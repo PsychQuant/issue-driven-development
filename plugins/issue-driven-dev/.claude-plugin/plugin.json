@@ -1,0 +1,10 @@
+{
+  "name": "issue-driven-dev",
+  "description": "Issue-driven development: create well-documented GitHub issues, verify implementation with Codex CLI, enforce closing comments. Human defines the problem, AI solves it.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Che Cheng"
+  },
+  "license": "MIT",
+  "keywords": ["github", "issues", "codex", "code-review", "workflow", "methodology"]
+}
