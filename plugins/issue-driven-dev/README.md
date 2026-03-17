@@ -4,46 +4,54 @@ Human defines the problem, AI solves it.
 
 ## What is this?
 
-A Claude Code plugin that enforces issue-driven development discipline:
+A Claude Code plugin that enforces issue-driven development as a complete methodology:
 
-1. **Every change starts with an issue** — with the customer's exact words quoted
-2. **Every implementation is verified** — Codex CLI checks code against issue requirements
-3. **Every closure is documented** — mandatory closing comment before close
+1. **Every change starts with an issue** — the single source of truth
+2. **Every issue is diagnosed before implementation** — no guessing
+3. **Every implementation is scope-controlled** — no creep
+4. **Every completion is independently verified** — no "looks good enough"
+5. **Every closure is documented** — knowledge preserved
 
 ## Why?
 
-Most teams use GitHub Issues casually. This plugin makes discipline automatic:
+Each skill guards against a specific failure mode:
 
-| Without this plugin | With this plugin |
-|---------------------|-----------------|
-| Issues have vague descriptions | Issues quote customer's exact words |
-| "Looks good enough" before commit | Codex verifies every requirement is met |
-| Issues closed with no explanation | Mandatory closing comment documenting what was done |
-| AI summaries lose precision | Original text preserved verbatim |
+| Failure | Without this plugin | With this plugin |
+|---------|---------------------|-----------------|
+| No documentation | Changes with no recorded reason | Every change traces to an issue |
+| Surface-level fixes | Patch symptoms, root cause returns | Diagnosis required before implementation |
+| Scope creep | Fix #42, refactor 3 unrelated files | Scope guardian flags unrelated changes |
+| False confidence | "Should work" → ship broken code | Independent AI verification (Codex) |
+| Lost knowledge | "What did we do?" 3 months later | Mandatory closing comment |
 
 ## Skills
 
+```
+issue → diagnose → implement → verify → close
+  ①        ②          ③         ④       ⑤
+```
+
 | Skill | Purpose |
 |-------|---------|
-| `issue` | Create well-documented GitHub Issues with original quotes, images, closing comments |
-| `codex-review` | Verify uncommitted changes against issue requirements using Codex CLI (gpt-5.4) |
+| `issue` | Create well-documented GitHub Issue with original quotes and images |
+| `diagnose` | Find root cause (bug) or analyze requirements (feature/refactor) |
+| `implement` | Scope-disciplined implementation with TDD |
+| `verify` | Independent verification using Codex CLI (gpt-5.4) |
+| `close` | Closing comment documenting problem, root cause, solution, verification |
 
-## Workflow
-
-```
-/issue-driven-dev:issue "description"
-    → implement changes
-    → /issue-driven-dev:codex-review #42
-    → findings? fix and re-verify
-    → all passed? commit with #42 reference
-    → closing comment → close
-```
-
-## Install
+## Quick Start
 
 ```bash
+# Install
 /plugin marketplace add https://github.com/PsychQuant/psychquant-claude-plugins
 /plugin install issue-driven-dev
+
+# Use
+/issue-driven-dev:issue "upload button doesn't work on mobile"
+/issue-driven-dev:diagnose #42
+/issue-driven-dev:implement #42
+/issue-driven-dev:verify #42
+/issue-driven-dev:close #42
 ```
 
 ## Configuration
@@ -60,6 +68,6 @@ attachments_release: "attachments"
 
 ## Requirements
 
-- [OpenAI Codex CLI](https://github.com/openai/codex) installed and authenticated
 - `gh` CLI authenticated with GitHub
+- [OpenAI Codex CLI](https://github.com/openai/codex) installed (for `verify`)
 - ChatGPT Pro account (for Codex gpt-5.4)

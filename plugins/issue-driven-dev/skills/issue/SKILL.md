@@ -1,10 +1,9 @@
 ---
 name: issue
 description: |
-  Create and manage well-documented GitHub Issues with original text quotes,
-  image attachments, and mandatory closing comments. Enforces issue-driven
-  development discipline. Use when: reporting bugs, tracking requests, or
-  any work that needs formal tracking.
+  建立 well-documented GitHub Issue。每個改動的起點。
+  Use when: 報 bug、追蹤需求、任何需要正式記錄的工作。
+  防止的失敗：改了東西卻沒有文件記錄「為什麼改」。
 argument-hint: "[description or path to .docx]"
 allowed-tools:
   - Bash(gh:*)
@@ -18,13 +17,13 @@ allowed-tools:
   - AskUserQuestion
 ---
 
-# /issue — GitHub Issue Management
+# /issue — 定義問題
 
-Create and manage issues in GitHub Issues with enforced documentation standards.
+每個改動都從 issue 開始。Issue 是人和 AI 的介面。
 
 ## Configuration
 
-This skill reads settings from `.claude/issue-driven-dev.local.md` frontmatter:
+讀取 `.claude/issue-driven-dev.local.md` frontmatter：
 
 ```yaml
 ---
@@ -34,50 +33,43 @@ attachments_release: "attachments"
 ---
 ```
 
-## When to Use
+如果不存在，詢問使用者並建立。
 
-- User reports a bug/problem
-- User asks to open or update an issue
-- Work needs formal tracking
+## Execution
 
-## Execution Steps
-
-### Step 0: Read Source Document (if .docx)
-
-When input is a `.docx` file, use `che-word-mcp` MCP tools:
+### Step 1: 讀取來源（如果是 .docx）
 
 ```
-mcp__che-word-mcp__read_docx(path)
-mcp__che-word-mcp__extract_images(path)
+mcp__che-word-mcp__get_document_text(source_path: "path")
+mcp__che-word-mcp__list_images(source_path: "path")
 ```
 
-### Step 1: Gather Required Info
+### Step 2: 蒐集資訊
 
-Ask user if missing:
-1. **Title**
-2. **Priority** (P0 / P1 / P2 / P3)
-3. **Description** (repro, expected, actual, impact)
+缺少的話詢問使用者：
 
-### Step 2: Create GitHub Issue
+1. **Title** — 一句話描述問題
+2. **Type** — bug / feature / refactor / docs
+3. **Priority** — P0（立即）/ P1（本週）/ P2（排程）/ P3（有空再做）
+4. **Description** — 問題描述（bug: 重現步驟 + expected + actual；feature: 需求 + 目的）
+
+### Step 3: 建立 Issue
 
 ```bash
 gh issue create \
   --repo $GITHUB_REPO \
-  --title "<title>" \
-  --body "<markdown body>" \
-  --label "bug"
-```
-
-Body template:
-
-```markdown
+  --title "$TITLE" \
+  --body "$(cat <<'EOF'
 ## Problem
 
 > **Original text**:
-> 「...exact original text from source document...」
-> — Source: {document_name}
+> 「...exact original text...」
+> — Source: {source}
 
 {Plain language interpretation}
+
+## Type
+{bug / feature / refactor / docs}
 
 ## Expected
 ...
@@ -87,80 +79,42 @@ Body template:
 
 ## Impact
 ...
+EOF
+)" \
+  --label "$TYPE"
 ```
 
-> **CRITICAL**: When issues come from a source document, you MUST include the **exact original text** quoted verbatim. AI summaries lose precision — the original text is the only thing that won't drift.
+> **CRITICAL**: 來自文件的 issue **必須**逐字引用原文。AI 摘要會失真，原文是唯一不會漂移的東西。
 
-### Step 2.1: Attach Images (If Applicable)
+### Step 4: 附加圖片（如果有）
 
-1. Upload to the `attachments` release:
 ```bash
-gh release upload $ATTACHMENTS_RELEASE <image_path> \
+# 建立 issue 後才知道 issue number
+gh release upload $ATTACHMENTS_RELEASE issue_${NUMBER}_${DESC}.png \
   --repo $GITHUB_REPO --clobber
+# 編輯 issue body 加入圖片連結
+gh issue edit $NUMBER --repo $GITHUB_REPO --body "..."
 ```
 
-2. Naming: `issue_<number>_<description>.png`
+### Step 5: 回報
 
-3. Workflow (issue number not known until creation):
-   1. Create issue first
-   2. Upload image with issue number
-   3. Edit issue body to add image link
+輸出：issue number、URL、labels、type。
 
-### Step 3: Confirm Back to User
+提示下一步：`/issue-driven-dev:diagnose #NNN`
 
-Return: issue number, URL, labels used.
-
-## Source Document Rule (CRITICAL)
+## 來源文件規則
 
 ### One Point = One Issue
 
-- **Every point** from a source document gets its own issue
-- **Never merge** — even similar topics get separate issues
-- **Never skip** — duplicates can be closed later, but missing issues = forgotten customer feedback
-- After processing, verify: `document points count == created issues count`
+- **每個要點**獨立建一個 issue
+- **不合併** — 類似主題也分開
+- **不跳過** — 重複可以之後關，遺漏 = 遺忘
+- 處理完畢後驗證：`文件要點數 == 建立的 issue 數`
 
-## Closing an Issue (MANDATORY)
+## Next Step
 
-**Never close without a closing comment.**
-
-### Closing Comment Format
-
-```markdown
-## Closing Summary
-
-### Problem
-{what was found, scope of impact}
-
-### Solution
-{what was changed, key logic}
-
-### Verification
-{how it was verified: codex-review, testing, screenshots}
-
-### Related Commits
-{commit hash or link}
-```
-
-### Workflow
+建立 issue 後，進入 `diagnose`：
 
 ```
-1. Create issue
-2. Implement code changes
-3. /issue-driven-dev:codex-review #NNN    ← verify
-4. Findings? → fix → re-verify
-5. All passed? → commit with #NNN reference
-6. gh issue comment #NNN                   ← closing comment
-7. gh issue close #NNN
+/issue-driven-dev:diagnose #NNN
 ```
-
-## Post-Implementation Verification
-
-After implementing, run `/issue-driven-dev:codex-review #NNN` to verify all requirements are met. **Never commit with unresolved findings.**
-
-For UI-visible changes, also run runtime verification (app testing, E2E tests).
-
-## Notes
-
-- Source of truth is GitHub issue status
-- IC_R009: every commit references an issue, every issue has a commit
-- Closing comment takes 3 minutes to write, saves 30 minutes finding "what was done" later

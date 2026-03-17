@@ -2,21 +2,27 @@
 
 ## Purpose
 
-Issue-driven development：人定義問題，AI 解決問題。
+Issue-driven development：每個改動都從 issue 出發，每個 issue 都有驗證過的結案。
 
 Issue 是人和 AI 的介面 — 人負責「什麼是對的」，AI 負責「怎麼做到」。
 
 ## Skills
 
-| Skill | 用途 |
-|-------|------|
-| `/issue-driven-dev:issue` | 建立 well-documented GitHub Issue（原文引用、圖片附件、closing comment） |
-| `/issue-driven-dev:codex-review` | 用 Codex CLI 驗證 uncommitted code 是否滿足 issue 要求 |
+| Skill | 防止的失敗 | 用途 |
+|-------|-----------|------|
+| `issue` | 改了東西卻沒有記錄「為什麼改」 | 建立 well-documented GitHub Issue |
+| `diagnose` | 修了表象，沒修根本原因 | 找 root cause / 分析需求 |
+| `implement` | Scope creep | 按 diagnosis 紀律實作 |
+| `verify` | 自以為修好了 | 用 Codex CLI 獨立驗證 |
+| `close` | 三個月後沒人知道做了什麼 | 寫 closing comment + 關 issue |
 
 ## Workflow
 
 ```
-issue → implement → codex-review → fix → codex-review → commit → closing comment → close
+issue → diagnose → implement → verify → close
+  ①        ②          ③         ④       ⑤
+
+每個 skill 都吃 #NNN，issue 貫穿全部。
 ```
 
 ## Configuration
@@ -30,6 +36,30 @@ github_owner: "owner"
 attachments_release: "attachments"
 ---
 ```
+
+## 設計哲學
+
+### 五個 Skill = 五個 Checkpoint
+
+每個 skill 是一個強制停頓點：
+
+| Checkpoint | 確認什麼 |
+|-----------|---------|
+| `issue` 之後 | 我們同意問題是什麼了嗎？ |
+| `diagnose` 之後 | 我們理解為什麼了嗎？ |
+| `implement` 之後 | 我們只改了該改的嗎？ |
+| `verify` 之後 | 真的修好了嗎？ |
+| `close` 之後 | 記錄完整嗎？ |
+
+### 與其他方法論的差異
+
+本 plugin 是 **issue-driven**（問題驅動），不是 process-driven（流程驅動）。
+所有決策都圍繞 `#NNN`，不是圍繞流程步驟。
+
+### 參考
+
+- **superpowers** (claude-plugins-official) — 小粒度 skill 設計、verification 獨立化
+- 本 plugin 的優勢：per-project config (`.local.md`)、具體 CLI 指令
 
 ## Development
 
