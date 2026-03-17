@@ -1,7 +1,7 @@
 {
   "name": "issue-driven-dev",
   "description": "Issue-driven development methodology: issue → diagnose → implement → verify → close. Every change traces back to an issue, every issue has a verified resolution.",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "author": {
     "name": "Che Cheng"
   },
