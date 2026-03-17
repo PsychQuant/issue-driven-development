@@ -1,5 +1,5 @@
 ---
-name: verify
+name: idd-verify
 description: |
   驗證 uncommitted/committed code 是否滿足 Issue 的所有要求。
   使用 Codex CLI (gpt-5.4) 進行獨立驗證。也可不帶 #NNN 做通用 code review。
@@ -128,8 +128,8 @@ X / Y requirements addressed
 
 | 結果 | 動作 |
 |------|------|
-| 全部通過 | 提示：`可以 commit 了。要 close 嗎？ /issue-driven-dev:close #NNN` |
-| 有 findings | 提示：`要修正嗎？修完後再跑一次 /issue-driven-dev:verify #NNN` |
+| 全部通過 | 提示：`可以 commit 了。要 close 嗎？ /issue-driven-dev:idd-close #NNN` |
+| 有 findings | 提示：`要修正嗎？修完後再跑一次 /issue-driven-dev:idd-verify #NNN` |
 | Scope creep detected | 提示：`有超出範圍的改動。要開新 issue 還是 revert？` |
 
 ## 鐵律
@@ -143,5 +143,5 @@ X / Y requirements addressed
 驗證通過後，進入 `close`：
 
 ```
-/issue-driven-dev:close #NNN
+/issue-driven-dev:idd-close #NNN
 ```

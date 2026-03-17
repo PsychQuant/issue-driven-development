@@ -1,5 +1,5 @@
 ---
-name: issue
+name: idd-issue
 description: |
   建立 well-documented GitHub Issue。每個改動的起點。
   Use when: 報 bug、追蹤需求、任何需要正式記錄的工作。
@@ -100,7 +100,7 @@ gh issue edit $NUMBER --repo $GITHUB_REPO --body "..."
 
 輸出：issue number、URL、labels、type。
 
-提示下一步：`/issue-driven-dev:diagnose #NNN`
+提示下一步：`/issue-driven-dev:idd-diagnose #NNN`
 
 ## 來源文件規則
 
@@ -116,5 +116,5 @@ gh issue edit $NUMBER --repo $GITHUB_REPO --body "..."
 建立 issue 後，進入 `diagnose`：
 
 ```
-/issue-driven-dev:diagnose #NNN
+/issue-driven-dev:idd-diagnose #NNN
 ```

@@ -27,17 +27,17 @@ Each skill guards against a specific failure mode:
 ## Skills
 
 ```
-issue → diagnose → implement → verify → close
-  ①        ②          ③         ④       ⑤
+idd-issue → idd-diagnose → idd-implement → idd-verify → idd-close
+    ①            ②              ③              ④            ⑤
 ```
 
 | Skill | Purpose |
 |-------|---------|
-| `issue` | Create well-documented GitHub Issue with original quotes and images |
-| `diagnose` | Find root cause (bug) or analyze requirements (feature/refactor) |
-| `implement` | Scope-disciplined implementation with TDD |
-| `verify` | Independent verification using Codex CLI (gpt-5.4) |
-| `close` | Closing comment documenting problem, root cause, solution, verification |
+| `idd-issue` | Create well-documented GitHub Issue with original quotes and images |
+| `idd-diagnose` | Find root cause (bug) or analyze requirements (feature/refactor) |
+| `idd-implement` | Scope-disciplined implementation with TDD |
+| `idd-verify` | Independent verification using Codex CLI (gpt-5.4) |
+| `idd-close` | Closing comment documenting problem, root cause, solution, verification |
 
 ## Quick Start
 
@@ -46,12 +46,12 @@ issue → diagnose → implement → verify → close
 /plugin marketplace add https://github.com/PsychQuant/psychquant-claude-plugins
 /plugin install issue-driven-dev
 
-# Use
-/issue-driven-dev:issue "upload button doesn't work on mobile"
-/issue-driven-dev:diagnose #42
-/issue-driven-dev:implement #42
-/issue-driven-dev:verify #42
-/issue-driven-dev:close #42
+# Use (auto-completion: type "idd-" to see all skills)
+/idd-issue "upload button doesn't work on mobile"
+/idd-diagnose #42
+/idd-implement #42
+/idd-verify #42
+/idd-close #42
 ```
 
 ## Configuration
@@ -69,5 +69,5 @@ attachments_release: "attachments"
 ## Requirements
 
 - `gh` CLI authenticated with GitHub
-- [OpenAI Codex CLI](https://github.com/openai/codex) installed (for `verify`)
+- [OpenAI Codex CLI](https://github.com/openai/codex) installed (for `idd-verify`)
 - ChatGPT Pro account (for Codex gpt-5.4)

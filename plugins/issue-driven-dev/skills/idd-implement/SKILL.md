@@ -1,5 +1,5 @@
 ---
-name: implement
+name: idd-implement
 description: |
   按照 diagnosis 的策略實作，嚴格控制 scope。
   只改 issue 要求的東西，每個 commit 引用 #NNN。
@@ -102,7 +102,7 @@ git diff --stat HEAD~{N}
 - 變更範圍跟 diagnosis 的 strategy 一致？
 - 沒有超出 scope 的改動？
 
-提示下一步：`/issue-driven-dev:verify #NNN`
+提示下一步：`/issue-driven-dev:idd-verify #NNN`
 
 ## Commit 規範
 
@@ -119,5 +119,5 @@ git diff --stat HEAD~{N}
 實作完成後，進入 `verify`：
 
 ```
-/issue-driven-dev:verify #NNN
+/issue-driven-dev:idd-verify #NNN
 ```

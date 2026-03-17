@@ -1,5 +1,5 @@
 ---
-name: diagnose
+name: idd-diagnose
 description: |
   對照 GitHub Issue 找 root cause（bug）或分析需求（feature/refactor）。
   輸出 diagnosis report：原因、影響範圍、修復/實作策略。
@@ -124,7 +124,7 @@ gh issue view $NUMBER --repo $GITHUB_REPO --json title,body,labels,comments
 
 詢問使用者：「Diagnosis 正確嗎？要調整策略嗎？」
 
-確認後提示下一步：`/issue-driven-dev:implement #NNN`
+確認後提示下一步：`/issue-driven-dev:idd-implement #NNN`
 
 ## 鐵律
 
@@ -137,5 +137,5 @@ gh issue view $NUMBER --repo $GITHUB_REPO --json title,body,labels,comments
 Diagnosis 確認後，進入 `implement`：
 
 ```
-/issue-driven-dev:implement #NNN
+/issue-driven-dev:idd-implement #NNN
 ```

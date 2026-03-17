@@ -1,5 +1,5 @@
 ---
-name: close
+name: idd-close
 description: |
   寫 closing comment 並關閉 GitHub Issue。
   強制記錄做了什麼、怎麼驗證的。
