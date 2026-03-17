@@ -96,11 +96,15 @@ gh release upload $ATTACHMENTS_RELEASE issue_${NUMBER}_${DESC}.png \
 gh issue edit $NUMBER --repo $GITHUB_REPO --body "..."
 ```
 
-### Step 5: 回報
+### Step 5: 回報並停止
 
 輸出：issue number、URL、labels、type。
 
 提示下一步：`/issue-driven-dev:idd-diagnose #NNN`
+
+> **CRITICAL: 建立 issue 後必須停止。不要自動開始 diagnose 或 implement。**
+> Issue 建立是人的決定點 — 人決定優先級、分配、時機。
+> AI 不應該擅自開始解決問題。等使用者明確說「開始做」或呼叫 `idd-diagnose` 才繼續。
 
 ## 來源文件規則
 

@@ -93,10 +93,10 @@ gh issue view $NUMBER --repo $GITHUB_REPO --json title,body,labels,comments
 
 ### Step 3: 輸出 Diagnosis Report
 
-輸出格式（直接寫在對話中，不存檔）：
+產生 diagnosis report 並 **comment 到 issue 底下**（預設行為）：
 
 ```markdown
-## Diagnosis: #NNN — {title}
+## Diagnosis
 
 ### Type
 {bug / feature / refactor}
@@ -120,11 +120,20 @@ gh issue view $NUMBER --repo $GITHUB_REPO --json title,body,labels,comments
 {可能出錯的地方}
 ```
 
+```bash
+gh issue comment $NUMBER --repo $GITHUB_REPO --body "$DIAGNOSIS_REPORT"
+```
+
+> **為什麼 comment 到 issue？** Diagnosis 是 issue 的一部分 — 三個月後回來看，issue 裡就有完整的「問題 → 診斷 → 解法」脈絡，不用翻對話紀錄。
+
+同時在對話中顯示 report，讓使用者可以即時確認。
+
 ### Step 4: 確認
 
-詢問使用者：「Diagnosis 正確嗎？要調整策略嗎？」
+詢問使用者：「Diagnosis 已 comment 到 #NNN。正確嗎？要調整策略嗎？」
 
-確認後提示下一步：`/issue-driven-dev:idd-implement #NNN`
+- 如果要調整 → 修改後用 `gh issue comment` 追加修正
+- 確認後提示下一步：`/issue-driven-dev:idd-implement #NNN`
 
 ## 鐵律
 
