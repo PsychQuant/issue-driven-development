@@ -86,7 +86,7 @@ EOF
 
 > **CRITICAL**: 來自文件的 issue **必須**逐字引用原文。AI 摘要會失真，原文是唯一不會漂移的東西。
 
-> **數學公式格式**：GitHub 支援 `$...$`（inline）和 `$$...$$`（display）。含底線的變數名用 `$\mathrm{mse\_info}$`，不要用裸底線。
+> **數學公式格式**：GitHub 支援 `$...$`（inline）和 `$$...$$`（display）。含底線的程式變數名**不放 math mode**，改用 backtick code。混合寫法：`$R_I = J \cdot$` `` `mse_info` ``。
 
 ### Step 4: 附加圖片（如果有）
 

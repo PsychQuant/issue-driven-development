@@ -125,8 +125,9 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$DIAGNOSIS_REPORT"
 ```
 
 > **數學公式格式**：GitHub 支援 `$...$`（inline）和 `$$...$$`（display）math mode。
-> 含底線的變數名必須跳脫：用 `$\mathrm{mse\_info}$` 而非 `$\text{mse_info}$`。
-> 裸底線會被 GitHub 誤判為 Markdown 斜體，導致渲染錯誤。
+> 含底線的程式變數名（如 `mse_info`）**不放進 math mode** — KaTeX 無法可靠渲染底線跳脫。
+> 改用混合寫法：數學部分用 `$R_I = J \cdot$`，變數名用 backtick code `` `mse_info` ``。
+> 純數學符號（$\theta$, $\hat{d}_J$ 等）放 math mode 沒問題。
 
 > **為什麼 comment 到 issue？** Diagnosis 是 issue 的一部分 — 三個月後回來看，issue 裡就有完整的「問題 → 診斷 → 解法」脈絡，不用翻對話紀錄。
 
