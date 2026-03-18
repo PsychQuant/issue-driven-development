@@ -124,6 +124,10 @@ gh issue view $NUMBER --repo $GITHUB_REPO --json title,body,labels,comments
 gh issue comment $NUMBER --repo $GITHUB_REPO --body "$DIAGNOSIS_REPORT"
 ```
 
+> **數學公式格式**：GitHub 支援 `$...$`（inline）和 `$$...$$`（display）math mode。
+> 含底線的變數名必須跳脫：用 `$\mathrm{mse\_info}$` 而非 `$\text{mse_info}$`。
+> 裸底線會被 GitHub 誤判為 Markdown 斜體，導致渲染錯誤。
+
 > **為什麼 comment 到 issue？** Diagnosis 是 issue 的一部分 — 三個月後回來看，issue 裡就有完整的「問題 → 診斷 → 解法」脈絡，不用翻對話紀錄。
 
 同時在對話中顯示 report，讓使用者可以即時確認。

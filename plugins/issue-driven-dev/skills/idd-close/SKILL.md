@@ -73,6 +73,8 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$CLOSING_COMMENT"
 gh issue close $NUMBER --repo $GITHUB_REPO
 ```
 
+> **數學公式格式**：GitHub 支援 `$...$`（inline）和 `$$...$$`（display）。含底線的變數名用 `$\mathrm{mse\_info}$`。
+
 ### Step 5: 回報
 
 ```
