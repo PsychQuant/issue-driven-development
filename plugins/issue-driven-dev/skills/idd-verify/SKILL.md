@@ -56,13 +56,23 @@ allowed-tools:
 
 ## Effort Levels
 
-| Level | 適用場景 |
-|-------|---------|
-| `medium` | 小改動 (<50 lines) |
-| `high` | 中等改動 (50-200 lines) |
-| `xhigh` | 大改動 (>200 lines，預設) |
+未指定時，依 diff 大小自動選擇 effort level。
 
-未指定時，依 diff 大小自動選擇。Codex 追加 `fast` 使用低延遲模式。
+| 改動規模 | Level |
+|---------|-------|
+| <50 lines | `medium` |
+| 50-200 lines | `high` |
+| >200 lines | `max`（預設） |
+
+### Effort 設定方式（兩種 engine 語法不同）
+
+| Engine | 語法 | 可用值 |
+|--------|------|-------|
+| **Codex CLI** | `-c "model_reasoning_effort=\"$EFFORT\""` | `medium`, `high`, `xhigh`（Codex 自己的 level 名） |
+| **claude -p** | `--effort $EFFORT` | `low`, `medium`, `high`, `max`（`max` 限 Opus 4.6） |
+
+> **注意**：兩者的 level 名稱不同！Codex 用 `xhigh`，claude -p 用 `max`。
+> 自動選擇時需要做映射：`大改動 → Codex xhigh / claude max`。
 
 ## Execution（單次模式）
 
@@ -70,10 +80,14 @@ allowed-tools:
 
 ```bash
 git status --short
-git diff --stat
+git diff --stat          # uncommitted changes
+git diff --stat HEAD~1   # last commit (if just committed)
 ```
 
-如果沒有改動，通知使用者並停止。
+如果沒有 uncommitted 也沒有 recent commit 改動，通知使用者並停止。
+
+> **重要**：如果改動已 committed（`idd-implement` 之後），用 `git diff HEAD~1` 取代 `git diff`。
+> 範本中的 `=== CHANGES ===` 區塊也要改用 `git diff HEAD~1`。
 
 ### Step 2: 取得 Issue 內容（如有 #NNN）
 
@@ -147,7 +161,7 @@ PROMPT_FILE=$(mktemp /tmp/claude_review_XXXXX)
   git diff --cached
 } > "$PROMPT_FILE"
 
-claude -p "$(cat $PROMPT_FILE)" --output-format text --max-turns 3
+claude -p "$(cat $PROMPT_FILE)" --output-format text --max-turns 3 --effort $EFFORT
 
 rm "$PROMPT_FILE"
 ```
