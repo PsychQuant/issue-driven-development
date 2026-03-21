@@ -108,7 +108,17 @@ git diff --stat HEAD~{N}
 - 變更範圍跟 diagnosis 的 strategy 一致？
 - 沒有超出 scope 的改動？
 
-**Comment 實作摘要到 issue**：
+**如果有產出圖表**，上傳到 attachments release：
+
+```bash
+# 讀取 .claude/issue-driven-dev.local.md 的 attachments_release 設定
+gh release upload $ATTACHMENTS_RELEASE {figure_files}.png \
+  --repo $GITHUB_REPO --clobber
+```
+
+圖片 URL 格式：`https://github.com/$GITHUB_REPO/releases/download/$ATTACHMENTS_RELEASE/{filename}.png`
+
+**Comment 實作摘要到 issue**（含圖片）：
 
 ```bash
 gh issue comment $NUMBER --repo $GITHUB_REPO --body "$(cat <<'EOF'
@@ -120,6 +130,9 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$(cat <<'EOF'
 
 ### Files Changed
 {git diff --stat output}
+
+### Figures (if any)
+![{description}](https://github.com/$GITHUB_REPO/releases/download/$ATTACHMENTS_RELEASE/{filename}.png)
 
 ### Scope Compliance
 {是否有超出範圍的改動，如有則說明}

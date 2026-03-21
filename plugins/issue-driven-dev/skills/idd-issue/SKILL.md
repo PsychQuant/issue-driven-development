@@ -91,12 +91,23 @@ EOF
 ### Step 4: 附加圖片（如果有）
 
 ```bash
-# 建立 issue 後才知道 issue number
+# 確保 attachments release 存在
+gh release view $ATTACHMENTS_RELEASE --repo $GITHUB_REPO 2>/dev/null || \
+  gh release create $ATTACHMENTS_RELEASE --repo $GITHUB_REPO \
+    --title "Attachments" --notes "Issue attachments and figures"
+
+# 上傳圖片到 release
 gh release upload $ATTACHMENTS_RELEASE issue_${NUMBER}_${DESC}.png \
   --repo $GITHUB_REPO --clobber
+
+# 圖片 URL 格式（private 和 public repo 都適用）
+# https://github.com/$GITHUB_REPO/releases/download/$ATTACHMENTS_RELEASE/issue_${NUMBER}_${DESC}.png
+
 # 編輯 issue body 加入圖片連結
 gh issue edit $NUMBER --repo $GITHUB_REPO --body "..."
 ```
+
+> **Private repo 圖片渲染**：Release asset URL 在 issue/comment 的 markdown 中可以正常渲染，前提是查看者是 repo 的 collaborator 且已登入 GitHub。不需要把 repo 改成 public。
 
 ### Step 5: 回報並停止
 
