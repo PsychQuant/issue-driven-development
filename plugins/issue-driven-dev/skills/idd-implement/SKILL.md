@@ -35,12 +35,12 @@ gh issue view $NUMBER --repo $GITHUB_REPO --json title,body,labels
 
 回顧對話中的 diagnosis report，確認 strategy。
 
-### Step 2: 列出變更清單
+### Step 2: 列出變更清單並 comment 到 issue
 
 根據 diagnosis 的 strategy，列出具體要改的檔案：
 
 ```markdown
-## 變更清單 for #NNN
+## Implementation Plan
 
 - [ ] 修改 src/foo.ts — {改什麼}
 - [ ] 修改 src/bar.ts — {改什麼}
@@ -50,6 +50,12 @@ gh issue view $NUMBER --repo $GITHUB_REPO --json title,body,labels
 **Scope check**: 清單裡的每一項都能對應到 issue 的某個要求？
 - 對應不上 → 移除，或開新 issue
 - Issue 的要求沒被覆蓋 → 補上
+
+**Comment 到 issue**（留下實作計畫的紀錄）：
+
+```bash
+gh issue comment $NUMBER --repo $GITHUB_REPO --body "$IMPLEMENTATION_PLAN"
+```
 
 ### Step 3: TDD 執行
 
@@ -88,7 +94,7 @@ gh issue view $NUMBER --repo $GITHUB_REPO --json title,body,labels
 
 **鐵律**：不在 #NNN 的 branch 上修不相關的東西。
 
-### Step 5: 完成確認
+### Step 5: 完成確認並 comment 到 issue
 
 所有變更清單項目完成後：
 
@@ -101,6 +107,27 @@ git diff --stat HEAD~{N}
 - 每個 commit 都引用了 #NNN？
 - 變更範圍跟 diagnosis 的 strategy 一致？
 - 沒有超出 scope 的改動？
+
+**Comment 實作摘要到 issue**：
+
+```bash
+gh issue comment $NUMBER --repo $GITHUB_REPO --body "$(cat <<'EOF'
+## Implementation Complete
+
+### Changes
+- {commit 1 hash}: {description}
+- {commit 2 hash}: {description}
+
+### Files Changed
+{git diff --stat output}
+
+### Scope Compliance
+{是否有超出範圍的改動，如有則說明}
+
+### Next: verification pending
+EOF
+)"
+```
 
 提示下一步：`/issue-driven-dev:idd-verify #NNN`
 

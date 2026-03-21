@@ -188,7 +188,17 @@ X / Y requirements addressed
 {有沒有超出 issue 範圍的改動}
 ```
 
-### Step 5: 後續動作
+### Step 5: Comment 驗證結果到 issue
+
+**每次驗證結果都 comment 到 issue**（含 loop 的每輪）：
+
+```bash
+gh issue comment $NUMBER --repo $GITHUB_REPO --body "$VERIFY_REPORT"
+```
+
+這樣 issue 上會有完整的驗證軌跡：哪些通過、哪些沒通過、用了什麼 engine。
+
+### Step 6: 後續動作
 
 | 結果 | 動作 |
 |------|------|
