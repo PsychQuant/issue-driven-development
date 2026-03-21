@@ -161,7 +161,7 @@ PROMPT_FILE=$(mktemp /tmp/claude_review_XXXXX)
   git diff --cached
 } > "$PROMPT_FILE"
 
-claude -p "$(cat $PROMPT_FILE)" --output-format text --max-turns 3 --effort $EFFORT
+claude -p "$(cat $PROMPT_FILE)" --output-format text --max-turns 10 --effort $EFFORT
 
 rm "$PROMPT_FILE"
 ```
