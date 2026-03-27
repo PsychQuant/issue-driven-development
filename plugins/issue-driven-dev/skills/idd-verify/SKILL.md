@@ -288,6 +288,10 @@ IF 達到 MAX_ROUNDS 仍有 findings:
 - **Verify 不是自己驗證自己**。用獨立的 AI 來檢查，避免自我盲點。
 - **Loop 中不修 scope 外的問題**。不在 #NNN 範圍的 → SKIPPED。
 
+## Auto-Update
+
+Verify comment 完成後，自動執行 `idd-update` 更新 issue body 的 Current Status（phase → `verified` 或 `needs-fix`）。
+
 ## Next Step
 
 驗證通過後，進入 `idd-close`：

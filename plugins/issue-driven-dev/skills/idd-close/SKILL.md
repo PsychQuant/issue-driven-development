@@ -91,6 +91,10 @@ gh issue close $NUMBER --repo $GITHUB_REPO
 | 類似 bug 再出現：「上次怎麼修的？」→ 不知道 | 類似 bug 再出現：參考上次的 root cause + solution |
 | 新人接手：「為什麼這段 code 長這樣？」→ 沒人知道 | 新人接手：issue 裡有完整的脈絡 |
 
+## Auto-Update
+
+Close 完成後，自動執行 `idd-update` 更新 issue body 的 Current Status（phase → `closed`）。
+
 ## 鐵律
 
 - **不跳過 closing comment**。即使是小 fix 也要寫。

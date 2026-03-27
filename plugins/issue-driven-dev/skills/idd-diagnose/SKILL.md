@@ -146,6 +146,10 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$DIAGNOSIS_REPORT"
 - **發現多個問題 → 開新 issue**。一個 issue 修一個問題。
 - **不確定就問**。問使用者比猜測好。
 
+## Auto-Update
+
+Diagnosis comment 完成後，自動執行 `idd-update` 更新 issue body 的 Current Status（phase → `diagnosed`）。
+
 ## Next Step
 
 Diagnosis 確認後，進入 `implement`：

@@ -154,6 +154,10 @@ EOF
 - description: 用 issue 的語言描述改了什麼
 - **必須**包含 `(#NNN)` 或 `#NNN`
 
+## Auto-Update
+
+Implementation comment 完成後，自動執行 `idd-update` 更新 issue body 的 Current Status（phase → `implemented`）。
+
 ## Next Step
 
 實作完成後，進入 `verify`：
