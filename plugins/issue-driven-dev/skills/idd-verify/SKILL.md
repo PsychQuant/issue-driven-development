@@ -35,13 +35,12 @@ allowed-tools:
 ## 參數
 
 ```
-/idd-verify #42                     → Codex 驗證（預設）
-/idd-verify #42 claude              → claude -p 驗證
-/idd-verify #42 gemini              → Gemini CLI 驗證
-/idd-verify #42 both                → Codex + claude 兩個跑
-/idd-verify #42 all                 → Codex + claude + Gemini 三引擎平行（推薦）
-/idd-verify #42 --loop              → 驗證-修復迴圈（預設最多 3 輪）
-/idd-verify #42 all --loop          → 三引擎 + 迴圈
+/idd-verify #42                     → Codex + claude 平行驗證（預設 both）
+/idd-verify #42 codex               → 只用 Codex
+/idd-verify #42 claude              → 只用 claude -p
+/idd-verify #42 gemini              → 只用 Gemini CLI
+/idd-verify #42 all                 → Codex + claude + Gemini 三引擎平行
+/idd-verify #42 --loop              → 驗證 + ralph-loop 自動修復迴圈
 /idd-verify                         → 通用 code review（無 issue）
 ```
 
@@ -53,11 +52,11 @@ allowed-tools:
 
 | Engine | 工具 | 模型 | 優勢 | 需求 |
 |--------|------|------|------|------|
-| `codex`（預設） | Codex CLI | gpt-5.4 | ~1M context、深度推理 | Codex CLI + ChatGPT Pro |
+| `both`（預設） | Codex + claude | gpt-5.4 + Opus 4.6 | 雙引擎交叉比對 | 兩者都需要 |
+| `codex` | Codex CLI | gpt-5.4 | ~1M context、深度推理 | Codex CLI + ChatGPT Pro |
 | `claude` | claude -p | Opus 4.6 | 可讀本地檔案、最強推理 | Claude Code 已安裝 |
-| `gemini` | Gemini CLI | Gemini 2.5 Pro | 1M context、免費 | Gemini CLI 已安裝 |
-| `both` | Codex + claude | — | 雙引擎交叉比對 | 兩者都需要 |
-| `all`（推薦） | 三個都跑 | — | 三引擎平行、覆蓋最廣 | 三者都需要 |
+| `gemini` | Gemini CLI | 最新可用模型 | 1M context、免費 | Gemini CLI 已安裝 |
+| `all` | 三個都跑 | — | 三引擎平行、覆蓋最廣 | 三者都需要 |
 
 ## Effort Levels
 
@@ -262,76 +261,52 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$VERIFY_REPORT"
 
 ---
 
-## Loop 模式（驗證-修復迴圈）
+## Loop 模式（ralph-loop 驅動）
 
-加上 `--loop` 後，自動進入修復迴圈：
-
-```
-verify → findings → Claude fixes → verify → findings → fixes → verify → clean ✓
-  ↑ 獨立 AI                ↑ 當前 session
-```
-
-### 迴圈流程
+加上 `--loop` 後，用 `/ralph-loop:ralph-loop` 驅動驗證-修復迴圈：
 
 ```
-FOR round = 1 to MAX_ROUNDS (預設 3):
-
-  1. 執行驗證（Codex / claude / both）
-  2. 解析 findings
-
-  IF 0 findings:
-    → PASS，結束迴圈
-    → 提示 idd-close
-
-  IF findings 數量 > 上一輪:
-    → STOP：regression detected
-    → 顯示新增的 findings，請人介入
-
-  IF 某個 finding 已出現 3 次:
-    → STOP：recurring finding，自動修不掉
-    → 請人介入
-
-  3. 分類 findings:
-     - IN_SCOPE（跟 #NNN 相關）→ 自動修復
-     - OUT_OF_SCOPE（不相關）→ 標記 SKIPPED
-
-  4. Claude 修復 IN_SCOPE findings
-  5. 進入下一輪
-
-IF 達到 MAX_ROUNDS 仍有 findings:
-  → STOP：列出剩餘 findings
-  → 提示：「超過上限，可能是架構問題」
+ralph-loop 啟動 → verify(both) → findings → 修復 → verify(both) → ... → 0 findings → <promise>
 ```
 
-### 每輪輸出
+### 啟動方式
 
-```markdown
-## Round 1/3 — Engine: codex
+當偵測到 `--loop` 參數時，呼叫：
 
-### Findings: 3
-- [FIXED] handleUpload() 缺少 null check
-- [FIXED] 測試沒覆蓋空輸入
-- [SKIPPED] 建議加 rate limiting（不在 #42 範圍）
-
-### 修復摘要
-修改了 src/upload.ts、tests/upload.test.ts
 ```
+/ralph-loop:ralph-loop "針對 Issue #NNN 執行驗證-修復迴圈：
+1. 用 Codex + claude -p 平行驗證（run_in_background）
+2. 合併 findings，按 severity 排序
+3. 修復所有 IN_SCOPE findings（不修 scope 外的）
+4. 每次修復後 commit（引用 #NNN）
+5. 重複直到 0 findings
+只修 #NNN 範圍內的問題。超出範圍的標 SKIPPED。"
+--completion-promise "All findings from both Codex and claude verification have been resolved. 0 findings remaining."
+--max-iterations 5
+```
+
+### 每輪流程
+
+1. Codex + claude 平行驗證（兩個 `run_in_background` Bash 呼叫）
+2. 等兩個結果回來，合併 findings
+3. 分類：IN_SCOPE → 修復；OUT_OF_SCOPE → SKIPPED
+4. 修復 + commit
+5. ralph-loop 的 Stop hook 自動重新餵入 prompt
 
 ### 終止條件
 
-| 條件 | 動作 |
+| 條件 | 行為 |
 |------|------|
-| 0 findings | 通過，提示 `idd-close` |
-| 達到上限 | 停止，列出剩餘 findings |
-| Findings 增加 | 停止，警告 regression — 修復引入了新問題 |
-| 同一 finding 出現 3 次 | 停止，這個修不掉，需要人 |
+| 0 findings | 輸出 `<promise>All findings...resolved</promise>`，ralph-loop 結束 |
+| 達到 max-iterations | ralph-loop 自動停止 |
+| 用戶 `/cancel-ralph` | 手動停止 |
 
 ### 安全設計
 
-- **修復者和驗證者是不同的 AI**：Claude 修、Codex/claude -p 驗。避免自我盲點。
-- **Scope 守衛**：迴圈中只修 #NNN 相關的 findings，不相關的標 SKIPPED。
-- **上限 3 輪**：超過 3 輪 = 可能是架構問題，不是 bug。跟 systematic-debugging 的原則一致。
-- **Regression 偵測**：findings 變多 = 修復引入新問題，立即停止。
+- **修復者和驗證者是不同的 AI**：Claude 修、Codex + claude -p 驗。
+- **Scope 守衛**：只修 #NNN 相關 findings。
+- **max-iterations 5**：超過 = 可能是架構問題，不是 bug。
+- **每輪 commit**：可以 revert 任何一輪的修復。
 
 ---
 
