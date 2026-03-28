@@ -2,13 +2,15 @@
 name: idd-verify
 description: |
   驗證 uncommitted/committed code 是否滿足 Issue 的所有要求。
-  支援 Codex CLI 或 claude -p 做獨立驗證。可 --loop 自動修到通過。
+  驗證 uncommitted/committed code 是否滿足 Issue 的所有要求。
+  支援 Codex CLI、claude -p、Gemini CLI 做獨立驗證，可三引擎平行。
   Use when: 實作完成後、commit 之前。
   防止的失敗：自以為修好了，沒跑驗證。
-argument-hint: "#issue [engine] [--loop [N]] e.g. '#42', '#42 claude', '#42 --loop', '#42 both --loop 5'"
+argument-hint: "#issue [engine] [--loop [N]] e.g. '#42', '#42 claude', '#42 all', '#42 --loop'"
 allowed-tools:
   - Bash(codex:*)
   - Bash(claude:*)
+  - Bash(gemini:*)
   - Bash(git:*)
   - Bash(gh:*)
   - Bash(mktemp:*)
@@ -35,10 +37,11 @@ allowed-tools:
 ```
 /idd-verify #42                     → Codex 驗證（預設）
 /idd-verify #42 claude              → claude -p 驗證
-/idd-verify #42 both                → 兩個都跑，交叉比對
+/idd-verify #42 gemini              → Gemini CLI 驗證
+/idd-verify #42 both                → Codex + claude 兩個跑
+/idd-verify #42 all                 → Codex + claude + Gemini 三引擎平行（推薦）
 /idd-verify #42 --loop              → 驗證-修復迴圈（預設最多 3 輪）
-/idd-verify #42 --loop 5            → 最多 5 輪
-/idd-verify #42 claude --loop       → 用 claude -p + 迴圈
+/idd-verify #42 all --loop          → 三引擎 + 迴圈
 /idd-verify                         → 通用 code review（無 issue）
 ```
 
@@ -48,11 +51,13 @@ allowed-tools:
 
 ## 驗證引擎
 
-| Engine | 工具 | 優勢 | 需求 |
-|--------|------|------|------|
-| `codex`（預設） | Codex CLI + gpt-5.4 | ~1M context、深度推理 | Codex CLI + ChatGPT Pro |
-| `claude` | claude -p | 不需額外工具、可讀本地檔案 | Claude Code 已安裝 |
-| `both` | 兩個都跑 | 交叉比對，覆蓋更廣 | 兩者都需要 |
+| Engine | 工具 | 模型 | 優勢 | 需求 |
+|--------|------|------|------|------|
+| `codex`（預設） | Codex CLI | gpt-5.4 | ~1M context、深度推理 | Codex CLI + ChatGPT Pro |
+| `claude` | claude -p | Opus 4.6 | 可讀本地檔案、最強推理 | Claude Code 已安裝 |
+| `gemini` | Gemini CLI | Gemini 2.5 Pro | 1M context、免費 | Gemini CLI 已安裝 |
+| `both` | Codex + claude | — | 雙引擎交叉比對 | 兩者都需要 |
+| `all`（推薦） | 三個都跑 | — | 三引擎平行、覆蓋最廣 | 三者都需要 |
 
 ## Effort Levels
 
@@ -64,15 +69,16 @@ allowed-tools:
 | 50-200 lines | `high` |
 | >200 lines | `max`（預設） |
 
-### Effort 設定方式（兩種 engine 語法不同）
+### Effort 設定方式（三種 engine 語法不同）
 
 | Engine | 語法 | 可用值 |
 |--------|------|-------|
-| **Codex CLI** | `-c "model_reasoning_effort=\"$EFFORT\""` | `medium`, `high`, `xhigh`（Codex 自己的 level 名） |
+| **Codex CLI** | `-c "model_reasoning_effort=\"$EFFORT\""` | `medium`, `high`, `xhigh` |
 | **claude -p** | `--effort $EFFORT` | `low`, `medium`, `high`, `max`（`max` 限 Opus 4.6） |
+| **Gemini CLI** | `-p` prompt 中指定 | Gemini 無 effort 參數，預設用最高推理 |
 
-> **注意**：兩者的 level 名稱不同！Codex 用 `xhigh`，claude -p 用 `max`。
-> 自動選擇時需要做映射：`大改動 → Codex xhigh / claude max`。
+> **注意**：三者的 level 名稱不同！
+> 自動選擇：`大改動 → Codex xhigh / claude max / Gemini 預設`。
 
 ## Execution（單次模式）
 
@@ -166,9 +172,57 @@ claude -p "$(cat $PROMPT_FILE)" --output-format text --max-turns 10 --effort $EF
 rm "$PROMPT_FILE"
 ```
 
+#### Engine: gemini
+
+```bash
+PROMPT_FILE=$(mktemp /tmp/gemini_review_XXXXX)
+
+{
+  echo "You are reviewing code changes for GitHub Issue #$NUMBER: $TITLE"
+  echo ""
+  echo "Issue requirements:"
+  echo "$BODY"
+  echo ""
+  echo "YOUR PRIMARY TASK:"
+  echo "1. Go through EACH requirement in the issue"
+  echo "2. For each requirement: FULLY / PARTIALLY / NOT addressed"
+  echo "3. Flag scope creep and regressions"
+  echo "4. Output as structured markdown with [P1] [P2] severity tags"
+  echo ""
+  echo "=== UNCOMMITTED CHANGES ==="
+  git diff
+  git diff --cached
+} > "$PROMPT_FILE"
+
+gemini -p "$(cat $PROMPT_FILE)" --approval-mode plan
+
+rm "$PROMPT_FILE"
+```
+
+> **注意**：Gemini CLI 用 `--approval-mode plan` 確保只讀不改。
+
 #### Engine: both
 
-依序執行 Codex 和 claude，合併 findings（去重），標註來源。
+平行執行 Codex 和 claude（兩個 `run_in_background`），合併 findings（去重），標註來源。
+
+#### Engine: all（推薦）
+
+**三引擎平行**：同時啟動 Codex、claude -p、Gemini CLI，全部 `run_in_background`。
+
+```
+┌─ Codex (gpt-5.4, xhigh) ──────┐
+│                                │
+├─ claude -p (Opus 4.6, max) ────┤ → 合併 findings → 去重 → 標註來源
+│                                │
+└─ Gemini CLI (2.5 Pro, plan) ───┘
+```
+
+執行方式：在同一個訊息中發出三個 `Bash(run_in_background=true)` 呼叫，等全部完成後合併結果。
+
+合併規則：
+- 相同 finding（相同檔案 + 相似描述）→ 只保留一個，標註 `[codex+claude+gemini]`
+- 不同 finding → 全部保留，各自標註來源
+- severity 以最高者為準（P1 > P2 > P3）
 
 ### Step 4: 呈現結果
 
