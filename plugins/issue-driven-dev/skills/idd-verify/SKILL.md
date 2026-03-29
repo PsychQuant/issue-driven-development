@@ -60,13 +60,13 @@ allowed-tools:
 
 ## Effort Levels
 
-未指定時，依 diff 大小自動選擇 effort level。
+**預設使用最高 effort**。只有明確指定時才降低。
 
-| 改動規模 | Level |
-|---------|-------|
-| <50 lines | `medium` |
-| 50-200 lines | `high` |
-| >200 lines | `max`（預設） |
+| 通用 Level | Codex CLI | claude -p | Gemini CLI |
+|-----------|-----------|-----------|------------|
+| `max`（預設） | `xhigh` | `max` | 無參數（最高） |
+| `high` | `high` | `high` | 無參數 |
+| `medium` | `medium` | `medium` | 無參數 |
 
 ### Effort 設定方式（三種 engine 語法不同）
 
@@ -76,8 +76,8 @@ allowed-tools:
 | **claude -p** | `--effort $EFFORT` | `low`, `medium`, `high`, `max`（`max` 限 Opus 4.6） |
 | **Gemini CLI** | `-p` prompt 中指定 | Gemini 無 effort 參數，預設用最高推理 |
 
-> **注意**：三者的 level 名稱不同！
-> 自動選擇：`大改動 → Codex xhigh / claude max / Gemini 預設`。
+> **重要**：三者的 level 名稱不同！必須按上方映射表轉換。
+> 未指定 effort 時，一律用 `max` → Codex 用 `xhigh`、claude 用 `max`。
 
 ## Execution（單次模式）
 
