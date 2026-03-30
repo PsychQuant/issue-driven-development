@@ -86,7 +86,7 @@ gh issue view $NUMBER --repo $GITHUB_REPO --json title,body
 
 ### Step 2: 平行啟動 Agent Team + Codex
 
-**同時啟動，不等對方**。
+**CRITICAL: 6 個 tool calls（5 Agent + 1 Bash codex）必須在同一個 message 送出。不可分步驟。**
 
 #### 2a. Agent Team（5 reviewers）
 
@@ -108,7 +108,7 @@ TeamCreate:
         對每個要求標記：FULLY / PARTIALLY / NOT addressed。
         用 Read/Grep 工具實際去看相關檔案確認。
       tools: Read, Grep, Glob, Bash
-      model: sonnet
+      # model 省略 → 繼承主對話模型
 
     - name: "logic"
       prompt: |
@@ -124,7 +124,7 @@ TeamCreate:
         - 控制流程（if/else 覆蓋、switch fall-through）
         用 Read 工具查看完整函數上下文。
       tools: Read, Grep, Glob, Bash
-      model: sonnet
+      # model 省略 → 繼承主對話模型
 
     - name: "security"
       prompt: |
@@ -140,7 +140,7 @@ TeamCreate:
         - 權限檢查
         - 輸入驗證
       tools: Read, Grep, Glob, Bash
-      model: sonnet
+      # model 省略 → 繼承主對話模型
 
     - name: "regression"
       prompt: |
@@ -156,7 +156,7 @@ TeamCreate:
         3. 有沒有引入新的 dependency 但沒處理？
         用 Grep 搜尋被改動的函數在哪裡被呼叫。
       tools: Read, Grep, Glob, Bash
-      model: sonnet
+      # model 省略 → 繼承主對話模型
 
     - name: "devils-advocate"
       prompt: |
@@ -172,7 +172,7 @@ TeamCreate:
 
         這是對抗性驗證 — 你的存在是為了防止群體盲點。
       tools: Read, Grep, Glob, Bash
-      model: sonnet
+      # model 省略 → 繼承主對話模型
 ```
 
 #### 2b. Codex CLI（背景執行）
