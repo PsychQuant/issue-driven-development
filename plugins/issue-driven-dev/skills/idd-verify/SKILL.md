@@ -175,7 +175,26 @@ TeamCreate:
       # model 省略 → 繼承主對話模型
 ```
 
-#### 2b. Codex CLI（背景執行）
+#### 2b. Codex CLI（背景執行，via companion script）
+
+使用 codex companion script 執行 review（更可靠，不需互動式 CLI）：
+
+```bash
+# Companion script 路徑
+CODEX_SCRIPT="$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs"
+
+# 用 Bash background 執行
+Bash({
+  command: `node "$CODEX_SCRIPT" review "--wait"`,
+  description: "Codex review for #$NUMBER",
+  run_in_background: true
+})
+```
+
+**設定沿用**：companion script 自動讀取 codex plugin 的 settings（model: `gpt-5.4`, reasoning_effort: `xhigh`）。
+若需手動指定，設定檔在 `~/.claude/plugins/marketplaces/openai-codex/plugins/codex/.claude-plugin/settings.json`。
+
+**Fallback（如果 companion script 不可用）**：
 
 ```bash
 PROMPT_FILE=$(mktemp /tmp/codex_verify_XXXXX)
@@ -248,6 +267,10 @@ X / Y requirements addressed
 只用 Codex，不開 team。適合小改動：
 
 ```bash
+# 優先使用 companion script
+node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" review "--wait"
+
+# Fallback
 codex review -c 'model="gpt-5.4"' -c 'model_reasoning_effort="xhigh"' - < "$PROMPT_FILE"
 ```
 
