@@ -111,9 +111,34 @@ gh issue edit $NUMBER --repo $GITHUB_REPO --body "..."
 
 > **Private repo 圖片渲染**：Release asset URL 在 issue/comment 的 markdown 中可以正常渲染，前提是查看者是 repo 的 collaborator 且已登入 GitHub。不需要把 repo 改成 public。
 
+### Step 4.5: 自動建立 Milestone（來源為文件時）
+
+當來源是一整個文件（.docx 等），所有 issues 建完後自動建立 milestone 並指派：
+
+```bash
+# 從檔案名稱或文件標題推導 milestone 名稱
+# 例：「網站調整內容.docx」→ milestone 名稱問使用者，預設用文件標題
+
+# 建立 milestone
+gh api repos/$GITHUB_REPO/milestones \
+  -f title="$MILESTONE_NAME" \
+  -f description="來源：$SOURCE_FILE — $ISSUE_COUNT 個 issues (#first-#last)" \
+  -f state="open"
+
+# 所有剛建立的 issues 都指派到此 milestone
+for n in $ALL_ISSUE_NUMBERS; do
+  gh issue edit $n --repo $GITHUB_REPO --milestone "$MILESTONE_NAME"
+done
+```
+
+**觸發條件**：來源為文件（.docx, .pdf, .md 等）且建立了 2 個以上 issues。
+**命名**：優先用文件內的主標題，沒有則問使用者。
+**不觸發**：單一 issue 或非文件來源。
+
 ### Step 5: 回報並停止
 
 輸出：issue number、URL、labels、type。
+如果有 milestone：輸出 milestone name、URL、issue count。
 
 提示下一步：`/issue-driven-dev:idd-diagnose #NNN`
 
