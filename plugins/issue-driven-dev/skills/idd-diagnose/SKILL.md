@@ -116,6 +116,10 @@ gh issue view $NUMBER --repo $GITHUB_REPO --json title,body,labels,comments
 - [ ] 改 B
 - [ ] 加測試 C
 
+### Complexity
+{Simple / SDD-warranted}
+{如果 SDD-warranted，列出原因}
+
 ### Risks
 {可能出錯的地方}
 ```
@@ -135,12 +139,37 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$DIAGNOSIS_REPORT"
 
 同時在對話中顯示 report，讓使用者可以即時確認。
 
+### Step 3.5: Complexity Assessment（SDD 判斷）
+
+Diagnosis 完成後，評估是否需要走 Spec-Driven Development (SDD)：
+
+**SDD 觸發條件**（任一為 Yes → SDD-warranted）：
+- 改動跨 3+ 檔案且邏輯互相依賴？
+- 需要新的共用抽象（新函式、新模組、新 protocol）？
+- 涉及架構決策或設計 trade-off？
+- 影響多個既有 capability / spec？
+- Strategy 裡有 5+ 個步驟且有順序依賴？
+
+**判定結果寫入 Diagnosis Report 的 `### Complexity` 區段。**
+
+如果 SDD-warranted：
+- Diagnosis report 的 Next Step 改為：`/spectra-propose`（自動綁 #NNN）
+- Spectra change 的 proposal 應引用 issue #NNN 作為 motivation
+- 後續流程：`spectra-propose → spectra-apply → idd-verify #NNN → idd-close #NNN + spectra-archive`
+
+如果 Simple：
+- 照常走 `/idd-implement #NNN`
+
+> **核心原則**：不是所有 issue 都需要 SDD，但所有 SDD 都值得有一個 issue。
+> SDD 是 IDD 的 special case — issue 始終是工作的入口和出口。
+
 ### Step 4: 確認
 
 詢問使用者：「Diagnosis 已 comment 到 #NNN。正確嗎？要調整策略嗎？」
 
 - 如果要調整 → 修改後用 `gh issue comment` 追加修正
-- 確認後提示下一步：`/issue-driven-dev:idd-implement #NNN`
+- 如果 Complexity = SDD-warranted → 提示：`/spectra-propose`（綁 #NNN）
+- 如果 Complexity = Simple → 提示：`/issue-driven-dev:idd-implement #NNN`
 
 ## 鐵律
 
