@@ -29,12 +29,29 @@ issue → diagnose ─┬→ implement → verify → close          (Simple)
 diagnose 判斷 Complexity → Simple 走 implement，SDD-warranted 走 Spectra。
 ```
 
-### SDD 是 IDD 的 Special Case
+### SDD 和 TDD 都是 IDD 的特例
+
+IDD 是框架，SDD 和 TDD 是它的內建機制：
+
+```
+IDD (Issue-Driven Development)
+ ├── TDD — 內嵌的實作紀律（RED → GREEN → commit）
+ │         不管走哪條路，implement 都強制 TDD
+ │
+ └── SDD — 條件觸發的設計流程
+           diagnose 判斷 complexity → SDD-warranted 才走 Spectra
+```
 
 > 不是所有 issue 都需要 SDD，但所有 SDD 都值得有一個 issue。
+> TDD 不是可選的 — 它是 `idd-implement` 的強制步驟。
 
-- **Simple**（bug fix、小改動）→ 標準 IDD 流程
-- **SDD-warranted**（跨檔案設計、新抽象、架構決策）→ `idd-diagnose` 判定後銜接 Spectra
+| 機制 | 性質 | 觸發條件 | 在 IDD 的位置 |
+|------|------|---------|--------------|
+| **TDD** | 內嵌強制 | 每次 implement 都執行 | `idd-implement` Step 3 |
+| **SDD** | 條件分支 | 跨 3+ 檔案、新抽象、架構決策 | `idd-diagnose` Step 3.5 判定 |
+
+- **Simple**（bug fix、小改動）→ 標準 IDD 流程（含 TDD）
+- **SDD-warranted**（跨檔案設計、新抽象、架構決策）→ `idd-diagnose` 判定後銜接 Spectra（仍含 TDD）
 - **進度追蹤**：SDD 用 `tasks.md`，issue 只掛一句 `→ see spectra change: <name>`
 - **驗證**：統一用 `idd-verify #NNN`（6-AI 交叉驗證）
 - **結案**：`idd-close #NNN` 同時觸發 `spectra-archive`
