@@ -153,9 +153,14 @@ Diagnosis 完成後，評估是否需要走 Spec-Driven Development (SDD)：
 **判定結果寫入 Diagnosis Report 的 `### Complexity` 區段。**
 
 如果 SDD-warranted：
-- Diagnosis report 的 Next Step 改為：`/spectra-propose`（自動綁 #NNN）
+- **預設** Next Step：`/spectra-discuss`（先對齊方向，再進 propose）
+- **opt-out** Next Step：`/spectra-propose`（僅當方向極度明確時跳過 discuss）
 - Spectra change 的 proposal 應引用 issue #NNN 作為 motivation
-- 後續流程：`spectra-propose → spectra-apply → idd-verify #NNN → idd-close #NNN + spectra-archive`
+- 後續流程：`[spectra-discuss →] spectra-propose → spectra-apply → idd-verify #NNN → idd-close #NNN + spectra-archive`
+
+> **為什麼 discuss 是 default?** AI 常常高估 diagnosis 的完整度。一份看起來詳盡的 diagnosis 可能仍留下關鍵的未決項:命名、範圍邊界、多個合理方案中該選哪個、新產物要放哪裡。直接跳到 `spectra-propose` 會產生建立在未確認假設之上的 proposal。`spectra-discuss` 是對齊的 safety net — 強制把假設列出、讓使用者修正。跳過它應該是例外,不是預設。
+>
+> **何時可 opt-out 跳過 discuss?** 當且僅當以下**全部**成立:使用者已在 issue body 或 diagnosis 對話中明確選定方向、無命名/範圍/trade-off 的 open questions、Strategy 沒有未決項、遵循既有 pattern 無新抽象。任一不成立,保留 discuss。
 
 如果 Simple：
 - 照常走 `/idd-implement #NNN`
@@ -163,13 +168,42 @@ Diagnosis 完成後，評估是否需要走 Spec-Driven Development (SDD)：
 > **核心原則**：不是所有 issue 都需要 SDD，但所有 SDD 都值得有一個 issue。
 > SDD 是 IDD 的 special case — issue 始終是工作的入口和出口。
 
-### Step 4: 確認
+### Step 4: 確認 + Routing
+
+Diagnosis comment 到 #NNN 後，進行兩階段確認:
+
+#### Stage 1: 確認 diagnosis 正確性
 
 詢問使用者：「Diagnosis 已 comment 到 #NNN。正確嗎？要調整策略嗎？」
 
-- 如果要調整 → 修改後用 `gh issue comment` 追加修正
-- 如果 Complexity = SDD-warranted → 提示：`/spectra-propose`（綁 #NNN）
-- 如果 Complexity = Simple → 提示：`/issue-driven-dev:idd-implement #NNN`
+- 如果要調整 → 修改後用 `gh issue comment` 追加修正,然後回到這個 Stage 1 重新確認
+
+#### Stage 2: Routing（根據 Complexity 選下一步）
+
+**如果 Complexity = Simple**:
+- 直接提示下一步命令:
+  ```
+  /issue-driven-dev:idd-implement #NNN
+  ```
+
+**如果 Complexity = SDD-warranted**:
+- **必須**使用 **AskUserQuestion 工具**強制使用者在 `spectra-discuss` 和 `spectra-propose` 之間明確選擇,不可預設任一方向自動繼續
+- AskUserQuestion 的 question 和 options 範例:
+  ```
+  question: "SDD-warranted。預設走 spectra-discuss 對齊方向，要 opt-out 嗎？"
+  options:
+    - label: "spectra-discuss (default)"
+      description: "先列 assumptions 讓你 correct，對齊後才寫 proposal。適用於還有 naming / 範圍 / trade-off 的不確定。"
+    - label: "spectra-propose (opt-out)"
+      description: "方向已在 issue 或 diagnosis 中明確選定，直接進 formal proposal。僅當零 open questions 時選這個。"
+  ```
+- 根據使用者選擇**顯示**對應命令讓使用者**自行執行**（不要自動 invoke,使用者應主導 pacing）:
+  - 選 `spectra-discuss` → 顯示:`/spectra-discuss` 並附上 topic 建議(例如 issue 標題或核心議題)
+  - 選 `spectra-propose` → 顯示:`/spectra-propose`
+
+> **為什麼強制選擇而非給 default?** diagnose 階段 AI 常常高估 strategy 的確定性。若只給「建議」使用者容易忽略並直接跳 propose。AskUserQuestion 把這個決定明確化,避免「忘記走 discuss」。
+>
+> **為什麼只顯示命令而不自動 invoke?** 使用者應該主導流程節奏。自動 invoke spectra skills 會讓使用者失去對何時進入下一階段的 visibility 和控制。idd-diagnose 的職責到「告訴使用者下一步是什麼」為止,實際執行由使用者主導。
 
 ## 鐵律
 
@@ -183,8 +217,22 @@ Diagnosis comment 完成後，自動執行 `idd-update` 更新 issue body 的 Cu
 
 ## Next Step
 
-Diagnosis 確認後，進入 `implement`：
+Diagnosis 確認後,依 Complexity 分流:
 
+**Complexity = Simple**:
 ```
 /issue-driven-dev:idd-implement #NNN
 ```
+
+**Complexity = SDD-warranted (default — discuss first)**:
+```
+/spectra-discuss
+```
+對齊方向後再執行 `/spectra-propose`。
+
+**Complexity = SDD-warranted (opt-out — 方向已明確)**:
+```
+/spectra-propose
+```
+
+> Step 4 會透過 AskUserQuestion 強制使用者在 discuss / propose 之間選擇,避免漏走 discuss。
