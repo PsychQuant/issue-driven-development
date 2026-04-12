@@ -177,45 +177,17 @@ TeamCreate:
 
 #### 2b. Codex CLI（背景執行，via companion script）
 
-使用 codex companion script 執行 review（更可靠，不需互動式 CLI）：
+使用 `codex exec` 執行 review：
 
 ```bash
-# Companion script 路徑
-CODEX_SCRIPT="$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs"
-
-# 用 Bash background 執行
 Bash({
-  command: `node "$CODEX_SCRIPT" review "--wait"`,
+  command: `codex exec --full-auto -c 'model_reasoning_effort="xhigh"' -o /tmp/codex-verify-$NUMBER.md "You are verifying code changes for Issue #$NUMBER: $TITLE. Go through EACH requirement: FULLY / PARTIALLY / NOT addressed. Flag scope creep and regressions. Reply in Traditional Chinese."`,
   description: "Codex review for #$NUMBER",
   run_in_background: true
 })
 ```
 
-**設定沿用**：companion script 自動讀取 codex plugin 的 settings（model: `gpt-5.4`, reasoning_effort: `xhigh`）。
-若需手動指定，設定檔在 `~/.claude/plugins/marketplaces/openai-codex/plugins/codex/.claude-plugin/settings.json`。
-
-**Fallback（如果 companion script 不可用）**：
-
-```bash
-PROMPT_FILE=$(mktemp /tmp/codex_verify_XXXXX)
-{
-  echo "You are verifying code changes for Issue #$NUMBER: $TITLE"
-  echo ""
-  echo "Issue requirements:"
-  echo "$BODY"
-  echo ""
-  echo "YOUR PRIMARY TASK:"
-  echo "1. Go through EACH requirement"
-  echo "2. For each: FULLY / PARTIALLY / NOT addressed"
-  echo "3. Flag scope creep and regressions"
-  echo "4. Reply in Traditional Chinese"
-  echo ""
-  echo "=== CHANGES ==="
-  git diff HEAD~1  # or git diff if uncommitted
-} > "$PROMPT_FILE"
-
-codex review -c 'model="gpt-5.4"' -c 'model_reasoning_effort="xhigh"' - < "$PROMPT_FILE" &
-```
+完成後用 Read 讀取 `/tmp/codex-verify-$NUMBER.md`。
 
 ### Step 3: 合併 Findings
 
@@ -267,11 +239,10 @@ X / Y requirements addressed
 只用 Codex，不開 team。適合小改動：
 
 ```bash
-# 優先使用 companion script
-node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" review "--wait"
-
-# Fallback
-codex review -c 'model="gpt-5.4"' -c 'model_reasoning_effort="xhigh"' - < "$PROMPT_FILE"
+codex exec --full-auto \
+  -c 'model_reasoning_effort="xhigh"' \
+  -o /tmp/codex-quick-review.md \
+  "Review the current git diff. Flag bugs, logic errors, security issues. Reply in Traditional Chinese."
 ```
 
 ## Engine: team（只用 Agent Team）
