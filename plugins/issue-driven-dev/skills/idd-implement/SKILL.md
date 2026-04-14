@@ -132,7 +132,30 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$(cat <<'EOF'
 {git diff --stat output}
 
 ### Figures (if any)
+
+**鐵律：每張圖下方必須附內容說明**。圖不會自己解釋自己——只貼圖沒文字，讀者需要回去翻 script 才能理解。說明必須包含三個要素：
+
+1. **資料**：N、變項、組別、誤差線意義（圖上看不到的資訊要補）
+2. **統計**：檢定方法、p-value、effect size、CI（若有）
+3. **結論**：一句話說明圖在講什麼（方向、顯著性、實務意義）
+
+格式：
+
+```markdown
 ![{description}](https://github.com/$GITHUB_REPO/releases/download/$ATTACHMENTS_RELEASE/{filename}.png)
+
+**圖 X. {Figure title}** — {資料描述}。{統計結果}。{結論一句話}。
+```
+
+實際範例：
+
+```markdown
+![5-group total score](https://.../fig1.png)
+
+**圖 1. 5-group 記憶表現比較** — 每組 N=13（Speaker / NN / NY / YN / YY），誤差線 ± SE。ANCOVA (group + MS_c) 中 RobotAgent contrast β=+1.09, p=.005；加 Age + MoCA 後 p=.0005。Speaker (53.8%) 顯著低於 Exp2 四組平均 (71.0%)，差距 17 個百分點——老師「Speaker 最佳」假設被反駁。
+```
+
+若圖是探索性/視覺化、沒跑特定檢定：說明仍要寫圖呈現的模式（何者高何者低、分布特徵）與是否符合主結論。
 
 ### Scope Compliance
 {是否有超出範圍的改動，如有則說明}
