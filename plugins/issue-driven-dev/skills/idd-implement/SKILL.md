@@ -232,9 +232,48 @@ EOF
 <type>: <description> (#NNN)
 ```
 
-- type: fix / feat / refactor / docs / test
+- type: `fix` / `feat` / `refactor` / `docs` / `test` / `chore`
 - description: 用 issue 的語言描述改了什麼
-- **必須**包含 `(#NNN)` 或 `#NNN`
+- **必須**引用 issue：用 `(#NNN)` 或 `Refs #NNN`（會產生 cross-link 但**不會** auto-close）
+
+### 禁止用 `Closes` / `Fixes` / `Resolves` trailer
+
+**Do NOT** use GitHub 的 auto-close trailers in IDD commits:
+
+```
+❌ fix: resolve foo (#42)\n\nCloses #42
+❌ fix: resolve foo\n\nFixes #42
+❌ fix: resolve foo\n\nResolves #42
+✅ fix: resolve foo (#42)
+✅ fix: resolve foo — Refs #42
+```
+
+**為什麼禁止**：
+
+1. **Auto-close 繞過 `idd-close` 的 Step 0 Checklist Gate Check**。GitHub 直接把 issue closed，`idd-close` 從未執行，沒人驗收 `Strategy` / `Implementation Plan` 的 checkbox 狀態——這違反 v2.17.0 的核心契約「沒打勾就不關」。
+2. **沒有 Closing Summary**。auto-close 只改 issue state，不 post 任何 comment。3 個月後回來看 issue 只會看到 diagnosis + implementation plan，然後突然 closed——沒有 Solution / Verification / Root Cause 的最終紀錄。
+3. **Issue 流程的 audit trail 斷裂**。IDD 的承諾是「每個 issue 都有 verified resolution」。auto-close 跳過這層驗證，變成「實作完就算結案」，退化成純 GitHub workflow。
+
+### 正確的 close 流程
+
+close 一律透過 `/idd-close #NNN` skill 走：
+
+1. `idd-close` Step 0 掃 checklist gate
+2. 若有未勾 todo → refuse（v2.17.0 行為）
+3. 若全部勾完 → post Closing Summary
+4. 最後由 skill 呼叫 `gh issue close` 關閉
+
+這樣 gate 和 summary 都有保障，而且 issue 仍然會被實際關掉。
+
+### 如果不小心用了 trailer 怎麼辦
+
+1. Push 之後 GitHub 立刻 auto-close — 來不及挽救
+2. 補救做法：
+   - 仍然走 `/idd-close` 的精神，用 retroactive mode：post 一個標明 `(retroactive — auto-closed via Closes trailer)` 的 Closing Summary，確保 audit trail 完整
+   - 不要 reopen → re-close，這是 noise
+3. Amend commit 拿掉 trailer 只在 **commit 尚未 push** 時可行；push 之後 trailer 的 side effect（auto-close）無法 undo
+
+**歷史脈絡**：`Closes` trailer 看起來很方便，#1/#2/#6 的 zombie issue 就是因為**沒用** trailer 而堆積 26 天。但 v2.17.0 introduced gate check 後，trailer 的「方便」變成了 gate bypass。正確的合成：**用 skill 關 issue**，skill 會負責既 enforce gate 又實際 close 掉（透過 `gh issue close`），兩全其美。
 
 ## Auto-Update
 

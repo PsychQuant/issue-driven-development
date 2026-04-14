@@ -139,6 +139,65 @@ IDD 把 checkbox 當成**契約**，不是願望清單。`idd-implement` 會 boo
 
 強制 `- [~]` / `- [-]` + reason 的代價是多打 30 秒字，換來的是「這個決定有紀錄」。這在 issue-driven dev 裡比 velocity 重要。
 
+## Commit Conventions
+
+IDD 的 close 流程是由 `idd-close` skill 執行的——它會跑 gate check、post Closing Summary、再實際關閉 issue。**不能**讓 GitHub 繞過這條流程 auto-close issue。
+
+### 規則：一律走 skill，不用 auto-close trailer
+
+| Trailer | 行為 | 在 IDD 裡 |
+|---------|------|----------|
+| `(#NNN)` / `Refs #NNN` | Cross-reference，不 auto-close | ✅ 推薦 |
+| `Closes #NNN` | GitHub 立即 auto-close | ❌ 禁止 |
+| `Fixes #NNN` | GitHub 立即 auto-close | ❌ 禁止 |
+| `Resolves #NNN` | GitHub 立即 auto-close | ❌ 禁止 |
+
+Commit message 只要用 `(#NNN)` 或 `Refs #NNN` 產生 cross-link 就好。Close 動作由 `/idd-close` 負責。
+
+### 為什麼
+
+#### 失敗模式 A：用 `Closes` trailer → gate bypass
+
+1. Commit message 寫 `Closes #42`
+2. Push 觸發 GitHub auto-close
+3. `idd-close` 從未執行 → Step 0 Checklist Gate Check 從未跑
+4. Strategy 的 `- [ ]` 可能還沒勾完——沒人攔
+5. 沒有 Closing Summary——3 個月後回來看 issue 只剩 diagnosis，沒有 Solution / Root Cause 的最終紀錄
+
+→ IDD 的核心契約「沒打勾就不關」+「結案必留 summary」被 silent 繞過。
+
+#### 失敗模式 B：完全不 reference issue → zombie
+
+1. Commit message 完全不寫 `#NNN`
+2. Fix 沒 link 到 issue
+3. Issue 保持 open，沒人回來 close
+4. 堆積成 zombie（#1/#2/#6 都是這個模式，closed 前放 26 天）
+
+→ Issue 被遺忘，類似 bug 再度報告時要重走 diagnose。
+
+### 正確做法
+
+**Both fix at once**: commit message 用 `(#NNN)` 或 `Refs #NNN` reference issue（防 zombie），close 時跑 `/idd-close` skill（enforce gate + post summary + 關 issue）。兩邊責任清楚：
+
+- **Commit** 負責「留 cross-reference 痕跡」
+- **Skill** 負責「驗收 + 記錄 + 關閉」
+
+這樣 commit 是 fix 的紀錄、issue 是 workflow 的紀錄，不會互相 bypass。
+
+### 歷史脈絡
+
+- **#1 / #2 / #6** (2026-03)：commit message 用了 `(#1)` 但**沒有** `Closes` trailer，結果 GitHub 不 auto-close，issue 堆積 26 天變 zombie。當時學到的 lesson 是「用 `Closes` trailer」。
+- **#11 / #13** (2026-04-14)：套用上面那個 lesson 在 commit message 寫 `Closes #11` 和 `Closes #13`，push 後 GitHub 立即 auto-close——但 v2.17.0 剛加的 `idd-close` gate check **從未跑過**，Closing Summary 也沒 post。之後補 retroactive comments 做補救。
+
+兩個 lesson 綜合後的正確合成：**用 skill 做 close，用 cross-reference 做 commit link**。`Closes` trailer 本身沒有錯，只是對 IDD 的 close 流程有害——我們選擇讓 skill 成為唯一的 close pathway，換回可預期、可驗收的 close 契約。
+
+### 補救：commit 已 push 且 trailer 已觸發 auto-close
+
+1. 不要 reopen → re-close，那是 noise。
+2. 補一個 retroactive Closing Summary comment，標題加 `(retroactive — auto-closed via Closes trailer)`，內容照 `idd-close` 的模板：Problem / Root Cause / Solution / Verification / Changes。
+3. 在 comment 裡標記 Strategy checklist 的最終狀態（本來 gate 會驗收的東西），確保 audit trail 完整。
+4. 記得在日後的 commit message 裡不要再犯。
+
 ## 設計哲學
 
 ### 五個 Skill = 五個 Checkpoint
