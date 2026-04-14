@@ -90,6 +90,55 @@ attachments_release: "attachments"
 ---
 ```
 
+## Checklist Conventions
+
+IDD 把 checkbox 當成**契約**，不是願望清單。`idd-implement` 會 bootstrap TaskList 追蹤進度，`idd-close` 會 refuse 關任何還有未勾項的 issue。
+
+### 標記語意
+
+| 標記 | 意義 | 阻擋 close? | 需附 reason? |
+|------|------|-------------|-------------|
+| `- [ ]` | Open todo，還沒做 | 🔴 是 | — |
+| `- [x]` / `- [X]` | 完成，測試通過 | ✅ 否 | — |
+| `- [~]` | Skipped（刻意跳過，可能回來做）| ✅ 否 | **必須**附原因 |
+| `- [-]` | Won't fix / out of scope（決定不做）| ✅ 否 | **必須**附原因 |
+| `- [?]` | Unknown / need input | 🟡 是（同 open）| — |
+
+**Reason 格式**：寫在同一行 dash 後，或下一個縮排 bullet：
+
+```markdown
+- [~] Add Redis cache layer — deferred: waiting on infra team's Redis rollout (ETA 2026-05)
+- [-] Support Windows paths
+  - Won't fix: MCP server is macOS-only; Windows would need a separate binary
+```
+
+### 哪些區段會被掃描
+
+`idd-close` 的 Gate Check 只掃**結構化的 checklist 區段**，避免誤判 `## Repro` 或 `## Steps to reproduce` 裡的情境 checkbox：
+
+| 標題 (`## ` 或 `### `) | 掃描 |
+|------------------------|------|
+| `Strategy` | ✅ |
+| `Implementation Plan` | ✅ |
+| `Implementation Complete` → `Checklist` | ✅（`idd-implement` Step 5 寫回的 source of truth）|
+| `Todo` / `Tasks` / `Checklist` | ✅ |
+| `Current Status` → `Tasks` | ✅ |
+| `Problem` / `Repro` / `Workaround` / `Expected` / `Actual` | ❌ |
+| _其他未列出的標題_ | ❌（保守：只掃白名單）|
+
+### 去重規則
+
+同一個 issue 可能有多個 comments 含相同 source 標題（例如 re-run `idd-implement` 後發了兩個 `## Implementation Complete`）。Gate check **只看最後一個**（按 comment `createdAt` desc），那是最新的 source of truth。
+
+### 為什麼這麼嚴格？
+
+「Strategy 上列了 5 個 bullet，實作了 3 個就 close issue」是最常見的隱形 scope creep：
+- 沒做的 2 個被遺忘，3 個月後變成新 bug 報告
+- 或者其實根本不打算做，但沒人記錄「為什麼不做」
+- 下一次類似需求再次走一遍 diagnose → 討論 → 決定不做 → 忘記 → …
+
+強制 `- [~]` / `- [-]` + reason 的代價是多打 30 秒字，換來的是「這個決定有紀錄」。這在 issue-driven dev 裡比 velocity 重要。
+
 ## 設計哲學
 
 ### 五個 Skill = 五個 Checkpoint

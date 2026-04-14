@@ -15,15 +15,20 @@ allowed-tools:
   - Glob
   - Grep
   - AskUserQuestion
+  - TaskCreate
+  - TaskUpdate
+  - TaskList
 ---
 
 # /implement — 紀律實作
 
-按 diagnosis 的策略寫 code，不多做也不少做。
+按 diagnosis 的策略寫 code，不多做也不少做。每個 checklist item 都有 TaskList 條目追蹤，`idd-close` 會強制驗收。
 
 ## 核心原則
 
 > 每一行改動都必須能追溯到 #NNN。追溯不到的改動 → 開新 issue。
+>
+> **Strategy 上的每個 `- [ ]` 都是契約**——`idd-implement` 開始時進 TaskList，`idd-close` 會 refuse 關任何還有未勾項的 issue。
 
 ## Execution
 
@@ -57,9 +62,30 @@ gh issue view $NUMBER --repo $GITHUB_REPO --json title,body,labels
 gh issue comment $NUMBER --repo $GITHUB_REPO --body "$IMPLEMENTATION_PLAN"
 ```
 
-### Step 3: TDD 執行
+### Step 2.5: Bootstrap TodoList（non-Spectra case）
+
+**判斷是否走 Spectra**：讀最新的 diagnosis comment 的 `### Complexity` 欄位：
+
+| Complexity | 行為 |
+|-----------|------|
+| `Simple` | ✅ 本 step 啟動 TaskList 追蹤每個 checklist item |
+| `SDD-warranted` | ⏭ 跳過本 step（由 `spectra-apply` 管 `openspec/changes/<name>/tasks.md`）|
+| _(missing / unclear)_ | ✅ 預設當 Simple，啟動 TaskList（保守作法）|
+
+**Simple case 執行**：
+
+1. 從 Implementation Plan（Step 2 剛 comment 的）擷取每個 `- [ ]` bullet 當 task subject
+2. 對每個 bullet 呼叫 `TaskCreate`，subject 用 bullet 第一行、description 用完整 bullet（含子項）
+3. 保留 task IDs 的映射表（`bullet_index → task_id`），之後用來 `TaskUpdate`
+
+> **為什麼用 harness-level TaskList 而不是只靠 comment checkbox?**
+> Comment checkbox 是**紀錄**，TaskList 是**即時狀態**。TaskList 讓進度在 UI 可視化、session 中斷不會丟狀態、完成一項就打勾。兩者並存：TaskList 是工作中的 source of truth，`## Implementation Complete` comment 是工作後的不可變紀錄。
+
+### Step 3: TDD 執行 + Task tracking
 
 每個變更項依序執行：
+
+0. **TaskUpdate → `in_progress`**（開始做這一項之前）
 
 1. **寫測試**（RED）
    - 測試描述用 issue 的語言
@@ -81,6 +107,14 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$IMPLEMENTATION_PLAN"
    git commit -m "fix: {description} (#NNN)"
    ```
 
+6. **TaskUpdate → `completed`**（確認該項真的做完了才打勾）
+
+**鐵律**：
+
+- 測試還在 red → 不能 `completed`
+- 只改了一半、等使用者確認 → 維持 `in_progress`
+- 完全不做了（scope 調整、won't fix）→ 用 `TaskUpdate` 改 subject 加 `[SKIP]` 前綴，維持 `pending` 或改 `deleted`；之後在 `## Implementation Complete` comment 裡寫成 `- [~]` 或 `- [-]`（見 CLAUDE.md Checklist Conventions）
+
 ### Step 4: Scope 守衛
 
 實作過程中發現的問題：
@@ -94,19 +128,35 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$IMPLEMENTATION_PLAN"
 
 **鐵律**：不在 #NNN 的 branch 上修不相關的東西。
 
-### Step 5: 完成確認並 comment 到 issue
+### Step 5: Checklist Sync + 完成確認
 
 所有變更清單項目完成後：
+
+**Step 5a: Checklist Sync**
+
+呼叫 `TaskList` 取當前所有 task 狀態，對照 Implementation Plan 的 bullet，把最終狀態寫回 `## Implementation Complete` comment 的 checkbox：
+
+| TaskList status | Comment checkbox | 意義 |
+|-----------------|------------------|------|
+| `completed` | `- [x]` | 做完，測試通過 |
+| `in_progress` | `- [ ]` | ⚠️ 還沒做完——**不該走到 Step 5** |
+| `pending` | `- [ ]` | ⚠️ 還沒開始——**不該走到 Step 5** |
+| subject 含 `[SKIP]` | `- [~]` | 刻意跳過（須在 comment 附說明原因）|
+| `deleted` | `- [-]` | 決定不做（scope 調整 / won't fix）|
+
+**鐵律**：若 TaskList 還有 `pending` 或 `in_progress` 的 task，**停下**——回到 Step 3 做完，或明確改成 `[SKIP]` / `deleted` 並說明原因。不能用 `- [x]` 假裝做完了。
 
 ```bash
 git status --short
 git diff --stat HEAD~{N}
 ```
 
-回顧：
+**Step 5b: 回顧**
+
 - 每個 commit 都引用了 #NNN？
 - 變更範圍跟 diagnosis 的 strategy 一致？
 - 沒有超出 scope 的改動？
+- TaskList 最終狀態與 `## Implementation Complete` comment 的 checkbox 一致？
 
 **如果有產出圖表**，上傳到 attachments release：
 
@@ -123,6 +173,15 @@ gh release upload $ATTACHMENTS_RELEASE {figure_files}.png \
 ```bash
 gh issue comment $NUMBER --repo $GITHUB_REPO --body "$(cat <<'EOF'
 ## Implementation Complete
+
+### Checklist (synced from TaskList)
+- [x] {plan item 1} → commit {hash}
+- [x] {plan item 2} → commit {hash}
+- [~] {plan item 3} — skipped: {reason why we chose not to do this now}
+- [-] {plan item 4} — won't fix: {why this is out of scope}
+
+> Legend: `- [x]` done · `- [~]` skipped (may revisit) · `- [-]` won't fix (scope)
+> `idd-close` will refuse to close if any `- [ ]` remains in this checklist.
 
 ### Changes
 - {commit 1 hash}: {description}
