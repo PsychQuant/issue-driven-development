@@ -6,6 +6,16 @@ Issue-driven development：每個改動都從 issue 出發，每個 issue 都有
 
 Issue 是人和 AI 的介面 — 人負責「什麼是對的」，AI 負責「怎麼做到」。
 
+## 鐵律:Step 0 Bootstrap Stage Task List(v2.18.0+)
+
+**每個 stage skill 的第一個動作必須是 `TaskCreate`**,把該 stage 的所有 execution sub-steps 建成 harness-level todo list。完成每一步立即 `TaskUpdate → completed`。**靜默完成 = 違規**。
+
+為什麼:
+- Stage 內部的步驟(讀 issue / comment 到 GitHub / 建 milestone / 上傳圖片)容易漏做
+- 歷史上看過:診斷完沒 comment / 建完 issue 沒建 milestone / verify findings 沒 post 到 issue
+- TaskList 讓進度在 UI 可視化、中斷後可恢復、完成即打勾
+- 與 `idd-implement` Step 2.5 的 Strategy-level TaskList 互補(Stage-level 追 skill sub-steps,Strategy-level 追改動 bullets)
+
 ## Skills
 
 **流程 skills（主 workflow）**：

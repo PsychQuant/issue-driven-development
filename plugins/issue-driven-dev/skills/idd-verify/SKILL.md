@@ -72,6 +72,29 @@ idd-verify #NNN
 
 ## Execution
 
+### Step 0: Bootstrap Stage Task List（強制)
+
+**在動任何事之前**先用 `TaskCreate` 為這個 stage 建 todo list:
+
+```
+TaskCreate(name="get_diff_and_issue", description="git diff + gh issue view,存 diff 到 /tmp 供 agents 讀取")
+TaskCreate(name="launch_parallel_reviewers", description="6 個 tool calls 同一 message: TeamCreate + 5 Agent(requirements/logic/security/regression/devils-advocate) + 1 Bash codex")
+TaskCreate(name="wait_for_claude_agents", description="等 5 Claude teammates 全部 idle,讀 /tmp/verify_${NUMBER}_findings_*.md")
+TaskCreate(name="wait_for_codex", description="等 Codex 背景任務完成,讀 /tmp/codex-verify-${NUMBER}.md")
+TaskCreate(name="merge_findings", description="合併 6 個來源 findings 去重,severity 取最高")
+TaskCreate(name="comment_to_issue", description="gh issue comment $NUMBER 貼合併後的 verification report")
+TaskCreate(name="decide_next_action", description="根據 findings: 通過→idd-close / 有 findings→修正 / scope creep→新 issue")
+```
+
+完成每一步立即 `TaskUpdate → completed`。**靜默完成 = 違規**。
+
+**鐵律**:
+- `wait_for_claude_agents` 和 `wait_for_codex` 都要跑到真的有 findings 內容,不能只看到 idle notification 就 completed
+- 如果某個 reviewer 沒寫 findings 檔,用 `SendMessage` 請它補寫,或 fallback 自己做 coordinator backup 檢查
+- `comment_to_issue` 一定要實際 post 到 GitHub,不是只在對話中顯示
+
+---
+
 ### Step 1: 取得 diff 和 issue
 
 ```bash

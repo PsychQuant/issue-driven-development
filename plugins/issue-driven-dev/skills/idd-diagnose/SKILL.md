@@ -27,6 +27,24 @@ allowed-tools:
 
 ## Execution
 
+### Step 0: Bootstrap Stage Task List（強制)
+
+**在動任何事之前**先用 `TaskCreate` 為這個 stage 建 todo list:
+
+```
+TaskCreate(name="read_issue", description="gh issue view #NNN 讀 title/body/labels/comments")
+TaskCreate(name="diagnose_by_type", description="依 issue type 做診斷: bug→RCA / feature→需求分析 / refactor→現狀分析")
+TaskCreate(name="post_diagnosis_report", description="產出 Diagnosis Report 並 comment 到 issue(非只在對話中顯示)")
+TaskCreate(name="complexity_assessment", description="Simple vs SDD-warranted 判定並寫入 report 的 Complexity 欄位")
+TaskCreate(name="confirm_and_route", description="與使用者確認診斷正確,依 complexity 顯示下一步命令")
+```
+
+完成每一步立即 `TaskUpdate → completed`。**靜默完成 = 違規**。
+
+特別提醒:**`post_diagnosis_report` 必須 comment 到 GitHub**,不是只在對話中回答。歷史上多次看到「診斷完但忘了 comment」→ 下次回來看不到脈絡。
+
+---
+
 ### Step 1: 讀取 Issue
 
 ```bash

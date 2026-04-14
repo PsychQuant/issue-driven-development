@@ -84,6 +84,22 @@ else:
 
 顯示 warning `(no checklist detected — legacy issue pattern)`，**不阻擋**（向後相容），但建議使用者考慮先跑 `idd-update` 補 Current Status。
 
+### Step 0.5: Bootstrap Stage Task List（強制)
+
+Gate check 通過後,用 `TaskCreate` 為 close stage 建 todo list:
+
+```
+TaskCreate(name="check_prerequisites", description="gh issue view 確認 OPEN + git log --grep=#NNN 確認有 commit 引用")
+TaskCreate(name="draft_closing_comment", description="起草 Problem / Root Cause / Solution / Verification / Changes 五段式")
+TaskCreate(name="review_with_user", description="顯示 closing comment 給使用者確認(若已明確 /idd-close 可省略此步)")
+TaskCreate(name="publish_and_close", description="gh issue comment + gh issue close")
+TaskCreate(name="report_result", description="輸出關閉後的 issue URL 與 commits chain")
+```
+
+完成每一步立即 `TaskUpdate → completed`。**靜默完成 = 違規**。
+
+---
+
 ### Step 1: 檢查前置條件
 
 ```bash

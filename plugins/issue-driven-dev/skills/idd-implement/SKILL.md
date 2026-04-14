@@ -32,6 +32,28 @@ allowed-tools:
 
 ## Execution
 
+### Step 0: Bootstrap Stage Task List（強制)
+
+**在動任何事之前**先用 `TaskCreate` 為這個 stage 建 stage-level todo list(與 Step 2.5 的 per-Strategy-item TaskList 不同層):
+
+```
+TaskCreate(name="read_issue_and_diagnosis", description="gh issue view + 確認最新 diagnosis comment 的 Strategy")
+TaskCreate(name="draft_implementation_plan", description="依 Strategy 起草 Implementation Plan 並 comment 到 issue")
+TaskCreate(name="bootstrap_strategy_tasklist", description="Step 2.5: Simple complexity → 為每個 - [ ] bullet 建 TaskCreate; SDD → 跳過(spectra-apply 管)")
+TaskCreate(name="execute_tdd_loop", description="對每個 strategy item: 寫測試→RED→實作→GREEN→commit→TaskUpdate completed")
+TaskCreate(name="scope_guard", description="實作中發現不相關問題 → 開新 issue,不混入本 #NNN")
+TaskCreate(name="sync_checklist_and_summary", description="Step 5: 把最終 checklist 狀態寫回 Implementation Complete comment")
+```
+
+完成每一步立即 `TaskUpdate → completed`。**靜默完成 = 違規**。
+
+> **兩層 task 的關係**:
+> - **Stage-level TaskList(此 Step 0)** — 追蹤 idd-implement 本身的 6 個 execution steps
+> - **Strategy-level TaskList(Step 2.5 Bootstrap)** — 追蹤具體改動清單的每個 checklist bullet
+> 兩者並存。Stage-level 的 `execute_tdd_loop` 那一項,會持續等到 Strategy-level 所有 items 完成後才 mark 為 completed。
+
+---
+
 ### Step 1: 讀取 Issue + Diagnosis
 
 ```bash
