@@ -75,10 +75,10 @@ Options (視 type 而定)：
 > 「{quote}」
 
 ### 決定
-{body first paragraph}
+{body_prose — 1-2 句陳述做了什麼決定}
 
 ### Rationale
-{body rest}
+{body_prose — 至少 1 段完整論述，解釋為何選這個方向 + 排除其他選項的理由}
 
 ### Related
 {auto-detect: scan body for #XX references}
@@ -94,7 +94,11 @@ Options (視 type 而定)：
 **Source**: {source}
 **Date**: YYYY-MM-DD
 
-{body}
+### 論述
+{body_prose — 至少 1 段 prose 解釋 note 的 context 與含義}
+
+### Details (optional)
+{bullets / tables 補充細節}
 
 <!-- idd:comment type=note date=YYYY-MM-DD source="{source}" -->
 ```
@@ -116,7 +120,15 @@ Options (視 type 而定)：
 ```markdown
 ## 🔧 Correction
 
-{body}
+### 論述
+{body_prose — 至少 1 段完整論述，解釋 (1) 先前的錯誤 claim、(2) 為何錯了、
+(3) 正確的理解是什麼、(4) 對後續決策的含義。避免通篇 bullets。}
+
+### Supporting evidence (optional)
+{tables / bullets / links — 支撐上面論述的具體數字、引用、圖表}
+
+### Related (optional)
+{cross-reference issues / commits / comments}
 
 <!-- idd:comment type=correction date=YYYY-MM-DD -->
 ```
@@ -222,11 +234,12 @@ HTML comment 在 GitHub 不渲染，但可 parse：
 
 ## 鐵律
 
+- **第一段必 prose**：`decision` / `note` / `correction` 三個長 body 的 types，body 必須以**至少一段完整論述段落（3+ 句）**開頭，解釋 context 與推論鏈條。之後才能接 tables / bullets 作 supporting evidence。**避免通篇 bullet-only**——bullets 容易把邏輯 gap 隱藏在排版底下，三個月後回讀無法重建脈絡。
 - **原文必 blockquote**：`decision` type 的 `--quote` 必用 `>` 包住
 - **Timestamp 必加**：所有 types 的 metadata marker 含 date
 - **errata 必 auto-call idd-edit**：確保 target comment 本體也被警示
 - **不走 phase detection**：idd-comment 是 ad-hoc，不觸發 phase 推斷（那是 idd-update 的事）
-- **Comment body 要自我解釋**：三個月後回來看，光看 comment 就知道 context
+- **Comment body 要自我解釋**：三個月後回來看，光看 comment 就知道 context。這是「第一段 prose」的動機。
 
 ## 與其他 idd-* skill 的關係
 
