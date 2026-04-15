@@ -93,10 +93,11 @@ TaskCreate(name="check_prerequisites", description="gh issue view 確認 OPEN + 
 TaskCreate(name="draft_closing_comment", description="起草 Problem / Root Cause / Solution / Verification / Changes 五段式")
 TaskCreate(name="review_with_user", description="顯示 closing comment 給使用者確認(若已明確 /idd-close 可省略此步)")
 TaskCreate(name="publish_and_close", description="gh issue comment + gh issue close")
+TaskCreate(name="auto_update_body", description="跑 /idd-update #NNN 把 issue body 的 Current Status phase 改 closed（Step 6，常被漏）")
 TaskCreate(name="report_result", description="輸出關閉後的 issue URL 與 commits chain")
 ```
 
-完成每一步立即 `TaskUpdate → completed`。**靜默完成 = 違規**。
+完成每一步立即 `TaskUpdate → completed`。**靜默完成 = 違規**。**TaskCreate 清單 = 真實的步驟清單；任何寫在 skill 裡但沒列進 TaskCreate 的步驟，都視為 skill 的 bug，必須補進 Task 清單。**
 
 ---
 
@@ -152,13 +153,35 @@ gh issue close $NUMBER --repo $GITHUB_REPO
 
 > **數學公式格式**：GitHub 支援 `$...$`（inline）和 `$$...$$`（display）。含底線的程式變數名**不放 math mode**，改用 backtick code。
 
-### Step 5: 回報
+### Step 5: 發佈完成回報
 
 ```
 ✓ Issue #NNN closed
   Closing comment: {URL}
   Commits: {list}
 ```
+
+### Step 6: Auto-Update Issue Body（強制，不可省略）
+
+Close 成功後**立即**執行，更新 issue body 的 `Current Status` 區塊（phase → `closed`）：
+
+```
+Skill(skill="issue-driven-dev:idd-update", args="#NNN")
+```
+
+或等價的手動等效動作：用 `gh api PATCH /repos/:owner/:repo/issues/:number` 更新 body 裡的 Current Status 區塊。
+
+**這一步設計上是工作流的真實終點，但最容易被漏掉**——因為 Step 5「發佈完成回報」後畫面看起來「全綠」，腦袋會以為結束了。沒做 Step 6 的後果：
+
+- Issue body 的 Current Status phase 停留在舊值（`implementing` / `diagnosed`），GitHub state 已是 `CLOSED` → 兩邊資料不一致
+- `gh issue view` 搭配 jq 掃 body metadata 的腳本會誤判
+- 幾個月後考古：「這 issue 狀態是啥？」body 說 implementing，state 說 closed → 只能翻 comments 重建
+
+**批次 close 時**：每一個 issue 都要分別跑 idd-update，不是跑一次。
+
+### Step 7: 批次 close 特殊規則
+
+若這次 `/idd-close` 是批次的其中一輪（例如 archive 之後同時 close #1 #2 #3），Step 5 和 Step 6 要對**每個 issue 各跑一次**。不要把多個 issue 的回報合併。TaskCreate 清單裡為每個 issue id 各建一份 `auto_update_body_N`。
 
 ## Closing Comment 的價值
 
@@ -168,16 +191,14 @@ gh issue close $NUMBER --repo $GITHUB_REPO
 | 類似 bug 再出現：「上次怎麼修的？」→ 不知道 | 類似 bug 再出現：參考上次的 root cause + solution |
 | 新人接手：「為什麼這段 code 長這樣？」→ 沒人知道 | 新人接手：issue 裡有完整的脈絡 |
 
-## Auto-Update
-
-Close 完成後，自動執行 `idd-update` 更新 issue body 的 Current Status（phase → `closed`）。
-
 ## 鐵律
 
 - **沒打勾就不關。** Step 0 的 Checklist Gate Check 是硬性 gate，不給 `--force` bypass。刻意跳過的 todo 必須明確改為 `- [~]` / `- [-]` 並附 reason——這本身就是一個 decision，值得留紀錄。
 - **不跳過 closing comment**。即使是小 fix 也要寫。
 - **Closing comment 要有 Root Cause**。「改了 X」不夠，要寫「因為 Y 所以改了 X」。
 - **列出所有相關 commit**。讓 issue 成為這次改動的完整入口。
+- **Step 6 Auto-Update 是工作流的真實終點**，不是可選 nice-to-have。跳過 Step 6 = 沒跑完 `/idd-close`。批次 close 時每個 issue 都要分別 auto-update。
+- **TaskCreate 清單即步驟清單**。skill 裡任何寫出來的步驟都必須在 Step 0.5 的 TaskCreate bootstrap 裡列出；遺漏就是 skill bug。
 
 ## 為什麼不給 `--force`？
 
