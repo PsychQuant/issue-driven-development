@@ -44,6 +44,26 @@ allowed-tools:
 
 ## Execution
 
+### Step 0: Bootstrap Stage Task List（強制)
+
+**在動任何事之前**先用 `TaskCreate` 為這個 stage 建 todo list,確保每個 sub-step 都被追蹤:
+
+```
+TaskCreate(name="parse_and_resolve_target", description="Parse comment:<id> 或 #NNN [--last] 並解析出實際 COMMENT_ID")
+TaskCreate(name="fetch_body_and_backup", description="gh api 取現 body 並寫入 /tmp/idd-edit-backup/comment-<id>-<ts>.md")
+TaskCreate(name="show_original", description="顯示原 comment 前 30 行讓使用者看清楚要動什麼")
+TaskCreate(name="build_new_body", description="按 mode（append / replace / prepend-note）組新 body 字串")
+TaskCreate(name="preview_and_confirm", description="顯示新 body 並用 AskUserQuestion 確認；--replace 模式必須通過")
+TaskCreate(name="execute_patch", description="gh api PATCH /repos/.../issues/comments/<id> 用 -F body=@file 避免 escape")
+TaskCreate(name="verify_and_report", description="re-fetch comment 比對寫入結果，輸出 ✓ Edit applied + diff summary")
+```
+
+完成每一步立即 `TaskUpdate → completed`。**靜默完成 = 違規**。**TaskCreate 清單 = 真實的步驟清單；任何寫在 skill 裡但沒列進 TaskCreate 的步驟，都視為 skill 的 bug，必須補進 Task 清單。**
+
+特別提醒：**idd-edit 是破壞性動作**，每一步都必須在 task list 留痕。`fetch_body_and_backup` 跳過 = 沒有 backup，誤改後無法復原；`preview_and_confirm` 跳過 = 跳過使用者把關。
+
+---
+
 ### Step 1: Parse arguments + resolve target
 
 ```bash

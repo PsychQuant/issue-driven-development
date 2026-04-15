@@ -37,6 +37,25 @@ allowed-tools:
 
 ## Execution
 
+### Step 0: Bootstrap Stage Task List（強制)
+
+**在動任何事之前**先用 `TaskCreate` 為這個 stage 建 todo list,確保每個 sub-step 都被追蹤:
+
+```
+TaskCreate(name="parse_args", description="Parse #NNN + --type + --body / --quote / --source / --target / --target-comment / --deadline 等 options")
+TaskCreate(name="validate_type_requirements", description="依 type 檢查必填欄位（decision 要 quote、note 要 source、link 要 target、errata 要 target-comment）")
+TaskCreate(name="build_comment_body", description="按 type 對應 template 組 markdown（emoji header + blockquote + body + metadata marker）")
+TaskCreate(name="post_comment", description="gh issue comment #NNN 用 --body-file 避免 escape 問題；errata type 額外 auto-call idd-edit")
+TaskCreate(name="report_result", description="輸出 ✓ Comment posted + URL；errata type 加報 idd-edit 結果")
+TaskCreate(name="auto_update_body", description="跑 /idd-update #NNN 同步 issue body Current Status（強制，常被漏；同 idd-close Step 6 模式）")
+```
+
+完成每一步立即 `TaskUpdate → completed`。**靜默完成 = 違規**。**TaskCreate 清單 = 真實的步驟清單；任何寫在 skill 裡但沒列進 TaskCreate 的步驟，都視為 skill 的 bug，必須補進 Task 清單。**
+
+特別提醒：**`auto_update_body` 不可省略**——`idd-comment` 的 comment 本身（例如 decision / correction）會改變 issue 的當前狀態，body Current Status 區塊必須同步。歷史上 idd-close 2.18.0 同樣的「Report + Auto-update 合在一個 Step」設計造成大量漏跑，於 2.18.1 修正。
+
+---
+
 ### Step 1: Parse arguments
 
 ```
@@ -181,7 +200,7 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body-file /tmp/idd-comment-$$.md
 rm /tmp/idd-comment-$$.md
 ```
 
-### Step 5: Report + Auto-update
+### Step 5: Report
 
 ```
 ✓ Comment posted to #NNN (type: {type})
@@ -190,7 +209,15 @@ rm /tmp/idd-comment-$$.md
 
 如果 type = errata → 額外報告 idd-edit 的結果。
 
-最後呼叫 `idd-update #NNN`（同步 body Current Status）。
+### Step 6: Auto-Update Issue Body（強制，不可省略）
+
+```
+Skill(skill="issue-driven-dev:idd-update", args="#NNN")
+```
+
+或等價手動執行 `/idd-update #NNN`。
+
+**為何強制**：`idd-comment` post 的 decision / correction / question 會改變 issue 的 Current Status；不同步 body 會導致 `gh issue view` 與 `idd-list` 看到舊 phase。歷史上 idd-close 2.18.0 同樣把 Report + Auto-update 合在一個 Step，造成大量漏跑（見 idd-close 2.18.1 fix）。
 
 ## Metadata Marker 格式
 

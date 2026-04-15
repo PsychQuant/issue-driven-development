@@ -28,6 +28,22 @@ allowed-tools:
 
 ## Execution
 
+### Step 0: Bootstrap Stage Task List（強制)
+
+**在動任何事之前**先用 `TaskCreate` 為這個 stage 建 todo list,確保每個 sub-step 都被追蹤:
+
+```
+TaskCreate(name="parse_args", description="Parse --state / --label / --limit / --repo flags 並 fallback 到 .claude/issue-driven-dev.local.md")
+TaskCreate(name="fetch_issues", description="gh issue list 取 number/title/state/labels/updatedAt/body/comments")
+TaskCreate(name="extract_phase", description="從每個 issue body 的 Current Status → **Phase**: 抽出 phase；fallback 掃 comments 標題推斷")
+TaskCreate(name="format_output", description="組 #N [phase] title 表格 + footer 統計")
+TaskCreate(name="report_and_suggest_next", description="輸出 table 並列出每個 issue 的 Suggested next 命令")
+```
+
+完成每一步立即 `TaskUpdate → completed`。**靜默完成 = 違規**。**TaskCreate 清單 = 真實的步驟清單；任何寫在 skill 裡但沒列進 TaskCreate 的步驟，都視為 skill 的 bug，必須補進 Task 清單。**
+
+---
+
 ### Step 1: Parse Arguments
 
 | Flag | 預設 | 說明 |

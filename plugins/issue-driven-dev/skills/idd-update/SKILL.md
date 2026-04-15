@@ -46,6 +46,25 @@ Issue body 分為兩個區域：
 
 ## Execution
 
+### Step 0: Bootstrap Stage Task List（強制)
+
+**在動任何事之前**先用 `TaskCreate` 為這個 stage 建 todo list,確保每個 sub-step 都被追蹤:
+
+```
+TaskCreate(name="read_issue", description="gh issue view #NNN 取 title/body/labels/state/comments")
+TaskCreate(name="determine_phase", description="掃 comments 標題（Diagnosis / Implementation Plan / Implementation Complete / Verify / Closing Summary）推斷 phase")
+TaskCreate(name="extract_key_info", description="從 comments 提取 Key Decisions / Scope Changes / Blocking / Related Commits 四類")
+TaskCreate(name="assemble_current_status", description="組 ## Current Status 區塊 markdown（Phase / Last updated / 四類分節）")
+TaskCreate(name="update_body", description="gh issue edit 替換 --- 以下內容；若 body 無 --- 則 append 新區塊")
+TaskCreate(name="report_update", description="輸出 ✓ Issue #NNN status updated → {phase}（取代原 Step 6「靜默完成」的 silent path）")
+```
+
+完成每一步立即 `TaskUpdate → completed`。**靜默完成 = 違規**。**TaskCreate 清單 = 真實的步驟清單；任何寫在 skill 裡但沒列進 TaskCreate 的步驟，都視為 skill 的 bug，必須補進 Task 清單。**
+
+特別提醒：原 Step 6 的「靜默完成」設計本意是「不打擾 caller」，但**「不輸出 = 不可見 = 沒人發現是否真的跑完」**。新的 `report_update` task 確保即使被其他 skill 呼叫，task list 仍會記錄完成狀態 — 這是「`idd-close` 的 Auto-Update 漏跑」這類 bug 的根因之一。
+
+---
+
 ### Step 1: 讀取 Issue 完整資訊
 
 ```bash

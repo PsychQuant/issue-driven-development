@@ -45,6 +45,28 @@ attachments_release: "attachments"
 
 ## Execution
 
+### Step 0: Bootstrap Stage Task List（強制)
+
+**在動任何事之前**先用 `TaskCreate` 為這個 stage 建 todo list,確保每個 sub-step 都被追蹤:
+
+```
+TaskCreate(name="parse_args", description="Parse #NNN list / source:file / milestone:name / @user tags")
+TaskCreate(name="gather_issues", description="依方式 A/B/C 用 gh issue list 蒐集目標 issue set")
+TaskCreate(name="validate_completeness", description="對每個 issue 找對應 commits 與 PR，產出驗證表（issue / PR / 變更量 / 狀態）")
+TaskCreate(name="read_issue_details", description="對每個 CLOSED issue 展開 body / closing comment / PR diff stats")
+TaskCreate(name="generate_report", description="按報告模板組 markdown（標題 / 統計 / 每個 issue 的 section / 量化成果）")
+TaskCreate(name="check_existing_discussion", description="gh api 查既有同標題 Discussion 決定 CREATE vs UPDATE")
+TaskCreate(name="confirm_category", description="AskUserQuestion 確認 Discussion category（避免 post 到錯類別）")
+TaskCreate(name="publish_discussion", description="gh api 建立 / 更新 GitHub Discussion")
+TaskCreate(name="report_result", description="輸出 Discussion URL 與 issue 涵蓋統計")
+```
+
+完成每一步立即 `TaskUpdate → completed`。**靜默完成 = 違規**。**TaskCreate 清單 = 真實的步驟清單；任何寫在 skill 裡但沒列進 TaskCreate 的步驟，都視為 skill 的 bug，必須補進 Task 清單。**
+
+特別提醒：`idd-report` 是 9 步流程，最容易在中段（validate_completeness / read_issue_details / check_existing_discussion）失去追蹤。每完成一步 `TaskUpdate → completed`，避免 9 個步驟混在 reasoning 裡看不清進度。
+
+---
+
 ### Step 1: Parse Arguments
 
 從 `$ARGUMENTS` 解析：
