@@ -146,15 +146,22 @@ git log --oneline --grep="#$NUMBER" | head -10
 gh issue edit $NUMBER --repo $GITHUB_REPO --body "$UPDATED_BODY"
 ```
 
-### Step 6: 靜默完成
+### Step 6: Report Update
 
-`idd-update` 被其他 skill 自動呼叫時，**不輸出額外訊息**，只在最後一行顯示：
+無論是被其他 skill 呼叫還是手動呼叫，**必須**輸出至少一行 task 完成證據：
 
 ```
 ✓ Issue #NNN status updated → {phase}
 ```
 
-手動呼叫時，顯示完整的 Current Status 內容。
+這是 task tracking 的硬性要求 — 沒有輸出 = task list 看不到結束 = 等同沒跑（這正是 2.18.x 之前 idd-close Auto-Update 漏跑的根因）。
+
+**模式差異**：
+
+- **被其他 skill 自動呼叫**（idd-diagnose / idd-implement / idd-verify / idd-close 等的 Step N Auto-Update）：只輸出上面那一行作為 noise minimum，不顯示完整 Current Status 區塊內容
+- **手動呼叫** `/idd-update #NNN`：除了那一行外，額外顯示完整的新 Current Status 內容讓使用者看清楚改了什麼
+
+**禁止靜默**：不論呼叫情境，「不輸出任何訊息然後直接 return」是違規。任務追蹤必須有可見證據。
 
 ## 被其他 Skills 呼叫
 
