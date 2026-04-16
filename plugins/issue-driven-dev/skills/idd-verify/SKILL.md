@@ -84,6 +84,7 @@ TaskCreate(name="wait_for_codex", description="等 Codex 背景任務完成,讀 
 TaskCreate(name="merge_findings", description="合併 6 個來源 findings 去重,severity 取最高")
 TaskCreate(name="comment_to_issue", description="gh issue comment $NUMBER 貼合併後的 verification report")
 TaskCreate(name="decide_next_action", description="根據 findings: 通過→idd-close / 有 findings→修正 / scope creep→新 issue")
+TaskCreate(name="triage_followup_issues", description="Step 5b: 分類 non-blocking findings → 問使用者要不要開新 issue，確認後批次建立")
 ```
 
 完成每一步立即 `TaskUpdate → completed`。**靜默完成 = 違規**。
@@ -251,11 +252,68 @@ X / Y requirements addressed
 
 ### Step 5: 後續動作
 
+#### Step 5a: 分類 findings
+
+合併後的每個 finding 歸入三類：
+
+| 類別 | 判斷標準 | 處置 |
+|------|---------|------|
+| **Blocking** | 直接違反 issue 要求、邏輯錯誤、安全漏洞 | 必須修復後重跑 verify |
+| **In-scope fix** | 屬於本 issue 範圍但非阻擋性（如 description 不精確、spec 過時） | 本次修復，不需重跑 verify |
+| **Follow-up** | 不屬於本 issue 範圍的改善建議（如共用函式的行為、缺少上限） | → Step 5b 問使用者 |
+
+在 verification report 的 Findings 表加一欄 `Action`：
+
+```markdown
+| # | Severity | Finding | Source | Action |
+|---|----------|---------|--------|--------|
+| 1 | MEDIUM | ... | team:logic+codex | Follow-up |
+| 2 | MEDIUM | ... | team:regression | In-scope fix |
+| 3 | LOW | ... | team:security | Follow-up |
+```
+
+#### Step 5b: Follow-up Issue Triage（強制，不可省略）
+
+當有任何 finding 被標記為 `Follow-up` 時，**必須**用 AskUserQuestion 問使用者：
+
+```
+question: "驗證發現 N 個 follow-up items（不影響本 issue，但值得追蹤）。要開新 issue 嗎？"
+options:
+  - "全部開" — 為每個 follow-up finding 建立獨立 issue
+  - "讓我選" — 逐一確認哪些要開
+  - "不開" — 記錄在 verification comment 中但不建 issue
+```
+
+**如果使用者選「全部開」或選了部分**：
+
+1. 相似的 findings 可合併（例如同一函式的多個問題 → 一個 issue）
+2. 用 `gh issue create` 批次建立，body 引用 verification report 的原文：
+   ```markdown
+   ## Problem
+
+   > **From verification of #NNN**:
+   > 「{finding 原文}」
+   > — Source: {reviewer sources}
+
+   {解讀}
+
+   ## Type
+   {bug / enhancement}
+   ```
+3. 每個新 issue 的 body 加上 `Related: #NNN`
+4. 輸出新建的 issue 清單
+
+**如果使用者選「不開」**：findings 已記錄在 verification comment 中，不會遺失。
+
+**為什麼強制問？** 歷史上的問題模式：verify 找到 5 個 follow-up items → 對話中討論了一下 → 使用者說「先 close」→ 所有 follow-up items 被遺忘。強制 triage 確保每個 finding 都有明確的去向（開 issue 或 conscious decision 不開）。
+
+#### Step 5c: Routing
+
 | 結果 | 動作 |
 |------|------|
-| 全部通過 + Devil's Advocate 無法反駁 | 提示 `idd-close` |
-| 有 findings | 修正後再跑 |
-| Scope creep | 開新 issue |
+| 無 blocking findings + follow-up triage 完成 | 提示 `idd-close` |
+| 有 blocking findings | 修正後再跑 verify |
+| 有 in-scope fix | 修正 + commit，不需重跑 verify |
 
 ## Engine: codex（快速模式）
 
