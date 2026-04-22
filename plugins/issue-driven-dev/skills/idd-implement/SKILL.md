@@ -183,7 +183,7 @@ git diff --stat HEAD~{N}
 **如果有產出圖表**，上傳到 attachments release：
 
 ```bash
-# 讀取 .claude/issue-driven-dev.local.md 的 attachments_release 設定
+# 讀取 .claude/issue-driven-dev.local.json 的 attachments_release 設定
 gh release upload $ATTACHMENTS_RELEASE {figure_files}.png \
   --repo $GITHUB_REPO --clobber
 ```

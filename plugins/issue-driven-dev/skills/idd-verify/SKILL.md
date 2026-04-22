@@ -45,7 +45,7 @@ allowed-tools:
 
 ## Configuration
 
-讀取 `.claude/issue-driven-dev.local.md` frontmatter。如不存在，詢問 `github_repo` 並建立。
+讀取 `.claude/issue-driven-dev.local.json`。如不存在，詢問 `github_repo` 並建立。
 
 ## 驗證架構（預設）
 

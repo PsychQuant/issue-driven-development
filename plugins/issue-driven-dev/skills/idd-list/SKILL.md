@@ -2,7 +2,7 @@
 name: idd-list
 description: |
   列出 GitHub issues（預設 open），顯示每個 issue 的 IDD phase 和建議 next action。
-  自動從 `.claude/issue-driven-dev.local.md` 取得 repo，支援 --state / --label / --limit filter。
+  自動從 `.claude/issue-driven-dev.local.json` 取得 repo，支援 --state / --label / --limit filter。
   Use when: 開工前 triage、想知道有哪些還沒處理完的 issue、回到專案看進度。
   防止的失敗：不知道有什麼要做、重複 diagnose 已處理的 issue、漏掉卡在 verify 的 issue。
 argument-hint: "[--state open|closed|all] [--label <name>] [--limit N]"
@@ -22,7 +22,7 @@ allowed-tools:
 
 ## Configuration
 
-與其他 `idd-*` skill 一致，讀取 `.claude/issue-driven-dev.local.md` frontmatter 的 `github_repo`。
+與其他 `idd-*` skill 一致，讀取 `.claude/issue-driven-dev.local.json` 的 `github_repo`。
 
 若該檔不存在，fallback 用 `gh repo view --json nameWithOwner -q .nameWithOwner` 自動偵測當前 git remote。偵測不到則要求明確 `--repo`。
 
@@ -33,7 +33,7 @@ allowed-tools:
 **在動任何事之前**先用 `TaskCreate` 為這個 stage 建 todo list,確保每個 sub-step 都被追蹤:
 
 ```
-TaskCreate(name="parse_args", description="Parse --state / --label / --limit / --repo flags 並 fallback 到 .claude/issue-driven-dev.local.md")
+TaskCreate(name="parse_args", description="Parse --state / --label / --limit / --repo flags 並 fallback 到 .claude/issue-driven-dev.local.json")
 TaskCreate(name="fetch_issues", description="gh issue list 取 number/title/state/labels/updatedAt/body/comments")
 TaskCreate(name="extract_phase", description="從每個 issue body 的 Current Status → **Phase**: 抽出 phase；fallback 掃 comments 標題推斷")
 TaskCreate(name="format_output", description="組 #N [phase] title 表格 + footer 統計")

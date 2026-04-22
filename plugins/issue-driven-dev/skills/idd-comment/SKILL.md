@@ -33,7 +33,7 @@ allowed-tools:
 
 ## Configuration
 
-讀取 `.claude/issue-driven-dev.local.md` frontmatter 取得 `github_repo`。
+讀取 `.claude/issue-driven-dev.local.json` 取得 `github_repo`。
 
 ## Execution
 

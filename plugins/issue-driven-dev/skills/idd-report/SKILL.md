@@ -33,14 +33,14 @@ allowed-tools:
 
 ## Configuration
 
-讀取 `.claude/issue-driven-dev.local.md` frontmatter：
+讀取 `.claude/issue-driven-dev.local.json`：
 
-```yaml
----
-github_repo: "owner/repo"
-github_owner: "owner"
-attachments_release: "attachments"
----
+```json
+{
+  "github_repo": "owner/repo",
+  "github_owner": "owner",
+  "attachments_release": "attachments"
+}
 ```
 
 ## Execution

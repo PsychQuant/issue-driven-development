@@ -42,7 +42,7 @@ Issue body 分為兩個區域：
 
 ## Configuration
 
-讀取 `.claude/issue-driven-dev.local.md` frontmatter 取得 `github_repo`。
+讀取 `.claude/issue-driven-dev.local.json` 取得 `github_repo`。
 
 ## Execution
 
