@@ -205,7 +205,7 @@ TeamCreate:
 
 ```bash
 Bash({
-  command: `codex exec --full-auto -c 'model_reasoning_effort="xhigh"' -o /tmp/codex-verify-$NUMBER.md "You are verifying code changes for Issue #$NUMBER: $TITLE. Go through EACH requirement: FULLY / PARTIALLY / NOT addressed. Flag scope creep and regressions. Reply in Traditional Chinese."`,
+  command: `codex exec --full-auto -c 'model_reasoning_effort="xhigh"' -c 'service_tier="fast"' -o /tmp/codex-verify-$NUMBER.md "You are verifying code changes for Issue #$NUMBER: $TITLE. Go through EACH requirement: FULLY / PARTIALLY / NOT addressed. Flag scope creep and regressions. Reply in Traditional Chinese."`,
   description: "Codex review for #$NUMBER",
   run_in_background: true
 })
@@ -322,9 +322,12 @@ options:
 ```bash
 codex exec --full-auto \
   -c 'model_reasoning_effort="xhigh"' \
+  -c 'service_tier="fast"' \
   -o /tmp/codex-quick-review.md \
   "Review the current git diff. Flag bugs, logic errors, security issues. Reply in Traditional Chinese."
 ```
+
+> **Fast mode note**: `service_tier="fast"` 加速 GPT-5.4 回應（需較多 credits,換取 2-5x 速度）。驗證場景對速度敏感（user 在等 findings），預設開啟;若要省 credit 可移除此 flag。
 
 ## Engine: team（只用 Agent Team）
 
