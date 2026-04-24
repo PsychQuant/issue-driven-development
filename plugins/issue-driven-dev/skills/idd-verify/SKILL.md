@@ -2,7 +2,7 @@
 name: idd-verify
 description: |
   驗證 uncommitted/committed code 是否滿足 Issue 的所有要求。
-  預設用 Agent Team（5 Claude reviewers 互相挑戰）+ Codex CLI（gpt-5.4）平行驗證。
+  預設用 Agent Team（5 Claude reviewers 互相挑戰）+ Codex CLI（gpt-5.5）平行驗證。
   6 個獨立 AI、兩個模型家族、互相看不到對方的結果。
   Use when: 實作完成後、commit 之前。
   防止的失敗：自以為修好了，沒跑驗證。
@@ -59,7 +59,7 @@ idd-verify #NNN
 │   ├── Regression — scope creep、副作用、既有功能
 │   └── Devil's Advocate — 反駁前四個的「通過」判斷
 │
-└── Codex CLI（gpt-5.4 xhigh，獨立 process）
+└── Codex CLI（gpt-5.5 xhigh，獨立 process）
     └── 完全獨立，看不到 team 的討論
 
 → 6 個 findings 合併去重 → 呈現結果
@@ -68,7 +68,7 @@ idd-verify #NNN
 **為什麼 6 個？**
 - 5 個 Claude teammates 在同一個 team 裡**互相挑戰**（不是各自獨立報告）
 - Devil's Advocate 的工作是**試著證明其他 4 個的通過判斷是錯的**
-- Codex 是完全不同的模型家族（gpt-5.4），提供**跨模型盲驗**
+- Codex 是完全不同的模型家族（gpt-5.5），提供**跨模型盲驗**
 
 ## Execution
 
@@ -205,7 +205,7 @@ TeamCreate:
 
 ```bash
 Bash({
-  command: `codex exec --full-auto -c 'model_reasoning_effort="xhigh"' -c 'service_tier="fast"' -o /tmp/codex-verify-$NUMBER.md "You are verifying code changes for Issue #$NUMBER: $TITLE. Go through EACH requirement: FULLY / PARTIALLY / NOT addressed. Flag scope creep and regressions. Reply in Traditional Chinese."`,
+  command: `codex exec --full-auto -c 'model="gpt-5.5"' -c 'model_reasoning_effort="xhigh"' -c 'service_tier="fast"' -o /tmp/codex-verify-$NUMBER.md "You are verifying code changes for Issue #$NUMBER: $TITLE. Go through EACH requirement: FULLY / PARTIALLY / NOT addressed. Flag scope creep and regressions. Reply in Traditional Chinese."`,
   description: "Codex review for #$NUMBER",
   run_in_background: true
 })
@@ -234,7 +234,7 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$MERGED_FINDINGS"
 ## Verify: #NNN
 
 ### Engine
-Agent Team (5 Claude reviewers) + Codex (gpt-5.4)
+Agent Team (5 Claude reviewers) + Codex (gpt-5.5)
 
 ### 要求覆蓋率
 X / Y requirements addressed
@@ -321,13 +321,14 @@ options:
 
 ```bash
 codex exec --full-auto \
+  -c 'model="gpt-5.5"' \
   -c 'model_reasoning_effort="xhigh"' \
   -c 'service_tier="fast"' \
   -o /tmp/codex-quick-review.md \
   "Review the current git diff. Flag bugs, logic errors, security issues. Reply in Traditional Chinese."
 ```
 
-> **Fast mode note**: `service_tier="fast"` 加速 GPT-5.4 回應（需較多 credits,換取 2-5x 速度）。驗證場景對速度敏感（user 在等 findings），預設開啟;若要省 credit 可移除此 flag。
+> **Fast mode note**: `service_tier="fast"` 加速 GPT-5.5 回應（需較多 credits,換取 2-5x 速度）。驗證場景對速度敏感（user 在等 findings），預設開啟;若要省 credit 可移除此 flag。
 
 ## Engine: team（只用 Agent Team）
 

@@ -36,7 +36,7 @@ idd-issue → idd-diagnose → idd-implement → idd-verify → idd-close
 | `idd-issue` | Create well-documented GitHub Issue with original quotes and images |
 | `idd-diagnose` | Find root cause (bug) or analyze requirements (feature/refactor) |
 | `idd-implement` | Scope-disciplined implementation with TDD |
-| `idd-verify` | Independent verification using Codex CLI (gpt-5.4) |
+| `idd-verify` | Independent verification using Codex CLI (gpt-5.5) |
 | `idd-close` | Closing comment documenting problem, root cause, solution, verification |
 
 ## Quick Start
@@ -70,4 +70,4 @@ attachments_release: "attachments"
 
 - `gh` CLI authenticated with GitHub
 - [OpenAI Codex CLI](https://github.com/openai/codex) installed (for `idd-verify`)
-- ChatGPT Pro account (for Codex gpt-5.4)
+- ChatGPT Pro account (for Codex gpt-5.5)
