@@ -23,6 +23,16 @@ allowed-tools:
 >
 > **沒打勾就不關。** 每一個 `- [ ]` 都必須變成 `- [x]`（完成）、`- [~]`（刻意跳過）、或 `- [-]`（won't fix / scope 調整）才能 close。
 
+## Configuration
+
+按 [config-protocol](../../references/config-protocol.md) 解析 target repo:
+
+- `--repo owner/repo` flag → per-invocation override
+- Walk-up `.claude/issue-driven-dev.local.json`(從 cwd 往上找)
+- Path / git predicates 自動匹配
+
+**Group/predicate 行為**:`idd-close` 操作既存 issue,只用 path/git 類 predicate。Group config 會 fall through 到 primary repo。**注意**:關 group 的 primary issue 不會自動關 tracking issues — 各自關閉,或加 `--close-tracked` 一併關閉並在 tracking issues 留 cross-link comment。
+
 ## Execution
 
 ### Step 0: Checklist Gate Check

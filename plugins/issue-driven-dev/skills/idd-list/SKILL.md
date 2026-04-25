@@ -2,10 +2,10 @@
 name: idd-list
 description: |
   列出 GitHub issues（預設 open），顯示每個 issue 的 IDD phase 和建議 next action。
-  自動從 `.claude/issue-driven-dev.local.json` 取得 repo，支援 --state / --label / --limit filter。
+  按 config-protocol 解析 target repo(walk-up cascading + --target flag),支援 --state / --label / --limit filter。
   Use when: 開工前 triage、想知道有哪些還沒處理完的 issue、回到專案看進度。
   防止的失敗：不知道有什麼要做、重複 diagnose 已處理的 issue、漏掉卡在 verify 的 issue。
-argument-hint: "[--state open|closed|all] [--label <name>] [--limit N]"
+argument-hint: "[--state open|closed|all] [--label <name>] [--limit N] [--target owner/repo]"
 allowed-tools:
   - Bash(gh:*)
   - Bash(git:*)
@@ -22,9 +22,18 @@ allowed-tools:
 
 ## Configuration
 
-與其他 `idd-*` skill 一致，讀取 `.claude/issue-driven-dev.local.json` 的 `github_repo`。
+按 [config-protocol](../../references/config-protocol.md) 解析 target repo。priority(由高到低):
 
-若該檔不存在，fallback 用 `gh repo view --json nameWithOwner -q .nameWithOwner` 自動偵測當前 git remote。偵測不到則要求明確 `--repo`。
+1. `--repo owner/repo` flag (per-invocation override)
+2. Walk-up `.claude/issue-driven-dev.local.json`(從 cwd 往上找,first-match wins)
+3. Path predicates (`when.path_contains` / `path_matches` / `git_remote_matches` 等)在 candidates / groups 上自動匹配
+4. `ask_each_time: true` → AskUserQuestion menu
+5. Fallback: `gh repo view --json nameWithOwner -q .nameWithOwner` 偵測 git remote
+6. 偵測不到 → 要求明確 `--repo`
+
+**注意**:`idd-list` 不會評估內容類 predicate(`title_matches` / `label_in` 等),因為這個 skill 不蒐集 issue title/labels。只 path / git 類 predicate 會生效。
+
+**Group 行為**:若解析結果是 group,預設只列 primary repo 的 issues;加 `--all-tracked` 可同時列所有 tracking repos。
 
 ## Execution
 

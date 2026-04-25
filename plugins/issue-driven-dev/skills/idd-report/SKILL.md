@@ -33,7 +33,11 @@ allowed-tools:
 
 ## Configuration
 
-讀取 `.claude/issue-driven-dev.local.json`：
+按 [config-protocol](../../references/config-protocol.md) 解析 target repo:
+
+- `--repo owner/repo` flag → per-invocation override
+- Walk-up `.claude/issue-driven-dev.local.json`(從 cwd 往上找)
+- Path / git predicates 自動匹配
 
 ```json
 {
@@ -42,6 +46,8 @@ allowed-tools:
   "attachments_release": "attachments"
 }
 ```
+
+**Group/predicate 行為**:`idd-report` 是 read-only 多 issue 報告,只用 path/git 類 predicate。Group config 預設只報 primary repo,加 `--all-tracked` 可同時報所有 tracking repos。
 
 ## Execution
 

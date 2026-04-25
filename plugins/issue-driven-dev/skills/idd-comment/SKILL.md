@@ -33,7 +33,13 @@ allowed-tools:
 
 ## Configuration
 
-讀取 `.claude/issue-driven-dev.local.json` 取得 `github_repo`。
+按 [config-protocol](../../references/config-protocol.md) 解析 target repo:
+
+- `--repo owner/repo` flag → per-invocation override(注意:`--target` 在 idd-comment 是「link 目標 issue」,不是 repo override)
+- Walk-up `.claude/issue-driven-dev.local.json`(從 cwd 往上找)
+- Path / git predicates 自動匹配
+
+**Group/predicate 行為**:`idd-comment` 只用 path/git 類 predicate(因為操作對象是已存在的 issue,沒有 title/labels 可評估)。Group config 會 fall through 到 primary repo。
 
 ## Execution
 

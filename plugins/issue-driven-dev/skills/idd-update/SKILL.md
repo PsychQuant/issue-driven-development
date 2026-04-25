@@ -42,7 +42,13 @@ Issue body 分為兩個區域：
 
 ## Configuration
 
-讀取 `.claude/issue-driven-dev.local.json` 取得 `github_repo`。
+按 [config-protocol](../../references/config-protocol.md) 解析 target repo:
+
+- `--repo owner/repo` flag → per-invocation override
+- Walk-up `.claude/issue-driven-dev.local.json`(從 cwd 往上找)
+- Path / git predicates 自動匹配
+
+**Group/predicate 行為**:`idd-update` 操作既存 issue,只用 path/git 類 predicate。Group config 會 fall through 到 primary repo。
 
 ## Execution
 

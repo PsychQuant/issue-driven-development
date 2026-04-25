@@ -30,6 +30,16 @@ allowed-tools:
 >
 > **Strategy 上的每個 `- [ ]` 都是契約**——`idd-implement` 開始時進 TaskList，`idd-close` 會 refuse 關任何還有未勾項的 issue。
 
+## Configuration
+
+按 [config-protocol](../../references/config-protocol.md) 解析 target repo:
+
+- `--repo owner/repo` flag → per-invocation override
+- Walk-up `.claude/issue-driven-dev.local.json`(從 cwd 往上找)
+- Path / git predicates 自動匹配
+
+**Group/predicate 行為**:`idd-implement` 操作既存 issue,只用 path/git 類 predicate。Group config 會 fall through 到 primary repo。
+
 ## Execution
 
 ### Step 0: Bootstrap Stage Task List（強制)

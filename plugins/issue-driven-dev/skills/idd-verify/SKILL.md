@@ -45,7 +45,15 @@ allowed-tools:
 
 ## Configuration
 
-讀取 `.claude/issue-driven-dev.local.json`。如不存在，詢問 `github_repo` 並建立。
+按 [config-protocol](../../references/config-protocol.md) 解析 target repo:
+
+- `--repo owner/repo` flag → per-invocation override
+- Walk-up `.claude/issue-driven-dev.local.json`(從 cwd 往上找)
+- Path / git predicates 自動匹配
+
+如完全找不到 config,詢問 `github_repo` 並建立 `$PWD/.claude/issue-driven-dev.local.json`。
+
+**Group/predicate 行為**:`idd-verify` 操作既存 issue,只用 path/git 類 predicate。Group config 會 fall through 到 primary repo。
 
 ## 驗證架構（預設）
 

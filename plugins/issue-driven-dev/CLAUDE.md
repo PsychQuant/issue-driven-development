@@ -90,15 +90,76 @@ IDD (Issue-Driven Development)
 
 ## Configuration
 
-首次使用時會建立 `.claude/issue-driven-dev.local.md`：
+首次使用 `idd-issue` 時會建立 `.claude/issue-driven-dev.local.json`(注意:從 v2.25.0 起是 JSON,不是 YAML/markdown)。
 
-```yaml
----
-github_repo: "owner/repo"
-github_owner: "owner"
-attachments_release: "attachments"
----
+最小設定:
+
+```json
+{
+  "github_repo": "owner/repo",
+  "github_owner": "owner",
+  "attachments_release": "attachments"
+}
 ```
+
+完整 schema 和解析規則見 [references/config-protocol.md](references/config-protocol.md)。摘要:
+
+### Six 機制(優先順序由高到低)
+
+1. **per-invocation flag** — `idd-issue --target owner/repo` 或 `--target group:<label>`;sibling skills 用 `--repo owner/repo`
+2. **Candidates menu** — config 有 `candidates` + `ask_each_time: true` → AskUserQuestion 選單
+3. **Predicates** — `candidates[].when` / `groups[].when` 自動匹配(`path_contains` / `title_matches` / `label_in` 等)
+4. **Cascading config** — 從 cwd 往上找 `.claude/issue-driven-dev.local.json`,first match wins(同 eslint/tsconfig 模式)
+5. **git remote fallback** — 沒任何 config 時用 `git remote get-url origin`
+6. **Groups**(orthogonal) — 一個邏輯 issue 跨多 repo,primary + tracking + cross-link comment
+
+### 範例:Monorepo 路由
+
+```json
+{
+  "github_repo": "owner/big-monorepo",
+  "candidates": [
+    {
+      "label": "Music sub-package",
+      "github_repo": "owner/music",
+      "when": { "path_contains": "/packages/music" }
+    },
+    {
+      "label": "Plugin marketplace (auto by title)",
+      "github_repo": "PsychQuant/psychquant-claude-plugins",
+      "when": { "title_matches": "(?i)\\b(plugin|skill|hook)\\b" }
+    }
+  ]
+}
+```
+
+`cd ~/big-monorepo/packages/music && /idd-issue` → 自動路由 `owner/music`(path 預判)。
+若使用者輸入 title 含「plugin」,Step 2.5 會問是否切到 plugin marketplace repo。
+
+### 範例:跨 repo coordinated issue
+
+```json
+{
+  "github_repo": "PsychQuant/foo",
+  "groups": [
+    {
+      "label": "Cross-stack: foo+bar+glue",
+      "repos": [
+        {"github_repo": "PsychQuant/foo",  "role": "primary"},
+        {"github_repo": "PsychQuant/bar",  "role": "tracking"},
+        {"github_repo": "PsychQuant/glue", "role": "tracking"}
+      ],
+      "when": { "label_in": ["cross-package"] }
+    }
+  ]
+}
+```
+
+當 issue 加 `cross-package` label,Step 2.5 會切到 group 模式:在 `foo` 建 primary issue,`bar` / `glue` 建 tracking issues(body 首行 `> Tracking primary: foo#N`),最後在 primary issue 留 comment 列出所有 tracking refs。
+
+### Backward compatibility
+
+舊有的單一 `github_repo` config 完全不受影響 — 沒有 `candidates` / `groups` / `when` 就走原本的單一 repo 行為。所有新欄位都是 additive。
 
 ## Checklist Conventions
 
