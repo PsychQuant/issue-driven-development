@@ -100,6 +100,7 @@ Gate check 通過後,用 `TaskCreate` 為 close stage 建 todo list:
 
 ```
 TaskCreate(name="check_prerequisites", description="gh issue view 確認 OPEN + git log --grep=#NNN 確認有 commit 引用")
+TaskCreate(name="check_open_prs", description="Step 1.5: gh pr list 找引用 #NNN 的 open PR；若有 unmerged PR → refuse close")
 TaskCreate(name="draft_closing_comment", description="起草 Problem / Root Cause / Solution / Verification / Changes 五段式")
 TaskCreate(name="review_with_user", description="顯示 closing comment 給使用者確認(若已明確 /idd-close 可省略此步)")
 TaskCreate(name="publish_and_close", description="gh issue comment + gh issue close")
@@ -126,6 +127,28 @@ git log --oneline --grep="#$NUMBER" | head -10
 ```
 
 如果沒有相關 commit，警告使用者：「找不到引用 #NNN 的 commit。確定要關嗎？」
+
+### Step 1.5: PR Gate Check
+
+掃描有沒有引用本 issue 的 open PR — 若有 **unmerged** PR，refuse close（PR path 走完才能 close issue）。
+
+```bash
+OPEN_PRS=$(gh pr list --repo "$GITHUB_REPO" --state open \
+    --search "in:body \"#${NUMBER}\"" \
+    --json number,url,headRefName,mergeable)
+```
+
+| 結果 | 行為 |
+|------|------|
+| 沒有 open PR | ✅ 通過（可能走 direct-commit path，或 PR 已 merged 變 closed state） |
+| 有 1+ open PR 引用 #NNN | 🔴 **Refuse close** — 列出 PR URL，提示 `gh pr merge <N>` 後再回來 |
+| 找到 open PR 但 mergeable=`CONFLICTING` | 🔴 **Refuse close** — 提示先解 conflict |
+
+**為什麼是阻擋而非 warn**：呼應「沒打勾就不關」的設計哲學。Open PR 代表「這個改動還沒進 main」，先 close issue 就是 audit trail 斷裂——三個月後會看到 closed issue 但 main 沒對應 commit。
+
+**Override**：若使用者真的要 close（PR 廢棄、走別路修了等）：先去 GitHub 手動 close 那個 PR，然後 `idd-close` 就會通過（找不到 open PR）。多一步動作，逼使用者表態 PR 的去向，正是 gate 的目的。
+
+完整 PR/direct-commit path contract 見 [pr-flow.md](../../references/pr-flow.md)。
 
 ### Step 2: 寫 Closing Comment
 

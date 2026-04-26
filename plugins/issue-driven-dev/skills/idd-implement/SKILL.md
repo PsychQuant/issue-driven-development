@@ -5,7 +5,7 @@ description: |
   只改 issue 要求的東西，每個 commit 引用 #NNN。
   Use when: diagnosis 確認後、開始寫 code 時。
   防止的失敗：scope creep — 改 #42 順手重構了三個不相關的檔案。
-argument-hint: "#issue e.g. '#42'"
+argument-hint: "#issue [--pr | --no-pr] e.g. '#42 --pr'"
 allowed-tools:
   - Bash(gh:*)
   - Bash(git:*)
@@ -40,6 +40,8 @@ allowed-tools:
 
 **Group/predicate 行為**:`idd-implement` 操作既存 issue,只用 path/git 類 predicate。Group config 會 fall through 到 primary repo。
 
+**PR vs Direct-commit path**:由 `--pr` / `--no-pr` flag、`pr_policy` config 欄位、與 fork detection 共同決定。完整 algorithm 見 [pr-flow](../../references/pr-flow.md)。Phase 0.5 會明確解析並印出選擇的 path。
+
 ## Execution
 
 ### Step 0: Bootstrap Stage Task List（強制)
@@ -47,12 +49,14 @@ allowed-tools:
 **在動任何事之前**先用 `TaskCreate` 為這個 stage 建 stage-level todo list(與 Step 2.5 的 per-Strategy-item TaskList 不同層):
 
 ```
+TaskCreate(name="resolve_pr_path", description="Phase 0.5: --pr/--no-pr flag → fork detection → pr_policy config → ask. 若 PR path: 建 feature branch")
 TaskCreate(name="read_issue_and_diagnosis", description="gh issue view + 確認最新 diagnosis comment 的 Strategy")
 TaskCreate(name="draft_implementation_plan", description="依 Strategy 起草 Implementation Plan 並 comment 到 issue")
 TaskCreate(name="bootstrap_strategy_tasklist", description="Step 2.5: Simple complexity → 為每個 - [ ] bullet 建 TaskCreate; SDD → 跳過(spectra-apply 管)")
 TaskCreate(name="execute_tdd_loop", description="對每個 strategy item: 寫測試→RED→實作→GREEN→commit→TaskUpdate completed")
 TaskCreate(name="scope_guard", description="實作中發現不相關問題 → 開新 issue,不混入本 #NNN")
 TaskCreate(name="sync_checklist_and_summary", description="Step 5: 把最終 checklist 狀態寫回 Implementation Complete comment")
+TaskCreate(name="open_pr_if_pr_path", description="Phase 5.5: PR path 才執行 — git push + gh pr create with Refs #NNN body")
 ```
 
 完成每一步立即 `TaskUpdate → completed`。**靜默完成 = 違規**。
@@ -61,6 +65,89 @@ TaskCreate(name="sync_checklist_and_summary", description="Step 5: 把最終 che
 > - **Stage-level TaskList(此 Step 0)** — 追蹤 idd-implement 本身的 6 個 execution steps
 > - **Strategy-level TaskList(Step 2.5 Bootstrap)** — 追蹤具體改動清單的每個 checklist bullet
 > 兩者並存。Stage-level 的 `execute_tdd_loop` 那一項,會持續等到 Strategy-level 所有 items 完成後才 mark 為 completed。
+
+---
+
+### Step 0.5: Resolve PR vs Direct-commit Path
+
+完整 resolution algorithm 見 [references/pr-flow.md](../../references/pr-flow.md)。簡述:
+
+```
+1. --pr flag                     → PR path
+2. --no-pr flag                  → direct-commit path
+3. gh repo view --json isFork    → 若 true,強制 PR path(無法 push 到 upstream)
+4. config.pr_policy = "always"   → PR path
+5. config.pr_policy = "never"    → direct-commit path
+6. config.pr_policy = "ask" / 缺省 → AskUserQuestion(同 conversation 內 cache 答案)
+```
+
+```bash
+# 1. Parse flag
+PR_FLAG=""  # "pr" / "no-pr" / ""
+for arg in "$@"; do
+    case "$arg" in
+        --pr)    PR_FLAG="pr" ;;
+        --no-pr) PR_FLAG="no-pr" ;;
+    esac
+done
+
+# 2. Fork check
+IS_FORK=$(gh repo view "$GITHUB_REPO" --json isFork -q .isFork 2>/dev/null || echo "false")
+
+# 3. Config policy
+PR_POLICY=$(jq -r '.pr_policy // "ask"' "$CONFIG_PATH" 2>/dev/null || echo "ask")
+
+# 4. Resolve
+if [ "$PR_FLAG" = "pr" ]; then
+    PATH_CHOICE="pr"
+elif [ "$PR_FLAG" = "no-pr" ]; then
+    PATH_CHOICE="no-pr"
+elif [ "$IS_FORK" = "true" ]; then
+    PATH_CHOICE="pr"
+    echo "→ Repo is a fork; PR path enforced."
+elif [ "$PR_POLICY" = "always" ]; then
+    PATH_CHOICE="pr"
+elif [ "$PR_POLICY" = "never" ]; then
+    PATH_CHOICE="no-pr"
+else
+    # ask via AskUserQuestion
+    PATH_CHOICE=$(ask_user "Open a PR for #$NUMBER?" \
+        "PR path (feature branch + push + gh pr create)" \
+        "Direct-commit path (commit to current branch, no PR)")
+fi
+
+echo "→ Path: $PATH_CHOICE"
+```
+
+#### If PR path: create feature branch
+
+Pre-conditions:
+- Working tree clean
+- On default branch
+
+```bash
+# Skip if already on the expected feature branch (re-running idd-implement after verify findings)
+EXPECTED="idd/${NUMBER}-${SLUG}"
+CURRENT=$(git branch --show-current)
+
+if [ "$CURRENT" = "$EXPECTED" ]; then
+    echo "→ Already on $EXPECTED, continuing."
+elif [ "$CURRENT" = "$DEFAULT_BRANCH" ]; then
+    git checkout -b "$EXPECTED"
+else
+    abort "PR path requires starting from $DEFAULT_BRANCH (currently on $CURRENT)."
+fi
+```
+
+If branch already exists from a prior aborted run: AskUserQuestion (checkout / `${EXPECTED}-2` suffix / abort).
+
+#### If direct-commit path: print notice, stay on current branch
+
+```bash
+echo "→ Direct-commit path: committing to $CURRENT, no PR will be opened."
+```
+
+No branch operations. Whatever branch the user is on, commits land there.
 
 ---
 
@@ -255,6 +342,50 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$(cat <<'EOF'
 EOF
 )"
 ```
+
+### Step 5.5: Open PR (PR path only, idempotent)
+
+**Skip if direct-commit path was chosen in Step 0.5.**
+
+Idempotent — if a PR already targeting `$BRANCH` is open, skip creation. This makes orchestration safe: `idd-all` may have pre-created a PR; verify-fix iterations re-running idd-implement won't duplicate.
+
+```bash
+# Re-confirm: only proceed if PR path
+[ "$PATH_CHOICE" != "pr" ] && exit 0
+
+# Idempotency check
+EXISTING_PR=$(gh pr list --repo "$GITHUB_REPO" --head "$BRANCH" --state open --json number -q '.[0].number')
+if [ -n "$EXISTING_PR" ]; then
+    echo "→ PR #$EXISTING_PR already open for $BRANCH; skipping creation."
+    exit 0
+fi
+
+git push -u origin "$BRANCH"
+
+PR_TITLE=$(gh issue view "$NUMBER" --repo "$GITHUB_REPO" --json title -q .title)
+
+PR_BODY=$(cat <<EOF
+Refs #${NUMBER}
+
+## Summary
+{from issue title + Implementation Plan}
+
+## Checklist
+- [x] Diagnose
+- [x] Implement (${COMMIT_COUNT} commits)
+- [ ] Verify (run /idd-verify #${NUMBER})
+- [ ] **Pending: human review of this PR + /idd-close after merge**
+
+---
+Generated by /idd-implement on PR path. **Do NOT add 'Closes #${NUMBER}'** — IDD discipline requires manual /idd-close after merge to enforce checklist gate + closing summary.
+EOF
+)
+
+gh pr create --title "$PR_TITLE" --body "$PR_BODY" \
+    --base "$DEFAULT_BRANCH" --head "$BRANCH" --repo "$GITHUB_REPO"
+```
+
+完整 PR body template + branch naming + 禁止 trailers 的理由見 [pr-flow.md](../../references/pr-flow.md)。
 
 提示下一步：`/issue-driven-dev:idd-verify #NNN`
 

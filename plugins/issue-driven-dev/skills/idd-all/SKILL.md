@@ -25,6 +25,7 @@ allowed-tools:
 
 > Orchestrator skill 的 contract:**自動化便利不能犧牲安全**。
 >
+> - **Always PR path**: idd-all 強制走 PR path(等同 `idd-implement --pr`),覆蓋 `pr_policy` config。理由:orchestrator 一鍵跑完整條 pipeline,沒有 user 在每個 commit 攔下來檢查;PR review 是 batch 的人類 checkpoint。完整 path contract 見 [pr-flow.md](../../references/pr-flow.md)。
 > - **Branch isolation**:所有 commits 在 feature branch,`main` 永遠乾淨。
 > - **PR as checkpoint**:user 透過 review PR 一次看完所有 diff + verify report。
 > - **Stop before close**:idd-all 永遠停在 verified,close 動作必須 user 主動觸發(保留 closing summary 的人類驗收)。
@@ -182,10 +183,17 @@ print(m.group(1).strip() if m else 'UNKNOWN')
 ### Phase 3a: Simple Path — idd-implement
 
 ```
-Skill(skill="issue-driven-dev:idd-implement", args="#$N")
+Skill(skill="issue-driven-dev:idd-implement", args="#$N --pr")
 ```
 
-idd-implement 會在 feature branch 做所有 commit。已自帶 strategy-level TaskList + scope guard,idd-all 不重複。
+**`--pr` flag is mandatory** — orchestrator path always = PR path (覆蓋 user 的 `pr_policy` config)。不傳 `--pr` 會讓 idd-implement 走 config / fork detection,結果可能不一致。
+
+idd-implement 會在 feature branch(由 Phase 0.4 建好的)上做所有 commit,因為已經 checkout 在 feature branch 上,Step 0.5 fork detection 會看到非 default branch + `--pr` flag,直接 reuse 當前 branch 不再 checkout。已自帶 strategy-level TaskList + scope guard,idd-all 不重複。
+
+**Phase 5.5 PR creation idempotency**: idd-implement 的 Step 5.5(PR creation)用 `gh pr list --head $BRANCH` 先查當前 branch 有沒有 open PR,有就 skip。idd-all 不需要傳特殊 flag — 兩個流程自然相容:
+
+- **idd-all 流程**: Phase 5(後面)會在 verify PASS 後 `gh pr create` 開 PR(含 verify result)。idd-implement 結束時 branch 還沒 PR,所以 Step 5.5 會嘗試開 — 但若 idd-all 設計成「先 verify 再開 PR」,可在 Phase 0.5 預先 `git push -u`(無 PR),這樣 idd-implement Step 5.5 看到 push 過但無 PR → 自己開了基礎 PR(body 簡版),Phase 5 再 `gh pr edit` 補 verify result。
+- **手動 standalone**: idd-implement 開 basic PR,user 自己跑 `idd-verify` + 手動 update PR body。
 
 ### Phase 3b: SDD Path — spectra-discuss + spectra-apply
 

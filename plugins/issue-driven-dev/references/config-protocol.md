@@ -312,11 +312,30 @@ If a group's `when` matches AND a candidate's `when` matches, **groups take prec
     }
   ],
 
-  "ask_each_time": false                         // OPTIONAL. If true and candidates/groups exist, always prompt.
+  "ask_each_time": false,                        // OPTIONAL. If true and candidates/groups exist, always prompt.
+
+  "pr_policy": "ask"                             // OPTIONAL. "always" | "never" | "ask" (default).
+                                                 // Controls idd-implement PR vs direct-commit path.
+                                                 // Fork detection always overrides to "always".
+                                                 // See references/pr-flow.md for full algorithm.
 }
 ```
 
-**Backward compatibility**: configs without `candidates` / `groups` / `ask_each_time` work exactly as before — they're plain single-target configs. All new fields are additive.
+**Backward compatibility**: configs without `candidates` / `groups` / `ask_each_time` / `pr_policy` work exactly as before — they're plain single-target configs. All new fields are additive.
+
+### `pr_policy` field
+
+Controls whether `idd-implement` opens a PR or commits directly.
+
+| Value | Behavior |
+|-------|----------|
+| `always` | Feature branch + push + `gh pr create`. Same as passing `--pr` every time. |
+| `never` | Stay on current branch, no push, no PR. Same as `--no-pr`. Suits solo repos. |
+| `ask` (default) | Prompt via AskUserQuestion on first invocation; cache within conversation. |
+
+**Override priority** (highest first): `--pr` / `--no-pr` flag > fork detection > `pr_policy` config > `ask` default.
+
+`idd-all` always enforces `--pr` regardless of `pr_policy`. Full path contract: [pr-flow.md](pr-flow.md).
 
 ## Resolution algorithm (canonical)
 
