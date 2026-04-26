@@ -38,6 +38,19 @@ idd-issue → idd-diagnose → idd-implement → idd-verify → idd-close
 | `idd-implement` | Scope-disciplined implementation with TDD |
 | `idd-verify` | Independent verification using Codex CLI (gpt-5.5) |
 | `idd-close` | Closing comment documenting problem, root cause, solution, verification |
+| `idd-comment` / `idd-edit` | Add or amend issue comments with template guidance (decision / note / question) |
+| `idd-list` / `idd-update` / `idd-report` | List open issues by phase, sync issue body, generate progress reports |
+| `idd-all` | Orchestrator that drives the full pipeline (issue → close) end-to-end (v2.26.0) |
+
+### Multi-repo Support（v2.21.0+ / v2.25.0）
+
+For monorepos and coordinated cross-repo issues, every IDD skill accepts `--target owner/repo` (or `--target group:<label>`) so a single workspace can drive issues across multiple GitHub repos:
+
+- **Fork-aware** (v2.21.0) — `idd-issue` resolves the upstream repo from the fork's `origin`
+- **JSON config** (v2.22.0, breaking) — per-repo settings move from `.local.md` to `.local.json`
+- **Six-mechanism resolution** (v2.25.0) — flag → `ask_each_time` menu → predicates → cascading walk-up → git remote fallback → orthogonal groups; supports `candidates[]` with `when` predicates and `groups[]` for primary + tracking issue pairs
+
+See `references/config-protocol.md` (in-plugin) for the full algorithm.
 
 ## Quick Start
 
