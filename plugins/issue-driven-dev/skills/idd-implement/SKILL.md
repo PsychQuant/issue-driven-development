@@ -5,7 +5,7 @@ description: |
   只改 issue 要求的東西，每個 commit 引用 #NNN。
   Use when: diagnosis 確認後、開始寫 code 時。
   防止的失敗：scope creep — 改 #42 順手重構了三個不相關的檔案。
-argument-hint: "#issue [--pr | --no-pr] e.g. '#42 --pr'"
+argument-hint: "#issue [--pr | --no-pr] [--with-skill <skill>] [--extra '<requirement>'] e.g. '#42 --with-skill perspective-writer --extra ''要 500–800 字''"
 allowed-tools:
   - Bash(gh:*)
   - Bash(git:*)
@@ -159,9 +159,48 @@ gh issue view $NUMBER --repo $GITHUB_REPO --json title,body,labels
 
 回顧對話中的 diagnosis report，確認 strategy。
 
+### Step 1.5: Resolve Extra Requirements
+
+合併三個來源的「額外要求」，記錄成 `EXTRA_REQUIREMENTS` 字典供 Step 2 / Step 3 使用：
+
+| 來源 | 範例 | 用途 |
+|------|------|------|
+| `--with-skill <name>` flag | `--with-skill perspective-writer` | Step 3 的 GREEN 階段呼叫該 skill 而非直接 Edit |
+| `--extra "<text>"` flag | `--extra '500–800 字、避免 em dash'` | 自由文字額外約束，寫入 Implementation Plan |
+| Diagnosis Strategy 中的「透過 X」/「via X」/「使用 X-skill」模式 | Strategy item: "新增 news_release.md（**透過 perspective-writer 撰寫**）" | 自動偵測，避免使用者每次都要重打 flag |
+
+```python
+# Pseudocode
+extra_requirements = {
+    "with_skill": parse_flag("--with-skill") or detect_in_diagnosis("透過|via|使用 (\S+)\s*skill"),
+    "extra_text": parse_flag("--extra"),
+}
+```
+
+#### 行為差異
+
+| `with_skill` 是否設定 | Step 3 GREEN 行為 |
+|----------------------|-------------------|
+| 未設定 | 直接 Edit / Write 完成該 strategy item |
+| 已設定 | 在 GREEN 階段 `Skill(skill="<name>", args="<strategy item description + extra_text>")`；該 skill 完成寫檔後，idd-implement 接手 commit + checklist |
+
+#### 鐵律
+
+- **不可靜默忽略 extra requirements**：若 `--with-skill` 設了但 GREEN 階段沒呼叫該 skill，視為違規 — Step 5 checklist sync 時必須能驗證 sub-skill 確實有跑（看 Skill 工具呼叫 log 或檔案內容對比）
+- **Diagnosis 自動偵測優先級低於 explicit flag**：若 flag 給 perspective-writer 但 diagnosis 沒提，仍要跑；若 flag 沒給但 diagnosis 寫了「透過 X」，視同 flag 給了
+- **Spectra 路徑（SDD-warranted complexity）忽略 `--with-skill`**：spectra-apply 自己有 sub-skill orchestration，不疊兩層
+
+#### 為什麼要這個 flag
+
+idd-implement 是 **orchestration**（issue tracking、plan、checklist、body sync），具體「**怎麼**寫」是另一件事。當 deliverable 是 prose（新聞稿、論文段落、信件）時，呼叫 perspective-writer 套用 voice 模型 + anti-pattern 檢查，比直接 Edit 寫得更穩。當 deliverable 是 code 時通常不用 sub-skill；但若 issue 要求「跟 X-skill 的測試模式一致」，flag 也派上用場。
+
+歷史脈絡：`kiki830621/collaboration_gukai#4` 第一次出現「idd-implement × perspective-writer」整合需求時，當下用 free-form Implementation Plan bullet 寫「透過 perspective-writer 撰寫」hack 過去；但 skill 沒明文支援，沒辦法在 checklist 階段驗證 sub-skill 有跑。本 flag 把這個整合升格為 first-class feature。
+
+---
+
 ### Step 2: 列出變更清單並 comment 到 issue
 
-根據 diagnosis 的 strategy，列出具體要改的檔案：
+根據 diagnosis 的 strategy 與 Step 1.5 的 `EXTRA_REQUIREMENTS`，列出具體要改的檔案：
 
 ```markdown
 ## Implementation Plan
@@ -169,7 +208,15 @@ gh issue view $NUMBER --repo $GITHUB_REPO --json title,body,labels
 - [ ] 修改 src/foo.ts — {改什麼}
 - [ ] 修改 src/bar.ts — {改什麼}
 - [ ] 新增 tests/foo.test.ts — {測什麼}
+
+### Extra Requirements (if any)
+- **With-skill**: `/perspective-writer` （GREEN 階段呼叫，不直接 Edit）
+- **Extra**: 500–800 字繁體中文；避免 em dash；套用 Decision guardrails (#42 issue body)
 ```
+
+**鐵律**：
+- 若 Step 1.5 解出 `with_skill` 或 `extra_text` 不為空，**必須**寫到 `### Extra Requirements` 段落 — 不寫 = Step 5 sync 時無法驗證
+- 若兩者皆空，整個 `### Extra Requirements` 段可省略
 
 **Scope check**: 清單裡的每一項都能對應到 issue 的某個要求？
 - 對應不上 → 移除，或開新 issue
@@ -209,12 +256,22 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$IMPLEMENTATION_PLAN"
 1. **寫測試**（RED）
    - 測試描述用 issue 的語言
    - 測 behavior，不測 implementation
+   - **若 deliverable 是 prose（信件、新聞稿、論文段落等非 code 文本）**：跳過正式測試，改用 perspective-writer 的 anti-pattern checklist 作驗收 gate
 
 2. **跑測試確認失敗**
    - 失敗原因必須是「功能還沒實作」，不是「測試寫錯」
 
 3. **寫最小實作**（GREEN）
-   - 只寫讓測試通過的 code
+   - **預設**：只寫讓測試通過的 code，不「順便」優化、重構、加功能
+   - **若 Step 1.5 設了 `with_skill`**：呼叫該 skill 完成寫檔，不直接 Edit
+     ```python
+     # 範例：with_skill="perspective-writer"
+     Skill(
+       skill="perspective-writer:perspective-writer",
+       args=f"{strategy_item_description}. Extra: {extra_text}. Issue: #{NUMBER}"
+     )
+     ```
+     Sub-skill 完成後 idd-implement 接手後續步驟（commit / checklist update）
    - 不「順便」優化、重構、加功能
 
 4. **跑測試確認通過**

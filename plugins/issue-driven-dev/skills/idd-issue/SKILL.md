@@ -247,11 +247,50 @@ UPSTREAM=$(echo "$REPO_JSON" | jq -r '.parent.nameWithOwner // empty')
 
 ---
 
-### Step 1: 讀取來源（如果是 .docx）
+### Step 1: 讀取來源並保留所有原始資料
 
-```
-mcp__che-word-mcp__get_document_text(source_path: "path")
-mcp__che-word-mcp__list_images(source_path: "path")
+> **資料保留鐵律（HARD RULE）**
+>
+> 來源中**所有可擷取的素材都要保留**並上傳到 attachments release。**不問使用者，預設全保留**，除非擷取技術上失敗（MCP tool 不存在、檔案損毀、權限不足）才回退到「請使用者明確存到 path X」的 fallback。
+>
+> 理由：issue 是審計軌跡。三個月後回來看 issue 應該能還原當時所有 context — 文字、圖、附件、原始連結都在。「先問使用者要不要附」會把保留責任推給人，AI 偷懶第一個跳過的就是這步。歷史上 SNQ issue（kiki830621/collaboration_gukai#5）的 PDF + 兩張時程圖就是因為這個 gap 被漏掉，後來才補。
+
+#### Source Type Adapter
+
+依來源類型挑對應的讀取 + 抽附件 tool；**Step 4 上傳時不分類型，一視同仁全部 push 到 release**。
+
+| Source type | 讀文字 | 抽附件 |
+|-------------|--------|--------|
+| `.docx` / `.doc` | `mcp__che-word-mcp__get_document_text(source_path)` | `mcp__che-word-mcp__list_images` → `mcp__che-word-mcp__export_image(image_id, output_path)` 逐張存檔 |
+| `.pdf` | `pdftotext` 或 `mcp__che-word-mcp` 開啟（若可） | `pdfimages -all input.pdf prefix` 抽全部嵌入圖 |
+| Telegram chat range | `mcp__plugin_che-telegram-mcp_telegram-all__get_chat_history(chat_id, limit)` 或 `dump_chat_to_markdown` | 列舉 chat 中所有 `[photo]` / `[document]` / `[video]` placeholder → 嘗試 MCP `download_file`（若存在）→ 否則**明列檔名 + 必要請求**讓使用者用 Telegram client 手動存檔到指定路徑後 skill 接手 upload |
+| Apple Mail / 郵件 | `mcp__plugin_che-apple-mail-mcp_mail__get_email(message_id)` | `list_attachments` → `save_attachment(filename, output_path)` |
+| Apple Notes | `mcp__plugin_che-apple-notes-mcp_notes__get_note` | 同上 export 全部 inline 圖 |
+| 直接貼文字（無附件） | argument 直接帶文字 | n/a |
+| 混合（文字 + 圖片貼上） | argument 帶文字 + 使用者另外提供 path 清單 | 把使用者給的 path 全部納入 Step 4 上傳清單 |
+
+#### Telegram source 專屬流程（最常見且最容易漏的）
+
+當原始描述中含 `chat_id` / Telegram URL / `@username` 引用時，**強制**走以下流程，不問：
+
+1. **列出 chat 中所有有 attachment 的訊息**（`get_chat_history` 抓最近 N 條，掃 `media_type` 不為 null 的）
+2. **逐項嘗試 MCP 下載**到本機暫存（如 `/tmp/idd-issue-attachments/`）
+3. **MCP 不支援下載**（目前 `che-telegram-mcp` 是這狀況，見 `PsychQuant/che-msg#17`）→ 進 fallback：明確列出**每個檔案是什麼**（時間戳 + sender + caption + 推測檔名），請使用者用 Telegram client 各別存到指定路徑，skill 等待後接手 Step 4 上傳
+4. **絕對不可省略 fallback 提示**——靜默跳過 = 違反保留鐵律
+
+```bash
+# Fallback 提示模板（Telegram MCP 無 download 支援時）
+echo "Telegram source 含 ${N} 個附件需要保留。MCP 目前不支援自動下載，請手動操作:"
+echo ""
+echo "  1) 開啟 Telegram → 對話 ${chat_id}"
+echo "  2) 找到以下訊息並 Save As 到指定路徑:"
+echo ""
+for att in "${ATTACHMENTS[@]}"; do
+  echo "     [${att.timestamp}] ${att.sender}: ${att.caption_preview}"
+  echo "       → 存成 /tmp/idd-issue-attachments/${att.suggested_filename}"
+done
+echo ""
+echo "  3) 全部存好後告訴我「ok」，skill 會接手 upload + 嵌入 issue body"
 ```
 
 ### Step 2: 蒐集資訊
@@ -416,7 +455,10 @@ EOF
 ✓ Cross-link comment added to PsychQuant/foo#42
 ```
 
-### Step 4: 附加圖片（如果有）
+### Step 4: 附加所有原始素材（鐵律：預設全保留）
+
+> 引用 Step 1 的「資料保留鐵律」：來源中**任何附件都要全部上傳**，不論張數、不論格式。
+> 詢問「要不要附」屬於違規。例外只在 Step 1 fallback 已經說明擷取技術失敗時才成立。
 
 ```bash
 # 確保 attachments release 存在
@@ -424,16 +466,41 @@ gh release view $ATTACHMENTS_RELEASE --repo $GITHUB_REPO 2>/dev/null || \
   gh release create $ATTACHMENTS_RELEASE --repo $GITHUB_REPO \
     --title "Attachments" --notes "Issue attachments and figures"
 
-# 上傳圖片到 release
-gh release upload $ATTACHMENTS_RELEASE issue_${NUMBER}_${DESC}.png \
-  --repo $GITHUB_REPO --clobber
+# 對 Step 1 蒐集到的每個附件依序上傳（命名規則：issue_${NUMBER}_${DESC}.${ext}）
+for f in "${ATTACHMENT_PATHS[@]}"; do
+  ext="${f##*.}"
+  desc=$(make_desc "$f")  # 簡短描述 e.g. "snq_timeline" / "telegram_msg_8169455616_photo1"
+  upload_name="issue_${NUMBER}_${desc}.${ext}"
+  gh release upload $ATTACHMENTS_RELEASE "$f" \
+    --repo $GITHUB_REPO --clobber
+done
 
 # 圖片 URL 格式（private 和 public repo 都適用）
-# https://github.com/$GITHUB_REPO/releases/download/$ATTACHMENTS_RELEASE/issue_${NUMBER}_${DESC}.png
+# https://github.com/$GITHUB_REPO/releases/download/$ATTACHMENTS_RELEASE/issue_${NUMBER}_${DESC}.${ext}
 
-# 編輯 issue body 加入圖片連結
+# 編輯 issue body 加入所有附件的 markdown link / 圖片嵌入
+# - .png/.jpg/.gif → ![desc](url)  讓 issue 直接渲染
+# - .pdf/.docx/其他 → [desc](url)  讓使用者點下載
 gh issue edit $NUMBER --repo $GITHUB_REPO --body "..."
 ```
+
+#### 命名規則
+
+`issue_${NUMBER}_${DESC}.${EXT}` — `DESC` 用 snake_case 簡短描述附件內容。範例：
+
+- `issue_5_snq_timeline.png` — SNQ 申請時程圖
+- `issue_5_snq_criteria.png` — SNQ 評分標準
+- `issue_5_snq_example_113A272.pdf` — 同類前例計畫書
+- `issue_4_telegram_msg_8169455616_photo1.jpg` — Telegram 原圖
+
+#### 違規情境（檢查清單）
+
+跑完 Step 4 後**必須**確認以下都成立，否則回頭補：
+
+- [ ] Step 1 列出的每個附件都已 upload（用 `gh release view $ATTACHMENTS_RELEASE` 確認 asset 數 = 附件總數）
+- [ ] 每個 asset URL 都已寫入 issue body（`![]()` 或 `[]()`）
+- [ ] 沒有以「使用者沒明說要附」為由跳過任何素材
+- [ ] Telegram MCP 失敗時有走 fallback 提示，不是靜默略過
 
 > **Private repo 圖片渲染**：Release asset URL 在 issue/comment 的 markdown 中可以正常渲染，前提是查看者是 repo 的 collaborator 且已登入 GitHub。不需要把 repo 改成 public。
 
