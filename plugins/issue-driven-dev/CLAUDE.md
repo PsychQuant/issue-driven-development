@@ -71,6 +71,8 @@ issue → diagnose ─┬→ implement → verify → close                     
 
 每個 skill 都吃 #NNN，issue 貫穿全部。
 diagnose 判斷 Complexity → Simple 走 implement，SDD-warranted 預設走 spectra-discuss 對齊方向。
+
+`idd-all` 走 SDD path 時(v2.28.0+)會把 discuss → propose → apply 三步串成 unattended chain — 每步用 args 傳 hint 抑制 spectra 的 AskUserQuestion checkpoint。手動跑 SDD path 仍維持 attended（每個 spectra-* 自己會問 user）。
 ```
 
 ### SDD 和 TDD 都是 IDD 的特例

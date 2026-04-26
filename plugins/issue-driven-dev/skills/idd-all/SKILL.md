@@ -25,11 +25,12 @@ allowed-tools:
 
 > Orchestrator skill 的 contract:**自動化便利不能犧牲安全**。
 >
+> - **Unattended assumption**: idd-all 假設整條 pipeline 跑完都沒有 user 在旁邊。所有 sub-skill 呼叫都必須在 args 裡傳 unattended hint,**override sub-skill 的 attended-by-default AskUserQuestion checkpoint**。包含 SDD path:`spectra-discuss` 不停下對話、`spectra-propose` 不問 Park/Apply、`spectra-apply` 不問 continue。Sub-skill 預設 attended 是它們在 solo 用法的合理選擇 — orchestrator 用 args 覆蓋是 idd-all 的責任,不該去改 sub-skill plugin。
 > - **Always PR path**: idd-all 強制走 PR path(等同 `idd-implement --pr`),覆蓋 `pr_policy` config。理由:orchestrator 一鍵跑完整條 pipeline,沒有 user 在每個 commit 攔下來檢查;PR review 是 batch 的人類 checkpoint。完整 path contract 見 [pr-flow.md](../../references/pr-flow.md)。
 > - **Branch isolation**:所有 commits 在 feature branch,`main` 永遠乾淨。
 > - **PR as checkpoint**:user 透過 review PR 一次看完所有 diff + verify report。
 > - **Stop before close**:idd-all 永遠停在 verified,close 動作必須 user 主動觸發(保留 closing summary 的人類驗收)。
-> - **Fail-safe escalation**:遇到 ambiguity 寧可 abort,絕不亂猜。
+> - **Fail-safe escalation**:遇到 ambiguity 寧可 abort,絕不亂猜 — 但 SDD path 預設是「文件化 assumption 後繼續」(見 Phase 3b),不是 abort。Abort 是最後手段。
 
 ## 與其他 idd-* skills 的關係
 
@@ -54,7 +55,7 @@ idd-all 不取代 atomic skills,而是包它們。每個 phase 仍透過 `Skill(
 TaskCreate(name="preflight", description="Phase 0: 檢查 git clean / gh auth / 解析 args / 建 feature branch")
 TaskCreate(name="ensure_issue", description="Phase 1: 若 from-scratch 則跑 idd-issue; from-issue 則 verify issue 存在")
 TaskCreate(name="diagnose", description="Phase 2: 跑 idd-diagnose,讀回 complexity 判定")
-TaskCreate(name="implement_or_sdd", description="Phase 3: Simple → idd-implement; SDD → spectra-discuss + spectra-apply")
+TaskCreate(name="implement_or_sdd", description="Phase 3: Simple → idd-implement --pr; SDD → spectra-discuss → spectra-propose → spectra-apply (chained, unattended)")
 TaskCreate(name="verify_loop", description="Phase 4: idd-verify; blocking findings 自動修復(最多 2 round); follow-ups → 開新 issue")
 TaskCreate(name="open_pr", description="Phase 5: git push + gh pr create(body 含 Refs #N, 不含 Closes)")
 TaskCreate(name="report_and_stop", description="Phase 6: 顯示 PR URL + 提示 user 可 merge 後跑 /idd-close")
@@ -173,10 +174,10 @@ print(m.group(1).strip() if m else 'UNKNOWN')
 | Complexity 值 | 下一步 |
 |--------------|--------|
 | `Simple` | Phase 3a: idd-implement |
-| `SDD-warranted` | Phase 3b: spectra-discuss → spectra-apply(由設計決策 #2:auto-pick discuss) |
+| `SDD-warranted` | Phase 3b: spectra-discuss → spectra-propose → spectra-apply (unattended chain) |
 | `UNKNOWN` | **abort** — diagnose 沒判定 complexity,user 需手動釐清 |
 
-> **為什麼 SDD path 用 auto-discuss**:user 選了「auto-pick spectra-discuss」(設計決策 #2),代表信任 discuss 會 align,不用每次手動。但 spectra-discuss 自己內部仍會 AskUserQuestion 對齊細節 — 那些是合理的 alignment checkpoint,不算 idd-all 的失職。
+> **SDD path 是 unattended 的**(v2.28.0+):idd-all 的 contract 是 fire-and-forget,所以 SDD path 也必須跑完整條 — 不停在 discuss 等對齊、不停在 propose 等 Park/Apply 抉擇。每個 spectra-* 呼叫都帶 explicit unattended hint(見 Phase 3b),sub-skill 看到 hint 就知道抑制 AskUserQuestion。如果 user 想要 attended SDD discussion,**不該**用 `idd-all` — 該用 `idd-diagnose` 後手動 `/spectra-discuss` + `/spectra-propose` + `/spectra-apply`。
 
 ---
 
@@ -195,16 +196,107 @@ idd-implement 會在 feature branch(由 Phase 0.4 建好的)上做所有 commit,
 - **idd-all 流程**: Phase 5(後面)會在 verify PASS 後 `gh pr create` 開 PR(含 verify result)。idd-implement 結束時 branch 還沒 PR,所以 Step 5.5 會嘗試開 — 但若 idd-all 設計成「先 verify 再開 PR」,可在 Phase 0.5 預先 `git push -u`(無 PR),這樣 idd-implement Step 5.5 看到 push 過但無 PR → 自己開了基礎 PR(body 簡版),Phase 5 再 `gh pr edit` 補 verify result。
 - **手動 standalone**: idd-implement 開 basic PR,user 自己跑 `idd-verify` + 手動 update PR body。
 
-### Phase 3b: SDD Path — spectra-discuss + spectra-apply
+### Phase 3b: SDD Path — discuss → propose → apply (unattended chain)
+
+idd-all 走 SDD path 時,**必須**串完三步:`spectra-discuss` → `spectra-propose` → `spectra-apply`。每步都用 args 傳 **unattended mode hint**,明確抑制 sub-skill 內建的 `AskUserQuestion` confirmation 點。
+
+> **為什麼三步都要明文 unattended hint**:
+> - `spectra-discuss` 預設「one question at a time」對話節奏 — 在 idd-all 裡會卡住
+> - `spectra-propose` Step 10 預設用 AskUserQuestion 問「Park or Apply」並 default 選 Park — idd-all 不該被 park 起來
+> - `spectra-propose` 還有禁令 `NEVER invoke /spectra-apply`(L267) — 所以**idd-all 必須自己**接著呼叫 `spectra-apply`,不能依賴 propose 自串
+> - `spectra-apply` Step 4 有 continue-confirmation — 也要抑制
+>
+> idd-all 不修改 spectra 任何檔案 — 全程用 args 傳指示 override sub-skill 的 attended 預設。
+
+#### Step 3b.1: Capture issue context for prompt
+
+```bash
+ISSUE_TITLE=$(gh issue view "$N" --repo "$GITHUB_REPO" --json title -q .title)
+ISSUE_BODY=$(gh issue view "$N" --repo "$GITHUB_REPO" --json body -q .body | head -50)
+DIAGNOSIS=$(gh issue view "$N" --repo "$GITHUB_REPO" --json comments \
+    | python3 -c "import json,sys; cs=json.load(sys.stdin)['comments']; \
+        ds=[c for c in cs if '## Diagnosis' in c['body']]; \
+        print(ds[-1]['body'] if ds else '')")
+```
+
+#### Step 3b.2: Discuss (converge in one round)
 
 ```
-Skill(skill="spectra-discuss")
-# spectra-discuss 結束會建立 openspec/changes/<name>/proposal.md 等
-Skill(skill="spectra-apply")
-# spectra-apply 會在 feature branch 做所有 commit
+Skill(
+  skill="spectra-discuss",
+  args="""Topic: ${ISSUE_TITLE} (#${N})
+
+Context (from issue body + diagnosis):
+${ISSUE_BODY}
+${DIAGNOSIS}
+
+UNATTENDED MODE — called by /idd-all orchestrator.
+
+Discipline overrides for this invocation:
+- Converge in ONE round. Do NOT use AskUserQuestion to pace the discussion across multiple turns.
+- If you have a strong recommendation among 2-3 options, pick it and state your reasoning.
+- If multiple viable approaches exist, choose the one with the smallest blast radius and document the trade-off.
+- End your output with a single line: 'Conclusion: <chosen approach in one sentence>' so the orchestrator can pass it to spectra-propose.
+- Do NOT pause to ask the user — there is no user available.
+"""
+)
 ```
 
-> **如果 spectra-discuss/apply 中途 fail 或需 user input**:abort idd-all 並提示 user 接手手動跑剩下的 phase。spectra 系列有自己的 user interaction,不該被自動跳過。
+Capture the conclusion line for the next step.
+
+#### Step 3b.3: Propose (suppress Park/Apply confirmation)
+
+```
+Skill(
+  skill="spectra-propose",
+  args="""<conclusion line from Step 3b.2>
+
+Original issue: #${N} ${ISSUE_TITLE}
+
+UNATTENDED MODE — called by /idd-all orchestrator.
+
+Discipline overrides for this invocation:
+- Skip ALL AskUserQuestion checkpoints. Make reasonable decisions and document them inline in the proposal/design artifacts.
+- Step 10 'Park or Apply' question: SUPPRESS. Do NOT call spectra park. Do NOT call /spectra-apply (your guardrail at L267 still applies). Just end the workflow after artifact validation succeeds.
+- If a 'plan file' check (Step 1.x) finds an existing plan, use it without asking.
+- If context is insufficient, prefer making a documented assumption over asking — write the assumption explicitly in proposal.md so it can be challenged later.
+- Output the final change-name on its own line as 'Change: <name>' so the orchestrator can pass it to spectra-apply.
+"""
+)
+```
+
+Capture the change-name line.
+
+#### Step 3b.4: Apply (suppress continue-confirmation)
+
+```
+Skill(
+  skill="spectra-apply",
+  args="""<change-name from Step 3b.3>
+
+Issue ref: #${N}
+
+UNATTENDED MODE — called by /idd-all orchestrator.
+
+Discipline overrides for this invocation:
+- Skip Step 4 continue-confirmation. Proceed directly through implementation tasks.
+- If validation reveals ambiguity that would normally trigger AskUserQuestion: document the assumption in tasks.md (mark with 'ASSUMPTION:'), proceed with the most conservative interpretation, and surface it in the verify phase.
+- Every commit MUST reference (#${N}) — same convention as idd-implement.
+- All commits land on the feature branch from Phase 0.4 ('${BRANCH}').
+"""
+)
+```
+
+#### Failure handling
+
+| Situation | Action |
+|---|---|
+| `spectra-discuss` doesn't emit a `Conclusion:` line | Re-prompt once with explicit format requirement; if still missing, abort with branch preserved |
+| `spectra-propose` doesn't emit a `Change:` line | Same as above |
+| `spectra-propose` hits a hard stop (e.g. spec validation fail it can't auto-fix) | Abort, preserve artifacts, instruct user to run `/spectra-propose` manually |
+| `spectra-apply` reports tasks remaining unfinished | Continue to Phase 4 (verify) — verify will surface incompleteness |
+
+> **Why idd-all overrides spectra defaults via args, not by modifying spectra**: spectra is a separate plugin with its own attended-by-default contract that's correct for solo use. idd-all is the one promising "unattended", so it's idd-all's responsibility to configure each sub-skill invocation to honor that promise. Args-based override keeps the boundary clean.
 
 ---
 
@@ -310,7 +402,10 @@ Next steps (manual):
 | Issue #N 不存在 / CLOSED | Phase 0 abort |
 | Branch 已存在 | Phase 0 AskUserQuestion(checkout / -2 suffix / abort) |
 | Diagnose 判定 UNKNOWN complexity | Phase 2 abort,提示手動跑 idd-diagnose |
-| spectra-discuss 中途 fail / need clarification | Phase 3b abort,提示手動續跑 |
+| spectra-discuss 沒 emit `Conclusion:` line(unattended hint 失敗)| Re-prompt 一次;再失敗 abort,branch 保留 |
+| spectra-propose 沒 emit `Change:` line | 同上 |
+| spectra-propose 遇到 unrecoverable validation error | Phase 3b abort,artifacts 保留,提示手動 `/spectra-propose` |
+| spectra-apply 留下 unfinished tasks | 不 abort — Phase 4 verify 會抓出來 |
 | Verify 2 round 後仍 blocking | Phase 4 abort,留 branch 給 user 手動修 |
 | `gh pr create` fail | Phase 5 abort,branch 已 push,提示手動開 PR |
 
