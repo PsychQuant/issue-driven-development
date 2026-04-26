@@ -234,6 +234,34 @@ IDD 把 checkbox 當成**契約**，不是願望清單。`idd-implement` 會 boo
 
 強制 `- [~]` / `- [-]` + reason 的代價是多打 30 秒字，換來的是「這個決定有紀錄」。這在 issue-driven dev 裡比 velocity 重要。
 
+### Two-Tier Gate（v2.29.0+）
+
+`idd-close` 有兩層 gate,各自防一種失敗模式:
+
+| Gate | Check what | 防什麼失敗 | 失敗行為 |
+|------|-----------|-----------|---------|
+| Step 0 — **Structural** (v2.17.0+) | 有沒有 `- [ ]` 未勾 | Honest forgetting(忘了打勾) | 🔴 REFUSE close,不給 `--force` |
+| Step 1.6 — **Semantic** (v2.29.0+) | 打勾的 bullet 是否有對應 commit/artifact | Motivated cheating(打勾了但沒做) | 🟡 WARN + AskUserQuestion(proceed / investigate / edit) |
+
+兩層的差別:
+- **Structural** = audit completeness — 所有 todo 都 explicit。FALSE NEGATIVE 不可能(打了勾就是有條目)。FALSE POSITIVE 不可能(沒打勾就 refuse)。可以硬 refuse。
+- **Semantic** = audit truthfulness — 打勾的事真做了。FALSE POSITIVE 有可能(test 的 commit 在更早的 PR、不在 #NNN log 裡)。所以 warn-only,讓 user 表態。
+
+兩層加總後 IDD 的 audit trail 守住「沒寫 = 不算做」+「打勾沒做 = 至少要解釋一下」雙重契約。
+
+### Falsifiability claim(v2.29.0+)
+
+加了 Step 1.6 後,`idd-close` 的 falsifiability surface 是:
+
+```
+falsifiability(IDD) = falsifiability(TDD)         ← idd-implement Step 3 RED→GREEN→commit (繼承)
+                    ∪ falsifiability(SDD)         ← spectra-apply spec/code conformance (條件繼承,SDD-warranted path)
+                    ∪ semantic_check              ← Step 1.6 keyword → commit/file 驗證 (IDD-only)
+                    ∪ process_compliance          ← issue why、closing summary root cause (IDD-only,non-mechanical)
+```
+
+Strict superset TDD/SDD:IDD 把它們的 outcome verification 全部繼承,加上 issue-level audit semantic check,還有 process compliance 層。後者(process)不是 mechanical falsifiable,但前三項都是。所以「IDD 比 TDD/SDD 弱」這個質疑在 v2.29.0 後不成立 — IDD ⊋ TDD ∪ SDD on falsifiability surface。
+
 ## Commit Conventions
 
 IDD 的 close 流程是由 `idd-close` skill 執行的——它會跑 gate check、post Closing Summary、再實際關閉 issue。**不能**讓 GitHub 繞過這條流程 auto-close issue。

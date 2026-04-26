@@ -1,5 +1,38 @@
 # Changelog
 
+## 2.29.0 — 2026-04-26
+
+### Two-tier checklist gate in `idd-close`
+
+The structural gate (v2.17.0) catches **honest forgetting** — you can't close an issue with unticked `- [ ]` items. But it can't catch **motivated cheating** — ticking `- [x]` without doing the work. v2.29.0 adds a semantic gate to address the second failure mode.
+
+### Changes
+
+- **`idd-close` Step 1.6 — Semantic Checklist Gate** — for each `- [x]` bullet that passed the structural gate, classify against three keyword patterns and verify the underlying artifact exists:
+
+  | Pattern | Check |
+  |---------|-------|
+  | Contains test/regression/coverage keywords | `git log --grep="#${N}" -- '**/*test*' ...` must return ≥1 commit |
+  | References `openspec/changes/<name>/{proposal,design,tasks,spec}.md` | File must exist |
+  | Contains backtick-wrapped file path with extension | Path must appear in `git log --grep="#${N}" --name-only` |
+  | No recognized pattern | Skip (counted as "unchecked") |
+
+- **Warn-only behavior** — semantic gate doesn't hard-refuse like the structural gate. Keyword extraction has false positives (e.g. test commit landed in earlier PR), so warnings are presented with AskUserQuestion three-way choice: proceed / investigate / edit checklist.
+
+- **`idd-close` Step 0.5 task list** — added `semantic_gate_check` entry.
+
+- **`idd-close` 鐵律 section** — added "打勾沒做要 warn" rule alongside "沒打勾就不關".
+
+- **`CLAUDE.md` Two-Tier Gate section** — new section comparing structural vs semantic gate, and explicit falsifiability claim that IDD is now strict superset of TDD ∪ SDD on the falsifiability surface (outcome verification inherited from inner methodologies + IDD-only audit-level semantic check).
+
+### Why warn-only and not hard-refuse
+
+The structural gate can hard-refuse because false positives are impossible — either a `- [ ]` exists or it doesn't. The semantic gate works on heuristics: a test commit might legitimately live in a prior PR not referencing #NNN, an external file might be modified by tooling, etc. A hard-refuse on heuristic check would block legitimate closes. The warn + AskUserQuestion approach surfaces the suspicious signal, makes the user explicitly acknowledge it, and lets them either proceed (confirming the heuristic was wrong) or investigate (treating the heuristic as right).
+
+### Migration
+
+No breaking changes. Issues that previously closed cleanly under v2.28.0 still close cleanly under v2.29.0 — the semantic gate adds a warning step but doesn't refuse anything. Issues with semantic mismatches now surface them at close time instead of staying hidden.
+
 ## 2.28.0 — 2026-04-26
 
 ### `idd-all` SDD path is now unattended
