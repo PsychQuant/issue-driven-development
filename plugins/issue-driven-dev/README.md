@@ -40,6 +40,7 @@ idd-issue → idd-diagnose → idd-implement → idd-verify → idd-close
 | `idd-close` | Closing comment documenting problem, root cause, solution, verification |
 | `idd-comment` / `idd-edit` | Add or amend issue comments with template guidance (decision / note / question) |
 | `idd-list` / `idd-update` / `idd-report` | List open issues by phase, sync issue body, generate progress reports |
+| `idd-config` | Manage `.claude/issue-driven-dev.local.json` lifecycle: `show` / `init` / `validate` / `which` (v2.31.0) |
 | `idd-all` | Orchestrator that drives the full pipeline (issue → close) end-to-end (v2.26.0) |
 
 ### PR vs Direct-Commit Path Routing（v2.27.0）
@@ -70,6 +71,7 @@ See `references/config-protocol.md` (in-plugin) for the full algorithm.
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v2.31.0 | 2026-04-27 | NEW `idd-config` skill — independent entry for `.claude/issue-driven-dev.local.json` lifecycle. Four subcommands: `show` (default; resolved target + cwd-aware predicate trace), `init` (interactive first-time setup, equivalent to `idd-issue` Step 0.5.E fork-aware detection without forcing an issue creation), `validate` (JSON schema + repo existence + predicate-key sanity), `which` (dry-run resolution at cwd, optional `--title` / `--label` to evaluate content predicates). Closes the gap where setup / inspection / monorepo predicate debugging was only available as a side effect of `idd-issue`. |
 | v2.30.0 | 2026-04-26 | (1) `idd-issue` 資料保留鐵律 — all source attachments uploaded to attachments release by default without asking. New Source Type Adapter table covers `.docx` / `.pdf` / Telegram / Apple Mail / Notes / pasted text + Telegram fallback flow. Step 4 renamed `附加圖片（如果有）` → `附加所有原始素材（鐵律：預設全保留）` with violation checklist. (2) `idd-implement` `--with-skill <name>` + `--extra '<text>'` flags + new Step 1.5 Resolve Extra Requirements; GREEN phase calls Skill(skill=…) instead of Edit when with_skill set. First-class formalization of idd-implement × perspective-writer integration. |
 | v2.29.0 | 2026-04-26 | Two-tier checklist gate in `idd-close` — Step 0 structural gate (existing) refuses close on unticked `- [ ]`; new Step 1.6 semantic gate does keyword extraction on each `- [x]` and verifies test/spec/file mentions correspond to real artifacts. Warn-only with three-way AskUserQuestion (proceed / investigate / edit). |
 | v2.28.0 | 2026-04-26 | `idd-all` SDD path is now an unattended chain — spectra-discuss → spectra-propose → spectra-apply with explicit unattended hints in args. Orchestrator overrides sub-skill attended-by-default contracts via args, not by modifying sub-skills. |
