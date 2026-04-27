@@ -41,7 +41,16 @@ idd-issue → idd-diagnose → idd-implement → idd-verify → idd-close
 | `idd-comment` / `idd-edit` | Add or amend issue comments with template guidance (decision / note / question) |
 | `idd-list` / `idd-update` / `idd-report` | List open issues by phase, sync issue body, generate progress reports |
 | `idd-config` | Manage `.claude/issue-driven-dev.local.json` lifecycle: `show` / `init` / `validate` / `which` (v2.31.0) |
-| `idd-all` | Orchestrator that drives the full pipeline (issue → close) end-to-end (v2.26.0) |
+| `idd-all` | Orchestrator that drives the full pipeline (issue → close) end-to-end (v2.26.0; v2.28.0 unattended SDD chain) |
+
+### Implementation Composability（v2.30.0）
+
+`idd-implement` accepts two flags that turn it from a single-purpose TDD loop into a **dispatcher** for other skills:
+
+- `--with-skill <name>` — GREEN phase calls `Skill(skill=<name>)` instead of direct `Edit` (e.g., `--with-skill perspective-writer` for prose deliverables, `--with-skill spectra-apply` for SDD-warranted)
+- `--extra '<text>'` — free-text additional constraint, written into Implementation Plan's `### Extra Requirements` section so checklist semantic gate can verify it
+
+Auto-detection: `idd-implement` Step 1.5 also scans the diagnosis Strategy for `透過 X` / `via X` patterns and resolves the with_skill target without requiring explicit flags. Compose order: explicit flag > diagnosis hint > none.
 
 ### PR vs Direct-Commit Path Routing（v2.27.0）
 
