@@ -43,6 +43,30 @@ idd-issue → idd-diagnose → idd-implement → idd-verify → idd-close
 | `idd-config` | Manage `.claude/issue-driven-dev.local.json` lifecycle: `show` / `init` / `validate` / `which` (v2.31.0) |
 | `idd-all` | Orchestrator that drives the full pipeline (issue → close) end-to-end (v2.26.0; v2.28.0 unattended SDD chain) |
 
+### Tagging Collaborators（v2.32.0）
+
+Any IDD skill that posts `@xxx` to GitHub follows a mandatory 5-step protocol so the wrong person never gets pinged:
+
+1. **Detect intent** — `--mention <login>[,<login>...]` flag (on `idd-issue` / `idd-comment`) or natural-language ("tag X" / "ping X" / "通知 X")
+2. **Fetch real list** — `gh api repos/$REPO/collaborators` (+ org members for org repos); training-data / chat-history / git-log handles are forbidden
+3. **Resolve** — fuzzy match against `login` + `name` field; unique match → use, otherwise fallback
+4. **AskUserQuestion fallback** — 0 or 2+ matches → menu populated from the real collaborator list, never guessed
+5. **Verify pre-post** — grep `@\w+` from body, every token must be in the verified set, otherwise abort
+
+GitHub mentions are an irreversible side effect; the rule is mandatory not advisory. See `rules/tagging-collaborators.md` (in-plugin) for the full protocol with examples.
+
+### Spectra ↔ IDD Bridge（v2.32.0）
+
+When `spectra-discuss` is interrupted mid-flow to invoke an IDD skill (e.g. "let me capture this finding to the issue"), the bridge protocol preserves and resumes context:
+
+- **Step 0.7 Detect** — `--resume-spectra="<topic>"` flag, `--source` contains `spectra-discuss`, `spectra list --json` shows in-flight changes, or `.claude/state/idd-bridge.json` exists → `SPECTRA_BRIDGE_ACTIVE=1`
+- **Step N-1 Bookmark** — `.claude/state/idd-bridge.json` written with verbatim `spectra_topic` + `issue_url` + `open_questions[]` + `idd_action_url` + `next_step_hint`
+- **Step N Resume Prompt** — final output prints a clearly-delimited `↩ Resume spectra-discuss` block with a copy-pasteable `/spectra-discuss <topic>...` prompt
+
+Hard rules: never auto-invoke `/spectra-discuss` (user controls pacing); never paraphrase `spectra_topic`; resume prompt is the actual recovery — bookmark file is convenience.
+
+`idd-comment` is the first skill with full implementation. `idd-issue` and `idd-edit` will gain it next; the rule defines the contract for all skills. See `rules/spectra-bridge.md` (in-plugin) for the full schema.
+
 ### Implementation Composability（v2.30.0）
 
 `idd-implement` accepts two flags that turn it from a single-purpose TDD loop into a **dispatcher** for other skills:
@@ -80,6 +104,7 @@ See `references/config-protocol.md` (in-plugin) for the full algorithm.
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v2.32.0 | 2026-04-28 | TWO new rules closing real-world workflow gaps observed in PsychQuant/contact-book#96. (1) NEW `rules/tagging-collaborators.md` — mandatory 5-step protocol when any IDD skill posts `@`-mention to GitHub: detect intent (`--mention <login>` flag or natural-language) → fetch real list (`gh api repos/$REPO/collaborators` + org members; training-memory / chat-history / git-log handles forbidden) → fuzzy match → AskUserQuestion fallback for 0/2+ matches → grep + verify pre-post (abort on unverified token). `idd-issue` + `idd-comment` gain `--mention <login>[,<login>...]` flag; `idd-diagnose` / `idd-implement` / `idd-verify` / `idd-close` enforce via prose detection. (2) NEW `rules/spectra-bridge.md` — bridge contract for IDD skills called mid-`spectra-discuss`: detection signals trigger `SPECTRA_BRIDGE_ACTIVE`, bookmark schema preserves verbatim `spectra_topic` + `issue_url` + `open_questions[]` + `next_step_hint`, final `↩ Resume spectra-discuss` prompt block printed at skill exit. `idd-comment` is first skill with full implementation (Step 0.7 detect, Step 7 bookmark + resume); `idd-issue` / `idd-edit` will gain it next. No breaking changes — new flags opt-in. |
 | v2.31.0 | 2026-04-27 | NEW `idd-config` skill — independent entry for `.claude/issue-driven-dev.local.json` lifecycle. Four subcommands: `show` (default; resolved target + cwd-aware predicate trace), `init` (interactive first-time setup, equivalent to `idd-issue` Step 0.5.E fork-aware detection without forcing an issue creation), `validate` (JSON schema + repo existence + predicate-key sanity), `which` (dry-run resolution at cwd, optional `--title` / `--label` to evaluate content predicates). Closes the gap where setup / inspection / monorepo predicate debugging was only available as a side effect of `idd-issue`. |
 | v2.30.0 | 2026-04-26 | (1) `idd-issue` 資料保留鐵律 — all source attachments uploaded to attachments release by default without asking. New Source Type Adapter table covers `.docx` / `.pdf` / Telegram / Apple Mail / Notes / pasted text + Telegram fallback flow. Step 4 renamed `附加圖片（如果有）` → `附加所有原始素材（鐵律：預設全保留）` with violation checklist. (2) `idd-implement` `--with-skill <name>` + `--extra '<text>'` flags + new Step 1.5 Resolve Extra Requirements; GREEN phase calls Skill(skill=…) instead of Edit when with_skill set. First-class formalization of idd-implement × perspective-writer integration. |
 | v2.29.0 | 2026-04-26 | Two-tier checklist gate in `idd-close` — Step 0 structural gate (existing) refuses close on unticked `- [ ]`; new Step 1.6 semantic gate does keyword extraction on each `- [x]` and verifies test/spec/file mentions correspond to real artifacts. Warn-only with three-way AskUserQuestion (proceed / investigate / edit). |
