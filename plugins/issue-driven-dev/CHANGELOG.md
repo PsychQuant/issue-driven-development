@@ -1,5 +1,42 @@
 # Changelog
 
+## 2.33.0 — 2026-04-28
+
+### NEW: `MANIFESTO.md` — methodology thesis
+
+Formalizes the IDD methodology argument as a standalone document, separating "what the plugin does" (README) from "why this is a methodology not a workflow tool" (MANIFESTO).
+
+### Thesis
+
+> **TDD writes tests. SDD writes specs. IDD solves bugs.**
+> 前兩個是手段，IDD 是目的。
+
+### Document structure
+
+- **三 methodology 各自回答的問題** — TDD/SDD/IDD 對應 verification unit；只有 IDD 給出 DONE definition
+- **5-axis 解 bug 能力拆解** — diagnosis quality / fix completeness / verification independence / regression prevention / audit traceability。TDD 覆蓋 1.5/5，SDD 覆蓋 0/5，IDD 覆蓋 5/5
+- **Verification × Closure 兩個正交軸** — TDD/SDD 在 verification axis 高，但在 closure axis 是 0；IDD 兩軸都正
+- **Falsifiability strict superset** — formal proof: IDD ⊋ TDD ∪ SDD via Step 3 RED→GREEN inheritance + spectra-apply conformance inheritance + Step 1.6 semantic gate
+- **TDD/SDD ⊂ IDD 的包含關係** — TDD/SDD 是 IDD 的 special case，不是並列方法論
+- **Case study: che-word-mcp #56 cluster** — empirical proof. 30 findings via 6-AI verify, 5 sub-stack rounds, v3.13.0-v3.13.5 共 6 個 patch release, zero zombie issues. 對照假想 TDD-only 路徑會 leak 29/30 findings 成為使用者後續半年才陸續報的獨立 bug。
+- **5 個 Skill = 5 個 Checkpoint** — 人決定，AI 執行
+- **這個 plugin 不是什麼** — disclaimer (不是 issue tracker、不是 GitHub workflow automation、不是 ceremony for ceremony 的 process)
+- **一句話總結** — 「TDD 跟 SDD 都驗證『對』，只有 IDD 驗證『完』」
+
+### Changes
+
+- **NEW** `plugins/issue-driven-dev/MANIFESTO.md` (~1100 字)
+- **README.md** — opening 加 thesis blockquote + link 到 MANIFESTO.md
+- **CLAUDE.md** — 「設計哲學」段加 link 到 MANIFESTO.md，標明本段是濃縮版
+
+### Migration
+
+No code changes. New artifact, opt-in reading. Plugin behavior identical to v2.32.0.
+
+### Why now
+
+`che-word-mcp` 是第一個用 IDD 從 v3.0 一路打到 v3.15 的大專案，#56 cluster 是 IDD 解 bug 能力的 empirical demo。把抽象論述跟具體 case study 一起寫進 MANIFESTO，讓 IDD 從「個人 plugin 的 README 描述」升級為「可被引用的 methodology 論述」。
+
 ## 2.32.0 — 2026-04-28
 
 ### NEW two protocols closing real-world workflow gaps

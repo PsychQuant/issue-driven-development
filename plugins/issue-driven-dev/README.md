@@ -2,6 +2,9 @@
 
 Human defines the problem, AI solves it.
 
+> **TDD 寫測試。SDD 寫規格。IDD 解 bug。** 前兩個是手段，IDD 是目的。
+> 完整論述見 [`MANIFESTO.md`](./MANIFESTO.md)。
+
 ## What is this?
 
 A Claude Code plugin that enforces issue-driven development as a complete methodology:
@@ -104,6 +107,7 @@ See `references/config-protocol.md` (in-plugin) for the full algorithm.
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v2.33.0 | 2026-04-28 | NEW [`MANIFESTO.md`](./MANIFESTO.md) — formalizes the methodology thesis. Decomposes "bug-solving capability" into 5 sub-capabilities (TDD covers 1.5/5, SDD 0/5, IDD 5/5). Adds two formal claims: (1) IDD opens a second axis orthogonal to TDD/SDD's verification axis (closure / DONE definition); (2) IDD ⊋ TDD ∪ SDD on falsifiability surface. Empirical case study: che-word-mcp #56 cluster — 30 findings, 5 sub-stack rounds, 6 patch releases, zero zombies. README + CLAUDE.md link to MANIFESTO. No code change. |
 | v2.32.0 | 2026-04-28 | TWO new rules closing real-world workflow gaps observed in PsychQuant/contact-book#96. (1) NEW `rules/tagging-collaborators.md` — mandatory 5-step protocol when any IDD skill posts `@`-mention to GitHub: detect intent (`--mention <login>` flag or natural-language) → fetch real list (`gh api repos/$REPO/collaborators` + org members; training-memory / chat-history / git-log handles forbidden) → fuzzy match → AskUserQuestion fallback for 0/2+ matches → grep + verify pre-post (abort on unverified token). `idd-issue` + `idd-comment` gain `--mention <login>[,<login>...]` flag; `idd-diagnose` / `idd-implement` / `idd-verify` / `idd-close` enforce via prose detection. (2) NEW `rules/spectra-bridge.md` — bridge contract for IDD skills called mid-`spectra-discuss`: detection signals trigger `SPECTRA_BRIDGE_ACTIVE`, bookmark schema preserves verbatim `spectra_topic` + `issue_url` + `open_questions[]` + `next_step_hint`, final `↩ Resume spectra-discuss` prompt block printed at skill exit. `idd-comment` is first skill with full implementation (Step 0.7 detect, Step 7 bookmark + resume); `idd-issue` / `idd-edit` will gain it next. No breaking changes — new flags opt-in. |
 | v2.31.0 | 2026-04-27 | NEW `idd-config` skill — independent entry for `.claude/issue-driven-dev.local.json` lifecycle. Four subcommands: `show` (default; resolved target + cwd-aware predicate trace), `init` (interactive first-time setup, equivalent to `idd-issue` Step 0.5.E fork-aware detection without forcing an issue creation), `validate` (JSON schema + repo existence + predicate-key sanity), `which` (dry-run resolution at cwd, optional `--title` / `--label` to evaluate content predicates). Closes the gap where setup / inspection / monorepo predicate debugging was only available as a side effect of `idd-issue`. |
 | v2.30.0 | 2026-04-26 | (1) `idd-issue` 資料保留鐵律 — all source attachments uploaded to attachments release by default without asking. New Source Type Adapter table covers `.docx` / `.pdf` / Telegram / Apple Mail / Notes / pasted text + Telegram fallback flow. Step 4 renamed `附加圖片（如果有）` → `附加所有原始素材（鐵律：預設全保留）` with violation checklist. (2) `idd-implement` `--with-skill <name>` + `--extra '<text>'` flags + new Step 1.5 Resolve Extra Requirements; GREEN phase calls Skill(skill=…) instead of Edit when with_skill set. First-class formalization of idd-implement × perspective-writer integration. |

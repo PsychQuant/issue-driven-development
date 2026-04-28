@@ -348,6 +348,8 @@ Commit message 只要用 `(#NNN)` 或 `Refs #NNN` 產生 cross-link 就好。Clo
 
 ## 設計哲學
 
+> **核心論述見 [`MANIFESTO.md`](MANIFESTO.md)** — IDD 跟 TDD/SDD 的差異、5-axis 解 bug 能力拆解、closure axis、case study (`che-word-mcp` #56 cluster)。本段只列濃縮版。
+
 ### 五個 Skill = 五個 Checkpoint
 
 每個 skill 是一個強制停頓點：
