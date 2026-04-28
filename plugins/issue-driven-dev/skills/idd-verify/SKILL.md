@@ -239,6 +239,29 @@ Bash({
 gh issue comment $NUMBER --repo $GITHUB_REPO --body "$MERGED_FINDINGS"
 ```
 
+#### SOP: pointer comments referencing this verify report
+
+If this verify covers a **bundle of multiple issues**（例如 batch triage 的 hub + N pointers / one TDD cycle 改 N issues），需要 post pointer comments 到其他 issue 指回 master verify report：
+
+**Rule**: 一定先 post master comment 到 hub issue, **capture 回傳的 URL**（`gh issue comment` 輸出的 `https://...#issuecomment-NNN` 那一行），**才**寫 pointer comment body。Pointer 必須使用剛 capture 的 URL，不可從先前對話裡複製貌似的 URL（容易誤用 Implementation Plan / Diagnosis 等更早的 comment URL）。
+
+**為什麼是 SOP**: 此模式被多次重複犯錯（che-word-mcp #62 batch triage、Bundle A v3.15.2 ship comment）。每犯一次需用 `gh api repos/.../issues/comments/<id> -X PATCH -F body=...` 批次補丁 N 個 comment。把 capture-then-write 升格為 SOP 預防 recurrence。
+
+**Helper pattern**:
+```bash
+# 1. Post master, capture URL
+MASTER_URL=$(gh issue comment $HUB_ISSUE --repo $REPO --body-file /tmp/master.md 2>&1 | tail -1)
+
+# 2. Compose pointer body using captured URL
+sed "s|__MASTER_URL__|$MASTER_URL|g" /tmp/pointer_template.md > /tmp/pointer.md
+
+# 3. Post pointers in parallel
+for I in $POINTER_ISSUES; do
+  gh issue comment $I --repo $REPO --body-file /tmp/pointer.md &
+done
+wait
+```
+
 格式：
 ```markdown
 ## Verify: #NNN
