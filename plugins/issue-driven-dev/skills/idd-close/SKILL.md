@@ -111,6 +111,8 @@ TaskCreate(name="report_result", description="輸出關閉後的 issue URL 與 c
 
 完成每一步立即 `TaskUpdate → completed`。**靜默完成 = 違規**。**TaskCreate 清單 = 真實的步驟清單；任何寫在 skill 裡但沒列進 TaskCreate 的步驟，都視為 skill 的 bug，必須補進 Task 清單。**
 
+**v2.32.0+ tagging 規則**：若 Closing Summary comment 要 @-tag 相關 stakeholder（例如要通知 reporter），**必須**遵循 [`rules/tagging-collaborators.md`](../../rules/tagging-collaborators.md) 5 步協定（gh api → fuzzy match → AskUserQuestion fallback → @login 不用 display name → post 前 verify）。違反 = 通知錯人，不可逆。
+
 ---
 
 ### Step 1: 檢查前置條件

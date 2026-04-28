@@ -61,6 +61,8 @@ TaskCreate(name="open_pr_if_pr_path", description="Phase 5.5: PR path 才執行 
 
 完成每一步立即 `TaskUpdate → completed`。**靜默完成 = 違規**。
 
+**v2.32.0+ tagging 規則**：若 Implementation Plan / Implementation Complete comment 中要 @-tag reviewer 或 stakeholder，**必須**遵循 [`rules/tagging-collaborators.md`](../../rules/tagging-collaborators.md) 5 步協定（gh api → fuzzy match → AskUserQuestion fallback → @login 不用 display name → post 前 verify）。違反 = 通知錯人，不可逆。
+
 > **兩層 task 的關係**:
 > - **Stage-level TaskList(此 Step 0)** — 追蹤 idd-implement 本身的 6 個 execution steps
 > - **Strategy-level TaskList(Step 2.5 Bootstrap)** — 追蹤具體改動清單的每個 checklist bullet

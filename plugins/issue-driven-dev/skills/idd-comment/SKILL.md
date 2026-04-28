@@ -48,19 +48,61 @@ allowed-tools:
 **在動任何事之前**先用 `TaskCreate` 為這個 stage 建 todo list,確保每個 sub-step 都被追蹤:
 
 ```
-TaskCreate(name="parse_args", description="Parse #NNN + --type + --body / --quote / --source / --target / --target-comment / --deadline 等 options")
+TaskCreate(name="parse_args", description="Parse #NNN + --type + --body / --quote / --source / --target / --target-comment / --deadline / --mention / --resume-spectra 等 options")
+TaskCreate(name="detect_spectra_context", description="Step 0.7: 偵測是否從 spectra-discuss 中斷進來（--resume-spectra flag / --source 含 spectra / spectra list 有 in-flight / .claude/state/idd-bridge.json）— 詳見 rules/spectra-bridge.md")
 TaskCreate(name="validate_type_requirements", description="依 type 檢查必填欄位（decision 要 quote、note 要 source、link 要 target、errata 要 target-comment）")
-TaskCreate(name="build_comment_body", description="按 type 對應 template 組 markdown（emoji header + blockquote + body + metadata marker）")
+TaskCreate(name="resolve_mentions", description="Step 1.5: 若有 --mention 或 body 含 @xxx，強制走 rules/tagging-collaborators.md 協定（gh api 取 collaborators → fuzzy match → AskUserQuestion fallback → 用 @login 不用 display name）")
+TaskCreate(name="build_comment_body", description="按 type 對應 template 組 markdown（emoji header + blockquote + body + metadata marker），插入已驗證的 @login mentions")
+TaskCreate(name="verify_mentions", description="post 前 grep body 的 @\\w+ 全部 cross-check 已驗證的 collaborator set；未驗證 token 直接 abort")
 TaskCreate(name="post_comment", description="gh issue comment #NNN 用 --body-file 避免 escape 問題；errata type 額外 auto-call idd-edit")
 TaskCreate(name="report_result", description="輸出 ✓ Comment posted + URL；errata type 加報 idd-edit 結果")
 TaskCreate(name="auto_update_body", description="跑 /idd-update #NNN 同步 issue body Current Status（強制，常被漏；同 idd-close Step 6 模式）")
+TaskCreate(name="spectra_bridge_resume", description="Step 7: 若 SPECTRA_BRIDGE_ACTIVE，寫 .claude/state/idd-bridge.json bookmark + 輸出 ↩ Resume spectra-discuss 區塊（rules/spectra-bridge.md）")
 ```
 
 完成每一步立即 `TaskUpdate → completed`。**靜默完成 = 違規**。**TaskCreate 清單 = 真實的步驟清單；任何寫在 skill 裡但沒列進 TaskCreate 的步驟，都視為 skill 的 bug，必須補進 Task 清單。**
 
 特別提醒：**`auto_update_body` 不可省略**——`idd-comment` 的 comment 本身（例如 decision / correction）會改變 issue 的當前狀態，body Current Status 區塊必須同步。歷史上 idd-close 2.18.0 同樣的「Report + Auto-update 合在一個 Step」設計造成大量漏跑，於 2.18.1 修正。
 
+**v2.32.0 新增**：`detect_spectra_context` / `resolve_mentions` / `verify_mentions` / `spectra_bridge_resume` 四個 task 對應兩個新規則 [`rules/tagging-collaborators.md`](../../rules/tagging-collaborators.md) 與 [`rules/spectra-bridge.md`](../../rules/spectra-bridge.md)。違反這兩個規則 = skill bug。
+
 ---
+
+### Step 0.7: Detect Spectra Context（v2.32.0+）
+
+在 parse_args 完成後、validate 之前，依 [`rules/spectra-bridge.md`](../../rules/spectra-bridge.md) 偵測是否從 spectra-discuss 中斷進來：
+
+```bash
+SPECTRA_BRIDGE_ACTIVE=0
+SPECTRA_TOPIC=""
+
+# Signal 1: 顯式 flag
+if [ -n "$RESUME_SPECTRA" ]; then
+  SPECTRA_BRIDGE_ACTIVE=1
+  SPECTRA_TOPIC="$RESUME_SPECTRA"
+fi
+
+# Signal 2: --source 含 spectra-discuss
+if echo "$SOURCE" | grep -qi "spectra-discuss"; then
+  SPECTRA_BRIDGE_ACTIVE=1
+fi
+
+# Signal 3: spectra list 有 in-flight
+if command -v spectra >/dev/null 2>&1; then
+  IN_FLIGHT=$(spectra list --json 2>/dev/null | jq '.changes | length')
+  if [ "${IN_FLIGHT:-0}" -gt 0 ]; then
+    SPECTRA_BRIDGE_ACTIVE=1
+  fi
+fi
+
+# Signal 4: bookmark 已存在
+if [ -f ".claude/state/idd-bridge.json" ]; then
+  ACTIVE=$(jq -r '.active_spectra_session // false' .claude/state/idd-bridge.json 2>/dev/null)
+  [ "$ACTIVE" = "true" ] && SPECTRA_BRIDGE_ACTIVE=1
+fi
+```
+
+若 `SPECTRA_BRIDGE_ACTIVE=1`，告訴使用者：「Detected spectra context. Will emit resume prompt at the end.」這樣使用者知道末尾要找 resume block。
 
 ### Step 1: Parse arguments
 
@@ -75,6 +117,9 @@ Options (視 type 而定)：
 - `--target=#XX` — 目標 issue（link type 必填）
 - `--target-comment=<id>` — 目標 comment ID（errata type 必填）
 - `--deadline=YYYY-MM-DD` — 未決問題的期限（question type 可選）
+- `--mention <login>[,<login>...]` — tag 人到 comment（**v2.32.0+**，強制走 [`rules/tagging-collaborators.md`](../../rules/tagging-collaborators.md)）
+- `--mention-prompt` — 強制走 AskUserQuestion 從 collaborator menu 選（不嘗試 auto-resolve）
+- `--resume-spectra="<topic>"` — 顯式宣告從 spectra-discuss 中斷進來（**v2.32.0+**，觸發 Step 7 resume prompt）
 
 ### Step 2: Validate type-specific requirements
 
@@ -88,6 +133,26 @@ Options (視 type 而定)：
 | errata | `--target-comment` + `--body` 必存在 |
 
 缺必填 → 用 AskUserQuestion 詢問。
+
+### Step 2.5: Resolve Mentions（v2.32.0+）
+
+若使用 `--mention` flag 或 body / quote / source 含 `@xxx`，**必須**遵循 [`rules/tagging-collaborators.md`](../../rules/tagging-collaborators.md) 的 5 步協定：
+
+1. **Detect intent** — flag 或自然語言（"tag X" / "ping X" / "通知 X"）
+2. **Fetch real list** — `gh api repos/$OWNER/$REPO/collaborators` + （若 org repo）`gh api orgs/$OWNER/members`
+3. **Resolve** — fuzzy match against login + name field；唯一匹配直接用，否則 AskUserQuestion
+4. **AskUserQuestion fallback** — 0 或 2+ 匹配時必選；options 用實際 collaborator list
+5. **Verify** — post 前 grep `@\w+` token 全部 cross-check 已驗證 set；未驗證 token = abort
+
+```bash
+# Step 2 — 抓清單
+OWNER=$(echo "$GITHUB_REPO" | cut -d/ -f1)
+REPO=$(echo "$GITHUB_REPO" | cut -d/ -f2)
+gh api repos/$OWNER/$REPO/collaborators --jq '.[] | {login, name}' \
+  > /tmp/idd-collaborators-$$.json
+```
+
+**禁止**：從訓練記憶、聊天歷史、git log 推測 @handle。API 失敗 = 取消 tagging（post comment 但不含 mention，並告訴使用者）。
 
 ### Step 3: Build comment body
 
@@ -197,6 +262,27 @@ This notice concerns [comment {target-comment}](https://github.com/{repo}/issues
 
 這讓 target comment 讀者看到「⚠️ 本 comment 已有 errata（下方）」的警示。
 
+### Step 3.5: Verify mentions (v2.32.0+)
+
+Post 前最後一道防線：
+
+```bash
+# 抓 body 中所有 @xxx token
+MENTIONS=$(grep -oE '@[A-Za-z0-9-]+' /tmp/idd-comment-body-$$.md | sort -u)
+
+for handle in $MENTIONS; do
+  login=${handle#@}
+  if ! jq -e ".[] | select(.login == \"$login\")" /tmp/idd-collaborators-$$.json > /dev/null 2>&1; then
+    echo "ERROR: $handle not in collaborator list. Aborting post."
+    echo "若這真是 collaborator 但 API 沒列到（outside collaborator / 私人 repo），用 --mention-prompt 強制選單。"
+    rm -f /tmp/idd-comment-body-$$.md /tmp/idd-collaborators-$$.json
+    exit 1
+  fi
+done
+```
+
+通過驗證才進 Step 4。
+
 ### Step 4: Post comment
 
 ```bash
@@ -224,6 +310,54 @@ Skill(skill="issue-driven-dev:idd-update", args="#NNN")
 或等價手動執行 `/idd-update #NNN`。
 
 **為何強制**：`idd-comment` post 的 decision / correction / question 會改變 issue 的 Current Status；不同步 body 會導致 `gh issue view` 與 `idd-list` 看到舊 phase。歷史上 idd-close 2.18.0 同樣把 Report + Auto-update 合在一個 Step，造成大量漏跑（見 idd-close 2.18.1 fix）。
+
+### Step 7: Spectra Bridge Resume Prompt（v2.32.0+，僅當 SPECTRA_BRIDGE_ACTIVE=1）
+
+依 [`rules/spectra-bridge.md`](../../rules/spectra-bridge.md) 執行兩件事：
+
+#### 7.1 寫 bookmark 檔
+
+```bash
+mkdir -p .claude/state
+cat > .claude/state/idd-bridge.json <<EOF
+{
+  "version": 1,
+  "created_at": "$(date -u +%Y-%m-%dT%H:%M:%S%z)",
+  "spectra_topic": "$SPECTRA_TOPIC",
+  "issue_number": $NUMBER,
+  "issue_url": "https://github.com/$GITHUB_REPO/issues/$NUMBER",
+  "idd_action": "idd-comment",
+  "idd_action_url": "$COMMENT_URL",
+  "open_questions": $OPEN_QUESTIONS_JSON,
+  "next_step_hint": "/spectra-discuss 接續 #$NUMBER 的討論..."
+}
+EOF
+```
+
+若已存在，merge 而非覆寫（保留更早的 `open_questions`，更新 `idd_action` 為最新）。
+
+#### 7.2 輸出 Resume Prompt 區塊
+
+```
+↩ Resume spectra-discuss
+═══════════════════════════════════════════════════════════
+Paste the following prompt back into the spectra-discuss session
+to continue with full context preserved:
+
+  /spectra-discuss 接續 ${SPECTRA_TOPIC} 的討論。
+  上輪結論已 comment 到 issue #${NUMBER}（${COMMENT_URL}）。
+  ${MENTIONS_LINE}
+  待解問題:
+  ${OPEN_QUESTIONS_BULLETS}
+
+State saved to: .claude/state/idd-bridge.json
+═══════════════════════════════════════════════════════════
+```
+
+**鐵律**：
+- **Never auto-invoke `/spectra-discuss`** — 使用者控 pacing
+- Bookmark 寫失敗 → 印 warning 但 resume prompt 還是要輸出（prompt 才是真正的 recovery）
+- Topic 必須 verbatim，不要 paraphrase
 
 ## Metadata Marker 格式
 
@@ -265,6 +399,29 @@ HTML comment 在 GitHub 不渲染，但可 parse：
 
 → 自動在 comment 4241327867 頂部加「⚠️ See errata below」警示。
 
+### Note with mention (v2.32.0+)
+
+```
+/idd-comment #96 --type=note \
+  --source="spectra-discuss session 2026-04-28" \
+  --mention=Hardy1Yang \
+  --body="..."
+```
+
+→ 觸發 [`rules/tagging-collaborators.md`](../../rules/tagging-collaborators.md)：抓 `gh api repos/PsychQuant/contact-book/collaborators` → 找到 `@Hardy1Yang` → 插入 body → verify pass → post。
+
+### Spectra-bridge resume (v2.32.0+)
+
+```
+/idd-comment #96 --type=note \
+  --source="spectra-discuss session 2026-04-28" \
+  --resume-spectra="ContactBook 雲端資料層 — CloudKit vs Supabase" \
+  --mention=Hardy1Yang \
+  --body="..."
+```
+
+→ Step 0.7 detect 命中 → Step 7 寫 `.claude/state/idd-bridge.json` + 印 `↩ Resume spectra-discuss` 區塊讓使用者貼回 spectra session。
+
 ## 鐵律
 
 - **第一段必 prose**：`decision` / `note` / `correction` 三個長 body 的 types，body 必須以**至少一段完整論述段落（3+ 句）**開頭，解釋 context 與推論鏈條。之後才能接 tables / bullets 作 supporting evidence。**避免通篇 bullet-only**——bullets 容易把邏輯 gap 隱藏在排版底下，三個月後回讀無法重建脈絡。
@@ -273,6 +430,8 @@ HTML comment 在 GitHub 不渲染，但可 parse：
 - **errata 必 auto-call idd-edit**：確保 target comment 本體也被警示
 - **不走 phase detection**：idd-comment 是 ad-hoc，不觸發 phase 推斷（那是 idd-update 的事）
 - **Comment body 要自我解釋**：三個月後回來看，光看 comment 就知道 context。這是「第一段 prose」的動機。
+- **任何 @xxx 必走 collaborator API**（v2.32.0+）：禁止從訓練記憶 / 聊天歷史 / git log 推測 handle。違反 = 通知錯人，不可逆。詳見 [`rules/tagging-collaborators.md`](../../rules/tagging-collaborators.md)。
+- **Spectra context 不可靜默忽略**（v2.32.0+）：偵測到從 spectra-discuss 進來必須印 resume prompt。使用者要不要回去 spectra 是他的事，但 skill 不能讓 context 默默掉地。
 
 ## 與其他 idd-* skill 的關係
 

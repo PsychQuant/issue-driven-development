@@ -97,6 +97,8 @@ TaskCreate(name="triage_followup_issues", description="Step 5b: 分類 non-block
 
 完成每一步立即 `TaskUpdate → completed`。**靜默完成 = 違規**。
 
+**v2.32.0+ tagging 規則**：若 Verify findings comment 要 @-tag 寫 code 的人或要求審閱者，**必須**遵循 [`rules/tagging-collaborators.md`](../../rules/tagging-collaborators.md) 5 步協定（gh api → fuzzy match → AskUserQuestion fallback → @login 不用 display name → post 前 verify）。違反 = 通知錯人，不可逆。
+
 **鐵律**:
 - `wait_for_claude_agents` 和 `wait_for_codex` 都要跑到真的有 findings 內容,不能只看到 idle notification 就 completed
 - 如果某個 reviewer 沒寫 findings 檔,用 `SendMessage` 請它補寫,或 fallback 自己做 coordinator backup 檢查

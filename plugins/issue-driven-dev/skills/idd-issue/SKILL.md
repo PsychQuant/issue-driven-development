@@ -102,7 +102,8 @@ TaskCreate(name="detect_target_repo", description="Step 0.5: 解析 target — -
 TaskCreate(name="read_source", description="讀取來源(docx → mcp__che-word-mcp 讀文字 + 列圖片)")
 TaskCreate(name="gather_info", description="Step 2: 蒐集 title / type / priority / description")
 TaskCreate(name="reresolve_target", description="Step 2.5: 用 title/labels 重評 content predicates,若新匹配 != tentative_default 則問使用者要不要切")
-TaskCreate(name="create_issue", description="Step 3: gh issue create — Single mode 或 Group mode(primary + tracking + cross-link comment)")
+TaskCreate(name="resolve_mentions", description="若有 --mention 或 description 含 @xxx，強制走 rules/tagging-collaborators.md 協定（v2.32.0+）")
+TaskCreate(name="create_issue", description="Step 3: gh issue create — Single mode 或 Group mode(primary + tracking + cross-link comment)，body 含已驗證的 @login")
 TaskCreate(name="attach_images", description="上傳圖片到 attachments release 並編輯 issue body 嵌入(若有)")
 TaskCreate(name="create_milestone", description="來源為文件時自動建立 milestone 並指派(見 Step 4.5)")
 TaskCreate(name="report_and_stop", description="回報 issue number/URL(group 模式列全部 + cross-link),停下等使用者決定下一步")
@@ -301,6 +302,20 @@ echo "  3) 全部存好後告訴我「ok」，skill 會接手 upload + 嵌入 is
 2. **Type** — bug / feature / refactor / docs
 3. **Priority** — P0（立即）/ P1（本週）/ P2（排程）/ P3（有空再做）
 4. **Description** — 問題描述（bug: 重現步驟 + expected + actual；feature: 需求 + 目的）
+5. **Stakeholders（v2.32.0+，可選）** — 若需要在 issue body 中 tag 人，使用 `--mention <login>[,<login>...]` flag 或自然語言（"tag X"）。**任何 @xxx 必走 [`rules/tagging-collaborators.md`](../../rules/tagging-collaborators.md) 5 步協定**（gh api → fuzzy match → AskUserQuestion fallback → @login 不用 display name → post 前 verify）。違反 = 通知錯人，不可逆。
+
+### Step 2.6: Resolve Mentions（v2.32.0+）
+
+若 Step 2 蒐集到的 description 含 `@xxx` token，或使用者下了 `--mention` flag：
+
+```bash
+OWNER=$(echo "$GITHUB_REPO" | cut -d/ -f1)
+REPO=$(echo "$GITHUB_REPO" | cut -d/ -f2)
+gh api repos/$OWNER/$REPO/collaborators --jq '.[] | {login, name}' \
+  > /tmp/idd-collaborators-$$.json
+```
+
+接 [`rules/tagging-collaborators.md`](../../rules/tagging-collaborators.md) Step 3-5。Post 前 grep `@\w+` 全部 cross-check，未驗證 token = abort。
 
 ### Step 2.5: Re-resolve target with content predicates(Phase 2A)
 
