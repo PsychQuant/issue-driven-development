@@ -5,7 +5,7 @@ description: |
   只改 issue 要求的東西，每個 commit 引用 #NNN。
   Use when: diagnosis 確認後、開始寫 code 時。
   防止的失敗：scope creep — 改 #42 順手重構了三個不相關的檔案。
-argument-hint: "#issue [--pr | --no-pr] [--with-skill <skill>] [--extra '<requirement>'] e.g. '#42 --with-skill perspective-writer --extra ''要 500–800 字''"
+argument-hint: "#issue [#issue ...] [--pr | --no-pr] [--with-skill <skill>] [--extra '<requirement>'] e.g. '#42 --with-skill perspective-writer --extra ''要 500–800 字''' or '#34 #36 #38 --pr' (cluster-PR mode)"
 allowed-tools:
   - Bash(gh:*)
   - Bash(git:*)
@@ -29,6 +29,14 @@ allowed-tools:
 > 每一行改動都必須能追溯到 #NNN。追溯不到的改動 → 開新 issue。
 >
 > **Strategy 上的每個 `- [ ]` 都是契約**——`idd-implement` 開始時進 TaskList，`idd-close` 會 refuse 關任何還有未勾項的 issue。
+
+## Cluster-PR mode（v2.34.0+）
+
+`idd-implement #34 #36 #38 --pr` 觸發 cluster-PR mode：3 個 issue 共用 1 個 feature branch + 1 個 PR，但每個 commit 仍以 `Refs #N`（可多）紀律標示對應 issue。Strategy-level TaskList 從各 issue 的 diagnosis 聚合，scope guard 仍逐 issue 檢查。
+
+完整契約見 [batch-and-cluster.md](../../references/batch-and-cluster.md)。Cluster-PR mode 強制 PR path（不接受 `--no-pr`），Branch 命名 `idd/cluster-{slug}`，PR 標題前綴 `cluster:`。
+
+實用情境：04/27 那種「7 個 issue 分成 Docs + Sanitizer-hardening 2 個 themed PR」的工作流。Single-issue 模式（`idd-implement #19`）行為不變。
 
 ## Configuration
 

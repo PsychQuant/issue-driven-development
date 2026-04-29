@@ -6,7 +6,7 @@ description: |
   6 個獨立 AI、兩個模型家族、互相看不到對方的結果。
   Use when: 實作完成後、commit 之前。
   防止的失敗：自以為修好了，沒跑驗證。
-argument-hint: "#issue [engine] [--loop] e.g. '#42', '#42 codex', '#42 --loop'"
+argument-hint: "#issue [#issue ...] [engine] [--loop] e.g. '#42', '#42 codex', '#42 --loop' or '#34 #36 #38' (cluster verify)"
 allowed-tools:
   - Bash(codex:*)
   - Bash(git:*)
@@ -32,6 +32,12 @@ allowed-tools:
 ## 核心原則
 
 > 「應該沒問題」不是驗證。跑了驗證、看了輸出、確認通過，才是驗證。
+
+## Cluster-PR mode（v2.34.0+）
+
+`idd-verify #34 #36 #38` 觸發 cluster verify：6-AI 看到所有 cluster issue 的 diagnoses + 整個 PR 的 diff，但 verify report **按 issue 分區段** — 每個 #N 都有獨立的 findings section，Aggregate PASS/FAIL 套到整個 PR。
+
+完整契約見 [batch-and-cluster.md](../../references/batch-and-cluster.md)。Per-issue follow-up findings 仍透過 `idd-issue` auto-create（target main）。Cluster verify 只在 cluster-PR mode 才有意義（即 `idd-implement #34 #36 #38 --pr` 之後）；單發 verify N 個獨立 issue 用 batch 不對 — 應該各跑一次。
 
 ## 參數
 

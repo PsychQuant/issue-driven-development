@@ -5,7 +5,7 @@ description: |
   支援 decision/note/question/correction/link/errata 6 個 types，強制 blockquote 原文、加 timestamp 與 metadata marker。
   用於記錄使用者決定、外部 context、開放問題，不走完整 diagnose/implement phase 時。
   防止的失敗：非流程性 decision 散落在 chat，未來無法追溯。
-argument-hint: "#issue --type=<type> [options]"
+argument-hint: "#issue [#issue ...] --type=<type> [options]"
 allowed-tools:
   - Bash(gh:*)
   - Read
@@ -19,6 +19,12 @@ allowed-tools:
 ## 核心原則
 
 > 使用者的決定、外部 context、未決問題，都應該**留在 issue 裡**，不是 chat history。Comment 是 audit trail。
+
+## Batch mode（v2.34.0+）
+
+`idd-comment #34 #36 --type note --body 'blocked by upstream X'` 把同樣的 comment 套到多個 issue。每個 issue 仍各自 post 獨立 comment（不是合併、不是 cross-link），保留 per-issue audit trail。完整契約見 [batch-and-cluster.md](../../references/batch-and-cluster.md)。
+
+實用情境：upstream 有變動波及多個 in-progress issue、同一個 advisor feedback 適用多個提案、宣告統一 deferral 原因。`--type=question` 也適合 batch（同一個未決問題影響多個 issue）。
 
 ## 6 個 Types
 

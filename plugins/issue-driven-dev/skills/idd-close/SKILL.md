@@ -5,7 +5,7 @@ description: |
   強制記錄做了什麼、怎麼驗證的。
   Use when: verify 通過後、commit 之後。
   防止的失敗：修完了但三個月後沒人知道當時做了什麼。
-argument-hint: "#issue e.g. '#42'"
+argument-hint: "#issue [#issue ...] e.g. '#42' or '#34 #36 #38' (cluster close after merge)"
 allowed-tools:
   - Bash(gh:*)
   - Bash(git:*)
@@ -22,6 +22,14 @@ allowed-tools:
 > 沒有 closing comment 就不關 issue。沒有例外。
 >
 > **沒打勾就不關。** 每一個 `- [ ]` 都必須變成 `- [x]`（完成）、`- [~]`（刻意跳過）、或 `- [-]`（won't fix / scope 調整）才能 close。
+
+## Cluster-PR mode（v2.34.0+）
+
+`idd-close #34 #36 #38` cluster close：refuse 若任一 issue checklist gate 失敗、refuse 若 PR 未 merge。通過後 **per issue 各自 fetch 該 issue 在 PR 裡的 commits**（`git log --grep "#N"` 過濾 PR commit range），各寫獨立 closing summary，再依序 `gh issue close`。
+
+完整契約見 [batch-and-cluster.md](../../references/batch-and-cluster.md)。**不**會合併出一份 batch summary — 每個 issue 仍要它自己的 root cause / solution / verification trail，那是 closing comment 的審計價值核心，不能省。Phase=`closed` 各自 auto-update。
+
+設計理由：closing summary 是 IDD 紀律最神聖的部分（pretend N 個 issue 共一份 summary = 偷懶 hallucinate）。Cluster mode 只省「重複打 N 次 `/idd-close #N`」的肌肉動作，不省 audit content。
 
 ## Configuration
 

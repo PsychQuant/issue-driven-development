@@ -5,7 +5,7 @@ description: |
   輸出 diagnosis report：原因、影響範圍、修復/實作策略。
   Use when: issue 建立後、開始寫 code 之前。
   防止的失敗：修了表象，沒修根本原因。
-argument-hint: "#issue e.g. '#42'"
+argument-hint: "#issue [#issue ...] e.g. '#42' or '#34 #36 #38' (batch)"
 allowed-tools:
   - Bash(gh:*)
   - Bash(git:*)
@@ -20,6 +20,12 @@ allowed-tools:
 # /diagnose — 理解問題
 
 在寫任何一行 code 之前，先確認你真的理解問題。
+
+## Batch mode（v2.34.0+）
+
+`idd-diagnose #34 #36 #38` 對 3 個 issue **依序**跑完整 diagnose 流程（每個 issue 各自 post diagnosis comment + auto-update phase）。語意同單一 issue，只是包了一層 loop。完整契約見 [batch-and-cluster.md](../../references/batch-and-cluster.md)。
+
+Aggregate report 在最後輸出（每個 issue 的 complexity 判定 + comment URL）。Per-issue abort 不停 batch — 失敗的 issue 標 `aborted` 在 report 裡，使用者個別處理。
 
 ## 核心原則
 

@@ -20,6 +20,12 @@ allowed-tools:
 
 > Edit 是破壞性動作。**原 body 必 backup，新 body 必 preview，修改必留 metadata**。
 
+## Batch mode（v2.34.0+）
+
+`idd-edit comment:NNN comment:MMM --replace --body '...'` 把同一段內容套到多個 comment。Edit 是破壞性動作，batch 把破壞範圍放大 N 倍 — preview + per-comment confirm 仍照舊（不允許 `--yes-to-all`），但每個 confirm 後就推進，不需要 N 次重打命令。
+
+完整契約見 [batch-and-cluster.md](../../references/batch-and-cluster.md)。罕見場景：跨 issue 的 typo 統一修、補同一段 errata note、把多個 stale comment 統一標 deprecated。
+
 ## 三種 Edit Mode
 
 | Mode | 動作 | 原 body | 適用 |

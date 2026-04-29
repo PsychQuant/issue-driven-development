@@ -6,7 +6,7 @@ description: |
   由其他 idd-* skills 自動呼叫，也可手動執行。
   Use when: issue 狀態改變時（自動）、或手動同步現狀。
   防止的失敗：issue body 過時，要讀完所有 comments 才知道現狀。
-argument-hint: "#issue e.g. '#42'"
+argument-hint: "#issue [#issue ...] e.g. '#42' or '#34 #36 #38' (batch)"
 allowed-tools:
   - Bash(gh:*)
   - Bash(git:*)
@@ -21,6 +21,12 @@ allowed-tools:
 ## 核心原則
 
 > 原始記錄不動，現狀即時更新。Comment 是歷史，Body 是現狀。
+
+## Batch mode（v2.34.0+）
+
+`idd-update #34 #36 #38` 對 3 個 issue 依序 fetch + 重組 Current Status + body edit。Pure idempotent，最安全的 batch 之一。完整契約見 [batch-and-cluster.md](../../references/batch-and-cluster.md)。
+
+實用情境：phase 從 verified 進到 closed 後一次 sync N 個 issue 的 body；或重啟 session 後想看哪些 issue 卡哪一階段，先 batch update 確保 body 是最新狀態。
 
 ## 設計
 
