@@ -3,6 +3,7 @@ name: idd-diagnose
 description: |
   對照 GitHub Issue 找 root cause（bug）或分析需求（feature/refactor）。
   輸出 diagnosis report：原因、影響範圍、修復/實作策略。
+  支援 batch mode（v2.34.0+）：多個 #N 依序跑（如 `#34 #36 #38`），各自 post diagnosis comment。
   Use when: issue 建立後、開始寫 code 之前。
   防止的失敗：修了表象，沒修根本原因。
 argument-hint: "#issue [#issue ...] e.g. '#42' or '#34 #36 #38' (batch)"

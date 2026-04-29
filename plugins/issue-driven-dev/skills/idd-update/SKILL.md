@@ -4,6 +4,7 @@ description: |
   更新 GitHub Issue body 的 Current Status 區塊，反映最新進度。
   保留原始記錄（Problem/Type/Expected），只更新狀態區塊。
   由其他 idd-* skills 自動呼叫，也可手動執行。
+  支援 batch mode（v2.34.0+）：多個 #N 依序 sync（如 `#34 #36 #38`），最 idempotent 的 batch。
   Use when: issue 狀態改變時（自動）、或手動同步現狀。
   防止的失敗：issue body 過時，要讀完所有 comments 才知道現狀。
 argument-hint: "#issue [#issue ...] e.g. '#42' or '#34 #36 #38' (batch)"

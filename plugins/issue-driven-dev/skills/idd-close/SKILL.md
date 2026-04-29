@@ -3,6 +3,7 @@ name: idd-close
 description: |
   寫 closing comment 並關閉 GitHub Issue。
   強制記錄做了什麼、怎麼驗證的。
+  支援 cluster close（v2.34.0+）：多個 #N（如 `#34 #36 #38`）共用 PR 的 cluster 一次關閉，**每個 issue 各寫獨立 closing summary**（不偷懶合併）。
   Use when: verify 通過後、commit 之後。
   防止的失敗：修完了但三個月後沒人知道當時做了什麼。
 argument-hint: "#issue [#issue ...] e.g. '#42' or '#34 #36 #38' (cluster close after merge)"

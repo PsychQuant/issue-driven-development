@@ -3,6 +3,7 @@ name: idd-implement
 description: |
   按照 diagnosis 的策略實作，嚴格控制 scope。
   只改 issue 要求的東西，每個 commit 引用 #NNN。
+  支援 cluster-PR mode（v2.34.0+）：多個 #N 共用 1 feature branch + 1 PR（如 `#34 #36 #38 --pr`），每個 commit 用 `Refs #N` 紀律標示。
   Use when: diagnosis 確認後、開始寫 code 時。
   防止的失敗：scope creep — 改 #42 順手重構了三個不相關的檔案。
 argument-hint: "#issue [#issue ...] [--pr | --no-pr] [--with-skill <skill>] [--extra '<requirement>'] e.g. '#42 --with-skill perspective-writer --extra ''要 500–800 字''' or '#34 #36 #38 --pr' (cluster-PR mode)"

@@ -4,6 +4,7 @@ description: |
   驗證 uncommitted/committed code 是否滿足 Issue 的所有要求。
   預設用 Agent Team（5 Claude reviewers 互相挑戰）+ Codex CLI（gpt-5.5）平行驗證。
   6 個獨立 AI、兩個模型家族、互相看不到對方的結果。
+  支援 cluster verify（v2.34.0+）：多個 #N 共用 1 PR 時（如 `#34 #36 #38`），report 按 issue 分區段。
   Use when: 實作完成後、commit 之前。
   防止的失敗：自以為修好了，沒跑驗證。
 argument-hint: "#issue [#issue ...] [engine] [--loop] e.g. '#42', '#42 codex', '#42 --loop' or '#34 #36 #38' (cluster verify)"

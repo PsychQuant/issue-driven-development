@@ -3,9 +3,10 @@ name: idd-edit
 description: |
   編輯既有 GitHub issue comment。支援 append/replace/prepend-note 三種 mode。
   必 show 原 body + preview 新 body 讓 user confirm。用 `gh api -F body=@file` 避免 backtick escape bug。
+  支援 batch mode（v2.34.0+）：多個 comment 套同一段 edit（如 `comment:NNN comment:MMM --replace --body '...'`），每個 comment 仍 per-confirm。
   Use when: 補既有 comment 說明（如圖片下方解釋）、修 typo、標示「此 comment 已被後續 errata 修正」。
   防止的失敗：手動 `gh api PATCH` 字串 escape 錯誤、誤覆蓋未 backup 的原內容。
-argument-hint: "comment:<id>|#issue --last [--append|--replace|--prepend-note] [--body=\"...\"]"
+argument-hint: "comment:<id>[ comment:<id>...]|#issue --last [--append|--replace|--prepend-note] [--body=\"...\"] (multi-comment = batch)"
 allowed-tools:
   - Bash(gh:*)
   - Read
