@@ -109,6 +109,7 @@ Gate check 通過後,用 `TaskCreate` 為 close stage 建 todo list:
 
 ```
 TaskCreate(name="check_prerequisites", description="gh issue view 確認 OPEN + git log --grep=#NNN 確認有 commit 引用")
+TaskCreate(name="check_attachments", description="確認 closing comment 即將引用的 attachment 在 .claude/.idd/attachments/issue-NNN/ 仍存在(防止使用者搬檔造成失效引用);manifest 對照 issue 當下 attachment list,新增的不重新 fetch(那是 idd-diagnose 工作)。依 rules/process-attachments.md。")
 TaskCreate(name="check_open_prs", description="Step 1.5: gh pr list 找引用 #NNN 的 open PR；若有 unmerged PR → refuse close")
 TaskCreate(name="semantic_gate_check", description="Step 1.6: 對每個 - [x] bullet 做 keyword extraction → 驗證對應 artifact 真存在/有 commit。Warn-only。")
 TaskCreate(name="draft_closing_comment", description="起草 Problem / Root Cause / Solution / Verification / Changes 五段式")
@@ -139,6 +140,20 @@ git log --oneline --grep="#$NUMBER" | head -10
 ```
 
 如果沒有相關 commit，警告使用者：「找不到引用 #NNN 的 commit。確定要關嗎？」
+
+### Step 1.4: 檢查 Attachment Disk Integrity
+
+依 [`rules/process-attachments.md`](../../rules/process-attachments.md):
+
+```bash
+IDD_CALLER=idd-close bash $CLAUDE_PLUGIN_ROOT/scripts/process-attachments.sh verify $NUMBER
+```
+
+Exit code:
+- `0` — manifest 列出的檔案在 disk 上都還在(closing comment 的 path 引用安全)
+- `1` — 至少一個檔案被搬走 / 刪掉 → 警告使用者(closing comment 寫到失效引用)。**不 abort close**,讓使用者決定是否搬回或修改 closing comment 引用
+
+無 manifest(issue 從未處理 attachment)→ 跳過此 step,exit 0。
 
 ### Step 1.5: PR Gate Check
 

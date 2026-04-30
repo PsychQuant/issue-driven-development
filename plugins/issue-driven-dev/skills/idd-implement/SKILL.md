@@ -60,6 +60,7 @@ allowed-tools:
 ```
 TaskCreate(name="resolve_pr_path", description="Phase 0.5: --pr/--no-pr flag → fork detection → pr_policy config → ask. 若 PR path: 建 feature branch")
 TaskCreate(name="read_issue_and_diagnosis", description="gh issue view + 確認最新 diagnosis comment 的 Strategy")
+TaskCreate(name="check_attachments", description="確認 .claude/.idd/attachments/issue-NNN/ 存在且 _manifest.json 涵蓋當下 issue attachment list;偵測新增 attachment 補 fetch。manifest 缺漏 → 警告並引導使用者重跑 idd-diagnose,不 auto-repair。依 rules/process-attachments.md。")
 TaskCreate(name="draft_implementation_plan", description="依 Strategy 起草 Implementation Plan 並 comment 到 issue")
 TaskCreate(name="bootstrap_strategy_tasklist", description="Step 2.5: Simple complexity → 為每個 - [ ] bullet 建 TaskCreate; SDD → 跳過(spectra-apply 管)")
 TaskCreate(name="execute_tdd_loop", description="對每個 strategy item: 寫測試→RED→實作→GREEN→commit→TaskUpdate completed")
@@ -169,6 +170,20 @@ gh issue view $NUMBER --repo $GITHUB_REPO --json title,body,labels
 ```
 
 回顧對話中的 diagnosis report，確認 strategy。
+
+### Step 1.2: 檢查 Attachment(下游)
+
+依 [`rules/process-attachments.md`](../../rules/process-attachments.md):
+
+```bash
+IDD_CALLER=idd-implement bash $CLAUDE_PLUGIN_ROOT/scripts/process-attachments.sh check $NUMBER
+```
+
+Exit code:
+- `0` — manifest up-to-date,可繼續實作
+- `1` — manifest missing 或 issue 有新 attachment 未抓 → **不 auto-repair**,警告使用者重跑 `/idd-diagnose #$NUMBER`
+
+下游 skill 看到 exit 1 時:**warn 但不 abort**(讓使用者決定要不要先 refresh 再 implement)。實作期引用 attachment 一律用 repo 相對 path(`.claude/.idd/attachments/issue-NNN/檔名`),不重複 paste 全文。
 
 ### Step 1.5: Resolve Extra Requirements
 

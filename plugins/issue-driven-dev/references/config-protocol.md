@@ -80,14 +80,27 @@ If `ask_each_time` is `false` or missing, the top-level `github_repo` wins by de
 
 ### Mechanism 4: Cascading config (walk-up)
 
-The skill walks up the directory tree from `cwd` looking for `.claude/issue-driven-dev.local.json`. **First found wins**.
+The skill walks up the directory tree from `cwd` looking for the config file. **First found wins**.
+
+**Path precedence(v2.35.0+,namespace 重組)**:
+
+1. **New(preferred)**: `.claude/.idd/local.json`
+2. **Legacy(backward compat)**: `.claude/issue-driven-dev.local.json`
+
+Walk-up checks both at every level — new path takes precedence at the same level. If only legacy is found, skill continues normally but **MUST** print a one-line migration hint:
+
+```
+ℹ Found legacy config at <path>. Consider running:
+   mkdir -p <dir>/.claude/.idd && mv <path> <dir>/.claude/.idd/local.json
+   (legacy path will keep working, but new format is .claude/.idd/local.{md,json})
+```
 
 Note: this happens **before** mechanisms 2 and 3 in execution order — we need to find the config before we can read candidates / evaluate predicates. The numbering reflects logical priority, not execution order.
 
 **Stop boundaries** (whichever comes first):
 - `$HOME` directory (do not look outside the user's home)
 - The filesystem root `/`
-- A directory containing both `.git/` AND `.claude/issue-driven-dev.local.json` (treat as repo boundary)
+- A directory containing `.git/` AND **either** `.claude/.idd/local.json` **or** `.claude/issue-driven-dev.local.json` (treat as repo boundary)
 
 **Walk-up algorithm** (bash):
 
@@ -95,8 +108,14 @@ Note: this happens **before** mechanisms 2 and 3 in execution order — we need 
 find_idd_config() {
   local dir="$PWD"
   while [ "$dir" != "/" ] && [ "$dir" != "$HOME/.." ]; do
+    # New path wins at the same directory level
+    if [ -f "$dir/.claude/.idd/local.json" ]; then
+      echo "$dir/.claude/.idd/local.json"
+      return 0
+    fi
     if [ -f "$dir/.claude/issue-driven-dev.local.json" ]; then
       echo "$dir/.claude/issue-driven-dev.local.json"
+      # Skill should print migration hint when this branch fires
       return 0
     fi
     [ "$dir" = "$HOME" ] && break  # don't go above $HOME
@@ -105,6 +124,22 @@ find_idd_config() {
   return 1
 }
 ```
+
+**Migration command**(使用者一次搬完):
+
+```bash
+cd <repo-root>
+mkdir -p .claude/.idd
+[ -f .claude/issue-driven-dev.local.json ] && \
+  mv .claude/issue-driven-dev.local.json .claude/.idd/local.json
+[ -f .claude/issue-driven-dev.local.md ] && \
+  mv .claude/issue-driven-dev.local.md .claude/.idd/local.md
+[ -f .claude/state/idd-bridge.json ] && \
+  mkdir -p .claude/.idd/state && \
+  mv .claude/state/idd-bridge.json .claude/.idd/state/bridge.json
+```
+
+`idd-config` skill 在 v2.35.0+ 會偵測 legacy 路徑並 offer auto-migrate。
 
 **Example**:
 
@@ -391,8 +426,10 @@ When `Group(repos)` is returned: see Mechanism 6 — primary + tracking issues w
 
 Only `idd-issue` writes back to config, and only in these specific cases:
 
-1. **First-run fork detection** chose a target and there was no prior config — write the chosen target to `$PWD/.claude/issue-driven-dev.local.json`
-2. **First-run non-fork** auto-resolved origin — write to `$PWD/.claude/issue-driven-dev.local.json`
+1. **First-run fork detection** chose a target and there was no prior config — write the chosen target to `$PWD/.claude/.idd/local.json` (v2.35.0+; legacy `.claude/issue-driven-dev.local.json` MUST NOT be written for new installs)
+2. **First-run non-fork** auto-resolved origin — write to `$PWD/.claude/.idd/local.json`
+
+When writing config for the first time, also create `$PWD/.claude/.idd/local.md` with a brief frontmatter describing the resolution(matches the legacy `.md` companion file convention).
 
 In all other cases (--target override, candidates pick, walk-up to existing config), the config is **read-only**.
 

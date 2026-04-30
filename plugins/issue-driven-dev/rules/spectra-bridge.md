@@ -35,14 +35,14 @@ An IDD skill is "in a spectra context" if **any** of these signals are true:
 | `--resume-spectra="<topic>"` flag | explicit | 100% |
 | `--source` argument contains `spectra-discuss` | explicit-ish | 95% |
 | `spectra list --json` returns in-flight changes | environmental | 60% (could be unrelated) |
-| `.claude/state/idd-bridge.json` exists with `active_spectra_session: true` | written by spectra (future contract) | 100% |
+| `.claude/.idd/state/bridge.json` exists with `active_spectra_session: true` | written by spectra (future contract) | 100% |
 | Conversation context (skill caller knows it was launched from spectra) | implicit | varies |
 
 If at least one signal fires → set `SPECTRA_BRIDGE_ACTIVE=1`. Otherwise, no bridge action.
 
 ## Bookmark file (Step N before exit)
 
-When `SPECTRA_BRIDGE_ACTIVE=1`, before the skill exits, write `.claude/state/idd-bridge.json`:
+When `SPECTRA_BRIDGE_ACTIVE=1`, before the skill exits, write `.claude/.idd/state/bridge.json`:
 
 ```json
 {
@@ -91,7 +91,7 @@ to continue with full context preserved:
     - App 是「平台」還是「工具」？
     - Web Admin 是否必要？
 
-State saved to: .claude/state/idd-bridge.json
+State saved to: .claude/.idd/state/bridge.json
 ═══════════════════════════════════════════════════════════
 ```
 
@@ -109,16 +109,17 @@ The block is **printable text** — not a tool call, not auto-invoked. The user 
 ## Hard rules
 
 1. **Never auto-invoke spectra-discuss.** The user controls pacing. The skill only emits a resume prompt.
-2. **Bookmark is best-effort.** If `.claude/state/` doesn't exist or is read-only, log a warning and emit the resume prompt anyway (the prompt is the actual recovery mechanism; bookmark is convenience).
+2. **Bookmark is best-effort.** If `.claude/.idd/state/` doesn't exist or is read-only, log a warning and emit the resume prompt anyway (the prompt is the actual recovery mechanism; bookmark is convenience).
 3. **Don't bridge silently.** Always tell the user the bridge fired ("Detected spectra context. Resume prompt below.") so they know to look for it.
 4. **Verbatim topic preservation.** Don't paraphrase `spectra_topic` — the user's original wording carries assumptions that paraphrasing can lose.
-5. **Stateless from spectra's side.** This rule only governs what IDD skills do. Spectra plugin authors may opt to read `idd-bridge.json` but are not required to.
+5. **Stateless from spectra's side.** This rule only governs what IDD skills do. Spectra plugin authors may opt to read `bridge.json` but are not required to.
+6. **Backward compat (v2.35.0+ namespace migration).** Read **new path first** (`.claude/.idd/state/bridge.json`),fallback to **legacy** (`.claude/state/idd-bridge.json`)。新 bookmark 一律寫新路徑;偵測到 legacy 印一行 hint:`ℹ Found legacy bridge at .claude/state/idd-bridge.json. Move to .claude/.idd/state/bridge.json.`
 
 ## Future: spectra-side complement
 
 If/when spectra-discuss adds bridge support, the contract is:
 
-- spectra-discuss writes `.claude/state/idd-bridge.json` on entry with `active_spectra_session: true`, `topic`, `started_at`
+- spectra-discuss writes `.claude/.idd/state/bridge.json` on entry with `active_spectra_session: true`, `topic`, `started_at`
 - IDD skills detect the file, read its `topic`, and produce richer resume prompts
 - spectra-discuss on resume reads the file's `idd_action_url` and surfaces it: "Last interruption: idd-comment at <url> — continuing from there"
 

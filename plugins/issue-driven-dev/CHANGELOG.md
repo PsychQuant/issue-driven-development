@@ -1,5 +1,102 @@
 # Changelog
 
+## 2.35.0 — 2026-04-30
+
+### NEW: `scripts/process-attachments.sh` + `rules/process-attachments.md` — attachment 上下游處理協定
+
+Closes a recurring gap: `gh issue view --json` 抓不到 issue body 含的 user-attachments docx/pdf 內容,IDD skills 過去全程沒處理 → diagnosis 漏關鍵 source-of-truth(歷史案例:kiki830621/collaboration_liu-thesis-analysis#21 摘要 docx 結尾段落「mismatch / SP 作為機制 / construct mapping」三條 narrative bridge 因 idd-diagnose 沒讀附件被遺漏,後續 spectra-propose 重建 design/spec/tasks 全部要回頭補)。
+
+**設計選擇**:把機械工作(detection / curl / sha256 / manifest write / diff check / disk verify)放進 `scripts/process-attachments.sh` helper,**不**依賴 SKILL.md 文檔 link 讓 Claude follow — shell call 一定執行,文檔 link Claude 不一定 follow。SKILL.md 只 call `bash $CLAUDE_PLUGIN_ROOT/scripts/process-attachments.sh {download|check|verify} <NUMBER>`,parse 部分(docx → text)由 Claude 用 MCP tool(che-word-mcp / che-pdf-mcp / Read)處理,因為 parse 本來就需要 LLM 介入。
+
+### Helper script: 3 個 commands
+
+| Command | 用途 | 主要 caller | Exit code 0 / 1 |
+|---------|------|-------------|-----------------|
+| `download <N>` | 偵測 issue body/comments 的 attachment URL,curl 下載到 `.claude/.idd/attachments/issue-N/`,寫 `_manifest.json` | idd-diagnose Step 1.5 / idd-issue | 0=完成或無 attachment;1=部分下載失敗(error 條目寫進 manifest) |
+| `check <N>` | 確認 manifest 涵蓋當下 issue attachment list;偵測 diagnose 後新增 | idd-implement Step 1.2 / idd-verify Step 1.5 / idd-report | 0=up-to-date;1=manifest missing 或有新增(警告但不 auto-repair) |
+| `verify <N>` | 確認 manifest 列出的檔案在 disk 上還在 | idd-close Step 1.4 | 0=all present;1=部分被搬走/刪掉(警告但不 abort close) |
+
+Repo 自動從 walk-up config 解析(支援新 `.claude/.idd/local.json` / 舊 `.claude/issue-driven-dev.local.json` / 更舊 `.claude/issue-driven-dev.local.md` YAML frontmatter);可用 `--repo owner/repo` 顯式 override。`IDD_CALLER` 環境變數記錄到 manifest `fetched_by` 欄位作 audit。
+
+### 上下游責任分工
+
+- **上游下載(`idd-issue`, `idd-diagnose`)** — call `download` 機械抓取 + manifest;Claude 後續用 MCP-first parser 讀內容(`.docx` → che-word-mcp、`.pdf` → che-pdf-mcp、圖片 → Read tool;fallback pandoc / pdftotext)
+- **下游檢查(`idd-implement`, `idd-verify`, `idd-close`, `idd-report`)** — call `check` 或 `verify`,缺漏輸出警告引導使用者重跑 idd-diagnose,**不 auto-fetch**(避免 mask 上游 skill bug)
+- **不適用** — idd-list / idd-config(不分析 issue 內容)
+
+### Manifest schema(`_manifest.json`)
+
+```json
+{
+  "issue": 21,
+  "fetched_at": "2026-04-30T03:13:02Z",
+  "fetched_by": "idd-diagnose",
+  "files": [
+    {"filename": "1.docx", "url": "https://...", "sha256": "2ae0...", "size_bytes": 16363}
+  ]
+}
+```
+
+下載失敗的條目改為 `{filename, url, error: "download_failed"}`。
+
+### Namespace 重組:`.claude/.idd/`
+
+統一所有 idd 工作流檔案到 `.claude/.idd/`:
+
+```
+.claude/.idd/
+  ├── local.md         # was .claude/issue-driven-dev.local.md
+  ├── local.json       # was .claude/issue-driven-dev.local.json
+  ├── state/
+  │   └── bridge.json  # was .claude/state/idd-bridge.json
+  └── attachments/
+      └── issue-NNN/   # 新功能
+```
+
+理由:idd config + state + attachments 屬於 issue 工作流,不該散在 `.claude/` root 跟 `.claude/state/` 兩處;統一到 `.claude/.idd/` 子目錄讓 namespace 收斂,協作者一看就知道「這些是 IDD 的東西」。
+
+### Backward compat
+
+Walk-up search 同時找新舊路徑,**新路徑優先**;偵測到 legacy(`.claude/issue-driven-dev.local.json` / `.claude/state/idd-bridge.json`)印一行 migration hint 但 skill 仍正常運作。新 install 一律寫新路徑(config-protocol.md `When skills should write back to config` 段落更新)。
+
+Migration 命令:
+
+```bash
+cd <repo-root>
+mkdir -p .claude/.idd .claude/.idd/state
+[ -f .claude/issue-driven-dev.local.json ] && mv .claude/issue-driven-dev.local.json .claude/.idd/local.json
+[ -f .claude/issue-driven-dev.local.md ] && mv .claude/issue-driven-dev.local.md .claude/.idd/local.md
+[ -f .claude/state/idd-bridge.json ] && mv .claude/state/idd-bridge.json .claude/.idd/state/bridge.json
+```
+
+### Changes
+
+- **NEW** `plugins/issue-driven-dev/scripts/process-attachments.sh`(150 行 bash + python3 inline,3 個 commands;支援 walk-up config 含 .md frontmatter fallback)
+- **NEW** `plugins/issue-driven-dev/rules/process-attachments.md`(薄薄的:scope / storage / manifest schema doc / parser strategy / reference convention / .gitignore guidance / 6 條 iron rules;機械邏輯不重複,引用 helper script)
+- `skills/idd-diagnose/SKILL.md` — Bootstrap Task List 加 `download_attachments`;Step 1.5 改為 `bash $CLAUDE_PLUGIN_ROOT/scripts/process-attachments.sh download $NUMBER` + Claude 後續 parse
+- `skills/idd-implement/SKILL.md` — Bootstrap Task List 加 `check_attachments`;Step 1.2 改為 `bash ... check $NUMBER`,exit 1 警告不 abort
+- `skills/idd-verify/SKILL.md` — Bootstrap Task List 加 `check_attachments`;Step 1.5 改為 `bash ... check $NUMBER`,把 attachment path 塞進 reviewer agent prompt 作 source-of-truth
+- `skills/idd-close/SKILL.md` — Bootstrap Task List 加 `check_attachments`;Step 1.4 改為 `bash ... verify $NUMBER`,disk integrity check
+- `references/config-protocol.md` — Walk-up algorithm 雙路徑;first-run write 寫新路徑;新增 Migration command
+- `rules/spectra-bridge.md` — bookmark path 全面換新;Hard rule #6 加 backward compat 條款
+- `CLAUDE.md` — 新增「Attachments」「Namespace Migration」段
+
+### Iron rules added
+
+- 下載 = mandatory for upstream(idd-diagnose 偵測到 attachment URL 必須下載,不可跳過)
+- Reference by path, never by URL(comment / report 一律用 repo 相對 path)
+- Failure must be visible(下載 / parse 失敗一律輸出警告,禁止靜默)
+- Downstream never auto-repairs upstream(下游發現 manifest 缺漏 → 警告 + 引導,不偷偷補抓)
+- Storage location is fixed(`.claude/.idd/attachments/issue-{NNN}/`,skill 不允許各自選位置)
+- Script is source of truth(機械工作由 helper script 處理,SKILL.md 不得 inline 重新實作)
+
+### Out of scope (留下次)
+
+- `idd-issue` 處理「下載別人 issue 的 attachment」(目前只處理「上傳本地素材」,反方向)
+- `idd-report` / `idd-all` 的 attachment check
+- `idd-config` 的 auto-migrate 命令(目前只在 walk-up 印 hint,沒主動搬)
+- `.gitignore` template 自動生成
+
 ## 2.33.0 — 2026-04-28
 
 ### NEW: `MANIFESTO.md` — methodology thesis

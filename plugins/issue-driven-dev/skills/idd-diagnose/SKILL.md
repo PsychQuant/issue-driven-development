@@ -50,6 +50,7 @@ Aggregate report 在最後輸出（每個 issue 的 complexity 判定 + comment 
 
 ```
 TaskCreate(name="read_issue", description="gh issue view #NNN 讀 title/body/labels/comments")
+TaskCreate(name="download_attachments", description="偵測 issue body/comments 的 attachment URL 全部下載到 .claude/.idd/attachments/issue-NNN/,寫 _manifest.json,parse(MCP-first: che-word-mcp / che-pdf-mcp / Read for images)。依 rules/process-attachments.md。忽略附件 = 忽略來源,違反鐵律。")
 TaskCreate(name="diagnose_by_type", description="依 issue type 做診斷: bug→RCA / feature→需求分析 / refactor→現狀分析")
 TaskCreate(name="post_diagnosis_report", description="產出 Diagnosis Report 並 comment 到 issue(非只在對話中顯示)")
 TaskCreate(name="complexity_assessment", description="Simple vs SDD-warranted 判定並寫入 report 的 Complexity 欄位")
@@ -72,6 +73,33 @@ gh issue view $NUMBER --repo $GITHUB_REPO --json title,body,labels,comments
 ```
 
 識別 issue type：bug / feature / refactor / docs。
+
+### Step 1.5: 下載 Attachment(強制)
+
+依 [`rules/process-attachments.md`](../../rules/process-attachments.md),helper script 處理機械工作:
+
+```bash
+IDD_CALLER=idd-diagnose bash $CLAUDE_PLUGIN_ROOT/scripts/process-attachments.sh download $NUMBER
+```
+
+Exit code:
+- `0` — 下載完成(或 issue 無 attachment,empty manifest 已寫)
+- `1` — 部分檔案下載失敗(error 條目已寫進 manifest,警告 surface 給使用者)
+- `2` — usage / repo resolution 失敗
+
+下載完成後 **必須** 用 MCP-first parser 讀檔案內容(由 Claude 而非 script 處理):
+
+| 副檔名 | 工具 |
+|--------|------|
+| `.docx` | `che-word-mcp` MCP tool;fallback `pandoc -f docx -t markdown` |
+| `.pdf` | `che-pdf-mcp` MCP tool;fallback `pdftotext` |
+| `.png` / `.jpg` / 等圖片 | `Read` tool(多模態直讀) |
+
+把 attachment 摘要納入 diagnosis 的 source-of-truth,在 Diagnosis Report 引用時用相對 path:`.claude/.idd/attachments/issue-NNN/檔名`。
+
+**沒有 attachment** → script 寫空 manifest 後 exit 0,Diagnosis Report 標明「issue 無 attachment」。
+
+**有 attachment 但 fetch 失敗** → script 把 error 條目寫進 manifest,Report 標明「attachment X 未能讀取,後續分析可能不完整」(禁止靜默)。
 
 ### Step 2: 依類型診斷
 

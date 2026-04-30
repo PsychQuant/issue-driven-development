@@ -93,7 +93,8 @@ idd-verify #NNN
 
 ```
 TaskCreate(name="get_diff_and_issue", description="git diff + gh issue view,存 diff 到 /tmp 供 agents 讀取")
-TaskCreate(name="launch_parallel_reviewers", description="6 個 tool calls 同一 message: TeamCreate + 5 Agent(requirements/logic/security/regression/devils-advocate) + 1 Bash codex")
+TaskCreate(name="check_attachments", description="確認 .claude/.idd/attachments/issue-NNN/ 存在,把 attachment 路徑塞進 reviewer agent prompt 作為 source-of-truth context。manifest 缺漏 → 警告繼續(reviewer 仍跑,但 verification 完整度受限)。依 rules/process-attachments.md。")
+TaskCreate(name="launch_parallel_reviewers", description="6 個 tool calls 同一 message: TeamCreate + 5 Agent(requirements/logic/security/regression/devils-advocate) + 1 Bash codex,prompt 中引用 attachment 路徑")
 TaskCreate(name="wait_for_claude_agents", description="等 5 Claude teammates 全部 idle,讀 /tmp/verify_${NUMBER}_findings_*.md")
 TaskCreate(name="wait_for_codex", description="等 Codex 背景任務完成,讀 /tmp/codex-verify-${NUMBER}.md")
 TaskCreate(name="merge_findings", description="合併 6 個來源 findings 去重,severity 取最高")
@@ -124,6 +125,20 @@ git diff --stat HEAD~1
 # 取 issue
 gh issue view $NUMBER --repo $GITHUB_REPO --json title,body
 ```
+
+### Step 1.5: 檢查 Attachment(下游,給 reviewer agents 用)
+
+依 [`rules/process-attachments.md`](../../rules/process-attachments.md):
+
+```bash
+IDD_CALLER=idd-verify bash $CLAUDE_PLUGIN_ROOT/scripts/process-attachments.sh check $NUMBER
+```
+
+Exit code:
+- `0` — manifest 完整,reviewer prompt 可引用 `.claude/.idd/attachments/issue-NNN/` 下檔案
+- `1` — manifest 缺漏或有新增 attachment → 警告但繼續(reviewer 仍跑,但 verification 完整度受限,在 final report 註明)
+
+把 attachment 路徑列入 Step 2 的 reviewer prompt 作為 source-of-truth context(尤其 requirements reviewer 需要原始需求文件)。**禁止**只在 prompt 寫「issue 有附件」而不給具體 path — reviewer agents 看不到 path 等於沒附件。
 
 ### Step 2: 平行啟動 Agent Team + Codex
 
