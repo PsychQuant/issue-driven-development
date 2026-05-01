@@ -130,18 +130,20 @@ Suggested next:
   #6 [diagnosed] → /idd-implement #6
 ```
 
-對應規則：
+對應規則（v2.36.0+ 含 Complexity-aware suggestion）：
 
 | Phase | Next |
 |-------|------|
 | `created` | `/idd-diagnose #N` |
-| `diagnosed` | `/idd-implement #N` |
-| `planning` | `/idd-implement #N` |
+| `diagnosed` | 依 diagnosis 的 `### Complexity` 欄位:<br>• `Simple` → `/idd-implement #N`<br>• `Plan` → `/idd-plan #N`<br>• `Spectra` (含 alias `SDD-warranted`) → `/spectra-discuss` (default) 或 `/spectra-propose` (opt-out)<br>• 推不出 Complexity → `/idd-implement #N`（保守 default） |
+| `planning` | `/idd-implement #N`（plan 已 approved，繼續實作）|
 | `implemented` | `/idd-verify #N` |
 | `verified` | `/idd-close #N` |
 | `needs-fix` | `/idd-diagnose #N`（重新分析為什麼 verify fail）|
 | `closed` | _(略)_ |
 | `(no phase)` | `/idd-update #N` 先同步狀態，再 `/idd-diagnose #N` |
+
+**Complexity 解析**：對 phase=`diagnosed` 的 issue，掃最新 `## Diagnosis` comment 的 `### Complexity` 行（regex `### Complexity\n([A-Za-z-]+)`），取第一個 token。`SDD-warranted` 視同 `Spectra`。
 
 ## 鐵律
 

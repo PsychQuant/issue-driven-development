@@ -167,6 +167,62 @@ v3.13.0  closes #56 — fix + 1 round-trip test pass
 
 ---
 
+## Anti-pattern: SDD escalation 過度敏感（2026-04-30 修訂）
+
+SDD ⊂ IDD 的包含關係不代表「複雜的 issue 都該升級 SDD」。實務上 IDD → SDD 升級**最常見的 failure mode 是 over-trigger** — 把 cross-file research analysis、多步驟 narrative work、multi-doc edits 等「scope 大但無 spec contract 需求」的 issue 強行升級成 spectra change,結果 spec/design/tasks artifacts 變成 fluid wording 的 freeze 嘗試,反覆 ingest 修訂卻 converge 不了。
+
+### Case study: `kiki830621/collaboration_liu-thesis-analysis#21`
+
+**Issue 性質**: research analysis(Exp2 SP-stratified contrasts vs Exp3 Human/Speaker + 摘要 v22 改寫)。Deliverable 是 R script outputs + abstract wording + cross-issue comments,**沒有任何 caller 會依賴的 reusable abstraction**。
+
+**前版 OR-trigger logic 命中**:
+- ✓ 改動跨 3+ 檔案(R script + outputs/ + docs/ + 摘要)
+- ✓ Strategy 5+ 步驟(setup + partition + contrasts + sensitivity + narrative)
+- ✗ 新可重用抽象、新 protocol、modify normative spec — 全 No
+
+兩個 false-positive(scope hint)讓 issue 升級 SDD。
+
+**實際 outcome**:
+- Spectra change 經三輪 framing 修訂(over-claim「SP 之外 affordance」 → HsuanYuLiuuu Q2 push-back 撤回 → over-claim「重要因素 vs 重要基礎」 → 第三輪撤回到老師原版 wording)
+- 真正的 surgical work(加 Low-SP × Human contrast + 撤 over-claim wording)在第二輪 follow-up 走 Simple path 才精準完成
+- HsuanYuLiuuu 的 Q1+Q2 collaborator pushback 比 6-AI verify 更有效;這類 review 用 IDD comments 已足夠
+- 過度生產的 narrative artifacts(`sp_stratified_narrative.md` / `sp_construct_mapping.md` / `mismatch_hypothesis_predictions.md`)是 spec 思維的副產品,實際**不一定進論文**
+
+### 為什麼 narrative work 不適合 SDD
+
+Spec 是 contract — 給 caller 用來驗證 conformance。Narrative wording(摘要、論文段落、報告)**by design 是 fluid 的**:它隨 reviewer feedback、advisor pushback、journal style guide 演化。試圖 spec 化 narrative 會產出每次都要 rewrite 的脆弱文件,而不是穩定的 contract。
+
+Ad-hoc analysis script 同理:當 question 答完,script 進 archive,不會被 future caller 呼叫,沒 contract 需要 verify。
+
+### 修正後的 logic(v2.36.0+)
+
+`rules/sdd-integration.md` 改為 **4-layer 評估產出 3-tier verdict**:
+
+**4-layer evaluation**:
+
+1. **Layer 1 disqualifiers**(任一命中 → 強制 Simple): narrative deliverable / ad-hoc analysis / no-caller code / multi-file independent
+2. **Layer 2 + Layer 3 (Spectra)**: Layer 2 必要條件(published API/protocol/skill/tool 給 future callers + documented contract) + Layer 3 至少一個(modify normative spec / cross-spec impact / architectural decision)
+3. **Layer P (Plan)**: 至少一個 — 2+ 互依檔案 / 5+ ordered steps / decision-heavy with 2+ valid approaches / risk-sensitive boundary / cross-file refactor without external contract change
+4. 否則 → Simple(default)
+
+**3-tier verdict**:
+
+| Verdict | Path | 場景 |
+|---------|------|------|
+| `Simple` | `/idd-implement #N` | clear root cause、單檔、follow existing pattern |
+| `Plan` (新) | `/idd-plan #N` | think before leap，但無 published API contract |
+| `Spectra` (rename from `SDD-warranted`) | `/spectra-discuss → spectra-propose → spectra-apply` | 有 published API contract 給 future callers |
+
+`SDD-warranted` 保留為 backward-compat alias(parse as `Spectra`),既有 issue 的 diagnosis comment 不需重寫。
+
+**跨檔案** 跟 **多步驟** 從 SDD trigger 降為 Plan signal — 它們表示「需要 deliberation」,不表示「需要 spec contract」。default = Simple,Plan/Spectra 都需 explicit escalation。
+
+> **教訓**: 「scope 大」、「需要先想清楚」、「需要 spec contract」是 **三件**事，不是兩件。前者用 IDD checklist + sequential sub-tasks 處理；中者用 Plan tier 的 EnterPlanMode approval gate；後者才需要 Spectra 的 spec/proposal/tasks artifacts。三層都是工具，工具錯用比工具不用更貴。
+>
+> **為什麼新增 Plan tier**: che-word-mcp#104 是 motivating example — 被判 Simple 直接 implement，6-AI verify 才抓到 P1 sub-bug(Run.toXML rawXML short-circuit 默默蓋掉 Run.text 寫入)。Implementation Plan 在 EnterPlanMode 給 user review 30 秒就能抓到的 case，省下後續補 commit 的迴圈。Plan tier 對「已知 risky boundary 的單筆改動」是 sweet spot。
+
+---
+
 ## 這個 plugin 不是什麼
 
 - **不是另一個 issue tracker**。GitHub Issues 已經夠用。IDD 不取代 issue tracker，是定義「以 issue 為中心的開發紀律」。

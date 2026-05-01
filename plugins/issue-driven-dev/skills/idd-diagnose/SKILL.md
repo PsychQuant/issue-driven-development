@@ -53,7 +53,7 @@ TaskCreate(name="read_issue", description="gh issue view #NNN 讀 title/body/lab
 TaskCreate(name="download_attachments", description="偵測 issue body/comments 的 attachment URL 全部下載到 .claude/.idd/attachments/issue-NNN/,寫 _manifest.json,parse(MCP-first: che-word-mcp / che-pdf-mcp / Read for images)。依 rules/process-attachments.md。忽略附件 = 忽略來源,違反鐵律。")
 TaskCreate(name="diagnose_by_type", description="依 issue type 做診斷: bug→RCA / feature→需求分析 / refactor→現狀分析")
 TaskCreate(name="post_diagnosis_report", description="產出 Diagnosis Report 並 comment 到 issue(非只在對話中顯示)")
-TaskCreate(name="complexity_assessment", description="Simple vs SDD-warranted 判定並寫入 report 的 Complexity 欄位")
+TaskCreate(name="complexity_assessment", description="3-tier 判定 Simple / Plan / Spectra 並寫入 report 的 Complexity 欄位（v2.36+，Spectra rename from SDD-warranted；新增 Plan tier 介於 Simple 和 Spectra 之間）")
 TaskCreate(name="confirm_and_route", description="與使用者確認診斷正確,依 complexity 顯示下一步命令")
 TaskCreate(name="auto_update_body", description="Step 5: 跑 /idd-update #NNN 同步 issue body Current Status phase → diagnosed（強制，常被漏；同 idd-close 2.18.1 模式）")
 ```
@@ -183,8 +183,9 @@ Exit code:
 - [ ] 加測試 C
 
 ### Complexity
-{Simple / SDD-warranted}
-{如果 SDD-warranted，列出原因}
+{Simple / Plan / Spectra}
+{如果 Plan，列出觸發的 Layer P 信號}
+{如果 Spectra，列出 Layer 2 + Layer 3 觸發項}
 
 ### Risks
 {可能出錯的地方}
@@ -205,34 +206,102 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$DIAGNOSIS_REPORT"
 
 同時在對話中顯示 report，讓使用者可以即時確認。
 
-### Step 3.5: Complexity Assessment（SDD 判斷）
+### Step 3.5: Complexity Assessment (3-tier: Simple / Plan / Spectra)
 
-Diagnosis 完成後，評估是否需要走 Spec-Driven Development (SDD)：
+Diagnosis 完成後，依 4 層 gate 判定 Complexity。**Default = Simple。** 完整邏輯見 [`rules/sdd-integration.md`](../../rules/sdd-integration.md)。
 
-**SDD 觸發條件**（任一為 Yes → SDD-warranted）：
-- 改動跨 3+ 檔案且邏輯互相依賴？
-- 需要新的共用抽象（新函式、新模組、新 protocol）？
-- 涉及架構決策或設計 trade-off？
-- 影響多個既有 capability / spec？
-- Strategy 裡有 5+ 個步驟且有順序依賴？
+> **v2.36.0+ rename**：原本是二元 `Simple` / `SDD-warranted`，現在是三層 `Simple` / `Plan` / `Spectra`。`SDD-warranted` 是 `Spectra` 的 backward-compat alias（既有 issue 不需重寫）。Plan 是新增的中間層，覆蓋「想先想清楚再動手，但沒到要寫 spec contract」的常見場景。
 
-**判定結果寫入 Diagnosis Report 的 `### Complexity` 區段。**
+#### 評估順序（必須照此順序）
 
-如果 SDD-warranted：
-- **預設** Next Step：`/spectra-discuss`（先對齊方向，再進 propose）
-- **opt-out** Next Step：`/spectra-propose`（僅當方向極度明確時跳過 discuss）
-- Spectra change 的 proposal 應引用 issue #NNN 作為 motivation
-- 後續流程：`[spectra-discuss →] spectra-propose → spectra-apply → idd-verify #NNN → idd-close #NNN + spectra-archive`
+1. **Layer 1 disqualifiers** 任一命中 → `Simple`，停止
+2. **Layer 2 + Layer 3** 都命中 → `Spectra`
+3. **Layer P** 任一命中 → `Plan`
+4. 否則 → `Simple`（default）
 
-> **為什麼 discuss 是 default?** AI 常常高估 diagnosis 的完整度。一份看起來詳盡的 diagnosis 可能仍留下關鍵的未決項:命名、範圍邊界、多個合理方案中該選哪個、新產物要放哪裡。直接跳到 `spectra-propose` 會產生建立在未確認假設之上的 proposal。`spectra-discuss` 是對齊的 safety net — 強制把假設列出、讓使用者修正。跳過它應該是例外,不是預設。
+#### Layer 1: Simple-required disqualifiers（任一命中 → 強制 Simple）
+
+- 主要 deliverable 是 narrative / prose（摘要改寫、論文段落、報告、closing summary、wording polish、translation）
+- 主要 deliverable 是 ad-hoc analysis script（一次性 R/Python/Julia 分析,腳本本身不會被別 caller 呼叫;產出 tables/figures/reports 給人看）
+- 主要 deliverable 是更新既有 prose 但不改 behavior（typo、wording cleanup、文件 restructure）
+- Multi-file 但每個檔案 independent（parallel doc updates、parallel script tweaks;檔案數不是 routing 信號）
+
+任一命中 → 直接判 Simple，**完全跳過** Layer 2 / Layer P。**Plan / Spectra 對 fluid narrative / one-shot analysis 是 dead weight。**
+
+#### Spectra（Layer 2 + Layer 3，兩者皆需）
+
+`Spectra` 保留給「**為 future callers 產出 frozen contract**」的改動。
+
+**Layer 2: Necessary condition**
+
+- 改動會對外暴露 published API / protocol / skill / tool surface 給 future callers（function、MCP tool、plugin skill、agent、public Swift API、REST endpoint、OOXML element handler 等），**且** abstraction 的 behavior contract 應該為這些 callers 寫成 documented spec
+
+未命中 Layer 2 → **不走 Spectra**，掉到 Layer P（Plan）評估。
+
+**Layer 3: Spectra confirmation signals（至少一個命中，加在 Layer 2 之上）**
+
+- 修改既有 published spec 的 normative behavior（MUST/SHALL clause changes,影響 downstream maintainers）
+- 影響 2+ 既有 specs 需要 consistency-checking（cross-spec impact,需要協調更新）
+- Architectural decision with long-term maintenance implications（不是 method-level choice,是會被 future engineers 繼承的結構性決定）
+
+**Plan-Spectra 分界**：「published API/protocol 給 future callers」就是 line。內部 refactor 5 個檔案 → Plan；加新 MCP tool / plugin skill / public API → Spectra。
+
+#### Plan（Layer P，至少一個命中）
+
+如果 Layer 1 沒命中、Layer 2 沒滿足 Spectra，評估 Plan signals：
+
+- **2+ 檔案有順序依賴** — 檔案 A 的改動影響檔案 B 必須怎麼改，無法 parallel edit
+- **Strategy 有 5+ ordered steps** — sequential 複雜度，受惠於 explicit checkpoint
+- **Decision-heavy with 2+ valid approaches** — diagnosis 列出 2+ 實作策略，選哪個會影響 code shape（例如 regex splice vs DOM walker、optimistic-locking vs pessimistic、batch vs streaming）
+- **觸及 risk-sensitive 邊界** — concurrency、migrations、backward-compat shims、security-critical paths、save-durability、ordering semantics、atomic operations
+- **Cross-file refactor 但無 external contract change** — 抽 shared logic 成 helper、拆 god-function、rename internal API used by ≥3 callers
+
+任一命中 → `Plan`。Plan path 在 diagnosis 和 TDD execution 之間插入 `EnterPlanMode` approval gate — user 在 plan-mode UI 看 Implementation Plan，approve 或修改後再進 implementation。
+
+#### Simple（default，沒命中以上任何條件）
+
+- Bug fix with clear root cause + self-contained fix
+- 單檔案 change
+- 跟既有 pattern 走（例如加上第 N 個已知 visitor instance）
+- Cross-file research analysis（R/Python script + outputs + docs + abstract）
+- Narrative revision
+- Ad-hoc one-shot analysis where script is the deliverable
+- Multi-step workflow with no shared abstraction
+
+#### Verdict 寫入 Diagnosis Report
+
+把判定結果寫進 Diagnosis Report 的 `### Complexity` 區段。格式：
+
+```
+### Complexity
+{Simple / Plan / Spectra}
+
+{對 Simple：列出哪個 Layer 1 命中、或 Layer 2/P 都沒命中的說明}
+{對 Plan：列出觸發的 Layer P 信號}
+{對 Spectra：列出 Layer 2 + Layer 3 觸發項}
+```
+
+#### 各 verdict 的 Next Step
+
+| Verdict | Next Step | Flow |
+|---------|-----------|------|
+| `Simple` | `/idd-implement #NNN` | diagnose → implement → verify → close |
+| `Plan` | `/idd-plan #NNN` | diagnose → plan (EnterPlanMode 審查 Implementation Plan → 使用者 approve via ExitPlanMode) → implement → verify → close |
+| `Spectra` (default) | `/spectra-discuss` | diagnose → discuss → propose → apply → verify → close + archive |
+| `Spectra` (opt-out) | `/spectra-propose` | diagnose → propose → apply → verify → close + archive（僅當 ALL opt-out conditions 成立） |
+
+> **為什麼 discuss 是 Spectra default?** AI 常常高估 diagnosis 的完整度。一份看起來詳盡的 diagnosis 可能仍留下關鍵的未決項:命名、範圍邊界、多個合理方案中該選哪個、新產物要放哪裡。直接跳到 `spectra-propose` 會產生建立在未確認假設之上的 proposal。`spectra-discuss` 是對齊的 safety net — 強制把假設列出、讓使用者修正。跳過它應該是例外,不是預設。
 >
 > **何時可 opt-out 跳過 discuss?** 當且僅當以下**全部**成立:使用者已在 issue body 或 diagnosis 對話中明確選定方向、無命名/範圍/trade-off 的 open questions、Strategy 沒有未決項、遵循既有 pattern 無新抽象。任一不成立,保留 discuss。
+>
+> **為什麼 Plan 用 EnterPlanMode?** Plan tier 的價值是「approval checkpoint before any tool that modifies state」。Claude Plan Mode 是這個約束的 first-class API — `EnterPlanMode` 鎖到 read-only tool set，user 必須對呈現的 plan 點 approve（透過 `ExitPlanMode`）才能繼續。比 AskUserQuestion 更強約束（後者只是 yes/no 確認，agent 仍可以「忘了」就動手）。
 
-如果 Simple：
-- 照常走 `/idd-implement #NNN`
-
-> **核心原則**：不是所有 issue 都需要 SDD，但所有 SDD 都值得有一個 issue。
-> SDD 是 IDD 的 special case — issue 始終是工作的入口和出口。
+> **核心原則**：不是所有 issue 都需要 Plan / Spectra，但所有 Plan / Spectra 都值得有一個 issue。三層都是 IDD 的 special case — issue 始終是工作的入口和出口。
+>
+> **Anti-pattern: 三層 over-trigger**：
+> - Spectra over-trigger：cross-file refactor 沒對外暴露 API → 應該 Plan，不是 Spectra
+> - Plan over-trigger：clear root cause 單檔 fix → 應該 Simple，不是 Plan
+> - Simple under-served：che-word-mcp#104 P1 sub-bug — diagnosis 漏了 rawXML-shadowing case，approval gate 會抓到 → 應該 Plan
 
 ### Step 4: 確認 + Routing
 
@@ -246,17 +315,25 @@ Diagnosis comment 到 #NNN 後，進行兩階段確認:
 
 #### Stage 2: Routing（根據 Complexity 選下一步）
 
-**如果 Complexity = Simple**:
-- 直接提示下一步命令:
+**如果 Complexity = `Simple`**:
+- 直接顯示下一步命令:
   ```
   /issue-driven-dev:idd-implement #NNN
   ```
 
-**如果 Complexity = SDD-warranted**:
+**如果 Complexity = `Plan`**:
+- 直接顯示下一步命令:
+  ```
+  /issue-driven-dev:idd-plan #NNN
+  ```
+- `idd-plan` 內部會呼叫 `EnterPlanMode`、呈現完整 Implementation Plan 給使用者審查、等 user 透過 `ExitPlanMode` approve 後才 chain 到 `idd-implement`。
+- 不要自動 invoke — 使用者應主導 pacing（同 Spectra 路徑慣例）。
+
+**如果 Complexity = `Spectra`**（含 backward-compat alias `SDD-warranted`）:
 - **必須**使用 **AskUserQuestion 工具**強制使用者在 `spectra-discuss` 和 `spectra-propose` 之間明確選擇,不可預設任一方向自動繼續
 - AskUserQuestion 的 question 和 options 範例:
   ```
-  question: "SDD-warranted。預設走 spectra-discuss 對齊方向，要 opt-out 嗎？"
+  question: "Spectra。預設走 spectra-discuss 對齊方向，要 opt-out 嗎？"
   options:
     - label: "spectra-discuss (default)"
       description: "先列 assumptions 讓你 correct，對齊後才寫 proposal。適用於還有 naming / 範圍 / trade-off 的不確定。"
@@ -267,9 +344,13 @@ Diagnosis comment 到 #NNN 後，進行兩階段確認:
   - 選 `spectra-discuss` → 顯示:`/spectra-discuss` 並附上 topic 建議(例如 issue 標題或核心議題)
   - 選 `spectra-propose` → 顯示:`/spectra-propose`
 
-> **為什麼強制選擇而非給 default?** diagnose 階段 AI 常常高估 strategy 的確定性。若只給「建議」使用者容易忽略並直接跳 propose。AskUserQuestion 把這個決定明確化,避免「忘記走 discuss」。
+> **為什麼 Spectra 強制選擇而非給 default?** diagnose 階段 AI 常常高估 strategy 的確定性。若只給「建議」使用者容易忽略並直接跳 propose。AskUserQuestion 把這個決定明確化,避免「忘記走 discuss」。
 >
-> **為什麼只顯示命令而不自動 invoke?** 使用者應該主導流程節奏。自動 invoke spectra skills 會讓使用者失去對何時進入下一階段的 visibility 和控制。idd-diagnose 的職責到「告訴使用者下一步是什麼」為止,實際執行由使用者主導。
+> **為什麼 Simple / Plan 不需要 AskUserQuestion?** 兩條路徑都只有一個合理 next command（idd-implement / idd-plan），沒有 opt-out 分支需要決定。
+>
+> **為什麼只顯示命令而不自動 invoke?** 使用者應該主導流程節奏。自動 invoke 下游 skills 會讓使用者失去對何時進入下一階段的 visibility 和控制。idd-diagnose 的職責到「告訴使用者下一步是什麼」為止,實際執行由使用者主導。
+
+> **Backward compat (v2.36.0+)**：若 diagnosis comment 寫了 `SDD-warranted`（pre-v2.36 格式），routing 視同 `Spectra` 處理。新 diagnosis comment **必須**寫 `Spectra`。
 
 ### Step 5: Auto-Update Issue Body（強制，不可省略）
 
@@ -296,22 +377,30 @@ Skill(skill="issue-driven-dev:idd-update", args="#NNN")
 
 ## Next Step
 
-Diagnosis 確認後,依 Complexity 分流:
+Diagnosis 確認後,依 Complexity 分流（v2.36.0+ 三路）:
 
-**Complexity = Simple**:
+**Complexity = `Simple`**:
 ```
 /issue-driven-dev:idd-implement #NNN
 ```
 
-**Complexity = SDD-warranted (default — discuss first)**:
+**Complexity = `Plan`**:
+```
+/issue-driven-dev:idd-plan #NNN
+```
+`idd-plan` 內部會用 EnterPlanMode 把 Implementation Plan 呈現給使用者審查，approve 後才執行 TDD loop。
+
+**Complexity = `Spectra` (default — discuss first)**:
 ```
 /spectra-discuss
 ```
 對齊方向後再執行 `/spectra-propose`。
 
-**Complexity = SDD-warranted (opt-out — 方向已明確)**:
+**Complexity = `Spectra` (opt-out — 方向已明確)**:
 ```
 /spectra-propose
 ```
 
 > Step 4 會透過 AskUserQuestion 強制使用者在 discuss / propose 之間選擇,避免漏走 discuss。
+>
+> **Backward compat**: 若舊 issue 的 Complexity 寫 `SDD-warranted`，視同 `Spectra` 處理。新 diagnosis 必須寫 `Spectra`。

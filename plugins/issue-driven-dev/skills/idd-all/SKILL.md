@@ -55,7 +55,7 @@ idd-all 不取代 atomic skills,而是包它們。每個 phase 仍透過 `Skill(
 TaskCreate(name="preflight", description="Phase 0: 檢查 git clean / gh auth / 解析 args / 建 feature branch")
 TaskCreate(name="ensure_issue", description="Phase 1: 若 from-scratch 則跑 idd-issue; from-issue 則 verify issue 存在")
 TaskCreate(name="diagnose", description="Phase 2: 跑 idd-diagnose,讀回 complexity 判定")
-TaskCreate(name="implement_or_sdd", description="Phase 3: Simple → idd-implement --pr; SDD → spectra-discuss → spectra-propose → spectra-apply (chained, unattended)")
+TaskCreate(name="implement_or_sdd", description="Phase 3 (v2.36+): Simple/Plan → idd-implement --pr (Plan 在 unattended 下退化成 Simple); Spectra → spectra-discuss → spectra-propose → spectra-apply (chained, unattended). SDD-warranted 是 Spectra 的 legacy alias.")
 TaskCreate(name="verify_loop", description="Phase 4: idd-verify; blocking findings 自動修復(最多 2 round); follow-ups → 開新 issue")
 TaskCreate(name="open_pr", description="Phase 5: git push + gh pr create(body 含 Refs #N, 不含 Closes)")
 TaskCreate(name="report_and_stop", description="Phase 6: 顯示 PR URL + 提示 user 可 merge 後跑 /idd-close")
@@ -174,9 +174,13 @@ print(m.group(1).strip() if m else 'UNKNOWN')
 | Complexity 值 | 下一步 |
 |--------------|--------|
 | `Simple` | Phase 3a: idd-implement |
-| `SDD-warranted` | Phase 3b: spectra-discuss → spectra-propose → spectra-apply (unattended chain) |
+| `Plan` | Phase 3a: idd-implement（Plan tier 的 approval gate **被跳過**, idd-all 不走 user-approval flow — 在 final report 標記 `[Plan tier skipped under unattended mode]`，並建議 user 之後手動 review the implementation comment）|
+| `Spectra` | Phase 3b: spectra-discuss → spectra-propose → spectra-apply (unattended chain) |
+| `SDD-warranted` (legacy alias) | 視同 `Spectra` 處理（v2.36.0+ backward compat）|
 | `UNKNOWN` | **abort** — diagnose 沒判定 complexity,user 需手動釐清 |
 
+> **Plan tier 在 unattended idd-all 下退化成 Simple**(v2.36.0+)：Plan tier 的核心價值是 user approval via `EnterPlanMode`/`ExitPlanMode`。idd-all 的 contract 是 unattended (fire-and-forget)，沒有 user 在 review plan，所以 Plan path 直接跳到 idd-implement，**並在 final report 顯著標記 `[Plan tier deliberation skipped]`**，提示 user：(a) 若這個 issue 真的需要 Plan tier 的 approval gate，應該手動跑 `/idd-plan #NNN` 而非 `idd-all`；(b) 若 unattended 是刻意選擇，可在 implement 後 review final commit + verify findings 補做 deliberation。
+>
 > **SDD path 是 unattended 的**(v2.28.0+):idd-all 的 contract 是 fire-and-forget,所以 SDD path 也必須跑完整條 — 不停在 discuss 等對齊、不停在 propose 等 Park/Apply 抉擇。每個 spectra-* 呼叫都帶 explicit unattended hint(見 Phase 3b),sub-skill 看到 hint 就知道抑制 AskUserQuestion。如果 user 想要 attended SDD discussion,**不該**用 `idd-all` — 該用 `idd-diagnose` 後手動 `/spectra-discuss` + `/spectra-propose` + `/spectra-apply`。
 
 ---

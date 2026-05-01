@@ -184,6 +184,9 @@ gh issue edit $NUMBER --repo $GITHUB_REPO --body "$UPDATED_BODY"
 # 在 idd-diagnose 結尾
 → idd-update #NNN（自動，phase = diagnosed）
 
+# 在 idd-plan 結尾（v2.36.0+ Plan tier）
+→ idd-update #NNN（自動，phase = planning，標示「Plan tier approval gate 已通過」）
+
 # 在 idd-implement 結尾
 → idd-update #NNN（自動，phase = implemented）
 

@@ -256,15 +256,17 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$IMPLEMENTATION_PLAN"
 
 ### Step 2.5: Bootstrap TodoList（non-Spectra case）
 
-**判斷是否走 Spectra**：讀最新的 diagnosis comment 的 `### Complexity` 欄位：
+**判斷 Complexity routing**：讀最新的 diagnosis comment 的 `### Complexity` 欄位（v2.36.0+ 三路）：
 
 | Complexity | 行為 |
 |-----------|------|
 | `Simple` | ✅ 本 step 啟動 TaskList 追蹤每個 checklist item |
-| `SDD-warranted` | ⏭ 跳過本 step（由 `spectra-apply` 管 `openspec/changes/<name>/tasks.md`）|
+| `Plan` | ✅ 同 Simple — TaskList 啟動。**注意**：使用者通常透過 `/idd-plan #NNN` 呼叫進來，approval gate 已在 idd-plan 處理完，本 skill 直接走 TDD loop。若使用者直接呼叫 `/idd-implement` 而 Complexity=Plan，**先提示**「Complexity 判定為 Plan，建議改走 `/idd-plan #NNN` 進入 approval gate；繼續直接 implement 等於跳過 Plan tier 的 deliberation 價值」並用 AskUserQuestion 確認 continue/abort |
+| `Spectra` | ⏭ 跳過本 step（由 `spectra-apply` 管 `openspec/changes/<name>/tasks.md`）|
+| `SDD-warranted` (legacy alias) | ⏭ 跳過本 step — 視同 `Spectra` 處理（v2.36.0+ backward compat）|
 | _(missing / unclear)_ | ✅ 預設當 Simple，啟動 TaskList（保守作法）|
 
-**Simple case 執行**：
+**Simple / Plan case 執行**：
 
 1. 從 Implementation Plan（Step 2 剛 comment 的）擷取每個 `- [ ]` bullet 當 task subject
 2. 對每個 bullet 呼叫 `TaskCreate`，subject 用 bullet 第一行、description 用完整 bullet（含子項）

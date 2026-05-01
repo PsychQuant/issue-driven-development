@@ -1,7 +1,7 @@
 {
   "name": "issue-driven-dev",
-  "description": "Issue-driven development methodology: issue → diagnose → implement → verify → close. Every change traces back to an issue, every issue has a verified resolution.",
-  "version": "2.35.0",
+  "description": "v2.36.0: 3-tier Complexity routing (Simple / Plan / Spectra) + new idd-plan skill. SDD-warranted renamed to Spectra (backward-compat alias preserved). Plan tier inserts EnterPlanMode approval gate between diagnosis and TDD execution — covers 'think before leap, no spec contract needed' (most common case where Simple was too thin and Spectra was overkill). Issue-driven development methodology: issue → diagnose → (idd-plan if Plan tier) → implement → verify → close. Every change traces back to an issue, every issue has a verified resolution.",
+  "version": "2.36.0",
   "author": {
     "name": "Che Cheng"
   },
