@@ -1,5 +1,77 @@
 # Changelog
 
+## 2.37.0 — 2026-05-02
+
+### NEW: External-agent / PR mode for `idd-verify` + use-case routing reference
+
+Closes a structural gap: `idd-verify` previously assumed Claude was always the implementer (operating on `git diff` / `HEAD~1`). When implement is delegated to another agent (Codex via `codex exec`, Copilot Workspace, remote claw on PsychQuantClaw), the change set lives in a PR or remote branch — current verify couldn't reach it.
+
+#### `idd-verify` new input source flags
+
+| Flag | Mode | Diff source |
+|------|------|------------|
+| `--pr <N>` | PR mode | `gh pr diff <N>` (with `gh pr checkout` so reviewer agents see file context); auto-restore original branch after verify |
+| `--commits <N>` | Local mode | `HEAD~N..HEAD` |
+| `--since <ref>` | Local mode | `<ref>..HEAD` |
+| `--branch <name>` | Branch mode | `git diff origin/<default>...<name>` |
+| (no flag) | **Auto-detect** | Count `Refs #N` commits since `origin/<default>` → if N>0 use HEAD~N; else `gh pr list --search "#N in:body" --state open` → AskUserQuestion to pick |
+
+Auto-detect catches the common "I cloned this repo, Codex committed 3 things, I forgot `--commits 3`" scenario without silently switching modes.
+
+#### Issue ↔ PR correspondence gate (PR mode iron rule)
+
+`--pr <N>` runs a hard gate before invoking the 6-AI ensemble:
+
+- `gh pr view --json body` → grep `Refs #N` patterns into **discovered set**
+- PR body has zero `Refs #N` → **ABORT** with "violates IDD discipline; add `Refs #N` and retry"
+- User passed `#98` but PR doesn't ref #98 → **ABORT** with "correspondence broken"
+- PR refs `{#98, #105}` but user only passed `#98` → **AskUserQuestion** to confirm scope
+
+A PR without any issue ref is an untrackable change. IDD's audit value evaporates if the PR-issue link doesn't exist.
+
+#### PR-as-master cross-post
+
+PR mode flips master comment location from issue → PR (external agent owners work in PR view; never see issue comments). Each ref'd issue receives a 1-line pointer comment back:
+
+```markdown
+## Verify (via PR #123)
+**Result**: PASS — no blocking findings
+**Full report**: https://github.com/owner/repo/pull/123#issuecomment-NNN
+
+This issue's findings: see "#98" section in the linked report.
+```
+
+Capture-master-URL-then-write-pointer SOP enforced (preventing the recurring bug class where pointer URLs accidentally referenced earlier diagnosis / implementation comments instead of the actual verify report).
+
+#### NEW reference: `references/external-agent-delegation.md`
+
+Single source of truth for IDD ⇄ external agent contract. Covers:
+
+- 4-phase delegation impact matrix (diagnose / implement / verify / close)
+- Hands-off principle (no babysitting external agents; strict verify + opt-in fix takeover)
+- Three input modes + auto-detect resolution algorithm
+- Issue↔PR correspondence gate
+- PR-as-master cross-post + working tree handling
+- Out-of-scope items deferred to v2 (`--takeover`, `idd-handoff`, force-push detection)
+
+#### NEW reference: `references/usecase-routing.md`
+
+Discoverability gap fix: 24-row table mapping common scenarios → exact skill chain + flags + contract doc. Covers single-issue, batch, cluster-PR, external-agent (PR/commits/branch/auto), Plan tier, Spectra-warranted, bundle close, Spectra-bridge, multi-repo monorepo. Plus a top-of-doc decision tree ("你正要做什麼？") for users who don't know which entry point to start from.
+
+Linked from CLAUDE.md (Claude-facing) and README.md (human-facing) so both audiences find it.
+
+#### Touched files
+
+- `skills/idd-verify/SKILL.md` — argument-hint, description, allowed-tools, Cluster-PR mode section, External-agent / PR mode section (new), 參數 section, Step 0 TaskCreate list (+ resolve_input_source / gate_pr_correspondence / post_master_and_pointers / restore_working_tree), Step 0.5 (new), Step 0.7 (new), Step 1 multi-source, Step 4 master-pointer rules per mode, report format examples
+- `references/external-agent-delegation.md` — new
+- `references/usecase-routing.md` — new
+- `CLAUDE.md` — Use-Case Routing section (new) before Multi-issue Invocation
+- `README.md` — Use-Case Routing + External-Agent Verify sections (new) before Multi-issue Invocation
+
+#### Backward compatibility
+
+Single-issue invocation `idd-verify #42` without flags still works exactly as v2.36 in the common case (no Refs commits, no open PRs → falls back to `HEAD~1`). Auto-detect only activates AskUserQuestion when ambiguous; never silently switches modes. Cluster-PR mode (`#34 #36 #38`) unchanged. No flag deprecations.
+
 ## 2.35.0 — 2026-04-30
 
 ### NEW: `scripts/process-attachments.sh` + `rules/process-attachments.md` — attachment 上下游處理協定

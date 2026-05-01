@@ -46,6 +46,21 @@ idd-issue → idd-diagnose → idd-implement → idd-verify → idd-close
 | `idd-config` | Manage `.claude/issue-driven-dev.local.json` lifecycle: `show` / `init` / `validate` / `which` (v2.31.0) |
 | `idd-all` | Orchestrator that drives the full pipeline (issue → close) end-to-end (v2.26.0; v2.28.0 unattended SDD chain) |
 
+### Use-Case Routing（v2.37.0）
+
+Not sure which skill / flag to use for your situation? See [`references/usecase-routing.md`](references/usecase-routing.md) — a 24-row reference mapping common scenarios (single / batch / cluster-PR / external-agent / Plan / Spectra) to the exact skill chain + flags + contract docs.
+
+### External-Agent Verify（v2.37.0）
+
+When `implement` is delegated to an external agent (Codex, Copilot Workspace, remote claw on a sibling machine), `idd-verify` supports three input sources beyond the default local-diff:
+
+- `idd-verify #98 --pr 123` — verify a PR opened by the external agent. PR is the master comment location; ref'd issues get pointer comments. Issue↔PR correspondence is gate-checked (PR body must `Refs #N` matching scope, else abort).
+- `idd-verify #98 --commits 3` — when the external agent commits to your current working tree
+- `idd-verify #98 --branch <name>` — when changes live on a branch but no PR yet
+- `idd-verify --pr 123` (no issue) — auto-discover ref'd issues from PR body
+
+Auto-detect: invoking `idd-verify #98` with no input flag counts unpushed commits ref'ing #98 and queries open PRs ref'ing #98, then `AskUserQuestion` to pick between local diff vs PR. Catches the common forgotten-flag case. Full contract: [`references/external-agent-delegation.md`](references/external-agent-delegation.md).
+
 ### Multi-issue Invocation（v2.34.0）
 
 Seven skills accept multiple `#NNN` arguments and dispatch to one of two modes:

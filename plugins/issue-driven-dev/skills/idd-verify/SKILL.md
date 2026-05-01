@@ -1,13 +1,14 @@
 ---
 name: idd-verify
 description: |
-  驗證 uncommitted/committed code 是否滿足 Issue 的所有要求。
+  驗證 uncommitted/committed/PR code 是否滿足 Issue 的所有要求。
   預設用 Agent Team（5 Claude reviewers 互相挑戰）+ Codex CLI（gpt-5.5）平行驗證。
   6 個獨立 AI、兩個模型家族、互相看不到對方的結果。
   支援 cluster verify（v2.34.0+）：多個 #N 共用 1 PR 時（如 `#34 #36 #38`），report 按 issue 分區段。
-  Use when: 實作完成後、commit 之前。
-  防止的失敗：自以為修好了，沒跑驗證。
-argument-hint: "#issue [#issue ...] [engine] [--loop] e.g. '#42', '#42 codex', '#42 --loop' or '#34 #36 #38' (cluster verify)"
+  支援 external-agent / PR mode（v2.37.0+）：`--pr <N>` 驗證外部 agent（Codex/Copilot）開的 PR，PR 是 master comment、ref'd issue 拿 pointer；`--commits N` / `--since <ref>` / `--branch <name>` 為其他輸入來源；缺 flag 時 auto-detect 本地 commits 與 open PR 並 AskUserQuestion。
+  Use when: 實作完成後、commit 之前；或外部 agent 開了 PR 要回頭驗證。
+  防止的失敗：自以為修好了，沒跑驗證；外部 agent 的 PR 沒走 IDD discipline。
+argument-hint: "#issue [#issue ...] [engine] [--loop] [--pr N] [--commits N] [--branch X] [--since REF] e.g. '#42', '#42 --pr 123', '#42 --commits 3', '#34 #36 #38' (cluster verify), '--pr 123' (auto-discover issues)"
 allowed-tools:
   - Bash(codex:*)
   - Bash(git:*)
@@ -15,6 +16,7 @@ allowed-tools:
   - Bash(mktemp:*)
   - Bash(rm:*)
   - Bash(wc:*)
+  - Bash(sed:*)
   - Read
   - Write
   - Edit
@@ -40,13 +42,37 @@ allowed-tools:
 
 完整契約見 [batch-and-cluster.md](../../references/batch-and-cluster.md)。Per-issue follow-up findings 仍透過 `idd-issue` auto-create（target main）。Cluster verify 只在 cluster-PR mode 才有意義（即 `idd-implement #34 #36 #38 --pr` 之後）；單發 verify N 個獨立 issue 用 batch 不對 — 應該各跑一次。
 
+## External-agent / PR mode（v2.37.0+）
+
+當 implement 階段委派給外部 agent（Codex / openclaw-task / 遠端 claw / Copilot Workspace）時，改動不在本地工作樹，而在某個 PR 或遠端 branch。`idd-verify` 支援三種輸入來源：
+
+```bash
+idd-verify #98 --pr 123               # PR mode：gh pr diff（最常見）
+idd-verify --pr 123                   # 不帶 issue：從 PR body Refs #N auto-discover
+idd-verify #98 --commits 3            # 本地：HEAD~3..HEAD（外部 agent commit 到當前 tree）
+idd-verify #98 --since <ref>          # 本地：<ref>..HEAD
+idd-verify #98 --branch <name>        # branch：origin/<default>...<name>（commit 但沒 PR）
+```
+
+PR mode 下：
+- **Master comment** post 到 PR（外部 agent owner 看 PR、code review 在 PR）
+- **Pointer comment** post 到每個 PR ref'd 的 issue（1 行指回 PR 的 verify comment URL）
+- **Issue ↔ PR 對應強制**：PR body 沒任何 `Refs #N` → abort；user 給的 issue 不在 PR 的 Refs set 裡 → abort
+
+完整契約見 [external-agent-delegation.md](../../references/external-agent-delegation.md)。
+
 ## 參數
 
 ```
-/idd-verify #42                     → Agent Team (5) + Codex 平行（預設）
+/idd-verify #42                     → Agent Team (5) + Codex 平行（預設）；auto-detect input source
 /idd-verify #42 codex               → 只用 Codex CLI
 /idd-verify #42 team                → 只用 Agent Team（不跑 Codex）
 /idd-verify #42 --loop              → 驗證 + ralph-loop 自動修復迴圈
+/idd-verify #42 --pr 123            → PR mode（master 落在 PR、issue 拿 pointer）
+/idd-verify --pr 123                → PR mode 不帶 issue：從 PR body Refs #N 自動 discover
+/idd-verify #42 --commits 3         → 本地 mode：HEAD~3..HEAD
+/idd-verify #42 --since <ref>       → 本地 mode：<ref>..HEAD
+/idd-verify #42 --branch <name>     → branch mode：origin/<default>...<name>
 /idd-verify                         → 通用 code review（無 issue）
 ```
 
@@ -92,13 +118,16 @@ idd-verify #NNN
 **在動任何事之前**先用 `TaskCreate` 為這個 stage 建 todo list:
 
 ```
-TaskCreate(name="get_diff_and_issue", description="git diff + gh issue view,存 diff 到 /tmp 供 agents 讀取")
+TaskCreate(name="resolve_input_source", description="Step 0.5: 解析 --pr / --commits / --branch / --since flag；都沒帶就跑 auto-detect（count Refs #N commits since origin/<default>，再 gh pr list 找 open PR），有歧義時 AskUserQuestion 確認")
+TaskCreate(name="gate_pr_correspondence", description="Step 0.7: PR mode 下強制檢查 issue↔PR 對應 — gh pr view --json body 抓 Refs #N，跟 user 指定的 issue 比對；PR 沒任何 Refs 或 user issue 不在 set 內 → abort 並告訴使用者怎麼修")
+TaskCreate(name="get_diff_and_issue", description="依 input source 取 diff（gh pr diff / git diff HEAD~N / git diff origin/<default>...<branch>） + gh issue view,存 diff 到 /tmp 供 agents 讀取；PR mode 額外做 gh pr checkout 並記住原 branch")
 TaskCreate(name="check_attachments", description="確認 .claude/.idd/attachments/issue-NNN/ 存在,把 attachment 路徑塞進 reviewer agent prompt 作為 source-of-truth context。manifest 缺漏 → 警告繼續(reviewer 仍跑,但 verification 完整度受限)。依 rules/process-attachments.md。")
 TaskCreate(name="launch_parallel_reviewers", description="6 個 tool calls 同一 message: TeamCreate + 5 Agent(requirements/logic/security/regression/devils-advocate) + 1 Bash codex,prompt 中引用 attachment 路徑")
 TaskCreate(name="wait_for_claude_agents", description="等 5 Claude teammates 全部 idle,讀 /tmp/verify_${NUMBER}_findings_*.md")
 TaskCreate(name="wait_for_codex", description="等 Codex 背景任務完成,讀 /tmp/codex-verify-${NUMBER}.md")
 TaskCreate(name="merge_findings", description="合併 6 個來源 findings 去重,severity 取最高")
-TaskCreate(name="comment_to_issue", description="gh issue comment $NUMBER 貼合併後的 verification report")
+TaskCreate(name="post_master_and_pointers", description="PR mode: master 貼到 PR + capture URL → 為每個 ref'd issue 貼 pointer comment；本地 mode: 貼到 issue（單 issue 直接貼／多 issue 用 SOP master+pointer）")
+TaskCreate(name="restore_working_tree", description="PR mode 結束後 git checkout 回原 branch（Step 0.5 記住的）")
 TaskCreate(name="decide_next_action", description="根據 findings: 通過→idd-close / 有 findings→修正 / scope creep→新 issue")
 TaskCreate(name="triage_followup_issues", description="Step 5b: 分類 non-blocking findings → 問使用者要不要開新 issue，確認後批次建立")
 ```
@@ -114,16 +143,83 @@ TaskCreate(name="triage_followup_issues", description="Step 5b: 分類 non-block
 
 ---
 
-### Step 1: 取得 diff 和 issue
+### Step 0.5: 解析 input source（v2.37.0+）
+
+依 [external-agent-delegation.md](../../references/external-agent-delegation.md) resolution algorithm：
+
+```
+1. --pr <N>          → PR mode（gh pr diff <N>）
+2. --branch <name>   → branch mode（git diff origin/<default>...<name>）
+3. --commits <N>     → 本地 mode（HEAD~N..HEAD）
+4. --since <ref>     → 本地 mode（<ref>..HEAD）
+5. 都沒帶            → auto-detect:
+   a. N=$(git log --grep "#$NUMBER" origin/$DEFAULT_BRANCH..HEAD --oneline | wc -l)
+      N>0  → 本地 mode HEAD~N..HEAD
+      N=0  → b
+   b. PRS=$(gh pr list --search "#$NUMBER in:body" --state open --json number,headRefName,author)
+      1 PR  → AskUserQuestion「Verify PR #X 還是本地 diff？」
+      2+ PR → AskUserQuestion 列全部
+      0 PR  → fall back HEAD~1（保留 v2.36 行為）
+```
+
+PR mode 額外做：
 
 ```bash
-# 如果有 uncommitted changes
-git diff --stat
-# 如果已 committed
-git diff --stat HEAD~1
+# 記住原 branch 供 restore
+ORIGINAL_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
-# 取 issue
-gh issue view $NUMBER --repo $GITHUB_REPO --json title,body
+# pre-condition: working tree clean
+[ -z "$(git status --porcelain)" ] || { echo "Working tree not clean — abort"; exit 1; }
+
+# checkout PR head
+gh pr checkout $PR --repo $GITHUB_REPO
+```
+
+### Step 0.7: PR ↔ issue 對應強制（PR mode only，v2.37.0+）
+
+```bash
+DISCOVERED=$(gh pr view $PR --repo $GITHUB_REPO --json body -q .body | grep -oE '#[0-9]+' | sort -u)
+
+if [ -z "$DISCOVERED" ]; then
+  echo "ABORT: PR #$PR has no Refs #N — violates IDD discipline."
+  echo "Add 'Refs #N' to PR body and retry."
+  exit 1
+fi
+
+# user 給的 issue 必須在 discovered set 裡
+for ISSUE in $USER_ISSUES; do
+  echo "$DISCOVERED" | grep -q "#$ISSUE" || {
+    echo "ABORT: PR #$PR does not ref #$ISSUE — correspondence broken."
+    exit 1
+  }
+done
+
+# discovered 比 user 給的多 → AskUserQuestion 確認 scope
+EXTRA=$(comm -23 <(echo "$DISCOVERED") <(echo "$USER_ISSUES" | sort -u))
+[ -n "$EXTRA" ] && AskUserQuestion "PR also refs $EXTRA — verify those too, or scope to $USER_ISSUES only?"
+```
+
+### Step 1: 取得 diff 和 issue
+
+依 Step 0.5 resolved source：
+
+```bash
+# PR mode
+git diff --stat origin/$DEFAULT_BRANCH...HEAD          # PR head 已 checkout
+gh pr diff $PR --repo $GITHUB_REPO > /tmp/diff_$NUMBER.patch
+
+# 本地 mode
+git diff --stat                                         # uncommitted
+git diff --stat HEAD~$COMMITS                           # explicit --commits
+git diff --stat $SINCE_REF                              # explicit --since
+
+# branch mode
+git diff --stat origin/$DEFAULT_BRANCH...$BRANCH
+
+# 取 issue（每個 ref'd issue 都要抓）
+for I in $REFD_ISSUES; do
+  gh issue view $I --repo $GITHUB_REPO --json title,body > /tmp/issue_$I.json
+done
 ```
 
 ### Step 1.5: 檢查 Attachment(下游,給 reviewer agents 用)
@@ -255,15 +351,51 @@ Bash({
 4. **severity 以最高為準**：如果 logic 說 P2 但 codex 說 P1 → P1
 5. Devil's Advocate 的反駁如果成立 → 升級 severity
 
-### Step 4: Comment 到 issue
+### Step 4: Comment（master + pointer 規則）
+
+依 Step 0.5 resolved mode 決定 master comment 落在哪：
+
+| Mode | Master comment 落地 | Pointer comments |
+|------|-------------------|------------------|
+| 本地 / branch（單 issue）| `gh issue comment $NUMBER` | 無 |
+| 本地 / branch（cluster ≥2 issue）| `gh issue comment $HUB_ISSUE`（第一個 #N 當 hub） | 其餘 #N 各貼 1 行 pointer |
+| **PR mode** | `gh pr comment $PR` | **每個** PR ref'd issue 都貼 pointer |
+
+#### PR mode（v2.37.0+）
+
+```bash
+# 1. Post master to PR, capture URL
+MASTER_URL=$(gh pr comment $PR --repo $GITHUB_REPO --body-file /tmp/master.md 2>&1 | tail -1)
+
+# 2. Compose pointer body using captured PR comment URL
+sed "s|__MASTER_URL__|$MASTER_URL|g" /tmp/pointer_template.md > /tmp/pointer.md
+
+# 3. Post pointer to each ref'd issue in parallel
+for I in $REFD_ISSUES; do
+  gh issue comment $I --repo $GITHUB_REPO --body-file /tmp/pointer.md &
+done
+wait
+```
+
+Pointer template:
+
+```markdown
+## Verify (via PR #__PR__)
+**Result**: __PASS_OR_FAIL__ — __SUMMARY__
+**Full report**: __MASTER_URL__
+
+This issue's findings: see "#__ISSUE__" section in the linked report.
+```
+
+#### 本地 / branch mode
+
+單 issue：直接貼到 issue。
 
 ```bash
 gh issue comment $NUMBER --repo $GITHUB_REPO --body "$MERGED_FINDINGS"
 ```
 
-#### SOP: pointer comments referencing this verify report
-
-If this verify covers a **bundle of multiple issues**（例如 batch triage 的 hub + N pointers / one TDD cycle 改 N issues），需要 post pointer comments 到其他 issue 指回 master verify report：
+Cluster（≥2 issue 共用一份 verify report）：
 
 **Rule**: 一定先 post master comment 到 hub issue, **capture 回傳的 URL**（`gh issue comment` 輸出的 `https://...#issuecomment-NNN` 那一行），**才**寫 pointer comment body。Pointer 必須使用剛 capture 的 URL，不可從先前對話裡複製貌似的 URL（容易誤用 Implementation Plan / Diagnosis 等更早的 comment URL）。
 
@@ -284,7 +416,15 @@ done
 wait
 ```
 
-格式：
+#### Restore working tree（PR mode only）
+
+Step 4 完成後 restore：
+
+```bash
+git checkout $ORIGINAL_BRANCH   # Step 0.5 記住的
+```
+
+格式（本地 / branch mode）：
 ```markdown
 ## Verify: #NNN
 
@@ -303,6 +443,41 @@ X / Y requirements addressed
 
 ### Scope Check
 {有沒有超出 issue 範圍的改動}
+```
+
+格式（PR mode，cluster 時 per-issue 分區段）：
+```markdown
+## Verify Report — PR #PPP
+
+### Engine
+Agent Team (5 Claude reviewers) + Codex (gpt-5.5)
+
+### Aggregate
+**PASS / FAIL** — N blocking, M follow-up
+
+### Scope coverage
+PR refs: #98, #105
+Verified scope: #98, #105
+
+---
+
+### #98 — {issue 98 title}
+
+**Requirements coverage**: X/Y addressed
+
+| # | Severity | Finding | Source | Action |
+|---|----------|---------|--------|--------|
+| 1 | P1 | ... | team:logic+codex | Blocking |
+
+---
+
+### #105 — {issue 105 title}
+
+**Requirements coverage**: X/Y addressed
+
+| # | Severity | Finding | Source | Action |
+|---|----------|---------|--------|--------|
+| 2 | P3 | ... | team:security | Follow-up |
 ```
 
 ### Step 5: 後續動作
