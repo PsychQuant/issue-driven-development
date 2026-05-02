@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-02
+
+### Changed
+- Pinned binary version `binaries.idd-route.version`: 0.2.0 → 0.3.0. Wrapper auto-downloads new binary on next invocation (atomic swap; `~/bin/.idd-route.version` sidecar tracks installed version).
+
+### Added
+- `/idd-route:backfill` skill is now functional (was placeholder in v0.1.0 — the underlying `idd-route backfill` command shipped in idd-route-swift v0.3.0).
+- Companion: idd-close Step 4.5 in issue-driven-dev v2.38.0+ now successfully calls `idd-route update-outcome` instead of gracefully no-op'ing on command-not-found.
+
 ## [0.1.0] - 2026-05-02
 
 ### Added
