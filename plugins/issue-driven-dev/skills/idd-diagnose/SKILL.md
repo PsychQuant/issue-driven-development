@@ -303,6 +303,58 @@ Diagnosis 完成後，依 4 層 gate 判定 Complexity。**Default = Simple。**
 > - Plan over-trigger：clear root cause 單檔 fix → 應該 Simple，不是 Plan
 > - Simple under-served：che-word-mcp#104 P1 sub-bug — diagnosis 漏了 rawXML-shadowing case，approval gate 會抓到 → 應該 Plan
 
+### Step 3.7: Agent Routing Recommendation (v2.38.0+, optional)
+
+If `idd-route` is installed (`command -v idd-route`), call it for an agent recommendation based on observed track record + the static heuristic fallback. The recommendation is informational — user accepts or overrides during Step 4 routing. **Skip silently if binary missing.**
+
+```bash
+if command -v idd-route &>/dev/null; then
+  REPO_PATH=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+  STATS="$REPO_PATH/.claude/.idd/routing-stats.jsonl"
+  GLOBAL="$HOME/.cache/idd-route/stats.jsonl"
+
+  # Detect signals from issue body + diagnosis (controlled vocabulary in
+  # idd-route plugin's references/signal-vocabulary.md). Common signals:
+  # explicit_acceptance, single_handler, sibling_sweep_needed, design_negotiation,
+  # cross_repo, breaking_change, requires_changelog, public_api, hot_context, etc.
+  SIGNALS="..."  # comma-separated, derived from your diagnosis
+
+  # Estimate scope LOC from diagnosis Strategy (rough — counting bullets,
+  # mentioned files, etc.)
+  SCOPE_LOC="..."
+
+  RECOMMENDATION=$(idd-route recommend \
+    --stats-file "$STATS" \
+    --global-stats-file "$GLOBAL" \
+    --complexity "$COMPLEXITY" \
+    --scope-loc-estimate "$SCOPE_LOC" \
+    --signals "$SIGNALS" \
+    --candidates codex-gpt-5.5-xhigh,claude-opus-4.7,claude-sonnet-4.6,claude-haiku-4.5 \
+    2>&1)
+  EXIT=$?  # 0=warm data-driven, 3=cold static heuristic, other=error
+fi
+```
+
+If recommendation succeeded, append a section to the diagnosis comment:
+
+```markdown
+### Recommended Agent: <recommended>
+**Confidence**: <confidence>  (0.0-1.0; lower = less data, take with grain of salt)
+**Data source**: <data_source>  (per_repo / global / static_heuristic)
+**Expected**: <round_trips> avg round trips, <blocking> avg blocking, <merge_rate>% merge rate
+**Reasoning**: <reasoning>
+
+**Compare**:
+| Agent | N | Avg RT | Avg blocking | Merge% | Score |
+|-------|---|--------|-------------|--------|-------|
+| codex-gpt-5.5-xhigh | 8 | 1.0 | 0.2 | 87% | 4.35 |
+| claude-opus-4.7 | 4 | 2.5 | 1.5 | 100% | 0.40 |
+| claude-sonnet-4.6 | 0 | — | — | — | insufficient_data |
+| claude-haiku-4.5 | 0 | — | — | — | insufficient_data |
+```
+
+Full integration contract: [`references/agent-routing.md`](../../references/agent-routing.md).
+
 ### Step 4: 確認 + Routing
 
 Diagnosis comment 到 #NNN 後，進行兩階段確認:

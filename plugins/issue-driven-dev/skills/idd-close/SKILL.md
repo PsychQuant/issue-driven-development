@@ -292,6 +292,39 @@ gh issue close $NUMBER --repo $GITHUB_REPO
 
 > **數學公式格式**：GitHub 支援 `$...$`（inline）和 `$$...$$`（display）。含底線的程式變數名**不放 math mode**，改用 backtick code。
 
+### Step 4.5: Finalize routing outcome (v2.38.0+, optional)
+
+If `idd-route` is installed, append a final outcome record (corresponds to the `in_review` record `idd-verify` Step 5d wrote earlier). Powers data-driven recommendation in future `idd-diagnose` calls. **Skip silently if binary missing.**
+
+> **NOTE**: `update-outcome` ships in `idd-route-swift` v0.3.0 (P2 of plan). Until then, this Step gracefully no-ops on `command not found`.
+
+```bash
+if command -v idd-route &>/dev/null; then
+  REPO_PATH=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+  STATS="$REPO_PATH/.claude/.idd/routing-stats.jsonl"
+
+  # Determine outcome:
+  #   - PR was merged → merged
+  #   - Issue closed without merge (wontfix, abandoned) → abandoned
+  if [[ -n "$PR_NUMBER" ]] && \
+     gh pr view "$PR_NUMBER" --repo "$GITHUB_REPO" --json merged -q .merged 2>/dev/null | grep -q true; then
+    OUTCOME="merged"
+  else
+    OUTCOME="abandoned"
+  fi
+
+  idd-route update-outcome \
+    --stats-file "$STATS" \
+    --issue "$NUMBER" --issue-repo "$GITHUB_REPO" \
+    --outcome "$OUTCOME" \
+    2>/dev/null || echo "idd-route update-outcome failed or unavailable (non-fatal)" >&2
+fi
+```
+
+Append-only — original `in_review` record from `idd-verify` Step 5d stays for audit trail.
+
+Full integration contract: [`references/agent-routing.md`](../../references/agent-routing.md).
+
 ### Step 5: 發佈完成回報
 
 ```

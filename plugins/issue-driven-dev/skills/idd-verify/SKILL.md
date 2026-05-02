@@ -545,6 +545,54 @@ options:
 | 有 blocking findings | 修正後再跑 verify |
 | 有 in-scope fix | 修正 + commit，不需重跑 verify |
 
+#### Step 5d: Record routing outcome (v2.38.0+, optional)
+
+If `idd-route` is installed, record this verify outcome to the routing-stats jsonl. Powers data-driven recommendation in future `idd-diagnose` calls. **Skip silently if binary missing.**
+
+```bash
+if command -v idd-route &>/dev/null; then
+  REPO_PATH=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+  STATS="$REPO_PATH/.claude/.idd/routing-stats.jsonl"
+
+  # Detect which agent implemented this round.
+  # Heuristic: PR head commit author / branch prefix.
+  #   codex/* branch or codex-* commit author → codex-gpt-5.5-xhigh
+  #   other → claude-opus-4.7 (default; user can override --agent)
+  AGENT=$(detect_agent_from_commits)
+
+  # Scope from PR diff or commit range
+  SCOPE_FILES=$(echo "$VERIFIED_DIFF" | grep -c '^diff --git')
+  SCOPE_LOC=$(echo "$VERIFIED_DIFF" | grep -cE '^[+-][^+-]')
+
+  # Round trips: count implement→verify cycles seen for this issue
+  ROUND_TRIPS=$(count_round_trips "$NUMBER")
+
+  # Findings from merged report
+  BLOCKING=<count>; MEDIUM=<count>; LOW=<count>; FOLLOWUPS=<count>
+
+  COMPLEXITY=$(parse_complexity_from_diagnosis)  # Simple/Plan/Spectra
+  SIGNALS=$(detect_signals)  # comma-separated controlled vocabulary
+
+  idd-route record \
+    --stats-file "$STATS" \
+    --issue "$NUMBER" --issue-repo "$GITHUB_REPO" \
+    --agent "$AGENT" \
+    --complexity "$COMPLEXITY" \
+    --scope-files "$SCOPE_FILES" --scope-loc "$SCOPE_LOC" \
+    --signals "$SIGNALS" \
+    --round-trips "$ROUND_TRIPS" \
+    --verify-blocking "$BLOCKING" --verify-medium "$MEDIUM" --verify-low "$LOW" \
+    --followups "$FOLLOWUPS" \
+    --outcome in_review \
+    --recorded-by "idd-verify-2.38.0" \
+    2>/dev/null || echo "idd-route record failed (non-fatal)" >&2
+fi
+```
+
+`idd-close` will append a follow-up record finalizing outcome to `merged` or `abandoned`. Append-only; original `in_review` stays for audit.
+
+Full integration contract: [`references/agent-routing.md`](../../references/agent-routing.md).
+
 ## Engine: codex（快速模式）
 
 只用 Codex，不開 team。適合小改動：

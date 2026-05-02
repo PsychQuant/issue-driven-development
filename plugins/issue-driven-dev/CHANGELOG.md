@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [2.38.0] - 2026-05-02
+
+### Added
+- **`idd-diagnose` Step 3.7**: Calls `~/bin/idd-route recommend` after Complexity Assessment. Injects "Recommended Agent" section into diagnosis comment with confidence + expected metrics + per-candidate stats + reasoning. Powered by data-driven recommendation against `<repo>/.claude/.idd/routing-stats.jsonl` + global mirror at `~/.cache/idd-route/stats.jsonl`. Falls back to static heuristic on cold start.
+- **`idd-verify` Step 5d**: Calls `~/bin/idd-route record` after findings post + triage. Captures (issue, agent, complexity, scope_files, scope_loc, signals, round_trips, blocking, medium, low, followups) + initial outcome=in_review. Append-only JSONL.
+- **`idd-close` Step 4.5**: Calls `~/bin/idd-route update-outcome` after issue close. Appends a follow-up record with outcome=merged or outcome=abandoned (auto-detected from `gh pr view --json merged`). Original in_review record from idd-verify Step 5d stays for audit. Requires `idd-route-swift` v0.3.0 (P2 of plan); gracefully no-ops on `command not found`.
+- **`references/agent-routing.md`**: Canonical contract for IDD ⇄ idd-route boundary. Lifecycle integration (diagnose recommends, verify records, close finalizes), graceful-skip semantics when binary missing, signal extraction conventions, opt-out mechanisms (kill-switch flag / per-project / per-machine config / uninstall).
+
+### Changed
+- All three new step blocks gracefully no-op via `command -v idd-route` check — IDD flow is unchanged for users who don't install the companion `idd-route` plugin.
+- Marketplace migration: this is the first issue-driven-dev release shipping in `PsychQuant/issue-driven-development` (the new dedicated marketplace). Full 63-commit history preserved via `git filter-repo` from the previous home (`PsychQuant/psychquant-claude-plugins`). `git log -- plugins/issue-driven-dev/` shows complete evolution since v1.0.0.
+
 ## [2.37.0] - 2026-05-02
 ### NEW: External-agent / PR mode for `idd-verify` + use-case routing reference
 
