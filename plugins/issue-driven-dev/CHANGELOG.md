@@ -1,7 +1,11 @@
 # Changelog
 
-## 2.37.0 — 2026-05-02
+All notable changes to this project will be documented in this file.
 
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [2.37.0] - 2026-05-02
 ### NEW: External-agent / PR mode for `idd-verify` + use-case routing reference
 
 Closes a structural gap: `idd-verify` previously assumed Claude was always the implementer (operating on `git diff` / `HEAD~1`). When implement is delegated to another agent (Codex via `codex exec`, Copilot Workspace, remote claw on PsychQuantClaw), the change set lives in a PR or remote branch — current verify couldn't reach it.
@@ -72,8 +76,7 @@ Linked from CLAUDE.md (Claude-facing) and README.md (human-facing) so both audie
 
 Single-issue invocation `idd-verify #42` without flags still works exactly as v2.36 in the common case (no Refs commits, no open PRs → falls back to `HEAD~1`). Auto-detect only activates AskUserQuestion when ambiguous; never silently switches modes. Cluster-PR mode (`#34 #36 #38`) unchanged. No flag deprecations.
 
-## 2.35.0 — 2026-04-30
-
+## [2.35.0] - 2026-04-30
 ### NEW: `scripts/process-attachments.sh` + `rules/process-attachments.md` — attachment 上下游處理協定
 
 Closes a recurring gap: `gh issue view --json` 抓不到 issue body 含的 user-attachments docx/pdf 內容,IDD skills 過去全程沒處理 → diagnosis 漏關鍵 source-of-truth(歷史案例:kiki830621/collaboration_liu-thesis-analysis#21 摘要 docx 結尾段落「mismatch / SP 作為機制 / construct mapping」三條 narrative bridge 因 idd-diagnose 沒讀附件被遺漏,後續 spectra-propose 重建 design/spec/tasks 全部要回頭補)。
@@ -90,7 +93,9 @@ Closes a recurring gap: `gh issue view --json` 抓不到 issue body 含的 user-
 
 Repo 自動從 walk-up config 解析(支援新 `.claude/.idd/local.json` / 舊 `.claude/issue-driven-dev.local.json` / 更舊 `.claude/issue-driven-dev.local.md` YAML frontmatter);可用 `--repo owner/repo` 顯式 override。`IDD_CALLER` 環境變數記錄到 manifest `fetched_by` 欄位作 audit。
 
-### 上下游責任分工
+### Changed
+
+<!-- (formerly: 上下游責任分工) -->
 
 - **上游下載(`idd-issue`, `idd-diagnose`)** — call `download` 機械抓取 + manifest;Claude 後續用 MCP-first parser 讀內容(`.docx` → che-word-mcp、`.pdf` → che-pdf-mcp、圖片 → Read tool;fallback pandoc / pdftotext)
 - **下游檢查(`idd-implement`, `idd-verify`, `idd-close`, `idd-report`)** — call `check` 或 `verify`,缺漏輸出警告引導使用者重跑 idd-diagnose,**不 auto-fetch**(避免 mask 上游 skill bug)
@@ -141,8 +146,7 @@ mkdir -p .claude/.idd .claude/.idd/state
 [ -f .claude/state/idd-bridge.json ] && mv .claude/state/idd-bridge.json .claude/.idd/state/bridge.json
 ```
 
-### Changes
-
+### Changed
 - **NEW** `plugins/issue-driven-dev/scripts/process-attachments.sh`(150 行 bash + python3 inline,3 個 commands;支援 walk-up config 含 .md frontmatter fallback)
 - **NEW** `plugins/issue-driven-dev/rules/process-attachments.md`(薄薄的:scope / storage / manifest schema doc / parser strategy / reference convention / .gitignore guidance / 6 條 iron rules;機械邏輯不重複,引用 helper script)
 - `skills/idd-diagnose/SKILL.md` — Bootstrap Task List 加 `download_attachments`;Step 1.5 改為 `bash $CLAUDE_PLUGIN_ROOT/scripts/process-attachments.sh download $NUMBER` + Claude 後續 parse
@@ -169,13 +173,14 @@ mkdir -p .claude/.idd .claude/.idd/state
 - `idd-config` 的 auto-migrate 命令(目前只在 walk-up 印 hint,沒主動搬)
 - `.gitignore` template 自動生成
 
-## 2.33.0 — 2026-04-28
-
+## [2.33.0] - 2026-04-28
 ### NEW: `MANIFESTO.md` — methodology thesis
 
 Formalizes the IDD methodology argument as a standalone document, separating "what the plugin does" (README) from "why this is a methodology not a workflow tool" (MANIFESTO).
 
-### Thesis
+### Changed
+
+<!-- (formerly: Thesis) -->
 
 > **TDD writes tests. SDD writes specs. IDD solves bugs.**
 > 前兩個是手段，IDD 是目的。
@@ -192,22 +197,19 @@ Formalizes the IDD methodology argument as a standalone document, separating "wh
 - **這個 plugin 不是什麼** — disclaimer (不是 issue tracker、不是 GitHub workflow automation、不是 ceremony for ceremony 的 process)
 - **一句話總結** — 「TDD 跟 SDD 都驗證『對』，只有 IDD 驗證『完』」
 
-### Changes
-
+### Changed
 - **NEW** `plugins/issue-driven-dev/MANIFESTO.md` (~1100 字)
 - **README.md** — opening 加 thesis blockquote + link 到 MANIFESTO.md
 - **CLAUDE.md** — 「設計哲學」段加 link 到 MANIFESTO.md，標明本段是濃縮版
 
-### Migration
-
+### Changed
 No code changes. New artifact, opt-in reading. Plugin behavior identical to v2.32.0.
 
 ### Why now
 
 `che-word-mcp` 是第一個用 IDD 從 v3.0 一路打到 v3.15 的大專案，#56 cluster 是 IDD 解 bug 能力的 empirical demo。把抽象論述跟具體 case study 一起寫進 MANIFESTO，讓 IDD 從「個人 plugin 的 README 描述」升級為「可被引用的 methodology 論述」。
 
-## 2.32.0 — 2026-04-28
-
+## [2.32.0] - 2026-04-28
 ### NEW two protocols closing real-world workflow gaps
 
 Two recurring failure modes observed in real IDD usage now have explicit, mandatory protocols.
@@ -238,8 +240,7 @@ When `spectra-discuss` is interrupted mid-flow to invoke an IDD skill (e.g. "let
 
 Hard rules: never auto-invoke `/spectra-discuss` (user controls pacing); never paraphrase `spectra_topic` (user's wording carries assumptions); resume prompt is the actual recovery — bookmark file is convenience.
 
-### Changes
-
+### Changed
 - **NEW `rules/tagging-collaborators.md`** — 5-step protocol with examples, hard rules, implementation contract for skill authors
 - **NEW `rules/spectra-bridge.md`** — detection signals, bookmark schema, resume prompt format, future-compat with spectra-side complement
 - **`skills/idd-comment/SKILL.md`** — Step 0 task list expanded (added `detect_spectra_context`, `resolve_mentions`, `verify_mentions`, `spectra_bridge_resume`); new Step 0.7 (Detect Spectra Context), Step 2.5 (Resolve Mentions), Step 3.5 (Verify mentions), Step 7 (Spectra Bridge Resume Prompt); two new flags `--mention <login>[,<login>...]` and `--resume-spectra="<topic>"`; two new examples (`Note with mention`, `Spectra-bridge resume`); two new 鐵律 entries
@@ -260,14 +261,12 @@ Two failure modes observed in PsychQuant/contact-book#96 (the ContactBook cloud-
 
 Both gaps are skill-level (every IDD skill that posts to GitHub needs them), so they live as rules and are referenced from each skill's Step 0 — same pattern as `sdd-integration.md` for the spectra escalation protocol.
 
-## 2.31.0 — 2026-04-27
-
+## [2.31.0] - 2026-04-27
 ### NEW `idd-config` skill — independent entry for config lifecycle
 
 Filling a long-standing gap where `.claude/issue-driven-dev.local.json` setup, inspection, and predicate debugging were only available as side effects of `idd-issue` Step 0.5.
 
-### Changes
-
+### Changed
 - **NEW `skills/idd-config/SKILL.md`** with four subcommands:
   - `show` (default, no args) — prints resolved target + cwd-aware predicate trace from current `.claude/issue-driven-dev.local.json`. Walks up filesystem to find config (eslint/tsconfig pattern). Reports candidates / groups / `ask_each_time` if present.
   - `init` — interactive first-time setup. Equivalent to `idd-issue` Step 0.5.E fork-aware detection, but as a standalone command so users can configure before creating any issue. Detects fork via `gh repo view --json isFork,parent`; for forks, presents three-option AskUserQuestion (Upstream / Own fork / Both). Writes `github_repo` + optional `tracking_upstream`; "Both" mode writes an ad-hoc `groups[]` with primary + tracking entries.
@@ -287,14 +286,12 @@ The IDD plugin's monorepo + multi-repo support has grown sophisticated since v2.
 
 These all required either side-effect-creating `idd-issue` runs or manual JSON editing. `idd-config` is the missing read/inspect/init layer.
 
-## 2.30.0 — 2026-04-26
-
+## [2.30.0] - 2026-04-26
 ### Data preservation hard rule in `idd-issue` + extra-requirements channel in `idd-implement`
 
 Two long-standing gaps surfaced during real-world IDD use on the gukai spondylodiscitis project (`kiki830621/collaboration_gukai#4` and `#5`). Both were fixed as additive changes — existing flows are untouched.
 
-### Changes
-
+### Changed
 - **`idd-issue` — 資料保留鐵律 (HARD RULE)**
 
   - Step 1 renamed `讀取來源（如果是 .docx）` → `讀取來源並保留所有原始資料` with explicit hardline: "all source attachments uploaded to attachments release by default, without asking; only fall back to manual when MCP extraction is technically impossible".
@@ -326,14 +323,12 @@ Two long-standing gaps surfaced during real-world IDD use on the gukai spondylod
 
 ---
 
-## 2.29.0 — 2026-04-26
-
+## [2.29.0] - 2026-04-26
 ### Two-tier checklist gate in `idd-close`
 
 The structural gate (v2.17.0) catches **honest forgetting** — you can't close an issue with unticked `- [ ]` items. But it can't catch **motivated cheating** — ticking `- [x]` without doing the work. v2.29.0 adds a semantic gate to address the second failure mode.
 
-### Changes
-
+### Changed
 - **`idd-close` Step 1.6 — Semantic Checklist Gate** — for each `- [x]` bullet that passed the structural gate, classify against three keyword patterns and verify the underlying artifact exists:
 
   | Pattern | Check |
@@ -355,12 +350,10 @@ The structural gate (v2.17.0) catches **honest forgetting** — you can't close 
 
 The structural gate can hard-refuse because false positives are impossible — either a `- [ ]` exists or it doesn't. The semantic gate works on heuristics: a test commit might legitimately live in a prior PR not referencing #NNN, an external file might be modified by tooling, etc. A hard-refuse on heuristic check would block legitimate closes. The warn + AskUserQuestion approach surfaces the suspicious signal, makes the user explicitly acknowledge it, and lets them either proceed (confirming the heuristic was wrong) or investigate (treating the heuristic as right).
 
-### Migration
-
+### Changed
 No breaking changes. Issues that previously closed cleanly under v2.28.0 still close cleanly under v2.29.0 — the semantic gate adds a warning step but doesn't refuse anything. Issues with semantic mismatches now surface them at close time instead of staying hidden.
 
-## 2.28.0 — 2026-04-26
-
+## [2.28.0] - 2026-04-26
 ### `idd-all` SDD path is now unattended
 
 `idd-all` is a fire-and-forget orchestrator — it assumes nobody is watching. Previously the SDD path called `spectra-discuss` and `spectra-apply` directly, with two problems:
@@ -370,8 +363,7 @@ No breaking changes. Issues that previously closed cleanly under v2.28.0 still c
 
 This release makes the SDD path a true unattended chain.
 
-### Changes
-
+### Changed
 - **`idd-all` Phase 3b** — rewrote as four sub-steps: capture issue context, then call `spectra-discuss` / `spectra-propose` / `spectra-apply` in sequence. Each call passes a long `args` string with explicit instructions to suppress `AskUserQuestion` checkpoints and produce a structured marker line (`Conclusion: ...` / `Change: ...`) that the next step parses.
 - **`spectra-propose` chaining** — `idd-all` calls `spectra-apply` itself rather than letting `spectra-propose` chain. This respects the architectural `NEVER invoke /spectra-apply` guardrail in spectra-propose (L267) while still achieving end-to-end automation.
 - **New core principle: "Unattended assumption"** — added to idd-all's core principles. Sub-skills' attended-by-default behavior is correct for solo use; idd-all is the one promising "unattended", so it's idd-all's responsibility to override via args, not by modifying sub-skill plugins.
@@ -379,12 +371,10 @@ This release makes the SDD path a true unattended chain.
 - **Complexity table footnote** — clarifies that users wanting attended SDD discussion should run `/spectra-discuss` etc. manually, not `idd-all`.
 - **CLAUDE.md workflow diagram** — annotated to show idd-all's SDD path is unattended chain; manual SDD path remains attended.
 
-### Migration
-
+### Changed
 No breaking changes for users running `idd-all` from scratch — the SDD path now finishes more reliably (no longer stalls on `Park or Apply` prompt). If you were relying on the prior "abort on user input needed" escape hatch, you now need to run the SDD skills manually instead of `idd-all`. The trade-off matches the orchestrator's stated promise: pick `idd-all` for fire-and-forget, pick manual `/spectra-*` for attended alignment.
 
-## 2.27.0 — 2026-04-26
-
+## [2.27.0] - 2026-04-26
 ### PR vs Direct-commit path routing
 
 `idd-implement` now explicitly resolves between two execution paths instead of implicitly following whatever branch the user happens to be on:
@@ -398,8 +388,7 @@ Resolution priority (highest first):
 2. Fork detection (`gh repo view --json isFork` true → forced PR path)
 3. `pr_policy` config field (`always` / `never` / `ask`, default `ask`)
 
-### Changes
-
+### Changed
 - **`idd-implement`** — added Phase 0.5 PR Decision step; added Phase 5.5 PR creation (idempotent — skips if PR for branch already open). New `--pr` / `--no-pr` flags. argument-hint updated.
 - **`idd-close`** — added Step 1.5 PR Gate Check. Refuses close when an open PR references the issue, instructing the user to merge first. Mirrors the "no `--force`" philosophy of the checklist gate.
 - **`idd-all`** — explicitly enforces `--pr` when calling `idd-implement` (orchestrator path always = PR path, overriding `pr_policy`). Phase 3a doc clarifies this. Phase 5.5 idempotency means orchestrator's Phase 5 PR creation no longer collides with idd-implement's.
@@ -408,8 +397,7 @@ Resolution priority (highest first):
 - **`references/config-protocol.md`** — added `pr_policy` documentation to schema and field reference.
 - **`CLAUDE.md`** — new "PR vs Direct-commit Path" section describing the routing.
 
-### Migration
-
+### Changed
 No breaking changes. Existing configs without `pr_policy` default to `ask` (prompts on first `idd-implement`). Existing `idd-all` users see no behavior change — it always was PR-only; this release just makes that contract explicit and consistent with the new flag system.
 
 If you want to opt out of the prompt on a solo / personal repo:
@@ -430,6 +418,5 @@ If you want to enforce PR for a team repo:
 }
 ```
 
-## 2.26.0 — 2026-04-25
-
+## [2.26.0] - 2026-04-25
 (prior history not migrated to CHANGELOG; see git log)

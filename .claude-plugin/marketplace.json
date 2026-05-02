@@ -17,6 +17,16 @@
       },
       "source": "./plugins/issue-driven-dev",
       "category": "development"
+    },
+    {
+      "name": "idd-route",
+      "version": "0.1.0",
+      "description": "v0.1.0: Data-driven agent routing for IDD methodology. Recommends Codex (GPT-5.5 xhigh) vs Claude (Opus 4.7 / Sonnet 4.6 / Haiku 4.5) per IDD issue based on observed track record per (complexity, scope_class) bucket with exponential decay (recent decisions weight more, half-life 30 days). Falls back to static heuristic rubric when fewer than 5 data points exist for a candidate (cold start). Wraps the PsychQuant/idd-route-swift binary (universal arm64+x86_64), auto-downloaded via bin/idd-route-wrapper.sh on first use following the version-aware pattern from che-word-mcp. Three thin user-facing skills: /idd-route:recommend (ad-hoc lookup; the issue-driven-dev plugin's idd-diagnose calls the binary directly), /idd-route:stats (human-readable markdown summary by bucket), /idd-route:backfill (one-shot seed from past GH verify-comment history). Per-repo stats at <repo>/.claude/.idd/routing-stats.jsonl, opt-in global mirror at ~/.cache/idd-route/stats.jsonl for cross-repo learning. Opt-out via {enabled: false} in <repo>/.claude/idd-route.json. References controlled signal vocabulary (explicit_acceptance / single_handler / sibling_sweep_needed / etc) shipped in references/signal-vocabulary.md. Static heuristic rubric in references/static-heuristic.md.",
+      "author": {
+        "name": "Che Cheng"
+      },
+      "source": "./plugins/idd-route",
+      "category": "development"
     }
   ]
 }
