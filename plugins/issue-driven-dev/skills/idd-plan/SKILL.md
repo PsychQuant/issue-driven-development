@@ -37,6 +37,7 @@ description: Plan-mode 實作。在 idd-implement 的 TDD loop 之前，先用 C
 TaskCreate(name="resolve_pr_path", description="Phase 0.5: --pr/--no-pr flag → fork detection → pr_policy config → ask. 若 PR path: 建 feature branch")
 TaskCreate(name="read_issue_and_diagnosis", description="gh issue view + 確認最新 diagnosis comment 的 Strategy + Complexity == Plan/Simple")
 TaskCreate(name="draft_implementation_plan", description="依 Strategy 起草 Implementation Plan（5 段：files + reasoning + tests + risks + sequence）並 comment 到 issue")
+TaskCreate(name="tangential_sweep", description="Step 2.5: review session log from Step 1 to here, identify mid-plan tangential discoveries (sister bugs / unrelated quality issues / user-mentioned sub-concerns); AskUserQuestion to file as follow-up issues; append filed list to plan body before ExitPlanMode (per IC_R011 #524)")
 TaskCreate(name="enter_plan_mode_for_approval", description="Step 4: EnterPlanMode → 呈現 full Implementation Plan → ExitPlanMode 等 user approve / revise / abort")
 TaskCreate(name="handle_plan_response", description="Step 5: Approved → 進 Step 6 chain to idd-implement / Revised → 修改 Implementation Plan comment + 重新 EnterPlanMode / Aborted → idd-update phase=needs-fix 並結束")
 TaskCreate(name="chain_to_idd_implement", description="Step 6: 呼叫 /idd-implement #NNN，pass 已 approved 的 Implementation Plan via context（idd-implement 跳過 Step 2 自動偵測現有 plan）")
@@ -88,6 +89,9 @@ gh issue view $NUMBER --repo $GITHUB_REPO --json title,body,labels,comments
 
 ### Out-of-scope (will NOT be touched)
 {明確列出 diagnosis 提過但本 PR 不做的，避免 scope creep}
+
+### Tangential Observations (filed mid-plan, v2.42.0+ #524)
+{由 Step 2.5 填入：filed issue numbers list / `none surfaced` / `skipped per user choice` / `skipped (AI_LOW_BAR_ISSUE_FILING=false)`}
 ```
 
 post 到 issue：
@@ -97,6 +101,64 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$IMPLEMENTATION_PLAN"
 ```
 
 > **為什麼比 idd-implement 的 plan 詳盡？** Plan tier 的 user 審查是事前 deliberation 的 core moment — plan 越具體，user 越容易抓出 missing case / wrong assumption / better alternative。idd-implement 的 plan 是「執行清單」，本 plan 是「decision artifact」。
+
+### Step 2.5: Tangential Observations Sweep (v2.42.0+, #524)
+
+**Compliance**: this step implements IC_R011 commercial low-bar filing for the **mid-plan deliberation window** — Phase 1 scouting / Phase 2 design / Phase 3 review 期間 surface 但 **沒 categorization** 的 tangential discoveries（既沒進 In-scope 也沒進 Out-of-scope，會隨 conversation 流失）。
+
+**Rule (SHALL)**: 在 ExitPlanMode 前，**必須** review session log from Step 1（Read Issue + Diagnosis）起到本 step 為止，identify tangential discoveries 並走 AskUserQuestion 流程。empty list 是合法結果，但 step 本身不可省略。
+
+**Heuristic — what counts as "tangential discovery worth surfacing"** (per IC_R011 default-on triggers):
+
+- Phase 1 Explore agents return summary 內提到 unrelated file/function quality issue（非主 plan 範圍）
+- Phase 2 Design 起草時 grep / file read 撞到 sister bug / drift / misleading TODO comment
+- Phase 3 Review 期間 user inline-mention 的 sub-concern beyond plan focus
+- Verifiable behavior gap（即使 1-line fix）/ design ambiguity / observed friction / deferred work
+- Plan 結尾 Out-of-scope 區塊**沒**列出但 user 後續 close 時可能忘的「曾提到但無 categorization」項目
+
+**Default-off exemptions** (per IC_R011, narrow):
+
+- 純探索 / 學術理論 brainstorm（走 IC_R010 `confidence:exploratory` routing 不在這 file）
+- 既有 issue 已 cover（grep 確認後 reference 而非 duplicate）
+- AI hallucinated without codebase evidence (per MP029 verify first)
+- CONSTRAINT not TODO（deliberate non-action，例如「不支援 X」是 design choice 不是 follow-up）
+
+**Procedure**:
+
+1. **Surface list**: Agent 自己 review conversation + scout output，列出候選項目，每項格式：
+
+   ```
+   {N}. [{file_path}{:line if applicable}] {1-line description}
+        Proposed type: bug / refactor / docs / test
+        Proposed labels: confidence:confirmed, priority:P3
+   ```
+
+2. **AskUserQuestion** 三選項：
+   - `file all` → loop 各 file 一個 follow-up issue
+   - `file selected` → 顯示 numbered checklist 給 user cherry-pick
+   - `skip` → 不 file，但仍 log 到 plan body 作 audit trail
+
+3. **File issues** (if "file all" or "file selected"):
+
+   ```bash
+   for item in $selected_items:
+     gh issue create --repo "$GITHUB_REPO" \
+       --title "[$type] $description (mid-plan tangential from #$NNN)" \
+       --body "$BODY_WITH_SOURCE_LINK" \
+       --label "$type,confidence:confirmed,priority:P3"
+   ```
+
+   Body 必須含：`**Source**: surfaced during /idd-plan #$NNN tangential sweep (Step 2.5)`，方便追溯。
+
+4. **Update plan body** (Step 2 已 post 的 comment): PATCH the comment to fill the `### Tangential Observations` section：
+   - "file all/selected" → `Tangential Observations: filed #NNN, #MMM, #PPP`
+   - "skip" → `Tangential Observations: skipped per user choice`
+   - empty surface list → `Tangential Observations: none surfaced`
+   - `AI_LOW_BAR_ISSUE_FILING=false` env var set → `Tangential Observations: skipped (AI_LOW_BAR_ISSUE_FILING=false, per IC_R011 rollback)`
+
+**Rollback escape hatch**: 若 env var `AI_LOW_BAR_ISSUE_FILING=false` 設定（per IC_R011），Step 2.5 silently skip surfacing + skip AskUserQuestion，仍寫 plan body audit trail line。Manual surfacing（user 主動 `/idd-issue` follow-up）不受影響。
+
+> **為什麼是 SHALL 而非 SHOULD？** Plan-tier issues 走完整 deliberation cycle，30 秒 file 一個 follow-up vs. 30 分鐘將來重新 reconstruct（per IC_R011 cost ratio）；audit trail 缺漏的代價 vs. 多 file 一個 issue 的代價，後者大幅低。SHALL 起來，empty list 是合法結果，no friction added。
 
 ### Step 3: 確認 plan post 成功
 

@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.42.0] - 2026-05-03
+
+### Added
+- **`idd-plan` Step 2.5: Tangential Observations Sweep** ([kiki830621/ai_martech_global_scripts#524](https://github.com/kiki830621/ai_martech_global_scripts/issues/524)): new mandatory step between Step 2 (Draft Plan) and Step 3 (Confirm post) that surfaces mid-plan tangential discoveries — Phase 1 Explore agents' pass-by sister bugs, Phase 2 grep-discovered drift, Phase 3 user-mentioned sub-concerns — previously falling into the gap between In-scope and Out-of-scope categorization, vanishing into conversation.
+  - Agent self-reviews session log from Step 1 to current point, identifies candidates per IC_R011 (#516) default-on heuristic (verifiable behavior gap / sister bug / out-of-scope user-mentioned), surfaces numbered list, then AskUserQuestion three-option (`file all` / `file selected` / `skip`).
+  - Files via `gh issue create` with `confidence:confirmed` + `priority:P3` labels and source link `surfaced during /idd-plan #NNN tangential sweep (Step 2.5)` for traceability.
+  - PATCHes the Step 2 plan comment to add `### Tangential Observations (filed mid-plan, v2.42.0+ #524)` audit trail line: `filed #NNN, #MMM, #PPP` / `none surfaced` / `skipped per user choice` / `skipped (AI_LOW_BAR_ISSUE_FILING=false)`.
+  - Strength: **SHALL** (mandatory step), but empty surface list is a legitimate result. `AI_LOW_BAR_ISSUE_FILING=false` env var (per IC_R011 rollback hatch) silences the AskUserQuestion prompt while preserving audit trail.
+
+### Changed
+- **`skills/idd-plan/SKILL.md` Implementation Plan template**: added `### Tangential Observations` section after `### Out-of-scope` (filled by Step 2.5).
+- **Step 0 Bootstrap Task List**: added `tangential_sweep` TaskCreate entry between `draft_implementation_plan` and `enter_plan_mode_for_approval`.
+
+### Why
+The original `idd-plan` flow had Out-of-scope as the only categorization for non-implemented items, but **Out-of-scope is a categorized exclusion** (diagnosis-mentioned items deliberately deferred). Mid-plan **tangential discoveries** are different — they emerge during scouting/design without a categorization channel, so they vanish into conversation. The plan structure itself didn't have a slot for them, leading to recurring audit-trail loss observed in #524-trigger session.
+
+This step is the plugin-side enforcement of IC_R011 (#516) "when in doubt, file the issue" applied specifically to the mid-plan deliberation window. Finer-grained than #523 broader systematic alignment, which covers Out-of-scope items + manual reproduction sister concerns + verify Step 5b + closing summary mentions but does NOT cover the mid-plan-without-categorization gap.
+
+### Backward compatibility
+- Empty observation list = no-op: existing plan flow unchanged for focused-scout cases.
+- `AI_LOW_BAR_ISSUE_FILING=false` env var (per IC_R011) skips AskUserQuestion silently, only writes the skip-reason to plan body.
+- Existing plan bodies without the new section: continue to work; section only appears when Step 2.5 runs.
+
+No flag deprecations. No breaking changes for any existing plan workflow.
+
+### Related issues
+- #516 (IC_R011 Commercial Project Low-Bar Issue Filing — codifies the spirit being mechanically enforced here)
+- #523 (broader plugin systematic alignment — sibling, but #524 is finer gap)
+- #515 (idd-close skill design gap — sibling, different layer)
+
 ## [2.41.0] - 2026-05-03
 
 ### Fixed
