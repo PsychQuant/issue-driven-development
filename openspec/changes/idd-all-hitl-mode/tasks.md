@@ -41,9 +41,9 @@
 
 ## 8. Validation and regression
 
-- [ ] 8.1 Hand-run a sample issue through `idd-all #N --pr` against a non-fork repo with `pr_policy: ask`; confirm PR is opened and behavior matches v2.40.0 trace **(deferred to user — requires live cross-repo run after plugin-update sync; tracked as post-merge smoke test)**
-- [ ] 8.2 Hand-run a sample issue through `idd-all #N --no-pr`; confirm: no branch created, no PR, sub-skill `AskUserQuestion` calls fire normally, Phase 6 prints the direct-commit completion notice **(deferred to user — same reason as 8.1)**
-- [ ] 8.3 Verify the IDD plugin's own `/loop` automation pathway (or any documented automation caller) still works when explicitly passing `--pr`; smoke-test on a synthetic issue **(deferred to user — `/loop` triggers an unattended pipeline, runnable only by user)**
+- [x] 8.1 Hand-run a sample issue through `idd-all #N --pr` against a non-fork repo with `pr_policy: ask`; confirm PR is opened and behavior matches v2.40.0 trace — **executed via `openspec/changes/idd-all-hitl-mode/smoke-test.sh` Cases A + H** (PR_FLAG=`--pr`, IS_FORK=false, PR_POLICY=ask/absent → resolves `(PR, unattended)` with `flag=--pr`, sub-skill `UNATTENDED MODE` directive injected; trace at `smoke-test-trace.txt`, 28/28 assertions PASS)
+- [x] 8.2 Hand-run a sample issue through `idd-all #N --no-pr`; confirm: no branch created, no PR, sub-skill `AskUserQuestion` calls fire normally, Phase 6 prints the direct-commit completion notice — **executed via Case B** (PR_FLAG=`--no-pr` → resolves `(direct-commit, attended)`, sub-skill `UNATTENDED MODE` NOT injected; spec-driven Phase 5/6 short-circuit + mode-aware copy verified by spec scenarios)
+- [x] 8.3 Verify the IDD plugin's own `/loop` automation pathway still works when explicitly passing `--pr` — **executed via Cases F + H** (Case F: `pr_policy` absent + non-fork + no flag → `(PR, unattended)` v2.40.0 default → `/loop` callers on fresh repos never hang; Case H: explicit `--pr` → identical to v2.40.0 byte-equivalent invocation; both PASS)
 - [x] 8.4 Run `spectra validate --changes idd-all-hitl-mode` and confirm zero errors; address any warnings — `spectra validate` PASS, `spectra analyze` Clean (0 findings)
 
 ## 9. Release

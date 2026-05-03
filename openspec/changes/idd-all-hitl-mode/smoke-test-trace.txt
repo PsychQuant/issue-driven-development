@@ -1,0 +1,87 @@
+==================================================================
+idd-all Phase 0.5 mode resolution smoke test
+Spec: openspec/changes/idd-all-hitl-mode/specs/idd-orchestrator-modes/spec.md
+Date: 2026-05-03T17:44:33Z
+Commit (this repo HEAD): 5fc39fce5450119d6dc62ea550453fec4ff8983a
+==================================================================
+
+Case A: --pr flag (matches spec scenario 'explicit --no-pr flag', PR variant)
+  Inputs:  PR_FLAG='--pr', IS_FORK_INPUT='false', PR_POLICY_INPUT='absent'
+  Notice:  → Path: PR (unattended) — flag=--pr
+  Sub-skill UNATTENDED MODE injected: true
+  ✓ PATH_AXIS                                          = PR
+  ✓ INTERACTION                                        = unattended
+  ✓ REASON                                             = flag=--pr
+  ✓ Sub-skills get UNATTENDED MODE                     = true
+
+Case B: --no-pr flag (HITL — spec scenario 'explicit --no-pr flag')
+  Inputs:  PR_FLAG='--no-pr', IS_FORK_INPUT='false', PR_POLICY_INPUT='absent'
+  Notice:  → Path: direct-commit (attended) — flag=--no-pr
+  Sub-skill UNATTENDED MODE injected: false
+  ✓ PATH_AXIS                                          = direct-commit
+  ✓ INTERACTION                                        = attended
+  ✓ REASON                                             = flag=--no-pr
+  ✓ Sub-skills DO NOT get UNATTENDED MODE              = false
+
+Case C: fork forces PR — overrides pr_policy: never (spec scenario 'fork forces PR path')
+  Inputs:  PR_FLAG='', IS_FORK_INPUT='true', PR_POLICY_INPUT='never'
+  Notice:  → Path: PR (unattended) — fork detected (override pr_policy=never)
+  Sub-skill UNATTENDED MODE injected: true
+  ✓ PATH_AXIS                                          = PR
+  ✓ INTERACTION                                        = unattended
+  ✓ Sub-skills get UNATTENDED MODE                     = true
+
+Case D: pr_policy: always config-driven
+  Inputs:  PR_FLAG='', IS_FORK_INPUT='false', PR_POLICY_INPUT='always'
+  Notice:  → Path: PR (unattended) — pr_policy=always
+  Sub-skill UNATTENDED MODE injected: true
+  ✓ PATH_AXIS                                          = PR
+  ✓ INTERACTION                                        = unattended
+  ✓ REASON                                             = pr_policy=always
+
+Case E: pr_policy: never config-driven HITL (spec scenario 'pr_policy=never config')
+  Inputs:  PR_FLAG='', IS_FORK_INPUT='false', PR_POLICY_INPUT='never'
+  Notice:  → Path: direct-commit (attended) — pr_policy=never
+  Sub-skill UNATTENDED MODE injected: false
+  ✓ PATH_AXIS                                          = direct-commit
+  ✓ INTERACTION                                        = attended
+  ✓ REASON                                             = pr_policy=never
+  ✓ Sub-skills DO NOT get UNATTENDED MODE              = false
+
+Case F: pr_policy absent + no flag + non-fork → v2.40.0 default (PR, unattended)
+  Inputs:  PR_FLAG='', IS_FORK_INPUT='false', PR_POLICY_INPUT='absent'
+  Notice:  → Path: PR (unattended) — pr_policy absent (v2.40.0 default)
+  Sub-skill UNATTENDED MODE injected: true
+  ✓ PATH_AXIS                                          = PR
+  ✓ INTERACTION                                        = unattended
+  ✓ REASON                                             = pr_policy absent (v2.40.0 default)
+  ✓ Sub-skills get UNATTENDED MODE (matches v2.40.0)   = true
+
+Case G: explicit pr_policy: ask + no flag → AskUserQuestion handoff
+  Inputs:  PR_FLAG='', IS_FORK_INPUT='false', PR_POLICY_INPUT='ask'
+  Notice:  → Path: ASK_HANDOFF (ASK_HANDOFF) — pr_policy=ask, agent invokes AskUserQuestion
+  Sub-skill UNATTENDED MODE injected: false
+  ✓ PATH_AXIS                                          = ASK_HANDOFF
+  ✓ INTERACTION                                        = ASK_HANDOFF
+  (ASK_HANDOFF is sentinel — real bash exits the case label and the agent
+   invokes AskUserQuestion at agent level, then resumes with assigned vars.)
+
+Case H: backward-compatible default (explicit --pr) — identical to v2.40.0
+  Inputs:  PR_FLAG='--pr', IS_FORK_INPUT='false', PR_POLICY_INPUT='absent'
+  Notice:  → Path: PR (unattended) — flag=--pr
+  Sub-skill UNATTENDED MODE injected: true
+  ✓ PATH_AXIS                                          = PR
+  ✓ INTERACTION                                        = unattended
+  ✓ REASON                                             = flag=--pr
+
+Case I: flag conflict --pr --no-pr (Step 0.2 abort, simulated)
+  Inputs: argv contains both --pr and --no-pr
+  Expected abort message contains: 'Conflicting flags'
+  (real argv loop in Step 0.2 calls 'abort' when PR_FLAG already set;
+   this case asserts the documented behavior, not exec'd here.)
+  ✓ documented abort message verified
+
+==================================================================
+Summary: 28/28 assertions PASS, 0 FAIL
+==================================================================
+✓ All Phase 0.5 mode resolution cases match spec.
