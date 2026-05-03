@@ -6,7 +6,7 @@ description: |
   支援 cluster-PR mode（v2.34.0+）：多個 #N 共用 1 feature branch + 1 PR（如 `#34 #36 #38 --pr`），每個 commit 用 `Refs #N` 紀律標示。
   Use when: diagnosis 確認後、開始寫 code 時。
   防止的失敗：scope creep — 改 #42 順手重構了三個不相關的檔案。
-argument-hint: "#issue [#issue ...] [--pr | --no-pr] [--with-skill <skill>] [--extra '<requirement>'] e.g. '#42 --with-skill perspective-writer --extra ''要 500–800 字''' or '#34 #36 #38 --pr' (cluster-PR mode)"
+argument-hint: "#issue [#issue ...] [--pr | --no-pr] [--cwd /path/to/clone] [--with-skill <skill>] [--extra '<requirement>'] e.g. '#42 --with-skill perspective-writer --extra ''要 500–800 字''' or '#34 #36 #38 --pr' (cluster-PR mode) or '#43 --pr --cwd /path/to/other/repo' (cross-repo)"
 allowed-tools:
   - Bash(gh:*)
   - Bash(git:*)
@@ -30,6 +30,17 @@ allowed-tools:
 > 每一行改動都必須能追溯到 #NNN。追溯不到的改動 → 開新 issue。
 >
 > **Strategy 上的每個 `- [ ]` 都是契約**——`idd-implement` 開始時進 TaskList，`idd-close` 會 refuse 關任何還有未勾項的 issue。
+
+## Cross-repo invocation（v2.40.0+）
+
+支援 `--cwd /path/to/local/clone` flag,讓 implement 在指定 local clone 上做 commit、checkout、push(不依賴 Claude Code session cwd)。Step 0 解析 `--cwd` 後,後續所有 `git`/`gh` 命令依 [`references/cross-repo-cwd.md`](../../references/cross-repo-cwd.md) 的 substitution rule 改寫:
+
+- `git X` → `git -C "$CWD" X`(包含 fork detection、branch checkout、add、commit、push)
+- `gh issue/pr/repo X` → `gh ... X -R "$GITHUB_REPO"`
+
+**特別重要**:Phase 0.5 fork detection、Phase 5.5 PR 建立、Step 5 commit 都必須用 `git -C "$CWD"`,否則會 commit 到錯的 repo。完整 algorithm + 失敗模式見 reference 文件。
+
+**本 skill 內所有 bash 範例為 cwd-only 寫法以保持可讀性,執行時請套用 substitution rule。**
 
 ## Cluster-PR mode（v2.34.0+）
 

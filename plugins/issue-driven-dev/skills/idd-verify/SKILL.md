@@ -8,7 +8,7 @@ description: |
   支援 external-agent / PR mode（v2.37.0+）：`--pr <N>` 驗證外部 agent（Codex/Copilot）開的 PR，PR 是 master comment、ref'd issue 拿 pointer；`--commits N` / `--since <ref>` / `--branch <name>` 為其他輸入來源；缺 flag 時 auto-detect 本地 commits 與 open PR 並 AskUserQuestion。
   Use when: 實作完成後、commit 之前；或外部 agent 開了 PR 要回頭驗證。
   防止的失敗：自以為修好了，沒跑驗證；外部 agent 的 PR 沒走 IDD discipline。
-argument-hint: "#issue [#issue ...] [engine] [--loop] [--pr N] [--commits N] [--branch X] [--since REF] e.g. '#42', '#42 --pr 123', '#42 --commits 3', '#34 #36 #38' (cluster verify), '--pr 123' (auto-discover issues)"
+argument-hint: "#issue [#issue ...] [engine] [--loop] [--pr N] [--commits N] [--branch X] [--since REF] [--cwd /path/to/clone] e.g. '#42', '#42 --pr 123', '#42 --commits 3', '#34 #36 #38' (cluster verify), '--pr 123' (auto-discover issues), '#43 --cwd /path/to/other/repo' (cross-repo)"
 allowed-tools:
   - Bash(codex:*)
   - Bash(git:*)
@@ -35,6 +35,17 @@ allowed-tools:
 ## 核心原則
 
 > 「應該沒問題」不是驗證。跑了驗證、看了輸出、確認通過，才是驗證。
+
+## Cross-repo invocation（v2.40.0+）
+
+支援 `--cwd /path/to/local/clone` flag,讓 verify 在指定 local clone 上跑(不依賴 Claude Code session cwd)。Step 0 解析 `--cwd` 後,後續所有 `git`/`gh` 命令依 [`references/cross-repo-cwd.md`](../../references/cross-repo-cwd.md) 的 substitution rule 改寫:
+
+- `git X`(包含 `git diff`、`git show`、`git log`、PR mode 的 `git checkout`) → `git -C "$CWD" X`
+- `gh issue/pr/repo X` → `gh ... X -R "$GITHUB_REPO"`
+
+**特別重要**:PR mode 的 auto-restore branch 邏輯(verify 完跳回原始 branch)也必須用 `git -C "$CWD" checkout -`,否則會把錯的 repo 切回去。完整 algorithm + 失敗模式見 reference 文件。
+
+**本 skill 內所有 bash 範例為 cwd-only 寫法以保持可讀性,執行時請套用 substitution rule。**
 
 ## Cluster-PR mode（v2.34.0+）
 

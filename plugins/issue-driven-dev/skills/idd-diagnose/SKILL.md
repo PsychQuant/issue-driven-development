@@ -6,7 +6,7 @@ description: |
   支援 batch mode（v2.34.0+）：多個 #N 依序跑（如 `#34 #36 #38`），各自 post diagnosis comment。
   Use when: issue 建立後、開始寫 code 之前。
   防止的失敗：修了表象，沒修根本原因。
-argument-hint: "#issue [#issue ...] e.g. '#42' or '#34 #36 #38' (batch)"
+argument-hint: "#issue [#issue ...] [--cwd /path/to/clone] e.g. '#42' or '#34 #36 #38' (batch)"
 allowed-tools:
   - Bash(gh:*)
   - Bash(git:*)
@@ -31,6 +31,15 @@ Aggregate report 在最後輸出（每個 issue 的 complexity 判定 + comment 
 ## 核心原則
 
 > 不理解問題就動手 = 修表象。修表象 = 問題會回來。
+
+## Cross-repo invocation（v2.40.0+）
+
+支援 `--cwd /path/to/local/clone` flag,讓 diagnose 在指定 local clone 上跑(不依賴 Claude Code session cwd)。Step 0 解析 `--cwd` 後,後續所有 `git`/`gh` 命令依 [`references/cross-repo-cwd.md`](../../references/cross-repo-cwd.md) 的 substitution rule 改寫:
+
+- `git X` → `git -C "$CWD" X`
+- `gh issue/pr/repo X` → `gh ... X -R "$GITHUB_REPO"`
+
+完整 algorithm + 失敗模式見 reference 文件。**本 skill 內所有 bash 範例為 cwd-only 寫法以保持可讀性,執行時請套用 substitution rule。**
 
 ## Configuration
 

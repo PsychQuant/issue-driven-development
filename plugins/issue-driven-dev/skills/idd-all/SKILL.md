@@ -175,7 +175,7 @@ git -C "$CWD" checkout -b "$BRANCH"
 
 ```
 if [ from-scratch mode ]:
-    Skill(skill="issue-driven-dev:idd-issue", args="<arg from /idd-all>")
+    Skill(skill="issue-driven-dev:idd-issue", args="<arg from /idd-all> --target $GITHUB_REPO")
     # idd-issue 會 post issue 並 print 出 number → capture 它
     N = parse from idd-issue output
 elif [ from-issue mode ]:
@@ -183,12 +183,16 @@ elif [ from-issue mode ]:
     pass
 ```
 
+> **`--target` not `--cwd` for idd-issue**: idd-issue 是 read-only(只 `gh issue create`),不 touch local git。所以用 `--target $GITHUB_REPO` 即可,不需要 `--cwd`。
+
 ---
 
 ### Phase 2: Diagnose
 
+idd-all 必須把 `--cwd "$CWD"` 傳給 idd-diagnose,否則 sub-skill 會在 Claude Code session 的 default cwd 跑(可能是錯的 repo):
+
 ```
-Skill(skill="issue-driven-dev:idd-diagnose", args="#$N")
+Skill(skill="issue-driven-dev:idd-diagnose", args="#$N --cwd $CWD")
 ```
 
 **讀回 complexity**:idd-diagnose 結束後 fetch issue comments,grep 最新 `## Diagnosis` 區塊的 `### Complexity` 欄位:
@@ -224,10 +228,12 @@ print(m.group(1).strip() if m else 'UNKNOWN')
 ### Phase 3a: Simple Path — idd-implement
 
 ```
-Skill(skill="issue-driven-dev:idd-implement", args="#$N --pr")
+Skill(skill="issue-driven-dev:idd-implement", args="#$N --pr --cwd $CWD")
 ```
 
 **`--pr` flag is mandatory** — orchestrator path always = PR path (覆蓋 user 的 `pr_policy` config)。不傳 `--pr` 會讓 idd-implement 走 config / fork detection,結果可能不一致。
+
+**`--cwd` flag is mandatory when forwarded from idd-all**: 確保 idd-implement 在跟 idd-all 同一個 local clone 跑(否則 sub-skill 跑在 session cwd,branch/commit 會 land 錯地方)。
 
 idd-implement 會在 feature branch(由 Phase 0.4 建好的)上做所有 commit,因為已經 checkout 在 feature branch 上,Step 0.5 fork detection 會看到非 default branch + `--pr` flag,直接 reuse 當前 branch 不再 checkout。已自帶 strategy-level TaskList + scope guard,idd-all 不重複。
 
@@ -344,7 +350,7 @@ Discipline overrides for this invocation:
 
 ```python
 for round in 1..2:
-    Skill(skill="issue-driven-dev:idd-verify", args="#$N")
+    Skill(skill="issue-driven-dev:idd-verify", args="#$N --cwd $CWD")
 
     findings = parse_verify_report(latest verify comment)
 
@@ -370,7 +376,7 @@ for round in 1..2:
 
 **Follow-up findings**(設計決策 #4:auto-create issues):
 
-每個 P3/follow-up finding → 呼叫 `Skill(skill="issue-driven-dev:idd-issue")` 建新 issue,body 引用本次 verify report 原文。新 issue target main(不是當前 branch)。
+每個 P3/follow-up finding → 呼叫 `Skill(skill="issue-driven-dev:idd-issue", args="<title> --target $GITHUB_REPO")` 建新 issue(用 `--target` 而非 `--cwd`,因為 idd-issue read-only),body 引用本次 verify report 原文。新 issue target main(不是當前 branch)。
 
 ---
 

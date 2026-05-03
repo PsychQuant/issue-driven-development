@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.40.0] - 2026-05-03
+
+### Added
+- **`--cwd` flag propagated to all cwd-aware sub-skills**: `idd-diagnose`, `idd-implement`, and `idd-verify` now accept `--cwd /path/to/local/clone` with the same semantics as `idd-all` v2.39.0. Each sub-skill's Step 0 parses `--cwd`, derives `$CWD` and `$GITHUB_REPO` from origin remote, and applies a substitution rule to all subsequent `git`/`gh` calls.
+- **`references/cross-repo-cwd.md`**: Single source of truth for the `--cwd` convention — resolution algorithm (BSD-sed-compatible), substitution table (`git X` → `git -C "$CWD" X`, `gh issue/pr/repo X` → `gh ... -R "$GITHUB_REPO"`), failure modes, sibling-flag interaction (`--target` for read-only vs `--cwd` for git-writing skills).
+- **`idd-all` Phase 1/2/3a/4 forwarding**: When `idd-all` invokes a sub-skill, it now appends `--cwd "$CWD"` (for git-writing skills) or `--target "$GITHUB_REPO"` (for read-only skills like `idd-issue`) to the args string. Without this, sub-skills would inherit Claude Code's session-level cwd and operate on the wrong repo — silently committing to repo A while user expected repo B.
+
+### Changed
+- **`idd-diagnose` argument-hint** advertises `--cwd /path/to/clone`.
+- **`idd-implement` argument-hint** advertises `--cwd /path/to/clone` alongside `--pr` / `--no-pr`.
+- **`idd-verify` argument-hint** advertises `--cwd /path/to/clone` alongside `--pr` / `--commits` / `--branch` / `--since`.
+- **`idd-all` Phase 2 / 3a / 4 / Phase 4 follow-up creation**: explicit `--cwd "$CWD"` / `--target "$GITHUB_REPO"` propagation (was: implicit cwd inheritance via Skill tool).
+
+### Why
+v2.39.0 introduced `--cwd` only on `idd-all`, but the orchestrator's primary job is to invoke sub-skills via the Skill tool. Skill calls inherit Claude Code's session-level cwd, not anything `idd-all` resolved internally — so sub-skills would still operate on the wrong repo. This release closes that gap by extending the convention to every sub-skill that does local git ops, plus updating `idd-all` to forward the flag explicitly.
+
+### Backward compatibility
+Omitting `--cwd` reads from session `pwd` — identical to v2.39.0 behavior. No flag deprecations. Single-repo workflows (the common case) are unchanged.
+
 ## [2.39.0] - 2026-05-03
 
 ### Added
