@@ -63,6 +63,7 @@ TaskCreate(name="download_attachments", description="偵測 issue body/comments 
 TaskCreate(name="diagnose_by_type", description="依 issue type 做診斷: bug→RCA / feature→需求分析 / refactor→現狀分析")
 TaskCreate(name="post_diagnosis_report", description="產出 Diagnosis Report 並 comment 到 issue(非只在對話中顯示)")
 TaskCreate(name="complexity_assessment", description="3-tier 判定 Simple / Plan / Spectra 並寫入 report 的 Complexity 欄位（v2.36+，Spectra rename from SDD-warranted；新增 Plan tier 介於 Simple 和 Spectra 之間）")
+TaskCreate(name="sister_concern_surfacing", description="Step 3.6: re-read posted Diagnosis content + scout session log for sister-concern markers (也有 / sister / 同樣的 / 另外 / etc); AskUserQuestion 3-option per canonical references/ic-r011-checkpoint.md; PATCH Diagnosis comment with `### Sister Concerns Filed` audit trail (per IC_R011 #528)")
 TaskCreate(name="confirm_and_route", description="與使用者確認診斷正確,依 complexity 顯示下一步命令")
 TaskCreate(name="auto_update_body", description="Step 5: 跑 /idd-update #NNN 同步 issue body Current Status phase → diagnosed（強制，常被漏；同 idd-close 2.18.1 模式）")
 ```
@@ -311,6 +312,62 @@ Diagnosis 完成後，依 4 層 gate 判定 Complexity。**Default = Simple。**
 > - Spectra over-trigger：cross-file refactor 沒對外暴露 API → 應該 Plan，不是 Spectra
 > - Plan over-trigger：clear root cause 單檔 fix → 應該 Simple，不是 Plan
 > - Simple under-served：che-word-mcp#104 P1 sub-bug — diagnosis 漏了 rawXML-shadowing case，approval gate 會抓到 → 應該 Plan
+
+### Step 3.6: Sister Concern Surfacing (v2.47.0+, kiki830621/ai_martech_global_scripts#528)
+
+**Compliance**: this step implements [IC_R011](https://github.com/kiki830621/ai_martech_global_scripts/issues/516) commercial low-bar filing for the **mid-diagnosis deliberation window** per the canonical [`references/ic-r011-checkpoint.md`](../../references/ic-r011-checkpoint.md) pattern (3-option AskUserQuestion + audit trail + rollback hatch).
+
+**Why this step**: Diagnosis posting (Step 3) often contains sister-concern markers — phrases like 「也有」 / 「same pattern in」 / 「the related X」 / 「另外」 / 「sister」 — referencing files / functions / scenarios beyond the current issue scope. Without mechanical checkpoint, these mentions live only in conversation + Diagnosis comment, never tracked as follow-ups. Diagnosis is a **prime deliberation moment** (Strategy section often surfaces tangential concerns) — same lifecycle position as `idd-plan` Step 2.5 (#524) but earlier in the IDD chain.
+
+**Rule (SHALL)**: 在 Step 4 (確認 + Routing) 前，**必須** review the just-posted Diagnosis comment + session log from Step 1 (Read Issue) for sister-concern markers; AskUserQuestion 3-option per canonical reference doc. Empty list 是合法結果，但 step 本身不可省略。
+
+**Heuristic — what counts as "sister concern worth surfacing"** (per IC_R011 default-on triggers, full list in `ic-r011-checkpoint.md` §2):
+
+- **Sister-pattern markers in Diagnosis content**: 「也有」 / 「same pattern」 / 「related」 / 「另外」 / 「sister」 / 「likewise affects」 — references to other files where the same root cause might apply
+- **"This won't solve X" disclaimers** in Strategy section — explicit out-of-scope mentions that should be tracked
+- **Verifiable behavior gap** observed during root-cause analysis but excluded from current issue scope
+- **Adjacent code quality issues** encountered while investigating root cause (TODOs / FIXMEs / drift)
+
+**Default-off exemptions**: per canonical reference doc §3 — purely exploratory observations / existing issue covers / hallucinated without evidence / CONSTRAINT not TODO.
+
+**Procedure**:
+
+1. **Surface list**: AI re-reads the just-posted Diagnosis content + scout session log, lists candidates per canonical format:
+
+   ```
+   {N}. [paragraph in Diagnosis: "{quoted excerpt}"] suggests follow-up: {1-line description}
+        Trigger: {sister marker phrase or pattern}
+        Proposed type: bug / refactor / docs / test
+        Proposed labels: confidence:confirmed, priority:P3
+   ```
+
+2. **AskUserQuestion** 3-option (per canonical reference doc §1):
+   - `file all` → loop `gh issue create --repo "$GITHUB_REPO"` per item
+   - `file selected` → numbered checklist for cherry-pick
+   - `skip` → audit-trail line documenting reason
+
+3. **File issues** (if "file all" or "file selected"):
+
+   ```bash
+   for item in $selected_items; do
+     gh issue create --repo "$GITHUB_REPO" \
+       --title "[$type] $description (sister concern from #$NNN)" \
+       --body "$BODY_WITH_SOURCE_LINK" \
+       --label "$type,confidence:confirmed,priority:P3"
+   done
+   ```
+
+   Body MUST contain `**Source**: surfaced during /idd-diagnose #$NNN sister concern surfacing (Step 3.6)` for traceability.
+
+4. **Update Diagnosis comment** (Step 3 已 post): PATCH the comment to append `### Sister Concerns Filed (mid-diagnose, v2.47.0+ #528)` section per canonical heading conventions table:
+   - "file all/selected" → `Filed: #NNN, #MMM, #PPP`
+   - "skip" → `Skipped per user choice (N items: brief list of descriptions)`
+   - empty surface list → `none surfaced`
+   - `AI_LOW_BAR_ISSUE_FILING=false` env var → `skipped (AI_LOW_BAR_ISSUE_FILING=false, per IC_R011 rollback)`
+
+**Rollback escape hatch**: per canonical reference doc §5 — `AI_LOW_BAR_ISSUE_FILING=false` env var or `# Disable IC_R011` flag in repo CLAUDE.md silently skips checkpoint while preserving audit trail.
+
+> **Why is this SHALL not SHOULD?** Diagnosis is a **deliberation moment** (per canonical eligibility criteria §6) — Strategy authoring is when sister concerns naturally surface. Closing tier (`#527` Step 3.5) is SHOULD because it's an after-the-fact text scan;diagnosis is a creative + analytical authoring moment where the mention is fresh + actionable.
 
 ### Step 3.7: Agent Routing Recommendation (v2.38.0+, optional)
 

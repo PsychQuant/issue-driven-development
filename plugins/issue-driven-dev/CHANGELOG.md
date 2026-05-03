@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.47.0] - 2026-05-03
+
+### Added
+- **`idd-diagnose` Step 3.6: Sister Concern Surfacing** ([kiki830621/ai_martech_global_scripts#528](https://github.com/kiki830621/ai_martech_global_scripts/issues/528), sub-issue C of [#523](https://github.com/kiki830621/ai_martech_global_scripts/issues/523) systematic plugin alignment): new mandatory step between Step 3.5 (Complexity Assessment) and Step 3.7 (Agent Routing). Surfaces sister-concern markers in the just-posted Diagnosis content + scout session log.
+
+  - Trigger phrases: 「也有」 / 「same pattern」 / 「related」 / 「另外」 / 「sister」 / 「likewise affects」 — references to other files where the same root cause might apply, plus "this won't solve X" disclaimers in Strategy section.
+  - Agent re-reads posted Diagnosis content after `complexity_assessment`, lists candidates per canonical [`references/ic-r011-checkpoint.md`](plugins/issue-driven-dev/references/ic-r011-checkpoint.md) heuristic, then AskUserQuestion three-option (`file all` / `file selected` / `skip`).
+  - Files via `gh issue create` with `confidence:confirmed` + `priority:P3` + source link `surfaced during /idd-diagnose #NNN sister concern surfacing (Step 3.6)` for traceability.
+  - PATCHes the Step 3 Diagnosis comment to add `### Sister Concerns Filed (mid-diagnose, v2.47.0+ #528)` audit-trail line per canonical heading conventions.
+  - Strength: **SHALL** (mandatory step) per canonical eligibility criteria — diagnosis is a deliberation moment where sister concerns naturally surface during Strategy authoring. Empty surface list is a legitimate result.
+  - `AI_LOW_BAR_ISSUE_FILING=false` env var (per IC_R011 rollback hatch) silences AskUserQuestion silently with audit-trail line.
+
+### Changed
+- **Step 0 Bootstrap Task List**: added `sister_concern_surfacing` TaskCreate entry between `complexity_assessment` and `confirm_and_route`.
+
+### Why
+Diagnosis Strategy section is **prime authoring territory** for sister concerns — the AI agent thinks about root cause, identifies the failing pattern, then naturally observes "this same pattern likely affects X / Y / Z elsewhere." Without mechanical checkpoint, those observations live only in conversation + Diagnosis comment text, never tracked as proper follow-up issues.
+
+This is the **earliest** lifecycle moment in the IDD chain where sister concerns surface organically. Catching them here prevents downstream cascading manual reminders during implement / verify / close (the previously-observed `#510 → #518 → #520` cluster pattern).
+
+### Backward compatibility
+- Empty surface list = no-op: existing diagnose flow unchanged for issues with no sister concerns.
+- `AI_LOW_BAR_ISSUE_FILING=false` env var (per IC_R011 rollback hatch) skips AskUserQuestion silently.
+- Existing Diagnosis comments without the new section: continue to work; section only appears when Step 3.6 runs.
+
+No flag deprecations. No breaking changes for any existing diagnose workflow.
+
+### Related issues
+- Parent: [#523](https://github.com/kiki830621/ai_martech_global_scripts/issues/523) (closed as parent tracker)
+- Blocking dependency landed: [#525](https://github.com/kiki830621/ai_martech_global_scripts/issues/525) (canonical reference doc v2.43.0)
+- Sibling shipped: [#526](https://github.com/kiki830621/ai_martech_global_scripts/issues/526) (idd-implement Step 5.7 v2.44.0), [#527](https://github.com/kiki830621/ai_martech_global_scripts/issues/527) (idd-close Step 3.5 v2.45.0)
+- IC_R011 codification: [#516](https://github.com/kiki830621/ai_martech_global_scripts/issues/516)
+- Reference impl pattern: [#524](https://github.com/kiki830621/ai_martech_global_scripts/issues/524) (idd-plan Step 2.5 v2.42.0)
+
+## [2.46.0] - 2026-05-03
+
+### Added
+- **`idd-all` HITL mode** ([PsychQuant/issue-driven-development#1](https://github.com/PsychQuant/issue-driven-development/issues/1)): Phase 0.5 now resolves a `(path, interaction)` tuple from existing `pr_policy` config field + new `--pr` / `--no-pr` flags, replacing the hardcoded `--pr` enforcement.
+  - Resolution precedence: `--pr` → `--no-pr` → fork detect → `pr_policy: always|never|ask`. Fork detection always overrides config to PR mode (no push to upstream).
+  - **`(PR, unattended)`**: feature branch `idd/<N>-<slug>` from default branch + push + PR + sub-skill args carry `UNATTENDED MODE` directive (suppress `AskUserQuestion`/`EnterPlanMode`). v2.40.0 regression — `/loop` automation observes zero behavioral drift.
+  - **`(direct-commit, attended)`**: stays on user's current checkout + no push + no PR + sub-skill args **omit** unattended hint. Native attended-by-default behavior fires: `idd-implement` Plan tier `EnterPlanMode` approval, `spectra-discuss` multi-turn pacing, `spectra-propose` Step 10 Park/Apply, `spectra-apply` Step 4 continue-confirmation. HITL scenario for solo/personal repos where PR is ceremony.
+  - Mandatory resolved-tuple notice line printed before any state-mutating action: `→ Path: direct-commit (attended) — pr_policy=never`.
+  - Phase 6 next-step copy is mode-aware: PR mode → `Next: review PR <url>, merge, then run /idd-close #N`; direct-commit mode → `Next: review last <N> commits, then run /idd-close #N`. **Verify is the terminal phase regardless of mode** — `idd-all` never auto-invokes `idd-close`.
+  - **No silent timeout in attended mode**: documentation explicit that attended mode assumes a user is in session; `idd-all` imposes no timeout on sub-skill prompts.
+- **`references/pr-flow.md`**: new `idd-all path resolution` section documenting that `idd-all` consumes `pr_policy` per the same algorithm as `idd-implement` (no behavioral divergence). Captures the "two axes from one source" architectural decision so future maintainers don't reintroduce duplicate config surfaces.
+
+### Migration
+Pure additive — no breaking change. Existing callers (`/loop`, `/idd-all #N`, `/idd-all #N --pr`, `/idd-all #N --cwd /path`) all continue to resolve to `(PR, unattended)`. Opt into HITL via `--no-pr` flag or `pr_policy: never` config.
+
+### Spec
+New capability `idd-orchestrator-modes` (`openspec/changes/idd-all-hitl-mode/specs/idd-orchestrator-modes/spec.md`) with 7 ADDED Requirements covering mode resolution, PR-path regression guarantee, direct-commit branch behavior, attended-interaction permits sub-skill questions, terminal-verify-regardless-of-mode, no-silent-timeout, and documentation contract.
+
 ## [2.45.0] - 2026-05-03
 
 ### Added
