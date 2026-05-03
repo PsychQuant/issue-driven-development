@@ -78,6 +78,7 @@ TaskCreate(name="execute_tdd_loop", description="對每個 strategy item: 寫測
 TaskCreate(name="scope_guard", description="實作中發現不相關問題 → 開新 issue,不混入本 #NNN")
 TaskCreate(name="sync_checklist_and_summary", description="Step 5: 把最終 checklist 狀態寫回 Implementation Complete comment")
 TaskCreate(name="open_pr_if_pr_path", description="Phase 5.5: PR path 才執行 — git push + gh pr create with Refs #NNN body")
+TaskCreate(name="sister_bug_sweep", description="Step 5.7: review session log + reproduction trace, identify sister bugs / refactor opportunities / TODOs encountered; AskUserQuestion 3-option per canonical references/ic-r011-checkpoint.md; PATCH Implementation Complete comment with `### Sister Bugs Filed` audit trail (per IC_R011 #526)")
 ```
 
 完成每一步立即 `TaskUpdate → completed`。**靜默完成 = 違規**。
@@ -482,6 +483,62 @@ gh pr create --title "$PR_TITLE" --body "$PR_BODY" \
 ```
 
 完整 PR body template + branch naming + 禁止 trailers 的理由見 [pr-flow.md](../../references/pr-flow.md)。
+
+### Step 5.7: Sister Bug Sweep (v2.44.0+, kiki830621/ai_martech_global_scripts#526)
+
+**Compliance**: this step implements [IC_R011](https://github.com/kiki830621/ai_martech_global_scripts/issues/516) commercial low-bar filing for the **mid-implementation reproduction window** per the canonical [`references/ic-r011-checkpoint.md`](../../references/ic-r011-checkpoint.md) pattern (3-option AskUserQuestion + audit trail + rollback hatch).
+
+**Why this step**: manual reproduction during TDD execution (Step 3) often surfaces same-root-cause sister bugs in adjacent files. 2026-05-03 cluster `#510 → #518 → #520` proves the inconsistency: 3 separate same-pattern bugs (gen_*.R / fix_wiser / _build.R) each required user manual reminder to file. Without mechanical checkpoint, AI spirit-alignment drifts.
+
+**Rule (SHALL)**: 在 chain to /idd-verify (Step 6) 前，**必須** review session log from Step 1 (Read Issue) through Step 5.5 (PR opened, if applicable) for sister-bug discoveries; AskUserQuestion 3-option per canonical reference doc. Empty list 是合法結果，但 step 本身不可省略。
+
+**Heuristic — what counts as "sister bug worth surfacing"** (per IC_R011 default-on triggers, full list in `ic-r011-checkpoint.md` §2):
+
+- **Same root cause manifesting in different file** — e.g. TDD fixture creation surfaced sibling file with similar broken pattern. Cluster pattern (`#510 → #518 → #520`) is the canonical example.
+- **Manual reproduction surfaced unrelated quality issue** — grep paths during scout hit sibling helper with broken pattern.
+- **Code search hit `# TODO` / `# FIXME`** in grep paths — orphan deferred work in adjacent files.
+- **Refactor opportunity adjacent to fix path** — touching file X to fix bug, encountered file Y obviously needs same refactor.
+
+**Default-off exemptions**: per canonical reference doc §3 — purely exploratory observations / existing issue covers / hallucinated without evidence / CONSTRAINT not TODO.
+
+**Procedure**:
+
+1. **Surface list**: AI agent reviews session log + grep paths + TDD reproduction trace, lists candidates per canonical format:
+
+   ```
+   {N}. [{file_path}{:line if applicable}] {1-line description}
+        Proposed type: bug / refactor / docs / test
+        Proposed labels: confidence:confirmed, priority:P3
+        Source: surfaced during /idd-implement #$NNN reproduction (Step 5.7)
+   ```
+
+2. **AskUserQuestion** 3-option (per canonical reference doc §1):
+   - `file all` → loop `gh issue create --repo "$GITHUB_REPO"` per item
+   - `file selected` → numbered checklist for cherry-pick
+   - `skip` → audit-trail line documenting reason
+
+3. **File issues** (if "file all" or "file selected"):
+
+   ```bash
+   for item in $selected_items; do
+     gh issue create --repo "$GITHUB_REPO" \
+       --title "[$type] $description (sister bug from #$NNN)" \
+       --body "$BODY_WITH_SOURCE_LINK" \
+       --label "$type,confidence:confirmed,priority:P3"
+   done
+   ```
+
+   Body MUST contain `**Source**: surfaced during /idd-implement #$NNN reproduction (Step 5.7)` for traceability.
+
+4. **Update Implementation Complete comment** (Step 5 已 post 的): PATCH the comment to append `### Sister Bugs Filed (mid-impl, v2.44.0+ #526)` section per canonical heading conventions table:
+   - "file all/selected" → `Filed: #NNN, #MMM, #PPP`
+   - "skip" → `Skipped per user choice (N items: brief list of descriptions)`
+   - empty surface list → `none surfaced`
+   - `AI_LOW_BAR_ISSUE_FILING=false` env var → `skipped (AI_LOW_BAR_ISSUE_FILING=false, per IC_R011 rollback)`
+
+**Rollback escape hatch**: per canonical reference doc §5 — `AI_LOW_BAR_ISSUE_FILING=false` env var or `# Disable IC_R011` flag in repo CLAUDE.md silently skips checkpoint while preserving audit trail.
+
+> **Why is this SHALL not SHOULD?** Implementation is the prime moment when sister bugs surface (manual reproduction reveals same-root-cause sibling files);30-second filing × N items vs. 30+ min reconstructing the cluster pattern weeks later. SHALL with empty list as legitimate result is the right strength.
 
 提示下一步：`/issue-driven-dev:idd-verify #NNN`
 

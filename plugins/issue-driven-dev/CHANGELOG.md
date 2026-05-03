@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.44.0] - 2026-05-03
+
+### Added
+- **`idd-implement` Step 5.7: Sister Bug Sweep** ([kiki830621/ai_martech_global_scripts#526](https://github.com/kiki830621/ai_martech_global_scripts/issues/526), sub-issue A of [#523](https://github.com/kiki830621/ai_martech_global_scripts/issues/523) systematic plugin alignment): new mandatory step between Step 5.5 (Open PR, if PR path) and chain to `/idd-verify`. Surfaces sister bugs discovered during TDD reproduction (Step 3 manual reproduction often reveals same-root-cause sibling files in adjacent paths).
+
+  - Agent reviews session log + grep paths + reproduction trace, identifies candidates per canonical [`references/ic-r011-checkpoint.md`](plugins/issue-driven-dev/references/ic-r011-checkpoint.md) heuristic (same root cause manifesting in different file / unrelated quality issue from manual reproduction / TODO-FIXME hits / refactor opportunities adjacent to fix path), surfaces numbered list, then AskUserQuestion three-option (`file all` / `file selected` / `skip`).
+  - Files via `gh issue create` with `confidence:confirmed` + `priority:P3` labels and source link `surfaced during /idd-implement #NNN reproduction (Step 5.7)` for traceability.
+  - PATCHes the Step 5 Implementation Complete comment to add `### Sister Bugs Filed (mid-impl, v2.44.0+ #526)` audit-trail line per canonical heading conventions table: `Filed: #NNN, #MMM, #PPP` / `none surfaced` / `Skipped per user choice (...)` / `skipped (AI_LOW_BAR_ISSUE_FILING=false)`.
+  - Strength: **SHALL** (mandatory step), but empty surface list is a legitimate result. `AI_LOW_BAR_ISSUE_FILING=false` env var (per IC_R011 rollback hatch) silences the AskUserQuestion prompt while preserving audit trail.
+
+### Changed
+- **Step 0 Bootstrap Task List**: added `sister_bug_sweep` TaskCreate entry between `open_pr_if_pr_path` and chain-to-verify.
+
+### Why
+2026-05-03 cluster `#510 → #518 → #520` proves the inconsistency: 3 separate same-pattern bugs (`gen_product_attribute_*` / `fix_wiser_poisson_tables.R` / `_build.R`) — each manual reminder was needed despite same root-cause pattern. Without mechanical checkpoint at this lifecycle moment, AI spirit-alignment drifts. Implementation is the **prime moment** for sister bugs to surface (manual reproduction is when they're most visible);30-second filing × N items vs. 30+ min reconstructing the cluster pattern weeks later (per IC_R011 cost calibration).
+
+### Backward compatibility
+- Empty observation list = no-op: existing implement flow unchanged for focused fixes with no sister observations.
+- `AI_LOW_BAR_ISSUE_FILING=false` env var (per IC_R011) skips AskUserQuestion silently, only writes the skip-reason to Implementation Complete audit trail.
+- Existing Implementation Complete comments without the new section: continue to work; section only appears when Step 5.7 runs.
+
+No flag deprecations. No breaking changes for any existing implement workflow.
+
+### Related issues
+- Parent: [#523](https://github.com/kiki830621/ai_martech_global_scripts/issues/523) (closed 2026-05-03 as parent tracker, decomposed into 6 sub-issues)
+- Blocking dependency landed: [#525](https://github.com/kiki830621/ai_martech_global_scripts/issues/525) (sub-issue F, canonical reference doc v2.43.0)
+- IC_R011 codification: [#516](https://github.com/kiki830621/ai_martech_global_scripts/issues/516)
+- Reference impl pattern: [#524](https://github.com/kiki830621/ai_martech_global_scripts/issues/524) (idd-plan Step 2.5 v2.42.0 — direct sibling at deliberation moment;Step 5.7 is the execution-moment counterpart)
+
 ## [2.43.0] - 2026-05-03
 
 ### Added
