@@ -52,15 +52,15 @@ allowed-tools:
 
 掃 issue body + **所有 comments** 的 **結構化區段**：
 
-| 區段標題 (`## ` 或 `### `) | 當成 checklist source |
-|----------------------------|---------------------|
-| `Strategy` | ✅ |
-| `Implementation Plan` | ✅ |
-| `Implementation Complete` → `Checklist` | ✅（這是 `idd-implement` Step 5 寫回的 source of truth）|
-| `Todo` / `Tasks` / `Checklist` | ✅ |
-| `Current Status` → `Tasks` | ✅ |
-| `Problem` / `Repro` / `Steps to reproduce` / `Workaround` / `Expected` / `Actual` | ❌ 忽略（描述性區段，checkbox 是情境不是 todo）|
-| _(未列出的標題)_ | ❌ 忽略（保守：不掃不認識的區段）|
+| 區段標題 (`## ` 或 `### `) | 當成 checklist source | Notes |
+|----------------------------|---------------------|-------|
+| `Strategy` | ✅ | **Superseded** when Implementation Complete > Checklist 全 `[x]`（v2.41.0+, #515）|
+| `Implementation Plan` | ✅ | **Superseded** when Implementation Complete > Checklist 全 `[x]`（v2.41.0+, #515）|
+| `Implementation Complete` → `Checklist` | ✅ | Canonical source of truth（`idd-implement` Step 5 寫回）。Triggers supersession of Strategy / Implementation Plan when 全 `[x]`. |
+| `Todo` / `Tasks` / `Checklist` | ✅ | 永遠 scan |
+| `Current Status` → `Tasks` | ✅ | 永遠 scan |
+| `Problem` / `Repro` / `Steps to reproduce` / `Workaround` / `Expected` / `Actual` | ❌ 忽略 | 描述性區段，checkbox 是情境不是 todo |
+| _(未列出的標題)_ | ❌ 忽略 | 保守：不掃不認識的區段 |
 
 **解析規則**：
 
@@ -82,6 +82,50 @@ allowed-tools:
 **Comment 去重**：
 
 若多個 comments 含相同 source 標題（例如使用者 re-ran `idd-implement` 並發了多個 `## Implementation Complete`），**只看最後一個**（按 comment `createdAt` desc 取第一個）——那是最新的 source of truth。
+
+**Pre-implementation supersession check (v2.41.0+, #515 fix)**：
+
+`Strategy` 跟 `Implementation Plan` 是 **pre-implementation snapshots**——它們在 `idd-diagnose` / `idd-plan` 階段寫進 issue,記錄當時的 design intent。`idd-implement` Step 5 「Checklist Sync」**只**回寫 `## Implementation Complete > ### Checklist`（自己發的 comment 內），**不會** PATCH `Strategy` / `Implementation Plan` comments 的 checkbox。
+
+因此即使 work 真正完成,Strategy / Plan 的 `- [ ]` 仍停留在 pre-impl 狀態,gate 會誤判為「有未完成 todo」,refuse close（observed in #455 / #510 close, 2026-05-03）。
+
+修法：當 `Implementation Complete > Checklist` 存在 **且其所有 items 全部 `- [x]`** 時，視為 **canonical state of truth**,Strategy 跟 Implementation Plan 的 `- [ ]` 一律當 superseded（skip gate）。
+
+```
+impl_complete = scan_subsection("## Implementation Complete > ### Checklist")
+                # 若多個 ## Implementation Complete comments，按 createdAt desc 取最新
+
+supersession_active = (impl_complete exists)
+                      AND (len(impl_complete.items) > 0)
+                      AND (all items in impl_complete are - [x])
+
+if supersession_active:
+    # Narrow scan：只 gate 真正 canonical 的 sources
+    sources = [Implementation Complete > Checklist,
+               Current Status > Tasks,
+               Todo / Tasks / Checklist (top-level headings)]
+    log "  ✅ Pre-implementation snapshots superseded by Implementation Complete > Checklist"
+else:
+    # Legacy / partial state：fall back to full spec table
+    sources = [Strategy, Implementation Plan, Implementation Complete > Checklist,
+               Todo / Tasks / Checklist, Current Status > Tasks]
+```
+
+**為什麼 supersession 是安全的**：
+
+- 防 motivated cheating：若 user 沒跑 `idd-implement`（Implementation Complete 不存在或不完整）就嘗試 close,fall back 維持 strict gate scan
+- 防 honest forgetting：若 Implementation Complete 內仍有 `- [ ]`，supersession 不 trigger,gate 正常擋
+- 解 #515 friction：完整 lifecycle（diagnose → plan → implement → close）的 happy path,user 不需手動 `gh api PATCH` Strategy / Plan comments
+
+**邊界 case**：
+
+| Implementation Complete > Checklist 狀態 | 行為 |
+|---|---|
+| 不存在（legacy issue 或 idd-implement 沒跑) | Legacy fallback：scan all 5 sources（含 Strategy / Implementation Plan）|
+| 存在但 0 items | 視同不存在 → Legacy fallback |
+| 存在,某些 `- [ ]` | Legacy fallback：scan all 5 sources（仍會 catch Implementation Complete 內未完項目)|
+| 存在,全部 `- [x]` | **Supersession active**：only scan canonical sources |
+| 存在,全部 `- [x]` 但有 `- [~]` / `- [-]` 含 reason | Supersession active（reason'd skips 本就 pass）|
 
 **Gate 決策**：
 

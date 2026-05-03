@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.41.0] - 2026-05-03
+
+### Fixed
+- **`idd-close` Step 0 false-positive on pre-implementation Strategy/Plan checkboxes** ([kiki830621/ai_martech_global_scripts#515](https://github.com/kiki830621/ai_martech_global_scripts/issues/515)): `idd-close`'s gate scanned `Strategy` + `Implementation Plan` + `Implementation Complete > Checklist` as equal sources, but `idd-implement` Step 5 only writes back to its own `## Implementation Complete > ### Checklist` subsection — never PATCHes the pre-implementation Strategy/Plan comments. Result: complete IDD-lifecycle issues (work done, Implementation Complete fully `- [x]`) still showed 8+ stale `- [ ]` in Strategy/Plan, refusing close until user manually `gh api PATCH`ed both comments. Observed in #455 + #510 close, 2026-05-03.
+
+### Added
+- **Pre-implementation supersession check** in `idd-close` Step 0 (`skills/idd-close/SKILL.md`): when `## Implementation Complete > ### Checklist` exists and **all** its items are `- [x]`, that subsection is recognized as the canonical state of truth and `Strategy` / `Implementation Plan` `- [ ]` items are auto-superseded (skipped from gate). Logged as `(superseded by Implementation Complete > Checklist)` for audit trail.
+
+### Why
+The original Step 0 spec implicitly assumed `idd-implement` Step 5 syncs all checkbox sources, but the actual implementation only writes the canonical `## Implementation Complete > ### Checklist`. Strategy/Plan are pre-implementation **snapshots** — they record design intent at diagnose/plan time, and shouldn't function as a ship gate after the canonical implementation record exists. Strategy A from #515 diagnosis (header-based supersession) was chosen over B (sync-at-write — adds idd-implement Step 5 complexity, error-prone PATCH fan-out) and C (narrow gate — too aggressive, loses Strategy/Plan defensive coverage when Implementation Complete is missing/partial).
+
+### Backward compatibility
+- Legacy issues without `## Implementation Complete` (idd-implement never ran): unchanged, full spec table still scanned.
+- Issues with `## Implementation Complete` but containing any `- [ ]`: supersession **not** triggered; falls back to full spec scan (defensive — catches both pre-impl AND post-impl unchecked items).
+- Issues already manually `PATCH`ed via the workaround: continue to pass (Strategy/Plan items already `- [x]`; gate succeeds via either the supersession path or the legacy path).
+
+No flag deprecations. No breaking changes for any existing close workflow.
+
+### Spec table update
+The `Step 0 > 掃描範圍` table in `skills/idd-close/SKILL.md` now documents the supersession rule explicitly: Strategy and Implementation Plan rows note `**Superseded** when Implementation Complete > Checklist 全 [x]`; Implementation Complete > Checklist row notes that triggering supersession requires all items to be `- [x]`.
+
 ## [2.40.0] - 2026-05-03
 
 ### Added
