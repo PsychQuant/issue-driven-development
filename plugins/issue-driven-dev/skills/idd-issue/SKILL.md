@@ -106,6 +106,7 @@ TaskCreate(name="resolve_mentions", description="若有 --mention 或 descriptio
 TaskCreate(name="create_issue", description="Step 3: gh issue create — Single mode 或 Group mode(primary + tracking + cross-link comment)，body 含已驗證的 @login")
 TaskCreate(name="attach_images", description="上傳圖片到 attachments release 並編輯 issue body 嵌入(若有)")
 TaskCreate(name="create_milestone", description="來源為文件時自動建立 milestone 並指派(見 Step 4.5)")
+TaskCreate(name="linked_context_sister_sweep", description="Step 4.7: scan body draft + linked attachments + recent session conversation for sibling-concern markers (also / additionally / 另外 / 順便 / etc); if hits AskUserQuestion 3-option per canonical references/ic-r011-checkpoint.md; PATCH just-created issue body with `### Linked-Context Siblings Filed` audit trail (advisory, non-blocking, per IC_R011 #529)")
 TaskCreate(name="report_and_stop", description="回報 issue number/URL(group 模式列全部 + cross-link),停下等使用者決定下一步")
 ```
 
@@ -542,6 +543,65 @@ done
 **觸發條件**：來源為文件（.docx, .pdf, .md 等）且建立了 2 個以上 issues。
 **命名**：優先用文件內的主標題，沒有則問使用者。
 **不觸發**：單一 issue 或非文件來源。
+
+### Step 4.7: Linked-Context Sister Sweep (v2.48.0+, kiki830621/ai_martech_global_scripts#529)
+
+**Compliance**: this step implements [IC_R011](https://github.com/kiki830621/ai_martech_global_scripts/issues/516) commercial low-bar filing for the **issue-creation context window** per the canonical [`references/ic-r011-checkpoint.md`](../../references/ic-r011-checkpoint.md) pattern (3-option AskUserQuestion + audit trail + rollback hatch).
+
+**Why this step**: when user invokes `/idd-issue` from a session with scout history / attached document / linked source material, the session log + attachments often contain references to **sibling concerns** — `also` / `another bug` / `additionally` / 「另外」 / 「順便」 — that are tangentially relevant but not the user's primary issue. Without checkpoint, those mentions stay in conversation;the user files one issue + walks away with N orphan mentions still un-tracked.
+
+**Why advisory not mandatory**: per canonical eligibility criteria §6 — `/idd-issue` is itself an action of filing. **Double-prompting risks user-friction** (just filed an issue + immediately asked "anything else?"). Light-touch: only surface if grep clearly hits sister markers in linked context. Empty list = silent no-op.
+
+**Rule (SHOULD, advisory)**: 在 Step 5 (回報並停止) 前，scan issue body draft + linked attachments + recent session conversation for sibling-concern markers. 若任何 hit → AskUserQuestion 3-option per canonical reference doc。**Non-blocking** — user 可選 skip 直接 finalize。
+
+**Heuristic — what counts as "linked-context sibling worth surfacing"** (per IC_R011 default-on triggers, full list in `ic-r011-checkpoint.md` §2):
+
+- **Issue body draft** contains `also` / `additionally` / `related` / 「另外」 / 「順便」 / `BTW` mentioning concerns beyond the primary scope
+- **Linked attachments** (per IC_R007 attachments policy) contain sibling-concern references that didn't make it into issue body
+- **Recent session conversation** (last ~20 turns before `/idd-issue` invocation) has orphan mentions of bugs/refactors/observations that weren't captured
+
+**Default-off exemptions**: per canonical reference doc §3 — purely exploratory observations / existing issue covers / hallucinated without evidence / CONSTRAINT not TODO. Plus: **single-issue invocation with no attached document and no scout history**, the heuristic typically returns empty — silent skip.
+
+**Procedure**:
+
+1. **Scan + classify**: AI scans the 3 sources (body draft / attachments / recent conversation), surfaces orphan-mention list:
+
+   ```
+   {N}. [source: body|attachment:doc.pdf|conversation] suggests follow-up: {1-line description}
+        Trigger: {sister marker phrase}
+        Proposed type: bug / refactor / docs / test
+        Proposed labels: confidence:confirmed, priority:P3
+   ```
+
+2. **AskUserQuestion** 3-option (per canonical reference doc §1, with creation-specific framing):
+   - `file as sibling issues now` → batch `gh issue create` per orphan mention (parallel issues, NOT cross-linked into the just-created issue body)
+   - `file selected` → numbered checklist for cherry-pick
+   - `skip` → audit-trail line in original issue body
+
+3. **File issues** (if "file as sibling issues now" or "file selected"):
+
+   ```bash
+   for item in $selected_items; do
+     gh issue create --repo "$GITHUB_REPO" \
+       --title "[$type] $description (sibling concern from #$NEW_ISSUE)" \
+       --body "$BODY_WITH_SOURCE_LINK" \
+       --label "$type,confidence:confirmed,priority:P3"
+   done
+   ```
+
+   Body MUST contain `**Source**: surfaced during /idd-issue #$NEW_ISSUE linked-context sister sweep (Step 4.7)` for traceability. Sibling issues reference the just-created `#NEW_ISSUE` as parent context, NOT vice versa (the just-created issue body stays focused on user's primary concern).
+
+4. **Update just-created issue body** (Step 3 已 created): PATCH the body to append `### Linked-Context Siblings Filed (v2.48.0+ #529)` section per canonical heading conventions table:
+   - "file as sibling issues now / file selected" → `Filed sibling issues: #NNN, #MMM, #PPP`
+   - "skip" → `Skipped per user choice (kept inline mentions: brief list of descriptions)`
+   - empty surface list → `(none — no orphan sibling mentions in linked context)`
+   - `AI_LOW_BAR_ISSUE_FILING=false` env var → `skipped (AI_LOW_BAR_ISSUE_FILING=false, per IC_R011 rollback)`
+
+   Use `gh issue edit "$NEW_ISSUE" --body "$UPDATED_BODY"` to PATCH.
+
+**Rollback escape hatch**: per canonical reference doc §5 — `AI_LOW_BAR_ISSUE_FILING=false` env var or `# Disable IC_R011` flag in repo CLAUDE.md silently skips checkpoint while preserving audit trail.
+
+> **Why advisory (SHOULD) not mandatory (SHALL)?** `/idd-issue` semantic is "file an issue I'm thinking about right now" — user is already in filing-active mode. Asking again right after creates double-prompt friction. Surface only when heuristic clearly hits;default to silent no-op for clean single-issue invocations. Per canonical eligibility criteria §6: issue creation is light-touch advisory, not the deliberation moment that demands SHALL strength (those are diagnose / plan / implement / discuss / propose).
 
 ### Step 5: 回報並停止
 

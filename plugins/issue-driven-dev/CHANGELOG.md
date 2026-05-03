@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.48.0] - 2026-05-03
+
+### Added
+- **`idd-issue` Step 4.7: Linked-Context Sister Sweep** ([kiki830621/ai_martech_global_scripts#529](https://github.com/kiki830621/ai_martech_global_scripts/issues/529), sub-issue D of [#523](https://github.com/kiki830621/ai_martech_global_scripts/issues/523) systematic plugin alignment): new advisory step between Step 4.5 (auto-milestone) and Step 5 (回報並停止). Scans 3 sources for sibling-concern markers:
+  - Issue body draft (`also` / `additionally` / `related` / 「另外」 / 「順便」 / `BTW`)
+  - Linked attachments (per IC_R007 attachments policy)
+  - Recent session conversation (~20 turns before `/idd-issue` invocation)
+
+  - If any source hits, AskUserQuestion three-option (`file as sibling issues now` / `file selected` / `skip`) per canonical [`references/ic-r011-checkpoint.md`](plugins/issue-driven-dev/references/ic-r011-checkpoint.md).
+  - `file as sibling issues now`/`file selected` filing pipeline: `gh issue create` per orphan mention (parallel issues — **NOT** cross-linked into the just-created issue body), each with `confidence:confirmed` + `priority:P3` labels and source link `surfaced during /idd-issue #NEW linked-context sister sweep (Step 4.7)`.
+  - PATCHes the just-created issue body via `gh issue edit` to append `### Linked-Context Siblings Filed (v2.48.0+ #529)` audit-trail line per canonical heading conventions.
+  - Strength: **SHOULD (advisory, non-blocking)** per canonical eligibility criteria §6 — issue creation is light-touch (user is already in filing-active mode, double-prompt risks friction). Empty list = silent no-op default for clean single-issue invocations.
+  - `AI_LOW_BAR_ISSUE_FILING=false` env var (per IC_R011 rollback hatch) silences AskUserQuestion silently with audit-trail line.
+
+### Changed
+- **Step 0 Bootstrap Task List**: added `linked_context_sister_sweep` TaskCreate entry between `create_milestone` and `report_and_stop`.
+
+### Why
+When user invokes `/idd-issue` from a session with scout history / attached document / linked source material, the session log + attachments often contain references to **sibling concerns** that are tangentially relevant but not the user's primary issue. Without checkpoint, those mentions stay in conversation; the user files one issue + walks away with N orphan mentions still un-tracked.
+
+Sibling issues are **filed in parallel** (not as children of the just-created issue), preserving primary-concern focus. The just-created issue body simply tracks the audit trail of which siblings got filed alongside.
+
+### Backward compatibility
+- Empty surface list = silent no-op: existing single-issue invocations unchanged for clean filing without scout context.
+- `AI_LOW_BAR_ISSUE_FILING=false` env var (per IC_R011 rollback hatch) skips AskUserQuestion silently.
+- Existing issue creation flows without the new section: continue to work; section only appears when Step 4.7 surfaces a hit.
+
+No flag deprecations. No breaking changes for any existing issue creation workflow.
+
+### Related issues
+- Parent: [#523](https://github.com/kiki830621/ai_martech_global_scripts/issues/523) (closed as parent tracker)
+- Blocking dependency landed: [#525](https://github.com/kiki830621/ai_martech_global_scripts/issues/525) (canonical reference doc v2.43.0)
+- Sibling shipped: [#526](https://github.com/kiki830621/ai_martech_global_scripts/issues/526) (idd-implement Step 5.7 v2.44.0), [#527](https://github.com/kiki830621/ai_martech_global_scripts/issues/527) (idd-close Step 3.5 v2.45.0), [#528](https://github.com/kiki830621/ai_martech_global_scripts/issues/528) (idd-diagnose Step 3.6 v2.47.0)
+- IC_R011 codification: [#516](https://github.com/kiki830621/ai_martech_global_scripts/issues/516)
+
 ## [2.47.0] - 2026-05-03
 
 ### Added
