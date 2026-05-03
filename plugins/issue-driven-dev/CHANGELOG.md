@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.49.0] - 2026-05-03
+
+### Added
+- **`references/ic-r011-checkpoint.md` v1.1.0 — Third-Party Skill Alignment section** ([kiki830621/ai_martech_global_scripts#530](https://github.com/kiki830621/ai_martech_global_scripts/issues/530), sub-issue E of [#523](https://github.com/kiki830621/ai_martech_global_scripts/issues/523) systematic plugin alignment, **last sub-issue closing the parent epic**): adds documentation guidance for applying IC_R011 checkpoint to third-party spectra-* skills.
+
+  - `/spectra-discuss` (deliberation moment): SHALL apply manual checkpoint at discussion convergence — review log, AskUserQuestion 3-option, file via `gh issue create`, note in conclusion artifact under `### Tangential Observations (post-discuss)` heading.
+  - `/spectra-propose` (deliberation moment): SHALL apply manual checkpoint at proposal drafting completion — re-read drafted artifact, AskUserQuestion 3-option, file via `gh issue create`, note in proposal under `### Tangential Observations (post-propose)` heading.
+  - Eligible-skills inventory: explicitly N/A for `/spectra-apply` / `/spectra-archive` / `/spectra-ask` / `/spectra-ingest` / `/spectra-commit` / `/spectra-debug` (all mechanical execution, no deliberation moment).
+
+### Why documentation-only (no SKILL.md modification)
+spectra-* skills are published by third-party `kaochenlong/spectra-app` repo. Direct upstream SKILL.md modification would require:
+- Cross-plugin coordination governance (different commit cycle)
+- Upstream PR review by third-party maintainer
+
+Documentation-side alignment delivers immediate value: agents/users reading this canonical doc when invoking `/spectra-*` know to apply the pattern manually at the equivalent lifecycle moments.
+
+If spectra-app upstream adopts native IC_R011 checkpoint in their SKILL.md files, the new "Third-Party Skill Alignment" section becomes redundant and can be removed. Until then, the canonical doc is the single source of truth that bridges the gap.
+
+### #523 parent epic closing
+This is **sub-issue E**, the **last** of 6 sub-issues filed under #523 systematic plugin alignment. With #530 closed, the parent epic [#523](https://github.com/kiki830621/ai_martech_global_scripts/issues/523) is fully resolved across the IDD lifecycle:
+
+| Sub-issue | Skill | Released | Strength |
+|---|---|---|---|
+| F #525 | canonical reference doc | v2.43.0 | (foundation) |
+| A #526 | `/idd-implement` Step 5.7 Sister Bug Sweep | v2.44.0 | SHALL |
+| B #527 | `/idd-close` Step 3.5 Closing Summary Scan | v2.45.0 | SHOULD |
+| C #528 | `/idd-diagnose` Step 3.6 Sister Concern Surfacing | v2.47.0 | SHALL |
+| D #529 | `/idd-issue` Step 4.7 Linked-Context Sister Sweep | v2.48.0 | SHOULD |
+| **E #530** | `/spectra-discuss` + `/spectra-propose` (docs-only) | **v2.49.0** | SHALL |
+
+Pre-existing alignment retained:
+- `/idd-verify` Step 5b follow-up triage (pre-existing in plugin)
+- `/idd-plan` Step 2.5 Tangential Observations Sweep ([#524](https://github.com/kiki830621/ai_martech_global_scripts/issues/524), v2.42.0)
+- `/idd-close` Step 0 supersession ([#515](https://github.com/kiki830621/ai_martech_global_scripts/issues/515), v2.41.0 — gate logic, distinct from #527 IC_R011 checkpoint)
+
+### Backward compatibility
+Documentation-only addition. No SKILL.md behavioral change. spectra-* invocations continue to work exactly as before; the alignment is opt-in guidance for agents/users who want IC_R011-spirit follow-up filing during spectra deliberation moments.
+
+### Related issues
+- Parent: [#523](https://github.com/kiki830621/ai_martech_global_scripts/issues/523) (parent epic — fully resolved with this release)
+- Canonical reference doc: [#525](https://github.com/kiki830621/ai_martech_global_scripts/issues/525) (v2.43.0, doc bumped to v1.1.0 in this release)
+- Sibling sub-issues (all closed): [#526](https://github.com/kiki830621/ai_martech_global_scripts/issues/526), [#527](https://github.com/kiki830621/ai_martech_global_scripts/issues/527), [#528](https://github.com/kiki830621/ai_martech_global_scripts/issues/528), [#529](https://github.com/kiki830621/ai_martech_global_scripts/issues/529)
+- IC_R011 codification: [#516](https://github.com/kiki830621/ai_martech_global_scripts/issues/516)
+
 ## [2.48.0] - 2026-05-03
 
 ### Added

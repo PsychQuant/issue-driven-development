@@ -204,6 +204,56 @@ Add new skills to the table above (with `cross-repo:idd-plugin` tracker issue) w
 
 ---
 
+## Third-Party Skill Alignment (v1.1.0+, #530)
+
+For skills outside this plugin (e.g. `/spectra-*` skills published by `kaochenlong/spectra-app`), **direct SKILL.md modification is not available**. Instead, agents and users invoking these skills with IC_R011 alignment SHALL apply this pattern manually at the equivalent lifecycle moments:
+
+### `/spectra-discuss` — Manual Step at end of discussion
+
+When discussion converges to a conclusion, **before** producing the conclusion artifact:
+
+1. AI agent reviews the discussion log for tangential observations per heuristic §2 above
+2. If hits, applies AskUserQuestion 3-option per §1 above
+3. Files via `gh issue create` per §1 filing command template
+4. Notes filed issues in conclusion artifact under `### Tangential Observations (post-discuss)` heading per §4 conventions
+
+**Strength**: SHALL — discussion convergence is a deliberation moment per §6 eligibility criteria.
+
+### `/spectra-propose` — Manual Step at end of proposal drafting
+
+When proposal artifact (spec / proposal / tasks) is drafted, **before** finalizing:
+
+1. AI agent re-reads the drafted artifact for sister-concern markers per heuristic §2 above
+2. If hits, applies AskUserQuestion 3-option per §1 above
+3. Files via `gh issue create` per §1 filing command template
+4. Notes filed issues in proposal under `### Tangential Observations (post-propose)` heading per §4 conventions
+
+**Strength**: SHALL — proposal drafting is a deliberation moment per §6 eligibility criteria.
+
+### Why manual-only for third-party skills
+
+Direct upstream contribution would be the proper fix (file upstream PR to add the steps natively), but:
+- Out-of-scope for this plugin's commit cycle (cross-plugin coordination has different governance)
+- Documentation-side alignment is the immediate-value path: agents reading this doc when invoking `/spectra-*` will know to apply the pattern manually
+- If spectra-* upstream adopts native IC_R011 checkpoint, this section becomes redundant + can be removed
+
+### Eligible spectra-* skills only
+
+Per §6 eligibility criteria, only **deliberation-moment** spectra skills need IC_R011 alignment:
+
+- ✅ `/spectra-discuss` (deliberation)
+- ✅ `/spectra-propose` (deliberation)
+- ❌ `/spectra-apply` (mechanical execution — N/A)
+- ❌ `/spectra-archive` (mechanical move — N/A)
+- ❌ `/spectra-ask` (read-only query — N/A)
+- ❌ `/spectra-ingest` (mechanical state import — N/A)
+- ❌ `/spectra-commit` (mechanical commit — N/A)
+- ❌ `/spectra-debug` (already a debugging workflow with own surfacing — N/A)
+
+When invoking the N/A skills, no checkpoint applies.
+
+---
+
 ## Citation Pattern (For Skill SKILL.md Files)
 
 Skills citing this reference doc SHALL use this exact pattern at the top of the relevant Step section:
@@ -225,6 +275,7 @@ This makes the dependency relationship explicit and lets future maintainers find
 | Version | Date | Change |
 |---|---|---|
 | **1.0.0** | 2026-05-03 | Initial canonical reference (sub-issue F of #523, plugin v2.43.0) |
+| **1.1.0** | 2026-05-03 | Added "Third-Party Skill Alignment" section for `/spectra-discuss` + `/spectra-propose` manual application (sub-issue E of #523, [#530](https://github.com/kiki830621/ai_martech_global_scripts/issues/530), plugin v2.49.0) |
 
 Future amendments to this doc require:
 - Cross-co IC_P002 verify (5 companies + community consumers)
