@@ -2,7 +2,7 @@
 
 Single source of truth for **PR path** vs **direct-commit path** routing in IDD.
 
-Both `idd-implement` and `idd-all` consume this — `idd-all` always enforces PR path; `idd-implement` resolves dynamically per invocation.
+Both `idd-implement` and `idd-all` consume this — both resolve dynamically per invocation. `idd-all` v2.46.0+ derives `(path, interaction)` tuple from the same `pr_policy` config + `--pr/--no-pr` flags (see "idd-all path resolution" section below). v2.40.0–v2.45.0 hardcoded PR path; v2.46.0+ removes that hardcode while preserving the v2.40.0 default for absent config.
 
 ## Two paths
 
@@ -23,9 +23,13 @@ When `idd-implement` (or any IDD skill that needs to know the path) starts, reso
 3. Repo is a fork                → PR path (forced — no push to upstream)
 4. Config: pr_policy = "always"  → PR path
 5. Config: pr_policy = "never"   → direct-commit path
-6. Config: pr_policy = "ask"     → AskUserQuestion (default if no config)
-7. Default (no config, not fork) → "ask"
+6. Config: pr_policy = "ask"     → AskUserQuestion (explicitly set)
+7. Default (no config / field absent, not fork) → consumer-specific:
+   - idd-implement → AskUserQuestion (treat absent as ask)
+   - idd-all       → PR path, unattended (v2.40.0 backward-compat default; protects /loop callers)
 ```
+
+> **Why idd-implement and idd-all diverge on absent config**: idd-implement is invoked single-issue per-call, often interactively — defaulting absent to `ask` is fine, the user is already at the prompt. idd-all is the orchestrator typically called by automation (`/loop`, scheduled cron). Defaulting absent to `ask` would hang fire-and-forget callers. The divergence is intentional; both consumers honor explicit `pr_policy` values identically.
 
 ### Why fork detection forces PR path
 
@@ -52,7 +56,7 @@ Add to `.claude/issue-driven-dev.local.json`:
 
 | Value | Meaning |
 |-------|---------|
-| `always` | Every `idd-implement` opens a feature branch + PR. Mirrors `idd-all` behavior. |
+| `always` | Every `idd-implement` opens a feature branch + PR. Same path resolution as `idd-all` with `--pr` or `pr_policy: always`. |
 | `never` | Every `idd-implement` commits to current branch, no PR. Suits solo repos. |
 | `ask` | First-time `AskUserQuestion`; subsequent invocations within the same conversation reuse the answer. **Default when field absent.** |
 
@@ -172,9 +176,9 @@ The check is signal-based, not state-based: if a PR ref exists, IDD assumes PR p
 | Work repo with mandatory review | `always` | Compliance |
 | Mixed personal/team repo | `ask` | Decide per issue |
 
-## `idd-all` path resolution (v2.44.0+)
+## `idd-all` path resolution (v2.46.0+)
 
-`idd-all` consumes `pr_policy` per the **same algorithm as `idd-implement`** — no behavioral divergence. The difference is that `idd-all`'s resolution also derives an `interaction` axis (`attended` vs `unattended`) from the same source, so a single `pr_policy` value drives both:
+`idd-all` consumes `pr_policy` per the **same precedence chain as `idd-implement`** for explicit values; the orchestrator's `interaction` axis (`attended` vs `unattended`) is derived from the same source so a single `pr_policy` value drives both. The one intentional divergence is on absent config (no file or no field) — see "Why idd-implement and idd-all diverge on absent config" above.
 
 | Resolved | `(path, interaction)` | When |
 |----------|----------------------|------|
@@ -183,7 +187,8 @@ The check is signal-based, not state-based: if a PR ref exists, IDD assumes PR p
 | Fork detected | `(PR, unattended)` | Always — overrides `pr_policy: never` |
 | `pr_policy: always` | `(PR, unattended)` | Config-driven |
 | `pr_policy: never` | `(direct-commit, attended)` | Config-driven HITL |
-| `pr_policy: ask` (or absent) | first answer locks both axes | First-run prompt |
+| `pr_policy: ask` (explicitly set) | first answer locks both axes | Interactive prompt via `AskUserQuestion` (Claude tool) |
+| `pr_policy` absent (no config / field missing) | `(PR, unattended)` | v2.40.0 backward-compat default; `/loop` callers never hang |
 
 **Why "two axes from one source"**: a `(PR, attended)` mix would mean opening a PR but pausing on every sub-skill prompt — defeats automation. A `(direct-commit, unattended)` mix would mean fire-and-forget commits to whatever branch the user happened to be on — too dangerous. The two paired tuples cover the real-world use cases (`/loop` automation vs solo HITL); orthogonal flags would just multiply the failure modes. If a future use case demands a mixed tuple, an explicit `--attended/--unattended` flag can be added without restructuring this contract.
 

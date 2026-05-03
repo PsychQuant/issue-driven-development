@@ -11,7 +11,8 @@ Resolution precedence (first match wins):
 3. Fork detected (`gh repo view --json isFork` returns true) → `(PR, unattended)` regardless of config
 4. `pr_policy: always` → `(PR, unattended)`
 5. `pr_policy: never` → `(direct-commit, attended)`
-6. `pr_policy: ask` (or absent) → `AskUserQuestion`; first answer locks the tuple for the invocation
+6. `pr_policy: ask` (explicitly set) → `AskUserQuestion`; first answer locks the tuple for the invocation
+7. `pr_policy` absent (no config file, or field missing) → `(PR, unattended)` — v2.40.0 backward-compat default; protects existing `/loop` automation callers from interactive hang
 
 The resolved tuple MUST be printed as a one-line notice before any state-mutating action, e.g. `→ Path: direct-commit (attended) — pr_policy=never`.
 
@@ -34,11 +35,28 @@ The resolved tuple MUST be printed as a one-line notice before any state-mutatin
 - **WHEN** user invokes `idd-all #42`
 - **THEN** `idd-all` resolves `(path, interaction) = (PR, unattended)` and prints a one-line override notice citing fork detection
 
-#### Scenario: backward-compatible default
+#### Scenario: backward-compatible default (explicit --pr)
 
 - **GIVEN** no `pr_policy` config exists and the repo is not a fork
 - **WHEN** user invokes `idd-all #42 --pr`
 - **THEN** `idd-all` resolves `(path, interaction) = (PR, unattended)` — identical to v2.40.0 behavior
+
+#### Scenario: backward-compatible default (no flag, no config)
+
+- **GIVEN** no `pr_policy` config exists and the repo is not a fork
+- **AND** user invokes `idd-all #42` with no `--pr` / `--no-pr` flag (the typical `/loop` automation shape)
+- **WHEN** Phase 0.5 mode resolution runs
+- **THEN** `idd-all` resolves `(path, interaction) = (PR, unattended)` and prints `→ Path: PR (unattended) — pr_policy absent (v2.40.0 default)` before Phase 1
+- **AND** does NOT invoke `AskUserQuestion`; absent-config callers never hang waiting for interactive input
+
+#### Scenario: explicit ask requires user choice
+
+- **GIVEN** `.claude/issue-driven-dev.local.json` contains `"pr_policy": "ask"` (explicitly set, not omitted)
+- **AND** user invokes `idd-all #42` with no `--pr` / `--no-pr` flag
+- **AND** the repo is not a fork
+- **WHEN** Phase 0.5 mode resolution runs
+- **THEN** `idd-all` invokes the `AskUserQuestion` Claude tool with two options (PR vs direct-commit)
+- **AND** the first answer locks the tuple for the invocation
 
 
 ### Requirement: PR path preserves v2.40.0 behavior

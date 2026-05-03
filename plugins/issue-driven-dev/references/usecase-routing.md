@@ -41,7 +41,8 @@
 | **8** | 一個 PR 涵蓋 2+ issues（不確定有哪些）| `idd-verify --pr 123` | 不帶 issue → auto-discover 從 PR body Refs #N | [external-agent-delegation.md](external-agent-delegation.md) |
 | **9** | Plan tier — 改動跨 5+ 檔且 sequence-dependent，動手前要 approval | `idd-diagnose` 判 Plan → `idd-plan` → `idd-implement` | （`idd-plan` 自動接 `idd-implement`）| `skills/idd-plan/SKILL.md` |
 | **10** | Spectra-warranted — 公開 API / protocol，有 spec contract | `idd-diagnose` 判 Spectra → `spectra-discuss` → `spectra-propose` → `spectra-apply` → `idd-verify` → `idd-close` + `spectra-archive` | （chain 由 spectra skills 接力）| `rules/sdd-integration.md` |
-| **11** | 一氣呵成跑完整個流程（unattended） | `idd-all #98` | （`idd-all` 強制 PR path，覆蓋 `pr_policy`）| [pr-flow.md](pr-flow.md) |
+| **11** | 一氣呵成跑完整個流程（unattended） | `idd-all #98 --pr`（或 `pr_policy: always`） | v2.46.0+：`idd-all` 從 `pr_policy` + `--pr/--no-pr` 解析 `(path, interaction)` tuple;不帶 flag 且 config 缺則默認 `(PR, unattended)`（v2.40.0 backward compat）| [pr-flow.md](pr-flow.md) |
+| **11b** | 一氣呵成跑完,HITL（attended,sub-skill 可問問題）| `idd-all #98 --no-pr`（或 `pr_policy: never`）| v2.46.0+:解析為 `(direct-commit, attended)`,留在當前 branch、不開 PR | [pr-flow.md](pr-flow.md) |
 | **12** | Verify 後有 blocking findings，要進入修復迴圈 | `idd-verify #98 --loop` | `--loop`（ralph-loop 自動驗-修迴圈，每輪用完整 6-AI）| `skills/idd-verify/SKILL.md` |
 | **13** | 只想要快速 Codex review（不開 5-Claude team）| `idd-verify #98 codex` | `codex`（engine 切換）| `skills/idd-verify/SKILL.md` |
 | **14** | 只想要 5-Claude team review（不跑 Codex）| `idd-verify #98 team` | `team`（engine 切換）| `skills/idd-verify/SKILL.md` |

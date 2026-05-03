@@ -83,18 +83,27 @@ TaskCreate(name="report_and_stop", description="Phase 6: 依 mode 顯示對應 n
 | `/idd-all "bug: foo doesn't work"` | from-scratch | 用該字串當 issue title 進 idd-issue |
 | `/idd-all path/to/spec.md` | from-scratch | 把檔案當 issue 描述進 idd-issue |
 
-#### Step 0.2: Resolve Working Tree(v2.39.0+ 新增)
+#### Step 0.2: Resolve Working Tree + Flags + Config(v2.46.0+ 擴充)
 
-idd-all 的所有 git/gh 操作都針對單一 target repo。先解析這個 repo:
+idd-all 的所有 git/gh 操作都針對單一 target repo,且 Phase 0.5 mode resolution 需要 `PR_FLAG` 與 `CONFIG_PATH` 變數。Step 0.2 一次解析三項。
 
 ```bash
-# 1. 解析 --cwd flag(per-invocation override)
+# 1. 解析 flags(per-invocation override) — 順序逐一掃描 argv
 CWD_FLAG=""
-for arg in "$@"; do
-    case "$arg" in
-        --cwd=*) CWD_FLAG="${arg#--cwd=}" ;;
-        --cwd)   shift; CWD_FLAG="$1" ;;
-    esac
+PR_FLAG=""        # "" | "--pr" | "--no-pr"
+ARGS=("$@")
+for ((i=0; i<${#ARGS[@]}; i++)); do
+  arg="${ARGS[i]}"
+  case "$arg" in
+    --cwd=*)    CWD_FLAG="${arg#--cwd=}" ;;
+    --cwd)      i=$((i+1)); CWD_FLAG="${ARGS[i]}" ;;
+    --pr)
+      [ -n "$PR_FLAG" ] && abort "Conflicting flags: '$PR_FLAG' and '--pr' both passed. Pick one."
+      PR_FLAG="--pr" ;;
+    --no-pr)
+      [ -n "$PR_FLAG" ] && abort "Conflicting flags: '$PR_FLAG' and '--no-pr' both passed. Pick one."
+      PR_FLAG="--no-pr" ;;
+  esac
 done
 
 # 2. 確定 working tree 路徑
@@ -109,7 +118,24 @@ fi
 GITHUB_REPO=$(git -C "$CWD" remote get-url origin 2>/dev/null \
     | sed -E 's#.*[:/]([^/]+/[^/]+?)(\.git)?$#\1#') \
     || abort "Could not determine github_repo from $CWD/.git/config (no 'origin' remote?)"
+
+# 4. Walked-up CONFIG_PATH discovery(從 $CWD 往上找 .claude/issue-driven-dev.local.json)
+find_idd_config() {
+  local dir="$1"
+  while [ "$dir" != "/" ]; do
+    if [ -f "$dir/.claude/issue-driven-dev.local.json" ]; then
+      echo "$dir/.claude/issue-driven-dev.local.json"
+      return 0
+    fi
+    [ "$dir" = "$HOME" ] && break
+    dir=$(dirname "$dir")
+  done
+  return 1
+}
+CONFIG_PATH=$(find_idd_config "$CWD")  # may be empty if no config found
 ```
+
+> **Why parse `--pr/--no-pr` here, not in Phase 0.5**: Phase 0.5 references `$PR_FLAG` and `$CONFIG_PATH` in its precedence chain. Both variables must be initialized before that chain runs. Conflict detection between `--pr` and `--no-pr` (Task: P1 finding 4) lands here at parse time so we abort early with a clear message.
 
 **為什麼需要 explicit `--cwd`**:Skill tool 呼叫繼承 Claude Code session-level cwd,不會跟著 mid-session `cd` 移動。跨 repo 工作(例如 thesis 在 repo A、要對 repo B 跑 idd-all)時,沒有 `--cwd` 就只能重啟 Claude Code session — 違反 unattended pipeline contract。
 
@@ -149,39 +175,64 @@ gh auth status > /dev/null 2>&1 || abort "gh CLI not authenticated. Run: gh auth
 3. Fork detected (gh repo view --json isFork)     → (PR, unattended)  [override config]
 4. pr_policy: always                              → (PR, unattended)
 5. pr_policy: never                               → (direct-commit, attended)
-6. pr_policy: ask  (or absent)                    → AskUserQuestion; first answer locks tuple
+6. pr_policy: ask (explicitly set)                → AskUserQuestion (Claude tool)
+7. pr_policy absent (config 缺 / 整個 config 不存在) → (PR, unattended)  [v2.40.0 backward-compat default]
 ```
+
+> **Step 6 vs Step 7 distinction (Task: P1 finding 3, proposal "no backward incompat")**: 顯式 `"pr_policy": "ask"` = user 明確要被問 → 用 AskUserQuestion Claude tool。Config 完全沒寫(field 缺或 file 不存在)= /loop 等舊 caller 場景 → 默認 PR mode 維持 v2.40.0 行為,不卡住自動化。
 
 ```bash
 # 讀 pr_policy from cascading config
-PR_POLICY=$(jq -r '.pr_policy // "ask"' "$CONFIG_PATH" 2>/dev/null || echo "ask")
+# Distinguish "absent" (no config / no field) from explicit "ask"
+if [ -z "$CONFIG_PATH" ] || [ ! -f "$CONFIG_PATH" ]; then
+  PR_POLICY="absent"
+else
+  PR_POLICY=$(jq -r '.pr_policy // "absent"' "$CONFIG_PATH" 2>/dev/null || echo "absent")
+fi
 
 # 1-2. Explicit flags
 if   [ "$PR_FLAG" = "--pr" ];     then PATH_AXIS="PR";            INTERACTION="unattended"; REASON="flag=--pr"
 elif [ "$PR_FLAG" = "--no-pr" ];  then PATH_AXIS="direct-commit"; INTERACTION="attended";   REASON="flag=--no-pr"
 else
-  # 3. Fork detection
+  # 3. Fork detection (fail-closed: gh failure defaults to PR for safety; see #5 follow-up)
   IS_FORK=$(gh repo view "$GITHUB_REPO" --json isFork -q .isFork 2>/dev/null || echo "false")
   if [ "$IS_FORK" = "true" ]; then
     PATH_AXIS="PR"; INTERACTION="unattended"; REASON="fork detected (override pr_policy=$PR_POLICY)"
   else
-    # 4-5. Config
+    # 4-5-7. Config-driven non-ask paths
     case "$PR_POLICY" in
       always) PATH_AXIS="PR";            INTERACTION="unattended"; REASON="pr_policy=always" ;;
       never)  PATH_AXIS="direct-commit"; INTERACTION="attended";   REASON="pr_policy=never" ;;
+      absent) PATH_AXIS="PR";            INTERACTION="unattended"; REASON="pr_policy absent (v2.40.0 default)" ;;
+      ask)
+        # 6. Explicit ask — break out of bash flow.
+        # AskUserQuestion is a Claude tool, NOT a shell command.
+        # See "Phase 0.5 ask-policy interaction" prose below.
+        : "Phase 0.5 ask-policy escape — see prose below"
+        ;;
       *)
-        # 6. Ask
-        ANSWER=$(AskUserQuestion "Path?" "PR (feature branch + PR + unattended)" "direct-commit (current branch + no PR + attended)")
-        if [ "$ANSWER" = "PR" ]; then
-          PATH_AXIS="PR"; INTERACTION="unattended"; REASON="pr_policy=ask, user picked PR"
-        else
-          PATH_AXIS="direct-commit"; INTERACTION="attended"; REASON="pr_policy=ask, user picked direct-commit"
-        fi
+        abort "Unknown pr_policy value: '$PR_POLICY'. Must be always / never / ask, or absent."
         ;;
     esac
   fi
 fi
+```
 
+**Phase 0.5 ask-policy interaction** (prose — NOT a shell-callable function; this is what the Claude agent does when `pr_policy == "ask"` and no flag was passed):
+
+When the resolution chain reaches the explicit `ask` case, the idd-all agent MUST invoke the **AskUserQuestion** tool (a Claude Code tool, not a CLI). Question template:
+
+> "Path for `idd-all #${N}`?"
+> - **PR** — feature branch + push + open PR + sub-skills run unattended (`/loop` friendly, public review path)
+> - **direct-commit** — stay on current branch + no push + no PR + sub-skills attended (HITL, solo/personal repo)
+
+Based on the user's selection, set:
+- PR → `PATH_AXIS="PR"; INTERACTION="unattended"; REASON="pr_policy=ask, user picked PR"`
+- direct-commit → `PATH_AXIS="direct-commit"; INTERACTION="attended"; REASON="pr_policy=ask, user picked direct-commit"`
+
+> **Why prose instead of bash**: `AskUserQuestion` is a tool the LLM agent invokes, not a binary on `$PATH`. Embedding `ANSWER=$(AskUserQuestion ...)` in the bash block was a category error caught in #1 verify (P0 finding 2). The agent reads the bash up to the `ask)` case label, then handles the question turn at the agent level, then resumes bash with the assigned variables.
+
+```bash
 # Resolved-tuple notice (mandatory — print before any state-mutating action)
 echo "→ Path: ${PATH_AXIS} (${INTERACTION}) — ${REASON}"
 ```
@@ -381,7 +432,33 @@ fi
 Skill(skill="spectra-discuss", args="$DISCUSS_ARGS")
 ```
 
-Capture the conclusion line(unattended)or summary(attended)for the next step.
+**Capture the conclusion** — extraction strategy depends on `$INTERACTION`:
+
+```python
+# Pseudocode — agent-level extraction logic
+if INTERACTION == "unattended":
+    # Unattended hint enforced 'Conclusion: <text>' format.
+    conclusion = grep_last_match(spectra_discuss_output, r'^Conclusion:\s*(.+)$')
+    if not conclusion:
+        # Re-prompt once with the format requirement; if still missing, abort with branch preserved.
+        # (See Failure handling table below.)
+        retry_or_abort()
+else:  # INTERACTION == "attended"
+    # No format directive was injected (spec SHALL NOT inject). spectra-discuss may emit
+    # a free-form multi-turn conclusion. Try in order:
+    #   1. Last 'Conclusion:' line if user/sub-skill happened to write one
+    #   2. Last paragraph of the final spectra-discuss message (heuristic — typical wrap-up)
+    #   3. Otherwise: AskUserQuestion the user "請用一句話總結 spectra-discuss 達成的方向"
+    #      Reason: in attended mode the user is in session, so a clarifying question is
+    #      acceptable here (and ideal — the user is the one steering the discussion).
+    conclusion = (
+        grep_last_match(output, r'^Conclusion:\s*(.+)$')
+        or last_paragraph(output)
+        or ask_user("請用一句話總結 spectra-discuss 達成的方向,作為 spectra-propose 的 input。")
+    )
+```
+
+> **Why fallback chain instead of just AskUserQuestion**: the heuristic-then-ask order avoids interrupting the user when they (or spectra-discuss itself) already wrapped up cleanly. AskUserQuestion is the safety net, not the default. This is consistent with the spec's "attended assumes user in session" — the cost of one clarifying question is much lower than passing an empty conclusion to spectra-propose.
 
 #### Step 3b.3: Propose
 
@@ -431,21 +508,24 @@ Discipline overrides for this invocation:
 - If validation reveals ambiguity that would normally trigger AskUserQuestion: document the assumption in tasks.md (mark with 'ASSUMPTION:'), proceed with the most conservative interpretation, and surface it in the verify phase.
 - Every commit MUST reference (#${N}) — same convention as idd-implement.
 - All commits land on the branch from Phase 0.5 ('${BRANCH}')."
-else
-  # Attended: tell spectra-apply where commits land but let its native checkpoints fire.
-  APPLY_ARGS="$APPLY_ARGS
-
-Commits land on '${BRANCH}' (Phase 0.5 resolved branch). Native AskUserQuestion / continue-confirmation prompts may fire — user is in session."
 fi
+# Attended mode: APPLY_ARGS contains ONLY the change-name + issue ref.
+# Per spec idd-orchestrator-modes requirement "Attended interaction permits sub-skill questions":
+# idd-all SHALL NOT inject any directive when interaction=attended. spectra-apply's
+# native attended-by-default behavior (Step 4 continue-confirmation, AskUserQuestion
+# on ambiguity) fires unmodified.
 
 Skill(skill="spectra-apply", args="$APPLY_ARGS")
 ```
+
+> **Branch context for spectra-apply (both modes)**: `BRANCH` is set in Phase 0.5 — PR mode → `idd/<N>-<slug>`, direct-commit mode → user's current checkout. spectra-apply doesn't need to be told this; it commits to whatever HEAD points at. The Phase 0.5 branch setup is the single source of truth.
 
 #### Failure handling
 
 | Situation | Action |
 |---|---|
-| `spectra-discuss` doesn't emit a `Conclusion:` line | Re-prompt once with explicit format requirement; if still missing, abort with branch preserved |
+| `spectra-discuss` doesn't emit `Conclusion:` (unattended) | Re-prompt once with explicit format requirement; if still missing, abort with branch preserved |
+| `spectra-discuss` doesn't emit `Conclusion:` (attended) | Fall back through last-paragraph heuristic → AskUserQuestion the user; never abort just for missing line |
 | `spectra-propose` doesn't emit a `Change:` line | Same as above |
 | `spectra-propose` hits a hard stop (e.g. spec validation fail it can't auto-fix) | Abort, preserve artifacts, instruct user to run `/spectra-propose` manually |
 | `spectra-apply` reports tasks remaining unfinished | Continue to Phase 4 (verify) — verify will surface incompleteness |
