@@ -172,6 +172,23 @@ The check is signal-based, not state-based: if a PR ref exists, IDD assumes PR p
 | Work repo with mandatory review | `always` | Compliance |
 | Mixed personal/team repo | `ask` | Decide per issue |
 
+## `idd-all` path resolution (v2.44.0+)
+
+`idd-all` consumes `pr_policy` per the **same algorithm as `idd-implement`** — no behavioral divergence. The difference is that `idd-all`'s resolution also derives an `interaction` axis (`attended` vs `unattended`) from the same source, so a single `pr_policy` value drives both:
+
+| Resolved | `(path, interaction)` | When |
+|----------|----------------------|------|
+| `--pr` flag | `(PR, unattended)` | Explicit override; matches v2.40.0 default + `/loop` automation |
+| `--no-pr` flag | `(direct-commit, attended)` | Explicit HITL override |
+| Fork detected | `(PR, unattended)` | Always — overrides `pr_policy: never` |
+| `pr_policy: always` | `(PR, unattended)` | Config-driven |
+| `pr_policy: never` | `(direct-commit, attended)` | Config-driven HITL |
+| `pr_policy: ask` (or absent) | first answer locks both axes | First-run prompt |
+
+**Why "two axes from one source"**: a `(PR, attended)` mix would mean opening a PR but pausing on every sub-skill prompt — defeats automation. A `(direct-commit, unattended)` mix would mean fire-and-forget commits to whatever branch the user happened to be on — too dangerous. The two paired tuples cover the real-world use cases (`/loop` automation vs solo HITL); orthogonal flags would just multiply the failure modes. If a future use case demands a mixed tuple, an explicit `--attended/--unattended` flag can be added without restructuring this contract.
+
+**Resolved-tuple notice**: `idd-all` MUST print one line before any state-mutating action, e.g. `→ Path: direct-commit (attended) — pr_policy=never`. The notice line cites the precedence reason (flag, fork, or config) so the user can see which gate fired.
+
 ## Why this lives in references, not in each SKILL.md
 
 Three skills consume this contract (`idd-implement`, `idd-all`, `idd-close`). Inlining would mean three copies that drift. References file = one canonical definition; SKILLs link here.
