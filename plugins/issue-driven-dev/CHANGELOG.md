@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.45.0] - 2026-05-03
+
+### Added
+- **`idd-close` Step 3.5: Closing Summary Follow-up Keyword Scan** ([kiki830621/ai_martech_global_scripts#527](https://github.com/kiki830621/ai_martech_global_scripts/issues/527), sub-issue B of [#523](https://github.com/kiki830621/ai_martech_global_scripts/issues/523) systematic plugin alignment): new advisory step between Step 3 (review with user) and Step 4 (gh issue close). Scans drafted closing summary for trigger phrases (`follow-up` / `follow up` / `deferred` / `future` / `TODO` / `later` / `之後` / `未來` / `待` / `待 follow` / `順便` / `我之前觀察到` / `之後再` / `改天`).
+
+  - Each match checked against existing `#NNN` cross-links via `gh issue view` — orphan mentions (no link or stale link to wrong-scope issue) trigger AskUserQuestion three-option (`file all` / `file selected` / `skip`) per canonical [`references/ic-r011-checkpoint.md`](plugins/issue-driven-dev/references/ic-r011-checkpoint.md).
+  - `file all`/`file selected` filing pipeline: `gh issue create` with `confidence:confirmed` + `priority:P3` labels + source link `surfaced during /idd-close #NNN closing summary scan (Step 3.5)`, then **PATCHes the closing summary inline** to replace each filed mention with `(see #NEW)` cross-link.
+  - `skip` keeps closing summary as-is, appends `### Closing Follow-ups Filed (v2.45.0+ #527)` audit trail with `Skipped per user choice (kept inline mentions without cross-links: ...)`.
+  - Strength: **SHOULD (advisory, non-blocking)** per canonical eligibility criteria §6 — closure is mostly mechanical action with text artifact;hard-blocking on every "future" keyword would create user-friction. Empty-list and skip-with-reason are both legitimate outcomes. The value is making orphan-mention pattern visible at decision moment, not enforcing filing.
+  - `AI_LOW_BAR_ISSUE_FILING=false` env var (per IC_R011 rollback hatch) silences AskUserQuestion silently with audit-trail line.
+
+### Changed
+- **Step 0.5 Bootstrap Task List**: added `closing_followup_keyword_scan` TaskCreate entry between `review_with_user` and `publish_and_close`.
+
+### Disambiguation
+A note added to Step 3.5 explicitly disambiguates this from Step 0 supersession check (#515 v2.41.0):
+- **Step 0 supersession** is **gate logic** (recognize Implementation Complete > Checklist as canonical when supersession active) — operates on pre-implementation Strategy/Plan checkboxes
+- **Step 3.5 closing summary scan** is the **IC_R011 checkpoint** (orphan mentions in drafted summary)
+
+The two are orthogonal concerns. Step 0 runs at gate time;Step 3.5 runs after summary draft + before final close.
+
+### Why
+Closing summaries often contain phrases like "will follow up later" / "之後再做" / "deferred to next sprint" — but if the mention isn't linked to an actual issue, it vanishes into the closing comment never to be tracked. By scan time, the user has just typed the summary, the matched phrase is fresh in context — best moment to prompt for filing.
+
+This step closes a gap in the IDD lifecycle: **closure** is the final discipline checkpoint where audit trail completeness matters most, since after close the issue artifact is frozen and orphan mentions become unrecoverable without manual archaeology.
+
+### Backward compatibility
+- Empty match list = no-op: closing flow unchanged for clean summaries (most common case).
+- Existing closing summaries unaffected: Step 3.5 only runs on the **draft** before `gh issue close`.
+- `AI_LOW_BAR_ISSUE_FILING=false` env var skips AskUserQuestion silently, only writes the skip-reason to closing summary audit trail.
+
+No flag deprecations. No breaking changes for any existing close workflow.
+
+### Related issues
+- Parent: [#523](https://github.com/kiki830621/ai_martech_global_scripts/issues/523) (closed as parent tracker)
+- Blocking dependency landed: [#525](https://github.com/kiki830621/ai_martech_global_scripts/issues/525) (canonical reference doc v2.43.0)
+- Sibling already shipped: [#526](https://github.com/kiki830621/ai_martech_global_scripts/issues/526) (idd-implement Step 5.7 v2.44.0)
+- IC_R011 codification: [#516](https://github.com/kiki830621/ai_martech_global_scripts/issues/516)
+- Disambiguates from: [#515](https://github.com/kiki830621/ai_martech_global_scripts/issues/515) (idd-close Step 0 supersession v2.41.0 — gate logic, not IC_R011 checkpoint)
+
 ## [2.44.0] - 2026-05-03
 
 ### Added
