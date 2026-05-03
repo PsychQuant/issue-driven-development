@@ -305,6 +305,31 @@ echo "  3) 全部存好後告訴我「ok」，skill 會接手 upload + 嵌入 is
 4. **Description** — 問題描述（bug: 重現步驟 + expected + actual；feature: 需求 + 目的）
 5. **Stakeholders（v2.32.0+，可選）** — 若需要在 issue body 中 tag 人，使用 `--mention <login>[,<login>...]` flag 或自然語言（"tag X"）。**任何 @xxx 必走 [`rules/tagging-collaborators.md`](../../rules/tagging-collaborators.md) 5 步協定**（gh api → fuzzy match → AskUserQuestion fallback → @login 不用 display name → post 前 verify）。違反 = 通知錯人，不可逆。
 
+#### Step 2.0.5: Title sanitization (v2.46.0+, P9 follow-up of #1)
+
+不論 title 來源（user 輸入、文件 mining、`idd-verify` follow-up triage、其他 skill caller），post 前**必須**做以下 sanitization：
+
+- **Length cap**: 200 chars (GitHub issue title 上限約 256;留 buffer 給後續編輯)
+- **Strip control chars except space**: `tr -cd '[:print:]\t '`(去掉 `\n`、`\r`、零寬字元、bidirectional override 等;`\t` → 空白由下一步處理)
+- **Collapse whitespace**: `tr -s '\t ' ' '`(多個空白 → 單一空白;tab → space)
+- **Trim leading / trailing whitespace**
+
+```bash
+sanitize_title() {
+  local raw="$1"
+  echo "$raw" \
+    | tr -cd '[:print:]\t ' \
+    | tr -s '\t ' ' ' \
+    | sed -E 's/^ +//; s/ +$//' \
+    | cut -c1-200
+}
+TITLE=$(sanitize_title "$RAW_TITLE")
+```
+
+**為什麼集中在 idd-issue 而非各 caller**:`idd-verify` follow-up triage、`idd-implement` sister-bug sweep、`idd-close` orphan-mention scan 全部 forward title 給 idd-issue。Sanitization 集中在 issue creation 邊界,所有 caller 都受惠;違反者唯一防線。
+
+**警告 (不阻擋)**:若發現 RTL/LTR override(U+202D-U+202E)、zero-width chars(U+200B-U+200D)、homoglyphs(`а` Cyrillic vs `a` Latin)被 strip,echo `⚠ stripped suspicious chars from title` 提示 user 重審。
+
 ### Step 2.6: Resolve Mentions（v2.32.0+）
 
 若 Step 2 蒐集到的 description 含 `@xxx` token，或使用者下了 `--mention` flag：

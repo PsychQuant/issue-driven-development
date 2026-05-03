@@ -114,10 +114,18 @@ else
     CWD="$(pwd)"
 fi
 
-# 3. 從 working tree 推導 GITHUB_REPO
+# 3. 從 working tree 推導 GITHUB_REPO + post-derive shape assertion (#8)
 GITHUB_REPO=$(git -C "$CWD" remote get-url origin 2>/dev/null \
     | sed -E 's#.*[:/]([^/]+/[^/]+?)(\.git)?$#\1#') \
     || abort "Could not determine github_repo from $CWD/.git/config (no 'origin' remote?)"
+
+# Origin URL might be local path / non-typical format; sed could output garbage.
+# Assert owner/repo shape before any gh -R "$GITHUB_REPO" call.
+if [[ ! "$GITHUB_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+  abort "Could not derive owner/repo shape from origin URL of $CWD.
+   Got: '$GITHUB_REPO'
+   Pass --target owner/repo or check 'git -C $CWD remote get-url origin'."
+fi
 
 # 4. Walked-up CONFIG_PATH discovery(從 $CWD 往上找 .claude/issue-driven-dev.local.json)
 find_idd_config() {
@@ -194,8 +202,20 @@ fi
 if   [ "$PR_FLAG" = "--pr" ];     then PATH_AXIS="PR";            INTERACTION="unattended"; REASON="flag=--pr"
 elif [ "$PR_FLAG" = "--no-pr" ];  then PATH_AXIS="direct-commit"; INTERACTION="attended";   REASON="flag=--no-pr"
 else
-  # 3. Fork detection (fail-closed: gh failure defaults to PR for safety; see #5 follow-up)
-  IS_FORK=$(gh repo view "$GITHUB_REPO" --json isFork -q .isFork 2>/dev/null || echo "false")
+  # 3. Fork detection — fail-closed (#5 fix). gh failure defaults IS_FORK="true"
+  # so we resolve to PR mode for safety. Direct-commit fall-through on a real
+  # fork would silently drop user's work (no push permission to upstream).
+  # The user gets a visible warning and can override with --pr / --no-pr.
+  IS_FORK_RAW=$(gh repo view "$GITHUB_REPO" --json isFork -q .isFork 2>&1)
+  IS_FORK_EXIT=$?
+  if [ $IS_FORK_EXIT -ne 0 ]; then
+    echo "⚠ Could not query fork status (gh exit $IS_FORK_EXIT): $IS_FORK_RAW"
+    echo "  Defaulting to PR mode for safety. Pass --no-pr to override."
+    IS_FORK="true"
+  else
+    IS_FORK="$IS_FORK_RAW"
+  fi
+
   if [ "$IS_FORK" = "true" ]; then
     PATH_AXIS="PR"; INTERACTION="unattended"; REASON="fork detected (override pr_policy=$PR_POLICY)"
   else
@@ -258,17 +278,27 @@ if [ "$PATH_AXIS" = "PR" ]; then
   # Build feature branch name
   N="19"  # 從 args 或 idd-issue 結果取得
   TITLE=$(gh issue view "$N" -R "$GITHUB_REPO" --json title -q .title)
+  # SLUG sanitization — POSIX-portable; avoids BSD/GNU sed `\|` divergence (#6 fix)
   SLUG=$(echo "$TITLE" | tr '[:upper:]' '[:lower:]' \
-      | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-\|-$//g' \
+      | sed -E 's/[^a-z0-9]/-/g; s/-+/-/g; s/^-//; s/-$//' \
       | cut -c1-40)
   BRANCH="idd/${N}-${SLUG}"
 
+  # #3 fix: branch-already-exists is now a real AskUserQuestion handoff,
+  # not a no-op `:` followed by guaranteed-fail `git checkout -b`.
   if git -C "$CWD" show-ref --verify --quiet "refs/heads/$BRANCH"; then
-    # AskUserQuestion: checkout 繼續 or 用 idd/19-...-2?
-    :
+    # The agent invokes AskUserQuestion (Claude tool — see Phase 0.5 ask-policy
+    # prose for the same pattern). Three options:
+    #   (a) Checkout existing — continue work on the prior branch
+    #   (b) Use suffix — try BRANCH-2, BRANCH-3, ... until unused
+    #   (c) Abort — let user clean up manually
+    # Per (a): git checkout "$BRANCH"
+    # Per (b): NEXT=$(suffix_for "$BRANCH"); BRANCH="$NEXT"; git checkout -b "$BRANCH"
+    # Per (c): abort "Branch $BRANCH already exists. Run: git -C $CWD branch -D $BRANCH or pick a different issue."
+    :  # bash flow exits the if; agent assigns BRANCH per user's choice and falls through
+  else
+    git -C "$CWD" checkout -b "$BRANCH"
   fi
-
-  git -C "$CWD" checkout -b "$BRANCH"
 fi
 ```
 
@@ -278,7 +308,18 @@ fi
 if [ "$PATH_AXIS" = "direct-commit" ]; then
   CURRENT_BRANCH=$(git -C "$CWD" branch --show-current)
   echo "→ direct-commit path: committing to ${CURRENT_BRANCH}, no PR will be opened"
-  # 不檢查 working-tree clean,不檢查 on default branch
+
+  # Passive warnings (#2 — surface risks without aborting; user is in HITL session)
+  if [ -n "$(git -C "$CWD" status --porcelain)" ]; then
+    echo "⚠ Working tree has uncommitted changes — these will be intermingled with idd-all commits."
+    echo "  If sensitive (e.g. .env, secrets), abort now and stash or commit them first."
+  fi
+  DEFAULT_FOR_WARN=$(gh repo view "$GITHUB_REPO" --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null)
+  if [ -n "$DEFAULT_FOR_WARN" ] && [ "$CURRENT_BRANCH" = "$DEFAULT_FOR_WARN" ]; then
+    echo "⚠ direct-commit on default branch '${DEFAULT_FOR_WARN}' — no PR review gate."
+  fi
+
+  # 不檢查 working-tree clean,不檢查 on default branch (HITL trade-off — user 自負其責)
   # 不建 feature branch — 留在 user 當前 checkout
   BRANCH="$CURRENT_BRANCH"
 fi
@@ -566,7 +607,7 @@ for round in 1..MAX_ROUND:
 
     # unattended path: auto-fix attempt
     if round == MAX_ROUND:
-        abort_with_message("verify still failing after MAX_ROUND rounds; manual intervention needed")
+        abort_with_message(f"verify still failing after {MAX_ROUND} rounds; manual intervention needed")
 
     attempt_auto_fix(findings.blocking)
 ```
@@ -591,23 +632,21 @@ for round in 1..MAX_ROUND:
 
 ### Phase 5: Push + Open PR (PR mode only)
 
-**Direct-commit mode short-circuit** (Task 3.2):
+**Conditional push + PR creation** (#3 Task 3.2 — replaces earlier `goto Phase 6` pseudocode that wasn't valid bash; structural conditional with explicit comment instead):
 
 ```bash
 if [ "$PATH_AXIS" = "direct-commit" ]; then
   echo "→ direct-commit path: skipping push + PR"
-  # Jump directly to Phase 6
-  goto Phase 6
-fi
-```
+  # No-op — fall through to Phase 6 unconditionally below.
+elif [ "$PATH_AXIS" = "PR" ]; then
+  # PR mode (preserves v2.40.0 byte-equivalent behavior)
+  # WARNING (#7): heredoc below is NOT quoted — variable expansion happens.
+  # Do NOT insert untrusted strings (e.g. issue titles) into the body without
+  # sanitization. Current placeholders {...} are markdown-style note text, not
+  # ${...} shell expansions, so safe today; future maintainers must keep it that way.
+  git -C "$CWD" push -u origin "$BRANCH"
 
-**PR mode** (preserves v2.40.0 behavior — Task 2.2):
-
-```bash
-git -C "$CWD" push -u origin "$BRANCH"
-
-# 組 PR body
-PR_BODY=$(cat <<EOF
+  PR_BODY=$(cat <<EOF
 Refs #${N}
 
 ## Summary
@@ -630,8 +669,10 @@ Refs #${N}
 EOF
 )
 
-gh pr create -R "$GITHUB_REPO" --title "$PR_TITLE" --body "$PR_BODY" \
-    --base "$DEFAULT" --head "$BRANCH"
+  gh pr create -R "$GITHUB_REPO" --title "$PR_TITLE" --body "$PR_BODY" \
+      --base "$DEFAULT" --head "$BRANCH"
+fi
+# Both branches fall through to Phase 6 below.
 ```
 
 > **絕對不能在 PR body 用 Closes/Fixes/Resolves trailer**。理由見 idd-implement skill 裡的 trailer 禁令說明 — auto-close 會繞過 idd-close 的 checklist gate 和 closing summary。
@@ -682,8 +723,8 @@ Next: review last ${COMMIT_COUNT} commits (git log -${COMMIT_COUNT}), then run /
 | `--cwd /path` 不存在 | Phase 0.2 abort,提示 user 確認 path |
 | `--cwd` 給的目錄沒 origin remote | Phase 0.2 abort,顯示 cd path 與 git config 修法 |
 | 沒給 --cwd 且 session cwd 不是 git repo | Phase 0.3 abort,訊息含「pass --cwd /path」alternative |
-| Working tree dirty | Phase 0.3 abort,顯示 `git -C $CWD status` |
-| Not on default branch | Phase 0.3 abort,提示 `git -C $CWD checkout $DEFAULT` |
+| Working tree dirty (PR mode only) | Phase 0.5 abort,顯示 `git -C $CWD status`(direct-commit mode 改 passive warning,不 abort) |
+| Not on default branch (PR mode only) | Phase 0.5 abort,提示 `git -C $CWD checkout $DEFAULT`(direct-commit mode 留 user 當前 branch) |
 | gh auth 沒設定 | Phase 0.3 abort,提示 gh auth login |
 | Issue #N 不存在 / CLOSED | Phase 0 abort |
 | Branch 已存在 | Phase 0 AskUserQuestion(checkout / -2 suffix / abort) |
@@ -785,9 +826,7 @@ Next: review last 3 commits (git log -3), then run /idd-close #42
 /idd-all #43 --cwd /Users/che/Developer/macdoc/packages/ooxml-swift --pr
 ```
 
-idd-all 在指定 local clone 跑完整 pipeline。`--pr` 與 `--cwd` 可並用;不帶 `--pr/--no-pr` 則由 walked-up config 的 `pr_policy` 決定。
-
-idd-all 會在指定 local clone 跑完整 pipeline,branch 開在那邊、commits land 那邊、PR 從那 push。Claude Code session cwd 不變。
+idd-all 在指定 local clone 跑完整 pipeline:branch 開在那邊、commits land 那邊、PR 從那 push,Claude Code session cwd 不變。`--pr` 與 `--cwd` 可並用;不帶 `--pr/--no-pr` 則由 walked-up config 的 `pr_policy` 決定。
 
 ---
 
