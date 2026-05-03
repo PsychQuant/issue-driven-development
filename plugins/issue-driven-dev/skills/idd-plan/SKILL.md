@@ -102,9 +102,11 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$IMPLEMENTATION_PLAN"
 
 > **為什麼比 idd-implement 的 plan 詳盡？** Plan tier 的 user 審查是事前 deliberation 的 core moment — plan 越具體，user 越容易抓出 missing case / wrong assumption / better alternative。idd-implement 的 plan 是「執行清單」，本 plan 是「decision artifact」。
 
-### Step 2.5: Tangential Observations Sweep (v2.42.0+, #524)
+### Step 2.5: Tangential Observations Sweep (v2.42.0+, #524;canonical pattern v2.43.0+, #525)
 
-**Compliance**: this step implements IC_R011 commercial low-bar filing for the **mid-plan deliberation window** — Phase 1 scouting / Phase 2 design / Phase 3 review 期間 surface 但 **沒 categorization** 的 tangential discoveries（既沒進 In-scope 也沒進 Out-of-scope，會隨 conversation 流失）。
+**Compliance**: this step implements [IC_R011](https://github.com/kiki830621/ai_martech_global_scripts/issues/516) commercial low-bar filing for the **mid-plan deliberation window** — Phase 1 scouting / Phase 2 design / Phase 3 review 期間 surface 但 **沒 categorization** 的 tangential discoveries（既沒進 In-scope 也沒進 Out-of-scope，會隨 conversation 流失）。
+
+**Canonical reference**: [`references/ic-r011-checkpoint.md`](../../references/ic-r011-checkpoint.md) — 3-option AskUserQuestion structure + heuristic + rollback hatch are normative there. Sections below are this skill's specific application of that pattern.
 
 **Rule (SHALL)**: 在 ExitPlanMode 前，**必須** review session log from Step 1（Read Issue + Diagnosis）起到本 step 為止，identify tangential discoveries 並走 AskUserQuestion 流程。empty list 是合法結果，但 step 本身不可省略。
 

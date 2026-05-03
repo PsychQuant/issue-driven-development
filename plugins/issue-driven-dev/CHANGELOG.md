@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.43.0] - 2026-05-03
+
+### Added
+- **NEW canonical reference doc**: [`references/ic-r011-checkpoint.md`](plugins/issue-driven-dev/references/ic-r011-checkpoint.md) ([kiki830621/ai_martech_global_scripts#525](https://github.com/kiki830621/ai_martech_global_scripts/issues/525), sub-issue F of [#523](https://github.com/kiki830621/ai_martech_global_scripts/issues/523) systematic plugin alignment). Standardizes the IC_R011 ([#516](https://github.com/kiki830621/ai_martech_global_scripts/issues/516)) checkpoint pattern across all eligible IDD + Spectra skills:
+  - **The 3-option AskUserQuestion structure** — exact labels (`file all` / `file selected` / `skip`), filing command template, sub-prompt structure for cherry-pick
+  - **Heuristic triggers** — what counts as "concern worth surfacing" with 7 categories + trigger phrase regex
+  - **Default-off exemptions** — narrow list (pure exploration / existing issue / hallucinated / CONSTRAINT / mechanical execution stages)
+  - **Audit trail format** — uniform contents + per-skill heading conventions table
+  - **Rollback escape hatch** — env var (`AI_LOW_BAR_ISSUE_FILING=false`) + repo CLAUDE.md flag (`# Disable IC_R011`); both layers honored additively
+  - **Eligibility criteria** — SHALL (deliberation moments + manual reproduction) / SHOULD (closure + issue creation) / N/A (mechanical execution)
+  - **Citation pattern** — exact Markdown for skills to back-reference the canonical doc
+
+### Changed
+- **`skills/idd-plan/SKILL.md` Step 2.5** now back-references the canonical doc: link added to `references/ic-r011-checkpoint.md`, and skill-specific sections marked as "this skill's specific application of that pattern". Step 2.5's own normative content unchanged (3-option AskUserQuestion + audit trail format already match canonical).
+- **`skills/idd-close/SKILL.md` Step 0 supersession check** now disambiguates itself from IC_R011 checkpoint: a sentinel note marks supersession as "gate logic, NOT IC_R011 checkpoint", and points to [#527](https://github.com/kiki830621/ai_martech_global_scripts/issues/527) as the proper IC_R011 closing summary keyword scan tracker.
+
+### Why
+Sub-issues [#526–#530](https://github.com/kiki830621/ai_martech_global_scripts/issues/526) (sibling sub-issues of [#523](https://github.com/kiki830621/ai_martech_global_scripts/issues/523)) all need the IC_R011 checkpoint pattern in their respective skills. Without a canonical reference, each implementation drifts in option labels, heuristic phrasing, audit format, and rollback semantics. This doc is the **mechanical anchor** that makes cross-skill consistency a verification artifact rather than a code-review aspiration.
+
+Filing this as a separate sub-issue (F) before A-E (per [#523](https://github.com/kiki830621/ai_martech_global_scripts/issues/523) phasing rationale) means:
+- A-E start by citing F → no per-skill drift
+- Future skill alignments (whatever's added beyond #530's scope) follow the same pattern
+
+### Backward compatibility
+- No behavioral change to existing skills. `idd-plan` Step 2.5 + `idd-close` Step 0 supersession both keep their existing logic;only added doc back-references.
+- `references/ic-r011-checkpoint.md` is a new file, no existing code references it (yet). Sub-issues #526–#530 will introduce citations as their Plan tier lands.
+
+### Related issues
+- Parent: [#523](https://github.com/kiki830621/ai_martech_global_scripts/issues/523) (closed 2026-05-03 as parent tracker, decomposed into 6 sub-issues F + A-E)
+- Sibling sub-issues (open): [#526](https://github.com/kiki830621/ai_martech_global_scripts/issues/526) [#527](https://github.com/kiki830621/ai_martech_global_scripts/issues/527) [#528](https://github.com/kiki830621/ai_martech_global_scripts/issues/528) [#529](https://github.com/kiki830621/ai_martech_global_scripts/issues/529) [#530](https://github.com/kiki830621/ai_martech_global_scripts/issues/530) (all blocked on this doc)
+- Source principle: [#516](https://github.com/kiki830621/ai_martech_global_scripts/issues/516) (IC_R011 codification)
+- Reference impl back-link: [#524](https://github.com/kiki830621/ai_martech_global_scripts/issues/524) (idd-plan Step 2.5 v2.42.0) + [#515](https://github.com/kiki830621/ai_martech_global_scripts/issues/515) (idd-close Step 0 supersession v2.41.0)
+
 ## [2.42.0] - 2026-05-03
 
 ### Added

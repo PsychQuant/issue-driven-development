@@ -83,7 +83,11 @@ allowed-tools:
 
 若多個 comments 含相同 source 標題（例如使用者 re-ran `idd-implement` 並發了多個 `## Implementation Complete`），**只看最後一個**（按 comment `createdAt` desc 取第一個）——那是最新的 source of truth。
 
-**Pre-implementation supersession check (v2.41.0+, #515 fix)**：
+**Pre-implementation supersession check (v2.41.0+, #515 fix;canonical IC_R011 reference v2.43.0+, #525)**：
+
+> **Note**: this is a **gate logic** fix (recognize Implementation Complete > Checklist as canonical when supersession active), NOT an IC_R011 checkpoint. The IC_R011 checkpoint for `/idd-close` (closing summary follow-up keyword scan) is tracked separately in [#527](https://github.com/kiki830621/ai_martech_global_scripts/issues/527) and will cite [`references/ic-r011-checkpoint.md`](../../references/ic-r011-checkpoint.md) when implemented.
+
+
 
 `Strategy` 跟 `Implementation Plan` 是 **pre-implementation snapshots**——它們在 `idd-diagnose` / `idd-plan` 階段寫進 issue,記錄當時的 design intent。`idd-implement` Step 5 「Checklist Sync」**只**回寫 `## Implementation Complete > ### Checklist`（自己發的 comment 內），**不會** PATCH `Strategy` / `Implementation Plan` comments 的 checkbox。
 
