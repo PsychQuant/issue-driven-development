@@ -4,7 +4,7 @@ description: |
   自動串連 IDD 完整 workflow（issue → diagnose → implement → verify），在 feature branch 開 PR，停在 verified 等 user merge + close。
   Use when: 想一次跑完整條 IDD pipeline、信任 6-AI verify 會抓錯、希望 fire-and-forget。
   防止的失敗：手動跑 5 個 idd-* skill 太繁瑣、忘記中間某一步、orchestration 一致性。
-argument-hint: "[#NNN | 'issue description'] (empty = interactive)"
+argument-hint: "[#NNN | 'issue description'] [--cwd /path/to/clone] (empty = interactive)"
 allowed-tools:
   - Bash(gh:*)
   - Bash(git:*)
@@ -75,60 +75,96 @@ TaskCreate(name="report_and_stop", description="Phase 6: 顯示 PR URL + 提示 
 |------|------|------|
 | `/idd-all` | interactive | AskUserQuestion: 建新 issue 還是用既有 issue? |
 | `/idd-all #19` | from-issue | 直接從 #19 進 diagnose |
+| `/idd-all #19 --cwd /path/to/clone` | from-issue cross-repo | 在指定 local clone 跑(不依賴 session cwd) |
 | `/idd-all "bug: foo doesn't work"` | from-scratch | 用該字串當 issue title 進 idd-issue |
 | `/idd-all path/to/spec.md` | from-scratch | 把檔案當 issue 描述進 idd-issue |
 
-#### Step 0.2: Hard pre-flight gates
+#### Step 0.2: Resolve Working Tree(v2.39.0+ 新增)
 
-任何一項失敗就 abort,顯示具體訊息讓 user 修。
+idd-all 的所有 git/gh 操作都針對單一 target repo。先解析這個 repo:
+
+```bash
+# 1. 解析 --cwd flag(per-invocation override)
+CWD_FLAG=""
+for arg in "$@"; do
+    case "$arg" in
+        --cwd=*) CWD_FLAG="${arg#--cwd=}" ;;
+        --cwd)   shift; CWD_FLAG="$1" ;;
+    esac
+done
+
+# 2. 確定 working tree 路徑
+if [ -n "$CWD_FLAG" ]; then
+    [ -d "$CWD_FLAG" ] || abort "--cwd path '$CWD_FLAG' does not exist."
+    CWD="$CWD_FLAG"
+else
+    CWD="$(pwd)"
+fi
+
+# 3. 從 working tree 推導 GITHUB_REPO
+GITHUB_REPO=$(git -C "$CWD" remote get-url origin 2>/dev/null \
+    | sed -E 's#.*[:/]([^/]+/[^/]+?)(\.git)?$#\1#') \
+    || abort "Could not determine github_repo from $CWD/.git/config (no 'origin' remote?)"
+```
+
+**為什麼需要 explicit `--cwd`**:Skill tool 呼叫繼承 Claude Code session-level cwd,不會跟著 mid-session `cd` 移動。跨 repo 工作(例如 thesis 在 repo A、要對 repo B 跑 idd-all)時,沒有 `--cwd` 就只能重啟 Claude Code session — 違反 unattended pipeline contract。
+
+#### Step 0.3: Hard pre-flight gates
+
+任何一項失敗就 abort,顯示具體訊息讓 user 修。所有 git 操作用 `git -C "$CWD"`,所有 gh 操作用 `gh -R "$GITHUB_REPO"`。
 
 ```bash
 # 1. 必須在 git repo
-git rev-parse --git-dir > /dev/null 2>&1 || abort "Not in a git repository."
+git -C "$CWD" rev-parse --git-dir > /dev/null 2>&1 \
+    || abort "'$CWD' is not a git repository.
+   Either:
+     - cd to the target repo first, then re-run /idd-all
+     - OR pass --cwd /path/to/local/clone"
 
 # 2. 必須 gh auth
 gh auth status > /dev/null 2>&1 || abort "gh CLI not authenticated. Run: gh auth login"
 
 # 3. Working tree 必須乾淨(由設計決策 #1 決定:Abort,不 stash)
-if [ -n "$(git status --porcelain)" ]; then
-    echo "Uncommitted changes detected. idd-all needs a clean working tree."
-    git status --short
-    abort "Run 'git stash' or 'git commit' first, then re-run /idd-all."
+if [ -n "$(git -C "$CWD" status --porcelain)" ]; then
+    echo "Uncommitted changes detected in $CWD. idd-all needs a clean working tree."
+    git -C "$CWD" status --short
+    abort "Run 'git -C $CWD stash' or commit first, then re-run /idd-all."
 fi
 
 # 4. 必須在 main / master / 預設 branch(避免從另一個 feature branch 起跳)
-CURRENT=$(git branch --show-current)
-DEFAULT=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name)
+CURRENT=$(git -C "$CWD" branch --show-current)
+DEFAULT=$(gh repo view "$GITHUB_REPO" --json defaultBranchRef -q .defaultBranchRef.name)
 if [ "$CURRENT" != "$DEFAULT" ]; then
-    abort "Currently on '$CURRENT'. idd-all must start from '$DEFAULT'. Run: git checkout $DEFAULT"
+    abort "$CWD is currently on '$CURRENT'. idd-all must start from '$DEFAULT'.
+   Run: git -C $CWD checkout $DEFAULT"
 fi
 ```
 
-#### Step 0.3: Resolve Issue Number
+#### Step 0.4: Resolve Issue Number
 
-- **from-issue mode**(`/idd-all #19`): 確認 issue #19 存在且 OPEN(`gh issue view 19 --json state -q .state`); 若 state=CLOSED → abort
+- **from-issue mode**(`/idd-all #19`): 確認 issue #19 存在且 OPEN(`gh issue view 19 -R "$GITHUB_REPO" --json state -q .state`); 若 state=CLOSED → abort
 - **from-scratch mode**: skip 到 Phase 1 跑 idd-issue
 - **interactive mode**: AskUserQuestion 兩選一
 
-#### Step 0.4: Create Feature Branch
+#### Step 0.5: Create Feature Branch
 
 決策 #2 已選定命名規則:`idd/{N}-{slug}`
 
 ```bash
 N="19"  # 從 args 或 idd-issue 結果取得
-TITLE=$(gh issue view "$N" --json title -q .title)
+TITLE=$(gh issue view "$N" -R "$GITHUB_REPO" --json title -q .title)
 SLUG=$(echo "$TITLE" | tr '[:upper:]' '[:lower:]' \
     | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-\|-$//g' \
     | cut -c1-40)
 BRANCH="idd/${N}-${SLUG}"
 
 # 若 branch 已存在 → AskUserQuestion(continue 還是建 -2 suffix)
-if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
+if git -C "$CWD" show-ref --verify --quiet "refs/heads/$BRANCH"; then
     # 詢問:該 branch 已存在,要 checkout 繼續 or 用 idd/19-...-2?
     # 預設 default 不 auto-pick,因為這是 user state edge case
 fi
 
-git checkout -b "$BRANCH"
+git -C "$CWD" checkout -b "$BRANCH"
 ```
 
 > **為什麼從 default branch 起跳**:idd-all 假設 issue 是針對 main 的工作。如果 user 已經在 feature branch 上要做 idd-all,代表他們在做 nested feature work,這不是 idd-all 的設計使用情境 — 應該 abort 讓 user 想清楚。
@@ -341,7 +377,7 @@ for round in 1..2:
 ### Phase 5: Open PR
 
 ```bash
-git push -u origin "$BRANCH"
+git -C "$CWD" push -u origin "$BRANCH"
 
 # 組 PR body
 PR_BODY=$(cat <<EOF
@@ -367,7 +403,8 @@ Refs #${N}
 EOF
 )
 
-gh pr create --title "$PR_TITLE" --body "$PR_BODY" --base "$DEFAULT" --head "$BRANCH"
+gh pr create -R "$GITHUB_REPO" --title "$PR_TITLE" --body "$PR_BODY" \
+    --base "$DEFAULT" --head "$BRANCH"
 ```
 
 > **絕對不能在 PR body 用 Closes/Fixes/Resolves trailer**(設計決策 #3:不包含)。理由見 idd-implement skill 裡的 trailer 禁令說明 — auto-close 會繞過 idd-close 的 checklist gate 和 closing summary。
@@ -400,9 +437,12 @@ Next steps (manual):
 
 | 情況 | 行為 |
 |------|------|
-| Working tree dirty | Phase 0 abort,顯示 git status |
-| Not on default branch | Phase 0 abort,提示 git checkout |
-| gh auth 沒設定 | Phase 0 abort,提示 gh auth login |
+| `--cwd /path` 不存在 | Phase 0.2 abort,提示 user 確認 path |
+| `--cwd` 給的目錄沒 origin remote | Phase 0.2 abort,顯示 cd path 與 git config 修法 |
+| 沒給 --cwd 且 session cwd 不是 git repo | Phase 0.3 abort,訊息含「pass --cwd /path」alternative |
+| Working tree dirty | Phase 0.3 abort,顯示 `git -C $CWD status` |
+| Not on default branch | Phase 0.3 abort,提示 `git -C $CWD checkout $DEFAULT` |
+| gh auth 沒設定 | Phase 0.3 abort,提示 gh auth login |
 | Issue #N 不存在 / CLOSED | Phase 0 abort |
 | Branch 已存在 | Phase 0 AskUserQuestion(checkout / -2 suffix / abort) |
 | Diagnose 判定 UNKNOWN complexity | Phase 2 abort,提示手動跑 idd-diagnose |
@@ -452,6 +492,16 @@ abort 時:
 ```
 
 把 spec 內容當 issue body 跑 idd-issue → 後續同上。
+
+### 跨 repo invocation(v2.39.0+)
+
+當 Claude Code session 的 cwd 不在目標 repo(例如同時在 thesis 工作要對 ooxml-swift 跑 idd-all):
+
+```
+/idd-all #43 --cwd /Users/che/Developer/macdoc/packages/ooxml-swift
+```
+
+idd-all 會在指定 local clone 跑完整 pipeline,branch 開在那邊、commits land 那邊、PR 從那 push。Claude Code session cwd 不變。
 
 ---
 

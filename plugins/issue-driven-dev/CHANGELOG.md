@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.39.0] - 2026-05-03
+
+### Added
+- **`idd-all --cwd /path/to/clone` flag**: Per-invocation override that decouples the orchestrator from Claude Code's session-level working directory. Previously, running `idd-all` on a repo other than the one your session started in required exiting Claude Code and re-launching with `cd <path>` first — because Skill tool calls inherit session cwd and don't follow mid-session `cd`. New `--cwd` flag breaks that friction; cross-repo orchestration (e.g. thesis work in repo A, want pipeline on dependency repo B) now works without session restart.
+- **Step 0.2 "Resolve Working Tree"**: Explicit phase that derives `$CWD` from `--cwd` flag (or falls back to session `pwd`) and `$GITHUB_REPO` from `git -C $CWD remote get-url origin`. All subsequent phases reference these variables instead of relying on cwd defaults.
+- **Improved abort messages**: Phase 0.2/0.3 abort guidance now includes `--cwd /path/to/clone` as an explicit alternative to `cd $path && claude`. Failure Modes table grew 3 new rows for `--cwd` validation errors.
+- **Cross-repo invocation example** in Examples section: `/idd-all #43 --cwd /Users/che/Developer/macdoc/packages/ooxml-swift`.
+
+### Changed
+- All `git` calls in idd-all use `git -C "$CWD" ...` (was: implicit cwd)
+- All `gh` calls in idd-all use `gh -R "$GITHUB_REPO" ...` (was: implicit cwd repo detect)
+- `argument-hint` updated to advertise the new flag
+
+### Backward compatibility
+- Omitting `--cwd` reads from session `pwd` — identical to v2.38.0 behavior. No flag deprecations.
+
 ## [2.38.0] - 2026-05-02
 
 ### Added
