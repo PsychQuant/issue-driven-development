@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.51.0] - 2026-05-04
+
+### Added
+
+- **`idd-list` shows open PR info + cluster detection** ([PsychQuant/issue-driven-development#13](https://github.com/PsychQuant/issue-driven-development/issues/13)): `idd-list` 從「列 issue phase + next action」升級為「列 issue + 對應 open PR + cluster 結構 + PR-aware actionable next」。
+
+  - **NEW Step 2.5**: batch fetch all open PRs once via `gh pr list --state open --limit 100 --json number,title,body,isDraft,mergeable,headRefName,createdAt,url`. 一次 query,不是 per-issue N+1(後者無法偵測 cluster)
+  - **NEW Step 3.5**: client-side regex `#(\d+)\b` scan PR body 反向建 `issue→PR` index + cluster map(同 PR ref ≥ 2 issue)。Cluster leader = `min(refs)` deterministic
+  - **Step 4 Format Output 擴充**:每個 issue 有 PR ref 時加 `└─ PR #N (draft|ready, MERGEABLE|CONFLICTING)` 子行;cluster leader 加 `— cluster: #X #Y #Z`;cluster member 顯示 `→ see PR #N (cluster member)`。Direct-commit issue **不加** 子行(完全 backward compatible)
+  - **Footer 擴充**:第二行加 `N issues bundled in M cluster(s); P solo PR(s); Q direct-commit` 統計(無 open PR 時 footer 維持 v2.50 格式)
+  - **Step 5 Suggest Next 擴充**:phase × PR state matrix(10+ rows)。`implemented + draft` → `gh pr ready N → /idd-verify --pr N`;`implemented + ready MERGEABLE` → `/idd-verify --pr N`;`verified + ready MERGEABLE` → `gh pr review N → gh pr merge N → /idd-close #N`;`verified + merged` (catch-up) → `/idd-close #N`;`CONFLICTING` → `gh pr checkout N → resolve`;cluster member → `see leader's next action`
+
+- **Step 0 TaskCreate 清單**:加 `fetch_open_prs` + `build_issue_pr_index` 兩個 task,讓 PR fetch + index 步驟有 stage-level audit trail
+
+### Spectra change
+
+`add-pr-aware-idd-list` (informal — 走 IDD lifecycle 而非 Spectra,因為 idd-list output 是視覺 surface 不是 frozen API contract)。Diagnosis verdict = `Plan` (Layer P:decision-heavy with 3 valid approaches + 5+ ordered steps)。
+
+### Sister issues filed (per IC_R011 sister concern surfacing)
+
+- **#14** [refactor] markdown-aware PR body parser:ignore `#N` inside fenced code blocks (R1 follow-up;v2.51 accepts false positive)
+- **#15** [enhancement] `cluster_leader: lowest | primary` config option (R3 follow-up;v2.51 hardcodes lowest)
+
+### Backward compatibility
+
+- Direct-commit issue(無 open PR ref)顯示**完全與 v2.50 一致**,no behavior change
+- Footer 第二行只在有 open PR 時出現,無 PR 時維持 v2.50 格式
+- Step 5 phase-only fallback 邏輯保留,作為 PR state 推不出時的 default
+- Performance:`--limit 100` 對 dogfood repo 足夠;100+ open PR repo 後續若有需求加 `--pr-limit` flag(目前 out-of-scope)
+
 ## [2.50.0] - 2026-05-04
 
 ### Added
