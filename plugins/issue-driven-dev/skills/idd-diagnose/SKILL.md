@@ -62,7 +62,8 @@ TaskCreate(name="read_issue", description="gh issue view #NNN 讀 title/body/lab
 TaskCreate(name="download_attachments", description="偵測 issue body/comments 的 attachment URL 全部下載到 .claude/.idd/attachments/issue-NNN/,寫 _manifest.json,parse(MCP-first: che-word-mcp / che-pdf-mcp / Read for images)。依 rules/process-attachments.md。忽略附件 = 忽略來源,違反鐵律。")
 TaskCreate(name="diagnose_by_type", description="依 issue type 做診斷: bug→RCA / feature→需求分析 / refactor→現狀分析")
 TaskCreate(name="post_diagnosis_report", description="產出 Diagnosis Report 並 comment 到 issue(非只在對話中顯示)")
-TaskCreate(name="complexity_assessment", description="3-tier 判定 Simple / Plan / Spectra 並寫入 report 的 Complexity 欄位（v2.36+，Spectra rename from SDD-warranted；新增 Plan tier 介於 Simple 和 Spectra 之間）")
+TaskCreate(name="vagueness_precheck", description="Step 3.4 (v2.50+): Layer V Vagueness Pre-check — 用 .claude/rules/attribute-assessment.md 的 6-point Likert anchors 評 V1 + V4,trigger ≥ 4 跳 Hybrid 3-option (clarify/proceed/escalate),audit trail PATCH 到 Diagnosis comment。Unattended mode 自動 proceed + audit trail")
+TaskCreate(name="complexity_assessment", description="Step 3.5: 5-layer 判定 Simple / Plan / Spectra 並寫入 report 的 Complexity 欄位(v2.36+ Spectra rename;v2.50+ Layer V 在 Layer 1 之後 Layer 2 之前)")
 TaskCreate(name="sister_concern_surfacing", description="Step 3.6: re-read posted Diagnosis content + scout session log for sister-concern markers (也有 / sister / 同樣的 / 另外 / etc); AskUserQuestion 3-option per canonical references/ic-r011-checkpoint.md; PATCH Diagnosis comment with `### Sister Concerns Filed` audit trail (per IC_R011 #528)")
 TaskCreate(name="confirm_and_route", description="與使用者確認診斷正確,依 complexity 顯示下一步命令")
 TaskCreate(name="auto_update_body", description="Step 5: 跑 /idd-update #NNN 同步 issue body Current Status phase → diagnosed（強制，常被漏；同 idd-close 2.18.1 模式）")
@@ -216,18 +217,156 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$DIAGNOSIS_REPORT"
 
 同時在對話中顯示 report，讓使用者可以即時確認。
 
+### Step 3.4: Vagueness Pre-check (Layer V, v2.50.0+)
+
+Diagnosis 完成、Step 3.5 Complexity Assessment 之前,評估 issue 的「需求清晰度」。如果模糊到無法可靠 routing,先讓 user 表態:澄清 / 照做 / 升級 Plan。
+
+**為何在 Step 3.5 之前**:Layer V 是 routing 決策的一階信號,放在 Step 3.5 之後等於 routing 已經做完才檢查 — 太晚。Layer 1 disqualifier 仍最優先(narrative / ad-hoc 強制 Simple,vagueness 不該推翻),所以 Step 3.4 在 Layer 1 之後、Layer 2/3/P 之前。
+
+#### A. 載入 attribute-assessment 規則(必要)
+
+```bash
+RULE_PATH=".claude/rules/attribute-assessment.md"
+if [ -f "$RULE_PATH" ]; then
+  ANCHOR_SOURCE="$RULE_PATH"
+else
+  echo "⚠ Layer V: This repo has no project rule for attribute-assessment;using plugin built-in anchors"
+  ANCHOR_SOURCE="plugin built-in (see plugins/issue-driven-dev/rules/sdd-integration.md Layer V section)"
+fi
+```
+
+Anchors 載入後,AI 對 issue body 評 V1 + V4 兩個 score(每個 1–6),依 anchor 給的 example 校準。
+
+#### B. Likert scoring (per-axis)
+
+對 issue body(若 Step 3.6 已澄清過,用更新後的 body)評估:
+
+- **V1 (vague WHAT)** — 「要做什麼」的清晰度
+- **V4 (vague ACCEPTANCE)** — 「完成定義」的清晰度
+
+每軸獨立評分 1–6,**不**用 keyword matching(brittle 且 cross-language drift)。Score + 一句話 reasoning(引具體證據:行號 / 引用 / 結構觀察 — 不可寫「感覺像 X」)。
+
+V2(vague HOW)已被 Layer P "decision-heavy" 覆蓋,本步驟**不**評。
+V3(vague SCOPE)由 IC_R011 sister sweep(Step 3.6)處理,本步驟**不**評。
+
+#### C. Trigger 判斷
+
+```
+trigger = (V1 >= 4) OR (V4 >= 4)
+max_score = max(V1, V4)
+```
+
+`trigger == false` → 跳過 D,直接進 E(audit trail untriggered)再進 Step 3.5。
+
+#### D. Hybrid 3-option AskUserQuestion(僅在 trigger 時)
+
+依 `max_score` 決定 default option(AskUserQuestion 第一選項):
+
+| max_score | Default option       |
+|-----------|----------------------|
+| 4         | `proceed anyway`     |
+| 5         | `clarify now`        |
+| 6         | `escalate to Plan`   |
+
+```
+AskUserQuestion(
+  question = "Layer V triggered (V1=$V1, V4=$V4). 模糊度 $max_score/6 — 怎麼處理?",
+  options = [
+    # 順序依 max_score 重排,把 default 放第一個
+    {label: "clarify now",      description: "Claude 問 1-3 個 focused questions → 拿你回答 → append 到 issue body 'Clarification (added during diagnose)' 區塊 → 重跑 Layer V + Step 3.5"},
+    {label: "proceed anyway",   description: "跳過 clarify,routing 進 Layer 2/3/P。trigger 事實寫入 audit trail"},
+    {label: "escalate to Plan", description: "verdict 直接設 Plan via Layer V,跳過 Step 3.5。Routing 進 /idd-plan EnterPlanMode 對齊"}
+  ]
+)
+```
+
+#### D.1 Choice handlers
+
+**`clarify now`**:
+1. AI 根據 V1 / V4 評分理由,挑出 1–3 個最不清楚的點問 user
+2. User 回答後,組合成 markdown 區塊:
+   ```markdown
+   ## Clarification (added during diagnose)
+
+   **Q**: <question>
+   **A**: <user answer>
+
+   (repeat for each Q/A pair)
+   ```
+3. 用 `gh issue edit $NUMBER --repo $GITHUB_REPO --body "$NEW_BODY"` append 到 issue body(放在 `---` separator 上,Current Status 之前)
+4. **重跑 Step 3.4**(Layer V 用更新後的 body 重新評分;若仍 trigger 再問,但循環不超過 2 次)+ Step 3.5
+
+**`proceed anyway`**:
+- 不澄清,不修 issue body
+- Audit trail entry(見 E)記 `Layer V triggered (V1=N V4=M), user opted to proceed`
+- 進 Step 3.5 Layer 2/3/P 評估
+
+**`escalate to Plan`**:
+- 直接設 verdict = `Plan via Layer V`(會被 Step 3.5 的 verdict format 採納)
+- 跳過 Step 3.5 Layer 2/3/P 評估
+- Routing 直接進 `/idd-plan` 走 EnterPlanMode approval gate
+
+#### E. Audit trail PATCH(無論是否 trigger 都要寫)
+
+把 Step 3.4 結果 append 到剛 post 的 Diagnosis comment:
+
+```bash
+COMMENT_ID=<剛 post 的 comment id>
+CURRENT_BODY=$(gh api "/repos/$GITHUB_REPO/issues/comments/$COMMENT_ID" --jq '.body')
+
+# Trigger case
+if [ "$trigger" = "true" ]; then
+  AUDIT_BLOCK="
+### Vagueness Pre-check
+
+- **V1**: $V1 — $V1_REASONING
+- **V4**: $V4 — $V4_REASONING
+- **Triggered**: yes (max=$max_score)
+- **User choice**: $USER_CHOICE
+- **Effect**: $EFFECT_DESCRIPTION
+"
+else
+  AUDIT_BLOCK="
+### Vagueness Pre-check
+
+- **V1**: $V1 — $V1_REASONING
+- **V4**: $V4 — $V4_REASONING
+- **Triggered**: no — both axes ≤ 3
+"
+fi
+
+NEW_BODY="${CURRENT_BODY}${AUDIT_BLOCK}"
+gh api -X PATCH "/repos/$GITHUB_REPO/issues/comments/$COMMENT_ID" -f body="$NEW_BODY"
+```
+
+#### F. `idd-all` Unattended mode
+
+當 idd-diagnose 在 `idd-all` UNATTENDED MODE directive 下執行(透過 args 偵測),Step 3.4 仍評分 + 寫 audit trail,但**不**跳 AskUserQuestion。自動 apply `proceed anyway`,audit trail 寫:
+
+```
+[Layer V: V1=$V1 V4=$V4, clarify-default skipped under unattended mode, defaulting to proceed]
+```
+
+跟 Plan tier 在 unattended mode 也跳過 EnterPlanMode 同樣設計(user 不在現場,沒法 review prompt)。User 後續 review final report 仍能看到 audit trail 上的 trigger 記錄,可以手動重 route。
+
 ### Step 3.5: Complexity Assessment (3-tier: Simple / Plan / Spectra)
 
-Diagnosis 完成後，依 4 層 gate 判定 Complexity。**Default = Simple。** 完整邏輯見 [`rules/sdd-integration.md`](../../rules/sdd-integration.md)。
+Diagnosis 完成 + Step 3.4 Vagueness Pre-check 結束後，依 5 層 gate 判定 Complexity。**Default = Simple。** 完整邏輯見 [`rules/sdd-integration.md`](../../rules/sdd-integration.md)。
 
 > **v2.36.0+ rename**：原本是二元 `Simple` / `SDD-warranted`，現在是三層 `Simple` / `Plan` / `Spectra`。`SDD-warranted` 是 `Spectra` 的 backward-compat alias（既有 issue 不需重寫）。Plan 是新增的中間層，覆蓋「想先想清楚再動手，但沒到要寫 spec contract」的常見場景。
+>
+> **v2.50.0+ Layer V**：Step 3.4 Vagueness Pre-check 在 Layer 1 之後、Layer 2 之前評估「需求清晰度」。若 user 在 Step 3.4 選 `escalate to Plan`，verdict 直接設 `Plan via Layer V`,本 step 跳過 Layer 2/3/P 評估。
 
-#### 評估順序（必須照此順序）
+#### 評估順序（必須照此順序，5 層）
 
 1. **Layer 1 disqualifiers** 任一命中 → `Simple`，停止
-2. **Layer 2 + Layer 3** 都命中 → `Spectra`
-3. **Layer P** 任一命中 → `Plan`
-4. 否則 → `Simple`（default）
+2. **Layer V (Step 3.4)** Vagueness 已在 Step 3.4 處理:
+   - User 選 `escalate to Plan` → verdict = `Plan via Layer V`,**本 step 結束**
+   - User 選 `clarify now` → 已重跑 Layer V + 進到本 step
+   - User 選 `proceed anyway` 或 V≤3 → 繼續以下評估
+3. **Layer 2 + Layer 3** 都命中 → `Spectra`
+4. **Layer P** 任一命中 → `Plan`
+5. 否則 → `Simple`（default）
 
 #### Layer 1: Simple-required disqualifiers（任一命中 → 強制 Simple）
 

@@ -375,10 +375,15 @@ print(m.group(1).strip() if m else 'UNKNOWN')
 |--------------|--------|
 | `Simple` | Phase 3a: idd-implement |
 | `Plan` | Phase 3a: idd-implement(unattended → Plan deliberation 跳過;attended → Plan tier `EnterPlanMode` approval gate 自然 fire) |
+| `Plan via Layer V` (v2.50+) | 視同 `Plan` 處理 — verdict 是 user 在 idd-diagnose Step 3.4 選 escalate 觸發,routing 行為跟 bare `Plan` 一致 |
 | `Spectra` | Phase 3b: spectra-discuss → spectra-propose → spectra-apply(unattended → 一輪收斂;attended → multi-turn 對話自然進行) |
 | `SDD-warranted` (legacy alias) | 視同 `Spectra` 處理(v2.36.0+ backward compat) |
 | `UNKNOWN` | **abort** — diagnose 沒判定 complexity,user 需手動釐清 |
 
+**Parser 對 `Plan via Layer V` 的處理**(v2.50+):上面 grep 抓 `### Complexity\n(.+?)\n` 會抓到整行 `Plan via Layer V`,在 routing dispatch 時必須提取 canonical tier。實作:`canonical_tier = COMPLEXITY.split(' via ')[0].strip()`,得 `Plan`,routing 同 bare `Plan`。Backward compat:bare `Plan` / `Simple` / `Spectra` / `SDD-warranted` 都不含 ` via `,split 後仍是原值。
+
+> **Layer V under (PR, unattended) — v2.50+**: Layer V Vagueness Pre-check (idd-diagnose Step 3.4) 在 unattended 仍評分 + 寫 audit trail,但 trigger 時自動 apply `proceed anyway` 不跳 AskUserQuestion。final report 應 surface `idd-diagnose` audit trail 中含 `[Layer V: V1=N V4=M, clarify-default skipped under unattended mode, defaulting to proceed]` 的 issue,讓 user 後續可以手動重 route。
+>
 > **Plan tier under (PR, unattended)**: Plan tier 的核心價值是 user approval via `EnterPlanMode`/`ExitPlanMode`。unattended 沒有 user 在 review plan,所以 Plan path 直接跳到 idd-implement,**在 final report 標記 `[Plan tier deliberation skipped under unattended mode]`**。
 >
 > **Plan tier under (direct-commit, attended)**: 不傳 unattended hint,idd-implement 進 Plan tier、`EnterPlanMode` 呈現 plan 給 user,user `ExitPlanMode` approve 後才繼續。這是 attended mode 的設計目的之一。

@@ -6,15 +6,18 @@ description: When to route IDD to Plan-mode or Spectra (formerly SDD), with back
 # Complexity Routing Rule (Simple / Plan / Spectra)
 
 > **v2.36.0+ rename**: the Complexity verdict was previously a binary `Simple` / `SDD-warranted`. It is now a 3-tier `Simple` / `Plan` / `Spectra`. `SDD-warranted` is treated as an alias for `Spectra` for backward compat (existing diagnosis comments parse without rewrite).
+>
+> **v2.50.0+ Layer V**: a 5th evaluation layer (Vagueness Pre-check) sits between Layer 1 and Layer 2. See "Layer V" section below. Existing diagnoses written before v2.50 are not retroactively re-evaluated.
 
-`idd-diagnose` is the single decision point. After diagnosis, evaluate in order:
+`idd-diagnose` is the single decision point. After diagnosis, evaluate in order (5 layers as of v2.50):
 
 1. **Disqualifiers (Layer 1)** — any one yes → force `Simple`, ignore everything below
-2. **Spectra-warranting condition (Layer 2 + Layer 3)** — both must be yes → `Spectra`
-3. **Plan signals (Layer P)** — at least one yes → `Plan`
-4. Otherwise → `Simple` (default)
+2. **Vagueness Pre-check (Layer V, v2.50+)** — `max(V1, V4) ≥ 4` triggers a 3-option AskUserQuestion gate; user choice determines whether routing continues, body is clarified first, or verdict is force-set to `Plan via Layer V`
+3. **Spectra-warranting condition (Layer 2 + Layer 3)** — both must be yes → `Spectra`
+4. **Plan signals (Layer P)** — at least one yes → `Plan`
+5. Otherwise → `Simple` (default)
 
-This three-tier evaluation replaces the previous binary "Simple vs SDD-warranted". Plan exists for "I want to think before I leap, but no spec contract is needed" — the most common case where Simple is too thin (multi-step / multi-file / decision-heavy) but Spectra is overkill (no published API contract for future callers).
+This 5-layer evaluation replaces the v2.36 4-layer order by inserting Layer V right after Layer 1 disqualifier. Plan exists for "I want to think before I leap, but no spec contract is needed" — the most common case where Simple is too thin (multi-step / multi-file / decision-heavy) but Spectra is overkill (no published API contract for future callers). Layer V exists for the orthogonal case: **the change shape is small, but the request itself is unclear** — Simple's direct TDD loop would pattern-match a wrong direction.
 
 ## Layer 1: Simple-required disqualifiers (any one = force Simple)
 
@@ -26,6 +29,82 @@ If any of these match, the work is `Simple` regardless of other signals. Plan / 
 - **Multi-file but each file is independent** — parallel doc updates, parallel script tweaks; multi-file count without interdependent contract is not a routing signal
 
 **Rationale**: Plan's value is the approval checkpoint; Spectra's value is the spec contract. Narrative is fluid by design (evolves with reviewer feedback). Ad-hoc analysis is similar — once the question is answered, the script is archived. IDD's checklist + closing summary already provide sufficient audit trail.
+
+## Layer V: Vagueness Pre-check (v2.50.0+)
+
+`Layer V` evaluates **request clarity** — orthogonal to the change-shape signals that Layer 1 / 2 / 3 / P measure. The 4-shape layers ask "what kind of work is this?". Layer V asks "is the work request itself clear enough to act on?".
+
+### Why Layer V exists
+
+`spectra-discuss` already handles vagueness inside the Spectra path ("AI consistently over-estimates how complete its diagnosis is"). But Simple path has **no equivalent alignment gate**. The most common failure mode is **scope-small + request-vague** ("the menu feels off, fix it") — current routing forces `Simple`, AI pattern-matches a direction, code lands wrong. Layer V plugs that hole **before** the routing tier is decided, regardless of which downstream tier (Simple / Plan / Spectra) eventually applies.
+
+### Heuristic: 6-point Likert per axis (no keywords)
+
+Layer V uses Likert scoring per the project rule [`.claude/rules/attribute-assessment.md`](../../../.claude/rules/attribute-assessment.md). Two axes:
+
+- **V1 (vague WHAT)** — clarity of what should be done
+- **V4 (vague ACCEPTANCE)** — clarity of completion criteria
+
+Both axes scored independently 1–6. Trigger threshold is `max(V1, V4) ≥ 4` (per-axis OR semantics). Anchors and concrete examples for each score live in the project rule file. **Keyword matching is explicitly forbidden** — see the rule's "Core principle" section for rationale.
+
+`V2` (vague HOW) is **not** evaluated here: it is already covered by Layer P's "Decision-heavy with multiple valid approaches" signal. `V3` (vague SCOPE) is **not** evaluated here either: it overlaps with the IC_R011 sister sweep mechanism (`idd-diagnose` Step 3.6).
+
+### When Layer V fires
+
+When `max(V1, V4) ≥ 4`, `idd-diagnose` Step 3.4 fires a Hybrid 3-option `AskUserQuestion`:
+
+| Score (max) | Default option        | Rationale                                                |
+|-------------|-----------------------|----------------------------------------------------------|
+| 4           | `proceed anyway`      | Mild vagueness — user often has unstated mental model    |
+| 5           | `clarify now`         | Medium vagueness — clarification is recommended          |
+| 6           | `escalate to Plan`    | Severe vagueness — alignment via Plan tier is recommended|
+
+User can choose any of the three options regardless of default:
+
+- **`clarify now`** → Claude asks 1–3 focused questions, appends user answers to the issue body via `gh issue edit` under `Clarification (added during diagnose)`, then re-runs Layer V + Step 3.5 with the clarified body
+- **`proceed anyway`** → Layer V is skipped (audit trail records the trigger event), routing continues to Layer 2/3/P normally
+- **`escalate to Plan`** → verdict force-set to `Plan via Layer V`; Layer 2/3/P evaluation is skipped entirely; routing chains to `idd-plan` (EnterPlanMode approval gate)
+
+### Audit trail (always recorded)
+
+Whether Layer V triggers or not, Step 3.4 PATCHes the just-posted Diagnosis comment with a `### Vagueness Pre-check` section recording: V1 score + reasoning, V4 score + reasoning, trigger status, user choice (if triggered), and routing effect. This is non-negotiable — Layer V's audit trail is the calibration mechanism for anchor drift.
+
+### `idd-all` unattended mode
+
+When `idd-diagnose` runs under `idd-all` UNATTENDED MODE directive, Layer V still scores but does not present `AskUserQuestion`. It auto-applies `proceed anyway` and records `[Layer V: V1=N V4=M, clarify-default skipped under unattended mode, defaulting to proceed]` in the audit trail. Same pattern as Plan tier under unattended mode (`/idd-plan` EnterPlanMode is also skipped).
+
+### Layer evaluation order (5-layer)
+
+| Layer 1 hit | Layer V hit | Layer 2 hit | Layer 3 hit | Layer P hit | Verdict             |
+|-------------|-------------|-------------|-------------|-------------|---------------------|
+| yes         | (skipped)   | (skipped)   | (skipped)   | (skipped)   | Simple              |
+| no          | yes (escalate) | (skipped) | (skipped)  | (skipped)   | `Plan via Layer V`  |
+| no          | yes (proceed/clarify) | yes | yes      | (any)       | Spectra             |
+| no          | yes (proceed/clarify) | no  | (any)    | yes         | Plan                |
+| no          | yes (proceed/clarify) | no  | (any)    | no          | Simple              |
+| no          | no (≤3)     | yes         | yes         | (any)       | Spectra             |
+| no          | no (≤3)     | no          | (any)       | yes         | Plan                |
+| no          | no (≤3)     | no          | (any)       | no          | Simple              |
+
+### Backward compatibility
+
+Diagnoses written before v2.50.0 (without Layer V evaluation) are **not** retroactively re-evaluated or flagged. Existing `Simple` / `Plan` / `Spectra` / `SDD-warranted` verdicts remain valid. Layer V applies only to diagnoses created on or after v2.50.0.
+
+There is **no `--ignore-vagueness` flag**: the 3-option `proceed anyway` choice already covers the "user knows what they want, just didn't write it down" case. Adding a flag would invite habitual bypass.
+
+### Retrospective dry-run
+
+When introducing or recalibrating Layer V anchors, run a retrospective dry-run on 5–10 closed issues to validate that anchors are not inflated (false positives) or deflated (false negatives). Record sample results in the table below.
+
+| Issue                     | V1 | V4 | Triggered | Actual verdict was | Layer V would have routed | Match? |
+|---------------------------|----|----|-----------|--------------------|---------------------------|--------|
+| #10 (合併重複段落)        | 2  | 3  | no        | (Simple — closed)  | Simple (no change)        | ✓      |
+| #9 (sanitize title)       | 2  | 3  | no        | (Simple — closed)  | Simple (no change)        | ✓      |
+| #8 (shape assertion)      | 1  | 3  | no        | (Simple — closed)  | Simple (no change)        | ✓      |
+| #7 (quoted heredoc)       | 2  | 3  | no        | (Simple — closed)  | Simple (no change)        | ✓      |
+| #11 (umbrella split SOP)  | 2  | 3  | no        | (Plan — open)      | Plan (no change)          | ✓      |
+
+**Dry-run finding (v2.50.0 release)**: 5 sample issues 全 V≤3,Layer V 都不 trigger。原因:這些 issue 多從 verify findings 派生,inherently 高清晰度(verify 階段已 framed problem)。Layer V 的設計目標是擋「user 直接開的、scope 小但需求模糊的 issue」(quadrant A),這類 issue 在 IDD-self-improvement repo 較少見。Anchors 不需 fine-tune,但需在後續其他 repo dogfood 時驗證。
 
 ## Spectra (Layer 2 + Layer 3)
 

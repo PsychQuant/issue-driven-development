@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.50.0] - 2026-05-04
+
+### Added
+
+- **Layer V Vagueness Pre-check** ([PsychQuant/issue-driven-development#12](https://github.com/PsychQuant/issue-driven-development/issues/12)): NEW Step 3.4 in `idd-diagnose` between Layer 1 disqualifier and Layer 2 Spectra evaluation. Closes the routing gap where scope-small + request-vague issues (quadrant A: "menu feels off, fix it") were forced to `Simple` verdict, AI pattern-matched a wrong direction, then needed rework.
+
+  - **Heuristic**: AI scores V1 (vague WHAT) + V4 (vague ACCEPTANCE) on Likert 6-point scale (no neutral midpoint); trigger threshold `max(V1, V4) ≥ 4` (per-axis OR semantics)
+  - **Hybrid 3-option AskUserQuestion** when triggered: `clarify now` / `proceed anyway` / `escalate to Plan`. Default option score-driven: V=4 → proceed, V=5 → clarify, V=6 → escalate
+  - **Choice effects**: clarify appends Q/A pairs to issue body via `gh issue edit` then re-runs Layer V; proceed continues to Layer 2/3/P with audit trail; escalate force-sets verdict = `Plan via Layer V` and skips Layer 2/3/P
+  - **5-layer evaluation order**: Layer 1 → V → 2+3 → P → Simple
+  - **V2 (vague HOW) and V3 (vague SCOPE) intentionally excluded**: V2 already covered by Layer P "decision-heavy"; V3 overlaps with IC_R011 sister sweep (idd-diagnose Step 3.6)
+
+- **`.claude/rules/attribute-assessment.md` project rule** (NEW file): codifies meta-principle "**attribute scoring SHALL use Likert scale, not keyword matching**". Applies repo-wide via root `CLAUDE.md` `@import`. Scope intentionally beyond Layer V — any future attribute scoring need (confidence, priority, risk) follows the same rule. Includes V1 + V4 6-point anchors with concrete examples per Likert level.
+
+- **MANIFESTO 6-axis bug-fix model** (was 5-axis): NEW axis 6 "Alignment quality (問題本身的清晰度)". Coverage: TDD ❌ / SDD ❌ / IDD ✅. Evidence: Layer V Vagueness Pre-check.
+
+- **`vagueness_precheck` TaskCreate entry** in `idd-diagnose` Step 0 Bootstrap Stage Task List.
+
+### Changed
+
+- **`rules/sdd-integration.md`**: 4-layer evaluation order → 5-layer (Layer V inserted between Layer 1 and Layer 2). NEW "Layer V: Vagueness Pre-check" section documenting heuristic, threshold, 3-option, audit trail, unattended mode, backward compat. NEW "Retrospective dry-run" table with 5 sample closed issues (#7-#11) — all V≤3, none triggered (expected: IDD-self-improvement issues are inherently high-clarity since they originate from verify findings).
+
+- **`idd-implement` Step 2.5 routing parser**: NEW logic strips ` via X` suffix to extract canonical tier. `Plan via Layer V` → `Plan` (routes identically to bare `Plan`). Bare verdicts unchanged (backward compat).
+
+- **`idd-all` Phase 3 routing parser**: same suffix-stripping logic as `idd-implement`. NEW `Plan via Layer V` row in Complexity-to-action table.
+
+- **`idd-all` unattended mode**: Layer V auto-applies `proceed anyway` + audit trail `[Layer V: V1=N V4=M, clarify-default skipped under unattended mode, defaulting to proceed]`. Same pattern as Plan tier under unattended mode (no user in current loop to review prompt).
+
+- **`idd-diagnose` Step 3.5**: 4-layer evaluation order updated to 5-layer; Layer V handling added (escalate short-circuits Layer 2/3/P).
+
+### Backward compatibility
+
+- Pre-v2.50 diagnoses **NOT** retroactively re-evaluated. Existing `Simple` / `Plan` / `Spectra` / `SDD-warranted` verdicts remain valid.
+- No `--ignore-vagueness` flag introduced. The 3-option `proceed anyway` choice covers the "user knows what they want, just didn't write it down" case. Adding a flag would invite habitual bypass.
+- Plugin trade-off acknowledged: `.claude/rules/attribute-assessment.md` lives in this repo, not in the plugin. Other repos installing `issue-driven-dev` won't have the file. Step 3.4 has a fallback that uses built-in anchors and prints a warning. If/when the rule proves stable, promote to plugin internal or to global `~/.claude/CLAUDE.md`.
+
+### Spectra change
+
+`add-vagueness-layer-routing` in `openspec/changes/` (this repo). Capability `routing-vagueness-layer` documents the 9 normative requirements with scenarios and example tables.
+
 ## [2.49.0] - 2026-05-03
 
 ### Added

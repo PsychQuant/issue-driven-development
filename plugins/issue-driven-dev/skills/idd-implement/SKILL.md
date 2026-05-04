@@ -268,12 +268,22 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$IMPLEMENTATION_PLAN"
 
 ### Step 2.5: Bootstrap TodoList（non-Spectra case）
 
-**判斷 Complexity routing**：讀最新的 diagnosis comment 的 `### Complexity` 欄位（v2.36.0+ 三路）：
+**判斷 Complexity routing**：讀最新的 diagnosis comment 的 `### Complexity` 欄位（v2.36.0+ 三路；v2.50+ 加 Layer V variant）：
 
-| Complexity | 行為 |
+> **v2.50+ Parser 規則**：verdict 文字可能含 ` via X` 後綴(例如 `Plan via Layer V`),parser 必須提取 canonical tier。實作:
+>
+> ```python
+> raw_complexity = match_group_after("### Complexity\n").strip()
+> canonical_tier = raw_complexity.split(" via ")[0].strip()  # "Plan via Layer V" → "Plan"
+> # bare "Plan" / "Simple" / "Spectra" / "SDD-warranted" 都不含 " via ",backward compat 保留
+> ```
+>
+> 對應 spec Requirement: Routing parsers SHALL recognize Plan via Layer V verdict。
+
+| Canonical tier | 行為 |
 |-----------|------|
 | `Simple` | ✅ 本 step 啟動 TaskList 追蹤每個 checklist item |
-| `Plan` | ✅ 同 Simple — TaskList 啟動。**注意**：使用者通常透過 `/idd-plan #NNN` 呼叫進來，approval gate 已在 idd-plan 處理完，本 skill 直接走 TDD loop。若使用者直接呼叫 `/idd-implement` 而 Complexity=Plan，**先提示**「Complexity 判定為 Plan，建議改走 `/idd-plan #NNN` 進入 approval gate；繼續直接 implement 等於跳過 Plan tier 的 deliberation 價值」並用 AskUserQuestion 確認 continue/abort |
+| `Plan` (含 `Plan via Layer V`) | ✅ 同 Simple — TaskList 啟動。**注意**：使用者通常透過 `/idd-plan #NNN` 呼叫進來，approval gate 已在 idd-plan 處理完，本 skill 直接走 TDD loop。若使用者直接呼叫 `/idd-implement` 而 Complexity=Plan，**先提示**「Complexity 判定為 Plan，建議改走 `/idd-plan #NNN` 進入 approval gate；繼續直接 implement 等於跳過 Plan tier 的 deliberation 價值」並用 AskUserQuestion 確認 continue/abort。`Plan via Layer V` 同樣行為(routing 一致),只是 verdict 標記提示這是 Layer V 觸發 |
 | `Spectra` | ⏭ 跳過本 step（由 `spectra-apply` 管 `openspec/changes/<name>/tasks.md`）|
 | `SDD-warranted` (legacy alias) | ⏭ 跳過本 step — 視同 `Spectra` 處理（v2.36.0+ backward compat）|
 | _(missing / unclear)_ | ✅ 預設當 Simple，啟動 TaskList（保守作法）|
