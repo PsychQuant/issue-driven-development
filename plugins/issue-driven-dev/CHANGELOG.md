@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.52.0] - 2026-05-05
+
+### Added
+
+- **`idd-issue` ordered/unordered bundle flags** ([#21](https://github.com/PsychQuant/issue-driven-development/issues/21), `add-bundle-flags-to-idd-issue` Spectra change):IDD 第三軸正交支援上線 — milestone(分組)、group(跨 repo)、bundle(同 repo parent-child + dependency)。
+
+  - **NEW `--parent <N>`**:child 建完後 PATCH parent #N body 加 task list entry。Idempotent via `#N` reference scan;parent 沒 task list 時 fallback 建 `## Children` anchor 段落
+  - **NEW `--blocked-by <M>[,<M2>...]`**:三層 fallback chain 全部執行 — Layer 1 GraphQL `addBlockedByDependency` 嘗試(失敗 → warning + continue,不 abort)、Layer 2 child body 加 `> Blocked by #M` blockquote(無條件,markdown 永遠可讀)、Layer 3 parent task list entry 加 `(blocked by #M)` 註解(僅 `--parent` co-used 時)
+  - **NEW `--bundle-mode <ordered|unordered>`**:單次 invocation 建 1 個 epic + N 個 children。`ordered` 加嚴格 `child[i] blocked by child[i-1]` 鏈、`unordered` 純 task list 無 dependency
+  - **Pre-flight gates**:cross-repo refuse(parent 在不同 repo → abort + 指引 `groups` 機制)、bundle-mode 與 group-mode 互斥(refuse if both)
+  - **Step 3.B** 插在 3.A(single repo)和 3.G(group)之間,reuse 3.A 作 primitive
+  - **Step 0 TaskCreate** 加 `resolve_parent_link` / `apply_blocked_by` / `orchestrate_bundle_mode` 三個 entry
+  - **正交保證**:Step 4.5 milestone(bundle children 仍 assign 到 milestone)、Step 4.7 sister sweep(epic parent 仍跑 sweep,sibling issues 不加進 bundle task list)、`groups` 機制(互斥但可漸進組合)
+
+- **NEW canonical reference doc** `plugins/issue-driven-dev/references/bundle-flags.md`:flag spec、edit algorithm、fallback chain、partial failure handling、idempotency contract
+
+- **NEW `## Ordered Bundle Pattern` section** in `idd-issue` SKILL.md(放在 Step 5 之後 / `## 來源文件規則` 之前):3-mode 對照表(parent + task list / native dependency / milestone)、3 種使用情境(單 child 加進既存 parent / 從零建完整 ordered bundle / retrofit 既存散落 issue)、設計理由(為什麼不另開 `/idd-bundle` skill)、反模式
+
+- **NEW capability** `idd-issue-bundle` in `openspec/specs/`(由本 change archive 後生成)
+
+### Spectra change
+
+`add-bundle-flags-to-idd-issue` — Feature change covering 3-flag interface + reference doc + SKILL.md sections。Decision-heavy with multiple valid approaches(mega flag vs three flags;hard refuse vs degrade;separate skill vs flag),適合走 Spectra path 凍 spec contract 給未來 caller 參考。
+
+### Backward compatibility
+
+- 全部 flag 都是 **additive**:既有 `idd-issue` invocation(無 flag)行為**完全不變**
+- Step 4.5 auto-milestone 對 bundle 透明(children + epic 都 assign milestone)
+- Step 4.7 sister sweep 對 epic parent 仍跑(orthogonal concern,不污染 bundle task list)
+- `groups` 機制完全保留作為 cross-repo 機制(bundle 偵測到跨 repo → refuse + 指引 groups)
+- 無 flag deprecation、無 config schema 改動
+
 ## [2.51.0] - 2026-05-04
 
 ### Added

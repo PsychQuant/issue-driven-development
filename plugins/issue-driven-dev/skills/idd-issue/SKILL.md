@@ -103,7 +103,10 @@ TaskCreate(name="read_source", description="讀取來源(docx → mcp__che-word-
 TaskCreate(name="gather_info", description="Step 2: 蒐集 title / type / priority / description")
 TaskCreate(name="reresolve_target", description="Step 2.5: 用 title/labels 重評 content predicates,若新匹配 != tentative_default 則問使用者要不要切")
 TaskCreate(name="resolve_mentions", description="若有 --mention 或 description 含 @xxx，強制走 rules/tagging-collaborators.md 協定（v2.32.0+）")
-TaskCreate(name="create_issue", description="Step 3: gh issue create — Single mode 或 Group mode(primary + tracking + cross-link comment)，body 含已驗證的 @login")
+TaskCreate(name="create_issue", description="Step 3: gh issue create — Single mode / Group mode / Bundle mode(--parent / --blocked-by / --bundle-mode,見 Step 3.B),body 含已驗證的 @login")
+TaskCreate(name="resolve_parent_link", description="Step 3.B: 若 --parent <N> set,驗證 #N 在 target repo + idempotent PATCH parent body task list(見 references/bundle-flags.md § Edit Algorithm)")
+TaskCreate(name="apply_blocked_by", description="Step 3.B: 若 --blocked-by <M>[,...] set,三層 fallback chain — body blockquote(unconditional)+ GraphQL addBlockedByDependency(嘗試)+ parent annotation(若 --parent co-used)")
+TaskCreate(name="orchestrate_bundle_mode", description="Step 3.B: 若 --bundle-mode <ordered|unordered> set,建 epic + N children + 自動套用 --parent + (ordered 時)Blocked-by 鏈;與 group 模式互斥")
 TaskCreate(name="attach_images", description="上傳圖片到 attachments release 並編輯 issue body 嵌入(若有)")
 TaskCreate(name="create_milestone", description="來源為文件時自動建立 milestone 並指派(見 Step 4.5)")
 TaskCreate(name="linked_context_sister_sweep", description="Step 4.7: scan body draft + linked attachments + recent session conversation for sibling-concern markers (also / additionally / 另外 / 順便 / etc); if hits AskUserQuestion 3-option per canonical references/ic-r011-checkpoint.md; PATCH just-created issue body with `### Linked-Context Siblings Filed` audit trail (advisory, non-blocking, per IC_R011 #529)")
@@ -382,10 +385,11 @@ if new_match exists AND new_match != tentative_default:
 
 ### Step 3: 建立 Issue
 
-根據 Step 0.5 / Step 2.5 解析結果,分兩種情境:
+根據 Step 0.5 / Step 2.5 解析結果 + flag,分三種情境:
 
 - **Single repo 模式**(常見) → 直接 `gh issue create` 到 `$GITHUB_REPO`,如下方範例
-- **Group 模式**(`tentative_default` 或 user 選擇是 group,或 fork-aware 選了 Both) → 走 Step 3.G(下一節)
+- **Group 模式**(`tentative_default` 或 user 選擇是 group,或 fork-aware 選了 Both) → 走 Step 3.G
+- **Bundle 模式**(任一 `--parent` / `--blocked-by` / `--bundle-mode` flag set,v2.52.0+) → 走 Step 3.B 在 Single repo 模式之上補強;與 Group 模式**互斥**(同時 set → refuse)
 
 #### 3.A — Single repo creation
 
@@ -423,6 +427,143 @@ EOF
 > **CRITICAL**: 所有原文引用**必須**使用 blockquote（`>`）格式。不論出現在 issue body 或 comment 中，只要是逐字引用的原文，都要用 `>` 包住整段。這是審計軌跡，必須在視覺上與分析/解讀明確區分。
 
 > **數學公式格式**：GitHub 支援 `$...$`（inline）和 `$$...$$`（display）。含底線的程式變數名**不放 math mode**，改用 backtick code。混合寫法：`$R_I = J \cdot$` `` `mse_info` ``。
+
+#### 3.B — Bundle flags(`--parent` / `--blocked-by` / `--bundle-mode`,v2.52.0+)
+
+任一 bundle flag set 時走這條路徑。完整 spec / edit algorithm / fallback chain / partial failure 處理見 [`references/bundle-flags.md`](../../references/bundle-flags.md);本節是 inline reference。
+
+##### Pre-flight Gates(必須先過)
+
+```bash
+# Gate 1:Bundle 與 Group 模式互斥
+if [[ -n "$BUNDLE_MODE" && "$RESOLVED" == group:* ]]; then
+  echo "✗ refuse: --bundle-mode 和 group mode 互斥"
+  echo "  group mode 已 implicitly 表達多 issue + cross-link;"
+  echo "  bundle 是同 repo parent-child + dependency,語意不同。請選一個。"
+  exit 1
+fi
+
+# Gate 2:--parent 必須在同 repo
+if [[ -n "$PARENT_NUM" ]]; then
+  PARENT_REPO=$(gh issue view "$PARENT_NUM" --json repository \
+    --jq '.repository.nameWithOwner' 2>/dev/null)
+  if [[ "$PARENT_REPO" != "$GITHUB_REPO" ]]; then
+    echo "✗ refuse: parent #$PARENT_NUM 在 '$PARENT_REPO',target repo 是 '$GITHUB_REPO'"
+    echo "  Bundle mechanism is same-repo only."
+    echo "  跨 repo coordinated issues 用 'groups' 機制,見 CLAUDE.md § Configuration § groups"
+    exit 1
+  fi
+fi
+```
+
+##### `--parent <N>` Handler(child 建完後 PATCH parent body)
+
+走完 3.A 建好 child(`$CHILD_NUM`)後執行:
+
+```bash
+# 1. 抓 parent body
+PARENT_BODY=$(gh issue view "$PARENT_NUM" --repo "$GITHUB_REPO" --json body --jq '.body')
+
+# 2. Idempotency check:scan #N references in existing task list
+if echo "$PARENT_BODY" | grep -qE "^- \[[ x]\] #${CHILD_NUM}\b"; then
+  echo "→ #${CHILD_NUM} already in parent #${PARENT_NUM} task list, skip (idempotent)"
+else
+  # 3. 找第一個連續 task list 段落,append `- [ ] #child`(若 --blocked-by 同時 used,加註解)
+  ENTRY="- [ ] #${CHILD_NUM}"
+  if [[ -n "$BLOCKED_BY_LIST" ]]; then
+    ENTRY="${ENTRY} (blocked by ${BLOCKED_BY_LIST_FORMATTED})"  # e.g. "(blocked by #50, #51)"
+  fi
+
+  # Algorithm: append to first contiguous "- [ ]"/"- [x]" section, OR append fresh `## Children` anchor
+  NEW_BODY=$(append_to_task_list "$PARENT_BODY" "$ENTRY")
+
+  gh issue edit "$PARENT_NUM" --repo "$GITHUB_REPO" --body "$NEW_BODY"
+fi
+```
+
+> **Edit algorithm 細節** — 演算法在 `references/bundle-flags.md § Edit Algorithm` 有完整定義:找第一個連續 `- [ ]`/`- [x]` 區段 → scan `#child` reference → append-if-absent → fallback `## Children` anchor。重複呼叫保證 idempotent。
+
+##### `--blocked-by <M>[,<M2>...]` Handler(三層 fallback chain)
+
+走完 3.A 建好 child 後,**三層全部執行**:
+
+```bash
+# Layer 2:Body blockquote 標註(無條件,先做)
+BLOCKED_BLOCKQUOTE=""
+for M in $(echo "$BLOCKED_BY_LIST" | tr ',' '\n'); do
+  BLOCKED_BLOCKQUOTE="${BLOCKED_BLOCKQUOTE}> Blocked by #${M}\n"
+done
+NEW_CHILD_BODY="${BLOCKED_BLOCKQUOTE}\n${ORIGINAL_BODY}"
+gh issue edit "$CHILD_NUM" --repo "$GITHUB_REPO" --body "$NEW_CHILD_BODY"
+
+# Layer 1:GraphQL native dependency(嘗試,失敗不 abort)
+CHILD_NODE_ID=$(gh issue view "$CHILD_NUM" --repo "$GITHUB_REPO" --json id --jq '.id')
+for M in $(echo "$BLOCKED_BY_LIST" | tr ',' '\n'); do
+  M_NODE_ID=$(gh issue view "$M" --repo "$GITHUB_REPO" --json id --jq '.id')
+  if ! gh api graphql -f query='
+    mutation($i:ID!,$b:ID!){addBlockedByDependency(input:{issueId:$i,blockedByIssueId:$b}){issue{id}}}
+  ' -F i="$CHILD_NODE_ID" -F b="$M_NODE_ID" 2>/dev/null; then
+    echo "⚠ GraphQL addBlockedByDependency #${CHILD_NUM} ← #${M} failed (repo not enabled / API error / permission); body blockquote already in place"
+  fi
+done
+
+# Layer 3:Parent task list annotation(僅 --parent co-used 時)
+# 已由上面 --parent handler 的 ENTRY 計算邏輯處理(若 BLOCKED_BY_LIST set,task list entry 含 `(blocked by ...)`)
+```
+
+> **三層全執行 vs 階層式 fallback** — 詳見 `references/bundle-flags.md § Fallback Chain`。Layer 2 在所有情境下執行(可讀性最高);Layer 1 只是錦上添花(GitHub UI native warning);Layer 3 只在 `--parent` 同時 used 時才有意義。
+
+##### `--bundle-mode <ordered|unordered>` Handler(orchestration)
+
+當 `--bundle-mode` set 且 input 含 ≥2 個 item:
+
+```bash
+# 0. 驗證 item 數量
+if [[ ${#ITEMS[@]} -lt 2 ]]; then
+  echo "✗ refuse: --bundle-mode 需要 ≥2 個 item;單一 item 用 idd-issue 不帶 flag"
+  exit 1
+fi
+
+# 1. 建 epic parent(用 bundle-level title;若 input 沒 epic title 則 AskUserQuestion 索取)
+EPIC_NUM=$(gh issue create --repo "$GITHUB_REPO" \
+  --title "$EPIC_TITLE" \
+  --body "Epic for ${#ITEMS[@]}-item bundle (${BUNDLE_MODE})\n\n## Children\n" \
+  --label "epic" | basename)
+
+# 2. 建 N children,逐個 auto-apply --parent <epic> + (ordered 時)--blocked-by <prev>
+PREV_CHILD=""
+for ITEM in "${ITEMS[@]}"; do
+  # ordered 模式:除第一個外,加 --blocked-by <prev>
+  EXTRA_FLAGS=()
+  if [[ "$BUNDLE_MODE" == "ordered" && -n "$PREV_CHILD" ]]; then
+    EXTRA_FLAGS+=(--blocked-by "$PREV_CHILD")
+  fi
+
+  # 遞迴呼叫 idd-issue 邏輯(內部 reuse 3.A + 上面的 --parent / --blocked-by handler)
+  CHILD_NUM=$(create_child_with_parent "$ITEM" "$EPIC_NUM" "${EXTRA_FLAGS[@]}")
+  PREV_CHILD="$CHILD_NUM"
+done
+```
+
+`unordered` 模式跳過 `--blocked-by` 套用,純 task list。`ordered` 模式形成嚴格鏈式(child[i] only blocked by child[i-1])。
+
+##### Partial Failure(bundle 中途某 child 失敗)
+
+| 失敗點 | 行為 |
+|--------|------|
+| 第一個 child 建立失敗 | abort 整個 invocation,清理已建的 epic(用 `gh issue close $EPIC_NUM --reason "not planned"`)。錯誤訊息名指失敗 child title |
+| 第 N 個 child 失敗(N>1) | 不 abort;**continue** 後續 children;最後報告 partial success(N-1 成功 / total)。使用者可重跑 invocation 並用 `--parent <epic>` 補建漏掉的 |
+| `--blocked-by` 中某 target GraphQL 失敗 | 該 target 的 Layer 1 失敗 → warning + 繼續嘗試下個 target;Layer 2 body blockquote 一律加(包括失敗 target);Layer 3 parent annotation 一律加 |
+| Parent body PATCH 失敗 | child 仍建立成功;parent body 未更新 → warning + 退出非零 code,使用者可 `gh issue edit` 手動補 |
+
+##### 與既有機制正交(不互相干擾)
+
+| 機制 | 互動 |
+|------|------|
+| **Step 4.5 Auto-milestone** | 不論 bundle 是否 used,`--bundle-mode` 觸發時 epic + children 全部 assign 到該 milestone |
+| **Step 4.7 Sister Sweep** | 對 bundle 的 epic parent 仍跑 sister sweep;sibling issues 不會被加進 epic 的 task list(它們是正交旁支) |
+| **Group 模式** | 互斥(見 Pre-flight Gate 1) |
+| **Step 0.5 / Step 2.5 Target Resolution** | 在 bundle flag handler 之前執行;`$GITHUB_REPO` 是 cross-repo refuse 的 source of truth |
 
 #### 3.G — Group creation(multi-repo cross-linked,Phase 2B)
 
@@ -638,6 +779,88 @@ done
 > **CRITICAL: 建立 issue 後必須停止。不要自動開始 diagnose 或 implement。**
 > Issue 建立是人的決定點 — 人決定優先級、分配、時機。
 > AI 不應該擅自開始解決問題。等使用者明確說「開始做」或呼叫 `idd-diagnose` 才繼續。
+
+## Ordered Bundle Pattern(v2.52.0+)
+
+當 N 個 issue 之間存在 **dependency 或 epic 關係**(schema 在 API 之前、phase 1 在 phase 2 之前、N 個 issue 同屬於一個 epic),用 bundle flags 一次成形;flag spec 完整定義見 [`references/bundle-flags.md`](../../references/bundle-flags.md)。
+
+### 三種 GitHub-native bundle 模式對照
+
+| 模式 | 順序強制 | GitHub UI 支援 | `idd-issue` 自動化 | 適合 |
+|------|---------|---------------|------------------|------|
+| **Parent + task list**(本 plugin 主推) | 手動標註 blocked by | ⭐⭐⭐ 渲染 sub-issues + 進度條 | `--parent` / `--bundle-mode` | 多數 ordered/unordered 情境 |
+| **Native dependency**(GitHub 2024+) | ✅ 強制(UI 紅色 warning) | ⭐⭐⭐ 紅色 blocked banner | `--blocked-by` 自動嘗試 | 想要 hard gate 的依賴 |
+| **Milestone**(分組,非依賴) | ❌ 不強制 | ⭐⭐ 列表 | Step 4.5 自動建(文件來源) | 鬆散順序、可平行 |
+
+三軸正交:bundle 表達依賴、milestone 表達分組、group 表達跨 repo。一個 bundle 可以同時屬於 milestone。
+
+### 三種使用情境
+
+#### (a) 單 child 加進既存 parent
+
+```bash
+# parent #100 已存在,加第 4 個 child
+idd-issue --parent 100 "Step 4: 接 email 通知"
+# → 建 child #N + parent #100 task list 多一行 `- [ ] #N`(idempotent;重跑不會重複加)
+```
+
+加 dependency:
+
+```bash
+idd-issue --parent 100 --blocked-by 102 "Step 4: 接 email 通知"
+# → child body 加 `> Blocked by #102`、嘗試 GraphQL native dep、parent task list entry 加 `(blocked by #102)` 註解
+```
+
+#### (b) 從零建完整 ordered bundle
+
+```bash
+idd-issue --bundle-mode ordered "做會員系統:建 schema; 加 API; 加 UI; 接 email"
+# → 建 1 個 epic + 4 children
+# → epic body task list 列出全部 4 個
+# → child2 blocked by child1, child3 blocked by child2, child4 blocked by child3
+```
+
+無依賴版:
+
+```bash
+idd-issue --bundle-mode unordered "首頁優化:換 hero 圖; footer 對齊; 加暗色模式"
+# → 建 epic + 3 children,純 task list,無 Blocked-by
+```
+
+#### (c) Retrofit:把已存在的散落 issue 重組成 bundle
+
+沒有專屬 flag(超出本 change 範圍),手動兩步:
+
+```bash
+# 1. 建 epic + 編 task list 引用既存 issues
+gh issue create --title "[Epic] 會員系統" --body "## Children
+- [ ] #101 (建 schema)
+- [ ] #102 (加 API)
+- [ ] #103 (加 UI)"
+
+# 2. 對每個 child 補 Blocked-by 標註
+idd-issue --blocked-by 101 ...   # 不行 — idd-issue 是建新 issue,不是 edit 既存
+# Retrofit 真要做要直接 gh issue edit,或之後另開 proposal 加 idd-issue-edit-bundle 之類
+```
+
+### 設計理由:為什麼不另開 `/idd-bundle` skill
+
+考慮過另開新 skill 但選擇加 flag 到 `idd-issue`:
+
+1. **70% 重疊**:bundle 仍要 target resolution(Step 0.5)、attachment upload(Step 4)、mention validation(Step 2.6)、sister sweep(Step 4.7)。複製這些邏輯成本高
+2. **漸進式採用**:`--parent` 可獨立用、`--blocked-by` 可獨立用、`--bundle-mode` 是高階組合;三 flag 各有獨立用途
+3. **Skill 數量已多**:IDD 已 14+ skills;新增 skill 的 cognitive cost 不值得 ~30% 獨特功能
+
+完整設計理由見 `openspec/specs/idd-issue-bundle/spec.md` 的 Decision §1。
+
+### 反模式
+
+| 想做的 | 為什麼不行 | 改用 |
+|--------|-----------|------|
+| 「建一個 issue 列 10 個 todo」 | issue 是工作單位,bundling 後沒辦法獨立 close / triage / verify | 10 個 issue + 1 個 epic(`--bundle-mode`)|
+| 「先建 epic issue,子任務之後再說」 | epic 在 GitHub 不是原生概念,容易腐爛;沒 task list 的 epic 是空殼 | 建 epic 同時建至少 2 個 child(`--bundle-mode`)|
+| 「用 `--parent` 跨 repo 串 issue」 | GitHub task list 跨 repo 不連動進度條,語意被破壞 | 用 `groups` 機制(primary + tracking + cross-link)|
+| 「`--bundle-mode` + `--target group:<label>`」 | 兩種機制 mental model 不同(parent-child vs cross-repo cross-link) | 選一個,refuse 同時 set |
 
 ## 來源文件規則
 
