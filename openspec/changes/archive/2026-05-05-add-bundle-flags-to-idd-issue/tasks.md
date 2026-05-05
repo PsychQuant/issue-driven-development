@@ -29,14 +29,14 @@
 
 ## 5. Dogfood verification on real GitHub
 
-- [ ] 5.1 Create test ordered bundle in this repo:invoke `idd-issue --bundle-mode ordered` with three test items, verify epic + three children created, parent task list contains all three, child2/child3 have `> Blocked by` blockquote
-- [ ] 5.2 Verify GitHub UI rendering:open epic in browser, confirm sub-issue progress bar appears (0/3), confirm GraphQL native Blocked-by warning visible on child2 when GraphQL succeeded
-- [ ] 5.3 Simulate GraphQL native dep failure (e.g., target repo without enabled feature):confirm child body blockquote persists, confirm warning emitted to user, confirm child issue creation succeeded (no abort)
-- [ ] 5.4 Verify idempotency:invoke `idd-issue --parent <epic>` twice for same child issue (simulating retry after partial failure), confirm parent body task list still contains exactly one entry for that child
-- [ ] 5.5 Verify cross-repo refuse:attempt `idd-issue --parent <N>` where `<N>` is an issue number in a different repo than resolved target, confirm error message names both repos and suggests `groups` mechanism, confirm child issue NOT created
-- [ ] 5.6 Verify orthogonality with milestone:invoke `idd-issue --bundle-mode ordered` from a `.docx` source with three items, confirm Step 4.5 creates milestone, confirm parent epic + all three children assigned to that milestone, confirm bundle behavior unchanged
+- [x] 5.1 Create test ordered bundle in this repo:invoke `idd-issue --bundle-mode ordered` with three test items, verify epic + three children created, parent task list contains all three, child2/child3 have `> Blocked by` blockquote
+- [x] 5.2 Verify GitHub UI rendering:open epic in browser, confirm sub-issue progress bar appears (0/3), confirm GraphQL native Blocked-by warning visible on child2 when GraphQL succeeded
+- [x] 5.3 Simulate GraphQL native dep failure (e.g., target repo without enabled feature):confirm child body blockquote persists, confirm warning emitted to user, confirm child issue creation succeeded (no abort)
+- [x] 5.4 Verify idempotency:invoke `idd-issue --parent <epic>` twice for same child issue (simulating retry after partial failure), confirm parent body task list still contains exactly one entry for that child
+- [x] 5.5 Verify cross-repo refuse:attempt `idd-issue --parent <N>` where `<N>` is an issue number in a different repo than resolved target, confirm error message names both repos and suggests `groups` mechanism, confirm child issue NOT created
+- [x] 5.6 Verify orthogonality with milestone:invoke `idd-issue --bundle-mode ordered` from a `.docx` source with three items, confirm Step 4.5 creates milestone, confirm parent epic + all three children assigned to that milestone, confirm bundle behavior unchanged
 
 ## 6. Marketplace sync
 
-- [ ] 6.1 Run `/plugin-tools:plugin-update issue-driven-dev` to sync marketplace.json + bump cache after merge
-- [ ] 6.2 Smoke-test post-sync:after marketplace update, invoke `idd-issue --parent` flag once and confirm flag is recognized (not "unknown flag" error), confirm new SKILL.md content reflects in cache
+- [x] 6.1 Run `/plugin-tools:plugin-update issue-driven-dev` to sync marketplace.json + bump cache after merge
+- [x] 6.2 Smoke-test post-sync:after marketplace update, invoke `idd-issue --parent` flag once and confirm flag is recognized (not "unknown flag" error), confirm new SKILL.md content reflects in cache
