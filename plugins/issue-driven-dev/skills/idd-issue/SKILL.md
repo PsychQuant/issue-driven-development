@@ -276,6 +276,56 @@ UPSTREAM=$(echo "$REPO_JSON" | jq -r '.parent.nameWithOwner // empty')
 | 直接貼文字（無附件） | argument 直接帶文字 | n/a |
 | 混合（文字 + 圖片貼上） | argument 帶文字 + 使用者另外提供 path 清單 | 把使用者給的 path 全部納入 Step 4 上傳清單 |
 
+#### MCP plugin presence pre-flight (v2.54+, #27 fail-fast)
+
+當 source 是 `.docx` / Telegram / Apple Mail / Apple Notes(任一需要 MCP plugin 的類型),Step 1 一開始就 invoke `check-plugin-presence.sh` detect — 缺失則 **fail-fast abort** with structured error message (per #32 absorbed acceptance criteria)。
+
+```bash
+# Source-type → required plugin mapping
+case "$SOURCE_TYPE" in
+  docx|doc)
+    "$CLAUDE_PLUGIN_ROOT/scripts/check-plugin-presence.sh" psychquant-claude-plugins che-word-mcp || abort_source_unsupported "che-word-mcp" ".docx" "psychquant-claude-plugins" ;;
+  telegram)
+    "$CLAUDE_PLUGIN_ROOT/scripts/check-plugin-presence.sh" psychquant-claude-plugins che-telegram-mcp || abort_source_unsupported "che-telegram-mcp" "Telegram chat" "psychquant-claude-plugins" ;;
+  apple-mail)
+    "$CLAUDE_PLUGIN_ROOT/scripts/check-plugin-presence.sh" psychquant-claude-plugins che-apple-mail-mcp || abort_source_unsupported "che-apple-mail-mcp" "Apple Mail" "psychquant-claude-plugins" ;;
+  apple-notes)
+    "$CLAUDE_PLUGIN_ROOT/scripts/check-plugin-presence.sh" psychquant-claude-plugins che-apple-notes-mcp || abort_source_unsupported "che-apple-notes-mcp" "Apple Notes" "psychquant-claude-plugins" ;;
+  text|md|mixed)
+    : ;; # no plugin needed for raw text / markdown / pasted text+paths
+esac
+```
+
+`abort_source_unsupported` 印出 structured error message(format spec from #32 absorbed acceptance criteria):
+
+```
+✗ Source detected as <SOURCE_DESC> but `<PLUGIN>` MCP plugin is not installed.
+
+該 source type 需要對應 MCP plugin 才能讀取文字 + 抽圖。
+
+Options:
+  1) Install plugin (recommended):
+     claude plugin marketplace add PsychQuant/<MARKETPLACE>
+     claude plugin install <PLUGIN>@<MARKETPLACE>
+     # 不知道 marketplace? 跑: claude plugin marketplace list
+     # 詳見: plugins/issue-driven-dev/README.md#optional-per-source-type
+
+  2) Convert to another supported format:
+     - Save as `.md` or `.txt` then paste content directly
+     - Or screenshot then attach as image (如果 主要內容是 figures)
+
+  3) Manual fallback (not recommended for archives):
+     paste relevant text into prompt directly
+
+Aborting /idd-issue. Run again after installing or converting.
+```
+
+**Why fail-fast not silent fallback** (per #27 + #32 absorbed):
+- Silent fallback (e.g. "讓使用者手動處理") 讓使用者誤以為 IDD **不支援**該格式,而非少裝 plugin
+- Explicit error + 3 options 把責任 explicit 還給使用者,各 source-type 統一格式建立 mental model
+
+**Bypass**: `IDD_SKIP_PLUGIN_CHECK=1` env var 跳過 detect(同 #34 generic helper escape hatch)。
+
 #### Telegram source 專屬流程（最常見且最容易漏的）
 
 當原始描述中含 `chat_id` / Telegram URL / `@username` 引用時，**強制**走以下流程，不問：

@@ -1,52 +1,22 @@
 #!/usr/bin/env bash
-# check-ralph-loop.sh — detect ralph-loop plugin presence
+# check-ralph-loop.sh — backward-compat wrapper around check-plugin-presence.sh
 #
-# Used by:
-#   - idd-verify --loop (Step 0a fail-fast)
-#   - idd-all Phase 0.6 (graceful degrade gate)
+# v2.54+ (#34 refactor): the actual detection logic moved to
+# scripts/check-plugin-presence.sh which accepts <marketplace> <plugin>.
+# This wrapper is preserved so #28's existing callers continue to work:
+#   - idd-verify --loop Step 0a fail-fast
+#   - idd-all Phase 0.6 graceful degrade gate
 #
-# Exit:
-#   0 — ralph-loop installed (or IDD_SKIP_RALPH_CHECK=1)
-#   1 — ralph-loop missing
+# Both `IDD_SKIP_RALPH_CHECK=1` and `IDD_SKIP_PLUGIN_CHECK=1` are honored
+# (legacy + new env var name).
 #
-# Detect path is hardcoded against Claude Code 2025-Q4 plugin cache schema.
-# When schema changes upstream, see #35 (path schema watch-list).
-# Source plugin lives at anthropics/claude-plugins-official.
+# Exit codes inherited from check-plugin-presence.sh:
+#   0 — installed
+#   1 — missing
 
-set -u
-
-# Escape hatch — let user bypass detect (#28 risk mitigation).
-# Print stderr warning so this leaves an audit trail (per F4 verify finding).
+# Honor legacy env var name from #28 v2.53.
 if [ "${IDD_SKIP_RALPH_CHECK:-}" = "1" ]; then
-  echo "⚠ IDD_SKIP_RALPH_CHECK=1 set — skipping ralph-loop detection (advanced override)" >&2
-  echo "  /idd-verify --loop and /idd-all (PR, unattended) will run as if ralph-loop is installed." >&2
-  exit 0
+  export IDD_SKIP_PLUGIN_CHECK=1
 fi
 
-# Plugin cache layout (Claude Code 2025-Q4):
-#   ~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/.claude-plugin/plugin.json
-# Match any installed version under the plugin dir.
-#
-# F3 fix: use bash array + nullglob, NOT unquoted `for f in $GLOB`. The latter
-# word-splits when HOME contains whitespace (macOS display-name accounts,
-# iCloud Mobile Documents paths) → false-negative even when ralph-loop is
-# installed → silently breaks v2.40.0 backward-compat for /idd-all callers.
-shopt -s nullglob
-files=( "${HOME}/.claude/plugins/cache/claude-plugins-official/ralph-loop"/*/.claude-plugin/plugin.json )
-shopt -u nullglob
-
-if (( ${#files[@]} > 0 )); then
-  exit 0
-fi
-
-cat >&2 <<EOF
-✗ ralph-loop plugin not found.
-  Searched: ~/.claude/plugins/cache/claude-plugins-official/ralph-loop/*/.claude-plugin/plugin.json
-
-  Install:
-    claude plugin marketplace add anthropics/claude-plugins-official
-    claude plugin install ralph-loop@claude-plugins-official
-
-  Or bypass this check (advanced): export IDD_SKIP_RALPH_CHECK=1
-EOF
-exit 1
+exec "$(dirname "$0")/check-plugin-presence.sh" claude-plugins-official ralph-loop
