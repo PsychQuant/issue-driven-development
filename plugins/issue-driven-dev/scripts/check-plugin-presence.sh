@@ -19,6 +19,23 @@
 #
 # Detect path is hardcoded against Claude Code 2025-Q4 plugin cache schema.
 # When schema changes upstream, see #35 (path schema watch-list).
+#
+# Trust model (#41):
+#   This script trusts the filesystem — presence of the plugin.json file
+#   inside ~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/.claude-plugin/
+#   counts as "plugin installed". NO signature/hash/integrity verification.
+#
+#   Implications:
+#   - Single-user dev environments (macOS local install): trust model is fine
+#   - Shared dev containers / CI runners / multi-user shared $HOME: a hostile
+#     party can plant an empty plugin.json skeleton in the cache path to fake
+#     detect → IDD will run --loop / source-type adapter as if plugin present
+#   - Caller's responsibility to harden if running in untrusted environment:
+#     either pre-validate the plugin install via `claude plugin list` or set
+#     IDD_SKIP_PLUGIN_CHECK=1 and accept the bypass cost
+#
+# Future hardening (#41 reopen criteria): if multi-user / CI deployment becomes
+# common, evaluate hash verification step against marketplace-published manifest.
 
 set -u
 
