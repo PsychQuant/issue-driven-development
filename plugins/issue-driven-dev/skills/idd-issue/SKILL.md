@@ -771,6 +771,53 @@ done
 
 > **Why advisory (SHOULD) not mandatory (SHALL)?** `/idd-issue` semantic is "file an issue I'm thinking about right now" — user is already in filing-active mode. Asking again right after creates double-prompt friction. Surface only when heuristic clearly hits;default to silent no-op for clean single-issue invocations. Per canonical eligibility criteria §6: issue creation is light-touch advisory, not the deliberation moment that demands SHALL strength (those are diagnose / plan / implement / discuss / propose).
 
+### Step 4.8: Split Umbrella SOP (v2.54+, #11)
+
+**When applies**: 將 umbrella issue 拆分為 N sub-issues 的場景(例如 `ai_martech_global_scripts #502 → #536-#541`)。**不適用** atomic issue / 一般 sister sweep。Trigger heuristic:
+- 使用者明說「split #X 為 N 個 sub-issue」/「拆 #X umbrella」
+- 同 session 連續用 `/idd-issue` 建 ≥3 個都 reference 同一 parent #X
+
+**Why mandatory pre-flight**: umbrella 的 scope 1/2/3 等可能在 split session 之前**幾天前**已 commit / 已歸檔成 spectra change → 若不檢查就 file,N 個 sub-issue 中可能有 X 個從一開始就該 retroactive close,浪費 audit + close 工(`#502` 案例為證)。
+
+**Pre-flight checks (per sub-issue candidate)**:
+
+```bash
+# 1. Scan commits since umbrella created — match parent ref
+UMBRELLA_DATE=$(gh issue view "$UMBRELLA" --json createdAt --jq .createdAt)
+git log --oneline --grep "#$UMBRELLA" --since="$UMBRELLA_DATE"
+
+# 2. Scan commits 用 sub-scope keyword
+git log --oneline --grep "<sub-scope keyword from umbrella body>" --since="$UMBRELLA_DATE"
+
+# 3. Scan spectra archive
+ls openspec/changes/archive/ 2>/dev/null | grep -i "<keyword>"
+
+# 4. Read commit message trailers (e.g. "(#$UMBRELLA scope N)")
+git log --oneline --grep "#$UMBRELLA scope" --since="$UMBRELLA_DATE"
+```
+
+任一 step 命中 → **AskUserQuestion**:
+
+```
+question: "Sub-issue candidate '<title>' 對應到 commit <hash> (<date>) — 已 shipped。怎麼處理?"
+options:
+  - file as retroactive tracker (close immediately with link to commit)
+  - skip — work already done, no audit needed
+  - file fresh (override, 表示 commit 不完整或要做 follow-up work)
+```
+
+**Audit trail**:不論選哪個,在 sub-issue body 加 `### Pre-flight scan (v2.54+ #11)` section 紀錄:
+- 找到的 commits / archive entries
+- 使用者選擇
+- Reason
+
+**Why this is SOP-only (不是新 skill / flag, per #11 diagnose option (c))**:
+- Split umbrella 是**低頻** workflow,不值得新 skill 的 cognitive cost (per IDD anti-pattern: 「不在沒見過 N instance 之前抽 abstraction」)
+- 防範動作是 mental check + 4 個簡單命令 — 寫進 SOP 即可,使用者背一次就會
+- 若未來 ≥3 個重複 occurrences,自然演化為 `--split-from <#>` flag 或 dedicated skill
+
+**Historical case**:`ai_martech_global_scripts #502` umbrella (2026-04-29 創建) split (2026-05-04) → #536/#537 為已 shipped (commit `7292219`, 2026-04-29) 工作,retroactive close 成本約 10 分鐘 audit + 2 個 closing summary。本 SOP 是該案例的 prevention 對策。
+
 ### Step 5: 回報並停止
 
 輸出：issue number、URL、labels、type。
