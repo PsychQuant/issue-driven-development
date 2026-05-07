@@ -342,17 +342,33 @@ if [ "$PATH_AXIS" = "PR" ] && [ "$INTERACTION" = "unattended" ]; then
     echo "  Degrading to (direct-commit, attended) for backward-compat (#28 B4 design)."
     echo "  To restore (PR, unattended): claude plugin install ralph-loop@claude-plugins-official"
     echo ""
+
+    # F2 fix: Phase 0.5 PR mode branch setup already created `idd/<N>-<slug>`
+    # and checked it out. Without unwinding, degrade leaves user committing to
+    # a dangling feature branch they never wanted (silent state corruption per
+    # verify finding F2). MUST unwind before flipping mode.
+    if [ -n "${BRANCH:-}" ] && git -C "$CWD" show-ref --verify --quiet "refs/heads/$BRANCH"; then
+      DEFAULT=$(gh repo view "$GITHUB_REPO" --json defaultBranchRef -q .defaultBranchRef.name)
+      echo "→ Unwinding Phase 0.5 PR-mode branch setup before degrade:"
+      echo "    git checkout $DEFAULT"
+      git -C "$CWD" checkout "$DEFAULT" 2>&1 | tail -1
+      echo "    git branch -d $BRANCH (no commits yet — safe delete)"
+      git -C "$CWD" branch -d "$BRANCH" 2>&1 | tail -1
+    fi
+
     PATH_AXIS="direct-commit"
     INTERACTION="attended"
     REASON="$REASON + ralph-loop missing → graceful degrade (#28)"
-    echo "→ Path: ${PATH_AXIS} (${INTERACTION}) — ${REASON}"
-    # NOTE: 在當前 branch commit(可能不是 default branch),不開 PR;sub-skill 進 attended 模式
     BRANCH=$(git -C "$CWD" branch --show-current)
+    echo "→ Path: ${PATH_AXIS} (${INTERACTION}) — ${REASON}"
+    echo "→ Will commit to current branch: ${BRANCH}"
   fi
 fi
 ```
 
 **為什麼 graceful degrade 不 abort**: `(PR, unattended)` 是 v2.40.0 default(`pr_policy` 缺省 → fall to step 7)。abort 會 break 所有既有 callers(包含 `/loop` 等舊 caller)違反 backward compat。Degrade 讓 IDD 仍能跑完整 pipeline(只是改 attended),user 看到 warning 可選 install + retry。
+
+**為什麼必須 unwind branch (F2 fix)**: Phase 0.5 PR mode setup 已 `git checkout -b idd/<N>-<slug>` 建好 feature branch。若 Phase 0.6 直接翻 `PATH_AXIS=direct-commit` 而不 unwind,degrade 後 commits 落在這個 dangling branch — user 預期落在自己 branch (e.g. main),結果靜默偏離。必須先 `git checkout $DEFAULT` + `git branch -d $BRANCH` 清掉,才能 flip mode。**Edge case**: 若 Phase 0.6 在 mid-implement 才偵測到 (例如 ralph-loop 中途被卸載) — 此時 feature branch 已有 commits,`git branch -d` 會 refuse,改要 user 手動處理 + abort。但本 skill 設計 Phase 0.6 在 Phase 1 (idd-issue) 之前跑,unwind 必為 safe-delete 場景。
 
 **對比 `/idd-verify --loop` Step 0a 是 fail-fast**: `--loop` 是 user explicit feature request,silent fallback 違反 user 預期。兩條 path 對缺失的處理不同,各有理由。
 
@@ -842,14 +858,20 @@ Next: review last 3 commits (git log -3), then run /idd-close #42
 /idd-all #42
 ```
 
-Phase 0.5 印 `→ Path: PR (unattended) — pr_policy absent (v2.40.0 default)`。Phase 0.6 偵測到 ralph-loop missing,印 warning 並 degrade。
+Phase 0.5 印 `→ Path: PR (unattended) — pr_policy absent (v2.40.0 default)` 並 `git checkout -b idd/42-bug-foo`。Phase 0.6 偵測到 ralph-loop missing,unwind branch 並 degrade。
 
 ```
 ⚠ ralph-loop plugin not detected — required to drive (PR, unattended) verify-fix loop.
   Degrading to (direct-commit, attended) for backward-compat (#28 B4 design).
   To restore (PR, unattended): claude plugin install ralph-loop@claude-plugins-official
 
+→ Unwinding Phase 0.5 PR-mode branch setup before degrade:
+    git checkout main
+    Switched to branch 'main'
+    git branch -d idd/42-bug-foo (no commits yet — safe delete)
+    Deleted branch idd/42-bug-foo (was 0e9bb99).
 → Path: direct-commit (attended) — pr_policy absent (v2.40.0 default) + ralph-loop missing → graceful degrade (#28)
+→ Will commit to current branch: main
 ```
 
 後續 sub-skill 全部進 attended 模式(像 Trace 2),user 在 keyboard 自然推進。final report 標明 degrade 原因。
