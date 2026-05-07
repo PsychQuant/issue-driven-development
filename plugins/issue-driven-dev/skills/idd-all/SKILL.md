@@ -331,6 +331,33 @@ fi
 
 ---
 
+#### Step 0.6: ralph-loop graceful degrade gate（v2.53+, #28）
+
+Phase 0.5 解析出 `(PATH_AXIS, INTERACTION)` 後,若 tuple 是 `(PR, unattended)`(無論來自 flag、fork detection、`pr_policy=always`、或 v2.40.0 default),**必須**檢查 ralph-loop 是否 installed。缺失則 graceful degrade 而非 abort。
+
+```bash
+if [ "$PATH_AXIS" = "PR" ] && [ "$INTERACTION" = "unattended" ]; then
+  if ! "$CLAUDE_PLUGIN_ROOT/scripts/check-ralph-loop.sh" 2>/dev/null; then
+    echo "⚠ ralph-loop plugin not detected — required to drive (PR, unattended) verify-fix loop."
+    echo "  Degrading to (direct-commit, attended) for backward-compat (#28 B4 design)."
+    echo "  To restore (PR, unattended): claude plugin install ralph-loop@claude-plugins-official"
+    echo ""
+    PATH_AXIS="direct-commit"
+    INTERACTION="attended"
+    REASON="$REASON + ralph-loop missing → graceful degrade (#28)"
+    echo "→ Path: ${PATH_AXIS} (${INTERACTION}) — ${REASON}"
+    # NOTE: 在當前 branch commit(可能不是 default branch),不開 PR;sub-skill 進 attended 模式
+    BRANCH=$(git -C "$CWD" branch --show-current)
+  fi
+fi
+```
+
+**為什麼 graceful degrade 不 abort**: `(PR, unattended)` 是 v2.40.0 default(`pr_policy` 缺省 → fall to step 7)。abort 會 break 所有既有 callers(包含 `/loop` 等舊 caller)違反 backward compat。Degrade 讓 IDD 仍能跑完整 pipeline(只是改 attended),user 看到 warning 可選 install + retry。
+
+**對比 `/idd-verify --loop` Step 0a 是 fail-fast**: `--loop` 是 user explicit feature request,silent fallback 違反 user 預期。兩條 path 對缺失的處理不同,各有理由。
+
+---
+
 ### Phase 1: Ensure Issue Exists
 
 ```
@@ -806,6 +833,28 @@ Next: review last 3 commits (git log -3), then run /idd-close #42
 ```
 
 無 push、無 PR、commits 直接落在 main(或 user 開頭 checkout 的 branch)。
+
+### Trace 4: `(PR, unattended)` + ralph-loop missing — graceful degrade (v2.53+, #28)
+
+`pr_policy` 缺省(預設) + ralph-loop 沒裝:
+
+```
+/idd-all #42
+```
+
+Phase 0.5 印 `→ Path: PR (unattended) — pr_policy absent (v2.40.0 default)`。Phase 0.6 偵測到 ralph-loop missing,印 warning 並 degrade。
+
+```
+⚠ ralph-loop plugin not detected — required to drive (PR, unattended) verify-fix loop.
+  Degrading to (direct-commit, attended) for backward-compat (#28 B4 design).
+  To restore (PR, unattended): claude plugin install ralph-loop@claude-plugins-official
+
+→ Path: direct-commit (attended) — pr_policy absent (v2.40.0 default) + ralph-loop missing → graceful degrade (#28)
+```
+
+後續 sub-skill 全部進 attended 模式(像 Trace 2),user 在 keyboard 自然推進。final report 標明 degrade 原因。
+
+無 abort、無 silent break — backward-compat 對 v2.40.0 既有 caller 維持。
 
 ### 從零開始 — 文字描述
 
