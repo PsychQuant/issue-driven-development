@@ -16,21 +16,28 @@
 set -u
 
 # Escape hatch — let user bypass detect (#28 risk mitigation).
+# Print stderr warning so this leaves an audit trail (per F4 verify finding).
 if [ "${IDD_SKIP_RALPH_CHECK:-}" = "1" ]; then
+  echo "⚠ IDD_SKIP_RALPH_CHECK=1 set — skipping ralph-loop detection (advanced override)" >&2
+  echo "  /idd-verify --loop and /idd-all (PR, unattended) will run as if ralph-loop is installed." >&2
   exit 0
 fi
 
 # Plugin cache layout (Claude Code 2025-Q4):
 #   ~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/.claude-plugin/plugin.json
 # Match any installed version under the plugin dir.
-DETECT_GLOB="${HOME}/.claude/plugins/cache/claude-plugins-official/ralph-loop/*/.claude-plugin/plugin.json"
+#
+# F3 fix: use bash array + nullglob, NOT unquoted `for f in $GLOB`. The latter
+# word-splits when HOME contains whitespace (macOS display-name accounts,
+# iCloud Mobile Documents paths) → false-negative even when ralph-loop is
+# installed → silently breaks v2.40.0 backward-compat for /idd-all callers.
+shopt -s nullglob
+files=( "${HOME}/.claude/plugins/cache/claude-plugins-official/ralph-loop"/*/.claude-plugin/plugin.json )
+shopt -u nullglob
 
-# shellcheck disable=SC2086  # intentional glob expansion
-for f in $DETECT_GLOB; do
-  if [ -f "$f" ]; then
-    exit 0
-  fi
-done
+if (( ${#files[@]} > 0 )); then
+  exit 0
+fi
 
 cat >&2 <<EOF
 ✗ ralph-loop plugin not found.
