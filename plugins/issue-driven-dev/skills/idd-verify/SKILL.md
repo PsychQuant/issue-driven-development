@@ -627,6 +627,20 @@ codex exec --full-auto \
 
 加上 `--loop` 後，用 ralph-loop 驅動驗證-修復迴圈。每輪用完整的 6-AI 驗證。
 
+### Step 0a: ralph-loop dependency gate（v2.53+, #28）
+
+當 invocation 含 `--loop` flag,**Step 0 Bootstrap 之前**先 invoke detector:
+
+```bash
+"$CLAUDE_PLUGIN_ROOT/scripts/check-ralph-loop.sh" || exit 1
+```
+
+helper 行為見 `scripts/check-ralph-loop.sh`:exit 0 if installed, exit 1 with structured message + install hint if missing。Bypass 用 `IDD_SKIP_RALPH_CHECK=1`。
+
+**為什麼 fail-fast 不 degrade**:`--loop` 是 user explicit feature request。沒裝 ralph-loop 時 silent fall back to single-pass verify 會違反 user 預期(以為跑了多輪 actually 沒跑)。abort + clear install hint 讓 user 自行選 install / 改 attended 模式。
+
+對比 `idd-all` 的 Phase 0.6 是 **graceful degrade** — 因為 `idd-all` (PR, unattended) 是 v2.40.0 default(implicit invocation),break 既有 caller 不可接受。兩條 path 對 ralph-loop 缺失的處理不同,各有理由。
+
 ## 鐵律
 
 - **不跳過驗證**。「看起來對了」不算。
