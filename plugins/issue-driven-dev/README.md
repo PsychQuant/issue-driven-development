@@ -206,7 +206,7 @@ attachments_release: "attachments"
 >
 >    | Plugin pattern | Marketplace | Add command |
 >    |----------------|-------------|-------------|
->    | `che-*` (incl. `che-word-mcp` / `che-telegram-mcp` / `che-apple-mail-mcp` / `che-apple-notes-mcp`) | `che-claude-plugins` | `claude plugin marketplace add PsychQuant/che-claude-plugins` |
+>    | `che-*` (incl. `che-word-mcp` / `che-telegram-mcp` / `che-apple-mail-mcp` / `che-apple-notes-mcp`) | `psychquant-claude-plugins` | `claude plugin marketplace add PsychQuant/psychquant-claude-plugins` |
 >    | `idd-*` (本 plugin / `idd-route`) | `issue-driven-development` | `claude plugin marketplace add PsychQuant/issue-driven-development` |
 >    | `ralph-loop` (Anthropic 官方) | `claude-plugins-official` | `claude plugin marketplace add anthropics/claude-plugins-official` |
 
