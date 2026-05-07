@@ -196,7 +196,19 @@ attachments_release: "attachments"
 | Apple Mail message | `che-apple-mail-mcp` | `get_email` + `list_attachments` + `save_attachment` | `claude plugin install che-apple-mail-mcp@<your-marketplace>` |
 | Apple Notes | `che-apple-notes-mcp` | `get_note` + 抽 inline 圖 | `claude plugin install che-apple-notes-mcp@<your-marketplace>` |
 
-替換 `<your-marketplace>` 為實際的 marketplace 名稱(例如 `che-claude-plugins`)。沒裝對應 plugin 不會壞 IDD 核心流程,但該 source type 會被迫 fallback 到「使用者手動處理」模式 (#27 追蹤改為明確 fail-fast 報錯)。
+替換 `<your-marketplace>` 為實際的 marketplace 名稱。沒裝對應 plugin 不會壞 IDD 核心流程,但該 source type 會被迫 fallback 到「使用者手動處理」模式 (#27 追蹤改為明確 fail-fast 報錯)。
+
+> **不知道 `<your-marketplace>` 該填什麼?**
+>
+> 1. 查已加的 marketplaces:`claude plugin marketplace list`
+> 2. 加新 marketplace:`claude plugin marketplace add <owner>/<repo>`
+> 3. 常見對照(以 PsychQuant 維護的 plugins 為例,如有變動以 `claude plugin marketplace list` 為準):
+>
+>    | Plugin pattern | Marketplace | Add command |
+>    |----------------|-------------|-------------|
+>    | `che-*` (incl. `che-word-mcp` / `che-telegram-mcp` / `che-apple-mail-mcp` / `che-apple-notes-mcp`) | `psychquant-claude-plugins` | `claude plugin marketplace add PsychQuant/psychquant-claude-plugins` |
+>    | `idd-*` (本 plugin / `idd-route`) | `issue-driven-development` | `claude plugin marketplace add PsychQuant/issue-driven-development` |
+>    | `ralph-loop` (Anthropic 官方) | `claude-plugins-official` | `claude plugin marketplace add anthropics/claude-plugins-official` |
 
 ### Sister plugins
 
