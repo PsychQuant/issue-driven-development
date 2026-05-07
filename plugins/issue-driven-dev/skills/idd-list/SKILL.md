@@ -125,11 +125,25 @@ import re
 
 PR_REF_RE = re.compile(r'#(\d{1,7})\b')   # ≤7 digits + word-boundary
 
+# Markdown-aware fenced code block stripper (#14 fix, v2.54+)
+# Strips ``` ... ``` blocks (with or without language tag) from PR body BEFORE
+# regex scan, so `Refs #99` inside ```bash ... ``` doesn't get counted as a
+# real issue ref. Indented code blocks (4-space) are NOT stripped — rare in
+# practice + harder to detect without false positives.
+FENCE_RE = re.compile(r'```[\s\S]*?```', re.MULTILINE)
+
+def strip_fenced_code(body):
+    """Remove ``` ... ``` fenced blocks. Inline code (`#99`) is NOT stripped —
+    that's a rarer false positive and removing it would also strip legit refs
+    like `closes #99` written inline."""
+    return FENCE_RE.sub('', body or '')
+
 issue_to_prs = {}   # issue_number -> [pr_info, ...] (sort by pr_info['number'] asc after build)
 clusters = {}       # pr_number -> [issue_number, ...] (only when len >= 2)
 
 for pr in open_prs:
-    raw_refs = set(int(m) for m in PR_REF_RE.findall(pr['body'] or ''))
+    body = strip_fenced_code(pr['body'])
+    raw_refs = set(int(m) for m in PR_REF_RE.findall(body))
     refs = {n for n in raw_refs if n > 0}   # filter #0 (GitHub has no issue #0)
     if not refs:
         continue
@@ -154,9 +168,37 @@ for issue_num in issue_to_prs:
 
 **Regex 說明**:`#(\d{1,7})\b` 偵測任何 `#NNN` 提及(`Refs #N` / `(#N)` / `Closes #N` / 純內文 `see #N` 都會中)。`\d{1,7}` 上限避免 PR body 含巨大數字(e.g. `#1234567890`)被誤當 issue ref;GitHub issue number 實務 < 1M(≤7 位足夠)。`#0` 在 raw_refs 抓到後 filter 掉(GitHub 沒有 issue #0)。
 
-**Known false positive (第一版接受)**:fenced code block 內的 `#N`(例如 PR body 含 `\`\`\`bash\ngit commit -m "Refs #99"\n\`\`\``)會被誤當 ref。Markdown-aware filter 是 follow-up issue **#14**(R1);regex 邊界(digit cap / `#0`)強化是 follow-up issue **#19**。
+**Markdown-aware fenced code stripping (v2.54+, #14)**:`strip_fenced_code()` 在 regex scan 前先移除 ` ``` ... ``` ` 區段(支援 ` ```bash ` / ` ```python ` 等 language-tagged 變體),避免 PR body 含 example commit message 的 `Refs #99` 被誤當真實 ref。Inline code 反引號內的 `#N`(`` `#99` ``)**不**剝除 — false positive 較罕見,且剝除會誤傷合法的「`closes #99` written inline」。Indented code blocks(4-space prefix)同樣不剝除,在 PR body 中極為少見。
 
-**Cluster leader 規則**:`min(cluster_members)` — deterministic、易預測。**Leader 是 self when** `issue_num == min(cluster_members)`(該 issue 自己就是 leader,Step 4 走 leader 顯示分支,不走 member redirect)。設定不同規則(如 `cluster_leader: primary`)是 follow-up issue **#15**(R3)。
+**Cluster leader 規則 (v2.54+, #15)**:依 `cluster_leader` config 欄位:
+- `cluster_leader: "lowest"` (預設) — `min(cluster_members)`,deterministic、易預測,大多數 cluster-PR 創建順序就是 leader
+- `cluster_leader: "primary"` — 第一個 ref'd 的 issue (PR body 中出現順序),適合「primary issue + tracked issues」工作流
+- 任何其他值 / 缺省 → fallback to `"lowest"`
+
+讀法:
+```python
+import json, pathlib
+
+config_path = pathlib.Path('.claude/issue-driven-dev.local.json')
+cluster_leader_rule = "lowest"  # default
+if config_path.exists():
+    cluster_leader_rule = json.loads(config_path.read_text()).get('cluster_leader', 'lowest')
+    if cluster_leader_rule not in ('lowest', 'primary'):
+        cluster_leader_rule = 'lowest'  # invalid → fallback
+
+# Build leader index: pr_number -> leader_issue_number
+def get_leader(refs_list, body, rule):
+    if rule == 'primary':
+        # First #N to appear in stripped body, if it's in refs_list
+        first = next(
+            (int(m) for m in PR_REF_RE.findall(body) if int(m) in refs_list),
+            min(refs_list)  # safety fallback
+        )
+        return first
+    return min(refs_list)
+```
+
+**Leader 是 self when** `issue_num == get_leader(cluster_members, body, cluster_leader_rule)`(該 issue 自己就是 leader,Step 4 走 leader 顯示分支)。
 
 **多 PR ref 同 issue**(罕見:超過一個 open PR 都 ref 同一 issue,可能是 wip + amendment)→ Step 4 顯示所有對應 PR 各一行 `└─` 子行,**順序 by PR number asc**(由上方 `issue_to_prs[N].sort(...)` 確保 deterministic)。
 
