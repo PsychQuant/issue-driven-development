@@ -198,8 +198,19 @@ attachments_release: "attachments"
 
 替換 `<your-marketplace>` 為實際的 marketplace 名稱(例如 `che-claude-plugins`)。沒裝對應 plugin 不會壞 IDD 核心流程,但該 source type 會被迫 fallback 到「使用者手動處理」模式 (#27 追蹤改為明確 fail-fast 報錯)。
 
+### Required for specific modes
+
+某些 mode / flag 需要額外 plugin。**未裝對應 plugin 時的行為**見最右欄:
+
+| Mode | Required plugin | Marketplace | Why | Behavior if missing |
+|------|-----------------|-------------|-----|---------------------|
+| `idd-verify --loop` | `ralph-loop` | `claude-plugins-official` | outer driver for verify-fix loop | **fail-fast abort** + install hint |
+| `idd-all` (PR, unattended) (default) | `ralph-loop` | 同上 | unattended 在 verify findings 後需 driver 觸發下一輪 | **graceful degrade** to `(direct-commit, attended)` + warning(保護 v2.40.0 caller backward compat) |
+| `idd-all --no-pr` (direct-commit, attended) | (none) | n/a | user 在 keyboard 自然推進 | n/a |
+| Single-skill calls (no `--loop`) | (none) | n/a | atomic skill 自完成 | n/a |
+
+Install:`claude plugin marketplace add anthropics/claude-plugins-official` 然後 `claude plugin install ralph-loop@claude-plugins-official`。
+
 ### Sister plugins
 
 - [`idd-route`](../idd-route) — Data-driven agent routing (Codex / Claude Opus / Sonnet / Haiku) per IDD issue。`idd-diagnose` Step 3.7 偵測到 `idd-route` 已裝就會自動呼叫做 enrichment;沒裝則 silently skip。**非必要**,純粹增強 routing 建議品質。Install: `claude plugin install idd-route@issue-driven-development`
-
-> **Note**:`idd-verify --loop` 與 `idd-all` (PR, unattended) mode 另外仰賴 `ralph-loop` plugin 作為 outer driver — 詳見 #28(預計在 follow-up release 補上完整文件 + skill auto-detect)。
