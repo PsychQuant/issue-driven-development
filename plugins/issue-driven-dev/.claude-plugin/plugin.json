@@ -6,5 +6,16 @@
     "name": "Che Cheng"
   },
   "license": "MIT",
-  "keywords": ["github", "issues", "methodology", "tdd", "code-review", "workflow", "codex"]
+  "keywords": ["github", "issues", "methodology", "tdd", "code-review", "workflow", "codex"],
+  "dependencies": {
+    "_comment": "Forward-compat declaration — Claude Code plugin schema does not yet consume this field (see #29 upstream tracking). When schema upgrade lands, this becomes machine-enforced. Today it serves as self-documentation + grep target for runtime checkers (#28).",
+    "optional_for_modes": {
+      "ralph-loop": {
+        "marketplace": "claude-plugins-official",
+        "required_for": ["idd-verify --loop", "idd-all (PR, unattended) mode"],
+        "graceful_degrade": "idd-all degrades to (direct-commit, attended) per #28 B4 design; idd-verify --loop fail-fast aborts with install hint",
+        "detect_runtime": "scripts/check-ralph-loop.sh"
+      }
+    }
+  }
 }
