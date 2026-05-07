@@ -179,6 +179,27 @@ attachments_release: "attachments"
 
 ## Requirements
 
+### Required (always)
+
 - `gh` CLI authenticated with GitHub
 - [OpenAI Codex CLI](https://github.com/openai/codex) installed (for `idd-verify`)
 - ChatGPT Pro account (for Codex gpt-5.5)
+
+### Optional (per source type)
+
+`/idd-issue` 支援多種來源類型。文字直接貼進 prompt 不需要任何 plugin;若要從以下來源讀取,需另裝對應 MCP plugin:
+
+| Source type | MCP plugin | Why | Install |
+|-------------|------------|-----|---------|
+| `.docx` / `.doc` | `che-word-mcp` | `idd-issue` Step 1 用 `mcp__che-word-mcp__get_document_text` / `list_images` / `export_image` 讀文字 + 抽圖 | `claude plugin install che-word-mcp@<your-marketplace>` |
+| Telegram chat range | `che-telegram-mcp` (telegram-all server) | 讀 chat history (`get_chat_history`) | `claude plugin install che-telegram-mcp@<your-marketplace>` |
+| Apple Mail message | `che-apple-mail-mcp` | `get_email` + `list_attachments` + `save_attachment` | `claude plugin install che-apple-mail-mcp@<your-marketplace>` |
+| Apple Notes | `che-apple-notes-mcp` | `get_note` + 抽 inline 圖 | `claude plugin install che-apple-notes-mcp@<your-marketplace>` |
+
+替換 `<your-marketplace>` 為實際的 marketplace 名稱(例如 `che-claude-plugins`)。沒裝對應 plugin 不會壞 IDD 核心流程,但該 source type 會被迫 fallback 到「使用者手動處理」模式 (#27 追蹤改為明確 fail-fast 報錯)。
+
+### Sister plugins
+
+- [`idd-route`](../idd-route) — Data-driven agent routing (Codex / Claude Opus / Sonnet / Haiku) per IDD issue。`idd-diagnose` Step 3.7 偵測到 `idd-route` 已裝就會自動呼叫做 enrichment;沒裝則 silently skip。**非必要**,純粹增強 routing 建議品質。Install: `claude plugin install idd-route@issue-driven-development`
+
+> **Note**:`idd-verify --loop` 與 `idd-all` (PR, unattended) mode 另外仰賴 `ralph-loop` plugin 作為 outer driver — 詳見 #28(預計在 follow-up release 補上完整文件 + skill auto-detect)。
