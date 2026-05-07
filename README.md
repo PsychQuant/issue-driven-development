@@ -18,6 +18,18 @@ claude plugin marketplace add PsychQuant/issue-driven-development
 claude plugin install issue-driven-dev@issue-driven-development
 ```
 
+## Requirements
+
+IDD core 是零依賴的 — 純文字 issue / `/idd-issue` 直接貼描述、`/idd-diagnose` / `/idd-implement` / `/idd-close` 都不需要任何外部 plugin。
+
+某些情境需要額外裝 plugin:
+
+- **`.docx` / Telegram / Apple Mail / Apple Notes 來源** — `/idd-issue` 從這些來源讀文字 + 抽附件需對應 MCP plugin
+- **`idd-verify --loop` / `idd-all` (PR, unattended) mode** — 需要 [`ralph-loop`](https://github.com/anthropics/claude-plugins-official) 作為 outer driver(#28 預計補完整文件)
+- **`idd-verify` 6-AI ensemble** — 需要 [OpenAI Codex CLI](https://github.com/openai/codex) + ChatGPT Pro
+
+完整 matrix 與 install 指令見 [`plugins/issue-driven-dev/README.md#requirements`](./plugins/issue-driven-dev/README.md#requirements)。
+
 ## Why a separate marketplace?
 
 IDD is a methodology unto itself with its own [MANIFESTO](./plugins/issue-driven-dev/MANIFESTO.md) and steady release cadence (38+ versions). Pulling it out of `psychquant-claude-plugins` (which has ~36 unrelated plugins) gives:

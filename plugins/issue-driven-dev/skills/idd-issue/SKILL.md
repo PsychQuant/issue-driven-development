@@ -262,6 +262,8 @@ UPSTREAM=$(echo "$REPO_JSON" | jq -r '.parent.nameWithOwner // empty')
 
 #### Source Type Adapter
 
+<!-- KEEP IN SYNC: plugins/issue-driven-dev/README.md#optional-per-source-type — 加新 source type 必須同步更新 README matrix -->
+
 依來源類型挑對應的讀取 + 抽附件 tool；**Step 4 上傳時不分類型，一視同仁全部 push 到 release**。
 
 | Source type | 讀文字 | 抽附件 |
