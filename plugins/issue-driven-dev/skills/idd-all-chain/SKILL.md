@@ -62,6 +62,7 @@ Inherits `/idd-all` config protocol (walked-up `.claude/issue-driven-dev.local.j
 
 ```
 TaskCreate(name="preflight", description="Phase 0: 解析 args、gh auth、確認 root issue OPEN")
+TaskCreate(name="check_diagnosis_readiness", description="Phase 0.4 (NEW, v2.55+ #47): gh issue view --json comments + jq filter '## Diagnosis'; found → silent pass; not found → AskUserQuestion 3-option (run /idd-diagnose first / proceed anyway / cancel). Placed before cluster branch / manifest creation so cancel has zero side effect.")
 TaskCreate(name="setup_cluster_branch", description="Phase 0: 建 cluster branch idd/chain-N-<slug> from default branch + 初始化 spawn manifest")
 TaskCreate(name="init_queue", description="Phase 1: queue = [root], depth_map = {root: 0}, closed_set = {}")
 TaskCreate(name="chain_loop", description="Phase 2: 主 loop — pop queue, invoke /idd-all #current --in-chain, read manifest, enqueue eligible spawns until queue empty / depth limit / max-issues cap reached / verify FAIL halt")
