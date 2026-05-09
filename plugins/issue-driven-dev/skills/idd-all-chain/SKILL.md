@@ -114,7 +114,76 @@ STATE=$(gh issue view "$ROOT_ISSUE" -R "$GITHUB_REPO" --json state -q .state 2>/
 [ "$STATE" = "OPEN" ] || abort "Issue #$ROOT_ISSUE state=$STATE (must be OPEN)"
 ```
 
-#### Step 0.4: Cluster branch setup
+#### Step 0.4 (NEW, v2.55+ #47): Diagnosis-readiness check
+
+Chain 預期 root issue 已 spec 收斂(有 `## Diagnosis` comment)。沒收斂就跑 chain → unattended idd-diagnose Layer V 自動 `proceed anyway` → idd-implement 基於 vague spec 做 design 猜測 → 6-AI verify 抓不到根本問題(因為 reviewers 也只看到 partial spec)。
+
+**Why ASK not BLOCK**:fresh-issue + quick-iter scenarios 有時 explicit 想跳過 prior diagnose;hard block 太嚴。AskUserQuestion + audit trail 是 IC_R011 canonical pattern 的 balance point。
+
+**Why placed here (before cluster branch / manifest creation)**:user 選 `cancel` 時 zero side effect to clean — 不會留 dangling branch / manifest。
+
+```bash
+# Detect via comments[*].body — NOT issue body
+# (precise — avoids false-positive on issue body discussing "diagnosis" concept)
+HAS_DIAGNOSIS=$(gh issue view "$ROOT_ISSUE" -R "$GITHUB_REPO" --json comments \
+    | jq -r '[.comments[] | select(.body | contains("## Diagnosis"))] | length')
+
+if [ "$HAS_DIAGNOSIS" = "0" ]; then
+  # Sanity check for unattended caller misuse (e.g. /loop --in-chain accidentally)
+  # If chain shell sets IN_CHAIN_CONTEXT env, default to 'proceed' + audit trail.
+  if [ -n "$IN_CHAIN_CONTEXT" ]; then
+    echo "→ Diagnosis-readiness: NOT FOUND, proceeding under unattended fallback"
+    bypass_audit_trail
+  else
+    # AskUserQuestion 3-option per IC_R011 canonical pattern
+    # Default option (first in list): run /idd-diagnose first — safest path
+    AskUserQuestion(
+      question="Issue #${ROOT_ISSUE} 沒有 diagnosis comment。沒 diagnose 跑 chain 風險:unattended idd-diagnose Layer V 自動 proceed 可能基於 vague spec 做出 design 猜測。怎麼處理?",
+      options=[
+        {label: "run /idd-diagnose first", description: "halt chain + preserve nothing (本 step 前無 branch/manifest) + 提示跑 /idd-diagnose #N,完成後重 invoke /idd-all-chain"},
+        {label: "proceed anyway", description: "繼續 chain;PATCH issue body 加 ### Chain pre-flight: diagnosis bypassed audit section"},
+        {label: "cancel", description: "abort + 印 cleanup commands (本 step 前無 side effect,只 exit)"}
+      ]
+    )
+  fi
+  case "$user_choice" in
+    "run /idd-diagnose first")
+      echo "→ Halt: please run /idd-diagnose ${ROOT_ISSUE} first, then re-invoke /idd-all-chain"
+      exit 0  # clean halt, no error code (user's deliberate choice)
+      ;;
+    "proceed anyway")
+      bypass_audit_trail  # PATCH issue body
+      ;;
+    "cancel")
+      echo "→ Aborted by user. No state changes made (Phase 0.4 ran before any branch/manifest creation)."
+      exit 0
+      ;;
+  esac
+fi
+
+# Helper function used in 'proceed' branch
+bypass_audit_trail() {
+  AUDIT_BLOCK="
+### Chain pre-flight: diagnosis bypassed
+
+- **At**: $(date -u +%Y-%m-%dT%H:%M:%SZ) by /idd-all-chain
+- **User choice**: proceed anyway despite no diagnosis comment
+- **Implication**: chain went through /idd-all which ran idd-diagnose unattended;Layer V might have triggered with auto-'proceed' default
+"
+  CURRENT_BODY=$(gh issue view "$ROOT_ISSUE" -R "$GITHUB_REPO" --json body -q .body)
+  # Place audit at TOP of body (above '---' separator if exists, else prepend)
+  NEW_BODY="${AUDIT_BLOCK}
+
+---
+
+${CURRENT_BODY}"
+  gh issue edit "$ROOT_ISSUE" -R "$GITHUB_REPO" --body "$NEW_BODY"
+}
+```
+
+> **Future #46 multi-root extension hook**:helper function 在實作時 signature 設計成 `check_diagnosis_readiness(issue_numbers...)` return `[ready_list, not_ready_list]` struct,#46 multi-root 落地時可直接 reuse 做 per-root readiness aggregation。本 step v1 仍 single-root,但 design 上保留擴展。
+
+#### Step 0.5: Cluster branch setup
 
 ```bash
 # Working tree must be clean
@@ -141,7 +210,7 @@ git -C "$CWD" checkout -b "$CLUSTER_BRANCH"
 echo "→ Cluster branch created: $CLUSTER_BRANCH"
 ```
 
-#### Step 0.5: Initialize spawn manifest
+#### Step 0.6: Initialize spawn manifest
 
 Per `references/spawn-manifest.md` schema v1:
 
