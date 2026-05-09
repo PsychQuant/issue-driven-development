@@ -542,7 +542,22 @@ options:
    {bug / enhancement}
    ```
 3. 每個新 issue 的 body 加上 `Related: #NNN`
-4. 輸出新建的 issue 清單
+4. **Chain context manifest write** (per spawn-manifest contract, v2.55+ #44):每建一個 follow-up issue,額外呼叫 manifest helper:
+   ```bash
+   NEW_ISSUE_URL=$(gh issue create ...)   # existing
+   NEW_ISSUE=$(basename "$NEW_ISSUE_URL")
+
+   # `same_file` / `same_skill` 依 finding scope 判斷:
+   # - finding 在同 file 內 → same_file=true
+   # - finding 跨 module 但同 skill (e.g. 同個 idd-* skill 不同 step) → same_skill=true
+   # - cross-cutting (跟 verified diff 完全無關) → 兩個都 false
+   bash "$CLAUDE_PLUGIN_ROOT/scripts/manifest-append.sh" \
+     "$REPO_ROOT" "$NEW_ISSUE" "idd-verify" "Phase 4 follow-up findings triage" \
+     "follow-up-finding" "$same_file" "$same_skill" "$NEW_TITLE" \
+     2>/dev/null || true   # silent skip when chain context inactive
+   ```
+   See `references/spawn-manifest.md` for cross-skill contract. Manifest write is **additive** — baseline audit trail unchanged when manifest absent.
+5. 輸出新建的 issue 清單
 
 **如果使用者選「不開」**：findings 已記錄在 verification comment 中，不會遺失。
 

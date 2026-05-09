@@ -531,14 +531,25 @@ gh pr create --title "$PR_TITLE" --body "$PR_BODY" \
 
    ```bash
    for item in $selected_items; do
-     gh issue create --repo "$GITHUB_REPO" \
+     NEW_ISSUE_URL=$(gh issue create --repo "$GITHUB_REPO" \
        --title "[$type] $description (sister bug from #$NNN)" \
        --body "$BODY_WITH_SOURCE_LINK" \
-       --label "$type,confidence:confirmed,priority:P3"
+       --label "$type,confidence:confirmed,priority:P3")
+     NEW_ISSUE=$(basename "$NEW_ISSUE_URL")
+
+     # Chain context manifest write (per spawn-manifest contract, v2.55+ #44)
+     # If chain shell initialized the manifest, also append a machine-readable entry.
+     # Sister bugs from same-cause reproduction are typically same-skill — set true.
+     bash "$CLAUDE_PLUGIN_ROOT/scripts/manifest-append.sh" \
+       "$REPO_ROOT" "$NEW_ISSUE" "idd-implement" "Step 5.7 sister bug sweep" \
+       "sister-bug" "$item_same_file" "true" "$item_title" \
+       2>/dev/null || true   # silent skip if no manifest (chain context inactive)
    done
    ```
 
    Body MUST contain `**Source**: surfaced during /idd-implement #$NNN reproduction (Step 5.7)` for traceability.
+
+   The manifest write is **additive** — when chain context is inactive (no manifest file), the helper exits 0 silently and behavior is identical to baseline. See `references/spawn-manifest.md` for the cross-skill contract.
 
 4. **Update Implementation Complete comment** (Step 5 已 post 的): PATCH the comment to append `### Sister Bugs Filed (mid-impl, v2.44.0+ #526)` section per canonical heading conventions table:
    - "file all/selected" → `Filed: #NNN, #MMM, #PPP`

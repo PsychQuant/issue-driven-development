@@ -489,14 +489,27 @@ Diagnosis 完成 + Step 3.4 Vagueness Pre-check 結束後，依 5 層 gate 判�
 
    ```bash
    for item in $selected_items; do
-     gh issue create --repo "$GITHUB_REPO" \
+     NEW_ISSUE_URL=$(gh issue create --repo "$GITHUB_REPO" \
        --title "[$type] $description (sister concern from #$NNN)" \
        --body "$BODY_WITH_SOURCE_LINK" \
-       --label "$type,confidence:confirmed,priority:P3"
+       --label "$type,confidence:confirmed,priority:P3")
+     NEW_ISSUE=$(basename "$NEW_ISSUE_URL")
+
+     # Chain context manifest write (per spawn-manifest contract, v2.55+ #44)
+     # spawn_kind classification:
+     # - 真的同主題 sister concern (same root cause, different file) → "sister-concern"
+     # - cross-cutting / upstream tracking (e.g. 跟 idd repo 無關的 upstream gap) → "upstream-tracking"
+     # `same_file` / `same_skill` 依 sister-concern evidence 判斷;upstream-tracking 兩個都 false
+     bash "$CLAUDE_PLUGIN_ROOT/scripts/manifest-append.sh" \
+       "$REPO_ROOT" "$NEW_ISSUE" "idd-diagnose" "Step 3.6 sister concern surfacing" \
+       "$item_kind" "$item_same_file" "$item_same_skill" "$item_title" \
+       2>/dev/null || true   # silent skip when chain context inactive
    done
    ```
 
    Body MUST contain `**Source**: surfaced during /idd-diagnose #$NNN sister concern surfacing (Step 3.6)` for traceability.
+
+   Manifest write is **additive** — 無 chain context 時 helper 靜默 exit 0,baseline behavior 不變。See `references/spawn-manifest.md` for the cross-skill contract.
 
 4. **Update Diagnosis comment** (Step 3 已 post): PATCH the comment to append `### Sister Concerns Filed (mid-diagnose, v2.47.0+ #528)` section per canonical heading conventions table:
    - "file all/selected" → `Filed: #NNN, #MMM, #PPP`

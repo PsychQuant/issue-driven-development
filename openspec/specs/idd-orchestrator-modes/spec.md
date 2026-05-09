@@ -8,19 +8,24 @@ TBD - created by archiving change 'idd-all-hitl-mode'. Update Purpose after arch
 
 ### Requirement: Mode resolution from pr_policy and flags
 
-`idd-all` SHALL resolve a `(path, interaction)` tuple at Phase 0.5 from the existing `pr_policy` config field and `--pr` / `--no-pr` per-invocation flags. The two axes MUST derive from a single source of truth — `pr_policy` — to prevent duplicate config surfaces.
+`idd-all` SHALL resolve a `(path, interaction)` tuple at Phase 0.5 from the existing `pr_policy` config field, `--pr` / `--no-pr` per-invocation flags, and the new `--in-chain` per-invocation flag introduced in v2.55.0+. The two axes MUST derive from a single source of truth — either `pr_policy` or `--in-chain` — to prevent duplicate config surfaces.
 
 Resolution precedence (first match wins):
 
-1. `--pr` flag → `(PR, unattended)`
-2. `--no-pr` flag → `(direct-commit, attended)`
-3. Fork detected (`gh repo view --json isFork` returns true) → `(PR, unattended)` regardless of config
-4. `pr_policy: always` → `(PR, unattended)`
-5. `pr_policy: never` → `(direct-commit, attended)`
-6. `pr_policy: ask` (explicitly set) → `AskUserQuestion`; first answer locks the tuple for the invocation
-7. `pr_policy` absent (no config file, or field missing) → `(PR, unattended)` — v2.40.0 backward-compat default; protects existing `/loop` automation callers from interactive hang
+1. `--in-chain` flag → `(direct-commit, unattended)` — chain context tuple introduced for `/idd-all-chain` recursive invocations
+2. `--pr` flag → `(PR, unattended)`
+3. `--no-pr` flag → `(direct-commit, attended)`
+4. Fork detected (`gh repo view --json isFork` returns true) → `(PR, unattended)` regardless of config
+5. `pr_policy: always` → `(PR, unattended)`
+6. `pr_policy: never` → `(direct-commit, attended)`
+7. `pr_policy: ask` (explicitly set) → `AskUserQuestion`; first answer locks the tuple for the invocation
+8. `pr_policy` absent (no config file, or field missing) → `(PR, unattended)` — v2.40.0 backward-compat default; protects existing `/loop` automation callers from interactive hang
 
-The resolved tuple MUST be printed as a one-line notice before any state-mutating action, e.g. `→ Path: direct-commit (attended) — pr_policy=never`.
+The resolved tuple MUST be printed as a one-line notice before any state-mutating action, e.g. `→ Path: direct-commit (attended) — pr_policy=never` or `→ Path: direct-commit (unattended) — flag=--in-chain`.
+
+The `--in-chain` flag MUST NOT be combined with `--pr` or `--no-pr` in the same invocation. Combining them MUST cause `idd-all` to abort with a conflict error before Phase 0.3 universal pre-flight gates run.
+
+When tuple is `(direct-commit, unattended)` resolved from `--in-chain`, `idd-all` Phase 0.5 MUST skip PR-mode branch creation (no `git checkout -b idd/<N>-<slug>`) and remain on the current branch (assumed to be a cluster branch managed by the calling `/idd-all-chain` shell). Phase 5.5 PR creation MUST be skipped entirely (the cluster PR is opened by `/idd-all-chain` Phase 3 after the chain queue completes).
 
 #### Scenario: explicit --no-pr flag
 
@@ -64,36 +69,55 @@ The resolved tuple MUST be printed as a one-line notice before any state-mutatin
 - **THEN** `idd-all` invokes the `AskUserQuestion` Claude tool with two options (PR vs direct-commit)
 - **AND** the first answer locks the tuple for the invocation
 
+#### Scenario: in-chain flag resolves to chain-context tuple
+
+- **GIVEN** user has a cluster branch `idd/chain-28-foo` checked out (e.g. from `/idd-all-chain` Phase 0)
+- **WHEN** the chain shell invokes `idd-all #34 --in-chain`
+- **THEN** `idd-all` resolves `(path, interaction) = (direct-commit, unattended)`
+- **AND** prints `→ Path: direct-commit (unattended) — flag=--in-chain` before Phase 1
+- **AND** Phase 0.5 PR-mode branch creation is skipped; the invocation remains on `idd/chain-28-foo`
+- **AND** sub-skills receive an `UNATTENDED MODE` directive suppressing `AskUserQuestion`
+- **AND** Phase 5.5 PR creation is skipped (the cluster PR is opened later by `/idd-all-chain`)
+
+#### Scenario: in-chain flag conflicts with --pr or --no-pr
+
+- **GIVEN** any combination such as `idd-all #34 --in-chain --pr` or `idd-all #34 --in-chain --no-pr`
+- **WHEN** Phase 0.2 argument parsing runs
+- **THEN** `idd-all` aborts with a conflict error message naming both flags and instructing the user to pick exactly one
+- **AND** does NOT proceed to Phase 0.3 universal pre-flight gates
+
 
 <!-- @trace
-source: idd-all-hitl-mode
-updated: 2026-05-04
+source: add-idd-all-chain-skill
+updated: 2026-05-10
 code:
-  - plugins/issue-driven-dev/references/usecase-routing.md
-  - .agents/skills/spectra-debug/SKILL.md
+  - .spectra.yaml
+  - .agents/skills/spectra-ingest/SKILL.md
+  - plugins/issue-driven-dev/scripts/manifest-append.sh
   - plugins/issue-driven-dev/CHANGELOG.md
-  - plugins/issue-driven-dev/skills/idd-plan/SKILL.md
-  - .claude-plugin/marketplace.json
   - plugins/issue-driven-dev/CLAUDE.md
-  - plugins/issue-driven-dev/references/ic-r011-checkpoint.md
-  - .agents/skills/spectra-ask/SKILL.md
-  - AGENTS.md
-  - plugins/issue-driven-dev/skills/idd-issue/SKILL.md
-  - .agents/skills/spectra-commit/SKILL.md
-  - .agents/skills/spectra-discuss/SKILL.md
-  - plugins/issue-driven-dev/skills/idd-close/SKILL.md
-  - plugins/issue-driven-dev/skills/idd-implement/SKILL.md
   - .agents/skills/spectra-archive/SKILL.md
-  - CLAUDE.md
-  - plugins/issue-driven-dev/skills/idd-all/SKILL.md
-  - plugins/issue-driven-dev/references/pr-flow.md
   - .agents/skills/spectra-audit/SKILL.md
   - .agents/skills/spectra-apply/SKILL.md
-  - .agents/skills/spectra-propose/SKILL.md
   - plugins/issue-driven-dev/.claude-plugin/plugin.json
-  - .spectra.yaml
+  - plugins/issue-driven-dev/references/spawn-manifest.md
+  - .agents/skills/spectra-commit/SKILL.md
   - plugins/issue-driven-dev/skills/idd-diagnose/SKILL.md
-  - .agents/skills/spectra-ingest/SKILL.md
+  - plugins/issue-driven-dev/references/usecase-routing.md
+  - plugins/issue-driven-dev/skills/idd-plan/SKILL.md
+  - .agents/skills/spectra-discuss/SKILL.md
+  - .claude-plugin/marketplace.json
+  - .agents/skills/spectra-drift/SKILL.md
+  - plugins/issue-driven-dev/skills/idd-all-chain/SKILL.md
+  - plugins/issue-driven-dev/skills/idd-implement/SKILL.md
+  - plugins/issue-driven-dev/skills/idd-verify/SKILL.md
+  - plugins/issue-driven-dev/skills/idd-all/SKILL.md
+  - docs/design-patterns/default-dilemma.md
+  - plugins/issue-driven-dev/references/chain-flow.md
+  - .agents/skills/spectra-debug/SKILL.md
+  - .agents/skills/spectra-propose/SKILL.md
+  - .agents/skills/spectra-ask/SKILL.md
+  - AGENTS.md
 -->
 
 ---

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`/idd-all-chain` skill — chain-solve mode** ([#44](https://github.com/PsychQuant/issue-driven-development/issues/44), `add-idd-all-chain-skill` Spectra change):root issue + auto-emergent spawned issues 自動接續解,**單一 cluster branch + 單一 review PR**。Reviewer 拿回 holistic view,使用者不必手動逐一跑 `/idd-all #M`。
+
+  - **NEW skill `/idd-all-chain #N`**:thin shell over `/idd-all`,內部 recursive 呼叫 `/idd-all #M --in-chain`。Phase 0 建 cluster branch `idd/chain-<N>-<slug>` from default branch、Phase 2 main loop pop queue + invoke sub-`/idd-all` + read manifest delta + enqueue eligible spawns、Phase 3 開 cluster PR(title prefix `chain:`、collapsed `<details>` per issue)、Phase 4 final report STOP at verified(永不 auto-close,維持 IDD 紀律)
+  - **NEW `--in-chain` flag on `/idd-all`**:single source for chain context,推導 4th mode tuple `(direct-commit, unattended)`。Sub-`/idd-all` skip Phase 0.5 PR-mode branch creation + skip Phase 5.5 PR open + sub-skill 收 `UNATTENDED MODE` directive。與 `--pr` / `--no-pr` 互斥 abort
+  - **NEW spawn manifest contract**:`.claude/.idd/state/chain-spawned-issues.json` schema_version=1,4 個 sub-skill(`idd-implement` / `idd-verify` / `idd-plan` / `idd-diagnose`)在既有 sister-sweep / follow-up-finding / tangential / sister-concern step append entry。Manifest writes atomic via temp-file rename。Schema mismatch abort。Helper script `scripts/manifest-append.sh`
+  - **Chain caps(hard-coded)**:`chain_max_depth = 2`、`chain_max_issues = 5`(含 root)。超過 cap 仍 file 為 follow-up issue 但不 enqueue
+  - **Chain-eligible heuristic**:`same_file_as_root OR same_skill_as_root OR spawn_kind="sister-bug"`。不 eligible 仍 file 但不 chain solve
+  - **Failure mode**:任一 chained verify FAIL → halt queue + preserve partial commits(無 rebase / revert)+ 印 abort report 含 4 條 recovery paths
+  - **NEW reference docs**:`references/spawn-manifest.md`(schema canonical contract)、`references/chain-flow.md`(chain shell algorithm canonical contract)
+  - **MODIFIED capability `idd-orchestrator-modes`**:加第 4 種 mode tuple `(direct-commit, unattended)` for chain context;既有 3 tuples 行為不變
+  - Backward compat:`/idd-all #N`(不帶 `--in-chain`)行為與 v2.53.0 baseline byte-equivalent
+
 ## [2.52.0] - 2026-05-05
 
 ### Added

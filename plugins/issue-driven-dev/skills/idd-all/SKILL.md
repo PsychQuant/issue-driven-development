@@ -91,6 +91,7 @@ idd-all 的所有 git/gh 操作都針對單一 target repo,且 Phase 0.5 mode re
 # 1. 解析 flags(per-invocation override) — 順序逐一掃描 argv
 CWD_FLAG=""
 PR_FLAG=""        # "" | "--pr" | "--no-pr"
+IN_CHAIN=""       # "" | "1" — set by --in-chain flag (v2.55+ #44)
 ARGS=("$@")
 for ((i=0; i<${#ARGS[@]}; i++)); do
   arg="${ARGS[i]}"
@@ -99,10 +100,16 @@ for ((i=0; i<${#ARGS[@]}; i++)); do
     --cwd)      i=$((i+1)); CWD_FLAG="${ARGS[i]}" ;;
     --pr)
       [ -n "$PR_FLAG" ] && abort "Conflicting flags: '$PR_FLAG' and '--pr' both passed. Pick one."
+      [ -n "$IN_CHAIN" ] && abort "Conflicting flags: '--in-chain' and '--pr' cannot be combined. --in-chain implies (direct-commit, unattended); pick one."
       PR_FLAG="--pr" ;;
     --no-pr)
       [ -n "$PR_FLAG" ] && abort "Conflicting flags: '$PR_FLAG' and '--no-pr' both passed. Pick one."
+      [ -n "$IN_CHAIN" ] && abort "Conflicting flags: '--in-chain' and '--no-pr' cannot be combined. --in-chain implies (direct-commit, unattended); pick one."
       PR_FLAG="--no-pr" ;;
+    --in-chain)
+      # v2.55+ #44 — chain context tuple (direct-commit, unattended)
+      [ -n "$PR_FLAG" ] && abort "Conflicting flags: '--in-chain' and '$PR_FLAG' cannot be combined. Pick one."
+      IN_CHAIN="1" ;;
   esac
 done
 
@@ -178,16 +185,19 @@ gh auth status > /dev/null 2>&1 || abort "gh CLI not authenticated. Run: gh auth
 **Resolution precedence(first match wins)**:
 
 ```
-1. --pr flag                                      → (PR, unattended)
-2. --no-pr flag                                   → (direct-commit, attended)
-3. Fork detected (gh repo view --json isFork)     → (PR, unattended)  [override config]
-4. pr_policy: always                              → (PR, unattended)
-5. pr_policy: never                               → (direct-commit, attended)
-6. pr_policy: ask (explicitly set)                → AskUserQuestion (Claude tool)
-7. pr_policy absent (config 缺 / 整個 config 不存在) → (PR, unattended)  [v2.40.0 backward-compat default]
+1. --in-chain flag                                → (direct-commit, unattended)  [v2.55+ #44 chain context tuple]
+2. --pr flag                                      → (PR, unattended)
+3. --no-pr flag                                   → (direct-commit, attended)
+4. Fork detected (gh repo view --json isFork)     → (PR, unattended)  [override config]
+5. pr_policy: always                              → (PR, unattended)
+6. pr_policy: never                               → (direct-commit, attended)
+7. pr_policy: ask (explicitly set)                → AskUserQuestion (Claude tool)
+8. pr_policy absent (config 缺 / 整個 config 不存在) → (PR, unattended)  [v2.40.0 backward-compat default]
 ```
 
-> **Step 6 vs Step 7 distinction (Task: P1 finding 3, proposal "no backward incompat")**: 顯式 `"pr_policy": "ask"` = user 明確要被問 → 用 AskUserQuestion Claude tool。Config 完全沒寫(field 缺或 file 不存在)= /loop 等舊 caller 場景 → 默認 PR mode 維持 v2.40.0 行為,不卡住自動化。
+> **Step 1 (v2.55+ #44, `--in-chain` chain context)**: `/idd-all-chain` 在 Phase 0 已建好 cluster branch 並透過 `--in-chain` 呼叫 sub `/idd-all`。第 4 種 mode tuple `(direct-commit, unattended)` 確保 sub-skill 不再建自己的 feature branch (Phase 0.5 PR mode skip)、不開自己的 PR (Phase 5.5 skip)、不 fire AskUserQuestion (UNATTENDED MODE directive)。**`--in-chain` 與 `--pr` / `--no-pr` 互斥**(在 Step 0.2 parse-time abort)。
+>
+> **Step 7 vs Step 8 distinction (Task: P1 finding 3, proposal "no backward incompat")**: 顯式 `"pr_policy": "ask"` = user 明確要被問 → 用 AskUserQuestion Claude tool。Config 完全沒寫(field 缺或 file 不存在)= /loop 等舊 caller 場景 → 默認 PR mode 維持 v2.40.0 行為,不卡住自動化。
 
 ```bash
 # 讀 pr_policy from cascading config
@@ -198,8 +208,10 @@ else
   PR_POLICY=$(jq -r '.pr_policy // "absent"' "$CONFIG_PATH" 2>/dev/null || echo "absent")
 fi
 
-# 1-2. Explicit flags
-if   [ "$PR_FLAG" = "--pr" ];     then PATH_AXIS="PR";            INTERACTION="unattended"; REASON="flag=--pr"
+# 1. --in-chain flag (v2.55+ #44 chain context tuple) — highest precedence
+if   [ -n "$IN_CHAIN" ];          then PATH_AXIS="direct-commit"; INTERACTION="unattended"; REASON="flag=--in-chain"
+# 2-3. Explicit flags
+elif [ "$PR_FLAG" = "--pr" ];     then PATH_AXIS="PR";            INTERACTION="unattended"; REASON="flag=--pr"
 elif [ "$PR_FLAG" = "--no-pr" ];  then PATH_AXIS="direct-commit"; INTERACTION="attended";   REASON="flag=--no-pr"
 else
   # 3. Fork detection — fail-closed (#5 fix). gh failure defaults IS_FORK="true"
@@ -302,10 +314,31 @@ if [ "$PATH_AXIS" = "PR" ]; then
 fi
 ```
 
-**Direct-commit mode**(`PATH_AXIS=direct-commit`):
+**Chain-context mode**(`IN_CHAIN=1` set,v2.55+ #44):
 
 ```bash
-if [ "$PATH_AXIS" = "direct-commit" ]; then
+if [ -n "$IN_CHAIN" ]; then
+  # Sub /idd-all called by /idd-all-chain. Cluster branch already created by
+  # chain shell — DO NOT create per-issue feature branch, DO NOT change branch.
+  CURRENT_BRANCH=$(git -C "$CWD" branch --show-current)
+
+  # Sanity check: cluster branch convention is `idd/chain-*` — refuse if not on
+  # one (prevents external misuse like `/loop --in-chain` without chain shell).
+  if [[ ! "$CURRENT_BRANCH" =~ ^idd/chain- ]]; then
+    abort "--in-chain set but current branch '$CURRENT_BRANCH' does not match cluster convention 'idd/chain-*'.
+   /idd-all --in-chain is meant to be invoked from within /idd-all-chain only.
+   If you reached here directly, run /idd-all-chain #N instead."
+  fi
+
+  BRANCH="$CURRENT_BRANCH"
+  # Phase 5.5 PR creation will also be skipped (see Phase 5 conditional).
+fi
+```
+
+**Direct-commit mode**(`PATH_AXIS=direct-commit` AND `IN_CHAIN` unset):
+
+```bash
+if [ "$PATH_AXIS" = "direct-commit" ] && [ -z "$IN_CHAIN" ]; then
   CURRENT_BRANCH=$(git -C "$CWD" branch --show-current)
   echo "→ direct-commit path: committing to ${CURRENT_BRANCH}, no PR will be opened"
 
@@ -683,7 +716,10 @@ for round in 1..MAX_ROUND:
 **Conditional push + PR creation** (#3 Task 3.2 — replaces earlier `goto Phase 6` pseudocode that wasn't valid bash; structural conditional with explicit comment instead):
 
 ```bash
-if [ "$PATH_AXIS" = "direct-commit" ]; then
+if [ -n "$IN_CHAIN" ]; then
+  echo "→ chain context (--in-chain): skipping push + PR (cluster PR opened later by /idd-all-chain Phase 3)"
+  # v2.55+ #44 — no per-issue PR; cluster PR is opened by /idd-all-chain after chain queue completes.
+elif [ "$PATH_AXIS" = "direct-commit" ]; then
   echo "→ direct-commit path: skipping push + PR"
   # No-op — fall through to Phase 6 unconditionally below.
 elif [ "$PATH_AXIS" = "PR" ]; then

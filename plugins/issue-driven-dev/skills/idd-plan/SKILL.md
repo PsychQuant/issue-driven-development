@@ -144,13 +144,26 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$IMPLEMENTATION_PLAN"
 
    ```bash
    for item in $selected_items:
-     gh issue create --repo "$GITHUB_REPO" \
+     NEW_ISSUE_URL=$(gh issue create --repo "$GITHUB_REPO" \
        --title "[$type] $description (mid-plan tangential from #$NNN)" \
        --body "$BODY_WITH_SOURCE_LINK" \
-       --label "$type,confidence:confirmed,priority:P3"
+       --label "$type,confidence:confirmed,priority:P3")
+     NEW_ISSUE=$(basename "$NEW_ISSUE_URL")
+
+     # Chain context manifest write (per spawn-manifest contract, v2.55+ #44)
+     # `same_file` / `same_skill` 依 observation evidence 判斷:
+     # - tangential 觀察到同個 file 的相鄰問題 → same_file=true
+     # - 跨 file 但同 skill / module → same_skill=true
+     # - 跨 cutting concern (cross-module observation) → 兩個都 false
+     bash "$CLAUDE_PLUGIN_ROOT/scripts/manifest-append.sh" \
+       "$REPO_ROOT" "$NEW_ISSUE" "idd-plan" "Step 2.5 tangential observations" \
+       "tangential" "$item_same_file" "$item_same_skill" "$item_title" \
+       2>/dev/null || true   # silent skip when chain context inactive
    ```
 
    Body 必須含：`**Source**: surfaced during /idd-plan #$NNN tangential sweep (Step 2.5)`，方便追溯。
+
+   Manifest write is **additive** — 無 chain context 時 helper 靜默 exit 0,baseline behavior 不變。See `references/spawn-manifest.md`.
 
 4. **Update plan body** (Step 2 已 post 的 comment): PATCH the comment to fill the `### Tangential Observations` section：
    - "file all/selected" → `Tangential Observations: filed #NNN, #MMM, #PPP`

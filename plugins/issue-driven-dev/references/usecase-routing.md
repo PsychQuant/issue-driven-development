@@ -56,6 +56,7 @@
 | **22** | 想知道 cwd 落在哪個 candidate / group repo | `idd-config which` | `which`（dry-run resolution）| [config-protocol.md](config-protocol.md) |
 | **23** | Monorepo / multi-repo，要把 issue 開到特定 repo | `idd-issue --target owner/repo` 或 `--target group:<label>` | `--target` | [config-protocol.md](config-protocol.md) |
 | **24** | 要把 issue tag 給 collaborator | `idd-issue --mention <login>[,<login>...]` | `--mention`（自動 fuzzy match + AskUserQuestion fallback）| `rules/tagging-collaborators.md` |
+| **25** | Emergent multi-issue solve from one root — root issue 解到一半 spawn 出 sister bug / follow-up,想全鏈在 1 個 PR review(v2.55.0+) | `idd-all-chain #N` | （無 — 內部用 `--in-chain` 自動推導 4th mode tuple `(direct-commit, unattended)`）；hard caps depth=2 / max-issues=5；eligibility = same-file OR same-skill OR sister-bug | [chain-flow.md](chain-flow.md), [spawn-manifest.md](spawn-manifest.md) |
 
 ---
 
