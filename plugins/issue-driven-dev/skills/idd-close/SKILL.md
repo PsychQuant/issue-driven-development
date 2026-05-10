@@ -404,7 +404,10 @@ For each trigger-phrase match:
 ### Step 4: 發佈並關閉
 
 ```bash
-gh issue comment $NUMBER --repo $GITHUB_REPO --body "$CLOSING_COMMENT"
+# Capture the comment URL → ID for downstream PATCH (Step 6.5 Distribution Sync audit trail).
+# Tail -1 grabs the URL line `gh` prints to stdout; sed extracts the numeric ID.
+CLOSING_COMMENT_URL=$(gh issue comment $NUMBER --repo $GITHUB_REPO --body "$CLOSING_COMMENT" 2>&1 | tail -1)
+CLOSING_COMMENT_ID=$(echo "$CLOSING_COMMENT_URL" | sed -E 's/.*#issuecomment-([0-9]+)/\1/')
 gh issue close $NUMBER --repo $GITHUB_REPO
 ```
 
