@@ -31,33 +31,57 @@ Walk-up parents from `$REPO_ROOT` looking for `.claude-plugin/marketplace.json`,
 ```bash
 is_plugin_marketplace_member() {
   local repo_root="$1"
-  local github_repo="$2"   # owner/repo form
-  local current="$repo_root"
+  local github_repo="$2"   # owner/repo form (unused in v1 — kept for v2 git-remote variant)
+  local resolved_root
+  resolved_root=$(cd "$repo_root" 2>/dev/null && pwd -P) || resolved_root="$repo_root"
+  local current="$resolved_root"
 
-  while [ "$current" != "$HOME" ] && [ "$current" != "/" ]; do
+  # Walk up to (and including) $HOME. The do-while-style first-pass check below
+  # ensures `$REPO_ROOT == $HOME` doesn't fall through unscanned.
+  while :; do
     local manifest="$current/.claude-plugin/marketplace.json"
     if [ -f "$manifest" ]; then
-      # Check if any plugins[].source.git matches our repo
-      # Normalize trailing .git for comparison
-      local match=$(jq -r --arg repo "$github_repo" \
-        '.plugins[]?.source.git // empty
-         | sub(".git$"; "")
-         | select(endswith($repo))' \
-        "$manifest" 2>/dev/null | head -1)
+      # Marketplace plugin schema: `"source": "./plugins/<name>"` (string, relative
+      # to manifest dir). Resolve each source path and compare to repo_root —
+      # match means this repo IS one of the plugins listed by the marketplace.
+      local manifest_dir
+      manifest_dir=$(cd "$(dirname "$manifest")/.." 2>/dev/null && pwd -P) || \
+        manifest_dir=$(dirname "$(dirname "$manifest")")
+      local match
+      match=$(jq -r '.plugins[]?.source // empty | select(type == "string")' \
+        "$manifest" 2>/dev/null \
+        | while IFS= read -r src; do
+            [ -z "$src" ] && continue
+            local plugin_dir
+            plugin_dir=$(cd "$manifest_dir/$src" 2>/dev/null && pwd -P) || continue
+            # Match if plugin_dir IS repo_root (repo == one plugin)
+            # OR plugin_dir is INSIDE repo_root (repo hosts plugins under plugins/, common monorepo layout).
+            # Trailing slash check prevents prefix collisions (e.g. repo=/foo, plugin_dir=/foobar).
+            case "$plugin_dir/" in
+              "$resolved_root/"|"$resolved_root/"*)
+                echo "match"
+                break
+                ;;
+            esac
+          done | head -1)
       if [ -n "$match" ]; then
         echo "true"
         return 0
       fi
     fi
+    [ "$current" = "$HOME" ] && break
+    [ "$current" = "/" ] && break
     current=$(dirname "$current")
   done
   echo "false"
 }
 ```
 
-**Stop conditions**: walking past `$HOME` is a strong signal we've left the user's project tree;`/` is a safety bound. Marketplace repos are by convention under `$HOME/Developer/` or similar.
+**Stop conditions**: walks up through `$HOME` itself (so repos cloned directly to `$HOME` are scanned), then breaks. `/` is a safety bound. Path resolution via `pwd -P` normalizes symlinks (handles macOS `/Users` ↔ `/private/var/...` cases).
 
-**Match logic**: `jq` extracts `plugins[].source.git` URLs (e.g. `https://github.com/PsychQuant/issue-driven-development.git`), strips trailing `.git`, then checks if any URL ends with the `owner/repo` form. This is robust to https vs ssh URLs and trailing `.git` variations.
+**Match logic**: marketplace.json plugins use `"source": "./plugins/<name>"` (string, relative to manifest dir). For each plugin entry, resolve `<manifest_dir>/<source>` to absolute path and compare to canonicalized `$REPO_ROOT`. A match means this repo IS one of the plugins published by that marketplace — could be the marketplace's own repo (self-publishing) or a submodule path.
+
+**Schema note**: object form `{"source": {"git": "..."}}` is not currently used in any inspected real marketplace.json (37/37 use string form). If future marketplace.json adopts object form, jq filter would need a parallel branch — but the `select(type == "string")` guard makes the current filter safe (skips non-string sources rather than erroring).
 
 ### `has_binary_wrapper(repo_root) -> bool`
 
@@ -70,16 +94,43 @@ has_binary_wrapper() {
 
   [ -d "$bin_dir" ] || { echo "false"; return; }
 
-  local match=$(ls "$bin_dir"/*.sh 2>/dev/null \
-    | xargs grep -l -E 'gh release download|curl.*github\.com.*releases' 2>/dev/null \
-    | head -1)
+  # Real-world wrappers (e.g. `che-apple-mail-mcp-wrapper.sh`, `agent-cacher`)
+  # construct GitHub URLs in variables (`API_URL=https://api.github.com/...`,
+  # `asset_url="https://github.com/.../releases/download/..."`) then call
+  # curl on a separate line. Line-anchored regex misses these. The pattern
+  # below matches any line containing GitHub release URL patterns OR explicit
+  # `gh release download` / `gh api .../releases` invocations.
+  # Match either explicit gh CLI invocations or GitHub URL patterns. Use .* between
+  # github.com and `releases` to accept variable-substituted single-segment paths
+  # (e.g. `https://github.com/${GITHUB_REPO}/releases/...` where the variable holds
+  # the full `owner/repo`); grep is line-based so .* won't span lines.
+  local pattern='gh release download|gh api[[:space:]]+.*/releases|api\.github\.com/.*/releases|github\.com/.*/releases/(download|tags|latest)'
+
+  # Glob may not match — guard with a 2>/dev/null + null-check
+  local match=""
+  shopt -s nullglob 2>/dev/null
+  for f in "$bin_dir"/*.sh; do
+    [ -f "$f" ] || continue
+    if grep -qE "$pattern" "$f" 2>/dev/null; then
+      match="$f"
+      break
+    fi
+  done
+  shopt -u nullglob 2>/dev/null
+
   [ -n "$match" ] && echo "true" || echo "false"
 }
 ```
 
 **Why `bin/*.sh` only**: build/dev scripts typically live under `scripts/` or `Sources/`;user-facing distribution wrappers conventionally live under `bin/`. False-positive on a non-distribution `bin/*.sh` is covered by AskUserQuestion `not applicable` opt-out (see Step 6.5 prose).
 
-**Detection keywords**: limited to GitHub-native distribution per #45 issue body scope. Future extension covered below.
+**Detection keywords (broadened from v1)**: matches:
+- `gh release download` — explicit GitHub CLI download
+- `gh api[[:space:]]+.*/releases` — GitHub API via gh CLI
+- `api\.github\.com/repos/.../releases` — direct REST API URL (real-world pattern: `che-apple-mail-mcp-wrapper.sh`)
+- `github\.com/.../releases/(download|tags|latest)` — public release URLs (real-world pattern: `cacher-mcp-wrapper.sh` `asset_url=`)
+
+Empirically validated: matches all 13 PsychQuant MCP wrappers + `idd-route` CLI wrapper. Future patterns (wget, npm) covered by Extension protocol below.
 
 ### `infer_distribution_type(repo_root, github_repo) -> string`
 
@@ -117,23 +168,25 @@ infer_distribution_type() {
 }
 ```
 
-## D3 — Mixed-type superset rule
+## D3 — Mixed-type handling (v1: explicit ordering, fallback-safe)
 
-When `infer_distribution_type` returns `plugin+mcp` or `plugin+cli`, **chain `plugin-update` only**.
+When `infer_distribution_type` returns `plugin+mcp` or `plugin+cli`, **chain BOTH skills with explicit ordering**: binary-deploy first (`mcp-deploy` or `cli-deploy`), then `plugin-update` to bump plugin shell pointing at the new binary version.
 
-**Rationale**: per `che-claude-config/rules/common-plugins.md`, `plugin-tools:plugin-update` v1.11+ is **dependency-aware orchestrator** — its Phase 1.5 detects `.mcp.json` / wrapper / session-start hook dependencies and AskUserQuestion-prompts the cascade ("順便更新 binary?" → invokes `mcp-deploy` / `cli-deploy`). Calling `plugin-update` is the superset action;calling both separately would either duplicate work or skip the plugin shell sync.
+**Rationale (v1)**: ordering binary-first is correctness-safe regardless of whether `plugin-update` cascades. If cascade exists (per `common-plugins.md` claim), calling binary-deploy first means `plugin-update`'s Phase 1.5 detection sees the already-bumped binary and skips its own cascade prompt (idempotent). If cascade doesn't exist or has changed, calling both ensures both shells stay in sync — exact anti-pattern #45 was designed to prevent.
 
-**Caveat**: this claim is **unverified empirically** (filed as PsychQuant/issue-driven-development#66 audit). If audit reveals stale claim, this contract should change to "chain both with explicit ordering" — `mcp-deploy` first to bump binary, then `plugin-update` to bump plugin shell pointing at new binary version.
+**Why not v2 superset rule yet**: the original Plan tier proposed "chain `plugin-update` only" relying on Phase 1.5 cascade per `che-claude-config/rules/common-plugins.md`. PsychQuant/issue-driven-development#66 audit was filed during /idd-plan to verify this claim empirically before relying on it. Until #66 confirms cascade behavior matches doc claim, **v1 default is "chain both" for safety**.
 
-## Skill resolution table
+**Future v2 (post-#66 audit)**: if #66 confirms `plugin-update` v1.11+ Phase 1.5 reliably cascades to `mcp-deploy` / `cli-deploy`, this contract may change to "chain `plugin-update` only" superset rule. v2 contract would document explicit cascade dependency on `plugin-update` v1.11+ and include version check.
 
-| `infer_distribution_type` returns | Sync skill to chain |
-|----------------------------------|--------------------|
+## Skill resolution table (v1)
+
+| `infer_distribution_type` returns | Sync skills to chain (in order) |
+|----------------------------------|---------------------------------|
 | `plugin` | `/plugin-tools:plugin-update <plugin-name>` |
 | `mcp` | `/mcp-tools:mcp-deploy` |
 | `cli` | `/cli-tools:cli-deploy` |
-| `plugin+mcp` | `/plugin-tools:plugin-update <plugin-name>` (D3) |
-| `plugin+cli` | `/plugin-tools:plugin-update <plugin-name>` (D3) |
+| `plugin+mcp` | `/mcp-tools:mcp-deploy` → then `/plugin-tools:plugin-update <plugin-name>` |
+| `plugin+cli` | `/cli-tools:cli-deploy` → then `/plugin-tools:plugin-update <plugin-name>` |
 | `n/a` | — silent skip, no chain |
 
 **Plugin name resolution** (when `<plugin-name>` is needed): parse the matched `marketplace.json` entry — its `name` field IS the plugin name to pass to `plugin-update`.

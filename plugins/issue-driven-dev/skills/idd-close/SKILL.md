@@ -405,9 +405,23 @@ For each trigger-phrase match:
 
 ```bash
 # Capture the comment URL → ID for downstream PATCH (Step 6.5 Distribution Sync audit trail).
-# Tail -1 grabs the URL line `gh` prints to stdout; sed extracts the numeric ID.
-CLOSING_COMMENT_URL=$(gh issue comment $NUMBER --repo $GITHUB_REPO --body "$CLOSING_COMMENT" 2>&1 | tail -1)
-CLOSING_COMMENT_ID=$(echo "$CLOSING_COMMENT_URL" | sed -E 's/.*#issuecomment-([0-9]+)/\1/')
+# IMPORTANT: don't use `2>&1 | tail -1` — that mixes stderr into stdout, and gh's
+# deprecation/warning messages can interleave with the URL, leading to a garbage ID.
+# `gh issue comment` prints ONLY the comment URL to stdout on success;errors go to stderr.
+# `set -e` (or explicit `|| abort`) guarantees we don't proceed with empty URL on failure.
+CLOSING_COMMENT_URL=$(gh issue comment $NUMBER --repo $GITHUB_REPO --body "$CLOSING_COMMENT") || {
+  echo "ERROR: gh issue comment failed for #$NUMBER" >&2
+  exit 1
+}
+
+# `sed -n '...p'` only prints the line if the regex matched, so a malformed URL
+# yields an empty CLOSING_COMMENT_ID rather than the unmodified input string.
+CLOSING_COMMENT_ID=$(printf '%s' "$CLOSING_COMMENT_URL" | sed -nE 's|.*#issuecomment-([0-9]+).*|\1|p')
+if [ -z "$CLOSING_COMMENT_ID" ]; then
+  echo "ERROR: failed to extract comment ID from URL: $CLOSING_COMMENT_URL" >&2
+  exit 1
+fi
+
 gh issue close $NUMBER --repo $GITHUB_REPO
 ```
 
@@ -482,40 +496,131 @@ Skill(skill="issue-driven-dev:idd-update", args="#NNN")
 
 **Placement rationale**: phase=closed locks audit at Step 6 (lifecycle gate complete);Step 6.5 is follow-up action not lifecycle gate. The closing comment's `### Distribution Sync` section heading clearly separates from main summary so audit trail timeline is unambiguous.
 
-#### Detection (bash)
+#### Detection (bash) — define helpers inline, then call
 
-Per [`references/distribution-detection.md`](../../references/distribution-detection.md) canonical contract — implement helpers inline (or source the contract's algorithm):
+Per [`references/distribution-detection.md`](../../references/distribution-detection.md) canonical contract. **Helpers MUST be defined before first call** — the silent-skip path below references them, so define-then-call ordering matters (bash treats undefined function calls as `command not found` exit 127).
 
 ```bash
-# Detection delegated to contract (algorithm fully spec'd in distribution-detection.md)
-DISTRIBUTION_TYPE=$(infer_distribution_type "$REPO_ROOT" "$GITHUB_REPO")
+# ── Helpers (inlined from references/distribution-detection.md) ──
+
+# patch_closing_comment_append — appends a markdown block to the closing comment
+# captured in Step 4 ($CLOSING_COMMENT_ID). All silent-skip and prompt-resolution
+# paths in this step call this helper, so define it FIRST.
+patch_closing_comment_append() {
+  local append_block="$1"
+  local existing
+  existing=$(gh api "/repos/${GITHUB_REPO}/issues/comments/${CLOSING_COMMENT_ID}" -q .body 2>/dev/null) || {
+    echo "WARN: gh api fetch failed for comment $CLOSING_COMMENT_ID — audit trail PATCH skipped" >&2
+    return 0
+  }
+  jq -n --arg b "${existing}${append_block}" '{body: $b}' > /tmp/distribution_sync_patch.json
+  gh api -X PATCH "/repos/${GITHUB_REPO}/issues/comments/${CLOSING_COMMENT_ID}" \
+    --input /tmp/distribution_sync_patch.json -q '.html_url' >/dev/null || \
+    echo "WARN: gh api PATCH failed — audit trail incomplete" >&2
+}
+
+# is_plugin_marketplace_member — walk-up scan for marketplace.json listing this repo
+is_plugin_marketplace_member() {
+  local repo_root="$1"
+  local resolved_root
+  resolved_root=$(cd "$repo_root" 2>/dev/null && pwd -P) || resolved_root="$repo_root"
+  local current="$resolved_root"
+  while :; do
+    local manifest="$current/.claude-plugin/marketplace.json"
+    if [ -f "$manifest" ]; then
+      local manifest_dir
+      manifest_dir=$(cd "$(dirname "$manifest")/.." 2>/dev/null && pwd -P) || \
+        manifest_dir=$(dirname "$(dirname "$manifest")")
+      local match
+      match=$(jq -r '.plugins[]?.source // empty | select(type == "string")' \
+        "$manifest" 2>/dev/null \
+        | while IFS= read -r src; do
+            [ -z "$src" ] && continue
+            local plugin_dir
+            plugin_dir=$(cd "$manifest_dir/$src" 2>/dev/null && pwd -P) || continue
+            case "$plugin_dir/" in
+              "$resolved_root/"|"$resolved_root/"*) echo "match"; break ;;
+            esac
+          done | head -1)
+      [ -n "$match" ] && { echo "true"; return 0; }
+    fi
+    [ "$current" = "$HOME" ] && break
+    [ "$current" = "/" ] && break
+    current=$(dirname "$current")
+  done
+  echo "false"
+}
+
+# has_binary_wrapper — scan bin/*.sh for GitHub release patterns (line-agnostic)
+has_binary_wrapper() {
+  local repo_root="$1"
+  local bin_dir="$repo_root/bin"
+  [ -d "$bin_dir" ] || { echo "false"; return; }
+  local pattern='gh release download|gh api[[:space:]]+.*/releases|api\.github\.com/.*/releases|github\.com/.*/releases/(download|tags|latest)'
+  local match=""
+  shopt -s nullglob 2>/dev/null
+  for f in "$bin_dir"/*.sh; do
+    [ -f "$f" ] || continue
+    if grep -qE "$pattern" "$f" 2>/dev/null; then match="$f"; break; fi
+  done
+  shopt -u nullglob 2>/dev/null
+  [ -n "$match" ] && echo "true" || echo "false"
+}
+
+# infer_distribution_type — orchestrator returning plugin/mcp/cli/plugin+mcp/plugin+cli/n/a
+infer_distribution_type() {
+  local repo_root="$1"
+  local is_plugin=$(is_plugin_marketplace_member "$repo_root")
+  local has_wrapper=$(has_binary_wrapper "$repo_root")
+  local binary_kind=""
+  if [ "$has_wrapper" = "true" ]; then
+    local mcp_match=$(ls "$repo_root/bin"/*.sh 2>/dev/null \
+      | grep -E '(-mcp-wrapper\.sh$|/[^/]*mcp[^/]*\.sh$)' | head -1)
+    [ -n "$mcp_match" ] && binary_kind="mcp" || binary_kind="cli"
+  fi
+  if [ "$is_plugin" = "true" ] && [ -n "$binary_kind" ]; then
+    echo "plugin+$binary_kind"
+  elif [ "$is_plugin" = "true" ]; then echo "plugin"
+  elif [ -n "$binary_kind" ]; then echo "$binary_kind"
+  else echo "n/a"; fi
+}
+
+# ── Detection invocation ──
+DISTRIBUTION_TYPE=$(infer_distribution_type "$REPO_ROOT")
 # Returns: plugin / mcp / cli / plugin+mcp / plugin+cli / n/a
 
 # Silent skip: non-distribution repo
 if [ "$DISTRIBUTION_TYPE" = "n/a" ]; then
-  AUDIT_LINE="### Distribution Sync
+  AUDIT_LINE="
+
+### Distribution Sync
 
 - **Detected**: not a distribution repo (skipped)
 - **At**: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 "
   patch_closing_comment_append "$AUDIT_LINE"
-  exit 0   # proceed to Step 7
+  # Silent skip — proceed to Step 7 (do NOT use `exit 0` here; in markdown-skill
+  # context that would terminate the entire close flow including Step 7 batch
+  # close special rules. Instead, the agent reading this skill branches at
+  # agent level: `n/a` path is complete, advance to Step 7 in skill order.)
 fi
 
-# Silent skip: env var rollback
-if [ "$IDD_DISTRIBUTION_SYNC_PROMPT" = "false" ]; then
-  AUDIT_LINE="### Distribution Sync
+# Silent skip: env var rollback (overrides prompt for distribution-detected repos)
+if [ "$DISTRIBUTION_TYPE" != "n/a" ] && [ "$IDD_DISTRIBUTION_SYNC_PROMPT" = "false" ]; then
+  AUDIT_LINE="
+
+### Distribution Sync
 
 - **Detected**: $DISTRIBUTION_TYPE
 - **Choice**: prompt skipped (IDD_DISTRIBUTION_SYNC_PROMPT=false, per IC_R011-style rollback)
 - **At**: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 "
   patch_closing_comment_append "$AUDIT_LINE"
-  exit 0
+  # Same agent-level advance: skip prompt, proceed to Step 7.
 fi
 ```
 
-If detection hit → enter the AskUserQuestion deliberation moment described below.
+If detection returned a real type AND env var didn't suppress → enter the AskUserQuestion deliberation moment described below.
 
 #### AskUserQuestion 3-option (prose — NOT a bash function call)
 
@@ -530,38 +635,38 @@ When `DISTRIBUTION_TYPE` is plugin/MCP/CLI/mixed, the agent invokes **AskUserQue
 > - **`skip — I'll sync manually later`** — record `### Distribution Sync Pending` audit + provide manual command;close completes
 > - **`not applicable — this issue doesn't ship`** — record `### Distribution Sync — Not Applicable`;e.g. test infra fix, internal refactor, docs-only change that doesn't reach user
 
-#### D3 Skill resolution table
+#### D3 Skill resolution table (v1: explicit ordering, fallback-safe)
 
-| `DISTRIBUTION_TYPE` | `SKILL_NAME` to invoke |
-|---------------------|----------------------|
+Per #45 Plan tier D3 + #66 audit dependency: until `plugin-update` Phase 1.5 cascade is empirically confirmed (see #66), v1 chains BOTH skills explicitly for mixed types — binary-deploy first, then plugin-update.
+
+| `DISTRIBUTION_TYPE` | Sync skill(s) to invoke (in order) |
+|---------------------|-----------------------------------|
 | `plugin` | `/plugin-tools:plugin-update <plugin-name>` |
 | `mcp` | `/mcp-tools:mcp-deploy` |
 | `cli` | `/cli-tools:cli-deploy` |
-| `plugin+mcp` / `plugin+cli` | `/plugin-tools:plugin-update <plugin-name>` (D3 superset rule — plugin-update v1.11+ Phase 1.5 cascades to binary deploy) |
+| `plugin+mcp` | `/mcp-tools:mcp-deploy` → then `/plugin-tools:plugin-update <plugin-name>` |
+| `plugin+cli` | `/cli-tools:cli-deploy` → then `/plugin-tools:plugin-update <plugin-name>` |
 
 **Plugin name resolution**: `<plugin-name>` is the `name` field of the matched `marketplace.json` `plugins[]` entry (algorithm in `references/distribution-detection.md`).
+
+**Why ordering matters for mixed types**: bumping the binary first means `plugin-update`'s Phase 1.5 dependency check (if cascade exists) sees the already-bumped binary and skips its own cascade prompt — idempotent. If `plugin-update` doesn't cascade (per #66 audit risk), explicit ordering ensures both shells are still in sync. Either way safer than relying on superset behavior unverified.
 
 **v1 caller-flag note**: Step 6.5 v1 invokes target skill **without** `--source-issue` flag (caller skills in `psychquant-claude-plugins` repo don't yet support it — sister issue tracks). Graceful: target skills ignore unknown flags. Audit trail still complete via closing comment patch.
 
 #### Audit trail PATCH (any choice)
 
-Regardless of user's choice, PATCH the closing comment (captured in Step 4 as `$CLOSING_COMMENT_ID`) to append `### Distribution Sync` section:
+Regardless of user's choice, PATCH the closing comment (captured in Step 4 as `$CLOSING_COMMENT_ID`) to append `### Distribution Sync` section. The `patch_closing_comment_append` helper was defined inline at the top of this Step 6.5 detection block (above) — reuse it here.
 
 ```bash
-# Helper: append a block to closing comment via gh api PATCH
-patch_closing_comment_append() {
-  local append_block="$1"
-  local existing=$(gh api "/repos/${GITHUB_REPO}/issues/comments/${CLOSING_COMMENT_ID}" -q .body)
-  jq -n --arg b "${existing}${append_block}" '{body: $b}' > /tmp/distribution_sync_patch.json
-  gh api -X PATCH "/repos/${GITHUB_REPO}/issues/comments/${CLOSING_COMMENT_ID}" \
-    --input /tmp/distribution_sync_patch.json -q '.html_url'
-}
-
-# Build outcome line per choice
+# Build outcome line per choice. Match against the AskUserQuestion option labels
+# emitted in the prose section above (substring match on the leading verb works
+# because options have distinct first words: "chain", "skip", "not applicable").
 case "$USER_CHOICE" in
   "chain to "*)
-    # Invoke target skill via Skill(...) tool, capture outcome summary
-    # Skill(skill="plugin-tools:plugin-update", args="<plugin-name>")
+    # Invoke target skill via Skill(...) tool at agent level (NOT inside this
+    # bash block — the Skill tool is a Claude Code agent-level tool). Per D3
+    # mixed-type ordering: for plugin+mcp/plugin+cli, invoke binary-deploy
+    # first, then plugin-update. Capture outcome summary from each invocation.
     OUTCOME="invoked \`${SKILL_NAME}\`, see chained skill output above"
     ;;
   "skip"*)
