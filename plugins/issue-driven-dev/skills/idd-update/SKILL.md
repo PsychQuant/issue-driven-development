@@ -29,6 +29,25 @@ allowed-tools:
 
 實用情境：phase 從 verified 進到 closed 後一次 sync N 個 issue 的 body；或重啟 session 後想看哪些 issue 卡哪一階段，先 batch update 確保 body 是最新狀態。
 
+## When to use `idd-issue` multi-finding mode instead（v2.55.0+）
+
+如果你要做的是「**從一個 source 文件抽多個 findings,部分 update 既存 issue Current Status**」(罕見場景:transcript 含 5 個對既存 in-flight issues 的 progress 紀錄),**不要**手動跑 `idd-update` 多次,改用 `idd-issue` multi-finding mode:
+
+```bash
+idd-issue source.docx       # auto-trigger when source contains ≥2 findings
+```
+
+差別:
+
+| 情境 | 用 idd-update | 用 idd-issue multi-finding mode |
+|------|--------------|-------------------------------|
+| 純 phase sync(verified → closed)N 個 issue | ✅ batch mode | overkill |
+| 從 source 文件分流多 finding,部分 update Current Status / 部分 comment / 部分 new | 5+ 次 invoke + 失 audit trail | ✅ 一次 invoke + Stage 2 picker 選 routing intent `update status` |
+
+`update status` intent 內部仍 call `idd-update` 邏輯(reuse 現有 implementation),audit trail 串接 idd-issue 的 jsonl run log。
+
+完整 multi-finding mode 契約見 `idd-issue` SKILL.md `## Multi-finding source mode` 段落。
+
 ## 設計
 
 Issue body 分為兩個區域：

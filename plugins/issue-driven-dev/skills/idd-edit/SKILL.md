@@ -27,6 +27,24 @@ allowed-tools:
 
 完整契約見 [batch-and-cluster.md](../../references/batch-and-cluster.md)。罕見場景：跨 issue 的 typo 統一修、補同一段 errata note、把多個 stale comment 統一標 deprecated。
 
+## When to use `idd-issue` multi-finding mode instead（v2.55.0+）
+
+如果你要做的是「**從一個 source 文件抽多個 findings,部分 edit 既存 issue body**」(典型場景:transcript 含 5 個對既存 issues body 的修正,e.g. 「H4 hypothesis 重新表述」「reputation 變 core IV 改 framing」),**不要**手動跑 `idd-edit` 多次,改用 `idd-issue` multi-finding mode:
+
+```bash
+idd-issue source.docx       # auto-trigger when source contains ≥2 findings
+```
+
+差別:
+
+| 情境 | 用 idd-edit | 用 idd-issue multi-finding mode |
+|------|------------|-------------------------------|
+| 已知 N 個 comment 套同一段 edit | ✅ batch mode | overkill |
+| 從 source 文件分流多 finding,部分 edit body / 部分 comment / 部分 new | 5+ 次 invoke + 失 audit trail | ✅ 一次 invoke + Stage 2 picker 對每筆選 routing intent(`comment` / `edit body` / `update status`) |
+| 需要 per-action footer 連結回 source | 手動加 | ✅ 自動加 |
+
+完整 multi-finding mode 契約見 `idd-issue` SKILL.md `## Multi-finding source mode` 段落。
+
 ## 三種 Edit Mode
 
 | Mode | 動作 | 原 body | 適用 |

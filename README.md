@@ -8,7 +8,7 @@ A Claude Code plugin marketplace for the [Issue-Driven Development (IDD)](https:
 
 | Plugin | Version | Purpose |
 |--------|---------|---------|
-| [`issue-driven-dev`](./plugins/issue-driven-dev) | 2.37.0 | Core IDD workflow — issue → diagnose → implement → verify → close. 13 skills + 5 rules + 5 references. |
+| [`issue-driven-dev`](./plugins/issue-driven-dev) | 2.56.0 | Core IDD workflow — issue → diagnose → implement → verify → close. 14 skills(含 `/idd-all-chain` chain-solve 與 `idd-issue` multi-finding source mode for batch routing across new + existing issues from a single source document) + 5 rules + 5 references. |
 | `idd-route` (coming) | 0.1.0 | Data-driven agent routing: recommends Codex / Claude Opus / Sonnet / Haiku per IDD issue based on observed track record. Wraps the [PsychQuant/idd-route-swift](https://github.com/PsychQuant/idd-route-swift) binary. |
 
 ## Installation

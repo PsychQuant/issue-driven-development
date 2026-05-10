@@ -27,6 +27,24 @@ allowed-tools:
 
 實用情境：upstream 有變動波及多個 in-progress issue、同一個 advisor feedback 適用多個提案、宣告統一 deferral 原因。`--type=question` 也適合 batch（同一個未決問題影響多個 issue）。
 
+## When to use `idd-issue` multi-finding mode instead（v2.55.0+）
+
+如果你要做的是「**從一個 source 文件抽多個 findings,部分 comment 既存 issue、部分建新 issue**」(典型場景:transcript 有 10 個觀察點,5 個對應 #14/#17/#23 的補充、5 個是新主題),**不要**手動跑 `idd-comment` 多次,改用 `idd-issue` multi-finding mode:
+
+```bash
+idd-issue source.docx       # auto-trigger when source contains ≥2 findings
+```
+
+差別:
+
+| 情境 | 用 idd-comment | 用 idd-issue multi-finding mode |
+|------|---------------|-------------------------------|
+| 已知對哪個 #N 加同一 comment(批次) | ✅ batch mode | overkill |
+| 從 source 文件分流多 finding 到多個 destination | 5 次 invoke + 失 audit trail | ✅ 一次 invoke + jsonl run log + per-action footer |
+| Mixed routing(new + comment + edit) | 不支援 | ✅ Stage 2 picker 對每筆選 routing |
+
+完整 multi-finding mode 契約見 `idd-issue` SKILL.md `## Multi-finding source mode` 段落。
+
 ## 6 個 Types
 
 | Type | 用途 | 必填 | 產出格式 emoji |

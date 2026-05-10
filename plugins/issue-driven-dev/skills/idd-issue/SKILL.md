@@ -961,6 +961,358 @@ idd-issue --blocked-by 101 ...   # 不行 — idd-issue 是建新 issue,不是 e
 | 「用 `--parent` 跨 repo 串 issue」 | GitHub task list 跨 repo 不連動進度條,語意被破壞 | 用 `groups` 機制(primary + tracking + cross-link)|
 | 「`--bundle-mode` + `--target group:<label>`」 | 兩種機制 mental model 不同(parent-child vs cross-repo cross-link) | 選一個,refuse 同時 set |
 
+## Multi-finding source mode(v2.55.0+)
+
+當 source(transcript / docx / pdf / pasted text)含 **≥2 個獨立 findings** 且部分對應到既存 issues(該 amend 而非建新),走 multi-finding source mode。auto-trigger,backward compat。
+
+> **為什麼有這個 mode**:處理 multi-finding source 時 user 常需要「把 finding 分流:有些開新 issue、有些 amend 既存 #N」。沒這個 mode 時退化成手動跑 N 次 atomic skill 或手敲 `gh api PATCH`(失去結構化 audit trail)。Lesley research 2026-05-09 case:5 個 amendments 用 5 次 `gh api PATCH` 浪費 2.5 min + 失 audit。本 mode 把 batch routing + dispatch 升格 first-class。
+>
+> **與 bundle mode 區別**:bundle 是**explicit 多 issue creation**(user 已知道要建 N 個 issue + 依賴關係);multi-finding 是 **source-driven mixed routing**(從 source 自動抽 findings,部分新建部分 amend 既存)。**互斥** — 同時 set 兩個 flag refuse。
+
+### Auto-trigger
+
+Step 1 source extraction 後:
+
+```
+if len(extracted_findings) >= 2:
+  enter multi-finding mode (Stage 1-4 below)
+else:
+  fall through to single-issue mode (existing behavior unchanged)
+```
+
+**Override flags**:
+
+- `--multi-finding` — 強制進 mode 即使 detect 1 finding(罕見:user 知 source 含多 finding 但 AI 沒抽到)
+- `--no-multi-finding` — 強制跳 mode 即使 detect ≥2 findings,把整個 source 當一個 issue body
+
+兩 flag 同時 set → refuse。`--bundle-mode` + multi-finding mode 同時觸發 → refuse(見「Mutual exclusion」段落)。
+
+### 4-Stage Pipeline
+
+```
+Stage 1: Extract findings (AI)
+   ↓
+Stage 2: Per-finding picker (user × N, AI surface top-3 candidates)
+   ↓
+Stage 3: Batch preview (single confirmation)
+   ↓
+Stage 4: Dispatch (warn-continue + audit trail)
+```
+
+#### Stage 1: Extract findings
+
+AI 從 source 抽 paragraph-level findings,每筆含:
+
+- `finding_id`: 1-indexed integer
+- `finding_quote`: **verbatim** original text(no AI rewording — 同 IC_R007 source-preservation 紀律)
+- `summary`: AI 1-3 句描述 finding 在講什麼
+
+Granularity 預設 paragraph-level。AI MAY 合併連續同主題段落、MAY 把含 2+ 主題的單段拆開。
+
+**Source type 沿用 Step 1 既有 adapter**:docx / pdf / Telegram / Apple Mail / Apple Notes / pasted-text / md。Adapter 切換對 multi-finding mode 透明。
+
+#### Stage 2: Per-finding picker
+
+對每個 finding,AI 先 surface candidate issues,再讓 user 選 routing。
+
+**Step 2a — AI compute keyword overlap**:
+
+```bash
+# Extract noun phrases from finding quote + summary
+NOUN_PHRASES=$(extract_keywords "$finding")  # e.g. "schultz scale 12 items environmental"
+
+# Search candidate issues
+gh issue list --repo "$GITHUB_REPO" --state open \
+  --search "$NOUN_PHRASES" --limit 30 --json number,title,body
+```
+
+**Step 2b — Score 計算**:
+
+```
+score = (title_overlap × 2 + body[:300]_overlap × 1) / max_possible_score
+```
+
+Top-3 by score。
+
+**Step 2c — 4-option AskUserQuestion picker**:
+
+```
+question: "Finding {N} of {M}: \"{finding_quote first 80 chars}...\""
+options:
+  - "#{X} ({score})"           ← top-1 candidate
+  - "#{Y} ({score})"           ← top-2 candidate
+  - "#{Z} ({score})"           ← top-3 candidate
+  - "Other"                    ← expands to second-level picker
+```
+
+選 `Other` → second-level AskUserQuestion:
+
+```
+options:
+  - "New issue"                ← go through Step 3 normal idd-issue flow
+  - "Skip this finding"        ← drop, no dispatch
+  - "Merge with another finding" ← see § Merge mechanism
+  - "Pick free-text #N"        ← AskUserQuestion for typed N
+```
+
+**Step 2d — Routing intent disambiguation(picked existing #N)**:
+
+```
+question: "Finding goes to #{picked}. What action?"
+options:
+  - "comment"           ← append new comment to #picked
+  - "edit body"         ← modify #picked body
+  - "update status"     ← call idd-update on #picked Current Status block
+  - "skip — change my mind" ← back to picker
+```
+
+**Iron rule**: skill SHALL NOT auto-dispatch based on score。Routing 決定要 explicit user selection。
+
+#### Stage 3: Batch preview
+
+Stage 2 完成所有 findings 後 print 完整 dispatch table + single AskUserQuestion:
+
+```
+=== Multi-Finding Plan (10 findings → 8 actions, 2 skipped) ===
+ 1. [NEW]      "Schultz scale 12 items"               → /idd-issue
+ 2. [COMMENT]  "Lesley reputation 變 core IV"         → #14
+ 3. [EDIT]     "刪 H4-H6 cue hypotheses"              → #14
+ 4. [COMMENT]  "Conjoint paired-choice 重要性"         → #17
+ 5. [SKIP]     "(老師閒聊不相關)"                       —
+ 6. [NEW]      "問卷 §5b Schultz 加 12 題"             → /idd-issue
+ 7. [COMMENT]  "Prolific N=200-400 確認"               → #8
+ 8. [EDIT]     "JCP 1-study → 2-study budget"         → #6
+ 9. [MERGED:8] (combined into row 8)                   → #6
+10. [COMMENT]  "Phase 4 dogfood 紀錄"                 → #48
+
+[Execute all] [Edit row N] [Cancel]
+```
+
+- `[Execute all]` → 進 Stage 4 dispatch
+- `[Edit row N]` → re-invoke Stage 2 picker for row N only,其他 rows 保留;re-pick 完成後回 Stage 3 preview
+- `[Cancel]` → 退出 skill,**no GitHub side effect**,**no jsonl written**
+
+#### Stage 4: Dispatch with warn-continue
+
+Stage 3 confirm 後 sequential 跑 N 個 `gh` action:
+
+| Action | Command |
+|--------|---------|
+| `create` | `gh issue create --title ... --body ...`(body 含 footer) |
+| `comment` | `gh issue comment $N --body ...`(body 含 footer) |
+| `edit` | `gh issue edit $N --body "$NEW_BODY_WITH_FOOTER"` |
+| `update` | call `idd-update` skill on #N |
+| `skip` | no-op |
+| `merged-into` | no separate dispatch(content 已在 partner action body) |
+
+**Warn-continue contract**:
+
+- 成功:寫 jsonl `actions[i]` 含 `issue_number` / `issue_url` / `comment_url` / `duration_ms`
+- 失敗:寫 jsonl `actions[i].error` + `retry_hint`,**continue** to `actions[i+1]`(不 abort)
+- 全部完成:print summary `N succeeded, M failed (see jsonl), K skipped`
+
+**No rollback**: 已 dispatch 的 actions **不**回滾(每筆是 user-confirmed 意圖,不是 AI 推論)。失敗的 user 自行手動補 dispatch(`retry_hint` 給 hint)。
+
+### Audit trail(雙軌:footer + jsonl)
+
+#### Per-action body footer
+
+每個 dispatched issue body / comment 結尾(用 `---` separator)加:
+
+```markdown
+---
+> **Surfaced via**: /idd-issue multi-finding mode <run_id> from `<source>`
+> **Run log**: `.claude/.idd/issue-runs/<run_id>.jsonl`
+```
+
+- `<run_id>`:ISO-8601 timestamp,e.g. `2026-05-10T17:00:00`
+- `<source>`:源 file path(e.g. `communications/recordings/0509-research.srt`)或 `pasted-text:<first-30-chars>`
+
+#### JSONL run log
+
+`.claude/.idd/issue-runs/<run_id>.jsonl` 每次 invocation 一檔。**Commit 進 git**(不 gitignore),確保 cross-machine continuity。
+
+Schema:
+
+```typescript
+type RunLog = {
+  run_id: string;          // ISO-8601 timestamp
+  source: string;          // file path or "pasted-text:..."
+  source_type: "docx" | "pdf" | "telegram" | "apple-mail" | "apple-notes" | "pasted-text" | "md";
+  total_findings: number;
+  actions: Action[];
+  started_at: string;      // ISO-8601
+  completed_at: string;    // ISO-8601
+  succeeded: number;
+  failed: number;
+  skipped: number;
+};
+
+type Action = {
+  finding_id: number;        // 1-indexed
+  finding_quote: string;     // verbatim from source
+  action: "create" | "comment" | "edit" | "update" | "skip" | "merged-into";
+  issue_number?: number;
+  issue_url?: string;
+  comment_url?: string;
+  duration_ms?: number;
+  merged_from?: number[];    // present on primary entry of a merge: [partner_finding_id]
+  merged_into?: number;      // present on partner entry (action="merged-into")
+  error?: string;
+  retry_hint?: string;
+  reason?: string;           // for action="skip"
+};
+```
+
+範例(Lesley case):
+
+```jsonl
+{"run_id": "2026-05-10T17:00:00", "source": "communications/recordings/0509-research.srt", "source_type": "pasted-text", "total_findings": 10, "actions": [
+  {"finding_id": 1, "finding_quote": "Schultz scale 12 items detail", "action": "create", "issue_number": 50, "issue_url": "https://github.com/.../50", "duration_ms": 1234},
+  {"finding_id": 2, "finding_quote": "reputation 變 core IV", "action": "comment", "issue_number": 14, "comment_url": "...", "duration_ms": 890},
+  {"finding_id": 3, "finding_quote": "刪 H4-H6 cue hypotheses", "action": "edit", "issue_number": 14, "duration_ms": 1100, "merged_from": [4]},
+  {"finding_id": 4, "finding_quote": "drop cue branch", "action": "merged-into", "merged_into": 3},
+  {"finding_id": 5, "action": "skip", "reason": "user-decision"},
+  {"finding_id": 6, "finding_quote": "問卷 §5b Schultz 加 12 題", "action": "create", "error": "GraphQL: rate limit", "retry_hint": "rerun gh issue create with same title manually"}
+], "started_at": "2026-05-10T17:00:00", "completed_at": "2026-05-10T17:03:42", "succeeded": 4, "failed": 1, "skipped": 1}
+```
+
+### Merge mechanism(二方 only)
+
+Stage 2 picker 選 `[Merge with another finding]` 觸發 inline sub-prompt 流程:
+
+```
+Step 1 — partner picker (4-option):
+  question: "Merge finding {current} with which?"
+  options: [{candidate-1}] [{candidate-2}] [{candidate-3}] [Other]
+  - candidates = remaining unprocessed findings(已 routed 的不能再被 merge,partner)
+  - Other → free-pick by finding_id
+
+Step 2 — combined target picker (4-option):
+  question: "Merged {current}+{partner} should go to..."
+  options: [#X] [#Y] [New issue] [Skip]
+  - top-3 candidates 用 combined keyword overlap recompute
+
+Step 3 — routing intent (if picked existing #N):
+  same as Stage 2d
+```
+
+**Operational semantics**:
+
+- Partner 條目在 jsonl 寫 `action: "merged-into"` + `merged_into: <primary_id>`,**無** issue_url(不 dispatch)
+- Primary 條目 dispatch 一個 combined comment / edit / new issue,body 含 partner + primary 的 quote + 各自 summary
+- JSONL 雙向可追溯:`merged_from: [<partner_id>]` in primary,`merged_into: <primary_id>` in partner
+
+**Three-way+ merge limit**:已被 merged 的 finding **不能**再被選為新 merge partner — refuse with explanation message。MVP 限二方;三方+ 列為 future enhancement。
+
+### Mutual exclusion (vs `--bundle-mode`)
+
+```bash
+if BUNDLE_MODE_FLAG_SET AND multi_finding_triggered:
+  abort with: "✗ refuse: --bundle-mode 和 multi-finding mode 互斥
+    bundle 是 explicit ordered/unordered 多 issue creation;
+    multi-finding 是 source-driven mixed routing(包含 amend existing)。
+    請選一個。"
+```
+
+### Cross-reference 對應 atomic skills
+
+當 user 用 `/idd-comment #14` 想批次 comment 多筆內容時,SKILL.md 引導改走本 mode:「For batch commenting from source document with multiple findings, use `idd-issue` multi-finding mode (auto-triggers when source contains ≥2 findings)」。同樣對 `idd-edit` / `idd-update`。
+
+### Backward compatibility 保證
+
+既有 invocation 行為**完全不變**:
+
+| Invocation | Behavior |
+|-----------|----------|
+| `idd-issue "text"` | Single-issue(unchanged)|
+| `idd-issue source.docx` 1 finding | Single-issue(unchanged)|
+| `idd-issue source.docx` ≥2 findings | **Auto-trigger multi-finding mode** |
+| `idd-issue --multi-finding "text"` | **Force multi-finding mode** |
+| `idd-issue --no-multi-finding source.docx` | Force single-issue,whole source 變 1 issue body |
+| `idd-issue --bundle-mode ordered "..." source.docx (multi)` | **Refuse mutual exclusive** |
+| 任何既有 flag(`--target` / `--mention` / `--parent` / `--blocked-by`) | unchanged |
+
+### Step 0 Bootstrap Stage Task List 條件 task
+
+**僅在 multi-finding mode 觸發時** create 以下 5 個 stage tasks(同既有 bundle-mode 條件 task pattern):
+
+```
+TaskCreate(name="extract_findings", description="Stage 1: source 抽 paragraph-level findings,verbatim quote + AI summary,寫入 internal state")
+TaskCreate(name="per_finding_picker", description="Stage 2: 對每個 finding 跑 4-option AskUserQuestion picker,top-3 + Other expand")
+TaskCreate(name="batch_preview", description="Stage 3: print full dispatch table,AskUserQuestion [Execute all][Edit row N][Cancel]")
+TaskCreate(name="dispatch_with_warn_continue", description="Stage 4: sequential gh actions,失敗 log to jsonl 不 abort,寫 footer")
+TaskCreate(name="merge_handler", description="Stage 2 inline sub-flow handler:partner picker → combined target picker → intent disambiguation,JSONL merged_from/merged_into")
+```
+
+不 trigger 時(single-issue mode)不 create 這些 task。
+
+### Examples
+
+#### Example 1: Lesley 0509 transcript
+
+```bash
+$ idd-issue communications/recordings/0509-research.srt --target kiki830621/teaching_lesley
+→ Auto-trigger multi-finding mode (10 findings extracted)
+
+Stage 2: per-finding picker × 10
+  Finding 1 of 10: "Schultz scale 12 items detail..."
+    [#15 (0.42)] [#14 (0.31)] [#17 (0.28)] [Other]
+    user picks → [Other] → [New issue] → routed: NEW
+  Finding 2 of 10: "reputation 變 core IV..."
+    [#23 (0.78)] [#14 (0.62)] [#17 (0.41)] [Other]
+    user picks → #23 → intent [comment] → routed: COMMENT to #23
+  ... (8 more)
+
+Stage 3: batch preview
+  === Plan (10 findings → 8 actions, 2 skipped) ===
+   1. [NEW]      ...                                  → /idd-issue
+   2. [COMMENT]  "reputation 變 core IV"              → #23
+   3+4. [EDIT-MERGED] "drop H4-H6 + reframe"          → #14
+   ...
+  [Execute all]
+
+Stage 4: Dispatch
+  ✓ Created issue #50 (1234ms)
+  ✓ Posted comment to #23 (890ms)
+  ✓ Edited #14 body (1100ms, merged_from: [4])
+  ⚠ Failed to create issue from finding 6: rate limit (retry_hint logged)
+  ...
+  Summary: 7 succeeded, 1 failed (see .claude/.idd/issue-runs/2026-05-10T17:00:00.jsonl), 2 skipped
+```
+
+#### Example 2: Single finding source — fall through
+
+```bash
+$ idd-issue short-note.docx
+→ Stage 1: 1 finding extracted
+→ Multi-finding mode NOT triggered
+→ Fall through to existing single-issue creation flow
+✓ Created issue #51
+```
+
+#### Example 3: Bundle mode + multi-finding source — refuse
+
+```bash
+$ idd-issue --bundle-mode ordered transcript.srt
+→ Stage 1: 8 findings extracted
+✗ refuse: --bundle-mode 和 multi-finding mode 互斥
+  bundle 是 explicit ordered/unordered 多 issue creation;
+  multi-finding 是 source-driven mixed routing(包含 amend existing)。
+  請選一個。
+```
+
+### 設計理由 — 為什麼不另起 sibling skill?
+
+考慮過開新 `/idd-fanout` 或 `/idd-triage` skill 但選 mode 擴展 `idd-issue`:
+
+1. **70% 重疊既有 idd-issue logic**:source adapter / target resolution / mention validation / attachment upload / sister sweep / milestone assignment 都要 reuse,複製一份成本高
+2. **Bundle mode 已是同類 prior art**:v2.52.0 把 bundle 做成 idd-issue 內部 mode(`--bundle-mode` flag),user 心智模型已建立「idd-issue 是 filing entry point,有多種 mode」
+3. **避免 skill 數量爆炸**:IDD 已 14+ skills,新增 cognitive cost 不值得 ~30% 獨特功能
+4. **Naming controversy 自然消解**:不需起 new noun(fanout/dispatch/triage),descriptive 命名「multi-finding source mode」即可
+
+設計 trade-off 完整紀錄見 `openspec/changes/add-multi-finding-source-mode-to-idd-issue/design.md` D1-D7。
+
 ## 來源文件規則
 
 ### One Point = One Issue
