@@ -209,7 +209,7 @@ fi
 gh issue edit "$ROOT_ISSUE" -R "$GITHUB_REPO" --body "$NEW_BODY"
 ```
 
-> **#46 multi-root extension hook** (v2.57.0+, #51 shipped): detection logic is now extracted to `plugins/issue-driven-dev/scripts/check-diagnosis-readiness.sh` with variadic positional signature `<github-repo> <issue-number> [<issue-number>...]` returning `{"ready":[N,...],"not_ready":[N,...]}` JSON. v1 single-root invocation;ready for #46 multi-root chain to call with multiple issue numbers + aggregate AskUserQuestion across roots without API change. See `references/chain-flow.md` for canonical signature.
+> **#46 multi-root extension hook** (v2.57.0+, #51 shipped): detection logic is now extracted to `plugins/issue-driven-dev/scripts/check-diagnosis-readiness.sh` with variadic positional signature `<github-repo> <issue-number> [<issue-number>...]` returning `{"ready":[N,...],"not_ready":[N,...]}` JSON. v1 single-root invocation; ready for #46 multi-root chain to call with multiple issue numbers + aggregate AskUserQuestion across roots without API change. See `references/chain-flow.md` for canonical signature.
 
 > **Removed pseudo-fallback for unattended caller**: 早期 design 含 `IN_CHAIN_CONTEXT` env var 偵測作 unattended fallback,但實際 repo 中**無任何 producer** sets this var(/idd-verify #47 P1 finding 1)。`/idd-all-chain` 是 user-invoked deliberation moment,沒 unattended caller path,該 env detection 是 dead code,移除。若未來真有 unattended caller,需明確設計 producer + 文件化 detection convention。
 
