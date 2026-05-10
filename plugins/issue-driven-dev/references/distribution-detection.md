@@ -14,10 +14,11 @@ This contract specifies how `/idd-close` Step 6.5 detects whether the closing re
 
 | Type | Detection signal | Sync skill |
 |------|-----------------|-----------|
-| `plugin` | Repo is referenced as `plugins[].source.git` in some ancestor `.claude-plugin/marketplace.json` | `/plugin-tools:plugin-update <plugin-name>` |
-| `mcp` | `$REPO_ROOT/bin/*.sh` contains `gh release download` or `curl.*github.com.*releases` AND wrapper script name matches `*-mcp-wrapper.sh` (or contains `mcp` substring) | `/mcp-tools:mcp-deploy` |
+| `plugin` | Repo or any subdir is listed as `plugins[].source` (string `"./plugins/<name>"`) in some ancestor `.claude-plugin/marketplace.json` | `/plugin-tools:plugin-update <plugin-name>` |
+| `mcp` | `$REPO_ROOT/bin/*.sh` contains GitHub release URL pattern (`gh release download` / `gh api .../releases` / `api.github.com/.../releases` / `github.com/.../releases/(download\|tags\|latest)` — line-agnostic, matches variable-substituted URLs) AND wrapper script name matches `*-mcp-wrapper.sh` (or contains `mcp` substring) | `/mcp-tools:mcp-deploy` |
 | `cli` | Same wrapper detection as MCP, but wrapper script name does NOT match MCP heuristic | `/cli-tools:cli-deploy` |
-| `plugin+mcp` / `plugin+cli` | Both signals trigger | `/plugin-tools:plugin-update <plugin-name>` (per D3 superset rule, see below) |
+| `plugin+mcp` | Both signals trigger | `/mcp-tools:mcp-deploy` → then `/plugin-tools:plugin-update <plugin-name>` (D3 v1: explicit ordering, see below) |
+| `plugin+cli` | Both signals trigger | `/cli-tools:cli-deploy` → then `/plugin-tools:plugin-update <plugin-name>` (D3 v1: explicit ordering, see below) |
 | `n/a` | None of the above | — silent skip |
 
 ## Detection helpers
@@ -131,6 +132,51 @@ has_binary_wrapper() {
 - `github\.com/.../releases/(download|tags|latest)` — public release URLs (real-world pattern: `cacher-mcp-wrapper.sh` `asset_url=`)
 
 Empirically validated: matches all 13 PsychQuant MCP wrappers + `idd-route` CLI wrapper. Future patterns (wget, npm) covered by Extension protocol below.
+
+### `resolve_plugin_name(repo_root) -> string`
+
+Returns the **plugin `name` field** from the marketplace.json entry whose `source` resolves to `repo_root` (or a subdir of it). Required when chain target is `plugin-update <plugin-name>` — Step 6.5 calls this AFTER `is_plugin_marketplace_member` returns true. Empty output if no match (caller must check).
+
+```bash
+resolve_plugin_name() {
+  local repo_root="$1"
+  local resolved_root
+  resolved_root=$(cd "$repo_root" 2>/dev/null && pwd -P) || resolved_root="$repo_root"
+  local current="$resolved_root"
+  while :; do
+    local manifest="$current/.claude-plugin/marketplace.json"
+    if [ -f "$manifest" ]; then
+      local manifest_dir
+      manifest_dir=$(cd "$(dirname "$manifest")/.." 2>/dev/null && pwd -P) || \
+        manifest_dir=$(dirname "$(dirname "$manifest")")
+      # Iterate plugin entries with both name and source. For each, resolve source
+      # path and check if matches repo_root prefix; emit name on match.
+      local name_match
+      name_match=$(jq -r '.plugins[]? | select(.source | type == "string") | "\(.name)\t\(.source)"' \
+        "$manifest" 2>/dev/null \
+        | while IFS=$'\t' read -r pname psrc; do
+            [ -z "$pname" ] && continue
+            local plugin_dir
+            plugin_dir=$(cd "$manifest_dir/$psrc" 2>/dev/null && pwd -P) || continue
+            case "$plugin_dir/" in
+              "$resolved_root/"|"$resolved_root/"*)
+                echo "$pname"
+                break
+                ;;
+            esac
+          done | head -1)
+      [ -n "$name_match" ] && { echo "$name_match"; return 0; }
+    fi
+    [ "$current" = "$HOME" ] && break
+    [ "$current" = "/" ] && break
+    current=$(dirname "$current")
+  done
+  # No match — return empty (caller checks via [ -z "$NAME" ])
+  echo ""
+}
+```
+
+**Monorepo host case**: when `repo_root` is the marketplace host itself (e.g. `psychquant-claude-plugins` containing 37 plugins), `resolve_plugin_name` returns the FIRST plugin whose source path starts within `repo_root`. This is ambiguous for monorepo hosts — caller (Step 6.5) should handle this case explicitly, e.g. by prompting user "which plugin?" via AskUserQuestion. v1 simplification: assume single-plugin per repo (true for most non-host cases); document monorepo handling as a v2 enhancement.
 
 ### `infer_distribution_type(repo_root, github_repo) -> string`
 

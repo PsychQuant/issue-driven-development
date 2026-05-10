@@ -501,6 +501,25 @@ Skill(skill="issue-driven-dev:idd-update", args="#NNN")
 Per [`references/distribution-detection.md`](../../references/distribution-detection.md) canonical contract. **Helpers MUST be defined before first call** — the silent-skip path below references them, so define-then-call ordering matters (bash treats undefined function calls as `command not found` exit 127).
 
 ```bash
+# ── Step 6.5 prelude: resolve REPO_ROOT (must be non-empty before helpers fire) ──
+# Earlier steps don't define REPO_ROOT. Detection helpers depend on absolute path
+# resolution + walk-up — empty input causes infinite loops in `dirname` and false
+# positives via `cd "" && pwd`. Resolve from git first;fallback to PWD.
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+if [ -z "$REPO_ROOT" ] || [ ! -d "$REPO_ROOT" ]; then
+  echo "WARN: cannot resolve REPO_ROOT — Step 6.5 silent-skip" >&2
+  AUDIT_LINE="
+
+### Distribution Sync
+
+- **Detected**: skipped (REPO_ROOT not resolvable — likely not in git work tree)
+- **At**: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+"
+  # Note: patch_closing_comment_append requires CLOSING_COMMENT_ID to be set;
+  # if it's also empty, the helper warns and returns without aborting close.
+  # Agent: skip remaining Step 6.5 logic, advance to Step 7 in skill order.
+fi
+
 # ── Helpers (inlined from references/distribution-detection.md) ──
 
 # patch_closing_comment_append — appends a markdown block to the closing comment
@@ -517,6 +536,40 @@ patch_closing_comment_append() {
   gh api -X PATCH "/repos/${GITHUB_REPO}/issues/comments/${CLOSING_COMMENT_ID}" \
     --input /tmp/distribution_sync_patch.json -q '.html_url' >/dev/null || \
     echo "WARN: gh api PATCH failed — audit trail incomplete" >&2
+}
+
+# resolve_plugin_name — emit matched plugin's `name` field from marketplace entry
+# (called AFTER is_plugin_marketplace_member returned true; required for SKILL_NAME
+# composition `/plugin-tools:plugin-update <plugin-name>`)
+resolve_plugin_name() {
+  local repo_root="$1"
+  local resolved_root
+  resolved_root=$(cd "$repo_root" 2>/dev/null && pwd -P) || resolved_root="$repo_root"
+  local current="$resolved_root"
+  while :; do
+    local manifest="$current/.claude-plugin/marketplace.json"
+    if [ -f "$manifest" ]; then
+      local manifest_dir
+      manifest_dir=$(cd "$(dirname "$manifest")/.." 2>/dev/null && pwd -P) || \
+        manifest_dir=$(dirname "$(dirname "$manifest")")
+      local name_match
+      name_match=$(jq -r '.plugins[]? | select(.source | type == "string") | "\(.name)\t\(.source)"' \
+        "$manifest" 2>/dev/null \
+        | while IFS=$'\t' read -r pname psrc; do
+            [ -z "$pname" ] && continue
+            local plugin_dir
+            plugin_dir=$(cd "$manifest_dir/$psrc" 2>/dev/null && pwd -P) || continue
+            case "$plugin_dir/" in
+              "$resolved_root/"|"$resolved_root/"*) echo "$pname"; break ;;
+            esac
+          done | head -1)
+      [ -n "$name_match" ] && { echo "$name_match"; return 0; }
+    fi
+    [ "$current" = "$HOME" ] && break
+    [ "$current" = "/" ] && break
+    current=$(dirname "$current")
+  done
+  echo ""
 }
 
 # is_plugin_marketplace_member — walk-up scan for marketplace.json listing this repo
@@ -589,6 +642,22 @@ infer_distribution_type() {
 DISTRIBUTION_TYPE=$(infer_distribution_type "$REPO_ROOT")
 # Returns: plugin / mcp / cli / plugin+mcp / plugin+cli / n/a
 
+# Resolve plugin name when applicable (required for plugin-update <name> chain).
+# Empty string for pure mcp/cli/n/a — caller branches handle empty case.
+PLUGIN_NAME=""
+case "$DISTRIBUTION_TYPE" in
+  plugin|plugin+*)
+    PLUGIN_NAME=$(resolve_plugin_name "$REPO_ROOT")
+    if [ -z "$PLUGIN_NAME" ]; then
+      # Detection said plugin but name resolution failed — schema ambiguity.
+      # Demote to n/a (with audit) so we don't fire AskUserQuestion with
+      # malformed chain command.
+      echo "WARN: distribution type=$DISTRIBUTION_TYPE but plugin name unresolvable — demoting to n/a" >&2
+      DISTRIBUTION_TYPE="n/a"
+    fi
+    ;;
+esac
+
 # Silent skip: non-distribution repo
 if [ "$DISTRIBUTION_TYPE" = "n/a" ]; then
   AUDIT_LINE="
@@ -626,12 +695,26 @@ If detection returned a real type AND env var didn't suppress → enter the AskU
 
 > **Why prose**: AskUserQuestion is a Claude Code agent-level tool, not a bash function. Embedding `AskUserQuestion(...)` inside fenced bash was a category error caught in #47 P1 finding 2 (idd-all-chain Step 0.4). Same pattern applies here — agent reads bash detection, branches at agent level on `DISTRIBUTION_TYPE != "n/a"`, then handles deliberation as prose.
 
-When `DISTRIBUTION_TYPE` is plugin/MCP/CLI/mixed, the agent invokes **AskUserQuestion** with this question structure (per IC_R011 canonical 3-option pattern):
+When `DISTRIBUTION_TYPE` is plugin/MCP/CLI/mixed, the agent **first** composes the chain command from the resolution table below using `$DISTRIBUTION_TYPE` and `$PLUGIN_NAME` (set in Detection invocation), then invokes **AskUserQuestion** per IC_R011 canonical 3-option pattern:
+
+```bash
+# Compose chain command(s) — referenced as $CHAIN_DESC in AskUserQuestion below.
+# For mixed types, this is two skills with explicit ordering (D3 v1).
+case "$DISTRIBUTION_TYPE" in
+  plugin)       CHAIN_DESC="/plugin-tools:plugin-update ${PLUGIN_NAME}" ;;
+  mcp)          CHAIN_DESC="/mcp-tools:mcp-deploy" ;;
+  cli)          CHAIN_DESC="/cli-tools:cli-deploy" ;;
+  plugin+mcp)   CHAIN_DESC="/mcp-tools:mcp-deploy → /plugin-tools:plugin-update ${PLUGIN_NAME}" ;;
+  plugin+cli)   CHAIN_DESC="/cli-tools:cli-deploy → /plugin-tools:plugin-update ${PLUGIN_NAME}" ;;
+esac
+```
+
+Then AskUserQuestion:
 
 > "Issue #${NUMBER} closed. Detected distribution type: **${DISTRIBUTION_TYPE}**. Sync to user-facing channel?"
 >
 > Options (default = first):
-> - **`chain to ${SKILL_NAME} now`** — invoke `${SKILL_NAME}` (resolved per D3 superset table below);outcome recorded in audit trail
+> - **`chain to ${CHAIN_DESC} now`** — invoke the resolved skill(s) at agent level (Skill tool, NOT bash);outcome recorded in audit trail
 > - **`skip — I'll sync manually later`** — record `### Distribution Sync Pending` audit + provide manual command;close completes
 > - **`not applicable — this issue doesn't ship`** — record `### Distribution Sync — Not Applicable`;e.g. test infra fix, internal refactor, docs-only change that doesn't reach user
 
@@ -663,14 +746,14 @@ Regardless of user's choice, PATCH the closing comment (captured in Step 4 as `$
 # because options have distinct first words: "chain", "skip", "not applicable").
 case "$USER_CHOICE" in
   "chain to "*)
-    # Invoke target skill via Skill(...) tool at agent level (NOT inside this
+    # Invoke target skill(s) via Skill(...) tool at agent level (NOT inside this
     # bash block — the Skill tool is a Claude Code agent-level tool). Per D3
     # mixed-type ordering: for plugin+mcp/plugin+cli, invoke binary-deploy
     # first, then plugin-update. Capture outcome summary from each invocation.
-    OUTCOME="invoked \`${SKILL_NAME}\`, see chained skill output above"
+    OUTCOME="invoked \`${CHAIN_DESC}\`, see chained skill output above"
     ;;
   "skip"*)
-    OUTCOME="pending — run \`${SKILL_NAME}\` when ready"
+    OUTCOME="pending — run \`${CHAIN_DESC}\` when ready"
     ;;
   "not applicable"*)
     OUTCOME="this fix doesn't reach user-facing distribution surface"
@@ -694,13 +777,14 @@ patch_closing_comment_append "$AUDIT_BLOCK"
 
 | Scenario | Behavior |
 |----------|----------|
-| Non-distribution repo | Silent skip + 1-line audit `(detection: not a distribution repo)` |
+| `REPO_ROOT` cannot be resolved (e.g. not in git work tree) | Silent skip + 1-line audit `(REPO_ROOT not resolvable)`;close still completes |
+| Non-distribution repo (detection returns `n/a`) | Silent skip + 1-line audit `(detection: not a distribution repo)` |
 | `IDD_DISTRIBUTION_SYNC_PROMPT=false` | Silent skip + 1-line audit citing env var |
 | Detection hit + user picks `chain` | Skill invoked + outcome appended to audit trail |
 | Detection hit + user picks `skip` | Manual command recorded for later use |
 | Detection hit + user picks `not applicable` | Reason recorded;close completes cleanly |
-| `gh api PATCH` fails (network / auth) | Print warning;close still proceeds (audit trail loss is non-blocking) |
-| Plugin name resolution fails (marketplace.json malformed) | Treat as `n/a` + audit line `(detection error: marketplace.json parse failed)` |
+| `gh api PATCH` fails (network / auth) | `patch_closing_comment_append` prints warning to stderr;close still proceeds (audit trail loss is non-blocking) |
+| Plugin name resolution fails (marketplace.json missing/malformed) | Demote `DISTRIBUTION_TYPE` to `n/a` + WARN to stderr;close completes via standard `n/a` path (no separate audit error category — keeps schema simple) |
 
 > **Future hook for `idd-implement` Step 5.x early-surface**: same `infer_distribution_type` helper could power an earlier prompt (at PR-open time rather than close time). Out of scope for #45 v1 — separate follow-up if value confirmed.
 
