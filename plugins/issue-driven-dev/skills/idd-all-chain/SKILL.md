@@ -160,7 +160,7 @@ When `HAS_DIAGNOSIS == 0`, the agent invokes the **AskUserQuestion** tool with t
 Based on the user's selection:
 
 - **`run /idd-diagnose first`** → echo `"→ Halt: please run /idd-diagnose ${ROOT_ISSUE} first, then re-invoke /idd-all-chain"`, then `exit 0` (clean halt — user's deliberate choice, not an error)
-- **`proceed anyway`** → invoke the bash audit-trail PATCH below (`bypass_audit_trail` block), then continue to Step 0.5
+- **`proceed anyway`** → invoke the proceed-anyway audit trail PATCH bash below, then continue to Step 0.5
 - **`cancel`** → echo `"→ Aborted by user. No state changes made (Phase 0.4 ran before any branch/manifest creation)."`, then `exit 0`
 
 ##### proceed-anyway audit trail PATCH (bash)
@@ -182,12 +182,16 @@ CURRENT_BODY=$(gh issue view "$ROOT_ISSUE" -R "$GITHUB_REPO" --json body -q .bod
 
 # Insert audit BEFORE first separator if one exists, else prepend with new separator.
 # Avoids `---` accumulation caught in /idd-verify #47 P3 finding 8.
-if echo "$CURRENT_BODY" | head -50 | grep -q '^---$'; then
-  # Body already has a separator near the top — insert audit before it (no new ---)
-  NEW_BODY=$(awk -v audit="$AUDIT_BLOCK" '
-    !inserted && /^---$/ { print audit; print ""; inserted=1 }
-    { print }
-  ' <<< "$CURRENT_BODY")
+# Use line-split shell pipeline (not `awk -v` with multi-line value, which
+# fails on macOS awk per /idd-verify re-verify finding).
+SEP_LINE=$(echo "$CURRENT_BODY" | head -50 | grep -n '^---$' | head -1 | cut -d: -f1)
+if [ -n "$SEP_LINE" ]; then
+  # Body already has a separator within first 50 lines — insert audit before it
+  BEFORE=$(echo "$CURRENT_BODY" | sed -n "1,$((SEP_LINE - 1))p")
+  AFTER=$(echo "$CURRENT_BODY" | sed -n "${SEP_LINE},\$p")
+  NEW_BODY="${BEFORE}${AUDIT_BLOCK}
+
+${AFTER}"
 else
   # No separator — prepend audit + new separator
   NEW_BODY="${AUDIT_BLOCK}

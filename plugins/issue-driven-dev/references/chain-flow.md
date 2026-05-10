@@ -28,7 +28,7 @@ When detection finds no diagnosis comment, the chain shell fires `AskUserQuestio
 - **`proceed anyway`** — escape hatch for fresh-issue / quick-iter scenarios. PATCHes issue body with `### Chain pre-flight: diagnosis bypassed` audit section so future readers know this chain ran without prior diagnose.
 - **`cancel`** — clean recovery. Same as `run /idd-diagnose first` mechanically (zero side effect, just exits) but communicates "user changed mind" rather than "user will diagnose later". Print explicit `(no cleanup needed — Phase 0.4 ran before any branch/manifest creation)` to remove confusion.
 
-For unattended caller (e.g. `/loop --in-chain` misuse — chain shell is not designed to be called by `/loop` directly, but sanity check), defaults to `proceed` + audit trail (same fallback pattern as Layer V unattended in idd-diagnose Step 3.4).
+**No unattended fallback by design**: `/idd-all-chain` is a user-invoked deliberation moment. There is no automated caller path (`/loop`, cron, etc.) that should reach Step 0.4. If the call is made non-interactively for some reason, the AskUserQuestion will block — that is the correct behavior, not a bug. (Earlier draft included an `IN_CHAIN_CONTEXT` env detection for unattended fallback, but `/idd-verify #47` proved it was dead code with no producer in the repo, so the fallback was removed.)
 
 **Why placement before branch/manifest creation matters**: cancel-path side-effect minimization. If user picks `cancel`, no work is undone — there is no work yet. Diagnosis-readiness gate placed AFTER branch creation would leave dangling cluster branches user must manually delete, breaking IDD's halt+preserve discipline (preserve assumes there's something worth preserving).
 
