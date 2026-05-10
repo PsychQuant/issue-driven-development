@@ -32,7 +32,7 @@ When detection finds no diagnosis comment, the chain shell fires `AskUserQuestio
 
 **Why placement before branch/manifest creation matters**: cancel-path side-effect minimization. If user picks `cancel`, no work is undone — there is no work yet. Diagnosis-readiness gate placed AFTER branch creation would leave dangling cluster branches user must manually delete, breaking IDD's halt+preserve discipline (preserve assumes there's something worth preserving).
 
-**Future #46 multi-root extension**: helper function design preserves N-arg shape (`check_diagnosis_readiness(issue_numbers...) → [ready_list, not_ready_list]`) so #46 can reuse for per-root readiness aggregation. v1 ships single-root only.
+**Implementation** (v2.57.0+, #51): extracted from inline bash to standalone helper at `plugins/issue-driven-dev/scripts/check-diagnosis-readiness.sh`. Variadic positional signature: `check-diagnosis-readiness.sh <github-repo> <issue-number> [<issue-number>...]` emits `{"ready":[N,...],"not_ready":[N,...]}` JSON to stdout. Exit codes 0 (success) / 1 (gh-jq failure) / 2 (usage error) per `manifest-append.sh` precedent. v1 single-root invocation; ready for #46 multi-root chain to call with multiple issue numbers without API change.
 
 ## Cluster branch naming
 
