@@ -62,6 +62,7 @@ Inherits `/idd-all` config protocol (walked-up `.claude/issue-driven-dev.local.j
 
 ```
 TaskCreate(name="preflight", description="Phase 0: 解析 args、gh auth、確認 root issue OPEN")
+TaskCreate(name="check_diagnosis_readiness", description="Phase 0.4 (NEW, v2.55+ #47): gh issue view --json comments + jq filter '## Diagnosis'; found → silent pass; not found → AskUserQuestion 3-option (run /idd-diagnose first / proceed anyway / cancel). Placed before cluster branch / manifest creation so cancel has zero side effect.")
 TaskCreate(name="setup_cluster_branch", description="Phase 0: 建 cluster branch idd/chain-N-<slug> from default branch + 初始化 spawn manifest")
 TaskCreate(name="init_queue", description="Phase 1: queue = [root], depth_map = {root: 0}, closed_set = {}")
 TaskCreate(name="chain_loop", description="Phase 2: 主 loop — pop queue, invoke /idd-all #current --in-chain, read manifest, enqueue eligible spawns until queue empty / depth limit / max-issues cap reached / verify FAIL halt")
@@ -113,7 +114,101 @@ STATE=$(gh issue view "$ROOT_ISSUE" -R "$GITHUB_REPO" --json state -q .state 2>/
 [ "$STATE" = "OPEN" ] || abort "Issue #$ROOT_ISSUE state=$STATE (must be OPEN)"
 ```
 
-#### Step 0.4: Cluster branch setup
+#### Step 0.4 (NEW, v2.55+ #47): Diagnosis-readiness check
+
+Chain 預期 root issue 已 spec 收斂(有 `## Diagnosis` comment)。沒收斂就跑 chain → unattended idd-diagnose Layer V 自動 `proceed anyway` → idd-implement 基於 vague spec 做 design 猜測 → 6-AI verify 抓不到根本問題(因為 reviewers 也只看到 partial spec)。
+
+**Why ASK not BLOCK**:fresh-issue + quick-iter scenarios 有時 explicit 想跳過 prior diagnose;hard block 太嚴。AskUserQuestion + audit trail 是 IC_R011 canonical pattern 的 balance point。
+
+**Why placed here (before cluster branch / manifest creation)**:user 選 `cancel` 時 zero side effect to clean — 不會留 dangling branch / manifest。
+
+##### Detection (bash)
+
+```bash
+# Detect via comments[*].body — NOT issue body
+# (precise — avoids false-positive on issue body discussing "diagnosis" concept)
+# Enable strict mode: gh / jq failure should NOT silently set HAS_DIAGNOSIS=""
+# (which would then equal "0" in `=` test below and silently skip the gate).
+set -e
+
+HAS_DIAGNOSIS=$(gh issue view "$ROOT_ISSUE" -R "$GITHUB_REPO" --json comments \
+    | jq -r '[.comments[] | select(.body | contains("## Diagnosis"))] | length')
+
+# Defensive: if upstream returned empty/non-numeric, treat as infrastructure failure not silent pass
+if ! [[ "$HAS_DIAGNOSIS" =~ ^[0-9]+$ ]]; then
+  abort "Diagnosis-readiness check failed: gh/jq returned non-numeric output ('$HAS_DIAGNOSIS'). Investigate gh auth / network and retry."
+fi
+```
+
+If `HAS_DIAGNOSIS != 0` → diagnosis comment exists → silent pass, fall through to Step 0.5。
+
+If `HAS_DIAGNOSIS == 0` → no diagnosis comment → enter the AskUserQuestion deliberation moment described below。
+
+##### AskUserQuestion deliberation (prose — NOT a bash function call)
+
+> **Why prose instead of bash**: `AskUserQuestion` is a Claude Code tool invoked at the agent level, **not** a binary on `$PATH` or a shell function. Embedding `AskUserQuestion(...)` inside a fenced bash block was a category error caught in /idd-verify #47 (P1 finding 2). The agent reads the bash detection logic, branches at the agent level on `HAS_DIAGNOSIS == 0`, then handles the deliberation as described in prose here. Same pattern as `idd-all/SKILL.md` Phase 0.5 ask-policy interaction.
+
+When `HAS_DIAGNOSIS == 0`, the agent invokes the **AskUserQuestion** tool with this question structure (per IC_R011 canonical 3-option pattern):
+
+> "Issue #${ROOT_ISSUE} 沒有 diagnosis comment。沒 diagnose 跑 chain 風險:unattended idd-diagnose Layer V 自動 proceed 可能基於 vague spec 做出 design 猜測。怎麼處理?"
+>
+> Options (default = first):
+> - **`run /idd-diagnose first`** — halt chain + preserve nothing (本 step 前無 branch/manifest) + 提示跑 `/idd-diagnose #N`,完成後重 invoke `/idd-all-chain`
+> - **`proceed anyway`** — 繼續 chain;PATCH issue body 加 `### Chain pre-flight: diagnosis bypassed` audit section
+> - **`cancel`** — abort + 印 cleanup commands (本 step 前無 side effect,只 exit)
+
+Based on the user's selection:
+
+- **`run /idd-diagnose first`** → echo `"→ Halt: please run /idd-diagnose ${ROOT_ISSUE} first, then re-invoke /idd-all-chain"`, then `exit 0` (clean halt — user's deliberate choice, not an error)
+- **`proceed anyway`** → invoke the proceed-anyway audit trail PATCH bash below, then continue to Step 0.5
+- **`cancel`** → echo `"→ Aborted by user. No state changes made (Phase 0.4 ran before any branch/manifest creation)."`, then `exit 0`
+
+##### proceed-anyway audit trail PATCH (bash)
+
+```bash
+# Build audit block (defined as inline expansion, not a function — avoids
+# forward-reference issues caught in /idd-verify #47 P1 finding 3).
+AUDIT_BLOCK=$(cat <<EOF
+
+### Chain pre-flight: diagnosis bypassed
+
+- **At**: $(date -u +%Y-%m-%dT%H:%M:%SZ) by /idd-all-chain
+- **User choice**: proceed anyway despite no diagnosis comment
+- **Implication**: chain went through /idd-all which ran idd-diagnose unattended;Layer V might have triggered with auto-'proceed' default
+EOF
+)
+
+CURRENT_BODY=$(gh issue view "$ROOT_ISSUE" -R "$GITHUB_REPO" --json body -q .body)
+
+# Insert audit BEFORE first separator if one exists, else prepend with new separator.
+# Avoids `---` accumulation caught in /idd-verify #47 P3 finding 8.
+# Use line-split shell pipeline (not `awk -v` with multi-line value, which
+# fails on macOS awk per /idd-verify re-verify finding).
+SEP_LINE=$(echo "$CURRENT_BODY" | head -50 | grep -n '^---$' | head -1 | cut -d: -f1)
+if [ -n "$SEP_LINE" ]; then
+  # Body already has a separator within first 50 lines — insert audit before it
+  BEFORE=$(echo "$CURRENT_BODY" | sed -n "1,$((SEP_LINE - 1))p")
+  AFTER=$(echo "$CURRENT_BODY" | sed -n "${SEP_LINE},\$p")
+  NEW_BODY="${BEFORE}${AUDIT_BLOCK}
+
+${AFTER}"
+else
+  # No separator — prepend audit + new separator
+  NEW_BODY="${AUDIT_BLOCK}
+
+---
+
+${CURRENT_BODY}"
+fi
+
+gh issue edit "$ROOT_ISSUE" -R "$GITHUB_REPO" --body "$NEW_BODY"
+```
+
+> **Future #46 multi-root extension hook**:#46 multi-root chain 落地時,本 step 的 detection logic 應 refactor 成 named helper function `check_diagnosis_readiness(issue_numbers...)` return `[ready_list, not_ready_list]` struct,讓 multi-root 可批次 check + 聚合 AskUserQuestion。**Currently inline only**(待 #46 + #51 follow-up issue 處理)— 本 step v1 single-root sufficient。
+
+> **Removed pseudo-fallback for unattended caller**: 早期 design 含 `IN_CHAIN_CONTEXT` env var 偵測作 unattended fallback,但實際 repo 中**無任何 producer** sets this var(/idd-verify #47 P1 finding 1)。`/idd-all-chain` 是 user-invoked deliberation moment,沒 unattended caller path,該 env detection 是 dead code,移除。若未來真有 unattended caller,需明確設計 producer + 文件化 detection convention。
+
+#### Step 0.5: Cluster branch setup
 
 ```bash
 # Working tree must be clean
@@ -140,7 +235,7 @@ git -C "$CWD" checkout -b "$CLUSTER_BRANCH"
 echo "→ Cluster branch created: $CLUSTER_BRANCH"
 ```
 
-#### Step 0.5: Initialize spawn manifest
+#### Step 0.6: Initialize spawn manifest
 
 Per `references/spawn-manifest.md` schema v1:
 
@@ -393,9 +488,11 @@ EOF
 | 情況 | 行為 |
 |------|------|
 | Root issue not OPEN | Phase 0.3 abort |
-| Working tree dirty | Phase 0.4 abort, 提示 stash/commit |
-| Not on default branch | Phase 0.4 abort, 提示 checkout default |
-| Cluster branch already exists | Phase 0.4 abort, 提示手動清理 |
+| Diagnosis comment missing on root issue + user picks `cancel` | Phase 0.4 clean halt (no branch/manifest yet) |
+| Diagnosis comment missing on root issue + user picks `run /idd-diagnose first` | Phase 0.4 clean halt + 提示 `/idd-diagnose #N` |
+| Working tree dirty | Phase 0.5 abort, 提示 stash/commit |
+| Not on default branch | Phase 0.5 abort, 提示 checkout default |
+| Cluster branch already exists | Phase 0.5 abort, 提示手動清理 |
 | `/idd-all #M --in-chain` 沒在 cluster branch | sub-skill 自己 abort (Step 0.5 sanity check) |
 | Chained verify FAIL | Phase 2 halt, partial commits 保留, abort report 印 recovery options |
 | Chain depth > 2 | Spawn filed (sub-skill audit trail) but NOT enqueued, chain continues |

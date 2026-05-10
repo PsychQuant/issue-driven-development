@@ -10,13 +10,29 @@ This document defines the **algorithmic contract** the chain shell honors. Imple
 
 | Phase | Action | Side effects |
 |-------|--------|--------------|
-| 0 | Pre-flight + cluster branch setup + manifest init | Creates `idd/chain-<root>-<slug>` branch; writes `.claude/.idd/state/chain-spawned-issues.json` schema_version=1 |
+| 0 | Pre-flight (5 gates: git repo / gh auth / issue OPEN / **diagnosis-readiness** / clean tree) + cluster branch setup + manifest init | May PATCH issue body (audit trail) when diagnosis bypassed; creates `idd/chain-<root>-<slug>` branch; writes `.claude/.idd/state/chain-spawned-issues.json` schema_version=1 |
 | 1 | Initialize chain state (queue, depth_map, processed set) | In-memory only |
 | 2 | Main chain loop — pop, invoke `/idd-all #N --in-chain`, read manifest delta, enqueue eligible spawns | Commits on cluster branch (via sub-`/idd-all`); manifest grows append-only |
 | 3 | Open cluster PR with collapsed per-issue sections | `git push` cluster branch; `gh pr create` |
 | 4 | Final report; STOP at verified | Print summary; no auto-close, no auto-merge |
 
-A chain run is fully determined by `(root_issue, working_tree_state, manifest_writes_during_run)`. No external state.
+A chain run is fully determined by `(root_issue, working_tree_state, manifest_writes_during_run, user_choice_at_diagnosis_gate)`. No external state.
+
+## Diagnosis-readiness gate (Phase 0 Step 0.4, v2.55+ #47)
+
+Phase 0 includes a diagnosis-readiness gate **before** any branch / manifest creation. Detects whether the root issue has a `## Diagnosis` comment via `comments[*].body` filter (precise — does NOT inspect issue body, which may discuss "diagnosis" conceptually).
+
+When detection finds no diagnosis comment, the chain shell fires `AskUserQuestion` with three options reflecting different mental models:
+
+- **`run /idd-diagnose first`** — diagnosis-first discipline (default safest). Halts cleanly with zero side effects (no branch / manifest yet); user runs `/idd-diagnose #N` then re-invokes `/idd-all-chain`.
+- **`proceed anyway`** — escape hatch for fresh-issue / quick-iter scenarios. PATCHes issue body with `### Chain pre-flight: diagnosis bypassed` audit section so future readers know this chain ran without prior diagnose.
+- **`cancel`** — clean recovery. Same as `run /idd-diagnose first` mechanically (zero side effect, just exits) but communicates "user changed mind" rather than "user will diagnose later". Print explicit `(no cleanup needed — Phase 0.4 ran before any branch/manifest creation)` to remove confusion.
+
+**No unattended fallback by design**: `/idd-all-chain` is a user-invoked deliberation moment. There is no automated caller path (`/loop`, cron, etc.) that should reach Step 0.4. If the call is made non-interactively for some reason, the AskUserQuestion will block — that is the correct behavior, not a bug. (Earlier draft included an `IN_CHAIN_CONTEXT` env detection for unattended fallback, but `/idd-verify #47` proved it was dead code with no producer in the repo, so the fallback was removed.)
+
+**Why placement before branch/manifest creation matters**: cancel-path side-effect minimization. If user picks `cancel`, no work is undone — there is no work yet. Diagnosis-readiness gate placed AFTER branch creation would leave dangling cluster branches user must manually delete, breaking IDD's halt+preserve discipline (preserve assumes there's something worth preserving).
+
+**Future #46 multi-root extension**: helper function design preserves N-arg shape (`check_diagnosis_readiness(issue_numbers...) → [ready_list, not_ready_list]`) so #46 can reuse for per-root readiness aggregation. v1 ships single-root only.
 
 ## Cluster branch naming
 
