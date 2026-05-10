@@ -165,6 +165,7 @@ TaskCreate(name="review_with_user", description="顯示 closing comment 給使�
 TaskCreate(name="closing_followup_keyword_scan", description="Step 3.5: scan drafted closing summary for trigger phrases (follow-up / deferred / future / 之後 / 順便 etc); orphan mentions without #NNN cross-link → AskUserQuestion 3-option per canonical references/ic-r011-checkpoint.md; PATCH closing summary inline + add `### Closing Follow-ups Filed` audit trail (advisory, non-blocking, per IC_R011 #527)")
 TaskCreate(name="publish_and_close", description="gh issue comment + gh issue close")
 TaskCreate(name="auto_update_body", description="跑 /idd-update #NNN 把 issue body 的 Current Status phase 改 closed（Step 6，常被漏）")
+TaskCreate(name="distribution_sync_chain_detection", description="Step 6.5 (v2.56.0+, #45): infer_distribution_type detection per references/distribution-detection.md; if hit → AskUserQuestion 3-option (chain to plugin-update/mcp-deploy/cli-deploy / skip — manual later / not applicable); patch closing comment with ### Distribution Sync section. Silent skip for non-distribution repos. IDD_DISTRIBUTION_SYNC_PROMPT=false env var bypasses prompt entirely (still 1-line audit).")
 TaskCreate(name="report_result", description="輸出關閉後的 issue URL 與 commits chain")
 ```
 
@@ -467,6 +468,133 @@ Skill(skill="issue-driven-dev:idd-update", args="#NNN")
 - 幾個月後考古：「這 issue 狀態是啥？」body 說 implementing，state 說 closed → 只能翻 comments 重建
 
 **批次 close 時**：每一個 issue 都要分別跑 idd-update，不是跑一次。
+
+### Step 6.5: Distribution Sync chain (v2.56.0+, #45)
+
+**Compliance**: this step implements close-tier distribution-sync checkpoint per IC_R011-style 3-option AskUserQuestion + audit trail pattern (canonical reference: [`references/ic-r011-checkpoint.md`](../../references/ic-r011-checkpoint.md)). Complements `che-claude-config/rules/common-release-flow.md` (release-tier trigger).
+
+**Why this step**: for plugin/MCP/CLI repos, fix lands in main but user-facing distribution channel (marketplace.json / binary release) needs separate sync. Without Step 6.5 mechanical checkpoint, "marketplace.json sync" relies on user memory → 「修了卻沒修」 anti-pattern (e.g. `che-apple-mail-mcp#72` PR #75 merged but marketplace.json not bumped → users `/plugin update` got old binary).
+
+**Rule**: Step 6 (auto-update phase=closed) completes → Step 6.5 runs detection. If detection returns `n/a` → silent skip + 1-line audit (`(detection: not a distribution repo)`). Otherwise AskUserQuestion 3-option per IC_R011 canonical pattern.
+
+**Placement rationale**: phase=closed locks audit at Step 6 (lifecycle gate complete);Step 6.5 is follow-up action not lifecycle gate. The closing comment's `### Distribution Sync` section heading clearly separates from main summary so audit trail timeline is unambiguous.
+
+#### Detection (bash)
+
+Per [`references/distribution-detection.md`](../../references/distribution-detection.md) canonical contract — implement helpers inline (or source the contract's algorithm):
+
+```bash
+# Detection delegated to contract (algorithm fully spec'd in distribution-detection.md)
+DISTRIBUTION_TYPE=$(infer_distribution_type "$REPO_ROOT" "$GITHUB_REPO")
+# Returns: plugin / mcp / cli / plugin+mcp / plugin+cli / n/a
+
+# Silent skip: non-distribution repo
+if [ "$DISTRIBUTION_TYPE" = "n/a" ]; then
+  AUDIT_LINE="### Distribution Sync
+
+- **Detected**: not a distribution repo (skipped)
+- **At**: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+"
+  patch_closing_comment_append "$AUDIT_LINE"
+  exit 0   # proceed to Step 7
+fi
+
+# Silent skip: env var rollback
+if [ "$IDD_DISTRIBUTION_SYNC_PROMPT" = "false" ]; then
+  AUDIT_LINE="### Distribution Sync
+
+- **Detected**: $DISTRIBUTION_TYPE
+- **Choice**: prompt skipped (IDD_DISTRIBUTION_SYNC_PROMPT=false, per IC_R011-style rollback)
+- **At**: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+"
+  patch_closing_comment_append "$AUDIT_LINE"
+  exit 0
+fi
+```
+
+If detection hit → enter the AskUserQuestion deliberation moment described below.
+
+#### AskUserQuestion 3-option (prose — NOT a bash function call)
+
+> **Why prose**: AskUserQuestion is a Claude Code agent-level tool, not a bash function. Embedding `AskUserQuestion(...)` inside fenced bash was a category error caught in #47 P1 finding 2 (idd-all-chain Step 0.4). Same pattern applies here — agent reads bash detection, branches at agent level on `DISTRIBUTION_TYPE != "n/a"`, then handles deliberation as prose.
+
+When `DISTRIBUTION_TYPE` is plugin/MCP/CLI/mixed, the agent invokes **AskUserQuestion** with this question structure (per IC_R011 canonical 3-option pattern):
+
+> "Issue #${NUMBER} closed. Detected distribution type: **${DISTRIBUTION_TYPE}**. Sync to user-facing channel?"
+>
+> Options (default = first):
+> - **`chain to ${SKILL_NAME} now`** — invoke `${SKILL_NAME}` (resolved per D3 superset table below);outcome recorded in audit trail
+> - **`skip — I'll sync manually later`** — record `### Distribution Sync Pending` audit + provide manual command;close completes
+> - **`not applicable — this issue doesn't ship`** — record `### Distribution Sync — Not Applicable`;e.g. test infra fix, internal refactor, docs-only change that doesn't reach user
+
+#### D3 Skill resolution table
+
+| `DISTRIBUTION_TYPE` | `SKILL_NAME` to invoke |
+|---------------------|----------------------|
+| `plugin` | `/plugin-tools:plugin-update <plugin-name>` |
+| `mcp` | `/mcp-tools:mcp-deploy` |
+| `cli` | `/cli-tools:cli-deploy` |
+| `plugin+mcp` / `plugin+cli` | `/plugin-tools:plugin-update <plugin-name>` (D3 superset rule — plugin-update v1.11+ Phase 1.5 cascades to binary deploy) |
+
+**Plugin name resolution**: `<plugin-name>` is the `name` field of the matched `marketplace.json` `plugins[]` entry (algorithm in `references/distribution-detection.md`).
+
+**v1 caller-flag note**: Step 6.5 v1 invokes target skill **without** `--source-issue` flag (caller skills in `psychquant-claude-plugins` repo don't yet support it — sister issue tracks). Graceful: target skills ignore unknown flags. Audit trail still complete via closing comment patch.
+
+#### Audit trail PATCH (any choice)
+
+Regardless of user's choice, PATCH the closing comment (captured in Step 4 as `$CLOSING_COMMENT_ID`) to append `### Distribution Sync` section:
+
+```bash
+# Helper: append a block to closing comment via gh api PATCH
+patch_closing_comment_append() {
+  local append_block="$1"
+  local existing=$(gh api "/repos/${GITHUB_REPO}/issues/comments/${CLOSING_COMMENT_ID}" -q .body)
+  jq -n --arg b "${existing}${append_block}" '{body: $b}' > /tmp/distribution_sync_patch.json
+  gh api -X PATCH "/repos/${GITHUB_REPO}/issues/comments/${CLOSING_COMMENT_ID}" \
+    --input /tmp/distribution_sync_patch.json -q '.html_url'
+}
+
+# Build outcome line per choice
+case "$USER_CHOICE" in
+  "chain to "*)
+    # Invoke target skill via Skill(...) tool, capture outcome summary
+    # Skill(skill="plugin-tools:plugin-update", args="<plugin-name>")
+    OUTCOME="invoked \`${SKILL_NAME}\`, see chained skill output above"
+    ;;
+  "skip"*)
+    OUTCOME="pending — run \`${SKILL_NAME}\` when ready"
+    ;;
+  "not applicable"*)
+    OUTCOME="this fix doesn't reach user-facing distribution surface"
+    ;;
+esac
+
+AUDIT_BLOCK="
+
+### Distribution Sync
+
+- **Detected**: ${DISTRIBUTION_TYPE}
+- **Choice**: ${USER_CHOICE}
+- **Outcome**: ${OUTCOME}
+- **At**: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+"
+
+patch_closing_comment_append "$AUDIT_BLOCK"
+```
+
+#### Failure-mode summary
+
+| Scenario | Behavior |
+|----------|----------|
+| Non-distribution repo | Silent skip + 1-line audit `(detection: not a distribution repo)` |
+| `IDD_DISTRIBUTION_SYNC_PROMPT=false` | Silent skip + 1-line audit citing env var |
+| Detection hit + user picks `chain` | Skill invoked + outcome appended to audit trail |
+| Detection hit + user picks `skip` | Manual command recorded for later use |
+| Detection hit + user picks `not applicable` | Reason recorded;close completes cleanly |
+| `gh api PATCH` fails (network / auth) | Print warning;close still proceeds (audit trail loss is non-blocking) |
+| Plugin name resolution fails (marketplace.json malformed) | Treat as `n/a` + audit line `(detection error: marketplace.json parse failed)` |
+
+> **Future hook for `idd-implement` Step 5.x early-surface**: same `infer_distribution_type` helper could power an earlier prompt (at PR-open time rather than close time). Out of scope for #45 v1 — separate follow-up if value confirmed.
 
 ### Step 7: 批次 close 特殊規則
 
