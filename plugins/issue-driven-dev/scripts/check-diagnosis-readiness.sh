@@ -55,7 +55,8 @@ READY=()
 NOT_READY=()
 
 for n in "$@"; do
-  if ! [[ "$n" =~ ^[0-9]+$ ]]; then
+  # Strict positive-integer check: GitHub has no issue #0, so reject "0" too.
+  if ! [[ "$n" =~ ^[1-9][0-9]*$ ]]; then
     echo "ERROR: '$n' is not a positive integer issue number" >&2
     usage
   fi
