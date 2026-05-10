@@ -777,7 +777,7 @@ patch_closing_comment_append "$AUDIT_BLOCK"
 
 | Scenario | Behavior |
 |----------|----------|
-| `REPO_ROOT` cannot be resolved (e.g. not in git work tree) | Silent skip + 1-line audit `(REPO_ROOT not resolvable)`;close still completes |
+| `REPO_ROOT` cannot be resolved (rare — `pwd` fallback covers non-git case;this branch fires only when both `git rev-parse` AND `pwd` fail or return non-existent dir) | Silent skip + 1-line audit `(REPO_ROOT not resolvable)`;close still completes |
 | Non-distribution repo (detection returns `n/a`) | Silent skip + 1-line audit `(detection: not a distribution repo)` |
 | `IDD_DISTRIBUTION_SYNC_PROMPT=false` | Silent skip + 1-line audit citing env var |
 | Detection hit + user picks `chain` | Skill invoked + outcome appended to audit trail |

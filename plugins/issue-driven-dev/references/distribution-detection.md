@@ -255,12 +255,13 @@ Rationale: CI / batch runs need disable to avoid AskUserQuestion blocking. Patte
 
 If a user's wrapper uses unlisted keyword (e.g. `wget`, `npm install`, `brew install`):
 
-1. **Don't edit `idd-close/SKILL.md`** — the SKILL.md delegates to this contract, not inline keywords
-2. Edit `has_binary_wrapper` regex in this doc + the inline implementation in `idd-close/SKILL.md` Step 6.5 bash to add the pattern
-3. Document the new pattern in this contract under "Detection keywords" section
-4. Smoke-test against the repo that has the unusual wrapper
+1. **Update the regex in TWO places** (helpers are inlined in skill, not sourced from this doc):
+   - `has_binary_wrapper` regex in this contract (canonical spec)
+   - `has_binary_wrapper` regex inlined in `plugins/issue-driven-dev/skills/idd-close/SKILL.md` Step 6.5 detection block
+2. Document the new pattern in this contract under "Detection keywords" section
+3. Smoke-test against the repo that has the unusual wrapper
 
-**Rationale**: encapsulating detection logic here lets future extension touch one canonical doc rather than hunting through skill prose.
+**Rationale**: this contract is the canonical spec — Step 6.5 inlines the algorithm rather than sourcing the doc at runtime (skills don't `source` reference markdown). Two-location update is unavoidable until skills gain a doc-import mechanism;the contract doc is the source of truth that drift checks should compare against.
 
 ## Test fixtures (manual smoke matrix)
 
