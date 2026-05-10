@@ -165,6 +165,7 @@ TaskCreate(name="review_with_user", description="顯示 closing comment 給使�
 TaskCreate(name="closing_followup_keyword_scan", description="Step 3.5: scan drafted closing summary for trigger phrases (follow-up / deferred / future / 之後 / 順便 etc); orphan mentions without #NNN cross-link → AskUserQuestion 3-option per canonical references/ic-r011-checkpoint.md; PATCH closing summary inline + add `### Closing Follow-ups Filed` audit trail (advisory, non-blocking, per IC_R011 #527)")
 TaskCreate(name="publish_and_close", description="gh issue comment + gh issue close")
 TaskCreate(name="auto_update_body", description="跑 /idd-update #NNN 把 issue body 的 Current Status phase 改 closed（Step 6，常被漏）")
+TaskCreate(name="distribution_sync_chain_detection", description="Step 6.5 (v2.56.0+, #45): infer_distribution_type detection per references/distribution-detection.md; if hit → AskUserQuestion 3-option (chain to plugin-update/mcp-deploy/cli-deploy / skip — manual later / not applicable); patch closing comment with ### Distribution Sync section. Silent skip for non-distribution repos. IDD_DISTRIBUTION_SYNC_PROMPT=false env var bypasses prompt entirely (still 1-line audit).")
 TaskCreate(name="report_result", description="輸出關閉後的 issue URL 與 commits chain")
 ```
 
@@ -403,7 +404,24 @@ For each trigger-phrase match:
 ### Step 4: 發佈並關閉
 
 ```bash
-gh issue comment $NUMBER --repo $GITHUB_REPO --body "$CLOSING_COMMENT"
+# Capture the comment URL → ID for downstream PATCH (Step 6.5 Distribution Sync audit trail).
+# IMPORTANT: don't use `2>&1 | tail -1` — that mixes stderr into stdout, and gh's
+# deprecation/warning messages can interleave with the URL, leading to a garbage ID.
+# `gh issue comment` prints ONLY the comment URL to stdout on success;errors go to stderr.
+# `set -e` (or explicit `|| abort`) guarantees we don't proceed with empty URL on failure.
+CLOSING_COMMENT_URL=$(gh issue comment $NUMBER --repo $GITHUB_REPO --body "$CLOSING_COMMENT") || {
+  echo "ERROR: gh issue comment failed for #$NUMBER" >&2
+  exit 1
+}
+
+# `sed -n '...p'` only prints the line if the regex matched, so a malformed URL
+# yields an empty CLOSING_COMMENT_ID rather than the unmodified input string.
+CLOSING_COMMENT_ID=$(printf '%s' "$CLOSING_COMMENT_URL" | sed -nE 's|.*#issuecomment-([0-9]+).*|\1|p')
+if [ -z "$CLOSING_COMMENT_ID" ]; then
+  echo "ERROR: failed to extract comment ID from URL: $CLOSING_COMMENT_URL" >&2
+  exit 1
+fi
+
 gh issue close $NUMBER --repo $GITHUB_REPO
 ```
 
@@ -467,6 +485,308 @@ Skill(skill="issue-driven-dev:idd-update", args="#NNN")
 - 幾個月後考古：「這 issue 狀態是啥？」body 說 implementing，state 說 closed → 只能翻 comments 重建
 
 **批次 close 時**：每一個 issue 都要分別跑 idd-update，不是跑一次。
+
+### Step 6.5: Distribution Sync chain (v2.56.0+, #45)
+
+**Compliance**: this step implements close-tier distribution-sync checkpoint per IC_R011-style 3-option AskUserQuestion + audit trail pattern (canonical reference: [`references/ic-r011-checkpoint.md`](../../references/ic-r011-checkpoint.md)). Complements `che-claude-config/rules/common-release-flow.md` (release-tier trigger).
+
+**Why this step**: for plugin/MCP/CLI repos, fix lands in main but user-facing distribution channel (marketplace.json / binary release) needs separate sync. Without Step 6.5 mechanical checkpoint, "marketplace.json sync" relies on user memory → 「修了卻沒修」 anti-pattern (e.g. `che-apple-mail-mcp#72` PR #75 merged but marketplace.json not bumped → users `/plugin update` got old binary).
+
+**Rule**: Step 6 (auto-update phase=closed) completes → Step 6.5 runs detection. If detection returns `n/a` → silent skip + 1-line audit (`(detection: not a distribution repo)`). Otherwise AskUserQuestion 3-option per IC_R011 canonical pattern.
+
+**Placement rationale**: phase=closed locks audit at Step 6 (lifecycle gate complete);Step 6.5 is follow-up action not lifecycle gate. The closing comment's `### Distribution Sync` section heading clearly separates from main summary so audit trail timeline is unambiguous.
+
+#### Detection (bash) — define helpers inline, then call
+
+Per [`references/distribution-detection.md`](../../references/distribution-detection.md) canonical contract. **Helpers MUST be defined before first call** — the silent-skip path below references them, so define-then-call ordering matters (bash treats undefined function calls as `command not found` exit 127).
+
+```bash
+# ── Step 6.5 prelude: resolve REPO_ROOT (must be non-empty before helpers fire) ──
+# Earlier steps don't define REPO_ROOT. Detection helpers depend on absolute path
+# resolution + walk-up — empty input causes infinite loops in `dirname` and false
+# positives via `cd "" && pwd`. Resolve from git first;fallback to PWD.
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+if [ -z "$REPO_ROOT" ] || [ ! -d "$REPO_ROOT" ]; then
+  echo "WARN: cannot resolve REPO_ROOT — Step 6.5 silent-skip" >&2
+  AUDIT_LINE="
+
+### Distribution Sync
+
+- **Detected**: skipped (REPO_ROOT not resolvable — likely not in git work tree)
+- **At**: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+"
+  # Note: patch_closing_comment_append requires CLOSING_COMMENT_ID to be set;
+  # if it's also empty, the helper warns and returns without aborting close.
+  # Agent: skip remaining Step 6.5 logic, advance to Step 7 in skill order.
+fi
+
+# ── Helpers (inlined from references/distribution-detection.md) ──
+
+# patch_closing_comment_append — appends a markdown block to the closing comment
+# captured in Step 4 ($CLOSING_COMMENT_ID). All silent-skip and prompt-resolution
+# paths in this step call this helper, so define it FIRST.
+patch_closing_comment_append() {
+  local append_block="$1"
+  local existing
+  existing=$(gh api "/repos/${GITHUB_REPO}/issues/comments/${CLOSING_COMMENT_ID}" -q .body 2>/dev/null) || {
+    echo "WARN: gh api fetch failed for comment $CLOSING_COMMENT_ID — audit trail PATCH skipped" >&2
+    return 0
+  }
+  jq -n --arg b "${existing}${append_block}" '{body: $b}' > /tmp/distribution_sync_patch.json
+  gh api -X PATCH "/repos/${GITHUB_REPO}/issues/comments/${CLOSING_COMMENT_ID}" \
+    --input /tmp/distribution_sync_patch.json -q '.html_url' >/dev/null || \
+    echo "WARN: gh api PATCH failed — audit trail incomplete" >&2
+}
+
+# resolve_plugin_name — emit matched plugin's `name` field from marketplace entry
+# (called AFTER is_plugin_marketplace_member returned true; required for SKILL_NAME
+# composition `/plugin-tools:plugin-update <plugin-name>`)
+resolve_plugin_name() {
+  local repo_root="$1"
+  local resolved_root
+  resolved_root=$(cd "$repo_root" 2>/dev/null && pwd -P) || resolved_root="$repo_root"
+  local current="$resolved_root"
+  while :; do
+    local manifest="$current/.claude-plugin/marketplace.json"
+    if [ -f "$manifest" ]; then
+      local manifest_dir
+      manifest_dir=$(cd "$(dirname "$manifest")/.." 2>/dev/null && pwd -P) || \
+        manifest_dir=$(dirname "$(dirname "$manifest")")
+      local name_match
+      name_match=$(jq -r '.plugins[]? | select(.source | type == "string") | "\(.name)\t\(.source)"' \
+        "$manifest" 2>/dev/null \
+        | while IFS=$'\t' read -r pname psrc; do
+            [ -z "$pname" ] && continue
+            local plugin_dir
+            plugin_dir=$(cd "$manifest_dir/$psrc" 2>/dev/null && pwd -P) || continue
+            case "$plugin_dir/" in
+              "$resolved_root/"|"$resolved_root/"*) echo "$pname"; break ;;
+            esac
+          done | head -1)
+      [ -n "$name_match" ] && { echo "$name_match"; return 0; }
+    fi
+    [ "$current" = "$HOME" ] && break
+    [ "$current" = "/" ] && break
+    current=$(dirname "$current")
+  done
+  echo ""
+}
+
+# is_plugin_marketplace_member — walk-up scan for marketplace.json listing this repo
+is_plugin_marketplace_member() {
+  local repo_root="$1"
+  local resolved_root
+  resolved_root=$(cd "$repo_root" 2>/dev/null && pwd -P) || resolved_root="$repo_root"
+  local current="$resolved_root"
+  while :; do
+    local manifest="$current/.claude-plugin/marketplace.json"
+    if [ -f "$manifest" ]; then
+      local manifest_dir
+      manifest_dir=$(cd "$(dirname "$manifest")/.." 2>/dev/null && pwd -P) || \
+        manifest_dir=$(dirname "$(dirname "$manifest")")
+      local match
+      match=$(jq -r '.plugins[]?.source // empty | select(type == "string")' \
+        "$manifest" 2>/dev/null \
+        | while IFS= read -r src; do
+            [ -z "$src" ] && continue
+            local plugin_dir
+            plugin_dir=$(cd "$manifest_dir/$src" 2>/dev/null && pwd -P) || continue
+            case "$plugin_dir/" in
+              "$resolved_root/"|"$resolved_root/"*) echo "match"; break ;;
+            esac
+          done | head -1)
+      [ -n "$match" ] && { echo "true"; return 0; }
+    fi
+    [ "$current" = "$HOME" ] && break
+    [ "$current" = "/" ] && break
+    current=$(dirname "$current")
+  done
+  echo "false"
+}
+
+# has_binary_wrapper — scan bin/*.sh for GitHub release patterns (line-agnostic)
+has_binary_wrapper() {
+  local repo_root="$1"
+  local bin_dir="$repo_root/bin"
+  [ -d "$bin_dir" ] || { echo "false"; return; }
+  local pattern='gh release download|gh api[[:space:]]+.*/releases|api\.github\.com/.*/releases|github\.com/.*/releases/(download|tags|latest)'
+  local match=""
+  shopt -s nullglob 2>/dev/null
+  for f in "$bin_dir"/*.sh; do
+    [ -f "$f" ] || continue
+    if grep -qE "$pattern" "$f" 2>/dev/null; then match="$f"; break; fi
+  done
+  shopt -u nullglob 2>/dev/null
+  [ -n "$match" ] && echo "true" || echo "false"
+}
+
+# infer_distribution_type — orchestrator returning plugin/mcp/cli/plugin+mcp/plugin+cli/n/a
+infer_distribution_type() {
+  local repo_root="$1"
+  local is_plugin=$(is_plugin_marketplace_member "$repo_root")
+  local has_wrapper=$(has_binary_wrapper "$repo_root")
+  local binary_kind=""
+  if [ "$has_wrapper" = "true" ]; then
+    local mcp_match=$(ls "$repo_root/bin"/*.sh 2>/dev/null \
+      | grep -E '(-mcp-wrapper\.sh$|/[^/]*mcp[^/]*\.sh$)' | head -1)
+    [ -n "$mcp_match" ] && binary_kind="mcp" || binary_kind="cli"
+  fi
+  if [ "$is_plugin" = "true" ] && [ -n "$binary_kind" ]; then
+    echo "plugin+$binary_kind"
+  elif [ "$is_plugin" = "true" ]; then echo "plugin"
+  elif [ -n "$binary_kind" ]; then echo "$binary_kind"
+  else echo "n/a"; fi
+}
+
+# ── Detection invocation ──
+DISTRIBUTION_TYPE=$(infer_distribution_type "$REPO_ROOT")
+# Returns: plugin / mcp / cli / plugin+mcp / plugin+cli / n/a
+
+# Resolve plugin name when applicable (required for plugin-update <name> chain).
+# Empty string for pure mcp/cli/n/a — caller branches handle empty case.
+PLUGIN_NAME=""
+case "$DISTRIBUTION_TYPE" in
+  plugin|plugin+*)
+    PLUGIN_NAME=$(resolve_plugin_name "$REPO_ROOT")
+    if [ -z "$PLUGIN_NAME" ]; then
+      # Detection said plugin but name resolution failed — schema ambiguity.
+      # Demote to n/a (with audit) so we don't fire AskUserQuestion with
+      # malformed chain command.
+      echo "WARN: distribution type=$DISTRIBUTION_TYPE but plugin name unresolvable — demoting to n/a" >&2
+      DISTRIBUTION_TYPE="n/a"
+    fi
+    ;;
+esac
+
+# Silent skip: non-distribution repo
+if [ "$DISTRIBUTION_TYPE" = "n/a" ]; then
+  AUDIT_LINE="
+
+### Distribution Sync
+
+- **Detected**: not a distribution repo (skipped)
+- **At**: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+"
+  patch_closing_comment_append "$AUDIT_LINE"
+  # Silent skip — proceed to Step 7 (do NOT use `exit 0` here; in markdown-skill
+  # context that would terminate the entire close flow including Step 7 batch
+  # close special rules. Instead, the agent reading this skill branches at
+  # agent level: `n/a` path is complete, advance to Step 7 in skill order.)
+fi
+
+# Silent skip: env var rollback (overrides prompt for distribution-detected repos)
+if [ "$DISTRIBUTION_TYPE" != "n/a" ] && [ "$IDD_DISTRIBUTION_SYNC_PROMPT" = "false" ]; then
+  AUDIT_LINE="
+
+### Distribution Sync
+
+- **Detected**: $DISTRIBUTION_TYPE
+- **Choice**: prompt skipped (IDD_DISTRIBUTION_SYNC_PROMPT=false, per IC_R011-style rollback)
+- **At**: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+"
+  patch_closing_comment_append "$AUDIT_LINE"
+  # Same agent-level advance: skip prompt, proceed to Step 7.
+fi
+```
+
+If detection returned a real type AND env var didn't suppress → enter the AskUserQuestion deliberation moment described below.
+
+#### AskUserQuestion 3-option (prose — NOT a bash function call)
+
+> **Why prose**: AskUserQuestion is a Claude Code agent-level tool, not a bash function. Embedding `AskUserQuestion(...)` inside fenced bash was a category error caught in #47 P1 finding 2 (idd-all-chain Step 0.4). Same pattern applies here — agent reads bash detection, branches at agent level on `DISTRIBUTION_TYPE != "n/a"`, then handles deliberation as prose.
+
+When `DISTRIBUTION_TYPE` is plugin/MCP/CLI/mixed, the agent **first** composes the chain command from the resolution table below using `$DISTRIBUTION_TYPE` and `$PLUGIN_NAME` (set in Detection invocation), then invokes **AskUserQuestion** per IC_R011 canonical 3-option pattern:
+
+```bash
+# Compose chain command(s) — referenced as $CHAIN_DESC in AskUserQuestion below.
+# For mixed types, this is two skills with explicit ordering (D3 v1).
+case "$DISTRIBUTION_TYPE" in
+  plugin)       CHAIN_DESC="/plugin-tools:plugin-update ${PLUGIN_NAME}" ;;
+  mcp)          CHAIN_DESC="/mcp-tools:mcp-deploy" ;;
+  cli)          CHAIN_DESC="/cli-tools:cli-deploy" ;;
+  plugin+mcp)   CHAIN_DESC="/mcp-tools:mcp-deploy → /plugin-tools:plugin-update ${PLUGIN_NAME}" ;;
+  plugin+cli)   CHAIN_DESC="/cli-tools:cli-deploy → /plugin-tools:plugin-update ${PLUGIN_NAME}" ;;
+esac
+```
+
+Then AskUserQuestion:
+
+> "Issue #${NUMBER} closed. Detected distribution type: **${DISTRIBUTION_TYPE}**. Sync to user-facing channel?"
+>
+> Options (default = first):
+> - **`chain to ${CHAIN_DESC} now`** — invoke the resolved skill(s) at agent level (Skill tool, NOT bash);outcome recorded in audit trail
+> - **`skip — I'll sync manually later`** — record `### Distribution Sync Pending` audit + provide manual command;close completes
+> - **`not applicable — this issue doesn't ship`** — record `### Distribution Sync — Not Applicable`;e.g. test infra fix, internal refactor, docs-only change that doesn't reach user
+
+#### D3 Skill resolution table (v1: explicit ordering, fallback-safe)
+
+Per #45 Plan tier D3 + #66 audit dependency: until `plugin-update` Phase 1.5 cascade is empirically confirmed (see #66), v1 chains BOTH skills explicitly for mixed types — binary-deploy first, then plugin-update.
+
+| `DISTRIBUTION_TYPE` | Sync skill(s) to invoke (in order) |
+|---------------------|-----------------------------------|
+| `plugin` | `/plugin-tools:plugin-update <plugin-name>` |
+| `mcp` | `/mcp-tools:mcp-deploy` |
+| `cli` | `/cli-tools:cli-deploy` |
+| `plugin+mcp` | `/mcp-tools:mcp-deploy` → then `/plugin-tools:plugin-update <plugin-name>` |
+| `plugin+cli` | `/cli-tools:cli-deploy` → then `/plugin-tools:plugin-update <plugin-name>` |
+
+**Plugin name resolution**: `<plugin-name>` is the `name` field of the matched `marketplace.json` `plugins[]` entry (algorithm in `references/distribution-detection.md`).
+
+**Why ordering matters for mixed types**: bumping the binary first means `plugin-update`'s Phase 1.5 dependency check (if cascade exists) sees the already-bumped binary and skips its own cascade prompt — idempotent. If `plugin-update` doesn't cascade (per #66 audit risk), explicit ordering ensures both shells are still in sync. Either way safer than relying on superset behavior unverified.
+
+**v1 caller-flag note**: Step 6.5 v1 invokes target skill **without** `--source-issue` flag (caller skills in `psychquant-claude-plugins` repo don't yet support it — sister issue tracks). Graceful: target skills ignore unknown flags. Audit trail still complete via closing comment patch.
+
+#### Audit trail PATCH (any choice)
+
+Regardless of user's choice, PATCH the closing comment (captured in Step 4 as `$CLOSING_COMMENT_ID`) to append `### Distribution Sync` section. The `patch_closing_comment_append` helper was defined inline at the top of this Step 6.5 detection block (above) — reuse it here.
+
+```bash
+# Build outcome line per choice. Match against the AskUserQuestion option labels
+# emitted in the prose section above (substring match on the leading verb works
+# because options have distinct first words: "chain", "skip", "not applicable").
+case "$USER_CHOICE" in
+  "chain to "*)
+    # Invoke target skill(s) via Skill(...) tool at agent level (NOT inside this
+    # bash block — the Skill tool is a Claude Code agent-level tool). Per D3
+    # mixed-type ordering: for plugin+mcp/plugin+cli, invoke binary-deploy
+    # first, then plugin-update. Capture outcome summary from each invocation.
+    OUTCOME="invoked \`${CHAIN_DESC}\`, see chained skill output above"
+    ;;
+  "skip"*)
+    OUTCOME="pending — run \`${CHAIN_DESC}\` when ready"
+    ;;
+  "not applicable"*)
+    OUTCOME="this fix doesn't reach user-facing distribution surface"
+    ;;
+esac
+
+AUDIT_BLOCK="
+
+### Distribution Sync
+
+- **Detected**: ${DISTRIBUTION_TYPE}
+- **Choice**: ${USER_CHOICE}
+- **Outcome**: ${OUTCOME}
+- **At**: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+"
+
+patch_closing_comment_append "$AUDIT_BLOCK"
+```
+
+#### Failure-mode summary
+
+| Scenario | Behavior |
+|----------|----------|
+| `REPO_ROOT` cannot be resolved (rare — `pwd` fallback covers non-git case;this branch fires only when both `git rev-parse` AND `pwd` fail or return non-existent dir) | Silent skip + 1-line audit `(REPO_ROOT not resolvable)`;close still completes |
+| Non-distribution repo (detection returns `n/a`) | Silent skip + 1-line audit `(detection: not a distribution repo)` |
+| `IDD_DISTRIBUTION_SYNC_PROMPT=false` | Silent skip + 1-line audit citing env var |
+| Detection hit + user picks `chain` | Skill invoked + outcome appended to audit trail |
+| Detection hit + user picks `skip` | Manual command recorded for later use |
+| Detection hit + user picks `not applicable` | Reason recorded;close completes cleanly |
+| `gh api PATCH` fails (network / auth) | `patch_closing_comment_append` prints warning to stderr;close still proceeds (audit trail loss is non-blocking) |
+| Plugin name resolution fails (marketplace.json missing/malformed) | Demote `DISTRIBUTION_TYPE` to `n/a` + WARN to stderr;close completes via standard `n/a` path (no separate audit error category — keeps schema simple) |
+
+> **Future hook for `idd-implement` Step 5.x early-surface**: same `infer_distribution_type` helper could power an earlier prompt (at PR-open time rather than close time). Out of scope for #45 v1 — separate follow-up if value confirmed.
 
 ### Step 7: 批次 close 特殊規則
 
