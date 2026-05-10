@@ -124,31 +124,36 @@ Chain 預期 root issue 已 spec 收斂(有 `## Diagnosis` comment)。沒收斂�
 
 ##### Detection (bash)
 
+Delegated to `scripts/check-diagnosis-readiness.sh` (v2.57.0+, #51) — variadic helper following `manifest-append.sh` precedent. v1 single-root invocation;ready for #46 multi-root extension to call with multiple issue numbers without API change.
+
 ```bash
-# Detect via comments[*].body — NOT issue body
-# (precise — avoids false-positive on issue body discussing "diagnosis" concept)
-# Enable strict mode: gh / jq failure should NOT silently set HAS_DIAGNOSIS=""
-# (which would then equal "0" in `=` test below and silently skip the gate).
+# Helper script does the per-issue gh+jq detection (regex test("(?m)^## Diagnosis") per #53).
+# Returns: {"ready":[N,...],"not_ready":[N,...]} JSON to stdout.
+# Exit: 0 success / 1 gh-jq failure / 2 usage error.
 set -e
 
-HAS_DIAGNOSIS=$(gh issue view "$ROOT_ISSUE" -R "$GITHUB_REPO" --json comments \
-    | jq -r '[.comments[] | select(.body | test("(?m)^## Diagnosis"))] | length')
+READINESS_JSON=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/check-diagnosis-readiness.sh" \
+                  "$GITHUB_REPO" "$ROOT_ISSUE")
 
-# Defensive: if upstream returned empty/non-numeric, treat as infrastructure failure not silent pass
-if ! [[ "$HAS_DIAGNOSIS" =~ ^[0-9]+$ ]]; then
-  abort "Diagnosis-readiness check failed: gh/jq returned non-numeric output ('$HAS_DIAGNOSIS'). Investigate gh auth / network and retry."
+# Parse: count not_ready entries. Single-root v1 → ready=[N] OR not_ready=[N].
+NOT_READY_COUNT=$(echo "$READINESS_JSON" | jq -r '.not_ready | length')
+
+# Defensive: jq failure → abort (helper script already failed-fast via exit 1 to stderr,
+# but if jq parse here also fails the abort still fires).
+if ! [[ "$NOT_READY_COUNT" =~ ^[0-9]+$ ]]; then
+  abort "Diagnosis-readiness parse failed: helper output not parsable JSON. Investigate scripts/check-diagnosis-readiness.sh output."
 fi
 ```
 
-If `HAS_DIAGNOSIS != 0` → diagnosis comment exists → silent pass, fall through to Step 0.5。
+If `NOT_READY_COUNT == 0` → diagnosis comment exists → silent pass, fall through to Step 0.5。
 
-If `HAS_DIAGNOSIS == 0` → no diagnosis comment → enter the AskUserQuestion deliberation moment described below。
+If `NOT_READY_COUNT > 0` → no diagnosis comment → enter the AskUserQuestion deliberation moment described below。
 
 ##### AskUserQuestion deliberation (prose — NOT a bash function call)
 
-> **Why prose instead of bash**: `AskUserQuestion` is a Claude Code tool invoked at the agent level, **not** a binary on `$PATH` or a shell function. Embedding `AskUserQuestion(...)` inside a fenced bash block was a category error caught in /idd-verify #47 (P1 finding 2). The agent reads the bash detection logic, branches at the agent level on `HAS_DIAGNOSIS == 0`, then handles the deliberation as described in prose here. Same pattern as `idd-all/SKILL.md` Phase 0.5 ask-policy interaction.
+> **Why prose instead of bash**: `AskUserQuestion` is a Claude Code tool invoked at the agent level, **not** a binary on `$PATH` or a shell function. Embedding `AskUserQuestion(...)` inside a fenced bash block was a category error caught in /idd-verify #47 (P1 finding 2). The agent reads the bash detection logic, branches at the agent level on `NOT_READY_COUNT > 0`, then handles the deliberation as described in prose here. Same pattern as `idd-all/SKILL.md` Phase 0.5 ask-policy interaction.
 
-When `HAS_DIAGNOSIS == 0`, the agent invokes the **AskUserQuestion** tool with this question structure (per IC_R011 canonical 3-option pattern):
+When `NOT_READY_COUNT > 0`, the agent invokes the **AskUserQuestion** tool with this question structure (per IC_R011 canonical 3-option pattern):
 
 > "Issue #${ROOT_ISSUE} 沒有 diagnosis comment。沒 diagnose 跑 chain 風險:unattended idd-diagnose Layer V 自動 proceed 可能基於 vague spec 做出 design 猜測。怎麼處理?"
 >
