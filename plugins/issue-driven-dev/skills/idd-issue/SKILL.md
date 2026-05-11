@@ -1169,10 +1169,16 @@ if [ -z "${JSONL_GITIGNORE_DECISION:-}" ]; then
       #                               outer source via git's last-matching rule).
       SOURCE_FILE=$(printf '%s\n' "$IGNORE_SOURCE" | awk -F: '{print $1}')
       IS_NESTED_GITIGNORE=false
+      # ORDER MATTERS (per /idd-verify --pr 71 round 5 P1.2): the `*/.gitignore`
+      # glob matches absolute paths like `/Users/X/.config/git/ignore` when
+      # `core.excludesfile` is named `.gitignore`. Test absolute paths FIRST
+      # so global excludesfile never falls into the nested branch.
       case "$SOURCE_FILE" in
+        /*)                          IS_NESTED_GITIGNORE=false ;;  # absolute → global ignore (fixable by 5-line in root)
+        .git/info/exclude)           IS_NESTED_GITIGNORE=false ;;  # repo-local but separate from .gitignore (fixable)
         .gitignore)                  IS_NESTED_GITIGNORE=false ;;  # root .gitignore (fixable)
         */.gitignore)                IS_NESTED_GITIGNORE=true  ;;  # nested .gitignore (NOT fixable from root)
-        *)                           IS_NESTED_GITIGNORE=false ;;  # absolute (global) / .git/info/exclude / other (fixable)
+        *)                           IS_NESTED_GITIGNORE=false ;;  # other repo-local → defensive fixable
       esac
       # Agent branches at agent level — see AskUserQuestion section below.
       : # JSONL_GITIGNORE_DECISION set by user choice next
@@ -1268,9 +1274,46 @@ case "$JSONL_GITIGNORE_DECISION" in
 BLOCK
 )
 
-    # Idempotency: only rewrite if the carve-out block isn't already present.
-    # Detection: look for the marker comment line we always emit at top of block.
-    if ! grep -qxF "# IDD multi-finding run log carve-out (idd-issue Stage 4.5, #55)" "$GITIGNORE_FILE" 2>/dev/null; then
+    # Idempotency + upgrade: detect both presence of marker AND that the block
+    # contains the universal `!.claude` parent re-include line (per /idd-verify
+    # --pr 71 round 5 P1.1). The marker alone is insufficient — older versions
+    # of this skill emitted a 4-line block with the SAME marker but missing
+    # `!.claude`, which still loses to stacked ignore sources. We upgrade in
+    # place: if marker present BUT `!.claude` line absent, drop the old block
+    # entirely (delete lines from marker through the next blank line / EOF)
+    # then re-append the current universal 5-line block.
+    # `grep -c` exits non-zero on no-match while still printing "0", so `|| echo 0`
+    # would emit "0\n0" and break the `-ge 1` integer test. Pipe to `wc -l` instead —
+    # always yields a clean integer (0 if grep finds nothing or file is absent).
+    HAS_MARKER=$(grep -xF "# IDD multi-finding run log carve-out (idd-issue Stage 4.5, #55)" "$GITIGNORE_FILE" 2>/dev/null | wc -l | tr -d ' ')
+    HAS_PARENT_REINCLUDE=$(grep -xF "!.claude" "$GITIGNORE_FILE" 2>/dev/null | wc -l | tr -d ' ')
+    NEEDS_REWRITE=true
+    if [ "$HAS_MARKER" -ge 1 ] && [ "$HAS_PARENT_REINCLUDE" -ge 1 ]; then
+      # Both marker and the universal `!.claude` line already present → block is
+      # already the current universal form, skip rewrite.
+      NEEDS_REWRITE=false
+    elif [ "$HAS_MARKER" -ge 1 ]; then
+      # Stale 4-line block detected — drop it before re-appending the new one.
+      # Stay in skip mode only while lines match known block content (comments
+      # we emit OR one of the literal carve-out patterns). Falls out cleanly
+      # on any unrelated line (which gets printed) or blank line (consumed).
+      awk -v marker="# IDD multi-finding run log carve-out (idd-issue Stage 4.5, #55)" '
+        $0 == marker { skip = 1; next }
+        skip {
+          if ($0 ~ /^#/) { next }
+          if ($0 == "" ) { next }
+          if ($0 == "!.claude" \
+             || $0 == ".claude/*" \
+             || $0 == "!.claude/.idd" \
+             || $0 == ".claude/.idd/*" \
+             || $0 == "!.claude/.idd/issue-runs") { next }
+          skip = 0   # unrelated line — fall through to print
+        }
+        { print }
+      ' "$GITIGNORE_FILE" > "$GITIGNORE_FILE.tmp"
+      mv "$GITIGNORE_FILE.tmp" "$GITIGNORE_FILE"
+    fi
+    if [ "$NEEDS_REWRITE" = "true" ]; then
       # Remove any existing bare `.claude/` or `.claude` line (we're rewriting that
       # pattern to `.claude/*` which behaves differently per git docs). Use sed -E
       # for portable BSD/GNU compatibility; rewrite via tempfile to handle the
@@ -1513,26 +1556,38 @@ Stage 4.5: jsonl gitignore pre-flight
     Status: committed
 ```
 
-When `.gitignore` shadows `.claude/`, Stage 4.5 surfaces the ignore source (repo `.gitignore` vs `.git/info/exclude` vs global `core.excludesfile`) + user choice in the same summary block:
+When `.gitignore` shadows `.claude/`, Stage 4.5 surfaces the ignore source + user choice in the same summary block. The carve-out always emits the same universal 5-line block (per round-5 fix), so the summary line doesn't vary by source:
 
 ```
 Stage 4.5: jsonl gitignore pre-flight
   ⚠ Detected: .gitignore:1:.claude/  shadows run log path
-  ✓ User chose: Add carve-out chain to .gitignore (repo-source mode, 4-line block)
+  ✓ User chose: Add carve-out chain to .gitignore
   Summary: 7 succeeded, 1 failed, 2 skipped
   Run log: .claude/.idd/issue-runs/2026-05-10T17:00:00.jsonl
-    Status: committed (added 4-line carve-out chain to .gitignore — replaced `.claude/` with `.claude/*` + parent-dir re-includes)
+    Status: committed (added universal 5-line carve-out chain to .gitignore — `!.claude` parent re-include neutralizes outer source)
 ```
 
-Global `core.excludesfile` case adds an extra `!.claude` line to re-include the directory itself (per P1.2 fix — global ignore cannot be edited from per-repo, so repo `.gitignore` must override):
+Global `core.excludesfile` and `.git/info/exclude` sources produce the same outcome (same 5-line block written to root `.gitignore`). Only the `Detected:` line differs:
 
 ```
 Stage 4.5: jsonl gitignore pre-flight
   ⚠ Detected: ~/.config/git/ignore:3:.claude/  (global core.excludesfile)
-  ✓ User chose: Add carve-out chain to .gitignore (global-source mode, 5-line block with !.claude re-include)
+  ✓ User chose: Add carve-out chain to .gitignore
   Summary: 7 succeeded, 1 failed, 2 skipped
   Run log: .claude/.idd/issue-runs/2026-05-10T17:00:00.jsonl
-    Status: committed (added 5-line carve-out chain with !.claude re-include to override global ignore)
+    Status: committed (added universal 5-line carve-out chain to .gitignore — `!.claude` parent re-include neutralizes global ignore)
+```
+
+Nested `.gitignore` (e.g. `.claude/.gitignore`) cannot be fixed from root — Add-carve-out option is not offered. Summary shows the nested source so user knows where to edit manually:
+
+```
+Stage 4.5: jsonl gitignore pre-flight
+  ⚠ Detected: .claude/.gitignore:1:*  (nested .gitignore — root carve-out cannot override)
+  ⚠ User chose: Skip commit (local-only)
+  Summary: 7 succeeded, 1 failed, 2 skipped
+  Run log: .claude/.idd/issue-runs/2026-05-10T17:00:00.jsonl
+    Status: ⚠ local-only (nested .gitignore shadows path; cross-machine continuity disabled)
+    Manual fix: edit .claude/.gitignore to add `!.idd/issue-runs/<run_id>.jsonl` exception, then commit
 ```
 
 ```
