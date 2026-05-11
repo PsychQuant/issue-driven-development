@@ -390,8 +390,15 @@ if [ "$ready" != "4" ]; then
   # Timeout fallback: write SENTINEL marker so Step 2.5 recovery scan detects
   # the timeout case (rather than treating non-empty file as valid review).
   # Sentinel = literal first line "[STAGE 2.5 RECOVERY: DEVILS_ADVOCATE_TIMEOUT_<ready>/4]"
-  # Step 2.5a file existence check looks for this sentinel and routes to retry.
-  printf '[STAGE 2.5 RECOVERY: DEVILS_ADVOCATE_TIMEOUT_%d/4]\\n\\nDevil\\'s Advocate skipped: timeout waiting for sibling findings (%d/4 ready after 2.5min). Coordinator should retry once siblings arrive, or run coordinator self-review as fallback.\\n' "$ready" "$ready" \
+  # Step 2.5a file existence check looks for this sentinel and DELETES the file
+  # so retry/fallback's -s test correctly sees it as missing (per round 2 P1.1 fix).
+  #
+  # NOTE on quoting (per /idd-verify --pr 73 round 2 P1.2): bash single quotes
+  # CANNOT escape apostrophes via backslash. Use printf '%s\n%s\n' "header" "body"
+  # with double-quoted args (where backslash-apostrophe is unnecessary).
+  printf '%s\n\n%s\n' \
+    "[STAGE 2.5 RECOVERY: DEVILS_ADVOCATE_TIMEOUT_${ready}/4]" \
+    "Devil's Advocate skipped: timeout waiting for sibling findings (${ready}/4 ready after 2.5min). Coordinator detects this sentinel and routes to retry once siblings arrive, or coordinator self-review fallback." \
     > /tmp/verify_${NUMBER}_findings_devils-advocate.md
   exit 0
 fi
@@ -450,8 +457,12 @@ for f in "${EXPECTED_FILES[@]}"; do
   elif head -1 "$f" | grep -q '^\[STAGE 2.5 RECOVERY: DEVILS_ADVOCATE_TIMEOUT_'; then
     # Devil's Advocate sentinel — file exists but reviewer didn't actually run
     # (timed out waiting for siblings, per Step 2 DA polling loop fallback).
-    # Treat as missing so retry / coordinator fallback fires.
-    echo "→ Detected DEVILS_ADVOCATE_TIMEOUT sentinel for $role — routing to retry/fallback"
+    # DELETE the sentinel file so downstream 2.5b retry polling (`-s` check)
+    # and 2.5c fallback (`! -s` check) correctly see it as missing
+    # (per /idd-verify --pr 73 round 2 P1.1 fix — sentinel file IS non-empty,
+    # so without `rm` it would silently pass downstream -s checks).
+    echo "→ Detected DEVILS_ADVOCATE_TIMEOUT sentinel for $role — deleting + routing to retry/fallback"
+    rm -f "$f"
     MISSING_ROLES+=("$role")
   fi
 done
