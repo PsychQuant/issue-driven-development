@@ -111,7 +111,7 @@ idd-verify #NNN
 │   └── Devil's Advocate — 反駁前四個的「通過」判斷
 │
 └── Codex CLI（gpt-5.5 xhigh，獨立 process）
-    └── 完全獨立，看不到 team 的討論
+    └── 完全獨立，看不到其他 reviewer Agents 的 findings 檔
 
 → 6 個 findings 合併去重 → 呈現結果
 ```
@@ -269,6 +269,19 @@ Exit code:
 
 每個 reviewer 用 single `Agent` tool call（**not** TeamCreate teammate）。所有 5 個 + 1 個 Bash codex **必須在同一個 message** 一起發出（單 message 多 tool calls = parallel）。
 
+> **Pre-spawn prompt persistence (per /idd-verify --pr 73 round 1 P1.2)**: BEFORE invoking the 5 Agent calls, coordinator MUST save each reviewer's full prompt to `/tmp/verify_${NUMBER}_prompt_<role>.md`. Step 2.5b Recovery Protocol re-paste step reads these files; if they don't exist, retry fails. Save via:
+>
+> ```bash
+> # Coordinator runs BEFORE Agent invocations
+> cat > /tmp/verify_${NUMBER}_prompt_requirements.md <<'EOF'
+> 你是 Requirements Reviewer for Issue #...
+> (full prompt body here, exactly as passed to Agent below)
+> EOF
+> # ... same for logic, security, regression, devils-advocate
+> ```
+>
+> Do this once per verify invocation (paths include `${NUMBER}` so different issues don't collide). The 5 prompt files + 5 findings files share the same `verify_<NUMBER>_*` naming convention.
+
 **Prompt template 強制要素**（每個 reviewer 都必含這 3 條，違反 = process gap）：
 
 1. **明示 file output path**：`Write your findings to /tmp/verify_${NUMBER}_findings_<role>.md when done.`
@@ -374,8 +387,11 @@ for i in $(seq 1 30); do
 done
 
 if [ "$ready" != "4" ]; then
-  # Timeout fallback: write "skipped: timeout waiting for siblings" findings
-  printf 'Devil\\'s Advocate skipped: timeout waiting for sibling findings (%d/4 ready after 2.5min)\\n' "$ready" \
+  # Timeout fallback: write SENTINEL marker so Step 2.5 recovery scan detects
+  # the timeout case (rather than treating non-empty file as valid review).
+  # Sentinel = literal first line "[STAGE 2.5 RECOVERY: DEVILS_ADVOCATE_TIMEOUT_<ready>/4]"
+  # Step 2.5a file existence check looks for this sentinel and routes to retry.
+  printf '[STAGE 2.5 RECOVERY: DEVILS_ADVOCATE_TIMEOUT_%d/4]\\n\\nDevil\\'s Advocate skipped: timeout waiting for sibling findings (%d/4 ready after 2.5min). Coordinator should retry once siblings arrive, or run coordinator self-review as fallback.\\n' "$ready" "$ready" \
     > /tmp/verify_${NUMBER}_findings_devils-advocate.md
   exit 0
 fi
@@ -427,15 +443,21 @@ EXPECTED_FILES=(
 
 MISSING_ROLES=()
 for f in "${EXPECTED_FILES[@]}"; do
+  role=$(basename "$f" | sed -E 's/^verify_[0-9]+_findings_(.*)\.md$/\1/')
   if [ ! -s "$f" ]; then
-    # Extract role name from file path
-    role=$(basename "$f" | sed -E 's/^verify_[0-9]+_findings_(.*)\.md$/\1/')
+    # File missing or empty
+    MISSING_ROLES+=("$role")
+  elif head -1 "$f" | grep -q '^\[STAGE 2.5 RECOVERY: DEVILS_ADVOCATE_TIMEOUT_'; then
+    # Devil's Advocate sentinel — file exists but reviewer didn't actually run
+    # (timed out waiting for siblings, per Step 2 DA polling loop fallback).
+    # Treat as missing so retry / coordinator fallback fires.
+    echo "→ Detected DEVILS_ADVOCATE_TIMEOUT sentinel for $role — routing to retry/fallback"
     MISSING_ROLES+=("$role")
   fi
 done
 
 if [ ${#MISSING_ROLES[@]} -eq 0 ]; then
-  echo "→ All 5 reviewer findings files present. Proceeding to Step 3 merge."
+  echo "→ All 5 reviewer findings files present + valid. Proceeding to Step 3 merge."
 else
   echo "→ Recovery Protocol fires for: ${MISSING_ROLES[*]}"
   # 進 2.5b
@@ -603,9 +625,9 @@ X / Y requirements addressed
 ### Findings（合併後）
 | # | Severity | Finding | Source |
 |---|----------|---------|--------|
-| 1 | P1 | ... | team:logic+codex |
-| 2 | P2 | ... | team:security |
-| 3 | — | (devil's advocate 未能反駁) | team:devils-advocate |
+| 1 | P1 | ... | agents:logic+codex |
+| 2 | P2 | ... | agents:security |
+| 3 | — | (devil's advocate 未能反駁) | agents:devils-advocate |
 
 ### Scope Check
 {有沒有超出 issue 範圍的改動}
@@ -633,7 +655,7 @@ Verified scope: #98, #105
 
 | # | Severity | Finding | Source | Action |
 |---|----------|---------|--------|--------|
-| 1 | P1 | ... | team:logic+codex | Blocking |
+| 1 | P1 | ... | agents:logic+codex | Blocking |
 
 ---
 
@@ -643,7 +665,7 @@ Verified scope: #98, #105
 
 | # | Severity | Finding | Source | Action |
 |---|----------|---------|--------|--------|
-| 2 | P3 | ... | team:security | Follow-up |
+| 2 | P3 | ... | agents:security | Follow-up |
 ```
 
 ### Step 5: 後續動作
@@ -663,9 +685,9 @@ Verified scope: #98, #105
 ```markdown
 | # | Severity | Finding | Source | Action |
 |---|----------|---------|--------|--------|
-| 1 | MEDIUM | ... | team:logic+codex | Follow-up |
-| 2 | MEDIUM | ... | team:regression | In-scope fix |
-| 3 | LOW | ... | team:security | Follow-up |
+| 1 | MEDIUM | ... | agents:logic+codex | Follow-up |
+| 2 | MEDIUM | ... | agents:regression | In-scope fix |
+| 3 | LOW | ... | agents:security | Follow-up |
 ```
 
 #### Step 5b: Follow-up Issue Triage（強制，不可省略）
@@ -816,7 +838,7 @@ helper 行為見 `scripts/check-ralph-loop.sh`:exit 0 if installed, exit 1 with 
 - **不跳過驗證**。「看起來對了」不算。
 - **有 findings 就不 close**。先修，再 verify。
 - **Devil's Advocate 是必要的**。防止 4 個 reviewer 的群體盲點。
-- **Codex 是獨立的**。它看不到 team 的討論，提供真正的盲驗。
+- **Codex 是獨立的**。它看不到 5 reviewer Agents 的 findings 檔，提供真正的盲驗。
 
 ## Auto-Update
 
