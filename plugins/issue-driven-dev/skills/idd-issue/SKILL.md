@@ -1293,21 +1293,40 @@ BLOCK
       # already the current universal form, skip rewrite.
       NEEDS_REWRITE=false
     elif [ "$HAS_MARKER" -ge 1 ]; then
-      # Stale 4-line block detected — drop it before re-appending the new one.
-      # Stay in skip mode only while lines match known block content (comments
-      # we emit OR one of the literal carve-out patterns). Falls out cleanly
-      # on any unrelated line (which gets printed) or blank line (consumed).
+      # Stale block detected — drop it before re-appending the universal block.
+      # State machine (per /idd-verify --pr 71 round 6 P1.1):
+      #   STATE 0: outside block — print line
+      #   STATE 1: just saw marker, in "header" — only consume # comments adjacent
+      #            to marker (the rationale comments we emit) UNTIL first
+      #            carve-out pattern line; any non-# / non-pattern line ENDS skip
+      #   STATE 2: saw a carve-out pattern — only consume more known patterns;
+      #            after consuming the FINAL pattern `!.claude/.idd/issue-runs`,
+      #            END skip
+      #
+      # CRITICAL: do NOT consume blank lines or arbitrary # comments past STATE 1.
+      # If user has `\n# User section` immediately after our stale block, the
+      # blank line ends skip — user content preserved (round 6 P1.1 regression).
       awk -v marker="# IDD multi-finding run log carve-out (idd-issue Stage 4.5, #55)" '
-        $0 == marker { skip = 1; next }
-        skip {
-          if ($0 ~ /^#/) { next }
-          if ($0 == "" ) { next }
-          if ($0 == "!.claude" \
-             || $0 == ".claude/*" \
-             || $0 == "!.claude/.idd" \
-             || $0 == ".claude/.idd/*" \
-             || $0 == "!.claude/.idd/issue-runs") { next }
-          skip = 0   # unrelated line — fall through to print
+        function is_block_pattern(line) {
+          return (line == "!.claude" \
+               || line == ".claude/*" \
+               || line == "!.claude/.idd" \
+               || line == ".claude/.idd/*" \
+               || line == "!.claude/.idd/issue-runs")
+        }
+        $0 == marker { skip = 1; state = 1; next }
+        skip && state == 1 {
+          if ($0 ~ /^#/) { next }                      # rationale comment — consume
+          if (is_block_pattern($0)) { state = 2; next } # entered patterns
+          skip = 0                                      # anything else ends skip
+        }
+        skip && state == 2 {
+          if ($0 == "!.claude/.idd/issue-runs") {       # last pattern → consume and END
+            skip = 0
+            next
+          }
+          if (is_block_pattern($0)) { next }            # intermediate pattern — consume
+          skip = 0                                      # anything else ends skip
         }
         { print }
       ' "$GITIGNORE_FILE" > "$GITIGNORE_FILE.tmp"
@@ -1578,7 +1597,7 @@ Stage 4.5: jsonl gitignore pre-flight
     Status: committed (added universal 5-line carve-out chain to .gitignore — `!.claude` parent re-include neutralizes global ignore)
 ```
 
-Nested `.gitignore` (e.g. `.claude/.gitignore`) cannot be fixed from root — Add-carve-out option is not offered. Summary shows the nested source so user knows where to edit manually:
+Nested `.gitignore` (e.g. `.claude/.gitignore`) cannot be fixed from root — Add-carve-out option is not offered. Summary shows the nested source + a complete carve-out hint (single-line exception does NOT work per git docs — the parent directory of the run log path is still excluded, so any single-line `!.idd/issue-runs/<file>` rule has no effect). The manual fix mirrors the same chain-style pattern we use in root `.gitignore`, but with paths relative to the nested file's directory:
 
 ```
 Stage 4.5: jsonl gitignore pre-flight
@@ -1587,7 +1606,18 @@ Stage 4.5: jsonl gitignore pre-flight
   Summary: 7 succeeded, 1 failed, 2 skipped
   Run log: .claude/.idd/issue-runs/2026-05-10T17:00:00.jsonl
     Status: ⚠ local-only (nested .gitignore shadows path; cross-machine continuity disabled)
-    Manual fix: edit .claude/.gitignore to add `!.idd/issue-runs/<run_id>.jsonl` exception, then commit
+    Manual fix: edit .claude/.gitignore — single-line `!...` exceptions DO NOT WORK here
+      (parent .idd is still excluded by `*` per git's "parent dir excluded" rule).
+      Append the chain instead (paths relative to .claude/ since that's where the
+      nested .gitignore lives, and note the trailing slashes on directory patterns
+      + the explicit glob on issue-runs/* — empirically validated 2026-05-11):
+
+        !.idd/
+        .idd/*
+        !.idd/issue-runs/
+        !.idd/issue-runs/*
+
+      Then commit both `.claude/.gitignore` and the jsonl file.
 ```
 
 ```
