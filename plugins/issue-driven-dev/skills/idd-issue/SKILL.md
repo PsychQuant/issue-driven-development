@@ -1105,13 +1105,303 @@ Stage 3 confirm 後 sequential 跑 N 個 `gh` action:
 | `skip` | no-op |
 | `merged-into` | no separate dispatch(content 已在 partner action body) |
 
-**Warn-continue contract**:
+**Warn-continue contract** (refined per /idd-verify --pr 71 round 1 P1.4):
 
-- 成功:寫 jsonl `actions[i]` 含 `issue_number` / `issue_url` / `comment_url` / `duration_ms`
-- 失敗:寫 jsonl `actions[i].error` + `retry_hint`,**continue** to `actions[i+1]`(不 abort)
-- 全部完成:print summary `N succeeded, M failed (see jsonl), K skipped`
+- Per-action result is accumulated into **in-memory** `RUN_LOG_ENTRIES` array, NOT directly to disk
+- 成功:append entry with `issue_number` / `issue_url` / `comment_url` / `duration_ms`
+- 失敗:append entry with `error` + `retry_hint`,**continue** to next action(不 abort)
+- 全部 dispatch 完成 → 進 Stage 4.5 gate → gate 決定 jsonl 命運:
+  - `committed` / `not-applicable` / `bypass-env-var` → materialize jsonl to disk (one-shot `jq -n ... > $JSONL_PATH`)
+  - `add-exception` → materialize jsonl + commit with `.gitignore` change (5-line carve-out chain with `!.claude` parent re-include — universal across all fixable sources) in same dispatch
+  - `skip-commit` → materialize jsonl locally, no `git add`
+  - `abort` → discard `RUN_LOG_ENTRIES`, no jsonl file ever written
+- Summary line is printed after gate completes (with continuity status appended)
 
-**No rollback**: 已 dispatch 的 actions **不**回滾(每筆是 user-confirmed 意圖,不是 AI 推論)。失敗的 user 自行手動補 dispatch(`retry_hint` 給 hint)。
+**No rollback**: 已 dispatch 的 GitHub actions **不**回滾(每筆是 user-confirmed 意圖,不是 AI 推論)。失敗的 user 自行手動補 dispatch(`retry_hint` 在 in-memory entry 給 hint;只在 jsonl materialized 時持久化)。Abort 模式下 in-memory entries 也丟,user 看 dispatch summary 看到哪些已 dispatch 即可手動追蹤。
+
+#### Stage 4.5: jsonl gitignore pre-flight gate (v2.58+, #55)
+
+**Why this step**: D2 spec contract states "JSONL run log SHALL be committed to git by default". But repos that `.gitignore` the `.claude/` directory (common IDE-config pattern, e.g. `kiki830621/teaching_lesley`) silently swallow `.claude/.idd/issue-runs/<run_id>.jsonl` — `git status` shows nothing untracked, cross-machine continuity assumption broken. Gate detects + lets user decide BEFORE jsonl write.
+
+**Rule**: Fires ONCE per dispatch batch (decision cached in `$JSONL_GITIGNORE_DECISION` for the run). Detection uses `git check-ignore -v` to honor all `.gitignore` precedence rules AND surface which source matched (repo `.gitignore`, `.git/info/exclude`, or global `core.excludesfile`) — the remediation strategy differs per source.
+
+**Ordering invariant** (per /idd-verify --pr 71 round 1 P1.4): execution order is **dispatch → gate → materialize**:
+
+1. **Stage 4 dispatch** loop iterates the planned `gh issue create/comment/edit` actions, accumulating each result (success / failure with `retry_hint`) into in-memory `RUN_LOG_ENTRIES` array — NOT to disk yet
+2. **Stage 4.5 gate** fires AFTER the dispatch loop completes (or on early abort within the loop). Decides jsonl materialization fate per `JSONL_GITIGNORE_DECISION`
+3. **Materialize**: only if gate decision is `committed` / `not-applicable` / `bypass-env-var` / `add-exception` / `skip-commit` does the jsonl actually get written via one-shot `jq -n ... > $JSONL_PATH`. `abort` discards in-memory entries; jsonl never reaches disk.
+
+The name "Stage 4.5" indicates "gate fires after Stage 4 dispatch loop, before jsonl persistence". Already-dispatched GitHub actions are NOT rolled back on `abort` (they're committed user intent from Stage 3 confirmation) — but the local audit artifact (jsonl) is suppressed.
+
+##### Detection (bash)
+
+```bash
+JSONL_PATH=".claude/.idd/issue-runs/${RUN_ID}.jsonl"
+
+# Cache the gate decision for this dispatch batch — gate fires once, not per-issue.
+if [ -z "${JSONL_GITIGNORE_DECISION:-}" ]; then
+  # Escape hatch: env var bypass for CI / unattended runs.
+  # Per /idd-verify --pr 71 round 1 P1.1 — must implement bypass in detection, not just doc-claim it.
+  if [ "${IDD_JSONL_GITIGNORE_GATE:-}" = "false" ]; then
+    JSONL_GITIGNORE_DECISION="bypass-env-var"
+  # Outside git work tree? `git rev-parse` returns non-zero — gate is not applicable.
+  elif ! git rev-parse --git-dir > /dev/null 2>&1; then
+    JSONL_GITIGNORE_DECISION="not-applicable"   # not in a git repo; jsonl writes as local file, no commit attempt
+  else
+    # Run `git check-ignore -v` to also capture WHICH source matched (repo .gitignore vs global excludesfile).
+    IGNORE_SOURCE=$(git check-ignore -v "$JSONL_PATH" 2>/dev/null)
+    if [ -n "$IGNORE_SOURCE" ]; then
+      # IGNORED — capture source for remediation strategy (agent reads $IGNORE_SOURCE in AskUserQuestion).
+      # Example: ".gitignore:1:.claude/        .claude/.idd/issue-runs/test.jsonl"
+      # Example: ".git/info/exclude:1:.claude/ .claude/.idd/issue-runs/test.jsonl"
+      # Example: "/Users/X/.config/git/ignore:1:.claude/  .claude/.idd/issue-runs/test.jsonl" (global)
+      # Example: ".claude/.gitignore:1:*       .claude/.idd/issue-runs/test.jsonl" (nested — UNSUPPORTED for add-carve-out)
+      #
+      # Classify the source so the agent can offer the right options:
+      #   IS_NESTED_GITIGNORE=true  → carve-out in root .gitignore CANNOT override a nested
+      #                               .gitignore (e.g. .claude/.gitignore). Per /idd-verify --pr 71
+      #                               round 4 P1.2, empirically validated: a root-level rewrite
+      #                               leaves the nested rule in force, jsonl stays ignored.
+      #                               AskUserQuestion drops "Add carve-out" option → 2-option (skip/abort).
+      #   IS_NESTED_GITIGNORE=false → root .gitignore, .git/info/exclude, or global core.excludesfile
+      #                               — all fixable by writing the 5-line carve-out block into root
+      #                               `.gitignore` (the `!.claude` parent re-include neutralizes any
+      #                               outer source via git's last-matching rule).
+      SOURCE_FILE=$(printf '%s\n' "$IGNORE_SOURCE" | awk -F: '{print $1}')
+      IS_NESTED_GITIGNORE=false
+      # ORDER MATTERS (per /idd-verify --pr 71 round 5 P1.2): the `*/.gitignore`
+      # glob matches absolute paths like `/Users/X/.config/git/ignore` when
+      # `core.excludesfile` is named `.gitignore`. Test absolute paths FIRST
+      # so global excludesfile never falls into the nested branch.
+      case "$SOURCE_FILE" in
+        /*)                          IS_NESTED_GITIGNORE=false ;;  # absolute → global ignore (fixable by 5-line in root)
+        .git/info/exclude)           IS_NESTED_GITIGNORE=false ;;  # repo-local but separate from .gitignore (fixable)
+        .gitignore)                  IS_NESTED_GITIGNORE=false ;;  # root .gitignore (fixable)
+        */.gitignore)                IS_NESTED_GITIGNORE=true  ;;  # nested .gitignore (NOT fixable from root)
+        *)                           IS_NESTED_GITIGNORE=false ;;  # other repo-local → defensive fixable
+      esac
+      # Agent branches at agent level — see AskUserQuestion section below.
+      : # JSONL_GITIGNORE_DECISION set by user choice next
+    else
+      JSONL_GITIGNORE_DECISION="committed"   # not ignored, silent pass
+    fi
+  fi
+fi
+```
+
+| `JSONL_GITIGNORE_DECISION` value | Semantic |
+|----------------------------------|----------|
+| `committed` | jsonl path NOT ignored — proceed with normal write + commit |
+| `not-applicable` | outside git work tree — jsonl written as local file, no commit attempt |
+| `bypass-env-var` | `IDD_JSONL_GITIGNORE_GATE=false` set — same as `committed` but audit cites env var |
+| (unset → enters AskUserQuestion) | ignored, source captured in `$IGNORE_SOURCE` for agent prose |
+
+If decision is `committed` / `not-applicable` / `bypass-env-var` → silent pass with 1-line audit. **Stage 4 dispatch has already completed at this point** (per dispatch→gate→materialize ordering invariant above) — the gate is the green light for materializing the in-memory `RUN_LOG_ENTRIES` to disk as the jsonl file. No further dispatch work needed;proceed to materialization.
+
+If detection found ignore shadow → enter the AskUserQuestion deliberation moment described next.
+
+##### AskUserQuestion 3-option (prose — agent-level, NOT bash)
+
+> **Why prose**: AskUserQuestion is a Claude Code agent-level tool, not a bash function. Embedding `AskUserQuestion(...)` inside bash was a category error caught in /idd-verify #47 P1 finding 2. Same pattern applies here — agent reads bash detection, branches at agent level on detection result, then handles deliberation as prose.
+
+When detection returns "ignored", agent branches on `$IS_NESTED_GITIGNORE`:
+
+**Case A — `IS_NESTED_GITIGNORE=false`** (source is root `.gitignore`, `.git/info/exclude`, or global `core.excludesfile`) → 3-option prose:
+
+> "Multi-finding dispatch will write run log to `.claude/.idd/issue-runs/<run_id>.jsonl`, but `${SOURCE_FILE}` shadows `.claude/` (D2 contract violated: jsonl can't reach git). Choose:"
+>
+> Options (default = first;agent emits `$IGNORE_SOURCE` in question so user can see WHICH gitignore source matched):
+> - **`Add carve-out chain to .gitignore`** — rewrite repo `.gitignore` to replace bare `.claude/` with the 5-line carve-out block (`!.claude` parent re-include + `.claude/*` + `!.claude/.idd` + `.claude/.idd/*` + `!.claude/.idd/issue-runs`). The `!.claude` parent re-include neutralizes any outer ignore source (`.git/info/exclude` or global `core.excludesfile`) via git's last-matching rule. Idempotent (re-run safe via marker comment).
+> - **`Skip commit (local-only)`** — write jsonl locally but don't `git add`;dispatch summary flags ⚠ cross-machine continuity gap + manual export command.
+> - **`Abort`** — discard in-memory run log + exit dispatch BEFORE any jsonl materialization. Already-dispatched GitHub actions (gh issue create / comment / edit) remain (NOT rolled back per "No rollback" rule above — but the JSONL file never reaches disk).
+
+**Case B — `IS_NESTED_GITIGNORE=true`** (source is a nested `.gitignore` such as `.claude/.gitignore`) → **`Add carve-out` option is NOT offered** (a root-level rewrite cannot override a nested `.gitignore`; the user must edit the nested source themselves or accept local-only). 2-option prose:
+
+> "Multi-finding dispatch will write run log to `.claude/.idd/issue-runs/<run_id>.jsonl`, but nested `${SOURCE_FILE}` shadows it (D2 contract violated). A root-level `.gitignore` carve-out CANNOT override a nested `.gitignore` (git evaluates per-directory rules in scope; the nested file wins for paths beneath it). To use the Add-carve-out path you'd need to edit `${SOURCE_FILE}` yourself. Choose:"
+>
+> Options (default = first):
+> - **`Skip commit (local-only)`** — write jsonl locally but don't `git add`;dispatch summary flags ⚠ cross-machine continuity gap + manual export command + `${SOURCE_FILE}` location.
+> - **`Abort`** — discard in-memory run log + exit dispatch BEFORE any jsonl materialization. Already-dispatched GitHub actions remain.
+
+Set `JSONL_GITIGNORE_DECISION` per user choice. Then proceed:
+
+```bash
+case "$JSONL_GITIGNORE_DECISION" in
+  "add-exception")
+    # CRITICAL git limitation (per git docs):
+    #   "It is not possible to re-include a file if a parent directory of
+    #    that file is excluded. Git doesn't list excluded directories for
+    #    performance reasons, so any patterns on contained files have no
+    #    effect, no matter where they are defined."
+    #
+    # Empirically: single-line `!.claude/.idd/issue-runs/` does NOT work
+    # when `.claude/` is excluded as a directory. We must rewrite `.claude/`
+    # to NOT exclude the directory itself (use `.claude/*` pattern) and
+    # carve out each parent dir on the path to issue-runs.
+    #
+    # ALWAYS-5-LINE BLOCK (per /idd-verify --pr 71 round 4 P1.1):
+    # Multiple ignore sources can stack — root `.gitignore` may carry `.claude/`
+    # AND `.git/info/exclude` (or global `core.excludesfile`) may also carry it.
+    # `git check-ignore -v` only reports the highest-precedence source, so a
+    # 4-line block that only handles the reported source still loses to a
+    # lower-precedence source that emerges after we sed-out the root pattern.
+    #
+    # The fix: always emit the 5-line block. The leading `!.claude` line uses
+    # git's last-matching rule to re-include `.claude/` regardless of any
+    # outer ignore source. The downstream `.claude/*` keeps everything else
+    # ignored, and the carve-out re-includes only the run-log path.
+    # Empirically validated against {root .gitignore, .git/info/exclude, global,
+    # global + root combined, .git/info/exclude + root combined} — all 5/5 pass.
+    #
+    # CALLER PRECONDITION: this case branch only runs when IS_NESTED_GITIGNORE=false.
+    # Nested `.gitignore` (e.g. `.claude/.gitignore`) cannot be fixed from root —
+    # the AskUserQuestion prose drops the Add-carve-out option in that case, so
+    # we'll never reach here with a nested source.
+    GITIGNORE_FILE=".gitignore"
+
+    REWRITE_BLOCK=$(cat <<'BLOCK'
+# IDD multi-finding run log carve-out (idd-issue Stage 4.5, #55)
+# `.claude/` is excluded by some ignore source (root .gitignore, .git/info/exclude,
+# or global core.excludesfile). The `!.claude` line re-includes the parent
+# directory itself via git's last-matching rule (neutralizes any outer source),
+# then `.claude/*` re-excludes everything inside, and the carve-out re-includes
+# only the run-log path. Other contents of .claude/ remain ignored.
+!.claude
+.claude/*
+!.claude/.idd
+.claude/.idd/*
+!.claude/.idd/issue-runs
+BLOCK
+)
+
+    # Idempotency + upgrade: detect both presence of marker AND that the block
+    # contains the universal `!.claude` parent re-include line (per /idd-verify
+    # --pr 71 round 5 P1.1). The marker alone is insufficient — older versions
+    # of this skill emitted a 4-line block with the SAME marker but missing
+    # `!.claude`, which still loses to stacked ignore sources. We upgrade in
+    # place: if marker present BUT `!.claude` line absent, drop the old block
+    # entirely (delete lines from marker through the next blank line / EOF)
+    # then re-append the current universal 5-line block.
+    # `grep -c` exits non-zero on no-match while still printing "0", so `|| echo 0`
+    # would emit "0\n0" and break the `-ge 1` integer test. Pipe to `wc -l` instead —
+    # always yields a clean integer (0 if grep finds nothing or file is absent).
+    HAS_MARKER=$(grep -xF "# IDD multi-finding run log carve-out (idd-issue Stage 4.5, #55)" "$GITIGNORE_FILE" 2>/dev/null | wc -l | tr -d ' ')
+    HAS_PARENT_REINCLUDE=$(grep -xF "!.claude" "$GITIGNORE_FILE" 2>/dev/null | wc -l | tr -d ' ')
+    NEEDS_REWRITE=true
+    if [ "$HAS_MARKER" -ge 1 ] && [ "$HAS_PARENT_REINCLUDE" -ge 1 ]; then
+      # Both marker and the universal `!.claude` line already present → block is
+      # already the current universal form, skip rewrite.
+      NEEDS_REWRITE=false
+    elif [ "$HAS_MARKER" -ge 1 ]; then
+      # Stale block detected — drop it before re-appending the universal block.
+      # State machine (per /idd-verify --pr 71 round 6 P1.1):
+      #   STATE 0: outside block — print line
+      #   STATE 1: just saw marker, in "header" — only consume # comments adjacent
+      #            to marker (the rationale comments we emit) UNTIL first
+      #            carve-out pattern line; any non-# / non-pattern line ENDS skip
+      #   STATE 2: saw a carve-out pattern — only consume more known patterns;
+      #            after consuming the FINAL pattern `!.claude/.idd/issue-runs`,
+      #            END skip
+      #
+      # CRITICAL: do NOT consume blank lines or arbitrary # comments past STATE 1.
+      # If user has `\n# User section` immediately after our stale block, the
+      # blank line ends skip — user content preserved (round 6 P1.1 regression).
+      awk -v marker="# IDD multi-finding run log carve-out (idd-issue Stage 4.5, #55)" '
+        function is_block_pattern(line) {
+          return (line == "!.claude" \
+               || line == ".claude/*" \
+               || line == "!.claude/.idd" \
+               || line == ".claude/.idd/*" \
+               || line == "!.claude/.idd/issue-runs")
+        }
+        $0 == marker { skip = 1; state = 1; next }
+        skip && state == 1 {
+          if ($0 ~ /^#/) { next }                      # rationale comment — consume
+          if (is_block_pattern($0)) { state = 2; next } # entered patterns
+          skip = 0                                      # anything else ends skip
+        }
+        skip && state == 2 {
+          if ($0 == "!.claude/.idd/issue-runs") {       # last pattern → consume and END
+            skip = 0
+            next
+          }
+          if (is_block_pattern($0)) { next }            # intermediate pattern — consume
+          skip = 0                                      # anything else ends skip
+        }
+        { print }
+      ' "$GITIGNORE_FILE" > "$GITIGNORE_FILE.tmp"
+      mv "$GITIGNORE_FILE.tmp" "$GITIGNORE_FILE"
+    fi
+    if [ "$NEEDS_REWRITE" = "true" ]; then
+      # Remove any existing bare `.claude/` or `.claude` line (we're rewriting that
+      # pattern to `.claude/*` which behaves differently per git docs). Use sed -E
+      # for portable BSD/GNU compatibility; rewrite via tempfile to handle the
+      # no-inplace case. Touch first to handle the no-`.gitignore`-yet case
+      # (sed errors on missing file → would abort under `set -e`).
+      touch "$GITIGNORE_FILE"
+      sed -E '/^\.claude\/?$/d' "$GITIGNORE_FILE" > "$GITIGNORE_FILE.tmp"
+      mv "$GITIGNORE_FILE.tmp" "$GITIGNORE_FILE"
+      # Append carve-out at EOF. If file is now empty, emit without leading newline.
+      if [ -s "$GITIGNORE_FILE" ]; then
+        printf '\n%s\n' "$REWRITE_BLOCK" >> "$GITIGNORE_FILE"
+      else
+        printf '%s\n' "$REWRITE_BLOCK" > "$GITIGNORE_FILE"
+      fi
+    fi
+    # .gitignore change is committed together with the jsonl materialization below
+    ;;
+  "skip-commit")
+    # jsonl will be written but not `git add`ed — dispatch summary shows warning
+    ;;
+  "abort")
+    # Discard in-memory run log without materializing the jsonl file. Already-dispatched
+    # GitHub actions (gh issue create / comment / edit) remain in flight — they were
+    # confirmed by user in Stage 3 and we don't roll those back. But the local audit
+    # artifact (jsonl) is suppressed by user choice;dispatch summary shows partial run
+    # without cross-machine continuity hook.
+    unset RUN_LOG_ENTRIES   # in-memory accumulator from Stage 4 (never written to disk)
+    echo "Dispatch aborted before jsonl materialization (per user choice in Stage 4.5 gate)." >&2
+    echo "Already-dispatched GitHub actions (issue create/comment/edit) remain — no rollback." >&2
+    echo "JSONL run log NOT written;cross-machine continuity disabled for this batch." >&2
+    exit 0
+    ;;
+  "bypass-env-var")
+    # Env var bypass: silent skip the prompt, write jsonl with 1-line audit citing the var.
+    # (Audit line emitted in dispatch summary template — see Stage 4.5 summary section.)
+    ;;
+  "not-applicable")
+    # Outside git work tree: jsonl writes as local file, no commit attempted.
+    # Dispatch summary shows "Not applicable" status (no continuity contract to violate).
+    ;;
+  "committed")
+    # Standard path: jsonl path not ignored, write + commit normally.
+    ;;
+esac
+```
+
+> **Why a 5-line carve-out, not a 1-line exception or a source-dependent 4/5 split**:
+>
+> - **1-line `!.claude/.idd/issue-runs/` exception doesn't work**: discovered empirically during this implementation's TDD reproduction (2026-05-11). git docs are explicit — "any patterns on contained files have no effect" when the parent directory is excluded.
+> - **4-line block (no `!.claude`) is fragile**: when multiple ignore sources stack (root `.gitignore` + `.git/info/exclude`, or root + global `core.excludesfile`), `git check-ignore -v` only reports the highest-precedence one. After we sed-out the root pattern, a lower-precedence source emerges and the 4-line block can't reach the parent directory (per round-4 P1.1).
+> - **5-line block (with `!.claude`) is universal**: the leading `!.claude` line uses git's last-matching rule to re-include `.claude/` regardless of any outer ignore source; the `.claude/*` and following carve-out lines keep everything except the run-log path ignored. Empirically validated against all stacked-source combinations.
+> - **Nested `.gitignore` (e.g. `.claude/.gitignore`) is NOT supported by Add-carve-out**: a root-level rewrite cannot override a nested `.gitignore` (git's per-directory scope rules). The AskUserQuestion prose drops the Add-carve-out option in that case and offers skip/abort only.
+>
+> Marker comment line at top of block makes the rewrite idempotent on re-run.
+
+##### Failure modes
+
+| Scenario | `JSONL_GITIGNORE_DECISION` | Behavior |
+|----------|---------------------------|----------|
+| Outside git work tree | `not-applicable` | jsonl writes as local file, no commit attempt;dispatch summary "Status: not applicable (outside git work tree)" |
+| `.claude/` not ignored | `committed` | silent pass — Stage 4 dispatch materializes jsonl normally + commits |
+| Root `.gitignore` ignores `.claude/` + user picks Add carve-out | (user choice) | 5-line carve-out block appended to `.gitignore` (with idempotency marker);both `.gitignore` change and jsonl commit in dispatch |
+| `.git/info/exclude` ignores `.claude/` + user picks Add carve-out | (user choice) | Same 5-line block written to **root `.gitignore`** (not `.git/info/exclude`). The `!.claude` line re-includes the parent dir via git's last-matching rule; outer source is neutralized |
+| Global `core.excludesfile` ignores `.claude/` + user picks Add carve-out | (user choice) | Same 5-line block written to root `.gitignore` — repo-local override of global ignore via `!.claude` re-include |
+| **Nested `.gitignore` (e.g. `.claude/.gitignore`) ignores `.claude/.idd/...`** | (user choice) | **Add carve-out option NOT offered** — root rewrite cannot override per-directory ignore. AskUserQuestion presents skip/abort + tells user the nested source path so they can edit it manually if desired |
+| Ignored + user picks Skip commit (local-only) | (user choice) | jsonl written locally, no `git add`;dispatch summary flags ⚠ cross-machine gap + manual export command + ignore source path |
+| Ignored + user picks Abort | (user choice) | In-memory run log discarded BEFORE materialization;dispatch summary shows aborted;already-dispatched GitHub actions remain |
+| Bypass via env var | `bypass-env-var` | `IDD_JSONL_GITIGNORE_GATE=false` → silent skip prompt (detection still runs for audit cite);1-line audit `Stage 4.5 gate bypassed (IDD_JSONL_GITIGNORE_GATE=false)` — for CI / unattended runs |
+| `git check-ignore -v` parse failure | (fallback) | If `$IGNORE_SOURCE` empty or unparseable, default `IS_NESTED_GITIGNORE=false` (assume fixable source) — better to attempt the 5-line block than refuse all options |
 
 ### Audit trail(雙軌:footer + jsonl)
 
@@ -1278,7 +1568,90 @@ Stage 4: Dispatch
   ✓ Edited #14 body (1100ms, merged_from: [4])
   ⚠ Failed to create issue from finding 6: rate limit (retry_hint logged)
   ...
-  Summary: 7 succeeded, 1 failed (see .claude/.idd/issue-runs/2026-05-10T17:00:00.jsonl), 2 skipped
+Stage 4.5: jsonl gitignore pre-flight
+  ✓ Run log path NOT gitignored — committing as-is (D2 contract preserved)
+  Summary: 7 succeeded, 1 failed, 2 skipped
+  Run log: .claude/.idd/issue-runs/2026-05-10T17:00:00.jsonl
+    Status: committed
+```
+
+When `.gitignore` shadows `.claude/`, Stage 4.5 surfaces the ignore source + user choice in the same summary block. The carve-out always emits the same universal 5-line block (per round-5 fix), so the summary line doesn't vary by source:
+
+```
+Stage 4.5: jsonl gitignore pre-flight
+  ⚠ Detected: .gitignore:1:.claude/  shadows run log path
+  ✓ User chose: Add carve-out chain to .gitignore
+  Summary: 7 succeeded, 1 failed, 2 skipped
+  Run log: .claude/.idd/issue-runs/2026-05-10T17:00:00.jsonl
+    Status: committed (added universal 5-line carve-out chain to .gitignore — `!.claude` parent re-include neutralizes outer source)
+```
+
+Global `core.excludesfile` and `.git/info/exclude` sources produce the same outcome (same 5-line block written to root `.gitignore`). Only the `Detected:` line differs:
+
+```
+Stage 4.5: jsonl gitignore pre-flight
+  ⚠ Detected: ~/.config/git/ignore:3:.claude/  (global core.excludesfile)
+  ✓ User chose: Add carve-out chain to .gitignore
+  Summary: 7 succeeded, 1 failed, 2 skipped
+  Run log: .claude/.idd/issue-runs/2026-05-10T17:00:00.jsonl
+    Status: committed (added universal 5-line carve-out chain to .gitignore — `!.claude` parent re-include neutralizes global ignore)
+```
+
+Nested `.gitignore` (e.g. `.claude/.gitignore`) cannot be fixed from root — Add-carve-out option is not offered. Summary shows the nested source + a complete carve-out hint (single-line exception does NOT work per git docs — the parent directory of the run log path is still excluded, so any single-line `!.idd/issue-runs/<file>` rule has no effect). The manual fix mirrors the same chain-style pattern we use in root `.gitignore`, but with paths relative to the nested file's directory:
+
+```
+Stage 4.5: jsonl gitignore pre-flight
+  ⚠ Detected: .claude/.gitignore:1:*  (nested .gitignore — root carve-out cannot override)
+  ⚠ User chose: Skip commit (local-only)
+  Summary: 7 succeeded, 1 failed, 2 skipped
+  Run log: .claude/.idd/issue-runs/2026-05-10T17:00:00.jsonl
+    Status: ⚠ local-only (nested .gitignore shadows path; cross-machine continuity disabled)
+    Manual fix: edit .claude/.gitignore — single-line `!...` exceptions DO NOT WORK here
+      (parent .idd is still excluded by `*` per git's "parent dir excluded" rule).
+      Append the chain instead (paths relative to .claude/ since that's where the
+      nested .gitignore lives, and note the trailing slashes on directory patterns
+      + the explicit glob on issue-runs/* — empirically validated 2026-05-11):
+
+        !.idd/
+        .idd/*
+        !.idd/issue-runs/
+        !.idd/issue-runs/*
+
+      Then commit both `.claude/.gitignore` and the jsonl file.
+```
+
+```
+Stage 4.5: jsonl gitignore pre-flight
+  ⚠ Detected: .gitignore:1:.claude/  shadows run log path
+  ⚠ User chose: Skip commit (local-only)
+  Summary: 7 succeeded, 1 failed, 2 skipped
+  Run log: .claude/.idd/issue-runs/2026-05-10T17:00:00.jsonl
+    Status: ⚠ local-only (gitignored by .claude/ pattern, cross-machine continuity disabled)
+    Manual export: cp .claude/.idd/issue-runs/2026-05-10T17:00:00.jsonl <path-outside-.gitignore>
+```
+
+```
+Stage 4.5: jsonl gitignore pre-flight
+  ⚠ Detected: .gitignore:1:.claude/  shadows run log path
+  ✗ User chose: Abort
+  Summary: dispatch aborted — 3 issues dispatched before gate (NOT rolled back), run log discarded
+  Run log: (not written — Abort discards in-memory accumulator)
+```
+
+```
+Stage 4.5: jsonl gitignore pre-flight
+  → Bypassed: IDD_JSONL_GITIGNORE_GATE=false (CI/unattended mode)
+  Summary: 7 succeeded, 1 failed, 2 skipped
+  Run log: .claude/.idd/issue-runs/2026-05-10T17:00:00.jsonl
+    Status: gate bypassed via env var — jsonl written per existing logic (may be silently gitignored)
+```
+
+```
+Stage 4.5: jsonl gitignore pre-flight
+  → Not applicable: outside git work tree
+  Summary: 7 succeeded, 1 failed, 2 skipped
+  Run log: .claude/.idd/issue-runs/2026-05-10T17:00:00.jsonl (local file, no commit attempted)
+    Status: not applicable
 ```
 
 #### Example 2: Single finding source — fall through
