@@ -1112,7 +1112,7 @@ Stage 3 confirm 後 sequential 跑 N 個 `gh` action:
 - 失敗:append entry with `error` + `retry_hint`,**continue** to next action(不 abort)
 - 全部 dispatch 完成 → 進 Stage 4.5 gate → gate 決定 jsonl 命運:
   - `committed` / `not-applicable` / `bypass-env-var` → materialize jsonl to disk (one-shot `jq -n ... > $JSONL_PATH`)
-  - `add-carve-out` → materialize jsonl + commit with `.gitignore` change in same dispatch
+  - `add-exception` → materialize jsonl + commit with `.gitignore` change (4-line repo-source or 5-line global-source carve-out chain) in same dispatch
   - `skip-commit` → materialize jsonl locally, no `git add`
   - `abort` → discard `RUN_LOG_ENTRIES`, no jsonl file ever written
 - Summary line is printed after gate completes (with continuity status appended)
@@ -1125,7 +1125,13 @@ Stage 3 confirm 後 sequential 跑 N 個 `gh` action:
 
 **Rule**: Fires ONCE per dispatch batch (decision cached in `$JSONL_GITIGNORE_DECISION` for the run). Detection uses `git check-ignore -v` to honor all `.gitignore` precedence rules AND surface which source matched (repo `.gitignore`, `.git/info/exclude`, or global `core.excludesfile`) — the remediation strategy differs per source.
 
-**Ordering invariant** (per /idd-verify --pr 71 round 1 P1.4): this gate MUST fire **before** Stage 4 begins per-action jsonl writes. Conceptually: the gate decides the destination of the jsonl;Stage 4 dispatch loop accumulates entries into in-memory `RUN_LOG`;the jsonl is materialized to disk only AFTER gate passes (committed / added-exception / local-only) OR is discarded entirely (abort). The skill prose names this Stage 4.5 for readability, but execution order is gate→dispatch→materialize.
+**Ordering invariant** (per /idd-verify --pr 71 round 1 P1.4): execution order is **dispatch → gate → materialize**:
+
+1. **Stage 4 dispatch** loop iterates the planned `gh issue create/comment/edit` actions, accumulating each result (success / failure with `retry_hint`) into in-memory `RUN_LOG_ENTRIES` array — NOT to disk yet
+2. **Stage 4.5 gate** fires AFTER the dispatch loop completes (or on early abort within the loop). Decides jsonl materialization fate per `JSONL_GITIGNORE_DECISION`
+3. **Materialize**: only if gate decision is `committed` / `not-applicable` / `bypass-env-var` / `add-exception` / `skip-commit` does the jsonl actually get written via one-shot `jq -n ... > $JSONL_PATH`. `abort` discards in-memory entries; jsonl never reaches disk.
+
+The name "Stage 4.5" indicates "gate fires after Stage 4 dispatch loop, before jsonl persistence". Already-dispatched GitHub actions are NOT rolled back on `abort` (they're committed user intent from Stage 3 confirmation) — but the local audit artifact (jsonl) is suppressed.
 
 ##### Detection (bash)
 
@@ -1204,13 +1210,23 @@ case "$JSONL_GITIGNORE_DECISION" in
     GITIGNORE_FILE=".gitignore"
 
     # Decide if we need the global-ignore re-include line.
-    # $IGNORE_SOURCE is set by detection: "filename:line:pattern    file" format.
-    # If source filename starts with $HOME or anything outside $REPO_ROOT, it's global.
+    # $IGNORE_SOURCE is set by detection: "filename:line:pattern\tfile" format.
+    # Extract the source filename (first field, before first ':').
+    #
+    # Heuristic (per /idd-verify --pr 71 round 2 P1.2 refinement):
+    # - Absolute path (starts with `/`) → global source (cannot be edited from
+    #   per-repo carve-out; needs `!.claude` re-include line)
+    # - Relative path (e.g. `.gitignore`, `.git/info/exclude`) → repo-local source
+    #   (4-line carve-out works as-is)
+    #
+    # `git check-ignore -v` ALWAYS prints repo-local sources as relative paths
+    # (`.gitignore` not `/Users/X/repo/.gitignore`), and global sources as
+    # absolute paths. So path-absoluteness is the canonical discriminator.
     NEEDS_GLOBAL_REINCLUDE=false
-    case "$IGNORE_SOURCE" in
-      "$HOME"/*|/*excludesfile*|/etc/*)
-        NEEDS_GLOBAL_REINCLUDE=true
-        ;;
+    SOURCE_FILE=$(printf '%s\n' "$IGNORE_SOURCE" | awk -F: '{print $1}')
+    case "$SOURCE_FILE" in
+      /*)  NEEDS_GLOBAL_REINCLUDE=true  ;;   # absolute path → global ignore
+      *)   NEEDS_GLOBAL_REINCLUDE=false ;;   # relative path → repo-local source
     esac
 
     if [ "$NEEDS_GLOBAL_REINCLUDE" = "true" ]; then
