@@ -1170,7 +1170,7 @@ fi
 | `bypass-env-var` | `IDD_JSONL_GITIGNORE_GATE=false` set — same as `committed` but audit cites env var |
 | (unset → enters AskUserQuestion) | ignored, source captured in `$IGNORE_SOURCE` for agent prose |
 
-If decision is `committed` / `not-applicable` / `bypass-env-var` → silent pass with 1-line audit, proceed to Stage 4 dispatch loop (jsonl will materialize after dispatch per ordering invariant above).
+If decision is `committed` / `not-applicable` / `bypass-env-var` → silent pass with 1-line audit. **Stage 4 dispatch has already completed at this point** (per dispatch→gate→materialize ordering invariant above) — the gate is the green light for materializing the in-memory `RUN_LOG_ENTRIES` to disk as the jsonl file. No further dispatch work needed;proceed to materialization.
 
 If detection found ignore shadow → enter the AskUserQuestion deliberation moment described next.
 
@@ -1209,24 +1209,34 @@ case "$JSONL_GITIGNORE_DECISION" in
     #     the parent directory itself (global ignore CANNOT be edited from per-repo carve-out)
     GITIGNORE_FILE=".gitignore"
 
-    # Decide if we need the global-ignore re-include line.
+    # Decide if we need the parent-re-include line (`!.claude`).
     # $IGNORE_SOURCE is set by detection: "filename:line:pattern\tfile" format.
     # Extract the source filename (first field, before first ':').
     #
-    # Heuristic (per /idd-verify --pr 71 round 2 P1.2 refinement):
-    # - Absolute path (starts with `/`) → global source (cannot be edited from
-    #   per-repo carve-out; needs `!.claude` re-include line)
-    # - Relative path (e.g. `.gitignore`, `.git/info/exclude`) → repo-local source
-    #   (4-line carve-out works as-is)
+    # Heuristic (per /idd-verify --pr 71 rounds 2-3 refinement):
+    # The carve-out we write goes into root `.gitignore`. If the .claude/ exclusion
+    # comes from a source OUTSIDE root `.gitignore`, our 4-line rewrite of `.gitignore`
+    # alone cannot un-exclude the directory — git stops there before considering our
+    # re-includes. We MUST emit the 5-line block with `!.claude` parent-re-include for:
+    #   - Global `core.excludesfile` (absolute paths, e.g. `/Users/X/.config/git/ignore`)
+    #   - `.git/info/exclude` (repo-local but separate from `.gitignore`)
     #
-    # `git check-ignore -v` ALWAYS prints repo-local sources as relative paths
-    # (`.gitignore` not `/Users/X/repo/.gitignore`), and global sources as
-    # absolute paths. So path-absoluteness is the canonical discriminator.
+    # The ONLY case where 4-line block works: source is the same root `.gitignore`
+    # we're about to rewrite (after our sed -E drops the bare `.claude/` line, the
+    # exclusion stops applying and our `.claude/*` pattern takes over). Any other source
+    # — including `.git/info/exclude` — needs `!.claude` because the carve-out is in
+    # root `.gitignore` only and git evaluates ignore sources in order.
+    #
+    # `git check-ignore -v` ALWAYS prints repo-local sources as relative paths and
+    # global sources as absolute. We use absolute-vs-relative + filename match to
+    # bucket the three cases.
     NEEDS_GLOBAL_REINCLUDE=false
     SOURCE_FILE=$(printf '%s\n' "$IGNORE_SOURCE" | awk -F: '{print $1}')
     case "$SOURCE_FILE" in
-      /*)  NEEDS_GLOBAL_REINCLUDE=true  ;;   # absolute path → global ignore
-      *)   NEEDS_GLOBAL_REINCLUDE=false ;;   # relative path → repo-local source
+      /*)                          NEEDS_GLOBAL_REINCLUDE=true  ;;   # absolute → global ignore
+      .git/info/exclude)           NEEDS_GLOBAL_REINCLUDE=true  ;;   # repo-local but separate from .gitignore
+      .gitignore|*/.gitignore)     NEEDS_GLOBAL_REINCLUDE=false ;;   # 4-line block in same file works
+      *)                           NEEDS_GLOBAL_REINCLUDE=true  ;;   # any other relative source → defensive 5-line
     esac
 
     if [ "$NEEDS_GLOBAL_REINCLUDE" = "true" ]; then
