@@ -150,14 +150,17 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$IMPLEMENTATION_PLAN"
        --label "$type,confidence:confirmed,priority:P3")
      NEW_ISSUE=$(basename "$NEW_ISSUE_URL")
 
-     # Chain context manifest write (per spawn-manifest contract, v2.55+ #44)
+     # Chain context manifest write (per spawn-manifest contract, v2.55+ #44; v2.60+ #46 schema v2)
      # `same_file` / `same_skill` 依 observation evidence 判斷:
      # - tangential 觀察到同個 file 的相鄰問題 → same_file=true
      # - 跨 file 但同 skill / module → same_skill=true
      # - 跨 cutting concern (cross-module observation) → 兩個都 false
+     # 9th arg root_id: prefer chain shell's exported IDD_CHAIN_CURRENT_ROOT_ID env var;
+     # fallback to current planning issue's #NNN (single-root chain or root self-spawn).
+     ROOT_ID_FOR_MANIFEST="${IDD_CHAIN_CURRENT_ROOT_ID:-$NNN}"
      bash "$CLAUDE_PLUGIN_ROOT/scripts/manifest-append.sh" \
        "$REPO_ROOT" "$NEW_ISSUE" "idd-plan" "Step 2.5 tangential observations" \
-       "tangential" "$item_same_file" "$item_same_skill" "$item_title" \
+       "tangential" "$item_same_file" "$item_same_skill" "$item_title" "$ROOT_ID_FOR_MANIFEST" \
        2>/dev/null || true   # silent skip when chain context inactive
    ```
 

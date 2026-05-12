@@ -537,12 +537,15 @@ gh pr create --title "$PR_TITLE" --body "$PR_BODY" \
        --label "$type,confidence:confirmed,priority:P3")
      NEW_ISSUE=$(basename "$NEW_ISSUE_URL")
 
-     # Chain context manifest write (per spawn-manifest contract, v2.55+ #44)
+     # Chain context manifest write (per spawn-manifest contract, v2.55+ #44; v2.60+ #46 schema v2)
      # If chain shell initialized the manifest, also append a machine-readable entry.
      # Sister bugs from same-cause reproduction are typically same-skill — set true.
+     # 9th arg root_id: prefer chain shell's exported IDD_CHAIN_CURRENT_ROOT_ID env var;
+     # fallback to current issue's #NNN (single-root chain or root self-spawn).
+     ROOT_ID_FOR_MANIFEST="${IDD_CHAIN_CURRENT_ROOT_ID:-$NNN}"
      bash "$CLAUDE_PLUGIN_ROOT/scripts/manifest-append.sh" \
        "$REPO_ROOT" "$NEW_ISSUE" "idd-implement" "Step 5.7 sister bug sweep" \
-       "sister-bug" "$item_same_file" "true" "$item_title" \
+       "sister-bug" "$item_same_file" "true" "$item_title" "$ROOT_ID_FOR_MANIFEST" \
        2>/dev/null || true   # silent skip if no manifest (chain context inactive)
    done
    ```
