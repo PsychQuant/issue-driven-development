@@ -27,7 +27,7 @@
 
 ## 6. References doc consistency
 
-- [ ] 6.1 `chain-flow.md` 補章節:DFS vs BFS algorithm 描述(push-front vs push-back semantics + 流程圖)、per-root verify FAIL halt scope、`max-depth=3`/`max-issues=10` cap interaction(per-root vs global)、branch naming hash8 rule。Covers all design decisions (D1 schema, D2 DFS, D3 caps, D4 halt, D5 branch, D6 PR, D7 forest) by providing prose reference for implementers. **Verification**:`grep -E 'DFS|BFS|FAIL_ROOTS|chain_max_depth|hash8' plugins/issue-driven-dev/references/chain-flow.md` 每個關鍵 token ≥ 1 hit;Phase 4 reviewer manual check 描述與 SKILL.md 實作 consistent。
+- [x] 6.1 `chain-flow.md` 補章節:DFS vs BFS algorithm 描述(push-front vs push-back semantics + 流程圖)、per-root verify FAIL halt scope、`max-depth=3`/`max-issues=10` cap interaction(per-root vs global)、branch naming hash8 rule。Covers all design decisions (D1 schema, D2 DFS, D3 caps, D4 halt, D5 branch, D6 PR, D7 forest) by providing prose reference for implementers. **Verification**:`grep -E 'DFS|BFS|FAIL_ROOTS|chain_max_depth|hash8' plugins/issue-driven-dev/references/chain-flow.md` 每個關鍵 token ≥ 1 hit;Phase 4 reviewer manual check 描述與 SKILL.md 實作 consistent。
 
 ## 7. Acceptance smoke tests
 
