@@ -19,15 +19,22 @@
 # Exit codes:
 #   0  — success (posted, skipped due to no linked issue, or idempotent skip)
 #   1  — generic error
-#   2  — usage error (bad/missing args)
+#   2  — usage error (bad/missing args, or unsafe --outcome-file path)
 #  64  — dependency missing (python3 not found)
 #  75  — multi-candidate detected; candidates written to /tmp/spectra-archive-candidates.txt
 #         agent MUST prompt user via AskUserQuestion and re-invoke with --linked-issue <N>
 #
 # Stdout: outcome message OR IC comment URL (single line)
 # Stderr: diagnostic info
-# Outcome file: same content as stdout, persistent across Bash tool calls
-#                (default /tmp/spectra-archive-ic-outcome.txt)
+# Outcome file: same content as stdout, persistent across Bash tool calls.
+#   The path is DERIVED INTERNALLY from --change-name:
+#     /tmp/spectra-archive-ic-outcome-<change-name>.txt
+#   --change-name is allowlist-validated (^[A-Za-z0-9_-]+$) before being used in
+#   the path, so the derived path is always traversal-safe and the formula has a
+#   single source of truth (this script). A caller (SKILL.md Step 8) recomputes
+#   the same path from the same --change-name to read the outcome across Bash
+#   tool calls. --outcome-file may override the path but is rejected if it
+#   contains '..' (path traversal) — see #56 R5-S1 / L1 verify findings.
 #
 # DRY RUN: when --dry-run is passed, skip all `gh` calls; print "[DRY-RUN] $cmd"
 # instead. Used by unit tests in .claude/scripts/tests/spectra-archive-post-ic/.
@@ -39,7 +46,11 @@ CHANGE_NAME=""
 ARCHIVE_DIR=""
 SPEC_DELTAS="(see archived change directory)"
 LINKED_ISSUE_RESOLVED=""
+# Pre-allowlist fallback path: used only for the python3-missing / unsafe-change-name
+# emit_outcome calls that fire BEFORE $CHANGE_NAME is validated. Once the allowlist
+# guard passes, OUTCOME_FILE is reassigned to the change-name-derived path below.
 OUTCOME_FILE="/tmp/spectra-archive-ic-outcome.txt"
+OUTCOME_FILE_EXPLICIT=0
 GH_REPO_ARG=""
 DRY_RUN=0
 
@@ -50,7 +61,7 @@ while [ $# -gt 0 ]; do
     --archive-dir)     ARCHIVE_DIR="$2"; shift 2;;
     --spec-deltas)     SPEC_DELTAS="$2"; shift 2;;
     --linked-issue)    LINKED_ISSUE_RESOLVED="$2"; shift 2;;
-    --outcome-file)    OUTCOME_FILE="$2"; shift 2;;
+    --outcome-file)    OUTCOME_FILE="$2"; OUTCOME_FILE_EXPLICIT=1; shift 2;;
     --gh-repo)         GH_REPO_ARG="$2"; shift 2;;
     --dry-run)         DRY_RUN=1; shift;;
     -h|--help)
@@ -71,6 +82,20 @@ if [ -z "$CHANGE_NAME" ] || [ -z "$ARCHIVE_DIR" ]; then
   exit 2
 fi
 
+# ── Reject path traversal in an explicit --outcome-file (closes #56 R5-S1 / L1) ──
+# Must run BEFORE emit_outcome() is ever called, since emit_outcome writes to
+# $OUTCOME_FILE — calling it for an unsafe path would itself perform the traversal
+# write. So reject with a plain echo + exit, NOT emit_outcome.
+# The default + change-name-derived paths never contain '..' (the change name is
+# allowlist-validated below), so only an explicit --outcome-file can fail this.
+case "$OUTCOME_FILE" in
+  *..*)
+    echo "ERROR: --outcome-file must not contain '..' (path traversal): $OUTCOME_FILE" >&2
+    echo "(failed — unsafe --outcome-file path)"
+    exit 2
+    ;;
+esac
+
 # ── Helper: write outcome to stdout + outcome file, exit ──
 emit_outcome() {
   local msg="$1"
@@ -88,6 +113,17 @@ fi
 # ── Allowlist guard: $CHANGE_NAME ──
 if ! [[ "$CHANGE_NAME" =~ ^[A-Za-z0-9_-]+$ ]]; then
   emit_outcome "(skipped — change name contains unsafe characters: $CHANGE_NAME)" 0
+fi
+
+# ── Derive the change-name-scoped outcome path (single source of truth) ──
+# $CHANGE_NAME has just passed the allowlist (^[A-Za-z0-9_-]+$), so it cannot
+# contain '/', '.', or shell metacharacters — the derived path is traversal-safe.
+# A caller (SKILL.md Step 8) recomputes this exact path from the same
+# --change-name to read the outcome across separate Bash tool calls.
+# Skip the reassignment when --outcome-file was explicitly given (already
+# traversal-checked above) so callers retain an escape hatch / tests can override.
+if [ "$OUTCOME_FILE_EXPLICIT" = "0" ]; then
+  OUTCOME_FILE="/tmp/spectra-archive-ic-outcome-${CHANGE_NAME}.txt"
 fi
 
 # ── Resolve GH_REPO ──

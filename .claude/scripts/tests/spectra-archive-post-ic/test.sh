@@ -46,8 +46,12 @@ for fixture in "$FIXTURES_DIR"/*/; do
   raw_args=$(cat "$fixture/args.txt")
   args="${raw_args//__FIXTURE_PATH__/$fixture_abs}"
 
-  # Clean any leftover artifacts from prior runs
-  rm -f /tmp/spectra-archive-candidates.txt /tmp/spectra-archive-ic-dryrun-body.md /tmp/pwn-fixture-05
+  # Clean any leftover artifacts from prior runs.
+  # The /tmp/spectra-archive-ic-outcome*.txt glob clears the change-name-derived
+  # outcome files (the script derives the path from --change-name since #56 R6),
+  # so fixture 10's must_exist post_assert cannot false-pass on a stale file.
+  rm -f /tmp/spectra-archive-candidates.txt /tmp/spectra-archive-ic-dryrun-body.md \
+        /tmp/pwn-fixture-05 /tmp/pwn-fixture-11.txt /tmp/spectra-archive-ic-outcome*.txt
 
   # Run script from /tmp (non-git cwd) so script's git log Fallback 3 can't find
   # commits referencing the fixtures themselves. Fixtures use absolute paths via

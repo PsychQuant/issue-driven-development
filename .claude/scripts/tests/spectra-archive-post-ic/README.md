@@ -50,6 +50,8 @@ calls real `gh issue comment` / `gh issue view`. Dry-run mode emits a synthetic
 | 07 | unsafe-change-name | `--change-name 'evil$(echo)'` → allowlist guard blocks |
 | 08 | linked-issue-resolved | Re-invoke with `--linked-issue 46` validates against candidate set |
 | 09 | linked-issue-invalid | Re-invoke with `--linked-issue 99` not in `[44]` → failed message |
+| 10 | deterministic-outcome-path | No `--outcome-file` passed → script derives `/tmp/spectra-archive-ic-outcome-<change-name>.txt` from `--change-name` (post_assert: derived path `must_exist`). Tests the actual derivation formula, not a hand-copied literal. |
+| 11 | unsafe-outcome-file | `--outcome-file` containing `..` → exit 2 + `(failed — unsafe --outcome-file path)`, rejected before any archive read (post_assert: `/tmp/pwn-fixture-11.txt` must not exist). No `archive/` subdir — the script exits before reaching it. |
 
 ## CI integration
 

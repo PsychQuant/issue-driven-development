@@ -100,7 +100,7 @@ Archive a completed change.
    **Delegated to executable helper script** `.claude/scripts/spectra-archive-post-ic.sh` (with unit tests at `.claude/scripts/tests/spectra-archive-post-ic/`). The script is the source of truth — this skill calls it and reads the outcome. Behavior contract (detection / idempotent guard / safe body composition / multi-candidate handling) lives in the script + its tests, not in skill prose. This separation was introduced after R2 verify found that prose-with-illustrative-bash had structural defects (variable persistence across Bash tool calls, Python3 RCE via shell-string interpolation, etc.) — see PsychQuant/issue-driven-development#56 R2 verify report.
 
    **Required inputs from caller (agent)**: before invoking Step 7, the agent MUST have these in scope (from earlier skill steps):
-   - `$CHANGE_NAME` — the Spectra change name (slug; same value passed to `spectra archive`)
+   - `$CHANGE_NAME` — the Spectra change name (slug; same value passed to `spectra archive`). **This exact value must also be reused, byte-identical, in Step 8** — the outcome file path is derived from it, so any drift (typo / whitespace / case) makes Step 8 read the wrong path.
    - `$SPEC_DELTAS` (optional) — comma-separated capability names from `spectra archive` stdout in Step 6 (e.g., `"idd-all-chain, idd-spawn-manifest"`); defaults to placeholder if absent
 
    **Invocation**:
@@ -114,25 +114,21 @@ Archive a completed change.
    ARCHIVE_DIR="${REPO_ROOT}/openspec/changes/archive/$(date +%Y-%m-%d)-${CHANGE_NAME}"
    SPEC_DELTAS="${SPEC_DELTAS:-(see archived change directory)}"
 
-   # Per-change outcome file path: deterministic, derived from $CHANGE_NAME.
-   # Properties:
-   #   1. Cross-Bash-invocation persistent — Step 7 and Step 8 independently
-   #      compute the SAME path from the SAME $CHANGE_NAME, so Step 8 can
-   #      read what Step 7 wrote even when they run in separate Bash tool calls
-   #      (bash shell vars do NOT persist across tool invocations).
-   #   2. Concurrent-collision safe — two parallel `/spectra-archive <A>` and
-   #      `/spectra-archive <B>` use different paths (different $CHANGE_NAME).
-   #   3. Same-change re-run safe — overwrites OK; idempotent guard inside the
-   #      helper script prevents double-posting.
-   # Why NOT $$-$(date +%s): random suffix breaks Step 7 → Step 8 handoff because
-   # shell vars don't persist across Bash calls (R4 verify R4-S1 finding).
-   OUTCOME_FILE="/tmp/spectra-archive-ic-outcome-${CHANGE_NAME}.txt"
-
+   # The helper script DERIVES the outcome file path internally from
+   # --change-name: /tmp/spectra-archive-ic-outcome-<change-name>.txt
+   # (--change-name is allowlist-validated inside the script before being used
+   # in the path, so the derived path is always traversal-safe). The formula
+   # has a single source of truth — the script — so this skill does NOT pass
+   # --outcome-file. Step 8 recomputes the same path from the same $CHANGE_NAME
+   # to read the outcome across separate Bash tool calls.
+   # Why deterministic, not $$-$(date +%s): a random suffix cannot be recomputed
+   # in a second shell, which breaks the Step 7 → Step 8 handoff (R4 verify
+   # R4-S1 finding). The change name is the skill's primary input — always known
+   # to Step 8 — so the derived path IS recoverable.
    bash "${REPO_ROOT}/.claude/scripts/spectra-archive-post-ic.sh" \
        --change-name "$CHANGE_NAME" \
        --archive-dir "$ARCHIVE_DIR" \
-       --spec-deltas "$SPEC_DELTAS" \
-       --outcome-file "$OUTCOME_FILE"
+       --spec-deltas "$SPEC_DELTAS"
    POST_IC_EXIT=$?
    ```
 
@@ -140,12 +136,12 @@ Archive a completed change.
 
    | Exit | Meaning | Agent action |
    |------|---------|--------------|
-   | `0` | Success or normal skip (posted / none / idempotent / unsafe-name / generic failure) | Read outcome from `$OUTCOME_FILE`, proceed to Step 8 |
-   | `2` | Usage error (missing args) | Skill bug — fix invocation |
+   | `0` | Success or normal skip (posted / none / idempotent / unsafe-name / generic failure) | Read outcome from the derived outcome file (see Step 8), proceed to Step 8 |
+   | `2` | Usage error (missing args, or unsafe `--outcome-file` path) | Skill bug — fix invocation |
    | `64` | Dependency missing (python3) | Surface to user; archive itself succeeded; manual retry after install |
-   | `75` | Multi-candidate detected | **AskUserQuestion required** — read `/tmp/spectra-archive-candidates.txt` for the candidate list, prompt user to pick canonical issue (show `#N + gh issue title` for each), then re-invoke script with `--linked-issue <chosen>` AND same `--outcome-file "$OUTCOME_FILE"` |
+   | `75` | Multi-candidate detected | **AskUserQuestion required** — read `/tmp/spectra-archive-candidates.txt` for the candidate list, prompt user to pick canonical issue (show `#N + gh issue title` for each), then re-invoke script with `--linked-issue <chosen>` |
 
-   **Stdout**: a single line that is either the IC comment URL, or one of the documented status messages (`(none — ...)`, `(skipped — ...)`, `(pending — ...)`, `(failed — ...)`). Also written to `$OUTCOME_FILE` for cross-Bash-call persistence (Step 8 reads from there).
+   **Stdout**: a single line that is either the IC comment URL, or one of the documented status messages (`(none — ...)`, `(skipped — ...)`, `(pending — ...)`, `(failed — ...)`). The same line is also written to the derived outcome file `/tmp/spectra-archive-ic-outcome-${CHANGE_NAME}.txt` for cross-Bash-call persistence (Step 8 reads from there).
 
    **Multi-candidate flow (agent responsibility)**:
 
@@ -160,8 +156,7 @@ Archive a completed change.
          --change-name "$CHANGE_NAME" \
          --archive-dir "$ARCHIVE_DIR" \
          --spec-deltas "$SPEC_DELTAS" \
-         --linked-issue "$CHOSEN_ISSUE" \
-         --outcome-file "$OUTCOME_FILE"
+         --linked-issue "$CHOSEN_ISSUE"
    fi
    ```
 
@@ -169,22 +164,32 @@ Archive a completed change.
 
    **Failure semantics**: any failure in Step 7 (gh auth lost, network, body too large, etc.) is recorded in the outcome file but does NOT abort the overall archive operation — the archive itself (Step 6) has already succeeded, and the archived change directory + main spec deltas are the canonical record. The GitHub comment is the convenience anchor for `/idd-close` supersession.
 
-   **Testing**: run `.claude/scripts/tests/spectra-archive-post-ic/test.sh` to validate the script against fixture archive directories (covers explicit-marker / Refs-fallback / no-marker / multi-candidate / malicious-tasks.md / missing-tasks.md / unsafe-change-name / linked-issue-resolved / linked-issue-invalid). All 9 fixtures pass as of v1.3.
+   **Testing**: run `.claude/scripts/tests/spectra-archive-post-ic/test.sh` to validate the script against fixture archive directories (covers explicit-marker / Refs-fallback / no-marker / multi-candidate / malicious-tasks.md / missing-tasks.md / unsafe-change-name / linked-issue-resolved / linked-issue-invalid / outcome-path-derivation / unsafe-outcome-file). All 11 fixtures pass.
 
 8. **Display summary**
 
-   Read the outcome from Step 7. Compute the outcome file path independently from
-   the same `$CHANGE_NAME` that Step 7 used — this works whether Step 7 + Step 8
-   ran in the same Bash invocation (var still in scope) OR in separate Bash calls
-   (deterministic path recomputation):
+   Read the outcome from Step 7. Recompute the outcome file path the same way the
+   script derived it — from the **identical** `$CHANGE_NAME` slug passed to
+   `spectra archive` in Step 6. This works whether Step 7 + Step 8 ran in the same
+   Bash invocation (var still in scope) OR in separate Bash calls (the formula is
+   deterministic). **The `$CHANGE_NAME` here MUST be byte-identical to Step 7's —
+   no typo, trailing whitespace, or case difference** — otherwise Step 8 reads a
+   different path:
 
    ```bash
-   # Recompute the same deterministic path Step 7 used.
-   # Cross-Bash-invocation safe: same $CHANGE_NAME → same path.
+   # Recompute the same path the script derived in Step 7.
+   # MUST use the identical $CHANGE_NAME slug — see contract note in Step 7.
    OUTCOME_FILE="/tmp/spectra-archive-ic-outcome-${CHANGE_NAME}.txt"
 
-   IMPLEMENTATION_COMPLETE_POSTED=$(cat "$OUTCOME_FILE" 2>/dev/null \
-       || echo "(unknown — outcome file missing)")
+   if [ -f "$OUTCOME_FILE" ]; then
+       IMPLEMENTATION_COMPLETE_POSTED=$(cat "$OUTCOME_FILE")
+   else
+       # Loud failure — NOT a quiet "(unknown)". A missing outcome file means
+       # either Step 7 never ran, or $CHANGE_NAME drifted between Step 7 and
+       # Step 8. Both are real errors the user must see.
+       IMPLEMENTATION_COMPLETE_POSTED="⚠️  ERROR — outcome file not found: $OUTCOME_FILE (Step 7 did not run, or \$CHANGE_NAME drifted between Step 7 and Step 8)"
+       echo "WARNING: spectra-archive Step 8 — outcome file missing: $OUTCOME_FILE" >&2
+   fi
    ```
 
    Show archive completion summary including:
