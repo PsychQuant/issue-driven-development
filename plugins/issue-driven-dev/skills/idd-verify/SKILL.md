@@ -130,7 +130,7 @@ idd-verify #NNN
 ```
 TaskCreate(name="resolve_input_source", description="Step 0.5: 解析 --pr / --commits / --branch / --since flag；都沒帶就跑 auto-detect（count Refs #N commits since origin/<default>，再 gh pr list 找 open PR），有歧義時 AskUserQuestion 確認")
 TaskCreate(name="gate_pr_correspondence", description="Step 0.7: PR mode 下強制檢查 issue↔PR 對應 — gh pr view --json body 抓 Refs #N，跟 user 指定的 issue 比對；PR 沒任何 Refs 或 user issue 不在 set 內 → abort 並告訴使用者怎麼修")
-TaskCreate(name="scan_pr_body_trailers", description="Step 0.8: PR mode 下掃 PR body 是否含 GitHub auto-close trailer（(closes|fixes|resolves) #<digit>）— 命中則 warn（merge 時會 auto-close issue、bypass /idd-close gate）。Warn-only，不 abort")
+TaskCreate(name="scan_pr_body_trailers", description="Step 0.8: PR mode 下用 gh pr view --json closingIssuesReferences 查本 PR 是否 linked-to-auto-close 任何 issue（GitHub 權威解析）— 非空則 warn（merge 時會 auto-close issue、bypass /idd-close gate）。Warn-only，不 abort")
 TaskCreate(name="get_diff_and_issue", description="依 input source 取 diff（gh pr diff / git diff HEAD~N / git diff origin/<default>...<branch>） + gh issue view,存 diff 到 /tmp 供 agents 讀取；PR mode 額外做 gh pr checkout 並記住原 branch")
 TaskCreate(name="check_attachments", description="確認 .claude/.idd/attachments/issue-NNN/ 存在,把 attachment 路徑塞進 reviewer agent prompt 作為 source-of-truth context。manifest 缺漏 → 警告繼續(reviewer 仍跑,但 verification 完整度受限)。依 rules/process-attachments.md。")
 TaskCreate(name="launch_parallel_reviewers", description="6 個 tool calls 同一 message: 5 Agent(subagent_type=general-purpose) for requirements/logic/security/regression/devils-advocate + 1 Bash codex(run_in_background:true),prompt 中引用 attachment 路徑 + 強制 file-output rule (per #52 v2.59.0+,replaces TeamCreate model from #47 incident)")
@@ -212,31 +212,32 @@ EXTRA=$(comm -23 <(echo "$DISCOVERED") <(echo "$USER_ISSUES" | sort -u))
 [ -n "$EXTRA" ] && AskUserQuestion "PR also refs $EXTRA — verify those too, or scope to $USER_ISSUES only?"
 ```
 
-### Step 0.8: PR-body auto-close-trailer scan（PR mode only，#87/#74）
+### Step 0.8: PR auto-close detection（PR mode only，#87/#74）
 
-`/idd-close` 的 checklist gate + closing summary 只在實際跑 `/idd-close` skill 時生效。若 PR body 含 GitHub auto-close trailer（keyword `closes`/`fixes`/`resolves` 後接 `#<數字>`），GitHub 在 merge 時會直接 close 對應 issue，**完全 bypass** `/idd-close` — gate 沒跑、closing summary 沒寫，audit trail 斷裂。本 step 在 verify 時掃 PR body，命中就 warn，讓使用者在 merge 前 strip。
+`/idd-close` 的 checklist gate + closing summary 只在實際跑 `/idd-close` skill 時生效。若 PR 帶 GitHub auto-close 連結（PR body 內 `Closes #N` 等 trailer），GitHub 在 merge 時會直接 close 對應 issue，**完全 bypass** `/idd-close` — gate 沒跑、closing summary 沒寫，audit trail 斷裂。本 step 在 verify 時偵測，命中就 warn，讓使用者在 merge 前 strip。
+
+偵測用 GitHub 自己的 `closingIssuesReferences` —— 這是 GitHub 對「本 PR merge 後會 auto-close 哪些 issue」的**權威解析**，已涵蓋所有 GitHub 承認的 trailer 形式（`Closes #N`、colon form `Closes: #N`、cross-repo、issue URL 等）。**不自寫 regex** 掃 PR body：自寫 regex 必然是 GitHub keyword parser 的脆弱近似（`/idd-verify --pr 94` R1 verify 實證 regex 漏了 colon form `Closes: #87`）。`closingIssuesReferences` 是 GitHub 算好的結果，定義上零漏判、零誤判。
 
 這是**防禦縱深**：真正的修法是各 skill 的 PR-body template 不嵌 trailer（idd-implement / idd-all / idd-all-chain / pr-flow.md 已於 #87/#74 cluster 修正）；本 gate 是第二層 —— 即使未來某個 template regression 漏掉、或使用者手動貼了 trailer，verify 仍能在 merge 前抓到。
 
 ```bash
 # PR mode only — skip in local / branch / commits mode.
-PR_BODY=$(gh pr view "$PR" --repo "$GITHUB_REPO" --json body -q .body)
-# The keyword must NOT be preceded by '-', '/', or an alphanumeric — this matches
-# GitHub's real word-boundary behavior and excludes the IDD skill invocation
-# `/idd-close #N` (a hyphenated token GitHub does NOT treat as a close keyword).
-TRAILER_HITS=$(printf '%s\n' "$PR_BODY" \
-  | grep -niE '(^|[^-/[:alnum:]])(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+#[0-9]+' || true)
+# closingIssuesReferences = GitHub's own authoritative parse of which issues this
+# PR auto-closes on merge. Covers every trailer form GitHub honors; zero false
+# positive (it IS what GitHub will do) and zero parser-reimplementation risk.
+CLOSING_REFS=$(gh pr view "$PR" --repo "$GITHUB_REPO" \
+  --json closingIssuesReferences \
+  -q '.closingIssuesReferences[].number' 2>/dev/null || true)
 
-if [ -n "$TRAILER_HITS" ]; then
-  echo "⚠️  WARNING: PR #$PR body contains GitHub auto-close trailer(s):"
-  echo "$TRAILER_HITS"
-  echo "    On merge these auto-close the referenced issue(s), bypassing /idd-close's"
-  echo "    checklist gate + closing summary. Strip them before merge, e.g.:"
-  echo "      gh pr edit $PR --repo $GITHUB_REPO --body '<body without the trailer>'"
+if [ -n "$CLOSING_REFS" ]; then
+  echo "⚠️  WARNING: PR #$PR is linked to auto-close issue(s): $(printf '%s' "$CLOSING_REFS" | tr '\n' ' ')"
+  echo "    On merge GitHub will auto-close these, bypassing /idd-close's checklist"
+  echo "    gate + closing summary. Strip the close trailer from the PR body before merge:"
+  echo "      gh pr edit $PR --repo $GITHUB_REPO --body '<body without the Closes/Fixes/Resolves #N trailer>'"
 fi
 ```
 
-**Warn-only，不 abort**：PR body 可能在 prose 裡合法引用這些關鍵字（例如某個 PR 的 diagnosis 段落本身在討論 auto-close trap）。硬 block verify 過度激進；gate 的價值是把風險在 merge 前 surface 給使用者，由使用者決定是否 `gh pr edit`。語意同 `idd-close` Step 1.6 semantic gate（也是 warn-only）。
+**Warn-only，不 abort**：gate 的價值是把風險在 merge 前 surface 給使用者，由使用者決定是否 `gh pr edit`。語意同 `idd-close` Step 1.6 semantic gate（也是 warn-only）。`/idd-close #N` 這類 skill invocation 不會出現在 `closingIssuesReferences`（hyphenated token，GitHub 不當 close keyword），因此天然零誤判 —— 不需像自寫 regex 那樣特別排除。
 
 **Regex 設計**：涵蓋 GitHub 全部 inflection（`close`/`closes`/`closed`/`fix`/`fixes`/`fixed`/`resolve`/`resolves`/`resolved`），case-insensitive。關鍵字前綴用 `(^|[^-/[:alnum:]])` 而非 `\b` —— `\b` 會把 `/idd-close #N`（IDD skill 呼叫指令，hyphenated token）誤判為 trailer，但 GitHub 實際**不會** auto-close `/idd-close #N`（hyphen 前綴）。前綴排除 `-` `/` 與英數字，精確對齊 GitHub 真實行為，同時保留對 `(Closes #N)` / `**Closes #N**` 等 context-blind 命中（`(` `*` 等非英數前綴仍命中，正是本 bug 要抓的）。
 
