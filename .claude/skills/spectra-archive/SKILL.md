@@ -147,7 +147,7 @@ Archive a completed change.
 
    ```bash
    if [ "$POST_IC_EXIT" = "75" ]; then
-     # Read candidates + AskUserQuestion + re-invoke (pass same OUTCOME_FILE)
+     # Read candidates + AskUserQuestion + re-invoke (script re-derives the outcome path from --change-name)
      CANDIDATES=$(cat /tmp/spectra-archive-candidates.txt)
      # For each candidate, fetch title via `gh issue view <N> --json title -q .title`
      # Then AskUserQuestion: "Multi-candidate detected: which is canonical?"
