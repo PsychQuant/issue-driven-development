@@ -49,8 +49,10 @@ for fixture in "$FIXTURES_DIR"/*/; do
   # Clean any leftover artifacts from prior runs
   rm -f /tmp/spectra-archive-candidates.txt /tmp/spectra-archive-ic-dryrun-body.md /tmp/pwn-fixture-05
 
-  # Run script (use bash explicitly to avoid PATH issues; eval needed for arg splitting)
-  actual_stdout=$(eval "bash $TARGET_SCRIPT $args" 2>/dev/null)
+  # Run script from /tmp (non-git cwd) so script's git log Fallback 3 can't find
+  # commits referencing the fixtures themselves. Fixtures use absolute paths via
+  # __FIXTURE_PATH__ substitution, so cwd change is safe.
+  actual_stdout=$(cd /tmp && eval "bash $TARGET_SCRIPT $args" 2>/dev/null)
   actual_exit=$?
 
   # Expected values
