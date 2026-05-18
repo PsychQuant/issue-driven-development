@@ -221,8 +221,11 @@ EXTRA=$(comm -23 <(echo "$DISCOVERED") <(echo "$USER_ISSUES" | sort -u))
 ```bash
 # PR mode only — skip in local / branch / commits mode.
 PR_BODY=$(gh pr view "$PR" --repo "$GITHUB_REPO" --json body -q .body)
+# The keyword must NOT be preceded by '-', '/', or an alphanumeric — this matches
+# GitHub's real word-boundary behavior and excludes the IDD skill invocation
+# `/idd-close #N` (a hyphenated token GitHub does NOT treat as a close keyword).
 TRAILER_HITS=$(printf '%s\n' "$PR_BODY" \
-  | grep -niE '\b(close[sd]?|fix(e[sd])?|resolve[sd]?)\b[[:space:]]+#[0-9]+' || true)
+  | grep -niE '(^|[^-/[:alnum:]])(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+#[0-9]+' || true)
 
 if [ -n "$TRAILER_HITS" ]; then
   echo "⚠️  WARNING: PR #$PR body contains GitHub auto-close trailer(s):"
@@ -233,7 +236,9 @@ if [ -n "$TRAILER_HITS" ]; then
 fi
 ```
 
-**Warn-only，不 abort**：PR body 可能在 prose 裡合法引用這些關鍵字（例如某個 PR 的 diagnosis 段落本身在討論 auto-close trap）。硬 block verify 過度激進；gate 的價值是把風險在 merge 前 surface 給使用者，由使用者決定是否 `gh pr edit`。語意同 `idd-close` Step 1.6 semantic gate（也是 warn-only）。regex 涵蓋 GitHub 全部 inflection（`close`/`closes`/`closed`/`fix`/`fixes`/`fixed`/`resolve`/`resolves`/`resolved`），case-insensitive。
+**Warn-only，不 abort**：PR body 可能在 prose 裡合法引用這些關鍵字（例如某個 PR 的 diagnosis 段落本身在討論 auto-close trap）。硬 block verify 過度激進；gate 的價值是把風險在 merge 前 surface 給使用者，由使用者決定是否 `gh pr edit`。語意同 `idd-close` Step 1.6 semantic gate（也是 warn-only）。
+
+**Regex 設計**：涵蓋 GitHub 全部 inflection（`close`/`closes`/`closed`/`fix`/`fixes`/`fixed`/`resolve`/`resolves`/`resolved`），case-insensitive。關鍵字前綴用 `(^|[^-/[:alnum:]])` 而非 `\b` —— `\b` 會把 `/idd-close #N`（IDD skill 呼叫指令，hyphenated token）誤判為 trailer，但 GitHub 實際**不會** auto-close `/idd-close #N`（hyphen 前綴）。前綴排除 `-` `/` 與英數字，精確對齊 GitHub 真實行為，同時保留對 `(Closes #N)` / `**Closes #N**` 等 context-blind 命中（`(` `*` 等非英數前綴仍命中，正是本 bug 要抓的）。
 
 ### Step 1: 取得 diff 和 issue
 
