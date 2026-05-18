@@ -46,7 +46,7 @@ idd-issue → idd-diagnose → idd-implement → idd-verify → idd-close
 | `idd-list` / `idd-update` / `idd-report` | List open issues by phase, sync issue body, generate progress reports |
 | `idd-config` | Manage `.claude/issue-driven-dev.local.json` lifecycle: `show` / `init` / `validate` / `which` (v2.31.0) |
 | `idd-all` | Orchestrator that drives the full pipeline (issue → close) end-to-end (v2.26.0; v2.28.0 unattended SDD chain) |
-| `idd-all-chain` | **Chain-solve mode** (v2.55.0+) — root issue + auto-emergent spawned issues (sister bug / verify follow-up / mid-plan tangential / sister concern) through ONE cluster branch + ONE review PR. Thin recursive shell over `idd-all` using new `--in-chain` flag (4th mode tuple `(direct-commit, unattended)`). Hard caps: depth=2, max-issues=5. Eligibility: same-file OR same-skill OR sister-bug. STOPs at verified — never auto-close |
+| `idd-all-chain` | **Chain-solve mode** (v2.55.0+ single-root, v2.60.0+ multi-root + DFS/BFS) — root issue(s) + auto-emergent spawned issues (sister bug / verify follow-up / mid-plan tangential / sister concern) through ONE cluster branch + ONE review PR. Thin recursive shell over `idd-all` using `--in-chain` flag (4th mode tuple `(direct-commit, unattended)`). Multi-root invocation `#A #B #C` with `--bfs` opt-in (default DFS). Hard caps: per-root depth=3, global max-issues=10 (v2.60.0+, was 2/5). Eligibility: same-file OR same-skill OR sister-bug. Verify FAIL = per-root halt (other root subtrees continue). STOPs at verified — never auto-close |
 
 ### Use-Case Routing（v2.37.0）
 

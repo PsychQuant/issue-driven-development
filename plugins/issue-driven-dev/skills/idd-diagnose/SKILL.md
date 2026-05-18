@@ -495,15 +495,21 @@ Diagnosis 完成 + Step 3.4 Vagueness Pre-check 結束後，依 5 層 gate 判�
        --label "$type,confidence:confirmed,priority:P3")
      NEW_ISSUE=$(basename "$NEW_ISSUE_URL")
 
-     # Chain context manifest write (per spawn-manifest contract, v2.55+ #44)
+     # Chain context manifest write (per spawn-manifest contract, v2.55+ #44; v2.60+ #46 schema v2)
      # spawn_kind classification:
      # - 真的同主題 sister concern (same root cause, different file) → "sister-concern"
      # - cross-cutting / upstream tracking (e.g. 跟 idd repo 無關的 upstream gap) → "upstream-tracking"
      # `same_file` / `same_skill` 依 sister-concern evidence 判斷;upstream-tracking 兩個都 false
-     bash "$CLAUDE_PLUGIN_ROOT/scripts/manifest-append.sh" \
-       "$REPO_ROOT" "$NEW_ISSUE" "idd-diagnose" "Step 3.6 sister concern surfacing" \
-       "$item_kind" "$item_same_file" "$item_same_skill" "$item_title" \
-       2>/dev/null || true   # silent skip when chain context inactive
+     # 9th arg root_id: prefer chain shell's exported IDD_CHAIN_CURRENT_ROOT_ID env var;
+     # fallback to current diagnosing issue's $NNN (single-root chain or root self-spawn).
+     # Defensive guard (v2.60+ #46 L2): skip explicitly if no root_id available.
+     ROOT_ID_FOR_MANIFEST="${IDD_CHAIN_CURRENT_ROOT_ID:-${NNN:-}}"
+     if [ -n "$ROOT_ID_FOR_MANIFEST" ]; then
+       bash "$CLAUDE_PLUGIN_ROOT/scripts/manifest-append.sh" \
+         "$REPO_ROOT" "$NEW_ISSUE" "idd-diagnose" "Step 3.6 sister concern surfacing" \
+         "$item_kind" "$item_same_file" "$item_same_skill" "$item_title" "$ROOT_ID_FOR_MANIFEST" \
+         2>/dev/null || true   # silent skip when chain context inactive
+     fi
    done
    ```
 

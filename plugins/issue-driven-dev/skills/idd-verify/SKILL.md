@@ -730,7 +730,7 @@ options:
    {bug / enhancement}
    ```
 3. 每個新 issue 的 body 加上 `Related: #NNN`
-4. **Chain context manifest write** (per spawn-manifest contract, v2.55+ #44):每建一個 follow-up issue,額外呼叫 manifest helper:
+4. **Chain context manifest write** (per spawn-manifest contract, v2.55+ #44; v2.60+ #46 schema v2):每建一個 follow-up issue,額外呼叫 manifest helper:
    ```bash
    NEW_ISSUE_URL=$(gh issue create ...)   # existing
    NEW_ISSUE=$(basename "$NEW_ISSUE_URL")
@@ -739,10 +739,17 @@ options:
    # - finding 在同 file 內 → same_file=true
    # - finding 跨 module 但同 skill (e.g. 同個 idd-* skill 不同 step) → same_skill=true
    # - cross-cutting (跟 verified diff 完全無關) → 兩個都 false
-   bash "$CLAUDE_PLUGIN_ROOT/scripts/manifest-append.sh" \
-     "$REPO_ROOT" "$NEW_ISSUE" "idd-verify" "Phase 4 follow-up findings triage" \
-     "follow-up-finding" "$same_file" "$same_skill" "$NEW_TITLE" \
-     2>/dev/null || true   # silent skip when chain context inactive
+   # 9th arg root_id: prefer chain shell's exported IDD_CHAIN_CURRENT_ROOT_ID env var;
+   # fallback to current verified issue's $NUMBER (single-root chain or root self-spawn).
+   # Defensive guard (v2.60+ #46 L2): skip explicitly if no root_id available, instead
+   # of letting helper reject empty arg and `|| true` swallow silently.
+   ROOT_ID_FOR_MANIFEST="${IDD_CHAIN_CURRENT_ROOT_ID:-${NUMBER:-}}"
+   if [ -n "$ROOT_ID_FOR_MANIFEST" ]; then
+     bash "$CLAUDE_PLUGIN_ROOT/scripts/manifest-append.sh" \
+       "$REPO_ROOT" "$NEW_ISSUE" "idd-verify" "Phase 4 follow-up findings triage" \
+       "follow-up-finding" "$same_file" "$same_skill" "$NEW_TITLE" "$ROOT_ID_FOR_MANIFEST" \
+       2>/dev/null || true   # silent skip when chain context inactive
+   fi
    ```
    See `references/spawn-manifest.md` for cross-skill contract. Manifest write is **additive** — baseline audit trail unchanged when manifest absent.
 5. 輸出新建的 issue 清單
