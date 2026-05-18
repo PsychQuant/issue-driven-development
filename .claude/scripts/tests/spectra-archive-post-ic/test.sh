@@ -52,7 +52,14 @@ for fixture in "$FIXTURES_DIR"/*/; do
   # Run script from /tmp (non-git cwd) so script's git log Fallback 3 can't find
   # commits referencing the fixtures themselves. Fixtures use absolute paths via
   # __FIXTURE_PATH__ substitution, so cwd change is safe.
-  actual_stdout=$(cd /tmp && eval "bash $TARGET_SCRIPT $args" 2>/dev/null)
+  #
+  # Parse args via array splitting (NOT eval) so malicious args.txt content cannot
+  # achieve RCE on the test machine (R3-S1 finding from /idd-verify #56 R3 verify
+  # report). `read -ra` populates the array using bash's standard word-splitting
+  # rules + respects single-quoted segments, e.g. 'evil$(echo)' stays literal
+  # (verified by fixture 07).
+  read -ra args_array <<<"$args"
+  actual_stdout=$(cd /tmp && bash "$TARGET_SCRIPT" "${args_array[@]}" 2>/dev/null)
   actual_exit=$?
 
   # Expected values

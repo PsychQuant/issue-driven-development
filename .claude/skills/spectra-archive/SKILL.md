@@ -93,25 +93,38 @@ Archive a completed change.
 
    **If archive fails** with "already exists" error, suggest renaming existing archive.
 
-7. **Post `## Implementation Complete` to linked GitHub issue (v1.2+, PsychQuant/issue-driven-development#56)**
+7. **Post `## Implementation Complete` to linked GitHub issue (v1.3+, PsychQuant/issue-driven-development#56)**
 
    **Purpose**: ensures `/idd-close` Step 0 supersession gate triggers for Spectra-path issues, removing the need for manual retroactive Implementation Complete synthesis.
 
    **Delegated to executable helper script** `.claude/scripts/spectra-archive-post-ic.sh` (with unit tests at `.claude/scripts/tests/spectra-archive-post-ic/`). The script is the source of truth — this skill calls it and reads the outcome. Behavior contract (detection / idempotent guard / safe body composition / multi-candidate handling) lives in the script + its tests, not in skill prose. This separation was introduced after R2 verify found that prose-with-illustrative-bash had structural defects (variable persistence across Bash tool calls, Python3 RCE via shell-string interpolation, etc.) — see PsychQuant/issue-driven-development#56 R2 verify report.
 
+   **Required inputs from caller (agent)**: before invoking Step 7, the agent MUST have these in scope (from earlier skill steps):
+   - `$CHANGE_NAME` — the Spectra change name (slug; same value passed to `spectra archive`)
+   - `$SPEC_DELTAS` (optional) — comma-separated capability names from `spectra archive` stdout in Step 6 (e.g., `"idd-all-chain, idd-spawn-manifest"`); defaults to placeholder if absent
+
    **Invocation**:
 
    ```bash
-   ARCHIVE_DIR="openspec/changes/archive/$(date +%Y-%m-%d)-${CHANGE_NAME}"
+   # Resolve repo root to make the script path cwd-independent — the skill may be
+   # invoked from a subdirectory (cd openspec && /spectra-archive ...). Relative
+   # path .claude/scripts/... breaks; absolute path via git-root prefix doesn't.
+   REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 
-   # Spec deltas list from Step 6 (e.g. "idd-all-chain, idd-spawn-manifest");
-   # falls back to descriptive placeholder if not provided.
+   ARCHIVE_DIR="${REPO_ROOT}/openspec/changes/archive/$(date +%Y-%m-%d)-${CHANGE_NAME}"
    SPEC_DELTAS="${SPEC_DELTAS:-(see archived change directory)}"
 
-   bash .claude/scripts/spectra-archive-post-ic.sh \
+   # Per-run outcome file path: prevents concurrent invocation collision.
+   # Two parallel `/spectra-archive` runs would otherwise both write to the same
+   # /tmp/spectra-archive-ic-outcome.txt — last writer wins. $$-$(date +%s)
+   # suffix gives each run its own file. Step 8 reads from this specific path.
+   OUTCOME_FILE="/tmp/spectra-archive-ic-outcome-$$-$(date +%s).txt"
+
+   bash "${REPO_ROOT}/.claude/scripts/spectra-archive-post-ic.sh" \
        --change-name "$CHANGE_NAME" \
        --archive-dir "$ARCHIVE_DIR" \
-       --spec-deltas "$SPEC_DELTAS"
+       --spec-deltas "$SPEC_DELTAS" \
+       --outcome-file "$OUTCOME_FILE"
    POST_IC_EXIT=$?
    ```
 
@@ -119,27 +132,28 @@ Archive a completed change.
 
    | Exit | Meaning | Agent action |
    |------|---------|--------------|
-   | `0` | Success or normal skip (posted / none / idempotent / unsafe-name / generic failure) | Read outcome from `/tmp/spectra-archive-ic-outcome.txt`, proceed to Step 8 |
+   | `0` | Success or normal skip (posted / none / idempotent / unsafe-name / generic failure) | Read outcome from `$OUTCOME_FILE`, proceed to Step 8 |
    | `2` | Usage error (missing args) | Skill bug — fix invocation |
    | `64` | Dependency missing (python3) | Surface to user; archive itself succeeded; manual retry after install |
-   | `75` | Multi-candidate detected | **AskUserQuestion required** — read `/tmp/spectra-archive-candidates.txt` for the candidate list, prompt user to pick canonical issue (show `#N + gh issue title` for each), then re-invoke script with `--linked-issue <chosen>` |
+   | `75` | Multi-candidate detected | **AskUserQuestion required** — read `/tmp/spectra-archive-candidates.txt` for the candidate list, prompt user to pick canonical issue (show `#N + gh issue title` for each), then re-invoke script with `--linked-issue <chosen>` AND same `--outcome-file "$OUTCOME_FILE"` |
 
-   **Stdout**: a single line that is either the IC comment URL, or one of the documented status messages (`(none — ...)`, `(skipped — ...)`, `(pending — ...)`, `(failed — ...)`). Also written to `/tmp/spectra-archive-ic-outcome.txt` for cross-Bash-call persistence (Step 8 reads from there).
+   **Stdout**: a single line that is either the IC comment URL, or one of the documented status messages (`(none — ...)`, `(skipped — ...)`, `(pending — ...)`, `(failed — ...)`). Also written to `$OUTCOME_FILE` for cross-Bash-call persistence (Step 8 reads from there).
 
    **Multi-candidate flow (agent responsibility)**:
 
    ```bash
    if [ "$POST_IC_EXIT" = "75" ]; then
-     # Read candidates + AskUserQuestion + re-invoke
+     # Read candidates + AskUserQuestion + re-invoke (pass same OUTCOME_FILE)
      CANDIDATES=$(cat /tmp/spectra-archive-candidates.txt)
      # For each candidate, fetch title via `gh issue view <N> --json title -q .title`
      # Then AskUserQuestion: "Multi-candidate detected: which is canonical?"
      # User picks → CHOSEN_ISSUE=<N>
-     bash .claude/scripts/spectra-archive-post-ic.sh \
+     bash "${REPO_ROOT}/.claude/scripts/spectra-archive-post-ic.sh" \
          --change-name "$CHANGE_NAME" \
          --archive-dir "$ARCHIVE_DIR" \
          --spec-deltas "$SPEC_DELTAS" \
-         --linked-issue "$CHOSEN_ISSUE"
+         --linked-issue "$CHOSEN_ISSUE" \
+         --outcome-file "$OUTCOME_FILE"
    fi
    ```
 
@@ -147,14 +161,14 @@ Archive a completed change.
 
    **Failure semantics**: any failure in Step 7 (gh auth lost, network, body too large, etc.) is recorded in the outcome file but does NOT abort the overall archive operation — the archive itself (Step 6) has already succeeded, and the archived change directory + main spec deltas are the canonical record. The GitHub comment is the convenience anchor for `/idd-close` supersession.
 
-   **Testing**: run `.claude/scripts/tests/spectra-archive-post-ic/test.sh` to validate the script against fixture archive directories (covers explicit-marker / Refs-fallback / no-marker / multi-candidate / malicious-tasks.md / missing-tasks.md / unsafe-change-name / linked-issue-resolved / linked-issue-invalid). All 9 fixtures pass as of v1.2.
+   **Testing**: run `.claude/scripts/tests/spectra-archive-post-ic/test.sh` to validate the script against fixture archive directories (covers explicit-marker / Refs-fallback / no-marker / multi-candidate / malicious-tasks.md / missing-tasks.md / unsafe-change-name / linked-issue-resolved / linked-issue-invalid). All 9 fixtures pass as of v1.3.
 
 8. **Display summary**
 
-   Read the outcome from Step 7 (the helper script writes to `/tmp/spectra-archive-ic-outcome.txt` — persistent across Bash tool invocations):
+   Read the outcome from Step 7 (the helper script writes to `$OUTCOME_FILE` — the per-run path set in Step 7, persistent across Bash tool invocations):
 
    ```bash
-   IMPLEMENTATION_COMPLETE_POSTED=$(cat /tmp/spectra-archive-ic-outcome.txt 2>/dev/null \
+   IMPLEMENTATION_COMPLETE_POSTED=$(cat "$OUTCOME_FILE" 2>/dev/null \
        || echo "(unknown — outcome file missing)")
    ```
 

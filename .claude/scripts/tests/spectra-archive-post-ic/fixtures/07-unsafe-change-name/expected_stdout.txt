@@ -1,1 +1,1 @@
-(skipped — change name contains unsafe characters: evil$(echo))
+(skipped — change name contains unsafe characters: 'evil$(echo)')
