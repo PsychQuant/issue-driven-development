@@ -16,6 +16,21 @@ allowed-tools:
   - Bash(mv:*)
   - Bash(cat:*)
   - Bash(echo:*)
+  - Bash(shasum:*)
+  - Bash(sed:*)
+  - Bash(tr:*)
+  - Bash(cut:*)
+  - Bash(sort:*)
+  - Bash(seq:*)
+  - Bash(grep:*)
+  - Bash(awk:*)
+  - Bash(printf:*)
+  - Bash(date:*)
+  - Bash(head:*)
+  - Bash(tail:*)
+  - Bash(wc:*)
+  - Bash(basename:*)
+  - Bash(comm:*)
   - Read
   - Glob
   - Grep

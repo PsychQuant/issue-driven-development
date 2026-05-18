@@ -156,12 +156,15 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$IMPLEMENTATION_PLAN"
      # - 跨 file 但同 skill / module → same_skill=true
      # - 跨 cutting concern (cross-module observation) → 兩個都 false
      # 9th arg root_id: prefer chain shell's exported IDD_CHAIN_CURRENT_ROOT_ID env var;
-     # fallback to current planning issue's #NNN (single-root chain or root self-spawn).
-     ROOT_ID_FOR_MANIFEST="${IDD_CHAIN_CURRENT_ROOT_ID:-$NNN}"
-     bash "$CLAUDE_PLUGIN_ROOT/scripts/manifest-append.sh" \
-       "$REPO_ROOT" "$NEW_ISSUE" "idd-plan" "Step 2.5 tangential observations" \
-       "tangential" "$item_same_file" "$item_same_skill" "$item_title" "$ROOT_ID_FOR_MANIFEST" \
-       2>/dev/null || true   # silent skip when chain context inactive
+     # fallback to current planning issue's $NNN (single-root chain or root self-spawn).
+     # Defensive guard (v2.60+ #46 L2): skip explicitly if no root_id available.
+     ROOT_ID_FOR_MANIFEST="${IDD_CHAIN_CURRENT_ROOT_ID:-${NNN:-}}"
+     if [ -n "$ROOT_ID_FOR_MANIFEST" ]; then
+       bash "$CLAUDE_PLUGIN_ROOT/scripts/manifest-append.sh" \
+         "$REPO_ROOT" "$NEW_ISSUE" "idd-plan" "Step 2.5 tangential observations" \
+         "tangential" "$item_same_file" "$item_same_skill" "$item_title" "$ROOT_ID_FOR_MANIFEST" \
+         2>/dev/null || true   # silent skip when chain context inactive
+     fi
    ```
 
    Body 必須含：`**Source**: surfaced during /idd-plan #$NNN tangential sweep (Step 2.5)`，方便追溯。

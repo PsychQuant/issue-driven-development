@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.60.0] - 2026-05-18
+
+### Added
+
+- **`/idd-all-chain` multi-root + DFS/BFS traversal + per-root halt** ([#46](https://github.com/PsychQuant/issue-driven-development/issues/46), `multi-root-traversal-idd-all-chain` Spectra change):chain-solve mode 從 single-root 擴成 multi-root forest orchestrator。N=1 行為 byte-equivalent backward compat;N>1 開新能力。
+
+  - **Multi-root invocation**:`/idd-all-chain #A #B #C [--bfs] [--cwd <path>]` 接受 ≥1 root issue。N>1 開 cluster branch `idd/chain-multi-<hash8>-<root1-slug>`(hash8 = first 8 hex of sha256 over sorted-asc roots joined by `-`;collision fallback hash16,double-collision abort)。
+  - **NEW `--bfs` flag**:BFS traversal mode(spawn push-back queue,level-by-level across roots,fairness 優先)。Default DFS(spawn push-front,rich subtree first per root)。
+  - **Cap redesign for multi-root**:per-root `chain_max_depth` 2→3、global `chain_max_issues` 5→10。兩 cap 獨立 apply,whichever triggers first 勝。每 root subtree 獨立 depth=0 起算。
+  - **Verify FAIL = per-root halt**(D4 Option C):failing issue 的 `root_id` 加入 `FAIL_ROOTS`,同 root_id 從 QUEUE 清出,其他 root subtree 繼續(不是 global halt),commits preserved;Phase 4 per-root PASS/FAIL summary 顯示。
+  - **PR title dispatches**:N=1 `chain: <root title>`(backward compat);N>1 `chain (multi-root): N issues — <root#1 title>`。Cluster overview table 加 `root_id` 欄位。
+  - **Phase 4 forest tree printout**:per-root subtree 含 status icons(`✓` PASS / `✗` FAIL / `⊘` filed-but-not-chained)+ depth + spawn source attribution;per-root PASS/FAIL summary block;filed-only-not-chained list。
+
+### Changed (BREAKING)
+
+- **Spawn manifest schema v1 → v2**:top-level `root_issue: int` 改為 `root_issues: [int]`,加 `traversal: "dfs"|"bfs"`,每個 spawn entry 加 `root_id: int`(必為 `root_issues` 元素之一)。
+  - Helper `scripts/manifest-append.sh` bumps `EXPECTED_SCHEMA_VERSION` 1→2,接受 9th positional arg `root_id`,validates `root_id ∈ root_issues`,fail-fast on v1 manifest detection(no silent migration)。
+  - 4 sub-skills(`idd-implement` / `idd-verify` / `idd-plan` / `idd-diagnose`)透過 `IDD_CHAIN_CURRENT_ROOT_ID` env var(Phase 2 chain loop export)傳第 9 個 arg。Defensive `[ -n "$ROOT_ID_FOR_MANIFEST" ]` guard 預防 unset 變數造成 silent skip。
+  - **無 v1 callers in the wild**:manifest 是 per-chain-session transient state(每次 Phase 0 重建,無 cross-session 持久化 client),hard-break 安全。
+
+### Fixed
+
+- **`idd-all-chain/SKILL.md` `allowed-tools` frontmatter 補齊**:新增 11 個 Bash tools(`shasum / sed / tr / cut / sort / seq / grep / awk / printf / date / head` 等)for Phase 0.5 branch naming + Phase 4 forest rendering。修復 first N>1 chain invocation 撞 permission gate 的 P1。
+- **Sub-skill `ROOT_ID_FOR_MANIFEST` 防禦性 guard**:`${IDD_CHAIN_CURRENT_ROOT_ID:-${NNN:-}}` + `if [ -n ]` 包裹,避免 fallback chain 同時 unset 時 silent skip(`|| true` 吞錯誤的歷史 trap)。
+
+### Documentation
+
+- **Modified specs**:`idd-all-chain`(3 MODIFIED + 1 ADDED Requirement)+ `idd-spawn-manifest`(3 MODIFIED)。Spec deltas in `openspec/changes/multi-root-traversal-idd-all-chain/`,將在 `/spectra-archive` 階段 merge 進 main specs。
+- **Updated reference docs**:`references/spawn-manifest.md` v2 schema + multi-root example;`references/chain-flow.md` DFS/BFS algorithm + per-root halt scope + cap interaction + branch naming hash rule + PR title/body dispatch。
+- **Cap docs sync**:`CLAUDE.md` skills table + Chain-Solve Mode section、`README.md` skills table、`references/usecase-routing.md` row 25 全部 reference v2.60.0+ caps。
+
+### Testing
+
+- **Smoke tests 7.1+7.2** 標 `[~]` first-real-use validation track per `## Checklist Conventions` IDD discipline:orchestration tests cannot mock GitHub API + git operations without significant fixture infrastructure(mirroring [#52](https://github.com/PsychQuant/issue-driven-development/issues/52) idd-verify validation pattern)。Manifest helper 4 unit tests pass(8-args→exit 2 / 9-args→exit 0+root_id written / v1-manifest→exit 1 / bad root_id→exit 2);branch naming deterministic smoke validated。
+
+## [2.59.0]
+
 ### Added
 
 - **`/idd-all-chain` skill — chain-solve mode** ([#44](https://github.com/PsychQuant/issue-driven-development/issues/44), `add-idd-all-chain-skill` Spectra change):root issue + auto-emergent spawned issues 自動接續解,**單一 cluster branch + 單一 review PR**。Reviewer 拿回 holistic view,使用者不必手動逐一跑 `/idd-all #M`。
