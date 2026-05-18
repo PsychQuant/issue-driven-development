@@ -216,30 +216,38 @@ EXTRA=$(comm -23 <(echo "$DISCOVERED") <(echo "$USER_ISSUES" | sort -u))
 
 `/idd-close` 的 checklist gate + closing summary 只在實際跑 `/idd-close` skill 時生效。若 PR 帶 GitHub auto-close 連結（PR body 內 `Closes #N` 等 trailer），GitHub 在 merge 時會直接 close 對應 issue，**完全 bypass** `/idd-close` — gate 沒跑、closing summary 沒寫，audit trail 斷裂。本 step 在 verify 時偵測，命中就 warn，讓使用者在 merge 前 strip。
 
-偵測用 GitHub 自己的 `closingIssuesReferences` —— 這是 GitHub 對「本 PR merge 後會 auto-close 哪些 issue」的**權威解析**，已涵蓋所有 GitHub 承認的 trailer 形式（`Closes #N`、colon form `Closes: #N`、cross-repo、issue URL 等）。**不自寫 regex** 掃 PR body：自寫 regex 必然是 GitHub keyword parser 的脆弱近似（`/idd-verify --pr 94` R1 verify 實證 regex 漏了 colon form `Closes: #87`）。`closingIssuesReferences` 是 GitHub 算好的結果，定義上零漏判、零誤判。
+偵測用 GitHub 自己的 `closingIssuesReferences` —— 這是 GitHub 對「本 PR merge 後會 auto-close 哪些 issue」的**權威解析**，已涵蓋所有 GitHub 承認的 trailer 形式（`Closes #N`、colon form `Closes: #N`、cross-repo、issue URL 等）。**不自寫 regex** 掃 PR body：自寫 regex 必然是 GitHub keyword parser 的脆弱近似（`/idd-verify --pr 94` R1 verify 實證 regex 漏了 colon form `Closes: #87`）。`closingIssuesReferences` 對 GitHub **已 settle 的 close-link 狀態**零誤判、零漏判。注意它是 eventually-consistent —— PR 剛建立的短暫傳播窗內可能尚未算出；verify 通常在 implement 完成數十秒以上才跑，屆時已 settle，此窗在實務上不構成問題。
 
 這是**防禦縱深**：真正的修法是各 skill 的 PR-body template 不嵌 trailer（idd-implement / idd-all / idd-all-chain / pr-flow.md 已於 #87/#74 cluster 修正）；本 gate 是第二層 —— 即使未來某個 template regression 漏掉、或使用者手動貼了 trailer，verify 仍能在 merge 前抓到。
 
 ```bash
 # PR mode only — skip in local / branch / commits mode.
 # closingIssuesReferences = GitHub's own authoritative parse of which issues this
-# PR auto-closes on merge. Covers every trailer form GitHub honors; zero false
-# positive (it IS what GitHub will do) and zero parser-reimplementation risk.
-CLOSING_REFS=$(gh pr view "$PR" --repo "$GITHUB_REPO" \
-  --json closingIssuesReferences \
-  -q '.closingIssuesReferences[].number' 2>/dev/null || true)
-
-if [ -n "$CLOSING_REFS" ]; then
-  echo "⚠️  WARNING: PR #$PR is linked to auto-close issue(s): $(printf '%s' "$CLOSING_REFS" | tr '\n' ' ')"
-  echo "    On merge GitHub will auto-close these, bypassing /idd-close's checklist"
-  echo "    gate + closing summary. Strip the close trailer from the PR body before merge:"
-  echo "      gh pr edit $PR --repo $GITHUB_REPO --body '<body without the Closes/Fixes/Resolves #N trailer>'"
+# PR auto-closes on merge. Covers every trailer form GitHub honors; no
+# parser-reimplementation risk. Query .url (not bare .number) so a cross-repo
+# close ref is unambiguous.
+# The `if CMD; then` form distinguishes a gh failure (auth/network/old CLI →
+# else branch, surface a note) from a successful query that found nothing
+# (then branch, $CLOSING_REFS empty → clean PR, stay silent). A bare
+# `2>/dev/null || true` would conflate the two into a silent fail-open.
+if CLOSING_REFS=$(gh pr view "$PR" --repo "$GITHUB_REPO" \
+     --json closingIssuesReferences \
+     -q '.closingIssuesReferences[].url' 2>/dev/null); then
+  if [ -n "$CLOSING_REFS" ]; then
+    echo "⚠️  WARNING: PR #$PR is linked to auto-close the following issue(s):"
+    printf '      %s\n' $CLOSING_REFS
+    echo "    On merge GitHub will auto-close these, bypassing /idd-close's checklist"
+    echo "    gate + closing summary. Strip the close trailer from the PR body before merge:"
+    echo "      gh pr edit $PR --repo $GITHUB_REPO --body '<body without the Closes/Fixes/Resolves #N trailer>'"
+  fi
+else
+  echo "note: Step 0.8 skipped — 'gh pr view --json closingIssuesReferences' failed"
+  echo "      (auth / network / old gh CLI). Could not check PR #$PR for auto-close links;"
+  echo "      verify continues. Re-check manually: gh pr view $PR --json closingIssuesReferences"
 fi
 ```
 
-**Warn-only，不 abort**：gate 的價值是把風險在 merge 前 surface 給使用者，由使用者決定是否 `gh pr edit`。語意同 `idd-close` Step 1.6 semantic gate（也是 warn-only）。`/idd-close #N` 這類 skill invocation 不會出現在 `closingIssuesReferences`（hyphenated token，GitHub 不當 close keyword），因此天然零誤判 —— 不需像自寫 regex 那樣特別排除。
-
-**Regex 設計**：涵蓋 GitHub 全部 inflection（`close`/`closes`/`closed`/`fix`/`fixes`/`fixed`/`resolve`/`resolves`/`resolved`），case-insensitive。關鍵字前綴用 `(^|[^-/[:alnum:]])` 而非 `\b` —— `\b` 會把 `/idd-close #N`（IDD skill 呼叫指令，hyphenated token）誤判為 trailer，但 GitHub 實際**不會** auto-close `/idd-close #N`（hyphen 前綴）。前綴排除 `-` `/` 與英數字，精確對齊 GitHub 真實行為，同時保留對 `(Closes #N)` / `**Closes #N**` 等 context-blind 命中（`(` `*` 等非英數前綴仍命中，正是本 bug 要抓的）。
+**Warn-only，不 abort**：gate 的價值是把風險在 merge 前 surface 給使用者，由使用者決定是否 `gh pr edit`。語意同 `idd-close` Step 1.6 semantic gate（也是 warn-only）。`/idd-close #N` 這類 skill invocation 不會出現在 `closingIssuesReferences`（hyphenated token，GitHub 不當 close keyword），因此天然零誤判 —— 用 GitHub 權威 field 而非自寫 regex 的好處之一就是不需任何 keyword 排除邏輯。
 
 ### Step 1: 取得 diff 和 issue
 
