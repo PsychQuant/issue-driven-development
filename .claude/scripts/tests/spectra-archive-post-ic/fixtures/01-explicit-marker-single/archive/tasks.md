@@ -1,0 +1,4 @@
+- [x] First task done
+- [x] Second task done
+- [~] Third task skipped — reason: deferred
+- [-] Fourth task won't fix — reason: out of scope

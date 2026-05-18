@@ -1,0 +1,1 @@
+- [x] Apply spec changes
