@@ -1,0 +1,1 @@
+--change-name test-resolved --archive-dir __FIXTURE_PATH__/archive --linked-issue 46 --dry-run --gh-repo test/repo

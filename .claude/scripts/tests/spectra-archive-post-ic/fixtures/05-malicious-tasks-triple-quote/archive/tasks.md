@@ -1,0 +1,2 @@
+- [x] Task with triple-quote attempt: ''' + __import__('os').system('echo PWNED > /tmp/pwn-fixture-05') + '''
+- [x] Second task with backtick attempt: `$(echo INJECTED > /tmp/pwn-fixture-05)`

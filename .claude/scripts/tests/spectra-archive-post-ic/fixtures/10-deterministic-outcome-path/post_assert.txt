@@ -1,0 +1,1 @@
+must_exist /tmp/spectra-archive-ic-outcome-test-deterministic.txt
