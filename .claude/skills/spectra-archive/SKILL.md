@@ -114,11 +114,19 @@ Archive a completed change.
    ARCHIVE_DIR="${REPO_ROOT}/openspec/changes/archive/$(date +%Y-%m-%d)-${CHANGE_NAME}"
    SPEC_DELTAS="${SPEC_DELTAS:-(see archived change directory)}"
 
-   # Per-run outcome file path: prevents concurrent invocation collision.
-   # Two parallel `/spectra-archive` runs would otherwise both write to the same
-   # /tmp/spectra-archive-ic-outcome.txt — last writer wins. $$-$(date +%s)
-   # suffix gives each run its own file. Step 8 reads from this specific path.
-   OUTCOME_FILE="/tmp/spectra-archive-ic-outcome-$$-$(date +%s).txt"
+   # Per-change outcome file path: deterministic, derived from $CHANGE_NAME.
+   # Properties:
+   #   1. Cross-Bash-invocation persistent — Step 7 and Step 8 independently
+   #      compute the SAME path from the SAME $CHANGE_NAME, so Step 8 can
+   #      read what Step 7 wrote even when they run in separate Bash tool calls
+   #      (bash shell vars do NOT persist across tool invocations).
+   #   2. Concurrent-collision safe — two parallel `/spectra-archive <A>` and
+   #      `/spectra-archive <B>` use different paths (different $CHANGE_NAME).
+   #   3. Same-change re-run safe — overwrites OK; idempotent guard inside the
+   #      helper script prevents double-posting.
+   # Why NOT $$-$(date +%s): random suffix breaks Step 7 → Step 8 handoff because
+   # shell vars don't persist across Bash calls (R4 verify R4-S1 finding).
+   OUTCOME_FILE="/tmp/spectra-archive-ic-outcome-${CHANGE_NAME}.txt"
 
    bash "${REPO_ROOT}/.claude/scripts/spectra-archive-post-ic.sh" \
        --change-name "$CHANGE_NAME" \
@@ -165,9 +173,16 @@ Archive a completed change.
 
 8. **Display summary**
 
-   Read the outcome from Step 7 (the helper script writes to `$OUTCOME_FILE` — the per-run path set in Step 7, persistent across Bash tool invocations):
+   Read the outcome from Step 7. Compute the outcome file path independently from
+   the same `$CHANGE_NAME` that Step 7 used — this works whether Step 7 + Step 8
+   ran in the same Bash invocation (var still in scope) OR in separate Bash calls
+   (deterministic path recomputation):
 
    ```bash
+   # Recompute the same deterministic path Step 7 used.
+   # Cross-Bash-invocation safe: same $CHANGE_NAME → same path.
+   OUTCOME_FILE="/tmp/spectra-archive-ic-outcome-${CHANGE_NAME}.txt"
+
    IMPLEMENTATION_COMPLETE_POSTED=$(cat "$OUTCOME_FILE" 2>/dev/null \
        || echo "(unknown — outcome file missing)")
    ```
