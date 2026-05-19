@@ -15,6 +15,23 @@ Archive a completed change.
 
 **Prerequisites**: This skill requires the `spectra` CLI. If any `spectra` command fails with "command not found" or similar, report the error and STOP.
 
+**Step 0: Bootstrap Stage Task List** (required)
+
+Before doing anything else, call `TaskCreate` to build a harness-level todo list for this archive run — one entry per step below. Mark each `TaskUpdate → completed` as you finish it; silent completion is a violation. This mirrors the Step 0 Bootstrap discipline every `idd-*` skill enforces, and gives per-step accountability when `/idd-close` cascades into `/spectra-archive`.
+
+```
+TaskCreate(name="prompt_change_name", description="Step 1: resolve change name — prompt via AskUserQuestion if not provided / inferable")
+TaskCreate(name="check_artifacts", description="Step 2: spectra status --json — warn + confirm if any artifact not done")
+TaskCreate(name="check_tasks", description="Step 3: scan tasks.md — warn + confirm if incomplete - [ ] tasks")
+TaskCreate(name="assess_delta_sync", description="Step 4: compare delta specs vs main specs; prompt sync now / archive without sync")
+TaskCreate(name="cleanup_tracking", description="Step 5: rm -f .spectra/touched/<name>.json")
+TaskCreate(name="run_archive_cli", description="Step 6: spectra archive <name>")
+TaskCreate(name="post_implementation_complete", description="Step 7: invoke spectra-archive-post-ic.sh to post ## Implementation Complete to the linked GitHub issue (#56)")
+TaskCreate(name="display_summary", description="Step 8: read Step 7 outcome + show archive completion summary")
+```
+
+Complete each step → `TaskUpdate → completed` immediately.
+
 **Steps**
 
 1. **If no change name provided, prompt for selection**
