@@ -7,9 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.63.0] - 2026-05-19
+
+### Added
+
+- **`## Cluster-PR eligibility` section in `references/batch-and-cluster.md`** ([#60](https://github.com/PsychQuant/issue-driven-development/issues/60)): criteria table (same-file / same-skill / same-root-issue / same-label / same-review-timing) + >50-line review-surface heuristic for the bundle-vs-split decision; cross-ref from `idd-implement` Cluster-PR mode.
+- **`openspec/CONVENTIONS.md`** ([#90](https://github.com/PsychQuant/issue-driven-development/issues/90)): documents the `**GitHub-side tracker**: #NN` canonical Spectra-proposal → GitHub-issue linking convention. (R1 placed it at `openspec/LANGUAGE.md`; 6-AI verify caught that as a reserved spectra-discuss vocabulary filename → R2 relocated to `CONVENTIONS.md`.)
+- **`Step 0: Bootstrap Stage Task List` in `.claude/skills/spectra-archive/SKILL.md`** ([#91](https://github.com/PsychQuant/issue-driven-development/issues/91)): 8 `TaskCreate` entries matching the idd-* Bootstrap pattern. The tool-managed command-file surface was intentionally left untouched — its gap is folded into #93.
+
 ### Changed
 
+- **`references/usecase-routing.md`** — decision-tree bulk-solve note pointing to row 27 ([#62](https://github.com/PsychQuant/issue-driven-development/issues/62)); `#44 chain-solve` given an explicit URL link in row 27 ([#63](https://github.com/PsychQuant/issue-driven-development/issues/63)).
 - **Retroactive notice — v2.55.0 multi-finding behavioral change for CI callers** ([#78](https://github.com/PsychQuant/issue-driven-development/issues/78)): from v2.55.0, `idd-issue source.docx` auto-enters multi-finding mode when the source contains ≥2 findings — changed from the pre-v2.55.0 always-single-issue behavior. Automated / CI / `/loop` callers expecting the legacy single-issue output **must pass `--no-multi-finding` explicitly**. `idd-issue/SKILL.md` now carries this notice inline at the multi-finding override-flags section. (No standalone `## [2.55.0]` entry exists in this CHANGELOG; this is the retroactive record.)
+
+> The 6 issues above are the Simple-tier subset of an 18-issue `/idd-diagnose` batch (6 Simple / 12 Plan) from the #96-backlog cleanup, shipped via cluster-PR #101 (squash `0eb419c`), 6-AI verified R1 CONDITIONAL → R2 PASS.
 
 ## [2.62.0] - 2026-05-19
 
