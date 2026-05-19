@@ -4,7 +4,7 @@ description: |
   自動串連 IDD 完整 workflow（issue → diagnose → implement → verify），按 pr_policy 解析 path 與 interaction 兩軸：PR + unattended（自動化、/loop friendly）或 direct-commit + attended（HITL、user 在 keyboard，sub-skill AskUserQuestion 自然 fire）。停在 verified 等 user 自己 close（永不 auto-close）。
   Use when: 想一次跑完整條 IDD pipeline、信任 6-AI verify 會抓錯、希望 fire-and-forget；HITL 模式則用於 solo repo 想被 sub-skill 諮詢的情境。
   防止的失敗：手動跑 5 個 idd-* skill 太繁瑣、忘記中間某一步、orchestration 一致性。
-argument-hint: "[#NNN | 'issue description'] [--pr | --no-pr] [--cwd /path/to/clone] (empty = interactive; --no-pr 觸發 HITL direct-commit + attended)"
+argument-hint: "[#NNN | 'issue description'] [--pr | --no-pr] [--review] [--cwd /path/to/clone] (empty = interactive; --no-pr 觸發 HITL direct-commit + attended; --review opt-in re-opens NSQL confirmation loop at terminal report)"
 allowed-tools:
   - Bash(gh:*)
   - Bash(git:*)
@@ -53,7 +53,8 @@ idd-all 不取代 atomic skills,而是包它們。每個 phase 仍透過 `Skill(
 **動任何事之前**先用 `TaskCreate` 建 stage-level todo list:
 
 ```
-TaskCreate(name="preflight", description="Phase 0: 解析 args(含 --pr/--no-pr/--cwd)、gh auth、resolve target repo")
+TaskCreate(name="preflight", description="Phase 0: 解析 args(含 --pr/--no-pr/--review/--cwd)、gh auth、resolve target repo")
+TaskCreate(name="parse_review_flag", description="Phase 0: 解析 --review flag → $REVIEW_FLAG (Phase 6 terminal report 切換 verify-gated default vs awaiting human acceptance; per #102 NSQL doctrine)")
 TaskCreate(name="resolve_mode", description="Phase 0.5: 從 pr_policy + flag + fork detection 解析 (path, interaction) tuple,印 notice line。PR mode 才檢查 git clean + on-default-branch + 建 feature branch;direct-commit mode 留在當前 branch。")
 TaskCreate(name="ensure_issue", description="Phase 1: 若 from-scratch 則跑 idd-issue; from-issue 則 verify issue 存在")
 TaskCreate(name="diagnose", description="Phase 2: 跑 idd-diagnose,讀回 complexity 判定")
@@ -92,6 +93,7 @@ idd-all 的所有 git/gh 操作都針對單一 target repo,且 Phase 0.5 mode re
 CWD_FLAG=""
 PR_FLAG=""        # "" | "--pr" | "--no-pr"
 IN_CHAIN=""       # "" | "1" — set by --in-chain flag (v2.55+ #44)
+REVIEW_FLAG=""    # "" | "--review" — set by --review flag (v2.65+ #102)
 ARGS=("$@")
 for ((i=0; i<${#ARGS[@]}; i++)); do
   arg="${ARGS[i]}"
@@ -110,6 +112,13 @@ for ((i=0; i<${#ARGS[@]}; i++)); do
       # v2.55+ #44 — chain context tuple (direct-commit, unattended)
       [ -n "$PR_FLAG" ] && abort "Conflicting flags: '--in-chain' and '$PR_FLAG' cannot be combined. Pick one."
       IN_CHAIN="1" ;;
+    --review)
+      # v2.65+ #102 — opt-in re-open NSQL confirmation loop at terminal report.
+      # Orthogonal to --pr/--no-pr/--in-chain (no mutex). Messaging-only effect:
+      # Phase 6 report swaps to "awaiting human acceptance" wording. Does NOT
+      # change idd-all behavior, does NOT make idd-all wait. Per MANIFESTO
+      # "Human-in-the-loop: IDD 即 NSQL Confirmation Protocol" doctrine.
+      REVIEW_FLAG="--review" ;;
   esac
 done
 
@@ -769,6 +778,10 @@ fi
 
 #### PR mode report
 
+Terminal disposition wording dispatches on `$REVIEW_FLAG` per the MANIFESTO `Human-in-the-loop: IDD 即 NSQL Confirmation Protocol` doctrine — `verify-gated` is the named terminal default; `--review` re-opens the confirmation loop.
+
+Default (`REVIEW_FLAG=""`):
+
 ```
 ✓ idd-all complete (PR mode)
 
@@ -776,13 +789,30 @@ fi
   Branch:       ${BRANCH}
   Commits:      ${COMMIT_COUNT} (implementation + ${FIX_ROUND_COUNT} verify-fix rounds)
   PR:           ${PR_URL}
-  Verify:       PASS
+  Verify:       verify-gated PASS
   Follow-ups:   ${FOLLOWUP_ISSUE_LIST or "(none)"}
 
-Next: review PR ${PR_URL}, merge, then run /idd-close #${N}
+Next: merge ${PR_URL}, then run /idd-close #${N}
+```
+
+With `--review` (`REVIEW_FLAG="--review"`):
+
+```
+✓ idd-all complete (PR mode, --review)
+
+  Issue:        #${N} — ${TITLE}
+  Branch:       ${BRANCH}
+  Commits:      ${COMMIT_COUNT} (implementation + ${FIX_ROUND_COUNT} verify-fix rounds)
+  PR:           ${PR_URL}
+  Verify:       verify-gated PASS — awaiting human acceptance (re-opened confirmation loop per --review)
+  Follow-ups:   ${FOLLOWUP_ISSUE_LIST or "(none)"}
+
+Next: review PR ${PR_URL}, merge after acceptance, then run /idd-close #${N}
 ```
 
 #### direct-commit mode report
+
+Default (`REVIEW_FLAG=""`):
 
 ```
 ✓ idd-all complete (direct-commit mode — HITL)
@@ -790,13 +820,27 @@ Next: review PR ${PR_URL}, merge, then run /idd-close #${N}
   Issue:        #${N} — ${TITLE}
   Branch:       ${BRANCH}  (commits landed on user's current checkout)
   Commits:      ${COMMIT_COUNT} (implementation + ${FIX_ROUND_COUNT} verify-fix rounds)
-  Verify:       ${VERIFY_STATE}  (PASS, or findings deferred to user in attended mode)
+  Verify:       verify-gated ${VERIFY_STATE}  (PASS, or findings deferred to user in attended mode)
+  Follow-ups:   ${FOLLOWUP_ISSUE_LIST or "(none)"}
+
+Next: run /idd-close #${N}
+```
+
+With `--review` (`REVIEW_FLAG="--review"`):
+
+```
+✓ idd-all complete (direct-commit mode — HITL, --review)
+
+  Issue:        #${N} — ${TITLE}
+  Branch:       ${BRANCH}  (commits landed on user's current checkout)
+  Commits:      ${COMMIT_COUNT} (implementation + ${FIX_ROUND_COUNT} verify-fix rounds)
+  Verify:       verify-gated ${VERIFY_STATE} — awaiting human acceptance (re-opened confirmation loop per --review)
   Follow-ups:   ${FOLLOWUP_ISSUE_LIST or "(none)"}
 
 Next: review last ${COMMIT_COUNT} commits (git log -${COMMIT_COUNT}), then run /idd-close #${N}
 ```
 
-**STOP**。不 auto-merge(PR mode)、不 auto-close(both modes)。user 可能想看 diff、跑 CI、找其他人 review、或在 attended mode 下對 verify findings 做進一步處理。
+**STOP**。不 auto-merge(PR mode)、不 auto-close(both modes)。Per MANIFESTO doctrine,verify-gated PASS 是 terminal default disposition;auto-merge mechanic 屬 **#37** bulk-solve autopilot 範疇,**不**是 idd-all default。`--review` 是 messaging-only opt-in,不會讓 idd-all 等候 — 它只表態 "user 還想自己再過一次" 並切換 Phase 6 wording。
 
 ---
 
