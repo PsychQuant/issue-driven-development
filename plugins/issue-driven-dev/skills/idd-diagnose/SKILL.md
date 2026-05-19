@@ -218,7 +218,7 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$DIAGNOSIS_REPORT"
 
 > **原文引用格式**：所有逐字引用的原文（使用者對話、老師回饋、文件段落）**必須**使用 blockquote（`>`）格式，與分析/解讀在視覺上明確區分。
 
-> **`### Residue` 是什麼（v2.64.0+, #103）**：NSQL §4.6 的 residue —— issue 的意圖裡*無法被 operationalize* 的那部分（它的 purpose / horizon）。**跟 Layer V vagueness 不同**：Layer V = issue *不清楚*；residue = issue *清楚*，但它的部分意圖（為什麼要這個、要放進什麼脈絡看）本來就接不進 function/argument。標出來，不靜默丟掉 —— 誠實的縮減 ≠ 假裝完整。
+> **`### Residue` 是什麼（v2.64.0+, #103）**：NSQL §4.6 的 residue —— issue 的意圖裡*無法被 operationalize* 的那部分（它的 purpose / horizon）。**跟 Layer V vagueness 不同**：Layer V = issue *不清楚*；residue = issue *清楚*，但它的部分意圖（為什麼要這個、要放進什麼脈絡看）本來就接不進 function/argument。標出來，不靜默丟掉 —— 誠實的縮減 ≠ 假裝完整。**無殘留時必填 `(none)`**；空著等於沒判斷,違反「明確標記」的本意。
 
 同時在對話中顯示 report，讓使用者可以即時確認。
 
@@ -278,7 +278,7 @@ AskUserQuestion(
   question = "Layer V triggered (V1=$V1, V4=$V4). 模糊度 $max_score/6 — 怎麼處理?",
   options = [
     # 順序依 max_score 重排,把 default 放第一個
-    {label: "clarify now",      description: "Claude 問 1-3 個 focused questions → 拿你回答 → append 到 issue body 'Clarification (added during diagnose)' 區塊 → 重跑 Layer V + Step 3.5"},
+    {label: "clarify now",      description: "Claude 對 1-3 個不清楚的點 render 候選詮釋讓你挑（NSQL P1 — Read-Only for Humans;無法列舉的點 fallback 才用 free-text 問）→ append 到 issue body 'Clarification (added during diagnose)' 區塊 → 重跑 Layer V + Step 3.5"},
     {label: "proceed anyway",   description: "跳過 clarify,routing 進 Layer 2/3/P。trigger 事實寫入 audit trail"},
     {label: "escalate to Plan", description: "verdict 直接設 Plan via Layer V,跳過 Step 3.5。Routing 進 /idd-plan EnterPlanMode 對齊"}
   ]

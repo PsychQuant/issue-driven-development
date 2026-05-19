@@ -61,7 +61,7 @@ When `max(V1, V4) ≥ 4`, `idd-diagnose` Step 3.4 fires a Hybrid 3-option `AskUs
 
 User can choose any of the three options regardless of default:
 
-- **`clarify now`** → Claude asks 1–3 focused questions, appends user answers to the issue body via `gh issue edit` under `Clarification (added during diagnose)`, then re-runs Layer V + Step 3.5 with the clarified body
+- **`clarify now`** → Claude renders 1–3 candidate interpretations for the unclear points and the user picks (NSQL P1 — Read-Only for Humans; free-text is the named fallback for genuinely un-enumerable questions). Picks/answers are appended to the issue body via `gh issue edit` under `Clarification (added during diagnose)`, then Layer V + Step 3.5 re-run with the clarified body
 - **`proceed anyway`** → Layer V is skipped (audit trail records the trigger event), routing continues to Layer 2/3/P normally
 - **`escalate to Plan`** → verdict force-set to `Plan via Layer V`; Layer 2/3/P evaluation is skipped entirely; routing chains to `idd-plan` (EnterPlanMode approval gate)
 
