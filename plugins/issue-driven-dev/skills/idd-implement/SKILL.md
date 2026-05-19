@@ -46,7 +46,7 @@ allowed-tools:
 
 `idd-implement #34 #36 #38 --pr` 觸發 cluster-PR mode：3 個 issue 共用 1 個 feature branch + 1 個 PR，但每個 commit 仍以 `Refs #N`（可多）紀律標示對應 issue。Strategy-level TaskList 從各 issue 的 diagnosis 聚合，scope guard 仍逐 issue 檢查。
 
-完整契約見 [batch-and-cluster.md](../../references/batch-and-cluster.md)。Cluster-PR mode 強制 PR path（不接受 `--no-pr`），Branch 命名 `idd/cluster-{slug}`，PR 標題前綴 `cluster:`。
+完整契約見 [batch-and-cluster.md](../../references/batch-and-cluster.md)。Cluster-PR mode 強制 PR path:`--no-pr` 或 `pr_policy=never` 撞 cluster 時,Phase 0.5 印 explicit override notice(`→ cluster mode (N issues) → PR path enforced (overriding --no-pr / pr_policy=never)`,mirror fork detection 既有 pattern)後 proceed as PR mode — 不 abort、不 silent ignore。完整 resolution semantics 見 [pr-flow.md § Cluster mode override](../../references/pr-flow.md#cluster-mode-override)。Branch 命名 `idd/cluster-{slug}`,PR 標題前綴 `cluster:`。
 
 實用情境：04/27 那種「7 個 issue 分成 Docs + Sanitizer-hardening 2 個 themed PR」的工作流。Single-issue 模式（`idd-implement #19`）行為不變。
 

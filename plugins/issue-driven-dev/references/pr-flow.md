@@ -15,7 +15,7 @@ Both paths share IDD discipline: every commit references `#NNN`, no `Closes`/`Fi
 
 ## Resolution algorithm
 
-When `idd-implement` (or any IDD skill that needs to know the path) starts, resolve in this order:
+When `idd-implement` (or any IDD skill that needs to know the path) starts, resolve in this order. **Cluster mode (≥2 `#N` invocations) is a precondition that pre-empts this table — see [Cluster mode override](#cluster-mode-override) below.**
 
 ```
 1. --pr flag                     → PR path (per-invocation)
@@ -42,6 +42,26 @@ IS_FORK=$(gh repo view "$GITHUB_REPO" --json isFork -q .isFork)
 ```
 
 If `true`, override `pr_policy` regardless of config — print one-line notice ("repo is a fork → PR path enforced") and proceed.
+
+### Cluster mode override
+
+Cluster mode — `idd-implement #34 #36 #38`, `idd-verify`, or `idd-close` invoked with **≥2 `#N` arguments** — is a precondition that pre-empts the [Resolution algorithm](#resolution-algorithm) above. Cluster mode **forces PR path**, with the same explicit override semantics as fork detection.
+
+**Why pre-empt**: a cluster is one reviewable unit (1 feature branch + 1 PR + cross-issue scope). Direct-commit on a cluster would either (a) commit N issues' changes to current branch (typically default) with no PR review gate, or (b) lose the "one-PR-spans-N-issues" semantic. Both defeat cluster's purpose.
+
+**Override notice**: when `--no-pr` or `pr_policy = "never"` collides with cluster mode, Phase 0.5 prints (mirror fork detection):
+
+```
+→ cluster mode (N issues) → PR path enforced (overriding --no-pr / pr_policy=never)
+```
+
+Then proceeds as PR path. **No abort, no silent ignore** — the flag is acknowledged but cannot satisfy cluster's contract. User stays informed; future single-issue invocation restores `--no-pr` / `pr_policy:"never"` honoring.
+
+**Why not abort**: cluster's typical caller is `idd-implement #34 #36 #38 --pr` (explicit). The `--no-pr` collision case is rare (user with `pr_policy:"never"` config who happens to run cluster). Aborting would block legitimate work; the override notice lets work proceed while making the precedence visible.
+
+**Single-issue invocation behavior is unchanged** — the cluster carve-out only fires on ≥2 `#N`. Backward compatibility preserved.
+
+Cross-reference: full cluster semantics in [batch-and-cluster.md](batch-and-cluster.md).
 
 ### `pr_policy` config field
 
