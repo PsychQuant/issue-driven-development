@@ -61,7 +61,7 @@ When `max(V1, V4) ≥ 4`, `idd-diagnose` Step 3.4 fires a Hybrid 3-option `AskUs
 
 User can choose any of the three options regardless of default:
 
-- **`clarify now`** → Claude asks 1–3 focused questions, appends user answers to the issue body via `gh issue edit` under `Clarification (added during diagnose)`, then re-runs Layer V + Step 3.5 with the clarified body
+- **`clarify now`** → Claude renders 1–3 candidate interpretations for the unclear points and the user picks (NSQL P1 — Read-Only for Humans; free-text is the named fallback for genuinely un-enumerable questions). Picks/answers are appended to the issue body via `gh issue edit` under `Clarification (added during diagnose)`, then Layer V + Step 3.5 re-run with the clarified body
 - **`proceed anyway`** → Layer V is skipped (audit trail records the trigger event), routing continues to Layer 2/3/P normally
 - **`escalate to Plan`** → verdict force-set to `Plan via Layer V`; Layer 2/3/P evaluation is skipped entirely; routing chains to `idd-plan` (EnterPlanMode approval gate)
 
@@ -145,7 +145,7 @@ If Layer 1 didn't fire AND Layer 2 didn't qualify for Spectra, evaluate Plan sig
 - **2+ files with sequence dependency** — file A's changes affect what file B's changes must do; can't parallelize the edits
 - **Strategy has 5+ ordered steps** — sequential complexity benefits from explicit checkpoint before execution
 - **Decision-heavy with multiple valid approaches** — the diagnosis identifies 2+ implementation strategies and the pick affects code shape (e.g., regex splice vs DOM walker, optimistic-locking vs pessimistic, batch vs streaming)
-- **Touches risk-sensitive boundary** — concurrency, migrations, backward-compat shims, security-critical paths, save-durability, ordering semantics, atomic operations
+- **Touches risk-sensitive boundary** — concurrency, migrations, backward-compat shims, security-critical paths, save-durability, ordering semantics, atomic operations, irreversible side effects
 - **Cross-file refactor without external contract change** — pulling shared logic into a helper, splitting a god-function, renaming internal API used by ≥3 callers
 
 If at least one signal hits, route to `Plan`. The Plan path inserts an `EnterPlanMode` approval gate between diagnosis and TDD execution — user reviews the proposed plan, approves or revises, then implementation proceeds with same TDD discipline as Simple.
