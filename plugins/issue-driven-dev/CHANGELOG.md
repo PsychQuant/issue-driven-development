@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.62.0] - 2026-05-19
+
+### Added
+
+- **Cluster mode override — `pr-flow.md` canonical doc + `idd-implement` Step 0.5 bash** ([#96](https://github.com/PsychQuant/issue-driven-development/issues/96)): resolves a 3-file contradiction in IDD's PR-vs-direct-commit path resolution. `pr-flow.md`'s resolution-algorithm table had no cluster carve-out while `idd-implement/SKILL.md:49` + `batch-and-cluster.md:133` independently asserted cluster forces PR; `--no-pr` + cluster collision behavior was undefined.
+
+  - **`pr-flow.md` `### Cluster mode override`** — cluster mode (≥2 `#N` args) is an `idd-implement` path-resolution precondition that pre-empts the algorithm table and forces PR path. `idd-verify` / `idd-close` are cluster-aware but consume the path, don't resolve it. Explicit override notice mirrors fork detection; fork+cluster co-occurrence prints both notices.
+  - **`idd-implement` Step 0.5 bash** — cluster detection wired: parse `#N` token count → `CLUSTER_MODE` → pre-empt block → `OVERRIDE_SRC` accumulation prints `→ cluster mode (N issues) → PR path enforced (overriding --no-pr / pr_policy=never)`. Local algorithm summary gains row 0.
+  - **`batch-and-cluster.md:133`** — rule statement demoted to a pointer at the new canonical section.
+
+  Option A (user-selected from 3 diagnosis candidates). Verified 6-AI × 2 rounds (R1 CONDITIONAL doc/code gap → R2 6/6 PASS with bash impl) + R3 doc fix. Backward compat: single-issue invocation byte-equivalent — cluster carve-out only fires on ≥2 `#N`. Follow-up [#100](https://github.com/PsychQuant/issue-driven-development/issues/100) tracks 2 non-blocking items (feature-branch cluster tension, glob looseness). PR #99 squashed as `b7f72ff`.
+
 ## [2.60.0] - 2026-05-18
 
 ### Added
