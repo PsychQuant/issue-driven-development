@@ -987,6 +987,8 @@ else:
 
 兩 flag 同時 set → refuse。`--bundle-mode` + multi-finding mode 同時觸發 → refuse(見「Mutual exclusion」段落)。
 
+> **⚠ Behavioral change for automated / CI callers (v2.55.0+)**: pre-v2.55.0, `idd-issue source.docx` always produced exactly one issue (whole source as body). v2.55.0+ auto-enters multi-finding mode when the source has ≥2 findings — so a CI pipeline or `/loop` script that relied on single-issue output will now silently get multi-finding dispatch. **Automated / unattended callers expecting the legacy single-issue behavior MUST pass `--no-multi-finding` explicitly.**
+
 ### 4-Stage Pipeline
 
 ```
