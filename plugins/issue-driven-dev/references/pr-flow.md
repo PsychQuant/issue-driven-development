@@ -45,7 +45,9 @@ If `true`, override `pr_policy` regardless of config — print one-line notice (
 
 ### Cluster mode override
 
-Cluster mode — `idd-implement #34 #36 #38`, `idd-verify`, or `idd-close` invoked with **≥2 `#N` arguments** — is a precondition that pre-empts the [Resolution algorithm](#resolution-algorithm) above. Cluster mode **forces PR path**, with the same explicit override semantics as fork detection.
+Cluster mode — any IDD skill invoked with **≥2 `#N` arguments** (`idd-implement`, `idd-verify`, `idd-close`) — is a multi-issue mode where all cluster issues share one feature branch + one PR.
+
+**Path resolution is `idd-implement`'s job** — it is the only skill that resolves PR-vs-direct-commit. For `idd-implement`, cluster mode is a precondition that pre-empts the [Resolution algorithm](#resolution-algorithm) above and **forces PR path**, with the same explicit override semantics as fork detection. `idd-verify` / `idd-close` are cluster-aware but operate on the cluster's already-existing PR — they consume the path decision, they don't make it.
 
 **Why pre-empt**: a cluster is one reviewable unit (1 feature branch + 1 PR + cross-issue scope). Direct-commit on a cluster would either (a) commit N issues' changes to current branch (typically default) with no PR review gate — i.e., stacked half-isolated changes on default branch — or (b) lose the "one-PR-spans-N-issues" semantic. Both defeat cluster's purpose.
 
