@@ -128,6 +128,24 @@ Single-issue invocation (`idd-implement #19`) behavior is **unchanged**. Cluster
 
 ---
 
+## Cluster-PR eligibility (when to bundle vs split)
+
+Cluster-PR mode (`/idd-implement #N #M --pr`) bundles multiple issues into one feature branch + one PR. Bundle only when the issues are genuinely related — a reviewer seeing two changes in one PR assumes they connect, and pays cognitive cost hunting for a link that isn't there.
+
+| Criterion | Bundle? | Example |
+|-----------|---------|---------|
+| Same-file | ✓ | #34, #36 both edit `src/cluster.ts` |
+| Same-skill | ✓ | both touch `idd-implement` steps |
+| Same-root-issue (chain mode only) | ✓ | `/idd-all-chain #N` auto-emergent spawn |
+| Same parent label (e.g. `#47 follow-up`) | ✗ | usually too weak — prefer atomic PRs |
+| Same PR review timing | ✗ | bundling saves effort, not review cost |
+
+**Borderline** — same parent label but non-overlapping file/skill: acceptable if the combined review surface is < 50 lines; split into atomic PRs if > 50 lines.
+
+Cluster-PR saves the mechanical cost of opening N PRs — it does **not** reduce per-issue review cost. When in doubt, atomic PRs keep each reviewer's mental model clean.
+
+---
+
 ## Cross-references
 
 - [pr-flow.md](pr-flow.md) — PR path resolution. Cluster mode is a precondition that pre-empts the resolution algorithm and forces PR path; full semantics + override notice format in [§ Cluster mode override](pr-flow.md#cluster-mode-override). `--no-pr` / `pr_policy:"never"` colliding with cluster mode trigger an explicit override notice (mirror fork detection), then proceed as PR — no abort, no silent ignore.

@@ -50,6 +50,8 @@ allowed-tools:
 
 實用情境：04/27 那種「7 個 issue 分成 Docs + Sanitizer-hardening 2 個 themed PR」的工作流。Single-issue 模式（`idd-implement #19`）行為不變。
 
+**何時該 bundle vs 拆 atomic PR**：見 [batch-and-cluster.md § Cluster-PR eligibility](../../references/batch-and-cluster.md#cluster-pr-eligibility-when-to-bundle-vs-split) — same-file / same-skill / same-root-issue 才適合 bundle;只共用 parent label 通常太弱,review surface > 50 行就拆。
+
 ## Configuration
 
 按 [config-protocol](../../references/config-protocol.md) 解析 target repo:
