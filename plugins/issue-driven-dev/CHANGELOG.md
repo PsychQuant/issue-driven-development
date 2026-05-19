@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.64.0] - 2026-05-20
+
+### Changed
+
+- **IDD human-in-the-loop reconciled to the NSQL confirmation protocol** ([#103](https://github.com/PsychQuant/issue-driven-development/issues/103)): NSQL ([kiki830621/NSQL](https://github.com/kiki830621/NSQL) v4.1.0) is registered as a reference project in the repo `CLAUDE.md`; this change aligns IDD's front-half human touchpoints to it. **F1** — `idd-issue` Step 5 report now echoes the AI-rendered interpretation (`## Type` / `## Expected` / `## Actual` + plain-language interpretation), so a misparse is catchable without opening the issue (NSQL `run → report` — creating an issue is reversible, so no confirm gate, but the report must state *what was done*). **F2** — `idd-diagnose` Layer V `clarify now` now renders candidate interpretations for the user to pick (NSQL P1, Read-Only for Humans), with free-text as the named fallback for un-enumerable questions. **F3** — the Diagnosis report template gains a `### Residue` section (NSQL §4.6 — non-operationalizable intent / horizon is marked, not silently dropped; distinct from Layer V vagueness: Layer V = the issue is unclear, residue = the issue is clear but part of its intent is non-operationalizable). **F4** — the Layer P "risk-sensitive boundary" signal (`rules/sdd-integration.md` + the `idd-diagnose` Step 3.5 inline copy) adds "irreversible side effects" to its enumerated list. Diagnosed Spectra → `/spectra-discuss` re-evaluated the 4 audit findings under NSQL v4.1.0's traceability gate (F1 dissolved from "add a confirm gate" to "echo the report"; F4 downgraded from a new mechanism to wording) → re-routed to Plan. The IDD↔NSQL doctrine in `MANIFESTO.md` is #102's deliverable, not #103's.
+
 ## [2.63.0] - 2026-05-19
 
 ### Added
