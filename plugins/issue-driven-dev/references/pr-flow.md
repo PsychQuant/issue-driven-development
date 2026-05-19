@@ -47,7 +47,7 @@ If `true`, override `pr_policy` regardless of config — print one-line notice (
 
 Cluster mode — `idd-implement #34 #36 #38`, `idd-verify`, or `idd-close` invoked with **≥2 `#N` arguments** — is a precondition that pre-empts the [Resolution algorithm](#resolution-algorithm) above. Cluster mode **forces PR path**, with the same explicit override semantics as fork detection.
 
-**Why pre-empt**: a cluster is one reviewable unit (1 feature branch + 1 PR + cross-issue scope). Direct-commit on a cluster would either (a) commit N issues' changes to current branch (typically default) with no PR review gate, or (b) lose the "one-PR-spans-N-issues" semantic. Both defeat cluster's purpose.
+**Why pre-empt**: a cluster is one reviewable unit (1 feature branch + 1 PR + cross-issue scope). Direct-commit on a cluster would either (a) commit N issues' changes to current branch (typically default) with no PR review gate — i.e., stacked half-isolated changes on default branch — or (b) lose the "one-PR-spans-N-issues" semantic. Both defeat cluster's purpose.
 
 **Override notice**: when `--no-pr` or `pr_policy = "never"` collides with cluster mode, Phase 0.5 prints (mirror fork detection):
 
@@ -56,6 +56,8 @@ Cluster mode — `idd-implement #34 #36 #38`, `idd-verify`, or `idd-close` invok
 ```
 
 Then proceeds as PR path. **No abort, no silent ignore** — the flag is acknowledged but cannot satisfy cluster's contract. User stays informed; future single-issue invocation restores `--no-pr` / `pr_policy:"never"` honoring.
+
+**Fork + cluster co-occurrence**: both pre-emptions independently force PR path — they are not mutually exclusive. When repo is a fork AND cluster mode is invoked AND `--no-pr` (or `pr_policy=never`) is set, Phase 0.5 prints **both** notices (cluster override first, then fork) and proceeds as PR path. There is no precedence question to resolve: both pre-emptions reach the same destination (PR path), they just each independently announce their own reason.
 
 **Why not abort**: cluster's typical caller is `idd-implement #34 #36 #38 --pr` (explicit). The `--no-pr` collision case is rare (user with `pr_policy:"never"` config who happens to run cluster). Aborting would block legitimate work; the override notice lets work proceed while making the precedence visible.
 
