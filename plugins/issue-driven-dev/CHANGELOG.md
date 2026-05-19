@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Retroactive notice — v2.55.0 multi-finding behavioral change for CI callers** ([#78](https://github.com/PsychQuant/issue-driven-development/issues/78)): from v2.55.0, `idd-issue source.docx` auto-enters multi-finding mode when the source contains ≥2 findings — changed from the pre-v2.55.0 always-single-issue behavior. Automated / CI / `/loop` callers expecting the legacy single-issue output **must pass `--no-multi-finding` explicitly**. `idd-issue/SKILL.md` now carries this notice inline at the multi-finding override-flags section. (No standalone `## [2.55.0]` entry exists in this CHANGELOG; this is the retroactive record.)
+
 ## [2.62.0] - 2026-05-19
 
 ### Added
