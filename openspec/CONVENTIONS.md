@@ -1,9 +1,10 @@
-# Spectra Project Language & Conventions
+# Spectra Project Conventions
 
-Project-specific conventions for authoring Spectra change proposals in
-`issue-driven-development`. The OpenSpec base documentation covers the general
-spec-authoring language; this file records the deltas and additions specific to
-this repo.
+Project-specific authoring conventions for Spectra change proposals in
+`issue-driven-development`. Distinct from `openspec/LANGUAGE.md`, which holds the
+project's canonical **vocabulary** (terms + `definition`/`avoid`/`why` notes,
+loaded by `/spectra-discuss` Step 0). This file holds **workflow conventions** —
+how proposals are authored and linked.
 
 ## GitHub-side tracker marker
 
