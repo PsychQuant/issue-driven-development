@@ -130,7 +130,7 @@ idd-verify #NNN
 ```
 TaskCreate(name="resolve_input_source", description="Step 0.5: 解析 --pr / --commits / --branch / --since flag；都沒帶就跑 auto-detect（count Refs #N commits since origin/<default>，再 gh pr list 找 open PR），有歧義時 AskUserQuestion 確認")
 TaskCreate(name="gate_pr_correspondence", description="Step 0.7: PR mode 下強制檢查 issue↔PR 對應 — gh pr view --json body 抓 Refs #N，跟 user 指定的 issue 比對；PR 沒任何 Refs 或 user issue 不在 set 內 → abort 並告訴使用者怎麼修")
-TaskCreate(name="scan_pr_body_trailers", description="Step 0.8: PR mode 下用 gh pr view --json closingIssuesReferences 查本 PR 是否 linked-to-auto-close 任何 issue（GitHub 權威解析）— 非空則 warn（merge 時會 auto-close issue、bypass /idd-close gate）。Warn-only，不 abort")
+TaskCreate(name="scan_pr_body_and_commits_trailers", description="Step 0.8: PR mode 下兩 source 偵測 auto-close trap — (1) gh pr view --json closingIssuesReferences 查 PR body 是否 linked-to-auto-close（GitHub 權威解析、所有 trailer 形式），(2) gh pr view --json commits 對每個 commit messageBody 跑 trap regex（補上 GitHub 不預計算的 commit-body channel — squash 後字串 land 在 main 觸發 auto-close）。任一非空則 warn — bypass /idd-close gate。Warn-only，不 abort")
 TaskCreate(name="get_diff_and_issue", description="依 input source 取 diff（gh pr diff / git diff HEAD~N / git diff origin/<default>...<branch>） + gh issue view,存 diff 到 /tmp 供 agents 讀取；PR mode 額外做 gh pr checkout 並記住原 branch")
 TaskCreate(name="check_attachments", description="確認 .claude/.idd/attachments/issue-NNN/ 存在,把 attachment 路徑塞進 reviewer agent prompt 作為 source-of-truth context。manifest 缺漏 → 警告繼續(reviewer 仍跑,但 verification 完整度受限)。依 rules/process-attachments.md。")
 TaskCreate(name="launch_parallel_reviewers", description="6 個 tool calls 同一 message: 5 Agent(subagent_type=general-purpose) for requirements/logic/security/regression/devils-advocate + 1 Bash codex(run_in_background:true),prompt 中引用 attachment 路徑 + 強制 file-output rule (per #52 v2.59.0+,replaces TeamCreate model from #47 incident)")
@@ -212,20 +212,31 @@ EXTRA=$(comm -23 <(echo "$DISCOVERED") <(echo "$USER_ISSUES" | sort -u))
 [ -n "$EXTRA" ] && AskUserQuestion "PR also refs $EXTRA — verify those too, or scope to $USER_ISSUES only?"
 ```
 
-### Step 0.8: PR auto-close detection（PR mode only，#87/#74）
+### Step 0.8: PR auto-close detection (PR mode only, #87 / #74 / #97)
 
-`/idd-close` 的 checklist gate + closing summary 只在實際跑 `/idd-close` skill 時生效。若 PR 帶 GitHub auto-close 連結（PR body 內 `Closes #N` 等 trailer），GitHub 在 merge 時會直接 close 對應 issue，**完全 bypass** `/idd-close` — gate 沒跑、closing summary 沒寫，audit trail 斷裂。本 step 在 verify 時偵測，命中就 warn，讓使用者在 merge 前 strip。
+`/idd-close` 的 checklist gate + closing summary 只在實際跑 `/idd-close` skill 時生效。若 PR merge 後 GitHub auto-close 對應 issue，**完全 bypass** `/idd-close` — gate 沒跑、closing summary 沒寫，audit trail 斷裂。本 step 在 verify 時偵測兩個 channel，命中就 warn，讓使用者在 merge 前修。
 
-偵測用 GitHub 自己的 `closingIssuesReferences` —— 這是 GitHub 對「本 PR merge 後會 auto-close 哪些 issue」的**權威解析**，已涵蓋所有 GitHub 承認的 trailer 形式（`Closes #N`、colon form `Closes: #N`、cross-repo、issue URL 等）。**不自寫 regex** 掃 PR body：自寫 regex 必然是 GitHub keyword parser 的脆弱近似（`/idd-verify --pr 94` R1 verify 實證 regex 漏了 colon form `Closes: #87`）。`closingIssuesReferences` 對 GitHub **已 settle 的 close-link 狀態**零誤判、零漏判。注意它是 eventually-consistent —— PR 剛建立的短暫傳播窗內可能尚未算出；verify 通常在 implement 完成數十秒以上才跑，屆時已 settle，此窗在實務上不構成問題。
+GitHub auto-close 的觸發面 = **PR body ∪ 每個 commit body landing on `main`**：
 
-這是**防禦縱深**：真正的修法是各 skill 的 PR-body template 不嵌 trailer（idd-implement / idd-all / idd-all-chain / pr-flow.md 已於 #87/#74 cluster 修正）；本 gate 是第二層 —— 即使未來某個 template regression 漏掉、或使用者手動貼了 trailer，verify 仍能在 merge 前抓到。
+- **Source 1**：PR body — 用 GitHub 自己的 `closingIssuesReferences` 權威解析（涵蓋 ``Closes #N``、colon form、cross-repo、issue URL 等所有 trailer 形式）。
+- **Source 2**：per-commit `messageHeadline` + `messageBody` — 各 commit 的 subject 與 body 在 squash-merge 時被連接進 squash commit message；merge / rebase strategy 下也以 commit 為單位 land 到 main。任一 channel（subject 或 body）含 close-keyword + ``#<digit>`` 都會被 GitHub auto-close parser fire。R1 jq filter 只掃 messageBody → R2 加上 messageHeadline 後關掉 subject-line channel（empirical 證明：commit ``8ac8206`` subject 含 ``resolves #N`` 形式 auto-closed `#70`、``a82867d`` subject 含 ``fix #N`` 形式 auto-closed `#26`，兩者 R1 都會漏掉）。
+
+兩個 source 互補：GitHub `closingIssuesReferences` 只解析 PR body（pre-merge 不會幫你解析 commit bodies），所以 Source 2 需要本地 regex 補上。Source 2 的 regex 把 R1/R2/R3 教訓 baked in：``(^|[^-/[:alnum:]])`` prefix 避開 ``/idd-close #N`` skill 引用（hyphenated token）、``:?`` 含 colon form、``[[:space:]]+`` 含 GitHub 要求的空格、case-insensitive 比對。
+
+#97 dogfood 證實 Source 1 不夠：PR #94 自己 squash-merge 時 commit ``d918270`` 的 messageBody 含一個被單引號包住的 ``Closes`` 反例引用作為 R1 verify finding 的解釋，PR body 乾淨但 squash 後該字串 land 在 main → GitHub fire → #87 在 merge 2 秒後被 auto-close。Source 2 就是補這個 channel。
+
+注意 `closingIssuesReferences` 是 eventually-consistent — PR 剛建立的短暫傳播窗內可能尚未算出；verify 通常在 implement 完成數十秒以上才跑，屆時已 settle，此窗在實務上不構成問題。
+
+這是**防禦縱深**：真正的修法是各 skill 的 PR-body template 不嵌 trailer（idd-implement / idd-all / idd-all-chain / pr-flow.md 已於 #87/#74 cluster 修正）+ CLAUDE.md Commit Conventions 規範引用 trap pattern 時的 commit-body 寫作紀律（#97）。本 gate 是第二層 — 即使未來 template regression 漏掉、或人手寫 commit body 不小心引用了 trap pattern，verify 仍能在 merge 前抓到。
 
 ```bash
 # PR mode only — skip in local / branch / commits mode.
-# closingIssuesReferences = GitHub's own authoritative parse of which issues this
-# PR auto-closes on merge. Covers every trailer form GitHub honors; no
-# parser-reimplementation risk. Query .url (not bare .number) so a cross-repo
-# close ref is unambiguous.
+#
+# Source 1: PR body via closingIssuesReferences (GitHub's own authoritative
+# parse of which issues the PR auto-closes on merge — covers every trailer
+# form GitHub honors). Query .url (not bare .number) so a cross-repo close
+# ref is unambiguous in the warning output.
+#
 # The `if CMD; then` form distinguishes a gh failure (auth/network/old CLI →
 # else branch, surface a note) from a successful query that found nothing
 # (then branch, $CLOSING_REFS empty → clean PR, stay silent). A bare
@@ -234,20 +245,72 @@ if CLOSING_REFS=$(gh pr view "$PR" --repo "$GITHUB_REPO" \
      --json closingIssuesReferences \
      -q '.closingIssuesReferences[].url' 2>/dev/null); then
   if [ -n "$CLOSING_REFS" ]; then
-    echo "⚠️  WARNING: PR #$PR is linked to auto-close the following issue(s):"
+    echo "⚠️  WARNING: PR #$PR body is linked to auto-close the following issue(s):"
     printf '      %s\n' $CLOSING_REFS
     echo "    On merge GitHub will auto-close these, bypassing /idd-close's checklist"
     echo "    gate + closing summary. Strip the close trailer from the PR body before merge:"
-    echo "      gh pr edit $PR --repo $GITHUB_REPO --body '<body without the Closes/Fixes/Resolves #N trailer>'"
+    echo "      gh pr edit $PR --repo $GITHUB_REPO --body '<body without the close-keyword + #digit trailer>'"
   fi
 else
-  echo "note: Step 0.8 skipped — 'gh pr view --json closingIssuesReferences' failed"
-  echo "      (auth / network / old gh CLI). Could not check PR #$PR for auto-close links;"
+  echo "note: Step 0.8 Source 1 skipped — 'gh pr view --json closingIssuesReferences' failed"
+  echo "      (auth / network / old gh CLI). Could not check PR #$PR body for auto-close links;"
   echo "      verify continues. Re-check manually: gh pr view $PR --json closingIssuesReferences"
+fi
+
+# Source 2: per-commit messageHeadline + messageBody. GitHub does NOT
+# pre-compute closing-issue references for commit text — closingIssuesReferences
+# covers PR body only. Squash-merge concatenates the per-commit subject + body
+# into the merge commit message; merge / rebase keep them as individual commits;
+# in all cases any close-keyword + #digit substring in EITHER the subject line
+# (messageHeadline) OR the body (messageBody) lands on main and GitHub's parser
+# fires context-blind (single quotes, markdown, "Do NOT" prose all ignored).
+# Empirical evidence (this repo): commit `8ac8206` subject `... resolves #70
+# structurally ...` auto-closed #70; commit `a82867d` subject `... fix #26
+# placeholder UX gap ...` auto-closed #26. Source 2's R1 jq filter scanned
+# only messageBody and missed both — R2 (this PR) adds messageHeadline to
+# close the channel.
+#
+# Regex baked-in lessons from PR #94 R1/R2/R3 (see #87/#74 close history):
+#   (^|[^-/[:alnum:]])  — exclude /idd-close skill invocations + other
+#                         hyphenated tokens (idd-close-skill #N etc.).
+#                         GitHub itself does not treat these as close keywords.
+#   close[sd]?|fix(e[sd])?|resolve[sd]?  — every inflection GitHub honors.
+#   [[:space:]]*:?[[:space:]]+  — covers both bare and colon forms.
+#   #[0-9]+  — same-repo issue number form only. Cross-repo owner/repo#N is
+#              out of scope for this gate (#97 D7 — separate failure mode).
+TRAP_RE='(^|[^-/[:alnum:]])(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]*:?[[:space:]]+#[0-9]+'
+if COMMIT_BODIES=$(gh pr view "$PR" --repo "$GITHUB_REPO" \
+     --json commits \
+     --jq '.commits[] | "===\(.oid)===\n\(.messageHeadline // "")\n\(.messageBody // "")"' 2>/dev/null); then
+  COMMIT_HITS=$(printf '%s\n' "$COMMIT_BODIES" | awk -v re="$TRAP_RE" '
+    /^===[a-f0-9]+===$/ { oid=substr($0, 4, length($0)-6); next }
+    { if (match(tolower($0), re)) print oid " :: " $0 }
+  ')
+  if [ -n "$COMMIT_HITS" ]; then
+    echo "⚠️  WARNING: PR #$PR commit bodies contain auto-close trailer pattern(s):"
+    printf '%s\n' "$COMMIT_HITS" | sed 's/^/      /'
+    echo "    These will land in main on merge (squash concatenates bodies into the"
+    echo "    merge commit; merge/rebase keep them as separate commits on main);"
+    echo "    GitHub's auto-close parser scans the resulting commit message context-blind."
+    echo "    Fix options:"
+    echo "      (a) git rebase -i origin/\$DEFAULT_BRANCH → amend the offending commit"
+    echo "          to use literal letter N (optionally in a code fence; code fence"
+    echo "          alone is visual-only — the parser is context-blind, only the"
+    echo "          absence of a digit after the keyword actually suppresses it)."
+    echo "          See plugins/issue-driven-dev/CLAUDE.md Commit Conventions."
+    echo "      (b) gh pr merge $PR --squash --body '<clean message>' to override"
+    echo "          the squash commit message at merge time"
+    echo "      (c) accept and run /idd-close manually after merge (last resort —"
+    echo "          loses the auto-close-bypass audit trail)"
+  fi
+else
+  echo "note: Step 0.8 Source 2 skipped — 'gh pr view --json commits' failed"
+  echo "      (auth / network / old gh CLI). Could not check PR #$PR commit bodies;"
+  echo "      verify continues. Re-check manually: gh pr view $PR --json commits"
 fi
 ```
 
-**Warn-only，不 abort**：gate 的價值是把風險在 merge 前 surface 給使用者，由使用者決定是否 `gh pr edit`。語意同 `idd-close` Step 1.6 semantic gate（也是 warn-only）。`/idd-close #N` 這類 skill invocation 不會出現在 `closingIssuesReferences`（hyphenated token，GitHub 不當 close keyword），因此天然零誤判 —— 用 GitHub 權威 field 而非自寫 regex 的好處之一就是不需任何 keyword 排除邏輯。
+**Warn-only，不 abort**：兩個 source 都是 surface 風險給使用者、不阻擋 PR。``/idd-close #N`` 這類 skill invocation 在 Source 1 天然零誤判（不出現在 `closingIssuesReferences`），在 Source 2 由 prefix guard 排除（hyphenated token 前綴 ``-`` 不滿足 ``[^-/[:alnum:]]``）。語意同 `idd-close` Step 1.6 semantic gate（也是 warn-only）。Source 2 的 regex 是同 GitHub parser 的近似而非權威——可能漏（cross-repo / issue-URL 形式，per #97 D7）也可能誤報（極罕見的合法 commit body 確實要保留 trailer 字面字串）；但同 gate 的 warn-only 哲學一致，false-positive 代價低、false-negative 比 silent 跳過好。
 
 ### Step 1: 取得 diff 和 issue
 
