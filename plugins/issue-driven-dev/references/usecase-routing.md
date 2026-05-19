@@ -25,6 +25,11 @@
 └── 看 / 修 .claude/.idd/local.json config                   → idd-config
 ```
 
+> **Note**: the decision tree above only covers atomic skill picking. For backlog
+> bulk-solve scenarios (N unrelated open issues), there is **no built-in zero-arg
+> bulk-solve** — see row 27 below: use per-issue `/idd-all #N`, or `/idd-all-chain`
+> if hot-emergent ripple is expected.
+
 ---
 
 ## Master use-case routing table
