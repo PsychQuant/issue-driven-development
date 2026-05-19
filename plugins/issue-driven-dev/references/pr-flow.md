@@ -15,7 +15,7 @@ Both paths share IDD discipline: every commit references `#NNN`, no `Closes`/`Fi
 
 ## Resolution algorithm
 
-When `idd-implement` (or any IDD skill that needs to know the path) starts, resolve in this order:
+When `idd-implement` (or any IDD skill that needs to know the path) starts, resolve in this order. **Cluster mode (≥2 `#N` invocations) is a precondition that pre-empts this table — see [Cluster mode override](#cluster-mode-override) below.**
 
 ```
 1. --pr flag                     → PR path (per-invocation)
@@ -42,6 +42,30 @@ IS_FORK=$(gh repo view "$GITHUB_REPO" --json isFork -q .isFork)
 ```
 
 If `true`, override `pr_policy` regardless of config — print one-line notice ("repo is a fork → PR path enforced") and proceed.
+
+### Cluster mode override
+
+Cluster mode — any IDD skill invoked with **≥2 `#N` arguments** (`idd-implement`, `idd-verify`, `idd-close`) — is a multi-issue mode where all cluster issues share one feature branch + one PR.
+
+**Path resolution is `idd-implement`'s job** — it is the only skill that resolves PR-vs-direct-commit. For `idd-implement`, cluster mode is a precondition that pre-empts the [Resolution algorithm](#resolution-algorithm) above and **forces PR path**, with the same explicit override semantics as fork detection. `idd-verify` / `idd-close` are cluster-aware but operate on the cluster's already-existing PR — they consume the path decision, they don't make it.
+
+**Why pre-empt**: a cluster is one reviewable unit (1 feature branch + 1 PR + cross-issue scope). Direct-commit on a cluster would either (a) commit N issues' changes to current branch (typically default) with no PR review gate — i.e., stacked half-isolated changes on default branch — or (b) lose the "one-PR-spans-N-issues" semantic. Both defeat cluster's purpose.
+
+**Override notice**: when `--no-pr` or `pr_policy = "never"` collides with cluster mode, Phase 0.5 prints (mirror fork detection):
+
+```
+→ cluster mode (N issues) → PR path enforced (overriding --no-pr / pr_policy=never)
+```
+
+Then proceeds as PR path. **No abort, no silent ignore** — the flag is acknowledged but cannot satisfy cluster's contract. User stays informed; future single-issue invocation restores `--no-pr` / `pr_policy:"never"` honoring.
+
+**Fork + cluster co-occurrence**: both pre-emptions independently force PR path — they are not mutually exclusive. When repo is a fork AND cluster mode is invoked AND `--no-pr` (or `pr_policy=never`) is set, Phase 0.5 prints **both** notices (cluster override first, then fork) and proceeds as PR path. There is no precedence question to resolve: both pre-emptions reach the same destination (PR path), they just each independently announce their own reason.
+
+**Why not abort**: cluster's typical caller is `idd-implement #34 #36 #38 --pr` (explicit). The `--no-pr` collision case is rare (user with `pr_policy:"never"` config who happens to run cluster). Aborting would block legitimate work; the override notice lets work proceed while making the precedence visible.
+
+**Single-issue invocation behavior is unchanged** — the cluster carve-out only fires on ≥2 `#N`. Backward compatibility preserved.
+
+Cross-reference: full cluster semantics in [batch-and-cluster.md](batch-and-cluster.md).
 
 ### `pr_policy` config field
 

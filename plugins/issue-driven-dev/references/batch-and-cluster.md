@@ -130,7 +130,7 @@ Single-issue invocation (`idd-implement #19`) behavior is **unchanged**. Cluster
 
 ## Cross-references
 
-- [pr-flow.md](pr-flow.md) — PR path resolution. Cluster-PR mode always uses PR path; never direct-commit (defensive: cluster on direct-commit = stacked half-isolated changes on default branch).
+- [pr-flow.md](pr-flow.md) — PR path resolution. Cluster mode is a precondition that pre-empts the resolution algorithm and forces PR path; full semantics + override notice format in [§ Cluster mode override](pr-flow.md#cluster-mode-override). `--no-pr` / `pr_policy:"never"` colliding with cluster mode trigger an explicit override notice (mirror fork detection), then proceed as PR — no abort, no silent ignore.
 - [config-protocol.md](config-protocol.md) — `--target` / multi-repo support. All issues in a cluster MUST share one target repo (cross-repo clusters not supported).
 - IDD checklist gate (idd-close Step 0) and PR Gate (Step 1.5) apply per-issue inside the cluster.
 

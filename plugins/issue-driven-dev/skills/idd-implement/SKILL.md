@@ -46,7 +46,7 @@ allowed-tools:
 
 `idd-implement #34 #36 #38 --pr` 觸發 cluster-PR mode：3 個 issue 共用 1 個 feature branch + 1 個 PR，但每個 commit 仍以 `Refs #N`（可多）紀律標示對應 issue。Strategy-level TaskList 從各 issue 的 diagnosis 聚合，scope guard 仍逐 issue 檢查。
 
-完整契約見 [batch-and-cluster.md](../../references/batch-and-cluster.md)。Cluster-PR mode 強制 PR path（不接受 `--no-pr`），Branch 命名 `idd/cluster-{slug}`，PR 標題前綴 `cluster:`。
+完整契約見 [batch-and-cluster.md](../../references/batch-and-cluster.md)。Cluster-PR mode 強制 PR path:`--no-pr` 或 `pr_policy=never` 撞 cluster 時,Phase 0.5 印 explicit override notice(`→ cluster mode (N issues) → PR path enforced (overriding --no-pr / pr_policy=never)`,mirror fork detection 既有 pattern)後 proceed as PR mode — 不 abort、不 silent ignore。完整 resolution semantics 見 [pr-flow.md § Cluster mode override](../../references/pr-flow.md#cluster-mode-override)。Branch 命名 `idd/cluster-{slug}`,PR 標題前綴 `cluster:`。
 
 實用情境：04/27 那種「7 個 issue 分成 Docs + Sanitizer-hardening 2 個 themed PR」的工作流。Single-issue 模式（`idd-implement #19`）行為不變。
 
@@ -97,6 +97,8 @@ TaskCreate(name="sister_bug_sweep", description="Step 5.7: review session log + 
 完整 resolution algorithm 見 [references/pr-flow.md](../../references/pr-flow.md)。簡述:
 
 ```
+0. Cluster mode (≥2 #N args)     → pre-empts entire table; PR path forced
+                                    (see pr-flow.md § Cluster mode override)
 1. --pr flag                     → PR path
 2. --no-pr flag                  → direct-commit path
 3. gh repo view --json isFork    → 若 true,強制 PR path(無法 push 到 upstream)
@@ -106,14 +108,18 @@ TaskCreate(name="sister_bug_sweep", description="Step 5.7: review session log + 
 ```
 
 ```bash
-# 1. Parse flag
+# 1. Parse flag + count issue args (cluster mode = ≥2 #N)
 PR_FLAG=""  # "pr" / "no-pr" / ""
+ISSUE_COUNT=0
 for arg in "$@"; do
     case "$arg" in
-        --pr)    PR_FLAG="pr" ;;
-        --no-pr) PR_FLAG="no-pr" ;;
+        --pr)     PR_FLAG="pr" ;;
+        --no-pr)  PR_FLAG="no-pr" ;;
+        \#[0-9]*) ISSUE_COUNT=$((ISSUE_COUNT + 1)) ;;
     esac
 done
+CLUSTER_MODE="false"
+[ "$ISSUE_COUNT" -ge 2 ] && CLUSTER_MODE="true"
 
 # 2. Fork check
 IS_FORK=$(gh repo view "$GITHUB_REPO" --json isFork -q .isFork 2>/dev/null || echo "false")
@@ -121,8 +127,19 @@ IS_FORK=$(gh repo view "$GITHUB_REPO" --json isFork -q .isFork 2>/dev/null || ec
 # 3. Config policy
 PR_POLICY=$(jq -r '.pr_policy // "ask"' "$CONFIG_PATH" 2>/dev/null || echo "ask")
 
-# 4. Resolve
-if [ "$PR_FLAG" = "pr" ]; then
+# 4. Resolve (cluster mode is a precondition that pre-empts the table; see pr-flow.md § Cluster mode override)
+if [ "$CLUSTER_MODE" = "true" ]; then
+    PATH_CHOICE="pr"
+    # If --no-pr or pr_policy=never collides, print explicit override notice (mirror fork detection)
+    OVERRIDE_SRC=""
+    [ "$PR_FLAG" = "no-pr" ] && OVERRIDE_SRC="--no-pr"
+    [ "$PR_POLICY" = "never" ] && OVERRIDE_SRC="${OVERRIDE_SRC:+$OVERRIDE_SRC / }pr_policy=never"
+    if [ -n "$OVERRIDE_SRC" ]; then
+        echo "→ cluster mode ($ISSUE_COUNT issues) → PR path enforced (overriding $OVERRIDE_SRC)"
+    fi
+    # If fork ALSO detected, print fork notice too (both pre-emptions independently force PR)
+    [ "$IS_FORK" = "true" ] && echo "→ Repo is a fork; PR path enforced."
+elif [ "$PR_FLAG" = "pr" ]; then
     PATH_CHOICE="pr"
 elif [ "$PR_FLAG" = "no-pr" ]; then
     PATH_CHOICE="no-pr"
