@@ -873,6 +873,10 @@ options:
 輸出：issue number、URL、labels、type。
 如果有 milestone：輸出 milestone name、URL、issue count。
 
+**回顯 render 的詮釋（v2.64.0+, #103）**：除了上面的 metadata，**必須**把 AI 自己*產出*的詮釋回顯給使用者 —— issue body 的 `## Type` / `## Expected` / `## Actual` 三段 + plain-language interpretation。使用者已給過的逐字「Original text」不重複貼。
+
+> **為什麼**：建 issue 是一個 NSQL `run → report` 操作（見 repo `CLAUDE.md`「Reference Projects: NSQL」）。建 issue 可逆，不需要 confirm gate；但 report 必須陳述「我做了什麼」，不只「它在哪」。回顯 AI render 的詮釋，讓 misparse（AI 把意圖讀錯）一眼可抓，不用點進 URL 才發現。
+
 提示下一步：`/issue-driven-dev:idd-diagnose #NNN`
 
 > **CRITICAL: 建立 issue 後必須停止。不要自動開始 diagnose 或 implement。**

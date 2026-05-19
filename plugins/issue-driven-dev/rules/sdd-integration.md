@@ -145,7 +145,7 @@ If Layer 1 didn't fire AND Layer 2 didn't qualify for Spectra, evaluate Plan sig
 - **2+ files with sequence dependency** — file A's changes affect what file B's changes must do; can't parallelize the edits
 - **Strategy has 5+ ordered steps** — sequential complexity benefits from explicit checkpoint before execution
 - **Decision-heavy with multiple valid approaches** — the diagnosis identifies 2+ implementation strategies and the pick affects code shape (e.g., regex splice vs DOM walker, optimistic-locking vs pessimistic, batch vs streaming)
-- **Touches risk-sensitive boundary** — concurrency, migrations, backward-compat shims, security-critical paths, save-durability, ordering semantics, atomic operations
+- **Touches risk-sensitive boundary** — concurrency, migrations, backward-compat shims, security-critical paths, save-durability, ordering semantics, atomic operations, irreversible side effects
 - **Cross-file refactor without external contract change** — pulling shared logic into a helper, splitting a god-function, renaming internal API used by ≥3 callers
 
 If at least one signal hits, route to `Plan`. The Plan path inserts an `EnterPlanMode` approval gate between diagnosis and TDD execution — user reviews the proposed plan, approves or revises, then implementation proceeds with same TDD discipline as Simple.
