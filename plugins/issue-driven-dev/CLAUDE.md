@@ -431,6 +431,22 @@ Commit message 只要用 `(#NNN)` 或 `Refs #NNN` 產生 cross-link 就好。Clo
 3. 在 comment 裡標記 Strategy checklist 的最終狀態（本來 gate 會驗收的東西），確保 audit trail 完整。
 4. 記得在日後的 commit message 裡不要再犯。
 
+### 引用 trap pattern 作反例的寫作紀律（v2.61.0+, #97）
+
+GitHub auto-close parser 掃 commit message 和 PR body 是 **context-blind** — 單/雙引號、markdown bold、surrounding 「Do NOT」prose、italics 全都不抑制。當 commit body 或 PR body 需要**引用** trap pattern 作為反例（verify findings 解釋、diagnosis prose、debug 報告、這條規則本身），必須選下列任一安全形式：
+
+| 形式 | 範例 | 為何安全 |
+|------|------|---------|
+| **Markdown code fence**（首選） | `` `Closes #N` `` | 渲染成 code 視覺、讀者一看就知道是 example；parser 仍會看到，但結合「literal letter N」更安全 |
+| **Literal letter N**（搭配） | `Closes #N`（大寫 N，沒有數字） | 缺 `#<digit>` 數字 → GitHub regex 不 match。Mirrors existing safe pattern in [`references/pr-flow.md:127`](references/pr-flow.md) |
+| **改用連結引用**（無 keyword） | `見 PR #94 #issuecomment-...` | 完全不重複 keyword，連 example 都不寫；最強但可讀性最低 |
+
+**Anti-pattern**：單引號、雙引號、italics 包住 `Closes: #87`（含真實數字）**不會**抑制 parser。PR #94 commit `d918270` 的 messageBody 中 single-quote 例子就是這樣弄掛 `#87`（merge 後 2 秒 auto-closed），#97 整個 issue 都在修這個 channel。
+
+**Why context-blind 不可繞**：GitHub parser 是 server-side regex，本地 markdown 渲染或 IDD 紀律對它無感。唯一可控的是輸入字串本身——要嘛 keyword 後沒數字、要嘛根本不寫 keyword。
+
+`/idd-verify --pr` Step 0.8 v2.61.0+ Source 2（per-commit body scan）會在 verify 時 surface 命中，但只是 warn-only 防禦縱深；本紀律才是 commit-body 端的根本修法。
+
 ## 設計哲學
 
 > **核心論述見 [`MANIFESTO.md`](MANIFESTO.md)** — IDD 跟 TDD/SDD 的差異、5-axis 解 bug 能力拆解、closure axis、case study (`che-word-mcp` #56 cluster)。本段只列濃縮版。
