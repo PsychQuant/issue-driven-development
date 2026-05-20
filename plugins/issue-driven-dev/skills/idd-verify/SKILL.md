@@ -490,7 +490,20 @@ done
 if [ "$ready" != "4" ]; then
   # Timeout fallback: write SENTINEL marker so Step 2.5 recovery scan detects
   # the timeout case (rather than treating non-empty file as valid review).
-  # Sentinel = literal first line "[STAGE 2.5 RECOVERY: DEVILS_ADVOCATE_TIMEOUT_<ready>/4]"
+  # CANONICAL SENTINEL STRING (write-side discipline per v2.69.0+ #88):
+  #   First line MUST be EXACTLY: "[STAGE 2.5 RECOVERY: DEVILS_ADVOCATE_TIMEOUT_<ready>/4]"
+  #   - All caps for STAGE / RECOVERY / DEVILS_ADVOCATE / TIMEOUT
+  #   - Single space after each colon
+  #   - Underscore separators in DEVILS_ADVOCATE_TIMEOUT (NOT hyphen, NOT space)
+  #   - NO apostrophe in DEVILS (use plural-noun form, not possessive)
+  #
+  # Why this matters: read-side regex (Step 2.5a line 558) was originally an
+  # exact-prefix match and missed variants like `[Stage 2.5 Recovery: ...]`,
+  # `DEVILS-ADVOCATE-TIMEOUT`, `DEVIL'S ADVOCATE TIMEOUT` observed during
+  # downstream verify (PsychQuantHsu#82). Read-side is now broadened to tolerant
+  # case-insensitive regex (line 558+), but write-side discipline should still
+  # produce the canonical string — defense in depth.
+  #
   # Step 2.5a file existence check looks for this sentinel and DELETES the file
   # so retry/fallback's -s test correctly sees it as missing (per round 2 P1.1 fix).
   #
@@ -555,14 +568,27 @@ for f in "${EXPECTED_FILES[@]}"; do
   if [ ! -s "$f" ]; then
     # File missing or empty
     MISSING_ROLES+=("$role")
-  elif head -1 "$f" | grep -q '^\[STAGE 2.5 RECOVERY: DEVILS_ADVOCATE_TIMEOUT_'; then
+  elif head -1 "$f" | grep -qiE '^\[[[:space:]]*stage[[:space:]]*2\.5[[:space:]]*recovery[[:space:]]*:[[:space:]]*devils?[[:space:]_-]*advocate[[:space:]_-]*timeout'; then
     # Devil's Advocate sentinel — file exists but reviewer didn't actually run
     # (timed out waiting for siblings, per Step 2 DA polling loop fallback).
     # DELETE the sentinel file so downstream 2.5b retry polling (`-s` check)
     # and 2.5c fallback (`! -s` check) correctly see it as missing
     # (per /idd-verify --pr 73 round 2 P1.1 fix — sentinel file IS non-empty,
     # so without `rm` it would silently pass downstream -s checks).
-    echo "→ Detected DEVILS_ADVOCATE_TIMEOUT sentinel for $role — deleting + routing to retry/fallback"
+    #
+    # v2.69.0+ #88 — broadened from exact-string match to case-insensitive
+    # tolerant pattern. Original regex `^\[STAGE 2.5 RECOVERY: DEVILS_ADVOCATE_TIMEOUT_`
+    # silently missed variants (caps drift like `[Stage 2.5 Recovery: ...]`,
+    # space drift like `[STAGE 2.5  RECOVERY:...]`, separator drift like
+    # `DEVILS-ADVOCATE-TIMEOUT` or `DEVILS ADVOCATE TIMEOUT`, apostrophe
+    # variants `DEVIL'S ADVOCATE` etc.) observed during PsychQuantHsu
+    # downstream verify. New regex uses:
+    #   `(?i)` via `grep -i`     — case-insensitive
+    #   `[[:space:]]*`           — flexible internal whitespace
+    #   `devils?`                — apostrophe optional, plural-style
+    #   `[[:space:]_-]*`         — underscore/hyphen/space separator drift
+    # Anchored `^\[` start + `timeout` required — won't match unrelated prose.
+    echo "→ Detected DEVILS_ADVOCATE_TIMEOUT sentinel variant for $role — deleting + routing to retry/fallback"
     rm -f "$f"
     MISSING_ROLES+=("$role")
   fi
