@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.66.0] - 2026-05-20
+
+### Added
+
+- **`idd-close` Step 3.6 — Residue Acknowledgement** ([#105](https://github.com/PsychQuant/issue-driven-development/issues/105)): closes the `### Residue` write-only loop from #103. v2.64.0 added `### Residue` to the Diagnosis template (NSQL §4.6 — non-operationalizable intent) but no downstream skill consumed it. Per #103 PR #104 Devil's Advocate finding D2: "latent capacity for the section to drift into ritual filler with no consumer pressure to keep it honest." Step 3.6 gives Residue its first consumer at close time. Reads latest `## Diagnosis` comment's `### Residue` section (mirrors Step 0 supersession). Silent skip when section missing, content is `(none)`, or pre-v2.64.0 format. When non-empty, AskUserQuestion 3-option (`still residue — acknowledge` / `file as follow-up issue(s)` / `skip — audit trail only`). Audit trail PATCH appends `### Residue Acknowledgement` to the in-memory closing summary draft before publish. Filed follow-ups get spawn manifest entries when chain context active. SHOULD-tier (non-blocking) per closure-tier IC_R011 eligibility. Step 0.5 Bootstrap adds `residue_acknowledgement` task. Placement mirrors Step 3.5's drafted-summary-scan pattern; must run before Step 4 publish so audit PATCH operates on same draft.
+
+- **`idd-issue` Step 5 — CI/loop hard-parse warning** ([#107](https://github.com/PsychQuant/issue-driven-development/issues/107)): #103 PR #104 expanded `idd-issue` Step 5 from metadata-only to also echo AI-rendered `## Type` / `## Expected` / `## Actual` + plain-language interpretation. Strictly better for human readers (misparse catchable from terminal) but a silent surface change for CI / `/loop` scripts that hard-parse Step 5 stdout. Adds one ⚠ paragraph mirroring the v2.55.0 `--no-multi-finding` CI warning precedent at line 994. Verbatim wording from the issue body. No behavior change — purely defensive documentation.
+
+### Changed
+
+- **PR-body checklist wording aligned across the IDD documentation family** ([#108](https://github.com/PsychQuant/issue-driven-development/issues/108)): #102 shipped the NSQL doctrine that `verify-gated PASS` is the terminal default disposition but only updated `idd-all-chain` Phase 5; the parallel templates were intentionally deferred. #108 closes the 5-template + 3-satellite consistency family.
+  - **4 PR-body templates** (`skills/idd-implement/SKILL.md:503` + `skills/idd-all/SKILL.md:755` + `references/pr-flow.md:135` + `references/chain-flow.md:254`) drop legacy `Pending: human review of this PR + /idd-close after merge` framing; default wording becomes `- [x] **Verify-gated**: PR verify PASS — ready to merge → /idd-close #${NUMBER} after merge` (or cluster variant for `chain-flow.md`). Per Option A from #108 diagnosis: `idd-implement` does NOT accept `--review` flag (remains `idd-all` + `idd-all-chain` only); direct `idd-implement` invocations get the default wording without conditional.
+  - **F3 satellite** — `idd-all-chain` Phase 4 final stdout report dispatches on `$REVIEW_FLAG`: default emits `Verify: verify-gated PASS across cluster — cluster ready to merge` + `Next: Merge → /idd-close`; with `--review` emits `awaiting human acceptance (re-opened confirmation loop per --review)` + `Next: Review PR → Merge after acceptance → /idd-close`. Built via explicit `if/else` before the heredoc to avoid the `${VAR:-word}` mutex pitfall hardcoded into the doctrine after PR #109 F1.
+  - **Trace 1 example refresh** — `idd-all/SKILL.md` Trace 1 example block (lines 893-901) shows the v2.65.0+ wording: default `Verify: verify-gated PASS` + `Next: merge`, with a parallel `--review` variant block showing `awaiting human acceptance` + `merge after acceptance`. Aligns documentation with actual Phase 6 output.
+  - **DA3 wording precision** — `--review` flag is now described as **orchestrator-scope messaging-only** (was just `messaging-only`) in 3 sites (`idd-all` Phase 0 args parsing comment, `idd-all-chain` Phase 0 args parsing comment, `MANIFESTO.md` Human-in-the-loop `--review` paragraph). The qualifier prevents the misreading: the flag is messaging-only AT THE ORCHESTRATOR (doesn't change skill behavior, doesn't make orchestrator wait), but humans + CI parsers downstream can react to the changed text differently — so the flag is not messaging-only end-to-end.
+
+### Notes
+
+- Plugin v2.66.0 is a **minor** bump (over v2.65.0): new `idd-close` step (additive behavior at close time) + 4 default PR-body wording strings change (user-visible diff in every PR opened by IDD orchestrators) + new conditional in `idd-all-chain` Phase 4 stdout. Patch would have under-claimed.
+- Marketplace.json sync deferred to `/idd-close` Step 6.5 chain (per repo precedent, same path used by #103 / #102).
+
 ## [2.65.0] - 2026-05-20
 
 ### Added
