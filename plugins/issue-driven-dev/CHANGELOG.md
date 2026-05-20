@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.68.0] - 2026-05-20
+
+### Changed
+
+- **Phase 0.4 diagnosis-detection precision sweep** ([#59](https://github.com/PsychQuant/issue-driven-development/issues/59), [#64](https://github.com/PsychQuant/issue-driven-development/issues/64), [#65](https://github.com/PsychQuant/issue-driven-development/issues/65)): 3 sister fixes from [#53](https://github.com/PsychQuant/issue-driven-development/issues/53)'s verify follow-up family.
+  - **#59** — `idd-all` 2 substring sites (line 450 complexity readback + line 533 Spectra context capture) swapped from `'## Diagnosis' in c['body']` to line-anchored `re.search(r'(?m)^## Diagnosis', c['body'])`, matching `check-diagnosis-readiness.sh` canonical convention shipped in #53 / PR #58. Cited `idd-list:115` / `idd-update:120` sites are prose, not code; `idd-close:416` uses `startswith()` (already line-1-anchored).
+  - **#64** — `scripts/check-diagnosis-readiness.sh` regex widened from `^## Diagnosis` to `^[ ]{0,3}## Diagnosis` for CommonMark spec's 1-3 space leading indent tolerance on ATX headings. 0 behavior change for canonical IDD comments (col-0 = `[ ]{0}`).
+  - **#65** — NEW comment block in `scripts/check-diagnosis-readiness.sh` documenting line-based detection's fenced-code false-positive limitation (Approach A from diagnosis decision point). Mitigation is the chain Phase 0.4 AskUserQuestion user override.
+
+### Notes
+
+- Plugin v2.68.0 is a **minor** bump (over v2.67.0): 3 same-family precision fixes from #53 verify follow-up. All additive.
+- **Not in scope this PR**: [#61](https://github.com/PsychQuant/issue-driven-development/issues/61) (shell test fixture infra) — Plan-tier with framework-choice surface deferred per `feedback_lead_minimal`. Stays diagnosed.
+- Marketplace.json sync deferred to `/idd-close` Step 6.5 chain (per repo precedent).
+
 ## [2.67.0] - 2026-05-20
 
 ### Changed

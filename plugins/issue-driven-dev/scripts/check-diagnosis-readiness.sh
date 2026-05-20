@@ -12,8 +12,22 @@
 #   1 — gh / jq failure (auth, network, non-existent issue)
 #   2 — usage error
 #
-# Detection regex (per PsychQuant/issue-driven-development#53):
-#   `test("(?m)^## Diagnosis")` — line-anchored, avoids quoted-history false-positives.
+# Detection regex (per PsychQuant/issue-driven-development#53, refined in #64/#65):
+#   `test("(?m)^[ ]{0,3}## Diagnosis")` — line-anchored with CommonMark spec's
+#   1-3 space leading indent tolerance for ATX headings (#64). 4+ space leading
+#   indent is a CommonMark code block (not a heading) — `[ ]{0,3}` correctly
+#   excludes that. Tab indent (U+0009) is NOT a valid ATX heading indent.
+#
+# Known limitations (#65 — acknowledged, not closed):
+#   - Detection is line-based; doesn't track fenced code block state. A comment
+#     body that quotes `## Diagnosis` INSIDE a fenced code block (```) for
+#     documentation / example purposes will false-positive as "diagnosed".
+#     Mitigation: chain Phase 0.4 AskUserQuestion lets the user override the
+#     auto-detect verdict (run /idd-diagnose first / proceed anyway / cancel).
+#   - For a context-aware markdown-state parser (would close this gap fully),
+#     see future-work follow-up. Current heuristic accepts the trade-off:
+#     simpler regex + user-override safety net > full state machine + edge-case
+#     bugs in the parser itself.
 #
 # See: plugins/issue-driven-dev/references/chain-flow.md for chain-shell context
 
@@ -61,8 +75,12 @@ for n in "$@"; do
     usage
   fi
 
+  # v2.68.0+ #64 — CommonMark allows 1-3 space leading indent for ATX headings;
+  # widen the anchor from strict ^## to ^[ ]{0,3}## so user-pasted comment bodies
+  # with legal indent don't false-negative. (4+ space is a code block per spec —
+  # `[ ]{0,3}` correctly excludes that.)
   count=$(gh issue view "$n" -R "$GITHUB_REPO" --json comments 2>/dev/null \
-    | jq -r '[.comments[] | select(.body | test("(?m)^## Diagnosis"))] | length' \
+    | jq -r '[.comments[] | select(.body | test("(?m)^[ ]{0,3}## Diagnosis"))] | length' \
     2>/dev/null)
 
   if ! [[ "$count" =~ ^[0-9]+$ ]]; then

@@ -447,7 +447,7 @@ COMPLEXITY=$(gh issue view "$N" --json comments \
     | python3 -c "
 import json, sys, re
 d = json.load(sys.stdin)
-diagnosis_comments = [c for c in d['comments'] if '## Diagnosis' in c['body']]
+diagnosis_comments = [c for c in d['comments'] if re.search(r'(?m)^## Diagnosis', c['body'])]   # v2.68.0+ #59 — line-anchored regex avoids quoted/inline false-positives (mirrors check-diagnosis-readiness.sh)
 if not diagnosis_comments:
     print('UNKNOWN'); exit(0)
 latest = diagnosis_comments[-1]['body']
@@ -529,9 +529,9 @@ idd-all 走 SDD path 時,**必須**串完三步:`spectra-discuss` → `spectra-p
 ISSUE_TITLE=$(gh issue view "$N" --repo "$GITHUB_REPO" --json title -q .title)
 ISSUE_BODY=$(gh issue view "$N" --repo "$GITHUB_REPO" --json body -q .body | head -50)
 DIAGNOSIS=$(gh issue view "$N" --repo "$GITHUB_REPO" --json comments \
-    | python3 -c "import json,sys; cs=json.load(sys.stdin)['comments']; \
-        ds=[c for c in cs if '## Diagnosis' in c['body']]; \
-        print(ds[-1]['body'] if ds else '')")
+    | python3 -c "import json,sys,re; cs=json.load(sys.stdin)['comments']; \
+        ds=[c for c in cs if re.search(r'(?m)^## Diagnosis', c['body'])]; \
+        print(ds[-1]['body'] if ds else '')")   # v2.68.0+ #59 — line-anchored regex avoids quoted/inline false-positives
 ```
 
 #### Step 3b.2: Discuss
