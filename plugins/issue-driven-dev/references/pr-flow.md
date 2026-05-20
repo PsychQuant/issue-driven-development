@@ -65,6 +65,23 @@ Then proceeds as PR path. **No abort, no silent ignore** — the flag is acknowl
 
 **Single-issue invocation behavior is unchanged** — the cluster carve-out only fires on ≥2 `#N`. Backward compatibility preserved.
 
+#### Feature-branch + cluster + direct-commit — rejected case (v2.70.0+, #100 Finding 1)
+
+PR #99 (#96 implementation, Option A) chose to unconditionally force PR for cluster mode, regardless of the starting branch. Devil's Advocate during verify flagged that the "force PR" rationale (stacked half-isolated changes on default branch) **only holds when the user starts from the default branch**. On a non-default feature branch, cluster direct-commit just stacks N `Refs #N` commits on that feature branch — a legitimate workflow (one local feature tracking N issues, shipped as one PR later).
+
+The alternative was **Option B** (branch-context-gated cluster direct-commit): if current branch != default branch, honor `--no-pr` / `pr_policy=never`; otherwise force PR as today. This issue confirms **Option A is final**:
+
+| Aspect | Option A (current) | Option B (rejected) |
+|--------|--------------------|--------------------|
+| Contract simplicity | Cluster → PR. Uniform regardless of branch context. | Cluster → PR if default branch, else direct-commit. Two paths. |
+| Override notice | One wording, mirrors fork detection | Two wordings depending on branch context |
+| `git symbolic-ref` dependency | None | Required (detached HEAD / merge-state edge cases) |
+| Cluster-on-feature-branch frequency | Rare (most cluster invocations are explicit `--pr`) | Same rare frequency, but now requires branch-context check overhead |
+
+**Recommendation**: keep Option A. The feature-branch direct-commit workflow remains viable for **single-issue** invocations (which honor `--no-pr` / `pr_policy=never`). Users who want cluster-on-feature-branch direct-commit pattern can: (a) run cluster as PR + cherry-pick or rebase to feature branch post-merge, or (b) run N atomic single-issue `--no-pr` invocations on the feature branch.
+
+If cluster-on-feature-branch direct-commit becomes a common pattern (not anticipated based on current usage), revisit Option B in a future issue. Until then, contract simplicity wins.
+
 Cross-reference: full cluster semantics in [batch-and-cluster.md](batch-and-cluster.md).
 
 ### `pr_policy` config field
