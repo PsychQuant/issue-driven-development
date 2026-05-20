@@ -1519,6 +1519,78 @@ type Action = {
 ], "started_at": "2026-05-10T17:00:00", "completed_at": "2026-05-10T17:03:42", "succeeded": 4, "failed": 1, "skipped": 1}
 ```
 
+### Content sanitization contract (v2.67.0+, #75)
+
+Multi-finding mode handles user-controlled content (file contents, pasted text, filenames) at the boundary between three sinks with different threat models: jsonl audit file (cat-able terminal output), GitHub issue body / comment (markdown renderer), and CLI footer composition (display strings). Each sink has different sanitization rules — the IC_R007 verbatim contract (line 1007) was authored for the audit channel and must NOT be unilaterally violated for the GitHub channel.
+
+#### Dual-track: jsonl verbatim vs GitHub display sanitized (#75 F1)
+
+```
+                     ┌─→ jsonl `finding_quote`           = verbatim (IC_R007)
+verbatim source ─────┤   (CAUTION banner above schema)
+                     └─→ GitHub body `finding_quote_display` = sanitized
+                         - strip C0/C1 control chars (U+0000-U+001F, U+007F-U+009F except \n\t)
+                         - warn-and-strip bidi-override (U+202A-U+202E + U+2066-U+2069)
+                         - normalize CRLF → LF
+                         - preserve all other Unicode (CJK, emoji, etc.)
+```
+
+**Implementation contract**:
+
+- jsonl `actions[].finding_quote` MUST contain the verbatim source content (IC_R007 line 1007 compliance);文件 schema CAUTION banner makes the untrusted-content invariant readable from the file itself.
+- GitHub-bound body composition MUST use the sanitized `finding_quote_display` variant. Sanitization is local to the dispatch path (Stage 4 body composition), not retroactive on the jsonl record.
+- `finding_quote_display` does not appear in the schema TypeScript above because it never persists — it's a composition-time projection of `finding_quote`.
+
+**Why dual-track instead of unilateral sanitize**: sanitizing `finding_quote` in the audit file would silently break IC_R007. If a downstream analysis needs to recover what the source literally contained (e.g. forensic / locale investigation), the jsonl is the source of truth. Verbatim + CAUTION banner is the IC_R007-conformant contract; sanitization happens at the rendering boundary, not the storage boundary.
+
+#### Filename / source-label sanitization (#75 F2)
+
+`<source>` footer substitution and any prose embedding of file paths / pasted-text excerpts MUST run `sanitize_source_label()`:
+
+```bash
+sanitize_source_label() {
+  local raw="$1"
+  # 1. Strip C0/C1 control chars (terminal hijack prevention)
+  local stripped
+  stripped=$(printf '%s' "$raw" | tr -d '\000-\010\013\014\016-\037\177' | LC_ALL=C tr -d '\200-\237')
+  # 2. Escape backticks (markdown code-fence escape prevention)
+  stripped="${stripped//\`/\\\`}"
+  # 3. Reject `@[A-Za-z0-9-]+` tokens — defer to tagging-collaborators.md 5-step protocol
+  #    (rather than silently strip — silently stripping a legitimate `@scope/package.docx`
+  #    name corrupts the audit trail; refuse instead and force the caller to use the
+  #    documented mention path).
+  if printf '%s' "$stripped" | grep -qE '@[A-Za-z0-9_-]+'; then
+    echo "✗ ABORT: source label contains '@' mention pattern: '$stripped'" >&2
+    echo "  Mentions MUST go through rules/tagging-collaborators.md 5-step protocol." >&2
+    echo "  Either rename the source file to remove '@token' or pass --mention <login> explicitly." >&2
+    return 1
+  fi
+  printf '%s' "$stripped"
+}
+```
+
+All footer composition paths (Stage 4 dispatch — `create` / `comment` / `edit`) MUST pass `<source>` through this helper before embedding in body markdown. Mention-validation cross-references the canonical [`rules/tagging-collaborators.md`](../../rules/tagging-collaborators.md) 5-step protocol — multi-finding mode does NOT bypass it.
+
+#### jq invocation pattern mandate (#75 F8)
+
+JSONL write and any body-composition that interpolates user content MUST use `--arg` / `--argjson` parameter binding, never string interpolation:
+
+```bash
+# REQUIRED (#75 F8 — safe parameter binding)
+jq -n \
+  --arg run_id "$RUN_ID" \
+  --arg source "$SOURCE" \
+  --argjson total "$TOTAL_FINDINGS" \
+  --argjson actions "$ACTIONS_JSON" \
+  '{run_id: $run_id, source: $source, total_findings: $total, actions: $actions}' \
+  > "$JSONL_PATH"
+
+# REFUSED — string interpolation (JSON injection)
+# jq -n "{run_id: \"$RUN_ID\", source: \"$SOURCE\"}" > "$JSONL_PATH"
+```
+
+The spec uses `--arg` for strings (jq quotes them as JSON strings automatically) and `--argjson` for already-encoded JSON values (numbers / arrays / objects produced upstream). String interpolation into the jq filter is vulnerable to JSON injection when user-controlled values contain `"` / `\` / control characters — the bug class jq's parameter binding exists to prevent.
+
 ### Merge mechanism(二方 only)
 
 Stage 2 picker 選 `[Merge with another finding]` 觸發 inline sub-prompt 流程:
