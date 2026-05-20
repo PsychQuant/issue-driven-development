@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.69.0] - 2026-05-20
+
+### Fixed
+
+- **`idd-verify` DA timeout sentinel detection broadening + write-side discipline** ([#88](https://github.com/PsychQuant/issue-driven-development/issues/88)): `/idd-verify --pr 82` in downstream `PsychQuantHsu/psychophysical_representations` exposed that DA agent wrote a VARIANT sentinel string that didn't match the exact-prefix regex at Step 2.5a line 558 → coordinator missed timeout → silent N-1 engine degradation. Two-track fix per #88 diagnosis: (a) read-side regex broadened to `grep -qiE '^\[[[:space:]]*stage[[:space:]]*2\.5[[:space:]]*recovery[[:space:]]*:[[:space:]]*devils?[[:space:]_-]*advocate[[:space:]_-]*timeout'` tolerating case drift / internal whitespace / separator drift (underscore vs hyphen vs space) / apostrophe variants; (b) write-side Step 2 DA spawn block gains canonical-sentinel-string discipline comment block specifying exact required form. Defense in depth.
+
+### Refactored
+
+- **CRLF → LF normalization across 4 idd-* SKILL.md files** ([#95](https://github.com/PsychQuant/issue-driven-development/issues/95)): #95 surfaced CRLF line terminators in `skills/idd-implement/SKILL.md`. Audit during fix revealed 3 SISTER files with the same issue: `skills/idd-close/SKILL.md` (912 CR chars), `skills/idd-diagnose/SKILL.md` (689), `skills/idd-issue/SKILL.md` (2007). Total 4259 CR characters stripped. Pure whitespace diff (`git diff --check` clean post-fix). 0 semantic change — Claude Code reads file content as text, normalizes whitespace internally. Pre-fix: `git diff --check` flagged touched lines as 'trailing whitespace' on every edit. Direct-commit `9a7244e` (no PR — pure whitespace + 4259-line balanced diff would be review-noise-dominated).
+
+### Notes
+
+- Plugin v2.69.0 is a **minor** bump (over v2.68.0) covering 2 fixes shipped via direct-commit (no PR). Direct-commit defensible for: (a) line-ending normalization (#95) where PR diff would be review-noise-dominated and `git diff --check` is sufficient verification; (b) DA sentinel regex broadening (#88) where the change is a localized regex tightening with clear rollback path and no cross-skill interactions.
+- Marketplace.json sync deferred to manual cycle (this release didn't go through `/idd-close` Step 6.5 chain because both issues closed via direct-commit + audit comment paths).
+
 ## [2.68.0] - 2026-05-20
 
 ### Changed
