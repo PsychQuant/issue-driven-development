@@ -993,6 +993,16 @@ else:
 
 兩 flag 同時 set → refuse。`--bundle-mode` + multi-finding mode 同時觸發 → refuse(見「Mutual exclusion」段落)。
 
+**Flag conflict detection layering (v2.67.0+, #77 Gap 1 / P1.1)** — flag-conflict refusal fires at **different layers** depending on whether both conflicting values are statically known:
+
+| Conflict | Refused at | Why |
+|----------|-----------|-----|
+| `--multi-finding` + `--no-multi-finding` (both explicit flags) | **Step 0 arg-parse** | Both values known statically — refuse immediately without paying Stage 1 source extraction cost (potentially 30s+ for large docx/srt). |
+| `--bundle-mode <m>` + `--multi-finding` (both explicit flags) | **Step 0 arg-parse** | Same — both static. Refuse before adapter load. |
+| `--bundle-mode <m>` + multi-finding auto-trigger | **Post-Stage 1** | Auto-trigger detection requires Stage 1 extraction to count findings (≥2 threshold). Can't refuse earlier without Stage 1 having run. |
+
+The general principle: explicit flag pairs refuse at the earliest layer where both values are knowable; auto-trigger detection necessarily waits for the trigger condition to be observable.
+
 > **⚠ Behavioral change for automated / CI callers (v2.55.0+)**: pre-v2.55.0, `idd-issue source.docx` always produced exactly one issue (whole source as body). v2.55.0+ auto-enters multi-finding mode when the source has ≥2 findings — so a CI pipeline or `/loop` script that relied on single-issue output will now silently get multi-finding dispatch. **Automated / unattended callers expecting the legacy single-issue behavior MUST pass `--no-multi-finding` explicitly.**
 
 ### 4-Stage Pipeline
@@ -1017,7 +1027,17 @@ AI 從 source 抽 paragraph-level findings,每筆含:
 
 Granularity 預設 paragraph-level。AI MAY 合併連續同主題段落、MAY 把含 2+ 主題的單段拆開。
 
-**Source type 沿用 Step 1 既有 adapter**:docx / pdf / Telegram / Apple Mail / Apple Notes / pasted-text / md。Adapter 切換對 multi-finding mode 透明。
+**Anchor heuristics for reproducibility (v2.67.0+, #80 Gap 1 / P3.1)** — the MAY clauses above are necessary for fluid source-shape adaptation but allow same source run twice to yield different finding counts (which crosses the ≥2 auto-trigger threshold → mode-switch). Apply these defaults to bound LLM nondeterminism:
+
+- **Default**: preserve original paragraph granularity (no merge / no split)
+- **Only split** if paragraph contains ≥3 clearly distinct topics AND topics are mutually independent (each can be a self-contained finding)
+- **Only merge** if 2 consecutive paragraphs are on the same topic AND combined length < 200 characters
+
+These anchors do not eliminate LLM variance — they reduce it for the typical case while preserving MAY semantics for genuinely ambiguous sources.
+
+**Source path validation (v2.67.0+, #77 Gap 5 / Security F4)** — Stage 1 entry MUST canonicalize source paths and refuse paths outside the repo work tree. Re-uses Step 1 adapter discipline (see [Step 1: 讀取來源並保留所有原始資料](#step-1-讀取來源並保留所有原始資料)) — multi-finding mode does NOT bypass it. A path like `../../etc/passwd` MUST be refused before any file read, preventing the file's contents from leaking into issue body / jsonl audit trail.
+
+**Source type 沿用 Step 1 既有 adapter**:docx / pdf / Telegram / Apple Mail / Apple Notes / pasted-text / md / srt(v2.67.0+, #79 Gap 3 — srt 作為 first-class adapter,不再隱式 mapped 到 pasted-text)。Adapter 切換對 multi-finding mode 透明。
 
 #### Stage 2: Per-finding picker
 
@@ -1037,10 +1057,26 @@ gh issue list --repo "$GITHUB_REPO" --state open \
 **Step 2b — Score 計算**:
 
 ```
-score = (title_overlap × 2 + body[:300]_overlap × 1) / max_possible_score
+title_overlap     = |finding_keywords ∩ candidate_title_tokens|
+body_overlap      = |finding_keywords ∩ candidate_body[:300]_tokens|
+max_possible_score = title_token_count × 2 + min(body_token_count, 300) × 1   ← (v2.67.0+, #80 Gap 2 REQ-3)
+score             = (title_overlap × 2 + body_overlap × 1) / max_possible_score
 ```
 
-Top-3 by score。
+`max_possible_score` denominator uses the **finding's own keyword set** as the basis: `title_token_count` is the number of finding keywords matched against title-position; `body_token_count` is the number of finding keywords matched against body-position (capped at 300 chars to bound score-window). This normalization yields scores in `[0, 1]` consistently — same candidate produces same absolute score across invocations (#80 Gap 2 REQ-3 — previously undefined `max_possible_score` allowed different LLM interpretations to display 0.42 vs 0.84 for the same candidate).
+
+Top-3 by score.
+
+**Degenerate-case picker shape (v2.67.0+, #80 Gap 3 / REQ-3)** — `gh issue list --search` may return fewer than 3 candidates. Dispatch:
+
+| N candidates | Picker shape |
+|-------------:|--------------|
+| 0 | Skip top-3 picker entirely. Go directly to `[Other]` second-level picker (`[New issue]` / `[Skip]` / `[Merge]` / `[Pick free-text #N]` + new `[Back to top-3]`) |
+| 1 | Show 1 candidate + `[Other]` (2-option AskUserQuestion) |
+| 2 | Show 2 candidates + `[Other]` (3-option AskUserQuestion) |
+| ≥3 | Show top-3 candidates + `[Other]` (existing 4-option, unchanged) |
+
+This is purely a picker-shape contract — score computation and ranking unchanged.
 
 **Step 2c — 4-option AskUserQuestion picker**:
 
@@ -1061,6 +1097,7 @@ options:
   - "Skip this finding"        ← drop, no dispatch
   - "Merge with another finding" ← see § Merge mechanism
   - "Pick free-text #N"        ← AskUserQuestion for typed N
+  - "Back to top-3"            ← (v2.67.0+, #77 Gap 4 / P2.3) return to first-level picker — for users who entered Other by mistake or changed mind after seeing second-level options
 ```
 
 **Step 2d — Routing intent disambiguation(picked existing #N)**:
@@ -1100,6 +1137,18 @@ Stage 2 完成所有 findings 後 print 完整 dispatch table + single AskUserQu
 - `[Edit row N]` → re-invoke Stage 2 picker for row N only,其他 rows 保留;re-pick 完成後回 Stage 3 preview
 - `[Cancel]` → 退出 skill,**no GitHub side effect**,**no jsonl written**
 
+**Edit-row loop soft cap (v2.67.0+, #77 Gap 3 / P2.2)** — after >5 cumulative `[Edit row N]` selections in a single Stage 3 cycle, prepend an additional confirmation prompt:
+
+```
+question: "You've edited 6 rows in this Stage 3 cycle. The picker may be drifting from the source intent. What now?"
+options:
+  - "Continue editing"   ← reset the counter, keep going
+  - "Execute all"        ← exit to Stage 4 dispatch
+  - "Cancel"             ← discard run, no GitHub side effect
+```
+
+Soft cap (warn-not-block) — user can `Continue editing` to opt out. The 5-row threshold is empirical heuristic; rationale is "if reviewer keeps revisiting same dispatch table, signal is more likely 'wrong source extraction' than 'still picking'."
+
 #### Stage 4: Dispatch with warn-continue
 
 Stage 3 confirm 後 sequential 跑 N 個 `gh` action:
@@ -1122,10 +1171,35 @@ Stage 3 confirm 後 sequential 跑 N 個 `gh` action:
   - `committed` / `not-applicable` / `bypass-env-var` → materialize jsonl to disk (one-shot `jq -n ... > $JSONL_PATH`)
   - `add-exception` → materialize jsonl + commit with `.gitignore` change (5-line carve-out chain with `!.claude` parent re-include — universal across all fixable sources) in same dispatch
   - `skip-commit` → materialize jsonl locally, no `git add`
-  - `abort` → discard `RUN_LOG_ENTRIES`, no jsonl file ever written
+  - `abort` → write minimal `aborted: true` jsonl (v2.67.0+, #79 Gap 1 / P3.2 disposition (a)) recording `actions[]` already dispatched + `started_at` / partial `completed_at`. File exists → footer link is valid → collaborators viewing already-dispatched GitHub bodies don't get 404. **In-memory entries beyond the abort point are still discarded** — the file shows "this run was aborted with N partial actions", not a full audit of pre-abort intent
 - Summary line is printed after gate completes (with continuity status appended)
 
 **No rollback**: 已 dispatch 的 GitHub actions **不**回滾(每筆是 user-confirmed 意圖,不是 AI 推論)。失敗的 user 自行手動補 dispatch(`retry_hint` 在 in-memory entry 給 hint;只在 jsonl materialized 時持久化)。Abort 模式下 in-memory entries 也丟,user 看 dispatch summary 看到哪些已 dispatch 即可手動追蹤。
+
+**Agent-crash recovery semantics (v2.67.0+, #77 Gap 6 / REQ-5)** — if the Claude agent crashes between Stage 4 dispatch and Stage 4.5 materialization, the in-memory `RUN_LOG_ENTRIES` array is lost. GitHub actions already dispatched (footer links written) but jsonl never materializes → partial audit trail.
+
+**Documented as a known gap (not auto-recovered)**: the trade-off is between (a) persisting `RUN_LOG_ENTRIES` incrementally to a temp file (extra I/O on every Stage 4 step, write-on-failure semantics) and (b) accepting partial-trail-on-crash. v2.67.0+ chooses (b) — the failure mode is rare in interactive use, and the recovery action is observable: user sees GitHub bodies with footer links pointing to a jsonl file that doesn't exist (or doesn't have the dispatched action recorded).
+
+Recovery workflow:
+1. User notices footer link 404 (file doesn't exist) or grep'ing jsonl for the `comment_url` returns no match
+2. User manually re-runs `/idd-issue --multi-finding <source>` from scratch — the dispatched GitHub actions are now duplicates of what the crashed run already did. Idempotency at GitHub side is the responsibility of the user (manual reconciliation).
+3. Future enhancement (deferred): incremental persistence to `.claude/.idd/issue-runs/.<run_id>.partial.jsonl` flushed on each Stage 4 success/failure — would be N additional `fsync` calls per dispatch. Not implemented in v2.67.0+ pending observed need.
+
+**Unattended-mode fallback for Stage 4.5 gate (v2.67.0+, #77 Gap 7)** — when `/loop` / CI / non-interactive callers run multi-finding mode without `IDD_JSONL_GITIGNORE_GATE=false`, the Stage 4.5 AskUserQuestion has no responder. Default fallback to prevent infinite hang:
+
+```bash
+# Add at top of Stage 4.5 gate (before AskUserQuestion):
+if [ -z "${JSONL_GITIGNORE_DECISION:-}" ] && [ ! -t 0 ] && [ -n "${IDD_ALL_UNATTENDED:-}${CI:-}" ]; then
+  # No TTY AND we're in /idd-all unattended chain OR a CI environment.
+  # Auto-select "skip-commit" as the safest default — jsonl writes locally
+  # but isn't committed, no .gitignore change. Audit trail still produced
+  # locally for whoever runs the unattended job.
+  JSONL_GITIGNORE_DECISION="skip-commit"
+  echo "ℹ Stage 4.5 gate auto-defaulted to 'skip-commit' under unattended mode (no TTY + IDD_ALL_UNATTENDED/CI)." >&2
+fi
+```
+
+The `IDD_JSONL_GITIGNORE_GATE=false` env var bypass remains the **explicit** escape hatch (1-line audit `bypass-env-var`); this unattended fallback is the **implicit** safety net for callers who forget to set it.
 
 #### Stage 4.5: jsonl gitignore pre-flight gate (v2.58+, #55)
 
@@ -1144,7 +1218,84 @@ The name "Stage 4.5" indicates "gate fires after Stage 4 dispatch loop, before j
 ##### Detection (bash)
 
 ```bash
+# RUN_ID format (v2.67.0+, #76): ISO-8601 with millisecond precision + UTC Z suffix.
+# Pre-v2.67.0 second-precision format collided under parallel `/loop` / CI batch /
+# two-terminal invocations — same-second invocations produced identical filename →
+# silent audit-trail overwrite (D2 "per-invocation 一檔" contract silently violated).
+# This is the irreversible-side-effect failure mode (#103 F4 Layer P vocabulary).
+#
+# Platform NOTE: GNU date supports `%3N` (millisecond truncation), but BSD date
+# (macOS native `/bin/date`) does NOT — it silently emits the literal string
+# `3N` instead of erroring. So `2>/dev/null || fallback` is NOT a working
+# fallback chain on macOS. The correct dispatch is: try GNU `%3N`, then
+# validate the output shape, fall through to nanosecond-then-truncate using
+# `%N`-supporting platforms, then absolute fallback to `.000Z`.
+RUN_ID_RAW="$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ 2>/dev/null || true)"
+if [[ "$RUN_ID_RAW" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$ ]]; then
+  RUN_ID="$RUN_ID_RAW"   # GNU date with %3N succeeded
+elif command -v python3 >/dev/null 2>&1; then
+  # BSD date emitted literal "3N" or otherwise malformed — fall back to Python
+  # which has UTC ms-precision via datetime stdlib on every platform.
+  RUN_ID="$(python3 -c 'import datetime; print(datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.") + f"{datetime.datetime.now(datetime.timezone.utc).microsecond // 1000:03d}Z")')"
+else
+  # No python3 — last-resort `.000Z` second-precision (sortable, but defeats
+  # the nonce-retry rationale below; user should install python3 for full
+  # collision resistance).
+  RUN_ID="$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
+  echo "⚠ run_id falling back to .000Z second-precision (no GNU date %3N, no python3) — collision resistance reduced." >&2
+fi
 JSONL_PATH=".claude/.idd/issue-runs/${RUN_ID}.jsonl"
+
+# Symlink check (v2.67.0+, #76 TOCTOU MEDIUM): predictable filename at known path
+# means an attacker with local FS write access can pre-create the path as a symlink
+# pointing at e.g. ~/.ssh/authorized_keys. `jq -n ... > $JSONL_PATH` truncate-writes
+# follows symlinks → silent target clobber. Fail-closed before any write.
+# Note: symlinking the issue-runs/ directory itself (e.g. to mount on different FS)
+# is fine — only the per-run jsonl FILE must not pre-exist as a symlink.
+if [ -L "$JSONL_PATH" ]; then
+  echo "✗ ABORT: $JSONL_PATH exists as a symlink — refusing to truncate-write a symlinked audit artifact."
+  echo "  This is a TOCTOU hardening gate (#76 v2.67.0+). Investigate before proceeding."
+  exit 1
+fi
+
+# Collision-detect via noclobber (v2.67.0+, #76 P1 HIGH): even with ms-precision
+# run_id, very tight parallel invocation (bash for-loop within same ms) could
+# still collide. `set -C` causes redirect to fail if target exists — retry with
+# random suffix. Combined with symlink-check above and ms-precision run_id, this
+# closes the collision channel even under hostile concurrency.
+#
+# NONCE SPACE NOTE: bash `$RANDOM` is 15-bit (range 0-32767), NOT 16-bit.
+# Birthday-paradox collision threshold within the same ms is therefore
+# ~sqrt(32768) = ~181 concurrent invocations, not ~256. Second-collision
+# abort defends; threat model is "audit overwrite", not "audit forge".
+JSONL_WRITE_GUARD() {
+  # Called at RUN-START (right after RUN_ID is set) to lock the canonical
+  # filename used by all footer composition. NOT called at materialize phase —
+  # mutating the path at materialize would invalidate the footer URLs already
+  # written to GitHub bodies by Stage 4 dispatch (#79 Gap 1 disposition
+  # depends on footer URL stability).
+  if [ -e "$JSONL_PATH" ]; then
+    local nonce
+    nonce=$(printf '%04x' $(( RANDOM % 32768 )))   # bash $RANDOM is 15-bit
+    RUN_ID="${RUN_ID%.???Z}-${nonce}"
+    JSONL_PATH=".claude/.idd/issue-runs/${RUN_ID}.jsonl"
+    echo "⚠ run_id collision detected, retrying with nonce suffix: $RUN_ID" >&2
+    if [ -e "$JSONL_PATH" ]; then
+      echo "✗ ABORT: jsonl write would clobber existing file even after nonce retry: $JSONL_PATH" >&2
+      exit 1
+    fi
+  fi
+}
+
+# CRITICAL ORDERING (v2.67.0+ #76 fix + #79 Gap 1 dependency):
+# Invoke JSONL_WRITE_GUARD HERE, BEFORE Stage 4 dispatch composes the footer
+# URL. The footer URL `> **Run log**: .claude/.idd/issue-runs/<run_id>.jsonl`
+# must point at the SAME path the materialize phase writes. If WRITE_GUARD ran
+# at materialize phase only, a nonce-retry would mutate $JSONL_PATH AFTER
+# Stage 4 dispatch baked the original path into footer URLs → footer 404.
+# Running at run-start locks the canonical path; Stage 4 footer + Stage 4.5
+# materialize + Stage 4.5 abort-path all use the same $JSONL_PATH variable.
+JSONL_WRITE_GUARD
 
 # Cache the gate decision for this dispatch batch — gate fires once, not per-issue.
 if [ -z "${JSONL_GITIGNORE_DECISION:-}" ]; then
@@ -1362,15 +1513,34 @@ BLOCK
     # jsonl will be written but not `git add`ed — dispatch summary shows warning
     ;;
   "abort")
-    # Discard in-memory run log without materializing the jsonl file. Already-dispatched
-    # GitHub actions (gh issue create / comment / edit) remain in flight — they were
-    # confirmed by user in Stage 3 and we don't roll those back. But the local audit
-    # artifact (jsonl) is suppressed by user choice;dispatch summary shows partial run
-    # without cross-machine continuity hook.
-    unset RUN_LOG_ENTRIES   # in-memory accumulator from Stage 4 (never written to disk)
-    echo "Dispatch aborted before jsonl materialization (per user choice in Stage 4.5 gate)." >&2
-    echo "Already-dispatched GitHub actions (issue create/comment/edit) remain — no rollback." >&2
-    echo "JSONL run log NOT written;cross-machine continuity disabled for this batch." >&2
+    # v2.67.0+ #79 Gap 1 disposition (a): write MINIMAL `aborted: true` jsonl with
+    # actions already dispatched + partial timestamps. File EXISTS → footer link
+    # written by Stage 4 to GitHub bodies is now valid (no 404). Already-dispatched
+    # GitHub actions remain in flight — Stage 3 user confirmation, no rollback.
+    #
+    # In-memory entries beyond the abort decision point are still discarded —
+    # the file shows "this run was aborted with N partial actions", NOT a full
+    # pre-abort audit.
+    #
+    # Order matters: WRITE_GUARD runs BEFORE jq write to avoid nonce-collision
+    # path mutation invalidating the footer URL composed in Stage 4 dispatch.
+    # (WRITE_GUARD already ran at Stage 4.5 top to lock the canonical RUN_ID
+    # used by all footer composition;here it's a defensive re-check only.)
+    JSONL_WRITE_GUARD
+    jq -n \
+      --arg run_id "$RUN_ID" \
+      --arg source "$SOURCE_LABEL_SANITIZED" \
+      --arg source_type "$SOURCE_TYPE" \
+      --argjson total "$TOTAL_FINDINGS" \
+      --argjson actions "$RUN_LOG_ENTRIES_JSON" \
+      --arg started "$STARTED_AT" \
+      --arg completed "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
+      '{run_id: $run_id, aborted: true, source: $source, source_type: $source_type, total_findings: $total, actions: $actions, started_at: $started, completed_at: $completed, succeeded: 0, failed: 0, skipped: 0}' \
+      > "$JSONL_PATH"
+    echo "Dispatch aborted at Stage 4.5 gate." >&2
+    echo "Minimal aborted jsonl written: $JSONL_PATH" >&2
+    echo "Already-dispatched GitHub actions remain — no rollback. Footer links in those bodies" >&2
+    echo "now point at the aborted jsonl (valid file, aborted: true marker for downstream readers)." >&2
     exit 0
     ;;
   "bypass-env-var")
@@ -1420,27 +1590,31 @@ esac
 ```markdown
 ---
 > **Surfaced via**: /idd-issue multi-finding mode <run_id> from `<source>`
-> **Run log**: `.claude/.idd/issue-runs/<run_id>.jsonl`
+> **Action**: {create|comment|edit|update} (v2.67.0+, #79 Gap 2 — reader can identify dispatch shape without cross-referencing jsonl)
+> **Run log**: `.claude/.idd/issue-runs/<run_id>.jsonl` (may be invalid on abort/skip-commit — see Stage 4.5 disposition)
 ```
 
-- `<run_id>`:ISO-8601 timestamp,e.g. `2026-05-10T17:00:00`
-- `<source>`:源 file path(e.g. `communications/recordings/0509-research.srt`)或 `pasted-text:<first-30-chars>`
+- `<run_id>`: ISO-8601 timestamp with millisecond precision + optional random suffix, e.g. `2026-05-10T17:00:00.123Z` or `2026-05-10T17:00:00-a3f9` (v2.67.0+, #76 — second-precision collides under parallel `/loop` / CI batch / concurrent terminals → silent audit-trail overwrite, the **irreversible side effect** failure mode added to Layer P vocabulary in v2.64.0 #103 F4)
+- `<source>`: 源 file path(e.g. `communications/recordings/0509-research.srt`)或 `pasted-text:<first-30-chars>` — 注意 `<source>` 字面值通過 `sanitize_source_label()` 處理(see § Content sanitization contract below;v2.67.0+, #75 F2)
 
 #### JSONL run log
 
 `.claude/.idd/issue-runs/<run_id>.jsonl` 每次 invocation 一檔。**Commit 進 git**(不 gitignore),確保 cross-machine continuity。
 
+> **CAUTION: `finding_quote` fields contain verbatim source content (per IC_R007 line 1007); treat as untrusted.** Verbatim quotes may contain control characters / ANSI escapes / bidi-override characters (U+202D-U+202E) that can hijack terminals when cat'ed. Sanitize before any human-facing display. The body-composition path uses a sanitized variant via `finding_quote_display`; jsonl preserves verbatim for audit fidelity. (v2.67.0+, #75 F1 + IC_R007 dual-track contract)
+
 Schema:
 
 ```typescript
 type RunLog = {
-  run_id: string;          // ISO-8601 timestamp
+  run_id: string;          // ISO-8601 with millisecond precision + optional nonce, e.g. "2026-05-10T17:00:00.123Z" or "2026-05-10T17:00:00-a3f9" (v2.67.0+, #76 — sub-second collision-resistant)
+  aborted?: boolean;       // (v2.67.0+, #79 Gap 1) present + true when Stage 4.5 user picked Abort; partial actions[] still recorded for audit trail consistency
   source: string;          // file path or "pasted-text:..."
-  source_type: "docx" | "pdf" | "telegram" | "apple-mail" | "apple-notes" | "pasted-text" | "md";
+  source_type: "docx" | "pdf" | "telegram" | "apple-mail" | "apple-notes" | "pasted-text" | "md" | "srt";  // (v2.67.0+, #79 Gap 3) "srt" added as first-class enum; transcript / subtitle sources adopting srt extension previously serialized as "pasted-text" via implicit adapter mapping
   total_findings: number;
   actions: Action[];
-  started_at: string;      // ISO-8601
-  completed_at: string;    // ISO-8601
+  started_at: string;      // ISO-8601 (millisecond precision)
+  completed_at: string;    // ISO-8601 (millisecond precision)
   succeeded: number;
   failed: number;
   skipped: number;
@@ -1475,16 +1649,137 @@ type Action = {
 ], "started_at": "2026-05-10T17:00:00", "completed_at": "2026-05-10T17:03:42", "succeeded": 4, "failed": 1, "skipped": 1}
 ```
 
+### Content sanitization contract (v2.67.0+, #75)
+
+Multi-finding mode handles user-controlled content (file contents, pasted text, filenames) at the boundary between three sinks with different threat models: jsonl audit file (cat-able terminal output), GitHub issue body / comment (markdown renderer), and CLI footer composition (display strings). Each sink has different sanitization rules — the IC_R007 verbatim contract (line 1007) was authored for the audit channel and must NOT be unilaterally violated for the GitHub channel.
+
+#### Dual-track: jsonl verbatim vs GitHub display sanitized (#75 F1)
+
+```
+                     ┌─→ jsonl `finding_quote`           = verbatim (IC_R007)
+verbatim source ─────┤   (CAUTION banner above schema)
+                     └─→ GitHub body `finding_quote_display` = sanitized
+                         - strip C0/C1 control chars (U+0000-U+001F, U+007F-U+009F except \n\t)
+                         - warn-and-strip bidi-override (U+202A-U+202E + U+2066-U+2069)
+                         - normalize CRLF → LF
+                         - preserve all other Unicode (CJK, emoji, etc.)
+```
+
+**Implementation contract**:
+
+- jsonl `actions[].finding_quote` MUST contain the verbatim source content (IC_R007 line 1007 compliance);文件 schema CAUTION banner makes the untrusted-content invariant readable from the file itself.
+- GitHub-bound body composition MUST use the sanitized `finding_quote_display` variant. Sanitization is local to the dispatch path (Stage 4 body composition), not retroactive on the jsonl record.
+- `finding_quote_display` does not appear in the schema TypeScript above because it never persists — it's a composition-time projection of `finding_quote`.
+
+**Why dual-track instead of unilateral sanitize**: sanitizing `finding_quote` in the audit file would silently break IC_R007. If a downstream analysis needs to recover what the source literally contained (e.g. forensic / locale investigation), the jsonl is the source of truth. Verbatim + CAUTION banner is the IC_R007-conformant contract; sanitization happens at the rendering boundary, not the storage boundary.
+
+#### Filename / source-label sanitization (#75 F2)
+
+`<source>` footer substitution and any prose embedding of file paths / pasted-text excerpts MUST run `sanitize_source_label()`:
+
+```bash
+sanitize_source_label() {
+  local raw="$1"
+  # v2.67.0+ #75 F2 — UTF-8-safe sanitization.
+  #
+  # CORRECTNESS: `tr -d '\200-\237'` operates at the BYTE level and would mangle
+  # UTF-8 multibyte sequences (CJK / emoji / accented Latin). For example, the
+  # byte 0x96 appears inside legitimate UTF-8 encodings of `文` (e4 b8 ad e6 96 87)
+  # — stripping it corrupts the character. Use Python's Unicode-aware filter
+  # for the C0/DEL/C1 + bidi-override strip; bash `tr` cannot do this safely.
+  local stripped
+  stripped=$(printf '%s' "$raw" | python3 -c '
+import sys
+raw = sys.stdin.read()
+# Strip C0 controls (U+0000-U+001F) except newline (\n=U+000A) and tab (\t=U+0009),
+# DEL (U+007F), C1 controls (U+0080-U+009F), and bidi-override / isolates
+# (U+202A-U+202E + U+2066-U+2069 — Trojan-Source CVE-2021-42574 family).
+out = []
+for ch in raw:
+    cp = ord(ch)
+    if (0x00 <= cp <= 0x08) or (0x0B <= cp <= 0x0C) or (0x0E <= cp <= 0x1F):
+        continue   # C0 controls except \n \t
+    if cp == 0x7F:
+        continue   # DEL
+    if 0x80 <= cp <= 0x9F:
+        continue   # C1 controls
+    if (0x202A <= cp <= 0x202E) or (0x2066 <= cp <= 0x2069):
+        continue   # bidi-override + directional isolates
+    out.append(ch)
+# Normalize CRLF / lone CR → LF
+text = "".join(out).replace("\r\n", "\n").replace("\r", "\n")
+sys.stdout.write(text)
+' 2>/dev/null) || {
+    echo "✗ ABORT: sanitize_source_label python3 step failed" >&2
+    return 1
+  }
+  # Escape backticks (markdown code-fence escape prevention)
+  stripped="${stripped//\`/\\\`}"
+  # Reject `@[A-Za-z0-9-]+` tokens — defer to tagging-collaborators.md 5-step protocol
+  # (rather than silently strip — silently stripping a legitimate `@scope/package.docx`
+  # name corrupts the audit trail; refuse instead and force the caller to use the
+  # documented mention path). Underscore intentionally included in the refuse pattern
+  # — over-broad but conservative: GitHub logins don't allow `_`, so `@scope_name`
+  # cannot be a real login, but the refusal prompts the caller to be explicit.
+  if printf '%s' "$stripped" | grep -qE '@[A-Za-z0-9_-]+'; then
+    echo "✗ ABORT: source label contains '@' mention pattern: '$stripped'" >&2
+    echo "  Mentions MUST go through rules/tagging-collaborators.md 5-step protocol." >&2
+    echo "  Either rename the source file to remove '@token' or pass --mention <login> explicitly." >&2
+    return 1
+  fi
+  printf '%s' "$stripped"
+}
+```
+
+**Implementation note**: bash `tr -d '\200-\237'` (LC_ALL=C or default) strips at the byte level and would corrupt UTF-8 multibyte sequences. The Python implementation operates on code points (Unicode-aware) and preserves CJK, emoji, accented Latin characters, etc. — only the targeted control characters and bidi-override code points are removed. Empirically validated: `中文` (U+4E2D U+6587) passes through unchanged; `Schultz scale\x9F12 items` has the C1 byte stripped but `Schultz scale12 items` (and any non-Latin content) preserved.
+
+All footer composition paths (Stage 4 dispatch — `create` / `comment` / `edit`) MUST pass `<source>` through this helper before embedding in body markdown. Mention-validation cross-references the canonical [`rules/tagging-collaborators.md`](../../rules/tagging-collaborators.md) 5-step protocol — multi-finding mode does NOT bypass it.
+
+#### jq invocation pattern mandate (#75 F8)
+
+JSONL write and any body-composition that interpolates user content MUST use `--arg` / `--argjson` parameter binding, never string interpolation:
+
+```bash
+# REQUIRED (#75 F8 — safe parameter binding)
+jq -n \
+  --arg run_id "$RUN_ID" \
+  --arg source "$SOURCE" \
+  --argjson total "$TOTAL_FINDINGS" \
+  --argjson actions "$ACTIONS_JSON" \
+  '{run_id: $run_id, source: $source, total_findings: $total, actions: $actions}' \
+  > "$JSONL_PATH"
+
+# REFUSED — string interpolation (JSON injection)
+# jq -n "{run_id: \"$RUN_ID\", source: \"$SOURCE\"}" > "$JSONL_PATH"
+```
+
+The spec uses `--arg` for strings (jq quotes them as JSON strings automatically) and `--argjson` for already-encoded JSON values (numbers / arrays / objects produced upstream). String interpolation into the jq filter is vulnerable to JSON injection when user-controlled values contain `"` / `\` / control characters — the bug class jq's parameter binding exists to prevent.
+
 ### Merge mechanism(二方 only)
 
 Stage 2 picker 選 `[Merge with another finding]` 觸發 inline sub-prompt 流程:
+
+**Partner eligibility set (v2.67.0+, #77 Gap 2 / P2.1)** — formal definition consolidating the rules previously scattered 18 lines apart in this section:
+
+```
+partner_eligible_set = {f | f.id > current_id
+                          AND f.id NOT IN merged_into_set
+                          AND f.id NOT IN already_routed_set}
+
+where:
+  current_id          = the finding triggering merge picker
+  merged_into_set     = findings already participating as merged-into a primary (cannot be re-merged)
+  already_routed_set  = findings already assigned an action in Stage 2 (not "remaining unprocessed")
+```
+
+Pickers SHALL surface candidates from this set only; refusing to include in-eligible findings prevents the three-way+ merge scenarios that MVP doesn't support.
 
 ```
 Step 1 — partner picker (4-option):
   question: "Merge finding {current} with which?"
   options: [{candidate-1}] [{candidate-2}] [{candidate-3}] [Other]
-  - candidates = remaining unprocessed findings(已 routed 的不能再被 merge,partner)
-  - Other → free-pick by finding_id
+  - candidates ∈ partner_eligible_set (per formal definition above)
+  - Other → free-pick by finding_id (still subject to eligibility check; refused if violates set)
 
 Step 2 — combined target picker (4-option):
   question: "Merged {current}+{partner} should go to..."

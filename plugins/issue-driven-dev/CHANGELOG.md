@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.67.0] - 2026-05-20
+
+### Changed
+
+- **`idd-issue` multi-finding mode — 5-issue spec hardening family from #48 verify** ([#75](https://github.com/PsychQuant/issue-driven-development/issues/75), [#76](https://github.com/PsychQuant/issue-driven-development/issues/76), [#77](https://github.com/PsychQuant/issue-driven-development/issues/77), [#79](https://github.com/PsychQuant/issue-driven-development/issues/79), [#80](https://github.com/PsychQuant/issue-driven-development/issues/80)): 5 sister issues from #48's 6-AI verify, all same-file (`skills/idd-issue/SKILL.md`), shipped as one chain.
+
+  - **#75 — Content sanitization contract** (security). NEW `### Content sanitization contract (v2.67.0+, #75)` subsection: dual-track contract (jsonl `finding_quote` verbatim per IC_R007 line 1007 + GitHub body `finding_quote_display` sanitized — strip C0/C1 control chars, warn-and-strip bidi-override U+202A-U+202E + U+2066-U+2069, normalize CRLF); `sanitize_source_label()` bash helper that strips control chars + escapes backticks + **refuses** (not silently strips) embedded `@[A-Za-z0-9_-]+` mention tokens (cross-references `rules/tagging-collaborators.md` 5-step protocol); mandate `jq --arg` / `--argjson` parameter binding (refuses string-interpolation anti-pattern vulnerable to JSON injection). `finding_quote` CAUTION banner above schema makes the untrusted-content invariant readable from the file itself.
+
+  - **#76 — `run_id` collision + symlink overwrite hardening** (bug). `run_id` format: ISO-8601 second precision → millisecond precision + UTC Z suffix + nonce-retry on collision. Pre-v2.67.0 second-precision collided under parallel `/loop` / CI batch / concurrent terminals → silent audit-trail overwrite (the **irreversible-side-effect** failure mode added to Layer P vocabulary in v2.64.0 #103 F4). TOCTOU symlink check before jsonl write (`[ -L "$JSONL_PATH" ] && abort`) closes the predictable-path + truncate-write hardening gap (attacker with local FS write access could pre-create the audit path as a symlink at e.g. `~/.ssh/authorized_keys`). Noclobber retry helper (`JSONL_WRITE_GUARD`) on hostile concurrency.
+
+  - **#77 — 7 corner-case spec contract gaps** (enhancement). Gap 1 — flag-conflict refusal layering table (explicit flag pairs at Step 0 arg-parse vs auto-trigger conflicts post-Stage 1). Gap 2 — `partner_eligible_set` formal definition consolidating rules previously 18 lines apart. Gap 3 — Stage 3 `[Edit row N]` soft cap at >5 cumulative edits. Gap 4 — `[Back to top-3]` added as 5th option in Stage 2 Other second-level picker. Gap 5 — Stage 1 entry MUST canonicalize source paths + refuse paths outside repo work tree. Gap 6 — agent-crash recovery documented as known gap with trade-off rationale. Gap 7 — Stage 4.5 unattended-mode fallback (no TTY + `IDD_ALL_UNATTENDED` / `CI` → auto-default to `skip-commit`).
+
+  - **#79 — Audit trail completeness** (enhancement). Gap 1 — abort-path now writes minimal `aborted: true` jsonl with `actions[]` already dispatched + partial timestamps; footer link no longer 404s after abort. Gap 2 — footer template adds `> **Action**: {create|comment|edit|update}` line. Gap 3 — schema `source_type` enum adds `"srt"` as first-class adapter.
+
+  - **#80 — Stage 1 reproducibility + Stage 2 scoring + N<3 picker** (enhancement). Gap 1 — Stage 1 anchor heuristics for "AI MAY merge / MAY split" clauses. Gap 2 — `max_possible_score` denominator explicitly defined as `title_token_count × 2 + min(body_token_count, 300) × 1`. Gap 3 — degenerate-case picker shape table (N=0 → skip to Other; N=1 → 1+Other; N=2 → 2+Other; N≥3 → unchanged).
+
+  Schema additions: `aborted?: boolean` (#79 Gap 1), `"srt"` enum value (#79 Gap 3), CAUTION banner above schema (#75 F1). Audit footer additions: action type line (#79 Gap 2), validity caveat (#79 Gap 1). All changes additive.
+
+### Notes
+
+- Plugin v2.67.0 is a **minor** bump (over v2.66.0): 5 same-file spec hardening additions to `idd-issue` multi-finding mode. No behavior change for inputs that already worked correctly under the looser pre-v2.67.0 contracts; user-visible changes for inputs that exercised the corner-case gaps (hostile concurrency, abort path, srt sources, etc.).
+- Marketplace.json sync deferred to `/idd-close` Step 6.5 chain (per repo precedent, same path used by #103 / #102 / #110).
+
 ## [2.66.0] - 2026-05-20
 
 ### Added
