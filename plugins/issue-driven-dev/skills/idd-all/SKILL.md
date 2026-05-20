@@ -114,7 +114,7 @@ for ((i=0; i<${#ARGS[@]}; i++)); do
       IN_CHAIN="1" ;;
     --review)
       # v2.65+ #102 — opt-in re-open NSQL confirmation loop at terminal report.
-      # Orthogonal to --pr/--no-pr/--in-chain (no mutex). Messaging-only effect:
+      # Orthogonal to --pr/--no-pr/--in-chain (no mutex). Orchestrator-scope messaging-only effect (per #108 DA3 — humans/CI downstream may react to the changed text, so the flag is messaging-only at orchestrator scope, not necessarily end-to-end):
       # Phase 6 report swaps to "awaiting human acceptance" wording. Does NOT
       # change idd-all behavior, does NOT make idd-all wait. Per MANIFESTO
       # "Human-in-the-loop: IDD 即 NSQL Confirmation Protocol" doctrine.
@@ -752,7 +752,7 @@ Refs #${N}
 - [x] Diagnose ✓
 - [x] Implement(${COMMIT_COUNT} commits)
 - [x] Verify ✓
-- [ ] **Pending: human review of this PR + /idd-close after merge**
+- [x] **Verify-gated**: verify PASS — ready to merge → /idd-close #${NUMBER} after merge
 
 ## Related
 {若有 follow-up issues,列出 #N #M ...}
@@ -840,7 +840,7 @@ With `--review` (`REVIEW_FLAG="--review"`):
 Next: review last ${COMMIT_COUNT} commits (git log -${COMMIT_COUNT}), then run /idd-close #${N}
 ```
 
-**STOP**。不 auto-merge(PR mode)、不 auto-close(both modes)。Per MANIFESTO doctrine,verify-gated PASS 是 terminal default disposition;auto-merge mechanic 屬 **#37** bulk-solve autopilot 範疇,**不**是 idd-all default。`--review` 是 messaging-only opt-in,不會讓 idd-all 等候 — 它只表態 "user 還想自己再過一次" 並切換 Phase 6 wording。
+**STOP**。不 auto-merge(PR mode)、不 auto-close(both modes)。Per MANIFESTO doctrine,verify-gated PASS 是 terminal default disposition;auto-merge mechanic 屬 **#37** bulk-solve autopilot 範疇,**不**是 idd-all default。`--review` 是 **orchestrator-scope messaging-only** opt-in,不會讓 idd-all 等候 — 它只表態 "user 還想自己再過一次" 並切換 Phase 6 wording。(per #108 DA3: orchestrator-scope qualifier matters — humans/CI downstream may react to the changed text differently, so the flag is messaging-only **at orchestrator scope**, not necessarily end-to-end.)
 
 ---
 
@@ -895,13 +895,27 @@ Phase 0.5 印 `→ Path: PR (unattended) — flag=--pr`,sub-skill args 全帶 `U
   Branch:       idd/42-bug-login-button-stops-after-3-faile
   Commits:      3 (implementation + 0 verify-fix rounds)
   PR:           https://github.com/owner/repo/pull/87
-  Verify:       PASS
+  Verify:       verify-gated PASS
   Follow-ups:   (none)
 
-Next: review PR https://github.com/owner/repo/pull/87, merge, then run /idd-close #42
+Next: merge https://github.com/owner/repo/pull/87, then run /idd-close #42
 ```
 
-`/loop` 自動化 caller 觀察行為與 v2.40.0 完全一致 — feature branch、push、PR 帶 `Refs #42`、無 `Closes`、停在 verified。
+With `--review` opt-in:
+
+```
+✓ idd-all complete (PR mode, --review)
+  Issue:        #42 — bug: login button stops after 3 failed attempts
+  Branch:       idd/42-bug-login-button-stops-after-3-faile
+  Commits:      3 (implementation + 0 verify-fix rounds)
+  PR:           https://github.com/owner/repo/pull/87
+  Verify:       verify-gated PASS — awaiting human acceptance (re-opened confirmation loop per --review)
+  Follow-ups:   (none)
+
+Next: review PR https://github.com/owner/repo/pull/87, merge after acceptance, then run /idd-close #42
+```
+
+`/loop` 自動化 caller 觀察行為與 v2.40.0 完全一致 — feature branch、push、PR 帶 `Refs #42`、無 `Closes`、停在 verified。Per MANIFESTO `Human-in-the-loop` doctrine: `verify-gated PASS, ready to merge` is a state declaration, NOT a `gh pr merge` authorization — autopilot remains #37 territory.
 
 ### Trace 2: `(direct-commit, attended)` — HITL 場景
 

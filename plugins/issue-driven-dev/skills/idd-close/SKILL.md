@@ -163,6 +163,7 @@ TaskCreate(name="semantic_gate_check", description="Step 1.6: 對每個 - [x] bu
 TaskCreate(name="draft_closing_comment", description="起草 Problem / Root Cause / Solution / Verification / Changes 五段式")
 TaskCreate(name="review_with_user", description="顯示 closing comment 給使用者確認(若已明確 /idd-close 可省略此步)")
 TaskCreate(name="closing_followup_keyword_scan", description="Step 3.5: scan drafted closing summary for trigger phrases (follow-up / deferred / future / 之後 / 順便 etc); orphan mentions without #NNN cross-link → AskUserQuestion 3-option per canonical references/ic-r011-checkpoint.md; PATCH closing summary inline + add `### Closing Follow-ups Filed` audit trail (advisory, non-blocking, per IC_R011 #527)")
+TaskCreate(name="residue_acknowledgement", description="Step 3.6 (v2.66.0+, #105): read latest ## Diagnosis ### Residue section; if non-empty (not `(none)`), AskUserQuestion 3-option (still residue / file follow-up / skip); silent skip when residue is `(none)` or section missing. Audit trail PATCH to closing summary. Non-blocking, IC_R011 rollback respected. Closes the F3 write-only loop from #103.")
 TaskCreate(name="publish_and_close", description="gh issue comment + gh issue close")
 TaskCreate(name="auto_update_body", description="跑 /idd-update #NNN 把 issue body 的 Current Status phase 改 closed（Step 6，常被漏）")
 TaskCreate(name="distribution_sync_chain_detection", description="Step 6.5 (v2.56.0+, #45): infer_distribution_type detection per references/distribution-detection.md; if hit → AskUserQuestion 3-option (chain to plugin-update/mcp-deploy/cli-deploy / skip — manual later / not applicable); patch closing comment with ### Distribution Sync section. Silent skip for non-distribution repos. IDD_DISTRIBUTION_SYNC_PROMPT=false env var bypasses prompt entirely (still 1-line audit).")
@@ -400,6 +401,100 @@ For each trigger-phrase match:
 **Rollback escape hatch**: per canonical reference doc §5 — `AI_LOW_BAR_ISSUE_FILING=false` env var or `# Disable IC_R011` flag in repo CLAUDE.md silently skips checkpoint while preserving audit trail.
 
 > **Disambiguation from #515 supersession**: Step 0 supersession (#515 v2.41.0) is **gate logic** preventing false-positive checklist refusals — it operates on pre-implementation Strategy/Plan checkboxes. Step 3.5 (this step, #527) is the **IC_R011 checkpoint** for orphan keyword mentions in the drafted closing summary. The two are orthogonal: Step 0 runs at gate time, Step 3.5 runs after summary draft + before final close.
+
+### Step 3.6: Residue Acknowledgement (v2.66.0+, #105)
+
+**Compliance**: this step closes the F3 `### Residue` write-only loop introduced in #103 v2.64.0. Producer was `idd-diagnose` Step 3 template + `>` explanatory paragraph; consumer was never implemented. Per Devil's Advocate D2 in PR #104 verify: "latent capacity for the section to drift into ritual filler with no consumer pressure to keep it honest". Step 3.6 gives Residue its first downstream consumer — the user is asked at close time "what happened to the residue declared at diagnose time?".
+
+**Rule (SHOULD, advisory)**: 在 `gh issue close` 前 (Step 4)，read the **latest** `## Diagnosis` comment's `### Residue` section. If non-empty (not `(none)` and not missing), AskUserQuestion 3-option per IC_R011 canonical pattern. **Non-blocking** — user can pick skip with audit trail. Silent skip when residue is `(none)` (the common case for clear-scope issues).
+
+#### Detection (bash)
+
+```bash
+# Pull the latest ## Diagnosis comment body (newest by createdAt desc, mirrors Step 0 supersession discipline)
+DIAG_BODY=$(gh issue view "$NUMBER" --repo "$GITHUB_REPO" --json comments \
+  --jq '[.comments[] | select(.body | startswith("## Diagnosis"))] | sort_by(.createdAt) | reverse | .[0].body // ""')
+
+# Extract the ### Residue section content — between the heading and either the next ###/## or EOF
+RESIDUE_CONTENT=$(printf '%s\n' "$DIAG_BODY" \
+  | awk '/^### Residue/{flag=1; next} flag && /^###? /{flag=0} flag' \
+  | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' \
+  | awk 'NF' \
+  | head -c 4000)
+
+# Trigger logic — silent skip when:
+#   - No Diagnosis comment exists at all (legacy issue pattern, pre-v2.64.0)
+#   - ### Residue section missing (pre-v2.64.0 Diagnosis template)
+#   - Content is exactly `(none)` (the explicit empty-state marker required by template)
+RESIDUE_TRIGGER="false"
+if [ -z "$DIAG_BODY" ]; then
+  AUDIT_REASON="no Diagnosis comment (legacy issue or pre-v2.64.0 — no Residue section to acknowledge)"
+elif ! printf '%s' "$DIAG_BODY" | grep -q '^### Residue'; then
+  AUDIT_REASON="Diagnosis has no \`### Residue\` section (pre-v2.64.0 format)"
+elif [ "$RESIDUE_CONTENT" = "(none)" ] || [ -z "$RESIDUE_CONTENT" ]; then
+  AUDIT_REASON="residue declared as \`(none)\` at diagnose time — no acknowledgement needed"
+else
+  RESIDUE_TRIGGER="true"
+fi
+```
+
+#### AskUserQuestion 3-option (prose — NOT a bash function call)
+
+When `RESIDUE_TRIGGER == "true"`, AskUserQuestion per IC_R011 canonical pattern. Surface the captured `$RESIDUE_CONTENT` so the user sees the exact text being acknowledged:
+
+> "Residue declared at diagnose time:
+> > <quoted RESIDUE_CONTENT>
+>
+> 該 residue 在 #${NUMBER} 完成期間有變動嗎?"
+>
+> Options (default = first):
+> - **`still residue — acknowledge as-is`** — record acknowledgement in closing summary that residue stayed as residue. No new issue. Audit trail: `Acknowledged as still residue (text quoted in audit block).`
+> - **`file as follow-up issue(s)`** — surface candidate decompositions if residue has multiple distinct items; user picks which to file. Each filed issue gets `**Source**: residue from #${NUMBER} at /idd-close time` for traceability.
+> - **`skip — record in audit trail only`** — no new issue, no acknowledgement; just log the user's choice. Audit trail: `Skipped per user choice (residue not addressed).`
+
+#### File issues (if user picks `file`)
+
+```bash
+# Loop per-item: if residue has multiple distinct items (decided via inline AskUserQuestion for picker)
+for item in $selected_items; do
+  NEW_ISSUE_URL=$(gh issue create --repo "$GITHUB_REPO" \
+    --title "[<type>] <description> (residue from #${NUMBER})" \
+    --body "$BODY_WITH_RESIDUE_QUOTE_AND_SOURCE_LINK" \
+    --label "<type>,confidence:confirmed,priority:P3")
+
+  # Chain context manifest write (per spawn-manifest contract, v2.55+ #44; v2.60+ #46 schema v2)
+  ROOT_ID_FOR_MANIFEST="${IDD_CHAIN_CURRENT_ROOT_ID:-${NUMBER:-}}"
+  if [ -n "$ROOT_ID_FOR_MANIFEST" ]; then
+    NEW_ISSUE=$(basename "$NEW_ISSUE_URL")
+    bash "$CLAUDE_PLUGIN_ROOT/scripts/manifest-append.sh" \
+      "$REPO_ROOT" "$NEW_ISSUE" "idd-close" "Step 3.6 residue acknowledgement" \
+      "residue-followup" "$item_same_file" "$item_same_skill" "$item_title" "$ROOT_ID_FOR_MANIFEST" \
+      2>/dev/null || true   # silent skip when chain context inactive
+  fi
+done
+```
+
+Body MUST contain `**Source**: residue from #${NUMBER} at /idd-close time (Step 3.6)` for traceability. Manifest write is **additive** — when chain context inactive, helper exits 0 silently. See `references/spawn-manifest.md`.
+
+#### Audit trail PATCH
+
+The closing summary (Step 2 已 drafted but not yet posted, same pattern as Step 3.5) gets a `### Residue Acknowledgement` section appended per canonical heading conventions:
+
+| User choice | Audit block content |
+|---|---|
+| `still residue — acknowledge as-is` | `**Acknowledged as still residue**: <RESIDUE_CONTENT quoted>` |
+| `file as follow-up issue(s)` (1+ filed) | `**Filed**: #X, #Y, #Z` |
+| `skip — record in audit trail only` | `**Skipped per user choice** (residue text quoted for posterity): <RESIDUE_CONTENT quoted>` |
+| silent skip (triggered=false) | `**$AUDIT_REASON**` (one line, no separate block) |
+| `AI_LOW_BAR_ISSUE_FILING=false` env var | `**Skipped** (AI_LOW_BAR_ISSUE_FILING=false, per IC_R011 rollback)` |
+
+**Rollback escape hatch**: per canonical reference doc §5 — `AI_LOW_BAR_ISSUE_FILING=false` env var silently skips Step 3.6 while preserving the audit trail line.
+
+**Why advisory not blocking**: same reasoning as Step 3.5 — closure is mostly mechanical action; hard-blocking on every residue declaration would multiply close-time friction. The value is making "residue is real, what happened to it?" a visible deliberation moment, not enforcing a particular answer. Silent skip when `(none)` keeps clear-scope issues frictionless.
+
+**Why placed here (between Step 3.5 keyword scan and Step 4 publish+close)**: Step 3.5 already established the "scan drafted closing summary + AskUserQuestion before publish" pattern. Step 3.6 mirrors it — same drafting/scan/PATCH flow, different source (Residue section vs orphan keyword mentions). Both must run **before** Step 4 so the audit trail PATCH happens to the same in-memory draft, not a post-hoc edit.
+
+**Why use only the latest Diagnosis comment** (mirrors Step 0 supersession): re-diagnoses after clarification produce multiple `## Diagnosis` comments — only the latest reflects the issue's current state. Earlier drafts' residue is part of the issue's deliberation history, not its current acceptance contract. If user wants to surface older residue, they can manually file follow-up from comment history.
 
 ### Step 4: 發佈並關閉
 
