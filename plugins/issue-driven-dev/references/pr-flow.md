@@ -132,7 +132,7 @@ Refs #${N}
 - [x] Diagnose
 - [x] Implement (${COMMIT_COUNT} commits)
 - [x] Verify
-- [ ] **Pending: human review of this PR + /idd-close after merge**
+- [x] **Verify-gated**: verify PASS — ready to merge → /idd-close #${NUMBER} after merge
 
 ## Related
 {follow-up issues, if any}
