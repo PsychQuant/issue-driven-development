@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Notes
 
-- Discuss-conclusion-aligned scope: `idd-implement` Step 5.5 + `idd-all` Phase 5 + `references/pr-flow.md` PR-body checklist wording **intentionally left at old wording** in this release. Sister consistency follow-up tracked as [#108](https://github.com/PsychQuant/issue-driven-development/issues/108) — "Sync 4-template PR-body checklist wording to match #102 NSQL doctrine" — to land in a separate PR.
+- Discuss-conclusion-aligned scope: `idd-implement` Step 5.5 + `idd-all` Phase 5 + `references/pr-flow.md` + `references/chain-flow.md` PR-body checklist wording **intentionally left at old wording** in this release. Sister consistency follow-up tracked as [#108](https://github.com/PsychQuant/issue-driven-development/issues/108) — "Sync PR-body checklist wording to match #102 NSQL doctrine" — to land in a separate PR. (Originally 4 templates; surfaced as 5-template family during /idd-implement #102 Step 5.7 sister sweep — `chain-flow.md:254` is the canonical chain-shell contract doc that mirrors the same `Pending: human review of cluster PR` wording the orchestrator skills used to emit.)
 
 ## [2.64.0] - 2026-05-20
 

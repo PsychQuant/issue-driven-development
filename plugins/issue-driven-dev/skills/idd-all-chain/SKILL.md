@@ -542,6 +542,18 @@ else
   SUMMARY_LINE="Multi-root chain (N=${N_ROOTS} roots: ${ROOT_ISSUES_SORTED[*]}) solved as one cluster via \`/idd-all-chain\` (v2.60+, traversal=${TRAVERSAL}). Total ${#CHAINED_ORDER[@]} processed issues across all root subtrees."
 fi
 
+# Compose review-state checklist line with explicit if/else BEFORE heredoc
+# interpolation (v2.65.1+ fix for the broken ${VAR:-word} mutex attempt that
+# this file shipped with — that idiom returns $VAR when set, not the
+# alternative branch, so the --review path leaked the literal `--review` at
+# the end of the rendered line. Build the line in a single var, then
+# interpolate, so the heredoc only sees the final string.)
+if [ -n "$REVIEW_FLAG" ]; then
+  REVIEW_CHECKLIST_LINE="- [ ] **Pending: human acceptance review of cluster PR** (per --review flag) + /idd-close $REFS_LIST after merge"
+else
+  REVIEW_CHECKLIST_LINE="- [x] **Verify-gated**: per-issue verify PASS — cluster ready to merge → /idd-close $REFS_LIST per issue after merge"
+fi
+
 PR_BODY=$(cat <<EOF
 Refs $REFS_LIST
 
@@ -558,12 +570,12 @@ $OVERVIEW_ROWS
 ## Per-issue details
 $DETAILS_BLOCKS
 
-## Pending review
+## Review status
 
 - [x] Diagnose ✓ for all ${#CHAINED_ORDER[@]} issues
 - [x] Implement ✓
 - [x] Verify ✓ (per-issue 6-AI ensemble)
-${REVIEW_FLAG:+- [ ] **Pending: human acceptance review of cluster PR** (per --review flag) + /idd-close $REFS_LIST after merge}${REVIEW_FLAG:-- [x] **Verify-gated**: per-issue verify PASS — cluster ready to merge → /idd-close $REFS_LIST per issue after merge}
+$REVIEW_CHECKLIST_LINE
 
 ---
 
