@@ -1144,7 +1144,47 @@ The name "Stage 4.5" indicates "gate fires after Stage 4 dispatch loop, before j
 ##### Detection (bash)
 
 ```bash
+# RUN_ID format (v2.67.0+, #76): ISO-8601 with millisecond precision + UTC Z suffix.
+# Pre-v2.67.0 second-precision format collided under parallel `/loop` / CI batch /
+# two-terminal invocations — same-second invocations produced identical filename →
+# silent audit-trail overwrite (D2 "per-invocation 一檔" contract silently violated).
+# This is the irreversible-side-effect failure mode (#103 F4 Layer P vocabulary).
+# Millisecond precision + Z suffix + noclobber retry (below) closes the collision
+# channel for typical workload; sortable ISO-8601 preserved.
+RUN_ID="$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%S.000Z)"
 JSONL_PATH=".claude/.idd/issue-runs/${RUN_ID}.jsonl"
+
+# Symlink check (v2.67.0+, #76 TOCTOU MEDIUM): predictable filename at known path
+# means an attacker with local FS write access can pre-create the path as a symlink
+# pointing at e.g. ~/.ssh/authorized_keys. `jq -n ... > $JSONL_PATH` truncate-writes
+# follows symlinks → silent target clobber. Fail-closed before any write.
+# Note: symlinking the issue-runs/ directory itself (e.g. to mount on different FS)
+# is fine — only the per-run jsonl FILE must not pre-exist as a symlink.
+if [ -L "$JSONL_PATH" ]; then
+  echo "✗ ABORT: $JSONL_PATH exists as a symlink — refusing to truncate-write a symlinked audit artifact."
+  echo "  This is a TOCTOU hardening gate (#76 v2.67.0+). Investigate before proceeding."
+  exit 1
+fi
+
+# Collision-detect via noclobber (v2.67.0+, #76 P1 HIGH): even with ms-precision
+# run_id, very tight parallel invocation (bash for-loop within same ms) could
+# still collide. `set -C` causes redirect to fail if target exists — retry with
+# random suffix. Combined with symlink-check above and ms-precision run_id, this
+# closes the collision channel even under hostile concurrency.
+JSONL_WRITE_GUARD() {
+  # Called by Stage 4 materialize phase right before `jq -n ... > $JSONL_PATH`.
+  if [ -e "$JSONL_PATH" ]; then
+    local nonce
+    nonce=$(printf '%04x' $(( RANDOM % 65536 )))
+    RUN_ID="${RUN_ID%.???Z}-${nonce}"
+    JSONL_PATH=".claude/.idd/issue-runs/${RUN_ID}.jsonl"
+    echo "⚠ run_id collision detected, retrying with nonce suffix: $RUN_ID" >&2
+    if [ -e "$JSONL_PATH" ]; then
+      echo "✗ ABORT: jsonl write would clobber existing file even after nonce retry: $JSONL_PATH" >&2
+      exit 1
+    fi
+  fi
+}
 
 # Cache the gate decision for this dispatch batch — gate fires once, not per-issue.
 if [ -z "${JSONL_GITIGNORE_DECISION:-}" ]; then
@@ -1420,27 +1460,31 @@ esac
 ```markdown
 ---
 > **Surfaced via**: /idd-issue multi-finding mode <run_id> from `<source>`
-> **Run log**: `.claude/.idd/issue-runs/<run_id>.jsonl`
+> **Action**: {create|comment|edit|update} (v2.67.0+, #79 Gap 2 — reader can identify dispatch shape without cross-referencing jsonl)
+> **Run log**: `.claude/.idd/issue-runs/<run_id>.jsonl` (may be invalid on abort/skip-commit — see Stage 4.5 disposition)
 ```
 
-- `<run_id>`:ISO-8601 timestamp,e.g. `2026-05-10T17:00:00`
-- `<source>`:源 file path(e.g. `communications/recordings/0509-research.srt`)或 `pasted-text:<first-30-chars>`
+- `<run_id>`: ISO-8601 timestamp with millisecond precision + optional random suffix, e.g. `2026-05-10T17:00:00.123Z` or `2026-05-10T17:00:00-a3f9` (v2.67.0+, #76 — second-precision collides under parallel `/loop` / CI batch / concurrent terminals → silent audit-trail overwrite, the **irreversible side effect** failure mode added to Layer P vocabulary in v2.64.0 #103 F4)
+- `<source>`: 源 file path(e.g. `communications/recordings/0509-research.srt`)或 `pasted-text:<first-30-chars>` — 注意 `<source>` 字面值通過 `sanitize_source_label()` 處理(see § Content sanitization contract below;v2.67.0+, #75 F2)
 
 #### JSONL run log
 
 `.claude/.idd/issue-runs/<run_id>.jsonl` 每次 invocation 一檔。**Commit 進 git**(不 gitignore),確保 cross-machine continuity。
 
+> **CAUTION: `finding_quote` fields contain verbatim source content (per IC_R007 line 1007); treat as untrusted.** Verbatim quotes may contain control characters / ANSI escapes / bidi-override characters (U+202D-U+202E) that can hijack terminals when cat'ed. Sanitize before any human-facing display. The body-composition path uses a sanitized variant via `finding_quote_display`; jsonl preserves verbatim for audit fidelity. (v2.67.0+, #75 F1 + IC_R007 dual-track contract)
+
 Schema:
 
 ```typescript
 type RunLog = {
-  run_id: string;          // ISO-8601 timestamp
+  run_id: string;          // ISO-8601 with millisecond precision + optional nonce, e.g. "2026-05-10T17:00:00.123Z" or "2026-05-10T17:00:00-a3f9" (v2.67.0+, #76 — sub-second collision-resistant)
+  aborted?: boolean;       // (v2.67.0+, #79 Gap 1) present + true when Stage 4.5 user picked Abort; partial actions[] still recorded for audit trail consistency
   source: string;          // file path or "pasted-text:..."
-  source_type: "docx" | "pdf" | "telegram" | "apple-mail" | "apple-notes" | "pasted-text" | "md";
+  source_type: "docx" | "pdf" | "telegram" | "apple-mail" | "apple-notes" | "pasted-text" | "md" | "srt";  // (v2.67.0+, #79 Gap 3) "srt" added as first-class enum; transcript / subtitle sources adopting srt extension previously serialized as "pasted-text" via implicit adapter mapping
   total_findings: number;
   actions: Action[];
-  started_at: string;      // ISO-8601
-  completed_at: string;    // ISO-8601
+  started_at: string;      // ISO-8601 (millisecond precision)
+  completed_at: string;    // ISO-8601 (millisecond precision)
   succeeded: number;
   failed: number;
   skipped: number;
