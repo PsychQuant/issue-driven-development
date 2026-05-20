@@ -5,7 +5,7 @@ description: |
   Recursive shell over /idd-all — sub-skill spawns (sister bug / follow-up finding / tangential / sister concern) detected via spawn manifest, chain-eligible enqueued automatically.
   Use when: root issue likely ripples (refactor with sister bugs / spec change with cross-spec impact / multi-layer feature) and you want single PR review.
   Stops at verified — never auto-close, /idd-close per issue still required.
-argument-hint: "[#NNN] [--cwd /path/to/clone] e.g. '#28', '#28 --cwd /path/to/repo'"
+argument-hint: "[#NNN ...] [--bfs] [--review] [--cwd /path/to/clone] e.g. '#28', '#A #B #C --bfs', '#28 --review' (--review opt-in re-opens NSQL confirmation loop at terminal report)"
 allowed-tools:
   - Bash(gh:*)
   - Bash(git:*)
@@ -76,7 +76,8 @@ Inherits `/idd-all` config protocol (walked-up `.claude/issue-driven-dev.local.j
 **動任何事之前**先用 `TaskCreate` 建 stage-level todo list:
 
 ```
-TaskCreate(name="preflight", description="Phase 0: 解析 args (≥1 root + optional --bfs)、gh auth、確認每個 root issue 都 OPEN")
+TaskCreate(name="preflight", description="Phase 0: 解析 args (≥1 root + optional --bfs/--review)、gh auth、確認每個 root issue 都 OPEN")
+TaskCreate(name="parse_review_flag", description="Phase 0: 解析 --review flag → $REVIEW_FLAG (Phase 2 chain loop 傳到 sub-/idd-all --in-chain;Phase 4 final report wording 切換 verify-gated default vs awaiting human acceptance;per #102 NSQL doctrine)")
 TaskCreate(name="check_diagnosis_readiness", description="Phase 0.4 (v2.55+ #47, helper extracted v2.57+ #51, multi-root v2.60+ #46): invoke scripts/check-diagnosis-readiness.sh <github-repo> <root1> [<root2> ...] → JSON {ready/not_ready}; not_ready=0 → silent pass; not_ready>0 → AskUserQuestion 3-option (run /idd-diagnose first / proceed anyway / cancel). Placed before cluster branch / manifest creation so cancel has zero side effect.")
 TaskCreate(name="setup_cluster_branch", description="Phase 0.5: 建 cluster branch — N=1 用 idd/chain-<N>-<slug>, N>1 用 idd/chain-multi-<hash8>-<root1-slug> from default branch + 初始化 spawn manifest schema v2 (root_issues + traversal)")
 TaskCreate(name="init_queue", description="Phase 1: QUEUE seeded with all roots (sorted asc), per-root DEPTH_MAP[$root]=0, ROOT_ID_MAP, FAIL_ROOTS set, CHAIN_MAX_DEPTH=3 + CHAIN_MAX_ISSUES=10")
@@ -102,6 +103,7 @@ Same as `/idd-all`,plus:
 declare -a ROOT_ISSUES=()
 TRAVERSAL="dfs"   # default
 CWD_FLAG=""
+REVIEW_FLAG=""    # "" | "--review" — set by --review flag (v2.65+ #102)
 for ((i=0; i<${#ARGS[@]}; i++)); do
   arg="${ARGS[i]}"
   case "$arg" in
@@ -109,11 +111,18 @@ for ((i=0; i<${#ARGS[@]}; i++)); do
       ROOT_ISSUES+=("${arg#\#}") ;;
     --bfs)
       TRAVERSAL="bfs" ;;
+    --review)
+      # v2.65+ #102 — opt-in re-open NSQL confirmation loop.
+      # Propagated to each chained /idd-all #M --in-chain in Phase 2 so per-issue
+      # Phase 6 reports also reflect; Phase 4 chain final report also dispatches.
+      # Messaging-only effect — does NOT make chain wait. Per MANIFESTO
+      # "Human-in-the-loop: IDD 即 NSQL Confirmation Protocol" doctrine.
+      REVIEW_FLAG="--review" ;;
     --cwd=*) CWD_FLAG="${arg#--cwd=}" ;;
     --cwd)   i=$((i+1)); CWD_FLAG="${ARGS[i]}" ;;
   esac
 done
-[ ${#ROOT_ISSUES[@]} -eq 0 ] && abort "Usage: /idd-all-chain #NNN [#MMM ...] [--bfs] [--cwd /path]"
+[ ${#ROOT_ISSUES[@]} -eq 0 ] && abort "Usage: /idd-all-chain #NNN [#MMM ...] [--bfs] [--review] [--cwd /path]"
 
 # Sort roots ascending for deterministic hash + lowest-root-first slug selection
 IFS=$'\n' ROOT_ISSUES_SORTED=($(sort -n <<<"${ROOT_ISSUES[*]}"))
@@ -382,8 +391,12 @@ while [ ${#QUEUE[@]} -gt 0 ]; do
 
   # Invoke /idd-all in chain context. Export current root_id so sub-skills can
   # propagate it to manifest-append.sh (per D1 schema v2 root_id field).
+  # Propagate $REVIEW_FLAG (v2.65+ #102) so each per-issue Phase 6 report also
+  # reflects the verify-gated vs awaiting-human-acceptance disposition.
+  # ${REVIEW_FLAG:+ $REVIEW_FLAG} appends with a leading space ONLY when set,
+  # avoiding a stray space when REVIEW_FLAG="" — otherwise args parse fragility.
   export IDD_CHAIN_CURRENT_ROOT_ID="$CURRENT_ROOT"
-  Skill(skill="issue-driven-dev:idd-all", args="#$CURRENT --in-chain --cwd $CWD")
+  Skill(skill="issue-driven-dev:idd-all", args="#$CURRENT --in-chain --cwd $CWD${REVIEW_FLAG:+ $REVIEW_FLAG}")
   unset IDD_CHAIN_CURRENT_ROOT_ID
 
   # Determine /idd-all completion state — read latest verify comment phase
@@ -529,6 +542,18 @@ else
   SUMMARY_LINE="Multi-root chain (N=${N_ROOTS} roots: ${ROOT_ISSUES_SORTED[*]}) solved as one cluster via \`/idd-all-chain\` (v2.60+, traversal=${TRAVERSAL}). Total ${#CHAINED_ORDER[@]} processed issues across all root subtrees."
 fi
 
+# Compose review-state checklist line with explicit if/else BEFORE heredoc
+# interpolation (v2.65.1+ fix for the broken ${VAR:-word} mutex attempt that
+# this file shipped with — that idiom returns $VAR when set, not the
+# alternative branch, so the --review path leaked the literal `--review` at
+# the end of the rendered line. Build the line in a single var, then
+# interpolate, so the heredoc only sees the final string.)
+if [ -n "$REVIEW_FLAG" ]; then
+  REVIEW_CHECKLIST_LINE="- [ ] **Pending: human acceptance review of cluster PR** (per --review flag) + /idd-close $REFS_LIST after merge"
+else
+  REVIEW_CHECKLIST_LINE="- [x] **Verify-gated**: per-issue verify PASS — cluster ready to merge → /idd-close $REFS_LIST per issue after merge"
+fi
+
 PR_BODY=$(cat <<EOF
 Refs $REFS_LIST
 
@@ -545,12 +570,12 @@ $OVERVIEW_ROWS
 ## Per-issue details
 $DETAILS_BLOCKS
 
-## Pending review
+## Review status
 
 - [x] Diagnose ✓ for all ${#CHAINED_ORDER[@]} issues
 - [x] Implement ✓
 - [x] Verify ✓ (per-issue 6-AI ensemble)
-- [ ] **Pending: human review of cluster PR + /idd-close $REFS_LIST after merge**
+$REVIEW_CHECKLIST_LINE
 
 ---
 

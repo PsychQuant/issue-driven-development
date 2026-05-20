@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.65.0] - 2026-05-20
+
+### Added
+
+- **`MANIFESTO.md` — Human-in-the-loop: IDD 即 NSQL Confirmation Protocol section** ([#102](https://github.com/PsychQuant/issue-driven-development/issues/102)): formalizes the doctrine that IDD's human-in-the-loop **is** an instance of the NSQL Confirmation Protocol ([kiki830621/NSQL](https://github.com/kiki830621/NSQL) v4.1.0, already registered as a reference project in CLAUDE.md via #103's `fd2f21c`). Doctrine elements: (1) NSQL confirmation loop ⇆ IDD pipeline mapping table — human's confirmation loop closes **before** execution (at `issue` + `idd-diagnose`); `idd-verify` is an execution-fidelity check, not a confirmation loop. (2) **`verify-gated` is the named, sanctioned terminal default disposition** — one clean 6/6 verify PASS is sufficient to merge; issue was the acceptance contract, verify confirmed delivery. (3) Verify-as-review reframe — 5 specialized adversarial agents + an independent model (Codex) on correctness exceed a single human merge reviewer's thoroughness; "AI verify PASS = no review" is a backwards read. (4) **`--review` flag — opt-in to re-open the confirmation loop**, NOT a quality gate, per-invocation flag (NOT a standing config field — exceptions don't warrant standing policy). (5) auto-merge legitimacy under verify-gated PASS, justified by "verify is the gate" (not "merges are reversible"); guardrails mandatory; `auto-merge ≠ auto-close`; autopilot mechanics belong to [#37](https://github.com/PsychQuant/issue-driven-development/issues/37) — `idd-all` default behavior unchanged (鐵律 `永遠不 auto-merge PR` stays).
+
+- **`--review` flag on `idd-all` + `idd-all-chain`** ([#102](https://github.com/PsychQuant/issue-driven-development/issues/102)): per-invocation messaging-only flag implementing the MANIFESTO doctrine above. Default Phase 6 report on `idd-all`: `Verify: verify-gated PASS` + `Next: merge <PR>, then /idd-close #N` (drops the legacy `Pending: human review` framing that implied a default second gate). With `--review`: `Verify: verify-gated PASS — awaiting human acceptance (re-opened confirmation loop per --review)` + `Next: review PR, merge after acceptance, then /idd-close #N`. `idd-all-chain` mirrors the same pattern: Phase 0 args parsing recognizes `--review`, Phase 2 chain loop propagates the flag to each chained `/idd-all #M --in-chain` invocation (so per-issue Phase 6 reports also reflect), Phase 4 cluster PR body checklist dispatches conditionally — default `- [x] Verify-gated: per-issue verify PASS — cluster ready to merge`, `--review` → `- [ ] Pending: human acceptance review of cluster PR (per --review flag)`. Flag is orthogonal to `--pr`/`--no-pr`/`--in-chain`/`--bfs`/`--cwd` (no mutex). Effect is messaging-only — does NOT make the orchestrator wait, does NOT change `idd-implement`/`idd-verify`/`idd-close` internals.
+
+### Notes
+
+- Discuss-conclusion-aligned scope: `idd-implement` Step 5.5 + `idd-all` Phase 5 + `references/pr-flow.md` + `references/chain-flow.md` PR-body checklist wording **intentionally left at old wording** in this release. Sister consistency follow-up tracked as [#108](https://github.com/PsychQuant/issue-driven-development/issues/108) — "Sync PR-body checklist wording to match #102 NSQL doctrine" — to land in a separate PR. (Originally 4 templates; surfaced as 5-template family during /idd-implement #102 Step 5.7 sister sweep — `chain-flow.md:254` is the canonical chain-shell contract doc that mirrors the same `Pending: human review of cluster PR` wording the orchestrator skills used to emit.)
+
 ## [2.64.0] - 2026-05-20
 
 ### Changed
