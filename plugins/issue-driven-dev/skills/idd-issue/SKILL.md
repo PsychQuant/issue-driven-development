@@ -993,6 +993,16 @@ else:
 
 兩 flag 同時 set → refuse。`--bundle-mode` + multi-finding mode 同時觸發 → refuse(見「Mutual exclusion」段落)。
 
+**Flag conflict detection layering (v2.67.0+, #77 Gap 1 / P1.1)** — flag-conflict refusal fires at **different layers** depending on whether both conflicting values are statically known:
+
+| Conflict | Refused at | Why |
+|----------|-----------|-----|
+| `--multi-finding` + `--no-multi-finding` (both explicit flags) | **Step 0 arg-parse** | Both values known statically — refuse immediately without paying Stage 1 source extraction cost (potentially 30s+ for large docx/srt). |
+| `--bundle-mode <m>` + `--multi-finding` (both explicit flags) | **Step 0 arg-parse** | Same — both static. Refuse before adapter load. |
+| `--bundle-mode <m>` + multi-finding auto-trigger | **Post-Stage 1** | Auto-trigger detection requires Stage 1 extraction to count findings (≥2 threshold). Can't refuse earlier without Stage 1 having run. |
+
+The general principle: explicit flag pairs refuse at the earliest layer where both values are knowable; auto-trigger detection necessarily waits for the trigger condition to be observable.
+
 > **⚠ Behavioral change for automated / CI callers (v2.55.0+)**: pre-v2.55.0, `idd-issue source.docx` always produced exactly one issue (whole source as body). v2.55.0+ auto-enters multi-finding mode when the source has ≥2 findings — so a CI pipeline or `/loop` script that relied on single-issue output will now silently get multi-finding dispatch. **Automated / unattended callers expecting the legacy single-issue behavior MUST pass `--no-multi-finding` explicitly.**
 
 ### 4-Stage Pipeline
@@ -1017,7 +1027,17 @@ AI 從 source 抽 paragraph-level findings,每筆含:
 
 Granularity 預設 paragraph-level。AI MAY 合併連續同主題段落、MAY 把含 2+ 主題的單段拆開。
 
-**Source type 沿用 Step 1 既有 adapter**:docx / pdf / Telegram / Apple Mail / Apple Notes / pasted-text / md。Adapter 切換對 multi-finding mode 透明。
+**Anchor heuristics for reproducibility (v2.67.0+, #80 Gap 1 / P3.1)** — the MAY clauses above are necessary for fluid source-shape adaptation but allow same source run twice to yield different finding counts (which crosses the ≥2 auto-trigger threshold → mode-switch). Apply these defaults to bound LLM nondeterminism:
+
+- **Default**: preserve original paragraph granularity (no merge / no split)
+- **Only split** if paragraph contains ≥3 clearly distinct topics AND topics are mutually independent (each can be a self-contained finding)
+- **Only merge** if 2 consecutive paragraphs are on the same topic AND combined length < 200 characters
+
+These anchors do not eliminate LLM variance — they reduce it for the typical case while preserving MAY semantics for genuinely ambiguous sources.
+
+**Source path validation (v2.67.0+, #77 Gap 5 / Security F4)** — Stage 1 entry MUST canonicalize source paths and refuse paths outside the repo work tree. Re-uses Step 1 adapter discipline (see [Step 1: 讀取來源並保留所有原始資料](#step-1-讀取來源並保留所有原始資料)) — multi-finding mode does NOT bypass it. A path like `../../etc/passwd` MUST be refused before any file read, preventing the file's contents from leaking into issue body / jsonl audit trail.
+
+**Source type 沿用 Step 1 既有 adapter**:docx / pdf / Telegram / Apple Mail / Apple Notes / pasted-text / md / srt(v2.67.0+, #79 Gap 3 — srt 作為 first-class adapter,不再隱式 mapped 到 pasted-text)。Adapter 切換對 multi-finding mode 透明。
 
 #### Stage 2: Per-finding picker
 
@@ -1037,10 +1057,26 @@ gh issue list --repo "$GITHUB_REPO" --state open \
 **Step 2b — Score 計算**:
 
 ```
-score = (title_overlap × 2 + body[:300]_overlap × 1) / max_possible_score
+title_overlap     = |finding_keywords ∩ candidate_title_tokens|
+body_overlap      = |finding_keywords ∩ candidate_body[:300]_tokens|
+max_possible_score = title_token_count × 2 + min(body_token_count, 300) × 1   ← (v2.67.0+, #80 Gap 2 REQ-3)
+score             = (title_overlap × 2 + body_overlap × 1) / max_possible_score
 ```
 
-Top-3 by score。
+`max_possible_score` denominator uses the **finding's own keyword set** as the basis: `title_token_count` is the number of finding keywords matched against title-position; `body_token_count` is the number of finding keywords matched against body-position (capped at 300 chars to bound score-window). This normalization yields scores in `[0, 1]` consistently — same candidate produces same absolute score across invocations (#80 Gap 2 REQ-3 — previously undefined `max_possible_score` allowed different LLM interpretations to display 0.42 vs 0.84 for the same candidate).
+
+Top-3 by score.
+
+**Degenerate-case picker shape (v2.67.0+, #80 Gap 3 / REQ-3)** — `gh issue list --search` may return fewer than 3 candidates. Dispatch:
+
+| N candidates | Picker shape |
+|-------------:|--------------|
+| 0 | Skip top-3 picker entirely. Go directly to `[Other]` second-level picker (`[New issue]` / `[Skip]` / `[Merge]` / `[Pick free-text #N]` + new `[Back to top-3]`) |
+| 1 | Show 1 candidate + `[Other]` (2-option AskUserQuestion) |
+| 2 | Show 2 candidates + `[Other]` (3-option AskUserQuestion) |
+| ≥3 | Show top-3 candidates + `[Other]` (existing 4-option, unchanged) |
+
+This is purely a picker-shape contract — score computation and ranking unchanged.
 
 **Step 2c — 4-option AskUserQuestion picker**:
 
@@ -1061,6 +1097,7 @@ options:
   - "Skip this finding"        ← drop, no dispatch
   - "Merge with another finding" ← see § Merge mechanism
   - "Pick free-text #N"        ← AskUserQuestion for typed N
+  - "Back to top-3"            ← (v2.67.0+, #77 Gap 4 / P2.3) return to first-level picker — for users who entered Other by mistake or changed mind after seeing second-level options
 ```
 
 **Step 2d — Routing intent disambiguation(picked existing #N)**:
@@ -1100,6 +1137,18 @@ Stage 2 完成所有 findings 後 print 完整 dispatch table + single AskUserQu
 - `[Edit row N]` → re-invoke Stage 2 picker for row N only,其他 rows 保留;re-pick 完成後回 Stage 3 preview
 - `[Cancel]` → 退出 skill,**no GitHub side effect**,**no jsonl written**
 
+**Edit-row loop soft cap (v2.67.0+, #77 Gap 3 / P2.2)** — after >5 cumulative `[Edit row N]` selections in a single Stage 3 cycle, prepend an additional confirmation prompt:
+
+```
+question: "You've edited 6 rows in this Stage 3 cycle. The picker may be drifting from the source intent. What now?"
+options:
+  - "Continue editing"   ← reset the counter, keep going
+  - "Execute all"        ← exit to Stage 4 dispatch
+  - "Cancel"             ← discard run, no GitHub side effect
+```
+
+Soft cap (warn-not-block) — user can `Continue editing` to opt out. The 5-row threshold is empirical heuristic; rationale is "if reviewer keeps revisiting same dispatch table, signal is more likely 'wrong source extraction' than 'still picking'."
+
 #### Stage 4: Dispatch with warn-continue
 
 Stage 3 confirm 後 sequential 跑 N 個 `gh` action:
@@ -1122,10 +1171,35 @@ Stage 3 confirm 後 sequential 跑 N 個 `gh` action:
   - `committed` / `not-applicable` / `bypass-env-var` → materialize jsonl to disk (one-shot `jq -n ... > $JSONL_PATH`)
   - `add-exception` → materialize jsonl + commit with `.gitignore` change (5-line carve-out chain with `!.claude` parent re-include — universal across all fixable sources) in same dispatch
   - `skip-commit` → materialize jsonl locally, no `git add`
-  - `abort` → discard `RUN_LOG_ENTRIES`, no jsonl file ever written
+  - `abort` → write minimal `aborted: true` jsonl (v2.67.0+, #79 Gap 1 / P3.2 disposition (a)) recording `actions[]` already dispatched + `started_at` / partial `completed_at`. File exists → footer link is valid → collaborators viewing already-dispatched GitHub bodies don't get 404. **In-memory entries beyond the abort point are still discarded** — the file shows "this run was aborted with N partial actions", not a full audit of pre-abort intent
 - Summary line is printed after gate completes (with continuity status appended)
 
 **No rollback**: 已 dispatch 的 GitHub actions **不**回滾(每筆是 user-confirmed 意圖,不是 AI 推論)。失敗的 user 自行手動補 dispatch(`retry_hint` 在 in-memory entry 給 hint;只在 jsonl materialized 時持久化)。Abort 模式下 in-memory entries 也丟,user 看 dispatch summary 看到哪些已 dispatch 即可手動追蹤。
+
+**Agent-crash recovery semantics (v2.67.0+, #77 Gap 6 / REQ-5)** — if the Claude agent crashes between Stage 4 dispatch and Stage 4.5 materialization, the in-memory `RUN_LOG_ENTRIES` array is lost. GitHub actions already dispatched (footer links written) but jsonl never materializes → partial audit trail.
+
+**Documented as a known gap (not auto-recovered)**: the trade-off is between (a) persisting `RUN_LOG_ENTRIES` incrementally to a temp file (extra I/O on every Stage 4 step, write-on-failure semantics) and (b) accepting partial-trail-on-crash. v2.67.0+ chooses (b) — the failure mode is rare in interactive use, and the recovery action is observable: user sees GitHub bodies with footer links pointing to a jsonl file that doesn't exist (or doesn't have the dispatched action recorded).
+
+Recovery workflow:
+1. User notices footer link 404 (file doesn't exist) or grep'ing jsonl for the `comment_url` returns no match
+2. User manually re-runs `/idd-issue --multi-finding <source>` from scratch — the dispatched GitHub actions are now duplicates of what the crashed run already did. Idempotency at GitHub side is the responsibility of the user (manual reconciliation).
+3. Future enhancement (deferred): incremental persistence to `.claude/.idd/issue-runs/.<run_id>.partial.jsonl` flushed on each Stage 4 success/failure — would be N additional `fsync` calls per dispatch. Not implemented in v2.67.0+ pending observed need.
+
+**Unattended-mode fallback for Stage 4.5 gate (v2.67.0+, #77 Gap 7)** — when `/loop` / CI / non-interactive callers run multi-finding mode without `IDD_JSONL_GITIGNORE_GATE=false`, the Stage 4.5 AskUserQuestion has no responder. Default fallback to prevent infinite hang:
+
+```bash
+# Add at top of Stage 4.5 gate (before AskUserQuestion):
+if [ -z "${JSONL_GITIGNORE_DECISION:-}" ] && [ ! -t 0 ] && [ -n "${IDD_ALL_UNATTENDED:-}${CI:-}" ]; then
+  # No TTY AND we're in /idd-all unattended chain OR a CI environment.
+  # Auto-select "skip-commit" as the safest default — jsonl writes locally
+  # but isn't committed, no .gitignore change. Audit trail still produced
+  # locally for whoever runs the unattended job.
+  JSONL_GITIGNORE_DECISION="skip-commit"
+  echo "ℹ Stage 4.5 gate auto-defaulted to 'skip-commit' under unattended mode (no TTY + IDD_ALL_UNATTENDED/CI)." >&2
+fi
+```
+
+The `IDD_JSONL_GITIGNORE_GATE=false` env var bypass remains the **explicit** escape hatch (1-line audit `bypass-env-var`); this unattended fallback is the **implicit** safety net for callers who forget to set it.
 
 #### Stage 4.5: jsonl gitignore pre-flight gate (v2.58+, #55)
 
@@ -1595,12 +1669,27 @@ The spec uses `--arg` for strings (jq quotes them as JSON strings automatically)
 
 Stage 2 picker 選 `[Merge with another finding]` 觸發 inline sub-prompt 流程:
 
+**Partner eligibility set (v2.67.0+, #77 Gap 2 / P2.1)** — formal definition consolidating the rules previously scattered 18 lines apart in this section:
+
+```
+partner_eligible_set = {f | f.id > current_id
+                          AND f.id NOT IN merged_into_set
+                          AND f.id NOT IN already_routed_set}
+
+where:
+  current_id          = the finding triggering merge picker
+  merged_into_set     = findings already participating as merged-into a primary (cannot be re-merged)
+  already_routed_set  = findings already assigned an action in Stage 2 (not "remaining unprocessed")
+```
+
+Pickers SHALL surface candidates from this set only; refusing to include in-eligible findings prevents the three-way+ merge scenarios that MVP doesn't support.
+
 ```
 Step 1 — partner picker (4-option):
   question: "Merge finding {current} with which?"
   options: [{candidate-1}] [{candidate-2}] [{candidate-3}] [Other]
-  - candidates = remaining unprocessed findings(已 routed 的不能再被 merge,partner)
-  - Other → free-pick by finding_id
+  - candidates ∈ partner_eligible_set (per formal definition above)
+  - Other → free-pick by finding_id (still subject to eligibility check; refused if violates set)
 
 Step 2 — combined target picker (4-option):
   question: "Merged {current}+{partner} should go to..."
