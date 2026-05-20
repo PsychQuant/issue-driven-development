@@ -273,8 +273,74 @@ UPSTREAM=$(echo "$REPO_JSON" | jq -r '.parent.nameWithOwner // empty')
 | Telegram chat range | `mcp__plugin_che-telegram-mcp_telegram-all__get_chat_history(chat_id, limit)` 或 `dump_chat_to_markdown` | 列舉 chat 中所有 `[photo]` / `[document]` / `[video]` placeholder → 嘗試 MCP `download_file`（若存在）→ 否則**明列檔名 + 必要請求**讓使用者用 Telegram client 手動存檔到指定路徑後 skill 接手 upload |
 | Apple Mail / 郵件 | `mcp__plugin_che-apple-mail-mcp_mail__get_email(message_id)` | `list_attachments` → `save_attachment(filename, output_path)` |
 | Apple Notes | `mcp__plugin_che-apple-notes-mcp_notes__get_note` | 同上 export 全部 inline 圖 |
+| Pasted image (`[Image: source: ~/.claude/image-cache/...]`) | n/a — image-only | **立即** `cp` 到 `/tmp/idd-issue-attachments/issue_pending_XXXXXX.png` (via `mktemp`) 在 *讀到 annotation 的同一 tool turn* — see "Pasted-image immediate-persistence" below (v2.70.0+, #112) |
 | 直接貼文字（無附件） | argument 直接帶文字 | n/a |
-| 混合（文字 + 圖片貼上） | argument 帶文字 + 使用者另外提供 path 清單 | 把使用者給的 path 全部納入 Step 4 上傳清單 |
+| 混合（文字 + 圖片貼上） | argument 帶文字 + `[Image:...]` annotation | **每張 pasted image 都套用 Pasted-image immediate-persistence**;使用者額外提供的 file path 直接納入 Step 4 上傳清單 |
+
+#### Pasted-image immediate-persistence (v2.70.0+, #112)
+
+**Why this step**: Claude Code's `~/.claude/image-cache/<session-id>/` is per-session + cleared by context compaction / session lifecycle / session-id rollover (continued session under fresh id). Step 1 → Step 4 separation (read annotation in Step 1, upload in Step 4) spans `AskUserQuestion` + Step 2.5/2.6 + Step 3 `gh issue create` + Step 4 upload — easily long enough for the cache to be evicted between turns. When this hits, Step 4's `gh release upload <image-cache-path>` fails because `ls` returns nothing; the user has to re-paste, violating the *spirit* of Step 1's data-preservation hard rule.
+
+**Rule (SHALL)**: when Step 1 encounters a `[Image: source: <path>]` annotation in the prompt, **`cp` the image to a stable staging path within the SAME tool turn** that first sees the annotation. Do NOT defer to Step 4. The staged path joins Step 4's upload list; the original `~/.claude/image-cache/` path is no longer referenced after Step 1.
+
+**PASTED_IMAGE_PATHS source contract** (as of v2.70.0+): when the agent (Claude Code) sees `[Image: source: <path>]` annotation(s) in the user's prompt (one or more), populate a bash array `PASTED_IMAGE_PATHS=( "/Users/che/.claude/image-cache/<session-id>/1.png" ... )` with one entry per annotation before invoking the staging loop below. The annotation is currently the only authoritative source per the v2.70.0+ Claude Code prompt format — there is no separate enumeration API; the agent reads the prompt text and extracts annotation `source:` values verbatim. (If future Claude Code versions add drag-drop or other attachment annotation forms, this contract may need extension.)
+
+```bash
+# Run in the SAME tool turn that first sees the [Image: source: ...] annotation.
+# Do NOT split into a separate turn — that's the bug class #112 surfaced.
+mkdir -p /tmp/idd-issue-attachments
+
+# Track staged paths for Step 4 upload. MUST be declared as array (not string) so
+# Step 4's ATTACHMENT_PATHS+=("${PASTED_IMAGES_STAGED[@]}") concatenation works.
+declare -a PASTED_IMAGES_STAGED=()
+
+for src_path in "${PASTED_IMAGE_PATHS[@]}"; do
+  if [ ! -f "$src_path" ]; then
+    # Cache already evicted before Step 1 ran (rare — happens in compaction-resumed sessions
+    # where the new agent loop runs under a fresh session id, original cache dir is gone).
+    # Fallback: ask user to re-provide. Documented in spec as the known failure mode.
+    echo "⚠ Pasted-image source $src_path no longer exists (cache evicted)." >&2
+    echo "  Please re-paste the image OR provide a stable path; continuing without this attachment." >&2
+    continue
+  fi
+  # Stage to /tmp via mktemp — collision-safe even under hostile concurrency.
+  # mktemp guarantees uniqueness (atomic create-or-fail per POSIX); pre-existing
+  # `$(date +%s)_$RANDOM` had ~0.4% collision rate at 1000 tight-loop trials
+  # (v2.70.0+ #112 logic-reviewer finding). mktemp closes that channel structurally.
+  #
+  # macOS BSD mktemp uses 6-X template by default; GNU mktemp accepts the same. Output
+  # is the actual unique pathname. The .png extension is appended after mktemp returns
+  # to preserve mime detection downstream.
+  staged_base=$(mktemp /tmp/idd-issue-attachments/issue_pending_XXXXXX) || {
+    echo "✗ mktemp failed for /tmp/idd-issue-attachments — skipping $src_path" >&2
+    continue
+  }
+  staged_path="${staged_base}.png"
+  mv "$staged_base" "$staged_path"   # rename so .png extension is present
+  cp "$src_path" "$staged_path"
+  PASTED_IMAGES_STAGED+=("$staged_path")
+  echo "→ Staged $src_path → $staged_path"
+done
+```
+
+**Step 4 hand-off contract**: Step 4's attachment-upload loop MUST concatenate `PASTED_IMAGES_STAGED[@]` into its `ATTACHMENT_PATHS[@]` upload list. Explicit example:
+
+```bash
+# In Step 4, after gathering other attachment paths (from docx export_image / pdfimages / etc):
+ATTACHMENT_PATHS+=("${PASTED_IMAGES_STAGED[@]}")
+
+# Then iterate ATTACHMENT_PATHS for gh release upload.
+```
+
+This makes the hand-off explicit — staged paths from Step 1's pasted-image handler flow through to Step 4 without a separate enumeration step.
+
+**Step 4 reference contract**: when uploading attachments, iterate `PASTED_IMAGES_STAGED[@]` (NOT the original `[Image: source:...]` paths). The annotation in the prompt is only the *initial pointer*; the staged copy is the durable artifact.
+
+**Why `/tmp` not in-repo `.claude/.idd/issue-pending/`**: anonymous + system-cleanup-friendly + doesn't pollute version control. The in-repo alternative was considered but rejected per `feedback_lead_minimal` — system housekeeping handles cleanup without policy surface.
+
+**Why not Read-then-Write via Claude Code tools**: Bash `cp` preserves bytes exactly + handles binary efficiently. Read/Write would re-encode through Claude's text channel for binary content.
+
+**Compaction-resumed session edge case**: if the cache was evicted before Step 1 even runs (extreme: long pre-Step-1 turn or session-id rollover), the `[ ! -f "$src_path" ]` check fails — fallback prints a warning + continues without that attachment. User can re-paste in a follow-up.
 
 #### MCP plugin presence pre-flight (v2.54+, #27 fail-fast)
 

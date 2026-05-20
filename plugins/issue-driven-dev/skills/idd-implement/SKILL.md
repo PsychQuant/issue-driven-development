@@ -110,14 +110,30 @@ TaskCreate(name="sister_bug_sweep", description="Step 5.7: review session log + 
 ```
 
 ```bash
-# 1. Parse flag + count issue args (cluster mode = ≥2 #N)
+# 1. Parse flag + count DISTINCT well-formed issue args (cluster mode = ≥2 #N)
+#
+# v2.70.0+ #100 Finding 2 — glob hardening:
+#   - Previous glob `\#[0-9]*` matched any `#<digit><anything>` including
+#     malformed tokens like `#42abc` (the `*` absorbed the trailing letters)
+#   - Duplicate args like `#34 #34` over-counted as 2, tripping CLUSTER_MODE
+#     on a single distinct issue
+#   - Strict regex `^#[0-9]+$` (matching batch-and-cluster.md documented form)
+#     + associative-array dedup closes both issues
 PR_FLAG=""  # "pr" / "no-pr" / ""
+declare -A SEEN_ISSUES=()
 ISSUE_COUNT=0
 for arg in "$@"; do
     case "$arg" in
         --pr)     PR_FLAG="pr" ;;
         --no-pr)  PR_FLAG="no-pr" ;;
-        \#[0-9]*) ISSUE_COUNT=$((ISSUE_COUNT + 1)) ;;
+        \#*)
+            # Strict integer check + dedup (v2.70.0+ #100)
+            arg_num="${arg#\#}"
+            if [[ "$arg_num" =~ ^[0-9]+$ ]] && [ -z "${SEEN_ISSUES[$arg_num]:-}" ]; then
+                SEEN_ISSUES[$arg_num]=1
+                ISSUE_COUNT=$((ISSUE_COUNT + 1))
+            fi
+            ;;
     esac
 done
 CLUSTER_MODE="false"
