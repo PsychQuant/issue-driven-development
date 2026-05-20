@@ -273,7 +273,7 @@ UPSTREAM=$(echo "$REPO_JSON" | jq -r '.parent.nameWithOwner // empty')
 | Telegram chat range | `mcp__plugin_che-telegram-mcp_telegram-all__get_chat_history(chat_id, limit)` 或 `dump_chat_to_markdown` | 列舉 chat 中所有 `[photo]` / `[document]` / `[video]` placeholder → 嘗試 MCP `download_file`（若存在）→ 否則**明列檔名 + 必要請求**讓使用者用 Telegram client 手動存檔到指定路徑後 skill 接手 upload |
 | Apple Mail / 郵件 | `mcp__plugin_che-apple-mail-mcp_mail__get_email(message_id)` | `list_attachments` → `save_attachment(filename, output_path)` |
 | Apple Notes | `mcp__plugin_che-apple-notes-mcp_notes__get_note` | 同上 export 全部 inline 圖 |
-| Pasted image (`[Image: source: ~/.claude/image-cache/...]`) | n/a — image-only | **立即** `cp` 到 `/tmp/idd-issue-attachments/issue_pending_<ts>_<rand>.png` 在 *讀到 annotation 的同一 tool turn* — see "Pasted-image immediate-persistence" below (v2.70.0+, #112) |
+| Pasted image (`[Image: source: ~/.claude/image-cache/...]`) | n/a — image-only | **立即** `cp` 到 `/tmp/idd-issue-attachments/issue_pending_XXXXXX.png` (via `mktemp`) 在 *讀到 annotation 的同一 tool turn* — see "Pasted-image immediate-persistence" below (v2.70.0+, #112) |
 | 直接貼文字（無附件） | argument 直接帶文字 | n/a |
 | 混合（文字 + 圖片貼上） | argument 帶文字 + `[Image:...]` annotation | **每張 pasted image 都套用 Pasted-image immediate-persistence**;使用者額外提供的 file path 直接納入 Step 4 上傳清單 |
 
@@ -283,7 +283,7 @@ UPSTREAM=$(echo "$REPO_JSON" | jq -r '.parent.nameWithOwner // empty')
 
 **Rule (SHALL)**: when Step 1 encounters a `[Image: source: <path>]` annotation in the prompt, **`cp` the image to a stable staging path within the SAME tool turn** that first sees the annotation. Do NOT defer to Step 4. The staged path joins Step 4's upload list; the original `~/.claude/image-cache/` path is no longer referenced after Step 1.
 
-**PASTED_IMAGE_PATHS source contract**: when the agent (Claude Code) sees `[Image: source: <path>]` annotation(s) in the user's prompt (one or more), populate a bash array `PASTED_IMAGE_PATHS=( "/Users/che/.claude/image-cache/<session-id>/1.png" ... )` with one entry per annotation before invoking the staging loop below. The annotation is the **only** authoritative source — there is no separate enumeration API; the agent reads the prompt text and extracts annotation `source:` values verbatim.
+**PASTED_IMAGE_PATHS source contract** (as of v2.70.0+): when the agent (Claude Code) sees `[Image: source: <path>]` annotation(s) in the user's prompt (one or more), populate a bash array `PASTED_IMAGE_PATHS=( "/Users/che/.claude/image-cache/<session-id>/1.png" ... )` with one entry per annotation before invoking the staging loop below. The annotation is currently the only authoritative source per the v2.70.0+ Claude Code prompt format — there is no separate enumeration API; the agent reads the prompt text and extracts annotation `source:` values verbatim. (If future Claude Code versions add drag-drop or other attachment annotation forms, this contract may need extension.)
 
 ```bash
 # Run in the SAME tool turn that first sees the [Image: source: ...] annotation.
