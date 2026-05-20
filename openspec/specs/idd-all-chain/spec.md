@@ -158,7 +158,7 @@ After the chain queue is processed (full success, per-root partial failure, or a
 2. `Refs #<root_1> #<root_2> ... #<chained_1> #<chained_2> ...` listing all chained issue numbers (all roots first, then their spawns)
 3. A `## Cluster overview` section with a table summarizing each issue (issue number, `root_id` it belongs to, spawn source, phase, head commit)
 4. A `## Per-issue details` section using collapsed `<details>` HTML elements per issue
-5. A `## Pending review` checklist where the final box reads `Pending: human review of cluster PR + /idd-close <issue list> after merge`
+5. A `## Review status` checklist where the final box reads `- [x] **Verify-gated**: per-issue verify PASS — cluster ready to merge → /idd-close #<root> #<chained_1> ... per issue after merge` (default), or with `--review` opt-in `awaiting human acceptance (re-opened confirmation loop per --review)` (per #108 NSQL doctrine; section heading swapped from `## Pending review` in v2.66.0)
 
 The PR body SHALL NOT contain `Closes #N` / `Fixes #N` / `Resolves #N` trailers (per existing IDD discipline against auto-close).
 

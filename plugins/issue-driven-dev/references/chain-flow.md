@@ -246,7 +246,7 @@ Refs #<root_1> #<root_2> ... #<chained_1> #<chained_2> ...    (roots first, then
 
 ...
 
-## Pending review
+## Review status
 
 - [x] Diagnose ✓ for all <N> issues
 - [x] Implement ✓
