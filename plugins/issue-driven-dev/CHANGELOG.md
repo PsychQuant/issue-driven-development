@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.70.0] - 2026-05-20
+
+### Fixed
+
+- **`idd-issue` Step 1 pasted-image immediate-persistence** ([#112](https://github.com/PsychQuant/issue-driven-development/issues/112)): Claude Code's `~/.claude/image-cache/<session-id>/` is per-session + cleared by context compaction / session lifecycle / session-id rollover. Step 1 → Step 4 separation (read annotation in Step 1, upload in Step 4) spans `AskUserQuestion` + Step 2.5/2.6 + Step 3 `gh issue create` + Step 4 upload — easily long enough for cache eviction. 2026-05-20 downstream incident (`kiki830621/ai_martech_global_scripts#788`) hit exactly this failure mode. NEW immediate-persistence rule: when Step 1 encounters `[Image: source: <path>]` annotation, `cp` to `/tmp/idd-issue-attachments/issue_pending_<ts>_<rand>.png` in the **same tool turn** that reads the annotation; Step 4 references the staged path, not the original cache path. Anonymous `/tmp` staging (POSIX-safe, system-cleanup-friendly, no repo pollution) per `feedback_lead_minimal`. Fallback for already-evicted source: warn + continue without that attachment.
+
+### Refactored
+
+- **`spectra-archive` skill `.agents/` ↔ `.claude/` sync** ([#93](https://github.com/PsychQuant/issue-driven-development/issues/93)): #93 surfaced 3-copy divergence between `.claude/skills/`, `.agents/skills/`, and `plugins/.../references/spectra-skills/`. Investigation refuted the diagnose-time recommendation to delete `.agents/` — 4 openspec specs reference `.agents/skills/spectra-*/SKILL.md` as Spectra-tier dependencies (the path is LIVE, not legacy). Revised disposition: sync `.agents/skills/spectra-archive/SKILL.md` from `.claude/` so both LIVE load paths carry the v1.3+ Implementation Complete auto-post feature (#56). `plugins/.../references/spectra-skills/spectra-archive/` left as historical snapshot (no markdown cross-refs found; low cleanup ROI per `lead-minimal`). **Sister-skill divergences out of scope**: 7 other spectra-* skills (audit / discuss / propose / apply / ingest / debug / commit) also diverge between `.claude/` and `.agents/` — audit comment on #93 documents the drift matrix; each candidate filed for separate follow-up as needed. Drift-prevention CI hook deferred until drift recurs naturally.
+
+- **`idd-implement` cluster detection glob hardening + Option A-final doc** ([#100](https://github.com/PsychQuant/issue-driven-development/issues/100)): two non-blocking findings from PR #99 (#96) verify rounds.
+  - **Finding 1 (design)** — Option A (cluster mode unconditionally forces PR regardless of branch context) confirmed final. NEW `### Feature-branch + cluster + direct-commit — rejected case` subsection in `references/pr-flow.md` § Cluster mode override documenting the rejected Option B (branch-context-gated cluster direct-commit) with comparison table + rationale. Contract simplicity wins; feature-branch direct-commit workflow remains viable for single-issue `--no-pr` invocations.
+  - **Finding 2 (refactor)** — `idd-implement` Step 0.5 cluster detection bash hardened. Previous glob `\#[0-9]*` over-matched (`#42abc` counted, `#34 #34` over-counted as 2). Replaced with strict integer check (`[[ "$arg_num" =~ ^[0-9]+$ ]]`) + associative-array dedup matching the documented `^#\d+$` form in `batch-and-cluster.md`. 0 behavior change for well-formed distinct invocations.
+
+### Notes
+
+- Plugin v2.70.0 is a **minor** bump (over v2.69.0) covering 3 issues across `idd-issue` + `idd-implement` + `pr-flow.md` + `.agents/skills/spectra-archive/SKILL.md`. All changes additive (#112 immediate-persistence + #93 sync + #100 glob hardening + Option A-final documentation). Cluster PR for review surface — verify ensemble runs over the cumulative diff.
+- Marketplace.json sync deferred to `/idd-close` Step 6.5 chain (per repo precedent).
+
 ## [2.69.0] - 2026-05-20
 
 ### Fixed
