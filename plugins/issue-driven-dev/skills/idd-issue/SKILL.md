@@ -283,13 +283,17 @@ UPSTREAM=$(echo "$REPO_JSON" | jq -r '.parent.nameWithOwner // empty')
 
 **Rule (SHALL)**: when Step 1 encounters a `[Image: source: <path>]` annotation in the prompt, **`cp` the image to a stable staging path within the SAME tool turn** that first sees the annotation. Do NOT defer to Step 4. The staged path joins Step 4's upload list; the original `~/.claude/image-cache/` path is no longer referenced after Step 1.
 
+**PASTED_IMAGE_PATHS source contract**: when the agent (Claude Code) sees `[Image: source: <path>]` annotation(s) in the user's prompt (one or more), populate a bash array `PASTED_IMAGE_PATHS=( "/Users/che/.claude/image-cache/<session-id>/1.png" ... )` with one entry per annotation before invoking the staging loop below. The annotation is the **only** authoritative source — there is no separate enumeration API; the agent reads the prompt text and extracts annotation `source:` values verbatim.
+
 ```bash
 # Run in the SAME tool turn that first sees the [Image: source: ...] annotation.
 # Do NOT split into a separate turn — that's the bug class #112 surfaced.
 mkdir -p /tmp/idd-issue-attachments
 
-# Track staged paths in an array for Step 4 to upload.
-PASTED_IMAGES_STAGED=()
+# Track staged paths for Step 4 upload. MUST be declared as array (not string) so
+# Step 4's ATTACHMENT_PATHS+=("${PASTED_IMAGES_STAGED[@]}") concatenation works.
+declare -a PASTED_IMAGES_STAGED=()
+
 for src_path in "${PASTED_IMAGE_PATHS[@]}"; do
   if [ ! -f "$src_path" ]; then
     # Cache already evicted before Step 1 ran (rare — happens in compaction-resumed sessions
@@ -299,14 +303,36 @@ for src_path in "${PASTED_IMAGE_PATHS[@]}"; do
     echo "  Please re-paste the image OR provide a stable path; continuing without this attachment." >&2
     continue
   fi
-  # Stage to /tmp with timestamp + random suffix (POSIX-safe, anonymous, no repo pollution).
-  # System /tmp housekeeping cleans these eventually; no manual cleanup required.
-  staged_path="/tmp/idd-issue-attachments/issue_pending_$(date +%s)_$RANDOM.png"
+  # Stage to /tmp via mktemp — collision-safe even under hostile concurrency.
+  # mktemp guarantees uniqueness (atomic create-or-fail per POSIX); pre-existing
+  # `$(date +%s)_$RANDOM` had ~0.4% collision rate at 1000 tight-loop trials
+  # (v2.70.0+ #112 logic-reviewer finding). mktemp closes that channel structurally.
+  #
+  # macOS BSD mktemp uses 6-X template by default; GNU mktemp accepts the same. Output
+  # is the actual unique pathname. The .png extension is appended after mktemp returns
+  # to preserve mime detection downstream.
+  staged_base=$(mktemp /tmp/idd-issue-attachments/issue_pending_XXXXXX) || {
+    echo "✗ mktemp failed for /tmp/idd-issue-attachments — skipping $src_path" >&2
+    continue
+  }
+  staged_path="${staged_base}.png"
+  mv "$staged_base" "$staged_path"   # rename so .png extension is present
   cp "$src_path" "$staged_path"
   PASTED_IMAGES_STAGED+=("$staged_path")
   echo "→ Staged $src_path → $staged_path"
 done
 ```
+
+**Step 4 hand-off contract**: Step 4's attachment-upload loop MUST concatenate `PASTED_IMAGES_STAGED[@]` into its `ATTACHMENT_PATHS[@]` upload list. Explicit example:
+
+```bash
+# In Step 4, after gathering other attachment paths (from docx export_image / pdfimages / etc):
+ATTACHMENT_PATHS+=("${PASTED_IMAGES_STAGED[@]}")
+
+# Then iterate ATTACHMENT_PATHS for gh release upload.
+```
+
+This makes the hand-off explicit — staged paths from Step 1's pasted-image handler flow through to Step 4 without a separate enumeration step.
 
 **Step 4 reference contract**: when uploading attachments, iterate `PASTED_IMAGES_STAGED[@]` (NOT the original `[Image: source:...]` paths). The annotation in the prompt is only the *initial pointer*; the staged copy is the durable artifact.
 
