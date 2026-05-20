@@ -704,15 +704,35 @@ $FILED_ONLY
 EOF
 fi
 
+# Verify-gated terminal disposition (v2.65.0+ #102) — dispatch on $REVIEW_FLAG
+# Build "Next" steps before the heredoc to avoid the ${VAR:-word} mutex pitfall
+# that PR #109 verify (F1) caught and that #108 doctrine now governs.
+if [ -n "$REVIEW_FLAG" ]; then
+  VERIFY_LINE="Verify:         verify-gated PASS across cluster — awaiting human acceptance (re-opened confirmation loop per --review)"
+  NEXT_STEPS=$(cat <<NEXT
+Next:
+  1. Review PR $PR_URL (per --review opt-in)
+  2. Merge after acceptance (squash recommended — single review surface)
+  3. /idd-close $REFS_LIST (per-issue closing summary required, no shortcut)
+NEXT
+)
+else
+  VERIFY_LINE="Verify:         verify-gated PASS across cluster — cluster ready to merge"
+  NEXT_STEPS=$(cat <<NEXT
+Next:
+  1. Merge $PR_URL (squash recommended — single review surface)
+  2. /idd-close $REFS_LIST (per-issue closing summary required, no shortcut)
+NEXT
+)
+fi
+
 cat <<EOF
   Cluster branch: $CLUSTER_BRANCH
   Refs:           $REFS_LIST
   PR:             $PR_URL
+  $VERIFY_LINE
 
-Next:
-  1. Review PR $PR_URL
-  2. Merge (squash recommended — single review surface)
-  3. /idd-close $REFS_LIST (per-issue closing summary required, no shortcut)
+$NEXT_STEPS
 EOF
 ```
 
