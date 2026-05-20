@@ -1223,9 +1223,27 @@ The name "Stage 4.5" indicates "gate fires after Stage 4 dispatch loop, before j
 # two-terminal invocations — same-second invocations produced identical filename →
 # silent audit-trail overwrite (D2 "per-invocation 一檔" contract silently violated).
 # This is the irreversible-side-effect failure mode (#103 F4 Layer P vocabulary).
-# Millisecond precision + Z suffix + noclobber retry (below) closes the collision
-# channel for typical workload; sortable ISO-8601 preserved.
-RUN_ID="$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%S.000Z)"
+#
+# Platform NOTE: GNU date supports `%3N` (millisecond truncation), but BSD date
+# (macOS native `/bin/date`) does NOT — it silently emits the literal string
+# `3N` instead of erroring. So `2>/dev/null || fallback` is NOT a working
+# fallback chain on macOS. The correct dispatch is: try GNU `%3N`, then
+# validate the output shape, fall through to nanosecond-then-truncate using
+# `%N`-supporting platforms, then absolute fallback to `.000Z`.
+RUN_ID_RAW="$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ 2>/dev/null || true)"
+if [[ "$RUN_ID_RAW" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$ ]]; then
+  RUN_ID="$RUN_ID_RAW"   # GNU date with %3N succeeded
+elif command -v python3 >/dev/null 2>&1; then
+  # BSD date emitted literal "3N" or otherwise malformed — fall back to Python
+  # which has UTC ms-precision via datetime stdlib on every platform.
+  RUN_ID="$(python3 -c 'import datetime; print(datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.") + f"{datetime.datetime.now(datetime.timezone.utc).microsecond // 1000:03d}Z")')"
+else
+  # No python3 — last-resort `.000Z` second-precision (sortable, but defeats
+  # the nonce-retry rationale below; user should install python3 for full
+  # collision resistance).
+  RUN_ID="$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
+  echo "⚠ run_id falling back to .000Z second-precision (no GNU date %3N, no python3) — collision resistance reduced." >&2
+fi
 JSONL_PATH=".claude/.idd/issue-runs/${RUN_ID}.jsonl"
 
 # Symlink check (v2.67.0+, #76 TOCTOU MEDIUM): predictable filename at known path
@@ -1245,11 +1263,20 @@ fi
 # still collide. `set -C` causes redirect to fail if target exists — retry with
 # random suffix. Combined with symlink-check above and ms-precision run_id, this
 # closes the collision channel even under hostile concurrency.
+#
+# NONCE SPACE NOTE: bash `$RANDOM` is 15-bit (range 0-32767), NOT 16-bit.
+# Birthday-paradox collision threshold within the same ms is therefore
+# ~sqrt(32768) = ~181 concurrent invocations, not ~256. Second-collision
+# abort defends; threat model is "audit overwrite", not "audit forge".
 JSONL_WRITE_GUARD() {
-  # Called by Stage 4 materialize phase right before `jq -n ... > $JSONL_PATH`.
+  # Called at RUN-START (right after RUN_ID is set) to lock the canonical
+  # filename used by all footer composition. NOT called at materialize phase —
+  # mutating the path at materialize would invalidate the footer URLs already
+  # written to GitHub bodies by Stage 4 dispatch (#79 Gap 1 disposition
+  # depends on footer URL stability).
   if [ -e "$JSONL_PATH" ]; then
     local nonce
-    nonce=$(printf '%04x' $(( RANDOM % 65536 )))
+    nonce=$(printf '%04x' $(( RANDOM % 32768 )))   # bash $RANDOM is 15-bit
     RUN_ID="${RUN_ID%.???Z}-${nonce}"
     JSONL_PATH=".claude/.idd/issue-runs/${RUN_ID}.jsonl"
     echo "⚠ run_id collision detected, retrying with nonce suffix: $RUN_ID" >&2
@@ -1259,6 +1286,16 @@ JSONL_WRITE_GUARD() {
     fi
   fi
 }
+
+# CRITICAL ORDERING (v2.67.0+ #76 fix + #79 Gap 1 dependency):
+# Invoke JSONL_WRITE_GUARD HERE, BEFORE Stage 4 dispatch composes the footer
+# URL. The footer URL `> **Run log**: .claude/.idd/issue-runs/<run_id>.jsonl`
+# must point at the SAME path the materialize phase writes. If WRITE_GUARD ran
+# at materialize phase only, a nonce-retry would mutate $JSONL_PATH AFTER
+# Stage 4 dispatch baked the original path into footer URLs → footer 404.
+# Running at run-start locks the canonical path; Stage 4 footer + Stage 4.5
+# materialize + Stage 4.5 abort-path all use the same $JSONL_PATH variable.
+JSONL_WRITE_GUARD
 
 # Cache the gate decision for this dispatch batch — gate fires once, not per-issue.
 if [ -z "${JSONL_GITIGNORE_DECISION:-}" ]; then
@@ -1476,15 +1513,34 @@ BLOCK
     # jsonl will be written but not `git add`ed — dispatch summary shows warning
     ;;
   "abort")
-    # Discard in-memory run log without materializing the jsonl file. Already-dispatched
-    # GitHub actions (gh issue create / comment / edit) remain in flight — they were
-    # confirmed by user in Stage 3 and we don't roll those back. But the local audit
-    # artifact (jsonl) is suppressed by user choice;dispatch summary shows partial run
-    # without cross-machine continuity hook.
-    unset RUN_LOG_ENTRIES   # in-memory accumulator from Stage 4 (never written to disk)
-    echo "Dispatch aborted before jsonl materialization (per user choice in Stage 4.5 gate)." >&2
-    echo "Already-dispatched GitHub actions (issue create/comment/edit) remain — no rollback." >&2
-    echo "JSONL run log NOT written;cross-machine continuity disabled for this batch." >&2
+    # v2.67.0+ #79 Gap 1 disposition (a): write MINIMAL `aborted: true` jsonl with
+    # actions already dispatched + partial timestamps. File EXISTS → footer link
+    # written by Stage 4 to GitHub bodies is now valid (no 404). Already-dispatched
+    # GitHub actions remain in flight — Stage 3 user confirmation, no rollback.
+    #
+    # In-memory entries beyond the abort decision point are still discarded —
+    # the file shows "this run was aborted with N partial actions", NOT a full
+    # pre-abort audit.
+    #
+    # Order matters: WRITE_GUARD runs BEFORE jq write to avoid nonce-collision
+    # path mutation invalidating the footer URL composed in Stage 4 dispatch.
+    # (WRITE_GUARD already ran at Stage 4.5 top to lock the canonical RUN_ID
+    # used by all footer composition;here it's a defensive re-check only.)
+    JSONL_WRITE_GUARD
+    jq -n \
+      --arg run_id "$RUN_ID" \
+      --arg source "$SOURCE_LABEL_SANITIZED" \
+      --arg source_type "$SOURCE_TYPE" \
+      --argjson total "$TOTAL_FINDINGS" \
+      --argjson actions "$RUN_LOG_ENTRIES_JSON" \
+      --arg started "$STARTED_AT" \
+      --arg completed "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
+      '{run_id: $run_id, aborted: true, source: $source, source_type: $source_type, total_findings: $total, actions: $actions, started_at: $started, completed_at: $completed, succeeded: 0, failed: 0, skipped: 0}' \
+      > "$JSONL_PATH"
+    echo "Dispatch aborted at Stage 4.5 gate." >&2
+    echo "Minimal aborted jsonl written: $JSONL_PATH" >&2
+    echo "Already-dispatched GitHub actions remain — no rollback. Footer links in those bodies" >&2
+    echo "now point at the aborted jsonl (valid file, aborted: true marker for downstream readers)." >&2
     exit 0
     ;;
   "bypass-env-var")
@@ -1624,15 +1680,47 @@ verbatim source ─────┤   (CAUTION banner above schema)
 ```bash
 sanitize_source_label() {
   local raw="$1"
-  # 1. Strip C0/C1 control chars (terminal hijack prevention)
+  # v2.67.0+ #75 F2 — UTF-8-safe sanitization.
+  #
+  # CORRECTNESS: `tr -d '\200-\237'` operates at the BYTE level and would mangle
+  # UTF-8 multibyte sequences (CJK / emoji / accented Latin). For example, the
+  # byte 0x96 appears inside legitimate UTF-8 encodings of `文` (e4 b8 ad e6 96 87)
+  # — stripping it corrupts the character. Use Python's Unicode-aware filter
+  # for the C0/DEL/C1 + bidi-override strip; bash `tr` cannot do this safely.
   local stripped
-  stripped=$(printf '%s' "$raw" | tr -d '\000-\010\013\014\016-\037\177' | LC_ALL=C tr -d '\200-\237')
-  # 2. Escape backticks (markdown code-fence escape prevention)
+  stripped=$(printf '%s' "$raw" | python3 -c '
+import sys
+raw = sys.stdin.read()
+# Strip C0 controls (U+0000-U+001F) except newline (\n=U+000A) and tab (\t=U+0009),
+# DEL (U+007F), C1 controls (U+0080-U+009F), and bidi-override / isolates
+# (U+202A-U+202E + U+2066-U+2069 — Trojan-Source CVE-2021-42574 family).
+out = []
+for ch in raw:
+    cp = ord(ch)
+    if (0x00 <= cp <= 0x08) or (0x0B <= cp <= 0x0C) or (0x0E <= cp <= 0x1F):
+        continue   # C0 controls except \n \t
+    if cp == 0x7F:
+        continue   # DEL
+    if 0x80 <= cp <= 0x9F:
+        continue   # C1 controls
+    if (0x202A <= cp <= 0x202E) or (0x2066 <= cp <= 0x2069):
+        continue   # bidi-override + directional isolates
+    out.append(ch)
+# Normalize CRLF / lone CR → LF
+text = "".join(out).replace("\r\n", "\n").replace("\r", "\n")
+sys.stdout.write(text)
+' 2>/dev/null) || {
+    echo "✗ ABORT: sanitize_source_label python3 step failed" >&2
+    return 1
+  }
+  # Escape backticks (markdown code-fence escape prevention)
   stripped="${stripped//\`/\\\`}"
-  # 3. Reject `@[A-Za-z0-9-]+` tokens — defer to tagging-collaborators.md 5-step protocol
-  #    (rather than silently strip — silently stripping a legitimate `@scope/package.docx`
-  #    name corrupts the audit trail; refuse instead and force the caller to use the
-  #    documented mention path).
+  # Reject `@[A-Za-z0-9-]+` tokens — defer to tagging-collaborators.md 5-step protocol
+  # (rather than silently strip — silently stripping a legitimate `@scope/package.docx`
+  # name corrupts the audit trail; refuse instead and force the caller to use the
+  # documented mention path). Underscore intentionally included in the refuse pattern
+  # — over-broad but conservative: GitHub logins don't allow `_`, so `@scope_name`
+  # cannot be a real login, but the refusal prompts the caller to be explicit.
   if printf '%s' "$stripped" | grep -qE '@[A-Za-z0-9_-]+'; then
     echo "✗ ABORT: source label contains '@' mention pattern: '$stripped'" >&2
     echo "  Mentions MUST go through rules/tagging-collaborators.md 5-step protocol." >&2
@@ -1642,6 +1730,8 @@ sanitize_source_label() {
   printf '%s' "$stripped"
 }
 ```
+
+**Implementation note**: bash `tr -d '\200-\237'` (LC_ALL=C or default) strips at the byte level and would corrupt UTF-8 multibyte sequences. The Python implementation operates on code points (Unicode-aware) and preserves CJK, emoji, accented Latin characters, etc. — only the targeted control characters and bidi-override code points are removed. Empirically validated: `中文` (U+4E2D U+6587) passes through unchanged; `Schultz scale\x9F12 items` has the C1 byte stripped but `Schultz scale12 items` (and any non-Latin content) preserved.
 
 All footer composition paths (Stage 4 dispatch — `create` / `comment` / `edit`) MUST pass `<source>` through this helper before embedding in body markdown. Mention-validation cross-references the canonical [`rules/tagging-collaborators.md`](../../rules/tagging-collaborators.md) 5-step protocol — multi-finding mode does NOT bypass it.
 
