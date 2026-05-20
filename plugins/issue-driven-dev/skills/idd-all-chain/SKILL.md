@@ -115,7 +115,7 @@ for ((i=0; i<${#ARGS[@]}; i++)); do
       # v2.65+ #102 — opt-in re-open NSQL confirmation loop.
       # Propagated to each chained /idd-all #M --in-chain in Phase 2 so per-issue
       # Phase 6 reports also reflect; Phase 4 chain final report also dispatches.
-      # Messaging-only effect — does NOT make chain wait. Per MANIFESTO
+      # Orchestrator-scope messaging-only effect (per #108 DA3) — does NOT make chain wait. Per MANIFESTO
       # "Human-in-the-loop: IDD 即 NSQL Confirmation Protocol" doctrine.
       REVIEW_FLAG="--review" ;;
     --cwd=*) CWD_FLAG="${arg#--cwd=}" ;;

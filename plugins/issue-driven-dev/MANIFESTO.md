@@ -116,7 +116,7 @@ IDD 的 human-in-the-loop 不是隨意散落在 pipeline 各處的 ad-hoc 確認
 
 罕見情境裡，user 想對自己 issue 起疑（"我可能 issue 寫錯了"），可以用 `--review` flag 重開 confirmation loop。Phase 6 報告會從 `verify-gated PASS, ready to merge` 切成 `verify-gated PASS — awaiting human acceptance (re-opened confirmation loop per --review)`。
 
-`--review` **不是 quality gate** —— 它是 opt-in 重開 confirmation loop。Verify 的 falsifiability 不受影響；改變的只是「user 還想自己再過一次」的 explicit 表態。`--review` 是 per-invocation flag，**不是** standing config field —— 一個 exception 不該升格成 standing policy。
+`--review` **不是 quality gate** —— 它是 **orchestrator-scope** opt-in 重開 confirmation loop (per #108 DA3)。Verify 的 falsifiability 不受影響；改變的只是「user 還想自己再過一次」的 explicit 表態。`--review` 是 per-invocation flag，**不是** standing config field —— 一個 exception 不該升格成 standing policy。
 
 ### auto-merge 的合法性與限制
 
