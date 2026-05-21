@@ -79,7 +79,7 @@ Inherits `/idd-all` config protocol (walked-up `.claude/issue-driven-dev.local.j
 TaskCreate(name="preflight", description="Phase 0: 解析 args (≥1 root + optional --bfs/--review)、gh auth、確認每個 root issue 都 OPEN")
 TaskCreate(name="parse_review_flag", description="Phase 0: 解析 --review flag → $REVIEW_FLAG (Phase 2 chain loop 傳到 sub-/idd-all --in-chain;Phase 4 final report wording 切換 verify-gated default vs awaiting human acceptance;per #102 NSQL doctrine)")
 TaskCreate(name="check_diagnosis_readiness", description="Phase 0.4 (v2.55+ #47, helper extracted v2.57+ #51, multi-root v2.60+ #46): invoke scripts/check-diagnosis-readiness.sh <github-repo> <root1> [<root2> ...] → JSON {ready/not_ready}; not_ready=0 → silent pass; not_ready>0 → AskUserQuestion 3-option (run /idd-diagnose first / proceed anyway / cancel). Placed before cluster branch / manifest creation so cancel has zero side effect.")
-TaskCreate(name="cap_exceeded_preflight", description="Phase 0.4.5 (v2.71+, #119): fail-fast refuse if ${#ROOTS[@]} > CHAIN_MAX_ISSUES — cite docs/workflows.md Anti-pattern A3 (P-chain-from-root 多 root 用 batch 跑) + suggest batch /idd-diagnose path. Placed before Phase 0.5 cluster branch so refuse leaves zero side effect.")
+TaskCreate(name="cap_exceeded_preflight", description="Phase 0.4.5 (v2.71+, #119): fail-fast refuse if N_ROOTS > CHAIN_MAX_ISSUES — cite docs/workflows.md Anti-pattern A3 (P-chain-from-root 多 root 用 batch 跑) + suggest batch /idd-diagnose path. Placed before Phase 0.5 cluster branch so refuse leaves zero side effect. CHAIN_MAX_ISSUES hoisted here (also set in Phase 1 init_queue, kept in sync).")
 TaskCreate(name="setup_cluster_branch", description="Phase 0.5: 建 cluster branch — N=1 用 idd/chain-<N>-<slug>, N>1 用 idd/chain-multi-<hash8>-<root1-slug> from default branch + 初始化 spawn manifest schema v2 (root_issues + traversal)")
 TaskCreate(name="init_queue", description="Phase 1: QUEUE seeded with all roots (sorted asc), per-root DEPTH_MAP[$root]=0, ROOT_ID_MAP, FAIL_ROOTS set, CHAIN_MAX_DEPTH=3 + CHAIN_MAX_ISSUES=10")
 TaskCreate(name="chain_loop", description="Phase 2: 主 loop — DFS push-front / BFS push-back for new spawns, per-root depth cap + global max-issues cap, per-root halt on verify FAIL (Q4 Option C — purge same-root pending, other roots continue)")
@@ -264,14 +264,17 @@ gh issue edit "$ROOT_ISSUE" -R "$GITHUB_REPO" --body "$NEW_BODY"
 
 ```bash
 # Phase 0.4.5: cap-exceeded fail-fast preflight (#119)
-if [[ ${#ROOTS[@]} -gt $CHAIN_MAX_ISSUES ]]; then
-  echo "✗ refuse: ${#ROOTS[@]} roots exceeds chain_max_issues=$CHAIN_MAX_ISSUES (hard cap as ripple-chain guardrail)"
-  echo ""
-  echo "本 invocation 看起來不適合 chain (N roots 大於 ripple chain 安全上限)。"
-  echo "Per docs/workflows.md Anti-pattern A3 (P-chain-from-root 多 root 用 batch 跑):"
-  echo "  → 應走 batch /idd-diagnose $(printf '#%s ' "${ROOTS[@]}") + (P-atomic 或 P-cluster-pr) per cluster"
-  echo "  → 或 narrow scope 到 single root + ripple-chain semantic"
-  exit 1
+# F1+F2 fix (post-cb96579 verify): use ROOT_ISSUES_SORTED / N_ROOTS (set in Phase 0.1),
+# hoist CHAIN_MAX_ISSUES here (it is also set in Phase 1 init_queue, kept in sync —
+# any change to one must mirror the other).
+CHAIN_MAX_ISSUES=10   # matches Phase 1 init_queue value (line ~377)
+
+if (( N_ROOTS > CHAIN_MAX_ISSUES )); then
+  abort "$N_ROOTS roots exceeds chain_max_issues=$CHAIN_MAX_ISSUES (hard cap as ripple-chain guardrail).
+本 invocation 看起來不適合 chain (N roots 大於 ripple chain 安全上限)。
+Per docs/workflows.md Anti-pattern A3 (P-chain-from-root 多 root 用 batch 跑):
+  → 應走 batch /idd-diagnose $(printf '#%s ' "${ROOT_ISSUES_SORTED[@]}") + (P-atomic 或 P-cluster-pr) per cluster
+  → 或 narrow scope 到 single root + ripple-chain semantic"
 fi
 ```
 
