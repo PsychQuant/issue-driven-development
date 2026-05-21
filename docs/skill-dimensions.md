@@ -49,7 +49,7 @@ IDD plugin 已累積 14+ skills(`idd-issue` / `idd-diagnose` / `idd-implement` /
 
 **Anti-pattern**:把「diagnose 是 deliberation moment」的紀律,放進「user 信任 AI 預設」的 automation 中。
 
-**Cross-link**:[PsychQuant/psychquant-claude-plugins#89](https://github.com/PsychQuant/psychquant-claude-plugins/issues/89) — 本向度的完整 design discussion + 3 個變更建議。
+**Cross-link**:#122 — 本向度的完整 design discussion + 3 個變更建議。
 
 ---
 
@@ -238,7 +238,7 @@ IDD plugin 已累積 14+ skills(`idd-issue` / `idd-diagnose` / `idd-implement` /
 | `idd-all` | **Auto (Hyb degraded)** ⚠ | Orch | (跨 D / E / Side) | W | (跨) | S / Cluster | mostly SHALL but soft Phase 0.4 | Hyb | Sk + flags | Cl-non |
 | `idd-all-chain` | **Auto × N (Hyb degraded)** ⚠ | Orch | (跨) | W | (跨) | Ch (1 root + N spawn) | mostly SHALL but soft Phase 0.4 | Hyb | Sk + flags | Cl-non |
 
-⚠ = D1 design tension(per [PsychQuant/psychquant-claude-plugins#89](https://github.com/PsychQuant/psychquant-claude-plugins/issues/89))— 預設過 aggressive,proposal 改為 Sup(Supervised Automation)。
+⚠ = D1 design tension(per #122)— 預設過 aggressive,proposal 改為 Sup(Supervised Automation)。
 
 ---
 
@@ -264,7 +264,7 @@ Dimensions **不正交** — 某些值組合互相 reinforce,某些互相 confli
 
 | Dimension / 概念 | 權威 source |
 |---|---|
-| D1 Separation vs Automation(完整 design discussion + 3 變更建議) | [PsychQuant/psychquant-claude-plugins#89](https://github.com/PsychQuant/psychquant-claude-plugins/issues/89) |
+| D1 Separation vs Automation(完整 design discussion + 3 變更建議) | #122 |
 | D3 Deliberation 哲學 + Human-in-the-loop | `plugins/issue-driven-dev/MANIFESTO.md` § Human-in-the-loop section |
 | D5 Closure axis + falsifiability | MANIFESTO § Two-dimension model |
 | D6 Batch vs Cluster vs Chain canonical contract | `plugins/issue-driven-dev/references/batch-and-cluster.md` |
@@ -281,7 +281,7 @@ Dimensions **不正交** — 某些值組合互相 reinforce,某些互相 confli
 - **首次版本**:2026-05-21 — AI agent skeleton,由 `/idd-issue` invocation 過程 distill(session at `ai_martech_global_scripts` repo,user observed `idd-all-chain` 預設 swallow `idd-diagnose` 的 design tension)
 - **觸發 insight**:user 一句「在idd裡面分成 idd-issue → idd-diagnose → idd-all/idd-all-chain 等三步奏,也就是 idd-all 不能跳過 diagonose」
 - **D11 補入**:2026-05-21(同日)— user 提出 reframing:「不是強制,而是要把所有可能的 path 都列出來」→ 新增 `docs/workflows.md` path catalog,D11 連結到該文件
-- **Companion issue**:[#89 strict separation proposal](https://github.com/PsychQuant/psychquant-claude-plugins/issues/89)(原 framing,reframing 後 supersede 為 path catalog approach,issue body 不變但 design intent 已調整)
+- **Companion issue**:#122 strict separation proposal(原 framing,reframing 後 supersede 為 path catalog approach,issue body 不變但 design intent 已調整;原 marketplace#89 已 transfer 過來)
 
 ### Maintenance discipline
 

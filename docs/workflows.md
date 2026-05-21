@@ -113,7 +113,7 @@ idd-issue → idd-all #N
 - **Assumptions**:user 信任 AI 對 issue 的 internal diagnose 不會 misalign
 - **Risks**:**中-高** — deliberation moment 被 swallow;若 issue body 模糊,AI auto-proceed 可能 mis-route
 - **適用情境**:`/loop` autonomous mode / quick housekeeping P3 issues
-- **Cross-link**:[#89](https://github.com/PsychQuant/psychquant-claude-plugins/issues/89) 提案改 Supervised Automation
+- **Cross-link**:#122 提案改 Supervised Automation
 
 #### P-cluster-pr — N issues 共 1 PR
 
@@ -470,7 +470,7 @@ Q1: 是 single issue 還是 multi issues?
 
 ## Provenance
 
-- **首次版本**:2026-05-21 — AI agent skeleton,由 user 對 [PsychQuant/psychquant-claude-plugins#89](https://github.com/PsychQuant/psychquant-claude-plugins/issues/89) 提出 reframing(「不是強制,而是把所有可能 path 都列出來」)觸發
+- **首次版本**:2026-05-21 — AI agent skeleton,由 user 對 #122(原 marketplace#89,已 transfer 過來)提出 reframing(「不是強制,而是把所有可能 path 都列出來」)觸發
 - **觸發 insight**:user observation:強制單一 path 違反 user agency;path catalog 讓 discipline 在 user 選 path 時 explicit
 
 ### Maintenance discipline
