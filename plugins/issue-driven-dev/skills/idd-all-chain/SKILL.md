@@ -65,7 +65,7 @@ Take 1 root issue, recursively solve any chain-eligible spawned issues (from sub
 Inherits `/idd-all` config protocol (walked-up `.claude/issue-driven-dev.local.json`). Chain-specific cap is hard-coded constants (not config-driven, to avoid config sprawl):
 
 - `chain_max_depth = 3` — applies **per root subtree**: each root starts at depth 0, immediate spawns at depth 1, deepest allowed at depth 3 (v2.60+, #46)
-- `chain_max_issues = 10` — global cap across all root subtrees combined; both caps apply independently, whichever triggers first wins (v2.60+, #46)
+- `chain_max_issues = 10` — **hard cap** as ripple-chain guardrail (per #119: cap 是 ripple subtree 安全上限, 非 batch knob — multi-root batch 應走 `/idd-all #N #M ... --pr` cluster-pr path 而非 chain). Global cap across all root subtrees combined; both caps apply independently, whichever triggers first wins (v2.60+, #46;v2.71+, #119)
 
 當 spawn 超過 cap 時:仍 file 為 follow-up issue (sub-skill 既有 audit trail 不變),但**不**加進 chain queue。
 
@@ -79,6 +79,7 @@ Inherits `/idd-all` config protocol (walked-up `.claude/issue-driven-dev.local.j
 TaskCreate(name="preflight", description="Phase 0: 解析 args (≥1 root + optional --bfs/--review)、gh auth、確認每個 root issue 都 OPEN")
 TaskCreate(name="parse_review_flag", description="Phase 0: 解析 --review flag → $REVIEW_FLAG (Phase 2 chain loop 傳到 sub-/idd-all --in-chain;Phase 4 final report wording 切換 verify-gated default vs awaiting human acceptance;per #102 NSQL doctrine)")
 TaskCreate(name="check_diagnosis_readiness", description="Phase 0.4 (v2.55+ #47, helper extracted v2.57+ #51, multi-root v2.60+ #46): invoke scripts/check-diagnosis-readiness.sh <github-repo> <root1> [<root2> ...] → JSON {ready/not_ready}; not_ready=0 → silent pass; not_ready>0 → AskUserQuestion 3-option (run /idd-diagnose first / proceed anyway / cancel). Placed before cluster branch / manifest creation so cancel has zero side effect.")
+TaskCreate(name="cap_exceeded_preflight", description="Phase 0.4.5 (v2.71+, #119): fail-fast refuse if ${#ROOTS[@]} > CHAIN_MAX_ISSUES — cite docs/workflows.md Anti-pattern A3 (P-chain-from-root 多 root 用 batch 跑) + suggest batch /idd-diagnose path. Placed before Phase 0.5 cluster branch so refuse leaves zero side effect.")
 TaskCreate(name="setup_cluster_branch", description="Phase 0.5: 建 cluster branch — N=1 用 idd/chain-<N>-<slug>, N>1 用 idd/chain-multi-<hash8>-<root1-slug> from default branch + 初始化 spawn manifest schema v2 (root_issues + traversal)")
 TaskCreate(name="init_queue", description="Phase 1: QUEUE seeded with all roots (sorted asc), per-root DEPTH_MAP[$root]=0, ROOT_ID_MAP, FAIL_ROOTS set, CHAIN_MAX_DEPTH=3 + CHAIN_MAX_ISSUES=10")
 TaskCreate(name="chain_loop", description="Phase 2: 主 loop — DFS push-front / BFS push-back for new spawns, per-root depth cap + global max-issues cap, per-root halt on verify FAIL (Q4 Option C — purge same-root pending, other roots continue)")
@@ -253,6 +254,27 @@ gh issue edit "$ROOT_ISSUE" -R "$GITHUB_REPO" --body "$NEW_BODY"
 
 > **Removed pseudo-fallback for unattended caller**: 早期 design 含 `IN_CHAIN_CONTEXT` env var 偵測作 unattended fallback,但實際 repo 中**無任何 producer** sets this var(/idd-verify #47 P1 finding 1)。`/idd-all-chain` 是 user-invoked deliberation moment,沒 unattended caller path,該 env detection 是 dead code,移除。若未來真有 unattended caller,需明確設計 producer + 文件化 detection convention。
 
+#### Step 0.4.5: Cap-exceeded fail-fast preflight (v2.71+, #119)
+
+當 user 傳入的 root 數量 > `CHAIN_MAX_ISSUES`(hard cap=10,per Configuration 段)時,**fail-fast refuse** 並 cite `docs/workflows.md` Anti-pattern A3(P-chain-from-root 多 root 用 batch 跑)。Placed before Phase 0.5 cluster branch / manifest creation,refuse 留零 side effect。
+
+> **Why fail-fast not silent-truncate**:Pre-v2.71 行為是 user 傳 14 roots → Phase 2 loop 處理到第 10 個 break,剩下 4 個 root 被 "filed only, not chained" silent truncate。User 看不出有 4 個沒被處理(#103 F4 "irreversible side effect" failure mode)。本 step 把 quantitative gate 移到 Phase 0,**user 看到 refuse 即知**該換 path(batch `/idd-diagnose` + per-cluster `/idd-all`),而不是等 chain 跑完才發現一半工作沒做。
+>
+> **Why hard refuse not warn-continue**:per #119 reframing decision,cap 是 ripple-chain guardrail(N>cap = 設計初衷外的使用場景),不是 batch knob。`docs/workflows.md` A3 文件 already 教育 user「14 sibling roots 不適合 chain」;skill 端 fail-fast 強制 explicit choice(narrow scope 或 switch path),消除 silent partial-success 失敗模式。
+
+```bash
+# Phase 0.4.5: cap-exceeded fail-fast preflight (#119)
+if [[ ${#ROOTS[@]} -gt $CHAIN_MAX_ISSUES ]]; then
+  echo "✗ refuse: ${#ROOTS[@]} roots exceeds chain_max_issues=$CHAIN_MAX_ISSUES (hard cap as ripple-chain guardrail)"
+  echo ""
+  echo "本 invocation 看起來不適合 chain (N roots 大於 ripple chain 安全上限)。"
+  echo "Per docs/workflows.md Anti-pattern A3 (P-chain-from-root 多 root 用 batch 跑):"
+  echo "  → 應走 batch /idd-diagnose $(printf '#%s ' "${ROOTS[@]}") + (P-atomic 或 P-cluster-pr) per cluster"
+  echo "  → 或 narrow scope 到 single root + ripple-chain semantic"
+  exit 1
+fi
+```
+
 #### Step 0.5: Cluster branch setup
 
 ```bash
@@ -365,7 +387,7 @@ DFS (default) pushes new spawns to **front** of queue (rich subtree first); BFS 
 while [ ${#QUEUE[@]} -gt 0 ]; do
   # Global cap check (max-issues=10 applies to total across all root subtrees)
   if [ ${#PROCESSED[@]} -ge $CHAIN_MAX_ISSUES ]; then
-    echo "⚠ chain_max_issues=$CHAIN_MAX_ISSUES reached. Remaining queue (filed but NOT chained): ${QUEUE[*]}"
+    echo "⚠ chain_max_issues=$CHAIN_MAX_ISSUES reached. Remaining queue (filed but NOT chained): ${QUEUE[*]} (per docs/workflows.md anti-pattern A3)"
     break
   fi
 
@@ -465,7 +487,7 @@ while [ ${#QUEUE[@]} -gt 0 ]; do
             ROOT_ID_MAP["$SPAWN_NUM"]="$CURRENT_ROOT"   # inherit owning root
             echo "  → enqueued #$SPAWN_NUM (kind=$KIND, depth=$NEXT_DEPTH, root_id=$CURRENT_ROOT, push=${TRAVERSAL})"
           else
-            echo "  ⊘ #$SPAWN_NUM eligible but max-issues cap reached — filed only, not chained"
+            echo "  ⊘ #$SPAWN_NUM eligible but max-issues cap reached — filed only, not chained (per docs/workflows.md anti-pattern A3)"
           fi
         else
           echo "  ⊘ #$SPAWN_NUM eligible but depth>$CHAIN_MAX_DEPTH (per-root) — filed only, not chained"
@@ -793,6 +815,7 @@ EOF
 | Chained verify FAIL (the only root subtree) | Equivalent to halting the whole queue; commits preserved; Phase 4 report shows single root FAIL |
 | Chain depth > 3 (per root) | Spawn filed (sub-skill audit trail) but NOT enqueued, chain continues |
 | Chain total issues > 10 | Same — filed only, not enqueued, chain continues |
+| Chain total roots > 10 at Phase 0 (v2.71+, #119) | Phase 0.4.5 fail-fast refuse with anti-pattern A3 cite (no cluster branch / no manifest created) |
 | Manifest helper invoked with 8 args under v2 helper | Helper exits 2 (usage error); sub-skill should pass 9th `root_id` arg |
 | Manifest helper detects v1 schema on disk | Helper exits 1 (schema mismatch); migration hint printed |
 | `gh pr create` 失敗 | Phase 3 abort, branch 已 push, 提示手動開 PR |
