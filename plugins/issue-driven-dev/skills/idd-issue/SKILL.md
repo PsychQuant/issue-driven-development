@@ -109,6 +109,7 @@ TaskCreate(name="apply_blocked_by", description="Step 3.B: 若 --blocked-by <M>[
 TaskCreate(name="orchestrate_bundle_mode", description="Step 3.B: 若 --bundle-mode <ordered|unordered> set,建 epic + N children + 自動套用 --parent + (ordered 時)Blocked-by 鏈;與 group 模式互斥")
 TaskCreate(name="attach_images", description="上傳圖片到 attachments release 並編輯 issue body 嵌入(若有)")
 TaskCreate(name="create_milestone", description="來源為文件時自動建立 milestone 並指派(見 Step 4.5)")
+TaskCreate(name="clarity_surface", description="Step 4.6: delegate to /idd-clarify $NEW_ISSUE_NUMBER per IC clarity axis (skip in --multi-finding mode); failure → emit 'deferred' placeholder block + continue to Step 4.7 (per #135 v4 composable primitive design)")
 TaskCreate(name="linked_context_sister_sweep", description="Step 4.7: scan body draft + linked attachments + recent session conversation for sibling-concern markers (also / additionally / 另外 / 順便 / etc); if hits AskUserQuestion 3-option per canonical references/ic-r011-checkpoint.md; PATCH just-created issue body with `### Linked-Context Siblings Filed` audit trail (advisory, non-blocking, per IC_R011 #529)")
 TaskCreate(name="report_and_stop", description="回報 issue number/URL(group 模式列全部 + cross-link),停下等使用者決定下一步")
 ```
@@ -827,6 +828,65 @@ done
 **觸發條件**：來源為文件（.docx, .pdf, .md 等）且建立了 2 個以上 issues。
 **命名**：優先用文件內的主標題，沒有則問使用者。
 **不觸發**：單一 issue 或非文件來源。
+
+### Step 4.6: Clarity Surface (v2.71.0+, PsychQuant/issue-driven-development#135)
+
+**Compliance**: this step implements the **Terminology / Semantic accuracy** axis(third axis in IDD quality framework — alongside IC_R010 Confidence + IC_R007 Verbatim)per the composable primitive pattern in `/idd-clarify` skill。
+
+**Why this step**:當 issue 來源含 domain-specific terms(統計 / ML / 商業分析 / medical / legal),source 用詞可能跟 canonical term 有 mismatch(QEF #804「特徵值」實際是「分群變數」typical case)。或 source 描述 analysis 需要 X 但未指明 X 來源(missing-context gap)。Without this step,downstream `idd-diagnose` / `idd-implement` chain 繼承錯誤越走越歪。
+
+**Rule (SHALL, mandatory)**:在 Step 4.5 milestone 完成後、Step 4.7 sister sweep 開始前,**必須** auto-delegate `/idd-clarify $NEW_ISSUE_NUMBER`,除非 `--multi-finding` mode。
+
+**Trigger predicate**:
+
+| Source type | Step 4.6 行為 |
+|---|---|
+| `.docx` / `.pdf` doc source | auto-delegate `/idd-clarify` |
+| Pasted text(含 mixed text+pasted images)| auto-delegate `/idd-clarify` |
+| Telegram chat / Apple Mail / Apple Notes | auto-delegate `/idd-clarify` |
+| `--multi-finding` mode | **SKIP**(per design D3 — 每 finding sub-invocation 跑會 multiply prompt) |
+
+**Procedure**:
+
+```bash
+# Skip in --multi-finding mode
+if [ -n "$MULTI_FINDING_MODE" ]; then
+  echo "→ Step 4.6 skipped: --multi-finding mode (per #135 v4 design D3)"
+else
+  # Delegate to idd-clarify; capture exit code
+  Skill(skill="issue-driven-dev:idd-clarify", args="#$NEW_ISSUE_NUMBER")
+  CLARIFY_EXIT=$?
+
+  if [ $CLARIFY_EXIT -ne 0 ]; then
+    # Failure handling: emit deferred placeholder so downstream gate doesn't silently bypass
+    DEFERRED_BLOCK="
+
+### Clarity Surface (deferred — see retry hint)
+
+| Type | Source | Suggested canonical | Status |
+|---|---|---|---|
+| (deferred) | /idd-clarify invocation failed | Run /idd-clarify #$NEW_ISSUE_NUMBER manually to populate | deferred |
+"
+    NEW_BODY="${CURRENT_BODY}${DEFERRED_BLOCK}"
+    gh issue edit $NEW_ISSUE_NUMBER --repo $GITHUB_REPO --body "$NEW_BODY"
+    echo "⚠ /idd-clarify failed (exit $CLARIFY_EXIT) — appended deferred placeholder; continuing to Step 4.7" >&2
+  fi
+fi
+```
+
+**Why deferred placeholder on failure**:Step 0.5 gate(in `idd-diagnose`)greps for `### Clarity Surface` block。若 Step 4.6 failure silent skip,downstream gate 看 body 缺 block,fall through to「legacy issue」branch(per `idd-diagnose-clarity-gate` backward-compat scenario)→ silently bypass。Deferred placeholder 強制 user explicit attention,符合「surface 不 silent ignore」哲學。
+
+**Ordering invariant**:
+
+```
+Step 4.5 Milestone  →  Step 4.6 Clarity Surface  →  Step 4.7 Sister Sweep  →  Step 4.8 Split Umbrella SOP
+```
+
+Step 4.7 sister sweep 讀 body **AFTER** Step 4.6 已 append annotation,所以 sister sweep 看到的 body 是 已加 Clarity Surface 後的版本。Anti-order(clarity 在 sister 之後)會讓 sister scan 看到 source 原詞 surface 出 sister concern,實際只是 terminology problem 該由 clarify 處理 — 兩個 axis 混淆,per design D1 rationale。
+
+**Why mandatory not advisory**:per design D2 + #135 v4 — clarity 是 first-class quality axis,不該被 silent skip。`--multi-finding` 的 skip 是 narrow exemption(cost prevention),不是 escape hatch。
+
+**Backward compat for unattended mode**:`/idd-all` UNATTENDED MODE directive 下 Step 4.6 仍 auto-delegate。`/idd-clarify` 自己處理 unattended decision(per sister #137 contract,deferred — 暫定 fail-fast)。
 
 ### Step 4.7: Linked-Context Sister Sweep (v2.48.0+, kiki830621/ai_martech_global_scripts#529)
 
