@@ -888,64 +888,26 @@ Step 4.7 sister sweep 讀 body **AFTER** Step 4.6 已 append annotation,所以 s
 
 **Backward compat for unattended mode**:`/idd-all` UNATTENDED MODE directive 下 Step 4.6 仍 auto-delegate。`/idd-clarify` 自己處理 unattended decision(per sister #137 contract,deferred — 暫定 fail-fast)。
 
-### Step 4.7: Linked-Context Sister Sweep (v2.48.0+, kiki830621/ai_martech_global_scripts#529)
+### Step 4.7: Linked-Context Sister Sweep
 
-**Compliance**: this step implements [IC_R011](https://github.com/kiki830621/ai_martech_global_scripts/issues/516) commercial low-bar filing for the **issue-creation context window** per the canonical [`references/ic-r011-checkpoint.md`](../../references/ic-r011-checkpoint.md) pattern (3-option AskUserQuestion + audit trail + rollback hatch).
+**Per IC_R011 follow-up filing checkpoint** (see [`references/ic-r011-checkpoint.md`](../../references/ic-r011-checkpoint.md))。
 
-**Why this step**: when user invokes `/idd-issue` from a session with scout history / attached document / linked source material, the session log + attachments often contain references to **sibling concerns** — `also` / `another bug` / `additionally` / 「另外」 / 「順便」 — that are tangentially relevant but not the user's primary issue. Without checkpoint, those mentions stay in conversation;the user files one issue + walks away with N orphan mentions still un-tracked.
+**Trigger condition**: 在 Step 5 (回報並停止) 前,scan 3 個 linked-context 來源 sibling-concern markers(per canonical §2 heuristic):
+- **Issue body draft** — `also` / `additionally` / `related` / 「另外」 / 「順便」 / `BTW` 等 sister marker 暗示超出 primary scope 的旁支
+- **Linked attachments** (per IC_R007 attachments policy) — 附件內部 reference 沒被帶進 body 的 sibling concern
+- **Recent session conversation** — invocation 前 ~20 turn 的 orphan 提及(bug / refactor / observation 沒被捕捉)
 
-**Why advisory not mandatory**: per canonical eligibility criteria §6 — `/idd-issue` is itself an action of filing. **Double-prompting risks user-friction** (just filed an issue + immediately asked "anything else?"). Light-touch: only surface if grep clearly hits sister markers in linked context. Empty list = silent no-op.
+Empty surface list = legitimate silent no-op(per canonical §4 `(none surfaced)`)。
 
-**Rule (SHOULD, advisory)**: 在 Step 5 (回報並停止) 前，scan issue body draft + linked attachments + recent session conversation for sibling-concern markers. 若任何 hit → AskUserQuestion 3-option per canonical reference doc。**Non-blocking** — user 可選 skip 直接 finalize。
+**Per-step deviation**:
+- **Light-touch surfacing** — per canonical §6, `/idd-issue` is light-touch (filing-active moment, double-prompt risk)。Heuristic 須**明顯命中** linked context 才 surface;乾淨的 single-issue invocation(無附件、無 scout history)預期 empty,直接跳過 audit trail 的 `(none surfaced)` 也可。
+- **Parent direction** — Sibling issues reference the just-created `#NEW_ISSUE` as parent context, **NOT** vice versa。Just-created issue body stays focused on user's primary concern;sibling issue 的 title 用 `(sibling concern from #$NEW_ISSUE)` suffix,body 含 canonical §7 footer。
+- **Audit trail target**:`### Linked-Context Siblings Filed (v2.48.0+ #529)` PATCHed into the just-created issue body(per canonical §4.1 heading conventions table)。
+- **Non-blocking** — user skip / empty list 都不阻擋 Step 5 報告完成。
 
-**Heuristic — what counts as "linked-context sibling worth surfacing"** (per IC_R011 default-on triggers, full list in `ic-r011-checkpoint.md` §2):
+**Default behavior (v2.72.0+)**: File by default per canonical §1.1。Skip requires 3-category taxonomy per canonical §1.4((a) unactionable / (b) infeasible → filed with `blocker:infeasible` / (c) blocked-on-external → filed with `blocker:waiting`)。Escape hatch(`AI_LOW_BAR_ISSUE_FILING=false` env var / `# Disable IC_R011` CLAUDE.md flag)reverts to legacy 3-option ask per canonical §5。
 
-- **Issue body draft** contains `also` / `additionally` / `related` / 「另外」 / 「順便」 / `BTW` mentioning concerns beyond the primary scope
-- **Linked attachments** (per IC_R007 attachments policy) contain sibling-concern references that didn't make it into issue body
-- **Recent session conversation** (last ~20 turns before `/idd-issue` invocation) has orphan mentions of bugs/refactors/observations that weren't captured
-
-**Default-off exemptions**: per canonical reference doc §3 — purely exploratory observations / existing issue covers / hallucinated without evidence / CONSTRAINT not TODO. Plus: **single-issue invocation with no attached document and no scout history**, the heuristic typically returns empty — silent skip.
-
-**Procedure**:
-
-1. **Scan + classify**: AI scans the 3 sources (body draft / attachments / recent conversation), surfaces orphan-mention list:
-
-   ```
-   {N}. [source: body|attachment:doc.pdf|conversation] suggests follow-up: {1-line description}
-        Trigger: {sister marker phrase}
-        Proposed type: bug / refactor / docs / test
-        Proposed labels: confidence:confirmed, priority:P3
-   ```
-
-2. **AskUserQuestion** 3-option (per canonical reference doc §1, with creation-specific framing):
-   - `file as sibling issues now` → batch `gh issue create` per orphan mention (parallel issues, NOT cross-linked into the just-created issue body)
-   - `file selected` → numbered checklist for cherry-pick
-   - `skip` → audit-trail line in original issue body
-
-3. **File issues** (if "file as sibling issues now" or "file selected"):
-
-   ```bash
-   for item in $selected_items; do
-     gh issue create --repo "$GITHUB_REPO" \
-       --title "[$type] $description (sibling concern from #$NEW_ISSUE)" \
-       --body "$BODY_WITH_SOURCE_LINK" \
-       --label "$type,confidence:confirmed,priority:P3"
-   done
-   ```
-
-   Body MUST contain `**Source**: surfaced during /idd-issue #$NEW_ISSUE linked-context sister sweep (Step 4.7)` for traceability. Sibling issues reference the just-created `#NEW_ISSUE` as parent context, NOT vice versa (the just-created issue body stays focused on user's primary concern).
-
-4. **Update just-created issue body** (Step 3 已 created): PATCH the body to append `### Linked-Context Siblings Filed (v2.48.0+ #529)` section per canonical heading conventions table:
-   - "file as sibling issues now / file selected" → `Filed sibling issues: #NNN, #MMM, #PPP`
-   - "skip" → `Skipped per user choice (kept inline mentions: brief list of descriptions)`
-   - empty surface list → `(none — no orphan sibling mentions in linked context)`
-   - `AI_LOW_BAR_ISSUE_FILING=false` env var → `skipped (AI_LOW_BAR_ISSUE_FILING=false, per IC_R011 rollback)`
-
-   Use `gh issue edit "$NEW_ISSUE" --body "$UPDATED_BODY"` to PATCH.
-
-**Rollback escape hatch**: per canonical reference doc §5 — `AI_LOW_BAR_ISSUE_FILING=false` env var or `# Disable IC_R011` flag in repo CLAUDE.md silently skips checkpoint while preserving audit trail.
-
-> **Why advisory (SHOULD) not mandatory (SHALL)?** `/idd-issue` semantic is "file an issue I'm thinking about right now" — user is already in filing-active mode. Asking again right after creates double-prompt friction. Surface only when heuristic clearly hits;default to silent no-op for clean single-issue invocations. Per canonical eligibility criteria §6: issue creation is light-touch advisory, not the deliberation moment that demands SHALL strength (those are diagnose / plan / implement / discuss / propose).
+> **Why light-touch deviation**: per canonical §6 eligibility table, `/idd-issue` is SHALL-tier but light-touch(filing-active moment) — default file still applies, but heuristic gating prevents double-prompt friction on clean single-issue invocations。
 
 ### Step 4.8: Split Umbrella SOP (v2.54+, #11)
 

@@ -531,77 +531,28 @@ gh pr create --title "$PR_TITLE" --body "$PR_BODY" \
 
 ### Step 5.7: Sister Bug Sweep (v2.44.0+, kiki830621/ai_martech_global_scripts#526)
 
-**Compliance**: this step implements [IC_R011](https://github.com/kiki830621/ai_martech_global_scripts/issues/516) commercial low-bar filing for the **mid-implementation reproduction window** per the canonical [`references/ic-r011-checkpoint.md`](../../references/ic-r011-checkpoint.md) pattern (3-option AskUserQuestion + audit trail + rollback hatch).
+**Per IC_R011 follow-up filing checkpoint** (see [`references/ic-r011-checkpoint.md`](../../references/ic-r011-checkpoint.md))。
 
-**Why this step**: manual reproduction during TDD execution (Step 3) often surfaces same-root-cause sister bugs in adjacent files. 2026-05-03 cluster `#510 → #518 → #520` proves the inconsistency: 3 separate same-pattern bugs (gen_*.R / fix_wiser / _build.R) each required user manual reminder to file. Without mechanical checkpoint, AI spirit-alignment drifts.
+**Trigger condition**: 在 chain to /idd-verify (Step 6) 前，review session log from Step 1 (Read Issue) through Step 5.5 (PR opened, if applicable) for sister-bug discoveries surfaced during TDD execution (Step 3) — manual reproduction often reveals same-root-cause sister bugs in adjacent files. Empty list 是合法結果，但 step 本身不可省略。
 
-**Rule (SHALL)**: 在 chain to /idd-verify (Step 6) 前，**必須** review session log from Step 1 (Read Issue) through Step 5.5 (PR opened, if applicable) for sister-bug discoveries; AskUserQuestion 3-option per canonical reference doc. Empty list 是合法結果，但 step 本身不可省略。
+**Per-step deviation**:
+- **Reproduction trace evidence**: surface candidates from session log + grep paths + TDD reproduction trace (not just diffs). 2026-05-03 cluster pattern `#510 → #518 → #520` (gen_*.R / fix_wiser / _build.R, 3 separate same-pattern bugs each required user manual reminder to file) motivates the SHALL strength here — without mechanical checkpoint, AI spirit-alignment drifts.
+- **Source footer** (per canonical §7): each filed issue body MUST contain `**Source**: surfaced during /idd-implement #$NNN reproduction (Step 5.7)`.
+- **Chain manifest write** (additive, v2.55+ #44 / v2.60+ #46 schema v2): when chain context is active, also append a machine-readable entry per [`references/spawn-manifest.md`](../../references/spawn-manifest.md). Sister bugs from same-cause reproduction are typically `same_skill=true`. Root id: prefer `IDD_CHAIN_CURRENT_ROOT_ID` env var, fallback to `$NNN`; if both unset/empty, skip manifest write explicitly (defensive guard per #46 L2):
 
-**Heuristic — what counts as "sister bug worth surfacing"** (per IC_R011 default-on triggers, full list in `ic-r011-checkpoint.md` §2):
+  ```bash
+  ROOT_ID_FOR_MANIFEST="${IDD_CHAIN_CURRENT_ROOT_ID:-${NNN:-}}"
+  if [ -n "$ROOT_ID_FOR_MANIFEST" ]; then
+    bash "$CLAUDE_PLUGIN_ROOT/scripts/manifest-append.sh" \
+      "$REPO_ROOT" "$NEW_ISSUE" "idd-implement" "Step 5.7 sister bug sweep" \
+      "sister-bug" "$item_same_file" "true" "$item_title" "$ROOT_ID_FOR_MANIFEST" \
+      2>/dev/null || true   # silent skip if no manifest (chain context inactive)
+  fi
+  ```
 
-- **Same root cause manifesting in different file** — e.g. TDD fixture creation surfaced sibling file with similar broken pattern. Cluster pattern (`#510 → #518 → #520`) is the canonical example.
-- **Manual reproduction surfaced unrelated quality issue** — grep paths during scout hit sibling helper with broken pattern.
-- **Code search hit `# TODO` / `# FIXME`** in grep paths — orphan deferred work in adjacent files.
-- **Refactor opportunity adjacent to fix path** — touching file X to fix bug, encountered file Y obviously needs same refactor.
+**Audit trail target**: `### Sister Bugs Filed (mid-impl, v2.44.0+ #526)` in Implementation Complete comment (PATCH the Step 5-posted comment to append this section per canonical §4.1 heading conventions).
 
-**Default-off exemptions**: per canonical reference doc §3 — purely exploratory observations / existing issue covers / hallucinated without evidence / CONSTRAINT not TODO.
-
-**Procedure**:
-
-1. **Surface list**: AI agent reviews session log + grep paths + TDD reproduction trace, lists candidates per canonical format:
-
-   ```
-   {N}. [{file_path}{:line if applicable}] {1-line description}
-        Proposed type: bug / refactor / docs / test
-        Proposed labels: confidence:confirmed, priority:P3
-        Source: surfaced during /idd-implement #$NNN reproduction (Step 5.7)
-   ```
-
-2. **AskUserQuestion** 3-option (per canonical reference doc §1):
-   - `file all` → loop `gh issue create --repo "$GITHUB_REPO"` per item
-   - `file selected` → numbered checklist for cherry-pick
-   - `skip` → audit-trail line documenting reason
-
-3. **File issues** (if "file all" or "file selected"):
-
-   ```bash
-   for item in $selected_items; do
-     NEW_ISSUE_URL=$(gh issue create --repo "$GITHUB_REPO" \
-       --title "[$type] $description (sister bug from #$NNN)" \
-       --body "$BODY_WITH_SOURCE_LINK" \
-       --label "$type,confidence:confirmed,priority:P3")
-     NEW_ISSUE=$(basename "$NEW_ISSUE_URL")
-
-     # Chain context manifest write (per spawn-manifest contract, v2.55+ #44; v2.60+ #46 schema v2)
-     # If chain shell initialized the manifest, also append a machine-readable entry.
-     # Sister bugs from same-cause reproduction are typically same-skill — set true.
-     # 9th arg root_id: prefer chain shell's exported IDD_CHAIN_CURRENT_ROOT_ID env var;
-     # fallback to current issue's $NNN (single-root chain or root self-spawn).
-     # Defensive guard (v2.60+ #46 L2): if both env and $NNN are unset/empty, skip the manifest write
-     # explicitly instead of letting the helper reject empty root_id and the `|| true` silently swallow.
-     ROOT_ID_FOR_MANIFEST="${IDD_CHAIN_CURRENT_ROOT_ID:-${NNN:-}}"
-     if [ -n "$ROOT_ID_FOR_MANIFEST" ]; then
-       bash "$CLAUDE_PLUGIN_ROOT/scripts/manifest-append.sh" \
-         "$REPO_ROOT" "$NEW_ISSUE" "idd-implement" "Step 5.7 sister bug sweep" \
-         "sister-bug" "$item_same_file" "true" "$item_title" "$ROOT_ID_FOR_MANIFEST" \
-         2>/dev/null || true   # silent skip if no manifest (chain context inactive)
-     fi
-   done
-   ```
-
-   Body MUST contain `**Source**: surfaced during /idd-implement #$NNN reproduction (Step 5.7)` for traceability.
-
-   The manifest write is **additive** — when chain context is inactive (no manifest file), the helper exits 0 silently and behavior is identical to baseline. See `references/spawn-manifest.md` for the cross-skill contract.
-
-4. **Update Implementation Complete comment** (Step 5 已 post 的): PATCH the comment to append `### Sister Bugs Filed (mid-impl, v2.44.0+ #526)` section per canonical heading conventions table:
-   - "file all/selected" → `Filed: #NNN, #MMM, #PPP`
-   - "skip" → `Skipped per user choice (N items: brief list of descriptions)`
-   - empty surface list → `none surfaced`
-   - `AI_LOW_BAR_ISSUE_FILING=false` env var → `skipped (AI_LOW_BAR_ISSUE_FILING=false, per IC_R011 rollback)`
-
-**Rollback escape hatch**: per canonical reference doc §5 — `AI_LOW_BAR_ISSUE_FILING=false` env var or `# Disable IC_R011` flag in repo CLAUDE.md silently skips checkpoint while preserving audit trail.
-
-> **Why is this SHALL not SHOULD?** Implementation is the prime moment when sister bugs surface (manual reproduction reveals same-root-cause sibling files);30-second filing × N items vs. 30+ min reconstructing the cluster pattern weeks later. SHALL with empty list as legitimate result is the right strength.
+**Default behavior (v2.72.0+)**: File by default per canonical §1.1. Skip requires 3-category taxonomy per canonical §1.4.
 
 提示下一步：`/issue-driven-dev:idd-verify #NNN`
 

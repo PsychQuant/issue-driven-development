@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.72.0] - 2026-05-25
+
+### BREAKING (behavioral)
+
+- **IC_R011 follow-up filing default flipped from "ask 3-option" to "file by default + 3-category skip taxonomy"** ([#148](https://github.com/PsychQuant/issue-driven-development/issues/148)): user feedback after 3 consecutive `file all`-variant choices in one session ("預設要開起 issue,不然過去的問題就會消失了吧,除非是無法解決的問題") triggered systematic default-flip across 5 SHALL-tier IC_R011 sites. `idd-diagnose` Step 3.6 / `idd-plan` Step 2.5 / `idd-implement` Step 5.7 / `idd-issue` Step 4.7 / `idd-verify` Step 5b now file by default without `AskUserQuestion`. Skip requires explicit 3-category taxonomy: **(a) unactionable observation** (real skip, no issue), **(b) infeasible but understood** (auto-file P3 with `blocker:infeasible` label), **(c) blocked on external state** (auto-file P3 with `blocker:waiting` label). Only (a) avoids filing — (b) and (c) preserve the parking lot.
+
+- **`idd-close` Step 3.5 SHOULD-tier preserved** — closing summary follow-up scan retains legacy `[file all] / [file selected] / [skip]` 3-option ask (closure is wrap-up moment, not deliberation per canonical Section 6).
+
+- **Escape hatch semantic shift** — `AI_LOW_BAR_ISSUE_FILING=false` env var + `# Disable IC_R011` repo CLAUDE.md flag preserve their names but shift semantics from "silent skip checkpoint" to "revert to pre-default-flip 3-option ask". No new env var introduced. CI / unattended (no TTY) environments with `=false` set fall back to implicit (a) skip + audit trail (no AskUserQuestion possible).
+
+- **Audit trail format change** — `Skipped per user choice (...)` superseded by categorized `Skipped: (a)|(b)|(c) ...` lines for SHALL-tier sites. `idd-close` SHOULD-tier preserves legacy string. Downstream telemetry / log analysis tools matching the legacy string need to extend regex:
+  ```bash
+  # v2.72.0+ migration hint
+  grep -E "Skipped(:| per user choice)" .claude/.idd/
+  ```
+
+### Refactored
+
+- **Canonical reference `references/ic-r011-checkpoint.md` now holds the normative procedure body** (Decision 4 from #148 design): grew from 301 → 397 lines absorbing file-by-default behavior, 3-category skip taxonomy, audit trail format table (6 literal strings), Source footer normative format, Skill citation template (Section 8). 6 implementing skill SKILL.md files refactored from inline procedure duplication (~50 lines each) to cite-only form (~15-20 lines per site) per Section 8 citation template. Net effect: future IC_R011 spec changes only edit 1 file (canonical ref) instead of syncing 7 places. Maintainer grep `grep -L 'per IC_R011' plugins/issue-driven-dev/skills/idd-*/SKILL.md` returns empty (all 6 sites cite).
+
+### Fixed
+
+- **`idd-verify` Step 5b lacks canonical "Rule (SHALL/SHOULD)" framing** ([#149](https://github.com/PsychQuant/issue-driven-development/issues/149)): closed as side effect of #148 refactor. `idd-verify` Step 5b now opens with explicit `**Rule (SHALL)**` framing line consistent with other IC_R011 sites. Spec consistency gap eliminated.
+
+### Notes
+
+- Plugin v2.72.0 is a **minor** bump (over v2.70.0) covering BREAKING behavioral change. Marketplace.json sync deferred to `/idd-close` Step 6.5 chain (per repo precedent).
+- Skipping 2.71.0 — intentional (BREAKING tier change deserves visible minor gap).
+- Dogfood: this CHANGELOG entry itself was authored under the OLD default (3-option ask); first invocation under the NEW default is the post-apply `/idd-diagnose` test per task 5.1 acceptance.
+
 ## [2.70.0] - 2026-05-20
 
 ### Fixed

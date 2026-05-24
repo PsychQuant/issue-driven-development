@@ -828,62 +828,22 @@ Verified scope: #98, #105
 | 3 | LOW | ... | agents:security | Follow-up |
 ```
 
-#### Step 5b: Follow-up Issue Triage（強制，不可省略）
+#### Step 5b: Follow-up Issue Triage
 
-當有任何 finding 被標記為 `Follow-up` 時，**必須**用 AskUserQuestion 問使用者：
+**Rule (SHALL)**: when any verify finding is classified as `Follow-up` (non-blocking, beyond current issue scope), the skill SHALL surface and file follow-up issues per IC_R011.
 
-```
-question: "驗證發現 N 個 follow-up items（不影響本 issue，但值得追蹤）。要開新 issue 嗎？"
-options:
-  - "全部開" — 為每個 follow-up finding 建立獨立 issue
-  - "讓我選" — 逐一確認哪些要開
-  - "不開" — 記錄在 verification comment 中但不建 issue
-```
+**Per IC_R011 follow-up filing checkpoint** (see [`references/ic-r011-checkpoint.md`](../../references/ic-r011-checkpoint.md))。
 
-**如果使用者選「全部開」或選了部分**：
+**Trigger condition**: At least one verify finding is classified as `Follow-up` (per Step 5a triage table).
 
-1. 相似的 findings 可合併（例如同一函式的多個問題 → 一個 issue）
-2. 用 `gh issue create` 批次建立，body 引用 verification report 的原文：
-   ```markdown
-   ## Problem
+**Per-step deviation** (if any):
+- Filter findings by `Follow-up` classification only (not `Blocking` or `In-scope fix`)
+- Pre-filing: similar findings MAY be merged (e.g. same function with multiple problems → one issue)
+- Body references verify report comment URL for source provenance
 
-   > **From verification of #NNN**:
-   > 「{finding 原文}」
-   > — Source: {reviewer sources}
+**Audit trail target**: `### Follow-up Findings Filed (v2.72.0+ #148)` in verify report (master comment)
 
-   {解讀}
-
-   ## Type
-   {bug / enhancement}
-   ```
-3. 每個新 issue 的 body 加上 `Related: #NNN`
-4. **Chain context manifest write** (per spawn-manifest contract, v2.55+ #44; v2.60+ #46 schema v2):每建一個 follow-up issue,額外呼叫 manifest helper:
-   ```bash
-   NEW_ISSUE_URL=$(gh issue create ...)   # existing
-   NEW_ISSUE=$(basename "$NEW_ISSUE_URL")
-
-   # `same_file` / `same_skill` 依 finding scope 判斷:
-   # - finding 在同 file 內 → same_file=true
-   # - finding 跨 module 但同 skill (e.g. 同個 idd-* skill 不同 step) → same_skill=true
-   # - cross-cutting (跟 verified diff 完全無關) → 兩個都 false
-   # 9th arg root_id: prefer chain shell's exported IDD_CHAIN_CURRENT_ROOT_ID env var;
-   # fallback to current verified issue's $NUMBER (single-root chain or root self-spawn).
-   # Defensive guard (v2.60+ #46 L2): skip explicitly if no root_id available, instead
-   # of letting helper reject empty arg and `|| true` swallow silently.
-   ROOT_ID_FOR_MANIFEST="${IDD_CHAIN_CURRENT_ROOT_ID:-${NUMBER:-}}"
-   if [ -n "$ROOT_ID_FOR_MANIFEST" ]; then
-     bash "$CLAUDE_PLUGIN_ROOT/scripts/manifest-append.sh" \
-       "$REPO_ROOT" "$NEW_ISSUE" "idd-verify" "Phase 4 follow-up findings triage" \
-       "follow-up-finding" "$same_file" "$same_skill" "$NEW_TITLE" "$ROOT_ID_FOR_MANIFEST" \
-       2>/dev/null || true   # silent skip when chain context inactive
-   fi
-   ```
-   See `references/spawn-manifest.md` for cross-skill contract. Manifest write is **additive** — baseline audit trail unchanged when manifest absent.
-5. 輸出新建的 issue 清單
-
-**如果使用者選「不開」**：findings 已記錄在 verification comment 中，不會遺失。
-
-**為什麼強制問？** 歷史上的問題模式：verify 找到 5 個 follow-up items → 對話中討論了一下 → 使用者說「先 close」→ 所有 follow-up items 被遺忘。強制 triage 確保每個 finding 都有明確的去向（開 issue 或 conscious decision 不開）。
+**Default behavior (v2.72.0+)**: File by default per canonical Section 1.1. Skip requires 3-category taxonomy per Section 1.4.
 
 #### Step 5c: Routing
 

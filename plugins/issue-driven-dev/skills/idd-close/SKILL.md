@@ -334,71 +334,36 @@ for (bullet, reason) in WARNINGS:
 
 將 closing comment 顯示給使用者確認。
 
-### Step 3.5: Closing Summary Follow-up Keyword Scan (v2.45.0+, kiki830621/ai_martech_global_scripts#527)
+### Step 3.5: Closing Summary Follow-up Keyword Scan
 
-**Compliance**: this step implements [IC_R011](https://github.com/kiki830621/ai_martech_global_scripts/issues/516) commercial low-bar filing for the **closure window** per the canonical [`references/ic-r011-checkpoint.md`](../../references/ic-r011-checkpoint.md) pattern (3-option AskUserQuestion + audit trail + rollback hatch).
+**Rule (SHOULD)**: closing-summary keyword scan SHOULD surface follow-up mentions and ask the user via legacy 3-option AskUserQuestion `[file all] / [file selected] / [skip]`.
 
-**Why this step**: closing summaries often contain phrases like 「will follow up later」 / 「之後再做」 / 「deferred to next sprint」 — but if the mention isn't linked to an actual issue, it vanishes into the closing comment never to be tracked. By scan time, the user has just typed the summary, the matched phrase fresh in context — best moment to prompt.
+**Per IC_R011 follow-up filing checkpoint** (see [`references/ic-r011-checkpoint.md`](../../references/ic-r011-checkpoint.md))。
 
-**Rule (SHOULD, advisory)**: 在 `gh issue close` 前 (Step 4)，scan 已 drafted closing comment for trigger phrases (per canonical reference doc). 命中且 paragraph 沒 cross-link 到既有 issue → AskUserQuestion 3-option。**Non-blocking** — user 可選 skip 直接 close (per canonical eligibility criteria: closure tier is SHOULD not SHALL)。
+**SHOULD-tier (not SHALL)**: Per canonical Section 6, closure is a wrap-up moment, NOT a deliberation moment. Default-flip from v2.72.0+ does NOT apply here.
 
-**Trigger phrase regex** (per canonical reference doc §2):
+**Trigger condition**: 在 `gh issue close` 前 (Step 4)，scan 已 drafted closing comment for trigger phrases per canonical Section 2 (`follow-up` / `follow up` / `deferred` / `future` / `TODO` / `later` / `之後` / `未來` / `待` / `待 follow` / `順便` / `我之前觀察到` / `之後再` / `改天`)。For each match, read the surrounding paragraph and look for `#NNN` cross-link — orphan mentions (no `#NNN`, or stale 404 link) surface as candidates.
+
+**Behavior**: Use the **legacy 3-option ask** path per canonical Section 1.6 (NOT the file-by-default path of Section 1.1):
 
 ```
-follow-up | follow up | deferred | future | TODO | later |
-之後 | 未來 | 待 | 待 follow | 順便 | 我之前觀察到 | 之後再 | 改天
+question: "Found N closing follow-up mention(s). File as follow-up issues?"
+options:
+  - label: "file all"
+  - label: "file selected"
+  - label: "skip"
 ```
 
-**Cross-link detection logic** (decide whether matched paragraph already covered):
+**Per-step deviation**:
+- Keyword scan on closing summary text (per existing trigger phrase heuristic above)
+- Light-touch advisory — empty list legitimate, never blocks close
+- Source link: closing summary comment URL
+- When filing (file all / file selected), inline replace each mention in closing summary with `(see #NEW)` cross-link before publish (Step 3.5 runs **before** Step 4)
+- Issue body MUST contain `**Source**: surfaced during /idd-close #$NNN closing summary scan (Step 3.5)` per canonical Section 7
 
-For each trigger-phrase match:
-1. Read the paragraph (line containing match + adjacent lines if continuous)
-2. Look for `#NNN` issue number reference within the paragraph
-3. If found:
-   - `gh issue view NNN --repo $GITHUB_REPO --json state,title -q .state` → if OPEN/CLOSED with relevant title, treat as covered
-   - Stale link (404 or wrong title scope) → still treat as orphan mention, prompt user to file new
-4. If no `#NNN` reference → orphan mention, surface as candidate
+**Audit trail target**: `### Closing Follow-ups Filed (v2.45.0+ #527)` in Closing Summary comment
 
-**Procedure**:
-
-1. **Scan + classify**: AI surfaces orphan-mention list (per match: paragraph excerpt + suggested issue title):
-
-   ```
-   {N}. [paragraph: "{quoted excerpt}"] suggests: {1-line follow-up description}
-        Trigger phrase: {matched phrase}
-        Proposed type: bug / refactor / docs / test
-        Proposed labels: confidence:confirmed, priority:P3
-   ```
-
-2. **AskUserQuestion** 3-option (per canonical reference doc §1, with closure-specific framing):
-   - `file all` → loop `gh issue create` per orphan mention; replace each mention in closing summary with `(see #NEW)` cross-link
-   - `file selected` → numbered checklist for cherry-pick
-   - `skip` → keep closing summary as-is, but append audit-trail line documenting the choice
-
-3. **File issues** (if `file all` or `file selected`):
-
-   ```bash
-   for item in $selected_items; do
-     gh issue create --repo "$GITHUB_REPO" \
-       --title "[$type] $description (closing follow-up from #$NNN)" \
-       --body "$BODY_WITH_SOURCE_LINK" \
-       --label "$type,confidence:confirmed,priority:P3"
-   done
-   ```
-
-   Body MUST contain `**Source**: surfaced during /idd-close #$NNN closing summary scan (Step 3.5)` for traceability.
-
-4. **Update closing summary** (Step 2 已 drafted but not yet posted, since Step 3.5 runs **before** Step 4):
-   - Inline replacement: `「will follow up X later」` → `「will follow up X later (see #NEW)」`
-   - Append `### Closing Follow-ups Filed (v2.45.0+ #527)` audit-trail section per canonical heading conventions table:
-     - "file all/selected" → `Filed: #NNN, #MMM, #PPP`
-     - "skip" → `Skipped per user choice (kept inline mentions without cross-links: brief list)`
-     - empty surface list → `(none — no orphan mentions in closing summary)`
-     - `AI_LOW_BAR_ISSUE_FILING=false` env var → `skipped (AI_LOW_BAR_ISSUE_FILING=false, per IC_R011 rollback)`
-
-**Why advisory not blocking**: per canonical reference doc §6 — closure is mostly mechanical action with text artifact. Hard-blocking on every "future" keyword would 友 friction. Empty-list and skip-with-reason are both legitimate outcomes;the value is making the orphan-mention pattern visible at the moment of decision, not enforcing filing.
-
-**Rollback escape hatch**: per canonical reference doc §5 — `AI_LOW_BAR_ISSUE_FILING=false` env var or `# Disable IC_R011` flag in repo CLAUDE.md silently skips checkpoint while preserving audit trail.
+**Default behavior**: Per canonical Section 1.6 (legacy 3-option ask) — NOT default file.
 
 > **Disambiguation from #515 supersession**: Step 0 supersession (#515 v2.41.0) is **gate logic** preventing false-positive checklist refusals — it operates on pre-implementation Strategy/Plan checkboxes. Step 3.5 (this step, #527) is the **IC_R011 checkpoint** for orphan keyword mentions in the drafted closing summary. The two are orthogonal: Step 0 runs at gate time, Step 3.5 runs after summary draft + before final close.
 

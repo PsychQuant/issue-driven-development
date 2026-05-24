@@ -102,82 +102,22 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$IMPLEMENTATION_PLAN"
 
 > **為什麼比 idd-implement 的 plan 詳盡？** Plan tier 的 user 審查是事前 deliberation 的 core moment — plan 越具體，user 越容易抓出 missing case / wrong assumption / better alternative。idd-implement 的 plan 是「執行清單」，本 plan 是「decision artifact」。
 
-### Step 2.5: Tangential Observations Sweep (v2.42.0+, #524;canonical pattern v2.43.0+, #525)
+### Step 2.5: Tangential Observations Sweep
 
-**Compliance**: this step implements [IC_R011](https://github.com/kiki830621/ai_martech_global_scripts/issues/516) commercial low-bar filing for the **mid-plan deliberation window** — Phase 1 scouting / Phase 2 design / Phase 3 review 期間 surface 但 **沒 categorization** 的 tangential discoveries（既沒進 In-scope 也沒進 Out-of-scope，會隨 conversation 流失）。
+**Per IC_R011 follow-up filing checkpoint** (see [`references/ic-r011-checkpoint.md`](../../references/ic-r011-checkpoint.md))。
 
-**Canonical reference**: [`references/ic-r011-checkpoint.md`](../../references/ic-r011-checkpoint.md) — 3-option AskUserQuestion structure + heuristic + rollback hatch are normative there. Sections below are this skill's specific application of that pattern.
+**Trigger condition**: 在 ExitPlanMode 前（Step 4 前），review session log from Step 1（Read Issue + Diagnosis）起到本 step 為止，identify mid-plan tangential discoveries — Phase 1 scouting / Phase 2 design / Phase 3 review 期間 surface 但 **沒 categorization** 的項目（既沒進 In-scope 也沒進 Out-of-scope，會隨 conversation 流失）。empty list 是合法結果，但 step 本身不可省略。
 
-**Rule (SHALL)**: 在 ExitPlanMode 前，**必須** review session log from Step 1（Read Issue + Diagnosis）起到本 step 為止，identify tangential discoveries 並走 AskUserQuestion 流程。empty list 是合法結果，但 step 本身不可省略。
+**Per-step deviation**:
 
-**Heuristic — what counts as "tangential discovery worth surfacing"** (per IC_R011 default-on triggers):
+- **Mid-plan deliberation window**：本 step 的 surface 來源是 Plan-tier deliberation 三個 phase（Phase 1 Explore agents return summary 提到 unrelated file/function quality issue / Phase 2 Design 起草時 grep / file read 撞到 sister bug / drift / misleading TODO / Phase 3 Review 期間 user inline-mention 的 sub-concern beyond plan focus）。
+- **Out-of-scope 區塊互補**：surface 對象特別包括 Plan 結尾 Out-of-scope 區塊**沒**列出但 user 後續 close 時可能忘的「曾提到但無 categorization」項目。
+- **Plan body PATCH**：當 default file path 完成或 skip 結果出爐後，必須 PATCH Step 2 已 post 的 Implementation Plan comment 的 `### Tangential Observations` section（不是新 comment），保持 plan artifact single source of truth。
+- **Chain context manifest write**：filing 時若 `IDD_CHAIN_CURRENT_ROOT_ID` env var set（fallback `$NNN`），呼叫 `scripts/manifest-append.sh` 以 `spawn_kind=tangential` + `same_file` / `same_skill` evidence 寫入 spawn manifest（per [`references/spawn-manifest.md`](../../references/spawn-manifest.md) v2.60+ #46 schema v2）。無 chain context 時 helper 靜默 exit 0，baseline behavior 不變。
 
-- Phase 1 Explore agents return summary 內提到 unrelated file/function quality issue（非主 plan 範圍）
-- Phase 2 Design 起草時 grep / file read 撞到 sister bug / drift / misleading TODO comment
-- Phase 3 Review 期間 user inline-mention 的 sub-concern beyond plan focus
-- Verifiable behavior gap（即使 1-line fix）/ design ambiguity / observed friction / deferred work
-- Plan 結尾 Out-of-scope 區塊**沒**列出但 user 後續 close 時可能忘的「曾提到但無 categorization」項目
+**Audit trail target**: `### Tangential Observations (filed mid-plan, v2.42.0+ #524)` in Implementation Plan comment
 
-**Default-off exemptions** (per IC_R011, narrow):
-
-- 純探索 / 學術理論 brainstorm（走 IC_R010 `confidence:exploratory` routing 不在這 file）
-- 既有 issue 已 cover（grep 確認後 reference 而非 duplicate）
-- AI hallucinated without codebase evidence (per MP029 verify first)
-- CONSTRAINT not TODO（deliberate non-action，例如「不支援 X」是 design choice 不是 follow-up）
-
-**Procedure**:
-
-1. **Surface list**: Agent 自己 review conversation + scout output，列出候選項目，每項格式：
-
-   ```
-   {N}. [{file_path}{:line if applicable}] {1-line description}
-        Proposed type: bug / refactor / docs / test
-        Proposed labels: confidence:confirmed, priority:P3
-   ```
-
-2. **AskUserQuestion** 三選項：
-   - `file all` → loop 各 file 一個 follow-up issue
-   - `file selected` → 顯示 numbered checklist 給 user cherry-pick
-   - `skip` → 不 file，但仍 log 到 plan body 作 audit trail
-
-3. **File issues** (if "file all" or "file selected"):
-
-   ```bash
-   for item in $selected_items:
-     NEW_ISSUE_URL=$(gh issue create --repo "$GITHUB_REPO" \
-       --title "[$type] $description (mid-plan tangential from #$NNN)" \
-       --body "$BODY_WITH_SOURCE_LINK" \
-       --label "$type,confidence:confirmed,priority:P3")
-     NEW_ISSUE=$(basename "$NEW_ISSUE_URL")
-
-     # Chain context manifest write (per spawn-manifest contract, v2.55+ #44; v2.60+ #46 schema v2)
-     # `same_file` / `same_skill` 依 observation evidence 判斷:
-     # - tangential 觀察到同個 file 的相鄰問題 → same_file=true
-     # - 跨 file 但同 skill / module → same_skill=true
-     # - 跨 cutting concern (cross-module observation) → 兩個都 false
-     # 9th arg root_id: prefer chain shell's exported IDD_CHAIN_CURRENT_ROOT_ID env var;
-     # fallback to current planning issue's $NNN (single-root chain or root self-spawn).
-     # Defensive guard (v2.60+ #46 L2): skip explicitly if no root_id available.
-     ROOT_ID_FOR_MANIFEST="${IDD_CHAIN_CURRENT_ROOT_ID:-${NNN:-}}"
-     if [ -n "$ROOT_ID_FOR_MANIFEST" ]; then
-       bash "$CLAUDE_PLUGIN_ROOT/scripts/manifest-append.sh" \
-         "$REPO_ROOT" "$NEW_ISSUE" "idd-plan" "Step 2.5 tangential observations" \
-         "tangential" "$item_same_file" "$item_same_skill" "$item_title" "$ROOT_ID_FOR_MANIFEST" \
-         2>/dev/null || true   # silent skip when chain context inactive
-     fi
-   ```
-
-   Body 必須含：`**Source**: surfaced during /idd-plan #$NNN tangential sweep (Step 2.5)`，方便追溯。
-
-   Manifest write is **additive** — 無 chain context 時 helper 靜默 exit 0,baseline behavior 不變。See `references/spawn-manifest.md`.
-
-4. **Update plan body** (Step 2 已 post 的 comment): PATCH the comment to fill the `### Tangential Observations` section：
-   - "file all/selected" → `Tangential Observations: filed #NNN, #MMM, #PPP`
-   - "skip" → `Tangential Observations: skipped per user choice`
-   - empty surface list → `Tangential Observations: none surfaced`
-   - `AI_LOW_BAR_ISSUE_FILING=false` env var set → `Tangential Observations: skipped (AI_LOW_BAR_ISSUE_FILING=false, per IC_R011 rollback)`
-
-**Rollback escape hatch**: 若 env var `AI_LOW_BAR_ISSUE_FILING=false` 設定（per IC_R011），Step 2.5 silently skip surfacing + skip AskUserQuestion，仍寫 plan body audit trail line。Manual surfacing（user 主動 `/idd-issue` follow-up）不受影響。
+**Default behavior (v2.72.0+)**: File by default per canonical Section 1.1。Skip requires 3-category taxonomy per Section 1.4。Source footer per Section 7.2：`**Source**: surfaced during /idd-plan #N tangential sweep (Step 2.5)`。Escape hatches (`AI_LOW_BAR_ISSUE_FILING=false` env var / `# Disable IC_R011` repo flag) per Section 5。
 
 > **為什麼是 SHALL 而非 SHOULD？** Plan-tier issues 走完整 deliberation cycle，30 秒 file 一個 follow-up vs. 30 分鐘將來重新 reconstruct（per IC_R011 cost ratio）；audit trail 缺漏的代價 vs. 多 file 一個 issue 的代價，後者大幅低。SHALL 起來，empty list 是合法結果，no friction added。
 
