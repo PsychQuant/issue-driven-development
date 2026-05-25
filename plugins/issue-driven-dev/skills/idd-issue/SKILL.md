@@ -902,7 +902,7 @@ Empty surface list = legitimate silent no-op(per canonical §4 `(none surfaced)`
 **Per-step deviation**:
 - **Light-touch surfacing** — per canonical §6, `/idd-issue` is light-touch (filing-active moment, double-prompt risk)。Heuristic 須**明顯命中** linked context 才 surface;乾淨的 single-issue invocation(無附件、無 scout history)預期 empty,直接跳過 audit trail 的 `(none surfaced)` 也可。
 - **Parent direction** — Sibling issues reference the just-created `#NEW_ISSUE` as parent context, **NOT** vice versa。Just-created issue body stays focused on user's primary concern;sibling issue 的 title 用 `(sibling concern from #$NEW_ISSUE)` suffix,body 含 canonical §7 footer。
-- **Audit trail target**:`### Linked-Context Siblings Filed (v2.48.0+ #529)` PATCHed into the just-created issue body(per canonical §4.1 heading conventions table)。
+- **Audit trail target**:`### Linked-Context Siblings Filed (v2.48.0+ #529)` PATCHed into the just-created issue body(per canonical §4.1 heading conventions table)。 `(category: audit-block-append, scope: "### Linked-Context Siblings Filed")` per [`rules/append-vs-modify.md`](../../rules/append-vs-modify.md)。
 - **Non-blocking** — user skip / empty list 都不阻擋 Step 5 報告完成。
 
 **Default behavior (v2.72.0+)**: File by default per canonical §1.1。Skip requires 3-category taxonomy per canonical §1.4((a) unactionable / (b) infeasible → filed with `blocker:infeasible` / (c) blocked-on-external → filed with `blocker:waiting`)。Escape hatch(`AI_LOW_BAR_ISSUE_FILING=false` env var / `# Disable IC_R011` CLAUDE.md flag)reverts to legacy 3-option ask per canonical §5。

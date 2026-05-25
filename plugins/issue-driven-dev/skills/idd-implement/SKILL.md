@@ -395,6 +395,8 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$IMPLEMENTATION_PLAN"
 
 **Step 5a: Checklist Sync**
 
+`## Implementation Complete > ### Checklist` 在 v2.73.0+ 是 **authoritative_source winner**(priority 1 in [`rules/append-vs-modify.md`](../../rules/append-vs-modify.md))— 一旦本 Step 寫回此 section,所有 downstream gate(`idd-close` Step 0 / `idd-verify` checklist scan / `idd-update` body sync gate)都以該 section 為 implementation truth source,Strategy / Implementation Plan 的 `- [ ]` 視為 superseded snapshot 不再 gate-block。 若本 Step 跳過(無 Implementation Complete > Checklist),downstream gate fall back legacy scan all sources(保留 backward compat,但 Strategy/Plan checkbox 會被視為「未完成」可能 refuse close)。
+
 呼叫 `TaskList` 取當前所有 task 狀態，對照 Implementation Plan 的 bullet，把最終狀態寫回 `## Implementation Complete` comment 的 checkbox：
 
 | TaskList status | Comment checkbox | 意義 |
@@ -550,7 +552,7 @@ gh pr create --title "$PR_TITLE" --body "$PR_BODY" \
   fi
   ```
 
-**Audit trail target**: `### Sister Bugs Filed (mid-impl, v2.44.0+ #526)` in Implementation Complete comment (PATCH the Step 5-posted comment to append this section per canonical §4.1 heading conventions).
+**Audit trail target**: `### Sister Bugs Filed (mid-impl, v2.44.0+ #526)` in Implementation Complete comment (PATCH the Step 5-posted comment to append this section per canonical §4.1 heading conventions). **`(category: audit-block-append, scope: "### Sister Bugs Filed")` per [`rules/append-vs-modify.md`](../../rules/append-vs-modify.md)** — adds new audit block to named section without modifying existing Implementation Complete prose.
 
 **Default behavior (v2.72.0+)**: File by default per canonical §1.1. Skip requires 3-category taxonomy per canonical §1.4.
 

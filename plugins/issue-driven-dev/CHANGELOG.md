@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.74.0] - 2026-05-25
+
+### Added
+
+- **`/idd-clarify` Step 4.8.A unattended-mode auto-defer** ([#137](https://github.com/PsychQuant/issue-driven-development/issues/137)): under `[ ! -t 0 ] || [ -n "$IDD_ALL_UNATTENDED" ]` detection, scan mode emits `deferred` rows with registry-cited reason literal `unattended-auto-Step-4.6-deferred` (instead of `surfaced`)。 5-column table schema(Type / Source / Suggested canonical / Status / Reason)used in unattended variant;attended mode preserves 4-column legacy schema unchanged。 Closes #137 design space收斂 Option D(per /spectra-discuss + user explicit pick post #150 reframe)— reuse existing `deferred` enum 取代 new `unattended_review_pending` enum 提案;preserve audit visibility per #148 file-by-default discipline。
+
+- **Reason pattern registry in `rules/append-vs-modify.md`** ([#137](https://github.com/PsychQuant/issue-driven-development/issues/137)): new `### Reason pattern registry` section as single source of truth for gate-recognized reason literals。 First registered:`unattended-auto-Step-4.6-deferred`(`/idd-clarify` Step 4.8.A → `/idd-diagnose` Step 0.5 gate)。 3+ SKILL.md sites SHALL cite by reference,not inline duplication — prevents typo drift HIGH risk surface across coordinating gates。 Registry规範 dot-escape + anchored case-sensitive regex convention for new literals。
+
+- **`openspec/specs/idd-clarify/spec.md`** ([#137](https://github.com/PsychQuant/issue-driven-development/issues/137)): NEW greenfield spec — 7 SHALL requirements covering scan/update mode dispatch, three-class detection (terminology / ambiguity / missing-context), Step 4.8.A unattended detection, registry citation, IC_R007 source preservation, mandatory `/idd-issue` Step 4.6 auto-delegation, scan-mode source guard。 Retroactive #135 codification + #137 unattended branch。
+
+- **`openspec/specs/idd-diagnose-clarity-gate/spec.md`** ([#137](https://github.com/PsychQuant/issue-driven-development/issues/137)): NEW greenfield spec — 7 SHALL requirements covering hard-refuse baseline (#135), reason-pattern accept for registry-cited unattended-auto-deferred rows (#137), legacy `deferred` row refusal preservation, dot-escaped anchored regex convention, legacy backward-compat silent proceed, all-resolved silent proceed, cross-site literal alignment guarantee。
+
+### Refactored
+
+- **`/idd-diagnose` Step 0.5 gate per-row reason scan** ([#137](https://github.com/PsychQuant/issue-driven-development/issues/137)): gate logic 改 `deferred` row blanket REFUSE 為 per-row reason regex 分流(dot-escaped `^unattended-auto-Step-4\.6-deferred$`)— registry-cited literal → PROCEED-with-warn(emit audit line to stderr 標示 count + 引導 user 看 /idd-all Phase 6 Action items),non-match → preserve legacy REFUSE。 `surfaced` rows unchanged(仍 REFUSE)。 `(category: state-field-update, scope: gate condition relaxation per #150 Path C pattern + #137 reason-pattern accept)` per `rules/append-vs-modify.md`。
+
+- **`/idd-all` Phase 6 final report Action items surface** ([#137](https://github.com/PsychQuant/issue-driven-development/issues/137)): Phase 6 終端 report 之後 scan invoked sub-issues' bodies(root + spawn manifest 衍生 issues if any)for `### Clarity Surface` rows with registry-cited reason literal;found rows append 到「## Action items (require human review)」section with cite to Reason pattern registry + 引導 user `/idd-clarify resolved=<idx>,<reason>` 解決路徑。 Non-noisy:無 auto-deferred rows → section 不 emit。 `(category: audit-block-append, scope: "## Action items" final report section)`。
+
+### Notes
+
+- Plugin v2.74.0 是 **minor** bump(activate #150 `state-field-update` category for `/idd-clarify` Step 4.8.A;non-BREAKING 因 legacy `deferred` rows 行為不變)。
+- 本 change 是 `#150`(action-scoped modify discipline,shipped v2.73.0)落地的第一個下游 design — activates 4 `#150` mechanisms:`state-field-update` category extension、`audit-block-append` category(Phase 6 Action items)、Path C `authoritative_source` pattern(gate condition-based dispatch deterministic)、strict reason literal naming(prevent drift)。
+- Cluster PR with #150:branch `idd/137-150-action-scoped-cluster` 含兩 issue's implementation,cluster close via `/idd-close #137 #150`(per-issue closing summary required per IDD discipline)。
+- Sister `#152` filed for git hygiene tangential(3 pre-existing dirty items pollute cluster PRs — surfaced via #137 tangential sweep,routing TBD)。
+
+## [2.73.0] - 2026-05-25
+
+### Spec discipline (declared, runtime enforcement deferred to follow-up issue)
+
+- **`/idd-edit --replace` SHALL declare scope** ([#150](https://github.com/PsychQuant/issue-driven-development/issues/150), [spec](../../openspec/specs/append-vs-modify-discipline/spec.md) Requirement 4): action-scoped modify discipline 規範 `/idd-edit --replace` 屬 `bounded-section-replace` category — invocations SHALL be made with explicit `--scope whole-comment` (full-comment overwrite acknowledgment) OR `--section <heading-within-comment>` (named subsection scope). `--append` 跟 `--prepend-note` 屬 `audit-block-append` category (scope inherent in mode semantics) — no flag required.
+
+  **Status**: Spec-documented + AI / user invocation discipline (Claude orchestrator reads the spec + applies). **Bash-runtime enforcement deferred to [#154](https://github.com/PsychQuant/issue-driven-development/issues/154)** after 3 verify iterations (R1/R2/R3) each surfaced new bugs in incremental bash patching attempts — implementation needs proper standalone proposal with multi-line body handling + parser pattern + errata flow integration designed upfront.
+
+  **Recommended invocation pattern (AI / user discipline)**:
+  ```bash
+  /idd-edit comment:NNN --replace --scope whole-comment --body "..."
+  /idd-edit comment:NNN --replace --section "### Sister Concerns Filed" --body "..."
+  ```
+
+- **`/idd-edit` verbatim-preserve guard for user-authored comments** ([#150](https://github.com/PsychQuant/issue-driven-development/issues/150), [spec](../../openspec/specs/append-vs-modify-discipline/spec.md) Requirement 5): all 3 modes SHALL refuse modifications to comments where `author_association ≠ OWNER` and author is not in known-bot allowlist. Aligns IC_R007 verbatim source preservation discipline at comment layer. Override via `--override-user-content` + `--reason="<rationale>"`.
+
+  **Status**: Same as above — spec discipline + AI/user invocation guideline; runtime enforcement deferred to [#154](https://github.com/PsychQuant/issue-driven-development/issues/154).
+
+  **Recommended override pattern**:
+  ```bash
+  /idd-edit comment:<external-user-id> --append --body "..." \
+    --override-user-content --reason="Reformatted at original author's email request 2026-05-25"
+  ```
+
+### Added
+
+- **`plugins/issue-driven-dev/rules/append-vs-modify.md`** ([#150](https://github.com/PsychQuant/issue-driven-development/issues/150)): new plugin-level rule codifying action-scoped modify discipline. 7-category taxonomy(`state-field-update` / `bounded-section-replace` / `audit-block-append` / `inline-replace-before-publish` / `verbatim-preserve` / `append-only` / `free-rewrite`)+ decision tree for new modify-actions + boundary with IC_R007 / IC_R010 / IC_R011 sister principles + Path C gate-logic generalization pattern + backward-compat fallback note。 Parallel to existing IC rule file pattern。
+
+- **`openspec/specs/append-vs-modify-discipline/spec.md`**: normative spec with 8 SHALL requirements + 16+ scenarios。 Sourced from change `add-action-scoped-modify-discipline`(see `openspec/changes/archive/<date>-add-action-scoped-modify-discipline/`)。
+
+### Refactored
+
+- **Path C gate-logic generalization across 4 sites** ([#150](https://github.com/PsychQuant/issue-driven-development/issues/150)): `idd-close` Step 0 / `idd-verify` checklist scan / `idd-update` body sync gate / `idd-implement` Step 5 Checklist Sync 統一採用 `authoritative_source` resolution(`## Implementation Complete > ### Checklist` → `## Current Status > ### Tasks` → `## Todo`/`## Tasks`/`## Checklist` priority order)。 `#515` supersession bridge 邏輯升格為通用 pattern;legacy fallback(無 authoritative_source → scan all sources)保留 backward compat。 Strategy / Implementation Plan checkboxes 在 implementation 後一律視為 superseded snapshot,不再 gate-block。
+
+- **Retroactive action category labels** ([#150](https://github.com/PsychQuant/issue-driven-development/issues/150)): existing modify-actions retroactively 在 SKILL.md inline note 標 category — `/idd-update`(`bounded-section-replace`)/ `/idd-clarify`(`state-field-update`)/ `/idd-close` Step 3.5 inline replace(`inline-replace-before-publish`)/ IC_R011 audit PATCH in 5 skills(`audit-block-append`)。 `/idd-edit` labels deferred to [#154](https://github.com/PsychQuant/issue-driven-development/issues/154) along with runtime enforcement (3 verify iterations exposed that bash-level enforcement needs a proper proposal, not incremental patches)。 未來新 modify-action 應在 SKILL.md 描述加 `(category: <name>)` inline note per spec discipline。
+
+### Notes
+
+- Plugin v2.73.0 是 minor bump(spec discipline declaration for `/idd-edit` — not runtime BREAKING since enforcement deferred to follow-up [#154](https://github.com/PsychQuant/issue-driven-development/issues/154))。
+- 本 change ship 後 sister `#137`(unattended-mode Clarity Surface contract)+ `#151`(commit-body auto-close trap remediation)的 design 必須 align 新 principle。
+- Dogfood paradox:本 change 在 spec-driven 流程內 ship,但 spec-driven flow 本身 pre-existing 不 compliant — `proposal.md` / `design.md` / `tasks.md` 屬 `free-rewrite`(docs),`spec.md` ship 後落 `verbatim-preserve`(spec frozen)。
+
 ## [2.72.0] - 2026-05-25
 
 ### BREAKING (behavioral)

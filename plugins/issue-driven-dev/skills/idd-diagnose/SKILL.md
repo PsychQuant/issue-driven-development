@@ -84,7 +84,9 @@ TaskCreate(name="auto_update_body", description="Step 5: 跑 /idd-update #NNN �
 
 **Why this gate exists**:`idd-diagnose` 預設 issue 已 framed correctly,只做 routing + complexity。若 source 用詞有誤 / 隱含 missing-context,diagnose chain 繼承錯誤越走越歪。Step 0.5 gate 強制 user 在 diagnose 之前先處理 `### Clarity Surface` annotation block 內的 surfaced rows(per `/idd-clarify` skill output schema)。
 
-**Rule (SHALL, hard refuse)**:
+**Rule (SHALL, hard refuse + reason-pattern accept)**:
+
+`(category: state-field-update, scope: gate condition relaxation per #150 Path C pattern + #137 reason-pattern accept)` per [`rules/append-vs-modify.md`](../../rules/append-vs-modify.md)。 Reason literal cited from [Reason pattern registry](../../rules/append-vs-modify.md#reason-pattern-registry) — strict literal `unattended-auto-Step-4.6-deferred`(dot-escaped regex `^unattended-auto-Step-4\.6-deferred$`,case-sensitive)。
 
 ```bash
 # Read issue body
@@ -93,18 +95,30 @@ BODY=$(gh issue view $NUMBER --repo $GITHUB_REPO --json body --jq '.body')
 # Look for ### Clarity Surface block
 if echo "$BODY" | grep -q '^### Clarity Surface'; then
   # Extract block + count surfaced rows
-  BLOCK=$(echo "$BODY" | awk '/^### Clarity Surface/,/^### /' | head -n -1)
+  # NOTE (v2.74.1+, #137 verify R1 fix): naive `awk '/^### Clarity Surface/,/^### /'`
+  # collapses on line 1 because start regex matches end regex (both `^### `),
+  # losing all rows. Use flag-based pattern instead — also removes GNU-only
+  # `head -n -1` dependency (errors on BSD/macOS).
+  BLOCK=$(echo "$BODY" | awk '/^### Clarity Surface/{flag=1; print; next} flag && /^### /{flag=0} flag')
   SURFACED_COUNT=$(echo "$BLOCK" | grep -cE '\| surfaced \|')
-  DEFERRED_COUNT=$(echo "$BLOCK" | grep -cE '\| deferred \|')
 
-  TOTAL_UNRESOLVED=$((SURFACED_COUNT + DEFERRED_COUNT))
+  # v2.74.0+ #137 — per-row reason-pattern scan for deferred rows:
+  # Reason literal cite registered in rules/append-vs-modify.md § Reason pattern registry
+  # Strict regex (dot-escaped) — `unattended-auto-Step-4.6-deferred` is the registered literal
+  DEFERRED_TOTAL=$(echo "$BLOCK" | grep -cE '\| deferred \|')
+  DEFERRED_AUTO=$(echo "$BLOCK" | grep -cE '\| deferred \| unattended-auto-Step-4\.6-deferred \|')
+  DEFERRED_LEGACY=$((DEFERRED_TOTAL - DEFERRED_AUTO))
+
+  # Legacy deferred (no reason match, or non-registry-cited reason) → block as before
+  TOTAL_UNRESOLVED=$((SURFACED_COUNT + DEFERRED_LEGACY))
 
   if [ "$TOTAL_UNRESOLVED" -gt 0 ]; then
     cat <<EOF >&2
 ✗ Step 0.5: Clarity Surface gate refuse — Issue #$NUMBER has $TOTAL_UNRESOLVED unresolved rows.
 
 Surfaced rows: $SURFACED_COUNT
-Deferred rows: $DEFERRED_COUNT (per Step 4.6 failure handling — need manual /idd-clarify)
+Deferred rows (legacy / non-registry reason): $DEFERRED_LEGACY (REFUSE; need manual /idd-clarify)
+Deferred rows (unattended-auto, registry-cited): $DEFERRED_AUTO (PROCEED-with-warn)
 
 Resolve via:
   - /idd-clarify #$NUMBER --status resolved=<idx>,<reason>
@@ -112,10 +126,13 @@ Resolve via:
   - LINE/email domain expert and update issue body manually
 
 Then re-run /idd-diagnose #$NUMBER.
-
-(unattended contract deferred to sister #137; current behavior: fail-fast per idd-all-chain #119 precedent)
 EOF
     exit 1
+  fi
+
+  # Auto-deferred rows: PROCEED with warn audit (per #137)
+  if [ "$DEFERRED_AUTO" -gt 0 ]; then
+    echo "[Step 0.5] $DEFERRED_AUTO row(s) auto-deferred under unattended mode (reason: unattended-auto-Step-4.6-deferred) — proceeding with warn (per #137 / spec idd-diagnose-clarity-gate). Manual /idd-clarify follow-up surfaced in /idd-all Phase 6 final report Action items section." >&2
   fi
 fi
 
@@ -133,7 +150,8 @@ fi
 | Body state | Step 0.5 action |
 |---|---|
 | Has block with ≥1 `surfaced` row | REFUSE + actionable message |
-| Has block with ≥1 `deferred` row | REFUSE + retry hint message |
+| Has block with ≥1 `deferred` row (no reason / legacy reason / non-registry-cited reason) | REFUSE + retry hint message (clarify-failed / manual defer cases) |
+| Has block with ≥1 `deferred` row reason = `unattended-auto-Step-4.6-deferred` (v2.74.0+, #137) | PROCEED-with-warn (emit audit line to stderr; `/idd-all` Phase 6 Action items section surfaces for human review) |
 | Has block, all rows `resolved` / `dismissed` / `passed` | PROCEED to Step 1 |
 | No `### Clarity Surface` block(legacy pre-v2.71.0) | PROCEED with log line |
 
@@ -144,9 +162,15 @@ fi
 - Warn-continue 會讓 `### Clarity Surface` annotation 被 silently ignored = 整個 `/idd-clarify` skill 沒用,違反 codify 初衷
 - Dismiss 是 1-step 操作(`/idd-clarify #N --status dismissed=<idx>,<reason>`),refuse + easy-dismiss 等價於 explicit choice — 不擾人
 
-**Unattended mode contract**:
+**Unattended mode contract (v2.74.0+, #137)**:
 
-Sister #137 P2 是 dedicated issue 處理 unattended-mode Clarity Surface interaction(`/idd-all` PR mode 下 surface 怎麼處理),本 Step 0.5 暫定 fail-fast policy(per design D2 + sister #137 暫時 default)。`/idd-all` orchestrator 看 sub-skill REFUSE 觸發其既有 abort flow,跟 `idd-all-chain` #119 precedent 一致。
+`#137` 收斂為 Option D — reuse existing `deferred` enum + registry-cited reason literal `unattended-auto-Step-4.6-deferred`(see `rules/append-vs-modify.md` § Reason pattern registry)。
+
+- `/idd-clarify` Step 4.8.A unattended detection → 寫 `deferred` rows with reason literal
+- `/idd-diagnose` Step 0.5 gate(本 step)→ per-row reason scan,registry-cited → PROCEED-with-warn,non-registry → REFUSE(legacy backward-compat 保留)
+- `/idd-all` Phase 6 final report → surface auto-deferred rows 到「Action items」section(per #137 Strategy)
+
+完整 lifecycle 見 #137 closing summary;reason literal 集中 source 在 [Reason pattern registry](../../rules/append-vs-modify.md#reason-pattern-registry)。
 
 完整 unattended decision space 待 #137 ship 後 codify(可能 options:auto-dismiss / hold-and-flag / hard-fail)。當前 implementation 走 hard-fail 預設,可由 #137 改進。
 
@@ -547,7 +571,7 @@ Diagnosis 完成 + Step 3.4 Vagueness Pre-check 結束後，依 5 層 gate 判�
 - **Issue title suffix**: `(sister concern from #$NNN)` — distinguishes diagnose-surfaced from other sites' suffixes (e.g. plan: "mid-plan tangential", verify: "follow-up finding")
 - **Chain manifest write** (per [`references/spawn-manifest.md`](../../references/spawn-manifest.md), v2.55+ #44 / v2.60+ #46 schema v2): when filing a candidate, classify `spawn_kind` (`sister-concern` for same-root-cause-different-file vs `upstream-tracking` for cross-cutting), pass `same_file` / `same_skill` flags, and call `manifest-append.sh` with `ROOT_ID_FOR_MANIFEST="${IDD_CHAIN_CURRENT_ROOT_ID:-${NNN:-}}"` (silent skip when chain context inactive — additive behavior, baseline unchanged).
 
-**Audit trail target**: `### Sister Concerns Filed (mid-diagnose, v2.47.0+ #528)` section appended to the Diagnosis comment (Step 3 已 post) via `gh api PATCH /repos/$GITHUB_REPO/issues/comments/$COMMENT_ID`. Audit line formats per canonical §4.2.
+**Audit trail target**: `### Sister Concerns Filed (mid-diagnose, v2.47.0+ #528)` section appended to the Diagnosis comment (Step 3 已 post) via `gh api PATCH /repos/$GITHUB_REPO/issues/comments/$COMMENT_ID`. Audit line formats per canonical §4.2. **`(category: audit-block-append, scope: "### Sister Concerns Filed")` per [`rules/append-vs-modify.md`](../../rules/append-vs-modify.md)** — adds new audit block to named section without modifying existing Diagnosis prose.
 
 **Default behavior (v2.72.0+)**: File by default per canonical §1.1. Skip path requires per-candidate 3-category taxonomy per §1.4 ((a) unactionable / (b) infeasible / (c) blocked-on-external). Legacy 3-option ask preserved only under `AI_LOW_BAR_ISSUE_FILING=false` env var or `# Disable IC_R011` repo CLAUDE.md flag (per §5 escape hatches);unattended mode falls back to implicit (a) skip per §5.4.
 
