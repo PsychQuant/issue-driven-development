@@ -1,0 +1,2 @@
+SCOPE_FLAG=whole-comment
+MODE=--replace

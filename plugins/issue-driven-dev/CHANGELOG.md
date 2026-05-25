@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.75.0] - 2026-05-25
+
+### Added
+
+- **`.claude/scripts/idd-edit-helper.sh`** ([#154](https://github.com/PsychQuant/issue-driven-development/issues/154)): NEW extracted runtime helper with 3 subcommands. `parse-args` does positional shift over 7 space-form flags with explicit missing-value guards (`[ -z "${2:-}" ]` + `[[ "$2" == --* ]]`) + eq-form support + body-file readability pre-check + emits eval-friendly KEY=quoted-value via printf %q (preserves newlines). `validate-target` enforces R5 via single gh API call (author_association + login fetch) with `*[bot]` allowlist + OWNER passthrough + override pathway. `section-replace` uses awk-getline pattern (BSD/gnu safe — closes R3 C3 BSD awk -v multi-line newline reject). 5 distinct exit codes (0/1/2/3/4/5).
+
+- **`.claude/scripts/tests/idd-edit/{test.sh,fixtures/01-13/}`** ([#154](https://github.com/PsychQuant/issue-driven-development/issues/154)): NEW test infrastructure per `.claude/scripts/tests/spectra-archive-post-ic/` precedent. 13 fixtures cover R1/R2/R3 regression set: parser robustness (eq form / space form / missing value / next-flag-eats-value / unreadable file / multi-line body / single-line body / subsections / no-closing-heading), R4 gate (no scope/section refuse), R5 override pair guard (default=false / requires --reason / succeeds with both). All 13 GREEN.
+
+- **`/idd-edit` R4 runtime gate** ([#154](https://github.com/PsychQuant/issue-driven-development/issues/154)): `--replace` without `--scope whole-comment` OR `--section <heading>` → refuse with exit 3 + actionable error message + spec Requirement 4 citation. Closes #150 Requirement 4 runtime enforcement deferral. Tested by fixture 10.
+
+- **`/idd-edit` R5 runtime gate** ([#154](https://github.com/PsychQuant/issue-driven-development/issues/154)): non-OWNER non-bot comment without `--override-user-content --reason="..."` → refuse with exit 4 + helpful manual-invocation message + spec Requirement 5 citation. Bot allowlist matches `*[bot]` glob (github-actions[bot], dependabot[bot], etc.). Override appends `<!-- idd:edit override-user-content date=... reason="..." -->` audit marker to comment body. Closes #150 Requirement 5 runtime enforcement deferral.
+
+- **`/idd-comment` errata flow R5 integration** ([#154](https://github.com/PsychQuant/issue-driven-development/issues/154)): errata Template SPECIAL BEHAVIOUR sets `IDD_CALLER=idd-comment-errata` env var when auto-calling `/idd-edit --prepend-note`. On R5 refuse (exit 4), displays helpful message with exact manual invocation pattern (`--override-user-content --reason='errata clarification per IDD discipline'`). Per D2 decision (refuse-with-message > auto-override, aligns with IC_R007 user-authored-intent spirit).
+
+### Refactored
+
+- **`/idd-edit` SKILL.md Step 1** ([#154](https://github.com/PsychQuant/issue-driven-development/issues/154)): replaced inline `if [[ "$ARG" == comment:* ]]; then ... elif [[ "$ARG" == \#* ]]; then ...` pseudocode with `bash $CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.sh parse-args "$@"` invocation + eval-import. AI no longer generates parser bash inline — uses tested helper. Closes R1/R2/R3 root cause: AI bash generation inconsistency.
+
+- **`/idd-edit` SKILL.md Step 4 `--replace` mode** ([#154](https://github.com/PsychQuant/issue-driven-development/issues/154)): replaced inline `awk -v new_content="$BODY"` (R3 C3 BSD-broken) with `bash ... section-replace` invocation that uses awk-getline reading from file. Whole-comment path stays inline (no awk needed). Override audit marker appended when applicable.
+
+- **`/idd-edit` SKILL.md frontmatter `argument-hint`** ([#154](https://github.com/PsychQuant/issue-driven-development/issues/154)): updated to show new flag syntax — mode flags grouped with R4-required `--scope`/`--section` for `--replace` + new `--body-file`/`--reason`/`--override-user-content` flags.
+
+- **`/idd-edit` SKILL.md `## 使用範例`** ([#154](https://github.com/PsychQuant/issue-driven-development/issues/154)): 3 existing examples updated with new flag syntax; 2 new examples added (section-replace + errata override flow).
+
+- **`/idd-edit` SKILL.md `## Batch mode`** ([#154](https://github.com/PsychQuant/issue-driven-development/issues/154)): added per-target R4/R5 enforcement note + cross-link to [#158](https://github.com/PsychQuant/issue-driven-development/issues/158) for full batch+R5 semantics design.
+
+- **`openspec/specs/append-vs-modify-discipline/spec.md`** ([#154](https://github.com/PsychQuant/issue-driven-development/issues/154)): Purpose / Requirement 4 / Requirement 5 preambles updated from "deferred to #154" to "landed via #154" + specific helper subcommand + tested-by fixture references. Removed "Re-verify for runtime conformance when #154 closes" cleanup tags.
+
+### BREAKING (runtime)
+
+- **`/idd-edit --replace` without `--scope`/`--section` now refuses** ([#154](https://github.com/PsychQuant/issue-driven-development/issues/154)): existing AI invocations of `/idd-edit comment:NNN --replace --body "..."` will get exit 3 + R4 message. Must add `--scope whole-comment` (full overwrite) or `--section "### Heading"` (named subsection). Discipline already declared in v2.73.0/v2.74.0 spec; v2.75.0 makes it runtime-enforced.
+
+- **`/idd-edit` modifying non-OWNER non-bot comment now refuses** ([#154](https://github.com/PsychQuant/issue-driven-development/issues/154)): existing AI invocations targeting external collaborator / non-OWNER comments will get exit 4 + R5 message. Must add `--override-user-content --reason="..."` for explicit consent. `/idd-comment` errata flow auto-call gracefully handles this with helpful message.
+
+### Filed during implementation
+
+- **[#155](https://github.com/PsychQuant/issue-driven-development/issues/155)** — sister concern: bash vs alternative layer for strict flag parsing (parking-lot P3; helper extraction proves bash + thin SKILL.md orchestration works)
+- **[#156](https://github.com/PsychQuant/issue-driven-development/issues/156)** — sister concern: IDD plugin test framework (P2; partially pre-empted by reusing `.claude/scripts/tests/` fixture-dir precedent for #154 — same pattern now applies to 2 sites)
+- **[#157](https://github.com/PsychQuant/issue-driven-development/issues/157)** — tangential: spec.md `<!-- @trace -->` blocks lack auto-updater (parking-lot P3)
+- **[#158](https://github.com/PsychQuant/issue-driven-development/issues/158)** — tangential: `/idd-edit` batch mode + R5 interaction semantics decision (P2; single-target enforcement shipped, batch interaction follow-up)
+
 ## [2.74.0] - 2026-05-25
 
 ### Added

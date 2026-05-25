@@ -1,0 +1,4 @@
+comment:123
+--replace
+--scope=whole-comment
+--body-file=/tmp/idd-edit-nonexistent-xyz-99999.md

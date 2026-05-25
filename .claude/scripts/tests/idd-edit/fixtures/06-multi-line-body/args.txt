@@ -1,0 +1,4 @@
+comment:123
+--replace
+--scope=whole-comment
+--body-file=__FIXTURE_PATH__/multiline_input.md

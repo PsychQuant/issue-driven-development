@@ -1,0 +1,1 @@
+--scope value cannot start with '--'
