@@ -4,6 +4,8 @@
 
 Defines the action-scoped modify discipline that governs every IDD plugin action that modifies existing artifacts (issue bodies, comments, files, state fields). Every modify-action SHALL declare exactly one scope category from a canonical 7-category enumeration (`state-field-update`, `bounded-section-replace`, `audit-block-append`, `inline-replace-before-publish`, `verbatim-preserve`, `append-only`, `free-rewrite`). Undeclared modify-actions SHALL be refused at runtime regardless of actor identity (default-refuse), and `/idd-edit --replace` SHALL require an explicit `--scope` or `--section` flag. The discipline also defines authoritative-source resolution for checklist gates (Implementation Complete > Current Status > top-level Todo/Tasks/Checklist) with a legacy-scan fallback for pre-discipline issues, plus retroactive category labeling of existing IDD skills. Sourced from change `add-action-scoped-modify-discipline`.
 
+**Implementation status (v2.74.0)**: discipline declared at spec level. Runtime enforcement landed for `bounded-section-replace` (`/idd-update` REPLACE), `state-field-update` (`/idd-clarify` status mutation, `spectra task done`), `audit-block-append` (5 IC_R011 PATCH sites), `inline-replace-before-publish` (`/idd-close` Step 3.5), Path C authoritative-source gate logic across 4 gate sites. **`/idd-edit` runtime enforcement of `--scope` / `--section` (Requirement 4) + user-authored verbatim-preserve guard (Requirement 5) deferred to follow-up issue [#154](https://github.com/PsychQuant/issue-driven-development/issues/154)** after 3 verify iterations (R1/R2/R3 on PR #153) showed bash-incremental impl introduces new bugs each pass. AI/user invocation SHALL apply Requirements 4-5 as discipline (read spec + apply manually) until #154 ships runtime gate. Requirements 4-5 SHALL be re-verified for runtime conformance when #154 closes.
+
 ## Requirements
 
 ### Requirement: Every modify-action SHALL declare a scope category
@@ -111,6 +113,8 @@ code:
 ---
 ### Requirement: /idd-edit --replace SHALL require scope flag
 
+**Implementation status (v2.74.0)**: discipline declared; runtime enforcement deferred to [#154](https://github.com/PsychQuant/issue-driven-development/issues/154). AI / user invocations SHALL apply this requirement as discipline (include `--scope` / `--section` in invocation patterns) until #154 ships bash runtime gate. Scenarios below describe intended runtime behavior post-#154 — they are NOT currently enforced by `idd-edit/SKILL.md` (which is at pre-#150 baseline). Re-verify for runtime conformance when #154 closes.
+
 The `/idd-edit` skill SHALL require explicit scope when invoked with `--replace` mode. The skill SHALL accept either `--scope whole-comment` (explicit acknowledgment of full-comment overwrite) OR `--section <heading-within-comment>` (limit replacement to a named subsection within the comment). Invocations of `--replace` without either flag SHALL be refused. The `--append` and `--prepend-note` modes SHALL NOT require scope flags because their scope is inherently bounded (trailing block / leading errata marker respectively).
 
 #### Scenario: idd-edit --replace without scope flag
@@ -154,6 +158,8 @@ code:
 
 ---
 ### Requirement: /idd-edit SHALL refuse modifications to user-authored comments
+
+**Implementation status (v2.74.0)**: discipline declared; runtime enforcement deferred to [#154](https://github.com/PsychQuant/issue-driven-development/issues/154). AI / user invocations SHALL apply this requirement as discipline (include `--override-user-content --reason="..."` when intentionally editing non-OWNER non-bot comments) until #154 ships bash runtime gate + `/idd-comment` errata flow integration. Scenarios below describe intended runtime behavior post-#154 — NOT currently enforced by `idd-edit/SKILL.md` (pre-#150 baseline). Re-verify for runtime conformance when #154 closes.
 
 The `/idd-edit` skill SHALL refuse modifications targeting comments authored by users whose `author_association` is not `OWNER` and who are not in the known-bot allowlist (`github-actions[bot]`, `dependabot[bot]`, and other repo-configured bots). This protection SHALL apply to all three modes (`--append`, `--prepend-note`, `--replace`). Invocations targeting user-authored comments SHALL be refused unless the caller provides `--override-user-content` flag together with `--reason="<rationale>"` documenting the explicit decision to modify user content. This requirement is the comment-level instance of the `verbatim-preserve` category, aligned with IC_R007 (verbatim source preservation).
 
