@@ -857,7 +857,7 @@ Verified scope: #98, #105
 - Pre-filing: similar findings MAY be merged (e.g. same function with multiple problems → one issue)
 - Body references verify report comment URL for source provenance
 
-**Audit trail target**: `### Follow-up Findings Filed (v2.72.0+ #148)` in verify report (master comment)
+**Audit trail target**: `### Follow-up Findings Filed (v2.72.0+ #148)` in verify report (master comment)。 **`(category: audit-block-append, scope: "### Follow-up Findings Filed")` per [`rules/append-vs-modify.md`](../../rules/append-vs-modify.md)** — adds new audit block to named section without modifying existing verify report findings table。
 
 **Default behavior (v2.72.0+)**: File by default per canonical Section 1.1. Skip requires 3-category taxonomy per Section 1.4.
 

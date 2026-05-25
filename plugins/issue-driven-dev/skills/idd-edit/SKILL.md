@@ -141,9 +141,39 @@ TaskCreate(name="verify_and_report", description="re-fetch comment 比對寫入�
 
 ---
 
-### Step 1: Parse arguments + resolve target
+### Step 1: Parse arguments + resolve target + enforce scope discipline
+
+`(category-flag enforcement per #150 action-scoped discipline, #137 verify R1 fix — moved from documentation-only to bash-runtime gate)`
 
 ```bash
+# Parse flags (also captures BREAKING --scope / --section / --override-user-content per #150 BREAKING + verbatim-preserve guard)
+MODE=""              # append / replace / prepend-note
+SCOPE_FLAG=""        # whole-comment | (empty)
+SECTION_FLAG=""      # named subsection heading | (empty)
+OVERRIDE_USER=""     # set to "true" via --override-user-content
+OVERRIDE_REASON=""   # required when --override-user-content set
+BODY_INPUT=""        # via --body or --body-file
+REASON_INPUT=""      # for edit metadata
+
+for ARG_I in "$@"; do
+    case "$ARG_I" in
+        --append)               MODE="append" ;;
+        --replace)              MODE="replace" ;;
+        --prepend-note)         MODE="prepend-note" ;;
+        --scope=*)              SCOPE_FLAG="${ARG_I#--scope=}" ;;
+        --scope)                SCOPE_FLAG="next" ;; # next arg
+        --section=*)            SECTION_FLAG="${ARG_I#--section=}" ;;
+        --section)              SECTION_FLAG="next" ;;
+        --override-user-content) OVERRIDE_USER="true" ;;
+        --reason=*)             REASON_INPUT="${ARG_I#--reason=}";
+                                # if OVERRIDE_USER set, this is the override reason
+                                [ "$OVERRIDE_USER" = "true" ] && OVERRIDE_REASON="$REASON_INPUT" ;;
+        --body=*)               BODY_INPUT="${ARG_I#--body=}" ;;
+        --body-file=*)          BODY_INPUT="$(cat ${ARG_I#--body-file=})" ;;
+    esac
+done
+# (positional next-arg pickup for --scope <val> / --section <val> form: handled by caller's tokenizer)
+
 # 解析 target
 if [[ "$ARG" == comment:* ]]; then
     COMMENT_ID=${ARG#comment:}
@@ -159,17 +189,85 @@ elif [[ "$ARG" == \#* ]]; then
         # 用 AskUserQuestion 選
     fi
 fi
+
+# BREAKING enforcement gate (v2.74.0+ #150, made runtime-enforcing in v2.74.1+ #137 verify R1 fix):
+# --replace MUST have --scope whole-comment OR --section <heading>
+if [ "$MODE" = "replace" ] && [ -z "$SCOPE_FLAG" ] && [ -z "$SECTION_FLAG" ]; then
+    cat >&2 <<'REFUSE'
+✗ Refuse: --replace requires --scope whole-comment OR --section <heading>
+  (action-scoped discipline per plugins/issue-driven-dev/rules/append-vs-modify.md)
+
+Examples:
+  /idd-edit comment:NNN --replace --scope whole-comment --body "..."
+  /idd-edit comment:NNN --replace --section "### Sister Concerns Filed" --body "..."
+REFUSE
+    exit 1
+fi
+
+# Validate --scope value (only "whole-comment" accepted; future values reserved)
+if [ -n "$SCOPE_FLAG" ] && [ "$SCOPE_FLAG" != "whole-comment" ]; then
+    echo "✗ Refuse: --scope value '$SCOPE_FLAG' not recognized; only 'whole-comment' supported in v2.74.0+" >&2
+    exit 1
+fi
 ```
 
-### Step 2: Fetch current body + backup
+### Step 2: Fetch current body + backup + verbatim-preserve guard
 
 ```bash
 mkdir -p /tmp/idd-edit-backup
 BACKUP_FILE="/tmp/idd-edit-backup/comment-${COMMENT_ID}-$(date +%s).md"
 
-gh api repos/$GITHUB_REPO/issues/comments/$COMMENT_ID --jq '.body' > "$BACKUP_FILE"
+# Defensive: validate COMMENT_ID is numeric (prevent path injection in backup filename + downstream paths)
+if ! [[ "$COMMENT_ID" =~ ^[0-9]+$ ]]; then
+    echo "✗ Refuse: COMMENT_ID '$COMMENT_ID' not numeric (resolution upstream failed?)" >&2
+    exit 1
+fi
+
+# Fetch body + author_association in one gh api call (verbatim-preserve guard per #150 + #137 verify R1 fix)
+COMMENT_META=$(gh api "repos/$GITHUB_REPO/issues/comments/$COMMENT_ID" \
+    --jq '{body: .body, author_association: .author_association, author_login: .user.login, author_type: .user.type}')
+if [ -z "$COMMENT_META" ]; then
+    # gh CLI failure (network / auth / missing comment) — fail-closed per L4 follow-up
+    echo "✗ Refuse: gh api fetch failed for comment $COMMENT_ID (network / auth / not found). Fail-closed per verbatim-preserve guard." >&2
+    exit 1
+fi
+AUTHOR_ASSOC=$(echo "$COMMENT_META" | jq -r '.author_association')
+AUTHOR_LOGIN=$(echo "$COMMENT_META" | jq -r '.author_login')
+AUTHOR_TYPE=$(echo "$COMMENT_META" | jq -r '.author_type')
+
+echo "$COMMENT_META" | jq -r '.body' > "$BACKUP_FILE"
+
+# Verbatim-preserve guard: refuse modifications to non-OWNER non-bot comments unless explicit override
+# Known bot allowlist (extend as needed):
+KNOWN_BOTS=("github-actions[bot]" "dependabot[bot]" "renovate[bot]" "codecov[bot]")
+IS_KNOWN_BOT="false"
+for bot in "${KNOWN_BOTS[@]}"; do
+    [ "$AUTHOR_LOGIN" = "$bot" ] && IS_KNOWN_BOT="true" && break
+done
+# Also treat author_type=Bot as bot
+[ "$AUTHOR_TYPE" = "Bot" ] && IS_KNOWN_BOT="true"
+
+if [ "$AUTHOR_ASSOC" != "OWNER" ] && [ "$IS_KNOWN_BOT" = "false" ] && [ "$OVERRIDE_USER" != "true" ]; then
+    cat >&2 <<REFUSE
+✗ Refuse: comment $COMMENT_ID was authored by @$AUTHOR_LOGIN (author_association=$AUTHOR_ASSOC, non-bot).
+  Comments by non-OWNER users are verbatim-preserve per IC_R007.
+  Pass --override-user-content --reason="<rationale>" to explicitly modify.
+
+  (Known limitation per #137 verify R1 DA-3: in solo-owner repos, AI posting via gh CLI
+  appears as OWNER, so guard cannot distinguish AI-authored from user-authored.
+  This guard is best-effort; spec documents the multi-collaborator-repo coverage.)
+REFUSE
+    exit 1
+fi
+
+# If override active, require reason (no empty reason allowed for audit trail integrity)
+if [ "$OVERRIDE_USER" = "true" ] && [ -z "$OVERRIDE_REASON" ]; then
+    echo "✗ Refuse: --override-user-content requires --reason=\"<rationale>\" for audit trail" >&2
+    exit 1
+fi
 
 echo "✓ Backup: $BACKUP_FILE"
+[ "$OVERRIDE_USER" = "true" ] && echo "⚠ user-content override active: reason=$OVERRIDE_REASON"
 ```
 
 ### Step 3: Show original body
@@ -198,13 +296,55 @@ $APPEND_BODY
 
 #### Mode: `--replace`
 
-```bash
-NEW_BODY="$REPLACE_BODY
+`--replace` 必須帶 `--scope whole-comment` OR `--section <heading>`(Step 1 gate 已 enforce)。 兩 sub-mode:
 
-<!-- idd:edit mode=replace date=$(date +%Y-%m-%d) backup=$BACKUP_FILE -->"
+```bash
+if [ "$SCOPE_FLAG" = "whole-comment" ]; then
+    # Whole-comment overwrite — backup retained for revert path
+    AUDIT_MARKER="<!-- idd:edit mode=replace scope=whole-comment date=$(date +%Y-%m-%d) backup=$BACKUP_FILE"
+    [ "$OVERRIDE_USER" = "true" ] && AUDIT_MARKER="$AUDIT_MARKER override-user-content=true reason=\"$OVERRIDE_REASON\""
+    AUDIT_MARKER="$AUDIT_MARKER -->"
+
+    NEW_BODY="$BODY_INPUT
+
+$AUDIT_MARKER"
+
+elif [ -n "$SECTION_FLAG" ]; then
+    # Section-bound replace — locate section in current body + replace its content (heading preserved)
+    # NOTE (v2.74.1+, #137 verify R1 fix): naive `awk` range pattern collapses if start matches end;
+    # use flag-based pattern. Section ends at next heading of same-or-higher level OR EOF.
+    SECTION_LEVEL=$(echo "$SECTION_FLAG" | grep -oE '^#+' | wc -c)  # count # chars; 4 for "### Foo"
+    # Build awk to extract everything outside the named section, then splice in new content under that heading
+
+    # Pre-flight: verify section exists in current body
+    if ! grep -qF "$SECTION_FLAG" "$BACKUP_FILE"; then
+        echo "✗ Refuse: section '$SECTION_FLAG' not found in comment $COMMENT_ID body. List headings:" >&2
+        grep -E '^#+ ' "$BACKUP_FILE" >&2
+        exit 1
+    fi
+
+    # Splice: keep everything before section, replace content under section heading until next same-or-higher-level heading
+    AUDIT_MARKER="<!-- idd:edit mode=replace scope=section section=\"$SECTION_FLAG\" date=$(date +%Y-%m-%d) backup=$BACKUP_FILE -->"
+
+    NEW_BODY=$(awk -v section="$SECTION_FLAG" -v new_content="$BODY_INPUT" -v marker="$AUDIT_MARKER" '
+        BEGIN { in_section=0; printed_new=0 }
+        $0 == section {
+            print $0
+            print ""
+            print new_content
+            print ""
+            print marker
+            in_section=1
+            printed_new=1
+            next
+        }
+        in_section && /^#+ / { in_section=0 }   # next heading ends section
+        !in_section { print }
+    ' "$BACKUP_FILE")
+fi
 ```
 
-**警告**：`--replace` 完全覆蓋原 body。必顯示 diff preview，使用者確認後才 PATCH。
+**警告**：`--replace --scope whole-comment` 完全覆蓋原 body;`--replace --section` 只覆蓋 named section 內容。 兩 sub-mode 都必顯示 diff preview,使用者確認後才 PATCH。
 
 #### Mode: `--prepend-note`
 

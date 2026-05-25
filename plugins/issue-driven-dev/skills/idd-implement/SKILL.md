@@ -552,7 +552,7 @@ gh pr create --title "$PR_TITLE" --body "$PR_BODY" \
   fi
   ```
 
-**Audit trail target**: `### Sister Bugs Filed (mid-impl, v2.44.0+ #526)` in Implementation Complete comment (PATCH the Step 5-posted comment to append this section per canonical §4.1 heading conventions).
+**Audit trail target**: `### Sister Bugs Filed (mid-impl, v2.44.0+ #526)` in Implementation Complete comment (PATCH the Step 5-posted comment to append this section per canonical §4.1 heading conventions). **`(category: audit-block-append, scope: "### Sister Bugs Filed")` per [`rules/append-vs-modify.md`](../../rules/append-vs-modify.md)** — adds new audit block to named section without modifying existing Implementation Complete prose.
 
 **Default behavior (v2.72.0+)**: File by default per canonical §1.1. Skip requires 3-category taxonomy per canonical §1.4.
 

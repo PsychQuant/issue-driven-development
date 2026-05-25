@@ -852,8 +852,10 @@ ACTION_ITEMS=""
 for sub_n in "$ROOT_N" "${SPAWNED_ISSUES[@]:-}"; do
   [ -z "$sub_n" ] && continue
   SUB_BODY=$(gh issue view "$sub_n" --repo "$GITHUB_REPO" --json body --jq '.body' 2>/dev/null)
+  # NOTE (v2.74.1+, #137 verify R1 fix): naive `awk '/^### Clarity Surface/,/^### /'`
+  # range collapses on line 1 (start regex matches end regex); use flag pattern.
   AUTO_DEFERRED_COUNT=$(echo "$SUB_BODY" \
-    | awk '/^### Clarity Surface/,/^### /' \
+    | awk '/^### Clarity Surface/{flag=1; print; next} flag && /^### /{flag=0} flag' \
     | grep -cE '\| deferred \| unattended-auto-Step-4\.6-deferred \|')
   if [ "$AUTO_DEFERRED_COUNT" -gt 0 ]; then
     ACTION_ITEMS+=$'\n'"- #${sub_n}: ${AUTO_DEFERRED_COUNT} row(s) auto-deferred at /idd-clarify Step 4.8 (unattended mode) — resolve via /idd-clarify #${sub_n} --status resolved=<idx>,<reason>"

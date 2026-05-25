@@ -276,7 +276,10 @@ fi
 
 # Find row N (1-indexed within block)
 # Extract block content, locate row N data line (skip header + separator)
-BLOCK=$(echo "$BODY" | awk '/^### Clarity Surface/,/^### /' | head -n -1)
+# NOTE (v2.74.1+, #137 verify R1 fix): naive `awk '/^### Clarity Surface/,/^### /'`
+# collapses on line 1 because start regex matches end regex (both `^### `),
+# losing all rows. Use flag-based pattern + drop GNU-only `head -n -1`.
+BLOCK=$(echo "$BODY" | awk '/^### Clarity Surface/{flag=1; print; next} flag && /^### /{flag=0} flag')
 ROW_LINES=$(echo "$BLOCK" | grep -E "^\| (terminology|ambiguity|missing-context|\(none\))" | head -n "$STATUS_ROW_IDX" | tail -n 1)
 
 [ -z "$ROW_LINES" ] && abort "Row index $STATUS_ROW_IDX out of range. Valid indices: 1..N (run /idd-clarify #$NUMBER without --status to see current rows)"

@@ -95,7 +95,11 @@ BODY=$(gh issue view $NUMBER --repo $GITHUB_REPO --json body --jq '.body')
 # Look for ### Clarity Surface block
 if echo "$BODY" | grep -q '^### Clarity Surface'; then
   # Extract block + count surfaced rows
-  BLOCK=$(echo "$BODY" | awk '/^### Clarity Surface/,/^### /' | head -n -1)
+  # NOTE (v2.74.1+, #137 verify R1 fix): naive `awk '/^### Clarity Surface/,/^### /'`
+  # collapses on line 1 because start regex matches end regex (both `^### `),
+  # losing all rows. Use flag-based pattern instead — also removes GNU-only
+  # `head -n -1` dependency (errors on BSD/macOS).
+  BLOCK=$(echo "$BODY" | awk '/^### Clarity Surface/{flag=1; print; next} flag && /^### /{flag=0} flag')
   SURFACED_COUNT=$(echo "$BLOCK" | grep -cE '\| surfaced \|')
 
   # v2.74.0+ #137 — per-row reason-pattern scan for deferred rows:
@@ -128,7 +132,7 @@ EOF
 
   # Auto-deferred rows: PROCEED with warn audit (per #137)
   if [ "$DEFERRED_AUTO" -gt 0 ]; then
-    echo "[Step 0.5] $DEFERRED_AUTO row(s) auto-deferred under unattended mode (reason: unattended-auto-Step-4.6-deferred) — proceeding with warn (per #137 / spec idd-diagnose-clarity-gate). Manual /idd-clarify follow-up surfaced in /idd-all Phase 4 final report." >&2
+    echo "[Step 0.5] $DEFERRED_AUTO row(s) auto-deferred under unattended mode (reason: unattended-auto-Step-4.6-deferred) — proceeding with warn (per #137 / spec idd-diagnose-clarity-gate). Manual /idd-clarify follow-up surfaced in /idd-all Phase 6 final report Action items section." >&2
   fi
 fi
 
@@ -147,7 +151,7 @@ fi
 |---|---|
 | Has block with ≥1 `surfaced` row | REFUSE + actionable message |
 | Has block with ≥1 `deferred` row (no reason / legacy reason / non-registry-cited reason) | REFUSE + retry hint message (clarify-failed / manual defer cases) |
-| Has block with ≥1 `deferred` row reason = `unattended-auto-Step-4.6-deferred` (v2.74.0+, #137) | PROCEED-with-warn (emit audit line to stderr; `/idd-all` Phase 4 surfaces for human review) |
+| Has block with ≥1 `deferred` row reason = `unattended-auto-Step-4.6-deferred` (v2.74.0+, #137) | PROCEED-with-warn (emit audit line to stderr; `/idd-all` Phase 6 Action items section surfaces for human review) |
 | Has block, all rows `resolved` / `dismissed` / `passed` | PROCEED to Step 1 |
 | No `### Clarity Surface` block(legacy pre-v2.71.0) | PROCEED with log line |
 
@@ -164,7 +168,7 @@ fi
 
 - `/idd-clarify` Step 4.8.A unattended detection → 寫 `deferred` rows with reason literal
 - `/idd-diagnose` Step 0.5 gate(本 step)→ per-row reason scan,registry-cited → PROCEED-with-warn,non-registry → REFUSE(legacy backward-compat 保留)
-- `/idd-all` Phase 4 final report → surface auto-deferred rows 到「Action items」section(per #137 Strategy)
+- `/idd-all` Phase 6 final report → surface auto-deferred rows 到「Action items」section(per #137 Strategy)
 
 完整 lifecycle 見 #137 closing summary;reason literal 集中 source 在 [Reason pattern registry](../../rules/append-vs-modify.md#reason-pattern-registry)。
 

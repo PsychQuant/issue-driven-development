@@ -40,7 +40,7 @@ The Step 0.5 gate SHALL refuse diagnosis when the target issue body contains a `
 
 ### Requirement: Gate SHALL proceed-with-warn for registry-cited unattended-auto deferred rows
 
-The Step 0.5 gate SHALL accept (proceed with warn audit line) when the target issue body's `### Clarity Surface` block contains `deferred` rows whose `Reason` field matches the registry-cited literal `unattended-auto-Step-4.6-deferred` (per `plugins/issue-driven-dev/rules/append-vs-modify.md` § Reason pattern registry). The gate SHALL emit a warn audit line to stderr identifying the count of auto-deferred rows and noting that `/idd-all` Phase 4 final report will surface them for human review. The gate SHALL NOT refuse on these rows alone.
+The Step 0.5 gate SHALL accept (proceed with warn audit line) when the target issue body's `### Clarity Surface` block contains `deferred` rows whose `Reason` field matches the registry-cited literal `unattended-auto-Step-4.6-deferred` (per `plugins/issue-driven-dev/rules/append-vs-modify.md` § Reason pattern registry). The gate SHALL emit a warn audit line to stderr identifying the count of auto-deferred rows and noting that `/idd-all` Phase 6 final report Action items section will surface them for human review. The gate SHALL NOT refuse on these rows alone.
 
 #### Scenario: Single auto-deferred row proceeds
 
