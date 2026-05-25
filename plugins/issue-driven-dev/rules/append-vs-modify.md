@@ -192,23 +192,29 @@ This rule defines the discipline; tooling-level enforcement is reserved for foll
 
 - **Skill spec gate** (in scope of this rule): each modify-action's SKILL.md description SHALL contain `(category: <name>)` inline note. Skill author's responsibility; reviewable manually.
 - **Future analyzer** (out of scope): static analyzer that scans SKILL.md for modify-action descriptions missing `(category: ...)` notes and flags as Critical. Follow-up issue when needed.
-- **CLI parser** (out of scope): native `--section` flag handling for `/idd-edit` at CLI parser layer. Phase 2 follow-up; Phase 1 (this change) implements via SKILL.md bash check.
+- **CLI parser + bash enforcement** (out of scope): native `--section` / `--scope` flag handling for `/idd-edit` at CLI parser layer + verbatim-preserve guard. Three R1/R2/R3 attempts at bash-level enforcement in SKILL.md introduced new bugs each iteration (infinite loop, flag-eat, multi-line awk-v BREAK). Deferred to follow-up issue [#154](https://github.com/PsychQuant/issue-driven-development/issues/154) for proper standalone proposal with multi-line body handling + parser pattern guards + errata flow integration designed upfront. Phase 1 (this change) is spec-discipline only: SKILL.md describes intended `--scope` / `--section` requirements + verbatim-preserve guard;AI / user invocation reads spec + applies discipline manually until runtime gate ships.
 
 ## Migration period for existing actions
 
 ≥ 8 existing IDD actions are retroactively labeled by the change that introduced this rule (`add-action-scoped-modify-discipline`). New actions added after this rule ships SHALL declare category at SKILL.md authoring time. The `(undeclared) → REFUSE` rule applies to both new and retroactively-introduced actions; legacy actions without inline notes are caught at next maintainer review.
 
-## BREAKING change: `/idd-edit` requires `--section` flag
+## Spec discipline: `/idd-edit` SHALL declare scope (runtime enforcement deferred)
 
-Before this rule: `/idd-edit` accepted free-form issue body modification (blanket user-modify entry).
+`/idd-edit` is the IDD plugin's existing comment-edit primitive. Per this rule's action-scoped discipline, the skill's invocation surface SHALL declare scope:
 
-After this rule: `/idd-edit` requires `--section <name>` flag identifying the target section. Without the flag, the skill refuses. Sections in `verbatim-preserve` zone (issue body above `---` separator) are refused even with the flag.
+- `--append` / `--prepend-note` modes: `audit-block-append` category (scope inherent in mode semantics — trailing block / leading errata marker). No additional flag required.
+- `--replace` mode: `bounded-section-replace` category. Invocations SHALL include `--scope whole-comment` (full-comment overwrite acknowledgment) OR `--section <heading-within-comment>` (named subsection scope).
 
-Migration path for existing user invocations:
-- Old: `/idd-edit #150` → New: `/idd-edit #150 --section "## Current Status"`
-- Old: `/idd-edit #150 "fix typo"` → use `/idd-edit #150 --section "<section-with-typo>"` then provide replacement content
+This rule additionally declares a verbatim-preserve guard at the comment layer: comments where `author_association ≠ OWNER` (and author is not in known-bot allowlist) SHALL NOT be modified without explicit `--override-user-content --reason="..."` invocation discipline.
 
-CHANGELOG.md entry for this BREAKING change cites both this rule and the corresponding spec `openspec/specs/append-vs-modify-discipline/spec.md`.
+**Enforcement status**: spec-discipline + AI / user invocation guideline. Three implementation attempts (verify R1/R2/R3 on PR #153) showed bash-level enforcement in SKILL.md introduces new bugs incrementally. Runtime enforcement deferred to follow-up issue [#154](https://github.com/PsychQuant/issue-driven-development/issues/154) requiring proper standalone proposal with multi-line body handling + parser pattern guards + `/idd-comment` errata flow integration designed upfront.
+
+Recommended invocation patterns (per discipline):
+- `/idd-edit comment:NNN --replace --scope whole-comment --body "..."`
+- `/idd-edit comment:NNN --replace --section "### Sister Concerns Filed" --body "..."`
+- `/idd-edit comment:<external-user-id> --append --body "..." --override-user-content --reason="..."`
+
+CHANGELOG.md `[2.73.0]` declares the spec discipline + cites this rule + tracks runtime-enforcement deferral via [#154](https://github.com/PsychQuant/issue-driven-development/issues/154).
 
 ## Reason pattern registry
 

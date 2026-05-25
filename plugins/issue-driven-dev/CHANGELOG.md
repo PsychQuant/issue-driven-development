@@ -34,28 +34,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.73.0] - 2026-05-25
 
-### BREAKING (behavioral)
+### Spec discipline (declared, runtime enforcement deferred to follow-up issue)
 
-- **`/idd-edit --replace` 必填 scope flag** ([#150](https://github.com/PsychQuant/issue-driven-development/issues/150)): action-scoped modify discipline (`plugins/issue-driven-dev/rules/append-vs-modify.md`) 把 `/idd-edit --replace` 從 `(undeclared)` blanket destructive mode 升上 `bounded-section-replace` category — 必須帶 `--scope whole-comment`(explicit acknowledgment of full-comment overwrite)OR `--section <heading-within-comment>`(限縮到 comment 內 named subsection)。 未帶任一 flag → REFUSE。 `--append` 跟 `--prepend-note` 是 additive 不受影響(scope inherent in mode semantics)。
+- **`/idd-edit --replace` SHALL declare scope** ([#150](https://github.com/PsychQuant/issue-driven-development/issues/150), [spec](../../openspec/specs/append-vs-modify-discipline/spec.md) Requirement 4): action-scoped modify discipline 規範 `/idd-edit --replace` 屬 `bounded-section-replace` category — invocations SHALL be made with explicit `--scope whole-comment` (full-comment overwrite acknowledgment) OR `--section <heading-within-comment>` (named subsection scope). `--append` 跟 `--prepend-note` 屬 `audit-block-append` category (scope inherent in mode semantics) — no flag required.
 
-  **Migration**:
+  **Status**: Spec-documented + AI / user invocation discipline (Claude orchestrator reads the spec + applies). **Bash-runtime enforcement deferred to [#154](https://github.com/PsychQuant/issue-driven-development/issues/154)** after 3 verify iterations (R1/R2/R3) each surfaced new bugs in incremental bash patching attempts — implementation needs proper standalone proposal with multi-line body handling + parser pattern + errata flow integration designed upfront.
+
+  **Recommended invocation pattern (AI / user discipline)**:
   ```bash
-  # Old(v2.72.0 and earlier)
-  /idd-edit comment:NNN --replace --body "..."
-
-  # New(v2.73.0+) — choose one:
   /idd-edit comment:NNN --replace --scope whole-comment --body "..."
   /idd-edit comment:NNN --replace --section "### Sister Concerns Filed" --body "..."
   ```
 
-- **`/idd-edit` verbatim-preserve guard for user-authored comments** ([#150](https://github.com/PsychQuant/issue-driven-development/issues/150)): 3 modes 都對 `author_association ≠ OWNER` 且非已知 bot(`github-actions[bot]` / `dependabot[bot]` 等)的 comment REFUSE。 對齊 IC_R007 「不改 user-authored prose」 discipline 在 comment 層級。 Override 需 `--override-user-content` + `--reason="<rationale>"`(skill 自動加 audit marker)。
+- **`/idd-edit` verbatim-preserve guard for user-authored comments** ([#150](https://github.com/PsychQuant/issue-driven-development/issues/150), [spec](../../openspec/specs/append-vs-modify-discipline/spec.md) Requirement 5): all 3 modes SHALL refuse modifications to comments where `author_association ≠ OWNER` and author is not in known-bot allowlist. Aligns IC_R007 verbatim source preservation discipline at comment layer. Override via `--override-user-content` + `--reason="<rationale>"`.
 
-  **Migration**:外部 collaborator comment 編輯路徑改變 — 必須 explicit override:
+  **Status**: Same as above — spec discipline + AI/user invocation guideline; runtime enforcement deferred to [#154](https://github.com/PsychQuant/issue-driven-development/issues/154).
+
+  **Recommended override pattern**:
   ```bash
-  # Old(v2.72.0 and earlier):skill 不檢查 author,直接 PATCH
-  /idd-edit comment:<external-user-id> --append --body "..."
-
-  # New(v2.73.0+):必須 explicit override + reason
   /idd-edit comment:<external-user-id> --append --body "..." \
     --override-user-content --reason="Reformatted at original author's email request 2026-05-25"
   ```
@@ -70,11 +66,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Path C gate-logic generalization across 4 sites** ([#150](https://github.com/PsychQuant/issue-driven-development/issues/150)): `idd-close` Step 0 / `idd-verify` checklist scan / `idd-update` body sync gate / `idd-implement` Step 5 Checklist Sync 統一採用 `authoritative_source` resolution(`## Implementation Complete > ### Checklist` → `## Current Status > ### Tasks` → `## Todo`/`## Tasks`/`## Checklist` priority order)。 `#515` supersession bridge 邏輯升格為通用 pattern;legacy fallback(無 authoritative_source → scan all sources)保留 backward compat。 Strategy / Implementation Plan checkboxes 在 implementation 後一律視為 superseded snapshot,不再 gate-block。
 
-- **Retroactive action category labels** ([#150](https://github.com/PsychQuant/issue-driven-development/issues/150)): ≥ 8 個既有 modify-actions retroactively 在 SKILL.md inline note 標 category — `/idd-update`(`bounded-section-replace`)/ `/idd-clarify`(`state-field-update`)/ `/idd-close` Step 3.5 inline replace(`inline-replace-before-publish`)/ IC_R011 audit PATCH in 3 skills(`audit-block-append`)/ `/idd-edit` 3 modes(各自分類)。 未來新 modify-action 必須在 SKILL.md 描述加 `(category: <name>)` inline note,違反 = `(undeclared)` → REFUSE。
+- **Retroactive action category labels** ([#150](https://github.com/PsychQuant/issue-driven-development/issues/150)): existing modify-actions retroactively 在 SKILL.md inline note 標 category — `/idd-update`(`bounded-section-replace`)/ `/idd-clarify`(`state-field-update`)/ `/idd-close` Step 3.5 inline replace(`inline-replace-before-publish`)/ IC_R011 audit PATCH in 5 skills(`audit-block-append`)。 `/idd-edit` labels deferred to [#154](https://github.com/PsychQuant/issue-driven-development/issues/154) along with runtime enforcement (3 verify iterations exposed that bash-level enforcement needs a proper proposal, not incremental patches)。 未來新 modify-action 應在 SKILL.md 描述加 `(category: <name>)` inline note per spec discipline。
 
 ### Notes
 
-- Plugin v2.73.0 是 minor bump(BREAKING tier change to `/idd-edit`)。
+- Plugin v2.73.0 是 minor bump(spec discipline declaration for `/idd-edit` — not runtime BREAKING since enforcement deferred to follow-up [#154](https://github.com/PsychQuant/issue-driven-development/issues/154))。
 - 本 change ship 後 sister `#137`(unattended-mode Clarity Surface contract)+ `#151`(commit-body auto-close trap remediation)的 design 必須 align 新 principle。
 - Dogfood paradox:本 change 在 spec-driven 流程內 ship,但 spec-driven flow 本身 pre-existing 不 compliant — `proposal.md` / `design.md` / `tasks.md` 屬 `free-rewrite`(docs),`spec.md` ship 後落 `verbatim-preserve`(spec frozen)。
 
