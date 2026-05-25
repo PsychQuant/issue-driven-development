@@ -47,11 +47,57 @@ idd-issue source.docx       # auto-trigger when source contains ≥2 findings
 
 ## 三種 Edit Mode
 
-| Mode | 動作 | 原 body | 適用 |
-|------|------|--------|------|
-| `--append` | 在末尾加 `---\n**Edit YYYY-MM-DD**: {reason}\n\n{body}` | 保留 | 補充 / 更正（保留歷史） |
-| `--replace` | 完全替換 body | 寫入 backup 檔 | 大幅改寫（如補圖說明） |
-| `--prepend-note` | 在最上方加 `> ⚠️ {reason}\n\n---\n\n` | 保留 | 標示「此 comment 已過時」（errata flow 用） |
+| Mode | 動作 | 原 body | 適用 | Action-scope category |
+|------|------|--------|------|------------------------|
+| `--append` | 在末尾加 `---\n**Edit YYYY-MM-DD**: {reason}\n\n{body}` | 保留 | 補充 / 更正（保留歷史） | `(category: audit-block-append, scope: trailing block)` |
+| `--prepend-note` | 在最上方加 `> ⚠️ {reason}\n\n---\n\n` | 保留 | 標示「此 comment 已過時」（errata flow 用） | `(category: audit-block-append, scope: leading errata marker)` |
+| `--replace` | 完全替換 body 或 named subsection | 寫入 backup 檔 | 大幅改寫（如補圖說明） | `(category: bounded-section-replace, scope: whole-comment OR <subsection-heading>)` — **必須帶 `--scope` 或 `--section` flag**（見「BREAKING:--replace scope discipline」段） |
+
+### Action-scope discipline (v2.73.0+, #150)
+
+依 [`rules/append-vs-modify.md`](../../rules/append-vs-modify.md) action-scoped principle,本 skill 是 **comment-only** modify entry — 不負責 issue body modify(issue body 各 zone 有專屬 skills:`/idd-clarify` 改 `### Clarity Surface` rows,`/idd-update` 改 `## Current Status`,上半 verbatim zone 無 modify path)。 三 mode 各 declare scope category。
+
+#### BREAKING: `--replace` scope discipline
+
+`--replace` 是唯一 destructive mode(整段或 named subsection overwrite),必須帶**explicit scope acknowledgment**:
+
+| Flag | 意義 | 範例 |
+|------|------|------|
+| `--scope whole-comment` | Explicit acknowledge 整個 comment overwrite | `/idd-edit comment:NNN --replace --scope whole-comment --body "..."` |
+| `--section <heading-within-comment>` | 限縮 replace 到 comment 內 named subsection(如 `### Sister Concerns Filed`)| `/idd-edit comment:NNN --replace --section "### Sister Concerns Filed" --body "..."` |
+
+`--replace` 不帶任一 flag → **REFUSE** with error:
+
+```
+✗ Refuse: --replace requires --scope whole-comment OR --section <heading>
+  (action-scoped discipline per plugins/issue-driven-dev/rules/append-vs-modify.md)
+
+Examples:
+  /idd-edit comment:NNN --replace --scope whole-comment --body "..."
+  /idd-edit comment:NNN --replace --section "### Sister Concerns Filed" --body "..."
+```
+
+**為何 BREAKING 只在 `--replace`**:`--append` 跟 `--prepend-note` 是 additive(scope inherent in mode semantics:trailing block / leading marker),不需 explicit scope flag。 `--replace` 是 destructive,scope ambiguous(整個? 部分?),必須 explicit。
+
+#### Verbatim-preserve guard (user-authored comments)
+
+對齊 IC_R007 「不改 user-authored prose」 discipline 在 comment 層級:三個 mode 都對 user-authored comments REFUSE,除非 explicit override。
+
+**Refuse condition**:target comment `author_association ≠ OWNER` 且非已知 bot(`github-actions[bot]` / `dependabot[bot]` / 等)。
+
+**Override**:`--override-user-content` flag + `--reason="<explicit rationale>"`。 若 override,skill 自動 PATCH 加 audit marker:
+
+```html
+<!-- idd:edit override-user-content date=YYYY-MM-DD reason="..." -->
+```
+
+**Refuse example**:
+```
+$ /idd-edit comment:NNN --append --body "..."  # comment authored by external collaborator
+✗ Refuse: comment NNN was authored by @username (author_association=NONE, non-bot)
+  Comments by non-OWNER users are verbatim-preserve per IC_R007.
+  Pass --override-user-content --reason="<rationale>" to explicitly modify.
+```
 
 ## Configuration
 

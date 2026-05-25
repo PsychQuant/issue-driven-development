@@ -48,6 +48,8 @@ idd-diagnose (Step 0.5 PR Gate)    ← refuse 進 diagnose 直到 unresolved row
 /idd-clarify #42 --cwd /path/to/clone     → cross-repo invocation(per references/cross-repo-cwd.md)
 ```
 
+`--status` update mode `(category: state-field-update, scope: "### Clarity Surface" row status field)` — 修改 named row 的 status enum field(resolved / dismissed),row 內 prose 不動。 依 [`rules/append-vs-modify.md`](../../rules/append-vs-modify.md)。
+
 ## Cross-repo invocation
 
 支援 `--cwd /path/to/local/clone` flag,語意同 `idd-diagnose` / `idd-verify`。Step 0 解析 `--cwd` 後,後續所有 `git`/`gh` 命令依 [`references/cross-repo-cwd.md`](../../references/cross-repo-cwd.md) substitution rule 改寫。
@@ -151,6 +153,30 @@ else
 fi
 ```
 
+### Step 4.8.A: Unattended mode detection (v2.74.0+, #137)
+
+Step 5a (scan mode) 開始前,偵測 unattended mode。 若 unattended → 寫的 surfaced rows 全部用 `deferred` status + cite-registered reason literal,而非 `surfaced`。 Step 0.5 gate 對 reason-matched `deferred` rows proceed-with-warn,unattended chain 不再 silent break。
+
+**Detection (reuse `idd-issue` Stage 4.5 既有 pattern, single-site convention)**:
+
+```bash
+IS_UNATTENDED="false"
+if [ ! -t 0 ] || [ -n "${IDD_ALL_UNATTENDED:-}" ]; then
+  IS_UNATTENDED="true"
+fi
+```
+
+**Reason literal**:cite [`rules/append-vs-modify.md` § Reason pattern registry](../../rules/append-vs-modify.md#reason-pattern-registry) — literal `unattended-auto-Step-4.6-deferred` 是 **single source of truth**;本 SKILL.md **不**內嵌字面拷貝。 Implementation 讀 registry table row corresponding to「originating action: `/idd-clarify` Step 4.8.A」。
+
+**Behavior dispatch**:
+
+| Mode | Action |
+|------|--------|
+| Attended (`IS_UNATTENDED=false`) | proceed to Step 5a normal — emit `surfaced` rows + AskUserQuestion downstream |
+| Unattended (`IS_UNATTENDED=true`) | Step 5a emits rows with `status=deferred` + `reason=<registry-cited literal>` instead of `surfaced` (see Step 5a unattended variant below) |
+
+`(category: state-field-update, scope: "### Clarity Surface" row status field — extended for unattended branch per #137)` per [`rules/append-vs-modify.md`](../../rules/append-vs-modify.md)。
+
 ### Step 5a: Scan mode — three-class detect
 
 **Library load**:每次 invocation **fresh read**,no cache(per spec idd-clarify-skill scenario):
@@ -217,6 +243,19 @@ LIBRARY_CONTENT=$(cat "$LIBRARY_FILE")
 ```
 
 **Why emit empty marker**:避免 `Step 0.5` gate 把「沒跑過 clarify」跟「跑過、通過」混淆。passed row 是顯式 declaration。
+
+**Unattended variant (v2.74.0+, #137)** — when Step 4.8.A detected `IS_UNATTENDED=true`,every detected surfaced row is written with `status=deferred` + `reason=unattended-auto-Step-4.6-deferred` (cited from rules/append-vs-modify.md § Reason pattern registry) **instead of** `surfaced`。 Schema extends to 5-column table:
+
+```markdown
+### Clarity Surface(idd-clarify run <ISO 8601 timestamp>, unattended)
+
+| Type | Source | Suggested canonical | Status | Reason |
+|---|---|---|---|---|
+| terminology | "..." | ... | deferred | unattended-auto-Step-4.6-deferred |
+| ambiguity | "..." | ... | deferred | unattended-auto-Step-4.6-deferred |
+```
+
+Attended-mode schema unchanged (4-column, no Reason). `/idd-diagnose` Step 0.5 gate handles both schemas — backward compatible。 Reason column absent → treated as legacy/manual `deferred` row(REFUSE behavior preserved per `rules/append-vs-modify.md` Backward-compat fallback section)。
 
 ### Step 5b: Update mode — row status mutation
 

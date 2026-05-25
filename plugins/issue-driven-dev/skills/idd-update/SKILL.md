@@ -87,7 +87,7 @@ TaskCreate(name="read_issue", description="gh issue view #NNN 取 title/body/lab
 TaskCreate(name="determine_phase", description="掃 comments 標題（Diagnosis / Implementation Plan / Implementation Complete / Verify / Closing Summary）推斷 phase")
 TaskCreate(name="extract_key_info", description="從 comments 提取 Key Decisions / Scope Changes / Blocking / Related Commits 四類")
 TaskCreate(name="assemble_current_status", description="組 ## Current Status 區塊 markdown（Phase / Last updated / 四類分節）")
-TaskCreate(name="update_body", description="gh issue edit 替換 --- 以下內容；若 body 無 --- 則 append 新區塊")
+TaskCreate(name="update_body", description="gh issue edit 替換 --- 以下內容；若 body 無 --- 則 append 新區塊 (category: bounded-section-replace, scope: \"## Current Status\")")
 TaskCreate(name="report_update", description="輸出 ✓ Issue #NNN status updated → {phase}（取代原 Step 6「靜默完成」的 silent path）")
 ```
 
@@ -118,6 +118,20 @@ gh issue view $NUMBER --repo $GITHUB_REPO --json title,body,labels,state,comment
 | Closing Summary | `closed` |
 
 判斷依據：掃描 comments 中的 `## Diagnosis`、`## Implementation Plan`、`## Implementation Complete`、`## Verify`、`## Closing Summary` 標題。
+
+#### Authoritative source resolution (v2.73.0+, #150)
+
+當需要從 body 讀取 Tasks / Checklist 作為 phase derivation 上下文(罕見:phase 推斷因 comment 結構模糊 fall back to body),套用 [`rules/append-vs-modify.md`](../../rules/append-vs-modify.md) 的 `authoritative_source` priority order:
+
+```
+authoritative_source = first_exists([
+  "## Implementation Complete > ### Checklist",
+  "## Current Status > ### Tasks",
+  "## Todo" | "## Tasks" | "## Checklist"
+])
+```
+
+無 authoritative_source → fall back 掃所有 sections(legacy issue 行為);此 fallback 保留 backward compat。
 
 ### Step 3: 從 Comments 提取關鍵資訊
 

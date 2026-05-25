@@ -86,6 +86,22 @@ PR mode 下：
 /idd-verify                         → 通用 code review（無 issue）
 ```
 
+## Authoritative source resolution (v2.73.0+, #150)
+
+當 verify ensemble 讀取 issue body 作為 context(理解「implement 到底做了什麼」),scan checklist-bearing sections 時遵循 [`rules/append-vs-modify.md`](../../rules/append-vs-modify.md) 的 `authoritative_source` priority order:
+
+```
+authoritative_source = first_exists([
+  "## Implementation Complete > ### Checklist",     # priority 1
+  "## Current Status > ### Tasks",                  # priority 2
+  "## Todo" | "## Tasks" | "## Checklist"           # priority 3 (top-level)
+])
+```
+
+當 authoritative source 存在 → verify ensemble 以該 section 為 implementation truth source(對齊 `idd-close` Step 0 gate 判斷);Strategy / Implementation Plan 是 pre-impl snapshot,不作 verify completeness 比對。
+
+**Legacy fallback (worked example)**:若 issue 無 `## Implementation Complete > ### Checklist`(legacy issue 或 implementation 中途未跑 Step 5),verify 讀 Strategy 作為 implementation intent reference(同 `/idd-close` 的 fallback scan all sources 行為);verify findings 對「Strategy 未滿足」標 LOW severity(因 implementation 未走完正規 flow,non-authoritative)。
+
 ## Configuration
 
 按 [config-protocol](../../references/config-protocol.md) 解析 target repo:

@@ -83,17 +83,25 @@ allowed-tools:
 
 若多個 comments 含相同 source 標題（例如使用者 re-ran `idd-implement` 並發了多個 `## Implementation Complete`），**只看最後一個**（按 comment `createdAt` desc 取第一個）——那是最新的 source of truth。
 
-**Pre-implementation supersession check (v2.41.0+, #515 fix;canonical IC_R011 reference v2.43.0+, #525)**：
+**Authoritative source resolution (v2.73.0+, #150 — generalizes v2.41.0 #515 supersession bridge across all 4 gate sites)**：
 
-> **Note**: this is a **gate logic** fix (recognize Implementation Complete > Checklist as canonical when supersession active), NOT an IC_R011 checkpoint. The IC_R011 checkpoint for `/idd-close` (closing summary follow-up keyword scan) is tracked separately in [#527](https://github.com/kiki830621/ai_martech_global_scripts/issues/527) and will cite [`references/ic-r011-checkpoint.md`](../../references/ic-r011-checkpoint.md) when implemented.
-
-
+> **Note**: this is a **gate logic** pattern (resolve canonical source per `authoritative_source` priority order), NOT an IC_R011 checkpoint. The IC_R011 checkpoint for `/idd-close` (closing summary follow-up keyword scan) is tracked separately in [#527](https://github.com/kiki830621/ai_martech_global_scripts/issues/527) and cites [`references/ic-r011-checkpoint.md`](../../references/ic-r011-checkpoint.md). This Step 0 logic implements the `authoritative_source` resolution pattern from `plugins/issue-driven-dev/rules/append-vs-modify.md`.
 
 `Strategy` 跟 `Implementation Plan` 是 **pre-implementation snapshots**——它們在 `idd-diagnose` / `idd-plan` 階段寫進 issue,記錄當時的 design intent。`idd-implement` Step 5 「Checklist Sync」**只**回寫 `## Implementation Complete > ### Checklist`（自己發的 comment 內），**不會** PATCH `Strategy` / `Implementation Plan` comments 的 checkbox。
 
-因此即使 work 真正完成,Strategy / Plan 的 `- [ ]` 仍停留在 pre-impl 狀態,gate 會誤判為「有未完成 todo」,refuse close（observed in #455 / #510 close, 2026-05-03）。
+因此即使 work 真正完成,Strategy / Plan 的 `- [ ]` 仍停留在 pre-impl 狀態。 v2.41.0 (`#515`) 引入 supersession bridge 修正 idd-close;v2.73.0 generalize 為 4 個 gate 通用 pattern。
 
-修法：當 `Implementation Complete > Checklist` 存在 **且其所有 items 全部 `- [x]`** 時，視為 **canonical state of truth**,Strategy 跟 Implementation Plan 的 `- [ ]` 一律當 superseded（skip gate）。
+修法 — Gate logic SHALL resolve authoritative source by priority order:
+
+```
+authoritative_source = first_exists([
+  "## Implementation Complete > ### Checklist",       # priority 1
+  "## Current Status > ### Tasks",                    # priority 2
+  "## Todo" | "## Tasks" | "## Checklist"             # priority 3 (top-level headings)
+])
+```
+
+當 authoritative source 存在時,Strategy 跟 Implementation Plan 的 `- [ ]` 一律當 superseded snapshot(skip gate)。 當沒任何 authoritative source 存在時(legacy issue pattern 或 pre-implementation 狀態) → fall back legacy scan all sources(保留 backward compat)。
 
 ```
 impl_complete = scan_subsection("## Implementation Complete > ### Checklist")
@@ -358,7 +366,8 @@ options:
 - Keyword scan on closing summary text (per existing trigger phrase heuristic above)
 - Light-touch advisory — empty list legitimate, never blocks close
 - Source link: closing summary comment URL
-- When filing (file all / file selected), inline replace each mention in closing summary with `(see #NEW)` cross-link before publish (Step 3.5 runs **before** Step 4)
+- When filing (file all / file selected), inline replace each mention in closing summary with `(see #NEW)` cross-link before publish (Step 3.5 runs **before** Step 4). `(category: inline-replace-before-publish)` per [`rules/append-vs-modify.md`](../../rules/append-vs-modify.md) — modify happens in draft phase before `gh issue comment` publishes; post-publish the closing summary falls under `append-only` discipline.
+- Audit block PATCH `### Closing Follow-ups Filed` to the Closing Summary comment after publish — `(category: audit-block-append, scope: "### Closing Follow-ups Filed")`. Adds new audit block without modifying existing summary text.
 - Issue body MUST contain `**Source**: surfaced during /idd-close #$NNN closing summary scan (Step 3.5)` per canonical Section 7
 
 **Audit trail target**: `### Closing Follow-ups Filed (v2.45.0+ #527)` in Closing Summary comment

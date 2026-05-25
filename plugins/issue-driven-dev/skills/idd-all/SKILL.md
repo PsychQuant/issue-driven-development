@@ -842,6 +842,39 @@ Next: review last ${COMMIT_COUNT} commits (git log -${COMMIT_COUNT}), then run /
 
 **STOP**。不 auto-merge(PR mode)、不 auto-close(both modes)。Per MANIFESTO doctrine,verify-gated PASS 是 terminal default disposition;auto-merge mechanic 屬 **#37** bulk-solve autopilot 範疇,**不**是 idd-all default。`--review` 是 **orchestrator-scope messaging-only** opt-in,不會讓 idd-all 等候 — 它只表態 "user 還想自己再過一次" 並切換 Phase 6 wording。(per #108 DA3: orchestrator-scope qualifier matters — humans/CI downstream may react to the changed text differently, so the flag is messaging-only **at orchestrator scope**, not necessarily end-to-end.)
 
+#### Phase 6 Action items surface (v2.74.0+, #137)
+
+`(category: audit-block-append, scope: "## Action items" final report section)` per [`rules/append-vs-modify.md`](../../rules/append-vs-modify.md)。 Phase 6 終端 report 之後,scan invoked sub-issues' bodies(本 invocation 直接處理的 root + spawn manifest 上記錄的衍生 issue,if any)for `### Clarity Surface` rows with reason matching the registry-cited literal `unattended-auto-Step-4.6-deferred`(cite [Reason pattern registry](../../rules/append-vs-modify.md#reason-pattern-registry))。 找到 → append 到 final report 末尾「## Action items (require human review)」section:
+
+```bash
+# After Phase 6 main report emit (see PR mode / direct-commit mode above), append action items:
+ACTION_ITEMS=""
+for sub_n in "$ROOT_N" "${SPAWNED_ISSUES[@]:-}"; do
+  [ -z "$sub_n" ] && continue
+  SUB_BODY=$(gh issue view "$sub_n" --repo "$GITHUB_REPO" --json body --jq '.body' 2>/dev/null)
+  AUTO_DEFERRED_COUNT=$(echo "$SUB_BODY" \
+    | awk '/^### Clarity Surface/,/^### /' \
+    | grep -cE '\| deferred \| unattended-auto-Step-4\.6-deferred \|')
+  if [ "$AUTO_DEFERRED_COUNT" -gt 0 ]; then
+    ACTION_ITEMS+=$'\n'"- #${sub_n}: ${AUTO_DEFERRED_COUNT} row(s) auto-deferred at /idd-clarify Step 4.8 (unattended mode) — resolve via /idd-clarify #${sub_n} --status resolved=<idx>,<reason>"
+  fi
+done
+
+if [ -n "$ACTION_ITEMS" ]; then
+  cat <<EOF
+
+## Action items (require human review)
+${ACTION_ITEMS}
+
+Reason literal source: rules/append-vs-modify.md § Reason pattern registry.
+EOF
+fi
+```
+
+**Trigger condition**:per-invocation;若無 auto-deferred rows → section 不 emit(non-noisy)。 attended mode 通常無 auto-deferred(`/idd-clarify` Step 4.8.A detection 預設 attended → 寫 `surfaced` rows + AskUserQuestion),unattended chain (`/loop` / `IDD_ALL_UNATTENDED=1`) 才會 surface。
+
+**Multi-issue scope**:`SPAWNED_ISSUES` 變數涵蓋 idd-all-chain 的 spawn manifest 或 cluster mode 的所有 #N(per [`references/spawn-manifest.md`](../../references/spawn-manifest.md));single-issue invocation 只 scan root。
+
 ---
 
 ## Failure Modes(每個都該明確 abort,不該 swallow)

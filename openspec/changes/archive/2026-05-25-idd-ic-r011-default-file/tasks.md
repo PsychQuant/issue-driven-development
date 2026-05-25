@@ -30,7 +30,7 @@
 
 ## 5. Acceptance criteria verification
 
-- [ ] 5.1 Dogfood acceptance:apply 完成後立刻在新 default 下跑一次 `/idd-diagnose` 試 invocation(per design Risks R6 dogfood-paradox mitigation):選一個既有 OPEN issue,跑 `/idd-diagnose #N`,確認 Step 3.6 IC_R011 checkpoint 採新 file-by-default 行為(無 AskUserQuestion 3-option 阻擋)。對應 design **acceptance criteria** section item 8(dogfood gate)。**Verification**:gh issue comments on the test diagnose target 含 Sister Concerns Filed block 用新 format,**沒**含舊 `[file all] / [file selected] / [skip]` AskUserQuestion 對話痕跡
+- [x] 5.1 Dogfood acceptance:apply 完成後立刻在新 default 下跑一次 `/idd-diagnose` 試 invocation(per design Risks R6 dogfood-paradox mitigation):選一個既有 OPEN issue,跑 `/idd-diagnose #N`,確認 Step 3.6 IC_R011 checkpoint 採新 file-by-default 行為(無 AskUserQuestion 3-option 阻擋)。對應 design **acceptance criteria** section item 8(dogfood gate)。**Verification**:gh issue comments on the test diagnose target 含 Sister Concerns Filed block 用新 format,**沒**含舊 `[file all] / [file selected] / [skip]` AskUserQuestion 對話痕跡
 
 - [x] 5.2 Run automated structural check 對應 design **acceptance criteria** items 1-5:6 SKILL.md cite canonical reference + 5 SHALL site 翻 default + idd-close preserved + #149 framing fixed + canonical ref 增長到 ≥350 行。**Verification**:`bash -c 'grep -L "per IC_R011" plugins/issue-driven-dev/skills/idd-{diagnose,plan,implement,issue,verify,close}/SKILL.md'` 返回 empty;`bash -c 'grep -c "\[file all\]" plugins/issue-driven-dev/skills/idd-close/SKILL.md'` ≥ 1(close 仍 3-option);5 SHALL site 加總 `\[file all\]` 命中 = 0;`wc -l plugins/issue-driven-dev/references/ic-r011-checkpoint.md` ≥ 350
 
