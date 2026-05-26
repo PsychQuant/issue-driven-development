@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Test runner for .claude/scripts/idd-edit-helper.sh
+# Test runner for plugins/issue-driven-dev/scripts/idd-edit-helper.sh
 #
 # Each fixture in fixtures/<NN-name>/ provides:
 #   - subcmd.txt         — subcommand to run (parse-args / validate-target / section-replace)
@@ -52,10 +52,19 @@ for fixture in "$FIXTURES_DIR"/*/; do
     # IDD_EDIT_HELPER_GH_MOCK pointing at it (helper reads mock instead of gh api).
     # Use shell glob (with nullglob via set + array) rather than `ls | head` pipe
     # (pipefail makes ls-no-match abort the script).
+    #
+    # R2 H8 fix: also set IDD_EDIT_HELPER_TEST_MODE=1 — helper gates mock var
+    # behind test-mode to prevent production R5 bypass via attacker-crafted env.
+    # Exception: fixture 21 deliberately omits TEST_MODE to verify the gate refuses.
     mock_env=""
     for cand in "$fixture"/mock_*.json; do
         if [ -f "$cand" ]; then
-            mock_env="IDD_EDIT_HELPER_GH_MOCK=$cand"
+            if [ -f "$fixture/no_test_mode_flag" ]; then
+                # Test-the-gate fixtures (e.g. 21) — set mock but NOT test-mode
+                mock_env="IDD_EDIT_HELPER_GH_MOCK=$cand"
+            else
+                mock_env="IDD_EDIT_HELPER_GH_MOCK=$cand IDD_EDIT_HELPER_TEST_MODE=1"
+            fi
             break
         fi
     done

@@ -55,7 +55,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **C2**: `comment_id` numeric validation (described above under Added).
 - **C3+M1**: `emit-audit-marker` helper subcommand (described above under Added) — centralized HTML-escape, marker emission in all 3 modes.
 - **B1**: SKILL.md Step 4 `--append` mode uses `$BODY_INPUT` (helper-exported) instead of undefined `$APPEND_BODY`.
-- **B2**: SKILL.md Step 6 PATCH + Step 7 verify use `$REPO` (helper-exported, respects `--repo` flag + walk-up config) instead of undefined `$GITHUB_REPO`.
+- **B2**: SKILL.md Step 6 PATCH + Step 7 verify use `$REPO` (helper-exported, currently respects `--repo` flag only; walk-up config resolution deferred to future enhancement) instead of undefined `$GITHUB_REPO`.
 - **H1**: helper `parse-args` R4 gate validates `--scope` value MUST be `whole-comment` (no other valid scopes today). Invalid value → exit 3 with hint.
 - **H2**: SKILL.md Step 1 splits `parse-args` stdout/stderr via temp file. `eval` only sees `printf %q` quoted assignments; stderr never reaches eval (closes shell-injection via `cat`-on-directory `$()` POC).
 - **H3**: `validate-target` test coverage via `IDD_EDIT_HELPER_GH_MOCK` env var (described above under Added) — 4 new fixtures.
@@ -73,6 +73,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **[#158](https://github.com/PsychQuant/issue-driven-development/issues/158)** — tangential: `/idd-edit` batch mode + R5 interaction semantics decision (P2; single-target enforcement shipped, batch interaction follow-up)
 - **[#160](https://github.com/PsychQuant/issue-driven-development/issues/160)** — sister bug: spectra-archive-post-ic/test.sh likely has same `grep -qF --` bug (parking-lot P3)
 - **[#161](https://github.com/PsychQuant/issue-driven-development/issues/161)** — sister concern: IDD_CALLER env var registry codification (parking-lot P3)
+
+### Round 2 verify fixes (R2 found 5 NEW HIGH + 4 MEDIUM introduced by R1 fix loop; R3 addresses all)
+
+R2 findings + R3 fixes:
+
+- **H6 (quote injection in `emit-audit-marker`)** — 4-way confluence (Logic + Security + DA + Codex independently surfaced). `--reason='ok" date="1970-01-01" forged="yes'` was forging audit attributes by breaking out of value's double-quote scope. R3 fix: `${val//\"/\&quot;}` (note bash `&`-as-backref gotcha required `\&` escape). Also closes latent key-injection (H7 defense in depth). Fixture 20 GREEN.
+- **H7 (batch mode broken)** — SKILL.md Step 1 for-loop closed BEFORE Steps 1.5-7, silently processing only LAST target. R3 fix: restructured to accumulate `RESOLVED_COMMENT_IDS` array; added explicit "Per-target outer loop" subsection wrapping Steps 1.5-7.
+- **H8 (`IDD_EDIT_HELPER_GH_MOCK` ungated)** — R5 author check bypassable via attacker-crafted env (classic LD_PRELOAD pattern). R3 fix: helper now requires `IDD_EDIT_HELPER_TEST_MODE=1` paired with the mock var, refuses with explicit error otherwise. Fixture 21 GREEN.
+- **H9 (CHANGELOG false claim)** — Line 58 claimed `$REPO` "respects walk-up config" but walk-up never implemented. R3 fix: corrected entry to acknowledge --repo flag only + defer walk-up to future enhancement.
+- **H10 (`--body-file` path traversal)** — R1 doc-only fix insufficient; `/etc/passwd` still readable. R3 fix: helper `validate_body_file_path()` refuses `/etc/* /var/* /sys/* /proc/* /private/etc|var/* $HOME/.ssh|.aws|.gnupg|.kube|.docker/*` unless `IDD_EDIT_HELPER_ALLOW_UNSAFE_BODY_FILE=1` escape hatch set. Fixtures 22 (refuse) + 23 (safe path) GREEN.
+- **M-R2-1 (null guard incomplete)** — Only caught `<null>` literal, not empty string from jq parse failure. R3 fix: extended to `[ -z "$author_login" ]` + `2>/dev/null` on jq calls.
+- **M-R2-2 (`tr` range excluded TAB/CR)** — R3 fix: range now `\000-\037` (full ctrl chars); comment corrected.
+- **M-R2-3 (marker format change unannounced)** — Marker values now double-quoted (e.g. `mode="replace"` not `mode=replace`). Downstream parsers should accept either form; this entry documents the change.
+- **M-R2-4 (fixtures don't cover SKILL.md↔helper integration)** — Architectural gap acknowledged; not addressed in R3 to avoid scope inflation. Filed as follow-up [#163](https://github.com/PsychQuant/issue-driven-development/issues/163).
+- **N1-3 doc drift** — Stale `.claude/scripts/` refs in spec.md / SKILL.md / test.sh + PR body "13 fixtures" outdated → R3 sed pass over 5 sites; PR body updated to "23 fixtures" (current count post-R3).
+
+### Filed during R3 fix loop
+
+- **[#163](https://github.com/PsychQuant/issue-driven-development/issues/163)** — sister: SKILL.md↔helper integration test layer (M-R2-4) — pragmatic test layer that exercises SKILL.md orchestration end-to-end with mock gh, not just helper standalone
 
 ## [2.74.0] - 2026-05-25
 

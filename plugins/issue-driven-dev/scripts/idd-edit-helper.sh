@@ -35,6 +35,49 @@ R4_MSG='Refuse: --replace requires --scope whole-comment OR --section <heading> 
 R5_MSG_TEMPLATE='Refuse: comment %s was authored by %s (author_association=%s, non-OWNER non-bot) and is verbatim-preserve per IC_R007; pass --override-user-content --reason="..." to explicitly modify user content (spec Requirement 5)'
 
 # ───────────────────────────────────────────────────────────────────────
+# Helper: --body-file path safety check
+# ───────────────────────────────────────────────────────────────────────
+# Closes R2 verify finding H10 (#154 Round 2): without this, --body-file
+# accepted ANY absolute path and would PATCH its contents to public GitHub
+# comment via /idd-edit Step 6. Codex independently re-confirmed exfiltration
+# via /etc/passwd POC.
+#
+# Refuse list: sensitive paths attackers might target. Allow /tmp/* and
+# relative paths (typical legitimate usage) + $HOME/Developer/* (user repos).
+# Escape hatch: IDD_EDIT_HELPER_ALLOW_UNSAFE_BODY_FILE=1 for documented
+# advanced use cases.
+#
+# Usage: validate_body_file_path <path> ; returns 0/5
+validate_body_file_path() {
+    local path="$1"
+
+    # Escape hatch
+    if [ "${IDD_EDIT_HELPER_ALLOW_UNSAFE_BODY_FILE:-}" = "1" ]; then
+        return 0
+    fi
+
+    # Refuse sensitive absolute paths
+    case "$path" in
+        /etc/*|/var/*|/sys/*|/proc/*|/private/etc/*|/private/var/*)
+            echo "ERROR: --body-file refuses sensitive system path: $path" >&2
+            echo "       Use IDD_EDIT_HELPER_ALLOW_UNSAFE_BODY_FILE=1 to override (audit your reason)." >&2
+            return 5
+            ;;
+    esac
+
+    # Refuse common credential paths under HOME
+    case "$path" in
+        "$HOME"/.ssh/*|"$HOME"/.aws/*|"$HOME"/.gnupg/*|"$HOME"/.kube/*|"$HOME"/.docker/*)
+            echo "ERROR: --body-file refuses credential path: $path" >&2
+            echo "       Use IDD_EDIT_HELPER_ALLOW_UNSAFE_BODY_FILE=1 to override (audit your reason)." >&2
+            return 5
+            ;;
+    esac
+
+    return 0
+}
+
+# ───────────────────────────────────────────────────────────────────────
 # Subcommand: parse-args
 # ───────────────────────────────────────────────────────────────────────
 # Parses /idd-edit flags. Emits shell-eval'able assignments on stdout.
@@ -96,6 +139,8 @@ parse_args_subcmd() {
             --body=*)          body_input="${arg#--body=}";         shift ;;
             --body-file=*)
                 body_file="${arg#--body-file=}"
+                # R2 H10 guard: refuse sensitive paths (escape via env var)
+                validate_body_file_path "$body_file" || return $?
                 # R3 H1 guard: readability pre-check (silent overwrite was R3 bug)
                 if [ ! -r "$body_file" ]; then
                     echo "ERROR: --body-file not readable: $body_file" >&2
@@ -129,6 +174,8 @@ parse_args_subcmd() {
                     --body)         body_input="$next"   ;;
                     --body-file)
                         body_file="$next"
+                        # R2 H10 guard: refuse sensitive paths (escape via env var)
+                        validate_body_file_path "$body_file" || return $?
                         if [ ! -r "$body_file" ]; then
                             echo "ERROR: --body-file not readable: $body_file" >&2
                             return 5
@@ -222,8 +269,18 @@ validate_target_subcmd() {
     # path instead of calling gh api. Format expected:
     #   {"login": "alice", "assoc": "OWNER"}
     # Closes #154 verify Round 1 H3 — adds validate-target unit-test surface.
+    #
+    # R2 finding H8 (security): mock var was previously ungated in production
+    # = trivial R5 author bypass via attacker-crafted `{"login":"x","assoc":"OWNER"}`
+    # (classic LD_PRELOAD pattern). R3 fix: require IDD_EDIT_HELPER_TEST_MODE=1
+    # paired with IDD_EDIT_HELPER_GH_MOCK; refuse otherwise.
     local author_data
     if [ -n "${IDD_EDIT_HELPER_GH_MOCK:-}" ]; then
+        if [ "${IDD_EDIT_HELPER_TEST_MODE:-}" != "1" ]; then
+            echo "ERROR: IDD_EDIT_HELPER_GH_MOCK is a test-only hook; refuses in production." >&2
+            echo "       Pair with IDD_EDIT_HELPER_TEST_MODE=1 if invoking from test runner." >&2
+            return 1
+        fi
         if [ ! -r "$IDD_EDIT_HELPER_GH_MOCK" ]; then
             echo "ERROR: IDD_EDIT_HELPER_GH_MOCK file not readable: $IDD_EDIT_HELPER_GH_MOCK" >&2
             return 1
@@ -238,12 +295,15 @@ validate_target_subcmd() {
     fi
 
     local author_login author_assoc
-    author_login=$(echo "$author_data" | jq -r '.login // "<null>"')
-    author_assoc=$(echo "$author_data" | jq -r '.assoc // "<null>"')
+    author_login=$(echo "$author_data" | jq -r '.login // "<null>"' 2>/dev/null)
+    author_assoc=$(echo "$author_data" | jq -r '.assoc // "<null>"' 2>/dev/null)
 
-    # M6 guard: refuse if either field is null (malformed gh API response)
-    if [ "$author_login" = "<null>" ] || [ "$author_assoc" = "<null>" ]; then
-        echo "ERROR: gh api response missing required fields (login/author_association) for comment $comment_id" >&2
+    # M6 + M-R2-1 guard (R2 R3 fix): refuse if either field is null OR empty
+    # string (jq parse failure on malformed JSON produces empty stdout).
+    # Originally caught `<null>` literal only — now fail-closed on parse errors too.
+    if [ "$author_login" = "<null>" ] || [ -z "$author_login" ] || \
+       [ "$author_assoc" = "<null>" ] || [ -z "$author_assoc" ]; then
+        echo "ERROR: gh api response missing or unparseable required fields (login/author_association) for comment $comment_id" >&2
         return 1
     fi
 
@@ -435,12 +495,31 @@ emit_audit_marker_subcmd() {
             *=*)
                 local key="${kv%%=*}"
                 local val="${kv#*=}"
+                # Closes R2 verify finding H6 (#154 Round 2): without this,
+                # `--reason='ok" date="1970-01-01" forged="yes'` forged audit
+                # attributes by breaking out of the value's double-quote scope.
+                # 4-way confluence (Logic + Security + DA + Codex independently).
+                # Replace `"` with HTML entity → preserves visual readability
+                # while preventing attribute injection.
+                #
+                # WARNING: bash `${var//pat/repl}` interprets `&` in replacement
+                # as the matched-text back-reference. MUST escape `\&` for
+                # literal ampersand. Without escape: `"` → `"quot;` (matched
+                # text + suffix) NOT `&quot;` as intended.
+                val="${val//\"/\&quot;}"
                 # Strip --> tokens (collapse to --\> visual placeholder)
                 val="${val//-->/-\\>}"
                 # Strip newlines (markers must be single-line)
                 val="${val//$'\n'/ }"
-                # Strip control characters (anything < 0x20 except space)
-                val=$(printf '%s' "$val" | tr -d '\000-\010\013\014\016-\037')
+                # Strip ALL control characters (0x00-0x1F including TAB \t / CR \r)
+                # Closes R2 verify finding M-R2-2: previous range excluded TAB/CR.
+                val=$(printf '%s' "$val" | tr -d '\000-\037')
+                # Sanitize key too (closes R2 verify H7 latent in emit-audit-marker
+                # itself) — defense in depth even though no current caller threads
+                # user input into keys. Note: `\&` escape rule applies here too,
+                # but key sanitization removes `"` entirely rather than entity-encoding.
+                key="${key//\"/}"; key="${key//-->/}"
+                key=$(printf '%s' "$key" | tr -d '\000-\037')
                 marker="$marker $key=\"$val\""
                 [ "$key" = "date" ] && has_date="true"
                 ;;

@@ -69,7 +69,7 @@ idd-issue source.docx       # auto-trigger when source contains ≥2 findings
 
 ## Runtime gates (#154, v2.75.0+)
 
-`/idd-edit` enforces 2 SHALL requirements at runtime via `.claude/scripts/idd-edit-helper.sh` (extracted parser + validator per #154 to avoid R1/R2/R3-style bash inline bugs):
+`/idd-edit` enforces 2 SHALL requirements at runtime via `plugins/issue-driven-dev/scripts/idd-edit-helper.sh` (extracted parser + validator per #154 to avoid R1/R2/R3-style bash inline bugs):
 
 | Requirement | Gate | Refuse code |
 |-------------|------|-------------|
@@ -122,7 +122,7 @@ TaskCreate(name="verify_and_report", description="re-fetch comment 比對寫入�
 
 ### Step 1: Parse arguments via helper (R4 gate enforced)
 
-**v2.75.0+ (#154)**: Parser extracted to `.claude/scripts/idd-edit-helper.sh parse-args` per [`#154`](https://github.com/PsychQuant/issue-driven-development/issues/154) (R1/R2/R3 bash-inline failure on PR #153 → 3-iteration verify cycle showed AI-generated inline parsers introduce bugs each pass). Helper provides positional shift + missing-value guards + eq-form support + body-file readability check + R4 gate refuse + R5 override-reason pair guard, all unit-tested via `.claude/scripts/tests/idd-edit/` 13 fixtures.
+**v2.75.0+ (#154)**: Parser extracted to `plugins/issue-driven-dev/scripts/idd-edit-helper.sh parse-args` per [`#154`](https://github.com/PsychQuant/issue-driven-development/issues/154) (R1/R2/R3 bash-inline failure on PR #153 → 3-iteration verify cycle showed AI-generated inline parsers introduce bugs each pass). Helper provides positional shift + missing-value guards + eq-form support + body-file readability check + R4 gate refuse + R5 override-reason pair guard, all unit-tested via `plugins/issue-driven-dev/scripts/tests/idd-edit/` 23 fixtures.
 
 ```bash
 # Parse + R4 gate (refuse if --replace lacks --scope/--section)
@@ -142,34 +142,54 @@ case $PARSE_EXIT in
   *) echo "$PARSE_ERR" >&2; exit $PARSE_EXIT ;;
 esac
 
-# Resolve target from TARGETS array
+# Resolve TARGETS array → RESOLVED_COMMENT_IDS array (one entry per comment to edit).
+# Closes R2 H7 (#154 Round 2): previously this loop closed BEFORE Steps 1.5-7,
+# so batch mode `comment:NNN comment:MMM` silently only processed the LAST target.
+# Fix: resolution loop accumulates; per-target processing happens in OUTER loop
+# wrapping Steps 1.5 through 7 (see "Per-target outer loop" note below).
+RESOLVED_COMMENT_IDS=()
 for target in "${TARGETS[@]}"; do
+    local id=""
     case "$target" in
         comment:*)
-            COMMENT_ID="${target#comment:}"
+            id="${target#comment:}"
             ;;
         \#*)
             ISSUE_NUMBER="${target#\#}"
             # Validate issue number is numeric before substitution into gh api URL
             [[ "$ISSUE_NUMBER" =~ ^[0-9]+$ ]] || { echo "ERROR: invalid issue number: $ISSUE_NUMBER" >&2; exit 2; }
             if [ "$LAST" = "true" ]; then
-                COMMENT_ID=$(gh api repos/$REPO/issues/$ISSUE_NUMBER/comments --jq '.[-1].id')
+                id=$(gh api repos/$REPO/issues/$ISSUE_NUMBER/comments --jq '.[-1].id')
             else
                 gh api repos/$REPO/issues/$ISSUE_NUMBER/comments \
                   --jq '.[] | "\(.id) | \(.created_at) | \(.body | .[0:80])"'
-                # Use AskUserQuestion to select
+                # Use AskUserQuestion to select → id="<selected-id>"
             fi
             ;;
     esac
 
-    # R4/R5 security gate: COMMENT_ID MUST be numeric before any URL / filename substitution.
-    # Closes #154 verify finding C2 — unsanitized comment_id flows into:
-    #   - gh api repos/.../comments/$COMMENT_ID (REST path traversal)
-    #   - /tmp/idd-edit-repl-${COMMENT_ID}.md (arbitrary local file write via embedded `/` + `..`)
-    [[ "$COMMENT_ID" =~ ^[0-9]+$ ]] || { echo "ERROR: invalid comment ID (must be numeric): $COMMENT_ID" >&2; exit 2; }
+    # R4/R5 security gate: id MUST be numeric before any URL / filename substitution.
+    # Closes #154 verify finding C2 — unsanitized id flows into:
+    #   - gh api repos/.../comments/$id (REST path traversal)
+    #   - /tmp/idd-edit-repl-${id}.md (arbitrary local file write via embedded `/` + `..`)
+    [[ "$id" =~ ^[0-9]+$ ]] || { echo "ERROR: invalid comment ID (must be numeric): $id" >&2; exit 2; }
 
-    # ... continue to Step 1.5 + Step 2 for each COMMENT_ID
+    RESOLVED_COMMENT_IDS+=("$id")
 done
+```
+
+#### Per-target outer loop (wraps Steps 1.5 — 7)
+
+**v2.75.0+ (#154 R3 fix for H7)**: Each resolved comment ID runs through the full pipeline (validate → fetch → preview → confirm → PATCH → verify) independently. Batch mode = N iterations of the same sequence, per-comment confirmation discipline preserved.
+
+```bash
+for COMMENT_ID in "${RESOLVED_COMMENT_IDS[@]}"; do
+    # === Steps 1.5 through 7 run here, per-target ===
+    # The bash blocks below show single-target templates; in batch mode
+    # they execute N times, once per resolved COMMENT_ID.
+    # ...
+done
+```
 ```
 
 ### Step 1.5: Validate target (R5 author gate)

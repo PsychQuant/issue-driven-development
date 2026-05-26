@@ -1,0 +1,3 @@
+comment:123
+--append
+--body-file=/tmp/idd-edit-fixture-23-safe.md
