@@ -11,9 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`.claude/scripts/idd-edit-helper.sh`** ([#154](https://github.com/PsychQuant/issue-driven-development/issues/154)): NEW extracted runtime helper with 3 subcommands. `parse-args` does positional shift over 7 space-form flags with explicit missing-value guards (`[ -z "${2:-}" ]` + `[[ "$2" == --* ]]`) + eq-form support + body-file readability pre-check + emits eval-friendly KEY=quoted-value via printf %q (preserves newlines). `validate-target` enforces R5 via single gh API call (author_association + login fetch) with `*[bot]` allowlist + OWNER passthrough + override pathway. `section-replace` uses awk-getline pattern (BSD/gnu safe — closes R3 C3 BSD awk -v multi-line newline reject). 5 distinct exit codes (0/1/2/3/4/5).
+- **`plugins/issue-driven-dev/scripts/idd-edit-helper.sh`** ([#154](https://github.com/PsychQuant/issue-driven-development/issues/154)): NEW extracted runtime helper with 3 subcommands. `parse-args` does positional shift over 7 space-form flags with explicit missing-value guards (`[ -z "${2:-}" ]` + `[[ "$2" == --* ]]`) + eq-form support + body-file readability pre-check + emits eval-friendly KEY=quoted-value via printf %q (preserves newlines). `validate-target` enforces R5 via single gh API call (author_association + login fetch) with `*[bot]` allowlist + OWNER passthrough + override pathway. `section-replace` uses awk-getline pattern (BSD/gnu safe — closes R3 C3 BSD awk -v multi-line newline reject). 5 distinct exit codes (0/1/2/3/4/5).
 
-- **`.claude/scripts/tests/idd-edit/{test.sh,fixtures/01-13/}`** ([#154](https://github.com/PsychQuant/issue-driven-development/issues/154)): NEW test infrastructure per `.claude/scripts/tests/spectra-archive-post-ic/` precedent. 13 fixtures cover R1/R2/R3 regression set: parser robustness (eq form / space form / missing value / next-flag-eats-value / unreadable file / multi-line body / single-line body / subsections / no-closing-heading), R4 gate (no scope/section refuse), R5 override pair guard (default=false / requires --reason / succeeds with both). All 13 GREEN.
+- **`plugins/issue-driven-dev/scripts/tests/idd-edit/{test.sh,fixtures/01-19/}`** ([#154](https://github.com/PsychQuant/issue-driven-development/issues/154)): NEW test infrastructure per `.claude/scripts/tests/spectra-archive-post-ic/` precedent. **19 fixtures** cover R1/R2/R3 regression set + Round 1 verify finding additions: parser robustness (eq form / space form / missing value / next-flag-eats-value / unreadable file / multi-line body / single-line body / subsections / no-closing-heading), R4 gate (no scope/section refuse + invalid scope value refuse), R5 override pair guard (default=false / requires --reason / succeeds with both), validate-target via IDD_EDIT_HELPER_GH_MOCK env var (OWNER passthrough / bot allowlist / non-OWNER refuse / non-OWNER with override), section-replace CRLF input handling. All 19 GREEN.
+
+- **`emit-audit-marker` helper subcommand** ([#154](https://github.com/PsychQuant/issue-driven-development/issues/154) Round 1 fix C3+M1): centralizes HTML-comment-escape so attacker-controlled `$REASON` / `$SECTION_FLAG` cannot forge audit trail. Strips `-->` tokens (→ `-\>`), newlines, control chars. Used by all 3 modes for both `edit` markers and `override` markers. Closes R5 forensic gap where override marker only emitted in `--replace` branch.
+
+- **`IDD_EDIT_HELPER_GH_MOCK` env var** ([#154](https://github.com/PsychQuant/issue-driven-development/issues/154) Round 1 fix H3): test hook for `validate-target` subcommand. When set, reads mock JSON `{"login": ..., "assoc": ...}` instead of calling `gh api`. Unblocks unit-test coverage of bot allowlist / OWNER passthrough / refuse paths without live API. Used by fixtures 15-18.
+
+- **`comment_id` numeric validation** ([#154](https://github.com/PsychQuant/issue-driven-development/issues/154) Round 1 fix C2): SKILL.md Step 1 enforces `[[ "$COMMENT_ID" =~ ^[0-9]+$ ]]` before substitution into `gh api repos/.../comments/$comment_id` URL or `/tmp/idd-edit-repl-$COMMENT_ID.md` filename. Closes Round 1 verify finding C2 path traversal via Step 0.7 PR↔issue correspondence input.
+
+- **`--body-file` path-traversal documentation** ([#154](https://github.com/PsychQuant/issue-driven-development/issues/154) Round 1 fix H5): SKILL.md 鐵律 section explicitly notes `--body-file=/etc/passwd` would be read + pushed to public PATCH; user/caller validates path; restrict-to-subtree is future enhancement.
 
 - **`/idd-edit` R4 runtime gate** ([#154](https://github.com/PsychQuant/issue-driven-development/issues/154)): `--replace` without `--scope whole-comment` OR `--section <heading>` → refuse with exit 3 + actionable error message + spec Requirement 4 citation. Closes #150 Requirement 4 runtime enforcement deferral. Tested by fixture 10.
 
@@ -41,12 +49,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`/idd-edit` modifying non-OWNER non-bot comment now refuses** ([#154](https://github.com/PsychQuant/issue-driven-development/issues/154)): existing AI invocations targeting external collaborator / non-OWNER comments will get exit 4 + R5 message. Must add `--override-user-content --reason="..."` for explicit consent. `/idd-comment` errata flow auto-call gracefully handles this with helpful message.
 
+### Round 1 verify fixes (all 11 pre-merge findings addressed)
+
+- **C1**: Helper + test fixtures moved from `.claude/scripts/` to `plugins/issue-driven-dev/scripts/` — matches `process-attachments.sh` / `manifest-append.sh` precedent. `$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.sh` now resolves correctly in production install.
+- **C2**: `comment_id` numeric validation (described above under Added).
+- **C3+M1**: `emit-audit-marker` helper subcommand (described above under Added) — centralized HTML-escape, marker emission in all 3 modes.
+- **B1**: SKILL.md Step 4 `--append` mode uses `$BODY_INPUT` (helper-exported) instead of undefined `$APPEND_BODY`.
+- **B2**: SKILL.md Step 6 PATCH + Step 7 verify use `$REPO` (helper-exported, respects `--repo` flag + walk-up config) instead of undefined `$GITHUB_REPO`.
+- **H1**: helper `parse-args` R4 gate validates `--scope` value MUST be `whole-comment` (no other valid scopes today). Invalid value → exit 3 with hint.
+- **H2**: SKILL.md Step 1 splits `parse-args` stdout/stderr via temp file. `eval` only sees `printf %q` quoted assignments; stderr never reaches eval (closes shell-injection via `cat`-on-directory `$()` POC).
+- **H3**: `validate-target` test coverage via `IDD_EDIT_HELPER_GH_MOCK` env var (described above under Added) — 4 new fixtures.
+- **H4**: `section-replace` heading-level counter rewritten via awk char-by-char (no `wc -c` trailing-newline off-by-one). CRLF input strip via `tr -d '\r'` on both input + replacement. Fixture 08 strengthened with exact-stdout match. New fixture 19 verifies CRLF.
+- **H5**: `--body-file` path-traversal risk documented in SKILL.md 鐵律.
+- **D1**: PR body + commit body Closes/auto-close trailer cleaned per `CLAUDE.md` Commit Conventions §「引用 trap pattern 作反例的寫作紀律」(#97).
+- **M3**: Bot allowlist dead-code redundant patterns cleaned up.
+- **M6**: `validate-target` guards against null `login`/`assoc` from malformed gh API response.
+
 ### Filed during implementation
 
 - **[#155](https://github.com/PsychQuant/issue-driven-development/issues/155)** — sister concern: bash vs alternative layer for strict flag parsing (parking-lot P3; helper extraction proves bash + thin SKILL.md orchestration works)
 - **[#156](https://github.com/PsychQuant/issue-driven-development/issues/156)** — sister concern: IDD plugin test framework (P2; partially pre-empted by reusing `.claude/scripts/tests/` fixture-dir precedent for #154 — same pattern now applies to 2 sites)
 - **[#157](https://github.com/PsychQuant/issue-driven-development/issues/157)** — tangential: spec.md `<!-- @trace -->` blocks lack auto-updater (parking-lot P3)
 - **[#158](https://github.com/PsychQuant/issue-driven-development/issues/158)** — tangential: `/idd-edit` batch mode + R5 interaction semantics decision (P2; single-target enforcement shipped, batch interaction follow-up)
+- **[#160](https://github.com/PsychQuant/issue-driven-development/issues/160)** — sister bug: spectra-archive-post-ic/test.sh likely has same `grep -qF --` bug (parking-lot P3)
+- **[#161](https://github.com/PsychQuant/issue-driven-development/issues/161)** — sister concern: IDD_CALLER env var registry codification (parking-lot P3)
 
 ## [2.74.0] - 2026-05-25
 

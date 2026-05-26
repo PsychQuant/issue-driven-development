@@ -126,12 +126,20 @@ TaskCreate(name="verify_and_report", description="re-fetch comment 比對寫入�
 
 ```bash
 # Parse + R4 gate (refuse if --replace lacks --scope/--section)
-PARSE_OUT=$(bash $CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.sh parse-args "$@" 2>&1)
+# CRITICAL: split stdout (eval-safe assignments) from stderr (diagnostic text).
+# Closes #154 verify Round 1 H2 — previously used `2>&1` which mixed
+# stderr (potentially containing $() from cat-on-directory failure etc.)
+# into the eval input, defeating printf %q quoting safety.
+PARSE_ERR_FILE="/tmp/idd-edit-parse-err-$$"
+PARSE_OUT=$(bash $CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.sh parse-args "$@" 2>"$PARSE_ERR_FILE")
 PARSE_EXIT=$?
+PARSE_ERR=$(cat "$PARSE_ERR_FILE")
+rm -f "$PARSE_ERR_FILE"
+
 case $PARSE_EXIT in
   0) eval "$PARSE_OUT" ;;   # imports MODE/SCOPE_FLAG/SECTION_FLAG/BODY_INPUT/etc.
-  3) echo "$PARSE_OUT" >&2; exit 3 ;;   # R4 refuse — actionable message in stderr
-  *) echo "$PARSE_OUT" >&2; exit $PARSE_EXIT ;;
+  3) echo "$PARSE_ERR" >&2; exit 3 ;;   # R4 refuse — actionable message
+  *) echo "$PARSE_ERR" >&2; exit $PARSE_EXIT ;;
 esac
 
 # Resolve target from TARGETS array
@@ -142,6 +150,8 @@ for target in "${TARGETS[@]}"; do
             ;;
         \#*)
             ISSUE_NUMBER="${target#\#}"
+            # Validate issue number is numeric before substitution into gh api URL
+            [[ "$ISSUE_NUMBER" =~ ^[0-9]+$ ]] || { echo "ERROR: invalid issue number: $ISSUE_NUMBER" >&2; exit 2; }
             if [ "$LAST" = "true" ]; then
                 COMMENT_ID=$(gh api repos/$REPO/issues/$ISSUE_NUMBER/comments --jq '.[-1].id')
             else
@@ -151,6 +161,13 @@ for target in "${TARGETS[@]}"; do
             fi
             ;;
     esac
+
+    # R4/R5 security gate: COMMENT_ID MUST be numeric before any URL / filename substitution.
+    # Closes #154 verify finding C2 — unsanitized comment_id flows into:
+    #   - gh api repos/.../comments/$COMMENT_ID (REST path traversal)
+    #   - /tmp/idd-edit-repl-${COMMENT_ID}.md (arbitrary local file write via embedded `/` + `..`)
+    [[ "$COMMENT_ID" =~ ^[0-9]+$ ]] || { echo "ERROR: invalid comment ID (must be numeric): $COMMENT_ID" >&2; exit 2; }
+
     # ... continue to Step 1.5 + Step 2 for each COMMENT_ID
 done
 ```
@@ -200,18 +217,29 @@ echo "✓ Backup: $BACKUP_FILE"
 
 ### Step 4: Build new body per mode
 
+> **v2.75.0+ (#154)**: audit markers are built via `bash $CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.sh emit-audit-marker` — centralizes HTML-comment-escape (`-->` stripping) so attacker-controlled `$REASON` / `$SECTION_FLAG` cannot forge audit trail (closes #154 verify finding C3).
+
 #### Mode: `--append`
 
 ```bash
+EDIT_MARKER=$(bash $CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.sh emit-audit-marker edit mode=append)
 NEW_BODY="$(cat $BACKUP_FILE)
 
 ---
 
 **Edit $(date +%Y-%m-%d)**: $REASON
 
-$APPEND_BODY
+$BODY_INPUT
 
-<!-- idd:edit mode=append date=$(date +%Y-%m-%d) -->"
+$EDIT_MARKER"
+
+# Append R5 override audit marker if applicable
+if [ "$OVERRIDE_USER_CONTENT" = "true" ]; then
+    OVERRIDE_MARKER=$(bash $CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.sh emit-audit-marker override mode=append reason="$REASON")
+    NEW_BODY="$NEW_BODY
+
+$OVERRIDE_MARKER"
+fi
 ```
 
 #### Mode: `--replace`
@@ -219,11 +247,12 @@ $APPEND_BODY
 R4 gate already enforced in Step 1 — `SCOPE_FLAG` or `SECTION_FLAG` is guaranteed non-empty here.
 
 ```bash
-if [ -n "$SCOPE_FLAG" ] && [ "$SCOPE_FLAG" = "whole-comment" ]; then
+if [ "$SCOPE_FLAG" = "whole-comment" ]; then
     # Whole-comment replacement
+    EDIT_MARKER=$(bash $CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.sh emit-audit-marker edit mode=replace scope=whole-comment backup="$BACKUP_FILE")
     NEW_BODY="$BODY_INPUT
 
-<!-- idd:edit mode=replace scope=whole-comment date=$(date +%Y-%m-%d) backup=$BACKUP_FILE -->"
+$EDIT_MARKER"
 elif [ -n "$SECTION_FLAG" ]; then
     # Named section replacement via getline pattern (closes R3 C3 BSD awk newline reject)
     REPL_FILE="/tmp/idd-edit-repl-${COMMENT_ID}.md"
@@ -231,16 +260,18 @@ elif [ -n "$SECTION_FLAG" ]; then
     NEW_BODY=$(bash $CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.sh \
                   section-replace "$BACKUP_FILE" "$SECTION_FLAG" "$REPL_FILE")
     rm -f "$REPL_FILE"
+    EDIT_MARKER=$(bash $CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.sh emit-audit-marker edit mode=replace section="$SECTION_FLAG" backup="$BACKUP_FILE")
     NEW_BODY="$NEW_BODY
 
-<!-- idd:edit mode=replace section=\"$SECTION_FLAG\" date=$(date +%Y-%m-%d) backup=$BACKUP_FILE -->"
+$EDIT_MARKER"
 fi
 
 # Append R5 override audit marker if applicable
 if [ "$OVERRIDE_USER_CONTENT" = "true" ]; then
+    OVERRIDE_MARKER=$(bash $CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.sh emit-audit-marker override mode=replace reason="$REASON")
     NEW_BODY="$NEW_BODY
 
-<!-- idd:edit override-user-content date=$(date +%Y-%m-%d) reason=\"$REASON\" -->"
+$OVERRIDE_MARKER"
 fi
 ```
 
@@ -249,13 +280,22 @@ fi
 #### Mode: `--prepend-note`
 
 ```bash
+EDIT_MARKER=$(bash $CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.sh emit-audit-marker edit mode=prepend-note)
 NEW_BODY="> ⚠️ **Edit $(date +%Y-%m-%d)**: $REASON
 
 ---
 
 $(cat $BACKUP_FILE)
 
-<!-- idd:edit mode=prepend-note date=$(date +%Y-%m-%d) -->"
+$EDIT_MARKER"
+
+# Append R5 override audit marker if applicable
+if [ "$OVERRIDE_USER_CONTENT" = "true" ]; then
+    OVERRIDE_MARKER=$(bash $CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.sh emit-audit-marker override mode=prepend-note reason="$REASON")
+    NEW_BODY="$NEW_BODY
+
+$OVERRIDE_MARKER"
+fi
 ```
 
 ### Step 5: Preview + confirm
@@ -278,7 +318,7 @@ Confirm edit? (y/n)
 TMP_BODY_FILE="/tmp/idd-edit-new-${COMMENT_ID}.md"
 echo "$NEW_BODY" > "$TMP_BODY_FILE"
 
-gh api repos/$GITHUB_REPO/issues/comments/$COMMENT_ID \
+gh api repos/$REPO/issues/comments/$COMMENT_ID \
     -X PATCH \
     -F body=@"$TMP_BODY_FILE"
 
@@ -289,9 +329,9 @@ rm "$TMP_BODY_FILE"
 
 ```bash
 # Re-fetch 確認
-UPDATED=$(gh api repos/$GITHUB_REPO/issues/comments/$COMMENT_ID --jq '.body' | head -5)
+UPDATED=$(gh api repos/$REPO/issues/comments/$COMMENT_ID --jq '.body' | head -5)
 echo "✓ Comment updated"
-echo "  URL: $(gh api repos/$GITHUB_REPO/issues/comments/$COMMENT_ID --jq '.html_url')"
+echo "  URL: $(gh api repos/$REPO/issues/comments/$COMMENT_ID --jq '.html_url')"
 echo "  Backup: $BACKUP_FILE"
 echo "  First 5 lines of new body: $UPDATED"
 ```
@@ -361,6 +401,7 @@ Audit marker `<!-- idd:edit override-user-content date=... reason="..." -->` 自
 - **Metadata marker 不覆蓋**：每次 edit 加新 marker，保留 history
 - **`--replace` 預設 confirm = NO**：破壞性動作不自動 yes
 - **Log 每次 edit**：顯示 URL 讓使用者能立即 verify
+- **`--body-file` path 由 user 負責**（v2.75.0+ #154 H5）：helper 不限制路徑,`--body-file=/etc/passwd` 之類 absolute path 會被讀取並進入 PATCH body → public GitHub comment。 Preview gate 是最後一道防線。 未來增強:限制到 repo subtree 或 user-home(out of scope for #154)。 Programmatic caller(`/idd-comment` errata)若接受 user-supplied `--body-file` 必須先 validate path
 
 ## 與 idd-comment 的配合
 
@@ -382,8 +423,8 @@ Target comment 頂部加警示「⚠️ See errata below」
 # 列出所有 backup
 ls -la /tmp/idd-edit-backup/
 
-# 回復某次 edit
-gh api repos/$GITHUB_REPO/issues/comments/<id> \
+# 回復某次 edit (set REPO=owner/repo first)
+gh api repos/$REPO/issues/comments/<id> \
     -X PATCH \
     -F body=@/tmp/idd-edit-backup/comment-<id>-<timestamp>.md
 ```

@@ -14,8 +14,9 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
-TARGET_SCRIPT="$REPO_ROOT/.claude/scripts/idd-edit-helper.sh"
+# Path: plugins/issue-driven-dev/scripts/tests/idd-edit/ → 5 levels deep
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../../../.." && pwd)"
+TARGET_SCRIPT="$REPO_ROOT/plugins/issue-driven-dev/scripts/idd-edit-helper.sh"
 FIXTURES_DIR="$SCRIPT_DIR/fixtures"
 
 if [ ! -x "$TARGET_SCRIPT" ]; then
@@ -46,13 +47,26 @@ for fixture in "$FIXTURES_DIR"/*/; do
         args+=("$line")
     done < "$fixture/args.txt"
 
-    # Run target script, capture stdout + stderr + exit
-    set +e
-    actual_stdout=$("$TARGET_SCRIPT" "$subcmd" "${args[@]+"${args[@]}"}" 2>"/tmp/idd-edit-test-stderr-$$")
+    # Auto-discover mock_*.json file for validate-target fixtures (closes #154 H3).
+    # When fixture dir contains a mock_*.json, run target with
+    # IDD_EDIT_HELPER_GH_MOCK pointing at it (helper reads mock instead of gh api).
+    # Use shell glob (with nullglob via set + array) rather than `ls | head` pipe
+    # (pipefail makes ls-no-match abort the script).
+    mock_env=""
+    for cand in "$fixture"/mock_*.json; do
+        if [ -f "$cand" ]; then
+            mock_env="IDD_EDIT_HELPER_GH_MOCK=$cand"
+            break
+        fi
+    done
+
+    # Run target script, capture stdout + stderr + exit.
+    # Script-level: `set -uo pipefail` only (NO `set -e`) — fixtures testing
+    # refuse paths expect non-zero exit codes; $? captures regardless.
+    actual_stdout=$(env $mock_env "$TARGET_SCRIPT" "$subcmd" "${args[@]+"${args[@]}"}" 2>"/tmp/idd-edit-test-stderr-$$")
     actual_exit=$?
     actual_stderr=$(cat "/tmp/idd-edit-test-stderr-$$")
     rm -f "/tmp/idd-edit-test-stderr-$$"
-    set -e
 
     # Assertions
     local_pass=true
