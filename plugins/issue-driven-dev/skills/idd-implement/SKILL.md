@@ -200,6 +200,8 @@ fi
 
 If branch already exists from a prior aborted run: AskUserQuestion (checkout / `${EXPECTED}-2` suffix / abort).
 
+> **Concurrent-session isolation (#947)**: the `abort` branch above is the floor — it refuses rather than yanking when the tree is on another branch. **Prefer an isolated `git worktree`** for PR-path branch acquisition so concurrent `/idd` sessions never share one tree (set `CWD` to the worktree; the existing `git -C "$CWD"` plumbing routes the rest of the flow). And **never** manually `git stash` / `git checkout` a shared tree that may hold another session's WIP to "make room" — that is the silent-data-loss path reproduced in #941↔#942 (the yank was an agentic manual action, not this documented flow). Full rule + worktree snippet: [`references/pr-flow.md`](../../references/pr-flow.md) → "Concurrent-session isolation".
+
 #### If direct-commit path: print notice, stay on current branch
 
 ```bash
