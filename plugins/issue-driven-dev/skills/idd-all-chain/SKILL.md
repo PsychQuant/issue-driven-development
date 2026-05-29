@@ -289,6 +289,11 @@ DEFAULT=$(gh repo view "$GITHUB_REPO" --json defaultBranchRef -q .defaultBranchR
 CURRENT=$(git -C "$CWD" branch --show-current)
 [ "$CURRENT" = "$DEFAULT" ] || abort "Cluster branch must start from $DEFAULT (currently on $CURRENT)"
 
+# Concurrent-session isolation (#947): the abort above is the floor — refuse, don't yank.
+# Prefer an isolated `git worktree add` for the cluster branch so concurrent /idd runs
+# never share one tree; NEVER manually stash+checkout a shared tree that may hold another
+# session's WIP. Full rule: references/pr-flow.md → "Concurrent-session isolation".
+
 # Build cluster branch name — dispatch on N
 TITLE=$(gh issue view "$LOWEST_ROOT" -R "$GITHUB_REPO" --json title -q .title)
 SLUG=$(echo "$TITLE" | tr '[:upper:]' '[:lower:]' \

@@ -131,6 +131,25 @@ If branch already exists:
 git checkout -b "$BRANCH"
 ```
 
+### Concurrent-session isolation (worktree) — #947
+
+The shared working tree is single-occupant. When two `/idd` sessions run against the same clone, in-tree branch switching collides: the second session's branch acquisition pulls the tree out from under the first, and any "clear the tree first" step (`git stash` + `git checkout`) **parks the first session's uncommitted/untracked WIP** — silent data loss. Reproduced live (ai_martech_global_scripts #941↔#942): a concurrent session manually stashed + branch-switched a tree that held another session's WIP, yanking it. Note the root cause was **agentic** — the documented clean-tree abort below already prevents the flow from yanking; the collision came from a session manually clearing the tree to "make room".
+
+**Rules (PR path):**
+
+1. **Default to an isolated `git worktree`, not in-tree `checkout -b`.** Provision the feature branch in its own working directory so concurrent PR-path sessions never share one tree:
+   ```bash
+   WORKTREE="${WORKTREE_ROOT:-$(git -C "$CWD" rev-parse --git-dir)/idd-worktrees}/${BRANCH##*/}"
+   git -C "$CWD" worktree add "$WORKTREE" -b "$BRANCH" "$DEFAULT_BRANCH"
+   CWD="$WORKTREE"   # all subsequent git/gh ops reuse the existing `git -C "$CWD"` plumbing
+   # ... after the PR is opened (or the run aborts): git worktree remove "$WORKTREE"
+   ```
+   The existing `--cwd` cross-repo substitution (`git -C "$CWD"`) already routes every downstream step to the worktree — no other step changes. Repo-specific **gitignored** symlinks (e.g. a `00_principles` symlink) are NOT recreated in a fresh worktree; provide them via a repo-level setup hook if the run's tests need them, otherwise those tests skip (acceptable for codegen-only helpers).
+
+2. **The clean-tree + on-default abort guard is the floor — never bypass it by manually clearing the tree.** A session MUST NOT `git stash` / `git checkout` a shared working tree that may hold another session's WIP to "make room" for its own branch. If the tree is dirty or on another `idd/*` branch: use a worktree (rule 1), or abort and let the human decide — do **not** stash-and-switch.
+
+3. **Single-occupant fallback.** Where worktrees are unavailable, the documented clean-tree/on-default abort stands: refuse rather than yank.
+
 ### PR creation (after verify PASS)
 
 ```bash
