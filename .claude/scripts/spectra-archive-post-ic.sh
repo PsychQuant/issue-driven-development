@@ -152,9 +152,19 @@ detect_candidates() {
       | grep -oE '#[0-9]+' | tr -d '#' | sort -u)
   fi
 
-  # Fallback 2: Refs / Closes / Fixes pattern (only if F1 yielded nothing)
+  # Fallback 2: Refs / Closes / Fixes / Issue pattern (only if F1 yielded nothing).
+  # `[Ii]ssue` added per #170 — /spectra-propose writes the link in IDD-prose form
+  # ("referencing issue #N"), not as a Refs/Closes/Fixes trailer, so the narrower
+  # regex missed it and detection fell through to "(none)".
+  # The `(^|[^[:alnum:]_])` prefix is a word boundary (#170 verify): without it
+  # `[Ii]ssue` substring-matches `reissue #5` / `tissue #9`. The downstream
+  # `grep -oE '#[0-9]+'` strips the captured prefix char, so only the number
+  # survives. NOTE (known limitation, tracked separately): this is still
+  # context-blind to legitimate cross-references in prose ("see issue #164"),
+  # which can surface a spurious candidate — handled fail-safe by the
+  # multi-candidate exit-75 prompt, but see the membership-semantics follow-up.
   if [ -z "$candidates" ] && [ -d "$archive_dir" ]; then
-    candidates=$(grep -rhoE '(Refs|Closes|Fixes) #[0-9]+' \
+    candidates=$(grep -rhoE '(^|[^[:alnum:]_])(Refs|Closes|Fixes|[Ii]ssue) #[0-9]+' \
       "$archive_dir"/*.md 2>/dev/null \
       | grep -oE '#[0-9]+' | tr -d '#' | sort -u)
   fi
@@ -171,13 +181,23 @@ detect_candidates() {
 
 # ── Resolve LINKED_ISSUE ──
 if [ -n "$LINKED_ISSUE_RESOLVED" ]; then
-  # Re-invoke from agent after multi-candidate prompt; validate against original set
-  CANDIDATES=$(detect_candidates "$ARCHIVE_DIR")
-  if ! echo "$CANDIDATES" | grep -qx "$LINKED_ISSUE_RESOLVED"; then
-    emit_outcome "(failed — --linked-issue $LINKED_ISSUE_RESOLVED not in candidate set: $(echo "$CANDIDATES" | tr '\n' ' '))" 0
-  fi
-  if ! [[ "$LINKED_ISSUE_RESOLVED" =~ ^[0-9]+$ ]]; then
+  # Validate integer FIRST (clearer error; emit_outcome exits, so this must
+  # precede the membership check to be reachable). (#170)
+  # `^[1-9][0-9]*$` is strictly positive — GitHub issue numbers start at 1, so
+  # `0` (and leading-zero forms) are invalid; the prior `^[0-9]+$` let `--linked-issue 0`
+  # through to post at /issues/0 despite the "positive integer" message (#170 verify).
+  if ! [[ "$LINKED_ISSUE_RESOLVED" =~ ^[1-9][0-9]*$ ]]; then
     emit_outcome "(failed — --linked-issue $LINKED_ISSUE_RESOLVED is not a positive integer)" 0
+  fi
+  # Membership validation applies ONLY when detection actually found candidates
+  # (the multi-candidate disambiguation re-invoke). When the candidate set is
+  # EMPTY, --linked-issue is the authoritative escape hatch — detection always
+  # has gaps (prose-only #N refs etc.), so the override MUST NOT depend on
+  # detection succeeding, or both fail together exactly when the fallback is
+  # needed (the #170 root cause). (#170)
+  CANDIDATES=$(detect_candidates "$ARCHIVE_DIR")
+  if [ -n "$CANDIDATES" ] && ! echo "$CANDIDATES" | grep -qx "$LINKED_ISSUE_RESOLVED"; then
+    emit_outcome "(failed — --linked-issue $LINKED_ISSUE_RESOLVED not in candidate set: $(echo "$CANDIDATES" | tr '\n' ' '))" 0
   fi
   LINKED_ISSUE="$LINKED_ISSUE_RESOLVED"
 else
