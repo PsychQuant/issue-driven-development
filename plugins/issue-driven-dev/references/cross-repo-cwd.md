@@ -85,7 +85,21 @@ Some skills also accept `--target owner/repo` (e.g. `idd-issue`, `idd-list`, `id
 
 `idd-implement` / `idd-verify` / `idd-all` require `--cwd` (not just `--target`) because they do local git writes that need a real working tree.
 
+## Parallel Worktree Pattern
+
+A git worktree of the **same** repo is a valid `--cwd` target: it has its own `.git` link and inherits the repo's `origin` remote, so the Step 0 resolution algorithm derives the same `$GITHUB_REPO` and treats it like any other clone. To run multiple IDD pipelines concurrently, give each issue its own worktree instead of fighting over one working tree:
+
+```bash
+WT=$(bash plugins/issue-driven-dev/scripts/idd-worktree.sh create 43)  # prints .claude/worktrees/idd-43/
+/idd-diagnose #43 --cwd "$WT"
+/idd-implement #43 --cwd "$WT"
+/idd-verify  #43 --cwd "$WT"
+```
+
+每個 issue 一個 worktree → N 條 pipeline 互不踩 working tree，各自開各自的 PR。完整 convention（layout、lifecycle、N-PRs-not-merge-back convergence）見 [`worktree-isolation.md`](worktree-isolation.md)。
+
 ## See Also
 
 - [`pr-flow.md`](pr-flow.md) — PR vs direct-commit path resolution (orthogonal to cwd)
 - [`config-protocol.md`](config-protocol.md) — `.claude/issue-driven-dev.local.md` config (also independent of cwd flag)
+- [`worktree-isolation.md`](worktree-isolation.md) — parallel IDD via git worktrees (`--cwd` per issue, Case B isolation)

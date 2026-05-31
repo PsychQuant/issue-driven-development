@@ -175,6 +175,7 @@ TaskCreate(name="residue_acknowledgement", description="Step 3.6 (v2.66.0+, #105
 TaskCreate(name="publish_and_close", description="gh issue comment + gh issue close")
 TaskCreate(name="auto_update_body", description="跑 /idd-update #NNN 把 issue body 的 Current Status phase 改 closed（Step 6，常被漏）")
 TaskCreate(name="distribution_sync_chain_detection", description="Step 6.5 (v2.56.0+, #45): infer_distribution_type detection per references/distribution-detection.md; if hit → AskUserQuestion 3-option (chain to plugin-update/mcp-deploy/cli-deploy / skip — manual later / not applicable); patch closing comment with ### Distribution Sync section. Silent skip for non-distribution repos. IDD_DISTRIBUTION_SYNC_PROMPT=false env var bypasses prompt entirely (still 1-line audit).")
+TaskCreate(name="worktree_gc", description="Step 6.7 (v2.75.0+, #167): best-effort worktree GC — bash $CLAUDE_PLUGIN_ROOT/scripts/idd-worktree.sh cleanup <N>; absent helper or dirty-refuse (exit 5) → one-line warning + close still completes; never blocks close")
 TaskCreate(name="report_result", description="輸出關閉後的 issue URL 與 commits chain")
 ```
 
@@ -856,6 +857,48 @@ patch_closing_comment_append "$AUDIT_BLOCK"
 | Plugin name resolution fails (marketplace.json missing/malformed) | Demote `DISTRIBUTION_TYPE` to `n/a` + WARN to stderr;close completes via standard `n/a` path (no separate audit error category — keeps schema simple) |
 
 > **Future hook for `idd-implement` Step 5.x early-surface**: same `infer_distribution_type` helper could power an earlier prompt (at PR-open time rather than close time). Out of scope for #45 v1 — separate follow-up if value confirmed.
+
+### Step 6.7: Worktree Garbage Collection (v2.75.0+, #167)
+
+Issue 關閉後,**best-effort** 回收這個 issue 的並行 worktree(`.claude/worktrees/idd-<N>/`)。`idd-close` 是 IDD 的終點,也是 issue worktree 生命週期的自然終結——清掉它,免得 abandoned worktree 堆積。
+
+完整契約見 [`references/worktree-isolation.md`](../../references/worktree-isolation.md)(D6 Auto-GC trigger)。
+
+**核心紀律:GC 永不阻擋 close**。worktree 回收是清理動作,不是 lifecycle gate。Step 6(phase=closed)跑完、issue 已關之後才跑;不論成敗,close 都已完成。
+
+呼叫 helper(對 repo root 跑,不是對 worktree 內部):
+
+```bash
+# 此時 issue 已 closed(Step 4)。worktree GC 是 post-close cleanup,不影響 close 結果。
+# helper 路徑用 $CLAUDE_PLUGIN_ROOT 解析;舊版 plugin 沒這個 script → 視為「helper 缺席」分支。
+WT_HELPER="$CLAUDE_PLUGIN_ROOT/scripts/idd-worktree.sh"
+
+if [ ! -f "$WT_HELPER" ]; then
+  # Helper 缺席(older plugin / 未安裝)— 一行 warning,close 已完成。
+  echo "⚠️  worktree GC skipped: helper not found ($WT_HELPER). 若有殘留 worktree,手動跑 idd-worktree.sh cleanup $NUMBER --force" >&2
+else
+  # cleanup 對 repo root 跑(--repo-root 預設為 cwd 的 git toplevel)。
+  bash "$WT_HELPER" cleanup "$NUMBER"
+  WT_RC=$?
+  if [ "$WT_RC" -eq 5 ]; then
+    # Exit 5 = refuse-dirty:worktree 有 uncommitted changes,helper 拒絕刪,worktree 原封不動。
+    echo "⚠️  worktree GC refused: .claude/worktrees/idd-$NUMBER/ 有未提交變更,已保留。手動處理:commit/stash 後 idd-worktree.sh cleanup $NUMBER,或 idd-worktree.sh cleanup $NUMBER --force 強制刪除。" >&2
+  elif [ "$WT_RC" -ne 0 ]; then
+    # 其他非零(generic / not-git / usage)— 同樣 warn-only,不影響已完成的 close。
+    echo "⚠️  worktree GC failed (exit $WT_RC): .claude/worktrees/idd-$NUMBER/ 可能殘留。手動跑 idd-worktree.sh cleanup $NUMBER 查看。" >&2
+  fi
+  # WT_RC=0 → worktree 已移除(或本來就不存在,idempotent no-op),靜默成功。
+fi
+```
+
+| 結果 | exit code | 行為 |
+|------|-----------|------|
+| Helper 缺席(older plugin) | — | 🟡 一行 warning(建議手動 cleanup),close 已完成 |
+| Worktree 移除成功 / 本來就不存在 | `0` | ✅ 靜默(idempotent no-op 也算成功) |
+| Dirty-refuse(未提交變更,無 `--force`) | `5` | 🟡 一行 warning(保留 worktree + 提示 commit/stash 或 `--force`),close 已完成 |
+| 其他錯誤(generic / not-git / usage) | `1`/`2`/`3`/`4` | 🟡 一行 warning,close 已完成 |
+
+**為什麼 best-effort 而非 hard gate**:issue 已經關了(Step 4)。worktree 殘留只是磁碟上的暫存目錄,`idd-worktree.sh list` 隨時能 surface 出 orphan 讓使用者手動 `cleanup`。為了一個清理動作去 fail 一個已完成的 close,會把 audit trail 弄得不一致(issue closed 但 skill 報 error)。Dirty-refuse 尤其要尊重——使用者可能還沒 commit 的工作不該被靜默刪掉。
 
 ### Step 7: 批次 close 特殊規則
 

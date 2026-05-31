@@ -191,6 +191,13 @@ CURRENT=$(git branch --show-current)
 
 if [ "$CURRENT" = "$EXPECTED" ]; then
     echo "→ Already on $EXPECTED, continuing."
+elif [[ "$CURRENT" =~ ^idd/${NUMBER}(-|$) ]]; then
+    # Slug-agnostic worktree-branch acceptance (idd-worktree.sh create #N):
+    # git forbids two worktrees on the default branch, so a helper-created
+    # worktree is necessarily already on idd/<N>-<slug>. Accept any slug after
+    # idd/<N>- (and bare idd/<N>) for THIS issue — same outcome as the EXPECTED
+    # path above, bypassing the default-branch precondition.
+    echo "→ On worktree feature branch $CURRENT (idd-worktree.sh), continuing."
 elif [ "$CURRENT" = "$DEFAULT_BRANCH" ]; then
     git checkout -b "$EXPECTED"
 else
@@ -200,7 +207,9 @@ fi
 
 If branch already exists from a prior aborted run: AskUserQuestion (checkout / `${EXPECTED}-2` suffix / abort).
 
-> **Concurrent-session isolation (#947)**: the `abort` branch above is the floor — it refuses rather than yanking when the tree is on another branch. **Prefer an isolated `git worktree`** for PR-path branch acquisition so concurrent `/idd` sessions never share one tree (set `CWD` to the worktree; the existing `git -C "$CWD"` plumbing routes the rest of the flow). And **never** manually `git stash` / `git checkout` a shared tree that may hold another session's WIP to "make room" — that is the silent-data-loss path reproduced in #941↔#942 (the yank was an agentic manual action, not this documented flow). Full rule + worktree snippet: [`references/pr-flow.md`](../../references/pr-flow.md) → "Concurrent-session isolation".
+> **Concurrent-session isolation (#947)**: the `abort` branch above is the floor — it refuses rather than yanking when the tree is on another branch. **Prefer an isolated `git worktree`** for PR-path branch acquisition so concurrent `/idd` sessions never share one tree (set `CWD` to the worktree; the existing `git -C "$CWD"` plumbing routes the rest of the flow). And **never** manually `git stash` / `git checkout` a shared tree that may hold another session's WIP to "make room" — that is the silent-data-loss path reproduced in #941↔#942 (the yank was an agentic manual action, not this documented flow). Full rule + ad-hoc worktree snippet: [`references/pr-flow.md`](../../references/pr-flow.md) → "Concurrent-session isolation". For a **managed** worktree lifecycle (issue-keyed `.claude/worktrees/idd-<N>/`, gitignored, with `create` / `cleanup` / `list` + `idd-close` auto-GC), use `scripts/idd-worktree.sh` — see [`references/worktree-isolation.md`](../../references/worktree-isolation.md) (#167). The two are the same convention at different ergonomic tiers.
+
+> **Worktree-branch acceptance（v2.75.0+, #167）**：當 `idd-implement #N --cwd <worktree>` 跑在 `idd-worktree.sh create N` 建出的 worktree 上時，`git branch --show-current` 已是 `idd/<N>-<slug>`（git 不允許兩個 worktree 共用 default branch）。上面 `^idd/${NUMBER}(-|$)` 那條 clause 是 **slug-agnostic** 的：任何 `idd/<N>-` 後綴（或裸 `idd/<N>`）都接受為 feature branch，跳過建 branch 與 default-branch 前置檢查。不同 issue 號的 branch（如實作 #167 時落在 `idd/999-*`）不匹配，照原 resolution 走。契約見 [`references/worktree-isolation.md`](../../references/worktree-isolation.md)。
 
 #### If direct-commit path: print notice, stay on current branch
 
