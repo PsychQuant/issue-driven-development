@@ -272,7 +272,7 @@ Repo: PsychQuant/issue-driven-development  (state: open, limit: 20)
 >
 > 這類 issue 很可能是在 `/idd-close` 之外被關掉的 —— 例如 commit / PR-body 的 `close` keyword + `#<digit>` 觸發 GitHub auto-close，繞過整個 gate（checklist / semantic / sister-sweep / residue / distribution-sync）。見 `CLAUDE.md` → Commit Conventions →「Direct-commit path has NO automated auto-close gate」(#151) 與 Step 0.8 (#173)。
 
-- Marker 子行：`└─ ⚠ closed without Closing Summary — possible auto-close-trap bypass; consider retroactive /idd-close remediation`
+- Marker 子行：`└─ ⚠ closed without Closing Summary — possible auto-close-trap bypass; remediate via /idd-close --retroactive #N` (v2.76.0+, #176)
 - `--audit-closes` 在 `--state` 仍是預設 `open` 時隱含切到 `closed`（open issue 不可能被 auto-close）。
 - **Advisory** — legacy / pre-IDD / GitHub-UI-closed 的 issue 本來就沒 summary，這是提醒不是錯誤。用 idd-list 自己的 `--limit` 收斂掃描範圍（`--since` 是 standalone helper 專屬 flag，idd-list 端不吃）。
 - Standalone 等價物（給 cron / 直接 CLI，只回 flagged set）是 `scripts/check-closed-without-summary.sh` — 同一個 `## Closing Summary` marker、同 advisory 契約。
