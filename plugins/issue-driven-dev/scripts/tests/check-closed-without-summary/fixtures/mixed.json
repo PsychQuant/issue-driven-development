@@ -1,0 +1,32 @@
+[
+  {
+    "number": 100,
+    "title": "closed WITH a proper Closing Summary",
+    "state": "CLOSED",
+    "comments": [
+      { "body": "## Diagnosis\n\n### Type\nbug" },
+      { "body": "## Closing Summary\n\n### Problem\nfoo\n\n### Root Cause\nbar" }
+    ]
+  },
+  {
+    "number": 101,
+    "title": "closed WITHOUT a Closing Summary (auto-close-trap victim)",
+    "state": "CLOSED",
+    "comments": [
+      { "body": "## Diagnosis\n\n### Type\nbug" },
+      { "body": "## Implementation Complete\n\n### Checklist\n- [x] done" }
+    ]
+  },
+  {
+    "number": 102,
+    "title": "still open — must never be flagged",
+    "state": "OPEN",
+    "comments": []
+  },
+  {
+    "number": 103,
+    "title": "closed, zero comments (legacy / GitHub-UI close) — flagged",
+    "state": "CLOSED",
+    "comments": []
+  }
+]

@@ -13,6 +13,8 @@ Both `idd-implement` and `idd-all` consume this — both resolve dynamically per
 
 Both paths share IDD discipline: every commit references `#NNN`, no `Closes`/`Fixes`/`Resolves` trailers, `idd-close` enforces checklist gate.
 
+> ⚠️ **Direct-commit path has NO automated auto-close gate** (#151): `idd-verify` Step 0.8 auto-close detection runs only in `--pr` mode, so on the direct-commit path the commit-body writing discipline is the *only* protection against a `close`-keyword-in-body trap landing on the default branch. Default to `Refs #N` for audit references; retroactively audit with `/idd-list --audit-closes`. Full callout: `CLAUDE.md` → Commit Conventions → "Direct-commit path 沒有自動 auto-close gate".
+
 ## Resolution algorithm
 
 When `idd-implement` (or any IDD skill that needs to know the path) starts, resolve in this order. **Cluster mode (≥2 `#N` invocations) is a precondition that pre-empts this table — see [Cluster mode override](#cluster-mode-override) below.**
