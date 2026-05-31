@@ -31,16 +31,32 @@ FILES=(
   "$P/skills/idd-all/SKILL.md"
   "$P/skills/idd-all-chain/SKILL.md"
   "$P/references/pr-flow.md"
+  "$P/references/chain-flow.md"   # chain cluster PR-body schema doc (#173 verify)
 )
 
 # PR-body template line markers.
 SCOPE='Verify-gated|REVIEW_CHECKLIST_LINE'
-# Trap: a close keyword + whitespace + an issue-ref form.
-TRAP='(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+(#\$\{|#[0-9]|\$[A-Z_]+)'
+# Trap: a close keyword + optional colon + whitespace + an issue-ref form.
+#
+# The inter-token pattern `[[:space:]]*:?[[:space:]]+` MIRRORS the runtime Step 0.8
+# Source 2 detector — so this static guard is NOT weaker than the detector it
+# backstops. GitHub auto-closes the COLON form too (`Closes: #N`), which an
+# earlier `[[:space:]]+`-only regex missed (#173 verify: DA-1 + Codex HIGH).
+# Issue-ref forms covered: `#$VAR` / `#${VAR}` (→ `#\$`), `#<digit>`,
+# and an ALLCAPS var that expands to refs `$REFS_LIST` / `${REFS_LIST}`
+# (→ `\$\{?[A-Z_]`).
+TRAP='(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]*:?[[:space:]]+(#\$|#[0-9]|\$\{?[A-Z_])'
 
 hits=0
+missing=0
 for f in "${FILES[@]}"; do
-  [ -f "$f" ] || { echo "  ⚠ missing: ${f#"$ROOT"/}"; continue; }
+  if [ ! -f "$f" ]; then
+    # Fail CLOSED: a stale FILES entry means the guard is no longer checking what
+    # it claims — a renamed / moved template would slip through GREEN. (#173 Codex)
+    echo "  ✗ expected template file missing (stale FILES list?): ${f#"$ROOT"/}"
+    missing=$((missing + 1))
+    continue
+  fi
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     hits=$((hits + 1))
@@ -48,12 +64,19 @@ for f in "${FILES[@]}"; do
   done < <(grep -hE "$SCOPE" "$f" 2>/dev/null | grep -iE "$TRAP")
 done
 
-if [ "$hits" -gt 0 ]; then
+if [ "$hits" -gt 0 ] || [ "$missing" -gt 0 ]; then
   echo ""
-  echo "FAIL: $hits PR-body template line(s) contain an auto-close trap"
-  echo "      (a close/fix/resolve keyword immediately before an issue reference)."
-  echo "      Rephrase so no such keyword is adjacent to #<issue> / \$REFS — e.g."
-  echo "      'after merge, run /idd-close to finalize this issue'."
+  if [ "$missing" -gt 0 ]; then
+    echo "FAIL: $missing expected template file(s) missing — guard cannot verify them."
+    echo "      Update the FILES list (a template was renamed / moved / deleted)."
+  fi
+  if [ "$hits" -gt 0 ]; then
+    echo "FAIL: $hits PR-body template line(s) contain an auto-close trap"
+    echo "      (a close/fix/resolve keyword — incl. colon form 'Closes: #N' —"
+    echo "       immediately before an issue reference)."
+    echo "      Rephrase so no such keyword is adjacent to #<issue> / \$REFS — e.g."
+    echo "      'after merge, run /idd-close to finalize this issue'."
+  fi
   exit 1
 fi
 

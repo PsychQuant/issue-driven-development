@@ -287,9 +287,12 @@ fi
 # close the channel.
 #
 # Regex baked-in lessons from PR #94 R1/R2/R3 (see #87/#74 close history):
-#   (^|[^-/[:alnum:]])  — exclude /idd-close skill invocations + other
-#                         hyphenated tokens (idd-close-skill #N etc.).
-#                         GitHub itself does not treat these as close keywords.
+#   (^|[^-/[:alnum:]])  — Source-2-only exclusion of /idd-close skill
+#                         invocations + other hyphenated tokens (idd-close-skill
+#                         #N etc.). NOTE this DIVERGES from GitHub (Source 1):
+#                         GitHub hyphen-splits idd-close -> close #N and DOES
+#                         auto-close (#173). Source 2 opts out here to avoid
+#                         flagging every skill-invocation reference as a trap.
 #   close[sd]?|fix(e[sd])?|resolve[sd]?  — every inflection GitHub honors.
 #   [[:space:]]*:?[[:space:]]+  — covers both bare and colon forms.
 #   #[0-9]+  — same-repo issue number form only. Cross-repo owner/repo#N is

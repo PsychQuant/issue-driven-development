@@ -16,7 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Guard test `scripts/tests/pr-body-autoclose-guard/test.sh`** ([#173](https://github.com/PsychQuant/issue-driven-development/issues/173)): scans the 4 PR-body-generating template files for a close/fix/resolve keyword adjacent to a rendered issue ref — catches both the `#${VAR}` literal-`#`-var form AND the `$REFS_LIST` expands-to-`#refs` form — scoped to PR-body lines (`Verify-gated` / `REVIEW_CHECKLIST_LINE`)。 Regression backstop so a future template edit cannot silently re-introduce the trap。
+- **Guard test `scripts/tests/pr-body-autoclose-guard/test.sh`** ([#173](https://github.com/PsychQuant/issue-driven-development/issues/173)): scans the 5 PR-body-generating template files for a close/fix/resolve keyword adjacent to a rendered issue ref — catches the `#${VAR}` / `#$VAR` brace-or-bare-var form, the `$REFS_LIST` / `${REFS_LIST}` expands-to-`#refs` form, AND the colon form (`Closes: #N`) — scoped to PR-body lines (`Verify-gated` / `REVIEW_CHECKLIST_LINE`)。 Regression backstop so a future template edit cannot silently re-introduce the trap。
+
+### Hardened (6-AI verify round, [#173](https://github.com/PsychQuant/issue-driven-development/issues/173))
+
+- **Guard regex no longer weaker than the runtime Step 0.8 Source 2 detector** — the initial guard required `[[:space:]]+` after the keyword and so MISSED the colon form `Closes: #N` (which GitHub DOES auto-close) and the braced `${REFS_LIST}` form。 Regex now mirrors the runtime detector's `[[:space:]]*:?[[:space:]]+` inter-token pattern + broadened ref alternation。 Surfaced by the Devil's Advocate (MEDIUM) and Codex gpt-5.5 (HIGH) cross-model reviewers。
+- **Guard fails CLOSED on a missing template file** — a stale `FILES` entry (renamed / moved template) previously warned + still exited PASS, letting a template slip through unscanned。 Now a missing expected file fails the guard。 (Codex finding。)
+- **`references/chain-flow.md` PR-body schema synced** — the chain cluster PR-body schema doc still illustrated the old `→ /idd-close #<root> #<chained_1> ...` trap shape, out of sync with the now-fixed `idd-all-chain` generator。 Rephrased to the safe form + added to the guard's `FILES` list。
+- **Second stale false-claim in `idd-verify` Step 0.8 corrected** — the Source 2 regex comment block still asserted "GitHub itself does not treat these as close keywords" (the same empirically-false belief as the prose fix above)。 Corrected to note Source 2's exclusion DIVERGES from GitHub Source 1, which hyphen-splits and DOES auto-close。 (Codex finding。)
 
 ### Notes
 
