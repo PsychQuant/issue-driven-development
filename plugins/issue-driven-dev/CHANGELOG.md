@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.75.1] - 2026-05-31
+
+### Fixed
+
+- **PR-body templates no longer emit a GitHub auto-close trap** ([#173](https://github.com/PsychQuant/issue-driven-development/issues/173)): the verify-gated checklist line in `idd-implement`, `idd-all`, `idd-all-chain` (cluster `REVIEW_CHECKLIST_LINE` — both `--review` pending + default verify-gated variants), and `references/pr-flow.md` rendered `/idd-close #${NUMBER}` / `/idd-close $REFS_LIST`。 GitHub hyphen-splits `idd-close` → `close #N`, surfaces it in the PR's `closingIssuesReferences`, and auto-closes the issue(s) on merge — bypassing `/idd-close`'s checklist gate + closing summary (observed on PR #171 auto-closing #170)。 Rephrased so no close keyword is adjacent to an issue ref(`after merge, run /idd-close to finalize ...` / cluster: `... finalize the cluster (issues: $REFS_LIST; ...)`); the `Refs #N` at the PR-body top still provides the non-closing link。
+- **Corrected a false claim in `idd-verify` Step 0.8 prose** ([#173](https://github.com/PsychQuant/issue-driven-development/issues/173)): the doc stated `/idd-close #N` is "天然零誤判" in Source 1 (`closingIssuesReferences`)。 It is NOT — Source 1 (GitHub, authoritative) DOES flag it via hyphen-split; only Source 2 (local regex with `[^-/[:alnum:]]` prefix guard) excludes it。 The two sources deliberately disagree, which is exactly why the template trap slipped past the verify gate yet still auto-closed on merge。
+
+### Added
+
+- **Guard test `scripts/tests/pr-body-autoclose-guard/test.sh`** ([#173](https://github.com/PsychQuant/issue-driven-development/issues/173)): scans the 4 PR-body-generating template files for a close/fix/resolve keyword adjacent to a rendered issue ref — catches both the `#${VAR}` literal-`#`-var form AND the `$REFS_LIST` expands-to-`#refs` form — scoped to PR-body lines (`Verify-gated` / `REVIEW_CHECKLIST_LINE`)。 Regression backstop so a future template edit cannot silently re-introduce the trap。
+
+### Notes
+
+- Plugin v2.75.1 是 **patch** bump — bug fix to PR-body template wording + regression test + doc correction。 No API / behavior change for users; backward-compatible。 Console "next steps" hints (`idd-all-chain` NEXT_STEPS) intentionally keep the literal `/idd-close $REFS_LIST` command — those are terminal output the user runs, not PR-body text, so they never reach GitHub's parser。
+
 ## [2.75.0] - 2026-05-31
 
 ### Added
