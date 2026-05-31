@@ -30,7 +30,7 @@ So the work is a convention + a thin helper, not new isolation machinery.
 
 Each parallel IDD produces its own feature branch and its own PR (one per issue). v1 does NOT merge N worktree branches into one cluster PR.
 
-Rationale: single-clustered-PR and parallelism are opposite convergence models. IDD already owns the sequential single-PR side (`/idd-all-chain` Phase 2 is a pop-invoke-enqueue loop on ONE cluster branch). Chasing parallel-into-one-PR would duplicate that machinery and add a worktree-branch merge-back step with conflict resolution. Taking the N-PRs branch deletes that entire problem. Users who want one clustered PR use the existing sequential `/idd-all-chain`.
+Rationale: single-clustered-PR and parallelism are opposite convergence models. IDD already owns the sequential single-PR side (`/idd-all-chain` Phase 2 is a pop-invoke-enqueue loop on ONE cluster branch). Chasing parallel-into-one-PR would duplicate that machinery and add a worktree-branch merge-back step with conflict resolution. Taking the N-PRs branch deletes the merge-back *orchestration* problem — it does NOT eliminate git-level conflicts when two parallel issues touch the same file (those still surface at the second PR's merge, resolved by normal human/CI PR-merge handling, exactly as for any two independent branches). What's removed is IDD owning a bespoke N-branch fan-in protocol. Users who want one clustered PR use the existing sequential `/idd-all-chain`.
 
 ### D2: Case A deferred out of v1
 

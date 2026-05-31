@@ -78,8 +78,21 @@ done
 
 RESOLVE_FROM="${REPO_ROOT_FLAG:-$PWD}"
 [ -d "$RESOLVE_FROM" ] || { err "✗ path does not exist: $RESOLVE_FROM"; exit 3; }
-REPO_ROOT="$(git -C "$RESOLVE_FROM" rev-parse --show-toplevel 2>/dev/null)" || {
+git -C "$RESOLVE_FROM" rev-parse --git-dir >/dev/null 2>&1 || {
   err "✗ not a git repository: $RESOLVE_FROM (pass --repo-root /path/to/repo)"
+  exit 3
+}
+# Anchor on the MAIN worktree root (where .claude/worktrees/ physically lives),
+# NOT the current linked worktree. `git worktree list` shares the repo's worktree
+# set, and its first entry is always the main worktree regardless of which
+# worktree we're invoked from. Using `rev-parse --show-toplevel` instead would
+# return the *current* linked worktree when called from inside one (e.g. idd-close
+# GC running with --cwd <worktree>), making cleanup/list look in the wrong tree
+# and silently no-op. (#167 verify P2 — codex fixture)
+REPO_ROOT="$(git -C "$RESOLVE_FROM" worktree list --porcelain 2>/dev/null \
+  | awk '/^worktree /{print substr($0, 10); exit}')"
+[ -n "$REPO_ROOT" ] || {
+  err "✗ could not resolve main worktree root from $RESOLVE_FROM"
   exit 3
 }
 
@@ -150,6 +163,13 @@ is_registered_worktree() {
 
 ensure_gitignore() {
   local gi="$REPO_ROOT/.gitignore"
+  # Refuse to append through a symlinked .gitignore (would write to the link
+  # target). Warn + continue — not gitignoring the worktree dir is degraded but
+  # non-fatal (it shows as untracked). (#167 verify LOW — agents:security)
+  if [ -L "$gi" ]; then
+    err "⚠ $gi is a symlink — not appending '.claude/worktrees/' (add it manually if desired)."
+    return 0
+  fi
   if ! grep -qxF '.claude/worktrees/' "$gi" 2>/dev/null; then
     {
       [ -s "$gi" ] && printf '\n'
@@ -165,10 +185,25 @@ cmd_create() {
   require_numeric_n
   local wt_dir="$WT_BASE/idd-$N"
 
-  # 1. Idempotent: canonical worktree already registered → print path, done.
+  # 1. Idempotent: canonical worktree already registered AND on this issue's
+  #    branch → print path, done. A canonical path registered on a wrong branch
+  #    (idd/999-*) is a conflict, not idempotent success — returning exit 0 there
+  #    would mislead the caller into using a worktree on the wrong issue's branch.
+  #    (#167 verify P2 — codex + agents:logic cross-confirmed)
   if is_registered_worktree "$wt_dir"; then
-    printf '%s\n' "$wt_dir"
-    return 0
+    local cur_branch
+    cur_branch="$(git -C "$wt_dir" branch --show-current 2>/dev/null)"
+    case "$cur_branch" in
+      "idd/$N" | "idd/$N-"*)
+        printf '%s\n' "$wt_dir"
+        return 0
+        ;;
+      *)
+        err "✗ worktree $wt_dir exists but is on branch '$cur_branch' (expected idd/$N or idd/$N-*)."
+        err "  It does not belong to issue #$N — resolve manually or clean it up first."
+        return 4
+        ;;
+    esac
   fi
 
   # 2. Conflict: issue N already checked out on a DIFFERENT worktree → refuse.

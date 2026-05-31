@@ -149,6 +149,26 @@ LIST2="$("$SCRIPT" list --repo-root "$REmpty" 2>/dev/null)"; RC=$?
 assert_exit "list empty exits 0" 0 "$RC"
 assert_eq "list empty prints nothing" "" "$LIST2"
 
+echo "== verify-round fixes (#167 P2) =="
+
+# FIX-2: canonical idd-<N>/ path registered on a WRONG branch → create exits 4
+# (not silent exit 0 that misleads the caller into a wrong-issue branch).
+RWB="$(new_repo)"; track "$RWB"
+git -C "$RWB" worktree add -q -b idd/999-other "$RWB/.claude/worktrees/idd-50" main
+"$SCRIPT" create 50 --slug x --repo-root "$RWB" >/dev/null 2>&1; RC=$?
+assert_exit "create on canonical path with wrong branch exits 4 (not 0)" 4 "$RC"
+
+# FIX-1: cleanup invoked with --repo-root pointing at a LINKED worktree still
+# removes the main-tree worktree — helper anchors on the main worktree, not the
+# linked one it was handed (the idd-close GC-from-worktree scenario).
+RA="$(new_repo)"; track "$RA"
+WT60="$("$SCRIPT" create 60 --slug a --repo-root "$RA" 2>/dev/null)"
+SIDE="$("$SCRIPT" create 61 --slug b --repo-root "$RA" 2>/dev/null)"
+"$SCRIPT" cleanup 60 --repo-root "$SIDE" >/dev/null 2>&1; RC=$?
+assert_exit "cleanup --repo-root <linked worktree> exits 0" 0 "$RC"
+assert_true "cleanup anchored on main removes target worktree idd-60" "[ ! -d '$WT60' ]"
+assert_true "cleanup did not touch unrelated worktree idd-61" "[ -d '$SIDE' ]"
+
 # ------------------------------------------------------------------------------
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

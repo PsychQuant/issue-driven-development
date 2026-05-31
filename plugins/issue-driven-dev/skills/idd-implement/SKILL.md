@@ -209,7 +209,11 @@ If branch already exists from a prior aborted run: AskUserQuestion (checkout / `
 
 > **Concurrent-session isolation (#947)**: the `abort` branch above is the floor — it refuses rather than yanking when the tree is on another branch. **Prefer an isolated `git worktree`** for PR-path branch acquisition so concurrent `/idd` sessions never share one tree (set `CWD` to the worktree; the existing `git -C "$CWD"` plumbing routes the rest of the flow). And **never** manually `git stash` / `git checkout` a shared tree that may hold another session's WIP to "make room" — that is the silent-data-loss path reproduced in #941↔#942 (the yank was an agentic manual action, not this documented flow). Full rule + ad-hoc worktree snippet: [`references/pr-flow.md`](../../references/pr-flow.md) → "Concurrent-session isolation". For a **managed** worktree lifecycle (issue-keyed `.claude/worktrees/idd-<N>/`, gitignored, with `create` / `cleanup` / `list` + `idd-close` auto-GC), use `scripts/idd-worktree.sh` — see [`references/worktree-isolation.md`](../../references/worktree-isolation.md) (#167). The two are the same convention at different ergonomic tiers.
 
-> **Worktree-branch acceptance（v2.75.0+, #167）**：當 `idd-implement #N --cwd <worktree>` 跑在 `idd-worktree.sh create N` 建出的 worktree 上時，`git branch --show-current` 已是 `idd/<N>-<slug>`（git 不允許兩個 worktree 共用 default branch）。上面 `^idd/${NUMBER}(-|$)` 那條 clause 是 **slug-agnostic** 的：任何 `idd/<N>-` 後綴（或裸 `idd/<N>`）都接受為 feature branch，跳過建 branch 與 default-branch 前置檢查。不同 issue 號的 branch（如實作 #167 時落在 `idd/999-*`）不匹配，照原 resolution 走。契約見 [`references/worktree-isolation.md`](../../references/worktree-isolation.md)。
+> **Worktree-branch acceptance（v2.75.0+, #167）**：當 `idd-implement #N --cwd <worktree>` 跑在 `idd-worktree.sh create N` 建出的 worktree 上時，`git branch --show-current` 已是 `idd/<N>-<slug>`（git 不允許兩個 worktree 共用 default branch）。上面 `^idd/${NUMBER}(-|$)` 那條 clause 是 **slug-agnostic** 的：任何 `idd/<N>-` 後綴（或裸 `idd/<N>`）都接受為 feature branch，跳過建 branch 與 default-branch 前置檢查。不同 issue 號的 branch（如實作 #167 時落在 `idd/999-*`）不匹配，照原 resolution 走。
+
+> 注意：這條 clause **不限定** `--cwd`/worktree 情境 —— 任何工作目錄(含主 tree)只要 current branch 是 `idd/<N>-*` 就接受。這是**刻意的**，與上面既有的 exact-`$EXPECTED` resume clause 一致(re-run idd-implement after verify findings 時也是在 feature branch 上直接續做、非 default branch)。代價是 stale same-issue branch 也會被接受續用，符合「同一 issue 的 work 在自己 branch 上續做」的語意。
+
+契約見 [`references/worktree-isolation.md`](../../references/worktree-isolation.md)。
 
 #### If direct-commit path: print notice, stay on current branch
 

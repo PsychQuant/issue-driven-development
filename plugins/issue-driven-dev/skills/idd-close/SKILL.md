@@ -877,8 +877,10 @@ if [ ! -f "$WT_HELPER" ]; then
   # Helper 缺席(older plugin / 未安裝)— 一行 warning,close 已完成。
   echo "⚠️  worktree GC skipped: helper not found ($WT_HELPER). 若有殘留 worktree,手動跑 idd-worktree.sh cleanup $NUMBER --force" >&2
 else
-  # cleanup 對 repo root 跑(--repo-root 預設為 cwd 的 git toplevel)。
-  bash "$WT_HELPER" cleanup "$NUMBER"
+  # cleanup 對 repo root 跑。明確傳 --repo-root(honors --cwd;預設 $PWD),helper
+  # 內部會 anchor 到該 repo 的 MAIN worktree,所以即使從 linked worktree 內呼叫
+  # 也能正確找到並移除 .claude/worktrees/idd-N。(#167 verify P2 — codex)
+  bash "$WT_HELPER" cleanup "$NUMBER" --repo-root "${CWD:-$PWD}"
   WT_RC=$?
   if [ "$WT_RC" -eq 5 ]; then
     # Exit 5 = refuse-dirty:worktree 有 uncommitted changes,helper 拒絕刪,worktree 原封不動。

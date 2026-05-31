@@ -15,7 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **NEW reference `references/worktree-isolation.md`** ([#167](https://github.com/PsychQuant/issue-driven-development/issues/167)): canonical contract for the worktree convention(`.claude/worktrees/idd-<N>/` + `idd/<N>-*` branch),lifecycle(`create` → work → `cleanup`),and the N-branches→N-PRs convergence model(each parallel issue stays a fully independent PR — no merge-back)。
 
-- **Tests `scripts/tests/idd-worktree/test.sh`** ([#167](https://github.com/PsychQuant/issue-driven-development/issues/167)): 30 assertions covering create / cleanup / list subcommands + path convention + branch-naming + idempotency。
+- **Tests `scripts/tests/idd-worktree/test.sh`** ([#167](https://github.com/PsychQuant/issue-driven-development/issues/167)): 34 assertions covering create / cleanup / list subcommands + path convention + branch-naming + idempotency + the verify-round P2 fixes below。
+
+### Hardened (6-AI verify round, [#167](https://github.com/PsychQuant/issue-driven-development/issues/167))
+
+- **Helper anchors on the MAIN worktree** — `create` / `cleanup` / `list` resolve the repo root via `git worktree list` (first entry = main worktree), not `rev-parse --show-toplevel`, so they stay correct even when invoked from inside a linked worktree (e.g. `idd-close` GC running with `--cwd <worktree>`). Codex caught the prior silent-no-op via fixture.
+- **`create` refuses a wrong-branch canonical path** — `.claude/worktrees/idd-<N>/` registered on a non-`idd/<N>` branch now exits 4 instead of a misleading exit 0.
+- **`ensure_gitignore` refuses to append through a symlinked `.gitignore`** (warns + continues).
 
 ### Refactored
 
