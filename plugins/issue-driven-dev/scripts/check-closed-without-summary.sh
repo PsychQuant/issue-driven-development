@@ -95,7 +95,7 @@ if [ -z "$FLAGGED" ]; then
 fi
 
 echo "Closed issues with NO ## Closing Summary (possible auto-close-trap bypass —"
-echo "consider retroactive /idd-close remediation):"
+echo "remediate each with: idd-close --retroactive #N):"
 printf '%s\n' "$FLAGGED"
 echo ""
 echo "(advisory — legacy / pre-IDD / GitHub-UI-closed issues are expected here; narrow with --since / --limit)"

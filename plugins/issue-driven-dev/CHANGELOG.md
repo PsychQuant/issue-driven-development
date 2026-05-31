@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.76.0] - 2026-06-01
+
+### Added
+
+- **`idd-close --retroactive [--via <channel>]`** ([#176](https://github.com/PsychQuant/issue-driven-development/issues/176)): a remediation mode that repairs an already-CLOSED issue lacking a `## Closing Summary` — the victims `/idd-list --audit-closes` + `check-closed-without-summary.sh` (#151) detect。 Automates the documented manual retroactive-summary procedure: reconstructs the 5-section summary from `git log --grep "#N"` + the issue's existing `## Diagnosis` / `## Implementation Complete` comments + body, tags the heading `(retroactive — auto-closed via <channel>)`, posts it (semi-auto confirm by default), and syncs the body phase — **reusing idd-close's Step 2/4/6 machinery, minus the gate** (moot for an already-closed issue; **not** `--force`) **minus the actual `gh issue close`**。 Batch (`--retroactive #N #M`) supported; idempotent (the detection layer already excludes remediated issues, + a pre-post re-check)。 Closes the detection→remediation loop (#151 → #176)。
+
+### Changed
+
+- **`--audit-closes` + `check-closed-without-summary.sh` marker text** repointed from the vague "consider retroactive /idd-close remediation" → the concrete `idd-close --retroactive #N` command ([#176](https://github.com/PsychQuant/issue-driven-development/issues/176))。
+- **`CLAUDE.md` Commit Conventions** remediation guidance now points at the automated `idd-close --retroactive` (manual procedure retained as the equivalent) ([#176](https://github.com/PsychQuant/issue-driven-development/issues/176))。
+
+### Notes
+
+- Plugin v2.76.0 是 **minor** bump — new feature (the remediation layer consuming #151's detection)。 The retroactive mode is idd-close prose (no new script — reuses the existing draft/publish/body-sync); the falsifiable verification is a live end-to-end remediation of a real `--audit-closes` victim (flagged → remediate → no-longer-flagged)。
+
 ## [2.75.2] - 2026-06-01
 
 ### Added
