@@ -20,6 +20,7 @@ JSON_FILE=""
 REPO=""
 LIMIT=50
 SINCE=""
+DRY_RUN=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -27,7 +28,8 @@ while [ $# -gt 0 ]; do
     --repo)      REPO="${2:-}"; shift 2 ;;
     --limit)     LIMIT="${2:-50}"; shift 2 ;;
     --since)     SINCE="${2:-}"; shift 2 ;;
-    -h|--help)   sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --dry-run)   DRY_RUN=1; shift ;;   # gh mode: print the composed gh command + exit (offline introspection / test seam)
+    -h|--help)   sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)           echo "unknown arg: $1" >&2; shift ;;
   esac
 done
@@ -55,10 +57,25 @@ else
   GH_ARGS=(issue list --state closed --json number,title,state,comments --limit "$LIMIT")
   [ -n "$REPO" ]  && GH_ARGS+=(--repo "$REPO")
   [ -n "$SINCE" ] && GH_ARGS+=(--search "closed:>=$SINCE")
+  if [ "$DRY_RUN" = "1" ]; then
+    # Print the composed gh invocation + exit (no network). Lets the test suite
+    # assert repo-resolution + arg composition for the live-gh branch (#151 verify).
+    printf 'gh %s\n' "${GH_ARGS[*]}"
+    exit 0
+  fi
   if ! ISSUES_JSON=$(gh "${GH_ARGS[@]}" 2>/dev/null); then
     echo "note: 'gh issue list' failed (auth / network / old gh CLI) — audit skipped." >&2
     exit 0
   fi
+fi
+
+# Fail-safe: if the acquired payload is NOT valid JSON (e.g. gh returned 0 with a
+# truncated stream / proxy HTML, or a hand-edited fixture is malformed), do NOT
+# fall through to the filter and print a false "✓ all-clear" — that's the worst
+# direction for a safety-net audit (false reassurance). Warn + exit, no verdict.
+if ! printf '%s' "$ISSUES_JSON" | jq empty 2>/dev/null; then
+  echo "note: issue payload is not valid JSON — audit skipped, no conclusion drawn." >&2
+  exit 0
 fi
 
 # ── Filter: CLOSED issues with NO `## Closing Summary` comment ──

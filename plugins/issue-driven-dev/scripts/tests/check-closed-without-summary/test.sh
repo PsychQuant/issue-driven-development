@@ -35,6 +35,19 @@ flagged 100 && { echo "  ✗ #100 (closed WITH summary) must NOT be flagged"; fa
 flagged 102 && { echo "  ✗ #102 (open) must NOT be flagged — only closed issues are audited"; fail=1; }
 [ "$RC" -eq 0 ] || { echo "  ✗ expected exit 0 (advisory), got $RC"; fail=1; }
 
+# --dry-run: assert the live-gh branch composes the right gh invocation, with NO
+# network (closes the untested-executable-seam gap, #151 verify DA/logic LOW).
+DRY=$(bash "$HELPER" --repo foo/bar --since 2026-01-01 --limit 5 --dry-run 2>/dev/null)
+echo "$DRY" | grep -q -- '--state closed'        || { echo "  ✗ --dry-run: gh args missing '--state closed'"; fail=1; }
+echo "$DRY" | grep -q -- '--repo foo/bar'         || { echo "  ✗ --dry-run: gh args missing '--repo foo/bar'"; fail=1; }
+echo "$DRY" | grep -q -- '--limit 5'              || { echo "  ✗ --dry-run: gh args missing '--limit 5'"; fail=1; }
+echo "$DRY" | grep -q 'closed:>=2026-01-01'       || { echo "  ✗ --dry-run: gh args missing '--since' search composition"; fail=1; }
+
+# Malformed JSON must NOT yield a false "all-clear" (safety-net direction, #151 verify logic LOW).
+MAL=$(bash "$HELPER" --json-file "$HERE/fixtures/malformed.json" 2>/dev/null); MRC=$?
+echo "$MAL" | grep -q 'No closed issue is missing' && { echo "  ✗ malformed JSON produced a FALSE all-clear"; fail=1; }
+[ "$MRC" -eq 0 ] || { echo "  ✗ malformed JSON: expected advisory exit 0, got $MRC"; fail=1; }
+
 if [ "$fail" -eq 0 ]; then
   echo "PASS: flags only #101 + #103 (closed without Closing Summary); #100 + #102 excluded."
   exit 0

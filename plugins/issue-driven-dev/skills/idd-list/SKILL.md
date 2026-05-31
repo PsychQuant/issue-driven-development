@@ -264,13 +264,17 @@ Repo: PsychQuant/issue-driven-development  (state: open, limit: 20)
 
 #### Closed-without-summary audit marker (`--audit-closes`, v2.75.2+ #151)
 
-`--audit-closes` 把 **direct-commit auto-close trap** 的受害者回溯標出來。偵測**完全 reuse Step 3 的 comment scan** — 不重 fetch:
+`--audit-closes` 把 **direct-commit auto-close trap** 的受害者回溯標出來。偵測**重用 Step 2 已 fetch 的 comments** + 同一個 `## Closing Summary` marker —— 不重 fetch，也**不**用 Step 3 的 phase verdict：
 
-> 一個 `state == CLOSED` 但 Step 3 **找不到 `## Closing Summary` comment**（phase 推成 `(no phase)` 或非 `closed`，卻已是 CLOSED 狀態）的 issue，很可能是在 `/idd-close` 之外被關掉的 —— 例如 commit / PR-body 的 `close` keyword + `#<digit>` 觸發 GitHub auto-close，繞過整個 gate（checklist / semantic / sister-sweep / residue / distribution-sync）。見 `CLAUDE.md` → Commit Conventions →「Direct-commit path has NO automated auto-close gate」(#151) 與 Step 0.8 (#173)。
+> **判定條件**：`state == CLOSED` **且**該 issue 的 comments（Step 2 已抓）中**沒有任何一則以 `## Closing Summary` 開頭**。
+>
+> **為什麼直接掃 comment、不看 Step 3 的 phase**（#151 verify DA MEDIUM）：Step 3 的 phase 推斷是**先讀 body 的 `**Phase**:` 行、first-match-wins，找到就 short-circuit、根本不掃 comments**。一個 trap 受害者的 body 很可能還停在 `**Phase**: implemented`（因為 `/idd-close` 從沒跑過去把它翻成 `closed`），所以 Step 3 會從 body 拿到 stale phase 而錯過「沒有 Closing Summary」這個事實。本 marker 必須**直接判斷 comment 的有無**，才能抓到正是這類受害者 —— 這也是 standalone helper（只 fetch `number,title,state,comments`、不 fetch body）的契約。
+>
+> 這類 issue 很可能是在 `/idd-close` 之外被關掉的 —— 例如 commit / PR-body 的 `close` keyword + `#<digit>` 觸發 GitHub auto-close，繞過整個 gate（checklist / semantic / sister-sweep / residue / distribution-sync）。見 `CLAUDE.md` → Commit Conventions →「Direct-commit path has NO automated auto-close gate」(#151) 與 Step 0.8 (#173)。
 
 - Marker 子行：`└─ ⚠ closed without Closing Summary — possible auto-close-trap bypass; consider retroactive /idd-close remediation`
 - `--audit-closes` 在 `--state` 仍是預設 `open` 時隱含切到 `closed`（open issue 不可能被 auto-close）。
-- **Advisory** — legacy / pre-IDD / GitHub-UI-closed 的 issue 本來就沒 summary，這是提醒不是錯誤。用 `--limit` / `--since` 收斂掃描範圍。
+- **Advisory** — legacy / pre-IDD / GitHub-UI-closed 的 issue 本來就沒 summary，這是提醒不是錯誤。用 idd-list 自己的 `--limit` 收斂掃描範圍（`--since` 是 standalone helper 專屬 flag，idd-list 端不吃）。
 - Standalone 等價物（給 cron / 直接 CLI，只回 flagged set）是 `scripts/check-closed-without-summary.sh` — 同一個 `## Closing Summary` marker、同 advisory 契約。
 
 **v2.51.0+ Footer 擴充**:
