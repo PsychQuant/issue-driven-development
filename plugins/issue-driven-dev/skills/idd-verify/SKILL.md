@@ -287,9 +287,12 @@ fi
 # close the channel.
 #
 # Regex baked-in lessons from PR #94 R1/R2/R3 (see #87/#74 close history):
-#   (^|[^-/[:alnum:]])  — exclude /idd-close skill invocations + other
-#                         hyphenated tokens (idd-close-skill #N etc.).
-#                         GitHub itself does not treat these as close keywords.
+#   (^|[^-/[:alnum:]])  — Source-2-only exclusion of /idd-close skill
+#                         invocations + other hyphenated tokens (idd-close-skill
+#                         #N etc.). NOTE this DIVERGES from GitHub (Source 1):
+#                         GitHub hyphen-splits idd-close -> close #N and DOES
+#                         auto-close (#173). Source 2 opts out here to avoid
+#                         flagging every skill-invocation reference as a trap.
 #   close[sd]?|fix(e[sd])?|resolve[sd]?  — every inflection GitHub honors.
 #   [[:space:]]*:?[[:space:]]+  — covers both bare and colon forms.
 #   #[0-9]+  — same-repo issue number form only. Cross-repo owner/repo#N is
@@ -326,7 +329,15 @@ else
 fi
 ```
 
-**Warn-only，不 abort**：兩個 source 都是 surface 風險給使用者、不阻擋 PR。``/idd-close #N`` 這類 skill invocation 在 Source 1 天然零誤判（不出現在 `closingIssuesReferences`），在 Source 2 由 prefix guard 排除（hyphenated token 前綴 ``-`` 不滿足 ``[^-/[:alnum:]]``）。語意同 `idd-close` Step 1.6 semantic gate（也是 warn-only）。Source 2 的 regex 是同 GitHub parser 的近似而非權威——可能漏（cross-repo / issue-URL 形式，per #97 D7）也可能誤報（極罕見的合法 commit body 確實要保留 trailer 字面字串）；但同 gate 的 warn-only 哲學一致，false-positive 代價低、false-negative 比 silent 跳過好。
+**Warn-only，不 abort**：兩個 source 都是 surface 風險給使用者、不阻擋 PR。
+
+> **兩 source 對 ``/idd-close #N`` skill invocation 的判定故意不一致**（#173 修正了原本「Source 1 天然零誤判」的錯誤宣稱）：
+> - **Source 1（GitHub `closingIssuesReferences`，權威）**：GitHub parser 對 ``idd-close`` 做 hyphen-split → 取出 ``close #N`` token → **確實會 flag**。Empirical：PR #171 body 的 ``/idd-close #170`` 在 merge 時 auto-close 了 #170 —— 這正是 #173 的根因。所以 PR-body template **絕不可**嵌 ``/idd-close #N`` literal（#173 已把各 template 改成 ``after merge, run /idd-close ...`` 的非相鄰形式，讓 close keyword 不緊接 ``#N``）。
+> - **Source 2（本地 regex）**：``(^|[^-/[:alnum:]])`` prefix guard 把 hyphenated token 前綴 ``-`` 排除，所以**不會 flag**。
+>
+> 兩者衝突時以 **Source 1 為準**（它是 merge 時真正 fire 的 parser）。Source 2 的寬鬆是有意的 false-negative trade-off：它假設 ``idd-close`` 是 skill 引用而非 close 意圖，但 GitHub 不這樣假設。
+
+語意同 `idd-close` Step 1.6 semantic gate（也是 warn-only）。Source 2 的 regex 是同 GitHub parser 的近似而非權威——可能漏（cross-repo / issue-URL 形式，per #97 D7）、可能誤報（極罕見的合法 commit body 確實要保留 trailer 字面字串），也可能與 Source 1 判定分歧（如上 ``/idd-close #N``）；但同 gate 的 warn-only 哲學一致，false-positive 代價低、false-negative 比 silent 跳過好。
 
 ### Step 1: 取得 diff 和 issue
 

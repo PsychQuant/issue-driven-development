@@ -579,9 +579,9 @@ fi
 # the end of the rendered line. Build the line in a single var, then
 # interpolate, so the heredoc only sees the final string.)
 if [ -n "$REVIEW_FLAG" ]; then
-  REVIEW_CHECKLIST_LINE="- [ ] **Pending: human acceptance review of cluster PR** (per --review flag) + /idd-close $REFS_LIST after merge"
+  REVIEW_CHECKLIST_LINE="- [ ] **Pending: human acceptance review of cluster PR** (per --review flag) + after merge, run /idd-close per issue to finalize the cluster (issues: $REFS_LIST; per-issue closing summary, no auto-close trailer)"
 else
-  REVIEW_CHECKLIST_LINE="- [x] **Verify-gated**: per-issue verify PASS — cluster ready to merge → /idd-close $REFS_LIST per issue after merge"
+  REVIEW_CHECKLIST_LINE="- [x] **Verify-gated**: per-issue verify PASS — cluster ready to merge → after merge, run /idd-close per issue to finalize the cluster (issues: $REFS_LIST; per-issue closing summary, no auto-close trailer)"
 fi
 
 PR_BODY=$(cat <<EOF

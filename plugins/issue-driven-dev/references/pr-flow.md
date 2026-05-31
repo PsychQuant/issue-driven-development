@@ -168,7 +168,7 @@ Refs #${N}
 - [x] Diagnose
 - [x] Implement (${COMMIT_COUNT} commits)
 - [x] Verify
-- [x] **Verify-gated**: verify PASS — ready to merge → /idd-close #${NUMBER} after merge
+- [x] **Verify-gated**: verify PASS — ready to merge → after merge, run /idd-close to finalize this issue (manual gate + closing summary; no auto-close trailer)
 
 ## Related
 {follow-up issues, if any}

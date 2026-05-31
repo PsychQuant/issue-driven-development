@@ -251,7 +251,7 @@ Refs #<root_1> #<root_2> ... #<chained_1> #<chained_2> ...    (roots first, then
 - [x] Diagnose ✓ for all <N> issues
 - [x] Implement ✓
 - [x] Verify ✓ (per-issue 6-AI ensemble)
-- [x] **Verify-gated**: per-issue verify PASS — cluster ready to merge → /idd-close #<root> #<chained_1> ... per issue after merge
+- [x] **Verify-gated**: per-issue verify PASS — cluster ready to merge → after merge, run /idd-close per issue to finalize the cluster (issues: #<root> #<chained_1> ...; per-issue closing summary, no auto-close trailer)
 ```
 
 PR title MUST begin with `chain:` (distinguishes from `cluster:` prefix used by pre-known cluster-PR mode in `idd-implement`/`idd-verify`/`idd-close`).
