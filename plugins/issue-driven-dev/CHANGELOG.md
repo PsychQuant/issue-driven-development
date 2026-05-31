@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.75.0] - 2026-05-31
+
+### Added
+
+- **Git-worktree isolation for parallel IDD (multi-window / Case B)** ([#167](https://github.com/PsychQuant/issue-driven-development/issues/167)): NEW `scripts/idd-worktree.sh` helper with `create` / `cleanup` / `list` subcommands。 Worktrees materialize at `.claude/worktrees/idd-<N>/` on branch `idd/<N>-*`,driven end-to-end via the existing `--cwd` flow(no new orchestration surface — helper-created worktree path feeds straight into `/idd-all --cwd <path>` etc.)。 Enables N parallel IDD sessions(N terminal windows / N Claude instances)to operate on N issues without stepping on each other's working tree。
+
+- **NEW reference `references/worktree-isolation.md`** ([#167](https://github.com/PsychQuant/issue-driven-development/issues/167)): canonical contract for the worktree convention(`.claude/worktrees/idd-<N>/` + `idd/<N>-*` branch),lifecycle(`create` → work → `cleanup`),and the N-branches→N-PRs convergence model(each parallel issue stays a fully independent PR — no merge-back)。
+
+- **Tests `scripts/tests/idd-worktree/test.sh`** ([#167](https://github.com/PsychQuant/issue-driven-development/issues/167)): 34 assertions covering create / cleanup / list subcommands + path convention + branch-naming + idempotency + the verify-round P2 fixes below。
+
+### Hardened (6-AI verify round, [#167](https://github.com/PsychQuant/issue-driven-development/issues/167))
+
+- **Helper anchors on the MAIN worktree** — `create` / `cleanup` / `list` resolve the repo root via `git worktree list` (first entry = main worktree), not `rev-parse --show-toplevel`, so they stay correct even when invoked from inside a linked worktree (e.g. `idd-close` GC running with `--cwd <worktree>`). Codex caught the prior silent-no-op via fixture.
+- **`create` refuses a wrong-branch canonical path** — `.claude/worktrees/idd-<N>/` registered on a non-`idd/<N>` branch now exits 4 instead of a misleading exit 0.
+- **`ensure_gitignore` refuses to append through a symlinked `.gitignore`** (warns + continues).
+
+### Refactored
+
+- **`idd-implement` Phase 0.5 accepts a pre-existing worktree branch** ([#167](https://github.com/PsychQuant/issue-driven-development/issues/167)): when invoked inside a helper-created `idd/<N>-*` worktree,Phase 0.5 adopts the existing branch(**slug-agnostic** — matches on the `idd/<N>-` prefix,not the full slug)instead of creating a fresh one,so a `idd-worktree.sh create` → `/idd-all --cwd` flow composes cleanly end-to-end。 Non-worktree single-issue invocation unchanged。
+
+- **`idd-close` best-effort terminal worktree garbage collection** ([#167](https://github.com/PsychQuant/issue-driven-development/issues/167)): at close,if the issue was worked in a `.claude/worktrees/idd-<N>/` worktree,`idd-close` opportunistically cleans it up。 Best-effort only — **never blocks close**(cleanup failure is logged, not fatal)。
+
+### Notes
+
+- Plugin v2.75.0 是 **minor** bump — additive backward-compatible feature(parallel-IDD opt-in;sequential single-window workflow unchanged)。
+- **Convergence model**:N parallel issues → N independent PRs(no merge-back)。 Single-cluster-PR work(root + auto-emergent ripple under one branch / one review PR)stays on the sequential `/idd-all-chain` path — worktree isolation is for *independent* parallel issues, not for clustering。
+- **Case A explicitly DEFERRED**:within-window agent teams with merge-back(multiple agents sharing one window, converging back to a single branch)is out of scope for this change。 Only Case B(multi-window / multi-instance parallelism, divergent PRs)ships here。
+
 ## [2.74.0] - 2026-05-25
 
 ### Added
