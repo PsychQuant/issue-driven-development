@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.75.2] - 2026-06-01
+
+### Added
+
+- **`/idd-list --audit-closes` + `scripts/check-closed-without-summary.sh`** ([#151](https://github.com/PsychQuant/issue-driven-development/issues/151)): retroactive audit for the **direct-commit auto-close trap** — surfaces CLOSED issues that lack a `## Closing Summary` comment (likely auto-closed by a commit / PR-body close keyword, bypassing the `/idd-close` gate)。 The `idd-list` in-view marker **reuses Step 3's existing comment scan** (zero extra fetch); the standalone helper (with a fixture test) is callable directly or by cron。 Live smoke surfaced #165 (closed without a Closing Summary)。
+
+### Docs
+
+- **`CLAUDE.md` + `references/pr-flow.md`: "Direct-commit path has NO automated auto-close gate"** ([#151](https://github.com/PsychQuant/issue-driven-development/issues/151)): `idd-verify` Step 0.8 auto-close detection runs **only in `--pr` mode**, so on the direct-commit path the commit-body writing discipline is the *only* protection。 Documents `Refs #N` as the default for audit references in commit bodies + cross-links Step 0.8 (#173) and the #97 trap-quoting discipline。
+
+### Notes
+
+- Plugin v2.75.2 是 **patch** — closes the **direct-commit half** of the auto-close-trap family (#173 fixed the PR-body half)。 Per the #151 Plan-tier decision, the proportionate set (Path C docs + Path B-lite audit) shipped; **Path A** (opt-in pre-push git hook) + **Path D** (GitHub Action) deferred — still captured as candidate paths in the #151 body。
+
 ## [2.75.1] - 2026-05-31
 
 ### Fixed
