@@ -43,15 +43,26 @@ allowed-tools:
 | 正常 `/idd-close` step | `--retroactive` 行為 |
 |------------------------|----------------------|
 | Step 0 / 1.5 / 1.6 gates | **跳過**（issue 已關，gate moot；非 force bypass）|
-| **Precondition**（retroactive 專屬）| `state == CLOSED` **且**無 `## Closing Summary` comment（reuse #151 偵測契約）。OPEN → abort（「不是 retroactive case，跑正常 `/idd-close`」）；已有 Closing Summary → abort（「已 remediate 過」）。**post 前再 check 一次**（防 stale list / race）。|
-| Step 2 draft | **reuse** —— 從 `git log --grep "#N"`（Changes）+ 該 issue 既有的 `## Diagnosis` / `## Implementation Complete` comments + body（Problem / Root Cause / Solution）reconstruct 五段式。**標題改成** `## Closing Summary (retroactive — auto-closed via <channel>)`。當來源 comment 稀疏（reconstruct 不足）→ 在 summary 標 **「best-effort reconstruction」**，不假裝完整。|
-| Step 3 confirm | **semi-auto（預設）** —— 把 draft 給 user 確認再 post（reconstruct 可能錯，且 issue 已關不急）。|
+| **Precondition**（retroactive 專屬）| `state == CLOSED` **且**無**以 `## Closing Summary` 開頭**的 comment（**startswith prefix-match**，同 #151 偵測契約 —— **不是** exact-match，否則 `## Closing Summary (retroactive — …)` 會被誤判成「沒有」而 double-post）。OPEN → abort（「不是 retroactive case，跑正常 `/idd-close`」）；已有 Closing Summary → abort（「已 remediate 過」）。**post 前用同一個 startswith 再 check 一次**（防 stale list / race / double-post）。|
+| Step 2 draft | **reuse，但 `### Verification` section 特別處理** —— 從 `git log --grep "#N"`（Changes）+ 該 issue 既有的 `## Diagnosis` / `## Implementation Complete` / `## Verify` comments + body reconstruct 五段式。**標題改成** `## Closing Summary (retroactive — auto-closed via <channel>)`。reconstruct 不足 → 標 **「best-effort reconstruction」**，不假裝完整。**`### Verification` 的捏造風險最高 —— 見下方「Verification honesty 鐵律」。** |
+| Step 3 confirm | **semi-auto（預設）** —— 把 draft 給 user 確認再 post（reconstruct 可能錯，且 issue 已關不急）。confirm 是必要的、但**不是** verification —— cold-read + batch 容易 rubber-stamp，所以下方鐵律把誠實寫死進 draft，不靠 confirm 兜底。|
 | Step 4 publish + close | **publish comment，但跳過 `gh issue close`**（已關）。|
+| Step 4.5 idd-route outcome | **跳過** —— issue 是（可能幾週前）關的，現在補寫 `merged` / `abandoned` routing-stats record 會是錯的時間點 + 錯的因果歸因。|
 | Step 6 body sync | **reuse** —— body Current Status phase → `closed`（若還停在舊值）。|
 | Step 6.5 distribution sync | **跳過** —— 把它 auto-close 的那個 merge 早就 ship 了，distribution 不是 retroactive 的事。|
 | Step 6.7 worktree GC | **跳過**。|
 
 `<channel>` 來源：optional `--via <channel>` flag（例 `--via commit-body` / `--via pr-body`）；不給就用 generic `auto-close trap, /idd-close gate bypassed`。**不**做 GitHub timeline API 的精確 channel 偵測（重、out of scope）。
+
+### Verification honesty 鐵律（#176 verify DA-1）
+
+`### Verification` 是 retroactive summary 裡**最容易捏造**的一段，而這個 feature 的全部價值就是 audit-trail **誠實**，所以這條是鐵律不是建議：
+
+- **modal victim（direct-commit `Closes #N` trap）沒有 PR、沒跑過 `idd-verify`、沒有任何 verify artifact。** 平時 fact-check「打勾的事真做了」的 `idd-close` Step 1.6 semantic gate 在 retroactive 被 skip 了 —— 也就是說，**沒有任何機制會擋住一份捏造的 Verification**。
+- reconstruct `### Verification` 時**只能引用真實存在的 verify 證據**：issue 既有的 `## Verify` comment / linked PR 的 verify report / 真的有的 test commit（`git log --grep "#N"` 裡確實改了 test 檔）。
+- **完全沒有 verify 證據** → Verification section **必須**原文寫：`(no verification ran before the auto-close — this comment is a retroactive audit-trail repair, NOT a post-hoc verification claim)`。**嚴禁**生出任何「測試通過 / verify PASS」之類的句子。
+- **`best-effort reconstruction` 標記的觸發軸 = 「缺 verify 證據 / 缺 diagnosis」，不是 comment 數量** —— 一個 body 很長但零 verify 證據的 victim 一樣要標 best-effort + 上面那句誠實聲明。
+- **Floor case**（`git log` + comments + body 幾乎全空，例如純 GitHub-UI close 的 legacy issue）：仍可從 issue title + 任一 commit 拼一份最小 summary，整份標 best-effort + 誠實聲明 —— 「至少留一句 retroactive 紀錄」勝過無 summary，但**不得假裝有內容**。
 
 **Batch**：`idd-close --retroactive #34 #36 #38` —— 每個 issue 各自 draft + confirm + post 獨立 retroactive summary（同 cluster-close 紀律，不合併）。
 
