@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.78.1] - 2026-06-01
+
+### Fixed
+
+- **`idd-diagnose` Step 0.5 Clarity gate now strips fenced code before scanning** ([#181](https://github.com/PsychQuant/issue-driven-development/issues/181)): the gate grepped `^### Clarity Surface` and counted `| surfaced |` rows directly against the raw issue body, so a `### Clarity Surface` that appears **only inside a ``` code fence** — an issue that documents or illustrates the annotation format rather than carrying a real annotation block — produced a **false-positive REFUSE**. (Surfaced via dogfood: diagnosing #178, whose body illustrates the format in a fence, the gate's naive grep matched the in-fence line; it took a manual fence-parity count to confirm it was spurious.) Step 0.5 now pre-strips ``` fenced blocks into `BODY_SCAN` (a small `awk` that toggles in/out of a fence and prints only out-of-fence lines) and scans that — mirroring `idd-list` Step 3.5's `strip_fenced_code()` (#14). Inline `` `code` `` is left alone (rarer false positive, same call as idd-list). Verified with two fixtures: a fence-only `### Clarity Surface` now **PROCEEDs**, while a real (non-fenced markdown-table) annotation block still **REFUSEs** — true-positive detection is unchanged. Same naive-structural-match class as #178 (`idd-update` anchoring on `---`).
+
 ## [2.78.0] - 2026-06-01
 
 ### Changed

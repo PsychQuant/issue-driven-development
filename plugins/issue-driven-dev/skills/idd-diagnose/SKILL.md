@@ -92,14 +92,23 @@ TaskCreate(name="auto_update_body", description="Step 5: 跑 /idd-update #NNN �
 # Read issue body
 BODY=$(gh issue view $NUMBER --repo $GITHUB_REPO --json body --jq '.body')
 
-# Look for ### Clarity Surface block
-if echo "$BODY" | grep -q '^### Clarity Surface'; then
+# Strip ``` fenced code blocks BEFORE scanning (#181). A `### Clarity Surface` that only
+# appears INSIDE a code fence — an issue that documents / illustrates the annotation format
+# (like #181 itself, or #178) — is NOT a real annotation block and must not trip the gate.
+# Mirrors idd-list Step 3.5 strip_fenced_code() (#14): the awk toggles `infence` on any line
+# whose first non-space chars are ``` and prints only out-of-fence lines; inline `code` is
+# left alone (rarer false positive). NOTE the ``` in the awk regex stays MID-line on purpose
+# (the line starts with BODY_SCAN=) so it does not close THIS markdown ```bash fence.
+BODY_SCAN=$(printf '%s\n' "$BODY" | awk '/^[[:space:]]*```/{infence=!infence; next} !infence{print}')
+
+# Look for ### Clarity Surface block (scan the fence-stripped body)
+if echo "$BODY_SCAN" | grep -q '^### Clarity Surface'; then
   # Extract block + count surfaced rows
   # NOTE (v2.74.1+, #137 verify R1 fix): naive `awk '/^### Clarity Surface/,/^### /'`
   # collapses on line 1 because start regex matches end regex (both `^### `),
   # losing all rows. Use flag-based pattern instead — also removes GNU-only
   # `head -n -1` dependency (errors on BSD/macOS).
-  BLOCK=$(echo "$BODY" | awk '/^### Clarity Surface/{flag=1; print; next} flag && /^### /{flag=0} flag')
+  BLOCK=$(echo "$BODY_SCAN" | awk '/^### Clarity Surface/{flag=1; print; next} flag && /^### /{flag=0} flag')
   SURFACED_COUNT=$(echo "$BLOCK" | grep -cE '\| surfaced \|')
 
   # v2.74.0+ #137 — per-row reason-pattern scan for deferred rows:
@@ -137,8 +146,9 @@ EOF
 fi
 
 # Backward compat: legacy issues with no ### Clarity Surface block
-# (filed before v2.71.0 plugin version — silently proceed)
-if ! echo "$BODY" | grep -q '^### Clarity Surface'; then
+# (filed before v2.71.0 plugin version — silently proceed). Uses BODY_SCAN so a body whose
+# only `### Clarity Surface` is inside a code fence is correctly treated as "no block" (#181).
+if ! echo "$BODY_SCAN" | grep -q '^### Clarity Surface'; then
   echo "[Step 0.5] no Clarity Surface block found (legacy issue — pre-v2.71.0). Proceeding to Step 1."
 fi
 
