@@ -196,7 +196,7 @@ if [ -n "$LINKED_ISSUE_RESOLVED" ]; then
   # detection succeeding, or both fail together exactly when the fallback is
   # needed (the #170 root cause). (#170)
   CANDIDATES=$(detect_candidates "$ARCHIVE_DIR")
-  if [ -n "$CANDIDATES" ] && ! echo "$CANDIDATES" | grep -qx "$LINKED_ISSUE_RESOLVED"; then
+  if [ -n "$CANDIDATES" ] && ! echo "$CANDIDATES" | grep -qx -- "$LINKED_ISSUE_RESOLVED"; then
     emit_outcome "(failed — --linked-issue $LINKED_ISSUE_RESOLVED not in candidate set: $(echo "$CANDIDATES" | tr '\n' ' '))" 0
   fi
   LINKED_ISSUE="$LINKED_ISSUE_RESOLVED"
@@ -231,7 +231,7 @@ SENTINEL="auto-posted by spectra-archive for ${ARCHIVE_BASENAME}"
 if [ "$DRY_RUN" = "0" ]; then
   ALREADY_POSTED=$(gh issue view "$LINKED_ISSUE" --repo "$GH_REPO" --json comments \
     --jq '.comments[].body' 2>/dev/null \
-    | grep -Fc "$SENTINEL" \
+    | grep -Fc -- "$SENTINEL" \
     | tr -d ' ')
   # grep -Fc returns "0" with exit 1 when no match; pipeline status doesn't propagate
   # so the value is clean. wc -l is more portable but grep -Fc handles fine here.
