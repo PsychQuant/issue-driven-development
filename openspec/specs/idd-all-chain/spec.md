@@ -2,7 +2,7 @@
 
 ## Purpose
 
-TBD - created by archiving change 'add-idd-all-chain-skill'. Update Purpose after archive.
+Defines the **chain-solve orchestration skill** (`/idd-all-chain`) — how a root issue and its *auto-emergent* spawn (sister bugs, verify follow-ups, mid-plan tangentials, sister concerns surfaced mid-work) are driven through ONE cluster branch and ONE review PR instead of N scattered PRs that lose holistic review context. Governs: chain-eligibility heuristics over `idd-spawn-manifest` fields (same-file / same-skill / sister-bug), per-root verify-failure halt with partial-commit preservation, collapsed per-issue PR sections, DFS/BFS traversal under hard per-root depth and global issue caps, and a Phase 4 forest-tree final report for multi-root chains. Stops at verified — never auto-closes or auto-merges.
 
 ## Requirements
 

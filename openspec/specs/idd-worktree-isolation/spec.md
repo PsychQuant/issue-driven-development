@@ -2,7 +2,7 @@
 
 ## Purpose
 
-TBD - created by archiving change 'idd-worktree-isolation'. Update Purpose after archive.
+Defines the **managed git-worktree lifecycle** (`scripts/idd-worktree.sh`) that isolates concurrent `/idd` sessions so they never share one working tree. Governs: issue-keyed worktrees under `.claude/worktrees/idd-<N>/` (gitignored) with create / cleanup / list, per-issue PR convergence, `idd-implement` slug-agnostic worktree-branch acceptance, `idd-close` worktree garbage collection, and the staging-isolation guarantee that prevents the silent-WIP-loss path (#941↔#942) where a shared tree's index is yanked by a parallel session.
 
 ## Requirements
 

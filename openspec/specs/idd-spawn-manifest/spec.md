@@ -2,7 +2,7 @@
 
 ## Purpose
 
-TBD - created by archiving change 'add-idd-all-chain-skill'. Update Purpose after archive.
+Defines the **spawn manifest** — the machine-readable, append-only, atomically-written (temp-file-rename) file at a fixed path with a versioned schema that records each *auto-emergent* spawned issue under chain context. Governs: the fixed-path + schema-version contract, the one-append-only-entry-per-spawn rule, atomic-write durability, and the requirement that all four IC_R011 sub-skill sites (`idd-diagnose` / `idd-plan` / `idd-implement` / `idd-verify`) write it conformantly — supplying the `root_id` / traversal / eligibility-flag fields that `idd-all-chain` reads to drive and bound its traversal.
 
 ## Requirements
 
