@@ -17,4 +17,4 @@
 ## 4. Spec Purpose 確保 + 分發
 
 - [ ] 4.1 archive 後確認 `openspec/specs/idd-verify/spec.md` 帶真 Purpose 而非 TBD stub；若 archive 未 materialize delta 的 Purpose（Spectra Purpose gap，見 kaochenlong/spectra-app#100），手動填入 delta 內 Purpose 文字。**Behavior**：materialized spec 的 Purpose 非 `TBD ... Update Purpose after archive`。**Verification**：`grep -L "Update Purpose after archive" openspec/specs/idd-verify/spec.md` 確認無 stub（CLI）。
-- [ ] 4.2 CHANGELOG 條目 + version bump（plugin.json + marketplace.json 同步）。**Behavior**：版本反映新 feature，CHANGELOG 記錄 idd-verify spec + workflow 採用。**Verification**：plugin.json 與 marketplace.json 版本一致且高於前版、CHANGELOG 有條目（content review）。依賴 3.x、4.1。
+- [x] 4.2 CHANGELOG 條目 + version bump（plugin.json + marketplace.json 同步）。**Behavior**：版本反映新 feature，CHANGELOG 記錄 idd-verify spec + workflow 採用。**Verification**：plugin.json 與 marketplace.json 版本一致且高於前版、CHANGELOG 有條目（content review）。依賴 3.x、4.1。

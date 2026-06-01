@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.77.0] - 2026-06-01
+
+### Added
+
+- **`idd-verify` dynamic-workflow backend** ([#164](https://github.com/PsychQuant/issue-driven-development/issues/164), `formalize-idd-verify-ensemble` Spectra change): the verify ensemble's deterministic core (4 distinct-lens reviewers → adversarial devil's-advocate → cross-model Codex → merge) can now run on Claude Code's dynamic-workflow primitive instead of the hand-rolled manual fan-out + `/tmp` file IPC + DA polling. Ships the inaugural **`idd-verify` spec** (5 requirements, real Purpose), `skills/idd-verify/ensemble-workflow.js` (the workflow script), and `references/idd-verify-findings-schema.json` (the structured findings contract). **Live-verified**: a real workflow run caught planted findings (hardcoded secret + SQL injection) and cross-checked the issue's stated requirements; 24 findings across all 5 lenses rendered into the same master-report `### Findings` table the manual path produces (so downstream posting / triage / verify-fix are backend-agnostic).
+  - **Hardened** against untrusted PR input (two rounds of background security review): no shell interpolation of the diff (command injection — Codex reads it from an agent-written temp file), fail-closed verdict (a missing core lens / devil's-advocate synthesizes a HIGH integrity finding so a crashed reviewer cannot yield PASS), and prompt-injection guards (non-forgeable sentinel-wrapped untrusted content + a data-not-instructions prefix).
+  - **Codex bounded** in-workflow (a Phase 0 spike confirmed `TaskStop` clean-kills a hung `codex exec` process tree with zero orphan) — addresses the #147 hang class.
+
+### Notes
+
+- **Gated, zero-regression**: the workflow backend is **component-verified** but the **manual fan-out remains the live default** until the skill-level end-to-end (capability detection executing + GitHub posting) is verified — see the `idd-verify/SKILL.md` "Dynamic-workflow backend" section. Existing `/idd-verify` behavior is unchanged; the workflow path is documented + gated behind that section. The `formalize-idd-verify-ensemble` change is in-progress (8/9; task 4.1 Purpose check runs at `/spectra-archive`).
+
 ## [2.76.1] - 2026-06-01
 
 ### Changed
