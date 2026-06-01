@@ -10,7 +10,7 @@
 
 ## 3. Skill 整合（hybrid split + capability gate + fallback）
 
-- [ ] 3.1 [Requirement: Graceful degradation to manual fan-out with an identical findings contract] [D1] [D4] 在 idd-verify skill 加 capability detection + backend 選擇：primitive 可用 → 跑 workflow 並 await findings；不可用 → 跑現行 manual fan-out；兩條路皆印 backend notice。**Behavior**：`/idd-verify #N` 依 primitive 可用性自動選 backend 並印 notice，兩條路產出相同 findings contract。**Verification**：primitive 開 / 關各跑一次，findings shape + 下游 posting/triage 一致（manual assertion）。依賴 2.2。
+- [x] 3.1 [Requirement: Graceful degradation to manual fan-out with an identical findings contract] [D1] [D4] 在 idd-verify skill 加 capability detection + backend 選擇：primitive 可用 → 跑 workflow 並 await findings；不可用 → 跑現行 manual fan-out；兩條路皆印 backend notice。**Behavior**：`/idd-verify #N` 依 primitive 可用性自動選 backend 並印 notice，兩條路產出相同 findings contract。**Verification**：primitive 開 / 關各跑一次，findings shape + 下游 posting/triage 一致（manual assertion）。依賴 2.2。
 - [x] 3.2 [Requirement: Deterministic core executes under unattended interaction semantics] [D1] [D5] 確保 gates（input-source / PR↔issue / auto-close 偵測）、GitHub master + pointer 發文、follow-up triage、verify-fix loop 全留在 skill、在 core 之前 / 之後執行，core 內零 user input。**Behavior**：core 執行期間無任何 AskUserQuestion；user-facing 決策在 core 前 / 後。**Verification**：一次完整 verify 跑程中 core 階段無 prompt（manual observation）；gates / triage 照常觸發。依賴 3.1。
 - [x] 3.3 [Requirement: Graceful degradation to manual fan-out with an identical findings contract] [D4] 保留 manual fan-out 為 live fallback（zero-regression）。**Behavior**：無 primitive 的環境，idd-verify 行為與本 change 前完全相同。**Verification**：關閉 primitive 跑一次，結果與現行 baseline 等價（manual assertion）。依賴 3.1。
 

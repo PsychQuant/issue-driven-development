@@ -169,6 +169,16 @@ skill **await** workflow 回傳的 findings 才發文，所以使用者視角不
 
 **Interaction 軸（D5）**：workflow 跑背景 = 本質 unattended（no mid-run input），對齊 `idd-pr-hitl-modes` 的 interaction 軸——verify core 內零 user input，所有 gates/triage/verify-fix 在 core 前/後（skill 端）。
 
+**Findings normalization → master-report parity（3.1 — the cross-backend contract）**：兩 backend 回傳的**形式不同**（workflow = structured findings array，見 `references/idd-verify-findings-schema.json`；manual fan-out = 各 reviewer 的 prose findings 檔），但**下游真正消費的共同 contract 是 Step 4 master report 的 `### Findings（合併後）` 表格**。所以 workflow backend 完成後，skill 在 Step 3 把回傳的 `findings` array **render 成同一張表格**，每筆一列：
+
+| # | Severity | Finding | Source |
+|---|----------|---------|--------|
+| n | `<severity>` | `<title>` — `<body>`（`file:line`，若有）| `<lens>` |
+
+`verdict` → master report 的 PASS / FAIL。manual path 的 prose findings 走既有 Step 3 merge 進同一張表。**兩 backend 因此產出結構相同的 master report**，所以 Step 4 posting / Step 5b triage / verify-fix loop **完全 backend-agnostic**（它們只看這張表，不在乎是哪個 backend 產的）。
+
+> **平價的剩餘細節**：workflow schema 的 severity 是 `CRITICAL/HIGH/MEDIUM/LOW/INFO`，render 時直接填 Severity 欄；manual path 歷史上混用 `P1/P2`/`LOW` 等——完整 severity vocab 統一是 minor follow-up，不影響**表格結構**平價。fail-closed 合成的 integrity HIGH findings（lens errored）同樣 render 成列，所以 degraded run 在表格裡就可見（對應 manual path 的 `### Process Gaps` section，語意一致）。
+
 ## Execution
 
 ### Step 0: Bootstrap Stage Task List（強制)
