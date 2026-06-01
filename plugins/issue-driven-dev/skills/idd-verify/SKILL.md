@@ -156,9 +156,14 @@ skill **await** workflow 回傳的 findings 才發文，所以使用者視角不
 ```
 若 dynamic-workflow primitive 可用（version gate）:
     write $DIFF 到 temp 檔 $DIFF_FILE   # 大 diff 不塞 inline args (Workflow tool 會把 args JSON-stringify；ensemble-workflow.js 已防禦性 parse，並支援 args.diffFile 讓 reviewer agents 用 file-read tool 讀，避免 escape 地獄 + prompt 膨脹)
+    # #147: 在 skill-run context 把 $CLAUDE_PLUGIN_ROOT **解析成絕對路徑**再 thread。
+    # 關鍵：傳「已解析」的值（如 /Users/.../cache/.../2.78.0/bin/codex-call），不是字面字串
+    # "$CLAUDE_PLUGIN_ROOT/bin/codex-call" —— workflow subagent 的 shell 沒有 $CLAUDE_PLUGIN_ROOT，
+    # 沒先解析的話 agent 端展開會得到空字串 → /bin/codex-call → 必失敗。同 parallel-ai-agents 的 codexCallPath 做法。
+    CODEX_CALL=$(realpath "$CLAUDE_PLUGIN_ROOT/bin/codex-call" 2>/dev/null || echo "$CLAUDE_PLUGIN_ROOT/bin/codex-call")
     findings = Workflow(scriptPath="plugins/issue-driven-dev/skills/idd-verify/ensemble-workflow.js",
                         args={diffFile: $DIFF_FILE, issues, attachments, codexEnabled,
-                              codexCall: "$CLAUDE_PLUGIN_ROOT/bin/codex-call"})   # D2: 傳檔路徑而非 named workflow。codexCall = vendored codex-call 絕對路徑（#147）— $CLAUDE_PLUGIN_ROOT 在 skill-run 時可解，但 workflow subagent 的 $PATH 沒它，故 thread 進 args
+                              codexCall: $CODEX_CALL})   # D2: 傳檔路徑而非 named workflow。codexCall = 已解析的 vendored codex-call 絕對路徑（#147）
     印一行 notice: "→ verify backend: dynamic-workflow"
 否則:
     findings = Step 2 manual fan-out（現行行為）

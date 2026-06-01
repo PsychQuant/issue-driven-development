@@ -165,7 +165,12 @@ function codexPrompt(args) {
   // SECURITY (command injection): the diff is attacker-controllable and MUST NOT be interpolated into
   // a shell command. codex-call reads it from a FILE via --prompt-file (the skill's trusted diffFile,
   // or a temp file the agent writes for an inline diff) — only a controlled path hits the shell.
-  const cc = args.codexCall || '"$CLAUDE_PLUGIN_ROOT/bin/codex-call"'
+  // Primary: args.codexCall = the skill-RESOLVED absolute path (e.g. /Users/.../bin/codex-call).
+  // Fallback (no inner quotes — they'd collide with the "${cc}" quoting below): a best-effort
+  // env-var guess, which only works if the sub-agent's shell happens to have $CLAUDE_PLUGIN_ROOT
+  // (often it does not — hence the skill resolves + threads the absolute path). The "${cc}" wrap
+  // in the command below quotes it either way, so a path with spaces or a var-expansion stays safe.
+  const cc = args.codexCall || '$CLAUDE_PLUGIN_ROOT/bin/codex-call'
   const reviewInstr = 'You are a blind cross-model reviewer of a code diff. Go through EACH requirement implied by the change: FULLY / PARTIALLY / NOT addressed. Flag bugs, logic errors, security issues, scope creep, and regressions. Reply in Traditional Chinese.'
   return [
     `You are the cross-model verifier. Use Codex (a different model family) via the codex-call HTTP wrapper as a blind reviewer of the diff, then convert its output into findings.`,
@@ -175,7 +180,7 @@ function codexPrompt(args) {
     `1. Resolve DIFF_FILE: if the diff above was given as a file path, use that path directly. If it was given inline as DATA, first write it verbatim to a temp file with your file-write tool (NEVER echo / printf / heredoc / interpolate it into a shell command — that is a command-injection sink on attacker-controlled input). Pick a temp OUT_FILE path too.`,
     `2. Run the cross-model pass bounded — codex-call is a direct HTTP wrapper (no subprocess pipe to hang; --max-time is a hard ceiling). The two file paths are the ONLY shell inputs and you control them:`,
     '```bash',
-    `${cc} --output "$OUT_FILE" --model gpt-5.5 --effort xhigh --service-tier fast --max-time 600 --prompt-file "$DIFF_FILE" --instructions ${JSON.stringify(reviewInstr)}`,
+    `"${cc}" --output "$OUT_FILE" --model gpt-5.5 --effort xhigh --service-tier fast --max-time 600 --prompt-file "$DIFF_FILE" --instructions ${JSON.stringify(reviewInstr)}`,
     '```',
     `   then read "$OUT_FILE" for Codex's review.`,
     `3. Map Codex's reported issues into the structured-output schema with lens="codex". If codex-call errors or yields no useful output (swift not on PATH, HTTP 5xx, OAuth refresh failure, or timeout), return exactly one finding: {lens:"codex", severity:"INFO", title:"cross-model pass incomplete", file:null, body:"codex-call did not complete (swift / auth / HTTP / timeout) — cross-model lens skipped this run"} — per the spec's "bounded lifetime" requirement (never silently drop it).`,
