@@ -1,0 +1,60 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "idd-verify ensemble findings",
+  "description": "Structured-output contract for the /idd-verify ensemble's dynamic-workflow backend (formalize-idd-verify-ensemble, task 2.1). Each reviewer agent's structured output AND the merged result conform to `findings_result`. Preserves the legacy manual-fan-out shape (severity / file / title / body) and adds an explicit `lens` so the merge step can attribute + dedup. The manual fan-out fallback MUST emit the same shape so downstream posting/triage is backend-agnostic.",
+  "definitions": {
+    "finding": {
+      "type": "object",
+      "required": ["lens", "severity", "title", "body"],
+      "additionalProperties": false,
+      "properties": {
+        "lens": {
+          "type": "string",
+          "enum": ["requirements", "logic", "security", "regression", "devils-advocate", "codex"],
+          "description": "Which reviewer surfaced this finding. `codex` = cross-model blind verifier; `devils-advocate` = adversarial refutation pass."
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"],
+          "description": "On merge/dedup of the same underlying issue across lenses, the highest severity wins (preserves the legacy 'severity 取最高' rule)."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "One-line summary used as the dedup key together with `file`."
+        },
+        "file": {
+          "type": ["string", "null"],
+          "description": "Repo-relative path / location the finding concerns; null when not file-scoped (e.g. a requirements-coverage gap)."
+        },
+        "line": {
+          "type": ["integer", "null"],
+          "description": "Optional line number; null/omitted when not applicable. Advisory only — must not be the sole locator."
+        },
+        "body": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Detail: evidence, reasoning, and (where applicable) the suggested fix."
+        }
+      }
+    },
+    "findings_result": {
+      "type": "object",
+      "required": ["findings"],
+      "additionalProperties": false,
+      "properties": {
+        "findings": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/finding" },
+          "description": "Zero or more findings. Empty (or all-INFO) means the lens passed."
+        },
+        "verdict": {
+          "type": "string",
+          "enum": ["PASS", "FINDINGS"],
+          "description": "Optional aggregate convenience field. PASS iff `findings` is empty or every finding is severity INFO."
+        }
+      }
+    }
+  },
+  "$ref": "#/definitions/findings_result"
+}

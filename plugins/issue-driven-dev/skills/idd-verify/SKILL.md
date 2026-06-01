@@ -137,6 +137,38 @@ idd-verify #NNN
 - Devil's Advocate 的工作是**試著證明其他 4 個的通過判斷是錯的**
 - Codex 是完全不同的模型家族（gpt-5.5），提供**跨模型盲驗**
 
+## Dynamic-workflow backend（formalize-idd-verify-ensemble — pending live verification）
+
+> **狀態**：此 backend 已實作（workflow script + findings schema + Codex-kill spike PASS），但**尚未 behavioral live-verify**（在真 PR 上跑、對比兩 backend 的 findings）。在 live-verify 完成前，**Step 2 的 manual fan-out 仍是 default**；本段是 backend 契約 + capability gate 的文件，不改變現行預設行為。完整 design 見 `openspec/changes/.../formalize-idd-verify-ensemble/design.md`（archived 後 → `idd-verify` spec）。
+
+**為什麼**：Step 2 的 manual fan-out（5 Agent + `/tmp` file IPC + DA polling + 背景 Codex）是 dynamic-workflow primitive 尚不存在時的 workaround。官方 workflow 的招牌 pattern 逐字就是這個 ensemble（"independent agents adversarially review each other's findings before they're reported"）。
+
+**Hybrid split（D1）— 縫在哪**：workflow 的兩條硬限制（**no mid-run user input** / **no FS-shell from the script itself**）決定 seam：
+
+| Workflow 擁有（deterministic core）| Skill 保留 |
+|---|---|
+| 4 distinct-lens reviewers fan-out → devil's-advocate 對抗 → Codex 跨模型 → merge+dedup → 回傳 validated findings | Step 0.5/0.7/0.8 gates、Step 4 GitHub master+pointer 發文、Step 5b triage、verify-fix loop |
+
+skill **await** workflow 回傳的 findings 才發文，所以使用者視角不變（run → 拿 findings），只是進度從 inline agent 換成 `/workflows` view。
+
+**Capability detection + fallback（D4）**：
+
+```
+若 dynamic-workflow primitive 可用（version gate）:
+    SCRIPT = read plugins/issue-driven-dev/skills/idd-verify/ensemble-workflow.js   # D2: plugin 無 workflows/ component，故讀檔
+    findings = Workflow(script=SCRIPT, args={diff, issues, attachments, codexEnabled})   # inline 傳 script param
+    印一行 notice: "→ verify backend: dynamic-workflow"
+否則:
+    findings = Step 2 manual fan-out（現行行為）
+    印一行 notice: "→ verify backend: manual fan-out (workflow primitive unavailable)"
+```
+
+兩條路產出**相同 findings contract**（見 `references/idd-verify-findings-schema.json`：severity / file / title / body / lens；merge 取最高），所以 Step 3 merge 之後（posting / triage / verify-fix）**backend-agnostic**。
+
+**Codex（D3）**：包進 workflow 當 Bash agent shell-out `codex exec`；runtime stop 連帶 kill（Phase 0 spike PASS：TaskStop 清掉整棵 codex tree、零 orphan）+ script 內 `timeout 600` 雙保險；超時回 INFO finding「cross-model pass incomplete」不靜默丟（對應 spec「bounded lifetime」requirement）。
+
+**Interaction 軸（D5）**：workflow 跑背景 = 本質 unattended（no mid-run input），對齊 `idd-pr-hitl-modes` 的 interaction 軸——verify core 內零 user input，所有 gates/triage/verify-fix 在 core 前/後（skill 端）。
+
 ## Execution
 
 ### Step 0: Bootstrap Stage Task List（強制)
