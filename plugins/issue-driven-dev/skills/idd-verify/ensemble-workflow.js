@@ -169,15 +169,22 @@ function mergeDedup(all) {
 // independently. A barrier is correct here because the devil's-advocate (phase 2) needs
 // every reviewer's findings to refute them. Each thunk CATCHES its own error and tags its
 // lens (ok:false) so a failed lens is observable downstream — never silently dropped.
+// `args` may arrive JSON-stringified — the Workflow runtime can pass the `args` input
+// verbatim as a string (confirmed: a scriptPath invocation delivered args as a JSON string,
+// not an object). Normalize defensively so the reviewer prompts get the real diff/issues
+// either way; otherwise every prompt's diff/issue block is empty and the ensemble reviews
+// nothing. The skill that invokes this workflow MUST tolerate the same behavior.
+const A = typeof args === 'string' ? JSON.parse(args) : (args || {})
+
 phase('review')
 const reviewThunks = LENSES.map((l) => () =>
-  agent(reviewPrompt(l, args), { schema: FINDINGS_SCHEMA, label: `review:${l.key}`, phase: 'review' })
+  agent(reviewPrompt(l, A), { schema: FINDINGS_SCHEMA, label: `review:${l.key}`, phase: 'review' })
     .then((r) => ({ lens: l.key, findings: (r && r.findings) || [], ok: true }))
     .catch(() => ({ lens: l.key, findings: [], ok: false }))
 )
-const codexThunk = args.codexEnabled
+const codexThunk = A.codexEnabled
   ? () =>
-      agent(codexPrompt(args), { schema: FINDINGS_SCHEMA, label: 'codex', phase: 'review' })
+      agent(codexPrompt(A), { schema: FINDINGS_SCHEMA, label: 'codex', phase: 'review' })
         .then((r) => ({ lens: 'codex', findings: (r && r.findings) || [], ok: true }))
         .catch(() => ({ lens: 'codex', findings: [], ok: false }))
   : null
@@ -187,7 +194,7 @@ const reviewerResults = round1.filter((r) => r.lens !== 'codex')
 
 // Phase 2: devil's-advocate adversarially refutes the reviewers' judgments (also fail-aware).
 phase('adversarial')
-const da = await agent(daPrompt(reviewerResults, args), { schema: FINDINGS_SCHEMA, label: 'devils-advocate', phase: 'adversarial' })
+const da = await agent(daPrompt(reviewerResults, A), { schema: FINDINGS_SCHEMA, label: 'devils-advocate', phase: 'adversarial' })
   .then((r) => ({ findings: (r && r.findings) || [], ok: true }))
   .catch(() => ({ findings: [], ok: false }))
 
@@ -208,7 +215,7 @@ for (const l of LENSES) {
 if (!da.ok) {
   integrity.push({ lens: 'devils-advocate', severity: 'HIGH', title: 'devils-advocate did not complete', file: null, body: 'the adversarial pass errored — pass judgments were not challenged (fail-closed).' })
 }
-if (args.codexEnabled && !ranOk.has('codex')) {
+if (A.codexEnabled && !ranOk.has('codex')) {
   integrity.push({ lens: 'codex', severity: 'INFO', title: 'cross-model pass incomplete', file: null, body: 'codex lens errored or was terminated — process gap, surfaced but non-blocking (the 5-lens verdict stands), per manual-fan-out parity.' })
 }
 
