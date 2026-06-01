@@ -281,11 +281,33 @@ This notice concerns [comment {target-comment}](https://github.com/{repo}/issues
 建立 errata comment 後，**自動呼叫 idd-edit** 在 target comment 頂部加警示（prepend-note mode）：
 
 ```bash
-# 自動執行：
-/idd-edit comment:{target-comment} --prepend-note --reason="See errata at <new comment URL>"
+# 自動執行（OWNER comment 或 bot comment）：
+IDD_CALLER=idd-comment-errata \
+  /idd-edit comment:{target-comment} --prepend-note --reason="See errata at <new comment URL>"
 ```
 
 這讓 target comment 讀者看到「⚠️ 本 comment 已有 errata（下方）」的警示。
+
+**v2.81.0+ (#154) R5 行為**：當 target comment 是 user-authored（非 OWNER 非 bot）時，`/idd-edit` 會 refuse with exit code 4 + 印 helpful message（per [#154](https://github.com/PsychQuant/issue-driven-development/issues/154) D2 decision — 不 auto-override per IC_R007 user-authored-intent spirit）。 處理:
+
+```bash
+# Auto-call 偵測 exit code 4 → idd-comment 顯示 hint:
+if [ $EDIT_EXIT -eq 4 ]; then
+  cat <<EOF >&2
+
+Errata target comment $TARGET_COMMENT is user-authored.
+Per IDD R5 discipline (rules/append-vs-modify.md), modifying user content requires explicit consent.
+
+Manually run:
+  /idd-edit comment:$TARGET_COMMENT --prepend-note \\
+    --override-user-content \\
+    --reason='errata clarification per IDD discipline — see new errata at $NEW_ERRATA_URL'
+EOF
+  # errata comment 本身已成功 post — 只 prepend-note marker 需 user 顯式 consent
+fi
+```
+
+完整 R4/R5 規範 + override pathway 見 [`/idd-edit` SKILL.md](../idd-edit/SKILL.md) `## Runtime gates (#154, v2.81.0+)`。
 
 ### Step 3.5: Verify mentions (v2.32.0+)
 

@@ -6,7 +6,7 @@ description: |
   支援 batch mode（v2.34.0+）：多個 comment 套同一段 edit（如 `comment:NNN comment:MMM --replace --body '...'`），每個 comment 仍 per-confirm。
   Use when: 補既有 comment 說明（如圖片下方解釋）、修 typo、標示「此 comment 已被後續 errata 修正」。
   防止的失敗：手動 `gh api PATCH` 字串 escape 錯誤、誤覆蓋未 backup 的原內容。
-argument-hint: "comment:<id>[ comment:<id>...]|#issue --last [--append|--replace|--prepend-note] [--body=\"...\"] (multi-comment = batch)"
+argument-hint: "comment:<id>[ comment:<id>...]|#issue --last (--append|--replace [--scope whole-comment|--section <heading>]|--prepend-note) [--body=... | --body-file=...] [--reason=...] [--override-user-content --reason='...']"
 allowed-tools:
   - Bash(gh:*)
   - Read
@@ -23,7 +23,12 @@ allowed-tools:
 
 ## Batch mode（v2.34.0+）
 
-`idd-edit comment:NNN comment:MMM --replace --body '...'` 把同一段內容套到多個 comment。Edit 是破壞性動作，batch 把破壞範圍放大 N 倍 — preview + per-comment confirm 仍照舊（不允許 `--yes-to-all`），但每個 confirm 後就推進，不需要 N 次重打命令。
+`idd-edit comment:NNN comment:MMM --replace --scope whole-comment --body '...'` 把同一段內容套到多個 comment。Edit 是破壞性動作，batch 把破壞範圍放大 N 倍 — preview + per-comment confirm 仍照舊（不允許 `--yes-to-all`），但每個 confirm 後就推進，不需要 N 次重打命令。
+
+**v2.81.0+ R4/R5 在 batch mode 下 per-target 評估**:
+- R4 (`--replace` 必要 scope) 一次套用全 batch
+- R5 (author check) **per-target**:N 個 targets 若 mixed OWNER + non-OWNER,目前 single-target 邏輯 refuse 第一個 non-OWNER target 並印 hint;`--override-user-content` 套用所有 targets(全 batch 啟用 override)
+- 完整 batch + R5 semantics (per-comment refuse vs transactional abort vs pre-flight scan) 設計 deferred to **[#158](https://github.com/PsychQuant/issue-driven-development/issues/158)** follow-up
 
 完整契約見 [batch-and-cluster.md](../../references/batch-and-cluster.md)。罕見場景：跨 issue 的 typo 統一修、補同一段 errata note、把多個 stale comment 統一標 deprecated。
 
@@ -47,11 +52,31 @@ idd-issue source.docx       # auto-trigger when source contains ≥2 findings
 
 ## 三種 Edit Mode
 
-| Mode | 動作 | 原 body | 適用 |
-|------|------|--------|------|
-| `--append` | 在末尾加 `---\n**Edit YYYY-MM-DD**: {reason}\n\n{body}` | 保留 | 補充 / 更正（保留歷史） |
-| `--replace` | 完全替換 body | 寫入 backup 檔 | 大幅改寫（如補圖說明） |
-| `--prepend-note` | 在最上方加 `> ⚠️ {reason}\n\n---\n\n` | 保留 | 標示「此 comment 已過時」（errata flow 用） |
+| Mode | 動作 | 原 body | 適用 | 強制 flags |
+|------|------|--------|------|-----------|
+| `--append` | 在末尾加 `---\n**Edit YYYY-MM-DD**: {reason}\n\n{body}` | 保留 | 補充 / 更正（保留歷史） | `--reason` |
+| `--replace` | 完全替換 body 或指定 section | 寫入 backup 檔 | 大幅改寫（如補圖說明） | `--reason` + **`--scope whole-comment` OR `--section <heading>`**（R4 enforced）|
+| `--prepend-note` | 在最上方加 `> ⚠️ {reason}\n\n---\n\n` | 保留 | 標示「此 comment 已過時」（errata flow 用） | `--reason` |
+
+## 動作分類 (per [`#150` action-scoped modify discipline](../../rules/append-vs-modify.md))
+
+| Mode | Category | Scope contract |
+|------|----------|---------------|
+| `--append` | `audit-block-append` | trailing block,inherently bounded — no `--scope` needed |
+| `--replace --scope whole-comment` | `bounded-section-replace` | scope = whole comment(explicit acknowledgment of full overwrite）|
+| `--replace --section <heading>` | `bounded-section-replace` | scope = named markdown subsection only |
+| `--prepend-note` | `audit-block-append` | leading errata marker,inherently bounded — no `--scope` needed |
+
+## Runtime gates (#154, v2.81.0+)
+
+`/idd-edit` enforces 2 SHALL requirements at runtime via the **Python helper** `plugins/issue-driven-dev/scripts/idd-edit-helper.py` (#155 — replaces inline bash that was non-convergent over 3 verify rounds; the Python layer eliminates the R1/R2/R3 bug classes by-construction). Call `python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" <subcmd> ...` and branch on its exit code:
+
+| Requirement | Gate | Refuse code |
+|-------------|------|-------------|
+| **R4** (spec) | `--replace` without `--scope`/`--section` → refuse | exit 3 |
+| **R5** (spec) | Comment author non-OWNER non-bot,無 `--override-user-content --reason="..."` → refuse | exit 4 |
+
+Override pathway:`--override-user-content --reason="<rationale>"` 顯式同意修改 user content。 Audit marker `<!-- idd:edit override-user-content date=... reason="..." -->` 自動 append。
 
 ## Configuration
 
@@ -95,24 +120,100 @@ TaskCreate(name="verify_and_report", description="re-fetch comment 比對寫入�
 
 ---
 
-### Step 1: Parse arguments + resolve target
+### Step 1: Parse arguments via helper (R4 gate enforced)
+
+**#155 Python layer**: parsing + enforcement live in `plugins/issue-driven-dev/scripts/idd-edit-helper.py parse-args` (per [`#154`](https://github.com/PsychQuant/issue-driven-development/issues/154) → [`#155`](https://github.com/PsychQuant/issue-driven-development/issues/155): R1/R2/R3 bash-inline failure on PR #159 — 3 verify rounds, fix-velocity 91%→55%→40%, each pass introduced new parser bugs → bash ruled empirically non-convergent → ratified Python). The helper is a stdlib-only argparse-style parser with missing-value / next-`--`-eats-value / eq-form guards, **`--body-file` path safety via `os.path.realpath` canonicalize-first** (refuses `/etc`, credential dirs, and the `//etc` / `/tmp/../etc` / symlink bypass vectors), the R4 gate, and the R5 override-reason guard — all by-construction, covered by `plugins/issue-driven-dev/scripts/tests/idd-edit/` 23 adversarial fixtures.
 
 ```bash
-# 解析 target
-if [[ "$ARG" == comment:* ]]; then
-    COMMENT_ID=${ARG#comment:}
-elif [[ "$ARG" == \#* ]]; then
-    ISSUE_NUMBER=${ARG#\#}
-    if [[ "$LAST" == "true" ]]; then
-        # 取最後一個 comment id
-        COMMENT_ID=$(gh api repos/$GITHUB_REPO/issues/$ISSUE_NUMBER/comments --jq '.[-1].id')
-    else
-        # 列出供使用者選
-        gh api repos/$GITHUB_REPO/issues/$ISSUE_NUMBER/comments \
-          --jq '.[] | "\(.id) | \(.created_at) | \(.body | .[0:80])"'
-        # 用 AskUserQuestion 選
+# Parse + R4 gate (refuse if --replace lacks --scope/--section)
+# CRITICAL: split stdout (eval-safe assignments) from stderr (diagnostic text).
+# Closes #154 verify Round 1 H2 — previously used `2>&1` which mixed
+# stderr (potentially containing $() from cat-on-directory failure etc.)
+# into the eval input, defeating printf %q quoting safety.
+PARSE_ERR_FILE="/tmp/idd-edit-parse-err-$$"
+PARSE_OUT=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" parse-args "$@" 2>"$PARSE_ERR_FILE")
+PARSE_EXIT=$?
+PARSE_ERR=$(cat "$PARSE_ERR_FILE")
+rm -f "$PARSE_ERR_FILE"
+
+case $PARSE_EXIT in
+  0) eval "$PARSE_OUT" ;;   # imports MODE/SCOPE_FLAG/SECTION_FLAG/BODY_INPUT/etc.
+  3) echo "$PARSE_ERR" >&2; exit 3 ;;   # R4 refuse — actionable message
+  *) echo "$PARSE_ERR" >&2; exit $PARSE_EXIT ;;
+esac
+
+# Resolve TARGETS array → RESOLVED_COMMENT_IDS array (one entry per comment to edit).
+# Closes R2 H7 (#154 Round 2): previously this loop closed BEFORE Steps 1.5-7,
+# so batch mode `comment:NNN comment:MMM` silently only processed the LAST target.
+# Fix: resolution loop accumulates; per-target processing happens in OUTER loop
+# wrapping Steps 1.5 through 7 (see "Per-target outer loop" note below).
+RESOLVED_COMMENT_IDS=()
+for target in "${TARGETS[@]}"; do
+    local id=""
+    case "$target" in
+        comment:*)
+            id="${target#comment:}"
+            ;;
+        \#*)
+            ISSUE_NUMBER="${target#\#}"
+            # Validate issue number is numeric before substitution into gh api URL
+            [[ "$ISSUE_NUMBER" =~ ^[0-9]+$ ]] || { echo "ERROR: invalid issue number: $ISSUE_NUMBER" >&2; exit 2; }
+            if [ "$LAST" = "true" ]; then
+                id=$(gh api repos/$REPO/issues/$ISSUE_NUMBER/comments --jq '.[-1].id')
+            else
+                gh api repos/$REPO/issues/$ISSUE_NUMBER/comments \
+                  --jq '.[] | "\(.id) | \(.created_at) | \(.body | .[0:80])"'
+                # Use AskUserQuestion to select → id="<selected-id>"
+            fi
+            ;;
+    esac
+
+    # R4/R5 security gate: id MUST be numeric before any URL / filename substitution.
+    # Closes #154 verify finding C2 — unsanitized id flows into:
+    #   - gh api repos/.../comments/$id (REST path traversal)
+    #   - /tmp/idd-edit-repl-${id}.md (arbitrary local file write via embedded `/` + `..`)
+    [[ "$id" =~ ^[0-9]+$ ]] || { echo "ERROR: invalid comment ID (must be numeric): $id" >&2; exit 2; }
+
+    RESOLVED_COMMENT_IDS+=("$id")
+done
+```
+
+#### Per-target outer loop (wraps Steps 1.5 — 7)
+
+**v2.81.0+ (#154 R3 fix for H7)**: Each resolved comment ID runs through the full pipeline (validate → fetch → preview → confirm → PATCH → verify) independently. Batch mode = N iterations of the same sequence, per-comment confirmation discipline preserved.
+
+```bash
+for COMMENT_ID in "${RESOLVED_COMMENT_IDS[@]}"; do
+    # === Steps 1.5 through 7 run here, per-target ===
+    # The bash blocks below show single-target templates; in batch mode
+    # they execute N times, once per resolved COMMENT_ID.
+    # ...
+done
+```
+```
+
+### Step 1.5: Validate target (R5 author gate)
+
+**v2.81.0+ (#154)**: R5 gate refuses modifications to user-authored comments (non-OWNER non-bot) unless `--override-user-content --reason="..."` provided。 Helper does single `gh api` call,checks `author_association` + `user.login`,applies bot allowlist (`*[bot]` pattern + `OWNER` passthrough)。
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
+    validate-target "$COMMENT_ID" "$REPO" "$OVERRIDE_USER_CONTENT"
+VALIDATE_EXIT=$?
+case $VALIDATE_EXIT in
+  0) ;;   # proceed (OWNER, bot, or override active)
+  4)
+    # R5 refuse — actionable message already on stderr
+    # If called from /idd-comment errata flow: print additional helpful hint
+    if [ "${IDD_CALLER:-}" = "idd-comment-errata" ]; then
+      echo "" >&2
+      echo "Hint: errata target was user-authored; manually run:" >&2
+      echo "  /idd-edit comment:$COMMENT_ID --prepend-note --override-user-content --reason='errata clarification per IDD discipline'" >&2
     fi
-fi
+    exit 4
+    ;;
+  *) exit $VALIDATE_EXIT ;;
+esac
 ```
 
 ### Step 2: Fetch current body + backup
@@ -121,7 +222,7 @@ fi
 mkdir -p /tmp/idd-edit-backup
 BACKUP_FILE="/tmp/idd-edit-backup/comment-${COMMENT_ID}-$(date +%s).md"
 
-gh api repos/$GITHUB_REPO/issues/comments/$COMMENT_ID --jq '.body' > "$BACKUP_FILE"
+gh api repos/$REPO/issues/comments/$COMMENT_ID --jq '.body' > "$BACKUP_FILE"
 
 echo "✓ Backup: $BACKUP_FILE"
 ```
@@ -136,40 +237,85 @@ echo "✓ Backup: $BACKUP_FILE"
 
 ### Step 4: Build new body per mode
 
+> **v2.81.0+ (#154)**: audit markers are built via `python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" emit-audit-marker` — centralizes HTML-comment-escape (`-->` stripping) so attacker-controlled `$REASON` / `$SECTION_FLAG` cannot forge audit trail (closes #154 verify finding C3).
+
 #### Mode: `--append`
 
 ```bash
+EDIT_MARKER=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" emit-audit-marker edit mode=append)
 NEW_BODY="$(cat $BACKUP_FILE)
 
 ---
 
 **Edit $(date +%Y-%m-%d)**: $REASON
 
-$APPEND_BODY
+$BODY_INPUT
 
-<!-- idd:edit mode=append date=$(date +%Y-%m-%d) -->"
+$EDIT_MARKER"
+
+# Append R5 override audit marker if applicable
+if [ "$OVERRIDE_USER_CONTENT" = "true" ]; then
+    OVERRIDE_MARKER=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" emit-audit-marker override mode=append reason="$REASON")
+    NEW_BODY="$NEW_BODY
+
+$OVERRIDE_MARKER"
+fi
 ```
 
 #### Mode: `--replace`
 
-```bash
-NEW_BODY="$REPLACE_BODY
+R4 gate already enforced in Step 1 — `SCOPE_FLAG` or `SECTION_FLAG` is guaranteed non-empty here.
 
-<!-- idd:edit mode=replace date=$(date +%Y-%m-%d) backup=$BACKUP_FILE -->"
+```bash
+if [ "$SCOPE_FLAG" = "whole-comment" ]; then
+    # Whole-comment replacement
+    EDIT_MARKER=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" emit-audit-marker edit mode=replace scope=whole-comment backup="$BACKUP_FILE")
+    NEW_BODY="$BODY_INPUT
+
+$EDIT_MARKER"
+elif [ -n "$SECTION_FLAG" ]; then
+    # Named section replacement via getline pattern (closes R3 C3 BSD awk newline reject)
+    REPL_FILE="/tmp/idd-edit-repl-${COMMENT_ID}.md"
+    echo "$BODY_INPUT" > "$REPL_FILE"
+    NEW_BODY=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
+                  section-replace "$BACKUP_FILE" "$SECTION_FLAG" "$REPL_FILE")
+    rm -f "$REPL_FILE"
+    EDIT_MARKER=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" emit-audit-marker edit mode=replace section="$SECTION_FLAG" backup="$BACKUP_FILE")
+    NEW_BODY="$NEW_BODY
+
+$EDIT_MARKER"
+fi
+
+# Append R5 override audit marker if applicable
+if [ "$OVERRIDE_USER_CONTENT" = "true" ]; then
+    OVERRIDE_MARKER=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" emit-audit-marker override mode=replace reason="$REASON")
+    NEW_BODY="$NEW_BODY
+
+$OVERRIDE_MARKER"
+fi
 ```
 
-**警告**：`--replace` 完全覆蓋原 body。必顯示 diff preview，使用者確認後才 PATCH。
+**警告**：`--replace` 是 `bounded-section-replace` 動作（per [#150 rule](../../rules/append-vs-modify.md)）。必顯示 diff preview，使用者確認後才 PATCH。 R4 強制 `--scope`/`--section` 避免「忘記講動作範圍 = 全 comment overwrite」silent footgun。
 
 #### Mode: `--prepend-note`
 
 ```bash
+EDIT_MARKER=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" emit-audit-marker edit mode=prepend-note)
 NEW_BODY="> ⚠️ **Edit $(date +%Y-%m-%d)**: $REASON
 
 ---
 
 $(cat $BACKUP_FILE)
 
-<!-- idd:edit mode=prepend-note date=$(date +%Y-%m-%d) -->"
+$EDIT_MARKER"
+
+# Append R5 override audit marker if applicable
+if [ "$OVERRIDE_USER_CONTENT" = "true" ]; then
+    OVERRIDE_MARKER=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" emit-audit-marker override mode=prepend-note reason="$REASON")
+    NEW_BODY="$NEW_BODY
+
+$OVERRIDE_MARKER"
+fi
 ```
 
 ### Step 5: Preview + confirm
@@ -192,7 +338,7 @@ Confirm edit? (y/n)
 TMP_BODY_FILE="/tmp/idd-edit-new-${COMMENT_ID}.md"
 echo "$NEW_BODY" > "$TMP_BODY_FILE"
 
-gh api repos/$GITHUB_REPO/issues/comments/$COMMENT_ID \
+gh api repos/$REPO/issues/comments/$COMMENT_ID \
     -X PATCH \
     -F body=@"$TMP_BODY_FILE"
 
@@ -203,9 +349,9 @@ rm "$TMP_BODY_FILE"
 
 ```bash
 # Re-fetch 確認
-UPDATED=$(gh api repos/$GITHUB_REPO/issues/comments/$COMMENT_ID --jq '.body' | head -5)
+UPDATED=$(gh api repos/$REPO/issues/comments/$COMMENT_ID --jq '.body' | head -5)
 echo "✓ Comment updated"
-echo "  URL: $(gh api repos/$GITHUB_REPO/issues/comments/$COMMENT_ID --jq '.html_url')"
+echo "  URL: $(gh api repos/$REPO/issues/comments/$COMMENT_ID --jq '.html_url')"
 echo "  Backup: $BACKUP_FILE"
 echo "  First 5 lines of new body: $UPDATED"
 ```
@@ -222,15 +368,16 @@ echo "  First 5 lines of new body: $UPDATED"
 
 ## 使用範例
 
-### 補既有 comment 的圖片說明（剛才 #13 的痛點）
+### 補既有 comment 的圖片說明（自己發的 comment,whole-comment scope）
 
 ```
 /idd-edit comment:4241327867 --replace \
+  --scope whole-comment \
   --body-file=/tmp/new-implementation-summary.md \
   --reason="依新 skill 規則補圖下方資料/統計/結論說明"
 ```
 
-### 修 typo
+### 修 typo（單 section replace）
 
 ```
 /idd-edit #18 --last --append \
@@ -238,12 +385,33 @@ echo "  First 5 lines of new body: $UPDATED"
   --reason="p-value 計算誤差"
 ```
 
-### 標記 comment 已過時（errata flow）
+### 修 Diagnosis comment 內某 ### 區段（自己發的 comment）
+
+```
+/idd-edit comment:4530594011 --replace \
+  --section="### Strategy" \
+  --body-file=/tmp/new-strategy.md \
+  --reason="重新拆 Block A → B 依賴順序"
+```
+
+### 標記 comment 已過時（errata flow,自己發的 comment）
 
 ```
 /idd-edit comment:4241327867 --prepend-note \
   --reason="See errata at https://github.com/.../issuecomment-4241609713 — Holm 校正後結論不同"
 ```
+
+### Errata 修別人發的 comment（需顯式 override）
+
+R5 強制非 OWNER 非 bot comment 必須 explicit consent。 `/idd-comment --type=errata` auto-call 在 R5 refuse 時印 helpful message,指引你手動加 flag:
+
+```
+/idd-edit comment:9999999 --prepend-note \
+  --override-user-content \
+  --reason="errata clarification per IDD discipline — see new errata at <URL>"
+```
+
+Audit marker `<!-- idd:edit override-user-content date=... reason="..." -->` 自動 append 到 body 留 audit trail。
 
 ## 鐵律
 
@@ -253,6 +421,7 @@ echo "  First 5 lines of new body: $UPDATED"
 - **Metadata marker 不覆蓋**：每次 edit 加新 marker，保留 history
 - **`--replace` 預設 confirm = NO**：破壞性動作不自動 yes
 - **Log 每次 edit**：顯示 URL 讓使用者能立即 verify
+- **`--body-file` path safety（#155）**：helper **canonicalize（`os.path.realpath`）後拒絕** sensitive system paths（`/etc` `/var` `/sys` `/proc` `/private/etc|var`）+ credential dirs（`.ssh` `.aws` `.gnupg` `.kube` `.docker`），含 `//etc` / `/tmp/../etc` / symlink / relative-traversal bypass vectors → exit 5 refuse。Escape hatch：`IDD_EDIT_HELPER_ALLOW_UNSAFE_BODY_FILE=1`（須自審 reason）。合法 repo / `/tmp` / `$HOME/Developer` 路徑照常讀。Preview gate 仍是最後一道防線。
 
 ## 與 idd-comment 的配合
 
@@ -274,8 +443,8 @@ Target comment 頂部加警示「⚠️ See errata below」
 # 列出所有 backup
 ls -la /tmp/idd-edit-backup/
 
-# 回復某次 edit
-gh api repos/$GITHUB_REPO/issues/comments/<id> \
+# 回復某次 edit (set REPO=owner/repo first)
+gh api repos/$REPO/issues/comments/<id> \
     -X PATCH \
     -F body=@/tmp/idd-edit-backup/comment-<id>-<timestamp>.md
 ```

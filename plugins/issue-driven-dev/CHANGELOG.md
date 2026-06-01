@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.81.0] - 2026-06-01
+
+### Added
+
+- **`idd-edit` runtime enforcement wired onto the Python helper** ([#154](https://github.com/PsychQuant/issue-driven-development/issues/154), completes the #154→#155 saga): `idd-edit`/SKILL.md now invokes `python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" <subcmd>` at its enforcement points (parse-args R4 gate / validate-target R5 gate / section-replace / emit-audit-marker) instead of the inline bash that was non-convergent over 3 verify rounds. The R4 (scope) + R5 (author) gates, `--body-file` path safety, and HTML-comment audit-marker escaping are now enforced by the #155 layer.
+  - `idd-comment`/SKILL.md gains the **errata-flow integration**: an errata note auto-calls `/idd-edit --prepend-note`, and on a user-authored (non-OWNER) target the R5 gate refuses with exit 4 + a helpful hint to re-run with `--override-user-content` (per the #154 Q4 decision — refuse-with-message, not auto-override, honoring IC_R007 user-authored-intent).
+  - **Fixed a stale, now-false security claim** in idd-edit/SKILL.md that said the helper "不限制路徑 / `--body-file=/etc/passwd` will be read into the comment body" — the #155 Python helper *does* refuse it (realpath-canonicalize then component-aware prefix check, exit 5). The prose now documents the real path-safety + the `IDD_EDIT_HELPER_ALLOW_UNSAFE_BODY_FILE=1` escape hatch.
+  - Verified: the SKILL→helper invocation contract smoke-tests correctly (R4→3, scope→0, body-file→5, marker→0), the 23 adversarial fixtures stay green, and the #156 grep-separator lint passes. SKILL.md prose imported from the preserved `idd/154-edit-runtime` audit branch (main hadn't drifted) and swapped bash→python3.
+
 ## [2.80.0] - 2026-06-01
 
 ### Added
