@@ -1,3 +1,8 @@
 .spectra/
 openspec/.vector-search.db*
 .claude/scheduled_tasks.lock
+
+# idd-all-chain per-session traversal state — session_id-bearing, ephemeral, not a
+# durable artifact (#152). Sibling .claude/.idd/attachments/ deliberately STAYS tracked
+# (its manifest is committed), so ignore state/ specifically, not the parent.
+.claude/.idd/state/
