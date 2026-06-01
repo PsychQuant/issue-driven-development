@@ -1,0 +1,3 @@
+__FIXTURE_PATH__/input.md
+## Foo
+__FIXTURE_PATH__/replacement.md

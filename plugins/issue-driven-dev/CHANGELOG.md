@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.80.0] - 2026-06-01
+
+### Added
+
+- **`idd-edit` runtime-enforcement helper — Python layer** ([#155](https://github.com/PsychQuant/issue-driven-development/issues/155), unblocks [#154](https://github.com/PsychQuant/issue-driven-development/issues/154)): the `/idd-edit` strict flag-parsing + enforcement logic was attempted in bash over 3 rounds (R1/R2/R3 on PR #159) and each round introduced new bugs — fix-velocity decayed 91% → 55% → ~40%, R3 ending in a **5-way reviewer confluence on a `--body-file` path-bypass class** (`//etc`, `/tmp/../etc`, symlinks, relative traversal). Bash was empirically non-convergent for this load, so #154 was escalated to #155 to pick a layer; the user ratified **Python**.
+  - **NEW `plugins/issue-driven-dev/scripts/idd-edit-helper.py`** (stdlib-only) — reproduces the bash helper's interface + exit-code contract (`0` ok / `2` usage / `3` R4 scope gate / `4` R5 author gate / `5` --body-file refused) but eliminates all 6 R1–R3 bug classes **by construction**: a deterministic flag parser (missing-value / next-`--`-eats-value / eq-form / numeric-id all handled), `--body-file` path safety via **`os.path.realpath` canonicalize-first then component-aware prefix check** (the bypass vectors that defeated bash R3 — `//etc/passwd`, `/tmp/../etc/passwd`, `../../etc/passwd`, symlinks into refused dirs — are all refused; `/etcetera` is not false-positived), R4 scope gate, R5 author check (mock honored **only** under `IDD_EDIT_HELPER_TEST_MODE=1` so production can't be spoofed), `html`-based audit-marker escaping (no bash back-reference traps), and level-aware section replacement.
+  - **NEW test suite** `scripts/tests/idd-edit/` — the 23 adversarial fixtures from the audit branch (preserved on `idd/154-edit-runtime`) now run against the Python helper via the runner; **23/23 green**. Independently re-verified, plus an out-of-fixture adversarial sweep of the path-bypass class. The new runner also passes the #156 grep-separator lint.
+  - **Scope**: this ships the *layer* (#155). Wiring it into `idd-edit`/`idd-comment` SKILL.md (replacing the inline bash) is #154, now unblocked — and the 9 adversarial fixtures there can source `lib/assert-helpers.sh` (#156).
+
 ## [2.79.0] - 2026-06-01
 
 ### Added

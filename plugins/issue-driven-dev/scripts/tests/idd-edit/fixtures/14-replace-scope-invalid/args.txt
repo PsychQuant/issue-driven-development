@@ -1,0 +1,4 @@
+comment:123
+--replace
+--scope=typo
+--body=hello

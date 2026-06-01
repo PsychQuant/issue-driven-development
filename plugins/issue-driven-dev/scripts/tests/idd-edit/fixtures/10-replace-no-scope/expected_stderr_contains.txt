@@ -1,0 +1,2 @@
+--replace requires --scope whole-comment OR --section
+Requirement 4

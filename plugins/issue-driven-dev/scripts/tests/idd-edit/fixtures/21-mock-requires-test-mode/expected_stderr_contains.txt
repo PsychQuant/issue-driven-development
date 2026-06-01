@@ -1,0 +1,2 @@
+IDD_EDIT_HELPER_GH_MOCK is a test-only hook
+IDD_EDIT_HELPER_TEST_MODE=1

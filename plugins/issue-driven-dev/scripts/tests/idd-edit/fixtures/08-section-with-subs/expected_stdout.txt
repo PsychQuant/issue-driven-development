@@ -1,0 +1,7 @@
+# Doc
+
+## Foo
+REPLACED FOO
+new line 2
+## Qux
+qux content (should NOT be replaced)

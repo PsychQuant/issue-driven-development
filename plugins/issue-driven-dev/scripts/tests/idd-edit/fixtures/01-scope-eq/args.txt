@@ -1,0 +1,4 @@
+comment:123
+--replace
+--scope=whole-comment
+--body=hello

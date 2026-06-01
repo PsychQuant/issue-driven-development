@@ -1,0 +1,2 @@
+BODY_INPUT=hello\ world
+MODE=--append
