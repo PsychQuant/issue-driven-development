@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.77.1] - 2026-06-01
+
+### Changed
+
+- **`idd-verify` dynamic-workflow backend ungated** ([#164](https://github.com/PsychQuant/issue-driven-development/issues/164)): it is now the **default** backend when the dynamic-workflow primitive is available (the manual fan-out remains the fallback — zero regression). The ungate ran one **end-to-end** verify — real diff via `args.diffFile` → workflow backend (5 agents) → findings normalized into the master-report table → posted to GitHub — a **self-dogfood** in which the verify ensemble reviewed its own `ensemble-workflow.js` and caught 3 real MEDIUM bugs, all fixed:
+  - `mergeDedup` indexed `SEVERITY_RANK` by the raw severity string → an out-of-enum severity made the comparator return `NaN`, scrambling the **entire** report sort (CRITICALs could sink below INFOs). Fixed with `?? 0`.
+  - `dataBlock` neutralized only the **same-label** `END` sentinel → cross-label + `BEGIN` markers were forgeable (an attacker-controlled issue body could forge the `DIFF` block boundary, breaking the data/instruction separation). Now strips **every** known sentinel token.
+  - `mergeDedup`'s dedup key degenerated to **title-only for `file:null` findings** → it collapsed distinct cross-lens findings, destroying the cross-lens corroboration signal the ensemble exists to produce. Now keys on `lens::title` when the file is null.
+  - Also: the `args` parse is wrapped in try/catch, and **`args.diffFile` support** was added so large diffs are passed by path (reviewer agents file-read them) instead of inline — the inline path bloats prompts and hits escaping limits.
+
+### Notes
+
+- Completes `formalize-idd-verify-ensemble` end-to-end: the workflow backend is now the live default, verified by running it on its own implementation. Remaining: Phase 2 (idd-all-chain workflow adoption) + the severity-vocab unification follow-up.
+
 ## [2.77.0] - 2026-06-01
 
 ### Added

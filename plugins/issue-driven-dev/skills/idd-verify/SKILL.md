@@ -137,9 +137,9 @@ idd-verify #NNN
 - Devil's Advocate 的工作是**試著證明其他 4 個的通過判斷是錯的**
 - Codex 是完全不同的模型家族（gpt-5.5），提供**跨模型盲驗**
 
-## Dynamic-workflow backend（formalize-idd-verify-ensemble — pending live verification）
+## Dynamic-workflow backend（formalize-idd-verify-ensemble — v2.77.0, default when the primitive is available）
 
-> **狀態**：此 backend 已實作（workflow script + findings schema + Codex-kill spike PASS），但**尚未 behavioral live-verify**（在真 PR 上跑、對比兩 backend 的 findings）。在 live-verify 完成前，**Step 2 的 manual fan-out 仍是 default**；本段是 backend 契約 + capability gate 的文件，不改變現行預設行為。完整 design 見 `openspec/changes/.../formalize-idd-verify-ensemble/design.md`（archived 後 → `idd-verify` spec）。
+> **狀態（live-verified + ungated, 2026-06-01）**：此 backend 已 **end-to-end live-verified** —— 真 diff 經 `args.diffFile` → workflow backend（5 agents）→ findings normalize 成 master-report 表格 → 真 `gh issue comment` 發到 issue。self-dogfood（verify 跑自身 `ensemble-workflow.js`）抓到並修掉 3 個 MEDIUM bug：unknown-severity 讓 `mergeDedup` 的 sort 回 NaN（garbage 排序）、`dataBlock` sentinel 只中和 same-label END（cross-label 可偽造）、`file:null` findings dedup 退化成 title-only（吃掉 cross-lens corroboration）。**所以現在：dynamic-workflow primitive 可用時 workflow 是 default backend；不可用時 fall back Step 2 的 manual fan-out（zero-regression）。** 完整 design 見 `idd-verify` spec。
 
 **為什麼**：Step 2 的 manual fan-out（5 Agent + `/tmp` file IPC + DA polling + 背景 Codex）是 dynamic-workflow primitive 尚不存在時的 workaround。官方 workflow 的招牌 pattern 逐字就是這個 ensemble（"independent agents adversarially review each other's findings before they're reported"）。
 
@@ -155,8 +155,9 @@ skill **await** workflow 回傳的 findings 才發文，所以使用者視角不
 
 ```
 若 dynamic-workflow primitive 可用（version gate）:
-    SCRIPT = read plugins/issue-driven-dev/skills/idd-verify/ensemble-workflow.js   # D2: plugin 無 workflows/ component，故讀檔
-    findings = Workflow(script=SCRIPT, args={diff, issues, attachments, codexEnabled})   # inline 傳 script param
+    write $DIFF 到 temp 檔 $DIFF_FILE   # 大 diff 不塞 inline args (Workflow tool 會把 args JSON-stringify；ensemble-workflow.js 已防禦性 parse，並支援 args.diffFile 讓 reviewer agents 用 file-read tool 讀，避免 escape 地獄 + prompt 膨脹)
+    findings = Workflow(scriptPath="plugins/issue-driven-dev/skills/idd-verify/ensemble-workflow.js",
+                        args={diffFile: $DIFF_FILE, issues, attachments, codexEnabled})   # D2: plugin 無 workflows/ → 傳檔路徑而非 named workflow
     印一行 notice: "→ verify backend: dynamic-workflow"
 否則:
     findings = Step 2 manual fan-out（現行行為）
