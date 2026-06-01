@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.76.1] - 2026-06-01
+
+### Changed
+
+- **Spec rename `idd-orchestrator-modes` → `idd-pr-hitl-modes`** + filled its `## Purpose` (previously a `TBD` archive stub that was never written). The old name was mechanism-named ("modes of *what*?") and the empty Purpose made the spec opaque on sight; the new name states the two axes it governs — **PR**-or-not × **HITL**-or-not — and the Purpose now defines the `(path, interaction)` tuple resolution consumed by `idd-all` + `idd-all-chain`. First application of a naming lesson from the [#164](https://github.com/PsychQuant/issue-driven-development/issues/164) orchestration discuss (intent-named + Purpose-first). The 6 live cross-references in `idd-all/SKILL.md` were repointed; historical mentions (this CHANGELOG's earlier entries, the README / plugin.json / marketplace.json version notes, and archived changes) intentionally keep the old name as accurate records of what those versions did. No behavior change.
+
 ## [2.76.0] - 2026-06-01
 
 ### Added

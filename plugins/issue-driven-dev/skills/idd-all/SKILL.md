@@ -481,7 +481,7 @@ print(m.group(1).strip() if m else 'UNKNOWN')
 
 ### Phase 3a: Simple/Plan Path — idd-implement
 
-依 Phase 0.5 的 `(PATH_AXIS, INTERACTION)` 條件組 invocation args。**Args 構造遵守「two axes derived from one source」原則**(見 spec `idd-orchestrator-modes`「Attended interaction permits sub-skill questions」requirement):
+依 Phase 0.5 的 `(PATH_AXIS, INTERACTION)` 條件組 invocation args。**Args 構造遵守「two axes derived from one source」原則**(見 spec `idd-pr-hitl-modes`「Attended interaction permits sub-skill questions」requirement):
 
 ```bash
 # Build args conditionally — UNATTENDED MODE directive only when interaction == unattended
@@ -545,7 +545,7 @@ Context (from issue body + diagnosis):
 ${ISSUE_BODY}
 ${DIAGNOSIS}"
 
-# Conditional: unattended only — see spec idd-orchestrator-modes,
+# Conditional: unattended only — see spec idd-pr-hitl-modes,
 # requirement "Attended interaction permits sub-skill questions".
 if [ "$INTERACTION" = "unattended" ]; then
   DISCUSS_ARGS="$DISCUSS_ARGS
@@ -598,7 +598,7 @@ PROPOSE_ARGS="<conclusion line from Step 3b.2>
 
 Original issue: #${N} ${ISSUE_TITLE}"
 
-# Conditional: unattended only — see spec idd-orchestrator-modes,
+# Conditional: unattended only — see spec idd-pr-hitl-modes,
 # requirement "Attended interaction permits sub-skill questions".
 if [ "$INTERACTION" = "unattended" ]; then
   PROPOSE_ARGS="$PROPOSE_ARGS
@@ -627,7 +627,7 @@ APPLY_ARGS="<change-name from Step 3b.3>
 
 Issue ref: #${N}"
 
-# Conditional: unattended only — see spec idd-orchestrator-modes,
+# Conditional: unattended only — see spec idd-pr-hitl-modes,
 # requirement "Attended interaction permits sub-skill questions".
 if [ "$INTERACTION" = "unattended" ]; then
   APPLY_ARGS="$APPLY_ARGS
@@ -641,7 +641,7 @@ Discipline overrides for this invocation:
 - All commits land on the branch from Phase 0.5 ('${BRANCH}')."
 fi
 # Attended mode: APPLY_ARGS contains ONLY the change-name + issue ref.
-# Per spec idd-orchestrator-modes requirement "Attended interaction permits sub-skill questions":
+# Per spec idd-pr-hitl-modes requirement "Attended interaction permits sub-skill questions":
 # idd-all SHALL NOT inject any directive when interaction=attended. spectra-apply's
 # native attended-by-default behavior (Step 4 continue-confirmation, AskUserQuestion
 # on ambiguity) fires unmodified.
@@ -670,7 +670,7 @@ Skill(skill="spectra-apply", args="$APPLY_ARGS")
 Args 構造同樣依 `INTERACTION` 軸條件化(Task 4.3, Requirement: "Attended interaction permits sub-skill questions"):
 
 ```bash
-# Build idd-verify args conditionally — see spec idd-orchestrator-modes,
+# Build idd-verify args conditionally — see spec idd-pr-hitl-modes,
 # requirement "Attended interaction permits sub-skill questions".
 VERIFY_ARGS="#$N --cwd $CWD"
 if [ "$INTERACTION" = "unattended" ]; then

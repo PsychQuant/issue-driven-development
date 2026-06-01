@@ -1,8 +1,8 @@
-# idd-orchestrator-modes Specification
+# idd-pr-hitl-modes Specification
 
 ## Purpose
 
-TBD - created by archiving change 'idd-all-hitl-mode'. Update Purpose after archive.
+Defines how an IDD orchestrator skill (`idd-all`, `idd-all-chain`) resolves two run-shape axes — **path** (PR vs direct-commit) and **interaction** (attended / human-in-the-loop vs unattended) — from a single source of truth (`pr_policy` config plus the `--pr` / `--no-pr` / `--in-chain` flags), so the two axes never split into duplicate config surfaces. Each resolved `(path, interaction)` tuple shapes whether a run opens a PR and whether sub-skills may ask the user questions. Consumed by `idd-all` (v2.40.0+) and `idd-all-chain` (v2.55.0+).
 
 ## Requirements
 
