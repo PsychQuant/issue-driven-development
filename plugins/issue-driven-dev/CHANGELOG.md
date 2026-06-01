@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.77.2] - 2026-06-01
+
+### Fixed
+
+- **`idd-update` managed-zone anchor: first `---` → `## Current Status` heading** ([#178](https://github.com/PsychQuant/issue-driven-development/issues/178)): Step 5 anchored the managed zone on the **first `---`**, but `/idd-issue` parking-lot seeds place **audit blocks** (`### Clarity Surface` / `### Linked-Context Siblings`) below the first `---` with **no `## Current Status`** — so a literal "replace below first `---`" **silently destroyed** those audit blocks (the caller only saw "✓ status updated"). The `---` separator is semantically overloaded in IDD bodies (it marks both the original/audit boundary AND the audit/status boundary), so it cannot be the managed-zone anchor. Fixed by re-anchoring all 4 prose spots (design section line 67, Step 0 task line 90, Step 5, 鐵律) on the **`## Current Status` heading**: Branch A (heading present → replace from heading, incl. immediately-preceding `---`) / Branch B (no heading → append, preserving all existing content regardless of `---` count). **Strictly backward-safe** — only changes behavior for the multi-`---`-with-audit-between case (the bug); never destroys more than before. The skill's own Step 0 task already declared the correct `scope: "## Current Status"` annotation — this aligns the prose to it. Surfaced via dogfood: the `/idd-diagnose #164` Step 5 auto-call hit it on the plugin's own repo.
+- Sister bug **[#181](https://github.com/PsychQuant/issue-driven-development/issues/181)** filed (not addressed here): `idd-diagnose` Step 0.5 Clarity gate greps `### Clarity Surface` without stripping code fences — the same naive-structural-match class (`idd-list` Step 3.5 already solved it with `strip_fenced_code()`).
+
 ## [2.77.1] - 2026-06-01
 
 ### Changed

@@ -64,7 +64,9 @@ Issue body 分為兩個區域：
 ## Current Status     ← idd-update 管理這塊
 ```
 
-`---` 分隔線以上 = 永遠不改。以下 = 每次 idd-update 重寫。
+**Managed zone = `## Current Status` heading 到 body 結尾**（含其上**緊鄰**的 `---`，若有）。這塊以外的所有內容 = 永遠不改。
+
+> ⚠️ Managed zone 錨在 `## Current Status` **heading**，**不是**「第一個 `---`」。`---` 在 IDD body 語意不唯一 —— `/idd-issue` 的 parking-lot seed 會在第一個 `---` **下**放 audit blocks（`### Clarity Surface` / `### Linked-Context Siblings`）而非 Current Status。錨在 `---` 會誤刪這些 audit（#178）。只有 `## Current Status` heading 是 unambiguous 的錨。
 
 ## Configuration
 
@@ -87,7 +89,7 @@ TaskCreate(name="read_issue", description="gh issue view #NNN 取 title/body/lab
 TaskCreate(name="determine_phase", description="掃 comments 標題（Diagnosis / Implementation Plan / Implementation Complete / Verify / Closing Summary）推斷 phase")
 TaskCreate(name="extract_key_info", description="從 comments 提取 Key Decisions / Scope Changes / Blocking / Related Commits 四類")
 TaskCreate(name="assemble_current_status", description="組 ## Current Status 區塊 markdown（Phase / Last updated / 四類分節）")
-TaskCreate(name="update_body", description="gh issue edit 替換 --- 以下內容；若 body 無 --- 則 append 新區塊 (category: bounded-section-replace, scope: \"## Current Status\")")
+TaskCreate(name="update_body", description="gh issue edit：body 有 ## Current Status → 替換該 heading（含其上緊鄰 ---）到結尾；無則 append 新區塊（保留全部既有內容，不論幾個 ---）(category: bounded-section-replace, scope: \"## Current Status\")")
 TaskCreate(name="report_update", description="輸出 ✓ Issue #NNN status updated → {phase}（取代原 Step 6「靜默完成」的 silent path）")
 ```
 
@@ -184,9 +186,15 @@ git log --oneline --grep="#$NUMBER" | head -10
 
 ### Step 5: 更新 Issue Body
 
-將原始 body 的 `---` 分隔線（含）以下替換為新的 Current Status。
+Managed zone 錨在 **`## Current Status` heading**，**不是**第一個 `---`。依 body 現狀走兩分支：
 
-如果原始 body 沒有 `---` 分隔線和 Current Status 區塊，在 body 尾部**新增**。
+**Branch A — body 已有 `## Current Status`**：從該 heading 起（含其上**緊鄰**的 `---`，若有）到 body 結尾，整段替換為新的 Current Status 區塊。`## Current Status` 以上的所有內容（原始記錄 + 任何 audit blocks）**逐字保留**。
+
+**Branch B — body 無 `## Current Status`**：**append** 新區塊（`\n---\n\n## Current Status...`）到 body 結尾，**保留所有既有內容**，不論 body 有幾個 `---`、`---` 下是什麼。
+
+> **為何不錨在第一個 `---`（#178）**：`/idd-issue` 的 parking-lot seed 在第一個 `---` 下放的是 **audit blocks**（`### Clarity Surface` / `### Linked-Context Siblings`），不是 Current Status。錨在「第一個 `---` 以下全替換」會**靜默刪掉**這些 audit。`---` 在 IDD body 語意不唯一（既分隔 original/audit，也分隔 audit/status），不能當 managed-zone 的唯一錨。
+>
+> **Backward-compat**：既有「`---` 緊鄰 `## Current Status`」的 body，Branch A 與舊「replace below first `---`」產出**同結果**。只有「多個 `---`、audit 夾在中間」的 body 行為改變 —— 那正是修復（舊邏輯誤刪、新邏輯保留）。Fix **strictly safer**：只保留更多、不刪更多。
 
 ```bash
 gh issue edit $NUMBER --repo $GITHUB_REPO --body "$UPDATED_BODY"
@@ -243,7 +251,7 @@ gh issue edit $NUMBER --repo $GITHUB_REPO --body "$UPDATED_BODY"
 
 ## 鐵律
 
-- **永遠不改 `---` 以上的內容**。原始記錄是審計軌跡。
+- **永遠不改 `## Current Status` managed zone 以外的內容**。原始記錄 + audit blocks（`### Clarity Surface` / `### Linked-Context Siblings` 等）都是審計軌跡。錨在 `## Current Status` heading，**不是**第一個 `---`（`---` 語意不唯一，錨在它會誤刪 audit — #178）。
 - **Key Decisions 只加不刪**。新的加在最上面，舊的保留。
 - **簡潔**。每個 bullet 一行，不超過 100 字。
 - **Phase 必須準確**。如果推斷不出來，標 `unknown` 並提醒使用者。
