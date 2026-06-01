@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.78.0] - 2026-06-01
+
+### Changed
+
+- **`idd-verify` Codex reviewer: `codex exec` subprocess → vendored `codex-call` HTTP wrapper** ([#147](https://github.com/PsychQuant/issue-driven-development/issues/147)): the 6th (cross-model blind-verify) reviewer no longer shells out to `codex exec --full-auto`, whose stdin/stdout pipe could interlock and hang for the full timeout. It now goes through `codex-call` — a direct HTTPS POST to chatgpt.com's codex backend (no subprocess → no pipe hang; `--max-time` is a hard ceiling the CLI didn't always honor). Distribution: **Option A (vendor)** — `codex-call` is copied verbatim into `plugins/issue-driven-dev/bin/codex-call` (an interpreted `#!/usr/bin/env swift` script — no build/notarize, just needs `swift` on PATH), so idd-verify has **zero runtime coupling** to whether `parallel-ai-agents` is installed. OAuth (`~/.codex/auth.json`) + the token-refresh lock are at fixed paths, so they stay shared across the vendored copy and upstream. Runtime dependency swaps from the `codex` CLI to `swift`.
+  - All 3 call sites migrated: `ensemble-workflow.js` `codexPrompt()` (the workflow backend), plus `SKILL.md` Engine 2b (manual-fan-out background Codex) and the standalone `codex` fast-mode engine.
+  - **Config drift unified**: the 3 sites had diverged (`SKILL.md` used `effort=xhigh` + `service_tier=fast`; `ensemble-workflow.js` had silently dropped to `effort=high` with no `service_tier`). All now use `effort=xhigh` + `service_tier=fast`.
+  - **Latent empty-diff bug fixed (in-scope)**: `codexPrompt()` used the inline-only `dataBlock('DIFF', args.diff)` instead of the `diffSection(args)` helper the reviewer/DA lenses use — so whenever the skill passed `args.diffFile` (the documented large-diff path), `args.diff` was `undefined` and the Codex lens reviewed an **empty diff**. It now uses `diffSection(args)` (diffFile-aware). The dogfood that ungated the workflow ran with `codexEnabled=false` (5 agents), so this never surfaced.
+  - **Path threading**: `codex-call` is not on a sub-agent's `$PATH`, so the skill threads its absolute path (`$CLAUDE_PLUGIN_ROOT/bin/codex-call`) as `args.codexCall` — mirroring how `parallel-ai-agents`' own workflow threads `codexCallPath` to avoid PATH fragility.
+  - **No `codex exec` fallback** by design — re-introducing the subprocess would re-introduce the hang path this change removes. On `codex-call` failure (swift missing / HTTP 5xx / OAuth refresh / timeout) the lens returns the existing fail-closed INFO finding "cross-model pass incomplete" rather than silently passing.
+
 ## [2.77.2] - 2026-06-01
 
 ### Fixed

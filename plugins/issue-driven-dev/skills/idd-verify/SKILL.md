@@ -157,7 +157,8 @@ skill **await** workflow 回傳的 findings 才發文，所以使用者視角不
 若 dynamic-workflow primitive 可用（version gate）:
     write $DIFF 到 temp 檔 $DIFF_FILE   # 大 diff 不塞 inline args (Workflow tool 會把 args JSON-stringify；ensemble-workflow.js 已防禦性 parse，並支援 args.diffFile 讓 reviewer agents 用 file-read tool 讀，避免 escape 地獄 + prompt 膨脹)
     findings = Workflow(scriptPath="plugins/issue-driven-dev/skills/idd-verify/ensemble-workflow.js",
-                        args={diffFile: $DIFF_FILE, issues, attachments, codexEnabled})   # D2: plugin 無 workflows/ → 傳檔路徑而非 named workflow
+                        args={diffFile: $DIFF_FILE, issues, attachments, codexEnabled,
+                              codexCall: "$CLAUDE_PLUGIN_ROOT/bin/codex-call"})   # D2: 傳檔路徑而非 named workflow。codexCall = vendored codex-call 絕對路徑（#147）— $CLAUDE_PLUGIN_ROOT 在 skill-run 時可解，但 workflow subagent 的 $PATH 沒它，故 thread 進 args
     印一行 notice: "→ verify backend: dynamic-workflow"
 否則:
     findings = Step 2 manual fan-out（現行行為）
@@ -166,7 +167,7 @@ skill **await** workflow 回傳的 findings 才發文，所以使用者視角不
 
 兩條路產出**相同 findings contract**（見 `references/idd-verify-findings-schema.json`：severity / file / title / body / lens；merge 取最高），所以 Step 3 merge 之後（posting / triage / verify-fix）**backend-agnostic**。
 
-**Codex（D3）**：包進 workflow 當 Bash agent shell-out `codex exec`；runtime stop 連帶 kill（Phase 0 spike PASS：TaskStop 清掉整棵 codex tree、零 orphan）+ script 內 `timeout 600` 雙保險；超時回 INFO finding「cross-model pass incomplete」不靜默丟（對應 spec「bounded lifetime」requirement）。
+**Codex（D3）**：包進 workflow 當 Bash agent，透過 vendored **`codex-call` HTTP wrapper**（#147，`$CLAUDE_PLUGIN_ROOT/bin/codex-call`，由 args.codexCall thread 絕對路徑進來）—— 直打 chatgpt codex backend，**非** `codex exec` subprocess，故無 stdin/stdout pipe 互鎖 hang；`--max-time 600` 是硬 HTTP timeout（codex CLI 不一定守）。runtime 依賴從 `codex` CLI 換成 `swift` 在 PATH。codex-call 失敗（swift 缺 / HTTP 5xx / auth refresh / timeout）→ 回 fail-closed INFO finding「cross-model pass incomplete」不靜默丟（對應 spec「bounded lifetime」requirement）；**刻意不 fallback `codex exec`**（會重引 hang 路徑）。
 
 **Interaction 軸（D5）**：workflow 跑背景 = 本質 unattended（no mid-run input），對齊 `idd-pr-hitl-modes` 的 interaction 軸——verify core 內零 user input，所有 gates/triage/verify-fix 在 core 前/後（skill 端）。
 
@@ -601,19 +602,19 @@ If you receive a later SendMessage with the same prompt re-pasted, treat as retr
 })
 ```
 
-#### 2b. Codex CLI（背景執行，via companion script）
+#### 2b. Codex（背景執行，via vendored `codex-call` HTTP wrapper，#147）
 
-使用 `codex exec` 執行 review：
+透過 vendored `codex-call`（HTTP，非 `codex exec` subprocess → 無 pipe hang）執行 review。**注意語意差異**：`codex exec --full-auto` 是 agentic（codex 自己讀 working-tree diff）；`codex-call` 是單次 completion（非 agentic），所以 diff 必須**顯式**用 `--prompt-file` 餵進去 —— 用 Step 1 已寫好的 `/tmp/diff_$NUMBER.patch`，review 框架放 `--instructions`：
 
 ```bash
 Bash({
-  command: `codex exec --full-auto -c 'model="gpt-5.5"' -c 'model_reasoning_effort="xhigh"' -c 'service_tier="fast"' -o /tmp/codex-verify-$NUMBER.md "You are verifying code changes for Issue #$NUMBER: $TITLE. Go through EACH requirement: FULLY / PARTIALLY / NOT addressed. Flag scope creep and regressions. Reply in Traditional Chinese."`,
-  description: "Codex review for #$NUMBER",
+  command: `"$CLAUDE_PLUGIN_ROOT/bin/codex-call" --output /tmp/codex-verify-$NUMBER.md --model gpt-5.5 --effort xhigh --service-tier fast --max-time 600 --prompt-file /tmp/diff_$NUMBER.patch --instructions "You are verifying code changes for Issue #$NUMBER: $TITLE. Go through EACH requirement: FULLY / PARTIALLY / NOT addressed. Flag scope creep and regressions. Reply in Traditional Chinese."`,
+  description: "Codex review for #$NUMBER (via codex-call)",
   run_in_background: true
 })
 ```
 
-完成後用 Read 讀取 `/tmp/codex-verify-$NUMBER.md`。
+完成後用 Read 讀取 `/tmp/codex-verify-$NUMBER.md`。codex-call 失敗（swift 缺 / HTTP / auth / timeout）→ 視為 cross-model lens 本次 skip，標記在 master report，不靜默當成 PASS。
 
 ### Step 2.5: Recovery Protocol（NEW v2.59.0+, #52）
 
@@ -976,15 +977,16 @@ Full integration contract: [`references/agent-routing.md`](../../references/agen
 只用 Codex，不開 team。適合小改動：
 
 ```bash
-codex exec --full-auto \
-  -c 'model="gpt-5.5"' \
-  -c 'model_reasoning_effort="xhigh"' \
-  -c 'service_tier="fast"' \
-  -o /tmp/codex-quick-review.md \
-  "Review the current git diff. Flag bugs, logic errors, security issues. Reply in Traditional Chinese."
+# codex-call 是單次 completion（非 agentic）→ 顯式把 diff 餵進去
+git diff > /tmp/codex-quick-diff.patch
+"$CLAUDE_PLUGIN_ROOT/bin/codex-call" \
+  --output /tmp/codex-quick-review.md \
+  --model gpt-5.5 --effort xhigh --service-tier fast --max-time 600 \
+  --prompt-file /tmp/codex-quick-diff.patch \
+  --instructions "Review this git diff. Flag bugs, logic errors, security issues. Reply in Traditional Chinese."
 ```
 
-> **Fast mode note**: `service_tier="fast"` 加速 GPT-5.5 回應（需較多 credits,換取 2-5x 速度）。驗證場景對速度敏感（user 在等 findings），預設開啟;若要省 credit 可移除此 flag。
+> **codex-call note（#147）**：透過 vendored `codex-call` HTTP wrapper（`$CLAUDE_PLUGIN_ROOT/bin/codex-call`）而非 `codex exec` subprocess —— 無 pipe hang、`--max-time` 硬 timeout、依賴 `swift` 在 PATH。`--service-tier fast` 加速 GPT-5.5 回應（需較多 credits,換取 2-5x 速度）。驗證場景對速度敏感（user 在等 findings），預設開啟;若要省 credit 可移除此 flag。
 
 ## Engine: team（只用 5 Reviewer Agents，alias `team` 保留為 backward-compat）
 
