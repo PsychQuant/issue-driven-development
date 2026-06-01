@@ -11,25 +11,10 @@ set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT="$HERE/../../idd-worktree.sh"
 
-PASS=0
-FAIL=0
-FAILURES=()
-
-# --- assertion helpers --------------------------------------------------------
-
-pass() { PASS=$((PASS + 1)); printf '  ✓ %s\n' "$1"; }
-fail() { FAIL=$((FAIL + 1)); FAILURES+=("$1"); printf '  ✗ %s\n     %s\n' "$1" "${2:-}"; }
-
-assert_eq() { # name expected actual
-  if [ "$2" = "$3" ]; then pass "$1"; else fail "$1" "expected [$2] got [$3]"; fi
-}
-assert_exit() { # name expected_code actual_code
-  if [ "$2" = "$3" ]; then pass "$1"; else fail "$1" "expected exit $2 got $3"; fi
-}
-assert_true() { # name condition-cmd... (eval)
-  local name="$1"; shift
-  if eval "$@"; then pass "$name"; else fail "$name" "condition false: $*"; fi
-}
+# --- assertion helpers (shared, #156) -----------------------------------------
+# pass / fail / assert_eq / assert_exit / assert_true + the PASS/FAIL/FAILURES
+# counters all come from the shared lib (this file was their original template).
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/assert-helpers.sh"
 
 # Build a throwaway git repo with one commit on branch main; echo its path.
 new_repo() {

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.79.0] - 2026-06-01
+
+### Added
+
+- **Shared test-assertion lib + grep-separator lint** ([#156](https://github.com/PsychQuant/issue-driven-development/issues/156)): structurally closes the `grep <opts> "$var"`-missing-`--` bug class (point-fixed in #154 / #160) instead of chasing instances.
+  - **NEW `plugins/issue-driven-dev/scripts/lib/assert-helpers.sh`** — one home for the assertion helpers the test runners had each inlined: `pass`/`fail`, value-comparison (`assert_eq`/`assert_exit`), command-success (`require`/`refute`/`assert_true`), filesystem (`assert_file_exists`/`assert_file_absent`), `print_summary`, and the class-closing **`assert_grep`/`refute_grep`** which bake in `grep -F -- "$needle"` — a `--`-prefixed needle (e.g. `--state closed`) can no longer be misparsed as a flag, by construction.
+  - **NEW `plugins/issue-driven-dev/scripts/lint-grep-separator.sh`** — tripwire that scans tracked `*.sh` for a needle-position bare-var grep missing `--` (exit 1 on violation; `# lint-ok: grep-sep` escape hatch for file-arg false positives).
+  - **Migrated** the 3 plugin test runners: `idd-worktree` (sourced the lib — it was the de-facto template), `check-closed-without-summary` (→ `require`/`refute`/`assert_grep`). `pr-body-autoclose-guard` is a file *scanner* (not an assertion runner), so force-fitting it to the lib would have destroyed its per-line diagnostics — it got in-place `--` hardening on its 2 regex greps instead (deliberate scope refinement of the plan's "migrate 3", on anti-over-engineering grounds).
+  - **Scope honesty**: the project-level `.claude/scripts/tests/spectra-archive-post-ic/test.sh` is left as-is (already `[ = ]`-safe per #160; migrating it would force a `.claude/`→`plugins/` cross-tree source). The original #156 epic (9 idd-edit adversarial fixtures, framework choice, CI) stays deferred — the idd-edit fixtures are blocked on #154.
+  - The lint's own falsifiable test caught a real `ROOT` operator-precedence bug (`A || cd X && pwd` → `pwd` ran unconditionally → `ROOT` got a second line → the lint silently scanned nothing and was always-green) — the exact happy-path-smoke-test failure mode #156 was filed to prevent.
+
 ## [2.78.1] - 2026-06-01
 
 ### Fixed

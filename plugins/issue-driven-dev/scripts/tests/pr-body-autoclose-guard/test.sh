@@ -61,7 +61,7 @@ for f in "${FILES[@]}"; do
     [ -z "$line" ] && continue
     hits=$((hits + 1))
     printf '  ✗ %s: %s\n' "${f#"$ROOT"/}" "$line"
-  done < <(grep -hE "$SCOPE" "$f" 2>/dev/null | grep -iE "$TRAP")
+  done < <(grep -hE -- "$SCOPE" "$f" 2>/dev/null | grep -iE -- "$TRAP")
 done
 
 if [ "$hits" -gt 0 ] || [ "$missing" -gt 0 ]; then
