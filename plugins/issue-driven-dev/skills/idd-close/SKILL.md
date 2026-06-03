@@ -203,6 +203,7 @@ Gate check 通過後,用 `TaskCreate` 為 close stage 建 todo list:
 TaskCreate(name="check_prerequisites", description="gh issue view 確認 OPEN + git log --grep=#NNN 確認有 commit 引用")
 TaskCreate(name="check_attachments", description="確認 closing comment 即將引用的 attachment 在 .claude/.idd/attachments/issue-NNN/ 仍存在(防止使用者搬檔造成失效引用);manifest 對照 issue 當下 attachment list,新增的不重新 fetch(那是 idd-diagnose 工作)。依 rules/process-attachments.md。")
 TaskCreate(name="check_open_prs", description="Step 1.5: gh pr list 找引用 #NNN 的 open PR；若有 unmerged PR → refuse close")
+TaskCreate(name="merge_completeness_gate", description="Step 1.55 (v2.84.0+, #184): resolve issue branch (merged PR headRefName → local idd/<N>-* → skip); bash scripts/check-merge-completeness.sh --branch <b> --baseline origin/<default>; rc=3 orphans → AskUserQuestion 3-option (close anyway / abort+land / mis-detection), warn-only; rc=4 silent skip (direct-commit, no branch). Never hard-blocks.")
 TaskCreate(name="semantic_gate_check", description="Step 1.6: 對每個 - [x] bullet 做 keyword extraction → 驗證對應 artifact 真存在/有 commit。Warn-only。")
 TaskCreate(name="draft_closing_comment", description="起草 Problem / Root Cause / Solution / Verification / Changes 五段式")
 TaskCreate(name="review_with_user", description="顯示 closing comment 給使用者確認(若已明確 /idd-close 可省略此步)")
@@ -272,6 +273,50 @@ OPEN_PRS=$(gh pr list --repo "$GITHUB_REPO" --state open \
 **Override**：若使用者真的要 close（PR 廢棄、走別路修了等）：先去 GitHub 手動 close 那個 PR，然後 `idd-close` 就會通過（找不到 open PR）。多一步動作，逼使用者表態 PR 的去向，正是 gate 的目的。
 
 完整 PR/direct-commit path contract 見 [pr-flow.md](../../references/pr-flow.md)。
+
+### Step 1.55: Merge-completeness Gate（warn-only，v2.84.0+，#184）
+
+Step 1.5 只確認 PR **merged**——但 **merged ≠ branch 上所有 work 真的進了 main**。當 PR merge 的是 **partial** 版本（cluster branch 某些 commit 沒被帶進 merge、或 branch 分歧），feature branch 上的 fix commit 變成 **orphan**：issue 被當「完成」關掉，但 bug 還活在 main 上（real incident：ai_martech `#1066` crash fix 漏到 5 公司共用的 origin/main，沒人發現）。`git branch --merged` 抓不到（merge context sha 不同）、PR「merged」status 也抓不到（merge 的是 partial）。
+
+本 gate 偵測「branch 上 content 沒進 baseline」的 commit，**warn**（不硬擋——因 squash-merge 會讓 patch-id 全變、有 false-positive）。
+
+```bash
+# 1. Resolve the issue's branch: merged PR headRefName → local idd/<N>-* → skip.
+BRANCH=$(gh pr list --repo "$GITHUB_REPO" --state merged \
+    --search "in:body \"#${NUMBER}\"" --json headRefName -q '.[0].headRefName' 2>/dev/null)
+if [ -z "$BRANCH" ]; then
+    BRANCH=$(git -C "$CWD" branch --list "idd/${NUMBER}-*" --format='%(refname:short)' | head -1)
+fi
+# No resolvable branch → direct-commit path, no orphan possible → silent skip.
+if [ -n "$BRANCH" ] && git -C "$CWD" rev-parse --verify --quiet "$BRANCH" >/dev/null; then
+    DEFAULT=$(gh repo view "$GITHUB_REPO" --json defaultBranchRef -q .defaultBranchRef.name)
+    git -C "$CWD" fetch -q origin "$DEFAULT" 2>/dev/null   # fresh baseline
+    OUT=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/check-merge-completeness.sh" \
+            --repo "$CWD" --branch "$BRANCH" --baseline "origin/$DEFAULT" 2>/dev/null)
+    RC=$?
+    case "$RC" in
+      0) : ;;  # clean — all branch content is in origin/<default>
+      3) echo "⚠️  Merge-completeness: commits on '$BRANCH' did NOT land in origin/$DEFAULT:"
+         echo "$OUT" | sed 's/^/    /'
+         # → AskUserQuestion (see below)
+         ;;
+      4) echo "note: merge-completeness gate skipped (branch/baseline unresolvable for #$NUMBER)" ;;
+      *) echo "note: merge-completeness gate errored (rc=$RC) — close continues" ;;
+    esac
+fi
+```
+
+**RC=3 → AskUserQuestion**（3 選項，warn-only，不阻擋）：
+
+| 選項 | 行為 |
+|------|------|
+| **close anyway** | orphan 是 intentional / out-of-scope — 繼續 close，closing summary 加 `### Merge-completeness` 註記列出 orphan + 理由 |
+| **abort + land orphans** | 暫停 close，印 `git cherry-pick <sha>`（到 `$DEFAULT`）的指令讓使用者把 orphan 補進 main，補完再 `/idd-close` |
+| **mis-detection** | 判定為 false-positive（content-verify 沒抓到的 edge case），繼續 close，註記「judged false-positive」 |
+
+> **為什麼 warn 而非 refuse（對比 Step 1.5 硬擋）**：Step 1.5 的「有 open PR」是明確事實；orphan 偵測是 **probabilistic**（squash-merge 讓 `git cherry` 把所有 commit 標 `+`，helper 的 content-verify 過濾掉大多數但非全部）。硬 refuse 會卡住合理的 squash-merged close。判定邏輯與 fixture 契約見 `scripts/check-merge-completeness.sh` + `scripts/tests/merge-completeness/test.sh`（genuine-orphan flagged / squash-content-present NOT flagged / no-branch skipped）。
+>
+> **Direct-commit path silent skip**：commit 本就直接落在 close 當下的 branch（通常 main），沒有 feature branch、不可能 orphan，gate 完全跳過、零 output。
 
 ### Step 1.6: Semantic Checklist Gate (v2.29.0+)
 

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.84.0] - 2026-06-04
+
+### Added
+
+- **`idd-close` Step 1.55 — merge-completeness gate** ([#184](https://github.com/PsychQuant/issue-driven-development/issues/184)): detects fix commits that live on an issue's branch but never landed in `origin/<default>` — the orphan-on-partial-merge failure mode that Step 1.5's "is the PR merged?" check is blind to (real incident: ai_martech #1066, a crash fix on a cluster branch that PR-merged a *partial* version, leaking a live crash to a 5-company shared `main`). `git branch --merged` misses it (post-merge sha differs) and so does PR "merged" status (the merge was partial).
+  - **NEW `plugins/issue-driven-dev/scripts/check-merge-completeness.sh`**: resolves the issue's branch, runs `git cherry -v origin/<default> <branch>` for patch-id-absent candidates, then **content-verifies each** by cherry-picking onto a throwaway worktree at the baseline and inspecting the result — this filters the **squash-merge false positive** (squash rewrites every commit's patch-id, so `git cherry` alone flags everything even when the content is present). Exit codes: 0 clean / 3 genuine orphans / 4 skip (no resolvable branch) / 2 usage.
+  - **NEW `plugins/issue-driven-dev/scripts/tests/merge-completeness/test.sh`**: 4 falsifiable fixtures (genuine-orphan flagged / squash-content-present NOT flagged / no-branch skipped / partial-merge orphan flagged), sourcing the #156 shared `assert-helpers.sh`. The fixtures are the executable spec for the content-verify step.
+  - **Step 1.55 is warn-only** — orphans trigger an AskUserQuestion (close anyway / abort + land via `git cherry-pick` / mis-detection), **not** a hard refuse, because content-verify is best-effort (Step 1.5 hard-refuses because "open PR" is unambiguous; orphan detection is probabilistic). Direct-commit-path issues (no feature branch) skip the gate silently. `merge_completeness_gate` added to the Step 0.5 Bootstrap TaskList.
+  - Scope: `idd-close` only. The same gate for `idd-verify` PR-mode and #183's worktree isolation are tracked separately (#184 residue / #183).
+
 ## [2.83.0] - 2026-06-04
 
 ### Added
