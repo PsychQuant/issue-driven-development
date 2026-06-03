@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.82.0] - 2026-06-02
+
+### Added
+
+- **North-star tracker SOP + shared idd-list tracker-phase display** ([#179](https://github.com/PsychQuant/issue-driven-development/issues/179), via Spectra change `north-star-tracker-sop`): a first-class convention for an **ordered, progressively-emerging multi-stage roadmap** — the gap between `--bundle-mode` (which files all children upfront) and milestone-first (#83, which is a flat unordered grouping).
+  - **NEW `plugins/issue-driven-dev/references/north-star-tracker.md`**: a tracker issue labeled `north-star` carries a `## Roadmap` checklist where an UNFILED stage is a plain bullet and a FILED stage is `- [x] Stage N: … → #M` — the presence/absence of the `#M` reference is the emerged-vs-not state, so the roadmap grows stage by stage (file-on-start) without the upfront-all-children constraint. Includes the 2×2 multi-issue-structure design space placing north-star (ordered + progressive) against #83 (flat) and #81 (ordered + upfront) — complementary, not merged.
+  - **`idd-list` tracker-phase display**: an open issue with a tracker label (`north-star`/`epic`) now shows `[tracking]` (plus roadmap progress `<filed>/<total> stages` when a `## Roadmap` is parseable; `<filed>` = checked AND carrying an `#<number>`) instead of `(no phase)` and a misleading `/idd-update` suggestion. Malformed/absent roadmap degrades gracefully to plain `tracking`. This fix is **shared** — it also covers the milestone-tracked epics of #83, so #83 need not re-implement it.
+  - `references/bundle-flags.md` gains a cross-reference to the progressive alternative. **Deferred** (rule-of-three): an `idd-issue --stage-of <tracker>` flag — today there is one real case (`PsychQuant/che-transport-mcp#7`), so the SOP works with a manual tracker edit for now.
+
 ## [2.81.0] - 2026-06-01
 
 ### Added

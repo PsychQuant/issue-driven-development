@@ -80,6 +80,8 @@ idd-issue --bundle-mode unordered "首頁優化:換 hero 圖; footer 對齊; 加
 # → 建 epic + 3 children,純 task list,無 Blocked-by
 ```
 
+> **Progressive alternative (#179)**：`--bundle-mode` 一次建**全部** children(upfront),無法表達「後期 stage 尚未設計」的路線圖。若你要的是**有序、漸進浮現**的多階段 roadmap(Stage N+1 在 Stage N 出貨**後**才 file),用 **north-star tracker SOP** —— 見 [`north-star-tracker.md`](north-star-tracker.md)。兩者互補:bundle = upfront-all-children,north-star = file-on-start。
+
 ## Edit Algorithm — Parent Body Task List
 
 PATCH parent body 加 child entry 時,演算法保證 idempotency:
