@@ -426,6 +426,8 @@ fi
 
 **為什麼 graceful degrade 不 abort**: `(PR, unattended)` 是 v2.40.0 default(`pr_policy` 缺省 → fall to step 7)。abort 會 break 所有既有 callers(包含 `/loop` 等舊 caller)違反 backward compat。Degrade 讓 IDD 仍能跑完整 pipeline(只是改 attended),user 看到 warning 可選 install + retry。
 
+> **Native alternative driver — `/goal`（v2.1.139+，#138）**：上面的 verify-fix loop driver 角色也可由 Claude Code 內建的 [`/goal`](https://code.claude.com/docs/en/goal.md) 擔任 —— 設一個 completion condition，它每 turn 後自動檢查、未達成就再跑下一 turn 直到滿足，是 native（無需第三方 plugin）。**本 gate 目前偵測的是 `ralph-loop` plugin**；若使用者偏好 native，可在 idd-all 之外手動以 `/goal` 驅動同一 verify-fix 迴圈。把本 gate 改為原生支援 `/goal`（少一個外部依賴）是更大的設計題，列為 #138 residue 不在此處理。
+
 **為什麼必須 unwind branch (F2 fix)**: Phase 0.5 PR mode setup 已 `git checkout -b idd/<N>-<slug>` 建好 feature branch。若 Phase 0.6 直接翻 `PATH_AXIS=direct-commit` 而不 unwind,degrade 後 commits 落在這個 dangling branch — user 預期落在自己 branch (e.g. main),結果靜默偏離。必須先 `git checkout $DEFAULT` + `git branch -d $BRANCH` 清掉,才能 flip mode。**Edge case**: 若 Phase 0.6 在 mid-implement 才偵測到 (例如 ralph-loop 中途被卸載) — 此時 feature branch 已有 commits,`git branch -d` 會 refuse,改要 user 手動處理 + abort。但本 skill 設計 Phase 0.6 在 Phase 1 (idd-issue) 之前跑,unwind 必為 safe-delete 場景。
 
 **對比 `/idd-verify --loop` Step 0a 是 fail-fast**: `--loop` 是 user explicit feature request,silent fallback 違反 user 預期。兩條 path 對缺失的處理不同,各有理由。

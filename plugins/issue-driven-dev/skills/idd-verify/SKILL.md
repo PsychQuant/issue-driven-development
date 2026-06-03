@@ -1015,6 +1015,8 @@ helper 行為見 `scripts/check-ralph-loop.sh`:exit 0 if installed, exit 1 with 
 
 對比 `idd-all` 的 Phase 0.6 是 **graceful degrade** — 因為 `idd-all` (PR, unattended) 是 v2.40.0 default(implicit invocation),break 既有 caller 不可接受。兩條 path 對 ralph-loop 缺失的處理不同,各有理由。
 
+> **Native alternative — `/goal`（v2.1.139+，#138）**：`--loop` 的「outer driver」角色也可由內建的 [`/goal`](https://code.claude.com/docs/en/goal.md) 擔任（設 completion condition、每 turn 自動檢查、未達成續跑），native 無需 `ralph-loop` plugin。**本 Step 0a gate 目前偵測的是 `ralph-loop` plugin**；偏好 native 者可手動以 `/goal` 驅動驗-修迴圈。把 gate 改為原生支援 `/goal` 列為 #138 residue。
+
 ## 鐵律
 
 - **不跳過驗證**。「看起來對了」不算。

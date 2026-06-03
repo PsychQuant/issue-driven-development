@@ -162,7 +162,7 @@ Guardrails 是 mandatory，不是 skipped：
 
 `idd-all` / `idd-all-chain` 預設**不**做 auto-merge（鐵律保留 `永遠不 auto-merge PR`）—— 那是 **#37** bulk-solve autopilot 的 mechanic，由 #37 處理 auto-merge → auto-close 序列細節，**不**在 #102 scope。本 section 只把 `verify-gated` 升格成 named, sanctioned terminal disposition —— 讓 #37 之後接手 autopilot 時有 doctrine 可依。
 
-同樣的約束適用於 `/loop` / `ralph-loop` / 外部 CI 等自動化 caller：把 Phase 6 「verify-gated PASS, ready to merge」當作「請 `gh pr merge`」的 trigger 是**讀錯了**。Doctrine 只 sanction 那個 disposition 為合法 terminal state，**沒有**授權任何 caller 自動 merge。Auto-merge 路徑統一由 **#37** 用 guardrail-aware mechanic 接手；在 #37 ship 前，自動化 caller 仍須停在 Phase 6 report 並由 user / `idd-close` 接手實際 merge。
+同樣的約束適用於 `/loop` / `/goal`（native，v2.1.139+）/ `ralph-loop` / 外部 CI 等自動化 caller：把 Phase 6 「verify-gated PASS, ready to merge」當作「請 `gh pr merge`」的 trigger 是**讀錯了**。Doctrine 只 sanction 那個 disposition 為合法 terminal state，**沒有**授權任何 caller 自動 merge。Auto-merge 路徑統一由 **#37** 用 guardrail-aware mechanic 接手；在 #37 ship 前，自動化 caller 仍須停在 Phase 6 report 並由 user / `idd-close` 接手實際 merge。
 
 ---
 

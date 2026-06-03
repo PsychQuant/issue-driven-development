@@ -229,6 +229,8 @@ attachments_release: "attachments"
 
 Install:`claude plugin marketplace add anthropics/claude-plugins-official` 然後 `claude plugin install ralph-loop@claude-plugins-official`。
 
+> **Native alternative — `/goal`（v2.1.139+，#138）**：以上「outer driver for verify-fix loop」的角色，也可改用 Claude Code **內建**的 [`/goal`](https://code.claude.com/docs/en/goal.md) —— 設一個 completion condition（例如「verify 通過、blocking findings = 0」），它每個 turn 後用 small fast model 檢查、未達成就自動再跑下一個 turn，直到條件滿足。`/goal` 是 native（無需安裝第三方 plugin），`ralph-loop` 是 `claude-plugins-official` 的 plugin —— 兩者都能驅動 loop，擇一即可。**目前 `idd-all` / `idd-verify --loop` 的 gate 偵測的是 `ralph-loop` plugin**；若偏好 native，可手動以 `/goal` 驅動（是否把 gate 改為支援 `/goal` 為更大設計題，見 #138 residue）。
+
 ### Sister plugins
 
 - [`idd-route`](../idd-route) — Data-driven agent routing (Codex / Claude Opus / Sonnet / Haiku) per IDD issue。`idd-diagnose` Step 3.7 偵測到 `idd-route` 已裝就會自動呼叫做 enrichment;沒裝則 silently skip。**非必要**,純粹增強 routing 建議品質。Install: `claude plugin install idd-route@issue-driven-development`
