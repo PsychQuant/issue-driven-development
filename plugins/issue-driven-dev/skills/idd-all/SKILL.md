@@ -42,6 +42,21 @@ allowed-tools:
 
 idd-all 不取代 atomic skills,而是包它們。每個 phase 仍透過 `Skill(skill=...)` 呼叫對應的 atomic skill,所有 sub-skill 的 stage TaskList、auto-update、IDD 紀律都繼承下來。
 
+## Multi-issue batch mode（conflict-class-ordered，v2.83.0+，#182）
+
+`/idd-all #a #b #c`（≥2 個 distinct `#N`）= 對一個 backlog 做 **conflict-class-ordered sequential** drain。每個 issue 仍走完整 idd-all pipeline（Phase 1–6），只是**多了一個按 conflict class 排序的外圈**。
+
+> **誠實邊界（CRITICAL）**：這個 mode 是 **sequential**，不是 concurrent。「在單一 session 內並發跑 N 個 stateful lane」目前**沒有真 primitive** —— within-window agent teams 在 [`references/worktree-isolation.md`](../../references/worktree-isolation.md) 是 **Deferred: Case A**，`TeamCreate` 已在 idd-verify 因 #47/#52 incident 廢棄。所以 batch mode **不宣稱並發執行**；conflict-class taxonomy 是「**當你（手動跨 session / worktree）並行、或未來有真 primitive 時**，什麼能安全並行」的前瞻性安全契約。詳見 [`references/parallel-orchestration.md`](../../references/parallel-orchestration.md)。
+
+行為：
+
+1. 對每個 `#N` 讀最新 Diagnosis 的 `### Conflict Class`（emit 契約見 `idd-diagnose`）。缺 / 無法 parse → 預設 `D_diagnose_first` 並 **surface**（印出來），不靜默、不預設成 parallel class。
+2. 按 conflict-class discipline 排序處理順序：`E_verified_close`（cheap verify+close）與 `D_diagnose_first`（先 read-only diagnose、再 re-bucket）優先；`B_resource_serialize` / `C_shared_module_coord` 觸碰**同一具名資源**者相鄰序列化、不交錯；`A_parallel_safe` 之間順序不拘。同檔的 issue 視為一組（不拆開）。
+3. 逐一（sequential）跑 `/idd-all #N`。`A_parallel_safe` issue **可選**用 `scripts/idd-worktree.sh create <N>` 隔離工作樹，讓你**事後**能把這些 branch 手動並行推進；serialize-class 不隔離也安全（反正 sequential）。
+4. 停在 verified —— 與單 issue 一致，永不 auto-close / auto-merge。
+
+> **為什麼仍值得排序（即使 sequential）**：sequential 本身永遠安全，所以排序不是為了正確性，而是為了 (a) 把 cheap/E 與 read-first/D 先清掉、(b) 把同資源的 B/C 相鄰處理便於 review、(c) 替「日後手動並行」預先把 class-A 隔離好。真正的價值在 taxonomy 作為**並行安全契約**，而非這個 sequential 外圈本身。
+
 ## Configuration
 
 從 `.claude/issue-driven-dev.local.md` frontmatter 讀 `github_repo`。如不存在,呼叫 `idd-issue` 流程會自動處理。
@@ -81,6 +96,7 @@ TaskCreate(name="report_and_stop", description="Phase 6: 依 mode 顯示對應 n
 | `/idd-all #19 --pr` | from-issue, force PR | 強制 (PR, unattended) — v2.40.0 既有行為,/loop friendly |
 | `/idd-all #19 --no-pr` | from-issue, force HITL | 強制 (direct-commit, attended) — user 在 keyboard,sub-skill 自然問問題 |
 | `/idd-all #19 --cwd /path/to/clone` | from-issue cross-repo | 在指定 local clone 跑(不依賴 session cwd);可與 `--pr/--no-pr` 並用 |
+| `/idd-all #a #b #c` (≥2 issues) | **multi-issue batch** | conflict-class-**ordered sequential** backlog drain(見下方 `## Multi-issue batch mode`,v2.83.0+)|
 | `/idd-all "bug: foo doesn't work"` | from-scratch | 用該字串當 issue title 進 idd-issue |
 | `/idd-all path/to/spec.md` | from-scratch | 把檔案當 issue 描述進 idd-issue |
 

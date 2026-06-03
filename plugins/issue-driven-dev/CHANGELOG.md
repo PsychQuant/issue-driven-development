@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.83.0] - 2026-06-04
+
+### Added
+
+- **Conflict-class parallel-orchestration discipline + `idd-all` multi-issue batch mode** ([#182](https://github.com/PsychQuant/issue-driven-development/issues/182), via Spectra change `idd-all-batch`): a discipline for safely draining a backlog of independent issues, layered onto existing `idd-diagnose` + `idd-all` (per #182's own Non-Goal — **not** a new top-level skill). The honest scope split is the whole point of the design (see below).
+  - **NEW `plugins/issue-driven-dev/references/parallel-orchestration.md`** — the conflict-class discipline + taxonomy brain. The A–E taxonomy: `A_parallel_safe` / `B_resource_serialize` (single-writer DB / serial upload / queue, serialized *per named resource*) / `C_shared_module_coord` (shared submodule) / `D_diagnose_first` (read before bucketing) / `E_verified_close` (cheap close), plus the same-file-group rule and the audit lenses. **Honest scope (critical)**: the doc draws a hard line between what is *real today* — the read-only parallel-diagnose fan-out (Workflow tool) — and what is *deferred* — concurrent **stateful** lanes (within-window agent teams is `## Deferred: Case A` in `worktree-isolation.md`; `TeamCreate` was abandoned by `idd-verify` after #47/#52). The taxonomy is a **forward-looking safety contract** for when you parallelize manually (separate sessions / worktrees) or when a real concurrent-lane primitive lands — it does **not** claim any skill auto-parallelizes stateful work.
+  - **NEW `### Conflict Class` Diagnosis field** (`idd-diagnose`): emits one of the five keys (`B`/`C` must name the shared resource); consumed by `idd-all` multi-issue mode. Absent/unparseable → defaults to `D_diagnose_first`, **surfaced** (never silent, never a parallel default). Follows `.claude/rules/attribute-assessment.md` adversary discipline.
+  - **NEW opt-in parallel-diagnose fan-out** in `idd-diagnose` — the one half that genuinely runs concurrently today: for a root cause spanning N independent subsystems, fan out one read-only investigator per subsystem (Workflow tool) + a synthesis agent citing file refs from ≥2 legs. Single-agent stays the default.
+  - **`idd-all` multi-issue batch mode** (`idd-all #a #b #c`): a conflict-class-**ordered sequential** backlog drain — orders by the discipline (`E`/`D` first, same-resource `B`/`C` adjacent, same-file grouped, `A` unconstrained), runs each through the normal pipeline one at a time, optionally worktree-isolating `A` for later manual parallelism. Sequential by design; stops at verified.
+  - `references/usecase-routing.md` row 27 + decision-tree Note updated to route to `idd-all #a #b #c` (retires the earlier "no built-in bulk-solve" note). **Note the "batch" overload**: `idd-diagnose #a #b #c` batch mode and `idd-all #a #b #c` batch mode are both *sequential*.
+  - **Design honesty trail**: the change initially proposed a standalone parallel `/idd-all-batch` orchestrator skill; the 6-AI verify ensemble (Devil's Advocate, #182 R1) caught that its spec froze a `SHALL` on a concurrency mechanism (`agent-teams`) that does not exist as a primitive. Rescoped to this discipline-layered-on-`idd-all` form rather than ship an unimplementable contract.
+
 ## [2.82.0] - 2026-06-02
 
 ### Added

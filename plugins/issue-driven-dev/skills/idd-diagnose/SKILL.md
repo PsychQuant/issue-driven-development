@@ -249,6 +249,8 @@ Exit code:
    - 明確陳述：「我認為 root cause 是 X，因為 Y」
    - 一次一個假設，不要同時猜多個
 
+> **(Opt-in) 多子系統平行 fan-out（v2.83.0+, #182）**：當 root cause *橫跨 N 個獨立子系統 / 假設*（例如一個 code-gen contract + 一個 cache-invalidation footgun + 一個 sister-occurrence sweep），可選擇用 **Workflow tool** fan out — 每個子系統一個 read-only investigator 平行 trace，再用一個 synthesis agent 把 findings 併成單一 Diagnosis Report。**single-agent 仍是 default**（簡單 issue 不 fan out）。synthesis **必須引用 ≥2 個 investigator leg** 的 file 參照（fan-out 的價值正是 cross-leg 重新框定 —— 一個 leg 的 reads 會修正另一個的 framing）。high-stakes findings 可用 **adversarial-verify variant**：fan out N 個 skeptic 各自試圖 refute 一個假設、通過才進 report。opt-in only —— auto-detect「N 子系統」本身模糊、且 fan-out 乘上 token spend。契約見 [`references/parallel-orchestration.md`](../../references/parallel-orchestration.md)。
+
 #### Feature → 需求分析
 
 1. **拆解需求**
@@ -302,6 +304,10 @@ Exit code:
 - [ ] 改 B
 - [ ] 加測試 C
 
+### Conflict Class
+{A_parallel_safe / B_resource_serialize / C_shared_module_coord / D_diagnose_first / E_verified_close}
+{一行 justification；`B`/`C` 必須 named 出共享資源（DB / upload endpoint / submodule）}
+
 ### Complexity
 {Simple / Plan / Spectra}
 {如果 Plan，列出觸發的 Layer P 信號}
@@ -328,6 +334,8 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$DIAGNOSIS_REPORT"
 > **原文引用格式**：所有逐字引用的原文（使用者對話、老師回饋、文件段落）**必須**使用 blockquote（`>`）格式，與分析/解讀在視覺上明確區分。
 
 > **`### Residue` 是什麼（v2.64.0+, #103）**：NSQL §4.6 的 residue —— issue 的意圖裡*無法被 operationalize* 的那部分（它的 purpose / horizon）。**跟 Layer V vagueness 不同**：Layer V = issue *不清楚*；residue = issue *清楚*，但它的部分意圖（為什麼要這個、要放進什麼脈絡看）本來就接不進 function/argument。標出來，不靜默丟掉 —— 誠實的縮減 ≠ 假裝完整。**無殘留時必填 `(none)`**；空著等於沒判斷,違反「明確標記」的本意。
+
+> **`### Conflict Class` 是什麼（v2.83.0+, #182）**：給 `idd-all` 的 multi-issue batch mode 消費的「實作時碰到的物理資源」分類（conflict-class discipline），五選一 —— `A_parallel_safe`（獨立檔案編輯、無共享 mutable 資源）/ `B_resource_serialize`（單寫者資源：DB lock、serial upload、external queue）/ `C_shared_module_coord`（共享 submodule / vendored dep）/ `D_diagnose_first`（scope 未明，須先讀）/ `E_verified_close`（已完成、只需 verify+close）。**判斷的是「碰到什麼資源」不是「issue 多難」**。`B`/`C` 的 justification **必須 named 出共享資源**，否則無法 audit（見 `references/parallel-orchestration.md` 的 Scoundrel/Lazy/Confused lens）。**Consumer 契約**：消費端若讀到的 Diagnosis 缺 `### Conflict Class` 或無法 parse，SHALL 預設為 `D_diagnose_first` 並 **surface 這個 fallback**（印出來），不得靜默、不得預設成 parallel class。完整 taxonomy + lane scheduling 見 [`references/parallel-orchestration.md`](../../references/parallel-orchestration.md)。
 
 同時在對話中顯示 report，讓使用者可以即時確認。
 
