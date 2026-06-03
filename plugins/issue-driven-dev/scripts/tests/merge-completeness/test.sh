@@ -97,4 +97,16 @@ git -C "$R" branch -D feat >/dev/null 2>&1   # branch gone, SHA still reachable
 assert_exit "fixture-6 SHA input after branch deleted (DA-1) flagged" 3 "$(run_helper "$R" "$SHA" main)"
 rm -rf "$R"
 
+# ── Fixture 7 (R2): a path with a SPACE must not word-split into false orphans ──
+# Old `for f in $files` split "sp ace.txt" → empty baseline content → landed
+# commit mis-flagged. Same DA-2 false-positive class, retriggered by a space.
+R="$(mk_repo)"
+git -C "$R" checkout -q -b feat
+printf 'l1\n'     > "$R/sp ace.txt"; git -C "$R" add -A && git -C "$R" commit -qm "spaced: l1"
+printf 'l1\nl2\n' > "$R/sp ace.txt"; git -C "$R" add -A && git -C "$R" commit -qm "spaced: l2"
+git -C "$R" checkout -q main
+printf 'l1\nl2\n' > "$R/sp ace.txt"; git -C "$R" add -A && git -C "$R" commit -qm "squash: spaced"
+assert_exit "fixture-7 spaced filename squash NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
 print_summary

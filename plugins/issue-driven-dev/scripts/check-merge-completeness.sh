@@ -69,11 +69,15 @@ orphan_p() { # <commit-sha> -> 0 if genuinely orphaned (added content missing fr
   local sha="$1" f base_content added line
   # files this commit touched
   local files; files="$(GIT show --format= --name-only "$sha" 2>/dev/null | sed '/^$/d')"
-  # baseline content of those files (absent file -> empty -> its added lines count as missing)
+  # baseline content of those files (absent file -> empty -> its added lines count
+  # as missing). while-read (not `for f in $files`) so paths with spaces are not
+  # word-split into bogus filenames — which would empty base_content and false-flag
+  # a landed commit (#184 R2: same false-positive class, retriggered by a space).
   base_content=""
-  for f in $files; do
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
     base_content+="$(GIT show "${BASELINE_SHA}:${f}" 2>/dev/null)"$'\n'
-  done
+  done <<< "$files"
   # added lines in this commit (strip the +++ file header; drop leading '+')
   added="$(GIT show --format= -p "$sha" 2>/dev/null | grep -E '^\+' | grep -vE '^\+\+\+' | sed 's/^\+//')"
   [ -n "$added" ] || return 1   # no added content (e.g. pure deletion) -> not detectable here
