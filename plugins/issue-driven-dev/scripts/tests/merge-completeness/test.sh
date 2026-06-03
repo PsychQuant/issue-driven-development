@@ -72,4 +72,29 @@ printf 'd\n' > "$R/d.txt"; git -C "$R" add -A && git -C "$R" commit -qm "land d 
 assert_exit "fixture-4 partial-merge orphan flagged" 3 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
+# ── Fixture 5 (DA-2): same FILE edited by >1 commit + squash → must NOT flag ──
+# This is the common TDD branch shape. The old cherry-pick content-verify
+# conflicts when replaying the intermediate same-file commit onto the squashed
+# tip → false orphan. The line-presence verify must see all added lines present.
+R="$(mk_repo)"
+git -C "$R" checkout -q -b feat
+printf 'line1\n'        > "$R/shared.txt"; git -C "$R" add -A && git -C "$R" commit -qm "shared: add line1"
+printf 'line1\nline2\n' > "$R/shared.txt"; git -C "$R" add -A && git -C "$R" commit -qm "shared: add line2"
+git -C "$R" checkout -q main
+printf 'line1\nline2\n' > "$R/shared.txt"; git -C "$R" add -A && git -C "$R" commit -qm "squash: shared line1+line2"
+assert_exit "fixture-5 same-file squash (DA-2) NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# ── Fixture 6 (DA-1): branch ref deleted, resolve by persistent SHA (headRefOid) ──
+# After merge GitHub deletes the head branch; idd-close must pass the head SHA
+# (gh pr view --json headRefOid), which still resolves to the commit object.
+R="$(mk_repo)"
+git -C "$R" checkout -q -b feat
+printf 'orphan2\n' > "$R/orphan2.txt"; git -C "$R" add -A && git -C "$R" commit -qm "orphan2"
+SHA=$(git -C "$R" rev-parse feat)
+git -C "$R" checkout -q main
+git -C "$R" branch -D feat >/dev/null 2>&1   # branch gone, SHA still reachable
+assert_exit "fixture-6 SHA input after branch deleted (DA-1) flagged" 3 "$(run_helper "$R" "$SHA" main)"
+rm -rf "$R"
+
 print_summary

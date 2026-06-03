@@ -203,7 +203,7 @@ Gate check 通過後,用 `TaskCreate` 為 close stage 建 todo list:
 TaskCreate(name="check_prerequisites", description="gh issue view 確認 OPEN + git log --grep=#NNN 確認有 commit 引用")
 TaskCreate(name="check_attachments", description="確認 closing comment 即將引用的 attachment 在 .claude/.idd/attachments/issue-NNN/ 仍存在(防止使用者搬檔造成失效引用);manifest 對照 issue 當下 attachment list,新增的不重新 fetch(那是 idd-diagnose 工作)。依 rules/process-attachments.md。")
 TaskCreate(name="check_open_prs", description="Step 1.5: gh pr list 找引用 #NNN 的 open PR；若有 unmerged PR → refuse close")
-TaskCreate(name="merge_completeness_gate", description="Step 1.55 (v2.84.0+, #184): resolve issue branch (merged PR headRefName → local idd/<N>-* → skip); bash scripts/check-merge-completeness.sh --branch <b> --baseline origin/<default>; rc=3 orphans → AskUserQuestion 3-option (close anyway / abort+land / mis-detection), warn-only; rc=4 silent skip (direct-commit, no branch). Never hard-blocks.")
+TaskCreate(name="merge_completeness_gate", description="Step 1.55 (v2.84.0+, #184): resolve issue branch via merged-PR headRefOid (SHA — survives GitHub branch-delete-on-merge) → local idd/<N>-* → VISIBLE skip note; bash scripts/check-merge-completeness.sh --branch <sha> --baseline origin/<default> (line-presence content-verify); rc=3 orphans → AskUserQuestion 3-option (close anyway / abort+land / mis-detection), warn-only; rc=4/no-branch print a note (never silent). Never hard-blocks.")
 TaskCreate(name="semantic_gate_check", description="Step 1.6: 對每個 - [x] bullet 做 keyword extraction → 驗證對應 artifact 真存在/有 commit。Warn-only。")
 TaskCreate(name="draft_closing_comment", description="起草 Problem / Root Cause / Solution / Verification / Changes 五段式")
 TaskCreate(name="review_with_user", description="顯示 closing comment 給使用者確認(若已明確 /idd-close 可省略此步)")
@@ -281,28 +281,43 @@ Step 1.5 只確認 PR **merged**——但 **merged ≠ branch 上所有 work 真
 本 gate 偵測「branch 上 content 沒進 baseline」的 commit，**warn**（不硬擋——因 squash-merge 會讓 patch-id 全變、有 false-positive）。
 
 ```bash
-# 1. Resolve the issue's branch: merged PR headRefName → local idd/<N>-* → skip.
-BRANCH=$(gh pr list --repo "$GITHUB_REPO" --state merged \
-    --search "in:body \"#${NUMBER}\"" --json headRefName -q '.[0].headRefName' 2>/dev/null)
-if [ -z "$BRANCH" ]; then
-    BRANCH=$(git -C "$CWD" branch --list "idd/${NUMBER}-*" --format='%(refname:short)' | head -1)
-fi
-# No resolvable branch → direct-commit path, no orphan possible → silent skip.
-if [ -n "$BRANCH" ] && git -C "$CWD" rev-parse --verify --quiet "$BRANCH" >/dev/null; then
+WORKDIR="${CWD:-$PWD}"   # idd-close has no --cwd parser; default to process cwd (align w/ Step 6.7)
+
+# Defensive: $NUMBER must be a plain issue number before it enters gh/git.
+if ! printf '%s' "$NUMBER" | grep -qE '^[0-9]+$'; then
+  echo "note: Step 1.55 skipped — issue ref '$NUMBER' is not numeric"
+else
+  # 1. Resolve the issue's branch HEAD. PREFER the merged PR's headRefOid — a
+  #    commit SHA that stays resolvable after GitHub auto-deletes the head branch
+  #    on merge (a bare branch NAME does not; #184 DA-1). Fall back to a local
+  #    idd/<N>-* branch ref.
+  BRANCH_REF=$(gh pr list --repo "$GITHUB_REPO" --state merged \
+      --search "in:body \"#${NUMBER}\"" --json headRefOid -q '.[0].headRefOid' 2>/dev/null)
+  if [ -z "$BRANCH_REF" ]; then
+      BRANCH_REF=$(git -C "$WORKDIR" branch --list "idd/${NUMBER}-*" --format='%(refname:short)' | head -1)
+  fi
+
+  if [ -z "$BRANCH_REF" ]; then
+    # No merged PR + no local branch → most likely direct-commit path (no feature
+    # branch ⇒ no orphan possible). Print a VISIBLE note — "skipped" must never be
+    # confused with "ran clean" (#184 DA-1: the original silent skip hid the gap).
+    echo "note: Step 1.55 skipped — no merged PR / feature branch for #$NUMBER (direct-commit path, no orphan possible)"
+  else
     DEFAULT=$(gh repo view "$GITHUB_REPO" --json defaultBranchRef -q .defaultBranchRef.name)
-    git -C "$CWD" fetch -q origin "$DEFAULT" 2>/dev/null   # fresh baseline
+    git -C "$WORKDIR" fetch -q origin -- "$DEFAULT" 2>/dev/null   # fresh baseline (-- guards $DEFAULT)
     OUT=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/check-merge-completeness.sh" \
-            --repo "$CWD" --branch "$BRANCH" --baseline "origin/$DEFAULT" 2>/dev/null)
+            --repo "$WORKDIR" --branch "$BRANCH_REF" --baseline "origin/$DEFAULT" 2>/dev/null)
     RC=$?
     case "$RC" in
       0) : ;;  # clean — all branch content is in origin/<default>
-      3) echo "⚠️  Merge-completeness: commits on '$BRANCH' did NOT land in origin/$DEFAULT:"
+      3) echo "⚠️  Merge-completeness: commits on the issue branch did NOT land in origin/$DEFAULT:"
          echo "$OUT" | sed 's/^/    /'
          # → AskUserQuestion (see below)
          ;;
-      4) echo "note: merge-completeness gate skipped (branch/baseline unresolvable for #$NUMBER)" ;;
+      4) echo "note: Step 1.55 skipped — branch SHA '$BRANCH_REF' unresolvable in $WORKDIR (could not verify; close continues)" ;;
       *) echo "note: merge-completeness gate errored (rc=$RC) — close continues" ;;
     esac
+  fi
 fi
 ```
 
@@ -314,9 +329,11 @@ fi
 | **abort + land orphans** | 暫停 close，印 `git cherry-pick <sha>`（到 `$DEFAULT`）的指令讓使用者把 orphan 補進 main，補完再 `/idd-close` |
 | **mis-detection** | 判定為 false-positive（content-verify 沒抓到的 edge case），繼續 close，註記「judged false-positive」 |
 
-> **為什麼 warn 而非 refuse（對比 Step 1.5 硬擋）**：Step 1.5 的「有 open PR」是明確事實；orphan 偵測是 **probabilistic**（squash-merge 讓 `git cherry` 把所有 commit 標 `+`，helper 的 content-verify 過濾掉大多數但非全部）。硬 refuse 會卡住合理的 squash-merged close。判定邏輯與 fixture 契約見 `scripts/check-merge-completeness.sh` + `scripts/tests/merge-completeness/test.sh`（genuine-orphan flagged / squash-content-present NOT flagged / no-branch skipped）。
+> **為什麼 warn 而非 refuse（對比 Step 1.5 硬擋）**：Step 1.5 的「有 open PR」是明確事實；orphan 偵測是 **probabilistic**。squash-merge 讓 `git cherry` 把所有 commit 標 `+`，helper 改用 **line-presence content-verify**（檢查 candidate commit 的 added lines 是否已存在 baseline 對應檔案）過濾 squash false-positive —— 這比 cherry-pick 3-way 穩健（#184 DA-2：cherry-pick 在「同檔被多 commit 改 + squash」時 conflict 誤判，line-presence 不會）。但仍 best-effort：抓不到純刪除型 orphan、added line 可能巧合出現他處。硬 refuse 會卡合理的 squash-merged close。判定邏輯與 fixture 契約見 `scripts/check-merge-completeness.sh` + `scripts/tests/merge-completeness/test.sh`（6 fixtures：genuine-orphan / squash-content-present NOT flagged / same-file-squash NOT flagged (DA-2) / no-branch skip / partial-merge orphan / SHA-after-branch-deleted (DA-1)）。
 >
-> **Direct-commit path silent skip**：commit 本就直接落在 close 當下的 branch（通常 main），沒有 feature branch、不可能 orphan，gate 完全跳過、零 output。
+> **Branch resolution 用 headRefOid 不用 branch name（#184 DA-1）**：`idd-close` 在 merge **之後**跑，此時 GitHub 預設已 auto-delete head branch、local branch 也常被 `git branch -d`、cross-clone closer 根本沒有它。所以 gate 必須用 merged PR 的 **headRefOid（commit SHA，object 持久）** 解析，而非易逝的 branch name —— 否則正是「partial-merge orphan」這個它要抓的場景會 silent skip。
+>
+> **Skip 一律 VISIBLE**：無 merged PR + 無 feature branch（direct-commit path，不可能 orphan）→ 印一行 note，**不留零 output**（DA-1：silent skip 與 "ran clean" 無法區分是原本的缺陷）。
 
 ### Step 1.6: Semantic Checklist Gate (v2.29.0+)
 

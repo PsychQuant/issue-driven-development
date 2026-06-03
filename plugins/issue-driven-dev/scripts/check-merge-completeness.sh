@@ -1,26 +1,38 @@
 #!/usr/bin/env bash
-# check-merge-completeness.sh — detect orphan commits on an issue branch that
-# never landed in the baseline (PsychQuant/issue-driven-development#184).
+# check-merge-completeness.sh — detect orphan commits on an issue branch whose
+# content never landed in the baseline (PsychQuant/issue-driven-development#184).
 #
 # `idd-close` Step 1.5 only checks the PR is *merged*; it cannot see that a
 # *partial* merge left a fix commit on the branch but not on main. This helper
-# closes that gap: it finds commits on <branch> whose CONTENT is absent from
-# <baseline> (usually origin/<default>), filtering the squash-merge false
-# positive (squash rewrites every patch-id, so `git cherry` alone flags
-# everything — we content-verify each candidate before reporting it).
+# closes that gap.
 #
 # Usage:
-#   check-merge-completeness.sh --branch <ref> --baseline <ref> [--repo <root>]
+#   check-merge-completeness.sh --branch <ref-or-sha> --baseline <ref> [--repo <root>]
+#
+#   --branch may be a branch name OR a commit SHA. idd-close passes the merged
+#   PR's headRefOid (a SHA), which stays resolvable after GitHub deletes the
+#   head branch on merge — a bare branch name does not (#184 DA-1).
 #
 # Exit codes:
-#   0 — clean: no genuine orphan (branch fully landed, or only false positives)
+#   0 — clean: no genuine orphan
 #   2 — usage error
 #   3 — genuine orphan(s) found; SHAs + subjects printed to stdout
-#   4 — skip: branch or baseline unresolvable (e.g. direct-commit issue with no
-#       branch, or branch ref deleted) — caller should skip the gate, never block
+#   4 — skip: branch or baseline unresolvable — caller skips the gate, never blocks
 #
-# Warn-only contract: the caller (idd-close) surfaces exit 3 via AskUserQuestion;
-# it does NOT hard-block, because content-verify is best-effort.
+# Method:
+#   1. `git cherry <baseline> <branch>` → '+'-marked commits are patch-id-absent
+#      from the baseline (candidate orphans).
+#   2. CONTENT-VERIFY each candidate by *line presence*, NOT cherry-pick. A
+#      cherry-pick is a 3-way merge and conflicts when the same file was touched
+#      by >1 commit and then squash-merged — the common TDD branch shape — which
+#      flagged fully-landed branches as false orphans (#184 DA-2). Instead we ask:
+#      are the commit's ADDED lines present in the baseline's version of the files
+#      it touched? Squash → lines present → not an orphan. Partial merge → the
+#      dropped commit's lines are absent → orphan.
+#
+# Warn-only contract: exit 3 is surfaced via AskUserQuestion by idd-close; it is
+# NOT a hard block, because line-presence is best-effort (it cannot see a dropped
+# pure-deletion, and a line could coincidentally appear elsewhere).
 set -u
 
 usage() { echo "usage: $0 --branch <ref> --baseline <ref> [--repo <root>]" >&2; exit 2; }
@@ -41,45 +53,40 @@ if [ -z "$REPO" ]; then
 fi
 GIT() { git -C "$REPO" "$@"; }
 
-# Skip (exit 4, never block) when either ref is unresolvable.
-GIT rev-parse --verify --quiet "$BRANCH"   >/dev/null || exit 4
-GIT rev-parse --verify --quiet "$BASELINE" >/dev/null || exit 4
+# Resolve both inputs to commit SHAs up front. `--end-of-options` prevents an
+# option-shaped ref (attacker-controllable PR branch name like `--upload-pack=x`)
+# from being parsed as a git option (#184 S1). A SHA can never be option-shaped,
+# so every downstream git call is injection-safe. Unresolvable → skip (exit 4).
+BRANCH_SHA="$(GIT rev-parse --verify --quiet --end-of-options "${BRANCH}^{commit}" 2>/dev/null)"   || exit 4
+BASELINE_SHA="$(GIT rev-parse --verify --quiet --end-of-options "${BASELINE}^{commit}" 2>/dev/null)" || exit 4
 
-# Candidate orphans = `+`-marked commits (patch-id absent from baseline).
-# `git cherry <upstream> <head>`: '+' not-in-upstream, '-' in-upstream.
-CANDIDATES=$(GIT cherry "$BASELINE" "$BRANCH" 2>/dev/null | awk '$1=="+"{print $2}')
-[ -n "$CANDIDATES" ] || exit 0   # nothing even patch-id-absent → clean
+# Candidate orphans = '+'-marked commits (patch-id absent from baseline).
+CANDIDATES=$(GIT cherry "$BASELINE_SHA" "$BRANCH_SHA" 2>/dev/null | awk '$1=="+"{print $2}')
+[ -n "$CANDIDATES" ] || exit 0
 
-# Throwaway worktree checked out at the baseline; content-verify each candidate
-# by cherry-picking it on top and inspecting the result.
-BASE_TMP="$(mktemp -d)"
-WT="$BASE_TMP/wt"
-cleanup() {
-  GIT worktree remove --force "$WT" >/dev/null 2>&1
-  rm -rf "$BASE_TMP"
+# Content-verify each candidate by line presence against the baseline.
+orphan_p() { # <commit-sha> -> 0 if genuinely orphaned (added content missing from baseline)
+  local sha="$1" f base_content added line
+  # files this commit touched
+  local files; files="$(GIT show --format= --name-only "$sha" 2>/dev/null | sed '/^$/d')"
+  # baseline content of those files (absent file -> empty -> its added lines count as missing)
+  base_content=""
+  for f in $files; do
+    base_content+="$(GIT show "${BASELINE_SHA}:${f}" 2>/dev/null)"$'\n'
+  done
+  # added lines in this commit (strip the +++ file header; drop leading '+')
+  added="$(GIT show --format= -p "$sha" 2>/dev/null | grep -E '^\+' | grep -vE '^\+\+\+' | sed 's/^\+//')"
+  [ -n "$added" ] || return 1   # no added content (e.g. pure deletion) -> not detectable here
+  while IFS= read -r line; do
+    [ -z "${line//[[:space:]]/}" ] && continue          # ignore blank / whitespace-only lines
+    printf '%s\n' "$base_content" | grep -Fxq -- "$line" || return 0   # an added line is absent -> orphan
+  done <<< "$added"
+  return 1   # every added line present in baseline -> landed
 }
-trap cleanup EXIT
-if ! GIT worktree add --detach -q "$WT" "$BASELINE" >/dev/null 2>&1; then
-  # Cannot stand up a verification worktree → skip rather than mis-report.
-  exit 4
-fi
 
 ORPHANS=""
 for sha in $CANDIDATES; do
-  git -C "$WT" cherry-pick --no-commit "$sha" >/dev/null 2>&1
-  if git -C "$WT" ls-files -u 2>/dev/null | grep -q .; then
-    # conflict → the change touches content that diverged from baseline → orphan
-    ORPHANS="$ORPHANS$sha"$'\n'
-  elif git -C "$WT" diff --cached --quiet 2>/dev/null; then
-    : # nothing staged → content already present in baseline → false positive
-  else
-    # staged a real change not in baseline → genuine orphan
-    ORPHANS="$ORPHANS$sha"$'\n'
-  fi
-  # reset the worktree for the next candidate
-  git -C "$WT" cherry-pick --abort >/dev/null 2>&1
-  git -C "$WT" reset --hard "$BASELINE" -q >/dev/null 2>&1
-  git -C "$WT" clean -fdxq >/dev/null 2>&1
+  if orphan_p "$sha"; then ORPHANS="$ORPHANS$sha"$'\n'; fi
 done
 
 ORPHANS="$(printf '%s' "$ORPHANS" | sed '/^$/d')"
