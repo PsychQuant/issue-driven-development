@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.85.1] - 2026-06-10
+
+### Fixed
+
+- **`process-attachments.sh` silently dies on zero-attachment issues** ([#186](https://github.com/PsychQuant/issue-driven-development/issues/186); duplicate #185 merged in): `detect_urls()` was a single `gh | jq | grep | sort` pipeline — zero attachment URLs made grep exit 1, `pipefail` propagated it, and `set -e` killed the script at the caller's `URLS=$(detect_urls)` assignment, **before** the empty-manifest branch. Violated the Step 1.5 contract ("no attachments → write empty manifest, exit 0") at **all three call sites** (download L130 + both check paths L178/L188), so every zero-attachment issue (most issues) got a false exit 1, no `_manifest.json`, no output — and every downstream attachment check repeatedly mis-warned. Hit independently by two sessions on the same day (che-ical-mcp#154, collaboration_su_ying_huang#26).
+  - Fix splits fetch from filter in `detect_urls()` with **explicit** `|| return 2` propagation — explicitly NOT errexit-reliant, because `$(...)` subshells don't inherit errexit by default (`inherit_errexit` is opt-in since bash 4.4), so a set-e-based fetch guard would silently downgrade a gh outage into a fake "no attachments" empty manifest. The asymmetry is the contract: fetch failure (gh/jq) stays **loud** (non-zero, no manifest); grep zero-match is a legitimate empty result (`|| true`).
+  - **NEW `scripts/tests/process-attachments/test.sh`** — first gh-stub (PATH-prepend) test in this repo; 11 assertions covering all three call sites, with-attachment regression guard, and the loud-failure contract (gh failure must NOT produce an empty manifest).
+
 ## [2.85.0] - 2026-06-04
 
 ### Added

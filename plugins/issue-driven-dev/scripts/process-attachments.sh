@@ -95,10 +95,26 @@ resolve_repo() {
 detect_urls() {
   # Patterns: github.com/user-attachments/{files,assets}/, github.com/{owner}/{repo}/files/N/,
   # (private-)user-images.githubusercontent.com/
-  gh issue view "$NUMBER" --repo "$REPO" --json body,comments \
-    | jq -r '.body, .comments[].body' \
+  #
+  # Fetch and filter are deliberately SPLIT (#186): a zero-attachment issue makes
+  # grep exit 1, and under `set -euo pipefail` a single fetch|filter pipeline dies
+  # at the caller's `URLS=$(detect_urls)` assignment — silently, before the
+  # empty-manifest branch (all three call sites: download + both check paths).
+  # The asymmetry is the contract: a FETCH failure (gh/jq — network, auth, bad
+  # JSON) must stay LOUD (return non-zero -> the caller's assignment fails ->
+  # top-level set -e aborts, no manifest written; never swallowed into a fake
+  # "no attachments"), while a FILTER zero-match is a legitimate empty result.
+  #
+  # Failure propagation is EXPLICIT (`|| return 2`), not errexit-reliant: this
+  # function runs inside `$(...)` whose subshell does NOT inherit errexit by
+  # default (bash `inherit_errexit` is opt-in since 4.4) — relying on set -e
+  # here silently downgrades a gh outage into "no attachments".
+  local raw content
+  raw=$(gh issue view "$NUMBER" --repo "$REPO" --json body,comments) || return 2
+  content=$(printf '%s\n' "$raw" | jq -r '.body, .comments[].body') || return 2
+  printf '%s\n' "$content" \
     | grep -oE 'https://(github\.com/(user-attachments/(files|assets)/[^)]+|[^/]+/[^/]+/files/[0-9]+/[^)]+)|(private-)?user-images\.githubusercontent\.com/[^)]+)' \
-    | sort -u
+    | sort -u || true
 }
 
 decode_filename() {
