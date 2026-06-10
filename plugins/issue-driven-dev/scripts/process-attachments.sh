@@ -20,7 +20,8 @@
 # Exit codes:
 #   0 — success / no attachments / up-to-date
 #   1 — manifest missing / new attachments detected / files missing on disk
-#   2 — usage error / cannot resolve repo
+#   2 — usage error / cannot resolve repo / attachment-list fetch failure
+#       (gh/jq — network, auth, malformed JSON; detect_urls returns 2, #186)
 
 set -euo pipefail
 

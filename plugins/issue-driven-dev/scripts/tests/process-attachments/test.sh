@@ -6,8 +6,8 @@
 # URLs → empty `_manifest.json` written + exit 0. The bug: `detect_urls()` is a
 # pipeline ending in grep; zero matches → grep exit 1 → pipefail → `set -e`
 # kills the script at the `URLS=$(detect_urls)` assignment, silently, before
-# the empty-manifest branch. THREE call sites are affected (download L130,
-# check L178, check L188), so the fixtures cover all three — plus the
+# the empty-manifest branch. THREE call sites are affected (download's URLS=,
+# check's no-manifest URLS=, check's with-manifest CURRENT=), so the fixtures cover all three — plus the
 # loud-failure contract: a REAL gh failure must NOT be swallowed into a fake
 # "no attachments" empty manifest.
 #
@@ -43,7 +43,7 @@ run_pa() { # cmd issue-number  (cwd must be the fixture workdir)
 
 echo "process-attachments zero-attachment contract"
 
-# ── Fixture 1 (L130): zero-attachment download → exit 0 + empty manifest ──
+# ── Fixture 1 (download call site): zero-attachment download → exit 0 + empty manifest ──
 W="$(mktemp -d)"; cd "$W"
 export GH_STUB_MODE=empty
 run_pa download 7 > "$W/out1.txt" 2>&1; RC=$?
@@ -52,16 +52,16 @@ require "f1b empty manifest written"  test -s "$W/.claude/.idd/attachments/issue
 require "f1c manifest has files: []"  bash -c "jq -e '.files == []' '$W/.claude/.idd/attachments/issue-7/_manifest.json' >/dev/null"
 require "f1d visible output (not silent)"  grep -q 'no attachments' "$W/out1.txt"
 
-# ── Fixture 2 (L188): zero-attachment check WITH manifest present → exit 0 ──
+# ── Fixture 2 (check with-manifest call site): zero-attachment check WITH manifest present → exit 0 ──
 #    (the third call site — proof that fixing download alone is not enough)
 run_pa check 7 >/dev/null 2>&1
-assert_exit "f2 check exit 0 (manifest exists, zero attachments — L188 call site)" 0 $?
+assert_exit "f2 check exit 0 (manifest exists, zero attachments — CURRENT= call site)" 0 $?
 cd /; rm -rf "$W"
 
-# ── Fixture 3 (L178): zero-attachment check with NO manifest → exit 0 ──
+# ── Fixture 3 (check no-manifest call site): zero-attachment check with NO manifest → exit 0 ──
 W="$(mktemp -d)"; cd "$W"
 run_pa check 8 > "$W/out3.txt" 2>&1; RC=$?
-assert_exit "f3a check exit 0 (no manifest, zero attachments — L178 call site)" 0 "$RC"
+assert_exit "f3a check exit 0 (no manifest, zero attachments — no-manifest call site)" 0 "$RC"
 require "f3b says no manifest needed"  grep -q 'no attachments' "$W/out3.txt"
 cd /; rm -rf "$W"
 
