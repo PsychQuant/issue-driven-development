@@ -94,6 +94,48 @@ TaskCreate(name="sister_bug_sweep", description="Step 5.7: review session log + 
 
 ---
 
+### Step 0.4: Tree-lock acquire / asymmetric escalation（v2.85.0+, #183）
+
+**在 Step 0.5 path resolution 之前**，先嘗試取得 shared working-tree lock。這把 line 210 的 advisory「prefer a worktree」變成 **normative 機制**：第一個 session 免費持有 main tree（direct-commit 零稅），後到的 session 偵測到 live holder 就**自己** escalate 進 worktree —— 沒有 session 需要預測未來或事後搬 tree（converged Option D，#183 discuss 2026-06-03）。
+
+```bash
+# Identity for the lock: a PERSISTENT process pid. $PPID = the harness shell,
+# stable across this claude instance's Bash calls and dead once the instance
+# exits — the correct cross-terminal liveness anchor. Do NOT use $$ (this bash's
+# own pid, dead the instant the command returns → the lock would never hold,
+# #183 verify B1). Same-instance sub-agent concurrency (shared $PPID) is the
+# already-deferred Case A (worktree-isolation.md), out of scope here.
+TREE_LOCK="$CLAUDE_PLUGIN_ROOT/scripts/idd-tree-lock.sh"
+bash "$TREE_LOCK" acquire --repo "$CWD" --pid "$PPID" --id "${IDD_SESSION_ID:-tree-$PPID}"
+LOCK_RC=$?
+case "$LOCK_RC" in
+  0) echo "→ tree lock acquired — solo on shared tree ($CWD), zero worktree tax" ;;
+  3) # Another LIVE session holds the tree. Self-escalate into an isolated
+     #    worktree — do NOT wait for the holder (idle != done; isolate now).
+     echo "→ tree held by a live session → escalating to an isolated worktree"
+     WT=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/idd-worktree.sh" create "$NUMBER" --repo-root "$CWD" 2>/dev/null | tail -1)
+     if [ -n "$WT" ] && [ -d "$WT" ]; then
+       CWD="$WT"   # all later git -C "$CWD" plumbing now routes to the worktree
+       echo "→ working in $CWD (own worktree + branch; merge back at close)"
+     else
+       echo "⚠ worktree escalation failed — proceeding on shared tree (collision risk; review carefully)"
+     fi
+     ;;
+  4) # Lock infra unwritable → FAIL OPEN. The lock is a convenience; the
+     #    correctness backstop is the #184 merge-completeness gate. Never block work.
+     echo "⚠ tree-lock dir unwritable — proceeding on main tree without isolation (fail-open)" ;;
+  *) echo "⚠ tree-lock acquire returned $LOCK_RC — proceeding on main tree (fail-open)" ;;
+esac
+```
+
+> **Asymmetric, never predictive**：first-comer 持 tree（exit 0），later-comer 偵測 live holder（exit 3）自己隔離。Lock 只回答「此 tree 還有別的 live session 嗎？」用 PID liveness 判定，**永不**問「holder 做完了嗎？」（這次 ai_martech incident 的 watcher 證明 process-quiet ≠ session-done）。Stale lock（dead holder）由 helper 在 acquire 時自動 reclaim。
+>
+> **Fail-open 紀律（exit 4 / 其他）**：lock infra 壞掉**不擋工作** —— 留在 main tree + 印 visible warning 繼續。Lock 是便利層，正確性的兜底是 #184 merge-completeness gate（escalated session branch+merge，orphan 由 #184 抓）。
+>
+> **Release**：lock 在 `idd-close` 釋放（見該 skill）；session 異常結束留下的 stale lock 由下一個 starter 的 acquire 自動 reclaim。
+
+完整契約見 [`references/worktree-isolation.md`](../../references/worktree-isolation.md) § Tree-lock。
+
 ### Step 0.5: Resolve PR vs Direct-commit Path
 
 完整 resolution algorithm 見 [references/pr-flow.md](../../references/pr-flow.md)。簡述:

@@ -137,6 +137,8 @@ git checkout -b "$BRANCH"
 
 The shared working tree is single-occupant. When two `/idd` sessions run against the same clone, in-tree branch switching collides: the second session's branch acquisition pulls the tree out from under the first, and any "clear the tree first" step (`git stash` + `git checkout`) **parks the first session's uncommitted/untracked WIP** — silent data loss. Reproduced live (ai_martech_global_scripts #941↔#942): a concurrent session manually stashed + branch-switched a tree that held another session's WIP, yanking it. Note the root cause was **agentic** — the documented clean-tree abort below already prevents the flow from yanking; the collision came from a session manually clearing the tree to "make room".
 
+> **Normative as of v2.85.0 (#183)** — this isolation is no longer "remember to prefer a worktree." `idd-implement` **Step 0.4** runs `scripts/idd-tree-lock.sh acquire` *before* path resolution: the first session holds the shared tree (direct-commit, zero tax); a session that finds the lock held by another **live** session self-escalates into its own worktree automatically. The rules below describe the floor the lock mechanizes. Full contract: [`worktree-isolation.md`](worktree-isolation.md) § Tree-lock. Companion FM-2 defense: the #184 merge-completeness gate (escalated sessions branch+merge).
+
 **Rules (PR path):**
 
 1. **Default to an isolated `git worktree`, not in-tree `checkout -b`.** Provision the feature branch in its own working directory so concurrent PR-path sessions never share one tree:

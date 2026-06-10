@@ -213,6 +213,7 @@ TaskCreate(name="publish_and_close", description="gh issue comment + gh issue cl
 TaskCreate(name="auto_update_body", description="跑 /idd-update #NNN 把 issue body 的 Current Status phase 改 closed（Step 6，常被漏）")
 TaskCreate(name="distribution_sync_chain_detection", description="Step 6.5 (v2.56.0+, #45): infer_distribution_type detection per references/distribution-detection.md; if hit → AskUserQuestion 3-option (chain to plugin-update/mcp-deploy/cli-deploy / skip — manual later / not applicable); patch closing comment with ### Distribution Sync section. Silent skip for non-distribution repos. IDD_DISTRIBUTION_SYNC_PROMPT=false env var bypasses prompt entirely (still 1-line audit).")
 TaskCreate(name="worktree_gc", description="Step 6.7 (v2.75.0+, #167): best-effort worktree GC — bash $CLAUDE_PLUGIN_ROOT/scripts/idd-worktree.sh cleanup <N>; absent helper or dirty-refuse (exit 5) → one-line warning + close still completes; never blocks close")
+TaskCreate(name="release_tree_lock", description="Step 6.8 (v2.85.0+, #183): best-effort release of the shared working-tree lock from idd-implement Step 0.4 — bash $CLAUDE_PLUGIN_ROOT/scripts/idd-tree-lock.sh release --repo <cwd> --id <session>; holder-scoped + idempotent (no lock / not-holder / absent helper → silent no-op); stale lock otherwise auto-reclaimed by next acquire via PID liveness. Never blocks close")
 TaskCreate(name="report_result", description="輸出關閉後的 issue URL 與 commits chain")
 ```
 
@@ -999,6 +1000,23 @@ fi
 | 其他錯誤(generic / not-git / usage) | `1`/`2`/`3`/`4` | 🟡 一行 warning,close 已完成 |
 
 **為什麼 best-effort 而非 hard gate**:issue 已經關了(Step 4)。worktree 殘留只是磁碟上的暫存目錄,`idd-worktree.sh list` 隨時能 surface 出 orphan 讓使用者手動 `cleanup`。為了一個清理動作去 fail 一個已完成的 close,會把 audit trail 弄得不一致(issue closed 但 skill 報 error)。Dirty-refuse 尤其要尊重——使用者可能還沒 commit 的工作不該被靜默刪掉。
+
+### Step 6.8: Tree-lock Release（v2.85.0+, #183）
+
+釋放 `idd-implement` Step 0.4 取得的 shared working-tree lock，讓下一個 session 能立刻 acquire（而非等 stale-reclaim TTL）。同 worktree GC 一樣 **best-effort**：lock 不存在、helper 缺席、或非本 session 持有都靜默無害（release 是 holder-scoped + idempotent）。
+
+```bash
+TREE_LOCK="$CLAUDE_PLUGIN_ROOT/scripts/idd-tree-lock.sh"
+if [ -f "$TREE_LOCK" ]; then
+  # Same id derivation as idd-implement Step 0.4 (tree-$PPID, the persistent
+  # harness shell) so release matches within the same claude instance. A
+  # different instance / mismatched id → holder-scoped no-op (lock left for the
+  # holder's own close or for liveness reclaim — never steals another's lock).
+  bash "$TREE_LOCK" release --repo "${CWD:-$PWD}" --id "${IDD_SESSION_ID:-tree-$PPID}" 2>/dev/null
+fi
+```
+
+> **為什麼放 close 而非更早**：lock 的語意是「這個 session 還在這棵 tree 上工作」。工作橫跨 implement→verify→close，所以 close 是 session 結束、該還鎖的點。若 session 異常結束沒跑到這裡，留下的 stale lock 由下一個 starter 的 `acquire` 用 PID-liveness 自動 reclaim（見 `idd-tree-lock.sh`），不會永久卡死。release 是優化（即時還鎖），reclaim 是兜底（liveness 回收）。
 
 ### Step 7: 批次 close 特殊規則
 

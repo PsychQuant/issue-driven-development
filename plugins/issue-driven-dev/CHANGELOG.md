@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.85.0] - 2026-06-04
+
+### Added
+
+- **Concurrent-session tree-lock — asymmetric escalation** ([#183](https://github.com/PsychQuant/issue-driven-development/issues/183), Spectra change `concurrent-session-tree-lock`): closes FM-1 (N concurrent IDD sessions sharing one working tree → branch parking, same-file WIP mixing, `git status` races — the ai_martech 2026-06-03 incident). Converged design (spectra-discuss): **lock-based asymmetric escalation (Option D)** — the first session holds the shared tree for free, later sessions detect the lock and isolate *themselves*.
+  - **Scope = cross-terminal** (resolved at verify, see below): isolation holds between IDD sessions in **separate terminals / `claude` instances** (the actual incident); same-instance sub-agent concurrency is the already-deferred "Case A" (`worktree-isolation.md`).
+  - **NEW `plugins/issue-driven-dev/scripts/idd-tree-lock.sh`**: `acquire` / `release` / `holder` / `reclaim-stale` over a `.claude/.idd/tree-lock` **file created atomically with `set -C`** (noclobber — create-with-content in one step; stale reclaim `mv`s the file aside so one racer wins). The lock records **`$PPID`** — the persistent harness shell (stable across an instance's Bash calls, dead once the instance exits), **not** the helper's ephemeral `$$`. Reclaims **by PID liveness** (`kill -0`), never by "is the holder done?" — the idle≠done lesson; heartbeat/mtime-TTL backs up an unverifiable PID (a *fresh* lock is held, a *stale* one reclaimable). Self-adds the lock to `.gitignore` (per-machine state must never be committed). Exit 0 / 3 held-by-live-other / 4 fail-open / 2 usage. Audit-hardened: `pid > 0` validation before `kill -0` (rejects the `kill -0 0` group-probe wedge), sanitized holder id, holder-scoped release.
+  - **NEW `plugins/issue-driven-dev/scripts/tests/idd-tree-lock/test.sh`**: 8 falsifiable fixtures using **real killable background processes** as holders (never the always-alive test-runner pid), incl. the regression that the recorded pid outlives the helper subprocess, the fresh-unreadable-lock-is-held window, and the planted-`pid=0` wedge.
+  - **`idd-implement` Step 0.4** (before path resolution): `acquire` → exit 0 stay on main (zero worktree tax, convention preserved) / exit 3 self-escalate via `idd-worktree.sh create <N>` into an isolated worktree+branch (never waits for the holder) / exit 4 **fail-open** (stay on main + visible warning, never blocks — the lock is a convenience, #184 is the correctness backstop).
+  - **`idd-close` Step 6.8**: holder-scoped best-effort lock release (idempotent; absent helper / not-holder / no-lock → silent no-op). A crashed session's stale lock is reclaimed by the next `acquire`.
+  - Promotes the `references/worktree-isolation.md` + `references/pr-flow.md` concurrent-session guidance from **advisory** ("prefer a worktree") to the lock-driven **normative** mechanism. Companion to the #184 merge-completeness gate (escalated sessions branch+merge → the FM-2 orphan defense is required, not optional).
+  - Scope: FM-1 only. Not cross-machine locking (a working tree is local); not a multi-session orchestration/scheduling model (#183 residue).
+  - **Design honesty trail**: the first implementation cut was a **no-op** — it recorded the helper's own ephemeral `$$`, so a second concurrent session always reclaimed the lock and escalation never fired. The 5-AI `/idd-verify` caught it (only the Devil's Advocate; the other lenses reached PASS via green fixtures / fail-open / reclaim-self-healing — all of which presuppose the lock has a function). The fixtures hid it because they passed an explicit always-alive pid. Rescoped to `$PPID`/cross-terminal, switched to an atomic noclobber-file lock, fixed the fixtures to use real killable holders, and corrected the spec's acceptance criterion (which had baked the wrong abstraction).
+
 ## [2.84.0] - 2026-06-04
 
 ### Added
