@@ -6,3 +6,6 @@ openspec/.vector-search.db*
 # durable artifact (#152). Sibling .claude/.idd/attachments/ deliberately STAYS tracked
 # (its manifest is committed), so ignore state/ specifically, not the parent.
 .claude/.idd/state/
+
+# IDD tree-lock (idd-tree-lock.sh #183) — per-machine session state, not tracked
+.claude/.idd/tree-lock
