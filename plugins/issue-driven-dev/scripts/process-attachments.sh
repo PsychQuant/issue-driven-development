@@ -22,6 +22,7 @@
 #   1 — manifest missing / new attachments detected / files missing on disk
 #   2 — usage error / cannot resolve repo / attachment-list fetch failure
 #       (gh/jq — network, auth, malformed JSON; detect_urls returns 2, #186)
+#       / corrupt _manifest.json (unparseable JSON; check/verify, #189)
 
 set -euo pipefail
 
@@ -118,6 +119,21 @@ detect_urls() {
     | sort -u || true
 }
 
+assert_manifest_valid() {
+  # $1 = manifest path. Loud-fail (exit 2) on unparseable JSON. A corrupt
+  # manifest must NEVER be read as "0 files / all present" (silent PASS, #189):
+  # `check` swallowed the jq error (2>/dev/null + || true) and `verify` read it
+  # through a process-substitution whose exit never propagated, so both reported
+  # a false success — and `verify` is idd-close's Step 1.4 gate. `jq empty`
+  # parses without emitting the document, exit 0 only on valid JSON. Same
+  # exit-2 = data-layer-failure semantics as the fetch-failure guard (#186).
+  if ! jq empty "$1" 2>/dev/null; then
+    echo "✗ Manifest is corrupt (not valid JSON): $1" >&2
+    echo "   Re-fetch to rebuild it: bash \$CLAUDE_PLUGIN_ROOT/scripts/process-attachments.sh download $NUMBER" >&2
+    exit 2
+  fi
+}
+
 decode_filename() {
   # URL-decode the basename, strip trailing markdown punctuation
   basename "$1" | sed 's/[)>"].*$//' | python3 -c 'import sys, urllib.parse; print(urllib.parse.unquote(sys.stdin.read().strip()))'
@@ -202,6 +218,7 @@ case "$CMD" in
       exit 0
     fi
 
+    assert_manifest_valid "$MANIFEST"   # #189 — corrupt manifest must loud-fail, not false "up-to-date"
     CURRENT=$(detect_urls)
     KNOWN=$(jq -r '.files[].url' "$MANIFEST" 2>/dev/null | sort -u || true)
     NEW=$(comm -23 <(echo "$CURRENT") <(echo "$KNOWN") | grep -v '^$' || true)
@@ -222,6 +239,7 @@ case "$CMD" in
       exit 0
     fi
 
+    assert_manifest_valid "$MANIFEST"   # #189 — corrupt manifest must loud-fail, not false "all present"
     MISSING=0
     while IFS= read -r filename; do
       [ -z "$filename" ] && continue

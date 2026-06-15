@@ -84,5 +84,37 @@ refute  "f5a gh failure → download exits non-zero (loud)"  test "$RC" -eq 0
 refute  "f5b gh failure → NO manifest written (not swallowed as 'no attachments')"  test -e "$W/.claude/.idd/attachments/issue-10/_manifest.json"
 cd /; rm -rf "$W"
 
+# ── Fixture 6 (#189): corrupt manifest → check loud-fails (NOT false "up-to-date") ──
+#    jq parse error was swallowed (2>/dev/null + || true) → empty KNOWN → false PASS.
+W="$(mktemp -d)"; cd "$W"; mkdir -p .claude/.idd/attachments/issue-11
+export GH_STUB_MODE=empty
+printf '{ broken json <<<<<<< HEAD\n' > .claude/.idd/attachments/issue-11/_manifest.json
+run_pa check 11 > "$W/out6.txt" 2>&1; RC6=$?
+refute  "f6a corrupt manifest → check exits non-zero (not false up-to-date)"  test "$RC6" -eq 0
+require "f6b check says manifest corrupt (loud)"  grep -qi 'corrupt' "$W/out6.txt"
+cd /; rm -rf "$W"
+
+# ── Fixture 7 (#189): corrupt manifest → verify loud-fails (verify IS idd-close Step 1.4 gate) ──
+#    process-substitution `< <(jq ... 2>/dev/null)` never propagated jq exit → MISSING=0 → false PASS.
+#    Realistic corruption: git merge-conflict markers (manifest is git-tracked).
+W="$(mktemp -d)"; cd "$W"; mkdir -p .claude/.idd/attachments/issue-12
+printf '{\n  "issue": 12,\n<<<<<<< HEAD\n  "files": []\n=======\n  "files": [{"filename":"a.png"}]\n>>>>>>> branch\n}\n' \
+  > .claude/.idd/attachments/issue-12/_manifest.json
+run_pa verify 12 > "$W/out7.txt" 2>&1; RC7=$?
+refute  "f7a corrupt manifest → verify exits non-zero (not false 'all present')"  test "$RC7" -eq 0
+require "f7b verify says manifest corrupt (loud)"  grep -qi 'corrupt' "$W/out7.txt"
+cd /; rm -rf "$W"
+
+# ── Fixture 8 (regression guard): VALID manifest → check + verify behavior unchanged ──
+W="$(mktemp -d)"; cd "$W"; mkdir -p .claude/.idd/attachments/issue-13
+printf 'content' > .claude/.idd/attachments/issue-13/a.png
+cat > .claude/.idd/attachments/issue-13/_manifest.json <<'JSON'
+{"issue":13,"fetched_at":"x","fetched_by":"test","files":[{"filename":"a.png","url":"https://github.com/user-attachments/files/1/a.png","sha256":"x","size_bytes":7}]}
+JSON
+export GH_STUB_MODE=empty
+run_pa verify 13 >/dev/null 2>&1; assert_exit "f8a valid manifest + file present → verify exit 0 (unchanged)" 0 $?
+run_pa check  13 >/dev/null 2>&1; assert_exit "f8b valid manifest → check exit 0 (unchanged)"               0 $?
+cd /; rm -rf "$W"
+
 rm -rf "$STUB"
 print_summary

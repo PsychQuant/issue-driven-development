@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.85.2] - 2026-06-15
+
+### Fixed
+
+- **`process-attachments.sh` `check`/`verify` silently PASS on a corrupt `_manifest.json`** ([#189](https://github.com/PsychQuant/issue-driven-development/issues/189), follow-up from #186): an unparseable manifest (e.g. git merge-conflict markers — the manifest is git-tracked) was read as "0 files / all present" and returned exit 0. `check` swallowed the jq parse error (`2>/dev/null | … || true`) → empty `KNOWN` → false "up-to-date"; `verify` read the manifest through a process-substitution (`< <(jq … 2>/dev/null)`) whose exit status never propagated → `MISSING=0` → false "all present". **`verify` is `idd-close`'s Step 1.4 gate**, so a corrupt manifest could let a close through with broken attachment references. Same failure class as #186 (a failure swallowed into a success), relocated to the manifest-read side.
+  - Fix: new `assert_manifest_valid()` helper (`jq empty` → loud `✗ Manifest is corrupt` + exit 2, same data-layer-failure semantics as #186's fetch guard), invoked in both `check` and `verify` right after their no-manifest branches, before the manifest is trusted. `download` is unaffected — it rebuilds the manifest rather than reading an existing one.
+  - Tests: extends `scripts/tests/process-attachments/test.sh` to 17 assertions (+ corrupt-manifest loud-fail for both `check` and `verify`, + valid-manifest regression guard). Live-verified against a merge-conflict-corrupted manifest (was exit 0 "all present" → now exit 2).
+
 ## [2.85.1] - 2026-06-10
 
 ### Fixed
