@@ -286,6 +286,7 @@ IDD_CALLER=idd-implement bash $CLAUDE_PLUGIN_ROOT/scripts/process-attachments.sh
 Exit code:
 - `0` — manifest up-to-date,可繼續實作
 - `1` — manifest missing 或 issue 有新 attachment 未抓 → **不 auto-repair**,警告使用者重跑 `/idd-diagnose #$NUMBER`
+- `2` — gh/jq fetch 失敗(#186)或 manifest 損毀/格式錯(0-byte / 非 JSON object / 缺 `files` array,#189)→ 資料層失敗,重跑 `/idd-diagnose #$NUMBER` 重建 manifest
 
 下游 skill 看到 exit 1 時:**warn 但不 abort**(讓使用者決定要不要先 refresh 再 implement)。實作期引用 attachment 一律用 repo 相對 path(`.claude/.idd/attachments/issue-NNN/檔名`),不重複 paste 全文。
 

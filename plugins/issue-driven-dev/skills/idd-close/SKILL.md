@@ -250,6 +250,7 @@ IDD_CALLER=idd-close bash $CLAUDE_PLUGIN_ROOT/scripts/process-attachments.sh ver
 Exit code:
 - `0` — manifest 列出的檔案在 disk 上都還在(closing comment 的 path 引用安全)
 - `1` — 至少一個檔案被搬走 / 刪掉 → 警告使用者(closing comment 寫到失效引用)。**不 abort close**,讓使用者決定是否搬回或修改 closing comment 引用
+- `2` — manifest 損毀/格式錯(0-byte / 非 JSON object / 缺 `files` array,#189)→ verify 無法判讀,**不可當成 exit 0「全在」放行**;引導使用者重跑 `download` 重建 manifest。修正前 #189 此情況會 false-PASS exit 0,讓 close gate 漏判
 
 無 manifest(issue 從未處理 attachment)→ 跳過此 step,exit 0。
 

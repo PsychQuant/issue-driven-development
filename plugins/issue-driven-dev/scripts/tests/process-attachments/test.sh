@@ -116,5 +116,23 @@ run_pa verify 13 >/dev/null 2>&1; assert_exit "f8a valid manifest + file present
 run_pa check  13 >/dev/null 2>&1; assert_exit "f8b valid manifest → check exit 0 (unchanged)"               0 $?
 cd /; rm -rf "$W"
 
+# ── Fixture 9 (#189 verify): 0-byte manifest (truncated/interrupted write) → loud-fail ──
+#    Parses past `jq empty` but is NOT a manifest — verify (idd-close's gate) must not false-PASS.
+W="$(mktemp -d)"; cd "$W"; mkdir -p .claude/.idd/attachments/issue-14
+: > .claude/.idd/attachments/issue-14/_manifest.json            # 0 bytes
+run_pa verify 14 > "$W/out9.txt" 2>&1; RC9=$?
+refute  "f9a 0-byte manifest → verify exits non-zero"  test "$RC9" -eq 0
+require "f9b 0-byte manifest → verify says corrupt/malformed (loud)"  grep -qiE 'corrupt|malformed' "$W/out9.txt"
+cd /; rm -rf "$W"
+
+# ── Fixture 10 (#189 verify): valid JSON but not a manifest (no .files) → loud-fail ──
+W="$(mktemp -d)"; cd "$W"; mkdir -p .claude/.idd/attachments/issue-15
+printf '{"foo":1}\n' > .claude/.idd/attachments/issue-15/_manifest.json
+export GH_STUB_MODE=empty
+run_pa check 15 > "$W/out10.txt" 2>&1; RC10=$?
+refute  "f10a schemaless manifest ({\"foo\":1}) → check exits non-zero"  test "$RC10" -eq 0
+require "f10b schemaless manifest → check says corrupt/malformed (loud)"  grep -qiE 'corrupt|malformed' "$W/out10.txt"
+cd /; rm -rf "$W"
+
 rm -rf "$STUB"
 print_summary

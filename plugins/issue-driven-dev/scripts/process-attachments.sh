@@ -22,7 +22,8 @@
 #   1 — manifest missing / new attachments detected / files missing on disk
 #   2 — usage error / cannot resolve repo / attachment-list fetch failure
 #       (gh/jq — network, auth, malformed JSON; detect_urls returns 2, #186)
-#       / corrupt _manifest.json (unparseable JSON; check/verify, #189)
+#       / corrupt or malformed _manifest.json (not a JSON object with a 'files'
+#       array — incl. 0-byte/truncated; check/verify, #189)
 
 set -euo pipefail
 
@@ -120,15 +121,23 @@ detect_urls() {
 }
 
 assert_manifest_valid() {
-  # $1 = manifest path. Loud-fail (exit 2) on unparseable JSON. A corrupt
-  # manifest must NEVER be read as "0 files / all present" (silent PASS, #189):
-  # `check` swallowed the jq error (2>/dev/null + || true) and `verify` read it
-  # through a process-substitution whose exit never propagated, so both reported
-  # a false success — and `verify` is idd-close's Step 1.4 gate. `jq empty`
-  # parses without emitting the document, exit 0 only on valid JSON. Same
-  # exit-2 = data-layer-failure semantics as the fetch-failure guard (#186).
-  if ! jq empty "$1" 2>/dev/null; then
-    echo "✗ Manifest is corrupt (not valid JSON): $1" >&2
+  # $1 = manifest path. Loud-fail (exit 2) on a corrupt OR malformed manifest. A
+  # manifest that can't be read must NEVER be treated as "0 files / all present"
+  # (silent PASS, #189): `check` swallowed the jq error (2>/dev/null + || true) and
+  # `verify` read it through a process-substitution whose exit never propagated, so
+  # both reported a false success — and `verify` is idd-close's Step 1.4 gate.
+  #
+  # The shape check is `type=="object" and (.files|type)=="array"`, NOT bare
+  # `jq empty` (#189 verify): `jq empty` only checks PARSEABILITY, so a 0-byte file
+  # (truncated/interrupted write), whitespace, `null`, `[1,2,3]`, or `{"foo":1}`
+  # all slip past it and then re-trigger the very swallowers above on `.files[]` —
+  # the same false-PASS class, one rung down. This guard fires on anything that
+  # isn't a JSON object carrying a `files` array (exactly what `download`'s `jq -n`
+  # always builds, even for zero attachments → no regression). It deliberately does
+  # NOT validate per-file fields (that deeper schema check is the deferred residue).
+  # Same exit-2 = data-layer-failure semantics as the fetch-failure guard (#186).
+  if ! jq -e 'type=="object" and (.files|type)=="array"' "$1" >/dev/null 2>&1; then
+    echo "✗ Manifest is corrupt or malformed (not a JSON object with a 'files' array): $1" >&2
     echo "   Re-fetch to rebuild it: bash \$CLAUDE_PLUGIN_ROOT/scripts/process-attachments.sh download $NUMBER" >&2
     exit 2
   fi

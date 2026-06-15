@@ -422,6 +422,7 @@ IDD_CALLER=idd-verify bash $CLAUDE_PLUGIN_ROOT/scripts/process-attachments.sh ch
 Exit code:
 - `0` — manifest 完整,reviewer prompt 可引用 `.claude/.idd/attachments/issue-NNN/` 下檔案
 - `1` — manifest 缺漏或有新增 attachment → 警告但繼續(reviewer 仍跑,但 verification 完整度受限,在 final report 註明)
+- `2` — gh/jq fetch 失敗(#186)或 manifest 損毀/格式錯(0-byte / 非 JSON object / 缺 `files` array,#189)→ 資料層失敗,引導使用者重跑 `/idd-diagnose #NNN` 重建 manifest
 
 把 attachment 路徑列入 Step 2 的 reviewer prompt 作為 source-of-truth context(尤其 requirements reviewer 需要原始需求文件)。**禁止**只在 prompt 寫「issue 有附件」而不給具體 path — reviewer agents 看不到 path 等於沒附件。
 
