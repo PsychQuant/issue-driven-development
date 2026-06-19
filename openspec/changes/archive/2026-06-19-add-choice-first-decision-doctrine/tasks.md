@@ -13,7 +13,7 @@
 ## 3. Spec sync
 
 - [x] 3.1 `openspec validate add-choice-first-decision-doctrine` 通過（spec delta 格式正確、與既有 spec 無衝突）。
-- [ ] 3.2 （N/A）repo 無獨立 skill-index/capability registry 需手動登記 — openspec specs/ 即 registry，archive 時自動 promote。
+- [x] 3.2 （N/A → 由 archive 解決）repo 無獨立 skill-index/capability registry — openspec specs/ 即 registry；spec 於本次 `openspec archive` 自動 promote 到 `openspec/specs/choice-first-decision-rendering/`。
 
 ## 4. Validation
 
