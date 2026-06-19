@@ -405,9 +405,9 @@ AskUserQuestion(
 #### D.1 Choice handlers
 
 **`clarify now`**:
-1. AI 根據 V1 / V4 評分理由,挑出 1–3 個最不清楚的點。**對每個點,優先 render 候選詮釋讓 user 挑,而非請 user 寫**（NSQL P1 — Read-Only for Humans;見 repo `CLAUDE.md`「Reference Projects: NSQL」）：
+1. AI 根據 V1 / V4 評分理由,挑出 1–3 個最不清楚的點。**對每個點套用 Choice-First Decision Rendering doctrine**（見 `MANIFESTO.md`「Choice-first decision rendering」/ spec capability `choice-first-decision-rendering`）—— 此處是該 doctrine 在 vagueness-clarification 情境的一個 instance,規則的 single source of truth 在 doctrine,本步不另立規則：
    - **可列舉** → 用 AskUserQuestion render 該點的候選詮釋（`1. X（推薦） 2. Y 3. Z`）。User *挑選*,不從白紙寫。
-   - **無法列舉**（問題本質開放,AI 真的舉不出候選）→ fallback 才用 free-text 問。fallback 是具名的例外,不是預設。
+   - **無法列舉**（問題本質開放,AI 真的舉不出候選）→ fallback 才用 free-text 問,且須說明為何無法列舉（doctrine 的具名例外,不是預設）。
 2. 把 user 的選擇 / 回答組合成 markdown 區塊:
    ```markdown
    ## Clarification (added during diagnose)
@@ -656,6 +656,8 @@ Diagnosis comment 到 #NNN 後，進行兩階段確認:
 詢問使用者：「Diagnosis 已 comment 到 #NNN。正確嗎？要調整策略嗎？」
 
 - 如果要調整 → 修改後用 `gh issue comment` 追加修正,然後回到這個 Stage 1 重新確認
+
+> **Choice-first decision surfacing**（套用 `MANIFESTO.md`「Choice-first decision rendering」doctrine / spec `choice-first-decision-rendering`）：當 diagnosis 的 Strategy / Conflict / Risks 浮出**需 stakeholder 拍板且可列舉**的決策（多個 valid approach、方向衝突、命名 / 範圍取捨等），Stage 1 **SHALL** 用 `AskUserQuestion` render 成候選選項（含推薦項）讓 user 挑,而非只用散文列出請 user 自行 articulate。選項空間真的開放（AI 舉不出候選）時才 fallback free-text,且須具名說明為何無法列舉。batch / aggregate diagnose 收尾列多個待拍板決策時同理。Unattended 下不 block,套用既有 unattended 慣例（取安全 non-blocking 預設、寫 audit trail；如 Layer V 的 `proceed anyway`,未必是推薦項）。
 
 #### Stage 2: Routing（根據 Complexity 選下一步）
 
