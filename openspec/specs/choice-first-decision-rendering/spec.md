@@ -1,7 +1,8 @@
 # choice-first-decision-rendering Specification
 
 ## Purpose
-TBD - created by archiving change add-choice-first-decision-doctrine. Update Purpose after archive.
+Define the cross-skill **Choice-First Decision Rendering** doctrine: at any decision / clarification point where an `idd-*` skill needs human input AND the option space is enumerable, the skill SHALL render `AskUserQuestion` candidate choices (recommended option first) rather than asking the human to articulate the answer in free-text. Free-text is a named-exception fallback permitted ONLY when the option space is genuinely open (the AI cannot enumerate plausible candidates), and the skill SHALL state why it could not enumerate. This is the normative generalization of the NSQL Confirmation Protocol's "Read-Only for Humans" principle (the human selects; the AI writes); `idd-diagnose` Step 3.4 Layer V D.1 is one application of it. Sourced from #190.
+
 ## Requirements
 ### Requirement: IDD skills SHALL render enumerable decisions as candidate choices
 
