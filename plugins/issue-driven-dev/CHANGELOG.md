@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.86.0] - 2026-06-20
+
+### Added
+
+- **Choice-First Decision Rendering doctrine** ([#190](https://github.com/PsychQuant/issue-driven-development/issues/190), PR [#191](https://github.com/PsychQuant/issue-driven-development/pull/191)): a cross-skill doctrine — at any decision / clarification point where an `idd-*` skill needs human input AND the option space is enumerable, the skill SHALL render `AskUserQuestion` candidate choices (recommended option first) rather than asking the human to articulate the answer in free-text. Free-text is a named-exception fallback permitted ONLY when the option space is genuinely open (the AI cannot enumerate plausible candidates), and the skill SHALL state why it could not enumerate. The normative generalization of the NSQL Confirmation Protocol's "Read-Only for Humans" principle.
+  - `MANIFESTO.md`: NEW "Choice-first decision rendering（人挑，不要人寫）" sub-section under the "Human-in-the-loop: IDD 即 NSQL Confirmation Protocol" section.
+  - `idd-diagnose` SKILL.md: Step 3.4 Layer V D.1 refactored to **reference** the doctrine as the single source of truth (the vagueness-clarification instance) instead of re-specifying the choice-vs-free-text rule; Step 4 Stage 1 gains a normative note applying the doctrine to stakeholder-decision surfacing.
+  - NEW spec capability `choice-first-decision-rendering` (1 requirement / 6 scenarios incl. unattended auto-proceed via the skill's existing non-blocking default, scope-excludes-pure-informational-output, and Layer-V-D.1-as-instance).
+  - Surfaced by the #190 incident: an `idd-diagnose` batch wrap-up prose-listed 4 stakeholder decisions instead of rendering them as choices; user feedback "需要 clarify 的部分，與其要我說，不如給我幾個選擇我比較確定". Design aligned via `spectra-discuss` (attended, 3 decisions). Adversarial verify (PR #191) caught + fixed a P1 — the unattended clause mis-described Layer V's `proceed anyway` default as "the recommended option" (wrong when max_score ≥ 5, where the recommended option is human-requiring).
+
 ## [2.85.2] - 2026-06-15
 
 ### Fixed
