@@ -29,9 +29,9 @@ This doctrine is the normative generalization of the NSQL Confirmation Protocol'
 
 #### Scenario: Unattended mode auto-proceeds without blocking
 
-- **WHEN** a skill runs under `INTERACTION=unattended` (no human present, e.g. `/idd-all --pr`, `/loop`)
+- **WHEN** a skill runs under unattended mode (no human present, e.g. `/idd-all --pr`, `/loop`; signalled to sub-skills via the `UNATTENDED MODE` directive)
 - **THEN** the skill SHALL NOT block on `AskUserQuestion`
-- **AND** the skill SHALL apply the recommended option and record the auto-decision in the audit trail, mirroring the existing Layer V unattended behavior
+- **AND** the skill SHALL apply a safe non-blocking default per its existing unattended convention — the conservative proceed-style option that does not itself require a human, which is NOT necessarily the human-facing recommended option — and record the auto-decision in the audit trail, mirroring idd-diagnose Layer V's `proceed anyway` default
 
 #### Scenario: idd-diagnose Layer V D.1 is an instance of this doctrine
 

@@ -44,7 +44,7 @@ choice-first 原則寫進 **MANIFESTO + 新 spec capability `choice-first-decisi
 | 套用範圍 | 跨 skill doctrine (Decision 1) |
 | 強度 | SHALL + named fallback (Decision 2) |
 | 與 D.1 關係 | 抽共用、D.1 引用 (Decision 3) |
-| unattended 行為 | 自動 apply 推薦項 + audit trail（沿用 Layer V 既有 unattended 設計，不新增） |
+| unattended 行為 | 不 block,取既有的安全 non-blocking 預設 + audit trail（沿用 Layer V `proceed anyway` 慣例，**非**推薦項；不新增機制） |
 | 與 idd-clarify 關係 | 正交,不動 idd-clarify（不同軸:術語 vs 決策渲染） |
 
 ## Risks

@@ -657,7 +657,7 @@ Diagnosis comment 到 #NNN 後，進行兩階段確認:
 
 - 如果要調整 → 修改後用 `gh issue comment` 追加修正,然後回到這個 Stage 1 重新確認
 
-> **Choice-first decision surfacing**（套用 `MANIFESTO.md`「Choice-first decision rendering」doctrine / spec `choice-first-decision-rendering`）：當 diagnosis 的 Strategy / Conflict / Risks 浮出**需 stakeholder 拍板且可列舉**的決策（多個 valid approach、方向衝突、命名 / 範圍取捨等），Stage 1 **SHALL** 用 `AskUserQuestion` render 成候選選項（含推薦項）讓 user 挑,而非只用散文列出請 user 自行 articulate。選項空間真的開放（AI 舉不出候選）時才 fallback free-text,且須具名說明為何無法列舉。batch / aggregate diagnose 收尾列多個待拍板決策時同理。Unattended 下不 block,自動取推薦項 + 寫 audit trail。
+> **Choice-first decision surfacing**（套用 `MANIFESTO.md`「Choice-first decision rendering」doctrine / spec `choice-first-decision-rendering`）：當 diagnosis 的 Strategy / Conflict / Risks 浮出**需 stakeholder 拍板且可列舉**的決策（多個 valid approach、方向衝突、命名 / 範圍取捨等），Stage 1 **SHALL** 用 `AskUserQuestion` render 成候選選項（含推薦項）讓 user 挑,而非只用散文列出請 user 自行 articulate。選項空間真的開放（AI 舉不出候選）時才 fallback free-text,且須具名說明為何無法列舉。batch / aggregate diagnose 收尾列多個待拍板決策時同理。Unattended 下不 block,套用既有 unattended 慣例（取安全 non-blocking 預設、寫 audit trail；如 Layer V 的 `proceed anyway`,未必是推薦項）。
 
 #### Stage 2: Routing（根據 Complexity 選下一步）
 

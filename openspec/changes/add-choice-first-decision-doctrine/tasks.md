@@ -7,8 +7,8 @@
 ## 2. idd-diagnose SKILL.md patches
 
 - [x] 2.1 Step 3.4 Layer V D.1（`clarify now` handler）:改為**顯式引用** choice-first doctrine（標明 vagueness 情境的 instance、single source of truth 在 doctrine），保留可列舉/無法列舉兩 bullet。
-- [x] 2.2 Step 4 Stage 1:新增 normative note — 可列舉的 stakeholder 決策 SHALL 用 `AskUserQuestion` render，不只散文列;batch/aggregate 同理;unattended 自動取推薦項。
-- [x] 2.3 unattended 行為文字與 doctrine 的 unattended scenario 一致（D.1 + Step 4 + spec 三處對齊，不 block）。
+- [x] 2.2 Step 4 Stage 1:新增 normative note — 可列舉的 stakeholder 決策 SHALL 用 `AskUserQuestion` render，不只散文列;batch/aggregate 同理;unattended 取安全 non-blocking 預設（非「推薦項」— 見 #190 verify P1 修正）。
+- [x] 2.3 unattended 行為文字與 **Layer V section F 實際行為**（auto-`proceed anyway`，非推薦項）一致 — MANIFESTO + Step 4 + spec scenario 4 + proposal/design 四處皆改為「安全 non-blocking 預設」措辭（#190 verify P1）。
 
 ## 3. Spec sync
 
