@@ -18,11 +18,11 @@
 
 ## 3. idd-issue Step 0.5.E third-party branch
 
-- [ ] 3.1 Write tests: owner-mismatch + push=false → third-party; owner-match → E1 (no probe); owner-mismatch + push=true → E1; fork → E2 (no third-party); probe failure → fail-safe third-party
-- [ ] 3.2 Implement hybrid detection (owner pre-filter → conditional push probe) inside the `IS_FORK=false` branch, ordered after E2
-- [ ] 3.3 Implement 3-option routing (upstream + visibility warning / tracking repo via --target, no auto-create / local-only)
-- [ ] 3.4 On chosen option: write `.claude/.idd/local.json` (github_repo + `pr_policy: never`) + call primitive (direction=exclude, target=`.git/info/exclude`, pattern `.claude/.idd/`)
-- [ ] 3.5 Update Step 0 Bootstrap `detect_target_repo` TaskCreate description (resolution order fork E2 → third-party → E1)
+- [~] 3.1 Detection logic lives as inline skill pseudocode in Step 0.5.E (same as existing E1/E2 — not unit-tested independently). The testable extracted portion (the ignore-block write) is covered by task 1's `git-ignore-block` test suite. A dedicated harness for the detection branch would require extracting detection into a script — reasonable follow-up, not done this pass.
+- [x] 3.2 Implement hybrid detection — refined: `viewerPermission` folded into the existing `gh repo view` call (owner-mismatch pre-filter → permission ∈ {WRITE,MAINTAIN,ADMIN}=own), ordered after E2. Zero extra API round-trip even on mismatch.
+- [x] 3.3 Implement 3-option routing (E-TP: upstream + visibility warning / tracking repo via --target, no auto-create / local-only)
+- [x] 3.4 On chosen option: write `.claude/.idd/local.json` (github_repo + `pr_policy: never`) + call `git-ignore-block.sh` (direction=exclude, target=`.git/info/exclude`, pattern `.claude/.idd/` + legacy)
+- [x] 3.5 Update Step 0 Bootstrap `detect_target_repo` TaskCreate description (resolution order fork E2 → third-party → E1)
 
 ## 4. config-protocol documentation
 

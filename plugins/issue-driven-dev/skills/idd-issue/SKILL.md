@@ -98,7 +98,7 @@ Fork 有兩種相反的使用情境：
 **在動任何事之前**先用 `TaskCreate` 為這個 stage 建 todo list,確保每個 sub-step 都被追蹤:
 
 ```
-TaskCreate(name="detect_target_repo", description="Step 0.5: 解析 target — --target flag → walked-up config → predicate pre-resolve → fork detection")
+TaskCreate(name="detect_target_repo", description="Step 0.5: 解析 target — --target flag → walked-up config → predicate pre-resolve → fork/third-party detection (順序: fork E2 → third-party E-TP → E1)")
 TaskCreate(name="read_source", description="讀取來源(docx → mcp__che-word-mcp 讀文字 + 列圖片)")
 TaskCreate(name="gather_info", description="Step 2: 蒐集 title / type / priority / description")
 TaskCreate(name="reresolve_target", description="Step 2.5: 用 title/labels 重評 content predicates,若新匹配 != tentative_default 則問使用者要不要切")
@@ -204,19 +204,28 @@ AskUserQuestion 列出每個 candidate 和 group 的 label,讓使用者選
 # 1. 拿到 origin 的 owner/repo
 ORIGIN=$(git remote get-url origin 2>/dev/null | sed -E 's#.*[:/]([^/]+/[^/]+?)(\.git)?$#\1#')
 
-# 2. 查 origin 是不是 fork,以及 upstream 是誰
-REPO_JSON=$(gh repo view "$ORIGIN" --json isFork,parent 2>/dev/null)
+# 2. 一次拿 origin 的 fork 狀態、upstream、以及你對它的權限。
+#    viewerPermission 折進這支 gh repo view → 省掉獨立的 push-permission probe(#192)。
+REPO_JSON=$(gh repo view "$ORIGIN" --json isFork,parent,viewerPermission 2>/dev/null)
 IS_FORK=$(echo "$REPO_JSON" | jq -r '.isFork')
 UPSTREAM=$(echo "$REPO_JSON" | jq -r '.parent.nameWithOwner // empty')
+
+# 3. third-party clone 偵測(hybrid,#192)。owner-mismatch 當 cheap pre-filter;
+#    不符才看權限。viewerPermission ∈ {WRITE,MAINTAIN,ADMIN} = 你能寫 → 視同自己的。
+ORIGIN_OWNER="${ORIGIN%%/*}"
+SELF_LOGIN=$(gh api user --jq .login 2>/dev/null)
+IS_THIRD_PARTY=false
+if [ -n "$SELF_LOGIN" ] && [ "$ORIGIN_OWNER" != "$SELF_LOGIN" ]; then
+  case "$(echo "$REPO_JSON" | jq -r '.viewerPermission // empty')" in
+    WRITE|MAINTAIN|ADMIN) IS_THIRD_PARTY=false ;;   # org / collaborator 可寫
+    *)                    IS_THIRD_PARTY=true  ;;   # READ/TRIAGE/NONE/probe 失敗 → fail-safe 當 third-party
+  esac
+fi
 ```
 
-接下來按既有邏輯:
+**解析順序（決策,first match wins）:E2 fork → E-TP third-party → E1。** fork 也是別人 upstream,但有自己的語意,必須**先判**,否則 third-party 會把 fork 誤吞 → double-prompt。
 
-**E1. `IS_FORK=false`（不是 fork）**
-
-直接用 origin,**寫入 config 到 `$PWD/.claude/issue-driven-dev.local.json`**,繼續。不需要詢問。
-
-**E2. `IS_FORK=true` 且 `UPSTREAM` 存在** → **強制使用 `AskUserQuestion` 呈現三選項**：
+**E2. `IS_FORK=true` 且 `UPSTREAM` 存在**（最先判） → **強制使用 `AskUserQuestion` 呈現三選項**：
 
 | 選項 | target | 適合情境 |
 |------|--------|---------|
@@ -226,9 +235,21 @@ UPSTREAM=$(echo "$REPO_JSON" | jq -r '.parent.nameWithOwner // empty')
 
 「Both」模式：等同於建立一個 ad-hoc group(primary=upstream, tracking=origin)。Step 3 會走 group flow。
 
+**E-TP. `IS_FORK=false` 且 `IS_THIRD_PARTY=true`**（clone 別人的 repo、你無 push 權,#192） → **強制使用 `AskUserQuestion` 呈現三選項**：
+
+| 選項 | target | 寫入 |
+|------|--------|------|
+| **Upstream**（原作者 `$ORIGIN`） | origin | config `github_repo=$ORIGIN`；⚠ **警示:issue 在原作者公開 repo 上人人可見** |
+| **自己的 tracking repo** | 使用者給的 `--target you/repo`（**不自動建**;缺則問） | config `github_repo=<該 repo>` |
+| **Local-only** | — | 不開 GitHub issue;提示 GitHub-backed idd-* 暫不可用 |
+
+選 Upstream 或 tracking repo → 一律走 **F 的 third-party 寫法**（config 加 `pr_policy: never` + `.claude/.idd/` 寫進 `.git/info/exclude`,不污染對方 repo）。
+
+**E1. `IS_FORK=false` 且 `IS_THIRD_PARTY=false`**（你自己的 repo / 你能寫的 org repo） → 直接用 origin,**寫 config（同既有）**,不需要詢問。與既有行為相同。
+
 #### F. 寫回 config(僅在 Step 0.5.E 觸發時)
 
-無論 E1/E2 選了什麼，都把結果寫入 `$PWD/.claude/issue-driven-dev.local.json`：
+無論 E1/E2/E-TP 選了什麼，都把結果寫入 config（E1/E2 用 `$PWD/.claude/issue-driven-dev.local.json`；E-TP 用新路徑 `$PWD/.claude/.idd/local.json`）：
 
 ```json
 {
@@ -240,6 +261,21 @@ UPSTREAM=$(echo "$REPO_JSON" | jq -r '.parent.nameWithOwner // empty')
 ```
 
 `tracking_upstream` 只在 Both 模式或 fork 情境下寫入（讓後續 skill 知道 upstream 是誰）。
+
+**E-TP（third-party clone）額外寫入（#192）**:除上面 config 外,
+
+1. config 加 `"pr_policy": "never"`（你對 origin 無 push 權 → local direct-commit;見 `idd-all` Phase 0.5）。third-party 的 config 放新路徑 `.claude/.idd/local.json`。
+2. 用共用 helper 把 IDD config 寫進 `.git/info/exclude`（per-clone、不 commit/push、**不動對方 tracked `.gitignore`**）:
+
+```bash
+"$CLAUDE_PLUGIN_ROOT/scripts/git-ignore-block.sh" \
+  --target "$(git rev-parse --git-dir)/info/exclude" \
+  --marker "IDD third-party clone config (#192)" \
+  --direction exclude \
+  ".claude/.idd/" ".claude/issue-driven-dev.local.json" ".claude/issue-driven-dev.local.md"
+```
+
+   helper 是 idempotent（重跑不重複、stale block 原地替換）。寫完 `git check-ignore .claude/.idd/local.json` 應回報 ignored、`git status` 不該出現任何 IDD 檔。為什麼用 `.git/info/exclude` 不改 `.gitignore`:後者是 tracked 檔,改它＝在對方 history 疊 commit＝污染;前者住 `.git/` 內、永不 push、別人 clone 拿不到。
 
 下次執行時 walked-up config 已存在,走 Step 0.5.B → C 路徑,不再詢問。
 
