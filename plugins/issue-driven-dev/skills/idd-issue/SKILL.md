@@ -216,9 +216,12 @@ ORIGIN_OWNER="${ORIGIN%%/*}"
 SELF_LOGIN=$(gh api user --jq .login 2>/dev/null)
 IS_THIRD_PARTY=false
 if [ -n "$SELF_LOGIN" ] && [ "$ORIGIN_OWNER" != "$SELF_LOGIN" ]; then
-  case "$(echo "$REPO_JSON" | jq -r '.viewerPermission // empty')" in
-    WRITE|MAINTAIN|ADMIN) IS_THIRD_PARTY=false ;;   # org / collaborator 可寫
-    *)                    IS_THIRD_PARTY=true  ;;   # READ/TRIAGE/NONE/probe 失敗 → fail-safe 當 third-party
+  VPERM=$(echo "$REPO_JSON" | jq -r '.viewerPermission // empty')
+  case "$VPERM" in
+    WRITE|MAINTAIN|ADMIN) IS_THIRD_PARTY=false ;;   # org / collaborator 可寫 → 視同自己的
+    READ|TRIAGE)          IS_THIRD_PARTY=true  ;;   # 明確唯讀 → third-party
+    *)                    IS_THIRD_PARTY=true        # 空 / NONE / probe 失敗 → fail-safe，且明示提示
+                          echo "ℹ third-party detection: push-permission probe unavailable for $ORIGIN (viewerPermission='$VPERM') — applying conservative third-party default." >&2 ;;
   esac
 fi
 ```

@@ -31,11 +31,12 @@ set -u
 
 TARGET="" MARKER="" DIRECTION=""
 PATTERNS=()
+need_val() { [ "$1" -ge 2 ] || { echo "✗ git-ignore-block: $2 needs a value" >&2; exit 2; }; }
 while [ $# -gt 0 ]; do
   case "$1" in
-    --target)    TARGET="${2:-}"; shift 2 ;;
-    --marker)    MARKER="${2:-}"; shift 2 ;;
-    --direction) DIRECTION="${2:-}"; shift 2 ;;
+    --target)    need_val $# --target;    TARGET="$2";    shift 2 ;;
+    --marker)    need_val $# --marker;    MARKER="$2";    shift 2 ;;
+    --direction) need_val $# --direction; DIRECTION="$2"; shift 2 ;;
     --)          shift; while [ $# -gt 0 ]; do PATTERNS+=("$1"); shift; done ;;
     -*)          echo "✗ git-ignore-block: unknown option: $1" >&2; exit 2 ;;
     *)           PATTERNS+=("$1"); shift ;;
@@ -83,18 +84,30 @@ touch "$TARGET"
 
 # --- Idempotent write ---------------------------------------------------------
 if grep -qF "$BEGIN" "$TARGET"; then
+  # Refuse to edit a file with a BEGIN sentinel but no matching END — the stale
+  # removal would otherwise delete from BEGIN to EOF and eat unrelated user
+  # content (violating the "surrounding content preserved" guarantee). The tool
+  # never produces such a file itself; this only fires on external corruption.
+  if ! grep -qF "$END" "$TARGET"; then
+    echo "✗ git-ignore-block: '$TARGET' has the BEGIN sentinel but no END sentinel." >&2
+    echo "  Refusing to edit (would delete to EOF). Fix the block manually, then re-run." >&2
+    exit 2
+  fi
   existing="$(awk -v b="$BEGIN" -v e="$END" '$0==b{f=1} f{print} $0==e{f=0}' "$TARGET")"
   desired="$(new_block)"
   if [ "$existing" = "$desired" ]; then
     exit 0   # same marker + same body → no-op
   fi
   # Remove stale block (BEGIN..END inclusive), preserving everything else.
+  # mktemp (not a predictable "$TARGET.tmp") avoids symlink-clobber / TOCTOU.
+  tmp="$(mktemp "$(dirname "$TARGET")/.idd-ignore-block.XXXXXX")" \
+    || { echo "✗ git-ignore-block: mktemp failed in $(dirname "$TARGET")" >&2; exit 2; }
   awk -v b="$BEGIN" -v e="$END" '
     $0==b{skip=1}
     !skip{print}
     $0==e{skip=0}
-  ' "$TARGET" > "$TARGET.tmp"
-  mv "$TARGET.tmp" "$TARGET"
+  ' "$TARGET" > "$tmp"
+  mv "$tmp" "$TARGET"
 fi
 
 # Append fresh block, with a blank-line separator when the file already has

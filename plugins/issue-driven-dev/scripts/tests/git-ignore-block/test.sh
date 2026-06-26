@@ -75,5 +75,28 @@ bash "$SCRIPT" --target /tmp/x --marker m --direction bogus foo 2>/dev/null
 assert_exit "bad direction exits 2" 2 $?
 bash "$SCRIPT" --marker m --direction exclude foo 2>/dev/null
 assert_exit "missing --target exits 2" 2 $?
+bash "$SCRIPT" --target /tmp/x --direction exclude 2>/dev/null
+assert_exit "missing pattern exits 2" 2 $?
+bash "$SCRIPT" --target 2>/dev/null   # valueless option must not hang/loop
+assert_exit "valueless --target exits 2 (no infinite loop)" 2 $?
+
+# --- Test 7: missing-END corruption → abort, surrounding content preserved ----
+R="$(mk)"
+EXC="$R/.git/info/exclude"
+mkdir -p "$(dirname "$EXC")"
+printf '# >>> %s >>>\n.claude/old/\n# user line AFTER a corrupted (END-less) block\nsecrets/\n' "$MARKER" > "$EXC"
+bash "$SCRIPT" --target "$EXC" --marker "$MARKER" --direction exclude ".claude/.idd/" 2>/dev/null
+assert_exit "missing-END corruption → exit 2 (no delete-to-EOF)" 2 $?
+assert_grep "missing-END: trailing user line preserved" "user line AFTER" "$(cat "$EXC")"
+assert_grep "missing-END: secrets/ line preserved" "secrets/" "$(cat "$EXC")"
+
+# --- Test 8: re-include idempotency (run twice → one block) -------------------
+R="$(mk)"
+printf '.claude/\n' > "$R/.gitignore"
+bash "$SCRIPT" --target "$R/.gitignore" --marker "$MARKER" --direction re-include ".claude/.idd/issue-runs"
+bash "$SCRIPT" --target "$R/.gitignore" --marker "$MARKER" --direction re-include ".claude/.idd/issue-runs"
+RCNT=$(grep -cF "$BEGINLINE" "$R/.gitignore")
+assert_eq "re-include idempotent: begin-sentinel once" "1" "$RCNT"
+refute "re-include idempotent: still trackable" git -C "$R" check-ignore -q .claude/.idd/issue-runs/x.jsonl
 
 print_summary "git-ignore-block"
