@@ -94,4 +94,27 @@ apply_stage45_carveout "$G"
 assert_eq "idempotent: NEW sentinel once after 2 runs" "1" "$(grep -cF "$NEW_SENTINEL" "$G")"
 refute "idempotent: still trackable"              git -C "$R" check-ignore -q .claude/.idd/issue-runs/x.jsonl
 
+# --- Test 4: MIGRATION of pre-#192 4-LINE old block (missing leading !.claude) -
+# The historical #55 code had explicit upgrade logic for a 4-line block (marker
+# present but `!.claude` absent). Confirm migration handles it: strip cleanly,
+# no orphan pattern line, no duplicate.
+R="$(mk)"; G="$R/.gitignore"
+{
+  printf '# user top\n.claude/\n'
+  printf '%s\n' "$OLD_MARKER"
+  printf '# rationale\n'
+  printf '.claude/*\n!.claude/.idd\n.claude/.idd/*\n!.claude/.idd/issue-runs\n'
+  printf '\n# user tail\nnode_modules/\n'
+} > "$G"
+apply_stage45_carveout "$G"
+refute "4-line: OLD marker gone"                  grep -qxF "$OLD_MARKER" "$G"
+assert_eq "4-line: NEW sentinel once"            "1" "$(grep -cF "$NEW_SENTINEL" "$G")"
+# no ORPHAN old pattern line left outside the new sentinel block:
+ORPHANS=$(awk -v b="$NEW_SENTINEL" '$0==b{f=1} f{next} /^(!?\.claude(\/(\*|\.idd(\/(\*|issue-runs))?))?)$/{print}' "$G" | wc -l | tr -d ' ')
+assert_eq "4-line: no orphan carve-out pattern outside new block" "0" "$ORPHANS"
+refute "4-line: run-log trackable"                git -C "$R" check-ignore -q .claude/.idd/issue-runs/x.jsonl
+assert_grep "4-line: user top preserved"          "# user top" "$(cat "$G")"
+assert_grep "4-line: user tail preserved"         "# user tail" "$(cat "$G")"
+require "4-line: node_modules/ still effective"   git -C "$R" check-ignore -q node_modules/x
+
 print_summary "stage45-carveout-migration"

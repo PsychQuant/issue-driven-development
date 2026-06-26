@@ -1466,7 +1466,23 @@ if [ -z "${JSONL_GITIGNORE_DECISION:-}" ]; then
         */.gitignore)                IS_NESTED_GITIGNORE=true  ;;  # nested .gitignore (NOT fixable from root)
         *)                           IS_NESTED_GITIGNORE=false ;;  # other repo-local → defensive fixable
       esac
-      # Agent branches at agent level — see AskUserQuestion section below.
+
+      # Third-party clone detection (#193) — RECOMPUTED here. The IS_THIRD_PARTY
+      # from Step 0.5.E does NOT survive into this gate: each fenced bash block runs
+      # as a fresh shell, and on the config-exists path Step 0.5.E never runs at all
+      # (walk-up config short-circuits it). The gate must derive third-party-ness
+      # itself, exactly as it recomputes IS_NESTED_GITIGNORE above.
+      GATE_ORIGIN=$(git remote get-url origin 2>/dev/null | sed -E 's#.*[:/]([^/]+/[^/]+?)(\.git)?$#\1#')
+      GATE_SELF=$(gh api user --jq .login 2>/dev/null)
+      IS_THIRD_PARTY=false
+      if [ -n "$GATE_SELF" ] && [ -n "$GATE_ORIGIN" ] && [ "${GATE_ORIGIN%%/*}" != "$GATE_SELF" ]; then
+        case "$(gh repo view "$GATE_ORIGIN" --json viewerPermission -q .viewerPermission 2>/dev/null)" in
+          WRITE|MAINTAIN|ADMIN) IS_THIRD_PARTY=false ;;
+          *)                    IS_THIRD_PARTY=true  ;;   # READ/TRIAGE/NONE/probe-fail → fail-safe
+        esac
+      fi
+      # Agent branches at agent level (on $IS_THIRD_PARTY then $IS_NESTED_GITIGNORE)
+      # — see AskUserQuestion section below.
       : # JSONL_GITIGNORE_DECISION set by user choice next
     else
       JSONL_GITIGNORE_DECISION="committed"   # not ignored, silent pass
@@ -1492,7 +1508,7 @@ If detection found ignore shadow → enter the AskUserQuestion deliberation mome
 
 When detection returns "ignored", agent branches first on whether the working tree is a **third-party clone** (#193), then on `$IS_NESTED_GITIGNORE`:
 
-**Case A-TP — third-party clone** (origin owner ≠ you AND no push permission, per the Step 0.5.E hybrid detection: `viewerPermission ∉ {WRITE,MAINTAIN,ADMIN}`) → **`Add carve-out` option is NOT offered**, regardless of `$IS_NESTED_GITIGNORE`. Writing the carve-out into the upstream's tracked `.gitignore` would pollute a repo you don't own — exactly what #192's third-party setup prevents — and with `pr_policy: never` you are not committing the run log anywhere anyway, so it stays local-only. 2-option prose:
+**Case A-TP — third-party clone** (`$IS_THIRD_PARTY = true`, computed in the gate detection block above — origin owner ≠ you AND `viewerPermission ∉ {WRITE,MAINTAIN,ADMIN}`; recomputed at the gate because Step 0.5.E's variable does not survive into this shell) → **`Add carve-out` option is NOT offered**, regardless of `$IS_NESTED_GITIGNORE`. Writing the carve-out into the upstream's tracked `.gitignore` would pollute a repo you don't own — exactly what #192's third-party setup prevents — and with `pr_policy: never` you are not committing the run log anywhere anyway, so it stays local-only. 2-option prose:
 
 > "Multi-finding dispatch will write run log to `.claude/.idd/issue-runs/<run_id>.jsonl`, but this is a third-party clone (`${SOURCE_FILE}` shadows `.claude/`). The run log stays local-only — IDD will not touch this repo's tracked `.gitignore`. Choose:"
 >
@@ -1605,12 +1621,22 @@ case "$JSONL_GITIGNORE_DECISION" in
 
     # (3) Write the carve-out via the shared helper (idempotent BEGIN/END-sentinel
     #     block; re-include direction generates the parent-dir carve-out chain).
-    "$CLAUDE_PLUGIN_ROOT/scripts/git-ignore-block.sh" \
-      --target "$GITIGNORE_FILE" \
-      --marker "IDD jsonl run-log carve-out (#55)" \
-      --direction re-include \
-      ".claude/.idd/issue-runs"
-    # .gitignore change is committed together with the jsonl materialization below
+    #     CHECK the exit code: the helper aborts (exit 2) on a corrupted block
+    #     (BEGIN sentinel without END). Without this check the branch would fall
+    #     through to "materialize + git add + commit", silently report success, and
+    #     leave the run log uncommitted while `.gitignore` is already half-edited
+    #     (the bare-`.claude/` sed ran). Per verify #192 DA HIGH finding.
+    if ! "$CLAUDE_PLUGIN_ROOT/scripts/git-ignore-block.sh" \
+           --target "$GITIGNORE_FILE" \
+           --marker "IDD jsonl run-log carve-out (#55)" \
+           --direction re-include \
+           ".claude/.idd/issue-runs"; then
+      echo "⚠ git-ignore-block helper could not write the carve-out (corrupted block?)." >&2
+      echo "  Falling back to skip-commit: run log written locally but NOT committed." >&2
+      echo "  Inspect '$GITIGNORE_FILE' manually, then re-run to retry the carve-out." >&2
+      JSONL_GITIGNORE_DECISION="skip-commit"   # downstream materialize honors this → no git add
+    fi
+    # On success: .gitignore change is committed together with the jsonl materialization below
     ;;
   "skip-commit")
     # jsonl will be written but not `git add`ed — dispatch summary shows warning
