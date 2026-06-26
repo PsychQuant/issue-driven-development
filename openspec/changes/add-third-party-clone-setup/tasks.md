@@ -4,11 +4,11 @@
 
 ## 1. Shared ignore-block writer primitive
 
-- [ ] 1.1 Write tests for `write_idempotent_ignore_block(target, marker, lines, direction)`: idempotent re-run, stale-block upgrade-in-place, adjacent-content preservation
-- [ ] 1.2 Write tests for direction=exclude → `.git/info/exclude` (`git check-ignore` reports ignored)
-- [ ] 1.3 Write tests for direction=re-include → `.gitignore` parent-dir-excluded carve-out chain
-- [ ] 1.4 Implement the primitive (extract from #55 awk state-machine + 5-line carve-out logic)
-- [ ] 1.5 Place the primitive where both `idd-issue` Stage 4.5 and Step 0.5.E can call it (script under `scripts/` or inline-shared reference)
+- [x] 1.1 Write tests for the primitive: idempotent re-run, stale-block upgrade-in-place, adjacent-content preservation → `scripts/tests/git-ignore-block/test.sh`
+- [x] 1.2 Write tests for direction=exclude → `.git/info/exclude` (`git check-ignore` reports ignored)
+- [x] 1.3 Write tests for direction=re-include → `.gitignore` parent-dir-excluded carve-out chain
+- [x] 1.4 Implement the primitive → `scripts/git-ignore-block.sh` (BEGIN/END-sentinel idempotent block writer; re-include expands the carve-out chain). NOTE: fresh implementation, not a literal extract of #55's awk state-machine — the #55 refactor-onto-this is task 2.
+- [x] 1.5 Placed under `scripts/` so both `idd-issue` Stage 4.5 and Step 0.5.E can call it
 
 ## 2. Refactor #55 Stage 4.5 carve-out onto the primitive
 
