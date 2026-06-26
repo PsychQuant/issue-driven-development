@@ -12,17 +12,15 @@
 
 ## 2. Refactor #55 Stage 4.5 carve-out onto the primitive
 
-> **DEFERRED this apply pass** (resume item). The new feature does not depend on it —
-> the `git-ignore-block.sh` re-include direction is implemented + tested, but porting
-> #55's existing inline awk state-machine onto it requires a **byte-equivalence**
-> reconciliation: the helper uses BEGIN/END sentinels whereas #55 emits a single-marker
-> block, so a literal refactor either (a) changes the helper to match #55's format, or
-> (b) updates #55's fixtures to the sentinel format. That decision + the full fixture
-> port is a self-contained follow-up, safest done as its own commit/review.
+> **RESOLVED (resume pass)** as Option A — behavior-equivalent refactor + migration.
+> byte-equivalence was confirmed infeasible (helper uses BEGIN/END sentinels vs #55's
+> single-marker+comments format). Acceptance criterion amended byte→behavior-equivalent
+> in spec + design D4. Also fixes #193 (third-party clone suppresses the carve-out option).
 
-- [ ] 2.1 Port existing #55 fixtures (root .gitignore / .git/info/exclude / global / stacked / nested) into byte-equivalence harness
-- [ ] 2.2 Refactor Stage 4.5 carve-out to call the primitive (reconcile BEGIN/END-sentinel vs single-marker format)
-- [ ] 2.3 Assert byte-equivalent output for every fixture; assert gate options / summary / `JSONL_GITIGNORE_DECISION` unchanged
+- [x] 2.1 Behavior-equivalence + migration harness → `scripts/tests/stage45-carveout-migration/test.sh` (13 assertions: fresh carve-out, old-format migration no-duplicate + content-preserved, idempotent)
+- [x] 2.2 Refactor Stage 4.5 add-exception to call `git-ignore-block.sh` (migration awk strips old block → bare-`.claude/` sed → helper re-include); same 5-line carve-out → identical `git check-ignore`
+- [x] 2.3 Assert behavior-equivalent (git check-ignore) + gate options / summary / `JSONL_GITIGNORE_DECISION` unchanged (helper test 22/22 confirms helper untouched)
+- [x] 2.4 (#193) Stage 4.5 gate: drop "Add carve-out to .gitignore" option in third-party clones (Case A-TP, mirrors nested Case B) — run log stays local-only
 
 ## 3. idd-issue Step 0.5.E third-party branch
 

@@ -78,7 +78,7 @@ third-party 預設一併寫 `pr_policy: never`（無 push 權 → local direct-c
 - 處理 git「parent-dir-excluded」quirk（單行 `!` 例外在父目錄被 exclude 時無效 → 需 carve-out 鏈；#55 已踩過並驗證 5-line 解法）。
 - **方向**（re-include vs exclude）與**目標檔**（`.gitignore` vs `.git/info/exclude`）由 caller 以參數帶入；primitive 不假設任一方向。
 
-**#55 regression 保證**：refactor 後 Stage 4.5 對 `.gitignore` 寫入的 byte 輸出必須與 refactor 前**位元等價**（用既有 #55 test fixtures 對拍）。primitive 抽取是純 refactor，不改 #55 observable behavior。
+**#55 regression 保證（amended — apply 時發現 byte-equivalence 不可行）**：byte-equivalence 證實**不可能** —— helper 用 BEGIN/END sentinel，舊 #55 block 是 single-marker + rationale-comments 格式；要 byte-equivalent 就得讓 generic helper 複製 #55 的特定格式，抹殺抽取意義。改採 **behavior-equivalence**：refactor 後 `git check-ignore` 結果與 refactor 前**完全一致**（run-log 變 trackable、sibling 仍 ignored、bare `.claude/` 移除、gate options/summary/`JSONL_GITIGNORE_DECISION` 不變），外加**一次性遷移**舊格式 block（偵測舊 marker → strip → helper 寫新 sentinel，不重複）。gate options 不變、user 內容保留。由 `scripts/tests/stage45-carveout-migration/test.sh`（13 assertions）驗證。
 
 ### D5: idd-config init / idd-all 對齊
 

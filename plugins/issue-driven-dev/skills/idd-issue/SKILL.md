@@ -1490,7 +1490,17 @@ If detection found ignore shadow → enter the AskUserQuestion deliberation mome
 
 > **Why prose**: AskUserQuestion is a Claude Code agent-level tool, not a bash function. Embedding `AskUserQuestion(...)` inside bash was a category error caught in /idd-verify #47 P1 finding 2. Same pattern applies here — agent reads bash detection, branches at agent level on detection result, then handles deliberation as prose.
 
-When detection returns "ignored", agent branches on `$IS_NESTED_GITIGNORE`:
+When detection returns "ignored", agent branches first on whether the working tree is a **third-party clone** (#193), then on `$IS_NESTED_GITIGNORE`:
+
+**Case A-TP — third-party clone** (origin owner ≠ you AND no push permission, per the Step 0.5.E hybrid detection: `viewerPermission ∉ {WRITE,MAINTAIN,ADMIN}`) → **`Add carve-out` option is NOT offered**, regardless of `$IS_NESTED_GITIGNORE`. Writing the carve-out into the upstream's tracked `.gitignore` would pollute a repo you don't own — exactly what #192's third-party setup prevents — and with `pr_policy: never` you are not committing the run log anywhere anyway, so it stays local-only. 2-option prose:
+
+> "Multi-finding dispatch will write run log to `.claude/.idd/issue-runs/<run_id>.jsonl`, but this is a third-party clone (`${SOURCE_FILE}` shadows `.claude/`). The run log stays local-only — IDD will not touch this repo's tracked `.gitignore`. Choose:"
+>
+> Options (default = first):
+> - **`Skip commit (local-only)`** — write jsonl locally but don't `git add` (expected for a clone you don't own).
+> - **`Abort`** — discard in-memory run log + exit before materialization.
+
+If NOT a third-party clone, branch on `$IS_NESTED_GITIGNORE`:
 
 **Case A — `IS_NESTED_GITIGNORE=false`** (source is root `.gitignore`, `.git/info/exclude`, or global `core.excludesfile`) → 3-option prose:
 
@@ -1545,54 +1555,24 @@ case "$JSONL_GITIGNORE_DECISION" in
     # we'll never reach here with a nested source.
     GITIGNORE_FILE=".gitignore"
 
-    REWRITE_BLOCK=$(cat <<'BLOCK'
-# IDD multi-finding run log carve-out (idd-issue Stage 4.5, #55)
-# `.claude/` is excluded by some ignore source (root .gitignore, .git/info/exclude,
-# or global core.excludesfile). The `!.claude` line re-includes the parent
-# directory itself via git's last-matching rule (neutralizes any outer source),
-# then `.claude/*` re-excludes everything inside, and the carve-out re-includes
-# only the run-log path. Other contents of .claude/ remain ignored.
-!.claude
-.claude/*
-!.claude/.idd
-.claude/.idd/*
-!.claude/.idd/issue-runs
-BLOCK
-)
+    # Refactored onto the shared git-ignore-block.sh helper (#192 task 2).
+    # Behavior-equivalent to the prior inline implementation: the helper's
+    # re-include direction expands `.claude/.idd/issue-runs` into the SAME 5-line
+    # carve-out chain (!.claude / .claude/* / !.claude/.idd / .claude/.idd/* /
+    # !.claude/.idd/issue-runs) → identical `git check-ignore` results. The block
+    # is now wrapped in BEGIN/END sentinels; a one-time migration strips any
+    # pre-#192 OLD-format block so re-runs don't duplicate. (byte-equivalence was
+    # provably impossible without coupling the generic helper to #55's exact
+    # marker+comments format — see openspec design.md D4 amendment.)
 
-    # Idempotency + upgrade: detect both presence of marker AND that the block
-    # contains the universal `!.claude` parent re-include line (per /idd-verify
-    # --pr 71 round 5 P1.1). The marker alone is insufficient — older versions
-    # of this skill emitted a 4-line block with the SAME marker but missing
-    # `!.claude`, which still loses to stacked ignore sources. We upgrade in
-    # place: if marker present BUT `!.claude` line absent, drop the old block
-    # entirely (delete lines from marker through the next blank line / EOF)
-    # then re-append the current universal 5-line block.
-    # `grep -c` exits non-zero on no-match while still printing "0", so `|| echo 0`
-    # would emit "0\n0" and break the `-ge 1` integer test. Pipe to `wc -l` instead —
-    # always yields a clean integer (0 if grep finds nothing or file is absent).
-    HAS_MARKER=$(grep -xF "# IDD multi-finding run log carve-out (idd-issue Stage 4.5, #55)" "$GITIGNORE_FILE" 2>/dev/null | wc -l | tr -d ' ')
-    HAS_PARENT_REINCLUDE=$(grep -xF "!.claude" "$GITIGNORE_FILE" 2>/dev/null | wc -l | tr -d ' ')
-    NEEDS_REWRITE=true
-    if [ "$HAS_MARKER" -ge 1 ] && [ "$HAS_PARENT_REINCLUDE" -ge 1 ]; then
-      # Both marker and the universal `!.claude` line already present → block is
-      # already the current universal form, skip rewrite.
-      NEEDS_REWRITE=false
-    elif [ "$HAS_MARKER" -ge 1 ]; then
-      # Stale block detected — drop it before re-appending the universal block.
-      # State machine (per /idd-verify --pr 71 round 6 P1.1):
-      #   STATE 0: outside block — print line
-      #   STATE 1: just saw marker, in "header" — only consume # comments adjacent
-      #            to marker (the rationale comments we emit) UNTIL first
-      #            carve-out pattern line; any non-# / non-pattern line ENDS skip
-      #   STATE 2: saw a carve-out pattern — only consume more known patterns;
-      #            after consuming the FINAL pattern `!.claude/.idd/issue-runs`,
-      #            END skip
-      #
-      # CRITICAL: do NOT consume blank lines or arbitrary # comments past STATE 1.
-      # If user has `\n# User section` immediately after our stale block, the
-      # blank line ends skip — user content preserved (round 6 P1.1 regression).
-      awk -v marker="# IDD multi-finding run log carve-out (idd-issue Stage 4.5, #55)" '
+    # (1) MIGRATION — strip any OLD single-marker #55 block (pre-#192 format:
+    #     marker + rationale comments + the 5 pattern lines, no END sentinel). The
+    #     state machine consumes marker → adjacent # comments → the known pattern
+    #     lines, stopping at the final pattern; it never eats blank lines or
+    #     unrelated comments (round-6 P1.1 user-content-preservation preserved).
+    OLD_MARKER="# IDD multi-finding run log carve-out (idd-issue Stage 4.5, #55)"
+    if grep -qxF "$OLD_MARKER" "$GITIGNORE_FILE" 2>/dev/null; then
+      awk -v marker="$OLD_MARKER" '
         function is_block_pattern(line) {
           return (line == "!.claude" \
                || line == ".claude/*" \
@@ -1602,38 +1582,34 @@ BLOCK
         }
         $0 == marker { skip = 1; state = 1; next }
         skip && state == 1 {
-          if ($0 ~ /^#/) { next }                      # rationale comment — consume
-          if (is_block_pattern($0)) { state = 2; next } # entered patterns
-          skip = 0                                      # anything else ends skip
+          if ($0 ~ /^#/) { next }
+          if (is_block_pattern($0)) { state = 2; next }
+          skip = 0
         }
         skip && state == 2 {
-          if ($0 == "!.claude/.idd/issue-runs") {       # last pattern → consume and END
-            skip = 0
-            next
-          }
-          if (is_block_pattern($0)) { next }            # intermediate pattern — consume
-          skip = 0                                      # anything else ends skip
+          if ($0 == "!.claude/.idd/issue-runs") { skip = 0; next }
+          if (is_block_pattern($0)) { next }
+          skip = 0
         }
         { print }
       ' "$GITIGNORE_FILE" > "$GITIGNORE_FILE.tmp"
       mv "$GITIGNORE_FILE.tmp" "$GITIGNORE_FILE"
     fi
-    if [ "$NEEDS_REWRITE" = "true" ]; then
-      # Remove any existing bare `.claude/` or `.claude` line (we're rewriting that
-      # pattern to `.claude/*` which behaves differently per git docs). Use sed -E
-      # for portable BSD/GNU compatibility; rewrite via tempfile to handle the
-      # no-inplace case. Touch first to handle the no-`.gitignore`-yet case
-      # (sed errors on missing file → would abort under `set -e`).
-      touch "$GITIGNORE_FILE"
-      sed -E '/^\.claude\/?$/d' "$GITIGNORE_FILE" > "$GITIGNORE_FILE.tmp"
-      mv "$GITIGNORE_FILE.tmp" "$GITIGNORE_FILE"
-      # Append carve-out at EOF. If file is now empty, emit without leading newline.
-      if [ -s "$GITIGNORE_FILE" ]; then
-        printf '\n%s\n' "$REWRITE_BLOCK" >> "$GITIGNORE_FILE"
-      else
-        printf '%s\n' "$REWRITE_BLOCK" > "$GITIGNORE_FILE"
-      fi
-    fi
+
+    # (2) Remove any bare `.claude/` / `.claude` line — the carve-out re-includes
+    #     `.claude` via `!.claude`; a lingering bare exclude is redundant. touch
+    #     handles the no-`.gitignore`-yet case (sed errors on a missing file).
+    touch "$GITIGNORE_FILE"
+    sed -E '/^\.claude\/?$/d' "$GITIGNORE_FILE" > "$GITIGNORE_FILE.tmp"
+    mv "$GITIGNORE_FILE.tmp" "$GITIGNORE_FILE"
+
+    # (3) Write the carve-out via the shared helper (idempotent BEGIN/END-sentinel
+    #     block; re-include direction generates the parent-dir carve-out chain).
+    "$CLAUDE_PLUGIN_ROOT/scripts/git-ignore-block.sh" \
+      --target "$GITIGNORE_FILE" \
+      --marker "IDD jsonl run-log carve-out (#55)" \
+      --direction re-include \
+      ".claude/.idd/issue-runs"
     # .gitignore change is committed together with the jsonl materialization below
     ;;
   "skip-commit")

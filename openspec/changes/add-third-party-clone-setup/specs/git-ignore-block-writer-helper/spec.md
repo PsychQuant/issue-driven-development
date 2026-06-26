@@ -30,15 +30,24 @@ The plugin SHALL provide a single shared primitive that writes an idempotent, ma
 
 ### Requirement: Stage 4.5 carve-out refactor preserves behavior
 
-The Stage 4.5 (#55) `.gitignore` carve-out logic SHALL be refactored to call the shared primitive, with byte-equivalent output to the pre-refactor implementation.
+The Stage 4.5 (#55) `.gitignore` carve-out logic SHALL be refactored to call the shared primitive, with **behavior-equivalent** output to the pre-refactor implementation. (Byte-equivalence was found infeasible — the helper uses BEGIN/END sentinels whereas the prior #55 block was a single-marker + rationale-comments format; replicating the old format would couple the generic helper to #55's specifics and defeat the extraction. The criterion is therefore identical `git check-ignore` results + a one-time migration of the old format, NOT byte-identical text — see design.md D4.)
 
-#### Scenario: refactored carve-out is byte-equivalent
+#### Scenario: refactored carve-out is behavior-equivalent
 
-- **WHEN** the refactored Stage 4.5 carve-out runs against the existing #55 test fixtures (root `.gitignore`, `.git/info/exclude`, global `core.excludesfile`, and stacked combinations)
-- **THEN** the resulting `.gitignore` content SHALL be byte-equivalent to the pre-refactor output for every fixture
-- **AND** all existing #55 scenarios (add-exception / skip-commit / abort / nested-gitignore) SHALL continue to pass
+- **WHEN** the refactored Stage 4.5 carve-out runs against a `.gitignore` that excludes `.claude/`
+- **THEN** the run-log path `.claude/.idd/issue-runs/<f>.jsonl` SHALL become trackable (`git check-ignore` reports NOT ignored)
+- **AND** sibling `.claude/<other>` paths SHALL remain ignored
+- **AND** the bare `.claude/` line SHALL be removed
+- **AND** the gate's user-facing options, summary lines, and `JSONL_GITIGNORE_DECISION` values SHALL be unchanged
 
-#### Scenario: refactor does not change #55 observable surface
+#### Scenario: one-time migration of pre-#192 old-format block
 
-- **WHEN** Stage 4.5 dispatches the gate decision after the refactor
-- **THEN** the gate's user-facing options, summary lines, and `JSONL_GITIGNORE_DECISION` values SHALL be unchanged
+- **WHEN** the refactored carve-out runs against a `.gitignore` already containing a pre-#192 OLD-format #55 block (single marker `# IDD multi-finding run log carve-out (idd-issue Stage 4.5, #55)` + rationale comments + the 5 pattern lines, no END sentinel)
+- **THEN** the old block SHALL be stripped and replaced by the new BEGIN/END-sentinel block, with **no duplicate** (the new sentinel appears exactly once)
+- **AND** unrelated user content adjacent to the old block SHALL be preserved
+
+#### Scenario: third-party clone suppresses the Add-carve-out option (#193)
+
+- **WHEN** the Stage 4.5 gate fires in a third-party clone (origin owner ≠ you AND no push permission, per Step 0.5.E detection)
+- **THEN** the gate SHALL NOT offer the "Add carve-out chain to `.gitignore`" option (it would pollute a repo you don't own)
+- **AND** SHALL offer only skip-commit (local-only) / abort, keeping the run log local
