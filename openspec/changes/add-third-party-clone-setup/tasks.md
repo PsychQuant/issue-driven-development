@@ -26,8 +26,8 @@
 
 ## 4. config-protocol documentation
 
-- [ ] 4.1 Add third-party detection clause + ordering to mechanism 5
-- [ ] 4.2 Add config-placement × ignore-mechanism decision matrix (own repo / third-party / monorepo)
+- [x] 4.1 Add third-party detection clause + ordering (E2 fork → E-TP → E1) + fail-safe to mechanism 5
+- [x] 4.2 Add config-placement × ignore-mechanism decision matrix (own repo / third-party / monorepo)
 
 ## 5. idd-config init parity
 
