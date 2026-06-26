@@ -148,7 +148,7 @@ fi
 
 # 3. 從 working tree 推導 GITHUB_REPO + post-derive shape assertion (#8)
 GITHUB_REPO=$(git -C "$CWD" remote get-url origin 2>/dev/null \
-    | sed -E 's#.*[:/]([^/]+/[^/]+?)(\.git)?$#\1#') \
+    | sed -E 's#(\.git)?$##; s#.*[:/]([^/]+/[^/]+)$#\1#') \
     || abort "Could not determine github_repo from $CWD/.git/config (no 'origin' remote?)"
 
 # Origin URL might be local path / non-typical format; sed could output garbage.

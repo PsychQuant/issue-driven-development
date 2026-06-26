@@ -202,7 +202,7 @@ AskUserQuestion 列出每個 candidate 和 group 的 label,讓使用者選
 
 ```bash
 # 1. 拿到 origin 的 owner/repo
-ORIGIN=$(git remote get-url origin 2>/dev/null | sed -E 's#.*[:/]([^/]+/[^/]+?)(\.git)?$#\1#')
+ORIGIN=$(git remote get-url origin 2>/dev/null | sed -E 's#(\.git)?$##; s#.*[:/]([^/]+/[^/]+)$#\1#')
 
 # 2. 一次拿 origin 的 fork 狀態、upstream、以及你對它的權限。
 #    viewerPermission 折進這支 gh repo view → 省掉獨立的 push-permission probe(#192)。
@@ -1472,7 +1472,7 @@ if [ -z "${JSONL_GITIGNORE_DECISION:-}" ]; then
       # as a fresh shell, and on the config-exists path Step 0.5.E never runs at all
       # (walk-up config short-circuits it). The gate must derive third-party-ness
       # itself, exactly as it recomputes IS_NESTED_GITIGNORE above.
-      GATE_ORIGIN=$(git remote get-url origin 2>/dev/null | sed -E 's#.*[:/]([^/]+/[^/]+?)(\.git)?$#\1#')
+      GATE_ORIGIN=$(git remote get-url origin 2>/dev/null | sed -E 's#(\.git)?$##; s#.*[:/]([^/]+/[^/]+)$#\1#')
       GATE_SELF=$(gh api user --jq .login 2>/dev/null)
       IS_THIRD_PARTY=false
       if [ -n "$GATE_SELF" ] && [ -n "$GATE_ORIGIN" ] && [ "${GATE_ORIGIN%%/*}" != "$GATE_SELF" ]; then
@@ -1612,31 +1612,31 @@ case "$JSONL_GITIGNORE_DECISION" in
       mv "$GITIGNORE_FILE.tmp" "$GITIGNORE_FILE"
     fi
 
-    # (2) Remove any bare `.claude/` / `.claude` line — the carve-out re-includes
-    #     `.claude` via `!.claude`; a lingering bare exclude is redundant. touch
-    #     handles the no-`.gitignore`-yet case (sed errors on a missing file).
-    touch "$GITIGNORE_FILE"
-    sed -E '/^\.claude\/?$/d' "$GITIGNORE_FILE" > "$GITIGNORE_FILE.tmp"
-    mv "$GITIGNORE_FILE.tmp" "$GITIGNORE_FILE"
-
-    # (3) Write the carve-out via the shared helper (idempotent BEGIN/END-sentinel
+    # (2) Write the carve-out via the shared helper (idempotent BEGIN/END-sentinel
     #     block; re-include direction generates the parent-dir carve-out chain).
-    #     CHECK the exit code: the helper aborts (exit 2) on a corrupted block
-    #     (BEGIN sentinel without END). Without this check the branch would fall
-    #     through to "materialize + git add + commit", silently report success, and
-    #     leave the run log uncommitted while `.gitignore` is already half-edited
-    #     (the bare-`.claude/` sed ran). Per verify #192 DA HIGH finding.
-    if ! "$CLAUDE_PLUGIN_ROOT/scripts/git-ignore-block.sh" \
-           --target "$GITIGNORE_FILE" \
-           --marker "IDD jsonl run-log carve-out (#55)" \
-           --direction re-include \
-           ".claude/.idd/issue-runs"; then
+    #     Runs BEFORE the destructive bare-`.claude/` sed (#192 DA MEDIUM): the
+    #     helper aborts (exit 2) on a corrupted block (BEGIN without END); on abort
+    #     `.gitignore` must NOT already be half-edited. CHECK the exit code —
+    #     without it the branch falls through to "materialize + git add + commit",
+    #     silently reports success, and leaves the run log uncommitted.
+    touch "$GITIGNORE_FILE"
+    if "$CLAUDE_PLUGIN_ROOT/scripts/git-ignore-block.sh" \
+         --target "$GITIGNORE_FILE" \
+         --marker "IDD jsonl run-log carve-out (#55)" \
+         --direction re-include \
+         ".claude/.idd/issue-runs"; then
+      # (3) Helper succeeded → remove any bare `.claude/` / `.claude` line
+      #     (redundant with the `!.claude` re-include). Only after success, so a
+      #     helper abort never leaves `.gitignore` half-edited.
+      sed -E '/^\.claude\/?$/d' "$GITIGNORE_FILE" > "$GITIGNORE_FILE.tmp"
+      mv "$GITIGNORE_FILE.tmp" "$GITIGNORE_FILE"
+      # .gitignore change is committed together with the jsonl materialization below
+    else
       echo "⚠ git-ignore-block helper could not write the carve-out (corrupted block?)." >&2
       echo "  Falling back to skip-commit: run log written locally but NOT committed." >&2
-      echo "  Inspect '$GITIGNORE_FILE' manually, then re-run to retry the carve-out." >&2
+      echo "  .gitignore left untouched by step 3; inspect it, then re-run to retry." >&2
       JSONL_GITIGNORE_DECISION="skip-commit"   # downstream materialize honors this → no git add
     fi
-    # On success: .gitignore change is committed together with the jsonl materialization below
     ;;
   "skip-commit")
     # jsonl will be written but not `git add`ed — dispatch summary shows warning

@@ -50,13 +50,17 @@ apply_stage45_carveout() {
     ' "$GITIGNORE_FILE" > "$GITIGNORE_FILE.tmp"
     mv "$GITIGNORE_FILE.tmp" "$GITIGNORE_FILE"
   fi
-  # (2) remove bare .claude/
+  # (2) helper writes the carve-out — BEFORE the destructive sed (mirrors skill).
+  #     Returns the helper's exit code so callers can assert the failure path.
   touch "$GITIGNORE_FILE"
-  sed -E '/^\.claude\/?$/d' "$GITIGNORE_FILE" > "$GITIGNORE_FILE.tmp"
-  mv "$GITIGNORE_FILE.tmp" "$GITIGNORE_FILE"
-  # (3) helper writes the carve-out
-  bash "$HELPER" --target "$GITIGNORE_FILE" \
-    --marker "IDD jsonl run-log carve-out (#55)" --direction re-include ".claude/.idd/issue-runs"
+  if bash "$HELPER" --target "$GITIGNORE_FILE" \
+       --marker "IDD jsonl run-log carve-out (#55)" --direction re-include ".claude/.idd/issue-runs"; then
+    # (3) on success, remove bare .claude/
+    sed -E '/^\.claude\/?$/d' "$GITIGNORE_FILE" > "$GITIGNORE_FILE.tmp"
+    mv "$GITIGNORE_FILE.tmp" "$GITIGNORE_FILE"
+    return 0
+  fi
+  return 1   # helper failed → skill falls back to skip-commit, sed skipped
 }
 
 # --- Test 1: fresh .gitignore with .claude/ → carve-out makes run-log trackable
@@ -116,5 +120,16 @@ refute "4-line: run-log trackable"                git -C "$R" check-ignore -q .c
 assert_grep "4-line: user top preserved"          "# user top" "$(cat "$G")"
 assert_grep "4-line: user tail preserved"         "# user tail" "$(cat "$G")"
 require "4-line: node_modules/ still effective"   git -C "$R" check-ignore -q node_modules/x
+
+# --- Test 5: helper FAILURE (corrupted block) → sed skipped, .gitignore not half-edited
+# A .gitignore with a BEGIN sentinel but no END makes the helper abort (exit 2).
+# The skill then falls back to skip-commit; crucially the bare-`.claude/` sed must
+# NOT have run (it's gated behind helper success), so the file is not half-edited.
+R="$(mk)"; G="$R/.gitignore"
+printf '# top\n.claude/\n%s\n!.claude\n.claude/*\n' "$NEW_SENTINEL" > "$G"   # BEGIN, no END
+apply_stage45_carveout "$G"; RC=$?
+assert_exit "helper-fail: apply returns non-zero (skill → skip-commit)" 1 "$RC"
+require "helper-fail: bare .claude/ NOT removed (sed skipped, not half-edited)" grep -qxF ".claude/" "$G"
+assert_grep "helper-fail: user top line preserved" "# top" "$(cat "$G")"
 
 print_summary "stage45-carveout-migration"

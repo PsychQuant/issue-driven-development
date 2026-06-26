@@ -228,7 +228,7 @@ Predicates compose with the other mechanisms:
 If no config is found anywhere on the path:
 
 ```bash
-ORIGIN=$(git remote get-url origin 2>/dev/null | sed -E 's#.*[:/]([^/]+/[^/]+?)(\.git)?$#\1#')
+ORIGIN=$(git remote get-url origin 2>/dev/null | sed -E 's#(\.git)?$##; s#.*[:/]([^/]+/[^/]+)$#\1#')
 ```
 
 Then run the **fork-aware + third-party detection** (only `idd-issue` does this; other skills just use origin or prompt). Resolution order (first match wins): **E2 fork → E-TP third-party → E1 own**.

@@ -115,7 +115,7 @@ TaskCreate(name="init_show_result", description="show 一次驗收")
 #### Algorithm（與 idd-issue Step 0.5.E 等價）
 
 ```bash
-ORIGIN=$(git remote get-url origin 2>/dev/null | sed -E 's#.*[:/]([^/]+/[^/]+?)(\.git)?$#\1#')
+ORIGIN=$(git remote get-url origin 2>/dev/null | sed -E 's#(\.git)?$##; s#.*[:/]([^/]+/[^/]+)$#\1#')
 
 if [ -z "$ORIGIN" ]; then
   AskUserQuestion(
