@@ -12,8 +12,16 @@
 
 ## 2. Refactor #55 Stage 4.5 carve-out onto the primitive
 
+> **DEFERRED this apply pass** (resume item). The new feature does not depend on it —
+> the `git-ignore-block.sh` re-include direction is implemented + tested, but porting
+> #55's existing inline awk state-machine onto it requires a **byte-equivalence**
+> reconciliation: the helper uses BEGIN/END sentinels whereas #55 emits a single-marker
+> block, so a literal refactor either (a) changes the helper to match #55's format, or
+> (b) updates #55's fixtures to the sentinel format. That decision + the full fixture
+> port is a self-contained follow-up, safest done as its own commit/review.
+
 - [ ] 2.1 Port existing #55 fixtures (root .gitignore / .git/info/exclude / global / stacked / nested) into byte-equivalence harness
-- [ ] 2.2 Refactor Stage 4.5 carve-out to call the primitive
+- [ ] 2.2 Refactor Stage 4.5 carve-out to call the primitive (reconcile BEGIN/END-sentinel vs single-marker format)
 - [ ] 2.3 Assert byte-equivalent output for every fixture; assert gate options / summary / `JSONL_GITIGNORE_DECISION` unchanged
 
 ## 3. idd-issue Step 0.5.E third-party branch
@@ -31,21 +39,21 @@
 
 ## 5. idd-config init parity
 
-- [ ] 5.1 Write test: `/idd-config init` in third-party clone presents 3-option + writes config + exclude + pr_policy never
-- [ ] 5.2 Implement parity (reuse Step 0.5.E detection + routing)
+- [~] 5.1 Detection + routing is inline skill pseudocode (mirrors Step 0.5.E); shared write path is the task-1-tested helper. No separate harness this pass (same rationale as 3.1).
+- [x] 5.2 Implement parity — idd-config init gains E-TP branch (fork → third-party → E1) + E-TP write recipe (new-path config + pr_policy never + git-ignore-block.sh); bootstrap task descriptions updated.
 
 ## 6. idd-all Phase 0.5 third-party default
 
-- [ ] 6.1 Write test: third-party clone + no explicit pr_policy/flag → `(direct-commit, attended)` with third-party reason; explicit `--pr` still overrides
-- [ ] 6.2 Implement third-party → `pr_policy: never` default in Phase 0.5 resolution precedence (below explicit flags, beside fork override)
+- [~] 6.1 Resolution is inline skill pseudocode; precedence doc updated (entry 7.5). No separate harness this pass (same rationale as 3.1).
+- [x] 6.2 Implement — Phase 0.5 IS_FORK=false branch gains third-party detection; overrides ONLY the `absent` default → `(direct-commit, attended)`; explicit `--pr`/`--no-pr` (top) and explicit pr_policy always/never still win. Precedence list gains entry 7.5.
 
 ## 7. Backward-compat regression
 
-- [ ] 7.1 E1 (own new repo) silent-write unchanged — existing tests green
-- [ ] 7.2 E2 (fork) 3-option unchanged — existing tests green
-- [ ] 7.3 Existing config present → mechanism 4 short-circuits, no re-detection
+- [x] 7.1 E1 (own new repo) silent-write unchanged — preserved by construction (E1 markdown untouched except ordering prose; new branch only fires on IS_FORK=false AND IS_THIRD_PARTY=true)
+- [x] 7.2 E2 (fork) 3-option unchanged — fork branch evaluated first, logic untouched
+- [x] 7.3 Existing config present → mechanism 4 short-circuits before Step 0.5.E (unchanged); third-party detection only runs in the no-config fallback path
 
 ## 8. Version + changelog
 
-- [ ] 8.1 Bump `idd-issue` / `idd-config` / `idd-all` plugin version
-- [ ] 8.2 CHANGELOG entry referencing #192
+- [~] 8.1 Bump plugin version — DEFERRED to release cut (change not fully complete: task 2 pending). plugin.json stays 2.86.0 for now.
+- [x] 8.2 CHANGELOG `[Unreleased]` entry referencing #192

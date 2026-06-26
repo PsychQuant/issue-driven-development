@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Third-party clone setup (#192)** — `idd-issue` Step 0.5.E now detects clones of repos you neither own nor can push to (hybrid: owner-mismatch pre-filter + `viewerPermission` folded into the existing `gh repo view`, ordered fork E2 → third-party E-TP → E1) and offers a 3-option routing (upstream w/ public-visibility warning / your own tracking repo via `--target`, never auto-created / local-only). Third-party config defaults to `pr_policy: never` and is kept out of the upstream via `.git/info/exclude` (never the tracked `.gitignore`). `idd-config init` and `idd-all` Phase 0.5 follow suit; `config-protocol.md` documents the detection + config-placement matrix.
+- **`scripts/git-ignore-block.sh`** — shared idempotent, marker-delimited git ignore-block writer (direction=exclude → `.git/info/exclude`; direction=re-include → `.gitignore` parent-dir carve-out chain) with a fixture test suite. (#192)
+
 ## [2.86.0] - 2026-06-20
 
 ### Added
