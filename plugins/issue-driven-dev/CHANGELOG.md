@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `git-ignore-block.sh`: abort instead of delete-to-EOF when a BEGIN sentinel is present without its END; `mktemp` instead of a predictable temp file; valueless-option arg-parse guard. (#192 verify findings)
+- **macOS/BSD sed portability** — the origin-parsing `sed` used a lazy quantifier `[^/]+?` that is a hard RE error on BSD/macOS sed, silently breaking IDD target resolution (and the new third-party detection) on macOS first-run. Replaced with a POSIX two-step expression across all 6 call sites (idd-issue, idd-config, idd-all, idd-clarify, config-protocol). (#192 verify)
 
 ## [2.86.0] - 2026-06-20
 
