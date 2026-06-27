@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `git-ignore-block.sh`: abort instead of delete-to-EOF when a BEGIN sentinel is present without its END; `mktemp` instead of a predictable temp file; valueless-option arg-parse guard. (#192 verify findings)
 - **macOS/BSD sed portability** — the origin-parsing `sed` used a lazy quantifier `[^/]+?` that is a hard RE error on BSD/macOS sed, silently breaking IDD target resolution (and the new third-party detection) on macOS first-run. Replaced with a POSIX two-step expression across all 6 call sites (idd-issue, idd-config, idd-all, idd-clarify, config-protocol). (#192 verify)
+- `git-ignore-block.sh`: `--target` allowlist — refuse any target whose basename isn't `.gitignore` or `exclude`, so the shared primitive can't be aimed at an executable path like `.git/hooks/pre-commit`. (#194)
+- **Config write-back / walk-up unified on `.claude/.idd/local.json`** — `idd-issue` Step 0.5.E and `idd-config init` now write the new-path config (E-TP already did); `idd-issue` Step 0.5.B and `idd-all` Step 0.2 walk-up resolvers check the new path first then legacy (were legacy-only, out of sync with `config-protocol` mechanism 4 — which also left #192's E-TP config invisible to idd-issue's own walk-up). Legacy `issue-driven-dev.local.json` still resolves. (#195)
+- `idd-all` Phase 0.5: third-party detection is now computed lazily inside the `absent` branch, so explicit `pr_policy: always/never` (and `--pr`/`--no-pr`) no longer pay the `gh api user` + `viewerPermission` probe. (#196)
 
 ## [2.86.0] - 2026-06-20
 
