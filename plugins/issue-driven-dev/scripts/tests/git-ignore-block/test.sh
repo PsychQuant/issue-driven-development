@@ -99,4 +99,16 @@ RCNT=$(grep -cF "$BEGINLINE" "$R/.gitignore")
 assert_eq "re-include idempotent: begin-sentinel once" "1" "$RCNT"
 refute "re-include idempotent: still trackable" git -C "$R" check-ignore -q .claude/.idd/issue-runs/x.jsonl
 
+# --- Test 9: target allowlist (#194) — reject non-ignore-file targets ---------
+bash "$SCRIPT" --target /tmp/idd-hax/.git/hooks/pre-commit --marker m --direction exclude ".x" 2>/dev/null
+assert_exit "#194: .git/hooks/pre-commit target rejected → exit 2" 2 $?
+bash "$SCRIPT" --target /tmp/idd-hax/random.txt --marker m --direction exclude ".x" 2>/dev/null
+assert_exit "#194: arbitrary basename rejected → exit 2" 2 $?
+# allowed basenames still work
+RA="$(mk)"
+bash "$SCRIPT" --target "$RA/.gitignore" --marker "$MARKER" --direction exclude ".claude/.idd/"
+assert_exit "#194: .gitignore basename allowed → exit 0" 0 $?
+bash "$SCRIPT" --target "$RA/.git/info/exclude" --marker "$MARKER" --direction exclude ".claude/.idd/"
+assert_exit "#194: exclude basename allowed → exit 0" 0 $?
+
 print_summary "git-ignore-block"
