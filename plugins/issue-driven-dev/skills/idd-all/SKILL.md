@@ -262,22 +262,23 @@ else
   if [ "$IS_FORK" = "true" ]; then
     PATH_AXIS="PR"; INTERACTION="unattended"; REASON="fork detected (override pr_policy=$PR_POLICY)"
   else
-    # 3.5 third-party clone detection (#192) — overrides ONLY the `absent` default
-    # (explicit --pr/--no-pr handled above; explicit pr_policy always/never below win).
-    SELF_LOGIN=$(gh api user --jq .login 2>/dev/null)
-    IS_THIRD_PARTY=false
-    if [ -n "$SELF_LOGIN" ] && [ "${GITHUB_REPO%%/*}" != "$SELF_LOGIN" ]; then
-      case "$(gh repo view "$GITHUB_REPO" --json viewerPermission -q .viewerPermission 2>/dev/null)" in
-        WRITE|MAINTAIN|ADMIN) IS_THIRD_PARTY=false ;;
-        *)                    IS_THIRD_PARTY=true  ;;   # READ/TRIAGE/NONE/probe-fail → fail-safe
-      esac
-    fi
-
     # 4-5-7. Config-driven non-ask paths
     case "$PR_POLICY" in
       always) PATH_AXIS="PR";            INTERACTION="unattended"; REASON="pr_policy=always" ;;
       never)  PATH_AXIS="direct-commit"; INTERACTION="attended";   REASON="pr_policy=never" ;;
       absent)
+        # third-party clone detection (#192) — computed LAZILY here (#196): only
+        # the `absent` default consults it, so explicit pr_policy=always/never (and
+        # the explicit --pr/--no-pr flags handled earlier) never pay the
+        # `gh api user` + `gh repo view --json viewerPermission` probe.
+        IS_THIRD_PARTY=false
+        SELF_LOGIN=$(gh api user --jq .login 2>/dev/null)
+        if [ -n "$SELF_LOGIN" ] && [ "${GITHUB_REPO%%/*}" != "$SELF_LOGIN" ]; then
+          case "$(gh repo view "$GITHUB_REPO" --json viewerPermission -q .viewerPermission 2>/dev/null)" in
+            WRITE|MAINTAIN|ADMIN) IS_THIRD_PARTY=false ;;
+            *)                    IS_THIRD_PARTY=true  ;;   # READ/TRIAGE/NONE/probe-fail → fail-safe
+          esac
+        fi
         if [ "$IS_THIRD_PARTY" = "true" ]; then
           PATH_AXIS="direct-commit"; INTERACTION="attended"; REASON="third-party clone, no push access (#192)"
         else
