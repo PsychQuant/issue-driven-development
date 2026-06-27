@@ -98,7 +98,7 @@ Fork 有兩種相反的使用情境：
 **在動任何事之前**先用 `TaskCreate` 為這個 stage 建 todo list,確保每個 sub-step 都被追蹤:
 
 ```
-TaskCreate(name="detect_target_repo", description="Step 0.5: 解析 target — --target flag → walked-up config → predicate pre-resolve → fork detection")
+TaskCreate(name="detect_target_repo", description="Step 0.5: 解析 target — --target flag → walked-up config → predicate pre-resolve → fork/third-party detection (順序: fork E2 → third-party E-TP → E1)")
 TaskCreate(name="read_source", description="讀取來源(docx → mcp__che-word-mcp 讀文字 + 列圖片)")
 TaskCreate(name="gather_info", description="Step 2: 蒐集 title / type / priority / description")
 TaskCreate(name="reresolve_target", description="Step 2.5: 用 title/labels 重評 content predicates,若新匹配 != tentative_default 則問使用者要不要切")
@@ -202,21 +202,33 @@ AskUserQuestion 列出每個 candidate 和 group 的 label,讓使用者選
 
 ```bash
 # 1. 拿到 origin 的 owner/repo
-ORIGIN=$(git remote get-url origin 2>/dev/null | sed -E 's#.*[:/]([^/]+/[^/]+?)(\.git)?$#\1#')
+ORIGIN=$(git remote get-url origin 2>/dev/null | sed -E 's#(\.git)?$##; s#.*[:/]([^/]+/[^/]+)$#\1#')
 
-# 2. 查 origin 是不是 fork,以及 upstream 是誰
-REPO_JSON=$(gh repo view "$ORIGIN" --json isFork,parent 2>/dev/null)
+# 2. 一次拿 origin 的 fork 狀態、upstream、以及你對它的權限。
+#    viewerPermission 折進這支 gh repo view → 省掉獨立的 push-permission probe(#192)。
+REPO_JSON=$(gh repo view "$ORIGIN" --json isFork,parent,viewerPermission 2>/dev/null)
 IS_FORK=$(echo "$REPO_JSON" | jq -r '.isFork')
 UPSTREAM=$(echo "$REPO_JSON" | jq -r '.parent.nameWithOwner // empty')
+
+# 3. third-party clone 偵測(hybrid,#192)。owner-mismatch 當 cheap pre-filter;
+#    不符才看權限。viewerPermission ∈ {WRITE,MAINTAIN,ADMIN} = 你能寫 → 視同自己的。
+ORIGIN_OWNER="${ORIGIN%%/*}"
+SELF_LOGIN=$(gh api user --jq .login 2>/dev/null)
+IS_THIRD_PARTY=false
+if [ -n "$SELF_LOGIN" ] && [ "$ORIGIN_OWNER" != "$SELF_LOGIN" ]; then
+  VPERM=$(echo "$REPO_JSON" | jq -r '.viewerPermission // empty')
+  case "$VPERM" in
+    WRITE|MAINTAIN|ADMIN) IS_THIRD_PARTY=false ;;   # org / collaborator 可寫 → 視同自己的
+    READ|TRIAGE)          IS_THIRD_PARTY=true  ;;   # 明確唯讀 → third-party
+    *)                    IS_THIRD_PARTY=true        # 空 / NONE / probe 失敗 → fail-safe，且明示提示
+                          echo "ℹ third-party detection: push-permission probe unavailable for $ORIGIN (viewerPermission='$VPERM') — applying conservative third-party default." >&2 ;;
+  esac
+fi
 ```
 
-接下來按既有邏輯:
+**解析順序（決策,first match wins）:E2 fork → E-TP third-party → E1。** fork 也是別人 upstream,但有自己的語意,必須**先判**,否則 third-party 會把 fork 誤吞 → double-prompt。
 
-**E1. `IS_FORK=false`（不是 fork）**
-
-直接用 origin,**寫入 config 到 `$PWD/.claude/issue-driven-dev.local.json`**,繼續。不需要詢問。
-
-**E2. `IS_FORK=true` 且 `UPSTREAM` 存在** → **強制使用 `AskUserQuestion` 呈現三選項**：
+**E2. `IS_FORK=true` 且 `UPSTREAM` 存在**（最先判） → **強制使用 `AskUserQuestion` 呈現三選項**：
 
 | 選項 | target | 適合情境 |
 |------|--------|---------|
@@ -226,9 +238,21 @@ UPSTREAM=$(echo "$REPO_JSON" | jq -r '.parent.nameWithOwner // empty')
 
 「Both」模式：等同於建立一個 ad-hoc group(primary=upstream, tracking=origin)。Step 3 會走 group flow。
 
+**E-TP. `IS_FORK=false` 且 `IS_THIRD_PARTY=true`**（clone 別人的 repo、你無 push 權,#192） → **強制使用 `AskUserQuestion` 呈現三選項**：
+
+| 選項 | target | 寫入 |
+|------|--------|------|
+| **Upstream**（原作者 `$ORIGIN`） | origin | config `github_repo=$ORIGIN`；⚠ **警示:issue 在原作者公開 repo 上人人可見** |
+| **自己的 tracking repo** | 使用者給的 `--target you/repo`（**不自動建**;缺則問） | config `github_repo=<該 repo>` |
+| **Local-only** | — | 不開 GitHub issue;提示 GitHub-backed idd-* 暫不可用 |
+
+選 Upstream 或 tracking repo → 一律走 **F 的 third-party 寫法**（config 加 `pr_policy: never` + `.claude/.idd/` 寫進 `.git/info/exclude`,不污染對方 repo）。
+
+**E1. `IS_FORK=false` 且 `IS_THIRD_PARTY=false`**（你自己的 repo / 你能寫的 org repo） → 直接用 origin,**寫 config（同既有）**,不需要詢問。與既有行為相同。
+
 #### F. 寫回 config(僅在 Step 0.5.E 觸發時)
 
-無論 E1/E2 選了什麼，都把結果寫入 `$PWD/.claude/issue-driven-dev.local.json`：
+無論 E1/E2/E-TP 選了什麼，都把結果寫入 config（E1/E2 用 `$PWD/.claude/issue-driven-dev.local.json`；E-TP 用新路徑 `$PWD/.claude/.idd/local.json`）：
 
 ```json
 {
@@ -240,6 +264,21 @@ UPSTREAM=$(echo "$REPO_JSON" | jq -r '.parent.nameWithOwner // empty')
 ```
 
 `tracking_upstream` 只在 Both 模式或 fork 情境下寫入（讓後續 skill 知道 upstream 是誰）。
+
+**E-TP（third-party clone）額外寫入（#192）**:除上面 config 外,
+
+1. config 加 `"pr_policy": "never"`（你對 origin 無 push 權 → local direct-commit;見 `idd-all` Phase 0.5）。third-party 的 config 放新路徑 `.claude/.idd/local.json`。
+2. 用共用 helper 把 IDD config 寫進 `.git/info/exclude`（per-clone、不 commit/push、**不動對方 tracked `.gitignore`**）:
+
+```bash
+"$CLAUDE_PLUGIN_ROOT/scripts/git-ignore-block.sh" \
+  --target "$(git rev-parse --git-dir)/info/exclude" \
+  --marker "IDD third-party clone config (#192)" \
+  --direction exclude \
+  ".claude/.idd/" ".claude/issue-driven-dev.local.json" ".claude/issue-driven-dev.local.md"
+```
+
+   helper 是 idempotent（重跑不重複、stale block 原地替換）。寫完 `git check-ignore .claude/.idd/local.json` 應回報 ignored、`git status` 不該出現任何 IDD 檔。為什麼用 `.git/info/exclude` 不改 `.gitignore`:後者是 tracked 檔,改它＝在對方 history 疊 commit＝污染;前者住 `.git/` 內、永不 push、別人 clone 拿不到。
 
 下次執行時 walked-up config 已存在,走 Step 0.5.B → C 路徑,不再詢問。
 
@@ -1427,7 +1466,23 @@ if [ -z "${JSONL_GITIGNORE_DECISION:-}" ]; then
         */.gitignore)                IS_NESTED_GITIGNORE=true  ;;  # nested .gitignore (NOT fixable from root)
         *)                           IS_NESTED_GITIGNORE=false ;;  # other repo-local → defensive fixable
       esac
-      # Agent branches at agent level — see AskUserQuestion section below.
+
+      # Third-party clone detection (#193) — RECOMPUTED here. The IS_THIRD_PARTY
+      # from Step 0.5.E does NOT survive into this gate: each fenced bash block runs
+      # as a fresh shell, and on the config-exists path Step 0.5.E never runs at all
+      # (walk-up config short-circuits it). The gate must derive third-party-ness
+      # itself, exactly as it recomputes IS_NESTED_GITIGNORE above.
+      GATE_ORIGIN=$(git remote get-url origin 2>/dev/null | sed -E 's#(\.git)?$##; s#.*[:/]([^/]+/[^/]+)$#\1#')
+      GATE_SELF=$(gh api user --jq .login 2>/dev/null)
+      IS_THIRD_PARTY=false
+      if [ -n "$GATE_SELF" ] && [ -n "$GATE_ORIGIN" ] && [ "${GATE_ORIGIN%%/*}" != "$GATE_SELF" ]; then
+        case "$(gh repo view "$GATE_ORIGIN" --json viewerPermission -q .viewerPermission 2>/dev/null)" in
+          WRITE|MAINTAIN|ADMIN) IS_THIRD_PARTY=false ;;
+          *)                    IS_THIRD_PARTY=true  ;;   # READ/TRIAGE/NONE/probe-fail → fail-safe
+        esac
+      fi
+      # Agent branches at agent level (on $IS_THIRD_PARTY then $IS_NESTED_GITIGNORE)
+      # — see AskUserQuestion section below.
       : # JSONL_GITIGNORE_DECISION set by user choice next
     else
       JSONL_GITIGNORE_DECISION="committed"   # not ignored, silent pass
@@ -1451,7 +1506,17 @@ If detection found ignore shadow → enter the AskUserQuestion deliberation mome
 
 > **Why prose**: AskUserQuestion is a Claude Code agent-level tool, not a bash function. Embedding `AskUserQuestion(...)` inside bash was a category error caught in /idd-verify #47 P1 finding 2. Same pattern applies here — agent reads bash detection, branches at agent level on detection result, then handles deliberation as prose.
 
-When detection returns "ignored", agent branches on `$IS_NESTED_GITIGNORE`:
+When detection returns "ignored", agent branches first on whether the working tree is a **third-party clone** (#193), then on `$IS_NESTED_GITIGNORE`:
+
+**Case A-TP — third-party clone** (`$IS_THIRD_PARTY = true`, computed in the gate detection block above — origin owner ≠ you AND `viewerPermission ∉ {WRITE,MAINTAIN,ADMIN}`; recomputed at the gate because Step 0.5.E's variable does not survive into this shell) → **`Add carve-out` option is NOT offered**, regardless of `$IS_NESTED_GITIGNORE`. Writing the carve-out into the upstream's tracked `.gitignore` would pollute a repo you don't own — exactly what #192's third-party setup prevents — and with `pr_policy: never` you are not committing the run log anywhere anyway, so it stays local-only. 2-option prose:
+
+> "Multi-finding dispatch will write run log to `.claude/.idd/issue-runs/<run_id>.jsonl`, but this is a third-party clone (`${SOURCE_FILE}` shadows `.claude/`). The run log stays local-only — IDD will not touch this repo's tracked `.gitignore`. Choose:"
+>
+> Options (default = first):
+> - **`Skip commit (local-only)`** — write jsonl locally but don't `git add` (expected for a clone you don't own).
+> - **`Abort`** — discard in-memory run log + exit before materialization.
+
+If NOT a third-party clone, branch on `$IS_NESTED_GITIGNORE`:
 
 **Case A — `IS_NESTED_GITIGNORE=false`** (source is root `.gitignore`, `.git/info/exclude`, or global `core.excludesfile`) → 3-option prose:
 
@@ -1506,54 +1571,24 @@ case "$JSONL_GITIGNORE_DECISION" in
     # we'll never reach here with a nested source.
     GITIGNORE_FILE=".gitignore"
 
-    REWRITE_BLOCK=$(cat <<'BLOCK'
-# IDD multi-finding run log carve-out (idd-issue Stage 4.5, #55)
-# `.claude/` is excluded by some ignore source (root .gitignore, .git/info/exclude,
-# or global core.excludesfile). The `!.claude` line re-includes the parent
-# directory itself via git's last-matching rule (neutralizes any outer source),
-# then `.claude/*` re-excludes everything inside, and the carve-out re-includes
-# only the run-log path. Other contents of .claude/ remain ignored.
-!.claude
-.claude/*
-!.claude/.idd
-.claude/.idd/*
-!.claude/.idd/issue-runs
-BLOCK
-)
+    # Refactored onto the shared git-ignore-block.sh helper (#192 task 2).
+    # Behavior-equivalent to the prior inline implementation: the helper's
+    # re-include direction expands `.claude/.idd/issue-runs` into the SAME 5-line
+    # carve-out chain (!.claude / .claude/* / !.claude/.idd / .claude/.idd/* /
+    # !.claude/.idd/issue-runs) → identical `git check-ignore` results. The block
+    # is now wrapped in BEGIN/END sentinels; a one-time migration strips any
+    # pre-#192 OLD-format block so re-runs don't duplicate. (byte-equivalence was
+    # provably impossible without coupling the generic helper to #55's exact
+    # marker+comments format — see openspec design.md D4 amendment.)
 
-    # Idempotency + upgrade: detect both presence of marker AND that the block
-    # contains the universal `!.claude` parent re-include line (per /idd-verify
-    # --pr 71 round 5 P1.1). The marker alone is insufficient — older versions
-    # of this skill emitted a 4-line block with the SAME marker but missing
-    # `!.claude`, which still loses to stacked ignore sources. We upgrade in
-    # place: if marker present BUT `!.claude` line absent, drop the old block
-    # entirely (delete lines from marker through the next blank line / EOF)
-    # then re-append the current universal 5-line block.
-    # `grep -c` exits non-zero on no-match while still printing "0", so `|| echo 0`
-    # would emit "0\n0" and break the `-ge 1` integer test. Pipe to `wc -l` instead —
-    # always yields a clean integer (0 if grep finds nothing or file is absent).
-    HAS_MARKER=$(grep -xF "# IDD multi-finding run log carve-out (idd-issue Stage 4.5, #55)" "$GITIGNORE_FILE" 2>/dev/null | wc -l | tr -d ' ')
-    HAS_PARENT_REINCLUDE=$(grep -xF "!.claude" "$GITIGNORE_FILE" 2>/dev/null | wc -l | tr -d ' ')
-    NEEDS_REWRITE=true
-    if [ "$HAS_MARKER" -ge 1 ] && [ "$HAS_PARENT_REINCLUDE" -ge 1 ]; then
-      # Both marker and the universal `!.claude` line already present → block is
-      # already the current universal form, skip rewrite.
-      NEEDS_REWRITE=false
-    elif [ "$HAS_MARKER" -ge 1 ]; then
-      # Stale block detected — drop it before re-appending the universal block.
-      # State machine (per /idd-verify --pr 71 round 6 P1.1):
-      #   STATE 0: outside block — print line
-      #   STATE 1: just saw marker, in "header" — only consume # comments adjacent
-      #            to marker (the rationale comments we emit) UNTIL first
-      #            carve-out pattern line; any non-# / non-pattern line ENDS skip
-      #   STATE 2: saw a carve-out pattern — only consume more known patterns;
-      #            after consuming the FINAL pattern `!.claude/.idd/issue-runs`,
-      #            END skip
-      #
-      # CRITICAL: do NOT consume blank lines or arbitrary # comments past STATE 1.
-      # If user has `\n# User section` immediately after our stale block, the
-      # blank line ends skip — user content preserved (round 6 P1.1 regression).
-      awk -v marker="# IDD multi-finding run log carve-out (idd-issue Stage 4.5, #55)" '
+    # (1) MIGRATION — strip any OLD single-marker #55 block (pre-#192 format:
+    #     marker + rationale comments + the 5 pattern lines, no END sentinel). The
+    #     state machine consumes marker → adjacent # comments → the known pattern
+    #     lines, stopping at the final pattern; it never eats blank lines or
+    #     unrelated comments (round-6 P1.1 user-content-preservation preserved).
+    OLD_MARKER="# IDD multi-finding run log carve-out (idd-issue Stage 4.5, #55)"
+    if grep -qxF "$OLD_MARKER" "$GITIGNORE_FILE" 2>/dev/null; then
+      awk -v marker="$OLD_MARKER" '
         function is_block_pattern(line) {
           return (line == "!.claude" \
                || line == ".claude/*" \
@@ -1563,39 +1598,45 @@ BLOCK
         }
         $0 == marker { skip = 1; state = 1; next }
         skip && state == 1 {
-          if ($0 ~ /^#/) { next }                      # rationale comment — consume
-          if (is_block_pattern($0)) { state = 2; next } # entered patterns
-          skip = 0                                      # anything else ends skip
+          if ($0 ~ /^#/) { next }
+          if (is_block_pattern($0)) { state = 2; next }
+          skip = 0
         }
         skip && state == 2 {
-          if ($0 == "!.claude/.idd/issue-runs") {       # last pattern → consume and END
-            skip = 0
-            next
-          }
-          if (is_block_pattern($0)) { next }            # intermediate pattern — consume
-          skip = 0                                      # anything else ends skip
+          if ($0 == "!.claude/.idd/issue-runs") { skip = 0; next }
+          if (is_block_pattern($0)) { next }
+          skip = 0
         }
         { print }
       ' "$GITIGNORE_FILE" > "$GITIGNORE_FILE.tmp"
       mv "$GITIGNORE_FILE.tmp" "$GITIGNORE_FILE"
     fi
-    if [ "$NEEDS_REWRITE" = "true" ]; then
-      # Remove any existing bare `.claude/` or `.claude` line (we're rewriting that
-      # pattern to `.claude/*` which behaves differently per git docs). Use sed -E
-      # for portable BSD/GNU compatibility; rewrite via tempfile to handle the
-      # no-inplace case. Touch first to handle the no-`.gitignore`-yet case
-      # (sed errors on missing file → would abort under `set -e`).
-      touch "$GITIGNORE_FILE"
+
+    # (2) Write the carve-out via the shared helper (idempotent BEGIN/END-sentinel
+    #     block; re-include direction generates the parent-dir carve-out chain).
+    #     Runs BEFORE the destructive bare-`.claude/` sed (#192 DA MEDIUM): the
+    #     helper aborts (exit 2) on a corrupted block (BEGIN without END); on abort
+    #     `.gitignore` must NOT already be half-edited. CHECK the exit code —
+    #     without it the branch falls through to "materialize + git add + commit",
+    #     silently reports success, and leaves the run log uncommitted.
+    touch "$GITIGNORE_FILE"
+    if "$CLAUDE_PLUGIN_ROOT/scripts/git-ignore-block.sh" \
+         --target "$GITIGNORE_FILE" \
+         --marker "IDD jsonl run-log carve-out (#55)" \
+         --direction re-include \
+         ".claude/.idd/issue-runs"; then
+      # (3) Helper succeeded → remove any bare `.claude/` / `.claude` line
+      #     (redundant with the `!.claude` re-include). Only after success, so a
+      #     helper abort never leaves `.gitignore` half-edited.
       sed -E '/^\.claude\/?$/d' "$GITIGNORE_FILE" > "$GITIGNORE_FILE.tmp"
       mv "$GITIGNORE_FILE.tmp" "$GITIGNORE_FILE"
-      # Append carve-out at EOF. If file is now empty, emit without leading newline.
-      if [ -s "$GITIGNORE_FILE" ]; then
-        printf '\n%s\n' "$REWRITE_BLOCK" >> "$GITIGNORE_FILE"
-      else
-        printf '%s\n' "$REWRITE_BLOCK" > "$GITIGNORE_FILE"
-      fi
+      # .gitignore change is committed together with the jsonl materialization below
+    else
+      echo "⚠ git-ignore-block helper could not write the carve-out (corrupted block?)." >&2
+      echo "  Falling back to skip-commit: run log written locally but NOT committed." >&2
+      echo "  .gitignore left untouched by step 3; inspect it, then re-run to retry." >&2
+      JSONL_GITIGNORE_DECISION="skip-commit"   # downstream materialize honors this → no git add
     fi
-    # .gitignore change is committed together with the jsonl materialization below
     ;;
   "skip-commit")
     # jsonl will be written but not `git add`ed — dispatch summary shows warning

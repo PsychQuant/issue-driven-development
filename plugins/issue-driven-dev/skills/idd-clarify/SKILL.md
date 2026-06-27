@@ -131,7 +131,7 @@ done
 # Fallback: derive from origin
 if [ -z "$GITHUB_REPO" ]; then
   GITHUB_REPO=$(git -C "$CWD" remote get-url origin 2>/dev/null \
-    | sed -E 's#.*[:/]([^/]+/[^/]+?)(\.git)?$#\1#')
+    | sed -E 's#(\.git)?$##; s#.*[:/]([^/]+/[^/]+)$#\1#')
 fi
 [ -z "$GITHUB_REPO" ] && abort "Could not resolve target repo. Pass --repo owner/repo or set walked-up config."
 ```

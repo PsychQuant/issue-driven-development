@@ -148,7 +148,7 @@ fi
 
 # 3. 從 working tree 推導 GITHUB_REPO + post-derive shape assertion (#8)
 GITHUB_REPO=$(git -C "$CWD" remote get-url origin 2>/dev/null \
-    | sed -E 's#.*[:/]([^/]+/[^/]+?)(\.git)?$#\1#') \
+    | sed -E 's#(\.git)?$##; s#.*[:/]([^/]+/[^/]+)$#\1#') \
     || abort "Could not determine github_repo from $CWD/.git/config (no 'origin' remote?)"
 
 # Origin URL might be local path / non-typical format; sed could output garbage.
@@ -217,6 +217,7 @@ gh auth status > /dev/null 2>&1 || abort "gh CLI not authenticated. Run: gh auth
 5. pr_policy: always                              → (PR, unattended)
 6. pr_policy: never                               → (direct-commit, attended)
 7. pr_policy: ask (explicitly set)                → AskUserQuestion (Claude tool)
+7.5 third-party clone + pr_policy absent (#192)   → (direct-commit, attended)  [no push access → local; overrides only the absent default]
 8. pr_policy absent (config 缺 / 整個 config 不存在) → (PR, unattended)  [v2.40.0 backward-compat default]
 ```
 
@@ -256,11 +257,28 @@ else
   if [ "$IS_FORK" = "true" ]; then
     PATH_AXIS="PR"; INTERACTION="unattended"; REASON="fork detected (override pr_policy=$PR_POLICY)"
   else
+    # 3.5 third-party clone detection (#192) — overrides ONLY the `absent` default
+    # (explicit --pr/--no-pr handled above; explicit pr_policy always/never below win).
+    SELF_LOGIN=$(gh api user --jq .login 2>/dev/null)
+    IS_THIRD_PARTY=false
+    if [ -n "$SELF_LOGIN" ] && [ "${GITHUB_REPO%%/*}" != "$SELF_LOGIN" ]; then
+      case "$(gh repo view "$GITHUB_REPO" --json viewerPermission -q .viewerPermission 2>/dev/null)" in
+        WRITE|MAINTAIN|ADMIN) IS_THIRD_PARTY=false ;;
+        *)                    IS_THIRD_PARTY=true  ;;   # READ/TRIAGE/NONE/probe-fail → fail-safe
+      esac
+    fi
+
     # 4-5-7. Config-driven non-ask paths
     case "$PR_POLICY" in
       always) PATH_AXIS="PR";            INTERACTION="unattended"; REASON="pr_policy=always" ;;
       never)  PATH_AXIS="direct-commit"; INTERACTION="attended";   REASON="pr_policy=never" ;;
-      absent) PATH_AXIS="PR";            INTERACTION="unattended"; REASON="pr_policy absent (v2.40.0 default)" ;;
+      absent)
+        if [ "$IS_THIRD_PARTY" = "true" ]; then
+          PATH_AXIS="direct-commit"; INTERACTION="attended"; REASON="third-party clone, no push access (#192)"
+        else
+          PATH_AXIS="PR";            INTERACTION="unattended"; REASON="pr_policy absent (v2.40.0 default)"
+        fi
+        ;;
       ask)
         # 6. Explicit ask — break out of bash flow.
         # AskUserQuestion is a Claude tool, NOT a shell command.

@@ -106,8 +106,8 @@ Run `/idd-config init` to create one.
 ```
 TaskCreate(name="init_check_existing", description="若 .claude/issue-driven-dev.local.json 已存在 → AskUserQuestion 確認覆蓋")
 TaskCreate(name="init_detect_origin", description="git remote get-url origin → 取 owner/repo")
-TaskCreate(name="init_check_fork", description="gh repo view --json isFork,parent → fork 偵測")
-TaskCreate(name="init_ask_target", description="AskUserQuestion: Upstream / Own fork / Both — fork=true 時強制問")
+TaskCreate(name="init_check_fork", description="gh repo view --json isFork,parent,viewerPermission → fork + third-party 偵測(#192)")
+TaskCreate(name="init_ask_target", description="AskUserQuestion: fork → Upstream/Own fork/Both;third-party → Upstream/tracking repo/local-only(順序 E2 fork → E-TP → E1)")
 TaskCreate(name="init_write_config", description="寫 .claude/issue-driven-dev.local.json")
 TaskCreate(name="init_show_result", description="show 一次驗收")
 ```
@@ -115,7 +115,7 @@ TaskCreate(name="init_show_result", description="show 一次驗收")
 #### Algorithm（與 idd-issue Step 0.5.E 等價）
 
 ```bash
-ORIGIN=$(git remote get-url origin 2>/dev/null | sed -E 's#.*[:/]([^/]+/[^/]+?)(\.git)?$#\1#')
+ORIGIN=$(git remote get-url origin 2>/dev/null | sed -E 's#(\.git)?$##; s#.*[:/]([^/]+/[^/]+)$#\1#')
 
 if [ -z "$ORIGIN" ]; then
   AskUserQuestion(
@@ -125,15 +125,27 @@ if [ -z "$ORIGIN" ]; then
   # if Enter → prompt for "owner/repo" string
 fi
 
-REPO_JSON=$(gh repo view "$ORIGIN" --json isFork,parent 2>/dev/null)
+REPO_JSON=$(gh repo view "$ORIGIN" --json isFork,parent,viewerPermission 2>/dev/null)
 IS_FORK=$(echo "$REPO_JSON" | jq -r '.isFork')
 UPSTREAM=$(echo "$REPO_JSON" | jq -r '.parent.nameWithOwner // empty')
 
-if [ "$IS_FORK" = "false" ]; then
-  # E1: not a fork → use origin directly
-  TARGET="$ORIGIN"
-  TRACKING_UPSTREAM=""
-elif [ "$IS_FORK" = "true" ] && [ -n "$UPSTREAM" ]; then
+# third-party clone 偵測(hybrid,#192;同 idd-issue Step 0.5.E)
+ORIGIN_OWNER="${ORIGIN%%/*}"
+SELF_LOGIN=$(gh api user --jq .login 2>/dev/null)
+IS_THIRD_PARTY=false
+if [ -n "$SELF_LOGIN" ] && [ "$ORIGIN_OWNER" != "$SELF_LOGIN" ]; then
+  VPERM=$(echo "$REPO_JSON" | jq -r '.viewerPermission // empty')
+  case "$VPERM" in
+    WRITE|MAINTAIN|ADMIN) IS_THIRD_PARTY=false ;;
+    READ|TRIAGE)          IS_THIRD_PARTY=true  ;;
+    *)                    IS_THIRD_PARTY=true        # 空 / NONE / probe 失敗 → fail-safe，且明示提示
+                          echo "ℹ third-party detection: push-permission probe unavailable for $ORIGIN (viewerPermission='$VPERM') — applying conservative third-party default." >&2 ;;
+  esac
+fi
+
+# 解析順序(同 Step 0.5.E):E2 fork → E-TP third-party → E1 own
+TRACKING_UPSTREAM=""; PR_POLICY_OUT=""
+if [ "$IS_FORK" = "true" ] && [ -n "$UPSTREAM" ]; then
   # E2: fork → AskUserQuestion three-option
   AskUserQuestion(
     question="$ORIGIN is a fork of $UPSTREAM. Where do new issues go by default?",
@@ -148,6 +160,25 @@ elif [ "$IS_FORK" = "true" ] && [ -n "$UPSTREAM" ]; then
     "Own fork":   TARGET="$ORIGIN";   TRACKING_UPSTREAM="$UPSTREAM"
     "Both":       TARGET="$UPSTREAM"; TRACKING_UPSTREAM="$ORIGIN"
                   # writes a group entry instead — see below
+elif [ "$IS_THIRD_PARTY" = "true" ]; then
+  # E-TP: third-party clone(無 push 權,#192)→ 三選項,預設不污染對方 repo
+  AskUserQuestion(
+    question="$ORIGIN looks like a third-party clone (not yours, no push access). Where do issues go?",
+    options=[
+      "Upstream ($ORIGIN) — ⚠ public, visible to the author",
+      "Your own tracking repo (enter owner/repo) — not auto-created",
+      "Local-only — no GitHub issues"
+    ]
+  )
+  case "$choice":
+    "Upstream":            TARGET="$ORIGIN"
+    "Your tracking repo":  TARGET="<entered owner/repo>"
+    "Local-only":          TARGET=""        # 不寫 github_repo;提示 GitHub-backed idd-* 暫不可用
+  PR_POLICY_OUT="never"                      # 無 push 權 → local direct-commit
+  # third-party 寫法見下方 "third-party 額外寫入"
+else
+  # E1: 你自己的 repo / 你能寫的 org repo → 直接用 origin
+  TARGET="$ORIGIN"
 fi
 
 mkdir -p .claude
@@ -160,6 +191,36 @@ cat > .claude/issue-driven-dev.local.json <<EOF
 }
 EOF
 ```
+
+#### E-TP（third-party clone）額外寫入（#192）
+
+若走 E-TP 分支且選了 target（非 Local-only），**不**用上面的 cat block，改用 third-party 寫法（同 `idd-issue` Step 0.5.E F 段）：
+
+1. config 寫到**新路徑** `.claude/.idd/local.json`，含 `"pr_policy": "never"`：
+
+```bash
+mkdir -p .claude/.idd
+cat > .claude/.idd/local.json <<EOF
+{
+  "github_repo": "$TARGET",
+  "github_owner": "$(echo $TARGET | cut -d/ -f1)",
+  "attachments_release": "attachments",
+  "pr_policy": "never"
+}
+EOF
+```
+
+2. 用共用 helper 把 IDD config 寫進 `.git/info/exclude`（per-clone、不 commit/push、不動對方 `.gitignore`）：
+
+```bash
+"$CLAUDE_PLUGIN_ROOT/scripts/git-ignore-block.sh" \
+  --target "$(git rev-parse --git-dir)/info/exclude" \
+  --marker "IDD third-party clone config (#192)" \
+  --direction exclude \
+  ".claude/.idd/" ".claude/issue-driven-dev.local.json" ".claude/issue-driven-dev.local.md"
+```
+
+Local-only（`TARGET=""`）：不寫 `github_repo`，提示 GitHub-backed idd-* 暫不可用。
 
 #### "Both" 模式特殊處理
 

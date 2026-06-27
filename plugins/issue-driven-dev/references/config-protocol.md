@@ -228,10 +228,46 @@ Predicates compose with the other mechanisms:
 If no config is found anywhere on the path:
 
 ```bash
-ORIGIN=$(git remote get-url origin 2>/dev/null | sed -E 's#.*[:/]([^/]+/[^/]+?)(\.git)?$#\1#')
+ORIGIN=$(git remote get-url origin 2>/dev/null | sed -E 's#(\.git)?$##; s#.*[:/]([^/]+/[^/]+)$#\1#')
 ```
 
-Then run the **fork-aware detection** (only `idd-issue` does this; other skills just use origin or prompt).
+Then run the **fork-aware + third-party detection** (only `idd-issue` does this; other skills just use origin or prompt). Resolution order (first match wins): **E2 fork → E-TP third-party → E1 own**.
+
+#### Third-party clone detection (#192)
+
+A **third-party clone** is a clone of a repo you neither own nor can push to (reference / tutorial / study material — e.g. `git clone` of someone else's public repo). It is `IS_FORK=false` yet not yours, so it would otherwise fall into E1 and silently route issues to the original author's public tracker + write IDD config into their working tree.
+
+Detection is **hybrid** — owner-mismatch as a cheap pre-filter, repo permission as the decisive signal, with the permission folded into the same `gh repo view` call (no extra round-trip):
+
+```bash
+ORIGIN_OWNER="${ORIGIN%%/*}"
+SELF_LOGIN=$(gh api user --jq .login 2>/dev/null)
+# viewerPermission came from `gh repo view "$ORIGIN" --json isFork,parent,viewerPermission`
+IS_THIRD_PARTY=false
+if [ -n "$SELF_LOGIN" ] && [ "$ORIGIN_OWNER" != "$SELF_LOGIN" ]; then
+  case "$VIEWER_PERMISSION" in
+    WRITE|MAINTAIN|ADMIN) IS_THIRD_PARTY=false ;;   # org / collaborator you can push to
+    *)                    IS_THIRD_PARTY=true  ;;    # READ/TRIAGE/NONE/probe-fail → fail-safe
+  esac
+fi
+```
+
+- **fork precedence**: E2 (fork) is evaluated before third-party. A fork is also owner-mismatch + often no-push, but carries its own contributor/customization/divergent semantics — judging it first prevents a double-prompt.
+- **fail-safe**: if the permission probe is unavailable (auth scope / rate limit / API error) after owner-mismatch matched, default to third-party (prompt) rather than silently using origin.
+
+When third-party is detected, `idd-issue` Step 0.5.E presents a 3-option routing (Upstream w/ public-visibility warning / your own tracking repo via `--target`, never auto-created / local-only) and applies the placement defaults below.
+
+#### Config-placement × ignore-mechanism matrix
+
+Where IDD config lives and how it is ignored depends on the situation:
+
+| Situation | config location | ignore mechanism |
+|---|---|---|
+| Your own repo | `.claude/.idd/local.json`, committed or globally ignored | per team convention |
+| **third-party clone** | `.claude/.idd/local.json` (local) | **`.git/info/exclude`** ignores `.claude/.idd/` — per-clone, never committed/pushed, never touches the upstream's tracked `.gitignore` |
+| monorepo / nested | walk-up config placed above the git repo (non-git parent) | same |
+
+For third-party clones the config also defaults to `"pr_policy": "never"` (no push permission → local direct-commit; see `idd-all` Phase 0.5). The ignore rule is written via the shared `scripts/git-ignore-block.sh` primitive (direction=exclude). Editing the upstream's tracked `.gitignore` is forbidden — it would stack a commit on their history (= pollution); `.git/info/exclude` lives inside `.git/` and never leaves the clone.
 
 ### Mechanism 6 (orthogonal): Groups — multi-repo cross-linked issue creation
 
