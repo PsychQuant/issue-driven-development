@@ -159,10 +159,15 @@ if [[ ! "$GITHUB_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
    Pass --target owner/repo or check 'git -C $CWD remote get-url origin'."
 fi
 
-# 4. Walked-up CONFIG_PATH discovery(從 $CWD 往上找 .claude/issue-driven-dev.local.json)
+# 4. Walked-up CONFIG_PATH discovery(從 $CWD 往上找 IDD config;新路徑優先,#195)
 find_idd_config() {
   local dir="$1"
   while [ "$dir" != "/" ]; do
+    # New path wins at the same level (config-protocol mechanism 4, #195)
+    if [ -f "$dir/.claude/.idd/local.json" ]; then
+      echo "$dir/.claude/.idd/local.json"
+      return 0
+    fi
     if [ -f "$dir/.claude/issue-driven-dev.local.json" ]; then
       echo "$dir/.claude/issue-driven-dev.local.json"
       return 0

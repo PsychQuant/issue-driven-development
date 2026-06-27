@@ -181,8 +181,10 @@ else
   TARGET="$ORIGIN"
 fi
 
-mkdir -p .claude
-cat > .claude/issue-driven-dev.local.json <<EOF
+# #195: write the new path .claude/.idd/local.json (matches config-protocol;
+# legacy issue-driven-dev.local.json still resolves via walk-up fallback).
+mkdir -p .claude/.idd
+cat > .claude/.idd/local.json <<EOF
 {
   "github_repo": "$TARGET",
   "github_owner": "$(echo $TARGET | cut -d/ -f1)",
