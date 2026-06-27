@@ -51,6 +51,16 @@ case "$DIRECTION" in
   *) echo "✗ git-ignore-block: --direction must be exclude|re-include (got '${DIRECTION}')" >&2; exit 2 ;;
 esac
 
+# Target allowlist (#194) — the helper only ever writes git ignore files. Reject
+# any other --target so a future caller passing untrusted input can't write to an
+# executable path like .git/hooks/pre-commit (which git RUNS). The legitimate
+# targets are `.gitignore` (any dir) and `.git/info/exclude` (basename `exclude`).
+TARGET_BASE="$(basename "$TARGET")"
+case "$TARGET_BASE" in
+  .gitignore|exclude) ;;
+  *) echo "✗ git-ignore-block: --target basename '$TARGET_BASE' not allowed — only '.gitignore' or 'exclude' (refusing to write outside git ignore files)." >&2; exit 2 ;;
+esac
+
 # --- Build block body ---------------------------------------------------------
 BODY=()
 if [ "$DIRECTION" = "exclude" ]; then
