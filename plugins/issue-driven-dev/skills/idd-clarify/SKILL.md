@@ -120,6 +120,11 @@ git -C "$CWD" rev-parse --git-dir > /dev/null 2>&1 || abort "$CWD is not a git r
 GITHUB_REPO=""
 DIR="$CWD"
 while [ "$DIR" != "/" ]; do
+  # New path wins at the same level, legacy fallback (config-protocol mechanism 4, #195)
+  if [ -f "$DIR/.claude/.idd/local.json" ]; then
+    GITHUB_REPO=$(jq -r '.github_repo // empty' "$DIR/.claude/.idd/local.json" 2>/dev/null)
+    [ -n "$GITHUB_REPO" ] && break
+  fi
   if [ -f "$DIR/.claude/issue-driven-dev.local.json" ]; then
     GITHUB_REPO=$(jq -r '.github_repo // empty' "$DIR/.claude/issue-driven-dev.local.json" 2>/dev/null)
     [ -n "$GITHUB_REPO" ] && break

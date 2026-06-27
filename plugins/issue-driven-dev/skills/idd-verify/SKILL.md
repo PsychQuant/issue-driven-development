@@ -107,10 +107,10 @@ authoritative_source = first_exists([
 按 [config-protocol](../../references/config-protocol.md) 解析 target repo:
 
 - `--repo owner/repo` flag → per-invocation override
-- Walk-up `.claude/issue-driven-dev.local.json`(從 cwd 往上找)
+- Walk-up IDD config(新路徑 `.claude/.idd/local.json` 優先,legacy 次之;從 cwd 往上找)
 - Path / git predicates 自動匹配
 
-如完全找不到 config,詢問 `github_repo` 並建立 `$PWD/.claude/issue-driven-dev.local.json`。
+如完全找不到 config,詢問 `github_repo` 並建立**新路徑** `$PWD/.claude/.idd/local.json`（#195;`mkdir -p .claude/.idd` 先）。
 
 **Group/predicate 行為**:`idd-verify` 操作既存 issue,只用 path/git 類 predicate。Group config 會 fall through 到 primary repo。
 

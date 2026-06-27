@@ -61,7 +61,7 @@ allowed-tools:
 #### Steps
 
 ```
-TaskCreate(name="show_walk_config", description="從 cwd 往上 walk 找 .claude/issue-driven-dev.local.json")
+TaskCreate(name="show_walk_config", description="從 cwd 往上 walk 找 IDD config（新路徑 .claude/.idd/local.json 優先,legacy 次之,#195）")
 TaskCreate(name="show_resolve_target", description="若有 candidates/groups，跑 path-class predicate 解析 tentative target")
 TaskCreate(name="show_print", description="輸出 config path / github_repo / tracking_upstream / candidates / groups / resolved")
 ```
@@ -104,11 +104,11 @@ Run `/idd-config init` to create one.
 #### Steps
 
 ```
-TaskCreate(name="init_check_existing", description="若 .claude/issue-driven-dev.local.json 已存在 → AskUserQuestion 確認覆蓋")
+TaskCreate(name="init_check_existing", description="若 .claude/.idd/local.json（或 legacy .claude/issue-driven-dev.local.json）已存在 → AskUserQuestion 確認覆蓋")
 TaskCreate(name="init_detect_origin", description="git remote get-url origin → 取 owner/repo")
 TaskCreate(name="init_check_fork", description="gh repo view --json isFork,parent,viewerPermission → fork + third-party 偵測(#192)")
 TaskCreate(name="init_ask_target", description="AskUserQuestion: fork → Upstream/Own fork/Both;third-party → Upstream/tracking repo/local-only(順序 E2 fork → E-TP → E1)")
-TaskCreate(name="init_write_config", description="寫 .claude/issue-driven-dev.local.json")
+TaskCreate(name="init_write_config", description="寫新路徑 .claude/.idd/local.json（#195；mkdir -p .claude/.idd 先）")
 TaskCreate(name="init_show_result", description="show 一次驗收")
 ```
 
@@ -248,7 +248,7 @@ Local-only（`TARGET=""`）：不寫 `github_repo`，提示 GitHub-backed idd-* 
 
 ### `validate`
 
-讀 `.claude/issue-driven-dev.local.json`，schema 檢查。
+讀 IDD config（新路徑 `.claude/.idd/local.json` 優先,legacy `.claude/issue-driven-dev.local.json` 次之,#195），schema 檢查。
 
 ```bash
 /idd-config validate
@@ -257,7 +257,7 @@ Local-only（`TARGET=""`）：不寫 `github_repo`，提示 GitHub-backed idd-* 
 #### Steps
 
 ```
-TaskCreate(name="validate_load", description="讀 .claude/issue-driven-dev.local.json，JSON parse")
+TaskCreate(name="validate_load", description="讀 IDD config（.claude/.idd/local.json 優先,legacy 次之,#195），JSON parse")
 TaskCreate(name="validate_schema", description="檢查 required fields + 各 candidates/groups 結構")
 TaskCreate(name="validate_repo_exists", description="對 github_repo / candidates[].github_repo / groups[].repos[].github_repo 跑 gh repo view 驗證實際存在")
 TaskCreate(name="validate_predicate_form", description="when 區塊 path_contains / title_matches 等 key 是 known set")

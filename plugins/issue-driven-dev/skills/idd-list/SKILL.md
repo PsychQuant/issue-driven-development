@@ -183,7 +183,9 @@ for issue_num in issue_to_prs:
 ```python
 import json, pathlib
 
-config_path = pathlib.Path('.claude/issue-driven-dev.local.json')
+config_path = pathlib.Path('.claude/.idd/local.json')                   # new path first (#195)
+if not config_path.exists():
+    config_path = pathlib.Path('.claude/issue-driven-dev.local.json')  # legacy fallback
 cluster_leader_rule = "lowest"  # default
 if config_path.exists():
     cluster_leader_rule = json.loads(config_path.read_text()).get('cluster_leader', 'lowest')
