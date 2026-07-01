@@ -15,6 +15,25 @@ A Claude Code plugin that enforces issue-driven development as a complete method
 4. **Every completion is independently verified** — no "looks good enough"
 5. **Every closure is documented** — knowledge preserved
 
+## Runtime support
+
+Claude Code is the canonical runtime for IDD skills. The shared `skills/` tree is the canonical
+source of workflow semantics; non-Claude runtimes are compatibility consumers of those same skills.
+
+Other runtimes, including Codex, can load or interpret the shared skills when a platform shell or
+adapter is available, but shared skill loading does not imply full runtime parity. If a runtime
+cannot preserve a Claude-defined workflow gate, it must mark the fallback as degraded instead of
+silently weakening the IDD contract.
+
+Runtime mapping references:
+
+- [`references/claude-code-tools.md`](references/claude-code-tools.md) — native Claude Code tool contracts
+- [`references/codex-tools.md`](references/codex-tools.md) — Codex compatibility mapping and degraded fallback rules
+
+The project does not maintain a `skills-codex/` fork. Forked skill trees are a last resort and need
+a documented incompatibility that cannot be handled through references, adapters, or plugin shell
+metadata.
+
 ## Why?
 
 Each skill guards against a specific failure mode:
