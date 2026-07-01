@@ -242,7 +242,9 @@ Detection is **hybrid** — owner-mismatch as a cheap pre-filter, repo permissio
 ```bash
 ORIGIN_OWNER="${ORIGIN%%/*}"
 SELF_LOGIN=$(gh api user --jq .login 2>/dev/null)
-# viewerPermission came from `gh repo view "$ORIGIN" --json isFork,parent,viewerPermission`
+# viewerPermission AND isPrivate both come from the SAME
+#   `gh repo view "$ORIGIN" --json isFork,parent,viewerPermission,isPrivate`
+# call (no extra round-trip; isPrivate folded in for the privacy-scrubbing gate, #202).
 IS_THIRD_PARTY=false
 if [ -n "$SELF_LOGIN" ] && [ "$ORIGIN_OWNER" != "$SELF_LOGIN" ]; then
   case "$VIEWER_PERMISSION" in
@@ -254,6 +256,27 @@ fi
 
 - **fork precedence**: E2 (fork) is evaluated before third-party. A fork is also owner-mismatch + often no-push, but carries its own contributor/customization/divergent semantics — judging it first prevents a double-prompt.
 - **fail-safe**: if the permission probe is unavailable (auth scope / rate limit / API error) after owner-mismatch matched, default to third-party (prompt) rather than silently using origin.
+
+#### Repo-visibility → privacy-scrubbing gate strictness (#202)
+
+The same `gh repo view` classification also drives the **privacy-scrubbing gate**
+(openspec change `add-privacy-scrubbing-gate`, [`rules/privacy-scrubbing.md`](../rules/privacy-scrubbing.md)),
+which every IDD skill runs before `gh issue create/comment/edit` egress. The
+`isPrivate` field is **added to the existing `--json` list** (`isFork,parent,viewerPermission,isPrivate`)
+— **zero extra round-trip**, same fold-in technique as the #192 permission probe:
+
+| Visibility | Predicate | Gate level |
+|---|---|---|
+| **third-party** | `viewerPermission ∉ {WRITE, MAINTAIN, ADMIN}` (reuses the detection above, incl. fail-safe) | **ENFORCE** — block-with-diff + require confirm |
+| **own-public** | you have write access **AND** `isPrivate=false` | **WARN** — flag, default proceed |
+| **private** | `isPrivate=true` | **LIGHT** — no block on ordinary identifiers |
+
+Adding `isPrivate` **resolves the push-permission proxy residue** flagged at
+`add-third-party-clone-setup/design.md:145`: push-permission alone conflated
+own-public with own-private, so the gate could not differentiate their strictness.
+With `isPrivate` folded in, own-public → WARN and private → LIGHT split cleanly.
+(The semantic residue — "is *this* name/content private?" — is separate and stays
+LLM-judgment; see the change's Open Question Q2.)
 
 When third-party is detected, `idd-issue` Step 0.5.E presents a 3-option routing (Upstream w/ public-visibility warning / your own tracking repo via `--target`, never auto-created / local-only) and applies the placement defaults below.
 
