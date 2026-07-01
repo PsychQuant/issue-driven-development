@@ -147,6 +147,12 @@ Additive + phased。Phase 1：新增 `rules/privacy-scrubbing.md` + `scripts/gh-
 
 wrapper 如何 deterministically 確認「自審跑過」？候選：(a) 必填 flag（`--scrub-attested`）由自審步驟末尾產生；(b) structured handshake token（self-review 輸出一段 wrapper 驗證的 marker）；(c) two-call protocol（先 `gh-egress.sh review` 再 `dispatch`，wrapper 記 state）。傾向 (a)/(b) 的輕量形式。**確切格式 apply-time 定**，不在 proposal 凍死。原則：保證「步驟存在」的 determinism，不假裝保證「判斷正確」。
 
+**RESOLVED (apply-time, Phase 1)**：採**候選 (a)** — 必填 flag `--scrub-attested <level>`，其值是 Step 0.6 解析出的 repo-visibility 嚴格度（`enforce` | `warn` | `light`）。理由：
+- **encode level 而非 bare boolean / magic token** — caller 沒跑過 repo-visibility classification 就產不出合法 level，所以 attestation 證的是「整個 Step 0.6 gate 跑過」，不只是「有人補了個 flag」。wrapper 驗 `<level> ∈ {enforce,warn,light}`，非法值同樣 refuse（exit 3）。
+- **per-call flag 而非 env var** — env var 可能被 globally 設著、silently 滿足未來每一次 dispatch，破壞 per-dispatch determinism。flag 每次呼叫都要顯式帶。
+- **level 對 wrapper 是 informational** — 機械 net 是 level-independent（連 LIGHT 都攔那 2 個字面項）；ENFORCE/WARN/LIGHT 的行為差異在 LLM 層（block-with-diff / flag / light），在 dispatch 之前。
+- Exit codes：0 dispatched、2 usage、3 attestation missing/invalid、4 mechanical net hit。encode 在 `scripts/gh-egress.sh` header + `rules/privacy-scrubbing.md`。
+
 ### Q2: 人名 / 「什麼算 private」的語意殘留（residue，不靜默吞掉）
 
 D3 的 `isPrivate` query 解掉了 **visibility proxy** 殘留（own-public vs own-private 現在可分）。但**「這個人名/這段內容是否私人」永遠是 LLM 語意判斷**，不是機械可判定——這是 D1 的直接後果，也是刻意的（固定名單必漏必誤傷）。明確標記為 **acknowledged residue**：gate 的偵測品質等同當下 LLM 的語意判斷品質，會隨模型演進，不承諾「零漏判」。這與 `.claude/rules/attribute-assessment.md` 一致——AI judgment + 揭露理由 > 藏在規則後的機械誤判。
