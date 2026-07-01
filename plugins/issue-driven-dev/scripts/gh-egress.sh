@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+# gh-egress.sh — the single deterministic choke-point wrapper for GitHub issue
+# egress (PsychQuant/issue-driven-development#202, openspec change
+# add-privacy-scrubbing-gate, design D2).
+#
+# WHY THIS EXISTS
+#   Every IDD skill dispatches AI-drafted issue bodies to GitHub via
+#   `gh issue create|comment|edit`. Past the egress boundary the content is
+#   public / notified / unrecoverable. Detection of private identifiers is an
+#   LLM SEMANTIC self-review (design D1 — no regex denylist, no name-detector).
+#   But "did the self-review actually run?" cannot be left to the AI remembering
+#   across 12 sites / long context / unattended /loop. This wrapper makes the
+#   EXISTENCE of the gate deterministic while leaving the CONTENT of detection to
+#   the LLM. All egress routes through here instead of raw `gh issue ...`.
+#
+# WHAT IT DOES (and ONLY this — design D2)
+#   (a) Enforce the self-review attestation. The calling skill, after running the
+#       privacy self-review (rules/privacy-scrubbing.md) and resolving the
+#       repo-visibility strictness level, passes `--scrub-attested <level>`.
+#       Missing / invalid attestation → REFUSE dispatch (non-zero exit). This
+#       guarantees the step EXISTS; it does not pretend to guarantee the
+#       judgment was correct (that is the LLM's + the ENFORCE block-with-diff's
+#       job — see rules/privacy-scrubbing.md).
+#   (b) A tiny mechanical LAST-RESORT net catching ONLY 2 zero-tolerance LITERAL
+#       items, as belt-and-suspenders for an LLM miss:
+#         1. an absolute macOS home path `/Users/<name>`
+#         2. verbatim `~/.claude.json` content (the path token, or a project-path
+#            string copied out of the user's actual ~/.claude.json)
+#       This net is LEVEL-INDEPENDENT (fires even at LIGHT) because these two are
+#       absolute zero-tolerance leaks, not "ordinary identifiers".
+#
+# WHAT IT MUST NOT DO
+#   No semantic pattern matching. No maintained denylist. No name detection. The
+#   semantic breadth of "is this private?" is 100% the LLM self-review's job
+#   (design D1). Expanding this net beyond the 2 literal items requires a
+#   separate openspec change (spec: "net does not grow into semantic matching").
+#
+# ATTESTATION FORMAT — Open Question Q1 resolution (chosen at apply time)
+#   Mechanism (a) from design.md Q1: a REQUIRED flag `--scrub-attested <level>`
+#   whose value is the resolved gate strictness (`enforce` | `warn` | `light`).
+#   Rationale: encoding the resolved LEVEL (not a bare boolean/magic token) means
+#   the caller cannot attest without having run the repo-visibility
+#   classification that produces the level — so the attestation proves the whole
+#   Step-0.6 gate ran, not merely that some flag was appended. The flag is
+#   per-call (not an env var) so it cannot be left globally set and silently
+#   satisfy every future dispatch. The level is informational to the wrapper (the
+#   mechanical net is level-independent); ENFORCE/WARN/LIGHT behavior differences
+#   live in the LLM layer, upstream of dispatch.
+#
+# USAGE
+#   gh-egress.sh <create|comment|edit> [gh issue <verb> args...] \
+#                --scrub-attested <enforce|warn|light>
+#
+#   On success the wrapper `exec`s the real gh so stdout / stderr / exit code are
+#   byte-for-byte the same as calling `gh issue <verb> ...` directly (backward
+#   compat: callers that capture `URL=$(... )` are unaffected).
+#
+# EXIT CODES
+#   0  dispatched (exec gh)          2  usage error (bad/missing verb)
+#   3  attestation missing/invalid   4  mechanical net hit (refused)
+#
+# TEST OVERRIDES (test-only; never set in production)
+#   IDD_GH_BIN       gh binary to exec       (default: gh)
+#   IDD_CLAUDE_JSON  claude.json to probe    (default: $HOME/.claude.json)
+
+set -u
+
+usage() {
+  echo "✗ gh-egress: usage: gh-egress.sh <create|comment|edit> [gh args...] --scrub-attested <enforce|warn|light>" >&2
+}
+
+# --- verb (first positional) -------------------------------------------------
+VERB="${1:-}"
+case "$VERB" in
+  create|comment|edit) shift ;;
+  "") echo "✗ gh-egress: missing egress verb." >&2; usage; exit 2 ;;
+  *)  echo "✗ gh-egress: unknown egress verb '$VERB' (only create|comment|edit route through this gate)." >&2; usage; exit 2 ;;
+esac
+
+# --- parse: pull out --scrub-attested, forward everything else verbatim -------
+ATTESTED=""
+GH_ARGS=()          # forwarded to gh, byte-identical minus the attestation flag
+SCAN_PARTS=()       # only the drafted prose (--body / --title / --body-file) is scanned
+next_is=""          # "body" | "title" | "bodyfile" when the previous arg expects a value
+while [ $# -gt 0 ]; do
+  arg="$1"
+  case "$arg" in
+    --scrub-attested)
+      [ $# -ge 2 ] || { echo "✗ gh-egress: --scrub-attested needs a value." >&2; exit 3; }
+      ATTESTED="$2"; shift 2; continue ;;
+    --scrub-attested=*)
+      ATTESTED="${arg#--scrub-attested=}"; shift; continue ;;
+    -b|--body|-t|--title)
+      GH_ARGS+=("$arg")
+      case "$arg" in -t|--title) next_is="title" ;; *) next_is="body" ;; esac
+      shift; continue ;;
+    --body=*)   GH_ARGS+=("$arg"); SCAN_PARTS+=("${arg#--body=}");   shift; continue ;;
+    --title=*)  GH_ARGS+=("$arg"); SCAN_PARTS+=("${arg#--title=}");  shift; continue ;;
+    -F|--body-file)
+      GH_ARGS+=("$arg"); next_is="bodyfile"; shift; continue ;;
+    --body-file=*) GH_ARGS+=("$arg"); next_is=""; f="${arg#--body-file=}"
+      [ -r "$f" ] && SCAN_PARTS+=("$(cat "$f")"); shift; continue ;;
+    *)
+      GH_ARGS+=("$arg")
+      case "$next_is" in
+        body|title) SCAN_PARTS+=("$arg") ;;
+        bodyfile)   [ -r "$arg" ] && SCAN_PARTS+=("$(cat "$arg")") ;;
+      esac
+      next_is=""; shift; continue ;;
+  esac
+done
+
+# --- (a) attestation enforcement (deterministic) -----------------------------
+case "$ATTESTED" in
+  enforce|warn|light) : ;;
+  "") echo "✗ gh-egress: REFUSED — privacy self-review attestation missing." >&2
+      echo "  Run the privacy-scrubbing self-review (rules/privacy-scrubbing.md), then pass" >&2
+      echo "  --scrub-attested <enforce|warn|light> (the resolved repo-visibility strictness)." >&2
+      exit 3 ;;
+  *)  echo "✗ gh-egress: REFUSED — invalid attestation level '$ATTESTED' (expected enforce|warn|light)." >&2
+      exit 3 ;;
+esac
+
+# --- (b) mechanical last-resort net (2 zero-tolerance literal items) ----------
+# Joined once; the net only ever inspects the drafted prose, never --repo /
+# --label / --milestone etc. (so metadata-only edits are never false-flagged).
+SCAN=""
+for p in "${SCAN_PARTS[@]:-}"; do SCAN+="$p"$'\n'; done
+
+net_refuse() { echo "✗ gh-egress: REFUSED — mechanical net caught $1." >&2
+  echo "  Zero-tolerance literal leak (belt-and-suspenders backstop; the LLM self-review normally catches this)." >&2
+  echo "  Redact it (e.g. /Users/<name> → ~, drop the ~/.claude.json excerpt), then re-dispatch." >&2
+  exit 4; }
+
+# 1. absolute macOS home path /Users/<name> — require a real name char right
+#    after the slash so the /Users/<name> placeholder (angle bracket) and a bare
+#    /Users/ do NOT match (design: "literal absolute home path", not a pattern set).
+if printf '%s' "$SCAN" | grep -qE '/Users/[A-Za-z0-9._-]'; then
+  net_refuse "an absolute /Users/<name> home path"
+fi
+
+# 2. verbatim ~/.claude.json content.
+#    (i) the literal path/filename token.
+if printf '%s' "$SCAN" | grep -qF '.claude.json'; then
+  net_refuse "a verbatim ~/.claude.json reference"
+fi
+#    (ii) a project-path string copied verbatim out of the user's actual
+#         ~/.claude.json (the "project basename leaks local folder structure"
+#         threat). Extract quoted absolute-path strings (>=2 slashes, >=12 chars)
+#         and match any verbatim in the drafted prose. One grep, no jq dependency.
+CJSON="${IDD_CLAUDE_JSON:-$HOME/.claude.json}"
+if [ -n "$SCAN" ] && [ -r "$CJSON" ]; then
+  KEYS="$(grep -oE '"(/[^"]{11,})"' "$CJSON" 2>/dev/null \
+            | sed -E 's/^"//; s/"$//' \
+            | grep -E '/[^/]+/' \
+            | sort -u)"
+  if [ -n "$KEYS" ] && printf '%s' "$SCAN" | grep -qFf <(printf '%s\n' "$KEYS"); then
+    net_refuse "verbatim content copied from ~/.claude.json"
+  fi
+fi
+
+# --- dispatch: byte-for-byte identical to raw `gh issue <verb> ...` -----------
+GH_BIN="${IDD_GH_BIN:-gh}"
+exec "$GH_BIN" issue "$VERB" "${GH_ARGS[@]:-}"
