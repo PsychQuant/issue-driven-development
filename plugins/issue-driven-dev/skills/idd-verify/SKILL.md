@@ -168,27 +168,54 @@ esac
 >
 > **方向性注意**：預設 opus 的降負載效益只在 session tier **高於** opus 時成立（#205 事故 session 為 Fable 級；live 證實 run wf_6c1d8ee6-5f3——fable session + `agentModel:'opus'` → 六個 agent transcript 全記錄 `claude-opus-4-8`，是真降級）。session 本身跑 sonnet/haiku 時，預設 opus 反而是**升級**——要壓低成本請顯式 `IDD_AGENT_MODEL=sonnet` 或 `haiku`。
 
-**Capability detection + fallback（D4）**：
+**Backend 解析鏈（#207 三層：canonical → vendored fallback → manual；原 D4）**：
 
 ```
-若 dynamic-workflow primitive 可用（version gate）:
-    write $DIFF 到 temp 檔 $DIFF_FILE   # 大 diff 不塞 inline args (Workflow tool 會把 args JSON-stringify；ensemble-workflow.js 已防禦性 parse，並支援 args.diffFile 讓 reviewer agents 用 file-read tool 讀，避免 escape 地獄 + prompt 膨脹)
-    # #147: 在 skill-run context 把 $CLAUDE_PLUGIN_ROOT **解析成絕對路徑**再 thread。
-    # 關鍵：傳「已解析」的值（如 /Users/.../cache/.../2.78.0/bin/codex-call），不是字面字串
-    # "$CLAUDE_PLUGIN_ROOT/bin/codex-call" —— workflow subagent 的 shell 沒有 $CLAUDE_PLUGIN_ROOT，
-    # 沒先解析的話 agent 端展開會得到空字串 → /bin/codex-call → 必失敗。同 parallel-ai-agents 的 codexCallPath 做法。
-    CODEX_CALL=$(realpath "$CLAUDE_PLUGIN_ROOT/bin/codex-call" 2>/dev/null || echo "$CLAUDE_PLUGIN_ROOT/bin/codex-call")
+# 共通前置（Tier 1/2 都需要）
+write $DIFF 到 temp 檔 $DIFF_FILE   # 大 diff 不塞 inline args (Workflow tool 會把 args JSON-stringify；兩個引擎都防禦性 parse 並支援 diffFile 讓 agents 用 file-read tool 讀)
+# #147: 在 skill-run context 把 $CLAUDE_PLUGIN_ROOT **解析成絕對路徑**再 thread（workflow subagent 的 shell 沒有這個變數）。
+# 一律用 IDD 自己 vendored 的 codex-call —— 不依賴 pai 的 bin 佈局（契約參數是 codexCallPath，路徑由 consumer 供給）。
+CODEX_CALL=$(realpath "$CLAUDE_PLUGIN_ROOT/bin/codex-call" 2>/dev/null || echo "$CLAUDE_PLUGIN_ROOT/bin/codex-call")
+
+# Tier 1 — canonical：已安裝的 parallel-ai-agents 引擎（#207 使用者依賴裁決；契約 = pai#20 官方化的 EXTERNAL-CONSUMER CONTRACT）
+MIN_PAI="2.18.0"   # agentModel + STABLE 契約起點——閘門理由：2.17.0 引擎會「靜默忽略」agentModel → 派發回退繼承 session model（#205 根因復發且揭露行造假），寧用 Tier 2 已修的 fork
+PAI_DIR=$(ls -d ~/.claude/plugins/cache/parallel-ai-agents/parallel-ai-agents/*/ 2>/dev/null | sort -V | tail -1)
+PAI_VER=$(basename "$PAI_DIR" 2>/dev/null)
+PAI_ENGINE="${PAI_DIR}workflows/ensemble-workflow.js"
+若 [ -f "$PAI_ENGINE" ] 且 [ "$(printf '%s\n%s\n' "$MIN_PAI" "$PAI_VER" | sort -V | head -1)" = "$MIN_PAI" ] 且 dynamic-workflow primitive 可用:
+    # contextBlock：DATA_GUARD 前言（與 vendored 引擎同文）+ 各 issue "ISSUE #N: <title>\n<body>" + "Source-of-truth attachments: <清單>"
+    # —— pai 端 dataBlock() 會對整塊再包 PAI_ENSEMBLE sentinel 並剝除偽造 marker（雙層防 prompt-injection）
+    findings = Workflow(scriptPath="$PAI_ENGINE",
+                        args={profile: 'custom',
+                              customLenses: [
+                                {key: 'requirements', focus: "whether the diff covers every requirement of the ref'd issue(s); flag uncovered or mis-covered requirements."},
+                                {key: 'logic',        focus: 'logic correctness, edge cases, null/empty handling, off-by-one, and error paths.'},
+                                {key: 'security',     focus: 'injection, authz/authn, hardcoded secrets, unsafe input handling, path traversal.'},
+                                {key: 'regression',   focus: 'scope creep, side effects on existing behavior, and unrelated changes.'}],
+                              daFocus: "adversarially refute the other reviewers' judgments: hunt for defects where they passed, false positives in their findings, and requirements-coverage claims the diff does not actually satisfy.",
+                              contextBlock: $CONTEXT_BLOCK,
+                              diffFile: $DIFF_FILE,
+                              codexEnabled, codexCallPath: $CODEX_CALL,
+                              agentModel: $AGENT_MODEL})   # = Step 2 前解析的 IDD_AGENT_MODEL 值（#205）；pai 端顯式非法值派發前 throw
+    印一行 notice: "→ verify backend: pai-ensemble $PAI_VER (canonical, #207)"
+
+# Tier 2 — vendored fallback（凍結 fork；pai 缺席或 < MIN_PAI）
+否則若 dynamic-workflow primitive 可用:
     findings = Workflow(scriptPath="plugins/issue-driven-dev/skills/idd-verify/ensemble-workflow.js",
                         args={diffFile: $DIFF_FILE, issues, attachments, codexEnabled,
                               codexCall: $CODEX_CALL,
-                              agentModel: $AGENT_MODEL})   # D2: 傳檔路徑而非 named workflow。codexCall = 已解析的 vendored codex-call 絕對路徑（#147）；agentModel = 上方解析的 dispatch model（#205）
-    印一行 notice: "→ verify backend: dynamic-workflow"
+                              agentModel: $AGENT_MODEL})   # 呼叫形狀不變（原 D2/#147/#205）
+    印一行 notice: "→ verify backend: vendored fallback (pai absent or < $MIN_PAI)"
+
+# Tier 3 — manual fan-out
 否則:
     findings = Step 2 manual fan-out（現行行為）
     印一行 notice: "→ verify backend: manual fan-out (workflow primitive unavailable)"
 ```
 
-兩條路產出**相同 findings contract**（見 `references/idd-verify-findings-schema.json`：severity / file / title / body / lens；merge 取最高），所以 Step 3 merge 之後（posting / triage / verify-fix）**backend-agnostic**。
+**customLenses focus 與 vendored 引擎 `LENSES` 字面一致**（Implementation Contract 可 grep 驗證）；lens 鍵沿用 IDD 命名，pai harness 強制 attribution，master report 的 Source 欄零改動。canonical tier 的 Engine 行揭露 `pai-ensemble <ver> (model: <stats.dispatchModel>)`。
+
+三條路產出**相同 findings contract**（見 `references/idd-verify-findings-schema.json`：severity / file / title / body / lens；merge 取最高），所以 Step 3 merge 之後（posting / triage / verify-fix）**backend-agnostic**。
 
 **Codex（D3）**：包進 workflow 當 Bash agent，透過 vendored **`codex-call` HTTP wrapper**（#147，`$CLAUDE_PLUGIN_ROOT/bin/codex-call`，由 args.codexCall thread 絕對路徑進來）—— 直打 chatgpt codex backend，**非** `codex exec` subprocess，故無 stdin/stdout pipe 互鎖 hang；`--max-time 600` 是硬 HTTP timeout（codex CLI 不一定守）。runtime 依賴從 `codex` CLI 換成 `swift` 在 PATH。codex-call 失敗（swift 缺 / HTTP 5xx / auth refresh / timeout）→ 回 fail-closed INFO finding「cross-model pass incomplete」不靜默丟（對應 spec「bounded lifetime」requirement）；**刻意不 fallback `codex exec`**（會重引 hang 路徑）。
 

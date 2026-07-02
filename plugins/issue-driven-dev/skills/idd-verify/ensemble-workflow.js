@@ -1,4 +1,10 @@
 /**
+ * ⚠ FROZEN — FALLBACK-ONLY (#207). The canonical ensemble engine is parallel-ai-agents'
+ * workflows/ensemble-workflow.js (STABLE external-consumer contract since pai 2.18.0);
+ * idd-verify resolves the installed copy first and only falls back here when pai is absent
+ * or predates the contract. New features and fixes go UPSTREAM to pai — this file accepts
+ * only alignment changes required to keep the fallback contract-compatible.
+ *
  * idd-verify-ensemble — dynamic-workflow backend for /idd-verify
  * (change: formalize-idd-verify-ensemble, task 2.2; spec: idd-verify).
  *
