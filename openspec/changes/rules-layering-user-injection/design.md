@@ -29,11 +29,11 @@ single canonical = plugins/issue-driven-dev/rules/commit-issue-reference.md（us
 
 ### D3 — 注入機制並用；hook 輸出 ≤5 行
 
-SessionStart hook（唯一能蓋 skill 外 commit 的 ambient 管道）印 4 行鐵律 + 1 行指路；完整版供 skill-scope。hooks.json 用 `${CLAUDE_PLUGIN_ROOT}` 解析 script 路徑（生態系 SessionStart 先例同型）。替代方案：只 hook（skill 內失去錨點）、只 skill-scope（主戰場裸奔）、README 教學（依賴手動）— 皆劣。行數上限是硬約束：所有使用者每 session 付 context 稅，超過即 drift guard 測試 FAIL。
+SessionStart hook（唯一能蓋 skill 外 commit 的 ambient 管道）在 ≤5 行內涵蓋四條鐵律（可合併行）+ 指路行；hook 無 matcher 為刻意決策 — startup/resume/clear/compact 皆注入，讓規則在 context 壓縮後存活（稅 = 每 SessionStart 事件 ≤5 行）；完整版供 skill-scope。hooks.json 用 `${CLAUDE_PLUGIN_ROOT}` 解析 script 路徑（生態系 SessionStart 先例同型）。替代方案：只 hook（skill 內失去錨點）、只 skill-scope（主戰場裸奔）、README 教學（依賴手動）— 皆劣。行數上限是硬約束：所有使用者每 session 付 context 稅，超過即 drift guard 測試 FAIL。
 
 ### D4 — hook static 內容 + drift-guard 測試
 
-hook script 印 static 文字；scripts/tests/session-start-commit-rule/test.sh 斷言：(1) 輸出 ≤5 行 (2) 關鍵 token（`(#N)`、`Refs #N`、`close/fix/resolve`、`/idd-close`、rules 檔路徑）同時存在於 hook 輸出與 canonical rules 檔（token 對齊而非全文 diff — 允許措辭差異、擋語意漂移）(3) script 可執行且 exit 0。替代方案「sed 從 rules 檔動態抽」脆弱且讓 hook 依賴檔案佈局。
+hook script 印 static 文字；scripts/tests/session-start-commit-rule/test.sh 斷言：(1) 輸出 ≤5 行 (2) 關鍵 token（`(#N)`、`Refs #N`、`close/fix/resolve`、`/idd-close`、rules 檔路徑）同時存在於 hook 輸出與 canonical rules 檔（token 對齊而非全文 diff — 允許措辭差異；**已知限制**：只擋 token 刪除與行數超標，不偵測 canonical 新增條目後 hook 過期 — 新增鐵律時須人工同步 hook 並擴充測試 token 集）(3) script 可執行且 exit 0。替代方案「sed 從 rules 檔動態抽」脆弱且讓 hook 依賴檔案佈局。
 
 ### D5 — 版本 2.91.0（minor）
 
@@ -51,5 +51,5 @@ hook 為 additive 新元件、無 breaking。repo 2.x 慣例（#209 close 時確
 ## Risks / Trade-offs
 
 - 所有使用者每 session 付 ~5 行 context 稅 — 上限由測試硬鎖，超標即 FAIL
-- hook 與 rules 檔措辭漂移 — token 對齊測試擋語意層，不擋純措辭（可接受）
+- hook 與 rules 檔漂移 — token 對齊測試擋 token 刪除與行數；canonical 新增條目方向偵測不到（已知限制，維護程序補位）
 - 使用者若 disable hook 則回到 skill-scope-only 保護 — 已知且可接受（他們的選擇）

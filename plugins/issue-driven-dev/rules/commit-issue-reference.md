@@ -7,7 +7,7 @@
 ## 四條鐵律
 
 1. **Issue ref 放 commit subject 尾端 `(#N)`**，或 body 用 `Refs #N`。
-2. **絕不讓 close / fix / resolve 任何詞形（含 conventional-commit 前綴如 `fix:`）鄰接 `#<數字>`**。`fix: #209 R1 verify findings — …` 這種 subject 在 push 到 main 的瞬間 auto-close 了 #209（2026-07-03 實證；更早前例：subject `resolves #70` 形式關掉 #70、`fix #26` 形式關掉 #26）。引號、粗體、斜體、「Do NOT」前後文都**不會**抑制 parser。
+2. **絕不讓 close / fix / resolve 任何詞形（含 conventional-commit 前綴如 `fix:`）鄰接 `#<數字>`**。`fix: #N R1 verify findings — …` 形式的 subject 曾在 push 到 main 的瞬間 auto-close 對應 issue（2026-07-03 實證，完整記錄見 PsychQuant/issue-driven-development#209 的 close-mechanics note；更早前例：`resolves #N` 與 `fix #N` 形式各關掉一個 issue，見該 repo #70 / #26 的 close 記錄）。引號、粗體、斜體、「Do NOT」前後文都**不會**抑制 parser。
 3. **引用 trap pattern 作反例時**：code fence + literal letter `N`（如 `` `Closes #N` ``），或改用連結引用不重複 keyword。
 4. **Close 永遠由 `/idd-close` 執行**（checklist gate + closing summary + 掃尾），不由 trailer 代勞。已被 trap auto-close 的 issue 用 `/idd-close --retroactive #N` 補救。
 

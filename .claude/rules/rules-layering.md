@@ -10,7 +10,7 @@
 ## 現狀對照（2026-07-03）
 
 | Rule | 層 | 依據 |
-|------|-----|------|
+| ---- | --- | ---- |
 | attribute-assessment | dev | 自述未達 rule-of-three promote 門檻 |
 | deep-integration-over-hardcode | dev | #209 Clarity row 3 使用者裁決（「是我開發要用的」）|
 | rules-layering（本檔）| dev | 判準受眾是維護者 |
