@@ -33,8 +33,18 @@
  *   codexCall    : string                          — absolute path to the vendored codex-call wrapper
  *                                                     (#147; $CLAUDE_PLUGIN_ROOT/bin/codex-call, resolved by
  *                                                     the skill — NOT reliably on a sub-agent's $PATH)
+ *   agentModel   : string                          — Claude model for every ensemble agent() dispatch
+ *                                                     ('sonnet'|'opus'|'haiku'|'fable'; #205). The skill
+ *                                                     resolves IDD_AGENT_MODEL and passes it; absent or
+ *                                                     invalid values normalize to 'opus' here (second-layer
+ *                                                     backstop — the skill's own resolution fails loudly on
+ *                                                     invalid input, so this only catches legacy callers).
+ *                                                     Without an explicit model, agent() would inherit the
+ *                                                     session's main-loop model — on high-tier sessions that
+ *                                                     burned 563k–1,092k tokens per verify and killed a lens
+ *                                                     agent mid-run (#205 evidence).
  *
- * Returns: { findings: Finding[], verdict: 'PASS' | 'FINDINGS' }
+ * Returns: { findings: Finding[], verdict: 'PASS' | 'FINDINGS', dispatchModel: string }
  * conforming to references/idd-verify-findings-schema.json.
  *
  * NOTE: behavioral verification (a real verify run on a real PR catching a known finding)
@@ -226,15 +236,20 @@ try {
   A = {} // malformed args string → empty object; reviewers see empty diff/issues rather than the workflow crashing
 }
 
+// Dispatch model (#205): explicit on every agent() call so the ensemble never inherits
+// the session's main-loop model. 'opus' default; whitelist keeps a typo'd override from
+// silently dispatching on an unintended tier (the skill already aborted loudly on it).
+const AGENT_MODEL = ['sonnet', 'opus', 'haiku', 'fable'].includes(A.agentModel) ? A.agentModel : 'opus'
+
 phase('review')
 const reviewThunks = LENSES.map((l) => () =>
-  agent(reviewPrompt(l, A), { schema: FINDINGS_SCHEMA, label: `review:${l.key}`, phase: 'review' })
+  agent(reviewPrompt(l, A), { schema: FINDINGS_SCHEMA, label: `review:${l.key}`, phase: 'review', model: AGENT_MODEL })
     .then((r) => ({ lens: l.key, findings: (r && r.findings) || [], ok: true }))
     .catch(() => ({ lens: l.key, findings: [], ok: false }))
 )
 const codexThunk = A.codexEnabled
   ? () =>
-      agent(codexPrompt(A), { schema: FINDINGS_SCHEMA, label: 'codex', phase: 'review' })
+      agent(codexPrompt(A), { schema: FINDINGS_SCHEMA, label: 'codex', phase: 'review', model: AGENT_MODEL })
         .then((r) => ({ lens: 'codex', findings: (r && r.findings) || [], ok: true }))
         .catch(() => ({ lens: 'codex', findings: [], ok: false }))
   : null
@@ -244,7 +259,7 @@ const reviewerResults = round1.filter((r) => r.lens !== 'codex')
 
 // Phase 2: devil's-advocate adversarially refutes the reviewers' judgments (also fail-aware).
 phase('adversarial')
-const da = await agent(daPrompt(reviewerResults, A), { schema: FINDINGS_SCHEMA, label: 'devils-advocate', phase: 'adversarial' })
+const da = await agent(daPrompt(reviewerResults, A), { schema: FINDINGS_SCHEMA, label: 'devils-advocate', phase: 'adversarial', model: AGENT_MODEL })
   .then((r) => ({ findings: (r && r.findings) || [], ok: true }))
   .catch(() => ({ findings: [], ok: false }))
 
@@ -272,4 +287,4 @@ if (A.codexEnabled && !ranOk.has('codex')) {
 const merged = mergeDedup([...round1.flatMap((r) => r.findings), ...da.findings, ...integrity])
 const verdict = merged.some((f) => f.severity !== 'INFO') ? 'FINDINGS' : 'PASS'
 log(`idd-verify-ensemble: ${merged.length} merged finding(s) → ${verdict}` + (integrity.length ? ` (${integrity.length} integrity/process-gap)` : ''))
-return { findings: merged, verdict }
+return { findings: merged, verdict, dispatchModel: AGENT_MODEL }

@@ -151,6 +151,20 @@ idd-verify #NNN
 
 skill **await** workflow 回傳的 findings 才發文，所以使用者視角不變（run → 拿 findings），只是進度從 inline agent 換成 `/workflows` view。
 
+**Dispatch model 解析（#205，兩個 backend 共用）**：ensemble 的每一次 agent 派發都必須帶**顯式** Claude model——不指定就會繼承 session 的 main-loop model，在高階 session 下單輪 verify 燒 563k–1,092k subagent tokens、且曾把 lens agent 撞死在 session limit（#205 實證）。engine 選擇前先解析一次：
+
+```bash
+AGENT_MODEL="${IDD_AGENT_MODEL:-opus}"          # 未設 → opus（預設）
+case "$AGENT_MODEL" in
+  sonnet|opus|haiku|fable) : ;;                  # 合法值域
+  *) abort "IDD_AGENT_MODEL='$AGENT_MODEL' is not a valid dispatch model.
+   Accepted: sonnet | opus | haiku | fable (unset = opus).
+   Refusing to dispatch — a silent fallback would run the ensemble on a model you didn't pick." ;;
+esac
+```
+
+> **Fail-loud（不靜默回退）**：使用者顯式設了覆蓋值就代表在意跑在哪個 model 上——typo 時安靜換成 opus 比直接失敗更糟。ensemble-workflow.js 內另有第二層兜底（absent/非法 → opus），只為 legacy caller 沒傳 `agentModel` 的路徑存在；互動路徑一律在這裡先擋。Codex lens 的 gpt-5.5 端不受此參數影響（跨模型驗證本來就刻意用不同 model family），但**驅動** codex-call 的 Bash-agent 本身照樣以 `$AGENT_MODEL` 派發。
+
 **Capability detection + fallback（D4）**：
 
 ```
@@ -163,7 +177,8 @@ skill **await** workflow 回傳的 findings 才發文，所以使用者視角不
     CODEX_CALL=$(realpath "$CLAUDE_PLUGIN_ROOT/bin/codex-call" 2>/dev/null || echo "$CLAUDE_PLUGIN_ROOT/bin/codex-call")
     findings = Workflow(scriptPath="plugins/issue-driven-dev/skills/idd-verify/ensemble-workflow.js",
                         args={diffFile: $DIFF_FILE, issues, attachments, codexEnabled,
-                              codexCall: $CODEX_CALL})   # D2: 傳檔路徑而非 named workflow。codexCall = 已解析的 vendored codex-call 絕對路徑（#147）
+                              codexCall: $CODEX_CALL,
+                              agentModel: $AGENT_MODEL})   # D2: 傳檔路徑而非 named workflow。codexCall = 已解析的 vendored codex-call 絕對路徑（#147）；agentModel = 上方解析的 dispatch model（#205）
     印一行 notice: "→ verify backend: dynamic-workflow"
 否則:
     findings = Step 2 manual fan-out（現行行為）
@@ -198,7 +213,8 @@ TaskCreate(name="gate_pr_correspondence", description="Step 0.7: PR mode 下強�
 TaskCreate(name="scan_pr_body_and_commits_trailers", description="Step 0.8: PR mode 下兩 source 偵測 auto-close trap — (1) gh pr view --json closingIssuesReferences 查 PR body 是否 linked-to-auto-close（GitHub 權威解析、所有 trailer 形式），(2) gh pr view --json commits 對每個 commit messageBody 跑 trap regex（補上 GitHub 不預計算的 commit-body channel — squash 後字串 land 在 main 觸發 auto-close）。任一非空則 warn — bypass /idd-close gate。Warn-only，不 abort")
 TaskCreate(name="get_diff_and_issue", description="依 input source 取 diff（gh pr diff / git diff HEAD~N / git diff origin/<default>...<branch>） + gh issue view,存 diff 到 /tmp 供 agents 讀取；PR mode 額外做 gh pr checkout 並記住原 branch")
 TaskCreate(name="check_attachments", description="確認 .claude/.idd/attachments/issue-NNN/ 存在,把 attachment 路徑塞進 reviewer agent prompt 作為 source-of-truth context。manifest 缺漏 → 警告繼續(reviewer 仍跑,但 verification 完整度受限)。依 rules/process-attachments.md。")
-TaskCreate(name="launch_parallel_reviewers", description="6 個 tool calls 同一 message: 5 Agent(subagent_type=general-purpose) for requirements/logic/security/regression/devils-advocate + 1 Bash codex(run_in_background:true),prompt 中引用 attachment 路徑 + 強制 file-output rule (per #52 v2.59.0+,replaces TeamCreate model from #47 incident)")
+TaskCreate(name="resolve_dispatch_model", description="解析 $AGENT_MODEL — IDD_AGENT_MODEL 未設 → opus；非法值 → abort with usage error（#205；兩個 backend 共用，Workflow args 傳 agentModel、manual 模板填 model）")
+TaskCreate(name="launch_parallel_reviewers", description="6 個 tool calls 同一 message: 5 Agent(subagent_type=general-purpose, model=$AGENT_MODEL) for requirements/logic/security/regression/devils-advocate + 1 Bash codex(run_in_background:true),prompt 中引用 attachment 路徑 + 強制 file-output rule (per #52 v2.59.0+,replaces TeamCreate model from #47 incident)")
 TaskCreate(name="wait_for_claude_agents", description="5 Agent calls 是 blocking,return 後立刻 ls /tmp/verify_${NUMBER}_findings_*.md 確認 5 個 findings 檔都 non-empty;缺者進 Step 2.5 Recovery Protocol")
 TaskCreate(name="recovery_protocol", description="Step 2.5 (NEW per #52): 缺 findings 檔者 SendMessage retry with FULL context re-paste(不假設 context 倖存 idle/wake);二次 idle → coordinator self-review for that role + 在 master report 標 process gap")
 TaskCreate(name="wait_for_codex", description="等 Codex 背景任務完成,讀 /tmp/codex-verify-${NUMBER}.md")
@@ -470,6 +486,7 @@ Exit code:
 Agent({
   description: "Requirements review for #${NUMBER}",
   subagent_type: "general-purpose",
+  model: "${AGENT_MODEL}",   // #205: 顯式 dispatch model（Step 2 前解析；預設 opus）
   prompt: `你是 Requirements Reviewer for Issue #${NUMBER}: ${TITLE}.
 
 Issue body:
@@ -490,6 +507,7 @@ If you receive a later SendMessage with the same prompt re-pasted, treat that as
 Agent({
   description: "Logic review for #${NUMBER}",
   subagent_type: "general-purpose",
+  model: "${AGENT_MODEL}",   // #205: 顯式 dispatch model（Step 2 前解析；預設 opus）
   prompt: `你是 Logic Reviewer for Issue #${NUMBER}: ${TITLE}.
 
 Diff path: /tmp/diff_${NUMBER}.patch
@@ -508,6 +526,7 @@ If you receive a later SendMessage with the same prompt re-pasted, treat as retr
 Agent({
   description: "Security review for #${NUMBER}",
   subagent_type: "general-purpose",
+  model: "${AGENT_MODEL}",   // #205: 顯式 dispatch model（Step 2 前解析；預設 opus）
   prompt: `你是 Security Reviewer for Issue #${NUMBER}: ${TITLE}.
 
 Diff path: /tmp/diff_${NUMBER}.patch
@@ -526,6 +545,7 @@ If you receive a later SendMessage with the same prompt re-pasted, treat as retr
 Agent({
   description: "Regression review for #${NUMBER}",
   subagent_type: "general-purpose",
+  model: "${AGENT_MODEL}",   // #205: 顯式 dispatch model（Step 2 前解析；預設 opus）
   prompt: `你是 Regression Reviewer for Issue #${NUMBER}: ${TITLE}.
 
 Diff path: /tmp/diff_${NUMBER}.patch
@@ -544,6 +564,7 @@ If you receive a later SendMessage with the same prompt re-pasted, treat as retr
 Agent({
   description: "Devil's Advocate review for #${NUMBER}",
   subagent_type: "general-purpose",
+  model: "${AGENT_MODEL}",   // #205: 顯式 dispatch model（Step 2 前解析；預設 opus）
   prompt: `你是 Devil's Advocate for Issue #${NUMBER}: ${TITLE}.
 
 Diff path: /tmp/diff_${NUMBER}.patch
@@ -705,7 +726,7 @@ $(cat /tmp/verify_${NUMBER}_prompt_${role}.md)"   # Coordinator saved prompts be
 done
 ```
 
-> **Note on `SendMessage` applicability**: standalone `Agent` calls return to coordinator after completion (no persistent addressable instance). The retry path therefore typically means **spawn a fresh `Agent(subagent_type=general-purpose, ...)` with the retry prompt** rather than literal `SendMessage`. The retry distinction matters most for context-re-paste discipline — always re-paste the FULL original prompt.
+> **Note on `SendMessage` applicability**: standalone `Agent` calls return to coordinator after completion (no persistent addressable instance). The retry path therefore typically means **spawn a fresh `Agent(subagent_type=general-purpose, ...)` with the retry prompt** rather than literal `SendMessage`. The retry distinction matters most for context-re-paste discipline — always re-paste the FULL original prompt **and the same explicit `model` designation** (a retry spawn without it would silently inherit the session model, undoing #205).
 
 #### 2.5c — Second-idle fallback: coordinator self-review
 
@@ -832,7 +853,7 @@ git checkout $ORIGINAL_BRANCH   # Step 0.5 記住的
 ## Verify: #NNN
 
 ### Engine
-5 general-purpose Agents (Claude reviewers, file-based output) + Codex (gpt-5.5, run_in_background)
+5 general-purpose Agents (Claude reviewers, model: ${AGENT_MODEL}, file-based output) + Codex (gpt-5.5, run_in_background)
 
 ### 要求覆蓋率
 X / Y requirements addressed
@@ -853,7 +874,7 @@ X / Y requirements addressed
 ## Verify Report — PR #PPP
 
 ### Engine
-5 general-purpose Agents (Claude reviewers, file-based output) + Codex (gpt-5.5, run_in_background)
+5 general-purpose Agents (Claude reviewers, model: ${AGENT_MODEL}, file-based output) + Codex (gpt-5.5, run_in_background)
 
 ### Aggregate
 **PASS / FAIL** — N blocking, M follow-up
@@ -996,7 +1017,7 @@ git diff > /tmp/codex-quick-diff.patch
 
 ## Engine: team（只用 5 Reviewer Agents，alias `team` 保留為 backward-compat）
 
-只 spawn 5 個 `Agent(subagent_type=general-purpose)` reviewer，不跑 Codex。適合不需要跨模型驗證、或 Codex 不可用的場景。CLI alias `team` 保留為 backward compat（pre-v2.59.0 model name），實際底層為 standalone Agent calls。
+只 spawn 5 個 `Agent(subagent_type=general-purpose, model=$AGENT_MODEL)` reviewer，不跑 Codex。dispatch model 解析規則同上（#205：預設 opus、`IDD_AGENT_MODEL` 覆蓋、非法值 abort）。適合不需要跨模型驗證、或 Codex 不可用的場景。CLI alias `team` 保留為 backward compat（pre-v2.59.0 model name），實際底層為 standalone Agent calls。
 
 ## Loop 模式
 
