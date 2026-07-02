@@ -15,6 +15,8 @@ This discipline has **two halves with very different maturity**, and conflating 
 
 So **`idd-all #a #b #c` batch mode is sequential, not concurrent.** The conflict-class taxonomy below is a **forward-looking safety contract**: it tells you what is safe to parallelize *when you do so manually* (separate Claude sessions / worktrees) or *when a real concurrent-lane primitive eventually lands*. It does NOT assert that any skill auto-parallelizes stateful work today. Do not write a spec or skill that `SHALL`s a concurrency engine that does not exist.
 
+**Dispatch model（#205）**：本契約下派發的每個 agent（workflow `agent()` 或 manual `Agent()`）SHALL 帶顯式 `model`——依 idd-verify 的 dispatch-model 規則解析（`IDD_AGENT_MODEL` else `opus`，非法值 fail-loud）——永不隱式繼承 session 的 main-loop model。
+
 ## Why the taxonomy exists — the hard part is physical-resource serialization
 
 Worktree isolation (`scripts/idd-worktree.sh`, [`worktree-isolation.md`](worktree-isolation.md)) cleanly solves *parallel file edits*: one `git worktree` per agent, no shared index. It does **not** solve shared **physical** resources — a single-writer DB lock, a serial cloud-upload endpoint, one external queue, or a shared submodule that multiple checkouts symlink to. The conflict-class taxonomy is the missing piece that tells you which issues are safe to parallelize and which must serialize — the part "just open a worktree per issue" never covers.

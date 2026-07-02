@@ -157,13 +157,16 @@ skill **await** workflow 回傳的 findings 才發文，所以使用者視角不
 AGENT_MODEL="${IDD_AGENT_MODEL:-opus}"          # 未設 → opus（預設）
 case "$AGENT_MODEL" in
   sonnet|opus|haiku|fable) : ;;                  # 合法值域
-  *) abort "IDD_AGENT_MODEL='$AGENT_MODEL' is not a valid dispatch model.
+  *) echo >&2 "✗ IDD_AGENT_MODEL='$AGENT_MODEL' is not a valid dispatch model.
    Accepted: sonnet | opus | haiku | fable (unset = opus).
-   Refusing to dispatch — a silent fallback would run the ensemble on a model you didn't pick." ;;
+   Refusing to dispatch — a silent fallback would run the ensemble on a model you didn't pick."
+     exit 64 ;;   # EX_USAGE；不用未定義的 abort helper——這段要能被逐字執行（#205 verify F2）
 esac
 ```
 
-> **Fail-loud（不靜默回退）**：使用者顯式設了覆蓋值就代表在意跑在哪個 model 上——typo 時安靜換成 opus 比直接失敗更糟。ensemble-workflow.js 內另有第二層兜底（absent/非法 → opus），只為 legacy caller 沒傳 `agentModel` 的路徑存在；互動路徑一律在這裡先擋。Codex lens 的 gpt-5.5 端不受此參數影響（跨模型驗證本來就刻意用不同 model family），但**驅動** codex-call 的 Bash-agent 本身照樣以 `$AGENT_MODEL` 派發。
+> **Fail-loud（不靜默回退）**：使用者顯式設了覆蓋值就代表在意跑在哪個 model 上——typo 時安靜換成 opus 比直接失敗更糟。ensemble-workflow.js 內另有第二層兜底（absent/非法 → opus），只為 legacy caller 沒傳 `agentModel` 的路徑存在；互動路徑一律在這裡先擋（workflow 層對「顯式非法值」同樣 throw——兩層都 fail-loud；只有「沒傳」才回退 opus）。Codex lens 的 gpt-5.5 端不受此參數影響（跨模型驗證本來就刻意用不同 model family），但**驅動** codex-call 的 Bash-agent 本身照樣以 `$AGENT_MODEL` 派發。
+>
+> **方向性注意**：預設 opus 的降負載效益只在 session tier **高於** opus 時成立（#205 事故 session 為 Fable 級；live 證實 run wf_6c1d8ee6-5f3——fable session + `agentModel:'opus'` → 六個 agent transcript 全記錄 `claude-opus-4-8`，是真降級）。session 本身跑 sonnet/haiku 時，預設 opus 反而是**升級**——要壓低成本請顯式 `IDD_AGENT_MODEL=sonnet` 或 `haiku`。
 
 **Capability detection + fallback（D4）**：
 
@@ -197,7 +200,7 @@ esac
 |---|----------|---------|--------|
 | n | `<severity>` | `<title>` — `<body>`（`file:line`，若有）| `<lens>` |
 
-`verdict` → master report 的 PASS / FAIL。manual path 的 prose findings 走既有 Step 3 merge 進同一張表。**兩 backend 因此產出結構相同的 master report**，所以 Step 4 posting / Step 5b triage / verify-fix loop **完全 backend-agnostic**（它們只看這張表，不在乎是哪個 backend 產的）。
+`verdict` → master report 的 PASS / FAIL。workflow backend 另回傳 `dispatchModel`——Engine 行的 model 揭露**以它為準**（`findings.dispatchModel || $AGENT_MODEL`；args 傳遞 degraded 時兩者可能不同，審計要記實際派發值，#205）。manual path 的 prose findings 走既有 Step 3 merge 進同一張表。**兩 backend 因此產出結構相同的 master report**，所以 Step 4 posting / Step 5b triage / verify-fix loop **完全 backend-agnostic**（它們只看這張表，不在乎是哪個 backend 產的）。
 
 > **平價的剩餘細節**：workflow schema 的 severity 是 `CRITICAL/HIGH/MEDIUM/LOW/INFO`，render 時直接填 Severity 欄；manual path 歷史上混用 `P1/P2`/`LOW` 等——完整 severity vocab 統一是 minor follow-up，不影響**表格結構**平價。fail-closed 合成的 integrity HIGH findings（lens errored）同樣 render 成列，所以 degraded run 在表格裡就可見（對應 manual path 的 `### Process Gaps` section，語意一致）。
 
@@ -716,7 +719,15 @@ for role in "${MISSING_ROLES[@]}"; do
 $(cat /tmp/verify_${NUMBER}_prompt_${role}.md)"   # Coordinator saved prompts before spawn
 
   # If Agent instance is addressable via SendMessage (named team member or running agent):
-  SendMessage(to="verify-${NUMBER}-${role}", body="$RETRY_PROMPT")  # OR spawn a fresh Agent if previous returned
+  SendMessage(to="verify-${NUMBER}-${role}", body="$RETRY_PROMPT")
+  # OR — the usual case: the standalone Agent already returned — spawn a fresh one,
+  # carrying the SAME explicit model (#205: an unpinned retry re-inherits the session model):
+  Agent({
+    description: "Retry ${role} review for #${NUMBER}",
+    subagent_type: "general-purpose",
+    model: "${AGENT_MODEL}",
+    prompt: "$RETRY_PROMPT"
+  })
 
   # Poll for file (90s max)
   for i in $(seq 1 18); do

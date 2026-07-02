@@ -20,4 +20,7 @@
 ## 4. 收尾
 
 - [x] 4.1 plugin.json 2.87.0 → 2.88.0 + CHANGELOG.md 條目
-- [x] 4.2 盤點 grep（`Agent({|agent(`）確認零未指定站點；`spectra validate` 通過
+- [x] 4.2 盤點 grep（`Agent({|agent(`）確認零字面未指定站點；`spectra validate` 通過
+- [x] 4.3（verify-fix）prose 派發雙軌掃描補齊：idd-diagnose #182 fan-out、parallel-orchestration.md、spectra-audit/apply vendored refs——首輪字面 grep 對 prose 派發盲視（假陰性），proposal Non-Goals 措辭如實化
+- [x] 4.4（verify-fix）fail-loud 兩層對齊 spec：SKILL.md `exit 64`（原 `abort` 未定義）、workflow 層顯式非法值 throw；retry 具體模板補 model；Engine 揭露改以 `dispatchModel` 為準
+- [x] 4.5（verify-fix）行為驗證 closed：live run wf_6c1d8ee6-5f3（fable session → 6/6 agent 實跑 claude-opus-4-8）記入 design 契約與 JS header

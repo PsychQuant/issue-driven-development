@@ -35,10 +35,11 @@
  *                                                     the skill — NOT reliably on a sub-agent's $PATH)
  *   agentModel   : string                          — Claude model for every ensemble agent() dispatch
  *                                                     ('sonnet'|'opus'|'haiku'|'fable'; #205). The skill
- *                                                     resolves IDD_AGENT_MODEL and passes it; absent or
- *                                                     invalid values normalize to 'opus' here (second-layer
- *                                                     backstop — the skill's own resolution fails loudly on
- *                                                     invalid input, so this only catches legacy callers).
+ *                                                     resolves IDD_AGENT_MODEL and passes it. Absent (legacy
+ *                                                     callers) → 'opus'; an EXPLICITLY invalid value throws
+ *                                                     before any dispatch (spec: invalid SHALL fail loudly
+ *                                                     at dispatch time — covers programmatic callers that
+ *                                                     bypass the skill's own guard).
  *                                                     Without an explicit model, agent() would inherit the
  *                                                     session's main-loop model — on high-tier sessions that
  *                                                     burned 563k–1,092k tokens per verify and killed a lens
@@ -50,6 +51,12 @@
  * NOTE: behavioral verification (a real verify run on a real PR catching a known finding)
  * is deferred to a focused session per the change's apply checkpoint — this file is the
  * structurally-complete implementation, not yet live-tested.
+ *
+ * MODEL-ROUTING CONFIRMED LIVE (#205, 2026-07-02, run wf_6c1d8ee6-5f3): a 6-agent verify
+ * dispatched with args.agentModel='opus' from a claude-fable-5[1m] session — all six agent
+ * transcripts record model=claude-opus-4-8. opts.model is honored end-to-end by the
+ * Workflow runtime (a genuine tier downgrade, not a dropped opt), and the returned
+ * dispatchModel matches what actually ran.
  */
 
 export const meta = {
@@ -237,9 +244,17 @@ try {
 }
 
 // Dispatch model (#205): explicit on every agent() call so the ensemble never inherits
-// the session's main-loop model. 'opus' default; whitelist keeps a typo'd override from
-// silently dispatching on an unintended tier (the skill already aborted loudly on it).
-const AGENT_MODEL = ['sonnet', 'opus', 'haiku', 'fable'].includes(A.agentModel) ? A.agentModel : 'opus'
+// the session's main-loop model. The whitelist mirrors the Agent tool's documented model
+// enum (sonnet | opus | haiku | fable — 'fable' = Claude Fable 5, the Mythos-class tier).
+// An explicitly invalid value throws BEFORE any dispatch — fail-loud at both layers, so a
+// typo'd override can never silently run the ensemble on a model the caller didn't pick.
+const VALID_DISPATCH_MODELS = ['sonnet', 'opus', 'haiku', 'fable']
+if (A.agentModel != null && !VALID_DISPATCH_MODELS.includes(A.agentModel)) {
+  throw new Error(
+    `invalid agentModel '${A.agentModel}' — accepted: ${VALID_DISPATCH_MODELS.join(' | ')} (unset = opus)`
+  )
+}
+const AGENT_MODEL = A.agentModel || 'opus'
 
 phase('review')
 const reviewThunks = LENSES.map((l) => () =>

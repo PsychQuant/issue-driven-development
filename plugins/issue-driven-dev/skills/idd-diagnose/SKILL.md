@@ -249,7 +249,7 @@ Exit code:
    - 明確陳述：「我認為 root cause 是 X，因為 Y」
    - 一次一個假設，不要同時猜多個
 
-> **(Opt-in) 多子系統平行 fan-out（v2.83.0+, #182）**：當 root cause *橫跨 N 個獨立子系統 / 假設*（例如一個 code-gen contract + 一個 cache-invalidation footgun + 一個 sister-occurrence sweep），可選擇用 **Workflow tool** fan out — 每個子系統一個 read-only investigator 平行 trace，再用一個 synthesis agent 把 findings 併成單一 Diagnosis Report。**single-agent 仍是 default**（簡單 issue 不 fan out）。synthesis **必須引用 ≥2 個 investigator leg** 的 file 參照（fan-out 的價值正是 cross-leg 重新框定 —— 一個 leg 的 reads 會修正另一個的 framing）。high-stakes findings 可用 **adversarial-verify variant**：fan out N 個 skeptic 各自試圖 refute 一個假設、通過才進 report。opt-in only —— auto-detect「N 子系統」本身模糊、且 fan-out 乘上 token spend。契約見 [`references/parallel-orchestration.md`](../../references/parallel-orchestration.md)。
+> **(Opt-in) 多子系統平行 fan-out（v2.83.0+, #182）**：當 root cause *橫跨 N 個獨立子系統 / 假設*（例如一個 code-gen contract + 一個 cache-invalidation footgun + 一個 sister-occurrence sweep），可選擇用 **Workflow tool** fan out — 每個子系統一個 read-only investigator 平行 trace，再用一個 synthesis agent 把 findings 併成單一 Diagnosis Report。**single-agent 仍是 default**（簡單 issue 不 fan out）。synthesis **必須引用 ≥2 個 investigator leg** 的 file 參照（fan-out 的價值正是 cross-leg 重新框定 —— 一個 leg 的 reads 會修正另一個的 framing）。high-stakes findings 可用 **adversarial-verify variant**：fan out N 個 skeptic 各自試圖 refute 一個假設、通過才進 report。opt-in only —— auto-detect「N 子系統」本身模糊、且 fan-out 乘上 token spend。**所有 fan-out agent（investigator / synthesis / skeptic）的 dispatch model 依 idd-verify 的解析規則顯式指定**（`IDD_AGENT_MODEL` else `opus`，非法值 fail-loud；#205——不指定會繼承 session main-loop model，高階 session 下重演 quota 撞牆）。契約見 [`references/parallel-orchestration.md`](../../references/parallel-orchestration.md)。
 
 #### Feature → 需求分析
 

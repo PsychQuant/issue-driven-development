@@ -38,7 +38,7 @@ If there are no changes, report "No changes to audit" and stop.
 
 ### Phase 2: Parallel 3-Agent Analysis
 
-Launch 3 agents in parallel (one message, 3 tool calls). Each agent receives the full diff and analyzes it through one adversary lens.
+Launch 3 agents in parallel (one message, 3 tool calls). Each agent receives the full diff and analyzes it through one adversary lens. Each `Agent` call carries an explicit `model` — resolve per idd-verify's dispatch-model rule (`IDD_AGENT_MODEL` else `opus`; #205 — doc-only alignment on this vendored reference copy; never inherit the session model implicitly).
 
 **Agent 1 — The Scoundrel (壞蛋)**
 

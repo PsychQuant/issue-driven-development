@@ -14,7 +14,7 @@
 - 不改 parallel-ai-agents plugin（tracking PsychQuant/parallel-ai-agents#20 另行處理）
 - 不改 Codex lens 的跨模型契約（gpt-5.5 via codex-call 不變）
 - 不加 per-lens 分級模型（如 DA 用高階、reviewer 用低階）——v1 單一預設，分級留未來
-- 不動 spectra-archive 委派以外的非 verify 派發（盤點確認無其他站點）
+- 非 verify 派發面**一體套用同一規則**（verify 首輪抓出首次 grep 盤點的假陰性後補齊）：idd-diagnose #182 平行 fan-out、references/parallel-orchestration.md 契約、spectra-audit 3-agent、spectra-apply `[P]` 平行（後兩者 + spectra-archive 為 vendored reference copy 的 doc-only 對齊）。教訓：`Agent({|agent(` 字面 grep 對 **prose 描述的派發**結構性盲視——同 session bestASR#20 的書寫變體假陰性同型
 
 ## Capabilities
 
@@ -30,6 +30,6 @@
 
 - Affected specs: `idd-verify`（MODIFIED）
 - Affected code:
-  - Modified: plugins/issue-driven-dev/skills/idd-verify/ensemble-workflow.js, plugins/issue-driven-dev/skills/idd-verify/SKILL.md, plugins/issue-driven-dev/references/spectra-skills/spectra-archive/SKILL.md, plugins/issue-driven-dev/CHANGELOG.md（若有）
+  - Modified: plugins/issue-driven-dev/skills/idd-verify/ensemble-workflow.js, plugins/issue-driven-dev/skills/idd-verify/SKILL.md, plugins/issue-driven-dev/skills/idd-diagnose/SKILL.md, plugins/issue-driven-dev/references/parallel-orchestration.md, plugins/issue-driven-dev/references/spectra-skills/{spectra-archive,spectra-audit,spectra-apply}/SKILL.md, plugins/issue-driven-dev/CHANGELOG.md
   - New: (none)
   - Removed: (none)
