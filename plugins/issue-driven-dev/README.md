@@ -190,6 +190,7 @@ attachments_release: "attachments"
 - `gh` CLI authenticated with GitHub
 - [OpenAI Codex CLI](https://github.com/openai/codex) installed (for `idd-verify`)
 - ChatGPT Pro account (for Codex gpt-5.5)
+- `superpowers` plugin（`claude-plugins-official`）— **hard dependency（v2.90.0+ #209）**。安裝本 plugin 時 Claude Code 會經 `plugin.json` `dependencies` 自動安裝（需 Claude Code v2.1.110+；遞移 enable 需 v2.1.143+）。`idd-implement` 的 TDD 執行與完成前驗證、`idd-diagnose` 的 bug RCA 執行框架 delegate 給它；缺席時該路徑 **fail-fast abort** + 一步安裝指令，不做 fallback
 
 ### Optional (per source type)
 
@@ -222,6 +223,7 @@ attachments_release: "attachments"
 
 | Mode | Required plugin | Marketplace | Why | Behavior if missing |
 |------|-----------------|-------------|-----|---------------------|
+| `idd-implement`（TDD / 完成前驗證）+ `idd-diagnose`（bug RCA） | `superpowers` | `claude-plugins-official` | process-discipline delegation（#209 hard dependency；正常情況由 `dependencies` 自動安裝，不會缺席） | **fail-fast abort** + install hint |
 | `idd-verify --loop` | `ralph-loop` | `claude-plugins-official` | outer driver for verify-fix loop | **fail-fast abort** + install hint |
 | `idd-all` (PR, unattended) (default) | `ralph-loop` | 同上 | unattended 在 verify findings 後需 driver 觸發下一輪 | **graceful degrade** to `(direct-commit, attended)` + warning(保護 v2.40.0 caller backward compat) |
 | `idd-all --no-pr` (direct-commit, attended) | (none) | n/a | user 在 keyboard 自然推進 | n/a |

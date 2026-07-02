@@ -223,31 +223,20 @@ Exit code:
 
 ### Step 2: 依類型診斷
 
-#### Bug → Root Cause Analysis
+#### Bug → Root Cause Analysis（v2.90.0+ #209: superpowers delegation）
 
-1. **重現問題**
-   - 找到觸發條件
-   - 如果不能穩定重現 → 蒐集更多資訊，不要猜
+**Pre-flight（強制）** — per spec `superpowers-integration`「Dual pre-flight at delegation sites」：
 
-2. **Trace 資料流**
-   - 從錯誤訊息 / stack trace 出發
-   - 往上追到源頭：壞的值是從哪裡來的？
-   - 每個環節都確認，不跳過
+```bash
+"$CLAUDE_PLUGIN_ROOT/scripts/check-plugin-presence.sh" \
+  claude-plugins-official superpowers systematic-debugging || exit 1
+```
 
-3. **檢查最近的變更**
-   ```bash
-   git log --oneline -20
-   git diff HEAD~5
-   ```
-   - 什麼改動可能引發這個問題？
+缺 plugin 或缺目標 skill → helper 印出含一步安裝指令（`claude plugin install superpowers@claude-plugins-official`）的錯誤，**立即 abort**。不做內建 fallback、不 silent degrade（#209 D2）。
 
-4. **找到 working example**
-   - Codebase 裡有沒有類似的、正常運作的 code？
-   - 壞的跟好的差在哪裡？
+**執行框架 = `superpowers:systematic-debugging`（canonical process source）**：invoke `Skill(skill="superpowers:systematic-debugging")`，依其紀律完成重現 → trace → 假設形成（一次一個假設、證據先於修法）。IDD 不再內嵌自己的 RCA 步驟敘述 — 除錯 process 以 superpowers 為 single source（#209 D3）。
 
-5. **形成假設**
-   - 明確陳述：「我認為 root cause 是 X，因為 Y」
-   - 一次一個假設，不要同時猜多個
+**IDD wrapper 紀律（不 delegate）**：root cause 的產出仍寫入下方 Step 3 的 Diagnosis Report 模板並 comment 到 issue；證據引用 attachment 用 repo 相對 path；假設陳述格式「我認為 root cause 是 X，因為 Y」進 `### Root Cause / Analysis` 區段。
 
 > **(Opt-in) 多子系統平行 fan-out（v2.83.0+, #182）**：當 root cause *橫跨 N 個獨立子系統 / 假設*（例如一個 code-gen contract + 一個 cache-invalidation footgun + 一個 sister-occurrence sweep），可選擇用 **Workflow tool** fan out — 每個子系統一個 read-only investigator 平行 trace，再用一個 synthesis agent 把 findings 併成單一 Diagnosis Report。**single-agent 仍是 default**（簡單 issue 不 fan out）。synthesis **必須引用 ≥2 個 investigator leg** 的 file 參照（fan-out 的價值正是 cross-leg 重新框定 —— 一個 leg 的 reads 會修正另一個的 framing）。high-stakes findings 可用 **adversarial-verify variant**：fan out N 個 skeptic 各自試圖 refute 一個假設、通過才進 report。opt-in only —— auto-detect「N 子系統」本身模糊、且 fan-out 乘上 token spend。**所有 fan-out agent（investigator / synthesis / skeptic）的 dispatch model 依 idd-verify 的解析規則顯式指定**（`IDD_AGENT_MODEL` else `opus`，非法值 fail-loud；#205——不指定會繼承 session main-loop model，高階 session 下重演 quota 撞牆）。契約見 [`references/parallel-orchestration.md`](../../references/parallel-orchestration.md)。
 
