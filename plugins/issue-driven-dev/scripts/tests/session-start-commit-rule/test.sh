@@ -6,6 +6,11 @@
 # ceiling (every user pays this context tax each session — hard-locked here),
 # and token alignment between hook output and the canonical rules file.
 #
+# COVERAGE SCOPE (#214 R2): artifact-level only — asserts the SHIPPED files
+# (hooks.json shape, script executability/output, token alignment). It does NOT
+# exercise Claude Code's runtime hook discovery; that contract is upstream
+# (hooks/hooks.json is the documented auto-discovery location per plugins-reference).
+#
 # Usage: bash test.sh   (exit 0 = all pass, 1 = any fail)
 
 set -u
@@ -16,7 +21,9 @@ HOOKS_JSON="$PLUGIN_ROOT/hooks/hooks.json"
 HOOK_SCRIPT="$PLUGIN_ROOT/hooks/session-start-commit-rule.sh"
 RULES_FILE="$PLUGIN_ROOT/rules/commit-issue-reference.md"
 
-. "$HERE/../../lib/assert-helpers.sh"
+HELPERS="$HERE/../../lib/assert-helpers.sh"
+[ -f "$HELPERS" ] || { echo "✗ missing $HELPERS — cannot run suite" >&2; exit 1; }
+. "$HELPERS"
 
 # --- hooks.json validity + wiring -------------------------------------------
 assert_file_exists "hooks.json exists" "$HOOKS_JSON"

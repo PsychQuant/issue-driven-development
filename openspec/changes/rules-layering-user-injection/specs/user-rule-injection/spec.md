@@ -4,10 +4,10 @@
 
 The plugin SHALL ship a SessionStart hook (`hooks/hooks.json` + `hooks/session-start-commit-rule.sh`) whose output is at most 5 lines, containing the commit issue-reference iron rules and a pointer to the canonical rule file. The hook content SHALL be statically defined and token-aligned with the canonical rule file.
 
-#### Scenario: Hook fires on session start
+#### Scenario: Hook artifact is wired for SessionStart
 
-- **WHEN** a user with the plugin enabled starts a Claude Code session
-- **THEN** the SessionStart hook prints at most 5 lines containing the issue-reference discipline and the canonical rule file path
+- **WHEN** the drift-guard test inspects the shipped hook artifacts
+- **THEN** `hooks/hooks.json` wires exactly one SessionStart command entry to the executable hook script, whose direct execution prints at most 5 lines containing the issue-reference discipline and the canonical rule file path (artifact-level coverage; runtime hook discovery is Claude Code's contract — `hooks/hooks.json` is the documented auto-discovery location)
 
 #### Scenario: Drift guard enforces alignment
 
