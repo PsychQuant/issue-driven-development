@@ -634,6 +634,8 @@ gh pr create --title "$PR_TITLE" --body "$PR_BODY" \
 
 ## Commit 規範
 
+> **User-facing canonical**：[`rules/commit-issue-reference.md`](../../rules/commit-issue-reference.md)（#214）— 四條鐵律以該檔為準。
+
 ```
 <type>: <description> (#NNN)
 ```

@@ -810,7 +810,7 @@ fi
 # Both branches fall through to Phase 6 below.
 ```
 
-> **絕對不能在 PR body 用 Closes/Fixes/Resolves trailer**。理由見 idd-implement skill 裡的 trailer 禁令說明 — auto-close 會繞過 idd-close 的 checklist gate 和 closing summary。
+> **絕對不能在 PR body 用 Closes/Fixes/Resolves trailer**。User-facing canonical 紀律見 [`rules/commit-issue-reference.md`](../../rules/commit-issue-reference.md)（#214）；理由見 idd-implement skill 裡的 trailer 禁令說明 — auto-close 會繞過 idd-close 的 checklist gate 和 closing summary。
 
 ---
 
