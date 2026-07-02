@@ -44,7 +44,7 @@ Each delegation site SHALL verify, before delegating: (1) the `superpowers` plug
 
 ### Requirement: Kept disciplines are excluded from delegation
 
-`idd-verify` ensemble backend resolution, worktree isolation, and planning disciplines (idd-plan / Spectra) SHALL NOT delegate to `superpowers`.
+`idd-verify` ensemble backend resolution, worktree isolation, and planning disciplines (idd-plan / Spectra — explicitly including the `brainstorming` and `writing-plans` counterparts) SHALL NOT delegate to `superpowers`.
 
 #### Scenario: Verify backend unaffected
 

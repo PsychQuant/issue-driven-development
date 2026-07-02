@@ -94,4 +94,31 @@ H="$(mk_home)"
 ERR=$(HOME="$H" IDD_SKIP_PLUGIN_CHECK=1 bash "$SCRIPT" claude-plugins-official superpowers test-driven-development 2>&1 >/dev/null)
 assert_exit "bypass: IDD_SKIP_PLUGIN_CHECK=1 covers 3-arg → 0" 0 $?
 
+
+# --- R1 verify fixes (#209 verify round 1) ------------------------------------
+# F3: partial version dir (no plugin.json) must NOT win highest-version resolution
+H="$(mk_home)"
+mk_plugin "$H" claude-plugins-official superpowers 4.9.0 test-driven-development
+mkdir -p "$H/.claude/plugins/cache/claude-plugins-official/superpowers/4.10.0"   # broken leftover: no plugin.json, no skills
+run "$H" claude-plugins-official superpowers test-driven-development
+assert_exit "F3: broken higher version dir ignored → 0" 0 $?
+
+# F7: multiline skill name must be rejected (whole-string match, not per-line grep)
+H="$(mk_home)"; mk_plugin "$H" claude-plugins-official superpowers 4.1.0 test-driven-development
+run "$H" claude-plugins-official superpowers "$(printf 'test-driven-development\n../../../etc/passwd')"
+assert_exit "F7: multiline skill name → 2" 2 $?
+
+# F9: marketplace / plugin args validated symmetrically
+H="$(mk_home)"
+run "$H" "../escape" superpowers
+assert_exit "F9: traversal marketplace arg → 2" 2 $?
+run "$H" claude-plugins-official "../escape"
+assert_exit "F9: traversal plugin arg → 2" 2 $?
+
+# F6: plugin-missing message leads with the one-step install command (no broken
+# unconditional "marketplace add <owner>/..." as the first instruction)
+H="$(mk_home)"
+run "$H" claude-plugins-official superpowers
+assert_grep "F6: one-step install line present" "Install (one step):" "$ERR"
+
 print_summary "check-plugin-presence"

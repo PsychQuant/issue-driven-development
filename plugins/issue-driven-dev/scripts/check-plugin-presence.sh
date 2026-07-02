@@ -41,6 +41,13 @@
 #
 # Future hardening (#41 reopen criteria): if multi-user / CI deployment becomes
 # common, evaluate hash verification step against marketplace-published manifest.
+#
+# Presence ≠ enabled (#209 R1 verify F10, DA finding): this script checks the
+# on-disk cache only. A plugin that is installed but DISABLED still passes;
+# the later Skill() invocation resolves against the enabled/active version and
+# will fail. If a delegation fails right after this pre-flight passed, run:
+#   claude plugin enable <plugin>@<marketplace>
+# Enabled-state detection is tracked as a follow-up issue.
 
 set -u
 
@@ -61,10 +68,20 @@ MARKETPLACE="$1"
 PLUGIN="$2"
 SKILL="${3:-}"
 
-# Skill-name hardening: a skill name is exactly one path component. Rejects
-# empty strings and traversal (../) so a buggy or hostile caller cannot probe
-# outside the plugin's skills/ directory.
-if [ $# -eq 3 ] && ! printf '%s' "$SKILL" | grep -qE '^[A-Za-z0-9_-]+$'; then
+# Argument hardening (#209 R1 verify): every arg is exactly one path component.
+# bash [[ =~ ]] matches the WHOLE string — a per-line grep can be bypassed by
+# multiline input whose first line is legal. Marketplace / plugin additionally
+# allow dots. Rejects empty strings, traversal (../), slashes, and embedded
+# newlines so a buggy or hostile caller cannot probe outside the plugin cache.
+if ! [[ "$MARKETPLACE" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  echo "✗ invalid marketplace name: '${MARKETPLACE}' (expected one path component)" >&2
+  exit 2
+fi
+if ! [[ "$PLUGIN" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  echo "✗ invalid plugin name: '${PLUGIN}' (expected one path component)" >&2
+  exit 2
+fi
+if [ $# -eq 3 ] && ! [[ "$SKILL" =~ ^[A-Za-z0-9_-]+$ ]]; then
   echo "✗ invalid skill name: '${SKILL}' (expected one path component, e.g. test-driven-development)" >&2
   exit 2
 fi
@@ -95,7 +112,11 @@ if (( ${#files[@]} > 0 )); then
   # sort -V (same resolution rule as the pai canonical chain in idd-verify D1)
   # and require skills/<name>/SKILL.md inside it. A skill that only exists in a
   # stale lower version does NOT count — Claude Code loads the highest version.
-  latest=$(printf '%s\n' "${HOME}/.claude/plugins/cache/${MARKETPLACE}/${PLUGIN}"/*/ | sort -V | tail -1)
+  # Membership consistency (#209 R1 verify F3): derive the version set from the
+  # SAME plugin.json-gated files[] used for the presence check, so a broken
+  # leftover dir (no plugin.json, e.g. an interrupted install) can never win
+  # highest-version resolution and false-negative the skill check.
+  latest=$(printf '%s\n' "${files[@]}" | sed 's|\.claude-plugin/plugin\.json$||' | sort -V | tail -1)
   if [ -f "${latest}skills/${SKILL}/SKILL.md" ]; then
     exit 0
   fi
@@ -116,9 +137,12 @@ cat >&2 <<EOF
 ✗ ${PLUGIN} plugin not found.
   Searched: ~/.claude/plugins/cache/${MARKETPLACE}/${PLUGIN}/*/.claude-plugin/plugin.json
 
-  Install:
-    claude plugin marketplace add <owner>/${MARKETPLACE}
+  Install (one step):
     claude plugin install ${PLUGIN}@${MARKETPLACE}
+
+  Only if the marketplace itself is not registered yet (NOT needed for
+  claude-plugins-official — Claude Code auto-registers it on first launch):
+    claude plugin marketplace add <owner-or-org>/${MARKETPLACE}
 
   Or bypass this check (advanced): export IDD_SKIP_PLUGIN_CHECK=1
 EOF

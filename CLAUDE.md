@@ -44,3 +44,4 @@ When reasoning about where a human belongs in the IDD pipeline (acceptance, revi
 ## Project Rules
 
 @.claude/rules/attribute-assessment.md
+@.claude/rules/deep-integration-over-hardcode.md

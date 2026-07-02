@@ -401,6 +401,8 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$IMPLEMENTATION_PLAN"
 
 缺 plugin 或缺目標 skill → helper 印出含一步安裝指令（`claude plugin install superpowers@claude-plugins-official`）的錯誤，**立即 abort**。不做 vendored fallback、不 silent degrade（#209 D2）— superpowers 是 install-time hard dependency（plugin.json `dependencies` 已宣告，正常安裝下必在；缺席代表安裝壞了，該修安裝而不是繞過紀律）。
 
+**適用範圍（#209 R1 verify F8）**：pre-flight 針對會走 TDD delegation 的 code 變更項；若本次變更清單**全部**屬下方「IDD 專屬路由例外」（純 prose / `with_skill`），此 pre-flight 可跳過 — 該路由本來就不 invoke superpowers。**注意（F10）**：pre-flight 驗的是磁碟 cache 存在；plugin 被 disable 時仍會通過、隨後 `Skill()` 才失敗 — 此時跑 `claude plugin enable superpowers@claude-plugins-official`。
+
 每個變更項依序執行：
 
 0. **TaskUpdate → `in_progress`**（開始做這一項之前）

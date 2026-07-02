@@ -15,7 +15,7 @@
 
 ## 4. R1 rule（design: D4 — R1 rule 內容以 pai 案例為 exemplar）
 
-- [x] 4.1 [P] 新增 .claude/rules/deep-integration-over-hardcode.md：判準鏈（canonical 套件存在 → 上游接口穩定 → 深度整合形狀選擇 fail-fast / frozen-fork）、三個具名例外（上游無穩定契約、隱私/安全邊界、時序解耦）各附記錄格式、pai 案例（idd-verify-depend-on-pai-engine）與本 change 作為兩個 exemplar。完成判準：檔案存在且含上述三段（content review），與 attribute-assessment.md 同層即可觸及（不需 @-import 變更）。
+- [x] 4.1 [P] 新增 .claude/rules/deep-integration-over-hardcode.md：判準鏈（canonical 套件存在 → 上游接口穩定 → 深度整合形狀選擇 fail-fast / frozen-fork）、三個具名例外（上游無穩定契約、隱私/安全邊界、時序解耦）各附記錄格式、pai 案例（idd-verify-depend-on-pai-engine）與本 change 作為兩個 exemplar。完成判準：檔案存在且含上述三段（content review），**並在專案 CLAUDE.md `## Project Rules` @-import**（R1 verify #2 更正：同層不 import 不會載入 — attribute-assessment.md 的「常駐」正是靠 @-import 達成）。
 
 ## 5. 行為驗證與掃尾
 
