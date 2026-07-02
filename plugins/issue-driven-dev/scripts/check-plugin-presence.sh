@@ -68,17 +68,21 @@ MARKETPLACE="$1"
 PLUGIN="$2"
 SKILL="${3:-}"
 
-# Argument hardening (#209 R1 verify): every arg is exactly one path component.
-# bash [[ =~ ]] matches the WHOLE string — a per-line grep can be bypassed by
-# multiline input whose first line is legal. Marketplace / plugin additionally
-# allow dots. Rejects empty strings, traversal (../), slashes, and embedded
-# newlines so a buggy or hostile caller cannot probe outside the plugin cache.
-if ! [[ "$MARKETPLACE" =~ ^[A-Za-z0-9._-]+$ ]]; then
-  echo "✗ invalid marketplace name: '${MARKETPLACE}' (expected one path component)" >&2
+# Argument hardening (#209 R1+R2 verify): every arg is exactly one REAL path
+# component. bash [[ =~ ]] matches the WHOLE string — a per-line grep can be
+# bypassed by multiline input whose first line is legal. Marketplace / plugin
+# additionally allow dots for real names (e.g. local.mcpb.x), but dot-only
+# values (`.` / `..` / `...`) are rejected — a bare `..` climbs out of the
+# cache subtree even without a slash (R2 DA PoC: `cache/../x` resolves one
+# level up and returned a false-positive exit 0). Rejects empty strings,
+# traversal, slashes, and embedded newlines so a buggy or hostile caller
+# cannot probe outside the plugin cache.
+if ! [[ "$MARKETPLACE" =~ ^[A-Za-z0-9._-]+$ ]] || [[ "$MARKETPLACE" =~ ^\.+$ ]]; then
+  echo "✗ invalid marketplace name: '${MARKETPLACE}' (expected one real path component)" >&2
   exit 2
 fi
-if ! [[ "$PLUGIN" =~ ^[A-Za-z0-9._-]+$ ]]; then
-  echo "✗ invalid plugin name: '${PLUGIN}' (expected one path component)" >&2
+if ! [[ "$PLUGIN" =~ ^[A-Za-z0-9._-]+$ ]] || [[ "$PLUGIN" =~ ^\.+$ ]]; then
+  echo "✗ invalid plugin name: '${PLUGIN}' (expected one real path component)" >&2
   exit 2
 fi
 if [ $# -eq 3 ] && ! [[ "$SKILL" =~ ^[A-Za-z0-9_-]+$ ]]; then

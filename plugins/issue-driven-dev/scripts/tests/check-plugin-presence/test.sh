@@ -121,4 +121,16 @@ H="$(mk_home)"
 run "$H" claude-plugins-official superpowers
 assert_grep "F6: one-step install line present" "Install (one step):" "$ERR"
 
+
+# --- R2 verify: bare dot components rejected (R2 findings 1/3/4/6, DA PoC) ----
+H="$(mk_home)"; mk_plugin "$H" claude-plugins-official superpowers 4.1.0 test-driven-development
+run "$H" ".." superpowers
+assert_exit "R2: bare .. marketplace → 2" 2 $?
+run "$H" "." superpowers
+assert_exit "R2: bare . marketplace → 2" 2 $?
+run "$H" claude-plugins-official ".."
+assert_exit "R2: bare .. plugin → 2" 2 $?
+run "$H" claude-plugins-official "..."
+assert_exit "R2: dot-only plugin (...) → 2" 2 $?
+
 print_summary "check-plugin-presence"

@@ -37,7 +37,7 @@ delegate：TDD loop（idd-implement）、完成前檢查（idd-implement）、bu
 
 ### D5 — pre-flight 雙重驗證，接口 = skill 名稱
 
-superpowers 無 EXTERNAL-CONSUMER CONTRACT，skill 名稱即事實接口。pre-flight 檢查兩層：(1) plugin 目錄存在於 plugin cache（比照 pai 的 cache-path 掃描）；(2) 目標 skill 目錄/SKILL.md 存在。名稱清單集中一處常數宣告（單點維護），上游改組 skills 時錯誤訊息指名缺哪個 skill。
+superpowers 無 EXTERNAL-CONSUMER CONTRACT，skill 名稱即事實接口。pre-flight 檢查兩層：(1) plugin 目錄存在於 plugin cache（比照 pai 的 cache-path 掃描）；(2) 目標 skill 目錄/SKILL.md 存在。名稱在各 delegation 點以字面出現（markdown prompt 無 include 機制，無法真正常數化 — R2 verify #8 更正）；「單點維護」以 grep 程序取代：改名時全倉 `grep -rn 'superpowers:' plugins/` 掃出所有站點一次更新。上游改組 skills 時 pre-flight 錯誤訊息指名缺哪個 skill。
 
 ## Implementation Contract
 

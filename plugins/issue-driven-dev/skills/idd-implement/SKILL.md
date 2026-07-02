@@ -392,7 +392,7 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$IMPLEMENTATION_PLAN"
 
 ### Step 3: TDD 執行 + Task tracking（v2.90.0+ #209: superpowers delegation）
 
-**Pre-flight（強制，先於任何變更項）** — per spec `superpowers-integration`「Dual pre-flight at delegation sites」：
+**Pre-flight（code 變更項必經；適用範圍與例外見下段）** — per spec `superpowers-integration`「Dual pre-flight at delegation sites」：
 
 ```bash
 "$CLAUDE_PLUGIN_ROOT/scripts/check-plugin-presence.sh" \
@@ -410,6 +410,8 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$IMPLEMENTATION_PLAN"
 1. **TDD 執行 = `superpowers:test-driven-development`（canonical process source）**
 
    invoke `Skill(skill="superpowers:test-driven-development")`，依該 skill 的 RED → GREEN → REFACTOR 紀律完成本變更項的測試先行與最小實作。IDD 不再內嵌自己的 TDD 步驟敘述 — 執行框架以 superpowers 為 single source（同 idd-verify 依賴 pai canonical 引擎的先例，#209 D3）。
+
+   **Wrapper 補充紀律（issue-anchored，superpowers 結構上無法涵蓋 — #209 R2 verify）**：測試描述用 **issue 的語言**（superpowers 是 issue-agnostic，不知道當前 issue 語彙）；commit 前**全套件**測試綠（上游 GREEN checklist 已含 "All tests pass"，此處為 IDD 端再保險，防 collateral regression）。
 
    **IDD 專屬路由例外（不 delegate）**：
    - **deliverable 是 prose**（信件、新聞稿、論文段落等非 code 文本）：跳過正式測試，改用 perspective-writer 的 anti-pattern checklist 作驗收 gate
@@ -483,6 +485,8 @@ Pre-flight（同 Step 3 的 dual pre-flight 契約，缺席 fail-fast）：
 "$CLAUDE_PLUGIN_ROOT/scripts/check-plugin-presence.sh" \
   claude-plugins-official superpowers verification-before-completion || exit 1
 ```
+
+**適用範圍（同 Step 3，#209 R2 verify）**：純 prose / `with_skill` 變更清單的 invocation 不經 superpowers delegation — 本 pre-flight 一併跳過，完成前驗證改用 perspective-writer anti-pattern checklist 或 sub-skill 自身驗收。
 
 通過後 invoke `Skill(skill="superpowers:verification-before-completion")` 執行完成前驗證紀律。驗證框架 delegate 給 superpowers；以下 **IDD wrapper 檢查**保留（issue-anchored，superpowers 不覆蓋）：
 

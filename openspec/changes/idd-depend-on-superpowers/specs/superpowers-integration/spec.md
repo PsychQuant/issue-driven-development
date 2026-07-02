@@ -16,7 +16,7 @@ The IDD plugin manifest SHALL declare `superpowers` as a plugin dependency resol
 
 ### Requirement: Dual pre-flight at delegation sites
 
-Each delegation site SHALL verify, before delegating: (1) the `superpowers` plugin is present in the local plugin cache, and (2) the target skill exists by name within it. On either failure the invoking skill SHALL abort with an error message containing the one-step install command `claude plugin install superpowers@claude-plugins-official`. The invoking skill SHALL NOT fall back to built-in equivalent process descriptions and SHALL NOT silently degrade.
+Each delegation site SHALL verify, before delegating: (1) the `superpowers` plugin is present in the local plugin cache, and (2) the target skill exists by name within it. On either failure the invoking skill SHALL abort with an error message containing the one-step install command `claude plugin install superpowers@claude-plugins-official`. The invoking skill SHALL NOT fall back to built-in equivalent process descriptions and SHALL NOT silently degrade. The sole documented exception is the audited operator override `IDD_SKIP_PLUGIN_CHECK=1`, which prints a stderr warning and exits 0 — an explicit, logged operator action, not a silent degrade (R2 verify reconciliation).
 
 #### Scenario: Plugin absent triggers fail-fast
 
@@ -50,3 +50,8 @@ Each delegation site SHALL verify, before delegating: (1) the `superpowers` plug
 
 - **WHEN** `idd-verify` resolves its ensemble backend
 - **THEN** resolution follows the existing `idd-verify` spec chain (pai canonical → vendored fallback → manual fan-out) with no `superpowers` involvement
+
+#### Scenario: Planning disciplines remain superpowers-free
+
+- **WHEN** `idd-plan` or the Spectra planning skills execute
+- **THEN** their skill definitions contain no `superpowers:` invocation (mechanical check: `grep -rn 'superpowers:' plugins/issue-driven-dev/skills/idd-plan/` returns zero hits)
