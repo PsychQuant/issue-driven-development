@@ -183,6 +183,18 @@ attachments_release: "attachments"
 ---
 ```
 
+## Deep Integrations（深度整合套件總覽）
+
+IDD 遵循「**深度整合 >> hard-coded**」原則（#209/#214）：生態系已有 canonical 套件時依賴它、不在內部複製等價邏輯。每個整合的綁定形狀與缺席行為：
+
+| Package | 綁定形狀 | 角色 | 缺席行為 |
+| ------- | ------- | ---- | ------- |
+| `superpowers`（`claude-plugins-official`） | **Hard dependency** — `plugin.json` `dependencies` 安裝時自動安裝（#209） | TDD 執行（`idd-implement`）、系統性除錯（`idd-diagnose` bug RCA）、完成前驗證的 canonical process 紀律 | Delegation 點 **fail-fast abort** + 一步安裝指令；絕不 silent degrade |
+| `parallel-ai-agents`（pai） | **Canonical engine + 版本閘門 ≥ 2.18.0**（#207，STABLE external-consumer contract） | `idd-verify` 的 6-AI ensemble 引擎（4 lenses + Devil's Advocate + Codex 編排） | 三層 graceful degrade：canonical → frozen vendored fork → manual fan-out（每層印 notice） |
+| `ralph-loop`（`claude-plugins-official`） | Optional mode 依賴（#28） | `idd-verify --loop` / `idd-all (PR, unattended)` 的 verify-fix loop driver | `--loop` fail-fast + 安裝指引；`idd-all` graceful degrade 到 (direct-commit, attended) |
+| OpenAI Codex CLI（gpt-5.5） | Vendored `codex-call` HTTP wrapper（#147，非 subprocess） | Verify 的跨模型盲驗 lens | Fail-closed INFO finding「cross-model pass incomplete」，不靜默當 PASS |
+| `che-word-mcp` / `che-telegram-mcp` / `che-apple-mail-mcp` / `che-apple-notes-mcp` | Optional per source type（#27） | `idd-issue` 來源 adapter（docx / Telegram / Mail / Notes） | 該 source type **fail-fast** + 結構化安裝指引（見下方 Optional 表） |
+
 ## Requirements
 
 ### Required (always)
