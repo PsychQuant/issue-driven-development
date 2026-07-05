@@ -21,7 +21,7 @@
 #       guarantees the step EXISTS; it does not pretend to guarantee the
 #       judgment was correct (that is the LLM's + the ENFORCE block-with-diff's
 #       job — see rules/privacy-scrubbing.md).
-#   (b) A tiny mechanical LAST-RESORT net catching ONLY 2 zero-tolerance LITERAL
+#   (b) A tiny mechanical LAST-RESORT net catching ONLY 3 zero-tolerance MECHANICAL
 #       items, as belt-and-suspenders for an LLM miss:
 #         1. an absolute macOS home path `/Users/<name>`
 #         2. verbatim `~/.claude.json` content (a project-path string copied out
@@ -96,7 +96,9 @@ require_scannable_bodyfile() {
 ATTESTED=""
 MENTION_ATTESTED=""   # comma-separated logins vetted via rules/tagging-collaborators.md 5-step (#117)
 GH_ARGS=()          # forwarded to gh, byte-identical minus the attestation flag
-SCAN_PARTS=()       # only the drafted prose (--body / --title / --body-file) is scanned
+SCAN_PARTS=()       # all drafted prose (--body / --title / --body-file) — privacy nets
+BODY_PARTS=()       # body-channel prose only — mention net (GitHub never notifies on
+                    # title mentions, and a plaintext title cannot be backtick-escaped)
 next_is=""          # "body" | "title" | "bodyfile" when the previous arg expects a value
 while [ $# -gt 0 ]; do
   arg="$1"
@@ -134,18 +136,28 @@ while [ $# -gt 0 ]; do
       GH_ARGS+=("$arg")
       case "$arg" in -t|--title) next_is="title" ;; *) next_is="body" ;; esac
       shift; continue ;;
-    --body=*)   GH_ARGS+=("$arg"); SCAN_PARTS+=("${arg#--body=}");   shift; continue ;;
+    --body=*)   GH_ARGS+=("$arg"); SCAN_PARTS+=("${arg#--body=}"); BODY_PARTS+=("${arg#--body=}"); shift; continue ;;
     --title=*)  GH_ARGS+=("$arg"); SCAN_PARTS+=("${arg#--title=}");  shift; continue ;;
     -F|--body-file)
       GH_ARGS+=("$arg"); next_is="bodyfile"; shift; continue ;;
+    -b?*)
+      GH_ARGS+=("$arg"); SCAN_PARTS+=("${arg#-b}"); BODY_PARTS+=("${arg#-b}"); shift; continue ;;
+    -t?*)
+      GH_ARGS+=("$arg"); SCAN_PARTS+=("${arg#-t}"); shift; continue ;;
+    -F?*)
+      GH_ARGS+=("$arg"); f="${arg#-F}"
+      require_scannable_bodyfile "$f"
+      FCONTENT="$(cat "$f")"; SCAN_PARTS+=("$FCONTENT"); BODY_PARTS+=("$FCONTENT"); shift; continue ;;
     --body-file=*) GH_ARGS+=("$arg"); next_is=""; f="${arg#--body-file=}"
       require_scannable_bodyfile "$f"
-      SCAN_PARTS+=("$(cat "$f")"); shift; continue ;;
+      FCONTENT="$(cat "$f")"; SCAN_PARTS+=("$FCONTENT"); BODY_PARTS+=("$FCONTENT"); shift; continue ;;
     *)
       GH_ARGS+=("$arg")
       case "$next_is" in
-        body|title) SCAN_PARTS+=("$arg") ;;
-        bodyfile)   require_scannable_bodyfile "$arg"; SCAN_PARTS+=("$(cat "$arg")") ;;
+        body)       SCAN_PARTS+=("$arg"); BODY_PARTS+=("$arg") ;;
+        title)      SCAN_PARTS+=("$arg") ;;
+        bodyfile)   require_scannable_bodyfile "$arg"; FCONTENT="$(cat "$arg")"
+                    SCAN_PARTS+=("$FCONTENT"); BODY_PARTS+=("$FCONTENT") ;;
       esac
       next_is=""; shift; continue ;;
   esac
@@ -162,7 +174,9 @@ case "$ATTESTED" in
       exit 3 ;;
 esac
 
-# --- (b) mechanical last-resort net (2 zero-tolerance literal items) ----------
+# --- (b) mechanical last-resort net (3 zero-tolerance mechanical items) -------
+# (grown 2→3 by #117 mention net — mechanical token matching, NOT semantic;
+#  the "no semantic matching" boundary from #202 D1/D2 is unchanged)
 # Joined once; the net only ever inspects the drafted prose, never --repo /
 # --label / --milestone etc. (so metadata-only edits are never false-flagged).
 SCAN=""
@@ -194,12 +208,19 @@ fi
 #    set -u — the probe just skips (#203 item 4).
 CJSON="${IDD_CLAUDE_JSON:-${HOME:-}/.claude.json}"
 if [ -n "$SCAN" ] && [ -r "$CJSON" ]; then
+  JQ_OK=0
   if command -v jq >/dev/null 2>&1; then
-    KEYS="$(jq -r '(.projects // {}) | keys[]' "$CJSON" 2>/dev/null \
-              | grep -E '^/.{11,}$' \
-              | grep -E '/[^/]+/' \
-              | sort -u)"
-  else
+    if KEYS_RAW="$(jq -r '(.projects // {}) | keys[]' "$CJSON" 2>/dev/null)"; then
+      JQ_OK=1
+      KEYS="$(printf '%s\n' "$KEYS_RAW" \
+                | grep -E '^/.{11,}$' \
+                | grep -E '/[^/]+/' \
+                | sort -u)"
+    fi
+  fi
+  if [ "$JQ_OK" -eq 0 ]; then
+    # jq absent OR jq parse failure (malformed config) — fail CLOSED to the
+    # whole-file wide net; a silently disabled net would leak (#203 verify sec-2).
     KEYS="$(grep -oE '"(/[^"]{11,})"' "$CJSON" 2>/dev/null \
               | sed -E 's/^"//; s/"$//' \
               | grep -E '/[^/]+/' \
@@ -220,7 +241,18 @@ fi
 #    (set only after the 5-step protocol resolved the logins).
 #    Prefix guard [^[:alnum:]_] keeps email-like user@host out (GitHub does not
 #    notify on those either).
-MSCAN="$(printf '%s' "$SCAN" | awk '/^[[:space:]]*```/{infence=!infence; next} !infence{print}' | sed -E 's/`[^`]*`//g')"
+MBODY=""
+for p in "${BODY_PARTS[@]:-}"; do MBODY+="$p"$'\n'; done
+# GFM: a fence opener allows at most 3 leading spaces; >=4 is literal indented
+# code and must NOT toggle fence state (logic 117-3 false-negative otherwise).
+MSCAN="$(printf '%s' "$MBODY" | awk '/^ ? ? ?```/{infence=!infence; next} !infence{print}' | sed -E 's/`[^`]*`//g')"
+# Entity-encoded @ (&#64; / &#x40; / &commat;) followed by a login shape: GitHub
+# may decode these before its mention scan — fail closed and refuse outright.
+if printf '%s' "$MSCAN" | grep -qiE '&#0*64;[a-z0-9-]|&#x0*40;[a-z0-9-]|&commat;[a-z0-9-]'; then
+  echo "✗ gh-egress: REFUSED — entity-encoded @-mention (e.g. &#64;login) in body." >&2
+  echo "  Encoded forms can decode into live mentions on GitHub. Spell it as literal text in backticks instead." >&2
+  exit 4
+fi
 UNATTESTED_MENTIONS=""
 while IFS= read -r login; do
   [ -z "$login" ] && continue

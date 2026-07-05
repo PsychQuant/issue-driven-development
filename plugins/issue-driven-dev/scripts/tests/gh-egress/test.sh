@@ -220,4 +220,49 @@ assert_exit "partially-attested mentions refused (#117, exit 4)" 4 $?
 bash "$SCRIPT" create --repo o/r --body --mention-attested kiki830621 "${ATT[@]}" >/dev/null 2>&1
 assert_exit "split-token --mention-attested refused (#117, exit 2)" 2 $?
 
+
+# ── cluster verify in-scope fixes (R1 findings) ──────────────────────────────
+# fix 1 (sec 203-2 / logic LOW): jq PRESENT but ~/.claude.json malformed →
+# content net must fail CLOSED to the grep fallback, not silently disable
+if command -v jq >/dev/null 2>&1; then
+  export IDD_CLAUDE_JSON="$WORK/malformed-claude.json"
+  printf '%s' '{"projects":{"/opt/priv/hidden-mal-xyz":{"x":1},}' > "$IDD_CLAUDE_JSON"   # trailing comma = invalid JSON
+  bash "$SCRIPT" comment 5 --repo o/r \
+    --body "crash traced to /opt/priv/hidden-mal-xyz build" "${ATT[@]}" >/dev/null 2>&1
+  assert_exit "malformed claude.json + jq present → fallback net still catches (fix1, exit 4)" 4 $?
+  export IDD_CLAUDE_JSON="$WORK/fixture-claude.json"
+fi
+
+# fix 2 (sec 117-1): entity-encoded @ forms refused (decode-side notification risk)
+bash "$SCRIPT" comment 5 --repo o/r \
+  --body "ping &#64;realuser about this" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "entity-encoded &#64;login refused (fix2, exit 4)" 4 $?
+bash "$SCRIPT" comment 5 --repo o/r \
+  --body "or &#x40;realuser even" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "entity-encoded &#x40;login refused (fix2, exit 4)" 4 $?
+
+# fix 3 (logic 117-1): attached short-form values are scanned like their spaced forms
+bash "$SCRIPT" create --repo o/r --title T "-blog at /Users/alice/secret.sh" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "attached -b<body> home-path leak caught (fix3, exit 4)" 4 $?
+bash "$SCRIPT" create --repo o/r --title T "-bcc @sneakymention" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "attached -b<body> raw mention caught (fix3, exit 4)" 4 $?
+printf 'leak at /Users/dave/y.log' > "$WORK/att.txt"
+bash "$SCRIPT" create --repo o/r --title T "-F$WORK/att.txt" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "attached -F<file> content scanned (fix3, exit 4)" 4 $?
+
+# fix 4 (logic 117-2): mention net is BODY-only — title @tokens neither notify nor can be escaped
+bash "$SCRIPT" create --repo o/r --title "responsive @media breakpoints" \
+  --body "clean prose" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "title @token NOT fed to mention net (fix4) → dispatch (exit 0)" 0 $?
+# privacy nets still scan titles (regression guard)
+bash "$SCRIPT" create --repo o/r --title "crash in /Users/eve/tool" \
+  --body "clean" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "title home-path still caught by privacy net (exit 4)" 4 $?
+
+# fix 5 (logic 117-3): 4-space-indented ``` is GFM literal code, NOT a fence —
+# must not toggle fence state and swallow a later real mention
+BODY_IND=$'see:\n    ```\ncc @realafteripseudofence' 
+bash "$SCRIPT" comment 5 --repo o/r --body "$BODY_IND" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "indented pseudo-fence does not hide later mention (fix5, exit 4)" 4 $?
+
 print_summary "gh-egress"

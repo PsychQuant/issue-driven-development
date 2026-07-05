@@ -114,16 +114,19 @@ things and **only** these:
    *existence* of the gate deterministic even though its *content* is the LLM's.
    (Q1 resolution: mechanism (a), a required per-call flag — not an env var,
    which could be left globally set and silently satisfy every dispatch.)
-2. **A mechanical last-resort net** catching **only 2 zero-tolerance literal
-   items** — an absolute `/Users/<name>` home path and verbatim `~/.claude.json`
-   content — as belt-and-suspenders if the LLM misses one. It is
-   **level-independent** (fires even at LIGHT: these two are absolute leaks, not
-   "ordinary identifiers"). It performs **no semantic pattern matching**; a
-   semantically-private identifier that is not one of these two literals (e.g. an
-   unpublished project codename) is deliberately **not** caught by the wrapper —
-   that breadth is the LLM self-review's job.
+2. **A mechanical last-resort net** catching **only 3 zero-tolerance mechanical
+   items** — an absolute `/Users/<name>` home path, verbatim `~/.claude.json`
+   content, and an unattested raw `@login` mention token (#117) — as
+   belt-and-suspenders if the LLM misses one. It is **level-independent**
+   (fires even at LIGHT: these are absolute leaks / irreversible notifications,
+   not "ordinary identifiers"). It performs **no semantic pattern matching**; a
+   semantically-private identifier that is not one of these mechanical items
+   (e.g. an unpublished project codename) is deliberately **not** caught by the
+   wrapper — that breadth is the LLM self-review's job.
 
-The wrapper MUST NOT grow a third semantic check; expanding the net requires a
+The wrapper MUST NOT grow a semantic check; the #202 D1/D2 boundary is
+"mechanical token matching only". The 2→3 growth (#117 mention net) stayed on
+the mechanical side of that line; any future semantic expansion requires a
 separate openspec change (spec: "net does not grow into semantic matching").
 
 ## Division of labor vs `sanitize_source_label` (#75)
