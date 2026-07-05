@@ -104,7 +104,7 @@ TaskCreate(name="gather_info", description="Step 2: 蒐集 title / type / priori
 TaskCreate(name="reresolve_target", description="Step 2.5: 用 title/labels 重評 content predicates,若新匹配 != tentative_default 則問使用者要不要切")
 TaskCreate(name="resolve_mentions", description="若有 --mention 或 description 含 @xxx，強制走 rules/tagging-collaborators.md 協定（v2.32.0+）")
 TaskCreate(name="privacy_scrub_gate", description="Step 0.6: 依 repo visibility 解析 $SCRUB_LEVEL (third-party=enforce / own-public=warn / private=light)；每次 egress 前對 drafted body 跑 rules/privacy-scrubbing.md 的 LLM 語意自審，並一律經 scripts/gh-egress.sh --scrub-attested 派送（不直接 gh issue，#202）")
-TaskCreate(name="create_issue", description="Step 3: gh issue create — Single mode / Group mode / Bundle mode(--parent / --blocked-by / --bundle-mode,見 Step 3.B),body 含已驗證的 @login；經 scripts/gh-egress.sh 派送（#202）")
+TaskCreate(name="create_issue", description="Step 3: gh issue create — Single mode / Group mode / Bundle mode(--parent / --blocked-by / --bundle-mode,見 Step 3.B),body 含已驗證的 @login；經 scripts/gh-egress.sh 派送（#202），有 mention 時帶 --mention-attested <resolved-logins>（#117 mention net；未帶會被 refuse）")
 TaskCreate(name="resolve_parent_link", description="Step 3.B: 若 --parent <N> set,驗證 #N 在 target repo + idempotent PATCH parent body task list(見 references/bundle-flags.md § Edit Algorithm)")
 TaskCreate(name="apply_blocked_by", description="Step 3.B: 若 --blocked-by <M>[,...] set,三層 fallback chain — body blockquote(unconditional)+ GraphQL addBlockedByDependency(嘗試)+ parent annotation(若 --parent co-used)")
 TaskCreate(name="orchestrate_bundle_mode", description="Step 3.B: 若 --bundle-mode <ordered|unordered> set,建 epic + N children + 自動套用 --parent + (ordered 時)Blocked-by 鏈;與 group 模式互斥")
@@ -527,7 +527,7 @@ echo "  3) 全部存好後告訴我「ok」，skill 會接手 upload + 嵌入 is
 2. **Type** — bug / feature / refactor / docs
 3. **Priority** — P0（立即）/ P1（本週）/ P2（排程）/ P3（有空再做）
 4. **Description** — 問題描述（bug: 重現步驟 + expected + actual；feature: 需求 + 目的）
-5. **Stakeholders（v2.32.0+，可選）** — 若需要在 issue body 中 tag 人，使用 `--mention <login>[,<login>...]` flag 或自然語言（"tag X"）。**任何 @xxx 必走 [`rules/tagging-collaborators.md`](../../rules/tagging-collaborators.md) 5 步協定**（gh api → fuzzy match → AskUserQuestion fallback → @login 不用 display name → post 前 verify）。違反 = 通知錯人，不可逆。
+5. **Stakeholders（v2.32.0+，可選）** — 若需要在 issue body 中 tag 人，使用 `--mention <login>[,<login>...]` flag 或自然語言（"tag X"）。**任何 @xxx 必走 [`rules/tagging-collaborators.md`](../../rules/tagging-collaborators.md) 5 步協定**（gh api → fuzzy match → AskUserQuestion fallback → @login 不用 display name → post 前 verify）。違反 = 通知錯人，不可逆。派送時把 resolved logins 帶進 `gh-egress.sh --mention-attested <login1,login2>`（#117 unconditional mention net）；非 mention 的附帶 `@xxx` token 一律 backtick-escape。
 
 #### Step 2.0.5: Title sanitization (v2.46.0+, P9 follow-up of #1)
 

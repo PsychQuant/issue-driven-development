@@ -150,8 +150,10 @@ assert_exit "projects key still caught after item-2 scoping (exit 4)" 4 $?
 # item 3: non-regular body-file (stdin dash / FIFO / process-sub) → refuse exit 5
 bash "$SCRIPT" create --repo o/r --title T --body-file - "${ATT[@]}" >/dev/null 2>&1
 assert_exit "body-file '-' (stdin) refused — unscannable (#203 item 3, exit 5)" 5 $?
+# No writer process needed: the gate refuses on the not-a-regular-file check
+# WITHOUT opening the FIFO (a background writer would block forever on open()
+# and hold the test's stdout pipe hostage).
 FIFO="$WORK/fifo"; mkfifo "$FIFO"
-( printf 'x' > "$FIFO" & ) 2>/dev/null
 bash "$SCRIPT" create --repo o/r --title T --body-file "$FIFO" "${ATT[@]}" >/dev/null 2>&1
 assert_exit "body-file FIFO refused — unscannable (#203 item 3, exit 5)" 5 $?
 # regular body-file still scanned + dispatched
@@ -179,5 +181,43 @@ assert_eq "zero-arg dispatch has no phantom empty positional (#203 item 5, argv 
 # item 6: --scrub-attested where a --body value is expected → malformed, usage refuse
 bash "$SCRIPT" create --repo o/r --body --scrub-attested warn >/dev/null 2>&1
 assert_exit "split-token attestation refused (#203 item 6, exit 2)" 2 $?
+
+
+# ── #117 unattested @-mention net ────────────────────────────────────────────
+# raw @login token without attestation → refuse (GitHub notification is irreversible)
+bash "$SCRIPT" comment 5 --repo o/r \
+  --body "ping @nonexistentuser123 for a second look" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "raw unattested @-mention refused (#117, exit 4)" 4 $?
+
+# backtick-escaped token is inert on GitHub → dispatch
+bash "$SCRIPT" comment 5 --repo o/r \
+  --body "the reviewer codename \`@codex\` wrote this" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "backtick-escaped @token NOT caught (#117) → dispatch (exit 0)" 0 $?
+
+# fenced code block containing @token is inert → dispatch
+BODY_FENCED=$'usage example:\n```\ncc @somebody\n```\ndone'
+bash "$SCRIPT" comment 5 --repo o/r --body "$BODY_FENCED" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "fenced @token NOT caught (#117) → dispatch (exit 0)" 0 $?
+
+# email-like user@host must not trip the net (char before @ is alnum)
+bash "$SCRIPT" comment 5 --repo o/r \
+  --body "reach me at demo@example.com about this" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "email-like token NOT caught (#117) → dispatch (exit 0)" 0 $?
+
+# attested mention dispatches AND the flag is stripped from forwarded argv
+bash "$SCRIPT" comment 5 --repo o/r \
+  --body "cc @kiki830621 please review" "${ATT[@]}" --mention-attested kiki830621 >/dev/null 2>&1
+assert_exit "attested @-mention dispatches (#117, exit 0)" 0 $?
+ARGV="$(tr '\0' '\n' < "$FAKE_GH_ARGV")"
+refute_grep "wrapper strips --mention-attested from gh argv (#117)" "--mention-attested" "$ARGV"
+
+# attestation must cover EVERY token — partial coverage still refuses
+bash "$SCRIPT" comment 5 --repo o/r \
+  --body "cc @kiki830621 and also @stranger99" "${ATT[@]}" --mention-attested kiki830621 >/dev/null 2>&1
+assert_exit "partially-attested mentions refused (#117, exit 4)" 4 $?
+
+# split-token guard extends to --mention-attested
+bash "$SCRIPT" create --repo o/r --body --mention-attested kiki830621 "${ATT[@]}" >/dev/null 2>&1
+assert_exit "split-token --mention-attested refused (#117, exit 2)" 2 $?
 
 print_summary "gh-egress"

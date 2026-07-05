@@ -94,12 +94,26 @@ require_scannable_bodyfile() {
 }
 
 ATTESTED=""
+MENTION_ATTESTED=""   # comma-separated logins vetted via rules/tagging-collaborators.md 5-step (#117)
 GH_ARGS=()          # forwarded to gh, byte-identical minus the attestation flag
 SCAN_PARTS=()       # only the drafted prose (--body / --title / --body-file) is scanned
 next_is=""          # "body" | "title" | "bodyfile" when the previous arg expects a value
 while [ $# -gt 0 ]; do
   arg="$1"
   case "$arg" in
+    --mention-attested|--mention-attested=*)
+      # Same malformed-shape guard as --scrub-attested (#203 item 6 / #117).
+      if [ -n "$next_is" ]; then
+        echo "✗ gh-egress: malformed args — '--mention-attested' found where a value for --body/--title/--body-file was expected." >&2
+        exit 2
+      fi
+      case "$arg" in
+        --mention-attested)
+          [ $# -ge 2 ] || { echo "✗ gh-egress: --mention-attested needs a value." >&2; exit 3; }
+          MENTION_ATTESTED="$2"; shift 2; continue ;;
+        *)
+          MENTION_ATTESTED="${arg#--mention-attested=}"; shift; continue ;;
+      esac ;;
     --scrub-attested|--scrub-attested=*)
       # Malformed-shape guard (#203 item 6): the attestation flag appearing where
       # a value for --body/--title/--body-file is still pending means the caller
@@ -194,6 +208,38 @@ if [ -n "$SCAN" ] && [ -r "$CJSON" ]; then
   if [ -n "$KEYS" ] && printf '%s' "$SCAN" | grep -qFf <(printf '%s\n' "$KEYS"); then
     net_refuse "verbatim content copied from ~/.claude.json"
   fi
+fi
+
+# 3. unattested @-mention net (#117). GitHub notifies real users on any raw
+#    @login token in posted prose — irreversibly, and context-blind. AI-generated
+#    bodies routinely carry incidental tokens (internal codenames like @codex,
+#    quoted conversation text, dynamic values), which the intent-gated
+#    tagging-collaborators.md protocol never sees. This net is UNCONDITIONAL:
+#    every raw token must either be escaped (backticks / fenced code — inert on
+#    GitHub, stripped before this scan) or covered by --mention-attested
+#    (set only after the 5-step protocol resolved the logins).
+#    Prefix guard [^[:alnum:]_] keeps email-like user@host out (GitHub does not
+#    notify on those either).
+MSCAN="$(printf '%s' "$SCAN" | awk '/^[[:space:]]*```/{infence=!infence; next} !infence{print}' | sed -E 's/`[^`]*`//g')"
+UNATTESTED_MENTIONS=""
+while IFS= read -r login; do
+  [ -z "$login" ] && continue
+  case ",$MENTION_ATTESTED," in
+    *",$login,"*) : ;;
+    *) UNATTESTED_MENTIONS="$UNATTESTED_MENTIONS @$login" ;;
+  esac
+done < <(printf '%s\n' "$MSCAN" \
+           | grep -oE '(^|[^[:alnum:]_])@[A-Za-z0-9][A-Za-z0-9-]*' \
+           | grep -oE '@[A-Za-z0-9-]+' \
+           | sed 's/^@//' \
+           | sort -u)
+if [ -n "$UNATTESTED_MENTIONS" ]; then
+  echo "✗ gh-egress: REFUSED — unattested @-mention token(s):$UNATTESTED_MENTIONS" >&2
+  echo "  GitHub notifies real users on raw @login tokens (irreversible). Either:" >&2
+  echo "    - escape non-mention tokens in backticks (\`@name\`) — inert on GitHub, or" >&2
+  echo "    - run the rules/tagging-collaborators.md 5-step protocol, then re-dispatch with" >&2
+  echo "      --mention-attested <login1,login2> covering every intended mention." >&2
+  exit 4
 fi
 
 # --- dispatch: byte-for-byte identical to raw `gh issue <verb> ...` -----------
