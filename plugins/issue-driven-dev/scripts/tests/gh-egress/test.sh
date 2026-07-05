@@ -47,7 +47,7 @@ export FAKE_GH_ARGV="$WORK/argv"
 # a non-/Users absolute path so the .claude.json content-overlap net can be
 # proven to fire INDEPENDENTLY of the home-path net.
 export IDD_CLAUDE_JSON="$WORK/fixture-claude.json"
-printf '%s' '{"projects":{"/Users/fixtureuser/secret-lab":{"x":1},"/opt/priv/hidden-proj-xyz":{"y":2}}}' \
+printf '%s' '{"projects":{"/Users/fixtureuser/secret-lab":{"x":1},"/opt/priv/hidden-proj-xyz":{"y":2}},"mcpServers":{"tool":{"command":"/opt/homebrew/bin/uvx-tool"}}}' \
   > "$IDD_CLAUDE_JSON"
 
 ATT=(--scrub-attested warn)
@@ -83,10 +83,11 @@ bash "$SCRIPT" create --repo o/r --title "crash in /Users/bob/tool" \
   --body "clean body" "${ATT[@]}" >/dev/null 2>&1
 assert_exit "literal home path in --title caught (exit 4)" 4 $?
 
-# verbatim ~/.claude.json reference caught
+# bare ~/.claude.json filename mention is PUBLIC info (#203 item 1) — the private
+# thing is its CONTENT (covered by the projects-key net below). Must dispatch.
 bash "$SCRIPT" comment 5 --repo o/r \
   --body "the value comes from ~/.claude.json under projects" "${ATT[@]}" >/dev/null 2>&1
-assert_exit "verbatim .claude.json reference caught (exit 4)" 4 $?
+assert_exit "bare .claude.json filename mention NOT caught (#203 item 1) → dispatch (exit 0)" 0 $?
 
 # verbatim CONTENT copied from ~/.claude.json (non-/Users project key) caught —
 # proves the content-overlap net fires independently of the home-path net
@@ -131,5 +132,52 @@ bash "$SCRIPT" delete 5 "${ATT[@]}" >/dev/null 2>&1
 assert_exit "unknown verb → usage error (exit 2)" 2 $?
 bash "$SCRIPT" >/dev/null 2>&1
 assert_exit "missing verb → usage error (exit 2)" 2 $?
+
+
+# ── #203 mechanical-net precision + edge-case hardening ─────────────────────
+# item 2: public tool path from mcpServers must NOT be treated as a leak
+# (content net scoped to the projects object when jq is available)
+if command -v jq >/dev/null 2>&1; then
+  bash "$SCRIPT" comment 5 --repo o/r \
+    --body "run it via /opt/homebrew/bin/uvx-tool instead" "${ATT[@]}" >/dev/null 2>&1
+  assert_exit "public mcpServers tool path NOT caught (#203 item 2, jq path) → dispatch (exit 0)" 0 $?
+fi
+# item 2 regression: projects key still caught (both jq and fallback paths)
+bash "$SCRIPT" comment 5 --repo o/r \
+  --body "reindex blew up on /opt/priv/hidden-proj-xyz again" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "projects key still caught after item-2 scoping (exit 4)" 4 $?
+
+# item 3: non-regular body-file (stdin dash / FIFO / process-sub) → refuse exit 5
+bash "$SCRIPT" create --repo o/r --title T --body-file - "${ATT[@]}" >/dev/null 2>&1
+assert_exit "body-file '-' (stdin) refused — unscannable (#203 item 3, exit 5)" 5 $?
+FIFO="$WORK/fifo"; mkfifo "$FIFO"
+( printf 'x' > "$FIFO" & ) 2>/dev/null
+bash "$SCRIPT" create --repo o/r --title T --body-file "$FIFO" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "body-file FIFO refused — unscannable (#203 item 3, exit 5)" 5 $?
+# regular body-file still scanned + dispatched
+printf 'a clean body from file' > "$WORK/body.txt"
+bash "$SCRIPT" create --repo o/r --title T --body-file "$WORK/body.txt" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "regular body-file still dispatches (exit 0)" 0 $?
+# regular body-file with a leak is still caught (scan path intact)
+printf 'log at /Users/carol/x.log' > "$WORK/leak.txt"
+bash "$SCRIPT" create --repo o/r --title T --body-file "$WORK/leak.txt" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "regular body-file leak still caught (exit 4)" 4 $?
+
+# item 4: HOME + IDD_CLAUDE_JSON both unset → no set -u crash, clean body dispatches
+env -u HOME -u IDD_CLAUDE_JSON IDD_GH_BIN="$STUB" FAKE_GH_ARGV="$FAKE_GH_ARGV" \
+  bash "$SCRIPT" create --repo o/r --title T --body "clean prose" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "HOME+IDD_CLAUDE_JSON unset → no crash, dispatch (#203 item 4, exit 0)" 0 $?
+
+# item 5: zero forwarded args → argv is exactly 2 NUL-terminated fields
+# (issue, create) with NO phantom '' third field. Field count via NUL bytes —
+# command substitution strips trailing newlines so a string compare is blind
+# to the phantom.
+bash "$SCRIPT" create "${ATT[@]}" >/dev/null 2>&1
+NFIELDS="$(tr -cd '\0' < "$FAKE_GH_ARGV" | wc -c | tr -d ' ')"
+assert_eq "zero-arg dispatch has no phantom empty positional (#203 item 5, argv fields)" "2" "$NFIELDS"
+
+# item 6: --scrub-attested where a --body value is expected → malformed, usage refuse
+bash "$SCRIPT" create --repo o/r --body --scrub-attested warn >/dev/null 2>&1
+assert_exit "split-token attestation refused (#203 item 6, exit 2)" 2 $?
 
 print_summary "gh-egress"
