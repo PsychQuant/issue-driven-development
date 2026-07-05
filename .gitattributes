@@ -1,0 +1,7 @@
+# Line-ending policy (#216): all text files normalize to LF in index and checkout.
+# Prevents whole-file CRLF churn like the diffs caught in #214 R1/R2 verify.
+* text=auto eol=lf
+
+# Deliberate CRLF test fixtures are exempt from text handling entirely (-text).
+# Convention: any future fixture that must keep CRLF bytes adds its own -text line here.
+plugins/issue-driven-dev/scripts/tests/idd-edit/fixtures/19-section-replace-crlf/input.md -text
