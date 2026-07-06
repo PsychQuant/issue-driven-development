@@ -173,3 +173,8 @@ Case A 落地時會用的 harness primitive：**`Agent(isolation:"worktree")`** 
 - [`cross-repo-cwd.md`](cross-repo-cwd.md) — `--cwd` flag convention；worktree 路徑就是餵給 `--cwd` 的值，本 doc 是它的一個 application
 - [`pr-flow.md`](pr-flow.md) — PR vs direct-commit path resolution；每個平行 worktree 各自獨立解析 PR path
 - [`chain-flow.md`](chain-flow.md) — sequential `/idd-all-chain` 的 cluster-PR 機制；本 doc 的 fan-out convergence 的相反側
+
+
+## PR-path branch acquisition（#169 統一註記）
+
+`references/pr-flow.md` 的 concurrent-session isolation snippet 與 `idd-implement` Step 0.4 tree-lock escalation **都**以本檔的 `idd-worktree.sh` 為唯一 worktree 入口（`.claude/worktrees/idd-<N>/`）。舊 ad-hoc location（`.git/idd-worktrees/`）對既存 worktree 繼續有效（git 獨立追蹤、`git worktree list` 可枚舉），新建一律走 helper — 不再有第二套公約。
