@@ -1,0 +1,19 @@
+# tests.yml — run every fixture suite on push + PR (#217).
+# The enforcement link for the repo's drift-guard hard locks: suites only
+# guarded what someone remembered to run (#214 R2 DA finding 15).
+#
+# NOTE: init.defaultBranch is deliberately NOT configured here — fixtures must
+# be self-sufficient (#224); masking that class in CI would hide real bugs.
+name: tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  suites:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run all fixture suites
+        run: bash plugins/issue-driven-dev/scripts/run-all-tests.sh
