@@ -141,13 +141,13 @@ while [ $# -gt 0 ]; do
     -F|--body-file)
       GH_ARGS+=("$arg"); next_is="bodyfile"; shift; continue ;;
     -b?*)
-      GH_ARGS+=("$arg"); SCAN_PARTS+=("${arg#-b}"); BODY_PARTS+=("${arg#-b}"); shift; continue ;;
+      GH_ARGS+=("$arg"); SCAN_PARTS+=("${arg#-b}"); BODY_PARTS+=("${arg#-b}"); next_is=""; shift; continue ;;
     -t?*)
-      GH_ARGS+=("$arg"); SCAN_PARTS+=("${arg#-t}"); shift; continue ;;
+      GH_ARGS+=("$arg"); SCAN_PARTS+=("${arg#-t}"); next_is=""; shift; continue ;;
     -F?*)
       GH_ARGS+=("$arg"); f="${arg#-F}"
       require_scannable_bodyfile "$f"
-      FCONTENT="$(cat "$f")"; SCAN_PARTS+=("$FCONTENT"); BODY_PARTS+=("$FCONTENT"); shift; continue ;;
+      FCONTENT="$(cat "$f")"; SCAN_PARTS+=("$FCONTENT"); BODY_PARTS+=("$FCONTENT"); next_is=""; shift; continue ;;
     --body-file=*) GH_ARGS+=("$arg"); next_is=""; f="${arg#--body-file=}"
       require_scannable_bodyfile "$f"
       FCONTENT="$(cat "$f")"; SCAN_PARTS+=("$FCONTENT"); BODY_PARTS+=("$FCONTENT"); shift; continue ;;
@@ -247,8 +247,11 @@ for p in "${BODY_PARTS[@]:-}"; do MBODY+="$p"$'\n'; done
 # code and must NOT toggle fence state (logic 117-3 false-negative otherwise).
 # URL spans are exempt: GitHub's mention parser does not notify on @handle
 # inside an autolinked URL (unpkg.com/@scope/pkg, mastodon.social/@dev), and
-# backtick-escaping a URL would break the link (DA-117-B, R2).
-MSCAN="$(printf '%s' "$MBODY" | awk '/^ ? ? ?```/{infence=!infence; next} !infence{print}' | sed -E 's/`[^`]*`//g; s|https?://[^[:space:])>]+||g')"
+# backtick-escaping a URL would break the link (DA-117-B, R2). Only
+# autolink-ELIGIBLE spans qualify — host must contain a dot; no-dot/malformed
+# "URLs" (https://@user, http://localhost/@user) render as literal text where
+# /@name IS a live mention, so they stay in the scan (117-A, R3).
+MSCAN="$(printf '%s' "$MBODY" | awk '/^ ? ? ?```/{infence=!infence; next} !infence{print}' | sed -E 's/`[^`]*`//g; s|https?://[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+[^[:space:])>]*||g')"
 # Entity-encoded @ (&#64; / &#x40; / &commat;) followed by a login shape: GitHub
 # may decode these before its mention scan — fail closed and refuse outright.
 # Known friction (DA-117-A, accepted): prose that merely DISCUSSES the encoded
@@ -257,7 +260,7 @@ MSCAN="$(printf '%s' "$MBODY" | awk '/^ ? ? ?```/{infence=!infence; next} !infen
 # prose use — discussing bypasses — which is rare and naturally backtick-escapable
 # (this guard runs AFTER fence/inline-code stripping, so `&#64;login` in code
 # spans already passes). Irreversible-notification risk outweighs the friction.
-if printf '%s' "$MSCAN" | grep -qiE '&#0*64;[a-z0-9-]|&#x0*40;[a-z0-9-]|&commat;[a-z0-9-]'; then
+if printf '%s' "$MSCAN" | grep -qiE '&#0*64;([a-z0-9-]|&#)|&#x0*40;([a-z0-9-]|&#)|&commat;([a-z0-9-]|&#)'; then
   echo "✗ gh-egress: REFUSED — entity-encoded @-mention (e.g. &#64;login) in body." >&2
   echo "  Encoded forms can decode into live mentions on GitHub. Spell it as literal text in backticks instead." >&2
   exit 4

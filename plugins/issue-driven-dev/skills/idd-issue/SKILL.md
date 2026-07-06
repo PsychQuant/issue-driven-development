@@ -344,7 +344,7 @@ basename、非公開 collaborator 真名、未發表 context)。**人名由 cont
 
 ```bash
 bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" <create|comment|edit> <原本的 gh args…> \
-  --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested "$MENTION_ATTESTED"}
+  --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}
 ```
 
 wrapper deterministically enforce「自審跑過」(缺 `--scrub-attested` → refuse,
@@ -620,7 +620,7 @@ if new_match exists AND new_match != tentative_default:
 bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" create \
   --repo $GITHUB_REPO \
   --title "$TITLE" \
-  --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested "$MENTION_ATTESTED"} \
+  --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"} \
   --body "$(cat <<'EOF'
 ## Problem
 
@@ -701,7 +701,7 @@ else
   # Algorithm: append to first contiguous "- [ ]"/"- [x]" section, OR append fresh `## Children` anchor
   NEW_BODY=$(append_to_task_list "$PARENT_BODY" "$ENTRY")
 
-  bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit "$PARENT_NUM" --repo "$GITHUB_REPO" --body "$NEW_BODY" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested "$MENTION_ATTESTED"}
+  bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit "$PARENT_NUM" --repo "$GITHUB_REPO" --body "$NEW_BODY" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}
 fi
 ```
 
@@ -718,7 +718,7 @@ for M in $(echo "$BLOCKED_BY_LIST" | tr ',' '\n'); do
   BLOCKED_BLOCKQUOTE="${BLOCKED_BLOCKQUOTE}> Blocked by #${M}\n"
 done
 NEW_CHILD_BODY="${BLOCKED_BLOCKQUOTE}\n${ORIGINAL_BODY}"
-bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit "$CHILD_NUM" --repo "$GITHUB_REPO" --body "$NEW_CHILD_BODY" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested "$MENTION_ATTESTED"}
+bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit "$CHILD_NUM" --repo "$GITHUB_REPO" --body "$NEW_CHILD_BODY" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}
 
 # Layer 1:GraphQL native dependency(嘗試,失敗不 abort)
 CHILD_NODE_ID=$(gh issue view "$CHILD_NUM" --repo "$GITHUB_REPO" --json id --jq '.id')
@@ -752,7 +752,7 @@ fi
 EPIC_NUM=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" create --repo "$GITHUB_REPO" \
   --title "$EPIC_TITLE" \
   --body "Epic for ${#ITEMS[@]}-item bundle (${BUNDLE_MODE})\n\n## Children\n" \
-  --label "epic" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested "$MENTION_ATTESTED"} | basename)
+  --label "epic" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"} | basename)
 
 # 2. 建 N children,逐個 auto-apply --parent <epic> + (ordered 時)--blocked-by <prev>
 PREV_CHILD=""
@@ -811,7 +811,7 @@ PRIMARY_URL=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" create \
   --repo $PRIMARY_REPO \
   --title "$TITLE" \
   --body "$FULL_BODY" \
-  --label "$TYPE" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested "$MENTION_ATTESTED"})
+  --label "$TYPE" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"})
 PRIMARY_NUM=$(basename "$PRIMARY_URL")
 
 # 2. 在每個 tracking repo 建追蹤 issue
@@ -831,13 +831,13 @@ ${FULL_BODY}"
     --repo $TRACKING_REPO \
     --title "$TITLE" \
     --body "$TRACKING_BODY" \
-    --label "$TYPE" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested "$MENTION_ATTESTED"})
+    --label "$TYPE" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"})
   TRACKING_NUM=$(basename "$TRACKING_URL")
   TRACKING_REFS+=("${TRACKING_REPO}#${TRACKING_NUM}")
 done
 
 # 3. 在 primary issue 留 comment,列出所有 tracking refs
-bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $PRIMARY_NUM --repo $PRIMARY_REPO --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested "$MENTION_ATTESTED"} --body "$(cat <<EOF
+bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $PRIMARY_NUM --repo $PRIMARY_REPO --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"} --body "$(cat <<EOF
 Tracked in:
 $(for ref in "${TRACKING_REFS[@]}"; do echo "- $ref"; done)
 EOF
@@ -887,7 +887,7 @@ done
 # 編輯 issue body 加入所有附件的 markdown link / 圖片嵌入
 # - .png/.jpg/.gif → ![desc](url)  讓 issue 直接渲染
 # - .pdf/.docx/其他 → [desc](url)  讓使用者點下載
-bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit $NUMBER --repo $GITHUB_REPO --body "..." --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested "$MENTION_ATTESTED"}
+bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit $NUMBER --repo $GITHUB_REPO --body "..." --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}
 ```
 
 #### 命名規則
@@ -927,7 +927,7 @@ gh api repos/$GITHUB_REPO/milestones \
 # 所有剛建立的 issues 都指派到此 milestone
 for n in $ALL_ISSUE_NUMBERS; do
   # metadata-only edit (no drafted body) — still routes through the gate for uniform egress (#202)
-  bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit $n --repo $GITHUB_REPO --milestone "$MILESTONE_NAME" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested "$MENTION_ATTESTED"}
+  bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit $n --repo $GITHUB_REPO --milestone "$MILESTONE_NAME" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}
 done
 ```
 
@@ -974,7 +974,7 @@ else
 | (deferred) | /idd-clarify invocation failed | Run /idd-clarify #$NEW_ISSUE_NUMBER manually to populate | deferred |
 "
     NEW_BODY="${CURRENT_BODY}${DEFERRED_BLOCK}"
-    bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit $NEW_ISSUE_NUMBER --repo $GITHUB_REPO --body "$NEW_BODY" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested "$MENTION_ATTESTED"}
+    bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit $NEW_ISSUE_NUMBER --repo $GITHUB_REPO --body "$NEW_BODY" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}
     echo "⚠ /idd-clarify failed (exit $CLARIFY_EXIT) — appended deferred placeholder; continuing to Step 4.7" >&2
   fi
 fi
@@ -1351,9 +1351,9 @@ drafted body（含 footer）在 dispatch 前過 repo-aware privacy gate:
 
 | Action | Command |
 |--------|---------|
-| `create` | `bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" create --title ... --body ... --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested "$MENTION_ATTESTED"}`(body 含 footer) |
-| `comment` | `bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $N --body ... --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested "$MENTION_ATTESTED"}`(body 含 footer) |
-| `edit` | `bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit $N --body "$NEW_BODY_WITH_FOOTER" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested "$MENTION_ATTESTED"}` |
+| `create` | `bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" create --title ... --body ... --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}`(body 含 footer) |
+| `comment` | `bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $N --body ... --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}`(body 含 footer) |
+| `edit` | `bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit $N --body "$NEW_BODY_WITH_FOOTER" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}` |
 | `update` | call `idd-update` skill on #N |
 | `skip` | no-op |
 | `merged-into` | no separate dispatch(content 已在 partner action body) |

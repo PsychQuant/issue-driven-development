@@ -281,4 +281,36 @@ bash "$SCRIPT" comment 5 --repo o/r \
   --body "see https://example.com/docs and ping @realperson about it" "${ATT[@]}" >/dev/null 2>&1
 assert_exit "raw mention adjacent to URL still caught (exit 4)" 4 $?
 
+
+# ── R3 fixes (R2-round findings) ─────────────────────────────────────────────
+# 117-A: URL-strip must only exempt autolink-eligible hosts (dot required);
+# no-dot/malformed hosts render as literal text where /@name IS a live mention
+bash "$SCRIPT" comment 5 --repo o/r --body "see https://@realuser now" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "no-host URL @mention still caught (117-A, exit 4)" 4 $?
+bash "$SCRIPT" comment 5 --repo o/r --body "at http://localhost/@realuser today" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "no-dot-host URL @mention still caught (117-A, exit 4)" 4 $?
+# regression: dotted-host URLs stay exempt
+bash "$SCRIPT" comment 5 --repo o/r --body "docs https://unpkg.com/@angular/core here" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "dotted-host URL @handle stays exempt (exit 0)" 0 $?
+
+# 117-B: fully-encoded username (&#64;&#114;ealuser) must also refuse
+bash "$SCRIPT" comment 5 --repo o/r --body "try &#64;&#114;ealuser form" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "double-encoded entity mention refused (117-B, exit 4)" 4 $?
+
+# 117-C: template expansion under zsh — the =-form must reach the wrapper as
+# ONE recognizable arg and dispatch a vetted mention (end-to-end)
+if command -v zsh >/dev/null 2>&1; then
+  MA_OUT="$WORK/zsh-ma-argv"
+  zsh -c '
+    MENTION_ATTESTED="kiki830621"
+    exec bash "$1" comment 5 --repo o/r --body "cc @kiki830621 ok" --scrub-attested warn ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}
+  ' zsh "$SCRIPT" >/dev/null 2>&1
+  assert_exit "zsh template =-form expansion dispatches vetted mention (117-C, exit 0)" 0 $?
+fi
+
+# 203-C: attached short-form must reset pending next_is (parser hygiene) —
+# `--body -bX Y` : -bX consumes as attached body, Y must NOT be eaten as body
+bash "$SCRIPT" create --repo o/r --body "-binline body" --title T "${ATT[@]}" >/dev/null 2>&1
+assert_exit "attached form after pending --body keeps parser state sane (exit 0)" 0 $?
+
 print_summary "gh-egress"
