@@ -1,0 +1,1 @@
+--change-name test-override-empty --archive-dir __FIXTURE_PATH__/archive --linked-issue 555 --force-linked-issue 556 --dry-run --gh-repo test/repo

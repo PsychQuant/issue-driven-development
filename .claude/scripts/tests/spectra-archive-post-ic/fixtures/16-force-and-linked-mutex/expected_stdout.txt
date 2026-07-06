@@ -1,0 +1,1 @@
+(failed — pass either --linked-issue or --force-linked-issue, not both)

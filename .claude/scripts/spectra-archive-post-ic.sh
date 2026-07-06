@@ -53,6 +53,7 @@ OUTCOME_FILE="/tmp/spectra-archive-ic-outcome.txt"
 OUTCOME_FILE_EXPLICIT=0
 GH_REPO_ARG=""
 DRY_RUN=0
+FORCE_LINKED_ISSUE=""
 
 # ── Parse args ──
 while [ $# -gt 0 ]; do
@@ -61,6 +62,7 @@ while [ $# -gt 0 ]; do
     --archive-dir)     ARCHIVE_DIR="$2"; shift 2;;
     --spec-deltas)     SPEC_DELTAS="$2"; shift 2;;
     --linked-issue)    LINKED_ISSUE_RESOLVED="$2"; shift 2;;
+    --force-linked-issue) FORCE_LINKED_ISSUE="$2"; shift 2;;
     --outcome-file)    OUTCOME_FILE="$2"; OUTCOME_FILE_EXPLICIT=1; shift 2;;
     --gh-repo)         GH_REPO_ARG="$2"; shift 2;;
     --dry-run)         DRY_RUN=1; shift;;
@@ -78,7 +80,7 @@ done
 # ── Validate required args ──
 if [ -z "$CHANGE_NAME" ] || [ -z "$ARCHIVE_DIR" ]; then
   echo "ERROR: --change-name and --archive-dir are required" >&2
-  echo "Usage: $0 --change-name <name> --archive-dir <path> [--spec-deltas <text>] [--linked-issue <N>] [--dry-run]" >&2
+  echo "Usage: $0 --change-name <name> --archive-dir <path> [--spec-deltas <text>] [--linked-issue <N> | --force-linked-issue <N>] [--dry-run]" >&2
   exit 2
 fi
 
@@ -180,7 +182,33 @@ detect_candidates() {
 }
 
 # ── Resolve LINKED_ISSUE ──
-if [ -n "$LINKED_ISSUE_RESOLVED" ]; then
+# Two flags, two intents (#172): --linked-issue is the exit-75 DISAMBIGUATION
+# re-invoke (validated against the detected candidate set); --force-linked-issue
+# is the AUTHORITATIVE override (caller knows the number; detection bypassed
+# entirely, existence-checked instead). The old "empty candidate set turns
+# --linked-issue authoritative" escape hatch is REMOVED — its emptiness was
+# timing/context-dependent (#172 fragility 2), and conflating the intents is
+# what made #170's fix fragile in the first place.
+if [ -n "$FORCE_LINKED_ISSUE" ] && [ -n "$LINKED_ISSUE_RESOLVED" ]; then
+  emit_outcome "(failed — pass either --linked-issue or --force-linked-issue, not both)" 0
+fi
+FORCE_NOTE=""
+if [ -n "$FORCE_LINKED_ISSUE" ]; then
+  if ! [[ "$FORCE_LINKED_ISSUE" =~ ^[1-9][0-9]*$ ]]; then
+    emit_outcome "(failed — --force-linked-issue $FORCE_LINKED_ISSUE is not a positive integer)" 0
+  fi
+  # Existence checkpoint (#172 direction 2): catches nonexistent numbers; a
+  # wrong-but-existing number is inherent to an explicit override — mitigated
+  # by the loud confirmation + the annotated anchor below.
+  if [ "$DRY_RUN" = "0" ]; then
+    FORCED_TITLE=$(gh issue view "$FORCE_LINKED_ISSUE" --repo "$GH_REPO" --json title -q .title 2>/dev/null) ||       emit_outcome "(failed — --force-linked-issue $FORCE_LINKED_ISSUE: issue not found in $GH_REPO)" 0
+    echo "→ FORCE-LINKED to #${FORCE_LINKED_ISSUE}: ${FORCED_TITLE} (authoritative override — detection & membership bypassed)" >&2
+  else
+    echo "[DRY-RUN] existence check skipped for --force-linked-issue $FORCE_LINKED_ISSUE" >&2
+  fi
+  LINKED_ISSUE="$FORCE_LINKED_ISSUE"
+  FORCE_NOTE=" via --force-linked-issue"
+elif [ -n "$LINKED_ISSUE_RESOLVED" ]; then
   # Validate integer FIRST (clearer error; emit_outcome exits, so this must
   # precede the membership check to be reachable). (#170)
   # `^[1-9][0-9]*$` is strictly positive — GitHub issue numbers start at 1, so
@@ -189,14 +217,15 @@ if [ -n "$LINKED_ISSUE_RESOLVED" ]; then
   if ! [[ "$LINKED_ISSUE_RESOLVED" =~ ^[1-9][0-9]*$ ]]; then
     emit_outcome "(failed — --linked-issue $LINKED_ISSUE_RESOLVED is not a positive integer)" 0
   fi
-  # Membership validation applies ONLY when detection actually found candidates
-  # (the multi-candidate disambiguation re-invoke). When the candidate set is
-  # EMPTY, --linked-issue is the authoritative escape hatch — detection always
-  # has gaps (prose-only #N refs etc.), so the override MUST NOT depend on
-  # detection succeeding, or both fail together exactly when the fallback is
-  # needed (the #170 root cause). (#170)
+  # Pure disambiguation semantics (#172): --linked-issue is ALWAYS validated
+  # against the candidate set. Empty set = nothing to disambiguate = this is
+  # the wrong flag; the authoritative path is --force-linked-issue (which
+  # existence-checks instead of membership-checks).
   CANDIDATES=$(detect_candidates "$ARCHIVE_DIR")
-  if [ -n "$CANDIDATES" ] && ! echo "$CANDIDATES" | grep -qx -- "$LINKED_ISSUE_RESOLVED"; then
+  if [ -z "$CANDIDATES" ]; then
+    emit_outcome "(failed — --linked-issue $LINKED_ISSUE_RESOLVED given but detection found no candidates; if you know the issue number authoritatively, re-invoke with --force-linked-issue $LINKED_ISSUE_RESOLVED)" 0
+  fi
+  if ! echo "$CANDIDATES" | grep -qx -- "$LINKED_ISSUE_RESOLVED"; then
     emit_outcome "(failed — --linked-issue $LINKED_ISSUE_RESOLVED not in candidate set: $(echo "$CANDIDATES" | tr '\n' ' '))" 0
   fi
   LINKED_ISSUE="$LINKED_ISSUE_RESOLVED"
@@ -227,6 +256,7 @@ fi
 
 # ── Step B: Idempotent guard (per-archive sentinel) ──
 SENTINEL="auto-posted by spectra-archive for ${ARCHIVE_BASENAME}"
+ANCHOR_SUFFIX="${FORCE_NOTE:-}"
 
 if [ "$DRY_RUN" = "0" ]; then
   ALREADY_POSTED=$(gh issue view "$LINKED_ISSUE" --repo "$GH_REPO" --json comments \
@@ -274,6 +304,7 @@ ARCHIVE_DATE=$(date -u +%Y-%m-%d)
 # context or execute code.
 export CHECKLIST_BODY_ENV="$CHECKLIST_BODY"
 export ARCHIVE_BASENAME_ENV="$ARCHIVE_BASENAME"
+export FORCE_NOTE_ENV="${FORCE_NOTE:-}"
 export CHANGE_NAME_ENV="$CHANGE_NAME"
 export ARCHIVE_DIR_ENV="$ARCHIVE_DIR"
 export SPEC_DELTAS_ENV="$SPEC_DELTAS"
@@ -283,7 +314,7 @@ export BODY_FILE_ENV="$BODY_FILE"
 python3 <<'PYEOF'
 import os, sys
 
-template = """## Implementation Complete (auto-posted by spectra-archive for {basename})
+template = """## Implementation Complete (auto-posted by spectra-archive for {basename}{force_note})
 
 > Auto-posted by `/spectra-archive` after archiving `{change_name}`. This comment is the canonical Implementation Complete anchor for `/idd-close` Step 0 supersession gate.
 
@@ -304,6 +335,7 @@ template = """## Implementation Complete (auto-posted by spectra-archive for {ba
 
 body = template.format(
     basename=os.environ.get("ARCHIVE_BASENAME_ENV", ""),
+    force_note=os.environ.get("FORCE_NOTE_ENV", ""),
     change_name=os.environ.get("CHANGE_NAME_ENV", ""),
     archive_dir=os.environ.get("ARCHIVE_DIR_ENV", ""),
     spec_deltas=os.environ.get("SPEC_DELTAS_ENV", ""),
@@ -317,7 +349,7 @@ with open(os.environ["BODY_FILE_ENV"], "w") as f:
 PYEOF
 
 PY_EXIT=$?
-unset CHECKLIST_BODY_ENV ARCHIVE_BASENAME_ENV CHANGE_NAME_ENV ARCHIVE_DIR_ENV SPEC_DELTAS_ENV ARCHIVE_DATE_ENV BODY_FILE_ENV
+unset CHECKLIST_BODY_ENV ARCHIVE_BASENAME_ENV FORCE_NOTE_ENV CHANGE_NAME_ENV ARCHIVE_DIR_ENV SPEC_DELTAS_ENV ARCHIVE_DATE_ENV BODY_FILE_ENV
 
 if [ "$PY_EXIT" -ne 0 ]; then
   rm -f "$BODY_FILE"
