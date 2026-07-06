@@ -95,6 +95,10 @@ User picks from the **actual list**. The "Other" free-text option is fine for ge
 - Use `@login` (not display name, not email)
 - Place mention on its own line or in a clear context (`cc @login` / `@login 想聽你的意見...`)
 - Before `gh issue comment` / `gh issue create` / `gh issue edit`: grep the body for `@\w+` and confirm every match is in the resolved set.
+- **Unconditional scan（v2.92.0+, #117）**：這個 pre-post 掃描**不是** intent-gated — 即使沒有 `--mention` flag、沒有 tagging 意圖，AI-generated body 中**附帶**的 `@xxx` token（內部 codename 如 `@codex`、引用對話原文、動態值如 `@assignee`）一樣會通知同名真實 user。每個 raw token 二擇一：
+  1. **不是 mention** → backtick-escape 成 `` `@xxx` ``（inline code 對 GitHub notification 惰性）或放進 code fence
+  2. **是 mention** → 走完 5-step 協定後，經 `scripts/gh-egress.sh` 派送時帶 `--mention-attested <login1,login2>`（涵蓋**每一個**意圖 mention；部分涵蓋一樣 refuse）
+- **機械 backstop**：`scripts/gh-egress.sh` 的 mention net（#117）會在派送前剝除 fence/inline-code 後掃 `@login` token，未被 `--mention-attested` 涵蓋者 refuse（exit 4）。此網對 email-like `user@host` 不誤觸（prefix guard）。未接線 gh-egress 的 skill 依本 rule 自律（prose 層），機械覆蓋隨 gh-egress rollout 生效。
 
 ```bash
 # Verification step

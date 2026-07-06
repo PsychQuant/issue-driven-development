@@ -21,11 +21,13 @@
 #       guarantees the step EXISTS; it does not pretend to guarantee the
 #       judgment was correct (that is the LLM's + the ENFORCE block-with-diff's
 #       job — see rules/privacy-scrubbing.md).
-#   (b) A tiny mechanical LAST-RESORT net catching ONLY 2 zero-tolerance LITERAL
+#   (b) A tiny mechanical LAST-RESORT net catching ONLY 3 zero-tolerance MECHANICAL
 #       items, as belt-and-suspenders for an LLM miss:
 #         1. an absolute macOS home path `/Users/<name>`
-#         2. verbatim `~/.claude.json` content (the path token, or a project-path
-#            string copied out of the user's actual ~/.claude.json)
+#         2. verbatim `~/.claude.json` content (a project-path string copied out
+#            of the user's actual ~/.claude.json `projects` object). The bare
+#            filename token is PUBLIC (Anthropic docs) and deliberately NOT
+#            matched — content is the secret, not the name (#203 item 1).
 #       This net is LEVEL-INDEPENDENT (fires even at LIGHT) because these two are
 #       absolute zero-tolerance leaks, not "ordinary identifiers".
 #
@@ -56,7 +58,8 @@
 #   compat: callers that capture `URL=$(... )` are unaffected).
 #
 # EXIT CODES
-#   0  dispatched (exec gh)          2  usage error (bad/missing verb)
+#   0  dispatched (exec gh)          2  usage error (bad/missing verb / malformed args)
+#   5  unscannable --body-file (not a readable regular file, #203 item 3)
 #   3  attestation missing/invalid   4  mechanical net hit (refused)
 #
 # TEST OVERRIDES (test-only; never set in production)
@@ -78,33 +81,83 @@ case "$VERB" in
 esac
 
 # --- parse: pull out --scrub-attested, forward everything else verbatim -------
+require_scannable_bodyfile() {
+  # Refuse '-' (stdin), FIFOs, process substitutions and anything that is not a
+  # readable REGULAR file (#203 item 3): the gate cannot scan a stream without
+  # consuming the bytes gh needs, and an unreadable file would dispatch unscanned.
+  if [ "$1" = "-" ] || [ ! -f "$1" ] || [ ! -r "$1" ]; then
+    echo "✗ gh-egress: REFUSED — --body-file '$1' is not a readable regular file." >&2
+    echo "  stdin ('-'), FIFOs and process substitutions cannot be scanned without consuming the stream." >&2
+    echo "  Write the body to a regular file first, then re-dispatch." >&2
+    exit 5
+  fi
+}
+
 ATTESTED=""
+MENTION_ATTESTED=""   # comma-separated logins vetted via rules/tagging-collaborators.md 5-step (#117)
 GH_ARGS=()          # forwarded to gh, byte-identical minus the attestation flag
-SCAN_PARTS=()       # only the drafted prose (--body / --title / --body-file) is scanned
+SCAN_PARTS=()       # all drafted prose (--body / --title / --body-file) — privacy nets
+BODY_PARTS=()       # body-channel prose only — mention net (GitHub never notifies on
+                    # title mentions, and a plaintext title cannot be backtick-escaped)
 next_is=""          # "body" | "title" | "bodyfile" when the previous arg expects a value
 while [ $# -gt 0 ]; do
   arg="$1"
   case "$arg" in
-    --scrub-attested)
-      [ $# -ge 2 ] || { echo "✗ gh-egress: --scrub-attested needs a value." >&2; exit 3; }
-      ATTESTED="$2"; shift 2; continue ;;
-    --scrub-attested=*)
-      ATTESTED="${arg#--scrub-attested=}"; shift; continue ;;
+    --mention-attested|--mention-attested=*)
+      # Same malformed-shape guard as --scrub-attested (#203 item 6 / #117).
+      if [ -n "$next_is" ]; then
+        echo "✗ gh-egress: malformed args — '--mention-attested' found where a value for --body/--title/--body-file was expected." >&2
+        exit 2
+      fi
+      case "$arg" in
+        --mention-attested)
+          [ $# -ge 2 ] || { echo "✗ gh-egress: --mention-attested needs a value." >&2; exit 3; }
+          MENTION_ATTESTED="$2"; shift 2; continue ;;
+        *)
+          MENTION_ATTESTED="${arg#--mention-attested=}"; shift; continue ;;
+      esac ;;
+    --scrub-attested|--scrub-attested=*)
+      # Malformed-shape guard (#203 item 6): the attestation flag appearing where
+      # a value for --body/--title/--body-file is still pending means the caller
+      # split its tokens (e.g. `--body --scrub-attested warn`) — the drafted
+      # prose would silently escape the scan. Refuse as a usage error.
+      if [ -n "$next_is" ]; then
+        echo "✗ gh-egress: malformed args — '--scrub-attested' found where a value for --body/--title/--body-file was expected (split-token attestation)." >&2
+        exit 2
+      fi
+      case "$arg" in
+        --scrub-attested)
+          [ $# -ge 2 ] || { echo "✗ gh-egress: --scrub-attested needs a value." >&2; exit 3; }
+          ATTESTED="$2"; shift 2; continue ;;
+        *)
+          ATTESTED="${arg#--scrub-attested=}"; shift; continue ;;
+      esac ;;
     -b|--body|-t|--title)
       GH_ARGS+=("$arg")
       case "$arg" in -t|--title) next_is="title" ;; *) next_is="body" ;; esac
       shift; continue ;;
-    --body=*)   GH_ARGS+=("$arg"); SCAN_PARTS+=("${arg#--body=}");   shift; continue ;;
+    --body=*)   GH_ARGS+=("$arg"); SCAN_PARTS+=("${arg#--body=}"); BODY_PARTS+=("${arg#--body=}"); shift; continue ;;
     --title=*)  GH_ARGS+=("$arg"); SCAN_PARTS+=("${arg#--title=}");  shift; continue ;;
     -F|--body-file)
       GH_ARGS+=("$arg"); next_is="bodyfile"; shift; continue ;;
+    -b?*)
+      GH_ARGS+=("$arg"); SCAN_PARTS+=("${arg#-b}"); BODY_PARTS+=("${arg#-b}"); next_is=""; shift; continue ;;
+    -t?*)
+      GH_ARGS+=("$arg"); SCAN_PARTS+=("${arg#-t}"); next_is=""; shift; continue ;;
+    -F?*)
+      GH_ARGS+=("$arg"); f="${arg#-F}"
+      require_scannable_bodyfile "$f"
+      FCONTENT="$(cat "$f")"; SCAN_PARTS+=("$FCONTENT"); BODY_PARTS+=("$FCONTENT"); next_is=""; shift; continue ;;
     --body-file=*) GH_ARGS+=("$arg"); next_is=""; f="${arg#--body-file=}"
-      [ -r "$f" ] && SCAN_PARTS+=("$(cat "$f")"); shift; continue ;;
+      require_scannable_bodyfile "$f"
+      FCONTENT="$(cat "$f")"; SCAN_PARTS+=("$FCONTENT"); BODY_PARTS+=("$FCONTENT"); shift; continue ;;
     *)
       GH_ARGS+=("$arg")
       case "$next_is" in
-        body|title) SCAN_PARTS+=("$arg") ;;
-        bodyfile)   [ -r "$arg" ] && SCAN_PARTS+=("$(cat "$arg")") ;;
+        body)       SCAN_PARTS+=("$arg"); BODY_PARTS+=("$arg") ;;
+        title)      SCAN_PARTS+=("$arg") ;;
+        bodyfile)   require_scannable_bodyfile "$arg"; FCONTENT="$(cat "$arg")"
+                    SCAN_PARTS+=("$FCONTENT"); BODY_PARTS+=("$FCONTENT") ;;
       esac
       next_is=""; shift; continue ;;
   esac
@@ -121,7 +174,9 @@ case "$ATTESTED" in
       exit 3 ;;
 esac
 
-# --- (b) mechanical last-resort net (2 zero-tolerance literal items) ----------
+# --- (b) mechanical last-resort net (3 zero-tolerance mechanical items) -------
+# (grown 2→3 by #117 mention net — mechanical token matching, NOT semantic;
+#  the "no semantic matching" boundary from #202 D1/D2 is unchanged)
 # Joined once; the net only ever inspects the drafted prose, never --repo /
 # --label / --milestone etc. (so metadata-only edits are never false-flagged).
 SCAN=""
@@ -139,26 +194,100 @@ if printf '%s' "$SCAN" | grep -qE '/Users/[A-Za-z0-9._-]'; then
   net_refuse "an absolute /Users/<name> home path"
 fi
 
-# 2. verbatim ~/.claude.json content.
-#    (i) the literal path/filename token.
-if printf '%s' "$SCAN" | grep -qF '.claude.json'; then
-  net_refuse "a verbatim ~/.claude.json reference"
-fi
-#    (ii) a project-path string copied verbatim out of the user's actual
-#         ~/.claude.json (the "project basename leaks local folder structure"
-#         threat). Extract quoted absolute-path strings (>=2 slashes, >=12 chars)
-#         and match any verbatim in the drafted prose. One grep, no jq dependency.
-CJSON="${IDD_CLAUDE_JSON:-$HOME/.claude.json}"
+# 2. verbatim ~/.claude.json CONTENT. The bare filename/path token used to be
+#    matched here too, but the name is public documentation — only the content
+#    leaks anything. Dropped per #203 item 1 (it also blocked issues discussing
+#    this gate itself, e.g. #202/#203).
+#    A project-path string copied verbatim out of the user's actual
+#    ~/.claude.json `projects` object (the "project basename leaks local folder
+#    structure" threat). When jq is available the extraction is scoped to the
+#    projects object so PUBLIC tool paths (mcpServers[].command etc.) are not
+#    false-flagged (#203 item 2); without jq, fall back to the original
+#    whole-file wide net (fail-closed: over-refusing beats leaking).
+#    ${HOME:-} guard: both IDD_CLAUDE_JSON and HOME unset must not crash under
+#    set -u — the probe just skips (#203 item 4).
+CJSON="${IDD_CLAUDE_JSON:-${HOME:-}/.claude.json}"
 if [ -n "$SCAN" ] && [ -r "$CJSON" ]; then
-  KEYS="$(grep -oE '"(/[^"]{11,})"' "$CJSON" 2>/dev/null \
-            | sed -E 's/^"//; s/"$//' \
-            | grep -E '/[^/]+/' \
-            | sort -u)"
+  JQ_OK=0
+  if command -v jq >/dev/null 2>&1; then
+    if KEYS_RAW="$(jq -r '(.projects // {}) | keys[]' "$CJSON" 2>/dev/null)"; then
+      JQ_OK=1
+      KEYS="$(printf '%s\n' "$KEYS_RAW" \
+                | grep -E '^/.{11,}$' \
+                | grep -E '/[^/]+/' \
+                | sort -u)"
+    fi
+  fi
+  if [ "$JQ_OK" -eq 0 ]; then
+    # jq absent OR jq parse failure (malformed config) — fail CLOSED to the
+    # whole-file wide net; a silently disabled net would leak (#203 verify sec-2).
+    KEYS="$(grep -oE '"(/[^"]{11,})"' "$CJSON" 2>/dev/null \
+              | sed -E 's/^"//; s/"$//' \
+              | grep -E '/[^/]+/' \
+              | sort -u)"
+  fi
   if [ -n "$KEYS" ] && printf '%s' "$SCAN" | grep -qFf <(printf '%s\n' "$KEYS"); then
     net_refuse "verbatim content copied from ~/.claude.json"
   fi
 fi
 
+# 3. unattested @-mention net (#117). GitHub notifies real users on any raw
+#    @login token in posted prose — irreversibly, and context-blind. AI-generated
+#    bodies routinely carry incidental tokens (internal codenames like @codex,
+#    quoted conversation text, dynamic values), which the intent-gated
+#    tagging-collaborators.md protocol never sees. This net is UNCONDITIONAL:
+#    every raw token must either be escaped (backticks / fenced code — inert on
+#    GitHub, stripped before this scan) or covered by --mention-attested
+#    (set only after the 5-step protocol resolved the logins).
+#    Prefix guard [^[:alnum:]_] keeps email-like user@host out (GitHub does not
+#    notify on those either).
+MBODY=""
+for p in "${BODY_PARTS[@]:-}"; do MBODY+="$p"$'\n'; done
+# GFM: a fence opener allows at most 3 leading spaces; >=4 is literal indented
+# code and must NOT toggle fence state (logic 117-3 false-negative otherwise).
+# URL spans are exempt: GitHub's mention parser does not notify on @handle
+# inside an autolinked URL (unpkg.com/@scope/pkg, mastodon.social/@dev), and
+# backtick-escaping a URL would break the link (DA-117-B, R2). Only
+# autolink-ELIGIBLE spans qualify — host must contain a dot; no-dot/malformed
+# "URLs" (https://@user, http://localhost/@user) render as literal text where
+# /@name IS a live mention, so they stay in the scan (117-A, R3).
+MSCAN="$(printf '%s' "$MBODY" | awk '/^ ? ? ?```/{infence=!infence; next} !infence{print}' | sed -E 's/`[^`]*`//g; s|https?://[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+[^[:space:])>]*||g')"
+# Entity-encoded @ (&#64; / &#x40; / &commat;) followed by a login shape: GitHub
+# may decode these before its mention scan — fail closed and refuse outright.
+# Known friction (DA-117-A, accepted): prose that merely DISCUSSES the encoded
+# form also refuses. Unlike the removed .claude.json filename net (public name,
+# zero leak value), a raw entity-encoded @login has essentially one legitimate
+# prose use — discussing bypasses — which is rare and naturally backtick-escapable
+# (this guard runs AFTER fence/inline-code stripping, so `&#64;login` in code
+# spans already passes). Irreversible-notification risk outweighs the friction.
+if printf '%s' "$MSCAN" | grep -qiE '&#0*64;([a-z0-9-]|&#)|&#x0*40;([a-z0-9-]|&#)|&commat;([a-z0-9-]|&#)'; then
+  echo "✗ gh-egress: REFUSED — entity-encoded @-mention (e.g. &#64;login) in body." >&2
+  echo "  Encoded forms can decode into live mentions on GitHub. Spell it as literal text in backticks instead." >&2
+  exit 4
+fi
+UNATTESTED_MENTIONS=""
+while IFS= read -r login; do
+  [ -z "$login" ] && continue
+  case ",$MENTION_ATTESTED," in
+    *",$login,"*) : ;;
+    *) UNATTESTED_MENTIONS="$UNATTESTED_MENTIONS @$login" ;;
+  esac
+done < <(printf '%s\n' "$MSCAN" \
+           | grep -oE '(^|[^[:alnum:]_])@[A-Za-z0-9][A-Za-z0-9-]*' \
+           | grep -oE '@[A-Za-z0-9-]+' \
+           | sed 's/^@//' \
+           | sort -u)
+if [ -n "$UNATTESTED_MENTIONS" ]; then
+  echo "✗ gh-egress: REFUSED — unattested @-mention token(s):$UNATTESTED_MENTIONS" >&2
+  echo "  GitHub notifies real users on raw @login tokens (irreversible). Either:" >&2
+  echo "    - escape non-mention tokens in backticks (\`@name\`) — inert on GitHub, or" >&2
+  echo "    - run the rules/tagging-collaborators.md 5-step protocol, then re-dispatch with" >&2
+  echo "      --mention-attested <login1,login2> covering every intended mention." >&2
+  exit 4
+fi
+
 # --- dispatch: byte-for-byte identical to raw `gh issue <verb> ...` -----------
 GH_BIN="${IDD_GH_BIN:-gh}"
-exec "$GH_BIN" issue "$VERB" "${GH_ARGS[@]:-}"
+# ${arr[@]+...} idiom: empty array expands to NOTHING (":-" would yield one
+# phantom '' positional, #203 item 5); bash-3.2 safe.
+exec "$GH_BIN" issue "$VERB" ${GH_ARGS[@]+"${GH_ARGS[@]}"}
