@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.92.0] - 2026-07-06
+
+Batch drain release — 23 issues verified/closed through 16 merged PRs (#223, #229-#243), driven end-to-end by `/idd-all` multi-issue batch mode（本 plugin 的最大規模 dogfood）。
+
+### Added
+- **unattended-contract**（#123/#222/#211, PR #238）：state-file 訊號（`.claude/.idd/state/unattended.json`，TTL 24h）+ `lib/unattended-state.sh` + `references/unattended-contract.md`；TTY heuristic 廢除（harness 恆真）；idd-all/chain 依賴 early gates（superpowers hard、spectra Phase 3b.0 hard）
+- **gh-egress unconditional @-mention net**（#117, PR #229）：escape-or-attest 契約、`--mention-attested` flag、entity-encoded/短格式/URL-span 邊界；tagging rule 掃描改 unconditional
+- **idd-close Step 6.3 doc-sync sweep**（#220, PR #239）：case-insensitive README*/CLAUDE.md 枚舉 + staleness 判定 + update-or-surface
+- **測試聚合器 + GitHub Actions CI**（#217, PR #234）：`run-all-tests.sh`（timeout watchdog、fail-tail surfacing）+ `tests.yml`；21 suites
+- **idd-list blocked-state awareness**（#84, PR #240）：actionable/blocked 分組 + 全 blocked banner
+- **config Mechanism 3.5 submodule 路由**（#162, PR #235）：`lib/resolve-submodule-route.sh`、`submodules: auto|off`、never-silent
+- **check-plugin-presence enabled-state 偵測**（#212, PR #232）：installed-but-disabled → exit 3 + enable 指令
+- **monorepo host plugin 消歧**（#68, PR #242）：`lib/resolve-plugin-candidates.sh` cwd-specificity 排序
+- **assert-helpers 安全 helper 對**（#188, PR #233）：eval-content ban + `assert_output_grep`/`refute_output_grep`
+- 新測試 suites：git-attributes、bridge-path、doc-sync-sweep、unattended-state、submodule-routing、resolve-plugin-candidates、check-diagnosis-readiness（#61）、run-all-tests-self、assert-helpers — 12 → 21 suites
+
+### Changed
+- **pai 升 install-time dependency + vendored fork 刪除**（#219, PR #237）：`dependencies` 增列 `parallel-ai-agents@psychquant-claude-plugins`；idd-verify Tier 鏈 3→2（canonical → manual）
+- **idd-verify DA sequenced-spawn**（#130, PR #237）：Tier-3 manual 的 DA 改 coordinator 序列 spawn，polling/sentinel 機制退場（#119 R2 socket-crash 窗消滅；live 對照 17min → 8.5min）
+- **spectra-archive-post-ic flag 分離**（#172, PR #236）：`--force-linked-issue`（authoritative, existence-checked）vs `--linked-issue`（消歧, membership-checked）；empty-set escape hatch 移除
+- worktree 公約統一於 managed helper（#169, PR #243）；bridge state 遷移至 `.claude/.idd/state/bridge.json`（#199, PR #231）
+- `.gitattributes` line-ending 政策（#216, PR #223）+ merge-completeness fixtures 環境自足（#224, PR #230）
+
+### Audit records（comment-only deliverables）
+- #210 套件綁定 vs deep-integration 判準（7符合/1例外/2已收載體）；#215 rules 歸位（12/12 留原位）
+
+### Fixed
+- #187（duplicate of #186）、#222（TTY 恆真誤判 attended session）
+
 ## [Unreleased]
 
 ### Changed
