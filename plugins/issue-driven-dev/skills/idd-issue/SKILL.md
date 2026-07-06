@@ -861,6 +861,105 @@ EOF
 ✓ Cross-link comment added to PsychQuant/foo#42
 ```
 
+### Step 3.5: Discussion Metadata Helper（討論型 issue，v2.93.0+，#141 + #142）
+
+**目的**：討論型 issue（advisor briefing / review-feedback / 等決定 / 等 collaborator 回應）建完後，現行 skill 不 surface GitHub right-sidebar metadata（assignee / label / milestone）。本 step 在 issue 已建立（有 `$NUMBER`）之後、Step 4 附件上傳之前，**advisory** 地把這些 metadata surface 出來。
+
+> **Lean-v1 scope（#141 完整 spec 的精簡本質）**：detection 只收 `--discussion` flag（+ 一個 config opt-in 的 body heuristic）；metadata 只做 assignee / label / milestone 三項 advisory；**Native relationship suggestion (deferred — 見下方 (d))**。這是刻意的最小切面，不是遺漏。
+
+#### Detection：何時啟動本 helper
+
+Lean-v1 **只有兩個** trigger（design Q1 自身建議的預設）：
+
+1. **Primary — explicit flag**：invocation 帶 `--discussion`（或 `--type discussion`）。
+2. **Opt-in fallback — body heuristic**：**預設 off**，只有 config `.claude/issue-driven-dev.local.json` 設 `"discussion_metadata_heuristic": true` 時，才對 body 掃 plain-language signal（`cc @<login>` + 「briefing / summary / 等決定 / review feedback」+ ≥3 個 `#N` reference）。關掉時，標準 bug/feature issue **絕不**被這 4-prompt ceremony 打擾。
+
+命中任一 → 在 bootstrap list 補一個 **conditional** stage task（只有命中才建；標準 case 不建）：
+
+```
+TaskCreate(name="discussion_metadata_helper",
+           description="Step 3.5 (#141): detection 命中 → advisory assignee / label / milestone。surface-only，unattended 絕不 auto-set outward-facing metadata。")
+```
+
+#### Interaction 模式（surface-only 契約，CRITICAL）
+
+- **attended**：以下每個 sub-step 用 `AskUserQuestion`（Claude runtime tool，非 shell）問使用者，選 Yes 才實際 `gh issue edit`。
+- **unattended**（`/idd-all --pr` 等）：`AskUserQuestion` 被抑制 → **不呼叫任何 `gh issue edit --add-assignee/--add-label/--milestone`**，改成在 Step 5 report 印一段「建議的 metadata（未套用）」讓人事後手動決定。**outward-facing metadata 在 unattended 下絕不 auto-set**（#141 Key Decision）。
+
+#### (a) Assignee suggestion
+
+候選 **只來自 body 內已通過 [`rules/tagging-collaborators.md`](../../rules/tagging-collaborators.md) 5-step protocol 的 `@login`**（Step 2.6 已驗證的 set）—— 不重新猜、不從 memory 撈。
+
+```
+AskUserQuestion:
+  "偵測到討論型 issue，body 內驗證過的 recipient：@<login>。設為 assignee？"
+  options:
+    - "Yes, assign @<login>"          → gh issue edit "$NUMBER" --repo "$REPO" --add-assignee "<login>"
+    - "Pick different assignee"        → 二層：列 collaborators（gh api repos/$REPO/collaborators）
+    - "Skip — 不設 assignee"
+```
+
+#### (b) Label suggestion（#142 Safeguard 1 + 2 baked in）
+
+label 名稱 **config-overridable**：讀 `discussion_label`（`.claude/issue-driven-dev.local.json`，物件形 `{name,color,description}` 或純字串；預設 `discussion` / `0E8A16` / "Open question awaiting decision or input"）。
+
+```
+AskUserQuestion:
+  "加上 `$LABEL_NAME` label？（區分於 implementation issue）"
+  options:
+    - "Yes, add（label 已存在）"
+    - "Yes + auto-create if missing"
+    - "Skip"
+```
+
+**#142 Safeguard 2 — Pre-add existence check**（`--add-label` 路徑，label 已存在的假設要先驗）。`gh issue edit --add-label X` 對不存在的 label 行為 inconsistent（有時 error、有時 server-side 用 default 白色 silently auto-create），故 add 前先讀：
+
+```bash
+label_exists() { # $1=name
+  gh label list --repo "$REPO" --search "$1" --json name \
+    --jq '.[] | select(.name == "'"$1"'") | .name' | grep -qx "$1"
+}
+# 只對非 default-set label 跑（discussion / epic / custom）；bug/feature/refactor/docs 是 repo 預設，跳過。
+if ! label_exists "$LABEL_NAME"; then
+  echo "⚠ Label '$LABEL_NAME' 不存在於 $REPO — 選 auto-create 或 skip"
+  # → 併入上面 AskUserQuestion 的 option 2/3
+fi
+gh issue edit "$NUMBER" --repo "$REPO" --add-label "$LABEL_NAME"   # 只在 verified-exist 後
+```
+
+**#142 Safeguard 1 — VERIFY by reading back**（auto-create 路徑）。`gh label create` 成功時**無 stdout**，且對「已存在」case 也 silently noop —— exit code + stdout 無法區分「剛建成」「早就有」「靜默失敗」。唯一可靠偵測是建完再讀回：
+
+```bash
+gh label create "$LABEL_NAME" --repo "$REPO" \
+  --description "$LABEL_DESC" --color "$LABEL_COLOR" 2>/dev/null
+if label_exists "$LABEL_NAME"; then
+  echo "✓ Label '$LABEL_NAME' verified in $REPO"
+  FRESH_LABEL_CREATED=1        # 給 Step 5 Safeguard 3 hint 用（只在真的新建時提示）
+else
+  echo "✗ ABORT: gh label create 回報成功但 label 不在 list — 查 API quota / 權限 / 網路後重跑"
+  return 1
+fi
+```
+
+> GitHub label API 是 strongly consistent（建完立即可讀），**first read 即可**，不需 retry backoff（#142 Q1）。cache lag 只發生在 web UI autocomplete，見 Step 5 Safeguard 3。
+
+#### (c) Milestone suggestion（只在偵測到 time-bound signal）
+
+僅當 body 含 **time-bound** deadline reference（「next meeting」「下次 advisor meeting」「下週」「month-end」等）才問；否則整段 skip（討論 issue 多數不綁時間）。命中時 reuse 既有 **Step 4.5 auto-milestone machinery**（`gh api repos/$REPO/milestones` 建 / 列、`--milestone` 指派），不重造：
+
+```
+AskUserQuestion:
+  "偵測到 time-bound 討論（提及 'next advisor meeting'）。掛 milestone？"
+  options:
+    - "Pick existing milestone"   → 列 open milestones
+    - "Create new milestone"      → 二層問 title（+ 選填 due date，空=open-ended，#141 Q3）
+    - "Skip"
+```
+
+#### (d) Native relationship suggestion (deferred — lean-v1 不實作，disclosed)
+
+- [~] **Native relationship suggestion (deferred)** — body 內 `#N` 用 GitHub 2024+ GraphQL（`addBlockedByDependency` 等）建 structured relationship，比 body text reference 多 sidebar backlink。**本 cluster 刻意不做**，理由：(1) 複雜度/風險最高（需 relationship-type picker UI）；(2) #141 spec 自身將其框為「reuse v2.52.0+ `--blocked-by` code path」的後續工作，而該 path 尚未一般化成可獨立呼叫的 primitive；(3) design Q4 裁定 body text reference 本來就保留（與 native backlink 互補不重複），所以延後不損失現有 inline context。點亮條件：`--blocked-by` 的 GraphQL mutation 抽成可重用 helper 後，再接本 (d)。
+
 ### Step 4: 附加所有原始素材（鐵律：預設全保留）
 
 > 引用 Step 1 的「資料保留鐵律」：來源中**任何附件都要全部上傳**，不論張數、不論格式。
@@ -1066,6 +1165,19 @@ options:
 
 輸出：issue number、URL、labels、type。
 如果有 milestone：輸出 milestone name、URL、issue count。
+
+**#142 Safeguard 3 — label cache-sync hint（只在 Step 3.5 真的新建 label 時，即 `FRESH_LABEL_CREATED=1`；既有 label reuse 不印）**：
+
+```
+✓ Created label '$LABEL_NAME' (#$LABEL_COLOR) + assigned to issue #$NUMBER
+
+ℹ  GitHub Web UI 的 label autocomplete dropdown 可能要 hard refresh (Cmd+Shift+R)
+   才會在 issue filter 看到此 label。若 UI 顯示 "Invalid value $LABEL_NAME for label"
+   —— 不是 bug，是 client-side autocomplete cache lag。filter 實際仍 work，
+   gh CLI 仍可用 `--label $LABEL_NAME`。
+```
+
+> **為什麼 preventive**：新建 label 後第一個進 issue list 的人常看到「Invalid value … for label」就誤判 skill 出 bug（實測 Liu-thesis discussion label setup 踩過）。issue body 的 label field / API / CLI 全 work，純 UI cache lag。先講清楚省一次 debugging。
 
 **回顯 render 的詮釋（v2.64.0+, #103）**：除了上面的 metadata，**必須**把 AI 自己*產出*的詮釋回顯給使用者 —— issue body 的 `## Type` / `## Expected` / `## Actual` 三段 + plain-language interpretation。使用者已給過的逐字「Original text」不重複貼。
 
