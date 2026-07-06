@@ -1389,13 +1389,15 @@ Recovery workflow:
 
 ```bash
 # Add at top of Stage 4.5 gate (before AskUserQuestion):
-if [ -z "${JSONL_GITIGNORE_DECISION:-}" ] && [ ! -t 0 ] && [ -n "${IDD_ALL_UNATTENDED:-}${CI:-}" ]; then
-  # No TTY AND we're in /idd-all unattended chain OR a CI environment.
+. "$CLAUDE_PLUGIN_ROOT/scripts/lib/unattended-state.sh"
+if [ -z "${JSONL_GITIGNORE_DECISION:-}" ] && { is_unattended "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || [ -n "${CI:-}" ]; }; then
+  # /idd-all unattended chain（state file / env var per references/unattended-contract.md）
+  # OR a CI environment. TTY check removed (#222 — always false in harness).
   # Auto-select "skip-commit" as the safest default — jsonl writes locally
   # but isn't committed, no .gitignore change. Audit trail still produced
   # locally for whoever runs the unattended job.
   JSONL_GITIGNORE_DECISION="skip-commit"
-  echo "ℹ Stage 4.5 gate auto-defaulted to 'skip-commit' under unattended mode (no TTY + IDD_ALL_UNATTENDED/CI)." >&2
+  echo "ℹ Stage 4.5 gate auto-defaulted to 'skip-commit' under unattended mode (unattended-contract signal / CI)." >&2
 fi
 ```
 
