@@ -25,6 +25,10 @@ mk_repo() {
   git -C "$d" config commit.gpgsign false
   printf 'base\n' > "$d/base.txt"
   git -C "$d" add -A && git -C "$d" commit -qm base
+  # Fixtures reference `main` explicitly; machines with unset init.defaultBranch
+  # (git default: master — most CI runners too) would 6/7 false-FAIL without
+  # this self-sufficient rename (idempotent when already main). Refs #224.
+  git -C "$d" branch -M main
   echo "$d"
 }
 
