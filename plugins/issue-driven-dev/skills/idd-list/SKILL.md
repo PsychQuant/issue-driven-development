@@ -47,8 +47,9 @@ TaskCreate(name="fetch_issues", description="gh issue list 取 number/title/stat
 TaskCreate(name="fetch_open_prs", description="Step 2.5 (v2.51+): gh pr list --state open --json number,body,title,isDraft,mergeable,headRefName,createdAt --limit 100 一次抓所有 open PR")
 TaskCreate(name="extract_phase", description="從每個 issue body 的 Current Status → **Phase**: 抽出 phase；fallback 掃 comments 標題推斷")
 TaskCreate(name="build_issue_pr_index", description="Step 3.5 (v2.51+): client-side regex `#(\d{1,7})\b` scan PR body 找 issue refs (cap digits ≤7,過濾 #0),反向建 issue→PR map + cluster detection (refs ≥ 2 → cluster,leader = min(refs);若同 issue 被多 PR ref,sort by PR number asc 確保 deterministic order;cluster_members 寫入 pr_info 僅當 len ≥ 2)")
+TaskCreate(name="extract_blocked_state", description="Step 3.7 (v2.92+, #84): 抽 blocked 信號（Blocking 區塊/label/wait 類 next）→ blocked_reason 掛 entry")
 TaskCreate(name="format_output", description="組 #N [phase] title 表格;有 PR 加 └─ 子行 (cluster leader 顯示 cluster: #X #Y / member 顯示 → see PR #N) + footer 統計含 PR/cluster 數")
-TaskCreate(name="report_and_suggest_next", description="輸出 table 並列出每個 issue 的 Suggested next 命令 (依 phase × PR state matrix)")
+TaskCreate(name="report_and_suggest_next", description="輸出 table 並列出 Suggested next（phase × PR state matrix）；#84 分 Actionable/Blocked 兩組 + 全 blocked banner + footer 計數")
 TaskCreate(name="audit_closes_marker", description="Step 4 (v2.75.2+, #151): 若 --audit-closes,對 state=CLOSED 但 Step 3 找不到 `## Closing Summary` 的 issue 加 ⚠ marker（可能被 commit/PR-body close keyword auto-close 繞過 /idd-close gate）。reuse Step 3 comment scan,不重 fetch")
 ```
 
@@ -210,6 +211,16 @@ def get_leader(refs_list, body, rule):
 
 **`cluster_members` 寫入規則**:寫進 `pr_info` 僅當 `len(refs) >= 2`(single-PR 為 None)。Step 4 判定 cluster 一律以 `pr_info['cluster_members'] is not None` 為 single source of truth,避免 single-PR 判定條件有歧義(per L12 finding)。
 
+### Step 3.7: Blocked-state extraction（v2.92+, #84）
+
+對每個 issue 抽 blocked 信號（**依 body 記錄判定，不宣稱即時**）：
+
+1. body `## Current Status` 的 `### Blocking` 區塊非空（首選 — idd-update 維護）
+2. `blocked` label（若 repo 有此慣例）
+3. Suggested-next 屬 wait 類（cluster UNKNOWN wait / 等 collaborator reply 樣式）
+
+抽出 `blocked_reason`（Blocking 區塊首行或 label 名），掛到 issue entry。
+
 ### Step 4: Format Output
 
 ```
@@ -295,6 +306,26 @@ Repo: PsychQuant/issue-driven-development  (state: open, limit: 20)
 ### Step 5: Suggest Next Actions
 
 Footer 之後列出每個 issue 的建議下一步。**v2.51.0+ phase × PR state matrix**:依 issue phase 和 Step 3.5 抓到的 PR state 組合決定 next action。
+
+**v2.92+ #84 blocked-state 分組（anti-anxiety surfacing）**：Suggested next 依 Step 3.7 分兩組輸出：
+
+```
+Actionable now:
+  #45 [verified]  → /idd-close #45
+
+Blocked (waiting on external):
+  #16 [diagnosed] → ⏳ waiting: Hsu Path 1/2 clarify（依 body Blocking 記錄）
+  #17 [diagnosed] → ⏳ waiting: Theorem 1 generalization confirm
+```
+
+**全 blocked banner**：當 Actionable now 為空且 Blocked 非空：
+
+```
+✋ 所有可控事項已完成 — N 個 open issue 全部等待外部回應（詳見上表 blocker）。
+   這不是 throughput 問題；下次回來先檢查 blocker 是否解除。
+```
+
+Footer 統計行加 blocked 計數：`X actionable, Y blocked`。理由（#84 原始觀察）：「等」的狀態被顯式 surface 後，「沒進度」焦慮與「漏掉了什麼」反向搜尋都消失 — 資訊本體是聚合判斷，不是 per-issue 列表。
 
 ```
 Suggested next:
