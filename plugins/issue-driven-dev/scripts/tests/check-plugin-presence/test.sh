@@ -33,9 +33,27 @@ mk_plugin() { # home marketplace plugin version [skill...]
   done
 }
 
-run() { # home [args...] — runs script with fake HOME, captures stderr to $ERR
+mk_claude_shim() { # home json — installs a fake `claude` CLI printing $json for `plugin list --json`
+  local home="$1" json="$2"
+  mkdir -p "$home/bin"
+  cat > "$home/bin/claude" <<SHIM
+#!/usr/bin/env bash
+if [ "\$1" = "plugin" ] && [ "\$2" = "list" ]; then printf '%s' '$json'; exit 0; fi
+exit 2
+SHIM
+  chmod +x "$home/bin/claude"
+}
+
+run() { # home [args...] — fake HOME + hermetic claude shim (default: empty list)
   local home="$1"; shift
-  ERR=$(HOME="$home" IDD_SKIP_PLUGIN_CHECK= bash "$SCRIPT" "$@" 2>&1 >/dev/null)
+  [ -x "$home/bin/claude" ] || mk_claude_shim "$home" "[]"
+  ERR=$(HOME="$home" PATH="$home/bin:$PATH" IDD_SKIP_PLUGIN_CHECK= bash "$SCRIPT" "$@" 2>&1 >/dev/null)
+  return $?
+}
+
+run_noclaude() { # home [args...] — PATH without any claude CLI
+  local home="$1"; shift
+  ERR=$(HOME="$home" PATH="/usr/bin:/bin" IDD_SKIP_PLUGIN_CHECK= bash "$SCRIPT" "$@" 2>&1 >/dev/null)
   return $?
 }
 
@@ -132,5 +150,46 @@ run "$H" claude-plugins-official ".."
 assert_exit "R2: bare .. plugin → 2" 2 $?
 run "$H" claude-plugins-official "..."
 assert_exit "R2: dot-only plugin (...) → 2" 2 $?
+
+
+# --- #212 enabled-state detection --------------------------------------------
+# enabled=true → pass
+H="$(mk_home)"; mk_plugin "$H" claude-plugins-official superpowers 4.1.0
+mk_claude_shim "$H" '[{"id":"superpowers@claude-plugins-official","enabled":true,"installPath":"'"$H"'/.claude/plugins/cache/claude-plugins-official/superpowers/4.1.0"}]'
+run "$H" claude-plugins-official superpowers
+assert_exit "#212: installed + enabled → 0" 0 $?
+
+# enabled=false → exit 3 + enable hint
+H="$(mk_home)"; mk_plugin "$H" claude-plugins-official superpowers 4.1.0
+mk_claude_shim "$H" '[{"id":"superpowers@claude-plugins-official","enabled":false,"installPath":"x"}]'
+run "$H" claude-plugins-official superpowers
+assert_exit "#212: installed but DISABLED → 3" 3 $?
+assert_grep "#212 disabled: stderr has enable cmd" "claude plugin enable superpowers@claude-plugins-official" "$ERR"
+
+# claude CLI absent → graceful degrade (disk evidence), exit 0 + warning
+H="$(mk_home)"; mk_plugin "$H" claude-plugins-official superpowers 4.1.0
+run_noclaude "$H" claude-plugins-official superpowers
+assert_exit "#212: claude CLI absent → degrade to disk check (0)" 0 $?
+assert_grep "#212 degrade: warning surfaced" "enabled-state check skipped" "$ERR"
+
+# list --json errors → degrade, exit 0 + warning
+H="$(mk_home)"; mk_plugin "$H" claude-plugins-official superpowers 4.1.0
+mkdir -p "$H/bin"; printf '#!/usr/bin/env bash\nexit 1\n' > "$H/bin/claude"; chmod +x "$H/bin/claude"
+run "$H" claude-plugins-official superpowers
+assert_exit "#212: plugin list --json fails → degrade (0)" 0 $?
+assert_grep "#212 cli-fail: warning surfaced" "enabled-state check skipped" "$ERR"
+
+# plugin on disk but absent from list → warn + proceed (fail-open floor)
+H="$(mk_home)"; mk_plugin "$H" claude-plugins-official superpowers 4.1.0
+mk_claude_shim "$H" '[]'
+run "$H" claude-plugins-official superpowers
+assert_exit "#212: on disk but absent from list → proceed (0)" 0 $?
+assert_grep "#212 absent: inconclusive warning" "inconclusive" "$ERR"
+
+# disabled check still respects skill-level pre-flight ordering (missing skill wins with 1)
+H="$(mk_home)"; mk_plugin "$H" claude-plugins-official superpowers 4.1.0
+mk_claude_shim "$H" '[{"id":"superpowers@claude-plugins-official","enabled":false}]'
+run "$H" claude-plugins-official superpowers no-such-skill
+assert_exit "#212: missing skill (1) precedes disabled (3)" 1 $?
 
 print_summary "check-plugin-presence"
