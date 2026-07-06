@@ -211,6 +211,7 @@ TaskCreate(name="closing_followup_keyword_scan", description="Step 3.5: scan dra
 TaskCreate(name="residue_acknowledgement", description="Step 3.6 (v2.66.0+, #105): read latest ## Diagnosis ### Residue section; if non-empty (not `(none)`), AskUserQuestion 3-option (still residue / file follow-up / skip); silent skip when residue is `(none)` or section missing. Audit trail PATCH to closing summary. Non-blocking, IC_R011 rollback respected. Closes the F3 write-only loop from #103.")
 TaskCreate(name="publish_and_close", description="gh issue comment + gh issue close")
 TaskCreate(name="auto_update_body", description="跑 /idd-update #NNN 把 issue body 的 Current Status phase 改 closed（Step 6，常被漏）")
+TaskCreate(name="doc_sync_sweep", description="Step 6.3 (v2.92+, #220): git ls-files case-insensitive 枚舉 README*/CLAUDE.md（含 localized 變體）→ per-file staleness 語意判定（以本 issue diff+summary 為據）→ 更新 commit 或 surface 到 closing summary「### Doc-sync 檢查」段；結果必留痕（N files checked 一行）")
 TaskCreate(name="distribution_sync_chain_detection", description="Step 6.5 (v2.56.0+, #45): infer_distribution_type detection per references/distribution-detection.md; if hit → AskUserQuestion 3-option (chain to plugin-update/mcp-deploy/cli-deploy / skip — manual later / not applicable); patch closing comment with ### Distribution Sync section. Silent skip for non-distribution repos. IDD_DISTRIBUTION_SYNC_PROMPT=false env var bypasses prompt entirely (still 1-line audit).")
 TaskCreate(name="worktree_gc", description="Step 6.7 (v2.75.0+, #167): best-effort worktree GC — bash $CLAUDE_PLUGIN_ROOT/scripts/idd-worktree.sh cleanup <N>; absent helper or dirty-refuse (exit 5) → one-line warning + close still completes; never blocks close")
 TaskCreate(name="release_tree_lock", description="Step 6.8 (v2.85.0+, #183): best-effort release of the shared working-tree lock from idd-implement Step 0.4 — bash $CLAUDE_PLUGIN_ROOT/scripts/idd-tree-lock.sh release --repo <cwd> --id <session>; holder-scoped + idempotent (no lock / not-holder / absent helper → silent no-op); stale lock otherwise auto-reclaimed by next acquire via PID liveness. Never blocks close")
@@ -655,6 +656,34 @@ Skill(skill="issue-driven-dev:idd-update", args="#NNN")
 - 幾個月後考古：「這 issue 狀態是啥？」body 說 implementing，state 說 closed → 只能翻 comments 重建
 
 **批次 close 時**：每一個 issue 都要分別跑 idd-update，不是跑一次。
+
+### Step 6.3: Doc-sync sweep（v2.92+, #220）
+
+> 使用者原話（#220）：「idd-close 的時候更新所有 README 跟 CLAUDE.md 這可能是最後一步吧」— close 是「改動最終狀態確定」的唯一時點，本步把文件 drift 的攔截制度化（motivating incident：che-ical v1.14.0 三處 stale docs 全靠人工 review 才抓到，其中 `README_zh-TW.md` 整份被字面 glob 漏掉）。
+
+**位置**：closing summary 已 publish、`gh issue close` 之前（與 Step 6 body sync 同區、序在 6.5 distribution sync 前）。
+
+#### 6.3.1 機械枚舉（防 glob 漏 — incident 教訓）
+
+```bash
+# tracked-only（避開 build 產物）；case-insensitive；含 localized 變體
+DOC_FILES=$(git -C "$CWD" ls-files | grep -iE '(^|/)(readme[^/]*\.(md|markdown)|claude\.md)$')
+echo "→ doc-sync sweep: $(echo "$DOC_FILES" | grep -c .) file(s) enumerated"
+```
+
+#### 6.3.2 Per-file staleness 語意判定（AI）
+
+對每份文件問：「**本 issue 的改動**（diff scope + closing summary）是否使其內容過時？」— 典型過時面：版本表、警告 banner、功能/skill 清單、依賴表、對照表。判定依據是本次改動，不是全面 doc audit（bounded）。
+
+#### 6.3.3 處置
+
+| 判定 | 動作 |
+|------|------|
+| 過時且可自動更新 | 更新 + `docs: sync <file> after #N close (#N)` commit（direct-commit path 直接 commit；PR path 時 PR 已 merge — commit 到 default branch） |
+| 過時但無法自動判定正確新內容 | **Surface** 到 closing summary 追加段「### Doc-sync 檢查」（PATCH），列 file + 疑點，不靜默 |
+| 無過時 | 一行 `→ doc-sync: N files checked, no staleness detected` |
+
+**鐵律**：sweep 保證的是「系統性檢查發生 + 結果留痕」，不宣稱零漏 — 語意判定的 false negative 由 audit trail 可追。
 
 ### Step 6.5: Distribution Sync chain (v2.56.0+, #45)
 
