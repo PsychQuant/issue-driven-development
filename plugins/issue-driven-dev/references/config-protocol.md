@@ -22,6 +22,9 @@ When an idd-* skill needs to determine the target repo, it walks this priority l
 1. --target <owner/repo> flag     ← runtime override (per invocation)
 2. ask_each_time + candidates     ← runtime menu (from config)
 3. Predicate match (when clauses) ← auto-pick candidate or group by context
+3.5 Submodule boundary (#162)     ← cwd inside a submodule → its own origin
+                                     overrides the parent config's github_repo
+                                     (unless "submodules": "off"); never silent
 4. Cascading config (walk up)     ← static routing by directory
 5. git remote fallback            ← last resort, with prompt
 ```
@@ -77,6 +80,28 @@ A single config can list multiple candidate repos. When `ask_each_time: true`, t
 - The chosen candidate's fields are used for that invocation only — config is NOT modified
 
 If `ask_each_time` is `false` or missing, the top-level `github_repo` wins by default. Candidates are ignored unless the user supplies `--target` matching a candidate label or repo.
+
+### Mechanism 3.5: Submodule boundary detection (#162)
+
+When the walk-up (mechanism 4) resolves a config that lives in a **parent
+repo** while `cwd` is inside a **git submodule**, the parent's `github_repo`
+would silently target the wrong repo (the pain point that motivated #162).
+Resolution therefore consults `scripts/lib/resolve-submodule-route.sh` before
+falling back to the config's bare `github_repo`:
+
+- `git rev-parse --show-superproject-working-tree` non-empty → inside a submodule
+- config key `"submodules"` (optional): `"auto"` (default) routes to the
+  **submodule's own origin**; `"off"` keeps the parent config's routing
+- **Never silent**: whichever way it routes, a surface line is printed when a
+  submodule boundary is crossed. A submodule without an `origin` remote (or a
+  non-`owner/repo`-shaped URL) falls back to the parent config with a warning.
+- Explicit mechanisms still win: `--target` (1) and matching `candidates`
+  predicates (2/3) take precedence — declare a `path_contains` candidate in the
+  parent config to pin a submodule to any repo regardless of this mechanism.
+
+**Backward-compat note**: repos that relied on "submodule cwd routes to the
+parent repo" must set `"submodules": "off"` (one line). The default flips to
+the submodule because the silent-wrong-repo direction is the bug class.
 
 ### Mechanism 4: Cascading config (walk-up)
 
