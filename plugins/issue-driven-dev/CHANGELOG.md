@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.92.1] - 2026-07-06
+
+Hotfix for a load-breaking regression in 2.92.0.
+
+### Fixed
+
+- **`parallel-ai-agents` install-time dependency pointed at the wrong marketplace.** 2.92.0 (#219) promoted `parallel-ai-agents` to an install-time hard dependency but declared its `marketplace` as `psychquant-claude-plugins`, where the plugin does not exist — it ships from its own `parallel-ai-agents` marketplace (`PsychQuant/parallel-ai-agents`). Dependency resolution failed at load time, so the whole `issue-driven-dev` plugin reported `failed to load` and every `/idd-*` skill silently disappeared on reload. Corrected both `plugin.json` `dependencies[].marketplace` and the marketplace-root `allowCrossMarketplaceDependenciesOn` allowlist to `parallel-ai-agents`.
+
 ## [2.92.0] - 2026-07-06
 
 Batch drain release — 23 issues verified/closed through 16 merged PRs (#223, #229-#243), driven end-to-end by `/idd-all` multi-issue batch mode（本 plugin 的最大規模 dogfood）。
