@@ -62,7 +62,12 @@ LOCK="$LOCK_PARENT/tree-lock"
 
 now_epoch()  { date +%s; }
 now_iso()    { date -u +%Y-%m-%dT%H:%M:%SZ; }
-file_mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null; }
+# GNU-first: `stat -c %Y` is GNU "format" (mtime); on Linux it succeeds and the
+# `||` short-circuits, so GNU's `-f`=--file-system multi-line output never leaks
+# into the mtime. On BSD/macOS `-c` is illegal → clean usage error to stderr, no
+# stdout (rc=1) → falls through to `-f %m` (BSD "format"). BSD-first breaks the
+# reverse way on Linux and reclaims fresh locks (#245). Regression: test.sh f11.
+file_mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null; }
 field()      { [ -f "$LOCK" ] && sed -n "s/^$1=//p" "$LOCK" | head -1; }
 valid_pid()  { printf '%s' "$1" | grep -qE '^[0-9]+$' && [ "$1" -gt 0 ] 2>/dev/null; }
 

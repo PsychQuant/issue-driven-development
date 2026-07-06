@@ -103,4 +103,31 @@ assert_eq "f10b exactly one holder after reclaim" "new" "$(lockpid_holder "$R")"
 require   "f10c no orphan reclaim mutex left"  bash -c "[ ! -d '$R/.claude/.idd/tree-lock.reclaim' ]"
 rm -rf "$R"
 
+# ── Fixture 11 (#245 REGRESSION): file_mtime() must resolve mtime under GNU stat
+#    semantics. `stat -f %m` is BSD "format"; on GNU/Linux `-f` = --file-system, so
+#    a BSD-first chain leaks a multi-line filesystem block into holder_is_live()'s
+#    freshness arithmetic — a FRESH empty lock is then wrongly reclaimed (f8 passes
+#    on macOS, fails on the Linux CI runner). We shim a GNU-semantics `stat` onto
+#    PATH so the Linux-only failure reproduces on ANY host: RED while file_mtime
+#    tries `-f` first, GREEN once it tries `-c %Y` first. ──
+R="$(mk_repo)"; mkdir -p "$R/.claude/.idd"
+: > "$R/.claude/.idd/tree-lock"                   # empty + fresh = mid-acquire window (as f8)
+SHIMDIR="$(mktemp -d)"
+cat > "$SHIMDIR/stat" <<'SHIM'
+#!/bin/sh
+# GNU-coreutils `stat` semantics, for the #245 regression only:
+#   -f  → --file-system (NOT BSD's "format"); handed a bogus %m operand it prints a
+#         multi-line fs block for the real file and exits nonzero.
+#   -c  → format string ($2=%Y = mtime); prints a bare epoch integer, exit 0.
+case "$1" in
+  -f) printf 'File: "%s"\nID: 0 Namelen: 255 Type: apfs\nBlock size: 4096\n' "${3:-$2}"; exit 1 ;;
+  -c) date +%s; exit 0 ;;
+  *)  exit 1 ;;
+esac
+SHIM
+chmod +x "$SHIMDIR/stat"
+( export PATH="$SHIMDIR:$PATH"; bash "$HELPER" acquire --repo "$R" --id A --pid "$$" ) >/dev/null 2>&1
+assert_exit "f11 GNU-stat shim: fresh empty lock still held (BSD-first file_mtime regression #245)" 3 $?
+rm -rf "$R" "$SHIMDIR"
+
 print_summary
