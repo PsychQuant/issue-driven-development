@@ -143,10 +143,16 @@ The shared working tree is single-occupant. When two `/idd` sessions run against
 
 1. **Default to an isolated `git worktree`, not in-tree `checkout -b`.** Provision the feature branch in its own working directory so concurrent PR-path sessions never share one tree:
    ```bash
-   WORKTREE="${WORKTREE_ROOT:-$(git -C "$CWD" rev-parse --git-dir)/idd-worktrees}/${BRANCH##*/}"
-   git -C "$CWD" worktree add "$WORKTREE" -b "$BRANCH" "$DEFAULT_BRANCH"
+   # Canonical location (#169 — unified on the #167 managed helper; the old
+   # ad-hoc `.git/idd-worktrees/` location is retired for NEW worktrees):
+   WORKTREE=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/idd-worktree.sh" create "$N" --repo-root "$CWD" | tail -1)
+   # → .claude/worktrees/idd-<N>/ (gitignored, issue-keyed, idd-close auto-GC)
    CWD="$WORKTREE"   # all subsequent git/gh ops reuse the existing `git -C "$CWD"` plumbing
-   # ... after the PR is opened (or the run aborts): git worktree remove "$WORKTREE"
+   # ... cleanup is managed: idd-close Step 6.7 auto-GC, or
+   #     bash scripts/idd-worktree.sh cleanup <N> manually.
+   # Migration note (#169): pre-existing `.git/idd-worktrees/*` worktrees keep
+   # working (git tracks them independently); the unification applies to NEW
+   # acquisitions only. `git worktree list` enumerates both.
    ```
    The existing `--cwd` cross-repo substitution (`git -C "$CWD"`) already routes every downstream step to the worktree — no other step changes. Repo-specific **gitignored** symlinks (e.g. a `00_principles` symlink) are NOT recreated in a fresh worktree; provide them via a repo-level setup hook if the run's tests need them, otherwise those tests skip (acceptable for codegen-only helpers).
 
