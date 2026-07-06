@@ -10,7 +10,7 @@ This discipline has **two halves with very different maturity**, and conflating 
 
 | Half | Status | Mechanism |
 |------|--------|-----------|
-| **Read-only diagnose fan-out** | ✅ **real today** | the Workflow tool (deterministic parallel agents + synthesis, exactly like `idd-verify`'s `ensemble-workflow.js`) |
+| **Read-only diagnose fan-out** | ✅ **real today** | the Workflow tool (deterministic parallel agents + synthesis, exactly like `idd-verify`'s canonical pai-ensemble engine（#219 後 vendored fork 已刪，引擎 = parallel-ai-agents plugin）) |
 | **Concurrent *stateful* lanes** (run N full `idd-all` pipelines at once) | ⛔ **deferred** | no primitive exists — within-window agent teams is `## Deferred: Case A` in [`worktree-isolation.md`](worktree-isolation.md) (#167); `TeamCreate` was abandoned by `idd-verify` after #47/#52; a Workflow `agent()` is a single subagent turn that cannot host `idd-all`'s skill orchestration or nest the verify ensemble |
 
 So **`idd-all #a #b #c` batch mode is sequential, not concurrent.** The conflict-class taxonomy below is a **forward-looking safety contract**: it tells you what is safe to parallelize *when you do so manually* (separate Claude sessions / worktrees) or *when a real concurrent-lane primitive eventually lands*. It does NOT assert that any skill auto-parallelizes stateful work today. Do not write a spec or skill that `SHALL`s a concurrency engine that does not exist.

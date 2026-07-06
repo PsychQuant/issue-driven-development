@@ -139,7 +139,7 @@ idd-verify #NNN
 
 ## Workflow backend（三層解析：pai canonical → vendored fallback → manual；formalize-idd-verify-ensemble v2.77.0、#207 依賴切換）
 
-> **狀態（live-verified + ungated, 2026-06-01）**：此 backend 已 **end-to-end live-verified** —— 真 diff 經 `args.diffFile` → workflow backend（5 agents）→ findings normalize 成 master-report 表格 → 真 `gh issue comment` 發到 issue。self-dogfood（verify 跑自身 `ensemble-workflow.js`）抓到並修掉 3 個 MEDIUM bug：unknown-severity 讓 `mergeDedup` 的 sort 回 NaN（garbage 排序）、`dataBlock` sentinel 只中和 same-label END（cross-label 可偽造）、`file:null` findings dedup 退化成 title-only（吃掉 cross-lens corroboration）。**現行（#207）**：已安裝 pai canonical 引擎（≥ 2.18.0）是首選 backend；缺席/過舊時用本 plugin 凍結的 vendored fork；workflow primitive 不可用時 fall back Step 2 manual fan-out（zero-regression）。完整 design 見 `idd-verify` spec。
+> **狀態（live-verified + ungated, 2026-06-01）**：此 backend 已 **end-to-end live-verified** —— 真 diff 經 `args.diffFile` → workflow backend（5 agents）→ findings normalize 成 master-report 表格 → 真 `gh issue comment` 發到 issue。self-dogfood（verify 跑自身 `ensemble-workflow.js`）抓到並修掉 3 個 MEDIUM bug：unknown-severity 讓 `mergeDedup` 的 sort 回 NaN（garbage 排序）、`dataBlock` sentinel 只中和 same-label END（cross-label 可偽造）、`file:null` findings dedup 退化成 title-only（吃掉 cross-lens corroboration）。**現行（#207）**：pai canonical 引擎（≥ 2.18.0，install-time dependency）是首選 backend；缺席/過舊/primitive 不可用時印安裝指令並 fall back Step 2 manual fan-out（品質等價、較慢）；vendored fork 已刪（#219）。完整 design 見 `idd-verify` spec。
 
 **為什麼**：Step 2 的 manual fan-out（5 Agent + `/tmp` file IPC + DA polling + 背景 Codex）是 dynamic-workflow primitive 尚不存在時的 workaround。官方 workflow 的招牌 pattern 逐字就是這個 ensemble（"independent agents adversarially review each other's findings before they're reported"）。
 
@@ -164,7 +164,7 @@ case "$AGENT_MODEL" in
 esac
 ```
 
-> **Fail-loud（不靜默回退）**：使用者顯式設了覆蓋值就代表在意跑在哪個 model 上——typo 時安靜換成 opus 比直接失敗更糟。ensemble-workflow.js 內另有第二層兜底（absent/非法 → opus），只為 legacy caller 沒傳 `agentModel` 的路徑存在；互動路徑一律在這裡先擋（workflow 層對「顯式非法值」同樣 throw——兩層都 fail-loud；只有「沒傳」才回退 opus）。Codex lens 的 gpt-5.5 端不受此參數影響（跨模型驗證本來就刻意用不同 model family），但**驅動** codex-call 的 Bash-agent 本身照樣以 `$AGENT_MODEL` 派發。
+> **Fail-loud（不靜默回退）**：使用者顯式設了覆蓋值就代表在意跑在哪個 model 上——typo 時安靜換成 opus 比直接失敗更糟。pai canonical 引擎內另有第二層兜底（absent/非法 → opus），只為 legacy caller 沒傳 `agentModel` 的路徑存在；互動路徑一律在這裡先擋（workflow 層對「顯式非法值」同樣 throw——兩層都 fail-loud；只有「沒傳」才回退 opus）。Codex lens 的 gpt-5.5 端不受此參數影響（跨模型驗證本來就刻意用不同 model family），但**驅動** codex-call 的 Bash-agent 本身照樣以 `$AGENT_MODEL` 派發。
 >
 > **方向性注意**：預設 opus 的降負載效益只在 session tier **高於** opus 時成立（#205 事故 session 為 Fable 級；live 證實 run wf_6c1d8ee6-5f3——fable session + `agentModel:'opus'` → 六個 agent transcript 全記錄 `claude-opus-4-8`，是真降級）。session 本身跑 sonnet/haiku 時，預設 opus 反而是**升級**——要壓低成本請顯式 `IDD_AGENT_MODEL=sonnet` 或 `haiku`。
 
@@ -216,27 +216,22 @@ PAI_ENGINE="${PAI_DIR}workflows/ensemble-workflow.js"
     BACKEND_DESC="pai-ensemble ${PAI_VER} (canonical #207) — 4 IDD lenses + DA + Codex (gpt-5.5)"
     印一行 notice: "→ verify backend: pai-ensemble $PAI_VER (canonical, #207)"
 
-# Tier 2 — vendored fallback（凍結 fork；pai 缺席或 < MIN_PAI）
-否則若 dynamic-workflow primitive 可用:
-    findings = Workflow(scriptPath="plugins/issue-driven-dev/skills/idd-verify/ensemble-workflow.js",
-                        args={diffFile: $DIFF_FILE, issues, attachments, codexEnabled,
-                              codexCall: $CODEX_CALL,
-                              agentModel: $AGENT_MODEL})   # 呼叫形狀不變（原 D2/#147/#205）
-    BACKEND_DESC="vendored dynamic-workflow fallback — 4 lenses + DA + Codex (gpt-5.5)"
-    印一行 notice: "→ verify backend: vendored fallback（reason 帶實況：pai cache 缺席 / 無 semver 目錄 / $PAI_VER < $MIN_PAI / workflows/ensemble-workflow.js 缺檔——四者印其一，不籠統）"
-
-# Tier 3 — manual fan-out
+# Tier 2 — manual fan-out（pai 缺席 / 過舊 / workflow primitive 不可用）
 否則:
-    findings = Step 2 manual fan-out（現行行為）
-    BACKEND_DESC="5 general-purpose Agents (Claude reviewers, model: ${AGENT_MODEL}, file-based output) + Codex (gpt-5.5, run_in_background)"
-    印一行 notice: "→ verify backend: manual fan-out (workflow primitive unavailable)"
+    印 fail-fast 安裝指引（#219 — vendored fork 已刪除，per deep-integration-over-hardcode「不留平行複本」；成熟條件見 #207 Residue 對照）:
+      "⚠ canonical pai-ensemble unavailable（pai cache 缺席 / 無 semver 目錄 / $PAI_VER < $MIN_PAI / workflows/ensemble-workflow.js 缺檔 / workflow primitive 不可用——五者印其一，不籠統）"
+      "  Install (one step): claude plugin install parallel-ai-agents@psychquant-claude-plugins"
+      "  Falling back to manual fan-out（品質等價：同 4 lens + DA + Codex，較慢）"
+    findings = Step 2 manual fan-out
+    BACKEND_DESC="manual fan-out (4 lens Agents + sequenced DA, model: ${AGENT_MODEL}, file-based output) + Codex (gpt-5.5, run_in_background)"
+    印一行 notice: "→ verify backend: manual fan-out"
 ```
 
-**customLenses focus 與 vendored 引擎 `LENSES` 字面一致**（Implementation Contract 可 grep 驗證）；lens 鍵沿用 IDD 命名，pai harness 強制 attribution，master report 的 Source 欄零改動。canonical tier 的 Engine 行揭露 `pai-ensemble <ver> (model: <stats.dispatchModel>)`。
+**customLenses focus 字面即 Implementation Contract**（#219 後 vendored 引擎已刪，contract 固定於本檔）；lens 鍵沿用 IDD 命名，pai harness 強制 attribution，master report 的 Source 欄零改動。canonical tier 的 Engine 行揭露 `pai-ensemble <ver> (model: <stats.dispatchModel>)`。
 
 三條路產出**相同 findings contract**（見 `references/idd-verify-findings-schema.json`：severity / file / title / body / lens；merge 取最高），所以 Step 3 merge 之後（posting / triage / verify-fix）**backend-agnostic**。
 
-**Codex（D3）**：包進 workflow 當 Bash agent，透過 vendored **`codex-call` HTTP wrapper**（#147，`$CLAUDE_PLUGIN_ROOT/bin/codex-call`，由 args thread 絕對路徑進來——vendored fallback 的 arg 名是 `codexCall`、pai canonical 契約是 `codexCallPath`，兩 tier 各自正確、勿接錯欄位）—— 直打 chatgpt codex backend，**非** `codex exec` subprocess，故無 stdin/stdout pipe 互鎖 hang；`--max-time 600` 是硬 HTTP timeout（codex CLI 不一定守）。runtime 依賴從 `codex` CLI 換成 `swift` 在 PATH。codex-call 失敗（swift 缺 / HTTP 5xx / auth refresh / timeout）→ 回 fail-closed INFO finding「cross-model pass incomplete」不靜默丟（對應 spec「bounded lifetime」requirement）；**刻意不 fallback `codex exec`**（會重引 hang 路徑）。
+**Codex（D3）**：包進 workflow 當 Bash agent，透過 vendored **`codex-call` HTTP wrapper**（#147，`$CLAUDE_PLUGIN_ROOT/bin/codex-call`，由 args thread 絕對路徑進來；pai canonical 契約欄位 = `codexCallPath`）—— 直打 chatgpt codex backend，**非** `codex exec` subprocess，故無 stdin/stdout pipe 互鎖 hang；`--max-time 600` 是硬 HTTP timeout（codex CLI 不一定守）。runtime 依賴從 `codex` CLI 換成 `swift` 在 PATH。codex-call 失敗（swift 缺 / HTTP 5xx / auth refresh / timeout）→ 回 fail-closed INFO finding「cross-model pass incomplete」不靜默丟（對應 spec「bounded lifetime」requirement）；**刻意不 fallback `codex exec`**（會重引 hang 路徑）。
 
 **Interaction 軸（D5）**：workflow 跑背景 = 本質 unattended（no mid-run input），對齊 `idd-pr-hitl-modes` 的 interaction 軸——verify core 內零 user input，所有 gates/triage/verify-fix 在 core 前/後（skill 端）。
 
@@ -246,7 +241,7 @@ PAI_ENGINE="${PAI_DIR}workflows/ensemble-workflow.js"
 |---|----------|---------|--------|
 | n | `<severity>` | `<title>` — `<body>`（`file:line`，若有）| `<lens>` |
 
-`verdict` → master report 的 PASS / FAIL。workflow backend 另回傳實際派發 model——**兩引擎的欄位位置不同**：vendored fork 回 top-level `dispatchModel`，pai canonical 回巢狀 `stats.dispatchModel`（pai 2.18.0 引擎 431/464/562 行實證，含 early-return 路徑）。Engine 行的 model 揭露抽取規則：`DISPATCH_MODEL = findings.dispatchModel || findings.stats.dispatchModel || $AGENT_MODEL`（最後的 fallback 是 request-echo——僅在 backend 沒回報時使用並如實標注；審計要記實際派發值，#205）。**Engine 行 = `${BACKEND_DESC}, model: ${DISPATCH_MODEL}`**（BACKEND_DESC 由解析鏈設定；Tier 3 manual 的 DESC 已含 model，不重複綴）。manual path 的 prose findings 走既有 Step 3 merge 進同一張表。**兩 backend 因此產出結構相同的 master report**，所以 Step 4 posting / Step 5b triage / verify-fix loop **完全 backend-agnostic**（它們只看這張表，不在乎是哪個 backend 產的）。
+`verdict` → master report 的 PASS / FAIL。workflow backend 另回傳實際派發 model——pai canonical 回巢狀 `stats.dispatchModel`（2.18.0 引擎實證，含 early-return 路徑）。Engine 行的 model 揭露抽取規則：`DISPATCH_MODEL = findings.stats.dispatchModel || $AGENT_MODEL`（最後的 fallback 是 request-echo——僅在 backend 沒回報時使用並如實標注；審計要記實際派發值，#205）。**Engine 行 = `${BACKEND_DESC}, model: ${DISPATCH_MODEL}`**（BACKEND_DESC 由解析鏈設定；Tier 3 manual 的 DESC 已含 model，不重複綴）。manual path 的 prose findings 走既有 Step 3 merge 進同一張表。**兩 backend 因此產出結構相同的 master report**，所以 Step 4 posting / Step 5b triage / verify-fix loop **完全 backend-agnostic**（它們只看這張表，不在乎是哪個 backend 產的）。
 
 > **平價的剩餘細節**：workflow schema 的 severity 是 `CRITICAL/HIGH/MEDIUM/LOW/INFO`，render 時直接填 Severity 欄；manual path 歷史上混用 `P1/P2`/`LOW` 等——完整 severity vocab 統一是 minor follow-up，不影響**表格結構**平價。fail-closed 合成的 integrity HIGH findings（lens errored）同樣 render 成列，所以 degraded run 在表格裡就可見（對應 manual path 的 `### Process Gaps` section，語意一致）。
 
@@ -263,8 +258,9 @@ TaskCreate(name="scan_pr_body_and_commits_trailers", description="Step 0.8: PR m
 TaskCreate(name="get_diff_and_issue", description="依 input source 取 diff（gh pr diff / git diff HEAD~N / git diff origin/<default>...<branch>） + gh issue view,存 diff 到 /tmp 供 agents 讀取；PR mode 額外做 gh pr checkout 並記住原 branch")
 TaskCreate(name="check_attachments", description="確認 .claude/.idd/attachments/issue-NNN/ 存在,把 attachment 路徑塞進 reviewer agent prompt 作為 source-of-truth context。manifest 缺漏 → 警告繼續(reviewer 仍跑,但 verification 完整度受限)。依 rules/process-attachments.md。")
 TaskCreate(name="resolve_dispatch_model", description="解析 $AGENT_MODEL — IDD_AGENT_MODEL 未設 → opus；非法值 → abort with usage error（#205；兩個 backend 共用，Workflow args 傳 agentModel、manual 模板填 model）")
-TaskCreate(name="launch_parallel_reviewers", description="6 個 tool calls 同一 message: 5 Agent(subagent_type=general-purpose, model=$AGENT_MODEL) for requirements/logic/security/regression/devils-advocate + 1 Bash codex(run_in_background:true),prompt 中引用 attachment 路徑 + 強制 file-output rule (per #52 v2.59.0+,replaces TeamCreate model from #47 incident)")
-TaskCreate(name="wait_for_claude_agents", description="5 Agent calls 是 blocking,return 後立刻 ls /tmp/verify_${NUMBER}_findings_*.md 確認 5 個 findings 檔都 non-empty;缺者進 Step 2.5 Recovery Protocol")
+TaskCreate(name="launch_parallel_reviewers", description="第一波 5 個 tool calls 同一 message: 4 lens Agent(subagent_type=general-purpose, model=$AGENT_MODEL) for requirements/logic/security/regression + 1 Bash codex(run_in_background:true)；DA 不在此波（#130 sequenced）。prompt 引用 attachment 路徑 + 強制 file-output rule (per #52)")
+TaskCreate(name="spawn_sequenced_da", description="#130: 4 份 lens findings 檔全部就緒（non-empty）後，coordinator 序列 spawn Devil's Advocate（model=$AGENT_MODEL，prompt 直附 4 檔路徑，無 polling）")
+TaskCreate(name="wait_for_claude_agents", description="4 lens Agent calls return 後 ls /tmp/verify_${NUMBER}_findings_*.md 確認 4 檔 non-empty（DA 檔在 sequenced spawn 後另計）;缺者進 Step 2.5 Recovery Protocol")
 TaskCreate(name="recovery_protocol", description="Step 2.5 (NEW per #52): 缺 findings 檔者 SendMessage retry with FULL context re-paste(不假設 context 倖存 idle/wake);二次 idle → coordinator self-review for that role + 在 master report 標 process gap")
 TaskCreate(name="wait_for_codex", description="等 Codex 背景任務完成,讀 /tmp/codex-verify-${NUMBER}.md")
 TaskCreate(name="merge_findings", description="合併 6 個來源 findings 去重,severity 取最高")
@@ -493,7 +489,7 @@ Exit code:
 
 ### Step 2: 平行啟動 5 Reviewer Agents + Codex (v2.59.0+, #52)
 
-**CRITICAL: 6 個 tool calls（5 Agent + 1 Bash codex）必須在同一個 message 送出。不可分步驟。**
+**CRITICAL（v2.92+ #130 重排）: 第一波 5 個 tool calls（4 lens Agent + 1 Bash codex）同一 message 平行送出；Devil's Advocate 改由 coordinator 在 4 份 lens findings 檔全部就緒後「序列 spawn」** — 舊的「DA 與 lens 同波 + bash polling 等 sibling」模式已移除：DA 的 agent-active 時間 = polling 空轉 + read + review，比其他 lens 長 2-3 倍，跨過 socket timeout 窗（#119 R2 兩次 crash 462s/420s = #130 根因；2026-07-06 live 對照：polling DA 17 分鐘 vs sequenced DA 8.5 分鐘）。序列化後與 canonical engine 的 pipeline sequencing 對齊，polling 窗口整段消滅。
 
 > **Engine note (#47 incident lesson, #52 v2.59.0+ fix)**：
 >
@@ -618,54 +614,8 @@ Agent({
 
 Diff path: /tmp/diff_${NUMBER}.patch
 
-你的任務：**等其他 4 個 reviewer 完成後**，讀取他們的結論，然後試著反駁每一個「通過」的判斷。
+你是在 4 份 lens findings 檔就緒後才被 spawn 的（coordinator 已確認 — #130 sequenced 模式，無需 polling）。直接讀取 4 份 sibling findings，然後：
 
-**Sequencing protocol** (因為 5 個 Agent 是 parallel spawn，沒有 TeamCreate 的 wait_for_idle):
-先用 bash polling loop 等其他 4 個 findings 檔案產生，再開始你的 review:
-
-\`\`\`bash
-# Poll for sibling findings files (max 30 iterations × 5s = 2.5 min timeout)
-for i in $(seq 1 30); do
-  ready=0
-  for role in requirements logic security regression; do
-    [ -s /tmp/verify_${NUMBER}_findings_$role.md ] && ready=$((ready+1))
-  done
-  [ "$ready" = "4" ] && break
-  sleep 5
-done
-
-if [ "$ready" != "4" ]; then
-  # Timeout fallback: write SENTINEL marker so Step 2.5 recovery scan detects
-  # the timeout case (rather than treating non-empty file as valid review).
-  # CANONICAL SENTINEL STRING (write-side discipline per v2.69.0+ #88):
-  #   First line MUST be EXACTLY: "[STAGE 2.5 RECOVERY: DEVILS_ADVOCATE_TIMEOUT_<ready>/4]"
-  #   - All caps for STAGE / RECOVERY / DEVILS_ADVOCATE / TIMEOUT
-  #   - Single space after each colon
-  #   - Underscore separators in DEVILS_ADVOCATE_TIMEOUT (NOT hyphen, NOT space)
-  #   - NO apostrophe in DEVILS (use plural-noun form, not possessive)
-  #
-  # Why this matters: read-side regex (Step 2.5a line 558) was originally an
-  # exact-prefix match and missed variants like `[Stage 2.5 Recovery: ...]`,
-  # `DEVILS-ADVOCATE-TIMEOUT`, `DEVIL'S ADVOCATE TIMEOUT` observed during
-  # downstream verify (PsychQuantHsu#82). Read-side is now broadened to tolerant
-  # case-insensitive regex (line 558+), but write-side discipline should still
-  # produce the canonical string — defense in depth.
-  #
-  # Step 2.5a file existence check looks for this sentinel and DELETES the file
-  # so retry/fallback's -s test correctly sees it as missing (per round 2 P1.1 fix).
-  #
-  # NOTE on quoting (per /idd-verify --pr 73 round 2 P1.2): bash single quotes
-  # CANNOT escape apostrophes via backslash. Use printf '%s\n%s\n' "header" "body"
-  # with double-quoted args (where backslash-apostrophe is unnecessary).
-  printf '%s\n\n%s\n' \
-    "[STAGE 2.5 RECOVERY: DEVILS_ADVOCATE_TIMEOUT_${ready}/4]" \
-    "Devil's Advocate skipped: timeout waiting for sibling findings (${ready}/4 ready after 2.5min). Coordinator detects this sentinel and routes to retry once siblings arrive, or coordinator self-review fallback." \
-    > /tmp/verify_${NUMBER}_findings_devils-advocate.md
-  exit 0
-fi
-\`\`\`
-
-After polling succeeds, read the 4 sibling findings files, then:
 - 如果他們說「FULLY addressed」，找理由說它其實沒有
 - 如果他們說「no security issues」，找他們漏掉的攻擊向量
 - 如果找不到反駁的理由，才承認確實通過
