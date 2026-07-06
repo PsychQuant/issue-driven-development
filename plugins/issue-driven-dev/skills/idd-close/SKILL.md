@@ -687,6 +687,8 @@ echo "→ doc-sync sweep: $(echo "$DOC_FILES" | grep -c .) file(s) enumerated"
 
 ### Step 6.5: Distribution Sync chain (v2.56.0+, #45)
 
+> **Monorepo host 消歧（v2.92+, #68）**：`resolve_plugin_name` 在 marketplace host（一 repo 多 plugin）下有歧義 — 改用 `. "$CLAUDE_PLUGIN_ROOT/scripts/lib/resolve-plugin-candidates.sh"` 的 `resolve_plugin_candidates "$CWD" "$PWD"`：0 候選 → silent skip；1 → proceed；N>1 → attended 用 AskUserQuestion（top-3 依 cwd specificity + Other）、unattended 取首位 + audit note。
+
 **Compliance**: this step implements close-tier distribution-sync checkpoint per IC_R011-style 3-option AskUserQuestion + audit trail pattern (canonical reference: [`references/ic-r011-checkpoint.md`](../../references/ic-r011-checkpoint.md)). Complements `che-claude-config/rules/common-release-flow.md` (release-tier trigger).
 
 **Why this step**: for plugin/MCP/CLI repos, fix lands in main but user-facing distribution channel (marketplace.json / binary release) needs separate sync. Without Step 6.5 mechanical checkpoint, "marketplace.json sync" relies on user memory → 「修了卻沒修」 anti-pattern (e.g. `che-apple-mail-mcp#72` PR #75 merged but marketplace.json not bumped → users `/plugin update` got old binary).
