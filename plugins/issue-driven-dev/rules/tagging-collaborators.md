@@ -55,6 +55,19 @@ git log --pretty=format:'%an <%ae>' | sort -u > /tmp/idd-commit-authors.txt
 - Handles inferred from git config / email domains
 - Handles from `~/.gitconfig` / `~/.ssh/config` / `gh auth status`
 
+### Step 2.5: Consult the config registry first (acceleration, not authority)
+
+If the walked-up IDD config has a `collaborators[]` array (schema in [references/config-protocol.md](../references/config-protocol.md)), use it as the **first** resolution attempt — it carries the human's own curated alias/name → `@login` mapping, so it resolves `Hardy` / `楊浩弘` / a student ID that the raw API list can't. Match the input, in priority order:
+
+1. `github_login` exact (case-insensitive)
+2. `aliases[]` exact (case-insensitive)
+3. `email` exact — **only if** the input literally is an email
+4. `display_name` substring
+
+On a **hit**, resolve to that entry's `github_login` — **but the table is an accelerator, never an authority.** It can go stale (a collaborator removed, a login renamed after the config was written), so a hit MUST still be existence-verified via `gh api users/<login>` before it counts as resolved and before `--mention-attested` is passed. A hit that fails existence-verification falls through to Step 3 (treat as no config match).
+
+On a **miss** (no `collaborators[]`, or no entry matches), fall through to Step 3 and fuzzy-match against the API-fetched list from Step 2 as before. The registry never replaces Step 2's fetch — it only front-runs the resolution when it can.
+
 ### Step 3: Resolve user input → @login
 
 Apply fuzzy matching against the real list:

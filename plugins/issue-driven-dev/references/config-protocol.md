@@ -433,14 +433,24 @@ If a group's `when` matches AND a candidate's `when` matches, **groups take prec
 
   "ask_each_time": false,                        // OPTIONAL. If true and candidates/groups exist, always prompt.
 
-  "pr_policy": "ask"                             // OPTIONAL. "always" | "never" | "ask" (default).
+  "pr_policy": "ask",                            // OPTIONAL. "always" | "never" | "ask" (default).
                                                  // Controls idd-implement PR vs direct-commit path.
                                                  // Fork detection always overrides to "always".
                                                  // See references/pr-flow.md for full algorithm.
+
+  "collaborators": [                             // OPTIONAL. Identity registry — resolve a person's
+    {                                            //   alias / email / display-name → GitHub @login WITHOUT guessing.
+      "github_login": "hardy1yang",              // REQUIRED. Canonical handle — the only string GitHub notifies.
+      "display_name": "Hau-Hung Yang",           // REQUIRED. Real name (may be 中文), echoed back on resolve.
+      "role": "collaborator",                    // OPTIONAL. maintainer | collaborator | advisor | external.
+      "aliases": ["hardy", "楊浩弘", "s1093301"],// OPTIONAL. Nicknames / student IDs / romanizations for fuzzy match.
+      "email": "hardy@example.edu"               // OPTIONAL, PII — private/gitignored config ONLY, never committed/public.
+    }
+  ]
 }
 ```
 
-**Backward compatibility**: configs without `candidates` / `groups` / `ask_each_time` / `pr_policy` work exactly as before — they're plain single-target configs. All new fields are additive.
+**Backward compatibility**: configs without `candidates` / `groups` / `ask_each_time` / `pr_policy` / `collaborators` work exactly as before — they're plain single-target configs. All new fields are additive.
 
 ### `pr_policy` field
 
@@ -455,6 +465,20 @@ Controls whether `idd-implement` opens a PR or commits directly.
 **Override priority** (highest first): `--pr` / `--no-pr` flag > fork detection > `pr_policy` config > `ask` default.
 
 `idd-all` always enforces `--pr` regardless of `pr_policy`. Full path contract: [pr-flow.md](pr-flow.md).
+
+### `collaborators[]` field
+
+An OPTIONAL identity registry so IDD can resolve a person's alias / email / display-name → their GitHub `@login` **without guessing** — the hard rule set by [tagging-collaborators.md](../rules/tagging-collaborators.md). It is a *resolution accelerator*, **not** an authority: a table hit is still existence-verified via `gh api users/<login>` before any mention is posted, because the table can go stale.
+
+| Field | Req? | Meaning |
+|-------|------|---------|
+| `github_login` | ✅ | Canonical GitHub handle — the only string GitHub actually notifies. Charset `A-Za-z0-9-`. |
+| `display_name` | ✅ | Real name (may be 中文), echoed back to the user on resolve as a sanity check. |
+| `role` | — | `maintainer` \| `collaborator` \| `advisor` \| `external`. Informational only. |
+| `aliases` | — | Nicknames / student IDs / romanizations for fuzzy input matching. Unique across the whole registry. |
+| `email` | — | **PII.** See boundary below. |
+
+**PII boundary (important).** `email` is personally-identifiable and MUST NOT live in a committed / public config. Keep the non-PII fields (`github_login` / `display_name` / `role` / `aliases`) in the normal walked-up config; put `email` only in a **private / gitignored** config layer. `idd-config validate` emits a PII reminder whenever it sees an `email` in a registry entry, so a leak into a tracked config is surfaced early. This mirrors the git-privacy boundary: a person's raw email is third-party PII, not your own derivative content.
 
 ## Resolution algorithm (canonical)
 

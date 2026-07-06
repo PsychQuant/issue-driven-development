@@ -261,6 +261,7 @@ Local-only（`TARGET=""`）：不寫 `github_repo`，提示 GitHub-backed idd-* 
 ```
 TaskCreate(name="validate_load", description="讀 IDD config（.claude/.idd/local.json 優先,legacy 次之,#195），JSON parse")
 TaskCreate(name="validate_schema", description="檢查 required fields + 各 candidates/groups 結構")
+TaskCreate(name="validate_collaborators", description="若有 collaborators[]：github_login 必填+格式、display_name 必填、role enum、aliases 全域唯一；email 出現→PII warning（#86）")
 TaskCreate(name="validate_repo_exists", description="對 github_repo / candidates[].github_repo / groups[].repos[].github_repo 跑 gh repo view 驗證實際存在")
 TaskCreate(name="validate_predicate_form", description="when 區塊 path_contains / title_matches 等 key 是 known set")
 TaskCreate(name="validate_report", description="輸出 PASS / list of issues")
@@ -272,6 +273,8 @@ TaskCreate(name="validate_report", description="輸出 PASS / list of issues")
 - `github_repo` 形式：`owner/repo`（regex `^[\w\-\.]+/[\w\-\.]+$`）
 - `candidates[].github_repo` 同上
 - `groups[]` 必須有**剛好一個** `role: "primary"`
+- `collaborators[]`（若存在，schema 見 [config-protocol.md](../../references/config-protocol.md)「`collaborators[]` field」）：每個 entry `github_login` **必填**且符合 GitHub login charset `^[A-Za-z0-9-]+$`（明顯錯字如含空白/`@`/中文 → error）；`display_name` **必填**非空；`role`（若有）∈ `{maintainer, collaborator, advisor, external}`（其餘 → warning）；**`aliases` 全域唯一** —— 跨所有 entry 的 `aliases` + `github_login` 攤平後不得重複（否則 fuzzy match 會 ambiguous，這是 error）
+- `collaborators[].email` 若出現 → **PII 提醒**（warning，非 error）：email 是可識別個資，不該進 committed/public config，只放 private/gitignored config layer（見 config-protocol.md「PII boundary」）
 - `when.path_contains` / `path_matches` / `title_matches` / `label_in` / `git_remote_matches` / `git_branch_matches` / `all` / `any` / `not` — 不認識的 key → warning（不 fail）
 - `gh repo view` 對每個 repo 跑（warning 而非 error，因為 private repo 無權限會失敗但 config 本身可能合法）
 
