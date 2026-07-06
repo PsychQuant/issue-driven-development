@@ -1,1 +1,1 @@
-https://github.com/test/repo/issues/555#issuecomment-DRY-RUN
+(failed — --linked-issue 555 given but detection found no candidates; if you know the issue number authoritatively, re-invoke with --force-linked-issue 555)

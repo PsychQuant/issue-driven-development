@@ -2,20 +2,27 @@
 # check-plugin-presence.sh — generic Claude Code plugin presence detector
 #
 # Usage:
-#   check-plugin-presence.sh <marketplace> <plugin-name>
+#   check-plugin-presence.sh <marketplace> <plugin-name> [skill-name]
 #
 # Examples:
 #   check-plugin-presence.sh claude-plugins-official ralph-loop
 #   check-plugin-presence.sh psychquant-claude-plugins che-word-mcp
+#   check-plugin-presence.sh claude-plugins-official superpowers test-driven-development
 #
 # Used by:
 #   - idd-issue Step 1 Source Type Adapter (#27 fail-fast for .docx / Telegram / Mail / Notes)
 #   - scripts/check-ralph-loop.sh (wrapper for backward-compat from #28)
+#   - idd-implement / idd-diagnose superpowers delegation pre-flight (#209 — the
+#     optional 3rd arg checks the target skill exists inside the HIGHEST installed
+#     version, per spec superpowers-integration "Dual pre-flight at delegation sites")
 #
 # Exit:
-#   0 — plugin installed (or IDD_SKIP_PLUGIN_CHECK=1)
-#   1 — plugin missing
-#   2 — usage error (wrong arg count)
+#   0 — plugin installed + enabled (or enabled-state inconclusive → disk
+#       evidence only, warning printed; or IDD_SKIP_PLUGIN_CHECK=1)
+#   1 — plugin missing, or skill missing from the highest installed version
+#   2 — usage error (wrong arg count, or invalid skill name)
+#   3 — plugin installed but DISABLED (#212) — Skill() would fail; stderr
+#       prints the one-step `claude plugin enable` command
 #
 # Detect path is hardcoded against Claude Code 2025-Q4 plugin cache schema.
 # When schema changes upstream, see #35 (path schema watch-list).
@@ -36,23 +43,55 @@
 #
 # Future hardening (#41 reopen criteria): if multi-user / CI deployment becomes
 # common, evaluate hash verification step against marketplace-published manifest.
+#
+# Presence + enabled (#209 F10 → #212): beyond the on-disk cache, this script
+# queries `claude plugin list --json` (documented CLI: code.claude.com
+# plugins-reference "plugin list — List installed plugins with their version,
+# source marketplace, and enable status"; JSON fields `id`/`enabled`/`installPath`
+# observed live 2026-07-05) and refuses (exit 3) when the plugin is installed
+# but DISABLED. CLI absent / query failure → graceful degrade to disk evidence
+# with a printed warning (fail-open floor — same philosophy as the #183 lock).
 
 set -u
 
-# Usage check
-if [ $# -ne 2 ]; then
+# Usage check (2 args = plugin-level; 3 args = plugin + skill-level pre-flight, #209)
+if [ $# -lt 2 ] || [ $# -gt 3 ]; then
   cat >&2 <<EOF
-Usage: $(basename "$0") <marketplace> <plugin-name>
+Usage: $(basename "$0") <marketplace> <plugin-name> [skill-name]
 
 Examples:
   $(basename "$0") claude-plugins-official ralph-loop
   $(basename "$0") psychquant-claude-plugins che-word-mcp
+  $(basename "$0") claude-plugins-official superpowers test-driven-development
 EOF
   exit 2
 fi
 
 MARKETPLACE="$1"
 PLUGIN="$2"
+SKILL="${3:-}"
+
+# Argument hardening (#209 R1+R2 verify): every arg is exactly one REAL path
+# component. bash [[ =~ ]] matches the WHOLE string — a per-line grep can be
+# bypassed by multiline input whose first line is legal. Marketplace / plugin
+# additionally allow dots for real names (e.g. local.mcpb.x), but dot-only
+# values (`.` / `..` / `...`) are rejected — a bare `..` climbs out of the
+# cache subtree even without a slash (R2 DA PoC: `cache/../x` resolves one
+# level up and returned a false-positive exit 0). Rejects empty strings,
+# traversal, slashes, and embedded newlines so a buggy or hostile caller
+# cannot probe outside the plugin cache.
+if ! [[ "$MARKETPLACE" =~ ^[A-Za-z0-9._-]+$ ]] || [[ "$MARKETPLACE" =~ ^\.+$ ]]; then
+  echo "✗ invalid marketplace name: '${MARKETPLACE}' (expected one real path component)" >&2
+  exit 2
+fi
+if ! [[ "$PLUGIN" =~ ^[A-Za-z0-9._-]+$ ]] || [[ "$PLUGIN" =~ ^\.+$ ]]; then
+  echo "✗ invalid plugin name: '${PLUGIN}' (expected one real path component)" >&2
+  exit 2
+fi
+if [ $# -eq 3 ] && ! [[ "$SKILL" =~ ^[A-Za-z0-9_-]+$ ]]; then
+  echo "✗ invalid skill name: '${SKILL}' (expected one path component, e.g. test-driven-development)" >&2
+  exit 2
+fi
 
 # Escape hatch — let user bypass detect (#28 risk mitigation, #27 inheritance).
 # Print stderr warning so this leaves an audit trail.
@@ -61,6 +100,44 @@ if [ "${IDD_SKIP_PLUGIN_CHECK:-}" = "1" ]; then
   echo "  Caller will run as if ${PLUGIN} is installed." >&2
   exit 0
 fi
+
+# Enabled-state detection (#212). Called just before every success exit —
+# disk evidence proves INSTALLED; Skill() resolves against ENABLED state.
+check_enabled_state() {
+  command -v claude >/dev/null 2>&1 || {
+    echo "⚠ claude CLI not on PATH — enabled-state check skipped (disk evidence only)." >&2; return 0; }
+  command -v python3 >/dev/null 2>&1 || {
+    echo "⚠ python3 not on PATH — enabled-state check skipped (disk evidence only)." >&2; return 0; }
+  local list_json verdict
+  if ! list_json="$(claude plugin list --json 2>/dev/null)"; then
+    echo "⚠ 'claude plugin list --json' failed — enabled-state check skipped (disk evidence only)." >&2
+    return 0
+  fi
+  verdict="$(printf '%s' "$list_json" | python3 -c '
+import json, sys
+target = sys.argv[1]
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    print("parse-error"); raise SystemExit
+for p in (data if isinstance(data, list) else []):
+    if p.get("id") == target:
+        print("true" if p.get("enabled") else "false"); break
+else:
+    print("absent")
+' "${PLUGIN}@${MARKETPLACE}" 2>/dev/null || echo "parse-error")"
+  case "$verdict" in
+    true) return 0 ;;
+    false)
+      echo "✗ ${PLUGIN}@${MARKETPLACE} is installed but DISABLED — Skill() resolution will fail." >&2
+      echo "  Enable it (one step):" >&2
+      echo "    claude plugin enable ${PLUGIN}@${MARKETPLACE}" >&2
+      exit 3 ;;
+    *)
+      echo "⚠ enabled-state check inconclusive (${verdict}) — proceeding on disk evidence only." >&2
+      return 0 ;;
+  esac
+}
 
 # Plugin cache layout (Claude Code 2025-Q4):
 #   ~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/.claude-plugin/plugin.json
@@ -73,16 +150,45 @@ files=( "${HOME}/.claude/plugins/cache/${MARKETPLACE}/${PLUGIN}"/*/.claude-plugi
 shopt -u nullglob
 
 if (( ${#files[@]} > 0 )); then
-  exit 0
+  # Plugin present. Without a skill arg, enabled-state is the last gate (#212).
+  if [ -z "$SKILL" ]; then check_enabled_state; exit 0; fi
+
+  # Skill-level pre-flight (#209): resolve the HIGHEST installed version via
+  # sort -V (same resolution rule as the pai canonical chain in idd-verify D1)
+  # and require skills/<name>/SKILL.md inside it. A skill that only exists in a
+  # stale lower version does NOT count — Claude Code loads the highest version.
+  # Membership consistency (#209 R1 verify F3): derive the version set from the
+  # SAME plugin.json-gated files[] used for the presence check, so a broken
+  # leftover dir (no plugin.json, e.g. an interrupted install) can never win
+  # highest-version resolution and false-negative the skill check.
+  latest=$(printf '%s\n' "${files[@]}" | sed 's|\.claude-plugin/plugin\.json$||' | sort -V | tail -1)
+  if [ -f "${latest}skills/${SKILL}/SKILL.md" ]; then
+    check_enabled_state
+    exit 0
+  fi
+  cat >&2 <<EOF
+✗ ${PLUGIN} plugin is installed, but skill '${SKILL}' was not found in it.
+  Searched: ${latest}skills/${SKILL}/SKILL.md
+  The upstream plugin may have renamed or reorganized its skills.
+
+  Update/reinstall:
+    claude plugin install ${PLUGIN}@${MARKETPLACE}
+
+  Or bypass this check (advanced): export IDD_SKIP_PLUGIN_CHECK=1
+EOF
+  exit 1
 fi
 
 cat >&2 <<EOF
 ✗ ${PLUGIN} plugin not found.
   Searched: ~/.claude/plugins/cache/${MARKETPLACE}/${PLUGIN}/*/.claude-plugin/plugin.json
 
-  Install:
-    claude plugin marketplace add <owner>/${MARKETPLACE}
+  Install (one step):
     claude plugin install ${PLUGIN}@${MARKETPLACE}
+
+  Only if the marketplace itself is not registered yet (NOT needed for
+  claude-plugins-official — Claude Code auto-registers it on first launch):
+    claude plugin marketplace add <owner-or-org>/${MARKETPLACE}
 
   Or bypass this check (advanced): export IDD_SKIP_PLUGIN_CHECK=1
 EOF

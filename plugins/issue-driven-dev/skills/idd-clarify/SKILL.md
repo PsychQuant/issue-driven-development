@@ -162,11 +162,14 @@ fi
 
 Step 5a (scan mode) 開始前,偵測 unattended mode。 若 unattended → 寫的 surfaced rows 全部用 `deferred` status + cite-registered reason literal,而非 `surfaced`。 Step 0.5 gate 對 reason-matched `deferred` rows proceed-with-warn,unattended chain 不再 silent break。
 
-**Detection (reuse `idd-issue` Stage 4.5 既有 pattern, single-site convention)**:
+**Detection（#123/#222 — 經 unattended-contract 統一，TTY heuristic 移除）**:
 
 ```bash
+# TTY check 在 harness 內恆真（#222）— 不得用。唯一可靠訊號 = state file + env var
+# （contract 見 references/unattended-contract.md）。
+. "$CLAUDE_PLUGIN_ROOT/scripts/lib/unattended-state.sh"
 IS_UNATTENDED="false"
-if [ ! -t 0 ] || [ -n "${IDD_ALL_UNATTENDED:-}" ]; then
+if is_unattended "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"; then
   IS_UNATTENDED="true"
 fi
 ```

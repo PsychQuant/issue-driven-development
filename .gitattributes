@@ -1,0 +1,10 @@
+# Line-ending policy (#216): all text files normalize to LF in index and checkout.
+# Prevents whole-file CRLF churn like the diffs caught in #214 R1/R2 verify.
+* text=auto eol=lf
+
+# Deliberate CRLF test fixtures are exempt from text handling via -text (text unset).
+# Note: `git check-attr -a` may still report `eol: lf` from the global rule above —
+# that attribute is inert when `text` is unset; the CRLF bytes are preserved.
+# Convention: any future fixture that must keep CRLF bytes adds its own -text line here.
+# Regression lock: plugins/issue-driven-dev/scripts/tests/git-attributes/test.sh
+plugins/issue-driven-dev/scripts/tests/idd-edit/fixtures/19-section-replace-crlf/input.md -text

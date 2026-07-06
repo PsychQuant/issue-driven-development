@@ -246,12 +246,12 @@ When detected, the skill reverts to the legacy 3-option ask path identically to 
 
 ### 5.4 Unattended mode fallback (no TTY + bypass set)
 
-When the skill detects `[ ! -t 0 ]` OR `IDD_ALL_UNATTENDED=1` AND `AI_LOW_BAR_ISSUE_FILING=false`:
+When the skill detects unattended mode（per `references/unattended-contract.md`：state file 或 `IDD_ALL_UNATTENDED=1`；TTY check 已廢除 #222）AND `AI_LOW_BAR_ISSUE_FILING=false`:
 - Skill cannot call AskUserQuestion (no TTY)
 - Skill SHALL apply **implicit (a) skip semantics** to all candidates
 - Audit trail: `Skipped (unattended mode + AI_LOW_BAR_ISSUE_FILING=false → implicit (a) skip)`
 
-When skill detects unattended mode WITHOUT env var bypass (just `IDD_ALL_UNATTENDED=1` or no TTY):
+When skill detects unattended mode WITHOUT env var bypass（unattended-contract 訊號本身）:
 - Default file path proceeds (it's non-blocking by design — no AskUserQuestion in default file path)
 
 ### 5.5 Both layers active

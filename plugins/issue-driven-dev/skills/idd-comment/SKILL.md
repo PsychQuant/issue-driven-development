@@ -74,7 +74,7 @@ idd-issue source.docx       # auto-trigger when source contains ≥2 findings
 
 ```
 TaskCreate(name="parse_args", description="Parse #NNN + --type + --body / --quote / --source / --target / --target-comment / --deadline / --mention / --resume-spectra 等 options")
-TaskCreate(name="detect_spectra_context", description="Step 0.7: 偵測是否從 spectra-discuss 中斷進來（--resume-spectra flag / --source 含 spectra / spectra list 有 in-flight / .claude/state/idd-bridge.json）— 詳見 rules/spectra-bridge.md")
+TaskCreate(name="detect_spectra_context", description="Step 0.7: 偵測是否從 spectra-discuss 中斷進來（--resume-spectra flag / --source 含 spectra / spectra list 有 in-flight / .claude/.idd/state/bridge.json（legacy fallback: .claude/state/idd-bridge.json）— 詳見 rules/spectra-bridge.md")
 TaskCreate(name="validate_type_requirements", description="依 type 檢查必填欄位（decision 要 quote、note 要 source、link 要 target、errata 要 target-comment）")
 TaskCreate(name="resolve_mentions", description="Step 1.5: 若有 --mention 或 body 含 @xxx，強制走 rules/tagging-collaborators.md 協定（gh api 取 collaborators → fuzzy match → AskUserQuestion fallback → 用 @login 不用 display name）")
 TaskCreate(name="build_comment_body", description="按 type 對應 template 組 markdown（emoji header + blockquote + body + metadata marker），插入已驗證的 @login mentions")
@@ -82,7 +82,7 @@ TaskCreate(name="verify_mentions", description="post 前 grep body 的 @\\w+ 全
 TaskCreate(name="post_comment", description="gh issue comment #NNN 用 --body-file 避免 escape 問題；errata type 額外 auto-call idd-edit")
 TaskCreate(name="report_result", description="輸出 ✓ Comment posted + URL；errata type 加報 idd-edit 結果")
 TaskCreate(name="auto_update_body", description="跑 /idd-update #NNN 同步 issue body Current Status（強制，常被漏；同 idd-close Step 6 模式）")
-TaskCreate(name="spectra_bridge_resume", description="Step 7: 若 SPECTRA_BRIDGE_ACTIVE，寫 .claude/state/idd-bridge.json bookmark + 輸出 ↩ Resume spectra-discuss 區塊（rules/spectra-bridge.md）")
+TaskCreate(name="spectra_bridge_resume", description="Step 7: 若 SPECTRA_BRIDGE_ACTIVE，寫 .claude/.idd/state/bridge.json bookmark + 輸出 ↩ Resume spectra-discuss 區塊（rules/spectra-bridge.md）")
 ```
 
 完成每一步立即 `TaskUpdate → completed`。**靜默完成 = 違規**。**TaskCreate 清單 = 真實的步驟清單；任何寫在 skill 裡但沒列進 TaskCreate 的步驟，都視為 skill 的 bug，必須補進 Task 清單。**
@@ -120,9 +120,16 @@ if command -v spectra >/dev/null 2>&1; then
   fi
 fi
 
-# Signal 4: bookmark 已存在
-if [ -f ".claude/state/idd-bridge.json" ]; then
-  ACTIVE=$(jq -r '.active_spectra_session // false' .claude/state/idd-bridge.json 2>/dev/null)
+# Signal 4: bookmark 已存在 — new path first, legacy fallback（#199; rule L116 契約）
+BRIDGE_FILE=""
+if [ -f ".claude/.idd/state/bridge.json" ]; then
+  BRIDGE_FILE=".claude/.idd/state/bridge.json"
+elif [ -f ".claude/state/idd-bridge.json" ]; then   # legacy fallback (#199)
+  BRIDGE_FILE=".claude/state/idd-bridge.json"   # legacy fallback
+  echo "ℹ Found legacy bridge at .claude/state/idd-bridge.json. Move to .claude/.idd/state/bridge.json."
+fi
+if [ -n "$BRIDGE_FILE" ]; then
+  ACTIVE=$(jq -r '.active_spectra_session // false' "$BRIDGE_FILE" 2>/dev/null)
   [ "$ACTIVE" = "true" ] && SPECTRA_BRIDGE_ACTIVE=1
 fi
 ```
@@ -365,8 +372,8 @@ Skill(skill="issue-driven-dev:idd-update", args="#NNN")
 #### 7.1 寫 bookmark 檔
 
 ```bash
-mkdir -p .claude/state
-cat > .claude/state/idd-bridge.json <<EOF
+mkdir -p .claude/.idd/state
+cat > .claude/.idd/state/bridge.json <<EOF
 {
   "version": 1,
   "created_at": "$(date -u +%Y-%m-%dT%H:%M:%S%z)",
@@ -397,7 +404,7 @@ to continue with full context preserved:
   待解問題:
   ${OPEN_QUESTIONS_BULLETS}
 
-State saved to: .claude/state/idd-bridge.json
+State saved to: .claude/.idd/state/bridge.json
 ═══════════════════════════════════════════════════════════
 ```
 
@@ -467,7 +474,7 @@ HTML comment 在 GitHub 不渲染，但可 parse：
   --body="..."
 ```
 
-→ Step 0.7 detect 命中 → Step 7 寫 `.claude/state/idd-bridge.json` + 印 `↩ Resume spectra-discuss` 區塊讓使用者貼回 spectra session。
+→ Step 0.7 detect 命中 → Step 7 寫 `.claude/.idd/state/bridge.json` + 印 `↩ Resume spectra-discuss` 區塊讓使用者貼回 spectra session。
 
 ## 鐵律
 

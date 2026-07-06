@@ -14,6 +14,15 @@
 # the `--` end-of-options separator so a `--`-prefixed needle can never be
 # misparsed as a grep flag — the #154/#160 bug class, made unrepresentable.
 #
+# EVAL-CONTENT BAN (#188, detonated in #186 f4b): with the eval family
+# (assert_true), never interpolate captured output into the eval string —
+# output containing a literal $VAR (e.g. a script printing
+# "$CLAUDE_PLUGIN_ROOT/...") gets RE-EXPANDED by eval and explodes under the
+# runner's `set -u` (unbound variable → the assertion false-FAILs). Safe forms:
+#   - write output to a file, then assert_output_grep / refute_output_grep
+#   - or assert_grep "name" "$needle" "$captured"   (string haystack, no eval)
+# assert_true is for command CONDITIONS you author, never for data you captured.
+#
 # Counters are module-level (PASS / FAIL / FAILURES); the sourcing runner does
 # not declare them. `set -u`-safe.
 
@@ -53,6 +62,21 @@ refute_grep() { # name needle haystack
 # Regex variant when the needle is an ERE pattern (still `--`-safe for the pattern).
 assert_grep_re() { # name ere_pattern haystack
   if printf '%s\n' "$3" | grep -qE -- "$2"; then pass "$1"; else fail "$1" "pattern not matched: [$2]"; fi
+}
+
+# ── output-file grep family (#188 — the safe form for captured output) ──
+# assert_output_grep : file MUST contain needle (fixed-string, `--`-safe).
+# refute_output_grep : file MUST NOT contain needle.
+# Reading via grep FILE (no eval, no interpolation) keeps literal $VAR content
+# in the output inert. A missing/unreadable file FAILS loudly on both helpers —
+# an unreadable capture is a broken test, never a silent pass.
+assert_output_grep() { # name needle file
+  if [ ! -r "$3" ]; then fail "$1" "output file missing/unreadable: $3"; return; fi
+  if grep -qF -- "$2" "$3"; then pass "$1"; else fail "$1" "needle not found in $3: [$2]"; fi
+}
+refute_output_grep() { # name needle file
+  if [ ! -r "$3" ]; then fail "$1" "output file missing/unreadable: $3"; return; fi
+  if grep -qF -- "$2" "$3"; then fail "$1" "needle unexpectedly found in $3: [$2]"; else pass "$1"; fi
 }
 
 # ── filesystem family ──

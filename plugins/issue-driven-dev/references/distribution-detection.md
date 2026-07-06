@@ -176,7 +176,7 @@ resolve_plugin_name() {
 }
 ```
 
-**Monorepo host case**: when `repo_root` is the marketplace host itself (e.g. `psychquant-claude-plugins` containing 37 plugins), `resolve_plugin_name` returns the FIRST plugin whose source path starts within `repo_root`. This is ambiguous for monorepo hosts — caller (Step 6.5) should handle this case explicitly, e.g. by prompting user "which plugin?" via AskUserQuestion. v1 simplification: assume single-plugin per repo (true for most non-host cases); document monorepo handling as a v2 enhancement.
+**Monorepo host case（v2, #68）**: `scripts/lib/resolve-plugin-candidates.sh` 的 `resolve_plugin_candidates <repo_root> [<cwd>]` 回**全部**匹配 plugin，依 cwd specificity 排序（plugin dir 是 cwd 祖先者最前、越深越前；path-boundary 安全 — `beta-extra` 不被 `beta` 前綴誤吃）。Caller（Step 6.5）契約：0 → silent skip（非 plugin close）；1 → proceed；N>1 attended → AskUserQuestion（top-3 + Other）；N>1 unattended → 取最 specific 候選 + audit note（non-blocking）。`resolve_plugin_name` 保留為 v1 相容 wrapper（首候選）。測試：`scripts/tests/resolve-plugin-candidates/`。
 
 ### `infer_distribution_type(repo_root, github_repo) -> string`
 

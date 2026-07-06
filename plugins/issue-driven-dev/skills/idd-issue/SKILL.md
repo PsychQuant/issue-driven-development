@@ -103,7 +103,8 @@ TaskCreate(name="read_source", description="讀取來源(docx → mcp__che-word-
 TaskCreate(name="gather_info", description="Step 2: 蒐集 title / type / priority / description")
 TaskCreate(name="reresolve_target", description="Step 2.5: 用 title/labels 重評 content predicates,若新匹配 != tentative_default 則問使用者要不要切")
 TaskCreate(name="resolve_mentions", description="若有 --mention 或 description 含 @xxx，強制走 rules/tagging-collaborators.md 協定（v2.32.0+）")
-TaskCreate(name="create_issue", description="Step 3: gh issue create — Single mode / Group mode / Bundle mode(--parent / --blocked-by / --bundle-mode,見 Step 3.B),body 含已驗證的 @login")
+TaskCreate(name="privacy_scrub_gate", description="Step 0.6: 依 repo visibility 解析 $SCRUB_LEVEL (third-party=enforce / own-public=warn / private=light)；每次 egress 前對 drafted body 跑 rules/privacy-scrubbing.md 的 LLM 語意自審，並一律經 scripts/gh-egress.sh --scrub-attested 派送（不直接 gh issue，#202）")
+TaskCreate(name="create_issue", description="Step 3: gh issue create — Single mode / Group mode / Bundle mode(--parent / --blocked-by / --bundle-mode,見 Step 3.B),body 含已驗證的 @login；經 scripts/gh-egress.sh 派送（#202），有 mention 時帶 --mention-attested <resolved-logins>（#117 mention net；未帶會被 refuse）")
 TaskCreate(name="resolve_parent_link", description="Step 3.B: 若 --parent <N> set,驗證 #N 在 target repo + idempotent PATCH parent body task list(見 references/bundle-flags.md § Edit Algorithm)")
 TaskCreate(name="apply_blocked_by", description="Step 3.B: 若 --blocked-by <M>[,...] set,三層 fallback chain — body blockquote(unconditional)+ GraphQL addBlockedByDependency(嘗試)+ parent annotation(若 --parent co-used)")
 TaskCreate(name="orchestrate_bundle_mode", description="Step 3.B: 若 --bundle-mode <ordered|unordered> set,建 epic + N children + 自動套用 --parent + (ordered 時)Blocked-by 鏈;與 group 模式互斥")
@@ -209,11 +210,13 @@ AskUserQuestion 列出每個 candidate 和 group 的 label,讓使用者選
 # 1. 拿到 origin 的 owner/repo
 ORIGIN=$(git remote get-url origin 2>/dev/null | sed -E 's#(\.git)?$##; s#.*[:/]([^/]+/[^/]+)$#\1#')
 
-# 2. 一次拿 origin 的 fork 狀態、upstream、以及你對它的權限。
+# 2. 一次拿 origin 的 fork 狀態、upstream、你對它的權限、以及 repo visibility。
 #    viewerPermission 折進這支 gh repo view → 省掉獨立的 push-permission probe(#192)。
-REPO_JSON=$(gh repo view "$ORIGIN" --json isFork,parent,viewerPermission 2>/dev/null)
+#    isPrivate 同樣折進同一支 → 供 privacy-scrubbing gate 分級 (#202,零額外 round-trip)。
+REPO_JSON=$(gh repo view "$ORIGIN" --json isFork,parent,viewerPermission,isPrivate 2>/dev/null)
 IS_FORK=$(echo "$REPO_JSON" | jq -r '.isFork')
 UPSTREAM=$(echo "$REPO_JSON" | jq -r '.parent.nameWithOwner // empty')
+IS_PRIVATE=$(echo "$REPO_JSON" | jq -r '.isPrivate // false')   # privacy-scrubbing gate 分級用 (#202)
 
 # 3. third-party clone 偵測(hybrid,#192)。owner-mismatch 當 cheap pre-filter;
 #    不符才看權限。viewerPermission ∈ {WRITE,MAINTAIN,ADMIN} = 你能寫 → 視同自己的。
@@ -294,6 +297,61 @@ fi
 - 一次性切換:用 `--target owner/repo` 或 `--target group:<label>`
 - 永久改:直接編輯 `.claude/issue-driven-dev.local.json`
 - 全部重來:刪掉 config,讓 skill 重新跑 Step 0.5.E fork detection
+
+---
+
+### Step 0.6: Privacy-Scrubbing Gate（egress 前強制,v2.87.0+,#202）
+
+**每個 GitHub egress（`create` / `comment` / `edit`）在 dispatch 前 SHALL 過
+privacy-scrubbing gate。** 完整契約見 [`rules/privacy-scrubbing.md`](../../rules/privacy-scrubbing.md);
+本步是 idd-issue 的落地（Phase 1,最高風險 authoring path）。
+
+**A. 解析 strictness level（每次 invocation 一次）** — 重用 Step 0.5.E 的 repo
+classification（`$IS_THIRD_PARTY` + 新加的 `$IS_PRIVATE`,兩者都折在同一支
+`gh repo view --json isFork,parent,viewerPermission,isPrivate` 內,零額外
+round-trip）:
+
+```bash
+# config-exists 路徑沒跑 Step 0.5.E 時,在此重算一次(same fold-in;變數不跨 fenced block 存活)
+if [ -z "${SCRUB_LEVEL:-}" ]; then
+  GATE_REPO="$GITHUB_REPO"                 # Step 0.5 / 2.5 已解析的 target
+  RJ=$(gh repo view "$GATE_REPO" --json viewerPermission,isPrivate 2>/dev/null)
+  VP=$(echo "$RJ" | jq -r '.viewerPermission // empty')
+  PRIV=$(echo "$RJ" | jq -r '.isPrivate // false')
+  case "$VP" in
+    WRITE|MAINTAIN|ADMIN)
+      [ "$PRIV" = "true" ] && SCRUB_LEVEL="light" || SCRUB_LEVEL="warn" ;;
+    *) SCRUB_LEVEL="enforce" ;;            # READ/TRIAGE/NONE/probe-fail → third-party fail-safe (#192)
+  esac
+fi
+```
+
+| `$SCRUB_LEVEL` | 情境 | 行為 |
+|---|---|---|
+| `enforce` | third-party（無 write 權）| **block-with-diff** — 顯示 redaction diff、拒絕 dispatch 到 user confirm。**絕不** silent redact |
+| `warn` | own-public（有 write 權 + `isPrivate=false`）| flag 一行、預設 proceed |
+| `light` | private（`isPrivate=true`）| 不 block 一般 identifier;仍守 CLAUDE.md「raw 第三方逐字內容不進 remote」|
+
+**B. LLM 語意自審（偵測,非固定 pattern — D1）** — dispatch 前對 drafted body
+做語意檢查,找 private identifiers（本機 home path、`~/.claude.json` project
+basename、非公開 collaborator 真名、未發表 context)。**人名由 context 語意判斷,
+不用固定名單/regex/NLP name-detector**（見 rules/privacy-scrubbing.md +
+`.claude/rules/attribute-assessment.md`）。`enforce` 命中 → 顯示 diff + confirm 才
+繼續;`warn` 命中 → 印一行 + proceed。
+
+**C. 一律經 choke-point wrapper 派送（enforcement — D2）** — 本 skill **所有**
+`gh issue create/comment/edit` 都改成:
+
+```bash
+bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" <create|comment|edit> <原本的 gh args…> \
+  --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}
+```
+
+wrapper deterministically enforce「自審跑過」(缺 `--scrub-attested` → refuse,
+exit 3)+ 攔 2 個 zero-tolerance 機械項(literal `/Users/<name>` 與 verbatim
+`~/.claude.json` 內容,exit 4)。wrapper stdout/exit code 與 raw `gh issue` 位元一致
+(捕捉 `URL=$(...)` 的既有 site 不受影響)。**`sanitize_source_label`（#75）不變** —
+privacy scrubbing 是疊在上面的新語意層。
 
 ---
 
@@ -469,7 +527,8 @@ echo "  3) 全部存好後告訴我「ok」，skill 會接手 upload + 嵌入 is
 2. **Type** — bug / feature / refactor / docs
 3. **Priority** — P0（立即）/ P1（本週）/ P2（排程）/ P3（有空再做）
 4. **Description** — 問題描述（bug: 重現步驟 + expected + actual；feature: 需求 + 目的）
-5. **Stakeholders（v2.32.0+，可選）** — 若需要在 issue body 中 tag 人，使用 `--mention <login>[,<login>...]` flag 或自然語言（"tag X"）。**任何 @xxx 必走 [`rules/tagging-collaborators.md`](../../rules/tagging-collaborators.md) 5 步協定**（gh api → fuzzy match → AskUserQuestion fallback → @login 不用 display name → post 前 verify）。違反 = 通知錯人，不可逆。
+5. **Stakeholders（v2.32.0+，可選）** — 若需要在 issue body 中 tag 人，使用 `--mention <login>[,<login>...]` flag 或自然語言（"tag X"）。**任何 @xxx 必走 [`rules/tagging-collaborators.md`](../../rules/tagging-collaborators.md) 5 步協定**（gh api → fuzzy match → AskUserQuestion fallback → @login 不用 display name → post 前 verify）。違反 = 通知錯人，不可逆。派送時把 resolved logins 帶進 `gh-egress.sh --mention-attested <login1,login2>`（#117 unconditional mention net）；非 mention 的附帶 `@xxx` token 一律 backtick-escape。
+   實作：resolution 完成後設 `MENTION_ATTESTED="login1,login2"`（無 mention 時留空 — 模板的 `${MENTION_ATTESTED:+...}` 條件式自動省略 flag）。
 
 #### Step 2.0.5: Title sanitization (v2.46.0+, P9 follow-up of #1)
 
@@ -557,9 +616,11 @@ if new_match exists AND new_match != tentative_default:
 #### 3.A — Single repo creation
 
 ```bash
-gh issue create \
+# egress via privacy-scrubbing choke-point wrapper (Step 0.6 / #202) — never raw `gh issue create`
+bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" create \
   --repo $GITHUB_REPO \
   --title "$TITLE" \
+  --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"} \
   --body "$(cat <<'EOF'
 ## Problem
 
@@ -640,7 +701,7 @@ else
   # Algorithm: append to first contiguous "- [ ]"/"- [x]" section, OR append fresh `## Children` anchor
   NEW_BODY=$(append_to_task_list "$PARENT_BODY" "$ENTRY")
 
-  gh issue edit "$PARENT_NUM" --repo "$GITHUB_REPO" --body "$NEW_BODY"
+  bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit "$PARENT_NUM" --repo "$GITHUB_REPO" --body "$NEW_BODY" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}
 fi
 ```
 
@@ -657,7 +718,7 @@ for M in $(echo "$BLOCKED_BY_LIST" | tr ',' '\n'); do
   BLOCKED_BLOCKQUOTE="${BLOCKED_BLOCKQUOTE}> Blocked by #${M}\n"
 done
 NEW_CHILD_BODY="${BLOCKED_BLOCKQUOTE}\n${ORIGINAL_BODY}"
-gh issue edit "$CHILD_NUM" --repo "$GITHUB_REPO" --body "$NEW_CHILD_BODY"
+bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit "$CHILD_NUM" --repo "$GITHUB_REPO" --body "$NEW_CHILD_BODY" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}
 
 # Layer 1:GraphQL native dependency(嘗試,失敗不 abort)
 CHILD_NODE_ID=$(gh issue view "$CHILD_NUM" --repo "$GITHUB_REPO" --json id --jq '.id')
@@ -688,10 +749,10 @@ if [[ ${#ITEMS[@]} -lt 2 ]]; then
 fi
 
 # 1. 建 epic parent(用 bundle-level title;若 input 沒 epic title 則 AskUserQuestion 索取)
-EPIC_NUM=$(gh issue create --repo "$GITHUB_REPO" \
+EPIC_NUM=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" create --repo "$GITHUB_REPO" \
   --title "$EPIC_TITLE" \
   --body "Epic for ${#ITEMS[@]}-item bundle (${BUNDLE_MODE})\n\n## Children\n" \
-  --label "epic" | basename)
+  --label "epic" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"} | basename)
 
 # 2. 建 N children,逐個 auto-apply --parent <epic> + (ordered 時)--blocked-by <prev>
 PREV_CHILD=""
@@ -746,11 +807,11 @@ group = {
 
 ```bash
 # 1. 在 primary repo 建 issue,用完整 body
-PRIMARY_URL=$(gh issue create \
+PRIMARY_URL=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" create \
   --repo $PRIMARY_REPO \
   --title "$TITLE" \
   --body "$FULL_BODY" \
-  --label "$TYPE")
+  --label "$TYPE" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"})
 PRIMARY_NUM=$(basename "$PRIMARY_URL")
 
 # 2. 在每個 tracking repo 建追蹤 issue
@@ -766,17 +827,17 @@ ${FULL_BODY}"
 > ${ONE_LINE_SUMMARY}"
   fi
 
-  TRACKING_URL=$(gh issue create \
+  TRACKING_URL=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" create \
     --repo $TRACKING_REPO \
     --title "$TITLE" \
     --body "$TRACKING_BODY" \
-    --label "$TYPE")
+    --label "$TYPE" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"})
   TRACKING_NUM=$(basename "$TRACKING_URL")
   TRACKING_REFS+=("${TRACKING_REPO}#${TRACKING_NUM}")
 done
 
 # 3. 在 primary issue 留 comment,列出所有 tracking refs
-gh issue comment $PRIMARY_NUM --repo $PRIMARY_REPO --body "$(cat <<EOF
+bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $PRIMARY_NUM --repo $PRIMARY_REPO --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"} --body "$(cat <<EOF
 Tracked in:
 $(for ref in "${TRACKING_REFS[@]}"; do echo "- $ref"; done)
 EOF
@@ -826,7 +887,7 @@ done
 # 編輯 issue body 加入所有附件的 markdown link / 圖片嵌入
 # - .png/.jpg/.gif → ![desc](url)  讓 issue 直接渲染
 # - .pdf/.docx/其他 → [desc](url)  讓使用者點下載
-gh issue edit $NUMBER --repo $GITHUB_REPO --body "..."
+bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit $NUMBER --repo $GITHUB_REPO --body "..." --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}
 ```
 
 #### 命名規則
@@ -865,7 +926,8 @@ gh api repos/$GITHUB_REPO/milestones \
 
 # 所有剛建立的 issues 都指派到此 milestone
 for n in $ALL_ISSUE_NUMBERS; do
-  gh issue edit $n --repo $GITHUB_REPO --milestone "$MILESTONE_NAME"
+  # metadata-only edit (no drafted body) — still routes through the gate for uniform egress (#202)
+  bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit $n --repo $GITHUB_REPO --milestone "$MILESTONE_NAME" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}
 done
 ```
 
@@ -912,7 +974,7 @@ else
 | (deferred) | /idd-clarify invocation failed | Run /idd-clarify #$NEW_ISSUE_NUMBER manually to populate | deferred |
 "
     NEW_BODY="${CURRENT_BODY}${DEFERRED_BLOCK}"
-    gh issue edit $NEW_ISSUE_NUMBER --repo $GITHUB_REPO --body "$NEW_BODY"
+    bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit $NEW_ISSUE_NUMBER --repo $GITHUB_REPO --body "$NEW_BODY" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}
     echo "⚠ /idd-clarify failed (exit $CLARIFY_EXIT) — appended deferred placeholder; continuing to Step 4.7" >&2
   fi
 fi
@@ -1283,16 +1345,22 @@ Soft cap (warn-not-block) — user can `Continue editing` to opt out. The 5-row 
 
 #### Stage 4: Dispatch with warn-continue
 
-Stage 3 confirm 後 sequential 跑 N 個 `gh` action:
+Stage 3 confirm 後 sequential 跑 N 個 action。**每個 `create`/`comment`/`edit` 都經
+privacy-scrubbing choke-point wrapper（Step 0.6 / #202）派送,不直接 `gh issue …`** —
+drafted body（含 footer）在 dispatch 前過 repo-aware privacy gate:
 
 | Action | Command |
 |--------|---------|
-| `create` | `gh issue create --title ... --body ...`(body 含 footer) |
-| `comment` | `gh issue comment $N --body ...`(body 含 footer) |
-| `edit` | `gh issue edit $N --body "$NEW_BODY_WITH_FOOTER"` |
+| `create` | `bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" create --title ... --body ... --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}`(body 含 footer) |
+| `comment` | `bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $N --body ... --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}`(body 含 footer) |
+| `edit` | `bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit $N --body "$NEW_BODY_WITH_FOOTER" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}` |
 | `update` | call `idd-update` skill on #N |
 | `skip` | no-op |
 | `merged-into` | no separate dispatch(content 已在 partner action body) |
+
+**Gate-block within warn-continue**：wrapper 在 `enforce` 未 confirm 或機械 net 命中時
+回 non-zero（exit 3/4）→ 該 action 視同 **non-dispatched**（記 gate-block reason 進
+in-memory entry），**不 abort** 後續 actions（與下方 warn-continue 契約一致）。
 
 **Warn-continue contract** (refined per /idd-verify --pr 71 round 1 P1.4):
 
@@ -1321,13 +1389,15 @@ Recovery workflow:
 
 ```bash
 # Add at top of Stage 4.5 gate (before AskUserQuestion):
-if [ -z "${JSONL_GITIGNORE_DECISION:-}" ] && [ ! -t 0 ] && [ -n "${IDD_ALL_UNATTENDED:-}${CI:-}" ]; then
-  # No TTY AND we're in /idd-all unattended chain OR a CI environment.
+. "$CLAUDE_PLUGIN_ROOT/scripts/lib/unattended-state.sh"
+if [ -z "${JSONL_GITIGNORE_DECISION:-}" ] && { is_unattended "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || [ -n "${CI:-}" ]; }; then
+  # /idd-all unattended chain（state file / env var per references/unattended-contract.md）
+  # OR a CI environment. TTY check removed (#222 — always false in harness).
   # Auto-select "skip-commit" as the safest default — jsonl writes locally
   # but isn't committed, no .gitignore change. Audit trail still produced
   # locally for whoever runs the unattended job.
   JSONL_GITIGNORE_DECISION="skip-commit"
-  echo "ℹ Stage 4.5 gate auto-defaulted to 'skip-commit' under unattended mode (no TTY + IDD_ALL_UNATTENDED/CI)." >&2
+  echo "ℹ Stage 4.5 gate auto-defaulted to 'skip-commit' under unattended mode (unattended-contract signal / CI)." >&2
 fi
 ```
 

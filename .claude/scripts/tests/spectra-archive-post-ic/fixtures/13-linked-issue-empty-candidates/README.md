@@ -1,6 +1,9 @@
-# fixture 13 — escape hatch on empty candidate set
+# fixture 13 — empty candidate set REFUSES --linked-issue (#172)
 
-Tests that `--linked-issue <N>` is accepted when detection returns NO candidates.
+Tests that `--linked-issue <N>` with an EMPTY candidate set fails with a
+redirect message pointing at `--force-linked-issue <N>` — the pre-#172 escape
+hatch (empty set = authoritative accept) was removed as timing-dependent;
+the authoritative path is now the dedicated force flag (fixture 15).
 
 ## Why this fixture runs from /tmp (env coupling — #170 verify DA-3 / codex)
 

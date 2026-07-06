@@ -202,6 +202,23 @@ gh auth status > /dev/null 2>&1 || abort "gh CLI not authenticated. Run: gh auth
 
 > **Mode-specific gates(working tree clean、on default branch)移到 Phase 0.5**:那些 gate 只在 PR mode 必須,direct-commit mode 預設留在 user 當前 branch + 容許未 commit 變更(由 user 自負其責)。
 
+#### Step 0.35: Dependency early gates（v2.92+ #211；scope 含 spectra per #210 audit）
+
+Phase 1 之前先驗 delegation 依賴，避免 unattended chain 中途 abort 留孤兒 issue/branch：
+
+```bash
+# superpowers — 無條件 hard gate（diagnose/implement 的 delegation 必經）
+"$CLAUDE_PLUGIN_ROOT/scripts/check-plugin-presence.sh" \
+  claude-plugins-official superpowers || abort "superpowers missing — install first (see hint above), then re-run /idd-all"
+
+# spectra — Phase 0 只 warn（complexity 尚未判定，SDD path 不一定觸發）；
+# Phase 3b 入口另有 hard gate（見該段）— fail 發生在任何 spectra artifact 產生之前
+if ! command -v spectra >/dev/null 2>&1; then
+  echo "⚠ spectra CLI not on PATH — if diagnosis routes to Spectra tier, Phase 3b will abort."
+  echo "  Pre-empt: install the Spectra plugin/CLI before long unattended runs."
+fi
+```
+
 #### Step 0.4: Resolve Issue Number
 
 - **from-issue mode**(`/idd-all #19`): 確認 issue #19 存在且 OPEN(`gh issue view 19 -R "$GITHUB_REPO" --json state -q .state`); 若 state=CLOSED → abort
@@ -316,7 +333,19 @@ Based on the user's selection, set:
 ```bash
 # Resolved-tuple notice (mandatory — print before any state-mutating action)
 echo "→ Path: ${PATH_AXIS} (${INTERACTION}) — ${REASON}"
+
+# Unattended signal (#123 — normative contract: references/unattended-contract.md)
+# State file 是 harness 內唯一跨 tool-call 可靠訊號（env var 不跨 fresh shell、
+# TTY 恆非互動 #222）。attended 分支的 clear 是防呆：清掉 crashed prior run 的殘留。
+. "$CLAUDE_PLUGIN_ROOT/scripts/lib/unattended-state.sh"
+if [ "$INTERACTION" = "unattended" ]; then
+  mark_unattended "$CWD" "idd-all"
+else
+  clear_unattended "$CWD"
+fi
 ```
+
+> **Subprocess hand-off（#123 契約訊號 2）**：unattended 模式下，idd-all 內部啟動的**真 subprocess**（如 plugin-tools `plugin-update`）必須在命令列前綴 `IDD_ALL_UNATTENDED=1`（state file 只對經 `is_unattended` 的 detector 有效；外部 plugin 讀 env var）。
 
 **PR mode branch setup**(只在 `PATH_AXIS=PR` 執行):
 
@@ -565,6 +594,14 @@ idd-all 走 SDD path 時,**必須**串完三步:`spectra-discuss` → `spectra-p
 >
 > idd-all 不修改 spectra 任何檔案 — 全程用 args 傳指示(或不傳)override sub-skill 的 attended 預設。
 
+#### Step 3b.0: Spectra presence hard gate（#211/#210）
+
+```bash
+command -v spectra >/dev/null 2>&1 || abort "Spectra tier routed but spectra CLI is missing.
+   Install the Spectra plugin, then re-run /idd-all #$N — aborting BEFORE any
+   spectra artifact is created (no half-baked openspec/changes/ residue)."
+```
+
 #### Step 3b.1: Capture issue context for prompt
 
 ```bash
@@ -810,7 +847,7 @@ fi
 # Both branches fall through to Phase 6 below.
 ```
 
-> **絕對不能在 PR body 用 Closes/Fixes/Resolves trailer**。理由見 idd-implement skill 裡的 trailer 禁令說明 — auto-close 會繞過 idd-close 的 checklist gate 和 closing summary。
+> **絕對不能在 PR body 用 Closes/Fixes/Resolves trailer**。User-facing canonical 紀律見 [`rules/commit-issue-reference.md`](../../rules/commit-issue-reference.md)（#214）；理由見 idd-implement skill 裡的 trailer 禁令說明 — auto-close 會繞過 idd-close 的 checklist gate 和 closing summary。
 
 ---
 
@@ -882,6 +919,8 @@ With `--review` (`REVIEW_FLAG="--review"`):
 Next: review last ${COMMIT_COUNT} commits (git log -${COMMIT_COUNT}), then run /idd-close #${N}
 ```
 
+**Cleanup（#123）**：terminal report 印出後 `clear_unattended "$CWD"` — unattended flag 的生命週期 = 本次 orchestration。
+
 **STOP**。不 auto-merge(PR mode)、不 auto-close(both modes)。Per MANIFESTO doctrine,verify-gated PASS 是 terminal default disposition;auto-merge mechanic 屬 **#37** bulk-solve autopilot 範疇,**不**是 idd-all default。`--review` 是 **orchestrator-scope messaging-only** opt-in,不會讓 idd-all 等候 — 它只表態 "user 還想自己再過一次" 並切換 Phase 6 wording。(per #108 DA3: orchestrator-scope qualifier matters — humans/CI downstream may react to the changed text differently, so the flag is messaging-only **at orchestrator scope**, not necessarily end-to-end.)
 
 #### Phase 6 Action items surface (v2.74.0+, #137)
@@ -942,6 +981,7 @@ fi
 | `gh pr create` fail | Phase 5 abort,branch 已 push,提示手動開 PR |
 
 abort 時:
+- `clear_unattended "$CWD"`（#123 — 絕不留 stale unattended flag 誤導下一個 attended session）
 - TaskList 標記當前 phase 為 in_progress(不要 mark completed)
 - 顯示「自己手動接手」的具體命令(例:`/idd-verify #19` 或 `gh pr create ...`)
 - branch 不刪除(保留進度,user 可繼續)

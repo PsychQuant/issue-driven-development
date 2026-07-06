@@ -93,6 +93,9 @@ TaskCreate(name="report_and_stop", description="Phase 4: 印 forest tree printou
 
 ### Phase 0: Pre-flight + cluster branch setup
 
+> **Unattended signal + 依賴 gate（v2.92+ #123/#211）**：chain 模式 = `(direct-commit, unattended)`，chain shell 在建 cluster branch 前先：(1) `. "$CLAUDE_PLUGIN_ROOT/scripts/lib/unattended-state.sh" && mark_unattended "$CWD" "idd-all-chain"`（契約見 `references/unattended-contract.md`；Phase 4 report 後與所有 abort path `clear_unattended`）；(2) superpowers hard gate（`check-plugin-presence.sh claude-plugins-official superpowers || abort`）+ spectra warn（同 idd-all Step 0.35 — 缺席時 unattended chain 中途 abort 留孤兒的正是本 gate 防的）。
+
+
 #### Step 0.1: Argument Parsing
 
 Same as `/idd-all`,plus:

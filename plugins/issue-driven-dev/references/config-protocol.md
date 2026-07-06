@@ -22,6 +22,9 @@ When an idd-* skill needs to determine the target repo, it walks this priority l
 1. --target <owner/repo> flag     ← runtime override (per invocation)
 2. ask_each_time + candidates     ← runtime menu (from config)
 3. Predicate match (when clauses) ← auto-pick candidate or group by context
+3.5 Submodule boundary (#162)     ← cwd inside a submodule → its own origin
+                                     overrides the parent config's github_repo
+                                     (unless "submodules": "off"); never silent
 4. Cascading config (walk up)     ← static routing by directory
 5. git remote fallback            ← last resort, with prompt
 ```
@@ -77,6 +80,28 @@ A single config can list multiple candidate repos. When `ask_each_time: true`, t
 - The chosen candidate's fields are used for that invocation only — config is NOT modified
 
 If `ask_each_time` is `false` or missing, the top-level `github_repo` wins by default. Candidates are ignored unless the user supplies `--target` matching a candidate label or repo.
+
+### Mechanism 3.5: Submodule boundary detection (#162)
+
+When the walk-up (mechanism 4) resolves a config that lives in a **parent
+repo** while `cwd` is inside a **git submodule**, the parent's `github_repo`
+would silently target the wrong repo (the pain point that motivated #162).
+Resolution therefore consults `scripts/lib/resolve-submodule-route.sh` before
+falling back to the config's bare `github_repo`:
+
+- `git rev-parse --show-superproject-working-tree` non-empty → inside a submodule
+- config key `"submodules"` (optional): `"auto"` (default) routes to the
+  **submodule's own origin**; `"off"` keeps the parent config's routing
+- **Never silent**: whichever way it routes, a surface line is printed when a
+  submodule boundary is crossed. A submodule without an `origin` remote (or a
+  non-`owner/repo`-shaped URL) falls back to the parent config with a warning.
+- Explicit mechanisms still win: `--target` (1) and matching `candidates`
+  predicates (2/3) take precedence — declare a `path_contains` candidate in the
+  parent config to pin a submodule to any repo regardless of this mechanism.
+
+**Backward-compat note**: repos that relied on "submodule cwd routes to the
+parent repo" must set `"submodules": "off"` (one line). The default flips to
+the submodule because the silent-wrong-repo direction is the bug class.
 
 ### Mechanism 4: Cascading config (walk-up)
 
@@ -242,7 +267,9 @@ Detection is **hybrid** — owner-mismatch as a cheap pre-filter, repo permissio
 ```bash
 ORIGIN_OWNER="${ORIGIN%%/*}"
 SELF_LOGIN=$(gh api user --jq .login 2>/dev/null)
-# viewerPermission came from `gh repo view "$ORIGIN" --json isFork,parent,viewerPermission`
+# viewerPermission AND isPrivate both come from the SAME
+#   `gh repo view "$ORIGIN" --json isFork,parent,viewerPermission,isPrivate`
+# call (no extra round-trip; isPrivate folded in for the privacy-scrubbing gate, #202).
 IS_THIRD_PARTY=false
 if [ -n "$SELF_LOGIN" ] && [ "$ORIGIN_OWNER" != "$SELF_LOGIN" ]; then
   case "$VIEWER_PERMISSION" in
@@ -254,6 +281,27 @@ fi
 
 - **fork precedence**: E2 (fork) is evaluated before third-party. A fork is also owner-mismatch + often no-push, but carries its own contributor/customization/divergent semantics — judging it first prevents a double-prompt.
 - **fail-safe**: if the permission probe is unavailable (auth scope / rate limit / API error) after owner-mismatch matched, default to third-party (prompt) rather than silently using origin.
+
+#### Repo-visibility → privacy-scrubbing gate strictness (#202)
+
+The same `gh repo view` classification also drives the **privacy-scrubbing gate**
+(openspec change `add-privacy-scrubbing-gate`, [`rules/privacy-scrubbing.md`](../rules/privacy-scrubbing.md)),
+which every IDD skill runs before `gh issue create/comment/edit` egress. The
+`isPrivate` field is **added to the existing `--json` list** (`isFork,parent,viewerPermission,isPrivate`)
+— **zero extra round-trip**, same fold-in technique as the #192 permission probe:
+
+| Visibility | Predicate | Gate level |
+|---|---|---|
+| **third-party** | `viewerPermission ∉ {WRITE, MAINTAIN, ADMIN}` (reuses the detection above, incl. fail-safe) | **ENFORCE** — block-with-diff + require confirm |
+| **own-public** | you have write access **AND** `isPrivate=false` | **WARN** — flag, default proceed |
+| **private** | `isPrivate=true` | **LIGHT** — no block on ordinary identifiers |
+
+Adding `isPrivate` **resolves the push-permission proxy residue** flagged at
+`add-third-party-clone-setup/design.md:145`: push-permission alone conflated
+own-public with own-private, so the gate could not differentiate their strictness.
+With `isPrivate` folded in, own-public → WARN and private → LIGHT split cleanly.
+(The semantic residue — "is *this* name/content private?" — is separate and stays
+LLM-judgment; see the change's Open Question Q2.)
 
 When third-party is detected, `idd-issue` Step 0.5.E presents a 3-option routing (Upstream w/ public-visibility warning / your own tracking repo via `--target`, never auto-created / local-only) and applies the placement defaults below.
 
