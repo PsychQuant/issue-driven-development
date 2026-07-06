@@ -6,6 +6,23 @@ Issue-driven development：每個改動都從 issue 出發，每個 issue 都有
 
 Issue 是人和 AI 的介面 — 人負責「什麼是對的」，AI 負責「怎麼做到」。
 
+## Runtime Compatibility Policy
+
+Claude Code 是 IDD skills 的 canonical runtime。`plugins/issue-driven-dev/skills/` 是唯一 canonical
+skill source tree；既有 `SKILL.md` 可以繼續使用 Claude-native tool contract，例如
+`AskUserQuestion`、`EnterPlanMode`、`TaskCreate`、`Agent`、`SendMessage`、`Skill(...)`、
+`.claude/.idd` 與 `CLAUDE_PLUGIN_ROOT`。
+
+非 Claude runtime（例如 Codex）是 compatibility consumer，不是另一個同等規格來源。支援其他 runtime
+時，優先新增 reference / adapter / plugin shell metadata，並保留 Claude-defined workflow semantics。
+若無法等價保留，必須明確標示 degraded fallback；禁止靜默弱化 gate。
+
+維護規則：
+- 不為了 Codex 或其他 runtime 先行 fork `skills-codex/`。
+- 不把 canonical `SKILL.md` 大量改寫成平台中立抽象語言。
+- 只有在具體 skill 證明無法透過 compatibility mapping 保留語意時，才可提案局部 fork。
+- Runtime 對照表見 [`references/claude-code-tools.md`](references/claude-code-tools.md) 與 [`references/codex-tools.md`](references/codex-tools.md)。
+
 ## 鐵律:Step 0 Bootstrap Stage Task List(v2.18.0+)
 
 **每個 stage skill 的第一個動作必須是 `TaskCreate`**,把該 stage 的所有 execution sub-steps 建成 harness-level todo list。完成每一步立即 `TaskUpdate → completed`。**靜默完成 = 違規**。
