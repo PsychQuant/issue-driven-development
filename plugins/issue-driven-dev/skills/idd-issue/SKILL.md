@@ -915,16 +915,19 @@ AskUserQuestion:
 **#142 Safeguard 2 — Pre-add existence check**（`--add-label` 路徑，label 已存在的假設要先驗）。`gh issue edit --add-label X` 對不存在的 label 行為 inconsistent（有時 error、有時 server-side 用 default 白色 silently auto-create），故 add 前先讀：
 
 ```bash
-label_exists() { # $1=name
-  gh label list --repo "$REPO" --search "$1" --json name \
-    --jq '.[] | select(.name == "'"$1"'") | .name' | grep -qx "$1"
+label_exists() { # $1=name — exact-match probe（--search 是 fuzzy，靠 grep -qx 收斂成精確比對，
+                 # 且不把 name 裸插進 jq 表達式 → 對含引號的 custom label 名也安全）
+  gh label list --repo "$REPO" --search "$1" --json name --jq '.[].name' | grep -qx "$1"
 }
 # 只對非 default-set label 跑（discussion / epic / custom）；bug/feature/refactor/docs 是 repo 預設，跳過。
-if ! label_exists "$LABEL_NAME"; then
-  echo "⚠ Label '$LABEL_NAME' 不存在於 $REPO — 選 auto-create 或 skip"
-  # → 併入上面 AskUserQuestion 的 option 2/3
+if label_exists "$LABEL_NAME"; then
+  gh issue edit "$NUMBER" --repo "$REPO" --add-label "$LABEL_NAME"   # verified-exist → 安全 add
+else
+  echo "⚠ Label '$LABEL_NAME' 不存在於 $REPO — 不 blind add（--add-label 對不存在 label 行為 inconsistent，"
+  echo "  有時 server-side 用 default 白色 silently auto-create，正是 #142 S2 要防的 edge case）。"
+  echo "  → 回上面 AskUserQuestion：option 2（auto-create，走下方 Safeguard 1 的 verify-by-read）或 option 3（skip）。"
+  # 兩條路都不落到未驗證的 blind add：auto-create 建好 + verify 後才 add；skip 則不 add。
 fi
-gh issue edit "$NUMBER" --repo "$REPO" --add-label "$LABEL_NAME"   # 只在 verified-exist 後
 ```
 
 **#142 Safeguard 1 — VERIFY by reading back**（auto-create 路徑）。`gh label create` 成功時**無 stdout**，且對「已存在」case 也 silently noop —— exit code + stdout 無法區分「剛建成」「早就有」「靜默失敗」。唯一可靠偵測是建完再讀回：

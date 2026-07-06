@@ -57,6 +57,11 @@ assert_output_grep "141 (d) native relationship deferral disclosed"        "Nati
 assert_output_grep "142 S1: verify-by-read after label create"             "VERIFY by reading back"          "$SKILL"
 # S2: pre-add existence check for the --add-label path.
 assert_output_grep "142 S2: pre-add label existence check"                 "Pre-add existence check"         "$SKILL"
+# S2 control-flow (verify round-1 regression guard, #248): the --add-label MUST be
+# GATED on label_exists — an unconditional blind add silently auto-creates a white
+# label, the exact edge #142 S2 exists to prevent. Prose-drift can't be caught for
+# free (bash isn't shell-run here), so lock the distinctive gated-branch phrase.
+assert_output_grep "142 S2: --add-label gated on existence (no blind add)"  "不 blind add"                    "$SKILL"
 # S3: UI cache-sync hint — the exact confusing string + the remedy.
 assert_output_grep "142 S3: cache-lag hint names the 'Invalid value' string" "Invalid value"                 "$SKILL"
 assert_output_grep "142 S3: cache-lag hint gives hard-refresh remedy"       "hard refresh"                    "$SKILL"
