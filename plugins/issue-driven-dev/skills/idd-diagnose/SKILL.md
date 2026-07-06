@@ -232,7 +232,7 @@ Exit code:
   claude-plugins-official superpowers systematic-debugging || exit 1
 ```
 
-缺 plugin 或缺目標 skill → helper 印出含一步安裝指令（`claude plugin install superpowers@claude-plugins-official`）的錯誤，**立即 abort**。不做內建 fallback、不 silent degrade（#209 D2）。**注意（#209 R1 verify F10）**：pre-flight 驗的是磁碟 cache 存在；plugin 被 disable 時仍會通過、隨後 `Skill()` 才失敗 — 此時跑 `claude plugin enable superpowers@claude-plugins-official`。
+缺 plugin 或缺目標 skill → helper 印出含一步安裝指令（`claude plugin install superpowers@claude-plugins-official`）的錯誤，**立即 abort**。不做內建 fallback、不 silent degrade（#209 D2）。**注意（#209 F10 → #212 已解）**：pre-flight 現亦查 `claude plugin list --json` 的 enabled 狀態 — installed-but-disabled 會在 pre-flight 即 exit 3 並印一步 `claude plugin enable` 指令；claude CLI 缺席時 graceful degrade 回磁碟檢查（警告可見）。
 
 **執行框架 = `superpowers:systematic-debugging`（canonical process source）**：invoke `Skill(skill="superpowers:systematic-debugging")`，依其紀律完成重現 → trace → 假設形成（一次一個假設、證據先於修法）。IDD 不再內嵌自己的 RCA 步驟敘述 — 除錯 process 以 superpowers 為 single source（#209 D3）。
 

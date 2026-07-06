@@ -17,10 +17,12 @@
 #     version, per spec superpowers-integration "Dual pre-flight at delegation sites")
 #
 # Exit:
-#   0 — plugin installed, and skill present when a skill-name was given
-#       (or IDD_SKIP_PLUGIN_CHECK=1)
+#   0 — plugin installed + enabled (or enabled-state inconclusive → disk
+#       evidence only, warning printed; or IDD_SKIP_PLUGIN_CHECK=1)
 #   1 — plugin missing, or skill missing from the highest installed version
 #   2 — usage error (wrong arg count, or invalid skill name)
+#   3 — plugin installed but DISABLED (#212) — Skill() would fail; stderr
+#       prints the one-step `claude plugin enable` command
 #
 # Detect path is hardcoded against Claude Code 2025-Q4 plugin cache schema.
 # When schema changes upstream, see #35 (path schema watch-list).
@@ -42,12 +44,13 @@
 # Future hardening (#41 reopen criteria): if multi-user / CI deployment becomes
 # common, evaluate hash verification step against marketplace-published manifest.
 #
-# Presence ≠ enabled (#209 R1 verify F10, DA finding): this script checks the
-# on-disk cache only. A plugin that is installed but DISABLED still passes;
-# the later Skill() invocation resolves against the enabled/active version and
-# will fail. If a delegation fails right after this pre-flight passed, run:
-#   claude plugin enable <plugin>@<marketplace>
-# Enabled-state detection is tracked as a follow-up issue.
+# Presence + enabled (#209 F10 → #212): beyond the on-disk cache, this script
+# queries `claude plugin list --json` (documented CLI: code.claude.com
+# plugins-reference "plugin list — List installed plugins with their version,
+# source marketplace, and enable status"; JSON fields `id`/`enabled`/`installPath`
+# observed live 2026-07-05) and refuses (exit 3) when the plugin is installed
+# but DISABLED. CLI absent / query failure → graceful degrade to disk evidence
+# with a printed warning (fail-open floor — same philosophy as the #183 lock).
 
 set -u
 
@@ -98,6 +101,44 @@ if [ "${IDD_SKIP_PLUGIN_CHECK:-}" = "1" ]; then
   exit 0
 fi
 
+# Enabled-state detection (#212). Called just before every success exit —
+# disk evidence proves INSTALLED; Skill() resolves against ENABLED state.
+check_enabled_state() {
+  command -v claude >/dev/null 2>&1 || {
+    echo "⚠ claude CLI not on PATH — enabled-state check skipped (disk evidence only)." >&2; return 0; }
+  command -v python3 >/dev/null 2>&1 || {
+    echo "⚠ python3 not on PATH — enabled-state check skipped (disk evidence only)." >&2; return 0; }
+  local list_json verdict
+  if ! list_json="$(claude plugin list --json 2>/dev/null)"; then
+    echo "⚠ 'claude plugin list --json' failed — enabled-state check skipped (disk evidence only)." >&2
+    return 0
+  fi
+  verdict="$(printf '%s' "$list_json" | python3 -c '
+import json, sys
+target = sys.argv[1]
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    print("parse-error"); raise SystemExit
+for p in (data if isinstance(data, list) else []):
+    if p.get("id") == target:
+        print("true" if p.get("enabled") else "false"); break
+else:
+    print("absent")
+' "${PLUGIN}@${MARKETPLACE}" 2>/dev/null || echo "parse-error")"
+  case "$verdict" in
+    true) return 0 ;;
+    false)
+      echo "✗ ${PLUGIN}@${MARKETPLACE} is installed but DISABLED — Skill() resolution will fail." >&2
+      echo "  Enable it (one step):" >&2
+      echo "    claude plugin enable ${PLUGIN}@${MARKETPLACE}" >&2
+      exit 3 ;;
+    *)
+      echo "⚠ enabled-state check inconclusive (${verdict}) — proceeding on disk evidence only." >&2
+      return 0 ;;
+  esac
+}
+
 # Plugin cache layout (Claude Code 2025-Q4):
 #   ~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/.claude-plugin/plugin.json
 # Match any installed version under the plugin dir.
@@ -109,8 +150,8 @@ files=( "${HOME}/.claude/plugins/cache/${MARKETPLACE}/${PLUGIN}"/*/.claude-plugi
 shopt -u nullglob
 
 if (( ${#files[@]} > 0 )); then
-  # Plugin present. Without a skill arg we are done (2-arg backward-compat path).
-  [ -z "$SKILL" ] && exit 0
+  # Plugin present. Without a skill arg, enabled-state is the last gate (#212).
+  if [ -z "$SKILL" ]; then check_enabled_state; exit 0; fi
 
   # Skill-level pre-flight (#209): resolve the HIGHEST installed version via
   # sort -V (same resolution rule as the pai canonical chain in idd-verify D1)
@@ -122,6 +163,7 @@ if (( ${#files[@]} > 0 )); then
   # highest-version resolution and false-negative the skill check.
   latest=$(printf '%s\n' "${files[@]}" | sed 's|\.claude-plugin/plugin\.json$||' | sort -V | tail -1)
   if [ -f "${latest}skills/${SKILL}/SKILL.md" ]; then
+    check_enabled_state
     exit 0
   fi
   cat >&2 <<EOF
