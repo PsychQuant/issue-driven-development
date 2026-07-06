@@ -43,6 +43,8 @@ allowed-tools:
 - `validate`
 - `which`
 
+> **Submodule boundary (#162)**：`which` 執行時同時跑 `scripts/lib/resolve-submodule-route.sh`（source 後呼叫 `resolve_submodule_route <submodules值>`）並顯示偵測結果 — cwd 在 submodule 內時，顯示將路由到 submodule origin 還是 parent config（依 `submodules` key，預設 `auto`）。
+
 **不做**（v2 再加）：
 - `set-target` / `add-candidate` / `add-group` / `remove-*` 等 mutating subcommands（先用直接編輯 JSON）
 - 全局 config（`~/.claude/issue-driven-dev.global.json`）— config-protocol 目前 only walked-up local config
