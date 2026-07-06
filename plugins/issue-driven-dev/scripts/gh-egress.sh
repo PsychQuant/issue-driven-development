@@ -245,9 +245,18 @@ MBODY=""
 for p in "${BODY_PARTS[@]:-}"; do MBODY+="$p"$'\n'; done
 # GFM: a fence opener allows at most 3 leading spaces; >=4 is literal indented
 # code and must NOT toggle fence state (logic 117-3 false-negative otherwise).
-MSCAN="$(printf '%s' "$MBODY" | awk '/^ ? ? ?```/{infence=!infence; next} !infence{print}' | sed -E 's/`[^`]*`//g')"
+# URL spans are exempt: GitHub's mention parser does not notify on @handle
+# inside an autolinked URL (unpkg.com/@scope/pkg, mastodon.social/@dev), and
+# backtick-escaping a URL would break the link (DA-117-B, R2).
+MSCAN="$(printf '%s' "$MBODY" | awk '/^ ? ? ?```/{infence=!infence; next} !infence{print}' | sed -E 's/`[^`]*`//g; s|https?://[^[:space:])>]+||g')"
 # Entity-encoded @ (&#64; / &#x40; / &commat;) followed by a login shape: GitHub
 # may decode these before its mention scan — fail closed and refuse outright.
+# Known friction (DA-117-A, accepted): prose that merely DISCUSSES the encoded
+# form also refuses. Unlike the removed .claude.json filename net (public name,
+# zero leak value), a raw entity-encoded @login has essentially one legitimate
+# prose use — discussing bypasses — which is rare and naturally backtick-escapable
+# (this guard runs AFTER fence/inline-code stripping, so `&#64;login` in code
+# spans already passes). Irreversible-notification risk outweighs the friction.
 if printf '%s' "$MSCAN" | grep -qiE '&#0*64;[a-z0-9-]|&#x0*40;[a-z0-9-]|&commat;[a-z0-9-]'; then
   echo "✗ gh-egress: REFUSED — entity-encoded @-mention (e.g. &#64;login) in body." >&2
   echo "  Encoded forms can decode into live mentions on GitHub. Spell it as literal text in backticks instead." >&2

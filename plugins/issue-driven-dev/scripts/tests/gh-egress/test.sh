@@ -265,4 +265,20 @@ BODY_IND=$'see:\n    ```\ncc @realafteripseudofence'
 bash "$SCRIPT" comment 5 --repo o/r --body "$BODY_IND" "${ATT[@]}" >/dev/null 2>&1
 assert_exit "indented pseudo-fence does not hide later mention (fix5, exit 4)" 4 $?
 
+
+# ── R2 fixes (DA-r2 findings on 4d2e87b) ─────────────────────────────────────
+# DA-117-B: @handle inside a URL never notifies on GitHub — must NOT refuse,
+# and backtick-escaping would break the link
+bash "$SCRIPT" comment 5 --repo o/r \
+  --body "docs at https://unpkg.com/@angular/core and https://mastodon.social/@dev profile" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "@handle inside URLs NOT caught (DA-117-B) → dispatch (exit 0)" 0 $?
+# markdown link target with /@handle also exempt
+bash "$SCRIPT" comment 5 --repo o/r \
+  --body "see [pkg docs](https://cdn.jsdelivr.net/npm/@scope/pkg) for details" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "markdown link target @handle NOT caught (DA-117-B) → dispatch (exit 0)" 0 $?
+# regression guard: raw mention NEXT TO a URL still caught
+bash "$SCRIPT" comment 5 --repo o/r \
+  --body "see https://example.com/docs and ping @realperson about it" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "raw mention adjacent to URL still caught (exit 4)" 4 $?
+
 print_summary "gh-egress"
