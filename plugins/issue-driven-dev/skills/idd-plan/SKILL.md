@@ -75,6 +75,9 @@ gh issue view $NUMBER --repo $GITHUB_REPO --json title,body,labels,comments
 - [ ] `path/to/file2.ext` — {改什麼 + 與 file1 的依賴關係}
 - [ ] `tests/path/to/test_file.ext` — {測什麼 invariant，RED→GREEN expectation}
 
+### Family-wide scope (shared-abstraction hard-gate trigger only)
+{僅當 #129 硬閘因 **shared abstraction** 命中時填：列舉該抽象的**所有已知 call site / family member** 為 in-scope，而非只覆蓋 issue 標題點名的觸發檔。例：scoring helper 被 CR + PTSR + PCQ 三個 sibling 量表共用 → 三個 sibling 全列入 Files & Changes。這是硬閘的產出契約（#44 教訓：Plan 只覆蓋一個量表、漏了同 family 的 sibling，兩次 close 才補齊）。非 shared-abstraction 觸發時填 `n/a`。}
+
 ### Sequencing & Dependencies
 {file A 的改動先 land，因為 file B 的測試會 import file A 的新 helper / file B 改完才能測 end-to-end / 等等}
 
@@ -101,6 +104,20 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$IMPLEMENTATION_PLAN"
 ```
 
 > **為什麼比 idd-implement 的 plan 詳盡？** Plan tier 的 user 審查是事前 deliberation 的 core moment — plan 越具體，user 越容易抓出 missing case / wrong assumption / better alternative。idd-implement 的 plan 是「執行清單」，本 plan 是「decision artifact」。
+
+> **`type=meeting` 用 meeting-adapted Plan body schema（#57）**：上面的 code-centric 模板（Files & Changes / Sequencing / Test Plan）**不適用** meeting。`type=meeting` 改用審議 Plan body：
+>
+> ```markdown
+> ## Meeting Plan: Issue #NNN
+> ### Phase A — 議程（本次要談的議題）
+> - {議題 1} …
+> ### Phase B — 決策點（需拍板 + 候選選項）
+> - {決策點 1：候選 A / B / C} …
+> ### Phase C — 行動項（decision → follow-up action + owner）
+> - [ ] {action} …
+> ```
+>
+> meeting plan 過 user approve 後 **不 chain 到 /idd-implement**（見 Step 6 skip-chain）。
 
 ### Step 2.5: Tangential Observations Sweep
 
@@ -157,6 +174,8 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$IMPLEMENTATION_PLAN"
 | Aborted | 跑 `/idd-update #NNN` 改 phase 為 `needs-fix`，並 post 一個 comment 說明「Plan tier deliberation 中止：{reason}；建議重新 `/idd-diagnose #NNN` 或調整 Complexity」 |
 
 ### Step 6: Chain to /idd-implement
+
+> **`type=meeting` → 跳過本步（skip-chain，#57）**：meeting 是 user-driven deliberation，不是 TDD loop。`type=meeting` 的 plan 用 **meeting-adapted Plan body** schema（Phase A/B/C 審議計畫：議程 → 決策點 → 行動項，非 code-centric 的 Files & Changes），且 **不 chain 到 /idd-implement**（輸出不含對 `/idd-implement` 的邀請 / 呼叫）。plan 過 user approve 後即結束於 deliberation artifact；closing 走 decision→action mapping、無 `/idd-verify` TDD pass（見 idd-close）。以下 chain 僅適用於 code-centric（bug / feature / refactor）plan。
 
 User approved → invoke idd-implement skill 繼續 TDD loop：
 

@@ -9,15 +9,17 @@ description: When to route IDD to Plan-mode or Spectra (formerly SDD), with back
 >
 > **v2.50.0+ Layer V**: a 5th evaluation layer (Vagueness Pre-check) sits between Layer 1 and Layer 2. See "Layer V" section below. Existing diagnoses written before v2.50 are not retroactively re-evaluated.
 
-`idd-diagnose` is the single decision point. After diagnosis, evaluate in order (5 layers as of v2.50):
+`idd-diagnose` is the single decision point. After diagnosis, evaluate in order:
 
-1. **Disqualifiers (Layer 1)** — any one yes → force `Simple`, ignore everything below
-2. **Vagueness Pre-check (Layer V, v2.50+)** — `max(V1, V4) ≥ 4` triggers a 3-option AskUserQuestion gate; user choice determines whether routing continues, body is clarified first, or verdict is force-set to `Plan via Layer V`
-3. **Spectra-warranting condition (Layer 2 + Layer 3)** — both must be yes → `Spectra`
-4. **Plan signals (Layer P)** — at least one yes → `Plan`
-5. Otherwise → `Simple` (default)
+1. **`type=meeting` branch (#57)** — if the issue type is `meeting`, route to the deliberation Strategy (Phase A/B/C: agenda / decision points / action items) and STOP. A meeting issue is NOT scored by Layer 1 / Layer V / Spectra (Layer 2+3) / the hard gate / Layer P. Checked FIRST because type is a deterministic field, and a meeting's deliberation content would otherwise be swallowed by Layer 1's narrative disqualifier.
+2. **Disqualifiers (Layer 1)** — any one yes → force `Simple`, ignore everything below
+3. **Vagueness Pre-check (Layer V, v2.50+)** — `max(V1, V4) ≥ 4` triggers a 3-option AskUserQuestion gate; user choice determines whether routing continues, body is clarified first, or verdict is force-set to `Plan via Layer V`
+4. **Spectra-warranting condition (Layer 2 + Layer 3)** — both must be yes → `Spectra`
+5. **Hard gate (#129, MUST-trigger)** — estimated ≥ 5 files of one interdependent concept OR a shared abstraction → force `Plan`; layered above Layer P, escalate-only. Genuinely-independent multi-file changes stay Simple via Layer 1's disqualifier.
+6. **Plan signals (Layer P)** — at least one yes → `Plan`
+7. Otherwise → `Simple` (default)
 
-This 5-layer evaluation replaces the v2.36 4-layer order by inserting Layer V right after Layer 1 disqualifier. Plan exists for "I want to think before I leap, but no spec contract is needed" — the most common case where Simple is too thin (multi-step / multi-file / decision-heavy) but Spectra is overkill (no published API contract for future callers). Layer V exists for the orthogonal case: **the change shape is small, but the request itself is unclear** — Simple's direct TDD loop would pattern-match a wrong direction.
+This routing has 7 evaluation steps (as of the #129/#57 change): the `type=meeting` branch and the MUST-trigger hard gate were layered onto the v2.50 order (which itself inserted Layer V right after the Layer 1 disqualifier). Plan exists for "I want to think before I leap, but no spec contract is needed" — the most common case where Simple is too thin (multi-step / multi-file / decision-heavy) but Spectra is overkill (no published API contract for future callers). Layer V exists for the orthogonal case: **the change shape is small, but the request itself is unclear** — Simple's direct TDD loop would pattern-match a wrong direction.
 
 ## Layer 1: Simple-required disqualifiers (any one = force Simple)
 
@@ -27,6 +29,10 @@ If any of these match, the work is `Simple` regardless of other signals. Plan / 
 - **Primary deliverable is ad-hoc analysis script** — one-shot data analysis (R/Python/Julia notebook style) where the script is not a reusable abstraction; it produces tables/figures/reports for human consumption
 - **Primary deliverable is updating existing prose without changing behavior** — typo fixes, wording cleanup, restructuring documents
 - **Multi-file but each file is independent** — parallel doc updates, parallel script tweaks; multi-file count without interdependent contract is not a routing signal
+
+> **`type=meeting` is evaluated BEFORE Layer 1** (see the ordered list above): a meeting issue's deliberation deliverable would otherwise match this section's narrative disqualifier and be force-`Simple`'d, so Layer 1 never sees a meeting issue (round-1 verify HIGH-2 fix).
+>
+> **Interaction with the #129 hard gate**: this "multi-file but each file independent → Simple" rule and the hard gate's "≥ 5 files" trigger are reconciled by scoping the hard gate to *one interdependent concept scattered across files*. Genuinely independent files (this bullet) stay Simple; a single concept spread across ≥ 5 files escalates to Plan. The two never fire on the same input with opposite verdicts.
 
 **Rationale**: Plan's value is the approval checkpoint; Spectra's value is the spec contract. Narrative is fluid by design (evolves with reviewer feedback). Ad-hoc analysis is similar — once the question is answered, the script is archived. IDD's checklist + closing summary already provide sufficient audit trail.
 
@@ -73,18 +79,21 @@ Whether Layer V triggers or not, Step 3.4 PATCHes the just-posted Diagnosis comm
 
 When `idd-diagnose` runs under `idd-all` UNATTENDED MODE directive, Layer V still scores but does not present `AskUserQuestion`. It auto-applies `proceed anyway` and records `[Layer V: V1=N V4=M, clarify-default skipped under unattended mode, defaulting to proceed]` in the audit trail. Same pattern as Plan tier under unattended mode (`/idd-plan` EnterPlanMode is also skipped).
 
-### Layer evaluation order (5-layer)
+**`type=meeting` exception**: a meeting issue skips Layer V entirely (the Step 3.4 `type=meeting` short-circuit runs in both attended and unattended mode), so no V1/V4 scoring and no Layer V audit line apply — meeting-first routing precedes Layer V regardless of mode.
 
-| Layer 1 hit | Layer V hit | Layer 2 hit | Layer 3 hit | Layer P hit | Verdict             |
-|-------------|-------------|-------------|-------------|-------------|---------------------|
-| yes         | (skipped)   | (skipped)   | (skipped)   | (skipped)   | Simple              |
-| no          | yes (escalate) | (skipped) | (skipped)  | (skipped)   | `Plan via Layer V`  |
-| no          | yes (proceed/clarify) | yes | yes      | (any)       | Spectra             |
-| no          | yes (proceed/clarify) | no  | (any)    | yes         | Plan                |
-| no          | yes (proceed/clarify) | no  | (any)    | no          | Simple              |
-| no          | no (≤3)     | yes         | yes         | (any)       | Spectra             |
-| no          | no (≤3)     | no          | (any)       | yes         | Plan                |
-| no          | no (≤3)     | no          | (any)       | no          | Simple              |
+### Layer evaluation order (7-step, meeting-first)
+
+Columns are evaluated left→right; the first decisive column wins. **Hard gate hit** = the #129 MUST-trigger fired (≥ 5 files of one interdependent concept OR a shared abstraction). `(skipped)` = an earlier column already decided the verdict.
+
+| type=meeting | Layer 1 hit | Layer V hit | Layer 2+3 hit | Hard gate hit | Layer P hit | Verdict                          |
+|--------------|-------------|-------------|---------------|---------------|-------------|----------------------------------|
+| yes          | (skipped)   | (skipped)   | (skipped)     | (skipped)     | (skipped)   | meeting Strategy (no Simple/Plan verdict) |
+| no           | yes         | (skipped)   | (skipped)     | (skipped)     | (skipped)   | Simple                           |
+| no           | no          | yes (escalate) | (skipped)  | (skipped)     | (skipped)   | `Plan via Layer V`               |
+| no           | no          | (proceed/≤3) | yes          | (any)         | (any)       | Spectra                          |
+| no           | no          | (proceed/≤3) | no           | yes           | (any)       | Plan (hard gate)                 |
+| no           | no          | (proceed/≤3) | no           | no            | yes         | Plan                             |
+| no           | no          | (proceed/≤3) | no           | no            | no          | Simple (default)                 |
 
 ### Backward compatibility
 
@@ -138,9 +147,20 @@ The single discriminator is **"published API/protocol for future callers"**:
 
 When in doubt, ask: **"Will a future engineer / future caller check the spec to know how to use this?"** Yes → Spectra. No → Plan.
 
+## Hard Gate (#129, MUST-trigger, layered above Layer P)
+
+A MUST-trigger hard gate is evaluated above Layer P. `/idd-diagnose` runs before implementation, so no diff exists yet — the hard gate is an **AI scope estimate** (disclosed with reasons + concrete anchors per [`attribute-assessment`](../../../.claude/rules/attribute-assessment.md)), not a diff-time mechanical count.
+
+It forces the `Plan` tier when EITHER holds (OR):
+
+1. **≥ 5 files of one interdependent concept** — threshold **N = 5**. The trigger is "one conceptual change scattered across ≥ 5 files", NOT a raw file count: genuinely-independent multi-file changes (parallel doc updates / independent script tweaks) stay Simple via Layer 1's "Multi-file but each file independent" disqualifier and do NOT fire the hard gate (round-1 verify HIGH-7 fix — resolves the hard-gate-vs-Layer-1 contradiction). Conservative to protect the `Simple` default (`3 = aggressive, 5 = conservative`); N is the design's one tunable knob. 5 rather than 3: a legitimate small change (impl + test + doc) commonly touches 3 files, so N = 3 over-triggers; 5 is the reliable "one concept scattered across many places" signal (aligns with the #44/#47 failure class — CR/PTSR/PCQ sharing one scoring helper is a scattered single concept, not independent files).
+2. **Modifies a shared abstraction** — a data structure, helper interface, or constants set estimated to be **referenced by ≥ 2 other files**. Estimated from the issue description plus reference lookups in existing code.
+
+The hard gate **only escalates**: it **does not invert** the `Simple` default. When it fires → force `Plan`. When it does not fire → routing **falls through to Layer P** and the `Simple` default is preserved. The gate is additive, not a new baseline — it lifts large multi-file / shared-abstraction changes from Simple to Plan without dragging small changes into the plan-mode approval gate (the rejected alternative — inverting to Default-Plan — was declined by the user; over-trigger cost exceeds the residual under-plan risk). The gate evaluates only **non-meeting, code-centric issues**; Layer 1 has already forced narrative / independent-multi-file work to Simple before this point.
+
 ## Layer P: Plan signals (at least one = `Plan`)
 
-If Layer 1 didn't fire AND Layer 2 didn't qualify for Spectra, evaluate Plan signals:
+If Layer 1 didn't fire AND Layer 2 didn't qualify for Spectra AND the hard gate didn't fire, evaluate Plan signals:
 
 - **2+ files with sequence dependency** — file A's changes affect what file B's changes must do; can't parallelize the edits
 - **Strategy has 5+ ordered steps** — sequential complexity benefits from explicit checkpoint before execution
@@ -219,7 +239,7 @@ New diagnosis comments (v2.36.0+) MUST emit `Spectra` — `SDD-warranted` is rea
 4. **Close triggers archive (Spectra only)** — `idd-close` should also `spectra-archive` for Spectra changes
 5. **Discuss-first for Spectra** — `idd-diagnose` must route Spectra issues to `spectra-discuss` by default; only bypass when the user explicitly opts out during the Step 4 routing prompt
 6. **Plan-mode approval gate** — `idd-plan` MUST use `EnterPlanMode` + present full Implementation Plan + `ExitPlanMode` for user approval BEFORE any tool that modifies state. No silent fallthrough to TDD.
-7. **Disqualifiers are evaluated first** — narrative / ad-hoc / no-caller deliverables route to `Simple` even if Plan signals or Spectra signals technically match. The disqualifier protects against pattern-matching scope hints into the heavier tiers.
+7. **`type=meeting` is evaluated first, then Layer 1 disqualifiers** — the `type=meeting` branch splits before any complexity scoring (deterministic type field). For non-meeting issues, Layer 1 disqualifiers are next: narrative / ad-hoc / no-caller deliverables route to `Simple` even if Plan signals or Spectra signals technically match. The disqualifier protects against pattern-matching scope hints into the heavier tiers.
 
 ## Retrospective check (motivating examples)
 

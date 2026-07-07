@@ -524,9 +524,9 @@ echo "  3) 全部存好後告訴我「ok」，skill 會接手 upload + 嵌入 is
 缺少的話詢問使用者：
 
 1. **Title** — 一句話描述問題
-2. **Type** — bug / feature / refactor / docs
+2. **Type** — bug / feature / refactor / docs / meeting（`meeting` = 使用者驅動的審議 / 決策工作，不是 code change — 走專屬的 diagnose Strategy / plan skip-chain / decision→action closing，見 [`rules/sdd-integration.md`](../../rules/sdd-integration.md) 與 idd-diagnose Step 3.5）
 3. **Priority** — P0（立即）/ P1（本週）/ P2（排程）/ P3（有空再做）
-4. **Description** — 問題描述（bug: 重現步驟 + expected + actual；feature: 需求 + 目的）
+4. **Description** — 問題描述（bug: 重現步驟 + expected + actual；feature: 需求 + 目的；meeting: 議題 + 待決策點）
 5. **Stakeholders（v2.32.0+，可選）** — 若需要在 issue body 中 tag 人，使用 `--mention <login>[,<login>...]` flag 或自然語言（"tag X"）。**任何 @xxx 必走 [`rules/tagging-collaborators.md`](../../rules/tagging-collaborators.md) 5 步協定**（gh api → fuzzy match → AskUserQuestion fallback → @login 不用 display name → post 前 verify）。違反 = 通知錯人，不可逆。派送時把 resolved logins 帶進 `gh-egress.sh --mention-attested <login1,login2>`（#117 unconditional mention net）；非 mention 的附帶 `@xxx` token 一律 backtick-escape。
    實作：resolution 完成後設 `MENTION_ATTESTED="login1,login2"`（無 mention 時留空 — 模板的 `${MENTION_ATTESTED:+...}` 條件式自動省略 flag）。
 
@@ -631,7 +631,7 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" create \
 {Plain language interpretation}
 
 ## Type
-{bug / feature / refactor / docs}
+{bug / feature / refactor / docs / meeting}
 
 ## Expected
 ...
@@ -1074,6 +1074,8 @@ options:
 > **⚠ CI / `/loop` callers (v2.64.0+, #107)**: Step 5 terminal output expanded from metadata-only (`number / URL / labels / type`) to also echoing the rendered `## Type` / `## Expected` / `## Actual` + plain-language interpretation. If your script hard-parses Step 5 output for the metadata fields only, add a `-m 1` / first-N-lines guard or grep specifically for the `issue.*#NNN.*created` line — the new echo paragraphs follow it. (Parallel precedent: `--no-multi-finding` CI warning below.)
 
 提示下一步：`/issue-driven-dev:idd-diagnose #NNN`
+
+> **Pre-implementation staging hand-off（#111，非綁定）**：若這是 design-heavy issue（預期會走 Plan / Spectra、方向未定），在 Step 5 摘要**額外印一行非綁定 pointer** —— `→ 若要先 brainstorm 對齊方向: superpowers:brainstorming`。這是**非綁定建議**：idd-issue **不** invoke `superpowers:brainstorming`，由使用者自行決定是否跟進（見 README「IDD ↔ superpowers stage mapping」）。
 
 > **CRITICAL: 建立 issue 後必須停止。不要自動開始 diagnose 或 implement。**
 > Issue 建立是人的決定點 — 人決定優先級、分配、時機。
