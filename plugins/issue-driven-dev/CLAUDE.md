@@ -348,6 +348,8 @@ IDD 把 checkbox 當成**契約**，不是願望清單。`idd-implement` 會 boo
 | `Problem` / `Repro` / `Workaround` / `Expected` / `Actual` | ❌ |
 | _其他未列出的標題_ | ❌（保守：只掃白名單）|
 
+> **`type=meeting` 例外（#57）**：meeting issue **不走**本 generic checklist gate；改由 `idd-close` 的 **meeting-specific gate** 掃 authoritative meeting deliverable（approved Meeting Plan 的 Phase C，退回 diagnose Strategy deliberation 的 Phase C），每個 `- [ ]` 行動項需 disposition。詳見 `idd-close` SKILL.md「Meeting close」段。
+
 ### 去重規則
 
 同一個 issue 可能有多個 comments 含相同 source 標題（例如 re-run `idd-implement` 後發了兩個 `## Implementation Complete`）。Gate check **只看最後一個**（按 comment `createdAt` desc），那是最新的 source of truth。
