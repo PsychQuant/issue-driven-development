@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.93.0] - 2026-07-08
+
+Reshape Plan / pre-implementation tier — Cluster C (#129 #57 #111), delivered via the `reshape-plan-preimpl-tier` Spectra change (PR #249). Three ratified decisions designed together because #129 and #57 both alter `idd-diagnose` Step 3.5 routing.
+
+### Added
+
+- **`meeting` first-class issue type (#57)** — meeting-first routing: a deterministic `type=meeting` field is evaluated **before** the Layer 1 disqualifier / Layer V / Spectra / #129 hard gate / Layer P (`idd-diagnose` Step 3.4 short-circuit + Step 3.5 first step). Meeting issues get a Phase A/B/C deliberation Strategy (agenda / decision points / action items) instead of the code-centric Files & Changes, an `idd-plan` skip-chain (no `/idd-implement` TDD loop), and a **self-contained `idd-close` gate**: `type=meeting` bypasses the generic checklist gate and instead scans the authoritative meeting deliverable (latest `## Meeting Plan` Phase C → fallback to the diagnose `### Strategy` Phase C → block on neither), each action item requiring a `[x]`/`[~]`/`[-]` disposition; closing = decision→action mapping, no `/idd-verify`. New spec `openspec/specs/meeting-issue-type/`; drift-guard `scripts/tests/meeting-issue-type/` (37 assertions).
+- **Complexity hard gate (#129)** — a MUST-trigger escalation to Plan when a change touches **≥5 files of one interdependent concept OR a shared abstraction** (data structure / helper interface / constants used by many callers). Layered *above* Layer P, escalate-only; the Simple default is preserved (no over-trigger flip). Wording keys on "interdependent concept" rather than bare file count so N unrelated single-file edits don't falsely escalate. New spec `openspec/specs/complexity-hard-gate/`; drift-guard `scripts/tests/complexity-hard-gate/` (44 assertions).
+
+### Changed
+
+- **superpowers pre-implementation hand-off (#111)** — a README IDD ↔ superpowers stage-mapping table (idd-issue / brainstorming / writing-plans / idd-implement / idd-verify / idd-close, marking verify ensemble + close audit trail as IDD-only) plus a **non-binding** `idd-issue` Step 5 pointer (design-heavy issues print `→ 若要先 brainstorm 對齊方向: superpowers:brainstorming`; the skill does not auto-invoke). No self-built `idd-brainstorm`/`idd-write-plan` skill — delegating to the superpowers hard dependency, per `deep-integration-over-hardcode`. Spec `openspec/specs/superpowers-integration/` extended (+8 requirements); drift-guard `scripts/tests/superpowers-staging/` (12 assertions, incl. a "pointer ≠ delegation" invariant).
+
+Verified across 5 rounds of 6-AI adversarial ensemble review (routing-doc drift → stale normative artifacts → meeting-gate self-contained redesign replacing a leaky whitelist bolt-on → full Spectra-omission sweep → operational meeting-gate defects). Drift-guards lock the mechanisms, not just canonical strings.
+
 ## [2.92.1] - 2026-07-06
 
 Hotfix for a load-breaking regression in 2.92.0.
