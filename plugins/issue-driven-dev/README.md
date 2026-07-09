@@ -206,6 +206,18 @@ attachments_release: "attachments"
 ---
 ```
 
+### Selective auto-tag（v2.94.0, #85）
+
+IDD tags two milestones so you can jump back to a stable checkpoint with `git checkout` instead of hunting commit hashes: `idd-{N}-baseline` (placed by `idd-issue` on main's HEAD when the issue opens — the rollback anchor) and `idd-{N}-verified` (placed by `idd-verify` on the Aggregate-PASS snapshot — review-ready). Only these two points are tagged (no `diagnose`/`plan`/`implement` tags), so the tag namespace stays clean.
+
+**Default-ON**, opt-out via config. Tagging includes a `git push` (a repo-wide side effect), is idempotent (existing tag → skip), and graceful-skips on any push failure (never aborts the workflow). Turn it off with:
+
+```json
+{ "auto_tag": { "enabled": false } }
+```
+
+Full schema (`enabled` / `baseline_format` / `verified_format` / `push_remote`) in [references/config-protocol.md](references/config-protocol.md) → `auto_tag` field.
+
 ## Deep Integrations（深度整合套件總覽）
 
 IDD 遵循「**深度整合 >> hard-coded**」原則（#209/#214）：生態系已有 canonical 套件時依賴它、不在內部複製等價邏輯。每個整合的綁定形狀與缺席行為：

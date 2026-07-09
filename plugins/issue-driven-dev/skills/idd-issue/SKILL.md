@@ -112,6 +112,7 @@ TaskCreate(name="attach_images", description="上傳圖片到 attachments releas
 TaskCreate(name="create_milestone", description="來源為文件時自動建立 milestone 並指派(見 Step 4.5)")
 TaskCreate(name="clarity_surface", description="Step 4.6: delegate to /idd-clarify $NEW_ISSUE_NUMBER per IC clarity axis (skip in --multi-finding mode); failure → emit 'deferred' placeholder block + continue to Step 4.7 (per #135 v4 composable primitive design)")
 TaskCreate(name="linked_context_sister_sweep", description="Step 4.7: scan body draft + linked attachments + recent session conversation for sibling-concern markers (also / additionally / 另外 / 順便 / etc); if hits AskUserQuestion 3-option per canonical references/ic-r011-checkpoint.md; PATCH just-created issue body with `### Linked-Context Siblings Filed` audit trail (advisory, non-blocking, per IC_R011 #529)")
+TaskCreate(name="tag_baseline", description="Step 3.6 (#85): if config auto_tag.enabled (default on), tag idd-{N}-baseline at the local default-branch HEAD (rollback anchor) + git push push_remote. Idempotent (tag exists → skip + note); graceful-skip on push failure (never abort). Skip when auto_tag.enabled=false.")
 TaskCreate(name="report_and_stop", description="回報 issue number/URL(group 模式列全部 + cross-link),停下等使用者決定下一步")
 ```
 
@@ -962,6 +963,38 @@ AskUserQuestion:
 #### (d) Native relationship suggestion (deferred — lean-v1 不實作，disclosed)
 
 - [~] **Native relationship suggestion (deferred)** — body 內 `#N` 用 GitHub 2024+ GraphQL（`addBlockedByDependency` 等）建 structured relationship，比 body text reference 多 sidebar backlink。**本 cluster 刻意不做**，理由：(1) 複雜度/風險最高（需 relationship-type picker UI）；(2) #141 spec 自身將其框為「reuse v2.52.0+ `--blocked-by` code path」的後續工作，而該 path 尚未一般化成可獨立呼叫的 primitive；(3) design Q4 裁定 body text reference 本來就保留（與 native backlink 互補不重複），所以延後不損失現有 inline context。點亮條件：`--blocked-by` 的 GraphQL mutation 抽成可重用 helper 後，再接本 (d)。
+
+### Step 3.6: Baseline auto-tag（rollback anchor，v2.94.0+，#85）
+
+Issue 建立成功、拿到 `$NUMBER` 之後，`tag_baseline` step 在當前 repo 打一個 **rollback baseline** tag，標記「issue 開案當下的 main HEAD」，方便日後一秒切回開工前的乾淨狀態（`git checkout idd-{N}-baseline`），不用記 commit hash。
+
+**Config gate（預設 on，可 opt-out）** — 讀 walked-up config 的 `auto_tag`（schema 見 [`references/config-protocol.md`](../../references/config-protocol.md#auto_tag-field)）：
+
+```bash
+AUTO_TAG_ENABLED=$(jq -r '.auto_tag.enabled // true' "$CONFIG_PATH" 2>/dev/null || echo true)
+[ "$AUTO_TAG_ENABLED" = "false" ] && { echo "→ auto_tag disabled — skipping baseline tag"; }   # opt-out: skip entirely
+```
+
+啟用時：
+
+```bash
+BASELINE_FMT=$(jq -r '.auto_tag.baseline_format // "idd-{N}-baseline"' "$CONFIG_PATH" 2>/dev/null || echo "idd-{N}-baseline")
+PUSH_REMOTE=$(jq -r '.auto_tag.push_remote // "origin"' "$CONFIG_PATH" 2>/dev/null || echo origin)
+TAG="${BASELINE_FMT/\{N\}/$NUMBER}"                       # idd-{N}-baseline → idd-42-baseline
+DEFAULT_BRANCH=$(gh repo view "$GITHUB_REPO" --json defaultBranchRef -q .defaultBranchRef.name)
+
+# idempotent: a tag that already exists is skipped (re-running idd-issue never re-tags)
+if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+    echo "→ $TAG already exists — skip (idempotent)"
+else
+    # baseline = the LOCAL default-branch HEAD (where main was when the issue opened)
+    git tag "$TAG" "$DEFAULT_BRANCH" && git push "$PUSH_REMOTE" "$TAG" \
+        && echo "→ tagged $TAG at $DEFAULT_BRANCH HEAD + pushed to $PUSH_REMOTE" \
+        || echo "⚠ auto_tag baseline: git tag/push failed (fork / no push permission / rejected) — graceful-skip, continuing"
+fi
+```
+
+**鐵律 — graceful-skip，never abort**：tag 或 push 失敗（fork 無 push 權限、remote reject、default-branch 解析失敗等）**只 warn，絕不 abort** `idd-issue`（per IDD warn-continue pattern）。tag 是便利 checkpoint，不是 issue 建立的成敗條件。fork-aware：tag 打在當前 cwd 的 repo（Step 0.5 解析結果），push 到 `push_remote`（預設 `origin`）。intermediate step（diagnose / plan / implement）不 tag；phase-level tag 留手動。
 
 ### Step 4: 附加所有原始素材（鐵律：預設全保留）
 

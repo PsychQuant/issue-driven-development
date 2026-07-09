@@ -265,6 +265,7 @@ TaskCreate(name="recovery_protocol", description="Step 2.5 (NEW per #52): 缺 fi
 TaskCreate(name="wait_for_codex", description="等 Codex 背景任務完成,讀 /tmp/codex-verify-${NUMBER}.md")
 TaskCreate(name="merge_findings", description="合併 6 個來源 findings 去重,severity 取最高")
 TaskCreate(name="post_master_and_pointers", description="PR mode: master 貼到 PR + capture URL → 為每個 ref'd issue 貼 pointer comment；本地 mode: 貼到 issue（單 issue 直接貼／多 issue 用 SOP master+pointer）")
+TaskCreate(name="tag_verified", description="Step 4.5 (#85): if config auto_tag.enabled (default on) AND Aggregate PASS, tag idd-{N}-verified at the PR head (PR mode) / current HEAD (local mode) + git push. Idempotent + graceful-skip. Cluster: tag each ref'd #N. Skip on FAIL or auto_tag.enabled=false.")
 TaskCreate(name="restore_working_tree", description="PR mode 結束後 git checkout 回原 branch（Step 0.5 記住的）")
 TaskCreate(name="decide_next_action", description="根據 findings: 通過→idd-close / 有 findings→修正 / scope creep→新 issue")
 TaskCreate(name="triage_followup_issues", description="Step 5b: 分類 non-blocking findings → 問使用者要不要開新 issue，確認後批次建立")
@@ -910,6 +911,37 @@ Verified scope: #98, #105
 |---|----------|---------|--------|--------|
 | 2 | P3 | ... | agents:security | Follow-up |
 ```
+
+### Step 4.5: Verified auto-tag（review snapshot，v2.94.0+，#85）
+
+Master report 貼出、且 **Aggregate PASS** 後，`tag_verified` step 在 review-ready 的 snapshot 打 `idd-{N}-verified` tag —— 一個 stable handle，日後可直接 `git checkout idd-{N}-verified` 切回「verify 通過那一刻」的 code，或在 PR / issue comment 引用給 reviewer。**只在 PASS 打**（FAIL 不 tag —— snapshot 的價值是「這是驗過的版本」）。
+
+**Config gate（同 idd-issue baseline，預設 on）** — 讀 `auto_tag`（schema 見 [`references/config-protocol.md`](../../references/config-protocol.md#auto_tag-field)）：
+
+```bash
+# Only when Aggregate verdict == PASS
+[ "$AGGREGATE_VERDICT" != "PASS" ] && { echo "→ verify FAIL — no verified tag"; }   # FAIL: no snapshot tag
+AUTO_TAG_ENABLED=$(jq -r '.auto_tag.enabled // true' "$CONFIG_PATH" 2>/dev/null || echo true)
+[ "$AUTO_TAG_ENABLED" = "false" ] && { echo "→ auto_tag disabled — skipping verified tag"; }   # opt-out
+
+VERIFIED_FMT=$(jq -r '.auto_tag.verified_format // "idd-{N}-verified"' "$CONFIG_PATH" 2>/dev/null || echo "idd-{N}-verified")
+PUSH_REMOTE=$(jq -r '.auto_tag.push_remote // "origin"' "$CONFIG_PATH" 2>/dev/null || echo origin)
+# snapshot target: PR head (PR mode) / current HEAD (local mode)
+SNAPSHOT=$([ "$INPUT_SOURCE" = "pr" ] && echo "$PR_HEAD_SHA" || echo HEAD)
+
+for N in $ISSUE_NUMBERS; do                                # cluster: tag each ref'd #N
+    TAG="${VERIFIED_FMT/\{N\}/$N}"                          # idd-{N}-verified → idd-42-verified
+    if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+        echo "→ $TAG already exists — skip (idempotent)"    # re-verify never re-tags
+    else
+        git tag "$TAG" "$SNAPSHOT" && git push "$PUSH_REMOTE" "$TAG" \
+            && echo "→ tagged $TAG at verified snapshot + pushed" \
+            || echo "⚠ auto_tag verified: git tag/push failed — graceful-skip, continuing"
+    fi
+done
+```
+
+**鐵律 — graceful-skip，never abort**：同 baseline —— tag/push 失敗只 warn，絕不 abort verify（結果已 post，tag 是附加便利）。**Aggregate PASS 是唯一觸發條件**；FAIL run 不留 verified tag，避免把未過的 code 標成「已驗證」。cluster mode（多 `#N`）每個 issue 各打自己的 `idd-{N}-verified`。
 
 ### Step 5: 後續動作
 

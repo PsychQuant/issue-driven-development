@@ -480,6 +480,30 @@ An OPTIONAL identity registry so IDD can resolve a person's alias / email / disp
 
 **PII boundary (important).** `email` is personally-identifiable and MUST NOT live in a committed / public config. Keep the non-PII fields (`github_login` / `display_name` / `role` / `aliases`) in the normal walked-up config; put `email` only in a **private / gitignored** config layer. `idd-config validate` emits a PII reminder whenever it sees an `email` in a registry entry, so a leak into a tracked config is surfaced early. This mirrors the git-privacy boundary: a person's raw email is third-party PII, not your own derivative content.
 
+### `auto_tag` field
+
+An OPTIONAL object that turns on **selective git-tag automation** at two high-value IDD milestones (#85): `idd-issue` tags the rollback baseline, `idd-verify` tags the review-ready snapshot. Deliberately *selective* — only these two points get a tag, so a long-running repo doesn't accumulate hundreds of stale lifecycle tags.
+
+```json
+{
+  "auto_tag": {
+    "enabled": true,
+    "baseline_format": "idd-{N}-baseline",
+    "verified_format": "idd-{N}-verified",
+    "push_remote": "origin"
+  }
+}
+```
+
+| Field | Default | Meaning |
+|-------|---------|---------|
+| `enabled` | `true` | Master switch. **Default-ON**: with no config, `idd-issue` / `idd-verify` create + push these tags automatically. Set `enabled: false` to opt out completely. |
+| `baseline_format` | `idd-{N}-baseline` | Tag placed by `idd-issue` on the local default-branch HEAD at issue-open time (the rollback anchor). `{N}` = issue number. |
+| `verified_format` | `idd-{N}-verified` | Tag placed by `idd-verify` on the Aggregate-PASS snapshot (PR head in PR mode, current HEAD in local mode). |
+| `push_remote` | `origin` | Remote the tags are pushed to. |
+
+**Side-effect note (important).** Tag creation includes a `git push` to `push_remote` — a **repo-wide side effect** visible to everyone with the remote. Because the default is **ON**, a fresh IDD user gets `idd-{N}-baseline` / `idd-{N}-verified` tags on their remote without asking; `enabled: false` is the one-line opt-out. Tagging is **idempotent** (a tag that already exists is skipped, so re-runs never re-tag) and **graceful-skip** (a push failure on a fork / permission-denied / rejected remote warns and continues — it never aborts the `idd-issue` / `idd-verify` workflow). Intermediate lifecycle steps (`diagnose` / `plan` / `implement`) are deliberately **not** tagged; phase-level tagging stays manual.
+
 ## Resolution algorithm (canonical)
 
 ```
