@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.93.1] - 2026-07-09
+
+### Added
+
+- **Collaborator identity registry in idd-config (#86)** — an optional `collaborators[]` config field so IDD can resolve a person's alias / email / display-name → their GitHub `@login` **without guessing** (the hard rule from `rules/tagging-collaborators.md`). `github_login` is required (charset `A-Za-z0-9-`); `role` / `aliases` / `email` optional. **PII boundary**: `email` is personally-identifiable → private/gitignored config layer only, never committed/public, and `idd-config validate` emits a PII reminder when it sees one. `rules/tagging-collaborators.md` gains **Step 2.5**: consult the registry *first* as an accelerator (resolves nicknames / romanizations / student IDs the raw API list can't) — but a hit is still **existence-verified via `gh api users/<login>`** before any mention (the table can go stale), and a miss falls through to the Step 3 API fuzzy-match. `idd-config validate` checks `github_login` format, globally-unique `aliases`, and the PII reminder. New drift-guard `scripts/tests/collaborators-schema/test.sh` (12 assertions). Via PR #247.
+
 ## [2.93.0] - 2026-07-08
 
 Reshape Plan / pre-implementation tier — Cluster C (#129 #57 #111), delivered via the `reshape-plan-preimpl-tier` Spectra change (PR #249). Three ratified decisions designed together because #129 and #57 both alter `idd-diagnose` Step 3.5 routing.

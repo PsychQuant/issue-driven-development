@@ -1,7 +1,7 @@
 {
   "name": "issue-driven-dev",
   "description": "v2.92.0: /idd-all batch-drain release — 23 issues verified+closed via 16 PRs (#223, #229-#243), the plugin's largest self-dogfood. Added: unattended-contract (state-file signal + TTL, TTY heuristic removed, idd-all/chain dependency early gates #123/#222/#211); gh-egress unconditional @-mention net with --mention-attested escape-or-attest contract (#117) atop 6-item mechanical-net precision hardening (#203); idd-close Step 6.3 doc-sync sweep (#220); test aggregator + GitHub Actions CI, 21 suites (#217); idd-list blocked-state grouping + all-blocked banner (#84); config Mechanism 3.5 submodule routing (#162); check-plugin-presence enabled-state detection exit 3 (#212); monorepo host plugin disambiguation (#68); assert-helpers eval-content ban + safe output-grep pair (#188); diagnosis-detection contract fixtures (#61). Changed: parallel-ai-agents promoted to install-time dependency, vendored ensemble fork DELETED, idd-verify two-tier chain (#219); DA sequenced-spawn eliminates the #119 socket-crash polling window (#130); spectra-archive-post-ic --force-linked-issue vs --linked-issue intent separation (#172); worktree conventions unified on the managed helper (#169); bridge state migrated to .claude/.idd/state/bridge.json (#199); .gitattributes LF policy (#216); merge-completeness fixtures default-branch self-sufficiency (#224). Audits: dependency bindings vs deep-integration rule (#210), rules layering 12/12 (#215). Follow-ups filed: #225-#228.",
-  "version": "2.93.0",
+  "version": "2.93.1",
   "author": {
     "name": "Che Cheng"
   },
