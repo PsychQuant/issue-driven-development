@@ -921,15 +921,19 @@ Master report 貼出、且 **Aggregate PASS** 後，`tag_verified` step 在 revi
 ```bash
 # Only when Aggregate verdict == PASS
 [ "$AGGREGATE_VERDICT" != "PASS" ] && { echo "→ verify FAIL — no verified tag"; }   # FAIL: no snapshot tag
+# resolve the walked-up IDD config (new path first, legacy fallback — see the Configuration section)
+CONFIG_PATH=$(d="$PWD"; while [ "$d" != / ]; do for f in "$d/.claude/.idd/local.json" "$d/.claude/issue-driven-dev.local.json"; do [ -f "$f" ] && { echo "$f"; break 2; }; done; d=$(dirname "$d"); done)
 AUTO_TAG_ENABLED=$(jq -r '.auto_tag.enabled // true' "$CONFIG_PATH" 2>/dev/null || echo true)
 [ "$AUTO_TAG_ENABLED" = "false" ] && { echo "→ auto_tag disabled — skipping verified tag"; }   # opt-out
 
 VERIFIED_FMT=$(jq -r '.auto_tag.verified_format // "idd-{N}-verified"' "$CONFIG_PATH" 2>/dev/null || echo "idd-{N}-verified")
 PUSH_REMOTE=$(jq -r '.auto_tag.push_remote // "origin"' "$CONFIG_PATH" 2>/dev/null || echo origin)
-# snapshot target: PR head (PR mode) / current HEAD (local mode)
-SNAPSHOT=$([ "$INPUT_SOURCE" = "pr" ] && echo "$PR_HEAD_SHA" || echo HEAD)
+# snapshot = HEAD. tag_verified runs BEFORE restore_working_tree, so in PR mode
+# HEAD is still the PR head (Step 0.5 already ran `gh pr checkout`); in local
+# mode (--commits / --since) HEAD is the tree just verified. Either way = HEAD.
+SNAPSHOT=HEAD
 
-for N in $ISSUE_NUMBERS; do                                # cluster: tag each ref'd #N
+for N in $ISSUE_NUMBERS; do                                # cluster: tag each ref'd issue (#N set from Step 0.5)
     TAG="${VERIFIED_FMT/\{N\}/$N}"                          # idd-{N}-verified → idd-42-verified
     if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
         echo "→ $TAG already exists — skip (idempotent)"    # re-verify never re-tags
