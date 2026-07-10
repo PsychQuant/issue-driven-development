@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.94.0] - 2026-07-10
+
+### Added
+
+- **Selective git auto-tag (#85)** — IDD now tags two high-value milestones so you can jump back to a stable checkpoint with `git checkout` instead of hunting commit hashes: `idd-issue` tags `idd-{N}-baseline` at the local default-branch HEAD (the rollback anchor = where main was when the issue opened, Step 3.6), and `idd-verify` tags `idd-{N}-verified` at the Aggregate-PASS snapshot (review-ready, Step 4.5; cluster-aware, tags each ref'd `#N`). Only these two points are tagged — no `diagnose`/`plan`/`implement` tags — so the tag namespace stays clean (phase-level tagging stays manual by design). New config `auto_tag` (`enabled` **default-ON**, opt-out via `enabled: false`; `baseline_format` / `verified_format` / `push_remote`), documented in `references/config-protocol.md` with an explicit repo-wide-side-effect note (tag creation includes a `git push`). Tagging is **idempotent** (existing tag → skip; re-runs never re-tag) and **graceful-skip** on any push failure (fork / no-permission / rejected → warn + continue, never aborts the workflow). New drift-guard `scripts/tests/auto-tag/test.sh` (27 assertions, RED→GREEN). Via PR #250. Motivated by `PsychQuantHsu/psychophysical_representations#30` (an 8-phase rewrite that proved manual milestone tags are a near-zero-cost checkpoint handle).
+
 ## [2.93.1] - 2026-07-09
 
 ### Added
