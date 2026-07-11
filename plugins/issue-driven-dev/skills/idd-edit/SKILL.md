@@ -27,8 +27,8 @@ allowed-tools:
 
 **v2.81.0+ R4/R5 在 batch mode 下 per-target 評估**:
 - R4 (`--replace` 必要 scope) 一次套用全 batch
-- R5 (author check) **per-target**:N 個 targets 若 mixed OWNER + non-OWNER,目前 single-target 邏輯 refuse 第一個 non-OWNER target 並印 hint;`--override-user-content` 套用所有 targets(全 batch 啟用 override)
-- 完整 batch + R5 semantics (per-comment refuse vs transactional abort vs pre-flight scan) 設計 deferred to **[#158](https://github.com/PsychQuant/issue-driven-development/issues/158)** follow-up
+- R5 (author check) **per-target**:mixed OWNER + non-OWNER 批次採**語意 (i) per-comment refuse + 繼續**（#158 拍板 2026-07-11）— OWNER 的照做、non-OWNER 的逐條 refuse 記錄後 `continue`,絕不因單一 refuse 殺整批;`--override-user-content` 語意為 **all-targets + reason 共用**（全 batch 啟用 override,一個 reason 進所有 audit markers）
+- 批次結束輸出 outcome report（`edited / refused` + 顯著標記,見 Step 7.5）;exit contract:全數成功 → 0,任一 refused（M>0 → exit 4,單 target 退化等價 — 契約鎖於 tests/idd-edit fixture 14）
 
 完整契約見 [batch-and-cluster.md](../../references/batch-and-cluster.md)。罕見場景：跨 issue 的 typo 統一修、補同一段 errata note、把多個 stale comment 統一標 deprecated。
 
@@ -183,12 +183,31 @@ done
 **v2.81.0+ (#154 R3 fix for H7)**: Each resolved comment ID runs through the full pipeline (validate → fetch → preview → confirm → PATCH → verify) independently. Batch mode = N iterations of the same sequence, per-comment confirmation discipline preserved.
 
 ```bash
+EDITED_COUNT=0        # incremented after each successful per-target Step 7 verify
+REFUSED_TARGETS=()    # R5-refused comment ids (#158 semantics (i) — recorded, not fatal)
 for COMMENT_ID in "${RESOLVED_COMMENT_IDS[@]}"; do
     # === Steps 1.5 through 7 run here, per-target ===
     # The bash blocks below show single-target templates; in batch mode
     # they execute N times, once per resolved COMMENT_ID.
     # ...
 done
+```
+
+#### Step 7.5: Batch outcome report（#158，語意 (i) 落地）
+
+批次（含退化的單 target）跑完後**必須**輸出 outcome report — 部分成功絕不偽裝成全成功：
+
+```bash
+echo "── idd-edit batch outcome ──"
+echo "edited: $EDITED_COUNT / refused: ${#REFUSED_TARGETS[@]}"
+for rid in ${REFUSED_TARGETS[@]+"${REFUSED_TARGETS[@]}"}; do
+  echo "  ✗ REFUSED comment:$rid — non-OWNER（override: --override-user-content --reason='...'）"
+done
+# Exit contract（fixture 14）：M=0 → exit 0；M>0 → exit 4。
+# 單 target refuse 走同一路徑 = 現行可觀察行為不變。idd-edit 沿用自身碼空間
+# （R5 refuse=4）— 不套 #227 的 gh-egress 碼帶（那是 egress wrapper 專屬）。
+[ "${#REFUSED_TARGETS[@]}" -gt 0 ] && exit 4   # M>0 → exit 4
+exit 0
 ```
 ```
 
@@ -210,7 +229,10 @@ case $VALIDATE_EXIT in
       echo "Hint: errata target was user-authored; manually run:" >&2
       echo "  /idd-edit comment:$COMMENT_ID --prepend-note --override-user-content --reason='errata clarification per IDD discipline'" >&2
     fi
-    exit 4
+    # #158 語意 (i)：記錄後 continue,不中斷 batch（#158 語意 (i)）— 本 target 跳過
+    # Steps 2-7,其餘 targets 照常;單 target 退化等價（記錄 → loop 自然結束 → report → exit 4）。
+    REFUSED_TARGETS+=("$COMMENT_ID")
+    continue
     ;;
   *) exit $VALIDATE_EXIT ;;
 esac
