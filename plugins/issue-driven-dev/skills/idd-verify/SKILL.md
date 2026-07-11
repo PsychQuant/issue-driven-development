@@ -255,7 +255,7 @@ PAI_ENGINE="${PAI_DIR}workflows/ensemble-workflow.js"
 TaskCreate(name="resolve_input_source", description="Step 0.5: 解析 --pr / --commits / --branch / --since flag；都沒帶就跑 auto-detect（count Refs #N commits since origin/<default>，再 gh pr list 找 open PR），有歧義時 AskUserQuestion 確認")
 TaskCreate(name="gate_pr_correspondence", description="Step 0.7: PR mode 下強制檢查 issue↔PR 對應 — gh pr view --json body 抓 Refs #N，跟 user 指定的 issue 比對；PR 沒任何 Refs 或 user issue 不在 set 內 → abort 並告訴使用者怎麼修")
 TaskCreate(name="scan_pr_body_and_commits_trailers", description="Step 0.8: PR mode 下兩 source 偵測 auto-close trap — (1) gh pr view --json closingIssuesReferences 查 PR body 是否 linked-to-auto-close（GitHub 權威解析、所有 trailer 形式），(2) gh pr view --json commits 對每個 commit messageBody 跑 trap regex（補上 GitHub 不預計算的 commit-body channel — squash 後字串 land 在 main 觸發 auto-close）。任一非空則 warn — bypass /idd-close gate。Warn-only，不 abort")
-TaskCreate(name="get_diff_and_issue", description="依 input source 取 diff（gh pr diff / git diff HEAD~N / git diff origin/<default>...<branch>） + gh issue view,存 diff 到 /tmp 供 agents 讀取；PR mode 額外做 gh pr checkout 並記住原 branch")
+TaskCreate(name="get_diff_and_issue", description="依 input source 取 diff（gh pr diff / git diff HEAD~N / git diff origin/<default>...<branch>） + gh issue view,存 diff 到 /tmp 供 agents 讀取,並記 FROZEN_SHA=$(git rev-parse HEAD)（PR mode 記 PR head oid — #228 freshness 錨點）；PR mode 額外做 gh pr checkout 並記住原 branch")
 TaskCreate(name="check_attachments", description="確認 .claude/.idd/attachments/issue-NNN/ 存在,把 attachment 路徑塞進 reviewer agent prompt 作為 source-of-truth context。manifest 缺漏 → 警告繼續(reviewer 仍跑,但 verification 完整度受限)。依 rules/process-attachments.md。")
 TaskCreate(name="resolve_dispatch_model", description="解析 $AGENT_MODEL — IDD_AGENT_MODEL 未設 → opus；非法值 → abort with usage error（#205；兩個 backend 共用，Workflow args 傳 agentModel、manual 模板填 model）")
 TaskCreate(name="launch_parallel_reviewers", description="第一波 5 個 tool calls 同一 message: 4 lens Agent(subagent_type=general-purpose, model=$AGENT_MODEL) for requirements/logic/security/regression + 1 Bash codex(run_in_background:true)；DA 不在此波（#130 sequenced）。prompt 引用 attachment 路徑 + 強制 file-output rule (per #52)")
@@ -263,6 +263,7 @@ TaskCreate(name="spawn_sequenced_da", description="#130: 4 份 lens findings 檔
 TaskCreate(name="wait_for_claude_agents", description="4 lens Agent calls return 後 ls /tmp/verify_${NUMBER}_findings_*.md 確認 4 檔 non-empty（DA 檔在 sequenced spawn 後另計）;缺者進 Step 2.5 Recovery Protocol")
 TaskCreate(name="recovery_protocol", description="Step 2.5 (NEW per #52): 缺 findings 檔者 SendMessage retry with FULL context re-paste(不假設 context 倖存 idle/wake);二次 idle → coordinator self-review for that role + 在 master report 標 process gap")
 TaskCreate(name="wait_for_codex", description="等 Codex 背景任務完成,讀 /tmp/codex-verify-${NUMBER}.md")
+TaskCreate(name="freshness_gate", description="Step 2.9 (#228): merge/aggregate 前比對 FROZEN_SHA vs 當前 HEAD（PR mode: PR head oid）— 不一致 → 拒絕 aggregate,要求 re-freeze + 補審 delta round;一致才放行 merge")
 TaskCreate(name="merge_findings", description="合併 6 個來源 findings 去重,severity 取最高")
 TaskCreate(name="post_master_and_pointers", description="PR mode: master 貼到 PR + capture URL → 為每個 ref'd issue 貼 pointer comment；本地 mode: 貼到 issue（單 issue 直接貼／多 issue 用 SOP master+pointer）")
 TaskCreate(name="tag_verified", description="Step 4.5 (#85): if config auto_tag.enabled (default on) AND Aggregate PASS, tag idd-{N}-verified at the PR head (PR mode) / current HEAD (local mode) + git push. Idempotent + graceful-skip. Cluster: tag each ref'd #N. Skip on FAIL or auto_tag.enabled=false.")
@@ -772,6 +773,26 @@ Step 4 master report **必須** 標示 process gap：
 > **Why explicit process gap section?** Hiding "1 of 5 reviewers failed" inside aggregate metrics looks like clean PASS but is actually 4-AI not 5-AI ensemble. Verify discipline = explicitly mark engine degradation. Future maintainers reading old verify comments can spot when an Agent class was systematically failing (e.g. infrastructure issue, prompt bug) by grepping `Process Gaps` sections.
 
 ---
+
+### Step 2.9: Diff-freshness gate（v2.94+，#228）
+
+Merge / aggregate **之前**，驗證 ensemble 審的 snapshot 仍是出貨的 snapshot。動機（DA-CRIT-1，2026-07-06 live incident）：4 lens 審了 `59e4123` 的凍結 patch，+100 行的 R1-fix commit 於 17 分鐘後 mid-review 落地 — 凍結 diff 與 HEAD 靜默分歧，aggregate PASS 差點轉貼到沒人審過的 code，靠 DA 以 mtime/行數證據碰巧抓到。本 gate 把「碰巧抓到」升級為機械檢查。
+
+```bash
+# FROZEN_SHA 在 get_diff_and_issue 凍結 diff 時記錄（PR mode 用 PR head oid）
+CURRENT_SHA=$([ "$INPUT_SOURCE" = "pr" ] \
+  && gh pr view "$PR" --repo "$GITHUB_REPO" --json headRefOid -q .headRefOid \
+  || git rev-parse HEAD)
+
+if [ "$CURRENT_SHA" != "$FROZEN_SHA" ]; then
+  echo "✗ Diff-freshness gate: HEAD 已從 ${FROZEN_SHA:0:7} 移到 ${CURRENT_SHA:0:7} — ensemble verdicts 描述的是舊 snapshot。"
+  echo "  拒絕 aggregate。補救：re-freeze diff（重跑 get_diff_and_issue）+ 對 delta 補審一輪（R2 round），"
+  echo "  或 revert mid-review commits 後重比對。不得把 stale verdicts 轉貼到未審的 HEAD。"
+  # abort aggregate — findings 保留為 R1 素材,不作最終 verdict
+fi
+```
+
+**紀律句（normative，與 gate 互補）**：verify in-flight 期間不得 commit — orchestrator 收到 findings 的修復**累積到 round 結束**再一次 commit + 觸發下一 round（DA-CRIT-1 當次的處置，自此為正式紀律）。gate 是兜底，紀律是根治：兩者缺一，另一仍能守住。
 
 ### Step 3: 合併 Findings
 
