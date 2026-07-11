@@ -47,7 +47,7 @@ export FAKE_GH_ARGV="$WORK/argv"
 # a non-/Users absolute path so the .claude.json content-overlap net can be
 # proven to fire INDEPENDENTLY of the home-path net.
 export IDD_CLAUDE_JSON="$WORK/fixture-claude.json"
-printf '%s' '{"projects":{"/Users/fixtureuser/secret-lab":{"x":1},"/opt/priv/hidden-proj-xyz":{"y":2}},"mcpServers":{"tool":{"command":"/opt/homebrew/bin/uvx-tool"}}}' \
+printf '%s' '{"projects":{"/Users/fixtureuser/secret-lab":{"x":1},"/opt/priv/hidden-proj-xyz":{"y":2}},"mcpServers":{"tool":{"command":"/opt/homebrew/bin/uvx-tool","env":{"KEY_FILE":"/srv/secret-vault/che-key-abc"}}}}' \
   > "$IDD_CLAUDE_JSON"
 
 ATT=(--scrub-attested warn)
@@ -137,11 +137,9 @@ assert_exit "missing verb → usage error (exit 14)" 14 $?
 # ── #203 mechanical-net precision + edge-case hardening ─────────────────────
 # item 2: public tool path from mcpServers must NOT be treated as a leak
 # (content net scoped to the projects object when jq is available)
-if command -v jq >/dev/null 2>&1; then
-  bash "$SCRIPT" comment 5 --repo o/r \
-    --body "run it via /opt/homebrew/bin/uvx-tool instead" "${ATT[@]}" >/dev/null 2>&1
-  assert_exit "public mcpServers tool path NOT caught (#203 item 2, jq path) → dispatch (exit 0)" 0 $?
-fi
+bash "$SCRIPT" comment 5 --repo o/r \
+  --body "run it via /opt/homebrew/bin/uvx-tool instead" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "public mcpServers tool path NOT caught (#203 item 2 / #225 unified) → dispatch (exit 0)" 0 $?
 # item 2 regression: projects key still caught (both jq and fallback paths)
 bash "$SCRIPT" comment 5 --repo o/r \
   --body "reindex blew up on /opt/priv/hidden-proj-xyz again" "${ATT[@]}" >/dev/null 2>&1
@@ -224,14 +222,12 @@ assert_exit "split-token --mention-attested refused (#117, exit 14)" 14 $?
 # ── cluster verify in-scope fixes (R1 findings) ──────────────────────────────
 # fix 1 (sec 203-2 / logic LOW): jq PRESENT but ~/.claude.json malformed →
 # content net must fail CLOSED to the grep fallback, not silently disable
-if command -v jq >/dev/null 2>&1; then
-  export IDD_CLAUDE_JSON="$WORK/malformed-claude.json"
-  printf '%s' '{"projects":{"/opt/priv/hidden-mal-xyz":{"x":1},}' > "$IDD_CLAUDE_JSON"   # trailing comma = invalid JSON
-  bash "$SCRIPT" comment 5 --repo o/r \
-    --body "crash traced to /opt/priv/hidden-mal-xyz build" "${ATT[@]}" >/dev/null 2>&1
-  assert_exit "malformed claude.json + jq present → fallback net still catches (fix1, exit 10)" 10 $?
-  export IDD_CLAUDE_JSON="$WORK/fixture-claude.json"
-fi
+export IDD_CLAUDE_JSON="$WORK/malformed-claude.json"
+printf '%s' '{"projects":{"/opt/priv/hidden-mal-xyz":{"x":1},}' > "$IDD_CLAUDE_JSON"   # trailing comma = invalid JSON
+bash "$SCRIPT" comment 5 --repo o/r \
+  --body "crash traced to /opt/priv/hidden-mal-xyz build" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "malformed claude.json → parse-failure falls CLOSED to wide net (fix1/#225, exit 10)" 10 $?
+export IDD_CLAUDE_JSON="$WORK/fixture-claude.json"
 
 # fix 2 (sec 117-1): entity-encoded @ forms refused (decode-side notification risk)
 bash "$SCRIPT" comment 5 --repo o/r \
@@ -322,5 +318,19 @@ FAILGH="$WORK/fail-gh"
 printf '#!/usr/bin/env bash\nexit 4\n' > "$FAILGH"; chmod +x "$FAILGH"
 IDD_GH_BIN="$FAILGH" bash "$SCRIPT" comment 5 --repo o/r --body "clean prose" "${ATT[@]}" >/dev/null 2>&1
 assert_exit "gh native exit 4 passes through UNCHANGED (#227 band disambiguation)" 4 $?
+
+
+# ── #225 unified scan (python3) — non-projects sensitive paths, same everywhere ─
+# The motivating divergence: a secret-file path under mcpServers[].env dispatched
+# on jq machines (projects-only scope) but refused on no-jq machines (wide net).
+# The unified python3 parser scans projects keys ∪ path-shaped values under
+# sensitive key names — SAME result on every machine.
+bash "$SCRIPT" comment 5 --repo o/r \
+  --body "loader reads /srv/secret-vault/che-key-abc at boot" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "mcpServers env secret path caught (#225 unified taxonomy, exit 10)" 10 $?
+# non-sensitive prose sharing no config path still dispatches (no over-match)
+bash "$SCRIPT" comment 5 --repo o/r \
+  --body "we store vault material under /srv/other-vault/keyring generally" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "similar-but-absent path NOT caught (#225 no fuzzy matching) → dispatch (exit 0)" 0 $?
 
 print_summary "gh-egress"
