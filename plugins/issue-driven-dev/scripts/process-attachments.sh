@@ -15,7 +15,8 @@
 #   process-attachments.sh verify   <issue-number> [--repo owner/repo]
 #
 # Env:
-#   IDD_CALLER — name of calling skill (recorded in manifest fetched_by)
+#   IDD_CALLER — name of calling skill (recorded in manifest fetched_by);
+#                allowed values + semantics: references/idd-caller-registry.md (#161)
 #
 # Exit codes:
 #   0 — success / no attachments / up-to-date
