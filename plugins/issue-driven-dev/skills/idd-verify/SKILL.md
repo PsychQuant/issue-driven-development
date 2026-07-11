@@ -774,7 +774,7 @@ Step 4 master report **必須** 標示 process gap：
 
 ---
 
-### Step 2.9: Diff-freshness gate（v2.94+，#228）
+### Step 2.9: Diff-freshness gate（v2.95+，#228）
 
 Merge / aggregate **之前**，驗證 ensemble 審的 snapshot 仍是出貨的 snapshot。動機（DA-CRIT-1，2026-07-06 live incident）：4 lens 審了 `59e4123` 的凍結 patch，+100 行的 R1-fix commit 於 17 分鐘後 mid-review 落地 — 凍結 diff 與 HEAD 靜默分歧，aggregate PASS 差點轉貼到沒人審過的 code，靠 DA 以 mtime/行數證據碰巧抓到。本 gate 把「碰巧抓到」升級為機械檢查。
 

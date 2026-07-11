@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.95.0] - 2026-07-11
+
+### Added
+
+- **Discussions intake bridge (#221)** — GitHub Discussions (Q&A / Ideas) are a real intake channel IDD was blind to (che-ical-mcp discussion 105: an entire bug lifecycle invisible to `idd-list`). `idd-list --discussions` (**opt-in**, Step 2.7): `hasDiscussionsEnabled` probe (disabled / query failure → one-line skip, never aborts) → GraphQL fetch (first 50) → filter (Q&A/Ideas ∧ `answerChosenAt: null`) → dedup (any issue referencing the URL) → dedicated `Discussions (actionable)` block with `→ /idd-issue --from-discussion <url>` next-steps. `idd-issue --from-discussion <url|number>` (Step 1.7): seeds the draft with `## Provenance` (URL + author + verbatim blockquote of the opening post), flows through the unchanged pipeline, then drafts a back-reference reply — **draft-and-confirm; unattended never posts**. **Cardinal rule: never auto-file** — the bridge surfaces, the human judges. Contract + GraphQL templates single-sourced in `references/discussions-intake.md`. Spectra change `discussions-intake-bridge`; drift-guard `discussions-intake/` (30 assertions). Via PR #255.
+- **idd-verify diff-freshness gate (#228)** — `FROZEN_SHA` recorded at diff-freeze (PR head oid in PR mode); new Step 2.9 compares it against current HEAD before merge/aggregate — mismatch **refuses the aggregate** and requires re-freeze + a delta round (DA-CRIT-1 live-incident handling, now mechanical). Normative discipline: no mid-verify commits; fixes accumulate to round end. Drift-guard `verify-diff-freshness/` (10 assertions). Via PR #253.
+- **IDD_CALLER registry (#161)** — `references/idd-caller-registry.md` codifies the cross-skill env-var convention (5 current values, reader contract `fetched_by`, unset fallback `idd-skill`, deliberately-informal validation). Drift-guard `idd-caller-registry/` does a **dynamic tree sweep**: any future `IDD_CALLER=` value without a registry row turns RED — the review surface #154's silent 6th value lacked. Via PR #254.
+
 ## [2.94.0] - 2026-07-10
 
 ### Added
