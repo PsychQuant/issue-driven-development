@@ -57,10 +57,17 @@
 #   byte-for-byte the same as calling `gh issue <verb> ...` directly (backward
 #   compat: callers that capture `URL=$(... )` are unaffected).
 #
-# EXIT CODES
-#   0  dispatched (exec gh)          2  usage error (bad/missing verb / malformed args)
-#   5  unscannable --body-file (not a readable regular file, #203 item 3)
-#   3  attestation missing/invalid   4  mechanical net hit (refused)
+# EXIT CODES — wrapper-origin codes live in a dedicated refusal band >=10 (#227).
+#   INVARIANT: this wrapper never exits with its own code below 10; any exit <10
+#   observed by a caller is gh's OWN code flowing through the final `exec` (so an
+#   unattended caller can mechanically split "gate refusal -> fix content/args"
+#   from "gh failure -> fix auth/network" on $? alone).
+#   0   dispatched (exec gh -- gh's exit codes flow through from here, all <10)
+#   10  privacy net hit (absolute /Users/<name> path / verbatim ~/.claude.json content)
+#   11  mention net hit (unattested @login token / entity-encoded @ form)
+#   12  unscannable --body-file (not a readable regular file, #203 item 3)
+#   13  attestation missing/invalid (--scrub-attested absent or bad level)
+#   14  usage error (bad/missing verb, malformed/split-token args, flag missing its value)
 #
 # TEST OVERRIDES (test-only; never set in production)
 #   IDD_GH_BIN       gh binary to exec       (default: gh)
@@ -76,8 +83,8 @@ usage() {
 VERB="${1:-}"
 case "$VERB" in
   create|comment|edit) shift ;;
-  "") echo "✗ gh-egress: missing egress verb." >&2; usage; exit 2 ;;
-  *)  echo "✗ gh-egress: unknown egress verb '$VERB' (only create|comment|edit route through this gate)." >&2; usage; exit 2 ;;
+  "") echo "✗ gh-egress: missing egress verb." >&2; usage; exit 14 ;;
+  *)  echo "✗ gh-egress: unknown egress verb '$VERB' (only create|comment|edit route through this gate)." >&2; usage; exit 14 ;;
 esac
 
 # --- parse: pull out --scrub-attested, forward everything else verbatim -------
@@ -89,7 +96,7 @@ require_scannable_bodyfile() {
     echo "✗ gh-egress: REFUSED — --body-file '$1' is not a readable regular file." >&2
     echo "  stdin ('-'), FIFOs and process substitutions cannot be scanned without consuming the stream." >&2
     echo "  Write the body to a regular file first, then re-dispatch." >&2
-    exit 5
+    exit 12
   fi
 }
 
@@ -107,11 +114,11 @@ while [ $# -gt 0 ]; do
       # Same malformed-shape guard as --scrub-attested (#203 item 6 / #117).
       if [ -n "$next_is" ]; then
         echo "✗ gh-egress: malformed args — '--mention-attested' found where a value for --body/--title/--body-file was expected." >&2
-        exit 2
+        exit 14
       fi
       case "$arg" in
         --mention-attested)
-          [ $# -ge 2 ] || { echo "✗ gh-egress: --mention-attested needs a value." >&2; exit 3; }
+          [ $# -ge 2 ] || { echo "✗ gh-egress: --mention-attested needs a value." >&2; exit 14; }
           MENTION_ATTESTED="$2"; shift 2; continue ;;
         *)
           MENTION_ATTESTED="${arg#--mention-attested=}"; shift; continue ;;
@@ -123,11 +130,11 @@ while [ $# -gt 0 ]; do
       # prose would silently escape the scan. Refuse as a usage error.
       if [ -n "$next_is" ]; then
         echo "✗ gh-egress: malformed args — '--scrub-attested' found where a value for --body/--title/--body-file was expected (split-token attestation)." >&2
-        exit 2
+        exit 14
       fi
       case "$arg" in
         --scrub-attested)
-          [ $# -ge 2 ] || { echo "✗ gh-egress: --scrub-attested needs a value." >&2; exit 3; }
+          [ $# -ge 2 ] || { echo "✗ gh-egress: --scrub-attested needs a value." >&2; exit 14; }
           ATTESTED="$2"; shift 2; continue ;;
         *)
           ATTESTED="${arg#--scrub-attested=}"; shift; continue ;;
@@ -169,9 +176,9 @@ case "$ATTESTED" in
   "") echo "✗ gh-egress: REFUSED — privacy self-review attestation missing." >&2
       echo "  Run the privacy-scrubbing self-review (rules/privacy-scrubbing.md), then pass" >&2
       echo "  --scrub-attested <enforce|warn|light> (the resolved repo-visibility strictness)." >&2
-      exit 3 ;;
+      exit 13 ;;
   *)  echo "✗ gh-egress: REFUSED — invalid attestation level '$ATTESTED' (expected enforce|warn|light)." >&2
-      exit 3 ;;
+      exit 13 ;;
 esac
 
 # --- (b) mechanical last-resort net (3 zero-tolerance mechanical items) -------
@@ -185,7 +192,7 @@ for p in "${SCAN_PARTS[@]:-}"; do SCAN+="$p"$'\n'; done
 net_refuse() { echo "✗ gh-egress: REFUSED — mechanical net caught $1." >&2
   echo "  Zero-tolerance literal leak (belt-and-suspenders backstop; the LLM self-review normally catches this)." >&2
   echo "  Redact it (e.g. /Users/<name> → ~, drop the ~/.claude.json excerpt), then re-dispatch." >&2
-  exit 4; }
+  exit 10; }
 
 # 1. absolute macOS home path /Users/<name> — require a real name char right
 #    after the slash so the /Users/<name> placeholder (angle bracket) and a bare
@@ -263,7 +270,7 @@ MSCAN="$(printf '%s' "$MBODY" | awk '/^ ? ? ?```/{infence=!infence; next} !infen
 if printf '%s' "$MSCAN" | grep -qiE '&#0*64;([a-z0-9-]|&#)|&#x0*40;([a-z0-9-]|&#)|&commat;([a-z0-9-]|&#)'; then
   echo "✗ gh-egress: REFUSED — entity-encoded @-mention (e.g. &#64;login) in body." >&2
   echo "  Encoded forms can decode into live mentions on GitHub. Spell it as literal text in backticks instead." >&2
-  exit 4
+  exit 11
 fi
 UNATTESTED_MENTIONS=""
 while IFS= read -r login; do
@@ -283,7 +290,7 @@ if [ -n "$UNATTESTED_MENTIONS" ]; then
   echo "    - escape non-mention tokens in backticks (\`@name\`) — inert on GitHub, or" >&2
   echo "    - run the rules/tagging-collaborators.md 5-step protocol, then re-dispatch with" >&2
   echo "      --mention-attested <login1,login2> covering every intended mention." >&2
-  exit 4
+  exit 11
 fi
 
 # --- dispatch: byte-for-byte identical to raw `gh issue <verb> ...` -----------

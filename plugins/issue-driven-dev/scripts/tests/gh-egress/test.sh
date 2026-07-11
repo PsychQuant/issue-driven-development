@@ -54,7 +54,7 @@ ATT=(--scrub-attested warn)
 
 # ── §2.1 attestation enforcement ────────────────────────────────────────────
 bash "$SCRIPT" create --repo o/r --title T --body "fix parser in src/main.rs" >/dev/null 2>&1
-assert_exit "attestation absent → refuse dispatch (exit 3)" 3 $?
+assert_exit "attestation absent → refuse dispatch (exit 13)" 13 $?
 
 OUT="$(bash "$SCRIPT" create --repo o/r --title T --body "fix parser in src/main.rs" "${ATT[@]}" 2>/dev/null)"
 RC=$?
@@ -62,7 +62,7 @@ assert_exit "attestation present + clean → dispatch (exit 0)" 0 "$RC"
 assert_grep "dispatch stdout is gh output, byte-preserved" "issues/123" "$OUT"
 
 bash "$SCRIPT" create --repo o/r --title T --body "clean" --scrub-attested bogus >/dev/null 2>&1
-assert_exit "invalid attestation level → refuse (exit 3)" 3 $?
+assert_exit "invalid attestation level → refuse (exit 13)" 13 $?
 
 # attestation flag is consumed by the wrapper, never forwarded to gh
 bash "$SCRIPT" comment 5 --repo o/r --body "hello world" "${ATT[@]}" >/dev/null 2>&1
@@ -76,12 +76,12 @@ assert_grep  "gh argv keeps the body value"      "hello world" "$ARGV"
 # literal /Users/<name> caught even WITH a valid attestation (LLM missed it)
 bash "$SCRIPT" create --repo o/r --title T \
   --body "the script at /Users/alice/proj/run.sh keeps failing" "${ATT[@]}" >/dev/null 2>&1
-assert_exit "literal /Users/alice home path caught (exit 4)" 4 $?
+assert_exit "literal /Users/alice home path caught (exit 10)" 10 $?
 
 # home path can also hide in the title
 bash "$SCRIPT" create --repo o/r --title "crash in /Users/bob/tool" \
   --body "clean body" "${ATT[@]}" >/dev/null 2>&1
-assert_exit "literal home path in --title caught (exit 4)" 4 $?
+assert_exit "literal home path in --title caught (exit 10)" 10 $?
 
 # bare ~/.claude.json filename mention is PUBLIC info (#203 item 1) — the private
 # thing is its CONTENT (covered by the projects-key net below). Must dispatch.
@@ -93,7 +93,7 @@ assert_exit "bare .claude.json filename mention NOT caught (#203 item 1) → dis
 # proves the content-overlap net fires independently of the home-path net
 bash "$SCRIPT" comment 5 --repo o/r \
   --body "reindex blew up on /opt/priv/hidden-proj-xyz this morning" "${ATT[@]}" >/dev/null 2>&1
-assert_exit "verbatim .claude.json project-key content caught (exit 4)" 4 $?
+assert_exit "verbatim .claude.json project-key content caught (exit 10)" 10 $?
 
 # ── NOT over-matching (the wrapper must not do semantic matching) ────────────
 # /Users/<name> PLACEHOLDER (angle-bracketed) is documentation, not a real path
@@ -129,9 +129,9 @@ assert_eq "pass-through argv is byte-identical to raw gh (attestation stripped, 
 
 # ── verb / usage validation ─────────────────────────────────────────────────
 bash "$SCRIPT" delete 5 "${ATT[@]}" >/dev/null 2>&1
-assert_exit "unknown verb → usage error (exit 2)" 2 $?
+assert_exit "unknown verb → usage error (exit 14)" 14 $?
 bash "$SCRIPT" >/dev/null 2>&1
-assert_exit "missing verb → usage error (exit 2)" 2 $?
+assert_exit "missing verb → usage error (exit 14)" 14 $?
 
 
 # ── #203 mechanical-net precision + edge-case hardening ─────────────────────
@@ -145,17 +145,17 @@ fi
 # item 2 regression: projects key still caught (both jq and fallback paths)
 bash "$SCRIPT" comment 5 --repo o/r \
   --body "reindex blew up on /opt/priv/hidden-proj-xyz again" "${ATT[@]}" >/dev/null 2>&1
-assert_exit "projects key still caught after item-2 scoping (exit 4)" 4 $?
+assert_exit "projects key still caught after item-2 scoping (exit 10)" 10 $?
 
 # item 3: non-regular body-file (stdin dash / FIFO / process-sub) → refuse exit 5
 bash "$SCRIPT" create --repo o/r --title T --body-file - "${ATT[@]}" >/dev/null 2>&1
-assert_exit "body-file '-' (stdin) refused — unscannable (#203 item 3, exit 5)" 5 $?
+assert_exit "body-file '-' (stdin) refused — unscannable (#203 item 3, exit 12)" 12 $?
 # No writer process needed: the gate refuses on the not-a-regular-file check
 # WITHOUT opening the FIFO (a background writer would block forever on open()
 # and hold the test's stdout pipe hostage).
 FIFO="$WORK/fifo"; mkfifo "$FIFO"
 bash "$SCRIPT" create --repo o/r --title T --body-file "$FIFO" "${ATT[@]}" >/dev/null 2>&1
-assert_exit "body-file FIFO refused — unscannable (#203 item 3, exit 5)" 5 $?
+assert_exit "body-file FIFO refused — unscannable (#203 item 3, exit 12)" 12 $?
 # regular body-file still scanned + dispatched
 printf 'a clean body from file' > "$WORK/body.txt"
 bash "$SCRIPT" create --repo o/r --title T --body-file "$WORK/body.txt" "${ATT[@]}" >/dev/null 2>&1
@@ -163,7 +163,7 @@ assert_exit "regular body-file still dispatches (exit 0)" 0 $?
 # regular body-file with a leak is still caught (scan path intact)
 printf 'log at /Users/carol/x.log' > "$WORK/leak.txt"
 bash "$SCRIPT" create --repo o/r --title T --body-file "$WORK/leak.txt" "${ATT[@]}" >/dev/null 2>&1
-assert_exit "regular body-file leak still caught (exit 4)" 4 $?
+assert_exit "regular body-file leak still caught (exit 10)" 10 $?
 
 # item 4: HOME + IDD_CLAUDE_JSON both unset → no set -u crash, clean body dispatches
 env -u HOME -u IDD_CLAUDE_JSON IDD_GH_BIN="$STUB" FAKE_GH_ARGV="$FAKE_GH_ARGV" \
@@ -180,14 +180,14 @@ assert_eq "zero-arg dispatch has no phantom empty positional (#203 item 5, argv 
 
 # item 6: --scrub-attested where a --body value is expected → malformed, usage refuse
 bash "$SCRIPT" create --repo o/r --body --scrub-attested warn >/dev/null 2>&1
-assert_exit "split-token attestation refused (#203 item 6, exit 2)" 2 $?
+assert_exit "split-token attestation refused (#203 item 6, exit 14)" 14 $?
 
 
 # ── #117 unattested @-mention net ────────────────────────────────────────────
 # raw @login token without attestation → refuse (GitHub notification is irreversible)
 bash "$SCRIPT" comment 5 --repo o/r \
   --body "ping @nonexistentuser123 for a second look" "${ATT[@]}" >/dev/null 2>&1
-assert_exit "raw unattested @-mention refused (#117, exit 4)" 4 $?
+assert_exit "raw unattested @-mention refused (#117, exit 11)" 11 $?
 
 # backtick-escaped token is inert on GitHub → dispatch
 bash "$SCRIPT" comment 5 --repo o/r \
@@ -214,11 +214,11 @@ refute_grep "wrapper strips --mention-attested from gh argv (#117)" "--mention-a
 # attestation must cover EVERY token — partial coverage still refuses
 bash "$SCRIPT" comment 5 --repo o/r \
   --body "cc @kiki830621 and also @stranger99" "${ATT[@]}" --mention-attested kiki830621 >/dev/null 2>&1
-assert_exit "partially-attested mentions refused (#117, exit 4)" 4 $?
+assert_exit "partially-attested mentions refused (#117, exit 11)" 11 $?
 
 # split-token guard extends to --mention-attested
 bash "$SCRIPT" create --repo o/r --body --mention-attested kiki830621 "${ATT[@]}" >/dev/null 2>&1
-assert_exit "split-token --mention-attested refused (#117, exit 2)" 2 $?
+assert_exit "split-token --mention-attested refused (#117, exit 14)" 14 $?
 
 
 # ── cluster verify in-scope fixes (R1 findings) ──────────────────────────────
@@ -229,26 +229,26 @@ if command -v jq >/dev/null 2>&1; then
   printf '%s' '{"projects":{"/opt/priv/hidden-mal-xyz":{"x":1},}' > "$IDD_CLAUDE_JSON"   # trailing comma = invalid JSON
   bash "$SCRIPT" comment 5 --repo o/r \
     --body "crash traced to /opt/priv/hidden-mal-xyz build" "${ATT[@]}" >/dev/null 2>&1
-  assert_exit "malformed claude.json + jq present → fallback net still catches (fix1, exit 4)" 4 $?
+  assert_exit "malformed claude.json + jq present → fallback net still catches (fix1, exit 10)" 10 $?
   export IDD_CLAUDE_JSON="$WORK/fixture-claude.json"
 fi
 
 # fix 2 (sec 117-1): entity-encoded @ forms refused (decode-side notification risk)
 bash "$SCRIPT" comment 5 --repo o/r \
   --body "ping &#64;realuser about this" "${ATT[@]}" >/dev/null 2>&1
-assert_exit "entity-encoded &#64;login refused (fix2, exit 4)" 4 $?
+assert_exit "entity-encoded &#64;login refused (fix2, exit 11)" 11 $?
 bash "$SCRIPT" comment 5 --repo o/r \
   --body "or &#x40;realuser even" "${ATT[@]}" >/dev/null 2>&1
-assert_exit "entity-encoded &#x40;login refused (fix2, exit 4)" 4 $?
+assert_exit "entity-encoded &#x40;login refused (fix2, exit 11)" 11 $?
 
 # fix 3 (logic 117-1): attached short-form values are scanned like their spaced forms
 bash "$SCRIPT" create --repo o/r --title T "-blog at /Users/alice/secret.sh" "${ATT[@]}" >/dev/null 2>&1
-assert_exit "attached -b<body> home-path leak caught (fix3, exit 4)" 4 $?
+assert_exit "attached -b<body> home-path leak caught (fix3, exit 10)" 10 $?
 bash "$SCRIPT" create --repo o/r --title T "-bcc @sneakymention" "${ATT[@]}" >/dev/null 2>&1
-assert_exit "attached -b<body> raw mention caught (fix3, exit 4)" 4 $?
+assert_exit "attached -b<body> raw mention caught (fix3, exit 11)" 11 $?
 printf 'leak at /Users/dave/y.log' > "$WORK/att.txt"
 bash "$SCRIPT" create --repo o/r --title T "-F$WORK/att.txt" "${ATT[@]}" >/dev/null 2>&1
-assert_exit "attached -F<file> content scanned (fix3, exit 4)" 4 $?
+assert_exit "attached -F<file> content scanned (fix3, exit 10)" 10 $?
 
 # fix 4 (logic 117-2): mention net is BODY-only — title @tokens neither notify nor can be escaped
 bash "$SCRIPT" create --repo o/r --title "responsive @media breakpoints" \
@@ -257,13 +257,13 @@ assert_exit "title @token NOT fed to mention net (fix4) → dispatch (exit 0)" 0
 # privacy nets still scan titles (regression guard)
 bash "$SCRIPT" create --repo o/r --title "crash in /Users/eve/tool" \
   --body "clean" "${ATT[@]}" >/dev/null 2>&1
-assert_exit "title home-path still caught by privacy net (exit 4)" 4 $?
+assert_exit "title home-path still caught by privacy net (exit 10)" 10 $?
 
 # fix 5 (logic 117-3): 4-space-indented ``` is GFM literal code, NOT a fence —
 # must not toggle fence state and swallow a later real mention
 BODY_IND=$'see:\n    ```\ncc @realafteripseudofence' 
 bash "$SCRIPT" comment 5 --repo o/r --body "$BODY_IND" "${ATT[@]}" >/dev/null 2>&1
-assert_exit "indented pseudo-fence does not hide later mention (fix5, exit 4)" 4 $?
+assert_exit "indented pseudo-fence does not hide later mention (fix5, exit 11)" 11 $?
 
 
 # ── R2 fixes (DA-r2 findings on 4d2e87b) ─────────────────────────────────────
@@ -279,23 +279,23 @@ assert_exit "markdown link target @handle NOT caught (DA-117-B) → dispatch (ex
 # regression guard: raw mention NEXT TO a URL still caught
 bash "$SCRIPT" comment 5 --repo o/r \
   --body "see https://example.com/docs and ping @realperson about it" "${ATT[@]}" >/dev/null 2>&1
-assert_exit "raw mention adjacent to URL still caught (exit 4)" 4 $?
+assert_exit "raw mention adjacent to URL still caught (exit 11)" 11 $?
 
 
 # ── R3 fixes (R2-round findings) ─────────────────────────────────────────────
 # 117-A: URL-strip must only exempt autolink-eligible hosts (dot required);
 # no-dot/malformed hosts render as literal text where /@name IS a live mention
 bash "$SCRIPT" comment 5 --repo o/r --body "see https://@realuser now" "${ATT[@]}" >/dev/null 2>&1
-assert_exit "no-host URL @mention still caught (117-A, exit 4)" 4 $?
+assert_exit "no-host URL @mention still caught (117-A, exit 11)" 11 $?
 bash "$SCRIPT" comment 5 --repo o/r --body "at http://localhost/@realuser today" "${ATT[@]}" >/dev/null 2>&1
-assert_exit "no-dot-host URL @mention still caught (117-A, exit 4)" 4 $?
+assert_exit "no-dot-host URL @mention still caught (117-A, exit 11)" 11 $?
 # regression: dotted-host URLs stay exempt
 bash "$SCRIPT" comment 5 --repo o/r --body "docs https://unpkg.com/@angular/core here" "${ATT[@]}" >/dev/null 2>&1
 assert_exit "dotted-host URL @handle stays exempt (exit 0)" 0 $?
 
 # 117-B: fully-encoded username (&#64;&#114;ealuser) must also refuse
 bash "$SCRIPT" comment 5 --repo o/r --body "try &#64;&#114;ealuser form" "${ATT[@]}" >/dev/null 2>&1
-assert_exit "double-encoded entity mention refused (117-B, exit 4)" 4 $?
+assert_exit "double-encoded entity mention refused (117-B, exit 11)" 11 $?
 
 # 117-C: template expansion under zsh — the =-form must reach the wrapper as
 # ONE recognizable arg and dispatch a vetted mention (end-to-end)
@@ -312,5 +312,15 @@ fi
 # `--body -bX Y` : -bX consumes as attached body, Y must NOT be eaten as body
 bash "$SCRIPT" create --repo o/r --body "-binline body" --title T "${ATT[@]}" >/dev/null 2>&1
 assert_exit "attached form after pending --body keeps parser state sane (exit 0)" 0 $?
+
+
+# ── #227 exit-code band: wrapper-origin ≥10; gh native codes pass through <10 ──
+# stub gh exiting 4 (e.g. auth failure) must surface as 4 — NOT be confused with
+# a gate refusal (which now lives at ≥10). This is the caller-disambiguation
+# contract: rc<10 ⇒ gh's own; rc≥10 ⇒ wrapper refusal.
+FAILGH="$WORK/fail-gh"
+printf '#!/usr/bin/env bash\nexit 4\n' > "$FAILGH"; chmod +x "$FAILGH"
+IDD_GH_BIN="$FAILGH" bash "$SCRIPT" comment 5 --repo o/r --body "clean prose" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "gh native exit 4 passes through UNCHANGED (#227 band disambiguation)" 4 $?
 
 print_summary "gh-egress"
