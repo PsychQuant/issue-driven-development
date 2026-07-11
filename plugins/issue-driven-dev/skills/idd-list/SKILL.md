@@ -45,6 +45,7 @@ allowed-tools:
 TaskCreate(name="parse_args", description="Parse --state / --label / --limit / --repo flags 並 fallback 到 .claude/issue-driven-dev.local.json")
 TaskCreate(name="fetch_issues", description="gh issue list 取 number/title/state/labels/updatedAt/body/comments")
 TaskCreate(name="fetch_open_prs", description="Step 2.5 (v2.51+): gh pr list --state open --json number,body,title,isDraft,mergeable,headRefName,createdAt --limit 100 一次抓所有 open PR")
+TaskCreate(name="fetch_discussions", description="Step 2.7 (v2.95+, #221): 僅當 --discussions flag — probe hasDiscussionsEnabled（false → 一行 skip note）→ GraphQL 抓 open discussions（first 50）→ filter（Q&A/Ideas ∧ answerChosenAt null）→ dedup（issue body 含該 URL 者剔除）→ Discussions (actionable) 區塊。query 失敗降級 skip note，絕不 abort。無 flag 時 no-op")
 TaskCreate(name="extract_phase", description="從每個 issue body 的 Current Status → **Phase**: 抽出 phase；fallback 掃 comments 標題推斷")
 TaskCreate(name="build_issue_pr_index", description="Step 3.5 (v2.51+): client-side regex `#(\d{1,7})\b` scan PR body 找 issue refs (cap digits ≤7,過濾 #0),反向建 issue→PR map + cluster detection (refs ≥ 2 → cluster,leader = min(refs);若同 issue 被多 PR ref,sort by PR number asc 確保 deterministic order;cluster_members 寫入 pr_info 僅當 len ≥ 2)")
 TaskCreate(name="extract_blocked_state", description="Step 3.7 (v2.92+, #84): 抽 blocked 信號（Blocking 區塊/label/wait 類 next）→ blocked_reason 掛 entry")
@@ -66,6 +67,7 @@ TaskCreate(name="audit_closes_marker", description="Step 4 (v2.75.2+, #151): 若
 | `--limit` | `20` | 最多顯示筆數 |
 | `--repo` | _(from config)_ | 覆寫 config 的 repo |
 | `--audit-closes` | off | 旗標：標記 **CLOSED 但無 `## Closing Summary`** 的 issue（可能被 commit / PR-body close keyword auto-close 繞過 `/idd-close` gate，#151）。`--state` 仍是預設 `open` 時隱含切到 `closed`。底層 primitive：`scripts/check-closed-without-summary.sh`（standalone / cron 可直接呼叫）|
+| `--discussions` | off | **Opt-in**（#221）：同場 surface GitHub Discussions 的 actionable 項（Q&A/Ideas、未答、未被任何 issue 引用）。契約 + GraphQL 見 [`references/discussions-intake.md`](../../references/discussions-intake.md) |
 
 ### Step 2: Fetch Issues
 
@@ -97,6 +99,20 @@ gh pr list \
 **Limit 為何 100**:dogfood repo 通常 < 50 open PR;100 是保守上限。若 repo 真有 100+ open PR(罕見),`idd-list` 仍可用,但可能漏掉最舊的 PR。後續若有需求可加 `--pr-limit N` flag(目前 out-of-scope,見 issue #13 R2)。
 
 **為何只看 open PR**:list 的目的是「actionable next step」,closed/merged PR 對應 issue 應已 close 或 catch-up close,本 step 不重複處理。
+
+### Step 2.7: Fetch Discussions（opt-in，v2.95+，#221）
+
+**僅當 `--discussions` flag 存在**才執行；無 flag 完全 no-op（預設 invocation 零延遲、零噪音）。Discussions 是 IDD 全盲的 intake channel（動機案例：che-ical-mcp 的權限 bug 整條生命週期都在 Discussion 105，`/idd-list` 回報 0 open issues）。契約、GraphQL 樣板、schema 假設的 single source 是 [`references/discussions-intake.md`](../../references/discussions-intake.md) — 本 step 引用它，**不**內嵌分歧的 query 副本。
+
+流程（依 reference 的 actionable filter 順序 — 便宜的先）：
+
+1. **Probe**：`hasDiscussionsEnabled` query — `false` → 印一行 `(discussions disabled on this repo — skip)` 繼續；query 失敗（GraphQL schema 漂移 / 網路）→ 同樣降級為一行 skip note，**絕不 abort idd-list**
+2. **Fetch**：open discussions（first 50，UPDATED_AT desc；欄位：number / title / url / updatedAt / answerChosenAt / category.name / author.login）
+3. **Filter**：`category.name ∈ {"Q&A","Ideas"}` **且** `answerChosenAt == null`（已答 = 已解決，不 actionable — 留言情緒判讀明文不做）
+4. **Dedup**：對每個候選跑 `gh issue list --state all --search "<url>"` — 任何既有 issue（open 或 closed）引用該 URL → 剔除（已橋接）
+5. **Render**：issues 表格之後加 `Discussions (actionable)` 區塊，每列含 title / category / updated + suggested next `→ /idd-issue --from-discussion <url>`；footer 統計加 discussions 計數。**零 actionable → 一行 note（不沉默）**：`(discussions: 0 actionable of N open)`
+
+**鐵律（no-auto-file）**：本 step **絕不自動建 issue** — surface + 人判斷。機械式對每個「問題貌」Discussion 建案會製造開了就關的 noise（reference 檔 constraint 1 的動機案例）。
 
 ### Step 3: Extract Phase
 

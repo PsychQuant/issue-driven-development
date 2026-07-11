@@ -207,6 +207,10 @@ attachments_release: "attachments"
 ---
 ```
 
+### Discussions intake bridge（v2.95.0, #221）
+
+GitHub Discussions（Q&A / Ideas）是 Issues 之外的真實 intake channel — 本 plugin 現在能看到它：`idd-list --discussions`（**opt-in**）surface actionable 的 Discussions（未答 `answerChosenAt: null`、未被任何 issue 引用、Discussions 停用時優雅 no-op），`idd-issue --from-discussion <url|number>` 把一則 Discussion seed 成 issue（`## Provenance` + 原文 verbatim blockquote），建案後的 back-reference 回文 **draft-and-confirm**（unattended 絕不 auto-post）。**鐵律：絕不 auto-file** — bridge 只 surface，人來判斷。契約 + GraphQL 樣板：[references/discussions-intake.md](references/discussions-intake.md)。
+
 ### Selective auto-tag（v2.94.0, #85）
 
 IDD tags two milestones so you can jump back to a stable checkpoint with `git checkout` instead of hunting commit hashes: `idd-{N}-baseline` (placed by `idd-issue` on main's HEAD when the issue opens — the rollback anchor) and `idd-{N}-verified` (placed by `idd-verify` on the Aggregate-PASS snapshot — review-ready). Only these two points are tagged (no `diagnose`/`plan`/`implement` tags), so the tag namespace stays clean.
