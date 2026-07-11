@@ -207,26 +207,62 @@ fi
 #    this gate itself, e.g. #202/#203).
 #    A project-path string copied verbatim out of the user's actual
 #    ~/.claude.json `projects` object (the "project basename leaks local folder
-#    structure" threat). When jq is available the extraction is scoped to the
-#    projects object so PUBLIC tool paths (mcpServers[].command etc.) are not
-#    false-flagged (#203 item 2); without jq, fall back to the original
-#    whole-file wide net (fail-closed: over-refusing beats leaking).
+#    structure" threat), or a path-shaped value under a sensitive key name
+#    (mcpServers[].env secret files etc. — #225 taxonomy). Extraction is ONE
+#    python3 parser (#225) so every machine scans the same set; PUBLIC tool
+#    paths (mcpServers[].command etc.) are not false-flagged (#203 item 2).
 #    ${HOME:-} guard: both IDD_CLAUDE_JSON and HOME unset must not crash under
 #    set -u — the probe just skips (#203 item 4).
+#    #225 unified scan: ONE python3 parser replaces the old jq/no-jq dual path
+#    whose results diverged per machine (jq: projects-only; no-jq: whole-file
+#    wide — a secret path under mcpServers[].env dispatched on one machine and
+#    refused on the other). Taxonomy: projects keys ∪ path-shaped string values
+#    whose key (or any ancestor key) matches the tight sensitive-name set
+#    (key|token|secret|credential|password|auth|env). Public tool paths
+#    (mcpServers[].command / args) stay un-flagged (#203 item 2 preserved).
+#    python3 absent OR parse failure → fail CLOSED to the bash-only whole-file
+#    wide net (over-refusing beats leaking, #203 verify sec-2) — the degraded
+#    path only ever over-matches, never under-matches the unified set.
 CJSON="${IDD_CLAUDE_JSON:-${HOME:-}/.claude.json}"
 if [ -n "$SCAN" ] && [ -r "$CJSON" ]; then
-  JQ_OK=0
-  if command -v jq >/dev/null 2>&1; then
-    if KEYS_RAW="$(jq -r '(.projects // {}) | keys[]' "$CJSON" 2>/dev/null)"; then
-      JQ_OK=1
+  PY_OK=0
+  if command -v python3 >/dev/null 2>&1; then
+    if KEYS_RAW="$(python3 - "$CJSON" <<'PYEOF' 2>/dev/null
+import json, re, sys
+try:
+    cfg = json.load(open(sys.argv[1]))
+    if not isinstance(cfg, dict):
+        raise ValueError("top-level not an object")
+except Exception:
+    sys.exit(3)   # parse failure -> bash falls CLOSED to the wide net
+SENS = re.compile(r"(?i)(key|token|secret|credential|password|auth|env)")
+out = set()
+proj = cfg.get("projects")
+if isinstance(proj, dict):
+    out.update(k for k in proj if isinstance(k, str))
+def walk(node, sens):
+    if isinstance(node, dict):
+        for k, v in node.items():
+            walk(v, sens or bool(SENS.search(str(k))))
+    elif isinstance(node, list):
+        for v in node:
+            walk(v, sens)
+    elif isinstance(node, str) and sens:
+        out.add(node)
+walk({k: v for k, v in cfg.items() if k != "projects"}, False)
+for s_ in sorted(out):
+    print(s_)
+PYEOF
+)"; then
+      PY_OK=1
       KEYS="$(printf '%s\n' "$KEYS_RAW" \
                 | grep -E '^/.{11,}$' \
                 | grep -E '/[^/]+/' \
                 | sort -u)"
     fi
   fi
-  if [ "$JQ_OK" -eq 0 ]; then
-    # jq absent OR jq parse failure (malformed config) — fail CLOSED to the
+  if [ "$PY_OK" -eq 0 ]; then
+    # python3 absent OR parse failure (malformed config) — fail CLOSED to the
     # whole-file wide net; a silently disabled net would leak (#203 verify sec-2).
     KEYS="$(grep -oE '"(/[^"]{11,})"' "$CJSON" 2>/dev/null \
               | sed -E 's/^"//; s/"$//' \
