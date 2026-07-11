@@ -4,7 +4,7 @@ description: |
   建立 well-documented GitHub Issue。每個改動的起點。
   Use when: 報 bug、追蹤需求、任何需要正式記錄的工作。
   防止的失敗：改了東西卻沒有文件記錄「為什麼改」。
-argument-hint: "[description or path to .docx] [--target owner/repo]"
+argument-hint: "[description or path to .docx] [--target owner/repo] [--from-discussion url|number]"
 allowed-tools:
   - Bash(gh:*)
   - Bash(cp:*)
@@ -100,6 +100,7 @@ Fork 有兩種相反的使用情境：
 ```
 TaskCreate(name="detect_target_repo", description="Step 0.5: 解析 target — --target flag → walked-up config → predicate pre-resolve → fork/third-party detection (順序: fork E2 → third-party E-TP → E1)")
 TaskCreate(name="read_source", description="讀取來源(docx → mcp__che-word-mcp 讀文字 + 列圖片)")
+TaskCreate(name="seed_from_discussion", description="Step 1.7 (v2.95+, #221): 僅當 --from-discussion <url|number> — GraphQL 讀 discussion（含 node id）→ 以 ## Provenance（URL + author + opening post verbatim blockquote）seed 草稿 body → 走正常 pipeline；建案後 back-reference 回文 draft-and-confirm（unattended = draft-only 絕不 post，印於 Step 5 report）")
 TaskCreate(name="gather_info", description="Step 2: 蒐集 title / type / priority / description")
 TaskCreate(name="reresolve_target", description="Step 2.5: 用 title/labels 重評 content predicates,若新匹配 != tentative_default 則問使用者要不要切")
 TaskCreate(name="resolve_mentions", description="若有 --mention 或 description 含 @xxx，強制走 rules/tagging-collaborators.md 協定（v2.32.0+）")
@@ -519,6 +520,18 @@ done
 echo ""
 echo "  3) 全部存好後告訴我「ok」，skill 會接手 upload + 嵌入 issue body"
 ```
+
+### Step 1.7: Seed from a Discussion（`--from-discussion`，v2.95+，#221）
+
+**僅當 `--from-discussion <url|number>` 存在**才執行。GitHub Discussions 是 Issues 之外的真實 intake channel；本 step 把一則 Discussion 轉成 well-documented issue 的**種子**，但**絕不自動建 issue** — flag 本身就是顯式人為呼叫（no-auto-file 契約）。契約 + GraphQL 的 single source 是 [`references/discussions-intake.md`](../../references/discussions-intake.md)。
+
+1. **Fetch**：以 reference 的 single-discussion query 讀 title / body / url / author / category / `answerChosenAt` / node `id`（回文用）
+2. **已答警示**：`answerChosenAt != null` → 印 warning「此 discussion 已有選定答案（可能已解決）」但**不擋**（人已顯式指名，人判斷）
+3. **Seed 草稿 body**：開頭插入 `## Provenance` 段 — Discussion URL + author + category + **opening post 的 verbatim blockquote**（原文引用紀律：逐行 `>`）；title 預設沿用 discussion title（Step 2 可改）
+4. **正常 pipeline**：其餘照 Step 2 起流程走（type / priority / privacy gate / gh-egress）— seeding 不繞過任何既有 gate
+5. **Back-reference 回文（建案成功後）**：draft 回文 `Filed as <issue-url> — follow-up there.`，**draft-and-confirm**：
+   - **attended**：AskUserQuestion 確認 → 才跑 reference 的 `addDiscussionComment` mutation
+   - **unattended**：**絕不 auto-post** — 草稿印在 Step 5 report 標 `suggested reply (not posted)`，人事後自行貼
 
 ### Step 2: 蒐集資訊
 
