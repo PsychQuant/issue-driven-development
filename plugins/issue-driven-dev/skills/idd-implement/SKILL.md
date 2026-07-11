@@ -356,7 +356,10 @@ idd-implement 是 **orchestration**（issue tracking、plan、checklist、body s
 **Comment 到 issue**（留下實作計畫的紀錄）：
 
 ```bash
-gh issue comment $NUMBER --repo $GITHUB_REPO --body "$IMPLEMENTATION_PLAN"
+# （#226）egress 經 gh-egress.sh 派送：$SCRUB_LEVEL 依 rules/privacy-scrubbing.md 解析
+# （third-party=enforce / own-public=warn / private=light），派送前先跑 LLM 隱私自審；
+# 有 @mention 時另帶 --mention-attested（rules/tagging-collaborators.md 5-step 後）。
+bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $NUMBER --repo $GITHUB_REPO --body "$IMPLEMENTATION_PLAN" --scrub-attested "$SCRUB_LEVEL"
 ```
 
 ### Step 2.5: Bootstrap TodoList（non-Spectra case）
@@ -508,7 +511,7 @@ gh release upload $ATTACHMENTS_RELEASE {figure_files}.png \
 **Comment 實作摘要到 issue**（含圖片）：
 
 ```bash
-gh issue comment $NUMBER --repo $GITHUB_REPO --body "$(cat <<'EOF'
+bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $NUMBER --repo $GITHUB_REPO --scrub-attested "$SCRUB_LEVEL" --body "$(cat <<'EOF'
 ## Implementation Complete
 
 ### Checklist (synced from TaskList)

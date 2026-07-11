@@ -825,7 +825,7 @@ sed "s|__MASTER_URL__|$MASTER_URL|g" /tmp/pointer_template.md > /tmp/pointer.md
 
 # 3. Post pointer to each ref'd issue in parallel
 for I in $REFD_ISSUES; do
-  gh issue comment $I --repo $GITHUB_REPO --body-file /tmp/pointer.md &
+  bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $I --repo $GITHUB_REPO --body-file /tmp/pointer.md --scrub-attested "$SCRUB_LEVEL" &
 done
 wait
 ```
@@ -845,7 +845,10 @@ This issue's findings: see "#__ISSUE__" section in the linked report.
 單 issue：直接貼到 issue。
 
 ```bash
-gh issue comment $NUMBER --repo $GITHUB_REPO --body "$MERGED_FINDINGS"
+# （#226）egress 經 gh-egress.sh 派送：$SCRUB_LEVEL 依 rules/privacy-scrubbing.md 解析
+# （third-party=enforce / own-public=warn / private=light），派送前先跑 LLM 隱私自審；
+# 有 @mention 時另帶 --mention-attested（rules/tagging-collaborators.md 5-step 後）。
+bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $NUMBER --repo $GITHUB_REPO --body "$MERGED_FINDINGS" --scrub-attested "$SCRUB_LEVEL"
 ```
 
 Cluster（≥2 issue 共用一份 verify report）：
@@ -857,14 +860,14 @@ Cluster（≥2 issue 共用一份 verify report）：
 **Helper pattern**:
 ```bash
 # 1. Post master, capture URL
-MASTER_URL=$(gh issue comment $HUB_ISSUE --repo $REPO --body-file /tmp/master.md 2>&1 | tail -1)
+MASTER_URL=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $HUB_ISSUE --repo $REPO --body-file /tmp/master.md --scrub-attested "$SCRUB_LEVEL" 2>&1 | tail -1)
 
 # 2. Compose pointer body using captured URL
 sed "s|__MASTER_URL__|$MASTER_URL|g" /tmp/pointer_template.md > /tmp/pointer.md
 
 # 3. Post pointers in parallel
 for I in $POINTER_ISSUES; do
-  gh issue comment $I --repo $REPO --body-file /tmp/pointer.md &
+  bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $I --repo $REPO --body-file /tmp/pointer.md --scrub-attested "$SCRUB_LEVEL" &
 done
 wait
 ```

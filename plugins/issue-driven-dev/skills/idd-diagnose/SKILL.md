@@ -312,7 +312,10 @@ Exit code:
 ```
 
 ```bash
-gh issue comment $NUMBER --repo $GITHUB_REPO --body "$DIAGNOSIS_REPORT"
+# （#226）egress 經 gh-egress.sh 派送：$SCRUB_LEVEL 依 rules/privacy-scrubbing.md 解析
+# （third-party=enforce / own-public=warn / private=light），派送前先跑 LLM 隱私自審；
+# 有 @mention 時另帶 --mention-attested（rules/tagging-collaborators.md 5-step 後）。
+bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $NUMBER --repo $GITHUB_REPO --body "$DIAGNOSIS_REPORT" --scrub-attested "$SCRUB_LEVEL"
 ```
 
 > **`type=meeting` 的 meeting-adapted Diagnosis（#57）**：當 issue type 是 `meeting` 時，`### Strategy` 段改用 **Phase A/B/C 審議模板**，**而非 code-centric 的 Files & Changes / Strategy checklist**（meeting 是使用者驅動的審議 / 決策工作，不是 TDD loop，emit code-centric 計畫沒有意義）。meeting Diagnosis 的 Strategy 段落格式：
@@ -426,7 +429,7 @@ AskUserQuestion(
 
    (repeat for each Q/A pair)
    ```
-3. 用 `gh issue edit $NUMBER --repo $GITHUB_REPO --body "$NEW_BODY"` append 到 issue body(放在 `---` separator 上,Current Status 之前)
+3. 用 `bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit $NUMBER --repo $GITHUB_REPO --body "$NEW_BODY" --scrub-attested "$SCRUB_LEVEL"`（#226）append 到 issue body(放在 `---` separator 上,Current Status 之前)
 4. **重跑 Step 3.4**(Layer V 用更新後的 body 重新評分;若仍 trigger 再問,但循環不超過 2 次)+ Step 3.5
 
 **`proceed anyway`**:

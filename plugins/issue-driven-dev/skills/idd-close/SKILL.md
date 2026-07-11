@@ -226,7 +226,7 @@ TaskCreate(name="draft_closing_comment", description="起草 closing summary：c
 TaskCreate(name="review_with_user", description="顯示 closing comment 給使用者確認(若已明確 /idd-close 可省略此步)")
 TaskCreate(name="closing_followup_keyword_scan", description="Step 3.5: scan drafted closing summary for trigger phrases (follow-up / deferred / future / 之後 / 順便 etc); orphan mentions without #NNN cross-link → AskUserQuestion 3-option per canonical references/ic-r011-checkpoint.md; PATCH closing summary inline + add `### Closing Follow-ups Filed` audit trail (advisory, non-blocking, per IC_R011 #527)")
 TaskCreate(name="residue_acknowledgement", description="Step 3.6 (v2.66.0+, #105): read latest ## Diagnosis ### Residue section; if non-empty (not `(none)`), AskUserQuestion 3-option (still residue / file follow-up / skip); silent skip when residue is `(none)` or section missing. Audit trail PATCH to closing summary. Non-blocking, IC_R011 rollback respected. Closes the F3 write-only loop from #103.")
-TaskCreate(name="publish_and_close", description="gh issue comment + gh issue close")
+TaskCreate(name="publish_and_close", description="經 gh-egress.sh comment 派送 closing summary（#226，--scrub-attested）+ gh issue close")
 TaskCreate(name="auto_update_body", description="跑 /idd-update #NNN 把 issue body 的 Current Status phase 改 closed（Step 6，常被漏）")
 TaskCreate(name="doc_sync_sweep", description="Step 6.3 (v2.92+, #220): git ls-files case-insensitive 枚舉 README*/CLAUDE.md（含 localized 變體）→ per-file staleness 語意判定（以本 issue diff+summary 為據）→ 更新 commit 或 surface 到 closing summary「### Doc-sync 檢查」段；結果必留痕（N files checked 一行）")
 TaskCreate(name="distribution_sync_chain_detection", description="Step 6.5 (v2.56.0+, #45): infer_distribution_type detection per references/distribution-detection.md; if hit → AskUserQuestion 3-option (chain to plugin-update/mcp-deploy/cli-deploy / skip — manual later / not applicable); patch closing comment with ### Distribution Sync section. Silent skip for non-distribution repos. IDD_DISTRIBUTION_SYNC_PROMPT=false env var bypasses prompt entirely (still 1-line audit).")
@@ -612,7 +612,10 @@ The closing summary (Step 2 已 drafted but not yet posted, same pattern as Step
 # deprecation/warning messages can interleave with the URL, leading to a garbage ID.
 # `gh issue comment` prints ONLY the comment URL to stdout on success;errors go to stderr.
 # `set -e` (or explicit `|| abort`) guarantees we don't proceed with empty URL on failure.
-CLOSING_COMMENT_URL=$(gh issue comment $NUMBER --repo $GITHUB_REPO --body "$CLOSING_COMMENT") || {
+# （#226）egress 經 gh-egress.sh 派送：$SCRUB_LEVEL 依 rules/privacy-scrubbing.md 解析
+# （third-party=enforce / own-public=warn / private=light），派送前先跑 LLM 隱私自審；
+# 有 @mention 時另帶 --mention-attested（rules/tagging-collaborators.md 5-step 後）。
+CLOSING_COMMENT_URL=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $NUMBER --repo $GITHUB_REPO --body "$CLOSING_COMMENT" --scrub-attested "$SCRUB_LEVEL") || {
   echo "ERROR: gh issue comment failed for #$NUMBER" >&2
   exit 1
 }
