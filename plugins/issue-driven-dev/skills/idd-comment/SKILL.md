@@ -79,7 +79,7 @@ TaskCreate(name="validate_type_requirements", description="依 type 檢查必填
 TaskCreate(name="resolve_mentions", description="Step 1.5: 若有 --mention 或 body 含 @xxx，強制走 rules/tagging-collaborators.md 協定（gh api 取 collaborators → fuzzy match → AskUserQuestion fallback → 用 @login 不用 display name）")
 TaskCreate(name="build_comment_body", description="按 type 對應 template 組 markdown（emoji header + blockquote + body + metadata marker），插入已驗證的 @login mentions")
 TaskCreate(name="verify_mentions", description="post 前 grep body 的 @\\w+ 全部 cross-check 已驗證的 collaborator set；未驗證 token 直接 abort")
-TaskCreate(name="post_comment", description="gh issue comment #NNN 用 --body-file 避免 escape 問題；errata type 額外 auto-call idd-edit")
+TaskCreate(name="post_comment", description="經 gh-egress.sh comment 派送（#226；--scrub-attested 依 rules/privacy-scrubbing.md 解析，mention 帶 --mention-attested），--body-file 避免 escape 問題；errata type 額外 auto-call idd-edit")
 TaskCreate(name="report_result", description="輸出 ✓ Comment posted + URL；errata type 加報 idd-edit 結果")
 TaskCreate(name="auto_update_body", description="跑 /idd-update #NNN 同步 issue body Current Status（強制，常被漏；同 idd-close Step 6 模式）")
 TaskCreate(name="spectra_bridge_resume", description="Step 7: 若 SPECTRA_BRIDGE_ACTIVE，寫 .claude/.idd/state/bridge.json bookmark + 輸出 ↩ Resume spectra-discuss 區塊（rules/spectra-bridge.md）")
@@ -342,7 +342,11 @@ done
 ```bash
 # 用 --body-file 避免 backtick / 多行 escape 問題
 echo "$COMMENT_BODY" > /tmp/idd-comment-$$.md
-gh issue comment $NUMBER --repo $GITHUB_REPO --body-file /tmp/idd-comment-$$.md
+# （#226）egress 經 gh-egress.sh 派送：$SCRUB_LEVEL 依 rules/privacy-scrubbing.md 解析
+# （third-party=enforce / own-public=warn / private=light），派送前先跑 LLM 隱私自審；
+# 有 @mention 時另帶 --mention-attested（rules/tagging-collaborators.md 5-step 後）。
+bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $NUMBER --repo $GITHUB_REPO --body-file /tmp/idd-comment-$$.md \
+  --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}
 rm /tmp/idd-comment-$$.md
 ```
 
