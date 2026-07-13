@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.96.0] - 2026-07-13
+
+### Changed
+
+- **gh-egress refusal exit-code band ≥10 (#227)** — wrapper-origin codes decouple from gh's native space: 10=privacy net, 11=mention net, 12=unscannable body-file, 13=attestation missing/invalid, 14=usage/malformed args. Invariant: the wrapper never exits <10 on its own; any rc<10 is gh's code flowing through `exec` — unattended callers split "gate refusal → fix content" from "gh failure → fix auth" on `$?` alone. Tests re-anchored + a gh-native-passthrough guard (stub gh exit 4 surfaces as 4). Via cluster PR #256.
+- **Unified python3 content-net scan (#225)** — one python3 parser replaces the jq/no-jq dual path whose results diverged per machine (a secret path under `mcpServers[].env` dispatched on jq machines, refused on no-jq ones). Taxonomy: projects keys ∪ path-shaped string values under sensitive key names (`key|token|secret|credential|password|auth|env`); public tool paths stay un-flagged. python3 absent / parse failure fails CLOSED to the bash-only wide net. Via cluster PR #256.
+- **gh-egress Phase 2 rollout (#226)** — every executable comment/edit call site in idd-comment, idd-diagnose, idd-implement, idd-verify, idd-close and idd-update now dispatches through `scripts/gh-egress.sh` with `--scrub-attested` (+ `--mention-attested` where mentions occur) — the #117 mention net and privacy nets are mechanically enforced on the comment channel, not just prose discipline. New drift-guard `gh-egress-rollout/` (24 assertions: wrapper presence + verbatim refutes of every pre-rollout raw call line). Via cluster PR #256.
+- **idd-edit batch × R5 semantics (#158)** — mixed-OWNER batches now use per-comment refuse + continue (decided scenario-C option i): the R5 author-gate refuse records the target and continues instead of killing the whole batch mid-loop. New Step 7.5 batch outcome report (`edited/refused` counts + highlighted `✗ REFUSED` rows with the override hint); exit contract 0 iff no refusals, 4 otherwise (single-target degenerate-equivalent). `--override-user-content` codified as all-targets + shared reason. Fixture 14 (8 prose-contract checks) joins the idd-edit suite (31/31). Via PR #257.
+
 ## [2.95.0] - 2026-07-11
 
 ### Added
