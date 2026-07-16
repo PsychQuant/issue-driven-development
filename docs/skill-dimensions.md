@@ -2,7 +2,7 @@
 
 > **Purpose**:把「設計向度」(design dimensions)明確化,讓 IDD plugin 維護者 + contributor 在加新 skill / 修舊 skill 時,**explicitly 對齊每個 dimension 的設計選擇**,而非 implicit drift。
 
-> **狀態**:initial skeleton(由 AI agent 從既有 design corpus distill,user 補充未列向度)。Maintained 維護紀律見 § Provenance。
+> **狀態**:maintained（#122 補完 2026-07-17 — skeleton → 對齊 v2.96 現實）。Maintained 維護紀律見 § Provenance。
 
 ---
 
@@ -206,7 +206,8 @@ IDD plugin 已累積 14+ skills(`idd-issue` / `idd-diagnose` / `idd-implement` /
 
 下列 dimensions 是 AI agent 從 corpus distill 不出,但 user 可能已有的:
 
-- **D12**: ? (cost / token / time 維度?)
+- **D12**: **Surfacing vs Lifecycle**（#140 認領中 — surfacing-only primitive family：idd-list / idd-clarify / idd-find；待 idd-find 落地後由 #140 正式定義）
+- **D12-alt**: ? (cost / token / time 維度?)
 - **D13**: ? (cross-repo / cross-skill 整合?)
 - **D14**: ? (retroactive vs forward-looking?)
 - **D15**: ? (formal vs informal / spec-bound vs ad-hoc?)
@@ -233,12 +234,13 @@ IDD plugin 已累積 14+ skills(`idd-issue` / `idd-diagnose` / `idd-implement` /
 | `idd-comment` | Sep | Atom | Side | W | Fwd | S / Batch | SHOULD template | Unatt-capable | Sk + flags | Cl-non |
 | `idd-edit` | Sep | Atom | Side | W | (任) | S / Batch | SHALL preview before write | Att-only | Sk | Cl-non |
 | `idd-list` | (n/a) | Atom | n/a | R | (查) | S | n/a | Unatt-capable | Sk + flags | Cl-non |
+| `idd-clarify` | Sep | Atom | Delib(surface-only) | W (annotation block) | Fwd | S | SHALL hard-gate consumer (diagnose Step 0.5) | Unatt (deferred-row 機制 #137) | Sk + flags | Cl-non |
 | `idd-report` | Sep | Atom | Side | W | Bwd | S | SHALL aggregate | Att | Sk | Cl-non |
 | `idd-route` | (n/a) | Atom | n/a | R (recommend) / W (record) | (查) | S | n/a | Unatt-capable | Sk | Cl-non |
-| `idd-all` | **Auto (Hyb degraded)** ⚠ | Orch | (跨 D / E / Side) | W | (跨) | S / Cluster | mostly SHALL but soft Phase 0.4 | Hyb | Sk + flags | Cl-non |
+| `idd-all` | **Auto (Hyb degraded)** ⚠ | Orch | (跨 D / E / Side) | W | (跨) | S / Batch (v2.83 conflict-class ordered) / Cluster | mostly SHALL but soft Phase 0.4 | Hyb | Sk + flags | Cl-non |
 | `idd-all-chain` | **Auto × N (Hyb degraded)** ⚠ | Orch | (跨) | W | (跨) | Ch (1 root + N spawn) | mostly SHALL but soft Phase 0.4 | Hyb | Sk + flags | Cl-non |
 
-⚠ = D1 design tension(per #122)— 預設過 aggressive,proposal 改為 Sup(Supervised Automation)。
+⚠ = D1 design tension（#122 原 framing）— 已由 path-catalog 裁決取代：不強制 Sup，改為本 catalog 把各 path 的 risk 顯式列出、discipline 在 user 選 path 時 explicit（見 workflows.md Anti-patterns + #120 的 Layer V deferred-record 機制）。
 
 ---
 
