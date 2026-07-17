@@ -223,6 +223,7 @@ Some `state-field-update` operations carry a `reason` field that downstream gate
 | Reason literal | Originating action | Recognized by | Behavior |
 |---|---|---|---|
 | `unattended-auto-Step-4.6-deferred` | `/idd-clarify` Step 4.8.A — auto-defer in unattended mode (#137, v2.74.0+) | `/idd-diagnose` Step 0.5 gate | Proceed-with-warn (instead of REFUSE the `deferred` row) |
+| `unattended-auto-Step-3.4-layerV-deferred` | `/idd-diagnose` Step 3.4 F — Layer V trigger auto-proceeds in unattended mode, leaving a structured deferred record in the Diagnosis comment (#120) | `/idd-all` Phase 6 Action items scan | Aggregate into「## Action items (require human review)」with the catch-up command `/idd-clarify #N` — not a gate bypass: the auto-proceed already happened, the record makes it recoverable |
 
 **Adding a new reason literal**:
 1. Choose strict literal (no abbreviation, no version suffix, no underscore variants — kebab-case with clear semantic anchor)
