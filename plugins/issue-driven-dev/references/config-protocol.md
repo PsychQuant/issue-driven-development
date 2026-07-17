@@ -504,6 +504,31 @@ An OPTIONAL object that turns on **selective git-tag automation** at two high-va
 
 **Side-effect note (important).** Tag creation includes a `git push` to `push_remote` — a **repo-wide side effect** visible to everyone with the remote. Because the default is **ON**, a fresh IDD user gets `idd-{N}-baseline` / `idd-{N}-verified` tags on their remote without asking; `enabled: false` is the one-line opt-out. Tagging is **idempotent** (a tag that already exists is skipped, so re-runs never re-tag) and **graceful-skip** (a push failure on a fork / permission-denied / rejected remote warns and continues — it never aborts the `idd-issue` / `idd-verify` workflow). Intermediate lifecycle steps (`diagnose` / `plan` / `implement`) are deliberately **not** tagged; phase-level tagging stays manual.
 
+### `verify_profiles` field
+
+An OPTIONAL object registering **repo-local custom verification profiles** for `idd-verify --profile` (#258; profile semantics + built-in profiles in [`verify-profiles.md`](verify-profiles.md)):
+
+```json
+{
+  "verify_profiles": {
+    "clinical": {
+      "lenses": [
+        {"key": "phi-leak", "focus": "protected health information leaving the trust boundary ..."},
+        {"key": "fact-vs-chart", "focus": "claims unsupported by the chart / source records ..."}
+      ],
+      "da_focus": "adversarially refute the other reviewers' passes ...",
+      "input": "file"
+    }
+  }
+}
+```
+
+| Rule | Behavior |
+|------|----------|
+| 名稱與內建（`code` / `prose` / `academic`）碰撞 | **內建勝** + warning（內建是行為契約，特別是 `code` 的 backward-compat 保證，config 不得靜默改寫） |
+| schema 不合（`lenses` 空 / 缺 `da_focus` / `input` ∉ {`file`,`git`}） | 該 entry 忽略 + warning（absent-safe，不 abort） |
+| `--profile <name>` 內建與 config 都查無 | **abort** + 可用 profile 清單（fail-loud — 顯式 per-invocation 意圖，typo 靜默跑錯 profile 比失敗更糟） |
+
 ## Resolution algorithm (canonical)
 
 ```

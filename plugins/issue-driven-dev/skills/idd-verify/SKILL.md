@@ -83,8 +83,22 @@ PR mode 下：
 /idd-verify #42 --commits 3         → 本地 mode：HEAD~3..HEAD
 /idd-verify #42 --since <ref>       → 本地 mode：<ref>..HEAD
 /idd-verify #42 --branch <name>     → branch mode：origin/<default>...<name>
+/idd-verify #42 --profile prose --file <path>   → prose profile 驗一份文件（git repo optional，#258）
+/idd-verify #42 --profile academic --dir <path> → academic profile 驗一個目錄（遞迴 bundle）
 /idd-verify                         → 通用 code review（無 issue）
 ```
+
+## Verification profiles（v2.97.0+, #258）
+
+`--profile <name>`（`code` 預設 / `prose` / `academic` / config 自訂）同時切換 **lens 組合、DA focus、輸入源預設、freshness 機制** 四元組。canonical 定義（含 prose/academic 的 lens 文本逐字）在 [`references/verify-profiles.md`](../../references/verify-profiles.md) — 本 SKILL 引用、不內嵌複本。要點：
+
+- **`code`（預設）＝今日行為，逐 byte 不變**：lens 文本、輸入源 auto-detect、#228 git diff-freshness gate 全部不動（backward-compat 鎖）。
+- **`prose` / `academic`** 的輸入源預設是 `--file <path>` / `--dir <path>`（必填其一；無 → abort 要求輸入源，**不** fallback git diff）。
+- **未知 profile 名**（內建與 config `verify_profiles` 都查無）→ abort + 印**可用 profile 清單**（fail-loud，同 `IDD_AGENT_MODEL` 判準 — 顯式意圖 typo 不得靜默跑錯 profile）。
+- **自訂 profile** 經 config `verify_profiles` 註冊（schema 見 [`references/config-protocol.md`](../../references/config-protocol.md)）；與內建同名碰撞 → 內建勝 + warning。
+- **Backend dispatch**：profile 四元組在 Step 2 backend 解析鏈**之前**組裝 — pai canonical tier 填 `customLenses` + `daFocus`（primitive 已支援）；manual fan-out tier 把同一組 lens 文本填進 4 個 Agent prompt + DA prompt。兩 backend 消費同一 reference 文本 → findings contract / master report 結構不變，Step 3 之後 backend-agnostic + profile-agnostic。
+
+## Authoritative source resolution (v2.73.0+, #150)
 
 ## Authoritative source resolution (v2.73.0+, #150)
 
@@ -289,11 +303,18 @@ TaskCreate(name="triage_followup_issues", description="Step 5b: 分類 non-block
 依 [external-agent-delegation.md](../../references/external-agent-delegation.md) resolution algorithm：
 
 ```
+0. --file <path> / --dir <path>  → file mode（#258；與 1–4 互斥，同時給 → abort with usage）
+   - 讀檔組 input bundle（單檔直接放；--dir 遞迴串接、`=== FILE: <relpath> ===` 分隔）
+   - 不做 git checkout / branch restore（無 git 假設；posting target 仍照 config-protocol 解析）
+   - Freshness（#228 等價物，MUST）：dispatch 前對每個輸入檔算 SHA-256 記 FROZEN_HASHES；
+     aggregate / post 前重算比對，mismatch（含檔案增刪）→ refuse verdict + 印重跑指令。
+     不因輸入不在 git 而靜默豁免。契約詳 references/verify-profiles.md。
 1. --pr <N>          → PR mode（gh pr diff <N>）
 2. --branch <name>   → branch mode（git diff origin/<default>...<name>）
 3. --commits <N>     → 本地 mode（HEAD~N..HEAD）
 4. --since <ref>     → 本地 mode（<ref>..HEAD）
-5. 都沒帶            → auto-detect:
+5. 都沒帶            → profile 輸入源預設是 file（prose / academic / 自訂 input:"file"）
+                       → abort 要求 --file / --dir（不 fallback git）；否則 auto-detect:
    a. N=$(git log --grep "#$NUMBER" origin/$DEFAULT_BRANCH..HEAD --oneline | wc -l)
       N>0  → 本地 mode HEAD~N..HEAD
       N=0  → b
