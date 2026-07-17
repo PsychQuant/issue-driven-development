@@ -29,7 +29,30 @@ allowed-tools:
 /idd-report milestone:UX Redesign             → milestone 下所有 issues
 /idd-report #157 #158 @Hardy1Yang @che        → 指定 issues + tag 人
 /idd-report milestone:UX Redesign @hardy      → milestone + tag
+/idd-report --rollup                          → 跨 open issue 的 human rollup（#134，讀 dashboard comments）
 ```
+
+## Rollup mode（`--rollup`，v2.97.0+，#134）
+
+聚合所有 open issue 的 dashboard comment（[#133 契約](../../references/dashboard-comment.md)）成一份「人這週該看什麼」的視圖。**Pull-only：snapshot-only、不寫回任何 issue、不發任何通知** — 這條 invariant 進 drift-guard（#116 教訓：push 通知的誘惑一律擋在設計層）。
+
+流程：
+
+1. `gh issue list --state open --json number,title,updatedAt,comments`（一次抓，不 N+1）
+2. 每個 issue 找 `<!-- idd:dashboard -->` marker comment（#133 格式；≥2 則取最早、印警告）；無 marker → 以 body `**Phase**:` 降級呈現（標 `(no dashboard)`）
+3. 依 dashboard 內容 + phase 分四組輸出：
+
+| 分組 | 判準 |
+|------|------|
+| 🎯 **need attention this week** | `verified`（awaiting merge）或 dashboard「你該做什麼」指名讀者行動（blocked-on-you） |
+| 🚧 **in progress** | `diagnosed` / `planning` / `implemented` 且 14 天內有活動 |
+| ⏸ **stalled**（>14d） | open 且 `updatedAt` 距今 > 14 天 |
+| ✅ **recently closed**（7d） | closed 且 `closedAt` 距今 ≤ 7 天（`--state all` 補抓） |
+
+4. 責任人映射：dashboard「你該做什麼」有指名時，經 config `collaborators` registry（#86）解析 alias → `@login`（僅顯示、**不**真的 @-mention — rollup 是 pull 視圖，通知不是它的事）
+5. 輸出到 stdout（預設）或 `--publish` 走既有 Step 6–8 Discussions 流程
+
+**與逐 issue 模式的分工**：逐 issue 模式（上方參數）回答「這批 issue 做了什麼」（narrative 報告）；rollup 回答「我現在該把注意力放哪」（triage 視圖）。rollup 不讀 diagnosis / IC comments 全文 — 只消費 dashboard snapshot（single source = #133 契約），所以成本是 O(1 comment/issue)。
 
 ## Configuration
 
