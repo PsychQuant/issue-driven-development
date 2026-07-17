@@ -41,4 +41,16 @@ assert_output_grep "skill: family membership (surfacing-only primitive)" "surfac
 assert_output_grep "plugin CLAUDE.md lists idd-find"           "idd-find"              "$PCLAUDE"
 assert_output_grep "usecase-routing has a find scenario"       "idd-find"              "$ROUTING"
 
+# ── #140: surfacing-only primitive family doc (D12 axis) ──
+FAMILY="$PLUGIN_ROOT/references/surfacing-primitives.md"
+assert_file_exists "references/surfacing-primitives.md exists" "$FAMILY"
+assert_output_grep "family: D12 axis named"                    "D12"                   "$FAMILY"
+assert_output_grep "family: Surfacing vs Lifecycle axis"       "Surfacing vs Lifecycle" "$FAMILY"
+assert_output_grep "family: member idd-list"                   "idd-list"              "$FAMILY"
+assert_output_grep "family: member idd-clarify"                "idd-clarify"           "$FAMILY"
+assert_output_grep "family: member idd-find"                   "idd-find"              "$FAMILY"
+assert_output_grep "family: state-mutation prohibition"        "no \`gh issue create\`" "$FAMILY"
+assert_output_grep "family: 4th-member review criteria"        "第 4 員"                "$FAMILY"
+assert_output_grep "family: boilerplate checklist"             "Family boilerplate"    "$FAMILY"
+
 print_summary "idd-find"
