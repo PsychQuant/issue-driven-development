@@ -504,6 +504,26 @@ An OPTIONAL object that turns on **selective git-tag automation** at two high-va
 
 **Side-effect note (important).** Tag creation includes a `git push` to `push_remote` — a **repo-wide side effect** visible to everyone with the remote. Because the default is **ON**, a fresh IDD user gets `idd-{N}-baseline` / `idd-{N}-verified` tags on their remote without asking; `enabled: false` is the one-line opt-out. Tagging is **idempotent** (a tag that already exists is skipped, so re-runs never re-tag) and **graceful-skip** (a push failure on a fork / permission-denied / rejected remote warns and continues — it never aborts the `idd-issue` / `idd-verify` workflow). Intermediate lifecycle steps (`diagnose` / `plan` / `implement`) are deliberately **not** tagged; phase-level tagging stays manual.
 
+### `sdd_bias` field
+
+An OPTIONAL string that shifts **where a complexity hard-gate hit escalates to** (#252; gate semantics in [`rules/sdd-integration.md`](../rules/sdd-integration.md)). Default routing sends a hard-gate hit to `Plan`; a repo that wants spec records for every gate-worthy change opts in with:
+
+```json
+{
+  "sdd_bias": "high"
+}
+```
+
+| Value | Hard-gate hit escalates to |
+|-------|---------------------------|
+| absent / `"default"` | `Plan` — shipped behavior, byte-identical to pre-#252 |
+| `"high"` | `Spectra` — verdict line reads `Spectra via hard-gate (sdd_bias)` |
+| anything else | treated as `default` silently (absent-safe: same walk-up first-match read as every other field; no abort, no warning noise) |
+
+**Scope guarantee.** The field acts only at the hard-gate exit (`idd-diagnose` Step 3.5): it never widens Layer 2's Spectra qualification, never touches Layer P signals or the Simple default, and has zero effect when the gate does not fire.
+
+**Trade-off note（流程重量）.** `sdd_bias: high` 買到的是「每個 gate-worthy 改動都有 spec 紀錄」，付出的是**流程重量** — 每次硬閘命中都走 proposal / design / spec / tasks 全套 artifacts，而不是單一 plan-mode approval。預設不翻轉：「over-trigger 成本高於 under-plan 殘餘風險」是 #129 的既有使用者裁決，本欄位是 opt-in 的團隊姿態（spec-first posture），不是新 baseline。
+
 ### `verify_profiles` field
 
 An OPTIONAL object registering **repo-local custom verification profiles** for `idd-verify --profile` (#258; profile semantics + built-in profiles in [`verify-profiles.md`](verify-profiles.md)):

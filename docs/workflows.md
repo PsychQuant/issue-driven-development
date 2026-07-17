@@ -84,6 +84,14 @@ idd-issue → idd-diagnose → spectra-propose → spectra-apply → idd-verify 
 
 ---
 
+#### P-meeting — meeting-type deliberation（#57，v2.93+）
+
+`idd-issue --type meeting` → `idd-diagnose`（type=meeting 最優先分流：Phase A/B/C 審議 Strategy，**不進** Layer 1 / Layer V / Spectra / 硬閘 / Layer P，無 complexity verdict）→ `idd-plan`（meeting-adapted Plan body：議程 → 決策點 → 行動項；**不 chain** idd-implement）→ 會議本體（user-driven）→ `idd-close`（meeting-specific gate：最新 Meeting Plan Phase C → fallback diagnose Strategy Phase C，行動項逐條 disposition；decision→action mapping，無 /idd-verify）。
+
+- **Use case**：審議/決策工作 — deliverable 是決策與 follow-up，不是 code
+- **Touchpoints**：4（issue → 審議 plan approve → 會議 → close disposition）
+- **Risk**：low — 全程 attended by nature
+
 ### B. Convenience-orchestrator paths(快速 lifecycle 完成)
 
 #### P-auto-from-diagnosed — diagnose 已過,跑自動化
@@ -114,6 +122,14 @@ idd-issue → idd-all #N
 - **Risks**:**中-高** — deliberation moment 被 swallow;若 issue body 模糊,AI auto-proceed 可能 mis-route
 - **適用情境**:`/loop` autonomous mode / quick housekeeping P3 issues
 - **Cross-link**:#122 提案改 Supervised Automation
+
+#### P-batch-drain — multi-issue conflict-class-ordered sequential（v2.83+，#182）
+
+`idd-all #a #b #c`（≥2 distinct #N）= 對 backlog 做 **sequential** drain，外圈按各 issue Diagnosis 的 `### Conflict Class` 排序（E/D 先、B/C 同資源相鄰、A 順序不拘）。**誠實邊界：不是並發** — taxonomy 是「手動跨 session / 未來 primitive」的並行安全契約。
+
+- **Use case**：積壓清倉（本 repo 2026-07 focused drain 即此 path 實例）
+- **Touchpoints**：2 + 決策檢查點（decision-heavy issue 停在 diagnosed 等拍板）
+- **Risk**：middle — unattended 段沿用 P-auto 系列 risk；排序保證同資源不交錯
 
 #### P-cluster-pr — N issues 共 1 PR
 
@@ -324,6 +340,21 @@ idd-edit comment:NNN --append --body "..."
 
 ---
 
+#### P-discussions-intake — Discussions 盲點橋接（#221，v2.95+）
+
+`idd-list --discussions`（opt-in surface：Q&A/Ideas ∧ 未答 ∧ 未被 issue 引用）→ **人判斷** → `idd-issue --from-discussion <url>`（Provenance verbatim seed + draft-and-confirm 回文）→ 進任一 single-issue lifecycle path。
+
+- **鐵律**：絕不 auto-file、絕不 auto-post 回文（unattended draft-only）
+- **Use case**：使用者回報以 GitHub Discussion 抵達（che-ical-mcp 105 事故的制度化解）
+- **Risk**：low — surfacing read-only；outward write 有 confirm gate
+
+#### P-clarify-audit — terminology / semantic surfacing（#135，v2.72+）
+
+`idd-clarify #N`（standalone，或被 idd-issue Step 4.6 delegate、被 idd-diagnose Step 0.5 gate 消費）→ `### Clarity Surface` annotation block（surfaced/resolved/dismissed rows）。Read-only surfacing primitive — 不 mutate lifecycle state，但其 surfaced rows 會 hard-block 後續 diagnose（gate 在 diagnose 端）。
+
+- **Use case**：issue body 用詞/語意精度審查；retroactive audit
+- **Risk**：low — 唯一副作用是 annotation block 寫入
+
 ### H. Unsupervised / autopilot paths(no human-in-loop)
 
 #### P-loop-autopilot
@@ -374,6 +405,7 @@ idd-edit comment:NNN --append --body "..."
 | `idd-comment` | | | | | | | ✓ batch | | | | ✓ standalone | |
 | `idd-edit` | | | | | | | ✓ batch | | | | ✓ standalone | |
 | `idd-list` | | | | | | | | | | | ✓ triage | ✓ cron |
+| `idd-clarify` | (issue 內 delegate) | | | | | | | | | | ✓ standalone audit | |
 | `idd-report` | | | | | | | | | | | ✓ aggregate | |
 | `idd-route` | | | | | | | | | | | ✓ recommend | |
 | `idd-all` | | | | ✓ all variants | ✓ cluster | | | | | | | ✓ loop |
@@ -386,7 +418,8 @@ idd-edit comment:NNN --append --body "..."
 ```
 Q1: 是 single issue 還是 multi issues?
 ├── Single
-│   └── Q2: 預期是 Simple / Plan / Spectra?
+│   └── Q1.5: type=meeting? ── Yes → P-meeting（複雜度評估前分流）
+│   └── Q2: 預期是 Simple / Plan / Spectra?（#129 硬閘：≥5 檔互依概念 / shared abstraction → MUST Plan，先於 Layer P）
 │       ├── Simple
 │       │   └── Q3: attended (你在 keyboard)?
 │       │       ├── Yes → P-atomic (5 touchpoints)
@@ -469,6 +502,9 @@ Q1: 是 single issue 還是 multi issues?
 ---
 
 ## Provenance
+
+> **2026-07-17（#122 補完）**：catalog 由 skeleton 補至 v2.96 現實 — 新增 P-meeting（#57）、P-batch-drain（#182）、P-discussions-intake（#221）、P-clarify-audit（#135）；decision tree 補 meeting 分流 + #129 硬閘；matrix 補 idd-clarify 列。後續新 path 隨 feature 落地就地 iterate（使用者裁決：本檔可就地補、不另開 issue）。
+
 
 - **首次版本**:2026-05-21 — AI agent skeleton,由 user 對 #122(原 marketplace#89,已 transfer 過來)提出 reframing(「不是強制,而是把所有可能 path 都列出來」)觸發
 - **觸發 insight**:user observation:強制單一 path 違反 user agency;path catalog 讓 discipline 在 user 選 path 時 explicit

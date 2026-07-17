@@ -925,7 +925,7 @@ Next: review last ${COMMIT_COUNT} commits (git log -${COMMIT_COUNT}), then run /
 
 #### Phase 6 Action items surface (v2.74.0+, #137)
 
-`(category: audit-block-append, scope: "## Action items" final report section)` per [`rules/append-vs-modify.md`](../../rules/append-vs-modify.md)。 Phase 6 終端 report 之後,scan invoked sub-issues' bodies(本 invocation 直接處理的 root + spawn manifest 上記錄的衍生 issue,if any)for `### Clarity Surface` rows with reason matching the registry-cited literal `unattended-auto-Step-4.6-deferred`(cite [Reason pattern registry](../../rules/append-vs-modify.md#reason-pattern-registry))。 找到 → append 到 final report 末尾「## Action items (require human review)」section:
+`(category: audit-block-append, scope: "## Action items" final report section)` per [`rules/append-vs-modify.md`](../../rules/append-vs-modify.md)。 Phase 6 終端 report 之後,scan invoked sub-issues(本 invocation 直接處理的 root + spawn manifest 上記錄的衍生 issue,if any)for **兩類** registry-cited deferred 記錄(cite [Reason pattern registry](../../rules/append-vs-modify.md#reason-pattern-registry)):(1) issue **body** 的 `### Clarity Surface` rows with reason literal `unattended-auto-Step-4.6-deferred`(#137);(2) issue **comments** 的 `#### Layer V Deferred Record` with reason literal `unattended-auto-Step-3.4-layerV-deferred`(#120 — Layer V 在 unattended 下 auto-proceed 的回補記錄,寫在 Diagnosis comment 不在 body)。 找到 → append 到 final report 末尾「## Action items (require human review)」section:
 
 ```bash
 # After Phase 6 main report emit (see PR mode / direct-commit mode above), append action items:
@@ -940,6 +940,13 @@ for sub_n in "$ROOT_N" "${SPAWNED_ISSUES[@]:-}"; do
     | grep -cE '\| deferred \| unattended-auto-Step-4\.6-deferred \|')
   if [ "$AUTO_DEFERRED_COUNT" -gt 0 ]; then
     ACTION_ITEMS+=$'\n'"- #${sub_n}: ${AUTO_DEFERRED_COUNT} row(s) auto-deferred at /idd-clarify Step 4.8 (unattended mode) — resolve via /idd-clarify #${sub_n} --status resolved=<idx>,<reason>"
+  fi
+  # #120 (v2.97.0+): Layer V deferred records live in Diagnosis COMMENTS (not body)
+  SUB_COMMENTS=$(gh issue view "$sub_n" --repo "$GITHUB_REPO" --json comments --jq '[.comments[].body] | join("\n---\n")' 2>/dev/null)
+  LAYERV_DEFERRED_COUNT=$(echo "$SUB_COMMENTS" \
+    | grep -cE 'unattended-auto-Step-3\.4-layerV-deferred')
+  if [ "$LAYERV_DEFERRED_COUNT" -gt 0 ]; then
+    ACTION_ITEMS+=$'\n'"- #${sub_n}: ${LAYERV_DEFERRED_COUNT} Layer V deferred record(s) — vagueness trigger auto-proceeded under unattended mode; catch up via /idd-clarify #${sub_n}（或確認 proceed 正確後 dismiss）"
   fi
 done
 
