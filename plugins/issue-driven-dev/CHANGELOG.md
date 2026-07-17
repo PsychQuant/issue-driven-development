@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.97.0] - 2026-07-17
+
+### Added
+
+- **Composable verification profiles (#258, Spectra `verify-profiles`)** — `idd-verify --profile <name>` (`code` default / `prose` / `academic` / config-registered custom) switches the (lens set, DA focus, input-source default, freshness) four-tuple; new canonical `references/verify-profiles.md` is the single source both ensemble backends consume. New input sources `--file <path>` / `--dir <path>` (mutually exclusive with git sources; git worktree optional — posting target still config-resolved). File-mode freshness gate: SHA-256 snapshot before dispatch, re-hash before verdict, mismatch refuses (the #228 gate's non-git equivalent, never silently exempted). Custom profiles via config `verify_profiles` (built-in wins on collision; unknown `--profile` fails loud). `code` stays byte-identical (verbatim drift-guard lock). Via cluster PR #261.
+- **`/idd-find` — surfacing-only semantic lookup (#139, Spectra `idd-find-skill`)** — free-text query → GitHub search relevance over the **open+closed** corpus; hits overlaid with IDD phase, open-PR ref, and Closing-Summary presence (archaeology signal). Read-only (allowed-tools locked), filter flags rejected with an idd-list redirect, v1 honesty line (lexical relevance disclosed every run; embedding stays residue), empty results degrade honestly. Usecase-routing scenario 29. Via cluster PR #263.
+- **Dashboard comment contract (#133)** — new `references/dashboard-comment.md`: one human-facing narrative snapshot per issue (`<!-- idd:dashboard -->` marker + current-state/Blocking/what-you-should-do/last-updated-by template), updates bound to **phase transitions only** (≤5 per lifecycle — the #116 fatigue class is the design constraint), explicit division of labor vs body Current Status. All four lifecycle SKILLs wired at their transition point. Via cluster PR #262.
+- **`idd-report --rollup` (#134)** — cross-issue human triage view consuming the dashboard contract (marker-located, O(1) comment per issue): need-attention-this-week / in-progress / stalled >14d / recently-closed 7d, with #86 registry owner mapping (display-only). **Pull-only invariant**: snapshot-only, never writes back, never notifies (locked into the drift-guard). Via cluster PR #262.
+- **`sdd_bias` config switch (#252, Spectra `sdd-bias-switch`)** — opt-in `"high"` reroutes a complexity hard-gate hit from Plan to `Spectra via hard-gate (sdd_bias)` (v2.50 ` via ` suffix convention); absent/default/invalid stay byte-identical Plan (absent-safe silent degrade). Acts only at the hard-gate exit — Layer 2 qualification, Layer P, and the Simple default untouched. Via cluster PR #260.
+- **Layer V unattended deferred-record (#120)** — registry literal `unattended-auto-Step-3.4-layerV-deferred`; when Layer V triggers under unattended mode the auto-proceed now appends a structured `#### Layer V Deferred Record` (V1/V4 + catch-up command) to the Diagnosis comment, and idd-all Phase 6 Action-items aggregates it (second scan source: comments; #137 isomorph). Attended paths unchanged. Via cluster PR #260.
+- **Surfacing-primitives family doc (#140)** — new `references/surfacing-primitives.md`: D12 axis (Surfacing vs Lifecycle), the two-way iron rule (primitives never smuggle state writes; lifecycle skills delegate read-only queries), 4th-member boilerplate checklist and three-question review gate. Via cluster PR #263.
+
+### Changed
+
+- **Model-generation sync (#251)** — live probe confirmed `gpt-5.6-sol` xhigh; the codex generation is now pinned in exactly ONE place (`bin/codex-call` default, `gpt-5.5` → `gpt-5.6-sol`). idd-verify's codex invocations inherit the default (explicit `--model` dropped); all SKILL/reference prose generation-neutral (`gpt-5.x`); idd-route candidate renamed `codex-xhigh` with an append-only stats migration note. New drift-guard `model-generation-sync` (19 assertions) locks the single-pin contract. Via cluster PR #261.
+- **Docs path catalog completed to v2.96 reality (#122)** — `docs/workflows.md` gains P-meeting / P-batch-drain / P-discussions-intake / P-clarify-audit, decision-tree Q1.5 meeting branch + hard-gate note, idd-clarify rows in both matrices; stale enforce-Sup footnote replaced. `docs/skill-dimensions.md` D12 slot realized post-merge. Via PR #259.
+
+### Tests
+
+- 5 new drift-guard suites (`verify-profiles`, `model-generation-sync`, `dashboard-comment`, `idd-find`, `layerv-deferred`) + extensions to `complexity-hard-gate`; aggregator now 36 suites, 0 fail.
+
 ## [2.96.0] - 2026-07-13
 
 ### Changed
