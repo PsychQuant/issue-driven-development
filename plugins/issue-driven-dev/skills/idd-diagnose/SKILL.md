@@ -483,7 +483,20 @@ gh api -X PATCH "/repos/$GITHUB_REPO/issues/comments/$COMMENT_ID" -f body="$NEW_
 [Layer V: V1=$V1 V4=$V4, clarify-default skipped under unattended mode, defaulting to proceed]
 ```
 
-跟 Plan tier 在 unattended mode 也跳過 EnterPlanMode 同樣設計(user 不在現場,沒法 review prompt)。User 後續 review final report 仍能看到 audit trail 上的 trigger 記錄,可以手動重 route。
+**結構化 deferred record（#120）**：unattended 下若 Layer V **有觸發**（`max(V1,V4) ≥ 4`），除上面 audit 行外，**必須**在 Diagnosis comment 的 Vagueness Pre-check audit block 之後 append 一段結構化記錄。reason literal 引自 [Reason pattern registry](../../rules/append-vs-modify.md#reason-pattern-registry)（strict literal `unattended-auto-Step-3.4-layerV-deferred`，dot-escaped regex `unattended-auto-Step-3\.4-layerV-deferred`）:
+
+```markdown
+#### Layer V Deferred Record
+
+- **Reason**: unattended-auto-Step-3.4-layerV-deferred
+- **V1**: $V1 — $V1_REASONING
+- **V4**: $V4 — $V4_REASONING
+- **Catch-up**: /idd-clarify #$NUMBER — 人回場後重走 clarify，或確認 proceed 判斷正確後 dismiss
+```
+
+`/idd-all` Phase 6 會掃 Diagnosis comments、把這些 record 聚合到 final report 的「## Action items (require human review)」（與 #137 的 Step-4.6 機制 isomorphic — 同 registry、同聚合出口）。**attended 行為零改動**：AskUserQuestion 路徑（A–E）不寫此 record；Layer V 未觸發（兩軸 ≤ 3）時 unattended 也不寫（non-noisy）。
+
+跟 Plan tier 在 unattended mode 也跳過 EnterPlanMode 同樣設計(user 不在現場,沒法 review prompt)。User 後續 review final report 仍能看到 audit trail 上的 trigger 記錄 + deferred record,可以手動重 route。
 
 ### Step 3.5: Complexity Assessment (3-tier: Simple / Plan / Spectra)
 
