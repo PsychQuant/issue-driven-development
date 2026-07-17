@@ -692,6 +692,8 @@ Skill(skill="issue-driven-dev:idd-update", args="#NNN")
 
 **批次 close 時**：每一個 issue 都要分別跑 idd-update，不是跑一次。
 
+**Dashboard update（#133）**：phase → `closed` 的同一時點，依 [`references/dashboard-comment.md`](../../references/dashboard-comment.md) 更新 dashboard comment（`<!-- idd:dashboard -->` marker 定位；無則首發經 gh-egress）。內容：現況 = 結案一句話（root cause + solution）；你該做什麼 = 無。這是該 issue dashboard 的最後一次更新。
+
 ### Step 6.3: Doc-sync sweep（v2.92+, #220）
 
 > 使用者原話（#220）：「idd-close 的時候更新所有 README 跟 CLAUDE.md 這可能是最後一步吧」— close 是「改動最終狀態確定」的唯一時點，本步把文件 drift 的攔截制度化（motivating incident：che-ical v1.14.0 三處 stale docs 全靠人工 review 才抓到，其中 `README_zh-TW.md` 整份被字面 glob 漏掉）。
