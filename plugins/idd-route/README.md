@@ -6,7 +6,7 @@ Data-driven agent routing for [IDD methodology](../issue-driven-dev). Wraps the 
 
 Given a new GitHub issue diagnosed by `idd-diagnose`, recommends the best agent to delegate implementation to:
 
-- `codex-gpt-5.5-xhigh` — OpenAI Codex CLI with GPT-5.5 at xhigh reasoning effort
+- `codex-xhigh` — OpenAI Codex CLI with GPT-5.5 at xhigh reasoning effort
 - `claude-opus-4.7` — Anthropic Claude Opus 4.7
 - `claude-sonnet-4.6` — Anthropic Claude Sonnet 4.6
 - `claude-haiku-4.5` — Anthropic Claude Haiku 4.5

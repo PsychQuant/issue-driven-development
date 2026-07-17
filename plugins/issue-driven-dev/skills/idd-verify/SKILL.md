@@ -2,7 +2,7 @@
 name: idd-verify
 description: |
   驗證 uncommitted/committed/PR code 是否滿足 Issue 的所有要求。
-  預設用 5 個 general-purpose Agents（Claude reviewers 互相挑戰）+ Codex CLI（gpt-5.5）平行驗證。
+  預設用 5 個 general-purpose Agents（Claude reviewers 互相挑戰）+ Codex CLI（gpt-5.x）平行驗證。
   6 個獨立 AI、兩個模型家族、互相看不到對方的結果。
   支援 cluster verify（v2.34.0+）：多個 #N 共用 1 PR 時（如 `#34 #36 #38`），report 按 issue 分區段。
   支援 external-agent / PR mode（v2.37.0+）：`--pr <N>` 驗證外部 agent（Codex/Copilot）開的 PR，PR 是 master comment、ref'd issue 拿 pointer；`--commits N` / `--since <ref>` / `--branch <name>` 為其他輸入來源；缺 flag 時 auto-detect 本地 commits 與 open PR 並 AskUserQuestion。
@@ -140,7 +140,7 @@ idd-verify #NNN
 │   ├── Regression — scope creep、副作用、既有功能
 │   └── Devil's Advocate — 反駁前四個的「通過」判斷
 │
-└── Codex CLI（gpt-5.5 xhigh，獨立 process）
+└── Codex CLI（gpt-5.x xhigh，獨立 process）
     └── 完全獨立，看不到其他 reviewer Agents 的 findings 檔
 
 → 6 個 findings 合併去重 → 呈現結果
@@ -149,7 +149,7 @@ idd-verify #NNN
 **為什麼 6 個？**
 - 5 個 Claude reviewers 各為獨立 `Agent(subagent_type=general-purpose)` call，平行 spawn 並寫 file-based output；Devil's Advocate 透過 polling 等其他 4 個 findings 檔產生後讀取 + 反駁（v2.59.0+, #52 重構自 pre-2.59 TeamCreate model — 詳見 Step 2 Engine note）
 - Devil's Advocate 的工作是**試著證明其他 4 個的通過判斷是錯的**
-- Codex 是完全不同的模型家族（gpt-5.5），提供**跨模型盲驗**
+- Codex 是完全不同的模型家族（gpt-5.x），提供**跨模型盲驗**
 
 ## Workflow backend（三層解析：pai canonical → vendored fallback → manual；formalize-idd-verify-ensemble v2.77.0、#207 依賴切換）
 
@@ -178,7 +178,7 @@ case "$AGENT_MODEL" in
 esac
 ```
 
-> **Fail-loud（不靜默回退）**：使用者顯式設了覆蓋值就代表在意跑在哪個 model 上——typo 時安靜換成 opus 比直接失敗更糟。pai canonical 引擎內另有第二層兜底（absent/非法 → opus），只為 legacy caller 沒傳 `agentModel` 的路徑存在；互動路徑一律在這裡先擋（workflow 層對「顯式非法值」同樣 throw——兩層都 fail-loud；只有「沒傳」才回退 opus）。Codex lens 的 gpt-5.5 端不受此參數影響（跨模型驗證本來就刻意用不同 model family），但**驅動** codex-call 的 Bash-agent 本身照樣以 `$AGENT_MODEL` 派發。
+> **Fail-loud（不靜默回退）**：使用者顯式設了覆蓋值就代表在意跑在哪個 model 上——typo 時安靜換成 opus 比直接失敗更糟。pai canonical 引擎內另有第二層兜底（absent/非法 → opus），只為 legacy caller 沒傳 `agentModel` 的路徑存在；互動路徑一律在這裡先擋（workflow 層對「顯式非法值」同樣 throw——兩層都 fail-loud；只有「沒傳」才回退 opus）。Codex lens 的 gpt-5.x 端不受此參數影響（跨模型驗證本來就刻意用不同 model family），但**驅動** codex-call 的 Bash-agent 本身照樣以 `$AGENT_MODEL` 派發。
 >
 > **方向性注意**：預設 opus 的降負載效益只在 session tier **高於** opus 時成立（#205 事故 session 為 Fable 級；live 證實 run wf_6c1d8ee6-5f3——fable session + `agentModel:'opus'` → 六個 agent transcript 全記錄 `claude-opus-4-8`，是真降級）。session 本身跑 sonnet/haiku 時，預設 opus 反而是**升級**——要壓低成本請顯式 `IDD_AGENT_MODEL=sonnet` 或 `haiku`。
 
@@ -227,7 +227,7 @@ PAI_ENGINE="${PAI_DIR}workflows/ensemble-workflow.js"
                               diffFile: $DIFF_FILE,
                               codexEnabled, codexCallPath: $CODEX_CALL,
                               agentModel: $AGENT_MODEL})   # = Step 2 前解析的 IDD_AGENT_MODEL 值（#205）；pai 端顯式非法值派發前 throw
-    BACKEND_DESC="pai-ensemble ${PAI_VER} (canonical #207) — 4 IDD lenses + DA + Codex (gpt-5.5)"
+    BACKEND_DESC="pai-ensemble ${PAI_VER} (canonical #207) — 4 IDD lenses + DA + Codex (gpt-5.x)"
     印一行 notice: "→ verify backend: pai-ensemble $PAI_VER (canonical, #207)"
 
 # Tier 2 — manual fan-out（pai 缺席 / 過舊 / workflow primitive 不可用）
@@ -237,7 +237,7 @@ PAI_ENGINE="${PAI_DIR}workflows/ensemble-workflow.js"
       "  Install (one step): claude plugin install parallel-ai-agents@psychquant-claude-plugins"
       "  Falling back to manual fan-out（品質等價：同 4 lens + DA + Codex，較慢）"
     findings = Step 2 manual fan-out
-    BACKEND_DESC="manual fan-out (4 lens Agents + sequenced DA, model: ${AGENT_MODEL}, file-based output) + Codex (gpt-5.5, run_in_background)"
+    BACKEND_DESC="manual fan-out (4 lens Agents + sequenced DA, model: ${AGENT_MODEL}, file-based output) + Codex (gpt-5.x, run_in_background)"
     印一行 notice: "→ verify backend: manual fan-out"
 ```
 
@@ -657,7 +657,7 @@ If you receive a later SendMessage with the same prompt re-pasted, treat as retr
 
 ```bash
 Bash({
-  command: `"$CLAUDE_PLUGIN_ROOT/bin/codex-call" --output /tmp/codex-verify-$NUMBER.md --model gpt-5.5 --effort xhigh --service-tier fast --max-time 600 --prompt-file /tmp/diff_$NUMBER.patch --instructions "You are verifying code changes for Issue #$NUMBER: $TITLE. Go through EACH requirement: FULLY / PARTIALLY / NOT addressed. Flag scope creep and regressions. Reply in Traditional Chinese."`,
+  command: `"$CLAUDE_PLUGIN_ROOT/bin/codex-call" --output /tmp/codex-verify-$NUMBER.md --effort xhigh --service-tier fast --max-time 600 --prompt-file /tmp/diff_$NUMBER.patch --instructions "You are verifying code changes for Issue #$NUMBER: $TITLE. Go through EACH requirement: FULLY / PARTIALLY / NOT addressed. Flag scope creep and regressions. Reply in Traditional Chinese."`,
   description: "Codex review for #$NUMBER (via codex-call)",
   run_in_background: true
 })
@@ -906,7 +906,7 @@ git checkout $ORIGINAL_BRANCH   # Step 0.5 記住的
 ## Verify: #NNN
 
 ### Engine
-${BACKEND_DESC}, model: ${DISPATCH_MODEL}   <!-- 由解析鏈 BACKEND_DESC + 雙路徑抽取的 DISPATCH_MODEL 組成（#207）；canonical 例：pai-ensemble 2.18.0 (canonical #207) — 4 IDD lenses + DA + Codex (gpt-5.5), model: opus；Tier 3 manual 的 DESC 自含 model -->
+${BACKEND_DESC}, model: ${DISPATCH_MODEL}   <!-- 由解析鏈 BACKEND_DESC + 雙路徑抽取的 DISPATCH_MODEL 組成（#207）；canonical 例：pai-ensemble 2.18.0 (canonical #207) — 4 IDD lenses + DA + Codex (gpt-5.x), model: opus；Tier 3 manual 的 DESC 自含 model -->
 
 ### 要求覆蓋率
 X / Y requirements addressed
@@ -1050,7 +1050,7 @@ if command -v idd-route &>/dev/null; then
 
   # Detect which agent implemented this round.
   # Heuristic: PR head commit author / branch prefix.
-  #   codex/* branch or codex-* commit author → codex-gpt-5.5-xhigh
+  #   codex/* branch or codex-* commit author → codex-xhigh
   #   other → claude-opus-4.7 (default; user can override --agent)
   AGENT=$(detect_agent_from_commits)
 
@@ -1096,7 +1096,7 @@ Full integration contract: [`references/agent-routing.md`](../../references/agen
 git diff > /tmp/codex-quick-diff.patch
 "$CLAUDE_PLUGIN_ROOT/bin/codex-call" \
   --output /tmp/codex-quick-review.md \
-  --model gpt-5.5 --effort xhigh --service-tier fast --max-time 600 \
+  --effort xhigh --service-tier fast --max-time 600 \
   --prompt-file /tmp/codex-quick-diff.patch \
   --instructions "Review this git diff. Flag bugs, logic errors, security issues. Reply in Traditional Chinese."
 ```

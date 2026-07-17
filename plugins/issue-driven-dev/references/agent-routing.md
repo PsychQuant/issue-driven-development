@@ -67,7 +67,7 @@ if command -v idd-route &>/dev/null; then
     --complexity "$COMPLEXITY" \
     --scope-loc-estimate "$SCOPE_LOC" \
     --signals "$SIGNALS" \
-    --candidates codex-gpt-5.5-xhigh,claude-opus-4.7,claude-sonnet-4.6,claude-haiku-4.5)
+    --candidates codex-xhigh,claude-opus-4.7,claude-sonnet-4.6,claude-haiku-4.5)
   EXIT=$?  # 0=warm, 3=fallback, other=error
 
   # Inject "Recommended Agent" section into diagnosis comment markdown:
@@ -90,7 +90,7 @@ if command -v idd-route &>/dev/null; then
   STATS="$REPO_PATH/.claude/.idd/routing-stats.jsonl"
 
   # Determine which agent actually implemented this round.
-  # Heuristic: PR head commit author (codex/* branches → codex-gpt-5.5-xhigh;
+  # Heuristic: PR head commit author (codex/* branches → codex-xhigh;
   # other authors → claude-opus-4.7 default; user can override via --agent).
   AGENT=$(detect_agent_from_commits "$VERIFIED_COMMITS")
 

@@ -64,7 +64,7 @@ Schema (all optional):
   "global_mirror": true,
   "decay_half_life_days": 30,
   "min_data_points": 5,
-  "candidates": ["codex-gpt-5.5-xhigh", "claude-opus-4.7"]
+  "candidates": ["codex-xhigh", "claude-opus-4.7"]
 }
 ```
 
