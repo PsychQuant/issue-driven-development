@@ -206,7 +206,7 @@ IDD plugin 已累積 14+ skills(`idd-issue` / `idd-diagnose` / `idd-implement` /
 
 下列 dimensions 是 AI agent 從 corpus distill 不出,但 user 可能已有的:
 
-- **D12**: **Surfacing vs Lifecycle**（#140 認領中 — surfacing-only primitive family：idd-list / idd-clarify / idd-find；待 idd-find 落地後由 #140 正式定義）
+- **D12**: **Surfacing vs Lifecycle**（#140 定義完成，v2.97.0）— surfacing-only primitive family：idd-list / idd-clarify / idd-find。canonical 定義（軸對照表、雙向鐵律、增員判準）見 [`plugins/issue-driven-dev/references/surfacing-primitives.md`](../plugins/issue-driven-dev/references/surfacing-primitives.md)
 - **D12-alt**: ? (cost / token / time 維度?)
 - **D13**: ? (cross-repo / cross-skill 整合?)
 - **D14**: ? (retroactive vs forward-looking?)
