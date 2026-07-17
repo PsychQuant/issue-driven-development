@@ -746,6 +746,8 @@ Skill(skill="issue-driven-dev:idd-update", args="#NNN")
 - 下一次回來不知道是 `diagnosed` 還是 `(no phase)`
 - 與 idd-close 2.18.0 同樣的「narrative Auto-Update 沒升 Step」漏跑模式（見 idd-close 2.18.1 fix `4762e64`）
 
+**Dashboard update（#133）**：phase → `diagnosed` 的同一時點，依 [`references/dashboard-comment.md`](../../references/dashboard-comment.md) 更新該 issue 的 dashboard comment（`<!-- idd:dashboard -->` marker 定位；無則首發經 gh-egress）。內容：現況 = root cause 一句話；你該做什麼 = 審 diagnosis / 等 implement。只在 phase 轉換時點更新，中間進度不觸發（anti-fatigue 鐵律見契約檔）。
+
 ## 鐵律
 
 - **不跳過 diagnosis**。就算「很明顯」也要做。簡單的問題做 diagnosis 只要 2 分鐘，但省下的是 2 小時的重工。

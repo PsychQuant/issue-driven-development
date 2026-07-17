@@ -690,6 +690,8 @@ close 一律透過 `/idd-close #NNN` skill 走：
 
 Implementation comment 完成後，自動執行 `idd-update` 更新 issue body 的 Current Status（phase → `implemented`）。
 
+**Dashboard update（#133）**：phase → `implemented` 的同一時點，依 [`references/dashboard-comment.md`](../../references/dashboard-comment.md) 更新 dashboard comment（`<!-- idd:dashboard -->` marker 定位；無則首發經 gh-egress）。內容：現況 = 改了什麼一句話 + PR ref；你該做什麼 = review PR。只綁 phase 轉換，commit / finding 等中間進度不觸發。
+
 ## Next Step
 
 實作完成後，進入 `verify`：

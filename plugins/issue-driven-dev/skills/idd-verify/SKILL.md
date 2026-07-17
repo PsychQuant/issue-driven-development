@@ -1117,6 +1117,8 @@ helper 行為見 `scripts/check-ralph-loop.sh`:exit 0 if installed, exit 1 with 
 
 Verify comment 完成後，自動執行 `idd-update` 更新 issue body 的 Current Status。
 
+**Dashboard update（#133）**：phase → `verified` / `needs-fix` 的同一時點，依 [`references/dashboard-comment.md`](../../references/dashboard-comment.md) 更新 dashboard comment（`<!-- idd:dashboard -->` marker 定位；無則首發經 gh-egress）。內容：現況 = verify verdict 一句話；你該做什麼 = merge（verified）/ 等修（needs-fix）。只綁 phase 轉換（anti-fatigue 鐵律見契約檔）。
+
 ## Next Step
 
 驗證通過後：`/issue-driven-dev:idd-close #NNN`
