@@ -524,6 +524,31 @@ An OPTIONAL string that shifts **where a complexity hard-gate hit escalates to**
 
 **Trade-off note（流程重量）.** `sdd_bias: high` 買到的是「每個 gate-worthy 改動都有 spec 紀錄」，付出的是**流程重量** — 每次硬閘命中都走 proposal / design / spec / tasks 全套 artifacts，而不是單一 plan-mode approval。預設不翻轉：「over-trigger 成本高於 under-plan 殘餘風險」是 #129 的既有使用者裁決，本欄位是 opt-in 的團隊姿態（spec-first posture），不是新 baseline。
 
+### `verify_profiles` field
+
+An OPTIONAL object registering **repo-local custom verification profiles** for `idd-verify --profile` (#258; profile semantics + built-in profiles in [`verify-profiles.md`](verify-profiles.md)):
+
+```json
+{
+  "verify_profiles": {
+    "clinical": {
+      "lenses": [
+        {"key": "phi-leak", "focus": "protected health information leaving the trust boundary ..."},
+        {"key": "fact-vs-chart", "focus": "claims unsupported by the chart / source records ..."}
+      ],
+      "da_focus": "adversarially refute the other reviewers' passes ...",
+      "input": "file"
+    }
+  }
+}
+```
+
+| Rule | Behavior |
+|------|----------|
+| 名稱與內建（`code` / `prose` / `academic`）碰撞 | **內建勝** + warning（內建是行為契約，特別是 `code` 的 backward-compat 保證，config 不得靜默改寫） |
+| schema 不合（`lenses` 空 / 缺 `da_focus` / `input` ∉ {`file`,`git`}） | 該 entry 忽略 + warning（absent-safe，不 abort） |
+| `--profile <name>` 內建與 config 都查無 | **abort** + 可用 profile 清單（fail-loud — 顯式 per-invocation 意圖，typo 靜默跑錯 profile 比失敗更糟） |
+
 ## Resolution algorithm (canonical)
 
 ```

@@ -132,7 +132,7 @@ For cluster-scope verify, partition findings per-issue inside one master comment
 ## Verify Report — PR #123
 
 ### Engine
-Agent Team (5 Claude reviewers) + Codex (gpt-5.5)
+Agent Team (5 Claude reviewers) + Codex (gpt-5.x)
 
 ### Aggregate
 **FAIL** — 2 blocking findings, 1 follow-up. (Or **PASS** — no blocking findings.)

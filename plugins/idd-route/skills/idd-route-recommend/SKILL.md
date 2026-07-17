@@ -22,7 +22,7 @@ Thin skill — 把參數 forward 給 `idd-route-wrapper.sh recommend ...`，wrap
 - `complexity`（必填）— `Simple` / `Plan` / `Spectra`
 - `scope_loc_estimate`（必填）— 整數，估計 implementation 會改幾行（diagnosis 的 file:line 摘要可以推估）
 - `--signals s1,s2`（可選）— 來自 issue body 的 signal classification，見 [signal-vocabulary.md](../../references/signal-vocabulary.md)
-- `--candidates c1,c2,...`（可選）— 預設 `codex-gpt-5.5-xhigh,claude-opus-4.7,claude-sonnet-4.6,claude-haiku-4.5`
+- `--candidates c1,c2,...`（可選）— 預設 `codex-xhigh,claude-opus-4.7,claude-sonnet-4.6,claude-haiku-4.5`
 
 ## Execution
 

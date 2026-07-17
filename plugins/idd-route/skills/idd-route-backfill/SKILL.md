@@ -63,7 +63,7 @@ ${CLAUDE_PLUGIN_ROOT}/bin/idd-route-wrapper.sh backfill \
 
 binary 用 regex 從 verify comment 抓：
 
-- **Agent**: 從 commit author 推斷（codex-* prefix → codex-gpt-5.5-xhigh；其他 → claude-opus-4.7 預設）
+- **Agent**: 從 commit author 推斷（codex-* prefix → codex-xhigh；其他 → claude-opus-4.7 預設）
 - **Complexity**: 從 diagnosis comment 的 `### Complexity` 區段（v2.36.0+）；找不到 fall back Simple
 - **Round trips**: 數 verify comments 跟 implementation commits 的 interleave
 - **Blocking / Medium / Low**: 解 verify report 的 findings 表

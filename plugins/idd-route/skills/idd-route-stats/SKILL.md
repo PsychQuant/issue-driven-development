@@ -38,14 +38,14 @@ Markdown 兩個表：
 ## By agent (un-decayed)
 
 | Agent | N | Avg round trips | Avg blocking | Merge rate |
-| codex-gpt-5.5-xhigh | 8 | 1.00 | 0.20 | 87% |
+| codex-xhigh | 8 | 1.00 | 0.20 | 87% |
 | claude-opus-4.7 | 4 | 2.50 | 1.50 | 100% |
 
 ## By (agent × complexity × scope) — for recommendation engine
 
 | Agent | Complexity | Scope | N | Avg RT | Avg blocking | Merge% |
-| codex-gpt-5.5-xhigh | Simple | small | 5 | 1.00 | 0.00 | 100% |
-| codex-gpt-5.5-xhigh | Simple | medium | 3 | 1.33 | 0.33 | 67% |
+| codex-xhigh | Simple | small | 5 | 1.00 | 0.00 | 100% |
+| codex-xhigh | Simple | medium | 3 | 1.33 | 0.33 | 67% |
 | claude-opus-4.7 | Plan | large | 4 | 2.50 | 1.50 | 100% |
 ```
 
@@ -71,3 +71,11 @@ _No data yet._ Cold start — recommendations will use static heuristic.
 
 - **stats 是純 read**，不會修改 jsonl
 - **decay flag 只影響推薦 score**，不影響 stats 表（兩者獨立）
+
+## Candidate 命名遷移（#251，世代中立）
+
+codex candidate 自 v0.2.1 起改用**世代中立名 `codex-xhigh`** — 實際 model 由 `issue-driven-dev` 的 `bin/codex-call` default 單點決定（換代只改那一處，stats 命名不再跟著斷代）。migration 契約：
+
+- **舊紀錄**（`agent: "codex-gpt-5.5-xhigh"`）**保留為歷史**，不改寫 jsonl（append-only 鐵律）
+- **新紀錄一律寫 `codex-xhigh`**；舊名 bucket 隨 30 天 half-life decay 自然淡出
+- 解讀時把舊名視為 `codex-xhigh` 的前身即可（同一 engine 家族、xhigh effort）

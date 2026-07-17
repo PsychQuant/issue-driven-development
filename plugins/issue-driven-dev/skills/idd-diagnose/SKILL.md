@@ -668,7 +668,7 @@ if command -v idd-route &>/dev/null; then
     --complexity "$COMPLEXITY" \
     --scope-loc-estimate "$SCOPE_LOC" \
     --signals "$SIGNALS" \
-    --candidates codex-gpt-5.5-xhigh,claude-opus-4.7,claude-sonnet-4.6,claude-haiku-4.5 \
+    --candidates codex-xhigh,claude-opus-4.7,claude-sonnet-4.6,claude-haiku-4.5 \
     2>&1)
   EXIT=$?  # 0=warm data-driven, 3=cold static heuristic, other=error
 fi
@@ -686,7 +686,7 @@ If recommendation succeeded, append a section to the diagnosis comment:
 **Compare**:
 | Agent | N | Avg RT | Avg blocking | Merge% | Score |
 |-------|---|--------|-------------|--------|-------|
-| codex-gpt-5.5-xhigh | 8 | 1.0 | 0.2 | 87% | 4.35 |
+| codex-xhigh | 8 | 1.0 | 0.2 | 87% | 4.35 |
 | claude-opus-4.7 | 4 | 2.5 | 1.5 | 100% | 0.40 |
 | claude-sonnet-4.6 | 0 | — | — | — | insufficient_data |
 | claude-haiku-4.5 | 0 | — | — | — | insufficient_data |
