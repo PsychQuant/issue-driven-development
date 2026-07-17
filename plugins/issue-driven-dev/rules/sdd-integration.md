@@ -158,6 +158,18 @@ It forces the `Plan` tier when EITHER holds (OR):
 
 The hard gate **only escalates**: it **does not invert** the `Simple` default. When it fires → force `Plan`. When it does not fire → routing **falls through to Layer P** and the `Simple` default is preserved. The gate is additive, not a new baseline — it lifts large multi-file / shared-abstraction changes from Simple to Plan without dragging small changes into the plan-mode approval gate (the rejected alternative — inverting to Default-Plan — was declined by the user; over-trigger cost exceeds the residual under-plan risk). The gate evaluates only **non-meeting, code-centric issues**; Layer 1 has already forced narrative / independent-multi-file work to Simple before this point.
 
+### Config-sensitive escalation destination: `sdd_bias` (#252)
+
+Where a hard-gate **hit** lands is governed by the optional `sdd_bias` field in the walk-up IDD config (schema + trade-off note in [`references/config-protocol.md`](../references/config-protocol.md)):
+
+| `sdd_bias` value | Hard-gate hit routes to | Verdict line |
+|------------------|------------------------|--------------|
+| absent / `"default"` | `Plan` — shipped behavior, byte-identical to pre-#252 | `Plan via hard-gate` |
+| `"high"` | `Spectra` — the repo has opted into spec records for every gate-worthy change | `Spectra via hard-gate (sdd_bias)` |
+| any other value | treated as `default` silently (absent-safe degrade: no abort, no warning noise) | `Plan via hard-gate` |
+
+The switch acts **only at the hard-gate exit**: it does not widen Layer 2's Spectra qualification, does not touch Layer P signals or the Simple default, and a non-firing gate behaves identically regardless of the field. The ` via ...` verdict suffix follows the v2.50 precedent — downstream phase parsers strip everything from ` via ` onward, so routing metadata rides along without breaking any consumer.
+
 ## Layer P: Plan signals (at least one = `Plan`)
 
 If Layer 1 didn't fire AND Layer 2 didn't qualify for Spectra AND the hard gate didn't fire, evaluate Plan signals:
@@ -196,7 +208,7 @@ Spectra:   diagnose → spectra-discuss → spectra-propose(#NNN) → spectra-ap
 
 Pre-v2.36 the Complexity verdict was binary: `Simple` or `SDD-warranted`. Real-world routing patterns showed two failure modes:
 
-1. **Spectra over-trigger**: cross-file refactor with 5+ steps and decision-heavy execution but no new caller contract was getting bumped to Spectra (because Layer 3 supplementary signals matched), producing proposal/design/spec artifacts for changes that nobody would ever check the spec for. Diagnosed in `kiki830621/collaboration_liu-thesis-analysis#21` retrospective and confirmed by user across 5+ subsequent issues.
+1. **Spectra over-trigger**: cross-file refactor with 5+ steps and decision-heavy execution but no new caller contract was getting bumped to Spectra (because Layer 3 supplementary signals matched), producing proposal/design/spec artifacts for changes that nobody would ever check the spec for. Diagnosed in `kiki830621/collaboration_liu-thesis-analysis#21` retrospective and confirmed by user across 5+ subsequent issues. Scope note (#252): this critique describes the shipped posture — `sdd_bias: default` — where nobody asked for per-change spec records. A repo that explicitly sets `sdd_bias: high` has **opted into** that cost for hard-gate hits, so the over-trigger argument scopes to the default, not to a prohibition of the switch.
 
 2. **Simple under-served**: PsychQuant/che-word-mcp#104 was diagnosed as Simple ("FieldParser canonical 5-run form gap"), implemented, then 6-AI verify surfaced a P1 sub-bug because the diagnosis missed the rawXML-shadowing case. Re-routing through approval gate would have caught the gap before commit. The work didn't warrant a spec, but it did warrant deliberation.
 

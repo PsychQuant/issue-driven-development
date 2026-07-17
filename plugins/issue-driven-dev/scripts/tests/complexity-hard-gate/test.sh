@@ -153,4 +153,17 @@ else
   pass "change artifacts absent (downstream/post-archive) — spec/tasks guards skipped"
 fi
 
+# ── #252 sdd_bias switch: hard-gate exit is config-sensitive ─────────────────
+# Opt-in `sdd_bias: high` escalates a hard-gate hit to Spectra (spec records)
+# instead of Plan; default/absent/invalid = Plan, byte-identical to pre-#252.
+SDDI="$PLUGIN_ROOT/rules/sdd-integration.md"
+PROTO="$PLUGIN_ROOT/references/config-protocol.md"
+assert_output_grep "sdd-integration: sdd_bias switch documented"       "sdd_bias"                          "$SDDI"
+assert_output_grep "sdd-integration: high-bias Spectra exit verbatim"  "Spectra via hard-gate (sdd_bias)"  "$SDDI"
+assert_output_grep "sdd-integration: anti-pattern scoped to default"   "sdd_bias: default"                 "$SDDI"
+assert_output_grep "diagnose: Step 3.5 mirrors the switch"             "Spectra via hard-gate (sdd_bias)"  "$DIAGNOSE"
+assert_output_grep "diagnose: invalid value degrades to default"       "視同 \`default\`"                   "$DIAGNOSE"
+assert_output_grep "config-protocol: sdd_bias field documented"        "### \`sdd_bias\` field"            "$PROTO"
+assert_output_grep "config-protocol: trade-off note (chain weight)"    "流程重量"                            "$PROTO"
+
 print_summary "complexity-hard-gate"
