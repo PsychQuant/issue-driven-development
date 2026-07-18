@@ -1,7 +1,7 @@
 {
   "name": "issue-driven-dev",
-  "description": "v2.99.0: /idd-ask — grounded QA over the issue corpus (#72), the surfacing family's 4th member mirroring /spectra-ask. Natural-language question -> decide-to-search gate (greetings/meta skip; bug-shaped questions never trigger diagnose) -> retrieval delegating idd-find's search backend (family rule: never rebuild a read-only query) -> full-text read of top-N hits (default 5, capped 10) -> grounded synthesis: first line blockquotes the question, every claim carries an issue/comment citation, source priority closed-with-PR > open > orphaned comment with conflicts surfaced, ending with Referenced Issues; corpus silence reported honestly, never filled from training memory. Read-only allowed-tools locked. First live run of the #140 fourth-member procedure (Q3 weak-hit judgment recorded in the family canonical). New capability spec idd-ask (+2 requirements); new drift-guard suite; 37 suites 0 fail.",
-  "version": "2.99.0",
+  "description": "v2.99.1: staleness sweep + guard-net expansion (#267). README carried three stale gpt-5.5 pins and a stale vendored-codex-call claim — all outside the drift-guard scan net; fixed and the net widened: model-generation-sync now refutes pins in README + both catalog docs (31 assertions), and a new docs-catalog-sync suite requires every skills/* directory to appear in the catalog docs (the #122 no-forcing-function root cause is now test-detectable; it caught idd-ask and idd-config on its first RED). docs/workflows.md + skill-dimensions.md backfilled to v2.99 reality (P-find-lookup / P-ask-history / P-report-rollup / P-config-maintain / P-verify-file-profile paths, matrix rows, D12 4th member). 38 suites 0 fail.",
+  "version": "2.99.1",
   "author": {
     "name": "Che Cheng"
   },

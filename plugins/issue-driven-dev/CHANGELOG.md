@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.99.1] - 2026-07-18
+
+### Fixed
+
+- **README stale pins + docs catalog drift (#267)** — README carried three `gpt-5.5` pins (skill / dependency / prerequisites tables) plus a stale "vendored codex-call, three-tier degrade" claim, all invisible to the drift-guards; docs/workflows.md + skill-dimensions.md lacked idd-find / idd-ask (and idd-config, a pre-#122 legacy gap). Backfilled to v2.99 reality: five new path entries, three matrix rows, D12 4th member. Via PR #268.
+
+### Tests
+
+- **Guard-net expansion (systemic prevention, both directions)** — `model-generation-sync` refutes now cover README + both catalog docs (31 assertions; the widened net immediately caught two pins the manual pass missed), and the new `docs-catalog-sync` suite requires every `skills/*/` directory name to appear in a catalog doc — the #122 root cause (no forcing function for backfill) is now test-detectable. 38 suites, 0 fail.
+
 ## [2.99.0] - 2026-07-18
 
 ### Added
