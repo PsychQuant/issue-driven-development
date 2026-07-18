@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.98.0] - 2026-07-18
+
+### Changed
+
+- **Codex channel goes full-dependency (#264, Spectra `codex-channel-dependency`)** — user ruling: "完全依賴，跟 superpowers 一樣". The vendored `bin/codex-call` is **deleted** (divergence audit: it trailed pai 2.18.0 by four security/correctness fixes — token-exp NSNumber parse, OAuth-file umask 0o077, RFC-3986 form-encoding, post-flock re-read — so the switch is a net upgrade). Executable resolves from the pai plugin cache (`PAI_CODEX_CALL`; `MIN_PAI` bumped to **2.19.0**, the pai#22 `codexModel`/`codexEffort` contract floor — 2.18.0 would silently ignore the args). Governance resolves from codex-pro's newly-officialized EXTERNAL-CONSUMER CONTRACT (`MIN_CODEX_PRO=0.7.0`: machine-readable `defaults.json` base + global/project `profile.yaml` overlay, codex-pro#7) and is passed explicitly on all three call paths. IDD's tree now contains **zero model pins**. Dependency wiring mirrors the superpowers shape (#209): install-time `dependencies` entry, `allowCrossMarketplaceDependenciesOn`, `check-plugin-presence` pre-flight, fail-fast with a one-step install instruction, no soft fallback. Upstream shipped first: codex-pro 0.7.0 + pai 2.19.0 (both marketplaces synced).
+
+### Tests
+
+- `model-generation-sync` reshaped to the v2 contract: a re-vendored `bin/codex-call` is itself a failing assertion; SKILL must carry both version gates + the install instruction. RED 17/8 → GREEN 25/0; aggregator 36 suites 0 fail.
+
 ## [2.97.0] - 2026-07-17
 
 ### Added
