@@ -262,6 +262,17 @@ idd-verify --pr 71
 - **Assumptions**:PR 已 reference 某 issue(`Refs #N` / `Closes #N`)
 - **Risk**:低 — verify 是 read-only verification,findings post 成 comment
 
+#### P-verify-file-profile — 非 code deliverable 驗證（#258，v2.97+）
+
+```
+idd-verify #N --profile prose --file report.md
+```
+
+`--profile`（code 預設不變 / prose / academic / config 自訂）切換 lens 四元組；`--file`/`--dir` 輸入源讓 git worktree optional（posting target 仍照 config 解析）。File-mode freshness gate = SHA-256 snapshot（#228 的非 git 等價物，不豁免）。
+
+- **Use case**：學術/臨床 prose、信件、報告的 ensemble 驗證；非 git workspace
+- **Risk**:低 — 同 P-pr-verify 的 read-only 性質；lens 品質見 `references/verify-profiles.md`
+
 #### P-pr-verify-then-merge
 
 ```
@@ -355,6 +366,34 @@ idd-edit comment:NNN --append --body "..."
 - **Use case**：issue body 用詞/語意精度審查；retroactive audit
 - **Risk**：low — 唯一副作用是 annotation block 寫入
 
+#### P-find-lookup — 語意查找（#139，v2.97+）
+
+`idd-find "<free-text query>"` → open+closed 全語料 GitHub relevance 排序 + phase / PR overlay。建案前查重、找舊案考古。surfacing-only、read-only；filter flags 拒收（導流 idd-list）；跨措辭限制每輪揭露（embedding 是 residue）。
+
+- **Use case**：「之前是不是處理過類似 X、在哪」
+- **Risk**：zero — 純讀
+
+#### P-ask-history — issue 知識庫問答（#72，v2.99+）
+
+`idd-ask "<自然語言問題>"` → decide-to-search gate → retrieval（delegate idd-find backend）→ top-N 全文（5／上限 10）→ grounded 合成答案（claim 必附引用、source priority、`### Referenced Issues`、查無誠實）。bug 貌問題**不觸發 diagnose**。
+
+- **Use case**：「當時為什麼這樣決定 / X 怎麼運作」— 還原 decision rationale
+- **Risk**：zero state / 中 token（top-N 全文是本質成本，有界）
+
+#### P-report-rollup — 跨 issue 人類 triage 視圖（#134，v2.97+）
+
+`idd-report --rollup` → 聚合各 issue 的 dashboard comment（#133 契約，marker 定位、O(1)/issue）→ 四分組（need-attention / in-progress / stalled>14d / recently-closed）。**Pull-only invariant**：不寫回、不通知。
+
+- **Use case**：「我這週該把注意力放哪」
+- **Risk**：zero — snapshot-only（invariant 在 drift-guard）
+
+#### P-config-maintain — config 生命週期（v2.31+）
+
+`idd-config show / init / validate / which` → `.claude/.idd/local.json` 檢視、初始化、predicate 驗證、cwd 落點 dry-run。非 lifecycle、無 issue 綁定。
+
+- **Use case**：首次設定、monorepo 路由除錯、「這個 cwd 會開到哪個 repo」
+- **Risk**：low — init/validate 只動 config 檔
+
 ### H. Unsupervised / autopilot paths(no human-in-loop)
 
 #### P-loop-autopilot
@@ -406,7 +445,10 @@ idd-edit comment:NNN --append --body "..."
 | `idd-edit` | | | | | | | ✓ batch | | | | ✓ standalone | |
 | `idd-list` | | | | | | | | | | | ✓ triage | ✓ cron |
 | `idd-clarify` | (issue 內 delegate) | | | | | | | | | | ✓ standalone audit | |
-| `idd-report` | | | | | | | | | | | ✓ aggregate | |
+| `idd-find` | (建案前查重) | | | | | | | | | | ✓ lookup | |
+| `idd-ask` | | | | | | | | | | | ✓ grounded QA | |
+| `idd-config` | | | | | | | | | | | ✓ maintain | |
+| `idd-report` | | | | | | | | | | | ✓ aggregate + `--rollup` | |
 | `idd-route` | | | | | | | | | | | ✓ recommend | |
 | `idd-all` | | | | ✓ all variants | ✓ cluster | | | | | | | ✓ loop |
 | `idd-all-chain` | | | | | | ✓ all variants | | | | | | ✓ rare |
@@ -504,6 +546,8 @@ Q1: 是 single issue 還是 multi issues?
 ## Provenance
 
 > **2026-07-17（#122 補完）**：catalog 由 skeleton 補至 v2.96 現實 — 新增 P-meeting（#57）、P-batch-drain（#182）、P-discussions-intake（#221）、P-clarify-audit（#135）；decision tree 補 meeting 分流 + #129 硬閘；matrix 補 idd-clarify 列。後續新 path 隨 feature 落地就地 iterate（使用者裁決：本檔可就地補、不另開 issue）。
+>
+> **2026-07-18（#267 回填 + 機制化）**：補至 v2.99 現實 — 新增 P-find-lookup（#139）、P-ask-history（#72）、P-report-rollup（#134）、P-config-maintain、P-verify-file-profile（#258）；matrix 補 idd-find / idd-ask / idd-config 列。**#122 的根因（catalog 無強制回填機制）獲得機制解**：`scripts/tests/docs-catalog-sync/` drift-guard 要求每個 `skills/*/` 目錄名出現在本檔或 skill-dimensions.md — 新 skill 落地忘記回填會直接紅。就地補裁決繼續有效；guard 只鎖「提及」，內容品質仍是人的判斷。
 
 
 - **首次版本**:2026-05-21 — AI agent skeleton,由 user 對 #122(原 marketplace#89,已 transfer 過來)提出 reframing(「不是強制,而是把所有可能 path 都列出來」)觸發

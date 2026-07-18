@@ -206,7 +206,7 @@ IDD plugin 已累積 14+ skills(`idd-issue` / `idd-diagnose` / `idd-implement` /
 
 下列 dimensions 是 AI agent 從 corpus distill 不出,但 user 可能已有的:
 
-- **D12**: **Surfacing vs Lifecycle**（#140 定義完成，v2.97.0）— surfacing-only primitive family：idd-list / idd-clarify / idd-find。canonical 定義（軸對照表、雙向鐵律、增員判準）見 [`plugins/issue-driven-dev/references/surfacing-primitives.md`](../plugins/issue-driven-dev/references/surfacing-primitives.md)
+- **D12**: **Surfacing vs Lifecycle**（#140 定義完成，v2.97.0）— surfacing-only primitive family：idd-list / idd-clarify / idd-find / idd-ask（#72，v2.99 第 4 員）。canonical 定義（軸對照表、雙向鐵律、增員判準）見 [`plugins/issue-driven-dev/references/surfacing-primitives.md`](../plugins/issue-driven-dev/references/surfacing-primitives.md)
 - **D12-alt**: ? (cost / token / time 維度?)
 - **D13**: ? (cross-repo / cross-skill 整合?)
 - **D14**: ? (retroactive vs forward-looking?)
@@ -235,6 +235,9 @@ IDD plugin 已累積 14+ skills(`idd-issue` / `idd-diagnose` / `idd-implement` /
 | `idd-edit` | Sep | Atom | Side | W | (任) | S / Batch | SHALL preview before write | Att-only | Sk | Cl-non |
 | `idd-list` | (n/a) | Atom | n/a | R | (查) | S | n/a | Unatt-capable | Sk + flags | Cl-non |
 | `idd-clarify` | Sep | Atom | Delib(surface-only) | W (annotation block) | Fwd | S | SHALL hard-gate consumer (diagnose Step 0.5) | Unatt (deferred-row 機制 #137) | Sk + flags | Cl-non |
+| `idd-find` | (n/a) | Atom | n/a | R | (查) | S | n/a | Unatt-capable | Sk + flags | Cl-non |
+| `idd-ask` | (n/a) | Atom | n/a | R | (查) | S | SHALL grounded (claim 必附引用) | Unatt (推題搜 + audit line) | Sk + flags | Cl-non |
+| `idd-config` | (n/a) | Atom | n/a | R (show/which) / W (init) | (n/a) | S | SHALL validate schema | Att | Sk + subcommands | Cl-non |
 | `idd-report` | Sep | Atom | Side | W | Bwd | S | SHALL aggregate | Att | Sk | Cl-non |
 | `idd-route` | (n/a) | Atom | n/a | R (recommend) / W (record) | (查) | S | n/a | Unatt-capable | Sk | Cl-non |
 | `idd-all` | **Auto (Hyb degraded)** ⚠ | Orch | (跨 D / E / Side) | W | (跨) | S / Batch (v2.83 conflict-class ordered) / Cluster | mostly SHALL but soft Phase 0.4 | Hyb | Sk + flags | Cl-non |

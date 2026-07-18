@@ -61,6 +61,17 @@ refute_output_grep "idd-verify: no hardcoded --model gpt-5 pin" '--model gpt-5' 
 refute_output_grep "idd-diagnose: old candidate name gone"      "codex-gpt-5.5-xhigh" "$DIAGNOSE"
 assert_output_grep "idd-diagnose: codex-xhigh candidate"        "codex-xhigh"      "$DIAGNOSE"
 
+# ── README + repo docs: same zero-pin contract (#267 — the file class that leaked) ──
+README="$PLUGIN_ROOT/README.md"
+WORKFLOWS="$REPO_ROOT/docs/workflows.md"
+DIMENSIONS="$REPO_ROOT/docs/skill-dimensions.md"
+assert_file_exists "plugin README exists" "$README"
+assert_file_exists "docs/workflows.md exists" "$WORKFLOWS"
+assert_file_exists "docs/skill-dimensions.md exists" "$DIMENSIONS"
+refute_output_grep "README: no stale gpt-5.5 hard-pin"          "gpt-5.5"          "$README"
+refute_output_grep "workflows.md: no stale gpt-5.5 hard-pin"    "gpt-5.5"          "$WORKFLOWS"
+refute_output_grep "skill-dimensions.md: no stale gpt-5.5 hard-pin" "gpt-5.5"      "$DIMENSIONS"
+
 # ── references: same neutrality contract ──
 AGENT_ROUTING="$PLUGIN_ROOT/references/agent-routing.md"
 EXT_DELEG="$PLUGIN_ROOT/references/external-agent-delegation.md"
