@@ -9,7 +9,8 @@
   "homepage": "https://github.com/PsychQuant/issue-driven-development",
   "allowCrossMarketplaceDependenciesOn": [
     "claude-plugins-official",
-    "parallel-ai-agents"
+    "parallel-ai-agents",
+    "codex-pro"
   ],
   "plugins": [
     {
