@@ -13,7 +13,7 @@
 | [`/idd-config`](#idd-config) | Inspect / init / validate `.claude/issue-driven-dev.local.json` | `[show \| init \| validate \| which]` |
 | [`/idd-list`](#idd-list) | List issues + IDD phase + suggested next action | `[--state ...] [--label ...] [--limit N] [--target ...]` |
 | [`/idd-issue`](#idd-issue) | Create a well-documented GitHub issue | `[description \| path/to/.docx] [--target ...] [--parent N] [--blocked-by M,...] [--bundle-mode ordered\|unordered] [--mention login]` |
-| [`/idd-comment`](#idd-comment) | Add template-guided comment (decision / note / question / correction / link / errata) | `#N [#N ...] --type=<type> [options]` |
+| [`/idd-comment`](#idd-comment) | Add template-guided comment (decision / note / question / correction / link / errata / reply) | `#N [#N ...] --type=<type> [options]` |
 | [`/idd-edit`](#idd-edit) | Edit existing comment (append / replace / prepend-note) | `comment:<id>[ ...] \| #N --last [--append \| --replace \| --prepend-note] [--body=...]` |
 | [`/idd-diagnose`](#idd-diagnose) | RCA / requirements analysis + complexity verdict | `#N [#N ...] [--cwd ...]` |
 | [`/idd-plan`](#idd-plan) | Plan-tier: EnterPlanMode approval gate before TDD | `#N [--pr \| --no-pr] [--cwd ...]` |
@@ -176,7 +176,7 @@
 
 **Syntax**: `/idd-comment #N [#N ...] --type=<type> [options]`
 
-**Options — `--type`** (mandatory, 6 types):
+**Options — `--type`** (mandatory, 7 types):
 
 | Type | Use |
 |---|---|
@@ -186,6 +186,7 @@
 | `correction` | Mark a previous claim wrong + correction |
 | `link` | External context (URL, related issue, gist) |
 | `errata` | Errata about a prior comment in the same issue |
+| `reply` | Human-facing point-by-point reply to a comment/issue (v2.100.0+, #269) |
 
 **Other options**:
 
@@ -194,6 +195,7 @@
 | `--body '...'` | Free-text body; appended under the type-specific template heading |
 | `--quote 'text'` | Source quote — forced into blockquote, marked as quoted text |
 | `--quote-source 'where'` | Attribution for the quote |
+| `--points-from=<comment-url\|issue-body>` | reply type 必填，逐點來源（human-facing 逐點回覆：verbatim blockquote 對方原文 → 各點怎麼改 + SHA 錨定） |
 | `#N #N #N` (batch mode, v2.34.0+) | Same comment goes to each issue (3 `gh issue comment` calls, one master report) |
 
 **Workflow position**: Side-quest, any phase. Use when a real-time decision / context fact deserves the audit trail but doesn't merit a new issue.

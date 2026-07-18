@@ -336,9 +336,9 @@ idd-route recommend --complexity Plan --signals ... --candidates ...
 idd-comment #N --type decision --body "..."
 ```
 
-- **Use case**:加 decision / note / question / correction / link / errata 到既存 issue,不走 phase
+- **Use case**:加 decision / note / question / correction / link / errata / reply 到既存 issue,不走 phase
 - **Mode**:Attended/Unattended hybrid
-- **6 types**:decision / note / question / correction / link / errata
+- **7 types**:decision / note / question / correction / link / errata / reply(human-facing 逐點回覆,`--points-from`,v2.100.0+ #269)
 
 #### P-edit-only
 
