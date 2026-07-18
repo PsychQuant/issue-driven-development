@@ -23,6 +23,10 @@
     {
       "name": "parallel-ai-agents",
       "marketplace": "parallel-ai-agents"
+    },
+    {
+      "name": "codex-pro",
+      "marketplace": "codex-pro"
     }
   ]
 }
