@@ -2,8 +2,9 @@
 name: idd-comment
 description: |
   加 template-guided comment 到 GitHub issue。
-  支援 decision/note/question/correction/link/errata 6 個 types，強制 blockquote 原文、加 timestamp 與 metadata marker。
-  用於記錄使用者決定、外部 context、開放問題，不走完整 diagnose/implement phase 時。
+  支援 decision/note/question/correction/link/errata/reply 7 個 types，強制 blockquote 原文、加 timestamp 與 metadata marker。
+  用於記錄使用者決定、外部 context、開放問題，不走完整 diagnose/implement phase 時；
+  reply type（#269）是 human-facing 逐點回覆——寫給 review 提出者等人類 collaborator 的 correspondence。
   支援 batch mode（v2.34.0+）：多個 #N 同步加同一段 comment（如 `#34 #36 --type note --body 'blocked by upstream'`）。
   防止的失敗：非流程性 decision 散落在 chat，未來無法追溯。
 argument-hint: "#issue [#issue ...] --type=<type> [options] e.g. '#42 --type note --body ...' or '#34 #36 --type note --body ...' (batch)"
@@ -45,7 +46,7 @@ idd-issue source.docx       # auto-trigger when source contains ≥2 findings
 
 完整 multi-finding mode 契約見 `idd-issue` SKILL.md `## Multi-finding source mode` 段落。
 
-## 6 個 Types
+## 7 個 Types
 
 | Type | 用途 | 必填 | 產出格式 emoji |
 |------|------|------|--------|
@@ -55,6 +56,7 @@ idd-issue source.docx       # auto-trigger when source contains ≥2 findings
 | `correction` | 修正外部 data / interpretation | `--body` | 🔧 |
 | `link` | 交叉引用其他 issue | `--target`, `--body` | 🔗 |
 | `errata` | 標記既有 comment 內容錯了（配 idd-edit 用） | `--target-comment`, `--body` | ⚠️ |
+| `reply` | Human-facing 逐點回覆（給 review 提出者等人類 collaborator；v2.100.0+，#269） | `--points-from`, `--body` | 🧑‍🏫 |
 
 ## Configuration
 
@@ -78,6 +80,9 @@ TaskCreate(name="detect_spectra_context", description="Step 0.7: 偵測是否從
 TaskCreate(name="validate_type_requirements", description="依 type 檢查必填欄位（decision 要 quote、note 要 source、link 要 target、errata 要 target-comment）")
 TaskCreate(name="resolve_mentions", description="Step 1.5: 若有 --mention 或 body 含 @xxx，強制走 rules/tagging-collaborators.md 協定（gh api 取 collaborators → fuzzy match → AskUserQuestion fallback → 用 @login 不用 display name）")
 TaskCreate(name="build_comment_body", description="按 type 對應 template 組 markdown（emoji header + blockquote + body + metadata marker），插入已驗證的 @login mentions")
+TaskCreate(name="resolve_points_source", description="（reply 專屬）--points-from 三層鏈解析：comment URL / `issue-body` → 預設 issue body Original text blockquote → fallback 要求使用者貼原文；verbatim，禁止 paraphrase（Reply drafting pipeline R1）")
+TaskCreate(name="verify_before_claim", description="（reply 專屬）每點宣稱已解決前以 git log --grep / PR merge 狀態驗證證據；無證據寫 open / pending（R2）")
+TaskCreate(name="calibrate_or_degrade", description="（reply 專屬）check-plugin-presence perspective-writer 命中 → calibration（不得改動錨定事實）；缺席 → 印安裝指令照 post（R4/R5 graceful degrade）")
 TaskCreate(name="verify_mentions", description="post 前 grep body 的 @\\w+ 全部 cross-check 已驗證的 collaborator set；未驗證 token 直接 abort")
 TaskCreate(name="post_comment", description="經 gh-egress.sh comment 派送（#226；--scrub-attested 依 rules/privacy-scrubbing.md 解析，mention 帶 --mention-attested），--body-file 避免 escape 問題；errata type 額外 auto-call idd-edit")
 TaskCreate(name="report_result", description="輸出 ✓ Comment posted + URL；errata type 加報 idd-edit 結果")
@@ -149,6 +154,7 @@ Options (視 type 而定)：
 - `--target=#XX` — 目標 issue（link type 必填）
 - `--target-comment=<id>` — 目標 comment ID（errata type 必填）
 - `--deadline=YYYY-MM-DD` — 未決問題的期限（question type 可選）
+- `--points-from=<comment-url|issue-body>` — 逐點來源（reply type 必填；值解析走 Reply drafting pipeline 的三層鏈）
 - `--mention <login>[,<login>...]` — tag 人到 comment（**v2.32.0+**，強制走 [`rules/tagging-collaborators.md`](../../rules/tagging-collaborators.md)）
 - `--mention-prompt` — 強制走 AskUserQuestion 從 collaborator menu 選（不嘗試 auto-resolve）
 - `--resume-spectra="<topic>"` — 顯式宣告從 spectra-discuss 中斷進來（**v2.32.0+**，觸發 Step 7 resume prompt）
@@ -163,6 +169,7 @@ Options (視 type 而定)：
 | correction | `--body` 必存在 |
 | link | `--target` + `--body` 必存在 |
 | errata | `--target-comment` + `--body` 必存在 |
+| reply | `--points-from` 必存在（`--body` 選填：per-point 處理說明素材） |
 
 缺必填 → 用 AskUserQuestion 詢問。
 
@@ -316,6 +323,59 @@ fi
 
 完整 R4/R5 規範 + override pathway 見 [`/idd-edit` SKILL.md](../idd-edit/SKILL.md) `## Runtime gates (#154, v2.81.0+)`。
 
+#### Template: `reply`（v2.100.0+，#269 — human-facing 逐點回覆）
+
+```markdown
+## 🧑‍🏫 Reply
+
+> **Point {i}**（{points 來源標示，如 review 日期}）：
+> 「{對方原文，逐字}」
+
+{該點的處理說明：改了哪裡（file / section / theorem / symbol）、怎麼改、cross-link commit / PR / label}
+
+**狀態**：✅ 已解決（`{merge SHA / PR}`）｜⏳ open / pending（{原因與下一步}）
+
+（…每點重複以上三段，依對方原始順序…）
+
+---
+
+**整體狀態**：{merged SHA、同步狀態（如 Overleaf / deploy）、下一步}
+
+<!-- idd:comment type=reply date=YYYY-MM-DD points-from={comment-url|issue-body|user-pasted} calibrated={yes|no} -->
+```
+
+#### Reply drafting pipeline（reply 專屬，強制順序）
+
+reply 是**寫給人看的 correspondence**，不是 audit log。draft 依以下順序執行，順序本身是契約：
+
+**R1 — Points-source 解析（`--points-from`，三層鏈）**：flag 必填（Step 2 validation 擋缺席）。值域：comment URL（逐點取自該 comment 的 blockquote / 列點）或字面值 `issue-body`。`issue-body`（或 URL 解析不到列點）→ 預設抓 issue body 的 Original text blockquote（idd-issue 建案紀律寫入的逐字原文）→ 仍解析不到 → 要求使用者貼上原文，**不得**自行歸納。逐點內容一律 verbatim blockquote，**禁止 paraphrase 對方原文**——收件人看到自己的話被改寫即失去信任（IC_R007 同源紀律）。
+
+**R2 — verify-before-claim gate**：每一點在 draft 宣稱「已解決」之前，先驗證證據存在——`git log --grep "#N"` 找 commit、PR merge 狀態、或等價 artifact。無證據的點必須寫 open / pending，不得宣稱完成。與 idd-close Step 1.6 semantic gate 同族；prose 紀律，不另立 helper script。
+
+**R3 — referent 錨定**：verbatim 引文組裝 + R2 通過 + SHA / file / theorem 引用固定。錨定完成後才進 calibration。
+
+**R4 — perspective-writer soft integration（graceful degrade）**：probe 指令 `check-plugin-presence.sh perspective-writer perspective-writer`（座標 = marketplace name + plugin name，standalone repo `PsychQuant/perspective-writer`）：
+
+```bash
+if "$CLAUDE_PLUGIN_ROOT/scripts/check-plugin-presence.sh" perspective-writer perspective-writer 2>/dev/null; then
+  # 命中 → Skill(skill="perspective-writer:perspective-writer") 做 voice / recipient calibration
+  # 轉交：resolved --mention login + target repo .claude/rules/correspondence-<person>.md 路徑（若存在）
+  CALIBRATED=yes
+else
+  cat <<'EOF'
+ℹ perspective-writer 未安裝 — reply 以未 calibrate 的 draft 照常 post（結構完整可用）。
+  要啟用 voice / recipient calibration：
+    claude plugin marketplace add PsychQuant/perspective-writer
+    claude plugin install perspective-writer@perspective-writer
+EOF
+  CALIBRATED=no
+fi
+```
+
+**不新增 install-time `dependencies` 條目**——soft integration 是 runtime-only presence check。與 superpowers 的 hard-dependency 刻意相反：那是 canonical process 替代（無物可退、fail-fast）；calibration 是 enhancement，缺席時 reply 的結構正確性由 R1–R3 自有紀律保證。consumer-facing 契約收斂後（PsychQuant/perspective-writer#1）可升級整合深度。
+
+**R5 — 不變量**：calibration 不得改動錨定事實——commit SHA、file / theorem 引用、對方原文的 verbatim 引文。違反即 bug。calibration 之後才走 Step 3.5 verify mentions → Step 4 egress（同六型的 gh-egress choke-point，`--scrub-attested` + 有 mention 時 `--mention-attested`）。
+
 ### Step 3.5: Verify mentions (v2.32.0+)
 
 Post 前最後一道防線：
@@ -468,6 +528,17 @@ HTML comment 在 GitHub 不渲染，但可 parse：
 
 → 觸發 [`rules/tagging-collaborators.md`](../../rules/tagging-collaborators.md)：抓 `gh api repos/PsychQuant/contact-book/collaborators` → 找到 `@Hardy1Yang` → 插入 body → verify pass → post。
 
+### Reply（human-facing 逐點回覆，v2.100.0+）
+
+```
+/idd-comment #141 --type=reply \
+  --points-from=issue-body \
+  --mention=<reviewer-login> \
+  --body="per-point 處理說明素材：各點改在哪個 lemma / section、merge SHA"
+```
+
+→ 逐點 verbatim blockquote 對方 review 原文 → 各點處理說明 + SHA 錨定（無證據的點誠實標 open）→ perspective-writer 存在則 calibrate 後 post、缺席則印安裝指令照 post。
+
 ### Spectra-bridge resume (v2.32.0+)
 
 ```
@@ -489,6 +560,8 @@ HTML comment 在 GitHub 不渲染，但可 parse：
 - **不走 phase detection**：idd-comment 是 ad-hoc，不觸發 phase 推斷（那是 idd-update 的事）
 - **Comment body 要自我解釋**：三個月後回來看，光看 comment 就知道 context。這是「第一段 prose」的動機。
 - **任何 @xxx 必走 collaborator API**（v2.32.0+）：禁止從訓練記憶 / 聊天歷史 / git log 推測 handle。違反 = 通知錯人，不可逆。詳見 [`rules/tagging-collaborators.md`](../../rules/tagging-collaborators.md)。
+- **reply 是 closing summary 的加項**（v2.100.0+）：不取代 closing summary / verify report / 任何 audit-facing 產出；close gate 不接受 reply 作為 closing summary 替代。
+- **reply 的錨定先於 calibration**（v2.100.0+）：R1–R3 錨定完成後才進 R4 calibration；calibration 不得改動錨定事實（見 Reply drafting pipeline R5）。
 - **Spectra context 不可靜默忽略**（v2.32.0+）：偵測到從 spectra-discuss 進來必須印 resume prompt。使用者要不要回去 spectra 是他的事，但 skill 不能讓 context 默默掉地。
 
 ## 與其他 idd-* skill 的關係

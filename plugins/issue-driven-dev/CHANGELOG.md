@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.100.0] - 2026-07-18
+
+### Added
+
+- **`/idd-comment --type=reply` — human-facing point-by-point reply (#269, Spectra `add-idd-comment-reply-type`)** — a seventh comment type for correspondence written *to a human collaborator* (a review author, an advisor), not for the audit trail. Every prior type is audit-facing; `reply` is the recipient-facing one. Structure: each of the counterpart's points quoted **verbatim** as a blockquote → what changed and where (file / section / theorem) → an anchor to the evidencing commit / PR / merge SHA → an honest per-point status, closing with an overall state line. Required flag `--points-from` resolves through a three-layer chain (explicit comment URL → default issue-body Original-text blockquote → user-pasted fallback); paraphrasing the counterpart's own words is forbidden. A **verify-before-claim** gate (same family as `idd-close`'s Step 1.6 semantic gate) refuses to mark a point resolved without evidence found via `git log --grep "#N"` / merged-PR state — unevidenced points stay `open`/`pending`. **perspective-writer soft integration**: `check-plugin-presence.sh perspective-writer perspective-writer` present → the anchored draft is calibrated through `perspective-writer:perspective-writer` for voice / recipient tone; absent → a one-line notice with the two install commands is printed and the structurally-complete draft is posted anyway (graceful degrade, NO install-time dependency — the deliberate opposite of the superpowers hard-dependency, because calibration is an enhancement, not a canonical-process substitute). Ordering invariant: referent anchoring (verbatim quotes, verify-before-claim, SHAs/refs) completes **before** calibration, and calibration must not alter anchored facts. `reply` is additive to closing summaries — it never substitutes for one. Egress unchanged (gh-egress choke-point + scrub/mention attestation). Motivated by the #141 6-point review-reply that took two rounds of verbal steering to shape.
+
+### Tests
+
+- New drift-guard suite `idd-comment-reply` (19 assertions locking the SKILL contract: type-table + Step-2 required-field row, reply template + metadata marker, three-layer points source + verbatim ban, verify-before-claim gate, presence-check coordinates + both degrade install literals + no-install-dependency clause, anchoring-precedes-calibration invariant, additive-audit posture, and the docs-catalog `reply` entry). Aggregator 40 suites, 0 fail.
+
+### Related
+
+- Depends on the standalone perspective-writer marketplace extraction (PsychQuant/psychquant-claude-plugins#116 — `PsychQuant/perspective-writer` v2.10.0) so the degrade notice's install command is meaningful to public IDD users. The perspective-writer-side EXTERNAL-CONSUMER CONTRACT for a programmatic calibrate-draft entry is tracked separately (PsychQuant/perspective-writer#1); this change depends only on presence-check + graceful degrade.
+
 ## [2.99.1] - 2026-07-18
 
 ### Fixed
