@@ -8,9 +8,10 @@ IDD 的 skill 分兩類：**lifecycle skills**（issue → diagnose → implemen
 |--------|-----|-----------|
 | `/idd-list`（v2.51+） | structural triage | 「現在有什麼、在哪個 phase、哪個 PR」 |
 | `/idd-clarify`（#135, v2.72+） | terminology / semantic accuracy | 「這個詞用得準不準、誰需要釐清」 |
-| `/idd-find`（#139, v2.97+） | semantic lookup | 「之前是不是處理過類似的問題」 |
+| `/idd-find`（#139, v2.97+） | semantic lookup | 「之前是不是處理過類似的問題、在哪」 |
+| `/idd-ask`（#72, v2.99+） | grounded QA | 「當時為什麼這樣決定 / X 怎麼運作」→ **合成答案**＋引用（鏡像 /spectra-ask） |
 
-三員互補、零重疊：list 吃 filters、find 吃 free-text query、clarify 吃 issue 內文語意 — 輸入/輸出形狀不同是「該開新 skill 而非塞 flag」的判準（#139 Option A 裁決的一般化）。
+四員互補、零重疊：list 吃 filters、find 吃 free-text query → ranked hits、ask 吃 question → 合成答案、clarify 吃 issue 內文語意 — 輸入/輸出形狀不同是「該開新 skill 而非塞 flag」的判準（#139 Option A 裁決的一般化）。ask 的 retrieval delegate find 的 backend（本檔「lifecycle 不重造唯讀查詢」鐵律同樣適用於 primitive 之間）。增員三題的誠實記錄（#72）：第 3 題（delegate 消費者）**弱命中** — ask 類 skill 的消費者本來就是人（spectra-ask 同構先例），以此 judgment 開員；若未來第 3 題弱的候選無同構先例，先當 reference 文件。
 
 ## D12 軸：Surfacing vs Lifecycle
 
