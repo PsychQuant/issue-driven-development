@@ -51,6 +51,7 @@ skill source tree；既有 `SKILL.md` 可以繼續使用 Claude-native tool cont
 | `idd-update` | Issue body 過時，要讀完所有 comments 才知道現狀 | 同步 body Current Status 區塊 |
 | `idd-list` | 不知道有什麼要做、漏掉卡 verify 的 issue | 列出 open issues 含 IDD phase + 建議 next action |
 | `idd-find` | 重複 diagnose 已解過的問題；忘記舊 fix 在哪 | 語意查找 open+closed 全語料（GitHub relevance + phase/PR overlay）；surfacing-only、read-only（v2.97.0+，#139）|
+| `idd-ask` | 三個月後沒人記得當時為什麼；AI 憑記憶腦補歷史 | issue 知識庫 grounded 問答（top-N 全文 + claim 必附引用 + source priority；鏡像 /spectra-ask）；surfacing-only、read-only（v2.99+，#72）|
 | `idd-report` | 進度不透明，stakeholder 看不到現況 | 產出進度報告到 GitHub Discussions |
 | `idd-comment` | 非流程性決定 / 外部 context 散落在 chat | Template-guided comment（decision/note/question/correction/link/errata）|
 | `idd-edit` | 手動 `gh api PATCH` 容易字串 escape 誤覆蓋 | 編輯既有 comment（append/replace/prepend-note 三種 mode）|
