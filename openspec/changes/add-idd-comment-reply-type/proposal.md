@@ -33,6 +33,6 @@ idd-* 產出的 comment 全部是 audit-facing（closing 五段式、verify mast
 
 - Affected specs: 新增 `idd-comment-reply`（既有 `superpowers-integration` 不修改 — 本案刻意走 soft 側，設計對比記於 design.md）
 - Affected code:
-  - New: plugins/issue-driven-dev/scripts/tests/idd-comment-reply/run.sh
+  - New: plugins/issue-driven-dev/scripts/tests/idd-comment-reply/test.sh
   - Modified: plugins/issue-driven-dev/skills/idd-comment/SKILL.md, plugins/issue-driven-dev/README.md, docs/commands.md, docs/workflows.md, plugins/issue-driven-dev/CHANGELOG.md, plugins/issue-driven-dev/.claude-plugin/plugin.json, .claude-plugin/marketplace.json
   - Removed: (none)

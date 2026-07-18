@@ -56,7 +56,7 @@ idd-issue source.docx       # auto-trigger when source contains ≥2 findings
 | `correction` | 修正外部 data / interpretation | `--body` | 🔧 |
 | `link` | 交叉引用其他 issue | `--target`, `--body` | 🔗 |
 | `errata` | 標記既有 comment 內容錯了（配 idd-edit 用） | `--target-comment`, `--body` | ⚠️ |
-| `reply` | Human-facing 逐點回覆（給 review 提出者等人類 collaborator；v2.100.0+，#269） | `--points-from`, `--body` | 🧑‍🏫 |
+| `reply` | Human-facing 逐點回覆（給 review 提出者等人類 collaborator；v2.100.0+，#269） | `--points-from` | 🧑‍🏫 |
 
 ## Configuration
 
@@ -79,10 +79,10 @@ TaskCreate(name="parse_args", description="Parse #NNN + --type + --body / --quot
 TaskCreate(name="detect_spectra_context", description="Step 0.7: 偵測是否從 spectra-discuss 中斷進來（--resume-spectra flag / --source 含 spectra / spectra list 有 in-flight / .claude/.idd/state/bridge.json（legacy fallback: .claude/state/idd-bridge.json）— 詳見 rules/spectra-bridge.md")
 TaskCreate(name="validate_type_requirements", description="依 type 檢查必填欄位（decision 要 quote、note 要 source、link 要 target、errata 要 target-comment）")
 TaskCreate(name="resolve_mentions", description="Step 1.5: 若有 --mention 或 body 含 @xxx，強制走 rules/tagging-collaborators.md 協定（gh api 取 collaborators → fuzzy match → AskUserQuestion fallback → 用 @login 不用 display name）")
-TaskCreate(name="build_comment_body", description="按 type 對應 template 組 markdown（emoji header + blockquote + body + metadata marker），插入已驗證的 @login mentions")
-TaskCreate(name="resolve_points_source", description="（reply 專屬）--points-from 三層鏈解析：comment URL / `issue-body` → 預設 issue body Original text blockquote → fallback 要求使用者貼原文；verbatim，禁止 paraphrase（Reply drafting pipeline R1）")
-TaskCreate(name="verify_before_claim", description="（reply 專屬）每點宣稱已解決前以 git log --grep / PR merge 狀態驗證證據；無證據寫 open / pending（R2）")
-TaskCreate(name="calibrate_or_degrade", description="（reply 專屬）check-plugin-presence perspective-writer 命中 → calibration（不得改動錨定事實）；缺席 → 印安裝指令照 post（R4/R5 graceful degrade）")
+TaskCreate(name="resolve_points_source", description="（reply 專屬，排在 build_comment_body 之前 — 順序是契約）--points-from 三層鏈解析：comment URL / `issue-body` → issue body Original text blockquote → fallback 要求使用者貼原文；verbatim，禁止 paraphrase（Reply drafting pipeline R1）")
+TaskCreate(name="verify_before_claim", description="（reply 專屬，排在 build_comment_body 之前）每點宣稱已解決前 per-point 驗證證據：git log --grep 只是入口，找到的 commit / PR 須實際含處理『該點』的改動；無對應改動寫 open / pending（R2）")
+TaskCreate(name="build_comment_body", description="按 type 對應 template 組 markdown（emoji header + blockquote + body + metadata marker），插入已驗證的 @login mentions。**reply 時本步即 pipeline R3（referent 錨定）**，consume 前兩步 resolve_points_source + verify_before_claim 的產物，故排在其後")
+TaskCreate(name="calibrate_or_degrade", description="（reply 專屬，排在 build_comment_body/R3 之後）check-plugin-presence perspective-writer 命中 → calibration（不得改動錨定事實）；缺席 → 印安裝指令照 post（R4/R5 graceful degrade）")
 TaskCreate(name="verify_mentions", description="post 前 grep body 的 @\\w+ 全部 cross-check 已驗證的 collaborator set；未驗證 token 直接 abort")
 TaskCreate(name="post_comment", description="經 gh-egress.sh comment 派送（#226；--scrub-attested 依 rules/privacy-scrubbing.md 解析，mention 帶 --mention-attested），--body-file 避免 escape 問題；errata type 額外 auto-call idd-edit")
 TaskCreate(name="report_result", description="輸出 ✓ Comment posted + URL；errata type 加報 idd-edit 結果")
@@ -348,9 +348,9 @@ fi
 
 reply 是**寫給人看的 correspondence**，不是 audit log。draft 依以下順序執行，順序本身是契約：
 
-**R1 — Points-source 解析（`--points-from`，三層鏈）**：flag 必填（Step 2 validation 擋缺席）。值域：comment URL（逐點取自該 comment 的 blockquote / 列點）或字面值 `issue-body`。`issue-body`（或 URL 解析不到列點）→ 預設抓 issue body 的 Original text blockquote（idd-issue 建案紀律寫入的逐字原文）→ 仍解析不到 → 要求使用者貼上原文，**不得**自行歸納。逐點內容一律 verbatim blockquote，**禁止 paraphrase 對方原文**——收件人看到自己的話被改寫即失去信任（IC_R007 同源紀律）。
+**R1 — Points-source 解析（`--points-from`，三層鏈）**：flag 必填（Step 2 validation 擋缺席）。值域：comment URL（逐點取自該 comment 的 blockquote / 列點）或字面值 `issue-body`。`issue-body`（或 URL 解析不到列點）→ 預設抓 issue body 的 Original text blockquote（idd-issue 建案紀律寫入的逐字原文）→ 仍解析不到 → 要求使用者貼上原文，**不得**自行歸納。逐點內容一律 verbatim blockquote，**禁止 paraphrase 對方原文**——收件人看到自己的話被改寫即失去信任（IC_R007 同源紀律）。**但 verbatim 服從 privacy-scrub gate**：reply 是唯一逐字重製第三方原文的型別，當某點引文含私人／PII 內容（尤其 layer 3 使用者貼上的外部原文），**scrub 優先於 verbatim（衝突時 redaction 勝）**——egress 的 `--scrub-attested` 本就掃整個 body 含 blockquote，此處明文化該優先序，避免執行者過度字面化 verbatim 而把未遮蔽的第三方 PII 推上 remote。**注意 SCRUB_LEVEL 是 repo-visibility-keyed**（third-party=enforce / own-public=warn / own-private=light）：reply 的典型情境是「第三方逐字內容貼到使用者自己的 repo」→ 落在 warn / light（預設 proceed），**不會**觸發 enforce 的 block-with-diff。因此對 **layer 3 使用者貼上的外部原文**（機械網抓不到的人名／未發表結果等 human-prose PII），executor **必須主動施加 heightened 隱私自審**、不得僅倚賴 repo-tier 預設放行；比照 CLAUDE.md「raw 第三方逐字內容不進 remote」鐵律。（把 reply 第三方 payload 強制拉到 enforce tier 屬 privacy-scrubbing 跨切面決策，另案 follow-up。）
 
-**R2 — verify-before-claim gate**：每一點在 draft 宣稱「已解決」之前，先驗證證據存在——`git log --grep "#N"` 找 commit、PR merge 狀態、或等價 artifact。無證據的點必須寫 open / pending，不得宣稱完成。與 idd-close Step 1.6 semantic gate 同族；prose 紀律，不另立 helper script。
+**R2 — verify-before-claim gate（per-point，非 issue-level）**：每一點在 draft 宣稱「已解決」之前，先驗證證據存在。**證據是 per-point 的，不是 per-issue**：`git log --grep "#N"` 只是**入口**——找到的 commit / merged PR **必須實際包含處理『該點』的改動**（讀 diff 確認觸及該點所指的 file / function / theorem / behavior），才算該點的證據。**嚴禁**「找到任一提及 `#N` 的 commit 就把所有點都標已解決」——那正是本 gate 要防的 over-claim（本 type 的 raison d'être：每句『已修正』都指到真實 diff）。某點找不到對應該點的具體改動 → 該點寫 open / pending，不得宣稱完成。與 idd-close Step 1.6 semantic gate 同族；prose 紀律，不另立 helper script。
 
 **R3 — referent 錨定**：verbatim 引文組裝 + R2 通過 + SHA / file / theorem 引用固定。錨定完成後才進 calibration。
 

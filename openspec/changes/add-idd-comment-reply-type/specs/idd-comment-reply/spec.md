@@ -16,11 +16,11 @@
 
 ### Requirement: Points-source resolution
 
-The `--points-from` value SHALL resolve through a three-layer chain: (1) an explicit comment URL or the literal `issue-body`; (2) when unspecified, the default SHALL be the verbatim "Original text" blockquote(s) of the issue body; (3) when neither yields points, the skill SHALL ask the user to paste the original text. Resolved points SHALL be reproduced verbatim in the reply; paraphrasing the counterpart's original wording SHALL NOT occur.
+`--points-from` is required (per the Reply comment type requirement); its *value* SHALL resolve through a three-layer chain: (1) an explicit comment URL → points are taken from that comment's blockquote / enumerated list; (2) the literal `issue-body` — or an explicit URL that yields no enumerable point list — → the points SHALL be taken from the verbatim "Original text" blockquote(s) of the issue body; (3) when neither yields points, the skill SHALL ask the user to paste the original text. The three layers describe how the required value resolves — they are NOT a default for an absent flag (an absent flag is refused at Step 2). Resolved points SHALL be reproduced verbatim in the reply; paraphrasing the counterpart's original wording SHALL NOT occur. Verbatim reproduction is nonetheless subject to the privacy-scrub gate: when a quoted point carries private / PII content, the scrub gate takes precedence over verbatim (redaction wins on conflict).
 
-#### Scenario: Default source from issue body
+#### Scenario: Value issue-body resolves to the issue-body blockquote
 
-- **WHEN** `--points-from` is not given a URL and the issue body contains an Original text blockquote
+- **WHEN** `--points-from=issue-body` is given and the issue body contains an Original text blockquote
 - **THEN** the points are extracted from that blockquote and quoted verbatim in the reply draft
 
 #### Scenario: No resolvable source falls back to user input

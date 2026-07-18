@@ -31,23 +31,31 @@ assert_output_grep "skill: Step 2 requires --points-from"       "reply | \`--poi
 
 # ── reply template: per-point structure + metadata marker ──
 assert_output_grep "skill: reply template section"              "#### Template: \`reply\`"          "$SKILL"
+assert_output_grep "skill: template per-point verbatim blockquote" "「{對方原文，逐字}」"             "$SKILL"
+assert_output_grep "skill: template per-point anchor + status"  "已解決（\`{merge SHA / PR}\`）"      "$SKILL"
 assert_output_grep "skill: metadata marker records type"        "idd:comment type=reply"           "$SKILL"
 assert_output_grep "skill: marker records calibration outcome"  "calibrated={yes|no}"              "$SKILL"
 
 # ── points-source three-layer chain + verbatim ban (spec: Points-source resolution) ──
-assert_output_grep "skill: issue-body source literal"           "\`issue-body\`"                   "$SKILL"
-assert_output_grep "skill: default = Original text blockquote"  "Original text" "$SKILL"
+assert_output_grep "skill: layer-1 explicit comment URL"        "comment URL（逐點取自該 comment"    "$SKILL"
+assert_output_grep "skill: layer-2 issue-body source literal"   "\`issue-body\`"                   "$SKILL"
+assert_output_grep "skill: layer-2 = Original text blockquote"  "Original text" "$SKILL"
+assert_output_grep "skill: layer-3 user-paste fallback"         "要求使用者貼上原文"                 "$SKILL"
 assert_output_grep "skill: verbatim ban on counterpart's words" "禁止 paraphrase 對方原文"           "$SKILL"
+assert_output_grep "skill: scrub wins over verbatim on PII"     "scrub 優先於 verbatim"             "$SKILL"
 
 # ── verify-before-claim gate (spec: Verify-before-claim gate) ──
 assert_output_grep "skill: evidence check before claiming"      "git log --grep" "$SKILL"
-assert_output_grep "skill: unevidenced points stay honest"      "無證據的點必須寫 open / pending"     "$SKILL"
+assert_output_grep "skill: evidence is per-point not per-issue (DA-1)" "證據是 per-point 的" "$SKILL"
+assert_output_grep "skill: commit must actually address that point" "必須實際包含處理『該點』的改動" "$SKILL"
+assert_output_grep "skill: unevidenced points stay honest"      "寫 open / pending"     "$SKILL"
 
 # ── perspective-writer soft integration (spec: soft integration with graceful degrade) ──
 assert_output_grep "skill: presence-check coordinates"          "check-plugin-presence.sh perspective-writer perspective-writer" "$SKILL"
 assert_output_grep "skill: degrade install literal (marketplace)" "claude plugin marketplace add PsychQuant/perspective-writer"   "$SKILL"
 assert_output_grep "skill: degrade install literal (install)"   "claude plugin install perspective-writer@perspective-writer"    "$SKILL"
 assert_output_grep "skill: calibration via skill invocation"    "perspective-writer:perspective-writer" "$SKILL"
+assert_output_grep "skill: absent → post uncalibrated draft anyway" "reply 以未 calibrate 的 draft 照常 post" "$SKILL"
 assert_output_grep "skill: no install-time dependency"          "不新增 install-time \`dependencies\` 條目" "$SKILL"
 
 # ── ordering invariant (spec: Anchoring precedes calibration) ──
@@ -57,7 +65,7 @@ assert_output_grep "skill: calibration must not alter anchors"  "calibration 不
 # ── additive audit posture (spec: Additive audit posture and egress discipline) ──
 assert_output_grep "skill: reply is additive to closing summary" "closing summary 的加項"            "$SKILL"
 
-# ── docs catalog: commands.md lists the new type ──
-assert_output_grep "docs: commands.md type enumeration has reply" "reply" "$COMMANDS_DOC"
+# ── docs catalog: commands.md lists the new type (anchored, not the bare `reply` substring) ──
+assert_output_grep "docs: commands.md quick-ref enumerates reply" "link / errata / reply" "$COMMANDS_DOC"
 
 print_summary "idd-comment-reply"
