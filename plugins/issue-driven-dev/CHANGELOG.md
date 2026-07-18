@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.99.0] - 2026-07-18
+
+### Added
+
+- **`/idd-ask` — grounded QA over the issue corpus (#72, Spectra `idd-ask-skill`)** — the surfacing family's 4th member, mirroring `/spectra-ask`: question → decide-to-search gate (greetings/meta skip; bug-shaped questions NEVER trigger diagnose — at most a one-line `/idd-issue` pointer) → retrieval delegating `idd-find`'s search backend (the family's never-rebuild-a-read-only-query rule, first applied between primitives) → full-text read of top-N hits (default 5, `--limit` capped at 10 — the honest token-cost boundary) → grounded synthesis: first line blockquotes the question, every claim carries an issue/comment citation, source priority closed-with-PR > open > orphaned comment with conflicts surfaced not silently resolved, ending with `### Referenced Issues`. Corpus silence is reported honestly — training memory is not corpus. Read-only allowed-tools locked. First live run of the #140 fourth-member procedure: the Q3 (delegating-consumer) weak hit is recorded in `surfacing-primitives.md` with the spectra-ask isomorph judgment, as precedent for future weak-Q3 candidates. Via PR #266.
+
+### Tests
+
+- New drift-guard suite `idd-ask` (17 assertions: grounding contract verbatim + family obligations + discoverability surfaces); aggregator 37 suites, 0 fail.
+
 ## [2.98.0] - 2026-07-18
 
 ### Changed
