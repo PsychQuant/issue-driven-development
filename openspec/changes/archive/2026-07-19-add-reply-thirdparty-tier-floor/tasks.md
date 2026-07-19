@@ -13,4 +13,4 @@
 ## 3. 文件與版本
 
 - [x] 3.1 plugins/issue-driven-dev/CHANGELOG.md 加 2.101.0 段（tier floor 三件套、net 3→4 的 separate-change 依據、#272 / #269 DA-3 出處）；plugin.json 與 root marketplace.json entry 同步 2.101.0。完成判準：三處版本字串一致。
-- [ ] 3.2 spectra validate + analyze 無 Critical/Warning；PR 以 Refs #272 開出。完成判準：validate exit 0。
+- [x] 3.2 spectra validate + analyze 無 Critical/Warning；PR 以 Refs #272 開出。完成判準：validate exit 0。
