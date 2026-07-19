@@ -333,4 +333,25 @@ bash "$SCRIPT" comment 5 --repo o/r \
   --body "we store vault material under /srv/other-vault/keyring generally" "${ATT[@]}" >/dev/null 2>&1
 assert_exit "similar-but-absent path NOT caught (#225 no fuzzy matching) → dispatch (exit 0)" 0 $?
 
+# ── #272 reply layer-3 tier floor — marker-token backstop (net item 4) ────────
+# Body carrying BOTH IDD-own marker tokens (`type=reply` + `points-from=user-pasted`)
+# at attested level `light` → refuse in the ATTESTATION band (13, not content 10):
+# the attested level is invalid for this payload; re-dispatch at warn after the
+# explicit user confirmation. Token matching on IDD's own metadata marker only —
+# NOT semantic content matching (net boundary discipline preserved).
+REPLY_L3_BODY='## 🧑‍🏫 Reply
+> 「third-party pasted words」
+done. <!-- idd:comment type=reply date=2026-07-19 points-from=user-pasted calibrated=no -->'
+bash "$SCRIPT" comment 5 --repo o/r --body "$REPLY_L3_BODY" --scrub-attested light >/dev/null 2>&1
+assert_exit "reply user-pasted marker at light → tier-floor refuse (#272, exit 13)" 13 $?
+# same body at warn (user confirmed) → dispatches normally
+bash "$SCRIPT" comment 5 --repo o/r --body "$REPLY_L3_BODY" --scrub-attested warn >/dev/null 2>&1
+assert_exit "reply user-pasted marker at warn → dispatch (#272 floor satisfied, exit 0)" 0 $?
+# reply WITHOUT user-pasted (layer 1/2) at light → unaffected (floor binds layer 3 only)
+REPLY_L2_BODY='## 🧑‍🏫 Reply
+> 「quoted from issue body」
+done. <!-- idd:comment type=reply date=2026-07-19 points-from=issue-body calibrated=yes -->'
+bash "$SCRIPT" comment 5 --repo o/r --body "$REPLY_L2_BODY" --scrub-attested light >/dev/null 2>&1
+assert_exit "reply issue-body marker at light → dispatch (#272 layer-1/2 unaffected, exit 0)" 0 $?
+
 print_summary "gh-egress"

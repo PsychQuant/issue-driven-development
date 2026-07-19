@@ -44,6 +44,15 @@ assert_output_grep "skill: layer-3 user-paste fallback"         "要求使用者
 assert_output_grep "skill: verbatim ban on counterpart's words" "禁止 paraphrase 對方原文"           "$SKILL"
 assert_output_grep "skill: scrub wins over verbatim on PII"     "scrub 優先於 verbatim"             "$SKILL"
 
+# ── layer-3 tier floor (#272; spec: Layer-3 third-party payload tier floor) ──
+RULES="$PLUGIN_ROOT/rules/privacy-scrubbing.md"
+assert_output_grep "skill: LIGHT does not apply to user-pasted"  "LIGHT 不適用於 \`points-from=user-pasted\`" "$SKILL"
+assert_output_grep "skill: floor = WARN + explicit confirm"      "WARN ＋ AskUserQuestion 顯式確認"   "$SKILL"
+assert_output_grep "skill: unattended layer-3 not posted"        "Unattended context 下不 post"      "$SKILL"
+assert_output_grep "skill: cites the rules floor section"        "Reply layer-3 payload tier floor" "$SKILL"
+assert_output_grep "rules: floor section exists"                 "## Reply layer-3 payload tier floor" "$RULES"
+assert_output_grep "rules: net item 4 is token-only"             "own structured metadata marker tokens only" "$RULES"
+
 # ── verify-before-claim gate (spec: Verify-before-claim gate) ──
 assert_output_grep "skill: evidence check before claiming"      "git log --grep" "$SKILL"
 assert_output_grep "skill: evidence is per-point not per-issue (DA-1)" "證據是 per-point 的" "$SKILL"

@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.101.0] - 2026-07-19
+
+### Added
+
+- **Reply layer-3 third-party payload tier floor (#272, Spectra `add-reply-thirdparty-tier-floor`)** — closes the #269 verify DA-3 gap: `--type=reply` is the only type mandating third-party verbatim reproduction, yet `SCRUB_LEVEL` is repo-visibility-keyed, so the characteristic case (third-party words posted to the user's OWN repo) resolves to WARN/LIGHT and never ENFORCE. Proportionality analysis: layers 1–2 (comment URL / issue-body) re-quote content already on this repo's remote — zero new exposure, tier default kept; **layer 3 (user-pasted external text) is the one channel where NEW third-party verbatim content first reaches the remote** — so the floor binds layer 3 only. Three-piece contract: (1) `rules/privacy-scrubbing.md` new normative section — LIGHT does not apply to `points-from=user-pasted` replies regardless of visibility; minimum WARN + explicit user confirmation; unattended contexts refuse to post (no human present to confirm); (2) SKILL R1 — attended AskUserQuestion confirm (with redact option) / unattended refuse, replacing v2.100.0's necessary-but-insufficient "heightened self-review" prose; (3) `gh-egress.sh` mechanical net item 4 (3→4, the separate change the rules file requires): body carrying both `type=reply` and `points-from=user-pasted` marker tokens at attested `light` → exit 13 (attestation band — the level is invalid for this payload, the body needs no redaction). Matches IDD's OWN structured metadata marker tokens only — zero semantic content matching, net boundary discipline unchanged. Marker-less bodies bypass by construction: the SKILL confirm is the primary gate, the wrapper is belt-and-suspenders.
+
+### Tests
+
+- gh-egress suite +3 (tier-floor refuse at light / dispatch at warn / layer-1-2 unaffected — 60 assertions); idd-comment-reply suite +6 (SKILL floor clauses + rules section anchors — 33 assertions). Aggregator 40 suites, 0 fail.
+
 ## [2.100.0] - 2026-07-18
 
 ### Added
