@@ -51,7 +51,9 @@ assert_output_grep "skill: floor = WARN + explicit confirm"      "WARN ＋ AskUs
 assert_output_grep "skill: unattended layer-3 not posted"        "Unattended context 下不 post"      "$SKILL"
 assert_output_grep "skill: cites the rules floor section"        "Reply layer-3 payload tier floor" "$SKILL"
 assert_output_grep "rules: floor section exists"                 "## Reply layer-3 payload tier floor" "$RULES"
-assert_output_grep "rules: net item 4 is token-only"             "own structured metadata marker tokens only" "$RULES"
+assert_output_grep "rules: net item 4 is token-only"             "token substrings from IDD's own marker vocabulary" "$RULES"
+assert_output_grep "rules: floor is minimum not replacement"     "max(repo-derived tier, WARN)" "$RULES"
+assert_output_grep "rules: cross-repo layer-1 carries the floor" "cross-repo comment URL is an external source" "$RULES"
 
 # ── verify-before-claim gate (spec: Verify-before-claim gate) ──
 assert_output_grep "skill: evidence check before claiming"      "git log --grep" "$SKILL"

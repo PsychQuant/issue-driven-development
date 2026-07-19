@@ -350,10 +350,10 @@ reply 是**寫給人看的 correspondence**，不是 audit log。draft 依以下
 
 **R1 — Points-source 解析（`--points-from`，三層鏈）**：flag 必填（Step 2 validation 擋缺席）。值域：comment URL（逐點取自該 comment 的 blockquote / 列點）或字面值 `issue-body`。`issue-body`（或 URL 解析不到列點）→ 預設抓 issue body 的 Original text blockquote（idd-issue 建案紀律寫入的逐字原文）→ 仍解析不到 → 要求使用者貼上原文，**不得**自行歸納。逐點內容一律 verbatim blockquote，**禁止 paraphrase 對方原文**——收件人看到自己的話被改寫即失去信任（IC_R007 同源紀律）。**但 verbatim 服從 privacy-scrub gate**：reply 是唯一逐字重製第三方原文的型別，當某點引文含私人／PII 內容（尤其 layer 3 使用者貼上的外部原文），**scrub 優先於 verbatim（衝突時 redaction 勝）**——egress 的 `--scrub-attested` 本就掃整個 body 含 blockquote，此處明文化該優先序，避免執行者過度字面化 verbatim 而把未遮蔽的第三方 PII 推上 remote。**Layer-3 tier floor（#272，normative — 見 rules/privacy-scrubbing.md § Reply layer-3 payload tier floor）**：SCRUB_LEVEL 是 repo-visibility-keyed（third-party=enforce / own-public=warn / own-private=light），reply 的典型情境（第三方逐字內容貼到使用者自己的 repo）落在 warn / light、永不 enforce——但 layer 1/2 的內容本已在本 repo remote（零新增暴露），**唯一的新增暴露通道是 layer 3（使用者貼上的外部原文）**。故 tier floor 只綁 layer 3：
 
-- **LIGHT 不適用於 `points-from=user-pasted` 的 reply**（不論 repo visibility）。最低 **WARN ＋ AskUserQuestion 顯式確認**「此段第三方逐字內容確認可進 remote？」（附 redact 選項）——確認通過才以 `--scrub-attested warn` 派送。
+- **LIGHT 不適用於 `points-from=user-pasted` 的 reply**（不論 repo visibility）。最低 **WARN ＋ AskUserQuestion 顯式確認**「此段第三方逐字內容確認可進 remote？」（附 redact 選項）。**Floor 是下限不是替代**：確認通過後以 `max(repo-derived tier, warn)` 派送——repo tier 為 light → 升 `warn`；為 warn → 維持 `warn`；為 **enforce（third-party repo）→ 維持 enforce**，block-with-diff 流程照常跑，**不得**因確認而降級。
 - **Unattended context 下不 post**：layer-3 reply 在 unattended（`is_unattended` / UNATTENDED MODE directive）一律 refuse ＋ 印說明（tier floor 需要人的確認），留待 attended session。
 - Marker 必記 `points-from=user-pasted`，讓 gh-egress 的機械 backstop（net item 4：雙 marker token ＋ attested=light → exit 13 refuse）可 deterministic 兜底。marker 是 belt-and-suspenders，本手續才是主 gate。
-- Layer 1/2（comment URL / issue-body）維持 repo-tier 預設，不受 floor 影響（比例原則）。
+- Layer 1/2（comment URL / issue-body）維持 repo-tier 預設，不受 floor 影響（比例原則）——**前提是 layer-1 的 comment URL 屬於 destination repo**（「內容已在同 repo remote、零新增暴露」的豁免理由才成立）。**跨 repo 的 comment URL 是 external source**：解析時視同 layer 3（marker 記 `points-from=user-pasted`、套用本 floor）——把別的（尤其 private / 第三方）repo 的內容逐字帶進本 repo 是一次新的跨受眾揭露。
 
 **R2 — verify-before-claim gate（per-point，非 issue-level）**：每一點在 draft 宣稱「已解決」之前，先驗證證據存在。**證據是 per-point 的，不是 per-issue**：`git log --grep "#N"` 只是**入口**——找到的 commit / merged PR **必須實際包含處理『該點』的改動**（讀 diff 確認觸及該點所指的 file / function / theorem / behavior），才算該點的證據。**嚴禁**「找到任一提及 `#N` 的 commit 就把所有點都標已解決」——那正是本 gate 要防的 over-claim（本 type 的 raison d'être：每句『已修正』都指到真實 diff）。某點找不到對應該點的具體改動 → 該點寫 open / pending，不得宣稱完成。與 idd-close Step 1.6 semantic gate 同族；prose 紀律，不另立 helper script。
 
@@ -410,6 +410,9 @@ echo "$COMMENT_BODY" > /tmp/idd-comment-$$.md
 # （#226）egress 經 gh-egress.sh 派送：$SCRUB_LEVEL 依 rules/privacy-scrubbing.md 解析
 # （third-party=enforce / own-public=warn / private=light），派送前先跑 LLM 隱私自審；
 # 有 @mention 時另帶 --mention-attested（rules/tagging-collaborators.md 5-step 後）。
+# （#272）reply 且 points-from=user-pasted 時，SCRUB_LEVEL 先取 floor：
+#   [ "$SCRUB_LEVEL" = light ] && SCRUB_LEVEL=warn   # max(repo tier, warn)；enforce 維持 enforce
+# —— SKILL 端是主 gate（wrapper net item 4 只是 light 的機械兜底）。
 bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $NUMBER --repo $GITHUB_REPO --body-file /tmp/idd-comment-$$.md \
   --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}
 rm /tmp/idd-comment-$$.md

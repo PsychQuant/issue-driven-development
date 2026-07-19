@@ -114,7 +114,7 @@ things and **only** these:
    *existence* of the gate deterministic even though its *content* is the LLM's.
    (Q1 resolution: mechanism (a), a required per-call flag — not an env var,
    which could be left globally set and silently satisfy every dispatch.)
-2. **A mechanical last-resort net** catching **only 4 zero-tolerance mechanical
+2. **A mechanical last-resort net** catching **only 4 mechanical
    items** — an absolute `/Users/<name>` home path, verbatim `~/.claude.json`
    content, and an unattested raw `@login` mention token (#117) — as
    belt-and-suspenders if the LLM misses one. It is **level-independent**
@@ -193,16 +193,33 @@ and never ENFORCE — so for layer-3 payloads the tier default is not enough:
 3. Layers 1–2 remain governed by the repository-visibility default (the floor
    binds layer 3 only — proportionality).
 
+The floor is a **minimum, not a replacement**: the effective tier is
+`max(repo-derived tier, WARN)` — a third-party repo's ENFORCE stays ENFORCE
+(block-with-diff runs unchanged); confirmation never downgrades a stricter
+tier. The layer-1/2 exemption presupposes the comment URL belongs to the
+**destination repository**; a cross-repo comment URL is an external source and
+carries the layer-3 floor (re-quoting another repo's content here is a new
+cross-audience disclosure).
+
 Deterministic backstop: `gh-egress.sh` net item 4 refuses (attestation band,
 exit 13) when the drafted body carries both the `type=reply` and
-`points-from=user-pasted` marker tokens while the attested level is `light`.
-This matches IDD's **own structured metadata marker tokens only** — it is not,
-and must not grow into, semantic content matching. A marker-less body bypasses
-the backstop by construction: the SKILL-side confirmation step is the primary
-gate; the wrapper is belt-and-suspenders (same philosophy as the other three
-net items). Anchor: the CLAUDE.md "raw third-party verbatim content does not go
-to remote" iron rule — this floor is its mechanical enforcement for the one
-channel reply opened.
+`points-from=user-pasted` **token substrings** while the attested level is
+`light`. Honest mechanics: the check is two raw fixed-string matches over the
+whole drafted prose (fences NOT stripped — fenced content still reaches the
+remote, and stripping would be a trivial bypass), so a body merely *discussing*
+both tokens at `light` over-refuses; that friction is accepted (fail-safe,
+escapable by re-attesting at `warn`), and — unlike the entity-encoded `@`
+net — there is **no backtick escape hatch** for it. Item 4 is
+**level-dependent** (fires only at `light`) — a tier-floor attestation check,
+unlike items 1–3 which are level-independent zero-tolerance nets. It matches
+token substrings from IDD's own marker vocabulary — it is not, and must not
+grow into, semantic content matching. A marker-less body bypasses the backstop
+by construction, and the unattended-refuse clause above is SKILL-prose-enforced
+(the wrapper has no unattended signal — a deliberate boundary): the SKILL-side
+confirmation step is the primary gate; the wrapper is belt-and-suspenders.
+Anchor: the CLAUDE.md "raw third-party verbatim content does not go to remote"
+iron rule — this floor is its mechanical enforcement for the one channel reply
+opened.
 
 ## Related rules
 

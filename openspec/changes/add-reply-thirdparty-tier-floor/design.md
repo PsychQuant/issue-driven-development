@@ -22,11 +22,11 @@ privacy-scrubbing 契約（v2.87–2.96 已 ship）的 tier 由 repo visibility 
 
 **D3 — SKILL 端主 gate：attended 顯式確認、unattended refuse。** layer-3 時 attended → AskUserQuestion「此段第三方逐字內容確認可進 remote？」（帶 redact 選項）；unattended（`is_unattended` / directive）→ 不 post、印 refuse 說明＋改跑 attended 的指示。理由：reply 本質是 correspondence（人在場的工作），unattended 貼第三方逐字內容無人把關 = CLAUDE.md「raw 第三方逐字內容不進 remote」鐵律的直接風險面。
 
-**D4 — rules 檔 append-only 新段。** 「Reply layer-3 payload tier floor」段落加在 net 說明段之後；不改 in-flight change 規劃中的既有段落（C_shared_module_coord 疊層紀律）。
+**D4 — rules 檔以 append 為主。** 「Reply layer-3 payload tier floor」段落 append 在 Related rules 之前；既有段落僅允許兩處最小 in-place 校正（net count 句 3→4、growth 歷史句補 3→4），其餘段落（tier 表、ENFORCE 語意、division of labor、implementation contract）零改動——與 in-flight change 的疊層紀律（C_shared_module_coord）以此為界。
 
 ## Implementation Contract
 
 - **gh-egress.sh net item 4**：`printf '%s' "$SCAN" | grep -q 'type=reply'` 且 `grep -q 'points-from=user-pasted'` 且 `[ "$ATTESTED" = "light" ]` → stderr 訊息（指示以 `--scrub-attested warn` 重派並先完成使用者確認）＋ `exit 13`。attested=warn/enforce 或 marker 不全 → 不觸發、行為不變。位置：既有 3-item net 之後、mention net 之前或之後皆可（獨立判斷）。
-- **SKILL R1/R4 增訂**：layer-3 手續字句（attended confirm / unattended refuse）、marker `points-from=user-pasted` 值與 tier floor 的對應、引用 rules 段名。
+- **SKILL R1 增訂**（R4 僅在 R1 的 floor 條目中被引用、不改動）：layer-3 手續字句（attended confirm / unattended refuse）、marker `points-from=user-pasted` 值與 tier floor 的對應、引用 rules 段名。
 - **rules 新段**：normative 三句——LIGHT 不適用於 user-pasted reply payload；最低 WARN＋顯式確認；unattended 不 post。net item 4 的邊界聲明（token-only）。
-- **驗證目標**：gh-egress suite 兩向斷言（light+雙 marker → exit 13；warn+雙 marker → 照派；light+單 marker → 照派）；idd-comment-reply suite 斷言 SKILL 新字句與 rules 段名；`run-all-tests.sh` 40 suites 全綠；版本 2.100.0 → 2.101.0 三處同步。
+- **驗證目標**：gh-egress suite 斷言（light+雙 token → exit 13＋stderr 含 warn 重派指示；warn+雙 token → 照派；light+單 token（各向）→ 照派；fenced 討論體 → refuse 的 accepted-friction 鎖定；template↔wrapper token binding）；idd-comment-reply suite 斷言 SKILL 新字句與 rules 段名；`run-all-tests.sh` 40 suites 全綠；版本 2.100.0 → 2.101.0 三處同步。

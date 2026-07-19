@@ -23,7 +23,7 @@
 
 ### Requirement: Layer-3 third-party payload tier floor
 
-Reply drafts whose points source is user-pasted external content (layer 3) SHALL NOT dispatch under the LIGHT scrub tier regardless of repository visibility: the minimum is WARN accompanied by an explicit user confirmation that the quoted third-party verbatim content may be pushed to the remote. In an unattended context the skill SHALL refuse to post such a reply (with an explanatory notice deferring to an attended session) rather than dispatch it unconfirmed. Layer-1 and layer-2 sources (content already present on the same repository's remote) SHALL remain governed by the repository-visibility tier default. As a deterministic backstop, `gh-egress.sh` SHALL refuse dispatch (attestation exit-code band) when the drafted body contains both the `type=reply` and `points-from=user-pasted` marker tokens while the attested level is `light`; this check matches IDD's own structured metadata marker tokens only and SHALL NOT grow into semantic content matching.
+Reply drafts whose points source is user-pasted external content (layer 3) SHALL NOT dispatch under the LIGHT scrub tier regardless of repository visibility: the minimum is WARN accompanied by an explicit user confirmation that the quoted third-party verbatim content may be pushed to the remote. The floor is a minimum, not a replacement — the effective tier SHALL be the stricter of the repository-derived tier and WARN, so an ENFORCE tier (third-party repository) is never downgraded by the confirmation. In an unattended context the skill SHALL refuse to post such a reply (with an explanatory notice deferring to an attended session) rather than dispatch it unconfirmed. Layer-1 and layer-2 sources SHALL remain governed by the repository-visibility tier default only when the quoted content is already present on the destination repository's remote; a layer-1 comment URL belonging to a different repository SHALL be treated as an external source carrying this same floor (the marker records `points-from=user-pasted`). As a deterministic backstop, `gh-egress.sh` SHALL refuse dispatch (attestation exit-code band) when the drafted body contains both the `type=reply` and `points-from=user-pasted` marker tokens while the attested level is `light`; this check matches IDD's own structured metadata marker tokens only and SHALL NOT grow into semantic content matching.
 
 #### Scenario: Light-tier dispatch of user-pasted reply is refused mechanically
 
@@ -32,8 +32,18 @@ Reply drafts whose points source is user-pasted external content (layer 3) SHALL
 
 #### Scenario: Warn-tier dispatch after confirmation proceeds
 
-- **WHEN** the same body is dispatched with `--scrub-attested warn` after the user confirmed the quoted content
+- **WHEN** the repository-derived tier is LIGHT or WARN and the same body is dispatched with `--scrub-attested warn` after the user confirmed the quoted content
 - **THEN** the wrapper dispatches normally
+
+#### Scenario: Enforce tier is never downgraded by confirmation
+
+- **WHEN** the destination is a third-party repository (repository-derived tier ENFORCE) and a layer-3 reply is drafted
+- **THEN** the ENFORCE block-with-diff flow runs unchanged and dispatch is not attested below `enforce`
+
+#### Scenario: Cross-repo layer-1 source carries the floor
+
+- **WHEN** `--points-from` is an explicit comment URL belonging to a repository other than the destination
+- **THEN** the source is treated as layer 3 (marker records `points-from=user-pasted`) and the floor applies
 
 #### Scenario: Layer-1/2 replies are unaffected
 

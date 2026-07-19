@@ -21,15 +21,20 @@
 #       guarantees the step EXISTS; it does not pretend to guarantee the
 #       judgment was correct (that is the LLM's + the ENFORCE block-with-diff's
 #       job — see rules/privacy-scrubbing.md).
-#   (b) A tiny mechanical LAST-RESORT net catching ONLY 4 zero-tolerance MECHANICAL
-#       items, as belt-and-suspenders for an LLM miss:
+#   (b) A tiny mechanical LAST-RESORT net catching ONLY 4 MECHANICAL items, as
+#       belt-and-suspenders for an LLM miss:
 #         1. an absolute macOS home path `/Users/<name>`
 #         2. verbatim `~/.claude.json` content (a project-path string copied out
 #            of the user's actual ~/.claude.json `projects` object). The bare
 #            filename token is PUBLIC (Anthropic docs) and deliberately NOT
 #            matched — content is the secret, not the name (#203 item 1).
-#       This net is LEVEL-INDEPENDENT (fires even at LIGHT) because they are
-#       absolute zero-tolerance leaks, not "ordinary identifiers".
+#         3. an unattested raw @login mention token (#117)
+#         4. reply layer-3 tier floor (#272): `type=reply` + `points-from=user-pasted`
+#            token substrings at attested `light`
+#       Items 1-3 are LEVEL-INDEPENDENT zero-tolerance nets (fire even at LIGHT:
+#       absolute leaks / irreversible notifications). Item 4 is LEVEL-DEPENDENT
+#       (fires only at `light`) — a tier-floor attestation check, not a content
+#       leak: the same body dispatches at warn/enforce.
 #
 # WHAT IT MUST NOT DO
 #   No semantic pattern matching. No maintained denylist. No name detection. The
@@ -341,13 +346,14 @@ fi
 #    template) — deterministic, ZERO semantic content matching (the net
 #    boundary from #202 D1/D2 is unchanged; growing the net 3→4 is exactly the
 #    "separate change" the rules file requires, this one).
-#    Exit 13 (attestation band), NOT 10: the body needs no redaction — the
-#    ATTESTED LEVEL is invalid for this payload; re-dispatch at warn after the
-#    confirmation. Marker-less bodies bypass this backstop by construction —
+#    Exit 13 (attestation band), NOT 10: the ATTESTED LEVEL is invalid for this
+#    payload — re-dispatch at max(repo tier, warn) after the confirmation
+#    (whether the body itself needs redaction is the higher tier's self-review
+#    judgment, not this check's). Marker-less bodies bypass this backstop by construction —
 #    the SKILL-side confirm step is the primary gate; this is belt-and-suspenders.
 if [ "$ATTESTED" = "light" ] \
-   && printf '%s' "$SCAN" | grep -q 'type=reply' \
-   && printf '%s' "$SCAN" | grep -q 'points-from=user-pasted'; then
+   && printf '%s' "$SCAN" | grep -Fq -- 'type=reply' \
+   && printf '%s' "$SCAN" | grep -Fq -- 'points-from=user-pasted'; then
   echo "✗ gh-egress: REFUSED — reply with user-pasted third-party payload attested at 'light' (#272 tier floor)." >&2
   echo "  Layer-3 (user-pasted) reply content is new third-party verbatim material entering the remote;" >&2
   echo "  LIGHT does not apply regardless of repo visibility (rules/privacy-scrubbing.md § Reply layer-3 payload tier floor)." >&2
