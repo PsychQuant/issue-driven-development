@@ -333,4 +333,52 @@ bash "$SCRIPT" comment 5 --repo o/r \
   --body "we store vault material under /srv/other-vault/keyring generally" "${ATT[@]}" >/dev/null 2>&1
 assert_exit "similar-but-absent path NOT caught (#225 no fuzzy matching) → dispatch (exit 0)" 0 $?
 
+# ── #272 reply layer-3 tier floor — marker-token backstop (net item 4) ────────
+# Body carrying BOTH IDD-own marker tokens (`type=reply` + `points-from=user-pasted`)
+# at attested level `light` → refuse in the ATTESTATION band (13, not content 10):
+# the attested level is invalid for this payload; re-dispatch at warn after the
+# explicit user confirmation. Token matching on IDD's own metadata marker only —
+# NOT semantic content matching (net boundary discipline preserved).
+REPLY_L3_BODY='## 🧑‍🏫 Reply
+> 「third-party pasted words」
+done. <!-- idd:comment type=reply date=2026-07-19 points-from=user-pasted calibrated=no -->'
+bash "$SCRIPT" comment 5 --repo o/r --body "$REPLY_L3_BODY" --scrub-attested light >/dev/null 2>&1
+assert_exit "reply user-pasted marker at light → tier-floor refuse (#272, exit 13)" 13 $?
+# same body at warn (user confirmed) → dispatches normally
+bash "$SCRIPT" comment 5 --repo o/r --body "$REPLY_L3_BODY" --scrub-attested warn >/dev/null 2>&1
+assert_exit "reply user-pasted marker at warn → dispatch (#272 floor satisfied, exit 0)" 0 $?
+# reply WITHOUT user-pasted (layer 1/2) at light → unaffected (floor binds layer 3 only)
+REPLY_L2_BODY='## 🧑‍🏫 Reply
+> 「quoted from issue body」
+done. <!-- idd:comment type=reply date=2026-07-19 points-from=issue-body calibrated=yes -->'
+bash "$SCRIPT" comment 5 --repo o/r --body "$REPLY_L2_BODY" --scrub-attested light >/dev/null 2>&1
+assert_exit "reply issue-body marker at light → dispatch (#272 layer-1/2 unaffected, exit 0)" 0 $?
+# conjunction pin: user-pasted token ALONE (no type=reply) at light → dispatch
+# (kills the single-token mis-implementation that would pass the other fixtures)
+bash "$SCRIPT" comment 5 --repo o/r --body "note: source resolution recorded points-from=user-pasted here" --scrub-attested light >/dev/null 2>&1
+assert_exit "user-pasted token without type=reply at light → dispatch (#272 conjunction pinned, exit 0)" 0 $?
+# refusal stderr carries the remediation instruction (re-dispatch at warn)
+ERR="$(bash "$SCRIPT" comment 5 --repo o/r --body "$REPLY_L3_BODY" --scrub-attested light 2>&1 >/dev/null)"
+printf '%s' "$ERR" | grep -Fq -- '--scrub-attested warn'
+assert_exit "tier-floor stderr instructs re-dispatch at warn (#272)" 0 $?
+# accepted-friction LOCK: a body merely DISCUSSING both tokens (in a code fence)
+# at light IS refused — raw-substring semantics are deliberate (fenced content
+# still reaches the remote; stripping fences would be a trivial bypass).
+DISCUSS_BODY='documenting the marker vocabulary:
+```
+type=reply
+points-from=user-pasted
+```
+this body quotes both tokens without being a reply.'
+bash "$SCRIPT" comment 5 --repo o/r --body "$DISCUSS_BODY" --scrub-attested light >/dev/null 2>&1
+assert_exit "fenced discussion of both tokens at light → refuse (#272 accepted friction locked, exit 13)" 13 $?
+
+# template↔wrapper binding (#272 DA N-4): the SKILL template must emit the exact
+# vocabulary the wrapper greps — if either side's spelling drifts, the net is
+# silently disabled. Bind both ends to the shared literals.
+SKILL_MD="$HERE/../../../skills/idd-comment/SKILL.md"
+assert_output_grep "binding: SKILL template enumerates user-pasted"  "points-from={comment-url|issue-body|user-pasted}" "$SKILL_MD"
+assert_output_grep "binding: wrapper greps the same reply token"     "grep -Fq -- 'type=reply'"                          "$SCRIPT"
+assert_output_grep "binding: wrapper greps the same user-pasted token" "grep -Fq -- 'points-from=user-pasted'"           "$SCRIPT"
+
 print_summary "gh-egress"

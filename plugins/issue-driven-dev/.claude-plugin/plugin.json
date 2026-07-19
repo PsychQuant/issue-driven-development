@@ -1,7 +1,7 @@
 {
   "name": "issue-driven-dev",
   "description": "v2.99.1: staleness sweep + guard-net expansion (#267). README carried three stale gpt-5.5 pins and a stale vendored-codex-call claim — all outside the drift-guard scan net; fixed and the net widened: model-generation-sync now refutes pins in README + both catalog docs (31 assertions), and a new docs-catalog-sync suite requires every skills/* directory to appear in the catalog docs (the #122 no-forcing-function root cause is now test-detectable; it caught idd-ask and idd-config on its first RED). docs/workflows.md + skill-dimensions.md backfilled to v2.99 reality (P-find-lookup / P-ask-history / P-report-rollup / P-config-maintain / P-verify-file-profile paths, matrix rows, D12 4th member). 38 suites 0 fail.",
-  "version": "2.100.0",
+  "version": "2.101.0",
   "author": {
     "name": "Che Cheng"
   },

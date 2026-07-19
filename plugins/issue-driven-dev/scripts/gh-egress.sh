@@ -21,20 +21,25 @@
 #       guarantees the step EXISTS; it does not pretend to guarantee the
 #       judgment was correct (that is the LLM's + the ENFORCE block-with-diff's
 #       job — see rules/privacy-scrubbing.md).
-#   (b) A tiny mechanical LAST-RESORT net catching ONLY 3 zero-tolerance MECHANICAL
-#       items, as belt-and-suspenders for an LLM miss:
+#   (b) A tiny mechanical LAST-RESORT net catching ONLY 4 MECHANICAL items, as
+#       belt-and-suspenders for an LLM miss:
 #         1. an absolute macOS home path `/Users/<name>`
 #         2. verbatim `~/.claude.json` content (a project-path string copied out
 #            of the user's actual ~/.claude.json `projects` object). The bare
 #            filename token is PUBLIC (Anthropic docs) and deliberately NOT
 #            matched — content is the secret, not the name (#203 item 1).
-#       This net is LEVEL-INDEPENDENT (fires even at LIGHT) because these two are
-#       absolute zero-tolerance leaks, not "ordinary identifiers".
+#         3. an unattested raw @login mention token (#117)
+#         4. reply layer-3 tier floor (#272): `type=reply` + `points-from=user-pasted`
+#            token substrings at attested `light`
+#       Items 1-3 are LEVEL-INDEPENDENT zero-tolerance nets (fire even at LIGHT:
+#       absolute leaks / irreversible notifications). Item 4 is LEVEL-DEPENDENT
+#       (fires only at `light`) — a tier-floor attestation check, not a content
+#       leak: the same body dispatches at warn/enforce.
 #
 # WHAT IT MUST NOT DO
 #   No semantic pattern matching. No maintained denylist. No name detection. The
 #   semantic breadth of "is this private?" is 100% the LLM self-review's job
-#   (design D1). Expanding this net beyond the 2 literal items requires a
+#   (design D1). Expanding this net beyond these literal items requires a
 #   separate openspec change (spec: "net does not grow into semantic matching").
 #
 # ATTESTATION FORMAT — Open Question Q1 resolution (chosen at apply time)
@@ -181,8 +186,9 @@ case "$ATTESTED" in
       exit 13 ;;
 esac
 
-# --- (b) mechanical last-resort net (3 zero-tolerance mechanical items) -------
-# (grown 2→3 by #117 mention net — mechanical token matching, NOT semantic;
+# --- (b) mechanical last-resort net (4 zero-tolerance mechanical items) -------
+# (grown 2→3 by #117 mention net, 3→4 by #272 reply tier-floor backstop —
+#  mechanical token matching, NOT semantic;
 #  the "no semantic matching" boundary from #202 D1/D2 is unchanged)
 # Joined once; the net only ever inspects the drafted prose, never --repo /
 # --label / --milestone etc. (so metadata-only edits are never false-flagged).
@@ -327,6 +333,33 @@ if [ -n "$UNATTESTED_MENTIONS" ]; then
   echo "    - run the rules/tagging-collaborators.md 5-step protocol, then re-dispatch with" >&2
   echo "      --mention-attested <login1,login2> covering every intended mention." >&2
   exit 11
+fi
+
+# 4. reply layer-3 tier floor (#272). A reply whose points source is user-pasted
+#    external text is the ONLY channel where NEW third-party verbatim content
+#    first reaches the remote (layers 1/2 re-quote content already on this
+#    repo's remote). rules/privacy-scrubbing.md § "Reply layer-3 payload tier
+#    floor": LIGHT does not apply to that payload — minimum WARN plus an
+#    explicit user confirmation, regardless of repo visibility.
+#    Mechanism: token match on IDD's OWN structured metadata marker
+#    (`type=reply` + `points-from=user-pasted`, both emitted by the reply
+#    template) — deterministic, ZERO semantic content matching (the net
+#    boundary from #202 D1/D2 is unchanged; growing the net 3→4 is exactly the
+#    "separate change" the rules file requires, this one).
+#    Exit 13 (attestation band), NOT 10: the ATTESTED LEVEL is invalid for this
+#    payload — re-dispatch at max(repo tier, warn) after the confirmation
+#    (whether the body itself needs redaction is the higher tier's self-review
+#    judgment, not this check's). Marker-less bodies bypass this backstop by construction —
+#    the SKILL-side confirm step is the primary gate; this is belt-and-suspenders.
+if [ "$ATTESTED" = "light" ] \
+   && printf '%s' "$SCAN" | grep -Fq -- 'type=reply' \
+   && printf '%s' "$SCAN" | grep -Fq -- 'points-from=user-pasted'; then
+  echo "✗ gh-egress: REFUSED — reply with user-pasted third-party payload attested at 'light' (#272 tier floor)." >&2
+  echo "  Layer-3 (user-pasted) reply content is new third-party verbatim material entering the remote;" >&2
+  echo "  LIGHT does not apply regardless of repo visibility (rules/privacy-scrubbing.md § Reply layer-3 payload tier floor)." >&2
+  echo "  Obtain the user's explicit confirmation that the quoted content may be posted, then re-dispatch" >&2
+  echo "  with --scrub-attested warn (or enforce)." >&2
+  exit 13
 fi
 
 # --- dispatch: byte-for-byte identical to raw `gh issue <verb> ...` -----------
