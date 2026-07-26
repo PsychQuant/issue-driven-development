@@ -1,6 +1,10 @@
 ---
 name: idd-clarify
-description: Scan an existing GitHub issue body for terminology / ambiguity / missing-context gaps and annotate via surfacing-only `### Clarity Surface` block. Standalone primitive — also delegated by `idd-issue` Step 4.6, gated by `idd-diagnose` Step 0.5.
+description: |
+  Scan an existing GitHub issue body for terminology / ambiguity / missing-context gaps and annotate via surfacing-only `### Clarity Surface` block.
+  Standalone primitive — also delegated by `idd-issue` Step 4.6, gated by `idd-diagnose` Step 0.5.
+  Use when: issue 已經存在但讀起來含糊 —— 術語沒定義、指涉不明、前提缺失，想在往下走之前先把不清楚的地方標出來讓人補。
+  防止的失敗：帶著沒對齊的假設一路做到底，交付後才發現雙方講的根本不是同一件事。
 ---
 
 # /idd-clarify — 語意校正 surface

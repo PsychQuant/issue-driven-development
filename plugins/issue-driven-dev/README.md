@@ -57,7 +57,7 @@ idd-issue → idd-diagnose → idd-implement → idd-verify → idd-close
 |-------|---------|
 | `idd-issue` | Create well-documented GitHub Issue with original quotes and images |
 | `idd-diagnose` | Find root cause (bug) or analyze requirements (feature/refactor) |
-| `idd-plan` | Plan tier approval gate using `EnterPlanMode` — presents Implementation Plan for user approval before TDD execution; sits between `Simple` direct-implement and `Spectra` spec-contract path (v2.36.0+) |
+| `idd-plan` | Approval gate before TDD — presents the Implementation Plan via `EnterPlanMode` and waits for your OK. **Runs after `idd-diagnose`, never instead of it**: you reach it when the diagnosis routes the issue to Plan tier (the middle ground between `Simple` direct-implement and the full `Spectra` spec path). Invoking it on an undiagnosed issue aborts — run `/idd-diagnose #N` first (v2.36.0+) |
 | `idd-implement` | Scope-disciplined implementation with TDD |
 | `idd-verify` | Independent verification — 5 Claude reviewer agents + cross-model Codex leg (gpt-5.x; executable from pai, governance from codex-pro per #264). `--profile code/prose/academic` + `--file`/`--dir` for non-code deliverables (#258, v2.97+) |
 | `idd-close` | Closing comment documenting problem, root cause, solution, verification |

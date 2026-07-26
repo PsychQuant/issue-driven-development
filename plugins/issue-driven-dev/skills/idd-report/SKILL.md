@@ -4,6 +4,7 @@ description: |
   產出進度報告到 GitHub Discussions。
   可指定 issue 清單、來源檔案、或 milestone，彙整所有相關 issue 的處理狀態。
   Use when: milestone 完成、Sprint review、向客戶/主管匯報進度。
+  防止的失敗：進度只散落在各 issue 的流水帳裡，要匯報時臨時人工翻一遍，還漏掉幾條。
 argument-hint: "#157 #158 ... 或 source:檔案名 或 milestone:名稱 [@tag1 @tag2]"
 allowed-tools:
   - Bash(gh:*)

@@ -1,6 +1,10 @@
 ---
 name: idd-plan
-description: Plan-mode 實作。在 idd-implement 的 TDD loop 之前，先用 Claude Plan Mode 把 Implementation Plan 呈現給使用者審查、approve 後才動手。介於 Simple（直接 implement）和 Spectra（完整 spec/proposal/tasks artifacts）之間的中間層。
+description: |
+  Plan-mode 實作。在 idd-implement 的 TDD loop 之前，先用 Claude Plan Mode 把 Implementation Plan 呈現給使用者審查、approve 後才動手。
+  介於 Simple（直接 implement）和 Spectra（完整 spec/proposal/tasks artifacts）之間的中間層。
+  Use when: 已跑過 `/idd-diagnose #N`、且該 diagnosis 的 Complexity 判為 Plan tier 之後。本 skill 不做診斷 —— issue 上沒有 Diagnosis comment 會直接 abort，此時該跑的是 `/idd-diagnose #N` 而不是本 skill。
+  防止的失敗：跳過 diagnose 直接 plan —— 還沒查出 root cause 就開始寫實作計畫，等於為錯的問題做規劃。
 ---
 
 # /idd-plan — Plan-mode 實作

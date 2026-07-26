@@ -3,7 +3,7 @@ name: idd-comment
 description: |
   加 template-guided comment 到 GitHub issue。
   支援 decision/note/question/correction/link/errata/reply 7 個 types，強制 blockquote 原文、加 timestamp 與 metadata marker。
-  用於記錄使用者決定、外部 context、開放問題，不走完整 diagnose/implement phase 時；
+  Use when: 要記錄使用者決定、外部 context、開放問題，但這件事不值得走完整 diagnose/implement phase 時；
   reply type（#269）是 human-facing 逐點回覆——寫給 review 提出者等人類 collaborator 的 correspondence。
   支援 batch mode（v2.34.0+）：多個 #N 同步加同一段 comment（如 `#34 #36 --type note --body 'blocked by upstream'`）。
   防止的失敗：非流程性 decision 散落在 chat，未來無法追溯。
