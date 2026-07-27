@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.102.0] - 2026-07-27
+
+### Added
+
+- **Path Map (#276 Phase 2, PR #280)** — `docs/workflows.md` gains `## Path Flowchart`: a mermaid graph whose spine mirrors the Path Selection Decision Tree and whose legend subgraphs carry every off-spine family (all 36 catalog paths). `scripts/generate-path-map.py` renders it deterministically to the wiki [Path-Map](https://github.com/PsychQuant/issue-driven-development/wiki/Path-Map) page; drift-guard `path-map-sync` locks freshness (byte-diff), coverage (a new path missing from the map goes red), and discovery (README pointer). The maintainer's daily-reference navigation ruling ("不然我也會搞不清楚") realized.
+- **`edit-comment` egress verb (#273, PR #281)** — comment-PATCH surgery enters the nets. idd-edit's Step-6 raw `gh api` PATCH was the #226 rollout's "tracked separately" whitelist debt and bypassed EVERY net; the new verb dispatches the PATCH with the full scan pipeline applied, idd-edit's batch loop classifies wrapper rc>=10 into an `EGRESS_REFUSED` bucket (warn-continue; dual-bucket outcome report; final exit stays 4 — per-comment classification consumes the band, the aggregate exit does not adopt it). Diagnosis correction recorded on the issue: the filed symptom (unobservable exit 13) sat on top of the deeper bypass.
+
+### Fixed
+
+- **Empty-body guard (#275, PR #281)** — a provided-but-empty body sailed through every net (they all inspect content, none inspected existence) and, on edit's overwrite semantics, wiped the target body (live incident 2026-07-22). New guard: stripped-empty refuses on all verbs, edit/edit-comment floor at 10 stripped chars; wrapper-origin exit **15** (the issue's suggested exit 5 would break the #227 rc<10-is-gh invariant); `--allow-empty-body` explicit-intent escape.
+- **Skill-description contract (#276 Phase 1, PR #279)** — `idd-plan`'s frontmatter description (the only surface read at skill-selection time) now names its diagnosis precondition; 4 sibling skills gain the house pattern; drift-guard `skill-description-contract` (RED 8 → GREEN).
+
+### Tests
+
+- 2 new suites (`skill-description-contract`, `path-map-sync`) + extensions (gh-egress 84, idd-edit 37, rollout 28); aggregator 42 suites, 0 fail. The #163 contract layer caught this release's own `$SCRUB_LEVEL` provenance gap on first sweep — shipped-then-immediately-useful.
+
 ## [Unreleased]
 
 ### Fixed
