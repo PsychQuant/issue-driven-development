@@ -110,7 +110,7 @@ TaskCreate(name="fetch_body_and_backup", description="gh api 取現 body 並寫�
 TaskCreate(name="show_original", description="顯示原 comment 前 30 行讓使用者看清楚要動什麼")
 TaskCreate(name="build_new_body", description="按 mode（append / replace / prepend-note）組新 body 字串")
 TaskCreate(name="preview_and_confirm", description="顯示新 body 並用 AskUserQuestion 確認；--replace 模式必須通過")
-TaskCreate(name="execute_patch", description="gh api PATCH /repos/.../issues/comments/<id> 用 -F body=@file 避免 escape")
+TaskCreate(name="execute_patch", description="經 gh-egress.sh edit-comment 派送 PATCH（#273 — 全網套用；rc>=10 → EGRESS_REFUSED 桶 warn-continue）；-F body=@file 避免 escape")
 TaskCreate(name="verify_and_report", description="re-fetch comment 比對寫入結果，輸出 ✓ Edit applied + diff summary")
 ```
 
@@ -185,6 +185,7 @@ done
 ```bash
 EDITED_COUNT=0        # incremented after each successful per-target Step 7 verify
 REFUSED_TARGETS=()    # R5-refused comment ids (#158 semantics (i) — recorded, not fatal)
+EGRESS_REFUSED_TARGETS=()   # egress-band refusals rc>=10（#273 — tier-floor/privacy/mention/empty-body），warn-continue
 for COMMENT_ID in "${RESOLVED_COMMENT_IDS[@]}"; do
     # === Steps 1.5 through 7 run here, per-target ===
     # The bash blocks below show single-target templates; in batch mode
@@ -199,14 +200,18 @@ done
 
 ```bash
 echo "── idd-edit batch outcome ──"
-echo "edited: $EDITED_COUNT / refused: ${#REFUSED_TARGETS[@]}"
+REFUSED_TOTAL=$(( ${#REFUSED_TARGETS[@]} + ${#EGRESS_REFUSED_TARGETS[@]} ))
+echo "edited: $EDITED_COUNT / refused: $REFUSED_TOTAL"
 for rid in ${REFUSED_TARGETS[@]+"${REFUSED_TARGETS[@]}"}; do
-  echo "  ✗ REFUSED comment:$rid — non-OWNER（override: --override-user-content --reason='...'）"
+  echo "  ✗ REFUSED(R5) comment:$rid — non-OWNER（override: --override-user-content --reason='...'）"
 done
-# Exit contract（fixture 14）：M=0 → exit 0；M>0 → exit 4。
-# 單 target refuse 走同一路徑 = 現行可觀察行為不變。idd-edit 沿用自身碼空間
-# （R5 refuse=4）— 不套 #227 的 gh-egress 碼帶（那是 egress wrapper 專屬）。
-[ "${#REFUSED_TARGETS[@]}" -gt 0 ] && exit 4   # M>0 → exit 4
+for rid in ${EGRESS_REFUSED_TARGETS[@]+"${EGRESS_REFUSED_TARGETS[@]}"}; do
+  echo "  ✗ REFUSED(egress) $rid — band 語意見 #227（10 privacy / 11 mention / 13 tier-floor #272 / 15 empty-body #275）"
+done
+# Exit contract（fixture 14/15；M = REFUSED_TOTAL；M>0 → exit 4，單 target 退化等價）：
+# final exit 仍不套 #227 碼帶 — batch 的聚合碼是 idd-edit 自身空間（任一 refusal = 4）；
+# per-comment 分類消費 band（10–15）— 這正是 band 存在的目的（#273）。
+[ "$REFUSED_TOTAL" -gt 0 ] && exit 4
 exit 0
 ```
 ```
@@ -354,17 +359,31 @@ Confirm edit? (y/n)
 
 ### Step 6: Execute PATCH
 
+> **Scrub level**：`$SCRUB_LEVEL` 依 [`rules/privacy-scrubbing.md`](../../rules/privacy-scrubbing.md) 解析（repo visibility → tier；#226 rollout 慣例），互動情境預設 `warn`。
+
 **關鍵**：用 `-F body=@file`（不是 `-f body=""`）避免 backtick / 多行字串的 escape bug。
 
 ```bash
 TMP_BODY_FILE="/tmp/idd-edit-new-${COMMENT_ID}.md"
 echo "$NEW_BODY" > "$TMP_BODY_FILE"
 
-gh api repos/$REPO/issues/comments/$COMMENT_ID \
-    -X PATCH \
-    -F body=@"$TMP_BODY_FILE"
-
+# #273：comment surgery 進 egress 網 — 原 raw `gh api` PATCH 完全繞過所有網
+# （#226 rollout 的 tracked-separately 欠帳，於此結清）。
+SCRUB_LEVEL="${SCRUB_LEVEL:-warn}"   # 依 rules/privacy-scrubbing.md 解析（repo tier；互動預設 warn，#226 慣例）
+bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit-comment "$COMMENT_ID" \
+    --repo "$REPO" --body-file "$TMP_BODY_FILE" --scrub-attested "$SCRUB_LEVEL"
+EGRESS_RC=$?
 rm "$TMP_BODY_FILE"
+if [ "$EGRESS_RC" -ge 10 ]; then
+    # wrapper refusal band（#227）— per-comment 分類消費 band（10–15）：
+    # 記錄 + warn-continue（#158 語意 (i) 同款）。wrapper 已對本 target 印明確 stderr。
+    EGRESS_REFUSED_TARGETS+=("comment:$COMMENT_ID rc=$EGRESS_RC")
+    continue
+elif [ "$EGRESS_RC" -ne 0 ]; then
+    # 0 < rc < 10 = gh 自身錯誤（auth / network），非 refusal — 誠實分流，不進 refused 桶
+    echo "✗ gh api PATCH failed for comment:$COMMENT_ID (rc=$EGRESS_RC, gh 自身碼) — skip this target" >&2
+    continue
+fi
 ```
 
 ### Step 7: Verify edit + report
@@ -466,7 +485,9 @@ Target comment 頂部加警示「⚠️ See errata below」
 ls -la /tmp/idd-edit-backup/
 
 # 回復某次 edit (set REPO=owner/repo first)
-gh api repos/$REPO/issues/comments/<id> \
+# （災難復原配方**刻意**走 raw gh api、不經 egress 網 — 還原的是先前已公開發佈
+#   的內容，wrapper refusal 不應阻擋緊急回復；#273 接線範圍是 Step 6 正常路徑）
+gh api "repos/$REPO/issues/comments/<id>" \
     -X PATCH \
     -F body=@/tmp/idd-edit-backup/comment-<id>-<timestamp>.md
 ```
