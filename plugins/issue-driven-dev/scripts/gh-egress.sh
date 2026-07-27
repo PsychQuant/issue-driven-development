@@ -73,6 +73,10 @@
 #   12  unscannable --body-file (not a readable regular file, #203 item 3)
 #   13  attestation missing/invalid (--scrub-attested absent or bad level)
 #   14  usage error (bad/missing verb, malformed/split-token args, flag missing its value)
+#   15  empty/near-empty body on the body channel (#275 — the signature of upstream
+#       composition failing silently; edit additionally floors at 10 stripped chars
+#       because its overwrite semantics turn an empty dispatch into data loss.
+#       Explicit intent escape: --allow-empty-body, consumed by the wrapper)
 #
 # TEST OVERRIDES (test-only; never set in production)
 #   IDD_GH_BIN       gh binary to exec       (default: gh)
@@ -106,6 +110,7 @@ require_scannable_bodyfile() {
 }
 
 ATTESTED=""
+ALLOW_EMPTY_BODY=""   # #275 escape hatch: explicit intent to dispatch an empty/short body
 MENTION_ATTESTED=""   # comma-separated logins vetted via rules/tagging-collaborators.md 5-step (#117)
 GH_ARGS=()          # forwarded to gh, byte-identical minus the attestation flag
 SCAN_PARTS=()       # all drafted prose (--body / --title / --body-file) — privacy nets
@@ -144,6 +149,14 @@ while [ $# -gt 0 ]; do
         *)
           ATTESTED="${arg#--scrub-attested=}"; shift; continue ;;
       esac ;;
+    --allow-empty-body)
+      # #275: same pending-value guard as the attestation flags — this flag
+      # appearing where a body/title value is expected means split tokens.
+      if [ -n "$next_is" ]; then
+        echo "✗ gh-egress: malformed args — '--allow-empty-body' found where a value for --body/--title/--body-file was expected." >&2
+        exit 14
+      fi
+      ALLOW_EMPTY_BODY=1; shift; continue ;;
     -b|--body|-t|--title)
       GH_ARGS+=("$arg")
       case "$arg" in -t|--title) next_is="title" ;; *) next_is="body" ;; esac
@@ -193,6 +206,36 @@ esac
 # Joined once; the net only ever inspects the drafted prose, never --repo /
 # --label / --milestone etc. (so metadata-only edits are never false-flagged).
 SCAN=""
+# ── #275 empty-body guard — presence check, not content check ────────────────
+# Every other net inspects what the body CONTAINS; this one inspects whether it
+# EXISTS. An empty/whitespace-only body on the body channel is the signature of
+# upstream shell composition failing silently (`"$(cat file)"` on a file that
+# was never written) — on `edit` (overwrite semantics) dispatching it WIPES the
+# target body irreversibly (live incident 2026-07-22). Refuse in the wrapper
+# band (15) unless the caller states intent with --allow-empty-body.
+if [ "${#BODY_PARTS[@]}" -gt 0 ] && [ "$ALLOW_EMPTY_BODY" != "1" ]; then
+  _BODY_JOINED=""
+  for p in "${BODY_PARTS[@]}"; do _BODY_JOINED+="$p"; done
+  _BODY_STRIPPED="$(printf '%s' "$_BODY_JOINED" | tr -d '[:space:]')"
+  if [ -z "$_BODY_STRIPPED" ]; then
+    echo "✗ gh-egress: REFUSED — the body channel is empty (whitespace-only)." >&2
+    echo "  This is the signature of upstream composition failing silently (e.g. \"\$(cat file)\" on an empty file)." >&2
+    [ "$VERB" = "edit" ] && echo "  edit has OVERWRITE semantics — dispatching this would wipe the target body." >&2
+    echo "  If an empty body is genuinely intended, re-dispatch with --allow-empty-body." >&2
+    exit 15
+  fi
+  # edit-only near-empty floor: overwrite semantics justify a stricter bar than
+  # comment/create ("done" is a legitimate short comment; a 3-char issue body
+  # overwrite almost never is). Byte-length check — multibyte text inflates the
+  # count, which only ever RELAXES the floor (safe direction).
+  if [ "$VERB" = "edit" ] && [ "${#_BODY_STRIPPED}" -lt 10 ]; then
+    echo "✗ gh-egress: REFUSED — edit body is near-empty (<10 chars after stripping whitespace)." >&2
+    echo "  edit OVERWRITES the target; a near-empty body is far more often a composition bug than intent." >&2
+    echo "  If this tiny body is genuinely intended, re-dispatch with --allow-empty-body." >&2
+    exit 15
+  fi
+fi
+
 for p in "${SCAN_PARTS[@]:-}"; do SCAN+="$p"$'\n'; done
 
 net_refuse() { echo "✗ gh-egress: REFUSED — mechanical net caught $1." >&2
