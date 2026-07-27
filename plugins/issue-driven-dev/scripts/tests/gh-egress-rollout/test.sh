@@ -12,9 +12,9 @@
 # Whitelist (deliberately NOT wired / not egress):
 #   - `gh issue close`            — not a content egress verb (wrapper scope is
 #                                   create|comment|edit per #202 D2)
-#   - `gh api ... PATCH comments` — idd-edit / audit-block PATCH surgery goes
-#                                   through gh api (comment-id scoped), tracked
-#                                   separately; wrapper wraps `gh issue` verbs
+#   - audit-block PATCH surgery (non-idd-edit sites) — tracked separately;
+#     idd-edit's Step-6 comment PATCH was RETIRED from this whitelist by #273:
+#     it now routes through the wrapper's edit-comment verb (asserted below)
 #   - prose/table MENTIONS of `gh issue comment` (rules text, rationale) — only
 #     executable call lines were wired
 #
@@ -31,7 +31,11 @@ HELPERS="$HERE/../../lib/assert-helpers.sh"
 . "$HELPERS"
 
 # ── every rolled-out skill routes egress through the wrapper ──
-for sk in idd-comment idd-diagnose idd-implement idd-verify idd-close idd-update; do
+# #273: comment surgery wired — the raw Step-6 PATCH line is refuted verbatim
+refute_output_grep "idd-edit: raw Step-6 comment PATCH gone (#273)" 'issues/comments/$COMMENT_ID \' "$SK/idd-edit/SKILL.md"
+assert_output_grep "idd-edit: Step 6 dispatches via edit-comment verb" 'gh-egress.sh" edit-comment' "$SK/idd-edit/SKILL.md"
+
+for sk in idd-comment idd-diagnose idd-implement idd-verify idd-close idd-update idd-edit; do
   assert_output_grep "$sk: routes egress via gh-egress.sh" "gh-egress.sh" "$SK/$sk/SKILL.md"
   assert_output_grep "$sk: carries a scrub attestation"    "--scrub-attested" "$SK/$sk/SKILL.md"
 done

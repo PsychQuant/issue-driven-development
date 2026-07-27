@@ -413,4 +413,32 @@ assert_exit "edit with NO body channel (label-only) → guard silent, dispatch" 
 
 assert_output_grep "header documents refusal code 15" "15  empty/near-empty body" "$SCRIPT"
 
+# ── §2.7 edit-comment verb (#273) — comment-PATCH surgery enters the nets ────
+# The #226 rollout whitelisted `gh api ... PATCH comments` as "tracked
+# separately"; that debt is retired here: a dedicated verb dispatches the
+# PATCH so every net (privacy / mention / attestation / tier-floor / #275
+# empty-body) applies to comment surgery too.
+
+printf '%s' "reasonable replacement body for the comment surgery path" > "$WORK/patch-body.md"
+bash "$SCRIPT" edit-comment 9 --repo o/r --body-file "$WORK/patch-body.md" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "edit-comment happy path → dispatch (exit 0)" 0 $?
+ARGV="$(tr '\0' '\n' < "$FAKE_GH_ARGV")"
+assert_grep "edit-comment dispatch is gh api"              "api"                          "$ARGV"
+assert_grep "edit-comment targets the comment endpoint"    "repos/o/r/issues/comments/9" "$ARGV"
+assert_grep "edit-comment method is PATCH"                 "PATCH"                        "$ARGV"
+assert_grep "edit-comment body rides -F body=@file"        "body=@$WORK/patch-body.md"    "$ARGV"
+
+printf '%s' "leak /Users/fixtureuser/secret-lab inside surgery body padded long" > "$WORK/leaky-body.md"
+bash "$SCRIPT" edit-comment 9 --repo o/r --body-file "$WORK/leaky-body.md" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "edit-comment privacy net applies (exit 10)" 10 $?
+
+bash "$SCRIPT" edit-comment 9 --repo o/r --body-file "$WORK/empty-body.md" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "edit-comment empty body → overwrite floor (exit 15)" 15 $?
+
+bash "$SCRIPT" edit-comment 9 --repo o/r --body-file "$WORK/patch-body.md" >/dev/null 2>&1
+assert_exit "edit-comment without attestation → refuse (exit 13)" 13 $?
+
+bash "$SCRIPT" edit-comment 9 --repo o/r "${ATT[@]}" >/dev/null 2>&1
+assert_exit "edit-comment without --body-file → usage (exit 14)" 14 $?
+
 print_summary "gh-egress"

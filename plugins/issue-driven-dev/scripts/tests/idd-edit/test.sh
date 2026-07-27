@@ -164,12 +164,20 @@ f14() { # name mode(assert|refute) needle
 }
 f14 "f14a: R5 refuse records + continues (no batch kill)"      assert 'REFUSED_TARGETS+=("$COMMENT_ID")'
 f14 "f14a2: refuse branch continues the loop"                  assert '不中斷 batch（#158 語意 (i)）'
-f14 "f14b: batch outcome report format present"                assert 'edited: $EDITED_COUNT / refused: ${#REFUSED_TARGETS[@]}'
-f14 "f14b2: refused rows highlighted"                          assert '✗ REFUSED comment:'
+f14 "f14b: batch outcome report sums both refusal buckets"     assert 'edited: $EDITED_COUNT / refused: $REFUSED_TOTAL'
+f14 "f14b2: R5 refused rows highlighted with source tag"       assert '✗ REFUSED(R5) comment:'
 f14 "f14c: override semantics = all-targets + shared reason"   assert 'all-targets + reason 共用'
 f14 "f14d: deferred-to-158 note removed (decision landed)"     refute '設計 deferred to **[#158]'
 f14 "f14e: single-target degenerate equivalence documented"    assert '單 target 退化等價'
 f14 "f14f: exit contract — 4 iff any refused"                  assert 'M>0 → exit 4'
+
+# ── fixture 15 (#273): egress refusal band enters the batch outcome ──
+f14 "f15a: egress refusal bucket exists"                       assert 'EGRESS_REFUSED_TARGETS+='
+f14 "f15b: rc>=10 classified as refusal (band consumed)"       assert '-ge 10'
+f14 "f15c: egress refused rows highlighted with source tag"    assert '✗ REFUSED(egress)'
+f14 "f15d: Step 6 dispatches via the edit-comment verb"        assert 'gh-egress.sh" edit-comment'
+f14 "f15e: band-consumption doctrine sentence present"         assert 'per-comment 分類消費 band（10–15）'
+f14 "f15f: final exit covers both buckets"                     assert '[ "$REFUSED_TOTAL" -gt 0 ] && exit 4'
 
 echo ""
 echo "================================"

@@ -56,6 +56,7 @@
 #
 # USAGE
 #   gh-egress.sh <create|comment|edit> [gh issue <verb> args...] \
+#   gh-egress.sh edit-comment <comment-id> --repo owner/repo --body-file <f> \   # #273: comment-PATCH surgery, all nets apply
 #                --scrub-attested <enforce|warn|light>
 #
 #   On success the wrapper `exec`s the real gh so stdout / stderr / exit code are
@@ -85,15 +86,15 @@
 set -u
 
 usage() {
-  echo "✗ gh-egress: usage: gh-egress.sh <create|comment|edit> [gh args...] --scrub-attested <enforce|warn|light>" >&2
+  echo "✗ gh-egress: usage: gh-egress.sh <create|comment|edit|edit-comment> [gh args...] --scrub-attested <enforce|warn|light>" >&2
 }
 
 # --- verb (first positional) -------------------------------------------------
 VERB="${1:-}"
 case "$VERB" in
-  create|comment|edit) shift ;;
+  create|comment|edit|edit-comment) shift ;;
   "") echo "✗ gh-egress: missing egress verb." >&2; usage; exit 14 ;;
-  *)  echo "✗ gh-egress: unknown egress verb '$VERB' (only create|comment|edit route through this gate)." >&2; usage; exit 14 ;;
+  *)  echo "✗ gh-egress: unknown egress verb '$VERB' (only create|comment|edit|edit-comment route through this gate)." >&2; usage; exit 14 ;;
 esac
 
 # --- parse: pull out --scrub-attested, forward everything else verbatim -------
@@ -111,6 +112,9 @@ require_scannable_bodyfile() {
 
 ATTESTED=""
 ALLOW_EMPTY_BODY=""   # #275 escape hatch: explicit intent to dispatch an empty/short body
+EC_ID=""            # edit-comment: target comment id (first bare numeric positional, #273)
+EC_REPO=""          # edit-comment: owner/repo (from --repo)
+BODYFILE_PATH=""    # edit-comment: dispatch needs the PATH, not just the content
 MENTION_ATTESTED=""   # comma-separated logins vetted via rules/tagging-collaborators.md 5-step (#117)
 GH_ARGS=()          # forwarded to gh, byte-identical minus the attestation flag
 SCAN_PARTS=()       # all drafted prose (--body / --title / --body-file) — privacy nets
@@ -157,6 +161,10 @@ while [ $# -gt 0 ]; do
         exit 14
       fi
       ALLOW_EMPTY_BODY=1; shift; continue ;;
+    --repo)
+      GH_ARGS+=("$arg"); next_is="repo"; shift; continue ;;
+    --repo=*)
+      GH_ARGS+=("$arg"); EC_REPO="${arg#--repo=}"; shift; continue ;;
     -b|--body|-t|--title)
       GH_ARGS+=("$arg")
       case "$arg" in -t|--title) next_is="title" ;; *) next_is="body" ;; esac
@@ -172,17 +180,23 @@ while [ $# -gt 0 ]; do
     -F?*)
       GH_ARGS+=("$arg"); f="${arg#-F}"
       require_scannable_bodyfile "$f"
+      BODYFILE_PATH="$f"
       FCONTENT="$(cat "$f")"; SCAN_PARTS+=("$FCONTENT"); BODY_PARTS+=("$FCONTENT"); next_is=""; shift; continue ;;
     --body-file=*) GH_ARGS+=("$arg"); next_is=""; f="${arg#--body-file=}"
       require_scannable_bodyfile "$f"
+      BODYFILE_PATH="$f"
       FCONTENT="$(cat "$f")"; SCAN_PARTS+=("$FCONTENT"); BODY_PARTS+=("$FCONTENT"); shift; continue ;;
     *)
       GH_ARGS+=("$arg")
       case "$next_is" in
         body)       SCAN_PARTS+=("$arg"); BODY_PARTS+=("$arg") ;;
         title)      SCAN_PARTS+=("$arg") ;;
-        bodyfile)   require_scannable_bodyfile "$arg"; FCONTENT="$(cat "$arg")"
+        repo)       EC_REPO="$arg" ;;
+        bodyfile)   require_scannable_bodyfile "$arg"; BODYFILE_PATH="$arg"; FCONTENT="$(cat "$arg")"
                     SCAN_PARTS+=("$FCONTENT"); BODY_PARTS+=("$FCONTENT") ;;
+        *)          if [ "$VERB" = "edit-comment" ] && [ -z "$EC_ID" ]; then
+                      case "$arg" in ''|*[!0-9]*) : ;; *) EC_ID="$arg" ;; esac
+                    fi ;;
       esac
       next_is=""; shift; continue ;;
   esac
@@ -220,7 +234,7 @@ if [ "${#BODY_PARTS[@]}" -gt 0 ] && [ "$ALLOW_EMPTY_BODY" != "1" ]; then
   if [ -z "$_BODY_STRIPPED" ]; then
     echo "✗ gh-egress: REFUSED — the body channel is empty (whitespace-only)." >&2
     echo "  This is the signature of upstream composition failing silently (e.g. \"\$(cat file)\" on an empty file)." >&2
-    [ "$VERB" = "edit" ] && echo "  edit has OVERWRITE semantics — dispatching this would wipe the target body." >&2
+    { [ "$VERB" = "edit" ] || [ "$VERB" = "edit-comment" ]; } && echo "  edit has OVERWRITE semantics — dispatching this would wipe the target body." >&2
     echo "  If an empty body is genuinely intended, re-dispatch with --allow-empty-body." >&2
     exit 15
   fi
@@ -228,7 +242,7 @@ if [ "${#BODY_PARTS[@]}" -gt 0 ] && [ "$ALLOW_EMPTY_BODY" != "1" ]; then
   # comment/create ("done" is a legitimate short comment; a 3-char issue body
   # overwrite almost never is). Byte-length check — multibyte text inflates the
   # count, which only ever RELAXES the floor (safe direction).
-  if [ "$VERB" = "edit" ] && [ "${#_BODY_STRIPPED}" -lt 10 ]; then
+  if { [ "$VERB" = "edit" ] || [ "$VERB" = "edit-comment" ]; } && [ "${#_BODY_STRIPPED}" -lt 10 ]; then
     echo "✗ gh-egress: REFUSED — edit body is near-empty (<10 chars after stripping whitespace)." >&2
     echo "  edit OVERWRITES the target; a near-empty body is far more often a composition bug than intent." >&2
     echo "  If this tiny body is genuinely intended, re-dispatch with --allow-empty-body." >&2
@@ -409,4 +423,13 @@ fi
 GH_BIN="${IDD_GH_BIN:-gh}"
 # ${arr[@]+...} idiom: empty array expands to NOTHING (":-" would yield one
 # phantom '' positional, #203 item 5); bash-3.2 safe.
+if [ "$VERB" = "edit-comment" ]; then
+  # #273: comment-PATCH surgery — same nets, different dispatch shape. The
+  # #226 rollout whitelisted this channel as "tracked separately"; retired here.
+  if [ -z "$EC_ID" ] || [ -z "$EC_REPO" ] || [ -z "$BODYFILE_PATH" ]; then
+    echo "✗ gh-egress: edit-comment needs <comment-id> --repo owner/repo --body-file <file>." >&2
+    usage; exit 14
+  fi
+  exec "$GH_BIN" api "repos/${EC_REPO}/issues/comments/${EC_ID}" -X PATCH -F body=@"$BODYFILE_PATH"
+fi
 exec "$GH_BIN" issue "$VERB" ${GH_ARGS[@]+"${GH_ARGS[@]}"}
