@@ -12,6 +12,6 @@
   - **#273 edit-comment verb**（diagnosis correction 記錄在案）— idd-edit Step-6 PATCH 原走 raw `gh api`，是 #226 rollout 白名單的「tracked separately」通道、**繞過全部網**；新 verb 接線後全網自動套用，batch 雙桶報表消費 band（final exit 仍 4）。
   - Dogfood 亮點：commit 2 首次 sweep 被 **#163 contract layer 當場抓到**新 code 的 `$SCRUB_LEVEL` 無 provenance — 該層上線同 session 即立功。
 
-#275/#273 diagnosis（batch）+ correction、#276 Phase 1 IC 皆已入 issue；三張 issue phase 已同步。發版待兩個 PR merge 後統一（預期 v2.102.0）。
+**收尾（同日）**：PR #280/#281 review + merged（main 42 suites 0 fail）；#276/#275/#273 依 close ritual 結案（各自獨立 summary + body sync + dashboard）；**v2.102.0 已發版**、marketplace 已同步。
 
 CLAUDE.md：無需更新。
