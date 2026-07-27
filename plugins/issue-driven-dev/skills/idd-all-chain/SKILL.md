@@ -5,6 +5,7 @@ description: |
   Recursive shell over /idd-all — sub-skill spawns (sister bug / follow-up finding / tangential / sister concern) detected via spawn manifest, chain-eligible enqueued automatically.
   Use when: root issue likely ripples (refactor with sister bugs / spec change with cross-spec impact / multi-layer feature) and you want single PR review.
   Stops at verified — never auto-close, /idd-close per issue still required.
+  防止的失敗：root issue 修完就收工，過程中冒出來的 sister bug / follow-up 散成孤兒 issue，沒人記得要一起 review。
 argument-hint: "[#NNN ...] [--bfs] [--review] [--cwd /path/to/clone] e.g. '#28', '#A #B #C --bfs', '#28 --review' (--review opt-in re-opens NSQL confirmation loop at terminal report)"
 allowed-tools:
   - Bash(gh:*)

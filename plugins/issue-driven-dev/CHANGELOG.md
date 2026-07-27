@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`idd-plan` advertised no diagnosis precondition, so AIs routed users around `idd-diagnose` (#276, Phase 1)** — a user's AI told them to skip `/idd-diagnose` and run `/idd-plan` directly; following that advice hits `idd-plan`'s hard abort. The advice was *correct on the information the AI could see*. The plan↔diagnose ordering lived on three surfaces, and the only one readable at routing time was silent about it: `docs/workflows.md` `P-plan-gated` (never auto-loaded), `skills/idd-plan/SKILL.md` Step 0 hard abort (loads only *after* the skill is already chosen), and the frontmatter `description` — the sole input to the choice — which named no precondition and positioned the skill purely relative to `idd-implement`. Combined with an effort-minimizing read of "plan" as a superset of "diagnose", the mis-route was structural, not incidental. `idd-plan`'s description now states the precondition **and the remedy** (`run /idd-diagnose #N first`), so a mis-routing AI is handed the correct next step rather than merely a warning it will learn to avoid. `README.md`'s skill row was reworded off the tier-spectrum vocabulary ("sits between Simple and Spectra") onto user vocabulary (when you reach it, what happens if you don't). The hard abort itself is unchanged — implementation stays the source of truth; this closes the docs/metadata gap around it.
+- **Four sibling skills off the frontmatter house pattern** — measurement during planning found the defect was family-wide, not a one-file slip (diagnosis had predicted one): `idd-clarify` (no `Use when` / `防止的失敗`), `idd-comment` (no `Use when` — it had the semantic equivalent, "用於…時", but not at the position an AI scans), `idd-all-chain` and `idd-report` (no `防止的失敗`). All five are fixed together per the #129 shared-abstraction contract and the #44 lesson that fixing only the triggering member costs a second close.
+
+### Added
+
+- **`skill-description-contract` drift-guard suite** — the forcing function the convention never had. Iterates every `skills/*/` and asserts, per skill: the frontmatter carries a non-empty `description` (A1), which states when to reach for the skill (A2, `Use when`) and what failure it prevents (A3, `防止的失敗`); skills in an explicit `DIAGNOSIS_DEPENDENT` allowlist must additionally name the diagnosis precondition (A4). New skills are covered by construction — the glob picks them up, so shipping one without the house pattern is immediately RED. Two limits are documented in the suite header rather than papered over: it asserts **presence, not quality** (`Use when: 需要時` would pass — prose depth stays review's job, same stance as `docs-catalog-sync`), and A4 is an explicit list rather than derived, because the obvious derivation ("any skill whose body tells the user to run `/idd-diagnose` first") false-positives on `idd-close`, where that string is a meeting-deliverable fallback and not close's own precondition (close gates on verify).
+
+### Tests
+
+- New suite `skill-description-contract`, 56 assertions. TDD-verified both directions: RED at exactly 8 failures against the pre-fix tree (`idd-plan`×3, `idd-clarify`×2, `idd-comment`/`idd-all-chain`/`idd-report`×1 each), GREEN 56/0 after; anti-placebo pass reverted `idd-plan` alone and confirmed exactly its 3 assertions flip back while the other 53 hold (the #119 placebo-gate failure class). The allowlist also self-guards — a renamed or deleted `DIAGNOSIS_DEPENDENT` entry fails loudly instead of silently asserting nothing. Aggregator 41 suites, 0 fail.
+
+### Notes
+
+- #276 stays **open**: this is Phase 1 only. Phase 2 — generating a wiki workflow flowchart from `docs/workflows.md` so the 31 paths are legible without reading the catalog — is deliberately unbundled. It has three open design questions (parse contract, push mechanism, how to render 31 paths) and writes to a second git repo, so binding the root-cause fix to it would leave the mis-routing shipping meanwhile.
+
 ## [2.101.0] - 2026-07-19
 
 ### Added
