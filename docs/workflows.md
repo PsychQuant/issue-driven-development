@@ -427,6 +427,74 @@ idd-edit comment:NNN --append --body "..."
 
 ---
 
+## Path Flowchart（wiki source，#276 Phase 2）
+
+> 本節的 mermaid 是 **wiki [Path Map](https://github.com/PsychQuant/issue-driven-development/wiki/Path-Map) 頁的 single source** — `scripts/generate-path-map.py` 把它與上方 catalog 一起渲染成 `docs/wiki/Path-Map.md`，wiki 同步逐字複製該檔。改這裡，跑 generator，別直接改 wiki。drift-guard：`path-map-sync`（freshness + 36 條 path 全覆蓋 + README 連結）。主幹忠實鏡像 § Path Selection Decision Tree；不在主幹上的 family 以 legend 群組列出。
+
+```mermaid
+flowchart TD
+    START(["你正要做什麼？"]) --> Q1{"single issue<br/>還是 multi？"}
+
+    Q1 -->|single| QM{"type=meeting？"}
+    QM -->|yes| A5["P-meeting<br/>（複雜度評估前分流）"]
+    QM -->|no| Q2{"Complexity？<br/>（硬閘：≥5 檔互依概念或<br/>shared abstraction → MUST Plan）"}
+    Q2 -->|Simple| Q3{"attended？<br/>（你在 keyboard）"}
+    Q3 -->|yes| A1["P-atomic（5 touchpoints）"]
+    Q3 -->|no| QD{"已有 diagnosis？"}
+    QD -->|yes| B1["P-auto-from-diagnosed"]
+    QD -->|no| B2["P-auto-full-swallow"]
+    Q2 -->|Plan| A2["P-plan-gated<br/>（EnterPlanMode 審批）"]
+    Q2 -->|Spectra| Q4{"方向已明確？<br/>（零 open questions）"}
+    Q4 -->|yes（罕用）| A4["P-spectra-opt-out"]
+    Q4 -->|no（預設）| A3["P-spectra-discuss-first"]
+
+    Q1 -->|multi| Q5{"issues 之間的關係？"}
+    Q5 -->|同根 cluster| B4["P-batch-diagnose → P-cluster-pr"]
+    Q5 -->|ripple：1 root + auto-emerge| B5["P-chain-from-root"]
+    Q5 -->|forest：N roots 獨立| B6["P-chain-multi-root<br/>（或 N × P-atomic）"]
+    Q5 -->|unrelated backlog drain| B3["P-batch-drain<br/>（conflict-class ordered）"]
+    Q5 -->|source-driven（一份來源 ≥2 findings）| D1["P-multi-finding<br/>（強制單線 → P-no-multi-finding）"]
+
+    subgraph C["C. Batch（N issues 各自 atomic，無共用 PR）"]
+        C2["P-batch-comment"]
+        C3["P-batch-update"]
+        C4["P-batch-edit"]
+        C5["P-batch-close"]
+    end
+
+    subgraph E["E. Verify-only / PR review"]
+        E1["P-pr-verify"]
+        E2["P-verify-file-profile（非 code deliverable）"]
+        E3["P-pr-verify-then-merge"]
+    end
+
+    subgraph F["F. Resume / 中斷恢復"]
+        F1["P-spectra-resume"]
+        F2["P-implement-retry"]
+    end
+
+    subgraph G["G. Non-lifecycle / ancillary"]
+        G1["P-list-triage"]
+        G2["P-route-recommend"]
+        G3["P-comment-only"]
+        G4["P-edit-only"]
+        G5["P-discussions-intake"]
+        G6["P-clarify-audit"]
+        G7["P-find-lookup"]
+        G8["P-ask-history"]
+        G9["P-report-rollup"]
+        G10["P-config-maintain"]
+    end
+
+    subgraph H["H. Autopilot（no human-in-loop）"]
+        H1["P-loop-autopilot"]
+        H2["P-cron-autopilot"]
+        H3["P-cron-list-triage"]
+    end
+```
+
+---
+
 ## Path × Skill Matrix
 
 | Skill | A:atomic | A:plan | A:spectra | B:auto | B:cluster | B:chain | C:batch | D:multi-finding | E:pr-verify | F:resume | G:non-lifecycle | H:autopilot |

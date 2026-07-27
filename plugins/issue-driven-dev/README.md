@@ -53,6 +53,8 @@ idd-issue → idd-diagnose → idd-implement → idd-verify → idd-close
     ①            ②              ③              ④            ⑤
 ```
 
+> 上圖是最常見的 P-atomic 主幹。完整 **36 條 sanctioned path** 的選擇導航（何時走 Plan / Spectra / cluster / chain / batch…）見 wiki **[Path Map](https://github.com/PsychQuant/issue-driven-development/wiki/Path-Map)**（流程圖 + 分類表；source = `docs/workflows.md`，generator 防 drift，#276）。
+
 | Skill | Purpose |
 |-------|---------|
 | `idd-issue` | Create well-documented GitHub Issue with original quotes and images |
