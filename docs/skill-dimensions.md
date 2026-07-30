@@ -77,7 +77,7 @@ IDD plugin 已累積 14+ skills(`idd-issue` / `idd-diagnose` / `idd-implement` /
 - `Execution` — implement / verify / close;產出**結果**(code / verify report / closing summary)
 - `Side effect`(中間)— issue / comment / edit / update;單純更新外部 state(GitHub issue body),既非判斷也非執行
 
-**為什麼重要**:Deliberation skill **不該** unattended-capable(D8),否則違反 NSQL P1(Read-Only for Humans);Execution skill 可以。
+**為什麼重要**:Deliberation skill **不該** unattended-capable(D8),否則違反 Foresay P1(Read-Only for Humans);Execution skill 可以。
 
 **Cross-link**:`plugins/issue-driven-dev/MANIFESTO.md` § Human-in-the-loop section。
 
@@ -256,7 +256,7 @@ Dimensions **不正交** — 某些值組合互相 reinforce,某些互相 confli
 | D1=Sep + D3=Delib + D7=SHALL | **Reinforce** | `idd-diagnose`、`idd-plan`(deliberation moment 必該 separation 且 mandatory) |
 | D1=Auto + D8=Unatt | **Reinforce** | `idd-implement`(unattended TDD 是合理 automation) |
 | D1=Sep + D8=Unatt | **Conflict** | 純 separation skill 通常需要 attended;若 unattended,degraded mode 必須明示 |
-| D3=Delib + D8=Unatt | **Conflict** | 違反 NSQL P1。`idd-all-chain` Phase 0.4 unattended auto-proceed 是此 conflict 的 hotspot |
+| D3=Delib + D8=Unatt | **Conflict** | 違反 Foresay P1。`idd-all-chain` Phase 0.4 unattended auto-proceed 是此 conflict 的 hotspot |
 | D6=Ch + D7=SHALL Layer V | **Reinforce risk-mitigation** | Chain 風險高 → Layer V 應該強制 block,不該 advisory |
 | D9=Flag + D2=Atom | **Reinforce** | 加 flag 不該升 atomic 成 orchestrator(D9 trilemma 通常 push 你開 separate skill) |
 | D10=Cl-def + D8=Unatt | **Hard conflict** | `idd-close` 永不該 unattended(MANIFESTO 鐵律)|

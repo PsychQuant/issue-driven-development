@@ -122,11 +122,11 @@ falsifiability(IDD) = falsifiability(TDD)         ← idd-implement Step 3 RED�
 
 ---
 
-## Human-in-the-loop: IDD 即 NSQL Confirmation Protocol
+## Human-in-the-loop: IDD 即 Foresay Confirmation Protocol
 
-IDD 的 human-in-the-loop 不是隨意散落在 pipeline 各處的 ad-hoc 確認 —— 它是 [NSQL](https://github.com/kiki830621/NSQL)（Human-AI Confirmation Protocol）的一個 instance。NSQL 的核心契約：**AI detect ambiguity → 對 user render structured understanding → user confirm/correct intent → execute**。一句話：**clarify before execute, never guess**。
+IDD 的 human-in-the-loop 不是隨意散落在 pipeline 各處的 ad-hoc 確認 —— 它是 [Foresay](https://github.com/kiki830621/foresay)（Human-AI Confirmation Protocol）的一個 instance。Foresay 的核心契約：**AI detect ambiguity → 對 user render structured understanding → user confirm/correct intent → execute**。一句話：**clarify before execute, never guess**。
 
-| NSQL confirmation loop | IDD pipeline |
+| Foresay confirmation loop | IDD pipeline |
 |---|---|
 | AI parses & identifies ambiguity | `idd-diagnose` + Layer V / Plan / Spectra（ambiguity detector） |
 | AI shows structured understanding | Diagnosis comment / `EnterPlanMode` plan |
@@ -138,7 +138,7 @@ IDD 的 human-in-the-loop 不是隨意散落在 pipeline 各處的 ad-hoc 確認
 
 ### Choice-first decision rendering（人挑，不要人寫）
 
-NSQL 的「Read-Only for Humans」在 IDD 落成一條具體的 cross-skill 紀律：**任何 `idd-*` skill 在決策 / 澄清點需要 human input 且選項可列舉時，SHALL 用 `AskUserQuestion` render 候選選項（含推薦項），而不是請 user 用自由文字 articulate。** Free-text 是**具名例外** fallback —— 只在選項空間真的開放、AI 無法列舉候選時才用，且須寫明「為何無法列舉」。
+Foresay 的「Read-Only for Humans」在 IDD 落成一條具體的 cross-skill 紀律：**任何 `idd-*` skill 在決策 / 澄清點需要 human input 且選項可列舉時，SHALL 用 `AskUserQuestion` render 候選選項（含推薦項），而不是請 user 用自由文字 articulate。** Free-text 是**具名例外** fallback —— 只在選項空間真的開放、AI 無法列舉候選時才用，且須寫明「為何無法列舉」。
 
 理由：當 AI 已經能列出選項，請 user 從白紙寫答案是把 enumeration 的認知負擔推回給人。人**挑選**比**articulate**更確定、更快，也更能讓 AI 的「我理解的選項空間」攤開受檢（misframe 一眼可抓）。
 

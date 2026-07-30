@@ -30,7 +30,7 @@ The 3 open questions from diagnosis were resolved via choice-first AskUserQuesti
 
 → The shared helper must be a **common primitive** (idempotent marker-delimited block writer + git parent-dir-excluded handling), parameterized by target file + direction — NOT forced into a single function. design.md D4 captures this with a byte-equivalence regression guarantee for #55.
 
-## Residue (NSQL §4.6)
+## Residue (Foresay §4.6)
 
 "What counts as a third-party clone worth special-casing" is partly a values judgment that push-permission cannot fully capture (e.g. a repo you co-maintain but did not create, or a read-only vendored dependency). The spec picks a mechanical proxy (push permission); the broader intent ("don't pollute repos that aren't really yours") is flagged in design.md Open Questions Q2, not silently dropped.
 

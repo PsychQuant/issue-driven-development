@@ -1230,7 +1230,7 @@ options:
 
 **回顯 render 的詮釋（v2.64.0+, #103）**：除了上面的 metadata，**必須**把 AI 自己*產出*的詮釋回顯給使用者 —— issue body 的 `## Type` / `## Expected` / `## Actual` 三段 + plain-language interpretation。使用者已給過的逐字「Original text」不重複貼。
 
-> **為什麼**：建 issue 是一個 NSQL `run → report` 操作（見 repo `CLAUDE.md`「Reference Projects: NSQL」）。建 issue 可逆，不需要 confirm gate；但 report 必須陳述「我做了什麼」，不只「它在哪」。回顯 AI render 的詮釋，讓 misparse（AI 把意圖讀錯）一眼可抓，不用點進 URL 才發現。
+> **為什麼**：建 issue 是一個 Foresay `run → report` 操作（見 repo `CLAUDE.md`「Reference Projects: Foresay」）。建 issue 可逆，不需要 confirm gate；但 report 必須陳述「我做了什麼」，不只「它在哪」。回顯 AI render 的詮釋，讓 misparse（AI 把意圖讀錯）一眼可抓，不用點進 URL 才發現。
 
 > **⚠ CI / `/loop` callers (v2.64.0+, #107)**: Step 5 terminal output expanded from metadata-only (`number / URL / labels / type`) to also echoing the rendered `## Type` / `## Expected` / `## Actual` + plain-language interpretation. If your script hard-parses Step 5 output for the metadata fields only, add a `-m 1` / first-N-lines guard or grep specifically for the `issue.*#NNN.*created` line — the new echo paragraphs follow it. (Parallel precedent: `--no-multi-finding` CI warning below.)
 

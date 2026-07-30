@@ -308,7 +308,7 @@ Exit code:
 {可能出錯的地方}
 
 ### Residue
-{NSQL §4.6 — issue 意圖中*無法 operationalize* 的部分（它的 purpose / horizon）。明確標記，不靜默丟棄。無殘留則寫 (none)}
+{Foresay §4.6 — issue 意圖中*無法 operationalize* 的部分（它的 purpose / horizon）。明確標記，不靜默丟棄。無殘留則寫 (none)}
 ```
 
 ```bash
@@ -341,7 +341,7 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $NUMBER --repo $GITHUB_R
 
 > **原文引用格式**：所有逐字引用的原文（使用者對話、老師回饋、文件段落）**必須**使用 blockquote（`>`）格式，與分析/解讀在視覺上明確區分。
 
-> **`### Residue` 是什麼（v2.64.0+, #103）**：NSQL §4.6 的 residue —— issue 的意圖裡*無法被 operationalize* 的那部分（它的 purpose / horizon）。**跟 Layer V vagueness 不同**：Layer V = issue *不清楚*；residue = issue *清楚*，但它的部分意圖（為什麼要這個、要放進什麼脈絡看）本來就接不進 function/argument。標出來，不靜默丟掉 —— 誠實的縮減 ≠ 假裝完整。**無殘留時必填 `(none)`**；空著等於沒判斷,違反「明確標記」的本意。
+> **`### Residue` 是什麼（v2.64.0+, #103）**：Foresay §4.6 的 residue —— issue 的意圖裡*無法被 operationalize* 的那部分（它的 purpose / horizon）。**跟 Layer V vagueness 不同**：Layer V = issue *不清楚*；residue = issue *清楚*，但它的部分意圖（為什麼要這個、要放進什麼脈絡看）本來就接不進 function/argument。標出來，不靜默丟掉 —— 誠實的縮減 ≠ 假裝完整。**無殘留時必填 `(none)`**；空著等於沒判斷,違反「明確標記」的本意。
 
 > **`### Conflict Class` 是什麼（v2.83.0+, #182）**：給 `idd-all` 的 multi-issue batch mode 消費的「實作時碰到的物理資源」分類（conflict-class discipline），五選一 —— `A_parallel_safe`（獨立檔案編輯、無共享 mutable 資源）/ `B_resource_serialize`（單寫者資源：DB lock、serial upload、external queue）/ `C_shared_module_coord`（共享 submodule / vendored dep）/ `D_diagnose_first`（scope 未明，須先讀）/ `E_verified_close`（已完成、只需 verify+close）。**判斷的是「碰到什麼資源」不是「issue 多難」**。`B`/`C` 的 justification **必須 named 出共享資源**，否則無法 audit（見 `references/parallel-orchestration.md` 的 Scoundrel/Lazy/Confused lens）。**Consumer 契約**：消費端若讀到的 Diagnosis 缺 `### Conflict Class` 或無法 parse，SHALL 預設為 `D_diagnose_first` 並 **surface 這個 fallback**（印出來），不得靜默、不得預設成 parallel class。完整 taxonomy + lane scheduling 見 [`references/parallel-orchestration.md`](../../references/parallel-orchestration.md)。
 
@@ -407,7 +407,7 @@ AskUserQuestion(
   question = "Layer V triggered (V1=$V1, V4=$V4). 模糊度 $max_score/6 — 怎麼處理?",
   options = [
     # 順序依 max_score 重排,把 default 放第一個
-    {label: "clarify now",      description: "Claude 對 1-3 個不清楚的點 render 候選詮釋讓你挑（NSQL P1 — Read-Only for Humans;無法列舉的點 fallback 才用 free-text 問）→ append 到 issue body 'Clarification (added during diagnose)' 區塊 → 重跑 Layer V + Step 3.5"},
+    {label: "clarify now",      description: "Claude 對 1-3 個不清楚的點 render 候選詮釋讓你挑（Foresay P1 — Read-Only for Humans;無法列舉的點 fallback 才用 free-text 問）→ append 到 issue body 'Clarification (added during diagnose)' 區塊 → 重跑 Layer V + Step 3.5"},
     {label: "proceed anyway",   description: "跳過 clarify,routing 進 Layer 2/3/P。trigger 事實寫入 audit trail"},
     {label: "escalate to Plan", description: "verdict 直接設 Plan via Layer V,跳過 Step 3.5。Routing 進 /idd-plan EnterPlanMode 對齊"}
   ]

@@ -1,7 +1,7 @@
 # choice-first-decision-rendering Specification
 
 ## Purpose
-Define the cross-skill **Choice-First Decision Rendering** doctrine: at any decision / clarification point where an `idd-*` skill needs human input AND the option space is enumerable, the skill SHALL render `AskUserQuestion` candidate choices (recommended option first) rather than asking the human to articulate the answer in free-text. Free-text is a named-exception fallback permitted ONLY when the option space is genuinely open (the AI cannot enumerate plausible candidates), and the skill SHALL state why it could not enumerate. This is the normative generalization of the NSQL Confirmation Protocol's "Read-Only for Humans" principle (the human selects; the AI writes); `idd-diagnose` Step 3.4 Layer V D.1 is one application of it. Sourced from #190.
+Define the cross-skill **Choice-First Decision Rendering** doctrine: at any decision / clarification point where an `idd-*` skill needs human input AND the option space is enumerable, the skill SHALL render `AskUserQuestion` candidate choices (recommended option first) rather than asking the human to articulate the answer in free-text. Free-text is a named-exception fallback permitted ONLY when the option space is genuinely open (the AI cannot enumerate plausible candidates), and the skill SHALL state why it could not enumerate. This is the normative generalization of the Foresay Confirmation Protocol's "Read-Only for Humans" principle (the human selects; the AI writes); `idd-diagnose` Step 3.4 Layer V D.1 is one application of it. Sourced from #190.
 
 ## Requirements
 ### Requirement: IDD skills SHALL render enumerable decisions as candidate choices
@@ -10,7 +10,7 @@ At any decision or clarification point where an `idd-*` skill needs human input 
 
 Free-text prompting is a **named-exception fallback**, permitted ONLY when the option space is genuinely open (the AI cannot enumerate plausible candidates). When falling back to free-text, the skill SHALL state the reason the space is not enumerable.
 
-This doctrine is the normative generalization of the NSQL Confirmation Protocol's "Read-Only for Humans" principle (the human selects; the AI writes). It is cross-skill: it applies wherever an `idd-*` skill surfaces a decision to a human, not only within a single skill's vagueness check.
+This doctrine is the normative generalization of the Foresay Confirmation Protocol's "Read-Only for Humans" principle (the human selects; the AI writes). It is cross-skill: it applies wherever an `idd-*` skill surfaces a decision to a human, not only within a single skill's vagueness check.
 
 **Scope boundary**: this requirement governs **decision / clarification points** only. It does NOT govern pure informational notices, progress reports, or status output (those are not decisions and need no choices).
 

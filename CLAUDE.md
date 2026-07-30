@@ -29,17 +29,20 @@ Changes can be parked（暫存）— temporarily moved out of `openspec/changes/
 
 ## Reference Projects
 
-### NSQL — Human-AI Confirmation Protocol (https://github.com/kiki830621/NSQL)
+### Foresay — Human-AI Confirmation Protocol (https://github.com/kiki830621/foresay)
 
-NSQL formalizes the human-AI confirmation loop: *AI detects ambiguity → shows structured understanding → human confirms or corrects **intent** → then execute*. Core principle: **"clarify before execute, never guess."**
+> Formerly `NSQL`, renamed 2026-07 (kiki830621/foresay#8) — older IDD
+> CHANGELOG / README entries cite the old name and are left as written.
+
+Foresay formalizes the human-AI confirmation loop: *AI detects ambiguity → shows structured understanding → human confirms or corrects **intent** → then execute*. Core principle: **"clarify before execute, never guess."**
 
 IDD's human-in-the-loop is an instance of this protocol — not a separate model. The mapping:
 
-- NSQL's confirmation loop = IDD's `issue` + `idd-diagnose` (Layer V / Plan / Spectra are the ambiguity detector).
+- Foresay's confirmation loop = IDD's `issue` + `idd-diagnose` (Layer V / Plan / Spectra are the ambiguity detector).
 - The human confirms *intent* **before** execution — not output **after**.
 - `idd-verify` is an execution-fidelity check, **not** a confirmation loop — the loop already closed upstream.
 
-When reasoning about where a human belongs in the IDD pipeline (acceptance, review, "human-in-the-loop"), treat NSQL as the canonical protocol IDD conforms to.
+When reasoning about where a human belongs in the IDD pipeline (acceptance, review, "human-in-the-loop"), treat Foresay as the canonical protocol IDD conforms to.
 
 ## Project Rules
 

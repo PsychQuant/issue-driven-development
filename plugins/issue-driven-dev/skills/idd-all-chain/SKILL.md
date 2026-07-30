@@ -6,7 +6,7 @@ description: |
   Use when: root issue likely ripples (refactor with sister bugs / spec change with cross-spec impact / multi-layer feature) and you want single PR review.
   Stops at verified — never auto-close, /idd-close per issue still required.
   防止的失敗：root issue 修完就收工，過程中冒出來的 sister bug / follow-up 散成孤兒 issue，沒人記得要一起 review。
-argument-hint: "[#NNN ...] [--bfs] [--review] [--cwd /path/to/clone] e.g. '#28', '#A #B #C --bfs', '#28 --review' (--review opt-in re-opens NSQL confirmation loop at terminal report)"
+argument-hint: "[#NNN ...] [--bfs] [--review] [--cwd /path/to/clone] e.g. '#28', '#A #B #C --bfs', '#28 --review' (--review opt-in re-opens Foresay confirmation loop at terminal report)"
 allowed-tools:
   - Bash(gh:*)
   - Bash(git:*)
@@ -78,7 +78,7 @@ Inherits `/idd-all` config protocol (walked-up `.claude/issue-driven-dev.local.j
 
 ```
 TaskCreate(name="preflight", description="Phase 0: 解析 args (≥1 root + optional --bfs/--review)、gh auth、確認每個 root issue 都 OPEN")
-TaskCreate(name="parse_review_flag", description="Phase 0: 解析 --review flag → $REVIEW_FLAG (Phase 2 chain loop 傳到 sub-/idd-all --in-chain;Phase 4 final report wording 切換 verify-gated default vs awaiting human acceptance;per #102 NSQL doctrine)")
+TaskCreate(name="parse_review_flag", description="Phase 0: 解析 --review flag → $REVIEW_FLAG (Phase 2 chain loop 傳到 sub-/idd-all --in-chain;Phase 4 final report wording 切換 verify-gated default vs awaiting human acceptance;per #102 Foresay doctrine)")
 TaskCreate(name="check_diagnosis_readiness", description="Phase 0.4 (v2.55+ #47, helper extracted v2.57+ #51, multi-root v2.60+ #46): invoke scripts/check-diagnosis-readiness.sh <github-repo> <root1> [<root2> ...] → JSON {ready/not_ready}; not_ready=0 → silent pass; not_ready>0 → AskUserQuestion 3-option (run /idd-diagnose first / proceed anyway / cancel). Placed before cluster branch / manifest creation so cancel has zero side effect.")
 TaskCreate(name="cap_exceeded_preflight", description="Phase 0.4.5 (v2.71+, #119): fail-fast refuse if N_ROOTS > CHAIN_MAX_ISSUES — cite docs/workflows.md Anti-pattern A3 (P-chain-from-root 多 root 用 batch 跑) + suggest batch /idd-diagnose path. Placed before Phase 0.5 cluster branch so refuse leaves zero side effect. CHAIN_MAX_ISSUES hoisted here (also set in Phase 1 init_queue, kept in sync).")
 TaskCreate(name="setup_cluster_branch", description="Phase 0.5: 建 cluster branch — N=1 用 idd/chain-<N>-<slug>, N>1 用 idd/chain-multi-<hash8>-<root1-slug> from default branch + 初始化 spawn manifest schema v2 (root_issues + traversal)")
@@ -117,11 +117,11 @@ for ((i=0; i<${#ARGS[@]}; i++)); do
     --bfs)
       TRAVERSAL="bfs" ;;
     --review)
-      # v2.65+ #102 — opt-in re-open NSQL confirmation loop.
+      # v2.65+ #102 — opt-in re-open Foresay confirmation loop.
       # Propagated to each chained /idd-all #M --in-chain in Phase 2 so per-issue
       # Phase 6 reports also reflect; Phase 4 chain final report also dispatches.
       # Orchestrator-scope messaging-only effect (per #108 DA3) — does NOT make chain wait. Per MANIFESTO
-      # "Human-in-the-loop: IDD 即 NSQL Confirmation Protocol" doctrine.
+      # "Human-in-the-loop: IDD 即 Foresay Confirmation Protocol" doctrine.
       REVIEW_FLAG="--review" ;;
     --cwd=*) CWD_FLAG="${arg#--cwd=}" ;;
     --cwd)   i=$((i+1)); CWD_FLAG="${ARGS[i]}" ;;
