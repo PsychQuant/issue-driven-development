@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.102.1] - 2026-08-01
+
+### Added
+
+- **Reopen / resume path (#278, PR #282)** — the lifecycle docs only described the one-way street; the legitimate change-of-mind case ("judged not-worth-doing at close time, later matters") had no canonical path. idd-close gains close's dual operation: reopen-vs-new-issue criteria table (same Expected → reopen; morphed need → new issue `Refs` old; broken upstream artifact → #200's re-baseline, explicitly out of path), resume point decided by the closing summary's WHY (premise changed → re-diagnose; pure deferral → implement), old summary untouched (append-only; reopen = note + `idd-update` rollback + optional prepend-note marker), cross-reference against auto-close-trap recovery. usecase-routing scenario 31. From a real user exchange (verbatim preserved, third party pseudonymized). Verify on substitute basis (Fable session; disclosed in the verify comment).
+
 ## [2.102.0] - 2026-07-27
 
 ### Added
