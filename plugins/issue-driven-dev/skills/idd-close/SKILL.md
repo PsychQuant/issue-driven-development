@@ -1114,3 +1114,36 @@ fi
 「強制關掉」是肌肉記憶殺手。第一次是 "我趕時間"，第三次就變成「反正都 force」。Gate check 的意義是**強迫使用者面對那個未勾項**——要嘛做完、要嘛明確標記「不做，因為 X」，兩種都比 silent 跳過好。
 
 要真的 override，應該走 `/idd-edit #NNN` 把 `- [ ]` 改成 `- [~]` 並寫 reason。多打 30 秒的字，換回 3 個月後的可追溯性。
+
+## Reopen / resume path（#278）— closed 之後事情還要做
+
+close 的**對偶操作**。適用情境：issue 已依正常流程結案（含「當時判定不用做」的合法 close），**事後**發現事情還是要做 / 改變主意。不是即興判斷 — 三問各有 canonical 答案：
+
+### 1. reopen 原 issue，還是開新 issue？
+
+| 判準 | 路徑 | 例 |
+|------|------|-----|
+| **事情同一件** — 原 body 的 Expected 仍成立、只是「做」的決定變了 | `gh issue reopen <N>`（audit trail 連續，同一件事一條線） | 「當時判 P3 不做，現在使用者第二次撞到」→ reopen |
+| **需求已變形** — 要做的已不是原 Expected 描述的那件事 | 開新 issue + body `Refs #<old>`（舊案保持 closed 作歷史） | 「原本只要文件，現在要做成 skill」→ 新 issue 引用舊的 |
+| **上游 artifact 本身錯了**（issue/diagnosis/spec 要重打地基） | **不在本路徑** — 那是 #200 `idd-reorganize` 的 re-baseline 範疇 | 診斷根因後來證明是錯的 → 走 #200（開放中） |
+
+### 2. reopen 之後從哪一步接？
+
+看 **closing summary 記的「當時為什麼關」**：
+
+- 不做的**理由如今不成立**（前提變了：環境變、需求方回頭、依賴解除）→ 從 **`/idd-diagnose`** 接 — 前提變了，原 diagnosis 的效力要重新確認
+- 純**排程延後**（當時就打算日後做，diagnosis / strategy 仍有效）→ 直接 **`/idd-implement`** 接
+
+### 3. 原 closing summary 怎麼處理？
+
+**不動**（append-only audit trail）。reopen 的標準三步：
+
+```bash
+gh issue reopen <N>
+/idd-comment #<N> --type note --body "Reopen：<為何重啟，一句話 — 例：前次結案理由 X 已不成立 / 排程到期>"
+/idd-update #<N>   # phase 撥回 diagnosed 或 implemented（依上一問的接點）
+```
+
+原 summary 自然成為歷史層；要顯眼標記可選配 `/idd-edit comment:<summary-id> --prepend-note`（既有 mode）標「已於 <date> reopen，見後續」。
+
+> **與 auto-close-trap 復原的區別**：`idd-implement` 的「不要 reopen → re-close，那是 noise」講的是 **commit 誤觸 auto-close** 的復原（issue 不該被關、用 retroactive summary 補），與本節「合法 close 後改變主意」是兩個情境 — 前者修狀態、後者是 lifecycle 的合法回程。
