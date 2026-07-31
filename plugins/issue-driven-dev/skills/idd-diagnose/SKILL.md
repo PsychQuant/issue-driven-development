@@ -270,6 +270,16 @@ Exit code:
    - 一步到位還是漸進式？
    - 如何確保行為不變？
 
+#### 外部事實蒐集 — Deep Research 非綁定 pointer（#277，v2.102.2+）
+
+診斷需要**外部世界**的輸入（非本 repo corpus）時，於 finalize diagnosis **之前**印一行非綁定建議（#111 superpowers hand-off 同款形狀 — 純建議、不檢查 presence、不建依賴、不阻塞）：
+
+> 💡 本 issue 涉及外部事實蒐集（文獻 / 既有方案 / 生態系現況）— 建議先跑 Claude 的 **Deep Research**，產出以 `/idd-comment #N --type note`（摘要 + 連結，**不貼全文** — #116 notification 教訓）回填本 issue，再繼續 diagnose。
+
+**觸發訊號**（示例）：需要文獻回顧、競品 / 既有方案調查、外部 API / 規格現況、領域事實查核。**反例**（不觸發）：純內部 code 診斷、repo 歷史查詢（那是 `/idd-find`・`/idd-ask` 的 corpus 內範疇）、已附足夠 attachment 的 issue。訊號詞過寬會讓每張 issue 都被建議 research — 判準是「diagnosis 的品質是否依賴 repo 之外的事實」。
+
+**Canonical 順序**：deep research **接在 diagnose 上**（diagnose 之前或之中，作為診斷輸入）— **不是** plan 之後、verify 之前。research 與 implement **不互斥**：research 是 diagnose 的補強輸入（回顧 / 事實），implement 是規劃定案後的實踐 — 兩者是不同 phase 的不同工作，不是二選一。
+
 ### Step 3: 輸出 Diagnosis Report
 
 產生 diagnosis report 並 **comment 到 issue 底下**（預設行為）：

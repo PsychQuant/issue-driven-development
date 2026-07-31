@@ -70,6 +70,16 @@
 | **29** | 「之前是不是處理過類似的問題？」— 建案前查重、找舊案考古、引用過往結案紀錄（v2.97.0+，#139）| `idd-find "<free-text query>"`（open+closed 全語料，GitHub relevance 排序 + phase / PR overlay；surfacing-only、read-only）| `--repo` / `--limit N`（filter flags 拒收 → 導流 `idd-list`）| [surfacing-primitives.md](surfacing-primitives.md) |
 | **30** | 「當時為什麼這樣決定？」「X 怎麼運作？」— 還原 decision rationale、查歷史脈絡、不想自己翻 issue（v2.99+，#72）| `idd-ask "<自然語言問題>"`（retrieval delegate idd-find backend → top-N 全文 → grounded 合成答案：claim 必附引用 + source priority + `### Referenced Issues`；surfacing-only、read-only、不觸發 diagnose）| `--repo` / `--limit N`（top-N 上限 10）| [surfacing-primitives.md](surfacing-primitives.md) |
 | **31** | **issue 已 closed 但事情還要做**（當時判定不用做、事後改變主意 — 合法回程）| `gh issue reopen #N` → `/idd-comment --type note` 記重啟理由 → `/idd-update` 撥回 phase → 依「當時為何關」從 diagnose（前提變了）或 implement（純延後）接 | （無 — 全為既有命令組合；判準表見 idd-close SKILL `## Reopen / resume path`）| `skills/idd-close/SKILL.md`（#278）|
+| **32** | **需要外部事實 / 文獻 / 生態系調查**（diagnosis 品質依賴 repo 之外的事實；#277，v2.102.2+）| 手動跑 Claude **Deep Research** → `/idd-comment #N --type note` 回填（摘要 + 連結，不貼全文）→ 續 `idd-diagnose`。順序：**接在 diagnose 上**，非 plan 之後 | （無 — 非綁定；`idd-diagnose` 遇訊號會印 pointer）| `skills/idd-diagnose/SKILL.md`「外部事實蒐集」段；邊界表見下 |
+
+### 內部 corpus vs 外部世界 — 查詢工具邊界表（#277）
+
+| 你要查的是 | 工具 | 性質 |
+|-----------|------|------|
+| 「之前是不是處理過類似 X、在哪」 | `/idd-find` | **corpus 內**（本 repo issues，open+closed）— ranked hits |
+| 「當時為什麼這樣決定 / X 怎麼運作」 | `/idd-ask` | **corpus 內** — grounded 合成答案 + 引用 |
+| 文獻 / 既有方案 / 生態系 / 外部事實 | Claude **Deep Research**（手動跑，非 IDD skill） | **外部世界** — 產出經 `/idd-comment --type note` 回填 issue 才進 audit trail |
+
 
 > **Chain-solve vs bulk-solve semantic 差異**(per #49 cross-link):
 > - **`/idd-all-chain #N`**(v2.55.0+, row 25, single-root):**hot-chain from active work** — 1 root + auto-emergent spawn(sister bug / verify follow-up / mid-plan tangential / sister concern detected via spawn manifest)。Bounded by hard caps per-root depth=3、global max-issues=10 (v2.60.0+, was 2/5)。Reviewer mental model:「this thread is complete」。
