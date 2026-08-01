@@ -157,6 +157,7 @@ See `references/config-protocol.md` (in-plugin) for the full algorithm.
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v2.102.2 | 2026-08-01 | **Deep Research 輕整合**（[#277](https://github.com/PsychQuant/issue-driven-development/issues/277)，裁決 (b)，PR #283）— idd-diagnose 非綁定 pointer（#111 形狀）+ 回填慣例（note 摘要+連結）+ corpus/外部世界邊界表 + 兩個實際使用者誤解的 canonical 澄清。詳見 CHANGELOG.md。 |
 | v2.102.1 | 2026-08-01 | **Reopen / resume path**（[#278](https://github.com/PsychQuant/issue-driven-development/issues/278)，PR #282）— closed 之後事情還要做的合法回程：判準表 + 接點規則 + summary append-only 三步；usecase-routing 情境 31。詳見 CHANGELOG.md。 |
 | v2.102.0 | 2026-07-27 | **三線發版**：skill description contract + **Path Map**（[#276](https://github.com/PsychQuant/issue-driven-development/issues/276)，PR #279/#280 — wiki 導航圖 36 路徑全覆蓋 + generator 防 drift）；**egress 資料安全 cluster**（[#275](https://github.com/PsychQuant/issue-driven-development/issues/275) empty-body guard exit 15、[#273](https://github.com/PsychQuant/issue-driven-development/issues/273) `edit-comment` verb — surgery 通道入網 + batch band 消費，PR #281）。42 suites 0 fail。詳見 CHANGELOG.md。 |
 | v2.99.1 | 2026-07-18 | **Staleness sweep + guard 擴網**（[#267](https://github.com/PsychQuant/issue-driven-development/issues/267)，PR #268）— README 3 根 stale pin + docs catalog 回填至 v2.99；`model-generation-sync` 網擴及 README/docs、新 `docs-catalog-sync` suite（#122 根因 test-detectable）。38 suites 0 fail。詳見 CHANGELOG.md。 |

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.102.2] - 2026-08-01
+
+### Added
+
+- **Deep Research light integration (#277, ruling b, PR #283)** — users were inventing their own ordering (research after plan) and treating research vs implement as substitutes; zero docs existed. idd-diagnose gains a non-binding pointer (the #111 superpowers hand-off shape: pure suggestion, no presence check, no dependency) when the diagnosis's quality depends on facts outside the repo, with trigger examples and counter-examples; output flows back via `/idd-comment --type note` (summary + link, never full text — #116) so external research enters the audit trail. Canonical order stated where both misconceptions lived: research attaches AT diagnose, and research/implement are different phases' work. usecase-routing scenario 32 + internal-corpus vs external-world boundary table (`idd-find` / `idd-ask` / Deep Research). Deep integration stays a recorded residue until a plugin-dependable primitive exists. Verify on substitute basis (disclosed).
+
 ## [2.102.1] - 2026-08-01
 
 ### Added
