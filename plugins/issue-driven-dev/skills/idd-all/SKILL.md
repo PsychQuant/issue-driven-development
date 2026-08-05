@@ -742,11 +742,13 @@ authoritative source，會 fallback 去掃 diagnosis 當初寫的 pre-implementa
 
 ```bash
 # 路徑用「查」不用「組」——組路徑只是把佈局知識換個位置，對方改佈局會靜默失效。
-TASKS_FILE=$(spectra instructions apply --change "$CHANGE_NAME" --json 2>/dev/null \
-  | python3 -c 'import json,sys; print(json.load(sys.stdin).get("contextFiles",{}).get("tasks",""))' 2>/dev/null)
+# **在 $CWD 下執行**——registry 的選擇已知與 cwd 有關，不可用繼承來的工作目錄。
+TASKS_FILE=$( cd "$CWD" && spectra instructions apply --change "$CHANGE_NAME" --json 2>/dev/null \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin).get("contextFiles",{}).get("tasks",""))' 2>/dev/null )
 
 if [ -n "$TASKS_FILE" ]; then
-  Skill(skill="issue-driven-dev:idd-update", args="#$N --cwd $CWD --tasks-file $TASKS_FILE")
+  # 路徑加引號——含空白的合法路徑不加引號會被拆成多個參數，甚至被當成別的 flag。
+  Skill(skill="issue-driven-dev:idd-update", args="#$N --cwd $CWD --tasks-file '$TASKS_FILE'")
 else
   # 查詢失敗 / 工具未安裝 → 不附 flag，行為退回現行 fallback。**不 abort**。
   echo "note: 無法取得 checklist 路徑,#$N 的 close gate 將 fallback 掃 Strategy"

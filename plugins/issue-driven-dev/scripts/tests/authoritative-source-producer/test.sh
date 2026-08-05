@@ -63,11 +63,23 @@ UPD="$HERE/../../../skills/idd-update/SKILL.md"
 ALL="$HERE/../../../skills/idd-all/SKILL.md"
 
 assert_grep "rule 定義 exists 需至少一個項目" "至少一個可解析" "$(cat "$RULE")"
-assert_grep "rule 用 producer/consumer 而非「4 個 gate site」" "1 producer" "$(cat "$RULE")"
+assert_grep "rule 按角色描述、且角色非互斥" "以 producer 身分執行時不評估 resolution" "$(cat "$RULE")"
 assert_grep "rule 指名 priority 2 的 producer" "tasks-file" "$(cat "$RULE")"
-assert_grep "rule 有「每層都須指名 producer」的不變式" "每一層都必須指名" "$(cat "$RULE")"
+assert_grep "rule 的不變式要求「具名或明示無」而非「必須有」" "明示「無自動 producer" "$(cat "$RULE")"
 assert_grep "idd-update 有 --tasks-file flag" "--tasks-file" "$(cat "$UPD")"
 assert_grep "idd-update 寫明 toplevel 圍籬" "show-toplevel" "$(cat "$UPD")"
 assert_grep "idd-all 在 Spectra 分支傳 --tasks-file" "--tasks-file" "$(cat "$ALL")"
+
+# ── 本輪 cross-model verify 逼出的兩個嚴重缺陷，各鎖一條 ──────────────────
+# (1) 未給 flag 時必須「保留」既有 ### Tasks。managed zone 是整段替換,
+#     若寫成「不輸出」,下一次不帶 flag 的 update 就會抹掉它——修法在自己的
+#     pipeline 裡活不過一步（3b.5 寫入 → Phase 4 的 Auto-Update 抹掉）。
+assert_grep "idd-update 規定未給 flag 時保留既有 ### Tasks" "逐字保留既有內容" "$(cat "$UPD")"
+assert_grep "idd-update 點名這是本 pipeline 的既定流程而非理論風險" "Auto-Update" "$(cat "$UPD")"
+# (2) toplevel 解析失敗必須 fail-closed。TOP="" 時 pattern 變 `/*`,任何絕對
+#     路徑都通過——圍籬看起來在,實際形同虛設。
+assert_grep "圍籬對 toplevel 解析失敗 fail-closed" "fail-closed" "$(cat "$UPD")"
+assert_grep "圍籬解析整條路徑而非只有 dirname（擋最後一段 symlink）" "readlink -f" "$(cat "$UPD")"
+assert_grep "拒絕訊息印使用者給的原始值" 'RAW' "$(cat "$UPD")"
 
 print_summary "authoritative-source-producer"

@@ -163,17 +163,21 @@ When an IC principle and this rule both apply to an action, both SHALL be satisf
 
 `#515` introduced supersession bridge logic in `idd-close` Step 0: when `## Implementation Complete > ### Checklist` exists with all items `[x]`, the gate ignores pre-impl Strategy/Plan checkboxes (they are superseded snapshots).
 
-This rule generalizes that pattern. The participants are **1 producer ＋ 3 consumer**（#290 修正——原本寫「4 個 gate site」，把 producer 誤列為 gate）：
+This rule generalizes that pattern。參與者要**按角色**描述而非當成一組同質的 gate site
+（#290 修正——原本寫「4 個 gate site」，把 producer 誤列為 gate）。**角色不是互斥的**：
+`idd-update` 兩者皆是。
 
-| 角色 | 誰 | 做什麼 |
+| 誰 | Producer | Consumer |
 |---|---|---|
-| **Producer**（priority 1）| `idd-implement` Step 5a Checklist Sync | 寫 `## Implementation Complete > ### Checklist` |
-| **Producer**（priority 2）| `idd-update` 的 `--tasks-file`（#290）| 寫 `## Current Status > ### Tasks` |
-| **Consumer** | `idd-close` Step 0 | 硬 gate：未完成則拒絕 close |
-| **Consumer** | `idd-verify` checklist scan | 讀為 verify context |
-| **Consumer** | `idd-update` body sync | phase 推斷的 fallback |
+| `idd-implement` Step 5a Checklist Sync | ✅ 寫 priority 1（`## Implementation Complete > ### Checklist`）| — |
+| `idd-update` | ✅ 寫 priority 2（`## Current Status > ### Tasks`，經 `--tasks-file`，#290）| ✅ body sync 的 phase 推斷 fallback |
+| `idd-close` Step 0 | — | ✅ 硬 gate：未完成則拒絕 close |
+| `idd-verify` checklist scan | — | ✅ 讀為 verify context |
 
-Producer **不執行 resolution**，不得計入 consumer。每個 consumer SHALL resolve an `authoritative_source` via the following priority order:
+**以 producer 身分執行時不評估 resolution**；`idd-update` 在同一次執行中兩件事都做，但那是
+兩個分開的動作（先寫、後讀），不是一個角色。
+
+每個 consumer SHALL resolve an `authoritative_source` via the following priority order:
 
 ```
 authoritative_source = first_exists([
@@ -201,17 +205,21 @@ heading 在而項目數為 0 **視同不存在**，resolution 繼續往下一個
 | heading 在，1 項未勾 | 是 |
 | heading 在，3 項已勾 | 是 |
 
-### 不變式：每一層都必須指名 producer（normative，#290）
+### 不變式：每一層都必須**具名其 producer 或明示無自動 producer**（normative，#290）
 
-優先序的**每一層都必須指名 producer**。沒有 producer 的層在實務上永遠不會 resolve，會讓
-優先序**靜默塌縮**成剩下的層——而塌縮不會報錯，只會讓某些路徑莫名其妙地 fallback。
+優先序的每一層 **MUST** 在上表指名它的 producer，**或**明示「無自動 producer（僅人手寫）」。
+兩者皆可，但**不得留白**——留白會讓一層在實務上永遠不 resolve，使優先序**靜默塌縮**成剩下
+的層，而塌縮不報錯，只會讓某些路徑莫名其妙地 fallback。
 
-這正是 #290 的成因：priority 2 被三個 consumer 讀，卻沒有任何 skill 寫它，於是 chain 退化成
-「只有 priority 1」，而 priority 1 只有 `idd-implement` 產生——**任何繞過 `idd-implement` 的
-路徑都沒有 authoritative source**。
+> 措辭注意：本不變式要求的是**具名**，不是「必須有自動 producer」。priority 3 明示為人工
+> 逃生口即滿足；若寫成「每層都必須有 producer」，會與 priority 3 的既定設計直接矛盾。
 
-**priority 3 目前仍無自動 producer**（只有人手寫）。這是已知且刻意的：它是給人工維護的
-issue 用的逃生口。若日後有工具開始依賴它，本不變式要求先為它指名 producer。
+這正是 #290 的成因：priority 2 被 consumer 讀，卻沒有任何 skill 寫它，而**那個事實沒有被
+記在任何地方**——於是 chain 退化成「只有 priority 1」，而 priority 1 只有 `idd-implement`
+產生，**任何繞過它的路徑都沒有 authoritative source**。
+
+**priority 3 明示為「無自動 producer（僅人手寫）」**——它是給人工維護的 issue 用的逃生口。
+若日後有工具開始依賴它，本不變式要求先為它指名 producer。
 
 **本不變式無法被測試強制**——它約束的是「未來新增的層」，而未來的層尚不存在。只能寫在此處
 靠 review 維持。
