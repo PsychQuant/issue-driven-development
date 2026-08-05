@@ -163,17 +163,58 @@ When an IC principle and this rule both apply to an action, both SHALL be satisf
 
 `#515` introduced supersession bridge logic in `idd-close` Step 0: when `## Implementation Complete > ### Checklist` exists with all items `[x]`, the gate ignores pre-impl Strategy/Plan checkboxes (they are superseded snapshots).
 
-This rule generalizes that pattern across all 4 gate sites (`idd-close` Step 0 / `idd-verify` checklist scan / `idd-update` body sync gate / `idd-implement` Step 5 Checklist Sync). Each gate SHALL resolve an `authoritative_source` via the following priority order:
+This rule generalizes that pattern. The participants are **1 producer ＋ 3 consumer**（#290 修正——原本寫「4 個 gate site」，把 producer 誤列為 gate）：
+
+| 角色 | 誰 | 做什麼 |
+|---|---|---|
+| **Producer**（priority 1）| `idd-implement` Step 5a Checklist Sync | 寫 `## Implementation Complete > ### Checklist` |
+| **Producer**（priority 2）| `idd-update` 的 `--tasks-file`（#290）| 寫 `## Current Status > ### Tasks` |
+| **Consumer** | `idd-close` Step 0 | 硬 gate：未完成則拒絕 close |
+| **Consumer** | `idd-verify` checklist scan | 讀為 verify context |
+| **Consumer** | `idd-update` body sync | phase 推斷的 fallback |
+
+Producer **不執行 resolution**，不得計入 consumer。每個 consumer SHALL resolve an `authoritative_source` via the following priority order:
 
 ```
 authoritative_source = first_exists([
-  "## Implementation Complete > ### Checklist",
-  "## Current Status > ### Tasks",
-  "## Todo" | "## Tasks" | "## Checklist"    # top-level headings
+  "## Implementation Complete > ### Checklist",   # producer: idd-implement Step 5a
+  "## Current Status > ### Tasks",                # producer: idd-update --tasks-file
+  "## Todo" | "## Tasks" | "## Checklist"         # producer: 無（僅人手寫）
 ])
 ```
 
 When a source resolves, the gate evaluates only items in that source. Earlier sources (Strategy, Implementation Plan) are treated as superseded snapshots — not subject to gate evaluation, retained for historical reference.
+
+### `exists` 的判準（normative，#290）
+
+一個候選**只有在** heading 存在**且**其下含**至少一個可解析的 checklist 項目**時才 resolve。
+heading 在而項目數為 0 **視同不存在**，resolution 繼續往下一個候選。
+
+此定義**三個 consumer 一致適用**；consumer **SHALL NOT** 自訂 emptiness 規則。在 #290 之前
+只有 `idd-close` Step 0 寫出這個條件（`len(items) > 0`），且只對 priority 1，另兩個無條件——
+本節把它升為 canonical。
+
+| 候選狀態 | resolve？ |
+|---|---|
+| heading 缺席 | 否 |
+| heading 在，0 項 | **否** |
+| heading 在，1 項未勾 | 是 |
+| heading 在，3 項已勾 | 是 |
+
+### 不變式：每一層都必須指名 producer（normative，#290）
+
+優先序的**每一層都必須指名 producer**。沒有 producer 的層在實務上永遠不會 resolve，會讓
+優先序**靜默塌縮**成剩下的層——而塌縮不會報錯，只會讓某些路徑莫名其妙地 fallback。
+
+這正是 #290 的成因：priority 2 被三個 consumer 讀，卻沒有任何 skill 寫它，於是 chain 退化成
+「只有 priority 1」，而 priority 1 只有 `idd-implement` 產生——**任何繞過 `idd-implement` 的
+路徑都沒有 authoritative source**。
+
+**priority 3 目前仍無自動 producer**（只有人手寫）。這是已知且刻意的：它是給人工維護的
+issue 用的逃生口。若日後有工具開始依賴它，本不變式要求先為它指名 producer。
+
+**本不變式無法被測試強制**——它約束的是「未來新增的層」，而未來的層尚不存在。只能寫在此處
+靠 review 維持。
 
 ## Backward-compat fallback
 

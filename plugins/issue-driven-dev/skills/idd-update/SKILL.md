@@ -180,9 +180,68 @@ git log --oneline --grep="#$NUMBER" | head -10
 ### Blocking
 - {blocker 1, or "(none)"}
 
+### Tasks
+- [x] {外部 checklist 的項目，逐行原文}
+- [ ] {保留 [ ] / [x] / [~] / [-] 標記}
+
 ### Commits
 - `{hash}` {message}
 ```
+
+#### `### Tasks` 小節：priority 2 的 producer（#290）
+
+`## Current Status > ### Tasks` 是 `authoritative_source` 優先序的**第二層**（見
+[`rules/append-vs-modify.md`](../../rules/append-vs-modify.md)）。在 #290 之前它**沒有任何
+producer**——三個 consumer 讀它，卻沒有 skill 寫它，於是優先序實務上塌縮成「只有第一層」，
+而第一層只有 `idd-implement` Step 5a 產生。**任何繞過 `idd-implement` 的路徑因此沒有
+authoritative source**，fallback 去掃 pre-implementation 的 Strategy checkbox。
+
+本小節是那個 producer。
+
+**`--tasks-file <path>`（選填）**：指向一個含 checkbox 行的 markdown 檔（例如外部
+spec-driven 工具維護的任務清單）。給定時，把該檔的 checkbox 行逐行複製進 `### Tasks`，
+保留 `[ ]` / `[x]` / `[~]` / `[-]` 標記與原文。
+
+**路徑從何而來**：由**呼叫端查詢外部工具取得**，不由任何一方從「change 名稱 ＋ 目錄慣例」
+組出。組路徑只是把佈局知識換個位置，對方改佈局會**靜默失效**。本 skill 只知道「一個含
+checkbox 的檔案」，樹內不出現任何外部工具的目錄名。
+
+##### 圍籬：路徑必須落在當前 git toplevel 之內（normative）
+
+```bash
+TOP=$(git -C "$CWD" rev-parse --show-toplevel)
+ABS=$(cd "$(dirname "$TASKS_FILE")" && pwd -P)/$(basename "$TASKS_FILE")
+case "$ABS/" in
+  "$TOP/"*) : ;;                       # 通過
+  *) echo "✗ --tasks-file 落在當前工作樹之外，拒絕採用："      >&2
+     echo "    給定路徑：$ABS"                                  >&2
+     echo "    當前 toplevel：$TOP"                             >&2
+     TASKS_FILE=""  ;;                 # 不 emit，但**不中止** idd-update 其餘工作
+esac
+```
+
+**為何是必要而非防禦性過度**：外部工具的 change registry **不一定 cwd-scoped**。實測有
+回傳**同一 repo 另一個 git worktree** 路徑的情形——worktree 共用 `.git` 但 toplevel 不同，
+所以這個檢查抓得到。若原樣採用，gate 會讀另一個工作樹的完成狀態。
+
+方向是最壞的那種：另一工作樹的清單若全部完成，**一個沒做完的 issue 會通過 close gate**。
+修一個假陰性（該過不過）卻引入假陽性（不該過卻過）——**後者嚴重得多**，因為前者會被人擋下
+（被擋住的人會抱怨），後者不會（沒人會發現 gate 放行了不該放的）。
+
+**拒絕時必須印出兩個路徑**：只說「拒絕」會讓使用者分不出這是設定錯誤還是真的越界。
+
+##### 三種不 emit 的情形
+
+| 情形 | 行為 |
+|---|---|
+| 未給 `--tasks-file` | 不 emit `### Tasks`，其餘逐字不變（退回現行 fallback）|
+| 路徑不存在 | 警告後跳過 emit，**不中止** |
+| 路徑越界（上方圍籬）| 拒絕 ＋ 印兩個路徑，不 emit，**不中止** |
+| 檔案存在但**零個** checkbox 行 | 不 emit |
+
+最後一列的理由：依 canonical 定義，heading 在而項目數為 0 **不會 resolve**，所以 emit 空節
+與不 emit 在 gate 層等價。選擇不 emit **不是可讀性偏好**——一個空的 `### Tasks` 出現在
+issue 上，讀的人會問「這是壞了還是本來就沒有」，那是需要解釋的雜訊。不製造它。
 
 ### Step 5: 更新 Issue Body
 
@@ -245,12 +304,14 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit $NUMBER --repo $GITHUB_REPO
 
 ```
 /issue-driven-dev:idd-update #42
+/issue-driven-dev:idd-update #42 --tasks-file <path>   # 見 Step 4 的 ### Tasks 小節
 ```
 
 用途：
 - 手動補充 comments 後同步 body
 - Issue 長時間沒動，重新整理現狀
 - 修正 Current Status 中的過時資訊
+- 為走「非 `idd-implement` 路徑」的 issue 補上 authoritative source（`--tasks-file`）
 
 ## 鐵律
 

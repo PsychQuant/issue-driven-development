@@ -730,6 +730,38 @@ Skill(skill="spectra-apply", args="$APPLY_ARGS")
 
 > **Branch context for spectra-apply (both modes)**: `BRANCH` is set in Phase 0.5 — PR mode → `idd/<N>-<slug>`, direct-commit mode → user's current checkout. spectra-apply doesn't need to be told this; it commits to whatever HEAD points at. The Phase 0.5 branch setup is the single source of truth.
 
+#### Step 3b.5: 把 checklist 路徑交給 `idd-update`（#290）
+
+SDD path **不經過 `idd-implement`**，所以不會產生 `## Implementation Complete > ### Checklist`
+——也就是 `authoritative_source` 的第一層。若不做本步，該 issue 走到 `idd-close` 時沒有任何
+authoritative source，會 fallback 去掃 diagnosis 當初寫的 pre-implementation checkbox，而
+**那些 checkbox 在整個 SDD 流程裡沒有任何一步會勾**。
+
+本步補上第二層（`## Current Status > ### Tasks`，producer 見
+[`idd-update`](../idd-update/SKILL.md) 的 Step 4）：
+
+```bash
+# 路徑用「查」不用「組」——組路徑只是把佈局知識換個位置，對方改佈局會靜默失效。
+TASKS_FILE=$(spectra instructions apply --change "$CHANGE_NAME" --json 2>/dev/null \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin).get("contextFiles",{}).get("tasks",""))' 2>/dev/null)
+
+if [ -n "$TASKS_FILE" ]; then
+  Skill(skill="issue-driven-dev:idd-update", args="#$N --cwd $CWD --tasks-file $TASKS_FILE")
+else
+  # 查詢失敗 / 工具未安裝 → 不附 flag，行為退回現行 fallback。**不 abort**。
+  echo "note: 無法取得 checklist 路徑,#$N 的 close gate 將 fallback 掃 Strategy"
+  Skill(skill="issue-driven-dev:idd-update", args="#$N --cwd $CWD")
+fi
+```
+
+**為什麼由本 orchestrator 查而非 `idd-update` 自己查**：`idd-all` 的 SDD 分支**本來就**按名字
+呼叫那三個 skill，已與該工具耦合；再多一次查詢不擴大耦合面。而 `idd-update` 是**通用** skill，
+在完全不涉及該工具的路徑上也會被呼叫——讓它認得對方，才是把耦合擴散出去。
+
+**`idd-update` 端另有 toplevel 圍籬**（見其 Step 4）：實測該工具的 registry 不一定 cwd-scoped，
+回傳的路徑可能指向同一 repo 的另一個 worktree。本步不做該檢查——圍籬屬於**消費路徑的一方**，
+放在 `idd-update` 才能同時保護手動呼叫。
+
 #### Failure handling
 
 | Situation | Action |
