@@ -160,7 +160,10 @@ authoritative_source = first_exists([
 impl_complete = scan_subsection("## Implementation Complete > ### Checklist")
                 # 若多個 ## Implementation Complete comments，按 createdAt desc 取最新
 
-supersession_active = (impl_complete exists)
+# `len(items) > 0` 是 canonical 的 `exists` 判準（#290 起明訂於
+# rules/append-vs-modify.md）——heading 在而 0 項**視同不存在**，resolution 往下一個候選。
+# 三個 consumer 一致適用；本 step 不得自訂 emptiness 規則。
+supersession_active = (impl_complete exists)          # exists ＝ heading 在 AND ≥1 項
                       AND (len(impl_complete.items) > 0)
                       AND (all items in impl_complete are - [x])
 

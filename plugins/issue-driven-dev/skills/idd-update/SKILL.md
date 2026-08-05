@@ -180,9 +180,100 @@ git log --oneline --grep="#$NUMBER" | head -10
 ### Blocking
 - {blocker 1, or "(none)"}
 
+{### Tasks —— **僅在**給了 --tasks-file 或 body 已有此小節時出現；否則整節省略。
+ 見下方「### Tasks 小節」。**不得**照本模板無條件輸出——那會製造一個假的
+ authoritative source，讓 gate 對一份不存在的 checklist 放行。}
+
 ### Commits
 - `{hash}` {message}
 ```
+
+#### `### Tasks` 小節：priority 2 的 producer（#290）
+
+`## Current Status > ### Tasks` 是 `authoritative_source` 優先序的**第二層**（見
+[`rules/append-vs-modify.md`](../../rules/append-vs-modify.md)）。在 #290 之前它**沒有任何
+producer**——三個 consumer 讀它，卻沒有 skill 寫它，於是優先序實務上塌縮成「只有第一層」，
+而第一層只有 `idd-implement` Step 5a 產生。**任何繞過 `idd-implement` 的路徑因此沒有
+authoritative source**，fallback 去掃 pre-implementation 的 Strategy checkbox。
+
+本小節是那個 producer。
+
+**`--tasks-file <path>`（選填）**：指向一個含 checkbox 行的 markdown 檔（例如外部
+spec-driven 工具維護的任務清單）。給定時，把該檔的 checkbox 行逐行複製進 `### Tasks`，
+保留 `[ ]` / `[x]` / `[~]` / `[-]` 標記與原文。
+
+**路徑從何而來**：由**呼叫端查詢外部工具取得**，不由任何一方從「change 名稱 ＋ 目錄慣例」
+組出。組路徑只是把佈局知識換個位置，對方改佈局會**靜默失效**。本 skill 只知道「一個含
+checkbox 的檔案」，樹內不出現任何外部工具的目錄名。
+
+##### 圍籬：路徑必須落在當前 git toplevel 之內（normative）
+
+```bash
+RAW="$TASKS_FILE"                      # 訊息要印**使用者給的**值，不是解析後的
+refuse() { printf '✗ --tasks-file 拒絕採用：%s\n    給定路徑：%s\n    當前 toplevel：%s\n' \
+             "$1" "$RAW" "${TOP:-<無法解析>}" >&2; TASKS_FILE=""; }
+
+# (1) toplevel 解析失敗 → **fail-closed**。少了這一步，TOP="" 會讓 pattern 變成
+#     `/*`，任何絕對路徑都通過——圍籬整個失效。
+TOP=$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null) || TOP=""
+TOP=$(cd "$TOP" 2>/dev/null && pwd -P) || TOP=""      # 與 ABS 同樣 physical，避免 symlink checkout 誤拒
+[ -n "$TOP" ] || { refuse "無法解析當前 git toplevel"; }
+
+# (2) 必須是**可讀的一般檔案**——目錄（例如 toplevel 本身）不是 checklist
+[ -n "$TASKS_FILE" ] && [ -f "$TASKS_FILE" ] && [ -r "$TASKS_FILE" ] \
+  || { [ -n "$TASKS_FILE" ] && refuse "不是可讀的一般檔案"; }
+
+# (3) **整條路徑**（含最後一段）都要解析 symlink。只解析 dirname 會被
+#     `ln -s /別處/tasks.md "$TOP/link.md"` 繞過——ABS 看起來在樹內，讀取卻落在樹外。
+if [ -n "$TASKS_FILE" ]; then
+  ABS=$(readlink -f "$TASKS_FILE" 2>/dev/null || python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$TASKS_FILE")
+  case "$ABS/" in
+    "$TOP/"*) : ;;                     # 通過
+    *) refuse "落在當前工作樹之外" ;;   # 不 emit，但**不中止** idd-update 其餘工作
+  esac
+fi
+```
+
+三道各有其失敗模式，缺一不可：**(1) 缺了會 fail-open**（最嚴重——圍籬看起來在但形同虛設）；
+**(2) 缺了**會把目錄當檔案讀；**(3) 只解析 dirname** 會被最後一段的 symlink 繞過。
+
+**為何是必要而非防禦性過度**：外部工具的 change registry **不一定 cwd-scoped**。實測有
+回傳**同一 repo 另一個 git worktree** 路徑的情形——worktree 共用 `.git` 但 toplevel 不同，
+所以這個檢查抓得到。若原樣採用，gate 會讀另一個工作樹的完成狀態。
+
+方向是最壞的那種：另一工作樹的清單若全部完成，**一個沒做完的 issue 會通過 close gate**。
+修一個假陰性（該過不過）卻引入假陽性（不該過卻過）——**後者嚴重得多**，因為前者會被人擋下
+（被擋住的人會抱怨），後者不會（沒人會發現 gate 放行了不該放的）。
+
+**拒絕時必須印出兩個路徑**：只說「拒絕」會讓使用者分不出這是設定錯誤還是真的越界。
+
+##### 未給 flag 時 **MUST 保留** body 既有的 `### Tasks`（normative）
+
+本 skill 的 managed zone 是「`## Current Status` 到結尾**整段替換**」。若「未給 flag ＝ 不
+輸出」，則**下一次**任何不帶 flag 的 idd-update 都會把先前寫入的 `### Tasks` 抹掉——
+authoritative source 消失，chain 又塌回去。
+
+這不是理論風險，是**本 pipeline 的既定流程**：
+
+```
+Phase 3b.5  idd-update --tasks-file   → 寫入 ### Tasks           ✓
+Phase 4     idd-verify 的 Auto-Update → idd-update（無 flag）→ 整段重建、被抹掉  ✗
+```
+
+所以規則是：
+
+| 情形 | 行為 |
+|---|---|
+| 給了合法 `--tasks-file` | 由該檔**重建** `### Tasks` |
+| **未給 flag，但 body 已有 `### Tasks`** | **逐字保留既有內容**（不重建、不刪除）|
+| 未給 flag，body 也沒有 | 不 emit |
+| 路徑不存在 / 不可讀 / 越界 / 零個 checkbox 行 | **視同未給 flag**——套用上面兩列（有就保留，沒有就不 emit）|
+
+最後一列的關鍵：**拒絕一個壞路徑不得順帶刪掉一份好的既有 checklist**。
+
+不 emit（而非 emit 空節）的理由：依 canonical 定義，heading 在而項目數為 0 **不會 resolve**，
+兩者在 gate 層等價。選擇不 emit **不是可讀性偏好**——一個空的 `### Tasks` 出現在 issue 上，
+讀的人會問「這是壞了還是本來就沒有」，那是需要解釋的雜訊。不製造它。
 
 ### Step 5: 更新 Issue Body
 
@@ -245,12 +336,14 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit $NUMBER --repo $GITHUB_REPO
 
 ```
 /issue-driven-dev:idd-update #42
+/issue-driven-dev:idd-update #42 --tasks-file <path>   # 見 Step 4 的 ### Tasks 小節
 ```
 
 用途：
 - 手動補充 comments 後同步 body
 - Issue 長時間沒動，重新整理現狀
 - 修正 Current Status 中的過時資訊
+- 為走「非 `idd-implement` 路徑」的 issue 補上 authoritative source（`--tasks-file`）
 
 ## 鐵律
 
