@@ -359,25 +359,59 @@ reply 是**寫給人看的 correspondence**，不是 audit log。draft 依以下
 
 **R3 — referent 錨定**：verbatim 引文組裝 + R2 通過 + SHA / file / theorem 引用固定。錨定完成後才進 calibration。
 
-**R4 — perspective-writer soft integration（graceful degrade）**：probe 指令 `check-plugin-presence.sh perspective-writer perspective-writer`（座標 = marketplace name + plugin name，standalone repo `PsychQuant/perspective-writer`）：
+**R4 — perspective-writer soft integration（graceful degrade）**：probe 指令 `check-plugin-presence.sh perspective-writer perspective-writer`（座標 = marketplace name + plugin name，standalone repo `PsychQuant/perspective-writer`）。
+
+**版本地板 `MIN_PW_CONTRACT=4.2.0`**，比較必須 **semver-aware**（`sort -V` 式），**絕不可字面比較**——`2.11.0` 在字串序裡排在 `2.9.2` 之前。4.2.0 是「consumer 可以不傳 `recipient-rules`、由 skill 自行解析」的地板。
 
 ```bash
-if "$CLAUDE_PLUGIN_ROOT/scripts/check-plugin-presence.sh" perspective-writer perspective-writer 2>/dev/null; then
-  # 命中 → Skill(skill="perspective-writer:perspective-writer") 做 voice / recipient calibration
-  # 轉交：resolved --mention login + target repo .claude/rules/correspondence-<person>.md 路徑（若存在）
-  CALIBRATED=yes
+PW_DIR=$(ls -d "$HOME/.claude/plugins/cache/perspective-writer/perspective-writer"/*/ 2>/dev/null | tail -1)
+PW_VER=$(basename "${PW_DIR:-}" 2>/dev/null)
+MIN_PW_CONTRACT=4.2.0
+
+if ! "$CLAUDE_PLUGIN_ROOT/scripts/check-plugin-presence.sh" perspective-writer perspective-writer 2>/dev/null; then
+  CALIBRATED=no; PW_REASON=absent
+elif [ -z "$PW_VER" ] || [ "$(printf '%s\n%s\n' "$MIN_PW_CONTRACT" "$PW_VER" | sort -V | head -1)" != "$MIN_PW_CONTRACT" ]; then
+  CALIBRATED=no; PW_REASON=too-old
 else
-  cat <<'EOF'
-ℹ perspective-writer 未安裝 — reply 以未 calibrate 的 draft 照常 post（結構完整可用）。
-  要啟用 voice / recipient calibration：
-    claude plugin marketplace add PsychQuant/perspective-writer
-    claude plugin install perspective-writer@perspective-writer
-EOF
-  CALIBRATED=no
+  # 命中且版本足夠 → Skill(skill="perspective-writer:perspective-writer")
+  #
+  # 轉交只有 recipient（resolved --mention login 或人名）。
+  # **不要拼任何規則路徑。** 規則位置由上游的 resolve 決定 —— 它會走完整的
+  # 三來源順序（subject 目錄 / skill-packaged / legacy 單檔）並跟隨 redirect
+  # placeholder。本 repo 複述那套順序 = 在第二個地方養一份會漂移的副本，
+  # 而跨 repo 的漂移沒有任何檢查抓得到。契約：perspective-writer README
+  # 的 EXTERNAL-CONSUMER CONTRACT 第 2 點。
+  #
+  # 回傳第一行是 status header：
+  #   <!-- pw:calibrate v1 status=person  -->  已套用對象規則
+  #   <!-- pw:calibrate v1 status=generic -->  未套用（保守通用語氣）
+  CALIBRATED=yes
 fi
 ```
 
-**不新增 install-time `dependencies` 條目**——soft integration 是 runtime-only presence check。與 superpowers 的 hard-dependency 刻意相反：那是 canonical process 替代（無物可退、fail-fast）；calibration 是 enhancement，缺席時 reply 的結構正確性由 R1–R3 自有紀律保證。consumer-facing 契約收斂後（PsychQuant/perspective-writer#1）可升級整合深度。
+**讀回 status header 並揭露（契約 SHALL，自 perspective-writer 3.1.0）**：
+
+| 情況 | 對使用者說什麼 |
+|---|---|
+| `status=person` | 不必說。 |
+| `status=generic` | **必須說**「本次未套用對象規則，回覆以通用語氣校準」。 |
+| `PW_REASON=absent` | 印安裝指令（下方），照常 post。 |
+| `PW_REASON=too-old` | 印升級指令，照常 post — **不拒絕**。 |
+
+```
+ℹ perspective-writer 未安裝 / 版本低於 4.2.0 — reply 以未 calibrate 的 draft 照常 post（結構完整可用）。
+  要啟用 voice / recipient calibration：
+    claude plugin marketplace add PsychQuant/perspective-writer
+    claude plugin install perspective-writer@perspective-writer
+```
+
+**為什麼揭露是必須的**：`status=generic` 的草稿**讀起來完全正常**，與已校準的無法用檢視分辨。它是唯一的訊號；不消費它等於這個失敗模式不存在。上游 3.1.0 已把「讀 header」與「揭露降級」都升為 SHALL。
+
+**誠實邊界**：`status=generic` **無法區分**「該對象本來就沒有規則」（首次通信，正常）與「有規則但沒拿到」（真問題）——上游回傳同一個值，這是其 #6 明列的 known residual。因此揭露文字只能寫成中性的「未套用對象規則」，**不要**寫成暗示出錯的措辭。
+
+**版本不足時 degrade 而非拒絕**：soft integration 的既有姿態是「缺席也能用」，版本不合應比照。拒絕呼叫會讓沒升級的使用者連 reply 都發不出來，而現況只是少了校準——把 soft 變 hard 的代價遠大於收益。
+
+**不新增 install-time `dependencies` 條目**——soft integration 是 runtime-only presence check。與 superpowers 的 hard-dependency 刻意相反：那是 canonical process 替代（無物可退、fail-fast）；calibration 是 enhancement，缺席時 reply 的結構正確性由 R1–R3 自有紀律保證。
 
 **R5 — 不變量**：calibration 不得改動錨定事實——commit SHA、file / theorem 引用、對方原文的 verbatim 引文。違反即 bug。calibration 之後才走 Step 3.5 verify mentions → Step 4 egress（同六型的 gh-egress choke-point，`--scrub-attested` + 有 mention 時 `--mention-attested`）。
 

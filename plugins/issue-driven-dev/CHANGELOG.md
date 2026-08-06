@@ -35,6 +35,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.103.0] - 2026-08-07
+
+### Fixed
+
+- **`idd-comment --type=reply` 不再自行拼 perspective-writer 的規則路徑。** R4 段原本
+  寫死 `.claude/rules/correspondence-<person>.md` 並做存在性檢查，只有存在才轉交。
+  上游在 3.0.0 之後把規則位置改成有三個來源的解析順序（subject 目錄 / skill-packaged /
+  legacy 單檔）＋ redirect placeholder 跟隨，該寫死路徑因此在多數新式 workspace 都找不到
+  ——什麼都不傳、上游回 `status=generic`、產出未校準的 reply，**而規則就在旁邊**。
+  實測於一個改用 skill-packaged 規則的 workspace：該路徑不存在，校準完全失效。
+- 現在只轉交 `recipient`，由上游的 resolve 決定位置（需 perspective-writer ≥ 4.2.0）。
+  **本 repo 不複述解析順序** —— 那會在第二個地方養一份會漂移的副本，而跨 repo 的漂移
+  沒有任何檢查抓得到。
+
+### Added
+
+- **`MIN_PW_CONTRACT=4.2.0` 版本地板**，比較走 `sort -V`（semver-aware）。契約明令不可
+  字面比較：`2.11.0` 在字串序裡排在 `2.9.2` 之前，`4.10.0` 排在 `4.2.0` 之前。
+- **讀回 status header 並揭露**（上游 3.1.0 起為 SHALL）。`status=generic` 時必須告訴
+  使用者「本次未套用對象規則」。該草稿讀起來完全正常、與已校準的無法用檢視分辨，
+  header 是唯一訊號；不消費它等於這個失敗模式不存在。
+
+### Notes
+
+- **版本不足時 degrade 而非拒絕。** soft integration 的既有姿態是「缺席也能用」；把它
+  變硬會讓沒升級的使用者連 reply 都發不出來，而現況只是少了校準。
+- **誠實邊界**：`status=generic` 無法區分「該對象本來就沒有規則」（首次通信，正常）與
+  「有規則但沒拿到」（真問題）——上游回傳同一個值，是其 #6 明列的 known residual。
+  揭露文字因此只能中性陳述，不暗示出錯。
+
+
 ### Fixed
 
 - **`idd-plan` advertised no diagnosis precondition, so AIs routed users around `idd-diagnose` (#276, Phase 1)** — a user's AI told them to skip `/idd-diagnose` and run `/idd-plan` directly; following that advice hits `idd-plan`'s hard abort. The advice was *correct on the information the AI could see*. The plan↔diagnose ordering lived on three surfaces, and the only one readable at routing time was silent about it: `docs/workflows.md` `P-plan-gated` (never auto-loaded), `skills/idd-plan/SKILL.md` Step 0 hard abort (loads only *after* the skill is already chosen), and the frontmatter `description` — the sole input to the choice — which named no precondition and positioned the skill purely relative to `idd-implement`. Combined with an effort-minimizing read of "plan" as a superset of "diagnose", the mis-route was structural, not incidental. `idd-plan`'s description now states the precondition **and the remedy** (`run /idd-diagnose #N first`), so a mis-routing AI is handed the correct next step rather than merely a warning it will learn to avoid. `README.md`'s skill row was reworded off the tier-spectrum vocabulary ("sits between Simple and Spectra") onto user vocabulary (when you reach it, what happens if you don't). The hard abort itself is unchanged — implementation stays the source of truth; this closes the docs/metadata gap around it.
