@@ -74,7 +74,7 @@ assert_exit "advisory exit 0 on mixed fixture" 0 "$RC"
 require "#104 (lowercase heading) is listed under CASING"        in_section "CASING —" 104
 refute  "#104 is NOT in MISSING (summary exists)"                flagged 104
 
-require "#105 (summary inside IC comment) is under MID-COMMENT"  in_section "MID-COMMENT —" 105
+require "#105 (summary inside IC comment) is under MID-COMMENT"  in_section "MID-COMMENT (unverified)" 105
 refute  "#105 is NOT in MISSING (summary exists)"                flagged 105
 
 # D2 — `## Closing Summary (retroactive — …)` satisfies the canonical prefix by
@@ -82,7 +82,7 @@ refute  "#105 is NOT in MISSING (summary exists)"                flagged 105
 # to classify as own-comment, i.e. appear in NO section at all.
 refute  "#106 (retroactive heading) is NOT in MISSING"           flagged 106
 refute  "#106 (retroactive heading) is NOT in CASING"            in_section "CASING —" 106
-refute  "#106 (retroactive heading) is NOT in MID-COMMENT"       in_section "MID-COMMENT —" 106
+refute  "#106 (retroactive heading) is NOT in MID-COMMENT"       in_section "MID-COMMENT (unverified)" 106
 
 # D3 — no `\b` after `summary`: `_` is a word character, so a trailing word
 # boundary would refuse `summary_v2` and misfile a present summary as MISSING.
@@ -101,15 +101,57 @@ assert_grep "MISSING header is the one that invites --retroactive" \
 assert_grep "CASING header warns off --retroactive" \
   "do NOT run --retroactive" "$(section_header 'CASING —')"
 assert_grep "MID-COMMENT header warns off --retroactive" \
-  "do NOT run --retroactive" "$(section_header 'MID-COMMENT —')"
+  "do NOT run --retroactive" "$(section_header 'MID-COMMENT (unverified)')"
 refute_grep "CASING header does not invite the destructive path" \
   "remediate: idd-close --retroactive" "$(section_header 'CASING —')"
 refute_grep "MID-COMMENT header does not invite the destructive path" \
-  "remediate: idd-close --retroactive" "$(section_header 'MID-COMMENT —')"
+  "remediate: idd-close --retroactive" "$(section_header 'MID-COMMENT (unverified)')"
 
-# Only MISSING entries carry the warning glyph.
-refute_grep "a CASING entry never carries the MISSING warning glyph" "⚠ #104" "$OUT"
-refute_grep "a MID-COMMENT entry never carries the MISSING warning glyph" "⚠ #105" "$OUT"
+# Glyph policy after the #295 verify round: ⚠ marks "a human still has to look",
+# which is true of MISSING and of MID-COMMENT (the tool cannot tell a real
+# summary from a quoted one there). CASING is the only class the tool has
+# actually established, so it is the only one printed without the glyph.
+assert_grep "MID-COMMENT entries carry ⚠ (unverified, needs a human)" "⚠ #105" "$OUT"
+refute_grep "a CASING entry never carries the warning glyph" "⚠ #104" "$OUT"
+
+# ── #295 R2: a quoted heading is not a summary (the verify round's H1) ──
+# Every one of these has NO summary; each was classified as mid-comment by the
+# first implementation, printed with "the summary IS there", and thereby
+# exonerated. All three must sit in MISSING.
+
+require "#108 (heading only inside a fenced block) is MISSING"     flagged 108
+require "#109 (heading only inside an HTML comment) is MISSING"    flagged 109
+require "#110 (heading with zero content under it) is MISSING"     flagged 110
+
+# The converse — a genuine summary merged into the IC comment — must survive as
+# MID-COMMENT, or the fix has simply collapsed the class into missing.
+require "#111 (genuine merged summary) is still MID-COMMENT"       in_section "MID-COMMENT (unverified)" 111
+refute  "#111 is NOT in MISSING"                                   flagged 111
+
+# ── #295 R2: the title is untrusted data (the verify round's H2) ──
+# `class\t#N  title` is parsed positionally downstream, so an unescaped newline
+# in a title forged a whole row — into the one section that invites the
+# irreversible --retroactive.
+
+refute_grep "a newline in a title cannot forge a row"  "#9999  FABRICATED ENTRY" "$OUT"
+require    "#112 (whose title carries the payload) is itself compliant" \
+  bash -c '! printf "%s\n" "$0" | grep -qE -- "(^|[^0-9])#112([^0-9]|$)"' "$OUT"
+assert_grep "a tab in a title no longer truncates it" "tab here in title" "$OUT"
+
+# A 4-space-indented heading is an indented code block, not a heading. This
+# guards `live_lines`, NOT the `^ {0,3}` cap in `head_re` — acid showed the cap
+# is strictly redundant once `live_lines` drops indented lines, so no input can
+# distinguish the two and the cap has no test of its own (labelled as such in
+# the script).
+require "#114 (heading indented 4 spaces) is MISSING, not a heading" flagged 114
+
+# The advisory contract's fail-safe direction, for the classification filter
+# itself: a jq error must not fall through to "✓ nothing missing". Acid showed
+# swallowing the error turned nothing red — the old test only covered the
+# malformed-JSON guard, one layer earlier.
+BADJQ=$(bash "$HELPER" --json-file "$HERE/fixtures/nonstring-body.json" 2>/dev/null); BJRC=$?
+refute_grep "a jq failure does NOT produce a false all-clear" "No closed issue is missing" "$BADJQ"
+assert_exit "a jq failure still exits 0 (advisory)" 0 "$BJRC"
 
 # --dry-run: assert the live-gh branch composes the right gh invocation, with NO
 # network (closes the untested-executable-seam gap, #151 verify DA/logic LOW).

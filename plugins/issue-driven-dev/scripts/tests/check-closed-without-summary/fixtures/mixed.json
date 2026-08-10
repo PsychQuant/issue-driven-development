@@ -61,5 +61,61 @@
     "comments": [
       { "body": "## closing summary_v2\n\n### Problem\nrevised after the first pass" }
     ]
+  },
+  {
+    "number": 108,
+    "title": "heading only inside a fenced block — NO real summary (#295 R2 / H1)",
+    "state": "CLOSED",
+    "comments": [
+      { "body": "## Diagnosis\n\nthe template looks like:\n\n```markdown\n## Closing Summary\n\n### Problem\n```\n\njust quoting it — no summary was ever written" }
+    ]
+  },
+  {
+    "number": 109,
+    "title": "heading only inside an HTML comment — invisible in a browser (#295 R2 / H1)",
+    "state": "CLOSED",
+    "comments": [
+      { "body": "## Diagnosis\n\n<!--\n## Closing Summary\n-->" }
+    ]
+  },
+  {
+    "number": 110,
+    "title": "heading with ZERO content after it — presence is not a summary (#295 R2 / H1)",
+    "state": "CLOSED",
+    "comments": [
+      { "body": "## Closing Summary" }
+    ]
+  },
+  {
+    "number": 111,
+    "title": "genuine summary merged into the IC comment — must stay MID-COMMENT (#295 R2)",
+    "state": "CLOSED",
+    "comments": [
+      { "body": "## Implementation Complete\n\n- [x] done\n\n---\n\n## Closing Summary\n\n### Problem\nreal content here\n\n### Root Cause\nmore real content" }
+    ]
+  },
+  {
+    "number": 112,
+    "title": "pwn\nmissing\t#9999  FABRICATED ENTRY",
+    "state": "CLOSED",
+    "comments": [
+      { "body": "## Closing Summary\n\n### Problem\nthis issue really does have a summary" }
+    ]
+  },
+  {
+    "number": 113,
+    "title": "tab\there\tin title",
+    "state": "CLOSED",
+    "comments": [
+      { "body": "## Diagnosis\n\nno summary" }
+    ]
+  },
+  {
+    "number": 114,
+    "title": "heading indented 4 spaces — CommonMark calls that code, not a heading (#295 R2)",
+    "state": "CLOSED",
+    "comments": [
+      { "body": "## Diagnosis\n\nsomeone pasted:\n\n    ## Closing Summary\n\n    ### Problem\n\nas an indented block" }
+    ]
   }
 ]

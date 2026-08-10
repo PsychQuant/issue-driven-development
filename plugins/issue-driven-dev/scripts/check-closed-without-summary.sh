@@ -1,11 +1,21 @@
 #!/usr/bin/env bash
 # check-closed-without-summary.sh — retroactive audit for the direct-commit
-# auto-close trap (#151). Lists CLOSED issues whose comments contain NO
-# `## Closing Summary` heading — i.e. issues that may have been auto-closed by a
-# commit / PR-body close keyword, bypassing the /idd-close gate (checklist /
-# semantic / sister-sweep / residue / distribution-sync).
+# auto-close trap (#151). Classifies CLOSED issues by what their
+# `## Closing Summary` marker looks like — issues with none may have been
+# auto-closed by a commit / PR-body close keyword, bypassing the /idd-close gate
+# (checklist / semantic / sister-sweep / residue / distribution-sync).
 #
-# Advisory only — ALWAYS exits 0. Output: one line per flagged issue.
+# Four classes (#295) — this file is their NORMATIVE SOURCE:
+#   own-comment   canonical heading at the start of a comment, with content
+#   casing        same, but non-canonical form (casing / 1-3 leading spaces)
+#   mid-comment   heading with content, not at the comment's start — UNVERIFIED
+#   missing       none of the above
+#
+# Output: three sections, printed only when non-empty. MISSING and MID-COMMENT
+# both carry ⚠; only MISSING invites `--retroactive`. All-clear is a single ✓
+# line when every closed issue is own-comment.
+#
+# Advisory only — ALWAYS exits 0.
 #
 # Usage:
 #   check-closed-without-summary.sh [--repo owner/repo] [--limit N] [--since YYYY-MM-DD]
@@ -85,9 +95,14 @@ fi
 # when they disagree with this filter, this filter is right.
 #
 #   own-comment  a comment starts with the canonical `## Closing Summary`
-#   casing       a comment's FIRST line is the heading in some other casing
-#   mid-comment  the heading appears, but not at the start of its comment
-#   missing      no closing-summary heading anywhere
+#                AND has content under it
+#   casing       a comment's FIRST line is that heading in a non-canonical form
+#                (different casing, or 1-3 leading spaces), with content under it
+#   mid-comment  a heading with content under it appears in LIVE markdown, but
+#                not at the start of its comment — **unverified**: the tool has
+#                not established that what follows is really a summary
+#   missing      no closing-summary heading in live markdown, or the heading has
+#                nothing under it
 #
 # Why four and not two: the two-way version asked only `startswith("## Closing
 # Summary")`, which misreported 11 of 43 closed issues in a real repo (26%) —
@@ -108,24 +123,89 @@ fi
 # be re-surfaced), and letting the casing branch claim it would break
 # idempotency.
 #
-# `HEAD_RE` has NO trailing `\b` on purpose: `_` is a word character, so a word
+# `head_re` has NO trailing `\b` on purpose: `_` is a word character, so a word
 # boundary there would refuse `## closing summary_v2` — a plausible way to head
-# a revised summary — and misfile a present summary as `missing`.
+# a revised summary — and misfile a present summary as `missing`. Indentation is
+# capped at three spaces (CommonMark): four or more is an indented code block,
+# not a heading.
+#
+# Three hardenings from the #295 verify round, each reproduced before fixing:
+#
+# 1. LIVE MARKDOWN ONLY. The first version matched the heading on any line of any
+#    comment, so merely *quoting* it exonerated an issue that had no summary —
+#    and the report then asserted "the summary IS there". Reachable by ordinary
+#    content, not just attack: `skills/idd-close/SKILL.md` prints the canonical
+#    template inside a fence, so any comment reproducing it tripped this. The
+#    HTML-comment case was worse — invisible in a browser while the audit
+#    insisted a summary existed. `live_lines` drops fenced blocks, HTML comments
+#    and indented code before the heading is looked for.
+#
+# 2. A HEADING IS NOT A SUMMARY. A comment whose entire body is `## Closing
+#    Summary` used to classify own-comment and vanish from the report. Every
+#    class now requires at least one non-blank line under the heading.
+#
+# 3. THE TITLE IS UNTRUSTED DATA. The record below is `class\t#N  title`, parsed
+#    positionally downstream. Both delimiters were in-band and the title was
+#    interpolated raw, so a newline in a title forged a whole row — including
+#    into the one section that invites the irreversible `--retroactive`.
+#    `sanitize` collapses every control character to a space, which closes the
+#    forging channel, the tab-truncation bug and the ANSI-repaint channel at once.
 CLASSIFY='
-  def head_re: "^[ \t]*##[ \t]*closing[ \t]+summary";
-  def has_heading($b): ($b | split("\n") | any(test(head_re; "i")));
-  def first_line_heading($b): ($b | split("\n") | .[0] // "" | test(head_re; "i"));
+  # `^ {0,3}` is CommonMark: four or more spaces is an indented code block, not
+  # a heading. It is REDUNDANT given `live_lines` (which already drops indented
+  # lines) and therefore has NO test of its own — acid confirmed that widening
+  # it back to `[ \t]*` turns nothing red, because no input can distinguish the
+  # two. Kept as the second line if `live_lines` is ever simplified, and labelled
+  # here rather than left to look like tested protection.
+  def head_re: "^ {0,3}##[ \t]*closing[ \t]+summary";
+  # Control characters are structural here (record + field delimiters) and can
+  # also repaint a terminal. One substitution neutralises all three uses.
+  #
+  # `[[:cntrl:]]`, not a `\uXXXX` range: Oniguruma does not read ` ` as an
+  # escape inside a jq string, so `[ -]` silently degrades into the
+  # literal range `0`-`u` and eats most of the alphabet. Caught because every
+  # fixture title came back as fragments like " y ( - - v )".
+  def sanitize: (. // "") | gsub("[[:cntrl:]]"; " ") | gsub(" +"; " ");
+  # Lines that GitHub renders as live markdown: no fenced blocks, no HTML
+  # comments, no indented code. Anything inside those is quotation, not content.
+  def live_lines:
+    ((. // "") | split("\n"))
+    | reduce .[] as $l ({f:false, h:false, out:[]};
+        if .f       then (if ($l | test("^ {0,3}(```|~~~)")) then .f = false else . end)
+        elif .h     then (if ($l | test("-->"))              then .h = false else . end)
+        elif ($l | test("^ {0,3}(```|~~~)")) then .f = true
+        elif ($l | test("<!--")) then (if ($l | test("-->")) then . else .h = true end)
+        elif ($l | test("^(    |\t)"))       then .
+        else .out += [$l] end)
+    | .out;
+  # A heading only counts when something non-blank follows it in live markdown.
+  def heading_at:
+    live_lines as $ls
+    | ([range(0; $ls | length) | select($ls[.] | test(head_re; "i"))] | first) as $i
+    | if $i == null then null
+      elif ($ls[($i + 1):] | any(test("\\S"))) then $i
+      else null end;
   .[]
   | select((.state // "CLOSED") | ascii_upcase == "CLOSED")
   | . as $i
   | [$i.comments[]?.body // ""] as $bodies
-  | (if ($bodies | any(startswith("## Closing Summary")))      then "own-comment"
-     elif ($bodies | any(first_line_heading(.)))               then "casing"
-     elif ($bodies | any(has_heading(.)))                      then "mid-comment"
+  | (if ($bodies | any(startswith("## Closing Summary") and (heading_at == 0)))
+                                                             then "own-comment"
+     elif ($bodies | any(heading_at == 0))                    then "casing"
+     elif ($bodies | any(heading_at != null))                 then "mid-comment"
      else "missing" end) as $class
-  | "\($class)\t#\($i.number)  \($i.title)"
+  | "\($class)\t#\($i.number)  \($i.title | sanitize)"
 '
-CLASSIFIED=$(printf '%s' "$ISSUES_JSON" | jq -r "$CLASSIFY" 2>/dev/null)
+# jq errors must NOT become a false all-clear: stderr is captured and a non-zero
+# exit aborts with a note instead of printing "✓ nothing missing" over a filter
+# that died halfway (the same fail-safe direction as the malformed-JSON guard).
+if ! CLASSIFIED=$(printf '%s' "$ISSUES_JSON" | jq -r "$CLASSIFY" 2>/tmp/csw_jq_err.$$); then
+  echo "note: classification filter failed — audit skipped, no conclusion drawn." >&2
+  sed 's/^/      jq: /' /tmp/csw_jq_err.$$ >&2
+  rm -f /tmp/csw_jq_err.$$
+  exit 0
+fi
+rm -f /tmp/csw_jq_err.$$
 
 pick() { printf '%s\n' "$CLASSIFIED" | awk -F'\t' -v c="$1" '$1 == c { print $2 }'; }
 
@@ -144,15 +224,24 @@ if [ -n "$MISSING" ]; then
   echo ""
 fi
 
+# CASING says "non-canonical form", not "cased differently": the class also
+# covers a heading indented one to three spaces, whose casing is perfectly
+# correct. Naming the wider thing after its commonest member told the reader to
+# fix something that was not wrong.
 if [ -n "$CASING" ]; then
-  echo "CASING — heading cased differently; the summary IS there (normalize the heading — do NOT run --retroactive):"
+  echo "CASING — heading is not in canonical form (different casing, or 1-3 leading spaces); a summary IS under it (normalize the heading — do NOT run --retroactive):"
   printf '%s\n' "$CASING" | sed 's/^/    /'
   echo ""
 fi
 
+# MID-COMMENT is stated as UNVERIFIED and keeps the ⚠, because the tool cannot
+# tell a real summary from a quoted one once the heading is not at the start of
+# its comment. The first version asserted "the summary IS there" and dropped the
+# glyph — a guess that switched off the only alarm. Erring loud is the whole
+# point of a safety net; the earlier wording erred silent.
 if [ -n "$MIDCOMMENT" ]; then
-  echo "MID-COMMENT — heading is not at the start of its comment; the summary IS there (split it into its own comment — do NOT run --retroactive):"
-  printf '%s\n' "$MIDCOMMENT" | sed 's/^/    /'
+  echo "MID-COMMENT (unverified) — a heading with content under it was found, but not at the start of its comment. Whether it is a real summary or a quoted one was NOT established — inspect by hand; do NOT run --retroactive on the strength of this line alone:"
+  printf '%s\n' "$MIDCOMMENT" | sed 's/^/  ⚠ /'
   echo ""
 fi
 

@@ -49,7 +49,7 @@ allowed-tools:
 
 ## Retroactive remediation mode（`--retroactive`, v2.76.0+, #176）
 
-`idd-close --retroactive #N` 修補一個**已經被 auto-close、但沒有 `## Closing Summary`** 的 issue —— 也就是被 commit / PR-body 的 close keyword 繞過 `/idd-close` gate 關掉的受害者（`/idd-list --audit-closes` / `scripts/check-closed-without-summary.sh` 抓出來的那些）。它把「人工 reconstruct + 手貼 retroactive summary」這個**已文檔化的補救程序**（見 `CLAUDE.md` → Commit Conventions →「補救：commit 已 push 且 trailer 已觸發 auto-close」）自動化。
+`idd-close --retroactive #N` 修補一個**已經被 auto-close、且分類為 `missing`**（四類定義見下方「Precondition 分類」，#295 —— `casing` / `mid-comment` **不**是 retroactive 的對象）的 issue —— 也就是被 commit / PR-body 的 close keyword 繞過 `/idd-close` gate 關掉的受害者（`/idd-list --audit-closes` / `scripts/check-closed-without-summary.sh` 抓出來的那些）。它把「人工 reconstruct + 手貼 retroactive summary」這個**已文檔化的補救程序**（見 `CLAUDE.md` → Commit Conventions →「補救：commit 已 push 且 trailer 已觸發 auto-close」）自動化。
 
 > **`--retroactive` 不是 `--force`。** `--force`（本 skill **不給**）是繞過 OPEN issue 的 gate —— 危險。`--retroactive` 處理的 issue **已經 CLOSED**：gate 本來就 moot（沒東西可繞）、也不會 re-close。它只補回缺失的 audit trail。
 

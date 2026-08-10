@@ -51,7 +51,7 @@ TaskCreate(name="build_issue_pr_index", description="Step 3.5 (v2.51+): client-s
 TaskCreate(name="extract_blocked_state", description="Step 3.7 (v2.92+, #84): 抽 blocked 信號（Blocking 區塊/label/wait 類 next）→ blocked_reason 掛 entry")
 TaskCreate(name="format_output", description="組 #N [phase] title 表格;有 PR 加 └─ 子行 (cluster leader 顯示 cluster: #X #Y / member 顯示 → see PR #N) + footer 統計含 PR/cluster 數")
 TaskCreate(name="report_and_suggest_next", description="輸出 table 並列出 Suggested next（phase × PR state matrix）；#84 分 Actionable/Blocked 兩組 + 全 blocked banner + footer 計數")
-TaskCreate(name="audit_closes_marker", description="Step 4 (v2.75.2+, #151): 若 --audit-closes,對 state=CLOSED 但 Step 3 找不到 `## Closing Summary` 的 issue 加 ⚠ marker（可能被 commit/PR-body close keyword auto-close 繞過 /idd-close gate）。reuse Step 3 comment scan,不重 fetch")
+TaskCreate(name="audit_closes_marker", description="Step 4 (v2.75.2+, #151; 四類化 #295): 若 --audit-closes,對 state=CLOSED 的 issue 依 scripts/check-closed-without-summary.sh 的 CLASSIFY（own-comment / casing / mid-comment / missing）分類。missing 與 mid-comment 帶 ⚠（前者欠 summary、後者未經驗證）;**只有 missing 提 --retroactive**;casing 不帶 ⚠。reuse Step 3 comment scan,不重 fetch")
 ```
 
 完成每一步立即 `TaskUpdate → completed`。**靜默完成 = 違規**。**TaskCreate 清單 = 真實的步驟清單；任何寫在 skill 裡但沒列進 TaskCreate 的步驟，都視為 skill 的 bug，必須補進 Task 清單。**
@@ -66,7 +66,7 @@ TaskCreate(name="audit_closes_marker", description="Step 4 (v2.75.2+, #151): 若
 | `--label` | _(none)_ | 單一 label filter |
 | `--limit` | `20` | 最多顯示筆數 |
 | `--repo` | _(from config)_ | 覆寫 config 的 repo |
-| `--audit-closes` | off | 旗標：標記 **CLOSED 但無 `## Closing Summary`** 的 issue（可能被 commit / PR-body close keyword auto-close 繞過 `/idd-close` gate，#151）。`--state` 仍是預設 `open` 時隱含切到 `closed`。底層 primitive：`scripts/check-closed-without-summary.sh`（standalone / cron 可直接呼叫）|
+| `--audit-closes` | off | 旗標：把 **CLOSED** 的 issue 依其 `## Closing Summary` marker **分四類**（`own-comment` / `casing` / `mid-comment` / `missing`，#295）。`missing` 可能是被 commit / PR-body close keyword auto-close 繞過 `/idd-close` gate 的受害者（#151）；`mid-comment` 未經驗證、同樣帶 ⚠；**只有 `missing` 提 `--retroactive`**。`--state` 仍是預設 `open` 時隱含切到 `closed`。底層 primitive：`scripts/check-closed-without-summary.sh`（standalone / cron 可直接呼叫）|
 | `--discussions` | off | **Opt-in**（#221）：同場 surface GitHub Discussions 的 actionable 項（Q&A/Ideas、未答、未被任何 issue 引用）。契約 + GraphQL 見 [`references/discussions-intake.md`](../../references/discussions-intake.md) |
 
 ### Step 2: Fetch Issues

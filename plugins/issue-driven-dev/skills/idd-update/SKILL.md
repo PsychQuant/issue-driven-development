@@ -119,7 +119,9 @@ gh issue view $NUMBER --repo $GITHUB_REPO --json title,body,labels,state,comment
 | Verify (FAIL / findings) | `needs-fix` |
 | Closing Summary | `closed` |
 
-判斷依據：掃描 comments 中的 `## Diagnosis`、`## Implementation Plan`、`## Implementation Complete`、`## Verify`、`## Closing Summary` 標題。
+判斷依據：掃描 comments 中的 `## Diagnosis`、`## Implementation Plan`、`## Implementation Complete`、`## Verify`、`## Closing Summary` 標題。**比對大小寫不敏感、允許 1-3 空格縮排**（#295）—— 這些 heading 全部由 LLM 依模板生成、寫入端沒有任何 normalization，所以 `## Closing summary` 這類漂移是預期而非例外；此處硬要求大小寫只會讓 phase 停在舊值，而 phase 停在舊值正是 `idd-close` Step 6 存在的理由。
+
+> **本步是這個 marker 的寫端 reader（#295 family-wide scope 的第 6 個）**。它**不做**四類分流 —— phase 推斷只需要「有沒有」，不需要「是哪一種」。四類的 normative source 是 [`scripts/check-closed-without-summary.sh`](../../scripts/check-closed-without-summary.sh)，消費者是 `--audit-closes` 與 `--retroactive`。
 
 #### Authoritative source resolution (v2.73.0+, #150)
 
