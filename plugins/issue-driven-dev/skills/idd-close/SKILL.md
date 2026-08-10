@@ -58,7 +58,7 @@ allowed-tools:
 | 正常 `/idd-close` step | `--retroactive` 行為 |
 |------------------------|----------------------|
 | Step 0 / 1.5 / 1.6 gates | **跳過**（issue 已關，gate moot；非 force bypass）|
-| **Precondition**（retroactive 專屬）| `state == CLOSED` **且**無**以 `## Closing Summary` 開頭**的 comment（**startswith prefix-match**，同 #151 偵測契約 —— **不是** exact-match，否則 `## Closing Summary (retroactive — …)` 會被誤判成「沒有」而 double-post）。OPEN → abort（「不是 retroactive case，跑正常 `/idd-close`」）；已有 Closing Summary → abort（「已 remediate 過」）。**post 前用同一個 startswith 再 check 一次**（防 stale list / race / double-post）。|
+| **Precondition**（retroactive 專屬）| `state == CLOSED` **且**分類為 **`missing`**（四類定義見下方「Precondition 分類」，#295）。OPEN → abort（「不是 retroactive case，跑正常 `/idd-close`」）。**post 前用同一套分類再 check 一次**（防 stale list / race / double-post）。|
 | Step 2 draft | **reuse，但 `### Verification` section 特別處理** —— 從 `git log --grep "#N"`（Changes）+ 該 issue 既有的 `## Diagnosis` / `## Implementation Complete` / `## Verify` comments + body reconstruct 五段式。**標題改成** `## Closing Summary (retroactive — auto-closed via <channel>)`。reconstruct 不足 → 標 **「best-effort reconstruction」**，不假裝完整。**`### Verification` 的捏造風險最高 —— 見下方「Verification honesty 鐵律」。** |
 | Step 3 confirm | **semi-auto（預設）** —— 把 draft 給 user 確認再 post（reconstruct 可能錯，且 issue 已關不急）。confirm 是必要的、但**不是** verification —— cold-read + batch 容易 rubber-stamp，所以下方鐵律把誠實寫死進 draft，不靠 confirm 兜底。|
 | Step 4 publish + close | **publish comment，但跳過 `gh issue close`**（已關）。|
@@ -68,6 +68,23 @@ allowed-tools:
 | Step 6.7 worktree GC | **跳過**。|
 
 `<channel>` 來源：optional `--via <channel>` flag（例 `--via commit-body` / `--via pr-body`）；不給就用 generic `auto-close trap, /idd-close gate bypassed`。**不**做 GitHub timeline API 的精確 channel 偵測（重、out of scope）。
+
+### Precondition 分類（#295）—— 只有 `missing` 可以走這條路
+
+**Normative source 是 [`scripts/check-closed-without-summary.sh`](../../scripts/check-closed-without-summary.sh) 的 `CLASSIFY` filter**；本節是它的散文鏡像，兩者衝突時以該 script 為準。
+
+| 分類 | 判準 | `--retroactive` |
+|---|---|---|
+| `own-comment` | 某則 comment 以 canonical `## Closing Summary` 開頭 | **abort** —— 「已 remediate 過 / 本來就有」 |
+| `casing` | 某則 comment 的**第一行**是該 heading 但大小寫不同（`## Closing summary`）| **abort** —— 訊息：summary **在**，要做的是把 heading 正規化成 `## Closing Summary`，不是再貼一份 |
+| `mid-comment` | heading 出現在某則 comment 內、但不在開頭（常見：接在 `## Implementation Complete` 後面、`---` 分隔）| **abort** —— 訊息：summary **在**，要做的是把它拆成獨立 comment |
+| `missing` | 完全找不到 closing-summary heading | ✅ **唯一放行** |
+
+**為什麼 precondition 不能只用 `startswith`**（#295 的核心）：`--audit-closes` 與本 precondition 共用同一個 marker，所以偵測端的假陽性**不只是噪音，會直接變成不可逆動作** —— 在一張已經有完整 summary 的 issue 上再貼一份。實測某 repo 43 張 closed issue 有 **11 張**（26%）是 `casing` / `mid-comment`：它們字面上確實沒有「以 `## Closing Summary` 開頭」的 comment，舊 precondition 會**全部放行**。那一次是操作者在 draft 前手動核對 comment 內容才攔下來的；契約裡沒有任何一層會擋。
+
+**`casing` / `mid-comment` 是 abort 不是 warn**：兩者都代表「內容在、marker 不合」，該做的是**一個字元或一次 comment 拆分**的正規化，不是 retroactive reconstruct。把它們放行等於用「補 audit trail」的名義製造重複 audit trail。
+
+**順序固定**：canonical `startswith` **最先判**，所以 `## Closing Summary (retroactive — …)`（本 skill 自己產出的 heading）落在 `own-comment` 而非被 `casing` 分支搶走 —— 那正是 idempotency 依賴的行為。
 
 ### Verification honesty 鐵律（#176 verify DA-1）
 
@@ -81,7 +98,7 @@ allowed-tools:
 
 **Batch**：`idd-close --retroactive #34 #36 #38` —— 每個 issue 各自 draft + confirm + post 獨立 retroactive summary（同 cluster-close 紀律，不合併）。
 
-**Idempotency**：`--audit-closes` 偵測本來就排除「已有 `## Closing Summary`」的 issue（含 retroactive heading，因 `startswith` 也 match），所以 remediate 過的 issue 不會被重新 surface；precondition 的 post-前再 check 是第二層保險。
+**Idempotency**：`--audit-closes` 只把 `missing` 標成 ⚠ 並邀請 retroactive；remediate 過的 issue 會分類為 `own-comment`（retroactive heading 也命中 canonical `startswith`，且該分支**最先判**），所以不會被重新 surface。precondition 的 post-前再 check 是第二層保險 —— 用**同一套四類分類**，不是另一個 startswith。
 
 ## Configuration
 

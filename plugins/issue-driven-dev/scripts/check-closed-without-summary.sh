@@ -78,25 +78,83 @@ if ! printf '%s' "$ISSUES_JSON" | jq empty 2>/dev/null; then
   exit 0
 fi
 
-# ── Filter: CLOSED issues with NO `## Closing Summary` comment ──
-# `select(... any | not)` keeps issues where NONE of the comment bodies start
-# with the heading. Empty-comments issues yield `[] | any == false → not == true`
-# → flagged (the legacy / GitHub-UI-close case).
-FLAGGED=$(printf '%s' "$ISSUES_JSON" | jq -r '
+# ── Classify: what does each CLOSED issue's summary marker actually look like? ──
+#
+# NORMATIVE SOURCE for the four classes (#295). The prose consumers — idd-list
+# `--audit-closes` and idd-close `--retroactive` — follow these definitions;
+# when they disagree with this filter, this filter is right.
+#
+#   own-comment  a comment starts with the canonical `## Closing Summary`
+#   casing       a comment's FIRST line is the heading in some other casing
+#   mid-comment  the heading appears, but not at the start of its comment
+#   missing      no closing-summary heading anywhere
+#
+# Why four and not two: the two-way version asked only `startswith("## Closing
+# Summary")`, which misreported 11 of 43 closed issues in a real repo (26%) —
+# ten were `## Closing summary`, one had the summary appended below an
+# Implementation Complete in the same comment. Every one of them had a real,
+# complete summary. A flag wrong a quarter of the time gets ignored, and the
+# ignoring is the damage: eleven false alarms hide the twelfth that is real.
+#
+# The sharper reason is that `idd-close --retroactive` uses the SAME marker as
+# its precondition, so a false positive here does not merely add noise — it
+# posts a duplicate summary onto an issue that already has one. Only `missing`
+# may reach that path, which is why the other two classes are printed with an
+# explicit "do NOT run --retroactive".
+#
+# Order matters. The canonical `startswith` is tested FIRST so that
+# `## Closing Summary (retroactive — …)` keeps classifying as own-comment —
+# that shape is deliberate (see idd-close SKILL.md: a remediated issue must not
+# be re-surfaced), and letting the casing branch claim it would break
+# idempotency.
+#
+# `HEAD_RE` has NO trailing `\b` on purpose: `_` is a word character, so a word
+# boundary there would refuse `## closing summary_v2` — a plausible way to head
+# a revised summary — and misfile a present summary as `missing`.
+CLASSIFY='
+  def head_re: "^[ \t]*##[ \t]*closing[ \t]+summary";
+  def has_heading($b): ($b | split("\n") | any(test(head_re; "i")));
+  def first_line_heading($b): ($b | split("\n") | .[0] // "" | test(head_re; "i"));
   .[]
   | select((.state // "CLOSED") | ascii_upcase == "CLOSED")
-  | select([.comments[]?.body // "" | startswith("## Closing Summary")] | any | not)
-  | "⚠ #\(.number)  \(.title)"
-' 2>/dev/null)
+  | . as $i
+  | [$i.comments[]?.body // ""] as $bodies
+  | (if ($bodies | any(startswith("## Closing Summary")))      then "own-comment"
+     elif ($bodies | any(first_line_heading(.)))               then "casing"
+     elif ($bodies | any(has_heading(.)))                      then "mid-comment"
+     else "missing" end) as $class
+  | "\($class)\t#\($i.number)  \($i.title)"
+'
+CLASSIFIED=$(printf '%s' "$ISSUES_JSON" | jq -r "$CLASSIFY" 2>/dev/null)
 
-if [ -z "$FLAGGED" ]; then
+pick() { printf '%s\n' "$CLASSIFIED" | awk -F'\t' -v c="$1" '$1 == c { print $2 }'; }
+
+MISSING=$(pick missing)
+CASING=$(pick casing)
+MIDCOMMENT=$(pick mid-comment)
+
+if [ -z "$MISSING" ] && [ -z "$CASING" ] && [ -z "$MIDCOMMENT" ]; then
   echo "✓ No closed issue is missing a ## Closing Summary (within the scanned window)."
   exit 0
 fi
 
-echo "Closed issues with NO ## Closing Summary (possible auto-close-trap bypass —"
-echo "remediate each with: idd-close --retroactive #N):"
-printf '%s\n' "$FLAGGED"
-echo ""
-echo "(advisory — legacy / pre-IDD / GitHub-UI-closed issues are expected here; narrow with --since / --limit)"
+if [ -n "$MISSING" ]; then
+  echo "MISSING — no ## Closing Summary anywhere (possible auto-close-trap bypass; remediate: idd-close --retroactive #N):"
+  printf '%s\n' "$MISSING" | sed 's/^/  ⚠ /'
+  echo ""
+fi
+
+if [ -n "$CASING" ]; then
+  echo "CASING — heading cased differently; the summary IS there (normalize the heading — do NOT run --retroactive):"
+  printf '%s\n' "$CASING" | sed 's/^/    /'
+  echo ""
+fi
+
+if [ -n "$MIDCOMMENT" ]; then
+  echo "MID-COMMENT — heading is not at the start of its comment; the summary IS there (split it into its own comment — do NOT run --retroactive):"
+  printf '%s\n' "$MIDCOMMENT" | sed 's/^/    /'
+  echo ""
+fi
+
+echo "(advisory — legacy / pre-IDD / GitHub-UI-closed issues are expected under MISSING; narrow with --since / --limit)"
 exit 0

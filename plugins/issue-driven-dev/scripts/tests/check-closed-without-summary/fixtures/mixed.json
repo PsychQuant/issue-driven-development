@@ -28,5 +28,38 @@
     "title": "closed, zero comments (legacy / GitHub-UI close) — flagged",
     "state": "CLOSED",
     "comments": []
+  },
+  {
+    "number": 104,
+    "title": "closed, summary heading cased differently — content IS there (#295)",
+    "state": "CLOSED",
+    "comments": [
+      { "body": "## Diagnosis\n\n### Type\nbug" },
+      { "body": "## Closing summary\n\n### Problem\nfoo\n\n### Root Cause\nbar" }
+    ]
+  },
+  {
+    "number": 105,
+    "title": "closed, summary merged into the Implementation Complete comment (#295)",
+    "state": "CLOSED",
+    "comments": [
+      { "body": "## Implementation Complete\n\n### Checklist\n- [x] done\n\n---\n\n## Closing Summary\n\n### Problem\nfoo" }
+    ]
+  },
+  {
+    "number": 106,
+    "title": "closed, retroactive summary — startswith still matches, must stay compliant (#295 D2)",
+    "state": "CLOSED",
+    "comments": [
+      { "body": "## Closing Summary (retroactive — auto-closed via commit-body)\n\n### Problem\nfoo" }
+    ]
+  },
+  {
+    "number": 107,
+    "title": "closed, versioned lowercase heading — a trailing word boundary would misfile this (#295 D3)",
+    "state": "CLOSED",
+    "comments": [
+      { "body": "## closing summary_v2\n\n### Problem\nrevised after the first pass" }
+    ]
   }
 ]

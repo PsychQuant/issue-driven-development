@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.104.0] - 2026-08-10
+
+### Fixed
+
+- **Closing-summary marker classifies four ways, not two (#295)** — `--audit-closes` asked only `startswith("## Closing Summary")`, case-sensitive and anchored at the comment's start. Measured against a real repo's 43 closed issues: **11 false positives (26%)** — ten `## Closing summary` (lowercase s), one with the summary appended below an Implementation Complete in the same comment. Every one had a complete summary. The sharper problem is that `idd-close --retroactive` shares that marker as its **precondition**, so a false positive there is not noise but an irreversible action: it posts a duplicate summary onto an issue that already has one, and nothing in the contract stops it (the live batch was caught only by a human reading the comments before drafting). `check-closed-without-summary.sh` now classifies `own-comment` / `casing` / `mid-comment` / `missing` and prints three sections — only `missing` carries ⚠ and invites `--retroactive`; the other two say the summary IS there and explicitly warn the destructive path off. The script's `CLASSIFY` filter is the **normative source**; `idd-close`'s precondition and `idd-list`'s Step 4 marker + Step 3 phase fallback (a fourth reader found during diagnosis, not in the issue body) follow it. Canonical `startswith` is tested first so `## Closing Summary (retroactive — …)` stays `own-comment` — idempotency depends on it — and the heading regex deliberately omits a trailing `\b` (`_` is a word character; `## closing summary_v2` would otherwise be misfiled as missing). Root cause is the two ends being asymmetric: the write side is LLM-generated free text with no normalization, the read side was an exact prefix. Write-side normalization is recorded residue, not done. Verified by cross-implementation agreement on 43 live issues plus a programmatically reconstructed pre-fix snapshot (10 lowercased + 1 merged → 10 CASING + 1 MID-COMMENT + **0 MISSING**); acid 7/7, each mechanism red on its own.
+
 ## [2.102.2] - 2026-08-01
 
 ### Added

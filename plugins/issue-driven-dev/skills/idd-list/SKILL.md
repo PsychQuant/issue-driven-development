@@ -133,7 +133,7 @@ Phase 值（與 `idd-update` 一致）：
 
 0. **Tracker 短路（v2.82.0+, #179）**：若 issue 帶 tracker label（`north-star` 或 `epic`）→ phase = `tracking`，**不**走下面 1-3 的 phase 推斷、**不**顯示 `(no phase)`，**也不**建議 `/idd-update`（tracker 本就不該跑 lifecycle step，那是 false signal）。若 body 有可解析的 `## Roadmap` checklist，附 roadmap progress `<filed>/<total> stages`：`<filed>` = **勾選 `- [x]` 且**該行含 `#<number>` issue 引用的項數（勾了但沒 link 的不算 filed —— 那是 malformed）；`<total>` = roadmap 項總數。`## Roadmap` 缺漏或無法解析 → 純顯示 `tracking`（不附 progress，**不報錯**，graceful）。此規則同時覆蓋 milestone-first（[`#83`](https://github.com/PsychQuant/issue-driven-development/issues/83)）的 epic tracker —— tracker-phase 顯示是**共用**的。完整慣例見 [`references/north-star-tracker.md`](../../references/north-star-tracker.md)。Tracker 的 Suggested-next 不給 lifecycle 命令（`/idd-diagnose` 等），改顯示 `(tracker — file next roadmap stage when ready)`。**例**：tracker `#7` 帶 `north-star` label，body `## Roadmap` 為 `- [x] Stage 1 → #10` / `- [ ] Stage 2` / `- [ ] Stage 3` → idd-list 顯示 `#7  [tracking] 1/3 stages`（filed=1 因只有 Stage 1 勾選且帶 `#10`；total=3），**不**顯示 `(no phase)` 或 `/idd-update` hint。
 1. 掃 body 尋找 `**Phase**:` 行，取第一個 match 的值
-2. 找不到 → 掃 comments 的標題推斷（`## Diagnosis` → `diagnosed`，`## Implementation Complete` → `implemented`，`## Verify (PASS)` → `verified`，`## Verify (FAIL)` → `needs-fix`，`## Closing Summary` → `closed`）
+2. 找不到 → 掃 comments 的標題推斷（`## Diagnosis` → `diagnosed`，`## Implementation Complete` → `implemented`，`## Verify (PASS)` → `verified`，`## Verify (FAIL)` → `needs-fix`，`## Closing Summary` → `closed`）。**標題比對大小寫不敏感**（#295）：這些 heading 由 LLM 依模板生成、寫入端無 normalization，`## Closing summary` 這類漂移是預期而非例外；此處硬要求大小寫只會讓 phase 顯示錯，沒有任何好處
 3. 仍推不出 → 顯示 `(no phase)`（legacy issue，建議手動 `/idd-update`）
 
 ### Step 3.5: Build Issue→PR Index (v2.51.0+)
@@ -297,16 +297,32 @@ Repo: PsychQuant/issue-driven-development  (state: open, limit: 20)
 
 `--audit-closes` 把 **direct-commit auto-close trap** 的受害者回溯標出來。偵測**重用 Step 2 已 fetch 的 comments** + 同一個 `## Closing Summary` marker —— 不重 fetch，也**不**用 Step 3 的 phase verdict：
 
-> **判定條件**：`state == CLOSED` **且**該 issue 的 comments（Step 2 已抓）中**沒有任何一則以 `## Closing Summary` 開頭**。
+> **判定條件（四類，#295）**：`state == CLOSED` 的 issue 依其 comments（Step 2 已抓）分類。**四類的 normative source 是 [`scripts/check-closed-without-summary.sh`](../../scripts/check-closed-without-summary.sh) 的 `CLASSIFY` filter**；本節是它的散文鏡像，兩者衝突時以該 script 為準。
+>
+> | 分類 | 判準 | 意義 |
+> |---|---|---|
+> | `own-comment` | 某則 comment 以 canonical `## Closing Summary` 開頭 | 合規，不標 |
+> | `casing` | 某則 comment 的**第一行**是該 heading 但大小寫不同 | summary **在**，heading 待正規化 |
+> | `mid-comment` | heading 在某則 comment 內但不在開頭 | summary **在**，待拆成獨立 comment |
+> | `missing` | 完全找不到該 heading | **唯一欠工作的一類** |
+>
+> **為什麼不是二分**：舊判定只問「有沒有以 `## Closing Summary` 開頭的 comment」，實測某 repo 43 張 closed issue **誤報 11 張（26%）** —— 十張是 `## Closing summary`（小寫 s）、一張把 summary 接在 `## Implementation Complete` 之後同一則裡，全部都有完整 summary。四分之一會誤報的旗標會被學會忽略，而忽略本身就是損害：十一個假警報蓋掉第十二個真的。更嚴重的是 `--retroactive` 與本 marker **共用同一個判定**，所以假陽性會升級成**不可逆動作**（在已有 summary 的 issue 上再貼一份）。
+>
+> **順序固定**：canonical `startswith` 最先判，讓 `## Closing Summary (retroactive — …)` 落在 `own-comment` 而非 `casing` —— 那是 remediate 過的 issue 不被重新 surface 的依據。heading 比對**不加尾端 `\b`**：`_` 是 word character，會讓 `## closing summary_v2` 誤判成 `missing`。
 >
 > **為什麼直接掃 comment、不看 Step 3 的 phase**（#151 verify DA MEDIUM）：Step 3 的 phase 推斷是**先讀 body 的 `**Phase**:` 行、first-match-wins，找到就 short-circuit、根本不掃 comments**。一個 trap 受害者的 body 很可能還停在 `**Phase**: implemented`（因為 `/idd-close` 從沒跑過去把它翻成 `closed`），所以 Step 3 會從 body 拿到 stale phase 而錯過「沒有 Closing Summary」這個事實。本 marker 必須**直接判斷 comment 的有無**，才能抓到正是這類受害者 —— 這也是 standalone helper（只 fetch `number,title,state,comments`、不 fetch body）的契約。
 >
 > 這類 issue 很可能是在 `/idd-close` 之外被關掉的 —— 例如 commit / PR-body 的 `close` keyword + `#<digit>` 觸發 GitHub auto-close，繞過整個 gate（checklist / semantic / sister-sweep / residue / distribution-sync）。見 `CLAUDE.md` → Commit Conventions →「Direct-commit path has NO automated auto-close gate」(#151) 與 Step 0.8 (#173)。
 
-- Marker 子行：`└─ ⚠ closed without Closing Summary — possible auto-close-trap bypass; remediate via /idd-close --retroactive #N` (v2.76.0+, #176)
+- Marker 子行依分類分流（#295）—— **只有 `missing` 帶 ⚠、也只有它提 `--retroactive`**：
+  - `missing` → `└─ ⚠ closed without Closing Summary — possible auto-close-trap bypass; remediate via /idd-close --retroactive #N` (v2.76.0+, #176)
+  - `casing` → `└─ closing summary heading is cased differently — the summary IS there; normalize the heading (do NOT run --retroactive)`
+  - `mid-comment` → `└─ closing summary is not at the start of its comment — the summary IS there; split it into its own comment (do NOT run --retroactive)`
+  - `own-comment` → 無子行
+- **非 `missing` 的兩類不得帶 ⚠、不得提 `--retroactive`**。它們代表「內容在、marker 不合」，該做的是一個字元或一次 comment 拆分的正規化；把它們寫成同一種告警，正是 #295 之前 26% 誤報演變成破壞性動作的路徑。
 - `--audit-closes` 在 `--state` 仍是預設 `open` 時隱含切到 `closed`（open issue 不可能被 auto-close）。
 - **Advisory** — legacy / pre-IDD / GitHub-UI-closed 的 issue 本來就沒 summary，這是提醒不是錯誤。用 idd-list 自己的 `--limit` 收斂掃描範圍（`--since` 是 standalone helper 專屬 flag，idd-list 端不吃）。
-- Standalone 等價物（給 cron / 直接 CLI，只回 flagged set）是 `scripts/check-closed-without-summary.sh` — 同一個 `## Closing Summary` marker、同 advisory 契約。
+- Standalone 等價物（給 cron / 直接 CLI）是 `scripts/check-closed-without-summary.sh` —— **它是四類定義的 normative source**，本 skill 依循它；同 advisory 契約（永遠 exit 0）。**已知殘留（#295 D4）**：兩邊是兩份實作（helper 是 jq、本 skill 是散文由 agent 執行），仍可能漂移。收斂成單一實作需要 helper 長出 machine-readable 輸出 + 改本 skill 的 render 流程，未做。
 
 **v2.51.0+ Footer 擴充**:
 
