@@ -166,25 +166,58 @@ CLASSIFY='
   # literal range `0`-`u` and eats most of the alphabet. Caught because every
   # fixture title came back as fragments like " y ( - - v )".
   def sanitize: (. // "") | gsub("[[:cntrl:]]"; " ") | gsub(" +"; " ");
-  # Lines that GitHub renders as live markdown: no fenced blocks, no HTML
-  # comments, no indented code. Anything inside those is quotation, not content.
-  def live_lines:
-    ((. // "") | split("\n"))
-    | reduce .[] as $l ({f:false, h:false, out:[]};
-        if .f       then (if ($l | test("^ {0,3}(```|~~~)")) then .f = false else . end)
-        elif .h     then (if ($l | test("-->"))              then .h = false else . end)
-        elif ($l | test("^ {0,3}(```|~~~)")) then .f = true
-        elif ($l | test("<!--")) then (if ($l | test("-->")) then . else .h = true end)
-        elif ($l | test("^(    |\t)"))       then .
-        else .out += [$l] end)
+  # Which lines are LIVE markdown, keeping the ORIGINAL index of each line.
+  #
+  # NOTE: this jq program lives inside a single-quoted shell string, so it must
+  # contain no apostrophe anywhere -- not even in a comment. Writing a real
+  # apostrophe here silently closed the string and produced a bash syntax error
+  # two lines further down.
+  #
+  # The index matters (#295 R3): the heading must be found in live markdown --
+  # a quoted heading is not a heading -- but "is there content under it" has to
+  # be answered against the RAW lines. Round 2 used the live list for both, so
+  # a real summary whose body sat entirely inside a fence classified missing
+  # and was routed to the one class --retroactive admits. One mechanism was
+  # borrowed for a second job whose semantics differ: content inside a fence is
+  # still content, it just is not a heading.
+  #
+  # HTML comments are stripped as a SPAN, not by deleting the line, and the
+  # block form is anchored at line start (CommonMark HTML block type 2). Round
+  # 2 deleted any line containing an HTML-comment opener, which erased a
+  # canonical heading carrying an inline marker -- and IDD itself writes
+  # markers like idd:dashboard into comments, so that was reachable by the
+  # conventions of this very plugin.
+  def strip_html_span: gsub("<!--(?:(?!-->)[\\s\\S])*-->"; "");
+  def live_pairs:
+    ((. // "") | split("\n")) as $raw
+    | reduce range(0; $raw | length) as $k ({f:false, h:false, out:[]};
+        ($raw[$k] | strip_html_span) as $l
+        | if .f     then (if ($l | test("^ {0,3}(```|~~~)")) then .f = false else . end)
+          elif .h   then (if ($l | test("-->"))              then .h = false else . end)
+          elif ($l | test("^ {0,3}(```|~~~)"))               then .f = true
+          elif ($l | test("^ {0,3}<!--"))                    then .h = true
+          elif ($l | test("^(    |\t)"))                    then .
+          else .out += [[$k, $l]] end)
     | .out;
-  # A heading only counts when something non-blank follows it in live markdown.
+  # A heading counts only when ITS OWN section carries something non-blank.
+  #
+  # "Its own section" = the RAW lines after the heading, up to the next h1/h2.
+  # Both halves were wrong before: round 2 asked the LIVE lines (so a summary
+  # written entirely inside a fence read as empty), and round 3 first widened it
+  # to every RAW line after the heading (so an unrelated later section made an
+  # EMPTY summary look filled -- a heading with nothing under it then classified
+  # own-comment and vanished from the report entirely). Raw lines, bounded by
+  # the section, is the predicate the class definitions actually claim.
   def heading_at:
-    live_lines as $ls
-    | ([range(0; $ls | length) | select($ls[.] | test(head_re; "i"))] | first) as $i
-    | if $i == null then null
-      elif ($ls[($i + 1):] | any(test("\\S"))) then $i
-      else null end;
+    . as $b
+    | (($b // "") | split("\n")) as $raw
+    | ([$b | live_pairs | .[] | select(.[1] | test(head_re; "i")) | .[0]] | first) as $k
+    | if $k == null then null else
+        ($raw[($k + 1):]) as $rest
+        | ([range(0; $rest | length) | select($rest[.] | test("^ {0,3}#{1,2}[ \t]"))] | first) as $stop
+        | (if $stop == null then $rest else $rest[0:$stop] end) as $section
+        | if ($section | any(test("\\S"))) then $k else null end
+      end;
   .[]
   | select((.state // "CLOSED") | ascii_upcase == "CLOSED")
   | . as $i
@@ -194,7 +227,7 @@ CLASSIFY='
      elif ($bodies | any(heading_at == 0))                    then "casing"
      elif ($bodies | any(heading_at != null))                 then "mid-comment"
      else "missing" end) as $class
-  | "\($class)\t#\($i.number)  \($i.title | sanitize)"
+  | "\($class)\t#\($i.number | tostring | sanitize)  \($i.title | sanitize)"
 '
 # jq errors must NOT become a false all-clear: stderr is captured and a non-zero
 # exit aborts with a note instead of printing "✓ nothing missing" over a filter

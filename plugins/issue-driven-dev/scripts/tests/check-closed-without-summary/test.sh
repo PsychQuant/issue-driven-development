@@ -145,6 +145,43 @@ assert_grep "a tab in a title no longer truncates it" "tab here in title" "$OUT"
 # the script).
 require "#114 (heading indented 4 spaces) is MISSING, not a heading" flagged 114
 
+# ── #295 R3: what round 2 broke ──
+# Round 2 used the live-markdown list to answer BOTH "where is the heading" and
+# "is there content under it". The second use was wrong — content inside a fence
+# is still content — and an over-broad `<!--` rule deleted whole lines. Both sent
+# REAL summaries to MISSING, the one class --retroactive admits.
+
+require "#115 (heading carries an inline HTML marker) is NOT missing" \
+  bash -c '! printf "%s\n" "$0" | grep -qE -- "⚠ #115"' "$OUT"
+require "#116 (summary body entirely inside a fence) is NOT missing" \
+  bash -c '! printf "%s\n" "$0" | grep -qE -- "⚠ #116"' "$OUT"
+
+# The converse of the content rule: an EMPTY summary must not be rescued by an
+# unrelated later section. Round 3's first cut widened the check to every raw
+# line after the heading, which made exactly that mistake.
+require "#117 (empty summary, unrelated later section) is MISSING" flagged 117
+
+# H2 again, one field to the left: `.number` is untrusted too.
+refute_grep "a newline in .number cannot forge a row" "#9999  FORGED VIA NUMBER" "$OUT"
+
+# The two HTML mechanisms mask each other under naive mutation — the anchored
+# block rule makes the span-strip look redundant, and the span-strip makes
+# un-anchoring look harmless. Each fixture below isolates ONE of them, so acid
+# on either mechanism turns exactly one assertion red.
+require "#119 (line starting with a balanced HTML comment) is NOT missing" \
+  bash -c '! printf "%s\n" "$0" | grep -qE -- "⚠ #119"' "$OUT"
+# #120's heading sits after a `---`, so it is legitimately `mid-comment` — which
+# now carries ⚠. The assertion is therefore "not in MISSING", not "no ⚠": the
+# first draft asserted the latter and failed on correct behaviour.
+refute "#120 (unbalanced HTML-comment opener mid-line) is NOT missing" flagged 120
+
+# Isolates `strip_html_span`: an IDD marker on its own line immediately above a
+# real summary — the exact shape this plugin writes (`<!-- idd:dashboard -->`
+# and friends). Without the span-strip the anchored block rule fires on the
+# marker line, never finds its `-->` (it was on that same consumed line), and
+# swallows the summary into MISSING — a real summary on the destructive path.
+refute "#121 (IDD marker line above a real summary) is NOT missing" flagged 121
+
 # The advisory contract's fail-safe direction, for the classification filter
 # itself: a jq error must not fall through to "✓ nothing missing". Acid showed
 # swallowing the error turned nothing red — the old test only covered the

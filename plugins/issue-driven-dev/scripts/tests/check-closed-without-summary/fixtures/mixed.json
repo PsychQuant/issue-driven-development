@@ -4,8 +4,12 @@
     "title": "closed WITH a proper Closing Summary",
     "state": "CLOSED",
     "comments": [
-      { "body": "## Diagnosis\n\n### Type\nbug" },
-      { "body": "## Closing Summary\n\n### Problem\nfoo\n\n### Root Cause\nbar" }
+      {
+        "body": "## Diagnosis\n\n### Type\nbug"
+      },
+      {
+        "body": "## Closing Summary\n\n### Problem\nfoo\n\n### Root Cause\nbar"
+      }
     ]
   },
   {
@@ -13,8 +17,12 @@
     "title": "closed WITHOUT a Closing Summary (auto-close-trap victim)",
     "state": "CLOSED",
     "comments": [
-      { "body": "## Diagnosis\n\n### Type\nbug" },
-      { "body": "## Implementation Complete\n\n### Checklist\n- [x] done" }
+      {
+        "body": "## Diagnosis\n\n### Type\nbug"
+      },
+      {
+        "body": "## Implementation Complete\n\n### Checklist\n- [x] done"
+      }
     ]
   },
   {
@@ -34,8 +42,12 @@
     "title": "closed, summary heading cased differently — content IS there (#295)",
     "state": "CLOSED",
     "comments": [
-      { "body": "## Diagnosis\n\n### Type\nbug" },
-      { "body": "## Closing summary\n\n### Problem\nfoo\n\n### Root Cause\nbar" }
+      {
+        "body": "## Diagnosis\n\n### Type\nbug"
+      },
+      {
+        "body": "## Closing summary\n\n### Problem\nfoo\n\n### Root Cause\nbar"
+      }
     ]
   },
   {
@@ -43,7 +55,9 @@
     "title": "closed, summary merged into the Implementation Complete comment (#295)",
     "state": "CLOSED",
     "comments": [
-      { "body": "## Implementation Complete\n\n### Checklist\n- [x] done\n\n---\n\n## Closing Summary\n\n### Problem\nfoo" }
+      {
+        "body": "## Implementation Complete\n\n### Checklist\n- [x] done\n\n---\n\n## Closing Summary\n\n### Problem\nfoo"
+      }
     ]
   },
   {
@@ -51,7 +65,9 @@
     "title": "closed, retroactive summary — startswith still matches, must stay compliant (#295 D2)",
     "state": "CLOSED",
     "comments": [
-      { "body": "## Closing Summary (retroactive — auto-closed via commit-body)\n\n### Problem\nfoo" }
+      {
+        "body": "## Closing Summary (retroactive — auto-closed via commit-body)\n\n### Problem\nfoo"
+      }
     ]
   },
   {
@@ -59,7 +75,9 @@
     "title": "closed, versioned lowercase heading — a trailing word boundary would misfile this (#295 D3)",
     "state": "CLOSED",
     "comments": [
-      { "body": "## closing summary_v2\n\n### Problem\nrevised after the first pass" }
+      {
+        "body": "## closing summary_v2\n\n### Problem\nrevised after the first pass"
+      }
     ]
   },
   {
@@ -67,7 +85,9 @@
     "title": "heading only inside a fenced block — NO real summary (#295 R2 / H1)",
     "state": "CLOSED",
     "comments": [
-      { "body": "## Diagnosis\n\nthe template looks like:\n\n```markdown\n## Closing Summary\n\n### Problem\n```\n\njust quoting it — no summary was ever written" }
+      {
+        "body": "## Diagnosis\n\nthe template looks like:\n\n```markdown\n## Closing Summary\n\n### Problem\n```\n\njust quoting it — no summary was ever written"
+      }
     ]
   },
   {
@@ -75,7 +95,9 @@
     "title": "heading only inside an HTML comment — invisible in a browser (#295 R2 / H1)",
     "state": "CLOSED",
     "comments": [
-      { "body": "## Diagnosis\n\n<!--\n## Closing Summary\n-->" }
+      {
+        "body": "## Diagnosis\n\n<!--\n## Closing Summary\n-->"
+      }
     ]
   },
   {
@@ -83,7 +105,9 @@
     "title": "heading with ZERO content after it — presence is not a summary (#295 R2 / H1)",
     "state": "CLOSED",
     "comments": [
-      { "body": "## Closing Summary" }
+      {
+        "body": "## Closing Summary"
+      }
     ]
   },
   {
@@ -91,7 +115,9 @@
     "title": "genuine summary merged into the IC comment — must stay MID-COMMENT (#295 R2)",
     "state": "CLOSED",
     "comments": [
-      { "body": "## Implementation Complete\n\n- [x] done\n\n---\n\n## Closing Summary\n\n### Problem\nreal content here\n\n### Root Cause\nmore real content" }
+      {
+        "body": "## Implementation Complete\n\n- [x] done\n\n---\n\n## Closing Summary\n\n### Problem\nreal content here\n\n### Root Cause\nmore real content"
+      }
     ]
   },
   {
@@ -99,7 +125,9 @@
     "title": "pwn\nmissing\t#9999  FABRICATED ENTRY",
     "state": "CLOSED",
     "comments": [
-      { "body": "## Closing Summary\n\n### Problem\nthis issue really does have a summary" }
+      {
+        "body": "## Closing Summary\n\n### Problem\nthis issue really does have a summary"
+      }
     ]
   },
   {
@@ -107,7 +135,9 @@
     "title": "tab\there\tin title",
     "state": "CLOSED",
     "comments": [
-      { "body": "## Diagnosis\n\nno summary" }
+      {
+        "body": "## Diagnosis\n\nno summary"
+      }
     ]
   },
   {
@@ -115,7 +145,79 @@
     "title": "heading indented 4 spaces — CommonMark calls that code, not a heading (#295 R2)",
     "state": "CLOSED",
     "comments": [
-      { "body": "## Diagnosis\n\nsomeone pasted:\n\n    ## Closing Summary\n\n    ### Problem\n\nas an indented block" }
+      {
+        "body": "## Diagnosis\n\nsomeone pasted:\n\n    ## Closing Summary\n\n    ### Problem\n\nas an indented block"
+      }
+    ]
+  },
+  {
+    "number": 115,
+    "title": "REAL summary whose heading carries an inline HTML marker (#295 R3 / B2)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Closing Summary <!-- idd:closing-summary -->\n\n### Problem\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 116,
+    "title": "REAL summary whose whole body is a fenced block (#295 R3 / B2)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Closing Summary\n\n```\nthe entire summary is a code block\n```"
+      }
+    ]
+  },
+  {
+    "number": 117,
+    "title": "EMPTY summary; a later unrelated section must not count as its content (#295 R3 / B4)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Closing Summary\n\n## Next Steps\n\n- follow up elsewhere"
+      }
+    ]
+  },
+  {
+    "number": "118\nmissing\t#9999  FORGED VIA NUMBER",
+    "title": "forging via .number must not work (#295 R3 / B3)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Closing Summary\n\n### Problem\nreal"
+      }
+    ]
+  },
+  {
+    "number": 119,
+    "title": "REAL summary containing a line that starts with a balanced HTML comment (#295 R3 acid)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Closing Summary\n\n<!-- editorial note --> still part of the summary\n\n### Problem\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 120,
+    "title": "prose mentioning an unbalanced HTML-comment opener, then a REAL summary (#295 R3 acid)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Implementation Complete\n\nThe variant <!-- was invisible in a browser.\n\n---\n\n## Closing Summary\n\n### Problem\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 121,
+    "title": "REAL summary preceded by an IDD marker on its own line (#295 R3 acid)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "<!-- idd:closing-summary -->\n## Closing Summary\n\n### Problem\nreal content"
+      }
     ]
   }
 ]

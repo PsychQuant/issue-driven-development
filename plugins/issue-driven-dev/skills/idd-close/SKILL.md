@@ -6,7 +6,7 @@ description: |
   支援 cluster close（v2.34.0+）：多個 #N（如 `#34 #36 #38`）共用 PR 的 cluster 一次關閉，**每個 issue 各寫獨立 closing summary**（不偷懶合併）。
   Use when: verify 通過後、commit 之後。
   防止的失敗：修完了但三個月後沒人知道當時做了什麼。
-argument-hint: "#issue [#issue ...] e.g. '#42' or '#34 #36 #38' (cluster close after merge) | --retroactive [--via <channel>] (remediate an already-closed issue that has no Closing Summary)"
+argument-hint: "#issue [#issue ...] e.g. '#42' or '#34 #36 #38' (cluster close after merge) | --retroactive [--via <channel>] (remediate an already-closed issue classified `missing` — see Precondition 分類; a heading in a non-canonical form or mid-comment does NOT qualify)"
 allowed-tools:
   - Bash(gh:*)
   - Bash(git:*)
@@ -73,16 +73,29 @@ allowed-tools:
 
 **Normative source 是 [`scripts/check-closed-without-summary.sh`](../../scripts/check-closed-without-summary.sh) 的 `CLASSIFY` filter**；本節是它的散文鏡像，兩者衝突時以該 script 為準。
 
+**先決條件（三條，套用於下表每一類）**：
+
+1. **只看活的 markdown** —— fenced code block、HTML comment、indented code 內的行**不算**（本檔 Step 2 自己就把 canonical template 印在 fence 裡，任何 comment 複述它都會誤判）。
+2. **heading 底下要有內容** —— 只有 heading、下面空無一物的 comment 不算 summary。
+3. **縮排上限 3 空格**（CommonMark；4 空格以上是 code block）。
+
 | 分類 | 判準 | `--retroactive` |
 |---|---|---|
-| `own-comment` | 某則 comment 以 canonical `## Closing Summary` 開頭 | **abort** —— 「已 remediate 過 / 本來就有」 |
-| `casing` | 某則 comment 的**第一行**是該 heading 但大小寫不同（`## Closing summary`）| **abort** —— 訊息：summary **在**，要做的是把 heading 正規化成 `## Closing Summary`，不是再貼一份 |
-| `mid-comment` | heading 出現在某則 comment 內、但不在開頭（常見：接在 `## Implementation Complete` 後面、`---` 分隔）| **abort** —— 訊息：summary **在**，要做的是把它拆成獨立 comment |
-| `missing` | 完全找不到 closing-summary heading | ✅ **唯一放行** |
+| `own-comment` | 某則 comment **以** canonical `## Closing Summary` 開頭，且底下有內容 | **abort** —— 「已 remediate 過 / 本來就有」 |
+| `casing` | 某則 comment 的**第一行**是該 heading 但**非 canonical 形式**（大小寫不同，或 1-3 空格縮排），且底下有內容 | **abort** —— 訊息：summary **在**，要做的是把 heading 正規化成 `## Closing Summary`，不是再貼一份 |
+| `mid-comment` | 活的 markdown 中有帶內容的該 heading，但**不在** comment 開頭 | **abort** —— 訊息：**未經驗證**，工具分不出這是真 summary 還是引述；請先人工看過再決定，**不要**憑這一行就跑 retroactive |
+| `missing` | 以上皆非 | ✅ **唯一放行** |
 
 **為什麼 precondition 不能只用 `startswith`**（#295 的核心）：`--audit-closes` 與本 precondition 共用同一個 marker，所以偵測端的假陽性**不只是噪音，會直接變成不可逆動作** —— 在一張已經有完整 summary 的 issue 上再貼一份。實測某 repo 43 張 closed issue 有 **11 張**（26%）是 `casing` / `mid-comment`：它們字面上確實沒有「以 `## Closing Summary` 開頭」的 comment，舊 precondition 會**全部放行**。那一次是操作者在 draft 前手動核對 comment 內容才攔下來的；契約裡沒有任何一層會擋。
 
-**`casing` / `mid-comment` 是 abort 不是 warn**：兩者都代表「內容在、marker 不合」，該做的是**一個字元或一次 comment 拆分**的正規化，不是 retroactive reconstruct。把它們放行等於用「補 audit trail」的名義製造重複 audit trail。
+**`casing` / `mid-comment` 是 abort 不是 warn，但理由不同**：
+
+- `casing` —— 工具**確定**內容在（heading 在第一行、底下有內容），只是形式非 canonical。該做的是**一個字元**的正規化，不是 retroactive reconstruct。
+- `mid-comment` —— 工具**不確定**。heading 不在 comment 開頭時，它分不出真 summary 與引述（例如有人在 comment 裡複述本檔 Step 2 的 template）。abort 的理由是**未經驗證**，不是「內容在」。人工看過後：真的是 summary → 拆成獨立 comment；只是引述 → 該 issue 其實是 `missing`，那時才走 retroactive。
+
+兩者放行都等於用「補 audit trail」的名義製造重複 audit trail。
+
+> **本 gate 是散文，不是機械強制（誠實揭露）。** 這張表由 agent 讀了才生效 —— 沒有任何 runtime 會擋住一個忽略它的執行。機械判定只存在於 [`scripts/check-closed-without-summary.sh`](../../scripts/check-closed-without-summary.sh)，而本 skill 並未呼叫它。要把這條路變成真正的 gate，需要 precondition 改為實際執行該 script 並讀其分類 —— **未做**，記在此處而非只留在 PR 討論裡。
 
 **順序固定**：canonical `startswith` **最先判**，所以 `## Closing Summary (retroactive — …)`（本 skill 自己產出的 heading）落在 `own-comment` 而非被 `casing` 分支搶走 —— 那正是 idempotency 依賴的行為。
 
