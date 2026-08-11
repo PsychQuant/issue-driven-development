@@ -81,7 +81,7 @@ fallback 啟用時印一行 notice（排序品質可能較差）。
 
 - **Open hit**：`gh issue view N --json body` 解析 `**Phase**:` 行（同 idd-list Step 3 規則；無 → `(no phase)`）；`gh pr list --state open` body scan `#N` → 有 → 標 `→ PR #M`（精簡版 — 不做 cluster leader 邏輯，要完整視圖導流 idd-list）
 - **Closed hit**：comments 掃 `## Closing Summary` 開頭，**大小寫不敏感、允許 1-3 空格縮排**（#295 —— 該 heading 由 LLM 依模板生成、寫入端無 normalization，大小寫漂移是預期而非例外）→ 有 → 標 `📜 closing summary`（可考古的結案紀錄）；無 → 標 `(closed, no summary)`
-  - 本標記只回答「有沒有可考古的紀錄」，**不做**四類分流 —— 那是 `--audit-closes` 與 `--retroactive` 的判定（normative source：`scripts/check-closed-without-summary.sh`）。但大小寫敏感會把 `## Closing summary` 標成 `(closed, no summary)`，對搜尋結果是誤導，故此處採寬鬆比對
+  - 本標記只回答「有沒有可考古的紀錄」，**不做**上述分類 —— 那是 `--audit-closes` 與 `--retroactive` 的判定（normative source：`scripts/check-closed-without-summary.sh`）。但大小寫敏感會把 `## Closing summary` 標成 `(closed, no summary)`，對搜尋結果是誤導，故此處採寬鬆比對
 
 ### Step 4: Render
 

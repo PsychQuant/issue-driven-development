@@ -5,15 +5,18 @@
 # auto-closed by a commit / PR-body close keyword, bypassing the /idd-close gate
 # (checklist / semantic / sister-sweep / residue / distribution-sync).
 #
-# Four classes (#295) — this file is their NORMATIVE SOURCE:
-#   own-comment   canonical heading at the start of a comment, with content
-#   casing        same, but non-canonical form (casing / 1-3 leading spaces)
-#   mid-comment   heading with content, not at the comment's start — UNVERIFIED
-#   missing       none of the above
+# Four destinations (#295) — this file is their NORMATIVE SOURCE:
+#   missing    no heading-shaped line anywhere in any comment (RAW text)
+#   present    such a line exists, but no comment leads with one — UNVERIFIED
+#   casing     a comment leads with it, in a non-canonical form
+#   (quiet)    a comment leads with the canonical `## Closing Summary`
 #
-# Output: three sections, printed only when non-empty. MISSING and MID-COMMENT
-# both carry ⚠; only MISSING invites `--retroactive`. All-clear is a single ✓
-# line when every closed issue is own-comment.
+# Output: three sections, printed only when non-empty. MISSING and PRESENT both
+# carry ⚠; only MISSING invites `--retroactive`. All-clear is a single ✓ line.
+#
+# No markdown parsing: the destructive gate turns on ABSENCE alone, so a quoted
+# heading and a real one count the same. That under-reports on purpose — see the
+# rationale above CLASSIFY.
 #
 # Advisory only — ALWAYS exits 0.
 #
@@ -88,144 +91,126 @@ if ! printf '%s' "$ISSUES_JSON" | jq empty 2>/dev/null; then
   exit 0
 fi
 
-# ── Classify: what does each CLOSED issue's summary marker actually look like? ──
+# ── Classify: may a human be told "this issue was closed with no summary"? ──
 #
-# NORMATIVE SOURCE for the four classes (#295). The prose consumers — idd-list
-# `--audit-closes` and idd-close `--retroactive` — follow these definitions;
-# when they disagree with this filter, this filter is right.
+# NORMATIVE SOURCE (#295). The prose consumers — idd-list `--audit-closes` and
+# idd-close `--retroactive` — follow these definitions; when they disagree with
+# this filter, this filter is right.
 #
-#   own-comment  a comment starts with the canonical `## Closing Summary`
-#                AND has content under it
-#   casing       a comment's FIRST line is that heading in a non-canonical form
-#                (different casing, or 1-3 leading spaces), with content under it
-#   mid-comment  a heading with content under it appears in LIVE markdown, but
-#                not at the start of its comment — **unverified**: the tool has
-#                not established that what follows is really a summary
-#   missing      no closing-summary heading in live markdown, or the heading has
-#                nothing under it
+#   missing    NO line in ANY comment looks like a closing-summary heading.
+#              This is the only class that invites `--retroactive`.
+#   present    Such a line exists, but no comment LEADS with one. Printed with a
+#              warning and an explicit "do NOT run --retroactive" — the tool has
+#              established nothing about it beyond its existence.
+#   casing     A comment leads with the heading in a non-canonical form
+#              (different casing, indented, `##closing summary`, `_v2`, …).
+#              Actionable, but the action is to normalise the heading.
+#   (quiet)    A comment leads with the canonical `## Closing Summary`.
+#              Printed nowhere, so the report stays quiet for compliant repos.
 #
-# Why four and not two: the two-way version asked only `startswith("## Closing
-# Summary")`, which misreported 11 of 43 closed issues in a real repo (26%) —
-# ten were `## Closing summary`, one had the summary appended below an
-# Implementation Complete in the same comment. Every one of them had a real,
-# complete summary. A flag wrong a quarter of the time gets ignored, and the
-# ignoring is the damage: eleven false alarms hide the twelfth that is real.
+# WHY THE DESTRUCTIVE GATE ASKS ONLY ABOUT ABSENCE (the round-5 rewrite).
 #
-# The sharper reason is that `idd-close --retroactive` uses the SAME marker as
-# its precondition, so a false positive here does not merely add noise — it
-# posts a duplicate summary onto an issue that already has one. Only `missing`
-# may reach that path, which is why the other two classes are printed with an
-# explicit "do NOT run --retroactive".
+# `idd-close --retroactive` shares this marker as its PRECONDITION, so a false
+# positive here is not noise — it posts a duplicate summary onto an issue that
+# already has one. The two error directions therefore cost wildly different
+# amounts: over-flagging is irreversible, under-flagging is a missed detection
+# in a tool that is advisory and reactive by design.
 #
-# Order matters. The canonical `startswith` is tested FIRST so that
-# `## Closing Summary (retroactive — …)` keeps classifying as own-comment —
-# that shape is deliberate (see idd-close SKILL.md: a remediated issue must not
-# be re-surfaced), and letting the casing branch claim it would break
-# idempotency.
+# Rounds 1 through 4 tried to earn precision by parsing markdown in jq — fenced
+# blocks, HTML comments, indented code, section bounds, indent caps. Each new
+# mechanism grew its own one-way failure, and every one of them failed in the
+# SAME direction: a real summary the parser could not follow became `missing`,
+# the one class that authorises the irreversible action. Four verify rounds
+# found nine such shapes (h2 subsections, a `~~~` line closing a ``` fence, an
+# empty decoy heading before a real one, a one-line summary on the heading line,
+# an unclosed fence, an unclosed HTML comment, a space+tab indent, …), and the
+# list was still growing when the parser was removed.
 #
-# `head_re` has NO trailing `\b` on purpose: `_` is a word character, so a word
-# boundary there would refuse `## closing summary_v2` — a plausible way to head
-# a revised summary — and misfile a present summary as `missing`. Indentation is
-# capped at three spaces (CommonMark): four or more is an indented code block,
-# not a heading.
+# So the parser is gone. Absence is judged on RAW TEXT: any line, any comment,
+# any indentation, blockquote markers allowed, case-insensitive. Nothing about
+# fences, HTML comments or section structure can change the answer, because a
+# quoted heading and a real one are treated alike — deliberately. The price is
+# stated plainly: an issue whose ONLY mention of the marker is a quotation is no
+# longer reported as missing. That is a missed detection, and it is the cheap
+# direction. The expensive direction is now unreachable by construction rather
+# than by getting a parser exactly right.
 #
-# Three hardenings from the #295 verify round, each reproduced before fixing:
+# `casing` and `present` keep the information the old two-way marker threw away
+# (10 of 43 closed issues in a real repo had drifted to `## Closing summary`),
+# but neither authorises anything.
 #
-# 1. LIVE MARKDOWN ONLY. The first version matched the heading on any line of any
-#    comment, so merely *quoting* it exonerated an issue that had no summary —
-#    and the report then asserted "the summary IS there". Reachable by ordinary
-#    content, not just attack: `skills/idd-close/SKILL.md` prints the canonical
-#    template inside a fence, so any comment reproducing it tripped this. The
-#    HTML-comment case was worse — invisible in a browser while the audit
-#    insisted a summary existed. `live_lines` drops fenced blocks, HTML comments
-#    and indented code before the heading is looked for.
+# `head_re` deliberately has no trailing `\b`: `_` is a word character, so a word
+# boundary would refuse `## closing summary_v2` — a plausible way to head a
+# revised summary — and misfile a present summary as missing.
 #
-# 2. A HEADING IS NOT A SUMMARY. A comment whose entire body is `## Closing
-#    Summary` used to classify own-comment and vanish from the report. Every
-#    class now requires at least one non-blank line under the heading.
-#
-# 3. THE TITLE IS UNTRUSTED DATA. The record below is `class\t#N  title`, parsed
-#    positionally downstream. Both delimiters were in-band and the title was
-#    interpolated raw, so a newline in a title forged a whole row — including
-#    into the one section that invites the irreversible `--retroactive`.
-#    `sanitize` collapses every control character to a space, which closes the
-#    forging channel, the tab-truncation bug and the ANSI-repaint channel at once.
+# THE TITLE AND NUMBER ARE UNTRUSTED DATA. The record below is `class\t#N  title`,
+# parsed positionally downstream. Both delimiters are in-band, so a newline in a
+# title forged a whole row — including into the section that invites the
+# irreversible `--retroactive`. `sanitize` collapses control characters AND the
+# non-Cc characters that can forge or reorder a visual row (U+2028/U+2029 line
+# and paragraph separators, and the bidi overrides and isolates). It stops short
+# of all of `\p{Cf}`: that would eat zero-width joiners and split emoji
+# sequences in ordinary titles.
 CLASSIFY='
-  # `^ {0,3}` is CommonMark: four or more spaces is an indented code block, not
-  # a heading. It is REDUNDANT given `live_lines` (which already drops indented
-  # lines) and therefore has NO test of its own — acid confirmed that widening
-  # it back to `[ \t]*` turns nothing red, because no input can distinguish the
-  # two. Kept as the second line if `live_lines` is ever simplified, and labelled
-  # here rather than left to look like tested protection.
-  def head_re: "^ {0,3}##[ \t]*closing[ \t]+summary";
-  # Control characters are structural here (record + field delimiters) and can
-  # also repaint a terminal. One substitution neutralises all three uses.
-  #
-  # `[[:cntrl:]]`, not a `\uXXXX` range: Oniguruma does not read ` ` as an
-  # escape inside a jq string, so `[ -]` silently degrades into the
-  # literal range `0`-`u` and eats most of the alphabet. Caught because every
-  # fixture title came back as fragments like " y ( - - v )".
-  def sanitize: (. // "") | gsub("[[:cntrl:]]"; " ") | gsub(" +"; " ");
-  # Which lines are LIVE markdown, keeping the ORIGINAL index of each line.
-  #
   # NOTE: this jq program lives inside a single-quoted shell string, so it must
   # contain no apostrophe anywhere -- not even in a comment. Writing a real
-  # apostrophe here silently closed the string and produced a bash syntax error
-  # two lines further down.
+  # apostrophe here silently closes the string and produces a bash syntax error
+  # further down. For the same reason every escape below is written as text:
+  # pasting a literal control character here once left two NUL bytes in this
+  # file, which made GitHub serve it as a binary blob (the whole diff rendered
+  # as "Binary file not shown") and made plain grep skip it in silence.
   #
-  # The index matters (#295 R3): the heading must be found in live markdown --
-  # a quoted heading is not a heading -- but "is there content under it" has to
-  # be answered against the RAW lines. Round 2 used the live list for both, so
-  # a real summary whose body sat entirely inside a fence classified missing
-  # and was routed to the one class --retroactive admits. One mechanism was
-  # borrowed for a second job whose semantics differ: content inside a fence is
-  # still content, it just is not a heading.
+  # Deliberately permissive: any indentation, blockquote markers allowed, one or
+  # two hashes, no space required after them. This regex answers only "could a
+  # reader see a closing-summary heading here", and every ambiguity resolves
+  # toward yes, because yes is the direction that withholds the destructive
+  # action. `###` is excluded -- an h3 is a subsection of a summary, not one.
+  def head_re: "^[ \t>]*#{1,2}[ \t]*closing[ \t]+summary";
+  # Control characters are structural here (record + field delimiters) and can
+  # also repaint a terminal; U+2028/U+2029 and the bidi controls can forge or
+  # reorder a row in any renderer that honours them. One substitution covers all.
   #
-  # HTML comments are stripped as a SPAN, not by deleting the line, and the
-  # block form is anchored at line start (CommonMark HTML block type 2). Round
-  # 2 deleted any line containing an HTML-comment opener, which erased a
-  # canonical heading carrying an inline marker -- and IDD itself writes
-  # markers like idd:dashboard into comments, so that was reachable by the
-  # conventions of this very plugin.
-  def strip_html_span: gsub("<!--(?:(?!-->)[\\s\\S])*-->"; "");
-  def live_pairs:
-    ((. // "") | split("\n")) as $raw
-    | reduce range(0; $raw | length) as $k ({f:false, h:false, out:[]};
-        ($raw[$k] | strip_html_span) as $l
-        | if .f     then (if ($l | test("^ {0,3}(```|~~~)")) then .f = false else . end)
-          elif .h   then (if ($l | test("-->"))              then .h = false else . end)
-          elif ($l | test("^ {0,3}(```|~~~)"))               then .f = true
-          elif ($l | test("^ {0,3}<!--"))                    then .h = true
-          elif ($l | test("^(    |\t)"))                    then .
-          else .out += [[$k, $l]] end)
-    | .out;
-  # A heading counts only when ITS OWN section carries something non-blank.
+  # POSIX class names, not a numeric escape range: Oniguruma does not read the
+  # backslash-u form inside a jq string, so a range written that way silently
+  # degrades into the literal range 0 to u and eats most of the alphabet. It was
+  # caught only because every fixture title came back as fragments.
+  def sanitize:
+    (. // "")
+    | gsub("[[:cntrl:]\\p{Zl}\\p{Zp}\\x{200E}\\x{200F}\\x{202A}-\\x{202E}\\x{2066}-\\x{2069}]"; " ")
+    | gsub(" +"; " ");
+  # The first line a reader actually sees: blank lines and whole-line HTML
+  # markers are skipped, because this plugin mandates a marker on line 1 for
+  # machine-locatable comments (references/dashboard-comment.md), and a leading
+  # marker must not demote a byte-perfect summary.
+  def lead_line:
+    ((. // "") | split("\n"))
+    | map(select((test("^[ \t]*$") | not) and (test("^[ \t]*<!--.*-->[ \t]*$") | not)))
+    | (first // "");
+  # Oniguruma anchors ^ to the START OF THE STRING, not to each line -- verified,
+  # not assumed. Lines are therefore split explicitly; relying on the anchor
+  # would have sent every mid-comment marker to missing, which is precisely the
+  # failure this rewrite exists to make unreachable.
+  def has_heading_anywhere:
+    ((. // "") | split("\n")) | any(test(head_re; "i"));
+  # Four destinations, in order. Only the LAST one authorises anything, and it
+  # is reached solely by the absence of any heading-shaped line anywhere.
   #
-  # "Its own section" = the RAW lines after the heading, up to the next h1/h2.
-  # Both halves were wrong before: round 2 asked the LIVE lines (so a summary
-  # written entirely inside a fence read as empty), and round 3 first widened it
-  # to every RAW line after the heading (so an unrelated later section made an
-  # EMPTY summary look filled -- a heading with nothing under it then classified
-  # own-comment and vanished from the report entirely). Raw lines, bounded by
-  # the section, is the predicate the class definitions actually claim.
-  def heading_at:
-    . as $b
-    | (($b // "") | split("\n")) as $raw
-    | ([$b | live_pairs | .[] | select(.[1] | test(head_re; "i")) | .[0]] | first) as $k
-    | if $k == null then null else
-        ($raw[($k + 1):]) as $rest
-        | ([range(0; $rest | length) | select($rest[.] | test("^ {0,3}#{1,2}[ \t]"))] | first) as $stop
-        | (if $stop == null then $rest else $rest[0:$stop] end) as $section
-        | if ($section | any(test("\\S"))) then $k else null end
-      end;
+  # The canonical test comes first so that `## Closing Summary (retroactive - ...)`
+  # -- the heading this very skill writes when it remediates -- stays quiet
+  # instead of being claimed by the casing branch. That is what makes
+  # `--retroactive` idempotent.
+  #
+  # Known and accepted: a lead line of `## Closing Summary (draft, do not use)`
+  # also reads as compliant and so is reported nowhere. Bounding the heading tail
+  # is exactly the kind of parsing this rewrite removed, and the residual error
+  # is a missed detection, not a duplicate post.
   .[]
   | select((.state // "CLOSED") | ascii_upcase == "CLOSED")
   | . as $i
   | [$i.comments[]?.body // ""] as $bodies
-  | (if ($bodies | any(startswith("## Closing Summary") and (heading_at == 0)))
-                                                             then "own-comment"
-     elif ($bodies | any(heading_at == 0))                    then "casing"
-     elif ($bodies | any(heading_at != null))                 then "mid-comment"
+  | (if   ($bodies | any(lead_line | startswith("## Closing Summary"))) then "compliant"
+     elif ($bodies | any(lead_line | test(head_re; "i")))               then "casing"
+     elif ($bodies | any(has_heading_anywhere))                         then "present"
      else "missing" end) as $class
   | "\($class)\t#\($i.number | tostring | sanitize)  \($i.title | sanitize)"
 '
@@ -244,37 +229,38 @@ pick() { printf '%s\n' "$CLASSIFIED" | awk -F'\t' -v c="$1" '$1 == c { print $2 
 
 MISSING=$(pick missing)
 CASING=$(pick casing)
-MIDCOMMENT=$(pick mid-comment)
+PRESENT=$(pick present)
 
-if [ -z "$MISSING" ] && [ -z "$CASING" ] && [ -z "$MIDCOMMENT" ]; then
+if [ -z "$MISSING" ] && [ -z "$CASING" ] && [ -z "$PRESENT" ]; then
   echo "✓ No closed issue is missing a ## Closing Summary (within the scanned window)."
   exit 0
 fi
 
 if [ -n "$MISSING" ]; then
-  echo "MISSING — no ## Closing Summary anywhere (possible auto-close-trap bypass; remediate: idd-close --retroactive #N):"
+  echo "MISSING — no closing-summary heading appears anywhere in the comments (possible auto-close-trap bypass; remediate: idd-close --retroactive #N):"
   printf '%s\n' "$MISSING" | sed 's/^/  ⚠ /'
+  echo ""
+fi
+
+# PRESENT keeps the ⚠ and says plainly that nothing was established. The heading
+# exists somewhere but no comment leads with one, and this audit deliberately no
+# longer tries to tell a real summary from a quoted one — four rounds of trying
+# produced nine ways to misjudge it, every one of them routing a real summary to
+# MISSING. A human decides here; the tool only points.
+if [ -n "$PRESENT" ]; then
+  echo "PRESENT (unverified) — a closing-summary heading exists in the comments, but no comment starts with one. Whether it is a real summary or a quotation was NOT established — inspect by hand; do NOT run --retroactive on the strength of this line:"
+  printf '%s\n' "$PRESENT" | sed 's/^/  ⚠ /'
   echo ""
 fi
 
 # CASING says "non-canonical form", not "cased differently": the class also
 # covers a heading indented one to three spaces, whose casing is perfectly
 # correct. Naming the wider thing after its commonest member told the reader to
-# fix something that was not wrong.
+# fix something that was not wrong. No ⚠ — the summary is where it should be and
+# only the heading needs normalising.
 if [ -n "$CASING" ]; then
-  echo "CASING — heading is not in canonical form (different casing, or 1-3 leading spaces); a summary IS under it (normalize the heading — do NOT run --retroactive):"
+  echo "CASING — a comment leads with the heading but not in canonical form (casing, indentation, or a suffix like _v2); the summary is there (normalize the heading — do NOT run --retroactive):"
   printf '%s\n' "$CASING" | sed 's/^/    /'
-  echo ""
-fi
-
-# MID-COMMENT is stated as UNVERIFIED and keeps the ⚠, because the tool cannot
-# tell a real summary from a quoted one once the heading is not at the start of
-# its comment. The first version asserted "the summary IS there" and dropped the
-# glyph — a guess that switched off the only alarm. Erring loud is the whole
-# point of a safety net; the earlier wording erred silent.
-if [ -n "$MIDCOMMENT" ]; then
-  echo "MID-COMMENT (unverified) — a heading with content under it was found, but not at the start of its comment. Whether it is a real summary or a quoted one was NOT established — inspect by hand; do NOT run --retroactive on the strength of this line alone:"
-  printf '%s\n' "$MIDCOMMENT" | sed 's/^/  ⚠ /'
   echo ""
 fi
 

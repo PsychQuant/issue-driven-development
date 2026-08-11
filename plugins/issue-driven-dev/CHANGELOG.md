@@ -35,15 +35,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.104.0] - 2026-08-10
+## [2.104.0] - 2026-08-11
 
 ### Fixed
 
-- **Closing-summary marker classifies four ways, not two (#295)** — `--audit-closes` asked only `startswith("## Closing Summary")`, case-sensitive and anchored at the comment's start. Measured against a real repo's 43 closed issues: **11 false positives (26%)** — ten `## Closing summary` (lowercase s), one with the summary appended below an Implementation Complete in the same comment. Every one had a complete summary. The sharper problem is that `idd-close --retroactive` shares that marker as its **precondition**, so a false positive there is not noise but an irreversible action: it posts a duplicate summary onto an issue that already has one, and nothing in the contract stops it (the live batch was caught only by a human reading the comments before drafting). `check-closed-without-summary.sh` now classifies `own-comment` / `casing` / `mid-comment` / `missing` and prints three sections — only `missing` carries ⚠ and invites `--retroactive`; the other two say the summary IS there and explicitly warn the destructive path off. The script's `CLASSIFY` filter is the **normative source**; `idd-close`'s precondition and `idd-list`'s Step 4 marker + Step 3 phase fallback (a fourth reader found during diagnosis, not in the issue body) follow it. Canonical `startswith` is tested first so `## Closing Summary (retroactive — …)` stays `own-comment` — idempotency depends on it — and the heading regex deliberately omits a trailing `\b` (`_` is a word character; `## closing summary_v2` would otherwise be misfiled as missing). Root cause is the two ends being asymmetric: the write side is LLM-generated free text with no normalization, the read side was an exact prefix. Write-side normalization is recorded residue, not done. Verified by cross-implementation agreement on 43 live issues plus a programmatically reconstructed pre-fix snapshot (10 lowercased + 1 merged → 10 CASING + 1 MID-COMMENT + **0 MISSING**); acid 7/7, each mechanism red on its own.
+- **The closing-summary audit no longer parses markdown; its destructive gate turns on absence alone (#295)** —
+  `--audit-closes` judged "closed but missing a closing summary" with `startswith("## Closing Summary")`:
+  case-sensitive, anchored at the comment start. On a real repo's 43 closed issues that misreported **11 (26%)**,
+  every one of which had a complete summary — ten had drifted to `## Closing summary`, one had the summary appended
+  below an Implementation Complete in the same comment. `idd-close --retroactive` shares that marker as its
+  **precondition**, so a false positive is not noise: it posts a duplicate summary onto an issue that already has one.
 
-- **Verify round 2 hardening (#295, PR #297)** — the ensemble refuted the first cut on four counts, each reproduced before it was accepted. (1) `mid-comment` matched the heading on *any* line of *any* comment, so merely **quoting** the marker exonerated an issue that had no summary — and the report then asserted "the summary IS there". Reachable by ordinary content: `idd-close/SKILL.md` prints the canonical template inside a fence, and the HTML-comment variant was invisible in a browser while the audit insisted a summary existed. The read side now looks only at **live markdown** (fenced blocks, HTML comments and indented code stripped first), requires **content under the heading**, states `mid-comment` as **UNVERIFIED**, and keeps its ⚠ — a guess must not switch off the only alarm. (2) The record `class\t#N  title` was parsed positionally with both delimiters in-band and the title interpolated raw, so a newline in a title **forged a whole row**, including into the one section that invites the irreversible `--retroactive`; titles are now control-character-sanitised, which closes the forging, tab-truncation and ANSI-repaint channels together. (3) `idd-list`'s own TaskCreate list and flag table still stated the two-way rule the same file had just replaced. (4) The Plan's family-wide scope claimed four readers; there are **six** — `idd-find` (read) and `idd-update` (write-side phase inference) were missed, which is precisely the failure the #129 hard gate exists to prevent. Suite 9 → 35 assertions.
+  The classifier now answers two questions and nothing else, both on RAW text:
 
-- **Verify round 3 (#295, PR #297)** — round 2 fixed the mechanics and left the prose behind. The ensemble's forensic was exact: `git show` on `idd-list/SKILL.md` was **2 insertions, 2 deletions** — precisely the two lines round 1 had *named as examples* — while the render spec they point at still said `mid-comment` means "the summary IS there" and **forbade** the ⚠ the script had just started emitting. Same in `idd-close`, including its frontmatter `argument-hint` (the only surface read at skill-selection time). Round 3 stops patching cited lines: every reader was enumerated exhaustively and its class table rewritten as one unit, with the three preconditions (live markdown only / content under the heading / 3-space indent cap) stated in each. Round 2 had also introduced two silent-direction defects of its own: `live_lines` was borrowed to answer BOTH "where is the heading" and "is there content", so a real summary written entirely inside a fence read as empty and went to MISSING; and any line *containing* an HTML-comment opener was deleted, which erased a canonical heading carrying an inline marker — reachable by this plugin's own `<!-- idd:dashboard -->` convention. Heading location now uses live markdown while the content check uses the RAW lines **bounded by the heading's own section** (an unrelated later section must not fill an empty summary), HTML comments are stripped as a span with the block form anchored at line start, and `.number` joins `.title` in sanitisation — the forging channel was still open one field to the left. The prose gate's lack of machine enforcement is now disclosed in `idd-close` itself rather than only in the PR thread. Suite 38 → 45; acid 5/5, each mechanism red on its own.
+  | class | predicate | effect |
+  |---|---|---|
+  | `missing` | no line in ANY comment matches `^[ \t>]*#{1,2}[ \t]*closing[ \t]+summary` (case-insensitive) | the only class that invites `--retroactive` |
+  | `present` | such a line exists, but no comment leads with one | ⚠ UNVERIFIED, `do NOT run --retroactive` |
+  | `casing` | a comment leads with it in a non-canonical form | no ⚠; normalise the heading |
+  | (quiet) | a comment leads with the canonical heading | printed nowhere |
+
+  "Leads with" skips blank lines and whole-line HTML markers, because this plugin mandates a marker on line 1 for
+  machine-locatable comments — a leading `<!-- idd:dashboard -->` must not demote a byte-perfect summary.
+
+- **Why the parser was deleted instead of fixed (#295, PR #297, four failed verify rounds)** — rounds 1 to 4 each tried
+  to earn precision by re-implementing CommonMark in jq: a fenced-block toggle, an HTML-comment stripper, an
+  indented-code rule, a section bound, an indent cap, a "heading must have content under it" requirement. Every round
+  fixed the previous round's defect **and introduced a new one in the same direction** — a real summary the parser could
+  not follow became `missing`, the one class that authorises an irreversible action. Round 4 alone found nine such
+  shapes still live: h2 subsections instead of h3; a `~~~` line closing a backtick fence; a three-backtick line closing
+  a four-backtick fence; an empty decoy heading suppressing a real one later in the same comment; a one-line summary
+  written on the heading line; an unclosed fence; an unclosed HTML comment; a space+tab indent; a cluster-close preamble
+  above the summary. The list was still growing when the maintainer chose to remove the parser rather than patch it a
+  fifth time. Each of those nine is now a fixture (`#122`-`#131`) asserting only that it never reaches `missing`.
+
+  **The accepted price, stated plainly**: an issue whose only mention of the marker is a quotation is no longer reported
+  as missing. That is a missed detection in a tool that is advisory and reactive; the expensive direction — a duplicate
+  post onto an issue that already has a summary — is now unreachable by construction instead of by getting a parser
+  exactly right. Fixtures `#108`/`#109`/`#110`/`#114` flipped from MISSING to PRESENT to record that choice, and say so
+  at the assertion.
+
+- **The normative source shipped as a binary blob for three rounds (#295 R4)** — two NUL bytes and a 0x1F sat inside the
+  jq comment that explained why control characters must be neutralised: the escapes had been pasted as the bytes
+  themselves. Every symptom was silence. `grep -r` printed nothing instead of erroring; `gh pr diff` inherited the bytes,
+  so grep went blind on the patch too; and the GitHub API returned **`patch: ABSENT`** for this file alone, meaning the
+  +199/-19 to the file that defines the whole feature rendered on the PR as *"Binary file not shown"* — unreadable and
+  un-commentable by any human reviewer. git itself still diffed it as text, because its detector only reads the first
+  8000 bytes and the NULs sat at byte 8216. A PR about making a marker reliably findable had shipped its own normative
+  source in a form `grep` refuses to search. The test suite now asserts the helper contains no control byte but TAB and LF.
+
+- **Row forging was still open one codepoint over (#295 R4)** — `sanitize` used `[[:cntrl:]]`, which covers Cc only.
+  Measured: TAB, LF, ESC, NEL and VT were neutralised while **U+2028, U+2029, U+202E, U+200E/200F and U+2066-2069 all
+  survived** into `.title` and `.number` — enough to forge or reorder a visible row in the one section that invites
+  `--retroactive`. The class now covers `\p{Zl}`, `\p{Zp}` and the bidi controls, and deliberately stops short of all
+  of `\p{Cf}`: that would eat zero-width joiners and split emoji sequences in ordinary titles.
+
+- **Two assertions that could not fail (#295 R4/R5)** — the forging tests grepped for `#9999  FABRICATED ENTRY` with two
+  spaces, but the whitespace-collapsing half of `sanitize` survives any mutation of the control-character half, so the
+  needle never matched and the assertion stayed green **while forging actually succeeded**. Acid exposed it: mutating
+  `sanitize` turned only the tab assertion red. Both now assert on the shape of a forged row. Separately, the in-file
+  claim that the `^ {0,3}` indent cap was "strictly redundant, no input can distinguish the two" was false — a space+tab
+  indent distinguished them — and the comment was instructing future maintainers to delete a load-bearing line; the cap
+  and the claim are both gone with the parser.
+
+  Suite 38 -> 66; acid 6/6, each mechanism red on its own. Cross-checked against live data: the 43 closed issues of a
+  real repo produce no output at all, and the same 43 rewound to the pre-fix state that opened #295 put **none** of the
+  original eleven on the destructive path while keeping all eleven visible (10 CASING, 1 PRESENT).
 
 ## [2.103.0] - 2026-08-07
 

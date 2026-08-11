@@ -6,7 +6,7 @@ description: |
   支援 cluster close（v2.34.0+）：多個 #N（如 `#34 #36 #38`）共用 PR 的 cluster 一次關閉，**每個 issue 各寫獨立 closing summary**（不偷懶合併）。
   Use when: verify 通過後、commit 之後。
   防止的失敗：修完了但三個月後沒人知道當時做了什麼。
-argument-hint: "#issue [#issue ...] e.g. '#42' or '#34 #36 #38' (cluster close after merge) | --retroactive [--via <channel>] (remediate an already-closed issue classified `missing` — see Precondition 分類; a heading in a non-canonical form or mid-comment does NOT qualify)"
+argument-hint: "#issue [#issue ...] e.g. '#42' or '#34 #36 #38' (cluster close after merge) | --retroactive [--via <channel>] (remediate an already-closed issue whose comments contain NO closing-summary heading at all — see Precondition 分類; a heading found anywhere in the comments, even quoted or non-canonical, does NOT qualify)"
 allowed-tools:
   - Bash(gh:*)
   - Bash(git:*)
@@ -49,7 +49,7 @@ allowed-tools:
 
 ## Retroactive remediation mode（`--retroactive`, v2.76.0+, #176）
 
-`idd-close --retroactive #N` 修補一個**已經被 auto-close、且分類為 `missing`**（四類定義見下方「Precondition 分類」，#295 —— `casing` / `mid-comment` **不**是 retroactive 的對象）的 issue —— 也就是被 commit / PR-body 的 close keyword 繞過 `/idd-close` gate 關掉的受害者（`/idd-list --audit-closes` / `scripts/check-closed-without-summary.sh` 抓出來的那些）。它把「人工 reconstruct + 手貼 retroactive summary」這個**已文檔化的補救程序**（見 `CLAUDE.md` → Commit Conventions →「補救：commit 已 push 且 trailer 已觸發 auto-close」）自動化。
+`idd-close --retroactive #N` 修補一個**已經被 auto-close、且分類為 `missing`**（分類定義見下方「Precondition 分類」，#295 —— `casing` / `present` **不**是 retroactive 的對象）的 issue —— 也就是被 commit / PR-body 的 close keyword 繞過 `/idd-close` gate 關掉的受害者（`/idd-list --audit-closes` / `scripts/check-closed-without-summary.sh` 抓出來的那些）。它把「人工 reconstruct + 手貼 retroactive summary」這個**已文檔化的補救程序**（見 `CLAUDE.md` → Commit Conventions →「補救：commit 已 push 且 trailer 已觸發 auto-close」）自動化。
 
 > **`--retroactive` 不是 `--force`。** `--force`（本 skill **不給**）是繞過 OPEN issue 的 gate —— 危險。`--retroactive` 處理的 issue **已經 CLOSED**：gate 本來就 moot（沒東西可繞）、也不會 re-close。它只補回缺失的 audit trail。
 
@@ -58,7 +58,7 @@ allowed-tools:
 | 正常 `/idd-close` step | `--retroactive` 行為 |
 |------------------------|----------------------|
 | Step 0 / 1.5 / 1.6 gates | **跳過**（issue 已關，gate moot；非 force bypass）|
-| **Precondition**（retroactive 專屬）| `state == CLOSED` **且**分類為 **`missing`**（四類定義見下方「Precondition 分類」，#295）。OPEN → abort（「不是 retroactive case，跑正常 `/idd-close`」）。**post 前用同一套分類再 check 一次**（防 stale list / race / double-post）。|
+| **Precondition**（retroactive 專屬）| `state == CLOSED` **且**分類為 **`missing`** —— 即**所有 comment 的原始文字裡都找不到** closing-summary heading（分類定義見下方「Precondition 分類」，#295）。OPEN → abort（「不是 retroactive case，跑正常 `/idd-close`」）。**post 前用同一套分類再 check 一次**（防 stale list / race / double-post）。|
 | Step 2 draft | **reuse，但 `### Verification` section 特別處理** —— 從 `git log --grep "#N"`（Changes）+ 該 issue 既有的 `## Diagnosis` / `## Implementation Complete` / `## Verify` comments + body reconstruct 五段式。**標題改成** `## Closing Summary (retroactive — auto-closed via <channel>)`。reconstruct 不足 → 標 **「best-effort reconstruction」**，不假裝完整。**`### Verification` 的捏造風險最高 —— 見下方「Verification honesty 鐵律」。** |
 | Step 3 confirm | **semi-auto（預設）** —— 把 draft 給 user 確認再 post（reconstruct 可能錯，且 issue 已關不急）。confirm 是必要的、但**不是** verification —— cold-read + batch 容易 rubber-stamp，所以下方鐵律把誠實寫死進 draft，不靠 confirm 兜底。|
 | Step 4 publish + close | **publish comment，但跳過 `gh issue close`**（已關）。|
@@ -73,31 +73,32 @@ allowed-tools:
 
 **Normative source 是 [`scripts/check-closed-without-summary.sh`](../../scripts/check-closed-without-summary.sh) 的 `CLASSIFY` filter**；本節是它的散文鏡像，兩者衝突時以該 script 為準。
 
-**先決條件（三條，套用於下表每一類）**：
+**判準只有兩個原始動作，不解析 markdown**（#295 R5）：
 
-1. **只看活的 markdown** —— fenced code block、HTML comment、indented code 內的行**不算**（本檔 Step 2 自己就把 canonical template 印在 fence 裡，任何 comment 複述它都會誤判）。
-2. **heading 底下要有內容** —— 只有 heading、下面空無一物的 comment 不算 summary。
-3. **縮排上限 3 空格**（CommonMark；4 空格以上是 code block）。
+1. **「有沒有」** —— 把**所有** comment 的**原始文字**逐行看，有沒有任何一行長得像 closing-summary heading：`^[ \t>]*#{1,2}[ \t]*closing[ \t]+summary`，**不分大小寫**。任何縮排都算、blockquote 前綴也算、fence 或 HTML comment 內的也算。
+2. **「開頭是不是」** —— 某則 comment 跳過空行與整行 HTML marker 後的**第一行**，是不是那個 heading。
 
 | 分類 | 判準 | `--retroactive` |
 |---|---|---|
-| `own-comment` | 某則 comment **以** canonical `## Closing Summary` 開頭，且底下有內容 | **abort** —— 「已 remediate 過 / 本來就有」 |
-| `casing` | 某則 comment 的**第一行**是該 heading 但**非 canonical 形式**（大小寫不同，或 1-3 空格縮排），且底下有內容 | **abort** —— 訊息：summary **在**，要做的是把 heading 正規化成 `## Closing Summary`，不是再貼一份 |
-| `mid-comment` | 活的 markdown 中有帶內容的該 heading，但**不在** comment 開頭 | **abort** —— 訊息：**未經驗證**，工具分不出這是真 summary 還是引述；請先人工看過再決定，**不要**憑這一行就跑 retroactive |
-| `missing` | 以上皆非 | ✅ **唯一放行** |
+| `compliant` | 某則 comment 的首行以 canonical `## Closing Summary` 開頭 | **abort** —— 「已 remediate 過 / 本來就有」 |
+| `casing` | 某則 comment 的首行是該 heading 但非 canonical 形式（大小寫、縮排、`_v2` 等） | **abort** —— 訊息：summary **在**，要做的是把 heading 正規化成 `## Closing Summary`，不是再貼一份 |
+| `present` | heading 出現在某處，但沒有任何 comment 以它開頭 | **abort** —— 訊息：**未經驗證**，這一端不判斷它是真 summary 還是引述；請人工看過再決定 |
+| `missing` | **所有 comment 的原始文字裡都找不到**那樣的一行 | ✅ **唯一放行** |
 
-**為什麼 precondition 不能只用 `startswith`**（#295 的核心）：`--audit-closes` 與本 precondition 共用同一個 marker，所以偵測端的假陽性**不只是噪音，會直接變成不可逆動作** —— 在一張已經有完整 summary 的 issue 上再貼一份。實測某 repo 43 張 closed issue 有 **11 張**（26%）是 `casing` / `mid-comment`：它們字面上確實沒有「以 `## Closing Summary` 開頭」的 comment，舊 precondition 會**全部放行**。那一次是操作者在 draft 前手動核對 comment 內容才攔下來的；契約裡沒有任何一層會擋。
+**為什麼 precondition 不能只用 `startswith`**（#295 的核心）：`--audit-closes` 與本 precondition 共用同一個 marker，所以偵測端的假陽性**不只是噪音，會直接變成不可逆動作** —— 在一張已經有完整 summary 的 issue 上再貼一份。實測某 repo 43 張 closed issue 有 **11 張**（26%）首行是 `## Closing summary` 或 summary 併在別的 comment 裡：舊 precondition 會**全部放行**。那一次是操作者在 draft 前手動核對才攔下來的；契約裡沒有任何一層會擋。
 
-**`casing` / `mid-comment` 是 abort 不是 warn，但理由不同**：
+**為什麼判準退回「有沒有」而不是「是不是真的」**（R5 的方向決定）：第 1 到第 4 輪都試圖用 jq 解析 markdown 來分辨真 summary 與引述（fence、HTML comment、縮排、section 邊界）。每加一個機制就長出自己的單向失敗，而且**全部朝同一個方向**：parser 跟不上的真 summary 被判成 `missing`，也就是唯一放行不可逆動作的那一類。四輪共找到九種形狀，且清單還在長。所以現在**引述與真 summary 一律當成「有」**。代價明寫：一張只在引述裡提到 marker 的 issue，不再被報成 missing —— 那是漏報，是便宜的方向；貴的方向現在是**結構上到不了**，而不是靠 parser 剛好寫對。
 
-- `casing` —— 工具**確定**內容在（heading 在第一行、底下有內容），只是形式非 canonical。該做的是**一個字元**的正規化，不是 retroactive reconstruct。
-- `mid-comment` —— 工具**不確定**。heading 不在 comment 開頭時，它分不出真 summary 與引述（例如有人在 comment 裡複述本檔 Step 2 的 template）。abort 的理由是**未經驗證**，不是「內容在」。人工看過後：真的是 summary → 拆成獨立 comment；只是引述 → 該 issue 其實是 `missing`，那時才走 retroactive。
+**`casing` / `present` 是 abort 不是 warn，但理由不同**：
+
+- `casing` —— 首行就是 heading，位置對、形式不對。該做的是**正規化 heading**，不是 retroactive reconstruct。
+- `present` —— 這一端**不做判斷**。人工看過後：真的是 summary → 拆成獨立 comment；只是引述 → 該 issue 其實欠一份 summary，用 `--retroactive --force-present`… **沒有這種 flag**：正確做法是人工貼一份，或先把引述改寫掉再跑。
 
 兩者放行都等於用「補 audit trail」的名義製造重複 audit trail。
 
 > **本 gate 是散文，不是機械強制（誠實揭露）。** 這張表由 agent 讀了才生效 —— 沒有任何 runtime 會擋住一個忽略它的執行。機械判定只存在於 [`scripts/check-closed-without-summary.sh`](../../scripts/check-closed-without-summary.sh)，而本 skill 並未呼叫它。要把這條路變成真正的 gate，需要 precondition 改為實際執行該 script 並讀其分類 —— **未做**，記在此處而非只留在 PR 討論裡。
 
-**順序固定**：canonical `startswith` **最先判**，所以 `## Closing Summary (retroactive — …)`（本 skill 自己產出的 heading）落在 `own-comment` 而非被 `casing` 分支搶走 —— 那正是 idempotency 依賴的行為。
+**順序固定**：canonical 首行**最先判**，所以 `## Closing Summary (retroactive — …)`（本 skill 自己產出的 heading）落在 `compliant` 而非被 `casing` 分支搶走 —— 那正是 idempotency 依賴的行為。**已知且接受**：`## Closing Summary (draft, do not use)` 同樣讀成 compliant，因此不會被報出來。要擋它就得去界定 heading 尾端，那正是 R5 移除掉的那種解析，而殘留誤差是漏報、不是重複貼文。
 
 ### Verification honesty 鐵律（#176 verify DA-1）
 
@@ -111,7 +112,7 @@ allowed-tools:
 
 **Batch**：`idd-close --retroactive #34 #36 #38` —— 每個 issue 各自 draft + confirm + post 獨立 retroactive summary（同 cluster-close 紀律，不合併）。
 
-**Idempotency**：`--audit-closes` 只把 `missing` 標成 ⚠ 並邀請 retroactive；remediate 過的 issue 會分類為 `own-comment`（retroactive heading 也命中 canonical `startswith`，且該分支**最先判**），所以不會被重新 surface。precondition 的 post-前再 check 是第二層保險 —— 用**同一套四類分類**，不是另一個 startswith。
+**Idempotency**：`--audit-closes` 只把 `missing` 標成 ⚠ 並邀請 retroactive；remediate 過的 issue 會分類為 `compliant`（retroactive heading 也命中 canonical 首行判定，且該分支**最先判**），所以不會被重新 surface。precondition 的 post-前再 check 是第二層保險 —— 用**同一套分類**，不是另一個 startswith。
 
 ## Configuration
 

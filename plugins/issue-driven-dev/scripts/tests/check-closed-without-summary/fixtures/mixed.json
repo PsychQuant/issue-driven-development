@@ -219,5 +219,111 @@
         "body": "<!-- idd:closing-summary -->\n## Closing Summary\n\n### Problem\nreal content"
       }
     ]
+  },
+  {
+    "number": 122,
+    "title": "REAL summary whose subsections are h2, not h3 (#295 R4 / DA-1.i)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Closing Summary\n\n## Problem\nthe marker was case-sensitive\n\n## Verification\nsuite green"
+      }
+    ]
+  },
+  {
+    "number": 123,
+    "title": "REAL summary preceded by an EMPTY decoy heading (#295 R4 / DA-1.ii)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Closing Summary\n\n---\n\n## Closing Summary (final)\n\n### Problem\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 124,
+    "title": "REAL one-line summary, content on the heading line itself (#295 R4 / DA-1.iii)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Closing Summary: fixed the parser, suite 45/45, no residue"
+      }
+    ]
+  },
+  {
+    "number": 125,
+    "title": "REAL summary after a fenced block whose body is a tilde line (#295 R4 / logic H3)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "```\n~~~\n```\n\n## Closing Summary\n\n### Problem\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 126,
+    "title": "REAL summary after a 4-backtick block containing 3 backticks (#295 R4 / logic H3)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "````\n```\n````\n\n## Closing Summary\n\n### Problem\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 127,
+    "title": "REAL summary after an unclosed fence earlier in the comment (#295 R4 / logic M)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Implementation Complete\n\n```\ntruncated pasted log\n\n## Closing Summary\n\n### Problem\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 128,
+    "title": "REAL summary after an unclosed HTML comment (#295 R4 / logic M)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "<!-- TODO finish this note\n\n## Closing Summary\n\n### Problem\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 129,
+    "title": "REAL summary whose heading is indented with a space then a tab (#295 R4 / DA-e)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": " \t## Closing Summary\n\n### Problem\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 130,
+    "title": "canonical heading, blank line first - must stay quiet (#295 R4 / logic M)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "\n## Closing Summary\n\n### Problem\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 131,
+    "title": "cluster-close preamble line above a real summary (#295 R4 / DA-b)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "Closing as part of the #34 #36 #38 cluster.\n\n## Closing Summary\n\n### Problem\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 132,
+    "title": "forging via non-Cc separators ‮missing\t#9999  FORGED VIA U+2028 (#295 R4)",
+    "state": "CLOSED",
+    "comments": []
   }
 ]
