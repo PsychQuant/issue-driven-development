@@ -1,0 +1,12 @@
+[
+  {
+    "number": 700,
+    "title": "only a casing row exists - the all-clear must NOT fire",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Closing summary\n\n### Problem\nreal content"
+      }
+    ]
+  }
+]

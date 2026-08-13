@@ -4,8 +4,12 @@
     "title": "closed WITH a proper Closing Summary",
     "state": "CLOSED",
     "comments": [
-      { "body": "## Diagnosis\n\n### Type\nbug" },
-      { "body": "## Closing Summary\n\n### Problem\nfoo\n\n### Root Cause\nbar" }
+      {
+        "body": "## Diagnosis\n\n### Type\nbug"
+      },
+      {
+        "body": "## Closing Summary\n\n### Problem\nfoo\n\n### Root Cause\nbar"
+      }
     ]
   },
   {
@@ -13,8 +17,12 @@
     "title": "closed WITHOUT a Closing Summary (auto-close-trap victim)",
     "state": "CLOSED",
     "comments": [
-      { "body": "## Diagnosis\n\n### Type\nbug" },
-      { "body": "## Implementation Complete\n\n### Checklist\n- [x] done" }
+      {
+        "body": "## Diagnosis\n\n### Type\nbug"
+      },
+      {
+        "body": "## Implementation Complete\n\n### Checklist\n- [x] done"
+      }
     ]
   },
   {
@@ -28,5 +36,748 @@
     "title": "closed, zero comments (legacy / GitHub-UI close) — flagged",
     "state": "CLOSED",
     "comments": []
+  },
+  {
+    "number": 104,
+    "title": "closed, summary heading cased differently — content IS there (#295)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Diagnosis\n\n### Type\nbug"
+      },
+      {
+        "body": "## Closing summary\n\n### Problem\nfoo\n\n### Root Cause\nbar"
+      }
+    ]
+  },
+  {
+    "number": 105,
+    "title": "closed, summary merged into the Implementation Complete comment (#295)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Implementation Complete\n\n### Checklist\n- [x] done\n\n---\n\n## Closing Summary\n\n### Problem\nfoo"
+      }
+    ]
+  },
+  {
+    "number": 106,
+    "title": "closed, retroactive summary — startswith still matches, must stay compliant (#295 D2)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Closing Summary (retroactive — auto-closed via commit-body)\n\n### Problem\nfoo"
+      }
+    ]
+  },
+  {
+    "number": 107,
+    "title": "closed, versioned lowercase heading — a trailing word boundary would misfile this (#295 D3)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## closing summary_v2\n\n### Problem\nrevised after the first pass"
+      }
+    ]
+  },
+  {
+    "number": 108,
+    "title": "heading only inside a fenced block — NO real summary (#295 R2 / H1)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Diagnosis\n\nthe template looks like:\n\n```markdown\n## Closing Summary\n\n### Problem\n```\n\njust quoting it — no summary was ever written"
+      }
+    ]
+  },
+  {
+    "number": 109,
+    "title": "heading only inside an HTML comment — invisible in a browser (#295 R2 / H1)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Diagnosis\n\n<!--\n## Closing Summary\n-->"
+      }
+    ]
+  },
+  {
+    "number": 110,
+    "title": "heading with ZERO content after it — presence is not a summary (#295 R2 / H1)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Closing Summary"
+      }
+    ]
+  },
+  {
+    "number": 111,
+    "title": "genuine summary merged into the IC comment - must stay in the advisory bucket (#295 R2)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Implementation Complete\n\n- [x] done\n\n---\n\n## Closing Summary\n\n### Problem\nreal content here\n\n### Root Cause\nmore real content"
+      }
+    ]
+  },
+  {
+    "number": 112,
+    "title": "pwn\nmissing\t#9999  FABRICATED ENTRY",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Closing Summary\n\n### Problem\nthis issue really does have a summary"
+      }
+    ]
+  },
+  {
+    "number": 113,
+    "title": "tab\there\tin title",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Diagnosis\n\nno summary"
+      }
+    ]
+  },
+  {
+    "number": 114,
+    "title": "heading indented 4 spaces — CommonMark calls that code, not a heading (#295 R2)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Diagnosis\n\nsomeone pasted:\n\n    ## Closing Summary\n\n    ### Problem\n\nas an indented block"
+      }
+    ]
+  },
+  {
+    "number": 115,
+    "title": "REAL summary whose heading carries an inline HTML marker (#295 R3 / B2)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Closing Summary <!-- idd:closing-summary -->\n\n### Problem\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 116,
+    "title": "REAL summary whose whole body is a fenced block (#295 R3 / B2)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Closing Summary\n\n```\nthe entire summary is a code block\n```"
+      }
+    ]
+  },
+  {
+    "number": 117,
+    "title": "EMPTY summary; a later unrelated section must not count as its content (#295 R3 / B4)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Closing Summary\n\n## Next Steps\n\n- follow up elsewhere"
+      }
+    ]
+  },
+  {
+    "number": "118\nmissing\t#9999  FORGED VIA NUMBER",
+    "title": "forging via .number must not work (#295 R3 / B3)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Closing Summary\n\n### Problem\nreal"
+      }
+    ]
+  },
+  {
+    "number": 119,
+    "title": "REAL summary containing a line that starts with a balanced HTML comment (#295 R3 acid)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Closing Summary\n\n<!-- editorial note --> still part of the summary\n\n### Problem\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 120,
+    "title": "prose mentioning an unbalanced HTML-comment opener, then a REAL summary (#295 R3 acid)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Implementation Complete\n\nThe variant <!-- was invisible in a browser.\n\n---\n\n## Closing Summary\n\n### Problem\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 121,
+    "title": "REAL summary preceded by an IDD marker on its own line (#295 R3 acid)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "<!-- idd:closing-summary -->\n## Closing Summary\n\n### Problem\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 122,
+    "title": "REAL summary whose subsections are h2, not h3 (#295 R4 / DA-1.i)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Closing Summary\n\n## Problem\nthe marker was case-sensitive\n\n## Verification\nsuite green"
+      }
+    ]
+  },
+  {
+    "number": 123,
+    "title": "REAL summary preceded by an EMPTY decoy heading (#295 R4 / DA-1.ii)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Closing Summary\n\n---\n\n## Closing Summary (final)\n\n### Problem\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 124,
+    "title": "REAL one-line summary, content on the heading line itself (#295 R4 / DA-1.iii)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Closing Summary: fixed the parser, suite 45/45, no residue"
+      }
+    ]
+  },
+  {
+    "number": 125,
+    "title": "REAL summary after a fenced block whose body is a tilde line (#295 R4 / logic H3)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "```\n~~~\n```\n\n## Closing Summary\n\n### Problem\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 126,
+    "title": "REAL summary after a 4-backtick block containing 3 backticks (#295 R4 / logic H3)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "````\n```\n````\n\n## Closing Summary\n\n### Problem\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 127,
+    "title": "REAL summary after an unclosed fence earlier in the comment (#295 R4 / logic M)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Implementation Complete\n\n```\ntruncated pasted log\n\n## Closing Summary\n\n### Problem\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 128,
+    "title": "REAL summary after an unclosed HTML comment (#295 R4 / logic M)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "<!-- TODO finish this note\n\n## Closing Summary\n\n### Problem\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 129,
+    "title": "REAL summary whose heading is indented with a space then a tab (#295 R4 / DA-e)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": " \t## Closing Summary\n\n### Problem\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 130,
+    "title": "canonical heading, blank line first - must stay quiet (#295 R4 / logic M)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "\n## Closing Summary\n\n### Problem\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 131,
+    "title": "cluster-close preamble line above a real summary (#295 R4 / DA-b)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "Closing as part of the #34 #36 #38 cluster.\n\n## Closing Summary\n\n### Problem\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 132,
+    "title": "forging via non-Cc separators ‮missing\t#9999  FORGED VIA U+2028 (#295 R4)",
+    "state": "CLOSED",
+    "comments": []
+  },
+  {
+    "number": 133,
+    "title": "invisible payloads ؜​⁠﻿󠁁 must not survive (#295 R6)",
+    "state": "CLOSED",
+    "comments": []
+  },
+  {
+    "number": 140,
+    "title": "REAL summary: emoji-decorated h2 - this plugin's own house style",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## 📝 Closing Summary\n\n### Problem\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 141,
+    "title": "REAL summary at h3",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "### Closing Summary\n\n### Problem\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 142,
+    "title": "REAL summary at h4",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "#### Closing Summary\n\n### Problem\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 147,
+    "title": "REAL summary: setext heading",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "Closing Summary\n---\n\n### Problem\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 148,
+    "title": "REAL summary: bold pseudo-heading",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "**Closing Summary**\n\n### Problem\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 149,
+    "title": "REAL summary: fullwidth hashes",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "＃＃ Closing Summary\n\n### Problem\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 150,
+    "title": "REAL summary: non-breaking space between the words",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Closing Summary\n\n### Problem\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 151,
+    "title": "REAL summary: ideographic space between the words",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Closing　Summary\n\n### Problem\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 152,
+    "title": "REAL summary: zero-width space between the words",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Closing​Summary\n\n### Problem\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 153,
+    "title": "REAL summary: leading BOM before the hashes",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "﻿## Closing Summary\n\n### Problem\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 154,
+    "title": "REAL summary: CRLF line endings, as GitHub web actually submits",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Closing Summary\r\n\r\n### Problem\r\nreal content\r\n"
+      }
+    ]
+  },
+  {
+    "number": 155,
+    "title": "QUOTATION ONLY, blockquote-led - must NOT be claimed as casing",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "> ## Closing Summary\n> ### Problem\n\nI am quoting #42's summary to ask a question; ours never got one."
+      }
+    ]
+  },
+  {
+    "number": 156,
+    "title": "bare heading padded with dots - still not a summary",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Closing Summary\n\n..."
+      }
+    ]
+  },
+  {
+    "number": 157,
+    "title": "REAL summary: emoji heading with same-line content, NOT at comment start (isolates present_re)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Implementation Complete\n\n- [x] done\n\n---\n\n## 📝 Closing Summary: fixed the parser, suite green, no residue"
+      }
+    ]
+  },
+  {
+    "number": 158,
+    "title": "comment set known truncated at the fetch - must never reach MISSING",
+    "state": "CLOSED",
+    "idd_comments_truncated": true,
+    "comments": [
+      {
+        "body": "c0 - no heading anywhere"
+      },
+      {
+        "body": "c1 - no heading anywhere"
+      },
+      {
+        "body": "c2 - no heading anywhere"
+      },
+      {
+        "body": "c3 - no heading anywhere"
+      },
+      {
+        "body": "c4 - no heading anywhere"
+      },
+      {
+        "body": "c5 - no heading anywhere"
+      },
+      {
+        "body": "c6 - no heading anywhere"
+      },
+      {
+        "body": "c7 - no heading anywhere"
+      },
+      {
+        "body": "c8 - no heading anywhere"
+      },
+      {
+        "body": "c9 - no heading anywhere"
+      },
+      {
+        "body": "c10 - no heading anywhere"
+      },
+      {
+        "body": "c11 - no heading anywhere"
+      },
+      {
+        "body": "c12 - no heading anywhere"
+      },
+      {
+        "body": "c13 - no heading anywhere"
+      },
+      {
+        "body": "c14 - no heading anywhere"
+      },
+      {
+        "body": "c15 - no heading anywhere"
+      },
+      {
+        "body": "c16 - no heading anywhere"
+      },
+      {
+        "body": "c17 - no heading anywhere"
+      },
+      {
+        "body": "c18 - no heading anywhere"
+      },
+      {
+        "body": "c19 - no heading anywhere"
+      },
+      {
+        "body": "c20 - no heading anywhere"
+      },
+      {
+        "body": "c21 - no heading anywhere"
+      },
+      {
+        "body": "c22 - no heading anywhere"
+      },
+      {
+        "body": "c23 - no heading anywhere"
+      },
+      {
+        "body": "c24 - no heading anywhere"
+      },
+      {
+        "body": "c25 - no heading anywhere"
+      },
+      {
+        "body": "c26 - no heading anywhere"
+      },
+      {
+        "body": "c27 - no heading anywhere"
+      },
+      {
+        "body": "c28 - no heading anywhere"
+      },
+      {
+        "body": "c29 - no heading anywhere"
+      },
+      {
+        "body": "c30 - no heading anywhere"
+      },
+      {
+        "body": "c31 - no heading anywhere"
+      },
+      {
+        "body": "c32 - no heading anywhere"
+      },
+      {
+        "body": "c33 - no heading anywhere"
+      },
+      {
+        "body": "c34 - no heading anywhere"
+      },
+      {
+        "body": "c35 - no heading anywhere"
+      },
+      {
+        "body": "c36 - no heading anywhere"
+      },
+      {
+        "body": "c37 - no heading anywhere"
+      },
+      {
+        "body": "c38 - no heading anywhere"
+      },
+      {
+        "body": "c39 - no heading anywhere"
+      },
+      {
+        "body": "c40 - no heading anywhere"
+      },
+      {
+        "body": "c41 - no heading anywhere"
+      },
+      {
+        "body": "c42 - no heading anywhere"
+      },
+      {
+        "body": "c43 - no heading anywhere"
+      },
+      {
+        "body": "c44 - no heading anywhere"
+      },
+      {
+        "body": "c45 - no heading anywhere"
+      },
+      {
+        "body": "c46 - no heading anywhere"
+      },
+      {
+        "body": "c47 - no heading anywhere"
+      },
+      {
+        "body": "c48 - no heading anywhere"
+      },
+      {
+        "body": "c49 - no heading anywhere"
+      },
+      {
+        "body": "c50 - no heading anywhere"
+      },
+      {
+        "body": "c51 - no heading anywhere"
+      },
+      {
+        "body": "c52 - no heading anywhere"
+      },
+      {
+        "body": "c53 - no heading anywhere"
+      },
+      {
+        "body": "c54 - no heading anywhere"
+      },
+      {
+        "body": "c55 - no heading anywhere"
+      },
+      {
+        "body": "c56 - no heading anywhere"
+      },
+      {
+        "body": "c57 - no heading anywhere"
+      },
+      {
+        "body": "c58 - no heading anywhere"
+      },
+      {
+        "body": "c59 - no heading anywhere"
+      },
+      {
+        "body": "c60 - no heading anywhere"
+      },
+      {
+        "body": "c61 - no heading anywhere"
+      },
+      {
+        "body": "c62 - no heading anywhere"
+      },
+      {
+        "body": "c63 - no heading anywhere"
+      },
+      {
+        "body": "c64 - no heading anywhere"
+      },
+      {
+        "body": "c65 - no heading anywhere"
+      },
+      {
+        "body": "c66 - no heading anywhere"
+      },
+      {
+        "body": "c67 - no heading anywhere"
+      },
+      {
+        "body": "c68 - no heading anywhere"
+      },
+      {
+        "body": "c69 - no heading anywhere"
+      },
+      {
+        "body": "c70 - no heading anywhere"
+      },
+      {
+        "body": "c71 - no heading anywhere"
+      },
+      {
+        "body": "c72 - no heading anywhere"
+      },
+      {
+        "body": "c73 - no heading anywhere"
+      },
+      {
+        "body": "c74 - no heading anywhere"
+      },
+      {
+        "body": "c75 - no heading anywhere"
+      },
+      {
+        "body": "c76 - no heading anywhere"
+      },
+      {
+        "body": "c77 - no heading anywhere"
+      },
+      {
+        "body": "c78 - no heading anywhere"
+      },
+      {
+        "body": "c79 - no heading anywhere"
+      },
+      {
+        "body": "c80 - no heading anywhere"
+      },
+      {
+        "body": "c81 - no heading anywhere"
+      },
+      {
+        "body": "c82 - no heading anywhere"
+      },
+      {
+        "body": "c83 - no heading anywhere"
+      },
+      {
+        "body": "c84 - no heading anywhere"
+      },
+      {
+        "body": "c85 - no heading anywhere"
+      },
+      {
+        "body": "c86 - no heading anywhere"
+      },
+      {
+        "body": "c87 - no heading anywhere"
+      },
+      {
+        "body": "c88 - no heading anywhere"
+      },
+      {
+        "body": "c89 - no heading anywhere"
+      },
+      {
+        "body": "c90 - no heading anywhere"
+      },
+      {
+        "body": "c91 - no heading anywhere"
+      },
+      {
+        "body": "c92 - no heading anywhere"
+      },
+      {
+        "body": "c93 - no heading anywhere"
+      },
+      {
+        "body": "c94 - no heading anywhere"
+      },
+      {
+        "body": "c95 - no heading anywhere"
+      },
+      {
+        "body": "c96 - no heading anywhere"
+      },
+      {
+        "body": "c97 - no heading anywhere"
+      },
+      {
+        "body": "c98 - no heading anywhere"
+      },
+      {
+        "body": "c99 - no heading anywhere"
+      }
+    ]
   }
 ]
