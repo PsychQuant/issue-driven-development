@@ -548,6 +548,26 @@ Exit code:
 
 每個 reviewer 用 single `Agent` tool call（**not** TeamCreate teammate）。所有 5 個 + 1 個 Bash codex **必須在同一個 message** 一起發出（單 message 多 tool calls = parallel）。
 
+> **Scratch-file naming (#288)**: every `/tmp` path in this skill MUST include a
+> per-run token, not just the issue number. `/tmp/verify_${NUMBER}_findings_*.md`
+> and `/tmp/codex-verify-${NUMBER}.md` carry no repo identity, so two sessions
+> verifying **the same issue number in different repos** share filenames — and a
+> leftover file from the earlier run is then read as this run's findings. That
+> failure is silent and its direction is the worst one: the coordinator merges
+> another repo's verdict into this PR's report.
+>
+> Resolve a run directory ONCE, before spawning anything, and use it everywhere:
+>
+> ```bash
+> VERIFY_DIR=$(mktemp -d "${TMPDIR:-/tmp}/idd-verify-${NUMBER}-XXXXXX")
+> # every findings / prompt / codex path below becomes "$VERIFY_DIR/<name>.md"
+> ```
+>
+> `mktemp -d` gives collision-freedom without needing a repo slug, survives
+> concurrent runs of the same issue in the same repo, and is cleaned up by the
+> OS. Do NOT paper over this by adding a repo slug to the old flat names —
+> concurrent runs of the *same* repo would still collide.
+
 > **Pre-spawn prompt persistence (per /idd-verify --pr 73 round 1 P1.2)**: BEFORE invoking the 5 Agent calls, coordinator MUST save each reviewer's full prompt to `/tmp/verify_${NUMBER}_prompt_<role>.md`. Step 2.5b Recovery Protocol re-paste step reads these files; if they don't exist, retry fails. Save via:
 >
 > ```bash
