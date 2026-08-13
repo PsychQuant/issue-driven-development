@@ -1,0 +1,19 @@
+[
+  {
+    "number": 200,
+    "title": "well-formed JSON, but a comment body is not a string — the CLASSIFY filter aborts on it",
+    "state": "CLOSED",
+    "comments": [
+      { "body": null },
+      { "body": 12345 }
+    ]
+  },
+  {
+    "number": 201,
+    "title": "would be MISSING if the filter survived — must not be reported as all-clear",
+    "state": "CLOSED",
+    "comments": [
+      { "body": "## Diagnosis\n\nno summary here" }
+    ]
+  }
+]

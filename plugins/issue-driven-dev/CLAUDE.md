@@ -482,9 +482,9 @@ IDD 的 auto-close 偵測（`idd-verify` Step 0.8）**只在 `--pr` mode 跑**�
 |------|------|
 | commit body 要 reference issue（防 zombie） | **預設 `Refs #N`**（cross-link、不 auto-close）。這是 direct-commit path 上 audit reference 的 default，不是 `Closes/Fixes/Resolves #<digit>` |
 | commit body 要*引用* trap pattern 當反例 | 套用上面「引用 trap pattern 作反例的寫作紀律」(#97)：code fence + literal letter N，或根本不寫 keyword |
-| 已經被 commit-body trap auto-close 了 | 跑 `idd-close --retroactive #N`（v2.76.0+, #176）—— 自動 reconstruct + post `## Closing Summary (retroactive — auto-closed via commit-body trap)`，補回 gate 會驗的東西。手動等價：照模板自己貼 |
+| 已經被 commit-body trap auto-close 了，**且該 issue 的 comment 裡完全找不到 closing-summary heading** | 跑 `idd-close --retroactive #N`（v2.76.0+, #176；precondition 見 #295 —— heading 只要出現過，即使是引述或非 canonical 形式，都**不是** retroactive 的對象，跑了會貼出重複 summary）—— 自動 reconstruct + post `## Closing Summary (retroactive — auto-closed via commit-body trap)`，補回 gate 會驗的東西。手動等價：照模板自己貼 |
 
-**回溯 safety net**：`/idd-list --audit-closes` 掃出「CLOSED 但無 `## Closing Summary`」的 issue（#151）—— reactive，不是 preventive，但能在事後抓到漏網的。standalone 版是 `scripts/check-closed-without-summary.sh`。
+**回溯 safety net**：`/idd-list --audit-closes` 掃出「CLOSED 且**所有 comment 的原始文字裡都找不到** closing-summary heading」的 issue（#151；判準見 #295 —— 引述、非 canonical 形式、fence 內的 heading 一律算「有」，只有完全找不到才算欠工作）—— reactive，不是 preventive，但能在事後抓到漏網的。standalone 版是 `scripts/check-closed-without-summary.sh`。
 
 **為什麼沒有 preventive gate**：direct-commit path 上唯一能在 push *前*攔截的是 client-side git hook（`pre-push`），那需要 per-user 安裝、且不 cover CI/server push —— 列為 power-user opt-in（#151 Path A，deferred）。所以這條路徑的根本保護就是上面的寫作紀律 + Step 0.8（走 PR 時）+ #173 的 `pr-body-autoclose-guard`（防 template regression）。三者各守一段；direct-commit + 手寫 commit body 這段，紀律是最後一道。
 

@@ -61,6 +61,162 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.104.0] - 2026-08-11
+
+### Fixed
+
+- **The closing-summary audit no longer parses markdown; its destructive gate turns on absence alone (#295)** —
+  `--audit-closes` judged "closed but missing a closing summary" with `startswith("## Closing Summary")`:
+  case-sensitive, anchored at the comment start. On a real repo's 43 closed issues that misreported **11 (26%)**,
+  every one of which had a complete summary — ten had drifted to `## Closing summary`, one had the summary appended
+  below an Implementation Complete in the same comment. `idd-close --retroactive` shares that marker as its
+  **precondition**, so a false positive is not noise: it posts a duplicate summary onto an issue that already has one.
+
+  The classifier now answers two questions and nothing else, both on RAW text:
+
+  | class | predicate | effect |
+  |---|---|---|
+  | `missing` | no line in ANY comment matches `^[ \t>]*#{1,2}[ \t]*closing[ \t]+summary` (case-insensitive) | the only class that invites `--retroactive` |
+  | `present` | such a line exists, but no comment leads with one | ⚠ UNVERIFIED, `do NOT run --retroactive` |
+  | `casing` | a comment leads with it in a non-canonical form | no ⚠; normalise the heading |
+  | (quiet) | a comment leads with the canonical heading | printed nowhere |
+
+  "Leads with" skips blank lines and whole-line HTML markers, because this plugin mandates a marker on line 1 for
+  machine-locatable comments — a leading `<!-- idd:dashboard -->` must not demote a byte-perfect summary.
+
+- **Why the parser was deleted instead of fixed (#295, PR #297, four failed verify rounds)** — rounds 1 to 4 each tried
+  to earn precision by re-implementing CommonMark in jq: a fenced-block toggle, an HTML-comment stripper, an
+  indented-code rule, a section bound, an indent cap, a "heading must have content under it" requirement. Every round
+  fixed the previous round's defect **and introduced a new one in the same direction** — a real summary the parser could
+  not follow became `missing`, the one class that authorises an irreversible action. Round 4 alone found nine such
+  shapes still live: h2 subsections instead of h3; a `~~~` line closing a backtick fence; a three-backtick line closing
+  a four-backtick fence; an empty decoy heading suppressing a real one later in the same comment; a one-line summary
+  written on the heading line; an unclosed fence; an unclosed HTML comment; a space+tab indent; a cluster-close preamble
+  above the summary. The list was still growing when the maintainer chose to remove the parser rather than patch it a
+  fifth time. Each of those nine is now a fixture (`#122`-`#131`) asserting only that it never reaches `missing`.
+
+  **The accepted price, stated plainly**: an issue whose only mention of the marker is a quotation is no longer reported
+  as missing. That is a missed detection in a tool that is advisory and reactive; the expensive direction — a duplicate
+  post onto an issue that already has a summary — is now unreachable by construction instead of by getting a parser
+  exactly right. Fixtures `#108`/`#109`/`#114` flipped from MISSING to PRESENT to record that choice, and say so at the
+  assertion. `#110` (a bare heading with nothing under it) went further in round 6 — see below.
+
+- **The normative source shipped as a binary blob for three rounds (#295 R4)** — two NUL bytes and a 0x1F sat inside the
+  jq comment that explained why control characters must be neutralised: the escapes had been pasted as the bytes
+  themselves. Every symptom was silence. `grep -r` printed nothing instead of erroring; `gh pr diff` inherited the bytes,
+  so grep went blind on the patch too; and the GitHub API returned **`patch: ABSENT`** for this file alone, meaning the
+  +199/-19 to the file that defines the whole feature rendered on the PR as *"Binary file not shown"* — unreadable and
+  un-commentable by any human reviewer. git itself still diffed it as text, because its detector only reads the first
+  8000 bytes and the NULs sat at byte 8216. A PR about making a marker reliably findable had shipped its own normative
+  source in a form `grep` refuses to search. The test suite now asserts the helper contains no control byte but TAB and LF.
+
+- **Row forging was still open one codepoint over (#295 R4)** — `sanitize` used `[[:cntrl:]]`, which covers Cc only.
+  Measured: TAB, LF, ESC, NEL and VT were neutralised while **U+2028, U+2029, U+202E, U+200E/200F and U+2066-2069 all
+  survived** into `.title` and `.number` — enough to forge or reorder a visible row in the one section that invites
+  `--retroactive`. The class now covers `\p{Zl}`, `\p{Zp}` and the bidi controls, and deliberately stops short of all
+  of `\p{Cf}`: that would eat zero-width joiners and split emoji sequences in ordinary titles.
+
+- **Two assertions that could not fail (#295 R4/R5)** — the forging tests grepped for `#9999  FABRICATED ENTRY` with two
+  spaces, but the whitespace-collapsing half of `sanitize` survives any mutation of the control-character half, so the
+  needle never matched and the assertion stayed green **while forging actually succeeded**. Acid exposed it: mutating
+  `sanitize` turned only the tab assertion red. Both now assert on the shape of a forged row. Separately, the in-file
+  claim that the `^ {0,3}` indent cap was "strictly redundant, no input can distinguish the two" was false — a space+tab
+  indent distinguished them — and the comment was instructing future maintainers to delete a load-bearing line; the cap
+  and the claim are both gone with the parser.
+
+  Suite 45 -> 71 (the whole PR moves it 11 -> 71); acid red on every mechanism. Cross-checked against live data: the 43 closed issues of a
+  real repo produce no output at all, and the same 43 rewound to the pre-fix state that opened #295 put **none** of the
+  original eleven on the destructive path while keeping all eleven visible (10 CASING, 1 PRESENT).
+
+- **Round 6: two predicates, because one regex was answering two questions with opposite safe directions (#295)** —
+  round 5 made the presence test permissive (blockquote prefixes, unlimited indentation) and then reused the same
+  regex to decide whether a comment *led* with the heading. So a comment that merely QUOTED the heading was
+  announced as **"the summary is there"**, with the warning glyph withheld and the only remedy barred — the exact
+  defect round 1 was failed for. Presence and leading are now separate:
+
+  | predicate | question | direction |
+  |---|---|---|
+  | `present_re` / `bare_re` | is a heading visible ANYWHERE? | permissive — over-detecting withholds the destructive action |
+  | `lead_re` | does this comment LEAD with one? | strict — over-detecting exonerates with a positive claim |
+
+  The recogniser also widened, because round 5's claim that the expensive direction was "unreachable by
+  construction" was **false** and every lens said so. Real summaries that still reached `missing`: an
+  emoji-decorated `## 📝 Closing Summary` (this plugin's own house style — `idd-comment` ships six emoji h2
+  templates), `### Closing Summary` at h3 or h4, a setext heading, a non-breaking or ideographic space inside the
+  phrase, fullwidth `＃＃`, and a leading BOM. Hash count is now 1–6, decoration between the hashes and the words
+  is allowed, and a line that is essentially just the phrase counts too. The file now states what is actually
+  true — the destructive class is reached only when nothing in any comment resembles the heading, and the
+  recogniser is deliberately generous about resemblance — instead of claiming a proof it does not have.
+
+- **A bare heading no longer makes an issue invisible (#295 R5 verify, security)** — `## Closing Summary` with
+  nothing under it classified `compliant` and was printed in **no section at all**, while `--retroactive` also
+  aborts on it. Anyone who can comment could therefore silence a closed issue permanently. `casing` and
+  `compliant` now require content under the heading; a bare one falls to `PRESENT` — visible, authorising nothing.
+
+- **Prose drift is now a test, after failing four rounds running (#295)** — new suite
+  `scripts/tests/closing-summary-prose-drift/`. Rounds 2–5 each fixed the lines a reviewer cited and left the
+  neighbours: round 5 rewrote `CLAUDE.md:487` while line **485**, directly above it, still said "跑
+  `idd-close --retroactive #N`" unconditionally, and fixed a sentence in `idd-find/SKILL.md` while the deleted
+  `1-3 空格縮排` cap survived two lines away. The test greps every `.md` in the plugin for nine phrases that can
+  only be true under a superseded rule and fails unless the line is explicitly marked as history. It caught both
+  survivors on its first run. (It also had to be fixed for a silent failure of its own: `--include` written after
+  `--` is parsed as a file operand, so the filter simply stopped applying.)
+
+- **`--retroactive` invitations now carry their precondition (#295 R5 verify, requirements)** — two unconditional
+  ones survived outside the touched files, in `CLAUDE.md` and `rules/commit-issue-reference.md`. `idd-find` had
+  also fixed only the casing half of the two drift shapes #295 measured; a summary merged into the
+  Implementation Complete comment still rendered as `(closed, no summary)`.
+
+- **`--help` regression, jq-error handling, and the invisible-character set (#295 R5 verify)** — the header grew
+  past the `sed -n '2,16p'` window, so Usage and the "ALWAYS exits 0" promise had silently vanished from
+  `--help`; it now prints the whole block. jq quotes the offending input in its error text, which therefore
+  bypassed `sanitize` entirely — that path is now stripped and capped, and the stderr file moved from a
+  predictable `/tmp` path to `mktemp`. `sanitize` gained U+061C, U+200B, U+2060–U+2064, U+FEFF and the Unicode
+  Tags block, while **deliberately sparing U+200C and U+200D** — they join Persian and Indic letters and hold
+  emoji sequences together, and neither can forge or reorder a row. A `state` field that is absent or null now
+  reads as *not closed*: it used to default to CLOSED, the one default in the file leaning toward the
+  destructive action.
+
+- **Round 7 — the defect was never in the classifier: `gh` truncates the comment set, and truncates the wrong end (#295)** —
+  `gh issue list --json comments` resolves the nested GraphQL connection as `comments(first: 100)`. It is hard-capped, it
+  does not paginate, and the 100 it returns are the **oldest**. Verified against a public repo rather than assumed:
+  `microsoft/vscode#301011` has 155 comments and returns exactly 100, whose first `createdAt` equals REST page 1. A
+  closing summary is by construction the **newest** comment, so on any issue past 100 comments it is precisely the
+  element guaranteed to be dropped — and the classifier, seeing no heading, says `missing`, the one class that invites
+  the irreversible `--retroactive`. **Six verify rounds worked on the classifier and none of them could have found this,
+  because it is not in the classifier.** It also falsified this file's own normative definition: "NO line in ANY comment"
+  was a property the filter could not evaluate, having never had all the comments. Now: issues at the cap are re-fetched
+  in full per issue, and if that fetch fails the issue is marked and can never reach `missing`.
+
+- **Round 7 — every mechanism now carries test weight, and the tests have positive controls (#295)** — round 6's acid
+  was run by hand and never entered the suite, so three of its own mechanisms could be reverted with the suite fully
+  green: the recogniser widening, the predicate split, and `bare_re`. Round 7's acid mutates seven mechanisms and each
+  turns assertions red on its own. Getting there required two fixture repairs that are worth recording, because both are
+  the same class of error the round was fixing: `#157` had to be re-shaped after the first version was claimed by
+  `lead_re` and isolated nothing, and its assertion had to be rewritten after asserting "no ⚠" — which PRESENT rows also
+  carry — made it fail on correct behaviour. The prose-drift suite gained **positive controls**: it plants a violation,
+  proves the scan sees it, then removes it. Round 6's version passed vacuously under four independent no-op mutations.
+
+- **Round 7 — prose no longer restates the regex at all (#295)** — three lenses independently reported the same
+  CRITICAL: both destructive-gate readers still printed the round-5 pattern verbatim, and round 6's drift test was blind
+  to it because a hand-maintained phrase list only knows what its author remembered to add — the faculty that had
+  already failed five times. The readers now describe the intent and point at `def present_re` / `def bare_re`; the
+  drift suite's primary check is mechanical, matching the *shape* of a line-anchored pattern mentioning the marker, so
+  no copy can exist to drift. A dangling-pointer check asserts the named predicates really exist.
+
+- **Round 7 — three advisory-contract holes and the silencing channel, properly this time (#295)** — a value-taking flag
+  as the last argument made the script **spin forever**, which breaks the "always exits 0" promise harder than any wrong
+  verdict; an empty or whitespace-only payload produced a green all-clear, the exact false reassurance its own guard
+  names; and the bare-heading fix from round 6 was one character deep — `## Closing Summary` followed by `...` restored
+  the invisibility, because "content" had been defined as any non-space. Content now means letters or digits.
+
+- **`idd-close` Step 3.6 stops missing a drifted Diagnosis heading (#296)** — the residue acknowledgement found
+  its Diagnosis comment with a case-sensitive `startswith("## Diagnosis")`. Any drift (`## diagnosis`,
+  `##Diagnosis`, an emoji or indented variant) made `DIAG_BODY` empty, which **silently skipped** the very
+  acknowledgement Step 3.6 exists to perform — reopening the write-only residue loop #105 was created to close —
+  and recorded an audit reason ("legacy issue or pre-v2.64.0") that was simply false. Same loose matching as its
+  sister marker, and the audit reason now states what was established rather than guessing why.
+
 ## [2.103.0] - 2026-08-07
 
 ### Fixed
