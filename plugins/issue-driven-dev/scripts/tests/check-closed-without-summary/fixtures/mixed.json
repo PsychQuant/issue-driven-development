@@ -112,7 +112,7 @@
   },
   {
     "number": 111,
-    "title": "genuine summary merged into the IC comment — must stay MID-COMMENT (#295 R2)",
+    "title": "genuine summary merged into the IC comment - must stay in the advisory bucket (#295 R2)",
     "state": "CLOSED",
     "comments": [
       {
@@ -323,6 +323,12 @@
   {
     "number": 132,
     "title": "forging via non-Cc separators ‮missing\t#9999  FORGED VIA U+2028 (#295 R4)",
+    "state": "CLOSED",
+    "comments": []
+  },
+  {
+    "number": 133,
+    "title": "invisible payloads ؜​⁠﻿󠁁 must not survive (#295 R6)",
     "state": "CLOSED",
     "comments": []
   }

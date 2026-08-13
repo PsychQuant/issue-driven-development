@@ -85,6 +85,8 @@ allowed-tools:
 | `present` | heading 出現在某處，但沒有任何 comment 以它開頭 | **abort** —— 訊息：**未經驗證**，這一端不判斷它是真 summary 還是引述；請人工看過再決定 |
 | `missing` | **所有 comment 的原始文字裡都找不到**那樣的一行 | ✅ **唯一放行** |
 
+> **已知盲點（明講，未修）**：判定只讀 **comments**。若有人把 summary 寫進 **issue body** 而非 comment，這裡會判 `missing` —— 跑下去就會貼出重複內容。那不是本 skill 的產出路徑（Step 4 發的是 comment），但後果落在破壞性那一側，所以 draft 前請順手看一眼 body。
+
 **為什麼 precondition 不能只用 `startswith`**（#295 的核心）：`--audit-closes` 與本 precondition 共用同一個 marker，所以偵測端的假陽性**不只是噪音，會直接變成不可逆動作** —— 在一張已經有完整 summary 的 issue 上再貼一份。實測某 repo 43 張 closed issue 有 **11 張**（26%）首行是 `## Closing summary` 或 summary 併在別的 comment 裡：舊 precondition 會**全部放行**。那一次是操作者在 draft 前手動核對才攔下來的；契約裡沒有任何一層會擋。
 
 **為什麼判準退回「有沒有」而不是「是不是真的」**（R5 的方向決定）：第 1 到第 4 輪都試圖用 jq 解析 markdown 來分辨真 summary 與引述（fence、HTML comment、縮排、section 邊界）。每加一個機制就長出自己的單向失敗，而且**全部朝同一個方向**：parser 跟不上的真 summary 被判成 `missing`，也就是唯一放行不可逆動作的那一類。四輪共找到九種形狀，且清單還在長。所以現在**引述與真 summary 一律當成「有」**。代價明寫：一張只在引述裡提到 marker 的 issue，不再被報成 missing —— 那是漏報，是便宜的方向；貴的方向現在是**結構上到不了**，而不是靠 parser 剛好寫對。
@@ -553,9 +555,21 @@ options:
 #### Detection (bash)
 
 ```bash
-# Pull the latest ## Diagnosis comment body (newest by createdAt desc, mirrors Step 0 supersession discipline)
+# Pull the latest ## Diagnosis comment body (newest by createdAt desc, mirrors Step 0 supersession discipline).
+#
+# Marker matching is LOOSE, for the same reason as the closing-summary marker
+# (#296, the sister of #295): this heading is LLM-generated from a template with
+# no normalization on the write side, so `## diagnosis`, `##Diagnosis`, an
+# indented or emoji-decorated variant are all expected drift — and a
+# case-sensitive `startswith` turns any of them into "no Diagnosis comment",
+# which SILENTLY SKIPS the residue acknowledgement that Step 3.6 exists to
+# perform, while recording an audit reason ("legacy issue or pre-v2.64.0") that
+# is simply FALSE. Both halves of that failure are invisible to the operator.
 DIAG_BODY=$(gh issue view "$NUMBER" --repo "$GITHUB_REPO" --json comments \
-  --jq '[.comments[] | select(.body | startswith("## Diagnosis"))] | sort_by(.createdAt) | reverse | .[0].body // ""')
+  --jq '[.comments[]
+         | select((.body // "") | split("\n")[0]
+                  | test("^ {0,3}#{1,6}[^\\p{L}\\p{N}]*diagnosis"; "i"))]
+        | sort_by(.createdAt) | reverse | .[0].body // ""')
 
 # Extract the ### Residue section content — between the heading and either the next ###/## or EOF
 RESIDUE_CONTENT=$(printf '%s\n' "$DIAG_BODY" \
@@ -570,7 +584,10 @@ RESIDUE_CONTENT=$(printf '%s\n' "$DIAG_BODY" \
 #   - Content is exactly `(none)` (the explicit empty-state marker required by template)
 RESIDUE_TRIGGER="false"
 if [ -z "$DIAG_BODY" ]; then
-  AUDIT_REASON="no Diagnosis comment (legacy issue or pre-v2.64.0 — no Residue section to acknowledge)"
+  # Say what was actually established, not a guess about why. The old wording
+  # asserted "legacy issue or pre-v2.64.0", which was false whenever the real
+  # cause was heading drift (#296).
+  AUDIT_REASON="no comment leads with a Diagnosis heading — nothing to read a Residue section from"
 elif ! printf '%s' "$DIAG_BODY" | grep -q '^### Residue'; then
   AUDIT_REASON="Diagnosis has no \`### Residue\` section (pre-v2.64.0 format)"
 elif [ "$RESIDUE_CONTENT" = "(none)" ] || [ -z "$RESIDUE_CONTENT" ]; then

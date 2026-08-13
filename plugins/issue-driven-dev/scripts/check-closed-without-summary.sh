@@ -7,9 +7,11 @@
 #
 # Four destinations (#295) — this file is their NORMATIVE SOURCE:
 #   missing    no heading-shaped line anywhere in any comment (RAW text)
-#   present    such a line exists, but no comment leads with one — UNVERIFIED
-#   casing     a comment leads with it, in a non-canonical form
-#   (quiet)    a comment leads with the canonical `## Closing Summary`
+#   present    such a line exists, but no comment leads with one, or the one that
+#              does has nothing under it — UNVERIFIED
+#   casing     a comment leads with it WITH content under it, non-canonical form
+#   (quiet)    a comment leads with the canonical `## Closing Summary`, with
+#              content under it
 #
 # Output: three sections, printed only when non-empty. MISSING and PRESENT both
 # carry ⚠; only MISSING invites `--retroactive`. All-clear is a single ✓ line.
@@ -42,7 +44,10 @@ while [ $# -gt 0 ]; do
     --limit)     LIMIT="${2:-50}"; shift 2 ;;
     --since)     SINCE="${2:-}"; shift 2 ;;
     --dry-run)   DRY_RUN=1; shift ;;   # gh mode: print the composed gh command + exit (offline introspection / test seam)
-    -h|--help)   sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    # Print the whole leading comment block, however long it grows. The old
+    # fixed range (2,16p) silently dropped Usage and the "ALWAYS exits 0"
+    # promise the moment the header grew past line 16.
+    -h|--help)   sed -n '2,/^$/p' "$0" | sed 's/^#\{1,\} \{0,1\}//'; exit 0 ;;
     *)           echo "unknown arg: $1" >&2; shift ;;
   esac
 done
@@ -132,16 +137,34 @@ fi
 # quoted heading and a real one are treated alike — deliberately. The price is
 # stated plainly: an issue whose ONLY mention of the marker is a quotation is no
 # longer reported as missing. That is a missed detection, and it is the cheap
-# direction. The expensive direction is now unreachable by construction rather
-# than by getting a parser exactly right.
+# direction.
+#
+# HOW FAR THAT ACTUALLY GOES — round 5 claimed here that the expensive direction
+# was "unreachable by construction". That was FALSE, and every lens said so: the
+# recogniser had simply become the new single point of failure, and an emoji-
+# decorated h2, an h3, a setext heading and a non-breaking space all still routed
+# real summaries to `missing`. Round 6 widened the recogniser and split it in two
+# (see CLASSIFY), which closes those. The honest statement is narrower: the
+# destructive class is reached only when NO line in any comment resembles the
+# heading, and the recogniser is deliberately generous about what resembles it.
+# It is not a proof, and the shapes it still misses are listed in the tests.
+#
+# ONE KNOWN BLIND SPOT, stated rather than fixed: only COMMENTS are fetched, so a
+# summary someone wrote into the ISSUE BODY instead of a comment reads as
+# missing. Writing it there is not the documented flow (idd-close posts a
+# comment), and widening the fetch would change the contract idd-list mirrors --
+# but the consequence lands on the destructive path, so it is recorded here and
+# in the idd-close precondition rather than left for a seventh round to find.
 #
 # `casing` and `present` keep the information the old two-way marker threw away
 # (10 of 43 closed issues in a real repo had drifted to `## Closing summary`),
-# but neither authorises anything.
+# but neither authorises anything. `casing` additionally requires content under
+# the heading, so it can state that the summary is there; `present` states
+# nothing at all beyond existence.
 #
-# `head_re` deliberately has no trailing `\b`: `_` is a word character, so a word
-# boundary would refuse `## closing summary_v2` — a plausible way to head a
-# revised summary — and misfile a present summary as missing.
+# The recognisers deliberately have no trailing `\b`: `_` is a word character, so
+# a word boundary would refuse `## closing summary_v2` — a plausible way to head
+# a revised summary — and misfile a present summary as missing.
 #
 # THE TITLE AND NUMBER ARE UNTRUSTED DATA. The record below is `class\t#N  title`,
 # parsed positionally downstream. Both delimiters are in-band, so a newline in a
@@ -160,15 +183,42 @@ CLASSIFY='
   # file, which made GitHub serve it as a binary blob (the whole diff rendered
   # as "Binary file not shown") and made plain grep skip it in silence.
   #
-  # Deliberately permissive: any indentation, blockquote markers allowed, one or
-  # two hashes, no space required after them. This regex answers only "could a
-  # reader see a closing-summary heading here", and every ambiguity resolves
-  # toward yes, because yes is the direction that withholds the destructive
-  # action. `###` is excluded -- an h3 is a subsection of a summary, not one.
-  def head_re: "^[ \t>]*#{1,2}[ \t]*closing[ \t]+summary";
+  # TWO PREDICATES, NOT ONE (round 6). Rounds 1-5 used a single heading regex to
+  # answer two questions whose SAFE DIRECTIONS ARE OPPOSITE, and round 5 failed
+  # on exactly that: blockquote prefixes and unlimited indentation were added to
+  # make the presence test permissive, the same regex then decided the lead test,
+  # and a comment that merely QUOTED the heading was announced as "the summary is
+  # there" with the warning glyph withheld. That is the round-1 defect restored.
+  #
+  #   present_re / bare_re   Q1: could a reader see a closing-summary heading
+  #     ANYWHERE? Over-detecting withholds the destructive action, so these are
+  #     deliberately permissive: any indentation, blockquote markers, one to six
+  #     hashes (fullwidth included), any non-letter decoration between the hashes
+  #     and the words -- emoji headings are this plugin house style, idd-comment
+  #     ships six of them -- and non-breaking or ideographic spaces inside the
+  #     phrase. `bare_re` additionally catches a line that is ESSENTIALLY JUST the
+  #     phrase, which covers setext headings and bold pseudo-headings.
+  #
+  #   lead_re   Q2: does this comment LEAD with a real heading? Over-detecting
+  #     exonerates an issue with a positive claim, so this one is strict: a
+  #     genuine ATX heading, no blockquote prefix, at most three spaces of indent.
+  #
+  # Hash count is 1-6, not 1-2. Excluding h3 bought nothing -- a subsection like
+  # `### Problem` does not contain the phrase -- while sending a summary written
+  # at h3 straight to the destructive class.
+  def present_re: "^[ \t>]*[#\\x{FF03}]{1,6}[^\\p{L}\\p{N}]*closing[\\s\\x{00A0}\\x{200B}\\x{3000}]+summary";
+  def bare_re:    "^[ \t>]*[^\\p{L}\\p{N}]*closing[\\s\\x{00A0}\\x{200B}\\x{3000}]+summary[^\\p{L}\\p{N}]*$";
+  def lead_re:    "^ {0,3}#{1,6}[^\\p{L}\\p{N}]*closing[\\s\\x{00A0}\\x{200B}\\x{3000}]+summary";
   # Control characters are structural here (record + field delimiters) and can
   # also repaint a terminal; U+2028/U+2029 and the bidi controls can forge or
   # reorder a row in any renderer that honours them. One substitution covers all.
+  #
+  # U+200C ZWNJ and U+200D ZWJ are deliberately NOT in the class: they are
+  # letter-joining controls in Persian and the Indic scripts, and ZWJ is what
+  # holds an emoji sequence together -- stripping it splits a woman-technologist
+  # into two people. Neither can forge or reorder a row, which is what this
+  # substitution is for. The first cut wrote the range 200B-200F and did exactly
+  # that damage.
   #
   # POSIX class names, not a numeric escape range: Oniguruma does not read the
   # backslash-u form inside a jq string, so a range written that way silently
@@ -176,7 +226,8 @@ CLASSIFY='
   # caught only because every fixture title came back as fragments.
   def sanitize:
     (. // "")
-    | gsub("[[:cntrl:]\\p{Zl}\\p{Zp}\\x{200E}\\x{200F}\\x{202A}-\\x{202E}\\x{2066}-\\x{2069}]"; " ")
+    | gsub("[[:cntrl:]\\p{Zl}\\p{Zp}\\x{061C}\\x{200B}\\x{200E}\\x{200F}\\x{202A}-\\x{202E}"
+           + "\\x{2060}-\\x{2064}\\x{2066}-\\x{2069}\\x{FEFF}\\x{E0000}-\\x{E007F}]"; " ")
     | gsub(" +"; " ");
   # The first line a reader actually sees: blank lines and whole-line HTML
   # markers are skipped, because this plugin mandates a marker on line 1 for
@@ -188,10 +239,33 @@ CLASSIFY='
     | (first // "");
   # Oniguruma anchors ^ to the START OF THE STRING, not to each line -- verified,
   # not assumed. Lines are therefore split explicitly; relying on the anchor
-  # would have sent every mid-comment marker to missing, which is precisely the
+  # would have sent every marker that is not on line 1 to missing, which is the
   # failure this rewrite exists to make unreachable.
   def has_heading_anywhere:
-    ((. // "") | split("\n")) | any(test(head_re; "i"));
+    ((. // "") | split("\n"))
+    | any(test(present_re; "i") or test(bare_re; "i"));
+  # Does anything non-blank follow the lead line? A heading with nothing under it
+  # is not a summary, and letting it read as compliant made such an issue
+  # INVISIBLE -- printed in no section at all, while --retroactive also aborts on
+  # it. Anyone who can comment could silence a closed issue permanently by
+  # posting a bare heading. It now lands in `present`: visible, authorising
+  # nothing.
+  def lead_has_content:
+    ((. // "") | split("\n")) as $l
+    | ([range(0; $l | length) | select(($l[.] | test("^[ \t]*$") | not)
+                                       and ($l[.] | test("^[ \t]*<!--.*-->[ \t]*$") | not))] | first) as $k
+    | if $k == null then false
+      else
+        # Content is either something non-blank on a LATER line, or something
+        # substantive left on the heading line once the heading itself is
+        # removed -- a one-line summary such as
+        # `## Closing Summary: fixed the parser, suite green` is a summary.
+        # The first cut asked whether the lead line contained a 20-character
+        # unbroken run, which no ordinary sentence has; it failed that exact
+        # fixture.
+        (($l[($k + 1):] | any(test("\\S")))
+         or ($l[$k] | sub(present_re; ""; "i") | test("\\S\\S\\S")))
+      end;
   # Four destinations, in order. Only the LAST one authorises anything, and it
   # is reached solely by the absence of any heading-shaped line anywhere.
   #
@@ -204,12 +278,17 @@ CLASSIFY='
   # also reads as compliant and so is reported nowhere. Bounding the heading tail
   # is exactly the kind of parsing this rewrite removed, and the residual error
   # is a missed detection, not a duplicate post.
+  #
+  # `state` absent or null now reads as NOT closed. It used to default to CLOSED,
+  # which was the one default in the file leaning toward the destructive action.
   .[]
-  | select((.state // "CLOSED") | ascii_upcase == "CLOSED")
+  | select(((.state // "") | ascii_upcase) == "CLOSED")
   | . as $i
   | [$i.comments[]?.body // ""] as $bodies
-  | (if   ($bodies | any(lead_line | startswith("## Closing Summary"))) then "compliant"
-     elif ($bodies | any(lead_line | test(head_re; "i")))               then "casing"
+  | (if   ($bodies | any((lead_line | startswith("## Closing Summary")) and lead_has_content))
+                                                                        then "compliant"
+     elif ($bodies | any((lead_line | test(lead_re; "i")) and lead_has_content))
+                                                                        then "casing"
      elif ($bodies | any(has_heading_anywhere))                         then "present"
      else "missing" end) as $class
   | "\($class)\t#\($i.number | tostring | sanitize)  \($i.title | sanitize)"
@@ -217,13 +296,18 @@ CLASSIFY='
 # jq errors must NOT become a false all-clear: stderr is captured and a non-zero
 # exit aborts with a note instead of printing "✓ nothing missing" over a filter
 # that died halfway (the same fail-safe direction as the malformed-JSON guard).
-if ! CLASSIFIED=$(printf '%s' "$ISSUES_JSON" | jq -r "$CLASSIFY" 2>/tmp/csw_jq_err.$$); then
+JQ_ERR=$(mktemp "${TMPDIR:-/tmp}/csw_jq_err.XXXXXX") || JQ_ERR=""
+if ! CLASSIFIED=$(printf '%s' "$ISSUES_JSON" | jq -r "$CLASSIFY" 2>"${JQ_ERR:-/dev/null}"); then
   echo "note: classification filter failed — audit skipped, no conclusion drawn." >&2
-  sed 's/^/      jq: /' /tmp/csw_jq_err.$$ >&2
-  rm -f /tmp/csw_jq_err.$$
+  # jq quotes the offending INPUT in its message, so this text is untrusted:
+  # control characters and bidi overrides here would bypass `sanitize` entirely
+  # and repaint the terminal. Strip them, and cap the volume.
+  [ -n "$JQ_ERR" ] && LC_ALL=C tr -d "\000-\010\013\014\016-\037\177" < "$JQ_ERR" \
+    | head -5 | sed "s/^/      jq: /" >&2
+  [ -n "$JQ_ERR" ] && rm -f "$JQ_ERR"
   exit 0
 fi
-rm -f /tmp/csw_jq_err.$$
+[ -n "$JQ_ERR" ] && rm -f "$JQ_ERR"
 
 pick() { printf '%s\n' "$CLASSIFIED" | awk -F'\t' -v c="$1" '$1 == c { print $2 }'; }
 
@@ -259,7 +343,7 @@ fi
 # fix something that was not wrong. No ⚠ — the summary is where it should be and
 # only the heading needs normalising.
 if [ -n "$CASING" ]; then
-  echo "CASING — a comment leads with the heading but not in canonical form (casing, indentation, or a suffix like _v2); the summary is there (normalize the heading — do NOT run --retroactive):"
+  echo "CASING — a comment leads with the heading and has content under it, but the heading is not canonical (casing, indentation, or a suffix like _v2). Normalize the heading — do NOT run --retroactive:"
   printf '%s\n' "$CASING" | sed 's/^/    /'
   echo ""
 fi

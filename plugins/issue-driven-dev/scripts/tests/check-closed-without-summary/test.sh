@@ -3,21 +3,28 @@
 # `## Closing Summary` marker looks like — the retroactive safety net for the
 # direct-commit auto-close trap (#151), made four-way by #295.
 #
-# Fixture `mixed.json`:
-#   #100 CLOSED + canonical heading, own comment → own-comment (not listed)
-#   #101 CLOSED + no  Closing Summary            → MISSING
-#   #102 OPEN   + no  Closing Summary            → not listed (only closed audited)
-#   #103 CLOSED + zero comments                  → MISSING (legacy / UI-close)
-#   #104 CLOSED + `## Closing summary`           → CASING       (#295)
-#   #105 CLOSED + summary inside the IC comment  → MID-COMMENT  (#295)
-#   #106 CLOSED + `## Closing Summary (retro…)`  → own-comment  (#295 D2)
-#   #107 CLOSED + `## closing summary_v2`        → CASING       (#295 D3)
+# Destinations (#295, as of round 6) — `compliant` prints nowhere:
+#   #100 CLOSED + canonical heading leading its comment  → compliant (not listed)
+#   #101 CLOSED + no  Closing Summary                    → MISSING
+#   #102 OPEN   + no  Closing Summary                    → not listed
+#   #103 CLOSED + zero comments                          → MISSING (legacy / UI-close)
+#   #104 CLOSED + `## Closing summary`                   → CASING
+#   #105 CLOSED + summary inside the IC comment          → PRESENT
+#   #106 CLOSED + `## Closing Summary (retro…)`          → compliant (D2)
+#   #107 CLOSED + `## closing summary_v2`                → CASING (D3)
 #
-# Why four classes and not two (#295): the two-way `startswith` misreported 11
-# of 43 closed issues in a real repo (26%), and `/idd-close --retroactive`
-# shares the same marker as its precondition — so a false positive there does
-# not merely add noise, it posts a duplicate summary onto an issue that already
-# has one. Only MISSING may reach that path.
+# Why not two classes (#295): the two-way `startswith` misreported 11 of 43
+# closed issues in a real repo (26%), and `/idd-close --retroactive` shares the
+# same marker as its precondition — so a false positive there does not merely add
+# noise, it posts a duplicate summary onto an issue that already has one. Only
+# MISSING may reach that path.
+#
+# TWO PREDICATES (round 6). Presence is judged permissively (any indentation,
+# blockquote prefix, 1-6 hashes, emoji decoration, NBSP) because over-detecting
+# withholds the destructive action. Leading is judged strictly (a real ATX
+# heading, no blockquote prefix, ≤3 spaces) because over-detecting exonerates an
+# issue with a positive claim — round 5 shared one regex between the two and a
+# blockquoted quotation was announced as "the summary is there".
 #
 # Usage: bash test.sh   (exit 0 = pass, 1 = fail)
 
@@ -81,7 +88,7 @@ refute  "#105 is NOT in MISSING (summary exists)"                flagged 105
 
 # D2 — `## Closing Summary (retroactive — …)` satisfies the canonical prefix by
 # design (idd-close SKILL.md: remediated issues must not be re-surfaced). It has
-# to classify as own-comment, i.e. appear in NO section at all.
+# to classify as `compliant`, i.e. appear in NO section at all.
 refute  "#106 (retroactive heading) is NOT in MISSING"           flagged 106
 refute  "#106 (retroactive heading) is NOT in CASING"            in_section "CASING —" 106
 refute  "#106 (retroactive heading) is NOT in PRESENT"           unverified 106
@@ -109,10 +116,10 @@ refute_grep "CASING header does not invite the destructive path" \
 refute_grep "PRESENT header does not invite the destructive path" \
   "remediate: idd-close --retroactive" "$(section_header 'PRESENT (unverified)')"
 
-# Glyph policy after the #295 verify round: ⚠ marks "a human still has to look",
-# which is true of MISSING and of MID-COMMENT (the tool cannot tell a real
-# summary from a quoted one there). CASING is the only class the tool has
-# actually established, so it is the only one printed without the glyph.
+# Glyph policy: ⚠ marks "a human still has to look", which is true of MISSING and
+# of PRESENT (the tool establishes nothing about a heading that does not lead its
+# comment). CASING is the only listed class whose position AND content the tool
+# has actually established, so it is the only one printed without the glyph.
 assert_grep "PRESENT entries carry ⚠ (unverified, needs a human)" "⚠ #105" "$OUT"
 refute_grep "a CASING entry never carries the warning glyph" "⚠ #104" "$OUT"
 
@@ -134,8 +141,13 @@ require "#108 (heading only inside a fenced block) is PRESENT, not MISSING"  unv
 refute  "#108 is NOT in MISSING (accepted under-report)"                     flagged 108
 require "#109 (heading only inside an HTML comment) is PRESENT"              unverified 109
 refute  "#109 is NOT in MISSING (accepted under-report)"                     flagged 109
-require "#110 (heading with zero content under it) is CASING-or-quiet, not MISSING" \
-  bash -c '! printf "%s\n" "$0" | grep -qE -- "⚠ #110"' "$OUT"
+# R6: a bare heading with nothing under it is no longer `compliant`. Reading it
+# as compliant made the issue INVISIBLE — printed in no section at all, while
+# `--retroactive` also aborts on it, so anyone who can comment could silence a
+# closed issue permanently by posting an empty `## Closing Summary`. It now
+# lands in PRESENT: visible to a human, authorising nothing.
+require "#110 (heading with zero content) is PRESENT, not MISSING and not silent" unverified 110
+refute  "#110 is NOT in MISSING"                                                  flagged 110
 
 # The converse — a genuine summary merged into the IC comment — must stay in the
 # advisory bucket, or the rewrite has simply collapsed everything into missing.
@@ -212,7 +224,7 @@ if found:
 # on either mechanism turns exactly one assertion red.
 require "#119 (line starting with a balanced HTML comment) is NOT missing" \
   bash -c '! printf "%s\n" "$0" | grep -qE -- "⚠ #119"' "$OUT"
-# #120's heading sits after a `---`, so it is legitimately `mid-comment` — which
+# #120's heading sits after a `---`, so it is legitimately `present` — which
 # now carries ⚠. The assertion is therefore "not in MISSING", not "no ⚠": the
 # first draft asserted the latter and failed on correct behaviour.
 refute "#120 (unbalanced HTML-comment opener mid-line) is NOT missing" flagged 120
@@ -249,9 +261,14 @@ for n in 122 123 124 130; do
     bash -c '! printf "%s\n" "$1" | grep -qE -- "#$0"' "$n" "$OUT"
 done
 
-# #129 leads with the heading but indented: CASING, and CASING carries no ⚠.
-require "#129 is listed under CASING"                    in_section "CASING —" 129
-refute_grep "#129 carries no warning glyph"              "⚠ #129" "$OUT"
+# #129 is indented with a space then a TAB, which under CommonMark tab-stop
+# rules indents to column 4 — an indented code block, i.e. a quotation, not a
+# heading. R6 split the predicates: `lead_re` is strict (a real ATX heading, no
+# blockquote prefix, at most three literal spaces), so #129 is no longer CASING.
+# It stays out of MISSING via the permissive presence test. R5 asserted CASING
+# here; the stricter reading is the correct one.
+require "#129 (space+tab indent) is PRESENT, not CASING"  unverified 129
+refute  "#129 is NOT in MISSING"                          flagged 129
 
 # The advisory contract's fail-safe direction, for the classification filter
 # itself: a jq error must not fall through to "✓ nothing missing". Acid showed
@@ -292,6 +309,30 @@ if bad:
     print('stray control bytes: %s' % [hex(b) for b in bad])
     sys.exit(1)
 " "$HELPER"
+
+# The widened invisible/bidi set (#295 R6). ZWJ and ZWNJ are deliberately spared
+# — they join emoji sequences and Persian/Indic letters and cannot forge a row —
+# so this asserts on the dangerous set only.
+require "invisible and bidi controls do not survive into the report" \
+  python3 -c "
+import sys
+bad = {0x061C, 0x200B, 0x200E, 0x200F, 0x2028, 0x2029, 0x2060, 0xFEFF}
+bad |= set(range(0x202A, 0x202F)) | set(range(0x2066, 0x206A)) | set(range(0xE0000, 0xE0080))
+found = sorted({hex(ord(c)) for c in sys.argv[1] if ord(c) in bad})
+if found:
+    print('unsanitised invisibles reached stdout: %s' % found)
+    sys.exit(1)
+" "$OUT"
+require "#133 (whose title carries them) is itself listed" flagged 133
+
+# The FOURTH mechanism, previously untested (round-5 verify, regression lens):
+# the three-way all-clear guard. If it is ever weakened to test only MISSING, a
+# repo with casing/present rows gets a green ✓ over a non-empty report.
+ALLCLEAR=$(bash "$HELPER" --json-file "$HERE/fixtures/casing-only.json" 2>/dev/null)
+refute_grep "a casing-only repo does NOT get a false all-clear" \
+  "No closed issue is missing" "$ALLCLEAR"
+assert_grep "a casing-only repo still prints its CASING section" \
+  "CASING —" "$ALLCLEAR"
 
 print_summary "check-closed-without-summary"
 exit $?
