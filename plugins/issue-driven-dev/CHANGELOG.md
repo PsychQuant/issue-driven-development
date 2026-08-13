@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.105.0] - 2026-08-14
+
+### Added
+
+- **`scripts/migrate-idd-config.sh` + an explicit deprecation statement (#303)** — #195 moved config *write-back* to
+  `.claude/.idd/local.json` and moved nothing that already existed, leaving both layouts coexisting with **no migration
+  and no support promise** — the worst of the three possible states, because a downstream tool cannot tell whether the
+  legacy path is permanent or about to vanish. Measured on one real machine: **32 repos** still on the legacy path.
+  Every new config scanner therefore has to parse both, and each gets its own chance to miss one — in #302's repo-map
+  scanner, missing a config means "this layer does not exist" and triggers the wrong upward resolution. The script has
+  `--scan` (default, writes nothing) and `--apply`; when both paths exist it **touches neither**, because the reader
+  already prefers the current one and moving could destroy a hand-edited file. `config-protocol.md` now states the
+  promise plainly: legacy reads keep working with no removal date, but **new scanners only need the current path**.
+
+- **`references/milestone-first-tracking.md` (#83)** — writes down the SOP the user found by hand in a 2026-05-12
+  dogfood session (「還是你可以創 milestone 來追蹤」). Epic issues are an anti-pattern for cross-cluster tracking because
+  every IDD phase degenerates on them: no single root cause to diagnose, no scope for the guard to police, no diff to
+  verify, and a closing summary whose five sections cannot be filled with anything real. Milestones carry the one thing
+  actually needed — "these finish together" — and GitHub counts progress itself. The dividing line: **counting →
+  milestone, argument → `tracking` issue**; neither runs implement or verify.
+
+### Fixed
+
+- **`--type=question` now tags the person it is asking (#128)** — the user's point was simple: 「如果要問一個人問題，要在
+  問題上自動tag他吧（diagonose除外）」. The hard half — verifying a handle before mentioning it — already shipped as
+  `rules/tagging-collaborators.md`, mandatory across seven skills; what was missing was the trigger. `idd-comment
+  --type=question` now follows that protocol when the question is directed at someone, with three boundaries stated:
+  `/idd-diagnose` is excluded (it is analysis for oneself, not a question), handles are never guessed from a name (a
+  mention cannot be withdrawn), and an unclear addressee means **no tag** — a missing mention costs one notification,
+  the wrong mention is an irreversible interruption.
+
 ## [2.104.0] - 2026-08-14
 
 ### Fixed

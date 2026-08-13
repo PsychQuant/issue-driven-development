@@ -522,3 +522,11 @@ IDD 不是把 TDD + SDD + issue tracking 拼在一起的 combo —
 
 - Update after changes: `/plugin-tools:plugin-update issue-driven-dev`
 - Health check: `/plugin-tools:plugin-health`
+
+## 跨 cluster 追蹤用 milestone，不用 Epic issue（#83）
+
+一組要一起完成的 issue，用 GitHub **milestone** 追蹤；**不要**開 Epic issue 當母票。Epic 跑 IDD lifecycle 不合適 —— 它沒有單一 root cause、沒有可實作的 scope、沒有可驗證的 diff，每個 phase 套上去都是空轉。
+
+判準一句話：**要計數就用 milestone，要論述就用 `tracking` phase 的 tracker issue。** 兩者都不跑 implement / verify。
+
+完整 SOP 見 [`references/milestone-first-tracking.md`](references/milestone-first-tracking.md)。

@@ -244,6 +244,21 @@ gh api repos/$OWNER/$REPO/collaborators --jq '.[] | {login, name}' \
 <!-- idd:comment type=question date=YYYY-MM-DD status=open -->
 ```
 
+**問題有對象時要 @ 到人（#128）**：`--type=question` 的本質是**向某個人提問**。使用者原話：
+
+> 「如果要問一個人問題，要在問題上自動tag他吧（diagonose除外，所以你要知道使用電腦的人是哪一個使用者）」
+
+所以：問題若指向特定的人（body 出現某人的名字、或使用者在呼叫時說「問 X」），**必須**依 [`rules/tagging-collaborators.md`](../../rules/tagging-collaborators.md) 的五步協定 @ 到他的 GitHub login，並把 mention 放在問題本文裡（不是附在最後）。
+
+**三條邊界**：
+
+1. **`/idd-diagnose` 排除** —— 使用者明確排除了它。diagnose 是給自己看的分析，不是提問。
+2. **不得從姓名猜 handle。** 這正是 tagging 協定存在的理由：`@JaneDoe` 猜錯會通知到無關的人，而 mention **無法撤回**。查不到就照協定走 AskUserQuestion，不要賭。
+3. **不確定問題是對誰時，不 tag。** 沒有 mention 的 open question 只是少一個通知；tag 錯人是不可逆的打擾。
+
+```
+```
+
 #### Template: `correction`
 
 ```markdown
