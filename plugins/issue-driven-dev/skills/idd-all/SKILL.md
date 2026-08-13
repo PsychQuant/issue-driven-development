@@ -530,7 +530,7 @@ print(m.group(1).strip() if m else 'UNKNOWN')
 | Complexity 值 | 下一步 |
 |--------------|--------|
 | `Simple` | Phase 3a: idd-implement |
-| `Plan` | Phase 3a: idd-implement(unattended → Plan deliberation 跳過;attended → Plan tier `EnterPlanMode` approval gate 自然 fire) |
+| `Plan` | **attended → Phase 3p: `/idd-plan`**（該 skill 擁有 `EnterPlanMode` 閘門，approve 後自己 chain 到 idd-implement）;**unattended → Phase 3a: idd-implement**，並在 final report 標記 `[Plan tier deliberation skipped under unattended mode]` |
 | `Plan via Layer V` (v2.50+) | 視同 `Plan` 處理 — verdict 是 user 在 idd-diagnose Step 3.4 選 escalate 觸發,routing 行為跟 bare `Plan` 一致 |
 | `Spectra` | Phase 3b: spectra-discuss → spectra-propose → spectra-apply(unattended → 一輪收斂;attended → multi-turn 對話自然進行) |
 | `SDD-warranted` (legacy alias) | 視同 `Spectra` 處理(v2.36.0+ backward compat) |
@@ -542,7 +542,9 @@ print(m.group(1).strip() if m else 'UNKNOWN')
 >
 > **Plan tier under (PR, unattended)**: Plan tier 的核心價值是 user approval via `EnterPlanMode`/`ExitPlanMode`。unattended 沒有 user 在 review plan,所以 Plan path 直接跳到 idd-implement,**在 final report 標記 `[Plan tier deliberation skipped under unattended mode]`**。
 >
-> **Plan tier under (direct-commit, attended)**: 不傳 unattended hint,idd-implement 進 Plan tier、`EnterPlanMode` 呈現 plan 給 user,user `ExitPlanMode` approve 後才繼續。這是 attended mode 的設計目的之一。
+> **Plan tier under (direct-commit, attended)**: 路由到 **`/idd-plan`**,由它 `EnterPlanMode` 呈現 plan 給 user,user `ExitPlanMode` approve 後由 `/idd-plan` 自己 chain 到 `/idd-implement`。這是 attended mode 的設計目的之一。
+>
+> **修正紀錄（#292）**：本表過去把 Plan tier 直送 `idd-implement`,並宣稱該 skill 的 `EnterPlanMode` 閘門會「自然 fire」。**那個閘門不在 `idd-implement` 裡** —— 它住在 `/idd-plan`（見該 skill Step 4 `enter_plan_mode_for_approval`）。`idd-implement` 收到 Plan tier 時做的是**印一句警告**並用 AskUserQuestion 問要不要繼續（見其 SKILL.md 的 Complexity 表）。而 `grep "idd-plan" idd-all/SKILL.md` 在修正前**沒有任何命中** —— `/idd-plan` 從 `/idd-all` 根本到不了。結果是 Plan tier 的 approval checkpoint 在 orchestrated 路徑上整個消失,而三處文件都宣稱它在。
 >
 > **SDD path under (PR, unattended)**: 三步 chain `spectra-discuss → spectra-propose → spectra-apply`,每步傳 `UNATTENDED MODE` directive 抑制 `AskUserQuestion`,一輪收斂、不停 Park。
 >
@@ -567,7 +569,7 @@ if [ "$INTERACTION" = "unattended" ]; then
   # Inline directive — sub-skill suppresses AskUserQuestion / EnterPlanMode prompts
   IMPL_ARGS="$IMPL_ARGS
 
-UNATTENDED MODE — called by /idd-all orchestrator. Suppress AskUserQuestion. If complexity is Plan, skip the EnterPlanMode approval gate and proceed straight to TDD; mark in your final comment that Plan deliberation was skipped."
+UNATTENDED MODE — called by /idd-all orchestrator. Suppress AskUserQuestion. If complexity is Plan, this is a DELIBERATE DOWNGRADE to the Simple path — there is no approval gate in this skill to skip (it lives in /idd-plan); proceed straight to TDD and mark in your final comment that Plan deliberation was skipped."
 fi
 
 Skill(skill="issue-driven-dev:idd-implement", args="$IMPL_ARGS")
@@ -1086,7 +1088,7 @@ Next: review PR https://github.com/owner/repo/pull/87, merge after acceptance, t
 Phase 0.5 印 `→ Path: direct-commit (attended) — pr_policy=never`,sub-skill args **不帶** unattended hint。
 
 中間流程:
-- Phase 2 diagnose 判定 `Plan` → Phase 3a `idd-implement` 進 Plan tier、`EnterPlanMode` 把 plan 呈現給 user → user `ExitPlanMode` approve 後才繼續 TDD
+- Phase 2 diagnose 判定 `Plan` → Phase 3p `/idd-plan` 用 `EnterPlanMode` 把 plan 呈現給 user → user `ExitPlanMode` approve → `/idd-plan` chain 到 `/idd-implement` 跑 TDD
 - Phase 4 verify 找到 1 個 P3 finding → 不 auto-fix(attended mode trade-off),直接 surface 給 user
 
 ```
