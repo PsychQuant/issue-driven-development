@@ -5,7 +5,6 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-<<<<<<< HEAD
 ## [2.103.3] - 2026-08-14
 
 ### Fixed
@@ -30,7 +29,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/idd-update --tasks-file` command whenever the verdict is Spectra. Auto-detecting the spectra directory layout was
   considered and rejected: it would weld an external tool's structure into IDD, against `--tasks-file`'s deliberate
   design of not composing paths from convention.
-=======
 ## [2.103.1] - 2026-08-14
 
 ### Fixed
@@ -56,7 +54,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Renamed in all four tables in `idd-clarify`, plus the copy `idd-issue` emits on the deferred path and the emit rule in
   `references/terminology-canonical.md` — that library keeps its own `Suggested canonical` field, which is a different
   layer, and now states that the canonical term is the *basis* of the question rather than the cell contents.
->>>>>>> main
 
 ## [2.102.2] - 2026-08-01
 
