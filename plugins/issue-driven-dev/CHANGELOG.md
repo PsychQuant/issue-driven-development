@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.107.0] - 2026-08-14
+
+### Added
+
+- **`/idd-reorganize` — a first-class re-baseline when an upstream artifact was wrong (#200)** — user's words:
+  「idd 有一個問題就是如果前面有問題的化，會對後面造成毀滅性的影響，我覺得 idd-edit 可能還不夠」. IDD is an append-only
+  chain, so a wrong premise upstream is inherited and amplified downstream, and the two existing responses are both
+  insufficient: `idd-edit` changes **one piece of text** (it cannot propagate), and `idd-verify` catches the problem at
+  the **end** of the chain (expensive, and only if it catches it). The new skill makes propagation an explicit
+  operation: name the wrong artifact in one sentence, **mechanically** enumerate everything built on it (comments, plan,
+  spec/tasks, branch, PR, commits, issues referencing it), adjudicate each as still-valid / redo / invalidate **with a
+  reason**, post a `## Re-baseline` record, and roll the phase back to the redo point.
+
+  Two deliberate constraints. `still-valid` requires a written reason, because "looks unrelated" is this operation's
+  commonest failure — downstream artifacts inherit premises in non-obvious places (a test's stated rationale, a
+  CHANGELOG's causal narrative). And the record has a **"why was this only found now"** field, because that is the one
+  thing that accumulates into evidence about what our upstream errors look like — the same evidence base the MANIFESTO
+  rule added in #144 draws on.
+
+  Its worked example is this repo: `#295`'s diagnosis located the root cause in the marker comparison; seven verify
+  rounds later the real cause turned out to be in `gh`'s **acquisition layer**, not the classifier at all. Everything
+  downstream — the Strategy, four rounds of test rationale, the CHANGELOG's causal account, and four prose
+  descriptions of the rule — had been built on the wrong premise and was repaired by hand, which is exactly why the
+  prose-drift defect recurred four rounds running.
+
 ## [2.106.0] - 2026-08-14
 
 ### Added

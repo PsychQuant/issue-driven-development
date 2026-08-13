@@ -233,6 +233,7 @@ IDD plugin 已累積 14+ skills(`idd-issue` / `idd-diagnose` / `idd-implement` /
 | `idd-update` | Sep | Atom | Side | W | Fwd | S / Batch | SHALL phase sync | Unatt-capable | Sk | Cl-non |
 | `idd-comment` | Sep | Atom | Side | W | Fwd | S / Batch | SHOULD template | Unatt-capable | Sk + flags | Cl-non |
 | `idd-edit` | Sep | Atom | Side | W | (任) | S / Batch | SHALL preview before write | Att-only | Sk | Cl-non |
+| `idd-reorganize` | **修復** | 上游 artifact 的前提錯了、而下游已經建在它之上時的 re-baseline 操作（#200）。與 `idd-edit` 的分界：edit 改**一處文字**，reorganize 讓修正**向下傳播** —— 機械枚舉所有下游產物，逐一裁定 still-valid / redo / invalidate，並留下含「為什麼現在才發現」的 re-baseline 紀錄 |
 | `idd-list` | (n/a) | Atom | n/a | R | (查) | S | n/a | Unatt-capable | Sk + flags | Cl-non |
 | `idd-clarify` | Sep | Atom | Delib(surface-only) | W (annotation block) | Fwd | S | SHALL hard-gate consumer (diagnose Step 0.5) | Unatt (deferred-row 機制 #137) | Sk + flags | Cl-non |
 | `idd-find` | (n/a) | Atom | n/a | R | (查) | S | n/a | Unatt-capable | Sk + flags | Cl-non |
