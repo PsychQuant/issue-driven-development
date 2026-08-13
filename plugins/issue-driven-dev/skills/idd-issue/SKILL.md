@@ -1020,13 +1020,37 @@ gh release view $ATTACHMENTS_RELEASE --repo $GITHUB_REPO 2>/dev/null || \
   gh release create $ATTACHMENTS_RELEASE --repo $GITHUB_REPO \
     --title "Attachments" --notes "Issue attachments and figures"
 
+idx=1
 # 對 Step 1 蒐集到的每個附件依序上傳（命名規則：issue_${NUMBER}_${DESC}.${ext}）
+#
+# DESC 必須是 ASCII（#286）。GitHub 會 sanitize release asset 檔名，**非 ASCII 字元
+# 直接被剝除**。實測上傳 `issue_10_tpa2026_年會議程.pdf` 與
+# `issue_10_nstc_心理學門成果發表會議程.pdf`，讀回來是 `issue_10_tpa2026_.pdf` 與
+# `issue_10_nstc_.pdf` —— 中文整段消失。那次沒出事只因為兩者的 ASCII 前綴剛好不同。
+#
+# 對中文語境的使用者，DESC 寫成純中文是很自然的，而那會讓兩個不同附件 sanitize 成
+# 同一個名字；再配上 `--clobber`，**第二個會靜默覆蓋第一個**，issue body 兩條連結
+# 指向同一份檔案，而且沒有任何錯誤訊息。
 for f in "${ATTACHMENT_PATHS[@]}"; do
   ext="${f##*.}"
-  desc=$(make_desc "$f")  # 簡短描述 e.g. "snq_timeline" / "telegram_msg_8169455616_photo1"
+  desc=$(make_desc "$f")        # 簡短描述 e.g. "snq_timeline"
+  # ASCII-fold：非 [A-Za-z0-9._-] 一律轉底線，再摺疊連續底線
+  desc=$(printf '%s' "$desc" | LC_ALL=C tr -c 'A-Za-z0-9._-' '_' | sed 's/__*/_/g; s/^_//; s/_$//')
+  # 全部被摺掉（DESC 原本純非 ASCII）→ 退回可辨識的序號，絕不產生會相撞的空名字
+  [ -z "$desc" ] && desc="attachment_$(printf '%03d' "$idx")"
   upload_name="issue_${NUMBER}_${desc}.${ext}"
-  gh release upload $ATTACHMENTS_RELEASE "$f" \
-    --repo $GITHUB_REPO --clobber
+
+  # --clobber 只有在「確定要覆蓋自己剛上傳的同一份」時才安全。先檢查同名 asset 是否
+  # 已存在且不是本輪產生的 —— 存在就換名，不靜默蓋掉別人的附件。
+  if gh release view "$ATTACHMENTS_RELEASE" --repo "$GITHUB_REPO" \
+       --json assets --jq '.assets[].name' 2>/dev/null | grep -qxF "$upload_name"; then
+    upload_name="issue_${NUMBER}_${desc}_$(printf '%03d' "$idx").${ext}"
+    echo "note: asset name collision — uploading as $upload_name instead" >&2
+  fi
+
+  gh release upload "$ATTACHMENTS_RELEASE" "$f#$upload_name" \
+    --repo "$GITHUB_REPO"
+  idx=$((idx + 1))
 done
 
 # 圖片 URL 格式（private 和 public repo 都適用）
