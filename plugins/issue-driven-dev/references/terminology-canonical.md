@@ -122,7 +122,7 @@ Optional fields(若有 evidence):
 1. **Lexical pass**:body contains source term(case-sensitive for ASCII abbreviations,case-insensitive for Chinese)
 2. **Context predicate pass**:context predicate phrase 在 same body 出現(任何位置 OK,not necessarily same paragraph — heuristic allows broad match,user 可 dismiss false positive)
 3. **De-dupe**:同一 source phrase 觸發多個 rows 時,選 highest-specificity row(最 specific context predicate)
-4. **Emit**:per match row,produce `### Clarity Surface` table row with Type=`terminology`,Source=quoted body excerpt(含周圍 sentence),Suggested canonical=本檔 row 的 suggested canonical value
+4. **Emit**:per match row,produce `### Clarity Surface` table row with Type=`terminology`,Source=quoted body excerpt(含周圍 sentence),**Question for you** = 用本檔 row 的 suggested canonical 組成一個可以一句話回答的問句（#294），例如「這裡的『分群變數』指的是 `distinguishing variable` 嗎？」——**不要**只把 canonical term 填進去。本檔的 `Suggested canonical` 欄位仍是 library 自己的欄位名，兩者不同層
 
 ## Versioning
 

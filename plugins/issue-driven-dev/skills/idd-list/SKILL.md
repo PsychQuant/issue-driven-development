@@ -72,15 +72,26 @@ TaskCreate(name="audit_closes_marker", description="Step 4 (v2.75.2+, #151): 若
 ### Step 2: Fetch Issues
 
 ```bash
+# --limit is applied SERVER-side, BEFORE any sort we do here (#299). Asking for
+# N and then sorting locally returns "N arbitrary issues, sorted" — not "the N
+# most recently active". The truncation is silent: the output looks correctly
+# ordered, and the issues that fell off are invisible.
+#
+# So the sort must happen server-side too. `--search "sort:updated-desc"` makes
+# GitHub order before it truncates; the local sort below is then a no-op that
+# keeps the contract explicit.
 gh issue list \
     --repo "$GITHUB_REPO" \
     --state "$STATE" \
     --limit "$LIMIT" \
+    --search "sort:updated-desc" \
     ${LABEL:+--label "$LABEL"} \
     --json number,title,state,labels,updatedAt,body,comments
 ```
 
-按 `updatedAt` desc 排序（最新活動在最上面）。
+按 `updatedAt` desc 排序（最新活動在最上面）。**排序必須在 server 端發生** —— `--limit` 是 server 端套用的，先截再排等於「隨便 N 筆，排好序」，而且截掉的是誰完全看不出來（#299）。
+
+> **若 `--search` 與 `--label` 併用有衝突**（GitHub 的 search 語法與 `--label` flag 走不同路徑），退而求其次：把 `--limit` 放大到 `3 × $LIMIT` 抓回來、本地排序後再取前 `$LIMIT`，並在 footer 註明「已從 N 筆中取最近 M 筆」。**不可**維持現狀的靜默截斷。
 
 ### Step 2.5: Fetch Open PRs (v2.51.0+)
 
