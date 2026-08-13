@@ -48,7 +48,7 @@ TaskCreate(name="fetch_open_prs", description="Step 2.5 (v2.51+): gh pr list --s
 TaskCreate(name="fetch_discussions", description="Step 2.7 (v2.95+, #221): 僅當 --discussions flag — probe hasDiscussionsEnabled（false → 一行 skip note）→ GraphQL 抓 open discussions（first 50）→ filter（Q&A/Ideas ∧ answerChosenAt null）→ dedup（issue body 含該 URL 者剔除）→ Discussions (actionable) 區塊。query 失敗降級 skip note，絕不 abort。無 flag 時 no-op")
 TaskCreate(name="extract_phase", description="從每個 issue body 的 Current Status → **Phase**: 抽出 phase；fallback 掃 comments 標題推斷")
 TaskCreate(name="build_issue_pr_index", description="Step 3.5 (v2.51+): client-side regex `#(\d{1,7})\b` scan PR body 找 issue refs (cap digits ≤7,過濾 #0),反向建 issue→PR map + cluster detection (refs ≥ 2 → cluster,leader = min(refs);若同 issue 被多 PR ref,sort by PR number asc 確保 deterministic order;cluster_members 寫入 pr_info 僅當 len ≥ 2)")
-TaskCreate(name="extract_blocked_state", description="Step 3.7 (v2.92+, #84): 抽 blocked 信號（Blocking 區塊/label/wait 類 next）→ blocked_reason 掛 entry")
+TaskCreate(name="extract_blocked_state", description="Step 3.7 (v2.92+, #84; #298 擴充): 抽四個「現在可不可以動」訊號 —— Blocking 區塊 / blocked label / **parking-lot label** / **### Complexity 的 when-triggered 限定詞**（非裸 tier token → 保守歸 Blocked 且印出限定詞原文，不得截斷）→ blocked_reason 掛 entry")
 TaskCreate(name="format_output", description="組 #N [phase] title 表格;有 PR 加 └─ 子行 (cluster leader 顯示 cluster: #X #Y / member 顯示 → see PR #N) + footer 統計含 PR/cluster 數")
 TaskCreate(name="report_and_suggest_next", description="輸出 table 並列出 Suggested next（phase × PR state matrix）；#84 分 Actionable/Blocked 兩組 + 全 blocked banner + footer 計數")
 TaskCreate(name="audit_closes_marker", description="Step 4 (v2.75.2+, #151; 分類契約 #295): 若 --audit-closes,對 state=CLOSED 的 issue 依 scripts/check-closed-without-summary.sh 的 CLASSIFY（compliant / casing / present / missing）分類。判準不解析 markdown：missing = 所有 comment 的原始文字裡都找不到 closing-summary heading（引述、fence 內、非 canonical 一律算「有」）。missing 與 present 帶 ⚠（前者欠 summary、後者未經驗證）;**只有 missing 提 --retroactive**;casing 不帶 ⚠。reuse Step 3 comment scan,不重 fetch")
@@ -238,7 +238,27 @@ def get_leader(refs_list, body, rule):
 
 **`cluster_members` 寫入規則**:寫進 `pr_info` 僅當 `len(refs) >= 2`(single-PR 為 None)。Step 4 判定 cluster 一律以 `pr_info['cluster_members'] is not None` 為 single source of truth,避免 single-PR 判定條件有歧義(per L12 finding)。
 
-### Step 3.7: Blocked-state extraction（v2.92+, #84）
+### Step 3.7: Blocked-state extraction（v2.92+, #84；#298 擴充為四訊號）
+
+對每個 issue 抽「現在可不可以動」的信號（**依 body 記錄判定，不宣稱即時**）。#84 只接上四個訊號中的一個，其餘三個 routing 讀不到 —— 實測本 repo 的 22-issue backlog，**9 條路由裡 8 條錯**，而且錯得完全看不出來（表格語法正確、格式正常、零 warning）。其中 #131 與 #200 帶著使用者親自下的 defer 裁決，照 routing 執行等於自動推翻已記錄的人為決策。
+
+**四個訊號，全部要讀（#298）**：
+
+| 訊號 | 位置 | 判定 |
+|---|---|---|
+| `### Blocking` 區塊非空 | body `## Current Status` | blocked（#84 已 ship）|
+| `blocked` label | labels | blocked |
+| **`parking-lot` label** | labels | **parked —— first-class gate，不得路由成 actionable** |
+| **`### Complexity` 帶限定詞** | 最新 Diagnosis comment | **見下** |
+
+**`### Complexity` 的限定詞不得被截斷**：值若不是已知 tier 的**裸 token**（`Simple` / `Plan` / `Spectra`），而是帶條件的形式 —— `Simple when triggered`、`Spectra when triggered (parking lot)`、`Plan (deferred pending #86)` —— 則：
+
+1. **保守處置**：歸入 Blocked/Parked 組，**不**給 `→ /idd-implement` 之類的 actionable 建議；
+2. **必須 surface**：在該列印出限定詞原文（如 `⏸ when triggered: ≥3 instances (目前 #1)`），不得靜默截成 tier。
+
+這與 `### Conflict Class` 的既有規則對稱：值無法 parse 成已知 token 時預設最保守的類別**並把 fallback 印出來**。差別只在本欄過去連 parse 都沒做 —— 它直接取第一個像 tier 的字。
+
+> **本規則的實證來源**：2026-08-14 的 backlog 清理逐一讀了這些 issue 的**歷史**（誰在什麼脈絡下決定了什麼），才判斷得出 #131/#146/#157/#143/#145/#136 該關、#200 該留。那個判斷需要的訊息不在 label 也不在 complexity 欄位裡 —— 這正是 #37（bulk-solve autopilot）被 re-park 的理由，也是本 step 只做到「擋下誤路由」而不做「自動決定處置」的原因。
 
 對每個 issue 抽 blocked 信號（**依 body 記錄判定，不宣稱即時**）：
 

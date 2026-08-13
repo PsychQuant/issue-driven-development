@@ -70,6 +70,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file behind them, no error anywhere. Names are now ASCII-folded before upload, an all-folded description falls back to
   an indexed name rather than an empty one, and a pre-existing asset of the same name causes a rename with a note
   instead of a clobber.
+## [2.103.3] - 2026-08-14
+
+### Fixed
+
+- **`idd-list` routing could not read "is this actionable right now" (#298)** — four signals exist for it and #84 wired
+  up exactly one. Measured against this repo's own 22-issue backlog: **8 of 9 routes were wrong**, and two of them
+  (#131, #200) carried a defer ruling the user had made personally — following the routing would have silently
+  overturned a recorded human decision. The failure looks like nothing: the table is syntactically fine, correctly
+  formatted, and carries no warning. Step 3.7 now reads all four — `### Blocking`, the `blocked` label, the
+  **`parking-lot` label as a first-class gate**, and the **`### Complexity` qualifier**. A Complexity value that is not
+  a bare tier token (`Simple when triggered`, `Spectra when triggered (parking lot)`) is treated conservatively **and
+  its qualifier is printed verbatim** — symmetric with the existing `### Conflict Class` rule, except this field
+  previously did not parse at all: it took the first tier-looking word and dropped the condition.
+
+- **Spectra-tier issues fell out of tracking after diagnose (#300)** — `/spectra-discuss`, `/spectra-propose` and
+  `/spectra-apply` emit **no phase-bearing comment**; progress lives in `openspec/changes/<name>/tasks.md`, which IDD
+  cannot see. So phase froze at `diagnosed`, and `idd-close`'s authoritative-source resolution fell through to the
+  Diagnosis **Strategy checklist** — a pre-implementation list that stays unticked no matter how much work was done.
+  Both directions are bad and one is silent: reading "nothing done" blocks a legitimate close (visible, someone
+  complains), but a Strategy list that happened to be short or already ticked lets the gate **pass on a checklist
+  unrelated to the actual implementation** — and nobody finds out. `idd-diagnose` now prints a binding hand-off with the
+  `/idd-update --tasks-file` command whenever the verdict is Spectra. Auto-detecting the spectra directory layout was
+  considered and rejected: it would weld an external tool's structure into IDD, against `--tasks-file`'s deliberate
+  design of not composing paths from convention.
 ## [2.103.1] - 2026-08-14
 
 ### Fixed

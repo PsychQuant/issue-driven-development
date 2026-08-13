@@ -618,6 +618,21 @@ Diagnosis 完成 + Step 3.4 Vagueness Pre-check 結束後（`type=meeting` 已�
 | `Spectra` (opt-out) | `/spectra-propose` | diagnose → propose → apply → verify → close + archive（僅當 ALL opt-out conditions 成立） |
 | `meeting`（**type 分流，非 complexity verdict** —— 在 Step 3.5 最優先分支、不經複雜度評分） | `/idd-plan #NNN`（meeting-adapted plan） | diagnose（Phase A/B/C Strategy）→ plan（meeting Plan body：議程 → 決策點 → 行動項；**不** chain to `/idd-implement`）→ close（decision→action mapping + meeting-specific gate，無 `/idd-verify` TDD pass） |
 
+> **Spectra tier 的追蹤 hand-off（#300，綁定）**：verdict 為 `Spectra` 時，diagnose **必須**在 report 的下一步區塊印出以下三行，否則該 issue 會在 diagnose 之後失去追蹤：
+>
+> ```
+> → /spectra-discuss   （或依 opt-out 條件走 /spectra-propose）
+> ⚠ Spectra 路徑不產生任何 phase-bearing comment，所以：
+>    artifacts 完成後請貼一則 `## Implementation Complete`，並跑
+>    /idd-update #N --tasks-file openspec/changes/<change-name>/tasks.md
+> ```
+>
+> **為什麼需要這一行**：`idd-update` 的 phase 推斷靠掃 comment 標題（`## Diagnosis` / `## Implementation Plan` / `## Implementation Complete` / `## Verify` / `## Closing Summary`），而 `/spectra-discuss`、`/spectra-propose`、`/spectra-apply` **一則都不產生** —— 進度記在 `openspec/changes/<name>/tasks.md`，那個檔案 IDD 看不到。於是 phase 凍在 `diagnosed`，而 `idd-close` 的 authoritative-source 解析會一路 fallback 到第 3 層，掃到 **Diagnosis 的 Strategy checklist** —— 一份 pre-implementation 清單，實作做完了它也還是全未打勾。
+>
+> 方向不對稱且其中一邊是安靜的：gate 讀到「全未完成」會擋下 close（假陰性，看得見、會被抱怨）；但若 Strategy 清單當初就寫得少或被打過勾，gate 會**對一份與實際實作無關的清單放行**（假陽性，沒人會發現）。
+>
+> `--tasks-file` 本來就是為此設計的（`idd-update` 自己寫著「為走非 `idd-implement` 路徑的 issue 補上 authoritative source」），但在本次修正之前**沒有任何地方會告訴走 Spectra 的人要用它**。這是最小改動的一版；把 spectra 目錄佈局寫進 IDD 的自動偵測方案刻意不採用，因為那會把外部工具的結構知識焊進來，與 `--tasks-file` 不從慣例組路徑的設計相衝。
+
 > **Pre-implementation staging hand-off（#111，非綁定）**：verdict 為 `Plan` 或 `Spectra`（design-heavy）時，diagnose 在 report 印一行非綁定 pointer —— `→ 建議 pre-implementation staging: superpowers:brainstorming`（先 brainstorm 對齊方向再進 plan / propose）。這是**非綁定建議**：IDD 自身**不** invoke `superpowers:brainstorming`，使用者自行決定是否跟進（見 README「IDD ↔ superpowers stage mapping」）。
 
 > **為什麼 discuss 是 Spectra default?** AI 常常高估 diagnosis 的完整度。一份看起來詳盡的 diagnosis 可能仍留下關鍵的未決項:命名、範圍邊界、多個合理方案中該選哪個、新產物要放哪裡。直接跳到 `spectra-propose` 會產生建立在未確認假設之上的 proposal。`spectra-discuss` 是對齊的 safety net — 強制把假設列出、讓使用者修正。跳過它應該是例外,不是預設。
