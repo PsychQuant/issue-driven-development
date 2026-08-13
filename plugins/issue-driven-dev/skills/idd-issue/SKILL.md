@@ -1117,7 +1117,7 @@ else
 
 ### Clarity Surface (deferred — see retry hint)
 
-| Type | Source | Suggested canonical | Status |
+| Type | Source | Question for you | Status |
 |---|---|---|---|
 | (deferred) | /idd-clarify invocation failed | Run /idd-clarify #$NEW_ISSUE_NUMBER manually to populate | deferred |
 "

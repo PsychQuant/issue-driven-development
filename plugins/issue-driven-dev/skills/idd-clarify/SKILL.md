@@ -237,19 +237,33 @@ LIBRARY_CONTENT=$(cat "$LIBRARY_FILE")
 ```markdown
 ### Clarity Surface(idd-clarify run <ISO 8601 timestamp>)
 
-| Type | Source | Suggested canonical | Status |
+| Type | Source | Question for you | Status |
 |---|---|---|---|
 | terminology | "..." | ... | surfaced |
 | ambiguity | "..." | ... | surfaced |
 | missing-context | "..." | ... | surfaced |
 ```
 
+**第三欄寫「問句」，不是分析（#294）**：使用者原話 ——
+
+> 「iddclarify我覺得你可以直接放對使用者的問題」
+
+那一欄的讀者是**要做裁決的人**。寫成描述式分析（「此處 X 與 Y 的界線未定義」），他讀完還得自己把分析還原成一個可回答的問題，才知道要決定什麼。直接寫成問句，讀完就能回答：
+
+| ❌ 描述式 | ✅ 問句 |
+|---|---|
+| 「`phase` 與 `status` 在本文中混用，語義邊界未定義」 | 「`phase` 和 `status` 是同一件事嗎？如果不是，哪一個是給人看的？」 |
+| 「未指明此規則套用於既有 repo 或僅新建 repo」 | 「這條規則要不要回頭套用到已經存在的 32 個 repo？」 |
+| 「缺少失敗時的預期行為」 | 「如果它失敗了，你希望它擋下來、還是印個警告繼續？」 |
+
+問句要**可以用一句話回答**。若一個疑點需要三個問題才問得完，那是三個 row，不是一個 row 塞三句。
+
 **Empty surface case**:no detection → 仍 emit:
 
 ```markdown
 ### Clarity Surface(idd-clarify run <ISO 8601 timestamp>)
 
-| Type | Source | Suggested canonical | Status |
+| Type | Source | Question for you | Status |
 |---|---|---|---|
 | (none) | — | no issues detected | passed |
 ```
@@ -261,7 +275,7 @@ LIBRARY_CONTENT=$(cat "$LIBRARY_FILE")
 ```markdown
 ### Clarity Surface(idd-clarify run <ISO 8601 timestamp>, unattended)
 
-| Type | Source | Suggested canonical | Status | Reason |
+| Type | Source | Question for you | Status | Reason |
 |---|---|---|---|---|
 | terminology | "..." | ... | deferred | unattended-auto-Step-4.6-deferred |
 | ambiguity | "..." | ... | deferred | unattended-auto-Step-4.6-deferred |
@@ -399,7 +413,7 @@ Annotation appended:
 
 ### Clarity Surface(idd-clarify run 2026-05-22T03:42:18Z)
 
-| Type | Source | Suggested canonical | Status |
+| Type | Source | Question for you | Status |
 |---|---|---|---|
 | terminology | "可否 prompt 跟他說各群要有至少一個最高得分的特徵值" | 分群變數 / distinguishing variable (per K-means context, library row 1) | surfaced |
 | missing-context | "請根據上面網址的Ｋ欄的情感、人、場..." | customer × attribute score 來源未指定(GSheet 只有 metadata) | surfaced |
