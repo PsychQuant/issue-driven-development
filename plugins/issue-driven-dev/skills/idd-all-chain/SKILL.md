@@ -43,6 +43,26 @@ allowed-tools:
 
 Take 1 root issue, recursively solve any chain-eligible spawned issues (from sub-skill sister sweeps / verify follow-ups / mid-plan tangentials / sister concerns), all on **ONE cluster branch** and reviewed via **ONE PR**.
 
+## Bundle epic 的 children 自動入列（#81）
+
+`idd-all-chain #ROOT` 若偵測到 ROOT 是 **bundle epic**（由 `idd-issue --bundle-mode` 建出、body 帶 children 清單），**自動把它的 children 全部 enqueue**，與 chain 自己 spawn 出來的 issue 同等對待。
+
+使用者原話（2026-05-12）：
+
+> 「bundle 處理到最後理論上是 idd-all-chain 的事情，chain 其實只是代表衍生的 issue 都要解玩」
+
+**為什麼**：在使用者的視角，bundle children 與 chain spawns **沒有差別** —— 都是「為了主任務而衍生、等著被解掉的 sub-issue」。差別只存在於實作歷史：children 是**建立時**就知道的，spawns 是**執行中**才冒出來的。要求使用者因為這個實作細節切換 mental model（從 `/idd-all-chain #epic` 改打 `/idd-all #epic #c1 #c2 #c3 --pr`），是把內部差異外洩成介面負擔。
+
+**偵測**：ROOT 的 body 含 bundle children 區塊（`idd-issue --bundle-mode` 的產出格式），或 ROOT 帶 `epic` label 且有 sub-issue 關聯。偵測不到就照現行行為跑，**不猜**。
+
+**入列後的行為與 chain spawn 完全相同**：同一條 cluster branch、同一個 review PR、每張各自跑完整 lifecycle、停在 verified 不 auto-close。
+
+**兩個邊界**：
+
+1. **`--bundle-mode ordered` 的順序要保留** —— ordered bundle 的 children 之間有相依性，入列順序必須照 body 的宣告順序，不可依 issue number 排序。
+2. **epic 本身不跑 implement / verify** —— 它是 bundle 的容器，與 `references/milestone-first-tracking.md` 對 Epic 的判斷一致（沒有單一 root cause、沒有 diff）。epic 在所有 children 都 verified 之後才進入可結案狀態。
+
+
 ## 核心原則
 
 > **`/idd-all-chain` is a thin shell over `/idd-all`.** 90% of pipeline logic stays in `/idd-all` (Phase 0-6 unchanged); chain shell only orchestrates the recursion + cluster branch + cluster PR.

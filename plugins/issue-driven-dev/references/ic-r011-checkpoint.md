@@ -71,7 +71,13 @@ When the user requests to skip one or more candidates, the skill SHALL present a
 | **(b) infeasible but understood** | Technically infeasible at this point but understood (e.g. "Need 100x budget to reproduce") | **Still files** as P3 with `blocker:infeasible` label. Audit: `Skipped: (b) infeasible — filed as #NNN with blocker:infeasible label` |
 | **(c) blocked on external state** | Waiting on external state that will likely change (e.g. "Wait for GitHub Actions API to add X") | **Still files** as P3 with `blocker:waiting` label. Audit: `Skipped: (c) blocked-on-external — filed as #NNN with blocker:waiting label` |
 
-**Net effect**: only (a) avoids filing. (b) and (c) preserve the parking lot — periodic backlog grooming can grep `blocker:infeasible` or `blocker:waiting` to revisit when conditions change.
+**Net effect**: only (a) avoids filing. (b) and (c) preserve the parking lot.
+
+> **關於「periodic backlog grooming」（#310，2026-08-14 更正）**：本段原本寫著 grooming「可以 grep `blocker:infeasible` / `blocker:waiting` 來回訪」。實測本 repo：**這兩個 label 一次都沒有被建立過**，而且**沒有任何 periodic grooming 機制存在** —— 沒有排程、沒有 CI、沒有任何 skill 會主動回頭看 parked issue。
+>
+> 這件事重要，因為 parked issue 的 trigger 條件全是**關於未來世界狀態的散文命題**（「等 ≥3 instances」「首次 trace-stale 實害事故」）。這類條件成立時**不會發出事件** —— 沒有 webhook、沒有訊號、沒有任何東西會通知 repo。唯一能發現「trigger 已成立」的路徑是**人主動回頭讀**。
+>
+> 現在提供的是 `/idd-list --parked`（見 idd-list SKILL）：它把所有 parked issue 連同**各自的 trigger 條件原文**列出來，讓一次人工回訪變得可行且便宜。它**不是**自動化 —— 它只是把回訪從「要先想起有這回事、再自己拼出清單」降成「跑一個指令」。若之後真的要自動化，那需要先讓 trigger 條件變成機器可判定的東西，那是另一個題目。
 
 ### 1.5 Skip taxonomy AskUserQuestion structure (per-candidate)
 
