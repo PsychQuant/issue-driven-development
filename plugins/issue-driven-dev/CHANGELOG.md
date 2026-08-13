@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.106.0] - 2026-08-14
+
+### Added
+
+- **`/idd-list --parked` — the revisit mechanism ic-r011 said already existed (#310)** — IDD has three ways to move an
+  issue out of sight (`parking-lot` label, `### Blocking`, the `when triggered` qualifier on `### Complexity`) and had
+  **none** to move it back. `references/ic-r011-checkpoint.md` told groomers to grep `blocker:infeasible` /
+  `blocker:waiting`; measured on this repo, **neither label has ever been created**, and no periodic grooming exists —
+  no schedule, no CI, no skill that looks back. That matters because a parked issue's trigger is always a prose
+  proposition about a future world state ("≥3 instances", "the first trace-stale incident"), and such conditions **emit
+  no event when they come true**. The only path is a human re-reading them. `--parked` lists every parked issue
+  **with its trigger condition verbatim** — not summarised, because judging whether a trigger fired requires the
+  original wording. It never unparks or closes anything: deciding whether that future arrived needs knowledge from
+  outside the repo. The claim in ic-r011 has been corrected rather than left as an aspiration.
+
+- **`/idd-all-chain` enqueues bundle children automatically (#81)** — user's observation:
+  「bundle 處理到最後理論上是 idd-all-chain 的事情，chain 其實只是代表衍生的 issue 都要解玩」. From the user's side a
+  bundle child and a chain spawn are the same thing — a sub-issue waiting to be solved; the difference is purely an
+  implementation accident (children are known at filing time, spawns appear during execution). Making the user switch
+  mental models because of that accident leaks an internal distinction into the interface. Ordered bundles keep their
+  declared order (children have dependencies; issue-number sort would break them), and the epic itself still runs no
+  implement/verify — consistent with `milestone-first-tracking.md` on why epics have no diff to verify.
+
 ## [2.105.0] - 2026-08-14
 
 ### Added

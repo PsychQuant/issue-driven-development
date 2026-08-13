@@ -67,6 +67,7 @@ TaskCreate(name="audit_closes_marker", description="Step 4 (v2.75.2+, #151; 分�
 | `--limit` | `20` | 最多顯示筆數 |
 | `--repo` | _(from config)_ | 覆寫 config 的 repo |
 | `--audit-closes` | off | 旗標：把 **CLOSED** 的 issue 依其 `## Closing Summary` marker 分類（`compliant` / `casing` / `present` / `missing`，#295）。`missing` = **所有 comment 的原始文字裡都找不到**該 heading，可能是被 commit / PR-body close keyword auto-close 繞過 `/idd-close` gate 的受害者（#151）；`present` 未經驗證、同樣帶 ⚠；**只有 `missing` 提 `--retroactive`**。`--state` 仍是預設 `open` 時隱含切到 `closed`。底層 primitive：`scripts/check-closed-without-summary.sh`（standalone / cron 可直接呼叫）|
+| `--parked` | off | **回訪模式（#310）**：只列被移出視線的 issue，並把**各自的 trigger 條件原文**一併印出。三個來源：`parking-lot` label、`### Complexity` 的 `when triggered` 限定詞、`### Blocking` 區塊非空。輸出每列為 `#N  title` + 縮排一行 `⏸ trigger: <原文>`；`--state` 隱含 `open`。**這不是自動化** —— parked 的 trigger 是關於未來世界狀態的散文命題，成立時不會發出任何事件，所以唯一的路徑是人回頭讀；本 flag 只是把那件事變便宜 |
 | `--discussions` | off | **Opt-in**（#221）：同場 surface GitHub Discussions 的 actionable 項（Q&A/Ideas、未答、未被任何 issue 引用）。契約 + GraphQL 見 [`references/discussions-intake.md`](../../references/discussions-intake.md) |
 
 ### Step 2: Fetch Issues
@@ -267,6 +268,36 @@ def get_leader(refs_list, body, rule):
 3. Suggested-next 屬 wait 類（cluster UNKNOWN wait / 等 collaborator reply 樣式）
 
 抽出 `blocked_reason`（Blocking 區塊首行或 label 名），掛到 issue entry。
+
+### Step 3.9: Parked review（`--parked`，v2.106+，#310）
+
+**僅當 `--parked`** 才執行；無 flag 完全 no-op。
+
+IDD 有三個機制會把 issue 移出視線，**沒有任何機制會把它移回來**：`parking-lot` label、`### Blocking` 區塊、`### Complexity` 的 `when triggered` 限定詞。`references/ic-r011-checkpoint.md` 原本宣稱 periodic grooming 可以 grep `blocker:*` label 來回訪 —— 實測那兩個 label **從來沒有被建立過**，而且沒有任何 periodic 機制存在（#310）。
+
+流程：
+
+1. 取 open issues（含 `labels`、`body`、最新 Diagnosis comment）
+2. 挑出符合任一來源者
+3. **抽出 trigger 條件原文**（不摘要、不改寫 —— 判斷 trigger 是否成立要看原話）：
+   - `parking-lot` → 找 body 或 diagnosis 裡說明 park 理由的句子；找不到就印 `(no trigger recorded)`，那本身就是要修的東西
+   - `when triggered` → 印限定詞括號內的全文
+   - `### Blocking` → 印該區塊內容
+4. render：
+
+```
+Parked (3) — 每一項的 trigger 條件是關於未來的散文命題，不會自己發出訊號：
+
+  #144  codify 'AI design 階段過抽象' as plugin-level principle
+     ⏸ trigger: ≥3 instances（目前 #1）
+
+  #157  spec.md @trace blocks lack auto-update
+     ⏸ trigger: ≥1 次 trace-stale 實害事故
+```
+
+5. footer 印 `(parked: N — 上次回訪日期不可知，IDD 不記錄)`。**不要**宣稱「已檢查過 trigger」—— 這個 flag 只負責把條件攤開給人看。
+
+**鐵律**：本 step **絕不自動 unpark、也絕不自動關閉** parked issue。判斷「那個未來狀態是否已經發生」需要 repo 之外的知識；工具把條件列出來，人來判斷。
 
 ### Step 4: Format Output
 
