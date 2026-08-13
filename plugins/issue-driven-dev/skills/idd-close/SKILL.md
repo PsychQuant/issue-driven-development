@@ -282,6 +282,9 @@ Exit code:
 ```bash
 OPEN_PRS=$(gh pr list --repo "$GITHUB_REPO" --state open \
     --search "in:body \"#${NUMBER}\"" \
+
+> ⚠ **`in:body "#N"` 不是精確比對**（#293 / #305）——它會誤中跨 repo 引用（`codex-pro#7` → `#7`）與無關的 PR。search 只能當粗篩，判定必須照 [`references/pr-issue-matching.md`](../../references/pr-issue-matching.md) 在 client 端精篩，並檢查 PR 不早於 issue。
+
     --json number,url,headRefName,mergeable)
 ```
 
@@ -558,10 +561,20 @@ When `RESIDUE_TRIGGER == "true"`, AskUserQuestion per IC_R011 canonical pattern.
 >
 > 該 residue 在 #${NUMBER} 完成期間有變動嗎?"
 >
-> Options (default = first):
-> - **`still residue — acknowledge as-is`** — record acknowledgement in closing summary that residue stayed as residue. No new issue. Audit trail: `Acknowledged as still residue (text quoted in audit block).`
-> - **`file as follow-up issue(s)`** — surface candidate decompositions if residue has multiple distinct items; user picks which to file. Each filed issue gets `**Source**: residue from #${NUMBER} at /idd-close time` for traceability.
-> - **`skip — record in audit trail only`** — no new issue, no acknowledgement; just log the user's choice. Audit trail: `Skipped per user choice (residue not addressed).`
+> Options (default = first, flipped in #304):
+> - **`file as follow-up issue(s)`** — **預設**。surface candidate decompositions if residue has multiple distinct items; user picks which to file. Each filed issue gets `**Source**: residue from #NNN` footer. Audit trail: `Filed as follow-up: #XXX`.
+> - **`still residue — acknowledge as-is`** — record acknowledgement in closing summary that residue stayed as residue. No new issue. Audit trail: `Acknowledged as still-residue`.
+> - **`skip — record in audit trail only`** — no new issue, no acknowledgement; just log the user's choice. Audit trail: `Skipped per user choice (residue not addressed)`.
+
+**為什麼預設是 file，不是 acknowledge（#304）**：三個理由，第三個是決定性的。
+
+1. **原本的理由是從別處借來的。** Step 3.6 過去寫著「closure 是 wrap-up moment 非 deliberation moment」—— 那句話是為 **Step 3.5**（closing-summary keyword scan）寫的。那一步撈的是散文裡的 orphan mention，可能只是順口提到，預設不 file 合理。但 residue 不是撈出來的：它是 `idd-diagnose` 時**被明確宣告過的實體**，模板還強制無殘留要寫 `(none)`。對一個已經正式宣告的東西，預設「不追蹤」說不通。
+
+2. **residue 的定義本身就指向它最容易被遺忘。** Foresay §4.6 的 residue = issue 意圖中*無法 operationalize* 的部分。無法 operationalize 就是接不進 checklist、接不進 commit、接不進測試 —— 除了 follow-up issue，**沒有任何機制會再碰它**。停在 closing summary 的散文裡等於宣告完就丟，而 #103 F3 指認的 write-only loop 正是這件事，#105 建本 step 就是要關掉它。
+
+3. **實測與預設系統性相反。** 同一批 close 的三個 residue，使用者三次全部偏離預設（Akashic-Library #235/#219/#224，2026-08-13）。一次是偏好，三次同向是預設站錯邊 —— 而代價不對稱：多開一張 follow-up 的成本是三十秒與一次關票，漏追一個 residue 的成本是三個月後重新考古。
+
+與 [`references/ic-r011-checkpoint.md`](../../references/ic-r011-checkpoint.md) §1.1 的 file-by-default 對齊；skip 需比照 §1.4 給理由。
 
 #### File issues (if user picks `file`)
 

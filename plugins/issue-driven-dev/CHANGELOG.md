@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.104.0] - 2026-08-14
+
+### Fixed
+
+- **`/idd-plan` was unreachable from `/idd-all` (#292)** — the issue reported "two skill docs contradict each other";
+  the contradiction was the symptom. `EnterPlanMode` lives in `/idd-plan` (Step 4 `enter_plan_mode_for_approval`).
+  `/idd-implement` says so itself and, when handed a Plan-tier issue, prints a *warning* suggesting `/idd-plan` — it has
+  no gate. And `grep "idd-plan" idd-all/SKILL.md` returned **nothing**: the orchestrator never routed there. So under
+  `/idd-all`, Plan tier's entire approval checkpoint silently vanished while three separate places claimed it fired —
+  under attended mode the user got a warning telling them to use a skill the orchestrator would not call, and under
+  unattended mode the injected directive told the sub-skill to "skip the EnterPlanMode approval gate" it never had.
+  Routing table now sends attended Plan tier to **Phase 3p `/idd-plan`**; unattended is stated as a deliberate downgrade
+  rather than skipping a gate that does not exist.
+
+- **`in:body "#N"` is not exact matching, in seven places (#293, #305)** — GitHub tokenizes `#N`; quoting does not make
+  it precise. Measured on `PsychQuant/perspective-writer`: `in:body "#7"` matched a PR whose body contains only
+  `codex-pro#7`, and `in:body "#10"` matched a PR whose body contains no `#10` at all. Every call site took `.[0]` as
+  the answer. The two issues named two sites; the pattern was in **seven** — the close gate (blocks a legitimate close),
+  branch resolution (verifies the wrong branch), verify's input auto-detect (reviews the wrong PR), the report stats,
+  and three reference files that get copied. New contract `references/pr-issue-matching.md`: search is a coarse filter,
+  the decision is made client-side with a regex that excludes cross-repo forms, plus #305's orthogonal check that a PR
+  predating the issue cannot be its feature branch. It is documented as a pragmatic answer, not an authoritative one —
+  GraphQL's `CrossReferencedEvent` is closer but not semantically identical.
+
+- **`idd-close` Step 3.6 now files residue by default (#304)** — the default was `acknowledge as-is`, whose stated
+  rationale ("closure is a wrap-up moment, not a deliberation moment") was written for **Step 3.5**, a keyword scan over
+  prose that may have surfaced an offhand mention. Residue is not surfaced — it is *declared* at diagnose time, with the
+  template requiring an explicit `(none)` when empty. And residue is by definition the part that cannot be
+  operationalized, so nothing but a follow-up issue will ever touch it again: leaving it in the closing summary reopens
+  the write-only loop #105 was created to close. Empirically the default was on the wrong side — three residues in one
+  batch, the user deviated all three times. Aligned with IC_R011 §1.1; skip still requires a reason.
+
+### Added
+
+- **MANIFESTO: 設計階段的抽象度，作者自己看不出來 (#144)** — codified with the evidence that produced it: #135's design
+  phase went four rounds over-abstract before a third party named it, and PR #297 needed **seven** verify rounds where
+  every round the author believed it was fixed and every round external review found real defects. The heaviest one —
+  `gh` returning only the oldest 100 comments, so a real closing summary is truncated away and the issue is classified
+  `missing`, inviting a duplicate post — surfaced only after round six, because it was never in the layer the author
+  kept re-reading. Round seven then demonstrated the recursive form: the machine check added to prevent prose drift
+  carried the same blind spot, and all three of that round's new mechanisms had zero test weight. Hence the three rules:
+  third-party surfacing of design shape, a positive control for every guard, and "I enumerated exhaustively" is not
+  evidence.
+
 ## [2.102.2] - 2026-08-01
 
 ### Added
