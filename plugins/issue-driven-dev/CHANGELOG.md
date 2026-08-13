@@ -151,6 +151,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reads as *not closed*: it used to default to CLOSED, the one default in the file leaning toward the
   destructive action.
 
+- **Round 7 — the defect was never in the classifier: `gh` truncates the comment set, and truncates the wrong end (#295)** —
+  `gh issue list --json comments` resolves the nested GraphQL connection as `comments(first: 100)`. It is hard-capped, it
+  does not paginate, and the 100 it returns are the **oldest**. Verified against a public repo rather than assumed:
+  `microsoft/vscode#301011` has 155 comments and returns exactly 100, whose first `createdAt` equals REST page 1. A
+  closing summary is by construction the **newest** comment, so on any issue past 100 comments it is precisely the
+  element guaranteed to be dropped — and the classifier, seeing no heading, says `missing`, the one class that invites
+  the irreversible `--retroactive`. **Six verify rounds worked on the classifier and none of them could have found this,
+  because it is not in the classifier.** It also falsified this file's own normative definition: "NO line in ANY comment"
+  was a property the filter could not evaluate, having never had all the comments. Now: issues at the cap are re-fetched
+  in full per issue, and if that fetch fails the issue is marked and can never reach `missing`.
+
+- **Round 7 — every mechanism now carries test weight, and the tests have positive controls (#295)** — round 6's acid
+  was run by hand and never entered the suite, so three of its own mechanisms could be reverted with the suite fully
+  green: the recogniser widening, the predicate split, and `bare_re`. Round 7's acid mutates seven mechanisms and each
+  turns assertions red on its own. Getting there required two fixture repairs that are worth recording, because both are
+  the same class of error the round was fixing: `#157` had to be re-shaped after the first version was claimed by
+  `lead_re` and isolated nothing, and its assertion had to be rewritten after asserting "no ⚠" — which PRESENT rows also
+  carry — made it fail on correct behaviour. The prose-drift suite gained **positive controls**: it plants a violation,
+  proves the scan sees it, then removes it. Round 6's version passed vacuously under four independent no-op mutations.
+
+- **Round 7 — prose no longer restates the regex at all (#295)** — three lenses independently reported the same
+  CRITICAL: both destructive-gate readers still printed the round-5 pattern verbatim, and round 6's drift test was blind
+  to it because a hand-maintained phrase list only knows what its author remembered to add — the faculty that had
+  already failed five times. The readers now describe the intent and point at `def present_re` / `def bare_re`; the
+  drift suite's primary check is mechanical, matching the *shape* of a line-anchored pattern mentioning the marker, so
+  no copy can exist to drift. A dangling-pointer check asserts the named predicates really exist.
+
+- **Round 7 — three advisory-contract holes and the silencing channel, properly this time (#295)** — a value-taking flag
+  as the last argument made the script **spin forever**, which breaks the "always exits 0" promise harder than any wrong
+  verdict; an empty or whitespace-only payload produced a green all-clear, the exact false reassurance its own guard
+  names; and the bare-heading fix from round 6 was one character deep — `## Closing Summary` followed by `...` restored
+  the invisibility, because "content" had been defined as any non-space. Content now means letters or digits.
+
 - **`idd-close` Step 3.6 stops missing a drifted Diagnosis heading (#296)** — the residue acknowledgement found
   its Diagnosis comment with a case-sensitive `startswith("## Diagnosis")`. Any drift (`## diagnosis`,
   `##Diagnosis`, an emoji or indented variant) made `DIAG_BODY` empty, which **silently skipped** the very

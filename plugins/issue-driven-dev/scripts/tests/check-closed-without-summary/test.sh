@@ -334,5 +334,45 @@ refute_grep "a casing-only repo does NOT get a false all-clear" \
 assert_grep "a casing-only repo still prints its CASING section" \
   "CASING —" "$ALLCLEAR"
 
+# ── #295 R7: the recogniser widening now carries test weight ──
+# Round 6 widened the recogniser and verified it with a hand-written probe that
+# never entered the suite. Acid then showed the entire widening could be reverted
+# to the round-5 form with the suite still fully green — and three lenses found
+# real summaries still reaching MISSING. Each shape below is one mechanism of the
+# widening; together they are the regression lock that was missing.
+
+for n in 140 141 142 147 148 149 150 151 152 153; do
+  refute "#$n (a real summary a reader can see) is NOT in MISSING" flagged "$n"
+done
+
+# CRLF is how the GitHub web UI actually submits comment bodies, and every other
+# fixture in this file is LF-only — so nothing here could see a CRLF regression.
+require "#154 (CRLF body, canonical summary) stays quiet" \
+  bash -c '! printf "%s\n" "$0" | grep -qE -- "#154"' "$OUT"
+
+# The mirror direction, and the reason round 6 exists: a comment that merely
+# QUOTES the heading must never reach a class that asserts content exists.
+# `casing` says "the summary is there"; `present` says nothing was established.
+require "#155 (blockquote-led quotation) is PRESENT, never CASING" unverified 155
+refute  "#155 is NOT in CASING (it would assert content that is not there)" \
+  in_section "CASING —" 155
+
+# The silencing channel, closed properly this time: round 6 required "content"
+# but accepted any non-space, so three dots restored the invisibility.
+require "#156 (heading + dots only) is PRESENT, not silent" unverified 156
+
+# Acid on round 7 found two mechanisms still carrying no weight, one of them
+# added in the same round. Each fixture below is reachable by exactly ONE
+# mechanism, so neither can hide behind the other — present_re and bare_re had
+# been masking each other, which is the same shape that hid defects in rounds
+# 2, 3 and 6.
+# NOTE the assertion form: `flagged` is section-scoped. The first cut asserted
+# "no ⚠ #157", but PRESENT entries carry ⚠ too, so it failed on correct
+# behaviour — the same conflation this suite already recorded once at #120.
+refute "#157 (emoji heading, mid-comment, same-line content) is NOT in MISSING" flagged 157
+require "#157 is visible in the advisory bucket"                                unverified 157
+require "#158 (known-truncated comment set) is PRESENT, never MISSING" unverified 158
+refute  "#158 is NOT in MISSING — an incomplete fetch cannot prove absence" flagged 158
+
 print_summary "check-closed-without-summary"
 exit $?

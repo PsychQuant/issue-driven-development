@@ -75,7 +75,7 @@ allowed-tools:
 
 **判準只有兩個原始動作，不解析 markdown**（#295 R5）：
 
-1. **「有沒有」** —— 把**所有** comment 的**原始文字**逐行看，有沒有任何一行長得像 closing-summary heading：`^[ \t>]*#{1,2}[ \t]*closing[ \t]+summary`，**不分大小寫**。任何縮排都算、blockquote 前綴也算、fence 或 HTML comment 內的也算。
+1. **「有沒有」**（normative source 的 `present_re` / `bare_re`）—— 把**所有** comment 的**原始文字**逐行看，有沒有任何一行**看起來像** closing-summary heading。判準刻意寬鬆：不分大小寫、任何縮排、blockquote 前綴、1-6 個井號（含全形＃）、井號與字之間的裝飾字元（emoji）、字間的 NBSP／全形空格／零寬空格；另外也認「整行基本上就是那兩個字」的形式（setext 標題、粗體偽標題）。fence 或 HTML comment 內的一樣算。**regex 字面不在此複述** —— 五輪的分岔全部來自散文複述了一份會過期的副本；要看確切形式請讀 normative source 的 `def present_re` / `def bare_re`。
 2. **「開頭是不是」** —— 某則 comment 跳過空行與整行 HTML marker 後的**第一行**，是不是那個 heading。
 
 | 分類 | 判準 | `--retroactive` |

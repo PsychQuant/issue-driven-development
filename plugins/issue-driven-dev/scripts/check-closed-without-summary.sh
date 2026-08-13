@@ -39,10 +39,13 @@ DRY_RUN=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --json-file) JSON_FILE="${2:-}"; shift 2 ;;
-    --repo)      REPO="${2:-}"; shift 2 ;;
-    --limit)     LIMIT="${2:-50}"; shift 2 ;;
-    --since)     SINCE="${2:-}"; shift 2 ;;
+    # `shift 2` with only one argument left is a no-op in some shells, so a
+    # trailing value-taking flag looped forever — the advisory contract promises
+    # exit 0, and never exiting breaks it harder than any wrong verdict.
+    --json-file) JSON_FILE="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
+    --repo)      REPO="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
+    --limit)     LIMIT="${2:-50}"; shift; [ $# -gt 0 ] && shift ;;
+    --since)     SINCE="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
     --dry-run)   DRY_RUN=1; shift ;;   # gh mode: print the composed gh command + exit (offline introspection / test seam)
     # Print the whole leading comment block, however long it grows. The old
     # fixed range (2,16p) silently dropped Usage and the "ALWAYS exits 0"
@@ -85,14 +88,61 @@ else
     echo "note: 'gh issue list' failed (auth / network / old gh CLI) — audit skipped." >&2
     exit 0
   fi
+
+  # ── The acquisition layer truncates, and it truncates the wrong end ──
+  #
+  # `gh issue list --json comments` resolves the nested GraphQL connection as
+  # `comments(first: 100)`. It is hard-capped, it does NOT paginate, and the 100
+  # it returns are the OLDEST. Verified against a public repo, not assumed:
+  #
+  #   gh issue list -R microsoft/vscode --state closed --search "comments:>150" \
+  #     --json number,comments --limit 3   ->  every row returns exactly 100
+  #   gh api repos/microsoft/vscode/issues/301011 --jq .comments   ->  155
+  #   first returned comment createdAt == REST comments?page=1 created_at  ->  oldest
+  #
+  # A closing summary is by construction the NEWEST comment, so on any issue past
+  # 100 comments it is precisely the element guaranteed to be dropped — and the
+  # classifier then sees no heading and says `missing`, the one class that invites
+  # the irreversible `--retroactive`. Six verify rounds worked on the classifier
+  # and none of them could have found this: it is not in the classifier.
+  #
+  # It also falsified this file's own normative definition. "NO line in ANY
+  # comment" is a property the filter could not evaluate, because it never had
+  # all the comments.
+  #
+  # Fix: re-fetch in full, per issue, but only for the issues that are actually
+  # at the cap. `length >= 100` is the truncation signal.
+  TRUNCATED=$(printf '%s' "$ISSUES_JSON" | jq -r '[.[] | select((.comments | length) >= 100) | .number] | .[]' 2>/dev/null)
+  if [ -n "$TRUNCATED" ]; then
+    RESOLVED_REPO="$REPO"
+    [ -z "$RESOLVED_REPO" ] && RESOLVED_REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)
+    for n in $TRUNCATED; do
+      FULL=$(gh api "repos/$RESOLVED_REPO/issues/$n/comments" --paginate --jq '[.[] | {body}]' 2>/dev/null)
+      if [ -n "$FULL" ]; then
+        ISSUES_JSON=$(printf '%s' "$ISSUES_JSON" \
+          | jq --argjson full "$FULL" --argjson n "$n" 'map(if .number == $n then .comments = $full else . end)')
+      else
+        # Could not complete the fetch. Do NOT let a partial comment set decide
+        # the destructive class: mark it so the classifier can never call it
+        # `missing`. Same fail-safe direction as the malformed-JSON guard.
+        ISSUES_JSON=$(printf '%s' "$ISSUES_JSON" \
+          | jq --argjson n "$n" 'map(if .number == $n then .idd_comments_truncated = true else . end)')
+        echo "note: issue #$n has more comments than one page and the full fetch failed — it will never be reported as missing." >&2
+      fi
+    done
+  fi
 fi
 
 # Fail-safe: if the acquired payload is NOT valid JSON (e.g. gh returned 0 with a
 # truncated stream / proxy HTML, or a hand-edited fixture is malformed), do NOT
 # fall through to the filter and print a false "✓ all-clear" — that's the worst
 # direction for a safety-net audit (false reassurance). Warn + exit, no verdict.
-if ! printf '%s' "$ISSUES_JSON" | jq empty 2>/dev/null; then
-  echo "note: issue payload is not valid JSON — audit skipped, no conclusion drawn." >&2
+if [ -z "$(printf '%s' "$ISSUES_JSON" | tr -d '[:space:]')" ]; then
+  echo "note: issue payload is empty — audit skipped, no conclusion drawn." >&2
+  exit 0
+fi
+if ! printf '%s' "$ISSUES_JSON" | jq -e 'type == "array"' >/dev/null 2>&1; then
+  echo "note: issue payload is not a JSON array — audit skipped, no conclusion drawn." >&2
   exit 0
 fi
 
@@ -263,8 +313,13 @@ CLASSIFY='
         # The first cut asked whether the lead line contained a 20-character
         # unbroken run, which no ordinary sentence has; it failed that exact
         # fixture.
-        (($l[($k + 1):] | any(test("\\S")))
-         or ($l[$k] | sub(present_re; ""; "i") | test("\\S\\S\\S")))
+        # "Content" means letters or digits, not merely non-space. Asking for
+        # non-space let three dots stand in for a summary, which re-opened the
+        # silencing channel this check exists to close: anyone who can comment
+        # could post `## Closing Summary` + `...` and remove a closed issue from
+        # the audit permanently.
+        (($l[($k + 1):] | any(test("[\\p{L}\\p{N}]")))
+         or ($l[$k] | sub(present_re; ""; "i") | test("[\\p{L}\\p{N}].*[\\p{L}\\p{N}]")))
       end;
   # Four destinations, in order. Only the LAST one authorises anything, and it
   # is reached solely by the absence of any heading-shaped line anywhere.
@@ -290,6 +345,10 @@ CLASSIFY='
      elif ($bodies | any((lead_line | test(lead_re; "i")) and lead_has_content))
                                                                         then "casing"
      elif ($bodies | any(has_heading_anywhere))                         then "present"
+     # A comment set we know is incomplete can never justify the destructive
+     # class: absence of evidence is not evidence of absence when the evidence
+     # was truncated at the fetch. Falls to `present`, which authorises nothing.
+     elif ($i.idd_comments_truncated == true)                           then "present"
      else "missing" end) as $class
   | "\($class)\t#\($i.number | tostring | sanitize)  \($i.title | sanitize)"
 '
@@ -332,7 +391,7 @@ fi
 # produced nine ways to misjudge it, every one of them routing a real summary to
 # MISSING. A human decides here; the tool only points.
 if [ -n "$PRESENT" ]; then
-  echo "PRESENT (unverified) — a closing-summary heading exists in the comments, but no comment starts with one. Whether it is a real summary or a quotation was NOT established — inspect by hand; do NOT run --retroactive on the strength of this line:"
+  echo "PRESENT (unverified) — nothing was established here. Either a closing-summary heading exists but no comment leads with one (real summary or quotation: not determined), or the comment set could not be read in full. Inspect by hand; do NOT run --retroactive on the strength of this line:"
   printf '%s\n' "$PRESENT" | sed 's/^/  ⚠ /'
   echo ""
 fi
