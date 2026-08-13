@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.103.2] - 2026-08-14
+
+### Fixed
+
+- **`process-attachments.sh` could not see the attachments this plugin itself uploads (#284)** — `idd-issue` Step 4
+  uploads to an `attachments` release and writes a `github.com/{o}/{r}/releases/download/{tag}/{file}` URL into the
+  issue body; the URL detector had no pattern for that shape, so `idd-diagnose` Step 1.5 reported
+  「Issue #N has no attachments (empty manifest written)」 and proceeded without the evidence it was supposed to read.
+  The write side and the read side of one plugin disagreed about a URL shape, and the disagreement was **silent** — an
+  empty manifest is indistinguishable from an issue that genuinely has none. (Filed three times as #284/#285/#287;
+  consolidated here.) The URL character classes were also tightened to exclude whitespace: a bare URL in prose used to
+  swallow the rest of the line.
+
+- **Non-ASCII attachment names collided silently, and `--clobber` overwrote the loser (#286)** — GitHub sanitizes
+  release asset filenames by **stripping non-ASCII characters**. Measured: `issue_10_tpa2026_年會議程.pdf` and
+  `issue_10_nstc_心理學門成果發表會議程.pdf` came back as `issue_10_tpa2026_.pdf` and `issue_10_nstc_.pdf` — the Chinese
+  segment gone entirely. That instance survived only because the two ASCII prefixes happened to differ. A description
+  written *entirely* in Chinese — the natural thing for this plugin's own users — sanitizes to the same name for
+  different files, and with `--clobber` the second upload silently replaces the first: two links in the issue body, one
+  file behind them, no error anywhere. Names are now ASCII-folded before upload, an all-folded description falls back to
+  an indexed name rather than an empty one, and a pre-existing asset of the same name causes a rename with a note
+  instead of a clobber.
+
 ## [2.102.2] - 2026-08-01
 
 ### Added

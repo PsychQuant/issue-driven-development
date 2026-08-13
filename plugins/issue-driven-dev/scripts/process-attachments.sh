@@ -98,7 +98,18 @@ resolve_repo() {
 
 detect_urls() {
   # Patterns: github.com/user-attachments/{files,assets}/, github.com/{owner}/{repo}/files/N/,
-  # (private-)user-images.githubusercontent.com/
+  # (private-)user-images.githubusercontent.com/, and RELEASE ASSETS (#284):
+  # github.com/{owner}/{repo}/releases/download/{tag}/{file}
+  #
+  # The release-asset form is not an exotic case — it is what THIS PLUGIN itself
+  # produces. `idd-issue` Step 4 uploads attachments to an `attachments` release
+  # and writes the release-download URL into the issue body; `idd-diagnose`
+  # Step 1.5 then called this function, matched nothing, and reported
+  # "Issue #N has no attachments (empty manifest written)". The write side and
+  # the read side of the same plugin disagreed about the URL shape, and the
+  # disagreement was silent: an empty manifest is indistinguishable from an issue
+  # that genuinely has no attachments, so a diagnosis proceeded without the
+  # evidence it was supposed to read.
   #
   # Fetch and filter are deliberately SPLIT (#186): a zero-attachment issue makes
   # grep exit 1, and under `set -euo pipefail` a single fetch|filter pipeline dies
@@ -117,7 +128,7 @@ detect_urls() {
   raw=$(gh issue view "$NUMBER" --repo "$REPO" --json body,comments) || return 2
   content=$(printf '%s\n' "$raw" | jq -r '.body, .comments[].body') || return 2
   printf '%s\n' "$content" \
-    | grep -oE 'https://(github\.com/(user-attachments/(files|assets)/[^)]+|[^/]+/[^/]+/files/[0-9]+/[^)]+)|(private-)?user-images\.githubusercontent\.com/[^)]+)' \
+    | grep -oE 'https://(github\.com/(user-attachments/(files|assets)/[^)[:space:]]+|[^/]+/[^/]+/files/[0-9]+/[^)[:space:]]+|[^/]+/[^/]+/releases/download/[^/)[:space:]]+/[^)[:space:]]+)|(private-)?user-images\.githubusercontent\.com/[^)[:space:]]+)' \
     | sort -u || true
 }
 
