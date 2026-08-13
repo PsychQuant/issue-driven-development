@@ -744,3 +744,46 @@ User runs `/idd-issue`, attaches label `cross-package`. Re-resolve picks the gro
 **支援承諾（明文，因為缺這句話本身就是問題）**：legacy 路徑的**讀取**支援不設移除日期，但**不保證新工具會實作它**。任何新的 config 掃描器只需要認 current 路徑；若它同時認 legacy，那是選配。
 
 **為什麼這句話必須寫下來**：#195 只遷了寫入端，於是「既沒有遷移、也沒有承諾永久支援」—— 三種可能狀態裡最差的一種。下游無法規劃：每個新的掃描器都得自己決定要不要寫兩份解析，而漏認一種格式的語意（在 #302 的 repo 地圖裡）是「該層不存在」，會觸發**錯誤的上收**。實測一台使用中的機器有 **32 個 repo** 仍在 legacy 路徑上。
+
+## Global 層與 residual clause（#302 / #301）
+
+### Global config：`~/.claude/.idd/global.json`
+
+**位置的四個理由**（考慮過 `~/.idd/`，不採用）：
+
+1. walk-up **已經**會經過 `$HOME/.claude/.idd/` —— 終止條件的檢查在 break 之前，所以這條路徑本來就在讀取路徑上，只需要多認一個檔名，零新增掃描邏輯。
+2. 與 project 層的 `.claude/.idd/local.json` 完全對稱，只差 `local` / `global`。
+3. IDD 是 Claude Code plugin，`~/.claude/` 是它的生態家（`settings.json`、`rules/`、`plugins/` 都在此）；另開 `~/.idd/` 等於在 home 再放一個 dotdir。
+4. 檔名**必須**是 `global.json` 而非 `local.json` —— 後者會讓 `$HOME` 被誤讀成「一個 repo」，汙染既有的 repo-boundary 判定。
+
+生態先例：同一套工具鏈的 `codex-pro` 已採 `~/.codex-pro/profile.yaml`（global）+ `<project>/.codex-pro/profile.yaml`（project）雙層 resolve。本案同模式，只是寄生在 `~/.claude/` 之下。
+
+### 地圖：自動推導，永不手寫
+
+`scripts/idd-repo-map.sh`（`--json` 可供程式消費）每次從檔案系統重算，**不存成 source of truth**。
+
+**為什麼不能手寫**：手寫 registry 會 stale，而 stale 正是這個問題的病因 —— #301 記錄的那條分散案例，成因就是某 project 中途被 extract 成獨立 repo 而**沒有任何地方被更新**。手寫地圖只是把同一種病從 walk-up 搬到 registry。
+
+**掃描器必須認兩種 config 格式**（#303）。漏認一種**不是「少一筆」** —— 沒被看到的 config 語意上等於「該層不存在」，會觸發**錯誤的上收**。
+
+### Residual clause：未列舉事項依「事務性質」歸屬（#301）
+
+現行 target resolution 只有兩條路：機械地依 `cwd` walk-up 找最近的 config，或依賴有人**事先寫好** predicate。兩者都答不出「這件事**在性質上**該歸哪個 repo」。
+
+**判準（憲法第 111 條均權制度的形式）**：
+
+> 事務有全國一致之性質者屬於中央，有因地制宜之性質者屬於地方。
+
+對應到這裡：
+
+| 事務性質 | 歸屬 |
+|---|---|
+| 只對**這個 repo** 有意義（它的 bug、它的功能、它的文件）| 該 repo |
+| 對**這套工具鏈**都有意義（跨 repo 的慣例、plugin 本身的行為）| 該工具的 repo |
+| 對**這台機器上的所有工作**都有意義（環境、憑證、個人慣例）| global 層 |
+
+**執行順序（不可調換）**：
+
+1. 先用 `idd-repo-map.sh` 確認**該層是否存在**。判準說「屬 project 層」但那個 project 沒有自己的 tracker 時，往下歸會落空 —— 這正是 #301 被 #302 擋住的原因：判準決定「該歸哪一層」，地圖決定「那一層是否存在」。
+2. 該層不存在 → **上收到最近的存在層**，但**停在當前 git repo 邊界**。使用者原話：「上收其實通常會到我現在正在開起的專案的git，要跨過的話通常會需要特別指定」。要跨過邊界必須顯式 `--repo`。
+3. 仍然無法判定 → `AskUserQuestion`，**不要猜**。歸錯 repo 的 issue 沒有人會發現它放錯了。

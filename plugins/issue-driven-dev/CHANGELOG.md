@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.108.0] - 2026-08-14
+
+### Added
+
+- **Global config layer + a derived repo map (#302)** — every resolution mechanism was single-point: it resolved one
+  repo and could see nothing about the relationships between them. So when a rule says "this belongs to the project
+  layer", nothing could answer the prior question — **does that layer exist here?** 「地方政府在不在」. If it does not,
+  resolution falls through to whatever `cwd` happens to be. `~/.claude/.idd/global.json` is the global layer (that path
+  is already on the walk-up route, so it costs no new scanning logic, and the filename must be `global.json` — calling
+  it `local.json` would make `$HOME` read as "a repo" and poison the boundary check). `scripts/idd-repo-map.sh`
+  derives the map from the filesystem on every run and is **never stored as a source of truth**: a hand-maintained
+  registry goes stale, and staleness is the disease — #301's recorded case was caused by a project being extracted into
+  its own repo with nothing anywhere updated. It recognises **both** config formats, because an unseen config does not
+  mean "one fewer row"; it means "this layer does not exist" and triggers the wrong upward resolution.
+
+- **Residual clause for target resolution (#301)** — resolution had only two routes, mechanical `cwd` walk-up or a
+  hand-written predicate, and neither answers "which repo does this belong to **by its nature**". The clause takes the
+  shape of ROC Constitution Art. 111 (事務有全國一致之性質者屬於中央，有因地制宜之性質者屬於地方): repo-specific → that
+  repo, toolchain-wide → the tool's repo, machine-wide → global. Order matters and cannot be swapped — **check the map
+  first**: a verdict of "project layer" is useless if that project has no tracker, which is exactly why this was blocked
+  on #302. When the layer is absent, resolution moves up but **stops at the current git repo boundary** (user: 「上收其實
+  通常會到我現在正在開起的專案的git，要跨過的話通常會需要特別指定」); crossing it requires an explicit `--repo`. Still
+  undecidable → `AskUserQuestion`, never a guess: an issue filed into the wrong repo is not something anyone notices.
+
 ## [2.107.0] - 2026-08-14
 
 ### Added
