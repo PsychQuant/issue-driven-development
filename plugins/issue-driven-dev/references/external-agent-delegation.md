@@ -77,6 +77,9 @@ idd-verify #98 --branch <name>          # diff against origin/<default>
        N>0  → local mode HEAD~N..HEAD
        N=0  → continue
    b. Search open PRs ref'ing #N: gh pr list --search "#N in:body" --state open
+
+> ⚠ **`in:body "#N"` 不是精確比對**（#293 / #305）——它會誤中跨 repo 引用（`codex-pro#7` → `#7`）與無關的 PR。search 只能當粗篩，判定必須照 [`references/pr-issue-matching.md`](pr-issue-matching.md) 在 client 端精篩，並檢查 PR 不早於 issue。
+
        1 PR found  → AskUserQuestion "Verify PR #X or local diff?"
        2+ PRs      → AskUserQuestion list all
        0 PRs       → fall back HEAD~1 (preserves v2.36 behavior)

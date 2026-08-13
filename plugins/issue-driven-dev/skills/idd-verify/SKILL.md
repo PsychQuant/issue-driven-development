@@ -336,6 +336,9 @@ TaskCreate(name="triage_followup_issues", description="Step 5b: 分類 non-block
       N>0  → 本地 mode HEAD~N..HEAD
       N=0  → b
    b. PRS=$(gh pr list --search "#$NUMBER in:body" --state open --json number,headRefName,author)
+
+> ⚠ **`in:body "#N"` 不是精確比對**（#293 / #305）——它會誤中跨 repo 引用（`codex-pro#7` → `#7`）與無關的 PR。search 只能當粗篩，判定必須照 [`references/pr-issue-matching.md`](../../references/pr-issue-matching.md) 在 client 端精篩，並檢查 PR 不早於 issue。
+
       1 PR  → AskUserQuestion「Verify PR #X 還是本地 diff？」
       2+ PR → AskUserQuestion 列全部
       0 PR  → fall back HEAD~1（保留 v2.36 行為）

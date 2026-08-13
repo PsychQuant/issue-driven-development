@@ -137,6 +137,9 @@ git log --all --oneline --grep="#$NUMBER" | head -5
 
 # 找對應 PR
 gh pr list --repo $GITHUB_REPO --state merged --search "#$NUMBER" \
+
+> ⚠ **`in:body "#N"` 不是精確比對**（#293 / #305）——它會誤中跨 repo 引用（`codex-pro#7` → `#7`）與無關的 PR。search 只能當粗篩，判定必須照 [`references/pr-issue-matching.md`](../../references/pr-issue-matching.md) 在 client 端精篩，並檢查 PR 不早於 issue。
+
   --json number,title,mergedAt,additions,deletions
 ```
 
