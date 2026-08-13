@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.103.1] - 2026-08-14
+
+### Fixed
+
+- **`idd-list` truncated the wrong issues, silently (#299)** — `--limit` is applied **server-side, before any sort**, so
+  asking for N and sorting locally returns "N arbitrary issues, sorted" rather than "the N most recently active". The
+  output looked correctly ordered and the issues that fell off were invisible — while the skill's own rule says
+  「按 `updatedAt` 排序，最近被動的 issue 通常最該注意」. The sort now happens server-side via
+  `--search "sort:updated-desc"`, with a documented fallback (over-fetch then trim, and say so in the footer) for the
+  case where `--search` and `--label` conflict. What is not allowed is the silent truncation.
+
+- **`idd-verify` scratch files collided across repos (#288)** — findings, prompt and codex paths were built from the
+  issue number alone (`/tmp/verify_${NUMBER}_findings_*.md`), so two sessions verifying **the same issue number in
+  different repos** shared filenames and a leftover file was read as this run's findings. The failure is silent and its
+  direction is the worst one: another repo's verdict merged into this PR's report. Every path now hangs off a single
+  `mktemp -d` run directory. Adding a repo slug to the flat names was considered and rejected — concurrent runs of the
+  *same* repo would still collide.
+
+- **`/idd-clarify` asks the user a question instead of describing an ambiguity (#294)** — user's words:
+  「iddclarify我覺得你可以直接放對使用者的問題」. The third column was `Suggested canonical` and held descriptive
+  analysis, so the reader had to reconstruct what was being asked before they could decide anything. It is now
+  `Question for you`, and the guidance requires a question answerable in one sentence (three questions = three rows).
+  Renamed in all four tables in `idd-clarify`, plus the copy `idd-issue` emits on the deferred path and the emit rule in
+  `references/terminology-canonical.md` — that library keeps its own `Suggested canonical` field, which is a different
+  layer, and now states that the canonical term is the *basis* of the question rather than the cell contents.
+
 ## [2.102.2] - 2026-08-01
 
 ### Added
