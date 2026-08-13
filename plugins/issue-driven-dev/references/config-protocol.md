@@ -729,3 +729,18 @@ User runs `/idd-issue`, attaches label `cross-package`. Re-resolve picks the gro
 2. Creates tracking issue in `bar` → `#15`, body starts `Tracking primary: PsychQuant/foo#42`
 3. Creates tracking issue in `glue` → `#8`, body starts `Tracking primary: PsychQuant/foo#42`
 4. Comments on `foo#42`: `Tracked in: PsychQuant/bar#15, PsychQuant/glue#8`
+
+## Legacy config path — deprecation (#303)
+
+兩個路徑並存：
+
+| 形式 | 路徑 | 狀態 |
+|---|---|---|
+| current | `<repo>/.claude/.idd/local.json` | **唯一的寫入目標**（#195 起）|
+| legacy | `<repo>/.claude/issue-driven-dev.local.json` | **仍然讀得到，但不再被寫入**；請遷移 |
+
+**遷移工具**：`scripts/migrate-idd-config.sh --scan`（只報告）／`--apply`（實際搬移）。同層若兩者都存在，工具**不動**任何一個 —— 讀取端本來就是 current 勝，搬移只會有機會毀掉一份手改過的檔案。
+
+**支援承諾（明文，因為缺這句話本身就是問題）**：legacy 路徑的**讀取**支援不設移除日期，但**不保證新工具會實作它**。任何新的 config 掃描器只需要認 current 路徑；若它同時認 legacy，那是選配。
+
+**為什麼這句話必須寫下來**：#195 只遷了寫入端，於是「既沒有遷移、也沒有承諾永久支援」—— 三種可能狀態裡最差的一種。下游無法規劃：每個新的掃描器都得自己決定要不要寫兩份解析，而漏認一種格式的語意（在 #302 的 repo 地圖裡）是「該層不存在」，會觸發**錯誤的上收**。實測一台使用中的機器有 **32 個 repo** 仍在 legacy 路徑上。
