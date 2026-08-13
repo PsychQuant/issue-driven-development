@@ -1,7 +1,7 @@
 {
   "name": "issue-driven-dev",
   "description": "v2.102.2: Deep Research light integration (#277, ruling b). idd-diagnose gains a non-binding pointer (the #111 superpowers hand-off shape: pure suggestion, no presence check, no dependency) fired when the diagnosis's quality depends on facts OUTSIDE the repo — with trigger examples AND counter-examples (the overly-broad-signal risk). Output flows back via '/idd-comment --type note' as summary + link, never full text (#116) — that is what keeps external research inside the audit trail. Both real-user misconceptions get canonical answers where they lived: research attaches AT diagnose (not after plan), and research vs implement are different phases' work, not substitutes. usecase-routing scenario 32 + a three-row internal-corpus vs external-world boundary table (idd-find / idd-ask / Deep Research). Deep integration stays a recorded residue until a plugin-dependable primitive exists.",
-  "version": "2.103.0",
+  "version": "2.103.1",
   "author": {
     "name": "Che Cheng"
   },
