@@ -1,0 +1,229 @@
+[
+  {
+    "number": 37,
+    "snapshot": true,
+    "note": "2026-08-10 snapshot, taken at the moment of the misroute (morning). Bare tier, no parking-lot label yet — this is the one issue the routing judged correctly that day. The label was applied later the same day when the issue was re-parked; recording that later state here would destroy the fixture's value as a regression of the actual incident.",
+    "complexity_raw": "Spectra",
+    "labels": [
+      "enhancement"
+    ],
+    "expect_parse_exit": 0,
+    "expect_tier": "Spectra",
+    "expect_verdict": "actionable",
+    "expect_reasons": []
+  },
+  {
+    "number": 131,
+    "snapshot": true,
+    "note": "2026-08-10 snapshot. Deferral qualifier present, label absent — the exact shape that produced the silent misroute.",
+    "complexity_raw": "Simple when triggered",
+    "labels": [
+      "enhancement"
+    ],
+    "expect_parse_exit": 3,
+    "expect_tier": null,
+    "expect_verdict": "not-actionable",
+    "expect_reasons": [
+      "complexity-unparseable"
+    ]
+  },
+  {
+    "number": 146,
+    "snapshot": true,
+    "note": "2026-08-10 snapshot. Qualifier and label agree.",
+    "complexity_raw": "Simple when triggered (parking lot)",
+    "labels": [
+      "enhancement",
+      "parking-lot"
+    ],
+    "expect_parse_exit": 3,
+    "expect_tier": null,
+    "expect_verdict": "not-actionable",
+    "expect_reasons": [
+      "complexity-unparseable",
+      "parking-lot-label"
+    ]
+  },
+  {
+    "number": 157,
+    "snapshot": true,
+    "note": "2026-08-10 snapshot. Plan tier with deferral qualifier.",
+    "complexity_raw": "Plan when triggered",
+    "labels": [
+      "enhancement",
+      "parking-lot"
+    ],
+    "expect_parse_exit": 3,
+    "expect_tier": null,
+    "expect_verdict": "not-actionable",
+    "expect_reasons": [
+      "complexity-unparseable",
+      "parking-lot-label"
+    ]
+  },
+  {
+    "number": 128,
+    "snapshot": true,
+    "note": "2026-08-10 snapshot. Free prose, not tier-plus-qualifier. Migration task 5.2 needs a human ruling on this one; the gate only has to withhold it.",
+    "complexity_raw": "Plan（觸發表）+ 未決 UX 軸 → **移入 discussion list**",
+    "labels": [
+      "enhancement"
+    ],
+    "expect_parse_exit": 3,
+    "expect_tier": null,
+    "expect_verdict": "not-actionable",
+    "expect_reasons": [
+      "complexity-unparseable"
+    ]
+  },
+  {
+    "number": 200,
+    "snapshot": true,
+    "note": "2026-08-10 snapshot. Qualifier present, label absent — carries a user defer ruling dated 2026-07-07.",
+    "complexity_raw": "Spectra when triggered",
+    "labels": [
+      "enhancement"
+    ],
+    "expect_parse_exit": 3,
+    "expect_tier": null,
+    "expect_verdict": "not-actionable",
+    "expect_reasons": [
+      "complexity-unparseable"
+    ]
+  },
+  {
+    "number": 143,
+    "snapshot": true,
+    "note": "2026-08-10 snapshot.",
+    "complexity_raw": "Spectra when triggered (parking lot)",
+    "labels": [
+      "enhancement",
+      "parking-lot"
+    ],
+    "expect_parse_exit": 3,
+    "expect_tier": null,
+    "expect_verdict": "not-actionable",
+    "expect_reasons": [
+      "complexity-unparseable",
+      "parking-lot-label"
+    ]
+  },
+  {
+    "number": 144,
+    "snapshot": true,
+    "note": "2026-08-10 snapshot.",
+    "complexity_raw": "Spectra when triggered (parking lot)",
+    "labels": [
+      "enhancement",
+      "parking-lot"
+    ],
+    "expect_parse_exit": 3,
+    "expect_tier": null,
+    "expect_verdict": "not-actionable",
+    "expect_reasons": [
+      "complexity-unparseable",
+      "parking-lot-label"
+    ]
+  },
+  {
+    "number": 145,
+    "snapshot": true,
+    "note": "2026-08-10 snapshot.",
+    "complexity_raw": "Spectra when triggered (parking lot)",
+    "labels": [
+      "enhancement",
+      "parking-lot"
+    ],
+    "expect_parse_exit": 3,
+    "expect_tier": null,
+    "expect_verdict": "not-actionable",
+    "expect_reasons": [
+      "complexity-unparseable",
+      "parking-lot-label"
+    ]
+  },
+  {
+    "number": 900,
+    "snapshot": false,
+    "note": "Synthetic. Provenance suffix from Layer V — inside the closed domain, nothing else withholds it.",
+    "complexity_raw": "Plan via Layer V",
+    "labels": [
+      "enhancement"
+    ],
+    "expect_parse_exit": 0,
+    "expect_tier": "Plan",
+    "expect_verdict": "actionable",
+    "expect_reasons": []
+  },
+  {
+    "number": 901,
+    "snapshot": false,
+    "note": "Synthetic. Provenance suffix from the hard gate, including parentheses in the source token.",
+    "complexity_raw": "Spectra via hard-gate (sdd_bias)",
+    "labels": [
+      "enhancement"
+    ],
+    "expect_parse_exit": 0,
+    "expect_tier": "Spectra",
+    "expect_verdict": "actionable",
+    "expect_reasons": []
+  },
+  {
+    "number": 902,
+    "snapshot": false,
+    "note": "Synthetic. No ### Complexity section at all — distinct reason from a non-domain value.",
+    "complexity_raw": null,
+    "labels": [
+      "enhancement"
+    ],
+    "expect_parse_exit": 4,
+    "expect_tier": null,
+    "expect_verdict": "not-actionable",
+    "expect_reasons": [
+      "complexity-missing"
+    ]
+  },
+  {
+    "number": 903,
+    "snapshot": false,
+    "note": "Synthetic. Legacy alias inside the closed domain.",
+    "complexity_raw": "SDD-warranted",
+    "labels": [
+      "enhancement"
+    ],
+    "expect_parse_exit": 0,
+    "expect_tier": "SDD-warranted",
+    "expect_verdict": "actionable",
+    "expect_reasons": []
+  },
+  {
+    "number": 904,
+    "snapshot": false,
+    "note": "Synthetic. Blocking section non-empty is the third gate signal; it must land in the blocked group, not the parked group.",
+    "complexity_raw": "Spectra",
+    "labels": [
+      "enhancement"
+    ],
+    "blocking": "- 等 /spectra-discuss 對齊 acceptance metric proxy",
+    "expect_parse_exit": 0,
+    "expect_tier": "Spectra",
+    "expect_verdict": "not-actionable",
+    "expect_reasons": [
+      "blocking-nonempty"
+    ]
+  },
+  {
+    "number": 905,
+    "snapshot": false,
+    "note": "Synthetic. A Strategy checklist skip marker MUST NOT withhold the issue — that marker belongs to idd-close, not to routing.",
+    "complexity_raw": "Simple",
+    "labels": [
+      "enhancement"
+    ],
+    "strategy_has_skip_marker": true,
+    "expect_parse_exit": 0,
+    "expect_tier": "Simple",
+    "expect_verdict": "actionable",
+    "expect_reasons": []
+  }
+]

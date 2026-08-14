@@ -39,7 +39,7 @@ description: |
 
 ```
 TaskCreate(name="resolve_pr_path", description="Phase 0.5: --pr/--no-pr flag → fork detection → pr_policy config → ask. 若 PR path: 建 feature branch")
-TaskCreate(name="read_issue_and_diagnosis", description="gh issue view + 確認最新 diagnosis comment 的 Strategy + Complexity == Plan/Simple")
+TaskCreate(name="read_issue_and_diagnosis", description="gh issue view + 讀最新 diagnosis comment 的 Strategy;Complexity 值域判定一律走 scripts/lib/actionability.sh 的 idd_parse_complexity,不自行比對字串")
 TaskCreate(name="draft_implementation_plan", description="依 Strategy 起草 Implementation Plan（5 段：files + reasoning + tests + risks + sequence）並 comment 到 issue")
 TaskCreate(name="tangential_sweep", description="Step 2.5: review session log from Step 1 to here, identify mid-plan tangential discoveries (sister bugs / unrelated quality issues / user-mentioned sub-concerns); AskUserQuestion to file as follow-up issues; append filed list to plan body before ExitPlanMode (per IC_R011 #524)")
 TaskCreate(name="enter_plan_mode_for_approval", description="Step 4: EnterPlanMode → 呈現 full Implementation Plan → ExitPlanMode 等 user approve / revise / abort")
@@ -56,14 +56,40 @@ TaskCreate(name="auto_update_body", description="Step 7: idd-update phase → pl
 gh issue view $NUMBER --repo $GITHUB_REPO --json title,body,labels,comments
 ```
 
-確認最新的 `## Diagnosis` comment 存在且 `### Complexity` 是 `Plan`（或 `Simple`，user 主動 deliberate）。
+**Complexity 值域判定不在此處自行比對字串**，改呼叫 [`references/actionability-gate.md`](../../references/actionability-gate.md) 契約下的共用實作：
 
-| Complexity | 行為 |
+```bash
+LATEST_DIAGNOSIS=$(gh issue view "$NUMBER" --repo "$GITHUB_REPO" --json comments \
+    | python3 -c "
+import json, sys, re
+d = json.load(sys.stdin)
+diagnosis_comments = [c for c in d['comments'] if re.search(r'(?m)^## Diagnosis', c['body'])]   # line-anchored,避免引述/inline 誤判
+print(diagnosis_comments[-1]['body'] if diagnosis_comments else '')
+")
+
+# 缺 helper 一律 fail loud + 指名 path,禁止 fallback 到私有檢查(契約 §Consumer contract)
+. "$CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh" || {
+    echo "FATAL: missing $CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh — 不得改用私有 Complexity 檢查" >&2
+    exit 1
+}
+
+TIER=$(idd_parse_complexity "$LATEST_DIAGNOSIS" 2>/dev/null); CEXIT=$?
+COMPLEXITY_ERR=$(idd_parse_complexity "$LATEST_DIAGNOSIS" 2>&1 >/dev/null)   # cexit≠0 時的 `unparseable-complexity: <raw>` / `missing-complexity`
+```
+
+以 `(CEXIT, TIER)` 為鍵決定行為。**exit 0 的四個 tier 是封閉值域,不得依相似性外推第五個**：
+
+| `CEXIT` · `TIER` | 行為 |
 |-----------|------|
-| `Plan` | ✅ 預期 — 繼續 |
-| `Simple` | ⚠️ 詢問 user：「Complexity 判定為 Simple，確定要走 Plan tier 多一道 approval gate 嗎？」 |
-| `Spectra` (含 alias `SDD-warranted`) | ⛔ 提示「Spectra 應走 `/spectra-discuss`，Plan tier 不會產出 spec/proposal/tasks artifacts」，AskUserQuestion abort 或 continue（continue 等於 user 自願降級到 Plan tier） |
-| _(missing)_ | ⛔ 提示「找不到 diagnosis，先跑 `/idd-diagnose #NNN`」並 abort |
+| `0` · `Plan` | ✅ 預期 — 繼續 Step 2 |
+| `0` · `Plan`（原值 `Plan via Layer V`）| 同上 — helper 已剝除 ` via <來源>` 後綴,canonical tier 即 `Plan`,行為與 bare `Plan` 完全一致 |
+| `0` · `Simple` | ⚠️ 詢問 user：「Complexity 判定為 Simple，確定要走 Plan tier 多一道 approval gate 嗎？」（行為不變 — user 主動要 deliberate 是允許的）|
+| `0` · `Spectra` | ⛔ 提示「Spectra 應走 `/spectra-discuss`，Plan tier 不會產出 spec/proposal/tasks artifacts」，AskUserQuestion abort 或 continue（continue 等於 user 自願降級到 Plan tier）— 行為不變 |
+| `0` · `SDD-warranted`（legacy alias）| 視同 `Spectra` 處理 — 行為不變 |
+| `3` — 值落在封閉值域外（如 `Plan when triggered`）| ⛔ **abort** — 印出 `$COMPLEXITY_ERR` 的 `unparseable-complexity: <raw>` **原值**，要求 user 修正 Diagnosis，或把延期狀態改掛 `parking-lot` label。**禁止**截斷成 tier 前綴、**禁止**降級成 `Plan` 或任何其他 tier、**禁止**當成 `Simple` 問過 user 就繼續 |
+| `4` — 無 `### Complexity` 區段（含完全沒有 `## Diagnosis` comment）| ⛔ **abort** — 提示「找不到 diagnosis / Complexity 判定，先跑 `/idd-diagnose #NNN`」（即舊表的 _(missing)_ 列，語意不變）|
+
+> **為何不在此處自行認定 tier（#298 → #316）**：本 step 原本用一句散文自行認定「`### Complexity` 是 `Plan`（或 `Simple`）」，值域外的值沒有任何定義行為。像 `Plan when triggered` 這種**帶延期修飾語**的歷史寫法，字面以 `Plan` 開頭、讀起來像 Plan tier，很容易被直接放行進 approval gate —— 但它真正的意思是「這件事被人為延期了」。`### Complexity` 的值域是**封閉的四個 tier**（可帶 ` via <來源>` 後綴），延期狀態屬於 `parking-lot` label，不屬於這個欄位。修法不是把散文判準寫得更嚴 —— 那只會讓第 N 份私有窄化加入既有的多方分歧 —— 而是讓值域判定只剩一份實作：後綴剝除、封閉值域檢查、原值 surface 全在 `scripts/lib/actionability.sh`，本 skill 只讀它的 exit code。「不得截斷、不得降級、不得靜默」的規定見 [`references/actionability-gate.md`](../../references/actionability-gate.md)。
 
 ### Step 2: Draft Implementation Plan
 

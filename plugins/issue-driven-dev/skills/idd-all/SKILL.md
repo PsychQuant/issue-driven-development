@@ -511,32 +511,40 @@ idd-all 必須把 `--cwd "$CWD"` 傳給 idd-diagnose,否則 sub-skill 會在 Cla
 Skill(skill="issue-driven-dev:idd-diagnose", args="#$N --cwd $CWD")
 ```
 
-**讀回 complexity**:idd-diagnose 結束後 fetch issue comments,grep 最新 `## Diagnosis` 區塊的 `### Complexity` 欄位:
+**讀回 complexity**:idd-diagnose 結束後 fetch issue comments,取最新 `## Diagnosis` 區塊的 body,**值域判定不在此處自行寫 regex**,改呼叫 [`references/actionability-gate.md`](../../references/actionability-gate.md) 契約下的共用實作:
 
 ```bash
-COMPLEXITY=$(gh issue view "$N" --json comments \
+LATEST_DIAGNOSIS=$(gh issue view "$N" --json comments \
     | python3 -c "
 import json, sys, re
 d = json.load(sys.stdin)
 diagnosis_comments = [c for c in d['comments'] if re.search(r'(?m)^## Diagnosis', c['body'])]   # v2.68.0+ #59 — line-anchored regex avoids quoted/inline false-positives (mirrors check-diagnosis-readiness.sh)
-if not diagnosis_comments:
-    print('UNKNOWN'); exit(0)
-latest = diagnosis_comments[-1]['body']
-m = re.search(r'### Complexity\n(.+?)\n', latest)
-print(m.group(1).strip() if m else 'UNKNOWN')
+print(diagnosis_comments[-1]['body'] if diagnosis_comments else '')
 ")
+
+# 缺 helper 一律 fail loud + 指名 path,禁止 fallback 到私有 regex(契約 §Consumer contract)
+. "$CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh" || {
+    echo "FATAL: missing $CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh — 不得改用私有 regex" >&2
+    exit 1
+}
+
+TIER=$(idd_parse_complexity "$LATEST_DIAGNOSIS" 2>/dev/null); CEXIT=$?
+COMPLEXITY_ERR=$(idd_parse_complexity "$LATEST_DIAGNOSIS" 2>&1 >/dev/null)   # cexit≠0 時的 `unparseable-complexity: <raw>` / `missing-complexity`
 ```
 
-| Complexity 值 | 下一步 |
-|--------------|--------|
-| `Simple` | Phase 3a: idd-implement |
-| `Plan` | **attended → Phase 3p: `/idd-plan`**（該 skill 擁有 `EnterPlanMode` 閘門，approve 後自己 chain 到 idd-implement）;**unattended → Phase 3a: idd-implement**，並在 final report 標記 `[Plan tier deliberation skipped under unattended mode]` |
-| `Plan via Layer V` (v2.50+) | 視同 `Plan` 處理 — verdict 是 user 在 idd-diagnose Step 3.4 選 escalate 觸發,routing 行為跟 bare `Plan` 一致 |
-| `Spectra` | Phase 3b: spectra-discuss → spectra-propose → spectra-apply(unattended → 一輪收斂;attended → multi-turn 對話自然進行) |
-| `SDD-warranted` (legacy alias) | 視同 `Spectra` 處理(v2.36.0+ backward compat) |
-| `UNKNOWN` | **abort** — diagnose 沒判定 complexity,user 需手動釐清 |
+Dispatch 以 `(CEXIT, TIER)` 為鍵,**四列 exit 0 的 tier 是封閉值域,不得依相似性外推第五個**:
 
-**Parser 對 `Plan via Layer V` 的處理**(v2.50+):上面 grep 抓 `### Complexity\n(.+?)\n` 會抓到整行 `Plan via Layer V`,在 routing dispatch 時必須提取 canonical tier。實作:`canonical_tier = COMPLEXITY.split(' via ')[0].strip()`,得 `Plan`,routing 同 bare `Plan`。Backward compat:bare `Plan` / `Simple` / `Spectra` / `SDD-warranted` 都不含 ` via `,split 後仍是原值。
+| `CEXIT` · `TIER` | 下一步 |
+|--------------|--------|
+| `0` · `Simple` | Phase 3a: idd-implement |
+| `0` · `Plan` | **attended → Phase 3p: `/idd-plan`**（該 skill 擁有 `EnterPlanMode` 閘門，approve 後自己 chain 到 idd-implement）;**unattended → Phase 3a: idd-implement**，並在 final report 標記 `[Plan tier deliberation skipped under unattended mode]` |
+| `0` · `Plan`（原值 `Plan via Layer V`,v2.50+）| 同上 — helper 已剝除 ` via <來源>` 後綴,verdict 是 user 在 idd-diagnose Step 3.4 選 escalate 觸發,routing 行為跟 bare `Plan` 一致 |
+| `0` · `Spectra` | Phase 3b: spectra-discuss → spectra-propose → spectra-apply(unattended → 一輪收斂;attended → multi-turn 對話自然進行) |
+| `0` · `SDD-warranted` (legacy alias) | 視同 `Spectra` 處理(v2.36.0+ backward compat) |
+| `4` — 無 `### Complexity` 區段（含完全沒有 `## Diagnosis` comment）| **abort** — diagnose 沒判定 complexity,user 需手動釐清（即舊表的 `UNKNOWN` 列,語意不變）|
+| `3` — 值落在封閉值域外（如 `Simple when triggered`）| **abort** — 印出 `$COMPLEXITY_ERR` 的 `unparseable-complexity: <raw>` **原值**,要求 user 修正 Diagnosis,或把延期狀態改掛 `parking-lot` label。**禁止**截斷成 tier 前綴、**禁止**降級成 `Plan` 或任何其他 tier |
+
+> **為何不在此處寫 regex（#298 → #316）**：本段原本就地用一條 `(.+?)` 窄化抓 `### Complexity` 標題下的整行，再自行 `split(' via ')` 取 canonical tier。那條 regex 對 `Simple when triggered` 這類**帶延期修飾語**的值會**匹配成功**，回傳一個非 tier 字串——它對不上任何 dispatch 列，卻也不是 `UNKNOWN`。舊表的 `UNKNOWN → abort` 安全網結構上接不住它：`UNKNOWN` 只在 regex **完全匹配失敗**時才產生（`if m else` 分支），值域外的**成功**匹配永遠落不進那一格，routing 因此進入未定義行為。修法不是把 regex 寫得更嚴——那只會讓第四份私有窄化加入既有的三方分歧——而是讓值域判定只剩一份實作：` via <來源>` 後綴剝除、封閉值域檢查、原值 surface 全在 `scripts/lib/actionability.sh`，本 skill 只讀它的 exit code。「不得截斷、不得降級、不得靜默」的規定見 [`references/actionability-gate.md`](../../references/actionability-gate.md)。
 
 > **Layer V under (PR, unattended) — v2.50+**: Layer V Vagueness Pre-check (idd-diagnose Step 3.4) 在 unattended 仍評分 + 寫 audit trail,但 trigger 時自動 apply `proceed anyway` 不跳 AskUserQuestion。final report 應 surface `idd-diagnose` audit trail 中含 `[Layer V: V1=N V4=M, clarify-default skipped under unattended mode, defaulting to proceed]` 的 issue,讓 user 後續可以手動重 route。
 >
@@ -1015,7 +1023,8 @@ fi
 | gh auth 沒設定 | Phase 0.3 abort,提示 gh auth login |
 | Issue #N 不存在 / CLOSED | Phase 0 abort |
 | Branch 已存在 | Phase 0 AskUserQuestion(checkout / -2 suffix / abort) |
-| Diagnose 判定 UNKNOWN complexity | Phase 2 abort,提示手動跑 idd-diagnose |
+| Diagnosis 缺 `### Complexity` 區段(helper cexit=4) | Phase 2 abort,提示手動跑 idd-diagnose |
+| `### Complexity` 值落在封閉值域外(helper cexit=3) | Phase 2 abort,印出 `unparseable-complexity: <raw>` 原值;不截斷、不降級成任何 tier |
 | spectra-discuss 沒 emit `Conclusion:` line(unattended hint 失敗)| Re-prompt 一次;再失敗 abort,branch 保留 |
 | spectra-propose 沒 emit `Change:` line | 同上 |
 | spectra-propose 遇到 unrecoverable validation error | Phase 3b abort,artifacts 保留,提示手動 `/spectra-propose` |

@@ -68,10 +68,16 @@ When the user requests to skip one or more candidates, the skill SHALL present a
 | Category | Meaning | Action |
 |----------|---------|--------|
 | **(a) unactionable observation** | Pure observation with no actionable form (e.g. "AI hallucinates is a statistical fact") | Real skip — NO `gh issue create`. Audit: `Skipped: (a) unactionable observation` |
-| **(b) infeasible but understood** | Technically infeasible at this point but understood (e.g. "Need 100x budget to reproduce") | **Still files** as P3 with `blocker:infeasible` label. Audit: `Skipped: (b) infeasible — filed as #NNN with blocker:infeasible label` |
-| **(c) blocked on external state** | Waiting on external state that will likely change (e.g. "Wait for GitHub Actions API to add X") | **Still files** as P3 with `blocker:waiting` label. Audit: `Skipped: (c) blocked-on-external — filed as #NNN with blocker:waiting label` |
+| **(b) infeasible but understood** | Technically infeasible at this point but understood (e.g. "Need 100x budget to reproduce") | **Still files** as P3 with the `parking-lot` label. Audit: `Skipped: (b) infeasible — filed as #NNN with parking-lot label` |
+| **(c) blocked on external state** | Waiting on external state that will likely change (e.g. "Wait for GitHub Actions API to add X") | **Still files** as P3 with the `parking-lot` label. Audit: `Skipped: (c) blocked-on-external — filed as #NNN with parking-lot label` |
 
 **Net effect**: only (a) avoids filing. (b) and (c) preserve the parking lot.
+
+> **Label 慣例已收斂為 `parking-lot`（#298 → #316，2026-08-14）**：(b) 與 (c) 原本各自規定貼 `blocker:infeasible` / `blocker:waiting`。實測本 repo：**這兩個 label 一次都沒有被建立過、0 個 issue 在用**，而且**沒有任何 consumer 讀它們** —— `/idd-list --parked` 與 actionability gate 讀的都是 `parking-lot`。一個被文件規定、卻無人貼也無人讀的 label，只會讓「已標記」的錯覺蓋過「沒被追蹤」的事實。
+>
+> 兩類合併到同一個 label，**(b) / (c) 的區分保留在 audit 字串裡**（`Skipped: (b) infeasible — …` / `Skipped: (c) blocked-on-external — …`）。理由：那個區分是**說明性**的（為什麼擱著），不是**機械判定**用的 —— gate 只問「是否 parked」，成因由人讀 audit 行。用兩個 label 承載一個布林加一段說明，是把可讀的東西塞進不可讀的通道。
+>
+> 完整值域契約見 [`actionability-gate.md`](actionability-gate.md)。
 
 > **關於「periodic backlog grooming」（#310，2026-08-14 更正）**：本段原本寫著 grooming「可以 grep `blocker:infeasible` / `blocker:waiting` 來回訪」。實測本 repo：**這兩個 label 一次都沒有被建立過**，而且**沒有任何 periodic grooming 機制存在** —— 沒有排程、沒有 CI、沒有任何 skill 會主動回頭看 parked issue。
 >
@@ -89,9 +95,9 @@ options:
   - label: "(a) unactionable observation"
     description: "Real skip — no issue created. Pure observation with no actionable form."
   - label: "(b) infeasible but understood"
-    description: "Still files as P3 with blocker:infeasible label. Parking lot — revisit when feasibility changes."
+    description: "Still files as P3 with the parking-lot label. Parked — revisit when feasibility changes."
   - label: "(c) blocked on external state"
-    description: "Still files as P3 with blocker:waiting label. Parking lot — revisit when external state changes."
+    description: "Still files as P3 with the parking-lot label. Parked — revisit when external state changes."
 ```
 
 ### 1.6 Legacy 3-option ask (close-tier only + bypass paths)
@@ -179,8 +185,8 @@ For each result of the checkpoint, write ONE of these lines (literal text matter
 |---------|---------------------------|
 | Default file path — N items filed | `Filed: #NNN, #MMM, #PPP` |
 | Skip (a) — unactionable | `Skipped: (a) unactionable observation` |
-| Skip (b) — infeasible | `Skipped: (b) infeasible — filed as #NNN with blocker:infeasible label` |
-| Skip (c) — blocked-on-external | `Skipped: (c) blocked-on-external — filed as #NNN with blocker:waiting label` |
+| Skip (b) — infeasible | `Skipped: (b) infeasible — filed as #NNN with parking-lot label` |
+| Skip (c) — blocked-on-external | `Skipped: (c) blocked-on-external — filed as #NNN with parking-lot label` |
 | Empty surface | `(none surfaced)` |
 | Env var bypass — user chose skip in reverted ask | `Skipped (AI_LOW_BAR_ISSUE_FILING=false — reverted to 3-option ask, user chose skip)` |
 | Unattended mode bypass | `Skipped (unattended mode + AI_LOW_BAR_ISSUE_FILING=false → implicit (a) skip)` |
@@ -195,7 +201,7 @@ When a default-file invocation surfaces 5 candidates and user skips 2 with mixed
 ```
 Filed: #N1, #N2, #N3
 Skipped: (a) unactionable observation (candidate #4: "AI race condition is statistical")
-Skipped: (c) blocked-on-external — filed as #N5 with blocker:waiting label (candidate #5: "wait for new GitHub API")
+Skipped: (c) blocked-on-external — filed as #N5 with parking-lot label (candidate #5: "wait for new GitHub API")
 ```
 
 Each filed / skipped item gets its own audit line. Multi-line audit block is preferred over compressed single-line for readability.

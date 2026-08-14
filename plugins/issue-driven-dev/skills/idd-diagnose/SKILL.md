@@ -601,12 +601,29 @@ Diagnosis 完成 + Step 3.4 Vagueness Pre-check 結束後（`type=meeting` 已�
 
 ```
 ### Complexity
-{Simple / Plan / Spectra}
+{Simple / Plan / Spectra / SDD-warranted}
 
 {對 Simple：列出哪個 Layer 1 命中、或 Layer 2/P 都沒命中的說明}
 {對 Plan：列出觸發的 Layer P 信號}
 {對 Spectra：列出 Layer 2 + Layer 3 觸發項}
 ```
+
+##### 值域是封閉的（#298 → #316）
+
+**`### Complexity` 的第一個非空行只得是下列四個值之一 —— 這是封閉列舉，不得依相似性類推出第五個值：**
+
+1. `Simple`
+2. `Plan`
+3. `Spectra`
+4. `SDD-warranted`（`Spectra` 的既有 backward-compat alias）
+
+該值**得**後接 ` via <來源>` provenance 後綴（v2.50 起的既有慣例）—— `Plan via Layer V`（Layer V escalate）與 `Spectra via hard-gate (sdd_bias)`（硬閘出口）皆為合法。canonical tier 是第一個 ` via ` 之前的文字。
+
+**延期修飾語 SHALL NOT 寫進這個欄位。** `when triggered`、`(parking lot)`、`(deferred pending #N)`、以及任何說明「為什麼先擱著」的散文，都屬於 `parking-lot` label，不屬於這裡。理由是生命週期不同：Diagnosis comment 是 **append-only** 審計軌跡（見 [`rules/append-vs-modify.md`](../../rules/append-vs-modify.md)），而「是否 parked」**會變**（trigger 成立就該解除）。把可變狀態凍進不可變的 artifact，正是 #298 診斷出的根因 —— 實例：`#136` 的 comment 寫 bare `Spectra`、body 卻寫 `Spectra when triggered (parking lot)`，狀態改不動就自己漂到別處去了。
+
+**本 skill SHALL NOT 貼、移除或推導 `parking-lot` label。** 該 label 是**人的裁決**，且可以在 diagnosis 寫完**之後**才下。實測 2026-08-10 的 11 筆 diagnosed issue，限定詞與 label 一致的只有 5 筆：`#37` 是 bare `Spectra` 而 label 由人事後貼上；`#131` / `#200` 則有限定詞卻無 label。兩者不是同一件事的兩種寫法 —— 由 producer 從限定詞推導 label，等於取消「人可以事後 park 一個 tier 明確的 issue」這條路徑。
+
+> 完整契約（含 consumer 端的保守處置與 surface 規定）見 [`references/actionability-gate.md`](../../references/actionability-gate.md)。想表達「這件事先擱著」時，寫清楚 tier、然後貼 label。
 
 #### 各 verdict 的 Next Step
 
