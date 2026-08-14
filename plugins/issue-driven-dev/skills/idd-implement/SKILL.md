@@ -364,25 +364,41 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $NUMBER --repo $GITHUB_R
 
 ### Step 2.5: Bootstrap TodoList（non-Spectra case）
 
-**判斷 Complexity routing**：讀最新的 diagnosis comment 的 `### Complexity` 欄位（v2.36.0+ 三路；v2.50+ 加 Layer V variant）：
+**判斷 Complexity routing**：讀最新 `## Diagnosis` comment 的 `### Complexity` 欄位（v2.36.0+ 三路；v2.50+ 加 Layer V variant）。**值域判定不在此處自行寫 parser**，改呼叫 [`references/actionability-gate.md`](../../references/actionability-gate.md) 契約下的共用實作：
 
-> **v2.50+ Parser 規則**：verdict 文字可能含 ` via X` 後綴(例如 `Plan via Layer V`),parser 必須提取 canonical tier。實作:
->
-> ```python
-> raw_complexity = match_group_after("### Complexity\n").strip()
-> canonical_tier = raw_complexity.split(" via ")[0].strip()  # "Plan via Layer V" → "Plan"
-> # bare "Plan" / "Simple" / "Spectra" / "SDD-warranted" 都不含 " via ",backward compat 保留
-> ```
->
-> 對應 spec Requirement: Routing parsers SHALL recognize Plan via Layer V verdict。
+```bash
+LATEST_DIAGNOSIS=$(gh issue view "$NUMBER" --repo "$GITHUB_REPO" --json comments \
+    | python3 -c "
+import json, sys, re
+d = json.load(sys.stdin)
+diagnosis_comments = [c for c in d['comments'] if re.search(r'(?m)^## Diagnosis', c['body'])]
+print(diagnosis_comments[-1]['body'] if diagnosis_comments else '')
+")
 
-| Canonical tier | 行為 |
+# 缺 helper 一律 fail loud + 指名 path，禁止 fallback 到私有 parser（契約 §Consumer contract）
+. "$CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh" || {
+    echo "FATAL: missing $CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh — 不得改用私有 parser" >&2
+    exit 1
+}
+
+TIER=$(idd_parse_complexity "$LATEST_DIAGNOSIS" 2>/dev/null); CEXIT=$?
+COMPLEXITY_ERR=$(idd_parse_complexity "$LATEST_DIAGNOSIS" 2>&1 >/dev/null)   # cexit≠0 時的 `unparseable-complexity: <raw>` / `missing-complexity`
+```
+
+` via <來源>` 後綴（例如 `Plan via Layer V`）由 helper 剝除，本 skill 拿到的 `$TIER` 已是 canonical tier — 對應 spec Requirement: Routing parsers SHALL recognize Plan via Layer V verdict。
+
+Routing 以 `(CEXIT, TIER)` 為鍵，**exit 0 的四個 tier 是封閉值域，不得依相似性外推第五個**：
+
+| `CEXIT` · `TIER` | 行為 |
 |-----------|------|
-| `Simple` | ✅ 本 step 啟動 TaskList 追蹤每個 checklist item |
-| `Plan` (含 `Plan via Layer V`) | ✅ 同 Simple — TaskList 啟動。**注意**：使用者通常透過 `/idd-plan #NNN` 呼叫進來，approval gate 已在 idd-plan 處理完，本 skill 直接走 TDD loop。若使用者直接呼叫 `/idd-implement` 而 Complexity=Plan，**先提示**「Complexity 判定為 Plan，建議改走 `/idd-plan #NNN` 進入 approval gate；繼續直接 implement 等於跳過 Plan tier 的 deliberation 價值」並用 AskUserQuestion 確認 continue/abort。`Plan via Layer V` 同樣行為(routing 一致),只是 verdict 標記提示這是 Layer V 觸發 |
-| `Spectra` | ⏭ 跳過本 step（由 `spectra-apply` 管 `openspec/changes/<name>/tasks.md`）|
-| `SDD-warranted` (legacy alias) | ⏭ 跳過本 step — 視同 `Spectra` 處理（v2.36.0+ backward compat）|
-| _(missing / unclear)_ | ✅ 預設當 Simple，啟動 TaskList（保守作法）|
+| `0` · `Simple` | ✅ 本 step 啟動 TaskList 追蹤每個 checklist item |
+| `0` · `Plan`（原值可能是 `Plan via Layer V`）| ✅ 同 Simple — TaskList 啟動。**注意**：使用者通常透過 `/idd-plan #NNN` 呼叫進來，approval gate 已在 idd-plan 處理完，本 skill 直接走 TDD loop。若使用者直接呼叫 `/idd-implement` 而 Complexity=Plan，**先提示**「Complexity 判定為 Plan，建議改走 `/idd-plan #NNN` 進入 approval gate；繼續直接 implement 等於跳過 Plan tier 的 deliberation 價值」並用 AskUserQuestion 確認 continue/abort。`Plan via Layer V` 同樣行為(routing 一致),只是 verdict 標記提示這是 Layer V 觸發 |
+| `0` · `Spectra` | ⏭ 跳過本 step（由 `spectra-apply` 管 `openspec/changes/<name>/tasks.md`）|
+| `0` · `SDD-warranted` (legacy alias) | ⏭ 跳過本 step — 視同 `Spectra` 處理（v2.36.0+ backward compat）|
+| `3` — 值落在封閉值域外（如 `Simple when triggered`）| 🛑 **停止實作** — 印出 `$COMPLEXITY_ERR` 的 `unparseable-complexity: <raw>` **原值**，要求 user 修正 Diagnosis，或把延期狀態改掛 `parking-lot` label。**禁止**截斷成 tier 前綴、**禁止**降級成 `Simple` / `Plan` 或任何其他 tier、**禁止**沿用舊的「不確定就當 Simple」預設 |
+| `4` — 無 `### Complexity` 區段（含完全沒有 `## Diagnosis` comment）| 🛑 **停止實作** — 印出 `missing-complexity`，提示先跑 `/idd-diagnose #$NUMBER` 判定 complexity。同樣不得代 user 挑一個 tier |
+
+> **為何不在此處自己解析（#298 → #316）**：本段原本規定就地取 `### Complexity` 標題底下那一行的原文，再以 ` via ` 分隔符切出前半當 canonical tier。那個做法對 `Simple when triggered` 這類**帶延期修飾語**的值會**成功產出**一個非 tier 字串——它對不上任何 routing 列，卻也不是「解析失敗」，只能落進舊表最後一列的 catch-all `_(missing / unclear)_ → 預設當 Simple`，把一個被人裁決延期的 issue 直接送進 TDD loop。「不確定就當 Simple」在 tier 已被寫壞時不是保守，是**代 user 挑了一個 tier**——契約明文禁止截斷、禁止降級、禁止靜默，所以該列已改為上表的 `3` / `4` 兩個停止列。修法不是把 parser 寫得更嚴——那只會讓第四份私有窄化加入既有的三方分歧——而是讓值域判定只剩一份實作：後綴剝除、封閉值域檢查、原值 surface 全在 `scripts/lib/actionability.sh`，本 skill 只讀它的 exit code。完整規定見 [`references/actionability-gate.md`](../../references/actionability-gate.md)。
 
 **Simple / Plan case 執行**：
 
