@@ -35,4 +35,23 @@ fi
 # 5. header documents the eval-content ban
 assert_output_grep "header carries eval-content warning" 'never interpolate captured output' "$HERE/../../lib/assert-helpers.sh"
 
+# 6. refute_grep_re anchors where refute_grep cannot. The pair below is the
+#    whole reason the helper exists: `marker` occurs inside a line, so a
+#    fixed-string refutation fails for a reason the test never meant to assert.
+HAY='  o/real-repo    o/FORGED-ROW  current'
+refute_grep_re "refute_grep_re: an in-line occurrence does not match an anchored pattern" \
+  '^  o/FORGED-ROW' "$HAY"
+assert_grep_re "assert_grep_re: the same string IS found unanchored" \
+  'o/FORGED-ROW' "$HAY"
+
+# 7. and it still fails when the pattern really does match
+RG_BEFORE=$FAIL
+refute_grep_re "anchored-match probe" '^  o/real-repo' "$HAY" 2>/dev/null || true
+if [ "$FAIL" -gt "$RG_BEFORE" ]; then
+  FAIL=$((FAIL - 1)); unset 'FAILURES[${#FAILURES[@]}-1]' 2>/dev/null
+  pass "refute_grep_re: a genuine anchored match fails loudly"
+else
+  fail "refute_grep_re: a genuine anchored match fails loudly" "helper passed when it should have failed"
+fi
+
 print_summary "assert-helpers"
