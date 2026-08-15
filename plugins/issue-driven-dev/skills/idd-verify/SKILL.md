@@ -286,14 +286,15 @@ PAI_ENGINE="${PAI_DIR}workflows/ensemble-workflow.js"
 TaskCreate(name="resolve_input_source", description="Step 0.5: 解析 --pr / --commits / --branch / --since flag；都沒帶就跑 auto-detect（count Refs #N commits since origin/<default>，再 gh pr list 找 open PR），有歧義時 AskUserQuestion 確認")
 TaskCreate(name="gate_pr_correspondence", description="Step 0.7: PR mode 下強制檢查 issue↔PR 對應 — gh pr view --json body 抓 Refs #N，跟 user 指定的 issue 比對；PR 沒任何 Refs 或 user issue 不在 set 內 → abort 並告訴使用者怎麼修")
 TaskCreate(name="scan_pr_body_and_commits_trailers", description="Step 0.8: PR mode 下兩 source 偵測 auto-close trap — (1) gh pr view --json closingIssuesReferences 查 PR body 是否 linked-to-auto-close（GitHub 權威解析、所有 trailer 形式），(2) gh pr view --json commits 對每個 commit messageBody 跑 trap regex（補上 GitHub 不預計算的 commit-body channel — squash 後字串 land 在 main 觸發 auto-close）。任一非空則 warn — bypass /idd-close gate。Warn-only，不 abort")
-TaskCreate(name="get_diff_and_issue", description="依 input source 取 diff（gh pr diff / git diff HEAD~N / git diff origin/<default>...<branch>） + gh issue view,存 diff 到 /tmp 供 agents 讀取,並記 FROZEN_SHA=$(git rev-parse HEAD)（PR mode 記 PR head oid — #228 freshness 錨點）；PR mode 額外做 gh pr checkout 並記住原 branch")
+TaskCreate(name="resolve_scratch_dir", description="Step 0.4 (#288): VERIFY_DIR=$(mktemp -d \"${TMPDIR:-/tmp}/idd-verify-${NUMBER}-XXXXXX\") — 一次解析、之後所有 diff / prompt / findings / codex 檔全部掛在它底下。**必須在任何寫檔或 spawn 之前**。固定名稱（舊的 /tmp/verify_${NUMBER}_*）不帶 repo 身分，同一個 issue 號在不同 repo 的兩個 session 會共用檔名，前一輪的殘檔會被當成這一輪的 findings 讀進來 —— 靜默，且方向最壞（把別的 repo 的判決併進這份報告）")
+TaskCreate(name="get_diff_and_issue", description="依 input source 取 diff（gh pr diff / git diff HEAD~N / git diff origin/<default>...<branch>） + gh issue view,存 diff 到 $VERIFY_DIR/diff.patch 供 agents 讀取,並記 FROZEN_SHA=$(git rev-parse HEAD)（PR mode 記 PR head oid — #228 freshness 錨點）；PR mode 額外做 gh pr checkout 並記住原 branch")
 TaskCreate(name="check_attachments", description="確認 .claude/.idd/attachments/issue-NNN/ 存在,把 attachment 路徑塞進 reviewer agent prompt 作為 source-of-truth context。manifest 缺漏 → 警告繼續(reviewer 仍跑,但 verification 完整度受限)。依 rules/process-attachments.md。")
 TaskCreate(name="resolve_dispatch_model", description="解析 $AGENT_MODEL — IDD_AGENT_MODEL 未設 → opus；非法值 → abort with usage error（#205；兩個 backend 共用，Workflow args 傳 agentModel、manual 模板填 model）；#264 同步解析 codex 治理（check-plugin-presence.sh codex-pro codex-pro → CP defaults.json + profile.yaml 兩層 → CODEX_MODEL/EFFORT/MAX_TIME，缺席 fail-fast）")
 TaskCreate(name="launch_parallel_reviewers", description="第一波 5 個 tool calls 同一 message: 4 lens Agent(subagent_type=general-purpose, model=$AGENT_MODEL) for requirements/logic/security/regression + 1 Bash codex(run_in_background:true)；DA 不在此波（#130 sequenced）。prompt 引用 attachment 路徑 + 強制 file-output rule (per #52)")
 TaskCreate(name="spawn_sequenced_da", description="#130: 4 份 lens findings 檔全部就緒（non-empty）後，coordinator 序列 spawn Devil's Advocate（model=$AGENT_MODEL，prompt 直附 4 檔路徑，無 polling）")
-TaskCreate(name="wait_for_claude_agents", description="4 lens Agent calls return 後 ls /tmp/verify_${NUMBER}_findings_*.md 確認 4 檔 non-empty（DA 檔在 sequenced spawn 後另計）;缺者進 Step 2.5 Recovery Protocol")
+TaskCreate(name="wait_for_claude_agents", description="4 lens Agent calls return 後 ls $VERIFY_DIR/findings_*.md 確認 4 檔 non-empty（DA 檔在 sequenced spawn 後另計）;缺者進 Step 2.5 Recovery Protocol")
 TaskCreate(name="recovery_protocol", description="Step 2.5 (NEW per #52): 缺 findings 檔者 SendMessage retry with FULL context re-paste(不假設 context 倖存 idle/wake);二次 idle → coordinator self-review for that role + 在 master report 標 process gap")
-TaskCreate(name="wait_for_codex", description="等 Codex 背景任務完成,讀 /tmp/codex-verify-${NUMBER}.md")
+TaskCreate(name="wait_for_codex", description="等 Codex 背景任務完成,讀 $VERIFY_DIR/codex.md")
 TaskCreate(name="freshness_gate", description="Step 2.9 (#228): merge/aggregate 前比對 FROZEN_SHA vs 當前 HEAD（PR mode: PR head oid）— 不一致 → 拒絕 aggregate,要求 re-freeze + 補審 delta round;一致才放行 merge")
 TaskCreate(name="merge_findings", description="合併 6 個來源 findings 去重,severity 取最高")
 TaskCreate(name="post_master_and_pointers", description="PR mode: master 貼到 PR + capture URL → 為每個 ref'd issue 貼 pointer comment；本地 mode: 貼到 issue（單 issue 直接貼／多 issue 用 SOP master+pointer）")
@@ -308,7 +309,7 @@ TaskCreate(name="triage_followup_issues", description="Step 5b: 分類 non-block
 **v2.32.0+ tagging 規則**：若 Verify findings comment 要 @-tag 寫 code 的人或要求審閱者，**必須**遵循 [`rules/tagging-collaborators.md`](../../rules/tagging-collaborators.md) 5 步協定（gh api → fuzzy match → AskUserQuestion fallback → @login 不用 display name → post 前 verify）。違反 = 通知錯人，不可逆。
 
 **鐵律**:
-- `wait_for_claude_agents` 和 `wait_for_codex` 都要跑到真的有 findings 內容,不能只看到 Agent return / idle notification 就 completed — 必須 `ls /tmp/verify_${NUMBER}_findings_*.md` 確認 5 個檔案 + non-empty
+- `wait_for_claude_agents` 和 `wait_for_codex` 都要跑到真的有 findings 內容,不能只看到 Agent return / idle notification 就 completed — 必須 `ls $VERIFY_DIR/findings_*.md` 確認 5 個檔案 + non-empty
 - 如果某個 reviewer 沒寫 findings 檔 → 進 Step 2.5 Recovery Protocol(SendMessage retry with FULL context re-paste);二次 idle → coordinator self-review fallback + master report 標 process gap
 - `comment_to_issue` 一定要實際 post 到 GitHub,不是只在對話中顯示
 - **絕對禁用** `subagent_type=Explore` for reviewer agents — Explore 是 read-only,**沒有 Write tool**,無法寫 findings 檔(#47 incident proved this; per #52 v2.59.0+ 強制 general-purpose)
@@ -499,7 +500,7 @@ fi
 ```bash
 # PR mode
 git diff --stat origin/$DEFAULT_BRANCH...HEAD          # PR head 已 checkout
-gh pr diff $PR --repo $GITHUB_REPO > /tmp/diff_$NUMBER.patch
+gh pr diff $PR --repo $GITHUB_REPO > "$VERIFY_DIR/diff.patch"
 
 # 本地 mode
 git diff --stat                                         # uncommitted
@@ -511,7 +512,7 @@ git diff --stat origin/$DEFAULT_BRANCH...$BRANCH
 
 # 取 issue（每個 ref'd issue 都要抓）
 for I in $REFD_ISSUES; do
-  gh issue view $I --repo $GITHUB_REPO --json title,body > /tmp/issue_$I.json
+  gh issue view $I --repo $GITHUB_REPO --json title,body > "$VERIFY_DIR/issue_$I.json"
 done
 ```
 
@@ -538,7 +539,7 @@ Exit code:
 >
 > **絕對禁用** `subagent_type=Explore` for reviewer agents。Explore agent 是 read-only（per Agent tool docs：「All tools except Agent, ExitPlanMode, Edit, Write, NotebookEdit」），**沒有 Write tool**，無法寫 findings 檔。`#47` verify 真實發生過：spawn 5 個 Explore agents，5 個全部 idle without output，verify 退化成 1-AI (Codex only)。
 >
-> **正確選擇** `subagent_type=general-purpose`：含完整 tool set (Read/Grep/Glob/Bash/**Write**/Edit)，可寫 `/tmp/verify_<NUMBER>_findings_<role>.md`。
+> **正確選擇** `subagent_type=general-purpose`：含完整 tool set (Read/Grep/Glob/Bash/**Write**/Edit)，可寫 `$VERIFY_DIR/findings_<role>.md`。
 >
 > **不用 TeamCreate**（pre-v2.59.0 model）的原因：
 > - TeamCreate teammates 必須在 `tools` field 顯式列出 Write，現有 prompt template 配置只給 Read/Grep/Glob/Bash —— 同 Explore 一樣 Write-missing failure mode
@@ -551,42 +552,53 @@ Exit code:
 
 每個 reviewer 用 single `Agent` tool call（**not** TeamCreate teammate）。所有 5 個 + 1 個 Bash codex **必須在同一個 message** 一起發出（單 message 多 tool calls = parallel）。
 
-> **Scratch-file naming (#288)**: every `/tmp` path in this skill MUST include a
-> per-run token, not just the issue number. `/tmp/verify_${NUMBER}_findings_*.md`
-> and `/tmp/codex-verify-${NUMBER}.md` carry no repo identity, so two sessions
-> verifying **the same issue number in different repos** share filenames — and a
-> leftover file from the earlier run is then read as this run's findings. That
+> **Scratch-file naming (#288)**: no scratch path in this skill may be a fixed
+> name in the system temp directory. (The superseded ones are not spelled out
+> here, for the same reason the prose-drift test bans quoting the classifier
+> regex: a copy cannot drift if it does not exist, and a banned literal written
+> into the document is the first thing a mechanical check trips over.) They were
+> keyed on the issue number alone, which carries no repo identity, so two sessions
+> verifying **the same issue number in different repos** share filenames, and a
+> leftover file from the earlier run is read as this run's findings. That
 > failure is silent and its direction is the worst one: the coordinator merges
 > another repo's verdict into this PR's report.
 >
-> Resolve a run directory ONCE, before spawning anything, and use it everywhere:
+> `$VERIFY_DIR` is resolved ONCE in Step 0 (`resolve_scratch_dir`) and every path
+> in this skill hangs off it:
 >
 > ```bash
 > VERIFY_DIR=$(mktemp -d "${TMPDIR:-/tmp}/idd-verify-${NUMBER}-XXXXXX")
-> # every findings / prompt / codex path below becomes "$VERIFY_DIR/<name>.md"
 > ```
 >
 > `mktemp -d` gives collision-freedom without needing a repo slug, survives
 > concurrent runs of the same issue in the same repo, and is cleaned up by the
-> OS. Do NOT paper over this by adding a repo slug to the old flat names —
-> concurrent runs of the *same* repo would still collide.
+> OS. Do NOT paper over this by adding a repo slug to flat names — concurrent
+> runs of the *same* repo would still collide.
+>
+> **This was documented before it was done.** #288's closing summary claimed
+> every scratch path now hung off `mktemp -d`; the note above shipped, and the
+> next paragraph went on MUSTing the old flat path, as did twenty-two others.
+> A spec that states a rule and then contradicts it a line later is worse than
+> one that states nothing: a reader who checks the rule finds it, and a reader
+> who copies the command gets the defect. The paths are now actually converted,
+> and `scripts/tests/verify-scratch-paths/` fails if a flat one comes back.
 
-> **Pre-spawn prompt persistence (per /idd-verify --pr 73 round 1 P1.2)**: BEFORE invoking the 5 Agent calls, coordinator MUST save each reviewer's full prompt to `/tmp/verify_${NUMBER}_prompt_<role>.md`. Step 2.5b Recovery Protocol re-paste step reads these files; if they don't exist, retry fails. Save via:
+> **Pre-spawn prompt persistence (per /idd-verify --pr 73 round 1 P1.2)**: BEFORE invoking the 5 Agent calls, coordinator MUST save each reviewer's full prompt to `$VERIFY_DIR/prompt_<role>.md`. Step 2.5b Recovery Protocol re-paste step reads these files; if they don't exist, retry fails. Save via:
 >
 > ```bash
 > # Coordinator runs BEFORE Agent invocations
-> cat > /tmp/verify_${NUMBER}_prompt_requirements.md <<'EOF'
+> cat > $VERIFY_DIR/prompt_requirements.md <<'EOF'
 > 你是 Requirements Reviewer for Issue #...
 > (full prompt body here, exactly as passed to Agent below)
 > EOF
 > # ... same for logic, security, regression, devils-advocate
 > ```
 >
-> Do this once per verify invocation (paths include `${NUMBER}` so different issues don't collide). The 5 prompt files + 5 findings files share the same `verify_<NUMBER>_*` naming convention.
+> Do this once per verify invocation. The 5 prompt files and 5 findings files all live in `$VERIFY_DIR`, so nothing collides — not across issues, not across repos, not across two concurrent runs of the same issue.
 
 **Prompt template 強制要素**（每個 reviewer 都必含這 3 條，違反 = process gap）：
 
-1. **明示 file output path**：`Write your findings to /tmp/verify_${NUMBER}_findings_<role>.md when done.`
+1. **明示 file output path**：`Write your findings to $VERIFY_DIR/findings_<role>.md when done.`
 2. **明示 DO NOT idle**：`Your task is NOT complete until the file is written. Do NOT idle without producing the output file.`
 3. **明示 retry context expectation**：`If you receive a later SendMessage with the same prompt re-pasted, treat that as a retry signal; the original context may have been lost across an idle/wake cycle.`
 
@@ -600,14 +612,14 @@ Agent({
 Issue body:
 ${BODY}
 
-Diff path: /tmp/diff_${NUMBER}.patch
+Diff path: $VERIFY_DIR/diff.patch
 Attachment paths (if any): .claude/.idd/attachments/issue-${NUMBER}/...
 
 你的任務：逐一檢查 issue 的每個要求是否在 code 中被實現。
 對每個要求標記：FULLY / PARTIALLY / NOT addressed。
 用 Read/Grep 工具實際去看相關檔案確認。
 
-OUTPUT (mandatory): Write your findings to /tmp/verify_${NUMBER}_findings_requirements.md when done.
+OUTPUT (mandatory): Write your findings to $VERIFY_DIR/findings_requirements.md when done.
 Your task is NOT complete until the file is written. Do NOT idle without producing the output file.
 If you receive a later SendMessage with the same prompt re-pasted, treat that as a retry signal — the original context may have been lost across an idle/wake cycle.`
 })
@@ -618,7 +630,7 @@ Agent({
   model: "${AGENT_MODEL}",   // #205: 顯式 dispatch model（Step 2 前解析；預設 opus）
   prompt: `你是 Logic Reviewer for Issue #${NUMBER}: ${TITLE}.
 
-Diff path: /tmp/diff_${NUMBER}.patch
+Diff path: $VERIFY_DIR/diff.patch
 
 你的任務：檢查邏輯正確性。
 - Edge cases（null、empty、boundary values）
@@ -626,7 +638,7 @@ Diff path: /tmp/diff_${NUMBER}.patch
 - 控制流程（if/else 覆蓋、switch fall-through）
 用 Read 工具查看完整函數上下文。
 
-OUTPUT (mandatory): Write findings to /tmp/verify_${NUMBER}_findings_logic.md.
+OUTPUT (mandatory): Write findings to $VERIFY_DIR/findings_logic.md.
 Your task is NOT complete until the file is written. Do NOT idle without producing output.
 If you receive a later SendMessage with the same prompt re-pasted, treat as retry signal.`
 })
@@ -637,7 +649,7 @@ Agent({
   model: "${AGENT_MODEL}",   // #205: 顯式 dispatch model（Step 2 前解析；預設 opus）
   prompt: `你是 Security Reviewer for Issue #${NUMBER}: ${TITLE}.
 
-Diff path: /tmp/diff_${NUMBER}.patch
+Diff path: $VERIFY_DIR/diff.patch
 
 你的任務：檢查安全問題。
 - SQL injection（字串拼接 vs parameterized）
@@ -645,7 +657,7 @@ Diff path: /tmp/diff_${NUMBER}.patch
 - 權限檢查
 - 輸入驗證
 
-OUTPUT (mandatory): Write findings to /tmp/verify_${NUMBER}_findings_security.md.
+OUTPUT (mandatory): Write findings to $VERIFY_DIR/findings_security.md.
 Your task is NOT complete until the file is written. Do NOT idle without producing output.
 If you receive a later SendMessage with the same prompt re-pasted, treat as retry signal.`
 })
@@ -656,7 +668,7 @@ Agent({
   model: "${AGENT_MODEL}",   // #205: 顯式 dispatch model（Step 2 前解析；預設 opus）
   prompt: `你是 Regression Reviewer for Issue #${NUMBER}: ${TITLE}.
 
-Diff path: /tmp/diff_${NUMBER}.patch
+Diff path: $VERIFY_DIR/diff.patch
 
 你的任務：
 1. 有沒有改到 issue 範圍外的東西（scope creep）？
@@ -664,7 +676,7 @@ Diff path: /tmp/diff_${NUMBER}.patch
 3. 有沒有引入新的 dependency 但沒處理？
 用 Grep 搜尋被改動的函數在哪裡被呼叫。
 
-OUTPUT (mandatory): Write findings to /tmp/verify_${NUMBER}_findings_regression.md.
+OUTPUT (mandatory): Write findings to $VERIFY_DIR/findings_regression.md.
 Your task is NOT complete until the file is written. Do NOT idle without producing output.
 If you receive a later SendMessage with the same prompt re-pasted, treat as retry signal.`
 })
@@ -675,7 +687,7 @@ Agent({
   model: "${AGENT_MODEL}",   // #205: 顯式 dispatch model（Step 2 前解析；預設 opus）
   prompt: `你是 Devil's Advocate for Issue #${NUMBER}: ${TITLE}.
 
-Diff path: /tmp/diff_${NUMBER}.patch
+Diff path: $VERIFY_DIR/diff.patch
 
 你是在 4 份 lens findings 檔就緒後才被 spawn 的（coordinator 已確認 — #130 sequenced 模式，無需 polling）。直接讀取 4 份 sibling findings，然後：
 
@@ -685,7 +697,7 @@ Diff path: /tmp/diff_${NUMBER}.patch
 
 這是對抗性驗證 — 你的存在是為了防止群體盲點。
 
-OUTPUT (mandatory): Write findings to /tmp/verify_${NUMBER}_findings_devils-advocate.md.
+OUTPUT (mandatory): Write findings to $VERIFY_DIR/findings_devils-advocate.md.
 Your task is NOT complete until the file is written. Do NOT idle without producing output.
 If you receive a later SendMessage with the same prompt re-pasted, treat as retry signal.`
 })
@@ -693,17 +705,17 @@ If you receive a later SendMessage with the same prompt re-pasted, treat as retr
 
 #### 2b. Codex（背景執行，via vendored `codex-call` HTTP wrapper，#147）
 
-透過 pai 的 `codex-call`（`$PAI_CODEX_CALL`；HTTP，非 `codex exec` subprocess → 無 pipe hang）執行 review，model/effort 帶共通前置解析的 codex-pro 治理值（#264）。**注意語意差異**：`codex exec --full-auto` 是 agentic（codex 自己讀 working-tree diff）；`codex-call` 是單次 completion（非 agentic），所以 diff 必須**顯式**用 `--prompt-file` 餵進去 —— 用 Step 1 已寫好的 `/tmp/diff_$NUMBER.patch`，review 框架放 `--instructions`：
+透過 pai 的 `codex-call`（`$PAI_CODEX_CALL`；HTTP，非 `codex exec` subprocess → 無 pipe hang）執行 review，model/effort 帶共通前置解析的 codex-pro 治理值（#264）。**注意語意差異**：`codex exec --full-auto` 是 agentic（codex 自己讀 working-tree diff）；`codex-call` 是單次 completion（非 agentic），所以 diff 必須**顯式**用 `--prompt-file` 餵進去 —— 用 Step 1 已寫好的 `"$VERIFY_DIR/diff.patch"`，review 框架放 `--instructions`：
 
 ```bash
 Bash({
-  command: `"$PAI_CODEX_CALL" --output /tmp/codex-verify-$NUMBER.md --model "$CODEX_MODEL" --effort "$CODEX_EFFORT" --service-tier fast --max-time "$CODEX_MAX_TIME" --prompt-file /tmp/diff_$NUMBER.patch --instructions "You are verifying code changes for Issue #$NUMBER: $TITLE. Go through EACH requirement: FULLY / PARTIALLY / NOT addressed. Flag scope creep and regressions. Reply in Traditional Chinese."`,
+  command: `"$PAI_CODEX_CALL" --output $VERIFY_DIR/codex.md --model "$CODEX_MODEL" --effort "$CODEX_EFFORT" --service-tier fast --max-time "$CODEX_MAX_TIME" --prompt-file "$VERIFY_DIR/diff.patch" --instructions "You are verifying code changes for Issue #$NUMBER: $TITLE. Go through EACH requirement: FULLY / PARTIALLY / NOT addressed. Flag scope creep and regressions. Reply in Traditional Chinese."`,
   description: "Codex review for #$NUMBER (via codex-call)",
   run_in_background: true
 })
 ```
 
-完成後用 Read 讀取 `/tmp/codex-verify-$NUMBER.md`。codex-call 失敗（swift 缺 / HTTP / auth / timeout）→ 視為 cross-model lens 本次 skip，標記在 master report，不靜默當成 PASS。
+完成後用 Read 讀取 `$VERIFY_DIR/codex.md`。codex-call 失敗（swift 缺 / HTTP / auth / timeout）→ 視為 cross-model lens 本次 skip，標記在 master report，不靜默當成 PASS。
 
 ### Step 2.5: Recovery Protocol（NEW v2.59.0+, #52）
 
@@ -715,11 +727,11 @@ Bash({
 
 ```bash
 EXPECTED_FILES=(
-  "/tmp/verify_${NUMBER}_findings_requirements.md"
-  "/tmp/verify_${NUMBER}_findings_logic.md"
-  "/tmp/verify_${NUMBER}_findings_security.md"
-  "/tmp/verify_${NUMBER}_findings_regression.md"
-  "/tmp/verify_${NUMBER}_findings_devils-advocate.md"
+  "$VERIFY_DIR/findings_requirements.md"
+  "$VERIFY_DIR/findings_logic.md"
+  "$VERIFY_DIR/findings_security.md"
+  "$VERIFY_DIR/findings_regression.md"
+  "$VERIFY_DIR/findings_devils-advocate.md"
 )
 
 MISSING_ROLES=()
@@ -775,7 +787,7 @@ for role in "${MISSING_ROLES[@]}"; do
   # Build retry prompt with full context re-paste
   RETRY_PROMPT="[RETRY] Original prompt re-pasted because the previous instance idled without producing output. Treat this as the canonical task instruction; do not assume any prior context.
 
-$(cat /tmp/verify_${NUMBER}_prompt_${role}.md)"   # Coordinator saved prompts before spawn
+$(cat $VERIFY_DIR/prompt_${role}.md)"   # Coordinator saved prompts before spawn
 
   # If Agent instance is addressable via SendMessage (named team member or running agent):
   SendMessage(to="verify-${NUMBER}-${role}", body="$RETRY_PROMPT")
@@ -790,7 +802,7 @@ $(cat /tmp/verify_${NUMBER}_prompt_${role}.md)"   # Coordinator saved prompts be
 
   # Poll for file (90s max)
   for i in $(seq 1 18); do
-    [ -s "/tmp/verify_${NUMBER}_findings_${role}.md" ] && break
+    [ -s "$VERIFY_DIR/findings_${role}.md" ] && break
     sleep 5
   done
 done
@@ -804,13 +816,13 @@ done
 
 ```bash
 for role in "${MISSING_ROLES[@]}"; do
-  if [ ! -s "/tmp/verify_${NUMBER}_findings_${role}.md" ]; then
+  if [ ! -s "$VERIFY_DIR/findings_${role}.md" ]; then
     # Coordinator self-review
     echo "## ${role} review (coordinator self-review — process gap)" \
-      > "/tmp/verify_${NUMBER}_findings_${role}.md"
-    echo "" >> "/tmp/verify_${NUMBER}_findings_${role}.md"
+      > "$VERIFY_DIR/findings_${role}.md"
+    echo "" >> "$VERIFY_DIR/findings_${role}.md"
     echo "(${role} Agent failed to produce output after retry. Coordinator self-reviewed:)" \
-      >> "/tmp/verify_${NUMBER}_findings_${role}.md"
+      >> "$VERIFY_DIR/findings_${role}.md"
 
     # Coordinator reads diff + issue + does role-specific review inline
     # (Quality lower than independent reviewer; flagged as process gap.)
@@ -859,8 +871,8 @@ fi
 
 等 5 reviewer Agents（Step 2.5 Recovery Protocol 已 satisfy: 所有 findings 檔 present + non-empty）和 Codex 都完成後：
 
-1. 收集 5 個 reviewer Agents 的 findings（從 `/tmp/verify_${NUMBER}_findings_*.md`）
-2. 收集 Codex 的 findings（從 `/tmp/codex-verify-${NUMBER}.md`）
+1. 收集 5 個 reviewer Agents 的 findings（從 `$VERIFY_DIR/findings_*.md`）
+2. 收集 Codex 的 findings（從 `$VERIFY_DIR/codex.md`）
 3. **去重**：相同檔案 + 相似描述 → 合併，標註來源 `[agents:logic+codex]`
 4. **severity 以最高為準**：如果 logic 說 P2 但 codex 說 P1 → P1
 5. Devil's Advocate 的反駁如果成立 → 升級 severity
@@ -879,14 +891,14 @@ fi
 
 ```bash
 # 1. Post master to PR, capture URL
-MASTER_URL=$(gh pr comment $PR --repo $GITHUB_REPO --body-file /tmp/master.md 2>&1 | tail -1)
+MASTER_URL=$(gh pr comment $PR --repo $GITHUB_REPO --body-file "$VERIFY_DIR/master.md" 2>&1 | tail -1)
 
 # 2. Compose pointer body using captured PR comment URL
-sed "s|__MASTER_URL__|$MASTER_URL|g" /tmp/pointer_template.md > /tmp/pointer.md
+sed "s|__MASTER_URL__|$MASTER_URL|g" "$VERIFY_DIR/pointer_template.md" > "$VERIFY_DIR/pointer.md"
 
 # 3. Post pointer to each ref'd issue in parallel
 for I in $REFD_ISSUES; do
-  bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $I --repo $GITHUB_REPO --body-file /tmp/pointer.md --scrub-attested "$SCRUB_LEVEL" &
+  bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $I --repo $GITHUB_REPO --body-file "$VERIFY_DIR/pointer.md" --scrub-attested "$SCRUB_LEVEL" &
 done
 wait
 ```
@@ -920,15 +932,18 @@ Cluster（≥2 issue 共用一份 verify report）：
 
 **Helper pattern**:
 ```bash
+# All three files live in $VERIFY_DIR (Step 0). These are EGRESS bodies — the
+# text that gets posted to someone's issue — so a stale or half-written file at
+# a shared fixed path does not fail loudly, it publishes the wrong comment.
 # 1. Post master, capture URL
-MASTER_URL=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $HUB_ISSUE --repo $REPO --body-file /tmp/master.md --scrub-attested "$SCRUB_LEVEL" 2>&1 | tail -1)
+MASTER_URL=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $HUB_ISSUE --repo $REPO --body-file "$VERIFY_DIR/master.md" --scrub-attested "$SCRUB_LEVEL" 2>&1 | tail -1)
 
 # 2. Compose pointer body using captured URL
-sed "s|__MASTER_URL__|$MASTER_URL|g" /tmp/pointer_template.md > /tmp/pointer.md
+sed "s|__MASTER_URL__|$MASTER_URL|g" "$VERIFY_DIR/pointer_template.md" > "$VERIFY_DIR/pointer.md"
 
 # 3. Post pointers in parallel
 for I in $POINTER_ISSUES; do
-  bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $I --repo $REPO --body-file /tmp/pointer.md --scrub-attested "$SCRUB_LEVEL" &
+  bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $I --repo $REPO --body-file "$VERIFY_DIR/pointer.md" --scrub-attested "$SCRUB_LEVEL" &
 done
 wait
 ```
@@ -1133,11 +1148,12 @@ Full integration contract: [`references/agent-routing.md`](../../references/agen
 
 ```bash
 # codex-call 是單次 completion（非 agentic）→ 顯式把 diff 餵進去
-git diff > /tmp/codex-quick-diff.patch
+QUICK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/idd-quick-XXXXXX")
+git diff > "$QUICK_DIR/diff.patch"
 "$PAI_CODEX_CALL" \
-  --output /tmp/codex-quick-review.md \
+  --output "$QUICK_DIR/review.md" \
   --model "$CODEX_MODEL" --effort "$CODEX_EFFORT" --service-tier fast --max-time "$CODEX_MAX_TIME" \
-  --prompt-file /tmp/codex-quick-diff.patch \
+  --prompt-file "$QUICK_DIR/diff.patch" \
   --instructions "Review this git diff. Flag bugs, logic errors, security issues. Reply in Traditional Chinese."
 ```
 
