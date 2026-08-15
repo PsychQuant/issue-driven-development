@@ -66,6 +66,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`idd-clarify`'s worked example** still used the analysis style `#294` replaced with questions, forty lines below the
   rule and its ❌/✅ demonstration. The example is the half people copy. `scripts/tests/clarify-question-column/` pins it.
 
+- **`idd-plan` described `idd-all`'s Plan routing as a universal** (`#317`) — "idd-all 不該走 Plan path". Its unattended
+  half was correct; the error was writing one branch's conclusion without its condition, and after `#292` an **attended**
+  `idd-all` routes to `/idd-plan` precisely. Split into two columns.
+  `scripts/tests/plan-routing-consistency/` asserts the routing against `idd-all` first — pinning a reader's account
+  without checking the source would just pin fiction — then asserts the split exists.
+
 ### Honest residue
 
 - The `.idd` re-check after `mkdir -p` narrows a TOCTOU window and **has no test weight** — a single-process test
@@ -75,7 +81,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Cannot index string with string ("state")` on jq 1.7 — the value is **not** echoed, so nothing attacker-controlled
   arrives. Comment corrected, code left alone: a Unicode-aware scrub would mean a second copy of the character class,
   and divergent copies of a safety definition are this file's longest-running failure.
-- Suites: 47 → 49. Classifier assertions: 89 → 120.
+- Suites: 47 → 50. Classifier assertions: 89 → 120.
 
 ## [2.109.0] - 2026-08-15
 
