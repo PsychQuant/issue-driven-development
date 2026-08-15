@@ -23,6 +23,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   again before posting, and refuses on anything that is not `rc == 0` — including every *uncertain* case, and including
   "the helper is missing", since a gate you cannot find is not a gate.
 
+- **The ensemble is now told about writes that happen outside the diff** (`#315`). `idd-verify`'s scope is a diff, but
+  `idd-implement`'s sister sweep and cross-reference notes write to surfaces that are not in it. In the recorded case
+  (`macdoc#143`) a factual error in an implementation note was propagated verbatim into another issue's cross-reference
+  note; four lenses reviewed only the wording inside the diff, and the devil's advocate caught it by stepping outside
+  its brief. One reviewer improvising is not a mechanism. The implementation's own record of external writes now goes
+  into the reviewer context on **both** backends — giving pai and the manual fan-out different context would make a
+  finding depend on which backend resolved. An absent record reports the blast radius as **UNKNOWN**, not as empty:
+  a missing sister-sweep looks exactly like a sweep that found nothing.
+
+  This is `#315`'s option 1. Option 2 — a machine-readable manifest written by `idd-implement` and content-checked by
+  `idd-verify` — is a new contract between two skills, and the finding of this whole audit is that new contracts
+  shipped without their own review are where the defects live. Not done; recorded here rather than left implied.
+
 ### Fixed — the rest of the post-merge audit (Codex cross-model pass)
 
 - **`migrate-idd-config.sh` only handles ordinary files now.** Four shapes it accepted silently: `.idd` as a symlink
@@ -81,7 +94,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Cannot index string with string ("state")` on jq 1.7 — the value is **not** echoed, so nothing attacker-controlled
   arrives. Comment corrected, code left alone: a Unicode-aware scrub would mean a second copy of the character class,
   and divergent copies of a safety definition are this file's longest-running failure.
-- Suites: 47 → 50. Classifier assertions: 89 → 120.
+- Suites: 47 → 51. Classifier assertions: 89 → 120.
 
 ## [2.109.0] - 2026-08-15
 

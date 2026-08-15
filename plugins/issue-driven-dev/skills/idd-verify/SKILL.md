@@ -224,6 +224,30 @@ CONTEXT_BLOCK="${CONTEXT_BLOCK}
 
 Source-of-truth attachments (repo-relative; read with your file tools): ${ATTACHMENT_LIST:-（none）}"
 
+# ── diff 之外的寫入（#315）──
+# verify 的 scope 是 diff，但 implement 階段的 sister sweep / cross-reference note
+# **會寫到 diff 以外的表面**：別的 issue 的 comment、別的 repo 的新 issue。那些內容
+# 沒有任何 lens 看得到。macdoc#143 的實例：實作筆記裡一個事實錯誤被原樣擴散到另一張
+# issue 的參照 note，四個 lens 都只評了文件內的措辭，是 DA **越出 scope** 去讀
+# Implementation Complete 的 blast radius 紀錄才抓到。靠某個 lens 臨場越界不是機制。
+#
+# 最小版（#315 選項 1）：把 implement 自己記下的外部寫入清單塞進 context，讓 reviewer
+# **知道它們存在**、並被明確要求去核對。這裡不做選項 2 的 machine-readable manifest
+# ——那要 idd-implement 與 idd-verify 之間新增一份契約，屬於另一次改動（理由與殘餘
+# 風險見下方）。
+EXTERNAL_WRITES=$(gh issue view "$N" --repo "$GITHUB_REPO" --json comments \
+  --jq '[.comments[].body] | map(select(test("(?i)^##+[^\\p{L}]*Implementation Complete"))) | last // ""' 2>/dev/null \
+  | awk '/^###[[:space:]]*(Sister Bugs Filed|Blast Radius|Cross-reference|External writes)/{f=1} f && /^###[[:space:]]/ && !/Sister Bugs Filed|Blast Radius|Cross-reference|External writes/{f=0} f')
+CONTEXT_BLOCK="${CONTEXT_BLOCK}
+
+WRITES OUTSIDE THIS DIFF, as recorded by the implementation step. These are real
+surfaces the change touched — comments on other issues, issues filed in other
+repos — and they are NOT in the diff you are reviewing. Check whether what was
+written there is consistent with what the diff actually does: a factual error in
+an implementation note propagates to every issue it was cross-referenced into,
+and no amount of reading the diff will surface it.
+${EXTERNAL_WRITES:-（none recorded — this is not the same as \"none happened\": if the Implementation Complete comment has no such section, the blast radius is simply unknown, and you should say so rather than assume it was empty.）}"
+
 # Tier 1 — canonical：已安裝的 parallel-ai-agents 引擎（#207 使用者依賴裁決；契約 = pai#20 官方化的 EXTERNAL-CONSUMER CONTRACT）
 MIN_PAI="2.19.0"   # codexModel/codexEffort 契約起點（pai#22）——閘門理由：2.18.0 引擎會「靜默忽略」這兩個 args → canonical tier 的 codex 治理斷鏈（#264；同 #205 的 agentModel 教訓：靜默忽略比失敗糟）
 # PAI_DIR / PAI_VER 已於共通前置解析（#264 重排 —— codex-call 路徑與 engine 路徑兩用）
@@ -289,6 +313,7 @@ TaskCreate(name="scan_pr_body_and_commits_trailers", description="Step 0.8: PR m
 TaskCreate(name="resolve_scratch_dir", description="Step 0.4 (#288): VERIFY_DIR=$(mktemp -d \"${TMPDIR:-/tmp}/idd-verify-${NUMBER}-XXXXXX\") — 一次解析、之後所有 diff / prompt / findings / codex 檔全部掛在它底下。**必須在任何寫檔或 spawn 之前**。固定名稱（舊的 /tmp/verify_${NUMBER}_*）不帶 repo 身分，同一個 issue 號在不同 repo 的兩個 session 會共用檔名，前一輪的殘檔會被當成這一輪的 findings 讀進來 —— 靜默，且方向最壞（把別的 repo 的判決併進這份報告）")
 TaskCreate(name="get_diff_and_issue", description="依 input source 取 diff（gh pr diff / git diff HEAD~N / git diff origin/<default>...<branch>） + gh issue view,存 diff 到 $VERIFY_DIR/diff.patch 供 agents 讀取,並記 FROZEN_SHA=$(git rev-parse HEAD)（PR mode 記 PR head oid — #228 freshness 錨點）；PR mode 額外做 gh pr checkout 並記住原 branch")
 TaskCreate(name="check_attachments", description="確認 .claude/.idd/attachments/issue-NNN/ 存在,把 attachment 路徑塞進 reviewer agent prompt 作為 source-of-truth context。manifest 缺漏 → 警告繼續(reviewer 仍跑,但 verification 完整度受限)。依 rules/process-attachments.md。")
+TaskCreate(name="collect_external_writes", description="#315: 讀最新 ## Implementation Complete comment 的 ### Sister Bugs Filed / Blast Radius / Cross-reference 區段,把 diff 之外的寫入清單塞進 CONTEXT_BLOCK。verify 的 scope 是 diff,但 implement 的 sister sweep / cross-reference note 會寫到別的 issue、別的 repo —— 那些內容沒有任何 lens 看得到。**沒有該區段時要說『blast radius 未知』,不可當成『沒有外部寫入』**")
 TaskCreate(name="resolve_dispatch_model", description="解析 $AGENT_MODEL — IDD_AGENT_MODEL 未設 → opus；非法值 → abort with usage error（#205；兩個 backend 共用，Workflow args 傳 agentModel、manual 模板填 model）；#264 同步解析 codex 治理（check-plugin-presence.sh codex-pro codex-pro → CP defaults.json + profile.yaml 兩層 → CODEX_MODEL/EFFORT/MAX_TIME，缺席 fail-fast）")
 TaskCreate(name="launch_parallel_reviewers", description="第一波 5 個 tool calls 同一 message: 4 lens Agent(subagent_type=general-purpose, model=$AGENT_MODEL) for requirements/logic/security/regression + 1 Bash codex(run_in_background:true)；DA 不在此波（#130 sequenced）。prompt 引用 attachment 路徑 + 強制 file-output rule (per #52)")
 TaskCreate(name="spawn_sequenced_da", description="#130: 4 份 lens findings 檔全部就緒（non-empty）後，coordinator 序列 spawn Devil's Advocate（model=$AGENT_MODEL，prompt 直附 4 檔路徑，無 polling）")
@@ -614,6 +639,8 @@ ${BODY}
 
 Diff path: $VERIFY_DIR/diff.patch
 Attachment paths (if any): .claude/.idd/attachments/issue-${NUMBER}/...
+Writes OUTSIDE this diff, as recorded by the implementation step (#315) — comments on other issues, issues filed in other repos. Check them against what the diff actually does: a factual error in an implementation note propagates to everything it was cross-referenced into, and reading the diff will never surface it. If nothing is listed below, report the blast radius as UNKNOWN rather than assuming it was empty:
+${EXTERNAL_WRITES:-(none recorded)}
 
 你的任務：逐一檢查 issue 的每個要求是否在 code 中被實現。
 對每個要求標記：FULLY / PARTIALLY / NOT addressed。
@@ -631,6 +658,8 @@ Agent({
   prompt: `你是 Logic Reviewer for Issue #${NUMBER}: ${TITLE}.
 
 Diff path: $VERIFY_DIR/diff.patch
+Writes OUTSIDE this diff, as recorded by the implementation step (#315) — comments on other issues, issues filed in other repos. Check them against what the diff actually does: a factual error in an implementation note propagates to everything it was cross-referenced into, and reading the diff will never surface it. If nothing is listed below, report the blast radius as UNKNOWN rather than assuming it was empty:
+${EXTERNAL_WRITES:-(none recorded)}
 
 你的任務：檢查邏輯正確性。
 - Edge cases（null、empty、boundary values）
@@ -650,6 +679,8 @@ Agent({
   prompt: `你是 Security Reviewer for Issue #${NUMBER}: ${TITLE}.
 
 Diff path: $VERIFY_DIR/diff.patch
+Writes OUTSIDE this diff, as recorded by the implementation step (#315) — comments on other issues, issues filed in other repos. Check them against what the diff actually does: a factual error in an implementation note propagates to everything it was cross-referenced into, and reading the diff will never surface it. If nothing is listed below, report the blast radius as UNKNOWN rather than assuming it was empty:
+${EXTERNAL_WRITES:-(none recorded)}
 
 你的任務：檢查安全問題。
 - SQL injection（字串拼接 vs parameterized）
@@ -669,6 +700,8 @@ Agent({
   prompt: `你是 Regression Reviewer for Issue #${NUMBER}: ${TITLE}.
 
 Diff path: $VERIFY_DIR/diff.patch
+Writes OUTSIDE this diff, as recorded by the implementation step (#315) — comments on other issues, issues filed in other repos. Check them against what the diff actually does: a factual error in an implementation note propagates to everything it was cross-referenced into, and reading the diff will never surface it. If nothing is listed below, report the blast radius as UNKNOWN rather than assuming it was empty:
+${EXTERNAL_WRITES:-(none recorded)}
 
 你的任務：
 1. 有沒有改到 issue 範圍外的東西（scope creep）？
@@ -688,6 +721,8 @@ Agent({
   prompt: `你是 Devil's Advocate for Issue #${NUMBER}: ${TITLE}.
 
 Diff path: $VERIFY_DIR/diff.patch
+Writes OUTSIDE this diff, as recorded by the implementation step (#315) — comments on other issues, issues filed in other repos. Check them against what the diff actually does: a factual error in an implementation note propagates to everything it was cross-referenced into, and reading the diff will never surface it. If nothing is listed below, report the blast radius as UNKNOWN rather than assuming it was empty:
+${EXTERNAL_WRITES:-(none recorded)}
 
 你是在 4 份 lens findings 檔就緒後才被 spawn 的（coordinator 已確認 — #130 sequenced 模式，無需 polling）。直接讀取 4 份 sibling findings，然後：
 
