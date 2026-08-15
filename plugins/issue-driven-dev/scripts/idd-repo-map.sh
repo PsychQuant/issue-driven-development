@@ -69,25 +69,48 @@ emit() {  # $1=repo_dir  $2=config_path  $3=format
   # rather than letting an empty string read as a match.
   [ -z "$(printf '%s' "$slug" | tr -d '[:space:]')" ] && slug="(no github_repo)"
   dir=$(printf '%s' "$dir" | sanitize_field)
-  rows="${rows}${dir}\t${slug}\t${fmt}\n"
+  # REAL tab and newline, not the two-character escapes `\t` / `\n`. The buffer
+  # used to hold escapes and be rendered with `printf '%b'`, which expands
+  # escapes in the DATA as well: a backslash inside a directory name or a
+  # `github_repo` value was executed rather than printed. `\c` was the worst of
+  # them — %b stops ALL output at it, so one crafted value silently deleted
+  # every row after it AND the totals line, and a map missing half its rows
+  # reads exactly like a machine with half as many repos. (`--json` was not
+  # exempt: the same %b feeds jq, so the payload truncated the JSON row too.)
+  # Real control characters cannot come back from the data, because
+  # sanitize_field deletes tabs and folds newlines to spaces.
+  rows="${rows}${dir}"$'\t'"${slug}"$'\t'"${fmt}"$'\n'
 }
 
+SCAN_INCOMPLETE=0
 for root in "${ROOTS[@]}"; do
   [ -d "$root" ] || continue
-  while IFS= read -r cfg; do
+  # `find`'s exit status is the only signal that part of the tree was
+  # unreadable, and a process substitution throws it away. That matters more
+  # here than in a normal scanner: this map's entire job is to answer "does this
+  # layer exist?", and an unreadable directory answering "no config here" is
+  # indistinguishable from "no config here" — which is precisely the wrong
+  # upward resolution #301 was filed for. So: capture, then check.
+  FIND_OUT=$(mktemp) || continue
+  find "$root" \
+    \( -name node_modules -o -name .git -o -name .build -o -name .venv \
+       -o -name archive -o -name archived -o -path '*/.claude/worktrees' \) -prune -o \
+    \( -path '*/.claude/.idd/local.json' -o -path '*/.claude/issue-driven-dev.local.json' \) \
+    -print0 >"$FIND_OUT" 2>/dev/null
+  [ $? -eq 0 ] || SCAN_INCOMPLETE=1
+  while IFS= read -r -d '' cfg; do
     case "$cfg" in
       */.claude/.idd/local.json)            emit "$(dirname "$(dirname "$(dirname "$cfg")")")" "$cfg" current ;;
       */.claude/issue-driven-dev.local.json) emit "$(dirname "$(dirname "$cfg")")" "$cfg" legacy ;;
     esac
-  done < <(find "$root" \
-             \( -name node_modules -o -name .git -o -name .build -o -name .venv \
-                -o -name archive -o -name archived -o -path '*/.claude/worktrees' \) -prune -o \
-             \( -path '*/.claude/.idd/local.json' -o -path '*/.claude/issue-driven-dev.local.json' \) \
-             -print 2>/dev/null)
+  done < "$FIND_OUT"
+  rm -f "$FIND_OUT"
 done
+[ "$SCAN_INCOMPLETE" -eq 0 ] || \
+  echo "note: parts of the scanned tree could not be read (permissions?) — this map may be INCOMPLETE, and a missing row means 'no such layer' to every consumer of it." >&2
 
 if [ "$JSON" = "1" ]; then
-  printf '%b' "$rows" | jq -R -s --arg g "$GLOBAL" '
+  printf '%s' "$rows" | jq -R -s --arg g "$GLOBAL" '
     {global: ($g | if (. | test("^/")) then . else null end),
      global_present: false,
      repos: (split("\n") | map(select(length > 0) | split("\t")
@@ -102,8 +125,8 @@ if [ -z "$rows" ]; then
   echo "no IDD-configured repo found under: ${ROOTS[*]}"
   exit 0
 fi
-printf '%b' "$rows" | sort | awk -F'\t' '{printf "  %-58s %-38s %s\n", $1, $2, $3}'
+printf '%s' "$rows" | sort | awk -F'\t' '{printf "  %-58s %-38s %s\n", $1, $2, $3}'
 echo ""
-printf '%b' "$rows" | awk -F'\t' '{c[$3]++} END {printf "total: %d  (current: %d, legacy: %d)\n", NR, c["current"], c["legacy"]}'
+printf '%s' "$rows" | awk -F'\t' '{c[$3]++} END {printf "total: %d  (current: %d, legacy: %d)\n", NR, c["current"], c["legacy"]}'
 echo "(legacy rows are migratable — see scripts/migrate-idd-config.sh, #303)"
 exit 0

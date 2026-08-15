@@ -244,14 +244,14 @@ idd-implement 偵測「已有 `## Implementation Plan` comment 在 issue 上」�
 
 ## 與 idd-all 的整合
 
-`idd-all` Phase 3 的 routing 也會新增 Plan path（v2.36.0+）：
+`idd-all` Phase 3 的 routing **依 interaction 軸分流**，Plan tier 的兩種模式走不同路（#292 之後）。normative source 是 [`idd-all/SKILL.md`](../idd-all/SKILL.md) 的 dispatch table；本表與它衝突時以它為準：
 
-```
-| Complexity 值 | Phase 3 行為 |
-|--------------|-------------|
-| Simple       | Phase 3a: idd-implement --pr |
-| Plan         | Phase 3p: idd-plan --pr (chains to idd-implement --pr internally) |
-| Spectra      | Phase 3b: spectra-discuss → spectra-propose → spectra-apply (unattended chain) |
-```
+| Complexity | attended | unattended |
+|---|---|---|
+| `Simple` | Phase 3a：`/idd-implement` | Phase 3a：`/idd-implement` |
+| `Plan` | **Phase 3p：`/idd-plan`** —— 本 skill 的 `EnterPlanMode` 閘門照常 fire，approve 後由本 skill chain 到 `/idd-implement` | Phase 3a：`/idd-implement` 直送，final report 標記 `[Plan tier deliberation skipped under unattended mode]` |
+| `Spectra` | Phase 3b：`spectra-discuss → propose → apply` | 同左 |
 
-unattended idd-all 模式下，idd-plan 的 EnterPlanMode 會被怎麼處理？— **idd-all 不該走 Plan path**。Plan tier 的核心價值是 user approval，unattended 直接跳過 = 退化成 Simple。idd-all Phase 3 看到 Complexity=Plan 應該 fallback 走 Simple path（idd-implement 直接），並在 final report 標記「Plan tier deliberation skipped under unattended mode」。
+**降級只發生在 unattended。** Plan tier 的價值是 user approval：unattended 沒有 user 在鍵盤前，閘門無從等待，所以那條路徑是**刻意**的降級、而且必須在報告裡講出來。attended 相反 —— 把 plan 呈現給 user 正是 attended 模式存在的理由之一。
+
+> **本段曾經是一句全稱句**（#317）：「**idd-all 不該走 Plan path**…應該 fallback 走 Simple path」。它的 unattended 半段是對的，錯在把一個分支的結論寫成無條件的 —— 而 #292 之後，attended `idd-all` 走的正是 `/idd-plan`。以本檔為準的讀者會得到與實際行為相反的結論。**能列舉的就列舉**：兩種模式各佔一格，不要先寫一句總括再補例外。

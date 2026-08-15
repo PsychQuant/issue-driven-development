@@ -20,11 +20,27 @@
 # heading and a real one count the same. That under-reports on purpose — see the
 # rationale above CLASSIFY.
 #
-# Advisory only — ALWAYS exits 0.
+# Advisory only in AUDIT mode — it ALWAYS exits 0 there.
+#
+# `--issue N` is the exception, and deliberately so. Audit mode reports to a
+# human; `--issue N` is a GATE for `/idd-close --retroactive`, whose action is
+# irreversible (it posts a second summary onto an issue that may already have
+# one). A gate that always exits 0 is not a gate — the caller has to interpret
+# prose, which is how seven rounds of work on this classifier stayed advisory
+# while the destructive path went on deciding for itself.
 #
 # Usage:
 #   check-closed-without-summary.sh [--repo owner/repo] [--limit N] [--since YYYY-MM-DD]
 #   check-closed-without-summary.sh --json-file <path>     # test / offline mode
+#   check-closed-without-summary.sh --issue N [--repo …]   # single-issue GATE
+#
+# `--issue N` prints one JSON object and exits:
+#   0  class == missing, comment set known complete   -> --retroactive may run
+#   1  any other class                                -> refuse, it has one
+#   2  could not determine (not closed / truncated /  -> refuse
+#      fetch or parse failure / no such issue)
+# Everything that is not a confident `missing` refuses. Fail-closed is the only
+# safe default when the action cannot be undone.
 #
 # Consumed by idd-list `--audit-closes`. The `## Closing Summary` heading is the
 # same marker idd-list Step 3 keys on for phase inference.
@@ -36,6 +52,8 @@ REPO=""
 LIMIT=50
 SINCE=""
 DRY_RUN=0
+GATE_ISSUE=""
+GATE_ERR=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -43,6 +61,7 @@ while [ $# -gt 0 ]; do
     # trailing value-taking flag looped forever — the advisory contract promises
     # exit 0, and never exiting breaks it harder than any wrong verdict.
     --json-file) JSON_FILE="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
+    --issue)     GATE_ISSUE="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
     --repo)      REPO="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
     --limit)     LIMIT="${2:-50}"; shift; [ $# -gt 0 ] && shift ;;
     --since)     SINCE="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
@@ -55,10 +74,44 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# ── Gate mode plumbing (--issue N) ──
+# One JSON object on stdout, and an exit code the caller cannot misread. Every
+# path that is not a confident `missing` on a complete comment set exits 2 (or
+# 1), because the caller is about to do something irreversible.
+gate_out() {  # $1=class-or-empty  $2=state-or-empty  $3=complete(true/false)  $4=error-or-empty  $5=exit code
+  jq -n --arg n "$GATE_ISSUE" --arg c "${1:-}" --arg s "${2:-}" \
+        --argjson complete "${3:-false}" --arg e "${4:-}" \
+    '{number: ($n | tonumber? // null),
+      state: (if $s == "" then null else $s end),
+      class: (if $c == "" then null else $c end),
+      comments_complete: $complete,
+      error: (if $e == "" then null else $e end)}'
+  exit "$5"
+}
+if [ -n "$GATE_ISSUE" ]; then
+  # Validated before it is interpolated into an API path, and before anything
+  # downstream compares it numerically.
+  case "$GATE_ISSUE" in
+    ''|*[!0-9]*) gate_out "" "" false "--issue expects an integer issue number" 2 ;;
+  esac
+fi
+
 # ── Acquire issue JSON ──
 if [ -n "$JSON_FILE" ]; then
-  [ -f "$JSON_FILE" ] || { echo "✗ --json-file not found: $JSON_FILE" >&2; exit 0; }
+  if [ ! -f "$JSON_FILE" ]; then
+    [ -n "$GATE_ISSUE" ] && gate_out "" "" false "--json-file not found: $JSON_FILE" 2
+    echo "✗ --json-file not found: $JSON_FILE" >&2; exit 0
+  fi
   ISSUES_JSON=$(cat "$JSON_FILE")
+  if [ -n "$GATE_ISSUE" ]; then
+    # Narrow to the one issue. An offline payload carries whatever comments the
+    # fixture author put there, so completeness is whatever the fixture says.
+    ISSUES_JSON=$(printf '%s' "$ISSUES_JSON" \
+      | jq --argjson n "$GATE_ISSUE" '[.[] | select(.number == $n)]' 2>/dev/null) \
+      || gate_out "" "" false "could not read the offline payload" 2
+    [ "$(printf '%s' "$ISSUES_JSON" | jq 'length' 2>/dev/null)" = "1" ] \
+      || gate_out "" "" false "issue #$GATE_ISSUE is not in the payload" 2
+  fi
 else
   # Resolve repo: --repo flag → walk-up .claude/.idd config → gh default repo.
   if [ -z "$REPO" ]; then
@@ -88,6 +141,26 @@ else
       [ -n "$REPO" ] && echo "note: repo resolved from the global layer ($REPO) — no repo-local config found." >&2
     fi
   fi
+  if [ -n "$GATE_ISSUE" ]; then
+    # Gate mode fetches ONE issue, and fetches its comments through REST with
+    # --paginate rather than the nested `--json comments` connection. That is
+    # not a preference: the nested form is hard-capped at the OLDEST 100, and a
+    # closing summary is by construction the NEWEST comment. The audit path
+    # repairs that after the fact; the gate simply never takes the broken road.
+    GATE_REPO="$REPO"
+    [ -z "$GATE_REPO" ] && GATE_REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)
+    [ -n "$GATE_REPO" ] || gate_out "" "" false "could not resolve the target repo" 2
+    META=$(gh issue view "$GATE_ISSUE" --repo "$GATE_REPO" --json number,title,state 2>/dev/null) \
+      || gate_out "" "" false "could not fetch issue #$GATE_ISSUE from $GATE_REPO" 2
+    if ! CMTS=$(gh api "repos/$GATE_REPO/issues/$GATE_ISSUE/comments" --paginate \
+                  --jq '[.[] | {body}]' 2>/dev/null | jq -s 'add // []' 2>/dev/null); then
+      gate_out "" "" false "could not fetch the comments of #$GATE_ISSUE" 2
+    fi
+    printf '%s' "$CMTS" | jq -e 'type == "array"' >/dev/null 2>&1 \
+      || gate_out "" "" false "the comment fetch returned something that is not an array" 2
+    ISSUES_JSON=$(printf '%s' "$META" | jq --argjson c "$CMTS" '[. + {comments: $c}]' 2>/dev/null) \
+      || gate_out "" "" false "could not assemble the issue payload" 2
+  else
   GH_ARGS=(issue list --state closed --json number,title,state,comments --limit "$LIMIT")
   [ -n "$REPO" ]  && GH_ARGS+=(--repo "$REPO")
   [ -n "$SINCE" ] && GH_ARGS+=(--search "closed:>=$SINCE")
@@ -168,17 +241,22 @@ else
       fi
     done
   fi
+  fi
 fi
 
 # Fail-safe: if the acquired payload is NOT valid JSON (e.g. gh returned 0 with a
 # truncated stream / proxy HTML, or a hand-edited fixture is malformed), do NOT
 # fall through to the filter and print a false "✓ all-clear" — that's the worst
 # direction for a safety-net audit (false reassurance). Warn + exit, no verdict.
+# In gate mode the same conditions must exit 2, not 0: `exit 0` there would
+# read as "confirmed missing, go ahead and post".
 if [ -z "$(printf '%s' "$ISSUES_JSON" | tr -d '[:space:]')" ]; then
+  [ -n "$GATE_ISSUE" ] && gate_out "" "" false "issue payload is empty" 2
   echo "note: issue payload is empty — audit skipped, no conclusion drawn." >&2
   exit 0
 fi
 if ! printf '%s' "$ISSUES_JSON" | jq -e 'type == "array"' >/dev/null 2>&1; then
+  [ -n "$GATE_ISSUE" ] && gate_out "" "" false "issue payload is not a JSON array" 2
   echo "note: issue payload is not a JSON array — audit skipped, no conclusion drawn." >&2
   exit 0
 fi
@@ -327,9 +405,23 @@ CLASSIFY='
   # markers are skipped, because this plugin mandates a marker on line 1 for
   # machine-locatable comments (references/dashboard-comment.md), and a leading
   # marker must not demote a byte-perfect summary.
+  # ONE notion of "a line a reader sees", used by BOTH the lead test and the
+  # content test. They used to disagree: lead_line skipped whole-line HTML
+  # markers, lead_has_content did not, so an HTML comment counted as the summary
+  # under a heading. `## Closing Summary` + `<!-- TODO -->` read as compliant --
+  # printed in NO section at all, and --retroactive refuses it too -- which is
+  # the silencing channel the content test was added to close, reopened one
+  # level down. A blank line and an invisible line are the same thing to a
+  # reader, so they are the same thing here.
+  #
+  # Only SINGLE-LINE HTML comments are recognised, deliberately. Spanning ones
+  # need the fence/comment state machine that rounds 1-4 removed, and the
+  # residual error is on the cheap side: it hides an issue rather than
+  # authorising a duplicate post.
+  def invisible_line: test("^[ \t]*$") or test("^[ \t]*<!--.*-->[ \t]*$");
   def lead_line:
     ((. // "") | split("\n"))
-    | map(select((test("^[ \t]*$") | not) and (test("^[ \t]*<!--.*-->[ \t]*$") | not)))
+    | map(select(invisible_line | not))
     | (first // "");
   # Oniguruma anchors ^ to the START OF THE STRING, not to each line -- verified,
   # not assumed. Lines are therefore split explicitly; relying on the anchor
@@ -346,8 +438,7 @@ CLASSIFY='
   # nothing.
   def lead_has_content:
     ((. // "") | split("\n")) as $l
-    | ([range(0; $l | length) | select(($l[.] | test("^[ \t]*$") | not)
-                                       and ($l[.] | test("^[ \t]*<!--.*-->[ \t]*$") | not))] | first) as $k
+    | ([range(0; $l | length) | select($l[.] | invisible_line | not)] | first) as $k
     | if $k == null then false
       else
         # Content is either something non-blank on a LATER line, or something
@@ -362,7 +453,9 @@ CLASSIFY='
         # silencing channel this check exists to close: anyone who can comment
         # could post `## Closing Summary` + `...` and remove a closed issue from
         # the audit permanently.
-        (($l[($k + 1):] | any(test("[\\p{L}\\p{N}]")))
+        # Later lines are filtered through the SAME visibility rule as the lead
+        # line before being counted -- see `invisible_line`.
+        (($l[($k + 1):] | map(select(invisible_line | not)) | any(test("[\\p{L}\\p{N}]")))
          or ($l[$k] | sub(present_re; ""; "i") | test("[\\p{L}\\p{N}].*[\\p{L}\\p{N}]")))
       end;
   # Four destinations, in order. Only the LAST one authorises anything, and it
@@ -402,15 +495,53 @@ CLASSIFY='
 JQ_ERR=$(mktemp "${TMPDIR:-/tmp}/csw_jq_err.XXXXXX") || JQ_ERR=""
 if ! CLASSIFIED=$(printf '%s' "$ISSUES_JSON" | jq -r "$CLASSIFY" 2>"${JQ_ERR:-/dev/null}"); then
   echo "note: classification filter failed — audit skipped, no conclusion drawn." >&2
-  # jq quotes the offending INPUT in its message, so this text is untrusted:
-  # control characters and bidi overrides here would bypass `sanitize` entirely
-  # and repaint the terminal. Strip them, and cap the volume.
+  # jq may quote the offending INPUT in its message, so treat this text as
+  # untrusted and cap the volume.
+  #
+  # WHAT THIS ACTUALLY STRIPS, stated precisely because the comment used to
+  # claim more than the code did: ASCII control characters, and nothing else.
+  # `tr` under LC_ALL=C works on BYTES, so it cannot see U+202E, U+2028 or the
+  # bidi isolates — they are multi-byte, and deleting their bytes individually
+  # would corrupt the surrounding UTF-8. Only `sanitize` (inside CLASSIFY) has
+  # the Unicode-aware version, and this path is precisely the one where CLASSIFY
+  # did not run.
+  #
+  # Whether that gap is reachable was measured, not assumed: three payloads
+  # (U+202E, U+2028, ESC) planted where a bare string reaches `.state` produce
+  # `Cannot index string with string ("state")` on jq 1.7 — the value is NOT
+  # echoed, so nothing attacker-controlled arrives here at all. Recorded as a
+  # clean negative rather than fixed: a Unicode-aware scrub would mean a second
+  # copy of the character class, and a divergent copy of a safety definition is
+  # the failure mode this file has the longest history with. If a jq that does
+  # echo the value ever shows up, this is the line to change.
   [ -n "$JQ_ERR" ] && LC_ALL=C tr -d "\000-\010\013\014\016-\037\177" < "$JQ_ERR" \
     | head -5 | sed "s/^/      jq: /" >&2
   [ -n "$JQ_ERR" ] && rm -f "$JQ_ERR"
+  [ -n "$GATE_ISSUE" ] && gate_out "" "" false "classification filter failed" 2
   exit 0
 fi
 [ -n "$JQ_ERR" ] && rm -f "$JQ_ERR"
+
+# ── Gate verdict ──
+# CLASSIFY only emits a row for issues whose state is CLOSED, so an empty result
+# here means "not closed" — which is not a retroactive case at all, and is
+# exactly the state in which posting a second summary would be worst.
+if [ -n "$GATE_ISSUE" ]; then
+  GATE_STATE=$(printf '%s' "$ISSUES_JSON" | jq -r '.[0].state // ""' 2>/dev/null)
+  GATE_TRUNC=$(printf '%s' "$ISSUES_JSON" | jq -r 'if .[0].idd_comments_truncated == true then "true" else "false" end' 2>/dev/null)
+  GATE_CLASS=$(printf '%s\n' "$CLASSIFIED" | awk -F'\t' 'NF { print $1; exit }')
+  [ -n "$GATE_CLASS" ] || gate_out "" "$GATE_STATE" false \
+    "issue #$GATE_ISSUE is not CLOSED — not a retroactive case" 2
+  if [ "$GATE_TRUNC" = "true" ]; then
+    gate_out "$GATE_CLASS" "$GATE_STATE" false \
+      "the comment set is known to be incomplete — absence proves nothing" 2
+  fi
+  case "$GATE_CLASS" in
+    missing) gate_out missing "$GATE_STATE" true "" 0 ;;
+    *)       gate_out "$GATE_CLASS" "$GATE_STATE" true \
+               "class is $GATE_CLASS, not missing — this issue already carries a closing-summary marker" 1 ;;
+  esac
+fi
 
 pick() { printf '%s\n' "$CLASSIFIED" | awk -F'\t' -v c="$1" '$1 == c { print $2 }'; }
 

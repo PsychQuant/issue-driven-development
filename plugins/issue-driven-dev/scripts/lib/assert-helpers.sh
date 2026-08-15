@@ -63,6 +63,13 @@ refute_grep() { # name needle haystack
 assert_grep_re() { # name ere_pattern haystack
   if printf '%s\n' "$3" | grep -qE -- "$2"; then pass "$1"; else fail "$1" "pattern not matched: [$2]"; fi
 }
+# The negative form. Worth having as a helper rather than an inline `! grep`,
+# because a fixed-string refutation is the easiest assertion in this repo to get
+# wrong: a payload that legitimately appears INSIDE a line makes `refute_grep`
+# fail for a reason the test did not intend to check. Anchoring needs a regex.
+refute_grep_re() { # name ere_pattern haystack
+  if printf '%s\n' "$3" | grep -qE -- "$2"; then fail "$1" "pattern unexpectedly matched: [$2]"; else pass "$1"; fi
+}
 
 # ── output-file grep family (#188 — the safe form for captured output) ──
 # assert_output_grep : file MUST contain needle (fixed-string, `--`-safe).

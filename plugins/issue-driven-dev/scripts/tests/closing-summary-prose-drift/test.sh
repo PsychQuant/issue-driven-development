@@ -63,7 +63,16 @@ require "no prose file quotes a regex literal for the closing-summary marker" \
 # it, then remove it. Without this, a broken scan (bad flag, wrong path, a `--`
 # swallowing --include — all three happened while writing this file) reads as a
 # clean repo.
-CANARY="$PLUGIN/.drift-canary.md"
+# The canary is a file written INTO THE REPO. Two consequences the first cut
+# ignored: an interrupted run (Ctrl-C, a failing assertion under `set -e`, a
+# killed CI job) leaves it behind, where it is both a permanent red for every
+# later run and something a careless `git add -A` will commit; and a fixed name
+# means two concurrent runs delete each other's canary and each reads the other's
+# removal as "the scan cannot see a planted literal". Unique name + trap.
+CANARY_SUFFIX="$$-${RANDOM}"
+CANARY="$PLUGIN/.drift-canary.$CANARY_SUFFIX.md"
+CANARY2="$PLUGIN/.drift-canary2.$CANARY_SUFFIX.md"
+trap 'rm -f "$CANARY" "$CANARY2"' EXIT HUP INT TERM
 # The canary plants the CANONICAL CAPITALISATION — the form the check must be
 # able to see. Planting the lowercase form is what let a case-sensitive scan
 # pass its own control.
@@ -112,7 +121,6 @@ require "no prose file states a superseded classification rule" \
   bash -c '[ "$0" -eq 0 ] || { printf "%s\n" "$1"; exit 1; }' "$hits" "$report"
 
 # ── Rule 3b: positive control for rule 2 ──
-CANARY2="$PLUGIN/.drift-canary2.md"
 printf 'canary: the class is called own-comment here\n' > "$CANARY2"
 SEEN2=$(grep -rn --include='*.md' -- "own-comment" "$PLUGIN" 2>/dev/null | grep -c 'drift-canary2' || true)
 rm -f "$CANARY2"
@@ -132,6 +140,52 @@ for def in present_re bare_re lead_re; do
   assert_grep "the normative source really defines $def" \
     "def $def:" "$(cat "$SCRIPT")"
 done
+
+# ── The destructive gate must be EXECUTED, not merely deferred to ──
+#
+# Pointing at the normative source is what the two readers already did while the
+# gate stayed advisory for seven rounds: idd-close described the classification
+# faithfully and then judged it itself. Deference is not enforcement. What makes
+# it a gate is that the skill runs the helper and obeys its exit code, so that
+# is what gets asserted — the invocation, and the fail-closed rule beside it.
+CLOSE_MD=$(cat "$PLUGIN/skills/idd-close/SKILL.md")
+assert_grep "idd-close resolves the gate helper by path" \
+  '/scripts/check-closed-without-summary.sh"' "$CLOSE_MD"
+assert_grep "idd-close INVOKES it in single-issue mode" \
+  'bash "$HELPER" --issue "$NUMBER"' "$CLOSE_MD"
+assert_grep "idd-close branches on the helper exit code" \
+  'GATE_RC" -ne 0' "$CLOSE_MD"
+assert_grep "idd-close states that only exit 0 may proceed" \
+  '只有 `rc == 0` 放行' "$CLOSE_MD"
+refute_grep "idd-close no longer describes its own gate as prose-only" \
+  "本 skill 並未呼叫它" "$CLOSE_MD"
+
+# ── Permissive matching may not back a POSITIVE claim ──
+#
+# The two-predicate split is not local to the classifier: it is a rule about
+# which question is being asked. `present_re` (permissive) answers "could a
+# reader see one?", where over-detecting is safe. `lead_re` (strict) answers
+# "does this comment lead with one?", where over-detecting states something
+# false. Two prose readers were on the wrong side of it — idd-find labelled a
+# quotation as an archaeological record, and idd-update pushed an OPEN issue's
+# phase to `closed` on a quoted heading.
+UPDATE_MD=$(cat "$PLUGIN/skills/idd-update/SKILL.md")
+FIND_MD=$(cat "$PLUGIN/skills/idd-find/SKILL.md")
+assert_grep "idd-update requires the heading to LEAD the comment (phase is a positive claim)" \
+  "必須是那則 comment 的首行" "$UPDATE_MD"
+refute_grep "idd-update no longer allows a blockquote prefix for phase inference" \
+  "允許任意縮排與 blockquote 前綴" "$UPDATE_MD"
+refute_grep "idd-find no longer calls a permissive match an archaeological record" \
+  "標 \`📜 closing summary\`（可考古的結案紀錄）" "$FIND_MD"
+
+# ...and the helper must really have the mode the skill invokes. A skill calling
+# a flag that does not exist fails open in the worst possible way: `gh`-less
+# environments aside, an unknown flag here is warned about and ignored, which
+# would put the audit's always-exit-0 contract on the destructive path.
+SRC=$(cat "$SCRIPT")
+assert_grep "the helper really implements --issue" '--issue)     GATE_ISSUE=' "$SRC"
+assert_grep "the helper documents the gate exit codes" \
+  '0  class == missing, comment set known complete' "$SRC"
 
 print_summary "closing-summary-prose-drift"
 exit $?

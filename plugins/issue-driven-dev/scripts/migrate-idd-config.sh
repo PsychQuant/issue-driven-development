@@ -66,6 +66,35 @@ for root in "${ROOTS[@]}"; do
     current="$dir/.idd/local.json"
     repo=$(dirname "$dir")
 
+    # ── Everything below assumes ordinary files in ordinary directories. Say so
+    # and check it, rather than letting the shell's own follow-the-symlink
+    # defaults decide what happens to somebody's data. The scan root defaults to
+    # ALL of ~/Developer, so "a repo I cloned" is inside the threat model, and
+    # every one of these shapes can be committed into a repo.
+    #
+    # Test order matters: -f, -d and -e all FOLLOW symlinks, so a link has to be
+    # excluded with -L first or it is judged by what it points at.
+
+    # The destination's parent. `mkdir -p` accepts an existing symlink-to-dir
+    # silently and reports success, after which the move follows it out of the
+    # tree entirely.
+    if [ -L "$dir/.idd" ] || { [ -e "$dir/.idd" ] && [ ! -d "$dir/.idd" ]; }; then
+      echo "  ✗ .claude/.idd is not a directory (symlink or other node) — refusing: $repo" >&2
+      failed=$((failed + 1)); continue
+    fi
+
+    # The destination itself.
+    if [ -L "$current" ]; then
+      echo "  ✗ .idd/local.json is a symlink — refusing: $repo" >&2
+      failed=$((failed + 1)); continue
+    fi
+    if [ -e "$current" ] && [ ! -f "$current" ]; then
+      # A directory here is the quiet one: `mv` would move the file INSIDE it
+      # and report success, leaving .idd/local.json/issue-driven-dev.local.json.
+      echo "  ✗ .idd/local.json exists but is not a regular file — refusing: $repo" >&2
+      failed=$((failed + 1)); continue
+    fi
+
     if [ -f "$current" ]; then
       # Both exist. The reader already prefers the current path, so moving would
       # change nothing and could destroy a hand-edited legacy file. Report, do
@@ -83,27 +112,55 @@ for root in "${ROOTS[@]}"; do
     if ! mkdir -p "$dir/.idd" 2>/dev/null; then
       echo "  ✗ cannot create $dir/.idd" >&2; failed=$((failed + 1)); continue
     fi
-    if ! mv "$legacy" "$current" 2>/dev/null; then
-      echo "  ✗ move failed: $legacy" >&2; failed=$((failed + 1)); continue
+    # Re-check after creating it: the window between the test above and here is
+    # small, but the whole point of these guards is that something else may be
+    # writing into the same tree.
+    if [ -L "$dir/.idd" ] || [ ! -d "$dir/.idd" ]; then
+      echo "  ✗ .claude/.idd changed shape while migrating — refusing: $repo" >&2
+      failed=$((failed + 1)); continue
+    fi
+
+    # `mv` has no atomic no-clobber: the check above and the rename below are
+    # two separate syscalls, and plain rename(2) replaces whatever is at the
+    # destination. `ln` DOES fail atomically when the destination exists, so a
+    # hardlink-then-unlink pair gives the guarantee `mv` cannot. It also fails
+    # safe in the middle: an interrupted migration leaves two links to the same
+    # inode, i.e. the config still readable at both paths, never at neither.
+    # (`mv -n` was the other candidate; its exit status does not distinguish
+    # "skipped because the destination existed" from "moved" on BSD.)
+    if ! ln "$legacy" "$current" 2>/dev/null; then
+      echo "  ✗ could not link $legacy -> $current (destination appeared, or a" >&2
+      echo "    filesystem boundary sits between them) — left in place" >&2
+      failed=$((failed + 1)); continue
+    fi
+    if ! rm -f "$legacy" 2>/dev/null; then
+      echo "  ⚠ copied to $current but could not remove the legacy path: $legacy" >&2
+      failed=$((failed + 1)); continue
     fi
     # Leave a breadcrumb: a repo whose config silently relocated is confusing to
     # anyone who bookmarked the old path or greps for it.
-    # Never truncate an existing file: the breadcrumb is a courtesy, not a
-    # reason to destroy something a user put there.
-    if [ -e "$legacy.moved" ]; then
-      echo "  note: $legacy.moved already exists — breadcrumb not written" >&2
-    else
-      printf '%s\n' \
+    # Never truncate an existing file, and never write THROUGH a symlink: the
+    # breadcrumb is a courtesy, not a reason to destroy something a user put
+    # there. -L is tested separately because a dangling link is invisible to -e,
+    # and redirection into one CREATES the target.
+    if [ -L "$legacy.moved" ] || [ -e "$legacy.moved" ]; then
+      echo "  note: $legacy.moved already exists (or is a symlink) — breadcrumb not written" >&2
+    elif ! printf '%s\n' \
         "This file moved to .claude/.idd/local.json (#303, $(date +%Y-%m-%d))." \
         "The old path is no longer written by any IDD skill." \
-        > "$legacy.moved"
+        > "$legacy.moved" 2>/dev/null; then
+      echo "  note: breadcrumb write failed: $legacy.moved" >&2
     fi
     echo "  ✓ migrated: $repo"
     migrated=$((migrated + 1))
+    # `-path` and not `-name`: the name alone matches a doc sample, a fixture, a
+    # test payload — anywhere in any repo. Migrating one of those invents a
+    # `.idd` directory in a tree that has nothing to do with IDD config. Only a
+    # file sitting directly in a `.claude/` directory is config.
   done < <(find "$root" \
              \( -name node_modules -o -name .git -o -name .build -o -name .venv \
                 -o -name archive -o -name archived -o -path '*/.claude/worktrees' \) -prune -o \
-             -type f -name "$LEGACY_NAME" -print0 2>/dev/null)
+             -type f -path "*/.claude/$LEGACY_NAME" -print0 2>/dev/null)
 done
 
 echo ""
