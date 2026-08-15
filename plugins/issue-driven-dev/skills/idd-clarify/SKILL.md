@@ -415,8 +415,8 @@ Annotation appended:
 
 | Type | Source | Question for you | Status |
 |---|---|---|---|
-| terminology | "可否 prompt 跟他說各群要有至少一個最高得分的特徵值" | 分群變數 / distinguishing variable (per K-means context, library row 1) | surfaced |
-| missing-context | "請根據上面網址的Ｋ欄的情感、人、場..." | customer × attribute score 來源未指定(GSheet 只有 metadata) | surfaced |
+| terminology | "可否 prompt 跟他說各群要有至少一個最高得分的特徵值" | 這裡的「特徵值」指的是分群變數（distinguishing variable）嗎？ | surfaced |
+| missing-context | "請根據上面網址的Ｋ欄的情感、人、場..." | customer × attribute 的分數要從哪裡讀？那份 GSheet 看起來只有 metadata。 | surfaced |
 ```
 
 ### Example 2: dismiss a false positive
