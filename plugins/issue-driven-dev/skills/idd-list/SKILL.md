@@ -90,9 +90,31 @@ gh issue list \
     --json number,title,state,labels,updatedAt,body,comments
 ```
 
+> ### ⚠ `comments` 在這裡也被截斷（post-merge audit 2026-08-15）
+>
+> `--json comments` 會把巢狀 connection 解成 `comments(first: 100)`：**硬上限、不分頁、且回的是最舊的 100 則**（實測 `microsoft/vscode#301011`：155 則只回 100，首則 createdAt 與 REST page 1 相同）。
+>
+> 這對 **Step 3 的 phase 推斷**與 **Step 4 的 `--audit-closes`** 都是致命的：closing summary 依定義是**最新**的一則，所以任何超過 100 則 comment 的 closed issue，它正是保證被丟掉的那一則 → `--audit-closes` 判 `missing` → 印出 `remediate: idd-close --retroactive #N` → 在已有 summary 的 issue 上貼重複內容。
+>
+> **`#295` 的修法只落在 `scripts/check-closed-without-summary.sh`，沒有落在這裡** —— 而這裡才是使用者實際呼叫、且實際印出那句邀請的地方。修法（與該 script 同款）：
+>
+> ```bash
+> # 任何 comments 陣列長度 >= 100 的 issue 都可能被截斷，逐一補抓全量。
+> # 注意 `gh api --paginate --jq` 每頁各吐一個 array，必須 `jq -s add` 收攏。
+> for n in $(printf '%s' "$ISSUES_JSON" | jq -r '.[] | select((.comments|length) >= 100) | .number'); do
+>   case "$n" in ''|*[!0-9]*) continue ;; esac      # .number 會進 API 路徑，先驗型
+>   FULL=$(gh api "repos/$GITHUB_REPO/issues/$n/comments" --paginate \
+>            --jq '[.[] | {body}]' 2>/dev/null | jq -s 'add // []' 2>/dev/null)
+>   # 補抓失敗、或補回來的比原本更少（部分頁）→ 標記，**永不判 missing**
+>   ...
+> done
+> ```
+>
+> **不得只在其中一個 consumer 修**。這個 marker 有多個讀取端，而 `#295` 連七輪的教訓正是「修在被指出的地方、留下同族的鄰居」。
+
 按 `updatedAt` desc 排序（最新活動在最上面）。**排序必須在 server 端發生** —— `--limit` 是 server 端套用的，先截再排等於「隨便 N 筆，排好序」，而且截掉的是誰完全看不出來（#299）。
 
-> **若 `--search` 與 `--label` 併用有衝突**（GitHub 的 search 語法與 `--label` flag 走不同路徑），退而求其次：把 `--limit` 放大到 `3 × $LIMIT` 抓回來、本地排序後再取前 `$LIMIT`，並在 footer 註明「已從 N 筆中取最近 M 筆」。**不可**維持現狀的靜默截斷。
+> **實測 `--search` 與 `--label` 可以併用**（2026-08-15 對本 repo 驗過）。保留退路僅為防禦 GitHub 端行為變動：若哪天真的衝突：把 `--limit` 放大到 `3 × $LIMIT` 抓回來、本地排序後再取前 `$LIMIT`，並在 footer 註明「已從 N 筆中取最近 M 筆」。**不可**維持現狀的靜默截斷。
 
 ### Step 2.5: Fetch Open PRs (v2.51.0+)
 

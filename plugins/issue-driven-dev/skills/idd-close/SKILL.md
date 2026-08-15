@@ -316,10 +316,15 @@ Exit code:
 OPEN_PRS=$(gh pr list --repo "$GITHUB_REPO" --state open \
     --search "in:body \"#${NUMBER}\"" \
 
-> ⚠ **`in:body "#N"` 不是精確比對**（#293 / #305）——它會誤中跨 repo 引用（`codex-pro#7` → `#7`）與無關的 PR。search 只能當粗篩，判定必須照 [`references/pr-issue-matching.md`](../../references/pr-issue-matching.md) 在 client 端精篩，並檢查 PR 不早於 issue。
-
-    --json number,url,headRefName,mergeable)
+    --json number,url,body,createdAt,headRefName,mergeable \
+  | jq --argjson n "$NUMBER" '
+      # search is a COARSE FILTER (#293/#305): GitHub tokenizes `#N`, so
+      # `in:body "#7"` matches a PR whose body only contains `codex-pro#7`, and
+      # `in:body "#10"` matched a PR containing no `#10` at all. Decide here.
+      map(select((.body // "") | test("(^|[^A-Za-z0-9_/-])#\($n)([^0-9]|$)")))')
 ```
+
+> ⚠ **`in:body "#N"` 不是精確比對**（#293 / #305）——它會誤中跨 repo 引用（`codex-pro#7` → `#7`）與無關的 PR。search 只能當粗篩，判定必須照 [`references/pr-issue-matching.md`](../../references/pr-issue-matching.md) 在 client 端精篩，並檢查 PR 不早於 issue。
 
 | 結果 | 行為 |
 |------|------|
@@ -351,7 +356,20 @@ else
   #    on merge (a bare branch NAME does not; #184 DA-1). Fall back to a local
   #    idd/<N>-* branch ref.
   BRANCH_REF=$(gh pr list --repo "$GITHUB_REPO" --state merged \
-      --search "in:body \"#${NUMBER}\"" --json headRefOid -q '.[0].headRefOid' 2>/dev/null)
+      --search "in:body \"#${NUMBER}\"" --json number,body,createdAt,headRefOid 2>/dev/null \\
+  | jq -r --argjson n "$NUMBER" --arg t "$ISSUE_CREATED_AT" '
+      # GitHub tokenizes `#N`; the search is a COARSE FILTER only (#293/#305).
+      # Decide client-side: `#N` must not be preceded by a repo-ref character
+      # (excludes owner/repo#N) nor followed by a digit (excludes #12 vs #123),
+      # and a PR created BEFORE the issue cannot be its feature branch.
+      map(select(((.body // "") | test("(^|[^A-Za-z0-9_/-])#\\($n)([^0-9]|$)"))
+                 and (.createdAt >= $t)))
+      | if length == 0 then ""
+        elif length == 1 then .[0].headRefOid
+        else (.[0].headRefOid)   # caller MUST surface that there were several
+        end')
+  # ISSUE_CREATED_AT=$(gh issue view "$NUMBER" --repo "$GITHUB_REPO" --json createdAt --jq .createdAt)
+  # 多筆命中時不得靜默取第一筆 —— 印出「有 N 筆候選」再繼續（契約見 references/pr-issue-matching.md）
   if [ -z "$BRANCH_REF" ]; then
       BRANCH_REF=$(git -C "$WORKDIR" branch --list "idd/${NUMBER}-*" --format='%(refname:short)' | head -1)
   fi

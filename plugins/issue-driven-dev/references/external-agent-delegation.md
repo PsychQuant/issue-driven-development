@@ -76,7 +76,7 @@ idd-verify #98 --branch <name>          # diff against origin/<default>
    a. Count commits ref'ing #N since origin/<default>
        N>0  → local mode HEAD~N..HEAD
        N=0  → continue
-   b. Search open PRs ref'ing #N: gh pr list --search "#N in:body" --state open
+   b. Search open PRs ref'ing #N: gh pr list --search "#N in:body" --state open --json number,body,createdAt | jq '…精篩…'  # references/pr-issue-matching.md
 
 > ⚠ **`in:body "#N"` 不是精確比對**（#293 / #305）——它會誤中跨 repo 引用（`codex-pro#7` → `#7`）與無關的 PR。search 只能當粗篩，判定必須照 [`references/pr-issue-matching.md`](pr-issue-matching.md) 在 client 端精篩，並檢查 PR 不早於 issue。
 

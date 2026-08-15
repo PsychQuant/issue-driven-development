@@ -99,7 +99,8 @@
    N>0 → 用 HEAD~N..HEAD（fall through，下一步不跑）
 
 2. N=0 → 查 open PRs ref'ing #98:
-   gh pr list --search "#98 in:body" --state open
+   gh pr list --search "#98 in:body" --state open --json number,body,createdAt \
+     | jq 'map(select((.body//"") | test("(^|[^A-Za-z0-9_/-])#98([^0-9]|$)")))'   # 精篩，見 references/pr-issue-matching.md
 
 > ⚠ **`in:body "#N"` 不是精確比對**（#293 / #305）——它會誤中跨 repo 引用（`codex-pro#7` → `#7`）與無關的 PR。search 只能當粗篩，判定必須照 [`references/pr-issue-matching.md`](pr-issue-matching.md) 在 client 端精篩，並檢查 PR 不早於 issue。
 

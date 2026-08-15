@@ -74,6 +74,19 @@ else
       [ "$dir" = "$HOME" ] && break
       dir=$(dirname "$dir")
     done
+    # The global layer (#302). Nothing read it before: the walk-up only ever
+    # checked `local.json` and the legacy name, so the CHANGELOG's claim that
+    # the path was "already on the walk-up route, just recognise one more
+    # filename" described a change that had not been made. It is made here.
+    #
+    # It is a LAST resort and it is not a repo boundary: `$HOME` is not a repo,
+    # which is exactly why the file is named `global.json` rather than
+    # `local.json` — the latter would make the walk-up read `$HOME` as one.
+    if [ -z "$REPO" ] && [ -f "$HOME/.claude/.idd/global.json" ]; then
+      REPO=$(jq -r '.default_github_repo // .github_repo // empty' \
+               "$HOME/.claude/.idd/global.json" 2>/dev/null)
+      [ -n "$REPO" ] && echo "note: repo resolved from the global layer ($REPO) — no repo-local config found." >&2
+    fi
   fi
   GH_ARGS=(issue list --state closed --json number,title,state,comments --limit "$LIMIT")
   [ -n "$REPO" ]  && GH_ARGS+=(--repo "$REPO")
@@ -117,10 +130,34 @@ else
     RESOLVED_REPO="$REPO"
     [ -z "$RESOLVED_REPO" ] && RESOLVED_REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)
     for n in $TRUNCATED; do
-      FULL=$(gh api "repos/$RESOLVED_REPO/issues/$n/comments" --paginate --jq '[.[] | {body}]' 2>/dev/null)
-      if [ -n "$FULL" ]; then
+      # `gh api --paginate --jq` emits ONE JSON ARRAY PER PAGE, concatenated —
+      # NOT one value. Verified against microsoft/vscode#301011 (155 comments):
+      # the output fails to parse ("Extra data: line 2 column 1"), so --argjson
+      # rejected it, jq died, ISSUES_JSON became empty, and the empty-payload
+      # guard silently disabled the WHOLE audit on any repo containing a long
+      # issue. `jq -s add` folds the pages into one array. (`--slurp` is not an
+      # option here: gh refuses it together with --jq.)
+      #
+      # `.number` is validated as an integer first: it is fetched data, and it
+      # is being interpolated into an API path.
+      case "$n" in
+        ''|*[!0-9]*) echo "note: skipping non-numeric issue id in re-fetch" >&2; continue ;;
+      esac
+      FULL=$(gh api "repos/$RESOLVED_REPO/issues/$n/comments" --paginate \
+               --jq '[.[] | {body}]' 2>/dev/null | jq -s 'add // []' 2>/dev/null)
+      # An empty/!valid result must NOT be treated as success: a partial re-fetch
+      # that SHRINKS the comment set would route a real summary to `missing`.
+      if [ -n "$FULL" ] && printf '%s' "$FULL" | jq -e 'type == "array" and length > 0' >/dev/null 2>&1; then
+        # Refuse a re-fetch that returns FEWER comments than we already had —
+        # that is a partial page, and swapping it in would delete evidence.
         ISSUES_JSON=$(printf '%s' "$ISSUES_JSON" \
-          | jq --argjson full "$FULL" --argjson n "$n" 'map(if .number == $n then .comments = $full else . end)')
+          | jq --argjson full "$FULL" --argjson n "$n" '
+              map(if (.number | tostring) == ($n | tostring)
+                  then (if ($full | length) >= (.comments | length)
+                        then .comments = $full
+                        else .idd_comments_truncated = true end)
+                  else . end)') || ISSUES_JSON=""
+        [ -z "$ISSUES_JSON" ] && { echo "note: re-fetch merge failed — audit skipped, no conclusion drawn." >&2; exit 0; }
       else
         # Could not complete the fetch. Do NOT let a partial comment set decide
         # the destructive class: mark it so the classifier can never call it
@@ -257,7 +294,14 @@ CLASSIFY='
   # `### Problem` does not contain the phrase -- while sending a summary written
   # at h3 straight to the destructive class.
   def present_re: "^[ \t>]*[#\\x{FF03}]{1,6}[^\\p{L}\\p{N}]*closing[\\s\\x{00A0}\\x{200B}\\x{3000}]+summary";
+  # Two forms. (a) a line that is ESSENTIALLY JUST the phrase — setext titles,
+  # bare title lines. The trailing anchor is what keeps ordinary prose ("I forgot
+  # the closing summary, sorry") out of the presence test, which matters: 5 of 9
+  # genuinely-missing issues in a real repo mention the phrase in prose and must
+  # stay flagged. (b) an EMPHASISED heading, which may carry a tail — the `$`
+  # anchor alone sent `**Closing Summary** - fixed the parser` to `missing`.
   def bare_re:    "^[ \t>]*[^\\p{L}\\p{N}]*closing[\\s\\x{00A0}\\x{200B}\\x{3000}]+summary[^\\p{L}\\p{N}]*$";
+  def emph_re:    "^[ \t>]*(\\*\\*|__|\\*|_)[^\\p{L}\\p{N}]*closing[\\s\\x{00A0}\\x{200B}\\x{3000}]+summary";
   def lead_re:    "^ {0,3}#{1,6}[^\\p{L}\\p{N}]*closing[\\s\\x{00A0}\\x{200B}\\x{3000}]+summary";
   # Control characters are structural here (record + field delimiters) and can
   # also repaint a terminal; U+2028/U+2029 and the bidi controls can forge or
@@ -293,7 +337,7 @@ CLASSIFY='
   # failure this rewrite exists to make unreachable.
   def has_heading_anywhere:
     ((. // "") | split("\n"))
-    | any(test(present_re; "i") or test(bare_re; "i"));
+    | any(test(present_re; "i") or test(bare_re; "i") or test(emph_re; "i"));
   # Does anything non-blank follow the lead line? A heading with nothing under it
   # is not a summary, and letting it read as compliant made such an issue
   # INVISIBLE -- printed in no section at all, while --retroactive also aborts on

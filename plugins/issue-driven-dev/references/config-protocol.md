@@ -751,7 +751,7 @@ User runs `/idd-issue`, attaches label `cross-package`. Re-resolve picks the gro
 
 **位置的四個理由**（考慮過 `~/.idd/`，不採用）：
 
-1. walk-up **已經**會經過 `$HOME/.claude/.idd/` —— 終止條件的檢查在 break 之前，所以這條路徑本來就在讀取路徑上，只需要多認一個檔名，零新增掃描邏輯。
+1. walk-up 的終止條件檢查在 break 之前，所以 `$HOME/.claude/.idd/` 在**目錄層級**上就在讀取路徑上 —— 但**檔名不是自動就認的**。這一點原本寫成「只需要多認一個檔名」，而那個改動當時並沒有做，於是 global 層有了規格卻沒有任何 reader（post-merge audit 2026-08-15 指出）。現已在 `scripts/check-closed-without-summary.sh` 的 walk-up 之後補上讀取（repo-local 皆未命中時才用，並印一行說明來源）。**其餘 consumer 尚未接上 —— 那是 residue，不是已完成的事**。
 2. 與 project 層的 `.claude/.idd/local.json` 完全對稱，只差 `local` / `global`。
 3. IDD 是 Claude Code plugin，`~/.claude/` 是它的生態家（`settings.json`、`rules/`、`plugins/` 都在此）；另開 `~/.idd/` 等於在 home 再放一個 dotdir。
 4. 檔名**必須**是 `global.json` 而非 `local.json` —— 後者會讓 `$HOME` 被誤讀成「一個 repo」，汙染既有的 repo-boundary 判定。

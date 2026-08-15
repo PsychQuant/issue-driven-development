@@ -47,8 +47,21 @@ failed=0
 for root in "${ROOTS[@]}"; do
   [ -d "$root" ] || { echo "note: not a directory, skipping: $root" >&2; continue; }
   # -prune the heavy directories rather than filtering after the fact.
-  while IFS= read -r legacy; do
+  # -print0 / read -d "" is not stylistic. With -print, a directory name that
+  # contains a NEWLINE splits one entry into two, and the second fragment is a
+  # RELATIVE path that `dirname`/`mv` then resolve against the CALLER's cwd.
+  # Reproduced: with a victim at caller/.claude/.claude/local config and a
+  # newline-named repo inside the scan root, `--apply ../scan` relocated the
+  # victim -- a file outside the scanned tree entirely -- and reported
+  # "✓ migrated: .claude  migrated: 1".
+  while IFS= read -r -d '' legacy; do
     found=$((found + 1))
+    # Belt and braces: even with -print0, never act on a path that is not an
+    # absolute path inside the root we were told to scan.
+    case "$legacy" in
+      "$root"/*) : ;;
+      *) echo "  ✗ refusing a path outside the scan root: $legacy" >&2; failed=$((failed + 1)); continue ;;
+    esac
     dir=$(dirname "$legacy")              # .../.claude
     current="$dir/.idd/local.json"
     repo=$(dirname "$dir")
@@ -75,15 +88,22 @@ for root in "${ROOTS[@]}"; do
     fi
     # Leave a breadcrumb: a repo whose config silently relocated is confusing to
     # anyone who bookmarked the old path or greps for it.
-    printf '%s\n' \
-      "This file moved to .claude/.idd/local.json (#303, $(date +%Y-%m-%d))." \
-      "The old path is no longer written by any IDD skill." \
-      > "$legacy.moved"
+    # Never truncate an existing file: the breadcrumb is a courtesy, not a
+    # reason to destroy something a user put there.
+    if [ -e "$legacy.moved" ]; then
+      echo "  note: $legacy.moved already exists — breadcrumb not written" >&2
+    else
+      printf '%s\n' \
+        "This file moved to .claude/.idd/local.json (#303, $(date +%Y-%m-%d))." \
+        "The old path is no longer written by any IDD skill." \
+        > "$legacy.moved"
+    fi
     echo "  ✓ migrated: $repo"
     migrated=$((migrated + 1))
   done < <(find "$root" \
-             \( -name node_modules -o -name .git -o -name .build -o -name .venv \) -prune -o \
-             -type f -name "$LEGACY_NAME" -print 2>/dev/null)
+             \( -name node_modules -o -name .git -o -name .build -o -name .venv \
+                -o -name archive -o -name archived -o -path '*/.claude/worktrees' \) -prune -o \
+             -type f -name "$LEGACY_NAME" -print0 2>/dev/null)
 done
 
 echo ""

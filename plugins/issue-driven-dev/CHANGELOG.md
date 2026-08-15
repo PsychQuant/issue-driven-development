@@ -5,6 +5,77 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.109.0] - 2026-08-15
+
+### Fixed — post-merge audit of the 2026-08-13/14 session
+
+The `#295` line reached `main` at round 7 without any independent review, and the twenty-one issues in PRs #306–#314
+had none at all. An ensemble audit of `8d0ec33..737dbe0` returned 4 CRITICAL and 17 HIGH. The pattern it found in the
+unreviewed half is worth stating plainly: **documentation was shipped and recorded as implementation.** Three "fixes"
+did not execute. Each of them passed the author's tests, because those tests exercised the code that was written and
+never the seam where it meets `gh`, the filesystem, or a reader.
+
+- **`migrate-idd-config.sh` moved files outside the tree it was told to scan, and reported success** — `find -print`
+  with `while read -r` splits a path containing a NEWLINE into two entries, and the second fragment is a **relative**
+  path that `dirname`/`mv` then resolve against the caller's cwd. Reproduced: with a victim at
+  `caller/.claude/.claude/…` and a newline-named repo inside the scan root, `--apply ../scan` relocated the victim —
+  entirely outside the scan — and printed `✓ migrated: .claude`. Now `-print0`/`read -d ''`, plus a guard that refuses
+  any path not under the scan root, `archive/` and `.claude/worktrees/` pruning, and a breadcrumb that will not truncate
+  an existing file. This is the first script here that moves user data; it was moving the wrong files.
+
+- **The round-7 truncation repair never worked, and never reached the surface users invoke** — `gh api --paginate --jq`
+  emits **one JSON array per page**, so `--argjson` rejected the concatenation, jq died, and the empty-payload guard
+  silently disabled the entire audit on any repo containing a >100-comment issue (verified against
+  `microsoft/vscode#301011`). Folded with `jq -s add`, plus a refusal to swap in a re-fetch that *shrinks* the comment
+  set and integer validation on `.number` before it reaches an API path. Separately, the repair had only ever been
+  applied to `scripts/check-closed-without-summary.sh`; **`/idd-list --audit-closes` — the surface that actually prints
+  the `--retroactive` invitation — still had the truncated fetch**, and now documents the same repair.
+
+- **`bare_re`'s trailing anchor sent emphasised headings to `missing`** — `**Closing Summary** - fixed the parser` has a
+  tail, so the phrase-only form rejected it and no hash form matched. `emph_re` covers it; the anchor stays, because it
+  is what keeps ordinary prose out of the presence test (5 of 9 genuinely-missing issues in a real repo mention the
+  phrase in prose and must stay flagged).
+
+- **`#286` was inert** — `gh release upload FILE#TEXT` sets a **display label, not the asset name**; the asset always
+  takes the on-disk basename. An earlier revision computed `upload_name` and never used it at all, so the documented
+  naming convention had **never** been applied. Attachments are now staged under the target basename before upload, and
+  `--clobber` is restored (removing it broke legitimate re-uploads).
+
+- **`#293`/`#305` was documentation only** — a contract file plus a prose ⚠ near each site, while all seven call sites
+  still ran `.[0]` on a coarse search. The client-side filter and the `createdAt` ordering check are now in the code at
+  the gate, the branch resolution and verify's auto-detect, and the reference examples are correct rather than merely
+  annotated.
+
+- **`#302`'s global layer had no reader** — the claim that the path was "already on the walk-up route, just recognise
+  one more filename" described a change that had not been made; the walk-up only ever checked `local.json` and the
+  legacy name. The reader exists now, as a last resort that announces itself; the remaining consumers are recorded as
+  residue rather than implied to be done.
+
+- **`idd-repo-map.sh` reproduced the row-forging channel from scratch** — a `github_repo` containing a newline emitted a
+  standalone forged row and corrupted the footer counts; ESC reached the terminal raw; tabs shifted columns. The sibling
+  script spent seven rounds closing exactly this. The shape of that script was copied without its safety; both now
+  sanitise every field that reaches stdout.
+
+- **Two prose callouts had been inserted inside fenced bash blocks** (`pr-flow.md`, `idd-close`), breaking the very
+  commands the contract says get copied.
+
+- **`marketplace.json` was five releases behind `plugin.json`** (2.103.3 vs 2.108.0) — the version-conflict resolution
+  had forced the maximum onto only one of the two files.
+
+### Fixed — tests that could not fail
+
+- **The prose-drift scan was case-sensitive against a canonically-capitalised marker**, so it could not fire on the
+  realistic literal — **and its positive control planted the lowercase form**, so the control passed while the check was
+  blind. A positive control that certifies a capability the check does not have is worse than no control at all. The
+  scan is case-insensitive and the canary now plants the canonical case.
+
+- **New suite `acquisition-truncation`** — the truncation repair lives in the live-`gh` branch, which every existing
+  suite skips because `--json-file` short-circuits it; the audit deleted all nineteen lines with 46/46 still green. The
+  new suite stubs `gh` on PATH so the real code runs, and acid confirms **5/5** of its mechanisms turn assertions red on
+  their own. Reaching that took three attempts, each recorded in the file: the first assertion could not tell "recovered"
+  from "failed safely", the second could not tell either from "the audit aborted before printing anything" (hence a
+  canary), and the shrink guard needed its own stub.
+
 ## [2.108.0] - 2026-08-14
 
 ### Added

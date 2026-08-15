@@ -779,5 +779,25 @@
         "body": "c99 - no heading anywhere"
       }
     ]
+  },
+  {
+    "number": 160,
+    "title": "REAL summary: bold heading WITH a trailing tail (C4 — the $ anchor sent this to MISSING)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "**Closing Summary** - fixed the parser, suite green\n\n### Problem\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 161,
+    "title": "REAL summary: italic heading with a tail",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "*Closing Summary*: done\n\n### Problem\nreal content"
+      }
+    ]
   }
 ]
