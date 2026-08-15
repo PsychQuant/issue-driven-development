@@ -58,7 +58,7 @@ allowed-tools:
 | 正常 `/idd-close` step | `--retroactive` 行為 |
 |------------------------|----------------------|
 | Step 0 / 1.5 / 1.6 gates | **跳過**（issue 已關，gate moot；非 force bypass）|
-| **Precondition**（retroactive 專屬）| `state == CLOSED` **且**分類為 **`missing`** —— 即**所有 comment 的原始文字裡都找不到** closing-summary heading（分類定義見下方「Precondition 分類」，#295）。OPEN → abort（「不是 retroactive case，跑正常 `/idd-close`」）。**post 前用同一套分類再 check 一次**（防 stale list / race / double-post）。|
+| **Precondition**（retroactive 專屬）| **執行** `check-closed-without-summary.sh --issue N` 並依其**退出碼**決定：`0` 才放行，`1`/`2` 一律 abort（分類語意見下方「Precondition 分類」，#295；執行方式與 fail-closed 規則見該節的「這個 gate 必須執行」）。draft 前一次、post 前再一次（防 stale list / race / double-post）。|
 | Step 2 draft | **reuse，但 `### Verification` section 特別處理** —— 從 `git log --grep "#N"`（Changes）+ 該 issue 既有的 `## Diagnosis` / `## Implementation Complete` / `## Verify` comments + body reconstruct 五段式。**標題改成** `## Closing Summary (retroactive — auto-closed via <channel>)`。reconstruct 不足 → 標 **「best-effort reconstruction」**，不假裝完整。**`### Verification` 的捏造風險最高 —— 見下方「Verification honesty 鐵律」。** |
 | Step 3 confirm | **semi-auto（預設）** —— 把 draft 給 user 確認再 post（reconstruct 可能錯，且 issue 已關不急）。confirm 是必要的、但**不是** verification —— cold-read + batch 容易 rubber-stamp，所以下方鐵律把誠實寫死進 draft，不靠 confirm 兜底。|
 | Step 4 publish + close | **publish comment，但跳過 `gh issue close`**（已關）。|
@@ -98,7 +98,30 @@ allowed-tools:
 
 兩者放行都等於用「補 audit trail」的名義製造重複 audit trail。
 
-> **本 gate 是散文，不是機械強制（誠實揭露）。** 這張表由 agent 讀了才生效 —— 沒有任何 runtime 會擋住一個忽略它的執行。機械判定只存在於 [`scripts/check-closed-without-summary.sh`](../../scripts/check-closed-without-summary.sh)，而本 skill 並未呼叫它。要把這條路變成真正的 gate，需要 precondition 改為實際執行該 script 並讀其分類 —— **未做**，記在此處而非只留在 PR 討論裡。
+#### 這個 gate 必須**執行**，不是讀完上表自己判（強制，v2.110.0）
+
+在此之前上表只是散文：沒有任何 runtime 擋得住一個忽略它的執行，機械判定只存在於 helper、而本 skill **並未呼叫它**。也就是說**七輪 verify 的全部成果，要等 agent 剛好讀到那張表才生效**。現在改成真的跑：
+
+```bash
+# draft 之前跑一次；要 post 之前**再跑一次**（防 stale list / race / double-post）。
+# 退出碼就是判決 —— 不要改讀 stdout 的散文再自己決定：
+#   0 → class == missing 且 comment 集合完整      → 唯一可以往下走的情況
+#   1 → 其他分類（compliant / casing / present）   → abort
+#   2 → 無法判定（未 CLOSED / 截斷 / 抓取或解析失敗）→ abort
+HELPER="${CLAUDE_PLUGIN_ROOT:-plugins/issue-driven-dev}/scripts/check-closed-without-summary.sh"
+[ -f "$HELPER" ] || { echo "✗ 找不到 gate helper：$HELPER —— 中止（找不到 gate 等於沒有 gate）" >&2; exit 1; }
+
+VERDICT=$(bash "$HELPER" --issue "$NUMBER" ${GITHUB_REPO:+--repo "$GITHUB_REPO"}); GATE_RC=$?
+if [ "$GATE_RC" -ne 0 ]; then
+  echo "✗ /idd-close --retroactive #$NUMBER 中止（rc=$GATE_RC）" >&2
+  printf '%s\n' "$VERDICT" | jq -r '"  class=\(.class // "?")  state=\(.state // "?")  comments_complete=\(.comments_complete)\n  \(.error // "")"' >&2
+  exit 1
+fi
+```
+
+**只有 `rc == 0` 放行。** `rc != 0` 一律 abort，**包含所有「不確定」的情況**（抓不到、讀不完整、不是 CLOSED、helper 不在）。動作不可逆時 fail-closed 是唯一安全的預設；把不確定讀成「大概沒有 summary 吧」正是會貼出重複內容的那條路。**helper 不在就跳過 gate** 是同一個錯誤的另一種形狀。
+
+helper 的 `--issue N` 模式另外做了一件審計模式沒做的事：它用 REST `--paginate` 抓 comment，**不走** `--json comments` 那條硬上限 100 則、且回**最舊** 100 則的路。closing summary 依定義是**最新**一則，所以審計端是事後修補截斷，gate 端是根本不走那條壞路。
 
 **順序固定**：canonical 首行**最先判**，所以 `## Closing Summary (retroactive — …)`（本 skill 自己產出的 heading）落在 `compliant` 而非被 `casing` 分支搶走 —— 那正是 idempotency 依賴的行為。**已知且接受**：`## Closing Summary (draft, do not use)` 同樣讀成 compliant，因此不會被報出來。要擋它就得去界定 heading 尾端，那正是 R5 移除掉的那種解析，而殘留誤差是漏報、不是重複貼文。
 

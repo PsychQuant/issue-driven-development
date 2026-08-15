@@ -387,5 +387,69 @@ require "prose mentioning the marker still cannot rescue an issue" \
   bash -c 'printf "%s" "[{\"number\":9001,\"title\":\"p\",\"state\":\"CLOSED\",\"comments\":[{\"body\":\"I forgot the closing summary, sorry\"}]}]" > "$0/p.json";
            bash "$1" --json-file "$0/p.json" | grep -q "9001"' "${TMPDIR:-/tmp}" "$HELPER"
 
+# ── `--issue N`: the single-issue GATE (#307 follow-up) ────────────────────────
+# Audit mode reports to a human and always exits 0. This mode is a precondition
+# for an IRREVERSIBLE action, so the whole point is the exit code: the caller
+# must not have to read prose to find out whether posting is allowed.
+#
+#   0 = confident `missing` on a complete comment set     1 = any other class
+#   2 = could not determine anything
+#
+# Everything that is not a confident 0 must refuse. These assertions are the
+# only reason the seven rounds of classifier work bind the destructive path at
+# all — before this mode existed, idd-close reimplemented the judgement in prose.
+gate() { bash "$HELPER" --json-file "$FIXTURE" --issue "$1" 2>/dev/null; }
+gate_rc() { gate "$1" >/dev/null 2>&1; echo $?; }
+# `tostring`, NOT `// "null"`: in jq the alternative operator treats `false` as
+# empty, so `.comments_complete // "null"` reports a genuine `false` as "null"
+# — which would have made the truncation assertion below unable to fail.
+gate_field() { gate "$1" | jq -r ".$2 | tostring"; }
+
+assert_eq "gate: a genuinely-missing issue exits 0"            "0" "$(gate_rc 101)"
+assert_eq "gate: ...and says so in machine-readable form"      "missing" "$(gate_field 101 class)"
+assert_eq "gate: ...and asserts the comment set was complete"  "true" "$(gate_field 101 comments_complete)"
+assert_eq "gate: a zero-comment closed issue also exits 0"     "0" "$(gate_rc 103)"
+
+assert_eq "gate: a compliant issue REFUSES (exit 1)"           "1" "$(gate_rc 100)"
+assert_eq "gate: a casing issue REFUSES — the summary is there, only misspelt" \
+  "1" "$(gate_rc 104)"
+assert_eq "gate: a PRESENT issue REFUSES — nothing was established about it" \
+  "1" "$(gate_rc 110)"
+# #155 is a pure QUOTATION. It is the shape the audit deliberately under-reports
+# on, and the gate must inherit that: refusing here costs a missed remediation,
+# allowing here costs a duplicate post onto someone else's issue.
+assert_eq "gate: a quotation-only issue REFUSES rather than authorising a post" \
+  "1" "$(gate_rc 155)"
+
+assert_eq "gate: an OPEN issue exits 2 — not a retroactive case at all" \
+  "2" "$(gate_rc 102)"
+assert_eq "gate: a truncated comment set exits 2, never 0" "2" "$(gate_rc 158)"
+assert_eq "gate: ...and reports the comment set as incomplete" \
+  "false" "$(gate_field 158 comments_complete)"
+assert_eq "gate: an issue absent from the payload exits 2"  "2" "$(gate_rc 9999)"
+assert_eq "gate: a non-numeric --issue exits 2"             "2" "$(gate_rc abc)"
+# ...and exits 2 because the VALIDATOR fired, not because jq happened to choke
+# downstream. Deleting the validation leaves the exit code at 2 (the offline
+# path dies on --argjson instead), so the code alone cannot tell the two apart —
+# and the reason the validation exists is the LIVE path, where the number is
+# interpolated into an API URL and no jq stands between it and the request.
+assert_grep "gate: ...because the integer check fired, not because jq crashed" \
+  "expects an integer" "$(gate_field abc error)"
+assert_eq "gate: a malformed payload exits 2, not 0" "2" \
+  "$(bash "$HELPER" --json-file "$HERE/fixtures/malformed.json" --issue 101 >/dev/null 2>&1; echo $?)"
+
+# The output must be a single JSON object on stdout for EVERY path, including
+# the failures — a caller that has to distinguish "JSON" from "a sentence" will
+# eventually get it wrong.
+for n in 101 100 102 158 9999 abc; do
+  require "gate: --issue $n emits one parseable JSON object" \
+    bash -c 'bash "$0" --json-file "$1" --issue "$2" 2>/dev/null | jq -e "type == \"object\"" >/dev/null' \
+    "$HELPER" "$FIXTURE" "$n"
+done
+
+# Audit mode must be UNAFFECTED: it still always exits 0, gate or no gate.
+assert_eq "audit mode still exits 0 (advisory contract intact)" "0" \
+  "$(bash "$HELPER" --json-file "$FIXTURE" >/dev/null 2>&1; echo $?)"
+
 print_summary "check-closed-without-summary"
 exit $?
