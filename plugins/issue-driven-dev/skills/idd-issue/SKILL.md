@@ -1033,6 +1033,9 @@ idx=1
 # 指向同一份檔案，而且沒有任何錯誤訊息。
 for f in "${ATTACHMENT_PATHS[@]}"; do
   ext="${f##*.}"
+  # `ext` reaches the asset name too, so it gets the same ASCII fold.
+  ext=$(printf '%s' "$ext" | LC_ALL=C tr -c 'A-Za-z0-9' '_' | cut -c1-10)
+  [ -z "$ext" ] && ext="bin"
   desc=$(make_desc "$f")        # 簡短描述 e.g. "snq_timeline"
   # ASCII-fold：非 [A-Za-z0-9._-] 一律轉底線，再摺疊連續底線
   desc=$(printf '%s' "$desc" | LC_ALL=C tr -c 'A-Za-z0-9._-' '_' | sed 's/__*/_/g; s/^_//; s/_$//')
@@ -1048,8 +1051,28 @@ for f in "${ATTACHMENT_PATHS[@]}"; do
     echo "note: asset name collision — uploading as $upload_name instead" >&2
   fi
 
-  gh release upload "$ATTACHMENTS_RELEASE" "$f#$upload_name" \
-    --repo "$GITHUB_REPO"
+  # `gh release upload FILE#TEXT` sets a DISPLAY LABEL, not the asset name —
+  # the asset always takes the basename of the file on disk. (Verified:
+  # `gh release upload --help` — "To define a display label for an asset, append
+  # text starting with `#` after the file name".) An earlier version of this
+  # block computed `upload_name` and then never used it at all, so the naming
+  # convention documented below was NEVER applied; a later one passed it after a
+  # `#` and was equally inert.
+  #
+  # The only way to control the asset name is to upload a file whose BASENAME is
+  # the name you want. Stage a copy under the target name, upload that, remove it.
+  staging=$(mktemp -d)
+  cp "$f" "$staging/$upload_name"
+  if ! gh release upload "$ATTACHMENTS_RELEASE" "$staging/$upload_name" \
+         --repo "$GITHUB_REPO" --clobber; then
+    # --clobber is correct HERE: the collision check above already refused to
+    # overwrite a pre-existing foreign asset, so anything left to clobber is our
+    # own re-upload of the same attachment. Without it a legitimate re-run fails.
+    echo "✗ upload failed: $upload_name" >&2
+    rm -rf "$staging"
+    exit 1
+  fi
+  rm -rf "$staging"
   idx=$((idx + 1))
 done
 

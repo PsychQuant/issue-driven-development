@@ -45,12 +45,30 @@ done
 GLOBAL="$HOME/.claude/.idd/global.json"
 rows=""
 
+# Values read out of a config file are UNTRUSTED: the file lives inside a
+# scanned repo, which in any shared checkout or cloned template is written by
+# someone else. Without this, a `github_repo` containing a newline emitted a
+# standalone forged row that looked exactly like real data (and corrupted the
+# footer counts), a tab shifted the columns, and a raw ESC reached the terminal.
+# That is the same row-forging class the sibling script spent seven verify
+# rounds closing — reproduced from scratch here because the shape of the script
+# was copied without its hard-won safety.
+sanitize_field() {
+  LC_ALL=C tr -d '\000-\010\011\013\014\016-\037\177' \
+    | python3 -c 'import sys
+bad = {0x061C, 0x200B, 0x200E, 0x200F, 0x2028, 0x2029, 0x2060, 0xFEFF}
+bad |= set(range(0x202A, 0x202F)) | set(range(0x2066, 0x206A)) | set(range(0xE0000, 0xE0080))
+s = "".join(" " if ord(c) in bad else c for c in sys.stdin.read())
+sys.stdout.write(s.replace("\n", " ")[:160])'
+}
+
 emit() {  # $1=repo_dir  $2=config_path  $3=format
   local dir="$1" cfg="$2" fmt="$3" slug=""
-  slug=$(jq -r '.github_repo // empty' "$cfg" 2>/dev/null)
+  slug=$(jq -r '.github_repo // empty' "$cfg" 2>/dev/null | sanitize_field)
   # A config that exists but names no repo is NOT a resolved layer — say so
   # rather than letting an empty string read as a match.
-  [ -z "$slug" ] && slug="(no github_repo)"
+  [ -z "$(printf '%s' "$slug" | tr -d '[:space:]')" ] && slug="(no github_repo)"
+  dir=$(printf '%s' "$dir" | sanitize_field)
   rows="${rows}${dir}\t${slug}\t${fmt}\n"
 }
 
@@ -62,7 +80,8 @@ for root in "${ROOTS[@]}"; do
       */.claude/issue-driven-dev.local.json) emit "$(dirname "$(dirname "$cfg")")" "$cfg" legacy ;;
     esac
   done < <(find "$root" \
-             \( -name node_modules -o -name .git -o -name .build -o -name .venv \) -prune -o \
+             \( -name node_modules -o -name .git -o -name .build -o -name .venv \
+                -o -name archive -o -name archived -o -path '*/.claude/worktrees' \) -prune -o \
              \( -path '*/.claude/.idd/local.json' -o -path '*/.claude/issue-driven-dev.local.json' \) \
              -print 2>/dev/null)
 done

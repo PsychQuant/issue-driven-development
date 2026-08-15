@@ -374,5 +374,18 @@ require "#157 is visible in the advisory bucket"                                
 require "#158 (known-truncated comment set) is PRESENT, never MISSING" unverified 158
 refute  "#158 is NOT in MISSING — an incomplete fetch cannot prove absence" flagged 158
 
+# ── post-merge audit (2026-08-15): emphasised headings with a tail ──
+# `bare_re`'s trailing `$` anchor is what keeps ordinary prose out of the
+# presence test, but it also rejected every emphasised heading carrying a tail,
+# sending a real summary to MISSING. `emph_re` covers that shape; these two
+# fixtures are its regression lock (acid: removing emph_re turns them red).
+refute "#160 (bold heading with a tail) is NOT in MISSING"   flagged 160
+refute "#161 (italic heading with a tail) is NOT in MISSING" flagged 161
+# The counterpart the loosening must NOT break: prose mentioning the phrase
+# still cannot rescue an issue that has no summary.
+require "prose mentioning the marker still cannot rescue an issue" \
+  bash -c 'printf "%s" "[{\"number\":9001,\"title\":\"p\",\"state\":\"CLOSED\",\"comments\":[{\"body\":\"I forgot the closing summary, sorry\"}]}]" > "$0/p.json";
+           bash "$1" --json-file "$0/p.json" | grep -q "9001"' "${TMPDIR:-/tmp}" "$HELPER"
+
 print_summary "check-closed-without-summary"
 exit $?

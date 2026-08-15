@@ -44,7 +44,13 @@ SCRIPT="$PLUGIN/scripts/check-closed-without-summary.sh"
 # marker words. Matching on the SHAPE rather than on a remembered string is what
 # makes this check survive rewordings the author did not anticipate.
 scan_prose_regex() {
-  grep -rnE --include='*.md' -- '\^[^`]*closing[^`]*summary' "$PLUGIN" 2>/dev/null \
+  # -i is not optional: the marker is canonically CAPITALISED (`## Closing
+  # Summary`), so a case-sensitive scan cannot fire on the realistic literal.
+  # It shipped case-sensitive, and its positive control planted the LOWERCASE
+  # form — so the control passed while the check was blind to every regex a
+  # reader would actually quote. A positive control that certifies a capability
+  # the check does not have is worse than none.
+  grep -rniE --include='*.md' -- '\^[^`]*closing[^`]*summary' "$PLUGIN" 2>/dev/null \
     | grep -v '/CHANGELOG.md:'
 }
 
@@ -58,7 +64,10 @@ require "no prose file quotes a regex literal for the closing-summary marker" \
 # swallowing --include — all three happened while writing this file) reads as a
 # clean repo.
 CANARY="$PLUGIN/.drift-canary.md"
-printf 'canary: `^ {0,3}#{1,2} closing summary`\n' > "$CANARY"
+# The canary plants the CANONICAL CAPITALISATION — the form the check must be
+# able to see. Planting the lowercase form is what let a case-sensitive scan
+# pass its own control.
+printf 'canary: `^ {0,3}#{1,2} Closing Summary`\n' > "$CANARY"
 CANARY_SEEN=$(scan_prose_regex | grep -c 'drift-canary' || true)
 rm -f "$CANARY"
 require "positive control: the regex scan actually detects a planted literal" \
