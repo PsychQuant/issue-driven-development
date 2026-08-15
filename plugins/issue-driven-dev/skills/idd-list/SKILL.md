@@ -523,7 +523,21 @@ Suggested next:
 | `Spectra` (含 alias `SDD-warranted`) | `/spectra-discuss` (default) 或 `/spectra-propose` (opt-out) |
 | 推不出 | `/idd-implement #N` (保守 default) |
 
-**Complexity 解析**：對 phase=`diagnosed` 的 issue，掃最新 `## Diagnosis` comment 的 `### Complexity` 行（regex `### Complexity\n([A-Za-z-]+)`），取第一個 token。`SDD-warranted` 視同 `Spectra`。Verdict 後綴(如 `Plan via Layer V`,v2.50.0+)用 `split(' via ')[0]` 取 canonical tier。
+**Complexity 解析**：**不要在此處自行寫 regex。** 依 [`references/actionability-gate.md`](../../references/actionability-gate.md) 的封閉值域契約，呼叫共用實作：
+
+```bash
+. "$CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh" || {
+    echo "FATAL: missing $CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh — 不得改用私有 regex" >&2
+    exit 1
+}
+tier=$(idd_parse_complexity "$latest_diagnosis_body"); cexit=$?
+```
+
+**helper 缺失必須 fail loud**（契約要求）：silent fallback 回私有解析，正是本次要消滅的東西 —— 一個「找不到就自己想辦法」的 consumer 會把三方分歧原封不動地帶回來。
+
+`cexit=0` → `$tier` 是 canonical tier（`SDD-warranted` 視同 `Spectra`；` via <來源>` 後綴已剝除），依上表 routing。**`cexit=3`（值在封閉值域外）或 `cexit=4`（缺區段）→ 不給任何 lifecycle 命令**，改依 Step 3.7 歸入 Parked 組並 surface 原值。
+
+> **為何不在這裡寫 regex（#298 → #316）**：本行原本規定 `### Complexity\n([A-Za-z-]+)`「取第一個 token」—— 那個 regex 在第一個空白處停止，`Simple when triggered` 被截成 `Simple`，正是 Step 3.7 明文禁止的截斷。同一份 SKILL.md 裡一段禁止截斷、另一段規定截斷，實作者照哪段做行為就不同。解析規則現在只有一份，住在共用 helper 裡。
 
 ## 鐵律
 
