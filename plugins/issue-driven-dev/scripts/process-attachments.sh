@@ -127,8 +127,26 @@ detect_urls() {
   local raw content
   raw=$(gh issue view "$NUMBER" --repo "$REPO" --json body,comments) || return 2
   content=$(printf '%s\n' "$raw" | jq -r '.body, .comments[].body') || return 2
+  # The character class excluded `)` and whitespace only, which covers a
+  # markdown link and nothing else. Real issue bodies wrap URLs three more ways,
+  # and each one used to come back with the wrapper glued on:
+  #
+  #   <https://…/a.pdf>          autolink        -> trailing `>`
+  #   <img src="https://…/b.png"> HTML attribute -> trailing `">`
+  #   see https://…/c.pdf.       end of sentence -> trailing `.`
+  #
+  # All three download as 404, and an attachment that cannot be downloaded is a
+  # source that gets ignored — which this plugin treats as a rule violation, not
+  # a nuisance. `<`, `>`, `"` and `'` can never appear unencoded in a URL, so
+  # excluding them is free.
+  local u='[^)<>"'"'"'[:space:]]'
+  # Trailing sentence punctuation is stripped afterwards rather than excluded,
+  # because `.` is legal mid-URL and every one of these ends in a file
+  # extension. Exactly one character, so `…/c.pdf..` would still keep a dot —
+  # accepted: the wrong direction here is a loud 404, not a silent wrong file.
   printf '%s\n' "$content" \
-    | grep -oE 'https://(github\.com/(user-attachments/(files|assets)/[^)[:space:]]+|[^/]+/[^/]+/files/[0-9]+/[^)[:space:]]+|[^/]+/[^/]+/releases/download/[^/)[:space:]]+/[^)[:space:]]+)|(private-)?user-images\.githubusercontent\.com/[^)[:space:]]+)' \
+    | grep -oE "https://(github\.com/(user-attachments/(files|assets)/$u+|[^/]+/[^/]+/files/[0-9]+/$u+|[^/]+/[^/]+/releases/download/[^/)<>\"'[:space:]]+/$u+)|(private-)?user-images\.githubusercontent\.com/$u+)" \
+    | sed 's/[.,;:!?]$//' \
     | sort -u || true
 }
 

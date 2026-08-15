@@ -160,6 +160,24 @@ assert_grep "idd-close states that only exit 0 may proceed" \
 refute_grep "idd-close no longer describes its own gate as prose-only" \
   "本 skill 並未呼叫它" "$CLOSE_MD"
 
+# ── Permissive matching may not back a POSITIVE claim ──
+#
+# The two-predicate split is not local to the classifier: it is a rule about
+# which question is being asked. `present_re` (permissive) answers "could a
+# reader see one?", where over-detecting is safe. `lead_re` (strict) answers
+# "does this comment lead with one?", where over-detecting states something
+# false. Two prose readers were on the wrong side of it — idd-find labelled a
+# quotation as an archaeological record, and idd-update pushed an OPEN issue's
+# phase to `closed` on a quoted heading.
+UPDATE_MD=$(cat "$PLUGIN/skills/idd-update/SKILL.md")
+FIND_MD=$(cat "$PLUGIN/skills/idd-find/SKILL.md")
+assert_grep "idd-update requires the heading to LEAD the comment (phase is a positive claim)" \
+  "必須是那則 comment 的首行" "$UPDATE_MD"
+refute_grep "idd-update no longer allows a blockquote prefix for phase inference" \
+  "允許任意縮排與 blockquote 前綴" "$UPDATE_MD"
+refute_grep "idd-find no longer calls a permissive match an archaeological record" \
+  "標 \`📜 closing summary\`（可考古的結案紀錄）" "$FIND_MD"
+
 # ...and the helper must really have the mode the skill invokes. A skill calling
 # a flag that does not exist fails open in the worst possible way: `gh`-less
 # environments aside, an unknown flag here is warned about and ignored, which

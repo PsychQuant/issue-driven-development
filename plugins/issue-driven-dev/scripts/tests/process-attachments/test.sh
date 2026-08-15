@@ -28,6 +28,11 @@ case "${1:-}" in
     case "${GH_STUB_MODE:-empty}" in
       empty)    printf '{"body":"## Problem\\nno attachment urls here","comments":[{"body":"plain comment"}]}\n' ;;
       with_url) printf '{"body":"spec: https://github.com/user-attachments/files/123/spec.docx ok","comments":[]}\n' ;;
+      # The three ways a real issue body wraps a URL. Each used to come back
+      # with the wrapper glued on, producing a link that 404s — and an
+      # attachment that cannot be downloaded is an attachment that gets
+      # ignored, which this plugin treats as ignoring the source.
+      wrapped)  printf '{"body":"autolink <https://github.com/user-attachments/files/1/a.pdf>\\nhtml <img src=\\"https://github.com/user-attachments/assets/2/b.png\\">\\nsentence see https://github.com/user-attachments/files/3/c.pdf.","comments":[]}\n' ;;
       fail)     echo "gh: network error (stub)" >&2; exit 1 ;;
     esac ;;
   auth)   echo "stub-token" ;;
@@ -132,6 +137,25 @@ export GH_STUB_MODE=empty
 run_pa check 15 > "$W/out10.txt" 2>&1; RC10=$?
 refute  "f10a schemaless manifest ({\"foo\":1}) → check exits non-zero"  test "$RC10" -eq 0
 require "f10b schemaless manifest → check says corrupt/malformed (loud)"  grep -qiE 'corrupt|malformed' "$W/out10.txt"
+cd /; rm -rf "$W"
+
+# ── Fixture 11 (post-merge audit): URLs wrapped the way real issue bodies wrap
+# them. The extractor's character class excluded `)` and whitespace only, so an
+# autolink kept its `>`, an HTML attribute kept its `">`, and a URL at the end
+# of a sentence kept the full stop. Each of those downloads 404s, and a file
+# that cannot be downloaded is a source that gets ignored — the one thing the
+# attachment rule says must never happen quietly.
+W="$(mktemp -d)"; cd "$W"
+export GH_STUB_MODE=wrapped
+run_pa download 21 > "$W/out11.txt" 2>&1
+MAN11=".claude/.idd/attachments/issue-21/_manifest.json"
+require "f11a wrapped-URL run still writes a manifest" test -f "$MAN11"
+URLS11=$(jq -r '.files[].url, (.errors[]?.url // empty)' "$MAN11" 2>/dev/null; jq -r '.[]?.url // empty' "$MAN11" 2>/dev/null)
+# Whatever the manifest ends up recording, no recorded URL may carry a wrapper.
+refute_grep_re "f11b no extracted URL keeps an autolink '>'"      '>' "$URLS11"
+refute_grep_re "f11c no extracted URL keeps an HTML quote"        '"' "$URLS11"
+refute_grep_re "f11d no extracted URL keeps a sentence full stop" '\.$' "$URLS11"
+assert_eq "f11e all three URLs were extracted" "3" "$(printf '%s\n' "$URLS11" | grep -c 'github.com')"
 cd /; rm -rf "$W"
 
 rm -rf "$STUB"

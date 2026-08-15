@@ -495,9 +495,25 @@ CLASSIFY='
 JQ_ERR=$(mktemp "${TMPDIR:-/tmp}/csw_jq_err.XXXXXX") || JQ_ERR=""
 if ! CLASSIFIED=$(printf '%s' "$ISSUES_JSON" | jq -r "$CLASSIFY" 2>"${JQ_ERR:-/dev/null}"); then
   echo "note: classification filter failed — audit skipped, no conclusion drawn." >&2
-  # jq quotes the offending INPUT in its message, so this text is untrusted:
-  # control characters and bidi overrides here would bypass `sanitize` entirely
-  # and repaint the terminal. Strip them, and cap the volume.
+  # jq may quote the offending INPUT in its message, so treat this text as
+  # untrusted and cap the volume.
+  #
+  # WHAT THIS ACTUALLY STRIPS, stated precisely because the comment used to
+  # claim more than the code did: ASCII control characters, and nothing else.
+  # `tr` under LC_ALL=C works on BYTES, so it cannot see U+202E, U+2028 or the
+  # bidi isolates — they are multi-byte, and deleting their bytes individually
+  # would corrupt the surrounding UTF-8. Only `sanitize` (inside CLASSIFY) has
+  # the Unicode-aware version, and this path is precisely the one where CLASSIFY
+  # did not run.
+  #
+  # Whether that gap is reachable was measured, not assumed: three payloads
+  # (U+202E, U+2028, ESC) planted where a bare string reaches `.state` produce
+  # `Cannot index string with string ("state")` on jq 1.7 — the value is NOT
+  # echoed, so nothing attacker-controlled arrives here at all. Recorded as a
+  # clean negative rather than fixed: a Unicode-aware scrub would mean a second
+  # copy of the character class, and a divergent copy of a safety definition is
+  # the failure mode this file has the longest history with. If a jq that does
+  # echo the value ever shows up, this is the line to change.
   [ -n "$JQ_ERR" ] && LC_ALL=C tr -d "\000-\010\013\014\016-\037\177" < "$JQ_ERR" \
     | head -5 | sed "s/^/      jq: /" >&2
   [ -n "$JQ_ERR" ] && rm -f "$JQ_ERR"
