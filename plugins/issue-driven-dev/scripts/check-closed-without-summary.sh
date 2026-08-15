@@ -405,9 +405,23 @@ CLASSIFY='
   # markers are skipped, because this plugin mandates a marker on line 1 for
   # machine-locatable comments (references/dashboard-comment.md), and a leading
   # marker must not demote a byte-perfect summary.
+  # ONE notion of "a line a reader sees", used by BOTH the lead test and the
+  # content test. They used to disagree: lead_line skipped whole-line HTML
+  # markers, lead_has_content did not, so an HTML comment counted as the summary
+  # under a heading. `## Closing Summary` + `<!-- TODO -->` read as compliant --
+  # printed in NO section at all, and --retroactive refuses it too -- which is
+  # the silencing channel the content test was added to close, reopened one
+  # level down. A blank line and an invisible line are the same thing to a
+  # reader, so they are the same thing here.
+  #
+  # Only SINGLE-LINE HTML comments are recognised, deliberately. Spanning ones
+  # need the fence/comment state machine that rounds 1-4 removed, and the
+  # residual error is on the cheap side: it hides an issue rather than
+  # authorising a duplicate post.
+  def invisible_line: test("^[ \t]*$") or test("^[ \t]*<!--.*-->[ \t]*$");
   def lead_line:
     ((. // "") | split("\n"))
-    | map(select((test("^[ \t]*$") | not) and (test("^[ \t]*<!--.*-->[ \t]*$") | not)))
+    | map(select(invisible_line | not))
     | (first // "");
   # Oniguruma anchors ^ to the START OF THE STRING, not to each line -- verified,
   # not assumed. Lines are therefore split explicitly; relying on the anchor
@@ -424,8 +438,7 @@ CLASSIFY='
   # nothing.
   def lead_has_content:
     ((. // "") | split("\n")) as $l
-    | ([range(0; $l | length) | select(($l[.] | test("^[ \t]*$") | not)
-                                       and ($l[.] | test("^[ \t]*<!--.*-->[ \t]*$") | not))] | first) as $k
+    | ([range(0; $l | length) | select($l[.] | invisible_line | not)] | first) as $k
     | if $k == null then false
       else
         # Content is either something non-blank on a LATER line, or something
@@ -440,7 +453,9 @@ CLASSIFY='
         # silencing channel this check exists to close: anyone who can comment
         # could post `## Closing Summary` + `...` and remove a closed issue from
         # the audit permanently.
-        (($l[($k + 1):] | any(test("[\\p{L}\\p{N}]")))
+        # Later lines are filtered through the SAME visibility rule as the lead
+        # line before being counted -- see `invisible_line`.
+        (($l[($k + 1):] | map(select(invisible_line | not)) | any(test("[\\p{L}\\p{N}]")))
          or ($l[$k] | sub(present_re; ""; "i") | test("[\\p{L}\\p{N}].*[\\p{L}\\p{N}]")))
       end;
   # Four destinations, in order. Only the LAST one authorises anything, and it

@@ -799,5 +799,25 @@
         "body": "*Closing Summary*: done\n\n### Problem\nreal content"
       }
     ]
+  },
+  {
+    "number": 162,
+    "title": "canonical heading whose only content is an HTML comment - invisible in a browser",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Closing Summary\n<!-- TODO: write this up properly -->"
+      }
+    ]
+  },
+  {
+    "number": 163,
+    "title": "non-canonical heading whose only content is an HTML comment",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## closing summary\n<!-- TODO -->"
+      }
+    ]
   }
 ]

@@ -387,6 +387,27 @@ require "prose mentioning the marker still cannot rescue an issue" \
   bash -c 'printf "%s" "[{\"number\":9001,\"title\":\"p\",\"state\":\"CLOSED\",\"comments\":[{\"body\":\"I forgot the closing summary, sorry\"}]}]" > "$0/p.json";
            bash "$1" --json-file "$0/p.json" | grep -q "9001"' "${TMPDIR:-/tmp}" "$HELPER"
 
+# ── the content test must use the same notion of "visible" as the lead test ──
+#
+# `lead_line` skips whole-line HTML markers when deciding which line a reader
+# sees first — this plugin mandates a machine-locatable marker on line 1, and it
+# must not demote a byte-perfect summary. `lead_has_content` did NOT apply the
+# same rule to the lines it scans for content, so an HTML comment counted as a
+# summary. That reopens, one level down, the silencing channel the content test
+# was added to close: `## Closing Summary` + `<!-- TODO -->` read as compliant,
+# which prints in NO section at all, and `--retroactive` refuses it too.
+#
+# Direction note: this whole class sits on the CHEAP side — the wrong answer
+# hides an issue rather than authorising a duplicate post. It is fixed anyway
+# because a previous round set out to close exactly this channel and left a
+# second door open.
+require "#162 (canonical heading, only an HTML comment under it) is PRESENT" unverified 162
+refute  "#162 is NOT compliant — compliant prints nowhere, i.e. invisible"   in_section "CASING —" 162
+refute  "#162 is NOT in MISSING"                                             flagged 162
+require "#163 (casing heading, only an HTML comment under it) is PRESENT"    unverified 163
+refute  "#163 is NOT in CASING — CASING claims the summary is there"         in_section "CASING —" 163
+refute  "#163 is NOT in MISSING"                                             flagged 163
+
 # ── `--issue N`: the single-issue GATE (#307 follow-up) ────────────────────────
 # Audit mode reports to a human and always exits 0. This mode is a precondition
 # for an IRREVERSIBLE action, so the whole point is the exit code: the caller
