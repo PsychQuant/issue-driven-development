@@ -5,6 +5,78 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.110.0] - 2026-08-15
+
+### Added — the closing-summary gate is now executed, not read
+
+- **`check-closed-without-summary.sh --issue N`** — a single-issue mode that prints one JSON object and **exits with a
+  verdict**: `0` = class `missing` on a comment set known to be complete, `1` = any other class, `2` = could not
+  determine (not CLOSED / truncated / fetch or parse failure). Audit mode's always-exit-0 contract is untouched and
+  pinned by an assertion; that contract is for reporting to a human, and a gate that always exits 0 is not a gate.
+  The mode also fetches comments through REST `--paginate` rather than the nested `--json comments` connection, which
+  is capped at the **oldest** 100 — the audit path repairs that after the fact, the gate never takes the road.
+
+- **`/idd-close --retroactive` now runs it.** The skill previously carried an honest disclosure that its own gate was
+  prose — that no runtime would stop an execution which ignored the table, and that the mechanical judgement existed
+  only in the helper, which the skill **did not call**. So seven verify rounds of classifier work bound the
+  irreversible path only when an agent happened to read the right table. It now invokes the helper before drafting and
+  again before posting, and refuses on anything that is not `rc == 0` — including every *uncertain* case, and including
+  "the helper is missing", since a gate you cannot find is not a gate.
+
+### Fixed — the rest of the post-merge audit (Codex cross-model pass)
+
+- **`migrate-idd-config.sh` only handles ordinary files now.** Four shapes it accepted silently: `.idd` as a symlink
+  (`mkdir -p` accepts a symlink-to-dir and reports success, so the move followed it out of the tree); a destination
+  that is a **directory** (`mv` moves the file *inside* it and prints `✓ migrated`); a dangling destination symlink
+  (invisible to `-e`); and a destination symlink to a regular file elsewhere (`-f` follows it, so the audit printed
+  "both present, current wins" — false whenever "current" is not in this repo). Plus a breadcrumb path that is a
+  dangling symlink, where `>` *creates* the target. `-f`/`-d`/`-e` all follow symlinks, so `-L` must be tested first.
+  The move itself is now `ln` + `rm` rather than `mv`: `mv` has no atomic no-clobber, `ln` fails atomically when the
+  destination exists, and an interruption leaves two links to one inode rather than a file at neither path. `find` is
+  now shape-limited to `*/.claude/<name>` — matching on the name alone picked up doc samples and fixtures and invented
+  a `.idd` directory in unrelated trees.
+
+- **`idd-repo-map.sh` rendered its row buffer with `printf '%b'`**, which expands escapes in the *data*. A backslash in
+  a path or a `github_repo` value was executed: `\c` stops all output, so one crafted value silently deleted every
+  later row *and* the totals line — and a map missing half its rows is indistinguishable from a machine with half as
+  many repos. **This corrects a claim in the previous entry's audit**: `--json` was not exempt, because the same `%b`
+  feeds jq. Real tab/newline delimiters + `%s` throughout. `find`'s exit status is now checked, too: an unreadable
+  directory answering "no config here" is exactly the wrong upward resolution this map exists to prevent.
+
+- **The content test now uses the same notion of "visible" as the lead test.** `lead_line` skips whole-line HTML
+  markers; `lead_has_content` did not, so `## Closing Summary` followed only by `<!-- TODO -->` classified as
+  `compliant` — printed in no section at all, and refused by `--retroactive` too. That is the silencing channel the
+  content test was added to close, reopened one level down.
+
+- **Permissive matching no longer backs a positive claim.** `idd-find` labelled a quotation `📜 closing summary
+  （可考古的結案紀錄）`; it now says `📜 summary marker`, which is what a deliberately-loose match can promise.
+  `idd-update` inferred phase from a permissive match, so a comment merely *quoting* `> ## Closing Summary` pushed an
+  **open** issue to `closed`; phase is a positive claim, so it now requires the strict lead predicate.
+
+- **Attachment URLs kept their wrappers.** The extractor excluded `)` and whitespace only — i.e. markdown links and
+  nothing else. An autolink kept its `>`, an HTML attribute its `">`, a sentence-final URL its full stop. All three
+  404, and an attachment that cannot be downloaded is a source that gets ignored.
+
+- **`#288`'s scratch paths are actually converted.** Its closing summary said every path hung off `mktemp -d`; what
+  shipped was a *note* saying so, followed by twenty-four paragraphs still naming fixed paths — including the OUTPUT
+  instructions handed to reviewer agents, and two copies of an egress loop writing the body that gets posted to
+  someone's issue. `scripts/tests/verify-scratch-paths/` now fails if a fixed one returns. Scope is stated in the test:
+  it covers `idd-verify` only, not `idd-edit`.
+
+- **`idd-clarify`'s worked example** still used the analysis style `#294` replaced with questions, forty lines below the
+  rule and its ❌/✅ demonstration. The example is the half people copy. `scripts/tests/clarify-question-column/` pins it.
+
+### Honest residue
+
+- The `.idd` re-check after `mkdir -p` narrows a TOCTOU window and **has no test weight** — a single-process test
+  cannot reach it. Recorded rather than dressed up.
+- The jq-error path strips ASCII controls only; its comment used to claim bidi as well. Measured before changing
+  anything: three payloads (U+202E, U+2028, ESC) planted where a bare string reaches `.state` produce
+  `Cannot index string with string ("state")` on jq 1.7 — the value is **not** echoed, so nothing attacker-controlled
+  arrives. Comment corrected, code left alone: a Unicode-aware scrub would mean a second copy of the character class,
+  and divergent copies of a safety definition are this file's longest-running failure.
+- Suites: 47 → 49. Classifier assertions: 89 → 120.
+
 ## [2.109.0] - 2026-08-15
 
 ### Fixed — post-merge audit of the 2026-08-13/14 session
