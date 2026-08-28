@@ -181,10 +181,22 @@ refute_grep "idd-close no longer describes its own gate as prose-only" \
 # phase to `closed` on a quoted heading.
 UPDATE_MD=$(cat "$PLUGIN/skills/idd-update/SKILL.md")
 FIND_MD=$(cat "$PLUGIN/skills/idd-find/SKILL.md")
-assert_grep "idd-update requires the heading to LEAD the comment (phase is a positive claim)" \
-  "必須是那則 comment 的首行" "$UPDATE_MD"
-refute_grep "idd-update no longer allows a blockquote prefix for phase inference" \
-  "允許任意縮排與 blockquote 前綴" "$UPDATE_MD"
+# The positive claim `phase = closed` is gated on GitHub's own `state`, not on
+# how strict the heading match is. Requiring a LEADING heading (the first fix)
+# blocked quotations but also blocked #295's own measured case — a real summary
+# merged into the Implementation Complete comment — leaving phase stuck at the
+# old value, which is the failure this step exists to prevent. Both directions
+# are pinned so neither over-correction can come back.
+# Needles are SINGLE-quoted and backtick-free. The first cut used double quotes
+# around a needle containing backticks — the shell ran them as command
+# substitution and the file stopped parsing at "unexpected EOF". Eighth broken
+# probe of this round; caught only because the suite refused to run at all.
+assert_grep "idd-update gates phase=closed on the real GitHub state" \
+  '額外要求 issue 的 GitHub' "$UPDATE_MD"
+assert_grep "...and says why an authoritative field beats a stricter regex" \
+  '無法被 comment 內容偽造' "$UPDATE_MD"
+refute_grep "idd-update does not re-impose the lead-line requirement on phase inference" \
+  '但該 heading 必須是那則 comment 的首行' "$UPDATE_MD"
 refute_grep "idd-find no longer calls a permissive match an archaeological record" \
   "標 \`📜 closing summary\`（可考古的結案紀錄）" "$FIND_MD"
 
