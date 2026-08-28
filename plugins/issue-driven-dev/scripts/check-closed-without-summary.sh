@@ -53,6 +53,13 @@ LIMIT=50
 SINCE=""
 DRY_RUN=0
 GATE_ISSUE=""
+# Whether `--issue` was PASSED, tracked separately from whether it has a value.
+# Keying gate mode off `[ -n "$GATE_ISSUE" ]` meant `--issue ""` — which is what
+# `--issue "$NUMBER"` expands to when NUMBER is unset — skipped the whole gate
+# block and fell through to AUDIT mode, whose contract is to always exit 0. The
+# caller read that 0 as "confirmed missing, go ahead and post". The validator's
+# own `''` arm was unreachable for the same reason.
+GATE_SEEN=0
 GATE_ERR=""
 
 while [ $# -gt 0 ]; do
@@ -61,7 +68,7 @@ while [ $# -gt 0 ]; do
     # trailing value-taking flag looped forever — the advisory contract promises
     # exit 0, and never exiting breaks it harder than any wrong verdict.
     --json-file) JSON_FILE="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
-    --issue)     GATE_ISSUE="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
+    --issue)     GATE_SEEN=1; GATE_ISSUE="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
     --repo)      REPO="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
     --limit)     LIMIT="${2:-50}"; shift; [ $# -gt 0 ] && shift ;;
     --since)     SINCE="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
@@ -88,9 +95,11 @@ gate_out() {  # $1=class-or-empty  $2=state-or-empty  $3=complete(true/false)  $
       error: (if $e == "" then null else $e end)}'
   exit "$5"
 }
-if [ -n "$GATE_ISSUE" ]; then
+if [ "$GATE_SEEN" = 1 ]; then
   # Validated before it is interpolated into an API path, and before anything
-  # downstream compares it numerically.
+  # downstream compares it numerically. Gated on GATE_SEEN, not on the value:
+  # an empty value is exactly the case that must be refused, and testing the
+  # value here would skip the refusal for it.
   case "$GATE_ISSUE" in
     ''|*[!0-9]*) gate_out "" "" false "--issue expects an integer issue number" 2 ;;
   esac
@@ -152,10 +161,30 @@ else
     [ -n "$GATE_REPO" ] || gate_out "" "" false "could not resolve the target repo" 2
     META=$(gh issue view "$GATE_ISSUE" --repo "$GATE_REPO" --json number,title,state 2>/dev/null) \
       || gate_out "" "" false "could not fetch issue #$GATE_ISSUE from $GATE_REPO" 2
-    if ! CMTS=$(gh api "repos/$GATE_REPO/issues/$GATE_ISSUE/comments" --paginate \
-                  --jq '[.[] | {body}]' 2>/dev/null | jq -s 'add // []' 2>/dev/null); then
-      gate_out "" "" false "could not fetch the comments of #$GATE_ISSUE" 2
+    # `gh ... | jq -s 'add // []'` in one pipeline was the #320 CRITICAL, found
+    # independently by four lenses. This script sets `set -u` and nothing else,
+    # so `if !` observed JQ's status — and `jq -s 'add // []'` exits 0 on empty
+    # stdin, printing `[]`. A 403, a 5xx, or a `--paginate` leg dying halfway
+    # was therefore INDISTINGUISHABLE from "this issue has no comments", and the
+    # classifier answered `missing` — the sole authorisation for an irreversible
+    # duplicate post. The partial case is the worse one and is not exotic:
+    # --paginate streams OLDEST first, so a mid-pagination failure keeps the old
+    # comments and drops the newest, which is by construction where a closing
+    # summary lives.
+    #
+    # Two syscalls, two checks. gh writes to a file; ITS status is tested; only
+    # then is the text parsed, and jq's failure is a separate refusal.
+    CMTS_RAW=$(mktemp) || gate_out "" "" false "could not create a temp file" 2
+    if ! gh api "repos/$GATE_REPO/issues/$GATE_ISSUE/comments" --paginate \
+           --jq '[.[] | {body}]' >"$CMTS_RAW" 2>/dev/null; then
+      rm -f "$CMTS_RAW"
+      gate_out "" "" false "could not fetch the comments of #$GATE_ISSUE (network / auth / rate limit / partial pagination)" 2
     fi
+    if ! CMTS=$(jq -s 'add // []' <"$CMTS_RAW" 2>/dev/null); then
+      rm -f "$CMTS_RAW"
+      gate_out "" "" false "the comment fetch returned unparseable JSON" 2
+    fi
+    rm -f "$CMTS_RAW"
     printf '%s' "$CMTS" | jq -e 'type == "array"' >/dev/null 2>&1 \
       || gate_out "" "" false "the comment fetch returned something that is not an array" 2
     ISSUES_JSON=$(printf '%s' "$META" | jq --argjson c "$CMTS" '[. + {comments: $c}]' 2>/dev/null) \

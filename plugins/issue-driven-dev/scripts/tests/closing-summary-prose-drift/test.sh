@@ -183,7 +183,7 @@ refute_grep "idd-find no longer calls a permissive match an archaeological recor
 # environments aside, an unknown flag here is warned about and ignored, which
 # would put the audit's always-exit-0 contract on the destructive path.
 SRC=$(cat "$SCRIPT")
-assert_grep "the helper really implements --issue" '--issue)     GATE_ISSUE=' "$SRC"
+assert_grep "the helper really implements --issue" '--issue)     GATE_SEEN=1; GATE_ISSUE=' "$SRC"
 assert_grep "the helper documents the gate exit codes" \
   '0  class == missing, comment set known complete' "$SRC"
 
