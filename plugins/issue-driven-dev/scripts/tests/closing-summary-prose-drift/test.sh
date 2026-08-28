@@ -155,6 +155,16 @@ assert_grep "idd-close INVOKES it in single-issue mode" \
   'bash "$HELPER" --issue "$NUMBER"' "$CLOSE_MD"
 assert_grep "idd-close branches on the helper exit code" \
   'GATE_RC" -ne 0' "$CLOSE_MD"
+# The gate's IDENTITY must come from the install location, never from the tree
+# being audited. `${CLAUDE_PLUGIN_ROOT:-plugins/issue-driven-dev}` resolved the
+# executable relative to $PWD, and /idd-close runs inside the user's repo — so a
+# cloned repo shipping that path got arbitrary code execution plus an
+# unconditional pass. Closing the "helper absent" hole opened the "helper
+# substituted" one; both halves are asserted here.
+refute_grep "idd-close does not fall back to a CWD-relative gate path" \
+  'CLAUDE_PLUGIN_ROOT:-plugins/issue-driven-dev' "$CLOSE_MD"
+assert_grep "idd-close requires CLAUDE_PLUGIN_ROOT to be set" \
+  'CLAUDE_PLUGIN_ROOT:?' "$CLOSE_MD"
 assert_grep "idd-close states that only exit 0 may proceed" \
   '只有 `rc == 0` 放行' "$CLOSE_MD"
 refute_grep "idd-close no longer describes its own gate as prose-only" \

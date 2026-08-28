@@ -108,7 +108,17 @@ allowed-tools:
 #   0 → class == missing 且 comment 集合完整      → 唯一可以往下走的情況
 #   1 → 其他分類（compliant / casing / present）   → abort
 #   2 → 無法判定（未 CLOSED / 截斷 / 抓取或解析失敗）→ abort
-HELPER="${CLAUDE_PLUGIN_ROOT:-plugins/issue-driven-dev}/scripts/check-closed-without-summary.sh"
+# `$CLAUDE_PLUGIN_ROOT` 必須有值，**沒有 CWD-relative fallback**。原本用的是
+# shell 的「未設就取預設值」寫法、預設值是一個**相對路徑**——它從當前工作目錄
+# 解析 gate 的執行檔，而 `/idd-close` 跑在使用者的 repo 裡。任何一個 clone 下來
+# 的 repo 只要在那個相對位置自備一個同名檔，就同時拿到「任意程式碼執行」與
+# 「無條件放行」。（那個 literal 不在這裡逐字重寫：prose-drift 測試會掃它，而
+# 把被禁的字面寫進說明正是機械檢查第一個踩到的東西。）
+#
+# 我上一版加的「helper 不在就 abort」關掉了**缺席**那個洞，卻打開了**被替換**
+# 這個。這兩者是同一個問題的兩半：gate 的身分必須來自安裝位置，不能來自被稽核
+# 的那棵樹。
+HELPER="${CLAUDE_PLUGIN_ROOT:?未設 —— 中止：gate 的路徑不得從當前工作目錄解析（被稽核的 repo 可以自備一個同名檔）}/scripts/check-closed-without-summary.sh"
 [ -f "$HELPER" ] || { echo "✗ 找不到 gate helper：$HELPER —— 中止（找不到 gate 等於沒有 gate）" >&2; exit 1; }
 
 VERDICT=$(bash "$HELPER" --issue "$NUMBER" ${GITHUB_REPO:+--repo "$GITHUB_REPO"}); GATE_RC=$?

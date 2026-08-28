@@ -404,7 +404,7 @@ idd-edit comment:NNN --append --body "..."
 
 - **Use case**:autonomous 持續執行;適合 well-bounded simple issues
 - **Mode**:Unattended
-- **Risks**:**極高** — deliberation 完全 absent;若 issue 模糊 / multi-step / Plan tier,Plan gate 仍 trigger 但 EnterPlanMode 無人 approve → 卡住
+- **Risks**:**極高** — deliberation 完全 absent。Plan tier 在 unattended 下**不會卡住,但也不會被審**:`idd-all` 的 dispatch table 把它降級走 Phase 3a `/idd-implement`(見 `skills/idd-all/SKILL.md`,那裡是 normative source),final report 標 `[Plan tier deliberation skipped under unattended mode]`。**沉默地少了一道 approval gate,比卡住更難察覺** —— issue 模糊 / multi-step 時尤其危險。
 
 #### P-cron-autopilot
 

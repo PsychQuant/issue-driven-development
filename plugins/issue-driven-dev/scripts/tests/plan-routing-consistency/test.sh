@@ -36,5 +36,50 @@ assert_grep "idd-plan says the downgrade is unattended-only" "降級只發生在
 assert_grep "idd-plan defers to idd-all as the normative source" \
   "normative source 是" "$PLAN"
 
+# ── Every file that makes a CLAIM about unattended Plan routing, not just the
+# ── ones using the implementation label
+#
+# `#317`'s criterion (c) asked whether a THIRD place restates this routing. The
+# check grepped for `Phase 3p` and reported "no third place" — but
+# `docs/workflows.md` stated the OPPOSITE ("Plan gate 仍 trigger…卡住") without
+# ever using that token. Grepping the implementation label answers "where is the
+# label", not "who makes a claim". The closing summary asserted the latter on the
+# strength of the former, and a post-merge ensemble falsified it.
+#
+# So: scan for the CLAIM's vocabulary — any file pairing unattended-mode words
+# with the Plan gate — and require each hit to agree that unattended DOWNGRADES.
+ROOT="$(cd "$PLUGIN/../.." && pwd)"
+claim_files() {
+  grep -rlE --include='*.md' -- 'Plan gate|Plan tier|Plan path' "$ROOT/docs" "$PLUGIN" 2>/dev/null \
+    | grep -v '/CHANGELOG.md$'
+}
+BAD=""
+while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  # A file claiming the gate FIRES under unattended contradicts idd-all.
+  if grep -qE 'unattended|/loop|autopilot' "$f" 2>/dev/null \
+     && grep -qE 'Plan gate 仍 trigger|EnterPlanMode 無人 approve' "$f" 2>/dev/null; then
+    BAD="${BAD}\n    ${f}"
+  fi
+done <<CLAIMS
+$(claim_files)
+CLAIMS
+require "no file claims the Plan gate still fires under unattended mode" \
+  bash -c '[ -z "$0" ] || { printf "%b\n" "$0"; exit 1; }' "$BAD"
+
+# Positive control — the scan above must be able to see such a claim.
+PC="$ROOT/docs/.plan-claim-canary.$$-${RANDOM}.md"
+trap 'rm -f "$PC"' EXIT HUP INT TERM
+printf 'unattended: Plan gate 仍 trigger 但 EnterPlanMode 無人 approve\n' > "$PC"
+PC_SEEN=0
+while IFS= read -r f; do
+  case "$f" in *plan-claim-canary*) PC_SEEN=1 ;; esac
+done <<CANARY
+$(claim_files)
+CANARY
+rm -f "$PC"
+require "positive control: the claim scan detects a planted contradiction" \
+  bash -c '[ "$0" = 1 ]' "$PC_SEEN"
+
 print_summary "plan-routing-consistency"
 exit $?
