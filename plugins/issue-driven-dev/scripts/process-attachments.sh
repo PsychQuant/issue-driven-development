@@ -174,8 +174,32 @@ assert_manifest_valid() {
 }
 
 decode_filename() {
-  # URL-decode the basename, strip trailing markdown punctuation
-  basename "$1" | sed 's/[)>"].*$//' | python3 -c 'import sys, urllib.parse; print(urllib.parse.unquote(sys.stdin.read().strip()))'
+  # ORDER MATTERS, and the original had it backwards: it took `basename` FIRST
+  # and URL-decoded AFTER. `basename` cannot see a separator that is still
+  # percent-encoded, so a URL ending in `%2e%2e%2f%2e%2e%2fpwned.txt` survived
+  # basename intact and only became `../../pwned.txt` afterwards — after which
+  # it was joined onto the attachments directory. Reproduced: the write lands in
+  # `.claude/.idd/pwned.txt`, two levels above where it belongs. The URL comes
+  # out of an issue body, so it is attacker-supplied on any repo that accepts
+  # outside reports.
+  #
+  # Decode first, THEN basename, then refuse anything that is not a plain
+  # filename. Refusing is safe here: the caller records a manifest error entry,
+  # which surfaces loudly, and this plugin's rule is that an unreadable
+  # attachment must never pass silently.
+  local dec
+  dec=$(printf '%s' "$1" | sed 's/[)>"].*$//' \
+        | python3 -c 'import sys, urllib.parse; print(urllib.parse.unquote(sys.stdin.read().strip()))')
+  dec=$(basename -- "$dec")
+  case "$dec" in
+    ''|.|..)  return 1 ;;   # nothing usable left
+    */*)      return 1 ;;   # unreachable after basename; kept as belt-and-braces
+    -*)       dec="./$dec" ; dec=${dec#./} ;;   # never let a name start an option
+  esac
+  # Control characters in a filename are never legitimate and can repaint a
+  # terminal when the name is echoed back in progress output.
+  printf '%s' "$dec" | LC_ALL=C tr -d '\000-\037\177'
+  printf '\n'
 }
 
 file_size() {

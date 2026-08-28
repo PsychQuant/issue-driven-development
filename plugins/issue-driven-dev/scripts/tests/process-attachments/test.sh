@@ -158,5 +158,50 @@ refute_grep_re "f11d no extracted URL keeps a sentence full stop" '\.$' "$URLS11
 assert_eq "f11e all three URLs were extracted" "3" "$(printf '%s\n' "$URLS11" | grep -c 'github.com')"
 cd /; rm -rf "$W"
 
+# ── Fixture 12 (#320 verify, security HIGH): percent-encoded path traversal ──
+#
+# `decode_filename` took `basename` FIRST and URL-decoded AFTER. basename cannot
+# see a separator that is still percent-encoded, so a URL ending in
+# `%2e%2e%2f%2e%2e%2fpwned.txt` passed through basename intact and only became
+# `../../pwned.txt` afterwards — after which it was joined onto the attachments
+# directory and resolved to `.claude/.idd/pwned.txt`, two levels up. The URL
+# comes out of an issue body, so it is attacker-supplied on any repo that takes
+# outside reports.
+#
+# The function is sourced directly: the traversal is in the NAME DERIVATION, and
+# routing it through a download would test the network stub instead.
+eval "$(sed -n '/^decode_filename()/,/^}/p' "$SCRIPT")"
+
+assert_eq "f12a percent-encoded traversal is flattened to a plain filename" \
+  "pwned.txt" \
+  "$(decode_filename 'https://github.com/user-attachments/files/1/%2e%2e%2f%2e%2e%2fpwned.txt')"
+assert_eq "f12b a literal traversal is flattened too" \
+  "pwned.txt" \
+  "$(decode_filename 'https://github.com/user-attachments/files/1/../../pwned.txt')"
+# NOT `bash -c`: that spawns a shell without the sourced function, so
+# `decode_filename` is "command not found", `$(...)` is empty, the case falls to
+# the catch-all and the assertion passes having tested NOTHING. Same for f12f
+# below, where 127 read as the expected failure. Ninth broken probe this round —
+# evaluate in THIS shell, where the function exists.
+case "$(decode_filename 'https://x/%2e%2e%2fa.txt')" in
+  */*) fail "f12c the derived name never contains a separator" "got a separator" ;;
+  *)   pass "f12c the derived name never contains a separator" ;;
+esac
+# The legitimate cases must survive — CJK and spaces are ordinary in this repo's
+# attachments, and mangling them would break the manifest↔disk correspondence.
+assert_eq "f12d percent-encoded spaces still decode" \
+  "報告 final.pdf" \
+  "$(decode_filename 'https://github.com/user-attachments/files/2/%E5%A0%B1%E5%91%8A%20final.pdf')"
+assert_eq "f12e trailing markdown punctuation is still stripped" \
+  "normal.png" \
+  "$(decode_filename 'https://github.com/user-attachments/files/3/normal.png)')"
+# A name that decodes to nothing usable must be REFUSED, not silently coerced —
+# the caller records a manifest error, which this plugin requires to be loud.
+if decode_filename 'https://x/%2e%2e' >/dev/null 2>&1; then
+  fail "f12f a name that decodes to '..' is refused outright" "it returned success"
+else
+  pass "f12f a name that decodes to '..' is refused outright"
+fi
+
 rm -rf "$STUB"
 print_summary
