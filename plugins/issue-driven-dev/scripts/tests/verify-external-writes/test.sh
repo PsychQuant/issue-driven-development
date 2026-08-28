@@ -3,28 +3,30 @@
 #
 # WHY THIS EXISTS
 #
-# `idd-verify`'s scope is a diff. But `idd-implement`'s sister sweep and
+# `idd-verify`'s scope is a diff. `idd-implement`'s sister sweep and
 # cross-reference notes write to surfaces that are NOT in it — comments on other
-# issues, issues filed in other repos. No lens can see them.
+# issues, issues filed in other repos. In the recorded case (macdoc#143) a
+# factual error in an implementation note was propagated verbatim into another
+# issue's cross-reference note; four lenses reviewed only the wording inside the
+# diff, and the devil's advocate caught it by stepping outside its brief.
 #
-# The recorded case (macdoc#143): a factual error in an implementation note was
-# propagated verbatim into a cross-reference note on another issue. Four lenses
-# reviewed only the wording inside the diff; the devil's advocate caught it by
-# stepping OUTSIDE its scope to read the Implementation Complete comment's blast
-# radius. One reviewer improvising past its brief is not a mechanism.
+# WHAT THE FIRST IMPLEMENTATION GOT WRONG (post-merge ensemble, #320 verify)
 #
-# #315 offered three options. This is option 1 — put the implementation's own
-# record of external writes into the reviewer context, so they at least know the
-# surfaces exist and are asked to check them. Option 2 (a machine-readable
-# manifest written by idd-implement and content-checked by idd-verify) is a NEW
-# CONTRACT BETWEEN TWO SKILLS, and this session's whole finding is that new
-# contracts shipped without their own review are where the defects live. Not
-# done here; the residue is recorded in the CHANGELOG.
+# Every one of these was live, and the suite was green over all of them:
+#   - the fetch used `$N`, undefined in that scope
+#   - it used `gh issue view --json comments` — the OLDEST-100 connection this
+#     same file deliberately routes the gate away from
+#   - it sat inside a block labelled "Tier 1 專用", so manual fan-out got
+#     "(none recorded)" every run
+#   - three of its four section names are written by no skill at all
+#   - `^` was applied to the whole comment string, not per line
+#   - cluster verify loops every ref'd issue; the fetch read one
+#   - the untrusted comment text went verbatim into five prompts with no guard
 #
-# BOTH BACKENDS, or the context is a coin flip: the same run reviewed through
-# pai gets the blast radius and through the manual fan-out does not, which makes
-# a finding depend on which backend resolved. The skill's own contract promises
-# the two are interchangeable after Step 3.
+# And the assertion meant to prove parity — annotated == prompt count — LOCKED
+# THE GAP IN: adding the context to the codex leg would have made it FAIL. An
+# equality that is satisfied by two things being equally incomplete is not a
+# parity check. This file now enumerates the reviewers by name instead.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN="$(cd "$HERE/../../.." && pwd)"
@@ -32,30 +34,69 @@ PLUGIN="$(cd "$HERE/../../.." && pwd)"
 
 MD=$(cat "$PLUGIN/skills/idd-verify/SKILL.md")
 
+echo "── acquisition ──"
 assert_grep "the external-writes list is collected as a Step 0 task" \
   'TaskCreate(name="collect_external_writes"' "$MD"
-assert_grep "it is read from the Implementation Complete comment" \
-  'Implementation Complete' "$MD"
-assert_grep "Tier 1 (pai) receives it through CONTEXT_BLOCK" \
-  'WRITES OUTSIDE THIS DIFF' "$MD"
+# The oldest-100 nested connection is the seven-round root cause. Using it to
+# find the NEWEST audit-trail comment repeats it one surface over.
+refute_grep "the fetch does NOT use the oldest-100 nested comments connection" \
+  'gh issue view "$N" --repo "$GITHUB_REPO" --json comments' "$MD"
+assert_grep "the fetch uses paginated REST, like the gate does" \
+  'gh api "repos/$GITHUB_REPO/issues/$1/comments" --paginate' "$MD"
+assert_grep "a failed fetch is distinguishable from an empty one" 'EW_OK=0' "$MD"
+refute_grep "no undefined \$N in the collector" 'gh issue view "$N"' "$MD"
+assert_grep "cluster: every ref'd issue is collected, not just one" \
+  'for I in ${REFD_ISSUES:-$NUMBER}' "$MD"
 
-# Every manual-fan-out prompt must carry it too. Counting is the point: the
-# first attempt at this edit keyed on a line only ONE of the five prompts has,
-# so four kept the old context and nothing said so.
+echo "── the sections scanned must be sections something WRITES ──"
+# Verified against the writers, not remembered. Each name below must appear in
+# the collector AND be produced by some skill; a name in the collector that
+# nothing emits guarantees a permanent UNKNOWN for that class.
+for sec in "Sister Bugs Filed" "Sister Concerns Filed" "Follow-up Findings Filed" \
+           "Closing Follow-ups Filed" "Tangential Observations"; do
+  assert_grep "collector scans '$sec'" "$sec" "$(printf '%s' "$MD" | grep -A2 '^EW_SECTIONS=')"
+  # `--include` MUST precede `--`: after it, grep takes the flag as a FILE
+  # OPERAND and ignores it. The first cut had it after, printed
+  # "grep: --include=*.md: No such file or directory" to stderr, and PASSED
+  # anyway. Same bug the prose-drift suite documents in its own header.
+  require "...and some skill actually writes '$sec'" \
+    bash -c 'grep -rqF --include="*.md" -- "### $1" "$0"/skills' "$PLUGIN" "$sec"
+done
+# The three names the first version invented, which nothing emits.
+for ghost in "Blast Radius" "External writes"; do
+  refute_grep "collector does not scan the invented section '$ghost'" \
+    "$ghost" "$(printf '%s' "$MD" | grep -A2 '^EW_SECTIONS=')"
+done
+
+echo "── who actually receives it ──"
+# Named reviewers, not a count. The pai DA is asserted as a KNOWN GAP rather
+# than quietly omitted — engine `daPrompt` takes no contextBlock, so IDD cannot
+# reach it through the documented contract.
+assert_grep "Tier 1 receives it through CONTEXT_BLOCK" 'CONTEXT_BLOCK="${CONTEXT_BLOCK}' "$MD"
+assert_grep "the manual codex leg receives it too" '--instructions "You are verifying' "$MD"
+require "the manual codex --instructions carries the block" \
+  bash -c 'printf "%s" "$0" | grep -A3 -- "--instructions \"You are verifying" | grep -q "EW_BLOCK"' "$MD"
+assert_grep "the pai DA gap is stated, with the engine line" 'daPrompt' "$MD"
+assert_grep "...and named as an upstream limitation, not a claim of parity" \
+  '上游限制' "$MD"
+refute_grep "no unqualified 'both backends' claim survives" \
+  '兩個 backend 都給' "$MD"
+
+# Every manual-fan-out lens prompt must carry it. Counting prompts is still
+# useful — but as a FLOOR (all five), never as an equality against however many
+# happen to be annotated.
 PROMPTS=$(printf '%s\n' "$MD" | grep -c 'Diff path: \$VERIFY_DIR/diff\.patch')
-ANNOTATED=$(printf '%s\n' "$MD" | grep -c 'Writes OUTSIDE this diff')
-assert_eq "every manual-fan-out lens prompt carries the external-writes context" \
-  "$PROMPTS" "$ANNOTATED"
-require "...and there is more than one of them (guards against a vacuous 0 == 0)" \
-  bash -c '[ "$0" -ge 4 ]' "$PROMPTS"
+ANNOTATED=$(printf '%s\n' "$MD" | grep -c '^\${EW_BLOCK}$')
+require "all five manual lens prompts carry the block (floor, not equality)" \
+  bash -c '[ "$0" -ge 5 ] && [ "$1" -ge "$0" ]' "$PROMPTS" "$ANNOTATED"
 
-# The absence case is the one that matters. "No section" means the blast radius
-# is UNKNOWN, not that it was empty — an absent record is exactly what a missing
-# sister-sweep looks like.
-assert_grep "an empty record is reported as UNKNOWN, not as 'nothing happened'" \
-  "blast radius as UNKNOWN rather than" "$MD"
-assert_grep "...and the pai-side wording says the same" \
-  "is simply unknown" "$MD"
+echo "── the absent case, and untrusted content ──"
+assert_grep "an empty record is reported as UNKNOWN, not 'nothing happened'" \
+  'the blast radius is UNKNOWN' "$MD"
+assert_grep "the untrusted comment text carries its own data guard" \
+  'UNTRUSTED issue-comment content' "$MD"
+assert_grep "...and is delimited so injected text cannot pass as instruction" \
+  '<<<EXTERNAL_WRITES' "$MD"
 
 print_summary "verify-external-writes"
 exit $?
