@@ -143,13 +143,25 @@ for root in "${ROOTS[@]}"; do
     # breadcrumb is a courtesy, not a reason to destroy something a user put
     # there. -L is tested separately because a dangling link is invisible to -e,
     # and redirection into one CREATES the target.
-    if [ -L "$legacy.moved" ] || [ -e "$legacy.moved" ]; then
-      echo "  note: $legacy.moved already exists (or is a symlink) — breadcrumb not written" >&2
-    elif ! printf '%s\n' \
+    # The `-L`/`-e` test followed by `>` was still CHECK-THEN-WRITE: two syscalls
+    # with a window between them, and `>` follows a symlink that appears inside
+    # it. Use the same primitive the move itself uses — `ln` fails atomically
+    # with EEXIST when the destination exists, symlink included — so the
+    # no-clobber promise is made by the kernel rather than by a preceding test.
+    bc_tmp=$(mktemp "$dir/.idd-breadcrumb.XXXXXX" 2>/dev/null)
+    if [ -n "$bc_tmp" ] && printf '%s\n' \
         "This file moved to .claude/.idd/local.json (#303, $(date +%Y-%m-%d))." \
         "The old path is no longer written by any IDD skill." \
-        > "$legacy.moved" 2>/dev/null; then
-      echo "  note: breadcrumb write failed: $legacy.moved" >&2
+        > "$bc_tmp" 2>/dev/null; then
+      if ln "$bc_tmp" "$legacy.moved" 2>/dev/null; then
+        :
+      else
+        echo "  note: $legacy.moved already exists — breadcrumb not written" >&2
+      fi
+      rm -f "$bc_tmp"
+    else
+      [ -n "$bc_tmp" ] && rm -f "$bc_tmp"
+      echo "  note: breadcrumb write failed near: $legacy.moved" >&2
     fi
     echo "  ✓ migrated: $repo"
     migrated=$((migrated + 1))

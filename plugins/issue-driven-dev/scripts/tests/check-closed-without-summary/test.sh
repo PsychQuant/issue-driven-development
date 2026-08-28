@@ -408,6 +408,41 @@ require "#163 (casing heading, only an HTML comment under it) is PRESENT"    unv
 refute  "#163 is NOT in CASING — CASING claims the summary is there"         in_section "CASING —" 163
 refute  "#163 is NOT in MISSING"                                             flagged 163
 
+# ── HTML-flavoured headings a reader sees but the recogniser did not (#320) ──
+#
+# The recogniser demanded a hash (or an emphasis run, or a bare title line) at
+# the start of the line. GitHub renders all four shapes below as visible
+# headings, so a human reading the comment sees a closing summary — and the
+# classifier said `missing`, which since the gate landed no longer merely
+# under-reports: it AUTHORISES the duplicate post, while idd-close explicitly
+# forbids the agent from second-guessing the exit code by reading the prose.
+#
+# #170 is the sharp one. The fixtures already had the marker AFTER the heading
+# (#115) and on its OWN line (#121). Marker BEFORE the heading, same line, is
+# the third arrangement of the same three tokens — the one nobody enumerated.
+refute "#170 (idd marker before the heading) is NOT in MISSING"   flagged 170
+refute "#171 (anchor tag before the heading) is NOT in MISSING"   flagged 171
+# Not merely "not missing" — these two LEAD with a heading once the invisible
+# prefix is accounted for, so they belong in CASING, whose advice (normalise the
+# heading, e.g. put the marker on its own line as #121 does) is actionable.
+# Asserting only "not missing" left the strict predicate with no individual
+# weight: an acid run showed html_pfx could be dropped from lead_re alone and
+# the suite stayed green, because present_re caught them one class down.
+require "#170 is listed under CASING, not merely absent from MISSING" in_section "CASING —" 170
+require "#171 is listed under CASING, not merely absent from MISSING" in_section "CASING —" 171
+refute "#172 (raw <h2> heading) is NOT in MISSING"                flagged 172
+refute "#173 (details/summary disclosure) is NOT in MISSING"      flagged 173
+# ...and none of them may be silently swallowed either: each must still show up
+# somewhere a human reads.
+require "#172 (raw <h2>) is visible in the advisory bucket"       unverified 172
+require "#173 (details/summary) is visible in the advisory bucket" unverified 173
+# The widening must not exonerate a QUOTATION: a blockquoted HTML heading is
+# still only `present`, never `casing`/`compliant`.
+require "a blockquoted HTML heading stays in the advisory bucket, not CASING" \
+  bash -c 'printf "%s" "[{\"number\":9100,\"title\":\"q\",\"state\":\"CLOSED\",\"comments\":[{\"body\":\"> <h2>Closing Summary</h2>\\n> quoted, not mine\"}]}]" > "$0/q.json";
+           [ "$(bash "$1" --json-file "$0/q.json" --issue 9100 2>/dev/null | jq -r .class)" = "present" ]' \
+  "${TMPDIR:-/tmp}" "$HELPER"
+
 # ── `--issue N`: the single-issue GATE (#307 follow-up) ────────────────────────
 # Audit mode reports to a human and always exits 0. This mode is a precondition
 # for an IRREVERSIBLE action, so the whole point is the exit code: the caller

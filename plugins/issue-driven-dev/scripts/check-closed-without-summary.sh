@@ -400,7 +400,35 @@ CLASSIFY='
   # Hash count is 1-6, not 1-2. Excluding h3 bought nothing -- a subsection like
   # `### Problem` does not contain the phrase -- while sending a summary written
   # at h3 straight to the destructive class.
-  def present_re: "^[ \t>]*[#\\x{FF03}]{1,6}[^\\p{L}\\p{N}]*closing[\\s\\x{00A0}\\x{200B}\\x{3000}]+summary";
+  # HTML_PFX: a run of inline HTML that renders to nothing visible before the
+  # heading. GitHub renders `<!-- marker --> ## Closing Summary` and
+  # `<a name="x"></a>## Closing Summary` exactly like a bare heading, but every
+  # recogniser here starts by demanding a hash, so both went to `missing`.
+  #
+  # The first is the sharp one. The fixtures already carry `## Closing Summary
+  # <!-- idd:closing-summary -->` (marker AFTER, #115) and the marker on its own
+  # line (#121). Marker BEFORE the heading on the same line is the third
+  # arrangement of the same three tokens — and it is the one that authorises a
+  # duplicate post. Two of three arrangements were covered; the third was not,
+  # which is what "we enumerated the shapes" is worth without someone else
+  # checking.
+  # Whitespace is allowed only AFTER an HTML tag, never on its own. The first
+  # cut had a bare space/tab alternative at the top level, which quietly relaxed
+  # the three-space indent cap in lead_re: a space+tab indent (fixture #129)
+  # started matching, and a shape that must stay in the advisory bucket was
+  # promoted to `casing` -- a positive claim. Widening one predicate loosened a
+  # different guarantee two definitions away.
+  #
+  # NOTE the wording above avoids the apostrophe. This jq program lives inside a
+  # single-quoted shell string; the file header says so, and the first version of
+  # this very comment wrote "lead_re" with a possessive apostrophe, closed the
+  # string, and turned 44 assertions red at once. The warning was three hundred
+  # lines up and still did not survive contact.
+  def html_pfx: "(?:(?:<!--(?:.|\n)*?-->|<[a-zA-Z/][^>]*>)[ \t]*)*";
+  def present_re: "^[ \t>]*" + html_pfx + "[#\\x{FF03}]{1,6}[^\\p{L}\\p{N}]*closing[\\s\\x{00A0}\\x{200B}\\x{3000}]+summary";
+  # Raw HTML headings. GitHub renders <h2>…</h2> and the <summary> of a
+  # <details> block as visible headings; nothing here looked for either.
+  def html_re: "^[ \t>]*" + html_pfx + "<(?:h[1-6]|summary)[^>]*>[^\\p{L}\\p{N}]*closing[\\s\\x{00A0}\\x{200B}\\x{3000}]+summary";
   # Two forms. (a) a line that is ESSENTIALLY JUST the phrase — setext titles,
   # bare title lines. The trailing anchor is what keeps ordinary prose ("I forgot
   # the closing summary, sorry") out of the presence test, which matters: 5 of 9
@@ -409,7 +437,11 @@ CLASSIFY='
   # anchor alone sent `**Closing Summary** - fixed the parser` to `missing`.
   def bare_re:    "^[ \t>]*[^\\p{L}\\p{N}]*closing[\\s\\x{00A0}\\x{200B}\\x{3000}]+summary[^\\p{L}\\p{N}]*$";
   def emph_re:    "^[ \t>]*(\\*\\*|__|\\*|_)[^\\p{L}\\p{N}]*closing[\\s\\x{00A0}\\x{200B}\\x{3000}]+summary";
-  def lead_re:    "^ {0,3}#{1,6}[^\\p{L}\\p{N}]*closing[\\s\\x{00A0}\\x{200B}\\x{3000}]+summary";
+  # The strict predicate gets the same HTML prefix — a leading marker does not
+  # make a heading stop leading — but keeps everything else strict: still no
+  # blockquote prefix, still at most three spaces of indent, so a quotation
+  # cannot reach it.
+  def lead_re:    "^ {0,3}" + html_pfx + "#{1,6}[^\\p{L}\\p{N}]*closing[\\s\\x{00A0}\\x{200B}\\x{3000}]+summary";
   # Control characters are structural here (record + field delimiters) and can
   # also repaint a terminal; U+2028/U+2029 and the bidi controls can forge or
   # reorder a row in any renderer that honours them. One substitution covers all.
@@ -458,7 +490,7 @@ CLASSIFY='
   # failure this rewrite exists to make unreachable.
   def has_heading_anywhere:
     ((. // "") | split("\n"))
-    | any(test(present_re; "i") or test(bare_re; "i") or test(emph_re; "i"));
+    | any(test(present_re; "i") or test(bare_re; "i") or test(emph_re; "i") or test(html_re; "i"));
   # Does anything non-blank follow the lead line? A heading with nothing under it
   # is not a summary, and letting it read as compliant made such an issue
   # INVISIBLE -- printed in no section at all, while --retroactive also aborts on

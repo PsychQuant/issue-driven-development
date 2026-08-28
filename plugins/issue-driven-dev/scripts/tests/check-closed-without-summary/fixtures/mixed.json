@@ -819,5 +819,45 @@
         "body": "## closing summary\n<!-- TODO -->"
       }
     ]
+  },
+  {
+    "number": 170,
+    "title": "REAL summary: idd marker BEFORE the heading on the same line (third arrangement of the same tokens)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "<!-- idd:closing-summary --> ## Closing Summary\n\nfixed the parser, suite green"
+      }
+    ]
+  },
+  {
+    "number": 171,
+    "title": "REAL summary: anchor tag before the heading",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "<a name=\"cs\"></a>## Closing Summary\n\nreal content here"
+      }
+    ]
+  },
+  {
+    "number": 172,
+    "title": "REAL summary: raw HTML h2 (GitHub renders it as a heading)",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "<h2>Closing Summary</h2>\n\nreal content here"
+      }
+    ]
+  },
+  {
+    "number": 173,
+    "title": "REAL summary: inside a details/summary disclosure",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "<details><summary>Closing Summary</summary>\n\nreal content here\n</details>"
+      }
+    ]
   }
 ]
