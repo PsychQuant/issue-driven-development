@@ -185,10 +185,16 @@ The order matters because the pointer must contain the master URL. This pattern 
 
 ```bash
 # Pseudocode mirroring the existing helper pattern
-MASTER_URL=$(gh pr comment "$PR" --repo "$REPO" --body-file /tmp/master.md 2>&1 | tail -1)
+# $VERIFY_DIR is the per-run scratch dir resolved in idd-verify Step 0. These
+# three are EGRESS BODIES — the text posted to somebody else's issue — so a
+# stale or half-written file at a shared fixed path does not fail loudly, it
+# publishes the wrong comment. #288 converted the copies in idd-verify/SKILL.md
+# and missed this one entirely; the test that was supposed to prevent that
+# declared a scope which did not mention this file.
+MASTER_URL=$(gh pr comment "$PR" --repo "$REPO" --body-file "$VERIFY_DIR/master.md" 2>&1 | tail -1)
 for I in $REFD_ISSUES; do
-  sed "s|__MASTER_URL__|$MASTER_URL|g" /tmp/pointer_template.md > /tmp/pointer.md
-  gh issue comment "$I" --repo "$REPO" --body-file /tmp/pointer.md &
+  sed "s|__MASTER_URL__|$MASTER_URL|g" "$VERIFY_DIR/pointer_template.md" > "$VERIFY_DIR/pointer.md"
+  gh issue comment "$I" --repo "$REPO" --body-file "$VERIFY_DIR/pointer.md" &
 done
 wait
 ```

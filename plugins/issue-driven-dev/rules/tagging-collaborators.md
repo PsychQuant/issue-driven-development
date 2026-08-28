@@ -34,18 +34,26 @@ If no tagging intent → skip the rest of this rule.
 Before resolving any handle:
 
 ```bash
+# One per-run scratch dir. Fixed names under the system temp directory are
+# shared by every concurrent session and by every repo: two runs tagging in
+# different repos read each other's collaborator list, and the mention gate
+# below decides who gets notified from exactly these files. #288 mechanised the
+# no-fixed-scratch-paths rule for idd-verify and this file was outside the scan
+# it declared -- while idd-verify MANDATES this protocol, so the rule and its
+# largest violation shipped together.
+TAG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/idd-tagging-XXXXXX")
 # Collaborators (anyone with repo access — outside collaborators included)
 gh api repos/$OWNER/$REPO/collaborators --jq '.[] | {login, name, type}' \
-  > /tmp/idd-collaborators.json
+  > "$TAG_DIR/collaborators.json"
 
 # Org members (in case the target is an org repo and the person is a member but not direct collaborator)
 if [ "$OWNER_TYPE" = "Organization" ]; then
   gh api orgs/$OWNER/members --jq '.[] | {login}' \
-    > /tmp/idd-org-members.json
+    > "$TAG_DIR/org-members.json"
 fi
 
 # Recent commit authors (fallback — for forked / public repos with no API access)
-git log --pretty=format:'%an <%ae>' | sort -u > /tmp/idd-commit-authors.txt
+git log --pretty=format:'%an <%ae>' | sort -u > "$TAG_DIR/commit-authors.txt"
 ```
 
 **The combined set of these lists is the only source of truth for valid handles.** Never use:
@@ -115,9 +123,9 @@ User picks from the **actual list**. The "Other" free-text option is fine for ge
 
 ```bash
 # Verification step
-for handle in $(grep -oE '@[A-Za-z0-9-]+' /tmp/comment-body.md | sort -u); do
+for handle in $(grep -oE '@[A-Za-z0-9-]+' "$TAG_DIR/comment-body.md" | sort -u); do
   login=${handle#@}
-  if ! jq -e ".[] | select(.login == \"$login\")" /tmp/idd-collaborators.json > /dev/null; then
+  if ! jq -e ".[] | select(.login == \"$login\")" "$TAG_DIR/collaborators.json" > /dev/null; then
     echo "ERROR: @$login not in collaborator list. Aborting."
     exit 1
   fi
