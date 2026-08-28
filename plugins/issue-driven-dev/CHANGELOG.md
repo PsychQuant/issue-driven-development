@@ -5,6 +5,82 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.111.0] - 2026-08-28
+
+### Fixed — the post-merge ensemble on 2.110.0 (first complete cross-model pass) returned FAIL
+
+Six of six legs reported; Codex had been rate-limited for four consecutive rounds on the `#295` line and its DA leg
+died on a weekly limit the round before. 69 findings, 4 CRITICAL, 15 HIGH. Every fix below was reproduced before it
+was accepted.
+
+- **CRITICAL — the gate fails open on a failed fetch.** Four lenses (codex, logic, security, regression) independently
+  reproduced it. `gh api ... --paginate | jq -s 'add // []'` in one pipeline, with `set -u` and no `pipefail`: `if !`
+  observed **jq's** status, and `jq -s 'add // []'` exits 0 on empty stdin printing `[]`. A 403, a 5xx, or a
+  `--paginate` leg dying halfway was indistinguishable from "this issue has no comments", so the classifier answered
+  `missing` — the sole authorisation for an irreversible duplicate post. The partial case is worse and unexotic:
+  `--paginate` streams **oldest first**, so a mid-pagination failure keeps the old comments and drops the newest,
+  which is by construction where a closing summary lives. Two syscalls, two checks now.
+  **This is the seven-round failure shape, restored at the acquisition layer** — the header claim that "the gate
+  simply never takes the broken road" was inverted: it took a different one, with no repair at all.
+
+- **CRITICAL — `--issue ""` bypassed the gate entirely.** That is what `--issue "$NUMBER"` expands to when `NUMBER`
+  is unset. `[ -n "$GATE_ISSUE" ]` was false, so the run fell through to **audit mode**, whose contract is to always
+  exit 0 — read by the caller as "confirmed missing, go ahead". The validator's own `''` arm was unreachable for the
+  same reason. Gate mode now keys on whether the FLAG was passed, not on whether it has a value.
+
+- **`scripts/tests/gate-live-path/` (new, 52nd suite, 22 assertions) — the coverage that was missing.** The gate
+  shipped with every assertion going through `--json-file`, which skips acquisition entirely. Repo resolution, the
+  `gh issue view` fetch and the paginated REST fetch had none, and the suite was 51/51 green throughout. Every case
+  here stubs `gh` on PATH and goes through the live branch.
+
+- **The gate resolved its own executable from `$PWD`.** A shell default-value expansion whose default was a relative
+  path, in a skill that runs inside the user's repo: a cloned repo shipping that path got arbitrary code execution
+  plus an unconditional pass. Closing the "helper absent" hole had opened the "helper substituted" one.
+
+- **Four HTML shapes a reader sees and the recogniser did not** — a marker or anchor tag before the heading on the
+  same line, a raw `<h2>`, a `<details><summary>`. The first is the sharp one: the fixtures already had the marker
+  *after* the heading and on its *own line*; marker *before*, same line, is the **third arrangement of the same three
+  tokens**, and it is the one that authorises the duplicate post.
+
+- **`#317` criterion (c) was not met**, and the closing summary said it was. `docs/workflows.md` is the third place
+  and stated the OPPOSITE. The grep searched for `Phase 3p` — the implementation *label* — while that file states the
+  *claim* without ever using the token. The test now scans the claim's vocabulary, not the label.
+
+- **`#315` was broken seven ways**, including a use of the oldest-100 connection this same release routes the gate
+  away from, and an undefined `$N`. The assertion meant to prove backend parity **locked the gap in**: adding the
+  context to the codex leg would have made it fail. Reviewers are now enumerated by name; the pai devil's-advocate is
+  recorded as a real upstream gap (`ensemble-workflow.js` `daPrompt` takes no `contextBlock`) rather than covered by
+  a "both backends" claim.
+
+- **`idd-update`'s previous fix was an over-correction I introduced**, and it regressed `#295`'s own measured case
+  (a summary merged into the Implementation Complete comment). `phase = closed` now gates on GitHub's `state` — an
+  authoritative field that comment text cannot forge — instead of on a stricter regex.
+
+- **Attachment filenames were URL-decoded *after* `basename`**, so `%2e%2e%2f%2e%2e%2f…` escaped the attachments
+  directory into `.claude/.idd/`. Reproduced. Decode first, then `basename`, then refuse anything that is not a
+  plain filename.
+
+- **`#288`'s rule and its two largest violations shipped together**: `references/external-agent-delegation.md` (the
+  egress-body copy — the surface `#288`'s own rationale calls the worst) and `rules/tagging-collaborators.md` (a
+  protocol `idd-verify` mandates, whose fixed files are the mention gate's decision source) were outside the scan's
+  declared scope. The scan also exempted the whole `${TMPDIR:-/tmp}` idiom and did not even match that shape.
+
+- Breadcrumb writing in `migrate-idd-config.sh` was still check-then-write; it now uses the same atomic `ln` primitive
+  as the move itself.
+
+### Honest residue
+
+- **Nine broken probes were found and fixed during this round, by me, in my own tests.** An unquoted heredoc that made
+  a case return the right exit code for the wrong reason; `$(...)` running assertions in a subshell so four counter
+  increments vanished; `--include` after `--`; `bash -c` spawning a shell without the sourced function so two
+  assertions passed having tested nothing; a backtick needle executing as command substitution; a fixture *title*
+  containing `#121` which broke an unrelated assertion; an apostrophe in a comment closing the single-quoted jq
+  program and turning 44 assertions red at once — the file header warns about that exact thing three hundred lines
+  above. The count is the point: this is the failure mode of the work, not an incident in it.
+- `html_pfx` individually has no test weight in `present_re` (the safety property survives via `lead_re`); two
+  narrower assertions were added so the strict half does. Disclosed rather than claimed.
+- The pai devil's-advocate still cannot receive the external-writes record. Upstream.
+
 ## [2.110.0] - 2026-08-15
 
 ### Added — the closing-summary gate is now executed, not read
