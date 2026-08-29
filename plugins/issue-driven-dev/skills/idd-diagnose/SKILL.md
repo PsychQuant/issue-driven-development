@@ -506,7 +506,7 @@ gh api -X PATCH "/repos/$GITHUB_REPO/issues/comments/$COMMENT_ID" -f body="$NEW_
 
 `/idd-all` Phase 6 會掃 Diagnosis comments、把這些 record 聚合到 final report 的「## Action items (require human review)」（與 #137 的 Step-4.6 機制 isomorphic — 同 registry、同聚合出口）。**attended 行為零改動**：AskUserQuestion 路徑（A–E）不寫此 record；Layer V 未觸發（兩軸 ≤ 3）時 unattended 也不寫（non-noisy）。
 
-跟 Plan tier 在 unattended mode 也跳過 EnterPlanMode 同樣設計(user 不在現場,沒法 review prompt)。User 後續 review final report 仍能看到 audit trail 上的 trigger 記錄 + deferred record,可以手動重 route。
+跟 Plan tier 在 unattended mode 同樣被降級的設計一致(user 不在現場,沒法 review prompt;實際降級成什麼見 `skills/idd-all/SKILL.md` 的 dispatch table)。User 後續 review final report 仍能看到 audit trail 上的 trigger 記錄 + deferred record,可以手動重 route。
 
 ### Step 3.5: Complexity Assessment (3-tier: Simple / Plan / Spectra)
 

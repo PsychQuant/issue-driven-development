@@ -49,24 +49,80 @@ assert_grep "cluster: every ref'd issue is collected, not just one" \
   'for I in ${REFD_ISSUES:-$NUMBER}' "$MD"
 
 echo "── the sections scanned must be sections something WRITES ──"
-# Verified against the writers, not remembered. Each name below must appear in
-# the collector AND be produced by some skill; a name in the collector that
-# nothing emits guarantees a permanent UNKNOWN for that class.
-for sec in "Sister Bugs Filed" "Sister Concerns Filed" "Follow-up Findings Filed" \
-           "Closing Follow-ups Filed" "Tangential Observations"; do
-  assert_grep "collector scans '$sec'" "$sec" "$(printf '%s' "$MD" | grep -A2 '^EW_SECTIONS=')"
-  # `--include` MUST precede `--`: after it, grep takes the flag as a FILE
-  # OPERAND and ignores it. The first cut had it after, printed
-  # "grep: --include=*.md: No such file or directory" to stderr, and PASSED
-  # anyway. Same bug the prose-drift suite documents in its own header.
-  require "...and some skill actually writes '$sec'" \
-    bash -c 'grep -rqF --include="*.md" -- "### $1" "$0"/skills' "$PLUGIN" "$sec"
-done
-# The three names the first version invented, which nothing emits.
-for ghost in "Blast Radius" "External writes"; do
-  refute_grep "collector does not scan the invented section '$ghost'" \
-    "$ghost" "$(printf '%s' "$MD" | grep -A2 '^EW_SECTIONS=')"
-done
+#
+# PARSED FROM THE SKILL, not hardcoded. The first cut iterated its own list of
+# five names and asserted each was real — which says nothing about what the
+# collector actually scans. Mutation-proven: prepending a sixth invented section
+# to `EW_SECTIONS` left the suite 28/0 green. A gate that cannot see the thing it
+# constrains is decoration.
+#
+# The stated guarantee is: "a name in the collector that nothing emits guarantees
+# a permanent UNKNOWN for that class". Enforce exactly that, over whatever the
+# collector currently lists.
+EW_LINE=$(printf '%s\n' "$MD" | grep '^EW_SECTIONS=' | head -1)
+require "the collector's section list is parseable" \
+  bash -c '[ -n "$0" ]' "$EW_LINE"
+EW_LIST=$(printf '%s' "$EW_LINE" | sed "s/^EW_SECTIONS='//; s/'\$//" | tr '|' '\n')
+require "...and non-empty" bash -c '[ -n "$0" ]' "$EW_LIST"
+
+# A section counts as EMITTED when some skill declares it an `**Audit trail
+# target**` — that is how all six writers state it. Keying on the declaration
+# rather than on a bare mention is what separates a writer from the collector's
+# own comment table; the first cut excluded `idd-verify/SKILL.md` wholesale
+# instead, which also excluded a GENUINE writer (idd-verify emits
+# `### Follow-up Findings Filed` into its own report) and failed on it.
+writers_of() {  # $1 = section name
+  grep -rl --include='*.md' -- "Audit trail target" "$PLUGIN/skills" 2>/dev/null \
+    | while IFS= read -r f; do
+        grep -qE -- '\*\*Audit trail target\*\*:?[^`]*`### '"$(printf '%s' "$1" | sed 's/[][\.*^$/]/\\&/g')" "$f" \
+          && printf '%s\n' "$f"
+      done
+}
+# Evaluated in THIS shell. `bash -c` spawns one without the function, so
+# `writers_of` would be "command not found", `$(...)` empty, and the assertion
+# would report on nothing. That is the same mistake this round already fixed
+# twice in the attachments suite — writing it a third time is the reason the
+# rule is stated here rather than remembered.
+while IFS= read -r sec; do
+  [ -z "$sec" ] && continue
+  if [ -n "$(writers_of "$sec")" ]; then
+    pass "collector scans '$sec' — and some OTHER skill actually writes it"
+  else
+    fail "collector scans '$sec' — and some OTHER skill actually writes it" \
+         "nothing outside idd-verify emits '### $sec'; that class can only ever report UNKNOWN"
+  fi
+done <<EW_SECTIONS_LIST
+$EW_LIST
+EW_SECTIONS_LIST
+
+# THE CONVERSE, which is the direction that actually finds things: every section
+# some skill DECLARES must appear in the collector. Without it the test only
+# ratifies today's list — and it immediately found a sixth,
+# `### Linked-Context Siblings Filed` (idd-issue), which the collector did not
+# scan, so that whole class of external write could only ever report UNKNOWN.
+DECLARED=$(grep -rhoE '\*\*Audit trail target\*\*:?[^`]*`### [^(`]+' "$PLUGIN/skills" 2>/dev/null \
+           | sed 's/.*### //; s/ *$//' | sort -u)
+require "at least one audit-trail target is declared (guards a vacuous pass)" \
+  bash -c '[ -n "$0" ]' "$DECLARED"
+while IFS= read -r decl; do
+  [ -z "$decl" ] && continue
+  case "$EW_LIST" in
+    *"$decl"*) pass "declared target '$decl' is in the collector's scan list" ;;
+    *)         fail "declared target '$decl' is in the collector's scan list" \
+                    "a skill writes it, the collector does not look for it — permanent UNKNOWN" ;;
+  esac
+done <<DECLARED_LIST
+$DECLARED
+DECLARED_LIST
+
+# Positive control: a name nothing emits must be caught. Without it the loop
+# above is only as good as the list it read, and an empty list would pass
+# vacuously.
+if [ -z "$(writers_of "Ghost Radius Log")" ]; then
+  pass "positive control: an invented section name has no writer"
+else
+  fail "positive control: an invented section name has no writer" "the writer search matches anything"
+fi
 
 echo "── who actually receives it ──"
 # Named reviewers, not a count. The pai DA is asserted as a KNOWN GAP rather
@@ -77,8 +133,17 @@ assert_grep "the manual codex leg receives it too" '--instructions "You are veri
 require "the manual codex --instructions carries the block" \
   bash -c 'printf "%s" "$0" | grep -A3 -- "--instructions \"You are verifying" | grep -q "EW_BLOCK"' "$MD"
 assert_grep "the pai DA gap is stated, with the engine line" 'daPrompt' "$MD"
-assert_grep "...and named as an upstream limitation, not a claim of parity" \
-  '上游限制' "$MD"
+# The DA IS reachable — `daPrompt` interpolates `A.daFocus`, a documented caller
+# arg this skill already passes. The previous text called it an upstream
+# limitation that could not be worked around; that was wrong, and the honest
+# version is a trade-off: `contextBlock` is sentinel-wrapped by pai, `daFocus` is
+# raw, so only a STRUCTURAL digest goes that way.
+refute_grep "the DA gap is no longer described as un-sendable" '無法從 documented contract 送進去' "$MD"
+assert_grep "...it is stated as a trade-off with a named reason" 'trade-off' "$MD"
+assert_grep "the DA receives a structural digest through daFocus" 'DA_FOCUS_SUFFIX' "$MD"
+assert_grep "...and the digest carries no verbatim comment text" 'EW_DIGEST=' "$MD"
+assert_grep "...and an absent record still reads UNKNOWN there too" \
+  'treat the blast radius as UNKNOWN' "$MD"
 refute_grep "no unqualified 'both backends' claim survives" \
   '兩個 backend 都給' "$MD"
 

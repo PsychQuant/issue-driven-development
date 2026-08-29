@@ -233,8 +233,10 @@ Source-of-truth attachments (repo-relative; read with your file tools): ${ATTACH
 #
 # 最小版（#315 選項 1）：把 implement 自己記下的外部寫入清單塞進 context，讓 reviewer
 # **知道它們存在**、並被明確要求去核對。這裡不做選項 2 的 machine-readable manifest
-# ——那要 idd-implement 與 idd-verify 之間新增一份契約，屬於另一次改動（理由與殘餘
-# 風險見下方）。
+# ——那要 idd-implement 與 idd-verify 之間新增一份契約，屬於另一次改動。理由與殘餘風險
+# 記在 CHANGELOG 2.110.0 的 #315 條目：新契約沒經過自己那輪 review 正是缺陷住的
+# 地方；殘留風險是**清單本身的正確性未被驗證** —— implement 漏記就等於 verify
+# 看不到。
 # 這一段刻意放在 backend 解析**之前**，而且不在任何 tier-specific 區塊內：第一版
 # 寫在標著「Tier 1 專用」的段落裡，於是 manual fan-out 每次都拿到 `(none recorded)`。
 #
@@ -251,14 +253,23 @@ Source-of-truth attachments (repo-relative; read with your file tools): ${ATTACH
 #   ### Follow-up Findings Filed   idd-verify    → verify report
 #   ### Closing Follow-ups Filed   idd-close     → closing summary
 #   ### Tangential Observations    idd-plan      → Implementation Plan
+#   ### Linked-Context Siblings Filed  idd-issue  → the issue BODY (not a comment)
 # 它們散在**不同的 comment** 裡，所以掃描對象是全部 comment，不是「最後一則
-# Implementation Complete」。
-EW_SECTIONS='Sister Bugs Filed|Sister Concerns Filed|Follow-up Findings Filed|Closing Follow-ups Filed|Tangential Observations'
+# Implementation Complete」——**外加 issue body**，因為 idd-issue 那一個是 PATCH
+# 進 body 的。清單的權威來源是各 skill 自己宣告的 `**Audit trail target**`；測試
+# 會反過來檢查「每個宣告的 target 都在這個清單裡」，所以新增一種紀錄不會靜默地
+# 永遠回報 UNKNOWN。
+EW_SECTIONS='Sister Bugs Filed|Sister Concerns Filed|Follow-up Findings Filed|Closing Follow-ups Filed|Tangential Observations|Linked-Context Siblings Filed'
 collect_external_writes() {   # $1 = issue number
   local raw; raw=$(mktemp) || return 1
   if ! gh api "repos/$GITHUB_REPO/issues/$1/comments" --paginate \
          --jq '.[] | .body' >"$raw" 2>/dev/null; then
     rm -f "$raw"; return 1        # 抓取失敗 → 回報 UNKNOWN，不是「沒有」
+  fi
+  # ...外加 issue body：`Linked-Context Siblings Filed` 是 PATCH 進 body 的，
+  # 只掃 comment 會讓那一類永遠回報 UNKNOWN。
+  if ! gh api "repos/$GITHUB_REPO/issues/$1" --jq '.body' >>"$raw" 2>/dev/null; then
+    rm -f "$raw"; return 1
   fi
   # 逐行掃。第一版把 `^` 用在整個 comment 字串上，而 Oniguruma/jq 的 `^` 錨在
   # 字串開頭、不是每行開頭 —— 只有恰好在第一行的 heading 會被看到。
@@ -290,12 +301,21 @@ fi
 #
 #   Tier 1 (pai 2.20.0)：4 lens ✅（engine `reviewPrompt` 帶 contextBlock）
 #                        codex  ✅（`codexPrompt` 帶 contextBlock）
-#                        DA     ❌ **engine 的 `daPrompt` 不接 contextBlock**
-#                               （ensemble-workflow.js:326-356 —— 三個 prompt builder
-#                               裡唯一沒有的那個）。這是上游限制，IDD 端無法從
-#                               documented contract 送進去；已對 pai 提 issue。
-#                               DA 仍拿得到四個 lens 的 findings，所以若 lens 有提到
-#                               外部寫入，DA 會間接看到 —— 那是間接、不是保證。
+#                        DA     ⚠ 只拿到**結構摘要**，不是全文（見下）
+#
+# **上一版在這裡寫錯了一句**：把 DA 說成從 documented contract 送不進去的。
+# （那句話的原字面不在這裡重寫 —— 測試會掃它，而把被禁的字面寫進說明正是機械
+# 檢查第一個踩到的東西。本輪第二次踩，第一次是 idd-close 的 gate 路徑。）
+# `daPrompt` 確實不接 `contextBlock`（ensemble-workflow.js:326-352，三個 prompt
+# builder 裡唯一沒有的），但它**有**插值 `A.daFocus` —— 而 `daFocus` 是 engine
+# header L40 明列的 caller arg，本 skill 早就在傳。所以那不是「送不進去」，是一個
+# **trade-off**：`contextBlock` 會被 pai 的 `dataBlock()` 包 sentinel 並剝除偽造
+# marker，`daFocus` 是**原樣**插值。
+#
+# 取捨後的做法：只把**結構摘要**（哪張 issue、哪些 section）走 daFocus，逐字內容
+# 仍只走 contextBlock。DA 因此知道有哪些 diff 外的寫入、知道要去讀，而不受信任的
+# 散文不會經過那條沒有 sentinel 的路。刻意的降級，不是遺漏 —— 而 DA 正是當初在
+# macdoc#143 抓到這件事的那一個。
 #   manual fan-out：      5 個 Agent prompt（含 DA）✅ + codex `--instructions` ✅
 #
 # **諷刺的是 DA 正是當初在 macdoc#143 抓到這個問題的那一個**，而它在 canonical
@@ -322,6 +342,13 @@ CONTEXT_BLOCK="${CONTEXT_BLOCK}
 
 ${EW_BLOCK}"
 
+# DA digest：只有結構、沒有逐字內容（理由見上）。控制字元一併去掉 —— 這條路徑
+# 沒有 pai 的 sentinel 包裝。
+EW_DIGEST=$(printf '%s' "${EXTERNAL_WRITES:-}" \
+  | awk '/^--- #/ {iss=$2} /^###/ {printf "%s %s; ", iss, $0}' \
+  | LC_ALL=C tr -d '\000-\037\177' | cut -c1-600)
+DA_FOCUS_SUFFIX=" Also: the implementation wrote OUTSIDE this diff, at these surfaces — ${EW_DIGEST:-(none recorded; treat the blast radius as UNKNOWN, not empty)}. The full text is in the reviewers context; check whether what was written there matches what the diff does."
+
 # Tier 1 — canonical：已安裝的 parallel-ai-agents 引擎（#207 使用者依賴裁決；契約 = pai#20 官方化的 EXTERNAL-CONSUMER CONTRACT）
 MIN_PAI="2.19.0"   # codexModel/codexEffort 契約起點（pai#22）——閘門理由：2.18.0 引擎會「靜默忽略」這兩個 args → canonical tier 的 codex 治理斷鏈（#264；同 #205 的 agentModel 教訓：靜默忽略比失敗糟）
 # PAI_DIR / PAI_VER 已於共通前置解析（#264 重排 —— codex-call 路徑與 engine 路徑兩用）
@@ -336,7 +363,7 @@ PAI_ENGINE="${PAI_DIR}workflows/ensemble-workflow.js"
                                 {key: 'logic',        focus: 'logic correctness, edge cases, null/empty handling, off-by-one, and error paths.'},
                                 {key: 'security',     focus: 'injection, authz/authn, hardcoded secrets, unsafe input handling, path traversal.'},
                                 {key: 'regression',   focus: 'scope creep, side effects on existing behavior, and unrelated changes.'}],
-                              daFocus: "adversarially refute the other reviewers' judgments: hunt for defects where they passed, false positives in their findings, and requirements-coverage claims the diff does not actually satisfy.",
+                              daFocus: "adversarially refute the other reviewers' judgments: hunt for defects where they passed, false positives in their findings, and requirements-coverage claims the diff does not actually satisfy." + $DA_FOCUS_SUFFIX,
                               contextBlock: $CONTEXT_BLOCK,
                               diffFile: $DIFF_FILE,
                               codexEnabled, codexCallPath: $PAI_CODEX_CALL,
@@ -387,7 +414,7 @@ TaskCreate(name="scan_pr_body_and_commits_trailers", description="Step 0.8: PR m
 TaskCreate(name="resolve_scratch_dir", description="Step 0.4 (#288): VERIFY_DIR=$(mktemp -d \"${TMPDIR:-/tmp}/idd-verify-${NUMBER}-XXXXXX\") — 一次解析、之後所有 diff / prompt / findings / codex 檔全部掛在它底下。**必須在任何寫檔或 spawn 之前**。固定名稱（舊的 /tmp/verify_${NUMBER}_*）不帶 repo 身分，同一個 issue 號在不同 repo 的兩個 session 會共用檔名，前一輪的殘檔會被當成這一輪的 findings 讀進來 —— 靜默，且方向最壞（把別的 repo 的判決併進這份報告）")
 TaskCreate(name="get_diff_and_issue", description="依 input source 取 diff（gh pr diff / git diff HEAD~N / git diff origin/<default>...<branch>） + gh issue view,存 diff 到 $VERIFY_DIR/diff.patch 供 agents 讀取,並記 FROZEN_SHA=$(git rev-parse HEAD)（PR mode 記 PR head oid — #228 freshness 錨點）；PR mode 額外做 gh pr checkout 並記住原 branch")
 TaskCreate(name="check_attachments", description="確認 .claude/.idd/attachments/issue-NNN/ 存在,把 attachment 路徑塞進 reviewer agent prompt 作為 source-of-truth context。manifest 缺漏 → 警告繼續(reviewer 仍跑,但 verification 完整度受限)。依 rules/process-attachments.md。")
-TaskCreate(name="collect_external_writes", description="#315: 讀最新 ## Implementation Complete comment 的 ### Sister Bugs Filed / Blast Radius / Cross-reference 區段,把 diff 之外的寫入清單塞進 CONTEXT_BLOCK。verify 的 scope 是 diff,但 implement 的 sister sweep / cross-reference note 會寫到別的 issue、別的 repo —— 那些內容沒有任何 lens 看得到。**沒有該區段時要說『blast radius 未知』,不可當成『沒有外部寫入』**")
+TaskCreate(name="collect_external_writes", description="#315: 用 REST --paginate 抓每個 refd issue 的**全部** comment,掃 $EW_SECTIONS 列出的 audit-trail heading(它們散在不同 comment 裡),組成 $EW_BLOCK。**不要**用 gh issue view --json comments —— 那是只回最舊 100 則的 connection,而要找的紀錄通常較新。$EW_BLOCK 兩個 backend 共用(Tier 1 併進 CONTEXT_BLOCK、manual fan-out 進每個 prompt + codex --instructions)。**沒有紀錄時報 UNKNOWN,不報「沒有外部寫入」** —— 漏跑的 sweep 與跑了沒找到的 sweep 痕跡一樣")
 TaskCreate(name="resolve_dispatch_model", description="解析 $AGENT_MODEL — IDD_AGENT_MODEL 未設 → opus；非法值 → abort with usage error（#205；兩個 backend 共用，Workflow args 傳 agentModel、manual 模板填 model）；#264 同步解析 codex 治理（check-plugin-presence.sh codex-pro codex-pro → CP defaults.json + profile.yaml 兩層 → CODEX_MODEL/EFFORT/MAX_TIME，缺席 fail-fast）")
 TaskCreate(name="launch_parallel_reviewers", description="第一波 5 個 tool calls 同一 message: 4 lens Agent(subagent_type=general-purpose, model=$AGENT_MODEL) for requirements/logic/security/regression + 1 Bash codex(run_in_background:true)；DA 不在此波（#130 sequenced）。prompt 引用 attachment 路徑 + 強制 file-output rule (per #52)")
 TaskCreate(name="spawn_sequenced_da", description="#130: 4 份 lens findings 檔全部就緒（non-empty）後，coordinator 序列 spawn Devil's Advocate（model=$AGENT_MODEL，prompt 直附 4 檔路徑，無 polling）")

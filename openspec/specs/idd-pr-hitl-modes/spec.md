@@ -237,15 +237,17 @@ code:
 ---
 ### Requirement: Attended interaction permits sub-skill questions
 
-When the resolved interaction is `attended`, `idd-all` SHALL NOT inject any `UNATTENDED MODE` directive into sub-skill invocation args. Each sub-skill's own attended-by-default behavior — `idd-implement` plan-tier `EnterPlanMode` approval, `spectra-discuss` multi-turn pacing, `spectra-propose` Step 10 Park/Apply prompt, `idd-implement` `AskUserQuestion` checkpoints — MUST take effect natively.
+When the resolved interaction is `attended`, `idd-all` SHALL NOT inject any `UNATTENDED MODE` directive into sub-skill invocation args. Each sub-skill's own attended-by-default behavior — `/idd-plan`'s `EnterPlanMode` approval, `spectra-discuss` multi-turn pacing, `spectra-propose` Step 10 Park/Apply prompt, `idd-implement` `AskUserQuestion` checkpoints — MUST take effect natively.
+
+> The Plan-tier gate lives in `/idd-plan`, not in `idd-implement` (`#292`). Which phase invokes which skill is stated once, in `skills/idd-all/SKILL.md`'s dispatch table; this spec constrains the *directive injection* and defers to that table for routing.
 
 #### Scenario: attended mode allows EnterPlanMode
 
 - **GIVEN** resolved interaction is `attended`
 - **AND** Phase 2 diagnose returns Complexity = `Plan`
-- **WHEN** Phase 3a invokes `idd-implement`
+- **WHEN** Phase 3p invokes `/idd-plan` (per the dispatch table in `skills/idd-all/SKILL.md`)
 - **THEN** the args string contains no `UNATTENDED MODE` directive
-- **AND** `idd-implement` enters Plan tier and triggers `EnterPlanMode` for user approval
+- **AND** `/idd-plan` triggers `EnterPlanMode` for user approval, then chains to `idd-implement`
 
 #### Scenario: attended mode allows spectra-discuss multi-turn
 

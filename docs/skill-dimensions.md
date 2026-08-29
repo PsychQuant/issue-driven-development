@@ -150,7 +150,7 @@ IDD plugin 已累積 14+ skills(`idd-issue` / `idd-diagnose` / `idd-implement` /
 **Values**:
 - `Attended-only` — Stage 2 picker / EnterPlanMode / `/spectra-discuss`(必須 user 在場回應)
 - `Unattended-capable` — `idd-implement`(TDD loop)/ `idd-verify`(6-AI ensemble,no user interaction)/ `idd-list` / `idd-route`
-- `Hybrid (attended preferred, unattended degraded)` — `idd-all`(attended:Plan tier 走 EnterPlanMode;unattended:auto-proceed default)/ `idd-all-chain` Phase 0.4
+- `Hybrid (attended preferred, unattended degraded)` — `idd-all`(Plan tier 的 attended / unattended 分流見 `skills/idd-all/SKILL.md` 的 dispatch table,此處不複述)/ `idd-all-chain` Phase 0.4
 
 **為什麼重要**:Hybrid skills 是 D1(Separation vs Automation)的衝突 hotspot — unattended mode 容易 silent-bypass deliberation moment。
 
