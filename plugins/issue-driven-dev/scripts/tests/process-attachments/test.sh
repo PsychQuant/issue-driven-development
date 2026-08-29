@@ -172,36 +172,47 @@ cd /; rm -rf "$W"
 # routing it through a download would test the network stub instead.
 eval "$(sed -n '/^decode_filename()/,/^}/p' "$SCRIPT")"
 
-assert_eq "f12a percent-encoded traversal is flattened to a plain filename" \
-  "pwned.txt" \
-  "$(decode_filename 'https://github.com/user-attachments/files/1/%2e%2e%2f%2e%2e%2fpwned.txt')"
-assert_eq "f12b a literal traversal is flattened too" \
+# CORRECTED (round 11): these asserted the FLATTENED output — `pwned.txt` — which
+# pinned "must accept and flatten" while the comment beside the code said
+# "refuse anything that is not a plain filename". The test fixed the opposite of
+# the stated requirement in place. Flattening is also unsafe on its own terms:
+# `%2e%2e%2ftrusted.pdf` and `trusted.pdf` flatten to the SAME name, so a
+# traversal-shaped URL on one issue can collide with, and overwrite, a real
+# attachment.
+refute "f12a a percent-encoded traversal is REFUSED, not flattened" \
+  decode_filename 'https://github.com/user-attachments/files/1/%2e%2e%2f%2e%2e%2fpwned.txt'
+# A LITERAL traversal needs no refusal: taking the URL's last path segment
+# already yields a plain name, and the `..` segments never reach the filesystem.
+# Refusing it would have been the wrong requirement — asserted here as the safe
+# OUTCOME rather than as a rejection, so the distinction is recorded rather than
+# rediscovered.
+assert_eq "f12b a literal traversal yields a plain name, no escape" \
   "pwned.txt" \
   "$(decode_filename 'https://github.com/user-attachments/files/1/../../pwned.txt')"
-# NOT `bash -c`: that spawns a shell without the sourced function, so
-# `decode_filename` is "command not found", `$(...)` is empty, the case falls to
-# the catch-all and the assertion passes having tested NOTHING. Same for f12f
-# below, where 127 read as the expected failure. Ninth broken probe this round —
-# evaluate in THIS shell, where the function exists.
-case "$(decode_filename 'https://x/%2e%2e%2fa.txt')" in
-  */*) fail "f12c the derived name never contains a separator" "got a separator" ;;
-  *)   pass "f12c the derived name never contains a separator" ;;
-esac
-# The legitimate cases must survive — CJK and spaces are ordinary in this repo's
-# attachments, and mangling them would break the manifest↔disk correspondence.
-assert_eq "f12d percent-encoded spaces still decode" \
+# The collision this prevents, asserted directly rather than implied.
+if decode_filename 'https://x/%2e%2e%2ftrusted.pdf' >/dev/null 2>&1; then
+  fail "f12c a traversal-shaped URL cannot collide with a real attachment name" \
+       "it produced a name instead of being refused"
+else
+  pass "f12c a traversal-shaped URL cannot collide with a real attachment name"
+fi
+assert_eq "f12d ...while the real attachment keeps its name" \
+  "trusted.pdf" "$(decode_filename 'https://x/trusted.pdf')"
+# A leading dash could be read as an option by anything downstream. The previous
+# guard was a no-op: it prepended `./` and stripped it again, so `%2d%2drf` still
+# came out as `--rf`. Nothing asserted it, so nothing noticed.
+refute "f12e a name that decodes to a leading dash is refused" \
+  decode_filename 'https://x/%2d%2drf'
+# The legitimate cases must survive — CJK and spaces are ordinary here, and
+# mangling them would break the manifest-to-disk correspondence.
+assert_eq "f12f percent-encoded spaces and CJK still decode" \
   "報告 final.pdf" \
   "$(decode_filename 'https://github.com/user-attachments/files/2/%E5%A0%B1%E5%91%8A%20final.pdf')"
-assert_eq "f12e trailing markdown punctuation is still stripped" \
+assert_eq "f12g trailing markdown punctuation is still stripped" \
   "normal.png" \
   "$(decode_filename 'https://github.com/user-attachments/files/3/normal.png)')"
-# A name that decodes to nothing usable must be REFUSED, not silently coerced —
-# the caller records a manifest error, which this plugin requires to be loud.
-if decode_filename 'https://x/%2e%2e' >/dev/null 2>&1; then
-  fail "f12f a name that decodes to '..' is refused outright" "it returned success"
-else
-  pass "f12f a name that decodes to '..' is refused outright"
-fi
+refute "f12h a name that decodes to '..' is refused outright" \
+  decode_filename 'https://x/%2e%2e'
 
 rm -rf "$STUB"
 print_summary

@@ -174,32 +174,39 @@ assert_manifest_valid() {
 }
 
 decode_filename() {
-  # ORDER MATTERS, and the original had it backwards: it took `basename` FIRST
-  # and URL-decoded AFTER. `basename` cannot see a separator that is still
-  # percent-encoded, so a URL ending in `%2e%2e%2f%2e%2e%2fpwned.txt` survived
-  # basename intact and only became `../../pwned.txt` afterwards — after which
-  # it was joined onto the attachments directory. Reproduced: the write lands in
-  # `.claude/.idd/pwned.txt`, two levels above where it belongs. The URL comes
-  # out of an issue body, so it is attacker-supplied on any repo that accepts
-  # outside reports.
+  # ORDER, and why each step is where it is. The input is a URL, not a filename.
   #
-  # Decode first, THEN basename, then refuse anything that is not a plain
-  # filename. Refusing is safe here: the caller records a manifest error entry,
-  # which surfaces loudly, and this plugin's rule is that an unreadable
-  # attachment must never pass silently.
-  local dec
-  dec=$(printf '%s' "$1" | sed 's/[)>"].*$//' \
-        | python3 -c 'import sys, urllib.parse; print(urllib.parse.unquote(sys.stdin.read().strip()))')
-  dec=$(basename -- "$dec")
+  #   1. strip trailing markdown punctuation
+  #   2. take the last path segment of the URL — split on REAL `/`, while a
+  #      percent-encoded one is still just three characters
+  #   3. decode
+  #   4. REFUSE anything that is not a plain filename
+  #
+  # The original ran basename(2) and decoded (3) in the other order, so
+  # `basename` could not see a separator that was still percent-encoded:
+  # `…/%2e%2e%2f%2e%2e%2fpwned.txt` survived intact and only became
+  # `../../pwned.txt` afterwards, joined onto the attachments directory and
+  # resolving two levels up. The URL comes from an issue body, so it is
+  # attacker-supplied wherever outside reports are accepted.
+  #
+  # The first fix decoded first and then FLATTENED with basename. That closed
+  # the traversal but opened a collision: `%2e%2e%2ftrusted.pdf` and
+  # `trusted.pdf` produced the SAME name, so a traversal-shaped URL on the same
+  # issue could overwrite a real attachment — and the tests asserted the
+  # flattened output, pinning "accept and flatten" while the comment beside them
+  # said "refuse". Refusing is what was claimed, and it is what is safe: the
+  # caller records a manifest error, which this plugin requires to be loud.
+  local seg dec
+  seg=$(printf '%s' "$1" | sed 's/[)>"].*$//')
+  seg=${seg##*/}
+  dec=$(printf '%s' "$seg" | python3 -c 'import sys, urllib.parse; print(urllib.parse.unquote(sys.stdin.read().strip()))')
   case "$dec" in
-    ''|.|..)  return 1 ;;   # nothing usable left
-    */*)      return 1 ;;   # unreachable after basename; kept as belt-and-braces
-    -*)       dec="./$dec" ; dec=${dec#./} ;;   # never let a name start an option
+    ''|.|..)  return 1 ;;
+    */*)      return 1 ;;   # a separator that was hiding inside an escape
+    -*)       return 1 ;;   # a name that could be read as an option
   esac
-  # Control characters in a filename are never legitimate and can repaint a
-  # terminal when the name is echoed back in progress output.
-  printf '%s' "$dec" | LC_ALL=C tr -d '\000-\037\177'
-  printf '\n'
+  case "$dec" in *[[:cntrl:]]*) return 1 ;; esac
+  printf '%s\n' "$dec"
 }
 
 file_size() {
