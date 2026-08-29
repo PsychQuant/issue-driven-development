@@ -443,6 +443,40 @@ require "a blockquoted HTML heading stays in the advisory bucket, not CASING" \
            [ "$(bash "$1" --json-file "$0/q.json" --issue 9100 2>/dev/null | jq -r .class)" = "present" ]' \
   "${TMPDIR:-/tmp}" "$HELPER"
 
+# ── round 10: absence is judged on NORMALISED text, not on heading shape ──
+#
+# Ten rounds ended the same way — a real summary the recogniser could not follow
+# reached `missing`, and since the gate landed that no longer under-reports, it
+# AUTHORISES the irreversible post. The seven shapes below were all reproduced
+# returning `class=missing, rc=0`, and every one renders on GitHub as a visible
+# "Closing Summary" heading.
+#
+# The lesson is not "we forgot some shapes". "Would a reader see a heading?" is a
+# question about RENDERED OUTPUT; matching source bytes cannot answer it, because
+# the rendering function is many-to-one with an unbounded preimage. So the
+# destructive class now turns on whether the two words are present at all in
+# renderer-flattened text. To be wrongly authorised, a real summary would have to
+# contain neither word adjacent anywhere — which a template summary cannot.
+refute "#180 (emphasis inside the phrase) is NOT in MISSING"        flagged 180
+refute "#181 (CJK prefix before the words) is NOT in MISSING"       flagged 181
+refute "#182 (the entity form of the gap) is NOT in MISSING"        flagged 182
+refute "#183 (HTML bold, twin of the markdown form) is NOT in MISSING" flagged 183
+refute "#184 (h2 attributes wrapped across lines) is NOT in MISSING" flagged 184
+refute "#185 (close bracket inside an attribute) is NOT in MISSING"  flagged 185
+
+# THE MIRROR, which the same round broke: `html_pfx` accepted ANY tag as an
+# invisible prefix, so an HTML blockquote and a CommonMark autolink — both
+# VISIBLE — were treated as blank and the quotation behind them was promoted to
+# `casing`, a positive claim. Round 5 restored, in the strict predicate.
+refute  "#186 (HTML-blockquoted quotation) is NOT promoted to CASING" in_section "CASING —" 186
+require "#186 stays in the advisory bucket"                          unverified 186
+refute  "#187 (autolink is visible, not a blank prefix) is NOT CASING" in_section "CASING —" 187
+
+# And the cheap direction must still work: something with no marker at all is
+# still the only thing that reaches the destructive class.
+require "#101 (no marker anywhere) still reaches MISSING"  flagged 101
+require "#103 (zero comments) still reaches MISSING"       flagged 103
+
 # ── `--issue N`: the single-issue GATE (#307 follow-up) ────────────────────────
 # Audit mode reports to a human and always exits 0. This mode is a precondition
 # for an IRREVERSIBLE action, so the whole point is the exit code: the caller

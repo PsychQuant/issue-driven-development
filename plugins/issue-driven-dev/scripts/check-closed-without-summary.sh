@@ -424,7 +424,13 @@ CLASSIFY='
   # this very comment wrote "lead_re" with a possessive apostrophe, closed the
   # string, and turned 44 assertions red at once. The warning was three hundred
   # lines up and still did not survive contact.
-  def html_pfx: "(?:(?:<!--(?:.|\n)*?-->|<[a-zA-Z/][^>]*>)[ \t]*)*";
+  # An explicit whitelist of INLINE tags that render to nothing visible. The
+  # first cut used `<[a-zA-Z/][^>]*>` -- any tag at all -- which also swallowed
+  # `<blockquote>`, `<pre>`, `<img>` and CommonMark autolinks. Consequence,
+  # reproduced: `<blockquote>## Closing Summary` reached `casing`, announcing a
+  # pure QUOTATION as a real summary. That is round 5 restored, in the strict
+  # predicate, which is the mirror direction the brief warned about.
+  def html_pfx: "(?:(?:<!--(?:.|\n)*?-->|</?(?:a|span|sup|sub|small|font|kbd|b|i|em|strong)(?:[ \t][^>]*)?>)[ \t]*)*";
   def present_re: "^[ \t>]*" + html_pfx + "[#\\x{FF03}]{1,6}[^\\p{L}\\p{N}]*closing[\\s\\x{00A0}\\x{200B}\\x{3000}]+summary";
   # Raw HTML headings. GitHub renders <h2>…</h2> and the <summary> of a
   # <details> block as visible headings; nothing here looked for either.
@@ -457,6 +463,47 @@ CLASSIFY='
   # backslash-u form inside a jq string, so a range written that way silently
   # degrades into the literal range 0 to u and eats most of the alphabet. It was
   # caught only because every fixture title came back as fragments.
+  # ── Why the destructive class stopped being shape-based (round 10) ──
+  #
+  # Ten consecutive rounds ended the same way: a real closing summary that the
+  # recogniser could not follow landed in `missing`, the one class that
+  # authorises an irreversible duplicate post. Each round added the shapes the
+  # last round missed. Round 10 found seven more, every one of which GitHub
+  # renders as a visible "Closing Summary" heading:
+  #
+  #   ## **Closing** Summary          emphasis INSIDE the phrase
+  #   ## 結案摘要 / Closing Summary    any letter before the word
+  #   ## Closing&nbsp;Summary         the entity, not the decoded character
+  #   <b>Closing Summary</b>          HTML emphasis (the markdown twin IS caught)
+  #   <strong>...</strong>            same
+  #   <h2\n id="cs">...</h2>          attributes wrapped across lines
+  #   <h2 title="a>b">...</h2>        an attribute containing a close bracket
+  #
+  # The pattern is not "we forgot some shapes". Asking "would a reader see a
+  # heading?" is a question about RENDERED OUTPUT, and matching source bytes
+  # cannot answer it: the rendering function is many-to-one and its preimage is
+  # unbounded. Another enumeration buys another round.
+  #
+  # So the destructive class no longer turns on heading SHAPE. It turns on
+  # whether the two words appear at all, in text normalised the way a renderer
+  # would flatten it. To be wrongly authorised now, a real summary would have to
+  # contain neither word adjacent anywhere in any comment -- which a
+  # template-generated summary cannot.
+  #
+  # The price, stated: strictly more `present`, strictly fewer `missing`, i.e.
+  # more missed remediations. That is the cheap direction, chosen deliberately.
+  # The four-class audit output keeps its shape-based richness for REPORTING;
+  # only the gate-authorising class is decided this way.
+  def entity_decode:
+    gsub("&nbsp;"; " ") | gsub("&#160;"; " ") | gsub("&#[xX]0*[aA]0;"; " ")
+    | gsub("&amp;"; "&") | gsub("&lt;"; "<") | gsub("&gt;"; ">") | gsub("&quot;"; " ");
+  # Tag stripping does NOT need to be a correct parser: whatever survives, the
+  # two-token test below still sees the words. `<h2 title="a>b">` strips
+  # imperfectly and the phrase is still found.
+  def normalise:
+    (. // "") | entity_decode | gsub("<[^>]*>"; " ") | ascii_downcase
+    | gsub("[^a-z0-9]+"; " ");
+  def mentions_marker: normalise | test("closing +summary");
   def sanitize:
     (. // "")
     | gsub("[[:cntrl:]\\p{Zl}\\p{Zp}\\x{061C}\\x{200B}\\x{200E}\\x{200F}\\x{202A}-\\x{202E}"
@@ -547,6 +594,10 @@ CLASSIFY='
      # class: absence of evidence is not evidence of absence when the evidence
      # was truncated at the fetch. Falls to `present`, which authorises nothing.
      elif ($i.idd_comments_truncated == true)                           then "present"
+     # Shape-independent backstop. Everything above is about where a heading
+     # sits; this is only about whether the words are there at all, after the
+     # text has been flattened the way a renderer would flatten it.
+     elif ($bodies | any(mentions_marker))                              then "present"
      else "missing" end) as $class
   | "\($class)\t#\($i.number | tostring | sanitize)  \($i.title | sanitize)"
 '

@@ -859,5 +859,85 @@
         "body": "<details><summary>Closing Summary</summary>\n\nreal content here\n</details>"
       }
     ]
+  },
+  {
+    "number": 180,
+    "title": "REAL summary: emphasis INSIDE the phrase",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## **Closing** Summary\n\nfixed the parser"
+      }
+    ]
+  },
+  {
+    "number": 181,
+    "title": "REAL summary: CJK prefix before the English words",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## 結案摘要 / Closing Summary\n\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 182,
+    "title": "REAL summary: the entity form of the gap, not the decoded char",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "## Closing&nbsp;Summary\n\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 183,
+    "title": "REAL summary: HTML bold, the twin of the markdown form",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "<b>Closing Summary</b>\n\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 184,
+    "title": "REAL summary: h2 whose attributes wrap across lines",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "<h2\n id=\"cs\">Closing Summary</h2>\n\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 185,
+    "title": "REAL summary: h2 with a close bracket inside an attribute",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "<h2 title=\"a>b\">Closing Summary</h2>\n\nreal content"
+      }
+    ]
+  },
+  {
+    "number": 186,
+    "title": "QUOTATION in an HTML blockquote - must NOT be exonerated",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "<blockquote>## Closing Summary\nquoting the template\n</blockquote>"
+      }
+    ]
+  },
+  {
+    "number": 187,
+    "title": "autolink then hash - the autolink is VISIBLE, not a blank prefix",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "<https://example.test>## Closing Summary\n\nexample only"
+      }
+    ]
   }
 ]
