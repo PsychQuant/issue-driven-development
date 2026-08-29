@@ -74,7 +74,10 @@ NORMATIVE='skills/idd-all/SKILL.md'
 # path catalogue and a design-rationale note — false positives that would have
 # taught the next reader to widen the exemption list instead of the rule.
 MECHANISM='EnterPlanMode|Phase 3a|Phase 3p'
-MODE_WORD='unattended|attended|/loop|autopilot'
+# `noninteractive` / `headless` / `without a user` are the same claim in other
+# words; leaving them out is the round-2 mistake (grep the wording you remember)
+# in miniature.
+MODE_WORD='unattended|attended|/loop|autopilot|noninteractive|non-interactive|headless|without a user|no user'
 DEFER='dispatch table|normative source|不複述|見 .skills/idd-all'
 
 # The claim has to actually be MADE, not merely have its vocabulary scattered
@@ -88,7 +91,11 @@ DEFER='dispatch table|normative source|不複述|見 .skills/idd-all'
 # catalogue's neighbouring entry as context for this one.
 ROOT="$(cd "$PLUGIN/../.." && pwd)"
 restating_files() {   # $1 = tree to scan
-  grep -rlE --include='*.md' -- 'Plan tier|Plan path|Plan-tier|plan-tier' "$1" 2>/dev/null \
+  # -i on the OUTER enumeration too. Lowercasing inside the awk was not enough:
+  # this grep decides which files reach it at all, and it was case-sensitive, so
+  # `PLAN TIER` never got that far. Two places had to agree and only one was
+  # changed — which is exactly the shape of defect this suite exists to catch.
+  grep -rliE --include='*.md' -- 'Plan[ -]tier|Plan path' "$1" 2>/dev/null \
     | grep -v '/CHANGELOG.md$' \
     | grep -v '/openspec/changes/archive/' \
     | while IFS= read -r f; do
@@ -105,8 +112,16 @@ restating_files() {   # $1 = tree to scan
           { line[NR] = $0 }
           END {
             for (n = 1; n <= NR; n++) {
-              if (line[n] !~ /Plan tier|Plan path|Plan-tier|plan-tier/) continue
-              if (line[n] !~ mech) continue
+              # The Plan token and the mechanism token do NOT have to share a
+              # line. Requiring that missed every claim spread over a short
+              # paragraph -- and a paragraph is how prose actually states this.
+              # Case-insensitive too: `Plan Tier` and `PLAN TIER` escaped a
+              # case-sensitive match.
+              if (tolower(line[n]) !~ /plan[ -]tier|plan path/) continue
+              plo = (n - 5 < 1 ? 1 : n - 5); phi = (n + 5 > NR ? NR : n + 5)
+              has_mech = 0
+              for (m = plo; m <= phi; m++) if (line[m] ~ mech) has_mech = 1
+              if (!has_mech) continue
               # A version-history row (first cell is a version) is a release
               # log embedded in a table -- same category as CHANGELOG.md, and
               # exempt for the same reason: it records what was true then, and
@@ -146,6 +161,18 @@ PC_DIR=$(mktemp -d); trap 'rm -rf "$PC_DIR"' EXIT HUP INT TERM
 cat > "$PC_DIR/restates.md" <<'CANARY'
 Under unattended mode a Plan tier issue still reaches EnterPlanMode via Phase 3a.
 CANARY
+# SPREAD ACROSS LINES, because that is how prose states it and because a
+# single-line control cannot tell whether the window works at all. Every control
+# here previously put Plan, mode and mechanism on one line, so shrinking the
+# window to zero would have left them all green -- the guard had no test weight
+# with respect to its own window parameter.
+cat > "$PC_DIR/restates-spread.md" <<'CANARY'
+Plan tier behaviour:
+
+When no user is present, the run is noninteractive.
+
+Phase 3a invokes idd-implement directly, so EnterPlanMode never fires.
+CANARY
 cat > "$PC_DIR/defers.md" <<'CANARY'
 Plan tier routing under unattended mode: see the dispatch table in skills/idd-all/SKILL.md.
 CANARY
@@ -158,12 +185,24 @@ cat > "$PC_DIR/restates-table.md" <<'CANARY'
 | unattended | Plan tier still reaches EnterPlanMode via Phase 3a |
 CANARY
 SEEN_TABLE=$(restating_files "$PC_DIR" | grep -c 'restates-table.md' || true)
+# Case. A case-sensitive `Plan tier` match let `Plan Tier` and `PLAN TIER`
+# through, and no control used either spelling, so lowering the token had no
+# test weight — the parameter was unguarded by its own controls.
+cat > "$PC_DIR/restates-case.md" <<'CANARY'
+PLAN TIER, unattended: EnterPlanMode still fires via Phase 3a.
+CANARY
+SEEN_CASE=$(restating_files "$PC_DIR" | grep -c 'restates-case.md' || true)
+SEEN_SPREAD=$(restating_files "$PC_DIR" | grep -c 'restates-spread.md' || true)
 SEEN=$(restating_files "$PC_DIR" | grep -c 'restates.md' || true)
 QUIET=$(restating_files "$PC_DIR" | grep -c 'defers.md' || true)
 require "positive control: the detector names a planted restatement" \
   bash -c '[ "$0" -ge 1 ]' "$SEEN"
 require "negative control: the detector stays silent on a file that defers" \
   bash -c '[ "$0" -eq 0 ]' "$QUIET"
+require "positive control: an upper-case Plan token is caught" \
+  bash -c '[ "$0" -ge 1 ]' "$SEEN_CASE"
+require "positive control: a claim SPREAD over several lines is caught" \
+  bash -c '[ "$0" -ge 1 ]' "$SEEN_SPREAD"
 require "positive control: a restatement in an ordinary table row is still caught" \
   bash -c '[ "$0" -ge 1 ]' "$SEEN_TABLE"
 
