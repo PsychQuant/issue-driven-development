@@ -443,11 +443,16 @@ CLASSIFY='
   # anchor alone sent `**Closing Summary** - fixed the parser` to `missing`.
   def bare_re:    "^[ \t>]*[^\\p{L}\\p{N}]*closing[\\s\\x{00A0}\\x{200B}\\x{3000}]+summary[^\\p{L}\\p{N}]*$";
   def emph_re:    "^[ \t>]*(\\*\\*|__|\\*|_)[^\\p{L}\\p{N}]*closing[\\s\\x{00A0}\\x{200B}\\x{3000}]+summary";
-  # The strict predicate gets the same HTML prefix — a leading marker does not
-  # make a heading stop leading — but keeps everything else strict: still no
-  # blockquote prefix, still at most three spaces of indent, so a quotation
-  # cannot reach it.
-  def lead_re:    "^ {0,3}" + html_pfx + "#{1,6}[^\\p{L}\\p{N}]*closing[\\s\\x{00A0}\\x{200B}\\x{3000}]+summary";
+  # The strict predicate does NOT get html_pfx, and the reason is a fact about
+  # CommonMark rather than a judgement call: an ATX heading must begin the line.
+  # `<!-- x --> ## Closing Summary` and `<a name="cs"></a>## Closing Summary`
+  # render as PARAGRAPHS, not headings -- verified with markdown-it, not assumed.
+  # Adding html_pfx here made the strict predicate promote a non-heading to
+  # `casing`, which asserts "the summary is there". Widening the strict half is
+  # how round 5 broke, and it was done again here one round after writing that
+  # sentence down. present_re / html_re keep the prefix: over-detecting THERE
+  # only withholds the destructive action.
+  def lead_re:    "^ {0,3}#{1,6}[^\\p{L}\\p{N}]*closing[\\s\\x{00A0}\\x{200B}\\x{3000}]+summary";
   # Control characters are structural here (record + field delimiters) and can
   # also repaint a terminal; U+2028/U+2029 and the bidi controls can forge or
   # reorder a row in any renderer that honours them. One substitution covers all.

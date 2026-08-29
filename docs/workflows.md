@@ -567,7 +567,7 @@ Q1: 是 single issue 還是 multi issues?
 
 > `/loop /idd-all #N`(其中 #N diagnose 後 verdict = Plan)
 
-**Wrong**:Plan tier EnterPlanMode 需 user approve,unsupervised loop 無人 approve,**卡住**。應改 verdict 為 Simple,或拒絕進 loop。
+**Wrong**:unattended 下 Plan tier 會被**降級**而不是卡住(見 `skills/idd-all/SKILL.md` 的 dispatch table),所以 deliberation 是**沉默地**消失的 —— 比卡住更難察覺。應改 verdict 為 Simple,或拒絕進 loop。
 
 ### A3. P-chain-from-root 多 root 用 batch 跑
 

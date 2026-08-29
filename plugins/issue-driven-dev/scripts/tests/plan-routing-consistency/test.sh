@@ -93,8 +93,15 @@ restating_files() {   # $1 = tree to scan
     | grep -v '/openspec/changes/archive/' \
     | while IFS= read -r f; do
         case "$f" in *"$NORMATIVE") continue ;; esac        # the source may state it
-        grep -qE -- "$DEFER" "$f" 2>/dev/null && continue   # defers: fine
-        awk -v mech="$MECHANISM" -v mode="$MODE_WORD" -v f="$f" '
+        # Deference is checked PER CLAIM, in the same window as the claim --
+        # NOT per file. A file-level `grep && continue` is a blanket amnesty:
+        # adding one deference pointer anywhere exempts every other restatement
+        # in the same document. That is not hypothetical -- it happened here.
+        # docs/workflows.md:570 restates the routing and says the OPPOSITE of
+        # line 407, which this same round had just fixed; the detector FOUND it
+        # and the file-level exemption threw it away, because 407 now carries a
+        # pointer. The fix created the amnesty that hid the violation.
+        awk -v mech="$MECHANISM" -v mode="$MODE_WORD" -v defer="$DEFER" -v f="$f" '
           { line[NR] = $0 }
           END {
             for (n = 1; n <= NR; n++) {
@@ -107,8 +114,17 @@ restating_files() {   # $1 = tree to scan
               if (line[n] ~ /^[ \t]*\|[ \t]*v[0-9]/) continue
               if (line[n] ~ /^[ \t]*\|/) { lo = n; hi = n }        # table row: same row only
               else { lo = (n - 5 < 1 ? 1 : n - 5); hi = (n + 5 > NR ? NR : n + 5) }
+              # The DEFERENCE window is wider than the CLAIM window, on purpose.
+              # A claim is made on a line (or a table row); a deference pointer
+              # legitimately introduces a whole block -- a table caption covers
+              # its rows. Same-row deference would force the pointer into every
+              # row. Still per-claim, not per-file: ten lines, not the document.
+              dlo = (n - 10 < 1 ? 1 : n - 10); dhi = (n + 10 > NR ? NR : n + 10)
+              deferred = 0
+              for (m = dlo; m <= dhi; m++) if (line[m] ~ defer) deferred = 1
+              if (deferred) continue
               for (m = lo; m <= hi; m++)
-                if (line[m] ~ mode) { print f; exit }
+                if (line[m] ~ mode) { print f ":" n; exit }
             }
           }' "$f"
       done
@@ -150,6 +166,25 @@ require "negative control: the detector stays silent on a file that defers" \
   bash -c '[ "$0" -eq 0 ]' "$QUIET"
 require "positive control: a restatement in an ordinary table row is still caught" \
   bash -c '[ "$0" -ge 1 ]' "$SEEN_TABLE"
+
+# THE CONTROL FOR PER-CLAIM DEFERENCE. Without it this mechanism has no test
+# weight: reverting to a file-level `grep && continue` leaves the suite green,
+# because the violation it used to hide was fixed in the same commit. That is
+# the shape this whole round keeps producing — a guard whose subject was
+# removed, so nothing proves the guard works.
+#
+# The planted file DEFERS in one place and RESTATES in another, far apart. A
+# file-level exemption clears it; a per-claim one must not. This is exactly what
+# happened to docs/workflows.md: line 407 gained a pointer, and line 570 kept
+# saying the opposite, hidden by the amnesty.
+{
+  printf 'Plan tier routing: see the dispatch table in skills/idd-all/SKILL.md.\n'
+  for i in $(seq 1 40); do printf 'filler line %s\n' "$i"; done
+  printf 'Under unattended mode a Plan tier issue still reaches EnterPlanMode via Phase 3a.\n'
+} > "$PC_DIR/defers-then-restates.md"
+SEEN_FAR=$(restating_files "$PC_DIR" | grep -c 'defers-then-restates.md' || true)
+require "positive control: a deference elsewhere in the file does NOT amnesty a distant restatement" \
+  bash -c '[ "$0" -ge 1 ]' "$SEEN_FAR"
 
 print_summary "plan-routing-consistency"
 exit $?

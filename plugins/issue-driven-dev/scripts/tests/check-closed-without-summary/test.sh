@@ -428,8 +428,18 @@ refute "#171 (anchor tag before the heading) is NOT in MISSING"   flagged 171
 # Asserting only "not missing" left the strict predicate with no individual
 # weight: an acid run showed html_pfx could be dropped from lead_re alone and
 # the suite stayed green, because present_re caught them one class down.
-require "#170 is listed under CASING, not merely absent from MISSING" in_section "CASING —" 170
-require "#171 is listed under CASING, not merely absent from MISSING" in_section "CASING —" 171
+# CORRECTED (round 11): these two were pinned to CASING, which asserts "the
+# summary is there". But `<!-- x --> ## Closing Summary` and
+# `<a name="cs"></a>## Closing Summary` are NOT CommonMark headings — an ATX
+# heading must begin the line, so both render as PARAGRAPHS. Verified with
+# markdown-it rather than reasoned about. The previous round widened the STRICT
+# predicate to accept them and then wrote a test fixing that behaviour in place —
+# pinning a non-heading as a positive claim, one round after writing down that
+# widening the strict half is how round 5 broke.
+require "#170 (marker before hashes — NOT a CommonMark heading) is advisory only" unverified 170
+refute  "#170 is NOT promoted to CASING"                                 in_section "CASING —" 170
+require "#171 (anchor before hashes — NOT a heading either) is advisory only"     unverified 171
+refute  "#171 is NOT promoted to CASING"                                 in_section "CASING —" 171
 refute "#172 (raw <h2> heading) is NOT in MISSING"                flagged 172
 refute "#173 (details/summary disclosure) is NOT in MISSING"      flagged 173
 # ...and none of them may be silently swallowed either: each must still show up
