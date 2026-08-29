@@ -5,6 +5,58 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.112.0] - 2026-08-29
+
+### Fixed — the ensemble on 2.111.0 (degraded: 1 of 6 legs) still returned FAIL
+
+Five legs died mid-run when the machine slept; only `requirements` completed, and the fail-closed synthesis correctly
+refuses to call that a PASS. What the one surviving lens found was enough on its own — **both guards written last round
+specifically to close these gaps were mutation-proven to have no test weight.**
+
+- **`#317` criterion (c) was still unmet, and the third place was a LIVE spec.**
+  `openspec/specs/idd-pr-hitl-modes/spec.md` had attended Plan tier going to `Phase 3a → idd-implement` with
+  `idd-implement` owning `EnterPlanMode` — wrong phase and wrong gate owner, and `#292` was entirely about moving that
+  gate. The check could not see it for two independent reasons: `openspec/` was outside its scanned directories, and
+  its needles were the two literal Chinese phrases from the *previous* violation, while this one is in English.
+  **Round 1 grepped the implementation label; round 2 grepped the previous violation's wording. Both answer "where is
+  this string", not "who makes this claim" — and the second was worse, because it looked specific.**
+  The rule is now **defer, do not restate**: a file pairing Plan tier with a mode word and a routing-mechanism token
+  is making a routing claim, and must either *be* the normative source or point at it. Scope is the whole repo's
+  prose. Widening it surfaced **five more restatements** (eight total), two of them mechanistically wrong in the same
+  way (`rules/sdd-integration.md`, `skills/idd-diagnose/SKILL.md` — both said `/idd-plan` runs with its gate skipped;
+  under unattended it is not invoked at all).
+
+- **`#315`'s fix never reached the operative instruction.** The `collect_external_writes` `TaskCreate` description —
+  which in this repo *is* what the executing LLM reads, the bash beneath it being pseudo-code — still named the ghost
+  sections and the oldest-100 single-comment approach. The pseudo-code 150 lines above it said the opposite. Before
+  the fix the two were at least consistently wrong.
+
+- **Both new guards had zero test weight, proven by mutation:**
+  neutering the `#317` detector's needle left the suite 8/0 green (its "positive control" planted the canary *after*
+  the detection loop and only checked the *enumeration* half); adding a sixth invented section to `EW_SECTIONS` left
+  it 28/0 green (the gate iterated its own hardcoded list instead of parsing the skill, and its writer probe searched
+  a tree including `idd-verify`'s own comment table — a proof satisfiable by the collector's documentation).
+  Both now parse what they constrain, and their controls run the detector itself.
+
+- **The converse assertion immediately found a sixth record type.** Requiring every declared `**Audit trail target**`
+  to appear in the collector's list surfaced `### Linked-Context Siblings Filed` (`idd-issue` — sibling issues filed
+  elsewhere, exactly `#315`'s class), which was never scanned and could only ever report UNKNOWN. It is PATCHed into
+  the issue *body*, so the collector now reads the body too.
+
+- **The pai devil's-advocate claim was wrong.** Last round recorded it as unreachable through the documented contract.
+  `daPrompt` does not take `contextBlock`, but it *does* interpolate `A.daFocus` — a caller arg named in the engine
+  header, which this skill already passes. Not "cannot"; a **trade-off**, since `contextBlock` is sentinel-wrapped by
+  pai and `daFocus` is raw. A **structural digest** (which issue, which sections) now goes through `daFocus`; verbatim
+  text still only through `contextBlock`.
+
+### Honest residue
+
+- **Two more broken probes, both repeats of mistakes fixed earlier in the same session**: `bash -c` spawning a shell
+  without the sourced function (five assertions reporting on nothing — the third time this round), and writing a
+  banned literal into the prose that explains why it is banned (the second time). Running total for this work: eleven.
+- **This run was 1/6 legs.** Nothing here has been checked by logic, security, regression, the devil's advocate, or
+  the cross-model leg.
+
 ## [2.111.0] - 2026-08-28
 
 ### Fixed — the post-merge ensemble on 2.110.0 (first complete cross-model pass) returned FAIL
