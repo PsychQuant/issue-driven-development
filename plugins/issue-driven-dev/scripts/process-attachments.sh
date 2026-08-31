@@ -247,7 +247,17 @@ case "$CMD" in
 
     while IFS= read -r url; do
       [ -z "$url" ] && continue
-      filename=$(decode_filename "$url")
+      # An explicit refusal must be recorded and skipped, not left to errexit.
+      # `filename=$(decode_filename ...)` propagates the non-zero status, and
+      # under `set -e` that aborted the WHOLE download — every attachment after
+      # the refused one lost, with a partial manifest. Refusing one unsafe name
+      # is not a reason to stop collecting the rest.
+      if ! filename=$(decode_filename "$url"); then
+        echo "⚠ refusing an unsafe attachment filename derived from: $url" >&2
+        FILES_JSON=$(printf '%s' "$FILES_JSON" | jq \
+          --arg url "$url" '. += [{filename: null, url: $url, error: "unsafe_filename"}]')
+        continue
+      fi
       target="$ATTACH_DIR/$filename"
 
       if curl -sLf -H "Authorization: token $TOKEN" -o "$target" "$url"; then

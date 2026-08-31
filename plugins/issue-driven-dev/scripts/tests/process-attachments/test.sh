@@ -33,6 +33,9 @@ case "${1:-}" in
       # attachment that cannot be downloaded is an attachment that gets
       # ignored, which this plugin treats as ignoring the source.
       wrapped)  printf '{"body":"autolink <https://github.com/user-attachments/files/1/a.pdf>\\nhtml <img src=\\"https://github.com/user-attachments/assets/2/b.png\\">\\nsentence see https://github.com/user-attachments/files/3/c.pdf.","comments":[]}\n' ;;
+      # one unsafe URL followed by a legitimate one — the ordering matters,
+      # because the bug lost everything AFTER the refusal.
+      refusable) printf '{"body":"bad https://github.com/user-attachments/files/1/%%2e%%2e%%2fpwned.txt and good https://github.com/user-attachments/files/2/safe.pdf","comments":[]}\n' ;;
       fail)     echo "gh: network error (stub)" >&2; exit 1 ;;
     esac ;;
   auth)   echo "stub-token" ;;
@@ -213,6 +216,24 @@ assert_eq "f12g trailing markdown punctuation is still stripped" \
   "$(decode_filename 'https://github.com/user-attachments/files/3/normal.png)')"
 refute "f12h a name that decodes to '..' is refused outright" \
   decode_filename 'https://x/%2e%2e'
+
+# ── Fixture 13: a refused filename must SKIP that URL, not kill the run ──
+#
+# `filename=$(decode_filename "$url")` propagates the refusal, and under
+# `set -euo pipefail` that aborted the whole download — every attachment after
+# the unsafe one lost, with a partial manifest written or none at all. The
+# refusal was correct; leaving it to errexit was not.
+W="$(mktemp -d)"; cd "$W"
+export GH_STUB_MODE=refusable
+run_pa download 22 > "$W/out13.txt" 2>&1; RC13=$?
+MAN13=".claude/.idd/attachments/issue-22/_manifest.json"
+require "f13a a refused name does not abort the run" test -f "$MAN13"
+require "f13b the refusal is recorded, not silently dropped" \
+  bash -c 'jq -e ".files[] | select(.error == \"unsafe_filename\")" "$0" >/dev/null' "$MAN13"
+require "f13c the SAFE attachment beside it is still collected" \
+  bash -c 'jq -e ".files[] | select(.filename == \"safe.pdf\")" "$0" >/dev/null' "$MAN13"
+require "f13d and the refusal is visible on stderr" grep -q 'refusing an unsafe' "$W/out13.txt"
+cd /; rm -rf "$W"
 
 rm -rf "$STUB"
 print_summary

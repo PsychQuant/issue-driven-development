@@ -275,10 +275,20 @@ collect_external_writes() {   # $1 = issue number
   # 字串開頭、不是每行開頭 —— 只有恰好在第一行的 heading 會被看到。
   awk -v re="^###[[:space:]]*(${EW_SECTIONS})" '
     $0 ~ re { f = 1; print; next }
-    f && /^#{1,3}[[:space:]]/ { f = 0 }
+    # `/^#{1,3}[[:space:]]/` used an interval quantifier, which older awk
+    # implementations do not support — and where it is unsupported the terminator
+    # never matches, so a section captures to END OF FILE and swallows every
+    # later comment. Written out longhand instead.
+    f && /^(#|##|###)[[:space:]]/ { f = 0 }
     f { print }
   ' "$raw"
+  # Capture awk's status BEFORE rm, or the function returns rm's — and rm
+  # practically always succeeds, so a failed scan was indistinguishable from
+  # "this issue has no external writes". Same shape as the pipefail CRITICAL:
+  # the status that reaches the caller is not the status that matters.
+  local rc=$?
   rm -f "$raw"
+  return "$rc"
 }
 EXTERNAL_WRITES=""
 EW_OK=1
@@ -521,6 +531,18 @@ gh pr checkout $PR --repo $GITHUB_REPO
 
 ```bash
 DISCOVERED=$(gh pr view $PR --repo $GITHUB_REPO --json body -q .body | grep -oE '#[0-9]+' | sort -u)
+# ASSIGN the variable the rest of this skill consumes. `REFD_ISSUES` is read in
+# three places (the external-writes collector, the pointer loop, the routing
+# record) and was assigned in NONE of them — so every one of those loops ran
+# over an empty list, and the cluster case degraded to a single issue in silence.
+# The external-writes collector even had a green assertion claiming cluster
+# coverage: a test can only check the text it was pointed at.
+#
+# Digits only, and stripped of the `#`: these values are interpolated into REST
+# paths, and this same release documents that validation as mandatory for the
+# gate. The same rule applies here.
+REFD_ISSUES=$(printf '%s\n' "$DISCOVERED" | tr -d '#' | grep -E '^[0-9]+$' | sort -u | tr '\n' ' ')
+[ -n "$REFD_ISSUES" ] || REFD_ISSUES="$NUMBER"
 
 if [ -z "$DISCOVERED" ]; then
   echo "ABORT: PR #$PR has no Refs #N — violates IDD discipline."

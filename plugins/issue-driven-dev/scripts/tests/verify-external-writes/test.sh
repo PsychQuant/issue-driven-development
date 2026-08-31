@@ -47,6 +47,20 @@ assert_grep "a failed fetch is distinguishable from an empty one" 'EW_OK=0' "$MD
 refute_grep "no undefined \$N in the collector" 'gh issue view "$N"' "$MD"
 assert_grep "cluster: every ref'd issue is collected, not just one" \
   'for I in ${REFD_ISSUES:-$NUMBER}' "$MD"
+# The loop is worthless if the variable is never set. It was read in three
+# places in this skill and ASSIGNED IN NONE, so every one of them iterated an
+# empty list and the cluster case degraded to a single issue — while this very
+# assertion reported cluster coverage as present. A test can only check the text
+# it was pointed at; pointing it at the consumer and not the producer is how it
+# certified a loop that could not run.
+assert_grep "...and REFD_ISSUES is actually assigned somewhere" 'REFD_ISSUES=$(' "$MD"
+assert_grep "...from digits only, since it reaches a REST path" \
+  "grep -E '^[0-9]+$'" "$MD"
+# The collector must report a failed scan as a failure. Ending on `rm` returned
+# rm's status, and rm practically always succeeds — so a broken scan was
+# indistinguishable from "this issue has no external writes".
+assert_grep "the collector returns the scan status, not the cleanup status" \
+  'local rc=$?' "$MD"
 # `Linked-Context Siblings Filed` is PATCHed into the issue BODY, not a comment.
 # Nothing asserted the body fetch, so removing it would silently return that
 # whole record type to permanent UNKNOWN — the exact defect this release claims
