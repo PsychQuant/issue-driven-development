@@ -189,6 +189,40 @@ assert_grep "...and makes the human confirmation non-optional" \
   '強制，無無人值守路徑' "$CLOSE_MD"
 refute_grep "idd-close no longer tells anyone that exit 0 may proceed" \
   '只有 `rc == 0` 放行' "$CLOSE_MD"
+
+# ── the human permit must not be optional ANYWHERE in this file ──
+#
+# Round 12 removed the helper's power to authorise, leaving exactly one thing
+# between `rc == 10` and an irreversible duplicate summary: a person. The table
+# row and the new section both say that confirmation cannot be disabled.
+#
+# The Step 0.5 bootstrap list said otherwise, and it is the list an executing
+# agent actually follows -- twelve lines below it the file declares
+# `TaskCreate 清單 = 真實的步驟清單`. Its `review_with_user` entry carried
+# `(若已明確 /idd-close 可省略此步)`, and `--retroactive` IS an explicit
+# `/idd-close` invocation, so the carve-out covered precisely the one case that
+# must never take it. Eight commits of round-12 work touched 65 lines of this
+# file and none of them touched that one.
+#
+# Three places have to agree, so all three are asserted: the table row, the task
+# list, and the Step 3 body. The previous round asserted the first two and the
+# defect lived in the third form of the same sentence.
+refute_grep "the task list does not license skipping confirmation for an explicit close" \
+  '(若已明確 /idd-close 可省略此步)' "$CLOSE_MD"
+assert_grep "...it scopes the omission away from --retroactive instead" \
+  '--retroactive 不得省略' "$CLOSE_MD"
+assert_grep "the Step 3 BODY carries the mandate too, not just the retroactive table" \
+  '`--retroactive` 時這一步不可省略' "$CLOSE_MD"
+# And the property behind all three, checked without depending on any single
+# wording: no line in this file may pair "省略/skip" with the confirmation step
+# unless it also names the retroactive exception.
+require "no line lets the confirmation step be skipped unconditionally" \
+  bash -c '
+    bad=$(printf "%s\n" "$0" \
+      | grep -nE "省略|skip" \
+      | grep -E "確認|confirm|review_with_user" \
+      | grep -vE "retroactive")
+    [ -z "$bad" ] || { printf "%s\n" "$bad"; exit 1; }' "$CLOSE_MD"
 refute_grep "idd-close no longer describes its own gate as prose-only" \
   "本 skill 並未呼叫它" "$CLOSE_MD"
 

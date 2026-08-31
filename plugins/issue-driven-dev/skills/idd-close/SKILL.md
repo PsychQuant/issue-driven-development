@@ -318,7 +318,7 @@ TaskCreate(name="check_open_prs", description="Step 1.5: gh pr list 找引用 #N
 TaskCreate(name="merge_completeness_gate", description="Step 1.55 (v2.84.0+, #184): resolve issue branch via merged-PR headRefOid (SHA — survives GitHub branch-delete-on-merge) → local idd/<N>-* → VISIBLE skip note; bash scripts/check-merge-completeness.sh --branch <sha> --baseline origin/<default> (line-presence content-verify); rc=3 orphans → AskUserQuestion 3-option (close anyway / abort+land / mis-detection), warn-only; rc=4/no-branch print a note (never silent). Never hard-blocks.")
 TaskCreate(name="semantic_gate_check", description="Step 1.6: 對每個 - [x] bullet 做 keyword extraction → 驗證對應 artifact 真存在/有 commit。Warn-only。")
 TaskCreate(name="draft_closing_comment", description="起草 closing summary：code issue（bug/feature/refactor/docs）用 Problem / Root Cause / Solution / Verification / Changes 五段式；`type=meeting` 用 decision→action mapping（每個決策 → follow-up action + owner），不用五段式、不跑 ### Verification、不要求 /idd-verify TDD pass（見上方「Meeting close」段 + Step 2 meeting 變體）")
-TaskCreate(name="review_with_user", description="顯示 closing comment 給使用者確認(若已明確 /idd-close 可省略此步)")
+TaskCreate(name="review_with_user", description="顯示 closing comment 給使用者確認。一般 close 在使用者已明確下 /idd-close 時可省略；**--retroactive 不得省略**——那條路徑上 helper 已經交出許可權，人是唯一還在判斷的一層")
 TaskCreate(name="closing_followup_keyword_scan", description="Step 3.5: scan drafted closing summary for trigger phrases (follow-up / deferred / future / 之後 / 順便 etc); orphan mentions without #NNN cross-link → AskUserQuestion 3-option per canonical references/ic-r011-checkpoint.md; PATCH closing summary inline + add `### Closing Follow-ups Filed` audit trail (advisory, non-blocking, per IC_R011 #527)")
 TaskCreate(name="residue_acknowledgement", description="Step 3.6 (v2.66.0+, #105): read latest ## Diagnosis ### Residue section; if non-empty (not `(none)`), AskUserQuestion 3-option (still residue / file follow-up / skip); silent skip when residue is `(none)` or section missing. Audit trail PATCH to closing summary. Non-blocking, IC_R011 rollback respected. Closes the F3 write-only loop from #103.")
 TaskCreate(name="publish_and_close", description="經 gh-egress.sh comment 派送 closing summary（#226，--scrub-attested）+ gh issue close")
@@ -590,7 +590,11 @@ for (bullet, reason) in WARNINGS:
 
 ### Step 3: 確認
 
-將 closing comment 顯示給使用者確認。
+將 closing comment 顯示給使用者確認。一般 close 在使用者已明確下 `/idd-close` 時可省略（**`--retroactive` 除外**）——那是他自己要求的動作，再問一次沒有增加任何判斷。
+
+**但 `--retroactive` 時這一步不可省略。** 兩條路徑的差別不在禮貌，在於**誰在判斷**：一般 close 的前面有 checklist gate、PR gate、semantic gate 一路擋著，而 `--retroactive` 把那些全部跳過（issue 已關，它們 moot），helper 又只能否決不能批准（round 12）。所以 `rc == 10` 之後，站在「補一份 audit trail」與「在已有摘要的 issue 上再貼一份」之間的，只剩這一個人。
+
+> **這個豁免曾經寫成無條件的。** Step 0.5 的 `review_with_user` 原本在括號裡寫「明確呼叫就可以省略這一步」，沒有任何例外——而 `--retroactive` **就是**一個明確的 `/idd-close` 呼叫，所以那個括號精準地涵蓋了唯一不能用它的情況。（原句不在此逐字重寫：測試會掃它，而把被禁的字面寫進解釋它為什麼被禁的段落，是這個 repo 第四次踩到的同一顆釘子。）同一份檔案在十二行後宣告該清單為權威（`TaskCreate 清單 = 真實的步驟清單`），而 round 12 那八個 commit 改了本檔 65 行、沒有一行碰到它。表格裡寫「強制、無無人值守路徑」、新章節裡寫「不可關閉」，然後在執行者真正會照著走的那份清單裡留著一句說可以關掉的話。三處要一起改，測試現在同時釘住三處。
 
 ### Step 3.5: Closing Summary Follow-up Keyword Scan
 

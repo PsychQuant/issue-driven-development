@@ -603,6 +603,14 @@ require "veto: the EQUALS spelling still enters gate mode, never audit" \
     done
     [ -z "$bad" ] || { echo "audit-mode 0 for:$bad"; exit 1; }' \
   "$HELPER" "$FIXTURE"
+# WHICH of these two pins the equals form, stated because the answer is not the
+# obvious one. Removing the `--*=*` split leaves the assertion ABOVE green: the
+# unknown-argument arm then refuses `--issue=101` with exit 2, which is still
+# "not 0", so the refusal guard masks the parsing guard. The assertion that
+# actually pins the equals spelling is this one -- it requires the two spellings
+# to reach the same VERDICT, which only parsing can deliver. Verified by
+# mutation both ways. (Same shape as the exit-0 sweep note above: two mechanisms
+# holding one property, and only one assertion able to tell them apart.)
 assert_eq "veto: --issue=101 gives the same verdict as --issue 101" \
   "$(bash "$HELPER" --json-file "$FIXTURE" --issue 101 2>/dev/null | jq -r .class)" \
   "$(bash "$HELPER" --json-file "$FIXTURE" --issue=101 2>/dev/null | jq -r .class)"
