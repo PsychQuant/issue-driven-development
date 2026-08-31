@@ -67,6 +67,9 @@ assert_grep "idd-plan defers to idd-all as the normative source" \
 # (snapshots of a past decision). Rewriting either to match today would falsify a
 # record. A LIVE spec is NOT in that category — openspec/specs/ is current, and
 # that is exactly where round 2's surviving violation sat.
+# The EXACT path, not a suffix. `case "$f" in *"$NORMATIVE")` matched anything
+# ending with it, so `docs/copied/skills/idd-all/SKILL.md` was exempt too — a
+# copy of the source is not the source.
 NORMATIVE='skills/idd-all/SKILL.md'
 # ROUTING tokens only. Bare skill names (`idd-implement`, `/idd-plan`) are not in
 # the set: they appear in ordinary prose everywhere, and a file that merely names
@@ -78,6 +81,12 @@ NORMATIVE='skills/idd-all/SKILL.md'
 # the commit message claimed the detector was case-insensitive -- and three of
 # the four kept matching literally. `Hybrid`, `Attended`, `EnterPlanMode` in a
 # heading: each escaped a different one of them.
+# A routing claim does not have to name a PHASE. Saying "attended goes to
+# /idd-plan, headless calls idd-implement" is the whole claim minus the internal
+# numbering, and it escaped four rounds of this detector. Bare skill names stay
+# out of the list (they appear in ordinary prose everywhere); what counts is
+# both skills named as the two branches of one decision, which the awk checks
+# separately below.
 MECHANISM='enterplanmode|phase 3a|phase 3p'
 # `noninteractive` / `headless` / `without a user` are the same claim in other
 # words; leaving them out is the round-2 mistake (grep the wording you remember)
@@ -109,11 +118,17 @@ restating_files() {   # $1 = tree to scan
   # this grep decides which files reach it at all, and it was case-sensitive, so
   # `PLAN TIER` never got that far. Two places had to agree and only one was
   # changed — which is exactly the shape of defect this suite exists to catch.
-  grep -rliE --include='*.md' -- 'Plan[ -]tier|Plan path' "$1" 2>/dev/null \
+  # The token list is exactly as wide as the tokens in it. An earlier comment
+  # here claimed the rule "catches a restatement written in a language nobody
+  # anticipated" — it cannot, and a Chinese restatement (the language most of
+  # this repo is written in) never reached the awk at all. The claim is dropped
+  # and the forms this repo actually uses are listed. Widening this list is the
+  # maintenance cost of the approach, and it is stated rather than hidden.
+  grep -rliE --include='*.md' -- 'Plan[ -]tier|Plan path|Plan 層|Plan 層級|計畫層級|計劃層級|Plan 路徑' "$1" 2>/dev/null \
     | grep -v '/CHANGELOG.md$' \
     | grep -v '/openspec/changes/archive/' \
     | while IFS= read -r f; do
-        case "$f" in *"$NORMATIVE") continue ;; esac        # the source may state it
+        [ "$f" = "$ROOT/plugins/issue-driven-dev/$NORMATIVE" ] && continue   # the source may state it
         # Deference is checked PER CLAIM, in the same window as the claim --
         # NOT per file. A file-level `grep && continue` is a blanket amnesty:
         # adding one deference pointer anywhere exempts every other restatement
@@ -132,16 +147,33 @@ restating_files() {   # $1 = tree to scan
               # paragraph -- and a paragraph is how prose actually states this.
               # Case-insensitive too: `Plan Tier` and `PLAN TIER` escaped a
               # case-sensitive match.
-              if (tolower(line[n]) !~ /plan[ -]tier|plan path/) continue
+              if (tolower(line[n]) !~ /plan[ -]tier|plan path|plan 層|計畫層級|計劃層級|plan 路徑/) continue
               plo = (n - 5 < 1 ? 1 : n - 5); phi = (n + 5 > NR ? NR : n + 5)
               has_mech = 0
               for (m = plo; m <= phi; m++) if (tolower(line[m]) ~ mech) has_mech = 1
+              # ...or the two skills named as the two branches of one decision.
+              # That is a routing claim without a phase token, and it is how the
+              # escape found in round 13 was written.
+              #
+              # Mutation note: deleting only the inner `if` line leaves the
+              # `if (!has_mech) for (...)` header binding to whatever statement
+              # follows, which produces a valid but scrambled program rather
+              # than the absence of this rule -- and the suite stayed green on
+              # it. Removing the whole three-line block does drop the control.
+              # A mutation that leaves a dangling control structure tests
+              # nothing; verified the clean way.
+              if (!has_mech)
+                for (m = plo; m <= phi; m++)
+                  if (tolower(line[m]) ~ /idd-plan/ && tolower(line[m]) ~ /idd-implement/) has_mech = 1
               if (!has_mech) continue
               # A version-history row (first cell is a version) is a release
               # log embedded in a table -- same category as CHANGELOG.md, and
               # exempt for the same reason: it records what was true then, and
               # editing it to match today would falsify the record.
-              if (line[n] ~ /^[ \t]*\|[ \t]*v[0-9]/) continue
+              # A DOTTED version. `v[0-9]` alone exempted `| v1 | ... |`, which
+              # is not a version-history row, it is a table cell that happens to
+              # start with a v — and a restatement could hide behind it.
+              if (line[n] ~ /^[ \t]*\|[ \t]*v[0-9]+\.[0-9]/) continue
               if (line[n] ~ /^[ \t]*\|/) { lo = n; hi = n }        # table row: same row only
               else { lo = (n - 5 < 1 ? 1 : n - 5); hi = (n + 5 > NR ? NR : n + 5) }
               # The DEFERENCE window is wider than the CLAIM window, on purpose.
@@ -208,6 +240,66 @@ cat > "$PC_DIR/restates-case.md" <<'CANARY'
 PLAN TIER, unattended: EnterPlanMode still fires via Phase 3a.
 CANARY
 SEEN_CASE=$(restating_files "$PC_DIR" | grep -c 'restates-case.md' || true)
+# ── four controls for four escapes an outside reviewer reproduced ──
+#
+# Each one is a COMPLETE restatement of idd-all's Plan routing that the detector
+# read and then discarded. None of them is exotic; three use this repo's own
+# vocabulary.
+#
+# (a) No mechanism TOKEN. `MECHANISM` lists EnterPlanMode / Phase 3a / Phase 3p,
+#     and bare skill names were deliberately excluded because they appear in
+#     ordinary prose. But naming BOTH skills as the two branches of one decision
+#     IS the routing claim -- that is the whole of it, minus the internal
+#     phase numbers.
+cat > "$PC_DIR/restates-noskillname.md" <<'CANARY'
+Plan tier: attended dispatches to `/idd-plan`; headless calls `idd-implement` directly.
+CANARY
+# (b) Chinese. The outer enumeration greps `Plan tier|Plan path` only, so a
+#     restatement in the language most of this repo is written in never reaches
+#     the awk at all. The comment above used to claim this catches "a
+#     restatement written in a language nobody anticipated"; it does not, and
+#     could not -- a token list catches the tokens in it. The claim is narrowed
+#     and the repo's own forms are added.
+cat > "$PC_DIR/restates-cjk.md" <<'CANARY'
+Plan 層級在有人值守時進入 EnterPlanMode，unattended 則直接走 Phase 3a。
+CANARY
+# (c) Path-suffix exemption. `case "$f" in *"$NORMATIVE")` matches any file whose
+#     path ENDS with the normative one, so a copy under docs/ is exempt.
+mkdir -p "$PC_DIR/copied/skills/idd-all"
+cat > "$PC_DIR/copied/skills/idd-all/SKILL.md" <<'CANARY'
+Plan tier under unattended mode is downgraded: Phase 3a, no EnterPlanMode.
+CANARY
+# (d) Version-row exemption. `| v[0-9]` skipped any row whose first cell starts
+#     with a v and a digit -- so `| v1 | <restatement> |` hid in plain sight. A
+#     real version-history row carries a dotted version.
+cat > "$PC_DIR/restates-vrow.md" <<'CANARY'
+| tier | behaviour |
+|---|---|
+| v1 | Plan tier unattended still reaches EnterPlanMode via Phase 3p |
+CANARY
+SEEN_NOSKILL=$(restating_files "$PC_DIR" | grep -c 'restates-noskillname.md' || true)
+SEEN_CJK=$(restating_files "$PC_DIR" | grep -c 'restates-cjk.md' || true)
+SEEN_COPY=$(restating_files "$PC_DIR" | grep -c 'copied/skills/idd-all' || true)
+SEEN_VROW=$(restating_files "$PC_DIR" | grep -c 'restates-vrow.md' || true)
+require "positive control: a routing claim naming both skills, no phase token" \
+  bash -c '[ "$0" -ge 1 ]' "$SEEN_NOSKILL"
+require "positive control: a restatement in Chinese is caught" \
+  bash -c '[ "$0" -ge 1 ]' "$SEEN_CJK"
+require "positive control: a COPY of the normative file is not exempt" \
+  bash -c '[ "$0" -ge 1 ]' "$SEEN_COPY"
+require "positive control: a bare 'v1' table cell does not buy version-history amnesty" \
+  bash -c '[ "$0" -ge 1 ]' "$SEEN_VROW"
+# NEGATIVE control for (d): a real version-history row must still be exempt, or
+# the fix would have bought its greens by deleting the exemption.
+cat > "$PC_DIR/real-version-history.md" <<'CANARY'
+| version | change |
+|---|---|
+| v2.36.0 | Plan tier routed through EnterPlanMode under unattended mode |
+CANARY
+QUIET_VH=$(restating_files "$PC_DIR" | grep -c 'real-version-history.md' || true)
+require "negative control: a dotted version row is still treated as history" \
+  bash -c '[ "$0" -eq 0 ]' "$QUIET_VH"
+
 SEEN_SPREAD=$(restating_files "$PC_DIR" | grep -c 'restates-spread.md' || true)
 SEEN=$(restating_files "$PC_DIR" | grep -c 'restates.md' || true)
 QUIET=$(restating_files "$PC_DIR" | grep -c 'defers.md' || true)
