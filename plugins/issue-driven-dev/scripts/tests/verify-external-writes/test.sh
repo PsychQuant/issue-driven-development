@@ -216,8 +216,25 @@ echo "── who actually receives it ──"
 # reach it through the documented contract.
 assert_grep "Tier 1 receives it through CONTEXT_BLOCK" 'CONTEXT_BLOCK="${CONTEXT_BLOCK}' "$MD"
 assert_grep "the manual codex leg receives it too" '--instructions "You are verifying' "$MD"
-require "the manual codex --instructions carries the block" \
-  bash -c 'printf "%s" "$0" | grep -A3 -- "--instructions \"You are verifying" | grep -q "EW_BLOCK"' "$MD"
+# The codex leg reads the block from a FILE, never from an interpolated value.
+# Two failures were mutually exclusive so one always held: a fresh shell per Bash
+# call left `$EW_BLOCK` empty (the #315 context silently missed the codex leg
+# entirely), or the model substituted the VALUE — verbatim third-party prose —
+# inside a double-quoted `--instructions "..."`. One `"` ends the argument; a
+# `$(...)` is command substitution in a call allowed to run `gh` and `rm`.
+# And the benign path already carried a `"`: the placeholder was written with
+# backslash-escaped quotes, which bash resolves to a literal `"` in the value.
+require "the manual codex --instructions carries the block, read from a file" \
+  bash -c 'printf "%s" "$0" | grep -A3 -- "--instructions \"You are verifying" | grep -q "cat \"\$VERIFY_DIR/ew-block.md\""' "$MD"
+assert_grep "...and the block is staged to that file where it is built" \
+  'printf '"'"'%s'"'"' "$EW_BLOCK" > "$VERIFY_DIR/ew-block.md"' "$MD"
+refute_grep "the untrusted body is never interpolated into the codex command" \
+  '$EW_BLOCK"`,' "$MD"
+# The placeholder must not carry a double quote of its own. This is the benign
+# path -- no attacker needed -- and it is the reason the quoting bug was live
+# rather than theoretical.
+refute_grep "the default placeholder carries no double quote" \
+  'NOT the same as \"none happened\"' "$MD"
 assert_grep "the pai DA gap is stated, with the engine line" 'daPrompt' "$MD"
 # The DA IS reachable — `daPrompt` interpolates `A.daFocus`, a documented caller
 # arg this skill already passes. The previous text called it an upstream

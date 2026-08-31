@@ -381,11 +381,34 @@ factual error in an implementation note propagates to every issue it was
 cross-referenced into, and no amount of reading the diff will surface it.
 
 <<<${EW_FENCE}
-${EXTERNAL_WRITES:-(none recorded — NOT the same as \"none happened\": if no audit-trail section exists, the blast radius is UNKNOWN, and you should report it as unknown rather than assume it was empty.)}
+${EXTERNAL_WRITES:-(none recorded — NOT the same as 「none happened」: if no audit-trail section exists, the blast radius is UNKNOWN, and you should report it as unknown rather than assume it was empty.)}
 ${EW_FENCE}>>>"
 CONTEXT_BLOCK="${CONTEXT_BLOCK}
 
 ${EW_BLOCK}"
+
+# Staged to a FILE, and every consumer reads it from there. Two reasons, and
+# they are mutually exclusive so one of them always applied:
+#
+#   1. Each Bash tool call is a FRESH SHELL. `$EW_BLOCK` set in this block does
+#      not exist in the codex block, so it expanded to empty and the whole #315
+#      context silently never reached the codex leg — one of the two backends
+#      the coverage claim names.
+#   2. The only way to make it non-empty is for the executing model to
+#      substitute the VALUE into the command text. That value is verbatim
+#      third-party issue-comment prose, and it was landing inside a
+#      double-quoted `--instructions "..."`. One `"` in a comment ends the
+#      argument and the rest is parsed as shell words; a `$(...)` or a backtick
+#      is command substitution in a call whose allowed-tools include
+#      `Bash(gh:*)` and `Bash(rm:*)`.
+#
+# And this was not attacker-only: the placeholder above used to write
+# `\"none happened\"`, which bash resolves to a literal `"` INSIDE the value —
+# so the benign default path already carried the character that breaks the
+# quoting. It is written with corner brackets now, but the quoting discipline
+# must not depend on that: a path is a stable string safe to substitute into a
+# command, a body is not. The body never appears in command text again.
+printf '%s' "$EW_BLOCK" > "$VERIFY_DIR/ew-block.md"
 
 # DA digest：只有結構、沒有逐字內容（理由見上）。控制字元一併去掉 —— 這條路徑
 # 沒有 pai 的 sentinel 包裝。
@@ -939,7 +962,7 @@ If you receive a later SendMessage with the same prompt re-pasted, treat as retr
 Bash({
   command: `"$PAI_CODEX_CALL" --output $VERIFY_DIR/codex.md --model "$CODEX_MODEL" --effort "$CODEX_EFFORT" --service-tier fast --max-time "$CODEX_MAX_TIME" --prompt-file "$VERIFY_DIR/diff.patch" --instructions "You are verifying code changes for Issue #$NUMBER: $TITLE. Go through EACH requirement: FULLY / PARTIALLY / NOT addressed. Flag scope creep and regressions. Reply in Traditional Chinese.
 
-$EW_BLOCK"`,
+$(cat "$VERIFY_DIR/ew-block.md")"`,
   description: "Codex review for #$NUMBER (via codex-call)",
   run_in_background: true
 })

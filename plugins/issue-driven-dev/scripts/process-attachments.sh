@@ -196,16 +196,40 @@ decode_filename() {
   # flattened output, pinning "accept and flatten" while the comment beside them
   # said "refuse". Refusing is what was claimed, and it is what is safe: the
   # caller records a manifest error, which this plugin requires to be loud.
+  # WHERE the validation runs matters as much as what it checks. The control
+  # character test used to live in the shell, AFTER `dec=$(... python3 ...)` —
+  # and command substitution strips NUL bytes and trailing newlines before the
+  # value is assigned. So `*[[:cntrl:]]*` was written for precisely the two
+  # inputs it could never see: `trusted.pdf%00` and `trusted.pdf%0A` both
+  # arrived as `trusted.pdf`, colliding with a legitimate attachment of that
+  # name — the collision the refuse-don`t-flatten change exists to prevent,
+  # walking in through the guard meant to stop it. A guard placed downstream of
+  # a lossy boundary is not a guard.
+  #
+  # It is now decided in python, on BYTES, before anything crosses that
+  # boundary: `errors="strict"` so invalid UTF-8 is refused instead of being
+  # folded to U+FFFD (which mapped `%FF.txt` and `%FE.txt` onto one name), and
+  # an explicit reject list for NUL and every other control character. The shell
+  # sees only an accepted name or a non-zero status.
   local seg dec
   seg=$(printf '%s' "$1" | sed 's/[)>"].*$//')
   seg=${seg##*/}
-  dec=$(printf '%s' "$seg" | python3 -c 'import sys, urllib.parse; print(urllib.parse.unquote(sys.stdin.read().strip()))')
+  dec=$(printf '%s' "$seg" | python3 -c '
+import sys, urllib.parse
+raw = sys.stdin.buffer.read().strip()
+try:
+    name = urllib.parse.unquote_to_bytes(raw).decode("utf-8", errors="strict")
+except UnicodeDecodeError:
+    sys.exit(1)                      # invalid UTF-8 — two of these fold to one name
+if any(ord(c) < 32 or ord(c) == 127 for c in name):
+    sys.exit(1)                      # NUL, LF, TAB, DEL — none survive the shell intact
+sys.stdout.write(name)
+') || return 1
   case "$dec" in
     ''|.|..)  return 1 ;;
     */*)      return 1 ;;   # a separator that was hiding inside an escape
     -*)       return 1 ;;   # a name that could be read as an option
   esac
-  case "$dec" in *[[:cntrl:]]*) return 1 ;; esac
   printf '%s\n' "$dec"
 }
 
@@ -257,6 +281,27 @@ case "$CMD" in
         FILES_JSON=$(printf '%s' "$FILES_JSON" | jq \
           --arg url "$url" '. += [{filename: null, url: $url, error: "unsafe_filename"}]')
         continue
+      fi
+      # The name comes from the URL's LAST SEGMENT, which is not unique: two
+      # perfectly legitimate attachments on one issue can both be `report.pdf`
+      # from different repos. `curl -o` then wrote the second over the first,
+      # the manifest kept BOTH rows (same filename, different url, different
+      # sha256), and `verify` — which only checks that the path exists — passed
+      # over an attachment that was irrecoverably gone.
+      #
+      # Disambiguated deterministically rather than refused: both files are
+      # legitimate and the caller asked for both. The suffix is derived from the
+      # URL, so re-running produces the same name, and it is inserted before the
+      # extension so the file still opens with the right application.
+      if [ -e "$ATTACH_DIR/$filename" ] \
+         && [ "$(printf '%s' "$FILES_JSON" | jq -r --arg f "$filename" --arg u "$url" \
+                  '[.[] | select(.filename == $f and .url != $u)] | length')" != "0" ]; then
+        sfx=$(printf '%s' "$url" | shasum -a 256 | cut -c1-8)
+        case "$filename" in
+          *.*) filename="${filename%.*}-${sfx}.${filename##*.}" ;;
+          *)   filename="${filename}-${sfx}" ;;
+        esac
+        echo "ℹ two attachments share the basename — the second is stored as $filename" >&2
       fi
       target="$ATTACH_DIR/$filename"
 

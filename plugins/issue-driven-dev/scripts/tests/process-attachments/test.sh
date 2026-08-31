@@ -36,6 +36,8 @@ case "${1:-}" in
       # one unsafe URL followed by a legitimate one — the ordering matters,
       # because the bug lost everything AFTER the refusal.
       refusable) printf '{"body":"bad https://github.com/user-attachments/files/1/%%2e%%2e%%2fpwned.txt and good https://github.com/user-attachments/files/2/safe.pdf","comments":[]}\n' ;;
+      # two legitimate attachments whose last URL segment is identical
+      collide)  printf '{"body":"a https://github.com/user-attachments/files/1/report.pdf and b https://github.com/user-attachments/files/2/report.pdf","comments":[]}\n' ;;
       fail)     echo "gh: network error (stub)" >&2; exit 1 ;;
     esac ;;
   auth)   echo "stub-token" ;;
@@ -305,6 +307,64 @@ require "f14e a REAL missing file still fails verify (the gate survives)" \
   bash -c '[ "$0" = 1 ]' "$RC14E"
 require "f14f ...and names the actual file, not 'null'" \
   grep -q 'references safe.pdf' "$W/out14e.txt"
+cd /; rm -rf "$W"
+
+# ── Fixture 15: the control-character guard must be able to fire ──
+#
+# `dec=$(... python3 ...)` is a command substitution, and command substitution
+# STRIPS NUL bytes and trailing newlines before the value is ever assigned. So
+# `case "$dec" in *[[:cntrl:]]*) return 1` could not see either of them: the
+# guard was written for exactly the inputs it cannot observe. `trusted.pdf%00`
+# and `trusted.pdf%0A` both decoded to `trusted.pdf` — the same target as a
+# legitimate `trusted.pdf`, which is the collision the refuse-don't-flatten
+# change exists to prevent, arriving through the guard meant to stop it.
+#
+# Separately, `urllib.parse.unquote` replaces invalid UTF-8 with U+FFFD by
+# default, so `%FF.txt` and `%FE.txt` both become the same name.
+#
+# Extracted and run directly, because these inputs cannot survive a round trip
+# through the test harness's own shell either.
+DF=$(sed -n '/^decode_filename()/,/^}/p' "$SCRIPT")
+require "decode_filename could be extracted" bash -c '[ -n "$0" ]' "$DF"
+probe_df() {  # $1 = url ; prints RC:<rc> and the output
+  bash -c "$DF"'
+    if out=$(decode_filename "$1"); then printf "ACCEPT:%s" "$out"; else printf "REFUSE"; fi
+  ' _ "$1"
+}
+assert_grep "f15a a NUL escape is refused, not silently dropped" \
+  "REFUSE" "$(probe_df 'https://x/files/1/trusted.pdf%00')"
+assert_grep "f15b a trailing-newline escape is refused" \
+  "REFUSE" "$(probe_df 'https://x/files/1/trusted.pdf%0A')"
+assert_grep "f15c an embedded newline is refused too" \
+  "REFUSE" "$(probe_df 'https://x/files/1/tru%0Asted.pdf')"
+assert_grep "f15d invalid UTF-8 is refused rather than folded to U+FFFD" \
+  "REFUSE" "$(probe_df 'https://x/files/1/%FF.txt')"
+# CONTROL: the ordinary name must still be accepted, or "refuse everything"
+# would pass every line above.
+assert_grep "f15e a plain filename is still accepted" \
+  "ACCEPT:trusted.pdf" "$(probe_df 'https://x/files/1/trusted.pdf')"
+assert_grep "f15f ...and a percent-encoded space still decodes" \
+  "ACCEPT:my report.pdf" "$(probe_df 'https://x/files/1/my%20report.pdf')"
+
+# ── Fixture 16: two different URLs, same basename ──
+#
+# The name comes from the URL's last segment only, and `curl -o` writes straight
+# to it, so two legitimate attachments called `report.pdf` from different repos
+# overwrite each other. The manifest keeps BOTH rows — same filename, different
+# url, different sha256 — and `verify` only checks that the path exists, so it
+# reports success over an attachment that is irrecoverably gone.
+W="$(mktemp -d)"; cd "$W"
+export GH_STUB_MODE=collide
+run_pa download 33 > "$W/out16.txt" 2>&1
+MAN16=".claude/.idd/attachments/issue-33/_manifest.json"
+require "f16a both attachments are recorded" \
+  bash -c '[ "$(jq ".files | length" "$0")" = 2 ]' "$MAN16"
+require "f16b ...under DIFFERENT filenames" \
+  bash -c '[ "$(jq -r "[.files[].filename] | unique | length" "$0")" = 2 ]' "$MAN16"
+require "f16c ...and both files exist on disk" \
+  bash -c 'for f in $(jq -r ".files[].filename" "$0"); do [ -f ".claude/.idd/attachments/issue-33/$f" ] || exit 1; done' "$MAN16"
+run_pa verify 33 > "$W/out16v.txt" 2>&1
+require "f16d verify passes with both present" bash -c '[ "$0" = 0 ]' "$?"
 cd /; rm -rf "$W"
 
 rm -rf "$STUB"
