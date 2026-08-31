@@ -581,7 +581,21 @@ REPO=$(echo "$GITHUB_REPO" | cut -d/ -f2)
 # keeping a divergent copy.
 TAG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/idd-tagging-XXXXXX") || {
   echo "✗ cannot create a scratch dir for tagging — refusing to continue" >&2; exit 1; }
-trap 'rm -rf "$TAG_DIR"' EXIT HUP INT TERM
+# EXIT cleans up; each SIGNAL cleans up, restores the default disposition, and
+# re-raises itself. The one-liner `trap '...' EXIT HUP INT TERM` looked tidier
+# and did something else: on HUP/TERM it ran the cleanup AND replaced the
+# default termination semantics, so a caller without `set -e` carried on into
+# the verification loop below with the directory already deleted — grep found
+# nothing, the loop ran zero times, and the mention gate passed silently. Third
+# route into the same silent pass (missing file, missing value, now a swallowed
+# signal); this one dies the way the sender asked.
+idd_tag_cleanup() { rm -rf "$TAG_DIR"; }
+idd_tag_on_signal() { sig="$1"; idd_tag_cleanup; trap - "$sig"; kill -s "$sig" $$; }
+trap idd_tag_cleanup EXIT
+for sig in HUP INT TERM; do
+  # shellcheck disable=SC2064  — $sig must expand NOW, one handler per signal
+  trap "idd_tag_on_signal $sig" "$sig"
+done
 gh api repos/$OWNER/$REPO/collaborators --jq '.[] | {login, name}' \
   > "$TAG_DIR/collaborators.json"
 ```

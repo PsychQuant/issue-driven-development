@@ -219,5 +219,60 @@ done <<ATTEST_FILE_LIST
 $(grep -rlE --include='*.md' -- 'MENTION_ATTESTED:\+' "$PLUGIN/skills" 2>/dev/null)
 ATTEST_FILE_LIST
 
+# ── a cleanup trap must not swallow the signal that fired it ──
+#
+# `trap 'rm -rf "$TAG_DIR"' EXIT HUP INT TERM` does two things at once, and the
+# second is not wanted. On HUP or TERM it deletes the directory AND replaces the
+# default termination semantics with "run this and carry on" -- so a caller
+# without `set -e` continues into the verification loop, `grep` finds no file,
+# the loop runs zero times, and the mention gate passes silently.
+#
+# That is the same silent-zero-iterations failure this file already records
+# twice (a missing file, then a missing VALUE), arriving a third time through
+# the signal path. Each fix closed the layer it was looking at.
+#
+# The shape that works: EXIT does cleanup; each signal runs cleanup, restores
+# the default disposition, and re-raises itself, so the process dies the way the
+# sender asked. Checked per implementation rather than per file, since the same
+# protocol is inlined in three places.
+TRAP_FILES=$(grep -rlE --include='*.md' -- 'TAG_DIR=\$\(mktemp' \
+  "$PLUGIN/skills" "$PLUGIN/rules" 2>/dev/null)
+require "at least one TAG_DIR implementation was found (guards a vacuous sweep)" \
+  bash -c '[ -n "$0" ]' "$TRAP_FILES"
+while IFS= read -r tf; do
+  [ -z "$tf" ] && continue
+  rel="${tf#$PLUGIN/}"
+  BODY=$(cat "$tf")
+  if printf '%s\n' "$BODY" | grep -qE "^trap '[^']*' EXIT HUP INT TERM"; then
+    fail "$rel: the cleanup trap does not swallow HUP/TERM" \
+         "one trap for EXIT and the signals means a signal is handled and then ignored"
+  else
+    pass "$rel: the cleanup trap does not swallow HUP/TERM"
+  fi
+  case "$BODY" in
+    *'kill -s "$sig" $$'*) pass "$rel: ...and the signal is re-raised after cleanup" ;;
+    *) fail "$rel: ...and the signal is re-raised after cleanup" \
+            "no re-raise — the process survives a termination request" ;;
+  esac
+  # Defence in depth, and the part that does not depend on signals at all: the
+  # loop must refuse when its input is not there, whatever removed it. Scoped to
+  # files that actually RUN the gate — `idd-issue` creates a TAG_DIR and then
+  # delegates the verification to `rules/tagging-collaborators.md`, so requiring
+  # a staging guard there would be demanding a guard for a loop it does not have.
+  # (The first cut of this assertion was scoped to "makes a TAG_DIR" and failed
+  # idd-issue for exactly that reason: a red that named a real file and a real
+  # line, and was still wrong about what the file does.)
+  if printf '%s\n' "$BODY" | grep -q "grep -oE '@\[A-Za-z0-9-\]"; then
+    case "$BODY" in
+      *'[ -s "$TAG_DIR/comment-body.md" ] || {'*)
+        pass "$rel: the gate refuses when its input file is absent or empty" ;;
+      *) fail "$rel: the gate refuses when its input file is absent or empty" \
+              "a missing body still yields zero iterations and a silent pass" ;;
+    esac
+  fi
+done <<TRAP_FILE_LIST
+$TRAP_FILES
+TRAP_FILE_LIST
+
 print_summary "verify-scratch-paths"
 exit $?
