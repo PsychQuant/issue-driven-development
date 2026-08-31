@@ -23,24 +23,61 @@
 # Advisory only in AUDIT mode — it ALWAYS exits 0 there.
 #
 # `--issue N` is the exception, and deliberately so. Audit mode reports to a
-# human; `--issue N` is a GATE for `/idd-close --retroactive`, whose action is
+# human; `--issue N` guards `/idd-close --retroactive`, whose action is
 # irreversible (it posts a second summary onto an issue that may already have
-# one). A gate that always exits 0 is not a gate — the caller has to interpret
+# one). A check that always exits 0 is not a check — the caller has to interpret
 # prose, which is how seven rounds of work on this classifier stayed advisory
 # while the destructive path went on deciding for itself.
+#
+# THIS MODE MAY VETO. IT MAY NOT PERMIT. (round 12)
+#
+# The two directions are not the same kind of statement:
+#
+#   "a marker IS here"      an OBSERVATION. The recogniser matched something.
+#                           Wrong only by matching too much, and being wrong
+#                           costs a missed remediation -- the cheap direction.
+#
+#   "a marker is NOT here"  an INFERENCE from a failure to recognise. Wrong
+#                           whenever a real summary takes a shape the matcher
+#                           cannot follow, and being wrong authorises an
+#                           irreversible duplicate post -- the expensive one.
+#
+# Twelve consecutive verify rounds failed in the second direction and only the
+# second. That is not a run of bad luck, it is the shape of the problem: "would
+# a reader see a heading?" is a question about RENDERED output, the rendering
+# function is many-to-one with unbounded preimage, and no matcher over source
+# bytes can answer it in the negative. Round 10 replaced shape-matching with
+# renderer-style normalisation and bought exactly one round -- normalisation is
+# still a recogniser, and round 12 broke it with `## Clos<b>ing</b> Summary`
+# (the tag-stripper writes a SPACE where a renderer concatenates) and with
+# `## 結案摘要` (a summary hand-written in the language this repo is written in).
+#
+# So the power is split along the direction that is sound. What supplies the
+# permit is the thing that can actually answer the question: a reader. See
+# `idd-close --retroactive`, which must read the comment set itself and obtain
+# human confirmation. This script only ever removes that option.
 #
 # Usage:
 #   check-closed-without-summary.sh [--repo owner/repo] [--limit N] [--since YYYY-MM-DD]
 #   check-closed-without-summary.sh --json-file <path>     # test / offline mode
-#   check-closed-without-summary.sh --issue N [--repo …]   # single-issue GATE
+#   check-closed-without-summary.sh --issue N [--repo …]   # single-issue VETO
 #
 # `--issue N` prints one JSON object and exits:
-#   0  class == missing, comment set known complete   -> --retroactive may run
-#   1  any other class                                -> refuse, it has one
-#   2  could not determine (not closed / truncated /  -> refuse
-#      fetch or parse failure / no such issue)
-# Everything that is not a confident `missing` refuses. Fail-closed is the only
-# safe default when the action cannot be undone.
+#   1   a marker WAS recognised (any class but `unrecognised`)  -> refuse
+#   2   could not determine (not closed / truncated / fetch or  -> refuse
+#       parse failure / no such issue / bad argument)
+#   10  no marker was recognised. The veto did not fire. This is NOT permission
+#       to post; it is the absence of a refusal. The caller still has to look.
+#
+# `authorises` is present on every reply and is the constant `false`. There is
+# no input -- fixture, live, malformed or hostile -- for which this script exits
+# 0 in gate mode. 10 rather than 0 is deliberate: a caller still reading
+# "rc == 0 means go" breaks loudly instead of silently keeping the behaviour
+# this contract exists to remove.
+#
+# The reported class is `unrecognised`, not `missing`. The old name asserted a
+# fact the tool cannot establish, and prose written against it inherited the
+# error -- that is how "0 才放行" came to be written down as a rule.
 #
 # Consumed by idd-list `--audit-closes`. The `## Closing Summary` heading is the
 # same marker idd-list Step 3 keys on for phase inference.
@@ -81,17 +118,26 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# ── Gate mode plumbing (--issue N) ──
+# ── Veto mode plumbing (--issue N) ──
 # One JSON object on stdout, and an exit code the caller cannot misread. Every
-# path that is not a confident `missing` on a complete comment set exits 2 (or
-# 1), because the caller is about to do something irreversible.
+# path that recognised a marker, and every path that could not determine
+# anything, refuses (1 / 2). The one remaining code is 10, which withholds the
+# refusal without granting anything -- see the contract at the top of the file.
+#
+# `authorises` is hard-coded `false` here rather than passed in. A caller that
+# wants to know whether it may post is asking the wrong component, and there is
+# no argument that makes this function say otherwise.
 gate_out() {  # $1=class-or-empty  $2=state-or-empty  $3=complete(true/false)  $4=error-or-empty  $5=exit code
+  case "${5:-}" in
+    0) echo "✗ internal: gate mode must never exit 0" >&2; exit 2 ;;
+  esac
   jq -n --arg n "$GATE_ISSUE" --arg c "${1:-}" --arg s "${2:-}" \
         --argjson complete "${3:-false}" --arg e "${4:-}" \
     '{number: ($n | tonumber? // null),
       state: (if $s == "" then null else $s end),
       class: (if $c == "" then null else $c end),
       comments_complete: $complete,
+      authorises: false,
       error: (if $e == "" then null else $e end)}'
   exit "$5"
 }
@@ -654,9 +700,13 @@ if [ -n "$GATE_ISSUE" ]; then
       "the comment set is known to be incomplete — absence proves nothing" 2
   fi
   case "$GATE_CLASS" in
-    missing) gate_out missing "$GATE_STATE" true "" 0 ;;
+    # No marker recognised. Reported as `unrecognised`, exit 10, and the error
+    # field says what the caller still owes -- because this is the branch whose
+    # old spelling (`missing`, exit 0) was read as permission for twelve rounds.
+    missing) gate_out unrecognised "$GATE_STATE" true \
+               "no closing-summary marker was recognised. This is NOT authorisation to post: read the comment set and obtain human confirmation first" 10 ;;
     *)       gate_out "$GATE_CLASS" "$GATE_STATE" true \
-               "class is $GATE_CLASS, not missing — this issue already carries a closing-summary marker" 1 ;;
+               "class is $GATE_CLASS — this issue already carries a closing-summary marker" 1 ;;
   esac
 fi
 

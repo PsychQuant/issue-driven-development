@@ -487,17 +487,31 @@ refute  "#187 (autolink is visible, not a blank prefix) is NOT CASING" in_sectio
 require "#101 (no marker anywhere) still reaches MISSING"  flagged 101
 require "#103 (zero comments) still reaches MISSING"       flagged 103
 
-# ── `--issue N`: the single-issue GATE (#307 follow-up) ────────────────────────
-# Audit mode reports to a human and always exits 0. This mode is a precondition
-# for an IRREVERSIBLE action, so the whole point is the exit code: the caller
-# must not have to read prose to find out whether posting is allowed.
+# ── `--issue N`: the single-issue VETO (#307; re-contracted round 12) ──────────
+# Audit mode reports to a human and always exits 0. This mode guards an
+# IRREVERSIBLE action, so the whole point is the exit code: the caller must not
+# have to read prose to find out whether posting is refused.
 #
-#   0 = confident `missing` on a complete comment set     1 = any other class
-#   2 = could not determine anything
+#   1  a marker WAS recognised            -> refuse
+#   2  nothing could be determined        -> refuse
+#   10 no marker was recognised           -> the veto did not fire. NOT a permit.
 #
-# Everything that is not a confident 0 must refuse. These assertions are the
-# only reason the seven rounds of classifier work bind the destructive path at
-# all — before this mode existed, idd-close reimplemented the judgement in prose.
+# The asymmetry is the contract, and it is the whole of round 12. Twelve rounds
+# of this classifier failed in ONE direction: a real closing summary whose shape
+# the recogniser could not follow was called `missing`, and `missing` authorised
+# a duplicate post. That direction cannot be fixed by a better recogniser --
+# "would a reader see a heading?" is a question about RENDERED output, and the
+# rendering function is many-to-one with unbounded preimage, so no source-byte
+# matcher can ever answer it in the negative.
+#
+# But it can answer in the POSITIVE. "I found the marker" is an observation;
+# "the marker is not there" is an inference from a failure to recognise. So the
+# power is split along the direction that is sound: this script may VETO, and
+# may never PERMIT. What supplies the permit is the thing that can actually
+# answer the question -- a reader (see idd-close --retroactive).
+#
+# 10, not 0, on purpose. Any caller still reading "rc == 0 means go" now breaks
+# loudly instead of silently keeping the behaviour this change exists to remove.
 gate() { bash "$HELPER" --json-file "$FIXTURE" --issue "$1" 2>/dev/null; }
 gate_rc() { gate "$1" >/dev/null 2>&1; echo $?; }
 # `tostring`, NOT `// "null"`: in jq the alternative operator treats `false` as
@@ -505,10 +519,44 @@ gate_rc() { gate "$1" >/dev/null 2>&1; echo $?; }
 # — which would have made the truncation assertion below unable to fail.
 gate_field() { gate "$1" | jq -r ".$2 | tostring"; }
 
-assert_eq "gate: a genuinely-missing issue exits 0"            "0" "$(gate_rc 101)"
-assert_eq "gate: ...and says so in machine-readable form"      "missing" "$(gate_field 101 class)"
-assert_eq "gate: ...and asserts the comment set was complete"  "true" "$(gate_field 101 comments_complete)"
-assert_eq "gate: a zero-comment closed issue also exits 0"     "0" "$(gate_rc 103)"
+assert_eq "veto: an unrecognised-marker issue exits 10, not 0" "10" "$(gate_rc 101)"
+assert_eq "veto: ...and names the class for what it is -- unrecognised, not missing" \
+  "unrecognised" "$(gate_field 101 class)"
+assert_eq "veto: ...and states in the payload that it authorises nothing" \
+  "false" "$(gate_field 101 authorises)"
+assert_eq "veto: ...and asserts the comment set was complete"  "true" "$(gate_field 101 comments_complete)"
+assert_eq "veto: a zero-comment closed issue also exits 10"    "10" "$(gate_rc 103)"
+
+# The property, swept rather than enumerated: there is no input -- fixture, live,
+# malformed, hostile -- for which this script exits 0 in gate mode.
+#
+# What this sweep does NOT pin, stated because the distinction is the kind that
+# quietly rots: two independent mechanisms hold the property (the verdict emits
+# 10, and gate_out refuses to exit 0 at all), so the sweep goes red only when
+# BOTH are broken. Mutating the verdict back to 0 leaves it green -- the guard
+# converts the 0 to a 2. The assertion that pins the verdict code is the
+# `exits 10, not 0` one above; this one pins the property they jointly hold.
+# Verified by mutation both ways, round 12.
+require "veto: NO input makes this script exit 0 in gate mode" \
+  bash -c '
+    rcs=""
+    for n in $(jq -r ".[].number" "$1") 9999 abc "" 0 -1; do
+      bash "$0" --json-file "$1" --issue "$n" >/dev/null 2>&1
+      rc=$?
+      [ "$rc" = 0 ] && rcs="$rcs $n"
+    done
+    [ -z "$rcs" ] || { echo "exited 0 for:$rcs"; exit 1; }' \
+  "$HELPER" "$FIXTURE"
+
+require "veto: ...and every gate reply carries authorises:false" \
+  bash -c '
+    bad=""
+    for n in $(jq -r ".[].number" "$1"); do
+      a=$(bash "$0" --json-file "$1" --issue "$n" 2>/dev/null | jq -r ".authorises | tostring")
+      [ "$a" = "false" ] || bad="$bad $n=$a"
+    done
+    [ -z "$bad" ] || { echo "not false for:$bad"; exit 1; }' \
+  "$HELPER" "$FIXTURE"
 
 assert_eq "gate: a compliant issue REFUSES (exit 1)"           "1" "$(gate_rc 100)"
 assert_eq "gate: a casing issue REFUSES — the summary is there, only misspelt" \

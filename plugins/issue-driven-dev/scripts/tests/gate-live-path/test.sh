@@ -77,13 +77,18 @@ gate_case() {
   assert_eq "$name" "$want" "$?"
 }
 
-echo "── live gate: the authorising direction ──"
+echo "── live gate: the veto-clear direction ──"
 # CONTROL. Proves the stub emits parseable JSON; without it every other row
 # below could be passing because jq choked, not because the guard worked.
 gate_case "control: a real summary in the newest comment REFUSES (rc=1)" success 1
-# The only legitimate rc=0: the fetch SUCCEEDED and there really are no comments.
-gate_case "a genuinely empty comment set authorises (rc=0)" genuinely-empty 0
-assert_grep "...and reports class=missing" '"class": "missing"' "$(cat "$GATE_OUT")"
+# The one path that clears the veto over the LIVE fetch: it SUCCEEDED and there
+# really are no comments. rc=10, and 10 is not permission -- idd-close still has
+# to read the comment set (there is none here) and get a human to say yes.
+gate_case "a genuinely empty comment set clears the veto (rc=10, not 0)" genuinely-empty 10
+assert_grep "...and reports class=unrecognised, not missing" \
+  '"class": "unrecognised"' "$(cat "$GATE_OUT")"
+assert_grep "...and says on the wire that it authorises nothing" \
+  '"authorises": false' "$(cat "$GATE_OUT")"
 
 echo "── live gate: every failure must refuse ──"
 # THE #320 CRITICAL. `gh api ... | jq -s 'add // []'` — without pipefail the

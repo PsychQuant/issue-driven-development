@@ -397,7 +397,8 @@ Repo: PsychQuant/issue-driven-development  (state: open, limit: 20)
 >
 > **為什麼不是二分**：舊判定只問「有沒有以 `## Closing Summary` 開頭的 comment」，實測某 repo 43 張 closed issue **誤報 11 張（26%）** —— 十張是 `## Closing summary`（小寫 s）、一張把 summary 接在 `## Implementation Complete` 之後同一則裡，全部都有完整 summary。四分之一會誤報的旗標會被學會忽略，而忽略本身就是損害：十一個假警報蓋掉第十二個真的。更嚴重的是 `--retroactive` 與本 marker **共用同一個判定**，所以假陽性會升級成**不可逆動作**（在已有 summary 的 issue 上再貼一份）。
 >
-> **為什麼引述也算「有」**（R5 的方向決定）：第 1 到第 4 輪都試圖解析 markdown 來分辨真 summary 與引述（fence、HTML comment、縮排、section 邊界）。每個機制都長出自己的單向失敗，而且全部朝同一個方向 —— parser 跟不上的**真 summary** 被判成 `missing`，也就是唯一放行不可逆動作的那一類；四輪共九種形狀，清單還在長。現在引述與真 summary 一律當「有」。**代價是漏報**：一張只在引述裡提到 marker 的 issue 不再被報成 missing。那是便宜的方向；貴的方向現在結構上到不了。
+> **為什麼引述也算「有」**（R5 的方向決定）：第 1 到第 4 輪都試圖解析 markdown 來分辨真 summary 與引述（fence、HTML comment、縮排、section 邊界）。每個機制都長出自己的單向失敗，而且全部朝同一個方向 —— parser 跟不上的**真 summary** 被判成 `missing`，也就是當時唯一放行不可逆動作的那一類；四輪共九種形狀，清單還在長。現在引述與真 summary 一律當「有」。**代價是漏報**：一張只在引述裡提到 marker 的 issue 不再被報成 missing。那是便宜的方向。
+> **Round 12 收窄**：當時接著寫「貴的方向現在結構上到不了」—— 不成立。放寬判準讓貴的方向變窄，沒有讓它消失；關掉它的是 `--retroactive` 那端不再把「認不出來」當成許可（見 `idd-close` 的「許可由讀者供給」）。本 skill 是 **audit** 端、永遠 exit 0，不受該改動影響。
 >
 > **順序固定**：canonical 首行最先判，讓 `## Closing Summary (retroactive — …)` 落在 `compliant` 而非 `casing` —— 那是 remediate 過的 issue 不被重新 surface 的依據。heading 比對**不加尾端 `\b`**：`_` 是 word character，會讓 `## closing summary_v2` 誤判成 `missing`。
 >

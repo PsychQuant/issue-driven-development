@@ -154,7 +154,7 @@ assert_grep "idd-close resolves the gate helper by path" \
 assert_grep "idd-close INVOKES it in single-issue mode" \
   'bash "$HELPER" --issue "$NUMBER"' "$CLOSE_MD"
 assert_grep "idd-close branches on the helper exit code" \
-  'GATE_RC" -ne 0' "$CLOSE_MD"
+  'GATE_RC" -ne 10' "$CLOSE_MD"
 # The gate's IDENTITY must come from the install location, never from the tree
 # being audited. `${CLAUDE_PLUGIN_ROOT:-plugins/issue-driven-dev}` resolved the
 # executable relative to $PWD, and /idd-close runs inside the user's repo — so a
@@ -165,7 +165,29 @@ refute_grep "idd-close does not fall back to a CWD-relative gate path" \
   'CLAUDE_PLUGIN_ROOT:-plugins/issue-driven-dev' "$CLOSE_MD"
 assert_grep "idd-close requires CLAUDE_PLUGIN_ROOT to be set" \
   'CLAUDE_PLUGIN_ROOT:?' "$CLOSE_MD"
-assert_grep "idd-close states that only exit 0 may proceed" \
+assert_grep "idd-close states that anything but the veto-clear code aborts" \
+  '`rc != 10` 一律 abort' "$CLOSE_MD"
+# The half that round 12 added, and the half that is easiest to lose again: the
+# veto-clear code is not permission. If this sentence goes, the skill reads
+# exactly like the twelve rounds that preceded it.
+assert_grep "idd-close states that the veto-clear code authorises nothing" \
+  '`rc == 10` 什麼都沒放行' "$CLOSE_MD"
+# Anchored at the HEADING, not anywhere in the file. The first cut of this
+# assertion grepped the bare phrase, and the phrase also appears in the
+# Precondition table as a cross-reference ("見下方「許可由讀者供給」") -- so
+# deleting the entire section left it green, satisfied by the pointer to the
+# thing it was supposed to be checking. Caught by mutating the heading away.
+assert_grep_re "...and routes the decision to a reader instead" \
+  '^#### 許可由讀者供給' "$CLOSE_MD"
+# ...and the section's operative content, not just its title. A heading with the
+# body deleted is the same failure one level down.
+assert_grep "...stating the reader must read the whole comment set" \
+  '讀完該 issue 的全部 comment' "$CLOSE_MD"
+assert_grep "...and must write the basis into the draft" \
+  '在 draft 裡明寫依據' "$CLOSE_MD"
+assert_grep "...and makes the human confirmation non-optional" \
+  '強制，無無人值守路徑' "$CLOSE_MD"
+refute_grep "idd-close no longer tells anyone that exit 0 may proceed" \
   '只有 `rc == 0` 放行' "$CLOSE_MD"
 refute_grep "idd-close no longer describes its own gate as prose-only" \
   "本 skill 並未呼叫它" "$CLOSE_MD"
@@ -206,8 +228,26 @@ refute_grep "idd-find no longer calls a permissive match an archaeological recor
 # would put the audit's always-exit-0 contract on the destructive path.
 SRC=$(cat "$SCRIPT")
 assert_grep "the helper really implements --issue" '--issue)     GATE_SEEN=1; GATE_ISSUE=' "$SRC"
-assert_grep "the helper documents the gate exit codes" \
+# This used to grep the header for a literal line of its own documentation --
+# prose checked against prose, which cannot notice the code changing underneath.
+# Now the observed exit code is produced by RUNNING the helper, and the header is
+# required to document that number. Change the verdict without changing the doc
+# (or the reverse) and this fires.
+GATE_FIXTURE=$(mktemp "${TMPDIR:-/tmp}/prose-drift-XXXXXX") || GATE_FIXTURE=""
+require "a gate fixture could be created" bash -c '[ -n "$0" ]' "$GATE_FIXTURE"
+trap 'rm -f "$CANARY" "$GATE_FIXTURE"' EXIT HUP INT TERM
+printf '%s' '[{"number":1,"title":"t","state":"CLOSED","url":"u","closedAt":"2026-01-01T00:00:00Z","comments":[{"body":"nothing marker-like here","createdAt":"2026-01-01T00:00:00Z"}]}]' > "$GATE_FIXTURE"
+bash "$SCRIPT" --issue 1 --json-file "$GATE_FIXTURE" >/dev/null 2>&1
+OBSERVED_RC=$?
+assert_eq "the helper's veto-clear path is the code the header documents" \
+  "10" "$OBSERVED_RC"
+assert_grep "...and the header documents that same code" \
+  "  $OBSERVED_RC  no marker was recognised" "$SRC"
+refute_grep "the header no longer documents an exit-0 pass" \
   '0  class == missing, comment set known complete' "$SRC"
+# The asymmetry itself, in the file that is normative for it.
+assert_grep "the header states the veto/permit asymmetry" \
+  'MAY VETO. IT MAY NOT PERMIT' "$SRC"
 
 print_summary "closing-summary-prose-drift"
 exit $?
