@@ -49,7 +49,7 @@ allowed-tools:
 
 ## Retroactive remediation mode（`--retroactive`, v2.76.0+, #176）
 
-`idd-close --retroactive #N` 修補一個**已經被 auto-close、且你讀過 comment 後確認確實沒有結案摘要**的 issue（helper 的分類定義見下方「Precondition 分類」，#295 —— `compliant` / `casing` / `present` 會被 helper 直接否決） —— 也就是被 commit / PR-body 的 close keyword 繞過 `/idd-close` gate 關掉的受害者（`/idd-list --audit-closes` / `scripts/check-closed-without-summary.sh` 抓出來的那些）。它把「人工 reconstruct + 手貼 retroactive summary」這個**已文檔化的補救程序**（見 `CLAUDE.md` → Commit Conventions →「補救：commit 已 push 且 trailer 已觸發 auto-close」）自動化。
+`idd-close --retroactive #N` 修補一個**已經被 auto-close、且你讀過 comment 後確認確實沒有結案摘要**的 issue（helper 的分類定義見下方「Precondition 分類」，#295 + round 12 —— `compliant` / `casing` / `present` / `mentioned` 四類都會被 helper 直接否決） —— 也就是被 commit / PR-body 的 close keyword 繞過 `/idd-close` gate 關掉的受害者（`/idd-list --audit-closes` / `scripts/check-closed-without-summary.sh` 抓出來的那些）。它把「人工 reconstruct + 手貼 retroactive summary」這個**已文檔化的補救程序**（見 `CLAUDE.md` → Commit Conventions →「補救：commit 已 push 且 trailer 已觸發 auto-close」）自動化。
 
 > **`--retroactive` 不是 `--force`。** `--force`（本 skill **不給**）是繞過 OPEN issue 的 gate —— 危險。`--retroactive` 處理的 issue **已經 CLOSED**：gate 本來就 moot（沒東西可繞）、也不會 re-close。它只補回缺失的 audit trail。
 
@@ -83,6 +83,7 @@ allowed-tools:
 | `compliant` | 某則 comment 的首行以 canonical `## Closing Summary` 開頭 | **abort** —— 「已 remediate 過 / 本來就有」 |
 | `casing` | 某則 comment 的首行是該 heading 但非 canonical 形式（大小寫、縮排、`_v2` 等） | **abort** —— 訊息：summary **在**，要做的是把 heading 正規化成 `## Closing Summary`，不是再貼一份 |
 | `present` | heading 出現在某處，但沒有任何 comment 以它開頭 | **abort** —— 訊息：**未經驗證**，這一端不判斷它是真 summary 還是引述；請人工看過再決定 |
+| `mentioned` | 沒有認出任何 heading，但正規化後找得到那兩個相鄰的字 | **abort** —— 訊息：**沒認出 heading**。兩種情況混在這一類且本工具不區分：純散文提及（「我忘了寫 closing summary」），以及辨識器跟不上的真 heading。讀 comment 再決定 |
 | `unrecognised` | **所有 comment 的原始文字裡都找不到**那樣的一行 | ⚠️ **否決沒有觸發 —— 這不是放行**。helper 到此為止，接手的是你：讀完 comment 再決定 |
 
 > **已知盲點（明講，未修）**：判定只讀 **comments**。若有人把 summary 寫進 **issue body** 而非 comment，這裡會判 `missing` —— 跑下去就會貼出重複內容。那不是本 skill 的產出路徑（Step 4 發的是 comment），但後果落在破壞性那一側，所以 draft 前請順手看一眼 body。
@@ -107,7 +108,9 @@ allowed-tools:
 ```bash
 # draft 之前跑一次；要 post 之前**再跑一次**（防 stale list / race / double-post）。
 # 退出碼是**否決權**，不是許可 —— 不要改讀 stdout 的散文再自己決定要不要 abort：
-#   1  → 認出了 marker（compliant / casing / present）→ abort
+#   1  → 已分類，且不是「沒認出來」（compliant / casing / present / mentioned）→ abort
+#         注意 mentioned **不是**「認出了 marker」：它是「找得到那兩個字、但沒有
+#         認出 heading」。gate 訊息本身就這樣寫，這行別再說成相反的意思。
 #   2  → 無法判定（未 CLOSED / 截斷 / 抓取或解析失敗）→ abort
 #   10 → 沒認出 marker → 否決沒觸發。**還不能 post**，往下走到「許可由讀者供給」。
 # 沒有 rc == 0 這個東西：helper 在 gate 模式下不會回 0（回 0 是它自己的內部錯誤）。

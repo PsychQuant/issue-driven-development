@@ -378,7 +378,12 @@ refute  "#158 is NOT in MISSING — an incomplete fetch cannot prove absence" fl
 # `bare_re`'s trailing `$` anchor is what keeps ordinary prose out of the
 # presence test, but it also rejected every emphasised heading carrying a tail,
 # sending a real summary to MISSING. `emph_re` covers that shape; these two
-# fixtures are its regression lock (acid: removing emph_re turns them red).
+# fixtures are its regression lock -- but only in STAGE 1. The parenthetical that
+# used to sit here said "acid: removing emph_re turns them red", and that is
+# FALSE of the shipped pipeline: the round-10 mention backstop catches the same
+# fixtures, so `emph_re` can be deleted outright and all 188 assertions stay
+# green. Measured, not assumed. The per-recogniser acid now lives in the stage-1
+# block at the end of this file, where the backstop is off and the claim is true.
 refute "#160 (bold heading with a tail) is NOT in MISSING"   flagged 160
 refute "#161 (italic heading with a tail) is NOT in MISSING" flagged 161
 # The counterpart the loosening must NOT break: prose mentioning the phrase
@@ -882,6 +887,54 @@ for n in 170 171; do
     pass "stage1: #$n (not a CommonMark heading) stays out of CASING"
   fi
 done
+
+# ── per-recogniser acid, in stage 1 where it can actually fail ──
+#
+# `has_heading_anywhere` is a disjunction of four recognisers, and in the SHIPPED
+# pipeline each one can be deleted outright with every assertion in this file
+# still green -- the mention backstop covers the same fixtures. Measured for all
+# four. So "these fixtures are the regression lock for emph_re" was a claim
+# nothing could falsify, and it was written into the file as if it had been
+# checked.
+#
+# With the backstop off, each recogniser owns specific fixtures. Deleting one
+# drops exactly its own into MISSING, which is a statement that can be wrong and
+# therefore worth asserting. `present_re` is listed too, with the honest answer:
+# inside this disjunction it earns nothing the others do not already catch (it
+# is load-bearing elsewhere -- `lead_re` and `lead_has_content` both use it).
+s1_owner() {  # $1 = recogniser  $2 = space-separated fixtures it should own
+  local mut base_out mut_out lost
+  mut=$(mktemp "${TMPDIR:-/tmp}/csw-s1mut-XXXXXX") || { fail "stage1 acid: $1" "mktemp"; return; }
+  sed "s/ or test($1; \"i\")//" "$STAGE1" > "$mut"
+  base_out=$(bash "$STAGE1" --json-file "$FIXTURE" 2>&1 | awk '/^MISSING/,/^$/')
+  mut_out=$(bash "$mut" --json-file "$FIXTURE" 2>&1 | awk '/^MISSING/,/^$/')
+  rm -f "$mut"
+  for n in $2; do
+    if printf '%s\n' "$base_out" | grep -qE -- "(^|[^0-9])#$n([^0-9]|$)"; then
+      fail "stage1 acid: $1 owns #$n" "#$n is already MISSING before the mutation"
+      continue
+    fi
+    if printf '%s\n' "$mut_out" | grep -qE -- "(^|[^0-9])#$n([^0-9]|$)"; then
+      pass "stage1 acid: $1 owns #$n"
+    else
+      fail "stage1 acid: $1 owns #$n" "deleting $1 did not drop #$n — the recogniser is dead weight here"
+    fi
+  done
+}
+s1_owner bare_re "147 153"
+s1_owner emph_re "160 161"
+s1_owner html_re "172"
+# present_re: no fixture in this disjunction depends on it. Asserted as the
+# measured fact rather than left as an assumption in either direction.
+require "stage1 acid: present_re adds nothing to has_heading_anywhere (recorded)" \
+  bash -c '
+    mut=$(mktemp) || exit 1
+    sed "s/ or test(present_re; \"i\")//" "$0" > "$mut"
+    a=$(bash "$0"  --json-file "$1" 2>&1 | awk "/^MISSING/,/^\$/")
+    b=$(bash "$mut" --json-file "$1" 2>&1 | awk "/^MISSING/,/^\$/")
+    rm -f "$mut"
+    [ "$a" = "$b" ] || { echo "present_re now owns something — update the note above"; exit 1; }' \
+  "$STAGE1" "$FIXTURE"
 
 print_summary "check-closed-without-summary"
 exit $?

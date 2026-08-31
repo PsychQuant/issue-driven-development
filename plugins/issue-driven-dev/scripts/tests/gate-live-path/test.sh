@@ -4,7 +4,8 @@
 # WHY THIS SUITE EXISTS
 #
 # `--issue N` decides whether `/idd-close --retroactive` may post a second
-# closing summary onto an issue. exit 0 is the authorisation. Everything else
+# closing summary onto an issue. HISTORICAL, round 9-11: exit 0 was the
+# authorisation and everything else
 # must refuse.
 #
 # When the gate shipped, its only coverage went through `--json-file`, which

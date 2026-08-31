@@ -5,7 +5,8 @@
 # auto-closed by a commit / PR-body close keyword, bypassing the /idd-close gate
 # (checklist / semantic / sister-sweep / residue / distribution-sync).
 #
-# Four destinations (#295) — this file is their NORMATIVE SOURCE:
+# Five destinations (#295, + `mentioned` in round 12) — this file is their
+# NORMATIVE SOURCE:
 #   missing    no heading-shaped line anywhere in any comment (RAW text)
 #   present    such a line exists, but no comment leads with one, or the one that
 #              does has nothing under it — UNVERIFIED
@@ -617,7 +618,7 @@ CLASSIFY='
   #
   # The price, stated: strictly more `present`, strictly fewer `missing`, i.e.
   # more missed remediations. That is the cheap direction, chosen deliberately.
-  # The four-class audit output keeps its shape-based richness for REPORTING;
+  # The audit output keeps its shape-based richness for REPORTING;
   # only the gate-authorising class is decided this way.
   def entity_decode:
     gsub("&nbsp;"; " ") | gsub("&#160;"; " ") | gsub("&#[xX]0*[aA]0;"; " ")
@@ -758,8 +759,11 @@ CLASSIFY='
          or ($l[$k] | sub(present_re; ""; "i") | strip_markup
              | test("[\\p{L}\\p{N}].*[\\p{L}\\p{N}]")))
       end;
-  # Four destinations, in order. Only the LAST one authorises anything, and it
-  # is reached solely by the absence of any heading-shaped line anywhere.
+  # Five destinations, in order. NONE of them authorises anything any more —
+  # round 12 removed the power of this file to permit, so the last one is merely
+  # class in which the veto does not fire. The sentence that used to stand here
+  # ("only the LAST one authorises anything") described the contract this file
+  # was rewritten to abolish, and survived the rewrite that abolished it.
   #
   # The canonical test comes first so that `## Closing Summary (retroactive - ...)`
   # -- the heading this very skill writes when it remediates -- stays quiet
@@ -796,6 +800,11 @@ CLASSIFY='
      # still refuses -- a missed remediation is the cheap direction -- but
      # refuses while naming what was actually observed.
      elif ($bodies | any(mentions_marker))                              then "mentioned"
+     # The audit label stays `missing` on purpose: this is the REPORTING side,
+     # where the cost of the name is a reader mistaking "not recognised" for
+     # "proven absent" — annoying, not destructive. The GATE renames it to
+     # `unrecognised`, because there the name was being read as authorisation.
+     # Recorded here so the difference reads as a decision, not a leftover.
      else "missing" end) as $class
   | "\($class)\t#\($i.number | tostring | sanitize)  \($i.title | sanitize)"
 '
