@@ -212,8 +212,18 @@ for sig in HUP INT TERM; do
   # shellcheck disable=SC2064  — $sig must expand NOW, one handler per signal
   trap "idd_tag_on_signal $sig" "$sig"
 done
-gh api repos/$OWNER/$REPO/collaborators --jq '.[] | {login, name}' \
-  > "$TAG_DIR/collaborators.json"
+# `[...]` and `--paginate`, and both matter for the same reason: the consumer
+# below runs `jq -e ".[] | select(.login == ...)"` on this file.
+#
+# Without the brackets `--jq` emits a STREAM of objects, so `.[]` iterates the
+# FIELDS of each one and `select` asks a STRING for `.login` — a type error, rc=5,
+# and EVERY legitimate mention refused. The MENTION_ATTESTED path shipped last
+# round could not work for anyone.
+#
+# Without `--paginate`, collaborator 31 and onward simply are not in the file, and
+# the gate aborts the post naming a real collaborator as unverified.
+gh api repos/$OWNER/$REPO/collaborators --paginate --jq '[.[] | {login, name}]' \
+  | jq -s 'add // []' > "$TAG_DIR/collaborators.json"
 ```
 
 **禁止**：從訓練記憶、聊天歷史、git log 推測 @handle。API 失敗 = 取消 tagging（post comment 但不含 mention，並告訴使用者）。

@@ -297,6 +297,81 @@ done <<TRAP_FILE_LIST
 $TRAP_FILES
 TRAP_FILE_LIST
 
+# ── the mention gate must actually be able to VERIFY a collaborator ──
+#
+# `gh api ... --jq ".[] | {login, name}"` emits a STREAM of objects, one per
+# collaborator, not an array. The consumer then runs
+# `jq -e ".[] | select(.login == …)"` over that file, so `.[]` iterates the
+# FIELDS of each object and `select` asks a string for `.login`:
+#
+#   jq: error: Cannot index string with string ("login")      rc=5
+#
+# Every legitimate @mention is therefore refused, and the `MENTION_ATTESTED`
+# path added this round cannot work for anyone. Two independent Codex legs found
+# it in two different files.
+#
+# Checked by RUNNING both halves against a sample, not by grepping the shape:
+# the failure is a type error at the seam between two commands, and only
+# executing the seam can see it.
+COLLAB_SRC=$(mktemp "${TMPDIR:-/tmp}/collab-src-XXXXXX") || COLLAB_SRC=""
+COLLAB_OUT=$(mktemp "${TMPDIR:-/tmp}/collab-out-XXXXXX") || COLLAB_OUT=""
+require "the collaborator-shape fixtures could be created" \
+  bash -c '[ -n "$0" ] && [ -n "$1" ]' "$COLLAB_SRC" "$COLLAB_OUT"
+printf '%s' '[{"login":"alice","name":"A"},{"login":"bob","name":"B"}]' > "$COLLAB_SRC"
+
+while IFS= read -r gf; do
+  [ -z "$gf" ] && continue
+  rel="${gf#$PLUGIN/}"
+  # the producer jq program, taken from the file under test
+  PROD=$(grep -oE -- "--jq '\[?\.\[\][^']*'" "$gf" | head -1 | sed "s/^--jq '//; s/'$//")
+  if [ -z "$PROD" ]; then
+    pass "$rel: no collaborator producer here (nothing to check)"
+    continue
+  fi
+  jq -r "$PROD" "$COLLAB_SRC" > "$COLLAB_OUT" 2>/dev/null
+  if jq -e '.[] | select(.login == "alice")' "$COLLAB_OUT" >/dev/null 2>&1; then
+    pass "$rel: a real collaborator VERIFIES against the file this produces"
+  else
+    fail "$rel: a real collaborator VERIFIES against the file this produces" \
+         "producer emits [$PROD] — the consumer's .[] cannot read it, so every mention is refused"
+  fi
+  # Page 2 exists on real repos. Without --paginate every collaborator past the
+  # first page is treated as unverified and the gate aborts the post.
+  if grep -q 'repos/\$OWNER/\$REPO/collaborators' "$gf"; then
+    if grep -E 'repos/\$OWNER/\$REPO/collaborators' "$gf" | grep -q -- '--paginate'; then
+      pass "$rel: the collaborator fetch is paginated"
+    else
+      fail "$rel: the collaborator fetch is paginated" \
+           "page 2+ collaborators are refused as unverified"
+    fi
+  fi
+done <<COLLAB_FILE_LIST
+$(grep -rlE --include='*.md' -- 'repos/\$OWNER/\$REPO/collaborators' "$PLUGIN/skills" "$PLUGIN/rules" 2>/dev/null)
+COLLAB_FILE_LIST
+# The org-member half of the union must have a consumer. The protocol fetches
+# `org-members.json` and declared "the combined set is the only source of truth",
+# while the verification loop read `collaborators.json` alone — a produced-but-
+# unread allowlist, i.e. a spec and an implementation disagreeing inside one file.
+# An org member who is not a direct collaborator was refused as unverified.
+TAG_MD_SRC=$(cat "$PLUGIN/rules/tagging-collaborators.md")
+assert_grep "the verification loop consults org-members too, not just collaborators" \
+  'org-members.json' "$TAG_MD_SRC"
+# The needle is the QUERY, not the filename. The first cut compared the last
+# line mentioning `org-members.json` against the ERROR line — and the prose
+# explaining WHY the fallback exists mentions the filename too, so deleting the
+# fallback left the comment to satisfy the assertion. Fourth instance of a needle
+# met by a neighbour in this work; the fix is always to name the mechanism.
+require "...as a QUERY inside the verify loop, not merely fetched or mentioned" \
+  bash -c '
+    P=$(printf "%s\n" "$0" | grep -n "jq -e --arg l .*org-members.json\|org-members.json. > /dev/null" | tail -1 | cut -d: -f1)
+    L=$(printf "%s\n" "$0" | grep -n "ERROR: @\$login" | head -1 | cut -d: -f1)
+    [ -n "$P" ] && [ -n "$L" ] && [ "$P" -lt "$L" ]' "$TAG_MD_SRC"
+# ...and the reason commit-authors.txt is NOT in the union has to be written
+# down, or the next reader adds it and starts matching logins against emails.
+assert_grep "the exclusion of commit-authors from the union is explained" \
+  'not logins' "$TAG_MD_SRC"
+rm -f "$COLLAB_SRC" "$COLLAB_OUT"
+
 # ── the widened SCOPE has to have weight ──
 #
 # Round 12 widened this scan from `skills/idd-verify` to skills/ + rules/ +
@@ -329,6 +404,41 @@ for SCOPE_ROOT in "$PLUGIN/rules" "$PLUGIN/references"; do
   fi
   rm -f "$SC"
 done
+
+# ── the pointer-publishing loop must not report success over a wrong post ──
+#
+# `references/external-agent-delegation.md` is already in this suite's scope
+# because its egress bodies are why the scope was widened. Three fail-open
+# shapes lived in six lines of it, each publishing something wrong while
+# reporting success:
+#
+#   MASTER_URL=$(gh ... 2>&1 | tail -1)   a failed `gh` still gives `tail` a
+#                                         zero exit, so the LAST LINE OF THE
+#                                         ERROR became the URL in every pointer
+#   one shared pointer.md                 rewritten in the loop while background
+#                                         `gh` processes were reading it
+#   a bare `wait`                         returns 0 and hides child failures
+#
+# Asserted on the shipped text: this is prose the executing model follows, and
+# there is no binary to run.
+EAD=$(cat "$PLUGIN/references/external-agent-delegation.md")
+refute_grep "the master-comment capture no longer folds stderr into the pipe" \
+  'gh pr comment "$PR" --repo "$REPO" --body-file "$VERIFY_DIR/master.md" 2>&1 | tail -1' "$EAD"
+assert_grep "...it checks the command status instead" \
+  'if ! MASTER_URL=$(gh pr comment' "$EAD"
+assert_grep "...and refuses anything that is not a URL" \
+  'the master comment did not return a URL' "$EAD"
+assert_grep "each issue gets its OWN pointer body file" \
+  'pointer-$I.md' "$EAD"
+refute_grep "...so the shared one is gone" \
+  '> "$VERIFY_DIR/pointer.md"' "$EAD"
+require "the pointer posts are waited on INDIVIDUALLY, not with a bare wait" \
+  bash -c '
+    printf "%s\n" "$0" | grep -q "wait \"\$pid\" || PTR_FAILED=" || exit 1
+    printf "%s\n" "$0" | grep -qE "^wait$" && exit 1
+    exit 0' "$EAD"
+assert_grep "...and a failed pointer makes the run refuse, not report done" \
+  'the external audit trail is INCOMPLETE' "$EAD"
 
 print_summary "verify-scratch-paths"
 exit $?

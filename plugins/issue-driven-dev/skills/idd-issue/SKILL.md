@@ -596,8 +596,18 @@ for sig in HUP INT TERM; do
   # shellcheck disable=SC2064  — $sig must expand NOW, one handler per signal
   trap "idd_tag_on_signal $sig" "$sig"
 done
-gh api repos/$OWNER/$REPO/collaborators --jq '.[] | {login, name}' \
-  > "$TAG_DIR/collaborators.json"
+# `[...]` and `--paginate`, and both matter for the same reason: the consumer
+# below runs `jq -e ".[] | select(.login == ...)"` on this file.
+#
+# Without the brackets `--jq` emits a STREAM of objects, so `.[]` iterates the
+# FIELDS of each one and `select` asks a STRING for `.login` — a type error, rc=5,
+# and EVERY legitimate mention refused. The MENTION_ATTESTED path shipped last
+# round could not work for anyone.
+#
+# Without `--paginate`, collaborator 31 and onward simply are not in the file, and
+# the gate aborts the post naming a real collaborator as unverified.
+gh api repos/$OWNER/$REPO/collaborators --paginate --jq '[.[] | {login, name}]' \
+  | jq -s 'add // []' > "$TAG_DIR/collaborators.json"
 ```
 
 接 [`rules/tagging-collaborators.md`](../../rules/tagging-collaborators.md) Step 3-5。Post 前 grep `@\w+` 全部 cross-check，未驗證 token = abort。
