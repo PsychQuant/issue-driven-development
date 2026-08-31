@@ -294,15 +294,41 @@ EXTERNAL_WRITES=""
 EW_OK=1
 # cluster 時每個 ref'd issue 都要抓 —— CONTEXT_BLOCK 本來就 loop 過全部，
 # 而第一版的抓取只讀一個。
+# EVERY issue gets a line, always. Previously a failed scan did `continue` and an
+# issue with no writes appended nothing, so both cases came out as ABSENCE —
+# and absence reads to a reviewer as "this issue wrote nothing outside the
+# diff", which is a claim neither case supports. That is the same false-negative
+# direction as the closing-summary classifier: a failure to observe, rendered as
+# an observation. The global "at least one fetch failed" footnote did not fix it,
+# because it never said WHICH issue, so the reviewer could not tell which line to
+# distrust.
+#
+# Three distinguishable outcomes, one per issue, no silent omission:
+#   <content>   scanned, and these are the external writes
+#   (none)      scanned, and there were none
+#   (UNKNOWN)   NOT scanned — the fetch failed; say nothing about this issue
 for I in ${REFD_ISSUES:-$NUMBER}; do
-  if ! ew=$(collect_external_writes "$I"); then EW_OK=0; continue; fi
-  [ -n "$ew" ] && EXTERNAL_WRITES="${EXTERNAL_WRITES}
+  if ! ew=$(collect_external_writes "$I"); then
+    EW_OK=0
+    EXTERNAL_WRITES="${EXTERNAL_WRITES}
+--- #${I} ---
+(UNKNOWN — the comment scan for this issue FAILED. Nothing is established about
+external writes on #${I}; do not read this as \"none\".)"
+    continue
+  fi
+  if [ -n "$ew" ]; then
+    EXTERNAL_WRITES="${EXTERNAL_WRITES}
 --- #${I} ---
 ${ew}"
+  else
+    EXTERNAL_WRITES="${EXTERNAL_WRITES}
+--- #${I} ---
+(none — scanned successfully, no external-write records found.)"
+  fi
 done
 if [ "$EW_OK" = 0 ]; then
   EXTERNAL_WRITES="${EXTERNAL_WRITES}
-(注意：至少一張 issue 的 comment 抓取失敗，這份清單不完整。)"
+(注意：至少一張 issue 的 comment 抓取失敗，這份清單不完整 —— 見上方標記 UNKNOWN 的 issue。)"
 fi
 
 # 組一次、兩個 backend 共用 —— 讓兩邊拿到不同 context，會使一個 finding 取決於
@@ -514,6 +540,24 @@ TaskCreate(name="triage_followup_issues", description="Step 5b: 分類 non-block
       0 PR  → fall back HEAD~1（保留 v2.36 行為）
 ```
 
+#### REFD_ISSUES —— 每一種 input mode 都要有值（#315 round 12）
+
+```bash
+# 這個變數被三個地方消費（external-writes 收集器、pointer loop、routing record）。
+# 上一輪修掉的是「三個地方讀、零個地方寫」；這一輪修掉的是那次修法自己的兩個洞：
+# 賦值放在 Step 0.7，而 Step 0.7 的標題就寫著 PR mode only —— 所以
+# --branch / --commits / --since / --file 四種 mode 仍然一個都沒有值；而且它在
+# 文件順序上晚於三個消費點裡的兩個，對一個由上往下讀的執行者來說等於沒有。
+#
+# 所以 canonical 賦值在這裡：Step 0.5 對每一種 input source 都會跑，而且在全部
+# 消費點之上。PR mode 之後在 Step 0.7 用 PR body 的 Refs 覆寫它（那才是 cluster
+# 的真正來源）；其餘 mode 就是使用者給的那一張 issue。
+#
+# 「至少有值」是這裡的重點，不是「值最完整」：一個 degrade 成單張 issue 的
+# cluster 掃描是縮減，一個空 list 的迴圈是靜默地什麼都沒做。
+REFD_ISSUES="$NUMBER"
+```
+
 PR mode 額外做：
 
 ```bash
@@ -531,18 +575,16 @@ gh pr checkout $PR --repo $GITHUB_REPO
 
 ```bash
 DISCOVERED=$(gh pr view $PR --repo $GITHUB_REPO --json body -q .body | grep -oE '#[0-9]+' | sort -u)
-# ASSIGN the variable the rest of this skill consumes. `REFD_ISSUES` is read in
-# three places (the external-writes collector, the pointer loop, the routing
-# record) and was assigned in NONE of them — so every one of those loops ran
-# over an empty list, and the cluster case degraded to a single issue in silence.
-# The external-writes collector even had a green assertion claiming cluster
-# coverage: a test can only check the text it was pointed at.
+# OVERRIDE the Step 0.5 default with the PR's own Refs — this is where a cluster
+# actually comes from. Step 0.5 already guaranteed a value, so this line widens
+# the set; it is no longer the only thing standing between the consumers and an
+# empty loop.
 #
 # Digits only, and stripped of the `#`: these values are interpolated into REST
 # paths, and this same release documents that validation as mandatory for the
 # gate. The same rule applies here.
-REFD_ISSUES=$(printf '%s\n' "$DISCOVERED" | tr -d '#' | grep -E '^[0-9]+$' | sort -u | tr '\n' ' ')
-[ -n "$REFD_ISSUES" ] || REFD_ISSUES="$NUMBER"
+REFD_ISSUES_PR=$(printf '%s\n' "$DISCOVERED" | tr -d '#' | grep -E '^[0-9]+$' | sort -u | tr '\n' ' ')
+[ -n "$REFD_ISSUES_PR" ] && REFD_ISSUES="$REFD_ISSUES_PR"
 
 if [ -z "$DISCOVERED" ]; then
   echo "ABORT: PR #$PR has no Refs #N — violates IDD discipline."
