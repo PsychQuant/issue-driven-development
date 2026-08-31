@@ -49,14 +49,24 @@ PLUGIN="$(cd "$HERE/../../.." && pwd)"
 #
 # ALLOWLIST (path fragment -> why). Keep it short; each entry is a promise that
 # the path is neither an egress body nor a gate input.
-#   skills/idd-edit/         /tmp/idd-edit-backup/ is a documented recovery
-#                            location users are told to `ls`; moving it is a
-#                            behaviour change, and its collision consequence is
-#                            a visible clash, not a wrong comment.
+#   idd-edit-backup          a documented recovery location users are told to
+#                            `ls`; moving it is a behaviour change, and its
+#                            collision consequence is a visible clash, not a
+#                            wrong comment.
+#   idd-edit-parse-err       a parse-error scratch file, PID-suffixed, read back
+#                            by the same run and never posted.
 #   idd-issue-attachments    a staging directory for downloads; the files are
 #                            read back by the same run and never posted.
+#
+# The entries name PATHS, not DIRECTORIES, and that distinction is the whole of
+# this fix. The first cut wrote `skills/idd-edit/` — a whole directory exempted
+# on the strength of a reason that named one path inside it. Two egress bodies
+# inherited it: the replacement text and the new comment body, both written to
+# a fixed name and handed straight to `gh-egress edit-comment`, i.e. PATCHed
+# into someone else`s comment. An exemption is a promise about a path; writing
+# it as a directory promises for files nobody looked at.
 SCAN_ROOTS="$PLUGIN/skills $PLUGIN/rules $PLUGIN/references"
-ALLOW_PATHS='skills/idd-edit/|idd-issue-attachments'
+ALLOW_PATHS='idd-edit-backup|idd-edit-parse-err|idd-issue-attachments'
 scan_fixed_tmp() {
   # The mktemp CALL is REMOVED from the line, then whatever remains is scanned.
   # Two weaker forms preceded this, each exempting more than it meant to:
@@ -70,8 +80,21 @@ scan_fixed_tmp() {
   # and the idiom `${TMPDIR:-/tmp}/name` where `/tmp` is followed by `}`. The
   # first cut wrote only the first alternative and then `grep -v`-ed the idiom
   # wholesale, so the idiom form was doubly invisible.
-  grep -rnE --include='*.md' -- '(^|[^A-Za-z0-9_])/tmp/[A-Za-z0-9_.-]|\$\{TMPDIR:-/tmp\}/[A-Za-z0-9_.-]' \
-    $SCAN_ROOTS 2>/dev/null \
+  # ONLY inside fenced code blocks. The rule is about paths a skill USES, and a
+  # skill executes what is in its fences; a path named in prose is an example, a
+  # past attack vector being discussed, or a `--body-file=` illustration for the
+  # reader. Scanning prose made the widened scope report four such lines in
+  # idd-edit and nothing about them was wrong.
+  #
+  # This is a property, not a wording heuristic: fenced or not fenced.
+  for _f in $(find $SCAN_ROOTS -name '*.md' 2>/dev/null); do
+    awk -v F="$_f" '
+      /^[[:space:]]*```/ { infence = !infence; next }
+      infence { print F ":" NR ":" $0 }
+    ' "$_f"
+  done 2>/dev/null \
+    | grep -vE '^[^:]*:[0-9]+:[[:space:]]*#' \
+    | grep -E -- '(^|[^A-Za-z0-9_])/tmp/[A-Za-z0-9_.-]|\$\{TMPDIR:-/tmp\}/[A-Za-z0-9_.-]' \
     | grep -vE "$ALLOW_PATHS" \
     | sed -E 's/mktemp( -d)?[ \t]+\\?"?[$]\{TMPDIR:-\/tmp\}\/[A-Za-z0-9_.${}-]*X{3,}\\?"?//g' \
     | grep -E '(^|[^A-Za-z0-9_])/tmp/[A-Za-z0-9_.-]|[$]\{TMPDIR:-/tmp\}/[A-Za-z0-9_.-]'
@@ -87,7 +110,7 @@ require "no skill names a fixed scratch path under /tmp" \
 # would otherwise leave it there as a permanent red.
 CANARY="$PLUGIN/skills/idd-verify/.tmp-path-canary.$$-${RANDOM}.md"
 trap 'rm -f "$CANARY"' EXIT HUP INT TERM
-printf 'canary: write findings to /tmp/verify_${NUMBER}_findings_logic.md\n' > "$CANARY"
+printf '```bash\ncanary: write findings to /tmp/verify_${NUMBER}_findings_logic.md\n```\n' > "$CANARY"
 SEEN=$(scan_fixed_tmp | grep -c 'tmp-path-canary' || true)
 rm -f "$CANARY"
 require "positive control: the scan actually detects a planted fixed path" \
@@ -98,7 +121,7 @@ require "positive control: the scan actually detects a planted fixed path" \
 # this exact line was invisible.
 CANARY2="$PLUGIN/skills/idd-verify/.tmp-idiom-canary.$$-${RANDOM}.md"
 trap 'rm -f "$CANARY" "$CANARY2"' EXIT HUP INT TERM
-printf 'body-file ${TMPDIR:-/tmp}/pointer.md\n' > "$CANARY2"
+printf '```bash\nbody-file ${TMPDIR:-/tmp}/pointer.md\n```\n' > "$CANARY2"
 SEEN2=$(scan_fixed_tmp | grep -c 'tmp-idiom-canary' || true)
 rm -f "$CANARY2"
 require "positive control: the TMPDIR idiom does not grant blanket exemption" \
@@ -109,7 +132,7 @@ require "positive control: the TMPDIR idiom does not grant blanket exemption" \
 # egress body could hide simply by sitting next to a legitimate call.
 CANARY3="$PLUGIN/skills/idd-verify/.tmp-beside-mktemp-canary.$$-${RANDOM}.md"
 trap 'rm -f "$CANARY" "$CANARY2" "$CANARY3"' EXIT HUP INT TERM
-printf 'D=$(mktemp -d "${TMPDIR:-/tmp}/ok-XXXXXX"); cp "$D/x" /tmp/pointer.md\n' > "$CANARY3"
+printf '```bash\nD=$(mktemp -d "${TMPDIR:-/tmp}/ok-XXXXXX"); cp "$D/x" /tmp/pointer.md\n```\n' > "$CANARY3"
 SEEN3=$(scan_fixed_tmp | grep -c 'tmp-beside-mktemp-canary' || true)
 rm -f "$CANARY3"
 require "positive control: a fixed path beside a sanctioned mktemp call is still caught" \
@@ -273,6 +296,39 @@ while IFS= read -r tf; do
 done <<TRAP_FILE_LIST
 $TRAP_FILES
 TRAP_FILE_LIST
+
+# ── the widened SCOPE has to have weight ──
+#
+# Round 12 widened this scan from `skills/idd-verify` to skills/ + rules/ +
+# references/ and made that widening the headline of the change. Measured
+# afterwards by an outside reviewer: narrowing `SCAN_ROOTS` back to `$PLUGIN`,
+# or all the way back to `$PLUGIN/skills/idd-verify`, left the suite 20/0 GREEN.
+# All three positive controls plant their canary in `skills/idd-verify` — the
+# old scope — so every one of them tests the grep flags and the sed exemption,
+# and none tests where the scan looks.
+#
+# What makes this worth more than the fix: in the SAME round, in the sibling
+# suite `plan-routing-consistency`, the identical lesson was written down --
+# "a scope with no control is a scope that will be narrowed by the next person
+# who finds it noisy" -- and canaries were added there for docs/ and
+# openspec/specs/. Diagnosed in one suite, shipped unfixed in the other, by the
+# same hand on the same day. Writing a lesson down is not the same as applying
+# it, and the gap is invisible from inside the file where it was written.
+for SCOPE_ROOT in "$PLUGIN/rules" "$PLUGIN/references"; do
+  if [ ! -d "$SCOPE_ROOT" ]; then
+    fail "scope control: $SCOPE_ROOT exists" "the scan claims to cover it"
+    continue
+  fi
+  SC="$SCOPE_ROOT/.tmp-scope-canary.$$-${RANDOM}.md"
+  printf '```bash\ncp "$D/x" /tmp/scope-canary-pointer.md\n```\n' > "$SC"
+  if scan_fixed_tmp | grep -q 'tmp-scope-canary'; then
+    pass "scope control: a fixed path planted in ${SCOPE_ROOT#$PLUGIN/} is detected"
+  else
+    fail "scope control: a fixed path planted in ${SCOPE_ROOT#$PLUGIN/} is detected" \
+         "the scan does not actually reach ${SCOPE_ROOT#$PLUGIN/}"
+  fi
+  rm -f "$SC"
+done
 
 print_summary "verify-scratch-paths"
 exit $?

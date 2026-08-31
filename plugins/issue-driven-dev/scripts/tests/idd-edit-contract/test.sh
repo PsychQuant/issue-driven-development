@@ -52,7 +52,13 @@ USE_RE    = re.compile(r'\$\{?([A-Z_][A-Z0-9_]*)\b')
 # deliberately exempt; GITHUB_REPO must never be added, that was bug B2)
 # IDD_CALLER: cross-skill invocation env contract (#161), consumed with a
 # ${VAR:-} safe default — provided by the calling skill's environment.
-ALLOWLIST = {"CLAUDE_PLUGIN_ROOT", "HOME", "PWD", "PATH", "ARGUMENTS", "EOF", "IDD_CALLER"}
+# Environment variables the SHELL supplies, not the helper. TMPDIR joined the
+# list when the skill stopped writing fixed /tmp paths for the two bodies it
+# PATCHes into a comment (#288 scan) — `mktemp "${TMPDIR:-/tmp}/..."` is the
+# sanctioned form everywhere else in this plugin, and the checker had no way to
+# know that a POSIX environment variable has a provenance.
+ALLOWLIST = {"CLAUDE_PLUGIN_ROOT", "HOME", "PWD", "PATH", "ARGUMENTS", "EOF",
+             "IDD_CALLER", "TMPDIR"}
 
 def violations(skill_md, helper_src):
     blocks = FENCE_RE.findall(skill_md)
