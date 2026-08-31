@@ -576,8 +576,14 @@ TITLE=$(sanitize_title "$RAW_TITLE")
 ```bash
 OWNER=$(echo "$GITHUB_REPO" | cut -d/ -f1)
 REPO=$(echo "$GITHUB_REPO" | cut -d/ -f2)
+# Same scratch dir as rules/tagging-collaborators.md — this file is a gate
+# decision input, so it follows the protocol's own path convention rather than
+# keeping a divergent copy.
+TAG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/idd-tagging-XXXXXX") || {
+  echo "✗ cannot create a scratch dir for tagging — refusing to continue" >&2; exit 1; }
+trap 'rm -rf "$TAG_DIR"' EXIT HUP INT TERM
 gh api repos/$OWNER/$REPO/collaborators --jq '.[] | {login, name}' \
-  > /tmp/idd-collaborators-$$.json
+  > "$TAG_DIR/collaborators.json"
 ```
 
 接 [`rules/tagging-collaborators.md`](../../rules/tagging-collaborators.md) Step 3-5。Post 前 grep `@\w+` 全部 cross-check，未驗證 token = abort。

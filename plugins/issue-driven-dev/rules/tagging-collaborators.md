@@ -53,8 +53,25 @@ trap 'rm -rf "$TAG_DIR"' EXIT HUP INT TERM
 # The draft body must be WRITTEN here, not assumed. The consumer below reads
 # $TAG_DIR/comment-body.md; nothing created it, so the loop was scanning a
 # missing file — the same silent-zero-iterations failure by a different route.
+#
+# And writing it is not enough either. `COMMENT_BODY` is supplied by the CALLING
+# skill; this protocol does not produce it. If the caller has not set it,
+# `printf '%s' ""` SUCCEEDS, writes a 0-byte file, the `||` never fires, and the
+# loop below greps an empty file and runs zero times — the gate passes silently
+# for a third time, now on a missing VALUE rather than a missing file. Each
+# previous fix closed the layer it was looking at and left the one under it.
+#
+# So the value is checked before it is staged. An empty draft body is not a
+# thing this protocol can be asked about: there is nothing to scan for mentions,
+# and answering "no mentions found" about text you were never given is the
+# failure this whole file exists to prevent.
+: "${COMMENT_BODY:?the calling skill must set COMMENT_BODY to the draft text before running this protocol — an empty body cannot be checked for mentions, and a gate that cannot read its input must refuse}"
 printf '%s' "$COMMENT_BODY" > "$TAG_DIR/comment-body.md" || {
   echo "✗ cannot stage the comment body for mention checking — refusing" >&2; exit 1; }
+# Non-empty on disk too: `printf` can succeed while writing nothing if the
+# variable was set but empty (`COMMENT_BODY=""` passes `:?`).
+[ -s "$TAG_DIR/comment-body.md" ] || {
+  echo "✗ the staged comment body is empty — refusing to certify 'no mentions'" >&2; exit 1; }
 # Collaborators (anyone with repo access — outside collaborators included)
 gh api repos/$OWNER/$REPO/collaborators --jq '.[] | {login, name, type}' \
   > "$TAG_DIR/collaborators.json"

@@ -187,8 +187,19 @@ Options (視 type 而定)：
 # Step 2 — 抓清單
 OWNER=$(echo "$GITHUB_REPO" | cut -d/ -f1)
 REPO=$(echo "$GITHUB_REPO" | cut -d/ -f2)
+# Same scratch dir as `rules/tagging-collaborators.md`, and created the same
+# fail-closed way. This skill used to keep its own PID-suffixed copy of the
+# collaborators file directly under the temp directory; the rule moved to a
+# mktemp dir and this copy did not, so the protocol's largest consumer had
+# silently diverged from the protocol.
+# (The old literals are described rather than quoted: the #288 scan reads these
+#  files, and writing a banned path into the explanation of why it is banned is
+#  the first thing that check trips on. Third time in this repo.)
+TAG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/idd-tagging-XXXXXX") || {
+  echo "✗ cannot create a scratch dir for tagging — refusing to continue" >&2; exit 1; }
+trap 'rm -rf "$TAG_DIR"' EXIT HUP INT TERM
 gh api repos/$OWNER/$REPO/collaborators --jq '.[] | {login, name}' \
-  > /tmp/idd-collaborators-$$.json
+  > "$TAG_DIR/collaborators.json"
 ```
 
 **禁止**：從訓練記憶、聊天歷史、git log 推測 @handle。API 失敗 = 取消 tagging（post comment 但不含 mention，並告訴使用者）。
@@ -435,18 +446,39 @@ fi
 Post 前最後一道防線：
 
 ```bash
+# 這個 gate 讀的檔案必須先**存在**且**是真的 body**。
+#
+# 它原本讀一個 PID 後綴的暫存檔（檔名不在此逐字重寫 —— #288 的掃描會讀這個檔案，
+# 而把被禁的路徑寫進「為什麼禁它」的說明裡，正是那個檢查第一個踩到的東西）。
+# 全 plugin 只有兩處提到那個名字：這裡讀、下面刪。**沒有任何一步寫它。**
+# 真正的 body 寫在 Step 4，用的是**另一個**檔名，而且在這個 gate **之後**。
+# 所以 grep 讀一個不存在的檔 → MENTIONS 空 → 迴圈跑零次 → 這道自稱
+# 「Post 前最後一道防線」的 gate
+# **永遠靜默通過**。與 `rules/tagging-collaborators.md` 同一輪修掉的是同一個缺陷，
+# 只是這一份沒有人往外看一格。
+: "${COMMENT_BODY:?draft body not set — refusing to certify 'no mentions' about text that was never staged}"
+printf '%s' "$COMMENT_BODY" > "$TAG_DIR/comment-body.md"
+[ -s "$TAG_DIR/comment-body.md" ] || {
+  echo "✗ staged comment body is empty — refusing" >&2; exit 1; }
+
 # 抓 body 中所有 @xxx token
-MENTIONS=$(grep -oE '@[A-Za-z0-9-]+' /tmp/idd-comment-body-$$.md | sort -u)
+MENTIONS=$(grep -oE '@[A-Za-z0-9-]+' "$TAG_DIR/comment-body.md" | sort -u)
 
 for handle in $MENTIONS; do
   login=${handle#@}
-  if ! jq -e ".[] | select(.login == \"$login\")" /tmp/idd-collaborators-$$.json > /dev/null 2>&1; then
+  if ! jq -e ".[] | select(.login == \"$login\")" "$TAG_DIR/collaborators.json" > /dev/null 2>&1; then
     echo "ERROR: $handle not in collaborator list. Aborting post."
     echo "若這真是 collaborator 但 API 沒列到（outside collaborator / 私人 repo），用 --mention-prompt 強制選單。"
-    rm -f /tmp/idd-comment-body-$$.md /tmp/idd-collaborators-$$.json
     exit 1
   fi
 done
+
+# 通過的 login 就是 attestation。`MENTION_ATTESTED` 在本 skill 從未被賦值，而
+# Step 4 的 `${MENTION_ATTESTED:+--mention-attested=...}` 因此永遠省略該 flag ——
+# 於是 gh-egress 的 mention net（#117）會把**任何**合法 @mention 一律 refuse
+# (exit 11)。documented flow 兩端同時斷：這裡的 gate 開不了火，那裡的網無條件擋。
+# idd-issue/SKILL.md:545 早就寫明了這個賦值慣例；本 skill 只是沒有照做。
+MENTION_ATTESTED=$(printf '%s' "$MENTIONS" | sed 's/^@//' | paste -sd, -)
 ```
 
 通過驗證才進 Step 4。
@@ -455,16 +487,18 @@ done
 
 ```bash
 # 用 --body-file 避免 backtick / 多行 escape 問題
-echo "$COMMENT_BODY" > /tmp/idd-comment-$$.md
+# 同一份已經過 gate 檢查的檔案，不另外再寫一次 —— 兩個檔名是這個 gate
+# 之所以能被繞過的原因。
+COMMENT_FILE="$TAG_DIR/comment-body.md"
 # （#226）egress 經 gh-egress.sh 派送：$SCRUB_LEVEL 依 rules/privacy-scrubbing.md 解析
 # （third-party=enforce / own-public=warn / private=light），派送前先跑 LLM 隱私自審；
 # 有 @mention 時另帶 --mention-attested（rules/tagging-collaborators.md 5-step 後）。
 # （#272）reply 且 points-from=user-pasted 時，SCRUB_LEVEL 先取 floor：
 #   [ "$SCRUB_LEVEL" = light ] && SCRUB_LEVEL=warn   # max(repo tier, warn)；enforce 維持 enforce
 # —— SKILL 端是主 gate（wrapper net item 4 只是 light 的機械兜底）。
-bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $NUMBER --repo $GITHUB_REPO --body-file /tmp/idd-comment-$$.md \
+bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $NUMBER --repo $GITHUB_REPO --body-file "$COMMENT_FILE" \
   --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}
-rm /tmp/idd-comment-$$.md
+# 清理由 TAG_DIR 的 trap 負責（見 Step 2）。
 ```
 
 ### Step 5: Report

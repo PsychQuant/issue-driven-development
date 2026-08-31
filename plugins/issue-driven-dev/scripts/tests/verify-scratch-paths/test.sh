@@ -26,19 +26,37 @@ PLUGIN="$(cd "$HERE/../../.." && pwd)"
 # `mktemp` lines are exempt: that is the sanctioned way to obtain one, and the
 # template it takes necessarily contains /tmp.
 #
-# SCOPE, stated rather than implied: idd-verify plus the two files its own
-# contract drags in — `references/external-agent-delegation.md` (the egress-body
-# copy of the same posting loop) and `rules/tagging-collaborators.md` (a
-# protocol idd-verify MANDATES, whose fixed files are the mention gate's
-# decision source). The first version scanned only `skills/idd-verify` and said
-# so; both of those were outside it, so the rule and its largest violations
-# shipped in the same release.
+# SCOPE IS A CRITERION, NOT A LIST (rewritten round 12).
 #
-# Still NOT covered, and deliberately: `idd-edit`, which writes
-# `/tmp/idd-edit-backup/`. That is a documented recovery location users are told
-# to `ls`, so moving it is a behaviour change, and its collision consequence is
-# a visible clash rather than a silently published wrong comment. Do not read
-# this file's green as a statement about idd-edit.
+# It used to name three files, then say "Still NOT covered, and deliberately:
+# idd-edit" -- which READS as a closed enumeration while being an open one. A
+# scan of the whole plugin found three more files nobody had looked at, and the
+# sharpest was `idd-close`'s `/tmp/distribution_sync_patch.json`: a fixed name
+# with NO per-run component at all, holding the full body about to be PATCHed
+# into someone's issue comment. Two concurrent /idd-close runs overwrite each
+# other's payload and the PATCH still succeeds -- with the other run's text.
+# That file met every stated inclusion criterion; it was simply outside the
+# sentence. So #288's own story -- "the rule and its largest violation shipped
+# in the same release" -- repeated inside the fix for it.
+#
+# The criterion: a fixed path is forbidden anywhere it becomes (a) an EGRESS
+# BODY -- text that gets posted, PATCHed or handed to a reviewer -- or (b) a
+# GATE'S DECISION INPUT. Both fail silently and in the publishing direction.
+# Rather than enumerate where that happens, the scan now covers skills/, rules/
+# and references/ wholesale, and exceptions live in an explicit allowlist below
+# with a reason each. An exception you have to write down is one the next reader
+# can find; a sentence they have to re-derive is not.
+#
+# ALLOWLIST (path fragment -> why). Keep it short; each entry is a promise that
+# the path is neither an egress body nor a gate input.
+#   skills/idd-edit/         /tmp/idd-edit-backup/ is a documented recovery
+#                            location users are told to `ls`; moving it is a
+#                            behaviour change, and its collision consequence is
+#                            a visible clash, not a wrong comment.
+#   idd-issue-attachments    a staging directory for downloads; the files are
+#                            read back by the same run and never posted.
+SCAN_ROOTS="$PLUGIN/skills $PLUGIN/rules $PLUGIN/references"
+ALLOW_PATHS='skills/idd-edit/|idd-issue-attachments'
 scan_fixed_tmp() {
   # The mktemp CALL is REMOVED from the line, then whatever remains is scanned.
   # Two weaker forms preceded this, each exempting more than it meant to:
@@ -51,12 +69,10 @@ scan_fixed_tmp() {
   # TWO shapes, because they do not look alike to a regex: a bare `/tmp/name`,
   # and the idiom `${TMPDIR:-/tmp}/name` where `/tmp` is followed by `}`. The
   # first cut wrote only the first alternative and then `grep -v`-ed the idiom
-  # wholesale, so the idiom form was doubly invisible — excluded by the filter
-  # AND unmatched by the pattern. Its positive control below is what surfaced it.
+  # wholesale, so the idiom form was doubly invisible.
   grep -rnE --include='*.md' -- '(^|[^A-Za-z0-9_])/tmp/[A-Za-z0-9_.-]|\$\{TMPDIR:-/tmp\}/[A-Za-z0-9_.-]' \
-    "$PLUGIN/skills/idd-verify" \
-    "$PLUGIN/references/external-agent-delegation.md" \
-    "$PLUGIN/rules/tagging-collaborators.md" 2>/dev/null \
+    $SCAN_ROOTS 2>/dev/null \
+    | grep -vE "$ALLOW_PATHS" \
     | sed -E 's/mktemp( -d)?[ \t]+\\?"?[$]\{TMPDIR:-\/tmp\}\/[A-Za-z0-9_.${}-]*X{3,}\\?"?//g' \
     | grep -E '(^|[^A-Za-z0-9_])/tmp/[A-Za-z0-9_.-]|[$]\{TMPDIR:-/tmp\}/[A-Za-z0-9_.-]'
 }
@@ -132,6 +148,76 @@ require "...by a producer that appears BEFORE the consumer that greps it" \
   bash -c 'P=$(printf "%s\n" "$0" | grep -n ">[ ]*\"[$]TAG_DIR/comment-body.md\"" | head -1 | cut -d: -f1);
            C=$(printf "%s\n" "$0" | grep -n "grep -oE .@\[A-Za-z0-9-\]" | head -1 | cut -d: -f1);
            [ -n "$P" ] && [ -n "$C" ] && [ "$P" -lt "$C" ]' "$TAG_MD"
+
+# ── the mention gate, in EVERY file that implements it ──
+#
+# The previous round added "the producer appears before the consumer" and bound
+# it to $TAG_MD alone -- the one file that had just been fixed. One directory
+# over, `idd-comment` had its own inline copy of the same protocol, broken worse:
+# the gate read a file no step ever wrote (the real body was written under a
+# DIFFERENT name, in a later step), so it scanned a missing file, found no
+# mentions, and passed. An assertion scoped to the fixed instance certifies the
+# fix, not the property.
+#
+# So the check enumerates implementations by finding them: any file that greps
+# for @-handles as a mention gate must (a) stage the body itself, (b) refuse an
+# unset or empty body, and (c) do both BEFORE the grep.
+GATE_FILES=$(grep -rlE --include='*.md' -- "grep -oE '@\[A-Za-z0-9-\]" \
+  "$PLUGIN/skills" "$PLUGIN/rules" 2>/dev/null)
+require "at least one mention-gate implementation was found (guards a vacuous sweep)" \
+  bash -c '[ -n "$0" ]' "$GATE_FILES"
+
+while IFS= read -r gf; do
+  [ -z "$gf" ] && continue
+  rel="${gf#$PLUGIN/}"
+  BODY=$(cat "$gf")
+  # (b) an unset/empty draft body must refuse. `printf '%s' "" > f` SUCCEEDS,
+  # writes 0 bytes, and the loop then certifies "no mentions" about text it was
+  # never given -- the same silent-zero-iterations failure as a missing file,
+  # one layer down on a missing VALUE.
+  case "$BODY" in
+    *'${COMMENT_BODY:?'*) pass "$rel: refuses an unset draft body" ;;
+    *) fail "$rel: refuses an unset draft body" \
+            "no \${COMMENT_BODY:?...} guard — an unset body yields a 0-byte file and a silent pass" ;;
+  esac
+  case "$BODY" in
+    *'-s "$TAG_DIR/comment-body.md"'*) pass "$rel: refuses an EMPTY staged body" ;;
+    *) fail "$rel: refuses an EMPTY staged body" \
+            "COMMENT_BODY=\"\" passes :? and still stages nothing" ;;
+  esac
+  # (a)+(c) producer before consumer, in this file.
+  P=$(printf '%s\n' "$BODY" | grep -n '> "\$TAG_DIR/comment-body.md"' | head -1 | cut -d: -f1)
+  C=$(printf '%s\n' "$BODY" | grep -n "grep -oE '@\[A-Za-z0-9-\]" | head -1 | cut -d: -f1)
+  if [ -n "$P" ] && [ -n "$C" ] && [ "$P" -lt "$C" ]; then
+    pass "$rel: the body is staged BEFORE the gate reads it"
+  else
+    fail "$rel: the body is staged BEFORE the gate reads it" \
+         "producer=${P:-none} consumer=${C:-none}"
+  fi
+done <<GATE_FILE_LIST
+$GATE_FILES
+GATE_FILE_LIST
+
+# `MENTION_ATTESTED` has to be produced by whoever runs the gate. idd-comment
+# read it in the egress call and assigned it nowhere, so the flag was always
+# omitted -- and gh-egress's mention net then REFUSES every legitimate @mention.
+# Both ends of the documented flow were broken at once: the gate could not fire,
+# and the net blocked unconditionally.
+while IFS= read -r gf; do
+  [ -z "$gf" ] && continue
+  rel="${gf#$PLUGIN/}"
+  BODY=$(cat "$gf")
+  case "$BODY" in
+    *'${MENTION_ATTESTED:+'*)
+      case "$BODY" in
+        *'MENTION_ATTESTED='*) pass "$rel: sets MENTION_ATTESTED before consuming it" ;;
+        *) fail "$rel: sets MENTION_ATTESTED before consuming it" \
+                "the flag is read but never assigned — gh-egress refuses every mention" ;;
+      esac ;;
+  esac
+done <<ATTEST_FILE_LIST
+$(grep -rlE --include='*.md' -- 'MENTION_ATTESTED:\+' "$PLUGIN/skills" 2>/dev/null)
+ATTEST_FILE_LIST
 
 print_summary "verify-scratch-paths"
 exit $?

@@ -911,10 +911,20 @@ patch_closing_comment_append() {
     echo "WARN: gh api fetch failed for comment $CLOSING_COMMENT_ID — audit trail PATCH skipped" >&2
     return 0
   }
-  jq -n --arg b "${existing}${append_block}" '{body: $b}' > /tmp/distribution_sync_patch.json
+  # Per-run path. It used to be a FIXED name directly under the temp directory
+  # — no per-run component at all, not even `$$` — holding the full body that
+  # is about to be PATCHed into someone's issue comment. Two sessions running
+  # /idd-close at the same time overwrite each other's payload, and the failure
+  # is silent in the worst direction: the PATCH succeeds, with the other run's
+  # text. Exactly the criterion #288 wrote down, in a file that scan never
+  # reached.
+  PATCH_JSON=$(mktemp "${TMPDIR:-/tmp}/idd-close-patch-XXXXXX") || {
+    echo "WARN: cannot create a scratch file — audit trail PATCH skipped" >&2; return 0; }
+  jq -n --arg b "${existing}${append_block}" '{body: $b}' > "$PATCH_JSON"
   gh api -X PATCH "/repos/${GITHUB_REPO}/issues/comments/${CLOSING_COMMENT_ID}" \
-    --input /tmp/distribution_sync_patch.json -q '.html_url' >/dev/null || \
+    --input "$PATCH_JSON" -q '.html_url' >/dev/null || \
     echo "WARN: gh api PATCH failed — audit trail incomplete" >&2
+  rm -f "$PATCH_JSON"
 }
 
 # resolve_plugin_name — emit matched plugin's `name` field from marketplace entry
