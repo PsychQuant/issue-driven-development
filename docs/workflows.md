@@ -103,7 +103,7 @@ idd-all #N
 ```
 
 - **Use case**:diagnose 階段已 surface complexity verdict,user 已 review;接下來 implement+verify+close 走 automation
-- **Mode**:Hybrid(Plan tier 仍走 EnterPlanMode,Simple/Spectra 不阻擋)
+- **Mode**:Hybrid — 依 interaction 軸分流;**routing 不在此複述**,見 [`skills/idd-all/SKILL.md`](../plugins/issue-driven-dev/skills/idd-all/SKILL.md) 的 dispatch table(normative source)
 - **觸發點數**:1(after diagnose)
 - **Assumptions**:`gh issue view #N` 已有 `## Diagnosis` comment
 - **Risks**:低 — deliberation 已 user-honored

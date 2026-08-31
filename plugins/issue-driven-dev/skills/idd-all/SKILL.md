@@ -575,7 +575,9 @@ fi
 Skill(skill="issue-driven-dev:idd-implement", args="$IMPL_ARGS")
 ```
 
-> **Why conditional, not unconditional `UNATTENDED MODE`** (Task 4.1, Requirement: "Attended interaction permits sub-skill questions"): when interaction = `attended`, idd-all MUST NOT inject the directive — `idd-implement`'s native attended-by-default behavior (Plan tier `EnterPlanMode`, mid-implementation `AskUserQuestion`) is precisely what the HITL user wants.
+> **Why conditional, not unconditional `UNATTENDED MODE`** (Task 4.1, Requirement: "Attended interaction permits sub-skill questions"): when interaction = `attended`, idd-all MUST NOT inject the directive — the sub-skills' native attended-by-default behaviour is precisely what the HITL user wants. Concretely that is `idd-implement`'s mid-implementation `AskUserQuestion`, **plus the Plan-tier `EnterPlanMode` gate that lives in `/idd-plan`** (reached via Phase 3p; see the dispatch table above and the #292 correction note).
+>
+> **這句原本把 `EnterPlanMode` 算成 `idd-implement` 的原生行為** —— 那正是 #292 在本檔上方那則修正紀錄裡推翻掉的宣稱，而它以第二人稱的形式活在同一份檔案裡三輪。偵測器看不到它，因為 normative source 被整檔豁免掃描：「不掃這個檔」與「這個檔是對的」是兩件事，而豁免讓後者搭了前者的便車。現在 source 有自己的窄規則（見 `plan-routing-consistency` 的 self-contradiction 檢查）：它可以陳述任何 routing，就是不能把 `EnterPlanMode` 掛在 `idd-implement` 名下。
 
 **`--cwd` flag is mandatory when forwarded from idd-all**: 確保 idd-implement 在跟 idd-all 同一個 local clone 跑(否則 sub-skill 跑在 session cwd,branch/commit 會 land 錯地方)。
 

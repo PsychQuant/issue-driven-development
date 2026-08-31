@@ -73,12 +73,26 @@ NORMATIVE='skills/idd-all/SKILL.md'
 # both skills is not restating routing. The first cut included them and flagged a
 # path catalogue and a design-rationale note — false positives that would have
 # taught the next reader to widen the exemption list instead of the rule.
-MECHANISM='EnterPlanMode|Phase 3a|Phase 3p'
+# ALL FOUR vocabularies are matched lowercased below, so they are written
+# lowercase here. The previous cut folded case for the Plan token only, while
+# the commit message claimed the detector was case-insensitive -- and three of
+# the four kept matching literally. `Hybrid`, `Attended`, `EnterPlanMode` in a
+# heading: each escaped a different one of them.
+MECHANISM='enterplanmode|phase 3a|phase 3p'
 # `noninteractive` / `headless` / `without a user` are the same claim in other
 # words; leaving them out is the round-2 mistake (grep the wording you remember)
-# in miniature.
-MODE_WORD='unattended|attended|/loop|autopilot|noninteractive|non-interactive|headless|without a user|no user'
+# in miniature. `hybrid` is here because docs/workflows.md:106 used it as its
+# mode word and sailed through four rounds of this detector: it is the repo's
+# own name for "attended for Plan tier, unattended otherwise", i.e. precisely a
+# routing claim that depends on the interaction axis.
+MODE_WORD='unattended|attended|hybrid|/loop|autopilot|noninteractive|non-interactive|headless|without a user|no user'
 DEFER='dispatch table|normative source|不複述|見 .skills/idd-all'
+# A deference pointer that DENIES being one is not a pointer. `defer` is a plain
+# substring test, so the sentence "this is not the normative source" exempted
+# every claim within ten lines of it -- an escape hatch made of the exact words
+# the rule asks for. Any line matching DEFER is discarded if it also matches
+# this.
+DEFER_NEG='not the normative|不是 normative|非 normative|is not a dispatch table'
 
 # The claim has to actually be MADE, not merely have its vocabulary scattered
 # across a long document: a routing-mechanism line with a mode word near it.
@@ -108,7 +122,8 @@ restating_files() {   # $1 = tree to scan
         # line 407, which this same round had just fixed; the detector FOUND it
         # and the file-level exemption threw it away, because 407 now carries a
         # pointer. The fix created the amnesty that hid the violation.
-        awk -v mech="$MECHANISM" -v mode="$MODE_WORD" -v defer="$DEFER" -v f="$f" '
+        awk -v mech="$MECHANISM" -v mode="$MODE_WORD" -v defer="$DEFER" \
+            -v deferneg="$DEFER_NEG" -v f="$f" '
           { line[NR] = $0 }
           END {
             for (n = 1; n <= NR; n++) {
@@ -120,7 +135,7 @@ restating_files() {   # $1 = tree to scan
               if (tolower(line[n]) !~ /plan[ -]tier|plan path/) continue
               plo = (n - 5 < 1 ? 1 : n - 5); phi = (n + 5 > NR ? NR : n + 5)
               has_mech = 0
-              for (m = plo; m <= phi; m++) if (line[m] ~ mech) has_mech = 1
+              for (m = plo; m <= phi; m++) if (tolower(line[m]) ~ mech) has_mech = 1
               if (!has_mech) continue
               # A version-history row (first cell is a version) is a release
               # log embedded in a table -- same category as CHANGELOG.md, and
@@ -136,10 +151,11 @@ restating_files() {   # $1 = tree to scan
               # row. Still per-claim, not per-file: ten lines, not the document.
               dlo = (n - 10 < 1 ? 1 : n - 10); dhi = (n + 10 > NR ? NR : n + 10)
               deferred = 0
-              for (m = dlo; m <= dhi; m++) if (line[m] ~ defer) deferred = 1
+              for (m = dlo; m <= dhi; m++)
+                if (tolower(line[m]) ~ defer && tolower(line[m]) !~ deferneg) deferred = 1
               if (deferred) continue
               for (m = lo; m <= hi; m++)
-                if (line[m] ~ mode) { print f ":" n; exit }
+                if (tolower(line[m]) ~ mode) { print f ":" n; exit }
             }
           }' "$f"
       done
@@ -224,6 +240,69 @@ require "positive control: a restatement in an ordinary table row is still caugh
 SEEN_FAR=$(restating_files "$PC_DIR" | grep -c 'defers-then-restates.md' || true)
 require "positive control: a deference elsewhere in the file does NOT amnesty a distant restatement" \
   bash -c '[ "$0" -ge 1 ]' "$SEEN_FAR"
+
+# ── the exempted source must not contradict ITSELF ──
+#
+# `$NORMATIVE` is skipped above, and rightly: the source is entitled to state
+# its own routing. But "skip the file" and "the file is correct" are different
+# claims, and the detector was making the second one on the strength of the
+# first. Inside that file, L578 says the attended Plan gate is
+# `idd-implement`'s native behaviour, while L547 of the SAME file records that
+# the gate is NOT in idd-implement -- it lives in `/idd-plan` -- and the
+# dispatch table routes attended Plan to Phase 3p. That is the #292/#317 claim
+# verbatim, surviving inside the one file nothing was allowed to look at.
+#
+# So the source gets its own, narrower rule: it may say anything about routing,
+# except attribute EnterPlanMode to idd-implement. That is not a style
+# preference -- the file itself documents why the attribution is false.
+NORMATIVE_FILE="$PLUGIN/skills/idd-all/SKILL.md"
+require "the normative source exists where the exemption expects it" \
+  test -f "$NORMATIVE_FILE"
+# The pattern is the ATTRIBUTION, not co-occurrence. Several lines legitimately
+# name both tokens while saying the correct thing ("Plan -> /idd-plan, which owns
+# the gate and then chains to idd-implement"); a co-occurrence test flags all of
+# them, and a rule that cries wolf on the correct lines gets deleted.
+#
+# Scope, stated rather than implied: this pins ONE false attribution -- the one
+# that actually survived three rounds inside the exempted file. It is not a
+# proof that the file is internally consistent, and no grep over prose could be.
+# Written down so the next reader does not mistake a green run for that.
+SELF_CONTRA=$(awk '
+  { l = tolower($0) }
+  # the refuted claim being QUOTED in a correction note is not the claim
+  l ~ /修正紀錄|推翻|原本|過去把|not in .idd-implement|不在 .idd-implement/ { next }
+  l ~ /enterplanmode/ && l ~ /idd-implement.{0,40}(native|的[^。]{0,20}閘門|自然 fire)/ {
+    print FILENAME ":" NR ": " $0
+  }
+' "$NORMATIVE_FILE" || true)
+require "the normative source never attributes EnterPlanMode to idd-implement" \
+  bash -c '[ -z "$0" ] || { printf "%s\n" "$0"; exit 1; }' "$SELF_CONTRA"
+
+# ── the scan SCOPE has to have weight ──
+#
+# `ROOT` is the repo root so that `docs/` and `openspec/` are covered -- and
+# reverting it to `$PLUGIN` (which drops both) turned NOTHING red, because every
+# planted control lived under the plugin. Round 2's surviving violation was in
+# `openspec/specs/`; round 12's was in `docs/`. A scope with no control is a
+# scope that will be narrowed by the next person who finds it noisy.
+for SCOPE_DIR in "$ROOT/docs" "$ROOT/openspec/specs"; do
+  if [ ! -d "$SCOPE_DIR" ]; then
+    fail "scope control: $SCOPE_DIR exists" "the scan claims to cover it"
+    continue
+  fi
+  SC="$SCOPE_DIR/.plan-routing-scope-canary.$$-${RANDOM}.md"
+  printf '%s\n' \
+    '# canary' \
+    '- **Mode**: Unattended' \
+    '- Plan tier routes through EnterPlanMode' > "$SC"
+  if restating_files "$ROOT" | grep -q 'plan-routing-scope-canary'; then
+    pass "scope control: a restatement planted in ${SCOPE_DIR#$ROOT/} is detected"
+  else
+    fail "scope control: a restatement planted in ${SCOPE_DIR#$ROOT/} is detected" \
+         "the scan does not actually reach ${SCOPE_DIR#$ROOT/}"
+  fi
+  rm -f "$SC"
+done
 
 print_summary "plan-routing-consistency"
 exit $?
