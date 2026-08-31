@@ -593,6 +593,28 @@ require "veto: NO input makes this script exit 0 in gate mode" \
 # Both are MALFORMED invocations, which is exactly the case that must not
 # silently become the advisory mode: a caller that wrote `--issue` meant to ask
 # the gate a question, and audit's 0 answers a different question.
+# `-h` prints the header and exits 0 unconditionally, so `--issue 101 -h` — a
+# plausible typo, and a plausible thing for a wrapper to append — answered 0
+# while the gate was armed. The two parse holes above were closed and this one,
+# in the same function, was not: help is not a verdict, and a caller that asked
+# the gate a question must not be handed a 0 by a flag that never looked at it.
+require "veto: --help alongside --issue does not answer 0" \
+  bash -c '
+    bad=""
+    for form in "-h" "--help"; do
+      bash "$0" --json-file "$1" --issue 101 "$form" >/dev/null 2>&1
+      [ "$?" = 0 ] && bad="$bad [$form]"
+      bash "$0" --json-file "$1" "$form" --issue 101 >/dev/null 2>&1
+      [ "$?" = 0 ] && bad="$bad [$form first]"
+    done
+    [ -z "$bad" ] || { echo "exited 0 with:$bad"; exit 1; }' \
+  "$HELPER" "$FIXTURE"
+# CONTROL: plain --help must still work and still exit 0. Refusing help would be
+# a different bug, and without this the fix could be "make -h fail".
+require "...but plain --help still prints the header and exits 0" \
+  bash -c 'out=$(bash "$0" --help 2>&1); rc=$?; [ "$rc" = 0 ] && printf "%s" "$out" | grep -q "Usage:"' \
+  "$HELPER"
+
 require "veto: the EQUALS spelling still enters gate mode, never audit" \
   bash -c '
     bad=""
@@ -690,6 +712,35 @@ require "#193 lands in the advisory bucket instead"          unverified 193
 refute  "#194 (lower-case heading + empty <a>) is NOT promoted to CASING" \
   in_section "CASING —" 194
 require "#194 lands in the advisory bucket too"              unverified 194
+
+# ── `lead_has_content` must not read MARKUP as content ──
+#
+# Round 12 fixed one instance (letters inside a TAG NAME) by stripping tags
+# before looking for letters. The predicate still counts:
+#   #198  an HTML ENTITY -- `&nbsp;` has four letters and no tag to strip
+#   #199  a tag whose ATTRIBUTE contains `>` -- `<[^>]*>` stops at the quoted
+#         bracket and leaves `abc">` behind
+#   #200  an UNTERMINATED tag -- there is no closing `>` to match at all
+#
+# All three render to a heading and nothing else, and all three were claimed
+# `compliant` -- the one class that prints in NO section, so the issue leaves
+# the audit entirely. That is the silencing channel, reopened for the third
+# time in the same predicate, each time one layer below where it was closed.
+#
+# The direction matters more than the enumeration: this predicate decides
+# whether to make a POSITIVE claim, so it must require evidence of content
+# rather than absence of evidence of emptiness. Anything that might be markup
+# is removed; what survives has to be real text. Over-removing costs a demotion
+# to `present` (advisory, authorising nothing) -- the cheap direction.
+for n in 198 199 200; do
+  require "#$n (heading + markup only) is NOT claimed compliant" \
+    bash -c 'printf "%s\n" "$1" | grep -qE -- "(^|[^0-9])#$0([^0-9]|$)"' "$n" "$OUT"
+  require "#$n lands in the advisory bucket instead" unverified "$n"
+done
+# CONTROL: real content must still read as content, or the fix would buy its
+# greens by never claiming compliance at all.
+require "#100 (a real summary) is still compliant, i.e. unlisted" \
+  bash -c '! printf "%s\n" "$0" | grep -qE -- "(^|[^0-9])#100([^0-9]|$)"' "$OUT"
 
 # ── a prose MENTION is not a marker, and must not be reported as one ──
 #

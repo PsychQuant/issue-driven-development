@@ -164,10 +164,26 @@ while [ $# -gt 0 ]; do
     # Print the whole leading comment block, however long it grows. The old
     # fixed range (2,16p) silently dropped Usage and the "ALWAYS exits 0"
     # promise the moment the header grew past line 16.
-    -h|--help)   sed -n '2,/^$/p' "$0" | sed 's/^#\{1,\} \{0,1\}//'; exit 0 ;;
+    # Help is not a verdict, and it must not be ANSWERED until the whole command
+    # line has been read. `--issue 101 -h` used to print the header and exit 0
+    # while the gate was armed -- the third exit-0 path in this parser, and the
+    # one the other two fixes walked past. Acting on it in place only moved the
+    # hole: `-h --issue 101` still exited 0, because -h was reached before
+    # --issue had set GATE_SEEN. A flag whose meaning depends on another flag
+    # cannot be handled where it appears.
+    -h|--help)   WANT_HELP=1; shift ;;
     *)           usage_error "unknown argument: $ARG" ;;
   esac
 done
+
+if [ "${WANT_HELP:-0}" = 1 ]; then
+  sed -n '2,/^$/p' "$0" | sed 's/^#\{1,\} \{0,1\}//'
+  if [ "$GATE_SEEN" = 1 ]; then
+    echo "✗ --help does not answer a gate question; drop --issue or drop --help" >&2
+    exit 2
+  fi
+  exit 0
+fi
 
 # ── Veto mode plumbing (--issue N) ──
 # One JSON object on stdout, and an exit code the caller cannot misread. Every
@@ -683,6 +699,25 @@ CLASSIFY='
   # it. Anyone who can comment could silence a closed issue permanently by
   # posting a bare heading. It now lands in `present`: visible, authorising
   # nothing.
+  # Markup removal for the CONTENT test. Deliberately not a parser: every branch
+  # REMOVES, none interprets, so an input this does not understand ends up with
+  # LESS surviving text rather than more -- the safe direction for a predicate
+  # whose positive answer silences an issue.
+  #
+  # NO APOSTROPHE anywhere in here, including comments: CLASSIFY lives inside a
+  # single-quoted shell string and one apostrophe ends it. That has cost this
+  # file a full red suite once already.
+  #
+  # KNOWN RESIDUE, stated: an attribute quoted with apostrophes rather than
+  # double quotes is not handled, because writing that alternative would need
+  # the character this program cannot contain. It fails toward MORE surviving
+  # text, i.e. toward claiming content -- the expensive direction -- so it is
+  # recorded here rather than left to be rediscovered.
+  def strip_markup:
+    gsub("<!--(?:(?!-->)(?:.|\n))*-->"; " ")
+    | gsub("<[a-zA-Z/!](?:[^>\"]|\"[^\"]*\")*>"; " ")
+    | gsub("<[^>]*$"; " ")
+    | gsub("&[a-zA-Z][a-zA-Z0-9]*;|&#[0-9]+;|&#[xX][0-9a-fA-F]+;"; " ");
   def lead_has_content:
     ((. // "") | split("\n")) as $l
     | ([range(0; $l | length) | select($l[.] | invisible_line | not)] | first) as $k
@@ -702,16 +737,25 @@ CLASSIFY='
         # the audit permanently.
         # Later lines are filtered through the SAME visibility rule as the lead
         # line before being counted -- see `invisible_line`.
-        # Tags are stripped BEFORE looking for letters. `invisible_line` only
-        # recognises a line made entirely of HTML comments, so `<span></span>`
-        # counted as content -- on the strength of the letters in the tag NAME.
-        # `## Closing Summary` + `<span></span>` therefore read as `compliant`:
-        # a positive claim about a comment that renders to a heading and nothing
-        # else, which is the silencing channel this predicate exists to close,
-        # re-opened one layer below where it was closed.
+        # `strip_markup` runs first, and it removes GENEROUSLY on purpose.
+        #
+        # This predicate decides whether to make a POSITIVE claim (`compliant` /
+        # `casing`), and a wrong positive makes the issue vanish from the audit
+        # entirely -- `compliant` prints in no section. So it must require
+        # evidence of content, not the absence of evidence of emptiness.
+        # Anything that might be markup goes; what survives has to be real text.
+        # Over-removing costs a demotion to `present`, which is advisory and
+        # authorises nothing -- the cheap direction.
+        #
+        # Three shapes reached `compliant` before, each one layer below where
+        # the previous fix stopped looking:
+        #   <span></span>            letters in the TAG NAME (fixed round 12)
+        #   &nbsp;                   letters in an ENTITY, no tag to strip
+        #   <span title=">abc">      `<[^>]*>` stops at the quoted bracket
+        #   <span abc                no closing bracket at all
         (($l[($k + 1):] | map(select(invisible_line | not))
-            | any(gsub("<[^>]*>"; " ") | test("[\\p{L}\\p{N}]")))
-         or ($l[$k] | sub(present_re; ""; "i") | gsub("<[^>]*>"; " ")
+            | any(strip_markup | test("[\\p{L}\\p{N}]")))
+         or ($l[$k] | sub(present_re; ""; "i") | strip_markup
              | test("[\\p{L}\\p{N}].*[\\p{L}\\p{N}]")))
       end;
   # Four destinations, in order. Only the LAST one authorises anything, and it

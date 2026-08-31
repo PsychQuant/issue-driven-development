@@ -921,6 +921,24 @@
     ]
   },
   {
+    "number": 198,
+    "title": "heading + only a &nbsp; entity - renders empty",
+    "state": "CLOSED",
+    "comments": [ { "body": "## Closing Summary\n&nbsp;" } ]
+  },
+  {
+    "number": 199,
+    "title": "heading + empty tag whose ATTRIBUTE contains a close bracket",
+    "state": "CLOSED",
+    "comments": [ { "body": "## Closing Summary\n<span title=\">abc\"></span>" } ]
+  },
+  {
+    "number": 200,
+    "title": "heading + an unterminated tag",
+    "state": "CLOSED",
+    "comments": [ { "body": "## Closing Summary\n<span abc" } ]
+  },
+  {
     "number": 193,
     "title": "EMPTY summary padded with an empty HTML tag - must not read as compliant",
     "state": "CLOSED",
