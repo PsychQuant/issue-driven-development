@@ -921,6 +921,36 @@
     ]
   },
   {
+    "number": 190,
+    "title": "QUOTATION whose blockquote opens on a line that ALSO carries HTML comments",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "<!-- a --> <blockquote><!-- b -->\n## Closing Summary\nquoting the template\n</blockquote>"
+      }
+    ]
+  },
+  {
+    "number": 191,
+    "title": "the same shape with one comment before the visible element",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "<!-- x --> <blockquote>\n## Closing Summary\nquoting the template\n</blockquote>"
+      }
+    ]
+  },
+  {
+    "number": 192,
+    "title": "CONTROL - a line of genuine HTML comments only, heading really does lead",
+    "state": "CLOSED",
+    "comments": [
+      {
+        "body": "<!-- a --> <!-- b -->\n## Closing Summary\n\nroot cause was X, changed Y.\n"
+      }
+    ]
+  },
+  {
     "number": 186,
     "title": "QUOTATION in an HTML blockquote - must NOT be exonerated",
     "state": "CLOSED",

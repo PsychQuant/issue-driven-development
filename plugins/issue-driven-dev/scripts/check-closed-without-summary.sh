@@ -577,7 +577,26 @@ CLASSIFY='
   # need the fence/comment state machine that rounds 1-4 removed, and the
   # residual error is on the cheap side: it hides an issue rather than
   # authorising a duplicate post.
-  def invisible_line: test("^[ \t]*$") or test("^[ \t]*<!--.*-->[ \t]*$");
+  # A line is invisible when it renders to nothing: blank, or made up ENTIRELY of
+  # HTML comments and whitespace. The second half has to state what the line may
+  # CONTAIN, not merely that it starts with `<!--` and ends with `-->`.
+  #
+  # It used to say `^[ \t]*<!--.*-->[ \t]*$`, and `.*` is greedy: on
+  # `<!-- a --> <blockquote><!-- b -->` it runs from the FIRST `<!--` to the LAST
+  # `-->` and swallows the visible element between them. The quotation`s opening
+  # tag became invisible, the heading below it became the lead line, and a pure
+  # quotation classified as `compliant` -- the one class that prints in no
+  # section at all, so the issue went silent AND `--retroactive` refused it.
+  #
+  # Non-greedy is NOT the fix, which is worth recording because it is the first
+  # thing anyone will try: `<!--.*?-->[ \t]*$` matches the same line, because the
+  # `$` forces the lazy quantifier to keep extending until the tail is blank.
+  # The tempered dot `(?:(?!-->).)*` is what makes each comment stop at its OWN
+  # terminator; the `+` then requires everything else on the line to be another
+  # comment or whitespace. (Lookahead verified against this jq`s Oniguruma, not
+  # assumed -- see the control fixture #192.)
+  def invisible_line:
+    test("^[ \t]*$") or test("^[ \t]*(?:<!--(?:(?!-->).)*-->[ \t]*)+$");
   def lead_line:
     ((. // "") | split("\n"))
     | map(select(invisible_line | not))

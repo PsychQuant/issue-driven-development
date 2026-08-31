@@ -310,7 +310,16 @@ case "$CMD" in
       exit 1
     fi
 
+    # A refused entry keeps its URL, so it counts as KNOWN and `check` used to
+    # print a bare "up-to-date" over an attachment that is not on disk and never
+    # will be. It IS known — re-running download reproduces the same refusal —
+    # so it must not be reported as drift; but it must not be silent either.
+    REFUSED=$(jq '[.files[] | select(.error == "unsafe_filename")] | length' "$MANIFEST" 2>/dev/null || echo 0)
     echo "✓ Manifest up-to-date for #$NUMBER ($(jq '.files | length' "$MANIFEST") files)"
+    if [ "${REFUSED:-0}" -gt 0 ]; then
+      echo "⚠ $REFUSED attachment(s) refused for an unsafe filename — permanently unavailable, not re-fetchable." >&2
+      jq -r '.files[] | select(.error == "unsafe_filename") | "   refused: \(.url)"' "$MANIFEST" >&2
+    fi
     ;;
 
   verify)
@@ -320,6 +329,20 @@ case "$CMD" in
     fi
 
     assert_manifest_valid "$MANIFEST"   # #189 — corrupt manifest must loud-fail, not false "all present"
+    # `select(.filename != null)`, and the reason is the difference between the
+    # two ways an entry can lack a file on disk:
+    #
+    #   download_failed   keeps a real filename, and is TRANSIENT. Re-fetching
+    #                     clears it, which is exactly what this gate should
+    #                     force. Still blocks.
+    #   unsafe_filename   has filename == null, and is DETERMINISTIC. Re-fetching
+    #                     reproduces the same refusal.
+    #
+    # Without the select, `jq -r` printed the literal string `null`, `[ -z ]` was
+    # false, and the loop tested `-f "$ATTACH_DIR/null"` — so one attacker-shaped
+    # (or merely dash-leading) attachment URL made this exit 1 forever, and this
+    # is idd-close Step 1.4. A gate with no remediation path does not gate, it
+    # bricks. So a refusal is reported and does not block; only drift blocks.
     MISSING=0
     while IFS= read -r filename; do
       [ -z "$filename" ] && continue
@@ -327,7 +350,14 @@ case "$CMD" in
         echo "⚠ Manifest references $filename but file missing on disk." >&2
         MISSING=$((MISSING + 1))
       fi
-    done < <(jq -r '.files[].filename' "$MANIFEST" 2>/dev/null)
+    done < <(jq -r '.files[] | select(.filename != null) | .filename' "$MANIFEST" 2>/dev/null)
+
+    REFUSED=$(jq '[.files[] | select(.error == "unsafe_filename")] | length' "$MANIFEST" 2>/dev/null || echo 0)
+    if [ "${REFUSED:-0}" -gt 0 ]; then
+      echo "⚠ $REFUSED attachment(s) were refused at download time for an unsafe filename." >&2
+      jq -r '.files[] | select(.error == "unsafe_filename") | "   refused: \(.url)"' "$MANIFEST" >&2
+      echo "   They are permanently unavailable — do NOT reference them in the closing comment." >&2
+    fi
 
     if [ "$MISSING" -gt 0 ]; then
       echo "⚠ $MISSING attachment(s) missing — closing comment may have broken references." >&2

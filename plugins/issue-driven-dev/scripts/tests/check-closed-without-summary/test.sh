@@ -480,6 +480,41 @@ refute "#185 (close bracket inside an attribute) is NOT in MISSING"  flagged 185
 # `casing`, a positive claim. Round 5 restored, in the strict predicate.
 refute  "#186 (HTML-blockquoted quotation) is NOT promoted to CASING" in_section "CASING —" 186
 require "#186 stays in the advisory bucket"                          unverified 186
+# The line BEFORE the heading is what decides which line leads, and #186 only
+# ever tested a blockquote sitting on the heading's own line. `invisible_line`
+# skipped any line matching `^[ \t]*<!--.*-->[ \t]*$`, and `.*` is greedy: on
+# `<!-- a --> <blockquote><!-- b -->` it runs from the FIRST `<!--` to the LAST
+# `-->`, swallowing the visible element between them. The quotation`s opening
+# tag was therefore invisible, the heading became the lead line, and a pure
+# quotation read as `compliant` -- the class that reports nothing at all.
+#
+# Non-greedy is NOT the fix, and that is worth writing down because it is the
+# obvious one: `<!--.*?-->[ \t]*$` still matches, because the `$` forces the
+# lazy quantifier to keep extending until the tail is whitespace. The fix has to
+# say what the line may CONTAIN -- comments and blanks, nothing else.
+# `compliant` prints in NO section, so "is not compliant" is asserted the way
+# #112 does it: the number must appear SOMEWHERE in the report. Numbers 190-192
+# and not 187-189 because 187 was already taken -- the first cut of these
+# fixtures collided with the existing `#187 autolink then hash`, and both of my
+# refutations passed against THAT issue while mine went unexamined. Same shape
+# as every vacuous guard this file records: an assertion satisfied by a
+# neighbour.
+require "#190 (blockquote opened beside HTML comments) is NOT compliant" \
+  bash -c 'printf "%s\n" "$0" | grep -qE -- "(^|[^0-9])#190([^0-9]|$)"' "$OUT"
+require "#190 stays in the advisory bucket"                          unverified 190
+# #191 is the BOUNDARY, not a second repro: `<!-- x --> <blockquote>` does not
+# end in `-->`, so even the greedy pattern never matched it. Kept because the
+# boundary is where a future "simplification" of the pattern would land, and
+# because saying which of two neighbouring fixtures actually reproduced the bug
+# is the difference between a regression lock and decoration.
+require "#191 (one comment, then a visible blockquote) is NOT compliant" \
+  bash -c 'printf "%s\n" "$0" | grep -qE -- "(^|[^0-9])#191([^0-9]|$)"' "$OUT"
+require "#191 stays in the advisory bucket"                          unverified 191
+# CONTROL for the fix: a line that really IS only HTML comments must still be
+# skipped, or the fix would buy its correctness by disabling the feature. That
+# means #192 must be compliant, i.e. appear nowhere.
+require "#192 (genuine comments-only line) is still compliant, i.e. unlisted" \
+  bash -c '! printf "%s\n" "$0" | grep -qE -- "(^|[^0-9])#192([^0-9]|$)"' "$OUT"
 refute  "#187 (autolink is visible, not a blank prefix) is NOT CASING" in_section "CASING —" 187
 
 # And the cheap direction must still work: something with no marker at all is

@@ -43,6 +43,24 @@ case "${1:-}" in
 esac
 GHSTUB
 chmod +x "$STUB/gh"
+
+# --- curl stub ---------------------------------------------------------------
+# Added with fixture 14. Without it every "download" in this file reached the
+# real network, failed, and recorded `download_failed` — so `verify` reported a
+# missing file in EVERY fixture, and no assertion here could tell a successful
+# download from a failed one. f13c ("the safe attachment is still collected")
+# was passing on an entry whose file had never existed.
+cat > "$STUB/curl" <<'CURLSTUB'
+#!/usr/bin/env bash
+out=""
+while [ $# -gt 0 ]; do
+  [ "$1" = "-o" ] && { out="${2:-}"; shift; }
+  shift
+done
+[ -n "$out" ] || exit 1
+printf 'stub-bytes' > "$out"
+CURLSTUB
+chmod +x "$STUB/curl"
 export PATH="$STUB:$PATH"
 
 run_pa() { # cmd issue-number  (cwd must be the fixture workdir)
@@ -231,8 +249,62 @@ require "f13a a refused name does not abort the run" test -f "$MAN13"
 require "f13b the refusal is recorded, not silently dropped" \
   bash -c 'jq -e ".files[] | select(.error == \"unsafe_filename\")" "$0" >/dev/null' "$MAN13"
 require "f13c the SAFE attachment beside it is still collected" \
-  bash -c 'jq -e ".files[] | select(.filename == \"safe.pdf\")" "$0" >/dev/null' "$MAN13"
+  bash -c 'jq -e ".files[] | select(.filename == \"safe.pdf\" and .error == null)" "$0" >/dev/null' "$MAN13"
+require "f13c2 ...and actually landed on disk" \
+  test -f ".claude/.idd/attachments/issue-22/safe.pdf"
 require "f13d and the refusal is visible on stderr" grep -q 'refusing an unsafe' "$W/out13.txt"
+
+# ── Fixture 14: the refusal must not poison the two manifest CONSUMERS ──
+#
+# The refusal above records `{filename: null, ...}`. `verify` read filenames
+# with `jq -r ".files[].filename"`, which prints the literal string `null` for
+# that entry; `[ -z "$filename" ]` is false, so it tested `-f "$ATTACH_DIR/null"`,
+# counted a missing file and exited 1. And `verify` is idd-close Step 1.4.
+#
+# What makes that different from the `download_failed` entry it resembles:
+# download_failed keeps a real filename and is TRANSIENT — the remediation the
+# script prints ("re-fetch") clears it. A refusal is DETERMINISTIC: re-fetching
+# reproduces the same refusal and the same null. So the issue could never be
+# closed again, with a diagnostic naming a file called `null`.
+#
+# The two consumers were failing in OPPOSITE directions, which is why both are
+# pinned here: `verify` hard-failed forever, while `check` read `.files[].url`,
+# found the refused URL among the known ones, and reported "up-to-date" — a
+# silent pass over an attachment that is not on disk and never will be.
+# Output captured to a FILE first, then asserted against. `run_pa` is a shell
+# function, so `bash -c "run_pa ..."` runs it in a shell that never sourced it:
+# the command fails, the pipeline prints nothing, and a negative grep passes for
+# the wrong reason. The first cut of f14a did exactly that and was vacuous.
+run_pa verify 22 > "$W/out14.txt" 2>&1; RC14=$?
+run_pa check  22 > "$W/out14chk.txt" 2>&1
+refute_grep "f14a verify does not report a file literally named 'null'" \
+  "references null" "$(cat "$W/out14.txt")"
+require "f14b verify still succeeds — a refusal is a recorded state, not drift" \
+  bash -c '[ "$0" = 0 ]' "$RC14"
+# Needles unique to the line each one is about. The first cut grepped for the
+# bare word "refused", which BOTH the summary line and the per-URL disclosure
+# line contain — so deleting either left the other to satisfy the assertion, and
+# mutating the summary line away kept the suite green. An assertion whose needle
+# is satisfied by a neighbouring mechanism tests nothing.
+assert_grep "f14c verify says so out loud rather than passing in silence" \
+  "were refused at download time" "$(cat "$W/out14.txt")"
+assert_grep "f14c2 ...and names which URL, so it can be acted on" \
+  "refused: https://github.com/user-attachments/files/1/" "$(cat "$W/out14.txt")"
+assert_grep "f14c3 ...and says not to cite it in the closing comment" \
+  "do NOT reference them in the closing comment" "$(cat "$W/out14.txt")"
+assert_grep "f14d check reports the refusal too, instead of a bare up-to-date" \
+  "permanently unavailable, not re-fetchable" "$(cat "$W/out14chk.txt")"
+assert_grep "f14d2 ...and still reports the manifest itself as up-to-date" \
+  "Manifest up-to-date" "$(cat "$W/out14chk.txt")"
+# CONTROL: a genuinely absent file must STILL block. Without this, the fix
+# above could have been "skip everything", which passes f14a-f14c and removes
+# the gate. Delete the safe attachment and verify must fail again.
+rm -f .claude/.idd/attachments/issue-22/safe.pdf
+run_pa verify 22 > "$W/out14e.txt" 2>&1; RC14E=$?
+require "f14e a REAL missing file still fails verify (the gate survives)" \
+  bash -c '[ "$0" = 1 ]' "$RC14E"
+require "f14f ...and names the actual file, not 'null'" \
+  grep -q 'references safe.pdf' "$W/out14e.txt"
 cd /; rm -rf "$W"
 
 rm -rf "$STUB"
