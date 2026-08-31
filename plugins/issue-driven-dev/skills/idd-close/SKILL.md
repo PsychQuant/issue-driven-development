@@ -173,7 +173,7 @@ helper 的 `--issue N` 模式另外做了一件審計模式沒做的事：它用
 
 **Batch**：`idd-close --retroactive #34 #36 #38` —— 每個 issue 各自跑完 veto + 讀 comment + draft + **逐筆** confirm + post 獨立 retroactive summary（同 cluster-close 紀律，不合併）。**不接受一次確認整批** —— 那正是 cold-read rubber-stamp 的形狀。
 
-**Idempotency**：`--audit-closes` 只把 `missing` 標成 ⚠ 並邀請 retroactive（audit 模式的四類報表沿用舊名，那裡誤報只是多一個 ⚠；改名的是 **veto 模式**的輸出，因為只有那裡的名字會被讀成授權）；remediate 過的 issue 會分類為 `compliant`（retroactive heading 也命中 canonical 首行判定，且該分支**最先判**），所以不會被重新 surface。precondition 的 post-前再 check 是第二層保險 —— 用**同一套分類**，不是另一個 startswith。
+**Idempotency**：`--audit-closes` 只把 `missing` 標成 ⚠ 並邀請 retroactive（audit 模式的報表沿用舊名，那裡誤報只是多一個 ⚠；改名的是 **veto 模式**的輸出，因為只有那裡的名字會被讀成授權。audit 另有第五類 `mentioned` — 見該 script）；remediate 過的 issue 會分類為 `compliant`（retroactive heading 也命中 canonical 首行判定，且該分支**最先判**），所以不會被重新 surface。precondition 的 post-前再 check 是第二層保險 —— 用**同一套分類**，不是另一個 startswith。
 
 ## Configuration
 

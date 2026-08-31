@@ -921,6 +921,36 @@
     ]
   },
   {
+    "number": 193,
+    "title": "EMPTY summary padded with an empty HTML tag - must not read as compliant",
+    "state": "CLOSED",
+    "comments": [ { "body": "## Closing Summary\n<span></span>" } ]
+  },
+  {
+    "number": 194,
+    "title": "same, lower-case heading - must not read as casing either",
+    "state": "CLOSED",
+    "comments": [ { "body": "## closing summary\n<a name=\"x\"></a>" } ]
+  },
+  {
+    "number": 195,
+    "title": "ONLY a prose mention - nobody wrote a summary here",
+    "state": "CLOSED",
+    "comments": [ { "body": "I forgot the closing summary, sorry" } ]
+  },
+  {
+    "number": 196,
+    "title": "prose mention in Chinese - same thing",
+    "state": "CLOSED",
+    "comments": [ { "body": "\u9019\u500b issue \u6c92\u6709 closing summary" } ]
+  },
+  {
+    "number": 197,
+    "title": "a REAL summary whose heading is split inside a word",
+    "state": "CLOSED",
+    "comments": [ { "body": "## Clos<b>ing</b> Summary\n\nroot cause was X, changed Y.\n" } ]
+  },
+  {
     "number": 190,
     "title": "QUOTATION whose blockquote opens on a line that ALSO carries HTML comments",
     "state": "CLOSED",

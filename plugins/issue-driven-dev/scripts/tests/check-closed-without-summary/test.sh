@@ -445,7 +445,7 @@ refute "#173 (details/summary disclosure) is NOT in MISSING"      flagged 173
 # ...and none of them may be silently swallowed either: each must still show up
 # somewhere a human reads.
 require "#172 (raw <h2>) is visible in the advisory bucket"       unverified 172
-require "#173 (details/summary) is visible in the advisory bucket" unverified 173
+require "#173 (details/summary) is visible in the advisory bucket" in_section "MENTIONED" 173
 # The widening must not exonerate a QUOTATION: a blockquoted HTML heading is
 # still only `present`, never `casing`/`compliant`.
 require "a blockquoted HTML heading stays in the advisory bucket, not CASING" \
@@ -479,7 +479,7 @@ refute "#185 (close bracket inside an attribute) is NOT in MISSING"  flagged 185
 # VISIBLE — were treated as blank and the quotation behind them was promoted to
 # `casing`, a positive claim. Round 5 restored, in the strict predicate.
 refute  "#186 (HTML-blockquoted quotation) is NOT promoted to CASING" in_section "CASING —" 186
-require "#186 stays in the advisory bucket"                          unverified 186
+require "#186 stays in the advisory bucket"                          in_section "MENTIONED" 186
 # The line BEFORE the heading is what decides which line leads, and #186 only
 # ever tested a blockquote sitting on the heading's own line. `invisible_line`
 # skipped any line matching `^[ \t]*<!--.*-->[ \t]*$`, and `.*` is greedy: on
@@ -633,6 +633,69 @@ done
 # Audit mode must be UNAFFECTED: it still always exits 0, gate or no gate.
 assert_eq "audit mode still exits 0 (advisory contract intact)" "0" \
   "$(bash "$HELPER" --json-file "$FIXTURE" >/dev/null 2>&1; echo $?)"
+
+# ── an EMPTY summary must not be exonerated by an empty HTML tag (round 12) ──
+#
+# `lead_has_content` tests `[\p{L}\p{N}]` on the RAW line, and `invisible_line`
+# only recognises a line made entirely of HTML comments. So `<span></span>` under
+# a heading counts as content -- because the tag NAME has letters in it. The
+# result is a positive claim (`compliant` / `casing`) about a comment that
+# renders to a heading and nothing else. The channel the bare-heading fix closed
+# one layer up, re-opened one layer down; the existing fixture only tried
+# `<!-- TODO -->`, which `invisible_line` does catch.
+require "#193 (heading + empty <span>) is NOT compliant — it renders to nothing" \
+  bash -c 'printf "%s\n" "$0" | grep -qE -- "(^|[^0-9])#193([^0-9]|$)"' "$OUT"
+require "#193 lands in the advisory bucket instead"          unverified 193
+refute  "#194 (lower-case heading + empty <a>) is NOT promoted to CASING" \
+  in_section "CASING —" 194
+require "#194 lands in the advisory bucket too"              unverified 194
+
+# ── a prose MENTION is not a marker, and must not be reported as one ──
+#
+# The round-10 backstop demotes anything containing the two adjacent words, which
+# is right for the veto direction but wrong about WHY. Reported as `present`, the
+# audit says "a closing-summary heading exists but no comment leads with one" and
+# the gate says "this issue already carries a closing-summary marker". Neither is
+# true of `I forgot the closing summary, sorry`: there is no heading and no
+# marker, only prose. And the file's own comment above `bare_re` still asserts
+# the opposite invariant -- that such prose stays flagged -- measured on 5 of 9
+# real issues. Code and stated requirement contradicted each other 165 lines
+# apart in one file.
+#
+# So the mention backstop gets its own class. It still refuses (the cheap
+# direction: a missed remediation beats a duplicate post), but it refuses while
+# saying what it actually found.
+require "#195 (prose mention only) is classified `mentioned`, not `present`" \
+  in_section "MENTIONED" 195
+refute  "#195 is NOT reported as carrying a heading"         in_section "PRESENT (unverified)" 195
+require "#196 (Chinese prose mention) lands there too"       in_section "MENTIONED" 196
+assert_grep "the MENTIONED section says no heading was RECOGNISED" \
+  "no closing-summary heading was RECOGNISED" "$OUT"
+# ...and does not overstate it. Two different situations land in this class and
+# the tool cannot tell them apart, so the line must not assert either one. The
+# first cut said "the phrase appears only in ordinary prose", which is false for
+# #173 (a real summary in a <details> disclosure) -- the same over-claim, in the
+# same file, that this whole class was split out to stop making.
+assert_grep "...and admits it does not tell prose from an unparsed heading" \
+  "does not tell them apart" "$OUT"
+GATE_195=$(gate_field 195 error)
+assert_grep "...and the gate stops claiming a marker exists" \
+  "no closing-summary heading was RECOGNISED" "$GATE_195"
+refute_grep "...the false 'already carries a marker' wording is gone from it" \
+  "already carries a closing-summary marker" "$GATE_195"
+
+# ── the recogniser sees a heading split inside a word ──
+#
+# `normalise` replaces a tag with a SPACE while a renderer concatenates, so
+# `Clos<b>ing</b>` normalises to `clos ing` and the two-token test misses it.
+# That was the round-12 CRITICAL. It no longer authorises anything (the gate
+# cannot authorise at all now), but it still costs a wasted human read, and the
+# de-spaced companion below is one line. It can only move issues TOWARD the
+# veto, which is the sound direction.
+require "#197 (heading split inside a word) is recognised, not left unseen" \
+  bash -c 'printf "%s\n" "$0" | grep -qE -- "(^|[^0-9])#197([^0-9]|$)"' "$OUT"
+refute  "#197 is NOT in MISSING"                             flagged 197
+assert_eq "...and the gate refuses rather than clearing the veto" "1" "$(gate_rc 197)"
 
 print_summary "check-closed-without-summary"
 exit $?

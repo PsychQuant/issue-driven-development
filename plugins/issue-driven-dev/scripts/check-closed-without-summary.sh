@@ -483,9 +483,16 @@ CLASSIFY='
   def html_re: "^[ \t>]*" + html_pfx + "<(?:h[1-6]|summary)[^>]*>[^\\p{L}\\p{N}]*closing[\\s\\x{00A0}\\x{200B}\\x{3000}]+summary";
   # Two forms. (a) a line that is ESSENTIALLY JUST the phrase — setext titles,
   # bare title lines. The trailing anchor is what keeps ordinary prose ("I forgot
-  # the closing summary, sorry") out of the presence test, which matters: 5 of 9
-  # genuinely-missing issues in a real repo mention the phrase in prose and must
-  # stay flagged. (b) an EMPHASISED heading, which may carry a tail — the `$`
+  # the closing summary, sorry") out of THIS predicate. It no longer keeps such
+  # prose out of the refusal, and the sentence that used to be written here --
+  # that those issues "must stay flagged", measured at 5 of 9 in a real repo --
+  # became false the moment the round-10 mention backstop landed, and then sat
+  # 165 lines away from the code contradicting it for two rounds. Those issues
+  # now classify `mentioned`: still refused, but named for what was actually
+  # observed rather than reported as carrying a marker. The requirement behind
+  # the old sentence -- that a prose mention must not be mistaken for a summary
+  # -- is met by the class, not by this anchor. (b) an EMPHASISED heading, which
+  # may carry a tail — the `$`
   # anchor alone sent `**Closing Summary** - fixed the parser` to `missing`.
   def bare_re:    "^[ \t>]*[^\\p{L}\\p{N}]*closing[\\s\\x{00A0}\\x{200B}\\x{3000}]+summary[^\\p{L}\\p{N}]*$";
   def emph_re:    "^[ \t>]*(\\*\\*|__|\\*|_)[^\\p{L}\\p{N}]*closing[\\s\\x{00A0}\\x{200B}\\x{3000}]+summary";
@@ -554,7 +561,18 @@ CLASSIFY='
   def normalise:
     (. // "") | entity_decode | gsub("<[^>]*>"; " ") | ascii_downcase
     | gsub("[^a-z0-9]+"; " ");
-  def mentions_marker: normalise | test("closing +summary");
+  # TWO passes, because `normalise` maps a tag to a SPACE while a renderer
+  # CONCATENATES. `Clos<b>ing</b> Summary` renders `Closing Summary` and
+  # normalises to `clos ing summary`, so the spaced test misses it; the de-spaced
+  # one collapses every separator and finds `closingsummary`. Same for an
+  # undecoded `&#32;`, a soft hyphen, or emphasis inside a word.
+  #
+  # This can only move an issue TOWARD the veto, never away from it, which is why
+  # it is safe to be generous: over-matching costs a missed remediation, and this
+  # script can no longer authorise anything.
+  def mentions_marker:
+    (normalise | test("closing +summary"))
+    or (normalise | gsub("[^a-z0-9]+"; "") | test("closingsummary"));
   def sanitize:
     (. // "")
     | gsub("[[:cntrl:]\\p{Zl}\\p{Zp}\\x{061C}\\x{200B}\\x{200E}\\x{200F}\\x{202A}-\\x{202E}"
@@ -633,8 +651,17 @@ CLASSIFY='
         # the audit permanently.
         # Later lines are filtered through the SAME visibility rule as the lead
         # line before being counted -- see `invisible_line`.
-        (($l[($k + 1):] | map(select(invisible_line | not)) | any(test("[\\p{L}\\p{N}]")))
-         or ($l[$k] | sub(present_re; ""; "i") | test("[\\p{L}\\p{N}].*[\\p{L}\\p{N}]")))
+        # Tags are stripped BEFORE looking for letters. `invisible_line` only
+        # recognises a line made entirely of HTML comments, so `<span></span>`
+        # counted as content -- on the strength of the letters in the tag NAME.
+        # `## Closing Summary` + `<span></span>` therefore read as `compliant`:
+        # a positive claim about a comment that renders to a heading and nothing
+        # else, which is the silencing channel this predicate exists to close,
+        # re-opened one layer below where it was closed.
+        (($l[($k + 1):] | map(select(invisible_line | not))
+            | any(gsub("<[^>]*>"; " ") | test("[\\p{L}\\p{N}]")))
+         or ($l[$k] | sub(present_re; ""; "i") | gsub("<[^>]*>"; " ")
+             | test("[\\p{L}\\p{N}].*[\\p{L}\\p{N}]")))
       end;
   # Four destinations, in order. Only the LAST one authorises anything, and it
   # is reached solely by the absence of any heading-shaped line anywhere.
@@ -667,7 +694,13 @@ CLASSIFY='
      # Shape-independent backstop. Everything above is about where a heading
      # sits; this is only about whether the words are there at all, after the
      # text has been flattened the way a renderer would flatten it.
-     elif ($bodies | any(mentions_marker))                              then "present"
+     # A recognised heading and a bare mention are different observations, and
+     # folding them together made two lines lie: the audit said a heading exists,
+     # and the gate said the issue "already carries a closing-summary marker".
+     # Neither is true of `I forgot the closing summary, sorry`. Its own class:
+     # still refuses -- a missed remediation is the cheap direction -- but
+     # refuses while naming what was actually observed.
+     elif ($bodies | any(mentions_marker))                              then "mentioned"
      else "missing" end) as $class
   | "\($class)\t#\($i.number | tostring | sanitize)  \($i.title | sanitize)"
 '
@@ -724,6 +757,11 @@ if [ -n "$GATE_ISSUE" ]; then
     # old spelling (`missing`, exit 0) was read as permission for twelve rounds.
     missing) gate_out unrecognised "$GATE_STATE" true \
                "no closing-summary marker was recognised. This is NOT authorisation to post: read the comment set and obtain human confirmation first" 10 ;;
+    # `mentioned` refuses like the rest, but the message must not claim a marker
+    # exists -- for this class none was recognised, and a refusal that
+    # misdescribes what it found sends the reader looking for something else.
+    mentioned) gate_out mentioned "$GATE_STATE" true \
+               "the phrase appears in the comments but no closing-summary heading was RECOGNISED — which is either a prose mention or a heading shape this tool cannot follow, and it does not tell them apart. Refusing: read the comments and, if the summary really is absent, write one by hand rather than letting a tool post over what may be there" 1 ;;
     *)       gate_out "$GATE_CLASS" "$GATE_STATE" true \
                "class is $GATE_CLASS — this issue already carries a closing-summary marker" 1 ;;
   esac
@@ -734,8 +772,9 @@ pick() { printf '%s\n' "$CLASSIFIED" | awk -F'\t' -v c="$1" '$1 == c { print $2 
 MISSING=$(pick missing)
 CASING=$(pick casing)
 PRESENT=$(pick present)
+MENTIONED=$(pick mentioned)
 
-if [ -z "$MISSING" ] && [ -z "$CASING" ] && [ -z "$PRESENT" ]; then
+if [ -z "$MISSING" ] && [ -z "$CASING" ] && [ -z "$PRESENT" ] && [ -z "$MENTIONED" ]; then
   echo "✓ No closed issue is missing a ## Closing Summary (within the scanned window)."
   exit 0
 fi
@@ -754,6 +793,12 @@ fi
 if [ -n "$PRESENT" ]; then
   echo "PRESENT (unverified) — nothing was established here. Either a closing-summary heading exists but no comment leads with one (real summary or quotation: not determined), or the comment set could not be read in full. Inspect by hand; do NOT run --retroactive on the strength of this line:"
   printf '%s\n' "$PRESENT" | sed 's/^/  ⚠ /'
+  echo ""
+fi
+
+if [ -n "$MENTIONED" ]; then
+  echo "MENTIONED — the phrase is in the comments, but no closing-summary heading was RECOGNISED. Two different situations land here and this class does not tell them apart: ordinary prose (\"I forgot the closing summary\"), and a real heading in a shape the recognisers cannot follow (a <details><summary>, a heading inside a visible element). Read the comments; if there really is no summary, write one by hand. --retroactive will refuse either way:"
+  printf '%s\n' "$MENTIONED" | sed 's/^/  ⚠ /'
   echo ""
 fi
 
