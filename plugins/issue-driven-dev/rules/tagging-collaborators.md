@@ -41,7 +41,20 @@ Before resolving any handle:
 # no-fixed-scratch-paths rule for idd-verify and this file was outside the scan
 # it declared -- while idd-verify MANDATES this protocol, so the rule and its
 # largest violation shipped together.
-TAG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/idd-tagging-XXXXXX")
+TAG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/idd-tagging-XXXXXX") || {
+  echo "✗ cannot create a scratch dir for tagging — refusing to continue" >&2; exit 1; }
+trap 'rm -rf "$TAG_DIR"' EXIT HUP INT TERM
+# Fail-closed on purpose. Without the `|| exit`, a full or read-only /tmp left
+# TAG_DIR empty, the paths below became `/collaborators.json` etc., and the
+# verification loop read a file that does not exist — so `grep` produced nothing,
+# the `for handle in ...` body ran zero times, and **the mention gate passed
+# silently**. A gate that cannot read its own inputs must refuse, not pass.
+#
+# The draft body must be WRITTEN here, not assumed. The consumer below reads
+# $TAG_DIR/comment-body.md; nothing created it, so the loop was scanning a
+# missing file — the same silent-zero-iterations failure by a different route.
+printf '%s' "$COMMENT_BODY" > "$TAG_DIR/comment-body.md" || {
+  echo "✗ cannot stage the comment body for mention checking — refusing" >&2; exit 1; }
 # Collaborators (anyone with repo access — outside collaborators included)
 gh api repos/$OWNER/$REPO/collaborators --jq '.[] | {login, name, type}' \
   > "$TAG_DIR/collaborators.json"

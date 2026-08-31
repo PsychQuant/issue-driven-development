@@ -40,10 +40,14 @@ PLUGIN="$(cd "$HERE/../../.." && pwd)"
 # a visible clash rather than a silently published wrong comment. Do not read
 # this file's green as a statement about idd-edit.
 scan_fixed_tmp() {
-  # `${TMPDIR:-/tmp}` is exempted ONLY on an mktemp line. The first cut dropped
-  # every line containing the idiom, so a FIXED name written that way — an
-  # egress body included — sailed through the check that exists to forbid it.
-  # The idiom is not the sanctioned thing; `mktemp` is.
+  # The mktemp CALL is REMOVED from the line, then whatever remains is scanned.
+  # Two weaker forms preceded this, each exempting more than it meant to:
+  #   1. drop every line containing the idiom `${TMPDIR:-/tmp}` -- so a FIXED
+  #      name written that way sailed through the check that forbids it;
+  #   2. drop every line containing the word `mktemp` -- so a fixed path merely
+  #      SHARING a line with a sanctioned call was excused too.
+  # Excusing the sanctioned construct is right. Excusing whatever sits beside it
+  # is how an exemption becomes a hiding place.
   # TWO shapes, because they do not look alike to a regex: a bare `/tmp/name`,
   # and the idiom `${TMPDIR:-/tmp}/name` where `/tmp` is followed by `}`. The
   # first cut wrote only the first alternative and then `grep -v`-ed the idiom
@@ -53,7 +57,8 @@ scan_fixed_tmp() {
     "$PLUGIN/skills/idd-verify" \
     "$PLUGIN/references/external-agent-delegation.md" \
     "$PLUGIN/rules/tagging-collaborators.md" 2>/dev/null \
-    | grep -v 'mktemp'
+    | sed -E 's/mktemp( -d)?[ \t]+\\?"?[$]\{TMPDIR:-\/tmp\}\/[A-Za-z0-9_.${}-]*X{3,}\\?"?//g' \
+    | grep -E '(^|[^A-Za-z0-9_])/tmp/[A-Za-z0-9_.-]|[$]\{TMPDIR:-/tmp\}/[A-Za-z0-9_.-]'
 }
 
 HITS=$(scan_fixed_tmp || true)
@@ -83,6 +88,17 @@ rm -f "$CANARY2"
 require "positive control: the TMPDIR idiom does not grant blanket exemption" \
   bash -c '[ "$0" -ge 1 ]' "$SEEN2"
 
+# Third control: a fixed path that merely SHARES A LINE with a sanctioned
+# mktemp call. Under `grep -v mktemp` this whole line was excused, so a fixed
+# egress body could hide simply by sitting next to a legitimate call.
+CANARY3="$PLUGIN/skills/idd-verify/.tmp-beside-mktemp-canary.$$-${RANDOM}.md"
+trap 'rm -f "$CANARY" "$CANARY2" "$CANARY3"' EXIT HUP INT TERM
+printf 'D=$(mktemp -d "${TMPDIR:-/tmp}/ok-XXXXXX"); cp "$D/x" /tmp/pointer.md\n' > "$CANARY3"
+SEEN3=$(scan_fixed_tmp | grep -c 'tmp-beside-mktemp-canary' || true)
+rm -f "$CANARY3"
+require "positive control: a fixed path beside a sanctioned mktemp call is still caught" \
+  bash -c '[ "$0" -ge 1 ]' "$SEEN3"
+
 # The sanctioned replacement must be present and resolved BEFORE anything is
 # written — a run directory created after the first write is not a run
 # directory, it is a rename.
@@ -93,6 +109,29 @@ assert_grep "...as a Step 0 task, before any spawn or write" \
   'TaskCreate(name="resolve_scratch_dir"' "$VERIFY_MD"
 assert_grep "reviewer OUTPUT instructions use it" \
   '$VERIFY_DIR/findings_' "$VERIFY_MD"
+
+# ── the tagging protocol's scratch dir must FAIL CLOSED ──
+#
+# `idd-verify` mandates this protocol, and the mention gate decides who gets
+# notified by reading files in that directory. `mktemp -d` without `|| exit` left
+# TAG_DIR empty on a full or read-only /tmp; the paths became `/collaborators.json`
+# etc.; the verification loop then read a file that does not exist, `grep`
+# produced nothing, the `for handle in ...` body ran ZERO times — and the gate
+# passed silently. A gate that cannot read its own inputs must refuse.
+#
+# The same silent-zero-iterations failure had a second cause: nothing created
+# `comment-body.md`, the file the loop scans. The consumer was repointed at the
+# new directory and no producer was ever written.
+TAG_MD=$(cat "$PLUGIN/rules/tagging-collaborators.md")
+assert_grep "the tagging scratch dir fails closed" \
+  'TAG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/idd-tagging-XXXXXX") || {' "$TAG_MD"
+assert_grep "...and is cleaned up" 'trap ' "$TAG_MD"
+assert_grep "the file the mention gate reads is actually written" \
+  '> "$TAG_DIR/comment-body.md"' "$TAG_MD"
+require "...by a producer that appears BEFORE the consumer that greps it" \
+  bash -c 'P=$(printf "%s\n" "$0" | grep -n ">[ ]*\"[$]TAG_DIR/comment-body.md\"" | head -1 | cut -d: -f1);
+           C=$(printf "%s\n" "$0" | grep -n "grep -oE .@\[A-Za-z0-9-\]" | head -1 | cut -d: -f1);
+           [ -n "$P" ] && [ -n "$C" ] && [ "$P" -lt "$C" ]' "$TAG_MD"
 
 print_summary "verify-scratch-paths"
 exit $?

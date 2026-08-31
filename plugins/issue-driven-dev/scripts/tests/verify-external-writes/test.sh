@@ -220,8 +220,35 @@ assert_grep "an empty record is reported as UNKNOWN, not 'nothing happened'" \
   'the blast radius is UNKNOWN' "$MD"
 assert_grep "the untrusted comment text carries its own data guard" \
   'UNTRUSTED issue-comment content' "$MD"
-assert_grep "...and is delimited so injected text cannot pass as instruction" \
-  '<<<EXTERNAL_WRITES' "$MD"
+# The delimiter carries a PER-RUN NONCE. A fixed literal is a word the attacker
+# can simply write: `EXTERNAL_WRITES>>>` inside an issue comment closed the block
+# early, and everything after it read as instruction rather than data. A text
+# guard is not a data boundary unless the boundary is unguessable.
+assert_grep "...and is delimited by a per-run nonce, not a fixed word" \
+  'EW_FENCE="EXTERNAL_WRITES_$(head -c 12 /dev/urandom' "$MD"
+# The nonce must be USED as the delimiter, not merely computed. Asserting the
+# assignment alone left the mutation green: swapping the fence back to a literal
+# kept the `EW_FENCE=` line intact and the test never noticed. And the paired
+# refutation carried a literal backslash-n in its needle, so it could not match
+# anything — two assertions, neither able to fail.
+assert_grep "the nonce is what actually opens the fence" '<<<${EW_FENCE}' "$MD"
+assert_grep "...and what closes it" '${EW_FENCE}>>>' "$MD"
+refute_grep "a fixed word is not used as the opening delimiter" '<<<EXTERNAL_WRITES' "$MD"
+assert_grep "the payload has the nonce neutralised before it is placed" \
+  'sed "s/${EW_FENCE}/[fence]/g"' "$MD"
+
+# The operative instruction must name the issue BODY. Third time this class has
+# appeared: the pseudo-code was fixed and the TaskCreate description — which is
+# what the executing LLM actually reads — was left describing the old design.
+#
+# SCOPED TO THE TASKCREATE LINE. `assert_grep 'issue body' "$MD"` passed from
+# anywhere in a 1200-line file, so deleting the phrase from the description
+# changed nothing. A fourth instance of the same shape, in the assertion written
+# to catch the third.
+TASK_LINE=$(printf '%s\n' "$MD" | grep 'TaskCreate(name="collect_external_writes"' | head -1)
+require "the collect_external_writes TaskCreate exists" bash -c '[ -n "$0" ]' "$TASK_LINE"
+assert_grep "...and its description names the issue body, not only comments" \
+  'issue body' "$TASK_LINE"
 
 print_summary "verify-external-writes"
 exit $?
