@@ -5,6 +5,131 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - 2026-09-01
+
+23 commits since 2.112.0, across four `/idd-verify` ensembles. **The major bump is for one
+change: `check-closed-without-summary.sh --issue N` no longer exits 0, ever.** Anything
+reading that exit code — cron jobs, wrappers, another repo's automation — breaks loudly
+rather than silently keeping the old meaning, which is the point.
+
+### BREAKING — the closing-summary helper may VETO, and may never PERMIT
+
+The classifier failed **twelve consecutive verify rounds** in one direction: a real closing
+summary whose shape the recogniser could not follow was classified `missing`, and `missing`
+was the sole authorisation for `/idd-close --retroactive` to post a DUPLICATE summary over
+one that already existed. Every round enumerated the shapes the last one missed; every next
+round found new ones. Round 10 replaced shape-matching with renderer-style normalisation and
+bought exactly one round — `## Clos<b>ing</b> Summary` (the tag-stripper writes a SPACE where
+a renderer concatenates) and `## 結案摘要` (a summary hand-written in the language this repo
+is written in) both walked straight through it.
+
+The thirteenth round stopped repairing the recogniser and split the POWER instead, along the
+direction that is sound:
+
+| | what kind of statement | cost when wrong |
+|---|---|---|
+| "a marker IS here" | an **observation** — the recogniser matched something | a missed remediation. Cheap. |
+| "a marker is NOT here" | an **inference** from a failure to recognise | an irreversible duplicate post. Expensive. |
+
+"Would a reader see a heading?" is a question about RENDERED output; the rendering function is
+many-to-one with unbounded preimage, so no matcher over source bytes can answer it in the
+negative. It can answer in the positive. So the negative half was removed from the tool and
+given to the thing that can actually answer it — **a reader**.
+
+- **Gate exit codes**: `1` a marker was recognised · `2` undeterminable · `10` nothing was
+  recognised, which is **not permission**. There is no exit 0 in gate mode; `gate_out` refuses
+  to emit one. `10` rather than `0` on purpose: a caller still reading "rc == 0 means go"
+  breaks loudly instead of silently keeping the behaviour this change exists to remove.
+- **Gate class renamed** `missing` → `unrecognised`, and every reply carries `authorises: false`.
+  The old name asserted a fact the tool cannot establish, and "0 才放行" grew out of that name.
+  The AUDIT report keeps `missing` — there the cost of the name is a reader mistaking "not
+  recognised" for "proven absent", which is annoying, not destructive.
+- **A fifth class, `mentioned`**: the phrase is in the comments but no heading was RECOGNISED.
+  Two situations land there and the tool does not tell them apart — ordinary prose ("I forgot
+  the closing summary"), and a real heading in a shape the recognisers cannot follow. Saying so
+  is the point; the previous behaviour reported both as "this issue already carries a marker".
+- **`/idd-close --retroactive` loses its unattended path.** `rc != 10` aborts; `rc == 10`
+  authorises nothing — the skill must read the whole comment set itself, write the basis into
+  the draft, and obtain human confirmation that cannot be disabled. Batch still works, one
+  confirmation each. **This is the stated price of the change.**
+- **Classification now asks who wrote the comment** (OWNER / MEMBER / COLLABORATOR / bot).
+  Six independent Codex legs converged on this: anyone able to comment could move an issue
+  between classes — two words in a question made it `mentioned` (blocking remediation forever),
+  a posted heading made it `compliant` (removing the issue from the audit). Affordable only
+  after the split above: before it, discarding comments pushed issues toward the class that
+  AUTHORISED a destructive post.
+
+### Fixed — everything else the four ensembles surfaced
+
+- **Three more exit-0 paths in the same parser**: `--issue=101` (the equals spelling missed the
+  arm and fell through to audit mode, which always exits 0), `--repo --issue 101` (a value-taking
+  flag swallowing the next flag), and `--issue 101 -h` (help answered 0 while the gate was armed;
+  handling it in place only moved the hole to `-h --issue 101`, so help is now resolved after the
+  whole command line is read). Unknown arguments and flag-eats-flag are fatal: a usage error is
+  not an audit result, and a non-zero cannot be misread as authorisation.
+- **`lead_has_content` counted markup as content** — three times, each one layer below where the
+  previous fix stopped: letters in a TAG NAME, letters in an ENTITY (`&nbsp;`), a tag whose
+  ATTRIBUTE contains `>`, and an unterminated tag. Each made an empty summary read as `compliant`,
+  the one class that prints in no section, so the issue left the audit entirely.
+- **A pure QUOTATION reached `compliant`**: `invisible_line`'s greedy `<!--.*-->` ran from the
+  first comment to the last and swallowed the visible `<blockquote>` between them. Non-greedy is
+  NOT the fix (the `$` anchor forces it to extend); a tempered dot is.
+- **`process-attachments`**: a refused filename recorded `filename: null`, which `verify` read as
+  a file literally named `null` — a deterministic failure that made the issue unclosable, and
+  `verify` is `idd-close` Step 1.4. The control-character guard sat DOWNSTREAM of a command
+  substitution that strips NUL and trailing LF, so it could never fire; validation moved into
+  python, on bytes. Two attachments sharing a basename overwrote each other while the manifest
+  kept both rows and `verify` reported success.
+- **The mention gate passed on zero iterations by three different routes**: a missing file, a
+  `COMMENT_BODY` that was never assigned anywhere, and a cleanup trap that handled HUP/TERM and
+  thereby swallowed the termination itself. `idd-comment` had an inline copy of the protocol that
+  read a file no step ever wrote, and never set `MENTION_ATTESTED` — so `gh-egress`'s mention net
+  refused every legitimate @mention.
+- **Untrusted third-party prose reached a shell command line** (`--instructions "…$EW_BLOCK"`), and
+  the benign default path already contained a `"`. Staged to a file; the five reviewer prompts are
+  now given the PATH and read it themselves, so it never enters a prompt either.
+- **`#317` criterion (c)** — "is there a THIRD place restating idd-all's Plan routing" — had been
+  answered wrongly four times. Two more live restatements found and fixed; the detector gained
+  case folding on all four vocabularies (only one of them had it, while the commit message claimed
+  all), the repo's own `Hybrid` and Chinese wordings, a guard against a deference pointer that
+  DENIES being one, exact-path rather than suffix matching for the normative-source exemption, and
+  a dotted-version test so `| v1 |` no longer buys version-history amnesty.
+- **`#315`**: `REFD_ISSUES` is assigned for every input mode (it was PR-mode-only, below two of its
+  three consumers), and every cluster issue now emits content / `(none)` / `(UNKNOWN)` — absence is
+  never silent.
+- **`#288`**: the no-fixed-scratch-path scan covers skills/ rules/ references/, reads only fenced
+  code, and its allowlist names PATHS rather than directories — the directory form had exempted two
+  egress bodies on the strength of a reason that named a third file.
+
+### Testing — ten vacuous guards, found by mutation
+
+Every guard added in this work was mutated before shipping. Ten were found to be unable to fail,
+**six of them written in the same round as the defect they were meant to close**:
+
+an assertion satisfied by a cross-reference to the very section it checked · a fixture number
+colliding with an existing one, so both refutations graded someone else's issue · `bash -c`
+invoking a shell FUNCTION a subshell does not have · a needle present on two adjacent output lines,
+so deleting either left the other · a hostile fixture using the allowlist's FIRST entry, which is
+exactly what the mutation emits · a banned literal written into the comment explaining the ban
+(four times) · `EW_AWK` extracted, asserted non-empty, then never used while a hardcoded copy was
+graded instead · a flagship "NO input makes this script exit 0" sweep that swept VALUES and never
+the flag's SPELLING · and a written-down claim, `acid: removing emph_re turns them red`, that was
+false of the shipped pipeline for all four recognisers.
+
+Two structural additions came out of that:
+
+- **Stage-1 isolation**: the shape recognisers are exercised with the round-10 backstop disabled,
+  because the backstop masks them — all four could be deleted outright with every assertion green.
+  The result is RECORDED rather than fixed: five of round 9's seven fixtures are covered ONLY by
+  the backstop, for structural reasons (a line-split scan cannot match a tag whose attributes wrap;
+  `<details>` and `<blockquote>` are visible elements and must not be in an invisible-prefix
+  whitelist). Widening the recognisers is the treadmill round 10 replaced.
+- **Scope controls**: a scan's SCOPE is a parameter like any other, and both the `#317` and `#288`
+  scans could be narrowed back to their old directories with nothing turning red. The lesson was
+  written into one suite and shipped unapplied in its sibling on the same day — which is itself the
+  finding: writing a lesson down is not the same as applying it, and the gap is invisible from
+  inside the file where it was written.
+
 ## [2.112.0] - 2026-08-29
 
 ### Fixed — the ensemble on 2.111.0 (degraded: 1 of 6 legs) still returned FAIL
