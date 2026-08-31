@@ -697,5 +697,99 @@ require "#197 (heading split inside a word) is recognised, not left unseen" \
 refute  "#197 is NOT in MISSING"                             flagged 197
 assert_eq "...and the gate refuses rather than clearing the veto" "1" "$(gate_rc 197)"
 
+# ── stage 1 in isolation: the SHAPE recognisers, with the backstop switched off ──
+#
+# The round-10 mention backstop catches almost everything the shape recognisers
+# catch, so it MASKS them. Measured, not guessed: emptying `html_pfx` (the whole
+# round-9 inline-tag whitelist) left the suite fully green before the `mentioned`
+# class existed, and replacing all four recognisers with `false` turned only two
+# assertions red. Round 9`s forty-five lines of reasoning about which tags may
+# count as an invisible prefix -- why `<blockquote>` must NOT, why an autolink is
+# visible -- had nothing holding them.
+#
+# Splitting `mentioned` out restored a lot of that weight (all-four-off is now 21
+# red), but `html_pfx` itself still only moves two. So stage 1 is exercised on
+# its own: a COPY of the shipped script with the backstop branch disabled, run
+# over the same fixtures. No test-only switch is added to the production script
+# — an env var that changes how a safety classifier decides is exactly the kind
+# of thing that gets found in the wild by someone who is not testing.
+STAGE1=$(mktemp "${TMPDIR:-/tmp}/csw-stage1-XXXXXX") || STAGE1=""
+require "a stage-1 copy could be created" bash -c '[ -n "$0" ]' "$STAGE1"
+trap 'rm -f "$STAGE1"' EXIT HUP INT TERM
+sed 's/elif ($bodies | any(mentions_marker))/elif (false)/' "$HELPER" > "$STAGE1"
+require "the backstop is actually disabled in the copy" \
+  bash -c '! grep -q "any(mentions_marker)" "$0" && grep -q "elif (false)" "$0"' "$STAGE1"
+S1_OUT=$(bash "$STAGE1" --json-file "$FIXTURE" 2>&1)
+# CONTROL: with the backstop off, a PROSE-only mention must fall to MISSING.
+# Without this the disabling might have silently failed and stage 1 would be
+# grading the same masked run again.
+require "stage1 control: a prose-only mention now falls to MISSING" \
+  bash -c 'printf "%s\n" "$0" | awk "/^MISSING/,/^\$/" | grep -qE -- "(^|[^0-9])#195([^0-9]|$)"' "$S1_OUT"
+
+# Now the claims round 9 actually made, each answerable by the recognisers alone.
+# WHAT STAGE 1 ACTUALLY COVERS — measured, and it is not what round 9 claimed.
+#
+# Running the fixtures with the backstop off gives a clean answer:
+#
+#   #170 #171 #172   present        -> the shape recognisers really do see these
+#   #173 #183 #184   unrecognised   -> NOTHING in stage 1 sees them
+#   #185 #186        unrecognised      the mention backstop is their only cover
+#
+# So five of the seven "reader sees it, the recogniser does not" fixtures that
+# round 9 added are not recognised by round 9's regexes at all. Their assertions
+# (`is NOT in MISSING`) have been passing on the strength of round 10's
+# backstop, a mechanism written a round later. The fixture tested the OUTCOME
+# and the assertion text implied the MECHANISM; nothing connected them.
+#
+# The reasons are structural rather than oversights, which is why this is
+# recorded instead of patched:
+#   #184  the scan splits on newlines, so a tag whose attributes wrap across
+#         lines cannot be matched by any single-line regex.
+#   #183  `<b>` is not in `html_re` (which takes h1-h6 and summary), and
+#         `emph_re` is about markdown emphasis, not HTML bold.
+#   #173  `<details>` is not in the `html_pfx` whitelist — correctly: it RENDERS
+#         a disclosure triangle, and round 9's own criterion is that only
+#         invisible prefixes may be skipped. Adding it to buy a green line would
+#         break the rule the whitelist exists to state.
+#   #186  a heading inside `<blockquote>` — `<blockquote>` is deliberately
+#         excluded for the same reason.
+#
+# Widening the recognisers to cover them is the enumeration treadmill round 10
+# replaced. What was missing is not coverage, it is an honest statement of which
+# layer covers what — so that is what these assertions are.
+s1_seen() {     # $1 = issue, $2 = label — stage 1 recognises it
+  if printf '%s\n' "$S1_OUT" | awk '/^MISSING/,/^$/' | grep -qE -- "(^|[^0-9])#$1([^0-9]|$)"; then
+    fail "stage1 sees it: $2" "#$1 fell to MISSING — a shape recogniser regressed"
+  else
+    pass "stage1 sees it: $2"
+  fi
+}
+s1_backstop_only() {  # $1 = issue, $2 = label — ONLY the backstop covers it
+  if printf '%s\n' "$S1_OUT" | awk '/^MISSING/,/^$/' | grep -qE -- "(^|[^0-9])#$1([^0-9]|$)"; then
+    pass "backstop-only, as recorded: $2"
+  else
+    fail "backstop-only, as recorded: $2" \
+         "#$1 is now recognised by stage 1 — good news, but the note above is stale: move it to s1_seen"
+  fi
+}
+s1_seen 172 "a raw <h2> heading (html_re)"
+s1_backstop_only 173 "<details><summary> — <details> is a VISIBLE element"
+s1_backstop_only 183 "HTML bold pseudo-heading — <b> is not in html_re"
+s1_backstop_only 184 "<h2> attributes wrapped across lines — the scan is line-split"
+s1_backstop_only 185 "close bracket inside an attribute"
+s1_backstop_only 186 "heading inside an HTML blockquote — deliberately excluded"
+# The NEGATIVE half of round 9, and the half `html_pfx` actually earns its keep
+# on: a marker or an anchor before the hashes is NOT a CommonMark heading, so it
+# must not be promoted to `casing`. If `html_pfx` ever widens to admit a visible
+# prefix, these fire — with the backstop off, nothing else can mask it.
+for n in 170 171; do
+  if printf '%s\n' "$S1_OUT" | awk '/^CASING/,/^$/' | grep -qE -- "(^|[^0-9])#$n([^0-9]|$)"; then
+    fail "stage1: #$n (not a CommonMark heading) stays out of CASING" \
+         "html_pfx admitted a visible prefix"
+  else
+    pass "stage1: #$n (not a CommonMark heading) stays out of CASING"
+  fi
+done
+
 print_summary "check-closed-without-summary"
 exit $?
