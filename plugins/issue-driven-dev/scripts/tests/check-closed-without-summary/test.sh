@@ -747,6 +747,43 @@ done
 require "#100 (a real summary) is still compliant, i.e. unlisted" \
   bash -c '! printf "%s\n" "$0" | grep -qE -- "(^|[^0-9])#100([^0-9]|$)"' "$OUT"
 
+# ── who wrote it matters ──
+#
+# Six independent Codex legs converged on this, the strongest cross-model
+# consensus in the run: the classifier reads every comment body and asks nothing
+# about who wrote it. So anyone who can comment can move an issue between
+# classes. Two directions, both bad:
+#
+#   #210  an outsider writes the two words in a question -> `mentioned` -> the
+#         gate refuses forever, and `--retroactive` can never run on that issue
+#   #211  an outsider posts a whole `## Closing Summary` with a line under it ->
+#         `compliant` -> the issue leaves the audit entirely, and a real missing
+#         summary is now invisible
+#
+# The audit is about whether THE PROJECT recorded a closing summary, and a
+# closing summary is something a maintainer writes. An outside comment is
+# evidence about that commenter, not about the project`s audit trail.
+#
+# This filter is affordable only because of round 12. Before it, discarding
+# comments meant more issues reaching the class that AUTHORISED a destructive
+# post -- so tightening here would have been the expensive direction. Now the
+# same movement lands on `unrecognised`, which authorises nothing and hands the
+# question to a person. The architecture change is what made the fix safe.
+require "#210 (outsider mention) does NOT become mentioned" \
+  bash -c '! printf "%s\n" "$0" | awk "/^MENTIONED/,/^\$/" | grep -qE -- "(^|[^0-9])#210([^0-9]|$)"' "$OUT"
+require "#210 still reaches MISSING, where a human decides" flagged 210
+require "#211 (outsider posts a heading) is NOT exonerated into silence" \
+  bash -c 'printf "%s\n" "$0" | grep -qE -- "(^|[^0-9])#211([^0-9]|$)"' "$OUT"
+require "#211 reaches MISSING too" flagged 211
+# CONTROL, and the reason this is a filter rather than a blanket: the SAME
+# sentence from a member must still count. Without it the fix could be "ignore
+# all comments".
+require "#212 (the same words from a MEMBER) still lands in MENTIONED" \
+  in_section "MENTIONED" 212
+assert_eq "gate: an outsider cannot flip the veto — #210 still clears it" "10" "$(gate_rc 210)"
+assert_eq "gate: nor can an outsider trigger it — #211 still clears it"   "10" "$(gate_rc 211)"
+assert_eq "gate: a member mention still refuses"                          "1"  "$(gate_rc 212)"
+
 # ── a prose MENTION is not a marker, and must not be reported as one ──
 #
 # The round-10 backstop demotes anything containing the two adjacent words, which

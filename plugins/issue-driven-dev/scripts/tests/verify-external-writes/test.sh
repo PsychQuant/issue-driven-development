@@ -395,15 +395,36 @@ refute_grep "no unqualified 'both backends' claim survives" \
 # CONTEXT_BLOCK occurrence, so with 5 prompts and 6 occurrences, DELETING one
 # prompt's block still left 5 >= 5 and the test passed. Replacing last round's
 # broken equality with a floor swapped one mutable shape for another.
+# The prompts now carry the PATH, not the text. That is the fix for a defect this
+# very assertion could not see: it required the literal `${EW_BLOCK}` placeholder,
+# and a placeholder in an Agent prompt is substituted by the executing model —
+# or is not, in which case the reviewer reads the four characters `${EW`. Either
+# way the assertion was green. Requiring the path means requiring something the
+# reviewer can act on with its own tool, which is also how the diff is passed.
 MISSING_PROMPTS=$(printf '%s\n' "$MD" | awk '
   /Diff path: \$VERIFY_DIR\/diff\.patch/ { n++; armed = 1; found[n] = 0; next }
-  armed && /^\$\{EW_BLOCK\}$/ { found[n] = 1; armed = 0 }
+  armed && /VERIFY_DIR\/ew-block\.md/ { found[n] = 1; armed = 0 }
   armed && /OUTPUT \(mandatory\)/ { armed = 0 }
   END { for (i = 1; i <= n; i++) if (!found[i]) miss++; print (miss ? miss : 0) }')
 PROMPTS=$(printf '%s\n' "$MD" | grep -c 'Diff path: \$VERIFY_DIR/diff\.patch')
 require "there are at least five manual lens prompts (guards a vacuous zero)" \
   bash -c '[ "$0" -ge 5 ]' "$PROMPTS"
-assert_eq "every manual lens prompt carries the block, counted per prompt" "0" "$MISSING_PROMPTS"
+assert_eq "every manual lens prompt is given the block PATH, counted per prompt" "0" "$MISSING_PROMPTS"
+# ...and each one says what to do when the file is not there. Without this the
+# reviewers fail open: a missing file reads as "nothing was written outside the
+# diff", which is the same false-negative direction as everything else in this
+# work.
+UNKNOWN_MISSING=$(printf '%s\n' "$MD" | awk '
+  /Diff path: \$VERIFY_DIR\/diff\.patch/ { n++; armed = 1; found[n] = 0; next }
+  armed && /do NOT treat it as/ { found[n] = 1; armed = 0 }
+  armed && /OUTPUT \(mandatory\)/ { armed = 0 }
+  END { for (i = 1; i <= n; i++) if (!found[i]) miss++; print (miss ? miss : 0) }')
+assert_eq "...and each prompt says a missing file means UNKNOWN, not none" "0" "$UNKNOWN_MISSING"
+# The codex leg is the one that substitutes CONTENT rather than a path, so it
+# needs the same fail-closed behaviour in shell: `cat` of a missing file must
+# not leave the instructions silently short.
+assert_grep "the codex leg substitutes a loud placeholder when the file is unreadable" \
+  'EXTERNAL-WRITES CONTEXT UNAVAILABLE' "$MD"
 
 echo "── the absent case, and untrusted content ──"
 assert_grep "an empty record is reported as UNKNOWN, not 'nothing happened'" \

@@ -290,7 +290,7 @@ else
     # then is the text parsed, and jq's failure is a separate refusal.
     CMTS_RAW=$(mktemp) || gate_out "" "" false "could not create a temp file" 2
     if ! gh api "repos/$GATE_REPO/issues/$GATE_ISSUE/comments" --paginate \
-           --jq '[.[] | {body}]' >"$CMTS_RAW" 2>/dev/null; then
+           --jq '[.[] | {body, author_association}]' >"$CMTS_RAW" 2>/dev/null; then
       rm -f "$CMTS_RAW"
       gate_out "" "" false "could not fetch the comments of #$GATE_ISSUE (network / auth / rate limit / partial pagination)" 2
     fi
@@ -360,7 +360,7 @@ else
         ''|*[!0-9]*) echo "note: skipping non-numeric issue id in re-fetch" >&2; continue ;;
       esac
       FULL=$(gh api "repos/$RESOLVED_REPO/issues/$n/comments" --paginate \
-               --jq '[.[] | {body}]' 2>/dev/null | jq -s 'add // []' 2>/dev/null)
+               --jq '[.[] | {body, author_association}]' 2>/dev/null | jq -s 'add // []' 2>/dev/null)
       # An empty/!valid result must NOT be treated as success: a partial re-fetch
       # that SHRINKS the comment set would route a real summary to `missing`.
       if [ -n "$FULL" ] && printf '%s' "$FULL" | jq -e 'type == "array" and length > 0' >/dev/null 2>&1; then
@@ -780,7 +780,26 @@ CLASSIFY='
   .[]
   | select(((.state // "") | ascii_upcase) == "CLOSED")
   | . as $i
-  | [$i.comments[]?.body // ""] as $bodies
+  # WHO wrote it. The classifier used to read every body and ask nothing about
+  # its author, so anyone able to comment could move an issue between classes:
+  # two words in a question made it `mentioned` (the gate then refuses forever),
+  # and a posted heading with a line under it made it `compliant` (the issue
+  # leaves the audit entirely). The audit is about whether THE PROJECT recorded
+  # a closing summary; an outside comment is evidence about that commenter.
+  #
+  # Affordable only because of round 12: before it, discarding comments pushed
+  # issues toward the class that AUTHORISED a destructive post. Now the same
+  # movement lands on `unrecognised`, which authorises nothing.
+  #
+  # A MISSING association counts as trusted. Offline payloads and older fixtures
+  # carry no such field, and refusing them would silently reclassify every issue
+  # in a test corpus. Stated rather than hidden: the filter binds on the live
+  # path, where the field is always present.
+  | [$i.comments[]?
+     | select((.author_association // "OWNER") as $a
+              | $a == "OWNER" or $a == "MEMBER" or $a == "COLLABORATOR"
+                or ($a | test("BOT"; "i")))
+     | .body // ""] as $bodies
   | (if   ($bodies | any((lead_line | startswith("## Closing Summary")) and lead_has_content))
                                                                         then "compliant"
      elif ($bodies | any((lead_line | test(lead_re; "i")) and lead_has_content))

@@ -921,6 +921,30 @@
     ]
   },
   {
+    "number": 210,
+    "title": "an OUTSIDER comment mentions the phrase - must not change the class",
+    "state": "CLOSED",
+    "comments": [
+      { "body": "any idea why there is no closing summary here?", "author_association": "NONE" }
+    ]
+  },
+  {
+    "number": 211,
+    "title": "an OUTSIDER posts a whole heading - must not exonerate the issue",
+    "state": "CLOSED",
+    "comments": [
+      { "body": "## Closing Summary\n\nlooks done to me", "author_association": "NONE" }
+    ]
+  },
+  {
+    "number": 212,
+    "title": "the same mention from a MEMBER does count",
+    "state": "CLOSED",
+    "comments": [
+      { "body": "I forgot the closing summary here", "author_association": "MEMBER" }
+    ]
+  },
+  {
     "number": 198,
     "title": "heading + only a &nbsp; entity - renders empty",
     "state": "CLOSED",

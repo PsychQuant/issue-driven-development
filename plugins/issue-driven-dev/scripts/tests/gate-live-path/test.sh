@@ -142,5 +142,25 @@ done
 AUDIT_RC=$(GATE_STUB=total-failure PATH="$STUB:$PATH" bash "$SCRIPT" --repo o/r >/dev/null 2>&1; echo $?)
 assert_eq "audit mode still always exits 0, even when gh fails" "0" "$AUDIT_RC"
 
+# ── the live fetch must ASK for the author association ──
+#
+# The classifier filters comments by `author_association`, and that filter is
+# only as real as the projection the fetch requests: `--jq "[.[] | {body}]"`
+# drops the field, every comment then defaults to trusted, and the filter turns
+# into a no-op on the one path where it matters — the live one. Every other test
+# in this repo feeds the classifier through `--json-file`, so nothing else can
+# see this.
+#
+# Asserted against the SHIPPED command text rather than by running it: the stub
+# here answers whatever is asked, so a stub-based check would pass with the
+# field dropped.
+GATE_SRC=$(cat "$SCRIPT")
+assert_grep "the live comment fetch requests author_association" \
+  '{body, author_association}' "$GATE_SRC"
+require "...on BOTH fetch paths (paginated and the fallback)" \
+  bash -c '[ "$(printf "%s" "$0" | grep -c "{body, author_association}")" -ge 2 ]' "$GATE_SRC"
+refute_grep "no fetch path still asks for the body alone" \
+  "--jq '[.[] | {body}]'" "$GATE_SRC"
+
 print_summary "gate-live-path"
 exit $?
