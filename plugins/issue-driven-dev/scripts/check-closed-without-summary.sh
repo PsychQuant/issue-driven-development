@@ -99,22 +99,73 @@ GATE_ISSUE=""
 GATE_SEEN=0
 GATE_ERR=""
 
+# A MALFORMED command line must not become the advisory mode. That is not a
+# style point -- it was the hole that survived round 12 with the whole
+# architecture resting on it:
+#
+#   --issue=101          did not match the `--issue)` arm, fell to `*)`, and the
+#                        run continued into AUDIT mode, which always exits 0.
+#   --repo --issue 101   `--repo` took `--issue` as its VALUE, then `101` fell to
+#                        `*)` -- again audit, again 0.
+#
+# So the file could still answer 0 while its own header claimed it never does.
+# A caller that typed `--issue` was asking the gate a question, and audit's 0
+# answers a different one.
+#
+# Three rules, each closing a different half of that:
+#   1. every value-taking flag accepts BOTH spellings, `--flag v` and `--flag=v`;
+#   2. `--issue` in ANY spelling sets GATE_SEEN BEFORE its value is validated,
+#      so a malformed issue argument is refused BY THE GATE (exit 2) instead of
+#      falling through to a mode that cannot refuse;
+#   3. a value-taking flag REFUSES a value beginning with `-`, and an unknown
+#      argument is fatal. A usage error is not an audit result, and exiting
+#      non-zero on one cannot be misread as authorisation -- which is what makes
+#      refusal the safe direction here.
+usage_error() {   # $1 = message
+  echo "✗ $1" >&2
+  echo "  (a malformed command line is refused rather than run as an audit — see the header)" >&2
+  [ "$GATE_SEEN" = 1 ] && gate_out "" "" false "$1" 2
+  exit 2
+}
+need_value() {    # $1 = flag  $2 = candidate  $3 = 1 if attached with `=`
+  if [ "$3" = 1 ]; then printf '%s' "$2"; return 0; fi   # --flag= is explicit, even if empty
+  case "$2" in
+    '')   usage_error "$1 needs a value" ;;
+    -*)   usage_error "$1 needs a value, but the next argument is another flag ($2)" ;;
+  esac
+  printf '%s' "$2"
+}
 while [ $# -gt 0 ]; do
-  case "$1" in
-    # `shift 2` with only one argument left is a no-op in some shells, so a
-    # trailing value-taking flag looped forever — the advisory contract promises
-    # exit 0, and never exiting breaks it harder than any wrong verdict.
-    --json-file) JSON_FILE="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
-    --issue)     GATE_SEEN=1; GATE_ISSUE="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
-    --repo)      REPO="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
-    --limit)     LIMIT="${2:-50}"; shift; [ $# -gt 0 ] && shift ;;
-    --since)     SINCE="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
+  # Split `--flag=value` once, up front, so every arm below sees one shape.
+  ARG="$1"; ATTACHED=0; VAL=""
+  case "$ARG" in
+    --*=*) VAL="${ARG#*=}"; ARG="${ARG%%=*}"; ATTACHED=1 ;;
+    *)     VAL="${2:-}" ;;
+  esac
+  # `shift 2` with only one argument left is a no-op in some shells, so a
+  # trailing value-taking flag looped forever — the advisory contract promises
+  # exit 0, and never exiting breaks it harder than any wrong verdict.
+  case "$ARG" in
+    --json-file) JSON_FILE=$(need_value --json-file "$VAL" "$ATTACHED") || exit 2
+                 shift; [ "$ATTACHED" = 0 ] && [ $# -gt 0 ] && shift ;;
+    # GATE_SEEN is set from the FLAG, before the value is looked at. `--issue=`
+    # and a trailing `--issue` both belong to the gate, which can refuse them;
+    # neither may leak into audit mode.
+    --issue)     GATE_SEEN=1
+                 GATE_ISSUE=$(need_value --issue "$VAL" "$ATTACHED") || exit 2
+                 shift; [ "$ATTACHED" = 0 ] && [ $# -gt 0 ] && shift ;;
+    --repo)      REPO=$(need_value --repo "$VAL" "$ATTACHED") || exit 2
+                 shift; [ "$ATTACHED" = 0 ] && [ $# -gt 0 ] && shift ;;
+    --limit)     LIMIT=$(need_value --limit "$VAL" "$ATTACHED") || exit 2
+                 shift; [ "$ATTACHED" = 0 ] && [ $# -gt 0 ] && shift ;;
+    --since)     SINCE=$(need_value --since "$VAL" "$ATTACHED") || exit 2
+                 shift; [ "$ATTACHED" = 0 ] && [ $# -gt 0 ] && shift ;;
     --dry-run)   DRY_RUN=1; shift ;;   # gh mode: print the composed gh command + exit (offline introspection / test seam)
     # Print the whole leading comment block, however long it grows. The old
     # fixed range (2,16p) silently dropped Usage and the "ALWAYS exits 0"
     # promise the moment the header grew past line 16.
     -h|--help)   sed -n '2,/^$/p' "$0" | sed 's/^#\{1,\} \{0,1\}//'; exit 0 ;;
-    *)           echo "unknown arg: $1" >&2; shift ;;
+    *)           usage_error "unknown argument: $ARG" ;;
   esac
 done
 

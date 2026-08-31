@@ -583,6 +583,39 @@ require "veto: NO input makes this script exit 0 in gate mode" \
     [ -z "$rcs" ] || { echo "exited 0 for:$rcs"; exit 1; }' \
   "$HELPER" "$FIXTURE"
 
+# The sweep above swept VALUES. It never swept the SPELLING of the flag, and
+# that is where the hole was: `--issue=101` did not match the `--issue)` arm,
+# fell through to `*)`, and the run continued into AUDIT mode -- which always
+# exits 0. So the assertion whose name is "NO input makes this script exit 0"
+# was defeated by an equals sign. Same for `--repo --issue 101`, where `--repo`
+# swallows `--issue` as its own value and the number then falls through.
+#
+# Both are MALFORMED invocations, which is exactly the case that must not
+# silently become the advisory mode: a caller that wrote `--issue` meant to ask
+# the gate a question, and audit's 0 answers a different question.
+require "veto: the EQUALS spelling still enters gate mode, never audit" \
+  bash -c '
+    bad=""
+    for form in "--issue=101" "--issue=abc" "--issue="; do
+      bash "$0" --json-file "$1" "$form" >/dev/null 2>&1
+      rc=$?
+      [ "$rc" = 0 ] && bad="$bad [$form -> 0]"
+    done
+    [ -z "$bad" ] || { echo "audit-mode 0 for:$bad"; exit 1; }' \
+  "$HELPER" "$FIXTURE"
+assert_eq "veto: --issue=101 gives the same verdict as --issue 101" \
+  "$(bash "$HELPER" --json-file "$FIXTURE" --issue 101 2>/dev/null | jq -r .class)" \
+  "$(bash "$HELPER" --json-file "$FIXTURE" --issue=101 2>/dev/null | jq -r .class)"
+require "veto: a value-taking flag REFUSES to swallow the next flag" \
+  bash -c '
+    bash "$0" --json-file "$1" --repo --issue 101 >/dev/null 2>&1
+    rc=$?
+    [ "$rc" != 0 ] || { echo "--repo swallowed --issue and the run exited 0"; exit 1; }' \
+  "$HELPER" "$FIXTURE"
+require "veto: ...and says which flag was missing its value" \
+  bash -c 'bash "$0" --json-file "$1" --repo --issue 101 2>&1 | grep -q -- "--repo"' \
+  "$HELPER" "$FIXTURE"
+
 require "veto: ...and every gate reply carries authorises:false" \
   bash -c '
     bad=""

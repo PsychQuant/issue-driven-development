@@ -223,11 +223,34 @@ refute_grep "idd-find no longer calls a permissive match an archaeological recor
   "標 \`📜 closing summary\`（可考古的結案紀錄）" "$FIND_MD"
 
 # ...and the helper must really have the mode the skill invokes. A skill calling
-# a flag that does not exist fails open in the worst possible way: `gh`-less
-# environments aside, an unknown flag here is warned about and ignored, which
-# would put the audit's always-exit-0 contract on the destructive path.
+# a flag that does not exist fails open in the worst possible way: an unknown or
+# malformed flag used to be warned about and IGNORED, so the run continued into
+# audit mode -- and audit always exits 0. The comment that used to sit here said
+# exactly that ("would put the audit's always-exit-0 contract on the destructive
+# path") and was left as a description of a live defect rather than a test of it.
+# Reproduced later by an outside reviewer: `--issue=101` and `--repo --issue 101`
+# both exited 0.
+#
+# Asserted BEHAVIOURALLY now. The old form grepped for the literal source line
+# `--issue)     GATE_SEEN=1; GATE_ISSUE=` -- which pinned the whitespace of an
+# implementation rather than the property, and went red the moment the parser
+# was rewritten to close the hole it was supposedly guarding.
 SRC=$(cat "$SCRIPT")
-assert_grep "the helper really implements --issue" '--issue)     GATE_SEEN=1; GATE_ISSUE=' "$SRC"
+PD_FIX=$(mktemp "${TMPDIR:-/tmp}/prose-drift-args-XXXXXX") || PD_FIX=""
+require "an argument fixture could be created" bash -c '[ -n "$0" ]' "$PD_FIX"
+printf '%s' '[{"number":1,"title":"t","state":"CLOSED","url":"u","closedAt":"2026-01-01T00:00:00Z","comments":[{"body":"nothing marker-like"}]}]' > "$PD_FIX"
+for FORM in "--issue 1" "--issue=1"; do
+  # shellcheck disable=SC2086
+  bash "$SCRIPT" --json-file "$PD_FIX" $FORM >/dev/null 2>&1
+  RC=$?
+  assert_eq "the helper really implements --issue ($FORM), and it is not audit mode" \
+    "10" "$RC"
+done
+bash "$SCRIPT" --json-file "$PD_FIX" --repo --issue 1 >/dev/null 2>&1
+assert_eq "a flag that swallows the next flag is refused, not run as an audit" "2" "$?"
+bash "$SCRIPT" --json-file "$PD_FIX" --no-such-flag >/dev/null 2>&1
+assert_eq "an unknown flag is fatal, so it cannot become an audit-mode 0" "2" "$?"
+rm -f "$PD_FIX"
 # This used to grep the header for a literal line of its own documentation --
 # prose checked against prose, which cannot notice the code changing underneath.
 # Now the observed exit code is produced by RUNNING the helper, and the header is
