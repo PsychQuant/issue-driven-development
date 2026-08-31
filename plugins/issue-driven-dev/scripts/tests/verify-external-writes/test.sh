@@ -291,28 +291,78 @@ HOSTILE=$(printf '%s\n' \
 assert_grep "the digest is fed the collector's own allowlist, not a second copy" \
   'awk -v allow="${EW_SECTIONS}"' "$MD"
 
-# ── run the SKILL'S OWN program, not a copy of it ──
+# ── run the SKILL'S OWN program, not a copy of it, and not through a shell ──
 #
-# The previous version extracted `$EW_AWK`, asserted it was non-empty, and then
-# never referred to it again: the digest below was computed by an inline
-# hardcoded transcription of the same awk. So the assertions graded the copy.
-# Mutating the skill's emit from the canonical name to the attacker-controlled
-# heading (`seen[iss " " A[k]]` -> `seen[iss " " name]`) shipped the injected
-# sentence straight into `daFocus` — the one pai arg with no `dataBlock()`
-# wrapper — and this suite stayed 53/0 green.
+# Two failures, one after the other, and the second was introduced by the fix
+# for the first.
 #
-# `eval` on text lifted out of a Markdown file is not something to reach for
-# lightly. It is right here because the text under test IS a shell program that
-# the skill will run verbatim, and any indirection between the file and the
-# execution is precisely the gap that hid this defect. The inputs are set by
-# this test, and the extraction is anchored to the assignment's own first and
-# last lines.
-DIGEST=$(
-  EXTERNAL_WRITES="$HOSTILE"
-  EW_SECTIONS="$EW_ALLOW"
-  eval "$EW_AWK"
-  printf '%s' "$EW_DIGEST"
-)
+# (1) The version before last extracted `$EW_AWK`, asserted it was non-empty,
+#     and then never referred to it again: the digest was computed by an inline
+#     hardcoded transcription. The assertions graded the copy. Mutating the
+#     skill's emit to the attacker-controlled heading shipped the injected
+#     sentence into `daFocus` and the suite stayed green.
+#
+# (2) The fix ran the extracted text with `eval`. That closed the copy problem
+#     and opened a worse one: any legal shell command substitution placed
+#     between the two extraction anchors in a MARKDOWN FILE executes here, with
+#     this process's privileges. A specification document became an execution
+#     surface. Caught by an outside reviewer before it shipped.
+#
+# What the test actually needs is the awk PROGRAM, and awk is not a shell. So
+# only the single-quoted program body is lifted out and handed to `awk` as an
+# argument -- no shell ever parses it. The two dangerous awk constructs are
+# rejected explicitly rather than trusted absent, because `system()` and a
+# command pipe would put the execution surface right back.
+EW_PROG=$(printf '%s\n' "$EW_AWK" | awk "
+  /awk -v allow=/ { inprog = 1; sub(/.*awk -v allow=\"[^\"]*\" '/, \"\"); }
+  inprog {
+    if (\$0 ~ /^[ \t]*'[ \t]*\\\\?\$/ || \$0 ~ /' *\\\\\$/) {
+      sub(/'.*\$/, \"\"); print; exit
+    }
+    print
+  }")
+require "the awk program body could be lifted out of the skill" \
+  bash -c '[ -n "$0" ] && printf "%s" "$0" | grep -q "seen\[iss"' "$EW_PROG"
+# awk can still shell out. Neither construct appears in the shipped program, and
+# this refuses rather than assumes: if one is ever added, this suite must stop
+# running it, not run it.
+# The pipe test excludes a `|` that is itself inside a string literal: the
+# shipped program contains `split(allow, A, "|")`, where the pipe is the
+# separator, not a command pipe. Requiring the `|` NOT to be preceded by a quote
+# separates the two without hand-listing the one benign case.
+require "the lifted program contains no awk shell-escape (system / command pipe)" \
+  bash -c '! printf "%s" "$0" | grep -qE "system[ \t]*\(|[^\"]\|[ \t]*\"|getline[ \t]*<"' "$EW_PROG"
+
+# POSITIVE CONTROL for the execution surface itself. A command substitution
+# planted between the extraction anchors of a COPY of the skill must not run.
+# Without this the paragraph above is a claim about a shell that is no longer
+# invoked -- easy to believe, and exactly the kind of thing that quietly stops
+# being true when someone "simplifies" the extraction back to eval.
+EVIL_MD=$(mktemp "${TMPDIR:-/tmp}/ew-evil-XXXXXX") || EVIL_MD=""
+EVIL_CANARY=$(mktemp "${TMPDIR:-/tmp}/ew-canary-XXXXXX") || EVIL_CANARY=""
+require "the injection-control fixtures could be created" \
+  bash -c '[ -n "$0" ] && [ -n "$1" ]' "$EVIL_MD" "$EVIL_CANARY"
+printf '%s\n' \
+  'EW_DIGEST=$(printf "%s" "${EXTERNAL_WRITES:-}" \' \
+  "  \$(printf PWNED > $EVIL_CANARY) \\" \
+  '  | awk -v allow="${EW_SECTIONS}" '"'"'' \
+  '      BEGIN { n = split(allow, A, "|") }' \
+  '      END { }'"'"' \' \
+  '  | cut -c1-600)' > "$EVIL_MD"
+: > "$EVIL_CANARY"
+EVIL_AWK=$(sed -n '/^EW_DIGEST=\$(printf/,/cut -c1-600)$/p' "$EVIL_MD")
+EVIL_PROG=$(printf '%s\n' "$EVIL_AWK" | awk "
+  /awk -v allow=/ { inprog = 1; sub(/.*awk -v allow=\"[^\"]*\" '/, \"\"); }
+  inprog {
+    if (\$0 ~ /^[ \t]*'[ \t]*\\\\?\$/ || \$0 ~ /' *\\\\\$/) { sub(/'.*\$/, \"\"); print; exit }
+    print
+  }")
+printf '%s' "" | awk -v allow="x" "$EVIL_PROG" >/dev/null 2>&1 || true
+require "a command substitution planted in the skill does NOT execute" \
+  bash -c '[ ! -s "$0" ]' "$EVIL_CANARY"
+rm -f "$EVIL_MD" "$EVIL_CANARY"
+
+DIGEST=$(printf '%s\n' "$HOSTILE" | awk -v allow="$EW_ALLOW" "$EW_PROG" | cut -c1-600)
 require "the extracted program actually ran (guards a vacuous empty digest)" \
   bash -c '[ -n "$0" ]' "$DIGEST"
 refute_grep "the digest drops injected text appended to a heading" 'IGNORE ALL REVIEW' "$DIGEST"
