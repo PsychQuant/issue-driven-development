@@ -5,6 +5,259 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - 2026-09-01
+
+23 commits since 2.112.0, across four `/idd-verify` ensembles. **The major bump is for one
+change: `check-closed-without-summary.sh --issue N` no longer exits 0, ever.** Anything
+reading that exit code — cron jobs, wrappers, another repo's automation — breaks loudly
+rather than silently keeping the old meaning, which is the point.
+
+### BREAKING — the closing-summary helper may VETO, and may never PERMIT
+
+The classifier failed **twelve consecutive verify rounds** in one direction: a real closing
+summary whose shape the recogniser could not follow was classified `missing`, and `missing`
+was the sole authorisation for `/idd-close --retroactive` to post a DUPLICATE summary over
+one that already existed. Every round enumerated the shapes the last one missed; every next
+round found new ones. Round 10 replaced shape-matching with renderer-style normalisation and
+bought exactly one round — `## Clos<b>ing</b> Summary` (the tag-stripper writes a SPACE where
+a renderer concatenates) and `## 結案摘要` (a summary hand-written in the language this repo
+is written in) both walked straight through it.
+
+The thirteenth round stopped repairing the recogniser and split the POWER instead, along the
+direction that is sound:
+
+| | what kind of statement | cost when wrong |
+|---|---|---|
+| "a marker IS here" | an **observation** — the recogniser matched something | a missed remediation. Cheap. |
+| "a marker is NOT here" | an **inference** from a failure to recognise | an irreversible duplicate post. Expensive. |
+
+"Would a reader see a heading?" is a question about RENDERED output; the rendering function is
+many-to-one with unbounded preimage, so no matcher over source bytes can answer it in the
+negative. It can answer in the positive. So the negative half was removed from the tool and
+given to the thing that can actually answer it — **a reader**.
+
+- **Gate exit codes**: `1` a marker was recognised · `2` undeterminable · `10` nothing was
+  recognised, which is **not permission**. There is no exit 0 in gate mode; `gate_out` refuses
+  to emit one. `10` rather than `0` on purpose: a caller still reading "rc == 0 means go"
+  breaks loudly instead of silently keeping the behaviour this change exists to remove.
+- **Gate class renamed** `missing` → `unrecognised`, and every reply carries `authorises: false`.
+  The old name asserted a fact the tool cannot establish, and "0 才放行" grew out of that name.
+  The AUDIT report keeps `missing` — there the cost of the name is a reader mistaking "not
+  recognised" for "proven absent", which is annoying, not destructive.
+- **A fifth class, `mentioned`**: the phrase is in the comments but no heading was RECOGNISED.
+  Two situations land there and the tool does not tell them apart — ordinary prose ("I forgot
+  the closing summary"), and a real heading in a shape the recognisers cannot follow. Saying so
+  is the point; the previous behaviour reported both as "this issue already carries a marker".
+- **`/idd-close --retroactive` loses its unattended path.** `rc != 10` aborts; `rc == 10`
+  authorises nothing — the skill must read the whole comment set itself, write the basis into
+  the draft, and obtain human confirmation that cannot be disabled. Batch still works, one
+  confirmation each. **This is the stated price of the change.**
+- **Classification now asks who wrote the comment** (OWNER / MEMBER / COLLABORATOR / bot).
+  Six independent Codex legs converged on this: anyone able to comment could move an issue
+  between classes — two words in a question made it `mentioned` (blocking remediation forever),
+  a posted heading made it `compliant` (removing the issue from the audit). Affordable only
+  after the split above: before it, discarding comments pushed issues toward the class that
+  AUTHORISED a destructive post.
+
+### Fixed — everything else the four ensembles surfaced
+
+- **Three more exit-0 paths in the same parser**: `--issue=101` (the equals spelling missed the
+  arm and fell through to audit mode, which always exits 0), `--repo --issue 101` (a value-taking
+  flag swallowing the next flag), and `--issue 101 -h` (help answered 0 while the gate was armed;
+  handling it in place only moved the hole to `-h --issue 101`, so help is now resolved after the
+  whole command line is read). Unknown arguments and flag-eats-flag are fatal: a usage error is
+  not an audit result, and a non-zero cannot be misread as authorisation.
+- **`lead_has_content` counted markup as content** — three times, each one layer below where the
+  previous fix stopped: letters in a TAG NAME, letters in an ENTITY (`&nbsp;`), a tag whose
+  ATTRIBUTE contains `>`, and an unterminated tag. Each made an empty summary read as `compliant`,
+  the one class that prints in no section, so the issue left the audit entirely.
+- **A pure QUOTATION reached `compliant`**: `invisible_line`'s greedy `<!--.*-->` ran from the
+  first comment to the last and swallowed the visible `<blockquote>` between them. Non-greedy is
+  NOT the fix (the `$` anchor forces it to extend); a tempered dot is.
+- **`process-attachments`**: a refused filename recorded `filename: null`, which `verify` read as
+  a file literally named `null` — a deterministic failure that made the issue unclosable, and
+  `verify` is `idd-close` Step 1.4. The control-character guard sat DOWNSTREAM of a command
+  substitution that strips NUL and trailing LF, so it could never fire; validation moved into
+  python, on bytes. Two attachments sharing a basename overwrote each other while the manifest
+  kept both rows and `verify` reported success.
+- **The mention gate passed on zero iterations by three different routes**: a missing file, a
+  `COMMENT_BODY` that was never assigned anywhere, and a cleanup trap that handled HUP/TERM and
+  thereby swallowed the termination itself. `idd-comment` had an inline copy of the protocol that
+  read a file no step ever wrote, and never set `MENTION_ATTESTED` — so `gh-egress`'s mention net
+  refused every legitimate @mention.
+- **Untrusted third-party prose reached a shell command line** (`--instructions "…$EW_BLOCK"`), and
+  the benign default path already contained a `"`. Staged to a file; the five reviewer prompts are
+  now given the PATH and read it themselves, so it never enters a prompt either.
+- **`#317` criterion (c)** — "is there a THIRD place restating idd-all's Plan routing" — had been
+  answered wrongly four times. Two more live restatements found and fixed; the detector gained
+  case folding on all four vocabularies (only one of them had it, while the commit message claimed
+  all), the repo's own `Hybrid` and Chinese wordings, a guard against a deference pointer that
+  DENIES being one, exact-path rather than suffix matching for the normative-source exemption, and
+  a dotted-version test so `| v1 |` no longer buys version-history amnesty.
+- **`#315`**: `REFD_ISSUES` is assigned for every input mode (it was PR-mode-only, below two of its
+  three consumers), and every cluster issue now emits content / `(none)` / `(UNKNOWN)` — absence is
+  never silent.
+- **`#288`**: the no-fixed-scratch-path scan covers skills/ rules/ references/, reads only fenced
+  code, and its allowlist names PATHS rather than directories — the directory form had exempted two
+  egress bodies on the strength of a reason that named a third file.
+
+### Testing — ten vacuous guards, found by mutation
+
+Every guard added in this work was mutated before shipping. Ten were found to be unable to fail,
+**six of them written in the same round as the defect they were meant to close**:
+
+an assertion satisfied by a cross-reference to the very section it checked · a fixture number
+colliding with an existing one, so both refutations graded someone else's issue · `bash -c`
+invoking a shell FUNCTION a subshell does not have · a needle present on two adjacent output lines,
+so deleting either left the other · a hostile fixture using the allowlist's FIRST entry, which is
+exactly what the mutation emits · a banned literal written into the comment explaining the ban
+(four times) · `EW_AWK` extracted, asserted non-empty, then never used while a hardcoded copy was
+graded instead · a flagship "NO input makes this script exit 0" sweep that swept VALUES and never
+the flag's SPELLING · and a written-down claim, `acid: removing emph_re turns them red`, that was
+false of the shipped pipeline for all four recognisers.
+
+Two structural additions came out of that:
+
+- **Stage-1 isolation**: the shape recognisers are exercised with the round-10 backstop disabled,
+  because the backstop masks them — all four could be deleted outright with every assertion green.
+  The result is RECORDED rather than fixed: five of round 9's seven fixtures are covered ONLY by
+  the backstop, for structural reasons (a line-split scan cannot match a tag whose attributes wrap;
+  `<details>` and `<blockquote>` are visible elements and must not be in an invisible-prefix
+  whitelist). Widening the recognisers is the treadmill round 10 replaced.
+- **Scope controls**: a scan's SCOPE is a parameter like any other, and both the `#317` and `#288`
+  scans could be narrowed back to their old directories with nothing turning red. The lesson was
+  written into one suite and shipped unapplied in its sibling on the same day — which is itself the
+  finding: writing a lesson down is not the same as applying it, and the gap is invisible from
+  inside the file where it was written.
+
+## [2.112.0] - 2026-08-29
+
+### Fixed — the ensemble on 2.111.0 (degraded: 1 of 6 legs) still returned FAIL
+
+Five legs died mid-run when the machine slept; only `requirements` completed, and the fail-closed synthesis correctly
+refuses to call that a PASS. What the one surviving lens found was enough on its own — **both guards written last round
+specifically to close these gaps were mutation-proven to have no test weight.**
+
+- **`#317` criterion (c) was still unmet, and the third place was a LIVE spec.**
+  `openspec/specs/idd-pr-hitl-modes/spec.md` had attended Plan tier going to `Phase 3a → idd-implement` with
+  `idd-implement` owning `EnterPlanMode` — wrong phase and wrong gate owner, and `#292` was entirely about moving that
+  gate. The check could not see it for two independent reasons: `openspec/` was outside its scanned directories, and
+  its needles were the two literal Chinese phrases from the *previous* violation, while this one is in English.
+  **Round 1 grepped the implementation label; round 2 grepped the previous violation's wording. Both answer "where is
+  this string", not "who makes this claim" — and the second was worse, because it looked specific.**
+  The rule is now **defer, do not restate**: a file pairing Plan tier with a mode word and a routing-mechanism token
+  is making a routing claim, and must either *be* the normative source or point at it. Scope is the whole repo's
+  prose. Widening it surfaced **five more restatements** (eight total), two of them mechanistically wrong in the same
+  way (`rules/sdd-integration.md`, `skills/idd-diagnose/SKILL.md` — both said `/idd-plan` runs with its gate skipped;
+  under unattended it is not invoked at all).
+
+- **`#315`'s fix never reached the operative instruction.** The `collect_external_writes` `TaskCreate` description —
+  which in this repo *is* what the executing LLM reads, the bash beneath it being pseudo-code — still named the ghost
+  sections and the oldest-100 single-comment approach. The pseudo-code 150 lines above it said the opposite. Before
+  the fix the two were at least consistently wrong.
+
+- **Both new guards had zero test weight, proven by mutation:**
+  neutering the `#317` detector's needle left the suite 8/0 green (its "positive control" planted the canary *after*
+  the detection loop and only checked the *enumeration* half); adding a sixth invented section to `EW_SECTIONS` left
+  it 28/0 green (the gate iterated its own hardcoded list instead of parsing the skill, and its writer probe searched
+  a tree including `idd-verify`'s own comment table — a proof satisfiable by the collector's documentation).
+  Both now parse what they constrain, and their controls run the detector itself.
+
+- **The converse assertion immediately found a sixth record type.** Requiring every declared `**Audit trail target**`
+  to appear in the collector's list surfaced `### Linked-Context Siblings Filed` (`idd-issue` — sibling issues filed
+  elsewhere, exactly `#315`'s class), which was never scanned and could only ever report UNKNOWN. It is PATCHed into
+  the issue *body*, so the collector now reads the body too.
+
+- **The pai devil's-advocate claim was wrong.** Last round recorded it as unreachable through the documented contract.
+  `daPrompt` does not take `contextBlock`, but it *does* interpolate `A.daFocus` — a caller arg named in the engine
+  header, which this skill already passes. Not "cannot"; a **trade-off**, since `contextBlock` is sentinel-wrapped by
+  pai and `daFocus` is raw. A **structural digest** (which issue, which sections) now goes through `daFocus`; verbatim
+  text still only through `contextBlock`.
+
+### Honest residue
+
+- **Two more broken probes, both repeats of mistakes fixed earlier in the same session**: `bash -c` spawning a shell
+  without the sourced function (five assertions reporting on nothing — the third time this round), and writing a
+  banned literal into the prose that explains why it is banned (the second time). Running total for this work: eleven.
+- **This run was 1/6 legs.** Nothing here has been checked by logic, security, regression, the devil's advocate, or
+  the cross-model leg.
+
+## [2.111.0] - 2026-08-28
+
+### Fixed — the post-merge ensemble on 2.110.0 (first complete cross-model pass) returned FAIL
+
+Six of six legs reported; Codex had been rate-limited for four consecutive rounds on the `#295` line and its DA leg
+died on a weekly limit the round before. 69 findings, 4 CRITICAL, 15 HIGH. Every fix below was reproduced before it
+was accepted.
+
+- **CRITICAL — the gate fails open on a failed fetch.** Four lenses (codex, logic, security, regression) independently
+  reproduced it. `gh api ... --paginate | jq -s 'add // []'` in one pipeline, with `set -u` and no `pipefail`: `if !`
+  observed **jq's** status, and `jq -s 'add // []'` exits 0 on empty stdin printing `[]`. A 403, a 5xx, or a
+  `--paginate` leg dying halfway was indistinguishable from "this issue has no comments", so the classifier answered
+  `missing` — the sole authorisation for an irreversible duplicate post. The partial case is worse and unexotic:
+  `--paginate` streams **oldest first**, so a mid-pagination failure keeps the old comments and drops the newest,
+  which is by construction where a closing summary lives. Two syscalls, two checks now.
+  **This is the seven-round failure shape, restored at the acquisition layer** — the header claim that "the gate
+  simply never takes the broken road" was inverted: it took a different one, with no repair at all.
+
+- **CRITICAL — `--issue ""` bypassed the gate entirely.** That is what `--issue "$NUMBER"` expands to when `NUMBER`
+  is unset. `[ -n "$GATE_ISSUE" ]` was false, so the run fell through to **audit mode**, whose contract is to always
+  exit 0 — read by the caller as "confirmed missing, go ahead". The validator's own `''` arm was unreachable for the
+  same reason. Gate mode now keys on whether the FLAG was passed, not on whether it has a value.
+
+- **`scripts/tests/gate-live-path/` (new, 52nd suite, 22 assertions) — the coverage that was missing.** The gate
+  shipped with every assertion going through `--json-file`, which skips acquisition entirely. Repo resolution, the
+  `gh issue view` fetch and the paginated REST fetch had none, and the suite was 51/51 green throughout. Every case
+  here stubs `gh` on PATH and goes through the live branch.
+
+- **The gate resolved its own executable from `$PWD`.** A shell default-value expansion whose default was a relative
+  path, in a skill that runs inside the user's repo: a cloned repo shipping that path got arbitrary code execution
+  plus an unconditional pass. Closing the "helper absent" hole had opened the "helper substituted" one.
+
+- **Four HTML shapes a reader sees and the recogniser did not** — a marker or anchor tag before the heading on the
+  same line, a raw `<h2>`, a `<details><summary>`. The first is the sharp one: the fixtures already had the marker
+  *after* the heading and on its *own line*; marker *before*, same line, is the **third arrangement of the same three
+  tokens**, and it is the one that authorises the duplicate post.
+
+- **`#317` criterion (c) was not met**, and the closing summary said it was. `docs/workflows.md` is the third place
+  and stated the OPPOSITE. The grep searched for `Phase 3p` — the implementation *label* — while that file states the
+  *claim* without ever using the token. The test now scans the claim's vocabulary, not the label.
+
+- **`#315` was broken seven ways**, including a use of the oldest-100 connection this same release routes the gate
+  away from, and an undefined `$N`. The assertion meant to prove backend parity **locked the gap in**: adding the
+  context to the codex leg would have made it fail. Reviewers are now enumerated by name; the pai devil's-advocate is
+  recorded as a real upstream gap (`ensemble-workflow.js` `daPrompt` takes no `contextBlock`) rather than covered by
+  a "both backends" claim.
+
+- **`idd-update`'s previous fix was an over-correction I introduced**, and it regressed `#295`'s own measured case
+  (a summary merged into the Implementation Complete comment). `phase = closed` now gates on GitHub's `state` — an
+  authoritative field that comment text cannot forge — instead of on a stricter regex.
+
+- **Attachment filenames were URL-decoded *after* `basename`**, so `%2e%2e%2f%2e%2e%2f…` escaped the attachments
+  directory into `.claude/.idd/`. Reproduced. Decode first, then `basename`, then refuse anything that is not a
+  plain filename.
+
+- **`#288`'s rule and its two largest violations shipped together**: `references/external-agent-delegation.md` (the
+  egress-body copy — the surface `#288`'s own rationale calls the worst) and `rules/tagging-collaborators.md` (a
+  protocol `idd-verify` mandates, whose fixed files are the mention gate's decision source) were outside the scan's
+  declared scope. The scan also exempted the whole `${TMPDIR:-/tmp}` idiom and did not even match that shape.
+
+- Breadcrumb writing in `migrate-idd-config.sh` was still check-then-write; it now uses the same atomic `ln` primitive
+  as the move itself.
+
+### Honest residue
+
+- **Nine broken probes were found and fixed during this round, by me, in my own tests.** An unquoted heredoc that made
+  a case return the right exit code for the wrong reason; `$(...)` running assertions in a subshell so four counter
+  increments vanished; `--include` after `--`; `bash -c` spawning a shell without the sourced function so two
+  assertions passed having tested nothing; a backtick needle executing as command substitution; a fixture *title*
+  containing `#121` which broke an unrelated assertion; an apostrophe in a comment closing the single-quoted jq
+  program and turning 44 assertions red at once — the file header warns about that exact thing three hundred lines
+  above. The count is the point: this is the failure mode of the work, not an incident in it.
+- `html_pfx` individually has no test weight in `present_re` (the safety property survives via `lead_re`); two
+  narrower assertions were added so the strict half does. Disclosed rather than claimed.
+- The pai devil's-advocate still cannot receive the external-writes record. Upstream.
+
 ## [2.110.0] - 2026-08-15
 
 ### Added — the closing-summary gate is now executed, not read

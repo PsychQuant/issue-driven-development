@@ -51,7 +51,7 @@ TaskCreate(name="build_issue_pr_index", description="Step 3.5 (v2.51+): client-s
 TaskCreate(name="extract_blocked_state", description="Step 3.7 (v2.92+, #84; #298 擴充): 抽四個「現在可不可以動」訊號 —— Blocking 區塊 / blocked label / **parking-lot label** / **### Complexity 的 when-triggered 限定詞**（非裸 tier token → 保守歸 Blocked 且印出限定詞原文，不得截斷）→ blocked_reason 掛 entry")
 TaskCreate(name="format_output", description="組 #N [phase] title 表格;有 PR 加 └─ 子行 (cluster leader 顯示 cluster: #X #Y / member 顯示 → see PR #N) + footer 統計含 PR/cluster 數")
 TaskCreate(name="report_and_suggest_next", description="輸出 table 並列出 Suggested next（phase × PR state matrix）；#84 分 Actionable/Blocked 兩組 + 全 blocked banner + footer 計數")
-TaskCreate(name="audit_closes_marker", description="Step 4 (v2.75.2+, #151; 分類契約 #295): 若 --audit-closes,對 state=CLOSED 的 issue 依 scripts/check-closed-without-summary.sh 的 CLASSIFY（compliant / casing / present / missing）分類。判準不解析 markdown：missing = 所有 comment 的原始文字裡都找不到 closing-summary heading（引述、fence 內、非 canonical 一律算「有」）。missing 與 present 帶 ⚠（前者欠 summary、後者未經驗證）;**只有 missing 提 --retroactive**;casing 不帶 ⚠。reuse Step 3 comment scan,不重 fetch")
+TaskCreate(name="audit_closes_marker", description="Step 4 (v2.75.2+, #151; 分類契約 #295): 若 --audit-closes,對 state=CLOSED 的 issue 依 scripts/check-closed-without-summary.sh 的 CLASSIFY（compliant / casing / present / mentioned / missing）分類。判準不解析 markdown：missing = 所有 comment 的原始文字裡都找不到 closing-summary heading、正規化後也找不到那兩個字（引述、fence 內、非 canonical 一律算「有」）。missing / present / mentioned 帶 ⚠（分別是：找不到 / 有 heading 但沒有 comment 以它開頭 / 有那個詞但沒認出 heading — 第三類混合了「純散文提及」與「認不出的 heading 形狀」，本工具不區分）;**只有 missing 提 --retroactive**;casing 不帶 ⚠。reuse Step 3 comment scan,不重 fetch")
 ```
 
 完成每一步立即 `TaskUpdate → completed`。**靜默完成 = 違規**。**TaskCreate 清單 = 真實的步驟清單；任何寫在 skill 裡但沒列進 TaskCreate 的步驟，都視為 skill 的 bug，必須補進 Task 清單。**
@@ -66,7 +66,7 @@ TaskCreate(name="audit_closes_marker", description="Step 4 (v2.75.2+, #151; 分�
 | `--label` | _(none)_ | 單一 label filter |
 | `--limit` | `20` | 最多顯示筆數 |
 | `--repo` | _(from config)_ | 覆寫 config 的 repo |
-| `--audit-closes` | off | 旗標：把 **CLOSED** 的 issue 依其 `## Closing Summary` marker 分類（`compliant` / `casing` / `present` / `missing`，#295）。`missing` = **所有 comment 的原始文字裡都找不到**該 heading，可能是被 commit / PR-body close keyword auto-close 繞過 `/idd-close` gate 的受害者（#151）；`present` 未經驗證、同樣帶 ⚠；**只有 `missing` 提 `--retroactive`**。`--state` 仍是預設 `open` 時隱含切到 `closed`。底層 primitive：`scripts/check-closed-without-summary.sh`（standalone / cron 可直接呼叫）|
+| `--audit-closes` | off | 旗標：把 **CLOSED** 的 issue 依其 `## Closing Summary` marker 分類（`compliant` / `casing` / `present` / `mentioned` / `missing`，#295 + round 12）。`missing` = **所有 comment 的原始文字裡都找不到**該 heading，可能是被 commit / PR-body close keyword auto-close 繞過 `/idd-close` gate 的受害者（#151）；`present` 未經驗證、同樣帶 ⚠；`mentioned` = 找得到那兩個字但沒認出 heading（純散文提及與認不出的 heading 形狀混在一起，本工具不區分），同樣帶 ⚠；**只有 `missing` 提 `--retroactive`**，且那個提示現在只是「去讀 comment」的邀請 —— helper 已經不能批准任何事（見 `idd-close` 的「許可由讀者供給」）。`--state` 仍是預設 `open` 時隱含切到 `closed`。底層 primitive：`scripts/check-closed-without-summary.sh`（standalone / cron 可直接呼叫）|
 | `--parked` | off | **回訪模式（#310）**：只列被移出視線的 issue，並把**各自的 trigger 條件原文**一併印出。三個來源：`parking-lot` label、`### Complexity` 的 `when triggered` 限定詞、`### Blocking` 區塊非空。輸出每列為 `#N  title` + 縮排一行 `⏸ trigger: <原文>`；`--state` 隱含 `open`。**這不是自動化** —— parked 的 trigger 是關於未來世界狀態的散文命題，成立時不會發出任何事件，所以唯一的路徑是人回頭讀；本 flag 只是把那件事變便宜 |
 | `--discussions` | off | **Opt-in**（#221）：同場 surface GitHub Discussions 的 actionable 項（Q&A/Ideas、未答、未被任何 issue 引用）。契約 + GraphQL 見 [`references/discussions-intake.md`](../../references/discussions-intake.md) |
 
@@ -397,7 +397,8 @@ Repo: PsychQuant/issue-driven-development  (state: open, limit: 20)
 >
 > **為什麼不是二分**：舊判定只問「有沒有以 `## Closing Summary` 開頭的 comment」，實測某 repo 43 張 closed issue **誤報 11 張（26%）** —— 十張是 `## Closing summary`（小寫 s）、一張把 summary 接在 `## Implementation Complete` 之後同一則裡，全部都有完整 summary。四分之一會誤報的旗標會被學會忽略，而忽略本身就是損害：十一個假警報蓋掉第十二個真的。更嚴重的是 `--retroactive` 與本 marker **共用同一個判定**，所以假陽性會升級成**不可逆動作**（在已有 summary 的 issue 上再貼一份）。
 >
-> **為什麼引述也算「有」**（R5 的方向決定）：第 1 到第 4 輪都試圖解析 markdown 來分辨真 summary 與引述（fence、HTML comment、縮排、section 邊界）。每個機制都長出自己的單向失敗，而且全部朝同一個方向 —— parser 跟不上的**真 summary** 被判成 `missing`，也就是唯一放行不可逆動作的那一類；四輪共九種形狀，清單還在長。現在引述與真 summary 一律當「有」。**代價是漏報**：一張只在引述裡提到 marker 的 issue 不再被報成 missing。那是便宜的方向；貴的方向現在結構上到不了。
+> **為什麼引述也算「有」**（R5 的方向決定）：第 1 到第 4 輪都試圖解析 markdown 來分辨真 summary 與引述（fence、HTML comment、縮排、section 邊界）。每個機制都長出自己的單向失敗，而且全部朝同一個方向 —— parser 跟不上的**真 summary** 被判成 `missing`，也就是當時唯一放行不可逆動作的那一類；四輪共九種形狀，清單還在長。現在引述與真 summary 一律當「有」。**代價是漏報**：一張只在引述裡提到 marker 的 issue 不再被報成 missing。那是便宜的方向。
+> **Round 12 收窄**：當時接著寫「貴的方向現在結構上到不了」—— 不成立。放寬判準讓貴的方向變窄，沒有讓它消失；關掉它的是 `--retroactive` 那端不再把「認不出來」當成許可（見 `idd-close` 的「許可由讀者供給」）。本 skill 是 **audit** 端、永遠 exit 0，不受該改動影響。
 >
 > **順序固定**：canonical 首行最先判，讓 `## Closing Summary (retroactive — …)` 落在 `compliant` 而非 `casing` —— 那是 remediate 過的 issue 不被重新 surface 的依據。heading 比對**不加尾端 `\b`**：`_` 是 word character，會讓 `## closing summary_v2` 誤判成 `missing`。
 >

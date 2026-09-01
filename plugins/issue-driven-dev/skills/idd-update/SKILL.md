@@ -121,11 +121,20 @@ gh issue view $NUMBER --repo $GITHUB_REPO --json title,body,labels,state,comment
 
 判斷依據：掃描 comments 中的 `## Diagnosis`、`## Implementation Plan`、`## Implementation Complete`、`## Verify`、`## Closing Summary` 標題。**比對大小寫不敏感、1-6 個井號、井號與字之間的裝飾字元（emoji）**（#295）—— 這些 heading 全部由 LLM 依模板生成、寫入端沒有任何 normalization，所以 `## Closing summary` 這類漂移是預期而非例外；此處硬要求大小寫只會讓 phase 停在舊值，而 phase 停在舊值正是 `idd-close` Step 6 存在的理由。
 
-**但該 heading 必須是那則 comment 的首行**（跳過空行與整行 HTML marker 後的第一行），**且不得帶 blockquote 前綴、縮排不超過 3 空格** —— 也就是 normative source 的 `lead_re`，不是 `present_re`。
+**比對維持寬鬆（`present_re` 那一側），但 `Closing Summary → closed` 這一條額外要求 issue 的 GitHub `state` 真的是 `CLOSED`。**
 
-> **為什麼這一步用嚴的那個 predicate**：phase 是一句**正面斷言**（「這個階段發生過」）。用寬鬆比對的話，一則只是**引用**模板來討論的 comment（`> ## Closing Summary`，或貼在 fence 裡的範例）就會把一張還開著的 issue 的 phase 推到 `closed`。normative source 之所以拆成兩個 predicate，判準正是**過度偵測會往哪個方向錯**：問「有沒有」時寬鬆是安全的（多報一次只是不採取破壞性動作），做正面斷言時寬鬆就是造假。`idd-find` 的 `📜 summary marker` 是前者，所以它維持寬鬆、而且標籤只敢說「marker 出現過」。
+> **上一版在這裡過度矯正了，而且是我自己造成的回歸。** 當時把五個 heading 全部改用嚴格的 `lead_re`（必須是 comment 首行、不得帶 blockquote 前綴），理由是「phase 是正面斷言，寬鬆比對會讓一則**引用**模板的 comment 把還開著的 issue 推成 `closed`」。那個顧慮是真的 —— 但那個修法**打掉了 `#295` 自己量到的真實案例**：43 張 closed issue 的 11 個誤報裡，有一個正是「summary 併進 Implementation Complete 那一則」。真 summary 併在別的 comment 中間，`lead_re` 看不到，phase 就永遠停在 `implemented`。而 phase 停在舊值，正是這一步存在的理由。
+>
+> 更糟的是，它跟上面那句「硬要求大小寫只會讓 phase 停在舊值」**直接矛盾**——我留著那句話，同時引進了另一條讓 phase 停在舊值的路。
+>
+> 真正的判準不是「比對要多嚴」，而是**這個正面斷言有沒有獨立證據**。`closed` 的權威來源不是某個 heading 長什麼樣，是 GitHub 自己的 `state` 欄位——免費、精確、無法被 comment 內容偽造。所以：
+>
+> - **引用造成的偽 `closed`**：issue 還開著 → `state != CLOSED` → 擋掉。這是原本要防的那個 harm，防住了。
+> - **併進 IC 的真 summary**：issue 已關 → `state == CLOSED` → phase 正確推到 `closed`。回歸修好了。
+>
+> 其餘四個 heading（Diagnosis / Implementation Plan / Implementation Complete / Verify）沒有對應的權威狀態欄位，維持寬鬆比對：它們推錯的代價是 phase 顯示錯（良性、下一次 sync 會更正），不是宣告一張開著的 issue 已結案。
 
-> **本步是這個 marker 的寫端 reader（#295 family-wide scope 的第 6 個）**。它**不做**四分類分流 —— phase 推斷只問「這則 comment 是不是以它開頭」。分類的 normative source 是 [`scripts/check-closed-without-summary.sh`](../../scripts/check-closed-without-summary.sh)，消費者是 `--audit-closes` 與 `--retroactive`。
+> **本步是這個 marker 的寫端 reader（#295 family-wide scope 的第 6 個）**。它**不做**四分類分流。分類的 normative source 是 [`scripts/check-closed-without-summary.sh`](../../scripts/check-closed-without-summary.sh)，消費者是 `--audit-closes` 與 `--retroactive`。
 
 #### Authoritative source resolution (v2.73.0+, #150)
 

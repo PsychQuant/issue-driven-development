@@ -174,8 +174,63 @@ assert_manifest_valid() {
 }
 
 decode_filename() {
-  # URL-decode the basename, strip trailing markdown punctuation
-  basename "$1" | sed 's/[)>"].*$//' | python3 -c 'import sys, urllib.parse; print(urllib.parse.unquote(sys.stdin.read().strip()))'
+  # ORDER, and why each step is where it is. The input is a URL, not a filename.
+  #
+  #   1. strip trailing markdown punctuation
+  #   2. take the last path segment of the URL — split on REAL `/`, while a
+  #      percent-encoded one is still just three characters
+  #   3. decode
+  #   4. REFUSE anything that is not a plain filename
+  #
+  # The original ran basename(2) and decoded (3) in the other order, so
+  # `basename` could not see a separator that was still percent-encoded:
+  # `…/%2e%2e%2f%2e%2e%2fpwned.txt` survived intact and only became
+  # `../../pwned.txt` afterwards, joined onto the attachments directory and
+  # resolving two levels up. The URL comes from an issue body, so it is
+  # attacker-supplied wherever outside reports are accepted.
+  #
+  # The first fix decoded first and then FLATTENED with basename. That closed
+  # the traversal but opened a collision: `%2e%2e%2ftrusted.pdf` and
+  # `trusted.pdf` produced the SAME name, so a traversal-shaped URL on the same
+  # issue could overwrite a real attachment — and the tests asserted the
+  # flattened output, pinning "accept and flatten" while the comment beside them
+  # said "refuse". Refusing is what was claimed, and it is what is safe: the
+  # caller records a manifest error, which this plugin requires to be loud.
+  # WHERE the validation runs matters as much as what it checks. The control
+  # character test used to live in the shell, AFTER `dec=$(... python3 ...)` —
+  # and command substitution strips NUL bytes and trailing newlines before the
+  # value is assigned. So `*[[:cntrl:]]*` was written for precisely the two
+  # inputs it could never see: `trusted.pdf%00` and `trusted.pdf%0A` both
+  # arrived as `trusted.pdf`, colliding with a legitimate attachment of that
+  # name — the collision the refuse-don`t-flatten change exists to prevent,
+  # walking in through the guard meant to stop it. A guard placed downstream of
+  # a lossy boundary is not a guard.
+  #
+  # It is now decided in python, on BYTES, before anything crosses that
+  # boundary: `errors="strict"` so invalid UTF-8 is refused instead of being
+  # folded to U+FFFD (which mapped `%FF.txt` and `%FE.txt` onto one name), and
+  # an explicit reject list for NUL and every other control character. The shell
+  # sees only an accepted name or a non-zero status.
+  local seg dec
+  seg=$(printf '%s' "$1" | sed 's/[)>"].*$//')
+  seg=${seg##*/}
+  dec=$(printf '%s' "$seg" | python3 -c '
+import sys, urllib.parse
+raw = sys.stdin.buffer.read().strip()
+try:
+    name = urllib.parse.unquote_to_bytes(raw).decode("utf-8", errors="strict")
+except UnicodeDecodeError:
+    sys.exit(1)                      # invalid UTF-8 — two of these fold to one name
+if any(ord(c) < 32 or ord(c) == 127 for c in name):
+    sys.exit(1)                      # NUL, LF, TAB, DEL — none survive the shell intact
+sys.stdout.write(name)
+') || return 1
+  case "$dec" in
+    ''|.|..)  return 1 ;;
+    */*)      return 1 ;;   # a separator that was hiding inside an escape
+    -*)       return 1 ;;   # a name that could be read as an option
+  esac
+  printf '%s\n' "$dec"
 }
 
 file_size() {
@@ -216,7 +271,38 @@ case "$CMD" in
 
     while IFS= read -r url; do
       [ -z "$url" ] && continue
-      filename=$(decode_filename "$url")
+      # An explicit refusal must be recorded and skipped, not left to errexit.
+      # `filename=$(decode_filename ...)` propagates the non-zero status, and
+      # under `set -e` that aborted the WHOLE download — every attachment after
+      # the refused one lost, with a partial manifest. Refusing one unsafe name
+      # is not a reason to stop collecting the rest.
+      if ! filename=$(decode_filename "$url"); then
+        echo "⚠ refusing an unsafe attachment filename derived from: $url" >&2
+        FILES_JSON=$(printf '%s' "$FILES_JSON" | jq \
+          --arg url "$url" '. += [{filename: null, url: $url, error: "unsafe_filename"}]')
+        continue
+      fi
+      # The name comes from the URL's LAST SEGMENT, which is not unique: two
+      # perfectly legitimate attachments on one issue can both be `report.pdf`
+      # from different repos. `curl -o` then wrote the second over the first,
+      # the manifest kept BOTH rows (same filename, different url, different
+      # sha256), and `verify` — which only checks that the path exists — passed
+      # over an attachment that was irrecoverably gone.
+      #
+      # Disambiguated deterministically rather than refused: both files are
+      # legitimate and the caller asked for both. The suffix is derived from the
+      # URL, so re-running produces the same name, and it is inserted before the
+      # extension so the file still opens with the right application.
+      if [ -e "$ATTACH_DIR/$filename" ] \
+         && [ "$(printf '%s' "$FILES_JSON" | jq -r --arg f "$filename" --arg u "$url" \
+                  '[.[] | select(.filename == $f and .url != $u)] | length')" != "0" ]; then
+        sfx=$(printf '%s' "$url" | shasum -a 256 | cut -c1-8)
+        case "$filename" in
+          *.*) filename="${filename%.*}-${sfx}.${filename##*.}" ;;
+          *)   filename="${filename}-${sfx}" ;;
+        esac
+        echo "ℹ two attachments share the basename — the second is stored as $filename" >&2
+      fi
       target="$ATTACH_DIR/$filename"
 
       if curl -sLf -H "Authorization: token $TOKEN" -o "$target" "$url"; then
@@ -269,7 +355,16 @@ case "$CMD" in
       exit 1
     fi
 
+    # A refused entry keeps its URL, so it counts as KNOWN and `check` used to
+    # print a bare "up-to-date" over an attachment that is not on disk and never
+    # will be. It IS known — re-running download reproduces the same refusal —
+    # so it must not be reported as drift; but it must not be silent either.
+    REFUSED=$(jq '[.files[] | select(.error == "unsafe_filename")] | length' "$MANIFEST" 2>/dev/null || echo 0)
     echo "✓ Manifest up-to-date for #$NUMBER ($(jq '.files | length' "$MANIFEST") files)"
+    if [ "${REFUSED:-0}" -gt 0 ]; then
+      echo "⚠ $REFUSED attachment(s) refused for an unsafe filename — permanently unavailable, not re-fetchable." >&2
+      jq -r '.files[] | select(.error == "unsafe_filename") | "   refused: \(.url)"' "$MANIFEST" >&2
+    fi
     ;;
 
   verify)
@@ -279,6 +374,20 @@ case "$CMD" in
     fi
 
     assert_manifest_valid "$MANIFEST"   # #189 — corrupt manifest must loud-fail, not false "all present"
+    # `select(.filename != null)`, and the reason is the difference between the
+    # two ways an entry can lack a file on disk:
+    #
+    #   download_failed   keeps a real filename, and is TRANSIENT. Re-fetching
+    #                     clears it, which is exactly what this gate should
+    #                     force. Still blocks.
+    #   unsafe_filename   has filename == null, and is DETERMINISTIC. Re-fetching
+    #                     reproduces the same refusal.
+    #
+    # Without the select, `jq -r` printed the literal string `null`, `[ -z ]` was
+    # false, and the loop tested `-f "$ATTACH_DIR/null"` — so one attacker-shaped
+    # (or merely dash-leading) attachment URL made this exit 1 forever, and this
+    # is idd-close Step 1.4. A gate with no remediation path does not gate, it
+    # bricks. So a refusal is reported and does not block; only drift blocks.
     MISSING=0
     while IFS= read -r filename; do
       [ -z "$filename" ] && continue
@@ -286,7 +395,14 @@ case "$CMD" in
         echo "⚠ Manifest references $filename but file missing on disk." >&2
         MISSING=$((MISSING + 1))
       fi
-    done < <(jq -r '.files[].filename' "$MANIFEST" 2>/dev/null)
+    done < <(jq -r '.files[] | select(.filename != null) | .filename' "$MANIFEST" 2>/dev/null)
+
+    REFUSED=$(jq '[.files[] | select(.error == "unsafe_filename")] | length' "$MANIFEST" 2>/dev/null || echo 0)
+    if [ "${REFUSED:-0}" -gt 0 ]; then
+      echo "⚠ $REFUSED attachment(s) were refused at download time for an unsafe filename." >&2
+      jq -r '.files[] | select(.error == "unsafe_filename") | "   refused: \(.url)"' "$MANIFEST" >&2
+      echo "   They are permanently unavailable — do NOT reference them in the closing comment." >&2
+    fi
 
     if [ "$MISSING" -gt 0 ]; then
       echo "⚠ $MISSING attachment(s) missing — closing comment may have broken references." >&2

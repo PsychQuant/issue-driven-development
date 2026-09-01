@@ -77,7 +77,7 @@ Whether Layer V triggers or not, Step 3.4 PATCHes the just-posted Diagnosis comm
 
 ### `idd-all` unattended mode
 
-When `idd-diagnose` runs under `idd-all` UNATTENDED MODE directive, Layer V still scores but does not present `AskUserQuestion`. It auto-applies `proceed anyway` and records `[Layer V: V1=N V4=M, clarify-default skipped under unattended mode, defaulting to proceed]` in the audit trail. Same pattern as Plan tier under unattended mode (`/idd-plan` EnterPlanMode is also skipped).
+When `idd-diagnose` runs under `idd-all` UNATTENDED MODE directive, Layer V still scores but does not present `AskUserQuestion`. It auto-applies `proceed anyway` and records `[Layer V: V1=N V4=M, clarify-default skipped under unattended mode, defaulting to proceed]` in the audit trail. Same shape as Plan tier under unattended mode, which is likewise downgraded rather than prompted — see the dispatch table in `skills/idd-all/SKILL.md` for what actually runs.
 
 **`type=meeting` exception**: a meeting issue skips Layer V entirely (the Step 3.4 `type=meeting` short-circuit runs in both attended and unattended mode), so no V1/V4 scoring and no Layer V audit line apply — meeting-first routing precedes Layer V regardless of mode.
 

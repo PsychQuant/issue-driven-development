@@ -5,7 +5,8 @@
 # auto-closed by a commit / PR-body close keyword, bypassing the /idd-close gate
 # (checklist / semantic / sister-sweep / residue / distribution-sync).
 #
-# Four destinations (#295) — this file is their NORMATIVE SOURCE:
+# Five destinations (#295, + `mentioned` in round 12) — this file is their
+# NORMATIVE SOURCE:
 #   missing    no heading-shaped line anywhere in any comment (RAW text)
 #   present    such a line exists, but no comment leads with one, or the one that
 #              does has nothing under it — UNVERIFIED
@@ -23,24 +24,61 @@
 # Advisory only in AUDIT mode — it ALWAYS exits 0 there.
 #
 # `--issue N` is the exception, and deliberately so. Audit mode reports to a
-# human; `--issue N` is a GATE for `/idd-close --retroactive`, whose action is
+# human; `--issue N` guards `/idd-close --retroactive`, whose action is
 # irreversible (it posts a second summary onto an issue that may already have
-# one). A gate that always exits 0 is not a gate — the caller has to interpret
+# one). A check that always exits 0 is not a check — the caller has to interpret
 # prose, which is how seven rounds of work on this classifier stayed advisory
 # while the destructive path went on deciding for itself.
+#
+# THIS MODE MAY VETO. IT MAY NOT PERMIT. (round 12)
+#
+# The two directions are not the same kind of statement:
+#
+#   "a marker IS here"      an OBSERVATION. The recogniser matched something.
+#                           Wrong only by matching too much, and being wrong
+#                           costs a missed remediation -- the cheap direction.
+#
+#   "a marker is NOT here"  an INFERENCE from a failure to recognise. Wrong
+#                           whenever a real summary takes a shape the matcher
+#                           cannot follow, and being wrong authorises an
+#                           irreversible duplicate post -- the expensive one.
+#
+# Twelve consecutive verify rounds failed in the second direction and only the
+# second. That is not a run of bad luck, it is the shape of the problem: "would
+# a reader see a heading?" is a question about RENDERED output, the rendering
+# function is many-to-one with unbounded preimage, and no matcher over source
+# bytes can answer it in the negative. Round 10 replaced shape-matching with
+# renderer-style normalisation and bought exactly one round -- normalisation is
+# still a recogniser, and round 12 broke it with `## Clos<b>ing</b> Summary`
+# (the tag-stripper writes a SPACE where a renderer concatenates) and with
+# `## 結案摘要` (a summary hand-written in the language this repo is written in).
+#
+# So the power is split along the direction that is sound. What supplies the
+# permit is the thing that can actually answer the question: a reader. See
+# `idd-close --retroactive`, which must read the comment set itself and obtain
+# human confirmation. This script only ever removes that option.
 #
 # Usage:
 #   check-closed-without-summary.sh [--repo owner/repo] [--limit N] [--since YYYY-MM-DD]
 #   check-closed-without-summary.sh --json-file <path>     # test / offline mode
-#   check-closed-without-summary.sh --issue N [--repo …]   # single-issue GATE
+#   check-closed-without-summary.sh --issue N [--repo …]   # single-issue VETO
 #
 # `--issue N` prints one JSON object and exits:
-#   0  class == missing, comment set known complete   -> --retroactive may run
-#   1  any other class                                -> refuse, it has one
-#   2  could not determine (not closed / truncated /  -> refuse
-#      fetch or parse failure / no such issue)
-# Everything that is not a confident `missing` refuses. Fail-closed is the only
-# safe default when the action cannot be undone.
+#   1   a marker WAS recognised (any class but `unrecognised`)  -> refuse
+#   2   could not determine (not closed / truncated / fetch or  -> refuse
+#       parse failure / no such issue / bad argument)
+#   10  no marker was recognised. The veto did not fire. This is NOT permission
+#       to post; it is the absence of a refusal. The caller still has to look.
+#
+# `authorises` is present on every reply and is the constant `false`. There is
+# no input -- fixture, live, malformed or hostile -- for which this script exits
+# 0 in gate mode. 10 rather than 0 is deliberate: a caller still reading
+# "rc == 0 means go" breaks loudly instead of silently keeping the behaviour
+# this contract exists to remove.
+#
+# The reported class is `unrecognised`, not `missing`. The old name asserted a
+# fact the tool cannot establish, and prose written against it inherited the
+# error -- that is how "0 才放行" came to be written down as a rule.
 #
 # Consumed by idd-list `--audit-closes`. The `## Closing Summary` heading is the
 # same marker idd-list Step 3 keys on for phase inference.
@@ -53,44 +91,129 @@ LIMIT=50
 SINCE=""
 DRY_RUN=0
 GATE_ISSUE=""
+# Whether `--issue` was PASSED, tracked separately from whether it has a value.
+# Keying gate mode off `[ -n "$GATE_ISSUE" ]` meant `--issue ""` — which is what
+# `--issue "$NUMBER"` expands to when NUMBER is unset — skipped the whole gate
+# block and fell through to AUDIT mode, whose contract is to always exit 0. The
+# caller read that 0 as "confirmed missing, go ahead and post". The validator's
+# own `''` arm was unreachable for the same reason.
+GATE_SEEN=0
 GATE_ERR=""
 
+# A MALFORMED command line must not become the advisory mode. That is not a
+# style point -- it was the hole that survived round 12 with the whole
+# architecture resting on it:
+#
+#   --issue=101          did not match the `--issue)` arm, fell to `*)`, and the
+#                        run continued into AUDIT mode, which always exits 0.
+#   --repo --issue 101   `--repo` took `--issue` as its VALUE, then `101` fell to
+#                        `*)` -- again audit, again 0.
+#
+# So the file could still answer 0 while its own header claimed it never does.
+# A caller that typed `--issue` was asking the gate a question, and audit's 0
+# answers a different one.
+#
+# Three rules, each closing a different half of that:
+#   1. every value-taking flag accepts BOTH spellings, `--flag v` and `--flag=v`;
+#   2. `--issue` in ANY spelling sets GATE_SEEN BEFORE its value is validated,
+#      so a malformed issue argument is refused BY THE GATE (exit 2) instead of
+#      falling through to a mode that cannot refuse;
+#   3. a value-taking flag REFUSES a value beginning with `-`, and an unknown
+#      argument is fatal. A usage error is not an audit result, and exiting
+#      non-zero on one cannot be misread as authorisation -- which is what makes
+#      refusal the safe direction here.
+usage_error() {   # $1 = message
+  echo "✗ $1" >&2
+  echo "  (a malformed command line is refused rather than run as an audit — see the header)" >&2
+  [ "$GATE_SEEN" = 1 ] && gate_out "" "" false "$1" 2
+  exit 2
+}
+need_value() {    # $1 = flag  $2 = candidate  $3 = 1 if attached with `=`
+  if [ "$3" = 1 ]; then printf '%s' "$2"; return 0; fi   # --flag= is explicit, even if empty
+  case "$2" in
+    '')   usage_error "$1 needs a value" ;;
+    -*)   usage_error "$1 needs a value, but the next argument is another flag ($2)" ;;
+  esac
+  printf '%s' "$2"
+}
 while [ $# -gt 0 ]; do
-  case "$1" in
-    # `shift 2` with only one argument left is a no-op in some shells, so a
-    # trailing value-taking flag looped forever — the advisory contract promises
-    # exit 0, and never exiting breaks it harder than any wrong verdict.
-    --json-file) JSON_FILE="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
-    --issue)     GATE_ISSUE="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
-    --repo)      REPO="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
-    --limit)     LIMIT="${2:-50}"; shift; [ $# -gt 0 ] && shift ;;
-    --since)     SINCE="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
+  # Split `--flag=value` once, up front, so every arm below sees one shape.
+  ARG="$1"; ATTACHED=0; VAL=""
+  case "$ARG" in
+    --*=*) VAL="${ARG#*=}"; ARG="${ARG%%=*}"; ATTACHED=1 ;;
+    *)     VAL="${2:-}" ;;
+  esac
+  # `shift 2` with only one argument left is a no-op in some shells, so a
+  # trailing value-taking flag looped forever — the advisory contract promises
+  # exit 0, and never exiting breaks it harder than any wrong verdict.
+  case "$ARG" in
+    --json-file) JSON_FILE=$(need_value --json-file "$VAL" "$ATTACHED") || exit 2
+                 shift; [ "$ATTACHED" = 0 ] && [ $# -gt 0 ] && shift ;;
+    # GATE_SEEN is set from the FLAG, before the value is looked at. `--issue=`
+    # and a trailing `--issue` both belong to the gate, which can refuse them;
+    # neither may leak into audit mode.
+    --issue)     GATE_SEEN=1
+                 GATE_ISSUE=$(need_value --issue "$VAL" "$ATTACHED") || exit 2
+                 shift; [ "$ATTACHED" = 0 ] && [ $# -gt 0 ] && shift ;;
+    --repo)      REPO=$(need_value --repo "$VAL" "$ATTACHED") || exit 2
+                 shift; [ "$ATTACHED" = 0 ] && [ $# -gt 0 ] && shift ;;
+    --limit)     LIMIT=$(need_value --limit "$VAL" "$ATTACHED") || exit 2
+                 shift; [ "$ATTACHED" = 0 ] && [ $# -gt 0 ] && shift ;;
+    --since)     SINCE=$(need_value --since "$VAL" "$ATTACHED") || exit 2
+                 shift; [ "$ATTACHED" = 0 ] && [ $# -gt 0 ] && shift ;;
     --dry-run)   DRY_RUN=1; shift ;;   # gh mode: print the composed gh command + exit (offline introspection / test seam)
     # Print the whole leading comment block, however long it grows. The old
     # fixed range (2,16p) silently dropped Usage and the "ALWAYS exits 0"
     # promise the moment the header grew past line 16.
-    -h|--help)   sed -n '2,/^$/p' "$0" | sed 's/^#\{1,\} \{0,1\}//'; exit 0 ;;
-    *)           echo "unknown arg: $1" >&2; shift ;;
+    # Help is not a verdict, and it must not be ANSWERED until the whole command
+    # line has been read. `--issue 101 -h` used to print the header and exit 0
+    # while the gate was armed -- the third exit-0 path in this parser, and the
+    # one the other two fixes walked past. Acting on it in place only moved the
+    # hole: `-h --issue 101` still exited 0, because -h was reached before
+    # --issue had set GATE_SEEN. A flag whose meaning depends on another flag
+    # cannot be handled where it appears.
+    -h|--help)   WANT_HELP=1; shift ;;
+    *)           usage_error "unknown argument: $ARG" ;;
   esac
 done
 
-# ── Gate mode plumbing (--issue N) ──
+if [ "${WANT_HELP:-0}" = 1 ]; then
+  sed -n '2,/^$/p' "$0" | sed 's/^#\{1,\} \{0,1\}//'
+  if [ "$GATE_SEEN" = 1 ]; then
+    echo "✗ --help does not answer a gate question; drop --issue or drop --help" >&2
+    exit 2
+  fi
+  exit 0
+fi
+
+# ── Veto mode plumbing (--issue N) ──
 # One JSON object on stdout, and an exit code the caller cannot misread. Every
-# path that is not a confident `missing` on a complete comment set exits 2 (or
-# 1), because the caller is about to do something irreversible.
+# path that recognised a marker, and every path that could not determine
+# anything, refuses (1 / 2). The one remaining code is 10, which withholds the
+# refusal without granting anything -- see the contract at the top of the file.
+#
+# `authorises` is hard-coded `false` here rather than passed in. A caller that
+# wants to know whether it may post is asking the wrong component, and there is
+# no argument that makes this function say otherwise.
 gate_out() {  # $1=class-or-empty  $2=state-or-empty  $3=complete(true/false)  $4=error-or-empty  $5=exit code
+  case "${5:-}" in
+    0) echo "✗ internal: gate mode must never exit 0" >&2; exit 2 ;;
+  esac
   jq -n --arg n "$GATE_ISSUE" --arg c "${1:-}" --arg s "${2:-}" \
         --argjson complete "${3:-false}" --arg e "${4:-}" \
     '{number: ($n | tonumber? // null),
       state: (if $s == "" then null else $s end),
       class: (if $c == "" then null else $c end),
       comments_complete: $complete,
+      authorises: false,
       error: (if $e == "" then null else $e end)}'
   exit "$5"
 }
-if [ -n "$GATE_ISSUE" ]; then
+if [ "$GATE_SEEN" = 1 ]; then
   # Validated before it is interpolated into an API path, and before anything
-  # downstream compares it numerically.
+  # downstream compares it numerically. Gated on GATE_SEEN, not on the value:
+  # an empty value is exactly the case that must be refused, and testing the
+  # value here would skip the refusal for it.
   case "$GATE_ISSUE" in
     ''|*[!0-9]*) gate_out "" "" false "--issue expects an integer issue number" 2 ;;
   esac
@@ -152,10 +275,30 @@ else
     [ -n "$GATE_REPO" ] || gate_out "" "" false "could not resolve the target repo" 2
     META=$(gh issue view "$GATE_ISSUE" --repo "$GATE_REPO" --json number,title,state 2>/dev/null) \
       || gate_out "" "" false "could not fetch issue #$GATE_ISSUE from $GATE_REPO" 2
-    if ! CMTS=$(gh api "repos/$GATE_REPO/issues/$GATE_ISSUE/comments" --paginate \
-                  --jq '[.[] | {body}]' 2>/dev/null | jq -s 'add // []' 2>/dev/null); then
-      gate_out "" "" false "could not fetch the comments of #$GATE_ISSUE" 2
+    # `gh ... | jq -s 'add // []'` in one pipeline was the #320 CRITICAL, found
+    # independently by four lenses. This script sets `set -u` and nothing else,
+    # so `if !` observed JQ's status — and `jq -s 'add // []'` exits 0 on empty
+    # stdin, printing `[]`. A 403, a 5xx, or a `--paginate` leg dying halfway
+    # was therefore INDISTINGUISHABLE from "this issue has no comments", and the
+    # classifier answered `missing` — the sole authorisation for an irreversible
+    # duplicate post. The partial case is the worse one and is not exotic:
+    # --paginate streams OLDEST first, so a mid-pagination failure keeps the old
+    # comments and drops the newest, which is by construction where a closing
+    # summary lives.
+    #
+    # Two syscalls, two checks. gh writes to a file; ITS status is tested; only
+    # then is the text parsed, and jq's failure is a separate refusal.
+    CMTS_RAW=$(mktemp) || gate_out "" "" false "could not create a temp file" 2
+    if ! gh api "repos/$GATE_REPO/issues/$GATE_ISSUE/comments" --paginate \
+           --jq '[.[] | {body, author_association}]' >"$CMTS_RAW" 2>/dev/null; then
+      rm -f "$CMTS_RAW"
+      gate_out "" "" false "could not fetch the comments of #$GATE_ISSUE (network / auth / rate limit / partial pagination)" 2
     fi
+    if ! CMTS=$(jq -s 'add // []' <"$CMTS_RAW" 2>/dev/null); then
+      rm -f "$CMTS_RAW"
+      gate_out "" "" false "the comment fetch returned unparseable JSON" 2
+    fi
+    rm -f "$CMTS_RAW"
     printf '%s' "$CMTS" | jq -e 'type == "array"' >/dev/null 2>&1 \
       || gate_out "" "" false "the comment fetch returned something that is not an array" 2
     ISSUES_JSON=$(printf '%s' "$META" | jq --argjson c "$CMTS" '[. + {comments: $c}]' 2>/dev/null) \
@@ -217,7 +360,7 @@ else
         ''|*[!0-9]*) echo "note: skipping non-numeric issue id in re-fetch" >&2; continue ;;
       esac
       FULL=$(gh api "repos/$RESOLVED_REPO/issues/$n/comments" --paginate \
-               --jq '[.[] | {body}]' 2>/dev/null | jq -s 'add // []' 2>/dev/null)
+               --jq '[.[] | {body, author_association}]' 2>/dev/null | jq -s 'add // []' 2>/dev/null)
       # An empty/!valid result must NOT be treated as success: a partial re-fetch
       # that SHRINKS the comment set would route a real summary to `missing`.
       if [ -n "$FULL" ] && printf '%s' "$FULL" | jq -e 'type == "array" and length > 0' >/dev/null 2>&1; then
@@ -371,15 +514,65 @@ CLASSIFY='
   # Hash count is 1-6, not 1-2. Excluding h3 bought nothing -- a subsection like
   # `### Problem` does not contain the phrase -- while sending a summary written
   # at h3 straight to the destructive class.
-  def present_re: "^[ \t>]*[#\\x{FF03}]{1,6}[^\\p{L}\\p{N}]*closing[\\s\\x{00A0}\\x{200B}\\x{3000}]+summary";
+  # HTML_PFX: a run of inline HTML that renders to nothing visible before the
+  # heading. GitHub renders `<!-- marker --> ## Closing Summary` and
+  # `<a name="x"></a>## Closing Summary` exactly like a bare heading, but every
+  # recogniser here starts by demanding a hash, so both went to `missing`.
+  #
+  # The first is the sharp one. The fixtures already carry `## Closing Summary
+  # <!-- idd:closing-summary -->` (marker AFTER, #115) and the marker on its own
+  # line (#121). Marker BEFORE the heading on the same line is the third
+  # arrangement of the same three tokens — and it is the one that authorises a
+  # duplicate post. Two of three arrangements were covered; the third was not,
+  # which is what "we enumerated the shapes" is worth without someone else
+  # checking.
+  # Whitespace is allowed only AFTER an HTML tag, never on its own. The first
+  # cut had a bare space/tab alternative at the top level, which quietly relaxed
+  # the three-space indent cap in lead_re: a space+tab indent (fixture #129)
+  # started matching, and a shape that must stay in the advisory bucket was
+  # promoted to `casing` -- a positive claim. Widening one predicate loosened a
+  # different guarantee two definitions away.
+  #
+  # NOTE the wording above avoids the apostrophe. This jq program lives inside a
+  # single-quoted shell string; the file header says so, and the first version of
+  # this very comment wrote "lead_re" with a possessive apostrophe, closed the
+  # string, and turned 44 assertions red at once. The warning was three hundred
+  # lines up and still did not survive contact.
+  # An explicit whitelist of INLINE tags that render to nothing visible. The
+  # first cut used `<[a-zA-Z/][^>]*>` -- any tag at all -- which also swallowed
+  # `<blockquote>`, `<pre>`, `<img>` and CommonMark autolinks. Consequence,
+  # reproduced: `<blockquote>## Closing Summary` reached `casing`, announcing a
+  # pure QUOTATION as a real summary. That is round 5 restored, in the strict
+  # predicate, which is the mirror direction the brief warned about.
+  def html_pfx: "(?:(?:<!--(?:.|\n)*?-->|</?(?:a|span|sup|sub|small|font|kbd|b|i|em|strong)(?:[ \t][^>]*)?>)[ \t]*)*";
+  def present_re: "^[ \t>]*" + html_pfx + "[#\\x{FF03}]{1,6}[^\\p{L}\\p{N}]*closing[\\s\\x{00A0}\\x{200B}\\x{3000}]+summary";
+  # Raw HTML headings. GitHub renders <h2>…</h2> and the <summary> of a
+  # <details> block as visible headings; nothing here looked for either.
+  def html_re: "^[ \t>]*" + html_pfx + "<(?:h[1-6]|summary)[^>]*>[^\\p{L}\\p{N}]*closing[\\s\\x{00A0}\\x{200B}\\x{3000}]+summary";
   # Two forms. (a) a line that is ESSENTIALLY JUST the phrase — setext titles,
   # bare title lines. The trailing anchor is what keeps ordinary prose ("I forgot
-  # the closing summary, sorry") out of the presence test, which matters: 5 of 9
-  # genuinely-missing issues in a real repo mention the phrase in prose and must
-  # stay flagged. (b) an EMPHASISED heading, which may carry a tail — the `$`
+  # the closing summary, sorry") out of THIS predicate. It no longer keeps such
+  # prose out of the refusal, and the sentence that used to be written here --
+  # that those issues "must stay flagged", measured at 5 of 9 in a real repo --
+  # became false the moment the round-10 mention backstop landed, and then sat
+  # 165 lines away from the code contradicting it for two rounds. Those issues
+  # now classify `mentioned`: still refused, but named for what was actually
+  # observed rather than reported as carrying a marker. The requirement behind
+  # the old sentence -- that a prose mention must not be mistaken for a summary
+  # -- is met by the class, not by this anchor. (b) an EMPHASISED heading, which
+  # may carry a tail — the `$`
   # anchor alone sent `**Closing Summary** - fixed the parser` to `missing`.
   def bare_re:    "^[ \t>]*[^\\p{L}\\p{N}]*closing[\\s\\x{00A0}\\x{200B}\\x{3000}]+summary[^\\p{L}\\p{N}]*$";
   def emph_re:    "^[ \t>]*(\\*\\*|__|\\*|_)[^\\p{L}\\p{N}]*closing[\\s\\x{00A0}\\x{200B}\\x{3000}]+summary";
+  # The strict predicate does NOT get html_pfx, and the reason is a fact about
+  # CommonMark rather than a judgement call: an ATX heading must begin the line.
+  # `<!-- x --> ## Closing Summary` and `<a name="cs"></a>## Closing Summary`
+  # render as PARAGRAPHS, not headings -- verified with markdown-it, not assumed.
+  # Adding html_pfx here made the strict predicate promote a non-heading to
+  # `casing`, which asserts "the summary is there". Widening the strict half is
+  # how round 5 broke, and it was done again here one round after writing that
+  # sentence down. present_re / html_re keep the prefix: over-detecting THERE
+  # only withholds the destructive action.
   def lead_re:    "^ {0,3}#{1,6}[^\\p{L}\\p{N}]*closing[\\s\\x{00A0}\\x{200B}\\x{3000}]+summary";
   # Control characters are structural here (record + field delimiters) and can
   # also repaint a terminal; U+2028/U+2029 and the bidi controls can forge or
@@ -396,6 +589,58 @@ CLASSIFY='
   # backslash-u form inside a jq string, so a range written that way silently
   # degrades into the literal range 0 to u and eats most of the alphabet. It was
   # caught only because every fixture title came back as fragments.
+  # ── Why the destructive class stopped being shape-based (round 10) ──
+  #
+  # Ten consecutive rounds ended the same way: a real closing summary that the
+  # recogniser could not follow landed in `missing`, the one class that
+  # authorises an irreversible duplicate post. Each round added the shapes the
+  # last round missed. Round 10 found seven more, every one of which GitHub
+  # renders as a visible "Closing Summary" heading:
+  #
+  #   ## **Closing** Summary          emphasis INSIDE the phrase
+  #   ## 結案摘要 / Closing Summary    any letter before the word
+  #   ## Closing&nbsp;Summary         the entity, not the decoded character
+  #   <b>Closing Summary</b>          HTML emphasis (the markdown twin IS caught)
+  #   <strong>...</strong>            same
+  #   <h2\n id="cs">...</h2>          attributes wrapped across lines
+  #   <h2 title="a>b">...</h2>        an attribute containing a close bracket
+  #
+  # The pattern is not "we forgot some shapes". Asking "would a reader see a
+  # heading?" is a question about RENDERED OUTPUT, and matching source bytes
+  # cannot answer it: the rendering function is many-to-one and its preimage is
+  # unbounded. Another enumeration buys another round.
+  #
+  # So the destructive class no longer turns on heading SHAPE. It turns on
+  # whether the two words appear at all, in text normalised the way a renderer
+  # would flatten it. To be wrongly authorised now, a real summary would have to
+  # contain neither word adjacent anywhere in any comment -- which a
+  # template-generated summary cannot.
+  #
+  # The price, stated: strictly more `present`, strictly fewer `missing`, i.e.
+  # more missed remediations. That is the cheap direction, chosen deliberately.
+  # The audit output keeps its shape-based richness for REPORTING;
+  # only the gate-authorising class is decided this way.
+  def entity_decode:
+    gsub("&nbsp;"; " ") | gsub("&#160;"; " ") | gsub("&#[xX]0*[aA]0;"; " ")
+    | gsub("&amp;"; "&") | gsub("&lt;"; "<") | gsub("&gt;"; ">") | gsub("&quot;"; " ");
+  # Tag stripping does NOT need to be a correct parser: whatever survives, the
+  # two-token test below still sees the words. `<h2 title="a>b">` strips
+  # imperfectly and the phrase is still found.
+  def normalise:
+    (. // "") | entity_decode | gsub("<[^>]*>"; " ") | ascii_downcase
+    | gsub("[^a-z0-9]+"; " ");
+  # TWO passes, because `normalise` maps a tag to a SPACE while a renderer
+  # CONCATENATES. `Clos<b>ing</b> Summary` renders `Closing Summary` and
+  # normalises to `clos ing summary`, so the spaced test misses it; the de-spaced
+  # one collapses every separator and finds `closingsummary`. Same for an
+  # undecoded `&#32;`, a soft hyphen, or emphasis inside a word.
+  #
+  # This can only move an issue TOWARD the veto, never away from it, which is why
+  # it is safe to be generous: over-matching costs a missed remediation, and this
+  # script can no longer authorise anything.
+  def mentions_marker:
+    (normalise | test("closing +summary"))
+    or (normalise | gsub("[^a-z0-9]+"; "") | test("closingsummary"));
   def sanitize:
     (. // "")
     | gsub("[[:cntrl:]\\p{Zl}\\p{Zp}\\x{061C}\\x{200B}\\x{200E}\\x{200F}\\x{202A}-\\x{202E}"
@@ -418,7 +663,26 @@ CLASSIFY='
   # need the fence/comment state machine that rounds 1-4 removed, and the
   # residual error is on the cheap side: it hides an issue rather than
   # authorising a duplicate post.
-  def invisible_line: test("^[ \t]*$") or test("^[ \t]*<!--.*-->[ \t]*$");
+  # A line is invisible when it renders to nothing: blank, or made up ENTIRELY of
+  # HTML comments and whitespace. The second half has to state what the line may
+  # CONTAIN, not merely that it starts with `<!--` and ends with `-->`.
+  #
+  # It used to say `^[ \t]*<!--.*-->[ \t]*$`, and `.*` is greedy: on
+  # `<!-- a --> <blockquote><!-- b -->` it runs from the FIRST `<!--` to the LAST
+  # `-->` and swallows the visible element between them. The quotation`s opening
+  # tag became invisible, the heading below it became the lead line, and a pure
+  # quotation classified as `compliant` -- the one class that prints in no
+  # section at all, so the issue went silent AND `--retroactive` refused it.
+  #
+  # Non-greedy is NOT the fix, which is worth recording because it is the first
+  # thing anyone will try: `<!--.*?-->[ \t]*$` matches the same line, because the
+  # `$` forces the lazy quantifier to keep extending until the tail is blank.
+  # The tempered dot `(?:(?!-->).)*` is what makes each comment stop at its OWN
+  # terminator; the `+` then requires everything else on the line to be another
+  # comment or whitespace. (Lookahead verified against this jq`s Oniguruma, not
+  # assumed -- see the control fixture #192.)
+  def invisible_line:
+    test("^[ \t]*$") or test("^[ \t]*(?:<!--(?:(?!-->).)*-->[ \t]*)+$");
   def lead_line:
     ((. // "") | split("\n"))
     | map(select(invisible_line | not))
@@ -429,13 +693,32 @@ CLASSIFY='
   # failure this rewrite exists to make unreachable.
   def has_heading_anywhere:
     ((. // "") | split("\n"))
-    | any(test(present_re; "i") or test(bare_re; "i") or test(emph_re; "i"));
+    | any(test(present_re; "i") or test(bare_re; "i") or test(emph_re; "i") or test(html_re; "i"));
   # Does anything non-blank follow the lead line? A heading with nothing under it
   # is not a summary, and letting it read as compliant made such an issue
   # INVISIBLE -- printed in no section at all, while --retroactive also aborts on
   # it. Anyone who can comment could silence a closed issue permanently by
   # posting a bare heading. It now lands in `present`: visible, authorising
   # nothing.
+  # Markup removal for the CONTENT test. Deliberately not a parser: every branch
+  # REMOVES, none interprets, so an input this does not understand ends up with
+  # LESS surviving text rather than more -- the safe direction for a predicate
+  # whose positive answer silences an issue.
+  #
+  # NO APOSTROPHE anywhere in here, including comments: CLASSIFY lives inside a
+  # single-quoted shell string and one apostrophe ends it. That has cost this
+  # file a full red suite once already.
+  #
+  # KNOWN RESIDUE, stated: an attribute quoted with apostrophes rather than
+  # double quotes is not handled, because writing that alternative would need
+  # the character this program cannot contain. It fails toward MORE surviving
+  # text, i.e. toward claiming content -- the expensive direction -- so it is
+  # recorded here rather than left to be rediscovered.
+  def strip_markup:
+    gsub("<!--(?:(?!-->)(?:.|\n))*-->"; " ")
+    | gsub("<[a-zA-Z/!](?:[^>\"]|\"[^\"]*\")*>"; " ")
+    | gsub("<[^>]*$"; " ")
+    | gsub("&[a-zA-Z][a-zA-Z0-9]*;|&#[0-9]+;|&#[xX][0-9a-fA-F]+;"; " ");
   def lead_has_content:
     ((. // "") | split("\n")) as $l
     | ([range(0; $l | length) | select($l[.] | invisible_line | not)] | first) as $k
@@ -455,11 +738,32 @@ CLASSIFY='
         # the audit permanently.
         # Later lines are filtered through the SAME visibility rule as the lead
         # line before being counted -- see `invisible_line`.
-        (($l[($k + 1):] | map(select(invisible_line | not)) | any(test("[\\p{L}\\p{N}]")))
-         or ($l[$k] | sub(present_re; ""; "i") | test("[\\p{L}\\p{N}].*[\\p{L}\\p{N}]")))
+        # `strip_markup` runs first, and it removes GENEROUSLY on purpose.
+        #
+        # This predicate decides whether to make a POSITIVE claim (`compliant` /
+        # `casing`), and a wrong positive makes the issue vanish from the audit
+        # entirely -- `compliant` prints in no section. So it must require
+        # evidence of content, not the absence of evidence of emptiness.
+        # Anything that might be markup goes; what survives has to be real text.
+        # Over-removing costs a demotion to `present`, which is advisory and
+        # authorises nothing -- the cheap direction.
+        #
+        # Three shapes reached `compliant` before, each one layer below where
+        # the previous fix stopped looking:
+        #   <span></span>            letters in the TAG NAME (fixed round 12)
+        #   &nbsp;                   letters in an ENTITY, no tag to strip
+        #   <span title=">abc">      `<[^>]*>` stops at the quoted bracket
+        #   <span abc                no closing bracket at all
+        (($l[($k + 1):] | map(select(invisible_line | not))
+            | any(strip_markup | test("[\\p{L}\\p{N}]")))
+         or ($l[$k] | sub(present_re; ""; "i") | strip_markup
+             | test("[\\p{L}\\p{N}].*[\\p{L}\\p{N}]")))
       end;
-  # Four destinations, in order. Only the LAST one authorises anything, and it
-  # is reached solely by the absence of any heading-shaped line anywhere.
+  # Five destinations, in order. NONE of them authorises anything any more —
+  # round 12 removed the power of this file to permit, so the last one is merely
+  # class in which the veto does not fire. The sentence that used to stand here
+  # ("only the LAST one authorises anything") described the contract this file
+  # was rewritten to abolish, and survived the rewrite that abolished it.
   #
   # The canonical test comes first so that `## Closing Summary (retroactive - ...)`
   # -- the heading this very skill writes when it remediates -- stays quiet
@@ -476,7 +780,26 @@ CLASSIFY='
   .[]
   | select(((.state // "") | ascii_upcase) == "CLOSED")
   | . as $i
-  | [$i.comments[]?.body // ""] as $bodies
+  # WHO wrote it. The classifier used to read every body and ask nothing about
+  # its author, so anyone able to comment could move an issue between classes:
+  # two words in a question made it `mentioned` (the gate then refuses forever),
+  # and a posted heading with a line under it made it `compliant` (the issue
+  # leaves the audit entirely). The audit is about whether THE PROJECT recorded
+  # a closing summary; an outside comment is evidence about that commenter.
+  #
+  # Affordable only because of round 12: before it, discarding comments pushed
+  # issues toward the class that AUTHORISED a destructive post. Now the same
+  # movement lands on `unrecognised`, which authorises nothing.
+  #
+  # A MISSING association counts as trusted. Offline payloads and older fixtures
+  # carry no such field, and refusing them would silently reclassify every issue
+  # in a test corpus. Stated rather than hidden: the filter binds on the live
+  # path, where the field is always present.
+  | [$i.comments[]?
+     | select((.author_association // "OWNER") as $a
+              | $a == "OWNER" or $a == "MEMBER" or $a == "COLLABORATOR"
+                or ($a | test("BOT"; "i")))
+     | .body // ""] as $bodies
   | (if   ($bodies | any((lead_line | startswith("## Closing Summary")) and lead_has_content))
                                                                         then "compliant"
      elif ($bodies | any((lead_line | test(lead_re; "i")) and lead_has_content))
@@ -486,6 +809,21 @@ CLASSIFY='
      # class: absence of evidence is not evidence of absence when the evidence
      # was truncated at the fetch. Falls to `present`, which authorises nothing.
      elif ($i.idd_comments_truncated == true)                           then "present"
+     # Shape-independent backstop. Everything above is about where a heading
+     # sits; this is only about whether the words are there at all, after the
+     # text has been flattened the way a renderer would flatten it.
+     # A recognised heading and a bare mention are different observations, and
+     # folding them together made two lines lie: the audit said a heading exists,
+     # and the gate said the issue "already carries a closing-summary marker".
+     # Neither is true of `I forgot the closing summary, sorry`. Its own class:
+     # still refuses -- a missed remediation is the cheap direction -- but
+     # refuses while naming what was actually observed.
+     elif ($bodies | any(mentions_marker))                              then "mentioned"
+     # The audit label stays `missing` on purpose: this is the REPORTING side,
+     # where the cost of the name is a reader mistaking "not recognised" for
+     # "proven absent" — annoying, not destructive. The GATE renames it to
+     # `unrecognised`, because there the name was being read as authorisation.
+     # Recorded here so the difference reads as a decision, not a leftover.
      else "missing" end) as $class
   | "\($class)\t#\($i.number | tostring | sanitize)  \($i.title | sanitize)"
 '
@@ -537,9 +875,18 @@ if [ -n "$GATE_ISSUE" ]; then
       "the comment set is known to be incomplete — absence proves nothing" 2
   fi
   case "$GATE_CLASS" in
-    missing) gate_out missing "$GATE_STATE" true "" 0 ;;
+    # No marker recognised. Reported as `unrecognised`, exit 10, and the error
+    # field says what the caller still owes -- because this is the branch whose
+    # old spelling (`missing`, exit 0) was read as permission for twelve rounds.
+    missing) gate_out unrecognised "$GATE_STATE" true \
+               "no closing-summary marker was recognised. This is NOT authorisation to post: read the comment set and obtain human confirmation first" 10 ;;
+    # `mentioned` refuses like the rest, but the message must not claim a marker
+    # exists -- for this class none was recognised, and a refusal that
+    # misdescribes what it found sends the reader looking for something else.
+    mentioned) gate_out mentioned "$GATE_STATE" true \
+               "the phrase appears in the comments but no closing-summary heading was RECOGNISED — which is either a prose mention or a heading shape this tool cannot follow, and it does not tell them apart. Refusing: read the comments and, if the summary really is absent, write one by hand rather than letting a tool post over what may be there" 1 ;;
     *)       gate_out "$GATE_CLASS" "$GATE_STATE" true \
-               "class is $GATE_CLASS, not missing — this issue already carries a closing-summary marker" 1 ;;
+               "class is $GATE_CLASS — this issue already carries a closing-summary marker" 1 ;;
   esac
 fi
 
@@ -548,8 +895,9 @@ pick() { printf '%s\n' "$CLASSIFIED" | awk -F'\t' -v c="$1" '$1 == c { print $2 
 MISSING=$(pick missing)
 CASING=$(pick casing)
 PRESENT=$(pick present)
+MENTIONED=$(pick mentioned)
 
-if [ -z "$MISSING" ] && [ -z "$CASING" ] && [ -z "$PRESENT" ]; then
+if [ -z "$MISSING" ] && [ -z "$CASING" ] && [ -z "$PRESENT" ] && [ -z "$MENTIONED" ]; then
   echo "✓ No closed issue is missing a ## Closing Summary (within the scanned window)."
   exit 0
 fi
@@ -568,6 +916,12 @@ fi
 if [ -n "$PRESENT" ]; then
   echo "PRESENT (unverified) — nothing was established here. Either a closing-summary heading exists but no comment leads with one (real summary or quotation: not determined), or the comment set could not be read in full. Inspect by hand; do NOT run --retroactive on the strength of this line:"
   printf '%s\n' "$PRESENT" | sed 's/^/  ⚠ /'
+  echo ""
+fi
+
+if [ -n "$MENTIONED" ]; then
+  echo "MENTIONED — the phrase is in the comments, but no closing-summary heading was RECOGNISED. Two different situations land here and this class does not tell them apart: ordinary prose (\"I forgot the closing summary\"), and a real heading in a shape the recognisers cannot follow (a <details><summary>, a heading inside a visible element). Read the comments; if there really is no summary, write one by hand. --retroactive will refuse either way:"
+  printf '%s\n' "$MENTIONED" | sed 's/^/  ⚠ /'
   echo ""
 fi
 

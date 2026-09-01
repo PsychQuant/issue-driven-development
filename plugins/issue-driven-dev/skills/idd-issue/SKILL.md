@@ -576,8 +576,38 @@ TITLE=$(sanitize_title "$RAW_TITLE")
 ```bash
 OWNER=$(echo "$GITHUB_REPO" | cut -d/ -f1)
 REPO=$(echo "$GITHUB_REPO" | cut -d/ -f2)
-gh api repos/$OWNER/$REPO/collaborators --jq '.[] | {login, name}' \
-  > /tmp/idd-collaborators-$$.json
+# Same scratch dir as rules/tagging-collaborators.md — this file is a gate
+# decision input, so it follows the protocol's own path convention rather than
+# keeping a divergent copy.
+TAG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/idd-tagging-XXXXXX") || {
+  echo "✗ cannot create a scratch dir for tagging — refusing to continue" >&2; exit 1; }
+# EXIT cleans up; each SIGNAL cleans up, restores the default disposition, and
+# re-raises itself. The one-liner `trap '...' EXIT HUP INT TERM` looked tidier
+# and did something else: on HUP/TERM it ran the cleanup AND replaced the
+# default termination semantics, so a caller without `set -e` carried on into
+# the verification loop below with the directory already deleted — grep found
+# nothing, the loop ran zero times, and the mention gate passed silently. Third
+# route into the same silent pass (missing file, missing value, now a swallowed
+# signal); this one dies the way the sender asked.
+idd_tag_cleanup() { rm -rf "$TAG_DIR"; }
+idd_tag_on_signal() { sig="$1"; idd_tag_cleanup; trap - "$sig"; kill -s "$sig" $$; }
+trap idd_tag_cleanup EXIT
+for sig in HUP INT TERM; do
+  # shellcheck disable=SC2064  — $sig must expand NOW, one handler per signal
+  trap "idd_tag_on_signal $sig" "$sig"
+done
+# `[...]` and `--paginate`, and both matter for the same reason: the consumer
+# below runs `jq -e ".[] | select(.login == ...)"` on this file.
+#
+# Without the brackets `--jq` emits a STREAM of objects, so `.[]` iterates the
+# FIELDS of each one and `select` asks a STRING for `.login` — a type error, rc=5,
+# and EVERY legitimate mention refused. The MENTION_ATTESTED path shipped last
+# round could not work for anyone.
+#
+# Without `--paginate`, collaborator 31 and onward simply are not in the file, and
+# the gate aborts the post naming a real collaborator as unverified.
+gh api repos/$OWNER/$REPO/collaborators --paginate --jq '[.[] | {login, name}]' \
+  | jq -s 'add // []' > "$TAG_DIR/collaborators.json"
 ```
 
 接 [`rules/tagging-collaborators.md`](../../rules/tagging-collaborators.md) Step 3-5。Post 前 grep `@\w+` 全部 cross-check，未驗證 token = abort。

@@ -185,12 +185,55 @@ The order matters because the pointer must contain the master URL. This pattern 
 
 ```bash
 # Pseudocode mirroring the existing helper pattern
-MASTER_URL=$(gh pr comment "$PR" --repo "$REPO" --body-file /tmp/master.md 2>&1 | tail -1)
+# $VERIFY_DIR is the per-run scratch dir resolved in idd-verify Step 0. These
+# three are EGRESS BODIES — the text posted to somebody else's issue — so a
+# stale or half-written file at a shared fixed path does not fail loudly, it
+# publishes the wrong comment. #288 converted the copies in idd-verify/SKILL.md
+# and missed this one entirely; the test that was supposed to prevent that
+# declared a scope which did not mention this file.
+# THREE fail-open shapes lived in these six lines, and each one published
+# something wrong while reporting success.
+#
+# 1. `MASTER_URL=$(gh ... 2>&1 | tail -1)` — with `2>&1` folded into the pipe and
+#    no `pipefail`, a 403 / network error / bad PR makes `gh` fail while `tail`
+#    succeeds, so the assignment "works" and MASTER_URL becomes THE LAST LINE OF
+#    THE ERROR MESSAGE. Every pointer comment then carries it. `set -e` cannot
+#    see this: the exit status of a pipeline is its last command.
+# 2. One `pointer.md` rewritten inside the loop while background `gh` processes
+#    read it. The per-run directory isolates different RUNS; it does nothing
+#    about parallel fan-out within one run, so issue #11 can be sent #10 pointer
+#    or half a file.
+# 3. A bare `wait` returns 0 and does not propagate child failures, so a pointer
+#    that failed on permissions or rate limit left the audit trail incomplete and
+#    the run called it done.
+set -o pipefail
+if ! MASTER_URL=$(gh pr comment "$PR" --repo "$REPO" --body-file "$VERIFY_DIR/master.md"); then
+  echo "✗ could not post the master comment — refusing to publish pointers to a URL that does not exist" >&2
+  exit 1
+fi
+case "$MASTER_URL" in
+  https://*) : ;;
+  *) echo "✗ the master comment did not return a URL (got: ${MASTER_URL:-<empty>}) — refusing" >&2; exit 1 ;;
+esac
+
+PTR_PIDS=""
 for I in $REFD_ISSUES; do
-  sed "s|__MASTER_URL__|$MASTER_URL|g" /tmp/pointer_template.md > /tmp/pointer.md
-  gh issue comment "$I" --repo "$REPO" --body-file /tmp/pointer.md &
+  # One body file PER ISSUE. Same reason the run gets its own directory, one
+  # level down.
+  sed "s|__MASTER_URL__|$MASTER_URL|g" "$VERIFY_DIR/pointer_template.md" \
+    > "$VERIFY_DIR/pointer-$I.md"
+  gh issue comment "$I" --repo "$REPO" --body-file "$VERIFY_DIR/pointer-$I.md" &
+  PTR_PIDS="$PTR_PIDS $!"
 done
-wait
+PTR_FAILED=0
+for pid in $PTR_PIDS; do
+  wait "$pid" || PTR_FAILED=$((PTR_FAILED + 1))
+done
+if [ "$PTR_FAILED" -gt 0 ]; then
+  echo "⚠ $PTR_FAILED pointer comment(s) failed to post — the external audit trail is INCOMPLETE." >&2
+  echo "  Re-run, or post them by hand; do not treat this verify as fully published." >&2
+  exit 1
+fi
 ```
 
 ---

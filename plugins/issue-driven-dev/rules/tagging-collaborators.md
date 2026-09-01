@@ -34,18 +34,80 @@ If no tagging intent → skip the rest of this rule.
 Before resolving any handle:
 
 ```bash
+# One per-run scratch dir. Fixed names under the system temp directory are
+# shared by every concurrent session and by every repo: two runs tagging in
+# different repos read each other's collaborator list, and the mention gate
+# below decides who gets notified from exactly these files. #288 mechanised the
+# no-fixed-scratch-paths rule for idd-verify and this file was outside the scan
+# it declared -- while idd-verify MANDATES this protocol, so the rule and its
+# largest violation shipped together.
+TAG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/idd-tagging-XXXXXX") || {
+  echo "✗ cannot create a scratch dir for tagging — refusing to continue" >&2; exit 1; }
+# EXIT cleans up; each SIGNAL cleans up, restores the default disposition, and
+# re-raises itself. The one-liner `trap '...' EXIT HUP INT TERM` looked tidier
+# and did something else: on HUP/TERM it ran the cleanup AND replaced the
+# default termination semantics, so a caller without `set -e` carried on into
+# the verification loop below with the directory already deleted — grep found
+# nothing, the loop ran zero times, and the mention gate passed silently. Third
+# route into the same silent pass (missing file, missing value, now a swallowed
+# signal); this one dies the way the sender asked.
+idd_tag_cleanup() { rm -rf "$TAG_DIR"; }
+idd_tag_on_signal() { sig="$1"; idd_tag_cleanup; trap - "$sig"; kill -s "$sig" $$; }
+trap idd_tag_cleanup EXIT
+for sig in HUP INT TERM; do
+  # shellcheck disable=SC2064  — $sig must expand NOW, one handler per signal
+  trap "idd_tag_on_signal $sig" "$sig"
+done
+# Fail-closed on purpose. Without the `|| exit`, a full or read-only /tmp left
+# TAG_DIR empty, the paths below became `/collaborators.json` etc., and the
+# verification loop read a file that does not exist — so `grep` produced nothing,
+# the `for handle in ...` body ran zero times, and **the mention gate passed
+# silently**. A gate that cannot read its own inputs must refuse, not pass.
+#
+# The draft body must be WRITTEN here, not assumed. The consumer below reads
+# $TAG_DIR/comment-body.md; nothing created it, so the loop was scanning a
+# missing file — the same silent-zero-iterations failure by a different route.
+#
+# And writing it is not enough either. `COMMENT_BODY` is supplied by the CALLING
+# skill; this protocol does not produce it. If the caller has not set it,
+# `printf '%s' ""` SUCCEEDS, writes a 0-byte file, the `||` never fires, and the
+# loop below greps an empty file and runs zero times — the gate passes silently
+# for a third time, now on a missing VALUE rather than a missing file. Each
+# previous fix closed the layer it was looking at and left the one under it.
+#
+# So the value is checked before it is staged. An empty draft body is not a
+# thing this protocol can be asked about: there is nothing to scan for mentions,
+# and answering "no mentions found" about text you were never given is the
+# failure this whole file exists to prevent.
+: "${COMMENT_BODY:?the calling skill must set COMMENT_BODY to the draft text before running this protocol — an empty body cannot be checked for mentions, and a gate that cannot read its input must refuse}"
+printf '%s' "$COMMENT_BODY" > "$TAG_DIR/comment-body.md" || {
+  echo "✗ cannot stage the comment body for mention checking — refusing" >&2; exit 1; }
+# Non-empty on disk too: `printf` can succeed while writing nothing if the
+# variable was set but empty (`COMMENT_BODY=""` passes `:?`).
+[ -s "$TAG_DIR/comment-body.md" ] || {
+  echo "✗ the staged comment body is empty — refusing to certify 'no mentions'" >&2; exit 1; }
 # Collaborators (anyone with repo access — outside collaborators included)
-gh api repos/$OWNER/$REPO/collaborators --jq '.[] | {login, name, type}' \
-  > /tmp/idd-collaborators.json
+# `[...]` and `--paginate`, and both matter for the same reason: the consumer
+# below runs `jq -e ".[] | select(.login == ...)"` on this file.
+#
+# Without the brackets `--jq` emits a STREAM of objects, so `.[]` iterates the
+# FIELDS of each one and `select` asks a STRING for `.login` — a type error, rc=5,
+# and EVERY legitimate mention refused. The MENTION_ATTESTED path shipped last
+# round could not work for anyone.
+#
+# Without `--paginate`, collaborator 31 and onward simply are not in the file, and
+# the gate aborts the post naming a real collaborator as unverified.
+gh api repos/$OWNER/$REPO/collaborators --paginate --jq '[.[] | {login, name, type}]' \
+  | jq -s 'add // []' > "$TAG_DIR/collaborators.json"
 
 # Org members (in case the target is an org repo and the person is a member but not direct collaborator)
 if [ "$OWNER_TYPE" = "Organization" ]; then
-  gh api orgs/$OWNER/members --jq '.[] | {login}' \
-    > /tmp/idd-org-members.json
+  gh api orgs/$OWNER/members --paginate --jq '[.[] | {login}]' \
+    | jq -s 'add // []' > "$TAG_DIR/org-members.json"
 fi
 
 # Recent commit authors (fallback — for forked / public repos with no API access)
-git log --pretty=format:'%an <%ae>' | sort -u > /tmp/idd-commit-authors.txt
+git log --pretty=format:'%an <%ae>' | sort -u > "$TAG_DIR/commit-authors.txt"
 ```
 
 **The combined set of these lists is the only source of truth for valid handles.** Never use:
@@ -115,12 +177,31 @@ User picks from the **actual list**. The "Other" free-text option is fine for ge
 
 ```bash
 # Verification step
-for handle in $(grep -oE '@[A-Za-z0-9-]+' /tmp/comment-body.md | sort -u); do
+#
+# The COMBINED set, because that is what the paragraph above declares to be the
+# source of truth. Only `collaborators.json` used to be consulted, so the
+# `org-members.json` this protocol goes and fetches had no consumer at all: an
+# org member who is not a direct collaborator is a legitimate mention target,
+# and the gate aborted the post naming them as unverified. A produced-but-unread
+# allowlist is a spec and an implementation disagreeing in the same file.
+#
+# `commit-authors.txt` is deliberately NOT in the union: it holds `Name <email>`,
+# not logins, so it cannot answer "is @x a valid handle". It feeds the Step 3
+# fuzzy resolution (name → login), which is a different question. Said here
+# because "the combined set" reads like all three.
+for handle in $(grep -oE '@[A-Za-z0-9-]+' "$TAG_DIR/comment-body.md" | sort -u); do
   login=${handle#@}
-  if ! jq -e ".[] | select(.login == \"$login\")" /tmp/idd-collaborators.json > /dev/null; then
-    echo "ERROR: @$login not in collaborator list. Aborting."
-    exit 1
+  if jq -e --arg l "$login" '.[] | select(.login == $l)' \
+       "$TAG_DIR/collaborators.json" > /dev/null 2>&1; then
+    continue
   fi
+  if [ -f "$TAG_DIR/org-members.json" ] \
+     && jq -e --arg l "$login" '.[] | select(.login == $l)' \
+          "$TAG_DIR/org-members.json" > /dev/null 2>&1; then
+    continue
+  fi
+  echo "ERROR: @$login is in neither the collaborator nor the org-member list. Aborting."
+  exit 1
 done
 ```
 

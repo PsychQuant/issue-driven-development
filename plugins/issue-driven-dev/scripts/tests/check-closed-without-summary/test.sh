@@ -378,7 +378,12 @@ refute  "#158 is NOT in MISSING — an incomplete fetch cannot prove absence" fl
 # `bare_re`'s trailing `$` anchor is what keeps ordinary prose out of the
 # presence test, but it also rejected every emphasised heading carrying a tail,
 # sending a real summary to MISSING. `emph_re` covers that shape; these two
-# fixtures are its regression lock (acid: removing emph_re turns them red).
+# fixtures are its regression lock -- but only in STAGE 1. The parenthetical that
+# used to sit here said "acid: removing emph_re turns them red", and that is
+# FALSE of the shipped pipeline: the round-10 mention backstop catches the same
+# fixtures, so `emph_re` can be deleted outright and all 188 assertions stay
+# green. Measured, not assumed. The per-recogniser acid now lives in the stage-1
+# block at the end of this file, where the backstop is off and the claim is true.
 refute "#160 (bold heading with a tail) is NOT in MISSING"   flagged 160
 refute "#161 (italic heading with a tail) is NOT in MISSING" flagged 161
 # The counterpart the loosening must NOT break: prose mentioning the phrase
@@ -408,17 +413,145 @@ require "#163 (casing heading, only an HTML comment under it) is PRESENT"    unv
 refute  "#163 is NOT in CASING — CASING claims the summary is there"         in_section "CASING —" 163
 refute  "#163 is NOT in MISSING"                                             flagged 163
 
-# ── `--issue N`: the single-issue GATE (#307 follow-up) ────────────────────────
-# Audit mode reports to a human and always exits 0. This mode is a precondition
-# for an IRREVERSIBLE action, so the whole point is the exit code: the caller
-# must not have to read prose to find out whether posting is allowed.
+# ── HTML-flavoured headings a reader sees but the recogniser did not (#320) ──
 #
-#   0 = confident `missing` on a complete comment set     1 = any other class
-#   2 = could not determine anything
+# The recogniser demanded a hash (or an emphasis run, or a bare title line) at
+# the start of the line. GitHub renders all four shapes below as visible
+# headings, so a human reading the comment sees a closing summary — and the
+# classifier said `missing`, which since the gate landed no longer merely
+# under-reports: it AUTHORISES the duplicate post, while idd-close explicitly
+# forbids the agent from second-guessing the exit code by reading the prose.
 #
-# Everything that is not a confident 0 must refuse. These assertions are the
-# only reason the seven rounds of classifier work bind the destructive path at
-# all — before this mode existed, idd-close reimplemented the judgement in prose.
+# #170 is the sharp one. The fixtures already had the marker AFTER the heading
+# (#115) and on its OWN line (#121). Marker BEFORE the heading, same line, is
+# the third arrangement of the same three tokens — the one nobody enumerated.
+refute "#170 (idd marker before the heading) is NOT in MISSING"   flagged 170
+refute "#171 (anchor tag before the heading) is NOT in MISSING"   flagged 171
+# Not merely "not missing" — these two LEAD with a heading once the invisible
+# prefix is accounted for, so they belong in CASING, whose advice (normalise the
+# heading, e.g. put the marker on its own line as #121 does) is actionable.
+# Asserting only "not missing" left the strict predicate with no individual
+# weight: an acid run showed html_pfx could be dropped from lead_re alone and
+# the suite stayed green, because present_re caught them one class down.
+# CORRECTED (round 11): these two were pinned to CASING, which asserts "the
+# summary is there". But `<!-- x --> ## Closing Summary` and
+# `<a name="cs"></a>## Closing Summary` are NOT CommonMark headings — an ATX
+# heading must begin the line, so both render as PARAGRAPHS. Verified with
+# markdown-it rather than reasoned about. The previous round widened the STRICT
+# predicate to accept them and then wrote a test fixing that behaviour in place —
+# pinning a non-heading as a positive claim, one round after writing down that
+# widening the strict half is how round 5 broke.
+require "#170 (marker before hashes — NOT a CommonMark heading) is advisory only" unverified 170
+refute  "#170 is NOT promoted to CASING"                                 in_section "CASING —" 170
+require "#171 (anchor before hashes — NOT a heading either) is advisory only"     unverified 171
+refute  "#171 is NOT promoted to CASING"                                 in_section "CASING —" 171
+refute "#172 (raw <h2> heading) is NOT in MISSING"                flagged 172
+refute "#173 (details/summary disclosure) is NOT in MISSING"      flagged 173
+# ...and none of them may be silently swallowed either: each must still show up
+# somewhere a human reads.
+require "#172 (raw <h2>) is visible in the advisory bucket"       unverified 172
+require "#173 (details/summary) is visible in the advisory bucket" in_section "MENTIONED" 173
+# The widening must not exonerate a QUOTATION: a blockquoted HTML heading is
+# still only `present`, never `casing`/`compliant`.
+require "a blockquoted HTML heading stays in the advisory bucket, not CASING" \
+  bash -c 'printf "%s" "[{\"number\":9100,\"title\":\"q\",\"state\":\"CLOSED\",\"comments\":[{\"body\":\"> <h2>Closing Summary</h2>\\n> quoted, not mine\"}]}]" > "$0/q.json";
+           [ "$(bash "$1" --json-file "$0/q.json" --issue 9100 2>/dev/null | jq -r .class)" = "present" ]' \
+  "${TMPDIR:-/tmp}" "$HELPER"
+
+# ── round 10: absence is judged on NORMALISED text, not on heading shape ──
+#
+# Ten rounds ended the same way — a real summary the recogniser could not follow
+# reached `missing`, and since the gate landed that no longer under-reports, it
+# AUTHORISES the irreversible post. The seven shapes below were all reproduced
+# returning `class=missing, rc=0`, and every one renders on GitHub as a visible
+# "Closing Summary" heading.
+#
+# The lesson is not "we forgot some shapes". "Would a reader see a heading?" is a
+# question about RENDERED OUTPUT; matching source bytes cannot answer it, because
+# the rendering function is many-to-one with an unbounded preimage. So the
+# destructive class now turns on whether the two words are present at all in
+# renderer-flattened text. To be wrongly authorised, a real summary would have to
+# contain neither word adjacent anywhere — which a template summary cannot.
+refute "#180 (emphasis inside the phrase) is NOT in MISSING"        flagged 180
+refute "#181 (CJK prefix before the words) is NOT in MISSING"       flagged 181
+refute "#182 (the entity form of the gap) is NOT in MISSING"        flagged 182
+refute "#183 (HTML bold, twin of the markdown form) is NOT in MISSING" flagged 183
+refute "#184 (h2 attributes wrapped across lines) is NOT in MISSING" flagged 184
+refute "#185 (close bracket inside an attribute) is NOT in MISSING"  flagged 185
+
+# THE MIRROR, which the same round broke: `html_pfx` accepted ANY tag as an
+# invisible prefix, so an HTML blockquote and a CommonMark autolink — both
+# VISIBLE — were treated as blank and the quotation behind them was promoted to
+# `casing`, a positive claim. Round 5 restored, in the strict predicate.
+refute  "#186 (HTML-blockquoted quotation) is NOT promoted to CASING" in_section "CASING —" 186
+require "#186 stays in the advisory bucket"                          in_section "MENTIONED" 186
+# The line BEFORE the heading is what decides which line leads, and #186 only
+# ever tested a blockquote sitting on the heading's own line. `invisible_line`
+# skipped any line matching `^[ \t]*<!--.*-->[ \t]*$`, and `.*` is greedy: on
+# `<!-- a --> <blockquote><!-- b -->` it runs from the FIRST `<!--` to the LAST
+# `-->`, swallowing the visible element between them. The quotation`s opening
+# tag was therefore invisible, the heading became the lead line, and a pure
+# quotation read as `compliant` -- the class that reports nothing at all.
+#
+# Non-greedy is NOT the fix, and that is worth writing down because it is the
+# obvious one: `<!--.*?-->[ \t]*$` still matches, because the `$` forces the
+# lazy quantifier to keep extending until the tail is whitespace. The fix has to
+# say what the line may CONTAIN -- comments and blanks, nothing else.
+# `compliant` prints in NO section, so "is not compliant" is asserted the way
+# #112 does it: the number must appear SOMEWHERE in the report. Numbers 190-192
+# and not 187-189 because 187 was already taken -- the first cut of these
+# fixtures collided with the existing `#187 autolink then hash`, and both of my
+# refutations passed against THAT issue while mine went unexamined. Same shape
+# as every vacuous guard this file records: an assertion satisfied by a
+# neighbour.
+require "#190 (blockquote opened beside HTML comments) is NOT compliant" \
+  bash -c 'printf "%s\n" "$0" | grep -qE -- "(^|[^0-9])#190([^0-9]|$)"' "$OUT"
+require "#190 stays in the advisory bucket"                          unverified 190
+# #191 is the BOUNDARY, not a second repro: `<!-- x --> <blockquote>` does not
+# end in `-->`, so even the greedy pattern never matched it. Kept because the
+# boundary is where a future "simplification" of the pattern would land, and
+# because saying which of two neighbouring fixtures actually reproduced the bug
+# is the difference between a regression lock and decoration.
+require "#191 (one comment, then a visible blockquote) is NOT compliant" \
+  bash -c 'printf "%s\n" "$0" | grep -qE -- "(^|[^0-9])#191([^0-9]|$)"' "$OUT"
+require "#191 stays in the advisory bucket"                          unverified 191
+# CONTROL for the fix: a line that really IS only HTML comments must still be
+# skipped, or the fix would buy its correctness by disabling the feature. That
+# means #192 must be compliant, i.e. appear nowhere.
+require "#192 (genuine comments-only line) is still compliant, i.e. unlisted" \
+  bash -c '! printf "%s\n" "$0" | grep -qE -- "(^|[^0-9])#192([^0-9]|$)"' "$OUT"
+refute  "#187 (autolink is visible, not a blank prefix) is NOT CASING" in_section "CASING —" 187
+
+# And the cheap direction must still work: something with no marker at all is
+# still the only thing that reaches the destructive class.
+require "#101 (no marker anywhere) still reaches MISSING"  flagged 101
+require "#103 (zero comments) still reaches MISSING"       flagged 103
+
+# ── `--issue N`: the single-issue VETO (#307; re-contracted round 12) ──────────
+# Audit mode reports to a human and always exits 0. This mode guards an
+# IRREVERSIBLE action, so the whole point is the exit code: the caller must not
+# have to read prose to find out whether posting is refused.
+#
+#   1  a marker WAS recognised            -> refuse
+#   2  nothing could be determined        -> refuse
+#   10 no marker was recognised           -> the veto did not fire. NOT a permit.
+#
+# The asymmetry is the contract, and it is the whole of round 12. Twelve rounds
+# of this classifier failed in ONE direction: a real closing summary whose shape
+# the recogniser could not follow was called `missing`, and `missing` authorised
+# a duplicate post. That direction cannot be fixed by a better recogniser --
+# "would a reader see a heading?" is a question about RENDERED output, and the
+# rendering function is many-to-one with unbounded preimage, so no source-byte
+# matcher can ever answer it in the negative.
+#
+# But it can answer in the POSITIVE. "I found the marker" is an observation;
+# "the marker is not there" is an inference from a failure to recognise. So the
+# power is split along the direction that is sound: this script may VETO, and
+# may never PERMIT. What supplies the permit is the thing that can actually
+# answer the question -- a reader (see idd-close --retroactive).
+#
+# 10, not 0, on purpose. Any caller still reading "rc == 0 means go" now breaks
+# loudly instead of silently keeping the behaviour this change exists to remove.
 gate() { bash "$HELPER" --json-file "$FIXTURE" --issue "$1" 2>/dev/null; }
 gate_rc() { gate "$1" >/dev/null 2>&1; echo $?; }
 # `tostring`, NOT `// "null"`: in jq the alternative operator treats `false` as
@@ -426,10 +559,116 @@ gate_rc() { gate "$1" >/dev/null 2>&1; echo $?; }
 # — which would have made the truncation assertion below unable to fail.
 gate_field() { gate "$1" | jq -r ".$2 | tostring"; }
 
-assert_eq "gate: a genuinely-missing issue exits 0"            "0" "$(gate_rc 101)"
-assert_eq "gate: ...and says so in machine-readable form"      "missing" "$(gate_field 101 class)"
-assert_eq "gate: ...and asserts the comment set was complete"  "true" "$(gate_field 101 comments_complete)"
-assert_eq "gate: a zero-comment closed issue also exits 0"     "0" "$(gate_rc 103)"
+assert_eq "veto: an unrecognised-marker issue exits 10, not 0" "10" "$(gate_rc 101)"
+assert_eq "veto: ...and names the class for what it is -- unrecognised, not missing" \
+  "unrecognised" "$(gate_field 101 class)"
+assert_eq "veto: ...and states in the payload that it authorises nothing" \
+  "false" "$(gate_field 101 authorises)"
+assert_eq "veto: ...and asserts the comment set was complete"  "true" "$(gate_field 101 comments_complete)"
+assert_eq "veto: a zero-comment closed issue also exits 10"    "10" "$(gate_rc 103)"
+
+# The property, swept rather than enumerated: there is no input -- fixture, live,
+# malformed, hostile -- for which this script exits 0 in gate mode.
+#
+# What this sweep does NOT pin, stated because the distinction is the kind that
+# quietly rots: two independent mechanisms hold the property (the verdict emits
+# 10, and gate_out refuses to exit 0 at all), so the sweep goes red only when
+# BOTH are broken. Mutating the verdict back to 0 leaves it green -- the guard
+# converts the 0 to a 2. The assertion that pins the verdict code is the
+# `exits 10, not 0` one above; this one pins the property they jointly hold.
+# Verified by mutation both ways, round 12.
+# `seen` counts the iterations. Both sweeps below drive their loop from
+# `jq -r ".[].number"`, and if jq is missing or the fixture is malformed that
+# emits nothing: the loop runs zero times, `bad` stays empty, and the final
+# `[ -z "$bad" ]` passes having tested no input at all. The property being swept
+# is only as real as the sweep having happened.
+require "veto: NO input makes this script exit 0 in gate mode" \
+  bash -c '
+    rcs=""; seen=0
+    for n in $(jq -r ".[].number" "$1") 9999 abc "" 0 -1; do
+      seen=$((seen + 1))
+      bash "$0" --json-file "$1" --issue "$n" >/dev/null 2>&1
+      rc=$?
+      [ "$rc" = 0 ] && rcs="$rcs $n"
+    done
+    [ "$seen" -ge 10 ] || { echo "swept only $seen inputs — the fixture list did not load"; exit 1; }
+    [ -z "$rcs" ] || { echo "exited 0 for:$rcs"; exit 1; }' \
+  "$HELPER" "$FIXTURE"
+
+# The sweep above swept VALUES. It never swept the SPELLING of the flag, and
+# that is where the hole was: `--issue=101` did not match the `--issue)` arm,
+# fell through to `*)`, and the run continued into AUDIT mode -- which always
+# exits 0. So the assertion whose name is "NO input makes this script exit 0"
+# was defeated by an equals sign. Same for `--repo --issue 101`, where `--repo`
+# swallows `--issue` as its own value and the number then falls through.
+#
+# Both are MALFORMED invocations, which is exactly the case that must not
+# silently become the advisory mode: a caller that wrote `--issue` meant to ask
+# the gate a question, and audit's 0 answers a different question.
+# `-h` prints the header and exits 0 unconditionally, so `--issue 101 -h` — a
+# plausible typo, and a plausible thing for a wrapper to append — answered 0
+# while the gate was armed. The two parse holes above were closed and this one,
+# in the same function, was not: help is not a verdict, and a caller that asked
+# the gate a question must not be handed a 0 by a flag that never looked at it.
+require "veto: --help alongside --issue does not answer 0" \
+  bash -c '
+    bad=""
+    for form in "-h" "--help"; do
+      bash "$0" --json-file "$1" --issue 101 "$form" >/dev/null 2>&1
+      [ "$?" = 0 ] && bad="$bad [$form]"
+      bash "$0" --json-file "$1" "$form" --issue 101 >/dev/null 2>&1
+      [ "$?" = 0 ] && bad="$bad [$form first]"
+    done
+    [ -z "$bad" ] || { echo "exited 0 with:$bad"; exit 1; }' \
+  "$HELPER" "$FIXTURE"
+# CONTROL: plain --help must still work and still exit 0. Refusing help would be
+# a different bug, and without this the fix could be "make -h fail".
+require "...but plain --help still prints the header and exits 0" \
+  bash -c 'out=$(bash "$0" --help 2>&1); rc=$?; [ "$rc" = 0 ] && printf "%s" "$out" | grep -q "Usage:"' \
+  "$HELPER"
+
+require "veto: the EQUALS spelling still enters gate mode, never audit" \
+  bash -c '
+    bad=""
+    for form in "--issue=101" "--issue=abc" "--issue="; do
+      bash "$0" --json-file "$1" "$form" >/dev/null 2>&1
+      rc=$?
+      [ "$rc" = 0 ] && bad="$bad [$form -> 0]"
+    done
+    [ -z "$bad" ] || { echo "audit-mode 0 for:$bad"; exit 1; }' \
+  "$HELPER" "$FIXTURE"
+# WHICH of these two pins the equals form, stated because the answer is not the
+# obvious one. Removing the `--*=*` split leaves the assertion ABOVE green: the
+# unknown-argument arm then refuses `--issue=101` with exit 2, which is still
+# "not 0", so the refusal guard masks the parsing guard. The assertion that
+# actually pins the equals spelling is this one -- it requires the two spellings
+# to reach the same VERDICT, which only parsing can deliver. Verified by
+# mutation both ways. (Same shape as the exit-0 sweep note above: two mechanisms
+# holding one property, and only one assertion able to tell them apart.)
+assert_eq "veto: --issue=101 gives the same verdict as --issue 101" \
+  "$(bash "$HELPER" --json-file "$FIXTURE" --issue 101 2>/dev/null | jq -r .class)" \
+  "$(bash "$HELPER" --json-file "$FIXTURE" --issue=101 2>/dev/null | jq -r .class)"
+require "veto: a value-taking flag REFUSES to swallow the next flag" \
+  bash -c '
+    bash "$0" --json-file "$1" --repo --issue 101 >/dev/null 2>&1
+    rc=$?
+    [ "$rc" != 0 ] || { echo "--repo swallowed --issue and the run exited 0"; exit 1; }' \
+  "$HELPER" "$FIXTURE"
+require "veto: ...and says which flag was missing its value" \
+  bash -c 'bash "$0" --json-file "$1" --repo --issue 101 2>&1 | grep -q -- "--repo"' \
+  "$HELPER" "$FIXTURE"
+
+require "veto: ...and every gate reply carries authorises:false" \
+  bash -c '
+    bad=""; seen=0
+    for n in $(jq -r ".[].number" "$1"); do
+      seen=$((seen + 1))
+      a=$(bash "$0" --json-file "$1" --issue "$n" 2>/dev/null | jq -r ".authorises | tostring")
+      [ "$a" = "false" ] || bad="$bad $n=$a"
+    done
+    [ "$seen" -ge 10 ] || { echo "checked only $seen replies — the fixture list did not load"; exit 1; }
+    [ -z "$bad" ] || { echo "not false for:$bad"; exit 1; }' \
+  "$HELPER" "$FIXTURE"
 
 assert_eq "gate: a compliant issue REFUSES (exit 1)"           "1" "$(gate_rc 100)"
 assert_eq "gate: a casing issue REFUSES — the summary is there, only misspelt" \
@@ -471,6 +710,277 @@ done
 # Audit mode must be UNAFFECTED: it still always exits 0, gate or no gate.
 assert_eq "audit mode still exits 0 (advisory contract intact)" "0" \
   "$(bash "$HELPER" --json-file "$FIXTURE" >/dev/null 2>&1; echo $?)"
+
+# ── an EMPTY summary must not be exonerated by an empty HTML tag (round 12) ──
+#
+# `lead_has_content` tests `[\p{L}\p{N}]` on the RAW line, and `invisible_line`
+# only recognises a line made entirely of HTML comments. So `<span></span>` under
+# a heading counts as content -- because the tag NAME has letters in it. The
+# result is a positive claim (`compliant` / `casing`) about a comment that
+# renders to a heading and nothing else. The channel the bare-heading fix closed
+# one layer up, re-opened one layer down; the existing fixture only tried
+# `<!-- TODO -->`, which `invisible_line` does catch.
+require "#193 (heading + empty <span>) is NOT compliant — it renders to nothing" \
+  bash -c 'printf "%s\n" "$0" | grep -qE -- "(^|[^0-9])#193([^0-9]|$)"' "$OUT"
+require "#193 lands in the advisory bucket instead"          unverified 193
+refute  "#194 (lower-case heading + empty <a>) is NOT promoted to CASING" \
+  in_section "CASING —" 194
+require "#194 lands in the advisory bucket too"              unverified 194
+
+# ── `lead_has_content` must not read MARKUP as content ──
+#
+# Round 12 fixed one instance (letters inside a TAG NAME) by stripping tags
+# before looking for letters. The predicate still counts:
+#   #198  an HTML ENTITY -- `&nbsp;` has four letters and no tag to strip
+#   #199  a tag whose ATTRIBUTE contains `>` -- `<[^>]*>` stops at the quoted
+#         bracket and leaves `abc">` behind
+#   #200  an UNTERMINATED tag -- there is no closing `>` to match at all
+#
+# All three render to a heading and nothing else, and all three were claimed
+# `compliant` -- the one class that prints in NO section, so the issue leaves
+# the audit entirely. That is the silencing channel, reopened for the third
+# time in the same predicate, each time one layer below where it was closed.
+#
+# The direction matters more than the enumeration: this predicate decides
+# whether to make a POSITIVE claim, so it must require evidence of content
+# rather than absence of evidence of emptiness. Anything that might be markup
+# is removed; what survives has to be real text. Over-removing costs a demotion
+# to `present` (advisory, authorising nothing) -- the cheap direction.
+for n in 198 199 200; do
+  require "#$n (heading + markup only) is NOT claimed compliant" \
+    bash -c 'printf "%s\n" "$1" | grep -qE -- "(^|[^0-9])#$0([^0-9]|$)"' "$n" "$OUT"
+  require "#$n lands in the advisory bucket instead" unverified "$n"
+done
+# CONTROL: real content must still read as content, or the fix would buy its
+# greens by never claiming compliance at all.
+require "#100 (a real summary) is still compliant, i.e. unlisted" \
+  bash -c '! printf "%s\n" "$0" | grep -qE -- "(^|[^0-9])#100([^0-9]|$)"' "$OUT"
+
+# ── who wrote it matters ──
+#
+# Six independent Codex legs converged on this, the strongest cross-model
+# consensus in the run: the classifier reads every comment body and asks nothing
+# about who wrote it. So anyone who can comment can move an issue between
+# classes. Two directions, both bad:
+#
+#   #210  an outsider writes the two words in a question -> `mentioned` -> the
+#         gate refuses forever, and `--retroactive` can never run on that issue
+#   #211  an outsider posts a whole `## Closing Summary` with a line under it ->
+#         `compliant` -> the issue leaves the audit entirely, and a real missing
+#         summary is now invisible
+#
+# The audit is about whether THE PROJECT recorded a closing summary, and a
+# closing summary is something a maintainer writes. An outside comment is
+# evidence about that commenter, not about the project`s audit trail.
+#
+# This filter is affordable only because of round 12. Before it, discarding
+# comments meant more issues reaching the class that AUTHORISED a destructive
+# post -- so tightening here would have been the expensive direction. Now the
+# same movement lands on `unrecognised`, which authorises nothing and hands the
+# question to a person. The architecture change is what made the fix safe.
+require "#210 (outsider mention) does NOT become mentioned" \
+  bash -c '! printf "%s\n" "$0" | awk "/^MENTIONED/,/^\$/" | grep -qE -- "(^|[^0-9])#210([^0-9]|$)"' "$OUT"
+require "#210 still reaches MISSING, where a human decides" flagged 210
+require "#211 (outsider posts a heading) is NOT exonerated into silence" \
+  bash -c 'printf "%s\n" "$0" | grep -qE -- "(^|[^0-9])#211([^0-9]|$)"' "$OUT"
+require "#211 reaches MISSING too" flagged 211
+# CONTROL, and the reason this is a filter rather than a blanket: the SAME
+# sentence from a member must still count. Without it the fix could be "ignore
+# all comments".
+require "#212 (the same words from a MEMBER) still lands in MENTIONED" \
+  in_section "MENTIONED" 212
+assert_eq "gate: an outsider cannot flip the veto — #210 still clears it" "10" "$(gate_rc 210)"
+assert_eq "gate: nor can an outsider trigger it — #211 still clears it"   "10" "$(gate_rc 211)"
+assert_eq "gate: a member mention still refuses"                          "1"  "$(gate_rc 212)"
+
+# ── a prose MENTION is not a marker, and must not be reported as one ──
+#
+# The round-10 backstop demotes anything containing the two adjacent words, which
+# is right for the veto direction but wrong about WHY. Reported as `present`, the
+# audit says "a closing-summary heading exists but no comment leads with one" and
+# the gate says "this issue already carries a closing-summary marker". Neither is
+# true of `I forgot the closing summary, sorry`: there is no heading and no
+# marker, only prose. And the file's own comment above `bare_re` still asserts
+# the opposite invariant -- that such prose stays flagged -- measured on 5 of 9
+# real issues. Code and stated requirement contradicted each other 165 lines
+# apart in one file.
+#
+# So the mention backstop gets its own class. It still refuses (the cheap
+# direction: a missed remediation beats a duplicate post), but it refuses while
+# saying what it actually found.
+require "#195 (prose mention only) is classified `mentioned`, not `present`" \
+  in_section "MENTIONED" 195
+refute  "#195 is NOT reported as carrying a heading"         in_section "PRESENT (unverified)" 195
+require "#196 (Chinese prose mention) lands there too"       in_section "MENTIONED" 196
+assert_grep "the MENTIONED section says no heading was RECOGNISED" \
+  "no closing-summary heading was RECOGNISED" "$OUT"
+# ...and does not overstate it. Two different situations land in this class and
+# the tool cannot tell them apart, so the line must not assert either one. The
+# first cut said "the phrase appears only in ordinary prose", which is false for
+# #173 (a real summary in a <details> disclosure) -- the same over-claim, in the
+# same file, that this whole class was split out to stop making.
+assert_grep "...and admits it does not tell prose from an unparsed heading" \
+  "does not tell them apart" "$OUT"
+GATE_195=$(gate_field 195 error)
+assert_grep "...and the gate stops claiming a marker exists" \
+  "no closing-summary heading was RECOGNISED" "$GATE_195"
+refute_grep "...the false 'already carries a marker' wording is gone from it" \
+  "already carries a closing-summary marker" "$GATE_195"
+
+# ── the recogniser sees a heading split inside a word ──
+#
+# `normalise` replaces a tag with a SPACE while a renderer concatenates, so
+# `Clos<b>ing</b>` normalises to `clos ing` and the two-token test misses it.
+# That was the round-12 CRITICAL. It no longer authorises anything (the gate
+# cannot authorise at all now), but it still costs a wasted human read, and the
+# de-spaced companion below is one line. It can only move issues TOWARD the
+# veto, which is the sound direction.
+require "#197 (heading split inside a word) is recognised, not left unseen" \
+  bash -c 'printf "%s\n" "$0" | grep -qE -- "(^|[^0-9])#197([^0-9]|$)"' "$OUT"
+refute  "#197 is NOT in MISSING"                             flagged 197
+assert_eq "...and the gate refuses rather than clearing the veto" "1" "$(gate_rc 197)"
+
+# ── stage 1 in isolation: the SHAPE recognisers, with the backstop switched off ──
+#
+# The round-10 mention backstop catches almost everything the shape recognisers
+# catch, so it MASKS them. Measured, not guessed: emptying `html_pfx` (the whole
+# round-9 inline-tag whitelist) left the suite fully green before the `mentioned`
+# class existed, and replacing all four recognisers with `false` turned only two
+# assertions red. Round 9`s forty-five lines of reasoning about which tags may
+# count as an invisible prefix -- why `<blockquote>` must NOT, why an autolink is
+# visible -- had nothing holding them.
+#
+# Splitting `mentioned` out restored a lot of that weight (all-four-off is now 21
+# red), but `html_pfx` itself still only moves two. So stage 1 is exercised on
+# its own: a COPY of the shipped script with the backstop branch disabled, run
+# over the same fixtures. No test-only switch is added to the production script
+# — an env var that changes how a safety classifier decides is exactly the kind
+# of thing that gets found in the wild by someone who is not testing.
+STAGE1=$(mktemp "${TMPDIR:-/tmp}/csw-stage1-XXXXXX") || STAGE1=""
+require "a stage-1 copy could be created" bash -c '[ -n "$0" ]' "$STAGE1"
+trap 'rm -f "$STAGE1"' EXIT HUP INT TERM
+sed 's/elif ($bodies | any(mentions_marker))/elif (false)/' "$HELPER" > "$STAGE1"
+require "the backstop is actually disabled in the copy" \
+  bash -c '! grep -q "any(mentions_marker)" "$0" && grep -q "elif (false)" "$0"' "$STAGE1"
+S1_OUT=$(bash "$STAGE1" --json-file "$FIXTURE" 2>&1)
+# CONTROL: with the backstop off, a PROSE-only mention must fall to MISSING.
+# Without this the disabling might have silently failed and stage 1 would be
+# grading the same masked run again.
+require "stage1 control: a prose-only mention now falls to MISSING" \
+  bash -c 'printf "%s\n" "$0" | awk "/^MISSING/,/^\$/" | grep -qE -- "(^|[^0-9])#195([^0-9]|$)"' "$S1_OUT"
+
+# Now the claims round 9 actually made, each answerable by the recognisers alone.
+# WHAT STAGE 1 ACTUALLY COVERS — measured, and it is not what round 9 claimed.
+#
+# Running the fixtures with the backstop off gives a clean answer:
+#
+#   #170 #171 #172   present        -> the shape recognisers really do see these
+#   #173 #183 #184   unrecognised   -> NOTHING in stage 1 sees them
+#   #185 #186        unrecognised      the mention backstop is their only cover
+#
+# So five of the seven "reader sees it, the recogniser does not" fixtures that
+# round 9 added are not recognised by round 9's regexes at all. Their assertions
+# (`is NOT in MISSING`) have been passing on the strength of round 10's
+# backstop, a mechanism written a round later. The fixture tested the OUTCOME
+# and the assertion text implied the MECHANISM; nothing connected them.
+#
+# The reasons are structural rather than oversights, which is why this is
+# recorded instead of patched:
+#   #184  the scan splits on newlines, so a tag whose attributes wrap across
+#         lines cannot be matched by any single-line regex.
+#   #183  `<b>` is not in `html_re` (which takes h1-h6 and summary), and
+#         `emph_re` is about markdown emphasis, not HTML bold.
+#   #173  `<details>` is not in the `html_pfx` whitelist — correctly: it RENDERS
+#         a disclosure triangle, and round 9's own criterion is that only
+#         invisible prefixes may be skipped. Adding it to buy a green line would
+#         break the rule the whitelist exists to state.
+#   #186  a heading inside `<blockquote>` — `<blockquote>` is deliberately
+#         excluded for the same reason.
+#
+# Widening the recognisers to cover them is the enumeration treadmill round 10
+# replaced. What was missing is not coverage, it is an honest statement of which
+# layer covers what — so that is what these assertions are.
+s1_seen() {     # $1 = issue, $2 = label — stage 1 recognises it
+  if printf '%s\n' "$S1_OUT" | awk '/^MISSING/,/^$/' | grep -qE -- "(^|[^0-9])#$1([^0-9]|$)"; then
+    fail "stage1 sees it: $2" "#$1 fell to MISSING — a shape recogniser regressed"
+  else
+    pass "stage1 sees it: $2"
+  fi
+}
+s1_backstop_only() {  # $1 = issue, $2 = label — ONLY the backstop covers it
+  if printf '%s\n' "$S1_OUT" | awk '/^MISSING/,/^$/' | grep -qE -- "(^|[^0-9])#$1([^0-9]|$)"; then
+    pass "backstop-only, as recorded: $2"
+  else
+    fail "backstop-only, as recorded: $2" \
+         "#$1 is now recognised by stage 1 — good news, but the note above is stale: move it to s1_seen"
+  fi
+}
+s1_seen 172 "a raw <h2> heading (html_re)"
+s1_backstop_only 173 "<details><summary> — <details> is a VISIBLE element"
+s1_backstop_only 183 "HTML bold pseudo-heading — <b> is not in html_re"
+s1_backstop_only 184 "<h2> attributes wrapped across lines — the scan is line-split"
+s1_backstop_only 185 "close bracket inside an attribute"
+s1_backstop_only 186 "heading inside an HTML blockquote — deliberately excluded"
+# The NEGATIVE half of round 9, and the half `html_pfx` actually earns its keep
+# on: a marker or an anchor before the hashes is NOT a CommonMark heading, so it
+# must not be promoted to `casing`. If `html_pfx` ever widens to admit a visible
+# prefix, these fire — with the backstop off, nothing else can mask it.
+for n in 170 171; do
+  if printf '%s\n' "$S1_OUT" | awk '/^CASING/,/^$/' | grep -qE -- "(^|[^0-9])#$n([^0-9]|$)"; then
+    fail "stage1: #$n (not a CommonMark heading) stays out of CASING" \
+         "html_pfx admitted a visible prefix"
+  else
+    pass "stage1: #$n (not a CommonMark heading) stays out of CASING"
+  fi
+done
+
+# ── per-recogniser acid, in stage 1 where it can actually fail ──
+#
+# `has_heading_anywhere` is a disjunction of four recognisers, and in the SHIPPED
+# pipeline each one can be deleted outright with every assertion in this file
+# still green -- the mention backstop covers the same fixtures. Measured for all
+# four. So "these fixtures are the regression lock for emph_re" was a claim
+# nothing could falsify, and it was written into the file as if it had been
+# checked.
+#
+# With the backstop off, each recogniser owns specific fixtures. Deleting one
+# drops exactly its own into MISSING, which is a statement that can be wrong and
+# therefore worth asserting. `present_re` is listed too, with the honest answer:
+# inside this disjunction it earns nothing the others do not already catch (it
+# is load-bearing elsewhere -- `lead_re` and `lead_has_content` both use it).
+s1_owner() {  # $1 = recogniser  $2 = space-separated fixtures it should own
+  local mut base_out mut_out lost
+  mut=$(mktemp "${TMPDIR:-/tmp}/csw-s1mut-XXXXXX") || { fail "stage1 acid: $1" "mktemp"; return; }
+  sed "s/ or test($1; \"i\")//" "$STAGE1" > "$mut"
+  base_out=$(bash "$STAGE1" --json-file "$FIXTURE" 2>&1 | awk '/^MISSING/,/^$/')
+  mut_out=$(bash "$mut" --json-file "$FIXTURE" 2>&1 | awk '/^MISSING/,/^$/')
+  rm -f "$mut"
+  for n in $2; do
+    if printf '%s\n' "$base_out" | grep -qE -- "(^|[^0-9])#$n([^0-9]|$)"; then
+      fail "stage1 acid: $1 owns #$n" "#$n is already MISSING before the mutation"
+      continue
+    fi
+    if printf '%s\n' "$mut_out" | grep -qE -- "(^|[^0-9])#$n([^0-9]|$)"; then
+      pass "stage1 acid: $1 owns #$n"
+    else
+      fail "stage1 acid: $1 owns #$n" "deleting $1 did not drop #$n — the recogniser is dead weight here"
+    fi
+  done
+}
+s1_owner bare_re "147 153"
+s1_owner emph_re "160 161"
+s1_owner html_re "172"
+# present_re: no fixture in this disjunction depends on it. Asserted as the
+# measured fact rather than left as an assumption in either direction.
+require "stage1 acid: present_re adds nothing to has_heading_anywhere (recorded)" \
+  bash -c '
+    mut=$(mktemp) || exit 1
+    sed "s/ or test(present_re; \"i\")//" "$0" > "$mut"
+    a=$(bash "$0"  --json-file "$1" 2>&1 | awk "/^MISSING/,/^\$/")
+    b=$(bash "$mut" --json-file "$1" 2>&1 | awk "/^MISSING/,/^\$/")
+    rm -f "$mut"
+    [ "$a" = "$b" ] || { echo "present_re now owns something — update the note above"; exit 1; }' \
+  "$STAGE1" "$FIXTURE"
 
 print_summary "check-closed-without-summary"
 exit $?

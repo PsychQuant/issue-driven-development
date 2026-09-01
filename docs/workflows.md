@@ -103,7 +103,7 @@ idd-all #N
 ```
 
 - **Use case**:diagnose 階段已 surface complexity verdict,user 已 review;接下來 implement+verify+close 走 automation
-- **Mode**:Hybrid(Plan tier 仍走 EnterPlanMode,Simple/Spectra 不阻擋)
+- **Mode**:Hybrid — 依 interaction 軸分流;**routing 不在此複述**,見 [`skills/idd-all/SKILL.md`](../plugins/issue-driven-dev/skills/idd-all/SKILL.md) 的 dispatch table(normative source)
 - **觸發點數**:1(after diagnose)
 - **Assumptions**:`gh issue view #N` 已有 `## Diagnosis` comment
 - **Risks**:低 — deliberation 已 user-honored
@@ -404,7 +404,7 @@ idd-edit comment:NNN --append --body "..."
 
 - **Use case**:autonomous 持續執行;適合 well-bounded simple issues
 - **Mode**:Unattended
-- **Risks**:**極高** — deliberation 完全 absent;若 issue 模糊 / multi-step / Plan tier,Plan gate 仍 trigger 但 EnterPlanMode 無人 approve → 卡住
+- **Risks**:**極高** — deliberation 完全 absent。Plan tier 在 unattended 下**不會卡住,但也不會被審**:`idd-all` 的 dispatch table 把它降級走 Phase 3a `/idd-implement`(見 `skills/idd-all/SKILL.md`,那裡是 normative source),final report 標 `[Plan tier deliberation skipped under unattended mode]`。**沉默地少了一道 approval gate,比卡住更難察覺** —— issue 模糊 / multi-step 時尤其危險。
 
 #### P-cron-autopilot
 
@@ -567,7 +567,7 @@ Q1: 是 single issue 還是 multi issues?
 
 > `/loop /idd-all #N`(其中 #N diagnose 後 verdict = Plan)
 
-**Wrong**:Plan tier EnterPlanMode 需 user approve,unsupervised loop 無人 approve,**卡住**。應改 verdict 為 Simple,或拒絕進 loop。
+**Wrong**:unattended 下 Plan tier 會被**降級**而不是卡住(見 `skills/idd-all/SKILL.md` 的 dispatch table),所以 deliberation 是**沉默地**消失的 —— 比卡住更難察覺。應改 verdict 為 Simple,或拒絕進 loop。
 
 ### A3. P-chain-from-root 多 root 用 batch 跑
 

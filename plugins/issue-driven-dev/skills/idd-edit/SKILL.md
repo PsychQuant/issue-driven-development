@@ -214,7 +214,6 @@ done
 [ "$REFUSED_TOTAL" -gt 0 ] && exit 4
 exit 0
 ```
-```
 
 ### Step 1.5: Validate target (R5 author gate)
 
@@ -302,7 +301,12 @@ if [ "$SCOPE_FLAG" = "whole-comment" ]; then
 $EDIT_MARKER"
 elif [ -n "$SECTION_FLAG" ]; then
     # Named section replacement via getline pattern (closes R3 C3 BSD awk newline reject)
-    REPL_FILE="/tmp/idd-edit-repl-${COMMENT_ID}.md"
+    # Per-run, because this file becomes part of an edited GitHub comment.
+    # The #288 scan exempted this whole directory on the strength of a reason
+    # that named only the backup directory — so two egress bodies inherited an
+    # exemption written for something else.
+    REPL_FILE=$(mktemp "${TMPDIR:-/tmp}/idd-edit-repl-XXXXXX") || {
+      echo "✗ cannot stage the replacement text — refusing" >&2; exit 1; }
     echo "$BODY_INPUT" > "$REPL_FILE"
     NEW_BODY=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
                   section-replace "$BACKUP_FILE" "$SECTION_FLAG" "$REPL_FILE")
@@ -364,7 +368,11 @@ Confirm edit? (y/n)
 **關鍵**：用 `-F body=@file`（不是 `-f body=""`）避免 backtick / 多行字串的 escape bug。
 
 ```bash
-TMP_BODY_FILE="/tmp/idd-edit-new-${COMMENT_ID}.md"
+# Per-run: this is the body that gets PATCHed into someone's comment. A fixed
+# name keyed only on the comment id collides between two sessions editing the
+# same comment, and the loser's text is what gets published.
+TMP_BODY_FILE=$(mktemp "${TMPDIR:-/tmp}/idd-edit-new-XXXXXX") || {
+  echo "✗ cannot stage the new body — refusing" >&2; exit 1; }
 echo "$NEW_BODY" > "$TMP_BODY_FILE"
 
 # #273：comment surgery 進 egress 網 — 原 raw `gh api` PATCH 完全繞過所有網
@@ -414,7 +422,7 @@ echo "  First 5 lines of new body: $UPDATED"
 ```
 /idd-edit comment:4241327867 --replace \
   --scope whole-comment \
-  --body-file=/tmp/new-implementation-summary.md \
+  --body-file=~/notes/new-implementation-summary.md \
   --reason="依新 skill 規則補圖下方資料/統計/結論說明"
 ```
 
@@ -431,7 +439,7 @@ echo "  First 5 lines of new body: $UPDATED"
 ```
 /idd-edit comment:4530594011 --replace \
   --section="### Strategy" \
-  --body-file=/tmp/new-strategy.md \
+  --body-file=~/notes/new-strategy.md \
   --reason="重新拆 Block A → B 依賴順序"
 ```
 
