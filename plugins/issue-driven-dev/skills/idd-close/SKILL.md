@@ -124,7 +124,15 @@ allowed-tools:
 # 我上一版加的「helper 不在就 abort」關掉了**缺席**那個洞，卻打開了**被替換**
 # 這個。這兩者是同一個問題的兩半：gate 的身分必須來自安裝位置，不能來自被稽核
 # 的那棵樹。
-HELPER="${CLAUDE_PLUGIN_ROOT:?未設 —— 中止：gate 的路徑不得從當前工作目錄解析（被稽核的 repo 可以自備一個同名檔）}/scripts/check-closed-without-summary.sh"
+# `:?` only demands NON-EMPTY, and non-empty is not the property that matters.
+# Set CLAUDE_PLUGIN_ROOT to a RELATIVE path and the gate resolves against $PWD —
+# which is the repo being audited, the exact hole the `:?` was added to close.
+# One character short of the fix it was written to be.
+case "${CLAUDE_PLUGIN_ROOT:?未設 —— 中止：gate 的路徑不得從當前工作目錄解析（被稽核的 repo 可以自備一個同名檔）}" in
+  /*) : ;;
+  *)  echo "✗ CLAUDE_PLUGIN_ROOT 必須是絕對路徑（現在是 '$CLAUDE_PLUGIN_ROOT'）—— 相對路徑會從被稽核的 repo 解析 gate" >&2; exit 1 ;;
+esac
+HELPER="${CLAUDE_PLUGIN_ROOT}/scripts/check-closed-without-summary.sh"
 [ -f "$HELPER" ] || { echo "✗ 找不到 gate helper：$HELPER —— 中止（找不到 gate 等於沒有 gate）" >&2; exit 1; }
 
 VERDICT=$(bash "$HELPER" --issue "$NUMBER" ${GITHUB_REPO:+--repo "$GITHUB_REPO"}); GATE_RC=$?

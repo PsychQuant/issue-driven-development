@@ -577,14 +577,21 @@ assert_eq "veto: a zero-comment closed issue also exits 10"    "10" "$(gate_rc 1
 # converts the 0 to a 2. The assertion that pins the verdict code is the
 # `exits 10, not 0` one above; this one pins the property they jointly hold.
 # Verified by mutation both ways, round 12.
+# `seen` counts the iterations. Both sweeps below drive their loop from
+# `jq -r ".[].number"`, and if jq is missing or the fixture is malformed that
+# emits nothing: the loop runs zero times, `bad` stays empty, and the final
+# `[ -z "$bad" ]` passes having tested no input at all. The property being swept
+# is only as real as the sweep having happened.
 require "veto: NO input makes this script exit 0 in gate mode" \
   bash -c '
-    rcs=""
+    rcs=""; seen=0
     for n in $(jq -r ".[].number" "$1") 9999 abc "" 0 -1; do
+      seen=$((seen + 1))
       bash "$0" --json-file "$1" --issue "$n" >/dev/null 2>&1
       rc=$?
       [ "$rc" = 0 ] && rcs="$rcs $n"
     done
+    [ "$seen" -ge 10 ] || { echo "swept only $seen inputs — the fixture list did not load"; exit 1; }
     [ -z "$rcs" ] || { echo "exited 0 for:$rcs"; exit 1; }' \
   "$HELPER" "$FIXTURE"
 
@@ -653,11 +660,13 @@ require "veto: ...and says which flag was missing its value" \
 
 require "veto: ...and every gate reply carries authorises:false" \
   bash -c '
-    bad=""
+    bad=""; seen=0
     for n in $(jq -r ".[].number" "$1"); do
+      seen=$((seen + 1))
       a=$(bash "$0" --json-file "$1" --issue "$n" 2>/dev/null | jq -r ".authorises | tostring")
       [ "$a" = "false" ] || bad="$bad $n=$a"
     done
+    [ "$seen" -ge 10 ] || { echo "checked only $seen replies — the fixture list did not load"; exit 1; }
     [ -z "$bad" ] || { echo "not false for:$bad"; exit 1; }' \
   "$HELPER" "$FIXTURE"
 

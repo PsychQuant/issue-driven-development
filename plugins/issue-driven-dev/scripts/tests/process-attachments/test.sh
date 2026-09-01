@@ -37,7 +37,12 @@ case "${1:-}" in
       # because the bug lost everything AFTER the refusal.
       refusable) printf '{"body":"bad https://github.com/user-attachments/files/1/%%2e%%2e%%2fpwned.txt and good https://github.com/user-attachments/files/2/safe.pdf","comments":[]}\n' ;;
       # two legitimate attachments whose last URL segment is identical
-      collide)  printf '{"body":"a https://github.com/user-attachments/files/1/report.pdf and b https://github.com/user-attachments/files/2/report.pdf","comments":[]}\n' ;;
+      # THREE, not two. With only two, a de-collision suffix that is constant
+      # rather than URL-derived still produces two distinct names and every
+      # assertion passes — the "deterministic, derived from the URL" half of the
+      # fix had no control. The third one collides with the second unless the
+      # suffix actually distinguishes them.
+      collide)  printf '{"body":"a https://github.com/user-attachments/files/1/report.pdf and b https://github.com/user-attachments/files/2/report.pdf and c https://github.com/user-attachments/files/3/report.pdf","comments":[]}\n' ;;
       fail)     echo "gh: network error (stub)" >&2; exit 1 ;;
     esac ;;
   auth)   echo "stub-token" ;;
@@ -54,13 +59,21 @@ chmod +x "$STUB/gh"
 # was passing on an entry whose file had never existed.
 cat > "$STUB/curl" <<'CURLSTUB'
 #!/usr/bin/env bash
-out=""
+# Content DERIVED FROM THE URL. The first version wrote the same bytes for every
+# download, so every file had the same sha256 — while fixture 16`s note claimed
+# the manifest kept "two rows with different sha256", and an implementation that
+# downloaded the FIRST attachment twice would have passed unnoticed. A stub that
+# makes all inputs identical cannot test a defect about telling them apart.
+out=""; url=""
 while [ $# -gt 0 ]; do
-  [ "$1" = "-o" ] && { out="${2:-}"; shift; }
+  case "$1" in
+    -o) out="${2:-}"; shift ;;
+    http*) url="$1" ;;
+  esac
   shift
 done
 [ -n "$out" ] || exit 1
-printf 'stub-bytes' > "$out"
+printf 'stub-bytes for %s' "$url" > "$out"
 CURLSTUB
 chmod +x "$STUB/curl"
 export PATH="$STUB:$PATH"
@@ -245,7 +258,11 @@ refute "f12h a name that decodes to '..' is refused outright" \
 # refusal was correct; leaving it to errexit was not.
 W="$(mktemp -d)"; cd "$W"
 export GH_STUB_MODE=refusable
-run_pa download 22 > "$W/out13.txt" 2>&1; RC13=$?
+# stderr kept SEPARATE. This block used to fold `2>&1` and then assert the
+# refusal was "visible on stderr" — which an implementation printing only to
+# stdout also satisfies, and in a caller that machine-reads or discards stdout
+# the refusal is then silent. The claim and the check disagreed.
+run_pa download 22 > "$W/out13.txt" 2> "$W/err13.txt"; RC13=$?
 MAN13=".claude/.idd/attachments/issue-22/_manifest.json"
 require "f13a a refused name does not abort the run" test -f "$MAN13"
 require "f13b the refusal is recorded, not silently dropped" \
@@ -254,7 +271,10 @@ require "f13c the SAFE attachment beside it is still collected" \
   bash -c 'jq -e ".files[] | select(.filename == \"safe.pdf\" and .error == null)" "$0" >/dev/null' "$MAN13"
 require "f13c2 ...and actually landed on disk" \
   test -f ".claude/.idd/attachments/issue-22/safe.pdf"
-require "f13d and the refusal is visible on stderr" grep -q 'refusing an unsafe' "$W/out13.txt"
+require "f13d and the refusal is visible on stderr" grep -q 'refusing an unsafe' "$W/err13.txt"
+# `RC13` was captured and never read. A run that produces the manifest and then
+# exits non-zero passes every assertion above while a real caller aborts.
+require "f13e ...and the run itself still succeeds" bash -c '[ "$0" = 0 ]' "$RC13"
 
 # ── Fixture 14: the refusal must not poison the two manifest CONSUMERS ──
 #
@@ -278,7 +298,7 @@ require "f13d and the refusal is visible on stderr" grep -q 'refusing an unsafe'
 # the command fails, the pipeline prints nothing, and a negative grep passes for
 # the wrong reason. The first cut of f14a did exactly that and was vacuous.
 run_pa verify 22 > "$W/out14.txt" 2>&1; RC14=$?
-run_pa check  22 > "$W/out14chk.txt" 2>&1
+run_pa check  22 > "$W/out14chk.txt" 2>&1; RC14CHK=$?
 refute_grep "f14a verify does not report a file literally named 'null'" \
   "references null" "$(cat "$W/out14.txt")"
 require "f14b verify still succeeds — a refusal is a recorded state, not drift" \
@@ -298,6 +318,8 @@ assert_grep "f14d check reports the refusal too, instead of a bare up-to-date" \
   "permanently unavailable, not re-fetchable" "$(cat "$W/out14chk.txt")"
 assert_grep "f14d2 ...and still reports the manifest itself as up-to-date" \
   "Manifest up-to-date" "$(cat "$W/out14chk.txt")"
+require "f14d3 ...and check exits 0 — a refusal is a recorded state, not drift" \
+  bash -c '[ "$0" = 0 ]' "$RC14CHK"
 # CONTROL: a genuinely absent file must STILL block. Without this, the fix
 # above could have been "skip everything", which passes f14a-f14c and removes
 # the gate. Delete the safe attachment and verify must fail again.
@@ -331,19 +353,30 @@ probe_df() {  # $1 = url ; prints RC:<rc> and the output
     if out=$(decode_filename "$1"); then printf "ACCEPT:%s" "$out"; else printf "REFUSE"; fi
   ' _ "$1"
 }
-assert_grep "f15a a NUL escape is refused, not silently dropped" \
+# EXACT match, not a substring. `ACCEPT:REFUSE-me.pdf` contains "REFUSE", so the
+# unanchored form could not tell a refusal from an accepted filename that
+# happens to say the word.
+assert_eq "f15a a NUL escape is refused, not silently dropped" \
   "REFUSE" "$(probe_df 'https://x/files/1/trusted.pdf%00')"
-assert_grep "f15b a trailing-newline escape is refused" \
+assert_eq "f15b a trailing-newline escape is refused" \
   "REFUSE" "$(probe_df 'https://x/files/1/trusted.pdf%0A')"
-assert_grep "f15c an embedded newline is refused too" \
+assert_eq "f15c an embedded newline is refused too" \
   "REFUSE" "$(probe_df 'https://x/files/1/tru%0Asted.pdf')"
-assert_grep "f15d invalid UTF-8 is refused rather than folded to U+FFFD" \
+assert_eq "f15d invalid UTF-8 is refused rather than folded to U+FFFD" \
   "REFUSE" "$(probe_df 'https://x/files/1/%FF.txt')"
 # CONTROL: the ordinary name must still be accepted, or "refuse everything"
 # would pass every line above.
-assert_grep "f15e a plain filename is still accepted" \
+# The two invalid-UTF-8 bytes the comment names as colliding are BOTH tested.
+# Only %FF was, so "and %FE folds to the same name" was an unchecked claim.
+assert_eq "f15d2 the OTHER invalid byte the note names is refused too" \
+  "REFUSE" "$(probe_df 'https://x/files/1/%FE.txt')"
+assert_eq "f15d3 a carriage return is refused" \
+  "REFUSE" "$(probe_df 'https://x/files/1/tru%0Dsted.pdf')"
+assert_eq "f15d4 a tab is refused" \
+  "REFUSE" "$(probe_df 'https://x/files/1/tru%09sted.pdf')"
+assert_eq "f15e a plain filename is still accepted" \
   "ACCEPT:trusted.pdf" "$(probe_df 'https://x/files/1/trusted.pdf')"
-assert_grep "f15f ...and a percent-encoded space still decodes" \
+assert_eq "f15f ...and a percent-encoded space still decodes" \
   "ACCEPT:my report.pdf" "$(probe_df 'https://x/files/1/my%20report.pdf')"
 
 # ── Fixture 16: two different URLs, same basename ──
@@ -357,14 +390,28 @@ W="$(mktemp -d)"; cd "$W"
 export GH_STUB_MODE=collide
 run_pa download 33 > "$W/out16.txt" 2>&1
 MAN16=".claude/.idd/attachments/issue-33/_manifest.json"
-require "f16a both attachments are recorded" \
-  bash -c '[ "$(jq ".files | length" "$0")" = 2 ]' "$MAN16"
-require "f16b ...under DIFFERENT filenames" \
-  bash -c '[ "$(jq -r "[.files[].filename] | unique | length" "$0")" = 2 ]' "$MAN16"
+require "f16a all three attachments are recorded" \
+  bash -c '[ "$(jq ".files | length" "$0")" = 3 ]' "$MAN16"
+require "f16b ...under THREE DISTINCT filenames" \
+  bash -c '[ "$(jq -r "[.files[].filename] | unique | length" "$0")" = 3 ]' "$MAN16"
 require "f16c ...and both files exist on disk" \
   bash -c 'for f in $(jq -r ".files[].filename" "$0"); do [ -f ".claude/.idd/attachments/issue-33/$f" ] || exit 1; done' "$MAN16"
 run_pa verify 33 > "$W/out16v.txt" 2>&1
 require "f16d verify passes with both present" bash -c '[ "$0" = 0 ]' "$?"
+# The point of the de-collision is that BOTH attachments survive — so the two
+# files must differ, and each must match the URL it was recorded against.
+require "f16e every file really holds different content" \
+  bash -c '
+    d=".claude/.idd/attachments/issue-33"
+    n=$(jq -r ".files[].filename" "$0" | wc -l | tr -d " ")
+    u=$(for f in $(jq -r ".files[].filename" "$0"); do shasum -a 256 "$d/$f" | cut -d" " -f1; done | sort -u | wc -l | tr -d " ")
+    [ "$n" = "$u" ]' "$MAN16"
+require "f16f ...and each file matches the URL its manifest row names" \
+  bash -c '
+    d=".claude/.idd/attachments/issue-33"
+    jq -r ".files[] | \"\(.filename)\t\(.url)\"" "$0" | while IFS="$(printf "\t")" read -r fn u; do
+      grep -qF -- "$u" "$d/$fn" || exit 1
+    done' "$MAN16"
 cd /; rm -rf "$W"
 
 rm -rf "$STUB"

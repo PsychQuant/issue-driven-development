@@ -86,10 +86,14 @@ gate_case "control: a real summary in the newest comment REFUSES (rc=1)" success
 # really are no comments. rc=10, and 10 is not permission -- idd-close still has
 # to read the comment set (there is none here) and get a human to say yes.
 gate_case "a genuinely empty comment set clears the veto (rc=10, not 0)" genuinely-empty 10
-assert_grep "...and reports class=unrecognised, not missing" \
-  '"class": "unrecognised"' "$(cat "$GATE_OUT")"
-assert_grep "...and says on the wire that it authorises nothing" \
-  '"authorises": false' "$(cat "$GATE_OUT")"
+# Field values again, for the same reason as the refutations above: these two
+# grepped the pretty-printer`s space after the colon, so a switch to `jq -c`
+# turned them red while the fields were correct — the same coupling, pointing
+# the other way. Anything that reads the wire format reads it with jq.
+require "...and reports class=unrecognised, not missing" \
+  bash -c 'printf "%s" "$0" | jq -e ".class == \"unrecognised\"" >/dev/null' "$(cat "$GATE_OUT")"
+require "...and says on the wire that it authorises nothing" \
+  bash -c 'printf "%s" "$0" | jq -e ".authorises == false" >/dev/null' "$(cat "$GATE_OUT")"
 
 echo "── live gate: every failure must refuse ──"
 # THE #320 CRITICAL. `gh api ... | jq -s 'add // []'` — without pipefail the
@@ -97,14 +101,23 @@ echo "── live gate: every failure must refuse ──"
 # therefore looked exactly like "this issue has no comments".
 gate_case "a failed comment fetch refuses (rc=2), NOT rc=0" total-failure 2
 TOTAL=$(cat "$GATE_OUT")
-refute_grep "a failed fetch never claims class=missing" '"class": "missing"' "$TOTAL"
-refute_grep "a failed fetch never claims the comment set is complete" '"comments_complete": true' "$TOTAL"
+# Field VALUES, via jq. The refutations here used to be `refute_grep` on
+# `"class": "missing"` — which contains the pretty-printer`s space after the
+# colon. Switch the helper to `jq -c` (a plausible tidy-up) and the needle stops
+# matching while the dangerous field is right there, so both refutations pass on
+# the thing they exist to forbid.
+require "a failed fetch never claims a class at all" \
+  bash -c 'printf "%s" "$0" | jq -e ".class == null" >/dev/null' "$TOTAL"
+require "a failed fetch never claims the comment set is complete" \
+  bash -c 'printf "%s" "$0" | jq -e ".comments_complete == false" >/dev/null' "$TOTAL"
 
 # Worse than total failure and not exotic: --paginate streams OLDEST first, so
 # a mid-pagination failure keeps the old comments and loses the newest — which
 # is by construction where a closing summary is.
 gate_case "a partially-paginated fetch refuses (rc=2)" partial-pagination 2
-refute_grep "a partial fetch never claims class=missing" '"class": "missing"' "$(cat "$GATE_OUT")"
+require "a partial fetch never claims class=missing/unrecognised" \
+  bash -c 'printf "%s" "$0" | jq -e ".class != \"missing\" and .class != \"unrecognised\"" >/dev/null' \
+  "$(cat "$GATE_OUT")"
 
 gate_case "an unreachable issue-view refuses (rc=2)"     issue-view-fails 2
 gate_case "a non-array comments response refuses (rc=2)" not-an-array     2
@@ -132,10 +145,29 @@ gate_case "a non-numeric --issue refuses (rc=2)"   success 2 --issue abc --repo 
 
 # Whatever happens, gate mode emits ONE JSON object — a caller that has to tell
 # JSON from a sentence will eventually get it wrong.
-for m in success genuinely-empty total-failure partial-pagination not-an-array open-issue; do
-  require "gate: $m emits one parseable JSON object" \
-    bash -c 'GATE_STUB="$2" PATH="$3:$PATH" bash "$0" --issue 42 --repo o/r 2>/dev/null | jq -e "type == \"object\"" >/dev/null' \
+# ONE, counted. `jq -e "type == \"object\""` accepts a STREAM of objects and
+# reports on each — so two `gate_out` calls, or a stray second object, passed a
+# test whose name is "emits ONE JSON object". `jq -s "length == 1"` is the
+# assertion the name was making.
+#
+# The list also gains the error branches it was missing. They were covered for
+# their EXIT CODE only, so deleting a `gate_out` from any of them left rc=2
+# intact and the caller holding an empty reply.
+for m in success genuinely-empty total-failure partial-pagination not-an-array \
+         open-issue issue-view-fails no-repo; do
+  require "gate: $m emits exactly ONE parseable JSON object" \
+    bash -c 'GATE_STUB="$2" PATH="$3:$PATH" bash "$0" --issue 42 --repo o/r 2>/dev/null \
+             | jq -s -e "length == 1 and (.[0] | type) == \"object\"" >/dev/null' \
     "$SCRIPT" "" "$m" "$STUB"
+done
+# The argument-error branches too: they refuse before any fetch, and they must
+# still answer in JSON rather than in prose.
+for a in '--issue=' '--issue abc'; do
+  # shellcheck disable=SC2086
+  require "gate: '$a' still answers with exactly ONE JSON object" \
+    bash -c 'GATE_STUB=success PATH="$2:$PATH" bash "$0" $1 --repo o/r 2>/dev/null \
+             | jq -s -e "length == 1 and (.[0] | type) == \"object\"" >/dev/null' \
+    "$SCRIPT" "$a" "$STUB"
 done
 
 # And the advisory contract must survive untouched: audit mode still exits 0.

@@ -226,6 +226,13 @@ GATE_FILE_LIST
 # omitted -- and gh-egress's mention net then REFUSES every legitimate @mention.
 # Both ends of the documented flow were broken at once: the gate could not fire,
 # and the net blocked unconditionally.
+# Enumerated FIRST, and required non-empty. The loop used to be driven straight
+# from the `grep -rl` in its here-doc, so deleting the only consuming line in a
+# file removed that file from the loop and the suite stayed green — the guard
+# disappeared together with its subject. Same shape as a scope with no control.
+ATTEST_FILES=$(grep -rlE --include='*.md' -- 'MENTION_ATTESTED:\+' "$PLUGIN/skills" 2>/dev/null)
+require "at least one MENTION_ATTESTED consumer exists (guards a vacuous sweep)" \
+  bash -c '[ -n "$0" ]' "$ATTEST_FILES"
 while IFS= read -r gf; do
   [ -z "$gf" ] && continue
   rel="${gf#$PLUGIN/}"
@@ -239,7 +246,7 @@ while IFS= read -r gf; do
       esac ;;
   esac
 done <<ATTEST_FILE_LIST
-$(grep -rlE --include='*.md' -- 'MENTION_ATTESTED:\+' "$PLUGIN/skills" 2>/dev/null)
+$ATTEST_FILES
 ATTEST_FILE_LIST
 
 # ── a cleanup trap must not swallow the signal that fired it ──

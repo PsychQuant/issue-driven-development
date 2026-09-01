@@ -187,6 +187,53 @@ assert_grep "...and must write the basis into the draft" \
   '在 draft 裡明寫依據' "$CLOSE_MD"
 assert_grep "...and makes the human confirmation non-optional" \
   '強制，無無人值守路徑' "$CLOSE_MD"
+
+# ── the PRICE has to be true in the prose, not merely stated in it ──
+#
+# The three assertions above check that sentences EXIST. The claim they stand in
+# for is "`--retroactive` has no unattended path", and a sentence saying so
+# survives every edit that reintroduces one. Deleting the operative confirmation
+# step while keeping its description, or adding an unattended branch beside it,
+# leaves all three green — and the round-12 price is then false in the shipped
+# skill while its own test reports otherwise. That is the exact shape this file
+# exists to catch, one level up from where it was looking.
+#
+# So: no escape hatch may exist, and the confirmation must come BEFORE the post.
+for HATCH in -- '--yes' '--no-confirm' '--force-confirm' 'skip-confirm' 'AUTO_CONFIRM'; do
+  [ "$HATCH" = "--" ] && continue
+  refute_grep "no '$HATCH' escape hatch around the retroactive confirmation" \
+    "$HATCH" "$CLOSE_MD"
+done
+# Unattended-mode words may APPEAR (the file explains why there is no such path);
+# what must not exist is one of them promising `--retroactive` a way through.
+require "no unattended/loop/cron branch offers --retroactive a way past the human" \
+  bash -c '
+    bad=$(printf "%s\n" "$0" \
+      | grep -nE "unattended|/loop|cron|autopilot|noninteractive" \
+      | grep -iE "retroactive" \
+      | grep -vE "不再有無人值守|無無人值守|no unattended|沒有無人值守|除外|不得省略")
+    [ -z "$bad" ] || { printf "%s\n" "$bad"; exit 1; }' "$CLOSE_MD"
+# ORDER: the confirmation step must be described before the publish step. A
+# mandate that lands after the post is not a gate.
+require "the confirmation is documented BEFORE the publish step" \
+  bash -c '
+    C=$(printf "%s\n" "$0" | grep -n "拿到人的確認才 post" | head -1 | cut -d: -f1)
+    P=$(printf "%s\n" "$0" | grep -n "^### Step 4: Post\|publish_and_close" | head -1 | cut -d: -f1)
+    [ -n "$C" ] && [ -n "$P" ] && [ "$C" -lt "$P" ]' "$CLOSE_MD"
+
+# `GATE_RC` must be the helper`s exit status, not a number set nearby. The two
+# assertions above check two disconnected strings, so `bash "$HELPER" …` followed
+# by an unrelated `GATE_RC=10` passes both.
+require "GATE_RC is captured from the helper invocation itself" \
+  bash -c 'printf "%s\n" "$0" | grep -q "VERDICT=\$(bash \"\$HELPER\".*); GATE_RC=\$?"' "$CLOSE_MD"
+# ...and the helper path must be ABSOLUTE. `${CLAUDE_PLUGIN_ROOT:?}` only
+# requires non-empty: set it to a relative path and the gate resolves against
+# $PWD, which is the audited repo — the hole the `:?` was added to close, one
+# character short.
+assert_grep "the gate helper path is required to be absolute" \
+  '必須是絕對路徑' "$CLOSE_MD"
+require "...checked with a leading-slash case, not merely described" \
+  bash -c 'printf "%s\n" "$0" | grep -A1 "case .\${CLAUDE_PLUGIN_ROOT" | grep -qE "^ +/\*\)"' "$CLOSE_MD"
 refute_grep "idd-close no longer tells anyone that exit 0 may proceed" \
   '只有 `rc == 0` 放行' "$CLOSE_MD"
 
