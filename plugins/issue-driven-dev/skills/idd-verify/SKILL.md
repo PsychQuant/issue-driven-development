@@ -262,12 +262,27 @@ Source-of-truth attachments (repo-relative; read with your file tools): ${ATTACH
 EW_SECTIONS='Sister Bugs Filed|Sister Concerns Filed|Follow-up Findings Filed|Closing Follow-ups Filed|Tangential Observations|Linked-Context Siblings Filed'
 collect_external_writes() {   # $1 = issue number
   local raw; raw=$(mktemp) || return 1
+  # WHO wrote it, and WHERE one comment ends. Two separate defects, one fetch.
+  #
+  # The author filter: this text goes verbatim into every reviewer context, so a
+  # comment from anyone able to type `### Sister Bugs Filed` injected content
+  # into the whole ensemble and could move the external-write classification.
+  # Same defect the classifier had, same trust set.
+  #
+  # The separator: bodies used to be concatenated with nothing between them, and
+  # the section terminator only fires on a heading — so a section running to the
+  # end of one comment SWALLOWED the next comment whole unless that comment
+  # happened to open with a heading.
   if ! gh api "repos/$GITHUB_REPO/issues/$1/comments" --paginate \
-         --jq '.[] | .body' >"$raw" 2>/dev/null; then
+         --jq '.[] | select((.author_association // "OWNER") as $a
+                            | $a == "OWNER" or $a == "MEMBER" or $a == "COLLABORATOR"
+                              or ($a | test("BOT"; "i")))
+               | "EW_COMMENT_SEP", .body' >"$raw" 2>/dev/null; then
     rm -f "$raw"; return 1        # 抓取失敗 → 回報 UNKNOWN，不是「沒有」
   fi
   # ...外加 issue body：`Linked-Context Siblings Filed` 是 PATCH 進 body 的，
   # 只掃 comment 會讓那一類永遠回報 UNKNOWN。
+  printf 'EW_COMMENT_SEP\n' >>"$raw"
   if ! gh api "repos/$GITHUB_REPO/issues/$1" --jq '.body' >>"$raw" 2>/dev/null; then
     rm -f "$raw"; return 1
   fi
@@ -280,6 +295,9 @@ collect_external_writes() {   # $1 = issue number
     # never matches, so a section captures to END OF FILE and swallows every
     # later comment. Written out longhand instead.
     f && /^(#|##|###)[[:space:]]/ { f = 0 }
+    # A comment boundary ends a section as surely as a heading does. Without it
+    # a section captured across the seam into the next comment.
+    /^EW_COMMENT_SEP$/ { f = 0; next }
     f { print }
   ' "$raw"
   # Capture awk's status BEFORE rm, or the function returns rm's — and rm
@@ -307,7 +325,21 @@ EW_OK=1
 #   <content>   scanned, and these are the external writes
 #   (none)      scanned, and there were none
 #   (UNKNOWN)   NOT scanned — the fetch failed; say nothing about this issue
-for I in ${REFD_ISSUES:-$NUMBER}; do
+# RESOLVED, not defaulted. `${REFD_ISSUES:-$NUMBER}` narrows in silence: on a PR
+# that Refs #10 and #11, running this before Step 0.7 has resolved the set scans
+# only $NUMBER, and #11`s out-of-diff writes are permanently absent with no
+# UNKNOWN to show for it. And `--issue ""` leaves both the variable and the
+# fallback empty, so the loop ran zero times and the run carried on with a
+# default block.
+#
+# A narrowing that produces no evidence of having narrowed is the same failure
+# this whole collector exists to prevent, one level up.
+: "${REFD_ISSUES:?REFD_ISSUES must be resolved by Step 0.5 (every input mode) and Step 0.7 (PR override) BEFORE the external-writes collector runs — a defaulted list scans the wrong set and says nothing about it}"
+if [ -z "${REFD_ISSUES// /}" ]; then
+  echo "✗ EW_LIST_EMPTY: the resolved issue list is empty — refusing to report an empty blast radius for a set that was never established" >&2
+  exit 1
+fi
+for I in $REFD_ISSUES; do
   if ! ew=$(collect_external_writes "$I"); then
     EW_OK=0
     EXTERNAL_WRITES="${EXTERNAL_WRITES}
@@ -323,7 +355,7 @@ ${ew}"
   else
     EXTERNAL_WRITES="${EXTERNAL_WRITES}
 --- #${I} ---
-(none — scanned successfully, no external-write records found.)"
+(no audit-trail record found. That is a statement about RECORDS, not about writes: if the implementation wrote to another issue and did not record it, this scan cannot see it. Treat the blast radius as unconfirmed, not empty.)"
   fi
 done
 if [ "$EW_OK" = 0 ]; then
@@ -440,7 +472,13 @@ printf '%s' "$EW_BLOCK" > "$VERIFY_DIR/ew-block.md"
 EW_DIGEST=$(printf '%s' "${EXTERNAL_WRITES:-}" \
   | awk -v allow="${EW_SECTIONS}" '
       BEGIN { n = split(allow, A, "|") }
-      /^--- #/ { iss = $2; gsub(/[^0-9]/, "", iss); next }
+      # The WHOLE line must be the marker this collector writes, and the number
+      # must already BE a number. `gsub(/[^0-9]/, "", iss)` was not validation —
+      # it MANUFACTURED a number from whatever it was handed, so a comment
+      # containing `--- #abc123 ---` produced issue 123 and the next line forged
+      # an entry for an issue that was never referenced. Stripping is not checking.
+      /^--- #[0-9]+ ---$/ { iss = $2; sub(/^#/, "", iss); next }
+      /^--- #/ { iss = ""; next }        # marker-shaped but not the marker
       /^###+[ 	]/ {
         name = $0
         sub(/^###+[ 	]+/, "", name)
