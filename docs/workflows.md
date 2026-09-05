@@ -375,7 +375,7 @@ idd-edit comment:NNN --append --body "..."
 
 #### P-ask-history — issue 知識庫問答（#72，v2.99+）
 
-`idd-ask "<自然語言問題>"` → decide-to-search gate → retrieval（delegate idd-find backend）→ top-N 全文（5／上限 10）→ grounded 合成答案（claim 必附引用、source priority、`### Referenced Issues`、查無誠實）。bug 貌問題**不觸發 diagnose**。
+`idd-ask "<自然語言問題>" --corpus all` → decide-to-search gate → 保留idd-find issue backend＋有界Discussion候選 → 合併top-N全文（總數5／上限10）→ grounded答案與精確來源。Discussion留言／回覆分頁，API失敗或截斷明示；提案、決定、更正與驗證結果分清，流程狀態不是正確性保證。`--corpus issues`可保留issue-only；bug貌問題不觸發diagnose。
 
 - **Use case**：「當時為什麼這樣決定 / X 怎麼運作」— 還原 decision rationale
 - **Risk**：zero state / 中 token（top-N 全文是本質成本，有界）
@@ -631,3 +631,16 @@ Q1: 是 single issue 還是 multi issues?
   4. 評估是否需要新增到 § Path Selection Decision Tree
 - **棄用 path 時**:不要刪掉,**標記 deprecated**並 cross-link 到取代 path,保留歷史 audit trail
 - **避免 drift**:本文件 grow 成 second source of truth(各 path 具體規則在這邊複製,而非 cross-link 出去)= violation
+
+## P-discussion-capture — 人與AI討論的保存與接續（#331）
+
+`idd-discuss <topic>` 將使用者明確指定的可見來源整理為草稿。當本次已明確要求建立或
+追加Discussion，完成既有privacy／mention gate後才發布。首次主文保存初次快照，
+後續以新source_id追加完整摘要及來源；不覆寫人工內容。Topic ID不是標題，來源內容
+變動不能沿用舊source_id。不確定寫入結果先核對遠端，沒有證據就停止重送。
+
+`idd-discuss`是受授權的寫入primitive；`idd-ask`是read-only知識查詢。形成具體工作時，
+仍由顯式的`idd-issue --from-discussion`接回issue lifecycle。這條路徑不自動建立所有
+AI歷史、不背景監聽、不保證AI判斷正確，也不提供跨裝置atomic exactly-once。
+
+詳見[capture contract](../plugins/issue-driven-dev/references/discussion-capture.md)。

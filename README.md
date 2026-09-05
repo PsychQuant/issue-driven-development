@@ -62,3 +62,12 @@ Each step is one skill. See [the plugin README](./plugins/issue-driven-dev/READM
 ## License
 
 MIT
+
+## 可追溯的 AI 討論（3.1.0）
+
+`idd-discuss` 將明確指定的人與 AI 對話整理為本地草稿，取得本次發布授權後建立或追加
+GitHub Discussion。它保留來源與更正歷史，使用穩定ID避免正常重試重複發布；不確定結果
+先核對，不盲重送。`idd-ask --corpus all` 可查回 Discussion 主文、留言與回覆，並保留
+既有 issue 檢索。這改善可追溯性，不代表所有 AI 溝通或正確性問題都已解決。
+
+詳細契約見 [Discussion capture](plugins/issue-driven-dev/references/discussion-capture.md)。

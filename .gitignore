@@ -14,3 +14,7 @@ openspec/.vector-search.db*
 # ephemera，與上面的 tree-lock / state/ 同類：可重新產生、不是 durable artifact。
 .wiki-last-sync
 **/.impeccable/
+
+# Python helper/test bytecode
+__pycache__/
+*.pyc

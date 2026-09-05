@@ -229,3 +229,11 @@ opened.
   — why "is this private?" is AI judgment, not keyword matching.
 - `references/config-protocol.md` §third-party detection — the viewerPermission +
   `isPrivate` classification this gate reuses.
+
+## Discussion snapshots (#331)
+
+`idd-discuss` uses `gh-egress.sh check --body-file <file> --title=<title>
+--scrub-attested <level>` on the exact rendered payload immediately before its GraphQL mutation.
+`check` runs the same attestation, privacy and mention nets and exits without invoking gh. It is
+validation only: a pass does not supply user authorization or certify semantic correctness. No
+scanner is duplicated in the Discussion publisher. Existing issue dispatch verbs are unchanged.

@@ -762,3 +762,22 @@ Session holds up to 50 scheduled tasks. Times are local timezone. Recurring task
 | Spawn manifest (chain-mode enqueue contract) | [`references/spawn-manifest.md`](../plugins/issue-driven-dev/references/spawn-manifest.md) |
 | Vagueness Likert scoring (Layer V anchors) | [`.claude/rules/attribute-assessment.md`](../.claude/rules/attribute-assessment.md) |
 | GitHub markdown math format rule | [`rules/github-math-format.md`](../plugins/issue-driven-dev/rules/github-math-format.md) |
+
+### `/idd-discuss`
+
+Capture a selected human/AI conversation topic as a local draft. An explicit request to publish
+or append authorizes that one operation after the privacy and mention gates. Existing roots and
+comments are immutable; corrections are new snapshots with new source IDs. Unknown provenance
+stays unknown, and uncertain writes require reconciliation rather than blind retry.
+
+**Syntax**: `/idd-discuss <topic or source scope> [--repo owner/repo] [--discussion N] [--publish]`
+
+**Spec**: [idd-discuss](../plugins/issue-driven-dev/skills/idd-discuss/SKILL.md).
+
+### `/idd-ask` — Discussion corpus selection
+
+`/idd-ask <question> [--repo owner/repo] [--limit N] [--corpus issues|discussions|all]`
+
+Default `all` combines issue and Discussion candidates before selecting at most ten full-text
+sources. Discussion comments and replies have exact citation URLs. `issues` retains the prior
+issue-only backend. Failed or bounded reads are disclosed as incomplete evidence.

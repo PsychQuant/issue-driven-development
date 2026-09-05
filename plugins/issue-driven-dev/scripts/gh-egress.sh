@@ -86,15 +86,15 @@
 set -u
 
 usage() {
-  echo "✗ gh-egress: usage: gh-egress.sh <create|comment|edit|edit-comment> [gh args...] --scrub-attested <enforce|warn|light>" >&2
+  echo "✗ gh-egress: usage: gh-egress.sh <create|comment|edit|edit-comment|check> [gh args...] --scrub-attested <enforce|warn|light>" >&2
 }
 
 # --- verb (first positional) -------------------------------------------------
 VERB="${1:-}"
 case "$VERB" in
-  create|comment|edit|edit-comment) shift ;;
+  create|comment|edit|edit-comment|check) shift ;;
   "") echo "✗ gh-egress: missing egress verb." >&2; usage; exit 14 ;;
-  *)  echo "✗ gh-egress: unknown egress verb '$VERB' (only create|comment|edit|edit-comment route through this gate)." >&2; usage; exit 14 ;;
+  *)  echo "✗ gh-egress: unknown egress verb '$VERB' (only create|comment|edit|edit-comment|check route through this gate)." >&2; usage; exit 14 ;;
 esac
 
 # --- parse: pull out --scrub-attested, forward everything else verbatim -------
@@ -212,6 +212,12 @@ case "$ATTESTED" in
   *)  echo "✗ gh-egress: REFUSED — invalid attestation level '$ATTESTED' (expected enforce|warn|light)." >&2
       exit 13 ;;
 esac
+
+# check is validation only; require actual prose, never dispatch a gh command.
+if [ "$VERB" = "check" ] && [ "${#BODY_PARTS[@]}" -eq 0 ]; then
+  echo "✗ gh-egress: check needs a body or readable body file." >&2
+  exit 15
+fi
 
 # --- (b) mechanical last-resort net (4 zero-tolerance mechanical items) -------
 # (grown 2→3 by #117 mention net, 3→4 by #272 reply tier-floor backstop —
@@ -417,6 +423,13 @@ if [ "$ATTESTED" = "light" ] \
   echo "  Obtain the user's explicit confirmation that the quoted content may be posted, then re-dispatch" >&2
   echo "  with --scrub-attested warn (or enforce)." >&2
   exit 13
+fi
+
+# A passing check certifies that these bytes passed the mechanical gate only.
+# It does not grant publication authority or certify semantic/privacy correctness.
+if [ "$VERB" = "check" ]; then
+  echo "gh-egress: check passed (no dispatch)"
+  exit 0
 fi
 
 # --- dispatch: byte-for-byte identical to raw `gh issue <verb> ...` -----------
