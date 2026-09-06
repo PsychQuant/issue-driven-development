@@ -1,0 +1,14 @@
+{
+  "topic_id": "fixture-topic",
+  "source_id": "fixture-source-001",
+  "title": "保留討論歷史",
+  "summary": "使用者選擇保留主文並追加更正。這份草稿未要求發布。",
+  "source_scope": "只有這兩則虛構 fixture 訊息，沒有其他歷史。",
+  "messages": [
+    {"id": "a1", "role": "assistant", "text": "建議保留主文，後續追加更正。", "model": "unknown"},
+    {"id": "u1", "role": "user", "text": "採用追加方式，先產生本地草稿。"}
+  ],
+  "decisions": [
+    {"text": "採用追加方式。", "user_message_id": "u1"}
+  ]
+}

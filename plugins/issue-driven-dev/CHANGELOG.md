@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2026-09-07
+
+### Added
+
+- `idd-discuss`: selected human/AI conversation snapshots with original-message provenance,
+  explicit publication, append-only history, stable topic/source IDs, local locking and uncertain
+  mutation reconciliation. It does not claim global exactly-once or correct AI judgments. Refs #331.
+- Shared bounded GraphQL Discussion search/read helpers, including paginated replies and explicit
+  incomplete/error results. Offline fixtures exercise publication and API behavior without real posts.
+- `gh-egress check`: reuse the existing privacy/mention gate without dispatch; all prior issue verbs
+  retain their original behavior. Skill contract tests parse YAML with the CI-installed PyYAML 6.0.2.
+
+### Security and operational prerequisite
+
+- Refs #332: shared mention checks use maintained Markdown parsing rather than delimiter regexes.
+  NUL body files are rejected before shell decoding, body arguments are parsed independently, and
+  URL exemptions stop at the GFM less-than boundary. Entity-origin account characters are refused
+  after source-aware decoding even when a prefix is attested. All egress now requires markdown-it-py 4.0.0 and linkify-it-py 2.0.3; install `scripts/requirements-egress.txt`. Missing or
+  incompatible dependencies refuse dispatch. Existing users must install this prerequisite on update.
+- Review repairs for #331 normalize rendered line endings, retain snapshot titles in protected bodies,
+  and validate read/mutation response types before reporting complete evidence or posted writes.
+
+### Changed
+
+- `idd-ask` includes Discussions by default with `--corpus issues|discussions|all`, a combined
+  top-N budget, precise citations and source interpretation rather than treating workflow state as truth.
+  The existing issue search backend remains available under `--corpus issues`.
+
 ## [3.0.0] - 2026-09-01
 
 23 commits since 2.112.0, across four `/idd-verify` ensembles. **The major bump is for one

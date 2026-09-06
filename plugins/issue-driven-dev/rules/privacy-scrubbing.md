@@ -229,3 +229,42 @@ opened.
   — why "is this private?" is AI judgment, not keyword matching.
 - `references/config-protocol.md` §third-party detection — the viewerPermission +
   `isPrivate` classification this gate reuses.
+
+## Discussion snapshots (#331)
+
+`idd-discuss` uses `gh-egress.sh check --body-file <file> --title=<title>
+--scrub-attested <level>` on the exact rendered payload immediately before its GraphQL mutation.
+`check` runs the same attestation, privacy and mention nets and exits without invoking gh. It is
+validation only: a pass does not supply user authorization or certify semantic correctness. No
+scanner is duplicated in the Discussion publisher. Existing issue dispatch verbs are unchanged.
+
+## Markdown boundary parser (#332)
+
+The common egress wrapper delegates code-region recognition to the maintained parser pinned in
+`scripts/requirements-egress.txt` (markdown-it-py 4.0.0 and linkify-it-py 2.0.3). It does not infer inert code from an
+awk/sed delimiter toggle. Raw non-code source, including entities and conservatively handled
+unsupported/mapping-ambiguous syntax, remains subject to the existing mention checks. Missing or
+unsupported parser dependencies and parse failures refuse dispatch; install the requirements
+with the same Python interpreter used by `gh-egress.sh`. This is a runtime prerequisite for all
+issue and Discussion egress, not only a test dependency.
+
+Source fidelity is part of this boundary: body files containing NUL are rejected before Bash
+command substitution can alter their bytes. Each body argument is parsed independently so one
+argument's fence cannot exempt another argument's mentions. The existing URL exemption stops at
+GFM's `<` boundary; following raw or encoded mentions remain visible to the gate.
+
+URL exemptions use maintained link recognition on the original inline source, with conservative
+GFM prefix and complete hostname checks, before code removal. Unsupported or ambiguous contexts
+remain in the scan; there is no post-processing regex that globally deletes URL-shaped strings.
+This deliberately prefers refusal over granting an exemption to a merely URL-like prefix.
+
+The retained mention surface is checked again using standard-library character-reference decoding
+with source-origin flags. If the decoded at-sign or any ASCII login character comes from an entity,
+dispatch is refused even when a prefix or full login is attested. This check runs after code/URL
+exemptions, never re-parses the retained surface as Markdown, and never joins across fragment lines.
+Decoder absence/inconsistency refuses dispatch. No entity-name or person-name denylist is maintained.
+
+Zero-length character-reference decodings retain deletion offsets; a deletion inside a reconstructed
+mention refuses dispatch too. Removing an encoded separator must not erase its provenance. Table
+inline code remains a documented conservative scan context; use a standalone fenced block for
+literal examples rather than treating an unsuccessful exemption as notification authorization.

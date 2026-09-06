@@ -67,7 +67,8 @@ idd-issue → idd-diagnose → idd-implement → idd-verify → idd-close
 | `idd-comment` / `idd-edit` | Add or amend issue comments with template guidance (decision / note / question / … / reply — reply is the human-facing point-by-point type, v2.100.0+) |
 | `idd-list` / `idd-update` / `idd-report` | List open issues by phase, sync issue body, generate progress reports (`idd-report --rollup` = cross-issue human triage view over dashboard comments, #134 v2.97+) |
 | `idd-find` | **Semantic lookup** (v2.97+, [#139](https://github.com/PsychQuant/issue-driven-development/issues/139)) — surfacing-only search over the open+closed corpus (GitHub relevance + phase/PR overlay); answers "have we solved something like X, and where" |
-| `idd-ask` | **Grounded QA** (v2.99+, [#72](https://github.com/PsychQuant/issue-driven-development/issues/72)) — mirrors `/spectra-ask` for the issue corpus: full-text top-N read, every claim cited, source priority closed-with-PR > open, honest silence on corpus miss; answers "why did we decide that" |
+| `idd-discuss` | Capture selected human/AI conversations as append-only Discussion snapshots: provenance, stable IDs, retry reconciliation, and the existing privacy gate. Draft by default; explicit publication only. |
+| `idd-ask` | **Grounded QA** over issues, PR evidence and Discussions (including comments/replies). Combined top-N ≤10, exact source links, explicit partial coverage; `--corpus issues` retains the original retrieval scope. Workflow state is evidence to interpret, not automatic truth. |
 | `idd-config` | Manage `.claude/issue-driven-dev.local.json` lifecycle: `show` / `init` / `validate` / `which` (v2.31.0) |
 | `idd-all` | Orchestrator that drives the full pipeline (issue → close) end-to-end (v2.26.0; v2.28.0 unattended SDD chain) |
 | `idd-all-chain` | **Chain-solve mode** (v2.55.0+ single-root, v2.60.0+ multi-root + DFS/BFS) — root issue(s) + auto-emergent spawned issues (sister bug / verify follow-up / mid-plan tangential / sister concern) through ONE cluster branch + ONE review PR. Thin recursive shell over `idd-all` using `--in-chain` flag (4th mode tuple `(direct-commit, unattended)`). Multi-root invocation `#A #B #C` with `--bfs` opt-in (default DFS). Hard caps: per-root depth=3, global max-issues=10 (v2.60.0+, was 2/5). Eligibility: same-file OR same-skill OR sister-bug. Verify FAIL = per-root halt (other root subtrees continue). STOPs at verified — never auto-close |
@@ -340,3 +341,28 @@ IDD pipeline stage 對照 superpowers counterpart。**pre-implementation staging
 3. 部署時 lock `~/.claude/plugins/cache/` permissions (chmod 700) 防 hostile write
 
 **Future hardening** (#41 reopen criteria): 若 multi-user / CI deployment 真實成本上升,evaluate hash verification step against marketplace-published plugin manifest。
+
+## Discussion knowledge capture (3.1.0)
+
+Use `/idd-discuss` to draft a record of a selected conversation topic. Explicitly request publication
+to create a Discussion, or continuation to append a new source batch. Initial bodies and existing
+comments are never overwritten; each later snapshot states the current understanding and cites its
+selected original messages. Unknown authors/models/times stay unknown.
+
+The [capture contract](references/discussion-capture.md) documents source JSON, stable topic/source IDs,
+local serialization, remote reconciliation and conservative handling of uncertain writes. Different
+state directories or devices must be serialized; this is not a global exactly-once service. The
+repository must enable Discussions and an actual category must be selected before publication.
+The helper does not enable Discussions or publish test messages automatically.
+
+`/idd-ask --corpus all` searches both issue and Discussion evidence; `issues` and `discussions` select
+a single corpus. Replies have exact citation URLs, and API failures or bounded reads are disclosed.
+This improves traceability, not the truth of every AI statement. Runtime helpers use Python and gh. The shared egress security gate additionally requires the
+pinned Markdown parser; install it with:
+
+```bash
+python3 -m pip install -r plugins/issue-driven-dev/scripts/requirements-egress.txt
+```
+
+Use the same Python executable as the helper. Missing/incompatible parser versions refuse all
+egress. The skill YAML contract test also uses PyYAML 6.0.2; CI installs both dependencies.
