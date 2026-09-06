@@ -17,6 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `gh-egress check`: reuse the existing privacy/mention gate without dispatch; all prior issue verbs
   retain their original behavior. Skill contract tests parse YAML with the CI-installed PyYAML 6.0.2.
 
+### Security and operational prerequisite
+
+- Refs #332: shared mention checks use maintained Markdown parsing rather than delimiter regexes.
+  NUL body files are rejected before shell decoding, body arguments are parsed independently, and
+  URL exemptions stop at the GFM less-than boundary. All egress now requires markdown-it-py 4.0.0 and linkify-it-py 2.0.3; install `scripts/requirements-egress.txt`. Missing or
+  incompatible dependencies refuse dispatch. Existing users must install this prerequisite on update.
+- Review repairs for #331 normalize rendered line endings, retain snapshot titles in protected bodies,
+  and validate read/mutation response types before reporting complete evidence or posted writes.
+
 ### Changed
 
 - `idd-ask` includes Discussions by default with `--corpus issues|discussions|all`, a combined

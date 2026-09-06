@@ -236,6 +236,114 @@ class ReaderTests(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertEqual(json.loads(stdout.getvalue())['author'], 'alice')
 
+    def test_discussion_metadata_rejects_malformed_fields_at_get_boundary(self):
+        cases = [(field, bad) for field in ('id', 'title', 'url', 'body', 'createdAt', 'updatedAt')
+                 for bad in (None, True, 123, [], {})]
+        cases += [(field, '') for field in ('id', 'title', 'url', 'createdAt', 'updatedAt')]
+        cases += [(field, bad) for field in ('createdAt', 'updatedAt')
+                  for bad in ('yesterday', '2026-99-01T00:00:00Z', '2026-01-01', '2026-01-01T00:00:00')]
+        cases += [('number', bad) for bad in (True, False, 0, -1, '1', 1.0, None)]
+        cases += [(field, bad) for field in ('closed', 'locked', 'viewerCanUpdate', 'isAnswered')
+                  for bad in (None, 0, 1, 'false', [], {}) if field != 'isAnswered' or bad is not None]
+        cases += [('repository', bad) for bad in (None, [], {}, {'nameWithOwner': None}, {'nameWithOwner': 'invalid'})]
+        cases += [('category', bad) for bad in (None, [], {}, {'id': 'C1'}, {'id': 1, 'name': 'General'}, {'id': 'C1', 'name': None})]
+        for field, bad in cases:
+            with self.subTest(field=field, bad=bad):
+                self.queue.clear()
+                self.feed({'repository': REPO}, {'repository': {'discussion': dict(DISCUSSION, **{field: bad})}},
+                          {'node': {'comments': connection([])}})
+                with self.assertRaises(api.DiscussionError):
+                    self.gh.get('o/r', 1)
+
+    def test_comment_metadata_rejects_malformed_fields_including_reply_pages(self):
+        cases = [(field, bad) for field in ('id', 'url', 'body', 'createdAt', 'updatedAt')
+                 for bad in (None, True, 123, [], {})]
+        cases += [(field, '') for field in ('id', 'url', 'createdAt', 'updatedAt')]
+        cases += [('replyTo', {'id': ''}), ('createdAt', '2026-02-31T00:00:00Z')]
+        for placement in ('root', 'reply'):
+            for field, bad in cases:
+                with self.subTest(placement=placement, field=field, bad=bad):
+                    self.queue.clear()
+                    malformed = dict(comment('C2', 'C1' if placement == 'reply' else None), **{field: bad})
+                    self.feed({'repository': REPO}, {'repository': {'discussion': DISCUSSION}})
+                    if placement == 'root':
+                        self.feed({'node': {'comments': connection([malformed])}})
+                    else:
+                        self.feed({'node': {'comments': connection([comment('C1', replies=1)])}},
+                                  {'node': {'replies': connection([malformed])}})
+                    with self.assertRaises(api.DiscussionError):
+                        self.gh.get('o/r', 1)
+
+    def test_get_and_list_reject_foreign_repository_metadata(self):
+        foreign = dict(DISCUSSION, repository={'nameWithOwner': 'evil/r'})
+        for operation in ('get', 'list'):
+            with self.subTest(operation=operation):
+                self.queue.clear()
+                self.feed({'repository': REPO})
+                if operation == 'get':
+                    self.feed({'repository': {'discussion': foreign}}, {'node': {'comments': connection([])}})
+                else:
+                    self.feed({'repository': {'discussions': connection([foreign])}})
+                with self.assertRaises(api.DiscussionError):
+                    self.gh.get('o/r', 1) if operation == 'get' else self.gh.list_discussions('o/r')
+
+    def test_search_and_list_validate_discussion_fields_too(self):
+        for operation in ('search', 'list'):
+            with self.subTest(operation=operation):
+                self.queue.clear()
+                bad = dict(DISCUSSION, body=None)
+                self.feed({'repository': REPO})
+                if operation == 'search':
+                    self.feed({'search': dict(connection([bad]), discussionCount=1)})
+                else:
+                    self.feed({'repository': {'discussions': connection([bad])}})
+                with self.assertRaises(api.DiscussionError):
+                    self.gh.search('o/r', 'topic') if operation == 'search' else self.gh.list_discussions('o/r')
+
+    def test_search_count_is_nonnegative_integer_on_every_page(self):
+        for bad in (None, True, False, -1, '1001', 1.5, [], {}):
+            with self.subTest(count=bad):
+                self.queue.clear()
+                self.feed({'repository': REPO},
+                          {'search': dict(connection([DISCUSSION], True, 'next'), discussionCount=bad)},
+                          {'search': dict(connection([]), discussionCount=0)})
+                with self.assertRaises(api.DiscussionError):
+                    self.gh.search('o/r', 'topic', limit=2)
+
+    def test_reply_count_is_nonnegative_integer(self):
+        for bad in (None, True, False, -1, '1', 1.5, [], {}):
+            with self.subTest(count=bad):
+                self.queue.clear()
+                self.feed({'repository': REPO}, {'repository': {'discussion': DISCUSSION}},
+                          {'node': {'comments': connection([comment('C1', replies=bad)])}},
+                          {'node': {'replies': connection([])}})
+                with self.assertRaises(api.DiscussionError):
+                    self.gh.get('o/r', 1)
+
+    def test_empty_body_null_author_and_case_insensitive_repo_are_valid(self):
+        self.feed({'repository': REPO}, {'repository': {'discussion': dict(DISCUSSION, body='', author=None, isAnswered=None,
+                  repository={'nameWithOwner': 'O/R'})}},
+                  {'node': {'comments': connection([dict(comment('C1'), body='', author=None)])}})
+        result = self.gh.get('o/r', 1)
+        self.assertTrue(result['complete'])
+        self.assertEqual(result['body'], '')
+        self.assertIsNone(result['isAnswered'])  # GitHub declares this Boolean nullable.
+        self.assertEqual(result['comments'][0]['body'], '')
+        self.assertIsNone(result['author'])
+        self.assertIsNone(result['comments'][0]['author'])
+
+    def test_repo_metadata_rejects_wrong_types_and_accepts_null_permission(self):
+        for field, bad in [('id', 1), ('id', ''), ('visibility', None), ('visibility', []),
+                           ('viewerPermission', []), ('hasDiscussionsEnabled', 1)]:
+            with self.subTest(field=field, bad=bad):
+                self.queue.clear()
+                self.feed({'repository': dict(REPO, **{field: bad})})
+                with self.assertRaises(api.DiscussionError):
+                    self.gh.repo('o/r')
+        self.queue.clear()
+        self.feed({'repository': dict(REPO, viewerPermission=None)})
+        self.assertIsNone(self.gh.repo('o/r')['viewerPermission'])
+
 
 if __name__ == '__main__':
     unittest.main()

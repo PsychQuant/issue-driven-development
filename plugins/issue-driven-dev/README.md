@@ -357,5 +357,12 @@ The helper does not enable Discussions or publish test messages automatically.
 
 `/idd-ask --corpus all` searches both issue and Discussion evidence; `issues` and `discussions` select
 a single corpus. Replies have exact citation URLs, and API failures or bounded reads are disclosed.
-This improves traceability, not the truth of every AI statement. Runtime helpers use Python's standard
-library and gh; the skill YAML contract test additionally uses PyYAML 6.0.2 (installed by CI).
+This improves traceability, not the truth of every AI statement. Runtime helpers use Python and gh. The shared egress security gate additionally requires the
+pinned Markdown parser; install it with:
+
+```bash
+python3 -m pip install -r plugins/issue-driven-dev/scripts/requirements-egress.txt
+```
+
+Use the same Python executable as the helper. Missing/incompatible parser versions refuse all
+egress. The skill YAML contract test also uses PyYAML 6.0.2; CI installs both dependencies.

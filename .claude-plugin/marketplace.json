@@ -16,7 +16,7 @@
     {
       "name": "issue-driven-dev",
       "version": "3.1.0",
-      "description": "v3.1.0: idd-discuss captures explicitly selected human/AI conversations as append-only GitHub Discussion snapshots (#331). Stable topic/source IDs, payload fingerprints, shared egress checks, local locks and uncertain-write reconciliation protect retry behavior without promising distributed exactly-once or AI correctness. idd-ask adds bounded Discussion/comment/reply evidence alongside existing issue retrieval, with corpus selection and explicit partial-read reporting.",
+      "description": "v3.1.0: idd-discuss captures explicitly selected human/AI conversations as append-only GitHub Discussion snapshots (#331). Stable topic/source IDs, payload fingerprints, shared egress checks, local locks and uncertain-write reconciliation protect retry behavior without promising distributed exactly-once or AI correctness. idd-ask adds bounded Discussion/comment/reply evidence alongside existing issue retrieval, with corpus selection and explicit partial-read reporting. Security repair #332 replaces delimiter and URL-prefix exemptions with maintained parsers and source-faithful checks. Runtime prerequisite: install scripts/requirements-egress.txt; missing/incompatible parser versions refuse egress.",
       "author": {
         "name": "Che Cheng"
       },

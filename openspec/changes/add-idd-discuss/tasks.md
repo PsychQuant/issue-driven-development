@@ -9,6 +9,13 @@
 - [x] 2.4 新增idd-discuss skill，整合idd-ask、公開routing與技能清單。
 - [x] 2.5 更新版本與changelog、完成spec validation、baseline對照與live read-only smoke。
 
+## 2b. Approved review repairs (Refs #331, #332)
+- [x] 2b.1 統一渲染換行、逐行引用並保留原payload fingerprint。
+- [x] 2b.2 保存每批snapshot title；明列遠端顯示標題的可變性。
+- [x] 2b.3 驗證read API回覆型別與scope，保留合法nullable欄位。
+- [x] 2b.4 驗證mutation identity，畸形成功保持uncertain並可恢復。
+- [x] 2b.5 修正共用Markdown mention gate與GFM反例；獨立security review與3696組GFM差異案例均通過。
+
 ## 3. Verify and deliver
 - [ ] 3.1 執行獨立requirements／logic／security／regression／DA與Codex驗證，修正blocking findings。
 - [ ] 3.2 提交、更新issue Current Status與驗證紀錄、push及建立PR，停止於verified。

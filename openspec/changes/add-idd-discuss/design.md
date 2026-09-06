@@ -1,6 +1,6 @@
 ## Context
 
-Refs #331。由既有對話收斂，PR／unattended。Claude canonical skill tree不分叉；Codex沿用compatibility reference。
+Refs #331, #332。由既有對話收斂，PR／unattended。Claude canonical skill tree不分叉；Codex沿用compatibility reference。
 
 ## Goals / Non-Goals
 
@@ -18,7 +18,7 @@ Refs #331。由既有對話收斂，PR／unattended。Claude canonical skill tre
   source_scope是非空文字，agent明示可取得範圍。`decisions`可選陣列，每筆`text`,
   `user_message_id`必須連到role=user；這只驗來源存在，不認證語意。
 - `topic_id`與`source_id`為opaque非空字串。標題不是去重key。topic/source穩定hash加payload
-  digest放在第一行marker；原文逐行blockquote，summary標示AI整理。metadata未知以unknown。
+  digest放在第一行marker；原文呈現統一CRLF／CR為LF並逐行blockquote，明示換行正規化；原始payload fingerprint仍保留原換行。每批title保存於body並受content digest保護，遠端顯示title可變且不覆寫。summary標示AI整理。metadata未知以unknown。
 - 本地state置於`.claude/.idd/state/discussions/`（由顯式--state-dir定位），每repo/topic
   使用file lock；state以atomic replace保留discussion ID／event digest／attempt狀態。
 - 首次建立先列出bounded Discussions核對同topic marker；已知編號只讀該篇。
@@ -51,3 +51,11 @@ GitHub API没有atomic create idempotency；本地journal與遠端核對降低�
 fixture GraphQL模擬建立／追加／重跑／不確定回覆／locked／disabled／分頁／reply／搜尋失敗。
 用既有egress fixture suite做回歸；完整測試入口、live read-only API smoke與獨立6-lens驗證。
 所有mutation fixture均離線，不發測試Discussion或通知給真實使用者。
+
+## Approved review repairs
+
+使用者於2026-09-06明確同意將#332共用安全修正與#331四項修訂一起處理。
+共用gate依賴markdown-it-py4.0.0與linkify-it-py2.0.3的真實token/source map；缺失或不支援版本拒絕，
+不能用無法辨識的字串推論為inert code。GFM table與未知source mapping採保守掃描。
+API read回覆依實際schema驗型別、保留合法null與空body；mutation回覆型別錯誤必須
+保持uncertain，不能寫posted。CI與使用者文件明列新的runtime prerequisite。

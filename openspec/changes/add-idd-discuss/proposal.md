@@ -15,6 +15,7 @@ Issue #331要求將這段歷史接回開發流程，並明確限制「記錄完�
 
 ### New Capabilities
 
+- `mention-markdown-safety`: 共用mention gate的安全code邊界與缺依賴拒絕。
 - `idd-discuss`: 授權保存、來源溯源、追加更正、去重及失敗處置。
 - `idd-ask-discussions`: Discussion知識查詢與既有issue語料共同引用。
 
@@ -25,4 +26,4 @@ Issue #331要求將這段歷史接回開發流程，並明確限制「記錄完�
 ## Impact
 
 影響plugins/issue-driven-dev內的新skill與helpers、idd-ask、gh-egress及公開文件。
-沿用Python標準函式庫、gh CLI及既有隱私gate，沒有新增平台或安裝依賴。
+沿用Python標準函式庫、gh CLI及既有隱私gate，沒有新增平台；共用egress需要固定版本的受維護Markdown parser。

@@ -18,7 +18,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install YAML parser for skill contract tests
-        run: python3 -m pip install PyYAML==6.0.2
+      - name: Install egress parser and skill test dependencies
+        run: python3 -m pip install PyYAML==6.0.2 -r plugins/issue-driven-dev/scripts/requirements-egress.txt
       - name: Run all fixture suites
         run: bash plugins/issue-driven-dev/scripts/run-all-tests.sh

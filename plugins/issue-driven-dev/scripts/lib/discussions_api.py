@@ -5,6 +5,7 @@ index results, not an exhaustive or immediately consistent repository corpus.
 Schema reference: https://docs.github.com/en/graphql/reference/discussions
 """
 import json
+from datetime import datetime
 import re
 import subprocess
 
@@ -45,22 +46,71 @@ def _object(value, context):
     return value
 
 
+def _string(value, context, allow_empty=False):
+    if not isinstance(value, str) or (not allow_empty and not value.strip()):
+        raise DiscussionError(f'Malformed {context}: expected a string')
+    return value
+
+
+def _timestamp(value, context):
+    _string(value, context)
+    if not re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})', value):
+        raise DiscussionError(f'Malformed {context}: expected an ISO 8601 timestamp with timezone')
+    try:
+        datetime.fromisoformat(value[:-1] + '+00:00' if value.endswith('Z') else value)
+    except ValueError as exc:
+        raise DiscussionError(f'Malformed {context}: invalid timestamp') from exc
+    return value
+
+
+def _count(value, context):
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise DiscussionError(f'Malformed {context}: expected a nonnegative integer')
+    return value
+
+
+def _boolean(value, context, nullable=False):
+    if not isinstance(value, bool) and not (nullable and value is None):
+        raise DiscussionError(f'Malformed {context}: expected a boolean')
+    return value
+
+
 def _author(value):
+    # Deleted GitHub actors are represented by null, not an empty login.
     if value is None:
         return None
     actor = _object(value, 'author')
-    if not isinstance(actor.get('login'), str):
-        raise DiscussionError('Malformed author login in GitHub response')
-    return actor['login']
+    return _string(actor.get('login'), 'author login')
 
 
 def _discussion(value):
     result = dict(_object(value, 'Discussion'))
-    for key in ('id', 'number', 'title', 'url', 'body', 'author', 'createdAt', 'updatedAt', 'closed', 'locked'):
+    fields = ('id', 'number', 'title', 'url', 'body', 'author', 'createdAt', 'updatedAt',
+              'closed', 'locked', 'viewerCanUpdate', 'isAnswered', 'repository', 'category')
+    for key in fields:
         if key not in result:
             raise DiscussionError(f'Missing Discussion field: {key}')
+    for key in ('id', 'title', 'url', 'body'):
+        _string(result[key], f'Discussion {key}', allow_empty=key == 'body')
+    _bound(result['number'], 'Discussion number', 2147483647)
+    for key in ('createdAt', 'updatedAt'):
+        _timestamp(result[key], f'Discussion {key}')
+    for key in ('closed', 'locked', 'viewerCanUpdate', 'isAnswered'):
+        # isAnswered is Boolean (nullable) in GitHub's Discussion schema.
+        _boolean(result[key], f'Discussion {key}', nullable=key == 'isAnswered')
+    repository = _object(result['repository'], 'Discussion repository')
+    _repo_parts(repository.get('nameWithOwner'))
+    category = _object(result['category'], 'Discussion category')
+    for key in ('id', 'name'):
+        _string(category.get(key), f'Discussion category {key}')
     result['author'] = _author(result['author'])
     return result
+
+
+def _check_source_repo(discussion, repo):
+    if discussion['repository']['nameWithOwner'].lower() != repo.lower():
+        raise DiscussionError('Discussion repository does not match the requested repository')
+    return discussion
 
 
 def _comment(value):
@@ -68,12 +118,15 @@ def _comment(value):
     for key in ('id', 'url', 'body', 'author', 'createdAt', 'updatedAt', 'replyTo'):
         if key not in node:
             raise DiscussionError(f'Missing DiscussionComment field: {key}')
+    for key in ('id', 'url', 'body'):
+        _string(node[key], f'DiscussionComment {key}', allow_empty=key == 'body')
+    for key in ('createdAt', 'updatedAt'):
+        _timestamp(node[key], f'DiscussionComment {key}')
     result = {key: node[key] for key in ('id', 'url', 'body', 'createdAt', 'updatedAt')}
     result['author'] = _author(node['author'])
     parent = node['replyTo']
-    result['replyTo'] = _object(parent, 'replyTo').get('id') if parent is not None else None
-    if parent is not None and not isinstance(result['replyTo'], str):
-        raise DiscussionError('Malformed replyTo ID')
+    result['replyTo'] = (_string(_object(parent, 'replyTo').get('id'), 'replyTo ID')
+                         if parent is not None else None)
     return result
 
 
@@ -126,8 +179,15 @@ class GitHub:
             }
         }''', _repo_parts(repo))
         result = _object(data.get('repository'), 'repository (not found or inaccessible)')
-        if not isinstance(result.get('hasDiscussionsEnabled'), bool) or not result.get('id'):
-            raise DiscussionError('Malformed repository metadata')
+        for key in ('id', 'hasDiscussionsEnabled', 'visibility', 'viewerPermission'):
+            if key not in result:
+                raise DiscussionError(f'Missing repository metadata: {key}')
+        _string(result['id'], 'repository ID')
+        _boolean(result['hasDiscussionsEnabled'], 'hasDiscussionsEnabled')
+        _string(result['visibility'], 'repository visibility')
+        # viewerPermission is nullable for viewers without repository access.
+        if result['viewerPermission'] is not None:
+            _string(result['viewerPermission'], 'repository viewerPermission')
         return result
 
     def viewer(self):
@@ -161,6 +221,7 @@ class GitHub:
                 }
             }''', {'query': search_query, 'first': min(100, limit - len(items)), 'after': after})
             search = _object(data.get('search'), 'search')
+            discussion_count = _count(search.get('discussionCount'), 'discussionCount')
             nodes, after = _page(search, seen, min(100, limit - len(items)))
             for node in nodes:
                 item = _discussion(node)
@@ -178,7 +239,7 @@ class GitHub:
                 complete = False
                 warnings.append(f'Search result budget reached ({limit}); further matches were not read.')
                 break
-        if search.get('discussionCount', 0) > 1000:
+        if discussion_count > 1000:
             complete = False
             warnings.append('GitHub search exposes at most 1000 results.')
         return {'items': items, 'complete': complete, 'warnings': warnings}
@@ -198,7 +259,7 @@ class GitHub:
             }''', dict(variables, first=min(100, max_items - len(items)), after=after))
             repository = _object(data.get('repository'), 'repository')
             nodes, after = _page(repository.get('discussions'), seen, min(100, max_items - len(items)))
-            items.extend(_discussion(node) for node in nodes[:max_items - len(items)])
+            items.extend(_check_source_repo(_discussion(node), repo) for node in nodes)
             if after is None:
                 return {'items': items, 'complete': True, 'warnings': []}
             if len(items) >= max_items:
@@ -215,7 +276,7 @@ class GitHub:
             ''' + DISCUSSION_FIELDS + ''' } }
         }''', dict(variables, number=number))
         repository = _object(data.get('repository'), 'repository')
-        result = _discussion(repository.get('discussion'))
+        result = _check_source_repo(_discussion(repository.get('discussion')), repo)
         comments = []
         after, seen = None, set()
         incomplete = False
@@ -234,9 +295,7 @@ class GitHub:
                     incomplete = True
                     break
                 comments.append(_comment(root))
-                count = _object(root.get('replies'), 'reply count').get('totalCount')
-                if not isinstance(count, int) or count < 0:
-                    raise DiscussionError('Malformed reply count')
+                count = _count(_object(root.get('replies'), 'reply count').get('totalCount'), 'replies.totalCount')
                 if count:
                     reply_after, reply_seen = None, set()
                     while True:

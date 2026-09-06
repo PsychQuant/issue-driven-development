@@ -237,3 +237,23 @@ opened.
 `check` runs the same attestation, privacy and mention nets and exits without invoking gh. It is
 validation only: a pass does not supply user authorization or certify semantic correctness. No
 scanner is duplicated in the Discussion publisher. Existing issue dispatch verbs are unchanged.
+
+## Markdown boundary parser (#332)
+
+The common egress wrapper delegates code-region recognition to the maintained parser pinned in
+`scripts/requirements-egress.txt` (markdown-it-py 4.0.0 and linkify-it-py 2.0.3). It does not infer inert code from an
+awk/sed delimiter toggle. Raw non-code source, including entities and conservatively handled
+unsupported/mapping-ambiguous syntax, remains subject to the existing mention checks. Missing or
+unsupported parser dependencies and parse failures refuse dispatch; install the requirements
+with the same Python interpreter used by `gh-egress.sh`. This is a runtime prerequisite for all
+issue and Discussion egress, not only a test dependency.
+
+Source fidelity is part of this boundary: body files containing NUL are rejected before Bash
+command substitution can alter their bytes. Each body argument is parsed independently so one
+argument's fence cannot exempt another argument's mentions. The existing URL exemption stops at
+GFM's `<` boundary; following raw or encoded mentions remain visible to the gate.
+
+URL exemptions use maintained link recognition on the original inline source, with conservative
+GFM prefix and complete hostname checks, before code removal. Unsupported or ambiguous contexts
+remain in the scan; there is no post-processing regex that globally deletes URL-shaped strings.
+This deliberately prefers refusal over granting an exemption to a merely URL-like prefix.

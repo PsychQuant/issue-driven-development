@@ -71,3 +71,7 @@ GitHub Discussion。它保留來源與更正歷史，使用穩定ID避免正常�
 既有 issue 檢索。這改善可追溯性，不代表所有 AI 溝通或正確性問題都已解決。
 
 詳細契約見 [Discussion capture](plugins/issue-driven-dev/references/discussion-capture.md)。
+
+共用GitHub寫入gate的安全修正需要Markdown解析器（#332）：使用同一個Python執行
+`python3 -m pip install -r plugins/issue-driven-dev/scripts/requirements-egress.txt`。
+更新後缺少此依賴時會拒絕寫入；不會降級成不可靠的code邊界猜測。

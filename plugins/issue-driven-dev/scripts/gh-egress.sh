@@ -71,7 +71,7 @@
 #   0   dispatched (exec gh -- gh's exit codes flow through from here, all <10)
 #   10  privacy net hit (absolute /Users/<name> path / verbatim ~/.claude.json content)
 #   11  mention net hit (unattested @login token / entity-encoded @ form)
-#   12  unscannable --body-file (not a readable regular file, #203 item 3)
+#   12  unscannable body (unreadable file or unavailable/failed Markdown parser)
 #   13  attestation missing/invalid (--scrub-attested absent or bad level)
 #   14  usage error (bad/missing verb, malformed/split-token args, flag missing its value)
 #   15  empty/near-empty body on the body channel (#275 — the signature of upstream
@@ -106,6 +106,22 @@ require_scannable_bodyfile() {
     echo "✗ gh-egress: REFUSED — --body-file '$1' is not a readable regular file." >&2
     echo "  stdin ('-'), FIFOs and process substitutions cannot be scanned without consuming the stream." >&2
     echo "  Write the body to a regular file first, then re-dispatch." >&2
+    exit 12
+  fi
+  # Bash command substitution drops NUL bytes, which can change Markdown
+  # delimiters before the mention scan. Reject on raw bytes before any cat
+  # result enters a shell variable; an unavailable byte check also refuses.
+  if ! python3 - "$1" <<'PYBODY'
+from pathlib import Path
+import sys
+try:
+    body = Path(sys.argv[1]).read_bytes()
+except OSError:
+    sys.exit(12)
+sys.exit(12 if b"\x00" in body else 0)
+PYBODY
+  then
+    echo "✗ gh-egress: REFUSED — body-file contains NUL bytes or its bytes could not be checked." >&2
     exit 12
   fi
 }
@@ -353,17 +369,23 @@ fi
 #    (set only after the 5-step protocol resolved the logins).
 #    Prefix guard [^[:alnum:]_] keeps email-like user@host out (GitHub does not
 #    notify on those either).
-MBODY=""
-for p in "${BODY_PARTS[@]:-}"; do MBODY+="$p"$'\n'; done
-# GFM: a fence opener allows at most 3 leading spaces; >=4 is literal indented
-# code and must NOT toggle fence state (logic 117-3 false-negative otherwise).
-# URL spans are exempt: GitHub's mention parser does not notify on @handle
-# inside an autolinked URL (unpkg.com/@scope/pkg, mastodon.social/@dev), and
-# backtick-escaping a URL would break the link (DA-117-B, R2). Only
-# autolink-ELIGIBLE spans qualify — host must contain a dot; no-dot/malformed
-# "URLs" (https://@user, http://localhost/@user) render as literal text where
-# /@name IS a live mention, so they stay in the scan (117-A, R3).
-MSCAN="$(printf '%s' "$MBODY" | awk '/^ ? ? ?```/{infence=!infence; next} !infence{print}' | sed -E 's/`[^`]*`//g; s|https?://[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+[^[:space:])>]*||g')"
+# CommonMark parsing, including nested fences and exact inline delimiters,
+# belongs to a maintained parser. Never treat uncertain syntax as inert code.
+# Each body input is its own Markdown document: an opening fence or backtick
+# in one argument must not exempt a mention in a later body argument/file.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MSCAN=""
+for p in "${BODY_PARTS[@]:-}"; do
+  if ! PART_SCAN="$(printf '%s' "$p" | python3 "$SCRIPT_DIR/lib/mention_scan_text.py")"; then
+    echo "✗ gh-egress: REFUSED — body could not be scanned for Markdown mentions." >&2
+    echo "  Install the supported parser, then retry: python3 -m pip install -r \"$SCRIPT_DIR/requirements-egress.txt\"" >&2
+    exit 12
+  fi
+  MSCAN+="$PART_SCAN"$'\n'
+done
+# The helper already excluded qualified source URL ranges, before removing
+# code. Never delete URLs globally from the resulting fragments: that loses
+# original prefix, hostname, HTML context, and code-boundary information.
 # Entity-encoded @ (&#64; / &#x40; / &commat;) followed by a login shape: GitHub
 # may decode these before its mention scan — fail closed and refuse outright.
 # Known friction (DA-117-A, accepted): prose that merely DISCUSSES the encoded
