@@ -18,4 +18,4 @@
 
 ## 3. Verify and deliver
 - [x] 3.1 執行獨立requirements／logic／security／regression／DA與Codex驗證，修正blocking findings（Codex相容模式，Claude模型替代已揭露）。
-- [ ] 3.2 提交、更新issue Current Status與驗證紀錄、push及建立PR，停止於verified。
+- [x] 3.2 提交、更新issue Current Status與驗證紀錄、push及建立PR，停止於verified。
