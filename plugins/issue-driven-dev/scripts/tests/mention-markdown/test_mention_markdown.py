@@ -196,6 +196,70 @@ class MentionMarkdownTests(unittest.TestCase):
         env = dict(self.env, PYTHONPATH=str(self.work))
         self.check('ordinary prose', 12, env=env)
 
+    def test_entity_derived_login_characters_are_refused_even_when_attested(self):
+        login = 'alice'
+        for index, char in enumerate(login):
+            for encoded in ['&#' + str(ord(char)) + ';', '&#x' + format(ord(char), 'x') + ';']:
+                body = '@' + login[:index] + encoded + login[index + 1:]
+                attested = ','.join(filter(None, [login, login[:index]]))
+                with self.subTest(body=body):
+                    self.check(body, 11, attested=attested)
+        self.check('@a&#108;ice', 11, attested='a')
+        self.check('@&fjlig;oo', 11, attested='fjoo')
+        self.check('@a&fjlig;oo', 11, attested='a,afjoo')
+        self.check('@alice&#45;dev', 11, attested='alice,alice-dev')
+
+    def test_zero_length_charrefs_inside_mentions_are_refused(self):
+        for body in ['@&#1;victim', '@vi&#x0B;ctim', '@&#1;&#x0B;victim',
+                     '@v&#1;i&#x0B;ctim', '@victi&#127;m']:
+            for attested in ['victim', 'v,vi,victi', 'v,vi,victi,victim']:
+                with self.subTest(body=body, attested=attested):
+                    self.check(body, 11, attested=attested)
+
+    def test_zero_length_charrefs_preserve_code_and_newline_boundaries(self):
+        for body in ['`@&#1;victim`', '```\n@vi&#x0B;ctim\n```',
+                     '@&#1;\nvictim', '@`code`&#1;victim',
+                     'ordinary&#1; prose', '@&#1;_victim']:
+            with self.subTest(body=body):
+                self.check(body, 0)
+        self.check('@vi&#1;\nctim', 0, attested='vi')
+        self.check('&#1;@victim', 0, attested='victim')
+        self.check('@victim&#1;', 0, attested='victim')
+
+    def test_semicolonless_charrefs_cannot_bypass_attestation(self):
+        for body in ['@&#97lice', '@&#x61lice', '@a&#108ice', '@a&#x6cice',
+                     '&#64alice', '&#x40octocat']:
+            with self.subTest(body=body):
+                self.check(body, 11, attested='a,alice,octocat')
+
+    def test_entity_check_respects_inert_ranges_and_fragment_boundaries(self):
+        for body in ['`@&#97;lice`', '```\n@a&#108;ice\n```',
+                     '`@&fjlig;oo`', 'https://example.org/@&#97;lice']:
+            with self.subTest(body=body):
+                self.check(body, 0)
+        self.check('@`code`&#97;lice', 0)
+        self.check('@\n&#97;lice', 0)
+        self.check('@a`code`&#108;ice', 0, attested='a')
+        self.check('ordinary prose &amp; entity', 0)
+        self.check('&#32;@alice', 0, attested='alice')
+        self.check('@&#10;&#97;lice', 0)
+        self.check('@alice', 0, attested='alice')
+
+    def test_missing_stdlib_charref_recognizer_refuses(self):
+        (self.work / 'sitecustomize.py').write_text(
+            'import html\n'
+            'del html._charref\n')
+        env = dict(self.env, PYTHONPATH=str(self.work))
+        self.check('ordinary prose', 12, env=env)
+
+    def test_entity_decoder_failure_refuses_instead_of_empty_success(self):
+        (self.work / 'sitecustomize.py').write_text(
+            'import html\n'
+            'def fail(*a, **kw): raise RuntimeError("fixture decoder failure")\n'
+            'html.unescape = fail\n')
+        env = dict(self.env, PYTHONPATH=str(self.work))
+        self.check('@&#97;lice', 12, env=env)
+
     def test_check_and_issue_dispatch_share_the_same_refusal(self):
         marker = self.work / 'dispatched'
         fake = self.work / 'gh'

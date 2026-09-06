@@ -386,6 +386,17 @@ done
 # The helper already excluded qualified source URL ranges, before removing
 # code. Never delete URLs globally from the resulting fragments: that loses
 # original prefix, hostname, HTML context, and code-boundary information.
+# Charrefs anywhere in a decoded mention (not just the @) require outright
+# refusal. This mode consumes already-filtered MSCAN; it does not parse Markdown
+# or join fragments again. Normalize failures to the wrapper's refusal band.
+if printf '%s' "$MSCAN" | python3 "$SCRIPT_DIR/lib/mention_scan_text.py" --check-entity-mentions; then
+  :
+else
+  case "$?" in
+    11) exit 11 ;;
+    *) echo "✗ gh-egress: REFUSED — entity mention scan could not complete." >&2; exit 12 ;;
+  esac
+fi
 # Entity-encoded @ (&#64; / &#x40; / &commat;) followed by a login shape: GitHub
 # may decode these before its mention scan — fail closed and refuse outright.
 # Known friction (DA-117-A, accepted): prose that merely DISCUSSES the encoded
@@ -414,7 +425,7 @@ done < <(printf '%s\n' "$MSCAN" \
 if [ -n "$UNATTESTED_MENTIONS" ]; then
   echo "✗ gh-egress: REFUSED — unattested @-mention token(s):$UNATTESTED_MENTIONS" >&2
   echo "  GitHub notifies real users on raw @login tokens (irreversible). Either:" >&2
-  echo "    - escape non-mention tokens in backticks (\`@name\`) — inert on GitHub, or" >&2
+  echo "    - escape non-mention tokens in a standalone fenced code block (table/ambiguous contexts remain conservatively scanned), or" >&2
   echo "    - run the rules/tagging-collaborators.md 5-step protocol, then re-dispatch with" >&2
   echo "      --mention-attested <login1,login2> covering every intended mention." >&2
   exit 11

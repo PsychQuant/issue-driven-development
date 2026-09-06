@@ -126,3 +126,7 @@ GraphQL read/type邊界與mutation成功回應都明確驗證；不合法的writ
 URL豁免只採原始行內內容中由維護中辨識器找到、且符合保守GFM起點與完整網域條件的範圍。
 HTML、table或未知對應，以及不合支援條件的URL會保留掃描；不宣稱所有合法Markdown連結
 都會自動豁免。明確配對的角括號autolink另由Markdown原生規則確認。
+
+表格等無可靠原文範圍的上下文採整行保守掃描，因此即使儲存格中的mention已有inline
+backticks仍可能被拒絕。需要展示literal內容時使用獨立fenced code區塊；這項限制不代表
+該段一定會通知，也不能據此捏造使用者mention授權。

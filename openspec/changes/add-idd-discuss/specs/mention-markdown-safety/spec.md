@@ -39,3 +39,10 @@ Only URL ranges identified by the maintained recognizer in the original inline s
 #### Scenario: Non-link URL-shaped text
 - **WHEN** a body contains `xhttps://example.org/` or an underscore-bearing domain followed by an unattested mention
 - **THEN** the mention remains subject to refusal rather than being deleted by a URL prefix match
+
+### Requirement: Encoded account characters cannot bypass attestation
+After code and qualified URL exclusions, the retained surface SHALL be decoded using the standard library while preserving entity-origin flags. A decoded mention whose at-sign or any account character originated from an entity SHALL be refused regardless of attestation. Fragment boundaries SHALL not be joined; decoder failure SHALL refuse dispatch.
+
+#### Scenario: Only the account name is encoded
+- **WHEN** a retained mention spells an account character as a decimal, hexadecimal, or named entity
+- **THEN** the encoded mention is refused even if its raw prefix is attested

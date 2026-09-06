@@ -5,6 +5,8 @@ Grammar and source ranges come from maintained parsers. Keep original slices:
 rendered tokens and link helpers can decode entity-encoded mentions, which
 must remain subject to stricter refusal even when the login is attested.
 """
+import html
+import re
 import sys
 from urllib.parse import urlsplit
 
@@ -143,9 +145,61 @@ def scan_text(source):
     return '\n'.join(fragments)
 
 
+def has_entity_mention(text):
+    """Inspect already-filtered prose, retaining charref provenance per character.
+
+    Use the standard library's own recognizer, also used by html.unescape,
+    rather than maintaining another charref grammar or named-entity list.
+    A missing/changed recognizer or decoder error is handled as scan failure.
+    """
+    for line in text.split('\n'):
+        chunks, from_entity = [], []
+        empty_entity_offsets = set()
+        cursor = 0
+        for match in html._charref.finditer(line):
+            literal = line[cursor:match.start()]
+            chunks.append(literal)
+            from_entity.extend([False] * len(literal))
+            raw = match.group()
+            decoded = html.unescape(raw)
+            # Some valid numeric references decode to nothing. Preserve the
+            # deleted boundary too: no output character can carry its flag.
+            if not decoded:
+                empty_entity_offsets.add(len(from_entity))
+            chunks.append(decoded)
+            from_entity.extend([decoded != raw] * len(decoded))
+            cursor = match.end()
+        literal = line[cursor:]
+        chunks.append(literal)
+        from_entity.extend([False] * len(literal))
+        decoded = ''.join(chunks)
+        if decoded != html.unescape(line):
+            raise ValueError('charref provenance does not match standard decoding')
+        # Match the gate's existing ASCII login shape. Refuse entity-derived
+        # characters and deleted boundaries strictly inside the mention; an
+        # entity outside the token does not make that token entity-derived.
+        for mention in re.finditer(r'(?<![A-Za-z0-9_])@[A-Za-z0-9][A-Za-z0-9-]*', decoded):
+            if (any(from_entity[mention.start():mention.end()])
+                    or any(mention.start() < offset < mention.end()
+                           for offset in empty_entity_offsets)):
+                return True
+    return False
+
+
 def main():
     try:
-        result = scan_text(sys.stdin.read())
+        source = sys.stdin.read()
+        if sys.argv[1:] == ['--check-entity-mentions']:
+            # Input is MSCAN, with inert ranges already removed and fragment
+            # boundaries preserved. Never reinterpret it as Markdown.
+            if has_entity_mention(source):
+                print('gh-egress: REFUSED — mention contains entity-derived characters.',
+                      file=sys.stderr)
+                return 11
+            return 0
+        if sys.argv[1:]:
+            return 14
+        result = scan_text(source)
     except Exception as error:
         print('gh-egress: Markdown mention scan unavailable (' + type(error).__name__ + ').',
               file=sys.stderr)

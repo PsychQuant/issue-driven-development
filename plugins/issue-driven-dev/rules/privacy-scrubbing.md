@@ -257,3 +257,14 @@ URL exemptions use maintained link recognition on the original inline source, wi
 GFM prefix and complete hostname checks, before code removal. Unsupported or ambiguous contexts
 remain in the scan; there is no post-processing regex that globally deletes URL-shaped strings.
 This deliberately prefers refusal over granting an exemption to a merely URL-like prefix.
+
+The retained mention surface is checked again using standard-library character-reference decoding
+with source-origin flags. If the decoded at-sign or any ASCII login character comes from an entity,
+dispatch is refused even when a prefix or full login is attested. This check runs after code/URL
+exemptions, never re-parses the retained surface as Markdown, and never joins across fragment lines.
+Decoder absence/inconsistency refuses dispatch. No entity-name or person-name denylist is maintained.
+
+Zero-length character-reference decodings retain deletion offsets; a deletion inside a reconstructed
+mention refuses dispatch too. Removing an encoded separator must not erase its provenance. Table
+inline code remains a documented conservative scan context; use a standalone fenced block for
+literal examples rather than treating an unsuccessful exemption as notification authorization.

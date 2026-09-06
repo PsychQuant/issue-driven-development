@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.1.0] - 2026-09-06
+## [3.1.0] - 2026-09-07
 
 ### Added
 
@@ -21,7 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Refs #332: shared mention checks use maintained Markdown parsing rather than delimiter regexes.
   NUL body files are rejected before shell decoding, body arguments are parsed independently, and
-  URL exemptions stop at the GFM less-than boundary. All egress now requires markdown-it-py 4.0.0 and linkify-it-py 2.0.3; install `scripts/requirements-egress.txt`. Missing or
+  URL exemptions stop at the GFM less-than boundary. Entity-origin account characters are refused
+  after source-aware decoding even when a prefix is attested. All egress now requires markdown-it-py 4.0.0 and linkify-it-py 2.0.3; install `scripts/requirements-egress.txt`. Missing or
   incompatible dependencies refuse dispatch. Existing users must install this prerequisite on update.
 - Review repairs for #331 normalize rendered line endings, retain snapshot titles in protected bodies,
   and validate read/mutation response types before reporting complete evidence or posted writes.
