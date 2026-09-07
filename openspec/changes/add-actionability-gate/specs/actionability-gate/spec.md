@@ -1,34 +1,43 @@
 ## ADDED Requirements
 
-### Requirement: Closed value domain for the Complexity field
+### Requirement: Complexity tier extraction tolerates trailing rationale
 
-The `### Complexity` field emitted by `idd-diagnose` SHALL carry exactly one of four tier values: `Simple`, `Plan`, `Spectra`, or `SDD-warranted`. A tier value SHALL also be accepted when followed by the existing ` via <source>` provenance suffix, in which case the canonical tier SHALL be the text preceding the first ` via ` separator. Qualifiers that express deferral state, such as `when triggered` or `(parking lot)`, SHALL NOT be written into this field; deferral state belongs to the `parking-lot` label instead. Consumers SHALL treat any other value as outside the domain.
+The system SHALL extract the routing tier from the `### Complexity` field by (1) stripping leading and trailing markdown decoration, (2) taking the tier prefix — the text preceding the first ` via ` separator — and (3) requiring that prefix to be exactly one of `Simple`, `Plan`, `Spectra`, or `SDD-warranted`. Any further text on the value line — same-line rationale, parenthetical explanation, or a ` via <source>` provenance suffix — SHALL NOT prevent tier extraction. Trailing rationale is the producer's normal writing style: in a corpus of 159 real diagnoses in this repository, 93.1% of values carry decoration, rationale, or a provenance suffix, and only 5.7% express deferral.
 
-#### Scenario: Bare tier is accepted
+#### Scenario: Bare tier is extracted
 
-- **WHEN** a Diagnosis comment contains a `### Complexity` section whose value is `Spectra`
-- **THEN** the canonical tier resolves to `Spectra`
-- **AND** the value is inside the closed domain
+- **WHEN** the value is `Spectra`
+- **THEN** the extracted tier is `Spectra`
 
-#### Scenario: Provenance suffix is accepted and stripped
+#### Scenario: Same-line rationale does not block extraction
 
-- **WHEN** a Diagnosis comment contains a `### Complexity` section whose value is `Plan via Layer V`
-- **THEN** the canonical tier resolves to `Plan`
-- **AND** the value is inside the closed domain
+- **WHEN** the value is `Spectra（opt-out → 直接 propose）`
+- **THEN** the extracted tier is `Spectra`
+- **AND** the value is treated as routable
 
-#### Scenario: Deferral qualifier is outside the domain
+#### Scenario: Markdown decoration is stripped
 
-- **WHEN** a Diagnosis comment contains a `### Complexity` section whose value is `Simple when triggered`
-- **THEN** the value is reported as outside the closed domain
-- **AND** the canonical tier is not resolved to `Simple`
+- **WHEN** the value is `**Plan**`
+- **THEN** the extracted tier is `Plan`
+
+#### Scenario: Provenance suffix is stripped
+
+- **WHEN** the value is `Plan via Layer V`
+- **THEN** the extracted tier is `Plan`
+
+#### Scenario: Non-tier prefix is not routable
+
+- **WHEN** the value is `移入 discussion list`
+- **THEN** no tier is extracted
+- **AND** the reason reported is `complexity-unparseable`
 
 ### Requirement: Actionability gate evaluates three signals disjunctively
 
-The system SHALL determine whether a diagnosed issue is actionable by evaluating exactly three signals: whether the `### Complexity` value is outside the closed domain or absent, whether the `parking-lot` label is present on the issue, and whether the `### Blocking` section of the issue body is non-empty. The issue SHALL be reported as actionable only when none of the three signals holds. The `- [~]` disposition marker inside a Diagnosis `### Strategy` checklist SHALL NOT be an input to this gate, because that marker is a close-time per-item disposition consumed by `idd-close` rather than a per-issue actionability signal.
+The system SHALL determine whether a diagnosed issue is actionable by evaluating exactly three signals: whether the `### Complexity` value is non-routable for any reason (unparseable prefix, absent section, or deferral vocabulary), whether the `parking-lot` label is present on the issue, and whether the `### Blocking` section of the issue body is non-empty. The issue SHALL be reported as actionable only when none of the three signals holds. The `- [~]` disposition marker inside a Diagnosis `### Strategy` checklist SHALL NOT be an input to this gate, because that marker is a close-time per-item disposition consumed by `idd-close` rather than a per-issue actionability signal.
 
 #### Scenario: All three signals clear
 
-- **WHEN** an issue has a `### Complexity` value inside the closed domain, carries no `parking-lot` label, and has an empty `### Blocking` section
+- **WHEN** an issue has a routable `### Complexity` value, carries no `parking-lot` label, and has an empty `### Blocking` section
 - **THEN** the gate reports the issue as actionable
 
 #### Scenario: Parking label alone withholds the issue
@@ -42,36 +51,57 @@ The system SHALL determine whether a diagnosed issue is actionable by evaluating
 - **WHEN** an issue has all three gate signals clear and its Diagnosis `### Strategy` checklist contains a `- [~]` item
 - **THEN** the gate reports the issue as actionable
 
-### Requirement: Conservative verdict and mandatory surfacing on non-domain Complexity
+### Requirement: Deferral vocabulary withholds routing under its own reason
 
-When the `### Complexity` value is outside the closed domain, the system SHALL report the issue as not actionable and SHALL surface the original unmodified value to the operator. When the `### Complexity` section is absent entirely, the system SHALL report the issue as not actionable with a distinct reason. The system SHALL NOT silently truncate a non-domain value to a tier prefix, SHALL NOT downgrade it to any tier, and SHALL NOT abort the enclosing listing operation.
+The system SHALL scan the **entire** `### Complexity` value — not only the text following the tier — for deferral vocabulary, and SHALL withhold the issue from routing when any is found, even though the tier prefix is valid. This condition SHALL carry the distinct reason `complexity-deferral-marker`, separate from `complexity-unparseable` and `complexity-missing`, because the three call for different human responses: an unparseable value is a data defect to correct, a missing section is a diagnosis that never ran, and a deferral marker is a legitimate state requiring no repair. The deferral vocabulary SHALL NOT be treated as a closed enumeration — it is a high-precision heuristic, and the `parking-lot` label remains the primary parked signal.
 
-#### Scenario: Non-domain value surfaces verbatim
+#### Scenario: Deferral vocabulary withholds a valid tier
 
-- **WHEN** the gate evaluates an issue whose `### Complexity` value is `Spectra when triggered (parking lot)`
-- **THEN** the issue is reported as not actionable with reason `complexity-unparseable`
-- **AND** the string `Spectra when triggered (parking lot)` appears in the operator-facing output
+- **WHEN** the value is `Simple when triggered`
+- **THEN** the issue is reported as not actionable with reason `complexity-deferral-marker`
+- **AND** the string `Simple when triggered` appears in the operator-facing output
 
-#### Scenario: Missing section is distinguished from non-domain value
+#### Scenario: Deferral vocabulary inside a parenthetical is still detected
 
-- **WHEN** the gate evaluates a Diagnosis comment that contains no `### Complexity` section
+- **WHEN** the value is `**Spectra**(Layer 2 + Layer 3 if/when triggered)`
+- **THEN** the issue is reported as not actionable with reason `complexity-deferral-marker`
+
+#### Scenario: Deferral reason is distinct from unparseable
+
+- **WHEN** one issue has the value `Plan when triggered` and another has the value `移入 discussion list`
+- **THEN** the first reports reason `complexity-deferral-marker`
+- **AND** the second reports reason `complexity-unparseable`
+
+### Requirement: Conservative verdict and mandatory surfacing on non-routable Complexity
+
+When a `### Complexity` value cannot be routed for any reason, the system SHALL report the issue as not actionable and SHALL surface the original unmodified value to the operator. A missing `### Complexity` section SHALL report reason `complexity-missing`. The system SHALL NOT silently truncate a non-routable value to a tier prefix, SHALL NOT downgrade it to any tier, and SHALL NOT abort the enclosing listing operation.
+
+#### Scenario: Missing section is distinguished from a non-routable value
+
+- **WHEN** a Diagnosis comment contains no `### Complexity` section
 - **THEN** the issue is reported as not actionable with reason `complexity-missing`
 
 #### Scenario: One bad value does not suppress other issues
 
-- **WHEN** a listing contains one issue with a non-domain `### Complexity` value and other issues with valid values
+- **WHEN** a listing contains one issue with a non-routable `### Complexity` value and other issues with routable values
 - **THEN** the listing reports every issue
 - **AND** the listing operation does not abort
 
+#### Scenario: No downgrade to a routable tier
+
+- **WHEN** a value is reported as not actionable for any complexity reason
+- **THEN** no tier is emitted for routing
+- **AND** the issue is not dispatched to any lifecycle command
+
 ### Requirement: Single shared implementation of parsing and verdict
 
-Complexity parsing and actionability verdict logic SHALL exist as one shared implementation. Every consumer that routes on `### Complexity` — `idd-list`, `idd-all`, `idd-implement`, and `idd-plan` — SHALL invoke that shared implementation rather than embedding its own parsing. The verdict reason vocabulary SHALL be the closed set `complexity-unparseable`, `complexity-missing`, `parking-lot-label`, `blocking-nonempty`. When the shared implementation is unavailable, a consumer SHALL fail loudly and name the missing path rather than degrade to a private parsing path.
+Complexity parsing and actionability verdict logic SHALL exist as one shared implementation. Every consumer that routes on `### Complexity` — `idd-list`, `idd-all`, `idd-implement`, and `idd-plan` — SHALL invoke that shared implementation rather than embedding its own parsing. The verdict reason vocabulary SHALL be the closed set `complexity-unparseable`, `complexity-missing`, `complexity-deferral-marker`, `parking-lot-label`, `blocking-nonempty`. When the shared implementation is unavailable, a consumer SHALL fail loudly and name the missing path rather than degrade to a private parsing path.
 
 #### Scenario: All routing consumers agree on the same input
 
 - **WHEN** the same Diagnosis comment containing `Simple when triggered` is evaluated by each routing consumer
-- **THEN** every consumer reports the value as outside the closed domain
-- **AND** no consumer resolves a canonical tier from it
+- **THEN** every consumer reports the value as non-routable under reason `complexity-deferral-marker`
+- **AND** no consumer dispatches the issue to a lifecycle command, even though the tier prefix `Simple` is itself well-formed
 
 #### Scenario: Missing helper fails loudly
 
@@ -108,12 +138,18 @@ The gate SHALL produce a verdict together with its reason list, and the display 
 - **WHEN** an issue carries a `### Complexity` value of `Spectra` and a human applies the `parking-lot` label afterwards
 - **THEN** the gate reports the issue as not actionable with reason `parking-lot-label`
 
-### Requirement: Legacy Diagnosis values are handled without rewriting history
+### Requirement: Existing diagnoses require no migration
 
-Existing Diagnosis comments that carry deferral qualifiers in `### Complexity` SHALL NOT be rewritten to satisfy the closed value domain. The closed value domain SHALL constrain newly emitted diagnoses, and legacy values SHALL be carried by the non-domain path, which yields a not-actionable verdict with the original value surfaced. Migration SHALL be limited to applying the `parking-lot` label where it is absent.
+Existing Diagnosis comments SHALL NOT be rewritten, and no label SHALL be backfilled, in order for the gate to produce correct verdicts on them. The extraction and deferral rules SHALL be validated against the repository's full diagnosis corpus, and that validation SHALL be a regression test rather than a one-off check.
 
-#### Scenario: Legacy value yields the correct verdict without edit
+#### Scenario: Full corpus produces correct verdicts unmodified
 
-- **WHEN** the gate evaluates an issue whose Diagnosis comment still reads `Simple when triggered` and which carries no `parking-lot` label
-- **THEN** the issue is reported as not actionable
-- **AND** the Diagnosis comment content is unchanged
+- **WHEN** the gate evaluates every existing Diagnosis comment in the repository
+- **THEN** every value carrying a valid tier without deferral vocabulary yields that tier
+- **AND** every value carrying deferral vocabulary is withheld with reason `complexity-deferral-marker`
+- **AND** no Diagnosis comment content is modified
+
+#### Scenario: Fixture reflects real shapes rather than a hypothesis-confirming sample
+
+- **WHEN** the regression fixture is reviewed
+- **THEN** it contains at least three cases each of bare tier, tier with same-line rationale, decorated tier, and deferral vocabulary

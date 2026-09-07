@@ -1,5 +1,7 @@
 ## Why
 
+> **第 2 輪 re-baseline（2026-08-15）**：`/idd-verify --pr 318` FAIL（2 CRITICAL / 21 HIGH）。CRITICAL-2 以 90 筆真實語料證偽第 1 輪的封閉值域前提；`/idd-reorganize #316` 完成裁定；`/idd-diagnose #316` 第 2 輪以 **159 筆完整 corpus** 重新定出值域規則（158/158，0 false positive）。本 proposal 的 What Changes / Impact 已依該結論重寫；design D1/D3/D5 與 spec R1/R3/R7 同步重寫，其餘決策經裁定為 still-valid 而保留。
+>
 > **Re-scope note（2026-08-14）**：本 change 於 #298 仍 open 時提出。走完 discuss → propose、進入 apply 時發現 **#298 已由 PR #309 / #306 修掉並 close** —— 但修正**只落在 `idd-list`**，另三個 consumer（`idd-all` / `idd-implement` / `idd-plan`）未動，且 `idd-list` 自身 Step 5 仍文載會截斷的 regex，與新增的 Step 3.7 直接矛盾。本 change 遂 re-scope 為**承接剩餘缺口**，追蹤於 **#316**；已完成的共用 helper、canonical 契約與回歸測試（全新檔、與已 merge 內容零衝突）原樣保留。Migration 相關 task 因目標 issue 全數 close 而 moot。
 
 
@@ -11,15 +13,15 @@
 
 ## What Changes
 
-- **`### Complexity` 回歸純封閉值域** —— 合法值僅 `Simple` / `Plan` / `Spectra` / `SDD-warranted`，各自可帶既有的 ` via <來源>` 後綴慣例。`when triggered` 這類限定詞不再寫進此欄位。**BREAKING**：既有 9 筆帶限定詞的 diagnosis 值在新契約下為非法，需 migration。
-- **parked 狀態改由 `parking-lot` label 單獨承載** —— 人可貼可撕，成為唯一 source of truth。實測 11 個 issue 中限定詞與 label 只有 5 個一致，證明兩者不是重複而是會分岔的兩個訊號。
-- **新增 actionability gate** —— 三訊號 OR 判定，放行需三者皆不成立：`### Complexity` 非合法值、`parking-lot` label 存在、`### Blocking` 區塊非空。
-- **default-on-unparseable = not-actionable + surface** —— 對稱於 `### Conflict Class` 的 `D_diagnose_first` 契約：不放行、必須顯示原始值、絕不靜默。
+- **`### Complexity` 的 tier 以 prefix 抽取，容許同行理由** —— 剝裝飾 → 取 ` via ` 之前的 tier prefix → tier 須為 `Simple` / `Plan` / `Spectra` / `SDD-warranted` 之一。tier 之後的理由、括號說明、provenance 後綴**皆為合法**，不影響抽取。
+- **延期以語彙偵測，並有獨立 reason** —— 對**整個值**掃 `when triggered` / `parking lot` / `deferred` / `暫緩`，命中則不路由，reason 為 `complexity-deferral-marker`（與 `complexity-unparseable` 分離 —— 前者是正常狀態、後者是資料錯誤，人的處置不同）。
+- **`parking-lot` label 是 parked 的主要訊號**，延期語彙是次要安全網。語彙清單取高精度、容忍低召回。
+- **新增 actionability gate** —— 三訊號 OR 判定（Complexity 不可路由、`parking-lot` label、`### Blocking` 非空），放行需三者皆不成立，**且四個 consumer 必須實際呼叫它**。
 - **三個 consumer 的 Complexity 解析統一** —— `idd-list`、`idd-all`、`idd-implement`（含 `idd-plan` 的 tier 確認）改用共用 helper，消除各自窄化。
 - **`### Blocking` 抽取重構為 gate 的 input** —— #84 既有的 Blocked 分組輸出行為不得退化。
-- **`idd-diagnose` producer 端宣告封閉值域** —— 明訂限定詞不得寫入，parked 意圖改以 label 表達。
-- **既有 9 筆 diagnosis migration** —— 8 筆機械處理（剝限定詞、必要時補 label）、#128 需人重新判斷（其值為散文，非 tier 加限定詞結構）。
-- **`references/ic-r011-checkpoint.md` 的 parking 慣例收斂** —— 該檔宣稱的 `blocker:infeasible` 與 `blocker:waiting` 目前 0 個 issue 在用，實際在用的是 `parking-lot`（6 個）。
+- **`idd-diagnose` producer 端明訂延期意圖走 label** —— 不再宣告封閉值域；改為「tier 寫清楚、延期貼 label、不要把延期寫進本欄」。
+- **零 migration** —— 新規則對既有 159 筆語料 158/158 全對，不需回填 label、不需改寫任何 Diagnosis comment。
+- **`references/ic-r011-checkpoint.md` 的 parking 慣例收斂** —— `blocker:infeasible` / `blocker:waiting` 目前 0 個 issue 在用，實際在用的是 `parking-lot`。
 
 ## Capabilities
 
@@ -51,4 +53,5 @@
     - `plugins/issue-driven-dev/references/ic-r011-checkpoint.md`
   - Removed: (none)
 - 同檔衝突：#299（`--limit` 先於排序生效）同樣修改 `plugins/issue-driven-dev/skills/idd-list/SKILL.md`，兩者需序列化或合併處理。
+- 追蹤 issue 由 #298 改為 **#316**（#298 已由 PR #309 / #306 修掉並 close，只涵蓋 `idd-list`）。
 - 配套 issue：#310（parked issue 無回訪機制）—— 本變更把 parked 藏得更乾淨，會放大該問題，但不在本次範圍內。

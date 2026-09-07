@@ -13,7 +13,7 @@
 
 實測另一項數據推翻了「限定詞與 label 資訊重複」的假設：11 個 issue 中兩者**一致的只有 5 個**。`#37` 是 bare `Spectra` 加 `parking-lot` label（人事後 park）；`#131` 與 `#200` 是有限定詞、無 label（diagnose 判 parked 但無人貼 label）；`#136` 的 comment 與 body 甚至彼此分岔。兩者不是同一資訊的兩種寫法，而是**兩個會分岔的訊號**。
 
-約束：`rules/append-vs-modify.md` 規定 Diagnosis comment 是 append-only 審計軌跡。既有的 `### Conflict Class` 契約（openspec/specs/parallel-orchestration/spec.md）已示範了正確形狀 —— 封閉值域、absent 或 unparseable 時保守預設、且必須 surface —— 本設計以之為對照模型。
+約束：`rules/append-vs-modify.md` 規定 Diagnosis comment 是 append-only 審計軌跡。既有的 `### Conflict Class` 契約（openspec/specs/parallel-orchestration/spec.md）示範了**保守預設 + 強制 surface**這一半的正確形狀，本設計沿用；但它的**封閉值域**那一半不可照搬 —— Conflict Class 由 `idd-diagnose` 以五個固定 key 寫入，`### Complexity` 的實際產出卻是自由散文（159 筆語料中 93% 帶理由或裝飾）。同一個 producer、兩種欄位紀律，這正是前版誤植的來源。
 
 ## Goals / Non-Goals
 
@@ -23,7 +23,7 @@
 - 把 parked 這個**會變的狀態**從不可變的 artifact 遷到可變的 metadata
 - 消除三個 consumer 各自窄化 `### Complexity` 的分岔
 - 保留 #84 既有的 Blocked 分組輸出行為，不退化
-- 建立可被未來新欄位繼承的通則：被 routing 消費的欄位必須宣告封閉值域與 unparseable 契約
+- 建立可被未來新欄位繼承的通則：**被 routing 消費的欄位，其判準必須以真實語料驗證**，不得從有偏樣本推導
 
 **Non-Goals:**
 
@@ -32,18 +32,51 @@
 - **不讓 producer 自動貼 `parking-lot` label**（理由見決策「parked label 維持人工裁決」）。
 - **不把 Strategy `[~] 暫緩` 納入 gate**（理由見決策「gate 採三訊號」）。
 - **不做 parked issue 的回訪／staleness 機制** —— 已獨立為 #310。本變更會把 parked 藏得更乾淨、放大該問題，但兩者範圍分離。
-- **不改寫既有 Diagnosis comment 的歷史內容**（理由見決策「migration 只貼 label」）。
-- **不退役 `SDD-warranted`** —— 它是 `Spectra` 的既有 backward-compat alias，留在封閉值域內。
+- **不改寫既有 Diagnosis comment 的歷史內容**（理由見決策「零 migration」）。
+- **不退役 `SDD-warranted`** —— 它是 `Spectra` 的既有 backward-compat alias，仍是合法 tier。
+- **不把延期語彙清單當成封閉列舉**。它是高精度的經驗規則，不是定義；漏抓由 `parking-lot` label 兜底。
 
 ## Decisions
 
-### Complexity 回歸純封閉值域，parked 遷出至 label
+### tier 以 prefix 抽取，延期以語彙偵測，parked 主訊號在 label
 
-`### Complexity` 的合法值僅四個 tier（`Simple` / `Plan` / `Spectra` / `SDD-warranted`），各自可帶既有的 ` via <來源>` 後綴慣例。parked 狀態改由 `parking-lot` label 單獨承載。
+> **本決策於 2026-08-15 重寫**（前版：「Complexity 回歸純封閉值域」）。前版把「tier 後接文字」等同於「延期修飾語」，被 `/idd-verify --pr 318` CRITICAL-2 以真實語料證偽。原文保留於 git history。
 
-理由：根因不是 parser 太窄，而是**把會變的狀態存進不可變的 artifact**。Diagnosis comment 是 append-only，parked 卻會變（trigger 成立就該 unpark）。`#136` 的 comment 與 body 分岔，正是狀態被凍住後自行漂移的自然實驗。IDD 已經知道正確做法 —— `### Blocking` 正因為會變才放在 body 由 `idd-update` 維護。
+`idd_parse_complexity` 依序：**(1)** 剝除前後 markdown 裝飾 → **(2)** 取 tier prefix（第一個 ` via ` 之前；tier 須為 `Simple` / `Plan` / `Spectra` / `SDD-warranted` 之一）→ **(3)** 對**整個值**掃延期語彙，命中則不路由。
 
-替代方案：(a) 讓 `when triggered` 成為合法後綴，兩訊號並存 —— 但實測已證明兩者會分岔，並存就必須定義優先序，而該優先序沒有非任意的答案；(b) 只加寬三個 parser —— 會讓三個 consumer 一致地讀到一個會分岔的訊號，一致地錯比不一致地錯更難發現。
+tier 之後的其餘文字（同行理由、括號說明）**是合法的**，不影響 tier 抽取。
+
+**理由（159 筆 corpus 實證）**：本 repo 全部 225 個 issue 中 159 筆有 Diagnosis。形狀分佈：
+
+| 形狀 | 數量 | 佔比 |
+|---|---|---|
+| tier + 同行理由 | 66 | 41.5% |
+| bare tier | 45 | 28.3% |
+| bare tier + markdown 裝飾 | 37 | 23.3% |
+| tier + ` via <來源>` | 1 | 0.6% |
+| **tier + 延期語彙** | **9** | **5.7%** |
+| 無區段 | 1 | 0.6% |
+
+**分界不在「後面有沒有字」，而在「那些字是否表達延期」。** 前版的分界把 93.1% 的正常寫法與 5.7% 的延期寫法切在同一邊，導致 66 筆本該路由的 issue 變成 hard abort。
+
+本規則在完整 corpus 上：**149 筆正確路由 + 9 筆正確擋下 = 158/158，0 false positive。**
+
+延期語彙目前為 `when triggered` / `parking lot` / `deferred` / `暫緩`。偵測必須掃**整個值**而非只掃 tier 之後 —— `#136` 的 tier 是 bare `Spectra`，延期語彙藏在括號理由內。
+
+替代方案：(a) 前版的純封閉值域 —— 已被 corpus 證偽（42% 誤判率）；(b) 維持舊的 `([A-Za-z-]+)` 截斷 —— 對裝飾值（37 筆）完全不匹配、對延期值（9 筆）誤判可動，錯誤率 29%；(c) 只認 tier prefix 不做延期偵測 —— 那 9 筆延期會被誤判可動，等同回到 #298 的原始 bug。
+
+### 風險姿態：label 為主、語彙為輔
+
+延期語彙是**開放列舉**（新措辭隨時可能出現），因此失敗方向必須明確界定：
+
+| 失敗 | 後果 | 兜底 | 可見性 |
+|---|---|---|---|
+| **漏抓**延期 | 退回 pre-#298 行為（以 tier 路由）| `parking-lot` label | label 在 |
+| **誤抓**延期 | 正常 issue 被擋下 | 無 | 原值有 surface，人一眼可辨 |
+
+因此：**`parking-lot` label 是 parked 的主要訊號**（人為裁決、可變、無歧義）；Complexity 的延期語彙是**次要安全網**，覆蓋 legacy 與未貼 label 的情形。語彙清單取**高精度、容忍低召回** —— 漏抓有 label 兜底，誤抓會擋住正常工作。
+
+這與前版的姿態相反：前版讓 Complexity 欄位做主要判定，於是任何解析不確定都變成硬停。
 
 ### gate 採三訊號，Strategy 暫緩標記排除在外
 
@@ -51,13 +84,29 @@ actionability gate 的輸入是三個訊號：`### Complexity` 非合法值、`p
 
 理由：`[~]` 的既有 consumer 是 `idd-close` 的 checklist gate，語意是「close 時這個 checklist item 刻意跳過」—— 那是 per-item 的 close-time disposition，不是 per-issue 的「現在可不可以動」。把它拉進 routing gate 等於用回答 A 問題的訊號去回答 B 問題，且會與 `idd-close` 的既有語意衝突。
 
-### unparseable 的保守處置為 not-actionable 並強制 surface
+### 三種不可路由狀態各有獨立 reason 並一律 surface
 
-`### Complexity` 值不在封閉值域內時，gate 判定 not-actionable，且**必須顯示原始值**供人判讀，絕不靜默截斷。完全缺少 `### Complexity` 區段時同樣 not-actionable，理由標為 missing。
+> **本決策於 2026-08-15 重寫**（前版：「unparseable 的保守處置」）。「不得靜默截斷 / 不得降級 / 不得中斷 listing」三條**未被推翻、原樣保留**；被推翻的是「什麼算不可路由」的定義。
 
-理由：完全對稱於 `### Conflict Class` 的 `D_diagnose_first` 契約 —— 保守預設加強制 surface。既有 `idd-all` 的 `UNKNOWN` 安全網只覆蓋「regex 完全沒 match」，結構上接不住「match 到但值非法」，本決策把兩種失敗都納入。
+`idd_parse_complexity` 的非零出口分成**三種**，各有獨立 reason：
 
-替代方案：降級為 `Plan` —— 否決，`Plan` 仍是可動 tier，仍會把 parked issue 送進 `/idd-plan`；中斷整個 `idd-list` —— 否決，對 surfacing-only 工具過重，一筆壞資料會堵死全部輸出。
+| 狀況 | exit | reason | stderr |
+|---|---|---|---|
+| tier prefix 不是四值之一 | 3 | `complexity-unparseable` | `unparseable-complexity: <原值>` |
+| 缺 `### Complexity` 區段 | 4 | `complexity-missing` | `missing-complexity` |
+| **tier 合法但值含延期語彙** | **5** | **`complexity-deferral-marker`** | **`deferral-marker: <原值>`** |
+
+三者一律**顯示原始值**供人判讀。
+
+**為何延期要獨立於 unparseable**：兩者的**人工處置完全不同**。`complexity-unparseable` 是**資料錯誤**（diagnosis 寫壞了，該修 diagnosis）；`complexity-deferral-marker` 是**正常狀態**（這件事確實被延期了，該做的是確認 label、不是修 diagnosis）。用同一個 reason 表達會讓 `/idd-list` 的 Parked 分組把「壞資料」和「正常延期」混在一起，人看不出哪些需要動手修。
+
+三條不變的禁令（前版保留）：
+
+- **SHALL NOT** 靜默截斷成 tier prefix —— 那是 2026-08-10 事故本身
+- **SHALL NOT** 降級為任何 tier（含 `Plan`）—— `Plan` 仍是可動 tier
+- **SHALL NOT** 中斷整個 listing —— 一筆壞資料不得壓掉其餘 issue
+
+對稱於 `### Conflict Class` 的 `D_diagnose_first` 契約：保守預設 + 強制 surface。
 
 ### 解析與判定抽為共用 helper
 
@@ -65,13 +114,19 @@ actionability gate 的輸入是三個訊號：`### Complexity` 非合法值、`p
 
 理由：`.claude/rules/deep-integration-over-hardcode.md` 的反複製判準 —— 同構機件兩處維護等於同一個 bug 要修多次，本 issue 正是該失敗模式的實例（三處實作、三種行為）。
 
-### migration 只貼 label，不改寫歷史
+### 零 migration —— 新規則對既有全部語料都給正確結果
 
-既有 9 筆帶限定詞的 Diagnosis comment **維持原狀不改寫**。migration 的動作只有兩種：對應 issue 補上 `parking-lot` label（若缺），以及 `#128` 由人重新判斷。
+> **本決策於 2026-08-15 重寫**（前版：「migration 只貼 label，不改寫歷史」，且宣稱「9 筆需 migration」）。前版的論證是「legacy 值走 unparseable 路徑得到的正是正確結果」—— 對 `Spectra（opt-out → 直接 propose）` 而言那是**錯的**（該 issue 可動），論證基礎已崩解。
 
-理由：改寫既有 Diagnosis comment 的 `### Complexity` 是 modify-in-place 一個 append-only 審計 artifact，違反 `rules/append-vs-modify.md`。而且**不需要改寫** —— legacy 限定詞值在新契約下落入 unparseable 路徑，判定為 not-actionable 並顯示原值，對那 8 個 parked issue 而言正是正確結果。封閉值域約束的是**新產出的** diagnosis；歷史值由 unparseable 路徑正確承接。
+**migration 動作為零。** 既有 Diagnosis comment 一律不改寫，也不需要補任何 label 來讓 gate 給出正確答案。
 
-替代方案：回填改寫 —— 否決，違反 append-only 且無必要；永久放寬值域容忍 legacy —— 否決，會讓封閉值域名存實亡。
+理由：新規則在 159 筆 corpus 上**158/158 全對** —— 149 筆正確路由、9 筆正確擋下。既有語料完全不需要調整就能被正確解讀。前版所謂「9 筆需 migration」是從封閉值域的錯誤前提推出的；真實需求是 **0 筆**。
+
+append-only 紀律仍然成立且更容易守：既然不需要改寫任何歷史 comment，也就不存在違反 `rules/append-vs-modify.md` 的誘因。
+
+**與 `parking-lot` label 的關係**：label 仍是 parked 的主要訊號（見「風險姿態」決策），但它的價值在**未來**（人事後 park 一個 tier 明確的 issue、以及延期語彙漏抓時的兜底），不是在補救歷史。既有那 9 筆 parked issue 由延期語彙正確擋下，貼不貼 label 都不影響 verdict。
+
+替代方案：仍補 label 以求「雙保險」—— 否決，那會把 0-migration 變成 9-migration 而不改變任何 verdict，是無收益的動作，且與「label 表達人的裁決」的語意相衝（替一個工具已判定的事後補人為標記，等於偽造裁決紀錄）。
 
 ### parked label 維持人工裁決，producer 不自動貼
 
@@ -97,45 +152,53 @@ gate 產出 verdict 加 reason 清單；顯示層依 reason 分兩組 —— rea
 
 **Interface** — 共用 helper 提供兩個函式：
 
-- `idd_parse_complexity`：輸入為 Diagnosis comment 全文，stdout 為 canonical tier（四個合法值之一）。exit 0 表示合法（bare tier 或帶 ` via <來源>` 後綴）；exit 3 表示區段存在但值不在封閉值域，stderr 輸出 `unparseable-complexity: <原始值>`；exit 4 表示缺少 `### Complexity` 區段，stderr 輸出 `missing-complexity`。
+- `idd_parse_complexity`：輸入為 Diagnosis comment 全文，stdout 為 canonical tier。exit 0 = tier prefix 為四值之一且值內無延期語彙（後接理由 / 裝飾 / ` via <來源>` 皆合法）；exit 3 = tier prefix 非四值之一，stderr `unparseable-complexity: <原始值>`；exit 4 = 缺 `### Complexity` 區段，stderr `missing-complexity`；**exit 5 = tier 合法但值含延期語彙**，stderr `deferral-marker: <原始值>`。三個非零出口一律 surface 原值。
 - `idd_actionability_verdict`：輸入為前一函式的 exit code、是否帶 `parking-lot` label、`### Blocking` 是否非空。stdout 為 `actionable`，或 `not-actionable: <reason>[; <reason>...]`；exit 0 為 actionable、exit 1 為 not-actionable。
 
-**Reason 值域**（封閉列舉，四個）：`complexity-unparseable`、`complexity-missing`、`parking-lot-label`、`blocking-nonempty`。
+**Reason 值域**（封閉列舉，**五個**）：`complexity-unparseable`、`complexity-missing`、**`complexity-deferral-marker`**、`parking-lot-label`、`blocking-nonempty`。
 
 **Failure modes** — 非法 Complexity 值一律 surface，絕不靜默截斷或降級為合法 tier。helper 本身不可用（檔案缺失）時，呼叫端 fail-loud 並指出缺失路徑，不 silent degrade 回舊行為。gate 不對「trigger 條件是否已成立」做任何判斷，該問題明確在範圍外。
 
 **Acceptance criteria**
 
 - 新增測試以既有慣例落在 `plugins/issue-driven-dev/scripts/tests/actionability-gate/test.sh`，並登錄進 `plugins/issue-driven-dev/scripts/run-all-tests.sh`。
-- fixture 為靜態對照表，記錄 issue 號、Complexity 原始值、labels、期望 verdict，覆蓋 2026-08-10 快照的 9 筆 diagnosed 路由，斷言其中只有 `#37` 為 actionable。fixture 不查詢 live GitHub。
-- 三個代表性 legacy 值（`Simple when triggered`、`Spectra when triggered (parking lot)`、`#128` 的散文值）經 `idd_parse_complexity` 皆回 exit 3 並在 stderr 顯示原值。
+- fixture 為靜態對照表，記錄 issue 號、Complexity 原始值、labels、期望 verdict。**必須覆蓋 corpus 的四種真實形狀各至少 3 筆**：bare tier、tier + 同行理由（`Spectra（opt-out → 直接 propose）` 類）、markdown 裝飾（`**Spectra**`）、延期語彙。fixture 不查詢 live GitHub，且**不得只收錄為驗證假設而挑的樣本**（前版 fixture 15 筆中 9 筆刻意選延期形狀，是本次失敗的成因之一）。
+- 全 corpus 回歸：對 159 筆真實 diagnosis 跑 `idd_parse_complexity`，斷言 **149 筆 exit 0 且 tier 正確、9 筆 exit 5、1 筆 exit 4、0 筆 exit 3**。
+- 三個代表性延期值（`Simple when triggered`、`Spectra when triggered (parking lot)`、`**Spectra**(Layer 2 + Layer 3 if/when triggered)`）皆回 exit 5 並顯示原值。
+- 三個代表性正常值（`Spectra（opt-out → 直接 propose）`、`Plan（Layer P：…）`、`Simple — 單檔、2 個 1-token 補丁…`）皆回 exit 0 且 tier 分別為 `Spectra` / `Plan` / `Simple`。
 - 兩個既有的合法後綴值（`Plan via Layer V`、`Spectra via hard-gate (sdd_bias)`）經 `idd_parse_complexity` 回 exit 0 且 canonical tier 分別為 `Plan` 與 `Spectra`。
 - #84 既有行為回歸測試：帶非空 `### Blocking` 的 issue 仍列於 Blocked 分組，該分組標題、全 blocked banner 文案、footer 計數與變更前逐字相同。
 
 **Scope boundaries**
 
-- 範圍內：Complexity 值域契約、三訊號 gate、共用 helper、四個 skill 的引用改寫、`ic-r011-checkpoint.md` 的 label 名稱收斂、測試與 fixture、9 筆 issue 的 label migration。
+- 範圍內：Complexity 解析契約（prefix + 裝飾剝除 + 延期語彙）、三訊號 gate **及其在四個 consumer 的實際接線**、共用 helper、`ic-r011-checkpoint.md` 的 label 名稱收斂、測試與 fixture、verify #318 的 2 CRITICAL + 21 HIGH findings。
 - 範圍外：parked 回訪／staleness 機制（#310）、`--limit` 排序缺陷（#299）、trigger 條件的機械判定、`idd-close` 對 Strategy `[~]` 的既有處理、grooming 機制的實作。
 
 ## Risks / Trade-offs
 
 - **#84 行為退化** → 顯示層分兩組而非合併，Blocked 分組的標題、banner、footer 計數列入回歸測試逐字比對。
-- **四個 skill 改寫不同步，只修一處等於沒修** → 抽共用 helper，並在測試中對四個引用點各驗一次；只修 `idd-list` 會讓 `idd-all` 的未定義行為留存。
-- **與 #299 同檔衝突** → 兩者都修改 `plugins/issue-driven-dev/skills/idd-list/SKILL.md`，需序列化或合併為同一 PR；conflict class 已判為需序列化。
-- **legacy 值走 unparseable 路徑，verdict 對但 reason 不精確** → reason 會標為 `complexity-unparseable`（資料問題）而非 parked。緩解：surface 原始值，人看到 `Simple when triggered` 即可理解實情。這是不改寫歷史所付的已知代價。
-- **本變更讓 parked 藏得更乾淨，放大無回訪機制的問題** → 已獨立為 #310 並在 Non-Goals 明記；本變更不因此擴大範圍。
+- **gate 實作了卻沒接上**（verify #318 CRITICAL-1 的實際發生）→ `idd_actionability_verdict` 在前一輪完整實作、66 個測試全綠，但四個 consumer 一個都沒呼叫它，`parking-lot` 與 `### Blocking` 照樣被繞過。緩解：驗收條件明列「四個引用點各驗一次**呼叫了 verdict**」，而不只驗「helper 自身行為正確」——測 helper 不等於測它被使用。
+- **四個 skill 改寫不同步，只修一處等於沒修** → 抽共用 helper，並在測試中對四個引用點各驗一次。
+- **延期語彙漏抓**（開放列舉的固有代價）→ 退化成 pre-#298 行為，由 `parking-lot` label 兜底；不是新失敗。
+- **延期語彙誤抓** → 正常 issue 被擋下。目前 corpus 零誤中，但語料會成長。緩解：語彙清單保守；原值一律 surface；出現誤抓時的正確修法是**收窄語彙**，不是放寬 gate。
+- **與 #299 同檔衝突** → 兩者都修改 `plugins/issue-driven-dev/skills/idd-list/SKILL.md`，需序列化或合併為同一 PR。
+- **本變更讓 parked 藏得更乾淨，放大無回訪機制的問題** → 已獨立為 #310 並在 Non-Goals 明記。
 
 ## Migration Plan
 
-1. helper 與新 reference 落地，四個 skill 改為引用共用實作。
-2. 測試與 fixture 落地並登錄進 test runner。
-3. 對 8 個既有 parked issue 補齊 `parking-lot` label（`#131`、`#200` 目前有限定詞但缺 label；其餘已有）。**不改寫任何 Diagnosis comment。**
-4. `#128` 交由人重新判斷 —— 其 Complexity 值為散文（tier 後接未決 UX 軸的敘述），需決定該 issue 是 parked 或可動，再決定是否貼 label。
+**無資料 migration。** 新規則對既有 159 筆語料 158/158 全對，不需要回填 label、不需要改寫任何 Diagnosis comment。
+
+實作順序（非 migration，是落地順序）：
+
+1. helper 的解析規則改寫（prefix + 裝飾剝除 + 延期語彙 + exit 5），並修 verify 指出的 HIGH findings（`shift 2` 無限迴圈、`set -e` command-substitution 提前中止、awk code-fence 感知、` via <source>` 後綴的延期夾帶）。
+2. fixture 重建為 corpus 抽樣 + 全 corpus 回歸測試。
+3. 四個 consumer 改寫：不只換 parser，**要真的呼叫 `idd_actionability_verdict`**（讀 labels + `### Blocking`）。
+4. `idd-diagnose` producer 宣告改寫（不再宣告封閉值域，改為「延期意圖請貼 label、不要寫進本欄」）。
 5. `ic-r011-checkpoint.md` 的 label 名稱收斂。
 
-Rollback：本變更為 skill 文件、helper script 與 label 的變更，無資料遷移。回退方式為 revert commit 加撕除步驟 3 補上的 label；既有 Diagnosis comment 全程未被修改，無不可逆狀態。
+Rollback：本變更為 skill 文件與 helper script 的變更，零資料遷移、零 label 異動。回退方式為 revert commit，無不可逆狀態。
 
 ## Open Questions
 
-- `#128` 的正確處置需人判斷，migration 步驟 4 才能完成。其值為「tier 後接未決 UX 軸」的散文，無法機械判定該 issue 是 parked 還是可動。
-- `ic-r011-checkpoint.md` 的兩個 `blocker:*` label 是「退役」還是「與 parking-lot 分工」，需在該檔改寫時定案。目前 0 使用，傾向退役，但若原設計意圖是區分 infeasible 與 waiting 兩種 parked 成因，則應保留並明記與 `parking-lot` 的關係。
+- **延期語彙清單的擴充機制未定。** 目前四個語彙由 159 筆 corpus 歸納而得。語料成長後若出現新措辭，是誰、依什麼判準把它加進清單？本變更不解決；先記錄為已知缺口。
+- `ic-r011-checkpoint.md` 的兩個 `blocker:*` label 是「退役」還是「與 parking-lot 分工」，需在該檔改寫時定案。目前 0 使用，傾向退役。
