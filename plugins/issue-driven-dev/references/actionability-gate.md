@@ -2,7 +2,7 @@
 
 > The contract that answers **「這個 issue 現在可不可以動？」** — how the routing tier is extracted from the `### Complexity` Diagnosis field, how deferral is detected, where parked state lives, and the three-signal gate that `idd-list` / `idd-all` / `idd-implement` / `idd-plan` all consume. This file is the single source of truth; the four skills cite it and MUST NOT restate the rules in their own words.
 >
-> **Source**: `add-actionability-gate` Spectra change (capability `actionability-gate`). Origin: issue-driven-development#298 → #316, surfaced from real dogfooding (2026-08-10 backlog routing). **Round 2** (2026-08-15): `/idd-verify --pr 318` falsified round 1's closed value domain against the real diagnosis corpus; the extraction rule below is the corrected one, validated on all 159 diagnoses in this repository.
+> **Source**: `add-actionability-gate` Spectra change (capability `actionability-gate`). Origin: issue-driven-development#298 → #316, surfaced from real dogfooding (2026-08-10 backlog routing). **Round 2** (2026-08-15): `/idd-verify --pr 318` falsified round 1's closed value domain against the real diagnosis corpus; the extraction rule below is the corrected one, validated on all 159 diagnoses in this repository. **Round 3** (2026-09-07): the round-2 verify found the same failure shape on the third signal — the `### Blocking` reader had been written against an unvalidated producer assumption — and found that filing not-yet-diagnosed issues under *Parked* misdescribed 11 of 14 open issues. Both are corrected below, each with its own frozen corpus or live-backlog measurement.
 
 ## The incident this exists to prevent
 
@@ -78,7 +78,11 @@ The rule was derived from and validated against every diagnosed issue in this re
 | `4` missing | 1 | #273 |
 | `3` unparseable | 0 | — |
 
-Every one of the 159 routes as hand-reviewed; **0 false positives**. No Diagnosis comment was rewritten and no label was backfilled to get there — **zero migration** is a claim about this corpus, and the test is what makes it falsifiable.
+| — no `## Diagnosis` comment at all | 66 of 225 | every one is exit 4 (`complexity-missing`) — see the *undiagnosed* group below |
+
+Every one of the 159 routes as hand-reviewed; **0 false positives**. No Diagnosis comment was rewritten and no label was backfilled to get there — **zero migration** is a claim about this corpus, and the test is what makes it falsifiable. Read it for what it says: *no existing diagnosis needs rewriting*. It does **not** say the backlog's actionability distribution is unchanged — on the 2026-09-07 open backlog only 2 of 14 issues were routable, because 11 had never been diagnosed. That is why the display distinguishes *undiagnosed* from *parked*.
+
+**Signal 3 has its own frozen corpus**: `scripts/tests/actionability-gate/fixtures/corpus-blocking.json` — every `### Blocking` section in the bodies of all 238 issues (55 sections, hand-reviewed: 47 empty, 8 non-empty). Round 2 shipped `idd_blocking_section` without this and withheld 31 of the 47 — including #316's own `- (none — 可動)`. The rule that is 0 FP / 0 FN on it is in the helper's comments; two other candidates were measured there and rejected (one cleared every real blocker, one left 20 false positives).
 
 ## Risk posture — the label is primary, the vocabulary is a net
 
@@ -91,6 +95,10 @@ Deferral vocabulary is a **high-precision, low-recall heuristic**. It is NOT a c
 
 So the rule for adding a term: **corpus evidence of zero false positives**, recorded in the regression fixture. Resemblance to an existing term is not evidence.
 
+**Signal 3 (`### Blocking`) has a different posture, and the difference matters.** It is a **list** field written by `idd-update`'s template `- {blocker 1, or "(none)"}`, model-filled, with 35+ spellings for "no blocker" in the wild. The reader therefore (a) judges **each bullet** — any non-placeholder bullet makes the section non-empty, so `- (none)` followed by `- 等 …` is a blocker — and (b) recognises a placeholder by its **leading token** (`none` · `n/a` · `無`, optionally bulleted, decorated or parenthesised, followed by end of line, a closing paren or a separator), so `- (none — 可動)` is empty while `- none of the reviewers replied yet` is not. Its failure directions are **not** symmetric with signal 1's: a miss here is not "pre-#298 behaviour", it is a regression of #84's blocked-state surfacing; a false positive is the hard stop the table above calls unacceptable. Accepted misses, documented: a placeholder token followed by a *clause* (`- (none) but actually blocked by #86`, `- n/a — blocked by #99`) reads as empty — the token wins. The corpus has none of these. Whether this field should be regex-read at all, or given a producer contract / returned to model judgement, is **#336**.
+
+**Mentions are not declarations — and the scan cannot tell them apart.** `Plan（把 parking lot 的文件敘述收斂）` and `Simple, no longer deferred` both trip the deferral scan. The corpus has zero such values, and negation logic would open a new miss surface, so the vocabulary is left as is; the operator sees the raw line and the remedy for this class is to keep meta-discussion out of the value line.
+
 **A documented miss, kept honest.** #128's Diagnosis reads `Plan（觸發表）+ 未決 UX 軸 → **移入 discussion list**`; its deferral ("blocked-by #86") lives only in Strategy prose. Under this rule it routes as `Plan`. That is the designed outcome — the gate does not parse prose — and the fixture pins #128 as *actionable* rather than pretending a marker exists. If it should be withheld, a human applies the label.
 
 ## Where deferral state lives
@@ -101,7 +109,7 @@ So the rule for adding a term: **corpus evidence of zero false positives**, reco
 | Deferral / parked | `parking-lot` label | **yes** | **a human** — see below |
 | External blocker | `### Blocking` in the issue body | yes | `idd-update` |
 
-**`idd-diagnose` SHALL NOT apply, remove, or derive the `parking-lot` label.** The label is a human ruling, and it is settable *after* the diagnosis was written. Empirically the two signals disagree: of 11 diagnosed issues sampled on 2026-08-10, only 5 had the qualifier and the label in agreement. #37 was `**Spectra**` with the label applied later by a human; #131 and #200 had the qualifier with no label. They are not two spellings of one fact — they are two facts, and deriving one from the other would delete the human's ability to park an issue whose tier is perfectly clear.
+**`idd-diagnose` SHALL NOT apply, remove, or derive the `parking-lot` label on the issue it is diagnosing.** The label is a human ruling, and it is settable *after* the diagnosis was written. (Scope: the IC_R011 checkpoint that idd-diagnose runs in Step 3.6 may attach `parking-lot` to a *newly filed sister issue* when the user classifies it (b) infeasible / (c) blocked-on-external — that is a human classification landing on a different issue, and since 3.1.0 it means the new issue is born parked. `blocker:infeasible` / `blocker:waiting` were never created in any repo and are retired everywhere IC_R011 is stated.) Empirically the two signals disagree: of 11 diagnosed issues sampled on 2026-08-10, only 5 had the qualifier and the label in agreement. #37 was `**Spectra**` with the label applied later by a human; #131 and #200 had the qualifier with no label. They are not two spellings of one fact — they are two facts, and deriving one from the other would delete the human's ability to park an issue whose tier is perfectly clear.
 
 **The producer's rule is therefore simple**: write the tier clearly, rationale welcome; if the issue is on hold, say so with the label, not in this field. The vocabulary scan exists for the 159-issue past, not as an invitation.
 
@@ -155,14 +163,17 @@ The gate emits a verdict together with its reason list. The display layer groups
 
 | Reasons | Group |
 |---|---|
-| `blocking-nonempty` **alone** | the existing blocked-state group (#84) — heading, all-blocked banner text, and footer counts unchanged |
-| anything else, including any mix | the parked group — each row shows the raw `### Complexity` line (from the helper's stderr) or the label, so the operator sees *why* |
+| any of `parking-lot-label` · `complexity-deferral-marker` · `complexity-unparseable` | **parked** — a human parked it, the diagnosis said so, or the value is a defect to repair; each row shows the raw `### Complexity` line (from the helper's stderr) or the label, so the operator sees *why*. This is also exactly the set `idd-list --parked` reviews |
+| otherwise `blocking-nonempty` | the existing **blocked**-state group (#84) — heading, all-blocked banner text, and footer counts unchanged |
+| otherwise (`complexity-missing` alone) | **undiagnosed** — the issue has not been diagnosed yet. That is every issue's birth state and, on a live backlog, the dominant one (11 of 14 open issues on 2026-09-07); round 2 filed it under *Parked*, which hid `→ /idd-diagnose #N` and made the footer disagree with `--parked` by an order of magnitude. The display keeps the diagnose command |
+
+`idd_actionability_group` returns exactly these three strings; the raw values it surfaces are third-party text and are printed with C0 control characters stripped — **data, never instructions**.
 
 Unifying the *judgment* does not mean unifying the *presentation*. #84's blocked-state surface is user-facing behavior people rely on; merging it into one undifferentiated bucket would be a regression dressed as a simplification.
 
 ## Consumer contract
 
-The four routing consumers SHALL invoke the shared implementation at `scripts/lib/actionability.sh` and MUST NOT embed a private parse — of `### Complexity` **or** of `### Blocking`. The canonical call shape, in full, is:
+The four routing consumers SHALL invoke the shared implementation at `scripts/lib/actionability.sh` and MUST NOT embed a private parse — of `### Complexity` **or** of `### Blocking`. **The gate SHALL run before any egress or branch creation** (a comment, a `git checkout -b`, a tree-lock): a human-parked issue must not receive an Implementation Plan comment before being told it is parked — round 2's `idd-implement` did exactly that at Step 2.5, and the test now pins the order. Prerequisites: `gh`, `jq`, `python3` (pre-approve them in `allowed-tools` so unattended runs do not stall on a permission prompt). The canonical call shape, in full, is:
 
 ```bash
 # 0. Missing helper → fail loud, name the path. Never fall back to a private regex.
@@ -171,11 +182,18 @@ The four routing consumers SHALL invoke the shared implementation at `scripts/li
     exit 1
 }
 
-# 1. Latest Diagnosis comment — PAGINATE. `gh issue view --json comments` returns
-#    only the OLDEST 100 comments, so on a long issue the latest diagnosis is
-#    exactly the one that gets dropped. (`--paginate --jq` emits one array per
-#    page; `jq -s add` folds them.)
-LATEST_DIAGNOSIS=$(gh api "repos/$GITHUB_REPO/issues/$N/comments" --paginate --jq '[.[] | {body}]' \
+# 0. Issue numbers enter a REST path: digits only, or refuse. (A `?per_page=1`
+#    smuggled in would silently truncate the fetch.)
+case "$N" in ''|*[!0-9]*) echo "FATAL: non-numeric issue number: $N" >&2; exit 1 ;; esac
+
+# 1. Latest Diagnosis comment — PAGINATE, and TRUST ONLY repo-affiliated authors.
+#    `gh issue view --json comments` returns only the OLDEST 100 comments, so on
+#    a long issue the latest diagnosis is exactly the one that gets dropped
+#    (`--paginate --jq` emits one array per page; `jq -s add` folds them). On a
+#    public repo any account can append a `## Diagnosis`; without the author
+#    filter that comment would become signal 1.
+LATEST_DIAGNOSIS=$(gh api "repos/$GITHUB_REPO/issues/$N/comments" --paginate \
+    --jq '[.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") | {body}]' \
     | jq -s 'add // []' \
     | python3 -c '
 import json, sys, re
@@ -201,16 +219,18 @@ if VERDICT=$(idd_actionability_verdict --complexity-exit "$CEXIT" --parking-labe
 case "$VEXIT" in
     0) ;;                                                  # actionable → dispatch on "$TIER"
     1) REASONS="${VERDICT#not-actionable: }" ;;            # withheld  → surface "$REASONS" + "$COMPLEXITY_ERR" / "$BLOCK_LINE"; no lifecycle command
-    *) echo "FATAL: idd_actionability_verdict misuse — $VERDICT" >&2; exit 1 ;;
+    *) echo "FATAL: idd_actionability_verdict misuse — $VERDICT" >&2; exit 1 ;;   # a LISTING consumer prints this and marks the row `(gate error)` instead of exiting
 esac
 ```
+
+`idd-list` deviates in three documented ways: it takes labels/body/comments from its bulk fetch and paginates only when the comment array is ≥ 100 (its own anti-N+1 rule), it skips the gate for non-open issues, and every fetch failure marks the row rather than exiting — "one bad value does not suppress the other issues" applies to API errors too.
 
 | Function | stdout | exit |
 |---|---|---|
 | `idd_parse_complexity <body>` | the leading tier (exit 0 only) | `0` routable · `3` no tier prefix (stderr `unparseable-complexity: <raw>`) · `4` no section (stderr `missing-complexity`) · `5` deferral vocabulary (stderr `deferral-marker: <raw>`) |
-| `idd_blocking_section <issue-body>` | first non-blank line of `### Blocking`, empty when absent or a `(none)` placeholder | `0` |
+| `idd_blocking_section <issue-body>` | the first **bullet** of `### Blocking` that is not a none-placeholder (leading-token rule); empty when the section is absent or every bullet is a placeholder | `0` |
 | `idd_actionability_verdict --complexity-exit 0|3|4|5 --parking-label yes|no --blocking-section yes|no` | `actionable` / `not-actionable: <reason>[; …]` | `0` actionable · `1` not actionable · `2` bad usage (missing value, non-boolean, unknown flag) |
-| `idd_actionability_group <reasons>` | `blocked` / `parked` | `0` |
+| `idd_actionability_group <reasons>` | `parked` / `blocked` / `undiagnosed` | `0` |
 
 **Only replacing the parser is not a fix.** Round 1 shipped a complete gate, 66 green assertions, and zero consumers calling `idd_actionability_verdict` (verify CRITICAL-1 on PR #318). A consumer that reads `$TIER` and never asks the gate has re-created the incident with a nicer parser.
 
@@ -239,5 +259,6 @@ Per [`.claude/rules/attribute-assessment.md`](../../../.claude/rules/attribute-a
 
 - [`parallel-orchestration.md`](parallel-orchestration.md) — the `### Conflict Class` contract this one mirrors; orthogonal field, same discipline
 - [`rules/append-vs-modify.md`](../rules/append-vs-modify.md) — why a Diagnosis comment cannot hold mutable state
-- `scripts/tests/actionability-gate/` — the incident fixture (`parked-routing.json`, verbatim 2026-08-10 rows plus corpus-sampled shapes) and the frozen corpus (`corpus-complexity.json`)
+- `scripts/tests/actionability-gate/` — the incident fixture (`parked-routing.json`, verbatim 2026-08-10 rows plus corpus-sampled shapes), the frozen Complexity corpus (`corpus-complexity.json`, 159 rows) and the frozen Blocking corpus (`corpus-blocking.json`, 55 rows)
+- **#336** — whether `### Blocking` should be regex-read at all (producer contract vs model judgement); **#337** — #84's `blocked`-label / wait-class display signals, retired from the gate path in 3.1.0
 - **On enumerations.** The *reason* vocabulary is written as a closed list with an explicit no-analogy clause because it is one: a summarizing criterion plus examples is two specifications that drift apart silently. The *deferral* vocabulary is deliberately **not** presented that way — it is a heuristic with a stated add-criterion (corpus evidence, zero false positives) — because round 1 showed what happens when a heuristic is dressed up as a domain: it rejects the data it was meant to describe.

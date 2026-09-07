@@ -15,8 +15,9 @@
 # no private parsing — that is the whole point of this file. Do not re-inline a
 # regex in a SKILL.md; extend here instead.
 #
-# THE RULE (round 2, validated on all 159 real diagnoses in this repo: 158/158
-# correct, 0 false positives — see /idd-diagnose #316)
+# THE RULE (round 2, validated on all 159 real diagnoses in this repo: 159/159
+# as hand-reviewed — 149 routable, 9 deferral, 1 correctly reported missing;
+# 0 false positives — see /idd-diagnose #316 and the frozen corpus fixture)
 #   1. strip leading/trailing markdown decoration (`**`, `` ` ``, `_`)
 #   2. the value must BEGIN WITH one of  Simple | Plan | Spectra | SDD-warranted
 #      (whole word; longest match first). That leading word IS the tier.
@@ -43,19 +44,25 @@
 
 # ── section extraction (shared by both readers below) ────────────────────────
 #
+# _idd_section_lines <body> <heading-text>
+#   stdout : every non-blank, non-subheading line under `### <heading-text>`,
+#            in order; empty when the section is absent or empty
 # _idd_section_first_line <body> <heading-text>
-#   stdout : first non-blank, non-subheading line under `### <heading-text>`;
-#            empty when the section is absent or empty
+#   stdout : the first of those lines (the scalar-field reader)
 #
+#   - a trailing CR is stripped first: GitHub's web textarea submits CRLF, and
+#     awk's default FS does not treat `\r` as blank, so a CRLF "empty line" has
+#     NF=1 and would be taken as the value (verify #318 round-2 HIGH)
 #   - heading anchored at line start, so prose mentioning "### Complexity"
 #     cannot match
 #   - ``` and ~~~ fences are tracked: a template example quoted inside a
 #     fence is not a section (verify #318 H4)
 #   - the section ends at the next heading of the same or higher level;
-#     a deeper `####` line is skipped, never taken as the value
-_idd_section_first_line() {
+#     a deeper `####` line is skipped, never taken as a value
+_idd_section_lines() {
     local body="${1-}" heading="${2-}"
     printf '%s\n' "$body" | awk -v h="$heading" '
+        { sub(/\r$/, "") }
         {
             if (fence != "") {
                 if (fence == "`" && $0 ~ /^[[:space:]]*```/) fence = ""
@@ -68,8 +75,11 @@ _idd_section_first_line() {
         !grab && $0 ~ ("^###[[:space:]]+" h "[[:space:]]*$") { grab = 1; next }
         grab && /^(#|##|###)[[:space:]]/                    { exit }
         grab && /^####/                                     { next }
-        grab && NF                                          { print; exit }
+        grab && NF                                          { print }
     '
+}
+_idd_section_first_line() {
+    _idd_section_lines "$1" "$2" | head -n 1
 }
 
 # ── contract 1: parse the Complexity field ───────────────────────────────────
@@ -217,39 +227,78 @@ idd_actionability_verdict() {
 # ── contract 3: the third signal — `### Blocking` in the issue body ──────────
 #
 # idd_blocking_section <issue-body>
-#   stdout : the first non-blank line of the `### Blocking` section when it
-#            holds a real blocker; empty otherwise
+#   stdout : the first line of the `### Blocking` section that states a real
+#            blocker; empty when the section is absent or every bullet is a
+#            none-placeholder
 #   exit 0 : always
 #
-# idd-update writes `- (none)` into an empty section, so "non-empty" means
-# "holds something other than a none-placeholder". Recognised placeholders,
-# optionally bulleted and decorated, any case: (none) · none · n/a · -
-# Consumers feed the result to the gate as
-#   --blocking-section "$([ -n "$BLOCK_LINE" ] && echo yes || echo no)"
-# and may show $BLOCK_LINE as the blocked reason (#84 behaviour preserved).
+# `### Blocking` is a LIST field (idd-update's template is a bullet list), so
+# unlike `### Complexity` it is read per bullet: any bullet that is not a
+# placeholder makes the section non-empty. Round 2 read only the first line —
+# `- (none)` followed by a real `- 等 …` bullet came back empty (verify #318
+# round-2, logic HIGH-1). Lines that do not start a bullet are continuations
+# of the bullet above and are not judged on their own.
+#
+# A placeholder is judged on its LEADING TOKEN, because the producer's real
+# style is "placeholder + annotation": of the 55 `### Blocking` sections in
+# this repo, 48 are semantically empty and 31 of those carry text after the
+# token (`- (none — 可動)`, `- (none) — closed`, `（無）`). Round 2 anchored the
+# match to the whole line and withheld all 31 — including #316 itself. The rule
+# below is 0 FP / 0 FN on the hand-reviewed corpus frozen in
+# scripts/tests/actionability-gate/fixtures/corpus-blocking.json; two other
+# candidate rules were tested there and rejected (one cleared every real
+# blocker, one left 20 false positives).
+#
+# Recognised token, any case, optionally bulleted / decorated / parenthesised:
+#   none · n/a · 無     followed by end of line, a closing paren, or a separator
+#   (— – - , 、 : ： ;). A bare bullet or bare decoration is also empty.
+# Accepted misses (documented, not in the corpus): `- (none) but actually
+# blocked by #86`, `- n/a — blocked by #99` read as empty; the token wins.
+# A real blocker that happens to START with the token (`- none of the
+# reviewers replied yet`) is NOT a placeholder because the token is followed by
+# a word, not a terminator — that case is pinned by test.
+_idd_is_none_placeholder() { # line
+    printf '%s\n' "$1" | grep -qiE '^[[:space:]]*([-*][[:space:]]+)?[_*`]*[（(]?[[:space:]]*(none|n/a|無)[_*`]*[[:space:]]*([)）]|$|[—–,、:：;-])' \
+    || printf '%s\n' "$1" | grep -qE '^[[:space:]]*[-*]?[_*`]*[[:space:]]*$'
+}
 idd_blocking_section() {
-    local body="${1-}" first
-    first=$(_idd_section_first_line "$body" Blocking)
-    if printf '%s\n' "$first" | grep -qiE '^[[:space:]]*([-*][[:space:]]+)?[_*`]*(\(none\)|none|n/a|-)?[_*`]*[[:space:]]*$'; then
-        return 0
-    fi
-    printf '%s\n' "$first"
+    local body="${1-}" line first=1
+    while IFS= read -r line; do
+        if [ "$first" = 1 ] || printf '%s\n' "$line" | grep -qE '^[[:space:]]*[-*][[:space:]]'; then
+            first=0
+            if ! _idd_is_none_placeholder "$line"; then
+                printf '%s\n' "$line"
+                return 0
+            fi
+        fi
+    done < <(_idd_section_lines "$body" Blocking)
+    return 0
 }
 
 # ── display helper: which group does a not-actionable issue belong to? ───────
 #
 # idd_actionability_group <reason-list>
-#   stdout : "blocked" | "parked"
+#   stdout : "blocked" | "parked" | "undiagnosed"
 #
-# Reason `blocking-nonempty` ALONE keeps the pre-#298 blocked-state grouping
-# (#84) intact — its heading, banner and footer counts are user-facing behavior
-# that must not regress. Everything else — parking-lot-label, any of the three
-# complexity reasons, or a mix that includes blocking — lands in the parked
-# group, where the raw Complexity value is shown alongside the reason.
+#   parked      — any of parking-lot-label / complexity-deferral-marker /
+#                 complexity-unparseable is present (a human parked it, the
+#                 diagnosis said so, or the value is a defect to repair)
+#   blocked     — otherwise, blocking-nonempty is present: reason
+#                 `blocking-nonempty` ALONE keeps the pre-#298 blocked-state
+#                 grouping (#84) intact — heading, banner and footer counts are
+#                 user-facing behavior that must not regress
+#   undiagnosed — otherwise (complexity-missing alone): the issue has simply
+#                 not been diagnosed yet. That is every issue's birth state, not
+#                 a parked state — on the live backlog it is the DOMINANT state
+#                 (11 of 14 open issues on 2026-09-07), and filing it under
+#                 "Parked" hid `→ /idd-diagnose #N` from the operator (verify
+#                 #318 round-2 DA-CRIT-1). The display keeps that command.
 idd_actionability_group() {
     local reasons="${1-}"
     case "$reasons" in
-        "blocking-nonempty") printf 'blocked\n' ;;
-        *)                   printf 'parked\n'  ;;
+        *parking-lot-label*|*complexity-deferral-marker*|*complexity-unparseable*) printf 'parked\n' ;;
+        *blocking-nonempty*)                                                        printf 'blocked\n' ;;
+        *complexity-missing*)                                                       printf 'undiagnosed\n' ;;
+        *)                                                                          printf 'parked\n' ;;
     esac
 }

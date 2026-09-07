@@ -61,3 +61,14 @@
 - [x] 9.1 `references/actionability-gate.md` 依新規則重寫。行為契約：封閉值域段改為「tier prefix 抽取 + 延期語彙」；reason 值域 4 → 5；新增「風險姿態：label 為主、語彙為輔」段並說明漏抓/誤抓的不對稱處置。驗證：內容審查確認不再出現「合法值域為封閉四值」的宣稱，且 corpus 數據（159 筆 / 158-158）有明文引用。檔案：`plugins/issue-driven-dev/references/actionability-gate.md`
 
 - [x] 9.2 [P] `idd-diagnose` producer 宣告改寫。行為契約：移除封閉值域宣告，改為「tier 寫清楚；延期意圖貼 `parking-lot` label，不要寫進 `### Complexity`」，並保留「producer 不自動貼 label」一條。驗證：內容審查確認不再宣告封閉值域，且 159 筆語料的常態寫法（tier + 同行理由）未被規定為違規。檔案：`plugins/issue-driven-dev/skills/idd-diagnose/SKILL.md`
+
+## 10. 第 3 輪（`/idd-verify --pr 318` 第 2 輪 FAIL 的 6 blocking + 10 in-scope）
+
+- [x] 10.1 `idd_blocking_section` 改為逐 bullet 讀、placeholder 以開頭 token 判定；CRLF 先剝；凍結 55 筆 `corpus-blocking.json`（47 空 / 8 非空，人工審）並加回歸。驗證：語料 55/55、`- (none — 可動)` 空、`- (none)` 後接 `- 等 …` 回真 blocker、`- none of the reviewers replied yet` 非空、CRLF 兩向皆正確。檔案：`scripts/lib/actionability.sh`、`fixtures/corpus-blocking.json`、`test.sh` 涵蓋需求：The blocking signal is read per bullet against a frozen corpus。
+- [x] 10.2 `idd_actionability_group` 增 `undiagnosed`；`idd-list` Step 5 增 `Needs diagnosis (N):` 組並保留 `→ /idd-diagnose #N`；Step 3.9 `--parked` 明文排除 missing / unparseable；spec R6 改三組。驗證：group 測試三組正確、drift guard 釘住組名與命令。涵蓋需求：Blocked-state output is preserved as a distinct display group。
+- [x] 10.3 `idd-implement` gate 移至 Step 0.35（tree-lock、建 branch、任何 egress 之前）；contract 加「gate SHALL precede any egress or branch creation」；測試釘住 gate 行號 < `git checkout -b` < 首個 `gh-egress.sh" comment`。
+- [x] 10.4 producer 禁令加範圍限定（正在診斷的該 issue）；`idd-issue` 與 live spec `idd-ic-r011-checkpoint`（spec delta）收斂為 `parking-lot`；測試 refute `blocker:infeasible`。
+- [x] 10.5 drift guard 補釘：verdict 條件式捕捉外殼、`REASONS=` 分支、`FATAL … misuse` 分支、issue 號驗型、author filter、allowed-tools `jq`/`python3`、`=$(gh issue view … --json comments` 全檔 refute。
+- [x] 10.6 in-scope 修正：`idd-all:1007` 分頁 + 3b.1 分頁 fallback；`idd-list` Step 3.7 取 Step 2 資料、≥100 才分頁、`|| …continue`、state guard、`REASONS` 重設、C0 剝除；`rules/sdd-integration.md` 移除平行解析敘述；row 905 真的帶 `- [~]`；fixture #160/#136 逐字；≥3 計數只算真實列；表頭 `VEXIT · CEXIT · TIER`；reference 增訊號 3 風險姿態、分母揭露、mention class、前置需求；158/158 → 159/159。
+- [~] 10.7 訊號 3 的 producer contract 或退回 model 判定 —— deferred to #336（超出本 change；第 3 輪為止血）。
+

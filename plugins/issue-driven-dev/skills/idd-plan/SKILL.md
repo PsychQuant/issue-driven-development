@@ -65,9 +65,12 @@ gh issue view $NUMBER --repo $GITHUB_REPO --json title,body,labels,comments
     exit 1
 }
 
-# 1. 最新 Diagnosis comment —— 必須分頁。`gh issue view --json comments` 只回最舊的 100 則，
+# 0. issue 號進 REST path 前先驗型
+case "$NUMBER" in ''|*[!0-9]*) echo "FATAL: non-numeric issue number: $NUMBER" >&2; exit 1 ;; esac
+
+# 1. 最新 Diagnosis comment —— 只信任 OWNER / MEMBER / COLLABORATOR 寫的（public repo 任何帳號都能留言）；必須分頁。`gh issue view --json comments` 只回最舊的 100 則，
 #    issue 一長，最新的 diagnosis 正好是被丟掉的那一則（#295 同族；`--paginate --jq` 每頁一個 array，`jq -s add` 收攏）。
-LATEST_DIAGNOSIS=$(gh api "repos/$GITHUB_REPO/issues/$NUMBER/comments" --paginate --jq '[.[] | {body}]' \
+LATEST_DIAGNOSIS=$(gh api "repos/$GITHUB_REPO/issues/$NUMBER/comments" --paginate --jq '[.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") | {body}]' \
     | jq -s 'add // []' \
     | python3 -c '
 import json, sys, re
@@ -96,9 +99,9 @@ esac
 
 **先看 `$VEXIT`**（gate 判定），`0` 才依 `$TIER` 決定行為。tier 只有四個；`### Complexity` 開頭以外的同行理由、裝飾、` via <來源>` 後綴都不影響 `$TIER`：
 
-| `CEXIT` · `TIER` | 行為 |
+| `VEXIT` · `CEXIT` · `TIER` | 行為 |
 |-----------|------|
-| `0` · `Plan` | ✅ 預期 — 繼續 Step 2 |
+| `0` · `0` · `Plan` | ✅ 預期 — 繼續 Step 2 |
 | `0` · `Plan`（原值 `Plan via Layer V`、`**Plan**(Layer P:…)` 等）| 同上 — helper 只取開頭的 tier,後綴與同行理由皆不影響,行為與 bare `Plan` 完全一致 |
 | `0` · `Simple` | ⚠️ 詢問 user：「Complexity 判定為 Simple，確定要走 Plan tier 多一道 approval gate 嗎？」（行為不變 — user 主動要 deliberate 是允許的）|
 | `0` · `Spectra` | ⛔ 提示「Spectra 應走 `/spectra-discuss`，Plan tier 不會產出 spec/proposal/tasks artifacts」，AskUserQuestion abort 或 continue（continue 等於 user 自願降級到 Plan tier）— 行為不變 |

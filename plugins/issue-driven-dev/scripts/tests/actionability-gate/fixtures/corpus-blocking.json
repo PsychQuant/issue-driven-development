@@ -1,0 +1,505 @@
+{
+ "_provenance": "Every `### Blocking` section found in the BODY of the 238 issues of PsychQuant/issue-driven-development (snapshot 2026-09-07, `gh issue list --state all --limit 400`): 55 sections, hand-reviewed — 47 semantically empty (a none-placeholder, with or without annotation), 8 non-empty (7 real blockers that all begin with `- 等 …`, plus #1 whose second bullet is a note read as non-empty by the per-bullet rule — accepted, see its note). Rows carry every non-blank line of the section verbatim. Frozen regression baseline for `idd_blocking_section`; do NOT regenerate from live GitHub.",
+ "rows": [
+  {
+   "number": 1,
+   "state": "CLOSED",
+   "section": [
+    "- (none) — 所有 27 spec tasks done;3 P0 + 5 P1 round-1 blockers closed via 5fc39fc;AC #5/#6 closed via smoke test",
+    "- 12 個 P2/P3 follow-up 整合為 9 個 focused issue (#2-#10),全部 ref Related: #1"
+   ],
+   "expect_empty": false,
+   "expect_first_blocker": "- 12 個 P2/P3 follow-up 整合為 9 個 focused issue (#2-#10),全部 ref Related: #1",
+   "note": "Second bullet is an informational note, not a blocker — the per-bullet rule reads it as non-empty. Accepted 1/55 false positive on a CLOSED issue; the structural fix is #336 (producer contract)."
+  },
+  {
+   "number": 12,
+   "state": "CLOSED",
+   "section": [
+    "- (none — closed)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 13,
+   "state": "CLOSED",
+   "section": [
+    "- 等 re-verify 確認 13 fixes 全 effective,verdict PASS"
+   ],
+   "expect_empty": false,
+   "expect_first_blocker": "- 等 re-verify 確認 13 fixes 全 effective,verdict PASS"
+  },
+  {
+   "number": 26,
+   "state": "CLOSED",
+   "section": [
+    "- (none — closed)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 37,
+   "state": "CLOSED",
+   "section": [
+    "- 等 re-park trigger 之一成立（見 2026-08-10 decision comment「Re-park 的 trigger 條件」）：",
+    "  (1) #298 落地後 triage 準確率可接受 /",
+    "  (2) 出現 actionable-Simple-tier 子集 ≥3 的 backlog /",
+    "  (3) 自動化 caller 卡 Phase 6 產生既有 `/idd-all #a #b #c` 無法解決的實際痛點"
+   ],
+   "expect_empty": false,
+   "expect_first_blocker": "- 等 re-park trigger 之一成立（見 2026-08-10 decision comment「Re-park 的 trigger 條件」）："
+  },
+  {
+   "number": 44,
+   "state": "CLOSED",
+   "section": [
+    "- (none — closed via /idd-close 2026-05-10 with retroactive Implementation Complete supersession)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 45,
+   "state": "CLOSED",
+   "section": [
+    "- 等 user 確認 diagnosis 後跑 `/idd-plan #45` 進 EnterPlanMode approval gate"
+   ],
+   "expect_empty": false,
+   "expect_first_blocker": "- 等 user 確認 diagnosis 後跑 `/idd-plan #45` 進 EnterPlanMode approval gate"
+  },
+  {
+   "number": 46,
+   "state": "CLOSED",
+   "section": [
+    "- (none)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 47,
+   "state": "CLOSED",
+   "section": [
+    "- (none — closed via PR #50 squash merge + retroactive closing summary)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 48,
+   "state": "CLOSED",
+   "section": [
+    "- (none — closed)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 49,
+   "state": "CLOSED",
+   "section": [
+    "- 等 user 跑 /idd-verify --pr 58 (cluster-PR mode 6-AI ensemble)"
+   ],
+   "expect_empty": false,
+   "expect_first_blocker": "- 等 user 跑 /idd-verify --pr 58 (cluster-PR mode 6-AI ensemble)"
+  },
+  {
+   "number": 51,
+   "state": "CLOSED",
+   "section": [
+    "- 等 user 跑 /idd-plan #51 進 EnterPlanMode 對齊 signature"
+   ],
+   "expect_empty": false,
+   "expect_first_blocker": "- 等 user 跑 /idd-plan #51 進 EnterPlanMode 對齊 signature"
+  },
+  {
+   "number": 52,
+   "state": "CLOSED",
+   "section": [
+    "- (none — issue closed)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 53,
+   "state": "CLOSED",
+   "section": [
+    "- 等 user 跑 /idd-verify --pr 58 (cluster-PR mode 6-AI ensemble)"
+   ],
+   "expect_empty": false,
+   "expect_first_blocker": "- 等 user 跑 /idd-verify --pr 58 (cluster-PR mode 6-AI ensemble)"
+  },
+  {
+   "number": 54,
+   "state": "CLOSED",
+   "section": [
+    "- (none)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 55,
+   "state": "CLOSED",
+   "section": [
+    "- (none — issue closed)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 102,
+   "state": "CLOSED",
+   "section": [
+    "- (none — Implementation Plan approved, ready for `/idd-implement #102`)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 103,
+   "state": "CLOSED",
+   "section": [
+    "- (none — PR #104 ready for merge → `/idd-close #103`)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 105,
+   "state": "CLOSED",
+   "section": [
+    "- (none — ready for /idd-plan #105 (per chain shell unattended, idd-plan EnterPlanMode auto-applies))"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 107,
+   "state": "CLOSED",
+   "section": [
+    "- (none — ready for /idd-implement #107)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 108,
+   "state": "CLOSED",
+   "section": [
+    "- (none — ready for /idd-plan #108 (per chain shell unattended, idd-plan EnterPlanMode auto-applies))"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 116,
+   "state": "CLOSED",
+   "section": [
+    "- 等 `/spectra-discuss` 對齊以下 open questions: acceptance metric proxy 怎麼定?jsonl schema(`verify-runs/<run_id>.jsonl`)欄位?phase 1/2/3 是否一次走完還是逐 phase ship?"
+   ],
+   "expect_empty": false,
+   "expect_first_blocker": "- 等 `/spectra-discuss` 對齊以下 open questions: acceptance metric proxy 怎麼定?jsonl schema(`verify-runs/<run_id>.jsonl`)欄位?phase 1/2/3 是否一次走完還是逐 phase ship?"
+  },
+  {
+   "number": 119,
+   "state": "CLOSED",
+   "section": [
+    "- (none)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 121,
+   "state": "CLOSED",
+   "section": [
+    "- (none)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 125,
+   "state": "CLOSED",
+   "section": [
+    "- (none) — closed"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 137,
+   "state": "CLOSED",
+   "section": [
+    "- (none — issue closed)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 147,
+   "state": "CLOSED",
+   "section": [
+    "- (none)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 150,
+   "state": "CLOSED",
+   "section": [
+    "- (none — issue closed; #154 inherits runtime enforcement work)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 151,
+   "state": "CLOSED",
+   "section": [
+    "- (none — closed)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 152,
+   "state": "CLOSED",
+   "section": [
+    "- (none)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 154,
+   "state": "CLOSED",
+   "section": [
+    "- (none)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 155,
+   "state": "CLOSED",
+   "section": [
+    "- (none — was the blocker for #154; #154 now unblocked)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 156,
+   "state": "CLOSED",
+   "section": [
+    "- (none)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 160,
+   "state": "CLOSED",
+   "section": [
+    "- (none)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 164,
+   "state": "CLOSED",
+   "section": [
+    "- (none) — 原「等 user 自行執行 `/spectra-propose`」為 stale 記錄：該 propose 已於 2026-06-01 消化（見 comment「Propose → parked change created」）；2026-07-18 user 確認不再為剩餘小項開新 propose"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 167,
+   "state": "CLOSED",
+   "section": [
+    "- (none) — closed via PR #168 (squash b11b65d). Spectra change archived. Follow-ups: #169 (convention reconciliation), #170 (post-IC detection)."
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 169,
+   "state": "CLOSED",
+   "section": [
+    "- (none) — diagnosed, awaiting pickup"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 170,
+   "state": "CLOSED",
+   "section": [
+    "- (none) — closed via PR #171 (squash 4b79694). Follow-ups: #172 (membership semantics), #173 (template auto-close trap)."
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 173,
+   "state": "CLOSED",
+   "section": [
+    "- (none — closed)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 176,
+   "state": "CLOSED",
+   "section": [
+    "- (none — closed)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 178,
+   "state": "CLOSED",
+   "section": [
+    "- (none)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 179,
+   "state": "CLOSED",
+   "section": [
+    "- (none)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 180,
+   "state": "CLOSED",
+   "section": [
+    "- (none)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 181,
+   "state": "CLOSED",
+   "section": [
+    "- (none)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 183,
+   "state": "CLOSED",
+   "section": [
+    "- (none)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 186,
+   "state": "CLOSED",
+   "section": [
+    "- (none)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 189,
+   "state": "CLOSED",
+   "section": [
+    "- (none)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 209,
+   "state": "CLOSED",
+   "section": [
+    "- (none) — closed"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 214,
+   "state": "CLOSED",
+   "section": [
+    "- (none) — closed；4 commits 已 push；residue acknowledged as-is；distribution chain 進行中"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 276,
+   "state": "CLOSED",
+   "section": [
+    "- (none) —— Phase 1 待 maintainer review draft PR #279；Phase 2 未開工，不阻塞 Phase 1"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 289,
+   "state": "CLOSED",
+   "section": [
+    "- (none)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 290,
+   "state": "CLOSED",
+   "section": [
+    "- (none) — 已結案。"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 295,
+   "state": "CLOSED",
+   "section": [
+    "（無）"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 298,
+   "state": "CLOSED",
+   "section": [
+    "- (none — 可動)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  },
+  {
+   "number": 316,
+   "state": "OPEN",
+   "section": [
+    "- (none — 可動)"
+   ],
+   "expect_empty": true,
+   "expect_first_blocker": null
+  }
+ ]
+}

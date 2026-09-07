@@ -18,9 +18,9 @@
 - **`parking-lot` label 是 parked 的主要訊號**，延期語彙是次要安全網。語彙清單取高精度、容忍低召回。
 - **新增 actionability gate** —— 三訊號 OR 判定（Complexity 不可路由、`parking-lot` label、`### Blocking` 非空），放行需三者皆不成立，**且四個 consumer 必須實際呼叫它**。
 - **三個 consumer 的 Complexity 解析統一** —— `idd-list`、`idd-all`、`idd-implement`（含 `idd-plan` 的 tier 確認）改用共用 helper，消除各自窄化。
-- **`### Blocking` 抽取重構為 gate 的 input** —— #84 既有的 Blocked 分組輸出行為不得退化。
+- **`### Blocking` 抽取重構為 gate 的 input** —— 共用 helper 逐 bullet 讀、placeholder 看開頭 token，對 55 筆凍結語料 0 誤判（第 3 輪；第 2 輪的整行比對誤判 31 筆、含 #316 自己）。#84 既有的 Blocked 分組輸出行為不得退化；未診斷的 issue 另成 `undiagnosed` 組並保留 `/idd-diagnose` 命令。
 - **`idd-diagnose` producer 端明訂延期意圖走 label** —— 不再宣告封閉值域；改為「tier 寫清楚、延期貼 label、不要把延期寫進本欄」。
-- **零 migration** —— 新規則對既有 159 筆語料 158/158 全對，不需回填 label、不需改寫任何 Diagnosis comment。
+- **零 migration** —— 新規則對既有 159 筆語料 159/159 全對（149 路由、9 擋下、1 缺區段），不需回填 label、不需改寫任何 Diagnosis comment。**零 migration 指「既有 diagnosis 不需改寫」，不是「backlog 可動性分佈不變」** —— 225 筆裡 66 筆從未 diagnose，全部 exit 4，顯示層以 `undiagnosed` 組承接（第 3 輪）。
 - **`references/ic-r011-checkpoint.md` 的 parking 慣例收斂** —— `blocker:infeasible` / `blocker:waiting` 目前 0 個 issue 在用，實際在用的是 `parking-lot`。
 
 ## Capabilities
@@ -31,7 +31,7 @@
 
 ### Modified Capabilities
 
-(none)
+- `idd-ic-r011-checkpoint`：skip path 的 (b)/(c) 分類改以 `parking-lot` label 立案（原 `blocker:infeasible` / `blocker:waiting` 從未建立過；`parking-lot` 自 3.1.0 起是 gate 的一級訊號）。delta 見 `specs/idd-ic-r011-checkpoint/spec.md`。
 
 為何無 modified capability：硬閘與 Layer V 這兩份既有 spec 所產出的帶後綴 verdict（形如 tier 後接 " via " 再接來源）在新抽取規則下**仍為合法值**（tier 開頭、` via ` 後綴不參與 tier 判定），其 requirement 不需修改；conflict-class 規範對 Complexity 欄位的正交性敘述同樣維持成立。
 
@@ -44,6 +44,8 @@
     - `plugins/issue-driven-dev/scripts/lib/actionability.sh`
     - `plugins/issue-driven-dev/scripts/tests/actionability-gate/test.sh`
     - `plugins/issue-driven-dev/scripts/tests/actionability-gate/fixtures/parked-routing.json`
+    - `plugins/issue-driven-dev/scripts/tests/actionability-gate/fixtures/corpus-complexity.json`（159 筆凍結 Complexity 語料）
+    - `plugins/issue-driven-dev/scripts/tests/actionability-gate/fixtures/corpus-blocking.json`（55 筆凍結 Blocking 語料，第 3 輪）
   - Modified:
     - `plugins/issue-driven-dev/skills/idd-list/SKILL.md`
     - `plugins/issue-driven-dev/skills/idd-all/SKILL.md`
@@ -51,6 +53,9 @@
     - `plugins/issue-driven-dev/skills/idd-plan/SKILL.md`
     - `plugins/issue-driven-dev/skills/idd-diagnose/SKILL.md`
     - `plugins/issue-driven-dev/references/ic-r011-checkpoint.md`
+    - `plugins/issue-driven-dev/skills/idd-issue/SKILL.md`（`blocker:*` → `parking-lot`，第 3 輪）
+    - `plugins/issue-driven-dev/rules/sdd-integration.md`（移除平行的 Complexity 解析敘述，第 3 輪）
+    - `plugins/issue-driven-dev/CHANGELOG.md`、`.claude-plugin/plugin.json`、`.claude-plugin/marketplace.json`（3.1.0）
   - Removed: (none)
 - 同檔衝突：#299（`--limit` 先於排序生效）同樣修改 `plugins/issue-driven-dev/skills/idd-list/SKILL.md`，兩者需序列化或合併處理。
 - 追蹤 issue 由 #298 改為 **#316**（#298 已由 PR #309 / #306 修掉並 close，只涵蓋 `idd-list`）。

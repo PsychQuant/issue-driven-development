@@ -111,7 +111,7 @@ Complexity parsing and actionability verdict logic SHALL exist as one shared imp
 
 ### Requirement: Blocked-state output is preserved as a distinct display group
 
-The gate SHALL produce a verdict together with its reason list, and the display layer SHALL group not-actionable issues by reason. Issues whose only reason is `blocking-nonempty` SHALL continue to appear under the existing blocked-state grouping, with its group heading, its all-blocked banner text, and its footer counts unchanged from the behavior established for blocked-state awareness. Issues whose reasons include `parking-lot-label`, `complexity-unparseable`, or `complexity-missing` SHALL appear under a separate parked grouping.
+The gate SHALL produce a verdict together with its reason list, and the display layer SHALL group not-actionable issues by reason into exactly three groups. Issues whose reasons include any of `parking-lot-label`, `complexity-deferral-marker`, or `complexity-unparseable` SHALL appear under a parked grouping — the same set the parked-review flag lists. Otherwise, issues whose reasons include `blocking-nonempty` SHALL appear under the existing blocked-state grouping, with its group heading, its all-blocked banner text, and its footer counts unchanged from the behavior established for blocked-state awareness. Otherwise — reason `complexity-missing` alone — the issue SHALL appear under an undiagnosed grouping that retains the diagnose lifecycle command, because an issue that has never been diagnosed is in its birth state, not a parked state; on the 2026-09-07 open backlog that state held 11 of 14 issues, and filing it as parked hid the only correct next action and made the footer disagree with the parked-review flag by an order of magnitude.
 
 #### Scenario: Blocking-only issue keeps existing grouping
 
@@ -124,9 +124,20 @@ The gate SHALL produce a verdict together with its reason list, and the display 
 - **WHEN** an issue is not actionable with reason `parking-lot-label`
 - **THEN** the issue appears under the parked group rather than the blocked-state group
 
+#### Scenario: Undiagnosed issue keeps its diagnose command
+
+- **WHEN** an issue is not actionable with reason `complexity-missing` alone
+- **THEN** the issue appears under the undiagnosed group, not the parked group
+- **AND** its row still offers the diagnose lifecycle command
+
+#### Scenario: Missing diagnosis with a real blocker is blocked
+
+- **WHEN** an issue is not actionable with reasons `complexity-missing` and `blocking-nonempty`
+- **THEN** the issue appears under the blocked-state group
+
 ### Requirement: Parked label is authored by a human and never derived by the producer
 
-`idd-diagnose` SHALL NOT apply, remove, or derive the `parking-lot` label. The label SHALL remain a human-authored decision that is settable and removable after the diagnosis was written.
+`idd-diagnose` SHALL NOT apply, remove, or derive the `parking-lot` label on the issue it is diagnosing. The label SHALL remain a human-authored decision that is settable and removable after the diagnosis was written. This prohibition is scoped to the issue under diagnosis: the IC_R011 checkpoint that runs inside `idd-diagnose` MAY attach `parking-lot` to a newly filed sister issue when the user classifies that candidate as infeasible or blocked-on-external, because that is a human classification landing on a different issue.
 
 #### Scenario: Diagnosis run leaves labels untouched
 
@@ -152,4 +163,28 @@ Existing Diagnosis comments SHALL NOT be rewritten, and no label SHALL be backfi
 #### Scenario: Fixture reflects real shapes rather than a hypothesis-confirming sample
 
 - **WHEN** the regression fixture is reviewed
-- **THEN** it contains at least three cases each of bare tier, tier with same-line rationale, decorated tier, and deferral vocabulary
+- **THEN** it contains at least three real-corpus cases each of bare tier, tier with same-line rationale, decorated tier, and deferral vocabulary
+
+### Requirement: The blocking signal is read per bullet against a frozen corpus
+
+The `### Blocking` section SHALL be read as a list: the section is non-empty when any bullet is not a none-placeholder, and a placeholder SHALL be recognised by its leading token (`none`, `n/a`, `無`, optionally bulleted, decorated, or parenthesised, followed by end of line, a closing paren, or a separator) so that an annotated placeholder such as `- (none — 可動)` is empty while a bullet whose first word merely happens to be `none` is not. Lines that do not begin a bullet SHALL be treated as continuations of the bullet above. A trailing carriage return SHALL be stripped before either section reader judges a line. The rule SHALL be validated against every `### Blocking` section in the repository's issue bodies as a frozen regression fixture, because the first implementation was written against an assumed producer shape and withheld 31 of the 47 empty sections in that corpus, including the tracking issue of this change.
+
+#### Scenario: Annotated placeholder is empty
+
+- **WHEN** the section reads `- (none — 可動)`
+- **THEN** the blocking signal is clear
+
+#### Scenario: Placeholder followed by a real bullet is non-empty
+
+- **WHEN** the section reads `- (none)` on one bullet and `- 等 upstream #310 merge` on the next
+- **THEN** the blocking signal reports the second bullet
+
+#### Scenario: A blocker that starts with the token is kept
+
+- **WHEN** the section reads `- none of the reviewers replied yet`
+- **THEN** the blocking signal reports that line
+
+#### Scenario: CRLF does not change either reader's verdict
+
+- **WHEN** an issue body or Diagnosis comment uses CRLF line endings
+- **THEN** `### Complexity` and `### Blocking` are judged exactly as their LF equivalents

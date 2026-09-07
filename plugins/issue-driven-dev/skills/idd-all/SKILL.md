@@ -9,6 +9,8 @@ allowed-tools:
   - Bash(gh:*)
   - Bash(git:*)
   - Bash(grep:*)
+  - Bash(jq:*)
+  - Bash(python3:*)
   - Bash(find:*)
   - Read
   - Glob
@@ -520,9 +522,12 @@ Skill(skill="issue-driven-dev:idd-diagnose", args="#$N --cwd $CWD")
     exit 1
 }
 
-# 1. 最新 Diagnosis comment —— 必須分頁。`gh issue view --json comments` 只回最舊的 100 則，
+# 0. issue 號進 REST path 前先驗型
+case "$N" in ''|*[!0-9]*) echo "FATAL: non-numeric issue number: $N" >&2; exit 1 ;; esac
+
+# 1. 最新 Diagnosis comment —— 只信任 OWNER / MEMBER / COLLABORATOR 寫的（public repo 任何帳號都能留言）；必須分頁。`gh issue view --json comments` 只回最舊的 100 則，
 #    issue 一長，最新的 diagnosis 正好是被丟掉的那一則（#295 同族；`--paginate --jq` 每頁一個 array，`jq -s add` 收攏）。
-LATEST_DIAGNOSIS=$(gh api "repos/$GITHUB_REPO/issues/$N/comments" --paginate --jq '[.[] | {body}]' \
+LATEST_DIAGNOSIS=$(gh api "repos/$GITHUB_REPO/issues/$N/comments" --paginate --jq '[.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") | {body}]' \
     | jq -s 'add // []' \
     | python3 -c '
 import json, sys, re
@@ -551,9 +556,9 @@ esac
 
 Dispatch **先看 `$VEXIT`**(gate 判定),`0` 才依 `$TIER` 分派。tier 只有四個(`SDD-warranted` 視同 `Spectra`);`### Complexity` 開頭以外的同行理由、裝飾、` via <來源>` 後綴都不影響 `$TIER`:
 
-| `CEXIT` · `TIER` | 下一步 |
+| `VEXIT` · `CEXIT` · `TIER` | 下一步 |
 |--------------|--------|
-| `0` · `Simple` | Phase 3a: idd-implement |
+| `0` · `0` · `Simple` | Phase 3a: idd-implement |
 | `0` · `Plan` | **attended → Phase 3p: `/idd-plan`**（該 skill 擁有 `EnterPlanMode` 閘門，approve 後自己 chain 到 idd-implement）;**unattended → Phase 3a: idd-implement**，並在 final report 標記 `[Plan tier deliberation skipped under unattended mode]` |
 | `0` · `Plan`（原值 `Plan via Layer V`,v2.50+）| 同上 — helper 只取開頭的 tier,` via <來源>` 後綴與同行理由皆不影響;verdict 是 user 在 idd-diagnose Step 3.4 選 escalate 觸發,routing 行為跟 bare `Plan` 一致 |
 | `0` · `Spectra` | Phase 3b: spectra-discuss → spectra-propose → spectra-apply(unattended → 一輪收斂;attended → multi-turn 對話自然進行) |
@@ -638,7 +643,12 @@ command -v spectra >/dev/null 2>&1 || abort "Spectra tier routed but spectra CLI
 ```bash
 ISSUE_TITLE=$(gh issue view "$N" --repo "$GITHUB_REPO" --json title -q .title)
 ISSUE_BODY=$(gh issue view "$N" --repo "$GITHUB_REPO" --json body -q .body | head -50)
-DIAGNOSIS="$LATEST_DIAGNOSIS"   # Phase 2 已分頁抓過最新 Diagnosis（`--json comments` 只回最舊 100 則,不得在此重抓）
+# Phase 2 已分頁抓過最新 Diagnosis；跨 Bash 區塊 shell 變數不保證存活,所以缺值時**用同一種分頁方式**重抓
+# （不得改用 `--json comments` —— 那只回最舊 100 則）。
+DIAGNOSIS="${LATEST_DIAGNOSIS:-}"
+[ -n "$DIAGNOSIS" ] || DIAGNOSIS=$(gh api "repos/$GITHUB_REPO/issues/$N/comments" --paginate \
+    --jq '[.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") | {body}]' \
+    | jq -s 'add // []' | python3 -c 'import json,sys,re; cs=json.load(sys.stdin); ds=[c for c in cs if re.search(r"(?m)^## Diagnosis", c["body"])]; print(ds[-1]["body"] if ds else "")')
 ```
 
 #### Step 3b.2: Discuss
@@ -1004,7 +1014,7 @@ for sub_n in "$ROOT_N" "${SPAWNED_ISSUES[@]:-}"; do
     ACTION_ITEMS+=$'\n'"- #${sub_n}: ${AUTO_DEFERRED_COUNT} row(s) auto-deferred at /idd-clarify Step 4.8 (unattended mode) — resolve via /idd-clarify #${sub_n} --status resolved=<idx>,<reason>"
   fi
   # #120 (v2.97.0+): Layer V deferred records live in Diagnosis COMMENTS (not body)
-  SUB_COMMENTS=$(gh issue view "$sub_n" --repo "$GITHUB_REPO" --json comments --jq '[.comments[].body] | join("\n---\n")' 2>/dev/null)
+  SUB_COMMENTS=$(gh api "repos/$GITHUB_REPO/issues/$sub_n/comments" --paginate --jq '[.[] | .body]' 2>/dev/null | jq -s 'add // []' | jq -r 'join("\n---\n")')   # 分頁：`--json comments` 只回最舊 100 則（#316 第 3 輪）
   LAYERV_DEFERRED_COUNT=$(echo "$SUB_COMMENTS" \
     | grep -cE 'unattended-auto-Step-3\.4-layerV-deferred')
   if [ "$LAYERV_DEFERRED_COUNT" -gt 0 ]; then

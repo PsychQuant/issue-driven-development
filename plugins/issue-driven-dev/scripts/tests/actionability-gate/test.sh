@@ -37,6 +37,11 @@
 # The `- [~]` Strategy skip marker is deliberately NOT a gate input — it is a
 # close-time per-item disposition owned by idd-close. Row 905 pins that.
 #
+# Round 3 (verify #318 round 2) adds: per-bullet `### Blocking` reader with a
+# leading-token placeholder rule frozen against corpus-blocking.json, CRLF
+# handling, the `undiagnosed` display group, and drift guards that pin the
+# consumers' verdict capture shape, branch/egress ordering and input hygiene.
+#
 # Usage: bash test.sh   (exit 0 = pass, 1 = fail)
 
 set -u
@@ -75,7 +80,12 @@ run_bounded() { # secs fn args...
 #   __NULL__  → no `### Complexity` section at all
 #   fenced=1  → no real section either, but a fenced example of the template
 #               sits in prose (a non-fence-aware extractor would grab it)
-synth_body() { # raw_or_NULL fenced
+synth_body() { # raw_or_NULL fenced [strategy-line]
+  local raw="$1" fenced="${2:-0}" strategy="${3:-}"
+  { synth_body_core "$raw" "$fenced"
+    [ -n "$strategy" ] && printf '\n### Strategy\n\n- [x] done item\n%s\n- [ ] open item\n' "$strategy"; }
+}
+synth_body_core() { # raw_or_NULL fenced
   local raw="$1" fenced="${2:-0}"
   if [ "$fenced" = "1" ]; then
     printf '## Diagnosis\n\n### Type\n\nbug\n\n### Notes\n\nThe template looks like this:\n\n```markdown\n### Complexity\n\nSimple\n```\n\nand also:\n\n~~~\n### Complexity\n\nPlan when triggered\n~~~\n\n### Risks\n\n- none\n'
@@ -96,6 +106,7 @@ while IFS= read -r row; do
   snapshot=$(jq -r '.snapshot' <<<"$row")
   raw=$(jq -r 'if .complexity_raw == null then "__NULL__" else .complexity_raw end' <<<"$row")
   fenced=$(jq -r 'if .fenced_example == true then "1" else "0" end' <<<"$row")
+  strategy=$(jq -r '.strategy // ""' <<<"$row")
   exp_exit=$(jq -r '.expect_parse_exit' <<<"$row")
   exp_tier=$(jq -r 'if .expect_tier == null then "" else .expect_tier end' <<<"$row")
   exp_verdict=$(jq -r '.expect_verdict' <<<"$row")
@@ -103,7 +114,7 @@ while IFS= read -r row; do
   has_label=$(jq -r 'if (.labels | index("parking-lot")) then "yes" else "no" end' <<<"$row")
   blocking_src=$(jq -r '.blocking // "- (none)"' <<<"$row")
 
-  body=$(synth_body "$raw" "$fenced")
+  body=$(synth_body "$raw" "$fenced" "$strategy")
 
   if [ "$HELPER_PRESENT" -eq 0 ]; then
     fail "#$num parse exit"     "$missing_helper_note"
@@ -200,18 +211,76 @@ if [ "$HELPER_PRESENT" -eq 1 ]; then
   idd_parse_complexity "$body" 2>/dev/null >/dev/null
   assert_exit "CJK deferral marker detected" "5" "$?"
 
-  # ── contract 3: ### Blocking reader ────────────────────────────────────────
+  # ── contract 3: ### Blocking reader (per bullet, leading-token placeholder) ──
   assert_eq "blocking: real blocker → first line" "- 等 /spectra-discuss 對齊 acceptance metric proxy" \
     "$(idd_blocking_section $'## Current Status\n\n### Blocking\n- 等 /spectra-discuss 對齊 acceptance metric proxy\n- second line\n\n### Tasks\n- [ ] x')"
-  assert_eq "blocking: idd-update placeholder is empty" "" "$(idd_blocking_section $'### Blocking\n- (none)\n')"
-  assert_eq "blocking: bare (none) is empty"           "" "$(idd_blocking_section $'### Blocking\n\n(none)\n')"
-  assert_eq "blocking: decorated none is empty"        "" "$(idd_blocking_section $'### Blocking\n_none_\n')"
-  assert_eq "blocking: N/A is empty"                   "" "$(idd_blocking_section $'### Blocking\nN/A\n')"
-  assert_eq "blocking: absent section is empty"        "" "$(idd_blocking_section $'### Type\nbug\n')"
-  assert_eq "blocking: fenced copy is not a section"   "" "$(idd_blocking_section $'### Notes\n```\n### Blocking\n- real\n```\n')"
-  assert_eq "blocking: higher heading ends section"    "" "$(idd_blocking_section $'### Blocking\n\n## Next\n- not a blocker\n')"
+  assert_eq "blocking: idd-update placeholder is empty"   "" "$(idd_blocking_section $'### Blocking\n- (none)\n')"
+  assert_eq "blocking: annotated placeholder is empty (#316's own body)" "" "$(idd_blocking_section $'### Blocking\n- (none — 可動)\n')"
+  assert_eq "blocking: placeholder + dash annotation is empty" "" "$(idd_blocking_section $'### Blocking\n- (none) — diagnosed, awaiting pickup\n')"
+  assert_eq "blocking: bare (none) is empty"             "" "$(idd_blocking_section $'### Blocking\n\n(none)\n')"
+  assert_eq "blocking: CJK placeholder is empty"         "" "$(idd_blocking_section $'### Blocking\n（無）\n')"
+  assert_eq "blocking: decorated none is empty"          "" "$(idd_blocking_section $'### Blocking\n_none_\n')"
+  assert_eq "blocking: N/A is empty"                     "" "$(idd_blocking_section $'### Blocking\nN/A\n')"
+  assert_eq "blocking: bare bullet is empty"             "" "$(idd_blocking_section $'### Blocking\n-\n')"
+  assert_eq "blocking: absent section is empty"          "" "$(idd_blocking_section $'### Type\nbug\n')"
+  assert_eq "blocking: fenced copy is not a section"     "" "$(idd_blocking_section $'### Notes\n```\n### Blocking\n- real\n```\n')"
+  assert_eq "blocking: higher heading ends section"      "" "$(idd_blocking_section $'### Blocking\n\n## Next\n- not a blocker\n')"
+  # per-bullet: a placeholder does not short-circuit the bullets after it
+  assert_eq "blocking: placeholder then real bullet → the real bullet" "- 等 upstream #310 merge" \
+    "$(idd_blocking_section $'### Blocking\n- (none)\n- 等 upstream #310 merge\n')"
+  assert_eq "blocking: annotated placeholder then real bullet → the real bullet" "- 等 collaborator 回信" \
+    "$(idd_blocking_section $'### Blocking\n- (none — closed)\n- 等 collaborator 回信\n')"
+  assert_eq "blocking: continuation line under a placeholder is not a bullet" "" \
+    "$(idd_blocking_section $'### Blocking\n- (none — closed)\n  see the closing summary for details\n')"
+  assert_eq "blocking: continuation line under a blocker keeps the blocker" "- 等 re-park trigger 之一成立：" \
+    "$(idd_blocking_section $'### Blocking\n- 等 re-park trigger 之一成立：\n  (1) #298 落地後 triage 準確率可接受\n')"
+  # token followed by a WORD is a blocker, not a placeholder
   assert_eq "blocking: 'none' inside a real blocker is kept" "- none of the reviewers replied yet" \
     "$(idd_blocking_section $'### Blocking\n- none of the reviewers replied yet\n')"
+  assert_eq "blocking: 'None yet, but …' is kept" "- None yet, but waiting on X" \
+    "$(idd_blocking_section $'### Blocking\n- None yet, but waiting on X\n')"
+  # documented accepted misses: the leading token wins over a trailing clause
+  assert_eq "blocking: DOCUMENTED MISS — '(none) but actually blocked by' reads empty" "" \
+    "$(idd_blocking_section $'### Blocking\n- (none) but actually blocked by #86\n')"
+  # CRLF (GitHub web textarea): both directions
+  assert_eq "blocking: CRLF real blocker is kept"       "- 等 upstream #310" "$(idd_blocking_section $'### Blocking\r\n\r\n- 等 upstream #310\r\n')"
+  assert_eq "blocking: CRLF placeholder is empty"       "" "$(idd_blocking_section $'### Blocking\r\n- (none)\r\n')"
+  tier=$(idd_parse_complexity $'### Complexity\r\n\r\nSimple\r\n' 2>/dev/null); rc=$?
+  assert_exit "complexity: CRLF bare tier routes (exit)" "0" "$rc"
+  assert_eq   "complexity: CRLF bare tier routes (tier)" "Simple" "$tier"
+  idd_parse_complexity $'### Complexity\r\n\r\nSimple when triggered\r\n' 2>/dev/null >/dev/null
+  assert_exit "complexity: CRLF deferral is exit 5, not 3" "5" "$?"
+  # deeper heading inside the section is skipped, never taken as the value
+  tier=$(idd_parse_complexity $'### Complexity\n#### tier\nPlan\n' 2>/dev/null); rc=$?
+  assert_exit "complexity: #### line is skipped (exit)" "0" "$rc"
+  assert_eq   "complexity: #### line is skipped (tier)" "Plan" "$tier"
+
+  # ── corpus regression for signal 3 (verify #318 round-2 CRITICAL): every real
+  #    `### Blocking` section in this repo, hand-reviewed. 47 empty / 8 non-empty.
+  #    Round 2 withheld 31 of the 47. ──
+  BCORPUS="$HERE/fixtures/corpus-blocking.json"
+  if [ -f "$BCORPUS" ]; then
+    b_ok=0; b_total=0; b_empty=0; b_block=0
+    while IFS= read -r row; do
+      b_total=$((b_total + 1))
+      num=$(jq -r '.number' <<<"$row")
+      exp_empty=$(jq -r '.expect_empty' <<<"$row")
+      exp_first=$(jq -r '.expect_first_blocker // ""' <<<"$row")
+      sec=$(jq -r '.section | join("\n")' <<<"$row")
+      got=$(idd_blocking_section "$(printf '## Current Status\n\n### Phase\n\nx\n\n### Blocking\n%s\n\n### Tasks\n\n- [ ] x\n' "$sec")")
+      if [ "$exp_empty" = "true" ]; then
+        b_empty=$((b_empty + 1))
+        if [ -z "$got" ]; then b_ok=$((b_ok + 1)); else fail "blocking corpus #$num" "expected empty, got: $got"; fi
+      else
+        b_block=$((b_block + 1))
+        if [ "$got" = "$exp_first" ]; then b_ok=$((b_ok + 1)); else fail "blocking corpus #$num" "expected '$exp_first', got '$got'"; fi
+      fi
+    done < <(jq -c '.rows[]' "$BCORPUS")
+    assert_eq "blocking corpus: every section judged as reviewed ($b_ok/$b_total)" "$b_total" "$b_ok"
+    assert_eq "blocking corpus: 55 sections, 47 empty / 8 non-empty" "55/47/8" "$b_total/$b_empty/$b_block"
+  else
+    fail "blocking corpus" "fixture missing: $BCORPUS"
+  fi
 
   # ── audit discipline: the cheap path must not be the unsafe one ────────────
   # A gate that treated an unanswered signal as "clear" would re-open the hole
@@ -250,7 +319,9 @@ if [ "$HELPER_PRESENT" -eq 1 ]; then
   assert_eq "blocking-only → blocked group"      "blocked" "$(idd_actionability_group 'blocking-nonempty')"
   assert_eq "parking label → parked group"       "parked"  "$(idd_actionability_group 'parking-lot-label')"
   assert_eq "unparseable → parked group"         "parked"  "$(idd_actionability_group 'complexity-unparseable')"
-  assert_eq "missing → parked group"             "parked"  "$(idd_actionability_group 'complexity-missing')"
+  assert_eq "missing alone → undiagnosed group"  "undiagnosed" "$(idd_actionability_group 'complexity-missing')"
+  assert_eq "missing + blocking → blocked group"  "blocked" "$(idd_actionability_group 'complexity-missing; blocking-nonempty')"
+  assert_eq "deferral + blocking → parked group"  "parked"  "$(idd_actionability_group 'complexity-deferral-marker; blocking-nonempty')"
   assert_eq "deferral marker → parked group"     "parked"  "$(idd_actionability_group 'complexity-deferral-marker')"
   assert_eq "mixed reasons → parked group"       "parked"  "$(idd_actionability_group 'complexity-unparseable; blocking-nonempty')"
 
@@ -286,15 +357,36 @@ for c in idd-list idd-all idd-implement idd-plan; do
   assert_output_grep "$c: set -e safe conditional capture"     'if TIER=$(idd_parse_complexity "$LATEST_DIAGNOSIS" 2>/dev/null); then CEXIT=0; else CEXIT=$?; fi' "$f"
   assert_output_grep "$c: paginates the comments fetch"        '/comments" --paginate --jq' "$f"
   refute_output_grep "$c: no truncating --json comments fetch for the diagnosis" 'LATEST_DIAGNOSIS=$(gh issue view' "$f"
+  refute_grep_re     "$c: no oldest-100 --json comments connection anywhere" '=\$\(gh issue view[^)]*--json comments' "$(cat "$f")"
+  assert_output_grep "$c: set -e safe verdict capture"        'if VERDICT=$(idd_actionability_verdict --complexity-exit "$CEXIT" --parking-label "$HAS_PARKING" --blocking-section "$BLOCKING" 2>&1); then VEXIT=0; else VEXIT=$?; fi' "$f"
+  assert_output_grep "$c: branches on the verdict"            'REASONS="${VERDICT#not-actionable: }"' "$f"
+  assert_output_grep "$c: exit 2 is a consumer FATAL"         'FATAL: idd_actionability_verdict misuse' "$f"
+  assert_output_grep "$c: issue number is digit-checked before the REST path" "*[!0-9]*) " "$f"
+  assert_output_grep "$c: Diagnosis author is trusted-only"   'author_association' "$f"
   refute_output_grep "$c: no closed-domain wording for the tier field" '封閉值域外' "$f"
   refute_output_grep "$c: no 'closed domain, no fifth value' tier claim" '不得依相似性外推第五個' "$f"
 done
+for c in idd-list idd-all idd-implement; do
+  f="$SKILLS/$c/SKILL.md"
+  assert_output_grep "$c: allowed-tools pre-approves jq"      'Bash(jq:*)' "$f"
+  assert_output_grep "$c: allowed-tools pre-approves python3" 'Bash(python3:*)' "$f"
+done
+# gate SHALL precede any egress or branch creation (verify #318 round-2 HIGH: idd-implement)
+IMPL="$SKILLS/idd-implement/SKILL.md"
+gate_ln=$(grep -n 'if VERDICT=$(idd_actionability_verdict' "$IMPL" | head -1 | cut -d: -f1)
+branch_ln=$(grep -nE '^[[:space:]]*git checkout -b' "$IMPL" | head -1 | cut -d: -f1)   # the command line, not a prose mention
+egress_ln=$(grep -n 'gh-egress.sh" comment' "$IMPL" | head -1 | cut -d: -f1)
+assert_true "idd-implement: gate precedes branch creation (gate@${gate_ln:-?} < branch@${branch_ln:-?})" "[ -n '$gate_ln' ] && [ -n '$branch_ln' ] && [ '$gate_ln' -lt '$branch_ln' ]"
+assert_true "idd-implement: gate precedes first egress (gate@${gate_ln:-?} < egress@${egress_ln:-?})"  "[ -n '$gate_ln' ] && [ -n '$egress_ln' ] && [ '$gate_ln' -lt '$egress_ln' ]"
 # #84 surface preserved verbatim (spec R6)
 L="$SKILLS/idd-list/SKILL.md"
 assert_output_grep "idd-list: #84 blocked group heading verbatim"  'Blocked (waiting on external):' "$L"
 assert_output_grep "idd-list: #84 all-blocked banner verbatim"     '✋ 所有可控事項已完成 — N 個 open issue 全部等待外部回應（詳見上表 blocker）。' "$L"
 assert_output_grep "idd-list: #84 footer count verbatim"           '`X actionable, Y blocked`' "$L"
 assert_output_grep "idd-list: parked group present"                'Parked (not routable now):' "$L"
+assert_output_grep "idd-list: undiagnosed group present"           'Needs diagnosis (' "$L"
+assert_output_grep "idd-list: undiagnosed rows keep the diagnose command" '→ /idd-diagnose #' "$L"
+assert_output_grep "idd-list: state guard before the gate"         '"$STATE" = "open"' "$L"
 assert_output_grep "idd-list: groups via the helper"               'idd_actionability_group "$REASONS"' "$L"
 # reference + producer (9.1 / 9.2)
 assert_output_grep "reference: cites the 159-diagnosis corpus"     '159' "$REF"
@@ -304,7 +396,11 @@ refute_output_grep "reference: no closed tier domain claim"        'The legal va
 D="$SKILLS/idd-diagnose/SKILL.md"
 refute_output_grep "idd-diagnose: no closed-enumeration tier claim" '只得是下列四個值之一' "$D"
 assert_output_grep "idd-diagnose: tier-prefix rule stated"         '必須以四個 tier 之一開頭' "$D"
-assert_output_grep "idd-diagnose: producer never derives the label" 'SHALL NOT 貼、移除或推導 `parking-lot` label' "$D"
+assert_output_grep "idd-diagnose: producer never derives the label — scoped to the issue under diagnosis" 'SHALL NOT 對**正在診斷的該 issue**貼、移除或推導 `parking-lot` label' "$D"
+refute_output_grep "idd-issue: no blocker:* label mandate left" 'blocker:infeasible' "$SKILLS/idd-issue/SKILL.md"
+refute_output_grep "sdd-integration: no parallel Complexity parse narrative" '→ parse as `Simple`' "$HERE/../../../rules/sdd-integration.md"
+assert_output_grep "reference: signal-3 risk posture present"     'Signal 3 (`### Blocking`)' "$REF"
+assert_output_grep "reference: undiagnosed group documented"      'undiagnosed' "$REF"
 
 # ── task 8.2 / spec R8: full-corpus regression. Every diagnosed issue in this
 #    repo (159, frozen 2026-08-15) must route exactly as hand-reviewed:
@@ -346,11 +442,11 @@ assert_eq "snapshot actionable = #37 + #128 (documented prose-deferral miss)" "3
 
 # spec R8 scenario: the fixture reflects real shapes, ≥3 each. Shape is judged
 # on the raw value; deferral rows are counted by expected exit.
-n_bare=$(jq '[.[] | select(.complexity_raw != null) | select(.complexity_raw | test("^(Simple|Plan|Spectra|SDD-warranted)$"))] | length' "$FIXTURE")
-n_deco=$(jq '[.[] | select(.complexity_raw != null) | select(.complexity_raw | test("^[*`_]"))] | length' "$FIXTURE")
-n_rat=$(jq  '[.[] | select(.complexity_raw != null) | select(.expect_parse_exit == 0) | select(.complexity_raw | test("^(Simple|Plan|Spectra|SDD-warranted)$") | not) | select(.complexity_raw | test("^[*`_]") | not)] | length' "$FIXTURE")
-n_def=$(jq  '[.[] | select(.expect_parse_exit == 5)] | length' "$FIXTURE")
-assert_true "≥3 bare-tier rows ($n_bare)"                 "[ $n_bare -ge 3 ]"
+n_bare=$(jq '[.[] | select(.number < 900) | select(.complexity_raw != null) | select(.complexity_raw | test("^(Simple|Plan|Spectra|SDD-warranted)$"))] | length' "$FIXTURE")
+n_deco=$(jq '[.[] | select(.number < 900) | select(.complexity_raw != null) | select(.complexity_raw | test("^[*`_]"))] | length' "$FIXTURE")
+n_rat=$(jq  '[.[] | select(.number < 900) | select(.complexity_raw != null) | select(.expect_parse_exit == 0) | select(.complexity_raw | test("^(Simple|Plan|Spectra|SDD-warranted)$") | not) | select(.complexity_raw | test("^[*`_]") | not)] | length' "$FIXTURE")
+n_def=$(jq  '[.[] | select(.number < 900) | select(.expect_parse_exit == 5)] | length' "$FIXTURE")
+assert_true "≥3 REAL bare-tier rows ($n_bare)"                 "[ $n_bare -ge 3 ]"
 assert_true "≥3 decorated-tier rows ($n_deco)"            "[ $n_deco -ge 3 ]"
 assert_true "≥3 tier+rationale rows ($n_rat)"             "[ $n_rat -ge 3 ]"
 assert_true "≥3 deferral-vocabulary rows ($n_def)"        "[ $n_def -ge 3 ]"

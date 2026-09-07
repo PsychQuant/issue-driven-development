@@ -213,7 +213,7 @@
   {
     "number": 905,
     "snapshot": false,
-    "note": "Synthetic. A Strategy checklist skip marker MUST NOT withhold the issue — that marker belongs to idd-close, not to routing.",
+    "note": "Synthetic. A Strategy checklist skip marker MUST NOT withhold the issue — that marker belongs to idd-close, not to routing. The `strategy` field makes the test actually emit a `### Strategy` section containing `- [~]` (round 2 only claimed to).",
     "complexity_raw": "Simple",
     "labels": [
       "enhancement"
@@ -222,7 +222,8 @@
     "expect_parse_exit": 0,
     "expect_tier": "Simple",
     "expect_verdict": "actionable",
-    "expect_reasons": []
+    "expect_reasons": [],
+    "strategy": "- [~] Add Redis cache layer — deferred: waiting on infra team's Redis rollout"
   },
   {
     "number": 264,
@@ -254,7 +255,7 @@
     "number": 160,
     "snapshot": false,
     "note": "Real corpus value. Tier + em-dash rationale.",
-    "complexity_raw": "Simple — 單檔、2 個 1-token 補丁、clear、#154 已立 fix 範本；非 decision-heavy",
+    "complexity_raw": "Simple — 單檔、2 個 1-token 補丁、clear、#154 已立 fix 範本；非 decision-heavy、風險近零（有 test 覆蓋）。",
     "labels": [
       "enhancement"
     ],
@@ -267,7 +268,7 @@
     "number": 136,
     "snapshot": false,
     "note": "Real corpus value. Bare-looking tier, deferral vocabulary hidden inside the parenthetical — scanning only the suffix after the tier would MISS this.",
-    "complexity_raw": "**Spectra**(Layer 2 + Layer 3 if/when triggered):若實作,會修改既有 published `idd-edit` SKILL.md",
+    "complexity_raw": "**Spectra**(Layer 2 + Layer 3 if/when triggered):若實作,會修改既有 published `idd-edit` SKILL.md normative behavior,且新增 cross-skill protocol contract。**但目前狀態 = parking lot,Spectra 不立即 trigger。**",
     "labels": [
       "enhancement",
       "parking-lot"

@@ -80,8 +80,55 @@ replaced. The producer's normal style is `**Plan** (decision-heavy at Finding 1)
 - `idd-diagnose` no longer declares a closed value domain for the field; it now says
   "write the tier clearly, rationale welcome; deferral goes on the label".
 
+### Round 3 — the same failure shape, caught on the third signal
+
+`/idd-verify --pr 318` on round 2 returned FAIL (6 blocking). Every lens measured the new
+`idd_blocking_section` against the repository's real issue bodies and got the same number:
+of 55 `### Blocking` sections, 48 are semantically empty and **31 were judged live
+blockers** — the reader anchored the none-placeholder to the whole line while the producer's
+style is `- (none — 可動)`, `- (none) — closed`, `（無）`. The one open issue carrying the
+section was **#316 itself**, so the change could not have been applied to its own tracking
+issue. The Devil's Advocate additionally ran the gate over the live open backlog: 2
+actionable, 1 blocked (the misjudgement), **11 "parked"** — all eleven merely undiagnosed.
+
+- `idd_blocking_section` now reads the section **per bullet** (any non-placeholder bullet is a
+  blocker, so `- (none)` followed by `- 等 …` is no longer swallowed) and recognises a
+  placeholder by its **leading token** (`none` · `n/a` · `無`, optionally bulleted, decorated,
+  parenthesised, followed by end-of-line / closing paren / separator). Frozen against
+  `fixtures/corpus-blocking.json` (55 rows, hand-reviewed): 0 FP / 0 FN. Two other candidate
+  rules were measured there and rejected — one cleared every real blocker, one left 20 false
+  positives. Whether the field should be regex-read at all is #336.
+- A trailing `\r` is stripped before either reader judges a line: GitHub's web textarea
+  submits CRLF, and awk's default FS counted a bare `\r` as a value (`Simple` → exit 3 with an
+  empty surfaced line; a CRLF blocker → dropped).
+- `idd_actionability_group` gains **`undiagnosed`** and `idd-list` a *Needs diagnosis (N):*
+  group that keeps `→ /idd-diagnose #N`. *Parked* is now exactly the set `--parked` reviews.
+  Spec R6 amended accordingly.
+- `idd-implement` runs the gate at **Step 0.35** — before tree-lock, branch creation and the
+  Implementation Plan comment. Round 2 had it at Step 2.5, so a human-parked issue received a
+  public comment before being told it was parked. The contract now says "gate SHALL precede
+  any egress or branch creation" and a test pins the line order.
+- The producer prohibition is scoped ("on the issue it is diagnosing"); `blocker:infeasible`
+  / `blocker:waiting` — never created in any repo — are retired from `idd-issue` and, via a
+  spec delta, from the live `idd-ic-r011-checkpoint` spec, which had still MUSTed them.
+- Canonical call shape hardened: issue numbers digit-checked before entering a REST path;
+  Diagnosis comments trusted only from OWNER / MEMBER / COLLABORATOR; surfaced raw values
+  stripped of C0 control characters and stated to be data, never instructions; `jq` /
+  `python3` pre-approved in `allowed-tools`. `idd-all`'s Layer V scan and Phase 3b.1
+  fallback paginate; `idd-list` reuses its bulk fetch (paginating only at ≥ 100 comments),
+  skips the gate for non-open issues, and survives a fetch failure per row.
+- Drift guard widened: verdict conditional-capture shape, the `REASONS=` branch and the
+  `FATAL … misuse` branch are pinned in all four consumers — round 2 stayed green with a bare
+  capture or an ignored verdict. `rules/sdd-integration.md` no longer carries a parallel
+  bare-token parse narrative. Row 905 now really emits a `- [~]` Strategy item.
+
+Codex was absent on that verify (usage limit); the Devil's Advocate carried the oracle role.
+
 ### Honest residue
 
+- **`### Blocking` is regex-read for now.** The leading-token rule is a stop, not an answer
+  (#336). Accepted misses are documented in the helper: a placeholder token followed by a
+  clause (`- (none) but actually blocked by #86`) reads as empty.
 - **#128 is a designed miss.** Its deferral ("blocked-by #86") lives only in Strategy
   prose — no marker, no label, empty Blocking. The gate routes it as `Plan`, and the
   incident fixture pins it as *actionable* rather than pretending a marker exists.

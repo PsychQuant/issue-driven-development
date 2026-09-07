@@ -1236,7 +1236,7 @@ Empty surface list = legitimate silent no-op(per canonical §4 `(none surfaced)`
 - **Audit trail target**:`### Linked-Context Siblings Filed (v2.48.0+ #529)` PATCHed into the just-created issue body(per canonical §4.1 heading conventions table)。 `(category: audit-block-append, scope: "### Linked-Context Siblings Filed")` per [`rules/append-vs-modify.md`](../../rules/append-vs-modify.md)。
 - **Non-blocking** — user skip / empty list 都不阻擋 Step 5 報告完成。
 
-**Default behavior (v2.72.0+)**: File by default per canonical §1.1。Skip requires 3-category taxonomy per canonical §1.4((a) unactionable / (b) infeasible → filed with `blocker:infeasible` / (c) blocked-on-external → filed with `blocker:waiting`)。Escape hatch(`AI_LOW_BAR_ISSUE_FILING=false` env var / `# Disable IC_R011` CLAUDE.md flag)reverts to legacy 3-option ask per canonical §5。
+**Default behavior (v2.72.0+)**: File by default per canonical §1.1。Skip requires 3-category taxonomy per canonical §1.4((a) unactionable / (b) infeasible / (c) blocked-on-external → filed with `parking-lot`（#316 收斂：`blocker:*` 從未建立過；`parking-lot` 是 actionability gate 的一級訊號，貼了即 parked）)。Escape hatch(`AI_LOW_BAR_ISSUE_FILING=false` env var / `# Disable IC_R011` CLAUDE.md flag)reverts to legacy 3-option ask per canonical §5。
 
 > **Why light-touch deviation**: per canonical §6 eligibility table, `/idd-issue` is SHALL-tier but light-touch(filing-active moment) — default file still applies, but heuristic gating prevents double-prompt friction on clean single-issue invocations。
 

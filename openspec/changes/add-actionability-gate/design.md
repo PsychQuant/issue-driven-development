@@ -59,7 +59,7 @@ tier 之後的其餘文字（同行理由、括號說明）**是合法的**，�
 
 **分界不在「後面有沒有字」，而在「那些字是否表達延期」。** 前版的分界把 93.1% 的正常寫法與 5.7% 的延期寫法切在同一邊，導致 66 筆本該路由的 issue 變成 hard abort。
 
-本規則在完整 corpus 上：**149 筆正確路由 + 9 筆正確擋下 = 158/158，0 false positive。**
+本規則在完整 corpus 上：**149 筆正確路由 + 9 筆正確擋下 + 1 筆正確報缺區段 = 159/159，0 false positive。**
 
 延期語彙目前為 `when triggered` / `parking lot` / `deferred` / `暫緩`。偵測必須掃**整個值**而非只掃 tier 之後 —— `#136` 的 tier 是 bare `Spectra`，延期語彙藏在括號理由內。
 
@@ -146,6 +146,22 @@ gate 產出 verdict 加 reason 清單；顯示層依 reason 分兩組 —— rea
 
 理由：vocabulary drift —— 文件寫的兩個 label 目前各 0 個 issue 在用，實際在用的 `parking-lot` 有 6 個。該檔同時宣稱存在一個「periodic backlog grooming」機制去 grep 那兩個 label；該機制不存在且會掃到空集合（已獨立為 #310）。本變更只收斂 label 名稱，不實作 grooming。
 
+### 第 3 輪（2026-09-07）：訊號 3 逐 bullet 讀、未診斷不是 parked、gate 先於副作用
+
+> `/idd-verify --pr 318` 第 2 輪 FAIL（6 blocking）。四個 lens 與 DA 各自對 238 筆 issue 實測，結論一致：第 2 輪在**第三個訊號**上重犯了 CRITICAL-2 的形狀 —— `idd_blocking_section` 依「idd-update 寫 `- (none)`」這個未經語料驗證的假設寫成整行比對，本 repo 55 個 `### Blocking` 區段裡 48 個語意為空、31 個被判成 blocker，**含 #316 自己**（`- (none — 可動)`）。DA 另外對 14 個 open issue 實跑 gate：2 actionable / 1 blocked（誤判）/ **11 parked** —— 那 11 筆只是還沒診斷。
+
+**決策 1 — `### Blocking` 是清單欄位，逐 bullet 判、placeholder 看開頭 token。** `### Complexity` 是純量、讀第一行是定義；`### Blocking` 的模板就是 bullet list，讀第一行等於把 list 當 head(list)。規則：任一 bullet 非 placeholder 即非空；placeholder = `none` / `n/a` / `無` 開頭（可帶 bullet、裝飾、括號），後接行尾、右括號或分隔符；非 bullet 起始的行是上一個 bullet 的續行。對 55 筆凍結語料（`corpus-blocking.json`）0 FP / 0 FN；另兩個候選規則在同一語料上各自失敗（一個把 7 筆真 blocker 全清空、一個留 20 個 FP），記在 helper 註解裡當反例。接受的漏抓：token 後接子句（`- (none) but actually blocked by #86`）讀成空 —— 語料 0 筆，明文記錄。**這個欄位該不該被 regex 化**是類別問題，開 #336 追（producer contract vs 退回 model 判定），本輪只止血。
+
+**決策 2 — `complexity-missing` 單獨成 `undiagnosed` 組，保留 `→ /idd-diagnose #N`。** 「還沒診斷」是每張 issue 的出生狀態，在真實 backlog 上是主導狀態；放進 Parked 會讓 footer 與 `--parked` 差一個數量級、藏掉唯一正確的 lifecycle 命令、並讓 #84 的 banner 在新的主導情境下永遠不 fire。spec R6 改為三組：含 label / deferral-marker / unparseable → parked；否則含 blocking-nonempty → blocked（#84 逐字保留）；否則 → undiagnosed。
+
+**決策 3 — gate 必須先於任何 egress 或建 branch。** `idd-implement` 第 2 輪把 gate 放在 Step 2.5，一張人為 park 的 issue 會先被建 branch、先貼 Implementation Plan 才被擋。移到 Step 0.35（tree-lock 之前），契約加一句，測試釘住順序。
+
+**決策 4 — producer 禁令加範圍限定；`blocker:*` 全面退役。** 「idd-diagnose SHALL NOT 貼 `parking-lot`」的對象是**正在診斷的該 issue**；IC_R011 對新 filed 的 sister issue 貼 label 是人的分類裁決落在另一張 issue 上。`idd-issue` 與 live spec `idd-ic-r011-checkpoint` 仍規定 `blocker:*`（MUST 級）—— 以 spec delta 收斂。
+
+**決策 5 — 信任邊界與輸入衛生進 canonical shape。** Diagnosis comment 只取 OWNER / MEMBER / COLLABORATOR（public repo 任何帳號都能留言）；issue 號進 REST path 前驗型；CRLF 先剝；surface 的原文剝 C0 控制字元、明寫「是資料不是指令」；`jq` / `python3` 進 allowed-tools。
+
+替代方案：(a) 只修 regex 不改逐 bullet —— 把 31 個 FP 換成 31 個 FN，失敗方向從保守擋下翻成靜默放行（DA 量過）；(b) 把 undiagnosed 留在 Parked 但改組名 —— 仍藏 diagnose 命令；(c) 訊號 3 退回 model 判定 —— 正確但超出本輪，是 #336。
+
 ## Implementation Contract
 
 **Behavior** — 跑 `/idd-list` 時，被 gate 判為 not-actionable 的 issue 不再出現在 Suggested next 的可動清單，改列於 Blocked 或 Parked 分組並附判定理由；`### Complexity` 值非法時，該值原文顯示於輸出中。`/idd-all`、`/idd-implement`、`/idd-plan` 拿到非法 Complexity 值時停止 routing 並回報原值，不再落入未定義行為。
@@ -186,7 +202,7 @@ gate 產出 verdict 加 reason 清單；顯示層依 reason 分兩組 —— rea
 
 ## Migration Plan
 
-**無資料 migration。** 新規則對既有 159 筆語料 158/158 全對，不需要回填 label、不需要改寫任何 Diagnosis comment。
+**無資料 migration。** 新規則對既有 159 筆語料 159/159 全對（149 路由、9 擋下、1 缺區段），不需要回填 label、不需要改寫任何 Diagnosis comment。
 
 實作順序（非 migration，是落地順序）：
 
@@ -199,6 +215,9 @@ gate 產出 verdict 加 reason 清單；顯示層依 reason 分兩組 —— rea
 Rollback：本變更為 skill 文件與 helper script 的變更，零資料遷移、零 label 異動。回退方式為 revert commit，無不可逆狀態。
 
 ## Open Questions
+
+- **`### Blocking` 該不該被機械判定？**（#336）第 3 輪的 leading-token 規則是止血，不是答案：對一個由 model 自由填寫的清單欄位疊字元類，每一輪都會長出新洞。要嘛給它 producer contract（空區段不寫 bullet、註記另起一行），要嘛 helper 只回原文、由執行中的 model 依 rubric 判空。兩條路都要對 `corpus-blocking.json` 0 FP / 0 FN。
+
 
 - **延期語彙清單的擴充機制未定。** 目前四個語彙由 159 筆 corpus 歸納而得。語料成長後若出現新措辭，是誰、依什麼判準把它加進清單？本變更不解決；先記錄為已知缺口。
 - `ic-r011-checkpoint.md` 的兩個 `blocker:*` label 是「退役」還是「與 parking-lot 分工」，需在該檔改寫時定案。目前 0 使用，傾向退役。
