@@ -11,7 +11,7 @@
 # Round 1 (PR #318) framed the fix as a CLOSED value domain for `### Complexity`.
 # /idd-verify falsified that with the real corpus: 93% of the 159 diagnoses in
 # this repo write the tier followed by same-line rationale, so a closed domain
-# would have rejected 42% of them. Round 2 (/idd-diagnose #316, corpus 158/158,
+# would have rejected 42% of them. Round 2 (/idd-diagnose #316, corpus 159/159,
 # 0 false positives) replaced it with the rule under test here:
 #
 #   idd_parse_complexity <body>
@@ -242,6 +242,24 @@ if [ "$HELPER_PRESENT" -eq 1 ]; then
   # documented accepted misses: the leading token wins over a trailing clause
   assert_eq "blocking: DOCUMENTED MISS — '(none) but actually blocked by' reads empty" "" \
     "$(idd_blocking_section $'### Blocking\n- (none) but actually blocked by #86\n')"
+  assert_eq "blocking: '- None.' with a full stop is empty" "" "$(idd_blocking_section $'### Blocking\n- None.\n')"
+  assert_eq "blocking: decoration inside the parens is empty" "" "$(idd_blocking_section $'### Blocking\n- (**none**)\n')"
+  # locale independence: the rule must not flip under LC_ALL=C (bracket
+  # expressions split multibyte characters into bytes there)
+  assert_eq "blocking: LC_ALL=C — kana after the token is still a blocker" "- none ぁ x" \
+    "$(LC_ALL=C bash -c '. "$1"; idd_blocking_section "$2"' _ "$LIB" $'### Blocking\n- none ぁ x\n')"
+  assert_eq "blocking: LC_ALL=C — CJK placeholder is still empty" "" \
+    "$(LC_ALL=C bash -c '. "$1"; idd_blocking_section "$2"' _ "$LIB" $'### Blocking\n（無）\n')"
+  # C0 / DEL scrubbed at the helper's outputs (TAB and LF kept)
+  assert_eq "blocking: mid-line CR and ESC are scrubbed" "- 等 #99 fake[31mX" "$(idd_blocking_section $'### Blocking\n- 等 #99\r fake\033[31mX\n')"
+  err=$(idd_parse_complexity $'### Complexity\n\nSimple\033[2K when triggered\n' 2>&1 >/dev/null)
+  refute_grep "complexity: ESC scrubbed from the surfaced raw line" $'\033' "$err"
+  # unbalanced fence → fence tracking disabled for that body (live #290 shape)
+  assert_eq "blocking: real blocker below an UNCLOSED fence is found" "- 等 #99 merge" \
+    "$(idd_blocking_section $'### Notes\n```\nexample\n\n### Blocking\n- 等 #99 merge\n')"
+  tier=$(idd_parse_complexity $'### Notes\n```\nexample\n\n### Complexity\n\nPlan\n' 2>/dev/null); rc=$?
+  assert_exit "complexity: section below an UNCLOSED fence is found (exit)" "0" "$rc"
+  assert_eq   "complexity: section below an UNCLOSED fence is found (tier)" "Plan" "$tier"
   # CRLF (GitHub web textarea): both directions
   assert_eq "blocking: CRLF real blocker is kept"       "- 等 upstream #310" "$(idd_blocking_section $'### Blocking\r\n\r\n- 等 upstream #310\r\n')"
   assert_eq "blocking: CRLF placeholder is empty"       "" "$(idd_blocking_section $'### Blocking\r\n- (none)\r\n')"
@@ -266,8 +284,11 @@ if [ "$HELPER_PRESENT" -eq 1 ]; then
       num=$(jq -r '.number' <<<"$row")
       exp_empty=$(jq -r '.expect_empty' <<<"$row")
       exp_first=$(jq -r '.expect_first_blocker // ""' <<<"$row")
-      sec=$(jq -r '.section | join("\n")' <<<"$row")
-      got=$(idd_blocking_section "$(printf '## Current Status\n\n### Phase\n\nx\n\n### Blocking\n%s\n\n### Tasks\n\n- [ ] x\n' "$sec")")
+      # the ORIGINAL body, so fences / headings / CR go through the shared extractor
+      # (round 3 synthesised a clean body from .section and never exercised it)
+      body=$(jq -r '.body // empty' <<<"$row")
+      if [ -z "$body" ]; then fail "blocking corpus #$num" "row has no body — fixture must carry the original issue body"; continue; fi
+      got=$(idd_blocking_section "$body")
       if [ "$exp_empty" = "true" ]; then
         b_empty=$((b_empty + 1))
         if [ -z "$got" ]; then b_ok=$((b_ok + 1)); else fail "blocking corpus #$num" "expected empty, got: $got"; fi
@@ -277,7 +298,10 @@ if [ "$HELPER_PRESENT" -eq 1 ]; then
       fi
     done < <(jq -c '.rows[]' "$BCORPUS")
     assert_eq "blocking corpus: every section judged as reviewed ($b_ok/$b_total)" "$b_total" "$b_ok"
-    assert_eq "blocking corpus: 55 sections, 47 empty / 8 non-empty" "55/47/8" "$b_total/$b_empty/$b_block"
+    assert_eq "blocking corpus: 55 sections, 47 empty / 8 non-empty (rule; hand review is 48/7, #1 is the accepted FP)" "55/47/8" "$b_total/$b_empty/$b_block"
+    # #290's body has an UNCLOSED fence: the extractor must still find its section
+    b290=$(jq -r '.rows[] | select(.number == 290) | .body' "$BCORPUS")
+    assert_eq "blocking corpus: #290 section survives an unclosed fence" "- (none) — 已結案。" "$(_idd_section_lines "$b290" Blocking)"
   else
     fail "blocking corpus" "fixture missing: $BCORPUS"
   fi
@@ -322,6 +346,8 @@ if [ "$HELPER_PRESENT" -eq 1 ]; then
   assert_eq "missing alone → undiagnosed group"  "undiagnosed" "$(idd_actionability_group 'complexity-missing')"
   assert_eq "missing + blocking → blocked group"  "blocked" "$(idd_actionability_group 'complexity-missing; blocking-nonempty')"
   assert_eq "deferral + blocking → parked group"  "parked"  "$(idd_actionability_group 'complexity-deferral-marker; blocking-nonempty')"
+  idd_actionability_group "" >/dev/null 2>&1
+  assert_exit "empty reason list is API misuse (exit 2), never parked" "2" "$?"
   assert_eq "deferral marker → parked group"     "parked"  "$(idd_actionability_group 'complexity-deferral-marker')"
   assert_eq "mixed reasons → parked group"       "parked"  "$(idd_actionability_group 'complexity-unparseable; blocking-nonempty')"
 
@@ -363,10 +389,14 @@ for c in idd-list idd-all idd-implement idd-plan; do
   assert_output_grep "$c: exit 2 is a consumer FATAL"         'FATAL: idd_actionability_verdict misuse' "$f"
   assert_output_grep "$c: issue number is digit-checked before the REST path" "*[!0-9]*) " "$f"
   assert_output_grep "$c: Diagnosis author is trusted-only"   'author_association' "$f"
+  assert_output_grep "$c: the verdict is PRINTED, not only assigned" "printf 'gate #%s: VEXIT=%s" "$f"
+  assert_output_grep "$c: REASONS reset on the actionable path" 'REASONS="" ;;' "$f"
+  # command lines only (not `#` comments or `>` prose), and `comments` must be inside the --json field list
+  refute_grep_re     "$c: no bare gh issue view --json …comments left" '^[^#>]*gh issue view[^\n]*--json[^ ]*comments' "$(cat "$f")"
   refute_output_grep "$c: no closed-domain wording for the tier field" '封閉值域外' "$f"
   refute_output_grep "$c: no 'closed domain, no fifth value' tier claim" '不得依相似性外推第五個' "$f"
 done
-for c in idd-list idd-all idd-implement; do
+for c in idd-list idd-all idd-implement idd-plan; do
   f="$SKILLS/$c/SKILL.md"
   assert_output_grep "$c: allowed-tools pre-approves jq"      'Bash(jq:*)' "$f"
   assert_output_grep "$c: allowed-tools pre-approves python3" 'Bash(python3:*)' "$f"
@@ -386,7 +416,14 @@ assert_output_grep "idd-list: #84 footer count verbatim"           '`X actionabl
 assert_output_grep "idd-list: parked group present"                'Parked (not routable now):' "$L"
 assert_output_grep "idd-list: undiagnosed group present"           'Needs diagnosis (' "$L"
 assert_output_grep "idd-list: undiagnosed rows keep the diagnose command" '→ /idd-diagnose #' "$L"
-assert_output_grep "idd-list: state guard before the gate"         '"$STATE" = "open"' "$L"
+assert_output_grep "idd-list: per-ISSUE state guard before the gate"  '.state // ""' "$L"
+refute_output_grep "idd-list: no listing-flag state guard"          '[ "$STATE" = "open" ]' "$L"
+assert_output_grep "idd-list: skipped rows have a display rule"     'group=skipped' "$L"
+IA="$SKILLS/idd-all/SKILL.md"
+assert_grep_re "idd-all: Layer-V sub-issue scan filters author"     'issues/\$sub_n/comments" --paginate --jq .\[\.\[\] \| select\(\.author_association' "$(cat "$IA")"
+assert_output_grep "idd-all: sub-issue number digit-checked"        'case "$sub_n" in' "$IA"
+IM="$SKILLS/idd-implement/SKILL.md"
+assert_output_grep "idd-implement: Step 2.5 re-runs the gate when the variables did not survive" '[ -n "${VEXIT:-}" ] ||' "$IM"
 assert_output_grep "idd-list: groups via the helper"               'idd_actionability_group "$REASONS"' "$L"
 # reference + producer (9.1 / 9.2)
 assert_output_grep "reference: cites the 159-diagnosis corpus"     '159' "$REF"
@@ -400,6 +437,9 @@ assert_output_grep "idd-diagnose: producer never derives the label — scoped to
 refute_output_grep "idd-issue: no blocker:* label mandate left" 'blocker:infeasible' "$SKILLS/idd-issue/SKILL.md"
 refute_output_grep "sdd-integration: no parallel Complexity parse narrative" '→ parse as `Simple`' "$HERE/../../../rules/sdd-integration.md"
 assert_output_grep "reference: signal-3 risk posture present"     'Signal 3 (`### Blocking`)' "$REF"
+refute_output_grep "reference: no 'parked group == --parked set' claim" 'exactly the set `idd-list --parked` reviews' "$REF"
+assert_output_grep "reference: corpus scope stated (54 of 55 CLOSED)" '54 of the 55' "$REF"
+assert_output_grep "reference: cluster-path coverage gap stated"    'cluster' "$REF"
 assert_output_grep "reference: undiagnosed group documented"      'undiagnosed' "$REF"
 
 # ── task 8.2 / spec R8: full-corpus regression. Every diagnosed issue in this

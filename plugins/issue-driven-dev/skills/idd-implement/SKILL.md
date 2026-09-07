@@ -133,10 +133,12 @@ COMPLEXITY_ERR=$(idd_parse_complexity "$LATEST_DIAGNOSIS" 2>&1 >/dev/null) || tr
 # 4. 真的呼叫 gate。exit 2 是 API 誤用（本 skill 的 bug），不得與 not-actionable 混同
 if VERDICT=$(idd_actionability_verdict --complexity-exit "$CEXIT" --parking-label "$HAS_PARKING" --blocking-section "$BLOCKING" 2>&1); then VEXIT=0; else VEXIT=$?; fi
 case "$VEXIT" in
-    0) ;;                                        # actionable → 依下表以 $TIER 分派
+    0) REASONS="" ;;                             # actionable → 依下表以 $TIER 分派（cluster 逐張跑時不得殘留上一張的 reasons）
     1) REASONS="${VERDICT#not-actionable: }" ;;  # withheld  → 下表 `VEXIT=1` 各列；不給任何 lifecycle 命令
     *) echo "FATAL: idd_actionability_verdict misuse — $VERDICT" >&2; exit 1 ;;
 esac
+# 5. 把判定印出來 —— skill 是模型執行的，Bash 輸出是模型唯一的觀測通道；只賦值不印，parked 與 actionable 在執行者眼裡一模一樣
+printf 'gate #%s: VEXIT=%s TIER=%s REASONS=%s | %s%s\n' "$NUMBER" "$VEXIT" "${TIER:-}" "${REASONS:-}" "${COMPLEXITY_ERR:-}" "${BLOCK_LINE:-}"
 ```
 
 `VEXIT=1` → 依 Step 2.5 的表**立即停止**（印 `$REASONS` 與原文），不進 Step 0.4 以後任何一步；`VEXIT=0` → 帶著 `$TIER` 繼續。
@@ -413,7 +415,11 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $NUMBER --repo $GITHUB_R
 
 **判斷 Complexity routing**：讀最新 `## Diagnosis` comment 的 `### Complexity` 欄位（v2.36.0+ 三路；v2.50+ 加 Layer V variant）。**tier 抽取與 actionability 判定都不在此處自行寫 parser**，改呼叫 [`references/actionability-gate.md`](../../references/actionability-gate.md) 契約下的共用實作：
 
-> **gate 已於 Step 0.35 執行**（第 3 輪，verify #318：gate 必須先於建 branch 與任何 egress）。本 step 只消費 Step 0.35 留下的 `$VEXIT` / `$TIER` / `$REASONS` / `$COMPLEXITY_ERR` / `$BLOCK_LINE`；不得在此重跑。
+> **gate 已於 Step 0.35 執行**（第 3 輪，verify #318：gate 必須先於建 branch 與任何 egress）。本 step 消費 Step 0.35 留下的 `$VEXIT` / `$TIER` / `$REASONS` / `$COMPLEXITY_ERR` / `$BLOCK_LINE`。**跨 Bash 區塊 shell 變數不保證存活**（與 idd-all Phase 3b.1 同一條規則），所以先檢查、缺值就**用 Step 0.35 同一段程式碼、同一份 helper 重跑一次**（它是唯讀判定，重跑無副作用）—— 不得改用私有 regex、不得從 Step 0.35 印出的那行 `gate #N: …` 之外的地方自行推 tier：
+>
+> ```bash
+> [ -n "${VEXIT:-}" ] || { echo "→ gate variables did not survive the Bash-call boundary — re-running the Step 0.35 block (same helper, same shape)" >&2; }   # 然後執行 Step 0.35 的整個 code block，再回到本表
+> ```
 
 
 helper 只取開頭的 tier：` via <來源>` 後綴（例如 `Plan via Layer V`）、同行理由、markdown 裝飾都不影響，本 skill 拿到的 `$TIER` 已是 canonical tier — 對應 spec Requirement: Routing parsers SHALL recognize Plan via Layer V verdict。
@@ -423,9 +429,9 @@ Routing **先看 `$VEXIT`**（gate 判定），`0` 才依 `$TIER` 決定行為�
 | `VEXIT` · `CEXIT` · `TIER` | 行為 |
 |-----------|------|
 | `0` · `0` · `Simple` | ✅ 本 step 啟動 TaskList 追蹤每個 checklist item |
-| `0` · `Plan`（原值可能是 `Plan via Layer V`）| ✅ 同 Simple — TaskList 啟動。**注意**：使用者通常透過 `/idd-plan #NNN` 呼叫進來，approval gate 已在 idd-plan 處理完，本 skill 直接走 TDD loop。若使用者直接呼叫 `/idd-implement` 而 Complexity=Plan，**先提示**「Complexity 判定為 Plan，建議改走 `/idd-plan #NNN` 進入 approval gate；繼續直接 implement 等於跳過 Plan tier 的 deliberation 價值」並用 AskUserQuestion 確認 continue/abort。`Plan via Layer V` 同樣行為(routing 一致),只是 verdict 標記提示這是 Layer V 觸發 |
-| `0` · `Spectra` | ⏭ 跳過本 step（由 `spectra-apply` 管 `openspec/changes/<name>/tasks.md`）|
-| `0` · `SDD-warranted` (legacy alias) | ⏭ 跳過本 step — 視同 `Spectra` 處理（v2.36.0+ backward compat）|
+| `0` · `0` · `Plan`（原值可能是 `Plan via Layer V`）| ✅ 同 Simple — TaskList 啟動。**注意**：使用者通常透過 `/idd-plan #NNN` 呼叫進來，approval gate 已在 idd-plan 處理完，本 skill 直接走 TDD loop。若使用者直接呼叫 `/idd-implement` 而 Complexity=Plan，**先提示**「Complexity 判定為 Plan，建議改走 `/idd-plan #NNN` 進入 approval gate；繼續直接 implement 等於跳過 Plan tier 的 deliberation 價值」並用 AskUserQuestion 確認 continue/abort。`Plan via Layer V` 同樣行為(routing 一致),只是 verdict 標記提示這是 Layer V 觸發 |
+| `0` · `0` · `Spectra` | ⏭ 跳過本 step（由 `spectra-apply` 管 `openspec/changes/<name>/tasks.md`）|
+| `0` · `0` · `SDD-warranted` (legacy alias) | ⏭ 跳過本 step — 視同 `Spectra` 處理（v2.36.0+ backward compat）|
 | `VEXIT=1` · `$REASONS` 含 `complexity-deferral-marker`（如 `Simple when triggered`）或 `parking-lot-label` | 🛑 **停止實作（parked）** — 印出 `$REASONS` 與原文（`$COMPLEXITY_ERR` 的 `deferral-marker: <原值>`，或 label 名）。這是**合法的延期狀態，不是資料錯誤**；要動它，先由人移除 label 或重新 diagnose。**禁止**截斷成 tier 前綴、**禁止**降級成 `Simple` / `Plan` 或任何其他 tier、**禁止**沿用舊的「不確定就當 Simple」預設 |
 | `VEXIT=1` · `$REASONS` 含 `blocking-nonempty` | 🛑 **停止實作（blocked）** — 印出 `$BLOCK_LINE`；等 blocker 解除（`idd-update` 清 `### Blocking`）|
 | `VEXIT=1` · `complexity-unparseable`（值不以 tier 開頭）| 🛑 **停止實作** — 印出 `$COMPLEXITY_ERR` 的 `unparseable-complexity: <原值>`，要求 user 修正 Diagnosis（這才是資料錯誤）|

@@ -124,6 +124,41 @@ actionable, 1 blocked (the misjudgement), **11 "parked"** — all eleven merely 
 
 Codex was absent on that verify (usage limit); the Devil's Advocate carried the oracle role.
 
+### Round 4 — repair the regressions, bring the claims down to the evidence
+
+The round-3 verify (again 5-of-6; Codex still rate-limited) returned FAIL. Round 3's six
+repairs are real — every lens re-measured them live — but round 3 had introduced its own
+regressions and over-claimed what the new corpus proved. The Devil's Advocate's ruling,
+followed here: fix correctness and honesty, not coverage; do not add another character class,
+do not demote the signal mid-verify.
+
+- **idd-implement** Step 2.5 consumed the gate's variables set ~280 lines and several Bash
+  calls earlier and forbade re-running — the same cross-block break the same commit had fixed
+  in idd-all. It now checks `${VEXIT:-}` and re-runs the Step 0.35 block with the same helper.
+- **The gate prints its verdict** in all four consumers and the canonical shape. A block that
+  only assigned `$VEXIT` showed a parked issue to the executing model as a clean, silent exit 0.
+- **idd-list** guarded with the listing-wide `--state` flag, so `--state all` marked every
+  issue `skipped` and Suggested-next vanished (a regression against `main`). Now per-issue
+  `.state == "OPEN"`; `skipped` rows keep the phase × PR matrix.
+- **Locale**: the placeholder rule had multibyte separators inside a bracket expression; under
+  `LC_ALL=C` it flipped both directions and the suite itself failed three assertions. Rewritten
+  as alternations; the test runs it under `LC_ALL=C`.
+- **Unclosed fence**: one stray ``` above `### Blocking` swallowed the section (live #290),
+  which would read a real blocker as "none". Unbalanced fences now disable fence tracking for
+  that body; balanced fenced examples are still skipped.
+- **C0 / DEL scrubbing** lives in the helper's outputs (round 3 only described it, and the
+  described set omitted `\r`); `idd_actionability_group ""` is exit 2, not a quiet *parked*.
+- **Claims**: "0 FP / 0 FN on 55 frozen sections" is now "54/55 agree with the hand review,
+  #1 an accepted false positive, 54/55 CLOSED issues the gate never evaluates, extractor
+  covered because each row carries its original body". #336's acceptance bar is the semantic
+  truth (48 / 7), not the fixture. The accepted-miss list is a rule in both directions; the
+  two rejected placeholder regexes are recorded with their FP/FN counts.
+- Hygiene from the report: idd-plan gains `allowed-tools`; idd-all's Layer-V sub-issue scan
+  digit-checks and author-filters; routing tables' rows carry all three keys; `REASONS` reset
+  on the actionable path; spec delta loses its `respectively`, nested backticks and a
+  mis-attributed `@trace`; cluster-path coverage (first issue only — pre-existing) is stated
+  in the contract and tracked in #340.
+
 ### Honest residue
 
 - **`### Blocking` is regex-read for now.** The leading-token rule is a stop, not an answer

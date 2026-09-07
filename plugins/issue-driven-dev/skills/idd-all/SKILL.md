@@ -548,10 +548,12 @@ COMPLEXITY_ERR=$(idd_parse_complexity "$LATEST_DIAGNOSIS" 2>&1 >/dev/null) || tr
 # 4. 真的呼叫 gate。exit 2 是 API 誤用（本 skill 的 bug），不得與 not-actionable 混同
 if VERDICT=$(idd_actionability_verdict --complexity-exit "$CEXIT" --parking-label "$HAS_PARKING" --blocking-section "$BLOCKING" 2>&1); then VEXIT=0; else VEXIT=$?; fi
 case "$VEXIT" in
-    0) ;;                                        # actionable → 依下表以 $TIER 分派
+    0) REASONS="" ;;                             # actionable → 依下表以 $TIER 分派（cluster 逐張跑時不得殘留上一張的 reasons）
     1) REASONS="${VERDICT#not-actionable: }" ;;  # withheld  → 下表 `VEXIT=1` 各列；不給任何 lifecycle 命令
     *) echo "FATAL: idd_actionability_verdict misuse — $VERDICT" >&2; exit 1 ;;
 esac
+# 5. 把判定印出來 —— skill 是模型執行的，Bash 輸出是模型唯一的觀測通道；只賦值不印，parked 與 actionable 在執行者眼裡一模一樣
+printf 'gate #%s: VEXIT=%s TIER=%s REASONS=%s | %s%s\n' "$N" "$VEXIT" "${TIER:-}" "${REASONS:-}" "${COMPLEXITY_ERR:-}" "${BLOCK_LINE:-}"
 ```
 
 Dispatch **先看 `$VEXIT`**(gate 判定),`0` 才依 `$TIER` 分派。tier 只有四個(`SDD-warranted` 視同 `Spectra`);`### Complexity` 開頭以外的同行理由、裝飾、` via <來源>` 後綴都不影響 `$TIER`:
@@ -559,10 +561,10 @@ Dispatch **先看 `$VEXIT`**(gate 判定),`0` 才依 `$TIER` 分派。tier 只�
 | `VEXIT` · `CEXIT` · `TIER` | 下一步 |
 |--------------|--------|
 | `0` · `0` · `Simple` | Phase 3a: idd-implement |
-| `0` · `Plan` | **attended → Phase 3p: `/idd-plan`**（該 skill 擁有 `EnterPlanMode` 閘門，approve 後自己 chain 到 idd-implement）;**unattended → Phase 3a: idd-implement**，並在 final report 標記 `[Plan tier deliberation skipped under unattended mode]` |
-| `0` · `Plan`（原值 `Plan via Layer V`,v2.50+）| 同上 — helper 只取開頭的 tier,` via <來源>` 後綴與同行理由皆不影響;verdict 是 user 在 idd-diagnose Step 3.4 選 escalate 觸發,routing 行為跟 bare `Plan` 一致 |
-| `0` · `Spectra` | Phase 3b: spectra-discuss → spectra-propose → spectra-apply(unattended → 一輪收斂;attended → multi-turn 對話自然進行) |
-| `0` · `SDD-warranted` (legacy alias) | 視同 `Spectra` 處理(v2.36.0+ backward compat) |
+| `0` · `0` · `Plan` | **attended → Phase 3p: `/idd-plan`**（該 skill 擁有 `EnterPlanMode` 閘門，approve 後自己 chain 到 idd-implement）;**unattended → Phase 3a: idd-implement**，並在 final report 標記 `[Plan tier deliberation skipped under unattended mode]` |
+| `0` · `0` · `Plan`（原值 `Plan via Layer V`,v2.50+）| 同上 — helper 只取開頭的 tier,` via <來源>` 後綴與同行理由皆不影響;verdict 是 user 在 idd-diagnose Step 3.4 選 escalate 觸發,routing 行為跟 bare `Plan` 一致 |
+| `0` · `0` · `Spectra` | Phase 3b: spectra-discuss → spectra-propose → spectra-apply(unattended → 一輪收斂;attended → multi-turn 對話自然進行) |
+| `0` · `0` · `SDD-warranted` (legacy alias) | 視同 `Spectra` 處理(v2.36.0+ backward compat) |
 | `VEXIT=1` · `$REASONS` 含 `complexity-deferral-marker`(如 `Simple when triggered`、`**Spectra**(… if/when triggered)`)或 `parking-lot-label` | **abort(parked)** — 印出 `$REASONS` 與原文(`$COMPLEXITY_ERR` 的 `deferral-marker: <原值>`,或 label 名)。這是**合法的延期狀態,不是資料錯誤**:不要求 user「修正」Diagnosis;要動它,先由人移除 label 或重新 diagnose。**禁止**截斷成 tier 前綴、**禁止**降級成任何 tier、**禁止**因為 tier 前綴合法就分派 |
 | `VEXIT=1` · `$REASONS` 含 `blocking-nonempty` | **abort(blocked)** — 印出 `$BLOCK_LINE`;等 blocker 解除(`idd-update` 清 `### Blocking`)|
 | `VEXIT=1` · `complexity-unparseable`(值不以 tier 開頭,如 `移入 discussion list`)| **abort** — 印出 `$COMPLEXITY_ERR` 的 `unparseable-complexity: <原值>`,要求 user 修正 Diagnosis(這才是資料錯誤)|
@@ -1014,7 +1016,8 @@ for sub_n in "$ROOT_N" "${SPAWNED_ISSUES[@]:-}"; do
     ACTION_ITEMS+=$'\n'"- #${sub_n}: ${AUTO_DEFERRED_COUNT} row(s) auto-deferred at /idd-clarify Step 4.8 (unattended mode) — resolve via /idd-clarify #${sub_n} --status resolved=<idx>,<reason>"
   fi
   # #120 (v2.97.0+): Layer V deferred records live in Diagnosis COMMENTS (not body)
-  SUB_COMMENTS=$(gh api "repos/$GITHUB_REPO/issues/$sub_n/comments" --paginate --jq '[.[] | .body]' 2>/dev/null | jq -s 'add // []' | jq -r 'join("\n---\n")')   # 分頁：`--json comments` 只回最舊 100 則（#316 第 3 輪）
+  case "$sub_n" in ''|*[!0-9]*) continue ;; esac   # 進 REST path 前驗型（manifest 內容不可信）
+  SUB_COMMENTS=$(gh api "repos/$GITHUB_REPO/issues/$sub_n/comments" --paginate --jq '[.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") | .body]' 2>/dev/null | jq -s 'add // []' | jq -r 'join("\n---\n")')   # 分頁 + 只信任 repo 成員（外人留一則含 marker 的 comment 就能灌大計數）
   LAYERV_DEFERRED_COUNT=$(echo "$SUB_COMMENTS" \
     | grep -cE 'unattended-auto-Step-3\.4-layerV-deferred')
   if [ "$LAYERV_DEFERRED_COUNT" -gt 0 ]; then

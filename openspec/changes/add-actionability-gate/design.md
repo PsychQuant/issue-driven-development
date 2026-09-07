@@ -150,7 +150,7 @@ gate 產出 verdict 加 reason 清單；顯示層依 reason 分兩組 —— rea
 
 > `/idd-verify --pr 318` 第 2 輪 FAIL（6 blocking）。四個 lens 與 DA 各自對 238 筆 issue 實測，結論一致：第 2 輪在**第三個訊號**上重犯了 CRITICAL-2 的形狀 —— `idd_blocking_section` 依「idd-update 寫 `- (none)`」這個未經語料驗證的假設寫成整行比對，本 repo 55 個 `### Blocking` 區段裡 48 個語意為空、31 個被判成 blocker，**含 #316 自己**（`- (none — 可動)`）。DA 另外對 14 個 open issue 實跑 gate：2 actionable / 1 blocked（誤判）/ **11 parked** —— 那 11 筆只是還沒診斷。
 
-**決策 1 — `### Blocking` 是清單欄位，逐 bullet 判、placeholder 看開頭 token。** `### Complexity` 是純量、讀第一行是定義；`### Blocking` 的模板就是 bullet list，讀第一行等於把 list 當 head(list)。規則：任一 bullet 非 placeholder 即非空；placeholder = `none` / `n/a` / `無` 開頭（可帶 bullet、裝飾、括號），後接行尾、右括號或分隔符；非 bullet 起始的行是上一個 bullet 的續行。對 55 筆凍結語料（`corpus-blocking.json`）0 FP / 0 FN；另兩個候選規則在同一語料上各自失敗（一個把 7 筆真 blocker 全清空、一個留 20 個 FP），記在 helper 註解裡當反例。接受的漏抓：token 後接子句（`- (none) but actually blocked by #86`）讀成空 —— 語料 0 筆，明文記錄。**這個欄位該不該被 regex 化**是類別問題，開 #336 追（producer contract vs 退回 model 判定），本輪只止血。
+**決策 1 — `### Blocking` 是清單欄位，逐 bullet 判、placeholder 看開頭 token。** `### Complexity` 是純量、讀第一行是定義；`### Blocking` 的模板就是 bullet list，讀第一行等於把 list 當 head(list)。規則：任一 bullet 非 placeholder 即非空；placeholder = `none` / `n/a` / `無` 開頭（可帶 bullet、裝飾、括號），後接行尾、右括號或分隔符；非 bullet 起始的行是上一個 bullet 的續行。對 55 筆凍結語料（`corpus-blocking.json`，含原始 body，走共用 extractor）與人工標註 54/55 一致（#1 為明文接受的 1 筆 FP）；語料 54/55 是 CLOSED issue，gate 不評；另兩個候選規則在同一語料上各自失敗（一個把 7 筆真 blocker 全清空、一個留 20 個 FP），記在 helper 註解裡當反例。接受的漏抓：token 後接子句（`- (none) but actually blocked by #86`）讀成空 —— 語料 0 筆，明文記錄。**這個欄位該不該被 regex 化**是類別問題，開 #336 追（producer contract vs 退回 model 判定），本輪只止血。
 
 **決策 2 — `complexity-missing` 單獨成 `undiagnosed` 組，保留 `→ /idd-diagnose #N`。** 「還沒診斷」是每張 issue 的出生狀態，在真實 backlog 上是主導狀態；放進 Parked 會讓 footer 與 `--parked` 差一個數量級、藏掉唯一正確的 lifecycle 命令、並讓 #84 的 banner 在新的主導情境下永遠不 fire。spec R6 改為三組：含 label / deferral-marker / unparseable → parked；否則含 blocking-nonempty → blocked（#84 逐字保留）；否則 → undiagnosed。
 
@@ -216,8 +216,12 @@ Rollback：本變更為 skill 文件與 helper script 的變更，零資料遷�
 
 ## Open Questions
 
-- **`### Blocking` 該不該被機械判定？**（#336）第 3 輪的 leading-token 規則是止血，不是答案：對一個由 model 自由填寫的清單欄位疊字元類，每一輪都會長出新洞。要嘛給它 producer contract（空區段不寫 bullet、註記另起一行），要嘛 helper 只回原文、由執行中的 model 依 rubric 判空。兩條路都要對 `corpus-blocking.json` 0 FP / 0 FN。
+- **`### Blocking` 該不該被機械判定？**（#336）第 3 輪的 leading-token 規則是止血，不是答案：對一個由 model 自由填寫的清單欄位疊字元類，每一輪都會長出新洞。要嘛給它 producer contract（空區段不寫 bullet、註記另起一行），要嘛 helper 只回原文、由執行中的 model 依 rubric 判空。兩條路都要對語料的**語意真值**（48 空 / 7 真 blocker）與 open backlog 驗證，不是對 fixture 的 `expect_empty`（它含 1 筆規則接受的 FP）。
 
 
 - **延期語彙清單的擴充機制未定。** 目前四個語彙由 159 筆 corpus 歸納而得。語料成長後若出現新措辭，是誰、依什麼判準把它加進清單？本變更不解決；先記錄為已知缺口。
 - `ic-r011-checkpoint.md` 的兩個 `blocker:*` label 是「退役」還是「與 parking-lot 分工」，需在該檔改寫時定案。目前 0 使用，傾向退役。
+
+### 第 4 輪（2026-09-07）：修回歸與誠實，不修涵蓋率
+
+> `/idd-verify --pr 318` 第 3 輪 FAIL（6 blocking）。DA 的裁決：round 3 在往 #336 的 rabbit hole 走（三輪各疊一層字元類、各長出新洞）；第 4 輪只做「正確性與誠實」——修 round 3 引入的回歸（idd-implement 跨 Bash 區塊消費 gate 變數且禁止重跑、idd-list state guard 用 listing 旗標）、關掉一行能關的 fail-open（未閉合 fence、locale 相依）、讓 verdict 可觀測（gate 區塊印出判定）、把宣稱降到與證據齊平（「0 FP / 0 FN」→「54/55、1 筆明文 FP、54/55 CLOSED、extractor 已由原始 body 覆蓋」）、把 Accepted misses 從兩個例子改寫成雙向規則。**不擴 bullet class、不把訊號 3 降回顯示訊號** —— 前者擴大 fail-closed 面、後者是 verify 中途對 #84 的 scope change；兩者都留給 #336 從容決定。cluster 路徑只 gate 第一張是 round 2 前就存在的缺口，開 #340 追蹤並在契約明記。

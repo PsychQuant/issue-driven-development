@@ -5,6 +5,11 @@ description: |
   介於 Simple（直接 implement）和 Spectra（完整 spec/proposal/tasks artifacts）之間的中間層。
   Use when: 已跑過 `/idd-diagnose #N`、且該 diagnosis 的 Complexity 判為 Plan tier 之後。本 skill 不做診斷 —— issue 上沒有 Diagnosis comment 會直接 abort，此時該跑的是 `/idd-diagnose #N` 而不是本 skill。
   防止的失敗：跳過 diagnose 直接 plan —— 還沒查出 root cause 就開始寫實作計畫，等於為錯的問題做規劃。
+allowed-tools:
+  - Bash(gh:*)
+  - Bash(git:*)
+  - Bash(jq:*)
+  - Bash(python3:*)
 ---
 
 # /idd-plan — Plan-mode 實作
@@ -53,7 +58,7 @@ TaskCreate(name="auto_update_body", description="Step 7: idd-update phase → pl
 ### Step 1: 讀取 Issue + Diagnosis + Confirm Complexity
 
 ```bash
-gh issue view $NUMBER --repo $GITHUB_REPO --json title,body,labels,comments
+gh issue view $NUMBER --repo $GITHUB_REPO --json title,body,labels   # comments 由下方 gate 區塊分頁抓（`--json comments` 只回最舊 100 則）
 ```
 
 **Complexity 的 tier 抽取與 actionability 判定不在此處自行比對字串**，改呼叫 [`references/actionability-gate.md`](../../references/actionability-gate.md) 契約下的共用實作：
@@ -91,10 +96,12 @@ COMPLEXITY_ERR=$(idd_parse_complexity "$LATEST_DIAGNOSIS" 2>&1 >/dev/null) || tr
 # 4. 真的呼叫 gate。exit 2 是 API 誤用（本 skill 的 bug），不得與 not-actionable 混同
 if VERDICT=$(idd_actionability_verdict --complexity-exit "$CEXIT" --parking-label "$HAS_PARKING" --blocking-section "$BLOCKING" 2>&1); then VEXIT=0; else VEXIT=$?; fi
 case "$VEXIT" in
-    0) ;;                                        # actionable → 依下表以 $TIER 分派
+    0) REASONS="" ;;                             # actionable → 依下表以 $TIER 分派（cluster 逐張跑時不得殘留上一張的 reasons）
     1) REASONS="${VERDICT#not-actionable: }" ;;  # withheld  → 下表 `VEXIT=1` 各列；不給任何 lifecycle 命令
     *) echo "FATAL: idd_actionability_verdict misuse — $VERDICT" >&2; exit 1 ;;
 esac
+# 5. 把判定印出來 —— skill 是模型執行的，Bash 輸出是模型唯一的觀測通道；只賦值不印，parked 與 actionable 在執行者眼裡一模一樣
+printf 'gate #%s: VEXIT=%s TIER=%s REASONS=%s | %s%s\n' "$NUMBER" "$VEXIT" "${TIER:-}" "${REASONS:-}" "${COMPLEXITY_ERR:-}" "${BLOCK_LINE:-}"
 ```
 
 **先看 `$VEXIT`**（gate 判定），`0` 才依 `$TIER` 決定行為。tier 只有四個；`### Complexity` 開頭以外的同行理由、裝飾、` via <來源>` 後綴都不影響 `$TIER`：
@@ -102,10 +109,10 @@ esac
 | `VEXIT` · `CEXIT` · `TIER` | 行為 |
 |-----------|------|
 | `0` · `0` · `Plan` | ✅ 預期 — 繼續 Step 2 |
-| `0` · `Plan`（原值 `Plan via Layer V`、`**Plan**(Layer P:…)` 等）| 同上 — helper 只取開頭的 tier,後綴與同行理由皆不影響,行為與 bare `Plan` 完全一致 |
+| `0` · `0` · `Plan`（原值 `Plan via Layer V`、`**Plan**(Layer P:…)` 等）| 同上 — helper 只取開頭的 tier,後綴與同行理由皆不影響,行為與 bare `Plan` 完全一致 |
 | `0` · `Simple` | ⚠️ 詢問 user：「Complexity 判定為 Simple，確定要走 Plan tier 多一道 approval gate 嗎？」（行為不變 — user 主動要 deliberate 是允許的）|
-| `0` · `Spectra` | ⛔ 提示「Spectra 應走 `/spectra-discuss`，Plan tier 不會產出 spec/proposal/tasks artifacts」，AskUserQuestion abort 或 continue（continue 等於 user 自願降級到 Plan tier）— 行為不變 |
-| `0` · `SDD-warranted`（legacy alias）| 視同 `Spectra` 處理 — 行為不變 |
+| `0` · `0` · `Spectra` | ⛔ 提示「Spectra 應走 `/spectra-discuss`，Plan tier 不會產出 spec/proposal/tasks artifacts」，AskUserQuestion abort 或 continue（continue 等於 user 自願降級到 Plan tier）— 行為不變 |
+| `0` · `0` · `SDD-warranted`（legacy alias）| 視同 `Spectra` 處理 — 行為不變 |
 | `VEXIT=1` · `$REASONS` 含 `complexity-deferral-marker`（如 `Plan when triggered`）或 `parking-lot-label` | ⛔ **abort（parked）** — 印出 `$REASONS` 與原文（`$COMPLEXITY_ERR` 的 `deferral-marker: <原值>`，或 label 名）。這是**合法的延期狀態，不是資料錯誤**；要動它，先由人移除 label 或重新 diagnose。**禁止**截斷成 tier 前綴、**禁止**降級成 `Plan` 或任何其他 tier、**禁止**因為前綴是 `Plan` 就放進 approval gate、**禁止**當成 `Simple` 問過 user 就繼續 |
 | `VEXIT=1` · `$REASONS` 含 `blocking-nonempty` | ⛔ **abort（blocked）** — 印出 `$BLOCK_LINE`；等 blocker 解除（`idd-update` 清 `### Blocking`）|
 | `VEXIT=1` · `complexity-unparseable`（值不以 tier 開頭）| ⛔ **abort** — 印出 `$COMPLEXITY_ERR` 的 `unparseable-complexity: <原值>`，要求 user 修正 Diagnosis（這才是資料錯誤）|

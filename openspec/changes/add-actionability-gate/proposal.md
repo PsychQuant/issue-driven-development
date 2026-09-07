@@ -1,6 +1,6 @@
 ## Why
 
-> **第 2 輪 re-baseline（2026-08-15）**：`/idd-verify --pr 318` FAIL（2 CRITICAL / 21 HIGH）。CRITICAL-2 以 90 筆真實語料證偽第 1 輪的封閉值域前提；`/idd-reorganize #316` 完成裁定；`/idd-diagnose #316` 第 2 輪以 **159 筆完整 corpus** 重新定出值域規則（158/158，0 false positive）。本 proposal 的 What Changes / Impact 已依該結論重寫；design D1/D3/D5 與 spec R1/R3/R7 同步重寫，其餘決策經裁定為 still-valid 而保留。
+> **第 2 輪 re-baseline（2026-08-15）**：`/idd-verify --pr 318` FAIL（2 CRITICAL / 21 HIGH）。CRITICAL-2 以 90 筆真實語料證偽第 1 輪的封閉值域前提；`/idd-reorganize #316` 完成裁定；`/idd-diagnose #316` 第 2 輪以 **159 筆完整 corpus** 重新定出值域規則（159/159，0 false positive）。本 proposal 的 What Changes / Impact 已依該結論重寫；design D1/D3/D5 與 spec R1/R3/R7 同步重寫，其餘決策經裁定為 still-valid 而保留。
 >
 > **Re-scope note（2026-08-14）**：本 change 於 #298 仍 open 時提出。走完 discuss → propose、進入 apply 時發現 **#298 已由 PR #309 / #306 修掉並 close** —— 但修正**只落在 `idd-list`**，另三個 consumer（`idd-all` / `idd-implement` / `idd-plan`）未動，且 `idd-list` 自身 Step 5 仍文載會截斷的 regex，與新增的 Step 3.7 直接矛盾。本 change 遂 re-scope 為**承接剩餘缺口**，追蹤於 **#316**；已完成的共用 helper、canonical 契約與回歸測試（全新檔、與已 merge 內容零衝突）原樣保留。Migration 相關 task 因目標 issue 全數 close 而 moot。
 
@@ -18,7 +18,7 @@
 - **`parking-lot` label 是 parked 的主要訊號**，延期語彙是次要安全網。語彙清單取高精度、容忍低召回。
 - **新增 actionability gate** —— 三訊號 OR 判定（Complexity 不可路由、`parking-lot` label、`### Blocking` 非空），放行需三者皆不成立，**且四個 consumer 必須實際呼叫它**。
 - **三個 consumer 的 Complexity 解析統一** —— `idd-list`、`idd-all`、`idd-implement`（含 `idd-plan` 的 tier 確認）改用共用 helper，消除各自窄化。
-- **`### Blocking` 抽取重構為 gate 的 input** —— 共用 helper 逐 bullet 讀、placeholder 看開頭 token，對 55 筆凍結語料 0 誤判（第 3 輪；第 2 輪的整行比對誤判 31 筆、含 #316 自己）。#84 既有的 Blocked 分組輸出行為不得退化；未診斷的 issue 另成 `undiagnosed` 組並保留 `/idd-diagnose` 命令。
+- **`### Blocking` 抽取重構為 gate 的 input** —— 共用 helper 逐 bullet 讀、placeholder 看開頭 token，對 55 筆凍結語料與人工標註 54/55 一致（#1 為明文接受的 FP；第 2 輪的整行比對誤判 31 筆、含 #316 自己；語料 54/55 為 CLOSED，見 design 第 4 輪）。#84 既有的 Blocked 分組輸出行為不得退化；未診斷的 issue 另成 `undiagnosed` 組並保留 `/idd-diagnose` 命令。
 - **`idd-diagnose` producer 端明訂延期意圖走 label** —— 不再宣告封閉值域；改為「tier 寫清楚、延期貼 label、不要把延期寫進本欄」。
 - **零 migration** —— 新規則對既有 159 筆語料 159/159 全對（149 路由、9 擋下、1 缺區段），不需回填 label、不需改寫任何 Diagnosis comment。**零 migration 指「既有 diagnosis 不需改寫」，不是「backlog 可動性分佈不變」** —— 225 筆裡 66 筆從未 diagnose，全部 exit 4，顯示層以 `undiagnosed` 組承接（第 3 輪）。
 - **`references/ic-r011-checkpoint.md` 的 parking 慣例收斂** —— `blocker:infeasible` / `blocker:waiting` 目前 0 個 issue 在用，實際在用的是 `parking-lot`。
@@ -33,11 +33,11 @@
 
 - `idd-ic-r011-checkpoint`：skip path 的 (b)/(c) 分類改以 `parking-lot` label 立案（原 `blocker:infeasible` / `blocker:waiting` 從未建立過；`parking-lot` 自 3.1.0 起是 gate 的一級訊號）。delta 見 `specs/idd-ic-r011-checkpoint/spec.md`。
 
-為何無 modified capability：硬閘與 Layer V 這兩份既有 spec 所產出的帶後綴 verdict（形如 tier 後接 " via " 再接來源）在新抽取規則下**仍為合法值**（tier 開頭、` via ` 後綴不參與 tier 判定），其 requirement 不需修改；conflict-class 規範對 Complexity 欄位的正交性敘述同樣維持成立。
+其餘既有 spec 為何不需修改：硬閘與 Layer V 這兩份既有 spec 所產出的帶後綴 verdict（形如 tier 後接 " via " 再接來源）在新抽取規則下**仍為合法值**（tier 開頭、` via ` 後綴不參與 tier 判定），其 requirement 不需修改；conflict-class 規範對 Complexity 欄位的正交性敘述同樣維持成立。
 
 ## Impact
 
-- Affected specs: 新增 `actionability-gate`
+- Affected specs: 新增 `actionability-gate`；修改 `idd-ic-r011-checkpoint`（(b)/(c) 立案 label → `parking-lot`）
 - Affected code:
   - New:
     - `plugins/issue-driven-dev/references/actionability-gate.md`

@@ -31,6 +31,17 @@
 #      the issue under its own reason, because a deferral is a legitimate
 #      state — not a data defect to repair.
 #
+# WHAT THE FROZEN BLOCKING CORPUS DOES AND DOES NOT PROVE (verify #318 round 3)
+#   scripts/tests/actionability-gate/fixtures/corpus-blocking.json holds every
+#   `### Blocking` section in this repo's issue bodies (55; 54 of them CLOSED
+#   issues the gate never evaluates — signal 3's live effect on 2026-09-07 was
+#   one issue, #316 itself). The reader agrees with the hand review on 54/55;
+#   row #1 is an accepted false positive (an informational second bullet). Each
+#   row now carries the original body, so the shared extractor — fences,
+#   headings, CR — is exercised by the corpus, not bypassed by a synthesised
+#   body. The corpus is a legitimate sample of producer style; it is NOT proof
+#   of gate correctness on the live backlog.
+#
 # RISK POSTURE
 #   The `parking-lot` label is the PRIMARY parked signal (human-authored,
 #   mutable, removable). Deferral vocabulary is a SECONDARY high-precision net:
@@ -60,10 +71,19 @@
 #   - the section ends at the next heading of the same or higher level;
 #     a deeper `####` line is skipped, never taken as a value
 _idd_section_lines() {
-    local body="${1-}" heading="${2-}"
-    printf '%s\n' "$body" | awk -v h="$heading" '
+    local body="${1-}" heading="${2-}" nfence nofence=0
+    # An UNCLOSED fence would otherwise swallow every later section (live
+    # instance #290: one ``` at line 8, `### Blocking` at line 39 → empty →
+    # a real blocker below it would read as "no blocker"). Fence tracking is
+    # only trustworthy when fences are balanced; with an odd count it is
+    # disabled for that body. A balanced fenced template example is still
+    # skipped (verify #318 H4).
+    nfence=$(printf '%s\n' "$body" | grep -cE '^[[:space:]]*(```|~~~)' || true)
+    [ $((nfence % 2)) -eq 1 ] && nofence=1
+    printf '%s\n' "$body" | awk -v h="$heading" -v nofence="$nofence" '
         { sub(/\r$/, "") }
-        {
+        nofence == 1 { }
+        nofence == 0 {
             if (fence != "") {
                 if (fence == "`" && $0 ~ /^[[:space:]]*```/) fence = ""
                 else if (fence == "~" && $0 ~ /^[[:space:]]*~~~/) fence = ""
@@ -79,7 +99,19 @@ _idd_section_lines() {
     '
 }
 _idd_section_first_line() {
-    _idd_section_lines "$1" "$2" | head -n 1
+    # No `| head -n 1`: closing the pipe early makes the upstream awk exit 141
+    # under `pipefail`. Capture, then take the first line.
+    local all
+    all=$(_idd_section_lines "$1" "$2")
+    printf '%s\n' "${all%%$'\n'*}"
+}
+
+# Third-party text leaves this file with C0 control characters (and DEL)
+# removed — TAB and LF kept — so a `\r` or an ANSI sequence inside an issue
+# body cannot repaint the operator's terminal or the executing model's prompt.
+# Surfaced values are DATA, never instructions.
+_idd_scrub() {
+    LC_ALL=C tr -d '\000-\010\013-\037\177'
 }
 
 # ── contract 1: parse the Complexity field ───────────────────────────────────
@@ -133,7 +165,7 @@ idd_parse_complexity() {
     done
 
     if [ -z "$tier" ]; then
-        printf 'unparseable-complexity: %s\n' "$raw" >&2
+        printf 'unparseable-complexity: %s\n' "$raw" | _idd_scrub >&2
         return 3
     fi
 
@@ -141,7 +173,7 @@ idd_parse_complexity() {
     # parenthetical or after a ` via ` suffix (verify #318 H3). Conservative on
     # purpose: see RISK POSTURE above before adding a term.
     if printf '%s\n' "$val" | grep -qiE 'when[[:space:]_-]+triggered|parking[[:space:]_-]*lot|deferred|暫緩'; then
-        printf 'deferral-marker: %s\n' "$raw" >&2
+        printf 'deferral-marker: %s\n' "$raw" | _idd_scrub >&2
         return 5
     fi
 
@@ -244,21 +276,50 @@ idd_actionability_verdict() {
 # this repo, 48 are semantically empty and 31 of those carry text after the
 # token (`- (none — 可動)`, `- (none) — closed`, `（無）`). Round 2 anchored the
 # match to the whole line and withheld all 31 — including #316 itself. The rule
-# below is 0 FP / 0 FN on the hand-reviewed corpus frozen in
+# below agrees with the hand review on 54 of the 55 rows frozen in
 # scripts/tests/actionability-gate/fixtures/corpus-blocking.json; two other
 # candidate rules were tested there and rejected (one cleared every real
 # blocker, one left 20 false positives).
 #
 # Recognised token, any case, optionally bulleted / decorated / parenthesised:
-#   none · n/a · 無     followed by end of line, a closing paren, or a separator
-#   (— – - , 、 : ： ;). A bare bullet or bare decoration is also empty.
-# Accepted misses (documented, not in the corpus): `- (none) but actually
-# blocked by #86`, `- n/a — blocked by #99` read as empty; the token wins.
-# A real blocker that happens to START with the token (`- none of the
-# reviewers replied yet`) is NOT a placeholder because the token is followed by
-# a word, not a terminator — that case is pinned by test.
+#   none · n/a · 無     followed by end of line, a closing paren, a full stop,
+#   or a separator (— – - , 、 : ： ;). A bare bullet or bare decoration is
+#   also empty.
+#
+# THE RULE FOR MISSES, stated as a rule (not as examples — see
+# common-spec-prose-enumeration): the leading token decides the bullet. Both
+# directions follow from that and are accepted, documented, and pinned by test:
+#   fail-open  : a placeholder token followed by a clause (`- (none) but
+#                actually blocked by #86`, `- n/a — blocked by #99`) reads as
+#                EMPTY; a real blocker written as an ordered-list item, a `+`
+#                bullet, a blockquote, a table row, a `####` line or a bare
+#                paragraph AFTER a placeholder bullet is a continuation and is
+#                NOT read (only `-` / `*` bullets, or the section's first
+#                line, are judged);
+#   fail-closed: a lead-in sentence before the first bullet (`目前阻塞如下：`
+#                then `- (none)`) is judged as the first line and reads as a
+#                BLOCKER.
+# The live corpus has zero cases of either shape. Widening the bullet class
+# was measured and rejected in verify #318 round 3 — it enlarges the
+# fail-closed side, and whether this field should be regex-read at all is
+# #336. Do not extend this by analogy; change #336 first.
+#
+# Multibyte characters are written as alternations, never inside a bracket
+# expression: under LC_ALL=C a bracket splits into bytes and `— – 、 ：`
+# turned every kana / CJK-punctuation lead byte into a separator (both
+# directions flipped; the suite itself failed 3 assertions). The rule below is
+# locale-independent and the test runs it under LC_ALL=C.
+#
+# Rejected candidate rules (measured on the same 55 rows; kept so nobody
+# re-derives them):
+#   '^[[:space:]]*([-*][[:space:]]+)?[_*`（(]*[[:space:]]*(none|n/a|無|-)([^[:alnum:]]|$)'
+#       → 0 FP but 7 FN: the optional bullet group lets `-` in the token set
+#         eat the bullet dash, so every `- 等 …` bullet read as empty.
+#   '^[[:space:]]*([-*][[:space:]]+)?[_*`]*[(（]?[[:space:]]*(none|n/a|無)[[:space:]]*([)）]|$)'
+#       → 20 FP: requires `)` or EOL right after the token, so `- (none — 可動)`
+#         (#316 itself) still read as a blocker.
 _idd_is_none_placeholder() { # line
-    printf '%s\n' "$1" | grep -qiE '^[[:space:]]*([-*][[:space:]]+)?[_*`]*[（(]?[[:space:]]*(none|n/a|無)[_*`]*[[:space:]]*([)）]|$|[—–,、:：;-])' \
+    printf '%s\n' "$1" | grep -qiE '^[[:space:]]*([-*][[:space:]]+)?[_*`]*(（|\()?[[:space:]]*[_*`]*(none|n/a|無)[_*`]*[[:space:]]*(\)|）|$|\.|。|[,:;-]|—|–|、|：)' \
     || printf '%s\n' "$1" | grep -qE '^[[:space:]]*[-*]?[_*`]*[[:space:]]*$'
 }
 idd_blocking_section() {
@@ -267,7 +328,7 @@ idd_blocking_section() {
         if [ "$first" = 1 ] || printf '%s\n' "$line" | grep -qE '^[[:space:]]*[-*][[:space:]]'; then
             first=0
             if ! _idd_is_none_placeholder "$line"; then
-                printf '%s\n' "$line"
+                printf '%s\n' "$line" | _idd_scrub
                 return 0
             fi
         fi
@@ -278,15 +339,15 @@ idd_blocking_section() {
 # ── display helper: which group does a not-actionable issue belong to? ───────
 #
 # idd_actionability_group <reason-list>
-#   stdout : "blocked" | "parked" | "undiagnosed"
+#   stdout : "blocked" | "parked" | "undiagnosed"      exit 2 : empty/unknown reasons
 #
 #   parked      — any of parking-lot-label / complexity-deferral-marker /
 #                 complexity-unparseable is present (a human parked it, the
 #                 diagnosis said so, or the value is a defect to repair)
-#   blocked     — otherwise, blocking-nonempty is present: reason
-#                 `blocking-nonempty` ALONE keeps the pre-#298 blocked-state
-#                 grouping (#84) intact — heading, banner and footer counts are
-#                 user-facing behavior that must not regress
+#   blocked     — otherwise, blocking-nonempty is present (alone, or together
+#                 with complexity-missing — spec R6 "Missing diagnosis with a
+#                 real blocker is blocked"): the pre-#298 blocked-state grouping
+#                 (#84) — heading, banner and footer counts — must not regress
 #   undiagnosed — otherwise (complexity-missing alone): the issue has simply
 #                 not been diagnosed yet. That is every issue's birth state, not
 #                 a parked state — on the live backlog it is the DOMINANT state
@@ -299,6 +360,9 @@ idd_actionability_group() {
         *parking-lot-label*|*complexity-deferral-marker*|*complexity-unparseable*) printf 'parked\n' ;;
         *blocking-nonempty*)                                                        printf 'blocked\n' ;;
         *complexity-missing*)                                                       printf 'undiagnosed\n' ;;
-        *)                                                                          printf 'parked\n' ;;
+        *) # an empty or unknown reason list is API misuse (called on an
+           # actionable issue?) — fail loud like the verdict does, never
+           # quietly park a routable issue
+           printf 'idd_actionability_group: empty or unknown reason list (got: %s)\n' "${reasons:-<empty>}" >&2; return 2 ;;
     esac
 }

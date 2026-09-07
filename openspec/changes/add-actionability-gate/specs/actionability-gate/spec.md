@@ -111,7 +111,7 @@ Complexity parsing and actionability verdict logic SHALL exist as one shared imp
 
 ### Requirement: Blocked-state output is preserved as a distinct display group
 
-The gate SHALL produce a verdict together with its reason list, and the display layer SHALL group not-actionable issues by reason into exactly three groups. Issues whose reasons include any of `parking-lot-label`, `complexity-deferral-marker`, or `complexity-unparseable` SHALL appear under a parked grouping — the same set the parked-review flag lists. Otherwise, issues whose reasons include `blocking-nonempty` SHALL appear under the existing blocked-state grouping, with its group heading, its all-blocked banner text, and its footer counts unchanged from the behavior established for blocked-state awareness. Otherwise — reason `complexity-missing` alone — the issue SHALL appear under an undiagnosed grouping that retains the diagnose lifecycle command, because an issue that has never been diagnosed is in its birth state, not a parked state; on the 2026-09-07 open backlog that state held 11 of 14 issues, and filing it as parked hid the only correct next action and made the footer disagree with the parked-review flag by an order of magnitude.
+The gate SHALL produce a verdict together with its reason list, and the display layer SHALL group not-actionable issues by reason into exactly three groups. Issues whose reasons include any of `parking-lot-label`, `complexity-deferral-marker`, or `complexity-unparseable` SHALL appear under a parked grouping. Otherwise, issues whose reasons include `blocking-nonempty` SHALL appear under the existing blocked-state grouping, with its group heading, its all-blocked banner text, and its footer counts unchanged from the behavior established for blocked-state awareness. Otherwise — reason `complexity-missing` alone — the issue SHALL appear under an undiagnosed grouping that retains the diagnose lifecycle command, because an issue that has never been diagnosed is in its birth state, not a parked state; on the 2026-09-07 open backlog that state held 11 of 14 issues, and filing it as parked hid the only correct next action and made the footer disagree with the parked-review flag by an order of magnitude.
 
 #### Scenario: Blocking-only issue keeps existing grouping
 
@@ -167,7 +167,7 @@ Existing Diagnosis comments SHALL NOT be rewritten, and no label SHALL be backfi
 
 ### Requirement: The blocking signal is read per bullet against a frozen corpus
 
-The `### Blocking` section SHALL be read as a list: the section is non-empty when any bullet is not a none-placeholder, and a placeholder SHALL be recognised by its leading token (`none`, `n/a`, `無`, optionally bulleted, decorated, or parenthesised, followed by end of line, a closing paren, or a separator) so that an annotated placeholder such as `- (none — 可動)` is empty while a bullet whose first word merely happens to be `none` is not. Lines that do not begin a bullet SHALL be treated as continuations of the bullet above. A trailing carriage return SHALL be stripped before either section reader judges a line. The rule SHALL be validated against every `### Blocking` section in the repository's issue bodies as a frozen regression fixture, because the first implementation was written against an assumed producer shape and withheld 31 of the 47 empty sections in that corpus, including the tracking issue of this change.
+The `### Blocking` section SHALL be read as a list: the section is non-empty when any bullet is not a none-placeholder, and a placeholder SHALL be recognised by its leading token (`none`, `n/a`, `無`, optionally bulleted, decorated, or parenthesised, followed by end of line, a closing paren, or a separator) so that an annotated placeholder such as `- (none — 可動)` is empty while a bullet whose first word merely happens to be `none` is not. Lines that do not begin a `-` or `*` bullet SHALL be treated as continuations of the bullet above, and the accepted consequences SHALL be stated as a rule in both failure directions rather than as examples. A trailing carriage return SHALL be stripped before either section reader judges a line, the rule SHALL NOT depend on the process locale, an unbalanced code fence SHALL NOT hide a section below it, and control characters SHALL be removed from every value the helper surfaces. The rule SHALL be validated against every `### Blocking` section in the repository's issue bodies as a frozen regression fixture, because the first implementation was written against an assumed producer shape and withheld 31 of the 47 empty sections in that corpus, including the tracking issue of this change.
 
 #### Scenario: Annotated placeholder is empty
 
@@ -183,6 +183,17 @@ The `### Blocking` section SHALL be read as a list: the section is non-empty whe
 
 - **WHEN** the section reads `- none of the reviewers replied yet`
 - **THEN** the blocking signal reports that line
+
+#### Scenario: Locale does not change the verdict
+
+- **WHEN** the reader runs under `LC_ALL=C`
+- **THEN** `- none ぁ x` is still reported as a blocker
+- **AND** `（無）` is still empty
+
+#### Scenario: An unclosed fence does not hide the section
+
+- **WHEN** a body contains an unclosed code fence above `### Blocking`
+- **THEN** the section is still read
 
 #### Scenario: CRLF does not change either reader's verdict
 
