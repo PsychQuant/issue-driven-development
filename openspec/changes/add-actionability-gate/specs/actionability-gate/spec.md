@@ -2,7 +2,7 @@
 
 ### Requirement: Complexity tier extraction tolerates trailing rationale
 
-The system SHALL extract the routing tier from the `### Complexity` field by (1) stripping leading and trailing markdown decoration, (2) taking the tier prefix — the text preceding the first ` via ` separator — and (3) requiring that prefix to be exactly one of `Simple`, `Plan`, `Spectra`, or `SDD-warranted`. Any further text on the value line — same-line rationale, parenthetical explanation, or a ` via <source>` provenance suffix — SHALL NOT prevent tier extraction. Trailing rationale is the producer's normal writing style: in a corpus of 159 real diagnoses in this repository, 93.1% of values carry decoration, rationale, or a provenance suffix, and only 5.7% express deferral.
+The system SHALL extract the routing tier from the `### Complexity` field by (1) stripping leading and trailing markdown decoration, (2) requiring the stripped value to **begin with** one of `Simple`, `Plan`, `Spectra`, or `SDD-warranted` (longest match first, so `SDD-warranted` is not read as a non-tier), and (3) taking that leading tier as the extracted value. Any further text on the value line — same-line rationale, parenthetical explanation, or a ` via <source>` provenance suffix — SHALL NOT prevent tier extraction. Trailing rationale is the producer's normal writing style: in a corpus of 159 real diagnoses in this repository, 71.7% of values are not a bare tier (23.3% decorated, 41.5% carry same-line rationale, 0.6% a provenance suffix) and only 5.7% express deferral; a closed domain would have wrongly refused 41.5% of them (66 of 159).
 
 #### Scenario: Bare tier is extracted
 

@@ -42,7 +42,7 @@
 
 > **本決策於 2026-08-15 重寫**（前版：「Complexity 回歸純封閉值域」）。前版把「tier 後接文字」等同於「延期修飾語」，被 `/idd-verify --pr 318` CRITICAL-2 以真實語料證偽。原文保留於 git history。
 
-`idd_parse_complexity` 依序：**(1)** 剝除前後 markdown 裝飾 → **(2)** 取 tier prefix（第一個 ` via ` 之前；tier 須為 `Simple` / `Plan` / `Spectra` / `SDD-warranted` 之一）→ **(3)** 對**整個值**掃延期語彙，命中則不路由。
+`idd_parse_complexity` 依序：**(1)** 剝除前後 markdown 裝飾 → **(2)** 值須**以** `Simple` / `Plan` / `Spectra` / `SDD-warranted` 之一**開頭**（最長匹配優先），該開頭即為 tier；其後的一切 —— 理由、括號、` via <來源>` —— 皆不參與 tier 判定→ **(3)** 對**整個值**掃延期語彙，命中則不路由。
 
 tier 之後的其餘文字（同行理由、括號說明）**是合法的**，不影響 tier 抽取。
 
@@ -120,7 +120,7 @@ actionability gate 的輸入是三個訊號：`### Complexity` 非合法值、`p
 
 **migration 動作為零。** 既有 Diagnosis comment 一律不改寫，也不需要補任何 label 來讓 gate 給出正確答案。
 
-理由：新規則在 159 筆 corpus 上**158/158 全對** —— 149 筆正確路由、9 筆正確擋下。既有語料完全不需要調整就能被正確解讀。前版所謂「9 筆需 migration」是從封閉值域的錯誤前提推出的；真實需求是 **0 筆**。
+理由：新規則在 159 筆 corpus 上**159/159 全對** —— 149 筆正確路由、9 筆正確擋下（exit 5）、1 筆正確報缺區段（exit 4）、0 筆 unparseable；已凍結為回歸 fixture `corpus-complexity.json`。既有語料完全不需要調整就能被正確解讀。前版所謂「9 筆需 migration」是從封閉值域的錯誤前提推出的；真實需求是 **0 筆**。
 
 append-only 紀律仍然成立且更容易守：既然不需要改寫任何歷史 comment，也就不存在違反 `rules/append-vs-modify.md` 的誘因。
 

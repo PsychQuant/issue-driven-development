@@ -1,8 +1,8 @@
 # Actionability Gate
 
-> The contract that answers **「這個 issue 現在可不可以動？」** — the closed value domain of the `### Complexity` Diagnosis field, where deferral state lives, and the three-signal gate that `idd-list` / `idd-all` / `idd-implement` / `idd-plan` all consume. This file is the single source of truth; the four skills cite it and MUST NOT restate the rules in their own words.
+> The contract that answers **「這個 issue 現在可不可以動？」** — how the routing tier is extracted from the `### Complexity` Diagnosis field, how deferral is detected, where parked state lives, and the three-signal gate that `idd-list` / `idd-all` / `idd-implement` / `idd-plan` all consume. This file is the single source of truth; the four skills cite it and MUST NOT restate the rules in their own words.
 >
-> **Source**: `add-actionability-gate` Spectra change (capability `actionability-gate`). Origin: issue-driven-development#298, surfaced from real dogfooding (2026-08-10 backlog routing).
+> **Source**: `add-actionability-gate` Spectra change (capability `actionability-gate`). Origin: issue-driven-development#298 → #316, surfaced from real dogfooding (2026-08-10 backlog routing). **Round 2** (2026-08-15): `/idd-verify --pr 318` falsified round 1's closed value domain against the real diagnosis corpus; the extraction rule below is the corrected one, validated on all 159 diagnoses in this repository.
 
 ## The incident this exists to prevent
 
@@ -10,40 +10,90 @@ On 2026-08-10 a real 22-issue backlog was routed by `/idd-list`. Of the 11 diagn
 
 The failure was **silent**. The table was syntactically correct, well-formatted, and carried no warning.
 
-## Root cause — mutable state in an immutable artifact
+## Root cause, in two layers
 
-`### Complexity` lives in a Diagnosis comment, and Diagnosis comments are **append-only** (see [`rules/append-vs-modify.md`](../rules/append-vs-modify.md)). But "is this issue parked?" is **mutable** — a trigger firing should un-park it. Writing deferral qualifiers (`Simple when triggered`, `Spectra when triggered (parking lot)`) into a frozen field created a value that could never be corrected in place.
+### 1. Mutable state in an immutable artifact
 
-Two consequences followed:
+`### Complexity` lives in a Diagnosis comment, and Diagnosis comments are **append-only** (see [`rules/append-vs-modify.md`](../rules/append-vs-modify.md)). But "is this issue parked?" is **mutable** — a trigger firing should un-park it. Writing deferral qualifiers (`Simple when triggered`, `**Spectra when triggered**(Layer 2: …)`) into a frozen field created a value that could never be corrected in place, and every consumer's parser assumed the field carried one kind of information. Three consumers each invented an incompatible narrowing:
 
-1. **The field carried two kinds of information** (tier + deferral) while every consumer's parser assumed one. Three consumers each invented an incompatible narrowing, and they disagreed:
+| Consumer | private narrowing | result on `Simple when triggered` |
+|---|---|---|
+| `idd-list` | `([A-Za-z-]+)` | silently truncated to `Simple` → routed a parked issue to `/idd-implement` |
+| `idd-all` | `(.+?)` + via-split | non-tier string; matched no dispatch row **and** was not `UNKNOWN` |
+| `idd-implement` | same | same |
 
-   | Consumer | private narrowing | result on `Simple when triggered` |
-   |---|---|---|
-   | `idd-list` | `([A-Za-z-]+)` | silently truncated to `Simple` → routed a parked issue to `/idd-implement` |
-   | `idd-all` | `(.+?)` + via-split | non-tier string; matched no dispatch row **and** was not `UNKNOWN` |
-   | `idd-implement` | same | same |
-
-   `idd-all`'s `UNKNOWN → abort` safety net structurally could not catch this: it fires only when the regex fails entirely, never when it matches an out-of-domain value.
-
-2. **The frozen state drifted elsewhere.** #136's Diagnosis comment read bare `Spectra` while its body read `Spectra when triggered (parking lot)` — state that cannot be corrected in place migrates to wherever it can be edited.
+`idd-all`'s `UNKNOWN → abort` safety net structurally could not catch this: it fires only when the regex fails entirely, never when it matches an out-of-domain value.
 
 IDD already knew the right shape: `### Blocking` is mutable, so it lives in the issue **body** and is maintained by `idd-update`. This contract applies the same reasoning to deferral.
 
-## Closed value domain — `### Complexity`
+> **Correction to the round-1 narrative.** Round 1 claimed #136's Diagnosis comment read bare `Spectra` while its body read `Spectra when triggered (parking lot)`. The "bare `Spectra`" was the truncating regex talking: the comment actually reads `**Spectra**(Layer 2 + Layer 3 if/when triggered):…` — the deferral was hiding inside the parenthetical, exactly where a suffix-only scan would miss it. The two-signals-drift argument still stands (#37, #131, #200), but #136 is evidence for scanning the *whole* value, not for state drift.
 
-**The legal values are exactly these four. This is a CLOSED enumeration — do NOT extend it by analogy, and do NOT infer a fifth value from resemblance to an existing one:**
+### 2. The round-1 fix over-corrected
 
-1. `Simple`
-2. `Plan`
-3. `Spectra`
-4. `SDD-warranted` — legacy alias of `Spectra`, retained for backward compatibility
+Round 1 declared a **closed value domain**: the value had to be exactly one of the four tiers, optionally followed by ` via <source>`. That rejected the producer's normal writing style. On the real corpus of **159 diagnoses** in this repository:
 
-A value MAY carry the provenance suffix ` via <source>` (established v2.50). The canonical tier is the text preceding the **first** ` via ` separator. Both existing producers of suffixed values remain legal: `Plan via Layer V` (Layer V escalation) and `Spectra via hard-gate (sdd_bias)` (hard-gate exit).
+| Shape (mutually exclusive, first line of the value) | Count | Share |
+|---|---|---|
+| bare tier (`Plan`) | 45 | 28.3 % |
+| decorated bare tier (`**Plan**`) | 37 | 23.3 % |
+| decorated tier + same-line rationale (`**Spectra** — Layer 2（…）`) | 41 | 25.8 % |
+| plain tier + same-line rationale (`Spectra（opt-out → 直接 propose）`) | 25 | 15.7 % |
+| tier + ` via <source>` (`Plan via hard-gate`) | 1 | 0.6 % |
+| deferral vocabulary present | 9 | 5.7 % |
+| no `### Complexity` section | 1 | 0.6 % |
 
-**Deferral qualifiers SHALL NOT be written into this field.** `when triggered`, `(parking lot)`, and any prose describing why the issue is on hold belong to the `parking-lot` label, not here. A tier field that carries deferral state is the defect this contract closes.
+71.7 % of values are not a bare tier. Round 1 stripped decoration before matching, so it would still have refused every rationale-bearing value: **66 of 159 (41.5 %)** wrongly withheld — worse than the 29 % misroute rate of the truncating regex it replaced (37 decorated values unmatched + 9 deferral values passed). Both figures are reproducible from the frozen fixture. That was verify finding CRITICAL-2 on PR #318, and it is why round 2 exists. The counts above are reproducible from the frozen fixture, not from memory.
 
-### Where deferral state lives instead
+## The extraction rule — prefix tier, whole-line deferral scan
+
+`idd_parse_complexity` applies these steps, in this order:
+
+1. **Take the first non-blank line** under the `### Complexity` heading. The heading is anchored at line start; a ``` or ~~~ fence is not a section; the section ends at the next heading of the same or higher level; a deeper `####` line is skipped.
+2. **Strip leading and trailing markdown decoration** (`**`, `` ` ``, `_`). Decoration is presentation, not value.
+3. **The stripped value must begin with one of `Simple`, `Plan`, `Spectra`, `SDD-warranted`** as a whole word — longest match first, so `SDD-warranted` is tried before anything that could be its prefix, and a word boundary keeps `Simpler` from reading as `Simple`. That leading word **is the tier**. Everything after it — same-line rationale, a parenthetical, an em-dash note, a ` via <source>` provenance suffix (`Plan via Layer V`, `Spectra via hard-gate (sdd_bias)`) — is **legal and ignored** for tier extraction.
+4. **Scan the entire first line** — not only the text after the tier — for deferral vocabulary: `when triggered`, `parking lot`, `deferred`, `暫緩` (case-insensitive; space, hyphen and underscore tolerant, so `Parking-Lot` and `if/when triggered` both count). A hit withholds the issue under its own reason, **even though the tier prefix is valid**.
+
+| Outcome | exit | stdout | stderr |
+|---|---|---|---|
+| routable | `0` | the leading tier | — |
+| value does not begin with a tier (`移入 discussion list`) | `3` | — | `unparseable-complexity: <raw line>` |
+| no `### Complexity` section | `4` | — | `missing-complexity` |
+| tier valid, deferral vocabulary present (`Plan when triggered`) | `5` | — | `deferral-marker: <raw line>` |
+
+Two ordering consequences are deliberate:
+
+- **Tier check precedes the deferral scan.** `移入 discussion list（暫緩）` is exit 3, not 5 — a value with no tier is a data defect first, whatever else it says.
+- **Only the first line is scanned.** Scanning the whole section would add two false positives on the corpus (#154 "remove *deferred* caveat", #137 "reuse existing `deferred` enum") and catch nothing new. The producer's deferral intent, when written into this field at all, sits on the value line.
+
+On every non-zero path **nothing is written to stdout**. A consumer that captured a tier there could route on it — which is the incident.
+
+### Corpus validation — the regression that keeps this honest
+
+The rule was derived from and validated against every diagnosed issue in this repository (snapshot 2026-08-15, 225 issues fetched, 159 with a `## Diagnosis` comment), and that validation is a **frozen regression test**, not a one-off check: `scripts/tests/actionability-gate/fixtures/corpus-complexity.json`, asserted by `scripts/tests/actionability-gate/test.sh`.
+
+| exit | count | issues |
+|---|---|---|
+| `0` routable | 149 | Plan 69 · Simple 41 · Spectra 39 |
+| `5` deferral | 9 | #131 #136 #140 #143 #144 #145 #146 #157 #200 |
+| `4` missing | 1 | #273 |
+| `3` unparseable | 0 | — |
+
+Every one of the 159 routes as hand-reviewed; **0 false positives**. No Diagnosis comment was rewritten and no label was backfilled to get there — **zero migration** is a claim about this corpus, and the test is what makes it falsifiable.
+
+## Risk posture — the label is primary, the vocabulary is a net
+
+Deferral vocabulary is a **high-precision, low-recall heuristic**. It is NOT a closed enumeration and MUST NOT be "completed" by analogy — but it must not grow casually either. The two failure directions are asymmetric:
+
+| Failure | Consequence | Posture |
+|---|---|---|
+| **miss** (deferral written in words the scan does not know) | the issue looks actionable — the pre-#298 behaviour, no worse | acceptable; the `parking-lot` label is the human backstop |
+| **false positive** (routable issue withheld) | a hard stop on real work, with a reason that reads as authoritative | unacceptable; keep the vocabulary conservative |
+
+So the rule for adding a term: **corpus evidence of zero false positives**, recorded in the regression fixture. Resemblance to an existing term is not evidence.
+
+**A documented miss, kept honest.** #128's Diagnosis reads `Plan（觸發表）+ 未決 UX 軸 → **移入 discussion list**`; its deferral ("blocked-by #86") lives only in Strategy prose. Under this rule it routes as `Plan`. That is the designed outcome — the gate does not parse prose — and the fixture pins #128 as *actionable* rather than pretending a marker exists. If it should be withheld, a human applies the label.
+
+## Where deferral state lives
 
 | State | Home | Mutable? | Maintained by |
 |---|---|---|---|
@@ -51,30 +101,35 @@ A value MAY carry the provenance suffix ` via <source>` (established v2.50). The
 | Deferral / parked | `parking-lot` label | **yes** | **a human** — see below |
 | External blocker | `### Blocking` in the issue body | yes | `idd-update` |
 
-**`idd-diagnose` SHALL NOT apply, remove, or derive the `parking-lot` label.** The label is a human ruling, and it is settable *after* the diagnosis was written. Empirically the two signals disagree: of 11 diagnosed issues sampled on 2026-08-10, only 5 had the qualifier and the label in agreement. #37 was bare `Spectra` with the label applied later by a human; #131 and #200 had the qualifier with no label. They are not two spellings of one fact — they are two facts, and deriving one from the other would delete the human's ability to park an issue whose tier is perfectly clear.
+**`idd-diagnose` SHALL NOT apply, remove, or derive the `parking-lot` label.** The label is a human ruling, and it is settable *after* the diagnosis was written. Empirically the two signals disagree: of 11 diagnosed issues sampled on 2026-08-10, only 5 had the qualifier and the label in agreement. #37 was `**Spectra**` with the label applied later by a human; #131 and #200 had the qualifier with no label. They are not two spellings of one fact — they are two facts, and deriving one from the other would delete the human's ability to park an issue whose tier is perfectly clear.
+
+**The producer's rule is therefore simple**: write the tier clearly, rationale welcome; if the issue is on hold, say so with the label, not in this field. The vocabulary scan exists for the 159-issue past, not as an invitation.
 
 ## The three-signal gate
 
 An issue is **actionable** only when all three signals are clear. Any one of them withholds it.
 
 ```
-  ### Complexity outside the closed domain, or absent  ─┐
-  parking-lot label present                            ─┼─→  not actionable
-  ### Blocking section non-empty                       ─┘
+  ### Complexity non-routable (exit 3 / 4 / 5)  ─┐
+  parking-lot label present                     ─┼─→  not actionable
+  ### Blocking section non-empty                ─┘
 
   actionable  ⟺  none of the three holds
 ```
 
-### Reason vocabulary — also a CLOSED enumeration
+### Reason vocabulary — a CLOSED enumeration
 
-**Exactly four values. Do NOT add a fifth by analogy:**
+**Exactly five values. Do NOT add a sixth by analogy:**
 
-| Reason | Fires when |
-|---|---|
-| `complexity-unparseable` | `### Complexity` section present, value outside the closed domain |
-| `complexity-missing` | no `### Complexity` section at all |
-| `parking-lot-label` | the issue carries the `parking-lot` label |
-| `blocking-nonempty` | the `### Blocking` section of the body is non-empty |
+| Reason | Fires when | What it asks of a human |
+|---|---|---|
+| `complexity-unparseable` | section present, value does not begin with a tier | fix the Diagnosis — this is a data defect |
+| `complexity-missing` | no `### Complexity` section | run `/idd-diagnose` — the diagnosis never judged complexity |
+| `complexity-deferral-marker` | tier valid, deferral vocabulary present | nothing to repair — this is a legitimate parked state; apply the label if it is not already there |
+| `parking-lot-label` | the issue carries the `parking-lot` label | nothing — a human parked it |
+| `blocking-nonempty` | the `### Blocking` section of the body is non-empty | wait, or clear the blocker via `idd-update` |
+
+The three complexity reasons are kept distinct **because the human response differs**. Collapsing them into one would tell the operator to "fix" a value that is not broken.
 
 ### What is deliberately NOT a signal
 
@@ -82,15 +137,15 @@ An issue is **actionable** only when all three signals are clear. Any one of the
 
 > ⚠ Anyone editing `- [~]` handling must check `idd-close` first. Treating it as unused because routing ignores it will break the close gate.
 
-## Default on absent or unparseable — conservative, and always surfaced
+## Default on non-routable Complexity — conservative, and always surfaced
 
-A consumer parsing a `### Complexity` value outside the closed domain SHALL report the issue as **not actionable** and SHALL **surface the original unmodified value** to the operator. A missing section gets the same verdict under a distinct reason.
+A consumer whose `### Complexity` value is non-routable **for any reason** SHALL report the issue as **not actionable** and SHALL **surface the original unmodified line** to the operator.
 
 Three things are forbidden:
 
-- **SHALL NOT** silently truncate a non-domain value to its tier prefix. That truncation is the 2026-08-10 incident.
-- **SHALL NOT** downgrade a non-domain value to any tier, including `Plan`. `Plan` is still actionable; downgrading routes a parked issue into `/idd-plan`.
-- **SHALL NOT** abort the enclosing listing operation. One bad value must not suppress the other issues — a surfacing tool that dies on one malformed row is worse than one that flags it.
+- **SHALL NOT** silently truncate a non-routable value to its tier prefix. That truncation is the 2026-08-10 incident — and on exit 5 the prefix is *right there*, well-formed, which is exactly why the helper refuses to print it.
+- **SHALL NOT** downgrade a non-routable value to any tier, including `Plan`. `Plan` is still actionable; downgrading routes a parked issue into `/idd-plan`.
+- **SHALL NOT** abort the enclosing listing operation. One bad value must not suppress the other issues — a surfacing tool that dies on one malformed row is worse than one that flags it. (The `set -e` call shape below is what makes this hold in practice.)
 
 This mirrors the `### Conflict Class` contract in [`parallel-orchestration.md`](parallel-orchestration.md), which defaults an absent or unparseable value to `D_diagnose_first` and requires the fallback be printed. The two fields are orthogonal (one classifies physical resources touched, the other routing tier) but share one discipline: **conservative default plus mandatory surfacing, never silent.**
 
@@ -101,31 +156,65 @@ The gate emits a verdict together with its reason list. The display layer groups
 | Reasons | Group |
 |---|---|
 | `blocking-nonempty` **alone** | the existing blocked-state group (#84) — heading, all-blocked banner text, and footer counts unchanged |
-| anything else, including any mix | the parked group |
+| anything else, including any mix | the parked group — each row shows the raw `### Complexity` line (from the helper's stderr) or the label, so the operator sees *why* |
 
 Unifying the *judgment* does not mean unifying the *presentation*. #84's blocked-state surface is user-facing behavior people rely on; merging it into one undifferentiated bucket would be a regression dressed as a simplification.
 
 ## Consumer contract
 
-The four routing consumers SHALL invoke the shared implementation at `scripts/lib/actionability.sh` and MUST NOT embed a private parse:
+The four routing consumers SHALL invoke the shared implementation at `scripts/lib/actionability.sh` and MUST NOT embed a private parse — of `### Complexity` **or** of `### Blocking`. The canonical call shape, in full, is:
 
 ```bash
-. "$CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh"
+# 0. Missing helper → fail loud, name the path. Never fall back to a private regex.
+. "$CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh" || {
+    echo "FATAL: missing $CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh — 不得改用私有 regex" >&2
+    exit 1
+}
 
-tier=$(idd_parse_complexity "$diagnosis_body"); cexit=$?
-verdict=$(idd_actionability_verdict \
-            --complexity-exit "$cexit" \
-            --parking-label "$has_parking_lot_label" \
-            --blocking-section "$blocking_section_nonempty")
+# 1. Latest Diagnosis comment — PAGINATE. `gh issue view --json comments` returns
+#    only the OLDEST 100 comments, so on a long issue the latest diagnosis is
+#    exactly the one that gets dropped. (`--paginate --jq` emits one array per
+#    page; `jq -s add` folds them.)
+LATEST_DIAGNOSIS=$(gh api "repos/$GITHUB_REPO/issues/$N/comments" --paginate --jq '[.[] | {body}]' \
+    | jq -s 'add // []' \
+    | python3 -c '
+import json, sys, re
+cs = json.load(sys.stdin)
+ds = [c for c in cs if re.search(r"(?m)^## Diagnosis", c["body"])]   # line-anchored: quoted/inline mentions do not count
+print(ds[-1]["body"] if ds else "")')
+
+# 2. The other two signals — labels, and the body's ### Blocking section (via the helper).
+ISSUE_JSON=$(gh issue view "$N" --repo "$GITHUB_REPO" --json labels,body)
+HAS_PARKING=$(jq -r 'if any(.labels[]; .name == "parking-lot") then "yes" else "no" end' <<<"$ISSUE_JSON")
+BLOCK_LINE=$(idd_blocking_section "$(jq -r '.body // ""' <<<"$ISSUE_JSON")")
+if [ -n "$BLOCK_LINE" ]; then BLOCKING=yes; else BLOCKING=no; fi
+
+# 3. Conditional capture — the only shape that survives `set -euo pipefail`.
+#    A bare TIER=$(idd_parse_complexity …) aborts the caller on exit 3/4/5 and
+#    takes the whole listing down with it.
+if TIER=$(idd_parse_complexity "$LATEST_DIAGNOSIS" 2>/dev/null); then CEXIT=0; else CEXIT=$?; fi
+COMPLEXITY_ERR=$(idd_parse_complexity "$LATEST_DIAGNOSIS" 2>&1 >/dev/null) || true   # raw line on 3/5, `missing-complexity` on 4
+
+# 4. The gate — actually call it. Exit 2 is API misuse (a bug in THIS consumer),
+#    never "not actionable"; do not fold it into the withheld branch.
+if VERDICT=$(idd_actionability_verdict --complexity-exit "$CEXIT" --parking-label "$HAS_PARKING" --blocking-section "$BLOCKING" 2>&1); then VEXIT=0; else VEXIT=$?; fi
+case "$VEXIT" in
+    0) ;;                                                  # actionable → dispatch on "$TIER"
+    1) REASONS="${VERDICT#not-actionable: }" ;;            # withheld  → surface "$REASONS" + "$COMPLEXITY_ERR" / "$BLOCK_LINE"; no lifecycle command
+    *) echo "FATAL: idd_actionability_verdict misuse — $VERDICT" >&2; exit 1 ;;
+esac
 ```
 
 | Function | stdout | exit |
 |---|---|---|
-| `idd_parse_complexity <body>` | canonical tier | `0` in domain · `3` out of domain (stderr: `unparseable-complexity: <raw>`) · `4` no section (stderr: `missing-complexity`) |
-| `idd_actionability_verdict …` | `actionable` / `not-actionable: <reason>[; …]` | `0` actionable · `1` not actionable · `2` bad usage |
+| `idd_parse_complexity <body>` | the leading tier (exit 0 only) | `0` routable · `3` no tier prefix (stderr `unparseable-complexity: <raw>`) · `4` no section (stderr `missing-complexity`) · `5` deferral vocabulary (stderr `deferral-marker: <raw>`) |
+| `idd_blocking_section <issue-body>` | first non-blank line of `### Blocking`, empty when absent or a `(none)` placeholder | `0` |
+| `idd_actionability_verdict --complexity-exit 0|3|4|5 --parking-label yes|no --blocking-section yes|no` | `actionable` / `not-actionable: <reason>[; …]` | `0` actionable · `1` not actionable · `2` bad usage (missing value, non-boolean, unknown flag) |
 | `idd_actionability_group <reasons>` | `blocked` / `parked` | `0` |
 
-**Malformed invocation fails loud (exit 2), never defaults to actionable.** An unanswered signal treated as "clear" would re-open the exact hole this contract closes.
+**Only replacing the parser is not a fix.** Round 1 shipped a complete gate, 66 green assertions, and zero consumers calling `idd_actionability_verdict` (verify CRITICAL-1 on PR #318). A consumer that reads `$TIER` and never asks the gate has re-created the incident with a nicer parser.
+
+**Malformed invocation fails loud (exit 2), never defaults to actionable.** An unanswered signal treated as "clear" would re-open the exact hole this contract closes. A flag with no value is a named exit-2 error, not an infinite loop (verify H1).
 
 **When the shared implementation is missing, a consumer SHALL fail loudly and name the path** — never fall back to a private parse. A silent fallback would restore the three-way divergence this file exists to prevent.
 
@@ -135,18 +224,20 @@ Per [`.claude/rules/attribute-assessment.md`](../../../.claude/rules/attribute-a
 
 | Lens | Risk | Mitigation |
 |---|---|---|
-| **Scoundrel** | Write `Simple via when triggered` so the via-split yields a legal tier and the issue passes the gate | The provenance suffix only affects the *tier* channel. Deferral is asserted through the label, which the gate reads independently — a scoundrel who wants the issue withheld cannot express that through Complexity anyway, and one who wants it actionable has simply declared it actionable, which is a claim the audit trail records under their name |
-| **Lazy Developer** | Skip a signal argument and let the gate assume "clear" | Every argument is required and validated; missing or non-boolean input returns exit 2 with a named cause. The cheap path is not the unsafe path |
-| **Confused Developer** | Answer "does this issue block others?" when asked "is this issue blocked?" | The flag is named `--blocking-section`, pointing at the artifact section being read rather than at a relationship. The axis is **what the `### Blocking` section contains**, never who blocks whom |
+| **Scoundrel** | Smuggle deferral vocabulary after the ` via ` separator (`Simple via when triggered`) so a suffix-stripping parser yields a legal tier | The scan covers the whole line; the suffix is not an escape hatch (fixture row 906). And in the other direction — a scoundrel who wants an issue *actionable* has simply declared it so under their own name in the audit trail; the label, which the gate reads independently, is the human's veto |
+| **Lazy Developer** | Skip a signal argument and let the gate assume "clear"; or read `$TIER` and skip the verdict | Every argument is required and validated; missing or non-boolean input returns exit 2 with a named cause. The consumer contract above makes the verdict call part of the canonical shape, and the #318 verify history is the reminder of what happens without it |
+| **Confused Developer** | Answer "does this issue block others?" when asked "is this issue blocked?"; or treat exit 5 as a value to correct | The flag is named `--blocking-section`, pointing at the artifact section being read rather than at a relationship. The three complexity reasons are distinct precisely so that `complexity-deferral-marker` reads as "parked", not "broken" |
 
 ## Out of scope
 
 - **Evaluating whether a trigger condition has fired.** Trigger conditions are prose propositions about future world state (「等 ≥3 instances」「首次 trace-stale 實害事故」). Deciding whether one has come true requires a human observing the world; it is not derivable from the repo. This gate knows only that *someone declared the issue parked*, never whether the parking is still warranted. That is an epistemic boundary, not a missing feature.
-- **Bringing parked issues back into view.** Nothing here re-surfaces an issue whose trigger has fired — tracked separately as **#310**. This contract makes parked issues *more* thoroughly hidden, which makes that gap more urgent, not less.
+- **Bringing parked issues back into view.** Nothing here re-surfaces an issue whose trigger has fired — tracked separately as **#310** (`idd-list --parked` is the manual review path). This contract makes parked issues *more* thoroughly hidden, which makes that gap more urgent, not less.
+- **Deferral expressed only in prose** (Strategy bullets, Blocking rationale, comments) — see #128 above. The label is the mechanism for that.
 - **`- [~]` handling** — belongs to `idd-close`, see above.
 
 ## See also
 
 - [`parallel-orchestration.md`](parallel-orchestration.md) — the `### Conflict Class` contract this one mirrors; orthogonal field, same discipline
 - [`rules/append-vs-modify.md`](../rules/append-vs-modify.md) — why a Diagnosis comment cannot hold mutable state
-- **Why both enumerations above are written as closed lists with explicit no-analogy clauses** rather than as summarizing criteria: a criterion plus illustrative examples is two specifications that will not be updated together, and the criterion's literal reach eventually exceeds the set of cases its author had in mind. The divergence is silent — the prose still reads fine, it just answers a boundary question nobody agreed to. Naming the members and forbidding extension-by-resemblance is what makes a boundary auditable. (This mirrors a maintainer-side writing discipline that is not part of the plugin distribution, so no link is given here.)
+- `scripts/tests/actionability-gate/` — the incident fixture (`parked-routing.json`, verbatim 2026-08-10 rows plus corpus-sampled shapes) and the frozen corpus (`corpus-complexity.json`)
+- **On enumerations.** The *reason* vocabulary is written as a closed list with an explicit no-analogy clause because it is one: a summarizing criterion plus examples is two specifications that drift apart silently. The *deferral* vocabulary is deliberately **not** presented that way — it is a heuristic with a stated add-criterion (corpus evidence, zero false positives) — because round 1 showed what happens when a heuristic is dressed up as a domain: it rejects the data it was meant to describe.

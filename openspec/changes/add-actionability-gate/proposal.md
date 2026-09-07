@@ -13,7 +13,7 @@
 
 ## What Changes
 
-- **`### Complexity` 的 tier 以 prefix 抽取，容許同行理由** —— 剝裝飾 → 取 ` via ` 之前的 tier prefix → tier 須為 `Simple` / `Plan` / `Spectra` / `SDD-warranted` 之一。tier 之後的理由、括號說明、provenance 後綴**皆為合法**，不影響抽取。
+- **`### Complexity` 的 tier 以 prefix 抽取，容許同行理由** —— 剝裝飾 → 值須**以** `Simple` / `Plan` / `Spectra` / `SDD-warranted` 之一**開頭**（最長匹配優先、整詞匹配），該開頭即為 tier。tier 之後的理由、括號說明、provenance 後綴**皆為合法**，不影響抽取。
 - **延期以語彙偵測，並有獨立 reason** —— 對**整個值**掃 `when triggered` / `parking lot` / `deferred` / `暫緩`，命中則不路由，reason 為 `complexity-deferral-marker`（與 `complexity-unparseable` 分離 —— 前者是正常狀態、後者是資料錯誤，人的處置不同）。
 - **`parking-lot` label 是 parked 的主要訊號**，延期語彙是次要安全網。語彙清單取高精度、容忍低召回。
 - **新增 actionability gate** —— 三訊號 OR 判定（Complexity 不可路由、`parking-lot` label、`### Blocking` 非空），放行需三者皆不成立，**且四個 consumer 必須實際呼叫它**。
@@ -27,13 +27,13 @@
 
 ### New Capabilities
 
-- `actionability-gate`: 定義 `### Complexity` 的封閉值域、parked 狀態的歸屬（label 而非 comment）、三訊號 actionability gate 的判定規則，以及 unparseable 時的保守處置與強制 surface。
+- `actionability-gate`: 定義 `### Complexity` 的 tier 抽取規則（以 tier 開頭、其後理由合法）與延期語彙偵測、parked 狀態的歸屬（label 而非 comment）、三訊號 actionability gate 的判定規則，以及不可路由時的保守處置與強制 surface。
 
 ### Modified Capabilities
 
 (none)
 
-為何無 modified capability：硬閘與 Layer V 這兩份既有 spec 所產出的帶後綴 verdict（形如 tier 後接 " via " 再接來源）在新封閉值域下**仍為合法值**，其 requirement 不需修改；conflict-class 規範對 Complexity 欄位的正交性敘述同樣維持成立。
+為何無 modified capability：硬閘與 Layer V 這兩份既有 spec 所產出的帶後綴 verdict（形如 tier 後接 " via " 再接來源）在新抽取規則下**仍為合法值**（tier 開頭、` via ` 後綴不參與 tier 判定），其 requirement 不需修改；conflict-class 規範對 Complexity 欄位的正交性敘述同樣維持成立。
 
 ## Impact
 
