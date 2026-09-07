@@ -5,6 +5,11 @@ description: |
   介於 Simple（直接 implement）和 Spectra（完整 spec/proposal/tasks artifacts）之間的中間層。
   Use when: 已跑過 `/idd-diagnose #N`、且該 diagnosis 的 Complexity 判為 Plan tier 之後。本 skill 不做診斷 —— issue 上沒有 Diagnosis comment 會直接 abort，此時該跑的是 `/idd-diagnose #N` 而不是本 skill。
   防止的失敗：跳過 diagnose 直接 plan —— 還沒查出 root cause 就開始寫實作計畫，等於為錯的問題做規劃。
+allowed-tools:
+  - Bash(gh:*)
+  - Bash(git:*)
+  - Bash(jq:*)
+  - Bash(python3:*)
 ---
 
 # /idd-plan — Plan-mode 實作
@@ -39,7 +44,7 @@ description: |
 
 ```
 TaskCreate(name="resolve_pr_path", description="Phase 0.5: --pr/--no-pr flag → fork detection → pr_policy config → ask. 若 PR path: 建 feature branch")
-TaskCreate(name="read_issue_and_diagnosis", description="gh issue view + 確認最新 diagnosis comment 的 Strategy + Complexity == Plan/Simple")
+TaskCreate(name="read_issue_and_diagnosis", description="gh issue view + 讀最新 diagnosis comment 的 Strategy;Complexity 值域判定一律走 scripts/lib/actionability.sh 的 idd_parse_complexity,不自行比對字串")
 TaskCreate(name="draft_implementation_plan", description="依 Strategy 起草 Implementation Plan（5 段：files + reasoning + tests + risks + sequence）並 comment 到 issue")
 TaskCreate(name="tangential_sweep", description="Step 2.5: review session log from Step 1 to here, identify mid-plan tangential discoveries (sister bugs / unrelated quality issues / user-mentioned sub-concerns); AskUserQuestion to file as follow-up issues; append filed list to plan body before ExitPlanMode (per IC_R011 #524)")
 TaskCreate(name="enter_plan_mode_for_approval", description="Step 4: EnterPlanMode → 呈現 full Implementation Plan → ExitPlanMode 等 user approve / revise / abort")
@@ -53,17 +58,67 @@ TaskCreate(name="auto_update_body", description="Step 7: idd-update phase → pl
 ### Step 1: 讀取 Issue + Diagnosis + Confirm Complexity
 
 ```bash
-gh issue view $NUMBER --repo $GITHUB_REPO --json title,body,labels,comments
+gh issue view $NUMBER --repo $GITHUB_REPO --json title,body,labels   # comments 由下方 gate 區塊分頁抓（`--json comments` 只回最舊 100 則）
 ```
 
-確認最新的 `## Diagnosis` comment 存在且 `### Complexity` 是 `Plan`（或 `Simple`，user 主動 deliberate）。
+**Complexity 的 tier 抽取與 actionability 判定不在此處自行比對字串**，改呼叫 [`references/actionability-gate.md`](../../references/actionability-gate.md) 契約下的共用實作：
 
-| Complexity | 行為 |
+```bash
+# 缺 helper 一律 fail loud + 指名 path，禁止 fallback 到私有 regex（契約 §Consumer contract）
+. "$CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh" || {
+    echo "FATAL: missing $CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh — 不得改用私有 regex" >&2
+    exit 1
+}
+
+# 0. issue 號進 REST path 前先驗型
+case "$NUMBER" in ''|*[!0-9]*) echo "FATAL: non-numeric issue number: $NUMBER" >&2; exit 1 ;; esac
+
+# 1. 最新 Diagnosis comment —— 只信任 OWNER / MEMBER / COLLABORATOR 寫的（public repo 任何帳號都能留言）；必須分頁。`gh issue view --json comments` 只回最舊的 100 則，
+#    issue 一長，最新的 diagnosis 正好是被丟掉的那一則（#295 同族；`--paginate --jq` 每頁一個 array，`jq -s add` 收攏）。
+LATEST_DIAGNOSIS=$(gh api "repos/$GITHUB_REPO/issues/$NUMBER/comments" --paginate --jq '[.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") | {body}]' \
+    | jq -s 'add // []' \
+    | python3 -c '
+import json, sys, re
+cs = json.load(sys.stdin)
+ds = [c for c in cs if re.search(r"(?m)^## Diagnosis", c["body"])]   # line-anchored，引述/inline 不算（v2.68.0+ #59）
+print(ds[-1]["body"] if ds else "")')
+
+# 2. 另外兩個訊號：labels，與 body 的 ### Blocking（經 helper 讀；idd-update 的 `- (none)` placeholder 算空）
+ISSUE_JSON=$(gh issue view "$NUMBER" --repo "$GITHUB_REPO" --json labels,body)
+HAS_PARKING=$(jq -r 'if any(.labels[]; .name == "parking-lot") then "yes" else "no" end' <<<"$ISSUE_JSON")
+BLOCK_LINE=$(idd_blocking_section "$(jq -r '.body // ""' <<<"$ISSUE_JSON")")
+if [ -n "$BLOCK_LINE" ]; then BLOCKING=yes; else BLOCKING=no; fi
+
+# 3. 條件式捕捉 —— `set -euo pipefail` 下唯一不會被 exit 3/4/5 終止的寫法（verify #318 HIGH）
+if TIER=$(idd_parse_complexity "$LATEST_DIAGNOSIS" 2>/dev/null); then CEXIT=0; else CEXIT=$?; fi
+COMPLEXITY_ERR=$(idd_parse_complexity "$LATEST_DIAGNOSIS" 2>&1 >/dev/null) || true   # 3/5 回 `<reason>: <原值>`、4 回 `missing-complexity`
+
+# 4. 真的呼叫 gate。exit 2 是 API 誤用（本 skill 的 bug），不得與 not-actionable 混同
+if VERDICT=$(idd_actionability_verdict --complexity-exit "$CEXIT" --parking-label "$HAS_PARKING" --blocking-section "$BLOCKING" 2>&1); then VEXIT=0; else VEXIT=$?; fi
+case "$VEXIT" in
+    0) REASONS="" ;;                             # actionable → 依下表以 $TIER 分派（cluster 逐張跑時不得殘留上一張的 reasons）
+    1) REASONS="${VERDICT#not-actionable: }" ;;  # withheld  → 下表 `VEXIT=1` 各列；不給任何 lifecycle 命令
+    *) echo "FATAL: idd_actionability_verdict misuse — $VERDICT" >&2; exit 1 ;;
+esac
+# 5. 把判定印出來 —— skill 是模型執行的，Bash 輸出是模型唯一的觀測通道；只賦值不印，parked 與 actionable 在執行者眼裡一模一樣
+printf 'gate #%s: VEXIT=%s TIER=%s REASONS=%s | %s%s\n' "$NUMBER" "$VEXIT" "${TIER:-}" "${REASONS:-}" "${COMPLEXITY_ERR:-}" "${BLOCK_LINE:-}"
+```
+
+**先看 `$VEXIT`**（gate 判定），`0` 才依 `$TIER` 決定行為。tier 只有四個；`### Complexity` 開頭以外的同行理由、裝飾、` via <來源>` 後綴都不影響 `$TIER`：
+
+| `VEXIT` · `CEXIT` · `TIER` | 行為 |
 |-----------|------|
-| `Plan` | ✅ 預期 — 繼續 |
-| `Simple` | ⚠️ 詢問 user：「Complexity 判定為 Simple，確定要走 Plan tier 多一道 approval gate 嗎？」 |
-| `Spectra` (含 alias `SDD-warranted`) | ⛔ 提示「Spectra 應走 `/spectra-discuss`，Plan tier 不會產出 spec/proposal/tasks artifacts」，AskUserQuestion abort 或 continue（continue 等於 user 自願降級到 Plan tier） |
-| _(missing)_ | ⛔ 提示「找不到 diagnosis，先跑 `/idd-diagnose #NNN`」並 abort |
+| `0` · `0` · `Plan` | ✅ 預期 — 繼續 Step 2 |
+| `0` · `0` · `Plan`（原值 `Plan via Layer V`、`**Plan**(Layer P:…)` 等）| 同上 — helper 只取開頭的 tier,後綴與同行理由皆不影響,行為與 bare `Plan` 完全一致 |
+| `0` · `Simple` | ⚠️ 詢問 user：「Complexity 判定為 Simple，確定要走 Plan tier 多一道 approval gate 嗎？」（行為不變 — user 主動要 deliberate 是允許的）|
+| `0` · `0` · `Spectra` | ⛔ 提示「Spectra 應走 `/spectra-discuss`，Plan tier 不會產出 spec/proposal/tasks artifacts」，AskUserQuestion abort 或 continue（continue 等於 user 自願降級到 Plan tier）— 行為不變 |
+| `0` · `0` · `SDD-warranted`（legacy alias）| 視同 `Spectra` 處理 — 行為不變 |
+| `VEXIT=1` · `$REASONS` 含 `complexity-deferral-marker`（如 `Plan when triggered`）或 `parking-lot-label` | ⛔ **abort（parked）** — 印出 `$REASONS` 與原文（`$COMPLEXITY_ERR` 的 `deferral-marker: <原值>`，或 label 名）。這是**合法的延期狀態，不是資料錯誤**；要動它，先由人移除 label 或重新 diagnose。**禁止**截斷成 tier 前綴、**禁止**降級成 `Plan` 或任何其他 tier、**禁止**因為前綴是 `Plan` 就放進 approval gate、**禁止**當成 `Simple` 問過 user 就繼續 |
+| `VEXIT=1` · `$REASONS` 含 `blocking-nonempty` | ⛔ **abort（blocked）** — 印出 `$BLOCK_LINE`；等 blocker 解除（`idd-update` 清 `### Blocking`）|
+| `VEXIT=1` · `complexity-unparseable`（值不以 tier 開頭）| ⛔ **abort** — 印出 `$COMPLEXITY_ERR` 的 `unparseable-complexity: <原值>`，要求 user 修正 Diagnosis（這才是資料錯誤）|
+| `VEXIT=1` · `complexity-missing`（無 `### Complexity` 區段，含完全沒有 `## Diagnosis` comment）| ⛔ **abort** — 提示「找不到 diagnosis / Complexity 判定，先跑 `/idd-diagnose #NNN`」（即舊表的 _(missing)_ 列，語意不變）|
+
+> **為何不在此處自行認定 tier（#298 → #316）**：本 step 原本用一句散文自行認定「`### Complexity` 是 `Plan`（或 `Simple`）」，值域外的值沒有任何定義行為。像 `Plan when triggered` 這種**帶延期修飾語**的歷史寫法，字面以 `Plan` 開頭、讀起來像 Plan tier，很容易被直接放行進 approval gate —— 但它真正的意思是「這件事被人為延期了」。`### Complexity` 只要求**以四個 tier 之一開頭**（其後理由、裝飾、` via <來源>` 後綴皆合法 —— 本 repo 159 筆 diagnosis 有 71.7% 不是裸 tier），延期狀態屬於 `parking-lot` label；歷史上寫進欄位的延期語彙由 helper 以 `complexity-deferral-marker` 擋下。修法不是把散文判準寫得更嚴 —— 那只會讓第 N 份私有窄化加入既有的多方分歧 —— 而是讓判定只剩一份實作：tier 前綴抽取、延期語彙偵測、`### Blocking` 讀取、三訊號 gate、原值 surface 全在 `scripts/lib/actionability.sh`，本 skill 只讀它的 exit code。**只換 parser 不呼叫 verdict 等於沒修**（PR #318 verify CRITICAL-1）。「不得截斷、不得降級、不得靜默」的規定見 [`references/actionability-gate.md`](../../references/actionability-gate.md)。
 
 ### Step 2: Draft Implementation Plan
 

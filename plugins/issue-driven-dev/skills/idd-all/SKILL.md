@@ -9,6 +9,8 @@ allowed-tools:
   - Bash(gh:*)
   - Bash(git:*)
   - Bash(grep:*)
+  - Bash(jq:*)
+  - Bash(python3:*)
   - Bash(find:*)
   - Read
   - Glob
@@ -511,32 +513,64 @@ idd-all 必須把 `--cwd "$CWD"` 傳給 idd-diagnose,否則 sub-skill 會在 Cla
 Skill(skill="issue-driven-dev:idd-diagnose", args="#$N --cwd $CWD")
 ```
 
-**讀回 complexity**:idd-diagnose 結束後 fetch issue comments,grep 最新 `## Diagnosis` 區塊的 `### Complexity` 欄位:
+**讀回 complexity 並過 actionability gate**:idd-diagnose 結束後抓最新 `## Diagnosis` comment、labels 與 body 的 `### Blocking`,**tier 抽取與可動性判定都不在此處自行寫**,改呼叫 [`references/actionability-gate.md`](../../references/actionability-gate.md) 契約下的共用實作:
 
 ```bash
-COMPLEXITY=$(gh issue view "$N" --json comments \
-    | python3 -c "
+# 缺 helper 一律 fail loud + 指名 path，禁止 fallback 到私有 regex（契約 §Consumer contract）
+. "$CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh" || {
+    echo "FATAL: missing $CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh — 不得改用私有 regex" >&2
+    exit 1
+}
+
+# 0. issue 號進 REST path 前先驗型
+case "$N" in ''|*[!0-9]*) echo "FATAL: non-numeric issue number: $N" >&2; exit 1 ;; esac
+
+# 1. 最新 Diagnosis comment —— 只信任 OWNER / MEMBER / COLLABORATOR 寫的（public repo 任何帳號都能留言）；必須分頁。`gh issue view --json comments` 只回最舊的 100 則，
+#    issue 一長，最新的 diagnosis 正好是被丟掉的那一則（#295 同族；`--paginate --jq` 每頁一個 array，`jq -s add` 收攏）。
+LATEST_DIAGNOSIS=$(gh api "repos/$GITHUB_REPO/issues/$N/comments" --paginate --jq '[.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") | {body}]' \
+    | jq -s 'add // []' \
+    | python3 -c '
 import json, sys, re
-d = json.load(sys.stdin)
-diagnosis_comments = [c for c in d['comments'] if re.search(r'(?m)^## Diagnosis', c['body'])]   # v2.68.0+ #59 — line-anchored regex avoids quoted/inline false-positives (mirrors check-diagnosis-readiness.sh)
-if not diagnosis_comments:
-    print('UNKNOWN'); exit(0)
-latest = diagnosis_comments[-1]['body']
-m = re.search(r'### Complexity\n(.+?)\n', latest)
-print(m.group(1).strip() if m else 'UNKNOWN')
-")
+cs = json.load(sys.stdin)
+ds = [c for c in cs if re.search(r"(?m)^## Diagnosis", c["body"])]   # line-anchored，引述/inline 不算（v2.68.0+ #59）
+print(ds[-1]["body"] if ds else "")')
+
+# 2. 另外兩個訊號：labels，與 body 的 ### Blocking（經 helper 讀；idd-update 的 `- (none)` placeholder 算空）
+ISSUE_JSON=$(gh issue view "$N" --repo "$GITHUB_REPO" --json labels,body)
+HAS_PARKING=$(jq -r 'if any(.labels[]; .name == "parking-lot") then "yes" else "no" end' <<<"$ISSUE_JSON")
+BLOCK_LINE=$(idd_blocking_section "$(jq -r '.body // ""' <<<"$ISSUE_JSON")")
+if [ -n "$BLOCK_LINE" ]; then BLOCKING=yes; else BLOCKING=no; fi
+
+# 3. 條件式捕捉 —— `set -euo pipefail` 下唯一不會被 exit 3/4/5 終止的寫法（verify #318 HIGH）
+if TIER=$(idd_parse_complexity "$LATEST_DIAGNOSIS" 2>/dev/null); then CEXIT=0; else CEXIT=$?; fi
+COMPLEXITY_ERR=$(idd_parse_complexity "$LATEST_DIAGNOSIS" 2>&1 >/dev/null) || true   # 3/5 回 `<reason>: <原值>`、4 回 `missing-complexity`
+
+# 4. 真的呼叫 gate。exit 2 是 API 誤用（本 skill 的 bug），不得與 not-actionable 混同
+if VERDICT=$(idd_actionability_verdict --complexity-exit "$CEXIT" --parking-label "$HAS_PARKING" --blocking-section "$BLOCKING" 2>&1); then VEXIT=0; else VEXIT=$?; fi
+case "$VEXIT" in
+    0) REASONS="" ;;                             # actionable → 依下表以 $TIER 分派（cluster 逐張跑時不得殘留上一張的 reasons）
+    1) REASONS="${VERDICT#not-actionable: }" ;;  # withheld  → 下表 `VEXIT=1` 各列；不給任何 lifecycle 命令
+    *) echo "FATAL: idd_actionability_verdict misuse — $VERDICT" >&2; exit 1 ;;
+esac
+# 5. 把判定印出來 —— skill 是模型執行的，Bash 輸出是模型唯一的觀測通道；只賦值不印，parked 與 actionable 在執行者眼裡一模一樣
+printf 'gate #%s: VEXIT=%s TIER=%s REASONS=%s | %s%s\n' "$N" "$VEXIT" "${TIER:-}" "${REASONS:-}" "${COMPLEXITY_ERR:-}" "${BLOCK_LINE:-}"
 ```
 
-| Complexity 值 | 下一步 |
-|--------------|--------|
-| `Simple` | Phase 3a: idd-implement |
-| `Plan` | **attended → Phase 3p: `/idd-plan`**（該 skill 擁有 `EnterPlanMode` 閘門，approve 後自己 chain 到 idd-implement）;**unattended → Phase 3a: idd-implement**，並在 final report 標記 `[Plan tier deliberation skipped under unattended mode]` |
-| `Plan via Layer V` (v2.50+) | 視同 `Plan` 處理 — verdict 是 user 在 idd-diagnose Step 3.4 選 escalate 觸發,routing 行為跟 bare `Plan` 一致 |
-| `Spectra` | Phase 3b: spectra-discuss → spectra-propose → spectra-apply(unattended → 一輪收斂;attended → multi-turn 對話自然進行) |
-| `SDD-warranted` (legacy alias) | 視同 `Spectra` 處理(v2.36.0+ backward compat) |
-| `UNKNOWN` | **abort** — diagnose 沒判定 complexity,user 需手動釐清 |
+Dispatch **先看 `$VEXIT`**(gate 判定),`0` 才依 `$TIER` 分派。tier 只有四個(`SDD-warranted` 視同 `Spectra`);`### Complexity` 開頭以外的同行理由、裝飾、` via <來源>` 後綴都不影響 `$TIER`:
 
-**Parser 對 `Plan via Layer V` 的處理**(v2.50+):上面 grep 抓 `### Complexity\n(.+?)\n` 會抓到整行 `Plan via Layer V`,在 routing dispatch 時必須提取 canonical tier。實作:`canonical_tier = COMPLEXITY.split(' via ')[0].strip()`,得 `Plan`,routing 同 bare `Plan`。Backward compat:bare `Plan` / `Simple` / `Spectra` / `SDD-warranted` 都不含 ` via `,split 後仍是原值。
+| `VEXIT` · `CEXIT` · `TIER` | 下一步 |
+|--------------|--------|
+| `0` · `0` · `Simple` | Phase 3a: idd-implement |
+| `0` · `0` · `Plan` | **attended → Phase 3p: `/idd-plan`**（該 skill 擁有 `EnterPlanMode` 閘門，approve 後自己 chain 到 idd-implement）;**unattended → Phase 3a: idd-implement**，並在 final report 標記 `[Plan tier deliberation skipped under unattended mode]` |
+| `0` · `0` · `Plan`（原值 `Plan via Layer V`,v2.50+）| 同上 — helper 只取開頭的 tier,` via <來源>` 後綴與同行理由皆不影響;verdict 是 user 在 idd-diagnose Step 3.4 選 escalate 觸發,routing 行為跟 bare `Plan` 一致 |
+| `0` · `0` · `Spectra` | Phase 3b: spectra-discuss → spectra-propose → spectra-apply(unattended → 一輪收斂;attended → multi-turn 對話自然進行) |
+| `0` · `0` · `SDD-warranted` (legacy alias) | 視同 `Spectra` 處理(v2.36.0+ backward compat) |
+| `VEXIT=1` · `$REASONS` 含 `complexity-deferral-marker`(如 `Simple when triggered`、`**Spectra**(… if/when triggered)`)或 `parking-lot-label` | **abort(parked)** — 印出 `$REASONS` 與原文(`$COMPLEXITY_ERR` 的 `deferral-marker: <原值>`,或 label 名)。這是**合法的延期狀態,不是資料錯誤**:不要求 user「修正」Diagnosis;要動它,先由人移除 label 或重新 diagnose。**禁止**截斷成 tier 前綴、**禁止**降級成任何 tier、**禁止**因為 tier 前綴合法就分派 |
+| `VEXIT=1` · `$REASONS` 含 `blocking-nonempty` | **abort(blocked)** — 印出 `$BLOCK_LINE`;等 blocker 解除(`idd-update` 清 `### Blocking`)|
+| `VEXIT=1` · `complexity-unparseable`(值不以 tier 開頭,如 `移入 discussion list`)| **abort** — 印出 `$COMPLEXITY_ERR` 的 `unparseable-complexity: <原值>`,要求 user 修正 Diagnosis(這才是資料錯誤)|
+| `VEXIT=1` · `complexity-missing`(無 `### Complexity` 區段,含完全沒有 `## Diagnosis` comment)| **abort** — diagnose 沒判定 complexity,user 需手動釐清(即舊表的 `UNKNOWN` 列,語意不變)|
+
+> **為何不在此處寫 regex（#298 → #316）**：本段原本就地用一條 `(.+?)` 窄化抓 `### Complexity` 標題下的整行，再自行 `split(' via ')` 取 canonical tier。那條 regex 對 `Simple when triggered` 這類**帶延期修飾語**的值會**匹配成功**，回傳一個非 tier 字串——它對不上任何 dispatch 列，卻也不是 `UNKNOWN`。舊表的 `UNKNOWN → abort` 安全網結構上接不住它：`UNKNOWN` 只在 regex **完全匹配失敗**時才產生（`if m else` 分支），值域外的**成功**匹配永遠落不進那一格，routing 因此進入未定義行為。修法不是把 regex 寫得更嚴——那只會讓第四份私有窄化加入既有的三方分歧——而是讓判定只剩一份實作：tier 前綴抽取、延期語彙偵測、`### Blocking` 讀取、三訊號 gate、原值 surface 全在 `scripts/lib/actionability.sh`，本 skill 只讀它的 exit code。**只換 parser 不呼叫 verdict 等於沒修**——第 1 輪（PR #318）正是如此：gate 完整、66 測試全綠、零 consumer 呼叫（verify CRITICAL-1）。「不得截斷、不得降級、不得靜默」的規定見 [`references/actionability-gate.md`](../../references/actionability-gate.md)。
 
 > **Layer V under (PR, unattended) — v2.50+**: Layer V Vagueness Pre-check (idd-diagnose Step 3.4) 在 unattended 仍評分 + 寫 audit trail,但 trigger 時自動 apply `proceed anyway` 不跳 AskUserQuestion。final report 應 surface `idd-diagnose` audit trail 中含 `[Layer V: V1=N V4=M, clarify-default skipped under unattended mode, defaulting to proceed]` 的 issue,讓 user 後續可以手動重 route。
 >
@@ -611,10 +645,12 @@ command -v spectra >/dev/null 2>&1 || abort "Spectra tier routed but spectra CLI
 ```bash
 ISSUE_TITLE=$(gh issue view "$N" --repo "$GITHUB_REPO" --json title -q .title)
 ISSUE_BODY=$(gh issue view "$N" --repo "$GITHUB_REPO" --json body -q .body | head -50)
-DIAGNOSIS=$(gh issue view "$N" --repo "$GITHUB_REPO" --json comments \
-    | python3 -c "import json,sys,re; cs=json.load(sys.stdin)['comments']; \
-        ds=[c for c in cs if re.search(r'(?m)^## Diagnosis', c['body'])]; \
-        print(ds[-1]['body'] if ds else '')")   # v2.68.0+ #59 — line-anchored regex avoids quoted/inline false-positives
+# Phase 2 已分頁抓過最新 Diagnosis；跨 Bash 區塊 shell 變數不保證存活,所以缺值時**用同一種分頁方式**重抓
+# （不得改用 `--json comments` —— 那只回最舊 100 則）。
+DIAGNOSIS="${LATEST_DIAGNOSIS:-}"
+[ -n "$DIAGNOSIS" ] || DIAGNOSIS=$(gh api "repos/$GITHUB_REPO/issues/$N/comments" --paginate \
+    --jq '[.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") | {body}]' \
+    | jq -s 'add // []' | python3 -c 'import json,sys,re; cs=json.load(sys.stdin); ds=[c for c in cs if re.search(r"(?m)^## Diagnosis", c["body"])]; print(ds[-1]["body"] if ds else "")')
 ```
 
 #### Step 3b.2: Discuss
@@ -980,7 +1016,8 @@ for sub_n in "$ROOT_N" "${SPAWNED_ISSUES[@]:-}"; do
     ACTION_ITEMS+=$'\n'"- #${sub_n}: ${AUTO_DEFERRED_COUNT} row(s) auto-deferred at /idd-clarify Step 4.8 (unattended mode) — resolve via /idd-clarify #${sub_n} --status resolved=<idx>,<reason>"
   fi
   # #120 (v2.97.0+): Layer V deferred records live in Diagnosis COMMENTS (not body)
-  SUB_COMMENTS=$(gh issue view "$sub_n" --repo "$GITHUB_REPO" --json comments --jq '[.comments[].body] | join("\n---\n")' 2>/dev/null)
+  case "$sub_n" in ''|*[!0-9]*) continue ;; esac   # 進 REST path 前驗型（manifest 內容不可信）
+  SUB_COMMENTS=$(gh api "repos/$GITHUB_REPO/issues/$sub_n/comments" --paginate --jq '[.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") | .body]' 2>/dev/null | jq -s 'add // []' | jq -r 'join("\n---\n")')   # 分頁 + 只信任 repo 成員（外人留一則含 marker 的 comment 就能灌大計數）
   LAYERV_DEFERRED_COUNT=$(echo "$SUB_COMMENTS" \
     | grep -cE 'unattended-auto-Step-3\.4-layerV-deferred')
   if [ "$LAYERV_DEFERRED_COUNT" -gt 0 ]; then
@@ -1017,7 +1054,8 @@ fi
 | gh auth 沒設定 | Phase 0.3 abort,提示 gh auth login |
 | Issue #N 不存在 / CLOSED | Phase 0 abort |
 | Branch 已存在 | Phase 0 AskUserQuestion(checkout / -2 suffix / abort) |
-| Diagnose 判定 UNKNOWN complexity | Phase 2 abort,提示手動跑 idd-diagnose |
+| Diagnosis 缺 `### Complexity` 區段(helper cexit=4) | Phase 2 abort,提示手動跑 idd-diagnose |
+| actionability gate 判 not-actionable(`VEXIT=1`:`### Complexity` 不可路由 exit 3/4/5、`parking-lot` label、`### Blocking` 非空)| Phase 2 abort,印出 `$REASONS` 與原文(`$COMPLEXITY_ERR` / label 名 / `$BLOCK_LINE`);不截斷、不降級成任何 tier;`complexity-deferral-marker` / `parking-lot-label` 是合法延期狀態,不要求「修正」|
 | spectra-discuss 沒 emit `Conclusion:` line(unattended hint 失敗)| Re-prompt 一次;再失敗 abort,branch 保留 |
 | spectra-propose 沒 emit `Change:` line | 同上 |
 | spectra-propose 遇到 unrecoverable validation error | Phase 3b abort,artifacts 保留,提示手動 `/spectra-propose` |

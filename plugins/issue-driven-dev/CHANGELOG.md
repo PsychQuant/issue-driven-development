@@ -5,6 +5,177 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2026-09-07
+
+Round 2 of the actionability gate (#298 → #316, PR #318). Round 1 shipped a shared
+`### Complexity` parser with a **closed value domain** — exactly `Simple` / `Plan` /
+`Spectra` / `SDD-warranted`, optionally ` via <source>` — plus a three-signal gate that
+**no consumer called**. `/idd-verify --pr 318` returned FAIL with two CRITICALs: the gate
+was unwired (CRITICAL-1), and the closed domain, checked against the repository's own
+diagnosis corpus, would have wrongly refused **66 of 159** real values (CRITICAL-2) — a
+41.5 % rejection rate, worse than the 29 % misroute rate of the truncating regex it
+replaced. The producer's normal style is `**Plan** (decision-heavy at Finding 1)` and
+`Spectra（opt-out → 直接 propose）`; only 28 % of values are a bare tier.
+
+### Changed — `### Complexity` is read by prefix, deferral by vocabulary
+
+- `idd_parse_complexity` now strips markdown decoration, requires the value to **begin
+  with** a tier as a whole word (longest match first, so `Simpler` is not `Simple` and
+  `SDD-warranted` is not a non-tier), and takes that word as the tier. Same-line rationale,
+  parentheticals, em-dash notes and ` via <source>` suffixes are legal and ignored.
+- The **entire first line** is then scanned for deferral vocabulary — `when triggered`,
+  `parking lot`, `deferred`, `暫緩` (case-insensitive, hyphen/underscore tolerant). A hit
+  is **exit 5** with stderr `deferral-marker: <raw>`; nothing is written to stdout, so the
+  well-formed tier prefix cannot be routed on. `Simple via when triggered` — the suffix as
+  an escape hatch (verify H3) — is caught. Only the first line is scanned: scanning the
+  section would add two false positives on the corpus (#154 "remove *deferred* caveat",
+  #137 "reuse `deferred` enum") and catch nothing.
+- The reason vocabulary grows from four to **five**: `complexity-deferral-marker` is
+  distinct from `complexity-unparseable` because the human response differs — a deferral
+  is a legitimate state with nothing to repair; an unparseable value is a data defect.
+  `idd_actionability_verdict` accepts `--complexity-exit 5`; the display group is *parked*.
+- **Risk posture is stated, not implied**: the `parking-lot` label is the primary parked
+  signal; the vocabulary is a high-precision, low-recall net kept deliberately small. A
+  miss falls back to pre-#298 behaviour (label is the backstop); a false positive is a hard
+  stop on real work. Adding a term requires corpus evidence of zero false positives.
+  The vocabulary is explicitly **not** a closed enumeration — round 1 showed what happens
+  when a heuristic is dressed as a domain.
+
+### Added — the gate is wired, and the third signal has a reader
+
+- `idd-list`, `idd-all`, `idd-implement`, `idd-plan` now **actually call**
+  `idd_actionability_verdict` with all three signals, in one canonical shape documented in
+  `references/actionability-gate.md`: paginated fetch of the latest Diagnosis comment,
+  labels via `jq`, `### Blocking` via the helper, `set -euo pipefail`-safe conditional
+  capture, and a verdict branch in which exit 2 (API misuse) is a FATAL in the consumer —
+  never "not actionable". A drift-guard test greps all four SKILL.md files for that shape.
+- New `idd_blocking_section <issue-body>` — first non-blank line of `### Blocking`, empty
+  when the section is absent or holds idd-update's `- (none)` placeholder (also `none`,
+  `n/a`, `-`, decorated). The fourth private awk that would otherwise have appeared.
+- Shared, fence-aware section extractor: ``` and ~~~ fences are not sections (a template
+  example quoted in prose no longer yields a value — verify H4); a section ends at the
+  next same-or-higher heading; a deeper `####` line is never taken as the value.
+- `idd-list` Step 5 gains a **Parked (not routable now)** group. The #84 blocked-state
+  group — heading `Blocked (waiting on external):`, the all-blocked banner, the
+  `X actionable, Y blocked` footer — is preserved verbatim and pinned by test; `, Z parked`
+  is appended only when Z > 0.
+- **Full-corpus regression**: `fixtures/corpus-complexity.json` freezes the first
+  `### Complexity` line of all 159 diagnosed issues (snapshot 2026-08-15) with reviewed
+  expectations — 149 routable (Plan 69 / Simple 41 / Spectra 39), 9 deferral, 1 missing
+  (#273), 0 unparseable. "Zero migration" is now a falsifiable assertion, not a claim.
+
+### Fixed — verify #318 HIGH findings
+
+- `idd_actionability_verdict` with a value-less flag (`--parking-label` as the last arg)
+  spun forever: `shift 2` on one remaining argument fails without shifting. Now a named
+  exit-2 error; the test bounds every such call with a bash-only timeout so a regression
+  reads as a failure, not a hung suite.
+- Consumer snippets fetched the latest Diagnosis with `gh issue view --json comments`,
+  which returns only the **oldest 100** — on a long issue the latest diagnosis is exactly
+  the one dropped (#295's family). All four now paginate through the REST endpoint.
+- Consumer snippets used bare `TIER=$(idd_parse_complexity …)`, which under `set -e`
+  aborts the whole listing on the first non-routable issue — the contract's own "SHALL
+  NOT abort the enclosing listing" broken by its own example. Conditional capture
+  throughout; an integration test runs the shape under `bash -euo pipefail`.
+- `idd-diagnose` no longer declares a closed value domain for the field; it now says
+  "write the tier clearly, rationale welcome; deferral goes on the label".
+
+### Round 3 — the same failure shape, caught on the third signal
+
+`/idd-verify --pr 318` on round 2 returned FAIL (6 blocking). Every lens measured the new
+`idd_blocking_section` against the repository's real issue bodies and got the same number:
+of 55 `### Blocking` sections, 48 are semantically empty and **31 were judged live
+blockers** — the reader anchored the none-placeholder to the whole line while the producer's
+style is `- (none — 可動)`, `- (none) — closed`, `（無）`. The one open issue carrying the
+section was **#316 itself**, so the change could not have been applied to its own tracking
+issue. The Devil's Advocate additionally ran the gate over the live open backlog: 2
+actionable, 1 blocked (the misjudgement), **11 "parked"** — all eleven merely undiagnosed.
+
+- `idd_blocking_section` now reads the section **per bullet** (any non-placeholder bullet is a
+  blocker, so `- (none)` followed by `- 等 …` is no longer swallowed) and recognises a
+  placeholder by its **leading token** (`none` · `n/a` · `無`, optionally bulleted, decorated,
+  parenthesised, followed by end-of-line / closing paren / separator). Frozen against
+  `fixtures/corpus-blocking.json` (55 rows, hand-reviewed): 0 FP / 0 FN. Two other candidate
+  rules were measured there and rejected — one cleared every real blocker, one left 20 false
+  positives. Whether the field should be regex-read at all is #336.
+- A trailing `\r` is stripped before either reader judges a line: GitHub's web textarea
+  submits CRLF, and awk's default FS counted a bare `\r` as a value (`Simple` → exit 3 with an
+  empty surfaced line; a CRLF blocker → dropped).
+- `idd_actionability_group` gains **`undiagnosed`** and `idd-list` a *Needs diagnosis (N):*
+  group that keeps `→ /idd-diagnose #N`. *Parked* is now exactly the set `--parked` reviews.
+  Spec R6 amended accordingly.
+- `idd-implement` runs the gate at **Step 0.35** — before tree-lock, branch creation and the
+  Implementation Plan comment. Round 2 had it at Step 2.5, so a human-parked issue received a
+  public comment before being told it was parked. The contract now says "gate SHALL precede
+  any egress or branch creation" and a test pins the line order.
+- The producer prohibition is scoped ("on the issue it is diagnosing"); `blocker:infeasible`
+  / `blocker:waiting` — never created in any repo — are retired from `idd-issue` and, via a
+  spec delta, from the live `idd-ic-r011-checkpoint` spec, which had still MUSTed them.
+- Canonical call shape hardened: issue numbers digit-checked before entering a REST path;
+  Diagnosis comments trusted only from OWNER / MEMBER / COLLABORATOR; surfaced raw values
+  stripped of C0 control characters and stated to be data, never instructions; `jq` /
+  `python3` pre-approved in `allowed-tools`. `idd-all`'s Layer V scan and Phase 3b.1
+  fallback paginate; `idd-list` reuses its bulk fetch (paginating only at ≥ 100 comments),
+  skips the gate for non-open issues, and survives a fetch failure per row.
+- Drift guard widened: verdict conditional-capture shape, the `REASONS=` branch and the
+  `FATAL … misuse` branch are pinned in all four consumers — round 2 stayed green with a bare
+  capture or an ignored verdict. `rules/sdd-integration.md` no longer carries a parallel
+  bare-token parse narrative. Row 905 now really emits a `- [~]` Strategy item.
+
+Codex was absent on that verify (usage limit); the Devil's Advocate carried the oracle role.
+
+### Round 4 — repair the regressions, bring the claims down to the evidence
+
+The round-3 verify (again 5-of-6; Codex still rate-limited) returned FAIL. Round 3's six
+repairs are real — every lens re-measured them live — but round 3 had introduced its own
+regressions and over-claimed what the new corpus proved. The Devil's Advocate's ruling,
+followed here: fix correctness and honesty, not coverage; do not add another character class,
+do not demote the signal mid-verify.
+
+- **idd-implement** Step 2.5 consumed the gate's variables set ~280 lines and several Bash
+  calls earlier and forbade re-running — the same cross-block break the same commit had fixed
+  in idd-all. It now checks `${VEXIT:-}` and re-runs the Step 0.35 block with the same helper.
+- **The gate prints its verdict** in all four consumers and the canonical shape. A block that
+  only assigned `$VEXIT` showed a parked issue to the executing model as a clean, silent exit 0.
+- **idd-list** guarded with the listing-wide `--state` flag, so `--state all` marked every
+  issue `skipped` and Suggested-next vanished (a regression against `main`). Now per-issue
+  `.state == "OPEN"`; `skipped` rows keep the phase × PR matrix.
+- **Locale**: the placeholder rule had multibyte separators inside a bracket expression; under
+  `LC_ALL=C` it flipped both directions and the suite itself failed three assertions. Rewritten
+  as alternations; the test runs it under `LC_ALL=C`.
+- **Unclosed fence**: one stray ``` above `### Blocking` swallowed the section (live #290),
+  which would read a real blocker as "none". Unbalanced fences now disable fence tracking for
+  that body; balanced fenced examples are still skipped.
+- **C0 / DEL scrubbing** lives in the helper's outputs (round 3 only described it, and the
+  described set omitted `\r`); `idd_actionability_group ""` is exit 2, not a quiet *parked*.
+- **Claims**: "0 FP / 0 FN on 55 frozen sections" is now "54/55 agree with the hand review,
+  #1 an accepted false positive, 54/55 CLOSED issues the gate never evaluates, extractor
+  covered because each row carries its original body". #336's acceptance bar is the semantic
+  truth (48 / 7), not the fixture. The accepted-miss list is a rule in both directions; the
+  two rejected placeholder regexes are recorded with their FP/FN counts.
+- Hygiene from the report: idd-plan gains `allowed-tools`; idd-all's Layer-V sub-issue scan
+  digit-checks and author-filters; routing tables' rows carry all three keys; `REASONS` reset
+  on the actionable path; spec delta loses its `respectively`, nested backticks and a
+  mis-attributed `@trace`; cluster-path coverage (first issue only — pre-existing) is stated
+  in the contract and tracked in #340.
+
+### Honest residue
+
+- **`### Blocking` is regex-read for now.** The leading-token rule is a stop, not an answer
+  (#336). Accepted misses are documented in the helper: a placeholder token followed by a
+  clause (`- (none) but actually blocked by #86`) reads as empty.
+- **#128 is a designed miss.** Its deferral ("blocked-by #86") lives only in Strategy
+  prose — no marker, no label, empty Blocking. The gate routes it as `Plan`, and the
+  incident fixture pins it as *actionable* rather than pretending a marker exists.
+  Withholding it is a human's label to apply.
+- The fixture's 2026-08-10 snapshot rows were corrected to the **verbatim** Diagnosis
+  comment values (`**Spectra**`, `**Spectra when triggered**(Layer 2: …)`); round 1 had
+  recorded the issue-body mirror forms, and had itself been misled by its own truncating
+  regex into calling #136's comment "bare `Spectra`". The body-mirror form is kept as a
+  separately-labelled row.
+- `plan-routing-consistency` fails on a developer checkout with gitignored
+  `.spectra/snapshots/` present and passes on a clean worktree — #335, not touched here.
+
 ## [3.0.0] - 2026-09-01
 
 23 commits since 2.112.0, across four `/idd-verify` ensembles. **The major bump is for one
