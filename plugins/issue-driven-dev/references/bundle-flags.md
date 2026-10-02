@@ -132,7 +132,7 @@ PATCH parent body 加 child entry 時,演算法保證 idempotency:
 呼叫 `addBlockedBy` GraphQL mutation,把 child issue 跟 #M 綁成原生 Blocked-by 關係。名稱與欄位以 GitHub schema 為準(`AddBlockedByInput` = `issueId` + `blockingIssueId`);v2.52.0 起此處寫的名稱不在現行 schema 裡,據此判斷原生依賴應從未建立過(#353)。
 
 ```bash
-gh api graphql -f query='
+GQL_OUT=$(gh api graphql -f query='
 mutation($issueId:ID!, $blockingId:ID!) {
   addBlockedBy(input: {
     issueId: $issueId,
@@ -140,17 +140,19 @@ mutation($issueId:ID!, $blockingId:ID!) {
   }) {
     issue { number }
   }
-}' -f issueId="$CHILD_NODE_ID" -f blockingId="$M_NODE_ID" 2>&1
+}' -f issueId="$CHILD_NODE_ID" -f blockingId="$M_NODE_ID" 2>&1)
 ```
 
-ID 用 `-f`(字串)不用 `-F`:`-F` 對 `@` 開頭的值會去讀本機檔案,而失敗時這段輸出會原樣印出。所有訊息(成功之外的兩種情形)都寫到 stderr:`--bundle-mode` 用 `CHILD_NUM=$(…)` 擷取 stdout,訊息若走 stdout 會被吃掉,還會被當成下一個 child 的 `--blocked-by` 值。
+這裡只示範 request 的形狀:輸出一律先擷取進 `GQL_OUT`,不直接印到 stdout。接下來的三個分支(成功不印、依賴已存在、其他失敗)以 `skills/idd-issue/SKILL.md` Step 3.B 的 Layer 1 為準;可執行的版本只有那一份,由 `scripts/tests/blocked-by-mutation` suite 實際執行。
+
+ID 用 `-f`(字串)不用 `-F`:`-F` 對 `@` 開頭的值會去讀本機檔案,而失敗時這段輸出會原樣印出。這一層的訊息都寫到 stderr:`--bundle-mode` 用 `CHILD_NUM=$(…)` 擷取 stdout,訊息若走 stdout 會被吃掉,還會被當成下一個 child 的 `--blocked-by` 值。同一個 handler 的 Layer 2 與 `--parent` 仍會寫 stdout,見 #359。
 
 成功效果:
 - GitHub UI 顯示 「Blocked by #M」 紅色 warning
 - Issue side panel 顯示原生 dependency
 - task list 自動連動(parent 看 #M close 才解 child block)
 
-已知情境:依賴已存在,例如同一個目標重複出現(`--blocked-by 50,50`),或關係已由他處建立。GitHub 回 rc=1 與 `Validation failed: Target issue has already been taken`,狀態不變(2026-10-02 實測)。**視為成功**、不印警告。只比對這一整句;其他 `has already been taken` 是別的驗證失敗,照常警告。
+已知情境:依賴已存在,例如同一個目標重複出現(`--blocked-by 50,50`),或關係已由他處建立。GitHub 回 rc=1 與 `Validation failed: Target issue has already been taken`,狀態不變(2026-10-02 實測)。**視為成功**、不印警告,但把 GitHub 的那一句印到 stderr,作為判讀依據。只比對這一整句;其他 `has already been taken` 是別的驗證失敗,照常警告。
 
 **失敗處理**:捕捉 GraphQL 的輸出,失敗時**原樣印出 GitHub 回傳的錯誤**,名指 `M`,**不 abort** child issue 建立。文件不預設失敗原因——舊版在這裡列了四個猜測原因,而當時真正的原因(名稱不存在)不在其中,猜測只會把人引去查環境(#353)。
 
@@ -205,7 +207,7 @@ Bundle 或 multi-target 操作的失敗情境分類處理:
 | 操作 | Idempotent? | 機制 |
 |------|------------|------|
 | `--parent <N>` 重複呼叫(同一 child) | ✅ | Edit algorithm Step 2 掃 `#N` reference;already-exists → no-op skip |
-| `--blocked-by <M>` 重複呼叫(同一 child) | ✅(body)/ ⚠(GraphQL) | Body blockquote 重複 prepend 會產生重複行 → 演算法掃 `> Blocked by #M` 字串先 dedup;GraphQL mutation 重複呼叫由 GitHub 端 dedup(no-op for already-blocking pair) |
+| `--blocked-by` 對同一 child 列出重複目標(如 `50,50`) | ❌(body)/ ✅(GraphQL) | Layer 2 目前不去重,會寫兩行 `> Blocked by #50`,Layer 3 的 entry 也會重複(#359)。GraphQL 第二次呼叫回 rc=1 與 `Target issue has already been taken`、狀態不變,skill 視為已連結。重跑 `idd-issue` 會建新的 child,不會碰到同一個 child |
 | `--bundle-mode` 重複呼叫(同樣 input) | ❌ | bundle 必然建新 epic + 新 children;使用者責任避免重複呼叫 |
 
 **為什麼 `--bundle-mode` 不 idempotent**:bundle 把 N 個 child 視為一次性 transaction,沒有 stable identifier 可掃。idempotency 只在「個別 child 的 parent / blocked-by 標註」層級保證。

@@ -37,10 +37,12 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN="$(cd "$HERE/../../.." && pwd)"
 REPO="$(cd "$PLUGIN/../.." && pwd)"
 SKILL="$PLUGIN/skills/idd-issue/SKILL.md"
+REFDOC="$PLUGIN/references/bundle-flags.md"
 . "$(cd "$HERE/../../lib" && pwd)/assert-helpers.sh"
 
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/blocked-by-mutation-XXXXXX") || exit 1
-trap 'rm -rf "$TMP"' EXIT HUP INT TERM
+trap 'rm -rf "$TMP"' EXIT
+trap 'exit 130' HUP INT TERM   # the EXIT trap still cleans up
 
 BANNED='addBlockedByDependency|blockedByIssueId'
 OLD_CAUSES='not enabled|API error|permission|rate limit'   # the causes the old warning guessed
@@ -62,7 +64,11 @@ printf '%s\n' "$*" >> "$GH_LOG"
 case "$1 $2" in
   "issue view") echo "NODE_$3"; exit 0 ;;
   "api graphql")
-    case "$GH_MODE" in
+    mode="$GH_MODE"                  # GH_MODE_<node> overrides it for one target
+    for a in "$@"; do
+      case "$a" in b=NODE_*) v="GH_MODE_${a#b=}"; mode="${!v:-$GH_MODE}" ;; esac
+    done
+    case "$mode" in
       ok)    echo '{"data":{"addBlockedBy":{"issue":{"number":9}}}}'; exit 0 ;;
       taken) echo '{"data":{"addBlockedBy":null},"errors":[{"type":"VALIDATION","message":"An error occurred while adding the blocking issue to the issue. Validation failed: Target issue has already been taken"}]}'
              echo "gh: An error occurred while adding the blocking issue to the issue. Validation failed: Target issue has already been taken" >&2
@@ -80,12 +86,12 @@ exit 0
 STUB
 chmod +x "$TMP/bin/gh"
 
-run_layer1() {   # $1 = snippet file, $2 = mode → $TMP/out.$2 (stdout), $TMP/err.$2, $TMP/rc.$2
+run_layer1() {   # $1 = snippet file, $2 = mode, [$3 = target list] → $TMP/out.$2, $TMP/err.$2, $TMP/rc.$2
   : > "$TMP/gh.log"
   (
     cd "$TMP/run" || exit 99    # anything the snippet writes by accident lands here, not in the repo
     export PATH="$TMP/bin:$PATH" GH_MODE="$2" GH_LOG="$TMP/gh.log"
-    CHILD_NUM=9 BLOCKED_BY_LIST=7 GITHUB_REPO=owner/repo
+    CHILD_NUM=9 BLOCKED_BY_LIST="${3:-7}" GITHUB_REPO=owner/repo
     . "$1"
   ) > "$TMP/out.$2" 2> "$TMP/err.$2"
   echo $? > "$TMP/rc.$2"
@@ -112,11 +118,12 @@ check_error_surfaced() {  # a real failure: GitHub's own text, the target named,
   ! grep -qiE -- "$OLD_CAUSES" "$TMP/err.other"
 }
 
-check_existing_is_success() {  # the exact "already linked" message is not a failure
-  run_layer1 "$1" taken
+check_existing_is_success() {  # the exact "already linked" message is not a failure,
+  run_layer1 "$1" taken          # and GitHub's sentence is kept as the evidence for saying so
   [ "$(cat "$TMP/rc.taken")" = 0 ] &&
   ! grep -q '⚠' "$TMP/err.taken" &&
-  grep -q '#7' "$TMP/err.taken"
+  grep -q '#7' "$TMP/err.taken" &&
+  grep -q 'Target issue has already been taken' "$TMP/err.taken"
 }
 
 check_other_uniqueness_warns() {  # any OTHER "has already been taken" is a real failure
@@ -130,6 +137,20 @@ check_success_is_quiet() {  # success prints nothing at all
   run_layer1 "$1" ok
   [ "$(cat "$TMP/rc.ok")" = 0 ] &&
   [ ! -s "$TMP/out.ok" ] && [ ! -s "$TMP/err.ok" ]
+}
+
+check_continues_after_failure() {  # spec: one target failing SHALL NOT stop the others
+  ( export GH_MODE_NODE_7=other GH_MODE_NODE_8=ok; run_layer1 "$1" multi 7,8 )   # #7 fails, #8 succeeds
+  [ "$(cat "$TMP/rc.multi")" = 0 ] &&
+  grep '⚠' "$TMP/err.multi" | grep -q '#7' &&
+  grep -qF -- '-f b=NODE_8' "$TMP/gh.log"
+}
+
+check_reference_captures() {   # $1 = bundle-flags.md: its Layer 1 example must capture the output,
+  local block                   # never end in a bare 2>&1 that sends GitHub's reply to stdout
+  block=$(awk '/^### Layer 1/{f=1; next} f && /^### /{f=0} f' "$1")
+  printf '%s\n' "$block" | grep -qF 'GQL_OUT=$(gh api graphql' &&
+  ! printf '%s\n' "$block" | grep -qE '2>&1[[:space:]]*$'
 }
 
 check_stdout_silent() {  # messages go to stderr in every mode: bundle-mode captures stdout
@@ -197,6 +218,8 @@ require "Layer 1 treats the exact 'Target issue has already been taken' as alrea
 require "Layer 1 still warns on a different 'has already been taken' failure" check_other_uniqueness_warns "$LAYER1"
 require "Layer 1 prints nothing on success" check_success_is_quiet "$LAYER1"
 require "Layer 1 never writes to stdout" check_stdout_silent "$LAYER1"
+require "Layer 1 still tries #8 after #7 fails" check_continues_after_failure "$LAYER1"
+require "bundle-flags.md's Layer 1 example captures the output instead of printing it" check_reference_captures "$REFDOC"
 
 require "the file list sees idd-issue/SKILL.md (an empty list would pass the scan vacuously)" \
   sh -c 'tr "\0" "\n" | grep -qx "plugins/issue-driven-dev/skills/idd-issue/SKILL.md"' < <(list_files)
@@ -227,7 +250,7 @@ require "control: GitHub's error can be swallowed again" \
 refute "control: the error check catches a swallowed error" check_error_surfaced "$TMP/m2.sh"
 
 require "control: a guessed cause can be put back into the warning" \
-  mutate 's/失敗；body blockquote/失敗 (permission)；body blockquote/' "$TMP/m2b.sh"
+  mutate 's/失敗。GitHub 回傳/失敗 (permission)。GitHub 回傳/' "$TMP/m2b.sh"
 refute "control: the error check catches a guessed cause" check_error_surfaced "$TMP/m2b.sh"
 
 require "control: the already-exists branch can be disabled" \
@@ -245,6 +268,23 @@ refute "control: the quiet-success check catches output on success" check_succes
 require "control: messages can be sent back to stdout" \
   mutate 's/ >&2$//; s/^([[:space:]]*\}) >&2$/\1/' "$TMP/m5.sh"
 refute "control: the stdout check catches a message on stdout" check_stdout_silent "$TMP/m5.sh"
+
+require "control: the loop can be cut short after a failure" \
+  mutate 's/\} >&2$/} >\&2; break/' "$TMP/m6.sh"
+refute "control: the continuation check catches a break after a failure" check_continues_after_failure "$TMP/m6.sh"
+
+require "control: the already-exists evidence can be dropped" \
+  mutate "s/grep -F 'Target issue has already been taken' \\| head -n 1/grep -F zzz-none | head -n 1/" "$TMP/m7.sh"
+refute "control: the already-exists check catches missing evidence" check_existing_is_success "$TMP/m7.sh"
+
+cat > "$TMP/ref-old.md" <<'OLD'
+### Layer 1 — old shape
+```bash
+gh api graphql -f query='mutation{addBlockedBy(input:{issueId:$i,blockingIssueId:$b}){issue{number}}}' -f i="$C" -f b="$M" 2>&1
+```
+### Layer 2
+OLD
+refute "control: the reference check catches an uncaptured example ending in 2>&1" check_reference_captures "$TMP/ref-old.md"
 
 mkdir -p "$TMP/tree/plugins/issue-driven-dev" "$TMP/tree/docs" "$TMP/tree/openspec/changes/archive/x"
 echo 'old: addBlockedByDependency'             > "$TMP/tree/plugins/issue-driven-dev/CHANGELOG.md"
@@ -267,6 +307,9 @@ if [ "${IDD_LIVE_GH:-}" = 1 ]; then
   MUTS=$(gh api graphql -f query='{__type(name:"Mutation"){fields{name}}}' --jq '.data.__type.fields[].name' 2>&1)
   INPUT=$(gh api graphql -f query='{__type(name:"AddBlockedByInput"){inputFields{name}}}' --jq '.data.__type.inputFields[].name' 2>&1)
   PAYLOAD=$(gh api graphql -f query='{__type(name:"AddBlockedByPayload"){fields{name}}}' --jq '.data.__type.fields[].name' 2>&1)
+  # `fields` / `inputFields` leave out deprecated entries unless includeDeprecated:true is
+  # passed (measured 2026-10-02: Mutation has 261 fields by default, 277 with deprecated ones),
+  # so a deprecation fails these checks as well as a removal.
   # Whole-line matches: a substring test would let `blockingIssueId` satisfy
   # "has issueId", and any longer mutation name satisfy "has addBlockedBy".
   assert_grep_re "live: the schema has an addBlockedBy mutation" '^addBlockedBy$' "$MUTS"
