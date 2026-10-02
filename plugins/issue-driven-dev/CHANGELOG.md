@@ -17,13 +17,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The failure was invisible.** The call sent stderr to `/dev/null` and the warning hard-coded three causes
   (repo not enabled / API error / permission), none of them the real one. Layer 1 now captures GitHub's output
   and prints it verbatim on failure, and no longer guesses a cause.
-- **Re-runs are not failures.** An existing dependency comes back as rc=1 with `Target issue has already been
-  taken` and no state change (measured 2026-10-02); it is now reported as already linked, without a warning.
-- **New suite `blocked-by-mutation`** runs the Layer 1 snippet from `SKILL.md` against a stub `gh` in three
-  modes (success / already exists / other error), checks that no live file names the old mutation outside a
-  closed list of historical records, and proves each check fails on a deliberately broken snippet.
-  `IDD_LIVE_GH=1` additionally introspects GitHub's real schema; without it the suite prints SKIP rather than
-  claiming the schema was checked.
+- **An existing dependency is not a failure.** When the dependency is already there — the same target listed
+  twice (`--blocked-by 50,50`), or the relationship created elsewhere — GitHub returns rc=1 with `Target issue
+  has already been taken` and changes nothing (measured 2026-10-02). Layer 1 now reports that as already
+  linked, without a warning. Only that exact sentence counts; any other "has already been taken" still warns.
+- **Messages go to stderr.** The documented bundle orchestration runs the `--blocked-by` handler inside
+  `CHILD_NUM=$(…)`, so a message Layer 1 printed on stdout would end up in `CHILD_NUM` and be passed to the next
+  child as its `--blocked-by` value.
+- **Node IDs are bound with `-f`, not `-F`.** `-F` reads a local file for a value starting with `@`, and the
+  failure branch now prints GitHub's output verbatim.
+- **New suite `blocked-by-mutation`** runs the Layer 1 snippet from `SKILL.md` against a stub `gh` in four
+  modes (success / already exists / another uniqueness failure / other error). It checks the request GitHub
+  receives (mutation, field names, `-f` bindings, child → `issueId`), that every message stays off stdout, and
+  that no live file names the old mutation outside a closed list of historical records. Each check has a
+  positive control that breaks the snippet again and requires the check to fail.
+- **Weekly live schema check.** `.github/workflows/live-schema.yml` runs the suite with `IDD_LIVE_GH=1` every
+  Monday 01:00 UTC (09:00 Taipei) and on demand, introspecting GitHub's real `addBlockedBy` mutation, its input
+  fields and its payload. A rename on GitHub's side does not come with a PR, so the PR suite cannot catch it;
+  without `IDD_LIVE_GH=1` the suite prints SKIP rather than claiming the schema was checked.
 
 ## [3.0.0] - 2026-09-01
 

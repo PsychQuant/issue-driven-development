@@ -1,0 +1,25 @@
+# live-schema.yml — check GitHub's real GraphQL schema for the names idd-issue uses (#353).
+#
+# `idd-issue --blocked-by` calls the `addBlockedBy` mutation. If GitHub renames it, nothing
+# in this repo changes, so the PR suite (tests.yml, offline by design) cannot notice. That
+# is how the wrong name in v2.52.0 survived until 3.0.1: the call failed on every run and
+# the failure was hidden. This job runs the blocked-by-mutation suite with IDD_LIVE_GH=1,
+# which introspects the live schema, on a schedule and on demand.
+name: live-schema
+on:
+  schedule:
+    - cron: '0 1 * * 1'   # Mondays 01:00 UTC = Mondays 09:00 Taipei (UTC+8)
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  blocked-by-mutation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Introspect GitHub's schema for addBlockedBy
+        env:
+          IDD_LIVE_GH: '1'
+          GH_TOKEN: ${{ github.token }}
+        run: bash plugins/issue-driven-dev/scripts/tests/blocked-by-mutation/test.sh

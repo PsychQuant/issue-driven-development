@@ -765,23 +765,27 @@ NEW_CHILD_BODY="${BLOCKED_BLOCKQUOTE}\n${ORIGINAL_BODY}"
 bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit "$CHILD_NUM" --repo "$GITHUB_REPO" --body "$NEW_CHILD_BODY" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}
 
 # Layer 1:GraphQL native dependency(嘗試,失敗不 abort)
-# Mutation 是 addBlockedBy(input:{issueId, blockingIssueId})——GitHub schema 裡唯一的名稱（#353）。
-# GitHub 的錯誤原樣印出，不猜原因：v2.52.0 起這裡用了 schema 沒有的名稱，又把錯誤丟進
-# /dev/null、印出三個寫死的猜測原因，所以原生依賴從未建立過，也沒有人看得出來。
+# Mutation 是 addBlockedBy(input:{issueId, blockingIssueId})——GitHub 現行 schema 裡的名稱（#353）。
+# GitHub 的錯誤原樣印出，不猜原因。v2.52.0 起這裡用的名稱不在現行 schema 裡，錯誤又被丟進
+# /dev/null、改印三個寫死的猜測原因；據此判斷，原生依賴應從未建立過。
+# 訊息一律走 stderr：bundle-mode 用 CHILD_NUM=$(…) 擷取 stdout，訊息若走 stdout 會被吃掉，
+# 還會被當成下一個 child 的 --blocked-by 值。
 CHILD_NODE_ID=$(gh issue view "$CHILD_NUM" --repo "$GITHUB_REPO" --json id --jq '.id')
 for M in $(echo "$BLOCKED_BY_LIST" | tr ',' '\n'); do
   M_NODE_ID=$(gh issue view "$M" --repo "$GITHUB_REPO" --json id --jq '.id')
+  # ID 用 -f（字串）不用 -F：-F 對 @ 開頭的值會去讀本機檔案，而失敗時這段輸出會原樣印出。
   if GQL_OUT=$(gh api graphql -f query='
     mutation($i:ID!,$b:ID!){addBlockedBy(input:{issueId:$i,blockingIssueId:$b}){issue{number}}}
-  ' -F i="$CHILD_NODE_ID" -F b="$M_NODE_ID" 2>&1); then
+  ' -f i="$CHILD_NODE_ID" -f b="$M_NODE_ID" 2>&1); then
     :   # 原生依賴已建立
-  elif printf '%s' "$GQL_OUT" | grep -q 'already been taken'; then
-    # 重跑時的正常情形：依賴已存在，GitHub 回 rc=1 與 "Target issue has already been taken"，
-    # 狀態不變（2026-10-02 實測）。這不是失敗，不印警告。
-    echo "→ #${CHILD_NUM} 已被 #${M} 阻擋（原生依賴先前已建立）"
+  elif printf '%s' "$GQL_OUT" | grep -qF 'Target issue has already been taken'; then
+    # 依賴已存在：同一個目標重複出現（例如 --blocked-by 50,50），或已由他處建立。
+    # GitHub 回 rc=1 與這句訊息，狀態不變（2026-10-02 實測），所以不算失敗、不印警告。
+    # 只比對這一整句：其他 "has already been taken" 是別的驗證失敗，照常警告。
+    echo "→ #${CHILD_NUM} 已被 #${M} 阻擋（原生依賴已存在）" >&2
   else
-    echo "⚠ GraphQL addBlockedBy #${CHILD_NUM} ← #${M} 失敗；body blockquote 已就位。GitHub 回傳："
-    printf '%s\n' "$GQL_OUT" | sed 's/^/    /'
+    { echo "⚠ GraphQL addBlockedBy #${CHILD_NUM} ← #${M} 失敗；body blockquote 已就位。GitHub 回傳："
+      printf '%s\n' "$GQL_OUT" | sed 's/^/    /'; } >&2
   fi
 done
 

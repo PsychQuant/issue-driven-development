@@ -54,7 +54,7 @@ The PATCH operation SHALL preserve existing parent body content: it SHALL NOT re
 The `idd-issue` skill SHALL accept a `--blocked-by <M>[,<M2>...]` flag where each value is a positive integer issue number. After creating the child issue, the skill SHALL apply the dependency annotation through three layers:
 
 1. The skill SHALL prepend a blockquote `> Blocked by #M` (one line per `M`) to the child issue body, regardless of subsequent layer outcomes.
-2. The skill SHALL attempt the GitHub GraphQL `addBlockedBy` mutation (input fields `issueId` and `blockingIssueId`) for each `M`. Failure SHALL NOT abort the operation;the skill SHALL emit a warning naming the failed `M` that includes the error text GitHub returned, SHALL NOT attribute the failure to a cause GitHub did not report, and continue. A response stating that the dependency already exists SHALL be treated as success.
+2. The skill SHALL attempt the GitHub GraphQL `addBlockedBy` mutation (input fields `issueId` and `blockingIssueId`) for each `M`. Failure SHALL NOT abort the operation;the skill SHALL emit a warning naming the failed `M` that includes the error text GitHub returned, SHALL NOT attribute the failure to a cause GitHub did not report, and continue. A failure whose GitHub error text contains `Target issue has already been taken` means the dependency already exists and SHALL be treated as success; any other error, including other "has already been taken" validation failures, SHALL produce the warning. The warning and any other message from this layer SHALL be written to stderr, because bundle mode captures the child number from stdout.
 3. When `--parent <N>` is also provided, the skill SHALL annotate the corresponding parent task list entry as `- [ ] #child (blocked by #M)` to surface dependency at parent view level.
 
 #### Scenario: Native dependency mutation succeeds
@@ -73,7 +73,7 @@ The `idd-issue` skill SHALL accept a `--blocked-by <M>[,<M2>...]` flag where eac
 
 #### Scenario: Dependency already exists
 
-- **WHEN** `idd-issue --blocked-by 50` is re-run and GitHub responds that the target issue "has already been taken"
+- **WHEN** the dependency on `50` already exists — for example `idd-issue --blocked-by 50,50`, or the relationship was created elsewhere — and GitHub's error text contains `Target issue has already been taken`
 - **THEN** the skill SHALL NOT emit a warning for target `50`
 - **AND** the child issue creation SHALL NOT be aborted
 
@@ -89,8 +89,8 @@ The `idd-issue` skill SHALL accept a `--blocked-by <M>[,<M2>...]` flag where eac
 | GraphQL result | Body blockquote | Parent annotation (when --parent used) | Final state |
 | ----- | ----- | ----- | ----- |
 | Success | Present | Present | All three layers active |
-| API failure | Present | Present | UI lacks native warning, but markdown still readable |
-| Repo not enabled | Present | Present | Same as API failure, plus one-time warning |
+| Dependency already exists (`Target issue has already been taken`) | Present | Present | Same as Success; no warning |
+| Any other failure | Present | Present | UI lacks native warning, but markdown still readable; warning on stderr carries GitHub's error text |
 | Both --blocked-by and --parent absent | N/A | N/A | Child created normally without dependency annotation |
 
 ### Requirement: idd-issue SHALL accept --bundle-mode flag for batch bundle creation
