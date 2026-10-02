@@ -54,21 +54,27 @@ The PATCH operation SHALL preserve existing parent body content: it SHALL NOT re
 The `idd-issue` skill SHALL accept a `--blocked-by <M>[,<M2>...]` flag where each value is a positive integer issue number. After creating the child issue, the skill SHALL apply the dependency annotation through three layers:
 
 1. The skill SHALL prepend a blockquote `> Blocked by #M` (one line per `M`) to the child issue body, regardless of subsequent layer outcomes.
-2. The skill SHALL attempt the GitHub GraphQL `addBlockedByDependency` mutation for each `M`. Failure SHALL NOT abort the operation;the skill SHALL emit a warning naming the failed `M` and continue.
+2. The skill SHALL attempt the GitHub GraphQL `addBlockedBy` mutation (input fields `issueId` and `blockingIssueId`) for each `M`. Failure SHALL NOT abort the operation;the skill SHALL emit a warning naming the failed `M` that includes the error text GitHub returned, SHALL NOT attribute the failure to a cause GitHub did not report, and continue. A response stating that the dependency already exists SHALL be treated as success.
 3. When `--parent <N>` is also provided, the skill SHALL annotate the corresponding parent task list entry as `- [ ] #child (blocked by #M)` to surface dependency at parent view level.
 
 #### Scenario: Native dependency mutation succeeds
 
-- **WHEN** `idd-issue --blocked-by 50` is invoked and the GraphQL `addBlockedByDependency` mutation returns success
+- **WHEN** `idd-issue --blocked-by 50` is invoked and the GraphQL `addBlockedBy` mutation returns success
 - **THEN** child body contains `> Blocked by #50` blockquote
 - **AND** GitHub UI displays the native "Blocked by" dependency on the child issue
 - **AND** no warning is emitted
 
 #### Scenario: Native dependency mutation fails, body annotation persists
 
-- **WHEN** `idd-issue --blocked-by 50` is invoked and the GraphQL mutation fails (repo not enabled / permission / API error)
+- **WHEN** `idd-issue --blocked-by 50` is invoked and the GraphQL mutation fails for a reason other than an existing dependency
 - **THEN** child body still contains `> Blocked by #50` blockquote
-- **AND** the skill SHALL emit a warning naming the mutation failure and the blocked-by target
+- **AND** the skill SHALL emit a warning naming the blocked-by target and including the error text GitHub returned
+- **AND** the child issue creation SHALL NOT be aborted
+
+#### Scenario: Dependency already exists
+
+- **WHEN** `idd-issue --blocked-by 50` is re-run and GitHub responds that the target issue "has already been taken"
+- **THEN** the skill SHALL NOT emit a warning for target `50`
 - **AND** the child issue creation SHALL NOT be aborted
 
 #### Scenario: Multiple blocked-by targets
