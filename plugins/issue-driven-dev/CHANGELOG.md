@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.1] - 2026-10-02
+
+### Fixed — `--blocked-by` never created a native dependency (#353)
+
+- **Layer 1 called a mutation GitHub does not have.** Since 2.52.0 (#21) the native-dependency layer sent
+  `addBlockedByDependency(input:{issueId, blockedByIssueId})`. GitHub's schema has `addBlockedBy(input:{issueId,
+  blockingIssueId})` and nothing by the other name, so every `--blocked-by` and every `--bundle-mode ordered` run
+  fell back to the body blockquote alone. The normative spec named the same mutation, which is why reviewing
+  against the spec agreed with the bug.
+- **The failure was invisible.** The call sent stderr to `/dev/null` and the warning hard-coded three causes
+  (repo not enabled / API error / permission), none of them the real one. Layer 1 now captures GitHub's output
+  and prints it verbatim on failure, and no longer guesses a cause.
+- **Re-runs are not failures.** An existing dependency comes back as rc=1 with `Target issue has already been
+  taken` and no state change (measured 2026-10-02); it is now reported as already linked, without a warning.
+- **New suite `blocked-by-mutation`** runs the Layer 1 snippet from `SKILL.md` against a stub `gh` in three
+  modes (success / already exists / other error), checks that no live file names the old mutation outside a
+  closed list of historical records, and proves each check fails on a deliberately broken snippet.
+  `IDD_LIVE_GH=1` additionally introspects GitHub's real schema; without it the suite prints SKIP rather than
+  claiming the schema was checked.
+
 ## [3.0.0] - 2026-09-01
 
 23 commits since 2.112.0, across four `/idd-verify` ensembles. **The major bump is for one
