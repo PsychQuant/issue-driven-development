@@ -138,6 +138,8 @@ do not demote the signal mid-verify.
 - **idd-implement** Step 2.5 consumed the gate's variables set ~280 lines and several Bash
   calls earlier and forbade re-running — the same cross-block break the same commit had fixed
   in idd-all. It now checks `${VEXIT:-}` and re-runs the Step 0.35 block with the same helper.
+  *Errata: the "re-run" was an `echo` — corrected in Round 5, and its copies pinned byte for
+  byte in Round 6.*
 - **The gate prints its verdict** in all four consumers and the canonical shape. A block that
   only assigned `$VEXIT` showed a parked issue to the executing model as a clean, silent exit 0.
 - **idd-list** guarded with the listing-wide `--state` flag, so `--state all` marked every
@@ -159,7 +161,8 @@ do not demote the signal mid-verify.
   truth (48 / 7), not the fixture. The accepted-miss list is a rule in both directions; the
   two rejected placeholder regexes are recorded with their FP/FN counts.
 - Hygiene from the report: idd-plan gains `allowed-tools`; idd-all's Layer-V sub-issue scan
-  digit-checks and author-filters; routing tables' rows carry all three keys; `REASONS` reset
+  digit-checks and author-filters; routing tables' rows carry all three keys (*errata: idd-plan's
+  Simple row did not — corrected in Round 5*); `REASONS` reset
   on the actionable path; spec delta loses its `respectively`, nested backticks and a
   mis-attributed `@trace`; cluster-path coverage (first issue only — pre-existing) is stated
   in the contract and tracked in #340.
@@ -183,10 +186,13 @@ Devil's Advocate's ruling, replicated by the coordinator: revert, do not refine.
   remaining departures from CommonMark — fence length, indentation, a closer with trailing
   text — are listed with their direction and pinned as documented divergences; none occurs in
   407 live documents.
+  *Errata: "three" was not the whole list — four more shapes, and the list is now stated as
+  known, not exhaustive; see Round 6.*
 - **`.` / `。` removed from the placeholder terminators.** `- None. Waiting on X` and
   `- 無。等 #99 merge` read as "no blocker"; no corpus row needed the full stop, and the spec
   never authorised it. The bare `- None.` now reads as a blocker (fail-closed, pinned).
-- **Change gate** (closed list): a change to the placeholder or section rules (a) flips at
+- **Change gate** (closed list; *errata: withdrawn in Round 6 — form (c) would have admitted
+  two fail-opens*): a change to the placeholder or section rules (a) flips at
   least one measured corpus row, named in the commit, (b) is a revert, or (c) removes an
   execution-environment dependence a pinned test demonstrates, leaving every corpus row
   unchanged. Recorded in the helper, the reference and the spec. The `LC_ALL=C` pin below is
@@ -197,10 +203,13 @@ Devil's Advocate's ruling, replicated by the coordinator: revert, do not refine.
   and instruction-shaped prose reached the model's only channel undelimited.
 - **idd-implement Step 2.5 actually re-runs the gate**: the Step 0.35 block is repeated there
   verbatim, and routing reads the line printed in that step. Round 4's "re-run" was an `echo`
-  with the real action in a trailing comment.
+  with the real action in a trailing comment. *Errata: "verbatim" was guarded only by two
+  occurrence counts — pinned byte for byte in Round 6.*
 - **Locale, properly**: the reader's greps pin `LC_ALL=C` — `[[:space:]]` still classified
   U+3000 differently per locale (`- none　` empty under UTF-8, a blocker under C). The test now
-  compares the two locales on one input.
+  compares the two locales on one input. *Errata: only the two placeholder greps were pinned,
+  the test compared equality rather than value, and production runs a ugrep shell function that
+  ignores `LC_ALL` — see Round 6.*
 - **Corpus claims are test-locked**: rows carry `semantic_empty`; the suite asserts 48/7
   semantically, disagreement set exactly {#1}, 54 CLOSED, and frozen `section` == extractor
   output for every body. #290's row records what CommonMark renders (empty section).
@@ -208,15 +217,72 @@ Devil's Advocate's ruling, replicated by the coordinator: revert, do not refine.
   ends the listing under `set -e`); Step 5's closed enumeration names `skipped`; every Step 3.7
   error exit prints why; the body is read under its own guard; label names are no longer
   claimed to pass through the helper's scrub.
-- Helper: the group misuse message is scrubbed too; the scrub's comment says what it does not
+- Helper: the group misuse message is scrubbed too (*errata: the verdict's five were not —
+  Round 6*); the scrub's comment says what it does not
   do (bidi, zero-width, C1, prose). `idd-all`'s sub-issue digit check precedes the first `gh`
   call. `idd-plan`'s Simple row carries three keys. The `--json …comments` drift guard, which
   matched nothing in round 4, is replaced and self-tested against the round-3 line.
 - Honesty: "widening the bullet class was measured" is restated as the design judgment it is
   (the corpus is insensitive, 0/55); the rejected regexes' counts share one denominator (the
-  semantic review: 0 FP / 7 FN and 21 FP / 0 FN); `31 of the 47` → `31 of the 48`; the
+  semantic review: 0 FP / 7 FN and 21 FP / 0 FN); `31 of the 47` → `31 of the 48` (*errata: 30
+  — the round-2 reader on the original bodies; see Round 6*); the
   "11 of 14" backlog figure is dated as measured before this change's own follow-ups; the
   spec delta keeps an updated `@trace` instead of deleting the live one at archive time.
+
+### Round 6 — every sentence backed by a test or a measurement
+
+The round-5 verify (6-of-6) returned FAIL. Round 5's reverts were correct and complete: rounds
+3, 4 and 5 give identical verdicts on the corpus, on 407 live documents and on the 47 issues
+open on 2026-10-05. What failed was what round 5 wrote about itself — six closed or universal
+claims — and the change gate's premise. The Devil's Advocate's principle, followed here: no new
+universal or closed empirical claim; apart from two `command` prefixes, no change to reader
+semantics.
+
+- **The gate block's copies are compared byte for byte.** idd-implement Step 0.35 and Step 2.5,
+  idd-plan and idd-all (after `$N`→`$NUMBER`) carry the same block, and routing reads the
+  Step 2.5 copy. Round 5 guarded them with two occurrence counts; six edits to Step 2.5 alone —
+  dropping the author filter, the digit check, the raw-block `sed`, hard-coding a signal — left
+  the suite green. One canonical script is #370.
+- **Fence divergences are known, not exhaustive.** Added and pinned: a tab-indented opener
+  (fail-open), an opener whose info string contains a backtick (fail-open), a closer indented
+  four or more spaces inside a fence (either direction), a fence opened on a list-item line
+  (fail-open), an HTML comment holding a fake `### Blocking` (either direction); a fence inside
+  a blockquote is pinned as *not* a divergence. Each was measured against markdown_it. The
+  measured basis is stated: 0 / 217 sections disagree on the live snapshot.
+- **Locale, narrowed to what holds.** Only the placeholder rule is environment-independent:
+  its two greps run as `LC_ALL=C command grep` (`command` because Claude Code's zsh defines
+  `grep` as a ugrep function that ignores `LC_ALL`). The test pins the value, `- none　` is a
+  blocker, under both locales and under a shadowing `grep` function, with a precondition that
+  the UTF-8 side really classifies U+3000 as blank. The bullet detector, the deferral grep and
+  the awk are not pinned. Pinning the deferral grep made `Plan when<NBSP>triggered` routable and
+  pinning the bullet detector lost a real `-<NBSP>` blocker, both with the suite green; direction
+  pins now refuse both. The verify had grouped the awk with them — the mutation test showed that
+  pinning it converges on CommonMark instead (both measured NBSP shapes) and changes no live
+  verdict; the gate admits it, round 6 leaves it.
+- **Change gate, keyed on direction and an external oracle.** Vocabulary rules may only move
+  toward withholding (unless a named corpus row flips, or a revert); structural rules may only
+  move toward the markdown_it render and may not move the corpus, the live snapshot or a
+  direction pin toward clearing — the bullet detector under C agrees with CommonMark and still
+  loses a blocker, so withholding wins. The corpus samples how the producer writes and never
+  contains an edge shape, so a gate keyed on "a corpus row flips" forbade every hardening fix;
+  round 5's third form, added to escape that, would have admitted the two fail-opens above.
+- **Shipped descriptions.** `plugin.json` and `marketplace.json` no longer claim round 4's three
+  repairs; they describe rounds 2–6 as shipped.
+- **The gate's fetches are guarded.** In `gh … | jq -s | python3` a failed fetch reached jq as
+  empty input and read as "no diagnosis" — after the branch and the public comment, at
+  Step 2.5. Each step is now captured and fails loud; the issue fetch too.
+- idd-list Step 5 enumerates five values with a display rule each — `undiagnosed` was missing,
+  so a `diagnosed`-phase issue without `### Complexity` fell through to `/idd-implement`. The
+  label-scrub claim, which no code implemented, is replaced by what is true (the gate surfaces
+  only the fixed name `parking-lot`; the labels column arrives JSON-escaped).
+- Helper: the verdict's five misuse messages are scrubbed; the scrub comment claims only what
+  the tests pin. The comments drift guard accepts `--json=`, joins `\`-continued lines and
+  crosses a `#` glued to a quote, while a blank-led `# …` note still ends the command.
+  idd-all strips a leading `#` from a sub-issue before the digit check and reports a skip.
+- Numbers: round 2 withheld **30** of the 48 (the round-2 reader on the original bodies; 31
+  counted a synthetic #290 section); the rejected regex is 21 FP on the semantic review
+  everywhere; "55 rows, 54 sections under CommonMark"; counts are UTF-8 counts. Errata markers
+  above.
 
 ### Honest residue
 

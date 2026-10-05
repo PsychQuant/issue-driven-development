@@ -167,7 +167,7 @@ Existing Diagnosis comments SHALL NOT be rewritten, and no label SHALL be backfi
 
 ### Requirement: The blocking signal is read per bullet against a frozen corpus
 
-The `### Blocking` section SHALL be read as a list: the section is non-empty when any bullet is not a none-placeholder, and a placeholder SHALL be recognised by its leading token (`none`, `n/a`, `無`, optionally bulleted, decorated, or parenthesised, followed by end of line, a closing paren, or a separator) so that an annotated placeholder such as `- (none — 可動)` is empty while a bullet whose first word merely happens to be `none` is not. Lines that do not begin a `-` or `*` bullet SHALL be treated as continuations of the bullet above, and the accepted consequences SHALL be stated as a rule in both failure directions rather than as examples. A trailing carriage return SHALL be stripped before either section reader judges a line, the rule SHALL NOT depend on the process locale, code fences SHALL follow the two CommonMark rules that decide what a reader of the rendered issue sees — a fenced example is never a section, and an unclosed fence runs to the end of the body so nothing below it is read (what GitHub renders) — and every remaining way the line-based reader departs from CommonMark fences SHALL be listed with its failure direction and pinned by test, and control characters SHALL be removed from every output the helper writes. A rule that detects an unbalanced fence and then stops tracking fences SHALL NOT be introduced: it exposes fenced templates as real sections, and a body with an unclosed fence is a producer defect to surface rather than something the reader works around. A change to the placeholder or section rules SHALL take one of exactly three forms, and no other form SHALL be accepted by analogy: (a) it flips the verdict of at least one measured corpus row, which the commit names; (b) it is a revert; (c) it removes a dependence on the execution environment (process locale, line endings) that a pinned test demonstrates, while leaving every corpus row's verdict unchanged. The rule SHALL be validated against every `### Blocking` section in the repository's issue bodies as a frozen regression fixture, because the first implementation was written against an assumed producer shape and withheld 31 of the 48 semantically empty sections in that corpus, including the tracking issue of this change.
+The `### Blocking` section SHALL be read as a list: the section is non-empty when any bullet is not a none-placeholder, and a placeholder SHALL be recognised by its leading token (`none`, `n/a`, `無`, optionally bulleted, decorated, or parenthesised, followed by end of line, a closing paren, or a separator) so that an annotated placeholder such as `- (none — 可動)` is empty while a bullet whose first word merely happens to be `none` is not. Lines that do not begin a `-` or `*` bullet SHALL be treated as continuations of the bullet above, and the accepted consequences SHALL be stated as a rule in both failure directions rather than as examples. A trailing carriage return SHALL be stripped before either section reader judges a line. The placeholder-token rule SHALL NOT depend on the process locale or on a shell function that shadows `grep`; the dependence of the reader's other matchers on the execution environment SHALL be listed with its failure direction. Code fences SHALL follow the two CommonMark rules that decide what a reader of the rendered issue sees — a fenced example is never a section, and an unclosed fence runs to the end of the body so nothing below it is read (what GitHub renders); the known ways the line-based reader departs from CommonMark SHALL be listed with their failure direction and pinned by test, and the list SHALL be described as known, not exhaustive. Every message the helper writes that carries an input value SHALL have its control characters removed. A rule that detects an unbalanced fence and then stops tracking fences SHALL NOT be introduced: it exposes fenced templates as real sections, and a body with an unclosed fence is a producer defect to surface rather than something the reader works around. A change to the reader SHALL satisfy the direction property of the rule it touches: a vocabulary rule (placeholder tokens and terminators, deferral vocabulary) SHALL move only toward withholding, unless the change flips the verdict of a measured corpus row named in the commit or is a revert; a structural rule (heading, fence, bullet and section boundaries) SHALL move only toward the markdown_it CommonMark render, with any documented-divergence pin it flips flipping to markdown_it's result, and SHALL NOT move any verdict toward clearing on the frozen corpus, the live snapshot, or a direction pin; where convergence and withholding conflict, withholding SHALL prevail. The rule SHALL be validated against every `### Blocking` section in the repository's issue bodies as a frozen regression fixture, because the first implementation was written against an assumed producer shape and withheld 30 of the 48 semantically empty rows in that corpus when it read their original bodies, including the tracking issue of this change.
 
 #### Scenario: Annotated placeholder is empty
 
@@ -184,17 +184,34 @@ The `### Blocking` section SHALL be read as a list: the section is non-empty whe
 - **WHEN** the section reads `- none of the reviewers replied yet`
 - **THEN** the blocking signal reports that line
 
-#### Scenario: Locale does not change the verdict
+#### Scenario: The placeholder rule does not depend on the environment
 
-- **WHEN** the reader runs under `LC_ALL=C`
-- **THEN** `- none ぁ x` is still reported as a blocker
-- **AND** `（無）` is still empty
+- **WHEN** the reader runs under `LC_ALL=C`, under a UTF-8 locale, or with `grep` shadowed by a shell function that ignores the locale
+- **THEN** `- none　` (the token followed by U+3000) is reported as a blocker in each
+- **AND** under `LC_ALL=C`, `- none ぁ x` is reported as a blocker and `（無）` is empty
+
+#### Scenario: A matcher left to the environment stays on the withholding side
+
+- **WHEN** `### Complexity` reads `Plan when<NBSP>triggered` in the reference environment
+- **THEN** the issue is withheld with reason `complexity-deferral-marker`
+- **AND** a change that pins the deferral grep to the C locale, making that value routable, does not satisfy the change gate
+
+#### Scenario: Convergence that clears a blocker is refused
+
+- **WHEN** a change pins the bullet detector to the C locale, so that `-<NBSP>等 #99 merge` after `- (none)` is no longer judged as a bullet
+- **THEN** the change does not satisfy the change gate, even though CommonMark does not treat `-<NBSP>` as a list marker either
 
 #### Scenario: A fenced example is never a section
 
 - **WHEN** a body carries a closed fenced copy of the template above the real sections, whether or not the fenced copy contains a `~~~` line and whether or not the body ends with a stray fence opener
 - **THEN** the real `### Complexity` and `### Blocking` are read
-- **AND** nothing inside the fenced copy is read
+- **AND** nothing inside the fenced copy is read, the listed divergences excepted
+
+#### Scenario: A listed divergence may converge on CommonMark
+
+- **WHEN** a change makes the reader agree with markdown_it on a listed divergence, and moves no verdict toward clearing on the corpus, the live snapshot or a direction pin
+- **THEN** the change satisfies the change gate
+- **AND** that divergence's pin flips to markdown_it's result in the same commit
 
 #### Scenario: An unclosed fence hides what is below it, as GitHub renders it
 

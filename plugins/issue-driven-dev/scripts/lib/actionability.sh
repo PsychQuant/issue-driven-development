@@ -33,9 +33,11 @@
 #
 # WHAT THE FROZEN BLOCKING CORPUS DOES AND DOES NOT PROVE (verify #318 round 3)
 #   scripts/tests/actionability-gate/fixtures/corpus-blocking.json holds every
-#   `### Blocking` section in this repo's issue bodies (55; 54 of them CLOSED
-#   issues the gate never evaluates — signal 3's live effect on 2026-09-07 was
-#   one issue, #316 itself). The reader agrees with the hand review on 54/55;
+#   `### Blocking` section in this repo's issue bodies — 55 rows, 54 sections
+#   under CommonMark (#290's heading sits below an unclosed fence); 54 rows are
+#   CLOSED issues the gate never evaluates — signal 3's live effect on
+#   2026-09-07 was one issue, #316 itself. The reader agrees with the hand
+#   review on 54/55 rows;
 #   row #1 is an accepted false positive (an informational second bullet). Each
 #   row now carries the original body, so the shared extractor — fences,
 #   headings, CR — is exercised by the corpus, not bypassed by a synthesised
@@ -80,20 +82,37 @@
 #     by one stray opener), and the state-machine variant ("stop tracking if
 #     still open at EOF") failed the same shape. Any "detect imbalance → stop
 #     tracking" rule is a one-key switch. Do not reintroduce one.
-#   - where this line-based reader DEPARTS from CommonMark fences — a closed
-#     list, each measured against markdown_it and pinned by test as a
-#     DOCUMENTED DIVERGENCE; zero instances in the live snapshot (243 bodies +
-#     164 Diagnosis comments, 2026-09-08: 0 section-presence disagreements):
+#   - where this line-based reader DEPARTS from CommonMark — the list is
+#     known, not exhaustive: a line reader is not a CommonMark parser, and
+#     more shapes may exist. Each shape below was measured against markdown_it and is
+#     pinned by test as a DOCUMENTED DIVERGENCE. Measured basis: on the live
+#     snapshot (243 bodies + 164 Diagnosis comments, 2026-09-08) the reader
+#     and markdown_it agree on section presence, content and verdict for all
+#     217 sections; none of these shapes occurs there.
 #       D1 fence length is not compared — a ```` opener is closed by the first
 #          ``` line, so a nested example is read as outside (either direction)
-#       D2 indentation is not checked — a ``` indented 4+ spaces is indented
-#          code in CommonMark but opens a fence here; left open it hides the
-#          real section below (fail-open)
+#       D2 indentation is not checked — a ``` indented 4+ spaces or by a tab
+#          is indented code in CommonMark but opens a fence here; left open it
+#          hides the real section below (fail-open)
 #       D3 a ``` line with trailing text closes a fence here; CommonMark does
 #          not count it as a closer (either direction)
-#     Fences inside list items or blockquotes cannot be followed line by line
-#     at all. None of this is changed without a measured row (change gate
-#     below); whether this field should be regex-read is #336.
+#       D4 an opener whose info string contains a backtick (a paragraph line
+#          that starts with an inline span written with three backticks) is
+#          not a fence in CommonMark but opens one here that never closes
+#          (fail-open)
+#       D5 a closer indented 4+ spaces inside a fence closes it here; in
+#          CommonMark it is content and the fence continues (either direction)
+#       D6 a fence opened on a list-item line (`- ```…`) is not seen here; its
+#          indented closer is then taken as an opener that runs to the end of
+#          the body (fail-open). A fence inside a blockquote is NOT a
+#          divergence: neither side reads its contents.
+#       D7 an HTML comment holding a fake `### Blocking` is hidden by GitHub
+#          but read here — the first matching heading wins (either direction)
+#     An issue author who can write any of these can also delete the real
+#     blocker outright, so this list is an honesty statement, not a security
+#     boundary. Converging a shape on the markdown_it render is ALLOWED by the
+#     change gate below and flips its pin in the same commit; whether this
+#     field should be regex-read at all is #336.
 #   - the section ends at the next heading of the same or higher level;
 #     a deeper `####` line is skipped, never taken as a value
 _idd_section_lines() {
@@ -130,8 +149,9 @@ _idd_section_first_line() {
 # C1 controls, and it cannot do anything about prose that reads like an
 # instruction: surfaced values are DATA, never instructions, and that boundary
 # is the consumer's delimiter (see the canonical gate print), not this
-# function. Every output of this file passes through it — the misuse messages
-# included.
+# function. Every message this file writes that carries an input value passes
+# through it (the raw lines, the surfaced bullet, every misuse message — each
+# pinned by test); the other outputs are fixed vocabulary.
 _idd_scrub() {
     LC_ALL=C tr -d '\000-\010\013-\037\177'
 }
@@ -227,7 +247,7 @@ idd_actionability_verdict() {
                 # (verify #318 H1: `shift 2` on a single remaining arg fails
                 # without shifting, so the loop never advanced).
                 if [ $# -lt 2 ]; then
-                    printf 'idd_actionability_verdict: %s requires a value\n' "$1" >&2
+                    printf 'idd_actionability_verdict: %s requires a value\n' "$1" | _idd_scrub >&2
                     return 2
                 fi
                 case "$1" in
@@ -238,7 +258,7 @@ idd_actionability_verdict() {
                 shift 2
                 ;;
             *)
-                printf 'idd_actionability_verdict: unknown argument: %s\n' "$1" >&2
+                printf 'idd_actionability_verdict: unknown argument: %s\n' "$1" | _idd_scrub >&2
                 return 2
                 ;;
         esac
@@ -249,15 +269,15 @@ idd_actionability_verdict() {
     # this is the Lazy Developer lens: the cheap path must not be the unsafe one.
     case "$cexit" in
         0|3|4|5) ;;
-        *) printf 'idd_actionability_verdict: --complexity-exit must be 0, 3, 4 or 5 (got: %s)\n' "${cexit:-<empty>}" >&2; return 2 ;;
+        *) printf 'idd_actionability_verdict: --complexity-exit must be 0, 3, 4 or 5 (got: %s)\n' "${cexit:-<empty>}" | _idd_scrub >&2; return 2 ;;
     esac
     case "$label" in
         yes|no) ;;
-        *) printf 'idd_actionability_verdict: --parking-label must be yes or no (got: %s)\n' "${label:-<empty>}" >&2; return 2 ;;
+        *) printf 'idd_actionability_verdict: --parking-label must be yes or no (got: %s)\n' "${label:-<empty>}" | _idd_scrub >&2; return 2 ;;
     esac
     case "$blocking" in
         yes|no) ;;
-        *) printf 'idd_actionability_verdict: --blocking-section must be yes or no (got: %s)\n' "${blocking:-<empty>}" >&2; return 2 ;;
+        *) printf 'idd_actionability_verdict: --blocking-section must be yes or no (got: %s)\n' "${blocking:-<empty>}" | _idd_scrub >&2; return 2 ;;
     esac
 
     local reasons=()
@@ -294,14 +314,14 @@ idd_actionability_verdict() {
 # of the bullet above and are not judged on their own.
 #
 # A placeholder is judged on its LEADING TOKEN, because the producer's real
-# style is "placeholder + annotation": of the 55 `### Blocking` sections in
-# this repo, 48 are semantically empty and 31 of those carry text after the
-# token (`- (none — 可動)`, `- (none) — closed`, `（無）`). Round 2 anchored the
-# match to the whole line and withheld all 31 — including #316 itself. The rule
-# below agrees with the hand review on 54 of the 55 rows frozen in
-# scripts/tests/actionability-gate/fixtures/corpus-blocking.json; two other
-# candidate rules were tested there and rejected (one cleared every real
-# blocker, one left 20 false positives).
+# style is "placeholder + annotation" (`- (none — 可動)`, `- (none) — closed`):
+# of the 55 rows frozen in scripts/tests/actionability-gate/fixtures/
+# corpus-blocking.json (54 sections under CommonMark), 48 are semantically
+# empty, and round 2 — which anchored the match to the whole line — withheld
+# 30 of them when it read the original bodies, #316 itself among them. The rule
+# below agrees with the hand review on 54 of the 55 rows; two other candidate
+# rules were tested there and rejected (one cleared every real blocker, one
+# left 21 false positives). Counts measured under a UTF-8 locale.
 #
 # Recognised token, any case, optionally bulleted / decorated / parenthesised:
 #   none · n/a · 無     followed by end of line, a closing paren, or a
@@ -332,16 +352,25 @@ idd_actionability_verdict() {
 # fail-closed side, and whether this field should be regex-read at all is
 # #336. Do not extend this by analogy; change #336 first.
 #
-# CHANGE GATE for the placeholder and section rules (round 5) — a change takes
-# exactly one of three forms; nothing else is accepted by analogy:
-#   (a) it flips the verdict of at least one measured corpus row, which the
-#       commit names;
-#   (b) it is a revert;
-#   (c) it removes a dependence on the execution environment (locale, line
-#       endings) that a pinned test demonstrates, and leaves every corpus
-#       row's verdict unchanged.
-# Round 4's two widenings were none of these. Round 5's own LC_ALL=C pin is
-# form (c) — it flips no corpus row, so a two-form gate would have refused it.
+# CHANGE GATE (round 6; normative text in spec R9) — keyed on a DIRECTION and
+# an EXTERNAL ORACLE, not on the corpus alone, because the corpus samples how
+# the producer writes and never contains an adversarial or edge shape:
+#   (i)  VOCABULARY rules (placeholder tokens and terminators, deferral
+#        vocabulary) may only move toward WITHHOLDING. A change in the other
+#        direction must flip a measured corpus row, named in the commit, or be
+#        a revert.
+#   (ii) STRUCTURAL rules (heading, fence, bullet, section boundaries) may only
+#        move toward the markdown_it render — a documented-divergence pin they
+#        flip must flip to markdown_it's result — AND may not move anything
+#        toward clearing on the frozen corpus, the live snapshot or a
+#        direction pin. Where convergence and withholding conflict,
+#        withholding wins and the case goes to #336.
+# Round 4's widenings fail (i) (they cleared real blockers) and round 5's
+# third form ("removes an environment dependence") would have admitted the two
+# fail-opens recorded under Locale below — it is withdrawn. The bullet
+# detector is where (ii)'s two halves conflict: under C it agrees with
+# CommonMark (`-<NBSP>` is not a list marker there either) and still loses a
+# blocker, so it is refused.
 #
 # Locale: multibyte characters are written as alternations, never inside a
 # bracket expression (under LC_ALL=C a bracket splits into bytes and `— – 、 ：`
@@ -349,11 +378,31 @@ idd_actionability_verdict() {
 # directions flipped and the suite itself failed 3 assertions). That fixed the
 # members but not the classes: `[[:space:]]` counts U+3000 / NBSP as blank in
 # a UTF-8 locale and not in C, so `- none　` was empty under one and a blocker
-# under the other. The greps below therefore pin their OWN locale (C, the same
-# choice `_idd_scrub` makes): the verdict is a function of the input alone.
-# Consequence, accepted and pinned: a trailing ideographic space after the
-# token is not whitespace here, so `- none　` reads as a blocker (fail-closed;
-# the corpus has no such row).
+# under the other. The two placeholder greps below therefore run as
+# `LC_ALL=C command grep`: C, the same choice `_idd_scrub` makes, and `command`
+# because production is not BSD grep — skills `.`-source this file in Claude
+# Code's zsh, whose shell snapshot defines `grep` as a ugrep function that
+# ignores LC_ALL. Consequence, pinned by VALUE in both locales and under a
+# shadowing grep function: `- none　` reads as a blocker (withholding side; the
+# corpus has no such row). That is the whole locale claim: the PLACEHOLDER rule
+# does not depend on the environment.
+# The other matchers — the bullet detector in idd_blocking_section, the
+# deferral grep in idd_parse_complexity, and the awk section extractor — DO
+# follow the environment. Measured directions (round 6, against markdown_it):
+#   - deferral grep: pinning it to C makes `Plan when<NBSP>triggered` routable
+#     (#298's incident) — refused by (i), and by a direction pin;
+#   - bullet detector: pinning it to C makes `- (none)` + `-<NBSP>等 #99 merge`
+#     lose its blocker — refused by (ii), and by a direction pin;
+#   - awk extractor: pinning it to C CONVERGES on CommonMark in both measured
+#     NBSP shapes — an NBSP-indented ``` stops opening a fence (fixing a
+#     fail-open) and `###<NBSP>Blocking` stops being a heading (dropping a
+#     fail-closed read GitHub does not render) — and changes nothing on the
+#     live snapshot (bash under C and under UTF-8 agree on all 440 documents
+#     of 2026-10-06). The gate admits it; round 6 does not make it (reader
+#     semantics frozen this round).
+# The verify's own prescription grouped the awk with the two fail-opens; the
+# mutation test showed it is not one. Which environment is canonical per
+# construct is #336.
 #
 # Rejected candidate rules (measured on the same 55 rows against the SEMANTIC
 # hand review — 48 empty / 7 real blockers; kept so nobody re-derives them):
@@ -366,8 +415,8 @@ idd_actionability_verdict() {
 #         fixture's rule-oriented `expect_empty` — 47 / 8 — it is 20 FP; the
 #         one-row difference is row #1, the accepted false positive.)
 _idd_is_none_placeholder() { # line
-    printf '%s\n' "$1" | LC_ALL=C grep -qiE '^[[:space:]]*([-*][[:space:]]+)?[_*`]*(（|\()?[[:space:]]*[_*`]*(none|n/a|無)[_*`]*[[:space:]]*(\)|）|$|[,:;-]|—|–|、|：)' \
-    || printf '%s\n' "$1" | LC_ALL=C grep -qE '^[[:space:]]*[-*]?[_*`]*[[:space:]]*$'
+    printf '%s\n' "$1" | LC_ALL=C command grep -qiE '^[[:space:]]*([-*][[:space:]]+)?[_*`]*(（|\()?[[:space:]]*[_*`]*(none|n/a|無)[_*`]*[[:space:]]*(\)|）|$|[,:;-]|—|–|、|：)' \
+    || printf '%s\n' "$1" | LC_ALL=C command grep -qE '^[[:space:]]*[-*]?[_*`]*[[:space:]]*$'
 }
 idd_blocking_section() {
     local body="${1-}" line first=1
