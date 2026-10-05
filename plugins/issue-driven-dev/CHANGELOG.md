@@ -177,13 +177,20 @@ Devil's Advocate's ruling, replicated by the coordinator: revert, do not refine.
   a fenced example was followed by one stray opener; a human deferral (`Plan when triggered`)
   then routed as `Simple`. Its motivating instance, #290, got the same gate verdict either way,
   and CommonMark — what GitHub renders — shows #290's `### Blocking` as code. The "still open
-  at EOF" variant was measured on the same shapes and failed one of them. Fences now follow
-  CommonMark: an unclosed fence runs to the end of the body; detecting such bodies is #336's.
+  at EOF" variant was measured on the same shapes and failed one of them. Fences follow
+  CommonMark's two visibility rules: a fenced example is never a section, an unclosed fence
+  runs to the end of the body (detecting such bodies is #336's). The line-based reader's three
+  remaining departures from CommonMark — fence length, indentation, a closer with trailing
+  text — are listed with their direction and pinned as documented divergences; none occurs in
+  407 live documents.
 - **`.` / `。` removed from the placeholder terminators.** `- None. Waiting on X` and
   `- 無。等 #99 merge` read as "no blocker"; no corpus row needed the full stop, and the spec
   never authorised it. The bare `- None.` now reads as a blocker (fail-closed, pinned).
-- **Change gate**: a reader-rule change ships only if it flips at least one measured corpus row
-  (named in the commit) or is a revert. Recorded in the helper, the reference and the spec.
+- **Change gate** (closed list): a change to the placeholder or section rules (a) flips at
+  least one measured corpus row, named in the commit, (b) is a revert, or (c) removes an
+  execution-environment dependence a pinned test demonstrates, leaving every corpus row
+  unchanged. Recorded in the helper, the reference and the spec. The `LC_ALL=C` pin below is
+  form (c); a two-form gate would have refused it.
 - **The gate prints in two parts**: a machine line of closed-vocabulary fields, then the
   third-party raw text inside `raw<<<` … `>>>raw`, every line indented. Round 4 glued the raws
   onto the verdict line, where a blocker bullet could carry a look-alike `gate #77: VEXIT=0`

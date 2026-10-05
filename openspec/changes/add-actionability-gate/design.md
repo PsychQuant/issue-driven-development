@@ -228,8 +228,8 @@ Rollback：本變更為 skill 文件與 helper script 的變更，零資料遷�
 
 ### 第 5 輪（2026-10-05）：撤回兩個沒有量測依據的放寬
 
-> `/idd-verify --pr 318` 第 4 輪 FAIL（9 blocking；首次 6-of-6，Codex 在場）。第 4 輪對共用 reader 的三處規則改動裡，只有 bracket → alternation 有量測依據；奇數 fence 啟發式與 `.` / `。` 終止符在 55 列語料與 19 張 open issue 上**一筆判定都沒改**，卻都打開了 fail-open 方向。DA 裁決（coordinator 獨立複驗）：**撤回，不改良**——logic 提的「EOF 時仍開著才停用追蹤」變體實測在「閉合範例 ＋ 文末孤立 opener」同樣把 fenced 範本讀成真區段；任何「偵測不平衡 → 整份停用追蹤」都是一鍵開關。fence 語意改為等同 CommonMark（GitHub 的渲染）：未閉合 fence 吃到文末，#290 那種 body 是 producer 缺陷，偵測與 surface 歸 #336。
+> `/idd-verify --pr 318` 第 4 輪 FAIL（9 blocking；首次 6-of-6，Codex 在場）。第 4 輪對共用 reader 的三處規則改動裡，只有 bracket → alternation 有量測依據；奇數 fence 啟發式與 `.` / `。` 終止符在 55 列語料與 19 張 open issue 上**一筆判定都沒改**，卻都打開了 fail-open 方向。DA 裁決（coordinator 獨立複驗）：**撤回，不改良**——logic 提的「EOF 時仍開著才停用追蹤」變體實測在「閉合範例 ＋ 文末孤立 opener」同樣把 fenced 範本讀成真區段；任何「偵測不平衡 → 整份停用追蹤」都是一鍵開關。fence 遵守 CommonMark 決定可見性的兩條規則（GitHub 的渲染）：fenced 範例不是區段、未閉合 fence 吃到文末——#290 那種 body 是 producer 缺陷，偵測與 surface 歸 #336。逐行 reader 與 CommonMark 另有三處已知分歧（fence 長度不比、縮排不檢、帶文字的 ``` 行被當成關閉；其中縮排那條是 fail-open），各自標明方向、以測試釘為 documented divergence；407 份 live 文件零分歧，所以依 change gate 不改行為。
 
-**往後的硬規則（change gate）**：對 `actionability.sh` reader 規則的任何改動，只有兩種合法形態——(a) 翻轉至少一列已量測 row 的判定，且 commit 指名那一列；(b) revert。兩者皆非不得 ship。第 4 輪違反的那句紀律散文（「do not extend the rule by analogy」）本來就寫在 reference 裡，缺的是閘門。
+**往後的硬規則（change gate，封閉列舉）**：對 placeholder 與區段規則的任何改動，只有三種合法形態，不得依性質相似類推第四種——(a) 翻轉至少一列已量測 row 的判定，且 commit 指名那一列；(b) revert；(c) 移除對執行環境（locale、換行符）的依賴，有釘住的測試示範該依賴，且所有語料列判定不變。本輪的 `LC_ALL=C` 釘選屬 (c)；只寫 (a)(b) 的初稿會把它擋下，是自審抓到的自相矛盾。第 4 輪違反的那句紀律散文（「do not extend the rule by analogy」）本來就寫在 reference 裡，缺的是閘門。
 
 其餘為第 4 輪的半修補齊：gate 印出改兩段（機器行只含封閉值域欄位、第三方原文在 `raw<<<` … `>>>raw` 內且逐行縮排）；idd-implement Step 2.5 逐字重跑 Step 0.35 區塊而不是 echo；reader 的 grep 自己釘 `LC_ALL=C`（`[[:space:]]` 對 U+3000 依 locale 分類不同）；語料宣稱改由測試斷言（`semantic_empty`、48/7、分歧集合恰為 {#1}、54 CLOSED、`section` == extractor 輸出）。

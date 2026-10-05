@@ -305,6 +305,25 @@ if [ "$HELPER_PRESENT" -eq 1 ]; then
   idd_parse_complexity "$shapeC" >/dev/null 2>&1
   assert_exit "fence C: unclosed fence runs to EOF — Complexity below it is not a section (CommonMark)" "4" "$?"
   assert_eq   "fence C: unclosed fence runs to EOF — Blocking below it is not read (CommonMark)" "" "$(idd_blocking_section "$shapeC")"
+  # The reader is line-based, so it follows CommonMark on the two rules above and NOT on the three
+  # below. Each divergence is measured against markdown_it (CommonMark) and has ZERO instances in
+  # the live snapshot (243 issue bodies + 164 Diagnosis comments, 2026-09-08: 0 section-presence
+  # disagreements). The change gate therefore keeps the behaviour; these assertions pin it so that
+  # changing it is a deliberate, gated decision rather than a side effect. Direction is stated per
+  # shape. (Containers — a fence inside a list item or blockquote — are a fourth class a line-based
+  # reader cannot follow at all; whether this field should be regex-read is #336.)
+  # D1: fence LENGTH is not compared — a ```` opener is closed by the first ``` line, so a nested
+  #     example's content is read as outside the fence. Direction: either (the template's text).
+  assert_eq "DOCUMENTED DIVERGENCE D1 (fence length): a nested example inside a 4-backtick fence is read" "- FAKE-NESTED" \
+    "$(idd_blocking_section $'### Notes\n````md\n```bash\n### Blocking\n- FAKE-NESTED\n```\n````\n\n### Blocking\n- (none)\n')"
+  # D2: INDENTATION is not checked — a ``` line indented 4+ spaces (CommonMark: indented code, not a
+  #     fence) opens a fence here and, left open, hides the real section. Direction: fail-open.
+  assert_eq "DOCUMENTED DIVERGENCE D2 (indentation): a 4-space-indented \`\`\` hides the real blocker below" "" \
+    "$(idd_blocking_section $'### Notes\n\n    ```\n    example\n\n### Blocking\n- 等 #99 merge\n')"
+  # D3: a ``` line WITH TRAILING TEXT closes a fence here (CommonMark: a closer carries no info
+  #     string, so it does not close). Direction: either (the template's text).
+  assert_eq "DOCUMENTED DIVERGENCE D3 (closer with text): a fenced template after '\`\`\` text' is read" "- FAKE-2" \
+    "$(idd_blocking_section $'### Notes\n```\n### Blocking\n- FAKE-CLOSER\n``` not a closer\n### Blocking\n- FAKE-2\n```\n\n### Blocking\n- (none)\n')"
   # CRLF (GitHub web textarea): both directions
   assert_eq "blocking: CRLF real blocker is kept"       "- 等 upstream #310" "$(idd_blocking_section $'### Blocking\r\n\r\n- 等 upstream #310\r\n')"
   assert_eq "blocking: CRLF placeholder is empty"       "" "$(idd_blocking_section $'### Blocking\r\n- (none)\r\n')"

@@ -68,9 +68,9 @@
 #     cannot match
 #   - ``` and ~~~ fences are tracked: a template example quoted inside a
 #     fence is not a section (verify #318 H4)
-#   - fence semantics are CommonMark's — i.e. what GitHub renders. A fence
-#     runs until its own closer; an UNCLOSED fence runs to the end of the
-#     body and everything below it is code, not a section. That is a producer
+#   - fences follow the two CommonMark rules that decide what GitHub shows:
+#     a fence runs until its own closer, and an UNCLOSED fence runs to the end
+#     of the body — everything below it is code, not a section. That is a producer
 #     defect in the body (live instance #290: one ``` at line 8; GitHub shows
 #     its `### Blocking` as code, and so does this reader), to be detected and
 #     surfaced — tracked in #336 — never patched around here. Round 4 tried
@@ -80,6 +80,20 @@
 #     by one stray opener), and the state-machine variant ("stop tracking if
 #     still open at EOF") failed the same shape. Any "detect imbalance → stop
 #     tracking" rule is a one-key switch. Do not reintroduce one.
+#   - where this line-based reader DEPARTS from CommonMark fences — a closed
+#     list, each measured against markdown_it and pinned by test as a
+#     DOCUMENTED DIVERGENCE; zero instances in the live snapshot (243 bodies +
+#     164 Diagnosis comments, 2026-09-08: 0 section-presence disagreements):
+#       D1 fence length is not compared — a ```` opener is closed by the first
+#          ``` line, so a nested example is read as outside (either direction)
+#       D2 indentation is not checked — a ``` indented 4+ spaces is indented
+#          code in CommonMark but opens a fence here; left open it hides the
+#          real section below (fail-open)
+#       D3 a ``` line with trailing text closes a fence here; CommonMark does
+#          not count it as a closer (either direction)
+#     Fences inside list items or blockquotes cannot be followed line by line
+#     at all. None of this is changed without a measured row (change gate
+#     below); whether this field should be regex-read is #336.
 #   - the section ends at the next heading of the same or higher level;
 #     a deeper `####` line is skipped, never taken as a value
 _idd_section_lines() {
@@ -318,9 +332,16 @@ idd_actionability_verdict() {
 # fail-closed side, and whether this field should be regex-read at all is
 # #336. Do not extend this by analogy; change #336 first.
 #
-# CHANGE GATE for this rule (round 5): a reader-rule change ships only if it
-# (a) flips the verdict of at least one measured corpus row and the commit
-# names that row, or (b) is a revert. Round 4's two rule widenings did neither.
+# CHANGE GATE for the placeholder and section rules (round 5) — a change takes
+# exactly one of three forms; nothing else is accepted by analogy:
+#   (a) it flips the verdict of at least one measured corpus row, which the
+#       commit names;
+#   (b) it is a revert;
+#   (c) it removes a dependence on the execution environment (locale, line
+#       endings) that a pinned test demonstrates, and leaves every corpus
+#       row's verdict unchanged.
+# Round 4's two widenings were none of these. Round 5's own LC_ALL=C pin is
+# form (c) — it flips no corpus row, so a two-form gate would have refused it.
 #
 # Locale: multibyte characters are written as alternations, never inside a
 # bracket expression (under LC_ALL=C a bracket splits into bytes and `— – 、 ：`
