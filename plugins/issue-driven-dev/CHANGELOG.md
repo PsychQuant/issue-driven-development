@@ -98,6 +98,9 @@ actionable, 1 blocked (the misjudgement), **11 "parked"** — all eleven merely 
   `fixtures/corpus-blocking.json` (55 rows, hand-reviewed): 0 FP / 0 FN. Two other candidate
   rules were measured there and rejected — one cleared every real blocker, one left 20 false
   positives. Whether the field should be regex-read at all is #336.
+  *Errata: "0 FP / 0 FN" over-claimed — restated in Round 4 below (54/55, #1 an accepted
+  false positive, 54/55 CLOSED); the two rejected rules' counts are re-stated on one
+  denominator in Round 5.*
 - A trailing `\r` is stripped before either reader judges a line: GitHub's web textarea
   submits CRLF, and awk's default FS counted a bare `\r` as a value (`Simple` → exit 3 with an
   empty surfaced line; a CRLF blocker → dropped).
@@ -146,6 +149,8 @@ do not demote the signal mid-verify.
 - **Unclosed fence**: one stray ``` above `### Blocking` swallowed the section (live #290),
   which would read a real blocker as "none". Unbalanced fences now disable fence tracking for
   that body; balanced fenced examples are still skipped.
+  *Errata: false and reverted — see Round 5. A balanced ``` block containing a `~~~` line
+  counts odd, so its fenced template was read as the section.*
 - **C0 / DEL scrubbing** lives in the helper's outputs (round 3 only described it, and the
   described set omitted `\r`); `idd_actionability_group ""` is exit 2, not a quiet *parked*.
 - **Claims**: "0 FP / 0 FN on 55 frozen sections" is now "54/55 agree with the hand review,
@@ -158,6 +163,53 @@ do not demote the signal mid-verify.
   on the actionable path; spec delta loses its `respectively`, nested backticks and a
   mis-attributed `@trace`; cluster-path coverage (first issue only — pre-existing) is stated
   in the contract and tracked in #340.
+
+### Round 5 — revert two unmeasured widenings, delimit the printed verdict
+
+The round-4 verify — the first 6-of-6 run, Codex present — returned FAIL. Round 3's repairs
+held (11 of 15 real, 4 half-done), but two of round 4's three changes to the shared reader had
+**no measured need** and both opened the fail-open direction: on the 55-row corpus with bodies
+and on all 19 open issues, the round-3 and round-4 readers give identical verdicts. The
+Devil's Advocate's ruling, replicated by the coordinator: revert, do not refine.
+
+- **Fence heuristic reverted.** "Odd marker count → stop tracking fences for this body" read a
+  fenced template as the real section whenever a closed ``` block contained a `~~~` line, or
+  a fenced example was followed by one stray opener; a human deferral (`Plan when triggered`)
+  then routed as `Simple`. Its motivating instance, #290, got the same gate verdict either way,
+  and CommonMark — what GitHub renders — shows #290's `### Blocking` as code. The "still open
+  at EOF" variant was measured on the same shapes and failed one of them. Fences now follow
+  CommonMark: an unclosed fence runs to the end of the body; detecting such bodies is #336's.
+- **`.` / `。` removed from the placeholder terminators.** `- None. Waiting on X` and
+  `- 無。等 #99 merge` read as "no blocker"; no corpus row needed the full stop, and the spec
+  never authorised it. The bare `- None.` now reads as a blocker (fail-closed, pinned).
+- **Change gate**: a reader-rule change ships only if it flips at least one measured corpus row
+  (named in the commit) or is a revert. Recorded in the helper, the reference and the spec.
+- **The gate prints in two parts**: a machine line of closed-vocabulary fields, then the
+  third-party raw text inside `raw<<<` … `>>>raw`, every line indented. Round 4 glued the raws
+  onto the verdict line, where a blocker bullet could carry a look-alike `gate #77: VEXIT=0`
+  and instruction-shaped prose reached the model's only channel undelimited.
+- **idd-implement Step 2.5 actually re-runs the gate**: the Step 0.35 block is repeated there
+  verbatim, and routing reads the line printed in that step. Round 4's "re-run" was an `echo`
+  with the real action in a trailing comment.
+- **Locale, properly**: the reader's greps pin `LC_ALL=C` — `[[:space:]]` still classified
+  U+3000 differently per locale (`- none　` empty under UTF-8, a blocker under C). The test now
+  compares the two locales on one input.
+- **Corpus claims are test-locked**: rows carry `semantic_empty`; the suite asserts 48/7
+  semantically, disagreement set exactly {#1}, 54 CLOSED, and frozen `section` == extractor
+  output for every body. #290's row records what CommonMark renders (empty section).
+- `idd-list`: `GROUP=$(idd_actionability_group …) || GROUP=error` (the new exit 2 no longer
+  ends the listing under `set -e`); Step 5's closed enumeration names `skipped`; every Step 3.7
+  error exit prints why; the body is read under its own guard; label names are no longer
+  claimed to pass through the helper's scrub.
+- Helper: the group misuse message is scrubbed too; the scrub's comment says what it does not
+  do (bidi, zero-width, C1, prose). `idd-all`'s sub-issue digit check precedes the first `gh`
+  call. `idd-plan`'s Simple row carries three keys. The `--json …comments` drift guard, which
+  matched nothing in round 4, is replaced and self-tested against the round-3 line.
+- Honesty: "widening the bullet class was measured" is restated as the design judgment it is
+  (the corpus is insensitive, 0/55); the rejected regexes' counts share one denominator (the
+  semantic review: 0 FP / 7 FN and 21 FP / 0 FN); `31 of the 47` → `31 of the 48`; the
+  "11 of 14" backlog figure is dated as measured before this change's own follow-ups; the
+  spec delta keeps an updated `@trace` instead of deleting the live one at archive time.
 
 ### Honest residue
 

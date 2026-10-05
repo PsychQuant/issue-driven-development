@@ -225,3 +225,11 @@ Rollback：本變更為 skill 文件與 helper script 的變更，零資料遷�
 ### 第 4 輪（2026-09-07）：修回歸與誠實，不修涵蓋率
 
 > `/idd-verify --pr 318` 第 3 輪 FAIL（6 blocking）。DA 的裁決：round 3 在往 #336 的 rabbit hole 走（三輪各疊一層字元類、各長出新洞）；第 4 輪只做「正確性與誠實」——修 round 3 引入的回歸（idd-implement 跨 Bash 區塊消費 gate 變數且禁止重跑、idd-list state guard 用 listing 旗標）、關掉一行能關的 fail-open（未閉合 fence、locale 相依）、讓 verdict 可觀測（gate 區塊印出判定）、把宣稱降到與證據齊平（「0 FP / 0 FN」→「54/55、1 筆明文 FP、54/55 CLOSED、extractor 已由原始 body 覆蓋」）、把 Accepted misses 從兩個例子改寫成雙向規則。**不擴 bullet class、不把訊號 3 降回顯示訊號** —— 前者擴大 fail-closed 面、後者是 verify 中途對 #84 的 scope change；兩者都留給 #336 從容決定。cluster 路徑只 gate 第一張是 round 2 前就存在的缺口，開 #340 追蹤並在契約明記。
+
+### 第 5 輪（2026-10-05）：撤回兩個沒有量測依據的放寬
+
+> `/idd-verify --pr 318` 第 4 輪 FAIL（9 blocking；首次 6-of-6，Codex 在場）。第 4 輪對共用 reader 的三處規則改動裡，只有 bracket → alternation 有量測依據；奇數 fence 啟發式與 `.` / `。` 終止符在 55 列語料與 19 張 open issue 上**一筆判定都沒改**，卻都打開了 fail-open 方向。DA 裁決（coordinator 獨立複驗）：**撤回，不改良**——logic 提的「EOF 時仍開著才停用追蹤」變體實測在「閉合範例 ＋ 文末孤立 opener」同樣把 fenced 範本讀成真區段；任何「偵測不平衡 → 整份停用追蹤」都是一鍵開關。fence 語意改為等同 CommonMark（GitHub 的渲染）：未閉合 fence 吃到文末，#290 那種 body 是 producer 缺陷，偵測與 surface 歸 #336。
+
+**往後的硬規則（change gate）**：對 `actionability.sh` reader 規則的任何改動，只有兩種合法形態——(a) 翻轉至少一列已量測 row 的判定，且 commit 指名那一列；(b) revert。兩者皆非不得 ship。第 4 輪違反的那句紀律散文（「do not extend the rule by analogy」）本來就寫在 reference 裡，缺的是閘門。
+
+其餘為第 4 輪的半修補齊：gate 印出改兩段（機器行只含封閉值域欄位、第三方原文在 `raw<<<` … `>>>raw` 內且逐行縮排）；idd-implement Step 2.5 逐字重跑 Step 0.35 區塊而不是 echo；reader 的 grep 自己釘 `LC_ALL=C`（`[[:space:]]` 對 U+3000 依 locale 分類不同）；語料宣稱改由測試斷言（`semantic_empty`、48/7、分歧集合恰為 {#1}、54 CLOSED、`section` == extractor 輸出）。

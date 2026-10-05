@@ -68,22 +68,25 @@
 #     cannot match
 #   - ``` and ~~~ fences are tracked: a template example quoted inside a
 #     fence is not a section (verify #318 H4)
+#   - fence semantics are CommonMark's — i.e. what GitHub renders. A fence
+#     runs until its own closer; an UNCLOSED fence runs to the end of the
+#     body and everything below it is code, not a section. That is a producer
+#     defect in the body (live instance #290: one ``` at line 8; GitHub shows
+#     its `### Blocking` as code, and so does this reader), to be detected and
+#     surfaced — tracked in #336 — never patched around here. Round 4 tried
+#     "odd marker count → stop tracking fences for this body": it did not
+#     change #290's gate verdict, it exposed FENCED TEMPLATES as real sections
+#     (a closed ``` block containing a `~~~` line; a fenced example followed
+#     by one stray opener), and the state-machine variant ("stop tracking if
+#     still open at EOF") failed the same shape. Any "detect imbalance → stop
+#     tracking" rule is a one-key switch. Do not reintroduce one.
 #   - the section ends at the next heading of the same or higher level;
 #     a deeper `####` line is skipped, never taken as a value
 _idd_section_lines() {
-    local body="${1-}" heading="${2-}" nfence nofence=0
-    # An UNCLOSED fence would otherwise swallow every later section (live
-    # instance #290: one ``` at line 8, `### Blocking` at line 39 → empty →
-    # a real blocker below it would read as "no blocker"). Fence tracking is
-    # only trustworthy when fences are balanced; with an odd count it is
-    # disabled for that body. A balanced fenced template example is still
-    # skipped (verify #318 H4).
-    nfence=$(printf '%s\n' "$body" | grep -cE '^[[:space:]]*(```|~~~)' || true)
-    [ $((nfence % 2)) -eq 1 ] && nofence=1
-    printf '%s\n' "$body" | awk -v h="$heading" -v nofence="$nofence" '
+    local body="${1-}" heading="${2-}"
+    printf '%s\n' "$body" | awk -v h="$heading" '
         { sub(/\r$/, "") }
-        nofence == 1 { }
-        nofence == 0 {
+        {
             if (fence != "") {
                 if (fence == "`" && $0 ~ /^[[:space:]]*```/) fence = ""
                 else if (fence == "~" && $0 ~ /^[[:space:]]*~~~/) fence = ""
@@ -106,10 +109,15 @@ _idd_section_first_line() {
     printf '%s\n' "${all%%$'\n'*}"
 }
 
-# Third-party text leaves this file with C0 control characters (and DEL)
-# removed — TAB and LF kept — so a `\r` or an ANSI sequence inside an issue
-# body cannot repaint the operator's terminal or the executing model's prompt.
-# Surfaced values are DATA, never instructions.
+# Third-party text leaves this file with C0 control characters (0x00–0x1F
+# except TAB and LF) and DEL removed — that is ALL this layer does. It stops a
+# `\r` or a 7-bit ANSI escape from repainting the operator's terminal. It does
+# NOT touch bidi overrides (U+202E), zero-width characters, U+2028, or 8-bit
+# C1 controls, and it cannot do anything about prose that reads like an
+# instruction: surfaced values are DATA, never instructions, and that boundary
+# is the consumer's delimiter (see the canonical gate print), not this
+# function. Every output of this file passes through it — the misuse messages
+# included.
 _idd_scrub() {
     LC_ALL=C tr -d '\000-\010\013-\037\177'
 }
@@ -282,9 +290,13 @@ idd_actionability_verdict() {
 # blocker, one left 20 false positives).
 #
 # Recognised token, any case, optionally bulleted / decorated / parenthesised:
-#   none · n/a · 無     followed by end of line, a closing paren, a full stop,
-#   or a separator (— – - , 、 : ： ;). A bare bullet or bare decoration is
-#   also empty.
+#   none · n/a · 無     followed by end of line, a closing paren, or a
+#   separator (— – - , 、 : ： ;). A bare bullet or bare decoration is also
+#   empty. A full stop is NOT a terminator: round 4 added `.` / `。` with no
+#   corpus need (0/55 rows) and `- None. Waiting on X` / `- 無。等 #99 merge`
+#   read as "no blocker" — the fail-open direction; round 5 reverted it. The
+#   bare `- None.` therefore reads as a blocker (fail-closed, visible; the
+#   corpus has no such row).
 #
 # THE RULE FOR MISSES, stated as a rule (not as examples — see
 # common-spec-prose-enumeration): the leading token decides the bullet. Both
@@ -299,28 +311,42 @@ idd_actionability_verdict() {
 #   fail-closed: a lead-in sentence before the first bullet (`目前阻塞如下：`
 #                then `- (none)`) is judged as the first line and reads as a
 #                BLOCKER.
-# The live corpus has zero cases of either shape. Widening the bullet class
-# was measured and rejected in verify #318 round 3 — it enlarges the
+# The live corpus has zero cases of either shape. The bullet class is NOT
+# widened (`- * +`, `1.`, `1)`): the corpus is insensitive to it (0/55 rows
+# change, measured in verify #318 round 4), so the choice is a design judgment,
+# not a measured result — it is left narrow because widening enlarges the
 # fail-closed side, and whether this field should be regex-read at all is
 # #336. Do not extend this by analogy; change #336 first.
 #
-# Multibyte characters are written as alternations, never inside a bracket
-# expression: under LC_ALL=C a bracket splits into bytes and `— – 、 ：`
-# turned every kana / CJK-punctuation lead byte into a separator (both
-# directions flipped; the suite itself failed 3 assertions). The rule below is
-# locale-independent and the test runs it under LC_ALL=C.
+# CHANGE GATE for this rule (round 5): a reader-rule change ships only if it
+# (a) flips the verdict of at least one measured corpus row and the commit
+# names that row, or (b) is a revert. Round 4's two rule widenings did neither.
 #
-# Rejected candidate rules (measured on the same 55 rows; kept so nobody
-# re-derives them):
+# Locale: multibyte characters are written as alternations, never inside a
+# bracket expression (under LC_ALL=C a bracket splits into bytes and `— – 、 ：`
+# turned every kana / CJK-punctuation lead byte into a separator — both
+# directions flipped and the suite itself failed 3 assertions). That fixed the
+# members but not the classes: `[[:space:]]` counts U+3000 / NBSP as blank in
+# a UTF-8 locale and not in C, so `- none　` was empty under one and a blocker
+# under the other. The greps below therefore pin their OWN locale (C, the same
+# choice `_idd_scrub` makes): the verdict is a function of the input alone.
+# Consequence, accepted and pinned: a trailing ideographic space after the
+# token is not whitespace here, so `- none　` reads as a blocker (fail-closed;
+# the corpus has no such row).
+#
+# Rejected candidate rules (measured on the same 55 rows against the SEMANTIC
+# hand review — 48 empty / 7 real blockers; kept so nobody re-derives them):
 #   '^[[:space:]]*([-*][[:space:]]+)?[_*`（(]*[[:space:]]*(none|n/a|無|-)([^[:alnum:]]|$)'
 #       → 0 FP but 7 FN: the optional bullet group lets `-` in the token set
 #         eat the bullet dash, so every `- 等 …` bullet read as empty.
 #   '^[[:space:]]*([-*][[:space:]]+)?[_*`]*[(（]?[[:space:]]*(none|n/a|無)[[:space:]]*([)）]|$)'
-#       → 20 FP: requires `)` or EOL right after the token, so `- (none — 可動)`
-#         (#316 itself) still read as a blocker.
+#       → 21 FP, 0 FN: requires `)` or EOL right after the token, so
+#         `- (none — 可動)` (#316 itself) still read as a blocker. (Against the
+#         fixture's rule-oriented `expect_empty` — 47 / 8 — it is 20 FP; the
+#         one-row difference is row #1, the accepted false positive.)
 _idd_is_none_placeholder() { # line
-    printf '%s\n' "$1" | grep -qiE '^[[:space:]]*([-*][[:space:]]+)?[_*`]*(（|\()?[[:space:]]*[_*`]*(none|n/a|無)[_*`]*[[:space:]]*(\)|）|$|\.|。|[,:;-]|—|–|、|：)' \
-    || printf '%s\n' "$1" | grep -qE '^[[:space:]]*[-*]?[_*`]*[[:space:]]*$'
+    printf '%s\n' "$1" | LC_ALL=C grep -qiE '^[[:space:]]*([-*][[:space:]]+)?[_*`]*(（|\()?[[:space:]]*[_*`]*(none|n/a|無)[_*`]*[[:space:]]*(\)|）|$|[,:;-]|—|–|、|：)' \
+    || printf '%s\n' "$1" | LC_ALL=C grep -qE '^[[:space:]]*[-*]?[_*`]*[[:space:]]*$'
 }
 idd_blocking_section() {
     local body="${1-}" line first=1
@@ -351,7 +377,8 @@ idd_blocking_section() {
 #   undiagnosed — otherwise (complexity-missing alone): the issue has simply
 #                 not been diagnosed yet. That is every issue's birth state, not
 #                 a parked state — on the live backlog it is the DOMINANT state
-#                 (11 of 14 open issues on 2026-09-07), and filing it under
+#                 (11 of 14 open issues on 2026-09-07, measured before this change
+#                 filed its own follow-ups), and filing it under
 #                 "Parked" hid `→ /idd-diagnose #N` from the operator (verify
 #                 #318 round-2 DA-CRIT-1). The display keeps that command.
 idd_actionability_group() {
@@ -363,6 +390,6 @@ idd_actionability_group() {
         *) # an empty or unknown reason list is API misuse (called on an
            # actionable issue?) — fail loud like the verdict does, never
            # quietly park a routable issue
-           printf 'idd_actionability_group: empty or unknown reason list (got: %s)\n' "${reasons:-<empty>}" >&2; return 2 ;;
+           printf 'idd_actionability_group: empty or unknown reason list (got: %s)\n' "${reasons:-<empty>}" | _idd_scrub >&2; return 2 ;;
     esac
 }

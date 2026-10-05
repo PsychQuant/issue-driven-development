@@ -23,3 +23,12 @@ When the user requests to skip filing one or more candidates (via explicit user 
 
 
 > Modified by `add-actionability-gate` (#316 round 3): the (b) / (c) skip categories file the candidate with the `parking-lot` label instead of `blocker:infeasible` / `blocker:waiting`. Those two labels were never created in any repository using IDD, while `parking-lot` is in use and — since 3.1.0 — is the primary parked signal of the actionability gate, so a sister issue filed under (b) / (c) is born parked and stays out of routing until a human removes the label. The reference (`ic-r011-checkpoint.md`), `idd-issue`, and `idd-diagnose` were converged in the same change; this delta brings the live spec's MUST into agreement.
+
+<!-- @trace
+source: add-actionability-gate
+updated: 2026-10-05
+code:
+  - plugins/issue-driven-dev/references/ic-r011-checkpoint.md
+  - plugins/issue-driven-dev/skills/idd-issue/SKILL.md
+  - plugins/issue-driven-dev/skills/idd-diagnose/SKILL.md
+-->

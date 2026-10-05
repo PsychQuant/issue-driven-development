@@ -242,7 +242,17 @@ if [ "$HELPER_PRESENT" -eq 1 ]; then
   # documented accepted misses: the leading token wins over a trailing clause
   assert_eq "blocking: DOCUMENTED MISS — '(none) but actually blocked by' reads empty" "" \
     "$(idd_blocking_section $'### Blocking\n- (none) but actually blocked by #86\n')"
-  assert_eq "blocking: '- None.' with a full stop is empty" "" "$(idd_blocking_section $'### Blocking\n- None.\n')"
+  # A full stop is NOT a terminator (round 5 reverted round 4's `\.|。`): it had
+  # no corpus need (0/55 rows) and turned `- None. Waiting on X` — placeholder
+  # token, full stop, real blocker clause — into "no blocker" (fail-open). The
+  # bare `- None.` therefore reads as a blocker: fail-closed, visible, and not
+  # a shape the corpus contains. Do not re-add the terminator by analogy; a
+  # reader-rule change must flip a measured row or be a revert.
+  assert_eq "blocking: '- None. Waiting on X' is a BLOCKER (full stop is not a terminator)" "- None. Waiting on X" \
+    "$(idd_blocking_section $'### Blocking\n- None. Waiting on X\n')"
+  assert_eq "blocking: '- 無。等 #99 merge' is a BLOCKER (CJK full stop is not a terminator)" "- 無。等 #99 merge" \
+    "$(idd_blocking_section $'### Blocking\n- 無。等 #99 merge\n')"
+  assert_eq "blocking: bare '- None.' reads as a BLOCKER (documented fail-closed)" "- None." "$(idd_blocking_section $'### Blocking\n- None.\n')"
   assert_eq "blocking: decoration inside the parens is empty" "" "$(idd_blocking_section $'### Blocking\n- (**none**)\n')"
   # locale independence: the rule must not flip under LC_ALL=C (bracket
   # expressions split multibyte characters into bytes there)
@@ -250,16 +260,51 @@ if [ "$HELPER_PRESENT" -eq 1 ]; then
     "$(LC_ALL=C bash -c '. "$1"; idd_blocking_section "$2"' _ "$LIB" $'### Blocking\n- none ぁ x\n')"
   assert_eq "blocking: LC_ALL=C — CJK placeholder is still empty" "" \
     "$(LC_ALL=C bash -c '. "$1"; idd_blocking_section "$2"' _ "$LIB" $'### Blocking\n（無）\n')"
+  # The verdict must not depend on the PROCESS locale at all (spec R9). The
+  # alternation fixed the bracket members, but `[[:space:]]` classifies U+3000
+  # / NBSP as whitespace in a UTF-8 locale and not in C, so `- none　` (token +
+  # ideographic space) was EMPTY under UTF-8 and a BLOCKER under C (verify #318
+  # round 4, codex). The reader pins its own locale; same input, same verdict.
+  u3000=$'### Blocking\n- none　\n'
+  assert_eq "blocking: verdict is identical under the process locale and LC_ALL=C (U+3000 after the token)" \
+    "$(LC_ALL=C bash -c '. "$1"; idd_blocking_section "$2"' _ "$LIB" "$u3000")" \
+    "$(LC_ALL=C.UTF-8 bash -c '. "$1"; idd_blocking_section "$2"' _ "$LIB" "$u3000")"
   # C0 / DEL scrubbed at the helper's outputs (TAB and LF kept)
   assert_eq "blocking: mid-line CR and ESC are scrubbed" "- 等 #99 fake[31mX" "$(idd_blocking_section $'### Blocking\n- 等 #99\r fake\033[31mX\n')"
   err=$(idd_parse_complexity $'### Complexity\n\nSimple\033[2K when triggered\n' 2>&1 >/dev/null)
   refute_grep "complexity: ESC scrubbed from the surfaced raw line" $'\033' "$err"
-  # unbalanced fence → fence tracking disabled for that body (live #290 shape)
-  assert_eq "blocking: real blocker below an UNCLOSED fence is found" "- 等 #99 merge" \
-    "$(idd_blocking_section $'### Notes\n```\nexample\n\n### Blocking\n- 等 #99 merge\n')"
-  tier=$(idd_parse_complexity $'### Notes\n```\nexample\n\n### Complexity\n\nPlan\n' 2>/dev/null); rc=$?
-  assert_exit "complexity: section below an UNCLOSED fence is found (exit)" "0" "$rc"
-  assert_eq   "complexity: section below an UNCLOSED fence is found (tier)" "Plan" "$tier"
+  err=$(idd_actionability_group $'bogus\033[31m' 2>&1 >/dev/null)
+  refute_grep "group: ESC scrubbed from the misuse message (every helper output is scrubbed)" $'\033' "$err"
+  # ── fences follow CommonMark, which is what GitHub renders (round 5) ────────
+  # Round 4 disabled fence tracking for a body whose marker count was odd, so
+  # that a section below an UNCLOSED fence would be read. Measured: the only
+  # live instance (#290) gets the same gate verdict either way; the heuristic
+  # exposed FENCED TEMPLATES as real sections (shapes A and B below); and the
+  # state-machine variant ("disable if still open at EOF") failed shape B the
+  # same way. The reader's fence semantics therefore equal the CommonMark
+  # render: an unclosed fence runs to the end of the body and hides everything
+  # below it (a producer defect to surface, #336), and a balanced fenced
+  # example is never a section. Any "detect imbalance → stop tracking" rule is
+  # a one-key switch and must not come back.
+  # A: a CLOSED ``` block whose content has a `~~~` line and a template — three
+  #    marker lines, balanced. The real sections after it win.
+  shapeA=$'### Notes\n```\nfence syntax:\n~~~\n### Complexity\n\nSimple\n\n### Blocking\n- (none)\n```\n\n### Complexity\n\nPlan when triggered\n\n### Blocking\n- 等 #99 merge\n'
+  idd_parse_complexity "$shapeA" >/dev/null 2>&1
+  assert_exit "fence A: closed block containing ~~~ — real Complexity (deferral) wins, not the fenced Simple" "5" "$?"
+  assert_eq   "fence A: closed block containing ~~~ — real blocker is read, not the fenced (none)" "- 等 #99 merge" "$(idd_blocking_section "$shapeA")"
+  # B: a closed fenced example, the real sections, then a stray opener at the
+  #    end (odd count; open at EOF). Neither the count nor the EOF state may
+  #    turn the fenced example into the section.
+  shapeB=$'### Notes\n```\n### Complexity\n\nSimple\n\n### Blocking\n- (none)\n```\n\n### Complexity\n\nPlan when triggered\n\n### Blocking\n- 等 #99 merge\n\n### Later\n```\n'
+  idd_parse_complexity "$shapeB" >/dev/null 2>&1
+  assert_exit "fence B: fenced example + trailing stray opener — real Complexity (deferral) wins" "5" "$?"
+  assert_eq   "fence B: fenced example + trailing stray opener — real blocker is read" "- 等 #99 merge" "$(idd_blocking_section "$shapeB")"
+  # C: the #290 shape — one unclosed fence above the sections. CommonMark (and
+  #    GitHub) render everything below it as code; so does the reader.
+  shapeC=$'### Notes\n```\nexample\n\n### Complexity\n\nPlan\n\n### Blocking\n- 等 #99 merge\n'
+  idd_parse_complexity "$shapeC" >/dev/null 2>&1
+  assert_exit "fence C: unclosed fence runs to EOF — Complexity below it is not a section (CommonMark)" "4" "$?"
+  assert_eq   "fence C: unclosed fence runs to EOF — Blocking below it is not read (CommonMark)" "" "$(idd_blocking_section "$shapeC")"
   # CRLF (GitHub web textarea): both directions
   assert_eq "blocking: CRLF real blocker is kept"       "- 等 upstream #310" "$(idd_blocking_section $'### Blocking\r\n\r\n- 等 upstream #310\r\n')"
   assert_eq "blocking: CRLF placeholder is empty"       "" "$(idd_blocking_section $'### Blocking\r\n- (none)\r\n')"
@@ -279,6 +324,7 @@ if [ "$HELPER_PRESENT" -eq 1 ]; then
   BCORPUS="$HERE/fixtures/corpus-blocking.json"
   if [ -f "$BCORPUS" ]; then
     b_ok=0; b_total=0; b_empty=0; b_block=0
+    s_empty=0; s_block=0; s_closed=0; s_disagree=""; s_secmatch=0
     while IFS= read -r row; do
       b_total=$((b_total + 1))
       num=$(jq -r '.number' <<<"$row")
@@ -296,12 +342,33 @@ if [ "$HELPER_PRESENT" -eq 1 ]; then
         b_block=$((b_block + 1))
         if [ "$got" = "$exp_first" ]; then b_ok=$((b_ok + 1)); else fail "blocking corpus #$num" "expected '$exp_first', got '$got'"; fi
       fi
+      # The claims the reference makes about this corpus, pinned as data rather
+      # than prose (verify #318 round 4, codex): the SEMANTIC hand review is
+      # carried per row, the rule–review disagreement set is exactly {#1}, 54 of
+      # the 55 issues are CLOSED, and the frozen `.section` is what the shared
+      # extractor returns for the original body (so `.section` cannot drift from
+      # what the reader actually judges).
+      sem=$(jq -r '.semantic_empty' <<<"$row")
+      case "$sem" in true) s_empty=$((s_empty + 1)) ;; false) s_block=$((s_block + 1)) ;; *) fail "blocking corpus #$num" "row has no boolean semantic_empty" ;; esac
+      [ "$sem" = "$exp_empty" ] || s_disagree="${s_disagree:+$s_disagree }$num"
+      [ "$(jq -r '.state' <<<"$row")" = "CLOSED" ] && s_closed=$((s_closed + 1))
+      if [ "$(jq -r '.section | join("\n")' <<<"$row")" = "$(_idd_section_lines "$body" Blocking)" ]; then s_secmatch=$((s_secmatch + 1)); else fail "blocking corpus #$num" "frozen .section differs from what the extractor returns for the original body"; fi
     done < <(jq -c '.rows[]' "$BCORPUS")
     assert_eq "blocking corpus: every section judged as reviewed ($b_ok/$b_total)" "$b_total" "$b_ok"
     assert_eq "blocking corpus: 55 sections, 47 empty / 8 non-empty (rule; hand review is 48/7, #1 is the accepted FP)" "55/47/8" "$b_total/$b_empty/$b_block"
-    # #290's body has an UNCLOSED fence: the extractor must still find its section
+    assert_eq "blocking corpus: semantic hand review is 48 empty / 7 real blockers"  "48/7" "$s_empty/$s_block"
+    assert_eq "blocking corpus: rule disagrees with the hand review on exactly #1"   "1"    "$s_disagree"
+    assert_eq "blocking corpus: 54 of the 55 issues are CLOSED"                      "54"   "$s_closed"
+    assert_eq "blocking corpus: frozen .section == extractor output for all 55 bodies" "$b_total" "$s_secmatch"
+    # #290's body has an UNCLOSED fence above `### Blocking`. Under CommonMark
+    # everything below it is code, and the reader agrees: the section is not
+    # read and the gate outcome is "no blocker" — the same outcome round 4's
+    # heuristic produced (its `- (none) — 已結案。` was a placeholder anyway).
+    # Pin the GATE OUTCOME, not an intermediate value: round 4 pinned the
+    # intermediate and called a no-op a fix.
     b290=$(jq -r '.rows[] | select(.number == 290) | .body' "$BCORPUS")
-    assert_eq "blocking corpus: #290 section survives an unclosed fence" "- (none) — 已結案。" "$(_idd_section_lines "$b290" Blocking)"
+    assert_eq "blocking corpus: #290 (unclosed fence) — gate outcome is no blocker, section below the fence is not read" "" "$(idd_blocking_section "$b290")"
+    assert_eq "blocking corpus: #290 (unclosed fence) — the reader does not surface anything below the fence" "" "$(_idd_section_lines "$b290" Blocking)"
   else
     fail "blocking corpus" "fixture missing: $BCORPUS"
   fi
@@ -346,8 +413,8 @@ if [ "$HELPER_PRESENT" -eq 1 ]; then
   assert_eq "missing alone → undiagnosed group"  "undiagnosed" "$(idd_actionability_group 'complexity-missing')"
   assert_eq "missing + blocking → blocked group"  "blocked" "$(idd_actionability_group 'complexity-missing; blocking-nonempty')"
   assert_eq "deferral + blocking → parked group"  "parked"  "$(idd_actionability_group 'complexity-deferral-marker; blocking-nonempty')"
-  idd_actionability_group "" >/dev/null 2>&1
-  assert_exit "empty reason list is API misuse (exit 2), never parked" "2" "$?"
+  idd_actionability_group "" >/dev/null 2>&1; rc=$?
+  assert_exit "empty reason list is API misuse (exit 2), never parked" "2" "$rc"
   assert_eq "deferral marker → parked group"     "parked"  "$(idd_actionability_group 'complexity-deferral-marker')"
   assert_eq "mixed reasons → parked group"       "parked"  "$(idd_actionability_group 'complexity-unparseable; blocking-nonempty')"
 
@@ -389,10 +456,20 @@ for c in idd-list idd-all idd-implement idd-plan; do
   assert_output_grep "$c: exit 2 is a consumer FATAL"         'FATAL: idd_actionability_verdict misuse' "$f"
   assert_output_grep "$c: issue number is digit-checked before the REST path" "*[!0-9]*) " "$f"
   assert_output_grep "$c: Diagnosis author is trusted-only"   'author_association' "$f"
-  assert_output_grep "$c: the verdict is PRINTED, not only assigned" "printf 'gate #%s: VEXIT=%s" "$f"
+  # The verdict is printed in TWO parts (round 5): a machine line whose fields
+  # are all closed-vocabulary, then the third-party raw text on its own lines
+  # inside a fixed `raw<<<` … `>>>raw` delimiter with every raw line indented.
+  # Round 4 printed `… | $COMPLEXITY_ERR$BLOCK_LINE` on the same unbounded line:
+  # a body bullet could carry a look-alike `gate #77: VEXIT=0 …` (TAB survives
+  # the scrub), the two raws were glued together, and prose that reads like an
+  # instruction landed on the executing model's only channel with nothing
+  # marking it as data (verify #318 round 4, security + codex).
+  assert_output_grep "$c: the verdict is PRINTED — machine line, closed vocabulary only" "printf 'gate #%s: VEXIT=%s TIER=%s REASONS=%s\\n'" "$f"
+  assert_output_grep "$c: raw third-party text opens a delimited block"  "printf 'raw<<<\\n'" "$f"
+  assert_output_grep "$c: raw third-party text closes the delimited block" "printf '>>>raw\\n'" "$f"
+  assert_output_grep "$c: every raw line is indented (no raw line at column 0)" "sed 's/^/  │ /'" "$f"
+  refute_output_grep "$c: no single-line print with the raws glued on"   'REASONS=%s | %s%s' "$f"
   assert_output_grep "$c: REASONS reset on the actionable path" 'REASONS="" ;;' "$f"
-  # command lines only (not `#` comments or `>` prose), and `comments` must be inside the --json field list
-  refute_grep_re     "$c: no bare gh issue view --json …comments left" '^[^#>]*gh issue view[^\n]*--json[^ ]*comments' "$(cat "$f")"
   refute_output_grep "$c: no closed-domain wording for the tier field" '封閉值域外' "$f"
   refute_output_grep "$c: no 'closed domain, no fifth value' tier claim" '不得依相似性外推第五個' "$f"
 done
@@ -401,6 +478,30 @@ for c in idd-list idd-all idd-implement idd-plan; do
   assert_output_grep "$c: allowed-tools pre-approves jq"      'Bash(jq:*)' "$f"
   assert_output_grep "$c: allowed-tools pre-approves python3" 'Bash(python3:*)' "$f"
 done
+# No consumer may fetch comments through `gh issue view --json …comments` — that connection returns only
+# the OLDEST 100 comments, so on a long issue the latest Diagnosis is the one dropped. Command lines only
+# (not `#` notes, not `>` prose), comments in ANY --json field position. Round 4's guard
+# (`--json[^ ]*comments`) could not cross the space after `--json` and matched nothing; its first
+# replacement needed a leading comma and missed `--json comments,…` (verify #318 round 4, logic L2).
+# One pattern, self-tested on the exact string the loop below uses.
+COMMENTS_GUARD_RE='^[^#>]*gh issue view[^|#]*--json[[:space:]]+[^[:space:]|#]*comments'
+assert_grep_re "drift guard self-test: comments as the FIRST --json field is caught too" \
+  "$COMMENTS_GUARD_RE" 'gh issue view $NUMBER --repo $GITHUB_REPO --json comments,title'
+assert_grep_re "drift guard self-test: comments as the last --json field is caught" \
+  "$COMMENTS_GUARD_RE" 'gh issue view $NUMBER --repo $GITHUB_REPO --json title,body,labels,comments'
+assert_grep_re "drift guard self-test: the round-3 quoted assignment form is caught" \
+  "$COMMENTS_GUARD_RE" 'ISSUE_JSON=$(gh issue view "$NUMBER" --repo "$GITHUB_REPO" --json title,body,labels,comments)'
+refute_grep_re "drift guard self-test: a fetch without comments is not flagged" \
+  "$COMMENTS_GUARD_RE" 'ISSUE_JSON=$(gh issue view "$NUMBER" --repo "$GITHUB_REPO" --json title,body,labels)'
+refute_grep_re "drift guard self-test: a trailing '# comments …' note is not a comments fetch" \
+  "$COMMENTS_GUARD_RE" 'gh issue view $NUMBER --repo $GITHUB_REPO --json title,body,labels   # comments 由下方 gate 區塊分頁抓'
+for c in idd-list idd-all idd-implement idd-plan; do
+  refute_grep_re "$c: no gh issue view fetches comments through --json (any field position)" "$COMMENTS_GUARD_RE" "$(cat "$SKILLS/$c/SKILL.md")"
+done
+# The canonical shape in the reference prints the same two-part verdict.
+assert_output_grep "reference: canonical shape prints the machine line"      "printf 'gate #%s: VEXIT=%s TIER=%s REASONS=%s\\n'" "$REF"
+assert_output_grep "reference: canonical shape delimits the raw block"       "printf 'raw<<<\\n'" "$REF"
+refute_output_grep "reference: no single-line print with the raws glued on"  'REASONS=%s | %s%s' "$REF"
 # gate SHALL precede any egress or branch creation (verify #318 round-2 HIGH: idd-implement)
 IMPL="$SKILLS/idd-implement/SKILL.md"
 gate_ln=$(grep -n 'if VERDICT=$(idd_actionability_verdict' "$IMPL" | head -1 | cut -d: -f1)
@@ -419,11 +520,35 @@ assert_output_grep "idd-list: undiagnosed rows keep the diagnose command" '→ /
 assert_output_grep "idd-list: per-ISSUE state guard before the gate"  '.state // ""' "$L"
 refute_output_grep "idd-list: no listing-flag state guard"          '[ "$STATE" = "open" ]' "$L"
 assert_output_grep "idd-list: skipped rows have a display rule"     'group=skipped' "$L"
+# Step 5's closed enumeration must name `skipped` too — Step 3.7 produces it for every non-OPEN
+# row under `--state all` / `--state closed`, and a rule that is only claimed in Step 3.7 prose is
+# not a rule (common-spec-prose-enumeration; verify #318 round 4, regression R4-M1).
+assert_output_grep "idd-list: Step 5 enumeration names skipped"     '`group=blocked` / `parked` / `error` / `skipped`' "$L"
+# Every error exit in Step 3.7 prints why (the model's only channel), and the helper's new exit 2
+# cannot take the listing down (verify #318 round 4: five silent `GROUP=error; continue`, one
+# unguarded `$(idd_actionability_group …)` under `set -e`).
+assert_output_grep "idd-list: group call is guarded against exit 2"  'GROUP=$(idd_actionability_group "$REASONS") || GROUP=error' "$L"
+assert_true "idd-list: every Step 3.7 error exit says so on stderr (≥ 7 'gate not evaluated')" "[ $(grep -c 'gate not evaluated' "$L") -ge 7 ]"
+assert_output_grep "idd-list: body is extracted under its own guard before the helper" 'BODY=$(jq -r '"'"'.body // ""'"'"' <<<"$ISSUE_JSON")' "$L"
+refute_output_grep "idd-list: no nested jq inside the helper call (its failure was swallowed)" 'idd_blocking_section "$(jq -r' "$L"
+refute_output_grep "idd-list: no blanket 'helper scrubs everything' delegation claim" '本 skill 不再自行處理' "$L"
+assert_output_grep "idd-list: label names are named as NOT passing through the helper" 'label 名不經 helper' "$L"
 IA="$SKILLS/idd-all/SKILL.md"
 assert_grep_re "idd-all: Layer-V sub-issue scan filters author"     'issues/\$sub_n/comments" --paginate --jq .\[\.\[\] \| select\(\.author_association' "$(cat "$IA")"
 assert_output_grep "idd-all: sub-issue number digit-checked"        'case "$sub_n" in' "$IA"
+# …and digit-checked BEFORE the first use of $sub_n, not between two uses (verify #318 round 4, regression R4-M4)
+subcase_ln=$(grep -n 'case "$sub_n" in' "$IA" | head -1 | cut -d: -f1)
+subview_ln=$(grep -n 'SUB_BODY=$(gh issue view "$sub_n"' "$IA" | head -1 | cut -d: -f1)
+assert_true "idd-all: sub-issue digit check precedes its first gh call (case@${subcase_ln:-?} < view@${subview_ln:-?})" "[ -n '$subcase_ln' ] && [ -n '$subview_ln' ] && [ '$subcase_ln' -lt '$subview_ln' ]"
 IM="$SKILLS/idd-implement/SKILL.md"
-assert_output_grep "idd-implement: Step 2.5 re-runs the gate when the variables did not survive" '[ -n "${VEXIT:-}" ] ||' "$IM"
+# Step 2.5 must actually RE-RUN the gate, not print that it is re-running: the verdict call and the
+# printed machine line appear twice in idd-implement (Step 0.35 and Step 2.5). Round 4 pinned the
+# `${VEXIT:-}` guard string and called an echo a re-run (verify #318 round 4, four lenses + codex).
+assert_true "idd-implement: Step 2.5 re-runs the gate (verdict call appears in two blocks)" "[ $(grep -c 'if VERDICT=$(idd_actionability_verdict --complexity-exit' "$IM") -ge 2 ]"
+assert_true "idd-implement: Step 2.5 prints the gate verdict again (machine line appears twice)" "[ $(grep -c "printf 'gate #%s: VEXIT=%s TIER=%s REASONS=%s" "$IM") -ge 2 ]"
+refute_output_grep "idd-implement: no prose-as-code re-run (echo only)" 're-running the Step 0.35 block (same helper, same shape)" >&2; }' "$IM"
+P="$SKILLS/idd-plan/SKILL.md"
+refute_output_grep "idd-plan: no 2-key routing row under the 3-key header" '| `0` · `Simple` |' "$P"
 assert_output_grep "idd-list: groups via the helper"               'idd_actionability_group "$REASONS"' "$L"
 # reference + producer (9.1 / 9.2)
 assert_output_grep "reference: cites the 159-diagnosis corpus"     '159' "$REF"
