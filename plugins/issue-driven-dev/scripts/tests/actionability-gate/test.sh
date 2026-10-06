@@ -278,6 +278,19 @@ if [ "$HELPER_PRESENT" -eq 1 ]; then
   shadowed() { LC_ALL=C bash -c 'grep() { LC_ALL=C.UTF-8 command grep "$@"; }; . "$1"; idd_blocking_section "$2"' _ "$LIB" "$1"; }
   assert_eq "blocking: with grep shadowed by a locale-ignoring function (the zsh/ugrep shape), '- none<U+3000>' still reads as a BLOCKER" "- none　" "$(shadowed "$u3000")"
   assert_eq "blocking: with grep shadowed, a plain '- (none)' is still empty" "" "$(shadowed $'### Blocking\n- (none)\n')"
+  # The SECOND placeholder grep (a bullet holding only blanks or decoration) is pinned too (round 7):
+  # a whitespace-only bullet written with U+3000 reads as a blocker in both locales and under the
+  # locale-ignoring shadow; and under a FAILING shadow (every grep "matches") both placeholder greps
+  # must still be the real one — round 5 prescribed this shadow, round 6 shipped only the other one.
+  ws=$'### Blocking\n-　\n'
+  for loc in C C.UTF-8; do
+    assert_eq "blocking: under LC_ALL=$loc, '-<U+3000>' (whitespace-only bullet) reads as a BLOCKER" "-　" \
+      "$(LC_ALL=$loc bash -c '. "$1"; idd_blocking_section "$2"' _ "$LIB" "$ws")"
+  done
+  assert_eq "blocking: with grep shadowed by a locale-ignoring function, '-<U+3000>' still reads as a BLOCKER" "-　" "$(shadowed "$ws")"
+  failing() { LC_ALL=C bash -c 'grep() { return 0; }; . "$1"; idd_blocking_section "$2"' _ "$LIB" "$1"; }
+  assert_eq "blocking: with grep shadowed by an always-matching function, both placeholder greps still decide (a real blocker after '- (none)' is read)" "- 等 #99 merge" \
+    "$(failing $'### Blocking\n- (none)\n- 等 #99 merge\n')"
   # DIRECTION PINS for the matchers that are deliberately NOT locale-pinned (round 6, DA-H1).
   # "Remove the locale dependence" has no direction-free answer: pinning the deferral grep or the
   # bullet detector to C turns these two inputs fail-open — a human deferral becomes routable
@@ -381,6 +394,36 @@ if [ "$HELPER_PRESENT" -eq 1 ]; then
   #     matching heading wins). Direction: either — here the fake placeholder hides the real blocker.
   assert_eq "DOCUMENTED DIVERGENCE D7 (HTML comment): a fake section inside <!-- --> is read first" "" \
     "$(idd_blocking_section $'<!--\n### Blocking\n- (none)\n-->\n\n### Blocking\n- 等 #99 merge\n')"
+  # D8–D12 (round 7) — measured against markdown-it AND pandoc's CommonMark reader, pinned under
+  # LC_ALL=C.UTF-8 (the production shell's locale; the awk extractor follows the locale, so these
+  # are environment-dependent where NBSP is involved). They record today's behaviour, not an
+  # approval: changing any of them is a structural change, frozen until a requirement names its
+  # oracle (#336). The awk C pin moves D8, D9 and D10 in mixed directions — these pins catch it.
+  assert_eq "precondition: under C.UTF-8 this awk classifies NBSP as [[:space:]] (else the D8–D10 pins test another environment)" "1" \
+    "$(printf ' x\n' | LC_ALL=C.UTF-8 awk '/^[[:space:]]x/' | wc -l | tr -d ' ')"
+  # D8: an NBSP-indented ``` opens a fence here; both oracles read paragraph text. Fail-open.
+  assert_eq "DOCUMENTED DIVERGENCE D8 (NBSP-indented opener, UTF-8): the real blocker below is hidden" "" \
+    "$(utf8_block $'### Notes\n ```\nx\n\n### Blocking\n- 等 #99 merge\n')"
+  # D9: `###<NBSP>X` / `##<NBSP>X` count as headings here; neither oracle treats them as headings.
+  assert_eq "DOCUMENTED DIVERGENCE D9 (###<NBSP>Blocking, UTF-8): read as the section (either direction)" "- 等 #99 merge" \
+    "$(utf8_block $'### Blocking\n- 等 #99 merge\n')"
+  assert_eq "DOCUMENTED DIVERGENCE D9 (##<NBSP>Next ends the section early, UTF-8): the blocker below is hidden" "" \
+    "$(utf8_block $'### Blocking\n- (none)\n## Next\n- 等 #99 merge\n')"
+  # D10: trailing whitespace other than space/tab after the heading text. The oracles disagree:
+  #      markdown-it strips it (heading "Blocking"); pandoc's CommonMark keeps it ("Blocking\160").
+  assert_eq "DOCUMENTED DIVERGENCE D10 (### Blocking<NBSP>, UTF-8): read (= markdown-it; pandoc CommonMark: no such heading)" "- 等 #99 merge" \
+    "$(utf8_block $'### Blocking \n- 等 #99 merge\n')"
+  assert_eq "DOCUMENTED DIVERGENCE D10 (### Blocking<U+3000>, UTF-8): not read (= pandoc CommonMark; markdown-it reads it)" "" \
+    "$(utf8_block $'### Blocking　\n- 等 #99 merge\n')"
+  # D11 / D12: an ATX heading indented 1–3 spaces, or with a closing sequence, is not read here;
+  #      both oracles read it. Fail-open.
+  assert_eq "DOCUMENTED DIVERGENCE D11 (ATX heading indented 3 spaces): not read" "" "$(idd_blocking_section $'   ### Blocking\n- 等 #99 merge\n')"
+  assert_eq "DOCUMENTED DIVERGENCE D12 (### Blocking ### closing sequence): not read" "" "$(idd_blocking_section $'### Blocking ###\n- 等 #99 merge\n')"
+  # Complexity's ltrim/rtrim parameter expansions follow the shell locale too (an environment
+  # dependence round 6 left off its list). Recorded in both environments.
+  assert_eq "environment dependence (Complexity trim): '<NBSP>Plan' routes as Plan under UTF-8 (exit 0)" "0" "$(utf8_cexit $'### Complexity\n\n Plan\n')"
+  assert_eq "environment dependence (Complexity trim): '<NBSP>Plan' is unparseable under C (exit 3)" "3" \
+    "$(LC_ALL=C bash -c '. "$1"; idd_parse_complexity "$2" >/dev/null 2>&1; echo $?' _ "$LIB" $'### Complexity\n\n Plan\n')"
   # CRLF (GitHub web textarea): both directions
   assert_eq "blocking: CRLF real blocker is kept"       "- 等 upstream #310" "$(idd_blocking_section $'### Blocking\r\n\r\n- 等 upstream #310\r\n')"
   assert_eq "blocking: CRLF placeholder is empty"       "" "$(idd_blocking_section $'### Blocking\r\n- (none)\r\n')"
@@ -566,6 +609,11 @@ done
 # comment and ends the command, so a note that mentions `--json comments` is not a fetch.
 COMMENTS_GUARD_RE='^[^#>]*gh issue view([^|#]|[^|#[:space:]]#)*--json([[:space:]]+|=)[^[:space:]|#]*comments'
 join_cont() { sed -e ':a' -e '/\\$/N' -e 's/\\\n//' -e 'ta'; }   # a `\`-continued command becomes one line before matching
+# Joining alone can HIDE a fetch: a previous line that ends in `2>/dev/null \\` puts a `>` before
+# `gh` on the joined line (verify #318 round 6, logic L-2). Each consumer is checked raw AND joined.
+two_lines=$(printf '%s\n' 'OUT=$(gh api x 2>/dev/null \' '  || gh issue view "$N" --json title,comments)')
+refute_grep_re "drift guard self-test: the joined form alone misses a fetch after '2>/dev/null \\' (why raw is checked too)" "$COMMENTS_GUARD_RE" "$(printf '%s\n' "$two_lines" | join_cont)"
+assert_grep_re "drift guard self-test: …and the raw form catches it" "$COMMENTS_GUARD_RE" "$two_lines"
 assert_grep_re "drift guard self-test: '--json=' is caught" \
   "$COMMENTS_GUARD_RE" 'X=$(gh issue view "$N" --repo "$R" --json=title,comments)'
 assert_grep_re "drift guard self-test: a '#'-quoted issue number before --json is caught" \
@@ -583,7 +631,8 @@ refute_grep_re "drift guard self-test: a fetch without comments is not flagged" 
 refute_grep_re "drift guard self-test: a trailing '# comments …' note is not a comments fetch" \
   "$COMMENTS_GUARD_RE" 'gh issue view $NUMBER --repo $GITHUB_REPO --json title,body,labels   # comments 由下方 gate 區塊分頁抓'
 for c in idd-list idd-all idd-implement idd-plan; do
-  refute_grep_re "$c: no gh issue view fetches comments through --json (any field position)" "$COMMENTS_GUARD_RE" "$(join_cont < "$SKILLS/$c/SKILL.md")"
+  refute_grep_re "$c: no gh issue view fetches comments through --json (raw lines)" "$COMMENTS_GUARD_RE" "$(cat "$SKILLS/$c/SKILL.md")"
+  refute_grep_re "$c: no gh issue view fetches comments through --json (continuation lines joined)" "$COMMENTS_GUARD_RE" "$(join_cont < "$SKILLS/$c/SKILL.md")"
 done
 # The canonical shape in the reference prints the same two-part verdict.
 assert_output_grep "reference: canonical shape prints the machine line"      "printf 'gate #%s: VEXIT=%s TIER=%s REASONS=%s\\n'" "$REF"
@@ -632,6 +681,12 @@ assert_true "idd-all: sub-issue digit check precedes its first gh call (case@${s
 subnorm_ln=$(grep -nF 'sub_n=${sub_n#\#}' "$IA" | head -1 | cut -d: -f1)
 assert_true "idd-all: a '#'-prefixed sub-issue is normalised before the digit check (norm@${subnorm_ln:-?} < case@${subcase_ln:-?})" "[ -n '$subnorm_ln' ] && [ '$subnorm_ln' -lt '$subcase_ln' ]"
 assert_output_grep "idd-all: a skipped non-numeric sub-issue is reported, not silent" 'skipping non-numeric sub-issue' "$IA"
+# …through printf + scrub, not echo: zsh's echo interprets backslash escapes in the model-filled
+# value (`\n` forges a column-0 line, `\c` silences the rest), and the value is not scrubbed.
+refute_output_grep "idd-all: the skip line does not echo the untrusted value" 'echo "⚠ skipping non-numeric sub-issue' "$IA"
+assert_output_grep "idd-all: the skip line prints through printf and strips C0/DEL" "printf '⚠ skipping non-numeric sub-issue: %s" "$IA"
+refute_output_grep "idd-list: one display rule for group=error (no second '⚠ gate error' form)" '⚠ gate error' "$L"
+refute_output_grep "idd-list: group=error is not described as API misuse only" 'gate API 誤用' "$L"
 IM="$SKILLS/idd-implement/SKILL.md"
 # Step 2.5 must actually RE-RUN the gate, not print that it is re-running: the verdict call and the
 # printed machine line appear twice in idd-implement (Step 0.35 and Step 2.5). Round 4 pinned the
@@ -657,7 +712,39 @@ gb_all=$(gate_blocks "$IA"); gb_all=${gb_all%%$'\036'*}
 gb_all=$(printf '%s' "$gb_all" | sed -E 's/\$N([^A-Za-z0-9_]|$)/$NUMBER\1/g')
 assert_eq "idd-all: the gate block is byte-identical to idd-implement's after \$N→\$NUMBER" "$(printf '%s' "$gb_035")" "$gb_all"
 assert_grep "gate block: the comment fetch is captured under its own guard (a failed fetch is not 'no diagnosis')" 'comment fetch failed' "$gb_035"
+# Round 7 — what the byte compare could not see (verify #318 round 6: security S2, logic L-3/L-4/L-5).
+# (a) every verdict call in the file, in ANY fence or none, is inside a compared block;
+# (b) idd-plan and idd-all carry exactly one block;
+# (c) no other fenced code in these files assigns a gate variable or prints a verdict line;
+# (d) idd-all's own block never says $NUMBER (the $N→$NUMBER rewrite would hide it);
+# (e) the guards are exercised, not just present: the extracted block runs against a stub gh.
+for c in idd-implement:2 idd-plan:1 idd-all:1; do
+  f="$SKILLS/${c%%:*}/SKILL.md"; want=${c##*:}
+  assert_eq "${c%%:*}: verdict calls anywhere in the file = $want (no copy outside a compared block)" "$want" \
+    "$(command grep -c 'VERDICT=$(idd_actionability_verdict --complexity-exit' "$f" | tr -d ' ')"
+  assert_eq "${c%%:*}: exactly $want gate block(s) extracted" "$want" "$(gate_blocks "$f" | tr -cd '\036' | wc -c | tr -d ' ')"
+  outside=$(awk '/^[[:space:]]*(```|~~~)/ { if (inb) { inb = 0; if (!index(buf, "VERDICT=$(idd_actionability_verdict --complexity-exit")) printf "%s", buf } else { inb = 1; buf = "" } next }
+                 inb { buf = buf $0 "\n" }' "$f")
+  refute_grep_re "${c%%:*}: no fenced code outside the gate blocks assigns a gate variable or prints a verdict line" \
+    '(^|[^A-Za-z_])(VEXIT|TIER|REASONS|CEXIT|BLOCKING|HAS_PARKING|LATEST_DIAGNOSIS|BLOCK_LINE)=|gate #' "$outside"
+done
+refute_grep "idd-all: its gate block never says \$NUMBER (idd-all defines only \$N)" '$NUMBER' "$(gate_blocks "$IA")"
+GB_RUN=$(mktemp -d); printf '%s' "$gb_035" > "$GB_RUN/block.sh"
+gb_stub='gh() { case "$1" in api) [ "$STUB" = commentfail ] && return 1; echo "[]" ;; issue) [ "$STUB" = issuefail ] && return 1; echo "{\"labels\":[],\"body\":\"\"}" ;; esac; }'
+run_block() { ( cd "$GB_RUN" && STUB="$1" NUMBER=316 GITHUB_REPO=o/r CLAUDE_PLUGIN_ROOT="$HERE/../../.." bash -c "$gb_stub"$'\n'"$(cat block.sh)" 2>&1 ); }
+out=$(run_block commentfail); rc=$?
+assert_eq "gate block (run): a failed comment fetch exits 1" "1" "$rc"
+assert_grep "gate block (run): a failed comment fetch says so" 'comment fetch failed' "$out"
+out=$(run_block issuefail); rc=$?
+assert_eq "gate block (run): a failed issue fetch exits 1" "1" "$rc"
+assert_grep "gate block (run): a failed issue fetch says so" 'issue fetch failed' "$out"
+out=$(run_block ok); rc=$?
+assert_eq "gate block (run): with both fetches ok it exits 0" "0" "$rc"
+assert_grep_re "gate block (run): no diagnosis prints the complexity-missing verdict" '^gate #316: VEXIT=1 TIER= REASONS=complexity-missing$' "$out"
+rm -rf "$GB_RUN"
 assert_output_grep "reference: canonical shape guards the comment fetch" 'comment fetch failed' "$REF"
+refute_output_grep "idd-implement: Step 2.5 prose no longer describes the superseded occurrence-count guard" 'drift guard 斷言兩處都含 verdict 呼叫與機器行' "$IM"
+assert_output_grep "idd-implement: Step 2.5 prose names the byte compare" '逐位元組' "$IM"
 refute_output_grep "idd-implement: no prose-as-code re-run (echo only)" 're-running the Step 0.35 block (same helper, same shape)" >&2; }' "$IM"
 P="$SKILLS/idd-plan/SKILL.md"
 refute_output_grep "idd-plan: no 2-key routing row under the 3-key header" '| `0` · `Simple` |' "$P"
@@ -744,14 +831,46 @@ for f in "$LIB" "$REF" "$SPEC"; do
   refute_output_grep "$n: no three-form change gate"                       'one of three forms' "$f"
 done
 assert_output_grep "helper: divergences are stated as known, not exhaustive" 'not exhaustive' "$LIB"
-assert_output_grep "spec: the gate's structural property converges on the markdown_it render" 'markdown_it' "$SPEC"
 assert_output_grep "spec: the gate's vocabulary property moves only toward withholding" 'toward withholding' "$SPEC"
+assert_output_grep "spec: structural rules are frozen until a requirement names their oracle" 'frozen' "$SPEC"
+assert_output_grep "spec: control characters narrowed to C0 and DEL" 'C0 control characters and DEL' "$SPEC"
+# Round-6 claims refuted by the round-6 verify must not come back (round 7).
+for f in "$LIB" "$REF" "$SPEC"; do
+  n=$(basename "$f")
+  refute_output_grep "$n: no 'the gate admits' the awk C pin"                   'gate admits' "$f"
+  refute_output_grep "$n: no 'not a fail-open' verdict on the awk C pin"         'not a fail-open' "$f"
+  refute_output_grep "$n: no 'never contains an adversarial or edge shape'"      'never contains an adversarial' "$f"
+  refute_output_grep "$n: no 'converging … is allowed' (structure is frozen)"    'ALLOWED by the change' "$f"
+  refute_output_grep "$n: no 'is allowed by the change gate'"                     'allowed by the change gate' "$f"
+  refute_output_grep "$n: no 'stays on the withholding side' universal title"    'stays on the withholding side' "$f"
+  refute_output_grep "$n: no 'author who can write any of these' framing"        'author who can write any of these' "$f"
+  refute_output_grep "$n: no 'every misuse message — each pinned' claim"         'every misuse message — each pinned' "$f"
+done
+refute_output_grep "spec.md: the convergence scenario is gone (structure is frozen)" 'A listed divergence may converge' "$SPEC"
+refute_output_grep "spec.md: no 'Convergence that clears a blocker is refused' scenario" 'Convergence that clears a blocker is refused' "$SPEC"
+refute_output_grep "spec.md: no undefined 'reference environment'" 'reference environment' "$SPEC"
+# History documents keep withdrawn claims, each marked where it stands (round 7, verify #318 round 6).
+bullet_marked() {   # file pattern marker — every bullet / paragraph holding PATTERN also holds MARKER
+  awk -v pat="$2" -v mk="$3" 'function flush() { if (buf != "" && index(buf, pat) && !index(buf, mk)) bad++; buf = "" }
+    /^- / || /^#/ || /^[[:space:]]*$/ { flush() } { buf = buf "\n" $0 } END { flush(); exit (bad > 0) }' "$1"
+}
+DESIGN="$ROOT/openspec/changes/add-actionability-gate/design.md"; TASKS="$ROOT/openspec/changes/add-actionability-gate/tasks.md"
+CL="$ROOT/plugins/issue-driven-dev/CHANGELOG.md"
+for spec_ in "$DESIGN|三處已知分歧|勘誤" "$DESIGN|三種合法形態|勘誤" "$DESIGN|不是** fail-open|勘誤" "$DESIGN|永遠不會出現在裡面|勘誤" \
+             "$TASKS|封閉三形態|勘誤" "$TASKS|awk 的 C 釘選未被擋|勘誤" \
+             "$CL|converges on CommonMark instead|Errata" "$CL|contains an edge shape|Errata" "$CL|may not move the corpus, the live snapshot or a|Errata"; do
+  IFS='|' read -r f_ pat_ mk_ <<<"$spec_"
+  assert_true "$(basename "$f_"): the withdrawn claim '$pat_' carries an errata marker" "bullet_marked '$f_' '$pat_' '$mk_'"
+done
 # B5: what plugin users read must not claim a repair round 5 reverted
 PJ="$ROOT/plugins/issue-driven-dev/.claude-plugin/plugin.json"; MJ="$ROOT/.claude-plugin/marketplace.json"
 pj_desc=$(jq -r '.description' "$PJ"); mj_desc=$(jq -r '.plugins[] | select(.name == "issue-driven-dev") | .description' "$MJ")
 for d in "plugin.json:$pj_desc" "marketplace.json:$mj_desc"; do
   refute_grep "${d%%:*}: does not claim the reverted unclosed-fence repair" 'unclosed-fence fail-open' "${d#*:}"
   assert_grep "${d%%:*}: states the CommonMark fence rule shipped in round 5" 'CommonMark' "${d#*:}"
+  refute_grep "${d%%:*}: no 'structure only toward the markdown_it render' (under it the bullet-detector pin would pass)" 'structure only toward the markdown_it render' "${d#*:}"
+  assert_grep "${d%%:*}: states that structural rules are frozen" 'frozen' "${d#*:}"
+  refute_grep "${d%%:*}: no '55 real sections' (55 rows, 54 sections under CommonMark)" '55 real sections' "${d#*:}"
 done
 
 print_summary "actionability-gate"

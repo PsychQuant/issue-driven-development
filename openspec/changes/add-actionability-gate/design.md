@@ -228,20 +228,61 @@ Rollback：本變更為 skill 文件與 helper script 的變更，零資料遷�
 
 ### 第 5 輪（2026-10-05）：撤回兩個沒有量測依據的放寬
 
-> `/idd-verify --pr 318` 第 4 輪 FAIL（9 blocking；首次 6-of-6，Codex 在場）。第 4 輪對共用 reader 的三處規則改動裡，只有 bracket → alternation 有量測依據；奇數 fence 啟發式與 `.` / `。` 終止符在 55 列語料與 19 張 open issue 上**一筆判定都沒改**，卻都打開了 fail-open 方向。DA 裁決（coordinator 獨立複驗）：**撤回，不改良**——logic 提的「EOF 時仍開著才停用追蹤」變體實測在「閉合範例 ＋ 文末孤立 opener」同樣把 fenced 範本讀成真區段；任何「偵測不平衡 → 整份停用追蹤」都是一鍵開關。fence 遵守 CommonMark 決定可見性的兩條規則（GitHub 的渲染）：fenced 範例不是區段、未閉合 fence 吃到文末——#290 那種 body 是 producer 缺陷，偵測與 surface 歸 #336。逐行 reader 與 CommonMark 另有三處已知分歧（fence 長度不比、縮排不檢、帶文字的 ``` 行被當成關閉；其中縮排那條是 fail-open），各自標明方向、以測試釘為 documented divergence；407 份 live 文件零分歧，所以依 change gate 不改行為。
+> `/idd-verify --pr 318` 第 4 輪 FAIL（9 blocking；首次 6-of-6，Codex 在場）。第 4 輪對共用 reader 的三處規則改動裡，只有 bracket → alternation 有量測依據；奇數 fence 啟發式與 `.` / `。` 終止符在 55 列語料與 19 張 open issue 上**一筆判定都沒改**，卻都打開了 fail-open 方向。DA 裁決（coordinator 獨立複驗）：**撤回，不改良**——logic 提的「EOF 時仍開著才停用追蹤」變體實測在「閉合範例 ＋ 文末孤立 opener」同樣把 fenced 範本讀成真區段；任何「偵測不平衡 → 整份停用追蹤」都是一鍵開關。fence 遵守 CommonMark 決定可見性的兩條規則（GitHub 的渲染）：fenced 範例不是區段、未閉合 fence 吃到文末——#290 那種 body 是 producer 缺陷，偵測與 surface 歸 #336。逐行 reader 與 CommonMark 另有三處已知分歧（fence 長度不比、縮排不檢、帶文字的 ``` 行被當成關閉；其中縮排那條是 fail-open），各自標明方向、以測試釘為 documented divergence；407 份 live 文件零分歧，所以依 change gate 不改行為。（勘誤，第 6、7 輪：分歧不只三處——第 6 輪補 D2 tab 與 D4–D7、第 7 輪補 D8–D12，清單改稱「已知、不窮舉」；「依 change gate 不改行為」的 gate 已撤回。）
 
-**往後的硬規則（change gate，封閉列舉）**：對 placeholder 與區段規則的任何改動，只有三種合法形態，不得依性質相似類推第四種——(a) 翻轉至少一列已量測 row 的判定，且 commit 指名那一列；(b) revert；(c) 移除對執行環境（locale、換行符）的依賴，有釘住的測試示範該依賴，且所有語料列判定不變。本輪的 `LC_ALL=C` 釘選屬 (c)；只寫 (a)(b) 的初稿會把它擋下，是自審抓到的自相矛盾。第 4 輪違反的那句紀律散文（「do not extend the rule by analogy」）本來就寫在 reference 裡，缺的是閘門。
+**往後的硬規則（change gate，封閉列舉）**：對 placeholder 與區段規則的任何改動，只有三種合法形態，不得依性質相似類推第四種——(a) 翻轉至少一列已量測 row 的判定，且 commit 指名那一列；(b) revert；(c) 移除對執行環境（locale、換行符）的依賴，有釘住的測試示範該依賴，且所有語料列判定不變。本輪的 `LC_ALL=C` 釘選屬 (c)；只寫 (a)(b) 的初稿會把它擋下，是自審抓到的自相矛盾。第 4 輪違反的那句紀律散文（「do not extend the rule by analogy」）本來就寫在 reference 裡，缺的是閘門。（勘誤：這個三形態 gate 已於第 6 輪撤回——形態 (c) 會准許 fail-open；第 6 輪的替代性質又於第 7 輪撤回，見下。）
 
-其餘為第 4 輪的半修補齊：gate 印出改兩段（機器行只含封閉值域欄位、第三方原文在 `raw<<<` … `>>>raw` 內且逐行縮排）；idd-implement Step 2.5 逐字重跑 Step 0.35 區塊而不是 echo；reader 的 grep 自己釘 `LC_ALL=C`（`[[:space:]]` 對 U+3000 依 locale 分類不同）；語料宣稱改由測試斷言（`semantic_empty`、48/7、分歧集合恰為 {#1}、54 CLOSED、`section` == extractor 輸出）。
+其餘為第 4 輪的半修補齊：gate 印出改兩段（機器行只含封閉值域欄位、第三方原文在 `raw<<<` … `>>>raw` 內且逐行縮排）；idd-implement Step 2.5 逐字重跑 Step 0.35 區塊而不是 echo；reader 的 grep 自己釘 `LC_ALL=C`（`[[:space:]]` 對 U+3000 依 locale 分類不同）；（勘誤：只釘了兩個 placeholder grep，而且 production 的 `grep` 是不理 `LC_ALL` 的 ugrep shell function，見第 6 輪）語料宣稱改由測試斷言（`semantic_empty`、48/7、分歧集合恰為 {#1}、54 CLOSED、`section` == extractor 輸出）。
 
 ### 第 6 輪（2026-10-06）：每一句都要有測試或量測撐著
 
 > `/idd-verify --pr 318` 第 5 輪 FAIL（5 blocking，皆 MEDIUM；6-of-6）。第 5 輪的兩個撤回正確且完整——第 3、4、5 輪的 reader 在語料、407 份 live 文件與 2026-10-05 的 47 張 open issue 上判定完全相同。失敗的是第 5 輪對自己寫的六個封閉或全稱宣稱（「恰好三處分歧」、「gate 恰好三種形態」、idd-list「四個值」、「every output」、「a function of the input alone」、「verbatim」），以及 change gate 的前提。DA 的原則照做：不新增任何封閉或全稱的**經驗**宣稱——`common-spec-prose-enumeration` 管的是作者決定誰算數的**規範性**成員（例如 reason 詞彙），不是關於外界的經驗陳述（reader 在哪裡和 CommonMark 不同、哪些環境不同）；把後者叫「封閉」就是一個必須證明的窮舉宣稱。除了兩個 `command` 前綴，reader 語意不動。
 
-**change gate 改以方向加外部 oracle 為鑰匙。** 以「語料列翻轉」為鑰匙的前提錯了：語料是 producer 寫法的樣本，對抗或邊角形狀永遠不會出現在裡面，所以形態 (a) 在結構上禁止所有硬化修正；第 5 輪自己撞上這面牆（`a80134e` 的 commit message 寫著 gate「擋下了它自己的 commit」），於是加了開放的形態 (c)——規則就是這樣長出洞的。DA 實測：把 helper 的 grep 全部改成 `LC_ALL=C command grep`，`Plan when<NBSP>triggered` 會從 exit 5 變成 exit 0（人為延期被覆蓋，正是 #298 的事故）；改釘 awk 與 bullet detector，`- (none)` 後接 `-<NBSP>等 #99 merge` 會失去 blocker——兩者都讓 suite 全綠、語料一列不變，完全符合 (c)。根因是「移除 locale 依賴」沒有與方向無關的答案：結構辨識（heading、fence）應該對齊 CommonMark（只把 ASCII 空白與 tab 當空白，C 釘選是對的）；詞彙判斷（延期、placeholder）應該站在扣住那一側（延期 grep 釘 C 是錯的）；bullet detector 釘 C 會對齊 CommonMark，卻在 production 變成 fail-open。新 gate：(i) 詞彙規則只能往扣住方向動，反方向必須翻轉一列在 commit 裡指名的語料，或是 revert；(ii) 結構規則只能往 markdown_it 的渲染結果收斂（翻轉的 divergence 釘選必須等於 markdown_it 的結果），**而且**不得讓語料、live 快照或方向釘選往放行方向移動——收斂與扣住衝突時扣住優先。第二半句是突變測試逼出來的：bullet detector 釘 C 之後跟 CommonMark 一致（CommonMark 也不把 `-<NBSP>` 當 list marker），卻讓 blocker 消失；只寫「往 markdown_it 收斂」的 (ii) 會准許它，與方向釘選互相矛盾。延期 grep 釘 C 由 (i) 拒絕，bullet detector 釘 C 由 (ii) 的後半拒絕，測試以方向釘選拒絕兩者。同一次突變測試也更正了 DA 的一句轉述：awk 釘 C **不是** fail-open——兩個量到的 NBSP 形狀都往 CommonMark 收斂（NBSP 縮排的 ``` 不再開 fence，修掉一個 fail-open；`###<NBSP>Blocking` 不再被當成標題，GitHub 也不渲染它），440 份 live 文件判定不變；gate 准許它，本輪不做（reader 語意凍結）。
+**change gate 改以方向加外部 oracle 為鑰匙。** 以「語料列翻轉」為鑰匙的前提錯了：語料是 producer 寫法的樣本，對抗或邊角形狀永遠不會出現在裡面，所以形態 (a) 在結構上禁止所有硬化修正；第 5 輪自己撞上這面牆（`a80134e` 的 commit message 寫著 gate「擋下了它自己的 commit」），於是加了開放的形態 (c)——規則就是這樣長出洞的。DA 實測：把 helper 的 grep 全部改成 `LC_ALL=C command grep`，`Plan when<NBSP>triggered` 會從 exit 5 變成 exit 0（人為延期被覆蓋，正是 #298 的事故）；改釘 awk 與 bullet detector，`- (none)` 後接 `-<NBSP>等 #99 merge` 會失去 blocker——兩者都讓 suite 全綠、語料一列不變，完全符合 (c)。根因是「移除 locale 依賴」沒有與方向無關的答案：結構辨識（heading、fence）應該對齊 CommonMark（只把 ASCII 空白與 tab 當空白，C 釘選是對的）；詞彙判斷（延期、placeholder）應該站在扣住那一側（延期 grep 釘 C 是錯的）；bullet detector 釘 C 會對齊 CommonMark，卻在 production 變成 fail-open。新 gate：(i) 詞彙規則只能往扣住方向動，反方向必須翻轉一列在 commit 裡指名的語料，或是 revert；(ii) 結構規則只能往 markdown_it 的渲染結果收斂（翻轉的 divergence 釘選必須等於 markdown_it 的結果），**而且**不得讓語料、live 快照或方向釘選往放行方向移動——收斂與扣住衝突時扣住優先。第二半句是突變測試逼出來的：bullet detector 釘 C 之後跟 CommonMark 一致（CommonMark 也不把 `-<NBSP>` 當 list marker），卻讓 blocker 消失；只寫「往 markdown_it 收斂」的 (ii) 會准許它，與方向釘選互相矛盾。延期 grep 釘 C 由 (i) 拒絕，bullet detector 釘 C 由 (ii) 的後半拒絕，測試以方向釘選拒絕兩者。同一次突變測試也更正了 DA 的一句轉述：awk 釘 C **不是** fail-open——兩個量到的 NBSP 形狀都往 CommonMark 收斂（NBSP 縮排的 ``` 不再開 fence，修掉一個 fail-open；`###<NBSP>Blocking` 不再被當成標題，GitHub 也不渲染它），440 份 live 文件判定不變；gate 准許它，本輪不做（reader 語意凍結）。（勘誤，第 7 輪：「對抗或邊角形狀永遠不會出現在裡面」不成立——#290 的未閉合 fence 就在語料裡；(ii) 的「往 markdown_it 收斂且不得往放行方向」給不出確定答案，已撤回，結構規則改為凍結；awk 釘 C 在九個量到的形狀上方向不一，上面「awk 釘 C 不是 fail-open」的更正本身是錯的。）
 
-**locale 宣稱收窄到成立的範圍。** 只有 placeholder 規則與環境無關：兩個 grep 改成 `LC_ALL=C command grep`——`command` 是因為 skill 在 Claude Code 的 zsh 裡 source helper，那裡的 `grep` 是 ugrep 的 shell function，不理 `LC_ALL`；第 5 輪的釘選在 production 根本沒有生效，而測試跑的是 bash 子程序裡的 BSD grep，所以看不出來。測試改斷言**值**（`- none　` 在兩個 locale、以及被不理 locale 的 grep function 遮蔽時，都是 blocker），並加前提斷言確認 UTF-8 那一側真的把 U+3000 當空白，否則兩個 locale 的比較等於比較兩個相同環境。其餘三個 matcher 仍隨環境，留給 #336 逐構造決定哪個環境是標準。
+**locale 宣稱收窄到成立的範圍。** 只有 placeholder 規則與環境無關：兩個 grep 改成 `LC_ALL=C command grep`——`command` 是因為 skill 在 Claude Code 的 zsh 裡 source helper，那裡的 `grep` 是 ugrep 的 shell function，不理 `LC_ALL`；第 5 輪的釘選在 production 根本沒有生效，而測試跑的是 bash 子程序裡的 BSD grep，所以看不出來。測試改斷言**值**（`- none　` 在兩個 locale、以及被不理 locale 的 grep function 遮蔽時，都是 blocker），並加前提斷言確認 UTF-8 那一側真的把 U+3000 當空白，否則兩個 locale 的比較等於比較兩個相同環境。其餘三個 matcher 仍隨環境，留給 #336 逐構造決定哪個環境是標準。（勘誤，第 7 輪：「其餘三個 matcher」不完整——`### Complexity` 值的 trim 參數展開也隨 locale 變化。）
 
-**分歧清單改為「已知、不窮舉」。** 新增並以 markdown_it 實測、釘住：tab 縮排的 opener、info string 含反引號的 opener、fence 內縮排 4 格以上的 closer、list item 那一行開的 fence、HTML 註解裡的假 `### Blocking`；blockquote 裡的 fence 實測**不是**分歧，也釘住。DA 把這類形狀定為誠實問題而非安全邊界：能寫出這些形狀的作者也能直接刪掉 blocker。
+**分歧清單改為「已知、不窮舉」。** 新增並以 markdown_it 實測、釘住：tab 縮排的 opener、info string 含反引號的 opener、fence 內縮排 4 格以上的 closer、list item 那一行開的 fence、HTML 註解裡的假 `### Blocking`；blockquote 裡的 fence 實測**不是**分歧，也釘住。DA 把這類形狀定為誠實問題而非安全邊界：能寫出這些形狀的作者也能直接刪掉 blocker。（勘誤，第 7 輪：「能寫出這些形狀的作者也能直接刪掉 blocker」只對作者自己寫的文字成立；`idd-issue --from-discussion` 複製進 body 的第三方文字只靠逐行 `>` 這條散文規則擋住，見 #372。）
 
 其餘：gate 區塊的副本逐位元組比對（取代出現次數計數；單一 script 是 #370）；gate 的兩次抓取各自捕捉並 fail loud（管線裡 `gh` 失敗時 `jq -s` 收到空輸入仍回 `[]`，被讀成「沒有 diagnosis」）；plugin.json / marketplace.json 描述改寫；idd-list Step 5 列舉五個值並各給顯示規則；label scrub 宣稱改成實情；verdict 的五則 misuse 訊息過 scrub；comments drift guard 接受 `--json=`、續行、緊貼引號的 `#`；idd-all 去掉 sub-issue 的 `#` 前綴並回報跳過；數字更正（round 2 扣住 30 / 48、21 FP、55 列 / 54 區段、UTF-8 計數）。
+
+### 第 7 輪（2026-10-06）：逐形狀量測；結構規則凍結
+
+> `/idd-verify --pr 318` 第 6 輪 FAIL（3 blocking，皆 MEDIUM；6-of-6），只敗在散文：440 份 live 文件上第 5、6 輪在 bash、`LC_ALL=C`、zsh＋ugrep 三環境輸出逐位元組相同，suite 五個 locale 全綠，新測試經突變確認會咬。不成立的是第 6 輪對自己寫的三件事：gate 性質 (ii) 給不出確定答案；awk 的「更正」從兩個形狀推出全稱結論；又新增六個被推翻的全稱宣稱。本輪 reader 語意不動。
+
+**撤回 (ii)，結構規則凍結。** 第 6 輪的 (ii)——「往 markdown_it 收斂，且不得在語料、live 快照或方向釘選上往放行方向」——照普遍讀法，D1–D7 每一處的收斂都會在某個形狀上清掉 blocker，所以全被拒，「收斂是准許的」成了死文；照限定讀法，NBSP 類的環境改動在語料與快照上沒有檢驗力（兩者都不含 NBSP），結果只取決於有沒有人寫了方向釘選——bullet detector 被拒、同樣會清掉 blocker 的 awk 釘選卻被准許。spec R9 改為：結構規則（標題、fence、bullet、區段邊界、`### Complexity` 值的 trim，以及實作它們的 matcher 的 locale）凍結，直到有一條 requirement 指名它要收斂到哪個 oracle（markdown-it 或 CommonMark）以及它改變的量測形狀（#336）。詞彙規則保留，例外收窄為「每個新增的詞彙元素都必須有一列被指名的語料需要它」，堵住一列語料夾帶無關放寬（DA-6）。gate 只在 spec 寫一次，helper 與 reference 只引用。
+
+**新 gate 套到每一種改動（不再有兩種讀法）：**
+
+| 改動 | 類別 | 結果 |
+|---|---|---|
+| deferral grep 釘 C | 詞彙；`Plan when<NBSP>triggered` 往放行、無語料列需要 | 拒 |
+| bullet detector 釘 C | 結構 | 凍結（#336） |
+| awk 區段讀取釘 C | 結構 | 凍結（#336） |
+| D1–D12 往任一 oracle 收斂 | 結構 | 凍結（#336） |
+| 第 4 輪的奇數 fence 啟發式 | 結構 | 凍結 |
+| 第 4 輪的 `.` / `。` 終止符 | 詞彙；往放行、無語料列需要 | 拒 |
+| 第 6 輪的 placeholder `command` 前綴 | 詞彙；往扣住 | 准 |
+
+**awk 的方向，逐形狀量測**（bash C.UTF-8＝production 的 locale；`awkC`＝awk 前加 `LC_ALL=C`；markdown-it-py 4.0.0、pandoc 3.10 commonmark；zsh＋ugrep 與 bash C.UTF-8 結果一致）：
+
+| 形狀 | 出貨版 | awkC | markdown-it | CommonMark |
+|---|---|---|---|---|
+| s01 NBSP 縮排的 ``` 在真 blocker 上方 | 藏住 | 讀到 | 讀到 | 讀到 |
+| s02 `###<NBSP>Blocking` | 讀到 | 空 | 無區段 | 無區段 |
+| s03 `### Blocking<NBSP>` | 讀到 | 空 | 讀到 | 無區段 |
+| s03u `### Blocking<U+3000>` | 空 | 空 | 讀到 | 無區段 |
+| s04 縮排 3 格的 ATX 標題 | 空 | 空 | 讀到 | 讀到 |
+| s05 `### Blocking ###` | 空 | 空 | 讀到 | 讀到 |
+| s06 fence 內 NBSP 縮排的 closer、下有假 blocker | 讀到假的 | 空 | `(none)` | `(none)` |
+| s07 NBSP 開頭的行不是 closer、fence 未閉合 | 讀到 | 空 | 無區段 | 無區段 |
+| s08 區段內的 `##<NBSP>Next` | 空 | 讀到 | 讀到 | 讀到 |
+| s09 尾端 NBSP 的假區段在真區段之前 | 空 | 讀到 | `(none)` | 讀到 |
+| cD2／cD4 分歧藏住假 `(none)`、下有真 blocker | 讀到 | 讀到 | `(none)` | `(none)` |
+| cD7 HTML 註解裡的假 blocker | 讀到假的 | 讀到假的 | `(none)` | `(none)` |
+
+Complexity：`<NBSP>Plan` 在 UTF-8／zsh 路由成 Plan、在 C 是 exit 3；`### Complexity<NBSP>` 在 UTF-8／zsh 是區段（`Simple when triggered` → exit 5）、在 C 是 exit 4。s01、s02、s03、s03u、s04、s05、s08 釘進測試（D8–D12），Complexity 的兩個環境各釘一條；cD 列說明「收斂」本身也可能清掉 blocker，記在這裡供 #336 使用。
+
+**第 5 輪 DA 也有錯，由 DA 承擔**：「結構辨識（heading、fence）應該對齊 CommonMark……C 釘選在那裡是對的」被 s03、s09 推翻；第 6 輪沿用了這句，本輪在 #336 更正。
+
+其餘：第二個 placeholder grep 補上「永遠匹配」的 grep shadow 與 `-<U+3000>` 值斷言；gate 區塊比對補上全檔 verdict 呼叫數、idd-plan／idd-all 恰好一個區塊、區塊外不得賦值 gate 變數或印判定行、idd-all 區塊不得出現 `$NUMBER`，並以 stub `gh` 實際執行抽出的區塊；comments drift guard 同時檢查原始行與接續後的行；歷史文件的勘誤標記由測試檢查；idd-all 的 skip 行改 `printf`＋剝 C0/DEL；idd-list 的 `error` 組只留一條顯示規則；label 那句收窄到 `jq -c` 實際轉義的範圍（C0 與 DEL）。

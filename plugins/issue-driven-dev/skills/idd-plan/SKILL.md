@@ -75,7 +75,7 @@ case "$NUMBER" in ''|*[!0-9]*) echo "FATAL: non-numeric issue number: $NUMBER" >
 
 # 1. 最新 Diagnosis comment —— 只信任 OWNER / MEMBER / COLLABORATOR 寫的（public repo 任何帳號都能留言）；必須分頁。`gh issue view --json comments` 只回最舊的 100 則，
 #    issue 一長，最新的 diagnosis 正好是被丟掉的那一則（#295 同族；`--paginate --jq` 每頁一個 array，`jq -s add` 收攏）。
-#    每一步各自捕捉：管線裡 `gh` 失敗時 `jq -s` 收到空輸入照樣回 `[]`，失敗的抓取會被讀成「沒有 diagnosis」，原因標錯。
+#    抓取與折疊分開捕捉（折疊 `jq -s | python3` 仍是同一條管線）：管線裡 `gh` 失敗時 `jq -s` 收到空輸入照樣回 `[]`，失敗的抓取會被讀成「沒有 diagnosis」；第 2 頁以後才失敗則會拿不完整的 comment 判定。
 PAGES=$(gh api "repos/$GITHUB_REPO/issues/$NUMBER/comments" --paginate --jq '[.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") | {body}]') \
     || { echo "FATAL: gate #$NUMBER: comment fetch failed — gate not evaluated" >&2; exit 1; }
 LATEST_DIAGNOSIS=$(jq -s 'add // []' <<<"$PAGES" | python3 -c '

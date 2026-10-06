@@ -112,7 +112,7 @@ case "$NUMBER" in ''|*[!0-9]*) echo "FATAL: non-numeric issue number: $NUMBER" >
 
 # 1. 最新 Diagnosis comment —— 只信任 OWNER / MEMBER / COLLABORATOR 寫的（public repo 任何帳號都能留言）；必須分頁。`gh issue view --json comments` 只回最舊的 100 則，
 #    issue 一長，最新的 diagnosis 正好是被丟掉的那一則（#295 同族；`--paginate --jq` 每頁一個 array，`jq -s add` 收攏）。
-#    每一步各自捕捉：管線裡 `gh` 失敗時 `jq -s` 收到空輸入照樣回 `[]`，失敗的抓取會被讀成「沒有 diagnosis」，原因標錯。
+#    抓取與折疊分開捕捉（折疊 `jq -s | python3` 仍是同一條管線）：管線裡 `gh` 失敗時 `jq -s` 收到空輸入照樣回 `[]`，失敗的抓取會被讀成「沒有 diagnosis」；第 2 頁以後才失敗則會拿不完整的 comment 判定。
 PAGES=$(gh api "repos/$GITHUB_REPO/issues/$NUMBER/comments" --paginate --jq '[.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") | {body}]') \
     || { echo "FATAL: gate #$NUMBER: comment fetch failed — gate not evaluated" >&2; exit 1; }
 LATEST_DIAGNOSIS=$(jq -s 'add // []' <<<"$PAGES" | python3 -c '
@@ -421,7 +421,7 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $NUMBER --repo $GITHUB_R
 
 **判斷 Complexity routing**：讀最新 `## Diagnosis` comment 的 `### Complexity` 欄位（v2.36.0+ 三路；v2.50+ 加 Layer V variant）。**tier 抽取與 actionability 判定都不在此處自行寫 parser**，改呼叫 [`references/actionability-gate.md`](../../references/actionability-gate.md) 契約下的共用實作：
 
-**gate 已於 Step 0.35 執行**（第 3 輪，verify #318：gate 必須先於建 branch 與任何 egress），但**跨 Bash 區塊 shell 變數不保證存活**（與 idd-all Phase 3b.1 同一條規則），而本 step 與 Step 0.35 之間隔著 tree-lock、`git checkout -b` 與一次 egress。所以本 step **不消費**那些變數：它把 Step 0.35 的整段區塊**原樣重跑一次**（唯讀判定、冪等、無副作用），路由只看**這裡**印出的那行 `gate #N:`。不得改用私有 regex、不得從別處推 tier。第 4 輪把重跑寫成一行 `echo` 加行尾註解 —— fenced block 跑完 `$VEXIT` 仍是空的，路由表沒有任何一列對得上（verify #318 round 4）；下面這段與 Step 0.35 **逐字相同**，drift guard 斷言兩處都含 verdict 呼叫與機器行，改一處就要改兩處。
+**gate 已於 Step 0.35 執行**（第 3 輪，verify #318：gate 必須先於建 branch 與任何 egress），但**跨 Bash 區塊 shell 變數不保證存活**（與 idd-all Phase 3b.1 同一條規則），而本 step 與 Step 0.35 之間隔著 tree-lock、`git checkout -b` 與一次 egress。所以本 step **不消費**那些變數：它把 Step 0.35 的整段區塊**原樣重跑一次**（唯讀判定、冪等、無副作用），路由只看**這裡**印出的那行 `gate #N:`。不得改用私有 regex、不得從別處推 tier。第 4 輪把重跑寫成一行 `echo` 加行尾註解 —— fenced block 跑完 `$VEXIT` 仍是空的，路由表沒有任何一列對得上（verify #318 round 4）；下面這段與 Step 0.35 **逐字相同**：測試把四份 gate 區塊（本檔兩份、idd-plan、idd-all）抽出來**逐位元組比對**，並斷言區塊外沒有任何 verdict 呼叫或 gate 變數賦值 —— 改一處就要改四處（單一 script 是 #370）。
 
 ```bash
 # 缺 helper 一律 fail loud + 指名 path，禁止 fallback 到私有 regex（契約 §Consumer contract）
@@ -435,7 +435,7 @@ case "$NUMBER" in ''|*[!0-9]*) echo "FATAL: non-numeric issue number: $NUMBER" >
 
 # 1. 最新 Diagnosis comment —— 只信任 OWNER / MEMBER / COLLABORATOR 寫的（public repo 任何帳號都能留言）；必須分頁。`gh issue view --json comments` 只回最舊的 100 則，
 #    issue 一長，最新的 diagnosis 正好是被丟掉的那一則（#295 同族；`--paginate --jq` 每頁一個 array，`jq -s add` 收攏）。
-#    每一步各自捕捉：管線裡 `gh` 失敗時 `jq -s` 收到空輸入照樣回 `[]`，失敗的抓取會被讀成「沒有 diagnosis」，原因標錯。
+#    抓取與折疊分開捕捉（折疊 `jq -s | python3` 仍是同一條管線）：管線裡 `gh` 失敗時 `jq -s` 收到空輸入照樣回 `[]`，失敗的抓取會被讀成「沒有 diagnosis」；第 2 頁以後才失敗則會拿不完整的 comment 判定。
 PAGES=$(gh api "repos/$GITHUB_REPO/issues/$NUMBER/comments" --paginate --jq '[.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") | {body}]') \
     || { echo "FATAL: gate #$NUMBER: comment fetch failed — gate not evaluated" >&2; exit 1; }
 LATEST_DIAGNOSIS=$(jq -s 'add // []' <<<"$PAGES" | python3 -c '

@@ -527,7 +527,7 @@ case "$N" in ''|*[!0-9]*) echo "FATAL: non-numeric issue number: $N" >&2; exit 1
 
 # 1. 最新 Diagnosis comment —— 只信任 OWNER / MEMBER / COLLABORATOR 寫的（public repo 任何帳號都能留言）；必須分頁。`gh issue view --json comments` 只回最舊的 100 則，
 #    issue 一長，最新的 diagnosis 正好是被丟掉的那一則（#295 同族；`--paginate --jq` 每頁一個 array，`jq -s add` 收攏）。
-#    每一步各自捕捉：管線裡 `gh` 失敗時 `jq -s` 收到空輸入照樣回 `[]`，失敗的抓取會被讀成「沒有 diagnosis」，原因標錯。
+#    抓取與折疊分開捕捉（折疊 `jq -s | python3` 仍是同一條管線）：管線裡 `gh` 失敗時 `jq -s` 收到空輸入照樣回 `[]`，失敗的抓取會被讀成「沒有 diagnosis」；第 2 頁以後才失敗則會拿不完整的 comment 判定。
 PAGES=$(gh api "repos/$GITHUB_REPO/issues/$N/comments" --paginate --jq '[.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") | {body}]') \
     || { echo "FATAL: gate #$N: comment fetch failed — gate not evaluated" >&2; exit 1; }
 LATEST_DIAGNOSIS=$(jq -s 'add // []' <<<"$PAGES" | python3 -c '
@@ -1014,7 +1014,7 @@ for sub_n in "$ROOT_N" "${SPAWNED_ISSUES[@]:-}"; do
   sub_n=${sub_n#\#}   # manifest 由模型填寫、未正規化：`#123` 先去掉 `#` 再驗型，否則兩項掃描都被靜默跳過（verify #318 round 5）
   case "$sub_n" in
     '') continue ;;   # 空值（例如 SPAWNED_ISSUES 為空時的 `:-` 展開）
-    *[!0-9]*) echo "⚠ skipping non-numeric sub-issue: $sub_n — Clarity Surface / Layer V scan not run" >&2; continue ;;
+    *[!0-9]*) printf '⚠ skipping non-numeric sub-issue: %s — Clarity Surface / Layer V scan not run\n' "$sub_n" | LC_ALL=C tr -d '\000-\010\013-\037\177' >&2; continue ;;   # printf, not echo：zsh 的 echo 會解譯值裡的反斜線跳脫（`\n` 偽造一行、`\c` 吞掉後半句）；值由模型填寫，剝 C0/DEL
   esac   # 進任何 gh 呼叫前驗型（manifest 內容不可信）。驗型必須在第一次使用之前，不是兩次使用之間（verify #318 round 4）
   SUB_BODY=$(gh issue view "$sub_n" --repo "$GITHUB_REPO" --json body --jq '.body' 2>/dev/null)
   # NOTE (v2.74.1+, #137 verify R1 fix): naive `awk '/^### Clarity Surface/,/^### /'`

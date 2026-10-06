@@ -186,8 +186,8 @@ Devil's Advocate's ruling, replicated by the coordinator: revert, do not refine.
   remaining departures from CommonMark — fence length, indentation, a closer with trailing
   text — are listed with their direction and pinned as documented divergences; none occurs in
   407 live documents.
-  *Errata: "three" was not the whole list — four more shapes, and the list is now stated as
-  known, not exhaustive; see Round 6.*
+  *Errata: "three" was not the whole list — Round 6 added four (D4–D7) plus a tab case under
+  D2, Round 7 five more (D8–D12); the list is now stated as known, not exhaustive.*
 - **`.` / `。` removed from the placeholder terminators.** `- None. Waiting on X` and
   `- 無。等 #99 merge` read as "no blocker"; no corpus row needed the full stop, and the spec
   never authorised it. The bare `- None.` now reads as a blocker (fail-closed, pinned).
@@ -259,6 +259,9 @@ semantics.
   pins now refuse both. The verify had grouped the awk with them — the mutation test showed that
   pinning it converges on CommonMark instead (both measured NBSP shapes) and changes no live
   verdict; the gate admits it, round 6 leaves it.
+  *Errata (Round 7): the awk claim is wrong — measured on nine NBSP shapes, the awk C pin moves
+  verdicts in both directions (and on `### Blocking<NBSP>` clears a blocker markdown-it reads); it
+  is a structural change, frozen, not something the gate admits.*
 - **Change gate, keyed on direction and an external oracle.** Vocabulary rules may only move
   toward withholding (unless a named corpus row flips, or a revert); structural rules may only
   move toward the markdown_it render and may not move the corpus, the live snapshot or a
@@ -266,11 +269,16 @@ semantics.
   loses a blocker, so withholding wins. The corpus samples how the producer writes and never
   contains an edge shape, so a gate keyed on "a corpus row flips" forbade every hardening fix;
   round 5's third form, added to escape that, would have admitted the two fail-opens above.
+  *Errata (Round 7): this property gave no determinate answer and is withdrawn — structural rules
+  are frozen until a requirement names their oracle. The corpus does hold an edge shape (#290's
+  unclosed fence); it does not guarantee coverage of them.*
 - **Shipped descriptions.** `plugin.json` and `marketplace.json` no longer claim round 4's three
   repairs; they describe rounds 2–6 as shipped.
 - **The gate's fetches are guarded.** In `gh … | jq -s | python3` a failed fetch reached jq as
   empty input and read as "no diagnosis" — after the branch and the public comment, at
   Step 2.5. Each step is now captured and fails loud; the issue fetch too.
+  *Errata (Round 7): the fetch and the fold are captured separately; the fold (`jq -s | python3`)
+  is still one pipeline.*
 - idd-list Step 5 enumerates five values with a display rule each — `undiagnosed` was missing,
   so a `diagnosed`-phase issue without `### Complexity` fell through to `/idd-implement`. The
   label-scrub claim, which no code implemented, is replaced by what is true (the gate surfaces
@@ -283,6 +291,59 @@ semantics.
   counted a synthetic #290 section); the rejected regex is 21 FP on the semantic review
   everywhere; "55 rows, 54 sections under CommonMark"; counts are UTF-8 counts. Errata markers
   above.
+
+### Round 7 — measured shape by shape; structural rules frozen
+
+The round-6 verify (6-of-6) returned FAIL on prose alone: on 440 live documents rounds 5 and 6
+give byte-identical output in bash, `LC_ALL=C` and zsh+ugrep, the suite passed in five
+locales, and the new tests bit under mutation. Three things round 6 wrote about itself did not
+hold. This round changes no reader semantics.
+
+- **Change-gate property (ii) withdrawn; structural rules frozen.** Round 6's property —
+  "toward the markdown_it render, never toward clearing on the corpus, the live snapshot or a
+  direction pin" — gave no determinate answer: read universally it refused every divergence's
+  convergence; read narrowly it depended on which direction pins someone had written (the
+  bullet-detector pin was refused, an awk pin that also clears blockers was admitted). Spec R9
+  now freezes structural rules — headings, fences, bullets, section boundaries, the Complexity
+  trim, and the locale of their matchers — until a requirement names the oracle it converges on
+  and the shapes it changes (#336). The vocabulary rule stays, and its exception is narrowed:
+  every element a change adds must be required by a named corpus row, so one row cannot carry
+  an unrelated widening. The gate is written once, in the spec; the helper and reference cite
+  it.
+- **The awk claim, re-measured.** Round 6 said pinning the awk extractor to C "converges on
+  CommonMark" from two shapes. Measured on nine, against markdown-it and pandoc's CommonMark
+  reader, it moves verdicts both ways: toward withholding on an NBSP-indented ``` and on
+  `##<NBSP>Next`, toward clearing on `###<NBSP>Blocking`, an NBSP-indented closer inside a fence
+  and an NBSP-led line that leaves a fence unclosed, and on `### Blocking<NBSP>` it clears a
+  blocker markdown-it reads and CommonMark does not. markdown-it and CommonMark disagree on
+  heading text with trailing NBSP / U+3000 — choosing the oracle is part of #336.
+- **Known divergences D8–D12** added and pinned (under C.UTF-8, the production locale, with a
+  precondition that this awk treats NBSP as blank there): NBSP-indented opener; `###<NBSP>` /
+  `##<NBSP>` headings; trailing NBSP / U+3000 after heading text; ATX headings indented 1–3
+  spaces; closing-sequence headings. The awk C pin now fails four of these pins.
+- **Six claims narrowed:** the corpus "never" holds an edge shape (it holds #290's unclosed
+  fence); the environment list now includes the Complexity trim (`<NBSP>Plan` routes under
+  UTF-8, is unparseable under C); the two refuted spec scenarios are replaced by concrete ones;
+  "an author who can write these can delete the blocker" now says what it covers and points to
+  `idd-issue --from-discussion` (#372); control characters → "C0 control characters and DEL"
+  (C1 / NEL / U+2028 pass, #371) with the five value-echoing misuse messages named; the plugin
+  and marketplace descriptions now state the frozen structural rule and "55 rows (54 sections
+  under CommonMark)".
+- **Tests that could not see what they guarded.** The second placeholder grep is pinned (an
+  always-matching `grep` shadow and `-<U+3000>` value pins). The gate-block compare now also
+  checks that every verdict call in a file sits in a compared block, that idd-plan and idd-all
+  carry exactly one, that no other fenced code assigns a gate variable or prints a verdict
+  line, and that idd-all's block never says `$NUMBER`; and it RUNS the extracted block against
+  a stub `gh` (failed comment fetch, failed issue fetch, success). The comments drift guard
+  checks raw lines as well as joined ones (joining alone hid a fetch after `2>/dev/null \`).
+  History documents carry errata markers, checked by the suite.
+- Consumers: idd-all's skip line prints through `printf` and strips C0 / DEL (zsh's `echo`
+  interpreted escapes in the model-filled value); idd-list has one display rule for
+  `group=error` and names every Step 3.7 exit that produces it; its label sentence is narrowed
+  to what `jq -c` actually escapes; idd-implement's Step 2.5 prose names the byte compare; the
+  gate block's comment says the fetch and the fold are captured separately, and that the guard
+  also closes a fail-open — a failure on page 2 or later used to route on an incomplete
+  comment set.
 
 ### Honest residue
 

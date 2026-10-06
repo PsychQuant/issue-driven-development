@@ -82,13 +82,17 @@
 #     by one stray opener), and the state-machine variant ("stop tracking if
 #     still open at EOF") failed the same shape. Any "detect imbalance → stop
 #     tracking" rule is a one-key switch. Do not reintroduce one.
-#   - where this line-based reader DEPARTS from CommonMark — the list is
-#     known, not exhaustive: a line reader is not a CommonMark parser, and
-#     more shapes may exist. Each shape below was measured against markdown_it and is
-#     pinned by test as a DOCUMENTED DIVERGENCE. Measured basis: on the live
-#     snapshot (243 bodies + 164 Diagnosis comments, 2026-09-08) the reader
-#     and markdown_it agree on section presence, content and verdict for all
-#     217 sections; none of these shapes occurs there.
+#   - where this line-based reader DEPARTS from markdown-it or CommonMark —
+#     the list is known, not exhaustive: a line reader is not a parser, and
+#     more shapes may exist. Each shape below was measured against
+#     markdown-it-py 4.0.0 and (round 7) pandoc 3.10's CommonMark reader, and
+#     is pinned by test as a DOCUMENTED DIVERGENCE. The two oracles are not the
+#     same: markdown-it strips NBSP / U+3000 from heading text, CommonMark
+#     strips only spaces and tabs (D10). Measured basis: on the snapshot of
+#     2026-09-08 (243 bodies + 164 Diagnosis comments) the reader and
+#     markdown-it agree on section presence, content and verdict for all 217
+#     sections; none of D1–D7 occurs there, and no body of the 2026-10-06
+#     snapshot (273) contains NBSP or U+3000.
 #       D1 fence length is not compared — a ```` opener is closed by the first
 #          ``` line, so a nested example is read as outside (either direction)
 #       D2 indentation is not checked — a ``` indented 4+ spaces or by a tab
@@ -108,11 +112,26 @@
 #          divergence: neither side reads its contents.
 #       D7 an HTML comment holding a fake `### Blocking` is hidden by GitHub
 #          but read here — the first matching heading wins (either direction)
-#     An issue author who can write any of these can also delete the real
-#     blocker outright, so this list is an honesty statement, not a security
-#     boundary. Converging a shape on the markdown_it render is ALLOWED by the
-#     change gate below and flips its pin in the same commit; whether this
-#     field should be regex-read at all is #336.
+#     Round 7, measured under C.UTF-8 (the production shell's locale; the awk
+#     follows the locale, so D8–D10 are environment-dependent):
+#       D8 an NBSP-indented ``` opens a fence here; both oracles read paragraph
+#          text, so the section below is hidden (fail-open)
+#       D9 `###<NBSP>X` / `##<NBSP>X` count as headings here; neither oracle
+#          treats them as headings — `###<NBSP>Blocking` is read as the section
+#          (either direction), `##<NBSP>Next` ends it early (fail-open)
+#       D10 trailing NBSP / U+3000 after the heading text: `### Blocking<NBSP>`
+#          is read (markdown-it agrees, CommonMark does not), `### Blocking
+#          <U+3000>` is not (CommonMark agrees, markdown-it does not)
+#       D11 an ATX heading indented 1–3 spaces is not read; both oracles read
+#          it (fail-open)
+#       D12 an ATX heading with a closing sequence (`### Blocking ###`) is not
+#          read; both oracles read it (fail-open)
+#     Anyone who can edit the body can also delete a blocker outright, so for
+#     text the author wrote this list is an honesty statement. Third-party text
+#     copied INTO a body (idd-issue --from-discussion) is held back only by its
+#     per-line `>` quoting, a prose rule today — #372. Changing any of these
+#     shapes is a structural change: frozen until a requirement names its
+#     oracle (spec R9; #336).
 #   - the section ends at the next heading of the same or higher level;
 #     a deeper `####` line is skipped, never taken as a value
 _idd_section_lines() {
@@ -149,9 +168,13 @@ _idd_section_first_line() {
 # C1 controls, and it cannot do anything about prose that reads like an
 # instruction: surfaced values are DATA, never instructions, and that boundary
 # is the consumer's delimiter (see the canonical gate print), not this
-# function. Every message this file writes that carries an input value passes
-# through it (the raw lines, the surfaced bullet, every misuse message — each
-# pinned by test); the other outputs are fixed vocabulary.
+# function. What passes through it: the two raw lines idd_parse_complexity
+# surfaces, the bullet idd_blocking_section surfaces, and the five misuse
+# messages that echo an argument value (four in the verdict, one in the group
+# helper) — each pinned by test. The verdict's "requires a value" message
+# echoes only a flag name already matched by `case`; the private
+# `_idd_section_*` readers return raw text to the functions above and no
+# consumer calls them. Everything else this file prints is fixed vocabulary.
 _idd_scrub() {
     LC_ALL=C tr -d '\000-\010\013-\037\177'
 }
@@ -352,25 +375,19 @@ idd_actionability_verdict() {
 # fail-closed side, and whether this field should be regex-read at all is
 # #336. Do not extend this by analogy; change #336 first.
 #
-# CHANGE GATE (round 6; normative text in spec R9) — keyed on a DIRECTION and
-# an EXTERNAL ORACLE, not on the corpus alone, because the corpus samples how
-# the producer writes and never contains an adversarial or edge shape:
+# CHANGE GATE (round 7) — the normative text is spec R9 (openspec/changes/
+# add-actionability-gate/specs/actionability-gate/spec.md); in one line each:
 #   (i)  VOCABULARY rules (placeholder tokens and terminators, deferral
-#        vocabulary) may only move toward WITHHOLDING. A change in the other
-#        direction must flip a measured corpus row, named in the commit, or be
-#        a revert.
-#   (ii) STRUCTURAL rules (heading, fence, bullet, section boundaries) may only
-#        move toward the markdown_it render — a documented-divergence pin they
-#        flip must flip to markdown_it's result — AND may not move anything
-#        toward clearing on the frozen corpus, the live snapshot or a
-#        direction pin. Where convergence and withholding conflict,
-#        withholding wins and the case goes to #336.
-# Round 4's widenings fail (i) (they cleared real blockers) and round 5's
-# third form ("removes an environment dependence") would have admitted the two
-# fail-opens recorded under Locale below — it is withdrawn. The bullet
-# detector is where (ii)'s two halves conflict: under C it agrees with
-# CommonMark (`-<NBSP>` is not a list marker there either) and still loses a
-# blocker, so it is refused.
+#        vocabulary, and the locale of the greps that apply them) move only
+#        toward WITHHOLDING, unless the change is a revert or every element it
+#        adds is required by a measured corpus row named in the commit;
+#   (ii) STRUCTURAL rules (heading, fence, bullet and section boundaries, the
+#        Complexity trim, and the locale of the matchers that implement them)
+#        are FROZEN until a requirement names the oracle they converge on and
+#        the measured shapes they change (#336).
+# Round 6 tried a property here ("toward the markdown_it render, never toward
+# clearing on the corpus, the live snapshot or a direction pin"); the round-6
+# verify showed it gives no determinate answer, so it is withdrawn.
 #
 # Locale: multibyte characters are written as alternations, never inside a
 # bracket expression (under LC_ALL=C a bracket splits into bytes and `— – 、 ：`
@@ -386,23 +403,28 @@ idd_actionability_verdict() {
 # shadowing grep function: `- none　` reads as a blocker (withholding side; the
 # corpus has no such row). That is the whole locale claim: the PLACEHOLDER rule
 # does not depend on the environment.
-# The other matchers — the bullet detector in idd_blocking_section, the
-# deferral grep in idd_parse_complexity, and the awk section extractor — DO
-# follow the environment. Measured directions (round 6, against markdown_it):
-#   - deferral grep: pinning it to C makes `Plan when<NBSP>triggered` routable
-#     (#298's incident) — refused by (i), and by a direction pin;
-#   - bullet detector: pinning it to C makes `- (none)` + `-<NBSP>等 #99 merge`
-#     lose its blocker — refused by (ii), and by a direction pin;
-#   - awk extractor: pinning it to C CONVERGES on CommonMark in both measured
-#     NBSP shapes — an NBSP-indented ``` stops opening a fence (fixing a
-#     fail-open) and `###<NBSP>Blocking` stops being a heading (dropping a
-#     fail-closed read GitHub does not render) — and changes nothing on the
-#     live snapshot (bash under C and under UTF-8 agree on all 440 documents
-#     of 2026-10-06). The gate admits it; round 6 does not make it (reader
-#     semantics frozen this round).
-# The verify's own prescription grouped the awk with the two fail-opens; the
-# mutation test showed it is not one. Which environment is canonical per
-# construct is #336.
+# The known environment dependences of the other matchers — known, not
+# exhaustive — each measured in bash C.UTF-8, bash C and the production zsh
+# (round 7), with what a C-locale pin would do:
+#   - deferral grep: `Plan when<NBSP>triggered` is withheld under UTF-8 and
+#     routable under C; a C pin makes it routable in all three measured
+#     environments (#298's incident)
+#     — refused by (i), and by a direction pin in the test;
+#   - bullet detector: `- (none)` + `-<NBSP>等 #99 merge` is a blocker under
+#     UTF-8 and empty under C; a C pin loses the blocker in all three — a
+#     structural change, frozen by (ii), and caught by a direction pin;
+#   - awk section extractor: MIXED. A C pin moves D8 and `##<NBSP>Next` (D9)
+#     toward withholding and toward both oracles; moves `###<NBSP>Blocking`
+#     (D9), an NBSP-indented closer inside a fence, and an NBSP-led line that
+#     leaves a fence unclosed toward clearing, also toward both oracles; and on
+#     `### Blocking<NBSP>` (D10) it clears a blocker that markdown-it reads
+#     and CommonMark does not. Round 6 judged this pin harmless from two
+#     shapes; that was wrong. Frozen by (ii); the D8–D10 pins catch it;
+#   - Complexity trim (the `[![:space:]]` parameter expansions):
+#     `<NBSP>Plan` routes as Plan under UTF-8 and is unparseable (exit 3)
+#     under C; `### Complexity<NBSP>` is a section under UTF-8 and missing
+#     (exit 4) under C. Pinned in both environments as a record.
+# Which environment, and which oracle, is canonical per construct is #336.
 #
 # Rejected candidate rules (measured on the same 55 rows against the SEMANTIC
 # hand review — 48 empty / 7 real blockers; kept so nobody re-derives them):
