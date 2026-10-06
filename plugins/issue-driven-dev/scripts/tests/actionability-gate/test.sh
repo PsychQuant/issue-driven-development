@@ -837,7 +837,11 @@ assert_true "≥3 deferral-vocabulary rows ($n_def)"        "[ $n_def -ge 3 ]"
 # Round-5 claims refuted by the round-5 verify must not come back (round 6). Empirical statements
 # about the outside world are "known, not exhaustive"; the change gate is two direction properties.
 ROOT="$HERE/../../../../.."
-SPEC="$ROOT/openspec/changes/add-actionability-gate/specs/actionability-gate/spec.md"
+# After `spectra archive` (2026-10-07) the requirements live in the main spec; the change's design and
+# tasks live in its archive directory. A test that kept reading the old change path would fail open
+# (a missing file refutes nothing), so the paths are asserted to exist below.
+SPEC="$ROOT/openspec/specs/actionability-gate/spec.md"
+ARCHIVED="$ROOT/openspec/changes/archive/2026-10-07-add-actionability-gate"
 refute_output_grep "spec.md: no 'one of exactly three forms' change gate" 'one of exactly three forms' "$SPEC"
 for f in "$LIB" "$REF" "$SPEC"; do
   n=$(basename "$f")
@@ -873,7 +877,8 @@ bullet_marked() {   # file pattern marker — every bullet / paragraph holding P
   awk -v pat="$2" -v mk="$3" 'function flush() { if (buf != "" && index(buf, pat) && !index(buf, mk)) bad++; buf = "" }
     /^- / || /^#/ || /^[[:space:]]*$/ { flush() } { buf = buf "\n" $0 } END { flush(); exit (bad > 0) }' "$1"
 }
-DESIGN="$ROOT/openspec/changes/add-actionability-gate/design.md"; TASKS="$ROOT/openspec/changes/add-actionability-gate/tasks.md"
+DESIGN="$ARCHIVED/design.md"; TASKS="$ARCHIVED/tasks.md"
+for f_ in "$SPEC" "$DESIGN" "$TASKS"; do assert_true "spec artifact present: ${f_#"$ROOT/"}" "[ -s '$f_' ]"; done
 CL="$ROOT/plugins/issue-driven-dev/CHANGELOG.md"
 for spec_ in "$DESIGN|三處已知分歧|勘誤" "$DESIGN|三種合法形態|勘誤" "$DESIGN|不是** fail-open|勘誤" "$DESIGN|永遠不會出現在裡面|勘誤" \
              "$TASKS|封閉三形態|勘誤" "$TASKS|awk 的 C 釘選未被擋|勘誤" \
