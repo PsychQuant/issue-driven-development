@@ -286,3 +286,6 @@ Complexity：`<NBSP>Plan` 在 UTF-8／zsh 路由成 Plan、在 C 是 exit 3；`#
 **第 5 輪 DA 也有錯，由 DA 承擔**：「結構辨識（heading、fence）應該對齊 CommonMark……C 釘選在那裡是對的」被 s03、s09 推翻；第 6 輪沿用了這句，本輪在 #336 更正。
 
 其餘：第二個 placeholder grep 補上「永遠匹配」的 grep shadow 與 `-<U+3000>` 值斷言；gate 區塊比對補上全檔 verdict 呼叫數、idd-plan／idd-all 恰好一個區塊、區塊外不得賦值 gate 變數或印判定行、idd-all 區塊不得出現 `$NUMBER`，並以 stub `gh` 實際執行抽出的區塊；comments drift guard 同時檢查原始行與接續後的行；歷史文件的勘誤標記由測試檢查；idd-all 的 skip 行改 `printf`＋剝 C0/DEL；idd-list 的 `error` 組只留一條顯示規則；label 那句收窄到 `jq -c` 實際轉義的範圍（C0 與 DEL）。
+
+**平台（merge 前 CI 抓到）**：第 6 輪的方向釘選把 macOS 的行為當成普遍規則。macOS 的 C library 在 UTF-8 locale 下把 NBSP 當空白，glibc 不會；U+3000 兩邊的 grep 都當空白，gawk 也當，macOS 的 awk 與 mawk 不當（Ubuntu 24.04 容器實測，GNU grep 3.11、gawk、mawk）。所以在 Linux 上，NBSP 形狀本來就走 C locale 的路：`Plan when<NBSP>triggered` 會被路由、`- (none)` 後的 `-<NBSP>` blocker 讀不到——第 3 輪以來一直如此，不是本輪的退化。CI（ubuntu-latest）從 `c006c8b` 起每個 commit 都失敗，第 6 輪 verify 只在 macOS 上跑、沒有看 CI。修法：兩條方向釘選改用 U+3000（兩個平台行為一致，C 釘選突變照樣抓得到），NBSP 形式改為記錄本平台實測值；D8–D10 的期望值依本機 awk 的實測分類決定。容器內以非 root 使用者跑全套：53 suites、0 failed；macOS 兩個 locale 皆 502/502。
+

@@ -317,10 +317,18 @@ hold. This round changes no reader semantics.
   and an NBSP-led line that leaves a fence unclosed, and on `### Blocking<NBSP>` it clears a
   blocker markdown-it reads and CommonMark does not. markdown-it and CommonMark disagree on
   heading text with trailing NBSP / U+3000 — choosing the oracle is part of #336.
-- **Known divergences D8–D12** added and pinned (under C.UTF-8, the production locale, with a
-  precondition that this awk treats NBSP as blank there): NBSP-indented opener; `###<NBSP>` /
+- **Known divergences D8–D12** added and pinned: NBSP-indented opener; `###<NBSP>` /
   `##<NBSP>` headings; trailing NBSP / U+3000 after heading text; ATX headings indented 1–3
-  spaces; closing-sequence headings. The awk C pin now fails four of these pins.
+  spaces; closing-sequence headings. D8–D10 take their expected value from the platform awk's
+  measured classification (macOS's awk: NBSP blank, U+3000 not; gawk: the reverse; mawk:
+  neither). On macOS the awk C pin now fails four of these pins.
+- **Platform, caught by CI.** Round 6's direction pins assumed macOS: glibc does not classify
+  NBSP as blank, so on Linux `Plan when<NBSP>triggered` already routes and a `-<NBSP>` blocker
+  after a placeholder is not read. CI on ubuntu-latest had failed on every commit since
+  `c006c8b`; the round-6 verify ran on macOS only and did not look. The direction pins now use
+  U+3000 (blank to grep on both platforms) and still catch the C pins; the NBSP forms are
+  recorded with the platform's value. Measured in an Ubuntu 24.04 container (GNU grep 3.11,
+  gawk, mawk); the full runner there, as a non-root user, is 53 suites, 0 failed.
 - **Six claims narrowed:** the corpus "never" holds an edge shape (it holds #290's unclosed
   fence); the environment list now includes the Complexity trim (`<NBSP>Plan` routes under
   UTF-8, is unparseable under C); the two refuted spec scenarios are replaced by concrete ones;

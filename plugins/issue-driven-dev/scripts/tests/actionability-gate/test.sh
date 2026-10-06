@@ -300,11 +300,21 @@ if [ "$HELPER_PRESENT" -eq 1 ]; then
   # either change. The remaining environment dependence is listed in the helper and handed to #336.
   utf8_cexit() { LC_ALL=C.UTF-8 bash -c '. "$1"; idd_parse_complexity "$2" >/dev/null 2>&1; echo $?' _ "$LIB" "$1"; }
   utf8_block() { LC_ALL=C.UTF-8 bash -c '. "$1"; idd_blocking_section "$2"' _ "$LIB" "$1"; }
-  assert_eq "direction pin (deferral grep): 'Plan when<NBSP>triggered' is withheld (exit 5), never routable" "5" \
-    "$(utf8_cexit $'### Complexity\n\nPlan when triggered\n')"
-  assert_eq "direction pin (deferral grep): 'Simple when<U+3000>triggered' is withheld (exit 5)" "5" \
+  # The pins use U+3000, which both macOS's libc and glibc classify as blank under a UTF-8 locale
+  # (round 7, measured: macOS bash + BSD grep + the production zsh; Ubuntu 24.04 + GNU grep 3.11).
+  # NBSP is NOT portable: glibc does not classify it as blank, so on Linux the NBSP forms already
+  # take the C-locale path. Round 6 pinned the NBSP forms and CI (ubuntu-latest) failed — on every
+  # commit since c006c8b, unnoticed by the round-6 verify, which ran on macOS only.
+  assert_eq "direction pin (deferral grep): 'Simple when<U+3000>triggered' is withheld (exit 5), never routable" "5" \
     "$(utf8_cexit $'### Complexity\n\nSimple when　triggered\n')"
-  assert_eq "direction pin (bullet detector): a real blocker '-<NBSP>…' after a placeholder is read" "- 等 #99 merge" \
+  assert_eq "direction pin (bullet detector): a real blocker '-<U+3000>…' after a placeholder is read" "-　等 #99 merge" \
+    "$(utf8_block $'### Blocking\n- (none)\n-　等 #99 merge\n')"
+  # Environment RECORD (not an approval): the NBSP forms, with the value this platform's libc gives.
+  nbsp_grep=$(printf ' \n' | LC_ALL=C.UTF-8 command grep -cE '^[[:space:]]$')
+  if [ "$nbsp_grep" = 1 ]; then exp_def=5; exp_bul="- 等 #99 merge"; plat="libc classifies NBSP as blank (macOS)"; else exp_def=0; exp_bul=""; plat="libc does not classify NBSP as blank (glibc): the C-locale path"; fi
+  assert_eq "environment record ($plat): 'Plan when<NBSP>triggered' exit under UTF-8" "$exp_def" \
+    "$(utf8_cexit $'### Complexity\n\nPlan when triggered\n')"
+  assert_eq "environment record ($plat): '-<NBSP>…' after a placeholder under UTF-8" "$exp_bul" \
     "$(utf8_block $'### Blocking\n- (none)\n- 等 #99 merge\n')"
   # C0 / DEL scrubbed at the helper's outputs (TAB and LF kept)
   assert_eq "blocking: mid-line CR and ESC are scrubbed" "- 等 #99 fake[31mX" "$(idd_blocking_section $'### Blocking\n- 等 #99\r fake\033[31mX\n')"
@@ -399,21 +409,28 @@ if [ "$HELPER_PRESENT" -eq 1 ]; then
   # are environment-dependent where NBSP is involved). They record today's behaviour, not an
   # approval: changing any of them is a structural change, frozen until a requirement names its
   # oracle (#336). The awk C pin moves D8, D9 and D10 in mixed directions — these pins catch it.
-  assert_eq "precondition: under C.UTF-8 this awk classifies NBSP as [[:space:]] (else the D8–D10 pins test another environment)" "1" \
-    "$(printf ' x\n' | LC_ALL=C.UTF-8 awk '/^[[:space:]]x/' | wc -l | tr -d ' ')"
+  # Which awk this is decides D8–D10 (round 7, measured): macOS's awk treats NBSP as blank under
+  # C.UTF-8 and U+3000 not; gawk + glibc the reverse; mawk neither. The expected value of each pin
+  # follows this platform's classification, so a change that makes the helper's awk disagree with
+  # the platform awk (a C-locale pin, a different regex) fails on macOS and under gawk alike.
+  awk_nbsp=$(printf ' x\n' | LC_ALL=C.UTF-8 awk '/^[[:space:]]x/' | wc -l | tr -d ' ')
+  awk_u3000=$(printf '　x\n' | LC_ALL=C.UTF-8 awk '/^[[:space:]]x/' | wc -l | tr -d ' ')
+  echo "  note: this awk under C.UTF-8 — NBSP blank=$awk_nbsp, U+3000 blank=$awk_u3000"
+  if [ "$awk_nbsp" = 1 ]; then d8="" d9a="- 等 #99 merge" d9b="" d10="- 等 #99 merge"; else d8="- 等 #99 merge" d9a="" d9b="- 等 #99 merge" d10=""; fi
+  if [ "$awk_u3000" = 1 ]; then d10u="- 等 #99 merge"; else d10u=""; fi
   # D8: an NBSP-indented ``` opens a fence here; both oracles read paragraph text. Fail-open.
-  assert_eq "DOCUMENTED DIVERGENCE D8 (NBSP-indented opener, UTF-8): the real blocker below is hidden" "" \
+  assert_eq "DOCUMENTED DIVERGENCE D8 (NBSP-indented opener, UTF-8; NBSP blank=$awk_nbsp): hidden where NBSP is blank" "$d8" \
     "$(utf8_block $'### Notes\n ```\nx\n\n### Blocking\n- 等 #99 merge\n')"
   # D9: `###<NBSP>X` / `##<NBSP>X` count as headings here; neither oracle treats them as headings.
-  assert_eq "DOCUMENTED DIVERGENCE D9 (###<NBSP>Blocking, UTF-8): read as the section (either direction)" "- 等 #99 merge" \
+  assert_eq "DOCUMENTED DIVERGENCE D9 (###<NBSP>Blocking, UTF-8; NBSP blank=$awk_nbsp): read as the section where NBSP is blank" "$d9a" \
     "$(utf8_block $'### Blocking\n- 等 #99 merge\n')"
-  assert_eq "DOCUMENTED DIVERGENCE D9 (##<NBSP>Next ends the section early, UTF-8): the blocker below is hidden" "" \
+  assert_eq "DOCUMENTED DIVERGENCE D9 (##<NBSP>Next, UTF-8; NBSP blank=$awk_nbsp): ends the section early where NBSP is blank" "$d9b" \
     "$(utf8_block $'### Blocking\n- (none)\n## Next\n- 等 #99 merge\n')"
   # D10: trailing whitespace other than space/tab after the heading text. The oracles disagree:
   #      markdown-it strips it (heading "Blocking"); pandoc's CommonMark keeps it ("Blocking\160").
-  assert_eq "DOCUMENTED DIVERGENCE D10 (### Blocking<NBSP>, UTF-8): read (= markdown-it; pandoc CommonMark: no such heading)" "- 等 #99 merge" \
+  assert_eq "DOCUMENTED DIVERGENCE D10 (### Blocking<NBSP>, UTF-8; NBSP blank=$awk_nbsp): read where NBSP is blank (= markdown-it; CommonMark: no such heading)" "$d10" \
     "$(utf8_block $'### Blocking \n- 等 #99 merge\n')"
-  assert_eq "DOCUMENTED DIVERGENCE D10 (### Blocking<U+3000>, UTF-8): not read (= pandoc CommonMark; markdown-it reads it)" "" \
+  assert_eq "DOCUMENTED DIVERGENCE D10 (### Blocking<U+3000>, UTF-8; U+3000 blank=$awk_u3000): read only where this awk treats U+3000 as blank (gawk)" "$d10u" \
     "$(utf8_block $'### Blocking　\n- 等 #99 merge\n')"
   # D11 / D12: an ATX heading indented 1–3 spaces, or with a closing sequence, is not read here;
   #      both oracles read it. Fail-open.
@@ -421,7 +438,9 @@ if [ "$HELPER_PRESENT" -eq 1 ]; then
   assert_eq "DOCUMENTED DIVERGENCE D12 (### Blocking ### closing sequence): not read" "" "$(idd_blocking_section $'### Blocking ###\n- 等 #99 merge\n')"
   # Complexity's ltrim/rtrim parameter expansions follow the shell locale too (an environment
   # dependence round 6 left off its list). Recorded in both environments.
-  assert_eq "environment dependence (Complexity trim): '<NBSP>Plan' routes as Plan under UTF-8 (exit 0)" "0" "$(utf8_cexit $'### Complexity\n\n Plan\n')"
+  nbsp_bash=$(LC_ALL=C.UTF-8 bash -c 'x=$1a; y=${x#"${x%%[![:space:]]*}"}; [ "$y" = a ] && echo 1 || echo 0' _ $' ')
+  if [ "$nbsp_bash" = 1 ]; then exp_trim=0; else exp_trim=3; fi
+  assert_eq "environment dependence (Complexity trim; bash NBSP blank=$nbsp_bash): '<NBSP>Plan' under UTF-8 exits $exp_trim" "$exp_trim" "$(utf8_cexit $'### Complexity\n\n Plan\n')"
   assert_eq "environment dependence (Complexity trim): '<NBSP>Plan' is unparseable under C (exit 3)" "3" \
     "$(LC_ALL=C bash -c '. "$1"; idd_parse_complexity "$2" >/dev/null 2>&1; echo $?' _ "$LIB" $'### Complexity\n\n Plan\n')"
   # CRLF (GitHub web textarea): both directions

@@ -112,8 +112,10 @@
 #          divergence: neither side reads its contents.
 #       D7 an HTML comment holding a fake `### Blocking` is hidden by GitHub
 #          but read here — the first matching heading wins (either direction)
-#     Round 7, measured under C.UTF-8 (the production shell's locale; the awk
-#     follows the locale, so D8–D10 are environment-dependent):
+#     Round 7, measured under C.UTF-8 on macOS. The awk follows the locale AND
+#     the platform: on glibc + gawk (Ubuntu 24.04) NBSP is not blank, so the
+#     NBSP shapes behave as under C, and `### Blocking<U+3000>` is read. The
+#     D8–D10 pins take their expected value from the platform awk:
 #       D8 an NBSP-indented ``` opens a fence here; both oracles read paragraph
 #          text, so the section below is hidden (fail-open)
 #       D9 `###<NBSP>X` / `##<NBSP>X` count as headings here; neither oracle
@@ -404,26 +406,33 @@ idd_actionability_verdict() {
 # corpus has no such row). That is the whole locale claim: the PLACEHOLDER rule
 # does not depend on the environment.
 # The known environment dependences of the other matchers — known, not
-# exhaustive — each measured in bash C.UTF-8, bash C and the production zsh
-# (round 7), with what a C-locale pin would do:
-#   - deferral grep: `Plan when<NBSP>triggered` is withheld under UTF-8 and
-#     routable under C; a C pin makes it routable in all three measured
-#     environments (#298's incident)
-#     — refused by (i), and by a direction pin in the test;
-#   - bullet detector: `- (none)` + `-<NBSP>等 #99 merge` is a blocker under
-#     UTF-8 and empty under C; a C pin loses the blocker in all three — a
-#     structural change, frozen by (ii), and caught by a direction pin;
-#   - awk section extractor: MIXED. A C pin moves D8 and `##<NBSP>Next` (D9)
-#     toward withholding and toward both oracles; moves `###<NBSP>Blocking`
+# exhaustive — measured in round 7 on macOS (bash under C.UTF-8 and C, the
+# production zsh) and on Ubuntu 24.04 (GNU grep 3.11, gawk, mawk). The platform
+# matters as much as the locale: macOS's C library classifies NBSP as blank
+# under a UTF-8 locale and glibc does not; U+3000 is blank to grep on both, to
+# gawk, and not to macOS's awk or mawk. With what a C-locale pin would do:
+#   - deferral grep: `Simple when<U+3000>triggered` is withheld under UTF-8 on
+#     both platforms and routable under C; `Plan when<NBSP>triggered` is
+#     withheld only on macOS under UTF-8 — on Linux it routes in any locale. A
+#     C pin makes both routable everywhere measured (#298's incident) — refused
+#     by (i), and by the U+3000 direction pin in the test;
+#   - bullet detector: `- (none)` + `-<U+3000>等 #99 merge` is a blocker under
+#     UTF-8 on both platforms and empty under C; with NBSP instead, a blocker
+#     only on macOS under UTF-8. A C pin loses both — a structural change,
+#     frozen by (ii), and caught by the U+3000 direction pin;
+#   - awk section extractor: MIXED on macOS. A C pin moves D8 and `##<NBSP>Next`
+#     (D9) toward withholding and toward both oracles; moves `###<NBSP>Blocking`
 #     (D9), an NBSP-indented closer inside a fence, and an NBSP-led line that
 #     leaves a fence unclosed toward clearing, also toward both oracles; and on
 #     `### Blocking<NBSP>` (D10) it clears a blocker that markdown-it reads
 #     and CommonMark does not. Round 6 judged this pin harmless from two
-#     shapes; that was wrong. Frozen by (ii); the D8–D10 pins catch it;
+#     shapes; that was wrong. On glibc + gawk the NBSP shapes already take the
+#     C path and a C pin instead stops reading `### Blocking<U+3000>`. Frozen by
+#     (ii); the D8–D10 pins, keyed on the platform awk, catch it;
 #   - Complexity trim (the `[![:space:]]` parameter expansions):
-#     `<NBSP>Plan` routes as Plan under UTF-8 and is unparseable (exit 3)
-#     under C; `### Complexity<NBSP>` is a section under UTF-8 and missing
-#     (exit 4) under C. Pinned in both environments as a record.
+#     `<NBSP>Plan` routes as Plan on macOS under UTF-8 and is unparseable
+#     (exit 3) under C and on Linux; `### Complexity<NBSP>` is a section on
+#     macOS under UTF-8 and missing (exit 4) otherwise. Recorded per platform.
 # Which environment, and which oracle, is canonical per construct is #336.
 #
 # Rejected candidate rules (measured on the same 55 rows against the SEMANTIC
