@@ -1,0 +1,1118 @@
+{
+ "_provenance": "Verbatim first line of `### Complexity` from the LATEST `## Diagnosis` comment of every diagnosed issue in PsychQuant/issue-driven-development, snapshot 2026-08-15 (225 issues fetched, 159 diagnosed). Expectations are the round-2 rule from /idd-diagnose #316 — hand-reviewed: 149 routable, 9 deferral-marker, 1 missing section (#273), 0 unparseable. Do NOT regenerate from live GitHub; this is a frozen regression baseline.",
+ "rows": [
+  {
+   "number": 1,
+   "state": "CLOSED",
+   "complexity_raw": "**Spectra**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 11,
+   "state": "CLOSED",
+   "complexity_raw": "**Simple**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 12,
+   "state": "CLOSED",
+   "complexity_raw": "**Spectra**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 13,
+   "state": "CLOSED",
+   "complexity_raw": "**Plan**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 26,
+   "state": "CLOSED",
+   "complexity_raw": "**Simple**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 27,
+   "state": "CLOSED",
+   "complexity_raw": "**Plan**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 28,
+   "state": "CLOSED",
+   "complexity_raw": "**Plan**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 31,
+   "state": "CLOSED",
+   "complexity_raw": "**Simple**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 34,
+   "state": "CLOSED",
+   "complexity_raw": "**Plan**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 37,
+   "state": "CLOSED",
+   "complexity_raw": "**Spectra**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 44,
+   "state": "CLOSED",
+   "complexity_raw": "**Spectra** (Layer 2 + Layer 3 都命中)",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 45,
+   "state": "CLOSED",
+   "complexity_raw": "**Plan** (Layer P 命中)",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 46,
+   "state": "CLOSED",
+   "complexity_raw": "**Spectra** (Layer 2 + Layer 3 都命中)",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 47,
+   "state": "CLOSED",
+   "complexity_raw": "**Plan** (Layer P 命中)",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 48,
+   "state": "CLOSED",
+   "complexity_raw": "**Spectra**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 49,
+   "state": "CLOSED",
+   "complexity_raw": "**Simple** (Layer 1 disqualifier 命中:純 docs 改動)",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 51,
+   "state": "CLOSED",
+   "complexity_raw": "**Plan** (Layer P 命中)",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 52,
+   "state": "CLOSED",
+   "complexity_raw": "**Plan** (Layer P 命中)",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 53,
+   "state": "CLOSED",
+   "complexity_raw": "**Simple** (Layer 1 not triggered + Layer 2 / Layer P 都不命中)",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 54,
+   "state": "CLOSED",
+   "complexity_raw": "**Spectra** (Layer 2 + Layer 3 都命中)",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 55,
+   "state": "CLOSED",
+   "complexity_raw": "**Plan** (Layer P 命中)",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 56,
+   "state": "CLOSED",
+   "complexity_raw": "**Spectra** (Layer 2 + Layer 3 都命中)",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 57,
+   "state": "CLOSED",
+   "complexity_raw": "Spectra",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 59,
+   "state": "CLOSED",
+   "complexity_raw": "**Plan** (cross-file refactor with no external contract change)",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 60,
+   "state": "CLOSED",
+   "complexity_raw": "**Simple**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 61,
+   "state": "CLOSED",
+   "complexity_raw": "**Plan** (5+ ordered steps + new infrastructure)",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 62,
+   "state": "CLOSED",
+   "complexity_raw": "**Simple**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 63,
+   "state": "CLOSED",
+   "complexity_raw": "**Simple**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 64,
+   "state": "CLOSED",
+   "complexity_raw": "**Simple** (single-line regex fix with clear root cause + self-contained)",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 65,
+   "state": "CLOSED",
+   "complexity_raw": "**Plan** (decision-heavy — Approach A vs Approach B)",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 66,
+   "state": "CLOSED",
+   "complexity_raw": "**Simple** (pure research/verification task — read 2 docs, compare, report)",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 68,
+   "state": "CLOSED",
+   "complexity_raw": "**Plan** (decision-heavy at disambiguation algorithm choice)",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 72,
+   "state": "CLOSED",
+   "complexity_raw": "Spectra（opt-out → 直接 propose）",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 74,
+   "state": "CLOSED",
+   "complexity_raw": "Plan",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 75,
+   "state": "CLOSED",
+   "complexity_raw": "**Plan** (decision-heavy + risk-sensitive boundary)",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 76,
+   "state": "CLOSED",
+   "complexity_raw": "**Plan** (risk-sensitive boundary — irreversible side effects)",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 77,
+   "state": "CLOSED",
+   "complexity_raw": "**Plan** (5+ ordered steps + decision-heavy at Gap 6)",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 78,
+   "state": "CLOSED",
+   "complexity_raw": "**Simple**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 79,
+   "state": "CLOSED",
+   "complexity_raw": "**Plan** (decision-heavy + spec contract dependencies)",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 80,
+   "state": "CLOSED",
+   "complexity_raw": "**Plan** (decision-heavy — heuristic constants + scoring normalization choice)",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 84,
+   "state": "CLOSED",
+   "complexity_raw": "Plan（Layer P：輸出契約變更 + blocked 判定 heuristic 的 decision 已定案）",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 85,
+   "state": "CLOSED",
+   "complexity_raw": "Plan",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 86,
+   "state": "CLOSED",
+   "complexity_raw": "Plan",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 87,
+   "state": "CLOSED",
+   "complexity_raw": "Plan",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 88,
+   "state": "CLOSED",
+   "complexity_raw": "**Plan** (multi-site fix + write-time + read-time consistency)",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 89,
+   "state": "CLOSED",
+   "complexity_raw": "Simple — see #74 (handled in the cluster fix).",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 90,
+   "state": "CLOSED",
+   "complexity_raw": "**Simple**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 91,
+   "state": "CLOSED",
+   "complexity_raw": "**Simple**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 93,
+   "state": "CLOSED",
+   "complexity_raw": "**Plan** (decision-heavy investigation + multi-file resolution + drift prevention)",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 95,
+   "state": "CLOSED",
+   "complexity_raw": "**Simple** (single-file line-ending normalization with clear root cause + self-contained fix)",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 96,
+   "state": "CLOSED",
+   "complexity_raw": "**Plan**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 97,
+   "state": "CLOSED",
+   "complexity_raw": "`Plan` —— Layer P 命中以下三項:",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 100,
+   "state": "CLOSED",
+   "complexity_raw": "**Plan** (decision-heavy at Finding 1 + risk-sensitive boundary)",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 102,
+   "state": "CLOSED",
+   "complexity_raw": "**Spectra**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 103,
+   "state": "CLOSED",
+   "complexity_raw": "**Spectra**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 105,
+   "state": "CLOSED",
+   "complexity_raw": "**Plan** — triggered by Layer P signals:",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 106,
+   "state": "CLOSED",
+   "complexity_raw": "**Simple** (pure research/verification task — read 1 doc, compare, report)",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 107,
+   "state": "CLOSED",
+   "complexity_raw": "**Simple** — triggers Layer 1 disqualifier:",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 108,
+   "state": "CLOSED",
+   "complexity_raw": "**Plan** — triggered by Layer P signals:",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 111,
+   "state": "CLOSED",
+   "complexity_raw": "Spectra",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 112,
+   "state": "CLOSED",
+   "complexity_raw": "**Plan** (multi-touch in same skill + decision-heavy on staging path / cleanup / failure handling)",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 116,
+   "state": "CLOSED",
+   "complexity_raw": "**Spectra**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 117,
+   "state": "CLOSED",
+   "complexity_raw": "Plan",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 119,
+   "state": "CLOSED",
+   "complexity_raw": "**Spectra**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 120,
+   "state": "CLOSED",
+   "complexity_raw": "Plan",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 122,
+   "state": "CLOSED",
+   "complexity_raw": "Simple",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 123,
+   "state": "CLOSED",
+   "complexity_raw": "Plan",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 124,
+   "state": "CLOSED",
+   "complexity_raw": "**Simple** — 單檔修改（`idd-close/SKILL.md`），新增 supersession rule + 一段文件，沒有 refactor，沒有跨 skill 依賴。",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 125,
+   "state": "CLOSED",
+   "complexity_raw": "**Simple**（非 SDD-warranted）",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 128,
+   "state": "CLOSED",
+   "complexity_raw": "Plan（觸發表）+ 未決 UX 軸 → **移入 discussion list**（使用者原話即開放問題；unattended 不代答）",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 130,
+   "state": "CLOSED",
+   "complexity_raw": "Plan",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 131,
+   "state": "CLOSED",
+   "complexity_raw": "Simple when triggered",
+   "expect_parse_exit": 5,
+   "expect_tier": null
+  },
+  {
+   "number": 133,
+   "state": "CLOSED",
+   "complexity_raw": "Plan",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 134,
+   "state": "CLOSED",
+   "complexity_raw": "Plan",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 135,
+   "state": "CLOSED",
+   "complexity_raw": "**Spectra**(SDD-warranted per Layer 2 + Layer 3)",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 136,
+   "state": "CLOSED",
+   "complexity_raw": "**Spectra**(Layer 2 + Layer 3 if/when triggered):若實作,會修改既有 published `idd-edit` SKILL.md normative behavior,且新增 cross-skill protocol contract。**但目前狀態 = parking lot,Spectra 不立即 trigger。**",
+   "expect_parse_exit": 5,
+   "expect_tier": null
+  },
+  {
+   "number": 137,
+   "state": "CLOSED",
+   "complexity_raw": "**Plan**(Layer P:**4 個 signal 命中**)",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 138,
+   "state": "CLOSED",
+   "complexity_raw": "Simple",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 139,
+   "state": "CLOSED",
+   "complexity_raw": "Spectra（default — 先 discuss；分岔 A/C 是 user 決策）",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 140,
+   "state": "CLOSED",
+   "complexity_raw": "Simple when triggered",
+   "expect_parse_exit": 5,
+   "expect_tier": null
+  },
+  {
+   "number": 141,
+   "state": "CLOSED",
+   "complexity_raw": "Plan（Layer P：多 metadata 面 + outward-facing 邊界）",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 142,
+   "state": "CLOSED",
+   "complexity_raw": "Simple（規格已由 issue 完整給定，實作依附 #141）",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 143,
+   "state": "CLOSED",
+   "complexity_raw": "**Spectra when triggered**(Layer 2:plugin-level extension protocol = published API for future callers;Layer 3:architectural decision with long-term maintenance implications)。**但目前 = parking lot,wait for trigger。**",
+   "expect_parse_exit": 5,
+   "expect_tier": null
+  },
+  {
+   "number": 144,
+   "state": "CLOSED",
+   "complexity_raw": "**Spectra when triggered**(MANIFESTO 是 plugin-level published contract,影響所有 user;架構性質決定 design 必走 Spectra discuss)。**但目前 = parking lot,wait for instance #2 + #3。**",
+   "expect_parse_exit": 5,
+   "expect_tier": null
+  },
+  {
+   "number": 145,
+   "state": "CLOSED",
+   "complexity_raw": "**Spectra when triggered** — governance policy 是 plugin-level published contract,影響 cross-plugin coordination。**但目前 = parking lot。**",
+   "expect_parse_exit": 5,
+   "expect_tier": null
+  },
+  {
+   "number": 146,
+   "state": "CLOSED",
+   "complexity_raw": "**Simple when triggered**(Layer 1 disqualifier:probably just \"add Note to /idd-clarify SKILL.md saying 'if ambiguity row 指向 self plugin docs gap, file IDD issue' \" — 純 docs update,no normative change)。",
+   "expect_parse_exit": 5,
+   "expect_tier": null
+  },
+  {
+   "number": 147,
+   "state": "CLOSED",
+   "complexity_raw": "Plan",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 148,
+   "state": "CLOSED",
+   "complexity_raw": "**Spectra**(Layer 2 + Layer 3 雙命中)",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 150,
+   "state": "CLOSED",
+   "complexity_raw": "**Spectra**(Layer 2 + Layer 3 全命中)",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 151,
+   "state": "CLOSED",
+   "complexity_raw": "**Plan**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 152,
+   "state": "CLOSED",
+   "complexity_raw": "Simple",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 154,
+   "state": "CLOSED",
+   "complexity_raw": "**Plan** (per Layer P signals — confirmed against issue's self-suggestion):",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 156,
+   "state": "CLOSED",
+   "complexity_raw": "Plan（design-heavy：lint 機制、是否建 lib、遷移範圍、framework choice 都是 decision；新 shared abstraction 給未來 test runner 用）—— 但 **scope 需先 clarify**（A/B/C 差異巨大），故先 AskUserQuestion 再進 plan。",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 157,
+   "state": "CLOSED",
+   "complexity_raw": "Plan when triggered",
+   "expect_parse_exit": 5,
+   "expect_tier": null
+  },
+  {
+   "number": 158,
+   "state": "CLOSED",
+   "complexity_raw": "Plan",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 160,
+   "state": "CLOSED",
+   "complexity_raw": "Simple — 單檔、2 個 1-token 補丁、clear、#154 已立 fix 範本；非 decision-heavy、風險近零（有 test 覆蓋）。",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 161,
+   "state": "CLOSED",
+   "complexity_raw": "Simple",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 162,
+   "state": "CLOSED",
+   "complexity_raw": "Plan（Layer P：resolution 優先序是跨 skill 契約變更）",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 163,
+   "state": "CLOSED",
+   "complexity_raw": "Plan",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 164,
+   "state": "CLOSED",
+   "complexity_raw": "**Spectra**（Layer 2 + Layer 3 皆命中）：",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 167,
+   "state": "CLOSED",
+   "complexity_raw": "**Spectra**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 169,
+   "state": "CLOSED",
+   "complexity_raw": "**Plan**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 170,
+   "state": "CLOSED",
+   "complexity_raw": "**Simple**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 172,
+   "state": "CLOSED",
+   "complexity_raw": "Plan",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 176,
+   "state": "CLOSED",
+   "complexity_raw": "**Plan**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 178,
+   "state": "CLOSED",
+   "complexity_raw": "Simple",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 179,
+   "state": "CLOSED",
+   "complexity_raw": "Spectra（discuss-first）—— Layer 2 命中（新 IDD convention/SOP 給 future callers，該寫成 documented contract）；且有真實 open design questions（#83 關係、unification scope）+ cross-issue 協調需要對齊。**但**最小版本偏 SOP-doc + 小 idd-list 改，若 user 方向已定可降到 Plan。",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 180,
+   "state": "CLOSED",
+   "complexity_raw": "Simple",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 181,
+   "state": "CLOSED",
+   "complexity_raw": "Simple",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 183,
+   "state": "CLOSED",
+   "complexity_raw": "**Spectra**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 184,
+   "state": "CLOSED",
+   "complexity_raw": "Plan",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 186,
+   "state": "CLOSED",
+   "complexity_raw": "**Simple**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 187,
+   "state": "CLOSED",
+   "complexity_raw": "Simple",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 188,
+   "state": "CLOSED",
+   "complexity_raw": "Simple",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 189,
+   "state": "CLOSED",
+   "complexity_raw": "**Simple**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 190,
+   "state": "CLOSED",
+   "complexity_raw": "**Spectra** — Layer 2（修改 published skill surface 給 future callers）+ Layer 3（normative 行為變更、影響 2+ specs〔idd-clarify + idd-diagnose-clarity-gate〕、是會被 future maintainer 繼承的 cross-cutting UX 原則決定）。",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 192,
+   "state": "CLOSED",
+   "complexity_raw": "**Spectra**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 199,
+   "state": "CLOSED",
+   "complexity_raw": "Simple",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 200,
+   "state": "CLOSED",
+   "complexity_raw": "Spectra when triggered",
+   "expect_parse_exit": 5,
+   "expect_tier": null
+  },
+  {
+   "number": 202,
+   "state": "CLOSED",
+   "complexity_raw": "Spectra",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 203,
+   "state": "CLOSED",
+   "complexity_raw": "Plan",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 205,
+   "state": "CLOSED",
+   "complexity_raw": "Spectra — 觸及 living spec（idd-verify MODIFIED）+ 跨 skill/workflow/reference 三面；本 repo 為 Spectra-governed。",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 207,
+   "state": "CLOSED",
+   "complexity_raw": "Spectra",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 209,
+   "state": "CLOSED",
+   "complexity_raw": "Spectra",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 210,
+   "state": "CLOSED",
+   "complexity_raw": "Plan（analysis-heavy；判準機械可依）",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 211,
+   "state": "CLOSED",
+   "complexity_raw": "Plan（gate 位置與強度的設計已由 #209 D2 前例 + #210 audit 定案）",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 212,
+   "state": "CLOSED",
+   "complexity_raw": "Simple",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 214,
+   "state": "CLOSED",
+   "complexity_raw": "Spectra",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 215,
+   "state": "CLOSED",
+   "complexity_raw": "Plan（Layer P：cross-file 一致性 + 判準應用的 judgment 邊界）",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 216,
+   "state": "CLOSED",
+   "complexity_raw": "Simple",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 217,
+   "state": "CLOSED",
+   "complexity_raw": "Plan",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 219,
+   "state": "CLOSED",
+   "complexity_raw": "Plan",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 220,
+   "state": "CLOSED",
+   "complexity_raw": "Plan",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 221,
+   "state": "CLOSED",
+   "complexity_raw": "Spectra（opt-out → 直接 propose）",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 222,
+   "state": "CLOSED",
+   "complexity_raw": "Simple（單 detector 替換，contract 由 #123 提供）",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 224,
+   "state": "CLOSED",
+   "complexity_raw": "Simple（單檔機械修正、修法已定案、驗收可機械化）",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 225,
+   "state": "CLOSED",
+   "complexity_raw": "Plan",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 226,
+   "state": "CLOSED",
+   "complexity_raw": "Plan",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 227,
+   "state": "CLOSED",
+   "complexity_raw": "Plan",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 228,
+   "state": "CLOSED",
+   "complexity_raw": "Simple",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 251,
+   "state": "CLOSED",
+   "complexity_raw": "Plan",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 252,
+   "state": "CLOSED",
+   "complexity_raw": "Spectra（default — 先 discuss）",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 258,
+   "state": "CLOSED",
+   "complexity_raw": "Spectra（opt-out → 直接 propose）",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 264,
+   "state": "CLOSED",
+   "complexity_raw": "Spectra（opt-out → 直接 propose）",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 267,
+   "state": "CLOSED",
+   "complexity_raw": "Plan via hard-gate",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 269,
+   "state": "CLOSED",
+   "complexity_raw": "Spectra",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 272,
+   "state": "CLOSED",
+   "complexity_raw": "Spectra",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 273,
+   "state": "CLOSED",
+   "complexity_raw": null,
+   "expect_parse_exit": 4,
+   "expect_tier": null
+  },
+  {
+   "number": 275,
+   "state": "CLOSED",
+   "complexity_raw": "Simple — 單一 script 的 guard + fixtures，修法由 issue Expected 定形，唯一修正是 exit code 歸帶。",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 276,
+   "state": "CLOSED",
+   "complexity_raw": "**Plan**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 277,
+   "state": "CLOSED",
+   "complexity_raw": "Plan（decision-heavy — 3 valid approaches，方向拍板屬 maintainer；issue 明文「哪一個都行，寫下來就好」→ 拍板後執行是 Simple-tier docs+pointer）",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 278,
+   "state": "CLOSED",
+   "complexity_raw": "Simple — Layer 1 disqualifier 命中（primary deliverable 是 docs/prose）；2 檔、判準由 issue 三問 + 既有機制（comment/update/prepend-note）組合定形，零新機件。",
+   "expect_parse_exit": 0,
+   "expect_tier": "Simple"
+  },
+  {
+   "number": 289,
+   "state": "CLOSED",
+   "complexity_raw": "**Plan**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 290,
+   "state": "CLOSED",
+   "complexity_raw": "**Spectra**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 292,
+   "state": "CLOSED",
+   "complexity_raw": "Plan",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 293,
+   "state": "CLOSED",
+   "complexity_raw": "Plan —— 七個呼叫點互相依賴同一個述詞，且要新增一個時序檢查；不是單檔 fix。",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 295,
+   "state": "CLOSED",
+   "complexity_raw": "**Plan**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Plan"
+  },
+  {
+   "number": 298,
+   "state": "CLOSED",
+   "complexity_raw": "**Spectra**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  },
+  {
+   "number": 302,
+   "state": "CLOSED",
+   "complexity_raw": "**Spectra**",
+   "expect_parse_exit": 0,
+   "expect_tier": "Spectra"
+  }
+ ]
+}
