@@ -233,13 +233,7 @@ If even one of these fails, keep `spectra-discuss` in the flow.
 
 ## Backward compat: `SDD-warranted` alias
 
-For diagnosis comments written before v2.36.0:
-
-- `### Complexity\nSDD-warranted` → parse as `Spectra`
-- `### Complexity\nSimple` → parse as `Simple`
-- `### Complexity\nPlan` → only appears in v2.36.0+ comments
-
-Skills that read `### Complexity` (idd-all Phase 3, idd-implement Step 2.5) MUST treat `SDD-warranted` and `Spectra` as identical for routing.
+`SDD-warranted` (diagnosis comments written before v2.36.0) is a backward-compat alias of `Spectra`: every routing consumer MUST treat the two as identical. **How the tier is extracted from `### Complexity` is not described here** — the single rule (leading tier, trailing rationale legal, deferral vocabulary, exit codes) lives in [`references/actionability-gate.md`](../references/actionability-gate.md) and its shared helper; do not restate it in this rule.
 
 New diagnosis comments (v2.36.0+) MUST emit `Spectra` — `SDD-warranted` is read-only legacy.
 
