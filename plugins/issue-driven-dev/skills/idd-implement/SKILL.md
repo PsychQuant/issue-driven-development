@@ -6,7 +6,7 @@ description: |
   支援 cluster-PR mode（v2.34.0+）：多個 #N 共用 1 feature branch + 1 PR（如 `#34 #36 #38 --pr`），每個 commit 用 `Refs #N` 紀律標示。
   Use when: diagnosis 確認後、開始寫 code 時。
   防止的失敗：scope creep — 改 #42 順手重構了三個不相關的檔案。
-argument-hint: "#issue [#issue ...] [--pr | --no-pr] [--cwd /path/to/clone] [--with-skill <skill>] [--extra '<requirement>'] e.g. '#42 --with-skill perspective-writer --extra ''要 500–800 字''' or '#34 #36 #38 --pr' (cluster-PR mode) or '#43 --pr --cwd /path/to/other/repo' (cross-repo)"
+argument-hint: "#issue [#issue ...] [--pr | --no-pr] [--existing-work-checked] [--cwd /path/to/clone] [--with-skill <skill>] [--extra '<requirement>'] e.g. '#42 --with-skill perspective-writer --extra ''要 500–800 字''' or '#34 #36 #38 --pr' (cluster-PR mode) or '#43 --pr --cwd /path/to/other/repo' (cross-repo)"
 allowed-tools:
   - Bash(gh:*)
   - Bash(git:*)
@@ -148,6 +148,23 @@ printf 'raw<<<\n'; printf '%s\n%s\n' "${COMPLEXITY_ERR:-}" "${BLOCK_LINE:-}" | s
 ```
 
 `VEXIT=1` → 依 Step 2.5 的表**立即停止**（印 `$REASONS` 與原文），不進 Step 0.4 以後任何一步；`VEXIT=0` → 帶著 `$TIER` 繼續。
+
+### Step 0.37: Existing-work check — 先於 tree-lock 與建 branch（#366）
+
+被 `idd-all` 或 `idd-all-chain` 呼叫時，它們已經做過，會帶 `--existing-work-checked`，本步**整步略過**（否則同一張 issue 被問兩次）。**直接被呼叫**（使用者自己跑 `/idd-implement #N`）時，在 Step 0.4 取 tree-lock、Step 0.5 `git checkout -b` 之前先問「這張 issue 是否已有 PR 或 branch 在處理」。對每個 `#N`：
+
+```bash
+case " $* " in *" --existing-work-checked "*) echo "→ Existing work: skipped (checked by the caller)" ;; *)
+  for N in "${ISSUE_NUMBERS[@]}"; do
+    EW_JSON=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/check-existing-work.sh" --cwd "$CWD" "$GITHUB_REPO" "$N") || EW_JSON='{}'   # 不是空字串：jq 收到空輸入什麼都不印，verdict 會變成空的
+    V=$(printf '%s' "$EW_JSON" | jq -r --arg n "$N" '.issues[$n].verdict // "unknown"')
+    R=$(printf '%s' "$EW_JSON" | jq -r --arg n "$N" '.issues[$n].reason // "lookup produced no result"')
+    echo "→ Existing work: #$N verdict=$V ${R:+($R)}"   # 一定要印 —— 模型只看得到 Bash 輸出
+  done ;;
+esac
+```
+
+查詢只有一個實作（`scripts/check-existing-work.sh`，契約 [`references/pr-issue-matching.md`](../../references/pr-issue-matching.md)）；`verdict` 的處置與 `idd-all` Step 0.5.1 的表**相同**，不在此重寫：`blocked` 時 attended 問三選一（接著在該 PR 上做／用 `idd-verify #N --pr P` 驗證它／忽略），unattended 直接停止並印出 outcome（`existing PR #P`，E3 為 `already merged in PR #P -> /idd-close #N`）；`resume` 在該 branch 上繼續；`unknown` 印出並繼續。
 
 ### Step 0.4: Tree-lock acquire / asymmetric escalation（v2.85.0+, #183）
 

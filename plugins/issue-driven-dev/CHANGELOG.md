@@ -5,6 +5,67 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.0] - 2026-10-07
+
+### Added
+
+- **`scripts/check-existing-work.sh` — does a PR or a branch already address issue N? (#366)**
+  `/idd-all #N` on an issue that an open PR already implements used to diagnose it and implement it again on a
+  new `idd/N-*` branch; the duplication showed up at review or at `idd-close`. The only issue→PR lookup in the
+  pipeline was `idd-close` Step 1.5, at the end. One helper now answers the question for every issue in one call
+  (PR lists fetched once, `git fetch` plus remote-tracking refs for branches) and returns a verdict per issue:
+  `blocked`, `resume`, `unknown` or `clear`.
+  - **"References #N" has two levels.** A PR *declares* an issue when a line outside a fenced block starts with
+    `Refs`, `Closes`, `Fixes` or `Resolves` and holds `#N`; it only *mentions* it otherwise. Run over the nine
+    open PRs of one repo, five of the nine issues were only mentioned (under "Recorded, not changed"), so
+    treating a mention as "someone is on it" would have stopped five issues. Only a declaration blocks.
+  - **Evidence is a closed list, no content similarity**: E1 a declaring open PR (blocks; its own `idd/N-*`
+    head is a resume), E2 an open PR that only mentions (shown), E3 a declaring merged PR while the issue is
+    still OPEN (blocks, unless the issue was reopened after the merge), E4 a branch `idd/N` or `idd/N-*`
+    (shown, verdict `resume`), E6 an unmerged commit with a `Refs #N` line (shown).
+  - **Not done, on purpose**: a branch `<other-prefix>/N-*` (E5): multi-issue branch names such as
+    `codex/119-124-…` yield only their first number, and a range cannot be told from a pair by name. A branch
+    that survived a squash merge is `stale-merged` (its tip is the head commit of a merged PR) and is not
+    evidence; in a squash-merging repo, branches of closed issues stay on `origin` with tips that are not
+    ancestors of the default branch.
+  - **A failed lookup or a list at its limit is `unknown`, never `clear`.** Starting skills print it and go on.
+  - **Consumers**: `idd-all` (Step 0.5.1, before the PR-mode branch exists; resume checks out the existing
+    branch), `idd-all-chain` (Step 0.4.1, before the cluster branch and manifest), `idd-implement`
+    (Step 0.37; skipped when the caller passes `--existing-work-checked`) and `idd-diagnose` (Step 1.6: an
+    `### Existing work` section in the Diagnosis; it reports and never stops). On `blocked` an attended run asks
+    (continue on that PR / verify it with `idd-verify #N --pr P` / ignore); an unattended run skips that issue,
+    carries on with the batch and adds a line to Phase 6 `## Action items (require human review)`.
+  - `references/pr-issue-matching.md` is rewritten around this contract and its call-site table is complete
+    (it now lists `idd-list`, whose private matcher does not follow the contract: #368).
+  - **The default branch comes from GitHub** (`gh repo view`), not from the clone's `origin/HEAD`. Found by running the helper on a real clone whose `origin/HEAD` pointed at an old feature branch: every commit on the real default branch that carried `Refs #N` was reported as E6. `origin/HEAD` is now only the fallback when GitHub cannot be asked.
+  - Tests: `scripts/tests/check-existing-work/` (53 assertions: a local bare origin and real git for branches and
+    ancestry, a shimmed `gh`; each key decision was removed in turn and a named test failed; wiring assertions
+    for all five consumers). Spectra change `add-existing-work-lookup`.
+
+### Changed
+
+- **`idd-close` Step 1.5 takes its open PRs from the helper.** The gate is unchanged: any open PR that
+  references the issue (declaring or only mentioning, the run's own or another's) refuses the close. One
+  behaviour is stricter: when the open PR list cannot be fetched or reaches its limit, it now refuses to close
+  and says why. Before, a failing `gh pr list` left the list empty and the gate passed without a word. Step 1.55
+  is not migrated; it needs merged PRs that only mention the issue and their head commits, which the helper
+  does not report.
+- **A lookup that observed nothing is never read as an answer.** Two paths did that before this release shipped
+  (found by a security review of the PR). The four starting and diagnosing skills fell back to an empty string
+  when the helper crashed; jq prints nothing for empty input, so `// "unknown"` never ran and the verdict came
+  out empty, a value no row of the table covers. They now fall back to `{}`, which gives `unknown`. And
+  `idd-close` Step 1.5 passed when `gh issue view` failed: the helper needs the issue's creation time to match
+  PRs, so the issue had no evidence and an open PR declaring it was treated as absent. The gate now refuses in
+  that case too. Both are covered by running each skill's own snippet in the `check-existing-work` suite.
+
+### Known
+
+- No version bump here: releasing is a separate decision, and `idd-all` and `idd-implement` carry the open
+  actionability-gate work (#316) on the same branch.
+- Whether the "starts with `Refs`/`Closes`/`Fixes`/`Resolves`" test fits PRs opened by other agents (Codex,
+  Copilot) was not sampled. A miss reads a declaration as a mention, which blocks less, not more.
+- The cost of the extra calls (two PR listings, one `gh issue view` per issue, a `git fetch`) was not measured.
+
 ## [3.2.0] - 2026-10-07
 
 > Prepared as 3.1.0 on 2026-09-07 (PR #334); renumbered when it merged after 3.1.0 and 3.1.1.
