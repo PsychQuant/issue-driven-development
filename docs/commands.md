@@ -150,7 +150,7 @@
 | _positional_ description / path | Raw text, file path (docx/pdf/md/txt), or chat reference; skill auto-detects type and routes to the matching reader (`che-word-mcp`, `che-pdf-mcp`, Telegram MCP, Apple Mail/Notes MCP). Missing MCP plugin → **fail-fast** with install instructions (per #27 / #32). |
 | `--target <owner/repo \| group:label>` | Per-invocation target override; does **not** write to config |
 | `--parent N` | Link the new issue under issue #N (idempotent PATCH of #N's body task-list, see [`bundle-flags.md`](../plugins/issue-driven-dev/references/bundle-flags.md)) |
-| `--blocked-by M[,M2,...]` | Three-layer chain: body blockquote (unconditional) + `addBlockedByDependency` GraphQL (best-effort) + parent annotation (if `--parent` co-used) |
+| `--blocked-by M[,M2,...]` | Three-layer chain: body blockquote (unconditional) + `addBlockedBy` GraphQL (best-effort; GitHub's error is printed verbatim, an existing dependency counts as success) + parent annotation (if `--parent` co-used) |
 | `--bundle-mode ordered \| unordered` | Create an epic + N children; `ordered` also wires a Blocked-by chain. Mutually exclusive with group mode. |
 | `--mention login[,login2,...]` | Force the 5-step collaborator-tagging protocol ([`rules/tagging-collaborators.md`](../plugins/issue-driven-dev/rules/tagging-collaborators.md)); cannot fail open. |
 

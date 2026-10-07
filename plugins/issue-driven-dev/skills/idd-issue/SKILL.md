@@ -107,7 +107,7 @@ TaskCreate(name="resolve_mentions", description="若有 --mention 或 descriptio
 TaskCreate(name="privacy_scrub_gate", description="Step 0.6: 依 repo visibility 解析 $SCRUB_LEVEL (third-party=enforce / own-public=warn / private=light)；每次 egress 前對 drafted body 跑 rules/privacy-scrubbing.md 的 LLM 語意自審，並一律經 scripts/gh-egress.sh --scrub-attested 派送（不直接 gh issue，#202）")
 TaskCreate(name="create_issue", description="Step 3: gh issue create — Single mode / Group mode / Bundle mode(--parent / --blocked-by / --bundle-mode,見 Step 3.B),body 含已驗證的 @login；經 scripts/gh-egress.sh 派送（#202），有 mention 時帶 --mention-attested <resolved-logins>（#117 mention net；未帶會被 refuse）")
 TaskCreate(name="resolve_parent_link", description="Step 3.B: 若 --parent <N> set,驗證 #N 在 target repo + idempotent PATCH parent body task list(見 references/bundle-flags.md § Edit Algorithm)")
-TaskCreate(name="apply_blocked_by", description="Step 3.B: 若 --blocked-by <M>[,...] set,三層 fallback chain — body blockquote(unconditional)+ GraphQL addBlockedByDependency(嘗試)+ parent annotation(若 --parent co-used)")
+TaskCreate(name="apply_blocked_by", description="Step 3.B: 若 --blocked-by <M>[,...] set,三層 fallback chain — body blockquote(unconditional)+ GraphQL addBlockedBy(嘗試,錯誤原樣印出)+ parent annotation(若 --parent co-used)")
 TaskCreate(name="orchestrate_bundle_mode", description="Step 3.B: 若 --bundle-mode <ordered|unordered> set,建 epic + N children + 自動套用 --parent + (ordered 時)Blocked-by 鏈;與 group 模式互斥")
 TaskCreate(name="attach_images", description="上傳圖片到 attachments release 並編輯 issue body 嵌入(若有)")
 TaskCreate(name="create_milestone", description="來源為文件時自動建立 milestone 並指派(見 Step 4.5)")
@@ -765,13 +765,29 @@ NEW_CHILD_BODY="${BLOCKED_BLOCKQUOTE}\n${ORIGINAL_BODY}"
 bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit "$CHILD_NUM" --repo "$GITHUB_REPO" --body "$NEW_CHILD_BODY" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}
 
 # Layer 1:GraphQL native dependency(嘗試,失敗不 abort)
+# Mutation 是 addBlockedBy(input:{issueId, blockingIssueId})——GitHub 現行 schema 裡的名稱（#353）。
+# GitHub 的錯誤原樣印出，不猜原因。v2.52.0 起這裡用的名稱不在現行 schema 裡，錯誤又被丟進
+# /dev/null、改印三個寫死的猜測原因；據此判斷，原生依賴應從未建立過。
+# 這一層的訊息一律走 stderr：bundle-mode 用 CHILD_NUM=$(…) 擷取 stdout，訊息若走 stdout 會被吃掉，
+# 還會被當成下一個 child 的 --blocked-by 值。同一個 handler 的 Layer 2 與 --parent 仍會寫 stdout，見 #359。
 CHILD_NODE_ID=$(gh issue view "$CHILD_NUM" --repo "$GITHUB_REPO" --json id --jq '.id')
 for M in $(echo "$BLOCKED_BY_LIST" | tr ',' '\n'); do
   M_NODE_ID=$(gh issue view "$M" --repo "$GITHUB_REPO" --json id --jq '.id')
-  if ! gh api graphql -f query='
-    mutation($i:ID!,$b:ID!){addBlockedByDependency(input:{issueId:$i,blockedByIssueId:$b}){issue{id}}}
-  ' -F i="$CHILD_NODE_ID" -F b="$M_NODE_ID" 2>/dev/null; then
-    echo "⚠ GraphQL addBlockedByDependency #${CHILD_NUM} ← #${M} failed (repo not enabled / API error / permission); body blockquote already in place"
+  # ID 用 -f（字串）不用 -F：-F 對 @ 開頭的值會去讀本機檔案，而失敗時這段輸出會原樣印出。
+  if GQL_OUT=$(gh api graphql -f query='
+    mutation($i:ID!,$b:ID!){addBlockedBy(input:{issueId:$i,blockingIssueId:$b}){issue{number}}}
+  ' -f i="$CHILD_NODE_ID" -f b="$M_NODE_ID" 2>&1); then
+    :   # 原生依賴已建立
+  elif printf '%s' "$GQL_OUT" | grep -qF 'Target issue has already been taken'; then
+    # 依賴已存在：同一個目標重複出現（例如 --blocked-by 50,50），或已由他處建立。
+    # GitHub 回 rc=1 與這句訊息，狀態不變（2026-10-02 實測），所以不算失敗、不印警告。
+    # 只比對這一整句：其他 "has already been taken" 是別的驗證失敗，照常警告。
+    # 判讀依據是 GitHub 的原句，所以把那一句一起印出來。
+    { echo "→ #${CHILD_NUM} ← #${M}：視為原生依賴已存在。GitHub 回傳："
+      printf '%s\n' "$GQL_OUT" | grep -F 'Target issue has already been taken' | head -n 1 | sed 's/^/    /'; } >&2
+  else
+    { echo "⚠ GraphQL addBlockedBy #${CHILD_NUM} ← #${M} 失敗。GitHub 回傳："
+      printf '%s\n' "$GQL_OUT" | sed 's/^/    /'; } >&2
   fi
 done
 
@@ -1005,7 +1021,7 @@ AskUserQuestion:
 
 #### (d) Native relationship suggestion (deferred — lean-v1 不實作，disclosed)
 
-- [~] **Native relationship suggestion (deferred)** — body 內 `#N` 用 GitHub 2024+ GraphQL（`addBlockedByDependency` 等）建 structured relationship，比 body text reference 多 sidebar backlink。**本 cluster 刻意不做**，理由：(1) 複雜度/風險最高（需 relationship-type picker UI）；(2) #141 spec 自身將其框為「reuse v2.52.0+ `--blocked-by` code path」的後續工作，而該 path 尚未一般化成可獨立呼叫的 primitive；(3) design Q4 裁定 body text reference 本來就保留（與 native backlink 互補不重複），所以延後不損失現有 inline context。點亮條件：`--blocked-by` 的 GraphQL mutation 抽成可重用 helper 後，再接本 (d)。
+- [~] **Native relationship suggestion (deferred)** — body 內 `#N` 用 GitHub 2024+ GraphQL（`addBlockedBy` 等）建 structured relationship，比 body text reference 多 sidebar backlink。**本 cluster 刻意不做**，理由：(1) 複雜度/風險最高（需 relationship-type picker UI）；(2) #141 spec 自身將其框為「reuse v2.52.0+ `--blocked-by` code path」的後續工作，而該 path 尚未一般化成可獨立呼叫的 primitive；(3) design Q4 裁定 body text reference 本來就保留（與 native backlink 互補不重複），所以延後不損失現有 inline context。點亮條件：`--blocked-by` 的 GraphQL mutation 抽成可重用 helper 後，再接本 (d)。
 
 ### Step 3.6: Baseline auto-tag（rollback anchor，v2.94.0+，#85）
 
@@ -1236,7 +1252,7 @@ Empty surface list = legitimate silent no-op(per canonical §4 `(none surfaced)`
 - **Audit trail target**:`### Linked-Context Siblings Filed (v2.48.0+ #529)` PATCHed into the just-created issue body(per canonical §4.1 heading conventions table)。 `(category: audit-block-append, scope: "### Linked-Context Siblings Filed")` per [`rules/append-vs-modify.md`](../../rules/append-vs-modify.md)。
 - **Non-blocking** — user skip / empty list 都不阻擋 Step 5 報告完成。
 
-**Default behavior (v2.72.0+)**: File by default per canonical §1.1。Skip requires 3-category taxonomy per canonical §1.4((a) unactionable / (b) infeasible → filed with `blocker:infeasible` / (c) blocked-on-external → filed with `blocker:waiting`)。Escape hatch(`AI_LOW_BAR_ISSUE_FILING=false` env var / `# Disable IC_R011` CLAUDE.md flag)reverts to legacy 3-option ask per canonical §5。
+**Default behavior (v2.72.0+)**: File by default per canonical §1.1。Skip requires 3-category taxonomy per canonical §1.4((a) unactionable / (b) infeasible / (c) blocked-on-external → filed with `parking-lot`（#316 收斂：`blocker:*` 從未建立過；`parking-lot` 是 actionability gate 的一級訊號，貼了即 parked）)。Escape hatch(`AI_LOW_BAR_ISSUE_FILING=false` env var / `# Disable IC_R011` CLAUDE.md flag)reverts to legacy 3-option ask per canonical §5。
 
 > **Why light-touch deviation**: per canonical §6 eligibility table, `/idd-issue` is SHALL-tier but light-touch(filing-active moment) — default file still applies, but heuristic gating prevents double-prompt friction on clean single-issue invocations。
 
