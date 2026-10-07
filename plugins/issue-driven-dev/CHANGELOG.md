@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.1] - 2026-10-07
+
+> Prepared as 3.0.1 on 2026-10-02 (PR #358); renumbered when it merged after 3.1.0.
+
+### Fixed — `--blocked-by` could not create a native dependency (#353)
+
+- **Layer 1 called a mutation GitHub does not have.** Since 2.52.0 (#21) the native-dependency layer sent
+  `addBlockedByDependency(input:{issueId, blockedByIssueId})`. GitHub's schema has `addBlockedBy(input:{issueId,
+  blockingIssueId})` and nothing by the other name. Against today's schema that call can only fail, so as far as
+  we can tell every `--blocked-by` and every `--bundle-mode ordered` run fell back to the body blockquote alone. The normative spec named the same mutation, which is why reviewing
+  against the spec agreed with the bug.
+- **The failure was invisible.** The call sent stderr to `/dev/null` and the warning hard-coded three causes
+  (repo not enabled / API error / permission), none of them the real one. Layer 1 now captures GitHub's output
+  and prints it verbatim on failure, and no longer guesses a cause.
+- **An existing dependency is not a failure.** When the dependency is already there — the same target listed
+  twice (`--blocked-by 50,50`), or the relationship created elsewhere — GitHub returns rc=1 with `Target issue
+  has already been taken` and changes nothing (measured 2026-10-02). Layer 1 now reports that as already
+  linked, without a warning, and prints GitHub's sentence as the evidence. Only that exact sentence counts; any
+  other "has already been taken" still warns.
+- **Layer 1 messages go to stderr.** The documented bundle orchestration runs the `--blocked-by` handler inside
+  `CHILD_NUM=$(…)`, so a message Layer 1 printed on stdout would end up in `CHILD_NUM` and be passed to the next
+  child as its `--blocked-by` value. Layer 2 and the `--parent` handler on the same path still print to stdout;
+  that, and the other remaining defects of the handler, are tracked in #359.
+- **The reference example no longer prints GitHub's reply.** `references/bundle-flags.md` shows the request
+  captured into `GQL_OUT` and points to `SKILL.md` for the branches; the suite checks the example's shape.
+- **Node IDs are bound with `-f`, not `-F`.** `-F` reads a local file for a value starting with `@`, and the
+  failure branch now prints GitHub's output verbatim.
+- **New suite `blocked-by-mutation`** runs the Layer 1 snippet from `SKILL.md` against a stub `gh` in four
+  modes (success / already exists / another uniqueness failure / other error), plus two targets where the first
+  fails and the second must still be attempted. It checks the request GitHub receives (mutation, field names,
+  `-f` bindings, child → `issueId`), that every message stays off stdout, and
+  that no live file names the old mutation outside a closed list of historical records. Each check has a
+  positive control that breaks the snippet again and requires the check to fail.
+- **Weekly live schema check.** `.github/workflows/live-schema.yml` runs the suite with `IDD_LIVE_GH=1` every
+  Monday 01:00 UTC (09:00 Taipei) and on demand, introspecting GitHub's real `addBlockedBy` mutation, its input
+  fields and its payload. A rename on GitHub's side does not come with a PR, so the PR suite cannot catch it;
+  without `IDD_LIVE_GH=1` the suite prints SKIP rather than claiming the schema was checked. Introspection
+  leaves out deprecated fields by default, so a deprecation fails the check too. GitHub disables scheduled
+  workflows in a public repository after 60 days without repository activity; if that happens, re-enable the
+  workflow from the Actions tab. The first run after merge is started by hand: `gh workflow run live-schema.yml`.
+- **Issues created by 2.52.0–3.1.0 have only the body blockquote.** To add the native dependency to one of
+  them, call `addBlockedBy` once per pair as shown in `references/bundle-flags.md` Layer 1. Re-running
+  `idd-issue` would create a new child instead.
+
 ## [3.1.0] - 2026-10-07
 
 Round 2 of the actionability gate (#298 → #316, PR #318). Round 1 shipped a shared
