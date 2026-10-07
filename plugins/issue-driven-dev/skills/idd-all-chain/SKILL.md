@@ -284,7 +284,7 @@ gh issue edit "$ROOT_ISSUE" -R "$GITHUB_REPO" --body "$NEW_BODY"
 與上面的 diagnosis-readiness 並列、同樣在建 cluster branch 與 manifest **之前**（user 在這裡停下時沒有任何東西要清）：對每個 root 問「是否已有 PR 或 branch 在處理它」。查詢只有一個實作 `scripts/check-existing-work.sh`（契約 [`references/pr-issue-matching.md`](../../references/pr-issue-matching.md)，行為 spec `idd-existing-work-lookup`）；本 skill 不自帶 PR 比對。每個 root 的 verdict 處置與 `idd-all` Step 0.5.1 的表**相同**（`clear` 繼續；`unknown` 印出並繼續；`resume` 在該 branch 上繼續；`blocked` attended 問三選一、unattended 停該 root），不在此重寫一份。
 
 ```bash
-EW_JSON=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/check-existing-work.sh" --cwd "$CWD" "$GITHUB_REPO" "${ROOT_ISSUES_SORTED[@]}") || EW_JSON=""
+EW_JSON=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/check-existing-work.sh" --cwd "$CWD" "$GITHUB_REPO" "${ROOT_ISSUES_SORTED[@]}") || EW_JSON='{}'   # 不是空字串：jq 收到空輸入什麼都不印，verdict 會變成空的
 for ROOT_ISSUE in "${ROOT_ISSUES_SORTED[@]}"; do
   V=$(printf '%s' "$EW_JSON" | jq -r --arg n "$ROOT_ISSUE" '.issues[$n].verdict // "unknown"')
   R=$(printf '%s' "$EW_JSON" | jq -r --arg n "$ROOT_ISSUE" '.issues[$n].reason // "lookup produced no result"')

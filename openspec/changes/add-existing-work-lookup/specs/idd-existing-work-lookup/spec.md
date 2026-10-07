@@ -123,7 +123,7 @@ An E3 SHALL NOT be blocking when the issue has a `reopened` event later than tha
 
 ### Requirement: A failed lookup or a truncated list SHALL be reported as unknown, never as clear
 
-When `gh` or `git ls-remote` fails, or when a PR list reaches its limit, the helper SHALL say so and SHALL NOT return `clear` for an issue it could not check completely. Calling skills SHALL print the `unknown` verdict and continue; they SHALL NOT stop on it.
+When `gh` or `git ls-remote` fails, or when a PR list reaches its limit, the helper SHALL say so and SHALL NOT return `clear` for an issue it could not check completely. Calling skills SHALL print the `unknown` verdict and continue; they SHALL NOT stop on it. A calling skill that gets no output from the helper (the helper crashed or could not start) SHALL treat every issue it asked about as `unknown`; it SHALL NOT print or act on an empty verdict.
 
 #### Scenario: gh fails
 
@@ -138,6 +138,12 @@ When `gh` or `git ls-remote` fails, or when a PR list reaches its limit, the hel
 - **WHEN** the helper is called
 - **THEN** the result SHALL carry `truncated: true`
 - **AND** an issue with no evidence SHALL get `unknown`, not `clear`
+
+#### Scenario: The helper produces no output
+
+- **GIVEN** the helper exits non-zero without printing anything
+- **WHEN** `idd-all`, `idd-all-chain`, `idd-implement` or `idd-diagnose` runs its existing-work step for issue 5
+- **THEN** it SHALL print `verdict=unknown` for 5
 
 ### Requirement: Starting skills SHALL act on a blocked verdict
 
@@ -176,7 +182,7 @@ When `gh` or `git ls-remote` fails, or when a PR list reaches its limit, the hel
 
 ### Requirement: idd-close SHALL use the same evidence for its open-PR gate
 
-`idd-close` Step 1.5 SHALL obtain the open PRs that reference the issue from the helper and not from a pattern of its own. The gate SHALL stay as it is: it SHALL refuse to close while any open PR references the issue, whether the evidence is E1 or E2 and whether the PR is the run's own or another's. It SHALL refuse to close, and say why, when the open PR list could not be fetched or reached its limit, because closing is irreversible and an unknown SHALL NOT be read as none. Step 1.55 SHALL keep its own matching.
+`idd-close` Step 1.5 SHALL obtain the open PRs that reference the issue from the helper and not from a pattern of its own. The gate SHALL stay as it is: it SHALL refuse to close while any open PR references the issue, whether the evidence is E1 or E2 and whether the PR is the run's own or another's. It SHALL refuse to close, and say why, when the open PR list could not be fetched or reached its limit, or when the helper could not read the issue itself (PRs are matched against the issue's creation time, so an unread issue has no evidence at all), because closing is irreversible and an unknown SHALL NOT be read as none. Step 1.55 SHALL keep its own matching.
 
 #### Scenario: Close with an open PR that only mentions the issue
 
@@ -193,5 +199,12 @@ When `gh` or `git ls-remote` fails, or when a PR list reaches its limit, the hel
 #### Scenario: The open PR list cannot be fetched
 
 - **GIVEN** the helper reports that `gh pr list --state open` failed
+- **WHEN** `/idd-close #N` runs
+- **THEN** it SHALL refuse to close and print the reason
+
+#### Scenario: The issue itself cannot be read
+
+- **GIVEN** the helper reports that `gh issue view N` failed
+- **AND** an open PR declares `#N`
 - **WHEN** `/idd-close #N` runs
 - **THEN** it SHALL refuse to close and print the reason

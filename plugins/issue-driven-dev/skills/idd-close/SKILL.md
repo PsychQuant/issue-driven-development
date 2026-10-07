@@ -390,7 +390,9 @@ EW_JSON=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/check-existing-work.sh" --cwd "${WOR
   echo "✗ Step 1.5: existing-work lookup produced no result — refusing to close (fail-closed; retry)" >&2; exit 1; }
 # 查詢 open PR 本身失敗或列表達上限時拒絕結案：結案不可逆，「不知道有沒有 open PR」不能當成「沒有」。
 # （比 #366 之前更嚴：以前 gh 失敗時 OPEN_PRS 為空，gate 安靜通過。）
-if printf '%s' "$EW_JSON" | jq -e '[.errors[] | select(test("--state open|open PR list"))] | length > 0' >/dev/null; then
+# 讀不到這張 issue（`gh issue view` 失敗）也一樣：helper 要先有 issue 的建立時間才能比對 PR，讀不到就整張
+# 沒有證據，一個寫著 Refs #N 的 open PR 會被當成不存在。
+if printf '%s' "$EW_JSON" | jq -e '[.errors[] | select(test("--state open|open PR list|gh issue view"))] | length > 0' >/dev/null; then
   echo "✗ Step 1.5: could not check the open PRs completely — refusing to close (fail-closed; retry)" >&2
   printf '%s' "$EW_JSON" | jq -r '.errors[]' >&2; exit 1
 fi

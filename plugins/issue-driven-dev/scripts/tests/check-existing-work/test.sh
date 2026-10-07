@@ -202,4 +202,31 @@ refute_grep "idd-close: Step 1.5 has no private open-PR search" 'gh pr list --re
 assert_grep "idd-close: refuses when the open PR list is unknown" "fail-closed" "$CSEC"
 assert_grep "idd-close: Step 1.55 keeps its own matching (not migrated)" 'gh pr list --repo "$GITHUB_REPO" --state merged' "$(section "$CLOSE" "### Step 1.55" "### Step 1.6")"
 
+# ── 11. a lookup that observed nothing is never read as an answer (skill snippets, executed) ──
+# Each skill's own first bash block is run, not grepped. Two shapes of the same defect:
+#   (a) the helper crashes (no stdout). `|| EW_JSON=""` handed jq an empty input, and jq given no input prints
+#       nothing, so `// "unknown"` never fired and the verdict came out EMPTY: no row of the table, not unknown.
+#   (b) idd-close Step 1.5 when `gh issue view` fails: the issue gets no evidence at all, the gate only refused on
+#       open-PR list errors, so an open PR declaring the issue was never matched and the gate passed.
+snippet() { printf '%s\n' "$1" | awk '/^```bash/{f=1; next} f&&/^```/{exit} f'; }
+CRASH="$W/crashroot"; mkdir -p "$CRASH/scripts"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$CRASH/scripts/check-existing-work.sh"
+crashed() { # prelude section → what the skill prints when the helper produced no output
+  CLAUDE_PLUGIN_ROOT="$CRASH" CWD="$W/work" GITHUB_REPO=test/repo PATH="$W/bin:$PATH" bash -c "$1
+$(snippet "$2")" _ 2>&1; }
+assert_grep "idd-all: a crashed lookup prints verdict=unknown" "verdict=unknown" \
+  "$(crashed 'IN_CHAIN=""; N=5' "$(section "$ALL" "#### Step 0.5.1" "**PR mode branch setup**")")"
+assert_grep "idd-all-chain: a crashed lookup prints verdict=unknown" "verdict=unknown" \
+  "$(crashed 'ROOT_ISSUES_SORTED=(5)' "$(section "$CHAIN" "#### Step 0.4.1" "#### Step 0.4.5")")"
+assert_grep "idd-implement: a crashed lookup prints verdict=unknown" "verdict=unknown" \
+  "$(crashed 'ISSUE_NUMBERS=(5)' "$(section "$IMPL" "### Step 0.37" "### Step 0.4: Tree-lock")")"
+assert_grep "idd-diagnose: a crashed lookup prints verdict=unknown" "verdict=unknown" "$(crashed 'NUMBER=5' "$DSEC")"
+
+reset_fx                                    # no issue_5.json → `gh issue view 5` fails
+pr open 20 "codex/z" ccc $NEWER "" $'Refs #5\n\nbody'
+CLOSE_OUT=$(CLAUDE_PLUGIN_ROOT="$HERE/../../.." WORKDIR="$W/work" GITHUB_REPO=test/repo NUMBER=5 PATH="$W/bin:$PATH" \
+  bash -c "$(snippet "$CSEC")" 2>&1); CLOSE_RC=$?
+assert_eq "idd-close: an issue the lookup could not read does not pass the PR gate" 1 "$CLOSE_RC"
+assert_grep "idd-close: and says why" "refusing to close" "$CLOSE_OUT"
+
 print_summary "check-existing-work"

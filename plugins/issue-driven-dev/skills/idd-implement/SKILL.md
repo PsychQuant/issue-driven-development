@@ -156,7 +156,7 @@ printf 'raw<<<\n'; printf '%s\n%s\n' "${COMPLEXITY_ERR:-}" "${BLOCK_LINE:-}" | s
 ```bash
 case " $* " in *" --existing-work-checked "*) echo "→ Existing work: skipped (checked by the caller)" ;; *)
   for N in "${ISSUE_NUMBERS[@]}"; do
-    EW_JSON=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/check-existing-work.sh" --cwd "$CWD" "$GITHUB_REPO" "$N") || EW_JSON=""
+    EW_JSON=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/check-existing-work.sh" --cwd "$CWD" "$GITHUB_REPO" "$N") || EW_JSON='{}'   # 不是空字串：jq 收到空輸入什麼都不印，verdict 會變成空的
     V=$(printf '%s' "$EW_JSON" | jq -r --arg n "$N" '.issues[$n].verdict // "unknown"')
     R=$(printf '%s' "$EW_JSON" | jq -r --arg n "$N" '.issues[$n].reason // "lookup produced no result"')
     echo "→ Existing work: #$N verdict=$V ${R:+($R)}"   # 一定要印 —— 模型只看得到 Bash 輸出

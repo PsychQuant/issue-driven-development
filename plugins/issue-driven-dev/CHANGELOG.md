@@ -50,6 +50,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and says why. Before, a failing `gh pr list` left the list empty and the gate passed without a word. Step 1.55
   is not migrated; it needs merged PRs that only mention the issue and their head commits, which the helper
   does not report.
+- **A lookup that observed nothing is never read as an answer.** Two paths did that before this release shipped
+  (found by a security review of the PR). The four starting and diagnosing skills fell back to an empty string
+  when the helper crashed; jq prints nothing for empty input, so `// "unknown"` never ran and the verdict came
+  out empty, a value no row of the table covers. They now fall back to `{}`, which gives `unknown`. And
+  `idd-close` Step 1.5 passed when `gh issue view` failed: the helper needs the issue's creation time to match
+  PRs, so the issue had no evidence and an open PR declaring it was treated as absent. The gate now refuses in
+  that case too. Both are covered by running each skill's own snippet in the `check-existing-work` suite.
 
 ### Known
 

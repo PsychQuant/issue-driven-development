@@ -229,7 +229,7 @@ Exit code:
 診斷是唯讀的，所以這一步只把「這張 issue 現在有沒有 PR 或 branch 在處理」寫進 Diagnosis，**不論 verdict 是什麼都不 abort、不 exit**；擋不擋是開工的 skill（`idd-all`、`idd-all-chain`、`idd-implement`）的事。查詢只有一個實作 `scripts/check-existing-work.sh`（契約 [`references/pr-issue-matching.md`](../../references/pr-issue-matching.md)）。
 
 ```bash
-EW_JSON=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/check-existing-work.sh" --cwd "$CWD" "$GITHUB_REPO" "$NUMBER") || EW_JSON=""
+EW_JSON=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/check-existing-work.sh" --cwd "$CWD" "$GITHUB_REPO" "$NUMBER") || EW_JSON='{}'   # 不是空字串：jq 收到空輸入什麼都不印，verdict 會變成空的
 printf '%s' "$EW_JSON" | jq -r --arg n "$NUMBER" '.issues[$n] // {verdict:"unknown",reason:"lookup produced no result",evidence:[]}
   | "→ Existing work: verdict=\(.verdict) \(.reason)", (.evidence[] | "   \(.kind) \(.ref) \(.head // .branch // "")")'
 ```

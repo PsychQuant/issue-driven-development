@@ -357,8 +357,9 @@ fi
 
 ```bash
 if [ -z "$IN_CHAIN" ] && [ -n "${N:-}" ]; then
-  EW_JSON=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/check-existing-work.sh" --cwd "$CWD" "$GITHUB_REPO" "$N") || EW_JSON=""
-  # 跑不出結果也要講出來 —— 「不知道」不得讀成「沒有」
+  EW_JSON=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/check-existing-work.sh" --cwd "$CWD" "$GITHUB_REPO" "$N") || EW_JSON='{}'
+  # 跑不出結果也要講出來 —— 「不知道」不得讀成「沒有」。fallback 必須是 `{}` 不是空字串：jq 收到空輸入什麼都不印，
+  # `// "unknown"` 根本不會執行，verdict 會變成空字串，處置表裡沒有這一列
   EW_VERDICT=$(printf '%s' "$EW_JSON" | jq -r --arg n "$N" '.issues[$n].verdict // "unknown"')
   EW_REASON=$(printf '%s' "$EW_JSON" | jq -r --arg n "$N" '.issues[$n].reason // "lookup produced no result"')
   # 一定要印 —— skill 是模型執行的，Bash 輸出是唯一的觀測通道；只賦值不印，blocked 與 clear 在執行者眼裡一樣
