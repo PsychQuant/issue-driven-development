@@ -100,6 +100,7 @@ Inherits `/idd-all` config protocol (walked-up `.claude/issue-driven-dev.local.j
 TaskCreate(name="preflight", description="Phase 0: 解析 args (≥1 root + optional --bfs/--review)、gh auth、確認每個 root issue 都 OPEN")
 TaskCreate(name="parse_review_flag", description="Phase 0: 解析 --review flag → $REVIEW_FLAG (Phase 2 chain loop 傳到 sub-/idd-all --in-chain;Phase 4 final report wording 切換 verify-gated default vs awaiting human acceptance;per #102 Foresay doctrine)")
 TaskCreate(name="check_diagnosis_readiness", description="Phase 0.4 (v2.55+ #47, helper extracted v2.57+ #51, multi-root v2.60+ #46): invoke scripts/check-diagnosis-readiness.sh <github-repo> <root1> [<root2> ...] → JSON {ready/not_ready}; not_ready=0 → silent pass; not_ready>0 → AskUserQuestion 3-option (run /idd-diagnose first / proceed anyway / cancel). Placed before cluster branch / manifest creation so cancel has zero side effect.")
+TaskCreate(name="existing_work_check", description="Phase 0.4.1 (#366): 對每個 root 呼叫 scripts/check-existing-work.sh，在建 cluster branch 與 manifest 之前;blocked 的 root attended 問、unattended 從 chain 中剔除並記入 Action items;全被剔除則 exit 0")
 TaskCreate(name="cap_exceeded_preflight", description="Phase 0.4.5 (v2.71+, #119): fail-fast refuse if N_ROOTS > CHAIN_MAX_ISSUES — cite docs/workflows.md Anti-pattern A3 (P-chain-from-root 多 root 用 batch 跑) + suggest batch /idd-diagnose path. Placed before Phase 0.5 cluster branch so refuse leaves zero side effect. CHAIN_MAX_ISSUES hoisted here (also set in Phase 1 init_queue, kept in sync).")
 TaskCreate(name="setup_cluster_branch", description="Phase 0.5: 建 cluster branch — N=1 用 idd/chain-<N>-<slug>, N>1 用 idd/chain-multi-<hash8>-<root1-slug> from default branch + 初始化 spawn manifest schema v2 (root_issues + traversal)")
 TaskCreate(name="init_queue", description="Phase 1: QUEUE seeded with all roots (sorted asc), per-root DEPTH_MAP[$root]=0, ROOT_ID_MAP, FAIL_ROOTS set, CHAIN_MAX_DEPTH=3 + CHAIN_MAX_ISSUES=10")
@@ -277,6 +278,21 @@ gh issue edit "$ROOT_ISSUE" -R "$GITHUB_REPO" --body "$NEW_BODY"
 > **#46 multi-root extension hook** (v2.57.0+, #51 shipped): detection logic is now extracted to `plugins/issue-driven-dev/scripts/check-diagnosis-readiness.sh` with variadic positional signature `<github-repo> <issue-number> [<issue-number>...]` returning `{"ready":[N,...],"not_ready":[N,...]}` JSON. v1 single-root invocation; ready for #46 multi-root chain to call with multiple issue numbers + aggregate AskUserQuestion across roots without API change. See `references/chain-flow.md` for canonical signature.
 
 > **Removed pseudo-fallback for unattended caller**: 早期 design 含 `IN_CHAIN_CONTEXT` env var 偵測作 unattended fallback,但實際 repo 中**無任何 producer** sets this var(/idd-verify #47 P1 finding 1)。`/idd-all-chain` 是 user-invoked deliberation moment,沒 unattended caller path,該 env detection 是 dead code,移除。若未來真有 unattended caller,需明確設計 producer + 文件化 detection convention。
+
+#### Step 0.4.1: Existing-work check（#366）
+
+與上面的 diagnosis-readiness 並列、同樣在建 cluster branch 與 manifest **之前**（user 在這裡停下時沒有任何東西要清）：對每個 root 問「是否已有 PR 或 branch 在處理它」。查詢只有一個實作 `scripts/check-existing-work.sh`（契約 [`references/pr-issue-matching.md`](../../references/pr-issue-matching.md)，行為 spec `idd-existing-work-lookup`）；本 skill 不自帶 PR 比對。每個 root 的 verdict 處置與 `idd-all` Step 0.5.1 的表**相同**（`clear` 繼續；`unknown` 印出並繼續；`resume` 在該 branch 上繼續；`blocked` attended 問三選一、unattended 停該 root），不在此重寫一份。
+
+```bash
+EW_JSON=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/check-existing-work.sh" --cwd "$CWD" "$GITHUB_REPO" "${ROOT_ISSUES_SORTED[@]}") || EW_JSON=""
+for ROOT_ISSUE in "${ROOT_ISSUES_SORTED[@]}"; do
+  V=$(printf '%s' "$EW_JSON" | jq -r --arg n "$ROOT_ISSUE" '.issues[$n].verdict // "unknown"')
+  R=$(printf '%s' "$EW_JSON" | jq -r --arg n "$ROOT_ISSUE" '.issues[$n].reason // "lookup produced no result"')
+  echo "→ Existing work: #$ROOT_ISSUE verdict=$V ${R:+($R)}"   # 一定要印 —— 模型只看得到 Bash 輸出
+done
+```
+
+unattended 時 `blocked` 的 root 從 `ROOT_ISSUES_SORTED` 剔除（連同它的 N_ROOTS 計數，讓 Step 0.4.5 的上限檢查用剔除後的數量），並把一行記進最終報告的 `## Action items (require human review)`；全部 root 都被剔除時 `exit 0`（一次乾淨的停止，不是錯誤）。
 
 #### Step 0.4.5: Cap-exceeded fail-fast preflight (v2.71+, #119)
 

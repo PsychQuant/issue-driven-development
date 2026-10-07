@@ -383,18 +383,27 @@ Exit code:
 掃描有沒有引用本 issue 的 open PR — 若有 **unmerged** PR，refuse close（PR path 走完才能 close issue）。
 
 ```bash
-OPEN_PRS=$(gh pr list --repo "$GITHUB_REPO" --state open \
-    --search "in:body \"#${NUMBER}\"" \
-
-    --json number,url,body,createdAt,headRefName,mergeable \
-  | jq --argjson n "$NUMBER" '
-      # search is a COARSE FILTER (#293/#305): GitHub tokenizes `#N`, so
-      # `in:body "#7"` matches a PR whose body only contains `codex-pro#7`, and
-      # `in:body "#10"` matched a PR containing no `#10` at all. Decide here.
-      map(select((.body // "") | test("(^|[^A-Za-z0-9_/-])#\($n)([^0-9]|$)")))')
+# #366: 引用本 issue 的 open PR 來自共用 helper（唯一的比對實作，契約 references/pr-issue-matching.md）。
+# gate 語意不變：任何 open PR 引用本 issue（E1 宣告或 E2 只提及，自家或別人的）都擋 ——
+# Open PR = 「這個改動還沒進 main」，PR 路徑沒走完就不能結案。
+EW_JSON=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/check-existing-work.sh" --cwd "${WORKDIR:-$PWD}" "$GITHUB_REPO" "$NUMBER") || {
+  echo "✗ Step 1.5: existing-work lookup produced no result — refusing to close (fail-closed; retry)" >&2; exit 1; }
+# 查詢 open PR 本身失敗或列表達上限時拒絕結案：結案不可逆，「不知道有沒有 open PR」不能當成「沒有」。
+# （比 #366 之前更嚴：以前 gh 失敗時 OPEN_PRS 為空，gate 安靜通過。）
+if printf '%s' "$EW_JSON" | jq -e '[.errors[] | select(test("--state open|open PR list"))] | length > 0' >/dev/null; then
+  echo "✗ Step 1.5: could not check the open PRs completely — refusing to close (fail-closed; retry)" >&2
+  printf '%s' "$EW_JSON" | jq -r '.errors[]' >&2; exit 1
+fi
+OPEN_PRS=$(printf '%s' "$EW_JSON" | jq -c --arg n "$NUMBER" \
+  '[.issues[$n].evidence[] | select(.kind=="E1" or .kind=="E2") | {number: .pr, url: .url, headRefName: .head}]')
+# mergeable（下表的 CONFLICTING 列）：helper 不回報，每個命中的 PR 另取一次
+OPEN_PRS=$(printf '%s' "$OPEN_PRS" | jq -c '.[]' | while read -r pr; do
+  m=$(gh pr view "$(printf '%s' "$pr" | jq -r .number)" --repo "$GITHUB_REPO" --json mergeable -q .mergeable 2>/dev/null)
+  printf '%s' "$pr" | jq -c --arg m "${m:-UNKNOWN}" '. + {mergeable: $m}'
+done | jq -s '.')
 ```
 
-> ⚠ **`in:body "#N"` 不是精確比對**（#293 / #305）——它會誤中跨 repo 引用（`codex-pro#7` → `#7`）與無關的 PR。search 只能當粗篩，判定必須照 [`references/pr-issue-matching.md`](../../references/pr-issue-matching.md) 在 client 端精篩，並檢查 PR 不早於 issue。
+> 比對由 `scripts/check-existing-work.sh` 負責（#366；精確比對規則與時序檢查在那裡，不在此重寫）。本 gate 把證據種類 E1（宣告）與 E2（只提及）都算數 —— 這**不是**「只提及也算在處理」的判斷，而是維持 close gate 一直以來的語意；是否改成只擋宣告是另一個決定（見 #366 的 Non-Goals）。Step 1.55 仍用自己的 jq（它需要已 merge 的只提及 PR 與 `headRefOid`，helper 不回報）。
 
 | 結果 | 行為 |
 |------|------|

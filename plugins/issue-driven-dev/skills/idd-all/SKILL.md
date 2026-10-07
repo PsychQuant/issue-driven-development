@@ -73,6 +73,7 @@ idd-all 不取代 atomic skills,而是包它們。每個 phase 仍透過 `Skill(
 TaskCreate(name="preflight", description="Phase 0: 解析 args(含 --pr/--no-pr/--review/--cwd)、gh auth、resolve target repo")
 TaskCreate(name="parse_review_flag", description="Phase 0: 解析 --review flag → $REVIEW_FLAG (Phase 6 terminal report 切換 verify-gated default vs awaiting human acceptance; per #102 Foresay doctrine)")
 TaskCreate(name="resolve_mode", description="Phase 0.5: 從 pr_policy + flag + fork detection 解析 (path, interaction) tuple,印 notice line。PR mode 才檢查 git clean + on-default-branch + 建 feature branch;direct-commit mode 留在當前 branch。")
+TaskCreate(name="existing_work_check", description="Phase 0.5.1 (#366): 在建任何 branch 之前呼叫 scripts/check-existing-work.sh;blocked → attended 問三選項、unattended 停該張並記入 Phase 6 Action items;resume → 在該 PR/branch 上繼續;unknown → 印出並繼續")
 TaskCreate(name="ensure_issue", description="Phase 1: 若 from-scratch 則跑 idd-issue; from-issue 則 verify issue 存在")
 TaskCreate(name="diagnose", description="Phase 2: 跑 idd-diagnose,讀回 complexity 判定")
 TaskCreate(name="implement_or_sdd", description="Phase 3: Simple/Plan → idd-implement; Spectra → spectra-discuss → spectra-propose → spectra-apply。Args 含 UNATTENDED MODE 與否依 Phase 0.5 解析的 interaction 軸決定。")
@@ -226,6 +227,7 @@ fi
 - **from-issue mode**(`/idd-all #19`): 確認 issue #19 存在且 OPEN(`gh issue view 19 -R "$GITHUB_REPO" --json state -q .state`); 若 state=CLOSED → abort
 - **from-scratch mode**: skip 到 Phase 1 跑 idd-issue
 - **interactive mode**: AskUserQuestion 兩選一
+- **開工前檢查（已有 PR／branch 在處理這張 issue？）**: 見 Step 0.5.1。它需要先知道 interaction 軸，所以排在 mode 解析之後、建 branch 之前
 
 #### Step 0.5: Resolve Mode + Conditional Branch Setup
 
@@ -349,6 +351,32 @@ fi
 
 > **Subprocess hand-off（#123 契約訊號 2）**：unattended 模式下，idd-all 內部啟動的**真 subprocess**（如 plugin-tools `plugin-update`）必須在命令列前綴 `IDD_ALL_UNATTENDED=1`（state file 只對經 `is_unattended` 的 detector 有效；外部 plugin 讀 env var）。
 
+#### Step 0.5.1: Existing-work check（#366）
+
+在**建任何 branch 之前**，問「這張 issue 是否已有 PR 或 branch 在處理」。查詢只有一個實作：`scripts/check-existing-work.sh`（契約見 [`references/pr-issue-matching.md`](../../references/pr-issue-matching.md)，行為見 spec `idd-existing-work-lookup`）；本 skill **不得**自帶 PR 比對。from-scratch mode（還沒有 issue）與 `--in-chain`（`/idd-all-chain` 的 Phase 0.4 已對每個 root 做過）跳過。批次（`/idd-all #a #b #c`）逐張各跑一次，一張被停下不影響其他張。
+
+```bash
+if [ -z "$IN_CHAIN" ] && [ -n "${N:-}" ]; then
+  EW_JSON=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/check-existing-work.sh" --cwd "$CWD" "$GITHUB_REPO" "$N") || EW_JSON=""
+  # 跑不出結果也要講出來 —— 「不知道」不得讀成「沒有」
+  EW_VERDICT=$(printf '%s' "$EW_JSON" | jq -r --arg n "$N" '.issues[$n].verdict // "unknown"')
+  EW_REASON=$(printf '%s' "$EW_JSON" | jq -r --arg n "$N" '.issues[$n].reason // "lookup produced no result"')
+  # 一定要印 —— skill 是模型執行的，Bash 輸出是唯一的觀測通道；只賦值不印，blocked 與 clear 在執行者眼裡一樣
+  echo "→ Existing work: #$N verdict=$EW_VERDICT ${EW_REASON:+($EW_REASON)}"
+fi
+```
+
+| `$EW_VERDICT` | 行為 |
+|---|---|
+| `clear` | 繼續 |
+| `unknown` | 印出原因並繼續（重複實作可逆；壞掉的網路不該停掉整批）。unattended 時另在 Action items 加一行 |
+| `resume` | 在該 PR／branch 上繼續：設 `RESUME_BRANCH` 為證據裡自家的 `idd/N-*` branch，下面的 branch setup 改為 checkout 它，不再從預設 branch 開新的 |
+| `blocked` | **attended**：用 **AskUserQuestion** 問三選一 —— (a) 接著在該 PR 上做、(b) 用 `idd-verify #N --pr P` 驗證它、(c) 忽略（在 issue body 加一行 `### Existing work: ignored #P by maintainer`）。選 (c) 才繼續往下；選 (a)(b) 不建 branch。**unattended**：**不**開始這張，印出 outcome，並把一行記進 `EXISTING_WORK_ITEMS`（Phase 6 會放進 `## Action items (require human review)`），然後結束這一張（批次繼續下一張） |
+
+blocked 的 outcome 文字：E1 → `existing PR #P`；E3 → `already merged in PR #P -> /idd-close #N`。Action items 的一行：`- #N: existing PR #P declares it — not started; review it (/idd-verify #N --pr P) or run /idd-all #N interactively`（E3：`- #N: already merged in PR #P — run /idd-close #N`）。
+
+> **為什麼 unknown 不擋**：這個檢查防的是重複實作，可逆；`idd-close` 擋的是不可逆的 close，所以它對失敗維持 fail-closed。兩者的差別是刻意的。
+
 **PR mode branch setup**(只在 `PATH_AXIS=PR` 執行):
 
 ```bash
@@ -375,6 +403,8 @@ if [ "$PATH_AXIS" = "PR" ]; then
       | sed -E 's/[^a-z0-9]/-/g; s/-+/-/g; s/^-//; s/-$//' \
       | cut -c1-40)
   BRANCH="idd/${N}-${SLUG}"
+  # #366: resume — 證據裡自家的 idd/N-* branch 取代新 branch 名
+  [ -n "${RESUME_BRANCH:-}" ] && BRANCH="$RESUME_BRANCH"
 
   # #3 fix: branch-already-exists is now a real AskUserQuestion handoff,
   # not a no-op `:` followed by guaranteed-fail `git checkout -b`.
@@ -388,6 +418,8 @@ if [ "$PATH_AXIS" = "PR" ]; then
     # Per (b): NEXT=$(suffix_for "$BRANCH"); BRANCH="$NEXT"; git checkout -b "$BRANCH"
     # Per (c): abort "Branch $BRANCH already exists. Run: git -C $CWD branch -D $BRANCH or pick a different issue."
     :  # bash flow exits the if; agent assigns BRANCH per user's choice and falls through
+  elif [ -n "${RESUME_BRANCH:-}" ]; then
+    git -C "$CWD" checkout -b "$BRANCH" "origin/$BRANCH"   # #366: resume 該 remote branch
   else
     git -C "$CWD" checkout -b "$BRANCH"
   fi
@@ -599,6 +631,8 @@ Dispatch **先看 `$VEXIT`**(gate 判定),`0` 才依 `$TIER` 分派。tier 只�
 ```bash
 # Build args conditionally — UNATTENDED MODE directive only when interaction == unattended
 IMPL_ARGS="#$N --cwd $CWD"
+# #366: 本 skill 已在 Step 0.5.1 做過存在工作檢查，idd-implement 不必再問
+IMPL_ARGS="$IMPL_ARGS --existing-work-checked"
 if [ "$PATH_AXIS" = "PR" ]; then
   IMPL_ARGS="$IMPL_ARGS --pr"
 elif [ "$PATH_AXIS" = "direct-commit" ]; then
@@ -1033,6 +1067,9 @@ for sub_n in "$ROOT_N" "${SPAWNED_ISSUES[@]:-}"; do
     ACTION_ITEMS+=$'\n'"- #${sub_n}: ${LAYERV_DEFERRED_COUNT} Layer V deferred record(s) — vagueness trigger auto-proceeded under unattended mode; catch up via /idd-clarify #${sub_n}（或確認 proceed 正確後 dismiss）"
   fi
 done
+
+# #366: Step 0.5.1 停下的 issue 與 unknown 的查詢（EXISTING_WORK_ITEMS 由 Step 0.5.1 逐行累積；shell 狀態沒存活時重跑 helper 重建）
+ACTION_ITEMS+="${EXISTING_WORK_ITEMS:-}"
 
 if [ -n "$ACTION_ITEMS" ]; then
   cat <<EOF

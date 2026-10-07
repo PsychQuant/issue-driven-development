@@ -60,6 +60,7 @@ Aggregate report 在最後輸出（每個 issue 的 complexity 判定 + comment 
 ```
 TaskCreate(name="read_issue", description="gh issue view #NNN 讀 title/body/labels/comments")
 TaskCreate(name="clarity_gate_check", description="Step 0.5 (v2.71.0+, #135): grep issue body for ### Clarity Surface unresolved rows; refuse if any per IC clarity axis hard-refuse rule (类比 PR Gate Check / idd-all-chain #119); backward compat: silent proceed if block absent (legacy pre-v2.71.0 issue)")
+TaskCreate(name="existing_work", description="Step 1.6 (#366): 呼叫 scripts/check-existing-work.sh，把證據寫進 Diagnosis 的 `### Existing work`（含 unknown 與 (none)）;只報告，任何 verdict 都不停止")
 TaskCreate(name="download_attachments", description="偵測 issue body/comments 的 attachment URL 全部下載到 .claude/.idd/attachments/issue-NNN/,寫 _manifest.json,parse(MCP-first: che-word-mcp / che-pdf-mcp / Read for images)。依 rules/process-attachments.md。忽略附件 = 忽略來源,違反鐵律。")
 TaskCreate(name="diagnose_by_type", description="依 issue type 做診斷: bug→RCA / feature→需求分析 / refactor→現狀分析 / docs→敘述性審查 / meeting→Phase A/B/C 審議 Strategy（見 Step 3 meeting-adapted Diagnosis）")
 TaskCreate(name="post_diagnosis_report", description="產出 Diagnosis Report 並 comment 到 issue(非只在對話中顯示)")
@@ -223,6 +224,18 @@ Exit code:
 
 **有 attachment 但 fetch 失敗** → script 把 error 條目寫進 manifest,Report 標明「attachment X 未能讀取,後續分析可能不完整」(禁止靜默)。
 
+### Step 1.6: Existing work（#366，只報告，**絕不停止**）
+
+診斷是唯讀的，所以這一步只把「這張 issue 現在有沒有 PR 或 branch 在處理」寫進 Diagnosis，**不論 verdict 是什麼都不 abort、不 exit**；擋不擋是開工的 skill（`idd-all`、`idd-all-chain`、`idd-implement`）的事。查詢只有一個實作 `scripts/check-existing-work.sh`（契約 [`references/pr-issue-matching.md`](../../references/pr-issue-matching.md)）。
+
+```bash
+EW_JSON=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/check-existing-work.sh" --cwd "$CWD" "$GITHUB_REPO" "$NUMBER") || EW_JSON=""
+printf '%s' "$EW_JSON" | jq -r --arg n "$NUMBER" '.issues[$n] // {verdict:"unknown",reason:"lookup produced no result",evidence:[]}
+  | "→ Existing work: verdict=\(.verdict) \(.reason)", (.evidence[] | "   \(.kind) \(.ref) \(.head // .branch // "")")'
+```
+
+把結果整理成 Diagnosis 的 `### Existing work`：逐條列出證據（種類、PR 或 branch、連結），`(none)` 與 `unknown`（連同原因）都要寫出來，不得省略成沒有這一節。E2 與 E6 只是脈絡，要明寫「只提及／只有 commit 引用，不代表有人在做」。
+
 ### Step 2: 依類型診斷
 
 #### Bug → Root Cause Analysis（v2.90.0+ #209: superpowers delegation）
@@ -294,6 +307,9 @@ Exit code:
 {bug: root cause + evidence}
 {feature: requirements breakdown}
 {refactor: current state + problems}
+
+### Existing work
+{Step 1.6 的結果：每條證據一行（E1/E2/E3/E4/E6 + PR 或 branch + 連結）；沒有則寫 `(none)`；查詢失敗寫 `unknown` 與原因}
 
 ### Impact
 - 影響的檔案：...
