@@ -1,0 +1,4 @@
+# Security-critical source ranges are tested against these versions.
+markdown-it-py==4.0.0
+linkify-it-py==2.0.3
+uc-micro-py==2.0.0

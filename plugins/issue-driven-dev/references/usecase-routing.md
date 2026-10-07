@@ -156,3 +156,16 @@
 
 - v2.37.0 — 首次發行（external-agent / PR mode 上線時順便整理）
 - 表格按 IDD 版本演進補；新增 use case 時直接加 row + 帶上 contract 文件 link
+
+## 保存與查詢 AI 討論（#331）
+
+| 情境 | 指令／流程 | 邊界 |
+|---|---|---|
+| 保存指定人與AI對話主題 | `idd-discuss <topic>` | 先產生草稿；目前明確發布要求才可寫入 |
+| 同主題新增來源或更正 | `idd-discuss --discussion N` | 穩定topic_id、新source_id；只追加，不蓋掉人工內容 |
+| 詢問當初為何這樣決定 | `idd-ask <question> --corpus all` | 合併top-N≤10、精確來源、partial與分歧明示 |
+| 只搜尋既有issue知識 | `idd-ask <question> --corpus issues` | 保留既有idd-find backend |
+| 討論形成具體工作 | 明確要求後 `idd-issue --from-discussion` | 沿用intake no-auto-file及back-reference規則 |
+
+契約：[discussion-capture](discussion-capture.md)。建立／追加不保證AI正確性、取得完整跨平台
+歷史或控制GitHub通知；不確定的寫入結果必須核對，不能以換source_id方式盲重送。

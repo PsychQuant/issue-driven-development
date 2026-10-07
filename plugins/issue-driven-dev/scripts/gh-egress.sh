@@ -71,7 +71,7 @@
 #   0   dispatched (exec gh -- gh's exit codes flow through from here, all <10)
 #   10  privacy net hit (absolute /Users/<name> path / verbatim ~/.claude.json content)
 #   11  mention net hit (unattested @login token / entity-encoded @ form)
-#   12  unscannable --body-file (not a readable regular file, #203 item 3)
+#   12  unscannable body (unreadable file or unavailable/failed Markdown parser)
 #   13  attestation missing/invalid (--scrub-attested absent or bad level)
 #   14  usage error (bad/missing verb, malformed/split-token args, flag missing its value)
 #   15  empty/near-empty body on the body channel (#275 — the signature of upstream
@@ -86,15 +86,15 @@
 set -u
 
 usage() {
-  echo "✗ gh-egress: usage: gh-egress.sh <create|comment|edit|edit-comment> [gh args...] --scrub-attested <enforce|warn|light>" >&2
+  echo "✗ gh-egress: usage: gh-egress.sh <create|comment|edit|edit-comment|check> [gh args...] --scrub-attested <enforce|warn|light>" >&2
 }
 
 # --- verb (first positional) -------------------------------------------------
 VERB="${1:-}"
 case "$VERB" in
-  create|comment|edit|edit-comment) shift ;;
+  create|comment|edit|edit-comment|check) shift ;;
   "") echo "✗ gh-egress: missing egress verb." >&2; usage; exit 14 ;;
-  *)  echo "✗ gh-egress: unknown egress verb '$VERB' (only create|comment|edit|edit-comment route through this gate)." >&2; usage; exit 14 ;;
+  *)  echo "✗ gh-egress: unknown egress verb '$VERB' (only create|comment|edit|edit-comment|check route through this gate)." >&2; usage; exit 14 ;;
 esac
 
 # --- parse: pull out --scrub-attested, forward everything else verbatim -------
@@ -106,6 +106,22 @@ require_scannable_bodyfile() {
     echo "✗ gh-egress: REFUSED — --body-file '$1' is not a readable regular file." >&2
     echo "  stdin ('-'), FIFOs and process substitutions cannot be scanned without consuming the stream." >&2
     echo "  Write the body to a regular file first, then re-dispatch." >&2
+    exit 12
+  fi
+  # Bash command substitution drops NUL bytes, which can change Markdown
+  # delimiters before the mention scan. Reject on raw bytes before any cat
+  # result enters a shell variable; an unavailable byte check also refuses.
+  if ! python3 - "$1" <<'PYBODY'
+from pathlib import Path
+import sys
+try:
+    body = Path(sys.argv[1]).read_bytes()
+except OSError:
+    sys.exit(12)
+sys.exit(12 if b"\x00" in body else 0)
+PYBODY
+  then
+    echo "✗ gh-egress: REFUSED — body-file contains NUL bytes or its bytes could not be checked." >&2
     exit 12
   fi
 }
@@ -212,6 +228,12 @@ case "$ATTESTED" in
   *)  echo "✗ gh-egress: REFUSED — invalid attestation level '$ATTESTED' (expected enforce|warn|light)." >&2
       exit 13 ;;
 esac
+
+# check is validation only; require actual prose, never dispatch a gh command.
+if [ "$VERB" = "check" ] && [ "${#BODY_PARTS[@]}" -eq 0 ]; then
+  echo "✗ gh-egress: check needs a body or readable body file." >&2
+  exit 15
+fi
 
 # --- (b) mechanical last-resort net (4 zero-tolerance mechanical items) -------
 # (grown 2→3 by #117 mention net, 3→4 by #272 reply tier-floor backstop —
@@ -347,17 +369,34 @@ fi
 #    (set only after the 5-step protocol resolved the logins).
 #    Prefix guard [^[:alnum:]_] keeps email-like user@host out (GitHub does not
 #    notify on those either).
-MBODY=""
-for p in "${BODY_PARTS[@]:-}"; do MBODY+="$p"$'\n'; done
-# GFM: a fence opener allows at most 3 leading spaces; >=4 is literal indented
-# code and must NOT toggle fence state (logic 117-3 false-negative otherwise).
-# URL spans are exempt: GitHub's mention parser does not notify on @handle
-# inside an autolinked URL (unpkg.com/@scope/pkg, mastodon.social/@dev), and
-# backtick-escaping a URL would break the link (DA-117-B, R2). Only
-# autolink-ELIGIBLE spans qualify — host must contain a dot; no-dot/malformed
-# "URLs" (https://@user, http://localhost/@user) render as literal text where
-# /@name IS a live mention, so they stay in the scan (117-A, R3).
-MSCAN="$(printf '%s' "$MBODY" | awk '/^ ? ? ?```/{infence=!infence; next} !infence{print}' | sed -E 's/`[^`]*`//g; s|https?://[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+[^[:space:])>]*||g')"
+# CommonMark parsing, including nested fences and exact inline delimiters,
+# belongs to a maintained parser. Never treat uncertain syntax as inert code.
+# Each body input is its own Markdown document: an opening fence or backtick
+# in one argument must not exempt a mention in a later body argument/file.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MSCAN=""
+for p in "${BODY_PARTS[@]:-}"; do
+  if ! PART_SCAN="$(printf '%s' "$p" | python3 "$SCRIPT_DIR/lib/mention_scan_text.py")"; then
+    echo "✗ gh-egress: REFUSED — body could not be scanned for Markdown mentions." >&2
+    echo "  Install the supported parser, then retry: python3 -m pip install -r \"$SCRIPT_DIR/requirements-egress.txt\"" >&2
+    exit 12
+  fi
+  MSCAN+="$PART_SCAN"$'\n'
+done
+# The helper already excluded qualified source URL ranges, before removing
+# code. Never delete URLs globally from the resulting fragments: that loses
+# original prefix, hostname, HTML context, and code-boundary information.
+# Charrefs anywhere in a decoded mention (not just the @) require outright
+# refusal. This mode consumes already-filtered MSCAN; it does not parse Markdown
+# or join fragments again. Normalize failures to the wrapper's refusal band.
+if printf '%s' "$MSCAN" | python3 "$SCRIPT_DIR/lib/mention_scan_text.py" --check-entity-mentions; then
+  :
+else
+  case "$?" in
+    11) exit 11 ;;
+    *) echo "✗ gh-egress: REFUSED — entity mention scan could not complete." >&2; exit 12 ;;
+  esac
+fi
 # Entity-encoded @ (&#64; / &#x40; / &commat;) followed by a login shape: GitHub
 # may decode these before its mention scan — fail closed and refuse outright.
 # Known friction (DA-117-A, accepted): prose that merely DISCUSSES the encoded
@@ -386,7 +425,7 @@ done < <(printf '%s\n' "$MSCAN" \
 if [ -n "$UNATTESTED_MENTIONS" ]; then
   echo "✗ gh-egress: REFUSED — unattested @-mention token(s):$UNATTESTED_MENTIONS" >&2
   echo "  GitHub notifies real users on raw @login tokens (irreversible). Either:" >&2
-  echo "    - escape non-mention tokens in backticks (\`@name\`) — inert on GitHub, or" >&2
+  echo "    - escape non-mention tokens in a standalone fenced code block (table/ambiguous contexts remain conservatively scanned), or" >&2
   echo "    - run the rules/tagging-collaborators.md 5-step protocol, then re-dispatch with" >&2
   echo "      --mention-attested <login1,login2> covering every intended mention." >&2
   exit 11
@@ -417,6 +456,13 @@ if [ "$ATTESTED" = "light" ] \
   echo "  Obtain the user's explicit confirmation that the quoted content may be posted, then re-dispatch" >&2
   echo "  with --scrub-attested warn (or enforce)." >&2
   exit 13
+fi
+
+# A passing check certifies that these bytes passed the mechanical gate only.
+# It does not grant publication authority or certify semantic/privacy correctness.
+if [ "$VERB" = "check" ]; then
+  echo "gh-egress: check passed (no dispatch)"
+  exit 0
 fi
 
 # --- dispatch: byte-for-byte identical to raw `gh issue <verb> ...` -----------
