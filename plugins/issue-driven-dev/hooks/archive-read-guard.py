@@ -16,9 +16,10 @@ second layer — archive files are mode 0000 — covers that case.
 Threat model: accidental reads, not an agent deliberately working around the
 guard.
 
-Shell commands are checked word by word: a quoted string with spaces in it
-(a commit message, an inline issue body) mentions the path without opening it
-and is not blocked. The file ~/.cache/idd/archive-read-guard.disabled, created
+Shell commands are checked word by word, quoted strings included (`sh -c`,
+`python3 -c` read files from inside them). Only the value of a message option
+(-m, --message, --body, --title, --notes, --subject) is skipped: a commit
+message or issue body that mentions the path does not open it. The file ~/.cache/idd/archive-read-guard.disabled, created
 by a human, turns the guard off.
 
 Input that cannot be parsed is allowed (a note goes to stderr): a bug in this
@@ -27,6 +28,7 @@ protects the archive.
 """
 import json
 import os
+import re
 import shlex
 import sys
 
@@ -75,10 +77,17 @@ def _hits(candidate):
     return False
 
 
+# Values of these options are prose (commit messages, issue bodies), not paths;
+# they may mention the archive without reading it. Closed list — every other
+# quoted string is still scanned, because `sh -c "cat <archive>"` and
+# `python3 -c "open('<archive>')"` read the archive from inside a quoted string.
+MESSAGE_FLAGS = ("-m", "--message", "--body", "--title", "--notes", "--subject")
+
+
 def _command_words(command):
-    """Shell words of a command. A word that contains whitespace came from a
-    quoted string — a commit message, an inline --body — and names nothing on
-    disk, so it is skipped; everything else is normalised as a path."""
+    """Path candidates in a shell command: every shell word, and every piece of
+    a word split on whitespace and quoting/grouping characters — except the
+    value of a message option, which is prose."""
     # Backslashes become '/' before splitting: PowerShell paths use them as
     # separators, and POSIX shlex would otherwise eat them as escapes.
     command = command.replace("\\", "/")
@@ -86,11 +95,17 @@ def _command_words(command):
         words = shlex.split(command, posix=True)
     except ValueError:
         words = command.split()
+    previous = ""
     for word in words:
-        if any(ch.isspace() for ch in word):
+        is_message = previous in MESSAGE_FLAGS or any(
+            word.startswith(flag + "=") for flag in MESSAGE_FLAGS if flag.startswith("--")
+        )
+        previous = word
+        if is_message:
             continue
-        for piece in word.split("="):
-            yield _norm_path(piece)
+        for piece in re.split(r"[\s'\"`()=;|&<>]+", word):
+            if piece:
+                yield _norm_path(piece)
 
 
 def _candidates(tool, tool_input):

@@ -260,6 +260,10 @@ expect_allow ghbody   '{"tool_name":"Bash","tool_input":{"command":"gh issue com
 expect_deny  dotdot   '{"tool_name":"Bash","tool_input":{"command":"cat .claude/x/../.idd/archive/edits/a.md"}}'
 expect_deny  dblslash '{"tool_name":"Bash","tool_input":{"command":"cat .claude//.idd/archive/edits/a.md"}}'
 expect_allow prefix   '{"tool_name":"Read","tool_input":{"file_path":"/r/.claude/.idd/archive-notes.md"}}'
+expect_deny  shc      '{"tool_name":"Bash","tool_input":{"command":"sh -c \"cat .claude/.idd/archive/edits/a.md\""}}'
+expect_deny  pyc      '{"tool_name":"Bash","tool_input":{"command":"python3 -c \"print(open(\u0027.claude/.idd/archive/edits/a.md\u0027).read())\""}}'
+expect_deny  quoted   '{"tool_name":"Bash","tool_input":{"command":"cat \".claude/.idd/archive/edits/a b.md\""}}'
+expect_allow commitF  '{"tool_name":"Bash","tool_input":{"command":"git commit --message=\"see .claude/.idd/archive/ docs\""}}'
 mkdir -p "$WORK/fakehome/.cache/idd"; : >"$WORK/fakehome/.cache/idd/archive-read-guard.disabled"
 printf '%s' '{"tool_name":"Read","tool_input":{"file_path":"/r/.claude/.idd/archive/edits/a.md"}}' \
   | HOME="$WORK/fakehome" python3 "$HOOK" >"$WORK/hook-unlock.out" 2>/dev/null
