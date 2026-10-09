@@ -39,7 +39,7 @@
 
 正文目標語法 `issue:<N>`，只接受 `--section <heading>`。整段取代正文會一起覆蓋 `Original text`、`## Current Status`、`### Clarity Surface`，所以不開放。保護區判定由 helper 的 `check-correction` 子命令執行：
 
-- 受管區：`## Current Status`（含其下巢狀標題，歸 `idd-update`）與 `### Clarity Surface`（歸 `idd-clarify`）。目標段落本身是受管區，或目標段落**包含**受管區標題，都 exit 6：`### Clarity Surface` 常巢狀在 `## Related` 這類段落底下，更正 `## Related` 會把整張表一起換掉。
+- 受管區：`## Current Status`（含其下巢狀標題，歸 `idd-update`）與 `### Clarity Surface`（歸 `idd-clarify`）。目標段落本身是受管區 → exit 6。`### Clarity Surface` 常巢狀在 `## Related` 底下：第 1 版把「包含受管區」也一律拒絕，手動驗收發現這讓 `## Related` 永遠改不了，所以改成更正的段落遇到受管標題（或 `---`）就結束，只換它上面的內容（使用者 2026-10-10 決定）。
 - verbatim 區塊：原 section 中「連續以 `>` 開頭、且其中一行含 `Original text`」的最大區塊，必須在取代內容中逐 byte 出現 → 否則 exit 6。
 
 ### 確認後才歸檔，歸檔成功才 PATCH

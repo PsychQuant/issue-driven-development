@@ -25,17 +25,17 @@ The `/idd-edit` skill SHALL accept a `--correct` mode whose target is either a c
 
 ### Requirement: Protected regions SHALL NOT be corrected
 
-The helper SHALL refuse a correction with exit code 6 when either of the following holds: (1) the target section is `## Current Status`, a heading beginning with `### Clarity Surface`, or any heading nested inside `## Current Status`, or the target section contains such a heading, or the replacement introduces such a heading; (2) the verbatim blocks of the original region and of the replacement are not identical as multisets. A verbatim block is a maximal run of consecutive lines starting with `>` in which some line contains `Original text` or the decision-template label `**Original**` (closed list of two labels). The refusal message SHALL name the protected region and the skill that owns it (`idd-update` for Current Status, `idd-clarify` for Clarity Surface) or state that the verbatim block must be preserved.
+The helper SHALL refuse a correction with exit code 6 when either of the following holds: (1) the target section is `## Current Status`, a heading beginning with `### Clarity Surface`, or any heading nested inside `## Current Status`, or the replacement introduces such a heading; (2) the verbatim blocks of the original region and of the replacement are not identical as multisets. A verbatim block is a maximal run of consecutive lines starting with `>` in which some line contains `Original text` or the decision-template label `**Original**` (closed list of two labels). The refusal message SHALL name the protected region and the skill that owns it (`idd-update` for Current Status, `idd-clarify` for Clarity Surface) or state that the verbatim block must be preserved.
 
 #### Scenario: Managed section refused
 
 - **WHEN** a user invokes `/idd-edit issue:351 --correct --section "## Current Status" --body "..."`
 - **THEN** the helper SHALL exit 6 and the message SHALL name `idd-update` as the owner of that section
 
-#### Scenario: Section that contains a managed heading refused
+#### Scenario: Managed heading nested below the target ends it
 
 - **WHEN** `## Related` is followed by a nested `### Clarity Surface` table and a user invokes `/idd-edit issue:351 --correct --section "## Related" --body "..."`
-- **THEN** the helper SHALL exit 6 and the message SHALL name `idd-clarify` as the owner of the contained section
+- **THEN** only the lines between `## Related` and `### Clarity Surface` SHALL be replaced, and the `### Clarity Surface` block SHALL be unchanged
 
 #### Scenario: Verbatim block preserved in replacement
 
@@ -130,9 +130,9 @@ After the user confirms and before archiving, the skill SHALL fetch the target a
 - **WHEN** `idd-update` rewrites the issue body while the user is reading the preview, and the user then confirms
 - **THEN** the correction SHALL be refused as changed since preview and the body SHALL keep `idd-update`'s version
 
-### Requirement: Corrected sections SHALL stop at a thematic break
+### Requirement: Corrected sections SHALL stop at a thematic break or a managed heading
 
-For `--correct`, a section SHALL end at the next heading of the same or a higher level or at the next line consisting of `---`, whichever comes first, so that separators and the audit blocks below them are never replaced.
+For `--correct`, a section SHALL end at the first of: the next heading of the same or a higher level, the next line consisting of `---`, or the next `## Current Status` or `### Clarity Surface` heading — so that separators, the audit blocks below them, and regions owned by other skills are never replaced.
 
 #### Scenario: Last section before the separator
 

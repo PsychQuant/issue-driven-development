@@ -686,7 +686,7 @@ def section_replace_subcmd(argv):
             # A heading of same-or-higher level (lvl <= target, lvl >= 1)
             # followed by whitespace ends the section.
             if (1 <= lvl <= level and len(line) > lvl and line[lvl].isspace()) or (
-                stop_at_rule and line.strip() == "---"
+                stop_at_rule and _is_correct_boundary(line)
             ):
                 skipping = False
                 out.append(line)
@@ -805,6 +805,13 @@ _VERBATIM_LABELS = ("Original text", "**Original**")
 _CLARITY_PREFIX = "### Clarity Surface"
 
 
+def _is_correct_boundary(line):
+    """Extra section ends under --correct: a `---` rule, or a heading managed by
+    another skill. idd-issue nests `### Clarity Surface` under `## Related`, so
+    without this the section above it could never be corrected (#351)."""
+    return line.strip() == "---" or line == _CURRENT_STATUS or line.startswith(_CLARITY_PREFIX)
+
+
 def _read_normalized(path):
     with open(path, "r", encoding="utf-8", errors="replace") as fh:
         return fh.read().replace("\r\n", "\n").replace("\r", "\n")
@@ -822,7 +829,7 @@ def _section_range(lines, heading_line, stop_at_rule=False):
     for i in range(start + 1, len(lines)):
         lvl = _heading_level(lines[i])
         if (1 <= lvl <= level and len(lines[i]) > lvl and lines[i][lvl].isspace()) or (
-            stop_at_rule and lines[i].strip() == "---"
+            stop_at_rule and _is_correct_boundary(lines[i])
         ):
             end = i
             break

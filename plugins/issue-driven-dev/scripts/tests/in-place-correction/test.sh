@@ -130,8 +130,10 @@ assert_exit "heading nested inside Current Status is refused with exit 6" 6 "$RC
 assert_output_grep "nested refusal names idd-update" "idd-update" "$WORK/b7.err"
 
 run_helper b8 check-correction "$WORK/body.md" "## Related" "$WORK/r-exp.md"
-assert_exit "section that contains ### Clarity Surface is refused with exit 6" 6 "$RC"
-assert_output_grep "containment refusal names idd-clarify" "idd-clarify" "$WORK/b8.err"
+assert_exit "## Related above a nested ### Clarity Surface is correctable (the managed heading ends it)" 0 "$RC"
+run_helper b8b section-replace "$WORK/body.md" "## Related" "$WORK/r-exp.md" --stop-at-rule
+assert_output_grep "Clarity Surface block survives the correction of ## Related" "### Clarity Surface(idd-clarify run 2026-09-24T00:00:00Z)" "$WORK/b8b.out"
+refute_output_grep "old ## Related content is replaced" "- #347" "$WORK/b8b.out"
 
 run_helper b9 check-correction "$WORK/body.md" "### Clarity Surface(idd-clarify run 2026-09-24T00:00:00Z)" "$WORK/r-exp.md"
 assert_exit "### Clarity Surface section is refused with exit 6" 6 "$RC"

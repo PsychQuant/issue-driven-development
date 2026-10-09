@@ -22,8 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     Glob / Edit / Write / NotebookEdit / Bash / PowerShell calls that name the archive path. About 31 ms per
     tool call.
   - **Protected regions** (`check-correction`, exit 6): `Original text` / `**Original**` quotations must survive unchanged;
-    `## Current Status` (idd-update) and `### Clarity Surface` (idd-clarify), or a section that contains them,
-    are refused. Only the invoking user's own content is corrected (see the author gate below); `--correct` has
+    `## Current Status` (idd-update) and `### Clarity Surface` (idd-clarify) are refused as targets, and a
+    corrected section ends at either heading or at `---`, so it never swallows them. Only the invoking user's own content is corrected (see the author gate below); `--correct` has
     no `--override-user-content`.
   - The marker `<!-- idd:edit mode="correct" backup-id="…" -->` ends the replaced region and carries no path.
 - `idd-verify`, `idd-diagnose` and `idd-reorganize` add `### Proposed Corrections` when their findings show a

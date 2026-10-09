@@ -81,7 +81,7 @@ idd-issue source.docx       # auto-trigger when source contains ≥2 findings
 | **R5** (spec) | Comment author non-OWNER non-bot,無 `--override-user-content --reason="..."` → refuse | exit 4 |
 | `--correct` scope | 缺 `--scope`/`--section`，或 `issue:<N>` 用 whole scope → refuse | exit 3 |
 | `--correct` override | `--correct` 併用 `--override-user-content` → refuse（協作者 comment 只提議、不改） | exit 2 |
-| Protected regions | `check-correction`：`## Current Status`／`### Clarity Surface`（或包含它們的 section）、`Original text` 引用區塊被改 → refuse | exit 6 |
+| Protected regions | `check-correction`：目標是 `## Current Status`／`### Clarity Surface`（或其下）、替換內容帶入這些標題、`Original text`／`**Original**` 引用被改 → refuse。更正的段落遇到 `---` 或這兩個標題即結束，不會吃到它們 | exit 6 |
 | Archive | 不在 git work tree、歸檔路徑沒被 ignore、寫入失敗 → refuse，不 PATCH | exit 7 |
 
 Override pathway:`--override-user-content --reason="<rationale>"` 顯式同意修改 user content。 Audit marker `<!-- idd:edit override-user-content date=... reason="..." -->` 自動 append。
