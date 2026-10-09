@@ -36,4 +36,4 @@
 - [x] 7.3 hook：shell word 比對、路徑段比對、解鎖旗標。驗證：7.1 的 hook 斷言轉綠。
 - [x] 7.4 `idd-edit` SKILL.md：每個目標一個 iteration（不用全域旗標）、確認後重抓比對、PATCH 前檢查 `section-replace` 結束碼、拒絕原因分桶、失敗路徑清除工作副本、`mktemp` 工作副本、正文的 Step 3／7；說明與範例把 typo 導到 `--correct`；multi-finding 指引改為更正走 `--correct`。驗證：`idd-edit-contract` 全綠、7.1 文件斷言轉綠。
 - [x] 7.5 其他文件：`idd-update` Key Decisions 改為每次重建；三個提議 skill 的替換檔放 `$HOME/.cache/idd/corrections/`、「錯在哪」欄不重述錯誤值；`idd-comment` errata 本人路徑改用 `--correction-file`、移除類別宣告；`idd-reorganize` 鐵律；規則檔 decision tree、IC_R007 列、spec 檔歸類、override 說法；MANIFESTO 8 類；CHANGELOG 標 BREAKING、修正「唯一保留的舊版」說法；design 同步。驗證：7.1 文件斷言轉綠，全部 suite 跑過。
-- [ ] 7.6 6.2 手動驗收加入正文路徑（`issue:<N> --correct --section`），並在 #351 驗收後套用 verify 報告的兩項 Proposed Corrections。驗證：#351 驗收紀錄。
+- [x] 7.6 6.2 手動驗收加入正文路徑（`issue:<N> --correct --section`），並在 #351 驗收後套用 verify 報告的兩項 Proposed Corrections。驗證：#351 驗收紀錄。
