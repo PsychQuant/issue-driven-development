@@ -14,7 +14,11 @@ a recursive read that never spells the path (`grep -r .`) passes here; the
 second layer — archive files are mode 0000 — covers that case.
 
 Threat model: accidental reads, not an agent deliberately working around the
-guard.
+guard. This hook parses the command with Python's shlex while the shell runs
+it, so the two can always be made to disagree (a path assembled from
+variables, ANSI-C escapes, eval). Those differentials are accepted: the file
+mode is what guarantees an unreadable archive; this hook only stops the
+ordinary `cat`/`grep`/Read that would otherwise happen by accident.
 
 Shell commands are checked word by word, quoted strings included (`sh -c`,
 `python3 -c` read files from inside them). Only the value of a message option
@@ -104,7 +108,7 @@ def _command_words(command):
         # A message value is prose only if the shell will not execute part of
         # it: `--body "$(cat <archive>)"` posts the archive (parser differential
         # between shlex and the real shell).
-        if is_message and not any(t in word for t in ("$(", "`", "<(", ">(")):
+        if is_message and not any(t in word for t in ("$", "`", "<(", ">(")):
             continue
         for piece in re.split(r"[\s'\"`()=;|&<>]+", word):
             if piece:

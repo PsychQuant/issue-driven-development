@@ -109,7 +109,7 @@ OWNER 或 bot 的 comment → 轉給 `idd-edit --correct`，不另貼 errata com
 
 ## Risks / Trade-offs
 
-- [hook 比對字串，指令用變數組出路徑時攔不到] → 第二層權限 `0000` 讓讀取失敗；threat model 明寫為「無意間讀到」。
+- [hook 用 shlex 解析、實際執行的是 shell，兩者必然有解析差異（變數拼出路徑、ANSI-C 跳脫、eval）；背景安全審查連續回報三次] → 接受：hook 只擋無意間的 `cat`／`grep`／Read，訊息參數含 `$`、反引號或程序替換時一律檢查；保證讀不到的是第二層權限 `0000`。threat model 是「無意間讀到」，不是刻意繞過。
 - [以 root 執行的程序不受權限限制] → 不處理；IDD 不以 root 執行。
 - [本機歸檔只在一台機器] → GitHub 編輯紀錄保有每一版；歸檔是可用 ID 找到的本機副本。
 - [restore 會蓋掉更正之後的修改] → 確認提示明說；還原後可再跑 `idd-update` 重建 Current Status。
