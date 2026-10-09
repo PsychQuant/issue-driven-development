@@ -1,12 +1,12 @@
 ---
 name: idd-edit
 description: |
-  編輯既有 GitHub issue comment。支援 append/replace/prepend-note 三種 mode。
+  編輯既有 GitHub issue comment。支援 append/replace/prepend-note/correct 四種 mode；`--correct` 也能更正 issue 正文（`issue:<N>`，#351）。
   必 show 原 body + preview 新 body 讓 user confirm。用 `gh api -F body=@file` 避免 backtick escape bug。
   支援 batch mode（v2.34.0+）：多個 comment 套同一段 edit（如 `comment:NNN comment:MMM --replace --body '...'`），每個 comment 仍 per-confirm。
-  Use when: 補既有 comment 說明（如圖片下方解釋）、修 typo、標示「此 comment 已被後續 errata 修正」。
+  Use when: 補既有 comment 說明（如圖片下方解釋）、修 typo；內容確定錯了 → `--correct` 就地取代（舊版歸檔、AI 讀不到）。
   防止的失敗：手動 `gh api PATCH` 字串 escape 錯誤、誤覆蓋未 backup 的原內容。
-argument-hint: "comment:<id>[ comment:<id>...]|#issue --last (--append|--replace [--scope whole-comment|--section <heading>]|--prepend-note) [--body=... | --body-file=...] [--reason=...] [--override-user-content --reason='...']"
+argument-hint: "comment:<id>[ comment:<id>...]|#issue --last|issue:<N> (--append|--replace [--scope whole-comment|--section <heading>]|--prepend-note|--correct (--scope whole-comment|--section <heading>)) [--body=... | --body-file=...] [--reason=...] [--override-user-content --reason='...']"
 allowed-tools:
   - Bash(gh:*)
   - Read
@@ -50,13 +50,14 @@ idd-issue source.docx       # auto-trigger when source contains ≥2 findings
 
 完整 multi-finding mode 契約見 `idd-issue` SKILL.md `## Multi-finding source mode` 段落。
 
-## 三種 Edit Mode
+## 四種 Edit Mode
 
 | Mode | 動作 | 原 body | 適用 | 強制 flags |
 |------|------|--------|------|-----------|
 | `--append` | 在末尾加 `---\n**Edit YYYY-MM-DD**: {reason}\n\n{body}` | 保留 | 補充 / 更正（保留歷史） | `--reason` |
 | `--replace` | 完全替換 body 或指定 section | 寫入 backup 檔 | 大幅改寫（如補圖說明） | `--reason` + **`--scope whole-comment` OR `--section <heading>`**（R4 enforced）|
-| `--prepend-note` | 在最上方加 `> ⚠️ {reason}\n\n---\n\n` | 保留 | 標示「此 comment 已過時」（errata flow 用） | `--reason` |
+| `--prepend-note` | 在最上方加 `> ⚠️ {reason}\n\n---\n\n` | 保留 | 標示「此 comment 已過時」 | `--reason` |
+| `--correct` | 就地取代確定錯誤的整則 comment 或指定 section，區段末尾加帶 `backup-id` 的標記 | 歸檔到 correction archive（不進 git、權限 0000、hook 擋 AI 讀取） | 內容確定是錯的、使用者已確認（#351） | `--scope whole-comment` OR `--section <heading>`；`issue:<N>` 只接受 `--section`；不接受 `--override-user-content` |
 
 ## 動作分類 (per [`#150` action-scoped modify discipline](../../rules/append-vs-modify.md))
 
@@ -66,6 +67,7 @@ idd-issue source.docx       # auto-trigger when source contains ≥2 findings
 | `--replace --scope whole-comment` | `bounded-section-replace` | scope = whole comment(explicit acknowledgment of full overwrite）|
 | `--replace --section <heading>` | `bounded-section-replace` | scope = named markdown subsection only |
 | `--prepend-note` | `audit-block-append` | leading errata marker,inherently bounded — no `--scope` needed |
+| `--correct` | `in-place-correction` | 一個 bounded region（整則 comment 或一個 section）；歸檔後才寫入 — `(category: in-place-correction)` |
 
 ## Runtime gates (#154, v2.81.0+)
 
@@ -75,6 +77,10 @@ idd-issue source.docx       # auto-trigger when source contains ≥2 findings
 |-------------|------|-------------|
 | **R4** (spec) | `--replace` without `--scope`/`--section` → refuse | exit 3 |
 | **R5** (spec) | Comment author non-OWNER non-bot,無 `--override-user-content --reason="..."` → refuse | exit 4 |
+| `--correct` scope | 缺 `--scope`/`--section`，或 `issue:<N>` 用 whole scope → refuse | exit 3 |
+| `--correct` override | `--correct` 併用 `--override-user-content` → refuse（協作者 comment 只提議、不改） | exit 2 |
+| Protected regions | `check-correction`：`## Current Status`／`### Clarity Surface`（或包含它們的 section）、`Original text` 引用區塊被改 → refuse | exit 6 |
+| Archive | 不在 git work tree、歸檔路徑沒被 ignore、寫入失敗 → refuse，不 PATCH | exit 7 |
 
 Override pathway:`--override-user-content --reason="<rationale>"` 顯式同意修改 user content。 Audit marker `<!-- idd:edit override-user-content date=... reason="..." -->` 自動 append。
 
@@ -97,6 +103,7 @@ Override pathway:`--override-user-content --reason="<rationale>"` 顯式同意�
 | `comment:<numeric-id>` | 直接用 GitHub comment ID（從 URL 尾部 `#issuecomment-<id>` 取） |
 | `#NNN --last` | issue #NNN 的**最後一個** comment |
 | `#NNN` | issue #NNN → 列出所有 comments 讓使用者選（AskUserQuestion） |
+| `issue:<N>` | issue #N 的**正文**（只限 `--correct --section`；其他模式見 #347） |
 
 ## Execution
 
@@ -109,7 +116,9 @@ TaskCreate(name="parse_and_resolve_target", description="Parse comment:<id> 或 
 TaskCreate(name="fetch_body_and_backup", description="gh api 取現 body 並寫入 /tmp/idd-edit-backup/comment-<id>-<ts>.md")
 TaskCreate(name="show_original", description="顯示原 comment 前 30 行讓使用者看清楚要動什麼")
 TaskCreate(name="build_new_body", description="按 mode（append / replace / prepend-note）組新 body 字串")
-TaskCreate(name="preview_and_confirm", description="顯示新 body 並用 AskUserQuestion 確認；--replace 模式必須通過")
+TaskCreate(name="check_correction", description="--correct only：helper check-correction 擋受管區與 Original text 引用區塊（exit 6）")
+TaskCreate(name="preview_and_confirm", description="顯示新 body 並用 AskUserQuestion 確認；--replace / --correct 模式必須通過")
+TaskCreate(name="archive_before_patch", description="--correct only：確認後 helper archive --from-file 歸檔舊版（exit 7 → 不 PATCH），再加 backup-id 標記組出 NEW_BODY；PATCH 後刪 /tmp 工作副本")
 TaskCreate(name="execute_patch", description="經 gh-egress.sh edit-comment 派送 PATCH（#273 — 全網套用；rc>=10 → EGRESS_REFUSED 桶 warn-continue）；-F body=@file 避免 escape")
 TaskCreate(name="verify_and_report", description="re-fetch comment 比對寫入結果，輸出 ✓ Edit applied + diff summary")
 ```
@@ -148,9 +157,14 @@ esac
 # Fix: resolution loop accumulates; per-target processing happens in OUTER loop
 # wrapping Steps 1.5 through 7 (see "Per-target outer loop" note below).
 RESOLVED_COMMENT_IDS=()
+ISSUE_BODY_TARGET=""   # --correct on issue:<N> (#351); helper already refused it for other modes
 for target in "${TARGETS[@]}"; do
     local id=""
     case "$target" in
+        issue:*)
+            ISSUE_BODY_TARGET="${target#issue:}"   # helper validated: numeric
+            continue
+            ;;
         comment:*)
             id="${target#comment:}"
             ;;
@@ -226,13 +240,9 @@ VALIDATE_EXIT=$?
 case $VALIDATE_EXIT in
   0) ;;   # proceed (OWNER, bot, or override active)
   4)
-    # R5 refuse — actionable message already on stderr
-    # If called from /idd-comment errata flow: print additional helpful hint
-    if [ "${IDD_CALLER:-}" = "idd-comment-errata" ]; then
-      echo "" >&2
-      echo "Hint: errata target was user-authored; manually run:" >&2
-      echo "  /idd-edit comment:$COMMENT_ID --prepend-note --override-user-content --reason='errata clarification per IDD discipline'" >&2
-    fi
+    # R5 refuse — actionable message already on stderr.
+    # (--correct has no override: a collaborator's comment is corrected by
+    #  proposing an errata comment, never by editing it — #351.)
     # #158 語意 (i)：記錄後 continue,不中斷 batch（#158 語意 (i)）— 本 target 跳過
     # Steps 2-7,其餘 targets 照常;單 target 退化等價（記錄 → loop 自然結束 → report → exit 4）。
     REFUSED_TARGETS+=("$COMMENT_ID")
@@ -251,6 +261,13 @@ BACKUP_FILE="/tmp/idd-edit-backup/comment-${COMMENT_ID}-$(date +%s).md"
 gh api repos/$REPO/issues/comments/$COMMENT_ID --jq '.body' > "$BACKUP_FILE"
 
 echo "✓ Backup: $BACKUP_FILE"
+```
+
+**Issue-body target（`issue:<N>`，`--correct` only）**：不跑 Step 1.5（正文沒有 comment author），工作副本改抓正文；之後的 Step 3–7 相同，PATCH 走 `gh-egress.sh edit`。
+
+```bash
+BACKUP_FILE="/tmp/idd-edit-backup/issue-${ISSUE_BODY_TARGET}-body-$(date +%s).md"
+gh api "repos/$REPO/issues/$ISSUE_BODY_TARGET" --jq '.body' > "$BACKUP_FILE"
 ```
 
 ### Step 3: Show original body
@@ -328,6 +345,27 @@ fi
 
 **警告**：`--replace` 是 `bounded-section-replace` 動作（per [#150 rule](../../rules/append-vs-modify.md)）。必顯示 diff preview，使用者確認後才 PATCH。 R4 強制 `--scope`/`--section` 避免「忘記講動作範圍 = 全 comment overwrite」silent footgun。
 
+#### Mode: `--correct`（#351）
+
+`(category: in-place-correction)` — 內容確定是錯的，使用者確認後就地取代。先檢查保護區，再預覽；**歸檔與標記在 Step 5.5（確認之後）**，所以這一步只準備取代內容，不產生 `NEW_BODY`。
+
+```bash
+REPL_FILE=$(mktemp "${TMPDIR:-/tmp}/idd-edit-repl-XXXXXX") || {
+  echo "✗ cannot stage the replacement text — refusing" >&2; exit 1; }
+printf '%s\n' "$BODY_INPUT" > "$REPL_FILE"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
+    check-correction "$BACKUP_FILE" "${SECTION_FLAG:--}" "$REPL_FILE"
+CHECK_RC=$?
+if [ "$CHECK_RC" -ne 0 ]; then
+    # 6 = protected region（stderr 已指名區域與負責的 skill）；1 = section 不存在
+    rm -f "$REPL_FILE"
+    REFUSED_TARGETS+=("${COMMENT_ID:-issue:$ISSUE_BODY_TARGET}")
+    continue
+fi
+```
+
+預覽（Step 5）顯示原 section 與 `$REPL_FILE` 的內容，並註明「確認後舊版會歸檔、區段末尾加一行 `idd:edit mode=correct` 標記」。
+
 #### Mode: `--prepend-note`
 
 ```bash
@@ -361,6 +399,38 @@ Confirm edit? (y/n)
 
 使用 AskUserQuestion。預設 NO（破壞性動作）。
 
+### Step 5.5: Archive before PATCH（`--correct` only）
+
+確認之後才歸檔，歸檔成功才 PATCH（拒絕確認 = 不留任何檔案）。helper 自己算歸檔路徑；**本 skill 執行的 bash 不寫出歸檔路徑**，否則會被 archive-read-guard hook 擋下。
+
+```bash
+if [ -n "$ISSUE_BODY_TARGET" ]; then
+    ARCHIVE_KIND="issue"
+    ARCHIVE_ID="$ISSUE_BODY_TARGET"
+else
+    ARCHIVE_KIND="comment"
+    ARCHIVE_ID="$COMMENT_ID"
+fi
+BACKUP_ID=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
+    archive "$ARCHIVE_KIND" "$ARCHIVE_ID" --from-file "$BACKUP_FILE") || {
+    # exit 7：不在 git work tree / 路徑沒被 ignore / 寫入失敗 — 目標不動
+    rm -f "$REPL_FILE"
+    REFUSED_TARGETS+=("$ARCHIVE_KIND:$ARCHIVE_ID")
+    continue
+}
+CORRECT_MARKER=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
+    emit-audit-marker edit mode=correct backup-id="$BACKUP_ID")
+# 標記接在取代內容末尾 → 它是被取代區段的最後一行，不會落進 idd-update 管的 ## Current Status
+printf '%s\n\n%s\n' "$BODY_INPUT" "$CORRECT_MARKER" > "$REPL_FILE"
+if [ -n "$SECTION_FLAG" ]; then
+    NEW_BODY=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
+                  section-replace "$BACKUP_FILE" "$SECTION_FLAG" "$REPL_FILE")
+else
+    NEW_BODY=$(cat "$REPL_FILE")
+fi
+rm -f "$REPL_FILE"
+```
+
 ### Step 6: Execute PATCH
 
 > **Scrub level**：`$SCRUB_LEVEL` 依 [`rules/privacy-scrubbing.md`](../../rules/privacy-scrubbing.md) 解析（repo visibility → tier；#226 rollout 慣例），互動情境預設 `warn`。
@@ -378,8 +448,14 @@ echo "$NEW_BODY" > "$TMP_BODY_FILE"
 # #273：comment surgery 進 egress 網 — 原 raw `gh api` PATCH 完全繞過所有網
 # （#226 rollout 的 tracked-separately 欠帳，於此結清）。
 SCRUB_LEVEL="${SCRUB_LEVEL:-warn}"   # 依 rules/privacy-scrubbing.md 解析（repo tier；互動預設 warn，#226 慣例）
-bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit-comment "$COMMENT_ID" \
-    --repo "$REPO" --body-file "$TMP_BODY_FILE" --scrub-attested "$SCRUB_LEVEL"
+if [ -n "$ISSUE_BODY_TARGET" ]; then
+    # issue 正文（--correct only）走 gh issue edit
+    bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit "$ISSUE_BODY_TARGET" \
+        --repo "$REPO" --body-file "$TMP_BODY_FILE" --scrub-attested "$SCRUB_LEVEL"
+else
+    bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit-comment "$COMMENT_ID" \
+        --repo "$REPO" --body-file "$TMP_BODY_FILE" --scrub-attested "$SCRUB_LEVEL"
+fi
 EGRESS_RC=$?
 rm "$TMP_BODY_FILE"
 if [ "$EGRESS_RC" -ge 10 ]; then
@@ -392,7 +468,11 @@ elif [ "$EGRESS_RC" -ne 0 ]; then
     echo "✗ gh api PATCH failed for comment:$COMMENT_ID (rc=$EGRESS_RC, gh 自身碼) — skip this target" >&2
     continue
 fi
+# --correct：歸檔已是唯一保留的舊版，刪掉 /tmp 工作副本（它含錯誤內容）
+[ "$MODE" = "--correct" ] && rm -f "$BACKUP_FILE"
 ```
+
+> `--correct` 的 PATCH 若失敗：歸檔已寫入但目標沒變。歸檔檔留著無害（不進 git、AI 讀不到）；重跑會產生新的 backup-id。
 
 ### Step 7: Verify edit + report
 
@@ -411,6 +491,12 @@ echo "  First 5 lines of new body: $UPDATED"
 
 ```html
 <!-- idd:edit mode=<mode> date=<date> [backup=<path>] -->
+```
+
+`--correct` 的標記只帶 backup id、不帶路徑，放在被取代區段的最後一行：
+
+```html
+<!-- idd:edit mode="correct" backup-id="comment-5805214375-20261009T100000Z" date="2026-10-09" -->
 ```
 
 多次 edit 會 **append 多個 marker**（不覆蓋前次），形成 edit history。
@@ -443,28 +529,23 @@ echo "  First 5 lines of new body: $UPDATED"
   --reason="重新拆 Block A → B 依賴順序"
 ```
 
-### 標記 comment 已過時（errata flow,自己發的 comment）
+### 更正確定錯誤的內容（`--correct`，#351）
 
 ```
-/idd-edit comment:4241327867 --prepend-note \
-  --reason="See errata at https://github.com/.../issuecomment-4241609713 — Holm 校正後結論不同"
+/idd-edit comment:4241327867 --correct --section "### Strategy" \
+  --body-file=~/notes/fixed-strategy.md \
+  --reason="備份位置寫錯，實際不進 git"
+
+/idd-edit issue:351 --correct --section "## Expected" \
+  --body-file=~/notes/fixed-expected.md \
+  --reason="誤讀了需求"
 ```
 
-### Errata 修別人發的 comment（需顯式 override）
-
-R5 強制非 OWNER 非 bot comment 必須 explicit consent。 `/idd-comment --type=errata` auto-call 在 R5 refuse 時印 helpful message,指引你手動加 flag:
-
-```
-/idd-edit comment:9999999 --prepend-note \
-  --override-user-content \
-  --reason="errata clarification per IDD discipline — see new errata at <URL>"
-```
-
-Audit marker `<!-- idd:edit override-user-content date=... reason="..." -->` 自動 append 到 body 留 audit trail。
+協作者發的 comment 不用 `--correct`：改用 `/idd-comment --type errata` 另貼更正（`--correct` 沒有 override）。
 
 ## 鐵律
 
-- **原 body 必 backup**：存到 `/tmp/idd-edit-backup/` 保留 7 天（或 session 結束）
+- **原 body 必 backup**：`--append`/`--replace`/`--prepend-note` 存 `/tmp/idd-edit-backup/`（暫存）；`--correct` 確認後歸檔到 correction archive（永久、不進 git、AI 讀不到），PATCH 後刪 `/tmp` 副本
 - **Preview 必 show**：即使是 `--append` 也要 show 最終 body 讓使用者確認
 - **`-F body=@file` 不是 `-f body=""`**：避免 backtick escape（`gh api` 會把 heredoc 裡的 backtick escape 成 `\`）
 - **Metadata marker 不覆蓋**：每次 edit 加新 marker，保留 history
@@ -474,33 +555,34 @@ Audit marker `<!-- idd:edit override-user-content date=... reason="..." -->` 自
 
 ## 與 idd-comment 的配合
 
-**errata flow**（idd-comment --type=errata 會自動 trigger 這裡）：
+**errata flow**（#351 起依 target 作者分流，由 `/idd-comment --type errata` 決定）：
 
 ```
-使用者 /idd-comment #NNN --type=errata --target-comment=XXX --body="..."
-  ↓
-idd-comment 建立 errata comment
-  ↓
-idd-comment 自動 call: /idd-edit comment:XXX --prepend-note --reason="See errata at <URL>"
-  ↓
-Target comment 頂部加警示「⚠️ See errata below」
+/idd-comment #NNN --type=errata --target-comment=XXX ...
+  ├─ XXX 作者是 OWNER / bot → /idd-edit comment:XXX --correct ...（不另貼 comment）
+  └─ 其他作者             → 只貼 errata comment，不呼叫 idd-edit
 ```
 
 ## Backup 管理
 
-```bash
-# 列出所有 backup
-ls -la /tmp/idd-edit-backup/
+**`--append` / `--replace` / `--prepend-note`**：備份在 `/tmp/idd-edit-backup/`，命名 `comment-<id>-<unix-timestamp>.md`。
 
-# 回復某次 edit (set REPO=owner/repo first)
-# （災難復原配方**刻意**走 raw gh api、不經 egress 網 — 還原的是先前已公開發佈
-#   的內容，wrapper refusal 不應阻擋緊急回復；#273 接線範圍是 Step 6 正常路徑）
+```bash
+ls -la /tmp/idd-edit-backup/
+# 回復（set REPO=owner/repo first；災難復原刻意走 raw gh api、不經 egress 網 —
+#  還原的是先前已公開發佈的內容，#273 接線範圍是 Step 6 正常路徑）
 gh api "repos/$REPO/issues/comments/<id>" \
     -X PATCH \
     -F body=@/tmp/idd-edit-backup/comment-<id>-<timestamp>.md
 ```
 
-backup 檔案命名：`comment-<id>-<unix-timestamp>.md`，方便 time-series 追溯。
+**`--correct`**：舊版在 correction archive，用 backup id（標記裡那個）還原。內容直接送給 GitHub、不顯示；還原的是**整個**目標，更正之後的修改（例如 `idd-update` 重建的 Current Status）會一起被蓋掉，執行前用 AskUserQuestion 說明這點並確認。
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" restore "$BACKUP_ID" --repo "$REPO"
+```
+
+歸檔檔不經過 Claude 讀取（hook 會擋、檔案權限 0000）。人要看舊版時，在自己的終端機 `chmod u+r` 該檔後用編輯器開，不要透過 Claude。
 
 ## Next Step
 

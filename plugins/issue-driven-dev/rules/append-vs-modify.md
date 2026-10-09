@@ -26,7 +26,7 @@ User pivot during `/spectra-discuss` (2026-05-25): actor-based exemption ("AI re
 
 ## The Rule
 
-> **Every modify-action SHALL declare exactly one scope category from the canonical 7-category enumeration.** Actions without a declared category SHALL be treated as `(undeclared)` and SHALL be refused at runtime (by skill spec gate) or at review time (by analyzer, future tooling).
+> **Every modify-action SHALL declare exactly one scope category from the canonical 8-category enumeration.** Actions without a declared category SHALL be treated as `(undeclared)` and SHALL be refused at runtime (by skill spec gate) or at review time (by analyzer, future tooling).
 
 Scope declaration takes the form of an inline note in the action's SKILL.md description:
 
@@ -37,7 +37,7 @@ Scope declaration takes the form of an inline note in the action's SKILL.md desc
 
 The `scope` qualifier names the targeted section / field / artifact when relevant (e.g. `scope: "## Current Status"`).
 
-## Canonical 7-Category Enumeration
+## Canonical 8-Category Enumeration
 
 ### 1. `state-field-update`
 
@@ -83,14 +83,17 @@ The `scope` qualifier names the targeted section / field / artifact when relevan
 
 ### 5. `verbatim-preserve`
 
-**Definition**: Absolute immutability. Once written, never modified by any action (AI or user). This is the IC_R007 zone.
+**Definition**: Absolute immutability. Once written, never modified by any action (AI or user), including `in-place-correction`. This is the IC_R007 zone.
 
-**Scope boundary**: User-authored prose, verbatim quotes, frozen spec contracts. Identified by structural markers (issue body above `---` separator) or content type (blockquote citing original text).
+**Scope boundary**: Exactly two kinds of content (closed list, #351 — do not extend by analogy):
+1. **Original-source quotations** — a maximal run of consecutive lines starting with `>` in which some line contains `Original text`. The quotation records what was actually said; it stays true as a record even when the judgment it led to turns out wrong.
+2. **Third-party comments** — comments whose author is neither the repository OWNER nor a bot. They are someone else's words; IDD proposes corrections to them but never edits them.
+
+Issue-body prose written by the issue author or by an IDD skill (interpretation paragraphs, Expected, Actual, Impact) is **not** in this zone: it is correctable through `in-place-correction`. Before #351 the whole body above the `---` separator was listed here, which made every wrong interpretation permanent and pushed corrections into appended errata that downstream readers kept missing.
 
 **Examples**:
-- Issue body above the `---` separator (Problem / Type / Expected / Actual / Impact sections — user's original framing)
-- Blockquote-wrapped verbatim quotes from external sources (per IC_R007)
-- Spec files in `openspec/specs/<name>/spec.md` once a change is archived
+- The `> **Original text**: …` blockquote under `## Problem` (per IC_R007)
+- A collaborator's review comment on the issue (`/idd-edit` R5 refuses it; `--correct` has no override)
 
 ### 6. `append-only`
 
@@ -99,7 +102,7 @@ The `scope` qualifier names the targeted section / field / artifact when relevan
 **Scope boundary**: Whole artifact is append-target. Existing entries immutable; new entries inserted at top or bottom per artifact convention.
 
 **Examples**:
-- GitHub comments after publish (the GitHub mechanism enforces this; PATCH is reserved for `audit-block-append` discipline)
+- GitHub comments after publish (the GitHub mechanism enforces this; PATCH is reserved for `audit-block-append` and `in-place-correction`)
 - `CHANGELOG.md` — new version entries prepended on top, old entries never modified
 - `tasks.md` history rows (the rows themselves are append-only; the checkbox state field is `state-field-update`)
 - Spectra archive snapshot directories (`openspec/changes/archive/<date>-<name>/`)
@@ -116,6 +119,17 @@ The `scope` qualifier names the targeted section / field / artifact when relevan
 - Source code files (`.rs` / `.py` / `.swift` / `.ts` / etc.)
 - Plugin manifesto, README, contributor guides
 
+### 8. `in-place-correction`
+
+**Definition**: Replace content that the user has confirmed to be wrong, in place, so that later readers — humans and AI sessions that re-read the issue as memory — stop inheriting the error (#351). Applies to issue-body prose and to OWNER- or bot-authored comments, including published comments that are otherwise `append-only`.
+
+**Scope boundary**: One bounded region — a whole comment (`--scope whole-comment`) or one named section (`--section <heading>`; the only form allowed for an issue body). The action SHALL (a) show the original and the replacement and get explicit confirmation, (b) archive the prior full text under `.claude/.idd/archive/edits/` before writing — the archive is never tracked by git and Claude's tools are denied access to it — (c) end the replaced region with a marker that carries the backup id and no path, and (d) refuse `verbatim-preserve` content and the regions owned by other skills (`## Current Status` → `idd-update`, `### Clarity Surface` → `idd-clarify`). `/idd-edit --correct` is the only action declared in this category; other skills reach it by proposing the command.
+
+**Examples**:
+- `/idd-edit comment:<id> --correct --section "### Strategy"` replaces a Diagnosis strategy that named the wrong backup location
+- `/idd-edit issue:<N> --correct --section "## Expected"` replaces an Expected paragraph that misread the request, keeping the `Original text` quotation above it untouched
+- `/idd-comment --type errata --target-comment <id>` on an OWNER-authored comment delegates to `/idd-edit --correct` instead of appending an errata comment
+
 ## Decision tree for classifying new modify-actions
 
 When introducing a new IDD action that modifies an existing artifact, walk this tree to assign a category:
@@ -128,6 +142,9 @@ Does the action publish to a permanent place (GitHub comment, archived spec)?
 │
 Is the target a user-authored / IC_R007-verbatim zone?
 ├─ Yes → REFUSE the action entirely (this zone is verbatim-preserve)
+│
+Is the action replacing content the user has confirmed to be wrong?
+├─ Yes → category: in-place-correction (only via /idd-edit --correct)
 │
 Is the target a machine-readable state field (phase, timestamp, status enum, checkbox boolean)?
 ├─ Yes → category: state-field-update
@@ -241,22 +258,23 @@ This rule defines the discipline; tooling-level enforcement is reserved for foll
 
 - **Skill spec gate** (in scope of this rule): each modify-action's SKILL.md description SHALL contain `(category: <name>)` inline note. Skill author's responsibility; reviewable manually.
 - **Future analyzer** (out of scope): static analyzer that scans SKILL.md for modify-action descriptions missing `(category: ...)` notes and flags as Critical. Follow-up issue when needed.
-- **CLI parser + bash enforcement** (out of scope): native `--section` / `--scope` flag handling for `/idd-edit` at CLI parser layer + verbatim-preserve guard. Three R1/R2/R3 attempts at bash-level enforcement in SKILL.md introduced new bugs each iteration (infinite loop, flag-eat, multi-line awk-v BREAK). Deferred to follow-up issue [#154](https://github.com/PsychQuant/issue-driven-development/issues/154) for proper standalone proposal with multi-line body handling + parser pattern guards + errata flow integration designed upfront. Phase 1 (this change) is **spec-discipline-only**: the normative `--scope` / `--section` requirements + verbatim-preserve guard live in `openspec/specs/append-vs-modify-discipline/spec.md` Requirements 4-5 + this rule's "Spec discipline" section below + CHANGELOG `[2.73.0]`. `idd-edit/SKILL.md` was reverted to pre-#150 baseline as part of the R4 / Path (c) decision — SKILL.md surface (argument-hint, mode table, usage examples) does NOT currently describe the discipline. AI / user invocation reads spec + rule + CHANGELOG + applies discipline manually until #154 ships both the runtime gate AND the SKILL.md surface updates.
+- **CLI parser + bash enforcement** (out of scope): native `--section` / `--scope` flag handling for `/idd-edit` at CLI parser layer + verbatim-preserve guard. Three R1/R2/R3 attempts at bash-level enforcement in SKILL.md introduced new bugs each iteration (infinite loop, flag-eat, multi-line awk-v BREAK). Deferred to follow-up issue [#154](https://github.com/PsychQuant/issue-driven-development/issues/154) for proper standalone proposal with multi-line body handling + parser pattern guards + errata flow integration designed upfront. Phase 1 (this change) is **spec-discipline-only**: the normative `--scope` / `--section` requirements + verbatim-preserve guard live in `openspec/specs/append-vs-modify-discipline/spec.md` Requirements 4-5 + this rule's "Spec discipline" section below + CHANGELOG `[2.73.0]`. `idd-edit/SKILL.md` was reverted to pre-#150 baseline as part of the R4 / Path (c) decision — SKILL.md surface (argument-hint, mode table, usage examples) does NOT currently describe the discipline. AI / user invocation reads spec + rule + CHANGELOG + applies discipline manually until #154 ships both the runtime gate AND the SKILL.md surface updates. (#154 shipped in v2.81.0 — see the Enforcement status paragraph under "Spec discipline" below.)
 
 ## Migration period for existing actions
 
 ≥ 8 existing IDD actions are retroactively labeled by the change that introduced this rule (`add-action-scoped-modify-discipline`). New actions added after this rule ships SHALL declare category at SKILL.md authoring time. The `(undeclared) → REFUSE` rule applies to both new and retroactively-introduced actions; legacy actions without inline notes are caught at next maintainer review.
 
-## Spec discipline: `/idd-edit` SHALL declare scope (runtime enforcement deferred)
+## Spec discipline: `/idd-edit` SHALL declare scope
 
 `/idd-edit` is the IDD plugin's existing comment-edit primitive. Per this rule's action-scoped discipline, the skill's invocation surface SHALL declare scope:
 
 - `--append` / `--prepend-note` modes: `audit-block-append` category (scope inherent in mode semantics — trailing block / leading errata marker). No additional flag required.
 - `--replace` mode: `bounded-section-replace` category. Invocations SHALL include `--scope whole-comment` (full-comment overwrite acknowledgment) OR `--section <heading-within-comment>` (named subsection scope).
+- `--correct` mode: `in-place-correction` category (#351). Same scope flags as `--replace`; an issue-body target (`issue:<N>`) accepts `--section` only. No `--override-user-content`.
 
 This rule additionally declares a verbatim-preserve guard at the comment layer: comments where `author_association ≠ OWNER` (and author is not in known-bot allowlist) SHALL NOT be modified without explicit `--override-user-content --reason="..."` invocation discipline.
 
-**Enforcement status**: spec-discipline + AI / user invocation guideline. Three implementation attempts (verify R1/R2/R3 on PR #153) showed bash-level enforcement in SKILL.md introduces new bugs incrementally. Runtime enforcement deferred to follow-up issue [#154](https://github.com/PsychQuant/issue-driven-development/issues/154) requiring proper standalone proposal with multi-line body handling + parser pattern guards + `/idd-comment` errata flow integration designed upfront.
+**Enforcement status**: enforced at runtime by `scripts/idd-edit-helper.py` since v2.81.0 ([#154](https://github.com/PsychQuant/issue-driven-development/issues/154) → [#155](https://github.com/PsychQuant/issue-driven-development/issues/155) Python layer): `parse-args` refuses `--replace` / `--correct` without scope (exit 3), `validate-target` refuses non-OWNER non-bot authors (exit 4), and `check-correction` refuses protected regions (exit 6, #351). The bash-in-SKILL.md attempts on PR #153 that this paragraph used to describe were replaced by that helper.
 
 Recommended invocation patterns (per discipline):
 - `/idd-edit comment:NNN --replace --scope whole-comment --body "..."`

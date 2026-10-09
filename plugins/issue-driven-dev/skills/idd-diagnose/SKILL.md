@@ -67,6 +67,7 @@ TaskCreate(name="post_diagnosis_report", description="產出 Diagnosis Report �
 TaskCreate(name="vagueness_precheck", description="Step 3.4 (v2.50+): Layer V Vagueness Pre-check — 用 .claude/rules/attribute-assessment.md 的 6-point Likert anchors 評 V1 + V4,trigger ≥ 4 跳 Hybrid 3-option (clarify/proceed/escalate),audit trail PATCH 到 Diagnosis comment。Unattended mode 自動 proceed + audit trail。#57: type=meeting 直接短路跳過整個 Layer V,不評 V1/V4")
 TaskCreate(name="complexity_assessment", description="Step 3.5: meeting-first 7-step routing 判定 Simple / Plan / Spectra(或 meeting 分支)並寫入 report 的 Complexity 欄位。序列: (1) type=meeting → (2) Layer 1 → (3) Layer V → (4) Spectra → (5) #129 硬閘 → (6) Layer P → (7) Simple 預設(v2.36+ Spectra rename;v2.50+ Layer V;#129 硬閘 + #57 meeting 分支)")
 TaskCreate(name="sister_concern_surfacing", description="Step 3.6: re-read posted Diagnosis content + scout session log for sister-concern markers (也有 / sister / 同樣的 / 另外 / etc); per IC_R011 file-by-default (v2.72.0+, see references/ic-r011-checkpoint.md §1.1); PATCH Diagnosis comment with `### Sister Concerns Filed` audit trail (per IC_R011 #528)")
+TaskCreate(name="propose_corrections", description="Step 3.8 (#351): 診斷證明 issue body / 既有 comment 已發表的敘述有錯 → Diagnosis comment 加 ### Proposed Corrections（目標、段落、錯在哪、/idd-edit ... --correct 指令）；attended 逐項 AskUserQuestion，unattended 只列不做；絕不自己 PATCH 目標或寫歸檔")
 TaskCreate(name="confirm_and_route", description="與使用者確認診斷正確,依 complexity 顯示下一步命令")
 TaskCreate(name="auto_update_body", description="Step 5: 跑 /idd-update #NNN 同步 issue body Current Status phase → diagnosed（強制，常被漏；同 idd-close 2.18.1 模式）")
 ```
@@ -761,6 +762,24 @@ If recommendation succeeded, append a section to the diagnosis comment:
 ```
 
 Full integration contract: [`references/agent-routing.md`](../../references/agent-routing.md).
+
+### Step 3.8: Proposed Corrections（#351）
+
+**觸發**：本次診斷證明 issue body 或既有 comment（含先前的 Diagnosis）**已發表**的敘述是錯的（例：body 把 bug 歸給 `a.py`，root cause 實際在 `b.py`）。沒有就略過，不加空 block。
+
+以 Step 3.6 同樣方式附加到本次 Diagnosis comment（`(category: audit-block-append, scope: "### Proposed Corrections")`），一項一列：
+
+```markdown
+### Proposed Corrections
+| # | Target | Section | 錯在哪 | Command |
+|---|--------|---------|--------|---------|
+| 1 | issue:42 | ## Problem | 把 bug 歸給 `a.py`，root cause 在 `b.py` | `/idd-edit issue:42 --correct --section "## Problem" --body-file correction-1.md --reason "bug location was wrong"` |
+```
+
+- comment 目標寫 `comment:<id>`（數字 REST id，即 URL 的 `#issuecomment-` 後綴），配 `--scope whole-comment` 或 `--section`；issue body 只能 `--section`。替換內容附在表下 `<details>`，`--body-file` 指向存放它的檔。
+- 替換內容須原樣保留 `Original text` 引文；`## Current Status`、`### Clarity Surface` 不提議（`/idd-edit` 會拒絕）。目標 comment 作者非 OWNER 且非 bot → 改提 `/idd-comment #N --type errata --target-comment <id> --body "..."`。
+- **attended**：逐項 `AskUserQuestion`（現在執行 / 先不要）；選執行 → `Skill(skill="issue-driven-dev:idd-edit", args="<該項參數>")`，`/idd-edit` 仍走自己的 preview + confirm。**unattended 只列不做**（`idd-all` UNATTENDED MODE，同 Step 3.4 F）：不呼叫 `/idd-edit`。
+- 本 skill **永不**自己 PATCH 目標、也不寫歸檔 —— 改寫只經 `/idd-edit`。
 
 ### Step 4: 確認 + Routing
 

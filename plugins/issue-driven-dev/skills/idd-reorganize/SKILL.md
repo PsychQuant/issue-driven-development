@@ -38,6 +38,7 @@ allowed-tools:
 TaskCreate(name="name_the_wrong_artifact", description="Step 1: 明確指出哪一個上游 artifact 錯了（issue framing / diagnosis 的 root cause / Strategy / plan / spec 的某條 acceptance criterion），以及它錯在哪 —— 一句話，不是一段")
 TaskCreate(name="enumerate_downstream", description="Step 2: 機械枚舉所有建立在它之上的產物：後續 comment、plan、spec/proposal/tasks、branch、PR、已 merge 的 commit、以及引用本 issue 的其他 issue")
 TaskCreate(name="adjudicate_each", description="Step 3: 逐一裁定 still-valid / redo / invalidate，每一項都要寫理由（無理由的裁定等於沒裁定）")
+TaskCreate(name="propose_corrections", description="Step 3.5 (#351): 判為 redo / invalidate 且屬 issue body / comment 內容的項目 → Re-baseline 加 ### Proposed Corrections（目標、段落、錯在哪、/idd-edit ... --correct 指令）；attended 逐項 AskUserQuestion，unattended 只列不做；絕不自己 PATCH 目標或寫歸檔")
 TaskCreate(name="post_rebaseline_record", description="Step 4: post 一則 ## Re-baseline comment，記錄錯在哪、影響了什麼、每一項的裁定與理由")
 TaskCreate(name="execute_redo", description="Step 5: 對判為 redo 的項目，依其類型 chain 到對應 skill（diagnosis → /idd-diagnose；plan → /idd-plan；spec → /spectra-propose）")
 TaskCreate(name="sync_phase", description="Step 6: /idd-update 把 phase 退回到重做的起點（例如 diagnosis 重做 → phase 退回 created）")
@@ -73,6 +74,22 @@ gh issue list --repo $REPO --state all --search "#$N"             # 引用本 is
 
 **`still-valid` 要最嚴格地審。** 「看起來沒關係」是這個 skill 最常見的失效方式：下游產物往往在不明顯的地方繼承了上游的前提（一句措辭、一個測試的斷言理由、一段 CHANGELOG 的因果敘述）。
 
+### Step 3.5: Proposed Corrections（#351）
+
+Step 1 那個錯的 artifact 與 Step 3 判為 `redo` / `invalidate` 的項目，若是 **issue body 或 issue comment 的內容**，就提議就地更正；spec / plan 檔、code、PR 不走這條（`/idd-edit` 不處理，照 Step 5 重做）。附在 Step 4 的 Re-baseline comment 末尾，一項一列：
+
+```markdown
+### Proposed Corrections
+| # | Target | Section | 錯在哪 | Command |
+|---|--------|---------|--------|---------|
+| 1 | comment:<id> | ### Root Cause / Analysis | 判成 marker 比對方式，實際在 `gh` 取得層 | `/idd-edit comment:<id> --correct --section "### Root Cause / Analysis" --body-file correction-1.md --reason "root cause was in the fetch layer"` |
+```
+
+- `<id>` 是數字 REST id（URL 的 `#issuecomment-` 後綴）；issue body 寫 `issue:<N>`，只能 `--section`。替換內容附在表下 `<details>`，`--body-file` 指向存放它的檔。
+- 替換內容須原樣保留 `Original text` 引文；`## Current Status`、`### Clarity Surface` 不提議（`/idd-edit` 會拒絕）。目標 comment 作者非 OWNER 且非 bot → 改提 `/idd-comment #N --type errata --target-comment <id> --body "..."`。
+- **attended**：Re-baseline 貼出後逐項 `AskUserQuestion`（現在執行 / 先不要）；選執行才呼叫該 `/idd-edit`，它仍走自己的 preview + confirm。**unattended 只列不做**：不呼叫 `/idd-edit`。
+- 本 skill **永不**自己 PATCH 目標、也不寫歸檔 —— 改寫只經 `/idd-edit`。
+
 ### Step 4: Re-baseline 紀錄
 
 ```markdown
@@ -104,7 +121,7 @@ gh issue list --repo $REPO --state all --search "#$N"             # 引用本 is
 - **不用本 skill 掩蓋「還沒想清楚」。** Step 1 說不出一句話就回去 diagnose。
 - **枚舉必須機械。** 憑印象列下游 = 重演本 skill 要修的失敗。
 - **`still-valid` 要寫理由。** 沒有理由的 still-valid 就是沒有裁定。
-- **不刪除既有 artifact。** 錯的 diagnosis 留著並標記為 superseded，不要抹掉 —— 「當時為什麼那樣想」是下次的資料。
+- **不刪除既有 artifact。** 錯的 diagnosis 留著並標記為 superseded，不要抹掉 —— 「當時為什麼那樣想」是下次的資料。其中已發表的錯誤敘述另依 Step 3.5 提議 `/idd-edit --correct`（舊版由它歸檔，不是抹掉）。
 - **phase 要退回。** 否則工具鏈會對這張 issue 說謊。
 
 ## 實例（本 repo，PR #297）

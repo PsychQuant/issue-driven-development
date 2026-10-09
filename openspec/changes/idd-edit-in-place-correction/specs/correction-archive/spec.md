@@ -1,0 +1,85 @@
+## Purpose
+
+Defines where the prior version of a corrected comment or issue body is kept, how it is guaranteed never to enter git history or review diffs, how it is restored, and how Claude's own tools are prevented from reading it. The archive exists so that corrected errors remain recoverable by humans without being re-read by AI sessions.
+
+## ADDED Requirements
+
+### Requirement: Archive entries SHALL be written once under a fixed local path
+
+The `idd-edit-helper.py archive <comment|issue> <id> --from-file <path>` subcommand SHALL write the full prior text of the target (the whole comment, or the whole issue body for a section correction), read from the file that was shown to the user in the preview, byte-for-byte to `<git-toplevel>/.claude/.idd/archive/edits/<backup-id>.md`. The backup id SHALL be `comment-<comment-id>-<UTC timestamp>` or `issue-<N>-body-<UTC timestamp>`, with the timestamp in `YYYYMMDDTHHMMSSZ` form. The file SHALL be created exclusively; when the name already exists the helper SHALL append `-2`, `-3`, and so on, and SHALL NOT overwrite or modify any existing archive file. The subcommand SHALL print only the backup id on stdout and SHALL NOT print archived content on stdout or stderr.
+
+#### Scenario: Comment archived with a unique id
+
+- **WHEN** the helper archives comment 5805214375 at 2026-10-09T10:00:00Z
+- **THEN** it SHALL create `.claude/.idd/archive/edits/comment-5805214375-20261009T100000Z.md` and print `comment-5805214375-20261009T100000Z`
+
+#### Scenario: Same-second collision
+
+- **WHEN** an archive file with that id already exists and the helper archives the same comment within the same second
+- **THEN** the helper SHALL create `comment-5805214375-20261009T100000Z-2.md` and the existing file SHALL be byte-identical to before
+
+### Requirement: Archive entries SHALL never be tracked by git
+
+Before writing, the helper SHALL ensure `.claude/.idd/archive/` is listed in the repository's `.git/info/exclude` by calling `scripts/git-ignore-block.sh` (idempotent), and SHALL then verify with `git check-ignore` that the target archive path is ignored. When the current directory is not inside a git work tree, or the path is not ignored after this step, the helper SHALL exit 7, SHALL NOT write the archive, and the calling skill SHALL NOT PATCH the target.
+
+#### Scenario: Re-include rule detected
+
+- **WHEN** the repository's `.gitignore` contains `!.claude/.idd/archive/` so the archive path is not ignored after the exclude block is written
+- **THEN** the helper SHALL exit 7 with a message naming the path, and the correction SHALL be aborted with the target unchanged
+
+#### Scenario: Not a git work tree
+
+- **WHEN** `/idd-edit --correct` runs from a directory that is not inside a git work tree
+- **THEN** the helper SHALL exit 7 and the target SHALL be unchanged
+
+### Requirement: Archive files SHALL be unreadable at rest
+
+After writing an archive file the helper SHALL set its permission bits to `0000`. Only the `restore` subcommand SHALL temporarily grant owner read permission, and it SHALL reset the bits to `0000` before exiting, including when the restore fails.
+
+#### Scenario: Recursive grep does not surface archived content
+
+- **WHEN** a command such as `grep -r "<a phrase from the archived text>" .` runs from the repository root after an archive was written
+- **THEN** the archived file's content SHALL NOT appear in the output
+
+### Requirement: Restore SHALL return a target to its archived version without displaying the content
+
+`idd-edit-helper.py restore <backup-id> --repo <owner/repo>` SHALL validate the backup id against the pattern `^(comment-[0-9]+|issue-[0-9]+-body)-[0-9]{8}T[0-9]{6}Z(-[0-9]+)?$`, refuse any other value with exit 2, derive the target from the id, and PATCH the target with the archived text passed on stdin. On success it SHALL print only the target URL and the number of bytes restored. The restore SHALL replace the whole target, and the skill SHALL ask for confirmation stating that changes made after the correction will be lost.
+
+#### Scenario: Path traversal refused
+
+- **WHEN** the helper is called as `restore ../../etc/passwd --repo owner/repo`
+- **THEN** it SHALL exit 2 without reading any file
+
+#### Scenario: Successful restore output
+
+- **WHEN** a valid backup id is restored
+- **THEN** stdout SHALL contain the target URL and a byte count, and SHALL NOT contain any line of the archived text
+
+### Requirement: A PreToolUse hook SHALL deny Claude tool access to the archive
+
+The issue-driven-dev plugin SHALL register a PreToolUse hook for the tools `Read`, `Grep`, `Glob`, `Edit`, `Write`, `NotebookEdit`, `Bash`, and `PowerShell`. The hook SHALL return a deny decision when any of these `tool_input` fields, compared case-insensitively and, for path fields, after `os.path.normpath` normalization (including the join of `path` with Glob's `pattern` or Grep's `glob`), contains `.claude/.idd/archive`: `file_path`, `path`, `notebook_path`, `pattern` (Glob only), `glob` (Grep only), or `command` (Bash and PowerShell). The deny reason SHALL state that the directory holds the prior versions of corrected errors, that reading it would reintroduce those errors, and that `/idd-edit` restore is the supported recovery path. When the hook input cannot be parsed, the hook SHALL allow the call. Skill instructions SHALL NOT place the literal archive path in any Bash command they execute; the helper computes the path internally.
+
+#### Scenario: Read denied
+
+- **WHEN** Claude calls `Read` with `file_path` ending in `.claude/.idd/archive/edits/comment-5805214375-20261009T100000Z.md`
+- **THEN** the hook SHALL return `permissionDecision: "deny"` with the reason described above
+
+#### Scenario: Helper invocation allowed
+
+- **WHEN** Claude runs `python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" archive comment 5805214375 --from-file "$BACKUP_FILE"`
+- **THEN** the hook SHALL allow the call, because the command string does not contain the archive path
+
+#### Scenario: Glob pattern into the archive denied
+
+- **WHEN** Claude calls `Glob` with `pattern` set to `.claude/.idd/archive/**/*.md`
+- **THEN** the hook SHALL return `permissionDecision: "deny"`
+
+#### Scenario: Case and dot-segment variants denied
+
+- **WHEN** Claude calls `Read` with `file_path` `.Claude/./.IDD/Archive/edits/x.md`
+- **THEN** the hook SHALL return `permissionDecision: "deny"`
+
+#### Scenario: Unrelated tool call allowed
+
+- **WHEN** Claude calls `Read` on `plugins/issue-driven-dev/skills/idd-edit/SKILL.md`
+- **THEN** the hook SHALL allow the call

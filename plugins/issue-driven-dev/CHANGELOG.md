@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.0] - 2026-10-16
+
+### Added
+
+- **`/idd-edit --correct` — wrong issue content is replaced in place, not followed by errata (#351)**
+  An issue is the memory that later skills and sessions read. An error left in place and corrected by a later
+  comment is still read and followed. `--correct` replaces one bounded region — a whole comment, or one
+  `--section` (the only form for an issue body, `issue:<N>`) — after a preview and a confirmation (default NO).
+  - **Archive first.** The prior text goes to `.claude/.idd/archive/edits/<backup-id>.md` before the PATCH. The
+    archive is never tracked (written to `.git/info/exclude`, checked with `git check-ignore`; exit 7 otherwise),
+    files are mode 0000, and `restore <backup-id>` puts a target back without printing the text.
+  - **Claude cannot read the archive.** A PreToolUse hook (`hooks/archive-read-guard.py`) denies Read / Grep /
+    Glob / Edit / Write / NotebookEdit / Bash / PowerShell calls that name the archive path. About 31 ms per
+    tool call.
+  - **Protected regions** (`check-correction`, exit 6): `Original text` quotations must survive byte for byte;
+    `## Current Status` (idd-update) and `### Clarity Surface` (idd-clarify), or a section that contains them,
+    are refused. Comments by anyone other than the OWNER or a bot are never corrected; `--correct` has no
+    `--override-user-content`.
+  - The marker `<!-- idd:edit mode="correct" backup-id="…" -->` ends the replaced region and carries no path.
+- `idd-verify`, `idd-diagnose` and `idd-reorganize` add `### Proposed Corrections` when their findings show a
+  published statement is wrong: attended asks per entry, unattended only lists. They never edit the target.
+- `rules/append-vs-modify.md`: category 8 `in-place-correction`; `verbatim-preserve` narrowed to `Original text`
+  quotations and third-party comments.
+
+### Changed
+
+- **Behavior change — `/idd-comment --type errata`** on an OWNER- or bot-authored comment now delegates to
+  `/idd-edit --correct` and posts nothing; it no longer appends an errata comment plus a `--prepend-note`
+  warning. On anyone else's comment it posts the errata comment only and no longer tries to edit the target.
+
+### Notes
+
+- After archiving the change, update the Purpose paragraph of `openspec/specs/append-vs-modify-discipline/spec.md`
+  from 7 to 8 categories (Purpose is outside the delta).
+
 ## [3.4.0] - 2026-10-15
 
 ### Added

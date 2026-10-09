@@ -567,6 +567,7 @@ TaskCreate(name="recovery_protocol", description="Step 2.5 (NEW per #52): 缺 fi
 TaskCreate(name="wait_for_codex", description="等 Codex 背景任務完成,讀 $VERIFY_DIR/codex.md")
 TaskCreate(name="freshness_gate", description="Step 2.9 (#228): merge/aggregate 前比對 FROZEN_SHA vs 當前 HEAD（PR mode: PR head oid）— 不一致 → 拒絕 aggregate,要求 re-freeze + 補審 delta round;一致才放行 merge")
 TaskCreate(name="merge_findings", description="合併 6 個來源 findings 去重,severity 取最高")
+TaskCreate(name="propose_corrections", description="Step 3.5 (#351): findings 證明 issue body / 既有 comment 已發表的敘述有錯 → master report 加 ### Proposed Corrections（目標、段落、錯在哪、/idd-edit ... --correct 指令）；attended 報告貼出後逐項 AskUserQuestion，unattended 只列不做；絕不自己 PATCH 目標或寫歸檔")
 TaskCreate(name="post_master_and_pointers", description="PR mode: master 貼到 PR + capture URL → 為每個 ref'd issue 貼 pointer comment；本地 mode: 貼到 issue（單 issue 直接貼／多 issue 用 SOP master+pointer）")
 TaskCreate(name="tag_verified", description="Step 4.5 (#85): if config auto_tag.enabled (default on) AND Aggregate PASS, tag idd-{N}-verified at the PR head (PR mode) / current HEAD (local mode) + git push. Idempotent + graceful-skip. Cluster: tag each ref'd #N. Skip on FAIL or auto_tag.enabled=false.")
 TaskCreate(name="restore_working_tree", description="PR mode 結束後 git checkout 回原 branch（Step 0.5 記住的）")
@@ -1211,6 +1212,24 @@ fi
 3. **去重**：相同檔案 + 相似描述 → 合併，標註來源 `[agents:logic+codex]`
 4. **severity 以最高為準**：如果 logic 說 P2 但 codex 說 P1 → P1
 5. Devil's Advocate 的反駁如果成立 → 升級 severity
+
+### Step 3.5: Proposed Corrections（#351）
+
+**觸發**：合併後的 findings 證明本 issue body 或某則 comment **已發表**的敘述是錯的（例：Diagnosis 指錯 root-cause 檔案）。code 寫壞不算，那是 finding。沒有這類項目就不加 block。
+
+在 master report 末尾（cluster 時放進對應 `### #N` 區段）加，一項一列：
+
+```markdown
+### Proposed Corrections
+| # | Target | Section | 錯在哪 | Command |
+|---|--------|---------|--------|---------|
+| 1 | comment:5805214375 | ### Root Cause / Analysis | 指向 `a.py`，root cause 實際在 `b.py` | `/idd-edit comment:5805214375 --correct --section "### Root Cause / Analysis" --body-file correction-1.md --reason "root-cause file was wrong"` |
+```
+
+- `<id>` 是數字 REST id（comment URL 的 `#issuecomment-` 後綴），不是 GraphQL node id；issue body 寫 `issue:<N>`，只能用 `--section`。替換內容附在表下 `<details>`，`--body-file` 指向存放它的檔（attended 執行時寫進 `$VERIFY_DIR/correction-<k>.md`）。
+- 替換內容須原樣保留 `Original text` 引文；`## Current Status`、`### Clarity Surface` 不提議（`/idd-edit` 會拒絕）。目標 comment 作者非 OWNER 且非 bot → 該項改提 `/idd-comment #N --type errata --target-comment <id> --body "..."`。
+- **attended**：報告貼出後逐項 `AskUserQuestion`（現在執行 / 先不要）；選執行才呼叫該指令，`/idd-edit` 仍走自己的 preview + confirm。**unattended 只列不做**：不呼叫 `/idd-edit`。
+- 本 skill **永不**自己 PATCH 目標、也不寫歸檔 —— 改寫只經 `/idd-edit`。
 
 ### Step 4: Comment（master + pointer 規則）
 

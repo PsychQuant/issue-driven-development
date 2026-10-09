@@ -10,6 +10,11 @@ openspec/.vector-search.db*
 # IDD tree-lock (idd-tree-lock.sh #183) — per-machine session state, not tracked
 .claude/.idd/tree-lock
 
+# /idd-edit --correct archive (#351) — prior versions of corrected issue content.
+# Never tracked: a committed copy would show up in review diffs, where the
+# archive-read-guard hook cannot keep an AI from reading it.
+.claude/.idd/archive/
+
 # wiki 同步標記（0-byte 時間戳）與 impeccable 的 hook cache — 皆為 per-machine
 # ephemera，與上面的 tree-lock / state/ 同類：可重新產生、不是 durable artifact。
 .wiki-last-sync

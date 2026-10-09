@@ -20,6 +20,15 @@ Subcommands:
   emit-audit-marker <kind> <key=value>...
                                — Emit HTML-comment audit marker with safe
                                  escaping (no breakout, no attribute injection).
+  check-correction <old-file> <section-heading|-> <new-file>
+                               — Refuse a --correct replacement that touches a
+                                 protected region (#351).
+  archive <comment|issue> <id> --from-file <path>
+                               — Write the prior text to the correction
+                                 archive; print only the backup id (#351).
+  restore <backup-id> --repo <owner/repo>
+                               — PATCH a target back to its archived text
+                                 without displaying it (#351).
 
 Exit codes:
   0  — success
@@ -28,6 +37,8 @@ Exit codes:
   3  — R4 gate refused (--replace missing --scope/--section)
   4  — R5 gate refused (non-OWNER non-bot, no --override-user-content)
   5  — --body-file unreadable / refused
+  6  — check-correction refused a protected region
+  7  — archive refused: not a git work tree / path not ignored / write failed
 
 Each subcommand prints diagnostics to stderr; stdout is reserved for
 machine-parseable output (eval lines / extracted text / markers).
@@ -38,6 +49,7 @@ import html
 import json
 import os
 import re
+import subprocess
 import sys
 
 # ── R4/R5 helpful messages (constants, must match bash reference substrings) ──
@@ -45,6 +57,10 @@ R4_MSG = (
     "Refuse: --replace requires --scope whole-comment OR --section <heading> "
     "(action-scoped discipline per plugins/issue-driven-dev/rules/append-vs-modify.md "
     "spec Requirement 4)"
+)
+CORRECT_SCOPE_MSG = (
+    "Refuse: --correct requires --scope whole-comment OR --section <heading> "
+    "(an issue:<N> target accepts --section only; #351)"
 )
 R5_MSG_TEMPLATE = (
     "Refuse: comment {cid} was authored by {login} (author_association={assoc}, "
@@ -248,7 +264,7 @@ _VALUE_FLAGS = {
     "--repo": "repo",
     "--cwd": "cwd",
 }
-_MODE_FLAGS = ("--append", "--replace", "--prepend-note")
+_MODE_FLAGS = ("--append", "--replace", "--prepend-note", "--correct")
 
 
 def parse_args_subcmd(argv):
@@ -333,8 +349,9 @@ def parse_args_subcmd(argv):
             i += 2
             continue
 
-        # Positional targets: comment:<id> or #<issue>.
-        if arg.startswith("comment:") or arg.startswith("#"):
+        # Positional targets: comment:<id>, #<issue>, or issue:<N> (issue
+        # body; --correct only, #351).
+        if arg.startswith("comment:") or arg.startswith("#") or arg.startswith("issue:"):
             targets.append(arg)
             i += 1
             continue
@@ -352,6 +369,44 @@ def parse_args_subcmd(argv):
                 "Refuse: --scope value must be 'whole-comment' (got: "
                 f"'{state['scope_flag']}'). Use --section <heading> for named "
                 "subsection scope."
+            )
+            return 3
+
+    # ── --correct gates (#351) ──
+    issue_targets = [t for t in targets if t.startswith("issue:")]
+    for t in issue_targets:
+        if not re.fullmatch(r"issue:[0-9]+", t):
+            err(f"ERROR: issue target must be issue:<numeric issue number> (got: {t})")
+            return 2
+    if issue_targets and state["mode"] != "--correct":
+        err(
+            "Refuse: an issue:<N> (issue body) target is only accepted with --correct. "
+            "Other edit modes on the issue body are tracked in #347."
+        )
+        return 2
+    if state["mode"] == "--correct":
+        if state["override"] == "true":
+            err(
+                "Refuse: --correct cannot override user-authored content. Comments by "
+                "anyone other than the OWNER or a bot are verbatim-preserve; propose the "
+                "correction instead of editing them (#351)."
+            )
+            return 2
+        if not state["scope_flag"] and not state["section_flag"]:
+            err(CORRECT_SCOPE_MSG)
+            return 3
+        if state["scope_flag"] and state["scope_flag"] != "whole-comment":
+            err(
+                "Refuse: --scope value must be 'whole-comment' (got: "
+                f"'{state['scope_flag']}'). Use --section <heading> for named "
+                "subsection scope."
+            )
+            return 3
+        if issue_targets and state["scope_flag"]:
+            err(
+                "Refuse: an issue-body correction requires --section <heading>; "
+                "replacing the whole body would also overwrite the Original text "
+                "quotation and the sections owned by idd-update and idd-clarify."
             )
             return 3
 
@@ -624,6 +679,11 @@ def _sanitize_marker_key(key):
     return key
 
 
+BACKUP_ID_RE = re.compile(
+    r"(comment-[0-9]+|issue-[0-9]+-body)-[0-9]{8}T[0-9]{6}Z(-[0-9]+)?"
+)
+
+
 def emit_audit_marker_subcmd(argv):
     if not argv:
         err("ERROR: emit-audit-marker requires <kind> arg")
@@ -645,6 +705,9 @@ def emit_audit_marker_subcmd(argv):
             err(f"ERROR: emit-audit-marker arg must be key=value (got: {kv})")
             return 2
         key, _, val = kv.partition("=")
+        if key == "backup-id" and not BACKUP_ID_RE.fullmatch(val):
+            err(f"ERROR: backup-id is not a correction backup id (got: {val})")
+            return 2
         key = _sanitize_marker_key(key)
         val = _sanitize_marker_value(val)
         marker += f' {key}="{val}"'
@@ -656,6 +719,329 @@ def emit_audit_marker_subcmd(argv):
 
     marker += " -->"
     print(marker)
+    return 0
+
+
+# ───────────────────────────────────────────────────────────────────────
+# Subcommand: check-correction (protected regions for --correct, #351)
+# ───────────────────────────────────────────────────────────────────────
+# Closed list of protected regions — do not extend by analogy (spec
+# `in-place-correction`, Requirement "Protected regions SHALL NOT be corrected"):
+#   1. `## Current Status` and every heading nested inside it  → idd-update
+#   2. a heading beginning with `### Clarity Surface`          → idd-clarify
+#   (either one as the target, or contained in the target section)
+#   3. verbatim blocks: a maximal run of lines starting with `>` in which some
+#      line contains `Original text`; it must survive byte-identical.
+_CURRENT_STATUS = "## Current Status"
+_CLARITY_PREFIX = "### Clarity Surface"
+
+
+def _read_normalized(path):
+    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        return fh.read().replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _section_range(lines, heading_line):
+    """(start, end) of the section headed by heading_line, end exclusive, or
+    None when absent. Same boundary rule as section-replace: the next heading
+    of the same or a higher level."""
+    if heading_line not in lines:
+        return None
+    start = lines.index(heading_line)
+    level = _heading_level(heading_line)
+    end = len(lines)
+    for i in range(start + 1, len(lines)):
+        lvl = _heading_level(lines[i])
+        if 1 <= lvl <= level and len(lines[i]) > lvl and lines[i][lvl].isspace():
+            end = i
+            break
+    return start, end
+
+
+def _managed_owner(lines, idx):
+    """(owner skill, heading) when line idx is a managed heading, else None."""
+    line = lines[idx]
+    if line.startswith(_CLARITY_PREFIX):
+        return "idd-clarify", line
+    if line == _CURRENT_STATUS:
+        return "idd-update", line
+    rng = _section_range(lines, _CURRENT_STATUS)
+    if rng and rng[0] < idx < rng[1] and _heading_level(line) >= 1:
+        return "idd-update", line
+    return None
+
+
+def _verbatim_blocks(lines):
+    blocks, run = [], []
+    for line in lines + [""]:
+        if line.startswith(">"):
+            run.append(line)
+            continue
+        if run and any("Original text" in r for r in run):
+            blocks.append("\n".join(run))
+        run = []
+    return blocks
+
+
+def check_correction_subcmd(argv):
+    if len(argv) != 3:
+        err("ERROR: check-correction requires <old-file> <section-heading|-> <new-file>")
+        return 2
+    old_file, heading, new_file = argv
+    for f in (old_file, new_file):
+        if not os.path.isfile(f) or not os.access(f, os.R_OK):
+            err(f"ERROR: file not readable: {f}")
+            return 5
+    old_lines = _read_normalized(old_file).split("\n")
+    new_text = _read_normalized(new_file)
+
+    if heading == "-":
+        start, end = 0, len(old_lines)
+    else:
+        rng = _section_range(old_lines, heading)
+        if rng is None:
+            err(f"ERROR: heading not found in input: {heading}")
+            return 1
+        start, end = rng
+        for idx in range(start, end):
+            owner = _managed_owner(old_lines, idx)
+            if owner:
+                who, line = owner
+                where = "is" if idx == start else "contains"
+                err(
+                    f"Refuse: the target section {where} '{line}', which is managed by "
+                    f"{who}; update it with {who} instead of --correct (#351)."
+                )
+                return 6
+        start += 1  # section-replace keeps the heading line itself
+
+    for block in _verbatim_blocks(old_lines[start:end]):
+        if block not in new_text:
+            first = block.split("\n", 1)[0]
+            err(
+                "Refuse: the replacement does not preserve an Original text quotation "
+                f"byte-for-byte (block starting '{first[:60]}'). Original-source "
+                "quotations are verbatim-preserve; keep the block and correct the "
+                "text around it (#351)."
+            )
+            return 6
+    return 0
+
+
+# ───────────────────────────────────────────────────────────────────────
+# Subcommands: archive / restore (correction archive, #351)
+# ───────────────────────────────────────────────────────────────────────
+# Prior versions of corrected targets live under ARCHIVE_REL in the git work
+# tree. Three guarantees (spec `correction-archive`):
+#   - never tracked: the dir is written to .git/info/exclude and checked with
+#     `git check-ignore` before any write (exit 7 otherwise — a tracked archive
+#     would ride into review diffs, where no hook can stop an AI reading it);
+#   - unreadable at rest: files are chmod 0000 right after the write, so
+#     recursive reads that never spell the path (`grep -r .`) get nothing;
+#   - never displayed: archived bytes never reach stdout or stderr.
+ARCHIVE_REL = os.path.join(".claude", ".idd", "archive", "edits")
+ARCHIVE_IGNORE_PATTERN = ".claude/.idd/archive/"
+ARCHIVE_EXCLUDE_MARKER = "IDD correction archive (#351)"
+_REPO_RE = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
+_MAX_COLLISIONS = 1000
+
+
+def _git(args, cwd=None):
+    try:
+        return subprocess.run(["git"] + args, cwd=cwd, capture_output=True, text=True)
+    except FileNotFoundError:
+        return None
+
+
+def _git_toplevel():
+    proc = _git(["rev-parse", "--show-toplevel"])
+    if proc is None or proc.returncode != 0:
+        return None
+    return proc.stdout.strip() or None
+
+
+def _now_utc():
+    override = os.environ.get("IDD_EDIT_HELPER_NOW")
+    if override:
+        if os.environ.get("IDD_EDIT_HELPER_TEST_MODE") != "1":
+            err("ERROR: IDD_EDIT_HELPER_NOW is a test-only hook; refuses in production.")
+            return None
+        try:
+            return datetime.datetime.strptime(override, "%Y-%m-%dT%H:%M:%SZ")
+        except ValueError:
+            err(f"ERROR: IDD_EDIT_HELPER_NOW must be YYYY-MM-DDTHH:MM:SSZ (got: {override})")
+            return None
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
+def _take_flag(argv, flag):
+    """Split `flag value` / `flag=value` out of argv → (value or None, rest).
+    A missing value or a value starting with '--' yields value "" (usage error)."""
+    rest, value, i = [], None, 0
+    while i < len(argv):
+        a = argv[i]
+        if a == flag:
+            nxt = argv[i + 1] if i + 1 < len(argv) else ""
+            value = "" if nxt.startswith("--") else nxt
+            i += 2 if value else 1
+            continue
+        if a.startswith(flag + "="):
+            value = a.partition("=")[2]
+            i += 1
+            continue
+        rest.append(a)
+        i += 1
+    return value, rest
+
+
+def _ensure_ignored(toplevel, rel_path):
+    """Write the exclude block and confirm rel_path is ignored. Returns an
+    error message, or None when the path is ignored."""
+    proc = _git(["rev-parse", "--git-path", "info/exclude"], cwd=toplevel)
+    if proc is None or proc.returncode != 0:
+        return "cannot locate .git/info/exclude"
+    exclude = proc.stdout.strip()
+    if not os.path.isabs(exclude):
+        exclude = os.path.join(toplevel, exclude)
+    os.makedirs(os.path.dirname(exclude), exist_ok=True)
+    block = os.path.join(os.path.dirname(os.path.abspath(__file__)), "git-ignore-block.sh")
+    proc = subprocess.run(
+        ["bash", block, "--target", exclude, "--marker", ARCHIVE_EXCLUDE_MARKER,
+         "--direction", "exclude", "--", ARCHIVE_IGNORE_PATTERN],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        return f"git-ignore-block failed: {proc.stderr.strip()}"
+    proc = _git(["check-ignore", "-q", "--", rel_path], cwd=toplevel)
+    if proc is None or proc.returncode != 0:
+        return (
+            f"{rel_path} is not ignored by git after writing .git/info/exclude "
+            "(a .gitignore rule re-includes it?)"
+        )
+    return None
+
+
+def archive_subcmd(argv):
+    from_file, rest = _take_flag(argv, "--from-file")
+    if len(rest) != 2 or not from_file:
+        err("ERROR: archive requires <comment|issue> <id> --from-file <path>")
+        return 2
+    kind, target_id = rest
+    if kind not in ("comment", "issue"):
+        err(f"ERROR: archive target kind must be 'comment' or 'issue' (got: {kind})")
+        return 2
+    if not re.fullmatch(r"[0-9]+", target_id):
+        err(f"ERROR: archive target id must be numeric (got: {target_id})")
+        return 2
+    if not os.path.isfile(from_file) or not os.access(from_file, os.R_OK):
+        err(f"ERROR: --from-file not readable: {from_file}")
+        return 5
+    now = _now_utc()
+    if now is None:
+        return 2
+
+    toplevel = _git_toplevel()
+    if toplevel is None:
+        err("Refuse: the correction archive needs a git work tree; run from inside the repository clone (#351).")
+        return 7
+    prefix = f"comment-{target_id}" if kind == "comment" else f"issue-{target_id}-body"
+    base_id = f"{prefix}-{now.strftime('%Y%m%dT%H%M%SZ')}"
+    problem = _ensure_ignored(toplevel, os.path.join(ARCHIVE_REL, base_id + ".md"))
+    if problem:
+        err(f"Refuse: {problem}. The archive must never be tracked; nothing was written (#351).")
+        return 7
+
+    with open(from_file, "rb") as fh:
+        data = fh.read()
+    archive_dir = os.path.join(toplevel, ARCHIVE_REL)
+    try:
+        os.makedirs(archive_dir, mode=0o700, exist_ok=True)
+    except OSError as e:
+        err(f"Refuse: cannot create the archive directory: {e.strerror}")
+        return 7
+    for n in range(1, _MAX_COLLISIONS + 1):
+        backup_id = base_id if n == 1 else f"{base_id}-{n}"
+        path = os.path.join(archive_dir, backup_id + ".md")
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            continue
+        except OSError as e:
+            err(f"Refuse: cannot create the archive file: {e.strerror}")
+            return 7
+        try:
+            with os.fdopen(fd, "wb") as out:
+                out.write(data)
+            os.chmod(path, 0)
+        except OSError as e:
+            try:
+                os.chmod(path, 0o600)
+                os.remove(path)
+            except OSError:
+                pass
+            err(f"Refuse: writing the archive file failed: {e.strerror}")
+            return 7
+        print(backup_id)
+        return 0
+    err(f"Refuse: more than {_MAX_COLLISIONS} archives share the id {base_id}")
+    return 7
+
+
+def restore_subcmd(argv):
+    repo, rest = _take_flag(argv, "--repo")
+    if len(rest) != 1 or not repo:
+        err("ERROR: restore requires <backup-id> --repo <owner/repo>")
+        return 2
+    backup_id = rest[0]
+    m = BACKUP_ID_RE.fullmatch(backup_id)
+    if not m:
+        err(f"ERROR: not a correction backup id: {backup_id}")
+        return 2
+    if not _REPO_RE.fullmatch(repo):
+        err(f"ERROR: --repo must be <owner>/<repo> (got: {repo})")
+        return 2
+    toplevel = _git_toplevel()
+    if toplevel is None:
+        err("Refuse: restore needs the git work tree that holds the archive.")
+        return 7
+    path = os.path.join(toplevel, ARCHIVE_REL, backup_id + ".md")
+    if not os.path.isfile(path):
+        err(f"ERROR: no archive entry named {backup_id}")
+        return 5
+
+    target = m.group(1)
+    num = re.search(r"[0-9]+", target).group(0)
+    if target.startswith("comment-"):
+        endpoint = f"repos/{repo}/issues/comments/{num}"
+    else:
+        endpoint = f"repos/{repo}/issues/{num}"
+
+    try:
+        os.chmod(path, 0o400)
+        with open(path, "rb") as fh:
+            data = fh.read()
+    except OSError as e:
+        err(f"ERROR: cannot read the archive entry: {e.strerror}")
+        return 5
+    finally:
+        try:
+            os.chmod(path, 0)
+        except OSError:
+            pass
+
+    try:
+        proc = subprocess.run(
+            ["gh", "api", "-X", "PATCH", endpoint, "-F", "body=@-", "--jq", ".html_url"],
+            input=data, capture_output=True,
+        )
+    except FileNotFoundError:
+        err("ERROR: gh not found")
+        return 1
+    if proc.returncode != 0:
+        err(f"ERROR: gh api PATCH {endpoint} failed (rc={proc.returncode})")
+        return proc.returncode
+    url = proc.stdout.decode("utf-8", errors="replace").strip()
+    print(f"restored {url} ({len(data)} bytes)")
     return 0
 
 
@@ -676,9 +1062,20 @@ Subcommands:
 
   emit-audit-marker <kind> <key=value>...
       Emit HTML-comment audit marker with safe escaping. Kinds: edit / override.
+      A backup-id value must be a correction backup id.
+
+  check-correction <old-file> <section-heading|-> <new-file>
+      Refuse (exit 6) a --correct replacement that touches a protected region.
+
+  archive <comment|issue> <id> --from-file <path>
+      Archive the prior text (never tracked, mode 0000); print the backup id.
+
+  restore <backup-id> --repo <owner/repo>
+      PATCH the target back to its archived text; print URL and byte count.
 
 Exit codes:
-  0=success, 1=generic, 2=usage, 3=R4-refuse, 4=R5-refuse, 5=unreadable-file
+  0=success, 1=generic, 2=usage, 3=R4-refuse, 4=R5-refuse, 5=unreadable-file,
+  6=protected-region, 7=archive-refused
 """
 
 
@@ -694,6 +1091,12 @@ def main(argv):
         return section_replace_subcmd(rest)
     if subcmd == "emit-audit-marker":
         return emit_audit_marker_subcmd(rest)
+    if subcmd == "check-correction":
+        return check_correction_subcmd(rest)
+    if subcmd == "archive":
+        return archive_subcmd(rest)
+    if subcmd == "restore":
+        return restore_subcmd(rest)
     if subcmd in ("-h", "--help", "help", ""):
         err(HELP_TEXT)
         return 2 if subcmd == "" else 0

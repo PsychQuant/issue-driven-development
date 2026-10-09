@@ -55,7 +55,7 @@ skill source tree；既有 `SKILL.md` 可以繼續使用 Claude-native tool cont
 | `idd-ask` | 不知道當初為何決定、誤把提案當事實 | Issues＋Discussions有界全文問答，精確引用comment/reply；`--corpus issues`保留原語料範圍，partial明示 |
 | `idd-report` | 進度不透明，stakeholder 看不到現況 | 產出進度報告到 GitHub Discussions |
 | `idd-comment` | 非流程性決定 / 外部 context 散落在 chat | Template-guided comment（decision/note/question/correction/link/errata）|
-| `idd-edit` | 手動 `gh api PATCH` 容易字串 escape 誤覆蓋 | 編輯既有 comment（append/replace/prepend-note 三種 mode）|
+| `idd-edit` | 手動 `gh api PATCH` 容易字串 escape 誤覆蓋；錯誤留在原處被後續 session 繼承 | 編輯既有 comment（append/replace/prepend-note）；`--correct` 確認後就地取代錯誤內容（含 issue 正文 section），舊版歸檔、AI 讀不到（#351）|
 | `idd-config` | 跑 `idd-issue` 才發現 config 缺、predicate 寫錯只在實際 issue 創建時才報、不知 cwd 落在哪個 candidate / group | 管理 `.claude/issue-driven-dev.local.json` 生命週期：`show` / `init` / `validate` / `which`（v2.31.0）|
 
 **Orchestrator skill**：
