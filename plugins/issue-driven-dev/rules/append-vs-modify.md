@@ -86,8 +86,10 @@ The `scope` qualifier names the targeted section / field / artifact when relevan
 **Definition**: Absolute immutability. Once written, never modified by any action (AI or user), including `in-place-correction`. This is the IC_R007 zone.
 
 **Scope boundary**: Exactly two kinds of content (closed list, #351 — do not extend by analogy):
-1. **Original-source quotations** — a maximal run of consecutive lines starting with `>` in which some line contains `Original text`. The quotation records what was actually said; it stays true as a record even when the judgment it led to turns out wrong.
-2. **Third-party comments** — comments whose author is neither the repository OWNER nor a bot. They are someone else's words; IDD proposes corrections to them but never edits them.
+1. **Original-source quotations** — a maximal run of consecutive lines starting with `>` in which some line contains one of exactly two labels: `Original text`, or the decision-template label `**Original**`. The quotation records what was actually said; it stays true as a record even when the judgment it led to turns out wrong.
+2. **Third-party content** — comments, and issue bodies, whose author is neither the OWNER, a bot, nor the invoking user (the authenticated `gh` user). They are someone else's words; IDD proposes corrections to them but does not correct them in place.
+
+`--override-user-content --reason="..."` still exists for `--append` / `--replace` / `--prepend-note` as an explicit, audited exception for third-party comments; it is never accepted with `--correct`.
 
 Issue-body prose written by the issue author or by an IDD skill (interpretation paragraphs, Expected, Actual, Impact) is **not** in this zone: it is correctable through `in-place-correction`. Before #351 the whole body above the `---` separator was listed here, which made every wrong interpretation permanent and pushed corrections into appended errata that downstream readers kept missing.
 
@@ -106,6 +108,7 @@ Issue-body prose written by the issue author or by an IDD skill (interpretation 
 - `CHANGELOG.md` — new version entries prepended on top, old entries never modified
 - `tasks.md` history rows (the rows themselves are append-only; the checkbox state field is `state-field-update`)
 - Spectra archive snapshot directories (`openspec/changes/archive/<date>-<name>/`)
+- `openspec/specs/<name>/spec.md` — changed only by archiving a change's delta, never edited directly
 
 ### 7. `free-rewrite`
 
@@ -121,9 +124,9 @@ Issue-body prose written by the issue author or by an IDD skill (interpretation 
 
 ### 8. `in-place-correction`
 
-**Definition**: Replace content that the user has confirmed to be wrong, in place, so that later readers — humans and AI sessions that re-read the issue as memory — stop inheriting the error (#351). Applies to issue-body prose and to OWNER- or bot-authored comments, including published comments that are otherwise `append-only`.
+**Definition**: Replace content that the user has confirmed to be wrong, in place, so that later readers — humans and AI sessions that re-read the issue as memory — stop inheriting the error (#351). Applies only to the invoking user's own content — issue bodies and comments whose author is the OWNER, a bot, or the invoking user's own `gh` login (org maintainers show as `MEMBER`, so the login check is what admits them) — including published comments that are otherwise `append-only`.
 
-**Scope boundary**: One bounded region — a whole comment (`--scope whole-comment`) or one named section (`--section <heading>`; the only form allowed for an issue body). The action SHALL (a) show the original and the replacement and get explicit confirmation, (b) archive the prior full text under `.claude/.idd/archive/edits/` before writing — the archive is never tracked by git and Claude's tools are denied access to it — (c) end the replaced region with a marker that carries the backup id and no path, and (d) refuse `verbatim-preserve` content and the regions owned by other skills (`## Current Status` → `idd-update`, `### Clarity Surface` → `idd-clarify`). `/idd-edit --correct` is the only action declared in this category; other skills reach it by proposing the command.
+**Scope boundary**: One bounded region — a whole comment (`--scope whole-comment`) or one named section (`--section <heading>`; the only form allowed for an issue body). The action SHALL (a) show the original and the replacement and get explicit confirmation, (b) archive the prior full text under `.claude/.idd/archive/edits/` of the main worktree (not a linked worktree, so the archive outlives worktree cleanup) before writing — the archive is never tracked by git and Claude's tools are denied access to it — (c) end the replaced region with a marker that carries the backup id and no path, and (d) refuse `verbatim-preserve` content and the regions owned by other skills (`## Current Status` → `idd-update`, `### Clarity Surface` → `idd-clarify`). `/idd-edit --correct` is the only action declared in this category; other skills reach it by proposing the command.
 
 **Examples**:
 - `/idd-edit comment:<id> --correct --section "### Strategy"` replaces a Diagnosis strategy that named the wrong backup location
@@ -140,7 +143,8 @@ Does the action publish to a permanent place (GitHub comment, archived spec)?
 │   ├─ Yes  → category: inline-replace-before-publish
 │   └─ No   → Continue ↓
 │
-Is the target a user-authored / IC_R007-verbatim zone?
+Is the target verbatim-preserve content (an Original-text / **Original** quotation,
+or a comment or issue body authored by someone other than the OWNER, a bot, or the invoking user)?
 ├─ Yes → REFUSE the action entirely (this zone is verbatim-preserve)
 │
 Is the action replacing content the user has confirmed to be wrong?
@@ -170,7 +174,7 @@ This rule does NOT replace existing IDD principles — it codifies the modify-ac
 
 | IC principle | Concern | Boundary with this rule |
 |---|---|---|
-| **IC_R007** (verbatim source preservation) | "Don't modify user-authored prose or external verbatim quotes" | IC_R007 zones map to `verbatim-preserve` category in this rule. IC_R007 remains the authoritative source for *what counts as* verbatim; this rule says *how* the discipline is structurally enforced (refuse modification via category gate). |
+| **IC_R007** (verbatim source preservation) | "Don't modify original-source quotations (`Original text` / `**Original**`) or third-party content" | IC_R007 zones map to `verbatim-preserve` category in this rule. IC_R007 remains the authoritative source for *what counts as* verbatim; this rule says *how* the discipline is structurally enforced (refuse modification via category gate). |
 | **IC_R010** (confidence-tagged routing) | "Tag confidence on automated decisions; defer low-confidence to review" | Orthogonal axis. IC_R010 governs *whether* an action should proceed; this rule governs *what scope* it operates on once proceeding. An IC_R010-confident action still SHALL declare its scope. |
 | **IC_R011** (follow-up filing checkpoint) | "Surface tangential concerns at deliberation moments; file by default" | IC_R011 audit blocks (`### Sister Concerns Filed` / `### Closing Follow-ups Filed` / `### Linked-Context Siblings Filed` / `### Distribution Sync` / `### Residue Acknowledgement`) are all instances of `audit-block-append` category under this rule. IC_R011 governs *when* and *why* to surface; this rule governs *how* the surface is structurally written (named-section append, not free modification). |
 
@@ -272,7 +276,7 @@ This rule defines the discipline; tooling-level enforcement is reserved for foll
 - `--replace` mode: `bounded-section-replace` category. Invocations SHALL include `--scope whole-comment` (full-comment overwrite acknowledgment) OR `--section <heading-within-comment>` (named subsection scope).
 - `--correct` mode: `in-place-correction` category (#351). Same scope flags as `--replace`; an issue-body target (`issue:<N>`) accepts `--section` only. No `--override-user-content`.
 
-This rule additionally declares a verbatim-preserve guard at the comment layer: comments where `author_association ≠ OWNER` (and author is not in known-bot allowlist) SHALL NOT be modified without explicit `--override-user-content --reason="..."` invocation discipline.
+This rule additionally declares a verbatim-preserve guard at the comment layer: comments where `author_association ≠ OWNER` (and the author is neither in the known-bot allowlist nor the invoking user's own `gh` login) SHALL NOT be modified without explicit `--override-user-content --reason="..."` invocation discipline.
 
 **Enforcement status**: enforced at runtime by `scripts/idd-edit-helper.py` since v2.81.0 ([#154](https://github.com/PsychQuant/issue-driven-development/issues/154) → [#155](https://github.com/PsychQuant/issue-driven-development/issues/155) Python layer): `parse-args` refuses `--replace` / `--correct` without scope (exit 3), `validate-target` refuses non-OWNER non-bot authors (exit 4), and `check-correction` refuses protected regions (exit 6, #351). The bash-in-SKILL.md attempts on PR #153 that this paragraph used to describe were replaced by that helper.
 

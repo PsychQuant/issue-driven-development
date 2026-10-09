@@ -1223,11 +1223,12 @@ fi
 ### Proposed Corrections
 | # | Target | Section | 錯在哪 | Command |
 |---|--------|---------|--------|---------|
-| 1 | comment:5805214375 | ### Root Cause / Analysis | 指向 `a.py`，root cause 實際在 `b.py` | `/idd-edit comment:5805214375 --correct --section "### Root Cause / Analysis" --body-file correction-1.md --reason "root-cause file was wrong"` |
+| 1 | comment:5805214375 | ### Root Cause / Analysis | root cause 檔案寫錯，正確是 `b.py` | `/idd-edit comment:5805214375 --correct --section "### Root Cause / Analysis" --body-file "$HOME/.cache/idd/corrections/correction-<N>-1.md" --reason "root-cause file was wrong"` |
 ```
 
-- `<id>` 是數字 REST id（comment URL 的 `#issuecomment-` 後綴），不是 GraphQL node id；issue body 寫 `issue:<N>`，只能用 `--section`。替換內容附在表下 `<details>`，`--body-file` 指向存放它的檔（attended 執行時寫進 `$VERIFY_DIR/correction-<k>.md`）。
-- 替換內容須原樣保留 `Original text` 引文；`## Current Status`、`### Clarity Surface` 不提議（`/idd-edit` 會拒絕）。目標 comment 作者非 OWNER 且非 bot → 該項改提 `/idd-comment #N --type errata --target-comment <id> --body "..."`。
+- `<id>` 是數字 REST id（comment URL 的 `#issuecomment-` 後綴），不是 GraphQL node id；issue body 寫 `issue:<N>`，只能用 `--section`。替換內容附在表下 `<details>`，執行時寫進 `$HOME/.cache/idd/corrections/correction-<N>-<k>.md`（先 `mkdir -p "$HOME/.cache/idd/corrections"`），`--body-file` 指向它；不放 `$VERIFY_DIR` 或 `$TMPDIR`（macOS 在 `/var` 下，`/idd-edit` 會拒絕）。
+- 「錯在哪」只寫位置與錯誤類型加正確內容，不重述錯的值 —— 重述就等於再留一份錯誤。
+- 替換內容須原樣保留 `Original text` 引文；`## Current Status`、`### Clarity Surface` 不提議（`/idd-edit` 會拒絕）。目標 comment 作者不是 OWNER、bot 或你自己（目前登入的 gh 使用者）→ 該項改提 `/idd-comment #N --type errata --target-comment <id> --body "..."`。
 - **attended**：報告貼出後逐項 `AskUserQuestion`（現在執行 / 先不要）；選執行才呼叫該指令，`/idd-edit` 仍走自己的 preview + confirm。**unattended 只列不做**：不呼叫 `/idd-edit`。
 - 本 skill **永不**自己 PATCH 目標、也不寫歸檔 —— 改寫只經 `/idd-edit`。
 

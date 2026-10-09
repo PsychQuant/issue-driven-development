@@ -155,7 +155,7 @@ authoritative_source = first_exists([
 
 掃描所有 comments，提取：
 
-1. **Key Decisions**：策略改變、重要發現、scope 調整
+1. **Key Decisions**（每次重建，見鐵律）：策略改變、重要發現、scope 調整
    - 從 diagnosis 的 Strategy 區塊
    - 從 implementation 中的 scope 說明
    - 從 verify 的 findings
@@ -364,6 +364,6 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit $NUMBER --repo $GITHUB_REPO
 ## 鐵律
 
 - **永遠不改 `## Current Status` managed zone 以外的內容**。原始記錄 + audit blocks（`### Clarity Surface` / `### Linked-Context Siblings` 等）都是審計軌跡。錨在 `## Current Status` heading，**不是**第一個 `---`（`---` 語意不唯一，錨在它會誤刪 audit — #178）。
-- **Key Decisions 只加不刪**。新的加在最上面，舊的保留。
+- **Key Decisions 每次重建**：每次執行都從 comments 目前的內容重新推導，不沿用上一版。來源被 `/idd-edit --correct` 就地更正的決定，下次執行就會消失（#351）。
 - **簡潔**。每個 bullet 一行，不超過 100 字。
 - **Phase 必須準確**。如果推斷不出來，標 `unknown` 並提醒使用者。

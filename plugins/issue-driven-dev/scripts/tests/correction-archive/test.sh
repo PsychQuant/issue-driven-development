@@ -14,7 +14,7 @@ HOOK="$PLUGIN/hooks/archive-read-guard.py"
 HOOKS_JSON="$PLUGIN/hooks/hooks.json"
 EDIT_SKILL="$PLUGIN/skills/idd-edit/SKILL.md"
 
-WORK="$(mktemp -d)"
+WORK="$(mktemp -d /tmp/idd-ca-XXXXXX)"
 cleanup() { chmod -R u+rwx "$WORK" 2>/dev/null; rm -rf "$WORK"; }
 trap cleanup EXIT
 
@@ -41,7 +41,7 @@ ID1="comment-5805214375-20261009T100000Z"
 # ── A. write once under a fixed local path ─────────────────────────────────
 echo "A. archive write"
 
-run_in "$REPO" a1 archive comment 5805214375 --from-file "$WORK/old.md"
+run_in "$REPO" a1 archive comment 5805214375 --from-file "$WORK/old.md" --repo o/r
 assert_exit "archive succeeds in a git work tree" 0 "$RC"
 assert_eq "stdout is exactly the backup id" "$ID1" "$(cat "$WORK/a1.out")"
 assert_file_exists "archive file is at the fixed path" "$ARCH/$ID1.md"
@@ -52,22 +52,24 @@ chmod u+r "$ARCH/$ID1.md"
 require "archive is byte-identical to the previewed original" cmp -s "$WORK/old.md" "$ARCH/$ID1.md"
 chmod 000 "$ARCH/$ID1.md"
 
-run_in "$REPO" a2 archive comment 5805214375 --from-file "$WORK/old.md"
+run_in "$REPO" a2 archive comment 5805214375 --from-file "$WORK/old.md" --repo o/r
 assert_exit "same-second second archive succeeds" 0 "$RC"
 assert_eq "collision gets a -2 suffix" "$ID1-2" "$(cat "$WORK/a2.out")"
 chmod u+r "$ARCH/$ID1.md"
 require "existing archive file is untouched by the collision" cmp -s "$WORK/old.md" "$ARCH/$ID1.md"
 chmod 000 "$ARCH/$ID1.md"
 
-run_in "$REPO" a3 archive issue 351 --from-file "$WORK/old.md"
+run_in "$REPO" a3 archive issue 351 --from-file "$WORK/old.md" --repo o/r
 assert_eq "issue body backup id" "issue-351-body-20261009T100000Z" "$(cat "$WORK/a3.out")"
 
-run_in "$REPO" a4 archive comment 5805214375 --from-file "$WORK/nope.md"
+run_in "$REPO" a4 archive comment 5805214375 --from-file "$WORK/nope.md" --repo o/r
 assert_exit "unreadable --from-file → exit 5" 5 "$RC"
-run_in "$REPO" a5 archive gist 1 --from-file "$WORK/old.md"
+run_in "$REPO" a5 archive gist 1 --from-file "$WORK/old.md" --repo o/r
 assert_exit "unknown target kind → exit 2" 2 "$RC"
-run_in "$REPO" a6 archive comment 12ab --from-file "$WORK/old.md"
+run_in "$REPO" a6 archive comment 12ab --from-file "$WORK/old.md" --repo o/r
 assert_exit "non-numeric id → exit 2" 2 "$RC"
+run_in "$REPO" a7 archive comment 1 --from-file "$WORK/old.md"
+assert_exit "missing --repo → exit 2" 2 "$RC"
 
 # ── B. never tracked by git ────────────────────────────────────────────────
 echo "B. never tracked"
@@ -78,19 +80,19 @@ assert_output_grep "archive dir is listed in .git/info/exclude" ".claude/.idd/ar
 require "git check-ignore reports the archive file as ignored" git -C "$REPO" check-ignore -q ".claude/.idd/archive/edits/$ID1.md"
 refute_grep "git status does not list the archive" ".claude" "$(git -C "$REPO" status --porcelain --untracked-files=all)"
 
-run_in "$REPO" b1 archive comment 5805214375 --from-file "$WORK/old.md"
+run_in "$REPO" b1 archive comment 5805214375 --from-file "$WORK/old.md" --repo o/r
 EXCL_LINES="$(grep -c 'claude/.idd/archive' "$EXCLUDE")"
 assert_eq "exclude block is written once (idempotent)" "1" "$EXCL_LINES"
 
 REINC="$WORK/reinc"; mkdir -p "$REINC"; git -C "$REINC" init -q
 printf '!.claude/.idd/archive/\n!.claude/.idd/archive/**\n' >"$REINC/.gitignore"
-run_in "$REINC" b2 archive comment 5805214375 --from-file "$WORK/old.md"
+run_in "$REINC" b2 archive comment 5805214375 --from-file "$WORK/old.md" --repo o/r
 assert_exit "re-include rule → exit 7" 7 "$RC"
 assert_output_grep "refusal names the archive path" ".claude/.idd/archive" "$WORK/b2.err"
 refute "no archive file is left behind" test -e "$REINC/.claude/.idd/archive/edits/$ID1.md"
 
 NOGIT="$WORK/nogit"; mkdir -p "$NOGIT"
-run_in "$NOGIT" b3 archive comment 5805214375 --from-file "$WORK/old.md"
+run_in "$NOGIT" b3 archive comment 5805214375 --from-file "$WORK/old.md" --repo o/r
 assert_exit "outside a git work tree → exit 7" 7 "$RC"
 refute "no archive dir is created outside git" test -e "$NOGIT/.claude"
 
@@ -183,7 +185,7 @@ expect_deny bash      '{"tool_name":"Bash","tool_input":{"command":"cat .claude/
 expect_deny pwsh      '{"tool_name":"PowerShell","tool_input":{"command":"Get-Content .claude\\.idd\\archive\\edits\\x.md"}}'
 assert_output_grep "deny reason points to restore" "restore" "$WORK/hook-read.out"
 
-expect_allow helper   '{"tool_name":"Bash","tool_input":{"command":"python3 \"$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py\" archive comment 5805214375 --from-file \"$BACKUP_FILE\""}}'
+expect_allow helper   '{"tool_name":"Bash","tool_input":{"command":"python3 \"$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py\" archive comment 5805214375 --from-file \"$BACKUP_FILE\" --repo \"$REPO\""}}'
 expect_allow skill    '{"tool_name":"Read","tool_input":{"file_path":"plugins/issue-driven-dev/skills/idd-edit/SKILL.md"}}'
 expect_allow grep-re  '{"tool_name":"Grep","tool_input":{"pattern":".claude/.idd/archive","path":"plugins"}}'
 expect_allow echo     '{"tool_name":"Bash","tool_input":{"command":"echo hi"}}'
@@ -202,5 +204,65 @@ EOF
 
 FENCED="$(awk '/^```bash/{f=1;next} /^```/{f=0} f' "$EDIT_SKILL")"
 refute_grep "idd-edit executed bash never spells the archive path" ".idd/archive" "$FENCED"
+
+# ── F. round 2 (verify #351 round 1) ──────────────────────────────────────
+echo "F. round 2"
+
+# F1. sidecar repo binding + restore refusals
+run_in "$REPO" f1 archive comment 777 --from-file "$WORK/old.md" --repo o/r
+F1ID="$(cat "$WORK/f1.out")"
+assert_file_exists "sidecar records the repo" "$ARCH/$F1ID.repo"
+assert_eq "sidecar content" "o/r" "$(cat "$ARCH/$F1ID.repo")"
+rm -f "$WORK/gh_args"
+run_in "$REPO" f1b restore "$F1ID" --repo c/d
+assert_exit "restore to a different repo → exit 2" 2 "$RC"
+refute "gh not called on repo mismatch" test -e "$WORK/gh_args"
+
+ln -s "$WORK/old.md" "$ARCH/comment-888-20261009T100000Z.md"
+printf 'o/r' >"$ARCH/comment-888-20261009T100000Z.repo"
+run_in "$REPO" f1c restore comment-888-20261009T100000Z --repo o/r
+assert_exit "symlinked archive entry → exit 2" 2 "$RC"
+
+TR="$WORK/tracked"; mkdir -p "$TR/.claude/.idd/archive/edits"; git -C "$TR" init -q
+printf 'x' >"$TR/.claude/.idd/archive/edits/comment-9-20261009T100000Z.md"
+printf 'o/r' >"$TR/.claude/.idd/archive/edits/comment-9-20261009T100000Z.repo"
+git -C "$TR" add -f .claude >/dev/null 2>&1
+run_in "$TR" f1d restore comment-9-20261009T100000Z --repo o/r
+assert_exit "tracked archive entry → exit 2" 2 "$RC"
+
+# F2. --from-file sensitive path gate
+mkdir -p "$WORK/home/.ssh"; printf 'KEY' >"$WORK/home/.ssh/id_rsa"
+export HOME_SAVE="$HOME" HOME="$WORK/home"
+run_in "$REPO" f2 archive comment 1 --from-file "$WORK/home/.ssh/id_rsa" --repo o/r
+export HOME="$HOME_SAVE"
+assert_exit "--from-file under .ssh → exit 5" 5 "$RC"
+
+# F3. linked worktree archives into the main worktree
+git -C "$REPO" commit -q --allow-empty -m init
+git -C "$REPO" worktree add -q "$WORK/wt" 2>/dev/null
+run_in "$WORK/wt" f3 archive comment 4242 --from-file "$WORK/old.md" --repo o/r
+F3ID="$(cat "$WORK/f3.out")"
+assert_file_exists "archive written under the main worktree" "$ARCH/$F3ID.md"
+git -C "$REPO" worktree remove "$WORK/wt" >/dev/null 2>&1
+assert_file_exists "archive survives git worktree remove" "$ARCH/$F3ID.md"
+
+# F4. collision filename is checked against ignore rules
+CI="$WORK/coll"; mkdir -p "$CI"; git -C "$CI" init -q
+printf '!.claude/.idd/archive/\n.claude/.idd/archive/edits/*\n!.claude/.idd/archive/edits/comment-5-20261009T100000Z-2.md\n' >"$CI/.gitignore"
+run_in "$CI" f4a archive comment 5 --from-file "$WORK/old.md" --repo o/r
+run_in "$CI" f4b archive comment 5 --from-file "$WORK/old.md" --repo o/r
+assert_exit "collision name that is not ignored → exit 7" 7 "$RC"
+refute "no -2 file written" test -e "$CI/.claude/.idd/archive/edits/comment-5-20261009T100000Z-2.md"
+
+# F5. hook: word-level matching, dot-dot, prefix, unlock flag
+expect_allow commit   '{"tool_name":"Bash","tool_input":{"command":"git commit -m \"keep .claude/.idd/archive/ out of git\""}}'
+expect_allow ghbody   '{"tool_name":"Bash","tool_input":{"command":"gh issue comment 351 --body \"archive lives in .claude/.idd/archive/edits\""}}'
+expect_deny  dotdot   '{"tool_name":"Bash","tool_input":{"command":"cat .claude/x/../.idd/archive/edits/a.md"}}'
+expect_deny  dblslash '{"tool_name":"Bash","tool_input":{"command":"cat .claude//.idd/archive/edits/a.md"}}'
+expect_allow prefix   '{"tool_name":"Read","tool_input":{"file_path":"/r/.claude/.idd/archive-notes.md"}}'
+mkdir -p "$WORK/fakehome/.cache/idd"; : >"$WORK/fakehome/.cache/idd/archive-read-guard.disabled"
+printf '%s' '{"tool_name":"Read","tool_input":{"file_path":"/r/.claude/.idd/archive/edits/a.md"}}' \
+  | HOME="$WORK/fakehome" python3 "$HOOK" >"$WORK/hook-unlock.out" 2>/dev/null
+refute_output_grep "unlock flag allows the call" "deny" "$WORK/hook-unlock.out"
 
 print_summary "correction-archive"

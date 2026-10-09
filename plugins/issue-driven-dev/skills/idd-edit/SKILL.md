@@ -4,7 +4,7 @@ description: |
   編輯既有 GitHub issue comment。支援 append/replace/prepend-note/correct 四種 mode；`--correct` 也能更正 issue 正文（`issue:<N>`，#351）。
   必 show 原 body + preview 新 body 讓 user confirm。用 `gh api -F body=@file` 避免 backtick escape bug。
   支援 batch mode（v2.34.0+）：多個 comment 套同一段 edit（如 `comment:NNN comment:MMM --replace --body '...'`），每個 comment 仍 per-confirm。
-  Use when: 補既有 comment 說明（如圖片下方解釋）、修 typo；內容確定錯了 → `--correct` 就地取代（舊版歸檔、AI 讀不到）。
+  Use when: 補既有 comment 說明（如圖片下方解釋）；內容有錯（打錯字、事實錯誤、被推翻的結論都算）→ `--correct` 就地取代（舊版歸檔、AI 讀不到）。
   防止的失敗：手動 `gh api PATCH` 字串 escape 錯誤、誤覆蓋未 backup 的原內容。
 argument-hint: "comment:<id>[ comment:<id>...]|#issue --last|issue:<N> (--append|--replace [--scope whole-comment|--section <heading>]|--prepend-note|--correct (--scope whole-comment|--section <heading>)) [--body=... | --body-file=...] [--reason=...] [--override-user-content --reason='...']"
 allowed-tools:
@@ -33,6 +33,8 @@ allowed-tools:
 完整契約見 [batch-and-cluster.md](../../references/batch-and-cluster.md)。罕見場景：跨 issue 的 typo 統一修、補同一段 errata note、把多個 stale comment 統一標 deprecated。
 
 ## When to use `idd-issue` multi-finding mode instead（v2.55.0+）
+
+> **例外（#351）**：內容**確定是錯的**（打錯字、事實錯誤、被推翻的結論）一律走 `--correct`，不走 multi-finding 的 `edit body` —— 後者不歸檔、不檢查 Original text，錯的舊版會留在 AI 讀得到的地方。
 
 如果你要做的是「**從一個 source 文件抽多個 findings,部分 edit 既存 issue body**」(典型場景:transcript 含 5 個對既存 issues body 的修正,e.g. 「H4 hypothesis 重新表述」「reputation 變 core IV 改 framing」),**不要**手動跑 `idd-edit` 多次,改用 `idd-issue` multi-finding mode:
 
@@ -112,13 +114,13 @@ Override pathway:`--override-user-content --reason="<rationale>"` 顯式同意�
 **在動任何事之前**先用 `TaskCreate` 為這個 stage 建 todo list,確保每個 sub-step 都被追蹤:
 
 ```
-TaskCreate(name="parse_and_resolve_target", description="Parse comment:<id> 或 #NNN [--last] 並解析出實際 COMMENT_ID")
+TaskCreate(name="parse_and_resolve_target", description="Parse comment:<id> / #NNN [--last] / issue:<N>，解析成 RESOLVED_TARGETS（每項 kind:number，每個 iteration 自己決定目標）")
 TaskCreate(name="fetch_body_and_backup", description="gh api 取現 body 並寫入 /tmp/idd-edit-backup/comment-<id>-<ts>.md")
 TaskCreate(name="show_original", description="顯示原 comment 前 30 行讓使用者看清楚要動什麼")
 TaskCreate(name="build_new_body", description="按 mode（append / replace / prepend-note）組新 body 字串")
 TaskCreate(name="check_correction", description="--correct only：helper check-correction 擋受管區與 Original text 引用區塊（exit 6）")
 TaskCreate(name="preview_and_confirm", description="顯示新 body 並用 AskUserQuestion 確認；--replace / --correct 模式必須通過")
-TaskCreate(name="archive_before_patch", description="--correct only：確認後 helper archive --from-file 歸檔舊版（exit 7 → 不 PATCH），再加 backup-id 標記組出 NEW_BODY；PATCH 後刪 /tmp 工作副本")
+TaskCreate(name="archive_before_patch", description="--correct only：確認後重抓目標與預覽比對（不同 → changed since preview，拒絕），helper archive --from-file --repo 歸檔舊版（exit 7 → 不 PATCH），加 backup-id 標記、section-replace --stop-at-rule 組出 NEW_BODY（失敗即拒絕）；PATCH 後刪 /tmp 工作副本")
 TaskCreate(name="execute_patch", description="經 gh-egress.sh edit-comment 派送 PATCH（#273 — 全網套用；rc>=10 → EGRESS_REFUSED 桶 warn-continue）；-F body=@file 避免 escape")
 TaskCreate(name="verify_and_report", description="re-fetch comment 比對寫入結果，輸出 ✓ Edit applied + diff summary")
 ```
@@ -151,18 +153,20 @@ case $PARSE_EXIT in
   *) echo "$PARSE_ERR" >&2; exit $PARSE_EXIT ;;
 esac
 
-# Resolve TARGETS array → RESOLVED_COMMENT_IDS array (one entry per comment to edit).
+# Resolve TARGETS array → RESOLVED_TARGETS array, one `kind:number` entry per
+# target (`comment:<id>` or `issue:<N>`). Each iteration derives its own kind —
+# a global flag here once sent a comment's correction to the issue body (#351).
 # Closes R2 H7 (#154 Round 2): previously this loop closed BEFORE Steps 1.5-7,
 # so batch mode `comment:NNN comment:MMM` silently only processed the LAST target.
 # Fix: resolution loop accumulates; per-target processing happens in OUTER loop
 # wrapping Steps 1.5 through 7 (see "Per-target outer loop" note below).
-RESOLVED_COMMENT_IDS=()
-ISSUE_BODY_TARGET=""   # --correct on issue:<N> (#351); helper already refused it for other modes
+RESOLVED_TARGETS=()
 for target in "${TARGETS[@]}"; do
     local id=""
     case "$target" in
         issue:*)
-            ISSUE_BODY_TARGET="${target#issue:}"   # helper validated: numeric
+            # --correct only, and the only target (parse-args refused anything else)
+            RESOLVED_TARGETS+=("$target")
             continue
             ;;
         comment:*)
@@ -188,22 +192,24 @@ for target in "${TARGETS[@]}"; do
     #   - /tmp/idd-edit-repl-${id}.md (arbitrary local file write via embedded `/` + `..`)
     [[ "$id" =~ ^[0-9]+$ ]] || { echo "ERROR: invalid comment ID (must be numeric): $id" >&2; exit 2; }
 
-    RESOLVED_COMMENT_IDS+=("$id")
+    RESOLVED_TARGETS+=("comment:$id")
 done
 ```
 
 #### Per-target outer loop (wraps Steps 1.5 — 7)
 
-**v2.81.0+ (#154 R3 fix for H7)**: Each resolved comment ID runs through the full pipeline (validate → fetch → preview → confirm → PATCH → verify) independently. Batch mode = N iterations of the same sequence, per-comment confirmation discipline preserved.
+**v2.81.0+ (#154 R3 fix for H7)**: Each resolved target runs through the full pipeline (validate → fetch → preview → confirm → PATCH → verify) independently. Batch mode = N iterations of the same sequence, per-comment confirmation discipline preserved.
 
 ```bash
 EDITED_COUNT=0        # incremented after each successful per-target Step 7 verify
-REFUSED_TARGETS=()    # R5-refused comment ids (#158 semantics (i) — recorded, not fatal)
+REFUSED_TARGETS=()    # "<kind:number> <reason>" — reason: R5 / protected / changed-since-preview / archive / replace (#158 (i): recorded, not fatal)
 EGRESS_REFUSED_TARGETS=()   # egress-band refusals rc>=10（#273 — tier-floor/privacy/mention/empty-body），warn-continue
-for COMMENT_ID in "${RESOLVED_COMMENT_IDS[@]}"; do
+for TARGET in "${RESOLVED_TARGETS[@]}"; do
+    TARGET_KIND="${TARGET%%:*}"     # comment | issue — derived per iteration
+    TARGET_NUM="${TARGET#*:}"
+    COMMENT_ID=""
+    [ "$TARGET_KIND" = "comment" ] && COMMENT_ID="$TARGET_NUM"
     # === Steps 1.5 through 7 run here, per-target ===
-    # The bash blocks below show single-target templates; in batch mode
-    # they execute N times, once per resolved COMMENT_ID.
     # ...
 done
 ```
@@ -216,8 +222,10 @@ done
 echo "── idd-edit batch outcome ──"
 REFUSED_TOTAL=$(( ${#REFUSED_TARGETS[@]} + ${#EGRESS_REFUSED_TARGETS[@]} ))
 echo "edited: $EDITED_COUNT / refused: $REFUSED_TOTAL"
-for rid in ${REFUSED_TARGETS[@]+"${REFUSED_TARGETS[@]}"}; do
-  echo "  ✗ REFUSED(R5) comment:$rid — non-OWNER（override: --override-user-content --reason='...'）"
+for entry in ${REFUSED_TARGETS[@]+"${REFUSED_TARGETS[@]}"}; do
+  # entry = "<kind:number> <reason>"; reason ∈ R5 / protected / changed-since-preview /
+  # archive / replace. Only R5 has an override, and only outside --correct.
+  echo "  ✗ REFUSED(${entry##* }) ${entry% *}"
 done
 for rid in ${EGRESS_REFUSED_TARGETS[@]+"${EGRESS_REFUSED_TARGETS[@]}"}; do
   echo "  ✗ REFUSED(egress) $rid — band 語意見 #227（10 privacy / 11 mention / 13 tier-floor #272 / 15 empty-body #275）"
@@ -234,8 +242,12 @@ exit 0
 **v2.81.0+ (#154)**: R5 gate refuses modifications to user-authored comments (non-OWNER non-bot) unless `--override-user-content --reason="..."` provided。 Helper does single `gh api` call,checks `author_association` + `user.login`,applies bot allowlist (`*[bot]` pattern + `OWNER` passthrough)。
 
 ```bash
+# comment → its author; issue:<N> → the issue author. OWNER, a bot, or the
+# authenticated gh user pass (org maintainers are MEMBER — #351).
+VALIDATE_ARG="$COMMENT_ID"
+[ "$TARGET_KIND" = "issue" ] && VALIDATE_ARG="issue:$TARGET_NUM"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
-    validate-target "$COMMENT_ID" "$REPO" "$OVERRIDE_USER_CONTENT"
+    validate-target "$VALIDATE_ARG" "$REPO" "$OVERRIDE_USER_CONTENT"
 VALIDATE_EXIT=$?
 case $VALIDATE_EXIT in
   0) ;;   # proceed (OWNER, bot, or override active)
@@ -245,7 +257,7 @@ case $VALIDATE_EXIT in
     #  proposing an errata comment, never by editing it — #351.)
     # #158 語意 (i)：記錄後 continue,不中斷 batch（#158 語意 (i)）— 本 target 跳過
     # Steps 2-7,其餘 targets 照常;單 target 退化等價（記錄 → loop 自然結束 → report → exit 4）。
-    REFUSED_TARGETS+=("$COMMENT_ID")
+    REFUSED_TARGETS+=("$TARGET R5")
     continue
     ;;
   *) exit $VALIDATE_EXIT ;;
@@ -256,24 +268,24 @@ esac
 
 ```bash
 mkdir -p /tmp/idd-edit-backup
-BACKUP_FILE="/tmp/idd-edit-backup/comment-${COMMENT_ID}-$(date +%s).md"
-
-gh api repos/$REPO/issues/comments/$COMMENT_ID --jq '.body' > "$BACKUP_FILE"
+# mktemp: an unpredictable name, so nothing else can swap the file between the
+# preview and the archive step.
+BACKUP_FILE=$(mktemp "/tmp/idd-edit-backup/${TARGET_KIND}-${TARGET_NUM}-XXXXXX") || {
+  echo "✗ cannot stage the working copy — refusing" >&2; exit 1; }
+if [ "$TARGET_KIND" = "issue" ]; then
+    TARGET_ENDPOINT="repos/$REPO/issues/$TARGET_NUM"            # issue body (--correct only)
+else
+    TARGET_ENDPOINT="repos/$REPO/issues/comments/$COMMENT_ID"
+fi
+gh api "$TARGET_ENDPOINT" --jq '.body' > "$BACKUP_FILE"
 
 echo "✓ Backup: $BACKUP_FILE"
-```
-
-**Issue-body target（`issue:<N>`，`--correct` only）**：不跑 Step 1.5（正文沒有 comment author），工作副本改抓正文；之後的 Step 3–7 相同，PATCH 走 `gh-egress.sh edit`。
-
-```bash
-BACKUP_FILE="/tmp/idd-edit-backup/issue-${ISSUE_BODY_TARGET}-body-$(date +%s).md"
-gh api "repos/$REPO/issues/$ISSUE_BODY_TARGET" --jq '.body' > "$BACKUP_FILE"
 ```
 
 ### Step 3: Show original body
 
 ```
-=== Original comment (ID: $COMMENT_ID) ===
+=== Original ($TARGET) ===
 {首 30 行 + "..."}
 ===
 ```
@@ -358,8 +370,8 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
 CHECK_RC=$?
 if [ "$CHECK_RC" -ne 0 ]; then
     # 6 = protected region（stderr 已指名區域與負責的 skill）；1 = section 不存在
-    rm -f "$REPL_FILE"
-    REFUSED_TARGETS+=("${COMMENT_ID:-issue:$ISSUE_BODY_TARGET}")
+    rm -f "$REPL_FILE" "$BACKUP_FILE"
+    REFUSED_TARGETS+=("$TARGET protected")
     continue
 fi
 ```
@@ -401,21 +413,25 @@ Confirm edit? (y/n)
 
 ### Step 5.5: Archive before PATCH（`--correct` only）
 
-確認之後才歸檔，歸檔成功才 PATCH（拒絕確認 = 不留任何檔案）。helper 自己算歸檔路徑；**本 skill 執行的 bash 不寫出歸檔路徑**，否則會被 archive-read-guard hook 擋下。
+確認之後才歸檔，歸檔成功才 PATCH（使用者拒絕 = 刪掉工作副本、不留任何檔案）。helper 自己算歸檔路徑；**本 skill 執行的 bash 不寫出歸檔路徑**，否則會被 archive-read-guard hook 擋下。
+
+確認後先重抓目標：預覽期間若有人（或 `idd-update`）改過，這次更正會蓋掉那些修改，所以內容不同就拒絕（changed since preview），請使用者重跑。GitHub 沒有條件式寫入，重抓到 PATCH 之間仍有極短的競爭窗。
 
 ```bash
-if [ -n "$ISSUE_BODY_TARGET" ]; then
-    ARCHIVE_KIND="issue"
-    ARCHIVE_ID="$ISSUE_BODY_TARGET"
-else
-    ARCHIVE_KIND="comment"
-    ARCHIVE_ID="$COMMENT_ID"
+CURRENT_FILE=$(mktemp "/tmp/idd-edit-backup/${TARGET_KIND}-${TARGET_NUM}-now-XXXXXX") || exit 1
+gh api "$TARGET_ENDPOINT" --jq '.body' > "$CURRENT_FILE"
+if ! cmp -s "$BACKUP_FILE" "$CURRENT_FILE"; then
+    echo "✗ $TARGET changed since preview — nothing archived or written; run again to see the new version" >&2
+    rm -f "$CURRENT_FILE" "$REPL_FILE" "$BACKUP_FILE"
+    REFUSED_TARGETS+=("$TARGET changed-since-preview")
+    continue
 fi
+rm -f "$CURRENT_FILE"
 BACKUP_ID=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
-    archive "$ARCHIVE_KIND" "$ARCHIVE_ID" --from-file "$BACKUP_FILE") || {
-    # exit 7：不在 git work tree / 路徑沒被 ignore / 寫入失敗 — 目標不動
-    rm -f "$REPL_FILE"
-    REFUSED_TARGETS+=("$ARCHIVE_KIND:$ARCHIVE_ID")
+    archive "$TARGET_KIND" "$TARGET_NUM" --from-file "$BACKUP_FILE" --repo "$REPO") || {
+    # exit 7：不在 git work tree / 路徑沒被 ignore / 寫入失敗；exit 5：路徑閘門 — 目標不動
+    rm -f "$REPL_FILE" "$BACKUP_FILE"
+    REFUSED_TARGETS+=("$TARGET archive")
     continue
 }
 CORRECT_MARKER=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
@@ -423,8 +439,14 @@ CORRECT_MARKER=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
 # 標記接在取代內容末尾 → 它是被取代區段的最後一行，不會落進 idd-update 管的 ## Current Status
 printf '%s\n\n%s\n' "$BODY_INPUT" "$CORRECT_MARKER" > "$REPL_FILE"
 if [ -n "$SECTION_FLAG" ]; then
+    # --stop-at-rule: a `---` line ends the section, so separators and the
+    # audit blocks below them are never replaced (#351)
     NEW_BODY=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
-                  section-replace "$BACKUP_FILE" "$SECTION_FLAG" "$REPL_FILE")
+                  section-replace "$BACKUP_FILE" "$SECTION_FLAG" "$REPL_FILE" --stop-at-rule) || {
+        rm -f "$REPL_FILE" "$BACKUP_FILE"
+        REFUSED_TARGETS+=("$TARGET replace")   # archived already; target untouched
+        continue
+    }
 else
     NEW_BODY=$(cat "$REPL_FILE")
 fi
@@ -443,14 +465,14 @@ rm -f "$REPL_FILE"
 # same comment, and the loser's text is what gets published.
 TMP_BODY_FILE=$(mktemp "${TMPDIR:-/tmp}/idd-edit-new-XXXXXX") || {
   echo "✗ cannot stage the new body — refusing" >&2; exit 1; }
-echo "$NEW_BODY" > "$TMP_BODY_FILE"
+printf '%s\n' "$NEW_BODY" > "$TMP_BODY_FILE"   # printf, not echo: zsh echo rewrites backslashes (#330)
 
 # #273：comment surgery 進 egress 網 — 原 raw `gh api` PATCH 完全繞過所有網
 # （#226 rollout 的 tracked-separately 欠帳，於此結清）。
 SCRUB_LEVEL="${SCRUB_LEVEL:-warn}"   # 依 rules/privacy-scrubbing.md 解析（repo tier；互動預設 warn，#226 慣例）
-if [ -n "$ISSUE_BODY_TARGET" ]; then
+if [ "$TARGET_KIND" = "issue" ]; then
     # issue 正文（--correct only）走 gh issue edit
-    bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit "$ISSUE_BODY_TARGET" \
+    bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit "$TARGET_NUM" \
         --repo "$REPO" --body-file "$TMP_BODY_FILE" --scrub-attested "$SCRUB_LEVEL"
 else
     bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit-comment "$COMMENT_ID" \
@@ -461,14 +483,16 @@ rm "$TMP_BODY_FILE"
 if [ "$EGRESS_RC" -ge 10 ]; then
     # wrapper refusal band（#227）— per-comment 分類消費 band（10–15）：
     # 記錄 + warn-continue（#158 語意 (i) 同款）。wrapper 已對本 target 印明確 stderr。
-    EGRESS_REFUSED_TARGETS+=("comment:$COMMENT_ID rc=$EGRESS_RC")
+    EGRESS_REFUSED_TARGETS+=("$TARGET rc=$EGRESS_RC")
+    [ "$MODE" = "--correct" ] && rm -f "$BACKUP_FILE"
     continue
 elif [ "$EGRESS_RC" -ne 0 ]; then
     # 0 < rc < 10 = gh 自身錯誤（auth / network），非 refusal — 誠實分流，不進 refused 桶
-    echo "✗ gh api PATCH failed for comment:$COMMENT_ID (rc=$EGRESS_RC, gh 自身碼) — skip this target" >&2
+    echo "✗ gh api PATCH failed for $TARGET (rc=$EGRESS_RC, gh 自身碼) — skip this target" >&2
+    [ "$MODE" = "--correct" ] && rm -f "$BACKUP_FILE"
     continue
 fi
-# --correct：歸檔已是唯一保留的舊版，刪掉 /tmp 工作副本（它含錯誤內容）
+# --correct：舊版已在歸檔，刪掉 /tmp 工作副本（它含錯誤內容，且 hook 不擋 /tmp）
 [ "$MODE" = "--correct" ] && rm -f "$BACKUP_FILE"
 ```
 
@@ -478,11 +502,12 @@ fi
 
 ```bash
 # Re-fetch 確認
-UPDATED=$(gh api repos/$REPO/issues/comments/$COMMENT_ID --jq '.body' | head -5)
-echo "✓ Comment updated"
-echo "  URL: $(gh api repos/$REPO/issues/comments/$COMMENT_ID --jq '.html_url')"
-echo "  Backup: $BACKUP_FILE"
+UPDATED=$(gh api "$TARGET_ENDPOINT" --jq '.body' | head -5)
+echo "✓ $TARGET updated"
+echo "  URL: $(gh api "$TARGET_ENDPOINT" --jq '.html_url')"
+[ "$MODE" = "--correct" ] && echo "  Backup id: $BACKUP_ID" || echo "  Backup: $BACKUP_FILE"
 echo "  First 5 lines of new body: $UPDATED"
+EDITED_COUNT=$((EDITED_COUNT + 1))
 ```
 
 ## Metadata Marker
@@ -512,12 +537,14 @@ echo "  First 5 lines of new body: $UPDATED"
   --reason="依新 skill 規則補圖下方資料/統計/結論說明"
 ```
 
-### 修 typo（單 section replace）
+### 修錯的數字或錯字（`--correct`，單 section）
+
+錯的值直接換掉，不在後面追加「修正：…」（#351：追加的更正會讓錯的原文繼續被讀到）。
 
 ```
-/idd-edit #18 --last --append \
-  --body="修正：上一段 frac_p<.05=57.5% 應為 56.3%（重跑後更新）" \
-  --reason="p-value 計算誤差"
+/idd-edit #18 --last --correct --section "### Results" \
+  --body-file=~/notes/fixed-results.md \
+  --reason="p-value 計算誤差，重跑後為 56.3%"
 ```
 
 ### 修 Diagnosis comment 內某 ### 區段（自己發的 comment）

@@ -44,11 +44,13 @@
 
 ### 確認後才歸檔，歸檔成功才 PATCH
 
-順序是預覽 → 確認 → `archive` → PATCH。`archive` 以 `--from-file` 讀入預覽時給使用者看的那份原文，不自己向 GitHub 重抓：重抓可能拿到中間被改過的版本，歸檔就不再等於實際被取代的內容。PATCH 成功後刪掉 `/tmp` 裡的工作副本，歸檔是唯一保留的舊版。使用者拒絕時不留任何檔案；歸檔失敗（不在 git work tree、路徑沒被 ignore、寫入失敗）一律 exit 7，skill 不 PATCH。替代方案「先歸檔再確認」會在拒絕時留下沒有對應更正的歸檔檔。
+順序是預覽 → 確認 → 重抓目標比對 → `archive` → PATCH。確認之後重新抓一次目標，與預覽時的原文比對；不一致就拒絕、不歸檔也不 PATCH，避免使用者確認的版本與實際被取代的內容不同。`archive` 以 `--from-file` 讀入預覽時給使用者看的那份原文，不自己向 GitHub 重抓：重抓可能拿到中間被改過的版本，歸檔就不再等於實際被取代的內容。PATCH 成功後刪掉 `/tmp` 裡的工作副本。歸檔是受保護、Claude 的工具讀不到的那一份，不是唯一的一份：GitHub 的編輯紀錄保有舊版，暫存與 scratch 副本也可能留下舊版，後者在 #378 追蹤。使用者拒絕時不留任何檔案；歸檔失敗（不在 git work tree、路徑沒被 ignore、寫入失敗）一律 exit 7，skill 不 PATCH。替代方案「先歸檔再確認」會在拒絕時留下沒有對應更正的歸檔檔。
 
 ### 歸檔寫進 .git/info/exclude，不改 tracked 的 .gitignore
 
-helper 用既有的 `scripts/git-ignore-block.sh --direction exclude` 把 `.claude/.idd/archive/` 寫進 `.git/info/exclude`，再用 `git check-ignore` 驗證。`.git/info/exclude` 是每個 clone 自己的設定、不會被 commit，不會在其他使用者的 repo 裡改動 tracked 檔（與 #192 third-party clone 的做法一致）。本 repo 另在 `.gitignore` 加一行，讓維護者在任何 clone 都一致。使用者決定的本意是「不進 git」，這個做法達成同一件事；若使用者要求一律改 `.gitignore`，只需換掉 helper 的寫入目標。
+helper 用既有的 `scripts/git-ignore-block.sh --direction exclude` 把 `.claude/.idd/archive/` 寫進 `.git/info/exclude`，再用 `git check-ignore` 驗證。`.git/info/exclude` 是每個 clone 自己的設定、不會被 commit，不會在其他使用者的 repo 裡改動 tracked 檔（與 #192 third-party clone 的做法一致）。本 repo 另在 `.gitignore` 加一行，讓維護者在任何 clone 都一致。使用者決定的本意是「不進 git」，這個做法達成同一件事；若使用者要求一律改 `.gitignore`，只需換掉 helper 的寫入目標。使用者已於 2026-10-10 確認採用 `.git/info/exclude`。
+
+歸檔根目錄是 main worktree（由 `git rev-parse --git-common-dir` 推出），不是當下的 linked worktree：從 linked worktree 寫入的歸檔才不會隨 `git worktree remove` 消失。
 
 ### 雙層擋讀：hook 加上檔案權限 0000
 
@@ -66,6 +68,10 @@ hook 腳本 `hooks/archive-read-guard.py` 用 stdlib `json` 解析 stdin，與 h
 
 `restore <backup-id> --repo R` 驗證 id 格式（擋路徑穿越），從 id 推出目標，把歸檔內容經 stdin 交給 `gh api -X PATCH ... -F body=@-`，只印目標 URL 與 byte 數。還原的是整個目標，更正之後的修改（例如 `idd-update` 重建的 Current Status）會一起還原；skill 在確認提示中明說這點。沿用既有「災難復原不經 egress 網」的理由：還原的是先前已公開的內容。
 
+### Key Decisions 改為每次重建
+
+`idd-update` 的 Key Decisions 原本只追加、沿用上一版；被 `--correct` 就地更正的決定會一直留在摘要裡，正好重演 #351 要解決的問題。改為每次執行都從 comments 當下的內容重建。使用者於 2026-10-10 決定。
+
 ### 偵測錯誤的 skill 只提議
 
 `idd-verify`、`idd-diagnose`、`idd-reorganize` 在自己的報告加 `### Proposed Corrections`，每項含目標、段落、一句話說明錯在哪、可直接執行的指令。attended 逐項問是否現在執行；unattended 只列不做。這三個 skill 不碰歸檔、不 PATCH，所以 hook 只需放行 helper 一個寫入者。
@@ -80,12 +86,14 @@ OWNER 或 bot 的 comment → 轉給 `idd-edit --correct`，不另貼 errata com
 
 | 子命令 | 輸入 | 成功輸出 | 失敗 |
 | --- | --- | --- | --- |
-| `parse-args` | 新增 `--correct` 與 `issue:<N>` target | eval 用的 assignments，`MODE=--correct`（沿用既有以旗標為值的慣例），`TARGETS` 保留 `issue:<N>` 原樣、由 SKILL 依前綴分辨目標類型 | `--correct` 缺 scope/section 或正文用 whole → exit 3；`--correct` 併用 `--override-user-content` → exit 2；`issue:<N>` 配 `--correct` 以外的模式 → exit 2 並指向 #347；id 非數字 → exit 2 |
+| `parse-args` | 新增 `--correct` 與 `issue:<N>` target | eval 用的 assignments，`MODE=--correct`（沿用既有以旗標為值的慣例），`TARGETS` 保留 `issue:<N>` 原樣、由 SKILL 依前綴分辨目標類型；多行 `--body-file` 內容以 ANSI-C quoting（`$'...'`）輸出 | `--correct` 缺 scope/section 或正文用 whole → exit 3；`--correct` 併用 `--override-user-content` → exit 2；`issue:<N>` 配 `--correct` 以外的模式 → exit 2 並指向 #347；id 非數字 → exit 2 |
 | `check-correction <old-file> <section|-> <new-file>` 的段落不存在 | — | — | exit 1（與 `section-replace` 一致） |
 | `check-correction <old-file> <section-heading|-> <new-file>` | 原文、目標段落（`-` 表示整則 comment）、新段落 | 無輸出，exit 0 | 受管區或 verbatim 區塊被改 → exit 6，stderr 指名區域與負責 skill |
-| `archive <comment|issue> <id> --from-file <path>` | 目標類型、id、預覽用的原文檔 | stdout 只有 backup-id | 原文檔不可讀 → exit 5；不在 git work tree／未被 ignore／寫入失敗 → exit 7，不留檔 |
+| `validate-target <comment-id|issue:<N>> <repo> <override>` | 新增 `issue:<N>`（檢查 issue 作者）與「目前登入的 gh 使用者本人」放行 | exit 0 | 作者不是 OWNER、bot 或目前登入的 gh 使用者（且未 override）→ exit 4 |
+| `section-replace ... [--stop-at-rule]` | 既有子命令，新增 `--stop-at-rule` | 取代後全文 | `--stop-at-rule` 時段落在 `---` 行結束，不吞掉其後的 `## Current Status` |
+| `archive <comment|issue> <id> --from-file <path> --repo R` | 目標類型、id、預覽用的原文檔（經 #155 路徑閘門）、repo | stdout 只有 backup-id；另寫 `<backup-id>.repo` sidecar 記錄 repo | 原文檔不可讀 → exit 5；不在 git work tree／未被 ignore／寫入失敗 → exit 7，不留檔 |
 | `emit-audit-marker edit mode=correct backup-id=<id>` | 既有子命令 | 標記一行 | `backup-id` 不符格式 → exit 2 |
-| `restore <backup-id> --repo R` | backup-id | stdout：目標 URL 與 byte 數 | id 格式不符 → exit 2；檔案不存在 → exit 5；PATCH 失敗 → 透傳 gh 非零碼 |
+| `restore <backup-id> --repo R` | backup-id | stdout：目標 URL 與 byte 數 | id 格式不符、歸檔或 sidecar 是 symlink、歸檔被 git 追蹤、sidecar 缺少或其 repo 與 `--repo` 不符 → exit 2；檔案不存在 → exit 5；PATCH 失敗 → 透傳 gh 非零碼 |
 
 既有 exit code（0／1／2／3／4／5）語意不變。所有子命令都不得把歸檔內容寫到 stdout 或 stderr。
 

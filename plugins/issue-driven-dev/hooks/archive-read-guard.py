@@ -16,15 +16,22 @@ second layer — archive files are mode 0000 — covers that case.
 Threat model: accidental reads, not an agent deliberately working around the
 guard.
 
+Shell commands are checked word by word: a quoted string with spaces in it
+(a commit message, an inline issue body) mentions the path without opening it
+and is not blocked. The file ~/.cache/idd/archive-read-guard.disabled, created
+by a human, turns the guard off.
+
 Input that cannot be parsed is allowed (a note goes to stderr): a bug in this
 hook must not block every tool call in the session, and the file mode still
 protects the archive.
 """
 import json
 import os
+import shlex
 import sys
 
 NEEDLE = ".claude/.idd/archive"
+UNLOCK_FLAG = os.path.join("~", ".cache", "idd", "archive-read-guard.disabled")
 
 REASON = (
     "Blocked: .claude/.idd/archive/ holds the prior versions of issue content "
@@ -56,16 +63,39 @@ def _norm_path(value):
     return os.path.normpath(value.replace("\\", "/")).lower()
 
 
-def _norm_command(value):
-    text = value.replace("\\", "/").lower()
-    while "/./" in text:
-        text = text.replace("/./", "/")
-    return text
+def _hits(candidate):
+    """NEEDLE as a path segment: followed by '/' or the end, so that
+    `archive-notes.md` or `archived/` next to it is not mistaken for it."""
+    start = candidate.find(NEEDLE)
+    while start != -1:
+        end = start + len(NEEDLE)
+        if end == len(candidate) or candidate[end] == "/":
+            return True
+        start = candidate.find(NEEDLE, start + 1)
+    return False
+
+
+def _command_words(command):
+    """Shell words of a command. A word that contains whitespace came from a
+    quoted string — a commit message, an inline --body — and names nothing on
+    disk, so it is skipped; everything else is normalised as a path."""
+    # Backslashes become '/' before splitting: PowerShell paths use them as
+    # separators, and POSIX shlex would otherwise eat them as escapes.
+    command = command.replace("\\", "/")
+    try:
+        words = shlex.split(command, posix=True)
+    except ValueError:
+        words = command.split()
+    for word in words:
+        if any(ch.isspace() for ch in word):
+            continue
+        for piece in word.split("="):
+            yield _norm_path(piece)
 
 
 def _candidates(tool, tool_input):
     if tool in COMMAND_TOOLS:
-        yield _norm_command(_as_text(tool_input.get("command")))
+        yield from _command_words(_as_text(tool_input.get("command")))
         return
     for field in PATH_FIELDS.get(tool, ()):
         yield _norm_path(_as_text(tool_input.get(field)))
@@ -92,7 +122,10 @@ def main():
         print(f"archive-read-guard: input not understood ({exc}); allowing", file=sys.stderr)
         return 0
 
-    if any(NEEDLE in c for c in _candidates(tool, tool_input)):
+    if os.path.exists(os.path.expanduser(UNLOCK_FLAG)):
+        return 0  # a human created the unlock flag (archive-first style switch)
+
+    if any(_hits(c) for c in _candidates(tool, tool_input)):
         print(json.dumps({
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",

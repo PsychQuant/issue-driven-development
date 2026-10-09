@@ -13,7 +13,7 @@ HELPER="$PLUGIN/scripts/idd-edit-helper.py"
 RULE="$PLUGIN/rules/append-vs-modify.md"
 SKILLS="$PLUGIN/skills"
 
-WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
+WORK="$(mktemp -d /tmp/idd-ipc-XXXXXX)"; trap 'rm -rf "$WORK"' EXIT
 
 # run_helper <label> <args...> — stdout/stderr land in $WORK/<label>.{out,err},
 # exit code in RC. Output is asserted from files, never re-expanded (#188).
@@ -206,5 +206,101 @@ for s in idd-verify idd-diagnose idd-reorganize; do
   assert_output_grep "$s lists only, under unattended (只列不做)" "只列不做" "$F"
   refute_output_grep "$s never calls the archive subcommand" "idd-edit-helper.py\" archive" "$F"
 done
+
+# ── E. round 2 (verify #351 round 1) ──────────────────────────────────────
+echo "E. round 2"
+
+# E1. multi-line --body-file survives eval and executes nothing
+cat >"$WORK/ml.md" <<'EOF'
+## Strategy
+- uses `.claude` dir and $(touch PWNED_MARKER)
+second line with 'quotes' and "double"
+EOF
+run_helper e1 parse-args comment:1 --correct --scope whole-comment --body-file "$WORK/ml.md" --reason r
+assert_exit "multi-line body-file parses" 0 "$RC"
+( cd "$WORK" && eval "$(cat "$WORK/e1.out")" 2>/dev/null; printf '%s' "$BODY_INPUT" >"$WORK/e1.body" )
+require "BODY_INPUT after eval equals the file byte for byte" cmp -s "$WORK/ml.md" "$WORK/e1.body"
+refute "eval executed nothing from the body" test -e "$WORK/PWNED_MARKER"
+
+# E2. target and flag combinations
+run_helper e2a parse-args issue:351 comment:5 --correct --section "## X" --body x --reason r
+assert_exit "issue + comment targets → exit 2" 2 "$RC"
+run_helper e2b parse-args issue:351 issue:352 --correct --section "## X" --body x --reason r
+assert_exit "two issue targets → exit 2" 2 "$RC"
+run_helper e2c parse-args comment:1 --correct --scope whole-comment --section "## X" --body x --reason r
+assert_exit "--scope and --section together → exit 3" 3 "$RC"
+
+# E3. author gate: own login passes regardless of association; outside issue author refused
+export IDD_EDIT_HELPER_TEST_MODE=1 IDD_EDIT_HELPER_GH_USER=kiki830621
+printf '{"login":"kiki830621","assoc":"MEMBER"}' >"$WORK/m-member.json"
+printf '{"login":"outsider","assoc":"NONE"}' >"$WORK/m-out.json"
+IDD_EDIT_HELPER_GH_MOCK="$WORK/m-member.json" run_helper e3a validate-target 5805214375 o/r false
+assert_exit "MEMBER comment by the authenticated user passes" 0 "$RC"
+export IDD_EDIT_HELPER_GH_MOCK="$WORK/m-out.json"
+run_helper e3b validate-target issue:42 o/r false
+assert_exit "issue opened by an outside reporter → exit 4" 4 "$RC"
+export IDD_EDIT_HELPER_GH_MOCK="$WORK/m-member.json"
+run_helper e3c validate-target issue:42 o/r false
+assert_exit "issue opened by the authenticated user passes" 0 "$RC"
+unset IDD_EDIT_HELPER_GH_MOCK IDD_EDIT_HELPER_GH_USER
+
+# E4. `---` ends a corrected section; replacement may not introduce managed headings
+cat >"$WORK/sep.md" <<'EOF'
+## Related
+- #347
+
+---
+
+### Linked-Context Siblings Filed
+- none
+
+---
+
+## Current Status
+
+**Phase**: x
+EOF
+printf -- '- #348\n' >"$WORK/r-rel.md"
+run_helper e4a check-correction "$WORK/sep.md" "## Related" "$WORK/r-rel.md"
+assert_exit "## Related with a separator below is accepted" 0 "$RC"
+run_helper e4b section-replace "$WORK/sep.md" "## Related" "$WORK/r-rel.md" --stop-at-rule
+assert_exit "section-replace --stop-at-rule succeeds" 0 "$RC"
+assert_output_grep "audit block below the separator survives" "### Linked-Context Siblings Filed" "$WORK/e4b.out"
+assert_eq "both separators survive" "2" "$(grep -c '^---$' "$WORK/e4b.out")"
+printf -- '- x\n\n## Current Status\n' >"$WORK/r-mg.md"
+run_helper e4c check-correction "$WORK/body.md" "## Expected" "$WORK/r-mg.md"
+assert_exit "replacement that introduces ## Current Status → exit 6" 6 "$RC"
+
+# E5. verbatim blocks compared as multisets; **Original** label also protected
+printf '\n%s (paraphrased)\n\nInterpretation A.\n' "$QUOTE" >"$WORK/v1.md"
+run_helper e5a check-correction "$WORK/body.md" "## Problem" "$WORK/v1.md"
+assert_exit "text appended to the quote's last line → exit 6" 6 "$RC"
+printf '\n%s\n> 「並且要求自動改」\n\nInterpretation A.\n' "$QUOTE" >"$WORK/v2.md"
+run_helper e5b check-correction "$WORK/body.md" "## Problem" "$WORK/v2.md"
+assert_exit "quote line appended to the block → exit 6" 6 "$RC"
+printf '\nsee: %s\n\nInterpretation A.\n' "$QUOTE" >"$WORK/v3.md"
+run_helper e5c check-correction "$WORK/body.md" "## Problem" "$WORK/v3.md"
+assert_exit "quote turned into a non-blockquote → exit 6" 6 "$RC"
+printf '> **Original** (2026-09-24)：\n> 「先不要做 X」\n\nnote\n' >"$WORK/dec.md"
+printf '> **Original** (2026-09-24)：\n> 「直接做 X」\n\nnote\n' >"$WORK/dec-new.md"
+run_helper e5d check-correction "$WORK/dec.md" - "$WORK/dec-new.md"
+assert_exit "decision-template **Original** quote is protected → exit 6" 6 "$RC"
+
+# E6. marker: date comes from the backup id (UTC day)
+run_helper e6 emit-audit-marker edit mode=correct backup-id=comment-1-20261009T230000Z
+assert_output_grep "marker date is the backup id's UTC day" 'date="2026-10-09"' "$WORK/e6.out"
+
+# E7. doc contracts for round 2
+UPD="$SKILLS/idd-update/SKILL.md"
+refute_output_grep "idd-update no longer says Key Decisions are append-only" "Key Decisions 只加不刪" "$UPD"
+assert_output_grep "idd-update rebuilds Key Decisions from current comments" "每次重建" "$UPD"
+for s in idd-verify idd-diagnose idd-reorganize; do
+  assert_output_grep "$s stores replacement files under ~/.cache/idd/corrections" ".cache/idd/corrections" "$SKILLS/$s/SKILL.md"
+done
+assert_output_grep "idd-edit re-reads the target after confirmation" "changed since preview" "$SKILLS/idd-edit/SKILL.md"
+refute_output_grep "idd-edit has no global ISSUE_BODY_TARGET routing" "ISSUE_BODY_TARGET" "$SKILLS/idd-edit/SKILL.md"
+assert_output_grep "idd-comment errata self path takes --correction-file" "--correction-file" "$SKILLS/idd-comment/SKILL.md"
+refute_output_grep "idd-comment does not declare the in-place-correction category" "(category: in-place-correction)" "$SKILLS/idd-comment/SKILL.md"
+assert_output_grep "MANIFESTO lists the 8th category" "in-place-correction" "$PLUGIN/MANIFESTO.md"
 
 print_summary "in-place-correction"

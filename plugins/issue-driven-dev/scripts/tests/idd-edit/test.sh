@@ -162,10 +162,10 @@ f14() { # name mode(assert|refute) needle
         FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name"); echo "FAIL: $name (needle: $needle)"
     fi
 }
-f14 "f14a: R5 refuse records + continues (no batch kill)"      assert 'REFUSED_TARGETS+=("$COMMENT_ID")'
+f14 "f14a: R5 refuse records + continues (no batch kill)"      assert 'REFUSED_TARGETS+=("$TARGET R5")'
 f14 "f14a2: refuse branch continues the loop"                  assert '不中斷 batch（#158 語意 (i)）'
 f14 "f14b: batch outcome report sums both refusal buckets"     assert 'edited: $EDITED_COUNT / refused: $REFUSED_TOTAL'
-f14 "f14b2: R5 refused rows highlighted with source tag"       assert '✗ REFUSED(R5) comment:'
+f14 "f14b2: refused rows carry their reason tag (#351)"         assert '✗ REFUSED(${entry##* })'
 f14 "f14c: override semantics = all-targets + shared reason"   assert 'all-targets + reason 共用'
 f14 "f14d: deferred-to-158 note removed (decision landed)"     refute '設計 deferred to **[#158]'
 f14 "f14e: single-target degenerate equivalence documented"    assert '單 target 退化等價'

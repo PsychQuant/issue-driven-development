@@ -6,7 +6,7 @@ Defines where the prior version of a corrected comment or issue body is kept, ho
 
 ### Requirement: Archive entries SHALL be written once under a fixed local path
 
-The `idd-edit-helper.py archive <comment|issue> <id> --from-file <path>` subcommand SHALL write the full prior text of the target (the whole comment, or the whole issue body for a section correction), read from the file that was shown to the user in the preview, byte-for-byte to `<git-toplevel>/.claude/.idd/archive/edits/<backup-id>.md`. The backup id SHALL be `comment-<comment-id>-<UTC timestamp>` or `issue-<N>-body-<UTC timestamp>`, with the timestamp in `YYYYMMDDTHHMMSSZ` form. The file SHALL be created exclusively; when the name already exists the helper SHALL append `-2`, `-3`, and so on, and SHALL NOT overwrite or modify any existing archive file. The subcommand SHALL print only the backup id on stdout and SHALL NOT print archived content on stdout or stderr.
+The `idd-edit-helper.py archive <comment|issue> <id> --from-file <path>` subcommand SHALL write the full prior text of the target (the whole comment, or the whole issue body for a section correction), read from the file that was shown to the user in the preview, byte-for-byte to `<main-worktree>/.claude/.idd/archive/edits/<backup-id>.md`, where the main worktree is the parent of `git rev-parse --git-common-dir` (so an archive written from a linked worktree survives `git worktree remove`), together with a sidecar `<backup-id>.repo` holding the `owner/repo` the target belongs to. `--from-file` SHALL pass the same sensitive-path gate as `--body-file`. The backup id SHALL be `comment-<comment-id>-<UTC timestamp>` or `issue-<N>-body-<UTC timestamp>`, with the timestamp in `YYYYMMDDTHHMMSSZ` form. The file SHALL be created exclusively; when the name already exists the helper SHALL append `-2`, `-3`, and so on, and SHALL NOT overwrite or modify any existing archive file. The subcommand SHALL print only the backup id on stdout and SHALL NOT print archived content on stdout or stderr.
 
 #### Scenario: Comment archived with a unique id
 
@@ -20,7 +20,7 @@ The `idd-edit-helper.py archive <comment|issue> <id> --from-file <path>` subcomm
 
 ### Requirement: Archive entries SHALL never be tracked by git
 
-Before writing, the helper SHALL ensure `.claude/.idd/archive/` is listed in the repository's `.git/info/exclude` by calling `scripts/git-ignore-block.sh` (idempotent), and SHALL then verify with `git check-ignore` that the target archive path is ignored. When the current directory is not inside a git work tree, or the path is not ignored after this step, the helper SHALL exit 7, SHALL NOT write the archive, and the calling skill SHALL NOT PATCH the target.
+Before writing, the helper SHALL ensure `.claude/.idd/archive/` is listed in the repository's `.git/info/exclude` by calling `scripts/git-ignore-block.sh` (idempotent), and SHALL then verify with `git check-ignore` that the exact archive path to be written — including any collision suffix — is ignored. When the current directory is not inside a git work tree, or the path is not ignored after this step, the helper SHALL exit 7, SHALL NOT write the archive, and the calling skill SHALL NOT PATCH the target.
 
 #### Scenario: Re-include rule detected
 
@@ -83,3 +83,31 @@ The issue-driven-dev plugin SHALL register a PreToolUse hook for the tools `Read
 
 - **WHEN** Claude calls `Read` on `plugins/issue-driven-dev/skills/idd-edit/SKILL.md`
 - **THEN** the hook SHALL allow the call
+
+### Requirement: Restore SHALL refuse entries it did not write
+
+`restore` SHALL refuse with exit 2 when the archive entry is a symbolic link or not a regular file, when it is tracked by git, or when its sidecar `owner/repo` differs from `--repo`.
+
+#### Scenario: Tracked symlink in a cloned repository
+
+- **WHEN** a repository tracks `.claude/.idd/archive/edits/comment-1-20261009T100000Z.md` as a symlink and the user runs `restore comment-1-20261009T100000Z --repo o/r`
+- **THEN** the helper SHALL exit 2, read nothing, and change no file mode
+
+#### Scenario: Wrong repository
+
+- **WHEN** the sidecar records `a/b` and the user runs `restore <id> --repo c/d`
+- **THEN** the helper SHALL exit 2 without calling `gh`
+
+### Requirement: The read guard SHALL match path tokens and honour an unlock flag
+
+For Bash and PowerShell the hook SHALL split the command into shell words and deny only when a word without whitespace, after `os.path.normpath`, contains `.claude/.idd/archive` as a path segment (followed by `/` or the end of the word). The hook SHALL allow every call while the file `~/.cache/idd/archive-read-guard.disabled` exists.
+
+#### Scenario: Commit message that mentions the path
+
+- **WHEN** Claude runs `git commit -m "keep .claude/.idd/archive/ out of git"`
+- **THEN** the hook SHALL allow the call
+
+#### Scenario: Dot-dot variant
+
+- **WHEN** Claude runs `cat .claude/x/../.idd/archive/edits/a.md`
+- **THEN** the hook SHALL deny the call
