@@ -101,7 +101,10 @@ def _command_words(command):
             word.startswith(flag + "=") for flag in MESSAGE_FLAGS if flag.startswith("--")
         )
         previous = word
-        if is_message:
+        # A message value is prose only if the shell will not execute part of
+        # it: `--body "$(cat <archive>)"` posts the archive (parser differential
+        # between shlex and the real shell).
+        if is_message and not any(t in word for t in ("$(", "`", "<(", ">(")):
             continue
         for piece in re.split(r"[\s'\"`()=;|&<>]+", word):
             if piece:

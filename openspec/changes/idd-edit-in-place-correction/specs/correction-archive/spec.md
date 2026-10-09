@@ -100,7 +100,7 @@ The issue-driven-dev plugin SHALL register a PreToolUse hook for the tools `Read
 
 ### Requirement: The read guard SHALL match path tokens and honour an unlock flag
 
-For Bash and PowerShell the hook SHALL split the command into shell words, split each word further on whitespace and quoting or grouping characters, and deny when any piece, after `os.path.normpath`, contains `.claude/.idd/archive` as a path segment (followed by `/` or the end of the piece). The only words skipped are values of the message options `-m`, `--message`, `--body`, `--title`, `--notes` and `--subject` (closed list), so `sh -c "cat <archive path>"` is denied while a commit message that mentions the path is allowed. The hook SHALL allow every call while the file `~/.cache/idd/archive-read-guard.disabled` exists.
+For Bash and PowerShell the hook SHALL split the command into shell words, split each word further on whitespace and quoting or grouping characters, and deny when any piece, after `os.path.normpath`, contains `.claude/.idd/archive` as a path segment (followed by `/` or the end of the piece). The only words skipped are values of the message options `-m`, `--message`, `--body`, `--title`, `--notes` and `--subject` (closed list), and only when the value contains no command or process substitution (`$(`, a backtick, `<(`, `>(`), so `sh -c "cat <archive path>"` is denied while a commit message that mentions the path is allowed. The hook SHALL allow every call while the file `~/.cache/idd/archive-read-guard.disabled` exists.
 
 #### Scenario: Commit message that mentions the path
 
