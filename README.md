@@ -8,7 +8,7 @@ A Claude Code plugin marketplace for the [Issue-Driven Development (IDD)](https:
 
 | Plugin | Version | Purpose |
 |--------|---------|---------|
-| [`issue-driven-dev`](./plugins/issue-driven-dev) | 2.56.0 | Core IDD workflow — issue → diagnose → implement → verify → close. 14 skills(含 `/idd-all-chain` chain-solve 與 `idd-issue` multi-finding source mode for batch routing across new + existing issues from a single source document) + 5 rules + 5 references. |
+| [`issue-driven-dev`](./plugins/issue-driven-dev) | 3.3.0 | Core IDD workflow — issue → diagnose → implement → verify → close. 19 skills(含 `/idd-all-chain` chain-solve 與 `idd-issue` multi-finding source mode for batch routing across new + existing issues from a single source document) + 8 rules + 28 references. |
 | `idd-route` (coming) | 0.1.0 | Data-driven agent routing: recommends Codex / Claude Opus / Sonnet / Haiku per IDD issue based on observed track record. Wraps the [PsychQuant/idd-route-swift](https://github.com/PsychQuant/idd-route-swift) binary. |
 
 ## Installation
@@ -63,7 +63,7 @@ Each step is one skill. See [the plugin README](./plugins/issue-driven-dev/READM
 
 MIT
 
-## 可追溯的 AI 討論（3.1.0）
+## 可追溯的 AI 討論（3.2.0）
 
 `idd-discuss` 將明確指定的人與 AI 對話整理為本地草稿，取得本次發布授權後建立或追加
 GitHub Discussion。它保留來源與更正歷史，使用穩定ID避免正常重試重複發布；不確定結果
