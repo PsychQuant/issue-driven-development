@@ -26,7 +26,7 @@
 ## 6. 收尾與驗收
 
 - [x] 6.1 本 repo 的 `.gitignore` 加入 `.claude/.idd/archive/`，執行 `plugins/issue-driven-dev/scripts/run-all-tests.sh` 全部 suite 通過，並以 `git status` 確認沒有歸檔檔被追蹤。驗證：run-all-tests 輸出全綠的 suite 數與 0 失敗。
-- [ ] 6.2 手動驗收一次：在本 repo 建一則測試 comment，跑完整 `/idd-edit comment:<id> --correct --scope whole-comment` 流程，確認 GitHub 上只剩更正版與標記、標記不含路徑、`git status` 乾淨、Claude 以 `Read` 與 `Grep` 讀歸檔都被 hook 拒絕、`restore` 能還原且輸出不含內容；把結果記在 #351。驗證：#351 上的驗收紀錄 comment。
+- [x] 6.2 手動驗收一次：在本 repo 建一則測試 comment，跑完整 `/idd-edit comment:<id> --correct --scope whole-comment` 流程，確認 GitHub 上只剩更正版與標記、標記不含路徑、`git status` 乾淨、Claude 以 `Read` 與 `Grep` 讀歸檔都被 hook 拒絕、`restore` 能還原且輸出不含內容；把結果記在 #351。驗證：#351 上的驗收紀錄 comment。
 - [x] 6.3 bump plugin 版本、更新 `plugins/issue-driven-dev/CHANGELOG.md`（標明 errata 行為面 BREAKING）與 `plugins/issue-driven-dev/.claude-plugin/plugin.json` 描述，並記下封存後要把 `append-vs-modify-discipline` spec 的 Purpose 由 7 類改為 8 類。驗證：`scripts/tests/model-generation-sync` 與 `docs-catalog-sync` 等版本相關 suite 通過；CHANGELOG 有對應版本段落。
 
 ## 7. Verify 第 1 輪修正
