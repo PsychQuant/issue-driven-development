@@ -37,4 +37,4 @@
 ## 實作備註
 
 - NOTE（1.3）：任務寫「現在就通過」，實際上帶 `--issue-type bug|unknown` 的回歸 assertion 在 2.2 之前是 RED——當時 verdict 不認得這個參數（exit 2）。2.2 之後全綠，行為正確；只是任務描述的預期與當時實況不同。
-- NOTE（5.3）：在作者的 clone 上 `plan-routing-consistency` 失敗 1 項，命中的是 gitignore 的本機 `.spectra/snapshots/2026-05-10-add-idd-all-chain-skill/…/spec.md`（2026-05-04 的本機檔）。乾淨的 `origin/main` worktree 放進同一份 `.spectra/` 也失敗，所以這是既有問題：該測試以 `grep -r` 掃整棵樹，連 ignored 檔也掃到。本分支在不含本機 `.spectra/` 的 worktree 跑：22 passed／0 failed。不在本 change 範圍內修。
+- NOTE（5.3）：在作者的 clone 上 `plan-routing-consistency` 失敗 1 項，命中的是 gitignore 的本機 `.spectra/snapshots/2026-05-10-add-idd-all-chain-skill/…/spec.md`（2026-05-04 的本機檔）。乾淨的 `origin/main` worktree 放進同一份 `.spectra/` 也失敗，所以這是既有問題，已有 #335 追蹤：該測試以 `grep -r` 掃整棵樹，連 ignored 檔也掃到。本分支在不含本機 `.spectra/` 的 worktree 跑：22 passed／0 failed。不在本 change 範圍內修。
