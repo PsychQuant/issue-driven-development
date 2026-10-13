@@ -314,6 +314,9 @@ HAS_PARKING=$(jq -r 'if any(.labels[]?; .name == "parking-lot") then "yes" else 
 BODY=$(jq -r '.body // ""' <<<"$ISSUE_JSON") || { echo "⚠ #$n: body read failed — gate not evaluated" >&2; GROUP=error; continue; }   # 守衛掛在會失敗的那一步（jq），不掛在恆 exit 0 的 helper 上
 BLOCK_LINE=$(idd_blocking_section "$BODY")
 if [ -n "$BLOCK_LINE" ]; then BLOCKING=yes; else BLOCKING=no; fi
+# 2.5 issue type（#383）—— 同一支 helper 解析；meeting 不評 Complexity 訊號，parking-lot 與 Blocking 照評
+LABELS=$(jq -r '[.labels[]?.name] | join("\n")' <<<"$ISSUE_JSON") || { echo "⚠ #$n: label list read failed — gate not evaluated" >&2; GROUP=error; continue; }
+ISSUE_TYPE=$(idd_issue_type --labels "$LABELS" --body "$BODY") || { echo "⚠ #$n: idd_issue_type misuse — gate not evaluated" >&2; GROUP=error; continue; }
 
 # 3. 條件式捕捉 —— `set -euo pipefail` 下唯一不會被 exit 3/4/5 終止的寫法（verify #318 HIGH）
 if TIER=$(idd_parse_complexity "$LATEST_DIAGNOSIS" 2>/dev/null); then CEXIT=0; else CEXIT=$?; fi
@@ -321,7 +324,7 @@ COMPLEXITY_ERR=$(idd_parse_complexity "$LATEST_DIAGNOSIS" 2>&1 >/dev/null) || tr
 
 # 4. 真的呼叫 gate。exit 2 是 API 誤用（本 skill 的 bug），不得與 not-actionable 混同；
 #    listing 語境下不 exit，改印 FATAL 行並把該 issue 標為 `(gate error)` 繼續
-if VERDICT=$(idd_actionability_verdict --complexity-exit "$CEXIT" --parking-label "$HAS_PARKING" --blocking-section "$BLOCKING" 2>&1); then VEXIT=0; else VEXIT=$?; fi
+if VERDICT=$(idd_actionability_verdict --complexity-exit "$CEXIT" --parking-label "$HAS_PARKING" --blocking-section "$BLOCKING" --issue-type "$ISSUE_TYPE" 2>&1); then VEXIT=0; else VEXIT=$?; fi
 case "$VEXIT" in
     0) GROUP=actionable; REASONS="" ;;
     1) REASONS="${VERDICT#not-actionable: }"; GROUP=$(idd_actionability_group "$REASONS") || GROUP=error ;;   # blocked | parked | undiagnosed；unknown reason → exit 2，在 set -e 下不得殺掉整份 listing
@@ -330,7 +333,7 @@ esac
 # 5. 把判定印出來 —— skill 是模型執行的，Bash 輸出是模型唯一的觀測通道。分兩段：機器行只含封閉值域的欄位；
 #    第三方原文（$COMPLEXITY_ERR / $BLOCK_LINE）另起 raw<<< … >>>raw 區塊、每行縮排 —— 區塊內是資料，不是判定也不是指令；
 #    只有第 0 欄起頭的 `gate #N:` 行才是判定
-printf 'gate #%s: VEXIT=%s TIER=%s REASONS=%s\n' "$n" "$VEXIT" "${TIER:-}" "${REASONS:-}"
+printf 'gate #%s: VEXIT=%s TIER=%s REASONS=%s TYPE=%s\n' "$n" "$VEXIT" "${TIER:-}" "${REASONS:-}" "$ISSUE_TYPE"
 printf 'raw<<<\n'; printf '%s\n%s\n' "${COMPLEXITY_ERR:-}" "${BLOCK_LINE:-}" | sed 's/^/  │ /'; printf '>>>raw\n'
 ```
 

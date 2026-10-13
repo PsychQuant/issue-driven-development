@@ -595,7 +595,8 @@ for c in idd-list idd-all idd-implement idd-plan; do
   assert_output_grep "$c: paginates the comments fetch"        '/comments" --paginate --jq' "$f"
   refute_output_grep "$c: no truncating --json comments fetch for the diagnosis" 'LATEST_DIAGNOSIS=$(gh issue view' "$f"
   refute_grep_re     "$c: no oldest-100 --json comments connection anywhere" '=\$\(gh issue view[^)]*--json comments' "$(cat "$f")"
-  assert_output_grep "$c: set -e safe verdict capture"        'if VERDICT=$(idd_actionability_verdict --complexity-exit "$CEXIT" --parking-label "$HAS_PARKING" --blocking-section "$BLOCKING" 2>&1); then VEXIT=0; else VEXIT=$?; fi' "$f"
+  assert_output_grep "$c: set -e safe verdict capture"        'if VERDICT=$(idd_actionability_verdict --complexity-exit "$CEXIT" --parking-label "$HAS_PARKING" --blocking-section "$BLOCKING" --issue-type "$ISSUE_TYPE" 2>&1); then VEXIT=0; else VEXIT=$?; fi' "$f"
+  assert_output_grep "$c: resolves the issue type through the helper (#383)" 'ISSUE_TYPE=$(idd_issue_type --labels' "$f"
   assert_output_grep "$c: branches on the verdict"            'REASONS="${VERDICT#not-actionable: }"' "$f"
   assert_output_grep "$c: exit 2 is a consumer FATAL"         'FATAL: idd_actionability_verdict misuse' "$f"
   assert_output_grep "$c: issue number is digit-checked before the REST path" "*[!0-9]*) " "$f"
@@ -608,7 +609,7 @@ for c in idd-list idd-all idd-implement idd-plan; do
   # the scrub), the two raws were glued together, and prose that reads like an
   # instruction landed on the executing model's only channel with nothing
   # marking it as data (verify #318 round 4, security + codex).
-  assert_output_grep "$c: the verdict is PRINTED — machine line, closed vocabulary only" "printf 'gate #%s: VEXIT=%s TIER=%s REASONS=%s\\n'" "$f"
+  assert_output_grep "$c: the verdict is PRINTED — machine line, closed vocabulary only" "printf 'gate #%s: VEXIT=%s TIER=%s REASONS=%s TYPE=%s\\n'" "$f"
   assert_output_grep "$c: raw third-party text opens a delimited block"  "printf 'raw<<<\\n'" "$f"
   assert_output_grep "$c: raw third-party text closes the delimited block" "printf '>>>raw\\n'" "$f"
   assert_output_grep "$c: every raw line is indented (no raw line at column 0)" "sed 's/^/  │ /'" "$f"
@@ -658,7 +659,8 @@ for c in idd-list idd-all idd-implement idd-plan; do
   refute_grep_re "$c: no gh issue view fetches comments through --json (continuation lines joined)" "$COMMENTS_GUARD_RE" "$(join_cont < "$SKILLS/$c/SKILL.md")"
 done
 # The canonical shape in the reference prints the same two-part verdict.
-assert_output_grep "reference: canonical shape prints the machine line"      "printf 'gate #%s: VEXIT=%s TIER=%s REASONS=%s\\n'" "$REF"
+assert_output_grep "reference: canonical shape prints the machine line"      "printf 'gate #%s: VEXIT=%s TIER=%s REASONS=%s TYPE=%s\\n'" "$REF"
+assert_output_grep "reference: canonical shape resolves the issue type through the helper (#383)" 'ISSUE_TYPE=$(idd_issue_type --labels' "$REF"
 assert_output_grep "reference: canonical shape delimits the raw block"       "printf 'raw<<<\\n'" "$REF"
 refute_output_grep "reference: no single-line print with the raws glued on"  'REASONS=%s | %s%s' "$REF"
 # gate SHALL precede any egress or branch creation (verify #318 round-2 HIGH: idd-implement)
@@ -753,7 +755,7 @@ for c in idd-implement:2 idd-plan:1 idd-all:1; do
 done
 refute_grep "idd-all: its gate block never says \$NUMBER (idd-all defines only \$N)" '$NUMBER' "$(gate_blocks "$IA")"
 GB_RUN=$(mktemp -d); printf '%s' "$gb_035" > "$GB_RUN/block.sh"
-gb_stub='gh() { case "$1" in api) [ "$STUB" = commentfail ] && return 1; echo "[]" ;; issue) [ "$STUB" = issuefail ] && return 1; echo "{\"labels\":[],\"body\":\"\"}" ;; esac; }'
+gb_stub='gh() { case "$1" in api) [ "$STUB" = commentfail ] && return 1; echo "[]" ;; issue) [ "$STUB" = issuefail ] && return 1; if [ "$STUB" = meeting ]; then echo "{\"labels\":[{\"name\":\"meeting\"}],\"body\":\"\"}"; else echo "{\"labels\":[],\"body\":\"\"}"; fi ;; esac; }'
 run_block() { ( cd "$GB_RUN" && STUB="$1" NUMBER=316 GITHUB_REPO=o/r CLAUDE_PLUGIN_ROOT="$HERE/../../.." bash -c "$gb_stub"$'\n'"$(cat block.sh)" 2>&1 ); }
 out=$(run_block commentfail); rc=$?
 assert_eq "gate block (run): a failed comment fetch exits 1" "1" "$rc"
@@ -763,7 +765,10 @@ assert_eq "gate block (run): a failed issue fetch exits 1" "1" "$rc"
 assert_grep "gate block (run): a failed issue fetch says so" 'issue fetch failed' "$out"
 out=$(run_block ok); rc=$?
 assert_eq "gate block (run): with both fetches ok it exits 0" "0" "$rc"
-assert_grep_re "gate block (run): no diagnosis prints the complexity-missing verdict" '^gate #316: VEXIT=1 TIER= REASONS=complexity-missing$' "$out"
+assert_grep_re "gate block (run): no diagnosis prints the complexity-missing verdict" '^gate #316: VEXIT=1 TIER= REASONS=complexity-missing TYPE=unknown$' "$out"
+out=$(run_block meeting); rc=$?
+assert_eq "gate block (run): a meeting issue with no diagnosis tier exits 0 (#383)" "0" "$rc"
+assert_grep_re "gate block (run): a meeting issue is actionable and says TYPE=meeting (#383)" '^gate #316: VEXIT=0 TIER= REASONS= TYPE=meeting$' "$out"
 rm -rf "$GB_RUN"
 assert_output_grep "reference: canonical shape guards the comment fetch" 'comment fetch failed' "$REF"
 refute_output_grep "idd-implement: Step 2.5 prose no longer describes the superseded occurrence-count guard" 'drift guard 斷言兩處都含 verdict 呼叫與機器行' "$IM"

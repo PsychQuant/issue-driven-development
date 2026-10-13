@@ -212,6 +212,9 @@ ISSUE_JSON=$(gh issue view "$N" --repo "$GITHUB_REPO" --json labels,body) \
 HAS_PARKING=$(jq -r 'if any(.labels[]; .name == "parking-lot") then "yes" else "no" end' <<<"$ISSUE_JSON")
 BLOCK_LINE=$(idd_blocking_section "$(jq -r '.body // ""' <<<"$ISSUE_JSON")")
 if [ -n "$BLOCK_LINE" ]; then BLOCKING=yes; else BLOCKING=no; fi
+# 2.5 issue type（#383）—— 同一支 helper 解析（label 優先、其次 body `## Type`）。meeting 不評 Complexity 訊號，parking-lot 與 Blocking 照評
+ISSUE_TYPE=$(idd_issue_type --labels "$(jq -r '[.labels[].name] | join("\n")' <<<"$ISSUE_JSON")" --body "$(jq -r '.body // ""' <<<"$ISSUE_JSON")") \
+    || { echo "FATAL: gate #$N: idd_issue_type misuse — gate not evaluated" >&2; exit 1; }
 
 # 3. Conditional capture — the only shape that survives `set -euo pipefail`.
 #    A bare TIER=$(idd_parse_complexity …) aborts the caller on exit 3/4/5 and
@@ -221,7 +224,7 @@ COMPLEXITY_ERR=$(idd_parse_complexity "$LATEST_DIAGNOSIS" 2>&1 >/dev/null) || tr
 
 # 4. The gate — actually call it. Exit 2 is API misuse (a bug in THIS consumer),
 #    never "not actionable"; do not fold it into the withheld branch.
-if VERDICT=$(idd_actionability_verdict --complexity-exit "$CEXIT" --parking-label "$HAS_PARKING" --blocking-section "$BLOCKING" 2>&1); then VEXIT=0; else VEXIT=$?; fi
+if VERDICT=$(idd_actionability_verdict --complexity-exit "$CEXIT" --parking-label "$HAS_PARKING" --blocking-section "$BLOCKING" --issue-type "$ISSUE_TYPE" 2>&1); then VEXIT=0; else VEXIT=$?; fi
 case "$VEXIT" in
     0) REASONS="" ;;                                       # actionable → dispatch on "$TIER" (reset: a cluster loop must not carry the previous issue's reasons)
     1) REASONS="${VERDICT#not-actionable: }" ;;            # withheld  → surface "$REASONS" + "$COMPLEXITY_ERR" / "$BLOCK_LINE"; no lifecycle command
@@ -237,7 +240,7 @@ esac
 #    raws on the same unbounded line: a body bullet could carry a look-alike
 #    `gate #77: VEXIT=0 …`, and prose that reads like an instruction reached the
 #    model's only channel with nothing marking it as data.)
-printf 'gate #%s: VEXIT=%s TIER=%s REASONS=%s\n' "$N" "$VEXIT" "${TIER:-}" "${REASONS:-}"
+printf 'gate #%s: VEXIT=%s TIER=%s REASONS=%s TYPE=%s\n' "$N" "$VEXIT" "${TIER:-}" "${REASONS:-}" "$ISSUE_TYPE"
 printf 'raw<<<\n'; printf '%s\n%s\n' "${COMPLEXITY_ERR:-}" "${BLOCK_LINE:-}" | sed 's/^/  │ /'; printf '>>>raw\n'
 ```
 
