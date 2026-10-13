@@ -1082,11 +1082,72 @@ assert_output_grep "idd-all: Phase 4 verify is skipped for meeting"             
 assert_output_grep "idd-all: Phase 5 push / PR is skipped for meeting"            '`TYPE=meeting` → 跳過 push 與 PR' "$IA_"
 # r1 (#9, #15): the Action item is rebuilt in Phase 6, not carried in shell state
 refute_output_grep "idd-all: no MEETING_ITEMS shell variable carried across phases" 'MEETING_ITEMS' "$IA_"
-assert_output_grep "idd-all: Phase 6 re-resolves the type for the Action item"    'if [ "$(idd_issue_type --labels "$SUB_LABELS" --body "$SUB_BODY")" = meeting ]' "$IA_"
+assert_output_grep "idd-all: Phase 6 re-resolves the type for the Action item"    'if [ "$(idd_issue_type --labels "$MT_LABELS" --body "$MT_BODY")" = meeting ]' "$IA_"
 # r1 (#30): Phase 5 has a code guard, not only prose
 assert_output_grep "idd-all: Phase 5 bash skips a meeting issue in code"          'Phase 5 skipped (no push, no PR)' "$IA_"
 # r1 (#7, #23): the Phase 0.5 branch is unwound for a meeting issue in PR mode
-assert_output_grep "idd-all: meeting dispatch unwinds the empty Phase 0.5 branch" '→ type=meeting: unwinding the Phase 0.5 PR-mode branch' "$IA_"
+assert_output_grep "idd-all: meeting dispatch unwinds the empty Phase 0.5 branch" 'removed the empty Phase 0.5 branch' "$IA_"
+# ── verify #383 r2 (#4, #6, #12/C2): BEHAVIOUR, not prose. The meeting unwind
+#    and the Phase 5 guard are extracted from idd-all and run in a scratch repo
+#    with a stubbed `gh`. Round 1 pinned only their strings; round 2 then showed
+#    the unwind deleted the branch of a NON-meeting run, and that a guard in its
+#    own fence cannot stop the push in the next one. ──
+ia_block_after() { awk -v h="$1" 'index($0, h) == 1 { f = 1; next } f && /^```bash$/ { inb = 1; next } inb && /^```$/ { exit } inb { print }' "$IA_"; }
+UW_SRC=$(ia_block_after '#### meeting 分派前的 branch unwind')
+assert_true "idd-all: the meeting unwind block is extractable" "[ -n \"\$UW_SRC\" ]"
+uw_repo() {   # $1 = scratch dir; leaves a repo on branch idd/7-x with no commits ahead of main
+  git -C "$1" init -q -b main && git -C "$1" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init \
+    && git -C "$1" checkout -q -b idd/7-x
+}
+uw_stub='gh() { case "$1" in repo) echo main ;; issue) if [ "$UW_TYPE" = meeting ]; then echo "{\"labels\":[{\"name\":\"meeting\"}],\"body\":\"\"}"; else echo "{\"labels\":[{\"name\":\"bug\"}],\"body\":\"\"}"; fi ;; esac; }'
+uw_run() {   # $1 repo, $2 type
+  ( cd "$1" && UW_TYPE="$2" N=7 GITHUB_REPO=o/r CWD="$1" PATH_AXIS=PR BRANCH=idd/7-x CLAUDE_PLUGIN_ROOT="$HERE/../../.." \
+      GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
+      bash -c "$uw_stub"$'\n'"$UW_SRC" 2>&1 )
+}
+UWD=$(mktemp -d)
+mkdir "$UWD/a" && uw_repo "$UWD/a" && out=$(uw_run "$UWD/a" bug); rc=$?
+assert_eq "unwind (run): a non-meeting PR run exits 0" "0" "$rc"
+assert_eq "unwind (run): a non-meeting PR run stays on its feature branch (r2 #4)" "idd/7-x" "$(git -C "$UWD/a" branch --show-current)"
+assert_true "unwind (run): a non-meeting PR run keeps its feature branch" "git -C '$UWD/a' show-ref --verify --quiet refs/heads/idd/7-x"
+mkdir "$UWD/b" && uw_repo "$UWD/b" && mkdir -p "$UWD/b/.claude/.idd/attachments/issue-7" \
+  && printf '{"files": []}\n' > "$UWD/b/.claude/.idd/attachments/issue-7/_manifest.json" && out=$(uw_run "$UWD/b" meeting); rc=$?
+assert_eq "unwind (run): a meeting run with a diagnose manifest exits 0" "0" "$rc"
+assert_eq "unwind (run): it returns to the default branch" "main" "$(git -C "$UWD/b" branch --show-current)"
+assert_eq "unwind (run): the working tree is clean afterwards, so the next PR-mode Phase 0.5 can start (r2 #6)" "" "$(git -C "$UWD/b" status --porcelain)"
+assert_true "unwind (run): the manifest is kept, committed on the feature branch" "git -C '$UWD/b' cat-file -e idd/7-x:.claude/.idd/attachments/issue-7/_manifest.json"
+assert_grep "unwind (run): it says the branch was kept and not pushed" 'not pushed' "$out"
+mkdir "$UWD/c" && uw_repo "$UWD/c" && out=$(uw_run "$UWD/c" meeting); rc=$?
+assert_eq "unwind (run): a meeting run with nothing to keep exits 0" "0" "$rc"
+assert_eq "unwind (run): it returns to the default branch (empty case)" "main" "$(git -C "$UWD/c" branch --show-current)"
+refute_grep "unwind (run): the empty branch is gone" 'idd/7-x' "$(git -C "$UWD/c" branch --list)"
+assert_grep "unwind (run): it reports the removal only after it happened" 'removed the empty Phase 0.5 branch' "$out"
+rm -rf "$UWD"
+# Phase 5: the guard lives in the same shell as the push, on the PR path only.
+P5_SRC=$(ia_block_after '**Conditional push + PR creation**')
+assert_true "idd-all: the Phase 5 block is extractable" "[ -n \"\$P5_SRC\" ]"
+p5_stub='git() { case "$*" in *push*) echo "PUSH-CALLED"; return 0 ;; esac; command git "$@"; }; gh() { case "$1" in issue) if [ "$UW_TYPE" = meeting ]; then echo "{\"labels\":[{\"name\":\"meeting\"}],\"body\":\"\"}"; else return 1; fi ;; pr) echo "PR-CALLED" ;; esac; }'
+p5_run() { ( UW_TYPE="$1" N=7 GITHUB_REPO=o/r CWD=/nonexistent PATH_AXIS="$2" IN_CHAIN="${3:-}" BRANCH=idd/7-x CLAUDE_PLUGIN_ROOT="$HERE/../../.." bash -c "$p5_stub"$'\n'"$P5_SRC" 2>&1 ); }
+out=$(p5_run meeting PR); rc=$?
+assert_eq "phase 5 (run): a meeting issue in PR mode exits 0" "0" "$rc"
+refute_grep "phase 5 (run): a meeting issue never reaches git push (r2 #12, C2)" 'PUSH-CALLED' "$out"
+refute_grep "phase 5 (run): a meeting issue never opens a PR" 'PR-CALLED' "$out"
+out=$(p5_run bug direct-commit); rc=$?
+assert_eq "phase 5 (run): direct-commit makes no issue fetch, so a failing gh cannot abort it (r2 #5)" "0" "$rc"
+out=$(p5_run bug PR "" ); rc=$?
+assert_eq "phase 5 (run): a failed issue fetch on the PR path stops before pushing" "1" "$rc"
+refute_grep "phase 5 (run): ... and never pushes" 'PUSH-CALLED' "$out"
+# r2 (#9): the meeting report carries the #123 cleanup and names the Action-items section
+assert_output_grep "idd-all: the meeting report clears the unattended flag (#123)" 'meeting report 印出後同樣 `clear_unattended "$CWD"`' "$IA_"
+assert_output_grep "idd-all: the meeting report names the Action-items section" '「Phase 6 Action items surface」那一節' "$IA_"
+# r2 (#14, #28, C3): the meeting Action item is for the root this run gated, never spawned issues;
+# no Meeting Plan comment suppresses it; a failed re-resolve is itself an item
+assert_output_grep "idd-all: the meeting Action item is computed for the root only" 'MT_LABELS=$(gh issue view "$ROOT_N"' "$IA_"
+refute_output_grep "idd-all: no Meeting Plan comment suppresses the Action item" "grep -q '^## Meeting Plan'" "$IA_"
+assert_output_grep "idd-all: a failed type re-resolve is surfaced, not skipped" 'could not re-resolve the issue type' "$IA_"
+# r2 (#20, #5): the abort table carries the meeting exception and the Phase 5 FATALs
+assert_output_grep "idd-all: the cexit=4 abort row names its meeting exception" '非 meeting;meeting 只在完全沒有受信任的 Diagnosis 時才 abort' "$IA_"
+assert_output_grep "idd-all: the abort table lists the Phase 5 type-guard FATALs" 'Phase 5 type guard 失敗(PR 路徑)' "$IA_"
 # r1 (#6, #8, #14): Phase 6 has a meeting report that claims no verify / PR
 assert_output_grep "idd-all: Phase 6 has a meeting report"                        '✓ idd-all stopped (type=meeting)' "$IA_"
 assert_output_grep "idd-all: the terminal-phase rule names its meeting exception" 'Verify is the terminal phase regardless of mode**（meeting issue 例外' "$IA_"
