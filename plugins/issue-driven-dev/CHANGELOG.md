@@ -15,8 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `idd-all` Phase 2 and `idd-plan` Step 1 with "fix the Diagnosis", although the Diagnosis was correct.
   - **The type is a gate input, resolved by one helper.** `idd_issue_type --labels --body` follows
     `idd-diagnose` Step 1: type label first (ASCII case-folded), then the body's `## Type`, label wins a
-    conflict, no signal is `unknown` (never `meeting`). The body reader skips HTML comments, and a fence closes
-    only on the opener's character at no less than its length — the unsafe direction here is a false meeting.
+    conflict, no signal is `unknown` (never `meeting`). The unsafe direction here is a false meeting, so the
+    body reader follows CommonMark where it matters: any line ending (CRLF, LF, lone CR); a fence closes only on
+    the opener's character at no less than its length; HTML comments and type-1 / type-6 HTML blocks are
+    skipped; the type word must end at a non-word character.
   - **`idd_actionability_verdict --issue-type meeting --diagnosis-present yes` drops only the Complexity
     signal.** `parking-lot` and `### Blocking` still withhold a meeting issue. Exit 4 also means "no trusted
     Diagnosis at all", so a meeting issue nobody diagnosed stays `complexity-missing` (`--diagnosis-present
@@ -24,8 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     corpora run without it and also with every non-meeting type.
   - **Consumers dispatch on `TYPE=meeting` before any tier.** `idd-all`: attended → meeting `/idd-plan`;
     unattended → stops at `diagnosed` with an Action item (`/idd-plan` or `/idd-close` — a plan is optional);
-    never implement, verify, push or PR, and in PR mode the empty Phase 0.5 branch is removed; Phase 6 prints a
-    meeting report instead of claiming a verify and a PR. `idd-plan` writes the Meeting Plan. `idd-implement`
+    never implement, verify, push or PR. In PR mode it returns to the default branch: diagnose's attachment
+    manifest is committed on the Phase 0.5 branch, which is then kept and not pushed, and an empty branch is
+    deleted. Phase 6 prints a meeting report instead of claiming a verify and a PR. `idd-plan` writes the Meeting Plan. `idd-implement`
     refuses an actionable meeting with a meeting message. `idd-list` suggests `/idd-plan` (`diagnosed`) or
     `/idd-close` (`planning`) and adds no group. Every gate block prints `TYPE=` on its machine line.
   - **`idd-update` reads `## Meeting Plan` as `planning`.**

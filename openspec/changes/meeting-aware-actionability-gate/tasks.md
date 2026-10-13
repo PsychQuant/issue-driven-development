@@ -34,6 +34,14 @@
 - [x] 6.3 `idd-all`：meeting 分派前 unwind Phase 0.5 branch；Phase 5 code guard；Phase 6 meeting report 與 Action item 重建（不靠 shell 狀態）；Action item 改為 plan 選填。驗證：8 條 pin
 - [x] 6.4 `idd-implement` meeting 列只在 VEXIT=0；`idd-list` 依 phase `planning` 給 `/idd-close`、Step 3 fallback 認 `## Meeting Plan`；回歸檢查擴到三份 corpus；description v3.3.1。驗證：`test.sh` 797 passed
 
+## 7. verify round 2 修正
+
+- [x] 7.1 （blocking #4）meeting unwind 在 code 裡判斷 type；manifest commit 在 feature branch 並保留（#6）；只有沒有 commit、沒有 upstream 的空 branch 才刪；每個 git 步驟都檢查。驗證：行為測試在暫存 repo 跑三種情況
+- [x] 7.2 Phase 5 type guard 移進 PR 分支、與 push 同一個 shell（#12、#5）；meeting report 補 `clear_unattended`（#9）；meeting Action item 只看 root、不受 Meeting Plan comment 影響、失敗時列出（#14、#28）；abort 表補列（#20）。驗證：行為測試 + pin
+- [x] 7.3 （blocking #1／#7）spec delta 再補兩個 MODIFIED：Single shared implementation、Existing diagnoses require no migration；proposal／design 的 API 描述更新；回歸檢查涵蓋五種非 meeting type（2140 組）
+- [x] 7.4 type reader：lone CR、info string 含反引號、type-1／type-6 HTML block、heading 只接受空白或 tab、type 字詞邊界；divergence 清單寫明方向。驗證：12 條 pin，預期值以 markdown-it 4.0.0 核對
+- [x] 7.5 idd-list meeting 兩列改為真正的封閉列舉並更正 fallback 說法（#10、#16）；idd-plan 中止列補 meeting 版本（#23）。驗證：`test.sh` 1109 passed
+
 ## 實作備註
 
 - NOTE（1.3）：任務寫「現在就通過」，實際上帶 `--issue-type bug|unknown` 的回歸 assertion 在 2.2 之前是 RED——當時 verdict 不認得這個參數（exit 2）。2.2 之後全綠，行為正確；只是任務描述的預期與當時實況不同。

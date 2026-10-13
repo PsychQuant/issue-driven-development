@@ -585,12 +585,12 @@ Suggested next:
 
 #### meeting issue 的下一步（#383）
 
-`group=actionable` 且 `type=meeting` 的 issue **不走**下面的 Complexity 表（meeting 依規格沒有 tier，gate 對它不評 Complexity 訊號），也不套用 phase × PR state matrix 的 implement／verify 列。這是封閉列舉，只有兩列，依 Step 3 解析出的 phase 判斷（不另外掃 comment）：
+`group=actionable` 且 `type=meeting` 的 issue **不走**下面的 Complexity 表（meeting 依規格沒有 tier，gate 對它不評 Complexity 訊號），也不套用 phase × PR state matrix 的 implement／verify 列。這是封閉列舉，只有兩列，依 Step 3 解析出的 phase 判斷（不另外掃 comment）；第二列涵蓋 `planning` 以外的**所有** phase，不得依性質類推第三列：
 
-- `TYPE=meeting` 且 phase `diagnosed` → `/idd-plan #N`（meeting 版 Plan，選填），或直接 `/idd-close #N`（沒有 plan 時 close gate 退回 Diagnosis 的 Phase C）
-- `TYPE=meeting` 且 phase `planning` → `/idd-close #N`（meeting 專屬 close gate）。`planning` 由 `idd-update` 讀到 `## Meeting Plan` 時設定，body 還沒 sync 時由 Step 3 的 heading fallback 讀到
+- `TYPE=meeting` 且 phase `planning` → `/idd-close #N`（meeting 專屬 close gate）
+- `TYPE=meeting` 且 phase 不是 `planning` → `/idd-plan #N`（meeting 版 Plan，選填），或直接 `/idd-close #N`（沒有 plan 時 close gate 退回 Diagnosis 的 Phase C）。典型是 `TYPE=meeting` 且 phase `diagnosed` → `/idd-plan #N`；body 還停在 `created` 也一樣，能走到 actionable 代表已有受信任的 Diagnosis
 
-其他 phase 的 actionable meeting（例如 body 還停在 `created`）照第一列處理：能走到 actionable 代表已有受信任的 Diagnosis。完全沒有 Diagnosis 的 meeting 不會在這裡——gate 回 `complexity-missing`，歸 **undiagnosed** 組，下一步是 `/idd-diagnose #N`（#383 verify r1）。meeting 被 `parking-lot` label 或 `### Blocking` 擋下時（`group=parked` / `blocked`），照下方 not-actionable 表處理，不在此列。
+`planning` 由 `idd-update` 讀到 `## Meeting Plan` 時寫進 body。Step 3 先讀 body 的 `**Phase**:`，只有 body 沒有這一行時才退回 comment heading（那時才會把 `## Meeting Plan` 讀成 `planning`）。所以 `/idd-plan` 貼出 Meeting Plan 卻在自己的 Step 7 sync 之前中止時，body 仍是 `diagnosed`，這裡會再建議 `/idd-plan`——先跑 `/idd-update #N` 同步，免得寫出第二份 plan（#383 verify r2）。完全沒有 Diagnosis 的 meeting 不會在這裡——gate 回 `complexity-missing`，歸 **undiagnosed** 組，下一步是 `/idd-diagnose #N`（#383 verify r1）。meeting 被 `parking-lot` label 或 `### Blocking` 擋下時（`group=parked` / `blocked`），照下方 not-actionable 表處理，不在此列。
 
 #### `diagnosed` phase 的 Complexity-aware sub-routing(v2.36.0+ 既有)
 

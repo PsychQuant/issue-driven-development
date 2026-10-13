@@ -243,7 +243,7 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$IMPLEMENTATION_PLAN"
 |---------------|------|
 | Approved | 進 Step 6 — chain to `/idd-implement` |
 | Revised (with feedback) | 修改 Implementation Plan comment（用 `gh api PATCH` 更新原 comment 而非新 comment 避免散亂），再次 `EnterPlanMode` 呈現新版 |
-| Aborted | 跑 `/idd-update #NNN` 改 phase 為 `needs-fix`，並 post 一個 comment 說明「Plan tier deliberation 中止：{reason}；建議重新 `/idd-diagnose #NNN` 或調整 Complexity」 |
+| Aborted | 跑 `/idd-update #NNN` 改 phase 為 `needs-fix`，並 post 一個 comment 說明「Plan tier deliberation 中止：{reason}；建議重新 `/idd-diagnose #NNN` 或調整 Complexity」。**type=meeting 改說**「Meeting Plan 中止：{reason}；調整議程後重跑 `/idd-plan #NNN`，或直接 `/idd-close #NNN`（close gate 退回 Diagnosis 的 Phase C）」——meeting 沒有 Complexity 可調（#383 verify r2） |
 
 ### Step 6: Chain to /idd-implement
 
