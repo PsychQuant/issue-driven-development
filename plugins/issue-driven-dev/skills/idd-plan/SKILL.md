@@ -113,10 +113,11 @@ printf 'gate #%s: VEXIT=%s TIER=%s REASONS=%s TYPE=%s\n' "$NUMBER" "$VEXIT" "${T
 printf 'raw<<<\n'; printf '%s\n%s\n' "${COMPLEXITY_ERR:-}" "${BLOCK_LINE:-}" | sed 's/^/  │ /'; printf '>>>raw\n'
 ```
 
-**先看 `$VEXIT`**（gate 判定），`0` 才依 `$TIER` 決定行為。tier 只有四個；`### Complexity` 開頭以外的同行理由、裝飾、` via <來源>` 後綴都不影響 `$TIER`：
+**先看 `$VEXIT`**（gate 判定），`0` 才依 `$TIER` 決定行為；**`$ISSUE_TYPE` 是 `meeting` 時走第一列，不看 `$TIER`**（#383）。tier 只有四個；`### Complexity` 開頭以外的同行理由、裝飾、` via <來源>` 後綴都不影響 `$TIER`：
 
 | `VEXIT` · `CEXIT` · `TIER` | 行為 |
 |-----------|------|
+| `TYPE=meeting` · `VEXIT=0` | ✅ meeting（#383）— 繼續 Step 2，用 **meeting-adapted Plan body**（`## Meeting Plan: Issue #NNN`，Phase A/B/C），Step 6 skip-chain、不接 `/idd-implement`。meeting 依規格沒有 tier，gate 對它不評 Complexity 訊號，所以這裡不會出現 `complexity-unparseable` / `complexity-missing`；meeting 的 `VEXIT=1`（`parking-lot-label` / `blocking-nonempty`）照下面的 parked／blocked 列處理 |
 | `0` · `0` · `Plan` | ✅ 預期 — 繼續 Step 2 |
 | `0` · `0` · `Plan`（原值 `Plan via Layer V`、`**Plan**(Layer P:…)` 等）| 同上 — helper 只取開頭的 tier,後綴與同行理由皆不影響,行為與 bare `Plan` 完全一致 |
 | `0` · `0` · `Simple` | ⚠️ 詢問 user：「Complexity 判定為 Simple，確定要走 Plan tier 多一道 approval gate 嗎？」（行為不變 — user 主動要 deliberate 是允許的）|

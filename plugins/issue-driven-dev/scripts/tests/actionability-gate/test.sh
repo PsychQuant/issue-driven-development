@@ -981,4 +981,24 @@ assert_eq "issue type: an unknown argument is misuse (exit 2)" "2" "$?"
 run_bounded 5 idd_issue_type --labels >/dev/null 2>&1
 assert_eq "issue type: a value-less flag is misuse (exit 2), not a hang" "2" "$?"
 
+# ── #383: consumers route on the type before any tier (meeting-issue-type spec
+#    "Routing consumers honour the meeting type" / "Meeting Plan advances the
+#    phase to planning") ──
+IA_="$SKILLS/idd-all/SKILL.md"; IP_="$SKILLS/idd-plan/SKILL.md"; IM_="$SKILLS/idd-implement/SKILL.md"
+IL_="$SKILLS/idd-list/SKILL.md"; IU_="$SKILLS/idd-update/SKILL.md"
+assert_output_grep "idd-all: a meeting dispatch row comes before the tier rows"   '| `TYPE=meeting` · `VEXIT=0` |' "$IA_"
+assert_output_grep "idd-all: unattended meeting records the attended-plan action item" 'needs an attended /idd-plan' "$IA_"
+assert_output_grep "idd-all: Phase 4 verify is skipped for meeting"               '`TYPE=meeting` → 跳過 Phase 4' "$IA_"
+assert_output_grep "idd-all: Phase 5 push / PR is skipped for meeting"            '`TYPE=meeting` → 跳過 push 與 PR' "$IA_"
+n_tier_=$(grep -n '^| `0` · `0` · `Simple` |' "$IA_" | head -1 | cut -d: -f1)
+n_meet_=$(grep -n -F '| `TYPE=meeting` · `VEXIT=0` |' "$IA_" | head -1 | cut -d: -f1)
+assert_true "idd-all: the meeting row precedes the first tier row (meeting@${n_meet_:-?} < Simple@${n_tier_:-?})" "[ -n '$n_meet_' ] && [ -n '$n_tier_' ] && [ '$n_meet_' -lt '$n_tier_' ]"
+assert_output_grep "idd-plan: a meeting row in the Step 1 gate table"             '| `TYPE=meeting` · `VEXIT=0` |' "$IP_"
+assert_output_grep "idd-implement: refuses meeting with its own message"          'meeting 不走 implement' "$IM_"
+refute_output_grep "idd-implement: the meeting refusal never asks to fix the Diagnosis" 'meeting 不走 implement，要求 user 修正 Diagnosis' "$IM_"
+assert_output_grep "idd-list: meeting next action is /idd-plan while diagnosed"   '`TYPE=meeting` 且 phase `diagnosed` → `/idd-plan #N`' "$IL_"
+assert_output_grep "idd-list: meeting next action is /idd-close once a Meeting Plan exists" '已有 `## Meeting Plan` → `/idd-close #N`' "$IL_"
+assert_output_grep "idd-update: Meeting Plan is a planning row in the phase table" '| Meeting Plan | `planning` |' "$IU_"
+assert_output_grep "idd-update: the heading list names ## Meeting Plan"          '`## Meeting Plan`' "$IU_"
+
 print_summary "actionability-gate"

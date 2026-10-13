@@ -12,14 +12,14 @@
 ## 3. gate block 與呼叫端
 
 - [x] 3.1 gate block 機器行加 TYPE 欄位：`plugins/issue-driven-dev/references/actionability-gate.md` 的 canonical gate block 與四份副本（`idd-implement` Step 0.35 與 Step 2.5、`idd-plan` Step 1、`idd-all` Phase 2）以相同改法加入 `ISSUE_TYPE=$(idd_issue_type …)`（labels 取自 `ISSUE_JSON`）、把 `--issue-type "$ISSUE_TYPE"` 傳給 verdict，機器行改為 `gate #N: VEXIT= TIER= REASONS= TYPE=`；同步更新 `test.sh` 的 canonical shape assertion。驗證：`test.sh` 的「gate block 逐 byte 相同」與「canonical shape」assertion 通過
-- [ ] 3.2 `idd-all`（Routing consumers honour the meeting type）：分派表加 meeting 列——attended 送 meeting 版 `/idd-plan`；unattended 下 meeting 停在 diagnosed，並在 Phase 6 Action items 記「meeting 需要有人在場跑 /idd-plan」；兩種模式都跳過 Phase 3a／3b、Phase 4 verify 與 Phase 5 push／PR。驗證：在 `test.sh` 加 grep assertion，確認 `plugins/issue-driven-dev/skills/idd-all/SKILL.md` 含 meeting 分派列、unattended 的 Action item 文字與 Phase 4 的 meeting skip
-- [ ] 3.3 `idd-plan`：Step 1 的 gate 表加 meeting 列——`TYPE=meeting` 且 VEXIT=0 時進入 meeting-adapted Plan，不再走 tier 分派。驗證：`test.sh` grep assertion 確認 `plugins/issue-driven-dev/skills/idd-plan/SKILL.md` 的 meeting 列存在
-- [ ] 3.4 `idd-implement`：gate 表加 meeting 列——拒絕並說明 meeting 不走 implement、下一步是 `/idd-plan` 或 `/idd-close`，不要求修正 Diagnosis。驗證：`test.sh` grep assertion 確認 `plugins/issue-driven-dev/skills/idd-implement/SKILL.md` 的訊息存在，且「gate 在建 branch 之前」的既有 assertion 仍通過
-- [ ] 3.5 [P] idd-list 不新增 meeting 群組：`plugins/issue-driven-dev/skills/idd-list/SKILL.md` Step 3.7 把 issue type 傳入 verdict，Step 5 對 actionable 的 meeting issue 依 phase 建議 `/idd-plan`（`diagnosed`）或 `/idd-close`（已有 Meeting Plan）。驗證：`test.sh` 既有的 blocked 群組標題、banner、footer 逐字 assertion 仍通過，新增的 meeting 下一步 assertion 通過
+- [x] 3.2 `idd-all`（Routing consumers honour the meeting type）：分派表加 meeting 列——attended 送 meeting 版 `/idd-plan`；unattended 下 meeting 停在 diagnosed，並在 Phase 6 Action items 記「meeting 需要有人在場跑 /idd-plan」；兩種模式都跳過 Phase 3a／3b、Phase 4 verify 與 Phase 5 push／PR。驗證：在 `test.sh` 加 grep assertion，確認 `plugins/issue-driven-dev/skills/idd-all/SKILL.md` 含 meeting 分派列、unattended 的 Action item 文字與 Phase 4 的 meeting skip
+- [x] 3.3 `idd-plan`：Step 1 的 gate 表加 meeting 列——`TYPE=meeting` 且 VEXIT=0 時進入 meeting-adapted Plan，不再走 tier 分派。驗證：`test.sh` grep assertion 確認 `plugins/issue-driven-dev/skills/idd-plan/SKILL.md` 的 meeting 列存在
+- [x] 3.4 `idd-implement`：gate 表加 meeting 列——拒絕並說明 meeting 不走 implement、下一步是 `/idd-plan` 或 `/idd-close`，不要求修正 Diagnosis。驗證：`test.sh` grep assertion 確認 `plugins/issue-driven-dev/skills/idd-implement/SKILL.md` 的訊息存在，且「gate 在建 branch 之前」的既有 assertion 仍通過
+- [x] 3.5 [P] idd-list 不新增 meeting 群組：`plugins/issue-driven-dev/skills/idd-list/SKILL.md` Step 3.7 把 issue type 傳入 verdict，Step 5 對 actionable 的 meeting issue 依 phase 建議 `/idd-plan`（`diagnosed`）或 `/idd-close`（已有 Meeting Plan）。驗證：`test.sh` 既有的 blocked 群組標題、banner、footer 逐字 assertion 仍通過，新增的 meeting 下一步 assertion 通過
 
 ## 4. idd-update
 
-- [ ] 4.1 [P] Meeting Plan advances the phase to planning：`plugins/issue-driven-dev/skills/idd-update/SKILL.md` 的 phase 表加 `Meeting Plan` → `planning`，比對規則沿用其他標題的寬鬆比對。驗證：`test.sh` grep assertion 確認 phase 表與判斷依據兩處都列出 `## Meeting Plan`
+- [x] 4.1 [P] Meeting Plan advances the phase to planning：`plugins/issue-driven-dev/skills/idd-update/SKILL.md` 的 phase 表加 `Meeting Plan` → `planning`，比對規則沿用其他標題的寬鬆比對。驗證：`test.sh` grep assertion 確認 phase 表與判斷依據兩處都列出 `## Meeting Plan`
 
 ## 5. 文件與發布
 

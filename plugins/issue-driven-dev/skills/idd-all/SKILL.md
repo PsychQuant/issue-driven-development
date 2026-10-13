@@ -598,10 +598,11 @@ printf 'gate #%s: VEXIT=%s TIER=%s REASONS=%s TYPE=%s\n' "$N" "$VEXIT" "${TIER:-
 printf 'raw<<<\n'; printf '%s\n%s\n' "${COMPLEXITY_ERR:-}" "${BLOCK_LINE:-}" | sed 's/^/  │ /'; printf '>>>raw\n'
 ```
 
-Dispatch **先看 `$VEXIT`**(gate 判定),`0` 才依 `$TIER` 分派。tier 只有四個(`SDD-warranted` 視同 `Spectra`);`### Complexity` 開頭以外的同行理由、裝飾、` via <來源>` 後綴都不影響 `$TIER`:
+Dispatch **先看 `$VEXIT`**(gate 判定),`0` 才依 `$TIER` 分派;**`$ISSUE_TYPE` 是 `meeting` 時走第一列,不看 `$TIER`**(#383 — meeting 依規格不產生 tier,gate 對它不評 Complexity 訊號)。tier 只有四個(`SDD-warranted` 視同 `Spectra`);`### Complexity` 開頭以外的同行理由、裝飾、` via <來源>` 後綴都不影響 `$TIER`:
 
 | `VEXIT` · `CEXIT` · `TIER` | 下一步 |
 |--------------|--------|
+| `TYPE=meeting` · `VEXIT=0` | **meeting(#383),先於任何 tier 分派**:**attended → Phase 3m: `/idd-plan #$N`**(meeting 版 Plan;approve 後**不** chain 到 idd-implement);**unattended → 停在 diagnosed**,不跑 `/idd-plan`(Meeting Plan 是人核准的審議紀錄,unattended 沒有人可核准),並把一行累積進 `MEETING_ITEMS`:`- #N: type=meeting — needs an attended /idd-plan (a Meeting Plan is approved by a person); not planned under unattended mode`。兩種模式都跳過 Phase 3a／3b、Phase 4、Phase 5。meeting 的 `VEXIT=1`(`parking-lot-label` / `blocking-nonempty`)照下面的 parked／blocked 列處理 |
 | `0` · `0` · `Simple` | Phase 3a: idd-implement |
 | `0` · `0` · `Plan` | **attended → Phase 3p: `/idd-plan`**（該 skill 擁有 `EnterPlanMode` 閘門，approve 後自己 chain 到 idd-implement）;**unattended → Phase 3a: idd-implement**，並在 final report 標記 `[Plan tier deliberation skipped under unattended mode]` |
 | `0` · `0` · `Plan`（原值 `Plan via Layer V`,v2.50+）| 同上 — helper 只取開頭的 tier,` via <來源>` 後綴與同行理由皆不影響;verdict 是 user 在 idd-diagnose Step 3.4 選 escalate 觸發,routing 行為跟 bare `Plan` 一致 |
@@ -864,6 +865,8 @@ fi
 
 ### Phase 4: Verify Loop
 
+> **`TYPE=meeting` → 跳過 Phase 4**(#383):meeting 沒有 TDD verify(meeting-issue-type 規格;結案走 `idd-close` 的 meeting gate),不呼叫 `idd-verify`,直接進 Phase 6。
+
 Args 構造同樣依 `INTERACTION` 軸條件化(Task 4.3, Requirement: "Attended interaction permits sub-skill questions"):
 
 ```bash
@@ -918,6 +921,8 @@ for round in 1..MAX_ROUND:
 ---
 
 ### Phase 5: Push + Open PR (PR mode only)
+
+> **`TYPE=meeting` → 跳過 push 與 PR**(#383):meeting 沒有 code branch 可推,不論 PR 或 direct-commit mode 都不 push、不開 PR。
 
 **Conditional push + PR creation** (#3 Task 3.2 — replaces earlier `goto Phase 6` pseudocode that wasn't valid bash; structural conditional with explicit comment instead):
 
@@ -1074,6 +1079,8 @@ done
 
 # #366: Step 0.5.1 停下的 issue 與 unknown 的查詢（EXISTING_WORK_ITEMS 由 Step 0.5.1 逐行累積；shell 狀態沒存活時重跑 helper 重建）
 ACTION_ITEMS+="${EXISTING_WORK_ITEMS:-}"
+# #383: unattended 下停在 diagnosed 的 meeting issue（MEETING_ITEMS 由 Phase 2 分派表的 meeting 列逐行累積）
+ACTION_ITEMS+="${MEETING_ITEMS:-}"
 
 if [ -n "$ACTION_ITEMS" ]; then
   cat <<EOF
