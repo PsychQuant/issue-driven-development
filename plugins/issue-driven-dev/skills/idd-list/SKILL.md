@@ -169,7 +169,7 @@ Phase 值（與 `idd-update` 一致）：
 
 0. **Tracker 短路（v2.82.0+, #179）**：若 issue 帶 tracker label（`north-star` 或 `epic`）→ phase = `tracking`，**不**走下面 1-3 的 phase 推斷、**不**顯示 `(no phase)`，**也不**建議 `/idd-update`（tracker 本就不該跑 lifecycle step，那是 false signal）。若 body 有可解析的 `## Roadmap` checklist，附 roadmap progress `<filed>/<total> stages`：`<filed>` = **勾選 `- [x]` 且**該行含 `#<number>` issue 引用的項數（勾了但沒 link 的不算 filed —— 那是 malformed）；`<total>` = roadmap 項總數。`## Roadmap` 缺漏或無法解析 → 純顯示 `tracking`（不附 progress，**不報錯**，graceful）。此規則同時覆蓋 milestone-first（[`#83`](https://github.com/PsychQuant/issue-driven-development/issues/83)）的 epic tracker —— tracker-phase 顯示是**共用**的。完整慣例見 [`references/north-star-tracker.md`](../../references/north-star-tracker.md)。Tracker 的 Suggested-next 不給 lifecycle 命令（`/idd-diagnose` 等），改顯示 `(tracker — file next roadmap stage when ready)`。**例**：tracker `#7` 帶 `north-star` label，body `## Roadmap` 為 `- [x] Stage 1 → #10` / `- [ ] Stage 2` / `- [ ] Stage 3` → idd-list 顯示 `#7  [tracking] 1/3 stages`（filed=1 因只有 Stage 1 勾選且帶 `#10`；total=3），**不**顯示 `(no phase)` 或 `/idd-update` hint。
 1. 掃 body 尋找 `**Phase**:` 行，取第一個 match 的值
-2. 找不到 → 掃 comments 的標題推斷（`## Diagnosis` → `diagnosed`，`## Implementation Complete` → `implemented`，`## Verify (PASS)` → `verified`，`## Verify (FAIL)` → `needs-fix`，`## Closing Summary` → `closed`）。**標題比對大小寫不敏感**（#295）：這些 heading 由 LLM 依模板生成、寫入端無 normalization，`## Closing summary` 這類漂移是預期而非例外；此處硬要求大小寫只會讓 phase 顯示錯，沒有任何好處
+2. 找不到 → 掃 comments 的標題推斷（`## Diagnosis` → `diagnosed`，`## Meeting Plan` → `planning`（#383），`## Implementation Complete` → `implemented`，`## Verify (PASS)` → `verified`，`## Verify (FAIL)` → `needs-fix`，`## Closing Summary` → `closed`）。**標題比對大小寫不敏感**（#295）：這些 heading 由 LLM 依模板生成、寫入端無 normalization，`## Closing summary` 這類漂移是預期而非例外；此處硬要求大小寫只會讓 phase 顯示錯，沒有任何好處
 3. 仍推不出 → 顯示 `(no phase)`（legacy issue，建議手動 `/idd-update`）
 
 ### Step 3.5: Build Issue→PR Index (v2.51.0+)
@@ -585,12 +585,12 @@ Suggested next:
 
 #### meeting issue 的下一步（#383）
 
-`group=actionable` 且 `type=meeting` 的 issue **不走**下面的 Complexity 表（meeting 依規格沒有 tier，gate 對它不評 Complexity 訊號），也不套用 phase × PR state matrix 的 implement／verify 列。這是封閉列舉，只有兩列：
+`group=actionable` 且 `type=meeting` 的 issue **不走**下面的 Complexity 表（meeting 依規格沒有 tier，gate 對它不評 Complexity 訊號），也不套用 phase × PR state matrix 的 implement／verify 列。這是封閉列舉，只有兩列，依 Step 3 解析出的 phase 判斷（不另外掃 comment）：
 
-- `TYPE=meeting` 且 phase `diagnosed` → `/idd-plan #N`（meeting 版 Plan）
-- 已有 `## Meeting Plan` → `/idd-close #N`（meeting 專屬 close gate；`idd-update` 會把 phase 推為 `planning`）
+- `TYPE=meeting` 且 phase `diagnosed` → `/idd-plan #N`（meeting 版 Plan，選填），或直接 `/idd-close #N`（沒有 plan 時 close gate 退回 Diagnosis 的 Phase C）
+- `TYPE=meeting` 且 phase `planning` → `/idd-close #N`（meeting 專屬 close gate）。`planning` 由 `idd-update` 讀到 `## Meeting Plan` 時設定，body 還沒 sync 時由 Step 3 的 heading fallback 讀到
 
-meeting 被 `parking-lot` label 或 `### Blocking` 擋下時（`group=parked` / `blocked`），照下方 not-actionable 表處理，不在此列。
+其他 phase 的 actionable meeting（例如 body 還停在 `created`）照第一列處理：能走到 actionable 代表已有受信任的 Diagnosis。完全沒有 Diagnosis 的 meeting 不會在這裡——gate 回 `complexity-missing`，歸 **undiagnosed** 組，下一步是 `/idd-diagnose #N`（#383 verify r1）。meeting 被 `parking-lot` label 或 `### Blocking` 擋下時（`group=parked` / `blocked`），照下方 not-actionable 表處理，不在此列。
 
 #### `diagnosed` phase 的 Complexity-aware sub-routing(v2.36.0+ 既有)
 

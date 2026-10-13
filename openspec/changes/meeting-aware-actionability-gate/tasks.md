@@ -27,6 +27,13 @@
 - [x] 5.2 `plugins/issue-driven-dev/CHANGELOG.md` 新增 3.3.1（Fixed：#383），`plugins/issue-driven-dev/.claude-plugin/plugin.json` 與 `.claude-plugin/marketplace.json` 的版本都改為 3.3.1。驗證：`jq -r .version` 兩處都印 `3.3.1`，CHANGELOG 最上方是 3.3.1
 - [x] 5.3 執行 `plugins/issue-driven-dev/scripts/tests/` 底下全部 `test.sh`，確認沒有其他 drift guard 因 SKILL.md 改動而失敗。驗證：全部 suite exit 0
 
+## 6. verify round 1 修正
+
+- [x] 6.1 verdict 加 `--diagnosis-present yes|no`（meeting 必填）；五個 gate block 由 `LATEST_DIAGNOSIS` 設 `HAS_DIAGNOSIS`；沒有 Diagnosis 的 meeting 仍是 `complexity-missing`。驗證：fixture 兩列 undiagnosed meeting、run_block 兩種 stub、誤用四條
+- [x] 6.2 `idd_issue_type`：fence 依開頭字元與長度關閉、≥4 空白不算 fence、略過 HTML 註解；label 在 LC_ALL=C 下 ASCII 小寫比對。驗證：11 條 pin
+- [x] 6.3 `idd-all`：meeting 分派前 unwind Phase 0.5 branch；Phase 5 code guard；Phase 6 meeting report 與 Action item 重建（不靠 shell 狀態）；Action item 改為 plan 選填。驗證：8 條 pin
+- [x] 6.4 `idd-implement` meeting 列只在 VEXIT=0；`idd-list` 依 phase `planning` 給 `/idd-close`、Step 3 fallback 認 `## Meeting Plan`；回歸檢查擴到三份 corpus；description v3.3.1。驗證：`test.sh` 797 passed
+
 ## 實作備註
 
 - NOTE（1.3）：任務寫「現在就通過」，實際上帶 `--issue-type bug|unknown` 的回歸 assertion 在 2.2 之前是 RED——當時 verdict 不認得這個參數（exit 2）。2.2 之後全綠，行為正確；只是任務描述的預期與當時實況不同。

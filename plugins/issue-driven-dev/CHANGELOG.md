@@ -14,15 +14,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gate (3.1.0, #316) treated every non-tier `### Complexity` as a defect. Every meeting issue therefore stopped in
   `idd-all` Phase 2 and `idd-plan` Step 1 with "fix the Diagnosis", although the Diagnosis was correct.
   - **The type is a gate input, resolved by one helper.** `idd_issue_type --labels --body` follows
-    `idd-diagnose` Step 1: type label first, then the body's `## Type`, label wins a conflict, no signal is
-    `unknown` (never `meeting`).
-  - **`idd_actionability_verdict --issue-type meeting` drops only the Complexity signal.** `parking-lot` and
-    `### Blocking` still withhold a meeting issue. Without the flag the verdict is unchanged; the frozen corpus
-    runs without it.
+    `idd-diagnose` Step 1: type label first (ASCII case-folded), then the body's `## Type`, label wins a
+    conflict, no signal is `unknown` (never `meeting`). The body reader skips HTML comments, and a fence closes
+    only on the opener's character at no less than its length — the unsafe direction here is a false meeting.
+  - **`idd_actionability_verdict --issue-type meeting --diagnosis-present yes` drops only the Complexity
+    signal.** `parking-lot` and `### Blocking` still withhold a meeting issue. Exit 4 also means "no trusted
+    Diagnosis at all", so a meeting issue nobody diagnosed stays `complexity-missing` (`--diagnosis-present
+    no`); the flag is required with `meeting`. Without the type the verdict is unchanged; all three frozen
+    corpora run without it and also with every non-meeting type.
   - **Consumers dispatch on `TYPE=meeting` before any tier.** `idd-all`: attended → meeting `/idd-plan`;
-    unattended → stops at `diagnosed` with an Action item; never implement, verify or PR. `idd-plan` writes the
-    Meeting Plan. `idd-implement` refuses with a meeting message. `idd-list` suggests `/idd-plan` or
-    `/idd-close` and adds no group. Every gate block prints `TYPE=` on its machine line.
+    unattended → stops at `diagnosed` with an Action item (`/idd-plan` or `/idd-close` — a plan is optional);
+    never implement, verify, push or PR, and in PR mode the empty Phase 0.5 branch is removed; Phase 6 prints a
+    meeting report instead of claiming a verify and a PR. `idd-plan` writes the Meeting Plan. `idd-implement`
+    refuses an actionable meeting with a meeting message. `idd-list` suggests `/idd-plan` (`diagnosed`) or
+    `/idd-close` (`planning`) and adds no group. Every gate block prints `TYPE=` on its machine line.
   - **`idd-update` reads `## Meeting Plan` as `planning`.**
   - **Not done, on purpose**: a `meeting` sentinel in `### Complexity` — a verdict the meeting spec forbids, and
     every existing meeting Diagnosis would need migrating.

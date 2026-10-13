@@ -1075,17 +1075,33 @@ assert_eq "issue type: a value-less flag is misuse (exit 2), not a hang" "2" "$?
 IA_="$SKILLS/idd-all/SKILL.md"; IP_="$SKILLS/idd-plan/SKILL.md"; IM_="$SKILLS/idd-implement/SKILL.md"
 IL_="$SKILLS/idd-list/SKILL.md"; IU_="$SKILLS/idd-update/SKILL.md"
 assert_output_grep "idd-all: a meeting dispatch row comes before the tier rows"   '| `TYPE=meeting` · `VEXIT=0` |' "$IA_"
-assert_output_grep "idd-all: unattended meeting records the attended-plan action item" 'needs an attended /idd-plan' "$IA_"
+# verify #383 r1 (#16): a Meeting Plan is optional — the item names both next steps
+assert_output_grep "idd-all: unattended meeting action item names /idd-plan or /idd-close" 'stopped at diagnosed (unattended); next: attended /idd-plan' "$IA_"
+refute_output_grep "idd-all: no action item calls the plan a requirement"         'needs an attended /idd-plan' "$IA_"
 assert_output_grep "idd-all: Phase 4 verify is skipped for meeting"               '`TYPE=meeting` → 跳過 Phase 4' "$IA_"
 assert_output_grep "idd-all: Phase 5 push / PR is skipped for meeting"            '`TYPE=meeting` → 跳過 push 與 PR' "$IA_"
+# r1 (#9, #15): the Action item is rebuilt in Phase 6, not carried in shell state
+refute_output_grep "idd-all: no MEETING_ITEMS shell variable carried across phases" 'MEETING_ITEMS' "$IA_"
+assert_output_grep "idd-all: Phase 6 re-resolves the type for the Action item"    'if [ "$(idd_issue_type --labels "$SUB_LABELS" --body "$SUB_BODY")" = meeting ]' "$IA_"
+# r1 (#30): Phase 5 has a code guard, not only prose
+assert_output_grep "idd-all: Phase 5 bash skips a meeting issue in code"          'Phase 5 skipped (no push, no PR)' "$IA_"
+# r1 (#7, #23): the Phase 0.5 branch is unwound for a meeting issue in PR mode
+assert_output_grep "idd-all: meeting dispatch unwinds the empty Phase 0.5 branch" '→ type=meeting: unwinding the Phase 0.5 PR-mode branch' "$IA_"
+# r1 (#6, #8, #14): Phase 6 has a meeting report that claims no verify / PR
+assert_output_grep "idd-all: Phase 6 has a meeting report"                        '✓ idd-all stopped (type=meeting)' "$IA_"
+assert_output_grep "idd-all: the terminal-phase rule names its meeting exception" 'Verify is the terminal phase regardless of mode**（meeting issue 例外' "$IA_"
 n_tier_=$(grep -n '^| `0` · `0` · `Simple` |' "$IA_" | head -1 | cut -d: -f1)
 n_meet_=$(grep -n -F '| `TYPE=meeting` · `VEXIT=0` |' "$IA_" | head -1 | cut -d: -f1)
 assert_true "idd-all: the meeting row precedes the first tier row (meeting@${n_meet_:-?} < Simple@${n_tier_:-?})" "[ -n '$n_meet_' ] && [ -n '$n_tier_' ] && [ '$n_meet_' -lt '$n_tier_' ]"
 assert_output_grep "idd-plan: a meeting row in the Step 1 gate table"             '| `TYPE=meeting` · `VEXIT=0` |' "$IP_"
 assert_output_grep "idd-implement: refuses meeting with its own message"          'meeting 不走 implement' "$IM_"
-refute_output_grep "idd-implement: the meeting refusal never asks to fix the Diagnosis" 'meeting 不走 implement，要求 user 修正 Diagnosis' "$IM_"
+meet_row_=$(grep -F '| `TYPE=meeting` · `VEXIT=0` |' "$IM_")
+assert_true "idd-implement: the meeting row exists and is keyed on VEXIT=0 (r1 #19)" "[ -n \"\$meet_row_\" ]"
+refute_grep_re "idd-implement: the meeting row never asks to fix the Diagnosis (any wording, r1 #32)" '(修正|修) *Diagnosis|fix the Diagnosis' "$meet_row_"
 assert_output_grep "idd-list: meeting next action is /idd-plan while diagnosed"   '`TYPE=meeting` 且 phase `diagnosed` → `/idd-plan #N`' "$IL_"
-assert_output_grep "idd-list: meeting next action is /idd-close once a Meeting Plan exists" '已有 `## Meeting Plan` → `/idd-close #N`' "$IL_"
+assert_output_grep "idd-list: meeting next action is /idd-close in phase planning (r1 #20)" '`TYPE=meeting` 且 phase `planning` → `/idd-close #N`' "$IL_"
+assert_output_grep "idd-list: the Step 3 heading fallback reads ## Meeting Plan as planning" '`## Meeting Plan` → `planning`（#383）' "$IL_"
+assert_output_grep "idd-list: an undiagnosed meeting stays in the undiagnosed group" '歸 **undiagnosed** 組，下一步是 `/idd-diagnose #N`' "$IL_"
 assert_output_grep "idd-update: Meeting Plan is a planning row in the phase table" '| Meeting Plan | `planning` |' "$IU_"
 assert_output_grep "idd-update: the heading list names ## Meeting Plan"          '`## Meeting Plan`' "$IU_"
 # reference (task 5.1): the meeting section, its spec citation, and the sentinel rejection

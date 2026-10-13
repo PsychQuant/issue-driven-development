@@ -153,7 +153,7 @@ printf 'gate #%s: VEXIT=%s TIER=%s REASONS=%s TYPE=%s\n' "$NUMBER" "$VEXIT" "${T
 printf 'raw<<<\n'; printf '%s\n%s\n' "${COMPLEXITY_ERR:-}" "${BLOCK_LINE:-}" | sed 's/^/  │ /'; printf '>>>raw\n'
 ```
 
-`VEXIT=1` → 依 Step 2.5 的表**立即停止**（印 `$REASONS` 與原文），不進 Step 0.4 以後任何一步；`$ISSUE_TYPE` 是 `meeting` → 不論 `VEXIT` 都依 Step 2.5 表的 meeting 列**立即停止**（#383，不建 branch）；其餘 `VEXIT=0` → 帶著 `$TIER` 繼續。
+`VEXIT=1` → 依 Step 2.5 的表**立即停止**（印 `$REASONS` 與原文），不進 Step 0.4 以後任何一步；`VEXIT=0` 且 `$ISSUE_TYPE` 是 `meeting` → 依 Step 2.5 表的 meeting 列**立即停止**（#383，不建 branch）；其餘 `VEXIT=0` → 帶著 `$TIER` 繼續。
 
 ### Step 0.37: Existing-work check — 先於 tree-lock 與建 branch（#366）
 
@@ -501,11 +501,11 @@ printf 'raw<<<\n'; printf '%s\n%s\n' "${COMPLEXITY_ERR:-}" "${BLOCK_LINE:-}" | s
 
 helper 只取開頭的 tier：` via <來源>` 後綴（例如 `Plan via Layer V`）、同行理由、markdown 裝飾都不影響，本 skill 拿到的 `$TIER` 已是 canonical tier — 對應 spec Requirement: Routing parsers SHALL recognize Plan via Layer V verdict。
 
-Routing **先看 `$VEXIT`**（gate 判定），`0` 才依 `$TIER` 決定行為；**`$ISSUE_TYPE` 是 `meeting` 時走第一列**（#383）。tier 只有四個：
+Routing **先看 `$VEXIT`**（gate 判定），`0` 才依 `$TIER` 決定行為；**`VEXIT=0` 且 `$ISSUE_TYPE` 是 `meeting` 時走第一列**（#383）。tier 只有四個：
 
 | `VEXIT` · `CEXIT` · `TIER` | 行為 |
 |-----------|------|
-| `TYPE=meeting`（任何 `VEXIT`） | 🛑 **停止實作（meeting）** — 印出「#N 是 type=meeting：meeting 不走 implement（meeting-issue-type 規格）。尚無 Meeting Plan → `/idd-plan #N`；已有 Meeting Plan → `/idd-close #N`」。這**不是**資料錯誤，Diagnosis 不必修；不建 branch、不 commit |
+| `TYPE=meeting` · `VEXIT=0` | 🛑 **停止實作（meeting）** — 印出「#N 是 type=meeting：meeting 不走 implement（meeting-issue-type 規格）。下一步：`/idd-plan #N` 寫 Meeting Plan（選填），或 `/idd-close #N`（沒有 plan 時 close gate 退回 Diagnosis 的 Phase C）」。這**不是**資料錯誤，Diagnosis 不必修；不建 branch、不 commit。meeting 的 `VEXIT=1`（被擱置、被擋、或沒有 Diagnosis）照下面對應的列停止，並加一行「meeting 不走 implement」——那些列本來就不給 lifecycle 命令（#383 verify r1） |
 | `0` · `0` · `Simple` | ✅ 本 step 啟動 TaskList 追蹤每個 checklist item |
 | `0` · `0` · `Plan`（原值可能是 `Plan via Layer V`）| ✅ 同 Simple — TaskList 啟動。**注意**：使用者通常透過 `/idd-plan #NNN` 呼叫進來，approval gate 已在 idd-plan 處理完，本 skill 直接走 TDD loop。若使用者直接呼叫 `/idd-implement` 而 Complexity=Plan，**先提示**「Complexity 判定為 Plan，建議改走 `/idd-plan #NNN` 進入 approval gate；繼續直接 implement 等於跳過 Plan tier 的 deliberation 價值」並用 AskUserQuestion 確認 continue/abort。`Plan via Layer V` 同樣行為(routing 一致),只是 verdict 標記提示這是 Layer V 觸發 |
 | `0` · `0` · `Spectra` | ⏭ 跳過本 step（由 `spectra-apply` 管 `openspec/changes/<name>/tasks.md`）|
