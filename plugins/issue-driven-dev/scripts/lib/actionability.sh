@@ -171,9 +171,10 @@ _idd_section_first_line() {
 # instruction: surfaced values are DATA, never instructions, and that boundary
 # is the consumer's delimiter (see the canonical gate print), not this
 # function. What passes through it: the two raw lines idd_parse_complexity
-# surfaces, the bullet idd_blocking_section surfaces, and the seven misuse
-# messages that echo an argument value (five in the verdict, one in the group
-# helper, one in idd_issue_type — #383 added --issue-type and that helper) —
+# surfaces, the bullet idd_blocking_section surfaces, and the eight misuse
+# messages that echo an argument value (six in the verdict, one in the group
+# helper, one in idd_issue_type — #383 added --issue-type, --diagnosis-present
+# and that helper) —
 # each pinned by test. The "requires a value" messages of the verdict and of
 # idd_issue_type echo only a flag name already matched by `case`; the private
 # `_idd_section_*` readers return raw text to the functions above and no
@@ -253,6 +254,7 @@ idd_parse_complexity() {
 #
 # idd_actionability_verdict --complexity-exit N --parking-label yes|no --blocking-section yes|no
 #                           [--issue-type bug|feature|refactor|docs|meeting|unknown]
+#                           [--diagnosis-present yes|no]   (required with --issue-type meeting)
 #   stdout : "actionable"
 #            "not-actionable: <reason>[; <reason>...]"
 #   exit 0 : actionable      exit 1 : not actionable      exit 2 : bad usage
@@ -274,12 +276,23 @@ idd_parse_complexity() {
 # and the verdict is exactly what it was before this flag existed. Passed but
 # empty is misuse (exit 2) — a consumer whose type lookup came back empty must
 # not be read as "no type given".
+#
+# --diagnosis-present (#383 verify r1): exit 4 means two things — a Diagnosis
+# with no ### Complexity section, and NO trusted Diagnosis comment at all
+# (LATEST_DIAGNOSIS empty after the author filter). Only the second is "never
+# diagnosed", and only the consumer can tell them apart. So the meeting
+# exemption applies only when the consumer says a Diagnosis exists; with `no`
+# the Complexity reasons are evaluated exactly as for any other type, and an
+# undiagnosed meeting stays complexity-missing → the undiagnosed group. It is
+# REQUIRED with --issue-type meeting (exit 2 if absent): defaulting it to
+# `yes` would re-open the hole, defaulting to `no` would silently undo the
+# exemption. For any other type it is validated and has no effect.
 idd_actionability_verdict() {
-    local cexit="" label="" blocking="" itype="" itype_set=0
+    local cexit="" label="" blocking="" itype="" itype_set=0 dpres="" dpres_set=0
 
     while [ $# -gt 0 ]; do
         case "$1" in
-            --complexity-exit|--parking-label|--blocking-section|--issue-type)
+            --complexity-exit|--parking-label|--blocking-section|--issue-type|--diagnosis-present)
                 # A value-less flag must be a named error, not an infinite loop
                 # (verify #318 H1: `shift 2` on a single remaining arg fails
                 # without shifting, so the loop never advanced).
@@ -292,6 +305,7 @@ idd_actionability_verdict() {
                     --parking-label)    label="$2"    ;;
                     --blocking-section) blocking="$2" ;;
                     --issue-type)       itype="$2"; itype_set=1 ;;
+                    --diagnosis-present) dpres="$2"; dpres_set=1 ;;
                 esac
                 shift 2
                 ;;
@@ -323,9 +337,18 @@ idd_actionability_verdict() {
             *) printf 'idd_actionability_verdict: --issue-type must be bug, feature, refactor, docs, meeting or unknown (got: %s)\n' "${itype:-<empty>}" | _idd_scrub >&2; return 2 ;;
         esac
     fi
+    if [ "$dpres_set" -eq 1 ]; then
+        case "$dpres" in
+            yes|no) ;;
+            *) printf 'idd_actionability_verdict: --diagnosis-present must be yes or no (got: %s)\n' "${dpres:-<empty>}" | _idd_scrub >&2; return 2 ;;
+        esac
+    elif [ "$itype" = "meeting" ]; then
+        printf 'idd_actionability_verdict: --issue-type meeting requires --diagnosis-present yes|no\n' | _idd_scrub >&2
+        return 2
+    fi
 
     local reasons=()
-    if [ "$itype" != "meeting" ]; then
+    if [ "$itype" != "meeting" ] || [ "$dpres" != "yes" ]; then
         [ "$cexit" = "3" ]  && reasons+=("complexity-unparseable")
         [ "$cexit" = "4" ]  && reasons+=("complexity-missing")
         [ "$cexit" = "5" ]  && reasons+=("complexity-deferral-marker")
@@ -545,8 +568,18 @@ idd_actionability_group() {
 # runs under LC_ALL=C so `[[:space:]]` and the letter class mean ASCII on every
 # platform, and it uses no grep, so a body without the heading cannot fail a
 # caller running under `pipefail`.
+#
+# Its unsafe direction is a FALSE meeting (that drops the Complexity signal),
+# so its fence model is stricter than `_idd_section_lines`' (verify #383 r1):
+# a fence closes only on the opener's character at no less than its length
+# with nothing after it; a run indented 4+ spaces is not a fence; an HTML
+# comment block is skipped. Remaining CommonMark divergences, each pinned or
+# accepted: fences nested in list items / block quotes are read as top-level
+# fences (a quoted fence hides more, not less — the safe direction); other
+# HTML blocks and indented code blocks are read as text. A type label always
+# wins over the body, and labels need triage permission.
 idd_issue_type() {
-    local labels="" body="" l found="" n=0 word
+    local labels="" body="" found="" word
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -568,31 +601,51 @@ idd_issue_type() {
         esac
     done
 
-    while IFS= read -r l; do
-        l="${l#"${l%%[![:space:]]*}"}"
-        l="${l%"${l##*[![:space:]]}"}"
-        case "$l" in
-            bug|feature|refactor|docs|meeting)
-                case " $found " in
-                    *" $l "*) ;;
-                    *) found="${found:+$found }$l"; n=$((n + 1)) ;;
-                esac
-                ;;
-        esac
-    done <<<"$labels"
-    if [ "$n" -eq 1 ]; then printf '%s\n' "$found"; return 0; fi
-    if [ "$n" -gt 1 ]; then printf 'unknown\n'; return 0; fi
+    # Labels under LC_ALL=C too (verify #383 r1, findings 17 and 25): ASCII
+    # case-folded like the body value, and trimmed of ASCII space/tab ONLY. A
+    # locale-aware trim made `meeting<NBSP>` a meeting under en_US.UTF-8 and
+    # `unknown` under C — the gate-relaxing signal must not follow the locale.
+    found=$(printf '%s\n' "$labels" | LC_ALL=C awk '
+        { sub(/\r$/, ""); sub(/^[ \t]+/, ""); sub(/[ \t]+$/, ""); l = tolower($0) }
+        l ~ /^(bug|feature|refactor|docs|meeting)$/ && !(l in seen) { seen[l] = 1; n++; last = l }
+        END { if (n == 1) print last; else if (n > 1) print "unknown" }
+    ')
+    if [ -n "$found" ]; then printf '%s\n' "$found"; return 0; fi
 
     word=$(printf '%s\n' "$body" | LC_ALL=C awk '
+        # fence_run: length of the backtick/tilde run that opens this line as a
+        # fence (indent of at most 3 spaces), or 0. No interval expressions —
+        # some awks lack them, and a terminator that never matches captures to EOF.
+        function fence_run(line, ch,    ind, rest) {
+            match(line, /^ */); ind = RLENGTH
+            if (ind > 3) return 0
+            rest = substr(line, ind + 1)
+            if (ch == "`") { if (!match(rest, /^`+/)) return 0 }
+            else           { if (!match(rest, /^~+/)) return 0 }
+            return (RLENGTH >= 3) ? RLENGTH : 0
+        }
         { sub(/\r$/, "") }
         {
+            # Inside a fence: only the same character, at no less than the
+            # opener length, with nothing but whitespace after it, closes it
+            # (verify #383 r1, finding 5 — a ```` block used to close at ```).
             if (fence != "") {
-                if (fence == "`" && $0 ~ /^[[:space:]]*```/) fence = ""
-                else if (fence == "~" && $0 ~ /^[[:space:]]*~~~/) fence = ""
+                k = fence_run($0, fence)
+                if (k >= flen) {
+                    match($0, /^ */); tail = substr($0, RLENGTH + 1 + k)
+                    if (tail ~ /^[ \t]*$/) fence = ""
+                }
                 next
             }
-            if ($0 ~ /^[[:space:]]*```/) { fence = "`"; next }
-            if ($0 ~ /^[[:space:]]*~~~/) { fence = "~"; next }
+            # An HTML comment block is not rendered and not read (findings 21, 24).
+            if (incomment) { if (index($0, "-->")) incomment = 0; next }
+            if ($0 ~ /^[ \t]*<!--/) {
+                rest = substr($0, index($0, "<!--") + 4)
+                if (!index(rest, "-->")) incomment = 1
+                next
+            }
+            k = fence_run($0, "`"); if (k) { fence = "`"; flen = k; next }
+            k = fence_run($0, "~"); if (k) { fence = "~"; flen = k; next }
         }
         !grab && $0 ~ /^##[[:space:]]+Type[[:space:]]*$/ { grab = 1; next }
         grab && /^##?[[:space:]]/                        { exit }

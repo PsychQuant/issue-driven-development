@@ -50,6 +50,8 @@ meeting 類型（#57）比 gate 早三個月上線，規格明定 meeting 不產
 
 理由：meeting 也可能被人擱置或卡在外部，那兩個訊號的語意對 meeting 一樣成立；只有 complexity 這個訊號依規格對 meeting 不存在。
 
+**verify r1 修正：豁免只在 Diagnosis 存在時成立。** exit 4 同時代表「Diagnosis 沒有 `### Complexity`」與「完全沒有受信任的 Diagnosis」。第一版把兩者一起略過，於是從未診斷過的 meeting 也被判為可動：`idd-plan` 會在沒有 Diagnosis 時寫 Meeting Plan，`idd-list` 會把新開的 meeting 移出 *Needs diagnosis*。verdict 因此新增 `--diagnosis-present yes|no`，由 consumer 依 `LATEST_DIAGNOSIS`（已過作者過濾）設定；`--issue-type meeting` 時必填，兩個預設值都不安全（`yes` 重開這個洞，`no` 讓豁免靜默失效）。非 meeting 時只驗證值、不影響判定。
+
 ### 不在 Complexity 寫 meeting 哨兵值
 
 否決選項 (c)：讓 meeting Diagnosis 在 `### Complexity` 寫 `meeting`。它違反 meeting-issue-type 規格「不產生判定」，而且既有的 meeting Diagnosis 都要遷移，與「不需遷移」規格衝突。
@@ -59,6 +61,8 @@ meeting 類型（#57）比 gate 早三個月上線，規格明定 meeting 不產
 `idd-all` 遇到 meeting 時：attended 送 meeting 版 `/idd-plan`；unattended 不跑 `/idd-plan`，停在 diagnosed，並在 Phase 6 的 Action items 記一條「meeting 需要有人在場跑 /idd-plan」。兩種模式都不進 implement、verify，也不開 PR。
 
 理由：Meeting Plan 的價值是人核准的審議紀錄，unattended 沒有人可以核准。這是本 change 未經人確認的假設，已寫進 proposal，可以挑戰；若要改，只需改 `idd-all` 的分派列。
+
+verify r1（#16）指出兩點，記在這裡供裁決：預設設定下 `idd-all` 一律是 unattended，所以 meeting 預設永遠不會自動走 `/idd-plan`；而 meeting 的 close gate 在沒有 plan 時會退回 Diagnosis 的 Phase C，plan 是選填。所以 Action item 與 `idd-implement` 的訊息改寫成「`/idd-plan` 或 `/idd-close`」，不再把 plan 寫成必要步驟；停在 diagnosed 的行為不變，留給 maintainer 決定。
 
 ### idd-list 不新增 meeting 群組
 

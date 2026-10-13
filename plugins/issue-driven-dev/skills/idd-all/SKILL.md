@@ -579,13 +579,16 @@ if [ -n "$BLOCK_LINE" ]; then BLOCKING=yes; else BLOCKING=no; fi
 # 2.5 issue type（#383）—— 同一支 helper 解析（label 優先、其次 body `## Type`）。meeting 不評 Complexity 訊號，parking-lot 與 Blocking 照評
 ISSUE_TYPE=$(idd_issue_type --labels "$(jq -r '[.labels[].name] | join("\n")' <<<"$ISSUE_JSON")" --body "$(jq -r '.body // ""' <<<"$ISSUE_JSON")") \
     || { echo "FATAL: gate #$N: idd_issue_type misuse — gate not evaluated" >&2; exit 1; }
+# 2.6 有沒有受信任的 Diagnosis（#383 verify r1）—— exit 4 同時代表「Diagnosis 沒有 ### Complexity」與「完全沒有 Diagnosis」；
+#     只有這裡分得出來。meeting 的豁免只在 Diagnosis 存在時成立
+if [ -n "$LATEST_DIAGNOSIS" ]; then HAS_DIAGNOSIS=yes; else HAS_DIAGNOSIS=no; fi
 
 # 3. 條件式捕捉 —— `set -euo pipefail` 下唯一不會被 exit 3/4/5 終止的寫法（verify #318 HIGH）
 if TIER=$(idd_parse_complexity "$LATEST_DIAGNOSIS" 2>/dev/null); then CEXIT=0; else CEXIT=$?; fi
 COMPLEXITY_ERR=$(idd_parse_complexity "$LATEST_DIAGNOSIS" 2>&1 >/dev/null) || true   # 3/5 回 `<reason>: <原值>`、4 回 `missing-complexity`
 
 # 4. 真的呼叫 gate。exit 2 是 API 誤用（本 skill 的 bug），不得與 not-actionable 混同
-if VERDICT=$(idd_actionability_verdict --complexity-exit "$CEXIT" --parking-label "$HAS_PARKING" --blocking-section "$BLOCKING" --issue-type "$ISSUE_TYPE" 2>&1); then VEXIT=0; else VEXIT=$?; fi
+if VERDICT=$(idd_actionability_verdict --complexity-exit "$CEXIT" --parking-label "$HAS_PARKING" --blocking-section "$BLOCKING" --issue-type "$ISSUE_TYPE" --diagnosis-present "$HAS_DIAGNOSIS" 2>&1); then VEXIT=0; else VEXIT=$?; fi
 case "$VEXIT" in
     0) REASONS="" ;;                             # actionable → 依下表以 $TIER 分派（cluster 逐張跑時不得殘留上一張的 reasons）
     1) REASONS="${VERDICT#not-actionable: }" ;;  # withheld  → 下表 `VEXIT=1` 各列；不給任何 lifecycle 命令

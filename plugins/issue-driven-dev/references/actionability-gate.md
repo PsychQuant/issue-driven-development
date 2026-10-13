@@ -151,21 +151,24 @@ A `meeting` issue is a deliberation record, not a code task. Its spec ([`openspe
 
 The type is therefore a gate input, resolved by **one** helper, `idd_issue_type --labels <newline-separated names> --body <text>` (contract 4 in `scripts/lib/actionability.sh`). Its order is `idd-diagnose` Step 1's: a type label first, then the body's `## Type` heading, the label wins a conflict, and **no signal means `unknown` — never `meeting`**. Defaulting the other way would let any unlabelled issue skip the Complexity signal.
 
-`idd_actionability_verdict` takes it as an optional `--issue-type <value>`:
+`idd_actionability_verdict` takes it as an optional `--issue-type <value>`, together with `--diagnosis-present yes|no`:
 
-| `--issue-type` | Complexity signal | `parking-lot` label | `### Blocking` |
+| `--issue-type` · `--diagnosis-present` | Complexity signal | `parking-lot` label | `### Blocking` |
 |---|---|---|---|
-| omitted, or any value other than `meeting` | evaluated exactly as before — the frozen corpus runs without the flag and its verdicts are unchanged | evaluated | evaluated |
-| `meeting` | `--complexity-exit` is still required and validated (0 / 3 / 4 / 5), but it produces **no reason** | evaluated | evaluated |
-| passed with an empty value | exit 2 (misuse) | — | — |
+| omitted, or any value other than `meeting` (`--diagnosis-present` validated, no effect) | evaluated exactly as before — the frozen corpora run without the flags and their verdicts are unchanged | evaluated | evaluated |
+| `meeting` · `yes` | `--complexity-exit` is still required and validated (0 / 3 / 4 / 5), but it produces **no reason** | evaluated | evaluated |
+| `meeting` · `no` | evaluated as for any other type — an undiagnosed meeting is `complexity-missing`, grouped **undiagnosed** | evaluated | evaluated |
+| `meeting` without `--diagnosis-present`; either flag passed empty or out of domain | exit 2 (misuse) | — | — |
 
-So a meeting issue is withheld only by the two signals whose meaning holds for it — a person parked it, or it waits on something — and the reason vocabulary above stays closed at five values. The consumers then dispatch on `TYPE=meeting` before any tier row: `idd-all` sends it to the meeting-adapted `/idd-plan` when attended and stops at `diagnosed` with an Action item when unattended; `idd-plan` writes the `## Meeting Plan`; `idd-implement` refuses with a meeting-specific message; `idd-list` suggests `/idd-plan` or `/idd-close`. Every gate block prints the type on its machine line (`... REASONS=%s TYPE=%s`).
+**Why the second flag (verify r1).** Exit 4 means two things: a Diagnosis with no `### Complexity` section, and **no trusted Diagnosis at all** (`LATEST_DIAGNOSIS` empty after the author filter). Only the second is "never diagnosed", and only the consumer can tell them apart — it sets `HAS_DIAGNOSIS` from `LATEST_DIAGNOSIS` right after resolving the type. The first cut dropped exit 4 for every meeting issue, so a meeting issue nobody had diagnosed was actionable: `idd-plan` would write a Meeting Plan with no Diagnosis behind it, and `idd-list` moved every freshly filed meeting out of *Needs diagnosis*. The flag is required with `meeting` because both defaults are wrong: `yes` re-opens that hole, `no` silently undoes the exemption.
+
+So a diagnosed meeting issue is withheld only by the two signals whose meaning holds for it — a person parked it, or it waits on something — and the reason vocabulary above stays closed at five values. The consumers then dispatch on `TYPE=meeting` before any tier row: `idd-all` sends it to the meeting-adapted `/idd-plan` when attended and stops at `diagnosed` with an Action item when unattended; `idd-plan` writes the `## Meeting Plan`; `idd-implement` refuses with a meeting-specific message; `idd-list` suggests `/idd-plan` or `/idd-close`. Every gate block prints the type on its machine line (`... REASONS=%s TYPE=%s`).
 
 There is **no `meeting` sentinel in Complexity**. Writing `meeting` into the `### Complexity` line would have needed no new input, but it is a verdict the meeting spec forbids, and every existing meeting Diagnosis would have to be rewritten — against this gate's own "existing diagnoses require no migration". The type already lives in the label and the body; the gate reads it there.
 
 ## Default on non-routable Complexity — conservative, and always surfaced
 
-A consumer whose `### Complexity` value is non-routable **for any reason** SHALL report the issue as **not actionable** and SHALL **surface the original unmodified line** to the operator — except for a `meeting` issue, whose Complexity signal the gate does not evaluate (previous section).
+A consumer whose `### Complexity` value is non-routable **for any reason** SHALL report the issue as **not actionable** and SHALL **surface the original unmodified line** to the operator — except for a `meeting` issue that has a trusted Diagnosis, whose Complexity signal the gate does not evaluate (previous section). A meeting issue with no Diagnosis is not excepted.
 
 Three things are forbidden:
 
@@ -233,6 +236,9 @@ if [ -n "$BLOCK_LINE" ]; then BLOCKING=yes; else BLOCKING=no; fi
 # 2.5 issue type（#383）—— 同一支 helper 解析（label 優先、其次 body `## Type`）。meeting 不評 Complexity 訊號，parking-lot 與 Blocking 照評
 ISSUE_TYPE=$(idd_issue_type --labels "$(jq -r '[.labels[].name] | join("\n")' <<<"$ISSUE_JSON")" --body "$(jq -r '.body // ""' <<<"$ISSUE_JSON")") \
     || { echo "FATAL: gate #$N: idd_issue_type misuse — gate not evaluated" >&2; exit 1; }
+# 2.6 有沒有受信任的 Diagnosis（#383 verify r1）—— exit 4 同時代表「Diagnosis 沒有 ### Complexity」與「完全沒有 Diagnosis」；
+#     只有這裡分得出來。meeting 的豁免只在 Diagnosis 存在時成立
+if [ -n "$LATEST_DIAGNOSIS" ]; then HAS_DIAGNOSIS=yes; else HAS_DIAGNOSIS=no; fi
 
 # 3. Conditional capture — the only shape that survives `set -euo pipefail`.
 #    A bare TIER=$(idd_parse_complexity …) aborts the caller on exit 3/4/5 and
@@ -242,7 +248,7 @@ COMPLEXITY_ERR=$(idd_parse_complexity "$LATEST_DIAGNOSIS" 2>&1 >/dev/null) || tr
 
 # 4. The gate — actually call it. Exit 2 is API misuse (a bug in THIS consumer),
 #    never "not actionable"; do not fold it into the withheld branch.
-if VERDICT=$(idd_actionability_verdict --complexity-exit "$CEXIT" --parking-label "$HAS_PARKING" --blocking-section "$BLOCKING" --issue-type "$ISSUE_TYPE" 2>&1); then VEXIT=0; else VEXIT=$?; fi
+if VERDICT=$(idd_actionability_verdict --complexity-exit "$CEXIT" --parking-label "$HAS_PARKING" --blocking-section "$BLOCKING" --issue-type "$ISSUE_TYPE" --diagnosis-present "$HAS_DIAGNOSIS" 2>&1); then VEXIT=0; else VEXIT=$?; fi
 case "$VEXIT" in
     0) REASONS="" ;;                                       # actionable → dispatch on "$TIER" (reset: a cluster loop must not carry the previous issue's reasons)
     1) REASONS="${VERDICT#not-actionable: }" ;;            # withheld  → surface "$REASONS" + "$COMPLEXITY_ERR" / "$BLOCK_LINE"; no lifecycle command

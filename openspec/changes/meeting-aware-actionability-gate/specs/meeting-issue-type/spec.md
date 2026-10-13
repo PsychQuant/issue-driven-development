@@ -2,7 +2,7 @@
 
 ### Requirement: Routing consumers honour the meeting type
 
-For an issue with `type=meeting`, the routing consumers `idd-all`, `idd-plan`, `idd-implement`, and `idd-list` SHALL pass the resolved issue type to the actionability gate (see the actionability-gate capability) and SHALL route on the type before any complexity tier. `/idd-all` SHALL dispatch an actionable meeting issue to the meeting-adapted `/idd-plan` when its interaction mode is attended, and SHALL stop at the diagnosed state and record an action item stating that the meeting issue needs an attended `/idd-plan` when its interaction mode is unattended; in neither mode SHALL `/idd-all` invoke `/idd-implement` or `/idd-verify`, push a branch, or open a pull request for a meeting issue. `/idd-implement` SHALL refuse a meeting issue with a message that names the meeting type and points to `/idd-plan` or `/idd-close`, and SHALL NOT instruct the user to correct the Diagnosis. `/idd-list` SHALL suggest `/idd-plan` as the next action for an actionable meeting issue in the `diagnosed` phase and `/idd-close` for one that already has a Meeting Plan.
+For an issue with `type=meeting`, the routing consumers `idd-all`, `idd-plan`, `idd-implement`, and `idd-list` SHALL pass the resolved issue type, and whether a trusted Diagnosis comment exists, to the actionability gate (see the actionability-gate capability) and SHALL route on the type before any complexity tier. `/idd-all` SHALL dispatch an actionable meeting issue to the meeting-adapted `/idd-plan` when its interaction mode is attended, and SHALL stop at the diagnosed state and record an action item stating that it stopped there and that the next step is an attended `/idd-plan` or `/idd-close` when its interaction mode is unattended; a Meeting Plan is optional, because the meeting close gate falls back to the Diagnosis Phase C when no plan stage ran. In neither mode SHALL `/idd-all` invoke `/idd-implement` or `/idd-verify`, push a branch, or open a pull request for a meeting issue; in pull-request mode it SHALL return to the default branch and delete the empty feature branch it created before the type was known, and its final report SHALL NOT claim a verification, implementation commits or a pull request. `/idd-implement` SHALL refuse an actionable meeting issue with a message that names the meeting type and points to `/idd-plan` or `/idd-close`, and SHALL NOT instruct the user to correct the Diagnosis; a meeting issue the gate withholds is handled by the parked or blocked rules. `/idd-list` SHALL suggest `/idd-plan` as the next action for an actionable meeting issue in the `diagnosed` phase and `/idd-close` for one in the `planning` phase, which `/idd-update` sets when it reads a Meeting Plan.
 
 #### Scenario: attended orchestration plans a meeting issue
 
@@ -14,11 +14,12 @@ For an issue with `type=meeting`, the routing consumers `idd-all`, `idd-plan`, `
 
 - **WHEN** `/idd-all` runs in unattended mode on an actionable `type=meeting` issue
 - **THEN** it does not run `/idd-plan`, `/idd-implement`, or `/idd-verify`
-- **AND** its final report lists an action item saying the meeting issue needs an attended `/idd-plan`
+- **AND** its final report lists an action item saying it stopped at diagnosed and naming an attended `/idd-plan` or `/idd-close` as the next step
+- **AND** its final report claims no verification, no implementation commits and no pull request
 
 #### Scenario: implement refuses a meeting issue without blaming the Diagnosis
 
-- **WHEN** `/idd-implement` is invoked on a `type=meeting` issue
+- **WHEN** `/idd-implement` is invoked on an actionable `type=meeting` issue
 - **THEN** it stops before creating a branch or committing
 - **AND** its message names the meeting type and points to `/idd-plan` or `/idd-close` rather than asking for the Diagnosis to be corrected
 
@@ -26,7 +27,12 @@ For an issue with `type=meeting`, the routing consumers `idd-all`, `idd-plan`, `
 
 - **WHEN** `/idd-list` shows an actionable `type=meeting` issue in the `diagnosed` phase
 - **THEN** the suggested next action is `/idd-plan`
-- **AND** when the issue already has a `## Meeting Plan` comment the suggested next action is `/idd-close`
+- **AND** when the issue is in the `planning` phase because a `## Meeting Plan` comment was recorded, the suggested next action is `/idd-close`
+
+#### Scenario: an undiagnosed meeting issue still needs diagnosis
+
+- **WHEN** `/idd-list` shows a `type=meeting` issue that has no trusted Diagnosis comment
+- **THEN** it appears in the undiagnosed group with `/idd-diagnose` as the next action
 
 ### Requirement: Meeting Plan advances the phase to planning
 
