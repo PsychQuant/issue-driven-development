@@ -145,9 +145,27 @@ The three complexity reasons are kept distinct **because the human response diff
 
 > ⚠ Anyone editing `- [~]` handling must check `idd-close` first. Treating it as unused because routing ignores it will break the close gate.
 
+### The issue type — meeting drops the Complexity signal only (#383)
+
+A `meeting` issue is a deliberation record, not a code task. Its spec ([`openspec/specs/meeting-issue-type/spec.md`](../../../openspec/specs/meeting-issue-type/spec.md)) forbids a `Simple` / `Plan` / `Spectra` verdict, so a meeting Diagnosis legitimately has a `### Complexity` line that is a sentence (exit 3) or no section at all (exit 4). Before #383 the gate had no way to know that: every meeting issue came back `complexity-unparseable` or `complexity-missing`, and `idd-all` / `idd-plan` told the operator to "fix the Diagnosis" that was correct.
+
+The type is therefore a gate input, resolved by **one** helper, `idd_issue_type --labels <newline-separated names> --body <text>` (contract 4 in `scripts/lib/actionability.sh`). Its order is `idd-diagnose` Step 1's: a type label first, then the body's `## Type` heading, the label wins a conflict, and **no signal means `unknown` — never `meeting`**. Defaulting the other way would let any unlabelled issue skip the Complexity signal.
+
+`idd_actionability_verdict` takes it as an optional `--issue-type <value>`:
+
+| `--issue-type` | Complexity signal | `parking-lot` label | `### Blocking` |
+|---|---|---|---|
+| omitted, or any value other than `meeting` | evaluated exactly as before — the frozen corpus runs without the flag and its verdicts are unchanged | evaluated | evaluated |
+| `meeting` | `--complexity-exit` is still required and validated (0 / 3 / 4 / 5), but it produces **no reason** | evaluated | evaluated |
+| passed with an empty value | exit 2 (misuse) | — | — |
+
+So a meeting issue is withheld only by the two signals whose meaning holds for it — a person parked it, or it waits on something — and the reason vocabulary above stays closed at five values. The consumers then dispatch on `TYPE=meeting` before any tier row: `idd-all` sends it to the meeting-adapted `/idd-plan` when attended and stops at `diagnosed` with an Action item when unattended; `idd-plan` writes the `## Meeting Plan`; `idd-implement` refuses with a meeting-specific message; `idd-list` suggests `/idd-plan` or `/idd-close`. Every gate block prints the type on its machine line (`... REASONS=%s TYPE=%s`).
+
+There is **no `meeting` sentinel in Complexity**. Writing `meeting` into the `### Complexity` line would have needed no new input, but it is a verdict the meeting spec forbids, and every existing meeting Diagnosis would have to be rewritten — against this gate's own "existing diagnoses require no migration". The type already lives in the label and the body; the gate reads it there.
+
 ## Default on non-routable Complexity — conservative, and always surfaced
 
-A consumer whose `### Complexity` value is non-routable **for any reason** SHALL report the issue as **not actionable** and SHALL **surface the original unmodified line** to the operator.
+A consumer whose `### Complexity` value is non-routable **for any reason** SHALL report the issue as **not actionable** and SHALL **surface the original unmodified line** to the operator — except for a `meeting` issue, whose Complexity signal the gate does not evaluate (previous section).
 
 Three things are forbidden:
 

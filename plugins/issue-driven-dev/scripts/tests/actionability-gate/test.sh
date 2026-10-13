@@ -1000,5 +1000,10 @@ assert_output_grep "idd-list: meeting next action is /idd-plan while diagnosed" 
 assert_output_grep "idd-list: meeting next action is /idd-close once a Meeting Plan exists" '已有 `## Meeting Plan` → `/idd-close #N`' "$IL_"
 assert_output_grep "idd-update: Meeting Plan is a planning row in the phase table" '| Meeting Plan | `planning` |' "$IU_"
 assert_output_grep "idd-update: the heading list names ## Meeting Plan"          '`## Meeting Plan`' "$IU_"
+# reference (task 5.1): the meeting section, its spec citation, and the sentinel rejection
+assert_output_grep "reference: a section on the issue type input (#383)"        '### The issue type — meeting drops the Complexity signal only' "$REF"
+assert_output_grep "reference: cites the meeting-issue-type spec"                'openspec/specs/meeting-issue-type/spec.md' "$REF"
+assert_output_grep "reference: states why there is no meeting sentinel in Complexity" 'no `meeting` sentinel' "$REF"
+assert_output_grep "reference: the non-routable default names its meeting exception" 'except for a `meeting` issue' "$REF"
 
 print_summary "actionability-gate"

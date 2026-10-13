@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.1] - 2026-10-14
+
+### Fixed
+
+- **A `meeting` issue is no longer withheld by the actionability gate as `complexity-unparseable` (#383)**
+  `idd-diagnose`'s meeting branch (v2.93.0) emits no `Simple` / `Plan` / `Spectra` verdict by design, but the
+  gate (3.1.0, #316) treated every non-tier `### Complexity` as a defect. Every meeting issue therefore stopped in
+  `idd-all` Phase 2 and `idd-plan` Step 1 with "fix the Diagnosis", although the Diagnosis was correct.
+  - **The type is a gate input, resolved by one helper.** `idd_issue_type --labels --body` follows
+    `idd-diagnose` Step 1: type label first, then the body's `## Type`, label wins a conflict, no signal is
+    `unknown` (never `meeting`).
+  - **`idd_actionability_verdict --issue-type meeting` drops only the Complexity signal.** `parking-lot` and
+    `### Blocking` still withhold a meeting issue. Without the flag the verdict is unchanged; the frozen corpus
+    runs without it.
+  - **Consumers dispatch on `TYPE=meeting` before any tier.** `idd-all`: attended → meeting `/idd-plan`;
+    unattended → stops at `diagnosed` with an Action item; never implement, verify or PR. `idd-plan` writes the
+    Meeting Plan. `idd-implement` refuses with a meeting message. `idd-list` suggests `/idd-plan` or
+    `/idd-close` and adds no group. Every gate block prints `TYPE=` on its machine line.
+  - **`idd-update` reads `## Meeting Plan` as `planning`.**
+  - **Not done, on purpose**: a `meeting` sentinel in `### Complexity` — a verdict the meeting spec forbids, and
+    every existing meeting Diagnosis would need migrating.
+
 ## [3.3.0] - 2026-10-07
 
 ### Added
