@@ -987,7 +987,7 @@ while IFS= read -r row; do
   if [ -n "$(idd_blocking_section "$(cs_body "$(jq -r '.blocking // "- (none)"' <<<"$row")")")" ]; then hb=yes; else hb=no; fi
   idd_parse_complexity "$(synth_body "$raw" "$fenced" "$strategy")" >/dev/null 2>&1; pexit=$?
   base=$(idd_actionability_verdict --complexity-exit "$pexit" --parking-label "$has_label" --blocking-section "$hb" 2>/dev/null)
-  for t_ in bug unknown; do
+  for t_ in bug feature refactor docs unknown; do
     got=$(idd_actionability_verdict --complexity-exit "$pexit" --parking-label "$has_label" \
             --blocking-section "$hb" --issue-type "$t_" 2>/dev/null)
     assert_eq "#$num: --issue-type $t_ leaves the verdict unchanged" "$base" "$got"
@@ -1007,7 +1007,7 @@ while IFS= read -r row; do
   raw=$(jq -r 'if .complexity_raw == null then "__NULL__" else .complexity_raw end' <<<"$row")
   idd_parse_complexity "$(synth_body "$raw" 0)" >/dev/null 2>&1; pexit=$?
   base=$(idd_actionability_verdict --complexity-exit "$pexit" --parking-label no --blocking-section no 2>/dev/null)
-  for t_ in bug unknown; do for dp_ in yes no; do
+  for t_ in bug feature refactor docs unknown; do for dp_ in yes no; do
     reg_total=$((reg_total + 1))
     got=$(idd_actionability_verdict --complexity-exit "$pexit" --parking-label no --blocking-section no --issue-type "$t_" --diagnosis-present "$dp_" 2>/dev/null)
     if [ "$got" = "$base" ]; then reg_ok=$((reg_ok + 1)); else fail "corpus-complexity #$num" "--issue-type $t_ --diagnosis-present $dp_ changed '$base' to '$got'"; fi
@@ -1017,14 +1017,14 @@ while IFS= read -r row; do
   num=$(jq -r '.number' <<<"$row")
   if [ -n "$(idd_blocking_section "$(jq -r '.body' <<<"$row")")" ]; then hb=yes; else hb=no; fi
   base=$(idd_actionability_verdict --complexity-exit 0 --parking-label no --blocking-section "$hb" 2>/dev/null)
-  for t_ in bug unknown; do for dp_ in yes no; do
+  for t_ in bug feature refactor docs unknown; do for dp_ in yes no; do
     reg_total=$((reg_total + 1))
     got=$(idd_actionability_verdict --complexity-exit 0 --parking-label no --blocking-section "$hb" --issue-type "$t_" --diagnosis-present "$dp_" 2>/dev/null)
     if [ "$got" = "$base" ]; then reg_ok=$((reg_ok + 1)); else fail "corpus-blocking #$num" "--issue-type $t_ --diagnosis-present $dp_ changed '$base' to '$got'"; fi
   done; done
 done < <(jq -c '.rows[]' "$HERE/fixtures/corpus-blocking.json")
 assert_eq "regression: corpus-complexity + corpus-blocking unchanged under every non-meeting type ($reg_ok/$reg_total)" "$reg_total" "$reg_ok"
-assert_eq "regression: (159 + 55) rows × 4 flag combinations" "856" "$reg_total"
+assert_eq "regression: (159 + 55) rows × 5 non-meeting types × 2 --diagnosis-present values" "2140" "$reg_total"
 
 # ── #383: idd_issue_type — the order of /idd-diagnose Step 1, one implementation ─
 # Values from the spec's resolution table and scenarios.

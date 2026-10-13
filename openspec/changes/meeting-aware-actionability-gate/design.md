@@ -89,7 +89,7 @@ meeting 判定為 actionable 時，`idd-list` 照常列在 actionable 區，只�
   - label 中恰好有一個 IDD type 名稱 → 回該值；有多個不同的 IDD type → 回 `unknown`
   - label 中沒有 IDD type → 讀 body 中位於 code fence 之外、行首為 `## Type` 的標題，取其後第一個非空行的開頭英文字（小寫比對）；是 IDD type 就回該值
   - 都沒有 → `unknown`
-- `idd_actionability_verdict` 新增 `--issue-type <bug|feature|refactor|docs|meeting|unknown>`（選填）
+- `idd_actionability_verdict` 新增 `--issue-type <bug|feature|refactor|docs|meeting|unknown>`（選填）與 `--diagnosis-present <yes|no>`（`--issue-type meeting` 時必填；其他 type 只驗證、不影響判定；verify r1 加入）
 - 呼叫端取得 labels 的方式：`jq -r '[.labels[].name] | join("\n")'`，來源是 gate block 已經抓好的 `ISSUE_JSON`
 
 **Failure modes**
@@ -101,7 +101,8 @@ meeting 判定為 actionable 時，`idd-list` 照常列在 actionable 區，只�
 **Acceptance criteria**
 
 - `scripts/tests/actionability-gate/test.sh` 全數通過，包括新加的 meeting 與 type 解析 assertion
-- 三份既有 fixture 在不帶 `--issue-type` 時判定逐筆不變
+- 三份既有 fixture 在不帶 `--issue-type`、或帶任何非 meeting 的 type（含 `--diagnosis-present yes|no`）時判定逐筆不變
+- `--issue-type meeting` 但沒有 `--diagnosis-present`、或其值為空或不是 `yes`／`no` → stderr 具名錯誤、exit 2
 - 新 fixture `meeting-routing.json` 的每一列判定與預期相同
 - 四份 gate block 逐 byte 相同的既有 assertion 仍通過
 

@@ -101,6 +101,44 @@ When a `### Complexity` value cannot be routed for any reason, the system SHALL 
 - **THEN** no complexity reason is reported for it
 - **AND** a `meeting` issue with no trusted Diagnosis comment is reported with reason `complexity-missing`
 
+### Requirement: Single shared implementation of parsing and verdict
+
+Complexity parsing and actionability verdict logic SHALL exist as one shared implementation. Every consumer that routes on `### Complexity` — `idd-list`, `idd-all`, `idd-implement`, and `idd-plan` — SHALL invoke that shared implementation rather than embedding its own parsing. The verdict reason vocabulary SHALL be the closed set `complexity-unparseable`, `complexity-missing`, `complexity-deferral-marker`, `parking-lot-label`, `blocking-nonempty`. When the shared implementation is unavailable, a consumer SHALL fail loudly and name the missing path rather than degrade to a private parsing path. Consumers SHALL agree on every input, including a diagnosed `meeting` issue, whose Complexity signal the shared implementation does not evaluate (see "Actionability gate evaluates three signals disjunctively").
+
+#### Scenario: All routing consumers agree on the same input
+
+- **WHEN** the same Diagnosis comment containing `Simple when triggered` is evaluated by each routing consumer for an issue that is not a diagnosed `meeting` issue
+- **THEN** every consumer reports the value as non-routable under reason `complexity-deferral-marker`
+- **AND** no consumer dispatches the issue to a lifecycle command, even though the tier prefix `Simple` is itself well-formed
+
+#### Scenario: All routing consumers agree on a diagnosed meeting issue
+
+- **WHEN** the same Diagnosis comment containing `Plan when triggered` is evaluated by each routing consumer for a diagnosed `meeting` issue with no `parking-lot` label and an empty `### Blocking` section
+- **THEN** every consumer reports the issue as actionable with no complexity reason
+- **AND** every consumer routes it on the meeting type rather than on any tier
+
+#### Scenario: Missing helper fails loudly
+
+- **WHEN** a consumer invokes the shared implementation and the implementation file is absent
+- **THEN** the consumer reports an error naming the missing path
+- **AND** the consumer does not fall back to a private parsing path
+
+### Requirement: Existing diagnoses require no migration
+
+Existing Diagnosis comments SHALL NOT be rewritten, and no label SHALL be backfilled, in order for the gate to produce correct verdicts on them. The extraction and deferral rules SHALL be validated against the repository's full diagnosis corpus, and that validation SHALL be a regression test rather than a one-off check. The corpus is evaluated without an issue type, and therefore under the rules for an issue that is not a diagnosed `meeting` issue; supplying any non-meeting issue type SHALL NOT change a corpus verdict.
+
+#### Scenario: Full corpus produces correct verdicts unmodified
+
+- **WHEN** the gate evaluates every existing Diagnosis comment in the repository without an issue type, or with any issue type other than `meeting`
+- **THEN** every value carrying a valid tier without deferral vocabulary yields that tier
+- **AND** every value carrying deferral vocabulary is withheld with reason `complexity-deferral-marker`
+- **AND** no Diagnosis comment content is modified
+
+#### Scenario: Fixture reflects real shapes rather than a hypothesis-confirming sample
+
+- **WHEN** the regression fixture is reviewed
+- **THEN** it contains at least three real-corpus cases each of bare tier, tier with same-line rationale, decorated tier, and deferral vocabulary
+
 ## ADDED Requirements
 
 ### Requirement: Issue type resolution is part of the shared implementation
