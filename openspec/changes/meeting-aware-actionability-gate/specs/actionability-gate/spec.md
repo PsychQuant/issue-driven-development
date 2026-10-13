@@ -48,13 +48,50 @@ The system SHALL determine whether a diagnosed issue is actionable by evaluating
 - **WHEN** the gate is called without an issue type on any row of the existing frozen fixtures
 - **THEN** every verdict and reason list is identical to the result recorded before this change
 
+### Requirement: Complexity tier extraction tolerates trailing rationale
+
+The system SHALL extract the routing tier from the `### Complexity` field by (1) stripping leading and trailing markdown decoration, (2) requiring the stripped value to **begin with** one of `Simple`, `Plan`, `Spectra`, or `SDD-warranted` (longest match first, so `SDD-warranted` is not read as a non-tier), and (3) taking that leading tier as the extracted value. Any further text on the value line — same-line rationale, parenthetical explanation, or a ` via <source>` provenance suffix — SHALL NOT prevent tier extraction. Trailing rationale is the producer's normal writing style: in a corpus of 159 real diagnoses in this repository, 71.7% of values are not a bare tier (23.3% decorated, 41.5% carry same-line rationale, 0.6% a provenance suffix) and only 5.7% express deferral; a closed domain would have wrongly refused 41.5% of them (66 of 159). Extraction does not depend on the issue type; whether a non-routable value contributes a reason to the verdict is decided by the gate, which does not evaluate the Complexity signal of a diagnosed `meeting` issue (see "Actionability gate evaluates three signals disjunctively").
+
+#### Scenario: Bare tier is extracted
+
+- **WHEN** the value is `Spectra`
+- **THEN** the extracted tier is `Spectra`
+
+#### Scenario: Same-line rationale does not block extraction
+
+- **WHEN** the value is `Spectra（opt-out → 直接 propose）`
+- **THEN** the extracted tier is `Spectra`
+- **AND** the value is treated as routable
+
+#### Scenario: Markdown decoration is stripped
+
+- **WHEN** the value is `**Plan**`
+- **THEN** the extracted tier is `Plan`
+
+#### Scenario: Provenance suffix is stripped
+
+- **WHEN** the value is `Plan via Layer V`
+- **THEN** the extracted tier is `Plan`
+
+#### Scenario: Non-tier prefix is not routable
+
+- **WHEN** the value is `移入 discussion list` on an issue that is not a diagnosed `meeting` issue
+- **THEN** no tier is extracted
+- **AND** the reason reported is `complexity-unparseable`
+
+#### Scenario: Non-tier prefix on a diagnosed meeting issue contributes no reason
+
+- **WHEN** the value is `（不適用）type=meeting 在 complexity 評估前分流` on a diagnosed `meeting` issue
+- **THEN** no tier is extracted
+- **AND** the gate reports no `complexity-unparseable` reason for it
+
 ### Requirement: Deferral vocabulary withholds routing under its own reason
 
 The system SHALL scan the **entire** `### Complexity` value — not only the text following the tier — for deferral vocabulary, and SHALL withhold the issue from routing when any is found, even though the tier prefix is valid. This condition SHALL carry the distinct reason `complexity-deferral-marker`, separate from `complexity-unparseable` and `complexity-missing`, because the three call for different human responses: an unparseable value is a data defect to correct, a missing section is a diagnosis that never ran, and a deferral marker is a legitimate state requiring no repair. The deferral vocabulary SHALL NOT be treated as a closed enumeration — it is a high-precision heuristic, and the `parking-lot` label remains the primary parked signal. For a diagnosed `meeting` issue the Complexity signal is not evaluated (see "Actionability gate evaluates three signals disjunctively"), so deferral vocabulary in its `### Complexity` value SHALL NOT withhold it; parking a meeting issue is the `parking-lot` label's job.
 
 #### Scenario: Deferral vocabulary withholds a valid tier
 
-- **WHEN** the value is `Simple when triggered`
+- **WHEN** the value is `Simple when triggered` on an issue that is not a diagnosed `meeting` issue
 - **THEN** the issue is reported as not actionable with reason `complexity-deferral-marker`
 - **AND** the string `Simple when triggered` appears in the operator-facing output
 
@@ -65,7 +102,7 @@ The system SHALL scan the **entire** `### Complexity` value — not only the tex
 
 #### Scenario: Deferral reason is distinct from unparseable
 
-- **WHEN** one issue has the value `Plan when triggered` and another has the value `移入 discussion list`
+- **WHEN** one issue that is not a diagnosed `meeting` issue has the value `Plan when triggered` and another such issue has the value `移入 discussion list`
 - **THEN** the first reports reason `complexity-deferral-marker`
 - **AND** the second reports reason `complexity-unparseable`
 
@@ -143,7 +180,7 @@ Existing Diagnosis comments SHALL NOT be rewritten, and no label SHALL be backfi
 
 ### Requirement: Issue type resolution is part of the shared implementation
 
-The shared implementation SHALL provide the issue type resolution that consumers pass to the gate, so that no consumer parses issue labels or the body `## Type` heading on its own. Resolution SHALL follow the order used by `/idd-diagnose` Step 1: when exactly one IDD type name (`bug`, `feature`, `refactor`, `docs`, `meeting`) is present among the issue labels, compared after ASCII case folding and trimming of ASCII space and tab only, that type SHALL be returned; when more than one distinct IDD type label is present, the result SHALL be `unknown`; when no IDD type label is present, the leading word of the first non-empty line under a line-anchored `## Type` heading outside fenced code and outside HTML comment blocks SHALL be used if it is an IDD type name, where a fence closes only on a line of the opener's character at no less than the opener's length with nothing after it; otherwise the result SHALL be `unknown`. The value `unknown` SHALL be treated as not meeting. An unrecognised argument, a flag without a value, or an issue type value outside `bug`, `feature`, `refactor`, `docs`, `meeting`, `unknown` SHALL fail loudly with exit status 2 rather than defaulting.
+The shared implementation SHALL provide the issue type resolution that consumers pass to the gate, so that no consumer parses issue labels or the body `## Type` heading on its own. Resolution SHALL follow the order used by `/idd-diagnose` Step 1: when exactly one IDD type name (`bug`, `feature`, `refactor`, `docs`, `meeting`) is present among the issue labels, compared after ASCII case folding and trimming of ASCII space and tab only, that type SHALL be returned; when more than one distinct IDD type label is present, the result SHALL be `unknown`; when no IDD type label is present, the leading word of the first non-empty line under a line-anchored `## Type` heading that GitHub renders as a heading — outside fenced code and outside HTML comments and HTML blocks, as GitHub's Markdown renderer delimits them — SHALL be used if it is an IDD type name and ends at a non-word character; a body-derived `meeting` SHALL additionally require that the body contain exactly one `## Type` heading line anywhere, and SHALL resolve to `unknown` otherwise, so that a concealed second heading can never produce a meeting; otherwise the result SHALL be `unknown`. The value `unknown` SHALL be treated as not meeting. An unrecognised argument, a flag without a value, or an issue type value outside `bug`, `feature`, `refactor`, `docs`, `meeting`, `unknown` SHALL fail loudly with exit status 2 rather than defaulting.
 
 #### Scenario: Label decides when exactly one type label is present
 
@@ -173,3 +210,6 @@ The shared implementation SHALL provide the issue type resolution that consumers
 | (none) | `## Type` inside a four-backtick fence that contains a three-backtick line | `unknown` |
 | (none) | `## Type` / `meeting` inside an HTML comment, then a visible `## Type` / `bug` | `bug` |
 | `Meeting` | (none) | `meeting` |
+| (none) | `meeting-notes` | `unknown` |
+| (none) | `## Type` / `meeting`, and a second `## Type` heading anywhere in the body | `unknown` |
+| (none) | `## Type` / `meeting` inside a `<details>` block with no blank line | `unknown` |

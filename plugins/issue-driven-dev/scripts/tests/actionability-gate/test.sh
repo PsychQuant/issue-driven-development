@@ -1168,6 +1168,27 @@ assert_eq "unwind (run): a meeting run with nothing to keep exits 0" "0" "$rc"
 assert_eq "unwind (run): it returns to the default branch (empty case)" "main" "$(git -C "$UWD/c" branch --show-current)"
 refute_grep "unwind (run): the empty branch is gone" 'idd/7-x' "$(git -C "$UWD/c" branch --list)"
 assert_grep "unwind (run): it reports the removal only after it happened" 'removed the empty Phase 0.5 branch' "$out"
+# r3 #2: lost shell state is a loud failure, not "no branch to unwind"
+mkdir "$UWD/d" && uw_repo "$UWD/d" && mkdir -p "$UWD/d/.claude/.idd/attachments/issue-7" \
+  && printf '{"files": []}\n' > "$UWD/d/.claude/.idd/attachments/issue-7/_manifest.json"
+out=$( cd "$UWD/d" && UW_TYPE=meeting N=7 GITHUB_REPO=o/r CWD="$UWD/d" CLAUDE_PLUGIN_ROOT="$HERE/../../.." bash -c "$uw_stub"$'\n'"$UW_SRC" 2>&1 ); rc=$?
+assert_eq "unwind (run): an unset PATH_AXIS is a loud failure (r3 #2)" "1" "$rc"
+assert_grep "unwind (run): ... naming the lost shell state" 'PATH_AXIS' "$out"
+assert_eq "unwind (run): ... and the branch is left as is" "idd/7-x" "$(git -C "$UWD/d" branch --show-current)"
+# r3 #10: HEAD on the default branch → nothing to unwind, nothing committed to main
+mkdir "$UWD/e" && uw_repo "$UWD/e" && git -C "$UWD/e" checkout -q main && mkdir -p "$UWD/e/.claude/.idd/attachments/issue-7" \
+  && printf '{"files": []}\n' > "$UWD/e/.claude/.idd/attachments/issue-7/_manifest.json" && out=$(uw_run "$UWD/e" meeting); rc=$?
+assert_eq "unwind (run): on the default branch it exits 0" "0" "$rc"
+assert_eq "unwind (run): ... and commits nothing to main (r3 #10)" "1" "$(git -C "$UWD/e" rev-list --count main)"
+# r3 #23: direct-commit makes no issue fetch (gh fails here and must not be reached)
+mkdir "$UWD/f" && uw_repo "$UWD/f"
+out=$( cd "$UWD/f" && N=7 GITHUB_REPO=o/r CWD="$UWD/f" PATH_AXIS=direct-commit CLAUDE_PLUGIN_ROOT="$HERE/../../.." bash -c 'gh() { echo GH-CALLED; return 1; }'$'\n'"$UW_SRC" 2>&1 ); rc=$?
+assert_eq "unwind (run): direct-commit exits 0 without touching gh (r3 #23)" "0" "$rc"
+refute_grep "unwind (run): ... no gh call on direct-commit" 'GH-CALLED' "$out"
+# r3 #3/#6: the kept branch says how to get the manifest back
+mkdir "$UWD/g" && uw_repo "$UWD/g" && mkdir -p "$UWD/g/.claude/.idd/attachments/issue-7" \
+  && printf '{"files": []}\n' > "$UWD/g/.claude/.idd/attachments/issue-7/_manifest.json" && out=$(uw_run "$UWD/g" meeting)
+assert_grep "unwind (run): the kept-branch line says what to do with it (r3 #3)" 'push it with a later PR' "$out"
 rm -rf "$UWD"
 # Phase 5: the guard lives in the same shell as the push, on the PR path only.
 P5_SRC=$(ia_block_after '**Conditional push + PR creation**')
@@ -1178,6 +1199,10 @@ out=$(p5_run meeting PR); rc=$?
 assert_eq "phase 5 (run): a meeting issue in PR mode exits 0" "0" "$rc"
 refute_grep "phase 5 (run): a meeting issue never reaches git push (r2 #12, C2)" 'PUSH-CALLED' "$out"
 refute_grep "phase 5 (run): a meeting issue never opens a PR" 'PR-CALLED' "$out"
+# r3 #27: positive control — a non-meeting PR run still reaches git push
+p5ok_stub='git() { case "$*" in *push*) echo "PUSH-CALLED"; return 0 ;; esac; return 0; }; gh() { case "$1" in issue) echo "{\"labels\":[{\"name\":\"bug\"}],\"body\":\"\"}" ;; pr) echo "PR-CALLED" ;; *) return 0 ;; esac; }'
+out=$( UW_TYPE=bug N=7 GITHUB_REPO=o/r CWD=/nonexistent PATH_AXIS=PR IN_CHAIN= BRANCH=idd/7-x CLAUDE_PLUGIN_ROOT="$HERE/../../.." bash -c "$p5ok_stub"$'\n'"$P5_SRC" 2>&1 )
+assert_grep "phase 5 (run): a non-meeting PR run does call git push (positive control)" 'PUSH-CALLED' "$out"
 out=$(p5_run bug direct-commit); rc=$?
 assert_eq "phase 5 (run): direct-commit makes no issue fetch, so a failing gh cannot abort it (r2 #5)" "0" "$rc"
 out=$(p5_run bug PR "" ); rc=$?
@@ -1188,12 +1213,29 @@ assert_output_grep "idd-all: the meeting report clears the unattended flag (#123
 assert_output_grep "idd-all: the meeting report names the Action-items section" '「Phase 6 Action items surface」那一節' "$IA_"
 # r2 (#14, #28, C3): the meeting Action item is for the root this run gated, never spawned issues;
 # no Meeting Plan comment suppresses it; a failed re-resolve is itself an item
-assert_output_grep "idd-all: the meeting Action item is computed for the root only" 'MT_LABELS=$(gh issue view "$ROOT_N"' "$IA_"
+assert_output_grep "idd-all: the meeting Action item is computed for the root only" 'MT_JSON=$(gh issue view "$RN"' "$IA_"
 refute_output_grep "idd-all: no Meeting Plan comment suppresses the Action item" "grep -q '^## Meeting Plan'" "$IA_"
 assert_output_grep "idd-all: a failed type re-resolve is surfaced, not skipped" 'could not re-resolve the issue type' "$IA_"
 # r2 (#20, #5): the abort table carries the meeting exception and the Phase 5 FATALs
 assert_output_grep "idd-all: the cexit=4 abort row names its meeting exception" '非 meeting;meeting 只在完全沒有受信任的 Diagnosis 時才 abort' "$IA_"
 assert_output_grep "idd-all: the abort table lists the Phase 5 type-guard FATALs" 'Phase 5 type guard 失敗(PR 路徑)' "$IA_"
+# r3 #4/#21: the Phase 6 Action-items block, run. ROOT_N is never assigned in
+# idd-all; the meeting item must come from $N, appear only for a meeting whose
+# body phase is diagnosed, and a non-meeting unattended run must print nothing.
+P6_SRC=$(ia_block_after '#### Phase 6 Action items surface')
+assert_true "idd-all: the Phase 6 Action-items block is extractable" "[ -n \"\$P6_SRC\" ]"
+p6_run() {   # $1 = labels json fragment, $2 = body (json-escaped), $3 = gh mode
+  ( N=7 INTERACTION=unattended GITHUB_REPO=o/r CWD=/nonexistent CLAUDE_PLUGIN_ROOT="$HERE/../../.." P6L="$1" P6B="$2" P6M="${3:-ok}" \
+      bash -c 'gh() { [ "$P6M" = fail ] && return 1; case "$1" in issue) [ -z "$3" ] && return 1; printf "{\"labels\":[%s],\"body\":\"%s\"}\n" "$P6L" "$P6B" ;; api) echo "[]" ;; esac; }; git() { return 0; }'$'\n'"$P6_SRC" 2>&1 )
+}
+out=$(p6_run '{"name":"bug"}' '## Problem\n\n**Phase**: diagnosed\n')
+assert_eq "phase 6 (run): a non-meeting unattended run prints no Action items (r3 #4)" "" "$out"
+out=$(p6_run '{"name":"meeting"}' '## Problem\n\n**Phase**: diagnosed\n')
+assert_grep "phase 6 (run): a diagnosed meeting root gets its item, numbered from \$N" '#7: type=meeting — stopped at diagnosed' "$out"
+out=$(p6_run '{"name":"meeting"}' '## Problem\n\n**Phase**: created\n')
+refute_grep "phase 6 (run): a meeting root that never reached diagnosed gets no stopped-at-diagnosed item (r3 #21)" 'stopped at diagnosed' "$out"
+out=$(p6_run '' '' fail)
+assert_grep "phase 6 (run): a failed re-resolve is itself an item" 'could not re-resolve the issue type' "$out"
 # r1 (#6, #8, #14): Phase 6 has a meeting report that claims no verify / PR
 assert_output_grep "idd-all: Phase 6 has a meeting report"                        '✓ idd-all stopped (type=meeting)' "$IA_"
 assert_output_grep "idd-all: the terminal-phase rule names its meeting exception" 'Verify is the terminal phase regardless of mode**（meeting issue 例外' "$IA_"

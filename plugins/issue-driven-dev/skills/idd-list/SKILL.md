@@ -585,7 +585,7 @@ Suggested next:
 
 #### meeting issue 的下一步（#383）
 
-`group=actionable` 且 `type=meeting` 的 issue **不走**下面的 Complexity 表（meeting 依規格沒有 tier，gate 對它不評 Complexity 訊號），也不套用 phase × PR state matrix 的 implement／verify 列。這是封閉列舉，只有兩列，依 Step 3 解析出的 phase 判斷（不另外掃 comment）；第二列涵蓋 `planning` 以外的**所有** phase，不得依性質類推第三列：
+`group=actionable` 且 `type=meeting` 的 issue **不走**下面的 Complexity 表（meeting 依規格沒有 tier，gate 對它不評 Complexity 訊號），也不套用 phase × PR state matrix 的 implement／verify 列。這是封閉列舉，只有兩列，依 Step 3 解析出的 phase 判斷（不另外掃 comment）；第二列涵蓋 `planning` 以外的**所有** phase，不得依性質類推第三列。**例外只有一個，而且優先**：phase 是 `tracking`（帶 `north-star` / `epic` label）的 issue 照 Step 3 規則 0 不給任何 lifecycle 命令，meeting 也一樣（#383 verify r3）：
 
 - `TYPE=meeting` 且 phase `planning` → `/idd-close #N`（meeting 專屬 close gate）
 - `TYPE=meeting` 且 phase 不是 `planning` → `/idd-plan #N`（meeting 版 Plan，選填），或直接 `/idd-close #N`（沒有 plan 時 close gate 退回 Diagnosis 的 Phase C）。典型是 `TYPE=meeting` 且 phase `diagnosed` → `/idd-plan #N`；body 還停在 `created` 也一樣，能走到 actionable 代表已有受信任的 Diagnosis

@@ -290,6 +290,12 @@ idd-plan 結束 = idd-implement 結束。所以 next step 沿用 idd-implement �
 /issue-driven-dev:idd-verify #NNN
 ```
 
+**type=meeting 例外（#383）**：Meeting Plan 不 chain 到 idd-implement，也沒有 TDD verify。next step 是做完 Phase C 的行動項之後：
+
+```
+/issue-driven-dev:idd-close #NNN
+```
+
 ## 與 idd-implement 的關係
 
 idd-plan 不取代 idd-implement，它是 idd-implement 的 superset：
@@ -323,3 +329,5 @@ idd-implement 偵測「已有 `## Implementation Plan` comment 在 issue 上」�
 **降級只發生在 unattended。** Plan tier 的價值是 user approval：unattended 沒有 user 在鍵盤前，閘門無從等待，所以那條路徑是**刻意**的降級、而且必須在報告裡講出來。attended 相反 —— 把 plan 呈現給 user 正是 attended 模式存在的理由之一。
 
 > **本段曾經是一句全稱句**（#317）：「**idd-all 不該走 Plan path**…應該 fallback 走 Simple path」。它的 unattended 半段是對的，錯在把一個分支的結論寫成無條件的 —— 而 #292 之後，attended `idd-all` 走的正是 `/idd-plan`。以本檔為準的讀者會得到與實際行為相反的結論。**能列舉的就列舉**：兩種模式各佔一格，不要先寫一句總括再補例外。
+
+**type=meeting 先於上表任何一列**（#383）：attended → Phase 3m：本 skill 寫 `## Meeting Plan`，skip-chain，不接 `/idd-implement`；unattended → 停在 `diagnosed`，不跑本 skill，Action item 指向 `/idd-plan` 或 `/idd-close`。以 idd-all 的 dispatch table 為準。

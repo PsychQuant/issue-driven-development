@@ -42,6 +42,14 @@
 - [x] 7.4 type reader：lone CR、info string 含反引號、type-1／type-6 HTML block、heading 只接受空白或 tab、type 字詞邊界；divergence 清單寫明方向。驗證：12 條 pin，預期值以 markdown-it 4.0.0 核對
 - [x] 7.5 idd-list meeting 兩列改為真正的封閉列舉並更正 fallback 說法（#10、#16）；idd-plan 中止列補 meeting 版本（#23）。驗證：`test.sh` 1109 passed
 
+## 8. verify round 3 修正
+
+- [x] 8.1 （blocking #5）spec delta MODIFIED「Complexity tier extraction tolerates trailing rationale」，「Non-tier prefix is not routable」限定非 meeting；Deferral 兩條 scenario 同樣限定。以同一標準逐行掃過 canonical spec，沒有其他無條件的 complexity 理由句
+- [x] 8.2 （blocking #1／#22）meeting-issue-type delta 改寫：PR 模式 commit manifest、保留 branch 不 push，只有沒有 commit 與 upstream 時才刪；新增 scenario
+- [x] 8.3 type reader 改以 GitHub（cmark-gfm）為基準：type-6 清單去 `search` 加 `source`、補 type 3／4／5；backstop：body 不只一個 `## Type` 時 meeting → unknown；`_meeting_` 邊界；讀完整份 input（無 SIGPIPE）。驗證：12 條 pin，預期值以 `gh api markdown` 核對
+- [x] 8.4 idd-all：unwind 驗 N、PATH_AXIS 遺失時明確失敗、branch 由 git 判斷、direct-commit 不 fetch、保留 branch 時說明怎麼處理；Phase 6 meeting item 用 `$N`、只在 phase diagnosed 且非 Step 0.5.1 擋下時列；Plan 預設文字；Step 0 task 清單。驗證：行為測試（unwind 7 情況、Phase 5 正向對照、Phase 6 四情況）
+- [x] 8.5 idd-plan 對照表補 meeting 列、Next Step 補 meeting 例外；idd-list meeting 列寫明 tracker 優先；reference 機器行說明補 TYPE。驗證：`test.sh` 1135 passed
+
 ## 實作備註
 
 - NOTE（1.3）：任務寫「現在就通過」，實際上帶 `--issue-type bug|unknown` 的回歸 assertion 在 2.2 之前是 RED——當時 verdict 不認得這個參數（exit 2）。2.2 之後全綠，行為正確；只是任務描述的預期與當時實況不同。

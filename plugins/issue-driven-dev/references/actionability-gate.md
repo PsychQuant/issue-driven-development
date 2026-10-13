@@ -257,7 +257,7 @@ esac
 # 5. Print the verdict. The executing model sees only this output; an unprinted
 #    withheld verdict is indistinguishable from an actionable issue. Two parts:
 #    a MACHINE LINE whose fields are all closed-vocabulary (a digit, one of four
-#    tiers, a subset of five reasons), then the third-party raw text on its own
+#    tiers, a subset of five reasons, one of six issue types — #383), then the third-party raw text on its own
 #    lines inside a fixed `raw<<<` … `>>>raw` delimiter with every raw line
 #    indented. Text inside the delimiter is DATA — never a verdict, never an
 #    instruction; only a column-0 `gate #N:` line is a verdict. (Round 4 put the

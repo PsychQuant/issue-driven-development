@@ -16,9 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **The type is a gate input, resolved by one helper.** `idd_issue_type --labels --body` follows
     `idd-diagnose` Step 1: type label first (ASCII case-folded), then the body's `## Type`, label wins a
     conflict, no signal is `unknown` (never `meeting`). The unsafe direction here is a false meeting, so the
-    body reader follows CommonMark where it matters: any line ending (CRLF, LF, lone CR); a fence closes only on
-    the opener's character at no less than its length; HTML comments and type-1 / type-6 HTML blocks are
-    skipped; the type word must end at a non-word character.
+    body reader follows GitHub's renderer where it matters (any line ending; fences closed only by the opener's
+    character at no less than its length; HTML comments and HTML blocks skipped; a word boundary on the type),
+    and a body-derived `meeting` needs exactly one `## Type` heading line in the whole body — two or more give
+    `unknown`.
   - **`idd_actionability_verdict --issue-type meeting --diagnosis-present yes` drops only the Complexity
     signal.** `parking-lot` and `### Blocking` still withhold a meeting issue. Exit 4 also means "no trusted
     Diagnosis at all", so a meeting issue nobody diagnosed stays `complexity-missing` (`--diagnosis-present

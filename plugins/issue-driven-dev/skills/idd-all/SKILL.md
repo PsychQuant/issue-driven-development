@@ -76,9 +76,9 @@ TaskCreate(name="resolve_mode", description="Phase 0.5: 從 pr_policy + flag + f
 TaskCreate(name="existing_work_check", description="Phase 0.5.1 (#366): 在建任何 branch 之前呼叫 scripts/check-existing-work.sh;blocked → attended 問三選項、unattended 停該張並記入 Phase 6 Action items;resume → 在該 PR/branch 上繼續;unknown → 印出並繼續")
 TaskCreate(name="ensure_issue", description="Phase 1: 若 from-scratch 則跑 idd-issue; from-issue 則 verify issue 存在")
 TaskCreate(name="diagnose", description="Phase 2: 跑 idd-diagnose,讀回 complexity 判定")
-TaskCreate(name="implement_or_sdd", description="Phase 3: Simple/Plan → idd-implement; Spectra → spectra-discuss → spectra-propose → spectra-apply。Args 含 UNATTENDED MODE 與否依 Phase 0.5 解析的 interaction 軸決定。")
-TaskCreate(name="verify_loop", description="Phase 4: idd-verify; blocking findings 處理(unattended 自動修復最多 2 round, attended 把控制交回 user); follow-ups → 開新 issue")
-TaskCreate(name="open_pr", description="Phase 5: PR mode → git push + gh pr create(body 含 Refs #N, 不含 Closes); direct-commit mode → skip,進 Phase 6")
+TaskCreate(name="implement_or_sdd", description="Phase 3: type=meeting → attended 走 meeting 版 /idd-plan、unattended 跳過(#383,先跑 meeting unwind); Simple/Plan → idd-implement; Spectra → spectra-discuss → spectra-propose → spectra-apply。Args 含 UNATTENDED MODE 與否依 Phase 0.5 解析的 interaction 軸決定。")
+TaskCreate(name="verify_loop", description="Phase 4: type=meeting → 跳過(#383); idd-verify; blocking findings 處理(unattended 自動修復最多 2 round, attended 把控制交回 user); follow-ups → 開新 issue")
+TaskCreate(name="open_pr", description="Phase 5: type=meeting → 跳過、不 push(#383); PR mode → git push + gh pr create(body 含 Refs #N, 不含 Closes); direct-commit mode → skip,進 Phase 6")
 TaskCreate(name="report_and_stop", description="Phase 6: 依 mode 顯示對應 next-step(PR → review/merge/close; direct-commit → review last N commits/close)。永不 auto-invoke idd-close。")
 ```
 
@@ -623,34 +623,42 @@ Phase 0.5 在得知 type **之前**就建好 feature branch(PR 模式)。meeting
 diagnose 寫的 `.claude/.idd/attachments/issue-N/` 依 repo 慣例要追蹤(`rules/process-attachments.md`),一般 run 由 implement 的 commit 帶走;meeting 沒有 implement,不處理的話它會以 untracked 跟著 checkout 到預設 branch,下一次 PR 模式的 Phase 0.5 就因工作樹不乾淨而 abort(r2 #6)。所以先把它 commit 在 feature branch 上、保留那個 branch(不 push),再切回預設 branch;沒有任何東西要留時才刪掉空 branch。
 
 ```bash
+# N 進 gh 與 git pathspec 前先驗型（r3 #19）
+case "$N" in ''|*[!0-9]*) echo "FATAL: meeting unwind: issue number is not numeric: $N" >&2; exit 1 ;; esac
+# PATH_AXIS 是 Phase 0.5 的 shell 狀態，不跨 Bash 呼叫。遺失時要明講，不能當成「沒有 branch」
+# 悄悄略過（r3 #2）；direct-commit 沒有 Phase 0.5 branch，也不必查 type（r3 #23）。
+case "${PATH_AXIS:-}" in
+  PR) ;;
+  direct-commit) echo "→ direct-commit: no Phase 0.5 branch — nothing to unwind"; exit 0 ;;
+  *) echo "FATAL: meeting unwind: PATH_AXIS is '${PATH_AXIS:-}' — the Phase 0.5 shell state was lost; re-run its mode resolution. Branch left as is" >&2; exit 1 ;;
+esac
+# 要收的 branch 由 git 判斷，不信任 $BRANCH：只收「現在所在、名為 idd/N-*」的那個（r3 #2、#10）
+CUR=$(git -C "$CWD" branch --show-current) || { echo "FATAL: meeting unwind: cannot read the current branch" >&2; exit 1; }
+case "$CUR" in "idd/$N-"*) ;; *) echo "→ on '$CUR', not the Phase 0.5 branch of #$N — nothing to unwind"; exit 0 ;; esac
 . "$CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh" || { echo "FATAL: meeting unwind: actionability helper missing — branch left as is" >&2; exit 1; }
 UW_JSON=$(gh issue view "$N" --repo "$GITHUB_REPO" --json labels,body) || { echo "FATAL: meeting unwind: issue fetch failed — branch left as is" >&2; exit 1; }
 UW_TYPE=$(idd_issue_type --labels "$(jq -r '[.labels[].name] | join("\n")' <<<"$UW_JSON")" --body "$(jq -r '.body // ""' <<<"$UW_JSON")")
-if [ "$UW_TYPE" != meeting ]; then
-  echo "→ #$N is not a meeting issue — no unwind"
-elif [ "$PATH_AXIS" != "PR" ] || [ -z "${BRANCH:-}" ] || ! git -C "$CWD" show-ref --verify --quiet "refs/heads/$BRANCH"; then
-  echo "→ type=meeting: no Phase 0.5 branch to unwind"
-else
-  DEFAULT=$(gh repo view "$GITHUB_REPO" --json defaultBranchRef -q .defaultBranchRef.name) && [ -n "$DEFAULT" ] \
-    || { echo "FATAL: meeting unwind: default branch lookup failed — still on $BRANCH" >&2; exit 1; }
-  ATT=".claude/.idd/attachments/issue-$N"
-  if [ -n "$(git -C "$CWD" status --porcelain -- "$ATT")" ]; then
-    { git -C "$CWD" add -- "$ATT" && git -C "$CWD" commit -q -m "chore: record the attachment manifest of a meeting issue (#$N)" -m "Refs #$N" -- "$ATT"; } \
-      || { echo "FATAL: meeting unwind: could not commit $ATT — still on $BRANCH" >&2; exit 1; }
-  fi
-  AHEAD=$(git -C "$CWD" rev-list --count "$DEFAULT..$BRANCH") || { echo "FATAL: meeting unwind: rev-list failed — still on $BRANCH" >&2; exit 1; }
-  UPSTREAM=$(git -C "$CWD" rev-parse --abbrev-ref --symbolic-full-name "$BRANCH@{upstream}" 2>/dev/null || true)
-  git -C "$CWD" checkout -q "$DEFAULT" || { echo "FATAL: meeting unwind: checkout $DEFAULT failed — still on $BRANCH" >&2; exit 1; }
-  if [ "$AHEAD" = 0 ] && [ -z "$UPSTREAM" ]; then
-    # 沒有 commit、沒有 upstream 才刪;-d 只在這個前提下是 safe delete(r2 #13/#19:resume 的 branch 有 upstream)
-    if git -C "$CWD" branch -q -d "$BRANCH"; then echo "→ type=meeting: removed the empty Phase 0.5 branch $BRANCH (now on $DEFAULT)"
-    else echo "⚠ type=meeting: could not delete $BRANCH — left in place (now on $DEFAULT)"; fi
-  else
-    echo "→ type=meeting: back on $DEFAULT; kept $BRANCH ($AHEAD commit(s) not on $DEFAULT${UPSTREAM:+, tracks $UPSTREAM}) — not pushed"
-  fi
-  REST=$(git -C "$CWD" status --porcelain)
-  [ -z "$REST" ] || printf '⚠ working tree not clean after the meeting unwind — the next PR-mode run will stop at Phase 0.5:\n%s\n' "$REST"
+[ "$UW_TYPE" = meeting ] || { echo "→ #$N is not a meeting issue — no unwind"; exit 0; }
+DEFAULT=$(gh repo view "$GITHUB_REPO" --json defaultBranchRef -q .defaultBranchRef.name) && [ -n "$DEFAULT" ] \
+  || { echo "FATAL: meeting unwind: default branch lookup failed — still on $CUR" >&2; exit 1; }
+ATT=".claude/.idd/attachments/issue-$N"
+if [ -n "$(git -C "$CWD" status --porcelain -- "$ATT")" ]; then
+  { git -C "$CWD" add -- "$ATT" && git -C "$CWD" commit -q -m "chore: record the attachment manifest of a meeting issue (#$N)" -m "Refs #$N" -- "$ATT"; } \
+    || { echo "FATAL: meeting unwind: could not commit $ATT — still on $CUR" >&2; exit 1; }
 fi
+AHEAD=$(git -C "$CWD" rev-list --count "$DEFAULT..$CUR") || { echo "FATAL: meeting unwind: rev-list failed — still on $CUR" >&2; exit 1; }
+UPSTREAM=$(git -C "$CWD" rev-parse --abbrev-ref --symbolic-full-name "$CUR@{upstream}" 2>/dev/null || true)
+git -C "$CWD" checkout -q "$DEFAULT" || { echo "FATAL: meeting unwind: checkout $DEFAULT failed — still on $CUR" >&2; exit 1; }
+if [ "$AHEAD" = 0 ] && [ -z "$UPSTREAM" ]; then
+  # 沒有 commit、沒有 upstream 才刪;-d 只在這個前提下是 safe delete(r2 #13/#19)
+  if git -C "$CWD" branch -q -d "$CUR"; then echo "→ type=meeting: removed the empty Phase 0.5 branch $CUR (now on $DEFAULT)"
+  else echo "⚠ type=meeting: could not delete $CUR — left in place (now on $DEFAULT)"; fi
+else
+  # 一般情況：diagnose 一定會寫 manifest，所以 branch 上有那一個 commit（r3 #1／#3）
+  echo "→ type=meeting: back on $DEFAULT; kept $CUR ($AHEAD commit(s), e.g. diagnose's attachment manifest${UPSTREAM:+; tracks $UPSTREAM}) — not pushed. To use the manifest in a later /idd-plan or /idd-close, check that branch out; push it with a later PR, or delete it with git branch -D $CUR if it is not needed"
+fi
+REST=$(git -C "$CWD" status --porcelain)
+[ -z "$REST" ] || printf '⚠ working tree not clean after the meeting unwind — the next PR-mode run will stop at Phase 0.5:\n%s\n' "$REST"
 ```
 
 > **為何不在此處寫 regex（#298 → #316）**：本段原本就地用一條 `(.+?)` 窄化抓 `### Complexity` 標題下的整行，再自行 `split(' via ')` 取 canonical tier。那條 regex 對 `Simple when triggered` 這類**帶延期修飾語**的值會**匹配成功**，回傳一個非 tier 字串——它對不上任何 dispatch 列，卻也不是 `UNKNOWN`。舊表的 `UNKNOWN → abort` 安全網結構上接不住它：`UNKNOWN` 只在 regex **完全匹配失敗**時才產生（`if m else` 分支），值域外的**成功**匹配永遠落不進那一格，routing 因此進入未定義行為。修法不是把 regex 寫得更嚴——那只會讓第四份私有窄化加入既有的三方分歧——而是讓判定只剩一份實作：tier 前綴抽取、延期語彙偵測、`### Blocking` 讀取、三訊號 gate、原值 surface 全在 `scripts/lib/actionability.sh`，本 skill 只讀它的 exit code。**只換 parser 不呼叫 verdict 等於沒修**——第 1 輪（PR #318）正是如此：gate 完整、66 測試全綠、零 consumer 呼叫（verify CRITICAL-1）。「不得截斷、不得降級、不得靜默」的規定見 [`references/actionability-gate.md`](../../references/actionability-gate.md)。
@@ -1034,7 +1042,7 @@ fi
 
   Issue:        #${N} — ${TITLE}
   Path:         meeting — no implement, no verify, no push, no PR
-  Plan:         ${MEETING_PLAN_URL:-none — stopped at diagnosed (unattended)}
+  Plan:         ${MEETING_PLAN_URL:-none — /idd-plan did not run (unattended) or did not finish}
   Branch:       ${UNWIND_LINE}   (照抄 meeting unwind 實際印出的那一行;沒跑 unwind 就寫目前的 branch)
 
   Next: attended → /idd-close #${N} once the Meeting Plan's Phase C is done
@@ -1144,18 +1152,24 @@ done
 
 # #366: Step 0.5.1 停下的 issue 與 unknown 的查詢（EXISTING_WORK_ITEMS 由 Step 0.5.1 逐行累積；shell 狀態沒存活時重跑 helper 重建）
 ACTION_ITEMS+="${EXISTING_WORK_ITEMS:-}"
-# #383: 本次 gate 判為 meeting 的 root。Phase 6 只在 gate 放行時才會走到,所以 root 是 meeting
-# 就代表它停在 diagnosed(unattended)。只看 $ROOT_N —— 衍生 issue 從沒過 gate(verify r2 #14);
-# 不看有沒有 Meeting Plan comment(r2 C3);重新解析失敗本身就是一條 item,不靜默略過(r2 #28)。
-if [ "$INTERACTION" = "unattended" ]; then
+# #383: 本次 gate 判為 meeting、停在 diagnosed 的 issue。idd-all 從沒有賦值 ROOT_N（上面那個
+# loop 靠 `''` 那一列略過了它），本次處理的就是 $N（verify r3 #4）。只在 body 的 phase 是
+# diagnosed、而且不是 Step 0.5.1 擋下的 issue 才列（r3 #21：那條路徑在 diagnose 之前就停了）；
+# 不看有沒有 Meeting Plan comment（r2 C3）；重新解析失敗本身就是一條 item（r2 #28）。
+RN="${ROOT_N:-$N}"
+case "$RN" in ''|*[!0-9]*) RN="" ;; esac
+if [ "$INTERACTION" = "unattended" ] && [ -n "$RN" ]; then
   if . "$CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh" \
-     && MT_LABELS=$(gh issue view "$ROOT_N" --repo "$GITHUB_REPO" --json labels --jq '[.labels[].name] | join("\n")') \
-     && MT_BODY=$(gh issue view "$ROOT_N" --repo "$GITHUB_REPO" --json body --jq '.body // ""'); then
-    if [ "$(idd_issue_type --labels "$MT_LABELS" --body "$MT_BODY")" = meeting ]; then
-      ACTION_ITEMS+=$'\n'"- #${ROOT_N}: type=meeting — stopped at diagnosed (unattended); next: attended /idd-plan #${ROOT_N} for a Meeting Plan, or /idd-close #${ROOT_N} (a plan is optional — the close gate falls back to the Diagnosis Phase C)"
+     && MT_JSON=$(gh issue view "$RN" --repo "$GITHUB_REPO" --json labels,body); then
+    MT_LABELS=$(jq -r '[.labels[].name] | join("\n")' <<<"$MT_JSON"); MT_BODY=$(jq -r '.body // ""' <<<"$MT_JSON")
+    if [ "$(idd_issue_type --labels "$MT_LABELS" --body "$MT_BODY")" = meeting ] \
+       && printf '%s\n' "$MT_BODY" | grep -q '^\*\*Phase\*\*: diagnosed' \
+       && ! printf '%s\n' "${EXISTING_WORK_ITEMS:-}" | grep -q "^- #${RN}:"; then
+      KEPT=$(git -C "$CWD" for-each-ref --format='%(refname:short)' "refs/heads/idd/${RN}-*" 2>/dev/null | head -1)
+      ACTION_ITEMS+=$'\n'"- #${RN}: type=meeting — stopped at diagnosed (unattended); next: attended /idd-plan #${RN} for a Meeting Plan, or /idd-close #${RN} (a plan is optional — the close gate falls back to the Diagnosis Phase C)${KEPT:+; local branch $KEPT holds the attachment manifest, not pushed}"
     fi
   else
-    ACTION_ITEMS+=$'\n'"- #${ROOT_N}: could not re-resolve the issue type for this report — if it is a meeting issue, it stopped at diagnosed; check it by hand"
+    ACTION_ITEMS+=$'\n'"- #${RN}: could not re-resolve the issue type for this report — if it is a meeting issue, it stopped at diagnosed; check it by hand"
   fi
 fi
 
