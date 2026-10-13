@@ -570,14 +570,26 @@ idd_actionability_group() {
 # caller running under `pipefail`.
 #
 # Its unsafe direction is a FALSE meeting (that drops the Complexity signal),
-# so its fence model is stricter than `_idd_section_lines`' (verify #383 r1):
-# a fence closes only on the opener's character at no less than its length
-# with nothing after it; a run indented 4+ spaces is not a fence; an HTML
-# comment block is skipped. Remaining CommonMark divergences, each pinned or
-# accepted: fences nested in list items / block quotes are read as top-level
-# fences (a quoted fence hides more, not less — the safe direction); other
-# HTML blocks and indented code blocks are read as text. A type label always
-# wins over the body, and labels need triage permission.
+# so its block model is stricter than `_idd_section_lines`' (verify #383 r1,
+# r2), each rule pinned in test.sh against markdown-it's rendering: line
+# endings are CRLF, LF or a lone CR; a fence closes only on the opener's
+# character at no less than its length with nothing after it; a backtick
+# opener's info string has no backtick; a run indented 4+ spaces is not a
+# fence; HTML comment blocks, type-1 (pre/script/style/textarea) and type-6
+# (block tag, until a blank line) HTML blocks are skipped; the heading needs
+# a space or tab after `##`; the type word must end at a non-word character.
+# Known divergences, with their direction:
+#   - a fence nested in a list item or block quote is read as a top-level
+#     fence. Usually that hides more (safe), but a fence the reader opens and
+#     CommonMark does not can turn the next real opener into a closer and
+#     expose a hidden `## Type` (UNSAFE; not handled).
+#   - type-7 HTML blocks (any other tag alone on a line) are read as text
+#     (UNSAFE in principle; such a block cannot interrupt a paragraph, so it
+#     needs a blank line before it).
+#   - indented code blocks are read as text, but the heading must start at
+#     column 0, so an indented `## Type` is never read (safe).
+# A type label always wins over the body, and labels need triage permission;
+# trust in a body-only type is tracked in #385.
 idd_issue_type() {
     local labels="" body="" found="" word
 
@@ -612,7 +624,10 @@ idd_issue_type() {
     ')
     if [ -n "$found" ]; then printf '%s\n' "$found"; return 0; fi
 
-    word=$(printf '%s\n' "$body" | LC_ALL=C awk '
+    # A lone CR is a line ending in CommonMark: normalise CRLF, then every
+    # remaining CR, before the line-based awk (verify #383 r2 #3 — an opener
+    # after a lone CR used to be read mid-line and miss its rule).
+    word=$(printf '%s\n' "$body" | LC_ALL=C sed 's/\r$//' | LC_ALL=C tr '\r' '\n' | LC_ALL=C awk '
         # fence_run: length of the backtick/tilde run that opens this line as a
         # fence (indent of at most 3 spaces), or 0. No interval expressions —
         # some awks lack them, and a terminator that never matches captures to EOF.
@@ -622,21 +637,38 @@ idd_issue_type() {
             rest = substr(line, ind + 1)
             if (ch == "`") { if (!match(rest, /^`+/)) return 0 }
             else           { if (!match(rest, /^~+/)) return 0 }
-            return (RLENGTH >= 3) ? RLENGTH : 0
+            if (RLENGTH < 3) return 0
+            # A backtick fence info string cannot contain a backtick — such a
+            # line is a paragraph with a code span, not an opener (r2 #11/#17).
+            if (ch == "`" && opener && index(substr(rest, RLENGTH + 1), "`")) return 0
+            return RLENGTH
         }
-        { sub(/\r$/, "") }
+        # html_block: 1 = <pre|script|style|textarea> (ends at its closing tag),
+        # 6 = a CommonMark type-6 block tag (ends at a blank line), else 0 (r2 #21).
+        function html_block(line,    ind, rest, low) {
+            match(line, /^ */); ind = RLENGTH
+            if (ind > 3) return 0
+            rest = substr(line, ind + 1); low = tolower(rest)
+            if (low ~ /^<(pre|script|style|textarea)([ \t>]|$)/) return 1
+            if (low ~ /^<\/?(address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h1|h2|h3|h4|h5|h6|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)([ \t>]|\/>|$)/) return 6
+            return 0
+        }
         {
             # Inside a fence: only the same character, at no less than the
             # opener length, with nothing but whitespace after it, closes it
             # (verify #383 r1, finding 5 — a ```` block used to close at ```).
             if (fence != "") {
-                k = fence_run($0, fence)
+                opener = 0; k = fence_run($0, fence)
                 if (k >= flen) {
                     match($0, /^ */); tail = substr($0, RLENGTH + 1 + k)
                     if (tail ~ /^[ \t]*$/) fence = ""
                 }
                 next
             }
+            # HTML blocks are not read: a type-1 block until its closing tag, a
+            # type-6 block until a blank line (r2 #21 — `<details>` in templates).
+            if (htmlb == 1) { if (tolower($0) ~ /<\/(pre|script|style|textarea)>/) htmlb = 0; next }
+            if (htmlb == 6) { if ($0 ~ /^[ \t]*$/) htmlb = 0; next }
             # An HTML comment block is not rendered and not read (findings 21, 24).
             if (incomment) { if (index($0, "-->")) incomment = 0; next }
             if ($0 ~ /^[ \t]*<!--/) {
@@ -644,15 +676,21 @@ idd_issue_type() {
                 if (!index(rest, "-->")) incomment = 1
                 next
             }
+            opener = 1
             k = fence_run($0, "`"); if (k) { fence = "`"; flen = k; next }
             k = fence_run($0, "~"); if (k) { fence = "~"; flen = k; next }
+            h = html_block($0)
+            if (h == 1) { if (tolower($0) !~ /<\/(pre|script|style|textarea)>/) htmlb = 1; next }
+            if (h == 6) { htmlb = 6; next }
         }
-        !grab && $0 ~ /^##[[:space:]]+Type[[:space:]]*$/ { grab = 1; next }
+        !grab && $0 ~ /^##[ \t]+Type[ \t]*$/             { grab = 1; next }
         grab && /^##?[[:space:]]/                        { exit }
         grab && NF {
             line = $0
             sub(/^[[:space:]]*[*`_]*/, "", line)
-            if (match(line, /^[A-Za-z]+/)) print tolower(substr(line, 1, RLENGTH))
+            # The word must end at a non-word character, as the Complexity parser
+            # boundary does: `meeting-notes` / `meeting2` are not meeting (r2 #26).
+            if (match(line, /^[A-Za-z]+/) && substr(line, RLENGTH + 1, 1) !~ /^[A-Za-z0-9_-]$/) print tolower(substr(line, 1, RLENGTH))
             exit
         }
     ')

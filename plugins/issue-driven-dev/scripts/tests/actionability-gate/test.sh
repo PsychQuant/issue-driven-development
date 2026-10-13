@@ -1056,6 +1056,28 @@ assert_eq "issue type: a one-line HTML comment does not hide what follows → me
   "$(it_ '' $'<!-- template note -->\n## Type\nmeeting\n')"
 assert_eq "issue type: the closer fence after a longer opener closes it → meeting" "meeting" \
   "$(it_ '' $'````\nx\n`````\n## Type\nmeeting\n')"
+# verify #383 r2 (#3, #11/#17, #21, #26, #27): more false-meeting shapes. Each
+# expected value is what CommonMark (markdown-it) renders as the visible heading.
+assert_eq "issue type: a lone CR before <!-- still opens the comment → bug" "bug" \
+  "$(it_ '' $'Intro\r<!--\n## Type\nmeeting\n-->\n## Type\nbug\n')"
+assert_eq "issue type: a lone CR before a fence still opens it → bug" "bug" \
+  "$(it_ '' $'Intro\r```\n## Type\nmeeting\n```\n## Type\nbug\n')"
+assert_eq "issue type: CRLF bodies still read normally → meeting" "meeting" \
+  "$(it_ '' $'## Problem\r\n\r\nx\r\n\r\n## Type\r\nmeeting\r\n')"
+assert_eq "issue type: a backtick line whose info string has a backtick is not a fence → bug" "bug" \
+  "$(it_ '' $'```a`b\n```\n## Type\nmeeting\n```\n\n## Type\nbug\n')"
+assert_eq "issue type: an inline triple-backtick span does not open a fence → bug" "bug" \
+  "$(it_ '' $'## Problem\n\n```idd_issue_type``` reads the type\n\n```\n## Type\nmeeting\n```\n\n## Type\nbug\n')"
+assert_eq "issue type: ## Type inside a <details> HTML block (no blank line) is not read → unknown" "unknown" \
+  "$(it_ '' $'<details>\n## Type\nmeeting\n</details>\n')"
+assert_eq "issue type: a blank line ends the HTML block, so the heading after it is read → meeting" "meeting" \
+  "$(it_ '' $'<details>\n<summary>x</summary>\n\n## Type\nmeeting\n\n</details>\n')"
+assert_eq "issue type: ## Type inside <pre> is not read → bug" "bug" \
+  "$(it_ '' $'<pre>\n## Type\nmeeting\n</pre>\n\n## Type\nbug\n')"
+assert_eq "issue type: 'meeting-notes' is not the word meeting → unknown" "unknown" "$(it_ '' "$(tb_ 'meeting-notes')")"
+assert_eq "issue type: 'meeting2' is not the word meeting → unknown"       "unknown" "$(it_ '' "$(tb_ 'meeting2')")"
+assert_eq "issue type: 'meeting.' still is → meeting"                      "meeting" "$(it_ '' "$(tb_ 'meeting.')")"
+assert_eq "issue type: '##<FF>Type' is not a heading → unknown" "unknown" "$(it_ '' $'##\fType\nmeeting\n')"
 # Labels (findings 17, 25): ASCII case-folded like the body, ASCII-only trim,
 # and no locale-dependent whitespace — a lookalike label is not a meeting.
 assert_eq "issue type: label 'Meeting' folds to meeting, like the body"   "meeting" "$(it_ 'Meeting' '')"
