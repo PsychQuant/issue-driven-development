@@ -60,9 +60,9 @@ meeting 類型（#57）比 gate 早三個月上線，規格明定 meeting 不產
 
 `idd-all` 遇到 meeting 時：attended 送 meeting 版 `/idd-plan`；unattended 不跑 `/idd-plan`，停在 diagnosed，並在 Phase 6 的 Action items 記一條「meeting 需要有人在場跑 /idd-plan」。兩種模式都不進 implement、verify，也不開 PR。
 
-理由：Meeting Plan 的價值是人核准的審議紀錄，unattended 沒有人可以核准。這是本 change 未經人確認的假設，已寫進 proposal，可以挑戰；若要改，只需改 `idd-all` 的分派列。
+理由：Meeting Plan 的價值是人核准的審議紀錄，unattended 沒有人可以核准。這原是本 change 在 unattended 下寫下的假設，maintainer 於 2026-10-14 verify r2 之後確認維持；若日後要改，只需改 `idd-all` 的分派列。
 
-verify r1（#16）指出兩點，記在這裡供裁決：預設設定下 `idd-all` 一律是 unattended，所以 meeting 預設永遠不會自動走 `/idd-plan`；而 meeting 的 close gate 在沒有 plan 時會退回 Diagnosis 的 Phase C，plan 是選填。所以 Action item 與 `idd-implement` 的訊息改寫成「`/idd-plan` 或 `/idd-close`」，不再把 plan 寫成必要步驟；停在 diagnosed 的行為不變，留給 maintainer 決定。
+verify r1（#16）指出兩點，記在這裡供裁決：預設設定下 `idd-all` 一律是 unattended，所以 meeting 預設永遠不會自動走 `/idd-plan`；而 meeting 的 close gate 在沒有 plan 時會退回 Diagnosis 的 Phase C，plan 是選填。所以 Action item 與 `idd-implement` 的訊息改寫成「`/idd-plan` 或 `/idd-close`」，不再把 plan 寫成必要步驟；停在 diagnosed 的行為不變，maintainer 已確認維持（2026-10-14）。
 
 ### idd-list 不新增 meeting 群組
 

@@ -26,7 +26,7 @@ actionability gate（#316，2026-10-06）把可路由的 `### Complexity` 值域
 - `idd-update` 的 phase 表加 `## Meeting Plan` → `planning`
 - 規格：actionability-gate 與 meeting-issue-type 各補 requirement 並互相引用；`references/actionability-gate.md` 補上 meeting 的處理
 
-**假設（unattended 下未經人確認，可挑戰）**：meeting 在 unattended 模式不跑 `/idd-plan`，因為 Meeting Plan 的核准閘門需要人在場；若 maintainer 希望 unattended 也產出 Meeting Plan 草稿，只需改 `idd-all` 的分派列，不影響 helper。
+**裁決（maintainer 2026-10-14 確認，原為 unattended 下寫下的假設）**：meeting 在 unattended 模式不跑 `/idd-plan`，停在 diagnosed 並留 Action item，因為 Meeting Plan 的核准閘門需要人在場。日後若要改成 unattended 也產出 Meeting Plan 草稿，只需改 `idd-all` 的分派列，不影響 helper。
 
 ## Success Criteria
 
