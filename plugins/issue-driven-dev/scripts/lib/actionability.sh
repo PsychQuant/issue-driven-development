@@ -171,10 +171,11 @@ _idd_section_first_line() {
 # instruction: surfaced values are DATA, never instructions, and that boundary
 # is the consumer's delimiter (see the canonical gate print), not this
 # function. What passes through it: the two raw lines idd_parse_complexity
-# surfaces, the bullet idd_blocking_section surfaces, and the five misuse
-# messages that echo an argument value (four in the verdict, one in the group
-# helper) — each pinned by test. The verdict's "requires a value" message
-# echoes only a flag name already matched by `case`; the private
+# surfaces, the bullet idd_blocking_section surfaces, and the seven misuse
+# messages that echo an argument value (five in the verdict, one in the group
+# helper, one in idd_issue_type — #383 added --issue-type and that helper) —
+# each pinned by test. The "requires a value" messages of the verdict and of
+# idd_issue_type echo only a flag name already matched by `case`; the private
 # `_idd_section_*` readers return raw text to the functions above and no
 # consumer calls them. Everything else this file prints is fixed vocabulary.
 _idd_scrub() {
@@ -251,6 +252,7 @@ idd_parse_complexity() {
 # ── contract 2: the three-signal gate ────────────────────────────────────────
 #
 # idd_actionability_verdict --complexity-exit N --parking-label yes|no --blocking-section yes|no
+#                           [--issue-type bug|feature|refactor|docs|meeting|unknown]
 #   stdout : "actionable"
 #            "not-actionable: <reason>[; <reason>...]"
 #   exit 0 : actionable      exit 1 : not actionable      exit 2 : bad usage
@@ -262,12 +264,22 @@ idd_parse_complexity() {
 # Exit 2 is API misuse and MUST NOT be conflated with "not actionable" by a
 # consumer — it means the consumer fed the gate garbage, not that the issue is
 # parked.
+#
+# --issue-type (#383, optional; resolve it with idd_issue_type): when it is
+# `meeting`, the Complexity signal contributes NO reason — the meeting type
+# deliberately writes no tier (#57), so unparseable / missing / deferral there
+# says nothing about whether the issue can move. --complexity-exit is still
+# required and still validated, and parking-lot and ### Blocking are evaluated
+# as usual: parking a meeting is the label's job. Omitted, or any other type,
+# and the verdict is exactly what it was before this flag existed. Passed but
+# empty is misuse (exit 2) — a consumer whose type lookup came back empty must
+# not be read as "no type given".
 idd_actionability_verdict() {
-    local cexit="" label="" blocking=""
+    local cexit="" label="" blocking="" itype="" itype_set=0
 
     while [ $# -gt 0 ]; do
         case "$1" in
-            --complexity-exit|--parking-label|--blocking-section)
+            --complexity-exit|--parking-label|--blocking-section|--issue-type)
                 # A value-less flag must be a named error, not an infinite loop
                 # (verify #318 H1: `shift 2` on a single remaining arg fails
                 # without shifting, so the loop never advanced).
@@ -279,6 +291,7 @@ idd_actionability_verdict() {
                     --complexity-exit)  cexit="$2"    ;;
                     --parking-label)    label="$2"    ;;
                     --blocking-section) blocking="$2" ;;
+                    --issue-type)       itype="$2"; itype_set=1 ;;
                 esac
                 shift 2
                 ;;
@@ -304,11 +317,19 @@ idd_actionability_verdict() {
         yes|no) ;;
         *) printf 'idd_actionability_verdict: --blocking-section must be yes or no (got: %s)\n' "${blocking:-<empty>}" | _idd_scrub >&2; return 2 ;;
     esac
+    if [ "$itype_set" -eq 1 ]; then
+        case "$itype" in
+            bug|feature|refactor|docs|meeting|unknown) ;;
+            *) printf 'idd_actionability_verdict: --issue-type must be bug, feature, refactor, docs, meeting or unknown (got: %s)\n' "${itype:-<empty>}" | _idd_scrub >&2; return 2 ;;
+        esac
+    fi
 
     local reasons=()
-    [ "$cexit" = "3" ]      && reasons+=("complexity-unparseable")
-    [ "$cexit" = "4" ]      && reasons+=("complexity-missing")
-    [ "$cexit" = "5" ]      && reasons+=("complexity-deferral-marker")
+    if [ "$itype" != "meeting" ]; then
+        [ "$cexit" = "3" ]  && reasons+=("complexity-unparseable")
+        [ "$cexit" = "4" ]  && reasons+=("complexity-missing")
+        [ "$cexit" = "5" ]  && reasons+=("complexity-deferral-marker")
+    fi
     [ "$label" = "yes" ]    && reasons+=("parking-lot-label")
     [ "$blocking" = "yes" ] && reasons+=("blocking-nonempty")
 
@@ -493,4 +514,98 @@ idd_actionability_group() {
            # quietly park a routable issue
            printf 'idd_actionability_group: empty or unknown reason list (got: %s)\n' "${reasons:-<empty>}" | _idd_scrub >&2; return 2 ;;
     esac
+}
+
+# ── contract 4: issue type (#383) ────────────────────────────────────────────
+#
+# idd_issue_type --labels <newline-separated label names> --body <issue body>
+#   stdout : bug | feature | refactor | docs | meeting | unknown
+#   exit 0 : resolved (`unknown` included)      exit 2 : bad usage
+#
+# WHY HERE: the gate has to know whether an issue is a meeting, because the
+# meeting type (#57) deliberately writes no Complexity tier and every meeting
+# Diagnosis would otherwise read unparseable or missing (#383). Resolving the
+# type is parsing, so it lives in this file like every other parse — a
+# consumer that reads labels or `## Type` on its own is the private-narrowing
+# shape #298 → #316 removed.
+#
+# THE ORDER is /idd-diagnose Step 1's:
+#   1. exactly one IDD type name among the labels → that type; more than one
+#      distinct IDD type label → `unknown` (a conflict is not a meeting)
+#   2. no IDD type label → the leading word of the first non-empty line under a
+#      line-anchored `## Type` heading outside fenced code, if it is an IDD
+#      type name (`meeting（…）` and `**meeting**` both read as meeting)
+#   3. otherwise `unknown`
+# `unknown` means "not meeting": the gate then evaluates Complexity exactly as
+# it did before the type existed. The default is deliberately NOT meeting —
+# reading an ordinary issue as a meeting would skip its Complexity signal.
+#
+# The `## Type` reader is its own awk on purpose: `_idd_section_lines` reads
+# only `###` headings and its structural rules are frozen (spec R9, #336). It
+# runs under LC_ALL=C so `[[:space:]]` and the letter class mean ASCII on every
+# platform, and it uses no grep, so a body without the heading cannot fail a
+# caller running under `pipefail`.
+idd_issue_type() {
+    local labels="" body="" l found="" n=0 word
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --labels|--body)
+                if [ $# -lt 2 ]; then
+                    printf 'idd_issue_type: %s requires a value\n' "$1" | _idd_scrub >&2
+                    return 2
+                fi
+                case "$1" in
+                    --labels) labels="$2" ;;
+                    --body)   body="$2"   ;;
+                esac
+                shift 2
+                ;;
+            *)
+                printf 'idd_issue_type: unknown argument: %s\n' "$1" | _idd_scrub >&2
+                return 2
+                ;;
+        esac
+    done
+
+    while IFS= read -r l; do
+        l="${l#"${l%%[![:space:]]*}"}"
+        l="${l%"${l##*[![:space:]]}"}"
+        case "$l" in
+            bug|feature|refactor|docs|meeting)
+                case " $found " in
+                    *" $l "*) ;;
+                    *) found="${found:+$found }$l"; n=$((n + 1)) ;;
+                esac
+                ;;
+        esac
+    done <<<"$labels"
+    if [ "$n" -eq 1 ]; then printf '%s\n' "$found"; return 0; fi
+    if [ "$n" -gt 1 ]; then printf 'unknown\n'; return 0; fi
+
+    word=$(printf '%s\n' "$body" | LC_ALL=C awk '
+        { sub(/\r$/, "") }
+        {
+            if (fence != "") {
+                if (fence == "`" && $0 ~ /^[[:space:]]*```/) fence = ""
+                else if (fence == "~" && $0 ~ /^[[:space:]]*~~~/) fence = ""
+                next
+            }
+            if ($0 ~ /^[[:space:]]*```/) { fence = "`"; next }
+            if ($0 ~ /^[[:space:]]*~~~/) { fence = "~"; next }
+        }
+        !grab && $0 ~ /^##[[:space:]]+Type[[:space:]]*$/ { grab = 1; next }
+        grab && /^##?[[:space:]]/                        { exit }
+        grab && NF {
+            line = $0
+            sub(/^[[:space:]]*[*`_]*/, "", line)
+            if (match(line, /^[A-Za-z]+/)) print tolower(substr(line, 1, RLENGTH))
+            exit
+        }
+    ')
+    case "$word" in
+        bug|feature|refactor|docs|meeting) printf '%s\n' "$word" ;;
+        *)                                 printf 'unknown\n' ;;
+    esac
+    return 0
 }

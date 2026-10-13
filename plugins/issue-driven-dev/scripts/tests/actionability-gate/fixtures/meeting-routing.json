@@ -1,0 +1,56 @@
+[
+  {
+    "name": "meeting, Complexity written as a not-applicable sentence (exit 3), no label, empty Blocking",
+    "complexity_raw": "（不適用）type=meeting 在 complexity 評估前分流，不產生 Simple / Plan / Spectra 判定",
+    "labels": ["meeting"],
+    "blocking": "- (none)",
+    "expect_parse_exit": 3,
+    "expect_verdict": "actionable",
+    "expect_reasons": []
+  },
+  {
+    "name": "meeting, no Complexity section (exit 4), no label, empty Blocking",
+    "complexity_raw": null,
+    "labels": ["meeting"],
+    "blocking": "- (none)",
+    "expect_parse_exit": 4,
+    "expect_verdict": "actionable",
+    "expect_reasons": []
+  },
+  {
+    "name": "meeting, no Complexity section, parking-lot label",
+    "complexity_raw": null,
+    "labels": ["meeting", "parking-lot"],
+    "blocking": "- (none)",
+    "expect_parse_exit": 4,
+    "expect_verdict": "not-actionable",
+    "expect_reasons": ["parking-lot-label"]
+  },
+  {
+    "name": "meeting, not-applicable sentence, non-empty Blocking",
+    "complexity_raw": "（不適用）type=meeting 在 complexity 評估前分流",
+    "labels": ["meeting"],
+    "blocking": "- 等 #99 merge",
+    "expect_parse_exit": 3,
+    "expect_verdict": "not-actionable",
+    "expect_reasons": ["blocking-nonempty"]
+  },
+  {
+    "name": "meeting, tier written anyway (exit 0) — the tier is ignored, not routed on",
+    "complexity_raw": "Simple",
+    "labels": ["meeting"],
+    "blocking": "- (none)",
+    "expect_parse_exit": 0,
+    "expect_verdict": "actionable",
+    "expect_reasons": []
+  },
+  {
+    "name": "meeting, deferral vocabulary in Complexity (exit 5) — parking a meeting is the label's job",
+    "complexity_raw": "Plan when triggered",
+    "labels": ["meeting"],
+    "blocking": "- (none)",
+    "expect_parse_exit": 5,
+    "expect_verdict": "actionable",
+    "expect_reasons": []
+  }
+]

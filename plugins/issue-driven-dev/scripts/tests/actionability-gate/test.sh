@@ -332,6 +332,10 @@ if [ "$HELPER_PRESENT" -eq 1 ]; then
   refute_grep "verdict: ESC scrubbed from the --blocking-section misuse message" $'\033' "$err"
   err=$(idd_actionability_verdict $'--bogus\033[2K' 2>&1 >/dev/null)
   refute_grep "verdict: ESC scrubbed from the unknown-argument misuse message" $'\033' "$err"
+  err=$(idd_actionability_verdict --complexity-exit 0 --parking-label no --blocking-section no --issue-type $'x\033[31m' 2>&1 >/dev/null)
+  refute_grep "verdict: ESC scrubbed from the --issue-type misuse message" $'\033' "$err"
+  err=$(idd_issue_type $'--bogus\033[2K' 2>&1 >/dev/null)
+  refute_grep "issue type: ESC scrubbed from the unknown-argument misuse message" $'\033' "$err"
   # ── fences follow CommonMark, which is what GitHub renders (round 5) ────────
   # Round 4 disabled fence tracking for a body whose marker count was odd, so
   # that a section below an UNCLOSED fence would be read. Measured: the only
@@ -896,5 +900,80 @@ for d in "plugin.json:$pj_desc" "marketplace.json:$mj_desc"; do
   assert_grep "${d%%:*}: states that structural rules are frozen" 'frozen' "${d#*:}"
   refute_grep "${d%%:*}: no '55 real sections' (55 rows, 54 sections under CommonMark)" '55 real sections' "${d#*:}"
 done
+
+# ── #383: issue type — a meeting issue skips the Complexity signal ───────────
+# The meeting type (#57) deliberately writes no tier, so the Complexity signal
+# would always read unparseable (exit 3) or missing (exit 4) and withhold every
+# meeting issue. With --issue-type meeting the gate ignores that signal and
+# still evaluates parking-lot and ### Blocking. Expected values come from the
+# fixture, written by hand from the spec scenarios.
+MFIX="$HERE/fixtures/meeting-routing.json"
+assert_true "meeting fixture present" "[ -s '$MFIX' ]"
+cs_body() { printf '## Current Status\n\n### Phase\n\ndiagnosed\n\n### Blocking\n%s\n\n### Tasks\n\n- [ ] x\n' "$1"; }
+while IFS= read -r row; do
+  name=$(jq -r '.name' <<<"$row")
+  raw=$(jq -r 'if .complexity_raw == null then "__NULL__" else .complexity_raw end' <<<"$row")
+  exp_pexit=$(jq -r '.expect_parse_exit' <<<"$row")
+  exp_verdict=$(jq -r '.expect_verdict' <<<"$row")
+  exp_reasons=$(jq -r '.expect_reasons | sort | join(";")' <<<"$row")
+  has_label=$(jq -r 'if (.labels | index("parking-lot")) then "yes" else "no" end' <<<"$row")
+  if [ -n "$(idd_blocking_section "$(cs_body "$(jq -r '.blocking' <<<"$row")")")" ]; then hb=yes; else hb=no; fi
+  idd_parse_complexity "$(synth_body "$raw" 0)" >/dev/null 2>&1; pexit=$?
+  assert_eq "meeting [$name]: parse exit" "$exp_pexit" "$pexit"
+  out=$(idd_actionability_verdict --complexity-exit "$pexit" --parking-label "$has_label" \
+          --blocking-section "$hb" --issue-type meeting 2>/dev/null); vexit=$?
+  verdict="${out%%:*}"; verdict="${verdict// /}"
+  assert_eq "meeting [$name]: verdict" "$exp_verdict" "$verdict"
+  if [ "$exp_verdict" = "not-actionable" ]; then
+    got=$(printf '%s' "${out#*: }" | tr ';' '\n' | sed 's/^ *//; s/ *$//' | sort | paste -sd';' -)
+    assert_eq "meeting [$name]: reasons" "$exp_reasons" "$got"
+    assert_eq "meeting [$name]: exit 1" "1" "$vexit"
+  else
+    assert_eq "meeting [$name]: exit 0" "0" "$vexit"
+  fi
+done < <(jq -c '.[]' "$MFIX")
+
+idd_actionability_verdict --complexity-exit 0 --parking-label no --blocking-section no --issue-type nonsense >/dev/null 2>&1
+assert_eq "--issue-type: a value outside the six is misuse (exit 2)" "2" "$?"
+run_bounded 5 idd_actionability_verdict --complexity-exit 0 --parking-label no --blocking-section no --issue-type >/dev/null 2>&1
+assert_eq "--issue-type: a value-less flag is misuse (exit 2), not a hang" "2" "$?"
+idd_actionability_verdict --complexity-exit 0 --parking-label no --blocking-section no --issue-type "" >/dev/null 2>&1
+assert_eq "--issue-type: passed but empty is misuse (exit 2), not 'no type given'" "2" "$?"
+
+# Omitted issue type preserves the existing verdict, and so does every type
+# other than meeting: re-run each parked-routing row with --issue-type bug and
+# unknown and compare against the same row without the flag.
+while IFS= read -r row; do
+  num=$(jq -r '.number' <<<"$row")
+  raw=$(jq -r 'if .complexity_raw == null then "__NULL__" else .complexity_raw end' <<<"$row")
+  fenced=$(jq -r 'if .fenced_example == true then "1" else "0" end' <<<"$row")
+  strategy=$(jq -r '.strategy // ""' <<<"$row")
+  has_label=$(jq -r 'if (.labels | index("parking-lot")) then "yes" else "no" end' <<<"$row")
+  if [ -n "$(idd_blocking_section "$(cs_body "$(jq -r '.blocking // "- (none)"' <<<"$row")")")" ]; then hb=yes; else hb=no; fi
+  idd_parse_complexity "$(synth_body "$raw" "$fenced" "$strategy")" >/dev/null 2>&1; pexit=$?
+  base=$(idd_actionability_verdict --complexity-exit "$pexit" --parking-label "$has_label" --blocking-section "$hb" 2>/dev/null)
+  for t_ in bug unknown; do
+    got=$(idd_actionability_verdict --complexity-exit "$pexit" --parking-label "$has_label" \
+            --blocking-section "$hb" --issue-type "$t_" 2>/dev/null)
+    assert_eq "#$num: --issue-type $t_ leaves the verdict unchanged" "$base" "$got"
+  done
+done < <(jq -c '.[]' "$FIXTURE")
+
+# ── #383: idd_issue_type — the order of /idd-diagnose Step 1, one implementation ─
+# Values from the spec's resolution table and scenarios.
+it_() { idd_issue_type --labels "$1" --body "$2" 2>/dev/null; }
+tb_() { printf '## Problem\n\nx\n\n## Type\n%s\n\n## Expected\n\ny\n' "$1"; }
+assert_eq "issue type: label meeting, no body"                      "meeting" "$(it_ 'meeting' '')"
+assert_eq "issue type: label meeting wins over body bug"            "meeting" "$(it_ 'meeting' "$(tb_ bug)")"
+assert_eq "issue type: labels bug+planning, body meeting → bug"     "bug"     "$(it_ $'bug\nplanning' "$(tb_ meeting)")"
+assert_eq "issue type: label planning, body 'meeting（審議）'"       "meeting" "$(it_ 'planning' "$(tb_ 'meeting（審議）')")"
+assert_eq "issue type: no type label, body 'meeting（要老師裁決的編排決定）'" "meeting" "$(it_ '' "$(tb_ 'meeting（要老師裁決的編排決定）')")"
+assert_eq "issue type: labels bug+meeting → unknown"                "unknown" "$(it_ $'bug\nmeeting' "$(tb_ meeting)")"
+assert_eq "issue type: no labels, no heading → unknown"             "unknown" "$(it_ '' '')"
+assert_eq "issue type: ## Type only inside a fence → unknown"       "unknown" "$(it_ '' $'## Problem\n\n```\n## Type\nmeeting\n```\n')"
+idd_issue_type --bogus x >/dev/null 2>&1
+assert_eq "issue type: an unknown argument is misuse (exit 2)" "2" "$?"
+run_bounded 5 idd_issue_type --labels >/dev/null 2>&1
+assert_eq "issue type: a value-less flag is misuse (exit 2), not a hang" "2" "$?"
 
 print_summary "actionability-gate"
