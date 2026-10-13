@@ -569,27 +569,28 @@ idd_actionability_group() {
 # platform, and it uses no grep, so a body without the heading cannot fail a
 # caller running under `pipefail`.
 #
-# Its unsafe direction is a FALSE meeting (that drops the Complexity signal),
-# so its block model is stricter than `_idd_section_lines`' (verify #383 r1,
-# r2), each rule pinned in test.sh against markdown-it's rendering: line
-# endings are CRLF, LF or a lone CR; a fence closes only on the opener's
-# character at no less than its length with nothing after it; a backtick
-# opener's info string has no backtick; a run indented 4+ spaces is not a
-# fence; HTML comment blocks, type-1 (pre/script/style/textarea) and type-6
-# (block tag, until a blank line) HTML blocks are skipped; the heading needs
-# a space or tab after `##`; the type word must end at a non-word character.
-# Known divergences, with their direction:
-#   - a fence nested in a list item or block quote is read as a top-level
-#     fence. Usually that hides more (safe), but a fence the reader opens and
-#     CommonMark does not can turn the next real opener into a closer and
-#     expose a hidden `## Type` (UNSAFE; not handled).
-#   - type-7 HTML blocks (any other tag alone on a line) are read as text
-#     (UNSAFE in principle; such a block cannot interrupt a paragraph, so it
-#     needs a blank line before it).
-#   - indented code blocks are read as text, but the heading must start at
-#     column 0, so an indented `## Type` is never read (safe).
-# A type label always wins over the body, and labels need triage permission;
-# trust in a body-only type is tracked in #385.
+# Its unsafe direction is a FALSE meeting (that drops the Complexity signal).
+# The baseline is GitHub's renderer (cmark-gfm, checked with `gh api markdown`),
+# because that is what a maintainer reads (verify #383 r3). Rules, each pinned
+# in test.sh: line endings are CRLF, LF or a lone CR; a fence closes only on the
+# opener's character at no less than its length with nothing after it; a
+# backtick opener's info string has no backtick; a run indented 4+ spaces is not
+# a fence; HTML comments and HTML blocks of types 1, 3, 4, 5 and 6 (GitHub's tag
+# list) are skipped; the heading needs a space or tab after `##`; the type word
+# ends at a non-word character once closing emphasis is stripped.
+#
+# BACKSTOP, renderer-independent: a body-derived `meeting` needs exactly one
+# `## Type` heading line in the whole body; with two or more the result is
+# `unknown`. Three verify rounds kept finding concealment shapes (list-item
+# fences, HTML block variants, renderer tag-list drift) and every one put a
+# second `## Type` where the reader and GitHub disagree. The backstop never
+# upgrades a result, and an issue filed by idd-issue carries a type label,
+# which wins over the body.
+#
+# Known divergences that the backstop does NOT cover — a single `## Type`
+# hidden by a construct the reader does not model (a fence nested in a list
+# item or block quote that the reader misses, a type-7 HTML block) can still
+# read as meeting. Trust in a body-only type is tracked in #385.
 idd_issue_type() {
     local labels="" body="" found="" word
 
@@ -643,16 +644,33 @@ idd_issue_type() {
             if (ch == "`" && opener && index(substr(rest, RLENGTH + 1), "`")) return 0
             return RLENGTH
         }
-        # html_block: 1 = <pre|script|style|textarea> (ends at its closing tag),
-        # 6 = a CommonMark type-6 block tag (ends at a blank line), else 0 (r2 #21).
+        # html_block: the HTML block type a line opens, or 0. Tag list and end
+        # conditions follow GitHub (cmark-gfm), the renderer a maintainer reads
+        # — not CommonMark 0.31, which added `search` and is not what GitHub
+        # renders (verify #383 r3 #25). 1 pre/script/style/textarea, 3 <?,
+        # 4 <!X, 5 <![CDATA[, 6 block tag (until a blank line).
         function html_block(line,    ind, rest, low) {
             match(line, /^ */); ind = RLENGTH
             if (ind > 3) return 0
             rest = substr(line, ind + 1); low = tolower(rest)
             if (low ~ /^<(pre|script|style|textarea)([ \t>]|$)/) return 1
-            if (low ~ /^<\/?(address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h1|h2|h3|h4|h5|h6|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)([ \t>]|\/>|$)/) return 6
+            if (low ~ /^<\?/) return 3
+            if (low ~ /^<!\[cdata\[/) return 5
+            if (low ~ /^<![a-z]/) return 4
+            if (low ~ /^<\/?(address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h1|h2|h3|h4|h5|h6|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|section|source|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)([ \t>]|\/>|$)/) return 6
             return 0
         }
+        function html_ends(type, line,    low) {
+            low = tolower(line)
+            if (type == 1) return low ~ /<\/(pre|script|style|textarea)>/
+            if (type == 3) return index(line, "?>") > 0
+            if (type == 4) return index(line, ">") > 0
+            if (type == 5) return index(line, "]]>") > 0
+            return 0
+        }
+        # Every `## Type` heading line in the body, wherever it sits: the
+        # renderer-independent backstop (r3) — see END.
+        $0 ~ /^##[ \t]+Type[ \t]*$/ { ntype++ }
         {
             # Inside a fence: only the same character, at no less than the
             # opener length, with nothing but whitespace after it, closes it
@@ -665,10 +683,9 @@ idd_issue_type() {
                 }
                 next
             }
-            # HTML blocks are not read: a type-1 block until its closing tag, a
-            # type-6 block until a blank line (r2 #21 — `<details>` in templates).
-            if (htmlb == 1) { if (tolower($0) ~ /<\/(pre|script|style|textarea)>/) htmlb = 0; next }
+            # HTML blocks are not read (r2 #21, r3 #11/#18/#25).
             if (htmlb == 6) { if ($0 ~ /^[ \t]*$/) htmlb = 0; next }
+            if (htmlb)      { if (html_ends(htmlb, $0)) htmlb = 0; next }
             # An HTML comment block is not rendered and not read (findings 21, 24).
             if (incomment) { if (index($0, "-->")) incomment = 0; next }
             if ($0 ~ /^[ \t]*<!--/) {
@@ -680,19 +697,32 @@ idd_issue_type() {
             k = fence_run($0, "`"); if (k) { fence = "`"; flen = k; next }
             k = fence_run($0, "~"); if (k) { fence = "~"; flen = k; next }
             h = html_block($0)
-            if (h == 1) { if (tolower($0) !~ /<\/(pre|script|style|textarea)>/) htmlb = 1; next }
             if (h == 6) { htmlb = 6; next }
+            if (h)      { if (!html_ends(h, $0)) htmlb = h; next }
         }
-        !grab && $0 ~ /^##[ \t]+Type[ \t]*$/             { grab = 1; next }
-        grab && /^##?[[:space:]]/                        { exit }
+        # The input is always read to the end (no `exit`): the backstop needs
+        # every line, and an early exit would SIGPIPE the upstream sed/tr under
+        # a caller running `set -euo pipefail` (r3 #31).
+        !grab && !done && $0 ~ /^##[ \t]+Type[ \t]*$/  { grab = 1; next }
+        grab && /^##?[ \t]/                             { grab = 0; done = 1; next }
         grab && NF {
             line = $0
-            sub(/^[[:space:]]*[*`_]*/, "", line)
-            # The word must end at a non-word character, as the Complexity parser
-            # boundary does: `meeting-notes` / `meeting2` are not meeting (r2 #26).
-            if (match(line, /^[A-Za-z]+/) && substr(line, RLENGTH + 1, 1) !~ /^[A-Za-z0-9_-]$/) print tolower(substr(line, 1, RLENGTH))
-            exit
+            sub(/^[ \t]*[*`_]*/, "", line)
+            # The word ends at a non-word character once closing emphasis is
+            # stripped: `meeting-notes`, `meeting2`, `meeting_x` are not meeting,
+            # `_meeting_` and `**meeting**` are (r2 #26, r3 #12).
+            if (match(line, /^[A-Za-z]+/)) {
+                w = substr(line, 1, RLENGTH); rest = substr(line, RLENGTH + 1)
+                sub(/^[*_`]+/, "", rest)
+                if (rest !~ /^[A-Za-z0-9_-]/) word = tolower(w)
+            }
+            grab = 0; done = 1; next
         }
+        # Backstop: a body-derived meeting needs exactly ONE `## Type` heading
+        # line. Every concealment shape found across three verify rounds put a
+        # second one somewhere the reader and GitHub disagree about; with two or
+        # more, meeting becomes unknown (the safe direction). Never upgrades.
+        END { if (word == "meeting" && ntype > 1) print "unknown"; else print word }
     ')
     case "$word" in
         bug|feature|refactor|docs|meeting) printf '%s\n' "$word" ;;

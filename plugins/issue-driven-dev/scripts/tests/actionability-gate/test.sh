@@ -1078,6 +1078,30 @@ assert_eq "issue type: 'meeting-notes' is not the word meeting → unknown" "unk
 assert_eq "issue type: 'meeting2' is not the word meeting → unknown"       "unknown" "$(it_ '' "$(tb_ 'meeting2')")"
 assert_eq "issue type: 'meeting.' still is → meeting"                      "meeting" "$(it_ '' "$(tb_ 'meeting.')")"
 assert_eq "issue type: '##<FF>Type' is not a heading → unknown" "unknown" "$(it_ '' $'##\fType\nmeeting\n')"
+# verify #383 r3 (#11/#18, #25, #26, #12): the baseline is GitHub's renderer
+# (gh api markdown, gfm), not CommonMark 0.31 — that is what a maintainer sees.
+# Plus a renderer-independent backstop: a body-derived `meeting` needs exactly
+# one `## Type` heading line in the whole body; with two or more it is unknown.
+assert_eq "issue type: <source> starts an HTML block on GitHub (gfm list) → unknown" "unknown" \
+  "$(it_ '' $'Intro text\n<source src="x.mp4">\n## Type\nmeeting\n')"
+assert_eq "issue type: <search> is inline on GitHub, so the first visible Type is read → bug" "bug" \
+  "$(it_ '' $'Intro text\n<search>\n## Type\nbug\n\n## Type\nmeeting\n')"
+assert_eq "issue type: a type-3 block (<? … ?>) hides its contents → unknown" "unknown" "$(it_ '' $'<?php\n## Type\nmeeting\n?>\n')"
+assert_eq "issue type: a type-4 block (<!X … >) hides its contents → unknown" "unknown" "$(it_ '' $'<!ELEMENT note\n## Type\nmeeting\n>\n')"
+assert_eq "issue type: a type-5 block (<![CDATA[ … ]]>) hides its contents → unknown" "unknown" "$(it_ '' $'<![CDATA[\n## Type\nmeeting\n]]>\n')"
+assert_eq "issue type: two ## Type headings never yield a body meeting (list-item fence shape) → unknown" "unknown" \
+  "$(it_ '' $'1. step\n\n   ```\n   cmd\nparagraph that ends the list\n\n```\n## Type\nmeeting\n```\n\n## Type\nbug\n')"
+assert_eq "issue type: two visible ## Type headings, meeting first → unknown (backstop)" "unknown" "$(it_ '' $'## Type\nmeeting\n\n## Type\nbug\n')"
+assert_eq "issue type: the backstop never upgrades — visible bug with a hidden meeting stays bug" "bug" \
+  "$(it_ '' $'<!--\n## Type\nmeeting\n-->\n## Type\nbug\n')"
+assert_eq "issue type: a label decides even with two ## Type headings" "meeting" "$(it_ 'meeting' $'## Type\nbug\n\n## Type\nbug\n')"
+assert_eq "issue type: _meeting_ renders as emphasised meeting → meeting" "meeting" "$(it_ '' "$(tb_ '_meeting_')")"
+assert_eq "issue type: meeting_x is one word → unknown" "unknown" "$(it_ '' "$(tb_ 'meeting_x')")"
+# r3 #31: the reader consumes its whole input, so a direct caller under
+# `set -euo pipefail` is not killed by SIGPIPE on a large body.
+big_=$(printf '## Type\nmeeting\n'; for i in $(seq 1 20000); do printf 'line %s padding padding padding\n' "$i"; done)
+( set -euo pipefail; t_=$(idd_issue_type --labels '' --body "$big_"); [ "$t_" = meeting ] ); rc_=$?
+assert_eq "issue type: a large body under set -euo pipefail returns meeting with exit 0 (no SIGPIPE)" "0" "$rc_"
 # Labels (findings 17, 25): ASCII case-folded like the body, ASCII-only trim,
 # and no locale-dependent whitespace — a lookalike label is not a meeting.
 assert_eq "issue type: label 'Meeting' folds to meeting, like the body"   "meeting" "$(it_ 'Meeting' '')"
