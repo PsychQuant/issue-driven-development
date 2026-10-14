@@ -332,13 +332,9 @@ if [ "$HELPER_PRESENT" -eq 1 ]; then
   refute_grep "verdict: ESC scrubbed from the --blocking-section misuse message" $'\033' "$err"
   err=$(idd_actionability_verdict $'--bogus\033[2K' 2>&1 >/dev/null)
   refute_grep "verdict: ESC scrubbed from the unknown-argument misuse message" $'\033' "$err"
-  err=$(idd_actionability_verdict --complexity-exit 0 --parking-label no --blocking-section no --issue-type $'x\033[31m' 2>&1 >/dev/null)
-  refute_grep "verdict: ESC scrubbed from the --issue-type misuse message" $'\033' "$err"
-  err=$(idd_actionability_verdict --complexity-exit 0 --parking-label no --blocking-section no --issue-type meeting --diagnosis-present $'x\033[31m' 2>&1 >/dev/null)
-  refute_grep "verdict: ESC scrubbed from the --diagnosis-present misuse message" $'\033' "$err"
-  assert_grep "verdict: the --diagnosis-present misuse message names the flag" 'diagnosis-present must be yes or no' "$err"
-  err=$(idd_issue_type $'--bogus\033[2K' 2>&1 >/dev/null)
-  refute_grep "issue type: ESC scrubbed from the unknown-argument misuse message" $'\033' "$err"
+  err=$(idd_actionability_verdict --complexity-exit 0 --parking-label no --blocking-section no --diagnosis-type $'x\033[31m' 2>&1 >/dev/null)
+  refute_grep "verdict: ESC scrubbed from the --diagnosis-type misuse message" $'\033' "$err"
+  assert_grep "verdict: the --diagnosis-type misuse message names the flag" 'diagnosis-type must be' "$err"
   # ── fences follow CommonMark, which is what GitHub renders (round 5) ────────
   # Round 4 disabled fence tracking for a body whose marker count was odd, so
   # that a section below an UNCLOSED fence would be read. Measured: the only
@@ -598,9 +594,9 @@ for c in idd-list idd-all idd-implement idd-plan; do
   assert_output_grep "$c: paginates the comments fetch"        '/comments" --paginate --jq' "$f"
   refute_output_grep "$c: no truncating --json comments fetch for the diagnosis" 'LATEST_DIAGNOSIS=$(gh issue view' "$f"
   refute_grep_re     "$c: no oldest-100 --json comments connection anywhere" '=\$\(gh issue view[^)]*--json comments' "$(cat "$f")"
-  assert_output_grep "$c: set -e safe verdict capture"        'if VERDICT=$(idd_actionability_verdict --complexity-exit "$CEXIT" --parking-label "$HAS_PARKING" --blocking-section "$BLOCKING" --issue-type "$ISSUE_TYPE" --diagnosis-present "$HAS_DIAGNOSIS" 2>&1); then VEXIT=0; else VEXIT=$?; fi' "$f"
-  assert_output_grep "$c: derives HAS_DIAGNOSIS from the trusted Diagnosis (#383 r1)" 'if [ -n "$LATEST_DIAGNOSIS" ]; then HAS_DIAGNOSIS=yes; else HAS_DIAGNOSIS=no; fi' "$f"
-  assert_output_grep "$c: resolves the issue type through the helper (#383)" 'ISSUE_TYPE=$(idd_issue_type --labels' "$f"
+  assert_output_grep "$c: set -e safe verdict capture"        'if VERDICT=$(idd_actionability_verdict --complexity-exit "$CEXIT" --parking-label "$HAS_PARKING" --blocking-section "$BLOCKING" --diagnosis-type "$DIAG_TYPE" 2>&1); then VEXIT=0; else VEXIT=$?; fi' "$f"
+  assert_output_grep "$c: reads the type from the trusted Diagnosis (#383 r4)" 'DIAG_TYPE=$(idd_diagnosis_type "$LATEST_DIAGNOSIS")' "$f"
+  refute_output_grep "$c: never takes the type from labels or the issue body (#383 r4)" 'idd_issue_type' "$f"
   assert_output_grep "$c: branches on the verdict"            'REASONS="${VERDICT#not-actionable: }"' "$f"
   assert_output_grep "$c: exit 2 is a consumer FATAL"         'FATAL: idd_actionability_verdict misuse' "$f"
   assert_output_grep "$c: issue number is digit-checked before the REST path" "*[!0-9]*) " "$f"
@@ -664,7 +660,7 @@ for c in idd-list idd-all idd-implement idd-plan; do
 done
 # The canonical shape in the reference prints the same two-part verdict.
 assert_output_grep "reference: canonical shape prints the machine line"      "printf 'gate #%s: VEXIT=%s TIER=%s REASONS=%s TYPE=%s\\n'" "$REF"
-assert_output_grep "reference: canonical shape resolves the issue type through the helper (#383)" 'ISSUE_TYPE=$(idd_issue_type --labels' "$REF"
+assert_output_grep "reference: canonical shape reads the type from the trusted Diagnosis (#383 r4)" 'DIAG_TYPE=$(idd_diagnosis_type "$LATEST_DIAGNOSIS")' "$REF"
 assert_output_grep "reference: canonical shape delimits the raw block"       "printf 'raw<<<\\n'" "$REF"
 refute_output_grep "reference: no single-line print with the raws glued on"  'REASONS=%s | %s%s' "$REF"
 # gate SHALL precede any egress or branch creation (verify #318 round-2 HIGH: idd-implement)
@@ -759,7 +755,7 @@ for c in idd-implement:2 idd-plan:1 idd-all:1; do
 done
 refute_grep "idd-all: its gate block never says \$NUMBER (idd-all defines only \$N)" '$NUMBER' "$(gate_blocks "$IA")"
 GB_RUN=$(mktemp -d); printf '%s' "$gb_035" > "$GB_RUN/block.sh"
-gb_stub='gh() { case "$1" in api) [ "$STUB" = commentfail ] && return 1; if [ "$STUB" = meetingdiag ]; then echo "[{\"body\":\"## Diagnosis\\n\\n### Type\\nmeeting\\n\"}]"; else echo "[]"; fi ;; issue) [ "$STUB" = issuefail ] && return 1; case "$STUB" in meeting|meetingdiag) echo "{\"labels\":[{\"name\":\"meeting\"}],\"body\":\"\"}" ;; *) echo "{\"labels\":[],\"body\":\"\"}" ;; esac ;; esac; }'
+gb_stub='gh() { case "$1" in api) [ "$STUB" = commentfail ] && return 1; case "$STUB" in meetingdiag) echo "[{\"body\":\"## Diagnosis\\n\\n### Type\\nmeeting\\n\"}]" ;; bodyflip) echo "[{\"body\":\"## Diagnosis\\n\\n### Type\\nbug\\n\\n### Complexity\\n\\nSimple when triggered\\n\"}]" ;; *) echo "[]" ;; esac ;; issue) [ "$STUB" = issuefail ] && return 1; case "$STUB" in meeting|meetingdiag) echo "{\"labels\":[{\"name\":\"meeting\"}],\"body\":\"\"}" ;; bodyflip) echo "{\"labels\":[],\"body\":\"## Type\\nmeeting\\n\"}" ;; *) echo "{\"labels\":[],\"body\":\"\"}" ;; esac ;; esac; }'
 run_block() { ( cd "$GB_RUN" && STUB="$1" NUMBER=316 GITHUB_REPO=o/r CLAUDE_PLUGIN_ROOT="$HERE/../../.." bash -c "$gb_stub"$'\n'"$(cat block.sh)" 2>&1 ); }
 out=$(run_block commentfail); rc=$?
 assert_eq "gate block (run): a failed comment fetch exits 1" "1" "$rc"
@@ -769,16 +765,21 @@ assert_eq "gate block (run): a failed issue fetch exits 1" "1" "$rc"
 assert_grep "gate block (run): a failed issue fetch says so" 'issue fetch failed' "$out"
 out=$(run_block ok); rc=$?
 assert_eq "gate block (run): with both fetches ok it exits 0" "0" "$rc"
-assert_grep_re "gate block (run): no diagnosis prints the complexity-missing verdict" '^gate #316: VEXIT=1 TIER= REASONS=complexity-missing TYPE=unknown$' "$out"
+assert_grep_re "gate block (run): no diagnosis prints the complexity-missing verdict" '^gate #316: VEXIT=1 TIER= REASONS=complexity-missing TYPE=none$' "$out"
 # A meeting issue with NO Diagnosis comment is still undiagnosed: the meeting
 # exemption covers a Diagnosis without a tier, never a missing Diagnosis
 # (verify #383 r1, findings 1-4 — the first cut pinned the opposite here).
 out=$(run_block meeting); rc=$?
 assert_eq "gate block (run): a meeting issue with no Diagnosis comment exits 0 (block ran)" "0" "$rc"
-assert_grep_re "gate block (run): a meeting issue with no Diagnosis comment stays complexity-missing (#383 r1)" '^gate #316: VEXIT=1 TIER= REASONS=complexity-missing TYPE=meeting$' "$out"
+assert_grep_re "gate block (run): a meeting-labelled issue with no Diagnosis comment stays complexity-missing (#383 r1, r4)" '^gate #316: VEXIT=1 TIER= REASONS=complexity-missing TYPE=none$' "$out"
 out=$(run_block meetingdiag); rc=$?
 assert_eq "gate block (run): a diagnosed meeting issue exits 0 (#383)" "0" "$rc"
 assert_grep_re "gate block (run): a diagnosed meeting issue is actionable and says TYPE=meeting (#383)" '^gate #316: VEXIT=0 TIER= REASONS= TYPE=meeting$' "$out"
+# r4 #19: the issue author rewrites the body to `meeting` after a bug Diagnosis
+# with a deferral — the gate still reads `bug` from the trusted Diagnosis.
+out=$(run_block bodyflip); rc=$?
+assert_eq "gate block (run): a body flipped to meeting exits 0 (block ran)" "0" "$rc"
+assert_grep_re "gate block (run): the body cannot release the gate — TYPE comes from the Diagnosis (#383 r4)" '^gate #316: VEXIT=1 TIER= REASONS=complexity-deferral-marker TYPE=bug$' "$out"
 rm -rf "$GB_RUN"
 assert_output_grep "reference: canonical shape guards the comment fetch" 'comment fetch failed' "$REF"
 refute_output_grep "idd-implement: Step 2.5 prose no longer describes the superseded occurrence-count guard" 'drift guard 斷言兩處都含 verdict 呼叫與機器行' "$IM"
@@ -916,15 +917,20 @@ for d in "plugin.json:$pj_desc" "marketplace.json:$mj_desc"; do
   refute_grep "${d%%:*}: no '55 real sections' (55 rows, 54 sections under CommonMark)" '55 real sections' "${d#*:}"
 done
 
-# ── #383: issue type — a meeting issue skips the Complexity signal ───────────
+# ── #383: Diagnosis type — a diagnosed meeting issue skips the Complexity signal ─
 # The meeting type (#57) deliberately writes no tier, so the Complexity signal
-# would always read unparseable (exit 3) or missing (exit 4) and withhold every
-# meeting issue. With --issue-type meeting the gate ignores that signal and
-# still evaluates parking-lot and ### Blocking. Expected values come from the
-# fixture, written by hand from the spec scenarios.
+# would always read unparseable (exit 3) or missing (exit 4). The gate learns the
+# type from the latest TRUSTED Diagnosis (its `### Type`), never from labels or
+# the issue body, which the issue author can edit (verify r4, maintainer
+# decision 2026-10-14). Each fixture row builds a Diagnosis with that type and
+# runs it through idd_diagnosis_type, the path a consumer takes.
 MFIX="$HERE/fixtures/meeting-routing.json"
 assert_true "meeting fixture present" "[ -s '$MFIX' ]"
 cs_body() { printf '## Current Status\n\n### Phase\n\ndiagnosed\n\n### Blocking\n%s\n\n### Tasks\n\n- [ ] x\n' "$1"; }
+typed_diag() { # dtype raw_or_NULL — a Diagnosis whose ### Type is dtype
+  if [ "$2" = "__NULL__" ]; then printf '## Diagnosis\n\n### Type\n\n%s\n\n### Risks\n\n- none\n' "$1"
+  else printf '## Diagnosis\n\n### Type\n\n%s\n\n### Complexity\n\n%s\n\n### Risks\n\n- none\n' "$1" "$2"; fi
+}
 while IFS= read -r row; do
   name=$(jq -r '.name' <<<"$row")
   raw=$(jq -r 'if .complexity_raw == null then "__NULL__" else .complexity_raw end' <<<"$row")
@@ -933,17 +939,15 @@ while IFS= read -r row; do
   exp_reasons=$(jq -r '.expect_reasons | sort | join(";")' <<<"$row")
   has_label=$(jq -r 'if (.labels | index("parking-lot")) then "yes" else "no" end' <<<"$row")
   if [ -n "$(idd_blocking_section "$(cs_body "$(jq -r '.blocking' <<<"$row")")")" ]; then hb=yes; else hb=no; fi
-  # The type comes from the row's labels through the helper — the same path a
-  # consumer takes — not from a hard-coded flag (verify #383 r1, finding 32).
-  mtype=$(idd_issue_type --labels "$(jq -r '.labels | join("\n")' <<<"$row")" --body "" 2>/dev/null)
-  assert_eq "meeting [$name]: labels resolve to meeting" "meeting" "$mtype"
-  # No trusted Diagnosis comment means an EMPTY LATEST_DIAGNOSIS, not a synthesized one.
-  dpres=$(jq -r 'if .diagnosis_present then "yes" else "no" end' <<<"$row")
-  if [ "$dpres" = yes ]; then idd_parse_complexity "$(synth_body "$raw" 0)" >/dev/null 2>&1; pexit=$?
-  else idd_parse_complexity "" >/dev/null 2>&1; pexit=$?; fi
+  dtype=$(jq -r '.diagnosis_type' <<<"$row")
+  # No trusted Diagnosis comment means an EMPTY LATEST_DIAGNOSIS.
+  if [ "$dtype" = none ]; then diag=""; else diag=$(typed_diag "$dtype" "$raw"); fi
+  dt=$(idd_diagnosis_type "$diag" 2>/dev/null)
+  assert_eq "meeting [$name]: Diagnosis type read from the Diagnosis" "$dtype" "$dt"
+  idd_parse_complexity "$diag" >/dev/null 2>&1; pexit=$?
   assert_eq "meeting [$name]: parse exit" "$exp_pexit" "$pexit"
   out=$(idd_actionability_verdict --complexity-exit "$pexit" --parking-label "$has_label" \
-          --blocking-section "$hb" --issue-type "$mtype" --diagnosis-present "$dpres" 2>/dev/null); vexit=$?
+          --blocking-section "$hb" --diagnosis-type "$dt" 2>/dev/null); vexit=$?
   verdict="${out%%:*}"; verdict="${verdict// /}"
   assert_eq "meeting [$name]: verdict" "$exp_verdict" "$verdict"
   if [ "$exp_verdict" = "not-actionable" ]; then
@@ -957,27 +961,19 @@ while IFS= read -r row; do
   fi
 done < <(jq -c '.[]' "$MFIX")
 
-idd_actionability_verdict --complexity-exit 0 --parking-label no --blocking-section no --issue-type nonsense >/dev/null 2>&1
-assert_eq "--issue-type: a value outside the six is misuse (exit 2)" "2" "$?"
-run_bounded 5 idd_actionability_verdict --complexity-exit 0 --parking-label no --blocking-section no --issue-type >/dev/null 2>&1
-assert_eq "--issue-type: a value-less flag is misuse (exit 2), not a hang" "2" "$?"
-idd_actionability_verdict --complexity-exit 0 --parking-label no --blocking-section no --issue-type "" >/dev/null 2>&1
-assert_eq "--issue-type: passed but empty is misuse (exit 2), not 'no type given'" "2" "$?"
-# --diagnosis-present (#383 r1): exit 4 means both "no ### Complexity section"
-# and "no trusted Diagnosis at all"; only the consumer can tell them apart, so a
-# meeting verdict without it is misuse, never a silent "present".
-idd_actionability_verdict --complexity-exit 4 --parking-label no --blocking-section no --issue-type meeting >/dev/null 2>&1
-assert_eq "--diagnosis-present: meeting without it is misuse (exit 2)" "2" "$?"
-idd_actionability_verdict --complexity-exit 4 --parking-label no --blocking-section no --issue-type meeting --diagnosis-present maybe >/dev/null 2>&1
-assert_eq "--diagnosis-present: a value other than yes/no is misuse (exit 2)" "2" "$?"
-idd_actionability_verdict --complexity-exit 4 --parking-label no --blocking-section no --issue-type meeting --diagnosis-present "" >/dev/null 2>&1
-assert_eq "--diagnosis-present: passed but empty is misuse (exit 2)" "2" "$?"
-run_bounded 5 idd_actionability_verdict --complexity-exit 4 --parking-label no --blocking-section no --issue-type meeting --diagnosis-present >/dev/null 2>&1
-assert_eq "--diagnosis-present: a value-less flag is misuse (exit 2), not a hang" "2" "$?"
+idd_actionability_verdict --complexity-exit 0 --parking-label no --blocking-section no --diagnosis-type nonsense >/dev/null 2>&1
+assert_eq "--diagnosis-type: a value outside the seven is misuse (exit 2)" "2" "$?"
+run_bounded 5 idd_actionability_verdict --complexity-exit 0 --parking-label no --blocking-section no --diagnosis-type >/dev/null 2>&1
+assert_eq "--diagnosis-type: a value-less flag is misuse (exit 2), not a hang" "2" "$?"
+idd_actionability_verdict --complexity-exit 0 --parking-label no --blocking-section no --diagnosis-type "" >/dev/null 2>&1
+assert_eq "--diagnosis-type: passed but empty is misuse (exit 2), not 'no type given'" "2" "$?"
+for old_ in "--issue-type meeting" "--diagnosis-present yes"; do
+  idd_actionability_verdict --complexity-exit 4 --parking-label no --blocking-section no $old_ >/dev/null 2>&1
+  assert_eq "verdict: the withdrawn flag '${old_%% *}' is an unknown argument (exit 2)" "2" "$?"
+done
 
-# Omitted issue type preserves the existing verdict, and so does every type
-# other than meeting: re-run each parked-routing row with --issue-type bug and
-# unknown and compare against the same row without the flag.
+# Omitted Diagnosis type preserves the existing verdict, and so does every value
+# other than meeting: re-run each parked-routing row with each of them.
 while IFS= read -r row; do
   num=$(jq -r '.number' <<<"$row")
   raw=$(jq -r 'if .complexity_raw == null then "__NULL__" else .complexity_raw end' <<<"$row")
@@ -987,15 +983,10 @@ while IFS= read -r row; do
   if [ -n "$(idd_blocking_section "$(cs_body "$(jq -r '.blocking // "- (none)"' <<<"$row")")")" ]; then hb=yes; else hb=no; fi
   idd_parse_complexity "$(synth_body "$raw" "$fenced" "$strategy")" >/dev/null 2>&1; pexit=$?
   base=$(idd_actionability_verdict --complexity-exit "$pexit" --parking-label "$has_label" --blocking-section "$hb" 2>/dev/null)
-  for t_ in bug feature refactor docs unknown; do
+  for t_ in bug feature refactor docs unknown none; do
     got=$(idd_actionability_verdict --complexity-exit "$pexit" --parking-label "$has_label" \
-            --blocking-section "$hb" --issue-type "$t_" 2>/dev/null)
-    assert_eq "#$num: --issue-type $t_ leaves the verdict unchanged" "$base" "$got"
-    for dp_ in yes no; do
-      got=$(idd_actionability_verdict --complexity-exit "$pexit" --parking-label "$has_label" \
-              --blocking-section "$hb" --issue-type "$t_" --diagnosis-present "$dp_" 2>/dev/null)
-      assert_eq "#$num: --issue-type $t_ --diagnosis-present $dp_ leaves the verdict unchanged" "$base" "$got"
-    done
+            --blocking-section "$hb" --diagnosis-type "$t_" 2>/dev/null)
+    assert_eq "#$num: --diagnosis-type $t_ leaves the verdict unchanged" "$base" "$got"
   done
 done < <(jq -c '.[]' "$FIXTURE")
 # The other two frozen corpora too (verify #383 r1, finding 36 — task 1.3 named
@@ -1007,113 +998,54 @@ while IFS= read -r row; do
   raw=$(jq -r 'if .complexity_raw == null then "__NULL__" else .complexity_raw end' <<<"$row")
   idd_parse_complexity "$(synth_body "$raw" 0)" >/dev/null 2>&1; pexit=$?
   base=$(idd_actionability_verdict --complexity-exit "$pexit" --parking-label no --blocking-section no 2>/dev/null)
-  for t_ in bug feature refactor docs unknown; do for dp_ in yes no; do
+  for t_ in bug feature refactor docs unknown none; do
     reg_total=$((reg_total + 1))
-    got=$(idd_actionability_verdict --complexity-exit "$pexit" --parking-label no --blocking-section no --issue-type "$t_" --diagnosis-present "$dp_" 2>/dev/null)
-    if [ "$got" = "$base" ]; then reg_ok=$((reg_ok + 1)); else fail "corpus-complexity #$num" "--issue-type $t_ --diagnosis-present $dp_ changed '$base' to '$got'"; fi
-  done; done
+    got=$(idd_actionability_verdict --complexity-exit "$pexit" --parking-label no --blocking-section no --diagnosis-type "$t_" 2>/dev/null)
+    if [ "$got" = "$base" ]; then reg_ok=$((reg_ok + 1)); else fail "corpus-complexity #$num" "--diagnosis-type $t_ changed '$base' to '$got'"; fi
+  done
 done < <(jq -c '.rows[]' "$CORPUS")
 while IFS= read -r row; do
   num=$(jq -r '.number' <<<"$row")
   if [ -n "$(idd_blocking_section "$(jq -r '.body' <<<"$row")")" ]; then hb=yes; else hb=no; fi
   base=$(idd_actionability_verdict --complexity-exit 0 --parking-label no --blocking-section "$hb" 2>/dev/null)
-  for t_ in bug feature refactor docs unknown; do for dp_ in yes no; do
+  for t_ in bug feature refactor docs unknown none; do
     reg_total=$((reg_total + 1))
-    got=$(idd_actionability_verdict --complexity-exit 0 --parking-label no --blocking-section "$hb" --issue-type "$t_" --diagnosis-present "$dp_" 2>/dev/null)
-    if [ "$got" = "$base" ]; then reg_ok=$((reg_ok + 1)); else fail "corpus-blocking #$num" "--issue-type $t_ --diagnosis-present $dp_ changed '$base' to '$got'"; fi
-  done; done
+    got=$(idd_actionability_verdict --complexity-exit 0 --parking-label no --blocking-section "$hb" --diagnosis-type "$t_" 2>/dev/null)
+    if [ "$got" = "$base" ]; then reg_ok=$((reg_ok + 1)); else fail "corpus-blocking #$num" "--diagnosis-type $t_ changed '$base' to '$got'"; fi
+  done
 done < <(jq -c '.rows[]' "$HERE/fixtures/corpus-blocking.json")
 assert_eq "regression: corpus-complexity + corpus-blocking unchanged under every non-meeting type ($reg_ok/$reg_total)" "$reg_total" "$reg_ok"
-assert_eq "regression: (159 + 55) rows × 5 non-meeting types × 2 --diagnosis-present values" "2140" "$reg_total"
+assert_eq "regression: (159 + 55) rows × 6 non-meeting Diagnosis types" "1284" "$reg_total"
 
-# ── #383: idd_issue_type — the order of /idd-diagnose Step 1, one implementation ─
-# Values from the spec's resolution table and scenarios.
-it_() { idd_issue_type --labels "$1" --body "$2" 2>/dev/null; }
-tb_() { printf '## Problem\n\nx\n\n## Type\n%s\n\n## Expected\n\ny\n' "$1"; }
-assert_eq "issue type: label meeting, no body"                      "meeting" "$(it_ 'meeting' '')"
-assert_eq "issue type: label meeting wins over body bug"            "meeting" "$(it_ 'meeting' "$(tb_ bug)")"
-assert_eq "issue type: labels bug+planning, body meeting → bug"     "bug"     "$(it_ $'bug\nplanning' "$(tb_ meeting)")"
-assert_eq "issue type: label planning, body 'meeting（審議）'"       "meeting" "$(it_ 'planning' "$(tb_ 'meeting（審議）')")"
-assert_eq "issue type: no type label, body 'meeting（需要裁決的編排決定）'" "meeting" "$(it_ '' "$(tb_ 'meeting（需要裁決的編排決定）')")"
-assert_eq "issue type: labels bug+meeting → unknown"                "unknown" "$(it_ $'bug\nmeeting' "$(tb_ meeting)")"
-assert_eq "issue type: no labels, no heading → unknown"             "unknown" "$(it_ '' '')"
-assert_eq "issue type: ## Type only inside a fence → unknown"       "unknown" "$(it_ '' $'## Problem\n\n```\n## Type\nmeeting\n```\n')"
-# verify #383 r1 (findings 5, 21, 24): the unsafe direction for this reader is a
-# FALSE meeting, which drops the Complexity signal. A closer must use the
-# opener's character at no less than its length with nothing after it; a line
-# indented 4+ spaces is not a fence; an HTML comment block is not read.
-assert_eq "issue type: 4-backtick fence is not closed by an inner 3-backtick line → unknown" "unknown" \
-  "$(it_ '' $'````markdown\n```\n## Type\nmeeting\n````\n')"
-assert_eq "issue type: a backtick line with an info string does not close a fence → unknown" "unknown" \
-  "$(it_ '' $'```\ncode\n```bash\n## Type\nmeeting\n```\n')"
-assert_eq "issue type: a tilde line does not close a backtick fence → unknown" "unknown" \
-  "$(it_ '' $'```\n~~~\n## Type\nmeeting\n```\n')"
-assert_eq "issue type: a 4-space-indented backtick run is not a fence opener → meeting" "meeting" \
-  "$(it_ '' $'    ```\n## Type\nmeeting\n')"
-assert_eq "issue type: ## Type inside an HTML comment is not read; the visible one wins → bug" "bug" \
-  "$(it_ '' $'<!--\n## Type\nmeeting\n-->\n## Type\nbug\n')"
-assert_eq "issue type: a one-line HTML comment does not hide what follows → meeting" "meeting" \
-  "$(it_ '' $'<!-- template note -->\n## Type\nmeeting\n')"
-assert_eq "issue type: the closer fence after a longer opener closes it → meeting" "meeting" \
-  "$(it_ '' $'````\nx\n`````\n## Type\nmeeting\n')"
-# verify #383 r2 (#3, #11/#17, #21, #26, #27): more false-meeting shapes. Each
-# expected value is what CommonMark (markdown-it) renders as the visible heading.
-assert_eq "issue type: a lone CR before <!-- still opens the comment → bug" "bug" \
-  "$(it_ '' $'Intro\r<!--\n## Type\nmeeting\n-->\n## Type\nbug\n')"
-assert_eq "issue type: a lone CR before a fence still opens it → bug" "bug" \
-  "$(it_ '' $'Intro\r```\n## Type\nmeeting\n```\n## Type\nbug\n')"
-assert_eq "issue type: CRLF bodies still read normally → meeting" "meeting" \
-  "$(it_ '' $'## Problem\r\n\r\nx\r\n\r\n## Type\r\nmeeting\r\n')"
-assert_eq "issue type: a backtick line whose info string has a backtick is not a fence → bug" "bug" \
-  "$(it_ '' $'```a`b\n```\n## Type\nmeeting\n```\n\n## Type\nbug\n')"
-assert_eq "issue type: an inline triple-backtick span does not open a fence → bug" "bug" \
-  "$(it_ '' $'## Problem\n\n```idd_issue_type``` reads the type\n\n```\n## Type\nmeeting\n```\n\n## Type\nbug\n')"
-assert_eq "issue type: ## Type inside a <details> HTML block (no blank line) is not read → unknown" "unknown" \
-  "$(it_ '' $'<details>\n## Type\nmeeting\n</details>\n')"
-assert_eq "issue type: a blank line ends the HTML block, so the heading after it is read → meeting" "meeting" \
-  "$(it_ '' $'<details>\n<summary>x</summary>\n\n## Type\nmeeting\n\n</details>\n')"
-assert_eq "issue type: ## Type inside <pre> is not read → bug" "bug" \
-  "$(it_ '' $'<pre>\n## Type\nmeeting\n</pre>\n\n## Type\nbug\n')"
-assert_eq "issue type: 'meeting-notes' is not the word meeting → unknown" "unknown" "$(it_ '' "$(tb_ 'meeting-notes')")"
-assert_eq "issue type: 'meeting2' is not the word meeting → unknown"       "unknown" "$(it_ '' "$(tb_ 'meeting2')")"
-assert_eq "issue type: 'meeting.' still is → meeting"                      "meeting" "$(it_ '' "$(tb_ 'meeting.')")"
-assert_eq "issue type: '##<FF>Type' is not a heading → unknown" "unknown" "$(it_ '' $'##\fType\nmeeting\n')"
-# verify #383 r3 (#11/#18, #25, #26, #12): the baseline is GitHub's renderer
-# (gh api markdown, gfm), not CommonMark 0.31 — that is what a maintainer sees.
-# Plus a renderer-independent backstop: a body-derived `meeting` needs exactly
-# one `## Type` heading line in the whole body; with two or more it is unknown.
-assert_eq "issue type: <source> starts an HTML block on GitHub (gfm list) → unknown" "unknown" \
-  "$(it_ '' $'Intro text\n<source src="x.mp4">\n## Type\nmeeting\n')"
-assert_eq "issue type: <search> is inline on GitHub, so the first visible Type is read → bug" "bug" \
-  "$(it_ '' $'Intro text\n<search>\n## Type\nbug\n\n## Type\nmeeting\n')"
-assert_eq "issue type: a type-3 block (<? … ?>) hides its contents → unknown" "unknown" "$(it_ '' $'<?php\n## Type\nmeeting\n?>\n')"
-assert_eq "issue type: a type-4 block (<!X … >) hides its contents → unknown" "unknown" "$(it_ '' $'<!ELEMENT note\n## Type\nmeeting\n>\n')"
-assert_eq "issue type: a type-5 block (<![CDATA[ … ]]>) hides its contents → unknown" "unknown" "$(it_ '' $'<![CDATA[\n## Type\nmeeting\n]]>\n')"
-assert_eq "issue type: two ## Type headings never yield a body meeting (list-item fence shape) → unknown" "unknown" \
-  "$(it_ '' $'1. step\n\n   ```\n   cmd\nparagraph that ends the list\n\n```\n## Type\nmeeting\n```\n\n## Type\nbug\n')"
-assert_eq "issue type: two visible ## Type headings, meeting first → unknown (backstop)" "unknown" "$(it_ '' $'## Type\nmeeting\n\n## Type\nbug\n')"
-assert_eq "issue type: the backstop never upgrades — visible bug with a hidden meeting stays bug" "bug" \
-  "$(it_ '' $'<!--\n## Type\nmeeting\n-->\n## Type\nbug\n')"
-assert_eq "issue type: a label decides even with two ## Type headings" "meeting" "$(it_ 'meeting' $'## Type\nbug\n\n## Type\nbug\n')"
-assert_eq "issue type: _meeting_ renders as emphasised meeting → meeting" "meeting" "$(it_ '' "$(tb_ '_meeting_')")"
-assert_eq "issue type: meeting_x is one word → unknown" "unknown" "$(it_ '' "$(tb_ 'meeting_x')")"
-# r3 #31: the reader consumes its whole input, so a direct caller under
-# `set -euo pipefail` is not killed by SIGPIPE on a large body.
-big_=$(printf '## Type\nmeeting\n'; for i in $(seq 1 20000); do printf 'line %s padding padding padding\n' "$i"; done)
-( set -euo pipefail; t_=$(idd_issue_type --labels '' --body "$big_"); [ "$t_" = meeting ] ); rc_=$?
-assert_eq "issue type: a large body under set -euo pipefail returns meeting with exit 0 (no SIGPIPE)" "0" "$rc_"
-# Labels (findings 17, 25): ASCII case-folded like the body, ASCII-only trim,
-# and no locale-dependent whitespace — a lookalike label is not a meeting.
-assert_eq "issue type: label 'Meeting' folds to meeting, like the body"   "meeting" "$(it_ 'Meeting' '')"
-assert_eq "issue type: label with trailing ASCII space → meeting"         "meeting" "$(it_ 'meeting ' '')"
-assert_eq "issue type: label with a trailing NBSP is not a meeting (UTF-8 locale)" "unknown" \
-  "$(LC_ALL=en_US.UTF-8 idd_issue_type --labels $'meeting\xc2\xa0' --body '' 2>/dev/null)"
-assert_eq "issue type: label with a leading ideographic space is not a meeting (UTF-8 locale)" "unknown" \
-  "$(LC_ALL=en_US.UTF-8 idd_issue_type --labels $'\xe3\x80\x80meeting' --body '' 2>/dev/null)"
-idd_issue_type --bogus x >/dev/null 2>&1
-assert_eq "issue type: an unknown argument is misuse (exit 2)" "2" "$?"
-run_bounded 5 idd_issue_type --labels >/dev/null 2>&1
-assert_eq "issue type: a value-less flag is misuse (exit 2), not a hang" "2" "$?"
+# ── #383 r4: idd_diagnosis_type — the type recorded in the trusted Diagnosis ──
+# Values from the spec's Diagnosis type table. The input is the latest trusted
+# Diagnosis (author-filtered by every consumer), so this is not an adversarial
+# reader: it uses the same section reader as ### Complexity.
+dt_() { idd_diagnosis_type "$1" 2>/dev/null; }
+td_() { printf '## Diagnosis\n\n### Type\n%s\n\n### Complexity\n\nSimple\n' "$1"; }
+assert_eq "diagnosis type: ### Type meeting → meeting"                 "meeting" "$(dt_ "$(td_ meeting)")"
+assert_eq "diagnosis type: meeting with a parenthetical note → meeting" "meeting" "$(dt_ "$(td_ 'meeting（本文 ## Type；label 不是 IDD 類型）')")"
+assert_eq "diagnosis type: **meeting** → meeting"                      "meeting" "$(dt_ "$(td_ '**meeting**')")"
+assert_eq "diagnosis type: Meeting (ASCII case) → meeting"             "meeting" "$(dt_ "$(td_ 'Meeting')")"
+assert_eq "diagnosis type: bug → bug"                                  "bug"     "$(dt_ "$(td_ bug)")"
+assert_eq "diagnosis type: docs → docs"                                "docs"    "$(dt_ "$(td_ docs)")"
+assert_eq "diagnosis type: meeting-notes is not meeting → unknown"     "unknown" "$(dt_ "$(td_ 'meeting-notes')")"
+assert_eq "diagnosis type: meeting2 is not meeting → unknown"          "unknown" "$(dt_ "$(td_ 'meeting2')")"
+assert_eq "diagnosis type: a non-type word → unknown"                  "unknown" "$(dt_ "$(td_ 'deliberation')")"
+assert_eq "diagnosis type: no ### Type heading → unknown"              "unknown" "$(dt_ $'## Diagnosis\n\n### Complexity\n\nSimple\n')"
+assert_eq "diagnosis type: a fenced example ### Type is not read → bug" "bug" \
+  "$(dt_ $'## Diagnosis\n\n```\n### Type\nmeeting\n```\n\n### Type\nbug\n')"
+assert_eq "diagnosis type: an empty Diagnosis (none trusted) → none"   "none"    "$(dt_ '')"
+idd_diagnosis_type >/dev/null 2>&1
+assert_eq "diagnosis type: no argument is misuse (exit 2)" "2" "$?"
+idd_diagnosis_type a b >/dev/null 2>&1
+assert_eq "diagnosis type: two arguments is misuse (exit 2)" "2" "$?"
+# The type input is gone from the issue side: no label or body reader remains.
+refute_output_grep "helper: idd_issue_type was removed (r4 — the body is author-editable)" 'idd_issue_type()' "$LIB"
+# A large Diagnosis under set -euo pipefail is not killed by SIGPIPE.
+big_=$(printf '## Diagnosis\n\n### Type\nmeeting\n\n'; for i in $(seq 1 20000); do printf 'line %s padding padding padding\n' "$i"; done)
+( set -euo pipefail; t_=$(idd_diagnosis_type "$big_"); [ "$t_" = meeting ] ); rc_=$?
+assert_eq "diagnosis type: a large Diagnosis under set -euo pipefail returns meeting (no SIGPIPE)" "0" "$rc_"
 
 # ── #383: consumers route on the type before any tier (meeting-issue-type spec
 #    "Routing consumers honour the meeting type" / "Meeting Plan advances the
@@ -1128,7 +1060,7 @@ assert_output_grep "idd-all: Phase 4 verify is skipped for meeting"             
 assert_output_grep "idd-all: Phase 5 push / PR is skipped for meeting"            '`TYPE=meeting` → 跳過 push 與 PR' "$IA_"
 # r1 (#9, #15): the Action item is rebuilt in Phase 6, not carried in shell state
 refute_output_grep "idd-all: no MEETING_ITEMS shell variable carried across phases" 'MEETING_ITEMS' "$IA_"
-assert_output_grep "idd-all: Phase 6 re-resolves the type for the Action item"    'if [ "$(idd_issue_type --labels "$MT_LABELS" --body "$MT_BODY")" = meeting ]' "$IA_"
+assert_output_grep "idd-all: Phase 6 re-resolves the type from the trusted Diagnosis" 'MT_PAGES=$(gh api "repos/$GITHUB_REPO/issues/$RN/comments"' "$IA_"
 # r1 (#30): Phase 5 has a code guard, not only prose
 assert_output_grep "idd-all: Phase 5 bash skips a meeting issue in code"          'Phase 5 skipped (no push, no PR)' "$IA_"
 # r1 (#7, #23): the Phase 0.5 branch is unwound for a meeting issue in PR mode
@@ -1145,7 +1077,7 @@ uw_repo() {   # $1 = scratch dir; leaves a repo on branch idd/7-x with no commit
   git -C "$1" init -q -b main && git -C "$1" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init \
     && git -C "$1" checkout -q -b idd/7-x
 }
-uw_stub='gh() { case "$1" in repo) echo main ;; issue) if [ "$UW_TYPE" = meeting ]; then echo "{\"labels\":[{\"name\":\"meeting\"}],\"body\":\"\"}"; else echo "{\"labels\":[{\"name\":\"bug\"}],\"body\":\"\"}"; fi ;; esac; }'
+uw_stub='gh() { case "$1" in repo) echo main ;; api) echo "[\"## Diagnosis\\n\\n### Type\\n$UW_TYPE\\n\"]" ;; issue) echo "{\"labels\":[],\"body\":\"## Type\\nmeeting\\n\"}" ;; esac; }'
 uw_run() {   # $1 repo, $2 type
   ( cd "$1" && UW_TYPE="$2" N=7 GITHUB_REPO=o/r CWD="$1" PATH_AXIS=PR BRANCH=idd/7-x CLAUDE_PLUGIN_ROOT="$HERE/../../.." \
       GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
@@ -1175,6 +1107,14 @@ out=$( cd "$UWD/d" && UW_TYPE=meeting N=7 GITHUB_REPO=o/r CWD="$UWD/d" CLAUDE_PL
 assert_eq "unwind (run): an unset PATH_AXIS is a loud failure (r3 #2)" "1" "$rc"
 assert_grep "unwind (run): ... naming the lost shell state" 'PATH_AXIS' "$out"
 assert_eq "unwind (run): ... and the branch is left as is" "idd/7-x" "$(git -C "$UWD/d" branch --show-current)"
+# r4 #3/#8: a NON-meeting run with PATH_AXIS lost must not abort at the unwind
+mkdir "$UWD/h" && uw_repo "$UWD/h"
+out=$( cd "$UWD/h" && UW_TYPE=bug N=7 GITHUB_REPO=o/r CWD="$UWD/h" CLAUDE_PLUGIN_ROOT="$HERE/../../.." bash -c "$uw_stub"$'\n'"$UW_SRC" 2>&1 ); rc=$?
+assert_eq "unwind (run): a non-meeting run with PATH_AXIS unset exits 0 (r4 #3)" "0" "$rc"
+assert_eq "unwind (run): ... and keeps its branch" "idd/7-x" "$(git -C "$UWD/h" branch --show-current)"
+# r4 #19: the issue body says meeting but the trusted Diagnosis says bug → no unwind
+mkdir "$UWD/i" && uw_repo "$UWD/i" && out=$(uw_run "$UWD/i" bug)
+assert_eq "unwind (run): a body that says meeting does not trigger the unwind (the Diagnosis says bug)" "idd/7-x" "$(git -C "$UWD/i" branch --show-current)"
 # r3 #10: HEAD on the default branch → nothing to unwind, nothing committed to main
 mkdir "$UWD/e" && uw_repo "$UWD/e" && git -C "$UWD/e" checkout -q main && mkdir -p "$UWD/e/.claude/.idd/attachments/issue-7" \
   && printf '{"files": []}\n' > "$UWD/e/.claude/.idd/attachments/issue-7/_manifest.json" && out=$(uw_run "$UWD/e" meeting); rc=$?
@@ -1193,16 +1133,18 @@ rm -rf "$UWD"
 # Phase 5: the guard lives in the same shell as the push, on the PR path only.
 P5_SRC=$(ia_block_after '**Conditional push + PR creation**')
 assert_true "idd-all: the Phase 5 block is extractable" "[ -n \"\$P5_SRC\" ]"
-p5_stub='git() { case "$*" in *push*) echo "PUSH-CALLED"; return 0 ;; esac; command git "$@"; }; gh() { case "$1" in issue) if [ "$UW_TYPE" = meeting ]; then echo "{\"labels\":[{\"name\":\"meeting\"}],\"body\":\"\"}"; else return 1; fi ;; pr) echo "PR-CALLED" ;; esac; }'
+p5_stub='git() { case "$*" in *push*) echo "PUSH-CALLED"; return 0 ;; esac; command git "$@"; }; gh() { case "$1" in api) if [ "$UW_TYPE" = meeting ]; then echo "[\"## Diagnosis\\n\\n### Type\\nmeeting\\n\"]"; else return 1; fi ;; pr) echo "PR-CALLED" ;; esac; }'
 p5_run() { ( UW_TYPE="$1" N=7 GITHUB_REPO=o/r CWD=/nonexistent PATH_AXIS="$2" IN_CHAIN="${3:-}" BRANCH=idd/7-x CLAUDE_PLUGIN_ROOT="$HERE/../../.." bash -c "$p5_stub"$'\n'"$P5_SRC" 2>&1 ); }
 out=$(p5_run meeting PR); rc=$?
 assert_eq "phase 5 (run): a meeting issue in PR mode exits 0" "0" "$rc"
 refute_grep "phase 5 (run): a meeting issue never reaches git push (r2 #12, C2)" 'PUSH-CALLED' "$out"
 refute_grep "phase 5 (run): a meeting issue never opens a PR" 'PR-CALLED' "$out"
 # r3 #27: positive control — a non-meeting PR run still reaches git push
-p5ok_stub='git() { case "$*" in *push*) echo "PUSH-CALLED"; return 0 ;; esac; return 0; }; gh() { case "$1" in issue) echo "{\"labels\":[{\"name\":\"bug\"}],\"body\":\"\"}" ;; pr) echo "PR-CALLED" ;; *) return 0 ;; esac; }'
+# r4 #35: the issue body says meeting (as if the author rewrote it after implement); the trusted Diagnosis says bug
+p5ok_stub='git() { case "$*" in *push*) echo "PUSH-CALLED"; return 0 ;; esac; return 0; }; gh() { case "$1" in api) echo "[\"## Diagnosis\\n\\n### Type\\nbug\\n\"]" ;; issue) echo "{\"labels\":[],\"body\":\"## Type\\nmeeting\\n\"}" ;; pr) echo "PR-CALLED" ;; *) return 0 ;; esac; }'
 out=$( UW_TYPE=bug N=7 GITHUB_REPO=o/r CWD=/nonexistent PATH_AXIS=PR IN_CHAIN= BRANCH=idd/7-x CLAUDE_PLUGIN_ROOT="$HERE/../../.." bash -c "$p5ok_stub"$'\n'"$P5_SRC" 2>&1 )
 assert_grep "phase 5 (run): a non-meeting PR run does call git push (positive control)" 'PUSH-CALLED' "$out"
+assert_grep "phase 5 (run): ... even when the issue body was rewritten to meeting after implement (r4 #35)" 'PR-CALLED' "$out"
 out=$(p5_run bug direct-commit); rc=$?
 assert_eq "phase 5 (run): direct-commit makes no issue fetch, so a failing gh cannot abort it (r2 #5)" "0" "$rc"
 out=$(p5_run bug PR "" ); rc=$?
@@ -1213,7 +1155,7 @@ assert_output_grep "idd-all: the meeting report clears the unattended flag (#123
 assert_output_grep "idd-all: the meeting report names the Action-items section" '「Phase 6 Action items surface」那一節' "$IA_"
 # r2 (#14, #28, C3): the meeting Action item is for the root this run gated, never spawned issues;
 # no Meeting Plan comment suppresses it; a failed re-resolve is itself an item
-assert_output_grep "idd-all: the meeting Action item is computed for the root only" 'MT_JSON=$(gh issue view "$RN"' "$IA_"
+assert_output_grep "idd-all: the meeting Action item is computed for the root only" 'RN="${ROOT_N:-$N}"' "$IA_"
 refute_output_grep "idd-all: no Meeting Plan comment suppresses the Action item" "grep -q '^## Meeting Plan'" "$IA_"
 assert_output_grep "idd-all: a failed type re-resolve is surfaced, not skipped" 'could not re-resolve the issue type' "$IA_"
 # r2 (#20, #5): the abort table carries the meeting exception and the Phase 5 FATALs
@@ -1224,18 +1166,25 @@ assert_output_grep "idd-all: the abort table lists the Phase 5 type-guard FATALs
 # body phase is diagnosed, and a non-meeting unattended run must print nothing.
 P6_SRC=$(ia_block_after '#### Phase 6 Action items surface')
 assert_true "idd-all: the Phase 6 Action-items block is extractable" "[ -n \"\$P6_SRC\" ]"
-p6_run() {   # $1 = labels json fragment, $2 = body (json-escaped), $3 = gh mode
-  ( N=7 INTERACTION=unattended GITHUB_REPO=o/r CWD=/nonexistent CLAUDE_PLUGIN_ROOT="$HERE/../../.." P6L="$1" P6B="$2" P6M="${3:-ok}" \
-      bash -c 'gh() { [ "$P6M" = fail ] && return 1; case "$1" in issue) [ -z "$3" ] && return 1; printf "{\"labels\":[%s],\"body\":\"%s\"}\n" "$P6L" "$P6B" ;; api) echo "[]" ;; esac; }; git() { return 0; }'$'\n'"$P6_SRC" 2>&1 )
+p6_run() {   # $1 = Diagnosis type, $2 = issue body (\n escapes), $3 = gh mode, $4 = EXISTING_WORK_ITEMS, $5 = INTERACTION
+  ( N=7 INTERACTION="${5-unattended}" GITHUB_REPO=o/r CWD=/nonexistent CLAUDE_PLUGIN_ROOT="$HERE/../../.." P6D="$1" P6B="$2" P6M="${3:-ok}" EXISTING_WORK_ITEMS="${4:-}" \
+      bash -c 'gh() { [ "$P6M" = fail ] && return 1; case "$1" in issue) [ -z "$3" ] && return 1; printf "%b\n" "$P6B" ;; api) case "$2" in *"/issues//"*) return 1 ;; esac; echo "[\"## Diagnosis\\n\\n### Type\\n$P6D\\n\"]" ;; esac; }; git() { return 0; }'$'\n'"$P6_SRC" 2>&1 )
 }
-out=$(p6_run '{"name":"bug"}' '## Problem\n\n**Phase**: diagnosed\n')
+out=$(p6_run bug '## Problem\n\n**Phase**: diagnosed\n')
 assert_eq "phase 6 (run): a non-meeting unattended run prints no Action items (r3 #4)" "" "$out"
-out=$(p6_run '{"name":"meeting"}' '## Problem\n\n**Phase**: diagnosed\n')
+out=$(p6_run meeting '## Problem\n\n**Phase**: diagnosed\n')
 assert_grep "phase 6 (run): a diagnosed meeting root gets its item, numbered from \$N" '#7: type=meeting — stopped at diagnosed' "$out"
-out=$(p6_run '{"name":"meeting"}' '## Problem\n\n**Phase**: created\n')
+out=$(p6_run meeting '## Problem\n\n**Phase**: created\n')
 refute_grep "phase 6 (run): a meeting root that never reached diagnosed gets no stopped-at-diagnosed item (r3 #21)" 'stopped at diagnosed' "$out"
+assert_grep "phase 6 (run): ... but it is told that the body is not at diagnosed (r4 #16)" 'does not show phase diagnosed' "$out"
 out=$(p6_run '' '' fail)
 assert_grep "phase 6 (run): a failed re-resolve is itself an item" 'could not re-resolve the issue type' "$out"
+out=$(p6_run meeting '## Problem\n\n**Phase**: diagnosed\n' ok $'\n- #7: existing-work lookup unknown (gh api timeout) — check by hand')
+assert_grep "phase 6 (run): an unknown existing-work line does not suppress the meeting item (r4 #4)" '#7: type=meeting — stopped at diagnosed' "$out"
+out=$(p6_run meeting '## Problem\n\n**Phase**: diagnosed\n' ok $'\n- #7: existing PR #12 declares it — not started; review it (/idd-verify #7 --pr 12) or run /idd-all #7 interactively')
+refute_grep "phase 6 (run): an issue Step 0.5.1 blocked gets no stopped-at-diagnosed item (r3 #21)" 'type=meeting — stopped at diagnosed' "$out"
+out=$(p6_run meeting '## Problem\n\n**Phase**: diagnosed\n' ok '' '')
+assert_grep "phase 6 (run): a lost interaction mode is itself an item (r4 #12)" 'interaction mode of this run was lost' "$out"
 # r1 (#6, #8, #14): Phase 6 has a meeting report that claims no verify / PR
 assert_output_grep "idd-all: Phase 6 has a meeting report"                        '✓ idd-all stopped (type=meeting)' "$IA_"
 assert_output_grep "idd-all: the terminal-phase rule names its meeting exception" 'Verify is the terminal phase regardless of mode**（meeting issue 例外' "$IA_"
@@ -1257,9 +1206,9 @@ assert_output_grep "idd-list: an undiagnosed meeting stays in the undiagnosed gr
 assert_output_grep "idd-update: Meeting Plan is a planning row in the phase table" '| Meeting Plan | `planning` |' "$IU_"
 assert_output_grep "idd-update: the heading list names ## Meeting Plan"          '`## Meeting Plan`' "$IU_"
 # reference (task 5.1): the meeting section, its spec citation, and the sentinel rejection
-assert_output_grep "reference: a section on the issue type input (#383)"        '### The issue type — meeting drops the Complexity signal only' "$REF"
+assert_output_grep "reference: a section on the issue type input (#383)"        '### The Diagnosis type — a diagnosed meeting drops the Complexity signal only' "$REF"
 assert_output_grep "reference: cites the meeting-issue-type spec"                'openspec/specs/meeting-issue-type/spec.md' "$REF"
 assert_output_grep "reference: states why there is no meeting sentinel in Complexity" 'no `meeting` sentinel' "$REF"
-assert_output_grep "reference: the non-routable default names its meeting exception" 'except for a `meeting` issue' "$REF"
+assert_output_grep "reference: the non-routable default names its meeting exception" 'except for a diagnosed `meeting` issue' "$REF"
 
 print_summary "actionability-gate"

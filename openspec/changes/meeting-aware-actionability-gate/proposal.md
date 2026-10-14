@@ -15,14 +15,14 @@ actionability gate（#316，2026-10-06）把可路由的 `### Complexity` 值域
 
 ## Proposed Solution
 
-- 共用 helper 新增 `idd_issue_type`：照 `/idd-diagnose` Step 1 的順序解析 issue type（GitHub label 優先；label 沒有 type 時讀 body 的 `## Type`；兩者衝突時 label 勝；都沒有時回 `unknown`，視為非 meeting）
-- `idd_actionability_verdict` 新增選填 `--issue-type` 與 `--diagnosis-present yes|no`（後者在 `meeting` 時必填，verify r1 加入）：`meeting` 且有受信任的 Diagnosis 時不評 complexity 訊號，`parking-lot` label 與 `### Blocking` 照評；沒有 Diagnosis 的 meeting 照常回報 `complexity-missing`；未傳 type 或其他值時行為與現在逐 byte 相同
-- 四份 gate block（`idd-implement` 兩份、`idd-plan`、`idd-all`）以相同改法加入 type 解析並把 type 傳入 verdict；機器行加 `TYPE=` 欄位
+- 共用 helper 新增 `idd_diagnosis_type`：讀最新受信任 Diagnosis（作者為 OWNER／MEMBER／COLLABORATOR）的 `### Type`，回 `bug`／`feature`／`refactor`／`docs`／`meeting`／`unknown`；沒有 Diagnosis 時回 `none`。type 只信這一份文字：issue 本文由 issue 作者自由改寫，不能決定路由（verify r4 之後的 maintainer 裁決，2026-10-14；前四輪的 `idd_issue_type` 讀 label 與本文，已移除）
+- `idd_actionability_verdict` 新增選填 `--diagnosis-type`：`meeting` 時不評 complexity 訊號，`parking-lot` label 與 `### Blocking` 照評；`none`（沒有 Diagnosis）照常回報 `complexity-missing`；未傳或其他值時行為與現在逐 byte 相同
+- 四份 gate block（`idd-implement` 兩份、`idd-plan`、`idd-all`）以相同改法取得 Diagnosis type 並傳入 verdict；機器行加 `TYPE=` 欄位
 - 呼叫端依 type 先分派：
-  - `idd-all`：attended → 送 meeting 版 `/idd-plan`；unattended → 停在 diagnosed 並記一條 Action item；兩種模式都不進 implement、verify，也不開 PR
+  - `idd-all`：attended → 送 meeting 版 `/idd-plan`；unattended → 停在 diagnosed 並記一條 Action item；兩種模式都不進 implement、verify，也不開 PR；後續 phase 也只讀受信任的 Diagnosis
   - `idd-plan`：meeting → 產出 Meeting Plan
   - `idd-implement`：meeting → 以 meeting 專屬訊息拒絕
-  - `idd-list`：meeting 判定 actionable 時依 phase 給下一步（`diagnosed` → `/idd-plan`，已有 Meeting Plan → `/idd-close`）
+  - `idd-list`：meeting 判定 actionable 時依 phase 給下一步（非 `planning` → `/idd-plan` 或 `/idd-close`，`planning` → `/idd-close`）
 - `idd-update` 的 phase 表加 `## Meeting Plan` → `planning`
 - 規格：actionability-gate 與 meeting-issue-type 各補 requirement 並互相引用；`references/actionability-gate.md` 補上 meeting 的處理
 
@@ -30,10 +30,11 @@ actionability gate（#316，2026-10-06）把可路由的 `### Complexity` 值域
 
 ## Success Criteria
 
-- 一份 meeting Diagnosis（Complexity 寫說明句，或沒有 Complexity 段）、沒有 `parking-lot` label、`### Blocking` 為空 → `idd_actionability_verdict --issue-type meeting --diagnosis-present yes` 回 exit 0；同一個 issue 若完全沒有受信任的 Diagnosis（`--diagnosis-present no`）→ `complexity-missing`、歸 undiagnosed
+- 受信任 Diagnosis 的 `### Type` 是 meeting（Complexity 寫說明句，或沒有 Complexity 段）、沒有 `parking-lot` label、`### Blocking` 為空 → `idd_actionability_verdict --diagnosis-type meeting` 回 exit 0
+- 同一個 issue 若沒有受信任的 Diagnosis（`--diagnosis-type none`）→ `complexity-missing`、歸 undiagnosed；本文寫 meeting 但 Diagnosis 寫 bug → 照 bug 判定，不放行
 - 同上但有 `parking-lot` label → exit 1，reason 為 `parking-lot-label`；`### Blocking` 非空 → exit 1，reason 為 `blocking-nonempty`
-- 未傳 `--issue-type`，或傳任何非 meeting 的 type（`bug`、`feature`、`refactor`、`docs`、`unknown`）時，`corpus-complexity.json`、`corpus-blocking.json`、`parked-routing.json` 三份 fixture 的判定逐筆不變
-- `idd_issue_type`：label `meeting` → `meeting`；label 沒有 type 而 body `## Type` 為 meeting → `meeting`；label `bug` 而 body 寫 meeting → `bug`；都沒有 → `unknown`
+- 未傳 `--diagnosis-type`，或傳任何非 meeting 的值（`bug`、`feature`、`refactor`、`docs`、`unknown`、`none`）時，`corpus-complexity.json`、`corpus-blocking.json`、`parked-routing.json` 三份 fixture 的判定逐筆不變
+- `idd_diagnosis_type`：`### Type` 第一行為 `meeting` 或 `meeting（…）` → `meeting`；為 `bug` → `bug`；沒有 `### Type` → `unknown`；空字串 → `none`
 - 四份 gate block 仍逐 byte 相同，`scripts/tests/actionability-gate/test.sh` 全數通過
 - `idd-update`：最新的 phase comment 是 `## Meeting Plan` 時推為 `planning`
 
@@ -45,12 +46,12 @@ actionability gate（#316，2026-10-06）把可路由的 `### Complexity` 值域
 
 ### Modified Capabilities
 
-- `actionability-gate`: verdict 新增 issue type 輸入；type=meeting 不評 complexity 訊號；issue type 解析納入共用實作
+- `actionability-gate`: verdict 新增 Diagnosis type 輸入；受信任 Diagnosis 為 meeting 時不評 complexity 訊號；Diagnosis type 的讀取納入共用實作
 - `meeting-issue-type`: 新增 orchestrated routing 的要求（`idd-all`、`idd-list`、`idd-implement`、`idd-update` 對 meeting issue 的行為）
 
 ## Impact
 
 - Affected specs: actionability-gate, meeting-issue-type
 - Affected code:
-  - Modified: plugins/issue-driven-dev/scripts/lib/actionability.sh, plugins/issue-driven-dev/scripts/tests/actionability-gate/test.sh, plugins/issue-driven-dev/references/actionability-gate.md, plugins/issue-driven-dev/skills/idd-all/SKILL.md, plugins/issue-driven-dev/skills/idd-plan/SKILL.md, plugins/issue-driven-dev/skills/idd-implement/SKILL.md, plugins/issue-driven-dev/skills/idd-list/SKILL.md, plugins/issue-driven-dev/skills/idd-update/SKILL.md, plugins/issue-driven-dev/CHANGELOG.md, plugins/issue-driven-dev/.claude-plugin/plugin.json
+  - Modified: plugins/issue-driven-dev/scripts/lib/actionability.sh, plugins/issue-driven-dev/scripts/tests/actionability-gate/test.sh, plugins/issue-driven-dev/references/actionability-gate.md, plugins/issue-driven-dev/skills/idd-all/SKILL.md, plugins/issue-driven-dev/skills/idd-plan/SKILL.md, plugins/issue-driven-dev/skills/idd-implement/SKILL.md, plugins/issue-driven-dev/skills/idd-list/SKILL.md, plugins/issue-driven-dev/skills/idd-update/SKILL.md, plugins/issue-driven-dev/CHANGELOG.md, plugins/issue-driven-dev/.claude-plugin/plugin.json, .claude-plugin/marketplace.json
   - New: plugins/issue-driven-dev/scripts/tests/actionability-gate/fixtures/meeting-routing.json

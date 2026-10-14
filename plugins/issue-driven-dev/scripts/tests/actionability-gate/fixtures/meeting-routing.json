@@ -2,7 +2,7 @@
   {
     "name": "meeting, Complexity written as a not-applicable sentence (exit 3), no label, empty Blocking",
     "complexity_raw": "（不適用）type=meeting 在 complexity 評估前分流，不產生 Simple / Plan / Spectra 判定",
-    "diagnosis_present": true,
+    "diagnosis_type": "meeting",
     "labels": [
       "meeting"
     ],
@@ -14,7 +14,7 @@
   {
     "name": "meeting, no Complexity section (exit 4), no label, empty Blocking",
     "complexity_raw": null,
-    "diagnosis_present": true,
+    "diagnosis_type": "meeting",
     "labels": [
       "meeting"
     ],
@@ -26,7 +26,7 @@
   {
     "name": "meeting, no Complexity section, parking-lot label",
     "complexity_raw": null,
-    "diagnosis_present": true,
+    "diagnosis_type": "meeting",
     "labels": [
       "meeting",
       "parking-lot"
@@ -41,7 +41,7 @@
   {
     "name": "meeting, not-applicable sentence, non-empty Blocking",
     "complexity_raw": "（不適用）type=meeting 在 complexity 評估前分流",
-    "diagnosis_present": true,
+    "diagnosis_type": "meeting",
     "labels": [
       "meeting"
     ],
@@ -55,7 +55,7 @@
   {
     "name": "meeting, tier written anyway (exit 0) — the tier is ignored, not routed on",
     "complexity_raw": "Simple",
-    "diagnosis_present": true,
+    "diagnosis_type": "meeting",
     "labels": [
       "meeting"
     ],
@@ -67,7 +67,7 @@
   {
     "name": "meeting, deferral vocabulary in Complexity (exit 5) — parking a meeting is the label's job",
     "complexity_raw": "Plan when triggered",
-    "diagnosis_present": true,
+    "diagnosis_type": "meeting",
     "labels": [
       "meeting"
     ],
@@ -77,9 +77,9 @@
     "expect_reasons": []
   },
   {
-    "name": "meeting, no trusted Diagnosis comment at all (empty LATEST_DIAGNOSIS → exit 4) — still undiagnosed",
+    "name": "meeting, no trusted Diagnosis comment at all (Diagnosis type none → exit 4) — still undiagnosed",
     "complexity_raw": null,
-    "diagnosis_present": false,
+    "diagnosis_type": "none",
     "labels": [
       "meeting"
     ],
@@ -94,7 +94,7 @@
   {
     "name": "meeting, no Diagnosis, parking-lot label — parked wins the display group",
     "complexity_raw": null,
-    "diagnosis_present": false,
+    "diagnosis_type": "none",
     "labels": [
       "meeting",
       "parking-lot"
@@ -107,5 +107,32 @@
       "parking-lot-label"
     ],
     "expect_group": "parked"
+  },
+  {
+    "name": "issue body says meeting, but the trusted Diagnosis says bug with a deferral — the body cannot release the gate (r4 #19)",
+    "complexity_raw": "Simple when triggered",
+    "diagnosis_type": "bug",
+    "labels": [],
+    "blocking": "- (none)",
+    "expect_parse_exit": 5,
+    "expect_verdict": "not-actionable",
+    "expect_reasons": [
+      "complexity-deferral-marker"
+    ],
+    "expect_group": "parked"
+  },
+  {
+    "name": "Diagnosis type unknown (a ### Type word that is no IDD type) — evaluated as non-meeting",
+    "complexity_raw": "（不適用）",
+    "diagnosis_type": "unknown",
+    "labels": [
+      "meeting"
+    ],
+    "blocking": "- (none)",
+    "expect_parse_exit": 3,
+    "expect_verdict": "not-actionable",
+    "expect_reasons": [
+      "complexity-unparseable"
+    ]
   }
 ]

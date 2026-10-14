@@ -145,30 +145,29 @@ The three complexity reasons are kept distinct **because the human response diff
 
 > ⚠ Anyone editing `- [~]` handling must check `idd-close` first. Treating it as unused because routing ignores it will break the close gate.
 
-### The issue type — meeting drops the Complexity signal only (#383)
+### The Diagnosis type — a diagnosed meeting drops the Complexity signal only (#383)
 
 A `meeting` issue is a deliberation record, not a code task. Its spec ([`openspec/specs/meeting-issue-type/spec.md`](../../../openspec/specs/meeting-issue-type/spec.md)) forbids a `Simple` / `Plan` / `Spectra` verdict, so a meeting Diagnosis legitimately has a `### Complexity` line that is a sentence (exit 3) or no section at all (exit 4). Before #383 the gate had no way to know that: every meeting issue came back `complexity-unparseable` or `complexity-missing`, and `idd-all` / `idd-plan` told the operator to "fix the Diagnosis" that was correct.
 
-The type is therefore a gate input, resolved by **one** helper, `idd_issue_type --labels <newline-separated names> --body <text>` (contract 4 in `scripts/lib/actionability.sh`). Its order is `idd-diagnose` Step 1's: a type label first, then the body's `## Type` heading, the label wins a conflict, and **no signal means `unknown` — never `meeting`**. Defaulting the other way would let any unlabelled issue skip the Complexity signal.
+The type is therefore a gate input, and it comes from **the latest trusted Diagnosis** — the same author-filtered comment (OWNER / MEMBER / COLLABORATOR) the Complexity signal is read from. `idd_diagnosis_type "$LATEST_DIAGNOSIS"` (contract 4 in `scripts/lib/actionability.sh`) reads the first line of its `### Type` section with the same section reader; `meeting（…）` and `**meeting**` are meeting, any other word is `unknown`, and an empty input — no trusted Diagnosis — is `none`. `/idd-diagnose` writes `### Type` by template, so every existing meeting Diagnosis already carries it.
 
-`idd_actionability_verdict` takes it as an optional `--issue-type <value>`, together with `--diagnosis-present yes|no`:
+**Not the issue label, not the issue body.** Verify rounds 1–4 resolved the type from a type label or, without one, the issue body's `## Type`. The body is editable by the issue author at any time, and on a public repository that is anyone. An author could switch off the Complexity signal after a maintainer's diagnosis (r4 #19), or flip the type after implement so that `idd-all` skipped verify and the push (r4 #35); and each round found another way to hide a `## Type` from a markdown reader. Reading the type from the trusted Diagnosis closes both: the issue author cannot write it. A maintainer who relabels an issue re-diagnoses it — the Diagnosis is the record the gate judges, for type as for Complexity.
 
-| `--issue-type` · `--diagnosis-present` | Complexity signal | `parking-lot` label | `### Blocking` |
+`idd_actionability_verdict` takes it as an optional `--diagnosis-type <value>`:
+
+| `--diagnosis-type` | Complexity signal | `parking-lot` label | `### Blocking` |
 |---|---|---|---|
-| omitted, or any value other than `meeting` (`--diagnosis-present` validated, no effect) | evaluated exactly as before — the frozen corpora run without the flags and their verdicts are unchanged | evaluated | evaluated |
-| `meeting` · `yes` | `--complexity-exit` is still required and validated (0 / 3 / 4 / 5), but it produces **no reason** | evaluated | evaluated |
-| `meeting` · `no` | evaluated as for any other type — an undiagnosed meeting is `complexity-missing`, grouped **undiagnosed** | evaluated | evaluated |
-| `meeting` without `--diagnosis-present`; either flag passed empty or out of domain | exit 2 (misuse) | — | — |
+| omitted, or `bug` / `feature` / `refactor` / `docs` / `unknown` / `none` | evaluated exactly as before — the frozen corpora run without the flag and with every one of these values, and their verdicts are unchanged | evaluated | evaluated |
+| `meeting` | `--complexity-exit` is still required and validated (0 / 3 / 4 / 5), but it produces **no reason** | evaluated | evaluated |
+| passed empty, value-less, or out of domain | exit 2 (misuse) | — | — |
 
-**Why the second flag (verify r1).** Exit 4 means two things: a Diagnosis with no `### Complexity` section, and **no trusted Diagnosis at all** (`LATEST_DIAGNOSIS` empty after the author filter). Only the second is "never diagnosed", and only the consumer can tell them apart — it sets `HAS_DIAGNOSIS` from `LATEST_DIAGNOSIS` right after resolving the type. The first cut dropped exit 4 for every meeting issue, so a meeting issue nobody had diagnosed was actionable: `idd-plan` would write a Meeting Plan with no Diagnosis behind it, and `idd-list` moved every freshly filed meeting out of *Needs diagnosis*. The flag is required with `meeting` because both defaults are wrong: `yes` re-opens that hole, `no` silently undoes the exemption.
+`meeting` can only come from an existing trusted Diagnosis, so an undiagnosed issue stays `complexity-missing` → **undiagnosed** whatever its body says (the hole round 1 found). A diagnosed meeting issue is withheld only by the two signals whose meaning holds for it — a person parked it, or it waits on something — and the reason vocabulary above stays closed at five values. The consumers then dispatch on `TYPE=meeting` before any tier row: `idd-all` sends it to the meeting-adapted `/idd-plan` when attended and stops at `diagnosed` with an Action item when unattended; `idd-plan` writes the `## Meeting Plan`; `idd-implement` refuses with a meeting-specific message; `idd-list` suggests `/idd-plan` or `/idd-close`. Every gate block prints the Diagnosis type on its machine line (`... REASONS=%s TYPE=%s`), and every later `idd-all` step that needs the type (the branch unwind, verify, push, the report) reads it from the trusted Diagnosis again — never from the body.
 
-So a diagnosed meeting issue is withheld only by the two signals whose meaning holds for it — a person parked it, or it waits on something — and the reason vocabulary above stays closed at five values. The consumers then dispatch on `TYPE=meeting` before any tier row: `idd-all` sends it to the meeting-adapted `/idd-plan` when attended and stops at `diagnosed` with an Action item when unattended; `idd-plan` writes the `## Meeting Plan`; `idd-implement` refuses with a meeting-specific message; `idd-list` suggests `/idd-plan` or `/idd-close`. Every gate block prints the type on its machine line (`... REASONS=%s TYPE=%s`).
-
-There is **no `meeting` sentinel in Complexity**. Writing `meeting` into the `### Complexity` line would have needed no new input, but it is a verdict the meeting spec forbids, and every existing meeting Diagnosis would have to be rewritten — against this gate's own "existing diagnoses require no migration". The type already lives in the label and the body; the gate reads it there.
+There is **no `meeting` sentinel in Complexity**. Writing `meeting` into the `### Complexity` line would be a verdict the meeting spec forbids, and every existing meeting Diagnosis would have to be rewritten — against this gate's own "existing diagnoses require no migration". `### Type` already records the type.
 
 ## Default on non-routable Complexity — conservative, and always surfaced
 
-A consumer whose `### Complexity` value is non-routable **for any reason** SHALL report the issue as **not actionable** and SHALL **surface the original unmodified line** to the operator — except for a `meeting` issue that has a trusted Diagnosis, whose Complexity signal the gate does not evaluate (previous section). A meeting issue with no Diagnosis is not excepted.
+A consumer whose `### Complexity` value is non-routable **for any reason** SHALL report the issue as **not actionable** and SHALL **surface the original unmodified line** to the operator — except for a diagnosed `meeting` issue (its latest trusted Diagnosis records type meeting), whose Complexity signal the gate does not evaluate (previous section). An issue with no trusted Diagnosis is not excepted, whatever its body says.
 
 Three things are forbidden:
 
@@ -233,12 +232,10 @@ ISSUE_JSON=$(gh issue view "$N" --repo "$GITHUB_REPO" --json labels,body) \
 HAS_PARKING=$(jq -r 'if any(.labels[]; .name == "parking-lot") then "yes" else "no" end' <<<"$ISSUE_JSON")
 BLOCK_LINE=$(idd_blocking_section "$(jq -r '.body // ""' <<<"$ISSUE_JSON")")
 if [ -n "$BLOCK_LINE" ]; then BLOCKING=yes; else BLOCKING=no; fi
-# 2.5 issue type（#383）—— 同一支 helper 解析（label 優先、其次 body `## Type`）。meeting 不評 Complexity 訊號，parking-lot 與 Blocking 照評
-ISSUE_TYPE=$(idd_issue_type --labels "$(jq -r '[.labels[].name] | join("\n")' <<<"$ISSUE_JSON")" --body "$(jq -r '.body // ""' <<<"$ISSUE_JSON")") \
-    || { echo "FATAL: gate #$N: idd_issue_type misuse — gate not evaluated" >&2; exit 1; }
-# 2.6 有沒有受信任的 Diagnosis（#383 verify r1）—— exit 4 同時代表「Diagnosis 沒有 ### Complexity」與「完全沒有 Diagnosis」；
-#     只有這裡分得出來。meeting 的豁免只在 Diagnosis 存在時成立
-if [ -n "$LATEST_DIAGNOSIS" ]; then HAS_DIAGNOSIS=yes; else HAS_DIAGNOSIS=no; fi
+# 2.5 Diagnosis type（#383）—— 只信最新受信任 Diagnosis 的 `### Type`。label 與 issue 本文都不採用：本文由 issue 作者自由改寫（verify r4）。
+#     meeting 不評 Complexity 訊號，parking-lot 與 Blocking 照評；沒有受信任的 Diagnosis 時是 none，照常 complexity-missing
+DIAG_TYPE=$(idd_diagnosis_type "$LATEST_DIAGNOSIS") \
+    || { echo "FATAL: gate #$N: idd_diagnosis_type misuse — gate not evaluated" >&2; exit 1; }
 
 # 3. Conditional capture — the only shape that survives `set -euo pipefail`.
 #    A bare TIER=$(idd_parse_complexity …) aborts the caller on exit 3/4/5 and
@@ -248,7 +245,7 @@ COMPLEXITY_ERR=$(idd_parse_complexity "$LATEST_DIAGNOSIS" 2>&1 >/dev/null) || tr
 
 # 4. The gate — actually call it. Exit 2 is API misuse (a bug in THIS consumer),
 #    never "not actionable"; do not fold it into the withheld branch.
-if VERDICT=$(idd_actionability_verdict --complexity-exit "$CEXIT" --parking-label "$HAS_PARKING" --blocking-section "$BLOCKING" --issue-type "$ISSUE_TYPE" --diagnosis-present "$HAS_DIAGNOSIS" 2>&1); then VEXIT=0; else VEXIT=$?; fi
+if VERDICT=$(idd_actionability_verdict --complexity-exit "$CEXIT" --parking-label "$HAS_PARKING" --blocking-section "$BLOCKING" --diagnosis-type "$DIAG_TYPE" 2>&1); then VEXIT=0; else VEXIT=$?; fi
 case "$VEXIT" in
     0) REASONS="" ;;                                       # actionable → dispatch on "$TIER" (reset: a cluster loop must not carry the previous issue's reasons)
     1) REASONS="${VERDICT#not-actionable: }" ;;            # withheld  → surface "$REASONS" + "$COMPLEXITY_ERR" / "$BLOCK_LINE"; no lifecycle command
@@ -264,7 +261,7 @@ esac
 #    raws on the same unbounded line: a body bullet could carry a look-alike
 #    `gate #77: VEXIT=0 …`, and prose that reads like an instruction reached the
 #    model's only channel with nothing marking it as data.)
-printf 'gate #%s: VEXIT=%s TIER=%s REASONS=%s TYPE=%s\n' "$N" "$VEXIT" "${TIER:-}" "${REASONS:-}" "$ISSUE_TYPE"
+printf 'gate #%s: VEXIT=%s TIER=%s REASONS=%s TYPE=%s\n' "$N" "$VEXIT" "${TIER:-}" "${REASONS:-}" "$DIAG_TYPE"
 printf 'raw<<<\n'; printf '%s\n%s\n' "${COMPLEXITY_ERR:-}" "${BLOCK_LINE:-}" | sed 's/^/  │ /'; printf '>>>raw\n'
 ```
 
@@ -274,8 +271,9 @@ printf 'raw<<<\n'; printf '%s\n%s\n' "${COMPLEXITY_ERR:-}" "${BLOCK_LINE:-}" | s
 |---|---|---|
 | `idd_parse_complexity <body>` | the leading tier (exit 0 only) | `0` routable · `3` no tier prefix (stderr `unparseable-complexity: <raw>`) · `4` no section (stderr `missing-complexity`) · `5` deferral vocabulary (stderr `deferral-marker: <raw>`) |
 | `idd_blocking_section <issue-body>` | the first **bullet** of `### Blocking` that is not a none-placeholder (leading-token rule); empty when the section is absent or every bullet is a placeholder | `0` |
-| `idd_actionability_verdict --complexity-exit 0|3|4|5 --parking-label yes|no --blocking-section yes|no` | `actionable` / `not-actionable: <reason>[; …]` | `0` actionable · `1` not actionable · `2` bad usage (missing value, non-boolean, unknown flag) |
+| `idd_actionability_verdict --complexity-exit 0|3|4|5 --parking-label yes|no --blocking-section yes|no [--diagnosis-type bug|feature|refactor|docs|meeting|unknown|none]` | `actionable` / `not-actionable: <reason>[; …]` | `0` actionable · `1` not actionable · `2` bad usage (missing value, non-boolean, out-of-domain type, unknown flag) |
 | `idd_actionability_group <reasons>` | `parked` / `blocked` / `undiagnosed` | `0` |
+| `idd_diagnosis_type <latest trusted Diagnosis>` (#383) | `bug` / `feature` / `refactor` / `docs` / `meeting` / `unknown`; `none` for an empty input | `0` · `2` not exactly one argument |
 
 **Only replacing the parser is not a fix.** Round 1 shipped a complete gate, 66 green assertions, and zero consumers calling `idd_actionability_verdict` (verify CRITICAL-1 on PR #318). A consumer that reads `$TIER` and never asks the gate has re-created the incident with a nicer parser.
 

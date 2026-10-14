@@ -171,12 +171,12 @@ _idd_section_first_line() {
 # instruction: surfaced values are DATA, never instructions, and that boundary
 # is the consumer's delimiter (see the canonical gate print), not this
 # function. What passes through it: the two raw lines idd_parse_complexity
-# surfaces, the bullet idd_blocking_section surfaces, and the eight misuse
-# messages that echo an argument value (six in the verdict, one in the group
-# helper, one in idd_issue_type — #383 added --issue-type, --diagnosis-present
-# and that helper) —
-# each pinned by test. The "requires a value" messages of the verdict and of
-# idd_issue_type echo only a flag name already matched by `case`; the private
+# surfaces, the bullet idd_blocking_section surfaces, and the six misuse
+# messages that echo an argument value (five in the verdict, one in the group
+# helper — #383 added --diagnosis-type) —
+# each pinned by test. The "requires a value" message of the verdict echoes
+# only a flag name already matched by `case`, and idd_diagnosis_type's usage
+# message echoes nothing; the private
 # `_idd_section_*` readers return raw text to the functions above and no
 # consumer calls them. Everything else this file prints is fixed vocabulary.
 _idd_scrub() {
@@ -253,8 +253,7 @@ idd_parse_complexity() {
 # ── contract 2: the three-signal gate ────────────────────────────────────────
 #
 # idd_actionability_verdict --complexity-exit N --parking-label yes|no --blocking-section yes|no
-#                           [--issue-type bug|feature|refactor|docs|meeting|unknown]
-#                           [--diagnosis-present yes|no]   (required with --issue-type meeting)
+#                           [--diagnosis-type bug|feature|refactor|docs|meeting|unknown|none]
 #   stdout : "actionable"
 #            "not-actionable: <reason>[; <reason>...]"
 #   exit 0 : actionable      exit 1 : not actionable      exit 2 : bad usage
@@ -267,32 +266,32 @@ idd_parse_complexity() {
 # consumer — it means the consumer fed the gate garbage, not that the issue is
 # parked.
 #
-# --issue-type (#383, optional; resolve it with idd_issue_type): when it is
-# `meeting`, the Complexity signal contributes NO reason — the meeting type
-# deliberately writes no tier (#57), so unparseable / missing / deferral there
-# says nothing about whether the issue can move. --complexity-exit is still
-# required and still validated, and parking-lot and ### Blocking are evaluated
-# as usual: parking a meeting is the label's job. Omitted, or any other type,
-# and the verdict is exactly what it was before this flag existed. Passed but
-# empty is misuse (exit 2) — a consumer whose type lookup came back empty must
-# not be read as "no type given".
+# --diagnosis-type (#383, optional; get it with idd_diagnosis_type from the
+# latest TRUSTED Diagnosis): when it is `meeting`, the Complexity signal
+# contributes NO reason — the meeting type deliberately writes no tier (#57),
+# so unparseable / missing / deferral there says nothing about whether the
+# issue can move. --complexity-exit is still required and validated, and
+# parking-lot and ### Blocking are evaluated as usual: parking a meeting is the
+# label's job. `none` (no trusted Diagnosis) and every other value leave the
+# verdict exactly what it was before this flag existed, so an undiagnosed issue
+# stays complexity-missing whatever its body says. Passed but empty is misuse
+# (exit 2) — a consumer whose lookup came back empty must not be read as "no
+# type given".
 #
-# --diagnosis-present (#383 verify r1): exit 4 means two things — a Diagnosis
-# with no ### Complexity section, and NO trusted Diagnosis comment at all
-# (LATEST_DIAGNOSIS empty after the author filter). Only the second is "never
-# diagnosed", and only the consumer can tell them apart. So the meeting
-# exemption applies only when the consumer says a Diagnosis exists; with `no`
-# the Complexity reasons are evaluated exactly as for any other type, and an
-# undiagnosed meeting stays complexity-missing → the undiagnosed group. It is
-# REQUIRED with --issue-type meeting (exit 2 if absent): defaulting it to
-# `yes` would re-open the hole, defaulting to `no` would silently undo the
-# exemption. For any other type it is validated and has no effect.
+# Why the Diagnosis and not the issue (verify r4, maintainer decision
+# 2026-10-14): rounds 1-4 took the type from the issue label or, failing that,
+# the issue BODY — which the issue author can rewrite at any time. An author
+# could switch off the Complexity signal after a maintainer's diagnosis, or
+# flip the type after implement so that later phases skipped verify, and every
+# round found another way to hide a `## Type` from a markdown reader. The
+# Diagnosis is written by /idd-diagnose and author-filtered by every consumer;
+# the Complexity signal is read from the same text.
 idd_actionability_verdict() {
-    local cexit="" label="" blocking="" itype="" itype_set=0 dpres="" dpres_set=0
+    local cexit="" label="" blocking="" dtype="" dtype_set=0
 
     while [ $# -gt 0 ]; do
         case "$1" in
-            --complexity-exit|--parking-label|--blocking-section|--issue-type|--diagnosis-present)
+            --complexity-exit|--parking-label|--blocking-section|--diagnosis-type)
                 # A value-less flag must be a named error, not an infinite loop
                 # (verify #318 H1: `shift 2` on a single remaining arg fails
                 # without shifting, so the loop never advanced).
@@ -304,8 +303,7 @@ idd_actionability_verdict() {
                     --complexity-exit)  cexit="$2"    ;;
                     --parking-label)    label="$2"    ;;
                     --blocking-section) blocking="$2" ;;
-                    --issue-type)       itype="$2"; itype_set=1 ;;
-                    --diagnosis-present) dpres="$2"; dpres_set=1 ;;
+                    --diagnosis-type)   dtype="$2"; dtype_set=1 ;;
                 esac
                 shift 2
                 ;;
@@ -331,24 +329,15 @@ idd_actionability_verdict() {
         yes|no) ;;
         *) printf 'idd_actionability_verdict: --blocking-section must be yes or no (got: %s)\n' "${blocking:-<empty>}" | _idd_scrub >&2; return 2 ;;
     esac
-    if [ "$itype_set" -eq 1 ]; then
-        case "$itype" in
-            bug|feature|refactor|docs|meeting|unknown) ;;
-            *) printf 'idd_actionability_verdict: --issue-type must be bug, feature, refactor, docs, meeting or unknown (got: %s)\n' "${itype:-<empty>}" | _idd_scrub >&2; return 2 ;;
+    if [ "$dtype_set" -eq 1 ]; then
+        case "$dtype" in
+            bug|feature|refactor|docs|meeting|unknown|none) ;;
+            *) printf 'idd_actionability_verdict: --diagnosis-type must be bug, feature, refactor, docs, meeting, unknown or none (got: %s)\n' "${dtype:-<empty>}" | _idd_scrub >&2; return 2 ;;
         esac
-    fi
-    if [ "$dpres_set" -eq 1 ]; then
-        case "$dpres" in
-            yes|no) ;;
-            *) printf 'idd_actionability_verdict: --diagnosis-present must be yes or no (got: %s)\n' "${dpres:-<empty>}" | _idd_scrub >&2; return 2 ;;
-        esac
-    elif [ "$itype" = "meeting" ]; then
-        printf 'idd_actionability_verdict: --issue-type meeting requires --diagnosis-present yes|no\n' | _idd_scrub >&2
-        return 2
     fi
 
     local reasons=()
-    if [ "$itype" != "meeting" ] || [ "$dpres" != "yes" ]; then
+    if [ "$dtype" != "meeting" ]; then
         [ "$cexit" = "3" ]  && reasons+=("complexity-unparseable")
         [ "$cexit" = "4" ]  && reasons+=("complexity-missing")
         [ "$cexit" = "5" ]  && reasons+=("complexity-deferral-marker")
@@ -539,191 +528,44 @@ idd_actionability_group() {
     esac
 }
 
-# ── contract 4: issue type (#383) ────────────────────────────────────────────
+# ── contract 4: the Diagnosis type (#383) ────────────────────────────────────
 #
-# idd_issue_type --labels <newline-separated label names> --body <issue body>
-#   stdout : bug | feature | refactor | docs | meeting | unknown
-#   exit 0 : resolved (`unknown` included)      exit 2 : bad usage
+# idd_diagnosis_type <latest trusted Diagnosis text, possibly empty>
+#   stdout : bug | feature | refactor | docs | meeting | unknown | none
+#   exit 0 : resolved (`unknown` and `none` included)      exit 2 : bad usage
 #
-# WHY HERE: the gate has to know whether an issue is a meeting, because the
-# meeting type (#57) deliberately writes no Complexity tier and every meeting
-# Diagnosis would otherwise read unparseable or missing (#383). Resolving the
-# type is parsing, so it lives in this file like every other parse — a
-# consumer that reads labels or `## Type` on its own is the private-narrowing
-# shape #298 → #316 removed.
+# The gate needs to know whether an issue is a meeting, because the meeting
+# type (#57) deliberately writes no Complexity tier (#383). The ONLY source is
+# the `### Type` of the latest trusted Diagnosis — the text every consumer has
+# already fetched, author-filtered, as LATEST_DIAGNOSIS for the Complexity
+# signal. Never the issue labels or body: the issue author can rewrite the
+# body at will (verify r4; see idd_actionability_verdict above).
 #
-# THE ORDER is /idd-diagnose Step 1's:
-#   1. exactly one IDD type name among the labels → that type; more than one
-#      distinct IDD type label → `unknown` (a conflict is not a meeting)
-#   2. no IDD type label → the leading word of the first non-empty line under a
-#      line-anchored `## Type` heading outside fenced code, if it is an IDD
-#      type name (`meeting（…）` and `**meeting**` both read as meeting)
-#   3. otherwise `unknown`
-# `unknown` means "not meeting": the gate then evaluates Complexity exactly as
-# it did before the type existed. The default is deliberately NOT meeting —
-# reading an ordinary issue as a meeting would skip its Complexity signal.
-#
-# The `## Type` reader is its own awk on purpose: `_idd_section_lines` reads
-# only `###` headings and its structural rules are frozen (spec R9, #336). It
-# runs under LC_ALL=C so `[[:space:]]` and the letter class mean ASCII on every
-# platform, and it uses no grep, so a body without the heading cannot fail a
-# caller running under `pipefail`.
-#
-# Its unsafe direction is a FALSE meeting (that drops the Complexity signal).
-# The baseline is GitHub's renderer (cmark-gfm, checked with `gh api markdown`),
-# because that is what a maintainer reads (verify #383 r3). Rules, each pinned
-# in test.sh: line endings are CRLF, LF or a lone CR; a fence closes only on the
-# opener's character at no less than its length with nothing after it; a
-# backtick opener's info string has no backtick; a run indented 4+ spaces is not
-# a fence; HTML comments and HTML blocks of types 1, 3, 4, 5 and 6 (GitHub's tag
-# list) are skipped; the heading needs a space or tab after `##`; the type word
-# ends at a non-word character once closing emphasis is stripped.
-#
-# BACKSTOP, renderer-independent: a body-derived `meeting` needs exactly one
-# `## Type` heading line in the whole body; with two or more the result is
-# `unknown`. Three verify rounds kept finding concealment shapes (list-item
-# fences, HTML block variants, renderer tag-list drift) and every one put a
-# second `## Type` where the reader and GitHub disagree. The backstop never
-# upgrades a result, and an issue filed by idd-issue carries a type label,
-# which wins over the body.
-#
-# Known divergences that the backstop does NOT cover — a single `## Type`
-# hidden by a construct the reader does not model (a fence nested in a list
-# item or block quote that the reader misses, a type-7 HTML block) can still
-# read as meeting. Trust in a body-only type is tracked in #385.
-idd_issue_type() {
-    local labels="" body="" found="" word
-
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            --labels|--body)
-                if [ $# -lt 2 ]; then
-                    printf 'idd_issue_type: %s requires a value\n' "$1" | _idd_scrub >&2
-                    return 2
-                fi
-                case "$1" in
-                    --labels) labels="$2" ;;
-                    --body)   body="$2"   ;;
-                esac
-                shift 2
-                ;;
-            *)
-                printf 'idd_issue_type: unknown argument: %s\n' "$1" | _idd_scrub >&2
-                return 2
-                ;;
-        esac
-    done
-
-    # Labels under LC_ALL=C too (verify #383 r1, findings 17 and 25): ASCII
-    # case-folded like the body value, and trimmed of ASCII space/tab ONLY. A
-    # locale-aware trim made `meeting<NBSP>` a meeting under en_US.UTF-8 and
-    # `unknown` under C — the gate-relaxing signal must not follow the locale.
-    found=$(printf '%s\n' "$labels" | LC_ALL=C awk '
-        { sub(/\r$/, ""); sub(/^[ \t]+/, ""); sub(/[ \t]+$/, ""); l = tolower($0) }
-        l ~ /^(bug|feature|refactor|docs|meeting)$/ && !(l in seen) { seen[l] = 1; n++; last = l }
-        END { if (n == 1) print last; else if (n > 1) print "unknown" }
-    ')
-    if [ -n "$found" ]; then printf '%s\n' "$found"; return 0; fi
-
-    # A lone CR is a line ending in CommonMark: normalise CRLF, then every
-    # remaining CR, before the line-based awk (verify #383 r2 #3 — an opener
-    # after a lone CR used to be read mid-line and miss its rule).
-    word=$(printf '%s\n' "$body" | LC_ALL=C sed 's/\r$//' | LC_ALL=C tr '\r' '\n' | LC_ALL=C awk '
-        # fence_run: length of the backtick/tilde run that opens this line as a
-        # fence (indent of at most 3 spaces), or 0. No interval expressions —
-        # some awks lack them, and a terminator that never matches captures to EOF.
-        function fence_run(line, ch,    ind, rest) {
-            match(line, /^ */); ind = RLENGTH
-            if (ind > 3) return 0
-            rest = substr(line, ind + 1)
-            if (ch == "`") { if (!match(rest, /^`+/)) return 0 }
-            else           { if (!match(rest, /^~+/)) return 0 }
-            if (RLENGTH < 3) return 0
-            # A backtick fence info string cannot contain a backtick — such a
-            # line is a paragraph with a code span, not an opener (r2 #11/#17).
-            if (ch == "`" && opener && index(substr(rest, RLENGTH + 1), "`")) return 0
-            return RLENGTH
-        }
-        # html_block: the HTML block type a line opens, or 0. Tag list and end
-        # conditions follow GitHub (cmark-gfm), the renderer a maintainer reads
-        # — not CommonMark 0.31, which added `search` and is not what GitHub
-        # renders (verify #383 r3 #25). 1 pre/script/style/textarea, 3 <?,
-        # 4 <!X, 5 <![CDATA[, 6 block tag (until a blank line).
-        function html_block(line,    ind, rest, low) {
-            match(line, /^ */); ind = RLENGTH
-            if (ind > 3) return 0
-            rest = substr(line, ind + 1); low = tolower(rest)
-            if (low ~ /^<(pre|script|style|textarea)([ \t>]|$)/) return 1
-            if (low ~ /^<\?/) return 3
-            if (low ~ /^<!\[cdata\[/) return 5
-            if (low ~ /^<![a-z]/) return 4
-            if (low ~ /^<\/?(address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h1|h2|h3|h4|h5|h6|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|section|source|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)([ \t>]|\/>|$)/) return 6
-            return 0
-        }
-        function html_ends(type, line,    low) {
-            low = tolower(line)
-            if (type == 1) return low ~ /<\/(pre|script|style|textarea)>/
-            if (type == 3) return index(line, "?>") > 0
-            if (type == 4) return index(line, ">") > 0
-            if (type == 5) return index(line, "]]>") > 0
-            return 0
-        }
-        # Every `## Type` heading line in the body, wherever it sits: the
-        # renderer-independent backstop (r3) — see END.
-        $0 ~ /^##[ \t]+Type[ \t]*$/ { ntype++ }
+#   - empty input (no trusted Diagnosis) → `none`
+#   - otherwise the first non-empty line of the `### Type` section, read with
+#     the same section reader as ### Complexity, leading markdown decoration
+#     stripped, ASCII case-folded; its leading word counts only if it is an
+#     IDD type name that ends at a non-word character (`meeting（…）` and
+#     `**meeting**` are meeting; `meeting-notes`, `meeting2` are not)
+#   - anything else, including no `### Type` heading → `unknown`
+# Only `meeting` relaxes the gate, so every unrecognised shape fails safe.
+idd_diagnosis_type() {
+    if [ $# -ne 1 ]; then
+        printf 'idd_diagnosis_type: requires exactly one argument (the latest trusted Diagnosis, possibly empty)\n' >&2
+        return 2
+    fi
+    if [ -z "$1" ]; then printf 'none\n'; return 0; fi
+    local line word
+    line=$(_idd_section_first_line "$1" "Type")
+    word=$(printf '%s\n' "$line" | LC_ALL=C awk '
         {
-            # Inside a fence: only the same character, at no less than the
-            # opener length, with nothing but whitespace after it, closes it
-            # (verify #383 r1, finding 5 — a ```` block used to close at ```).
-            if (fence != "") {
-                opener = 0; k = fence_run($0, fence)
-                if (k >= flen) {
-                    match($0, /^ */); tail = substr($0, RLENGTH + 1 + k)
-                    if (tail ~ /^[ \t]*$/) fence = ""
-                }
-                next
-            }
-            # HTML blocks are not read (r2 #21, r3 #11/#18/#25).
-            if (htmlb == 6) { if ($0 ~ /^[ \t]*$/) htmlb = 0; next }
-            if (htmlb)      { if (html_ends(htmlb, $0)) htmlb = 0; next }
-            # An HTML comment block is not rendered and not read (findings 21, 24).
-            if (incomment) { if (index($0, "-->")) incomment = 0; next }
-            if ($0 ~ /^[ \t]*<!--/) {
-                rest = substr($0, index($0, "<!--") + 4)
-                if (!index(rest, "-->")) incomment = 1
-                next
-            }
-            opener = 1
-            k = fence_run($0, "`"); if (k) { fence = "`"; flen = k; next }
-            k = fence_run($0, "~"); if (k) { fence = "~"; flen = k; next }
-            h = html_block($0)
-            if (h == 6) { htmlb = 6; next }
-            if (h)      { if (!html_ends(h, $0)) htmlb = h; next }
-        }
-        # The input is always read to the end (no `exit`): the backstop needs
-        # every line, and an early exit would SIGPIPE the upstream sed/tr under
-        # a caller running `set -euo pipefail` (r3 #31).
-        !grab && !done && $0 ~ /^##[ \t]+Type[ \t]*$/  { grab = 1; next }
-        grab && /^##?[ \t]/                             { grab = 0; done = 1; next }
-        grab && NF {
-            line = $0
-            sub(/^[ \t]*[*`_]*/, "", line)
-            # The word ends at a non-word character once closing emphasis is
-            # stripped: `meeting-notes`, `meeting2`, `meeting_x` are not meeting,
-            # `_meeting_` and `**meeting**` are (r2 #26, r3 #12).
-            if (match(line, /^[A-Za-z]+/)) {
-                w = substr(line, 1, RLENGTH); rest = substr(line, RLENGTH + 1)
+            sub(/^[ \t]*[*`_]*/, "")
+            if (match($0, /^[A-Za-z]+/)) {
+                w = substr($0, 1, RLENGTH); rest = substr($0, RLENGTH + 1)
                 sub(/^[*_`]+/, "", rest)
-                if (rest !~ /^[A-Za-z0-9_-]/) word = tolower(w)
+                if (rest !~ /^[A-Za-z0-9_-]/) print tolower(w)
             }
-            grab = 0; done = 1; next
-        }
-        # Backstop: a body-derived meeting needs exactly ONE `## Type` heading
-        # line. Every concealment shape found across three verify rounds put a
-        # second one somewhere the reader and GitHub disagree about; with two or
-        # more, meeting becomes unknown (the safe direction). Never upgrades.
-        END { if (word == "meeting" && ntype > 1) print "unknown"; else print word }
-    ')
+        }')
     case "$word" in
         bug|feature|refactor|docs|meeting) printf '%s\n' "$word" ;;
         *)                                 printf 'unknown\n' ;;

@@ -2,7 +2,7 @@
 
 ### Requirement: Actionability gate evaluates three signals disjunctively
 
-The system SHALL determine whether a diagnosed issue is actionable by evaluating exactly three signals: whether the `### Complexity` value is non-routable for any reason (unparseable prefix, absent section, or deferral vocabulary), whether the `parking-lot` label is present on the issue, and whether the `### Blocking` section of the issue body is non-empty. The issue SHALL be reported as actionable only when none of the three signals holds. When the caller supplies the issue type `meeting` and states that a trusted Diagnosis comment exists, the Complexity signal SHALL NOT contribute a reason, because the meeting type deliberately produces no complexity tier (see the meeting-issue-type capability); the `parking-lot` label and `### Blocking` signals SHALL still be evaluated for a meeting issue. When the caller states that no trusted Diagnosis comment exists, the Complexity signal SHALL be evaluated for a meeting issue exactly as for any other type, so that a meeting issue that was never diagnosed reports `complexity-missing`. A caller that supplies the issue type `meeting` without stating whether a Diagnosis exists SHALL receive exit status 2, because both defaults are unsafe. When the issue type is not supplied, or is any value other than `meeting`, the gate SHALL produce exactly the verdict and reasons it produced before the issue type input existed. The `- [~]` disposition marker inside a Diagnosis `### Strategy` checklist SHALL NOT be an input to this gate, because that marker is a close-time per-item disposition consumed by `idd-close` rather than a per-issue actionability signal.
+The system SHALL determine whether a diagnosed issue is actionable by evaluating exactly three signals: whether the `### Complexity` value is non-routable for any reason (unparseable prefix, absent section, or deferral vocabulary), whether the `parking-lot` label is present on the issue, and whether the `### Blocking` section of the issue body is non-empty. The issue SHALL be reported as actionable only when none of the three signals holds. A **diagnosed `meeting` issue** is an issue whose latest trusted Diagnosis comment — authored by an OWNER, MEMBER or COLLABORATOR, the same comment the Complexity signal is read from — records `meeting` under its `### Type` heading. When the caller supplies that Diagnosis type and it is `meeting`, the Complexity signal SHALL NOT contribute a reason, because the meeting type deliberately produces no complexity tier (see the meeting-issue-type capability); the `parking-lot` label and `### Blocking` signals SHALL still be evaluated for a meeting issue. The type SHALL NOT be taken from issue labels or from the issue body for this purpose, because the issue body is editable by the issue author; an issue with no trusted Diagnosis has the Diagnosis type `none` and its Complexity signal is evaluated as for any other type. When the Diagnosis type is not supplied, or is any value other than `meeting`, the gate SHALL produce exactly the verdict and reasons it produced before the Diagnosis type input existed. The `- [~]` disposition marker inside a Diagnosis `### Strategy` checklist SHALL NOT be an input to this gate, because that marker is a close-time per-item disposition consumed by `idd-close` rather than a per-issue actionability signal.
 
 #### Scenario: All three signals clear
 
@@ -22,30 +22,35 @@ The system SHALL determine whether a diagnosed issue is actionable by evaluating
 
 #### Scenario: Meeting issue without a tier is actionable
 
-- **WHEN** the gate is called with issue type `meeting`, a trusted Diagnosis present, a Complexity parse result of unparseable or missing, no `parking-lot` label, and an empty `### Blocking` section
+- **WHEN** the gate is called with Diagnosis type `meeting`, a Complexity parse result of unparseable or missing, no `parking-lot` label, and an empty `### Blocking` section
 - **THEN** the gate reports the issue as actionable
 - **AND** no `complexity-unparseable` or `complexity-missing` reason is reported
 
-#### Scenario: Undiagnosed meeting issue stays undiagnosed
+#### Scenario: Undiagnosed issue stays undiagnosed whatever its body says
 
-- **WHEN** the gate is called with issue type `meeting`, no trusted Diagnosis comment, no `parking-lot` label, and an empty `### Blocking` section
+- **WHEN** an issue has no trusted Diagnosis comment, so the gate is called with Diagnosis type `none`, and its body declares `## Type` `meeting`
 - **THEN** the gate reports the issue as not actionable with reason `complexity-missing`
 - **AND** the display group is undiagnosed, which retains the diagnose lifecycle command
 
-#### Scenario: Meeting type without the diagnosis signal is misuse
+#### Scenario: The issue body cannot release the gate
 
-- **WHEN** the gate is called with issue type `meeting` and no statement of whether a Diagnosis exists
+- **WHEN** an issue's latest trusted Diagnosis records type `bug` with the Complexity value `Simple when triggered`, and the issue author has since changed the body to declare `## Type` `meeting`
+- **THEN** the gate is called with Diagnosis type `bug` and reports the issue as not actionable with reason `complexity-deferral-marker`
+
+#### Scenario: Out-of-domain Diagnosis type is misuse
+
+- **WHEN** the gate is called with a Diagnosis type that is empty or not one of `bug`, `feature`, `refactor`, `docs`, `meeting`, `unknown`, `none`
 - **THEN** the gate exits with status 2 and reports no verdict
 
 #### Scenario: Meeting issue still honours parking and blocking
 
-- **WHEN** the gate is called with issue type `meeting` and the issue carries the `parking-lot` label
+- **WHEN** the gate is called with Diagnosis type `meeting` and the issue carries the `parking-lot` label
 - **THEN** the gate reports the issue as not actionable with reason `parking-lot-label`
 - **AND** when instead the `### Blocking` section is non-empty, the gate reports reason `blocking-nonempty`
 
-#### Scenario: Omitted issue type preserves the existing verdict
+#### Scenario: Omitted or non-meeting Diagnosis type preserves the existing verdict
 
-- **WHEN** the gate is called without an issue type on any row of the existing frozen fixtures
+- **WHEN** the gate is called without a Diagnosis type, or with any value other than `meeting`, on any row of the existing frozen fixtures
 - **THEN** every verdict and reason list is identical to the result recorded before this change
 
 ### Requirement: Complexity tier extraction tolerates trailing rationale
@@ -97,7 +102,7 @@ The system SHALL scan the **entire** `### Complexity` value — not only the tex
 
 #### Scenario: Deferral vocabulary inside a parenthetical is still detected
 
-- **WHEN** the value is `**Spectra**(Layer 2 + Layer 3 if/when triggered)`
+- **WHEN** the value is `**Spectra**(Layer 2 + Layer 3 if/when triggered)` on an issue that is not a diagnosed `meeting` issue
 - **THEN** the issue is reported as not actionable with reason `complexity-deferral-marker`
 
 #### Scenario: Deferral reason is distinct from unparseable
@@ -113,7 +118,7 @@ The system SHALL scan the **entire** `### Complexity` value — not only the tex
 
 ### Requirement: Conservative verdict and mandatory surfacing on non-routable Complexity
 
-When a `### Complexity` value cannot be routed for any reason, the system SHALL report the issue as not actionable and SHALL surface the original unmodified value to the operator. A missing `### Complexity` section SHALL report reason `complexity-missing`. The system SHALL NOT silently truncate a non-routable value to a tier prefix, SHALL NOT downgrade it to any tier, and SHALL NOT abort the enclosing listing operation. The single exception is a `meeting` issue with a trusted Diagnosis comment, whose Complexity signal is not evaluated (see "Actionability gate evaluates three signals disjunctively"); a `meeting` issue with no trusted Diagnosis comment is not excepted and SHALL report `complexity-missing`.
+When a `### Complexity` value cannot be routed for any reason, the system SHALL report the issue as not actionable and SHALL surface the original unmodified value to the operator. A missing `### Complexity` section SHALL report reason `complexity-missing`. The system SHALL NOT silently truncate a non-routable value to a tier prefix, SHALL NOT downgrade it to any tier, and SHALL NOT abort the enclosing listing operation. The single exception is a diagnosed `meeting` issue, whose Complexity signal is not evaluated (see "Actionability gate evaluates three signals disjunctively"); an issue with no trusted Diagnosis comment is not excepted and SHALL report `complexity-missing`.
 
 #### Scenario: Missing section is distinguished from a non-routable value
 
@@ -134,9 +139,9 @@ When a `### Complexity` value cannot be routed for any reason, the system SHALL 
 
 #### Scenario: A diagnosed meeting issue is the only exception
 
-- **WHEN** a `meeting` issue has a trusted Diagnosis comment whose `### Complexity` value is a sentence
+- **WHEN** a diagnosed `meeting` issue has a `### Complexity` value that is a sentence
 - **THEN** no complexity reason is reported for it
-- **AND** a `meeting` issue with no trusted Diagnosis comment is reported with reason `complexity-missing`
+- **AND** an issue with no trusted Diagnosis comment is reported with reason `complexity-missing`, whatever its body declares
 
 ### Requirement: Single shared implementation of parsing and verdict
 
@@ -162,11 +167,11 @@ Complexity parsing and actionability verdict logic SHALL exist as one shared imp
 
 ### Requirement: Existing diagnoses require no migration
 
-Existing Diagnosis comments SHALL NOT be rewritten, and no label SHALL be backfilled, in order for the gate to produce correct verdicts on them. The extraction and deferral rules SHALL be validated against the repository's full diagnosis corpus, and that validation SHALL be a regression test rather than a one-off check. The corpus is evaluated without an issue type, and therefore under the rules for an issue that is not a diagnosed `meeting` issue; supplying any non-meeting issue type SHALL NOT change a corpus verdict.
+Existing Diagnosis comments SHALL NOT be rewritten, and no label SHALL be backfilled, in order for the gate to produce correct verdicts on them. The extraction and deferral rules SHALL be validated against the repository's full diagnosis corpus, and that validation SHALL be a regression test rather than a one-off check. The corpus is evaluated without a Diagnosis type, and therefore under the rules for an issue that is not a diagnosed `meeting` issue; supplying any non-meeting Diagnosis type SHALL NOT change a corpus verdict.
 
 #### Scenario: Full corpus produces correct verdicts unmodified
 
-- **WHEN** the gate evaluates every existing Diagnosis comment in the repository without an issue type, or with any issue type other than `meeting`
+- **WHEN** the gate evaluates every existing Diagnosis comment in the repository without a Diagnosis type, or with any Diagnosis type other than `meeting`
 - **THEN** every value carrying a valid tier without deferral vocabulary yields that tier
 - **AND** every value carrying deferral vocabulary is withheld with reason `complexity-deferral-marker`
 - **AND** no Diagnosis comment content is modified
@@ -178,38 +183,27 @@ Existing Diagnosis comments SHALL NOT be rewritten, and no label SHALL be backfi
 
 ## ADDED Requirements
 
-### Requirement: Issue type resolution is part of the shared implementation
+### Requirement: The meeting type is read from the latest trusted Diagnosis
 
-The shared implementation SHALL provide the issue type resolution that consumers pass to the gate, so that no consumer parses issue labels or the body `## Type` heading on its own. Resolution SHALL follow the order used by `/idd-diagnose` Step 1: when exactly one IDD type name (`bug`, `feature`, `refactor`, `docs`, `meeting`) is present among the issue labels, compared after ASCII case folding and trimming of ASCII space and tab only, that type SHALL be returned; when more than one distinct IDD type label is present, the result SHALL be `unknown`; when no IDD type label is present, the leading word of the first non-empty line under a line-anchored `## Type` heading that GitHub renders as a heading — outside fenced code and outside HTML comments and HTML blocks, as GitHub's Markdown renderer delimits them — SHALL be used if it is an IDD type name and ends at a non-word character; a body-derived `meeting` SHALL additionally require that the body contain exactly one `## Type` heading line anywhere, and SHALL resolve to `unknown` otherwise, so that a concealed second heading can never produce a meeting; otherwise the result SHALL be `unknown`. The value `unknown` SHALL be treated as not meeting. An unrecognised argument, a flag without a value, or an issue type value outside `bug`, `feature`, `refactor`, `docs`, `meeting`, `unknown` SHALL fail loudly with exit status 2 rather than defaulting.
+The shared implementation SHALL provide the Diagnosis type that consumers pass to the gate, so that no consumer parses it on its own and no consumer takes it from issue labels or the issue body. Given the latest trusted Diagnosis comment, the result SHALL be the leading word of the first non-empty line under its `### Type` heading, read with the same section reader as `### Complexity`, after leading markdown decoration is stripped, compared in ASCII lower case, and accepted only if it is one of `bug`, `feature`, `refactor`, `docs`, `meeting` and ends at a non-word character; any other content, or no `### Type` heading, SHALL yield `unknown`; an empty input (no trusted Diagnosis) SHALL yield `none`. Only `meeting` relaxes the gate. A call with other than exactly one argument SHALL fail loudly with exit status 2.
 
-#### Scenario: Label decides when exactly one type label is present
+#### Scenario: A meeting Diagnosis is read as meeting
 
-- **WHEN** an issue carries the label `meeting` and its body `## Type` heading reads `bug`
-- **THEN** the resolved issue type is `meeting`
+- **WHEN** the latest trusted Diagnosis has `### Type` followed by the line `meeting（本文 ## Type；label 不是 IDD 類型）`
+- **THEN** the Diagnosis type is `meeting`
 
-#### Scenario: Body heading is used only without a type label
+#### Scenario: No trusted Diagnosis is none
 
-- **WHEN** an issue carries no IDD type label and its body `## Type` heading is followed by the line `meeting（需要裁決的編排決定）`
-- **THEN** the resolved issue type is `meeting`
+- **WHEN** the issue has no trusted Diagnosis comment
+- **THEN** the Diagnosis type is `none`
 
-#### Scenario: Conflicting or absent signals default to not meeting
+##### Example: Diagnosis type table
 
-- **WHEN** an issue carries both the `bug` and `meeting` labels, or carries no type label and no `## Type` heading
-- **THEN** the resolved issue type is `unknown`
-
-##### Example: resolution table
-
-| Labels | Body `## Type` first line | Resolved |
-| ------ | ------------------------- | -------- |
-| `meeting` | (none) | `meeting` |
-| `bug`, `planning` | `meeting` | `bug` |
-| `planning` | `meeting（審議）` | `meeting` |
-| `bug`, `meeting` | `meeting` | `unknown` |
-| (none) | (none) | `unknown` |
-| (none) | `## Type` only inside a fenced code block | `unknown` |
-| (none) | `## Type` inside a four-backtick fence that contains a three-backtick line | `unknown` |
-| (none) | `## Type` / `meeting` inside an HTML comment, then a visible `## Type` / `bug` | `bug` |
-| `Meeting` | (none) | `meeting` |
-| (none) | `meeting-notes` | `unknown` |
-| (none) | `## Type` / `meeting`, and a second `## Type` heading anywhere in the body | `unknown` |
-| (none) | `## Type` / `meeting` inside a `<details>` block with no blank line | `unknown` |
+| Latest trusted Diagnosis | Diagnosis type |
+| ------------------------ | -------------- |
+| `### Type` / `meeting` | `meeting` |
+| `### Type` / `**meeting**` | `meeting` |
+| `### Type` / `bug` | `bug` |
+| `### Type` / `meeting-notes` | `unknown` |
+| no `### Type` heading | `unknown` |
+| (no trusted Diagnosis) | `none` |
