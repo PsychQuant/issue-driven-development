@@ -50,6 +50,14 @@
 - [x] 8.4 idd-all：unwind 驗 N、PATH_AXIS 遺失時明確失敗、branch 由 git 判斷、direct-commit 不 fetch、保留 branch 時說明怎麼處理；Phase 6 meeting item 用 `$N`、只在 phase diagnosed 且非 Step 0.5.1 擋下時列；Plan 預設文字；Step 0 task 清單。驗證：行為測試（unwind 7 情況、Phase 5 正向對照、Phase 6 四情況）
 - [x] 8.5 idd-plan 對照表補 meeting 列、Next Step 補 meeting 例外；idd-list meeting 列寫明 tracker 優先；reference 機器行說明補 TYPE。驗證：`test.sh` 1135 passed
 
+## 9. verify round 4 修正：type 改以受信任 Diagnosis 為準（maintainer 2026-10-14 裁決）
+
+- [x] 9.1 spec：三訊號 requirement 定義「diagnosed meeting issue」並禁止從 label／本文取 type；Deferral 的 parenthetical scenario 限定非 meeting（r4 blocking #2／#5／#9）；ADDED requirement 改為「The meeting type is read from the latest trusted Diagnosis」；meeting-issue-type delta 改寫並加 scenario（本文被改寫不影響路由；undiagnosed scenario 限定，#11）。這次逐條檢查了 delta 自己的每個 scenario，不只 canonical spec
+- [x] 9.2 helper：新增 `idd_diagnosis_type`（與 `### Complexity` 同一支 section reader）；verdict 以 `--diagnosis-type` 取代 `--issue-type` 與 `--diagnosis-present`；移除 `idd_issue_type` 與它的 markdown reader（r4 #19／#35 與 reader 一整類）。驗證：fixture 10 列、Diagnosis type 12 條、誤用與舊旗標、三份 corpus × 6 個非 meeting 值（1284 組）
+- [x] 9.3 五個 gate block 改為 `DIAG_TYPE=$(idd_diagnosis_type "$LATEST_DIAGNOSIS")`；gate block 實跑加「本文改成 meeting、Diagnosis 寫 bug → 仍被擋」
+- [x] 9.4 idd-all：unwind、Phase 5、Phase 6 改讀受信任 Diagnosis；unwind 先判 type 再要求 PATH_AXIS（#3／#8）、direct-commit 說明 manifest（#26）、kept-branch 據實描述並提醒重跑會停在 Phase 0.5（#17／#25）；Phase 6 只排除 blocked 行（#4）、遺失狀態要列（#12）、phase 非 diagnosed 的提示（#16）；Phase 5 註解（#20）；Next Step、task 清單、idd-plan description（#14）。驗證：行為測試，含撇號造成的語法錯誤被實跑抓到
+- [x] 9.5 reference meeting 一節與 contract 表（#22）；版本 3.3.1 → 3.4.0（新增 helper 與旗標，#34；5.2 的 3.3.1 由此取代）；CHANGELOG 3.4.0。驗證：`test.sh` 853 passed
+
 ## 實作備註
 
 - NOTE（1.3）：任務寫「現在就通過」，實際上帶 `--issue-type bug|unknown` 的回歸 assertion 在 2.2 之前是 RED——當時 verdict 不認得這個參數（exit 2）。2.2 之後全綠，行為正確；只是任務描述的預期與當時實況不同。

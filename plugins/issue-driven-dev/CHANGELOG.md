@@ -5,7 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.3.1] - 2026-10-14
+## [3.4.0] - 2026-10-14
+
+### Added
+
+- **`idd_diagnosis_type` and `idd_actionability_verdict --diagnosis-type` (#383)** — the gate's type input. The
+  type is the `### Type` of the latest trusted Diagnosis (OWNER / MEMBER / COLLABORATOR, the same comment the
+  Complexity signal is read from); `none` when there is no trusted Diagnosis. Values: `bug`, `feature`,
+  `refactor`, `docs`, `meeting`, `unknown`, `none`; out of domain is exit 2. Without the flag, or with any value
+  but `meeting`, every verdict is unchanged — all three frozen corpora run both ways.
 
 ### Fixed
 
@@ -13,24 +21,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `idd-diagnose`'s meeting branch (v2.93.0) emits no `Simple` / `Plan` / `Spectra` verdict by design, but the
   gate (3.1.0, #316) treated every non-tier `### Complexity` as a defect. Every meeting issue therefore stopped in
   `idd-all` Phase 2 and `idd-plan` Step 1 with "fix the Diagnosis", although the Diagnosis was correct.
-  - **The type is a gate input, resolved by one helper.** `idd_issue_type --labels --body` follows
-    `idd-diagnose` Step 1: type label first (ASCII case-folded), then the body's `## Type`, label wins a
-    conflict, no signal is `unknown` (never `meeting`). The unsafe direction here is a false meeting, so the
-    body reader follows GitHub's renderer where it matters (any line ending; fences closed only by the opener's
-    character at no less than its length; HTML comments and HTML blocks skipped; a word boundary on the type),
-    and a body-derived `meeting` needs exactly one `## Type` heading line in the whole body — two or more give
-    `unknown`.
-  - **`idd_actionability_verdict --issue-type meeting --diagnosis-present yes` drops only the Complexity
-    signal.** `parking-lot` and `### Blocking` still withhold a meeting issue. Exit 4 also means "no trusted
-    Diagnosis at all", so a meeting issue nobody diagnosed stays `complexity-missing` (`--diagnosis-present
-    no`); the flag is required with `meeting`. Without the type the verdict is unchanged; all three frozen
-    corpora run without it and also with every non-meeting type.
+  - **A diagnosed meeting drops only the Complexity signal.** `parking-lot` and `### Blocking` still withhold it;
+    an issue with no trusted Diagnosis stays `complexity-missing` → undiagnosed, whatever its body says.
+  - **The type comes from the trusted Diagnosis, never from labels or the issue body.** The body is editable by
+    the issue author; verify rounds 1–4 resolved the type from it and found an author could switch off the
+    Complexity signal after diagnosis, or make `idd-all` skip verify and the push after implement, and kept
+    finding ways to hide a `## Type` from a markdown reader. That reader (`idd_issue_type`) was removed before
+    release.
   - **Consumers dispatch on `TYPE=meeting` before any tier.** `idd-all`: attended → meeting `/idd-plan`;
     unattended → stops at `diagnosed` with an Action item (`/idd-plan` or `/idd-close` — a plan is optional);
-    never implement, verify, push or PR. In PR mode it returns to the default branch: diagnose's attachment
-    manifest is committed on the Phase 0.5 branch, which is then kept and not pushed, and an empty branch is
-    deleted. Phase 6 prints a meeting report instead of claiming a verify and a PR. `idd-plan` writes the Meeting Plan. `idd-implement`
-    refuses an actionable meeting with a meeting message. `idd-list` suggests `/idd-plan` (`diagnosed`) or
+    never implement, verify, push or PR. In PR mode it returns to the default branch: the attachment manifest
+    written by diagnose is committed on the Phase 0.5 branch, which is kept and not pushed, and an empty branch is
+    deleted. The branch unwind, verify, push and report read the type from the trusted Diagnosis again. Phase 6
+    prints a meeting report instead of claiming a verify and a PR. `idd-plan` writes the Meeting Plan.
+    `idd-implement` refuses an actionable meeting with a meeting message. `idd-list` suggests `/idd-plan` or
     `/idd-close` (`planning`) and adds no group. Every gate block prints `TYPE=` on its machine line.
   - **`idd-update` reads `## Meeting Plan` as `planning`.**
   - **Not done, on purpose**: a `meeting` sentinel in `### Complexity` — a verdict the meeting spec forbids, and
