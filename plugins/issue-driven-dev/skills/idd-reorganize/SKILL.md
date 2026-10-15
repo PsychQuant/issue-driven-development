@@ -87,7 +87,7 @@ Step 1 那個錯的 artifact 與 Step 3 判為 `redo` / `invalidate` 的項目�
 
 - `<id>` 是數字 REST id（URL 的 `#issuecomment-` 後綴）；issue body 寫 `issue:<N>`，只能 `--section`。替換內容附在表下 `<details>`，執行時寫進 `$HOME/.cache/idd/corrections/correction-<N>-<k>.md`（先 `mkdir -p "$HOME/.cache/idd/corrections"`），`--body-file` 指向它；不放 `$VERIFY_DIR` 或 `$TMPDIR`（macOS 在 `/var` 下，`/idd-edit` 會拒絕）。
 - 「錯在哪」只寫位置與錯誤類型加正確內容，不重述錯的值 —— 重述就等於再留一份錯誤。
-- 替換內容須原樣保留 `Original text` 引文；`## Current Status`、`### Clarity Surface` 不提議（`/idd-edit` 會拒絕）。目標 comment 作者不是 OWNER、bot 或你自己（目前登入的 gh 使用者）→ 改提 `/idd-comment #N --type errata --target-comment <id> --body "..."`。
+- 替換內容須原樣保留 `Original text` 引文；`## Current Status`、`### Clarity Surface` 不提議（`/idd-edit` 會拒絕）。目標 comment 作者不是 OWNER 或你自己（目前登入的 gh 使用者；bot 寫的也算其他人）→ 改提 `/idd-comment #N --type errata --target-comment <id> --body "..."`。
 - **attended**：Re-baseline 貼出後逐項 `AskUserQuestion`（現在執行 / 先不要）；選執行才呼叫該 `/idd-edit`，它仍走自己的 preview + confirm。**unattended 只列不做**：不呼叫 `/idd-edit`。
 - 本 skill **永不**自己 PATCH 目標、也不寫歸檔 —— 改寫只經 `/idd-edit`。
 
@@ -122,7 +122,9 @@ Step 1 那個錯的 artifact 與 Step 3 判為 `redo` / `invalidate` 的項目�
 - **不用本 skill 掩蓋「還沒想清楚」。** Step 1 說不出一句話就回去 diagnose。
 - **枚舉必須機械。** 憑印象列下游 = 重演本 skill 要修的失敗。
 - **`still-valid` 要寫理由。** 沒有理由的 still-valid 就是沒有裁定。
-- **不刪除既有 artifact。** 錯的 diagnosis 留著並標記為 superseded，不要抹掉 —— 「當時為什麼那樣想」是下次的資料。其中已發表的錯誤敘述另依 Step 3.5 提議 `/idd-edit --correct`（舊版由它歸檔，不是抹掉）。
+- **不刪除既有 artifact，但錯的敘述不留在 AI 讀得到的地方。** 兩種情況分開處理：
+  - **判斷被後來的資訊推翻**（當時依手上的資料是合理的）→ 原 diagnosis 留著並標 superseded —— 「當時為什麼那樣想」是下次的資料。
+  - **敘述本身確定是錯的**（事實、數字、root cause 判錯）→ 依 Step 3.5 提議 `/idd-edit --correct` 就地更正；舊版由它歸檔（可 restore，不是抹掉），改了什麼記在 Re-baseline comment。只標 superseded 而不更正，錯的敘述會繼續被之後的 session 當成記憶讀進去（#351）。
 - **phase 要退回。** 否則工具鏈會對這張 issue 說謊。
 
 ## 實例（本 repo，PR #297）

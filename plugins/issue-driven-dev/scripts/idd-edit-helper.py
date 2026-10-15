@@ -11,9 +11,11 @@ Subcommands:
   parse-args <args...>         — Parse /idd-edit flags, run R4 + body-file
                                  gates, emit shell-eval'able assignments on
                                  stdout (KEY=value lines, bash %q-quoted).
-  validate-target <comment-id> <repo> <override>
-                               — Enforce R5: non-OWNER non-bot author refuse
-                                 unless --override-user-content active.
+  validate-target <comment-id> <repo> <override> [<mode>]
+                               — Enforce R5: refuse an author who is not OWNER,
+                                 a bot, or the gh user, unless
+                                 --override-user-content is active. With mode
+                                 --correct a bot is refused too (#351).
   section-replace <input-file> <heading-line> <replacement-file>
                                — Replace a named markdown section, level-aware,
                                  CRLF-safe. Emits modified body to stdout.
@@ -23,6 +25,9 @@ Subcommands:
   check-correction <old-file> <section-heading|-> <new-file>
                                — Refuse a --correct replacement that touches a
                                  protected region (#351).
+  compose-correction <old-file> <section-heading|-> <body-file> <marker>
+                               — Print the full corrected body that is both
+                                 previewed and written (#351).
   archive <comment|issue> <id> --from-file <path> --repo <owner/repo>
                                — Write the prior text to the correction
                                  archive; print only the backup id (#351).
@@ -105,8 +110,10 @@ def bash_quote(value):
     if value == "":
         return "''"
     out = []
-    for ch in value:
-        if ch in _BASH_Q_SAFE:
+    for idx, ch in enumerate(value):
+        # A word that starts with '=' is `=cmd` expansion under zsh (EQUALS),
+        # which the skill's `eval` runs in (verify #351 round 2).
+        if ch in _BASH_Q_SAFE and not (idx == 0 and ch == "="):
             out.append(ch)
         elif ch == "\t":
             out.append("$'\\t'")
@@ -289,6 +296,7 @@ _VALUE_FLAGS = {
     "--cwd": "cwd",
 }
 _MODE_FLAGS = ("--append", "--replace", "--prepend-note", "--correct")
+_ATX_HEADING_RE = re.compile(r"#{1,6}[ \t]+\S.*")
 
 
 def parse_args_subcmd(argv):
@@ -395,6 +403,16 @@ def parse_args_subcmd(argv):
                 "subsection scope."
             )
             return 3
+
+    # --section names an ATX heading line: section-replace matches it as a whole
+    # line and reads its level from the leading '#'s, so `Expected` or
+    # `##Expected` matched nothing or the wrong level (verify #351 round 2).
+    if state["section_flag"] and not _ATX_HEADING_RE.fullmatch(state["section_flag"]):
+        err(
+            "Refuse: --section must be a markdown heading line such as '## Expected' "
+            f"(one to six '#', a space, then the title; got: '{state['section_flag']}')."
+        )
+        return 2
 
     # ── --correct gates (#351) ──
     issue_targets = [t for t in targets if t.startswith("issue:")]
@@ -531,8 +549,10 @@ def _load_author_data(comment_id, repo, issue=False):
 def _current_gh_login():
     """Login of the authenticated gh user, or "" when unknown. In test mode
     IDD_EDIT_HELPER_GH_USER stands in for `gh api user` (ignored otherwise)."""
-    if os.environ.get("IDD_EDIT_HELPER_TEST_MODE") == "1" and "IDD_EDIT_HELPER_GH_USER" in os.environ:
-        return os.environ["IDD_EDIT_HELPER_GH_USER"]
+    if os.environ.get("IDD_EDIT_HELPER_TEST_MODE") == "1":
+        # Test mode never reaches the network: the current user is whatever the
+        # fixture says, or unknown (verify #351 round 2 — R5 fixtures ran gh).
+        return os.environ.get("IDD_EDIT_HELPER_GH_USER", "")
     try:
         proc = subprocess.run(["gh", "api", "user", "--jq", ".login"], capture_output=True, text=True)
     except FileNotFoundError:
@@ -544,6 +564,7 @@ def validate_target_subcmd(argv):
     comment_id = argv[0] if len(argv) >= 1 else ""
     repo = argv[1] if len(argv) >= 2 else ""
     override = argv[2] if len(argv) >= 3 else "false"
+    mode = argv[3] if len(argv) >= 4 else ""
 
     if not comment_id or not repo:
         err("ERROR: validate-target requires <comment-id> <repo> <override>")
@@ -571,8 +592,17 @@ def validate_target_subcmd(argv):
         )
         return 1
 
-    # Known-bot allowlist: any *[bot] suffix matches.
+    # Known-bot allowlist: any *[bot] suffix matches — except for --correct. A
+    # review bot's comment is a third party's words; it is answered with an
+    # errata comment, never rewritten (verify #351 round 2).
     if login.endswith("[bot]"):
+        if mode == "--correct":
+            err(
+                f"Refuse: {comment_id} was written by {login}, a bot; --correct only "
+                "rewrites your own content. Propose the correction with "
+                "/idd-comment --type errata instead (#351)."
+            )
+            return 4
         err(f"✓ Bot author: {login} (skip R5 gate)")
         return 0
 
@@ -594,7 +624,15 @@ def validate_target_subcmd(argv):
         err(f"⚠ Override active: editing {login} ({assoc}) content")
         return 0
 
-    # Refuse with R5 message.
+    # Refuse with R5 message. --correct has no override, so its refusal must
+    # not suggest one (verify #351 round 2).
+    if mode == "--correct":
+        err(
+            f"Refuse: {comment_id} was written by {login} ({assoc}); --correct only "
+            "rewrites content by the OWNER or by you. Propose the correction with "
+            "/idd-comment --type errata instead (#351)."
+        )
+        return 4
     err(R5_MSG_TEMPLATE.format(cid=comment_id, login=login, assoc=assoc))
     return 4
 
@@ -611,6 +649,49 @@ def _heading_level(line):
         else:
             break
     return n
+
+
+class ParserUnavailable(Exception):
+    """The pinned Markdown parser is missing or a different version."""
+
+
+def _code_line_set(lines):
+    """Indices of lines inside a fenced or indented code block. A `#` line or a
+    `---` there is code, not a heading or a rule, so it must not end a section
+    (verify #351 round 2). Block ranges come from the same pinned CommonMark
+    parser gh-egress uses (scripts/requirements-egress.txt), never from a
+    hand-written fence matcher."""
+    try:
+        from markdown_it import MarkdownIt, __version__ as markdown_version
+    except ImportError:
+        raise ParserUnavailable(
+            "markdown-it-py is not installed; install scripts/requirements-egress.txt"
+        )
+    if markdown_version != "4.0.0":
+        raise ParserUnavailable(
+            f"markdown-it-py {markdown_version} is not the pinned 4.0.0 "
+            "(scripts/requirements-egress.txt)"
+        )
+    code = set()
+    for token in MarkdownIt("commonmark").parse("\n".join(lines)):
+        if token.type in ("fence", "code_block") and token.map:
+            code.update(range(*token.map))
+    return code
+
+
+def _find_heading(lines, heading_line, code):
+    """Index of the first line equal to heading_line outside code, else None."""
+    for i, line in enumerate(lines):
+        if line == heading_line and i not in code:
+            return i
+    return None
+
+
+def _ends_section(line, level, stop_at_rule):
+    lvl = _heading_level(line)
+    return (1 <= lvl <= level and len(line) > lvl and line[lvl].isspace()) or (
+        stop_at_rule and _is_correct_boundary(line)
+    )
 
 
 def section_replace_subcmd(argv):
@@ -656,8 +737,14 @@ def section_replace_subcmd(argv):
         err(f"ERROR: invalid heading level ({level}) for: {heading_line}")
         return 2
 
-    # Verify heading exists (exact line match on cleaned input).
-    if heading_line not in input_lines:
+    try:
+        code = _code_line_set(input_lines)
+    except ParserUnavailable as e:
+        err(f"ERROR: {e}; nothing was replaced")
+        return 1
+    # Verify heading exists (exact line match on cleaned input, outside code).
+    start = _find_heading(input_lines, heading_line, code)
+    if start is None:
         err(f"ERROR: heading not found in input: {heading_line}")
         return 1
 
@@ -672,22 +759,18 @@ def section_replace_subcmd(argv):
     # *lower* level / more '#'s, are part of the section and replaced as a
     # unit). EOF also ends the section.
     out = []
-    replaced = False
     skipping = False
-    for line in input_lines:
-        if not replaced and line == heading_line:
+    for idx, line in enumerate(input_lines):
+        if idx == start:
             out.append(line)
             out.extend(repl_lines)
-            replaced = True
             skipping = True
             continue
         if skipping:
-            lvl = _heading_level(line)
             # A heading of same-or-higher level (lvl <= target, lvl >= 1)
-            # followed by whitespace ends the section.
-            if (1 <= lvl <= level and len(line) > lvl and line[lvl].isspace()) or (
-                stop_at_rule and _is_correct_boundary(line)
-            ):
+            # followed by whitespace ends the section; lines inside a code
+            # block never do.
+            if idx not in code and _ends_section(line, level, stop_at_rule):
                 skipping = False
                 out.append(line)
                 continue
@@ -817,33 +900,33 @@ def _read_normalized(path):
         return fh.read().replace("\r\n", "\n").replace("\r", "\n")
 
 
-def _section_range(lines, heading_line, stop_at_rule=False):
+def _section_range(lines, heading_line, stop_at_rule=False, code=frozenset()):
     """(start, end) of the section headed by heading_line, end exclusive, or
     None when absent. Same boundary rule as section-replace: the next heading
-    of the same or a higher level."""
-    if heading_line not in lines:
+    of the same or a higher level, never a line inside a code block."""
+    start = _find_heading(lines, heading_line, code)
+    if start is None:
         return None
-    start = lines.index(heading_line)
     level = _heading_level(heading_line)
     end = len(lines)
     for i in range(start + 1, len(lines)):
-        lvl = _heading_level(lines[i])
-        if (1 <= lvl <= level and len(lines[i]) > lvl and lines[i][lvl].isspace()) or (
-            stop_at_rule and _is_correct_boundary(lines[i])
-        ):
+        if i not in code and _ends_section(lines[i], level, stop_at_rule):
             end = i
             break
     return start, end
 
 
-def _managed_owner(lines, idx):
-    """(owner skill, heading) when line idx is a managed heading, else None."""
+def _managed_owner(lines, idx, code=frozenset()):
+    """(owner skill, heading) when line idx is a managed heading, else None.
+    A line inside a code block is never a heading."""
+    if idx in code:
+        return None
     line = lines[idx]
     if line.startswith(_CLARITY_PREFIX):
         return "idd-clarify", line
     if line == _CURRENT_STATUS:
         return "idd-update", line
-    rng = _section_range(lines, _CURRENT_STATUS)
+    rng = _section_range(lines, _CURRENT_STATUS, code=code)
     if rng and rng[0] < idx < rng[1] and _heading_level(line) >= 1:
         return "idd-update", line
     return None
@@ -874,6 +957,15 @@ def check_correction_subcmd(argv):
     new_text = _read_normalized(new_file)
     new_lines = new_text.split("\n")
 
+    try:
+        code = _code_line_set(old_lines)
+    except ParserUnavailable as e:
+        err(f"ERROR: {e}; the correction was not checked")
+        return 1
+
+    # Deliberately not code-aware: idd-update and idd-clarify find their heading
+    # by exact line match, so even a fenced copy in the replacement could be
+    # taken for the real one.
     for line in new_lines:
         if line == _CURRENT_STATUS or line.startswith(_CLARITY_PREFIX):
             err(
@@ -885,21 +977,25 @@ def check_correction_subcmd(argv):
     if heading == "-":
         start, end = 0, len(old_lines)
     else:
-        rng = _section_range(old_lines, heading, stop_at_rule=True)
+        rng = _section_range(old_lines, heading, stop_at_rule=True, code=code)
         if rng is None:
             err(f"ERROR: heading not found in input: {heading}")
             return 1
         start, end = rng
-        for idx in range(start, end):
-            owner = _managed_owner(old_lines, idx)
-            if owner:
-                who, line = owner
-                where = "is" if idx == start else "contains"
-                err(
-                    f"Refuse: the target section {where} '{line}', which is managed by "
-                    f"{who}; update it with {who} instead of --correct (#351)."
-                )
-                return 6
+    # A whole-comment target contains every managed region in it, so it is
+    # checked like a section (verify #351 round 2: dropping them passed).
+    for idx in range(start, end):
+        owner = _managed_owner(old_lines, idx, code)
+        if owner:
+            who, line = owner
+            what = "comment" if heading == "-" else "section"
+            where = "is" if (idx == start and heading != "-") else "contains"
+            err(
+                f"Refuse: the target {what} {where} '{line}', which is managed by "
+                f"{who}; update it with {who} instead of --correct (#351)."
+            )
+            return 6
+    if heading != "-":
         start += 1  # section-replace keeps the heading line itself
 
     old_blocks = sorted(_verbatim_blocks(old_lines[start:end]))
@@ -916,6 +1012,66 @@ def check_correction_subcmd(argv):
                 "text around it (#351)."
             )
             return 6
+    return 0
+
+
+# The marker emit-audit-marker writes for --correct. Earlier markers in the
+# replaced region are carried forward, so a second correction of the same
+# section keeps the first backup id reachable (verify #351 round 2).
+CORRECT_MARKER_RE = re.compile(
+    r'<!-- idd:edit mode="correct" backup-id="[^"]*"(?: [a-z-]+="[^"]*")* -->'
+)
+
+
+def compose_correction_subcmd(argv):
+    """Print the full corrected body: the section (or whole comment) replaced
+    by the new text, any earlier correction markers, and the new marker last.
+    The skill shows this exact text at confirmation and PATCHes it afterwards,
+    so the preview is the write (verify #351 round 2)."""
+    if len(argv) != 4:
+        err("ERROR: compose-correction requires <old-file> <section-heading|-> <body-file> <marker>")
+        return 2
+    old_file, heading, body_file, marker = argv
+    for f in (old_file, body_file):
+        if not os.path.isfile(f) or not os.access(f, os.R_OK):
+            err(f"ERROR: file not readable: {f}")
+            return 5
+    if not CORRECT_MARKER_RE.fullmatch(marker):
+        err("ERROR: the marker must be one emit-audit-marker wrote for mode=correct")
+        return 2
+    old_text = _read_normalized(old_file)
+    old_lines = old_text.split("\n")
+    if old_text.endswith("\n"):
+        old_lines = old_lines[:-1]
+    body_lines = _read_normalized(body_file).split("\n")
+    while body_lines and body_lines[-1].strip() == "":
+        body_lines.pop()
+    try:
+        code = _code_line_set(old_lines)
+    except ParserUnavailable as e:
+        err(f"ERROR: {e}; nothing was composed")
+        return 1
+
+    if heading == "-":
+        prior = [l for i, l in enumerate(old_lines) if i not in code and CORRECT_MARKER_RE.fullmatch(l)]
+        out = body_lines + [""] + prior + [marker]
+    else:
+        rng = _section_range(old_lines, heading, stop_at_rule=True, code=code)
+        if rng is None:
+            err(f"ERROR: heading not found in input: {heading}")
+            return 1
+        start, end = rng
+        # A replacement that starts with the target heading would print it twice.
+        if body_lines and body_lines[0] == heading:
+            body_lines = body_lines[1:]
+        prior = [
+            old_lines[i] for i in range(start + 1, end)
+            if i not in code and CORRECT_MARKER_RE.fullmatch(old_lines[i])
+        ]
+        section = [heading] + body_lines + [""] + prior + [marker]
+        tail = old_lines[end:]
+        out = old_lines[:start] + section + ([""] + tail if tail else [])
+    sys.stdout.write("\n".join(out) + "\n")
     return 0
 
 
@@ -1024,6 +1180,20 @@ def _ensure_ignored(toplevel, rel_path):
     return None
 
 
+def _archive_path_problem(root):
+    """A symlink on any directory between the work tree and the archive would
+    let a cloned repository point restore at files it ships, or send an
+    archive write elsewhere (verify #351 round 2: only the last component was
+    checked). Returns a message, or None when every level is a real directory
+    or absent."""
+    cur = root
+    for part in ARCHIVE_REL.split(os.sep):
+        cur = os.path.join(cur, part)
+        if os.path.islink(cur):
+            return f"{os.path.relpath(cur, root)} is a symlink"
+    return None
+
+
 def _is_ignored(root, rel_path):
     proc = _git(["check-ignore", "-q", "--", rel_path], cwd=root)
     return proc is not None and proc.returncode == 0
@@ -1060,6 +1230,10 @@ def archive_subcmd(argv):
     root = _main_worktree()
     if root is None:
         err("Refuse: the correction archive needs a git work tree; run from inside the repository clone (#351).")
+        return 7
+    problem = _archive_path_problem(root)
+    if problem:
+        err(f"Refuse: {problem}; the archive is only written to real directories. Nothing was written (#351).")
         return 7
     prefix = f"comment-{target_id}" if kind == "comment" else f"issue-{target_id}-body"
     base_id = f"{prefix}-{now.strftime('%Y%m%dT%H%M%SZ')}"
@@ -1132,6 +1306,10 @@ def restore_subcmd(argv):
     if root is None:
         err("Refuse: restore needs the git work tree that holds the archive.")
         return 7
+    problem = _archive_path_problem(root)
+    if problem:
+        err(f"Refuse: {problem}, so this helper did not write the entry; nothing was read.")
+        return 2
     rel = os.path.join(ARCHIVE_REL, backup_id + ".md")
     path = os.path.join(root, rel)
     if not os.path.lexists(path):
@@ -1204,8 +1382,9 @@ Subcommands:
   parse-args <args...>
       Parse /idd-edit flags, emit shell-eval'able assignments to stdout.
 
-  validate-target <comment-id> <repo> <override-flag>
-      Enforce R5: refuse non-OWNER non-bot unless override flag is "true".
+  validate-target <comment-id> <repo> <override-flag> [<mode>]
+      Enforce R5: refuse an author who is not OWNER, a bot, or the gh user unless
+      override flag is "true"; mode --correct also refuses a bot.
 
   section-replace <input-file> <heading-line> <replacement-file>
       Replace named markdown section (level-aware, CRLF-safe).
@@ -1216,6 +1395,9 @@ Subcommands:
 
   check-correction <old-file> <section-heading|-> <new-file>
       Refuse (exit 6) a --correct replacement that touches a protected region.
+
+  compose-correction <old-file> <section-heading|-> <body-file> <marker>
+      Print the full corrected body (earlier correction markers kept, the new one last).
 
   archive <comment|issue> <id> --from-file <path> --repo <owner/repo>
       Archive the prior text (never tracked, mode 0000, <id>.repo sidecar); print the backup id.
@@ -1243,6 +1425,8 @@ def main(argv):
         return emit_audit_marker_subcmd(rest)
     if subcmd == "check-correction":
         return check_correction_subcmd(rest)
+    if subcmd == "compose-correction":
+        return compose_correction_subcmd(rest)
     if subcmd == "archive":
         return archive_subcmd(rest)
     if subcmd == "restore":

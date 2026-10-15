@@ -305,4 +305,121 @@ assert_output_grep "idd-comment errata self path takes --correction-file" "--cor
 refute_output_grep "idd-comment does not declare the in-place-correction category" "(category: in-place-correction)" "$SKILLS/idd-comment/SKILL.md"
 assert_output_grep "MANIFESTO lists the 8th category" "in-place-correction" "$PLUGIN/MANIFESTO.md"
 
+# ── F. round 3 (verify #351 round 2) ──────────────────────────────────────
+echo "F. round 3"
+
+# F1. a whole-comment correction may not drop a managed region either
+printf '## Notes\nwrong\n\n### Clarity Surface(idd-clarify run 2026-10-01T00:00:00Z)\n\n| Type | Source |\n|---|---|\n' >"$WORK/managed-comment.md"
+run_helper f1 check-correction "$WORK/managed-comment.md" - "$WORK/r-exp.md"
+assert_exit "whole-comment correction that drops managed sections → exit 6" 6 "$RC"
+assert_output_grep "whole-comment refusal names the managing skill" "idd-" "$WORK/f1.err"
+
+# F4. a fenced code block does not end a section
+cat >"$WORK/fenced.md" <<'EOF'
+## Notes
+wrong intro
+
+```bash
+# a shell comment, not a heading
+---
+## Current Status
+```
+
+wrong tail
+
+## Next
+- keep me
+EOF
+printf 'right text\n' >"$WORK/r-fix.md"
+run_helper f4a section-replace "$WORK/fenced.md" "## Notes" "$WORK/r-fix.md" --stop-at-rule
+assert_exit "section-replace across a fence succeeds" 0 "$RC"
+refute_output_grep "text after the fence is replaced too" "wrong tail" "$WORK/f4a.out"
+refute_output_grep "fenced lines are replaced with the section" "a shell comment" "$WORK/f4a.out"
+assert_output_grep "the next real heading survives" "## Next" "$WORK/f4a.out"
+run_helper f4b check-correction "$WORK/fenced.md" "## Notes" "$WORK/r-fix.md"
+assert_exit "a fenced '## Current Status' is not a managed heading" 0 "$RC"
+
+# F4 + F7 + F8. compose-correction builds the full new body for preview and write
+MARK='<!-- idd:edit mode="correct" backup-id="comment-1-20261016T000000Z" date="2026-10-16" -->'
+run_helper f4c compose-correction "$WORK/fenced.md" "## Notes" "$WORK/r-fix.md" "$MARK"
+assert_exit "compose-correction succeeds" 0 "$RC"
+assert_output_grep "composed body keeps the heading" "## Notes" "$WORK/f4c.out"
+assert_output_grep "composed body carries the new text" "right text" "$WORK/f4c.out"
+assert_output_grep "composed body ends the section with the marker" "comment-1-20261016T000000Z" "$WORK/f4c.out"
+assert_output_grep "composed body keeps the rest of the target" "keep me" "$WORK/f4c.out"
+
+printf '## Notes\nright text\n' >"$WORK/r-dup.md"
+run_helper f7a compose-correction "$WORK/fenced.md" "## Notes" "$WORK/r-dup.md" "$MARK"
+assert_eq "a replacement that repeats the heading does not duplicate it" "1" "$(grep -c '^## Notes$' "$WORK/f7a.out")"
+
+run_helper f7b parse-args comment:1 --correct --section "Expected" --body x --reason r
+assert_exit "--section that is not a heading → exit 2" 2 "$RC"
+run_helper f7c parse-args comment:1 --correct --section "##Expected" --body x --reason r
+assert_exit "--section without a space after the hashes → exit 2" 2 "$RC"
+run_helper f7d parse-args comment:1 --replace --section "Expected" --body x --reason r
+assert_exit "--replace --section that is not a heading → exit 2" 2 "$RC"
+
+OLDMARK='<!-- idd:edit mode="correct" backup-id="comment-1-20261001T000000Z" date="2026-10-01" -->'
+printf '## Notes\nfirst fix\n\n%s\n\n## Next\n- keep me\n' "$OLDMARK" >"$WORK/recorrected.md"
+run_helper f8 compose-correction "$WORK/recorrected.md" "## Notes" "$WORK/r-fix.md" "$MARK"
+assert_output_grep "re-correcting keeps the earlier marker" "comment-1-20261001T000000Z" "$WORK/f8.out"
+assert_output_grep "re-correcting adds the new marker" "comment-1-20261016T000000Z" "$WORK/f8.out"
+assert_eq "the new marker is the last line of the section" "$MARK" \
+  "$(awk '/^## Next/{exit} NF{last=$0} END{print last}' "$WORK/f8.out")"
+printf 'whole\n\n%s\n' "$OLDMARK" >"$WORK/whole-old.md"
+run_helper f8b compose-correction "$WORK/whole-old.md" - "$WORK/r-fix.md" "$MARK"
+assert_output_grep "whole-comment re-correction keeps the earlier marker" "comment-1-20261001T000000Z" "$WORK/f8b.out"
+
+# F6. --correct refuses a bot's comment; other modes keep the bot pass
+printf '%s' '{"login":"coderabbitai[bot]","assoc":"NONE"}' >"$WORK/m-bot.json"
+export IDD_EDIT_HELPER_TEST_MODE=1 IDD_EDIT_HELPER_GH_USER=kiki830621 IDD_EDIT_HELPER_GH_MOCK="$WORK/m-bot.json"
+run_helper f6a validate-target 900 o/r false --correct
+assert_exit "--correct on a bot comment → exit 4" 4 "$RC"
+assert_output_grep "bot refusal says to propose an errata comment" "errata" "$WORK/f6a.err"
+run_helper f6b validate-target 900 o/r false
+assert_exit "--replace on a bot comment still passes" 0 "$RC"
+printf '%s' '{"login":"someone-else","assoc":"CONTRIBUTOR"}' >"$WORK/m-other.json"
+IDD_EDIT_HELPER_GH_MOCK="$WORK/m-other.json" run_helper f6c validate-target 902 o/r false --correct
+assert_exit "--correct on another user's comment → exit 4" 4 "$RC"
+refute_output_grep "a --correct refusal does not suggest the override it rejects" "override-user-content" "$WORK/f6c.err"
+assert_output_grep "a --correct refusal points to errata" "errata" "$WORK/f6c.err"
+unset IDD_EDIT_HELPER_GH_MOCK IDD_EDIT_HELPER_GH_USER
+
+# F13. test mode never calls the real gh for the current user
+FAKEBIN="$WORK/fakebin"; mkdir -p "$FAKEBIN"
+printf '#!/bin/sh\necho called >"%s/gh-called"\necho kiki830621\n' "$WORK" >"$FAKEBIN/gh"; chmod +x "$FAKEBIN/gh"
+printf '%s' '{"login":"kiki830621","assoc":"MEMBER"}' >"$WORK/m-me.json"
+IDD_EDIT_HELPER_GH_MOCK="$WORK/m-me.json" PATH="$FAKEBIN:$PATH" run_helper f13 validate-target 901 o/r false
+refute "test mode without IDD_EDIT_HELPER_GH_USER does not run gh" test -e "$WORK/gh-called"
+assert_exit "unknown current user in test mode → not treated as own content" 4 "$RC"
+unset IDD_EDIT_HELPER_TEST_MODE
+
+# F14. a value starting with '=' survives eval under zsh
+run_helper f14 parse-args comment:1 --correct --scope whole-comment --body x --reason "=echo"
+assert_output_grep "a leading '=' is escaped" 'REASON=\=echo' "$WORK/f14.out"
+if command -v zsh >/dev/null 2>&1; then
+  assert_eq "zsh eval keeps the literal value" "=echo" \
+    "$(zsh -c 'eval "$(cat "$1")"; print -r -- "$REASON"' _ "$WORK/f14.out" 2>/dev/null)"
+fi
+
+# F2 + F11. skill contract: fetch failures and declines have their own buckets
+EDIT_SKILL="$SKILLS/idd-edit/SKILL.md"
+require "both gh fetches check the exit code (Step 2 and the re-read)" \
+  test "$(grep -c 'REFUSED_TARGETS+=("$TARGET fetch-failed")' "$EDIT_SKILL")" -ge 2
+assert_output_grep "a missing section has its own refusal reason" "section-not-found" "$EDIT_SKILL"
+assert_output_grep "a declined preview cleans up and is reported" "declined" "$EDIT_SKILL"
+assert_output_grep "the preview shows the composed full text" "compose-correction" "$EDIT_SKILL"
+assert_output_grep "validate-target receives the mode" 'validate-target "$VALIDATE_ARG" "$REPO" "$OVERRIDE_USER_CONTENT" "$MODE"' "$EDIT_SKILL"
+
+# F5 / F9 / F10 / F12. doc contracts
+assert_output_grep "idd-comment errata routing asks with --correct, so a bot goes to errata" \
+  'validate-target "$TARGET_COMMENT" "$GITHUB_REPO" false --correct' "$SKILLS/idd-comment/SKILL.md"
+refute_output_grep "no skill still says OWNER, a bot, or you are correctable" "OWNER、bot" "$SKILLS/idd-comment/SKILL.md"
+assert_output_grep "idd-edit says the archive lives in one clone" "那份 clone" "$EDIT_SKILL"
+assert_output_grep "idd-edit says to chmod the archive back" "chmod 000" "$EDIT_SKILL"
+assert_output_grep "idd-issue multi-finding routes wrong body content to --correct" "--correct --section" "$SKILLS/idd-issue/SKILL.md"
+assert_output_grep "README lists the archive read guard hook" "archive-read-guard" "$PLUGIN/README.md"
+assert_output_grep "idd-update leaves out decisions an errata overturned" "type=errata" "$SKILLS/idd-update/SKILL.md"
+assert_output_grep "idd-reorganize separates superseded judgments from wrong statements" "判斷被後來的資訊推翻" "$SKILLS/idd-reorganize/SKILL.md"
+
 print_summary "in-place-correction"

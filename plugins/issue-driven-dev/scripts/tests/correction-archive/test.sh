@@ -272,4 +272,31 @@ printf '%s' '{"tool_name":"Read","tool_input":{"file_path":"/r/.claude/.idd/arch
   | HOME="$WORK/fakehome" python3 "$HOOK" >"$WORK/hook-unlock.out" 2>/dev/null
 refute_output_grep "unlock flag allows the call" "deny" "$WORK/hook-unlock.out"
 
+# ── G. round 3 (verify #351 round 2) ──────────────────────────────────────
+echo "G. round 3"
+
+# G1. restore refuses when any directory on the archive path is a symlink
+for link_at in edits archive; do
+  SL="$WORK/sl-$link_at"; mkdir -p "$SL"; git -C "$SL" init -q
+  ELSE="$WORK/elsewhere-$link_at"; mkdir -p "$ELSE/edits"
+  printf 'x' >"$ELSE/edits/comment-9-20261009T100000Z.md"
+  printf 'o/r' >"$ELSE/edits/comment-9-20261009T100000Z.repo"
+  if [ "$link_at" = edits ]; then
+    mkdir -p "$SL/.claude/.idd/archive"; ln -s "$ELSE/edits" "$SL/.claude/.idd/archive/edits"
+  else
+    mkdir -p "$SL/.claude/.idd"; ln -s "$ELSE" "$SL/.claude/.idd/archive"
+  fi
+  rm -f "$WORK/gh_args"
+  run_in "$SL" "g1-$link_at" restore comment-9-20261009T100000Z --repo o/r
+  assert_exit "restore through a symlinked '$link_at' directory → exit 2" 2 "$RC"
+  refute "gh not called when '$link_at' is a symlink" test -e "$WORK/gh_args"
+done
+
+# G2. archive refuses to write through a symlinked directory
+SW="$WORK/sl-write"; mkdir -p "$SW/.claude/.idd"; git -C "$SW" init -q
+mkdir -p "$WORK/write-elsewhere"; ln -s "$WORK/write-elsewhere" "$SW/.claude/.idd/archive"
+run_in "$SW" g2 archive comment 10 --from-file "$WORK/old.md" --repo o/r
+assert_exit "archive through a symlinked directory → exit 7" 7 "$RC"
+refute "nothing written behind the symlink" test -e "$WORK/write-elsewhere/edits"
+
 print_summary "correction-archive"

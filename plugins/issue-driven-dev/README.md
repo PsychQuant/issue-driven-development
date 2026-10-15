@@ -265,6 +265,7 @@ IDD 遵循「**深度整合 >> hard-coded**」原則（#209/#214）：生態系�
 - ChatGPT Pro account (for the Codex cross-model lens, gpt-5.x — model governed by codex-pro's defaults.json)
 - `superpowers` plugin（`claude-plugins-official`）— **hard dependency（v2.90.0+ #209）**。安裝本 plugin 時 Claude Code 會經 `plugin.json` `dependencies` 自動安裝（需 Claude Code v2.1.110+；遞移 enable 需 v2.1.143+）。`idd-implement` 的 TDD 執行與完成前驗證、`idd-diagnose` 的 bug RCA 執行框架 delegate 給它；缺席時該路徑 **fail-fast abort** + 一步安裝指令，不做 fallback
 - **SessionStart hook（v2.91.0+ #214）**：plugin 啟用後每次 SessionStart 事件（startup / resume / clear / compact — 刻意含 compact，讓規則在 context 壓縮後存活）注入 ≤5 行 commit issue-reference 紀律（canonical：`rules/commit-issue-reference.md`）— 防 GitHub auto-close trap 於 skill 外的手動 commit
+- **PreToolUse hook `archive-read-guard`（v3.5.0+ #351）**：擋下 Claude 讀取 correction archive（`.claude/.idd/archive/`）的工具呼叫，`/idd-edit --correct` 歸檔的舊版因此不會被讀回 context；人要看舊版時在自己的終端機開；要暫時解除，建立 `~/.cache/idd/archive-read-guard.disabled`（見 `hooks/archive-read-guard.py`），用完刪掉。
 
 ### Optional (per source type)
 

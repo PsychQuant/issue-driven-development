@@ -87,7 +87,7 @@ The `scope` qualifier names the targeted section / field / artifact when relevan
 
 **Scope boundary**: Exactly two kinds of content (closed list, #351 — do not extend by analogy):
 1. **Original-source quotations** — a maximal run of consecutive lines starting with `>` in which some line contains one of exactly two labels: `Original text`, or the decision-template label `**Original**`. The quotation records what was actually said; it stays true as a record even when the judgment it led to turns out wrong.
-2. **Third-party content** — comments, and issue bodies, whose author is neither the OWNER, a bot, nor the invoking user (the authenticated `gh` user). They are someone else's words; IDD proposes corrections to them but does not correct them in place.
+2. **Third-party content** — comments, and issue bodies, whose author is neither the OWNER, a bot, nor the invoking user (the authenticated `gh` user). They are someone else's words; IDD proposes corrections to them but does not correct them in place. A bot's comment is outside this list (`--append` / `--replace` / `--prepend-note` may touch it), but it is still a third party's words, so `--correct` refuses it too (verify #351 round 2).
 
 `--override-user-content --reason="..."` still exists for `--append` / `--replace` / `--prepend-note` as an explicit, audited exception for third-party comments; it is never accepted with `--correct`.
 
@@ -278,7 +278,7 @@ This rule defines the discipline; tooling-level enforcement is reserved for foll
 
 This rule additionally declares a verbatim-preserve guard at the comment layer: comments where `author_association ≠ OWNER` (and the author is neither in the known-bot allowlist nor the invoking user's own `gh` login) SHALL NOT be modified without explicit `--override-user-content --reason="..."` invocation discipline.
 
-**Enforcement status**: enforced at runtime by `scripts/idd-edit-helper.py` since v2.81.0 ([#154](https://github.com/PsychQuant/issue-driven-development/issues/154) → [#155](https://github.com/PsychQuant/issue-driven-development/issues/155) Python layer): `parse-args` refuses `--replace` / `--correct` without scope (exit 3), `validate-target` refuses non-OWNER non-bot authors (exit 4), and `check-correction` refuses protected regions (exit 6, #351). The bash-in-SKILL.md attempts on PR #153 that this paragraph used to describe were replaced by that helper.
+**Enforcement status**: enforced at runtime by `scripts/idd-edit-helper.py` since v2.81.0 ([#154](https://github.com/PsychQuant/issue-driven-development/issues/154) → [#155](https://github.com/PsychQuant/issue-driven-development/issues/155) Python layer): `parse-args` refuses `--replace` / `--correct` without scope (exit 3), `validate-target` refuses authors other than the OWNER, a bot, or the invoking `gh` user (exit 4; with `--correct` a bot is refused as well), and `check-correction` refuses protected regions (exit 6, #351). The bash-in-SKILL.md attempts on PR #153 that this paragraph used to describe were replaced by that helper.
 
 Recommended invocation patterns (per discipline):
 - `/idd-edit comment:NNN --replace --scope whole-comment --body "..."`

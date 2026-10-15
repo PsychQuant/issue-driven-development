@@ -29,7 +29,7 @@
 
 ### 新增第 8 類 in-place-correction，不放寬既有類別
 
-在封閉列舉加一類，並把 `verbatim-preserve` 縮成「`Original text` 引用區塊＋非 OWNER 非 bot 的 comment」兩種。替代方案是直接放寬 `append-only`，但 `append-only` 也管 CHANGELOG 與 Spectra 歸檔快照，一起放寬會讓不該改的東西變得可改。spec 的類別數寫進了需求名稱（`Canonical 7-category enumeration ...`），因此以 REMOVED＋ADDED 換成不含數字的名稱，避免下次加類別又要改名。
+在封閉列舉加一類，並把 `verbatim-preserve` 縮成「`Original text` 引用區塊＋OWNER、bot、目前 gh 使用者以外的人寫的 comment」兩種。bot 的 comment 不在 `verbatim-preserve` 內，但仍是第三方的話，`--correct` 不改（verify 第 2 輪）。替代方案是直接放寬 `append-only`，但 `append-only` 也管 CHANGELOG 與 Spectra 歸檔快照，一起放寬會讓不該改的東西變得可改。spec 的類別數寫進了需求名稱（`Canonical 7-category enumeration ...`），因此以 REMOVED＋ADDED 換成不含數字的名稱，避免下次加類別又要改名。
 
 ### --correct 是獨立模式，不是 --replace 加旗標
 
@@ -78,7 +78,7 @@ hook 腳本 `hooks/archive-read-guard.py` 用 stdlib `json` 解析 stdin，與 h
 
 ### idd-comment errata 依作者分流
 
-OWNER 或 bot 的 comment → 轉給 `idd-edit --correct`，不另貼 errata comment。其他人的 comment → 只貼 errata comment，不再嘗試 prepend-note（舊流程會被 R5 擋下並印出 override 提示，而新規則下協作者 comment 不改，提示 override 會誤導）。
+OWNER 或目前 gh 使用者本人的 comment → 轉給 `idd-edit --correct`，不另貼 errata comment。其他人的 comment（含 bot）→ 只貼 errata comment，不再嘗試 prepend-note（舊流程會被 R5 擋下並印出 override 提示，而新規則下協作者 comment 不改，提示 override 會誤導）。
 
 ## Implementation Contract
 
@@ -89,8 +89,10 @@ OWNER 或 bot 的 comment → 轉給 `idd-edit --correct`，不另貼 errata com
 | `parse-args` | 新增 `--correct` 與 `issue:<N>` target | eval 用的 assignments，`MODE=--correct`（沿用既有以旗標為值的慣例），`TARGETS` 保留 `issue:<N>` 原樣、由 SKILL 依前綴分辨目標類型；多行 `--body-file` 內容以 ANSI-C quoting（`$'...'`）輸出 | `--correct` 缺 scope/section 或正文用 whole → exit 3；`--correct` 併用 `--override-user-content` → exit 2；`issue:<N>` 配 `--correct` 以外的模式 → exit 2 並指向 #347；id 非數字 → exit 2 |
 | `check-correction <old-file> <section|-> <new-file>` 的段落不存在 | — | — | exit 1（與 `section-replace` 一致） |
 | `check-correction <old-file> <section-heading|-> <new-file>` | 原文、目標段落（`-` 表示整則 comment）、新段落 | 無輸出，exit 0 | 受管區或 verbatim 區塊被改 → exit 6，stderr 指名區域與負責 skill |
-| `validate-target <comment-id|issue:<N>> <repo> <override>` | 新增 `issue:<N>`（檢查 issue 作者）與「目前登入的 gh 使用者本人」放行 | exit 0 | 作者不是 OWNER、bot 或目前登入的 gh 使用者（且未 override）→ exit 4 |
-| `section-replace ... [--stop-at-rule]` | 既有子命令，新增 `--stop-at-rule` | 取代後全文 | `--stop-at-rule` 時段落在 `---` 行結束，不吞掉其後的 `## Current Status` |
+| `validate-target <comment-id|issue:<N>> <repo> <override> [<mode>]` | 新增 `issue:<N>`（檢查 issue 作者）與「目前登入的 gh 使用者本人」放行（四種 mode 都適用）；第 4 個參數為 `--correct` 時 bot 不放行；test mode 不呼叫 `gh api user` | exit 0 | 作者不是 OWNER、bot 或目前登入的 gh 使用者（且未 override）→ exit 4；`--correct` 時 bot 也 exit 4，訊息指向 errata、不提 override |
+| `compose-correction <old-file> <section|-> <body-file> <marker>` | 原文、目標段落（`-` 為整則）、更正內容、標記（預覽用 `(assigned after confirmation)` 佔位） | 寫入用的完整內文：段落換成新內容，開頭重複的目標標題去掉，區段內舊的更正標記保留在新標記之前 | 檔案不可讀 → exit 5；標記格式不符 → exit 2；段落不存在或 Markdown parser 缺／版本不符 → exit 1 |
+| `section-replace ... [--stop-at-rule]` | 既有子命令，新增 `--stop-at-rule` | 取代後全文 | `--stop-at-rule` 時段落在 `---` 行結束，不吞掉其後的 `## Current Status`；fenced／縮排 code block 內的行不結束段落（範圍取自 `markdown-it-py` 4.0.0，與 gh-egress 同一個 parser；缺或版本不符 → exit 1，不改任何東西） |
+| `parse-args` 的 `--section` | — | — | 不是 markdown 標題行（1–6 個 `#`＋空白＋標題）→ exit 2 |
 | `archive <comment|issue> <id> --from-file <path> --repo R` | 目標類型、id、預覽用的原文檔（經 #155 路徑閘門）、repo | stdout 只有 backup-id；另寫 `<backup-id>.repo` sidecar 記錄 repo | 原文檔不可讀 → exit 5；不在 git work tree／未被 ignore／寫入失敗 → exit 7，不留檔 |
 | `emit-audit-marker edit mode=correct backup-id=<id>` | 既有子命令 | 標記一行 | `backup-id` 不符格式 → exit 2 |
 | `restore <backup-id> --repo R` | backup-id | stdout：目標 URL 與 byte 數 | id 格式不符、歸檔或 sidecar 是 symlink、歸檔被 git 追蹤、sidecar 缺少或其 repo 與 `--repo` 不符 → exit 2；檔案不存在 → exit 5；PATCH 失敗 → 透傳 gh 非零碼 |

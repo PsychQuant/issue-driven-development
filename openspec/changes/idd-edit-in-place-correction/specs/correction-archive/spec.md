@@ -86,7 +86,12 @@ The issue-driven-dev plugin SHALL register a PreToolUse hook for the tools `Read
 
 ### Requirement: Restore SHALL refuse entries it did not write
 
-`restore` SHALL refuse with exit 2 when the archive entry is a symbolic link or not a regular file, when it is tracked by git, or when its sidecar `owner/repo` differs from `--repo`.
+`restore` SHALL refuse with exit 2 when the archive entry is a symbolic link or not a regular file, when any directory between the work tree and the entry (`.claude`, `.claude/.idd`, `.claude/.idd/archive`, `.claude/.idd/archive/edits`) is a symbolic link, when it is tracked by git, or when its sidecar `owner/repo` differs from `--repo`. `archive` SHALL refuse with exit 7, writing nothing, when any of those directories is a symbolic link.
+
+#### Scenario: Symlinked archive directory
+
+- **WHEN** a cloned repository ships `.claude/.idd/archive/edits` as a symbolic link to a directory holding an entry and a sidecar that names the repository
+- **THEN** `restore` SHALL exit 2 without reading the entry or calling `gh`
 
 #### Scenario: Tracked symlink in a cloned repository
 

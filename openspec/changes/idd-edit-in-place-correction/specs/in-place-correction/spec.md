@@ -6,7 +6,12 @@ Defines how `/idd-edit --correct` replaces content in an issue comment or issue 
 
 ### Requirement: /idd-edit --correct SHALL replace a bounded region after explicit confirmation
 
-The `/idd-edit` skill SHALL accept a `--correct` mode whose target is either a comment (`comment:<id>`) or an issue body (`issue:<N>`). For a comment target the invocation SHALL carry exactly one of `--scope whole-comment` or `--section <heading>`. For an issue-body target the invocation SHALL carry `--section <heading>`; `--scope whole-comment` and any whole-body scope SHALL be refused with exit code 3. The skill SHALL show the original region and the replacement, then ask for confirmation with NO as the default. The skill SHALL write the archive and PATCH the target only after the user confirms; a declined confirmation SHALL leave both the target and the archive directory unchanged.
+The `/idd-edit` skill SHALL accept a `--correct` mode whose target is either a comment (`comment:<id>`) or an issue body (`issue:<N>`). For a comment target the invocation SHALL carry exactly one of `--scope whole-comment` or `--section <heading>`. For an issue-body target the invocation SHALL carry `--section <heading>`; `--scope whole-comment` and any whole-body scope SHALL be refused with exit code 3. A `--section` value SHALL be a markdown heading line (one to six `#`, whitespace, then the title); any other value SHALL be refused with exit code 2. The skill SHALL show the full body that would be written — composed by the helper's `compose-correction` with a placeholder in place of the backup id — then ask for confirmation with NO as the default; after confirmation the same subcommand composes the written body with the real backup id. When the replacement text begins with the target heading line, that line SHALL NOT appear twice. The skill SHALL write the archive and PATCH the target only after the user confirms; a declined confirmation SHALL leave both the target and the archive directory unchanged.
+
+#### Scenario: Section flag that is not a heading
+
+- **WHEN** a user invokes `/idd-edit comment:1 --correct --section "Expected" --body-file fixed.md`
+- **THEN** the parser SHALL exit 2 and nothing SHALL be fetched or written
 
 #### Scenario: Comment section corrected after confirmation
 
@@ -25,7 +30,12 @@ The `/idd-edit` skill SHALL accept a `--correct` mode whose target is either a c
 
 ### Requirement: Protected regions SHALL NOT be corrected
 
-The helper SHALL refuse a correction with exit code 6 when either of the following holds: (1) the target section is `## Current Status`, a heading beginning with `### Clarity Surface`, or any heading nested inside `## Current Status`, or the replacement introduces such a heading; (2) the verbatim blocks of the original region and of the replacement are not identical as multisets. A verbatim block is a maximal run of consecutive lines starting with `>` in which some line contains `Original text` or the decision-template label `**Original**` (closed list of two labels). The refusal message SHALL name the protected region and the skill that owns it (`idd-update` for Current Status, `idd-clarify` for Clarity Surface) or state that the verbatim block must be preserved.
+The helper SHALL refuse a correction with exit code 6 when either of the following holds: (1) the target section — or, for `--scope whole-comment`, the whole comment — is or contains `## Current Status`, a heading beginning with `### Clarity Surface`, or any heading nested inside `## Current Status`, or the replacement introduces such a heading (a line inside a code block of the original is not a heading; a matching line anywhere in the replacement, fenced or not, is refused, because `idd-update` and `idd-clarify` find their heading by exact line match); (2) the verbatim blocks of the original region and of the replacement are not identical as multisets. A verbatim block is a maximal run of consecutive lines starting with `>` in which some line contains `Original text` or the decision-template label `**Original**` (closed list of two labels). The refusal message SHALL name the protected region and the skill that owns it (`idd-update` for Current Status, `idd-clarify` for Clarity Surface) or state that the verbatim block must be preserved.
+
+#### Scenario: Whole-comment correction that drops a managed region
+
+- **WHEN** a comment contains a `### Clarity Surface` block and `/idd-edit comment:<id> --correct --scope whole-comment` supplies a replacement without it
+- **THEN** the helper SHALL exit 6 naming `idd-clarify`
 
 #### Scenario: Managed section refused
 
@@ -53,7 +63,12 @@ The helper SHALL refuse a correction with exit code 6 when either of the followi
 
 ### Requirement: Correction marker SHALL carry only the backup id and sit at the end of the replaced region
 
-After a correction the replaced region SHALL end with exactly one new marker of the form `<!-- idd:edit mode="correct" backup-id="<backup-id>" date="<YYYY-MM-DD>" -->`. The marker SHALL NOT contain a filesystem path; `emit-audit-marker` SHALL refuse with exit 2 a `backup-id` value that does not match the backup id pattern. For `--scope whole-comment` the marker SHALL be the last line of the comment; for `--section` the marker SHALL be the last line of the replaced section, before the next heading of the same or higher level.
+After a correction the replaced region SHALL end with exactly one new marker of the form `<!-- idd:edit mode="correct" backup-id="<backup-id>" date="<YYYY-MM-DD>" -->`. The marker SHALL NOT contain a filesystem path; `emit-audit-marker` SHALL refuse with exit 2 a `backup-id` value that does not match the backup id pattern. For `--scope whole-comment` the marker SHALL be the last line of the comment; for `--section` the marker SHALL be the last line of the replaced section, before the next heading of the same or higher level. Correction markers already present in the replaced region SHALL be kept, in their order, immediately before the new marker, so every earlier backup id stays reachable.
+
+#### Scenario: Second correction of the same section
+
+- **WHEN** a section that already ends with a correction marker for backup id A is corrected again and archived as backup id B
+- **THEN** the section SHALL end with the marker for A followed by the marker for B, and B's marker SHALL be the last line of the section
 
 #### Scenario: Section marker survives a later idd-update
 
@@ -81,7 +96,7 @@ After a correction the replaced region SHALL end with exactly one new marker of 
 
 ### Requirement: idd-comment errata SHALL route by comment author
 
-`/idd-comment --type errata --target-comment <id>` SHALL resolve the target comment's author. When the author is the repository OWNER or a bot, the skill SHALL delegate to `/idd-edit comment:<id> --correct` with the supplied scope or section and SHALL NOT post a separate errata comment. When the author is anyone else, the skill SHALL post the errata comment only and SHALL NOT attempt to modify the target comment.
+`/idd-comment --type errata --target-comment <id>` SHALL resolve the target comment's author. When the author is the repository OWNER or the authenticated `gh` user, the skill SHALL delegate to `/idd-edit comment:<id> --correct` with the supplied scope or section and SHALL NOT post a separate errata comment. When the author is anyone else, a bot included, the skill SHALL post the errata comment only and SHALL NOT attempt to modify the target comment.
 
 #### Scenario: Own comment corrected in place
 
@@ -90,7 +105,7 @@ After a correction the replaced region SHALL end with exactly one new marker of 
 
 #### Scenario: Collaborator comment left untouched
 
-- **WHEN** the errata target comment was authored by a non-OWNER, non-bot collaborator
+- **WHEN** the errata target comment was authored by a collaborator who is neither OWNER nor the authenticated `gh` user, or by a bot
 - **THEN** the skill SHALL post the errata comment, SHALL NOT call `/idd-edit`, and the target comment SHALL be unchanged
 
 ### Requirement: Correction targets SHALL be resolved one per iteration
@@ -109,12 +124,17 @@ After a correction the replaced region SHALL end with exactly one new marker of 
 
 ### Requirement: Only the invoking user's own content SHALL be correctable
 
-A target SHALL be correctable only when its author is a bot, has `author_association` `OWNER`, or has the same login as the authenticated `gh` user. For an issue-body target the author is the issue author. Any other author SHALL be refused with exit 4.
+A target SHALL be correctable only when its author has `author_association` `OWNER` or has the same login as the authenticated `gh` user. A bot's comment SHALL be refused: a review bot's words are a third party's, answered with `/idd-comment --type errata`. For an issue-body target the author is the issue author. Any other author SHALL be refused with exit 4, and the refusal SHALL NOT suggest `--override-user-content`, which `--correct` does not accept.
 
 #### Scenario: Maintainer's own comment in an organization repository
 
 - **WHEN** the target comment's author is `kiki830621` with `author_association` `MEMBER` and the authenticated `gh` user is `kiki830621`
 - **THEN** the author gate SHALL pass
+
+#### Scenario: Review bot comment
+
+- **WHEN** the target comment was written by `coderabbitai[bot]`
+- **THEN** the helper SHALL exit 4 and the refusal SHALL point to `/idd-comment --type errata`
 
 #### Scenario: Issue opened by an outside reporter
 
@@ -123,7 +143,12 @@ A target SHALL be correctable only when its author is a bot, has `author_associa
 
 ### Requirement: The target SHALL be re-read after confirmation
 
-After the user confirms and before archiving, the skill SHALL fetch the target again and compare it byte-for-byte with the previewed text. When they differ, the skill SHALL refuse that target as changed since preview, write no archive and PATCH nothing.
+After the user confirms and before archiving, the skill SHALL fetch the target again and compare it byte-for-byte with the previewed text. When they differ, the skill SHALL refuse that target as changed since preview, write no archive and PATCH nothing. When either fetch — the one before the preview or the one after confirmation — fails, the skill SHALL refuse that target as `fetch-failed` and write nothing; an empty working copy SHALL never be compared, archived or written.
+
+#### Scenario: Both fetches fail
+
+- **WHEN** `gh api` fails while fetching the target before the preview
+- **THEN** the target SHALL be reported as `fetch-failed`, no archive SHALL be written, and the target SHALL be unchanged
 
 #### Scenario: Concurrent edit during preview
 
@@ -132,7 +157,12 @@ After the user confirms and before archiving, the skill SHALL fetch the target a
 
 ### Requirement: Corrected sections SHALL stop at a thematic break or a managed heading
 
-For `--correct`, a section SHALL end at the first of: the next heading of the same or a higher level, the next line consisting of `---`, or the next `## Current Status` or `### Clarity Surface` heading — so that separators, the audit blocks below them, and regions owned by other skills are never replaced.
+For `--correct`, a section SHALL end at the first of: the next heading of the same or a higher level, the next line consisting of `---`, or the next `## Current Status` or `### Clarity Surface` heading — so that separators, the audit blocks below them, and regions owned by other skills are never replaced. A line inside a fenced or indented code block SHALL NOT end a section; code block ranges SHALL come from the pinned CommonMark parser (`markdown-it-py` 4.0.0, `scripts/requirements-egress.txt`), and when that parser is missing or a different version the helper SHALL refuse with exit 1 and change nothing.
+
+#### Scenario: A comment line inside a fence
+
+- **WHEN** the section being corrected contains a fenced code block with the lines `# a shell comment` and `---`, followed by more prose before the next heading
+- **THEN** the whole section, the fence and the prose after it included, SHALL be replaced, and the next heading SHALL remain
 
 #### Scenario: Last section before the separator
 

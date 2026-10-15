@@ -30,7 +30,7 @@ Modify-actions not classified into one of the 8 canonical categories SHALL be re
 
 ### Requirement: /idd-edit SHALL refuse modifications to user-authored comments
 
-The `/idd-edit` skill SHALL refuse modifications targeting comments authored by users whose `author_association` is not `OWNER` and who are not in the known-bot allowlist (`github-actions[bot]`, `dependabot[bot]`, and other repo-configured bots). This protection SHALL apply to all modes (`--append`, `--prepend-note`, `--replace`, `--correct`). For `--append`, `--prepend-note`, and `--replace`, invocations targeting user-authored comments SHALL be refused unless the caller provides `--override-user-content` flag together with `--reason="<rationale>"` documenting the explicit decision to modify user content. For `--correct`, no override SHALL exist: the parser SHALL refuse the combination of `--correct` and `--override-user-content` with exit code 2, and a `--correct` invocation targeting a user-authored comment SHALL be refused with exit code 4. This requirement is the comment-level instance of the `verbatim-preserve` category, aligned with IC_R007 (verbatim source preservation).
+The `/idd-edit` skill SHALL refuse modifications targeting comments authored by users whose `author_association` is not `OWNER`, who are not in the known-bot allowlist (`github-actions[bot]`, `dependabot[bot]`, and other repo-configured bots), and whose login differs from the authenticated `gh` user (a maintainer's own comment in an organization repository is `MEMBER`, and it passes in every mode). This protection SHALL apply to all modes (`--append`, `--prepend-note`, `--replace`, `--correct`). For `--append`, `--prepend-note`, and `--replace`, invocations targeting user-authored comments SHALL be refused unless the caller provides `--override-user-content` flag together with `--reason="<rationale>"` documenting the explicit decision to modify user content. For `--correct`, no override SHALL exist: the parser SHALL refuse the combination of `--correct` and `--override-user-content` with exit code 2, and a `--correct` invocation targeting a comment by anyone other than `OWNER` or the authenticated `gh` user — a bot included — SHALL be refused with exit code 4. This requirement is the comment-level instance of the `verbatim-preserve` category, aligned with IC_R007 (verbatim source preservation).
 
 #### Scenario: idd-edit targets user-authored comment
 
@@ -41,6 +41,11 @@ The `/idd-edit` skill SHALL refuse modifications targeting comments authored by 
 
 - **WHEN** a user invokes `/idd-edit comment:NNN --append --body "..."` and comment NNN was authored by `github-actions[bot]`
 - **THEN** the skill SHALL proceed; bot-authored comments are not subject to the verbatim-preserve refusal
+
+#### Scenario: Correction of a bot comment is refused
+
+- **WHEN** a user invokes `/idd-edit comment:NNN --correct --scope whole-comment --body "..."` and comment NNN was authored by `coderabbitai[bot]`
+- **THEN** the helper SHALL exit 4 and the refusal SHALL point to `/idd-comment --type errata`; comment NNN SHALL be unchanged
 
 #### Scenario: idd-edit override of user-authored comment
 
@@ -85,7 +90,7 @@ The `in-place-correction` category SHALL cover replacing content that the user h
 
 ### Requirement: verbatim-preserve SHALL cover only original-source quotations and third-party content
 
-The `verbatim-preserve` category SHALL cover exactly two kinds of content: (1) blockquote runs that quote original source text, identified by a line containing `Original text` within the run, and (2) comments authored by non-OWNER, non-bot users. Issue-body prose written by the issue author or by an IDD skill (interpretation paragraphs, Expected, Actual, Impact) SHALL NOT be `verbatim-preserve`; it SHALL be correctable through `in-place-correction`.
+The `verbatim-preserve` category SHALL cover exactly two kinds of content: (1) blockquote runs that quote original source text, identified by a line containing `Original text` within the run, and (2) comments authored by anyone other than `OWNER`, a bot, or the authenticated `gh` user. A bot's comment is outside `verbatim-preserve`, but it is still a third party's words, so `in-place-correction` SHALL NOT rewrite it. Issue-body prose written by the issue author or by an IDD skill (interpretation paragraphs, Expected, Actual, Impact) SHALL NOT be `verbatim-preserve`; it SHALL be correctable through `in-place-correction`.
 
 #### Scenario: Interpretation paragraph is correctable
 

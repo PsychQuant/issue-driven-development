@@ -1556,7 +1556,7 @@ options:
 question: "Finding goes to #{picked}. What action?"
 options:
   - "comment"           ← append new comment to #picked
-  - "edit body"         ← modify #picked body
+  - "edit body"         ← modify #picked body (additions only; if the finding shows the body is WRONG, route to `/idd-edit issue:<N> --correct --section ...` — it archives the old text and checks the Original text quotation, #351)
   - "update status"     ← call idd-update on #picked Current Status block
   - "skip — change my mind" ← back to picker
 ```

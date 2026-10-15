@@ -118,9 +118,9 @@ TaskCreate(name="parse_and_resolve_target", description="Parse comment:<id> / #N
 TaskCreate(name="fetch_body_and_backup", description="gh api 取現 body 並寫入 /tmp/idd-edit-backup/comment-<id>-<ts>.md")
 TaskCreate(name="show_original", description="顯示原 comment 前 30 行讓使用者看清楚要動什麼")
 TaskCreate(name="build_new_body", description="按 mode（append / replace / prepend-note）組新 body 字串")
-TaskCreate(name="check_correction", description="--correct only：helper check-correction 擋受管區與 Original text 引用區塊（exit 6）")
-TaskCreate(name="preview_and_confirm", description="顯示新 body 並用 AskUserQuestion 確認；--replace / --correct 模式必須通過")
-TaskCreate(name="archive_before_patch", description="--correct only：確認後重抓目標與預覽比對（不同 → changed since preview，拒絕），helper archive --from-file --repo 歸檔舊版（exit 7 → 不 PATCH），加 backup-id 標記、section-replace --stop-at-rule 組出 NEW_BODY（失敗即拒絕）；PATCH 後刪 /tmp 工作副本")
+TaskCreate(name="check_correction", description="--correct only：helper check-correction 擋受管區與 Original text 引用區塊（exit 6；section 不存在 → section-not-found），再以 compose-correction 組出預覽全文")
+TaskCreate(name="preview_and_confirm", description="顯示新 body 並用 AskUserQuestion 確認；--replace / --correct 模式必須通過；--correct 顯示 compose-correction 組好的全文；拒絕 → 刪工作副本、記 declined")
+TaskCreate(name="archive_before_patch", description="--correct only：確認後重抓目標與預覽比對（不同 → changed since preview，拒絕），helper archive --from-file --repo 歸檔舊版（exit 7 → 不 PATCH），加 backup-id 標記、compose-correction 組出 NEW_BODY（與預覽同一個子命令，失敗即拒絕）；PATCH 後刪 /tmp 工作副本")
 TaskCreate(name="execute_patch", description="經 gh-egress.sh edit-comment 派送 PATCH（#273 — 全網套用；rc>=10 → EGRESS_REFUSED 桶 warn-continue）；-F body=@file 避免 escape")
 TaskCreate(name="verify_and_report", description="re-fetch comment 比對寫入結果，輸出 ✓ Edit applied + diff summary")
 ```
@@ -202,7 +202,8 @@ done
 
 ```bash
 EDITED_COUNT=0        # incremented after each successful per-target Step 7 verify
-REFUSED_TARGETS=()    # "<kind:number> <reason>" — reason: R5 / protected / changed-since-preview / archive / replace (#158 (i): recorded, not fatal)
+REFUSED_TARGETS=()    # "<kind:number> <reason>" — reason: R5 / fetch-failed / protected / section-not-found / check-failed / changed-since-preview / archive / replace (#158 (i): recorded, not fatal)
+DECLINED_TARGETS=()   # the user answered NO at Step 5 — reported, not a refusal
 EGRESS_REFUSED_TARGETS=()   # egress-band refusals rc>=10（#273 — tier-floor/privacy/mention/empty-body），warn-continue
 for TARGET in "${RESOLVED_TARGETS[@]}"; do
     TARGET_KIND="${TARGET%%:*}"     # comment | issue — derived per iteration
@@ -223,9 +224,13 @@ echo "── idd-edit batch outcome ──"
 REFUSED_TOTAL=$(( ${#REFUSED_TARGETS[@]} + ${#EGRESS_REFUSED_TARGETS[@]} ))
 echo "edited: $EDITED_COUNT / refused: $REFUSED_TOTAL"
 for entry in ${REFUSED_TARGETS[@]+"${REFUSED_TARGETS[@]}"}; do
-  # entry = "<kind:number> <reason>"; reason ∈ R5 / protected / changed-since-preview /
-  # archive / replace. Only R5 has an override, and only outside --correct.
+  # entry = "<kind:number> <reason>"; reason ∈ R5 / fetch-failed / protected /
+  # section-not-found / check-failed / changed-since-preview / archive / replace.
+  # Only R5 has an override, and only outside --correct.
   echo "  ✗ REFUSED(${entry##* }) ${entry% *}"
+done
+for did in ${DECLINED_TARGETS[@]+"${DECLINED_TARGETS[@]}"}; do
+  echo "  – DECLINED $did（使用者在預覽時拒絕，未寫入）"
 done
 for rid in ${EGRESS_REFUSED_TARGETS[@]+"${EGRESS_REFUSED_TARGETS[@]}"}; do
   echo "  ✗ REFUSED(egress) $rid — band 語意見 #227（10 privacy / 11 mention / 13 tier-floor #272 / 15 empty-body #275）"
@@ -239,18 +244,19 @@ exit 0
 
 ### Step 1.5: Validate target (R5 author gate)
 
-**v2.81.0+ (#154)**: R5 gate refuses modifications to user-authored comments (non-OWNER non-bot) unless `--override-user-content --reason="..."` provided。 Helper does single `gh api` call,checks `author_association` + `user.login`,applies bot allowlist (`*[bot]` pattern + `OWNER` passthrough)。
+**v2.81.0+ (#154)**: R5 gate refuses modifications to content whose author is not `OWNER`, a bot, or the authenticated `gh` user, unless `--override-user-content --reason="..."` provided（`gh` 使用者本人的內容在 org repo 是 `MEMBER`，所以本人另外放行 —— 四種 mode 都適用，#351）。Helper does single `gh api` call, checks `author_association` + `user.login`。**`--correct` 不放行 bot**：review bot 的 comment 是第三方原話，只能另貼 errata（#351 verify 第 2 輪）。
 
 ```bash
 # comment → its author; issue:<N> → the issue author. OWNER, a bot, or the
-# authenticated gh user pass (org maintainers are MEMBER — #351).
+# authenticated gh user pass (org maintainers are MEMBER — #351); with
+# --correct a bot does not (its words are a third party's).
 VALIDATE_ARG="$COMMENT_ID"
 [ "$TARGET_KIND" = "issue" ] && VALIDATE_ARG="issue:$TARGET_NUM"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
-    validate-target "$VALIDATE_ARG" "$REPO" "$OVERRIDE_USER_CONTENT"
+    validate-target "$VALIDATE_ARG" "$REPO" "$OVERRIDE_USER_CONTENT" "$MODE"
 VALIDATE_EXIT=$?
 case $VALIDATE_EXIT in
-  0) ;;   # proceed (OWNER, bot, or override active)
+  0) ;;   # proceed (OWNER, bot outside --correct, own content, or override active)
   4)
     # R5 refuse — actionable message already on stderr.
     # (--correct has no override: a collaborator's comment is corrected by
@@ -277,7 +283,14 @@ if [ "$TARGET_KIND" = "issue" ]; then
 else
     TARGET_ENDPOINT="repos/$REPO/issues/comments/$COMMENT_ID"
 fi
-gh api "$TARGET_ENDPOINT" --jq '.body' > "$BACKUP_FILE"
+if ! gh api "$TARGET_ENDPOINT" --jq '.body' > "$BACKUP_FILE"; then
+    # An empty file is not the target's body: comparing two failed fetches
+    # would match and archive nothing (verify #351 round 2).
+    echo "✗ cannot read $TARGET — nothing changed" >&2
+    rm -f "$BACKUP_FILE"
+    REFUSED_TARGETS+=("$TARGET fetch-failed")
+    continue
+fi
 
 echo "✓ Backup: $BACKUP_FILE"
 ```
@@ -369,14 +382,27 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
     check-correction "$BACKUP_FILE" "${SECTION_FLAG:--}" "$REPL_FILE"
 CHECK_RC=$?
 if [ "$CHECK_RC" -ne 0 ]; then
-    # 6 = protected region（stderr 已指名區域與負責的 skill）；1 = section 不存在
     rm -f "$REPL_FILE" "$BACKUP_FILE"
-    REFUSED_TARGETS+=("$TARGET protected")
+    case $CHECK_RC in
+      6) REFUSED_TARGETS+=("$TARGET protected") ;;          # stderr 已指名區域與負責的 skill
+      1) REFUSED_TARGETS+=("$TARGET section-not-found") ;;  # 或 Markdown parser 缺／版本不符（stderr 會說明）
+      *) REFUSED_TARGETS+=("$TARGET check-failed") ;;
+    esac
     continue
 fi
+# The preview is the text that will be written: the same subcommand composes
+# it again in Step 5.5 with the real backup id (verify #351 round 2 — the
+# preview used to show only the replacement, not the assembled body).
+PLACEHOLDER_MARKER='<!-- idd:edit mode="correct" backup-id="(assigned after confirmation)" -->'
+PREVIEW_BODY=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
+    compose-correction "$BACKUP_FILE" "${SECTION_FLAG:--}" "$REPL_FILE" "$PLACEHOLDER_MARKER") || {
+    rm -f "$REPL_FILE" "$BACKUP_FILE"
+    REFUSED_TARGETS+=("$TARGET check-failed")
+    continue
+}
 ```
 
-預覽（Step 5）顯示原 section 與 `$REPL_FILE` 的內容，並註明「確認後舊版會歸檔、區段末尾加一行 `idd:edit mode=correct` 標記」。
+預覽（Step 5）顯示 `$PREVIEW_BODY` **全文**（不截斷），並註明「確認後舊版會歸檔、`(assigned after confirmation)` 換成實際的 backup id」。替換內容若以目標標題開頭，`compose-correction` 會去掉重複的那一行；同一段先前的更正標記會保留，新標記排在最後。
 
 #### Mode: `--prepend-note`
 
@@ -409,7 +435,16 @@ fi
 Confirm edit? (y/n)
 ```
 
-使用 AskUserQuestion。預設 NO（破壞性動作）。
+使用 AskUserQuestion。預設 NO（破壞性動作）。`--correct` 的預覽是 `$PREVIEW_BODY` 全文，不只首 40 行。
+
+使用者拒絕（NO）時：
+
+```bash
+# The working copies hold the wrong text; /tmp is outside the read guard.
+[ "$MODE" = "--correct" ] && rm -f "$REPL_FILE" "$BACKUP_FILE"
+DECLINED_TARGETS+=("$TARGET")
+continue
+```
 
 ### Step 5.5: Archive before PATCH（`--correct` only）
 
@@ -419,7 +454,12 @@ Confirm edit? (y/n)
 
 ```bash
 CURRENT_FILE=$(mktemp "/tmp/idd-edit-backup/${TARGET_KIND}-${TARGET_NUM}-now-XXXXXX") || exit 1
-gh api "$TARGET_ENDPOINT" --jq '.body' > "$CURRENT_FILE"
+if ! gh api "$TARGET_ENDPOINT" --jq '.body' > "$CURRENT_FILE"; then
+    echo "✗ cannot re-read $TARGET — nothing archived or written" >&2
+    rm -f "$CURRENT_FILE" "$REPL_FILE" "$BACKUP_FILE"
+    REFUSED_TARGETS+=("$TARGET fetch-failed")
+    continue
+fi
 if ! cmp -s "$BACKUP_FILE" "$CURRENT_FILE"; then
     echo "✗ $TARGET changed since preview — nothing archived or written; run again to see the new version" >&2
     rm -f "$CURRENT_FILE" "$REPL_FILE" "$BACKUP_FILE"
@@ -436,20 +476,15 @@ BACKUP_ID=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
 }
 CORRECT_MARKER=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
     emit-audit-marker edit mode=correct backup-id="$BACKUP_ID")
-# 標記接在取代內容末尾 → 它是被取代區段的最後一行，不會落進 idd-update 管的 ## Current Status
-printf '%s\n\n%s\n' "$BODY_INPUT" "$CORRECT_MARKER" > "$REPL_FILE"
-if [ -n "$SECTION_FLAG" ]; then
-    # --stop-at-rule: a `---` line ends the section, so separators and the
-    # audit blocks below them are never replaced (#351)
-    NEW_BODY=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
-                  section-replace "$BACKUP_FILE" "$SECTION_FLAG" "$REPL_FILE" --stop-at-rule) || {
-        rm -f "$REPL_FILE" "$BACKUP_FILE"
-        REFUSED_TARGETS+=("$TARGET replace")   # archived already; target untouched
-        continue
-    }
-else
-    NEW_BODY=$(cat "$REPL_FILE")
-fi
+# 標記是被取代區段的最後一行，不會落進 idd-update 管的 ## Current Status。
+# compose-correction 與預覽同一個子命令：`---`、受管標題與下一個同級標題結束
+# 區段，code block 裡的行不算；先前的更正標記保留在新標記之前。
+NEW_BODY=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
+    compose-correction "$BACKUP_FILE" "${SECTION_FLAG:--}" "$REPL_FILE" "$CORRECT_MARKER") || {
+    rm -f "$REPL_FILE" "$BACKUP_FILE"
+    REFUSED_TARGETS+=("$TARGET replace")   # archived already; target untouched
+    continue
+}
 rm -f "$REPL_FILE"
 ```
 
@@ -586,13 +621,13 @@ EDITED_COUNT=$((EDITED_COUNT + 1))
 
 ```
 /idd-comment #NNN --type=errata --target-comment=XXX ...
-  ├─ XXX 作者是 OWNER / bot → /idd-edit comment:XXX --correct ...（不另貼 comment）
-  └─ 其他作者             → 只貼 errata comment，不呼叫 idd-edit
+  ├─ XXX 是你本人或 OWNER 寫的 → /idd-edit comment:XXX --correct ...（不另貼 comment）
+  └─ 其他作者（含 bot）       → 只貼 errata comment，不呼叫 idd-edit
 ```
 
 ## Backup 管理
 
-**`--append` / `--replace` / `--prepend-note`**：備份在 `/tmp/idd-edit-backup/`，命名 `comment-<id>-<unix-timestamp>.md`。
+**`--append` / `--replace` / `--prepend-note`**：備份在 `/tmp/idd-edit-backup/`，由 `mktemp` 命名 `<kind>-<number>-XXXXXX`（例如 `comment-4241327867-a1B2c3`），`ls -t` 看最新的一份。
 
 ```bash
 ls -la /tmp/idd-edit-backup/
@@ -609,7 +644,9 @@ gh api "repos/$REPO/issues/comments/<id>" \
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" restore "$BACKUP_ID" --repo "$REPO"
 ```
 
-歸檔檔不經過 Claude 讀取（hook 會擋、檔案權限 0000）。人要看舊版時，在自己的終端機 `chmod u+r` 該檔後用編輯器開，不要透過 Claude。
+歸檔檔不經過 Claude 讀取（hook 會擋、檔案權限 0000）。人要看舊版時，在自己的終端機 `chmod u+r` 該檔後用編輯器開，不要透過 Claude；看完 `chmod 000` 改回，否則 `grep -r` 這類不寫出路徑的遞迴讀取會讀到它。
+
+歸檔只存在**執行 `--correct` 的那份 clone**（它的主 worktree）。同一個 repo 在別處的 clone 沒有這份歸檔，`restore` 會回報找不到；要還原就回到原本那份 clone 執行。
 
 ## Next Step
 

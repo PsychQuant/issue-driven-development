@@ -33,8 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed (verify round 2, before release)
 
-- **Own-content author gate**: a comment or issue body is correctable only when its author is the OWNER, a bot, or
-  the authenticated `gh` user (in an organization repository a maintainer's own comment is `MEMBER`). The same
+- **Own-content author gate**: a comment or issue body is correctable only when its author is the OWNER or
+  the authenticated `gh` user; in an organization repository a maintainer's own comment is `MEMBER`. Round 3
+  removed the bot pass (below). The same
   gate applies to issue-body targets (`issue:<N>`), checked against the issue author.
 - **Security — multi-line `--body-file` content is ANSI-C quoted** in `parse-args` output. Before this fix the
   skill's `eval` executed continuation lines as shell commands; this affected every `/idd-edit` mode, not only
@@ -50,6 +51,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `**Original**`.
 - The read-guard hook matches the archive path as a shell word, so a quoted commit or comment message that
   mentions it is allowed, and it honours `~/.cache/idd/archive-read-guard.disabled` as an off switch.
+
+### Fixed (verify round 3, before release)
+
+- **BREAKING for `--correct` only — a bot's comment is no longer correctable.** A review bot's words are a third
+  party's; `--correct` refuses them (exit 4) and points to `/idd-comment --type errata`. `--append`, `--replace`
+  and `--prepend-note` keep the bot pass. `idd-comment --type errata` now routes a bot's comment to a posted
+  errata instead of a correction that idd-edit would refuse.
+- A whole-comment `--correct` is checked for managed regions like a section is: dropping a `### Clarity Surface` or
+  `## Current Status` block from the comment is refused (exit 6).
+- Section boundaries skip code: a `# comment` or `---` inside a fenced or indented code block no longer ends the
+  section early. Code ranges come from the pinned `markdown-it-py` 4.0.0, the parser gh-egress already requires;
+  without it `section-replace`, `check-correction` and `compose-correction` refuse (exit 1) and change nothing.
+- New `compose-correction` subcommand builds the body that is both previewed and written: the confirmation shows the
+  full composed text, a replacement that repeats the target heading no longer prints it twice, and earlier
+  correction markers in the section are kept before the new one.
+- `--section` must be a heading line (`## Title`); anything else is refused (exit 2) in every mode.
+- Both `gh api` fetches (before the preview, after confirmation) check the exit code: a failed fetch is reported as
+  `fetch-failed` instead of comparing two empty files and archiving nothing. Refusals are bucketed
+  (`section-not-found`, `check-failed`), and a declined preview deletes the working copies and is reported.
+- `archive` and `restore` refuse when any directory on the archive path is a symlink, not only the entry itself.
+- Test mode never runs `gh api user`; a value starting with `=` is escaped for zsh's `eval`; a `--correct` refusal
+  no longer suggests `--override-user-content`.
+- Docs: the author gate reads "the OWNER or you" in every skill and rule; the archive lives in the clone that wrote
+  it; `chmod 000` the archive file again after reading it; `idd-update` leaves out decisions an errata overturned;
+  `idd-reorganize` separates superseded judgments from wrong statements; `idd-issue` multi-finding sends wrong
+  body content to `--correct`; README lists the read-guard hook.
 - `idd-update` rebuilds Key Decisions on every run instead of only appending, so a corrected decision does not
   survive in the summary.
 - `/idd-edit --correct` re-reads the target after confirmation and refuses when it changed since the preview.
