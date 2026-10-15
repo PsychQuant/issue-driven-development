@@ -126,6 +126,22 @@ jobs:
         shell: bash
         run: python3 -m pip install claude-agent-sdk==0.2.167
 
+      # CLAUDE_CODE_SUBPROCESS_ENV_SCRUB (set on the run step) isolates the
+      # agent's subprocesses with bubblewrap on Linux; without it the Claude Code
+      # CLI exits at startup. Ubuntu 24.04 confines unprivileged user namespaces
+      # through AppArmor, which bubblewrap needs, so the restriction is lifted on
+      # this throwaway runner. Runs before any step that holds the key.
+      - name: Install bubblewrap for subprocess isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y bubblewrap
+          if sysctl -n kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          bwrap --ro-bind / / true && echo "bubblewrap works"
+
       # The agent commits to the caller's repo; a runner has no git identity.
       - name: Set the git identity for agent commits
         shell: bash

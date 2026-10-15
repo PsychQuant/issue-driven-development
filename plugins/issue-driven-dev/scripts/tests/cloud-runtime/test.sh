@@ -189,6 +189,13 @@ PY
   # Prompt injection could make the agent print its environment. The scrub takes
   # ANTHROPIC_API_KEY out of every Bash / hook / MCP subprocess Claude Code starts.
   assert_output_grep "subprocess env scrub is on" 'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"' "$WORKFLOW"
+  # On Linux the scrub needs bubblewrap; without it the CLI exits at startup
+  # (first real run, workflow run 38683885702). It must be installed in a step
+  # that does not hold the key.
+  assert_output_grep "bubblewrap is installed for the scrub" "apt-get install -y bubblewrap" "$WORKFLOW"
+  BWRAP_LINE=$(grep -n "apt-get install -y bubblewrap" "$WORKFLOW" | head -1 | cut -d: -f1)
+  KEY_LINE=$(grep -n 'ANTHROPIC_API_KEY: \${{ secrets.ANTHROPIC_API_KEY }}' "$WORKFLOW" | head -1 | cut -d: -f1)
+  assert_true "bubblewrap is installed before the key appears" "[ -n '$BWRAP_LINE' ] && [ -n '$KEY_LINE' ] && [ '$BWRAP_LINE' -lt '$KEY_LINE' ]"
   # Code fetched by tag or branch can change under us and then runs in the job
   # that holds the key. Every action and every plugin ref must be a commit SHA.
   UNPINNED=$(grep -E '^[[:space:]]*(-[[:space:]]+)?uses:' "$WORKFLOW" | grep -vE '@[0-9a-f]{40}([[:space:]]|$)' || true)
