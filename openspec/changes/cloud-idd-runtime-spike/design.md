@@ -92,7 +92,7 @@ spike 的端到端 run 以 unattended PR mode 跑 `/idd-all`。#392 落地前，
 
 | 代號 | 準則 | 通過的定義 | 證據 |
 |---|---|---|---|
-| C1 | plugin 載入 | `/issue-driven-dev:idd-list` 跑完；`$CLAUDE_PLUGIN_ROOT` 有值；SessionStart hook 有輸出；superpowers 與 parallel-ai-agents 的 presence pre-flight 通過 | 執行紀錄原文 |
+| C1 | plugin 載入 | IDD 與三個依賴 plugin 都載入且沒有 plugin error；`/issue-driven-dev:idd-list` 跑完；skill 能解析出 plugin 路徑並執行其腳本；SessionStart hook 有輸出；superpowers 與 parallel-ai-agents 的 presence pre-flight 通過（原定「`$CLAUDE_PLUGIN_ROOT` 有值」已刪除：Bash 在任何環境都拿不到這個變數，見 #401） | 執行紀錄原文 |
 | C2 | GitHub 寫入 | 在 sandbox repo 依序完成：issue 留言、push branch、開 PR、merge PR | 每一步的成功輸出或錯誤原文、PR URL |
 | C3 | API 觸發 | 一次 HTTP 呼叫即開跑：Managed Agents 為 `POST /v1/sessions`；Agent SDK 為對部署者 repo 的 `POST /repos/{owner}/{repo}/dispatches` | 請求與回應（secret 遮蔽） |
 | C4 | Max API 額度 | 以只持有 Max API 額度的組織的 key 跑極小 prompt：額度餘額減少、且沒有出現「Credit balance too low」 | 執行前後的額度、錯誤原文 |
