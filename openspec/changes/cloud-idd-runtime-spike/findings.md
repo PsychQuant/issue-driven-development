@@ -9,7 +9,7 @@
 | 準則 | Agent SDK on GitHub Actions | Managed Agents |
 |---|---|---|
 | C1 plugin 載入 | partial — IDD 與三個依賴 plugin 全部載入、無 plugin error，`idd-list` 跑完；但 superpowers 與 parallel-ai-agents 的 presence pre-flight 回報找不到（只查 `~/.claude/plugins/cache/`） | not measured |
-| C2 GitHub 寫入 | partial — 留言、push 成功；開 PR 被 org 政策擋下（GitHub Actions 不得開 PR）；改用選填 PAT 後待重測 | not measured |
+| C2 GitHub 寫入 | pass — 留言、push、開 PR、squash merge 都成功（PR #2）；開 PR 需要選填的 `IDD_GITHUB_TOKEN`，因為 PsychQuant org 禁止 Actions 開 PR | not measured |
 | C3 API 觸發 | pass — 每次 run 都由一次 `POST /repos/PsychQuant/idd-cloud-sandbox/dispatches` 開跑（例：38685282630） | not measured |
 | C4 Max API 額度 | pass — 只持有 Max 額度的組織接受 SDK 請求，promotional credit 由 US$139.83 降到 US$139.73（run 回報 US$0.097） | not measured |
 | C5 成本與時間 | not measured | not measured |
@@ -77,7 +77,8 @@
   - agent 自動在 commit 加 `Co-Authored-By: Claude Opus 5.5`、在 PR body 加「Generated with Claude Code」：雲端沒有關閉 attribution 的設定。
 - 處理（IDD commit `4fc8dd5`）：reusable workflow 接選填的 `IDD_GITHUB_TOKEN`（使用者選擇以 sandbox 專用 PAT 處理，不改 org 政策）；不可能是專案內容的佔位 dotfile 寫進 `.git/info/exclude`，`scripts`、`.idea`、`.vscode` 刻意不排除。
 - 背景安全審查（commit `4fc8dd5`）：PAT 在 agent 的 shell 可見，且以 PAT 產生的事件會觸發 workflow、可被用來連鎖 dispatch。spike 期間接受（理由與正式版修法見 design 的 Risks）。
-- 待使用者建立 PAT（task 1.3）後重測開 PR 與 merge。
+- 使用者建立 fine-grained PAT（只授權 sandbox、Contents／Issues／Pull requests 讀寫、2026-10-17 到期），存成 keychain `github-pat`／`idd-cloud-sandbox` 與 sandbox secret `IDD_GITHUB_TOKEN`。
+- workflow run 38706501387（有 PAT）：`gh pr create` → https://github.com/PsychQuant/idd-cloud-sandbox/pull/2；`gh pr merge --squash` 成功，merge commit `16245559`，`mergedAt 2026-10-15T08:34:10Z`；PR 作者為 PAT 擁有者 kiki830621；issue #1 仍為 OPEN。`COST_USD: 0.186`，0 次 permission_denied。
 
 ## 待記錄的觀察
 

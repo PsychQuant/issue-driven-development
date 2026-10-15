@@ -2,7 +2,7 @@
 
 - [x] 1.1 依「spike 只在專用 scratch repo 上執行」與 requirement「Spike writes target only the dedicated scratch repository」，經使用者確認後建立 private repo `PsychQuant/idd-cloud-sandbox`，並開一張 seed issue（README 把 sandbox 拼成 sandbx）。完成時：repo 存在且為 private、seed issue #1 存在。驗證：`gh repo view PsychQuant/idd-cloud-sandbox --json isPrivate` 回 `true`，`gh issue view 1 -R PsychQuant/idd-cloud-sandbox` 讀得到。
 - [x] 1.2 依「憑證不進 repo 也不進 log」，把 che830621 組織的 API key 由 keychain 經 stdin 存成 sandbox 的 repository secret `ANTHROPIC_API_KEY`（不經 argv），並確認 Console 帳務頁屬於 che830621 組織。C4 的基準額度不在此時讀，改在 4.2 與 5.1 的 probe 前一刻讀，避免中間其他用量混入。完成時：secret 存在。驗證：`gh secret list -R PsychQuant/idd-cloud-sandbox` 列出 `ANTHROPIC_API_KEY`；帳務頁顯示「che830621’s Individual Org」。
-- [ ] 1.3 依「憑證不進 repo 也不進 log」，請使用者建立一把只授權 `PsychQuant/idd-cloud-sandbox` 的 fine-grained PAT（contents、issues、pull-requests 為 read and write），由使用者以 `che-keychain set --service github-pat --account idd-cloud-sandbox --from-clipboard` 存進 keychain，值不經過 AI；再由 keychain 經 stdin 存成 sandbox 的 repository secret `IDD_GITHUB_TOKEN`（PsychQuant org 禁止 Actions 開 PR，Agent SDK 路線也要用它）。完成時：keychain 有該 entry，sandbox 有該 secret。驗證：`security find-generic-password -s github-pat -a idd-cloud-sandbox` 找得到 entry（不加 `-w`，不讀出值）。
+- [x] 1.3 依「憑證不進 repo 也不進 log」，請使用者建立一把只授權 `PsychQuant/idd-cloud-sandbox` 的 fine-grained PAT（contents、issues、pull-requests 為 read and write），由使用者以 `che-keychain set --service github-pat --account idd-cloud-sandbox --from-clipboard` 存進 keychain，值不經過 AI；再由 keychain 經 stdin 存成 sandbox 的 repository secret `IDD_GITHUB_TOKEN`（PsychQuant org 禁止 Actions 開 PR，Agent SDK 路線也要用它）。完成時：keychain 有該 entry，sandbox 有該 secret。驗證：`security find-generic-password -s github-pat -a idd-cloud-sandbox` 找得到 entry（不加 `-w`，不讀出值）。
 
 ## 2. 測試（TDD：先寫測試）
 
@@ -21,7 +21,7 @@
 - [x] 4.1 依 requirement「The flow lives in the IDD repository and secrets stay in the deployer's repository」量測 C8：只照 `plugins/issue-driven-dev/cloud/README.md` 在 sandbox 部署 caller workflow（`idd_ref` 指向實作 branch），以 `dry_run: true` 觸發一次。完成時：C8 有結果。驗證：findings 草稿列出 sandbox 新增的檔案與行數、照做時偏離文件之處、該次 workflow run URL。
 - [x] 4.2 量測 Agent SDK 路線的 C4：先讀 che830621 組織的額度當基準，再以極小 prompt 觸發一次，之後再讀一次。依 requirement「Every candidate runtime is evaluated against criteria C1 to C8」的 scenario，出現 `Credit balance too low` 就把 C4 記為 fail、停止 4.3 到 4.5，並把那些格子記為 `not measured (stopped after C4 fail)`。完成時：C4 有結果與證據。驗證：findings 草稿記錄 workflow run URL，以及錯誤原文或執行前後的額度。
 - [x] 4.3 量測 Agent SDK 路線的 C1、C3、C6：以一次 `POST /repos/PsychQuant/idd-cloud-sandbox/dispatches` 觸發，執行 `/issue-driven-dev:idd-list`；記錄載入的 plugin、工具清單（Skill、Agent、TaskCreate、AskUserQuestion、Workflow 逐一列出有無）、SessionStart hook 的輸出、superpowers 與 parallel-ai-agents 的 presence pre-flight 結果。完成時：三格都有結果。驗證：findings 草稿的 C1、C3、C6 三格各附證據。
-- [ ] 4.4 量測 Agent SDK 路線的 C2：在 sandbox 依序做 issue 留言、push branch、開 PR、merge PR。完成時：四個動作各有成功輸出或錯誤原文。驗證：findings 草稿列出每一步的輸出與 PR URL；`PsychQuant/issue-driven-development` 沒有任何來自本 probe 的寫入。
+- [x] 4.4 量測 Agent SDK 路線的 C2：在 sandbox 依序做 issue 留言、push branch、開 PR、merge PR。完成時：四個動作各有成功輸出或錯誤原文。驗證：findings 草稿列出每一步的輸出與 PR URL；`PsychQuant/issue-driven-development` 沒有任何來自本 probe 的寫入。
 - [ ] 4.5 量測 Agent SDK 路線的端到端：以 unattended PR mode 對 seed issue #1 執行 `/issue-driven-dev:idd-all`。依「雲端 run 的終點沿用 idd-all」，預期停在開 PR 並 verified；依「雲端 verify 只用 Claude 並標 degraded」與 requirement「Cloud verify runs Claude-only and declares the missing Codex leg」量測 C7（報告沒寫明缺 Codex 即記 fail）；記錄 C5 的費用與耗時。完成時：C5、C7 有結果。驗證：findings 草稿有 run URL、verify 報告連結、費用、耗時。
 
 ## 5. Managed Agents 路線實測
