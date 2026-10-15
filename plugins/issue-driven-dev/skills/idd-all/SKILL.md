@@ -603,7 +603,7 @@ Dispatch **先看 `$VEXIT`**(gate 判定),`0` 才依 `$TIER` 分派;**`$DIAG_TYP
 
 | `VEXIT` · `CEXIT` · `TIER` | 下一步 |
 |--------------|--------|
-| `TYPE=meeting` · `VEXIT=0` | **meeting(#383),先於任何 tier 分派**:**attended → Phase 3m: `/idd-plan #$N`**(meeting 版 Plan;approve 後**不** chain 到 idd-implement);**unattended → 停在 diagnosed**,不跑 `/idd-plan`(Meeting Plan 是人核准的審議紀錄,unattended 沒有人可核准;plan 是選填,meeting 的 close gate 在沒有 plan 時退回 Diagnosis 的 Phase C),Phase 6 的 Action items 會為它列一條(在 Phase 6 重新解析 type,不靠 shell 狀態)。兩種模式都先跑下方「meeting 分派前的 branch unwind」,再跳過 Phase 3a／3b、Phase 4、Phase 5,Phase 6 印 meeting report。完全沒有 Diagnosis 的 meeting 是 `complexity-missing`(gate 要求 Diagnosis 存在才豁免),照 abort 列處理;meeting 的其他 `VEXIT=1`(`parking-lot-label` / `blocking-nonempty`)照下面的 parked／blocked 列處理 |
+| `TYPE=meeting` · `VEXIT=0` | **meeting(#383),先於任何 tier 分派**:**attended → Phase 3m: `/idd-plan #$N`**(meeting 版 Plan;approve 後**不** chain 到 idd-implement);**unattended → 停在 diagnosed**,不跑 `/idd-plan`(Meeting Plan 是人核准的審議紀錄,unattended 沒有人可核准;plan 是選填,meeting 的 close gate 在沒有 plan 時退回 Diagnosis 的 Phase C),Phase 6 的 Action items 會為它列一條(在 Phase 6 用 issue 號重新解析 type,不靠 Phase 2 的變數)。兩種模式都先跑下方「meeting 分派前的 branch unwind」,再跳過 Phase 3a／3b、Phase 4、Phase 5,Phase 6 印 meeting report。完全沒有 Diagnosis 的 meeting 是 `complexity-missing`(gate 要求 Diagnosis 存在才豁免),照 abort 列處理;meeting 的其他 `VEXIT=1`(`parking-lot-label` / `blocking-nonempty`)照下面的 parked／blocked 列處理 |
 | `0` · `0` · `Simple` | Phase 3a: idd-implement |
 | `0` · `0` · `Plan` | **attended → Phase 3p: `/idd-plan`**（該 skill 擁有 `EnterPlanMode` 閘門，approve 後自己 chain 到 idd-implement）;**unattended → Phase 3a: idd-implement**，並在 final report 標記 `[Plan tier deliberation skipped under unattended mode]` |
 | `0` · `0` · `Plan`（原值 `Plan via Layer V`,v2.50+）| 同上 — helper 只取開頭的 tier,` via <來源>` 後綴與同行理由皆不影響;verdict 是 user 在 idd-diagnose Step 3.4 選 escalate 觸發,routing 行為跟 bare `Plan` 一致 |
@@ -632,10 +632,15 @@ fi
 # type 只信最新受信任 Diagnosis 的 ### Type，不看 issue 本文（r4 #19／#35：本文由 issue 作者自由改寫）。
 # 先判 type（只需要 issue 號）：非 meeting 的 run 不因下面任何 shell 狀態遺失而中止（r4 #3／#8、r5 #10）
 . "$CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh" || { echo "FATAL: meeting unwind: actionability helper missing — branch left as is" >&2; exit 1; }
+# GITHUB_REPO 是 Phase 0.3 的 shell 狀態。遺失不是暫時性的 fetch 失敗：明講（r6 #14，同 r3 #2 對 PATH_AXIS 的處理）
+[ -n "${GITHUB_REPO:-}" ] || { echo "FATAL: meeting unwind: GITHUB_REPO is empty — the shell state was lost; re-run its resolution. Branch left as is" >&2; exit 1; }
 # 查詢失敗時不知道 type：branch 原樣保留本來就是非 meeting run 該有的結果，所以只警告、不中止（r5 #14）
 UW_PAGES=$(gh api "repos/$GITHUB_REPO/issues/$N/comments" --paginate --jq '[.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") | .body | select(split("\n") | any(startswith("## Diagnosis")))]') \
   || { echo "⚠ meeting unwind: could not read the Diagnosis type of #$N (comment fetch failed) — branch left as is; if #$N is a meeting issue, commit .claude/.idd/attachments/issue-$N on the idd/$N-* branch and return to the default branch by hand"; exit 0; }
-UW_TYPE=$(idd_diagnosis_type "$(jq -s -r 'add // [] | last // ""' <<<"$UW_PAGES")") || { echo "FATAL: meeting unwind: Diagnosis type lookup failed" >&2; exit 1; }
+# jq 讀不了 comment 清單時與 fetch 失敗同樣處理；helper 拿到一個參數恆 exit 0（r6 #12）
+UW_LATEST=$(jq -s -r 'add // [] | last // ""' <<<"$UW_PAGES") \
+  || { echo "⚠ meeting unwind: the comment list of #$N is not readable — branch left as is; if #$N is a meeting issue, commit .claude/.idd/attachments/issue-$N on the idd/$N-* branch and return to the default branch by hand"; exit 0; }
+UW_TYPE=$(idd_diagnosis_type "$UW_LATEST")
 [ "$UW_TYPE" = meeting ] || { echo "→ #$N: the trusted Diagnosis says '$UW_TYPE', not meeting — no unwind"; exit 0; }
 # CWD 是 Phase 0.2 的 shell 狀態。空字串時 `git -C ""` 會讀 session 目錄，回報「nothing to unwind」——
 # 跟 r3 #2 修掉的 PATH_AXIS 同一種靜默略過（r5 #10）。只有確定是 meeting 才要求它
@@ -928,11 +933,21 @@ fi
 # issue 號進 REST path 前先驗型（r5 #12）
 case "$N" in ''|*[!0-9]*) echo "FATAL: Phase 4: issue number is not numeric: $N — verify not started" >&2; exit 1 ;; esac
 . "$CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh" || { echo "FATAL: Phase 4: actionability helper missing — verify not started" >&2; exit 1; }
-P4_PAGES=$(gh api "repos/$GITHUB_REPO/issues/$N/comments" --paginate --jq '[.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") | .body | select(split("\n") | any(startswith("## Diagnosis")))]') \
-  || { echo "FATAL: Phase 4: comment fetch failed — verify not started" >&2; exit 1; }
-P4_TYPE=$(idd_diagnosis_type "$(jq -s -r 'add // [] | last // ""' <<<"$P4_PAGES")") || { echo "FATAL: Phase 4: Diagnosis type lookup failed — verify not started" >&2; exit 1; }
+# 只有「確定讀到 meeting」才中止。讀不到 type（GITHUB_REPO 遺失、fetch 失敗、comment 清單不是 JSON）時，
+# 照 Phase 2 選的 code 路線進 verify——那本來就是這種 run 的安全預設，而 verify 自己也要打同一組 API（r6 #2、#14）。
+# 錯誤處理掛在會失敗的 jq 那一步，不掛在恆 exit 0 的 helper 上（r6 #12）
+P4_TYPE=unknown
+if [ -z "${GITHUB_REPO:-}" ]; then
+  echo "⚠ Phase 4: GITHUB_REPO is empty (shell state lost) — cannot re-read the Diagnosis type of #$N; continuing into verify on the route Phase 2 chose"
+elif ! P4_PAGES=$(gh api "repos/$GITHUB_REPO/issues/$N/comments" --paginate --jq '[.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") | .body | select(split("\n") | any(startswith("## Diagnosis")))]'); then
+  echo "⚠ Phase 4: comment fetch failed — cannot re-read the Diagnosis type of #$N; continuing into verify on the route Phase 2 chose"
+elif ! P4_LATEST=$(jq -s -r 'add // [] | last // ""' <<<"$P4_PAGES"); then
+  echo "⚠ Phase 4: the comment list of #$N is not readable — cannot re-read the Diagnosis type; continuing into verify on the route Phase 2 chose"
+else
+  P4_TYPE=$(idd_diagnosis_type "$P4_LATEST")
+fi
 if [ "$P4_TYPE" = meeting ]; then
-  echo "FATAL: Phase 4: the latest trusted Diagnosis of #$N now records meeting, but Phase 2 routed this run as code work and it has implemented it — not verifying, not pushing; the commits stay where they are. Re-run /idd-diagnose #$N, then decide by hand (r5 #11)" >&2
+  echo "FATAL: Phase 4: the latest trusted Diagnosis of #$N now records meeting, but Phase 2 routed this run as code work — not verifying, not pushing. Any commits this run made stay where they are (check git log); if it made none — for example /idd-plan wrote a Meeting Plan — run the meeting unwind. Re-run /idd-diagnose #$N, then decide by hand (r5 #11)" >&2
   exit 1
 fi
 ```
@@ -1010,11 +1025,15 @@ elif [ "$PATH_AXIS" = "PR" ]; then
   # ### Type —— issue 作者在 implement 之後把本文改成 meeting,不能讓這裡跳過 push(r4 #35)。
   case "$N" in ''|*[!0-9]*) echo "FATAL: Phase 5: issue number is not numeric: $N — not pushing" >&2; exit 1 ;; esac   # r5 #12
   . "$CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh" || { echo "FATAL: Phase 5: actionability helper missing — not pushing" >&2; exit 1; }
+  # 遺失的 shell 狀態不是暫時性的 fetch 失敗，分開講（r6 #14）；push 之前讀不到 type 一律 fail-closed（r2）
+  [ -n "${GITHUB_REPO:-}" ] || { echo "FATAL: Phase 5: GITHUB_REPO is empty (shell state lost) — not pushing" >&2; exit 1; }
   P5_PAGES=$(gh api "repos/$GITHUB_REPO/issues/$N/comments" --paginate --jq '[.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") | .body | select(split("\n") | any(startswith("## Diagnosis")))]') \
     || { echo "FATAL: Phase 5: comment fetch failed — not pushing" >&2; exit 1; }
-  P5_TYPE=$(idd_diagnosis_type "$(jq -s -r 'add // [] | last // ""' <<<"$P5_PAGES")") || { echo "FATAL: Phase 5: Diagnosis type lookup failed — not pushing" >&2; exit 1; }
+  # 錯誤處理掛在會失敗的 jq 那一步；helper 拿到一個參數恆 exit 0（r6 #12）
+  P5_LATEST=$(jq -s -r 'add // [] | last // ""' <<<"$P5_PAGES") || { echo "FATAL: Phase 5: the comment list is not readable — not pushing" >&2; exit 1; }
+  P5_TYPE=$(idd_diagnosis_type "$P5_LATEST")
   # meeting run 不會到這裡（Phase 2 → Phase 6）；到這裡才讀到 meeting = Phase 2 之後 type 被改了：fail-closed（r5 #11）
-  if [ "$P5_TYPE" = meeting ]; then echo "FATAL: Phase 5: the latest trusted Diagnosis of #$N now records meeting, but Phase 2 routed this run as code work and it has implemented it — not pushing, no PR; the commits stay on $BRANCH. Re-run /idd-diagnose #$N, then decide by hand (r5 #11)" >&2; exit 1; fi
+  if [ "$P5_TYPE" = meeting ]; then echo "FATAL: Phase 5: the latest trusted Diagnosis of #$N now records meeting, but Phase 2 routed this run as code work — not pushing, no PR; any commits this run made stay on $BRANCH (check git log). Re-run /idd-diagnose #$N, then decide by hand (r5 #11)" >&2; exit 1; fi
   # PR mode (v2.40.0 behaviour below; #383 adds the type guard above, which fails closed before the push — r4 #20)
   # WARNING (#7): heredoc below is NOT quoted — variable expansion happens.
   # Do NOT insert untrusted strings (e.g. issue titles) into the body without
@@ -1061,10 +1080,11 @@ fi
 
 #### Meeting report(#383 verify r1)
 
-`TYPE=meeting` 的 run 不印下面的 PR／direct-commit 樣板——那些樣板宣稱的 verify、implementation commits、PR 都沒有發生。改印:
+選樣板看本次**實際走的路線**,不看重讀的 type(r6 #1):Phase 2 走了 meeting 列 → 印下面的 meeting report;Phase 3 有跑(implement、Plan 或 Spectra)→ 印後面的 PR／direct-commit 樣板。
 
-要不要印這份 report,不憑 Phase 2 gate 行的記憶:照 Phase 5 guard 的寫法(`idd_diagnosis_type` 讀最新受信任 Diagnosis)重新取得 type,attended 與 unattended 都一樣(meeting-issue-type 規格:後續需要 type 的步驟——unwind、verify、push、final report——都要從受信任 Diagnosis 重新取得,r5 #7)。到得了 Phase 6 而讀到 meeting 的,只有 Phase 2 分派過來的 meeting run——Phase 4／5 讀到 meeting 時已經 abort。
+再照 Phase 5 guard 的寫法(`idd_diagnosis_type` 讀最新受信任 Diagnosis)重新取得 type 做交叉核對,attended 與 unattended 都一樣(meeting-issue-type 規格:後續需要 type 的步驟——unwind、verify、push、final report——都要從受信任 Diagnosis 重新取得,r5 #7)。重讀結果與路線不一致時——例如 direct-commit 或 `--in-chain` 的 run 在 verify 期間被貼了 meeting 的 Diagnosis(Phase 5 guard 只在 PR 路徑跑)——樣板仍照路線印,最上方加一行 `⚠ type changed during this run: the latest trusted Diagnosis of #N now records <type>; re-run /idd-diagnose #N`;重讀失敗時也照路線印,加一行 `⚠ could not re-read the Diagnosis type of #N`(r6 #9、#17)。換樣板會讓一個真的 implement、verify、開了 PR 的 run 印出「no implement, no verify, no push, no PR」。
 
+Phase 2 走 meeting 列的 run 不印 PR／direct-commit 樣板——那些樣板宣稱的 verify、implementation commits、PR 都沒有發生。改印:
 
 ```
 ✓ idd-all stopped (type=meeting)
@@ -1078,7 +1098,7 @@ fi
         unattended → see Action items (an attended /idd-plan, or /idd-close)
 ```
 
-報告由模型照實填寫(Plan 填 `/idd-plan` 貼出的 Meeting Plan comment URL,unattended 時用預設文字)。之後照常附上「Phase 6 Action items surface」那一節的 Action items,meeting report 印出後同樣 `clear_unattended "$CWD"`(#123)——跳過 PR／direct-commit 樣板不代表跳過這個清理(verify r2 #9)。
+報告由模型照實填寫(Plan 填 `/idd-plan` 貼出的 Meeting Plan comment URL,unattended 時用預設文字)。之後照常附上「Phase 6 Action items surface」那一節的 Action items。**順序:先跑 Action items 區塊,再清理**——INTERACTION 遺失時,那個區塊要靠 unattended state file 回推,清掉之後就讀不到(r6 #8、#11)。meeting report 印出後同樣 `clear_unattended "$CWD"`(#123)——跳過 PR／direct-commit 樣板不代表跳過這個清理(verify r2 #9)。
 
 #### PR mode report
 
@@ -1144,7 +1164,7 @@ With `--review` (`REVIEW_FLAG="--review"`):
 Next: review last ${COMMIT_COUNT} commits (git log -${COMMIT_COUNT}), then run /idd-close #${N}
 ```
 
-**Cleanup（#123）**：terminal report 印出後 `clear_unattended "$CWD"` — unattended flag 的生命週期 = 本次 orchestration。
+**Cleanup（#123）**：terminal report 與下一節的 Action items 都印出後才 `clear_unattended "$CWD"` — unattended flag 的生命週期 = 本次 orchestration。Action items 區塊在 INTERACTION 遺失時要靠這個 state file 回推，所以不能先清（#383 verify r6 #8、#11）。
 
 **STOP**。不 auto-merge(PR mode)、不 auto-close(both modes)。Per MANIFESTO doctrine,verify-gated PASS 是 terminal default disposition;auto-merge mechanic 屬 **#37** bulk-solve autopilot 範疇,**不**是 idd-all default。`--review` 是 **orchestrator-scope messaging-only** opt-in,不會讓 idd-all 等候 — 它只表態 "user 還想自己再過一次" 並切換 Phase 6 wording。(per #108 DA3: orchestrator-scope qualifier matters — humans/CI downstream may react to the changed text differently, so the flag is messaging-only **at orchestrator scope**, not necessarily end-to-end.)
 
@@ -1201,9 +1221,10 @@ elif [ -z "$RN" ]; then
   if [ "$MODE" = unattended ]; then
     ACTION_ITEMS+=$'\n'"- the issue number of this run was lost (shell state) — if it was a meeting issue, it stopped at diagnosed; check it by hand"
   fi
-elif . "$CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh" \
-     && MT_PAGES=$(gh api "repos/$GITHUB_REPO/issues/$RN/comments" --paginate --jq '[.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") | .body | select(split("\n") | any(startswith("## Diagnosis")))]'); then
-  if [ "$(idd_diagnosis_type "$(jq -s -r 'add // [] | last // ""' <<<"$MT_PAGES")")" = meeting ]; then
+elif [ -n "${GITHUB_REPO:-}" ] && . "$CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh" \
+     && MT_PAGES=$(gh api "repos/$GITHUB_REPO/issues/$RN/comments" --paginate --jq '[.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") | .body | select(split("\n") | any(startswith("## Diagnosis")))]') \
+     && MT_LATEST=$(jq -s -r 'add // [] | last // ""' <<<"$MT_PAGES"); then
+  if [ "$(idd_diagnosis_type "$MT_LATEST")" = meeting ]; then
     if printf '%s\n' "${EXISTING_WORK_ITEMS:-}" | grep -qE "^- #${RN}: (existing PR #[0-9]+ declares it — not started|already merged in PR #[0-9]+)"; then
       :   # Step 0.5.1 stopped it before diagnose; its own line above says why
     elif [ "$MODE" != unattended ]; then
@@ -1212,7 +1233,8 @@ elif . "$CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh" \
       KEPT=""
       [ -n "${CWD:-}" ] && KEPT=$(git -C "$CWD" for-each-ref --format='%(refname:short)' "refs/heads/idd/${RN}-*" 2>/dev/null | head -1)
       NEXT="next: attended /idd-plan #${RN} for a Meeting Plan, or /idd-close #${RN} (a plan is optional — the close gate falls back to the Diagnosis Phase C)${KEPT:+; local branch $KEPT holds the attachment manifest}"
-      # phase 只讀 idd-update 管的 ## Current Status 區段：本文其他地方的 **Phase** 行是作者寫的（r5 #28）
+      # phase 從 idd-update 管的 ## Current Status 區段讀（r5 #28）。這是慣例不是信任邊界：整份本文作者都改得到，
+      # 這裡只決定兩種 Action item 措辭中的哪一種，兩種都帶同一個 NEXT（r6 #27、#29）
       if MT_BODY=$(gh issue view "$RN" --repo "$GITHUB_REPO" --json body --jq '.body // ""'); then
         if printf '%s\n' "$MT_BODY" | awk '/^## Current Status/{f=1} f' | grep -q '^\*\*Phase\*\*: diagnosed'; then
           ACTION_ITEMS+=$'\n'"- #${RN}: type=meeting — stopped at diagnosed (unattended); ${NEXT}"
@@ -1224,7 +1246,8 @@ elif . "$CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh" \
       fi
     fi
   fi
-else
+elif [ "$MODE" = unattended ]; then
+  # 查不到 type（GITHUB_REPO 遺失、fetch 或 jq 失敗）：只有確定是 unattended 才提醒，理由同上面 issue 號遺失那一列（r6 #14、#23）
   ACTION_ITEMS+=$'\n'"- #${RN}: could not re-resolve the issue type for this report — if it is a meeting issue, it stopped at diagnosed; check it by hand"
 fi
 
@@ -1258,9 +1281,9 @@ fi
 | Issue #N 不存在 / CLOSED | Phase 0 abort |
 | Branch 已存在 | Phase 0 AskUserQuestion(checkout / -2 suffix / abort) |
 | Diagnosis 缺 `### Complexity` 區段(helper cexit=4) | Phase 2 abort,提示手動跑 idd-diagnose。**非 meeting;meeting 只在完全沒有受信任的 Diagnosis 時才 abort**——有 Diagnosis 的 meeting 走分派表的 meeting 列(#383 verify r2) |
-| Phase 4 type guard:issue 號不是數字、helper 缺失、comment fetch 失敗、Diagnosis type lookup 失敗,或最新受信任 Diagnosis 記 meeting(Phase 2 之後 type 被改了)| Phase 4 abort,**不 verify、不 push**;implement 的 commits 原地保留並在訊息裡講明,照下方 abort 職責 `clear_unattended`(#383 verify r5 #11、#12)|
-| Phase 5 type guard 失敗(PR 路徑):issue 號不是數字、helper 缺失、comment fetch 失敗、Diagnosis type lookup 失敗,或最新受信任 Diagnosis 記 meeting | Phase 5 abort,**不 push、不開 PR**;branch 與 commits 保留,照下方 abort 職責 `clear_unattended`。direct-commit / `--in-chain` 不跑這個 guard(#383 verify r2、r5) |
-| meeting unwind 失敗(helper、type lookup、`CWD` 遺失、manifest commit、checkout 任一步) | Phase 2 abort,印出停在哪個 branch;不刪任何 branch(#383 verify r2、r5 #10)。**comment fetch 失敗不 abort**:不知道 type 時 branch 原樣保留本來就是非 meeting run 該有的結果,只印警告,說明若是 meeting 要怎麼手動收(r5 #14)|
+| Phase 4 type guard:issue 號不是數字、helper 缺失,或最新受信任 Diagnosis 記 meeting(Phase 2 之後 type 被改了)| Phase 4 abort,**不 verify、不 push**;本次做過的 commits 原地保留,訊息提醒查 git log,沒有 commit 時去跑 meeting unwind;照下方 abort 職責 `clear_unattended`(#383 verify r5 #11、#12)。**`GITHUB_REPO` 遺失、comment fetch 或 jq 失敗不 abort**:讀不到 type 時照 Phase 2 選的 code 路線進 verify,只印警告(r6 #2、#14)|
+| Phase 5 type guard 失敗(PR 路徑):issue 號不是數字、helper 缺失、`GITHUB_REPO` 遺失、comment fetch 失敗、comment 清單無法用 jq 讀取,或最新受信任 Diagnosis 記 meeting | Phase 5 abort,**不 push、不開 PR**;branch 與 commits 保留,照下方 abort 職責 `clear_unattended`。direct-commit / `--in-chain` 不跑這個 guard(#383 verify r2、r5) |
+| meeting unwind 失敗(helper、`GITHUB_REPO` 遺失、`CWD` 遺失、manifest commit、checkout 任一步) | Phase 2 abort,印出停在哪個 branch;不刪任何 branch(#383 verify r2、r5 #10、r6 #14)。**comment fetch 或 jq 失敗不 abort**:不知道 type 時 branch 原樣保留本來就是非 meeting run 該有的結果,只印警告,說明若是 meeting 要怎麼手動收(r5 #14)|
 | actionability gate 判 not-actionable(`VEXIT=1`:`### Complexity` 不可路由 exit 3/4/5、`parking-lot` label、`### Blocking` 非空)| Phase 2 abort,印出 `$REASONS` 與原文(`$COMPLEXITY_ERR` / label 名 / `$BLOCK_LINE`);不截斷、不降級成任何 tier;`complexity-deferral-marker` / `parking-lot-label` 是合法延期狀態,不要求「修正」|
 | spectra-discuss 沒 emit `Conclusion:` line(unattended hint 失敗)| Re-prompt 一次;再失敗 abort,branch 保留 |
 | spectra-propose 沒 emit `Change:` line | 同上 |

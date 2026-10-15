@@ -543,10 +543,13 @@ idd_actionability_group() {
 #
 #   - empty input (no trusted Diagnosis) → `none`
 #   - otherwise the first non-empty line of the `### Type` section, read with
-#     the same section reader as ### Complexity, leading markdown decoration
-#     stripped, ASCII case-folded; its leading word counts only if it is an
-#     IDD type name that ends at a non-word character (`meeting（…）` and
-#     `**meeting**` are meeting; `meeting-notes`, `meeting2` are not)
+#     the same section reader as ### Complexity, by the five steps of the
+#     actionability-gate spec: strip leading spaces/tabs and a run of `*` `_`
+#     backtick; take the leading ASCII-letter run; strip a run of `*` `_`
+#     backtick after it; the next character, if any, must not be an ASCII
+#     letter, digit, `_` or `-`; the lower-cased word must be an IDD type
+#     (`meeting（…）`, `**meeting**`, `meeting_` are meeting; `meeting-notes`,
+#     `meeting2`, `- meeting` are not)
 #   - anything else, including no `### Type` heading → `unknown`
 # Only `meeting` relaxes the gate, so every unrecognised shape fails safe.
 idd_diagnosis_type() {

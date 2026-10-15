@@ -1166,8 +1166,15 @@ out=$(p4_run bug); rc=$?
 assert_eq "phase 4 (run): a non-meeting run passes the guard" "0" "$rc"
 refute_grep "phase 4 (run): ... silently" 'FATAL' "$out"
 out=$(p4_run FAIL); rc=$?
-assert_eq "phase 4 (run): a failed comment fetch stops before verify" "1" "$rc"
-assert_grep "phase 4 (run): ... naming the fetch" 'comment fetch failed' "$out"
+assert_eq "phase 4 (run): a failed comment fetch does not stop a code run (r6 #2)" "0" "$rc"
+assert_grep "phase 4 (run): ... it warns and continues into verify" 'comment fetch failed — cannot re-read the Diagnosis type of #7; continuing into verify' "$out"
+out=$( P4T=bug N=7 GITHUB_REPO= CLAUDE_PLUGIN_ROOT="$HERE/../../.." bash -c 'gh() { echo GH-CALLED >&2; }'$'\n'"$P4_SRC" 2>&1 ); rc=$?
+assert_eq "phase 4 (run): a lost GITHUB_REPO does not stop a code run (r6 #14)" "0" "$rc"
+assert_grep "phase 4 (run): ... it names the lost shell state" 'GITHUB_REPO is empty (shell state lost)' "$out"
+refute_grep "phase 4 (run): ... and makes no gh call" 'GH-CALLED' "$out"
+out=$( N=7 GITHUB_REPO=o/r CLAUDE_PLUGIN_ROOT="$HERE/../../.." bash -c 'gh() { echo "not json"; }'$'\n'"$P4_SRC" 2>&1 ); rc=$?
+assert_eq "phase 4 (run): an unreadable comment list does not fail open into a silent pass, nor stop (r6 #12)" "0" "$rc"
+assert_grep "phase 4 (run): ... it warns that the list is not readable" 'is not readable — cannot re-read the Diagnosis type' "$out"
 out=$(p4_run bug '7/../x'); rc=$?
 assert_eq "phase 4 (run): a non-numeric issue number is fatal (r5 #12)" "1" "$rc"
 refute_grep "phase 4 (run): ... before any gh call" 'GH-CALLED' "$out"
@@ -1195,6 +1202,12 @@ out=$(p5_run bug direct-commit); rc=$?
 assert_eq "phase 5 (run): direct-commit makes no issue fetch, so a failing gh cannot abort it (r2 #5)" "0" "$rc"
 out=$(p5_run bug PR "" ); rc=$?
 assert_eq "phase 5 (run): a failed comment fetch on the PR path stops before pushing" "1" "$rc"
+out=$( UW_TYPE=bug N=7 GITHUB_REPO= CWD=/nonexistent PATH_AXIS=PR IN_CHAIN= BRANCH=idd/7-x CLAUDE_PLUGIN_ROOT="$HERE/../../.." bash -c "$p5ok_stub"$'\n'"$P5_SRC" 2>&1 ); rc=$?
+assert_eq "phase 5 (run): a lost GITHUB_REPO stops before pushing (r6 #14)" "1" "$rc"
+refute_grep "phase 5 (run): ... and never pushes" 'PUSH-CALLED' "$out"
+out=$( N=7 GITHUB_REPO=o/r CWD=/nonexistent PATH_AXIS=PR IN_CHAIN= BRANCH=idd/7-x CLAUDE_PLUGIN_ROOT="$HERE/../../.." bash -c 'git() { case "$*" in *push*) echo PUSH-CALLED ;; esac; return 0; }; gh() { case "$1" in api) echo "not json" ;; pr) echo PR-CALLED ;; esac; }'$'\n'"$P5_SRC" 2>&1 ); rc=$?
+assert_eq "phase 5 (run): an unreadable comment list stops before pushing (r6 #12)" "1" "$rc"
+refute_grep "phase 5 (run): ... and never pushes" 'PUSH-CALLED' "$out"
 refute_grep "phase 5 (run): ... and never pushes" 'PUSH-CALLED' "$out"
 # r2 (#9): the meeting report carries the #123 cleanup and names the Action-items section
 assert_output_grep "idd-all: the meeting report clears the unattended flag (#123)" 'meeting report 印出後同樣 `clear_unattended "$CWD"`' "$IA_"
@@ -1255,6 +1268,67 @@ rm -rf "$P6S"
 out=$(p6_run meeting '## Problem\n\n**Phase**: diagnosed\n')
 refute_grep "phase 6 (run): a **Phase** line outside ## Current Status does not count (r5 #28)" 'stopped at diagnosed' "$out"
 assert_grep "phase 6 (run): ... the item says the body does not show the phase" 'does not show phase diagnosed' "$out"
+# r6 #14/#23: a type lookup that cannot run adds an item only when the run is known to be unattended
+out=$(p6_run meeting '' fail '' '')
+assert_eq "phase 6 (run): a failed lookup with INTERACTION lost prints nothing (r6 #14)" "" "$out"
+out=$( N=7 INTERACTION=unattended IDD_ALL_UNATTENDED= GITHUB_REPO= CWD=/nonexistent CLAUDE_PLUGIN_ROOT="$HERE/../../.." bash -c 'gh() { echo GH-CALLED >&2; }; git() { return 0; }'$'\n'"$P6_SRC" 2>&1 )
+assert_grep "phase 6 (run): an unattended run that lost GITHUB_REPO says the type could not be re-resolved" 'could not re-resolve the issue type' "$out"
+refute_grep "phase 6 (run): ... without a gh call" 'GH-CALLED' "$out"
+
+# ── verify #383 r6 (#3): the author filter itself. Every stub above returns an
+#    already-filtered list, so deleting the four `select(.author_association …)`
+#    filters left the suite green. This stub runs the caller's own --jq against a
+#    raw comment list whose LATEST Diagnosis is a meeting posted by an outside
+#    author (NONE); the trusted Diagnosis before it says bug. ──
+RAW_UNTRUSTED='[{"author_association":"OWNER","body":"## Diagnosis\n\n### Type\nbug\n"},{"author_association":"NONE","body":"## Diagnosis\n\n### Type\nmeeting\n"}]'
+RAW_TRUSTED='[{"author_association":"OWNER","body":"## Diagnosis\n\n### Type\nbug\n"},{"author_association":"MEMBER","body":"## Diagnosis\n\n### Type\nmeeting\n"}]'
+RAWC_STUB=$(cat <<'EOS'
+gh() {
+  case "$1" in
+    api) local f=""; shift
+         while [ $# -gt 0 ]; do if [ "$1" = --jq ]; then f="$2"; shift; fi; shift; done
+         [ -n "$f" ] || return 1
+         printf '%s' "$RAWC" | jq -c "$f" ;;
+    pr) echo PR-CALLED ;;
+    repo) echo main ;;
+    issue) printf '%b\n' "${P6B:-}" ;;
+    *) return 0 ;;
+  esac
+}
+EOS
+)
+raw_env() { env RAWC="$1" N=7 GITHUB_REPO=o/r IDD_ALL_UNATTENDED= CLAUDE_PLUGIN_ROOT="$HERE/../../.." "${@:2}"; }
+out=$(raw_env "$RAW_UNTRUSTED" bash -c "$RAWC_STUB"$'\n'"$P4_SRC" 2>&1); rc=$?
+assert_eq "author filter (run): Phase 4 ignores an outside author's meeting Diagnosis (r6 #3)" "0" "$rc"
+out=$(raw_env "$RAW_TRUSTED" bash -c "$RAWC_STUB"$'\n'"$P4_SRC" 2>&1); rc=$?
+assert_eq "author filter (run): ... positive control: a MEMBER's meeting Diagnosis stops Phase 4" "1" "$rc"
+out=$(raw_env "$RAW_UNTRUSTED" CWD=/nonexistent PATH_AXIS=PR IN_CHAIN= BRANCH=idd/7-x bash -c 'git() { case "$*" in *push*) echo PUSH-CALLED ;; esac; return 0; }'$'\n'"$RAWC_STUB"$'\n'"$P5_SRC" 2>&1)
+assert_grep "author filter (run): Phase 5 ignores an outside author's meeting Diagnosis and pushes (r6 #3)" 'PUSH-CALLED' "$out"
+out=$(raw_env "$RAW_TRUSTED" CWD=/nonexistent PATH_AXIS=PR IN_CHAIN= BRANCH=idd/7-x bash -c 'git() { case "$*" in *push*) echo PUSH-CALLED ;; esac; return 0; }'$'\n'"$RAWC_STUB"$'\n'"$P5_SRC" 2>&1)
+refute_grep "author filter (run): ... positive control: a MEMBER's meeting Diagnosis stops the push" 'PUSH-CALLED' "$out"
+CS6='## Problem\n\n---\n\n## Current Status\n\n**Phase**: diagnosed\n'
+out=$(raw_env "$RAW_UNTRUSTED" INTERACTION=unattended CWD=/nonexistent P6B="$CS6" bash -c 'git() { return 0; }'$'\n'"$RAWC_STUB"$'\n'"$P6_SRC" 2>&1)
+assert_eq "author filter (run): Phase 6 ignores an outside author's meeting Diagnosis (r6 #3)" "" "$out"
+out=$(raw_env "$RAW_TRUSTED" INTERACTION=unattended CWD=/nonexistent P6B="$CS6" bash -c 'git() { return 0; }'$'\n'"$RAWC_STUB"$'\n'"$P6_SRC" 2>&1)
+assert_grep "author filter (run): ... positive control: a MEMBER's meeting Diagnosis gets the item" '#7: type=meeting — stopped at diagnosed' "$out"
+RWD=$(mktemp -d)
+mkdir "$RWD/a" && uw_repo "$RWD/a" && out=$( cd "$RWD/a" && raw_env "$RAW_UNTRUSTED" CWD="$RWD/a" PATH_AXIS=PR GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t bash -c "$RAWC_STUB"$'\n'"$UW_SRC" 2>&1 )
+assert_eq "author filter (run): the unwind ignores an outside author's meeting Diagnosis (r6 #3)" "idd/7-x" "$(git -C "$RWD/a" branch --show-current)"
+mkdir "$RWD/b" && uw_repo "$RWD/b" && out=$( cd "$RWD/b" && raw_env "$RAW_TRUSTED" CWD="$RWD/b" PATH_AXIS=PR GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t bash -c "$RAWC_STUB"$'\n'"$UW_SRC" 2>&1 )
+assert_eq "author filter (run): ... positive control: a MEMBER's meeting Diagnosis is unwound" "main" "$(git -C "$RWD/b" branch --show-current)"
+# r6 #14 / #12 in the unwind: lost GITHUB_REPO is loud; an unreadable list only warns
+mkdir "$RWD/c" && uw_repo "$RWD/c" && out=$( cd "$RWD/c" && N=7 GITHUB_REPO= CWD="$RWD/c" PATH_AXIS=PR CLAUDE_PLUGIN_ROOT="$HERE/../../.." bash -c 'gh() { echo GH-CALLED; }'$'\n'"$UW_SRC" 2>&1 ); rc=$?
+assert_eq "unwind (run): a lost GITHUB_REPO is a loud failure (r6 #14)" "1" "$rc"
+refute_grep "unwind (run): ... before any gh call" 'GH-CALLED' "$out"
+mkdir "$RWD/d" && uw_repo "$RWD/d" && out=$( cd "$RWD/d" && N=7 GITHUB_REPO=o/r CWD="$RWD/d" PATH_AXIS=PR CLAUDE_PLUGIN_ROOT="$HERE/../../.." bash -c 'gh() { echo "not json"; }'$'\n'"$UW_SRC" 2>&1 ); rc=$?
+assert_eq "unwind (run): an unreadable comment list only warns (r6 #12)" "0" "$rc"
+assert_grep "unwind (run): ... saying so" 'comment list of #7 is not readable' "$out"
+assert_eq "unwind (run): ... and the branch is left as is" "idd/7-x" "$(git -C "$RWD/d" branch --show-current)"
+rm -rf "$RWD"
+# r6 #1/#8: the report follows the route this run took; Action items run before the cleanup
+assert_output_grep "idd-all: the report template follows the route this run took (r6 #1)" '選樣板看本次**實際走的路線**,不看重讀的 type' "$IA_"
+assert_output_grep "idd-all: a type change during the run is a warning line, not a template swap" '⚠ type changed during this run' "$IA_"
+assert_output_grep "idd-all: Action items run before clear_unattended (r6 #8)" '**順序:先跑 Action items 區塊,再清理**' "$IA_"
 # r1 (#6, #8, #14): Phase 6 has a meeting report that claims no verify / PR
 assert_output_grep "idd-all: Phase 6 has a meeting report"                        '✓ idd-all stopped (type=meeting)' "$IA_"
 assert_output_grep "idd-all: the terminal-phase rule names its meeting exception" 'Verify is the terminal phase regardless of mode**（meeting issue 例外' "$IA_"
@@ -1280,7 +1354,8 @@ assert_output_grep "reference: a section on the issue type input (#383)"        
 assert_output_grep "reference: cites the meeting-issue-type spec"                'openspec/specs/meeting-issue-type/spec.md' "$REF"
 assert_output_grep "reference: states why there is no meeting sentinel in Complexity" 'no `meeting` sentinel' "$REF"
 assert_output_grep "reference: the non-routable default names its meeting exception" 'except for a diagnosed `meeting` issue' "$REF"
-assert_output_grep "reference: the trust claim names the producer rule (r5 #3/#27)" 'never infers meeting from content' "$REF"
+assert_output_grep "reference: the trust claim names the producer rule (r5 #3/#27)" 'never to infer meeting from content' "$REF"
+assert_output_grep "reference: the trust claim states its limits (r6 #15/#33)" 'the rule is an instruction the model follows, not a code check' "$REF"
 assert_output_grep "reference: TYPE is one of seven Diagnosis types (r5 #6)"    'one of seven Diagnosis types' "$REF"
 
 # ── verify #383 r5 (#3): the PRODUCER. idd-all re-runs idd-diagnose on every run,
@@ -1304,10 +1379,15 @@ out=$(dg_run 7 FAIL); rc=$?
 assert_eq "idd-diagnose (run): a failed association lookup does not stop diagnosis" "0" "$rc"
 assert_grep "idd-diagnose (run): ... and is not trusted (fail-safe)" 'unknown → BODY_MEETING_TRUSTED=no' "$out"
 out=$( NUMBER='7/../x' GITHUB_REPO=o/r bash -c 'gh() { echo GH-CALLED; echo OWNER; }'$'\n'"$DG_SRC" 2>&1 ); rc=$?
-assert_eq "idd-diagnose (run): a non-numeric issue number is fatal" "1" "$rc"
-refute_grep "idd-diagnose (run): ... before any gh call" 'GH-CALLED' "$out"
+assert_eq "idd-diagnose (run): a non-numeric issue number does not stop diagnosis (r6 #18)" "0" "$rc"
+assert_grep "idd-diagnose (run): ... it is not trusted" 'BODY_MEETING_TRUSTED=no' "$out"
+refute_grep "idd-diagnose (run): ... and no gh call is made" 'GH-CALLED' "$out"
+assert_eq "idd-diagnose (run): the trust line names its issue (r6 #22)" "#7 issue author association: OWNER → BODY_MEETING_TRUSTED=yes" "$(dg_run 7 OWNER)"
 assert_output_grep "idd-diagnose: a body meeting needs BODY_MEETING_TRUSTED=yes" '只有下方採信判斷印出 `BODY_MEETING_TRUSTED=yes` 才採用' "$ID_"
 assert_output_grep "idd-diagnose: inference never yields meeting"               '推斷永遠不得產生 `meeting`' "$ID_"
 refute_output_grep "idd-diagnose: no bare 'default non-meeting' that inference could override" '依內容推斷，**預設非 meeting**' "$ID_"
+assert_output_grep "idd-diagnose: the ### Type line never starts with a rejected declaration (r6 #19)" '**`### Type` 那一行只寫採用的值**' "$ID_"
+assert_output_grep "idd-diagnose: two or more IDD type labels count as none (r6 #21)" '**兩個以上**（例如維護者在既有的 `bug` 上又加了 `meeting`）視同沒有 type label' "$ID_"
+assert_output_grep "idd-diagnose: a failed lookup gets its own sentence (r6 #4)" '本文宣告 meeting，但查不到 issue 作者的 association' "$ID_"
 
 print_summary "actionability-gate"

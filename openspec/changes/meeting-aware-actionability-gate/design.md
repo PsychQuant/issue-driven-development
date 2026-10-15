@@ -47,7 +47,9 @@ Diagnosis 的 `### Type` 是 `/idd-diagnose` 依模板寫的，comment 經作者
 
 ### 本文的 meeting 只採信受信任作者
 
-`/idd-diagnose` Step 1 只在兩種情況把 `meeting` 寫進 `### Type`：issue 有 `meeting` type label；或沒有 type label、本文 `## Type` 宣告 meeting，且 issue 作者的 `author_association` 是 OWNER／MEMBER／COLLABORATOR（與 Diagnosis 過濾同一組）。依內容推斷不得產生 meeting；查不到 association 視同不受信任。外部作者要走 meeting，由維護者加 label——label 只有 triage 以上權限能加。
+`/idd-diagnose` Step 1 只在兩種情況把 `meeting` 寫進 `### Type`：issue 有 `meeting` type label；或沒有 type label、本文 `## Type` 宣告 meeting，且 issue 作者的 `author_association` 是 OWNER／MEMBER／COLLABORATOR（與 Diagnosis 過濾同一組）。依內容推斷不得產生 meeting；查不到 association 視同不受信任（不會寫出 meeting，但 type 改由推斷，可能得到 code 的 tier；處理方式追蹤於 #397）。兩個以上 IDD type label 視同沒有 label；`### Type` 那一行只寫採用的值，不得以沒有採用的宣告開頭（r6 #19、#21）。外部作者要走 meeting，由維護者加 label：手動加 label 需要 triage 以上權限，issue form、template 或 workflow 自動加的 label 是維護者事先設定的意思（r6 #16）。
+
+這條規則是 skill 對執行 `/idd-diagnose` 的模型的指示，不是程式強制；它涵蓋本版以後寫出的 Diagnosis 與四個 routing consumer，`idd-close` 的 meeting 分支屬 #385，程式層的 backstop 與 3.4.0 以前的舊 Diagnosis 追蹤於 #397（r6 #15、#33）。
 
 這是 r5 之後的裁決（maintainer 2026-10-15）。替代方案「接受殘餘、交給 #385」被否決：r4 裁決的前提是「issue 作者改不到」，這一步讓那個前提對 repo 成員以外的作者成立（成員本來就在信任集合內）。只收緊 meeting，因為 gate 只對 `meeting` 放寬（`idd_actionability_verdict` 只比對這個值）；其他 type 的判定不影響 gate，留在 #385。
 
@@ -98,12 +100,14 @@ meeting 判定為 actionable 時，`idd-list` 照常列在 actionable 區，只�
 - `idd-implement`：拒絕可動的 meeting issue，訊息說明 meeting 不走 implement、下一步是 `/idd-plan` 或 `/idd-close`，不要求「修正 Diagnosis」
 - `idd-list`：meeting 的 actionable 列建議 `/idd-plan`（非 `planning`）或 `/idd-close`（`planning`）
 - `idd-update`：最新的 phase-bearing comment 是 `## Meeting Plan` 時，phase 為 `planning`
+- `idd-diagnose`：只在 `meeting` type label，或沒有 type label 而本文 `## Type` 宣告 meeting 且 issue 作者是 OWNER／MEMBER／COLLABORATOR 時，把 `meeting` 寫進 `### Type`
+- `idd-all` 被 Phase 2 當成 code work 分派的 run，Phase 4／5 讀到 meeting 的 Diagnosis 時停下，不 verify、不 push；最終報告依實際路線選樣板，重讀的 type 不一致時加警告行
 
 **Interface**
 
 - `idd_diagnosis_type <diagnosis>` → stdout 印一個值：`bug`、`feature`、`refactor`、`docs`、`meeting`、`unknown` 或 `none`；exit 0
   - 參數為空（沒有受信任 Diagnosis）→ `none`
-  - 讀 `### Type` section（與 `### Complexity` 同一支 reader）的第一個非空行，去掉開頭的 markdown 裝飾，取開頭英文字（ASCII 小寫比對，後接非字詞字元）；是 IDD type 就回該值，否則 `unknown`
+  - 讀 `### Type` section（與 `### Complexity` 同一支 reader）的第一個非空行，依 actionability-gate delta 的五個步驟取 type 字（剝開頭空白與 `*`／`_`／反引號 → 取 ASCII 字母串 → 剝其後的 `*`／`_`／反引號 → 下一字元不得是字母、數字、`_`、`-` → 小寫後屬五個 IDD type）；符合就回該值，否則 `unknown`
   - 參數不是恰好一個 → stderr 具名錯誤、exit 2
 - `idd_actionability_verdict` 新增 `--diagnosis-type <bug|feature|refactor|docs|meeting|unknown|none>`（選填）
 - 呼叫端在 gate block 內 `DIAG_TYPE=$(idd_diagnosis_type "$LATEST_DIAGNOSIS")`，傳給 verdict，並印在機器行
@@ -119,6 +123,8 @@ meeting 判定為 actionable 時，`idd-list` 照常列在 actionable 區，只�
 - 三份既有 fixture 在不帶 `--diagnosis-type`、或帶任何非 meeting 的值時判定逐筆不變
 - 新 fixture `meeting-routing.json` 的每一列判定與預期相同，包括「本文寫 meeting、Diagnosis 寫 bug」不得放行
 - 四份 gate block 逐 byte 相同的既有 assertion 仍通過
+- `idd-diagnose` 的採信區塊實跑：OWNER／MEMBER／COLLABORATOR 可採用，其他 association 與查詢失敗不採用
+- `idd-all` 的 unwind、Phase 4、Phase 5、Phase 6 以原始 comment 清單實跑作者過濾：外部作者貼的 meeting Diagnosis 被忽略，MEMBER 貼的被讀到
 
 **Scope**
 
@@ -127,7 +133,7 @@ meeting 判定為 actionable 時，`idd-list` 照常列在 actionable 區，只�
 
 ## Risks / Trade-offs
 
-- [type 誤判成 meeting，一般 issue 跳過 complexity gate] → 只有受信任 Diagnosis 的 `### Type` 明寫 meeting 才算；而 `/idd-diagnose` 只在 type label 或受信任作者的本文宣告時寫 meeting，所以 repo 成員以外的 issue 作者改不到
+- [type 誤判成 meeting，一般 issue 跳過 complexity gate] → 只有受信任 Diagnosis 的 `### Type` 明寫 meeting 才算；而 `/idd-diagnose` 只在 type label 或受信任作者的本文宣告時寫 meeting，所以 repo 成員以外的 issue 作者改不到——前提是模型照 skill 的指示做（程式層 backstop 追蹤於 #397）
 - [同一張 issue 同時有兩個 run，或受信任成員在 implement 之後貼出 meeting 的 Diagnosis] → `idd-all` Phase 4／5 讀到 meeting 時 fail-closed：不 verify、不 push，明講 commit 留在哪（r5 #11）
 - [maintainer 改了 type label 但沒重新 diagnose] → gate 仍依舊 Diagnosis 判斷，直到重新 diagnose；與 Complexity 訊號的既有語意一致（Diagnosis 是判定的紀錄）
 - [四份 gate block 改不一致] → 既有的逐 byte 相同 assertion 會擋下

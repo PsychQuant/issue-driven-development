@@ -38,6 +38,8 @@ actionability gate（#316，2026-10-06）把可路由的 `### Complexity` 值域
 - `idd_diagnosis_type`：`### Type` 第一行為 `meeting` 或 `meeting（…）` → `meeting`；為 `bug` → `bug`；沒有 `### Type` → `unknown`；空字串 → `none`
 - 四份 gate block 仍逐 byte 相同，`scripts/tests/actionability-gate/test.sh` 全數通過
 - `idd-update`：最新的 phase comment 是 `## Meeting Plan` 時推為 `planning`
+- `idd-diagnose`：沒有 type label、本文 `## Type` 宣告 meeting 的 issue，作者 association 是 OWNER／MEMBER／COLLABORATOR 時採用 meeting，其他（含查不到）不採用
+- `idd-all`：Phase 2 當成 code work 分派的 run，Phase 4／5 讀到 meeting 的 Diagnosis 時停下，不 verify、不 push
 
 ## Capabilities
 
