@@ -354,6 +354,14 @@ IDD_CALLER=idd-comment-errata \
     --body-file {correction-file} [--reason "..."]
 ```
 
+依 idd-edit 的結束碼收尾（#351 verify 第 3 輪：更正被擋下時，舊流程什麼都沒留下）：
+
+| idd-edit 結束碼 | 意思 | 本 skill 接著做 |
+|---|---|---|
+| 0 | 已就地更正 | 回報「已更正」與 backup id，不貼任何 comment |
+| 5 | 使用者在預覽時拒絕 | 回報「使用者拒絕」，不貼、不改 |
+| 4（或其他非 0） | 更正被拒絕（受管區、egress、作者無法判定、寫入後無法確認…） | **改貼 errata**：照下方「其他作者」的路徑，以 `--correction-file` 的內容摘要寫成 errata 說明貼出，並在說明中註明「就地更正未成功：<idd-edit 的拒絕原因>」——錯的原文至少有一則指向正確內容的更正 |
+
 **其他作者 → 只 post errata comment**：不呼叫 idd-edit、target comment 不動，也不提示 `--override-user-content`（協作者的 comment 屬 verbatim-preserve，`--correct` 沒有 override）。`--body` 是 errata 說明：
 
 ```markdown

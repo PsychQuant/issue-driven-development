@@ -76,7 +76,7 @@ The 8 categories SHALL be: `state-field-update`, `bounded-section-replace`, `aud
 
 ### Requirement: in-place-correction SHALL replace confirmed errors only after archiving the prior version
 
-The `in-place-correction` category SHALL cover replacing content that the user has confirmed to be wrong, in an issue body or an OWNER- or bot-authored comment, including content that would otherwise fall under `append-only` (published comments) or the issue body above the `---` separator. An action in this category SHALL (a) archive the prior full text of the target before writing, (b) obtain explicit user confirmation, (c) leave a marker that identifies the archive entry without a filesystem path, and (d) refuse the regions that remain `verbatim-preserve`. `/idd-edit --correct` SHALL be the only action declared in this category; other skills SHALL reach it by invoking `/idd-edit`.
+The `in-place-correction` category SHALL cover replacing content that the user has confirmed to be wrong, in an issue body or a comment whose author is the OWNER or the authenticated `gh` user (never a bot's comment), including content that would otherwise fall under `append-only` (published comments) or the issue body above the `---` separator. An action in this category SHALL (a) archive the prior full text of the target before writing, (b) obtain explicit user confirmation, (c) leave a marker that identifies the archive entry without a filesystem path, and (d) refuse the regions that remain `verbatim-preserve`. `/idd-edit --correct` SHALL be the only action declared in this category; other skills SHALL reach it by invoking `/idd-edit`.
 
 #### Scenario: Correction declared in idd-edit
 
@@ -90,7 +90,7 @@ The `in-place-correction` category SHALL cover replacing content that the user h
 
 ### Requirement: verbatim-preserve SHALL cover only original-source quotations and third-party content
 
-The `verbatim-preserve` category SHALL cover exactly two kinds of content: (1) blockquote runs that quote original source text, identified by a line containing `Original text` within the run, and (2) comments authored by anyone other than `OWNER`, a bot, or the authenticated `gh` user. A bot's comment is outside `verbatim-preserve`, but it is still a third party's words, so `in-place-correction` SHALL NOT rewrite it. Issue-body prose written by the issue author or by an IDD skill (interpretation paragraphs, Expected, Actual, Impact) SHALL NOT be `verbatim-preserve`; it SHALL be correctable through `in-place-correction`.
+The `verbatim-preserve` category SHALL cover exactly two kinds of content: (1) blockquote runs that quote original source text, identified by a line containing `Original text` within the run, and (2) comments and issue bodies authored by anyone other than `OWNER`, a bot, or the authenticated `gh` user. A bot's comment is outside `verbatim-preserve`, but it is still a third party's words, so `in-place-correction` SHALL NOT rewrite it. Issue-body prose in an issue opened by the OWNER or the authenticated `gh` user — interpretation paragraphs, Expected, Actual, Impact, including text an IDD skill wrote there — SHALL NOT be `verbatim-preserve`; it SHALL be correctable through `in-place-correction`. An issue body opened by anyone else is third-party content under (2).
 
 #### Scenario: Interpretation paragraph is correctable
 

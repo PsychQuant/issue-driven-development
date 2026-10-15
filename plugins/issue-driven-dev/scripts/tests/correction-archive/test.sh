@@ -299,4 +299,49 @@ run_in "$SW" g2 archive comment 10 --from-file "$WORK/old.md" --repo o/r
 assert_exit "archive through a symlinked directory → exit 7" 7 "$RC"
 refute "nothing written behind the symlink" test -e "$WORK/write-elsewhere/edits"
 
+# ── H. round 4 (verify #351 round 3) ──────────────────────────────────────
+echo "H. round 4"
+
+# H1. the sidecar is created exclusively: an orphan or a symlinked .repo is never written through
+OR="$WORK/orphan"; mkdir -p "$OR"; git -C "$OR" init -q
+mkdir -p "$OR/.claude/.idd/archive/edits"
+printf 'someone/else' >"$OR/.claude/.idd/archive/edits/comment-11-20261009T100000Z.repo"
+printf 'victim' >"$WORK/victim.txt"
+ln -s "$WORK/victim.txt" "$OR/.claude/.idd/archive/edits/comment-12-20261009T100000Z.repo"
+run_in "$OR" h1a archive comment 11 --from-file "$WORK/old.md" --repo o/r
+assert_eq "an orphan sidecar pushes the id to -2" "comment-11-20261009T100000Z-2" "$(cat "$WORK/h1a.out")"
+assert_eq "the orphan sidecar is untouched" "someone/else" "$(cat "$OR/.claude/.idd/archive/edits/comment-11-20261009T100000Z.repo")"
+run_in "$OR" h1b archive comment 12 --from-file "$WORK/old.md" --repo o/r
+assert_eq "a symlinked sidecar is not written through" "victim" "$(cat "$WORK/victim.txt")"
+
+# H2. a nested repository (submodule) under the archive path is refused
+NR="$WORK/nested"; mkdir -p "$NR"; git -C "$NR" init -q
+mkdir -p "$NR/.claude/.idd/archive/edits"; git -C "$NR/.claude" init -q
+printf 'x' >"$NR/.claude/.idd/archive/edits/comment-13-20261009T100000Z.md"
+printf 'o/r' >"$NR/.claude/.idd/archive/edits/comment-13-20261009T100000Z.repo"
+git -C "$NR/.claude" add -f . >/dev/null 2>&1
+rm -f "$WORK/gh_args"
+run_in "$NR" h2 restore comment-13-20261009T100000Z --repo o/r
+assert_exit "an entry inside a nested repository → exit 2" 2 "$RC"
+refute "gh not called for a nested-repository entry" test -e "$WORK/gh_args"
+
+# H3. on a case-insensitive filesystem, a tracked .CLAUDE/... entry is still refused
+CS="$WORK/case"; mkdir -p "$CS/.CLAUDE/.IDD/ARCHIVE/EDITS"; git -C "$CS" init -q
+if [ -d "$CS/.claude/.idd/archive/edits" ]; then
+  printf 'x' >"$CS/.CLAUDE/.IDD/ARCHIVE/EDITS/comment-14-20261009T100000Z.md"
+  printf 'o/r' >"$CS/.CLAUDE/.IDD/ARCHIVE/EDITS/comment-14-20261009T100000Z.repo"
+  git -C "$CS" add -f . >/dev/null 2>&1
+  rm -f "$WORK/gh_args"
+  run_in "$CS" h3 restore comment-14-20261009T100000Z --repo o/r
+  assert_exit "a tracked entry under a case variant → exit 2" 2 "$RC"
+  refute "gh not called for the case variant" test -e "$WORK/gh_args"
+fi
+
+# H4. hook: a recursive chmod above the archive is denied; -m is prose only for message-taking commands
+expect_deny  chmodR   "{\"tool_name\":\"Bash\",\"cwd\":\"$REPO\",\"tool_input\":{\"command\":\"chmod -R u+r .claude\"}}"
+expect_deny  chmodRd  "{\"tool_name\":\"Bash\",\"cwd\":\"$REPO\",\"tool_input\":{\"command\":\"chmod -R u+rw .\"}}"
+expect_allow chmodOk  "{\"tool_name\":\"Bash\",\"cwd\":\"$REPO\",\"tool_input\":{\"command\":\"chmod u+x scripts/run.sh\"}}"
+expect_deny  sortm    '{"tool_name":"Bash","tool_input":{"command":"sort -m .claude/.idd/archive/edits/a.md"}}'
+expect_allow gitm     '{"tool_name":"Bash","tool_input":{"command":"git commit -m .claude/.idd/archive/edits"}}'
+
 print_summary "correction-archive"

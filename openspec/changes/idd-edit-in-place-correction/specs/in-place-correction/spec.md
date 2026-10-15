@@ -6,7 +6,7 @@ Defines how `/idd-edit --correct` replaces content in an issue comment or issue 
 
 ### Requirement: /idd-edit --correct SHALL replace a bounded region after explicit confirmation
 
-The `/idd-edit` skill SHALL accept a `--correct` mode whose target is either a comment (`comment:<id>`) or an issue body (`issue:<N>`). For a comment target the invocation SHALL carry exactly one of `--scope whole-comment` or `--section <heading>`. For an issue-body target the invocation SHALL carry `--section <heading>`; `--scope whole-comment` and any whole-body scope SHALL be refused with exit code 3. A `--section` value SHALL be a markdown heading line (one to six `#`, whitespace, then the title); any other value SHALL be refused with exit code 2. The skill SHALL show the full body that would be written — composed by the helper's `compose-correction` with a placeholder in place of the backup id — then ask for confirmation with NO as the default; after confirmation the same subcommand composes the written body with the real backup id. When the replacement text begins with the target heading line, that line SHALL NOT appear twice. The skill SHALL write the archive and PATCH the target only after the user confirms; a declined confirmation SHALL leave both the target and the archive directory unchanged.
+The `/idd-edit` skill SHALL accept a `--correct` mode whose target is either a comment (`comment:<id>`) or an issue body (`issue:<N>`). For a comment target the invocation SHALL carry exactly one of `--scope whole-comment` or `--section <heading>`. For an issue-body target the invocation SHALL carry `--section <heading>`; `--scope whole-comment` and any whole-body scope SHALL be refused with exit code 3. In every `/idd-edit` mode a `--section` value SHALL be a markdown heading line (one to six `#`, whitespace, then the title); any other value SHALL be refused with exit code 2. A `--correct` invocation without replacement text (`--body` or a non-empty `--body-file`) SHALL be refused with exit code 2. Before the preview the skill SHALL run `gh-egress.sh check` on the composed body, attesting only the logins the target already mentions (`existing-mentions`), and SHALL refuse the target as `egress` when the check fails, so a body the egress gates would reject is never confirmed or archived. The skill SHALL show the full body that would be written — composed by the helper's `compose-correction` with a placeholder in place of the backup id — then ask for confirmation with NO as the default; after confirmation, and before archiving, the same subcommand composes the body again with the placeholder and the skill SHALL refuse the target as `differs-from-preview` when the result differs from the preview; only then is the body composed with the real backup id. When the replacement text begins with the target heading line, that line SHALL NOT appear twice. When the user declines every preview and nothing is refused, the skill SHALL exit 5. The skill SHALL write the archive and PATCH the target only after the user confirms; a declined confirmation SHALL leave both the target and the archive directory unchanged.
 
 #### Scenario: Section flag that is not a heading
 
@@ -30,7 +30,17 @@ The `/idd-edit` skill SHALL accept a `--correct` mode whose target is either a c
 
 ### Requirement: Protected regions SHALL NOT be corrected
 
-The helper SHALL refuse a correction with exit code 6 when either of the following holds: (1) the target section — or, for `--scope whole-comment`, the whole comment — is or contains `## Current Status`, a heading beginning with `### Clarity Surface`, or any heading nested inside `## Current Status`, or the replacement introduces such a heading (a line inside a code block of the original is not a heading; a matching line anywhere in the replacement, fenced or not, is refused, because `idd-update` and `idd-clarify` find their heading by exact line match); (2) the verbatim blocks of the original region and of the replacement are not identical as multisets. A verbatim block is a maximal run of consecutive lines starting with `>` in which some line contains `Original text` or the decision-template label `**Original**` (closed list of two labels). The refusal message SHALL name the protected region and the skill that owns it (`idd-update` for Current Status, `idd-clarify` for Clarity Surface) or state that the verbatim block must be preserved.
+The helper SHALL refuse a correction with exit code 6 when either of the following holds: (1) the target section — or, for `--scope whole-comment`, the whole comment — is or contains `## Current Status`, a heading beginning with `### Clarity Surface`, or any heading nested inside `## Current Status`, or the replacement introduces such a heading (both the original and the replacement are read line by line, fenced or not, because `idd-update` and `idd-clarify` find their heading by exact line match; a heading nested under `### Clarity Surface` belongs to it); (3) for `--scope whole-comment`, the comment opens with an ATX heading (such as `## Diagnosis`) that the replacement does not keep as its first line; (4) a non-blank line follows a verbatim block in the replacement directly, joining the quotation as a lazy continuation, where the original had no such line; (2) the verbatim blocks of the original region and of the replacement are not identical as multisets. A verbatim block is a maximal run of consecutive lines starting with `>` in which some line contains `Original text` or the decision-template label `**Original**` (closed list of two labels). The refusal message SHALL name the protected region and the skill that owns it (`idd-update` for Current Status, `idd-clarify` for Clarity Surface) or state that the verbatim block must be preserved.
+
+#### Scenario: Correction that would swallow a section after an unclosed fence
+
+- **WHEN** the target section contains a fence that is never closed and `## Current Status` follows it
+- **THEN** `check-correction` SHALL exit 6, because the section then runs to the end and contains `## Current Status`
+
+#### Scenario: Whole-comment correction that drops the opening heading
+
+- **WHEN** a comment opens with `## Diagnosis` and the whole-comment replacement does not start with that line
+- **THEN** the helper SHALL exit 6
 
 #### Scenario: Whole-comment correction that drops a managed region
 
@@ -63,7 +73,12 @@ The helper SHALL refuse a correction with exit code 6 when either of the followi
 
 ### Requirement: Correction marker SHALL carry only the backup id and sit at the end of the replaced region
 
-After a correction the replaced region SHALL end with exactly one new marker of the form `<!-- idd:edit mode="correct" backup-id="<backup-id>" date="<YYYY-MM-DD>" -->`. The marker SHALL NOT contain a filesystem path; `emit-audit-marker` SHALL refuse with exit 2 a `backup-id` value that does not match the backup id pattern. For `--scope whole-comment` the marker SHALL be the last line of the comment; for `--section` the marker SHALL be the last line of the replaced section, before the next heading of the same or higher level. Correction markers already present in the replaced region SHALL be kept, in their order, immediately before the new marker, so every earlier backup id stays reachable.
+After a correction the replaced region SHALL end with exactly one new marker of the form `<!-- idd:edit mode="correct" backup-id="<backup-id>" date="<YYYY-MM-DD>" -->`. The marker SHALL NOT contain a filesystem path; `emit-audit-marker` SHALL refuse with exit 2 a `backup-id` value that does not match the backup id pattern. For `--scope whole-comment` the marker SHALL be the last line of the comment; for `--section` the marker SHALL be the last line of the replaced section, before the next heading of the same or higher level. Every whole-line IDD marker (`<!-- idd:… -->`, correction markers included) present in the replaced region SHALL be kept once, in order, immediately before the new marker, so every earlier backup id and every marker other skills look for stays; a marker the replacement already contains SHALL NOT be repeated. `compose-correction` SHALL refuse with exit 6 when the composed body would parse differently outside the replaced region, or when a marker would not start its own HTML block or would sit in a code block — the result of a replacement that leaves a fence or an HTML comment open.
+
+#### Scenario: Replacement that leaves a fence open
+
+- **WHEN** the replacement text ends inside an open fenced code block
+- **THEN** `compose-correction` SHALL exit 6 and nothing SHALL be previewed or written
 
 #### Scenario: Second correction of the same section
 
@@ -143,7 +158,7 @@ A target SHALL be correctable only when its author has `author_association` `OWN
 
 ### Requirement: The target SHALL be re-read after confirmation
 
-After the user confirms and before archiving, the skill SHALL fetch the target again and compare it byte-for-byte with the previewed text. When they differ, the skill SHALL refuse that target as changed since preview, write no archive and PATCH nothing. When either fetch — the one before the preview or the one after confirmation — fails, the skill SHALL refuse that target as `fetch-failed` and write nothing; an empty working copy SHALL never be compared, archived or written.
+After the user confirms and before archiving, the skill SHALL fetch the target again and compare it byte-for-byte with the previewed text. When they differ, the skill SHALL refuse that target as changed since preview, write no archive and PATCH nothing. When either fetch — the one before the preview or the one after confirmation — fails, the skill SHALL refuse that target as `fetch-failed` and write nothing; an empty working copy SHALL never be compared, archived or written. Working copies SHALL live in a directory private to the run. After the PATCH the skill SHALL read the target back; when the read fails or differs from what was sent, the target SHALL be reported as unverified, SHALL NOT count as edited, and the run SHALL exit 4.
 
 #### Scenario: Both fetches fail
 
@@ -157,7 +172,12 @@ After the user confirms and before archiving, the skill SHALL fetch the target a
 
 ### Requirement: Corrected sections SHALL stop at a thematic break or a managed heading
 
-For `--correct`, a section SHALL end at the first of: the next heading of the same or a higher level, the next line consisting of `---`, or the next `## Current Status` or `### Clarity Surface` heading — so that separators, the audit blocks below them, and regions owned by other skills are never replaced. A line inside a fenced or indented code block SHALL NOT end a section; code block ranges SHALL come from the pinned CommonMark parser (`markdown-it-py` 4.0.0, `scripts/requirements-egress.txt`), and when that parser is missing or a different version the helper SHALL refuse with exit 1 and change nothing.
+Section boundaries SHALL come from the pinned CommonMark parser (`markdown-it-py` 4.0.0, `scripts/requirements-egress.txt`), not from the leading characters of a line. For `--correct`, a section SHALL end at the first of: the next top-level heading of the same or a higher level (ATX or setext), the next top-level thematic break, or the next `## Current Status` or `### Clarity Surface` line outside a code or HTML block — so that separators, the audit blocks below them, and regions owned by other skills are never replaced. A line inside a fenced or indented code block or an HTML block SHALL NOT end a section. When the parser is missing or a different version, `section-replace`, `check-correction` and `compose-correction` SHALL exit 8 and change nothing.
+
+#### Scenario: A heading inside an HTML comment
+
+- **WHEN** the section being corrected contains a multi-line `<!--` comment with a `## hidden` line, followed by more prose
+- **THEN** the section SHALL run past the comment to the next real heading, and no `-->` SHALL be left behind
 
 #### Scenario: A comment line inside a fence
 
@@ -177,3 +197,17 @@ For `--correct`, a section SHALL end at the first of: the next heading of the sa
 
 - **WHEN** a Diagnosis comment that stated a decision is corrected with `/idd-edit --correct` and `/idd-update` runs afterwards
 - **THEN** `### Key Decisions` SHALL NOT contain the corrected statement
+
+### Requirement: Parsed arguments SHALL evaluate to exactly the given values
+
+`parse-args` output is evaluated by the skill under bash or zsh. Every emitted value SHALL evaluate to exactly the value given: a value containing a newline or any other control character SHALL be emitted in ANSI-C quoting, and every `=` SHALL be escaped (zsh expands `=cmd` at the start of a word and after `:`). A `--body-file` containing a NUL byte SHALL be refused with exit code 5. The skill SHALL stop when the evaluation fails.
+
+#### Scenario: NUL byte in a body file
+
+- **WHEN** `--body-file` names a file whose content is `x`, a NUL byte, then `;touch PWNED`
+- **THEN** `parse-args` SHALL exit 5 and no command from the file SHALL run
+
+#### Scenario: Equals sign after a colon under zsh
+
+- **WHEN** `--body 'a:=ls'` is parsed and the output is evaluated by zsh
+- **THEN** `BODY_INPUT` SHALL equal `a:=ls`

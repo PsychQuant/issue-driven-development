@@ -124,7 +124,7 @@ Issue-body prose written by the issue author or by an IDD skill (interpretation 
 
 ### 8. `in-place-correction`
 
-**Definition**: Replace content that the user has confirmed to be wrong, in place, so that later readers — humans and AI sessions that re-read the issue as memory — stop inheriting the error (#351). Applies only to the invoking user's own content — issue bodies and comments whose author is the OWNER, a bot, or the invoking user's own `gh` login (org maintainers show as `MEMBER`, so the login check is what admits them) — including published comments that are otherwise `append-only`.
+**Definition**: Replace content that the user has confirmed to be wrong, in place, so that later readers — humans and AI sessions that re-read the issue as memory — stop inheriting the error (#351). Applies only to the invoking user's own content — issue bodies and comments whose author is the OWNER or the invoking user's own `gh` login (org maintainers show as `MEMBER`, so the login check is what admits them) — including published comments that are otherwise `append-only`. A bot's comment is not included: it is a third party's words, answered with an errata comment (verify #351 round 2).
 
 **Scope boundary**: One bounded region — a whole comment (`--scope whole-comment`) or one named section (`--section <heading>`; the only form allowed for an issue body). The action SHALL (a) show the original and the replacement and get explicit confirmation, (b) archive the prior full text under `.claude/.idd/archive/edits/` of the main worktree (not a linked worktree, so the archive outlives worktree cleanup) before writing — the archive is never tracked by git and Claude's tools are denied access to it — (c) end the replaced region with a marker that carries the backup id and no path, and (d) refuse `verbatim-preserve` content and the regions owned by other skills (`## Current Status` → `idd-update`, `### Clarity Surface` → `idd-clarify`). `/idd-edit --correct` is the only action declared in this category; other skills reach it by proposing the command.
 
@@ -148,7 +148,8 @@ or a comment or issue body authored by someone other than the OWNER, a bot, or t
 ├─ Yes → REFUSE the action entirely (this zone is verbatim-preserve)
 │
 Is the action replacing content the user has confirmed to be wrong?
-├─ Yes → category: in-place-correction (only via /idd-edit --correct)
+├─ Yes → category: in-place-correction (only via /idd-edit --correct; the OWNER's or your own content only —
+│          a bot's comment gets an errata comment instead)
 │
 Is the target a machine-readable state field (phase, timestamp, status enum, checkbox boolean)?
 ├─ Yes → category: state-field-update
@@ -276,7 +277,7 @@ This rule defines the discipline; tooling-level enforcement is reserved for foll
 - `--replace` mode: `bounded-section-replace` category. Invocations SHALL include `--scope whole-comment` (full-comment overwrite acknowledgment) OR `--section <heading-within-comment>` (named subsection scope).
 - `--correct` mode: `in-place-correction` category (#351). Same scope flags as `--replace`; an issue-body target (`issue:<N>`) accepts `--section` only. No `--override-user-content`.
 
-This rule additionally declares a verbatim-preserve guard at the comment layer: comments where `author_association ≠ OWNER` (and the author is neither in the known-bot allowlist nor the invoking user's own `gh` login) SHALL NOT be modified without explicit `--override-user-content --reason="..."` invocation discipline.
+This rule additionally declares a verbatim-preserve guard at the comment layer: comments where `author_association ≠ OWNER` (and the author is neither in the known-bot allowlist nor the invoking user's own `gh` login) SHALL NOT be modified without explicit `--override-user-content --reason="..."` invocation discipline. `--correct` is narrower still: it admits only the OWNER and the invoking user, never a bot, and has no override.
 
 **Enforcement status**: enforced at runtime by `scripts/idd-edit-helper.py` since v2.81.0 ([#154](https://github.com/PsychQuant/issue-driven-development/issues/154) → [#155](https://github.com/PsychQuant/issue-driven-development/issues/155) Python layer): `parse-args` refuses `--replace` / `--correct` without scope (exit 3), `validate-target` refuses authors other than the OWNER, a bot, or the invoking `gh` user (exit 4; with `--correct` a bot is refused as well), and `check-correction` refuses protected regions (exit 6, #351). The bash-in-SKILL.md attempts on PR #153 that this paragraph used to describe were replaced by that helper.
 

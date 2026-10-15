@@ -22,8 +22,14 @@ ordinary `cat`/`grep`/Read that would otherwise happen by accident.
 
 Shell commands are checked word by word, quoted strings included (`sh -c`,
 `python3 -c` read files from inside them). Only the value of a message option
-(-m, --message, --body, --title, --notes, --subject) is skipped: a commit
-message or issue body that mentions the path does not open it. The file ~/.cache/idd/archive-read-guard.disabled, created
+(-m, --message, --body, --title, --notes, --subject) given to a command that
+takes messages (git, gh, hg, jj, svn) is skipped: a commit message or issue
+body that mentions the path does not open it, while `sort -m <archive>` still
+names a file (verify #351 round 3).
+
+A recursive permission change (chmod/chown/chgrp/chflags/setfacl with -R) on
+the archive or any directory above it is denied too: it would undo the second
+layer, after which a recursive read gets the files (round 3). The file ~/.cache/idd/archive-read-guard.disabled, created
 by a human, turns the guard off.
 
 Input that cannot be parsed is allowed (a note goes to stderr): a bug in this
@@ -86,25 +92,36 @@ def _hits(candidate):
 # quoted string is still scanned, because `sh -c "cat <archive>"` and
 # `python3 -c "open('<archive>')"` read the archive from inside a quoted string.
 MESSAGE_FLAGS = ("-m", "--message", "--body", "--title", "--notes", "--subject")
+MESSAGE_COMMANDS = ("git", "gh", "hg", "jj", "svn")
+SEPARATORS = (";", "&&", "||", "|", "&")
+PERMISSION_COMMANDS = ("chmod", "chown", "chgrp", "chflags", "setfacl")
+
+
+def _split_words(command):
+    # Backslashes become '/' before splitting: PowerShell paths use them as
+    # separators, and POSIX shlex would otherwise eat them as escapes.
+    command = command.replace("\\", "/")
+    try:
+        return shlex.split(command, posix=True)
+    except ValueError:
+        return command.split()
 
 
 def _command_words(command):
     """Path candidates in a shell command: every shell word, and every piece of
     a word split on whitespace and quoting/grouping characters — except the
     value of a message option, which is prose."""
-    # Backslashes become '/' before splitting: PowerShell paths use them as
-    # separators, and POSIX shlex would otherwise eat them as escapes.
-    command = command.replace("\\", "/")
-    try:
-        words = shlex.split(command, posix=True)
-    except ValueError:
-        words = command.split()
-    previous = ""
-    for word in words:
-        is_message = previous in MESSAGE_FLAGS or any(
-            word.startswith(flag + "=") for flag in MESSAGE_FLAGS if flag.startswith("--")
+    previous, command_name = "", None
+    for word in _split_words(command):
+        if command_name is None:
+            command_name = os.path.basename(word)
+        is_message = command_name in MESSAGE_COMMANDS and (
+            previous in MESSAGE_FLAGS
+            or any(word.startswith(flag + "=") for flag in MESSAGE_FLAGS if flag.startswith("--"))
         )
         previous = word
+        if word in SEPARATORS or word.endswith(";"):
+            command_name = None
         # A message value is prose only if the shell will not execute part of
         # it: `--body "$(cat <archive>)"` posts the archive (parser differential
         # between shlex and the real shell).
@@ -113,6 +130,43 @@ def _command_words(command):
         for piece in re.split(r"[\s'\"`()=;|&<>]+", word):
             if piece:
                 yield _norm_path(piece)
+
+
+def _archive_below(target):
+    """True if `target` is the archive, inside it, or a directory above it."""
+    if _hits(_norm_path(target)):
+        return True
+    for suffix in (NEEDLE, ".idd/archive", "archive"):
+        candidate = os.path.join(target, suffix)
+        if os.path.isdir(candidate) and _hits(_norm_path(candidate)):
+            return True
+    return False
+
+
+def _recursive_permission_change(command, cwd):
+    """A -R permission change whose target is the archive or a directory above
+    it (resolved against the tool call's working directory)."""
+    words = _split_words(command)
+    i = 0
+    while i < len(words):
+        if os.path.basename(words[i]) not in PERMISSION_COMMANDS:
+            i += 1
+            continue
+        args = []
+        i += 1
+        while i < len(words) and words[i] not in SEPARATORS:
+            args.append(words[i])
+            i += 1
+        recursive = any(
+            a == "--recursive" or (a.startswith("-") and not a.startswith("--") and "R" in a)
+            for a in args
+        )
+        if recursive and any(
+            _archive_below(os.path.normpath(os.path.join(cwd, os.path.expanduser(a))))
+            for a in args if not a.startswith("-")
+        ):
+            return True
+    return False
 
 
 def _candidates(tool, tool_input):
@@ -147,7 +201,11 @@ def main():
     if os.path.exists(os.path.expanduser(UNLOCK_FLAG)):
         return 0  # a human created the unlock flag (archive-first style switch)
 
-    if any(_hits(c) for c in _candidates(tool, tool_input)):
+    cwd = _as_text(event.get("cwd")) or os.getcwd()
+    command = _as_text(tool_input.get("command")) if tool in COMMAND_TOOLS else ""
+    if any(_hits(c) for c in _candidates(tool, tool_input)) or (
+        command and _recursive_permission_change(command, cwd)
+    ):
         print(json.dumps({
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",

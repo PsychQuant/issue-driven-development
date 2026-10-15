@@ -78,10 +78,11 @@ idd-issue source.docx       # auto-trigger when source contains ≥2 findings
 | Requirement | Gate | Refuse code |
 |-------------|------|-------------|
 | **R4** (spec) | `--replace` without `--scope`/`--section` → refuse | exit 3 |
-| **R5** (spec) | Comment author non-OWNER non-bot,無 `--override-user-content --reason="..."` → refuse | exit 4 |
+| **R5** (spec) | 作者不是 OWNER、bot 或你自己（目前的 gh 使用者），且沒有 `--override-user-content --reason="..."` → refuse；`--correct` 只放行 OWNER 與你自己（bot 也拒絕、沒有 override；查不到 gh 使用者 → exit 1） | exit 4 |
 | `--correct` scope | 缺 `--scope`/`--section`，或 `issue:<N>` 用 whole scope → refuse | exit 3 |
 | `--correct` override | `--correct` 併用 `--override-user-content` → refuse（協作者 comment 只提議、不改） | exit 2 |
-| Protected regions | `check-correction`：目標是 `## Current Status`／`### Clarity Surface`（或其下）、替換內容帶入這些標題、`Original text`／`**Original**` 引用被改 → refuse。更正的段落遇到 `---` 或這兩個標題即結束，不會吃到它們 | exit 6 |
+| Protected regions | `check-correction`：目標是或包含 `## Current Status`／`### Clarity Surface`（含其下的子標題，逐行比對、與 idd-update 相同）、替換內容帶入這些標題、`Original text`／`**Original**` 引用被改或後面緊接文字、整則更正拿掉開頭的型別標題 → refuse。`compose-correction`：替換內容留下沒關閉的 fence 或 HTML 註解 → refuse。段落邊界取自 Markdown parser（頂層標題、分隔線；code 與 HTML 區塊裡的行不算） | exit 6 |
+| Markdown parser | `section-replace`／`check-correction`／`compose-correction` 需要 `markdown-it-py` 4.0.0（`scripts/requirements-egress.txt`）；缺或版本不符 → refuse、不改任何東西 | exit 8 |
 | Archive | 不在 git work tree、歸檔路徑沒被 ignore、寫入失敗 → refuse，不 PATCH | exit 7 |
 
 Override pathway:`--override-user-content --reason="<rationale>"` 顯式同意修改 user content。 Audit marker `<!-- idd:edit override-user-content date=... reason="..." -->` 自動 append。
@@ -148,7 +149,7 @@ PARSE_ERR=$(cat "$PARSE_ERR_FILE")
 rm -f "$PARSE_ERR_FILE"
 
 case $PARSE_EXIT in
-  0) eval "$PARSE_OUT" ;;   # imports MODE/SCOPE_FLAG/SECTION_FLAG/BODY_INPUT/etc.
+  0) eval "$PARSE_OUT" || { echo "✗ the parsed arguments did not evaluate — nothing was changed" >&2; exit 2; } ;;   # imports MODE/SCOPE_FLAG/SECTION_FLAG/BODY_INPUT/etc.
   3) echo "$PARSE_ERR" >&2; exit 3 ;;   # R4 refuse — actionable message
   *) echo "$PARSE_ERR" >&2; exit $PARSE_EXIT ;;
 esac
@@ -201,9 +202,15 @@ done
 **v2.81.0+ (#154 R3 fix for H7)**: Each resolved target runs through the full pipeline (validate → fetch → preview → confirm → PATCH → verify) independently. Batch mode = N iterations of the same sequence, per-comment confirmation discipline preserved.
 
 ```bash
+# One private directory per run (mode 0700): every working copy lives here, so
+# no other local user can swap one between the preview and the write (verify
+# #351 round 3 — a shared fixed directory under /tmp allowed it).
+WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/idd-edit-XXXXXX") || {
+  echo "✗ cannot create a private working directory — nothing was changed" >&2; exit 1; }
 EDITED_COUNT=0        # incremented after each successful per-target Step 7 verify
-REFUSED_TARGETS=()    # "<kind:number> <reason>" — reason: R5 / fetch-failed / protected / section-not-found / check-failed / changed-since-preview / archive / replace (#158 (i): recorded, not fatal)
+REFUSED_TARGETS=()    # "<kind:number> <reason>" — reason: R5 / author-unknown / fetch-failed / stage-failed / protected / section-not-found / parser-unavailable / check-failed / egress / changed-since-preview / differs-from-preview / archive / replace (#158 (i): recorded, not fatal)
 DECLINED_TARGETS=()   # the user answered NO at Step 5 — reported, not a refusal
+UNVERIFIED_TARGETS=() # written, but the re-read at Step 7 failed or did not match
 EGRESS_REFUSED_TARGETS=()   # egress-band refusals rc>=10（#273 — tier-floor/privacy/mention/empty-body），warn-continue
 for TARGET in "${RESOLVED_TARGETS[@]}"; do
     TARGET_KIND="${TARGET%%:*}"     # comment | issue — derived per iteration
@@ -224,13 +231,15 @@ echo "── idd-edit batch outcome ──"
 REFUSED_TOTAL=$(( ${#REFUSED_TARGETS[@]} + ${#EGRESS_REFUSED_TARGETS[@]} ))
 echo "edited: $EDITED_COUNT / refused: $REFUSED_TOTAL"
 for entry in ${REFUSED_TARGETS[@]+"${REFUSED_TARGETS[@]}"}; do
-  # entry = "<kind:number> <reason>"; reason ∈ R5 / fetch-failed / protected /
-  # section-not-found / check-failed / changed-since-preview / archive / replace.
+  # entry = "<kind:number> <reason>"; reason ∈ the list at REFUSED_TARGETS above.
   # Only R5 has an override, and only outside --correct.
   echo "  ✗ REFUSED(${entry##* }) ${entry% *}"
 done
 for did in ${DECLINED_TARGETS[@]+"${DECLINED_TARGETS[@]}"}; do
   echo "  – DECLINED $did（使用者在預覽時拒絕，未寫入）"
+done
+for uid in ${UNVERIFIED_TARGETS[@]+"${UNVERIFIED_TARGETS[@]}"}; do
+  echo "  ⚠ UNVERIFIED $uid（已寫入，但重讀失敗或內容不符 — 請手動確認）"
 done
 for rid in ${EGRESS_REFUSED_TARGETS[@]+"${EGRESS_REFUSED_TARGETS[@]}"}; do
   echo "  ✗ REFUSED(egress) $rid — band 語意見 #227（10 privacy / 11 mention / 13 tier-floor #272 / 15 empty-body #275）"
@@ -238,7 +247,12 @@ done
 # Exit contract（fixture 14/15；M = REFUSED_TOTAL；M>0 → exit 4，單 target 退化等價）：
 # final exit 仍不套 #227 碼帶 — batch 的聚合碼是 idd-edit 自身空間（任一 refusal = 4）；
 # per-comment 分類消費 band（10–15）— 這正是 band 存在的目的（#273）。
+# 4 = a refusal, or a write that could not be confirmed; 5 = nothing refused
+# but the user declined at least one preview — callers such as idd-comment's
+# errata path tell "declined" from "corrected" by this code (verify #351 round 3).
 [ "$REFUSED_TOTAL" -gt 0 ] && exit 4
+[ "${#UNVERIFIED_TARGETS[@]}" -gt 0 ] && exit 4
+[ "${#DECLINED_TARGETS[@]}" -gt 0 ] && exit 5
 exit 0
 ```
 
@@ -266,6 +280,12 @@ case $VALIDATE_EXIT in
     REFUSED_TARGETS+=("$TARGET R5")
     continue
     ;;
+  1)
+    # --correct and the gh user is unknown: whether this is your content is not
+    # established, so nothing is guessed (stderr says why).
+    REFUSED_TARGETS+=("$TARGET author-unknown")
+    continue
+    ;;
   *) exit $VALIDATE_EXIT ;;
 esac
 ```
@@ -273,11 +293,12 @@ esac
 ### Step 2: Fetch current body + backup
 
 ```bash
-mkdir -p /tmp/idd-edit-backup
-# mktemp: an unpredictable name, so nothing else can swap the file between the
-# preview and the archive step.
-BACKUP_FILE=$(mktemp "/tmp/idd-edit-backup/${TARGET_KIND}-${TARGET_NUM}-XXXXXX") || {
-  echo "✗ cannot stage the working copy — refusing" >&2; exit 1; }
+# In the run's private $WORK_DIR: an unpredictable name in a directory only
+# this user can write, so nothing else can swap the file between the preview
+# and the archive step.
+BACKUP_FILE=$(mktemp "$WORK_DIR/${TARGET_KIND}-${TARGET_NUM}-XXXXXX") || {
+  echo "✗ cannot stage the working copy of $TARGET — skipped" >&2
+  REFUSED_TARGETS+=("$TARGET stage-failed"); continue; }
 if [ "$TARGET_KIND" = "issue" ]; then
     TARGET_ENDPOINT="repos/$REPO/issues/$TARGET_NUM"            # issue body (--correct only)
 else
@@ -291,6 +312,14 @@ if ! gh api "$TARGET_ENDPOINT" --jq '.body' > "$BACKUP_FILE"; then
     REFUSED_TARGETS+=("$TARGET fetch-failed")
     continue
 fi
+# Logins the target already mentions: published already, so keeping them in
+# an edit notifies no one new. They are attested to gh-egress (Step 4 check and
+# Step 6); a mention the edit ADDS is still refused there (verify #351 round 3 —
+# any existing mention used to make every edit of the target fail at egress).
+EXISTING_MENTIONS=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" existing-mentions "$BACKUP_FILE") || {
+    echo "✗ cannot scan $TARGET for existing mentions — skipped" >&2
+    rm -f "$BACKUP_FILE"
+    REFUSED_TARGETS+=("$TARGET egress"); continue; }
 
 echo "✓ Backup: $BACKUP_FILE"
 ```
@@ -347,11 +376,20 @@ elif [ -n "$SECTION_FLAG" ]; then
     # The #288 scan exempted this whole directory on the strength of a reason
     # that named only the backup directory — so two egress bodies inherited an
     # exemption written for something else.
-    REPL_FILE=$(mktemp "${TMPDIR:-/tmp}/idd-edit-repl-XXXXXX") || {
-      echo "✗ cannot stage the replacement text — refusing" >&2; exit 1; }
-    echo "$BODY_INPUT" > "$REPL_FILE"
+    REPL_FILE=$(mktemp "$WORK_DIR/repl-XXXXXX") || {
+      echo "✗ cannot stage the replacement text for $TARGET — skipped" >&2
+      REFUSED_TARGETS+=("$TARGET stage-failed"); continue; }
+    printf '%s\n' "$BODY_INPUT" > "$REPL_FILE"
     NEW_BODY=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
-                  section-replace "$BACKUP_FILE" "$SECTION_FLAG" "$REPL_FILE")
+                  section-replace "$BACKUP_FILE" "$SECTION_FLAG" "$REPL_FILE") || {
+        SR_RC=$?   # an empty NEW_BODY here used to be written as the section (verify #351 round 3)
+        rm -f "$REPL_FILE"
+        case $SR_RC in
+          8) REFUSED_TARGETS+=("$TARGET parser-unavailable") ;;
+          *) REFUSED_TARGETS+=("$TARGET section-not-found") ;;
+        esac
+        continue
+    }
     rm -f "$REPL_FILE"
     EDIT_MARKER=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" emit-audit-marker edit mode=replace section="$SECTION_FLAG" backup="$BACKUP_FILE")
     NEW_BODY="$NEW_BODY
@@ -375,8 +413,9 @@ fi
 `(category: in-place-correction)` — 內容確定是錯的，使用者確認後就地取代。先檢查保護區，再預覽；**歸檔與標記在 Step 5.5（確認之後）**，所以這一步只準備取代內容，不產生 `NEW_BODY`。
 
 ```bash
-REPL_FILE=$(mktemp "${TMPDIR:-/tmp}/idd-edit-repl-XXXXXX") || {
-  echo "✗ cannot stage the replacement text — refusing" >&2; exit 1; }
+REPL_FILE=$(mktemp "$WORK_DIR/repl-XXXXXX") || {
+  echo "✗ cannot stage the replacement text for $TARGET — skipped" >&2
+  rm -f "$BACKUP_FILE"; REFUSED_TARGETS+=("$TARGET stage-failed"); continue; }
 printf '%s\n' "$BODY_INPUT" > "$REPL_FILE"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
     check-correction "$BACKUP_FILE" "${SECTION_FLAG:--}" "$REPL_FILE"
@@ -385,7 +424,8 @@ if [ "$CHECK_RC" -ne 0 ]; then
     rm -f "$REPL_FILE" "$BACKUP_FILE"
     case $CHECK_RC in
       6) REFUSED_TARGETS+=("$TARGET protected") ;;          # stderr 已指名區域與負責的 skill
-      1) REFUSED_TARGETS+=("$TARGET section-not-found") ;;  # 或 Markdown parser 缺／版本不符（stderr 會說明）
+      1) REFUSED_TARGETS+=("$TARGET section-not-found") ;;
+      8) REFUSED_TARGETS+=("$TARGET parser-unavailable") ;; # 安裝 scripts/requirements-egress.txt
       *) REFUSED_TARGETS+=("$TARGET check-failed") ;;
     esac
     continue
@@ -396,10 +436,29 @@ fi
 PLACEHOLDER_MARKER='<!-- idd:edit mode="correct" backup-id="(assigned after confirmation)" -->'
 PREVIEW_BODY=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
     compose-correction "$BACKUP_FILE" "${SECTION_FLAG:--}" "$REPL_FILE" "$PLACEHOLDER_MARKER") || {
+    COMPOSE_RC=$?
     rm -f "$REPL_FILE" "$BACKUP_FILE"
-    REFUSED_TARGETS+=("$TARGET check-failed")
+    case $COMPOSE_RC in
+      6) REFUSED_TARGETS+=("$TARGET protected") ;;          # a fence or HTML comment left open
+      8) REFUSED_TARGETS+=("$TARGET parser-unavailable") ;;
+      *) REFUSED_TARGETS+=("$TARGET check-failed") ;;
+    esac
     continue
 }
+# The egress gates run on the composed body BEFORE the preview, so a body that
+# gh-egress would refuse never reaches confirmation or the archive (verify #351
+# round 3 — a refusal after archiving left an orphan entry each time).
+PREVIEW_FILE=$(mktemp "$WORK_DIR/preview-XXXXXX") || {
+    rm -f "$REPL_FILE" "$BACKUP_FILE"; REFUSED_TARGETS+=("$TARGET stage-failed"); continue; }
+printf '%s\n' "$PREVIEW_BODY" > "$PREVIEW_FILE"
+SCRUB_LEVEL="${SCRUB_LEVEL:-warn}"   # 依 rules/privacy-scrubbing.md 解析（同 Step 6）
+if ! bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" check --body-file "$PREVIEW_FILE" \
+       --scrub-attested "$SCRUB_LEVEL" ${EXISTING_MENTIONS:+--mention-attested="$EXISTING_MENTIONS"}; then
+    rm -f "$PREVIEW_FILE" "$REPL_FILE" "$BACKUP_FILE"
+    REFUSED_TARGETS+=("$TARGET egress")   # stderr 已說明是哪一道（隱私、mention、…）
+    continue
+fi
+rm -f "$PREVIEW_FILE"
 ```
 
 預覽（Step 5）顯示 `$PREVIEW_BODY` **全文**（不截斷），並註明「確認後舊版會歸檔、`(assigned after confirmation)` 換成實際的 backup id」。替換內容若以目標標題開頭，`compose-correction` 會去掉重複的那一行；同一段先前的更正標記會保留，新標記排在最後。
@@ -453,7 +512,8 @@ continue
 確認後先重抓目標：預覽期間若有人（或 `idd-update`）改過，這次更正會蓋掉那些修改，所以內容不同就拒絕（changed since preview），請使用者重跑。GitHub 沒有條件式寫入，重抓到 PATCH 之間仍有極短的競爭窗。
 
 ```bash
-CURRENT_FILE=$(mktemp "/tmp/idd-edit-backup/${TARGET_KIND}-${TARGET_NUM}-now-XXXXXX") || exit 1
+CURRENT_FILE=$(mktemp "$WORK_DIR/${TARGET_KIND}-${TARGET_NUM}-now-XXXXXX") || {
+    rm -f "$REPL_FILE" "$BACKUP_FILE"; REFUSED_TARGETS+=("$TARGET stage-failed"); continue; }
 if ! gh api "$TARGET_ENDPOINT" --jq '.body' > "$CURRENT_FILE"; then
     echo "✗ cannot re-read $TARGET — nothing archived or written" >&2
     rm -f "$CURRENT_FILE" "$REPL_FILE" "$BACKUP_FILE"
@@ -467,6 +527,16 @@ if ! cmp -s "$BACKUP_FILE" "$CURRENT_FILE"; then
     continue
 fi
 rm -f "$CURRENT_FILE"
+# What gets archived and written must be what was previewed: compose again with
+# the placeholder and compare, before anything is archived (verify #351 round 3).
+RECHECK_BODY=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
+    compose-correction "$BACKUP_FILE" "${SECTION_FLAG:--}" "$REPL_FILE" "$PLACEHOLDER_MARKER")
+if [ "$?" -ne 0 ] || [ "$RECHECK_BODY" != "$PREVIEW_BODY" ]; then
+    echo "✗ the body to be written differs from the preview — nothing archived or written" >&2
+    rm -f "$REPL_FILE" "$BACKUP_FILE"
+    REFUSED_TARGETS+=("$TARGET differs-from-preview")
+    continue
+fi
 BACKUP_ID=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
     archive "$TARGET_KIND" "$TARGET_NUM" --from-file "$BACKUP_FILE" --repo "$REPO") || {
     # exit 7：不在 git work tree / 路徑沒被 ignore / 寫入失敗；exit 5：路徑閘門 — 目標不動
@@ -498,8 +568,10 @@ rm -f "$REPL_FILE"
 # Per-run: this is the body that gets PATCHed into someone's comment. A fixed
 # name keyed only on the comment id collides between two sessions editing the
 # same comment, and the loser's text is what gets published.
-TMP_BODY_FILE=$(mktemp "${TMPDIR:-/tmp}/idd-edit-new-XXXXXX") || {
-  echo "✗ cannot stage the new body — refusing" >&2; exit 1; }
+TMP_BODY_FILE=$(mktemp "$WORK_DIR/new-XXXXXX") || {
+  echo "✗ cannot stage the new body for $TARGET — skipped" >&2
+  [ "$MODE" = "--correct" ] && rm -f "$BACKUP_FILE"
+  REFUSED_TARGETS+=("$TARGET stage-failed"); continue; }
 printf '%s\n' "$NEW_BODY" > "$TMP_BODY_FILE"   # printf, not echo: zsh echo rewrites backslashes (#330)
 
 # #273：comment surgery 進 egress 網 — 原 raw `gh api` PATCH 完全繞過所有網
@@ -508,10 +580,12 @@ SCRUB_LEVEL="${SCRUB_LEVEL:-warn}"   # 依 rules/privacy-scrubbing.md 解析（r
 if [ "$TARGET_KIND" = "issue" ]; then
     # issue 正文（--correct only）走 gh issue edit
     bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit "$TARGET_NUM" \
-        --repo "$REPO" --body-file "$TMP_BODY_FILE" --scrub-attested "$SCRUB_LEVEL"
+        --repo "$REPO" --body-file "$TMP_BODY_FILE" --scrub-attested "$SCRUB_LEVEL" \
+        ${EXISTING_MENTIONS:+--mention-attested="$EXISTING_MENTIONS"}
 else
     bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit-comment "$COMMENT_ID" \
-        --repo "$REPO" --body-file "$TMP_BODY_FILE" --scrub-attested "$SCRUB_LEVEL"
+        --repo "$REPO" --body-file "$TMP_BODY_FILE" --scrub-attested "$SCRUB_LEVEL" \
+        ${EXISTING_MENTIONS:+--mention-attested="$EXISTING_MENTIONS"}
 fi
 EGRESS_RC=$?
 rm "$TMP_BODY_FILE"
@@ -536,12 +610,23 @@ fi
 ### Step 7: Verify edit + report
 
 ```bash
-# Re-fetch 確認
-UPDATED=$(gh api "$TARGET_ENDPOINT" --jq '.body' | head -5)
+# Re-fetch 確認：讀回失敗或內容不符，就不算成功（verify #351 round 3）
+UPDATED=$(gh api "$TARGET_ENDPOINT" --jq '.body')
+UPDATED_RC=$?
+if [ "$UPDATED_RC" -ne 0 ]; then
+    echo "⚠ $TARGET was written but could not be read back — check it by hand" >&2
+    UNVERIFIED_TARGETS+=("$TARGET")
+    continue
+fi
+if [ "$UPDATED" != "$NEW_BODY" ]; then
+    echo "⚠ $TARGET reads back differently from what was sent — check it by hand" >&2
+    UNVERIFIED_TARGETS+=("$TARGET")
+    continue
+fi
 echo "✓ $TARGET updated"
 echo "  URL: $(gh api "$TARGET_ENDPOINT" --jq '.html_url')"
 [ "$MODE" = "--correct" ] && echo "  Backup id: $BACKUP_ID" || echo "  Backup: $BACKUP_FILE"
-echo "  First 5 lines of new body: $UPDATED"
+echo "  First 5 lines of new body: $(printf '%s\n' "$UPDATED" | head -5)"
 EDITED_COUNT=$((EDITED_COUNT + 1))
 ```
 
@@ -627,15 +712,15 @@ EDITED_COUNT=$((EDITED_COUNT + 1))
 
 ## Backup 管理
 
-**`--append` / `--replace` / `--prepend-note`**：備份在 `/tmp/idd-edit-backup/`，由 `mktemp` 命名 `<kind>-<number>-XXXXXX`（例如 `comment-4241327867-a1B2c3`），`ls -t` 看最新的一份。
+**`--append` / `--replace` / `--prepend-note`**：備份在這次執行的私有工作目錄（`${TMPDIR:-/tmp}/idd-edit-XXXXXX/`，權限 0700），由 `mktemp` 命名 `<kind>-<number>-XXXXXX`；Step 2 會印出完整路徑。
 
 ```bash
-ls -la /tmp/idd-edit-backup/
+ls -la "${TMPDIR:-/tmp}"/idd-edit-*/
 # 回復（set REPO=owner/repo first；災難復原刻意走 raw gh api、不經 egress 網 —
 #  還原的是先前已公開發佈的內容，#273 接線範圍是 Step 6 正常路徑）
 gh api "repos/$REPO/issues/comments/<id>" \
     -X PATCH \
-    -F body=@/tmp/idd-edit-backup/comment-<id>-<timestamp>.md
+    -F body=@"<Step 2 印出的備份路徑>"
 ```
 
 **`--correct`**：舊版在 correction archive，用 backup id（標記裡那個）還原。內容直接送給 GitHub、不顯示；還原的是**整個**目標，更正之後的修改（例如 `idd-update` 重建的 Current Status）會一起被蓋掉，執行前用 AskUserQuestion 說明這點並確認。
@@ -645,6 +730,8 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" restore "$BACKUP_ID" --
 ```
 
 歸檔檔不經過 Claude 讀取（hook 會擋、檔案權限 0000）。人要看舊版時，在自己的終端機 `chmod u+r` 該檔後用編輯器開，不要透過 Claude；看完 `chmod 000` 改回，否則 `grep -r` 這類不寫出路徑的遞迴讀取會讀到它。
+
+歸檔是被 git ignore 的檔案：`git clean -X`（或 `-x`）會把它刪掉，而它是更正前內容在本機唯一能還原的一份 —— 在有歸檔的 clone 裡不要跑這兩個指令（移到更安全位置的討論在 #407）。
 
 歸檔只存在**執行 `--correct` 的那份 clone**（它的主 worktree）。同一個 repo 在別處的 clone 沒有這份歸檔，`restore` 會回報找不到；要還原就回到原本那份 clone 執行。
 

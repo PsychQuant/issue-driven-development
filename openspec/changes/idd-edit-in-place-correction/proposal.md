@@ -8,7 +8,7 @@ Issue 是下游 skill 與日後 session 的記憶。錯誤內容留在原處、�
 - `idd-edit` 新增 `--correct` 模式：目標可以是 comment（`comment:<id>`）或 issue 正文（`issue:<N>`，只接受 `--section`）。取代前由 helper 歸檔舊版，正文只留帶 `backup-id` 的標記。
 - 歸檔位置 `.claude/.idd/archive/edits/<backup-id>.md`：不進 git（寫入前確認已被 ignore，否則拒絕）、檔案權限設為不可讀。還原走 helper 的 `restore` 子命令，內容不經過 stdout。
 - IDD plugin 新增 PreToolUse hook：Claude 的 Read、Grep、Glob、Edit、Write 與 Bash 只要指向歸檔路徑一律拒絕，並說明原因。
-- `idd-comment --type errata` 對 OWNER／bot 的 comment 改走 `idd-edit --correct`；協作者寫的 comment 維持只貼更正 comment、不改原文。
+- `idd-comment --type errata` 對 OWNER 或本人的 comment 改走 `idd-edit --correct`（更正被拒絕時改貼 errata）；協作者與 bot 寫的 comment 維持只貼更正 comment、不改原文。
 - `idd-verify`、`idd-diagnose`、`idd-reorganize` 發現 issue 既有內容有錯時，列出更正提議與可直接執行的 `/idd-edit --correct` 指令；只有使用者確認才執行，unattended 只列不做。
 - **BREAKING**（行為面）：`idd-comment --type errata` 對自己的 comment 不再追加 errata comment 與頂端警示，改為就地取代。
 

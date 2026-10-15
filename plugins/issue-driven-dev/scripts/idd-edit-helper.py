@@ -40,10 +40,12 @@ Exit codes:
   1  — generic error
   2  — usage error (missing/invalid args)
   3  — R4 gate refused (--replace missing --scope/--section)
-  4  — R5 gate refused (non-OWNER non-bot, no --override-user-content)
+  4  — R5 gate refused (author is neither OWNER, a bot, nor you; no
+       --override-user-content), or --correct on anyone else's content
   5  — --body-file unreadable / refused
   6  — check-correction refused a protected region
   7  — archive refused: not a git work tree / path not ignored / write failed
+  8  — the pinned Markdown parser (markdown-it-py 4.0.0) is missing or differs
 
 Each subcommand prints diagnostics to stderr; stdout is reserved for
 machine-parseable output (eval lines / extracted text / markers).
@@ -69,7 +71,7 @@ CORRECT_SCOPE_MSG = (
 )
 R5_MSG_TEMPLATE = (
     "Refuse: comment {cid} was authored by {login} (author_association={assoc}, "
-    "non-OWNER non-bot) and is verbatim-preserve per IC_R007; pass "
+    "neither OWNER, a bot, nor you) and is verbatim-preserve per IC_R007; pass "
     '--override-user-content --reason="..." to explicitly modify user content '
     "(spec Requirement 5)"
 )
@@ -98,8 +100,10 @@ _BASH_Q_SAFE = set(
     "abcdefghijklmnopqrstuvwxyz"
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     "0123456789"
-    "_-./=:@%+,"
+    "_-./:@%+,"
 )
+# '=' is deliberately absent: zsh expands `=cmd` at the start of a word and
+# after ':' in an assignment value (verify #351 rounds 2 and 3).
 
 
 def bash_quote(value):
@@ -110,10 +114,8 @@ def bash_quote(value):
     if value == "":
         return "''"
     out = []
-    for idx, ch in enumerate(value):
-        # A word that starts with '=' is `=cmd` expansion under zsh (EQUALS),
-        # which the skill's `eval` runs in (verify #351 round 2).
-        if ch in _BASH_Q_SAFE and not (idx == 0 and ch == "="):
+    for ch in value:
+        if ch in _BASH_Q_SAFE:
             out.append(ch)
         elif ch == "\t":
             out.append("$'\\t'")
@@ -133,7 +135,10 @@ def emit_assignment(key, value):
     Single-line values use bash `%q` quoting; multiline values are emitted
     raw so that downstream substring assertions on individual lines match.
     """
-    if "\n" in value:
+    # Control characters go through ANSI-C quoting too: bash command
+    # substitution drops a NUL, so `\<NUL>;` from the backslash form collapsed
+    # into `\;` + a live `;` under eval (verify #351 round 3).
+    if "\n" in value or any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in value):
         # ANSI-C quoting ($'...'). The raw form this replaced (KEY=<line0>
         # newline <line1>...) made `eval` run every line after the first as a
         # shell command — `$(...)` and backticks in a body file executed — and
@@ -270,10 +275,14 @@ def read_body_file(raw_path):
         return False, 5, None
     try:
         with open(raw_path, "r", encoding="utf-8", errors="replace") as fh:
-            return True, 0, fh.read()
+            content = fh.read()
     except OSError:
         err(f"ERROR: --body-file not readable: {raw_path}")
         return False, 5, None
+    if "\x00" in content:
+        err(f"ERROR: --body-file contains a NUL byte, which no issue text can hold: {raw_path}")
+        return False, 5, None
+    return True, 0, content
 
 
 # ───────────────────────────────────────────────────────────────────────
@@ -435,9 +444,9 @@ def parse_args_subcmd(argv):
     if state["mode"] == "--correct":
         if state["override"] == "true":
             err(
-                "Refuse: --correct cannot override user-authored content. Comments by "
-                "anyone other than the OWNER or a bot are verbatim-preserve; propose the "
-                "correction instead of editing them (#351)."
+                "Refuse: --correct cannot override user-authored content. It rewrites only "
+                "content by the OWNER or by you; for anyone else's comment, a bot's "
+                "included, propose the correction with /idd-comment --type errata (#351)."
             )
             return 2
         if not state["scope_flag"] and not state["section_flag"]:
@@ -453,6 +462,12 @@ def parse_args_subcmd(argv):
                 "subsection scope."
             )
             return 3
+        if not state["body_input"]:
+            err(
+                "Refuse: --correct needs the corrected text (--body or --body-file); "
+                "without it the region would be emptied (#351)."
+            )
+            return 2
         if issue_targets and state["scope_flag"]:
             err(
                 "Refuse: an issue-body correction requires --section <heading>; "
@@ -552,7 +567,11 @@ def _current_gh_login():
     if os.environ.get("IDD_EDIT_HELPER_TEST_MODE") == "1":
         # Test mode never reaches the network: the current user is whatever the
         # fixture says, or unknown (verify #351 round 2 — R5 fixtures ran gh).
-        return os.environ.get("IDD_EDIT_HELPER_GH_USER", "")
+        # The stand-in counts only when the author data is mocked too, so a
+        # real author is never paired with a fake identity (round 3).
+        if os.environ.get("IDD_EDIT_HELPER_GH_MOCK"):
+            return os.environ.get("IDD_EDIT_HELPER_GH_USER", "")
+        return ""
     try:
         proc = subprocess.run(["gh", "api", "user", "--jq", ".login"], capture_output=True, text=True)
     except FileNotFoundError:
@@ -619,20 +638,27 @@ def validate_target_subcmd(argv):
         err(f"✓ Own content: {login} ({assoc})")
         return 0
 
-    # Non-OWNER non-bot: require override.
-    if override == "true":
-        err(f"⚠ Override active: editing {login} ({assoc}) content")
-        return 0
-
-    # Refuse with R5 message. --correct has no override, so its refusal must
-    # not suggest one (verify #351 round 2).
+    # --correct has no override (checked before it — verify #351 round 3), and
+    # an unknown current user is not a verdict: idd-comment routes errata on
+    # this answer, so guessing "someone else" sent your own comment to errata.
     if mode == "--correct":
+        if not me:
+            err(
+                f"ERROR: cannot determine the authenticated gh user, so whether {comment_id} "
+                "is your own content is unknown; nothing was changed (check `gh auth status`)."
+            )
+            return 1
         err(
             f"Refuse: {comment_id} was written by {login} ({assoc}); --correct only "
             "rewrites content by the OWNER or by you. Propose the correction with "
             "/idd-comment --type errata instead (#351)."
         )
         return 4
+
+    # Neither OWNER, a bot, nor you: require override.
+    if override == "true":
+        err(f"⚠ Override active: editing {login} ({assoc}) content")
+        return 0
     err(R5_MSG_TEMPLATE.format(cid=comment_id, login=login, assoc=assoc))
     return 4
 
@@ -651,47 +677,81 @@ def _heading_level(line):
     return n
 
 
+EXIT_PARSER = 8
+
+
 class ParserUnavailable(Exception):
     """The pinned Markdown parser is missing or a different version."""
 
 
-def _code_line_set(lines):
-    """Indices of lines inside a fenced or indented code block. A `#` line or a
-    `---` there is code, not a heading or a rule, so it must not end a section
-    (verify #351 round 2). Block ranges come from the same pinned CommonMark
-    parser gh-egress uses (scripts/requirements-egress.txt), never from a
-    hand-written fence matcher."""
-    try:
-        from markdown_it import MarkdownIt, __version__ as markdown_version
-    except ImportError:
-        raise ParserUnavailable(
-            "markdown-it-py is not installed; install scripts/requirements-egress.txt"
-        )
-    if markdown_version != "4.0.0":
-        raise ParserUnavailable(
-            f"markdown-it-py {markdown_version} is not the pinned 4.0.0 "
-            "(scripts/requirements-egress.txt)"
-        )
-    code = set()
-    for token in MarkdownIt("commonmark").parse("\n".join(lines)):
-        if token.type in ("fence", "code_block") and token.map:
-            code.update(range(*token.map))
-    return code
+class _Blocks:
+    """The parser's view of a body, by line index (verify #351 rounds 2–3).
+
+    - opaque:   lines inside a fenced or indented code block or an HTML block;
+                nothing there is a heading or a rule.
+    - code:     the fenced and indented code lines alone.
+    - html_starts: first line of each HTML block (an IDD marker is one).
+    - headings: line of each top-level heading → its level, setext included.
+    - rules:    lines of top-level thematic breaks (a setext underline is not one).
+
+    Section boundaries come from here, never from `#` at the start of a line:
+    the line view ended a section at a `# comment` inside a fence (round 2),
+    and at a `## x` inside an HTML comment or a setext underline (round 3).
+    The ranges come from the same pinned CommonMark parser gh-egress uses
+    (scripts/requirements-egress.txt)."""
+
+    def __init__(self, lines):
+        try:
+            from markdown_it import MarkdownIt, __version__ as markdown_version
+        except ImportError:
+            raise ParserUnavailable(
+                "markdown-it-py is not installed; install scripts/requirements-egress.txt"
+            )
+        if markdown_version != "4.0.0":
+            raise ParserUnavailable(
+                f"markdown-it-py {markdown_version} is not the pinned 4.0.0 "
+                "(scripts/requirements-egress.txt)"
+            )
+        self.opaque, self.code, self.html_starts = set(), set(), set()
+        self.headings, self.rules = {}, set()
+        for token in MarkdownIt("commonmark").parse("\n".join(lines)):
+            if token.map is None:
+                continue
+            if token.type in ("fence", "code_block", "html_block"):
+                self.opaque.update(range(*token.map))
+                if token.type == "html_block":
+                    self.html_starts.add(token.map[0])
+                else:
+                    self.code.update(range(*token.map))
+            elif token.type == "heading_open" and token.level == 0:
+                self.headings[token.map[0]] = int(token.tag[1])
+            elif token.type == "hr" and token.level == 0:
+                self.rules.add(token.map[0])
 
 
-def _find_heading(lines, heading_line, code):
-    """Index of the first line equal to heading_line outside code, else None."""
+def _find_heading(lines, heading_line, blocks):
+    """Index of the first line equal to heading_line that the parser reads as a
+    top-level heading, else None."""
     for i, line in enumerate(lines):
-        if line == heading_line and i not in code:
+        if line == heading_line and i in blocks.headings:
             return i
     return None
 
 
-def _ends_section(line, level, stop_at_rule):
-    lvl = _heading_level(line)
-    return (1 <= lvl <= level and len(line) > lvl and line[lvl].isspace()) or (
-        stop_at_rule and _is_correct_boundary(line)
-    )
+def _section_end(lines, start, blocks, stop_at_rule):
+    """End (exclusive) of the section headed at `start`: the next top-level
+    heading of the same or a higher level; with stop_at_rule also a thematic
+    break or a heading managed by another skill."""
+    level = blocks.headings[start]
+    for i in range(start + 1, len(lines)):
+        if i in blocks.headings and blocks.headings[i] <= level:
+            return i
+        if stop_at_rule and (
+            i in blocks.rules
+            or (i not in blocks.opaque and (lines[i] == _CURRENT_STATUS or lines[i].startswith(_CLARITY_PREFIX)))
+        ):
+            return i
+    return len(lines)
 
 
 def section_replace_subcmd(argv):
@@ -714,15 +774,10 @@ def section_replace_subcmd(argv):
         err(f"ERROR: replacement-file not readable: {replacement_file}")
         return 5
 
-    with open(input_file, "r", encoding="utf-8", errors="replace") as fh:
-        input_text = fh.read()
-    with open(replacement_file, "r", encoding="utf-8", errors="replace") as fh:
-        repl_text = fh.read()
-
     # Strip CRLF: normalize \r\n and lone \r to \n (closes the CRLF exact-match
     # break — `## Foo\r` != `## Foo`).
-    input_text = input_text.replace("\r\n", "\n").replace("\r", "\n")
-    repl_text = repl_text.replace("\r\n", "\n").replace("\r", "\n")
+    input_text = _read_normalized(input_file)
+    repl_text = _read_normalized(replacement_file)
 
     input_lines = input_text.split("\n")
     # split() yields a trailing "" when the file ends with a newline; track it
@@ -731,22 +786,19 @@ def section_replace_subcmd(argv):
     if trailing_newline and input_lines and input_lines[-1] == "":
         input_lines = input_lines[:-1]
 
-    # Determine target heading level.
-    level = _heading_level(heading_line)
-    if level < 1 or level > 6:
-        err(f"ERROR: invalid heading level ({level}) for: {heading_line}")
+    if not _ATX_HEADING_RE.fullmatch(heading_line):
+        err(f"ERROR: not a markdown heading line: {heading_line}")
         return 2
-
     try:
-        code = _code_line_set(input_lines)
+        blocks = _Blocks(input_lines)
     except ParserUnavailable as e:
         err(f"ERROR: {e}; nothing was replaced")
-        return 1
-    # Verify heading exists (exact line match on cleaned input, outside code).
-    start = _find_heading(input_lines, heading_line, code)
+        return EXIT_PARSER
+    start = _find_heading(input_lines, heading_line, blocks)
     if start is None:
         err(f"ERROR: heading not found in input: {heading_line}")
         return 1
+    end = _section_end(input_lines, start, blocks, stop_at_rule)
 
     # Replacement body lines (preserve internal newlines; drop the trailing
     # empty produced by a final newline so we don't inject a blank line).
@@ -754,30 +806,7 @@ def section_replace_subcmd(argv):
     if repl_text.endswith("\n") and repl_lines and repl_lines[-1] == "":
         repl_lines = repl_lines[:-1]
 
-    # Level-aware section boundary: a `### Foo` section ends at the next
-    # heading of the SAME-or-higher level (subsections under it, being a
-    # *lower* level / more '#'s, are part of the section and replaced as a
-    # unit). EOF also ends the section.
-    out = []
-    skipping = False
-    for idx, line in enumerate(input_lines):
-        if idx == start:
-            out.append(line)
-            out.extend(repl_lines)
-            skipping = True
-            continue
-        if skipping:
-            # A heading of same-or-higher level (lvl <= target, lvl >= 1)
-            # followed by whitespace ends the section; lines inside a code
-            # block never do.
-            if idx not in code and _ends_section(line, level, stop_at_rule):
-                skipping = False
-                out.append(line)
-                continue
-            # Still inside the old section → drop the line.
-            continue
-        out.append(line)
-
+    out = input_lines[: start + 1] + repl_lines + input_lines[end:]
     result = "\n".join(out)
     if trailing_newline:
         result += "\n"
@@ -888,60 +917,70 @@ _VERBATIM_LABELS = ("Original text", "**Original**")
 _CLARITY_PREFIX = "### Clarity Surface"
 
 
-def _is_correct_boundary(line):
-    """Extra section ends under --correct: a `---` rule, or a heading managed by
-    another skill. idd-issue nests `### Clarity Surface` under `## Related`, so
-    without this the section above it could never be corrected (#351)."""
-    return line.strip() == "---" or line == _CURRENT_STATUS or line.startswith(_CLARITY_PREFIX)
-
-
 def _read_normalized(path):
     with open(path, "r", encoding="utf-8", errors="replace") as fh:
         return fh.read().replace("\r\n", "\n").replace("\r", "\n")
 
 
-def _section_range(lines, heading_line, stop_at_rule=False, code=frozenset()):
+def _lines_of(text):
+    lines = text.split("\n")
+    if text.endswith("\n"):
+        lines = lines[:-1]
+    return lines
+
+
+def _section_range(lines, heading_line, stop_at_rule=False, blocks=None):
     """(start, end) of the section headed by heading_line, end exclusive, or
-    None when absent. Same boundary rule as section-replace: the next heading
-    of the same or a higher level, never a line inside a code block."""
-    start = _find_heading(lines, heading_line, code)
+    None when absent. Same boundary rule as section-replace."""
+    start = _find_heading(lines, heading_line, blocks)
     if start is None:
         return None
-    level = _heading_level(heading_line)
-    end = len(lines)
-    for i in range(start + 1, len(lines)):
-        if i not in code and _ends_section(lines[i], level, stop_at_rule):
-            end = i
-            break
-    return start, end
+    return start, _section_end(lines, start, blocks, stop_at_rule)
 
 
-def _managed_owner(lines, idx, code=frozenset()):
-    """(owner skill, heading) when line idx is a managed heading, else None.
-    A line inside a code block is never a heading."""
-    if idx in code:
-        return None
-    line = lines[idx]
-    if line.startswith(_CLARITY_PREFIX):
-        return "idd-clarify", line
-    if line == _CURRENT_STATUS:
-        return "idd-update", line
-    rng = _section_range(lines, _CURRENT_STATUS, code=code)
-    if rng and rng[0] < idx < rng[1] and _heading_level(line) >= 1:
-        return "idd-update", line
-    return None
+def _line_heading(line):
+    """Level of an ATX heading line by plain text, else 0 — the way idd-update
+    and idd-clarify find their sections."""
+    lvl = _heading_level(line)
+    return lvl if 1 <= lvl <= 6 and len(line) > lvl and line[lvl].isspace() else 0
 
 
-def _verbatim_blocks(lines):
-    blocks, run = [], []
-    for line in lines + [""]:
-        if line.startswith(">"):
+def _managed_ranges(lines):
+    """(start, end, owner, heading) for each region another skill owns, found by
+    exact line match — fenced or not — because that is how idd-update and
+    idd-clarify find them. A region runs to the next ATX heading of the same or
+    a higher level (verify #351 round 3: a code-aware view here let an unclosed
+    fence hide ## Current Status from the check)."""
+    ranges = []
+    for i, line in enumerate(lines):
+        if line == _CURRENT_STATUS:
+            owner = "idd-update"
+        elif line.startswith(_CLARITY_PREFIX):
+            owner = "idd-clarify"
+        else:
+            continue
+        level = _line_heading(line) or 3
+        end = len(lines)
+        for j in range(i + 1, len(lines)):
+            lvl = _line_heading(lines[j])
+            if lvl and lvl <= level:
+                end = j
+                break
+        ranges.append((i, end, owner, line))
+    return ranges
+
+
+def _verbatim_runs(lines):
+    """(block text, the line after it or None) for each verbatim block."""
+    runs, run = [], []
+    for idx, line in enumerate(lines + [None]):
+        if line is not None and line.startswith(">"):
             run.append(line)
             continue
         if run and any(label in r for r in run for label in _VERBATIM_LABELS):
-            blocks.append("\n".join(run))
+            runs.append(("\n".join(run), line))
         run = []
-    return blocks
+    return runs
 
 
 def check_correction_subcmd(argv):
@@ -953,19 +992,16 @@ def check_correction_subcmd(argv):
         if not os.path.isfile(f) or not os.access(f, os.R_OK):
             err(f"ERROR: file not readable: {f}")
             return 5
-    old_lines = _read_normalized(old_file).split("\n")
-    new_text = _read_normalized(new_file)
-    new_lines = new_text.split("\n")
-
+    old_lines = _lines_of(_read_normalized(old_file))
+    new_lines = _lines_of(_read_normalized(new_file))
     try:
-        code = _code_line_set(old_lines)
+        blocks = _Blocks(old_lines)
     except ParserUnavailable as e:
         err(f"ERROR: {e}; the correction was not checked")
-        return 1
+        return EXIT_PARSER
 
-    # Deliberately not code-aware: idd-update and idd-clarify find their heading
-    # by exact line match, so even a fenced copy in the replacement could be
-    # taken for the real one.
+    # Line view, fenced or not: idd-update and idd-clarify find their heading by
+    # exact line match, so even a fenced copy could be taken for the real one.
     for line in new_lines:
         if line == _CURRENT_STATUS or line.startswith(_CLARITY_PREFIX):
             err(
@@ -977,39 +1013,63 @@ def check_correction_subcmd(argv):
     if heading == "-":
         start, end = 0, len(old_lines)
     else:
-        rng = _section_range(old_lines, heading, stop_at_rule=True, code=code)
+        rng = _section_range(old_lines, heading, stop_at_rule=True, blocks=blocks)
         if rng is None:
             err(f"ERROR: heading not found in input: {heading}")
             return 1
         start, end = rng
-    # A whole-comment target contains every managed region in it, so it is
-    # checked like a section (verify #351 round 2: dropping them passed).
+    # The protection scan reads lines the way the owners do. A whole-comment
+    # target contains every managed region in it (round 2); a nested heading
+    # under Clarity Surface belongs to idd-clarify (round 3).
+    managed = _managed_ranges(old_lines)
     for idx in range(start, end):
-        owner = _managed_owner(old_lines, idx, code)
-        if owner:
-            who, line = owner
-            what = "comment" if heading == "-" else "section"
-            where = "is" if (idx == start and heading != "-") else "contains"
+        for m_start, m_end, who, m_heading in managed:
+            if m_start <= idx < m_end:
+                what = "comment" if heading == "-" else "section"
+                where = "is" if idx == m_start == start else ("is inside" if idx == start else "contains")
+                err(
+                    f"Refuse: the target {what} {where} '{m_heading}', which is managed by "
+                    f"{who}; update it with {who} instead of --correct (#351)."
+                )
+                return 6
+
+    if heading == "-":
+        # Other skills find a comment by its opening heading (## Diagnosis,
+        # ## Implementation Complete, …); a whole-comment correction keeps it.
+        old_first = next((l for l in old_lines if l.strip()), "")
+        new_first = next((l for l in new_lines if l.strip()), "")
+        if _line_heading(old_first) and new_first != old_first:
             err(
-                f"Refuse: the target {what} {where} '{line}', which is managed by "
-                f"{who}; update it with {who} instead of --correct (#351)."
+                f"Refuse: the comment opens with '{old_first}', which other skills use "
+                "to recognise it; keep it as the first line of the replacement (#351)."
             )
             return 6
-    if heading != "-":
-        start += 1  # section-replace keeps the heading line itself
+    else:
+        start += 1  # the heading line itself is kept
 
-    old_blocks = sorted(_verbatim_blocks(old_lines[start:end]))
-    new_blocks = sorted(_verbatim_blocks(new_lines))
-    if old_blocks != new_blocks:
+    old_runs = _verbatim_runs(old_lines[start:end])
+    new_runs = _verbatim_runs(new_lines)
+    if sorted(b for b, _ in old_runs) != sorted(b for b, _ in new_runs):
         # Multiset equality, not substring: appending to a quote, adding a quote
         # line, or un-quoting it all used to pass (verify #351 round 1).
-        for block in old_blocks or new_blocks:
+        for block, _ in old_runs or new_runs:
             first = block.split("\n", 1)[0]
             err(
                 "Refuse: the replacement does not preserve an Original text quotation "
                 f"byte-for-byte (block starting '{first[:60]}'). Original-source "
                 "quotations are verbatim-preserve; keep the block and correct the "
                 "text around it (#351)."
+            )
+            return 6
+    # A non-blank line right after the quotation joins it as a lazy
+    # continuation, so the rendered quote changes while the bytes match
+    # (verify #351 round 3). Allowed only where the original already had it.
+    old_follow = {(b, f) for b, f in old_runs}
+    for block, follow in new_runs:
+        if follow is not None and follow.strip() and (block, follow) not in old_follow:
+            err(
+                "Refuse: the line after an Original text quotation would join the "
+                "quotation when rendered; leave a blank line after it (#351)."
             )
             return 6
     return 0
@@ -1021,13 +1081,16 @@ def check_correction_subcmd(argv):
 CORRECT_MARKER_RE = re.compile(
     r'<!-- idd:edit mode="correct" backup-id="[^"]*"(?: [a-z-]+="[^"]*")* -->'
 )
+# Any whole-line IDD marker (idd:edit, idd:comment, idd:dashboard, …). Other
+# skills find comments by these, so a correction carries them forward.
+IDD_MARKER_LINE_RE = re.compile(r"<!-- idd:[^\n]*-->")
 
 
 def compose_correction_subcmd(argv):
     """Print the full corrected body: the section (or whole comment) replaced
-    by the new text, any earlier correction markers, and the new marker last.
-    The skill shows this exact text at confirmation and PATCHes it afterwards,
-    so the preview is the write (verify #351 round 2)."""
+    by the new text, the IDD markers it held, and the new marker last. The
+    skill shows this exact text at confirmation and PATCHes it afterwards, so
+    the preview is the write (verify #351 round 2)."""
     if len(argv) != 4:
         err("ERROR: compose-correction requires <old-file> <section-heading|-> <body-file> <marker>")
         return 2
@@ -1039,24 +1102,21 @@ def compose_correction_subcmd(argv):
     if not CORRECT_MARKER_RE.fullmatch(marker):
         err("ERROR: the marker must be one emit-audit-marker wrote for mode=correct")
         return 2
-    old_text = _read_normalized(old_file)
-    old_lines = old_text.split("\n")
-    if old_text.endswith("\n"):
-        old_lines = old_lines[:-1]
+    old_lines = _lines_of(_read_normalized(old_file))
     body_lines = _read_normalized(body_file).split("\n")
     while body_lines and body_lines[-1].strip() == "":
         body_lines.pop()
     try:
-        code = _code_line_set(old_lines)
+        blocks = _Blocks(old_lines)
     except ParserUnavailable as e:
         err(f"ERROR: {e}; nothing was composed")
-        return 1
+        return EXIT_PARSER
 
     if heading == "-":
-        prior = [l for i, l in enumerate(old_lines) if i not in code and CORRECT_MARKER_RE.fullmatch(l)]
-        out = body_lines + [""] + prior + [marker]
+        start, end = -1, len(old_lines)
+        head, tail = [], []
     else:
-        rng = _section_range(old_lines, heading, stop_at_rule=True, code=code)
+        rng = _section_range(old_lines, heading, stop_at_rule=True, blocks=blocks)
         if rng is None:
             err(f"ERROR: heading not found in input: {heading}")
             return 1
@@ -1064,14 +1124,64 @@ def compose_correction_subcmd(argv):
         # A replacement that starts with the target heading would print it twice.
         if body_lines and body_lines[0] == heading:
             body_lines = body_lines[1:]
-        prior = [
-            old_lines[i] for i in range(start + 1, end)
-            if i not in code and CORRECT_MARKER_RE.fullmatch(old_lines[i])
-        ]
-        section = [heading] + body_lines + [""] + prior + [marker]
-        tail = old_lines[end:]
-        out = old_lines[:start] + section + ([""] + tail if tail else [])
+        head, tail = old_lines[: start + 1], old_lines[end:]
+    # Line view, like the owners of these markers: every IDD marker line in the
+    # replaced region is kept once, before the new marker.
+    in_body = set(body_lines)
+    carried = []
+    for line in old_lines[start + 1 : end]:
+        if IDD_MARKER_LINE_RE.fullmatch(line) and line not in in_body and line not in carried and line != marker:
+            carried.append(line)
+    region = body_lines + [""] + carried + [marker]
+    out = head + region + ([""] + tail if tail else [])
+
+    # Invariant: nothing outside the replaced region may change how it parses,
+    # and every marker must still be a marker — outside code, and the first line
+    # of its own HTML block (a marker is an HTML comment, so an unclosed `<!--`
+    # before it would swallow it). A replacement that leaves a fence or an HTML
+    # comment open fails this (verify #351 round 3).
+    try:
+        new_blocks = _Blocks(out)
+    except ParserUnavailable as e:
+        err(f"ERROR: {e}; nothing was composed")
+        return EXIT_PARSER
+    marker_lines = range(len(head) + len(body_lines) + 1, len(head) + len(region))
+    broken = any(i in new_blocks.code or i not in new_blocks.html_starts for i in marker_lines)
+    tail_at = len(head) + len(region) + 1
+    for k in range(len(tail)):
+        o, n = end + k, tail_at + k
+        if (o in blocks.opaque) != (n in new_blocks.opaque) or (o in blocks.headings) != (n in new_blocks.headings):
+            broken = True
+            break
+    if broken:
+        err(
+            "Refuse: the replacement leaves a code block or an HTML comment open, so "
+            "the marker or the text after the corrected region would render as code. "
+            "Close it and try again (#351)."
+        )
+        return 6
     sys.stdout.write("\n".join(out) + "\n")
+    return 0
+
+
+def existing_mentions_subcmd(argv):
+    """Logins the target already mentions, found exactly the way gh-egress finds
+    them (its parser, then its token pattern). They were published already, so
+    keeping them in an edit notifies no one new; the skill attests them and
+    gh-egress still refuses any mention the correction adds (round 3)."""
+    if len(argv) != 1 or not os.path.isfile(argv[0]):
+        err("ERROR: existing-mentions requires <file>")
+        return 2
+    scanner = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib", "mention_scan_text.py")
+    with open(argv[0], "rb") as fh:
+        data = fh.read()
+    proc = subprocess.run([sys.executable, scanner], input=data, capture_output=True)
+    if proc.returncode != 0:
+        err("ERROR: the mention scan failed (install scripts/requirements-egress.txt)")
+        return 1
+    text = proc.stdout.decode("utf-8", errors="replace")
+    logins = sorted({m for m in re.findall(r"(?:^|[^A-Za-z0-9_])@([A-Za-z0-9][A-Za-z0-9-]*)", text)})
+    print(",".join(logins))
     return 0
 
 
@@ -1191,6 +1301,10 @@ def _archive_path_problem(root):
         cur = os.path.join(cur, part)
         if os.path.islink(cur):
             return f"{os.path.relpath(cur, root)} is a symlink"
+        # A nested repository (a submodule at .claude, say) tracks files that
+        # the superproject's `git ls-files` never lists (round 3).
+        if os.path.lexists(os.path.join(cur, ".git")):
+            return f"{os.path.relpath(cur, root)} is inside a nested git repository"
     return None
 
 
@@ -1254,7 +1368,10 @@ def archive_subcmd(argv):
         backup_id = base_id if n == 1 else f"{base_id}-{n}"
         rel = os.path.join(ARCHIVE_REL, backup_id + ".md")
         path = os.path.join(root, rel)
-        if os.path.lexists(path):
+        side = path[:-3] + ".repo"
+        # Both names must be free: an orphan or symlinked sidecar is never
+        # written through (verify #351 round 3).
+        if os.path.lexists(path) or os.path.lexists(side):
             continue
         # Every name actually written is checked, not only the base name: a
         # rule can re-include `<id>-2.md` alone (verify #351 round 1).
@@ -1269,13 +1386,19 @@ def archive_subcmd(argv):
             err(f"Refuse: cannot create the archive file: {e.strerror}")
             return 7
         try:
+            sfd = os.open(side, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except OSError:
+            os.close(fd)
+            os.remove(path)
+            continue
+        try:
             with os.fdopen(fd, "wb") as out:
                 out.write(data)
-            with open(path[:-3] + ".repo", "w", encoding="utf-8") as side:
-                side.write(repo)
+            with os.fdopen(sfd, "w", encoding="utf-8") as side_fh:
+                side_fh.write(repo)
             os.chmod(path, 0)
         except OSError as e:
-            for leftover in (path, path[:-3] + ".repo"):
+            for leftover in (path, side):
                 try:
                     os.chmod(leftover, 0o600)
                     os.remove(leftover)
@@ -1324,6 +1447,17 @@ def restore_subcmd(argv):
     tracked = _git(["ls-files", "--error-unmatch", "--", rel], cwd=root)
     if tracked is not None and tracked.returncode == 0:
         err(f"Refuse: {backup_id} is tracked by git, so this helper did not write it; nothing was read.")
+        return 2
+    # A case-insensitive filesystem resolves .claude/... to a tracked
+    # .CLAUDE/... that ls-files does not match by name (round 3): refuse when
+    # the repository tracks anything under the archive path in any case.
+    listing = _git(["ls-files", "-z"], cwd=root)
+    if listing is None or listing.returncode != 0:
+        err("Refuse: cannot list tracked files to confirm the entry is untracked; nothing was read.")
+        return 2
+    prefix = ARCHIVE_IGNORE_PATTERN.casefold()
+    if any(p.casefold().startswith(prefix) for p in listing.stdout.split("\0") if p):
+        err("Refuse: the repository tracks files under the archive path, so its entries are not this helper's; nothing was read.")
         return 2
     side = path[:-3] + ".repo"
     try:
@@ -1407,7 +1541,10 @@ Subcommands:
 
 Exit codes:
   0=success, 1=generic, 2=usage, 3=R4-refuse, 4=R5-refuse, 5=unreadable-file,
-  6=protected-region, 7=archive-refused
+  6=protected-region, 7=archive-refused, 8=markdown-parser-unavailable
+
+  existing-mentions <file>
+      Print, comma-separated, the logins the file already mentions (gh-egress's scan).
 """
 
 
@@ -1427,6 +1564,8 @@ def main(argv):
         return check_correction_subcmd(rest)
     if subcmd == "compose-correction":
         return compose_correction_subcmd(rest)
+    if subcmd == "existing-mentions":
+        return existing_mentions_subcmd(rest)
     if subcmd == "archive":
         return archive_subcmd(rest)
     if subcmd == "restore":

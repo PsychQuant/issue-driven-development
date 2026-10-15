@@ -57,7 +57,7 @@ After writing an archive file the helper SHALL set its permission bits to `0000`
 
 ### Requirement: A PreToolUse hook SHALL deny Claude tool access to the archive
 
-The issue-driven-dev plugin SHALL register a PreToolUse hook for the tools `Read`, `Grep`, `Glob`, `Edit`, `Write`, `NotebookEdit`, `Bash`, and `PowerShell`. The hook SHALL return a deny decision when any of these `tool_input` fields, compared case-insensitively and, for path fields, after `os.path.normpath` normalization (including the join of `path` with Glob's `pattern` or Grep's `glob`), contains `.claude/.idd/archive`: `file_path`, `path`, `notebook_path`, `pattern` (Glob only), `glob` (Grep only), or `command` (Bash and PowerShell). The deny reason SHALL state that the directory holds the prior versions of corrected errors, that reading it would reintroduce those errors, and that `/idd-edit` restore is the supported recovery path. When the hook input cannot be parsed, the hook SHALL allow the call. Skill instructions SHALL NOT place the literal archive path in any Bash command they execute; the helper computes the path internally.
+The issue-driven-dev plugin SHALL register a PreToolUse hook for the tools `Read`, `Grep`, `Glob`, `Edit`, `Write`, `NotebookEdit`, `Bash`, and `PowerShell`. The hook SHALL return a deny decision when any of these `tool_input` fields, compared case-insensitively and, for path fields, after `os.path.normpath` normalization (including the join of `path` with Glob's `pattern` or Grep's `glob`), contains `.claude/.idd/archive` as a path segment (followed by `/` or the end): `file_path`, `path`, `notebook_path`, `pattern` (Glob only), `glob` (Grep only), or `command` (Bash and PowerShell). The deny reason SHALL state that the directory holds the prior versions of corrected errors, that reading it would reintroduce those errors, and that `/idd-edit` restore is the supported recovery path. When the hook input cannot be parsed, the hook SHALL allow the call. Skill instructions SHALL NOT place the literal archive path in any Bash command they execute; the helper computes the path internally.
 
 #### Scenario: Read denied
 
@@ -86,7 +86,12 @@ The issue-driven-dev plugin SHALL register a PreToolUse hook for the tools `Read
 
 ### Requirement: Restore SHALL refuse entries it did not write
 
-`restore` SHALL refuse with exit 2 when the archive entry is a symbolic link or not a regular file, when any directory between the work tree and the entry (`.claude`, `.claude/.idd`, `.claude/.idd/archive`, `.claude/.idd/archive/edits`) is a symbolic link, when it is tracked by git, or when its sidecar `owner/repo` differs from `--repo`. `archive` SHALL refuse with exit 7, writing nothing, when any of those directories is a symbolic link.
+`restore` SHALL refuse with exit 2 when the archive entry is a symbolic link or not a regular file, when any directory between the work tree and the entry (`.claude`, `.claude/.idd`, `.claude/.idd/archive`, `.claude/.idd/archive/edits`) is a symbolic link or holds a nested git repository, when it is tracked by git, when the repository tracks any path under the archive directory in any letter case, or when its sidecar `owner/repo` differs from `--repo`. `archive` SHALL refuse with exit 7, writing nothing, when any of those directories is a symbolic link or holds a nested git repository. `archive` SHALL create both the entry and its `.repo` sidecar exclusively, moving to the next suffix when either name exists, so an existing or symlinked sidecar is never written through.
+
+#### Scenario: Orphan sidecar
+
+- **WHEN** a `.repo` sidecar for the base id already exists without its `.md` entry
+- **THEN** `archive` SHALL write the entry under the `-2` suffix and SHALL leave the existing sidecar unchanged
 
 #### Scenario: Symlinked archive directory
 
@@ -105,7 +110,7 @@ The issue-driven-dev plugin SHALL register a PreToolUse hook for the tools `Read
 
 ### Requirement: The read guard SHALL match path tokens and honour an unlock flag
 
-For Bash and PowerShell the hook SHALL split the command into shell words, split each word further on whitespace and quoting or grouping characters, and deny when any piece, after `os.path.normpath`, contains `.claude/.idd/archive` as a path segment (followed by `/` or the end of the piece). The only words skipped are values of the message options `-m`, `--message`, `--body`, `--title`, `--notes` and `--subject` (closed list), and only when the value contains no `$`, backtick, `<(` or `>(`, so `sh -c "cat <archive path>"` is denied while a commit message that mentions the path is allowed. The hook SHALL allow every call while the file `~/.cache/idd/archive-read-guard.disabled` exists.
+For Bash and PowerShell the hook SHALL split the command into shell words, split each word further on whitespace and quoting or grouping characters, and deny when any piece, after `os.path.normpath`, contains `.claude/.idd/archive` as a path segment (followed by `/` or the end of the piece). The only words skipped are values of the message options `-m`, `--message`, `--body`, `--title`, `--notes` and `--subject` (closed list) given to a command that takes messages (`git`, `gh`, `hg`, `jj`, `svn`), and only when the value contains no `$`, backtick, `<(` or `>(`, so `sh -c "cat <archive path>"` and `sort -m <archive path>` are denied while a commit message that mentions the path is allowed. The hook SHALL also deny a recursive permission change (`chmod`, `chown`, `chgrp`, `chflags` or `setfacl` with `-R` or `--recursive`) whose target, resolved against the call's working directory, is the archive or a directory above it. The hook SHALL allow every call while the file `~/.cache/idd/archive-read-guard.disabled` exists.
 
 #### Scenario: Commit message that mentions the path
 

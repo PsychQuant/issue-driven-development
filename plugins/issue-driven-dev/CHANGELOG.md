@@ -45,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `archive --from-file` goes through the #155 path gate.
 - The archive root is the main worktree, so an archive written from a linked worktree survives
   `git worktree remove`.
-- A `---` line ends a corrected section (`section-replace --stop-at-rule`), so a correction cannot swallow the
+- A thematic break ends a corrected section (round 4 reads it from the Markdown parser), so a correction cannot swallow the
   body's `## Current Status` block.
 - Verbatim blocks are compared as multisets and recognised by exactly two labels, `Original text` and
   `**Original**`.
@@ -62,7 +62,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `## Current Status` block from the comment is refused (exit 6).
 - Section boundaries skip code: a `# comment` or `---` inside a fenced or indented code block no longer ends the
   section early. Code ranges come from the pinned `markdown-it-py` 4.0.0, the parser gh-egress already requires;
-  without it `section-replace`, `check-correction` and `compose-correction` refuse (exit 1) and change nothing.
+  without it `section-replace`, `check-correction` and `compose-correction` refuse and change nothing (exit 8 since
+  round 4).
 - New `compose-correction` subcommand builds the body that is both previewed and written: the confirmation shows the
   full composed text, a replacement that repeats the target heading no longer prints it twice, and earlier
   correction markers in the section are kept before the new one.
@@ -77,15 +78,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it; `chmod 000` the archive file again after reading it; `idd-update` leaves out decisions an errata overturned;
   `idd-reorganize` separates superseded judgments from wrong statements; `idd-issue` multi-finding sends wrong
   body content to `--correct`; README lists the read-guard hook.
+
+### Fixed (verify round 4, before release)
+
+- **Section boundaries come from the Markdown parser.** A top-level heading (setext included) or thematic break ends a
+  section; nothing inside a code block or an HTML block does. The protection scan stays line by line, the way
+  `idd-update` and `idd-clarify` find their headings, so an unclosed fence can no longer hide `## Current Status` from
+  it, and a subsection of `### Clarity Surface` is protected too. `compose-correction` refuses (exit 6) a body whose
+  text outside the corrected region would parse differently, which is what a replacement leaving a fence or an HTML
+  comment open does.
+- **Security — `parse-args` output survives `eval` exactly.** A NUL byte in `--body-file` is refused (exit 5); any value
+  with a control character goes through ANSI-C quoting (a NUL used to cancel the escaping backslash under bash and let
+  a `;` through); every `=` is escaped for zsh; the skill stops when the evaluation fails.
+- Corrections keep every IDD marker in the replaced region (`idd:comment`, `idd:dashboard`, earlier `idd:edit`), once;
+  a whole-comment correction must keep the comment's opening heading (`## Diagnosis` …); a line glued to an
+  `Original text` quotation is refused; `--correct` without replacement text is refused.
+- The egress gates run on the composed body before the preview, with the target's existing mentions attested
+  (`existing-mentions`), so a body gh-egress would refuse is never archived. `idd-comment --type errata` posts the
+  errata when the correction is refused.
+- Working copies live in a private per-run directory; the body is composed again and compared with the preview before
+  archiving; the target is read back after the write (a failed or different read is reported as unverified, exit 4);
+  a run where the user declined exits 5; `--replace --section` checks section-replace's exit code; a staging failure
+  skips the target instead of ending the run.
+- `archive` creates the entry and its sidecar exclusively; `archive` and `restore` refuse a nested git repository on
+  the archive path, and `restore` refuses when the repository tracks anything under the archive path in any letter
+  case. The read guard denies a recursive `chmod`/`chown` on the archive or a directory above it, and treats `-m` as a
+  message only for git, gh, hg, jj and svn.
+- `validate-target --correct` ignores `--override-user-content` and answers "unknown" (exit 1) when the gh user cannot
+  be determined; a missing Markdown parser is exit 8 with its own refusal reason. The archive is an ignored file, so
+  `git clean -X` deletes it — documented, with relocation tracked in #407; the marker date's time zone is #406.
 - `idd-update` rebuilds Key Decisions on every run instead of only appending, so a corrected decision does not
   survive in the summary.
 - `/idd-edit --correct` re-reads the target after confirmation and refuses when it changed since the preview.
 
 ### Changed
 
-- **BREAKING (behavior) — `/idd-comment --type errata`** on a comment by the OWNER, a bot or the invoking user now delegates to
+- **BREAKING (behavior) — `/idd-comment --type errata`** on a comment by the OWNER or the invoking user now delegates to
   `/idd-edit --correct` and posts nothing; it no longer appends an errata comment plus a `--prepend-note`
-  warning. On anyone else's comment it posts the errata comment only and no longer tries to edit the target.
+  warning. When the correction is refused it posts the errata comment instead. On anyone else's comment, a bot's
+  included, it posts the errata comment only and no longer tries to edit the target.
 
 ### Notes
 

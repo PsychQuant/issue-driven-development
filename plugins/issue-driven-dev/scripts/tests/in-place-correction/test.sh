@@ -337,7 +337,9 @@ refute_output_grep "text after the fence is replaced too" "wrong tail" "$WORK/f4
 refute_output_grep "fenced lines are replaced with the section" "a shell comment" "$WORK/f4a.out"
 assert_output_grep "the next real heading survives" "## Next" "$WORK/f4a.out"
 run_helper f4b check-correction "$WORK/fenced.md" "## Notes" "$WORK/r-fix.md"
-assert_exit "a fenced '## Current Status' is not a managed heading" 0 "$RC"
+# Round 4 reversed this: idd-update finds '## Current Status' by exact line
+# match, fenced or not, so the protection scan reads lines the same way.
+assert_exit "a '## Current Status' line inside the target is refused even when fenced" 6 "$RC"
 
 # F4 + F7 + F8. compose-correction builds the full new body for preview and write
 MARK='<!-- idd:edit mode="correct" backup-id="comment-1-20261016T000000Z" date="2026-10-16" -->'
@@ -421,5 +423,123 @@ assert_output_grep "idd-issue multi-finding routes wrong body content to --corre
 assert_output_grep "README lists the archive read guard hook" "archive-read-guard" "$PLUGIN/README.md"
 assert_output_grep "idd-update leaves out decisions an errata overturned" "type=errata" "$SKILLS/idd-update/SKILL.md"
 assert_output_grep "idd-reorganize separates superseded judgments from wrong statements" "判斷被後來的資訊推翻" "$SKILLS/idd-reorganize/SKILL.md"
+
+# ── G. round 4 (verify #351 round 3) ──────────────────────────────────────
+echo "G. round 4"
+
+# G1. an unclosed fence: in the original target, or opened by the replacement
+cat >"$WORK/unclosed.md" <<'EOF'
+## Expected
+wrong text
+```bash
+echo oops
+
+---
+
+## Current Status
+
+**Phase**: diagnosed
+EOF
+run_helper g1a check-correction "$WORK/unclosed.md" "## Expected" "$WORK/r-fix.md"
+assert_exit "an unclosed fence that swallows ## Current Status → exit 6" 6 "$RC"
+
+printf '## Expected\nwrong\n\n## Actual\nx\n\n---\n\n## Current Status\n\n**Phase**: diagnosed\n' >"$WORK/plain.md"
+printf 'fixed:\n```bash\necho hi\n' >"$WORK/r-open.md"
+run_helper g1b compose-correction "$WORK/plain.md" "## Expected" "$WORK/r-open.md" "$MARK"
+assert_exit "a replacement that leaves a fence open → exit 6" 6 "$RC"
+assert_output_grep "the refusal says the block is left open" "open" "$WORK/g1b.err"
+
+printf '## Notes\nwrong\n<!--\n## hidden\n-->\nmore wrong\n\n## Next\n- keep me\n' >"$WORK/htmlc.md"
+run_helper g1c section-replace "$WORK/htmlc.md" "## Notes" "$WORK/r-fix.md" --stop-at-rule
+refute_output_grep "a heading inside an HTML comment does not end the section" "more wrong" "$WORK/g1c.out"
+assert_output_grep "the real next heading survives" "## Next" "$WORK/g1c.out"
+refute_output_grep "no orphan comment terminator is left" "-->" "$WORK/g1c.out"
+
+printf '## Notes\nwrong\n\nSub title\n---\nkeep sub\n\n## Next\n' >"$WORK/setext.md"
+run_helper g1d section-replace "$WORK/setext.md" "## Notes" "$WORK/r-fix.md" --stop-at-rule
+assert_output_grep "a setext H2 ends the section" "Sub title" "$WORK/g1d.out"
+assert_output_grep "the setext section's body stays" "keep sub" "$WORK/g1d.out"
+refute_output_grep "the corrected text is gone" "wrong" "$WORK/g1d.out"
+
+# G2. NUL and control characters never reach eval unquoted
+printf 'x\000;touch %s/PWNED' "$WORK" >"$WORK/nul.md"
+run_helper g2a parse-args comment:1 --correct --scope whole-comment --body-file "$WORK/nul.md" --reason r
+assert_exit "a body file with a NUL byte → exit 5" 5 "$RC"
+run_helper g2b parse-args comment:1 --correct --scope whole-comment --body "$(printf 'a\001b')" --reason r
+assert_output_grep "a control character goes through ANSI-C quoting" "BODY_INPUT=\$'a\\x01b'" "$WORK/g2b.out"
+
+# G3. every '=' is escaped (zsh expands '=cmd' after ':' too)
+run_helper g3 parse-args comment:1 --correct --scope whole-comment --body 'a:=ls' --reason r
+assert_output_grep "an '=' after ':' is escaped" 'BODY_INPUT=a:\=ls' "$WORK/g3.out"
+if command -v zsh >/dev/null 2>&1; then
+  assert_eq "zsh eval keeps 'a:=ls'" "a:=ls" \
+    "$(zsh -c 'eval "$(cat "$1")"; print -r -- "$BODY_INPUT"' _ "$WORK/g3.out" 2>/dev/null)"
+fi
+
+# G4. a subsection of Clarity Surface is managed too
+printf '## Related\n- #1\n\n### Clarity Surface(idd-clarify run 2026-10-01T00:00:00Z)\n\n#### Pending\n- a question\n' >"$WORK/nested-cs.md"
+run_helper g4 check-correction "$WORK/nested-cs.md" "#### Pending" "$WORK/r-fix.md"
+assert_exit "a heading nested under Clarity Surface → exit 6" 6 "$RC"
+assert_output_grep "the refusal names idd-clarify" "idd-clarify" "$WORK/g4.err"
+
+# G5. a line right after the Original text quotation would join it (lazy continuation)
+printf '%s\nnew interpretation\n' "$QUOTE" >"$WORK/r-lazy.md"
+run_helper g5 check-correction "$WORK/body.md" "## Problem" "$WORK/r-lazy.md"
+assert_exit "text glued to the quotation → exit 6" 6 "$RC"
+
+# G6. --correct needs replacement text
+run_helper g6 parse-args comment:1 --correct --scope whole-comment --reason r
+assert_exit "--correct without --body or --body-file → exit 2" 2 "$RC"
+
+# G7. identity markers other skills look for survive a whole-comment correction
+printf '## Diagnosis\n### Root Cause\nwrong\n\n<!-- idd:comment type=errata date=2026-10-01 target-comment=99 -->\n' >"$WORK/diag.md"
+run_helper g7a check-correction "$WORK/diag.md" - "$WORK/r-fix.md"
+assert_exit "dropping the comment's ## Diagnosis heading → exit 6" 6 "$RC"
+printf '## Diagnosis\n### Root Cause\nright\n' >"$WORK/r-diag.md"
+run_helper g7b check-correction "$WORK/diag.md" - "$WORK/r-diag.md"
+assert_exit "keeping the heading passes" 0 "$RC"
+run_helper g7c compose-correction "$WORK/diag.md" - "$WORK/r-diag.md" "$MARK"
+assert_output_grep "the idd:comment marker is carried forward" "target-comment=99" "$WORK/g7c.out"
+
+# G8. markers are not duplicated, and every idd:edit marker is kept
+printf 'fixed\n\n%s\n' "$OLDMARK" >"$WORK/r-withmark.md"
+run_helper g8 compose-correction "$WORK/recorrected.md" "## Notes" "$WORK/r-withmark.md" "$MARK"
+assert_eq "an earlier marker copied into the replacement appears once" "1" "$(grep -c 'comment-1-20261001T000000Z' "$WORK/g8.out")"
+printf '## Notes\nold\n\n<!-- idd:edit mode="replace" section="## Notes" date="2026-09-01" -->\n\n## Next\n' >"$WORK/replaced.md"
+run_helper g8b compose-correction "$WORK/replaced.md" "## Notes" "$WORK/r-fix.md" "$MARK"
+assert_output_grep "an earlier replace marker is kept" 'mode="replace"' "$WORK/g8b.out"
+
+# G9. a missing or different Markdown parser has its own exit code
+mkdir -p "$WORK/fakemd/markdown_it"
+printf '__version__ = "0.0.1"\nclass MarkdownIt:\n    pass\n' >"$WORK/fakemd/markdown_it/__init__.py"
+PYTHONPATH="$WORK/fakemd" run_helper g9 section-replace "$WORK/body.md" "## Expected" "$WORK/r-fix.md"
+assert_exit "a different markdown-it-py version → exit 8" 8 "$RC"
+
+# G10. validate-target: --correct ignores override; an unknown gh user is not a verdict
+printf '%s' '{"login":"someone-else","assoc":"CONTRIBUTOR"}' >"$WORK/m-other2.json"
+export IDD_EDIT_HELPER_TEST_MODE=1 IDD_EDIT_HELPER_GH_MOCK="$WORK/m-other2.json" IDD_EDIT_HELPER_GH_USER=kiki830621
+run_helper g10a validate-target 903 o/r true --correct
+assert_exit "--correct with override true still refuses another user's comment" 4 "$RC"
+unset IDD_EDIT_HELPER_GH_USER
+run_helper g10b validate-target 903 o/r false --correct
+assert_exit "--correct when the gh user cannot be determined → exit 1" 1 "$RC"
+assert_output_grep "the error says the gh user is unknown" "gh user" "$WORK/g10b.err"
+unset IDD_EDIT_HELPER_TEST_MODE IDD_EDIT_HELPER_GH_MOCK
+
+# G11. existing-mentions lists the logins the target already mentions
+printf 'Thanks @alice and `@bob`, mail user@host.\n' >"$WORK/mentions.md"
+run_helper g11 existing-mentions "$WORK/mentions.md"
+assert_eq "only the live mention is listed" "alice" "$(cat "$WORK/g11.out")"
+
+# G12. skill contracts
+assert_output_grep "egress is checked before anything is archived" 'gh-egress.sh" check' "$EDIT_SKILL"
+assert_output_grep "existing mentions are attested" "existing-mentions" "$EDIT_SKILL"
+assert_output_grep "--replace checks section-replace's exit code" 'section-replace "$BACKUP_FILE" "$SECTION_FLAG" "$REPL_FILE") || {' "$EDIT_SKILL"
+assert_output_grep "a staging failure is recorded, not fatal" "stage-failed" "$EDIT_SKILL"
+assert_output_grep "working copies live in a private per-run directory" 'WORK_DIR=$(mktemp -d' "$EDIT_SKILL"
+assert_output_grep "the written body is compared with the preview" "differs-from-preview" "$EDIT_SKILL"
+assert_output_grep "a run where something was declined exits 5" '[ "${#DECLINED_TARGETS[@]}" -gt 0 ] && exit 5' "$EDIT_SKILL"
+assert_output_grep "a failed eval stops the run" 'eval "$PARSE_OUT" ||' "$EDIT_SKILL"
+assert_output_grep "idd-comment falls back to an errata comment when idd-edit refuses" "改貼 errata" "$SKILLS/idd-comment/SKILL.md"
 
 print_summary "in-place-correction"

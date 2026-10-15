@@ -89,13 +89,14 @@ OWNER 或目前 gh 使用者本人的 comment → 轉給 `idd-edit --correct`，
 | `parse-args` | 新增 `--correct` 與 `issue:<N>` target | eval 用的 assignments，`MODE=--correct`（沿用既有以旗標為值的慣例），`TARGETS` 保留 `issue:<N>` 原樣、由 SKILL 依前綴分辨目標類型；多行 `--body-file` 內容以 ANSI-C quoting（`$'...'`）輸出 | `--correct` 缺 scope/section 或正文用 whole → exit 3；`--correct` 併用 `--override-user-content` → exit 2；`issue:<N>` 配 `--correct` 以外的模式 → exit 2 並指向 #347；id 非數字 → exit 2 |
 | `check-correction <old-file> <section|-> <new-file>` 的段落不存在 | — | — | exit 1（與 `section-replace` 一致） |
 | `check-correction <old-file> <section-heading|-> <new-file>` | 原文、目標段落（`-` 表示整則 comment）、新段落 | 無輸出，exit 0 | 受管區或 verbatim 區塊被改 → exit 6，stderr 指名區域與負責 skill |
-| `validate-target <comment-id|issue:<N>> <repo> <override> [<mode>]` | 新增 `issue:<N>`（檢查 issue 作者）與「目前登入的 gh 使用者本人」放行（四種 mode 都適用）；第 4 個參數為 `--correct` 時 bot 不放行；test mode 不呼叫 `gh api user` | exit 0 | 作者不是 OWNER、bot 或目前登入的 gh 使用者（且未 override）→ exit 4；`--correct` 時 bot 也 exit 4，訊息指向 errata、不提 override |
-| `compose-correction <old-file> <section|-> <body-file> <marker>` | 原文、目標段落（`-` 為整則）、更正內容、標記（預覽用 `(assigned after confirmation)` 佔位） | 寫入用的完整內文：段落換成新內容，開頭重複的目標標題去掉，區段內舊的更正標記保留在新標記之前 | 檔案不可讀 → exit 5；標記格式不符 → exit 2；段落不存在或 Markdown parser 缺／版本不符 → exit 1 |
-| `section-replace ... [--stop-at-rule]` | 既有子命令，新增 `--stop-at-rule` | 取代後全文 | `--stop-at-rule` 時段落在 `---` 行結束，不吞掉其後的 `## Current Status`；fenced／縮排 code block 內的行不結束段落（範圍取自 `markdown-it-py` 4.0.0，與 gh-egress 同一個 parser；缺或版本不符 → exit 1，不改任何東西） |
-| `parse-args` 的 `--section` | — | — | 不是 markdown 標題行（1–6 個 `#`＋空白＋標題）→ exit 2 |
-| `archive <comment|issue> <id> --from-file <path> --repo R` | 目標類型、id、預覽用的原文檔（經 #155 路徑閘門）、repo | stdout 只有 backup-id；另寫 `<backup-id>.repo` sidecar 記錄 repo | 原文檔不可讀 → exit 5；不在 git work tree／未被 ignore／寫入失敗 → exit 7，不留檔 |
+| `validate-target <comment-id|issue:<N>> <repo> <override> [<mode>]` | 新增 `issue:<N>`（檢查 issue 作者）與「目前登入的 gh 使用者本人」放行（四種 mode 都適用）；第 4 個參數為 `--correct` 時只放行 OWNER 與本人（bot 不放行、override 不適用，判斷在 override 之前）；test mode 不呼叫 `gh api user`，`GH_USER` 只在作者資料也是 mock 時採用 | exit 0 | 作者不是 OWNER、bot 或目前登入的 gh 使用者（且未 override）→ exit 4；`--correct` 時 bot 或他人 exit 4，訊息指向 errata、不提 override；`--correct` 且查不到 gh 使用者 → exit 1 |
+| `compose-correction <old-file> <section|-> <body-file> <marker>` | 原文、目標段落（`-` 為整則）、更正內容、標記（預覽用 `(assigned after confirmation)` 佔位） | 寫入用的完整內文：段落換成新內容，開頭重複的目標標題去掉，區段內所有整行 IDD 標記（`<!-- idd:… -->`）保留一次、放在新標記之前 | 檔案不可讀 → exit 5；標記格式不符 → exit 2；段落不存在 → exit 1；組好的內文在區段外的解析結果改變、或標記不自成 HTML 區塊／落在 code 裡（替換內容留下沒關閉的 fence 或 HTML 註解）→ exit 6；Markdown parser 缺或版本不符 → exit 8 |
+| `existing-mentions <file>` | 目標原文 | 以逗號分隔的、原文已經提及的帳號（用 gh-egress 同一個 parser 與 token 規則） | 掃描失敗 → exit 1 |
+| `section-replace ... [--stop-at-rule]` | 既有子命令，新增 `--stop-at-rule` | 取代後全文 | 段落邊界取自 Markdown parser：同級或更高的頂層標題（含 setext）；`--stop-at-rule` 時另有頂層分隔線與受管標題；code、HTML 區塊內的行不結束段落；`--section` 不是標題 → exit 2；parser 缺或版本不符 → exit 8，不改任何東西 |
+| `parse-args` | — | 每個值 eval 後與原值相同：含換行或控制字元的值用 ANSI-C quoting，`=` 一律跳脫 | `--section` 不是 markdown 標題行 → exit 2（每個 mode）；`--correct` 沒有替換內容 → exit 2；`--body-file` 含 NUL → exit 5 |
+| `archive <comment|issue> <id> --from-file <path> --repo R` | 目標類型、id、預覽用的原文檔（經 #155 路徑閘門）、repo | stdout 只有 backup-id；另寫 `<backup-id>.repo` sidecar 記錄 repo | 原文檔不可讀 → exit 5；不在 git work tree／未被 ignore／寫入失敗 → exit 7，不留檔；歸檔路徑上任一層是 symlink 或巢狀 git repo → exit 7；`.md` 與 `.repo` 都以 exclusive 方式建立，任一已存在就換下一個後綴 |
 | `emit-audit-marker edit mode=correct backup-id=<id>` | 既有子命令 | 標記一行 | `backup-id` 不符格式 → exit 2 |
-| `restore <backup-id> --repo R` | backup-id | stdout：目標 URL 與 byte 數 | id 格式不符、歸檔或 sidecar 是 symlink、歸檔被 git 追蹤、sidecar 缺少或其 repo 與 `--repo` 不符 → exit 2；檔案不存在 → exit 5；PATCH 失敗 → 透傳 gh 非零碼 |
+| `restore <backup-id> --repo R` | backup-id | stdout：目標 URL 與 byte 數 | id 格式不符、歸檔或 sidecar 是 symlink、歸檔被 git 追蹤、sidecar 缺少或其 repo 與 `--repo` 不符 → exit 2；檔案不存在 → exit 5；PATCH 失敗 → 透傳 gh 非零碼；歸檔路徑上任一層是 symlink 或巢狀 git repo、repo 追蹤歸檔目錄下任何路徑（不分大小寫）→ exit 2 |
 
 既有 exit code（0／1／2／3／4／5）語意不變。所有子命令都不得把歸檔內容寫到 stdout 或 stderr。
 
