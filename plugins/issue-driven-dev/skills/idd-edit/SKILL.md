@@ -69,7 +69,7 @@ idd-issue source.docx       # auto-trigger when source contains ≥2 findings
 
 ## Runtime gates (#154, v2.81.0+)
 
-`/idd-edit` enforces 2 SHALL requirements at runtime via the **Python helper** `plugins/issue-driven-dev/scripts/idd-edit-helper.py` (#155 — replaces inline bash that was non-convergent over 3 verify rounds; the Python layer eliminates the R1/R2/R3 bug classes by-construction). Call `python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" <subcmd> ...` and branch on its exit code:
+`/idd-edit` enforces 2 SHALL requirements at runtime via the **Python helper** `plugins/issue-driven-dev/scripts/idd-edit-helper.py` (#155 — replaces inline bash that was non-convergent over 3 verify rounds; the Python layer eliminates the R1/R2/R3 bug classes by-construction). Call `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" <subcmd> ...` and branch on its exit code:
 
 | Requirement | Gate | Refuse code |
 |-------------|------|-------------|
@@ -131,7 +131,7 @@ TaskCreate(name="verify_and_report", description="re-fetch comment 比對寫入�
 # stderr (potentially containing $() from cat-on-directory failure etc.)
 # into the eval input, defeating printf %q quoting safety.
 PARSE_ERR_FILE="/tmp/idd-edit-parse-err-$$"
-PARSE_OUT=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" parse-args "$@" 2>"$PARSE_ERR_FILE")
+PARSE_OUT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" parse-args "$@" 2>"$PARSE_ERR_FILE")
 PARSE_EXIT=$?
 PARSE_ERR=$(cat "$PARSE_ERR_FILE")
 rm -f "$PARSE_ERR_FILE"
@@ -220,7 +220,7 @@ exit 0
 **v2.81.0+ (#154)**: R5 gate refuses modifications to user-authored comments (non-OWNER non-bot) unless `--override-user-content --reason="..."` provided。 Helper does single `gh api` call,checks `author_association` + `user.login`,applies bot allowlist (`*[bot]` pattern + `OWNER` passthrough)。
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" \
     validate-target "$COMMENT_ID" "$REPO" "$OVERRIDE_USER_CONTENT"
 VALIDATE_EXIT=$?
 case $VALIDATE_EXIT in
@@ -263,12 +263,12 @@ echo "✓ Backup: $BACKUP_FILE"
 
 ### Step 4: Build new body per mode
 
-> **v2.81.0+ (#154)**: audit markers are built via `python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" emit-audit-marker` — centralizes HTML-comment-escape (`-->` stripping) so attacker-controlled `$REASON` / `$SECTION_FLAG` cannot forge audit trail (closes #154 verify finding C3).
+> **v2.81.0+ (#154)**: audit markers are built via `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" emit-audit-marker` — centralizes HTML-comment-escape (`-->` stripping) so attacker-controlled `$REASON` / `$SECTION_FLAG` cannot forge audit trail (closes #154 verify finding C3).
 
 #### Mode: `--append`
 
 ```bash
-EDIT_MARKER=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" emit-audit-marker edit mode=append)
+EDIT_MARKER=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" emit-audit-marker edit mode=append)
 NEW_BODY="$(cat $BACKUP_FILE)
 
 ---
@@ -281,7 +281,7 @@ $EDIT_MARKER"
 
 # Append R5 override audit marker if applicable
 if [ "$OVERRIDE_USER_CONTENT" = "true" ]; then
-    OVERRIDE_MARKER=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" emit-audit-marker override mode=append reason="$REASON")
+    OVERRIDE_MARKER=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" emit-audit-marker override mode=append reason="$REASON")
     NEW_BODY="$NEW_BODY
 
 $OVERRIDE_MARKER"
@@ -295,7 +295,7 @@ R4 gate already enforced in Step 1 — `SCOPE_FLAG` or `SECTION_FLAG` is guarant
 ```bash
 if [ "$SCOPE_FLAG" = "whole-comment" ]; then
     # Whole-comment replacement
-    EDIT_MARKER=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" emit-audit-marker edit mode=replace scope=whole-comment backup="$BACKUP_FILE")
+    EDIT_MARKER=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" emit-audit-marker edit mode=replace scope=whole-comment backup="$BACKUP_FILE")
     NEW_BODY="$BODY_INPUT
 
 $EDIT_MARKER"
@@ -308,10 +308,10 @@ elif [ -n "$SECTION_FLAG" ]; then
     REPL_FILE=$(mktemp "${TMPDIR:-/tmp}/idd-edit-repl-XXXXXX") || {
       echo "✗ cannot stage the replacement text — refusing" >&2; exit 1; }
     echo "$BODY_INPUT" > "$REPL_FILE"
-    NEW_BODY=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
+    NEW_BODY=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" \
                   section-replace "$BACKUP_FILE" "$SECTION_FLAG" "$REPL_FILE")
     rm -f "$REPL_FILE"
-    EDIT_MARKER=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" emit-audit-marker edit mode=replace section="$SECTION_FLAG" backup="$BACKUP_FILE")
+    EDIT_MARKER=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" emit-audit-marker edit mode=replace section="$SECTION_FLAG" backup="$BACKUP_FILE")
     NEW_BODY="$NEW_BODY
 
 $EDIT_MARKER"
@@ -319,7 +319,7 @@ fi
 
 # Append R5 override audit marker if applicable
 if [ "$OVERRIDE_USER_CONTENT" = "true" ]; then
-    OVERRIDE_MARKER=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" emit-audit-marker override mode=replace reason="$REASON")
+    OVERRIDE_MARKER=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" emit-audit-marker override mode=replace reason="$REASON")
     NEW_BODY="$NEW_BODY
 
 $OVERRIDE_MARKER"
@@ -331,7 +331,7 @@ fi
 #### Mode: `--prepend-note`
 
 ```bash
-EDIT_MARKER=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" emit-audit-marker edit mode=prepend-note)
+EDIT_MARKER=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" emit-audit-marker edit mode=prepend-note)
 NEW_BODY="> ⚠️ **Edit $(date +%Y-%m-%d)**: $REASON
 
 ---
@@ -342,7 +342,7 @@ $EDIT_MARKER"
 
 # Append R5 override audit marker if applicable
 if [ "$OVERRIDE_USER_CONTENT" = "true" ]; then
-    OVERRIDE_MARKER=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" emit-audit-marker override mode=prepend-note reason="$REASON")
+    OVERRIDE_MARKER=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" emit-audit-marker override mode=prepend-note reason="$REASON")
     NEW_BODY="$NEW_BODY
 
 $OVERRIDE_MARKER"
@@ -378,7 +378,7 @@ echo "$NEW_BODY" > "$TMP_BODY_FILE"
 # #273：comment surgery 進 egress 網 — 原 raw `gh api` PATCH 完全繞過所有網
 # （#226 rollout 的 tracked-separately 欠帳，於此結清）。
 SCRUB_LEVEL="${SCRUB_LEVEL:-warn}"   # 依 rules/privacy-scrubbing.md 解析（repo tier；互動預設 warn，#226 慣例）
-bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit-comment "$COMMENT_ID" \
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-egress.sh" edit-comment "$COMMENT_ID" \
     --repo "$REPO" --body-file "$TMP_BODY_FILE" --scrub-attested "$SCRUB_LEVEL"
 EGRESS_RC=$?
 rm "$TMP_BODY_FILE"

@@ -418,7 +418,7 @@ PW_DIR=$(ls -d "$HOME/.claude/plugins/cache/perspective-writer/perspective-write
 PW_VER=$(basename "${PW_DIR:-}" 2>/dev/null)
 MIN_PW_CONTRACT=4.2.0
 
-if ! "$CLAUDE_PLUGIN_ROOT/scripts/check-plugin-presence.sh" perspective-writer perspective-writer 2>/dev/null; then
+if ! "${CLAUDE_PLUGIN_ROOT}/scripts/check-plugin-presence.sh" perspective-writer perspective-writer 2>/dev/null; then
   CALIBRATED=no; PW_REASON=absent
 elif [ -z "$PW_VER" ] || [ "$(printf '%s\n%s\n' "$MIN_PW_CONTRACT" "$PW_VER" | sort -V | head -1)" != "$MIN_PW_CONTRACT" ]; then
   CALIBRATED=no; PW_REASON=too-old
@@ -520,7 +520,7 @@ COMMENT_FILE="$TAG_DIR/comment-body.md"
 # （#272）reply 且 points-from=user-pasted 時，SCRUB_LEVEL 先取 floor：
 #   [ "$SCRUB_LEVEL" = light ] && SCRUB_LEVEL=warn   # max(repo tier, warn)；enforce 維持 enforce
 # —— SKILL 端是主 gate（wrapper net item 4 只是 light 的機械兜底）。
-bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $NUMBER --repo $GITHUB_REPO --body-file "$COMMENT_FILE" \
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-egress.sh" comment $NUMBER --repo $GITHUB_REPO --body-file "$COMMENT_FILE" \
   --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}
 # 清理由 TAG_DIR 的 trap 負責（見 Step 2）。
 ```

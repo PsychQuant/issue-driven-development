@@ -306,7 +306,7 @@ Managed zone 錨在 **`## Current Status` heading**，**不是**第一個 `---`�
 # （#226）egress 經 gh-egress.sh 派送：$SCRUB_LEVEL 依 rules/privacy-scrubbing.md 解析
 # （third-party=enforce / own-public=warn / private=light），派送前先跑 LLM 隱私自審；
 # 有 @mention 時另帶 --mention-attested（rules/tagging-collaborators.md 5-step 後）。
-bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit $NUMBER --repo $GITHUB_REPO --body "$UPDATED_BODY" --scrub-attested "$SCRUB_LEVEL"
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-egress.sh" edit $NUMBER --repo $GITHUB_REPO --body "$UPDATED_BODY" --scrub-attested "$SCRUB_LEVEL"
 ```
 
 ### Step 6: Report Update

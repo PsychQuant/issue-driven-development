@@ -211,7 +211,7 @@ Phase 1 之前先驗 delegation 依賴，避免 unattended chain 中途 abort �
 
 ```bash
 # superpowers — 無條件 hard gate（diagnose/implement 的 delegation 必經）
-"$CLAUDE_PLUGIN_ROOT/scripts/check-plugin-presence.sh" \
+"${CLAUDE_PLUGIN_ROOT}/scripts/check-plugin-presence.sh" \
   claude-plugins-official superpowers || abort "superpowers missing — install first (see hint above), then re-run /idd-all"
 
 # spectra — Phase 0 只 warn（complexity 尚未判定，SDD path 不一定觸發）；
@@ -341,7 +341,7 @@ echo "→ Path: ${PATH_AXIS} (${INTERACTION}) — ${REASON}"
 # Unattended signal (#123 — normative contract: references/unattended-contract.md)
 # State file 是 harness 內唯一跨 tool-call 可靠訊號（env var 不跨 fresh shell、
 # TTY 恆非互動 #222）。attended 分支的 clear 是防呆：清掉 crashed prior run 的殘留。
-. "$CLAUDE_PLUGIN_ROOT/scripts/lib/unattended-state.sh"
+. "${CLAUDE_PLUGIN_ROOT}/scripts/lib/unattended-state.sh"
 if [ "$INTERACTION" = "unattended" ]; then
   mark_unattended "$CWD" "idd-all"
 else
@@ -357,7 +357,7 @@ fi
 
 ```bash
 if [ -z "$IN_CHAIN" ] && [ -n "${N:-}" ]; then
-  EW_JSON=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/check-existing-work.sh" --cwd "$CWD" "$GITHUB_REPO" "$N") || EW_JSON='{}'
+  EW_JSON=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/check-existing-work.sh" --cwd "$CWD" "$GITHUB_REPO" "$N") || EW_JSON='{}'
   # 跑不出結果也要講出來 —— 「不知道」不得讀成「沒有」。fallback 必須是 `{}` 不是空字串：jq 收到空輸入什麼都不印，
   # `// "unknown"` 根本不會執行，verdict 會變成空字串，處置表裡沒有這一列
   EW_VERDICT=$(printf '%s' "$EW_JSON" | jq -r --arg n "$N" '.issues[$n].verdict // "unknown"')
@@ -483,7 +483,7 @@ Phase 0.5 解析出 `(PATH_AXIS, INTERACTION)` 後,若 tuple 是 `(PR, unattende
 
 ```bash
 if [ "$PATH_AXIS" = "PR" ] && [ "$INTERACTION" = "unattended" ]; then
-  if ! "$CLAUDE_PLUGIN_ROOT/scripts/check-ralph-loop.sh" 2>/dev/null; then
+  if ! "${CLAUDE_PLUGIN_ROOT}/scripts/check-ralph-loop.sh" 2>/dev/null; then
     echo "⚠ ralph-loop plugin not detected — required to drive (PR, unattended) verify-fix loop."
     echo "  Degrading to (direct-commit, attended) for backward-compat (#28 B4 design)."
     echo "  To restore (PR, unattended): claude plugin install ralph-loop@claude-plugins-official"
@@ -550,8 +550,8 @@ Skill(skill="issue-driven-dev:idd-diagnose", args="#$N --cwd $CWD")
 
 ```bash
 # 缺 helper 一律 fail loud + 指名 path，禁止 fallback 到私有 regex（契約 §Consumer contract）
-. "$CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh" || {
-    echo "FATAL: missing $CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh — 不得改用私有 regex" >&2
+. "${CLAUDE_PLUGIN_ROOT}/scripts/lib/actionability.sh" || {
+    echo "FATAL: missing ${CLAUDE_PLUGIN_ROOT}/scripts/lib/actionability.sh — 不得改用私有 regex" >&2
     exit 1
 }
 

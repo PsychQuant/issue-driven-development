@@ -18,7 +18,8 @@
 # Subcommands:
 #   acquire   exit 0 acquired / 3 held-by-live-other / 4 lock infra unwritable
 #             (caller fails open) / 2 usage.
-#   release   release the lock IF held by --id. exit 0.
+#   release   release the lock IF held by --id; report outcome on stderr.
+#             exit 0 released / already free / not ours, 4 removal failed.
 #   holder    print holder info (exit 0 if held, 1 if free).
 #   reclaim-stale  drop the lock iff the recorded holder is not live. exit 0.
 #
@@ -30,6 +31,7 @@
 # Stale reclaim moves the file aside atomically (one winner) before re-creating
 # (verify B3). Holder identity / liveness via pid + heartbeat/mtime TTL backup.
 set -u
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/runtime-ignore.sh"
 
 SUB="${1:-}"; shift 2>/dev/null || true
 REPO="" ; ID="${IDD_SESSION_ID:-tree-$PPID}" ; PID="$PPID"
@@ -94,19 +96,10 @@ holder_is_live() {
 
 ensure_parent() { mkdir -p "$LOCK_PARENT" 2>/dev/null; }
 
-# Self-add the lock to .gitignore — the lock holds a live PID + heartbeat, which
-# is per-machine ephemeral state that must never be committed (spec Req 1). This
-# is a plugin-distributed primitive, so downstream-installed repos won't have a
-# hand-written rule; mirror idd-worktree.sh's create-time self-ignore.
+# Keep per-machine PID/heartbeat state out of Git without changing host policy.
 ensure_ignored() {
-  local gi="$REPO/.gitignore" line=".claude/.idd/tree-lock"
-  [ -f "$gi" ] && grep -qxF "$line" "$gi" 2>/dev/null && return 0
-  [ -f "$gi" ] && grep -qE '^\.claude/(\.idd/)?$' "$gi" 2>/dev/null && return 0
-  {
-    [ -s "$gi" ] && printf '\n'
-    printf '# IDD tree-lock (idd-tree-lock.sh #183) — per-machine session state, not tracked\n'
-    printf '%s\n' "$line"
-  } >> "$gi" 2>/dev/null || true
+  idd_ignore_runtime_paths "$REPO" || \
+    echo "⚠ could not install local runtime excludes for $REPO; check untracked state before staging" >&2
 }
 
 # Atomic create-with-content. `set -C` makes `>` fail if the file exists, so the
@@ -154,9 +147,18 @@ case "$SUB" in
     holder_is_live && exit 3 || exit 3
     ;;
   release)
-    [ -f "$LOCK" ] || exit 0
-    [ "$(field holder)" = "$ID" ] && rm -f "$LOCK" 2>/dev/null
-    exit 0                                       # not ours → leave it (holder-scoped)
+    [ -f "$LOCK" ] || { echo "tree lock already free: $LOCK" >&2; exit 0; }
+    OWNER="$(field holder)"
+    if [ "$OWNER" != "$ID" ]; then
+      echo "tree lock unchanged: held by $OWNER, not $ID; release with the same --id used for acquire (--pid does not select the holder)" >&2
+      exit 0
+    fi
+    if ! rm -f "$LOCK" || [ -e "$LOCK" ]; then
+      echo "could not release tree lock: $LOCK" >&2
+      exit 4
+    fi
+    echo "tree lock released: $ID" >&2
+    exit 0
     ;;
   holder)
     [ -f "$LOCK" ] || exit 1

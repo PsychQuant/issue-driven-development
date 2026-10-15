@@ -20,6 +20,8 @@
 #   4 — skip: branch or baseline unresolvable — caller skips the gate, never blocks
 #
 # Method:
+#   0. If every path in the branch's cumulative change matches the baseline,
+#      its final content landed. Superseded intermediate lines are not orphans.
 #   1. `git cherry <baseline> <branch>` → '+'-marked commits are patch-id-absent
 #      from the baseline (candidate orphans).
 #   2. CONTENT-VERIFY each candidate by *line presence*, NOT cherry-pick. A
@@ -59,6 +61,21 @@ GIT() { git -C "$REPO" "$@"; }
 # so every downstream git call is injection-safe. Unresolvable → skip (exit 4).
 BRANCH_SHA="$(GIT rev-parse --verify --quiet --end-of-options "${BRANCH}^{commit}" 2>/dev/null)"   || exit 4
 BASELINE_SHA="$(GIT rev-parse --verify --quiet --end-of-options "${BASELINE}^{commit}" 2>/dev/null)" || exit 4
+
+# Squash merges preserve the branch's FINAL content, not each intermediate
+# commit (#399). Compare only cumulative changed paths, so unrelated later
+# baseline commits do not disable this check. Disable rename detection to
+# include both removed and added paths; NUL delimiters preserve unusual names.
+if MERGE_BASE="$(GIT merge-base "$BASELINE_SHA" "$BRANCH_SHA" 2>/dev/null)"; then
+  CHANGED_PATHS=()
+  while IFS= read -r -d '' path; do CHANGED_PATHS+=("$path"); done < <(
+    GIT diff --no-renames --name-only -z "$MERGE_BASE" "$BRANCH_SHA" --
+  )
+  if [ ${#CHANGED_PATHS[@]} -eq 0 ]; then exit 0; fi
+  if GIT --literal-pathspecs diff --quiet "$BRANCH_SHA" "$BASELINE_SHA" -- "${CHANGED_PATHS[@]}"; then
+    exit 0
+  fi
+fi
 
 # Candidate orphans = '+'-marked commits (patch-id absent from baseline).
 CANDIDATES=$(GIT cherry "$BASELINE_SHA" "$BRANCH_SHA" 2>/dev/null | awk '$1=="+"{print $2}')

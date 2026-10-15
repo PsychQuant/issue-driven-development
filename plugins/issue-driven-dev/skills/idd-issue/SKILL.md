@@ -281,7 +281,7 @@ fi
 2. 用共用 helper 把 IDD config 寫進 `.git/info/exclude`（per-clone、不 commit/push、**不動對方 tracked `.gitignore`**）:
 
 ```bash
-"$CLAUDE_PLUGIN_ROOT/scripts/git-ignore-block.sh" \
+"${CLAUDE_PLUGIN_ROOT}/scripts/git-ignore-block.sh" \
   --target "$(git rev-parse --git-dir)/info/exclude" \
   --marker "IDD third-party clone config (#192)" \
   --direction exclude \
@@ -345,7 +345,7 @@ basename、非公開 collaborator 真名、未發表 context)。**人名由 cont
 `gh issue create/comment/edit` 都改成:
 
 ```bash
-bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" <create|comment|edit> <原本的 gh args…> \
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-egress.sh" <create|comment|edit> <原本的 gh args…> \
   --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}
 ```
 
@@ -455,13 +455,13 @@ This makes the hand-off explicit — staged paths from Step 1's pasted-image han
 # Source-type → required plugin mapping
 case "$SOURCE_TYPE" in
   docx|doc)
-    "$CLAUDE_PLUGIN_ROOT/scripts/check-plugin-presence.sh" psychquant-claude-plugins che-word-mcp || abort_source_unsupported "che-word-mcp" ".docx" "psychquant-claude-plugins" ;;
+    "${CLAUDE_PLUGIN_ROOT}/scripts/check-plugin-presence.sh" psychquant-claude-plugins che-word-mcp || abort_source_unsupported "che-word-mcp" ".docx" "psychquant-claude-plugins" ;;
   telegram)
-    "$CLAUDE_PLUGIN_ROOT/scripts/check-plugin-presence.sh" psychquant-claude-plugins che-telegram-mcp || abort_source_unsupported "che-telegram-mcp" "Telegram chat" "psychquant-claude-plugins" ;;
+    "${CLAUDE_PLUGIN_ROOT}/scripts/check-plugin-presence.sh" psychquant-claude-plugins che-telegram-mcp || abort_source_unsupported "che-telegram-mcp" "Telegram chat" "psychquant-claude-plugins" ;;
   apple-mail)
-    "$CLAUDE_PLUGIN_ROOT/scripts/check-plugin-presence.sh" psychquant-claude-plugins che-apple-mail-mcp || abort_source_unsupported "che-apple-mail-mcp" "Apple Mail" "psychquant-claude-plugins" ;;
+    "${CLAUDE_PLUGIN_ROOT}/scripts/check-plugin-presence.sh" psychquant-claude-plugins che-apple-mail-mcp || abort_source_unsupported "che-apple-mail-mcp" "Apple Mail" "psychquant-claude-plugins" ;;
   apple-notes)
-    "$CLAUDE_PLUGIN_ROOT/scripts/check-plugin-presence.sh" psychquant-claude-plugins che-apple-notes-mcp || abort_source_unsupported "che-apple-notes-mcp" "Apple Notes" "psychquant-claude-plugins" ;;
+    "${CLAUDE_PLUGIN_ROOT}/scripts/check-plugin-presence.sh" psychquant-claude-plugins che-apple-notes-mcp || abort_source_unsupported "che-apple-notes-mcp" "Apple Notes" "psychquant-claude-plugins" ;;
   text|md|mixed)
     : ;; # no plugin needed for raw text / markdown / pasted text+paths
 esac
@@ -661,7 +661,7 @@ if new_match exists AND new_match != tentative_default:
 
 ```bash
 # egress via privacy-scrubbing choke-point wrapper (Step 0.6 / #202) — never raw `gh issue create`
-bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" create \
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-egress.sh" create \
   --repo $GITHUB_REPO \
   --title "$TITLE" \
   --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"} \
@@ -745,7 +745,7 @@ else
   # Algorithm: append to first contiguous "- [ ]"/"- [x]" section, OR append fresh `## Children` anchor
   NEW_BODY=$(append_to_task_list "$PARENT_BODY" "$ENTRY")
 
-  bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit "$PARENT_NUM" --repo "$GITHUB_REPO" --body "$NEW_BODY" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}
+  bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-egress.sh" edit "$PARENT_NUM" --repo "$GITHUB_REPO" --body "$NEW_BODY" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}
 fi
 ```
 
@@ -762,7 +762,7 @@ for M in $(echo "$BLOCKED_BY_LIST" | tr ',' '\n'); do
   BLOCKED_BLOCKQUOTE="${BLOCKED_BLOCKQUOTE}> Blocked by #${M}\n"
 done
 NEW_CHILD_BODY="${BLOCKED_BLOCKQUOTE}\n${ORIGINAL_BODY}"
-bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit "$CHILD_NUM" --repo "$GITHUB_REPO" --body "$NEW_CHILD_BODY" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-egress.sh" edit "$CHILD_NUM" --repo "$GITHUB_REPO" --body "$NEW_CHILD_BODY" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}
 
 # Layer 1:GraphQL native dependency(嘗試,失敗不 abort)
 # Mutation 是 addBlockedBy(input:{issueId, blockingIssueId})——GitHub 現行 schema 裡的名稱（#353）。
@@ -809,7 +809,7 @@ if [[ ${#ITEMS[@]} -lt 2 ]]; then
 fi
 
 # 1. 建 epic parent(用 bundle-level title;若 input 沒 epic title 則 AskUserQuestion 索取)
-EPIC_NUM=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" create --repo "$GITHUB_REPO" \
+EPIC_NUM=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-egress.sh" create --repo "$GITHUB_REPO" \
   --title "$EPIC_TITLE" \
   --body "Epic for ${#ITEMS[@]}-item bundle (${BUNDLE_MODE})\n\n## Children\n" \
   --label "epic" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"} | basename)
@@ -867,7 +867,7 @@ group = {
 
 ```bash
 # 1. 在 primary repo 建 issue,用完整 body
-PRIMARY_URL=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" create \
+PRIMARY_URL=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-egress.sh" create \
   --repo $PRIMARY_REPO \
   --title "$TITLE" \
   --body "$FULL_BODY" \
@@ -887,7 +887,7 @@ ${FULL_BODY}"
 > ${ONE_LINE_SUMMARY}"
   fi
 
-  TRACKING_URL=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" create \
+  TRACKING_URL=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-egress.sh" create \
     --repo $TRACKING_REPO \
     --title "$TITLE" \
     --body "$TRACKING_BODY" \
@@ -897,7 +897,7 @@ ${FULL_BODY}"
 done
 
 # 3. 在 primary issue 留 comment,列出所有 tracking refs
-bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $PRIMARY_NUM --repo $PRIMARY_REPO --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"} --body "$(cat <<EOF
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-egress.sh" comment $PRIMARY_NUM --repo $PRIMARY_REPO --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"} --body "$(cat <<EOF
 Tracked in:
 $(for ref in "${TRACKING_REFS[@]}"; do echo "- $ref"; done)
 EOF
@@ -1128,7 +1128,7 @@ done
 # 編輯 issue body 加入所有附件的 markdown link / 圖片嵌入
 # - .png/.jpg/.gif → ![desc](url)  讓 issue 直接渲染
 # - .pdf/.docx/其他 → [desc](url)  讓使用者點下載
-bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit $NUMBER --repo $GITHUB_REPO --body "..." --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-egress.sh" edit $NUMBER --repo $GITHUB_REPO --body "..." --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}
 ```
 
 #### 命名規則
@@ -1168,7 +1168,7 @@ gh api repos/$GITHUB_REPO/milestones \
 # 所有剛建立的 issues 都指派到此 milestone
 for n in $ALL_ISSUE_NUMBERS; do
   # metadata-only edit (no drafted body) — still routes through the gate for uniform egress (#202)
-  bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit $n --repo $GITHUB_REPO --milestone "$MILESTONE_NAME" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}
+  bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-egress.sh" edit $n --repo $GITHUB_REPO --milestone "$MILESTONE_NAME" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}
 done
 ```
 
@@ -1215,7 +1215,7 @@ else
 | (deferred) | /idd-clarify invocation failed | Run /idd-clarify #$NEW_ISSUE_NUMBER manually to populate | deferred |
 "
     NEW_BODY="${CURRENT_BODY}${DEFERRED_BLOCK}"
-    bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit $NEW_ISSUE_NUMBER --repo $GITHUB_REPO --body "$NEW_BODY" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}
+    bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-egress.sh" edit $NEW_ISSUE_NUMBER --repo $GITHUB_REPO --body "$NEW_BODY" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}
     echo "⚠ /idd-clarify failed (exit $CLARIFY_EXIT) — appended deferred placeholder; continuing to Step 4.7" >&2
   fi
 fi
@@ -1607,9 +1607,9 @@ drafted body（含 footer）在 dispatch 前過 repo-aware privacy gate:
 
 | Action | Command |
 |--------|---------|
-| `create` | `bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" create --title ... --body ... --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}`(body 含 footer) |
-| `comment` | `bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $N --body ... --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}`(body 含 footer) |
-| `edit` | `bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit $N --body "$NEW_BODY_WITH_FOOTER" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}` |
+| `create` | `bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-egress.sh" create --title ... --body ... --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}`(body 含 footer) |
+| `comment` | `bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-egress.sh" comment $N --body ... --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}`(body 含 footer) |
+| `edit` | `bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-egress.sh" edit $N --body "$NEW_BODY_WITH_FOOTER" --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"}` |
 | `update` | call `idd-update` skill on #N |
 | `skip` | no-op |
 | `merged-into` | no separate dispatch(content 已在 partner action body) |
@@ -1645,7 +1645,7 @@ Recovery workflow:
 
 ```bash
 # Add at top of Stage 4.5 gate (before AskUserQuestion):
-. "$CLAUDE_PLUGIN_ROOT/scripts/lib/unattended-state.sh"
+. "${CLAUDE_PLUGIN_ROOT}/scripts/lib/unattended-state.sh"
 if [ -z "${JSONL_GITIGNORE_DECISION:-}" ] && { is_unattended "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || [ -n "${CI:-}" ]; }; then
   # /idd-all unattended chain（state file / env var per references/unattended-contract.md）
   # OR a CI environment. TTY check removed (#222 — always false in harness).
@@ -1951,7 +1951,7 @@ case "$JSONL_GITIGNORE_DECISION" in
     #     without it the branch falls through to "materialize + git add + commit",
     #     silently reports success, and leaves the run log uncommitted.
     touch "$GITIGNORE_FILE"
-    if "$CLAUDE_PLUGIN_ROOT/scripts/git-ignore-block.sh" \
+    if "${CLAUDE_PLUGIN_ROOT}/scripts/git-ignore-block.sh" \
          --target "$GITIGNORE_FILE" \
          --marker "IDD jsonl run-log carve-out (#55)" \
          --direction re-include \

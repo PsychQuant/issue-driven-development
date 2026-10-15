@@ -102,8 +102,8 @@ TaskCreate(name="sister_bug_sweep", description="Step 5.7: review session log + 
 
 ```bash
 # 缺 helper 一律 fail loud + 指名 path，禁止 fallback 到私有 regex（契約 §Consumer contract）
-. "$CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh" || {
-    echo "FATAL: missing $CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh — 不得改用私有 regex" >&2
+. "${CLAUDE_PLUGIN_ROOT}/scripts/lib/actionability.sh" || {
+    echo "FATAL: missing ${CLAUDE_PLUGIN_ROOT}/scripts/lib/actionability.sh — 不得改用私有 regex" >&2
     exit 1
 }
 
@@ -156,7 +156,7 @@ printf 'raw<<<\n'; printf '%s\n%s\n' "${COMPLEXITY_ERR:-}" "${BLOCK_LINE:-}" | s
 ```bash
 case " $* " in *" --existing-work-checked "*) echo "→ Existing work: skipped (checked by the caller)" ;; *)
   for N in "${ISSUE_NUMBERS[@]}"; do
-    EW_JSON=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/check-existing-work.sh" --cwd "$CWD" "$GITHUB_REPO" "$N") || EW_JSON='{}'   # 不是空字串：jq 收到空輸入什麼都不印，verdict 會變成空的
+    EW_JSON=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/check-existing-work.sh" --cwd "$CWD" "$GITHUB_REPO" "$N") || EW_JSON='{}'   # 不是空字串：jq 收到空輸入什麼都不印，verdict 會變成空的
     V=$(printf '%s' "$EW_JSON" | jq -r --arg n "$N" '.issues[$n].verdict // "unknown"')
     R=$(printf '%s' "$EW_JSON" | jq -r --arg n "$N" '.issues[$n].reason // "lookup produced no result"')
     echo "→ Existing work: #$N verdict=$V ${R:+($R)}"   # 一定要印 —— 模型只看得到 Bash 輸出
@@ -177,7 +177,7 @@ esac
 # own pid, dead the instant the command returns → the lock would never hold,
 # #183 verify B1). Same-instance sub-agent concurrency (shared $PPID) is the
 # already-deferred Case A (worktree-isolation.md), out of scope here.
-TREE_LOCK="$CLAUDE_PLUGIN_ROOT/scripts/idd-tree-lock.sh"
+TREE_LOCK="${CLAUDE_PLUGIN_ROOT}/scripts/idd-tree-lock.sh"
 bash "$TREE_LOCK" acquire --repo "$CWD" --pid "$PPID" --id "${IDD_SESSION_ID:-tree-$PPID}"
 LOCK_RC=$?
 case "$LOCK_RC" in
@@ -185,7 +185,7 @@ case "$LOCK_RC" in
   3) # Another LIVE session holds the tree. Self-escalate into an isolated
      #    worktree — do NOT wait for the holder (idle != done; isolate now).
      echo "→ tree held by a live session → escalating to an isolated worktree"
-     WT=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/idd-worktree.sh" create "$NUMBER" --repo-root "$CWD" 2>/dev/null | tail -1)
+     WT=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/idd-worktree.sh" create "$NUMBER" --repo-root "$CWD" 2>/dev/null | tail -1)
      if [ -n "$WT" ] && [ -d "$WT" ]; then
        CWD="$WT"   # all later git -C "$CWD" plumbing now routes to the worktree
        echo "→ working in $CWD (own worktree + branch; merge back at close)"
@@ -352,7 +352,7 @@ gh issue view $NUMBER --repo $GITHUB_REPO --json title,body,labels
 依 [`rules/process-attachments.md`](../../rules/process-attachments.md):
 
 ```bash
-IDD_CALLER=idd-implement bash $CLAUDE_PLUGIN_ROOT/scripts/process-attachments.sh check $NUMBER
+IDD_CALLER=idd-implement bash ${CLAUDE_PLUGIN_ROOT}/scripts/process-attachments.sh check $NUMBER
 ```
 
 Exit code:
@@ -431,7 +431,7 @@ idd-implement 是 **orchestration**（issue tracking、plan、checklist、body s
 # （#226）egress 經 gh-egress.sh 派送：$SCRUB_LEVEL 依 rules/privacy-scrubbing.md 解析
 # （third-party=enforce / own-public=warn / private=light），派送前先跑 LLM 隱私自審；
 # 有 @mention 時另帶 --mention-attested（rules/tagging-collaborators.md 5-step 後）。
-bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $NUMBER --repo $GITHUB_REPO --body "$IMPLEMENTATION_PLAN" --scrub-attested "$SCRUB_LEVEL"
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-egress.sh" comment $NUMBER --repo $GITHUB_REPO --body "$IMPLEMENTATION_PLAN" --scrub-attested "$SCRUB_LEVEL"
 ```
 
 ### Step 2.5: Bootstrap TodoList（non-Spectra case）
@@ -442,8 +442,8 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $NUMBER --repo $GITHUB_R
 
 ```bash
 # 缺 helper 一律 fail loud + 指名 path，禁止 fallback 到私有 regex（契約 §Consumer contract）
-. "$CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh" || {
-    echo "FATAL: missing $CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh — 不得改用私有 regex" >&2
+. "${CLAUDE_PLUGIN_ROOT}/scripts/lib/actionability.sh" || {
+    echo "FATAL: missing ${CLAUDE_PLUGIN_ROOT}/scripts/lib/actionability.sh — 不得改用私有 regex" >&2
     exit 1
 }
 
@@ -518,7 +518,7 @@ Routing **先看 `$VEXIT`**（gate 判定），`0` 才依 `$TIER` 決定行為�
 **Pre-flight（code 變更項必經；適用範圍與例外見下段）** — per spec `superpowers-integration`「Dual pre-flight at delegation sites」：
 
 ```bash
-"$CLAUDE_PLUGIN_ROOT/scripts/check-plugin-presence.sh" \
+"${CLAUDE_PLUGIN_ROOT}/scripts/check-plugin-presence.sh" \
   claude-plugins-official superpowers test-driven-development || exit 1
 ```
 
@@ -605,7 +605,7 @@ git diff --stat HEAD~{N}
 Pre-flight（同 Step 3 的 dual pre-flight 契約，缺席 fail-fast）：
 
 ```bash
-"$CLAUDE_PLUGIN_ROOT/scripts/check-plugin-presence.sh" \
+"${CLAUDE_PLUGIN_ROOT}/scripts/check-plugin-presence.sh" \
   claude-plugins-official superpowers verification-before-completion || exit 1
 ```
 
@@ -631,7 +631,7 @@ gh release upload $ATTACHMENTS_RELEASE {figure_files}.png \
 **Comment 實作摘要到 issue**（含圖片）：
 
 ```bash
-bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $NUMBER --repo $GITHUB_REPO --scrub-attested "$SCRUB_LEVEL" --body "$(cat <<'EOF'
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-egress.sh" comment $NUMBER --repo $GITHUB_REPO --scrub-attested "$SCRUB_LEVEL" --body "$(cat <<'EOF'
 ## Implementation Complete
 
 ### Checklist (synced from TaskList)
@@ -742,7 +742,7 @@ gh pr create --title "$PR_TITLE" --body "$PR_BODY" \
   ```bash
   ROOT_ID_FOR_MANIFEST="${IDD_CHAIN_CURRENT_ROOT_ID:-${NNN:-}}"
   if [ -n "$ROOT_ID_FOR_MANIFEST" ]; then
-    bash "$CLAUDE_PLUGIN_ROOT/scripts/manifest-append.sh" \
+    bash "${CLAUDE_PLUGIN_ROOT}/scripts/manifest-append.sh" \
       "$REPO_ROOT" "$NEW_ISSUE" "idd-implement" "Step 5.7 sister bug sweep" \
       "sister-bug" "$item_same_file" "true" "$item_title" "$ROOT_ID_FOR_MANIFEST" \
       2>/dev/null || true   # silent skip if no manifest (chain context inactive)

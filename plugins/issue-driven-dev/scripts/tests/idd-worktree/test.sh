@@ -49,7 +49,8 @@ assert_eq "create fresh stdout = abs worktree path" "$R/.claude/worktrees/idd-16
 assert_true "create fresh makes branch idd/167-parallel-iso" \
   "git -C '$R' show-ref --verify --quiet refs/heads/idd/167-parallel-iso"
 assert_true "create fresh gitignores .claude/worktrees/" \
-  "grep -qxF '.claude/worktrees/' '$R/.gitignore'"
+  "git -C '$R' check-ignore -q .claude/worktrees/idd-167/"
+assert_true "create does not create a host .gitignore" "[ ! -e '$R/.gitignore' ]"
 
 # 2. create idempotent re-run
 OUT2="$("$SCRIPT" create 167 --slug different-slug --repo-root "$R" 2>/dev/null)"; RC=$?
@@ -59,7 +60,7 @@ WT_COUNT="$(git -C "$R" worktree list | grep -c 'idd-167')"
 assert_eq "create idempotent makes no 2nd worktree" "1" "$WT_COUNT"
 
 # 3. gitignore idempotent (no duplicate line)
-GI_COUNT="$(grep -cxF '.claude/worktrees/' "$R/.gitignore")"
+GI_COUNT="$(grep -cxF '.claude/worktrees/' "$R/.git/info/exclude")"
 assert_eq "gitignore line appears exactly once" "1" "$GI_COUNT"
 
 # 4. create not-a-git-repo
@@ -153,6 +154,13 @@ SIDE="$("$SCRIPT" create 61 --slug b --repo-root "$RA" 2>/dev/null)"
 assert_exit "cleanup --repo-root <linked worktree> exits 0" 0 "$RC"
 assert_true "cleanup anchored on main removes target worktree idd-60" "[ ! -d '$WT60' ]"
 assert_true "cleanup did not touch unrelated worktree idd-61" "[ -d '$SIDE' ]"
+# Excludes are shared with linked worktrees and must preserve host policy.
+assert_true "linked worktree uses common excludes" "git -C '$SIDE' check-ignore -q .claude/worktrees/idd-99/"
+printf '.claude/.idd/*\n!.claude/.idd/local.json\n' > "$RA/.gitignore"
+git -C "$RA" add .gitignore && git -C "$RA" commit -qm 'host ignore policy'
+"$SCRIPT" create 62 --slug c --repo-root "$SIDE" >/dev/null 2>&1
+assert_true "create through linked worktree keeps tracked files clean" "git -C '$RA' diff --quiet"
+assert_true "local config exception survives" "! git -C '$RA' check-ignore -q .claude/.idd/local.json"
 
 # ------------------------------------------------------------------------------
 echo ""
