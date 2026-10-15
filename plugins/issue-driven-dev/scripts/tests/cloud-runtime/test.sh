@@ -75,6 +75,16 @@ if [ -f "$RUNNER" ]; then
   refute_output_grep "runner dry run hides the key (stderr)" "$SENTINEL" "$ERR"
   assert_output_grep "runner dry run masks the key as ***" "***" "$OUT"
   assert_file_absent "runner dry run makes no curl call" "$MARK/curl"
+  # With CLAUDE_CODE_SUBPROCESS_ENV_SCRUB set, Claude Code forces the session to
+  # the default permission mode and prints a warning on stderr (sandbox run
+  # 38684468139: SESSION_PERMISSION_MODE default, five permission_denied). The
+  # runner therefore asks for default openly, pre-approves IDD's tools, grants
+  # the plugin directories, and surfaces the CLI's stderr.
+  assert_output_grep "runner asks for the default permission mode" "PERMISSION_MODE: default" "$OUT"
+  assert_output_grep "runner pre-approves Bash" "ALLOWED_TOOLS: " "$OUT"
+  assert_grep_re "allowlist includes Bash, Skill and Workflow" "ALLOWED_TOOLS: .*Bash.*Skill.*Workflow" "$(grep '^ALLOWED_TOOLS: ' "$OUT")"
+  assert_output_grep "runner grants each plugin dir as an extra directory" "ADD_DIR: $PLUGIN_ROOT" "$OUT"
+  assert_output_grep "runner wires the CLI stderr callback" "stderr=" "$RUNNER"
 
   OUT="$WORK/runner-nokey.out"; ERR="$WORK/runner-nokey.err"
   env -u ANTHROPIC_API_KEY PATH="$STUB:$PATH" \
@@ -192,15 +202,6 @@ PY
   # On Linux the scrub needs bubblewrap; without it the CLI exits at startup
   # (first real run, workflow run 38683885702). It must be installed in a step
   # that does not hold the key.
-  # bypassPermissions was silently downgraded to default in sandbox run 38684230150:
-  # a non-interactive session needs the acceptance recorded in user or managed
-  # settings, and the runner loads only project settings. Managed settings always
-  # load; written before the key appears.
-  assert_output_grep "bypass acceptance is recorded in managed settings" "/etc/claude-code/managed-settings.json" "$WORKFLOW"
-  assert_output_grep "acceptance key is set" "skipDangerousModePermissionPrompt" "$WORKFLOW"
-  MS_LINE=$(grep -n "/etc/claude-code/managed-settings.json" "$WORKFLOW" | head -1 | cut -d: -f1)
-  KEY_LINE2=$(grep -n 'ANTHROPIC_API_KEY: \${{ secrets.ANTHROPIC_API_KEY }}' "$WORKFLOW" | head -1 | cut -d: -f1)
-  assert_true "managed settings are written before the key appears" "[ -n '$MS_LINE' ] && [ -n '$KEY_LINE2' ] && [ '$MS_LINE' -lt '$KEY_LINE2' ]"
   for dep in superpowers parallel-ai-agents codex-pro; do
     assert_grep_re "workflow loads dependency $dep with --plugin-dir" "--plugin-dir .*$dep" "$(cat "$WORKFLOW")"
   done

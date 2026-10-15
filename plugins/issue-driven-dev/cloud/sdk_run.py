@@ -52,10 +52,23 @@ SDK_PACKAGE = "claude-agent-sdk"
 DEFAULT_MAX_TURNS = 80
 SUMMARY_CHARS = 200
 
-# Unattended CI run: nobody can answer a permission prompt. bypassPermissions
-# is the documented mode for that (explicit `ask` rules still prompt). The
-# GitHub token the run holds is scoped by the caller workflow's permissions.
-PERMISSION_MODE = "bypassPermissions"
+# The workflow sets CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 so a prompt-injected
+# command cannot read ANTHROPIC_API_KEY. With the scrub on, Claude Code forces
+# the session to the default permission mode whatever is requested, and says so
+# only on stderr ("Permission mode forced to default ... Declare allowedTools
+# explicitly"; sandbox run 38684468139 and a local repro with CLI 2.1.300). So
+# the runner asks for default openly and pre-approves the tools IDD uses. A tool
+# not on the list is denied, which shows up as permission_denied in the log.
+PERMISSION_MODE = "default"
+
+# Bare names approve every call to that tool. Names a given CLI version does not
+# have are ignored. Kept to what IDD's skills, superpowers and pai actually call.
+ALLOWED_TOOLS = (
+    "Bash", "Read", "Write", "Edit", "NotebookEdit", "Glob", "Grep",
+    "Skill", "Task", "Agent", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate",
+    "TaskStop", "Workflow", "WebFetch", "WebSearch", "ToolSearch", "Monitor",
+    "EnterWorktree", "ExitWorktree",
+)
 
 # Load only the target repo's shared .claude/settings.json (and its CLAUDE.md).
 # Leaving setting_sources unset would also load ~/.claude (user) and
@@ -197,6 +210,9 @@ def print_options(printer: Printer, plugin_dirs: list[str], cwd: str, args: argp
     printer.out(f"CWD: {cwd}")
     printer.out(f"MAX_TURNS: {args.max_turns}")
     printer.out(f"PERMISSION_MODE: {PERMISSION_MODE}")
+    printer.out(f"ALLOWED_TOOLS: {', '.join(ALLOWED_TOOLS)}")
+    for path in plugin_dirs:
+        printer.out(f"ADD_DIR: {path}")
     printer.out(f"SETTING_SOURCES: {','.join(SETTING_SOURCES)}")
     printer.out(f"{API_KEY_ENV}: {presence(API_KEY_ENV)}")
 
@@ -333,13 +349,20 @@ def import_sdk(printer: Printer) -> Any:
     return claude_agent_sdk
 
 
-def build_options(sdk: Any, plugin_dirs: list[str], cwd: str, max_turns: int) -> Any:
+def build_options(printer: Printer, sdk: Any, plugin_dirs: list[str], cwd: str, max_turns: int) -> Any:
+    """SDK options. add_dirs lets the agent read the plugins, which live outside
+    cwd (default mode otherwise confines Bash and reads to the working directory).
+    The stderr callback surfaces CLI warnings such as the forced-default notice,
+    which the SDK would otherwise drop."""
     return sdk.ClaudeAgentOptions(
         plugins=[{"type": "local", "path": path} for path in plugin_dirs],
         cwd=cwd,
         max_turns=max_turns,
         permission_mode=PERMISSION_MODE,
+        allowed_tools=list(ALLOWED_TOOLS),
+        add_dirs=list(plugin_dirs),
         setting_sources=SETTING_SOURCES,
+        stderr=lambda line: printer.out(f"CLI_STDERR: {line.rstrip()}"),
     )
 
 
@@ -372,7 +395,7 @@ def run(printer: Printer, prompt: str, plugin_dirs: list[str], cwd: str, max_tur
     sdk = import_sdk(printer)
     printer.out(f"SDK_VERSION: {getattr(sdk, '__version__', '(unknown)')}")
     try:
-        options = build_options(sdk, plugin_dirs, cwd, max_turns)
+        options = build_options(printer, sdk, plugin_dirs, cwd, max_turns)
     except TypeError as exc:
         fail(printer, f"this claude_agent_sdk does not accept the runner's options: {exc}", EXIT_CONFIG)
 
