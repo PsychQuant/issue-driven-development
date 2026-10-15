@@ -9,7 +9,7 @@
 | 準則 | Agent SDK on GitHub Actions | Managed Agents |
 |---|---|---|
 | C1 plugin 載入 | partial — IDD 與三個依賴 plugin 全部載入、無 plugin error，`idd-list` 跑完；但 superpowers 與 parallel-ai-agents 的 presence pre-flight 回報找不到（只查 `~/.claude/plugins/cache/`） | not measured |
-| C2 GitHub 寫入 | not measured | not measured |
+| C2 GitHub 寫入 | partial — 留言、push 成功；開 PR 被 org 政策擋下（GitHub Actions 不得開 PR）；改用選填 PAT 後待重測 | not measured |
 | C3 API 觸發 | pass — 每次 run 都由一次 `POST /repos/PsychQuant/idd-cloud-sandbox/dispatches` 開跑（例：38685282630） | not measured |
 | C4 Max API 額度 | pass — 只持有 Max 額度的組織接受 SDK 請求，promotional credit 由 US$139.83 降到 US$139.73（run 回報 US$0.097） | not measured |
 | C5 成本與時間 | not measured | not measured |
@@ -66,6 +66,17 @@
 - presence pre-flight：兩個都 `exit=1`，訊息為「plugin not found. Searched: ~/.claude/plugins/cache/...」。plugin 實際已載入，是檢查方式只認安裝快取。
 - idd-list 輸出：`Repo: PsychQuant/idd-cloud-sandbox`、`#1 [(no phase)] docs: README 把 sandbox 拼成 sandbx`、`Needs diagnosis (1): #1 → /idd-diagnose #1`。agent 為了讓 Step 3.7 的 helper 載得到，自行把 `$CLAUDE_PLUGIN_ROOT` 代成實際路徑。
 - https://github.com/PsychQuant/idd-cloud-sandbox/actions/runs/38685282630
+
+### Agent SDK — C2（task 4.4，進行中）
+
+- workflow run 38685626718（`GITHUB_TOKEN`，無 PAT）：
+  - `gh issue comment 1` 成功：https://github.com/PsychQuant/idd-cloud-sandbox/issues/1#issuecomment-6184965200
+  - `git push` 成功（branch `spike/c2-probe`，commit `28f843d`）；`-u` 寫 upstream 設定失敗：`could not lock config file .../.git/config: File exists`（沙箱保護 `.git/config`），不影響 push。
+  - `gh pr create` 失敗：`GitHub Actions is not permitted to create or approve pull requests (createPullRequest)`；PsychQuant org 設定 `can_approve_pull_request_reviews: false`，repo 層無法覆寫（API 回 409）。`gh pr merge` 因此也失敗。
+  - `git status --porcelain` 顯示沙箱留下的未追蹤佔位：`.bash_profile .bashrc .gitconfig .idea .mcp.json .profile .ripgreprc .vscode .zprofile .zshrc scripts`。
+  - agent 自動在 commit 加 `Co-Authored-By: Claude Opus 5.5`、在 PR body 加「Generated with Claude Code」：雲端沒有關閉 attribution 的設定。
+- 處理（IDD commit `4fc8dd5`）：reusable workflow 接選填的 `IDD_GITHUB_TOKEN`（使用者選擇以 sandbox 專用 PAT 處理，不改 org 政策）；不可能是專案內容的佔位 dotfile 寫進 `.git/info/exclude`，`scripts`、`.idea`、`.vscode` 刻意不排除。
+- 待使用者建立 PAT（task 1.3）後重測開 PR 與 merge。
 
 ## 待記錄的觀察
 
