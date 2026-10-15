@@ -1,0 +1,36 @@
+## 1. 準備：sandbox repo 與憑證
+
+- [x] 1.1 依「spike 只在專用 scratch repo 上執行」與 requirement「Spike writes target only the dedicated scratch repository」，經使用者確認後建立 private repo `PsychQuant/idd-cloud-sandbox`，並開一張 seed issue（README 把 sandbox 拼成 sandbx）。完成時：repo 存在且為 private、seed issue #1 存在。驗證：`gh repo view PsychQuant/idd-cloud-sandbox --json isPrivate` 回 `true`，`gh issue view 1 -R PsychQuant/idd-cloud-sandbox` 讀得到。
+- [ ] 1.2 依「憑證不進 repo 也不進 log」，把 che830621 組織的 API key 由 keychain 經 stdin 存成 sandbox 的 repository secret `ANTHROPIC_API_KEY`（不經 argv），並記下該組織實測當下的額度餘額作為 C4 基準。完成時：secret 存在、基準額度已記錄。驗證：`gh secret list -R PsychQuant/idd-cloud-sandbox` 列出 `ANTHROPIC_API_KEY`；findings 草稿有基準額度與讀取時間。
+- [ ] 1.3 依「憑證不進 repo 也不進 log」，請使用者建立一把只授權 `PsychQuant/idd-cloud-sandbox` 的 fine-grained PAT（contents、issues、pull-requests 為 read and write），由使用者以 `che-keychain set --service github-pat --account idd-cloud-sandbox --from-clipboard` 存進 keychain，值不經過 AI。完成時：keychain 有該 entry。驗證：`security find-generic-password -s github-pat -a idd-cloud-sandbox` 找得到 entry（不加 `-w`，不讀出值）。
+
+## 2. 測試（TDD：先寫測試）
+
+- [ ] 2.1 依 requirement「Credentials never appear in repository files or output」與「The flow lives in the IDD repository and secrets stay in the deployer's repository」，寫 `plugins/issue-driven-dev/scripts/tests/cloud-runtime/test.sh`：把 API key 設成哨兵字串後以 `--dry-run` 執行 `sdk_run.py` 與 `ma_run.sh`，斷言輸出含 `***`、不含哨兵、沒有網路請求；沒有 key 時以非 dry-run 執行，斷言非零結束且 stderr 點名缺少的變數或 keychain entry；掃描 `.github/workflows/idd-cloud-run.yml`，斷言唯一觸發是 `workflow_call`、只宣告 `ANTHROPIC_API_KEY` 一個 secret、沒有任何 `run:` 區塊含 `${{ inputs.prompt }}`；掃描 `plugins/issue-driven-dev/cloud/caller-example.yml`，斷言沒有 `secrets: inherit`、`permissions` 只給 contents、issues、pull-requests 的 write。測試不得需要網路或真的 key，才能在 CI 跑。完成時：測試存在且因檔案尚未存在而失敗（RED）。驗證：`bash plugins/issue-driven-dev/scripts/tests/cloud-runtime/test.sh` 以非零結束並列出失敗的 case。
+
+## 3. 流程（放在 IDD repo）
+
+- [ ] 3.1 [P] 依「Agent SDK 路線以本機路徑載入三個 plugin」寫 `plugins/issue-driven-dev/cloud/sdk_run.py`，參數與行為照 design 的 Implementation Contract（`--prompt`、可重複的 `--plugin-dir`、`--cwd`、`--max-turns`、`--dry-run`）：以 `plugins=[{"type": "local", "path": ...}]` 載入，先印出實際載入的 plugin 與可用工具清單，最後印出結果與 SDK 回報的費用；缺 key、plugin 目錄不存在或 SDK 回報錯誤時非零結束。完成時：2.1 測試中 runner 的 case 通過。驗證：`bash plugins/issue-driven-dev/scripts/tests/cloud-runtime/test.sh` 的 runner case 全數通過。
+- [ ] 3.2 [P] 依「流程放在 IDD repo，key 留在部署者的 private repo」寫 reusable workflow `.github/workflows/idd-cloud-run.yml`：只有 `on: workflow_call`；inputs 為 `prompt`、`idd_ref`（預設 `main`）、`max_turns`（預設 80）、`dry_run`（預設 false）；secrets 只有 `ANTHROPIC_API_KEY`；checkout 部署者 repo，把 IDD（`idd_ref`）、superpowers（`anthropics/claude-plugins-official`）、parallel-ai-agents（`PsychQuant/parallel-ai-agents`）clone 到 `$RUNNER_TEMP`；安裝 Python 與鎖定版本的 `claude-agent-sdk`；prompt 經環境變數傳給 `sdk_run.py`；`timeout-minutes: 60`；`GH_TOKEN` 取自 `github.token`。完成時：2.1 測試中 workflow 的 case 通過。驗證：`bash plugins/issue-driven-dev/scripts/tests/cloud-runtime/test.sh` 的 workflow case 全數通過；`actionlint`（若已安裝）無錯誤。
+- [ ] 3.3 [P] 寫 caller 範本 `plugins/issue-driven-dev/cloud/caller-example.yml`：`workflow_dispatch`（輸入 `prompt`）與 `repository_dispatch`（type `idd-run`）觸發；`permissions` 只給 contents、issues、pull-requests 的 write；以 `uses: PsychQuant/issue-driven-development/.github/workflows/idd-cloud-run.yml@<ref>` 呼叫，並只明確傳入 `ANTHROPIC_API_KEY`。完成時：2.1 測試中 caller 的 case 通過。驗證：`bash plugins/issue-driven-dev/scripts/tests/cloud-runtime/test.sh` 的 caller case 全數通過。
+- [ ] 3.4 [P] 依「Managed Agents 路線以讀檔方式執行 IDD skill」寫 `plugins/issue-driven-dev/cloud/ma_run.sh`，參數與行為照 Implementation Contract（`--prompt-file`、`--target-repo`、`--keychain-account`、`--github-token-keychain`、`--dry-run`）：依序建立 environment（安裝 gh，裝不到就下載官方 release binary；`CLAUDE_PLUGIN_ROOT` 指向掛載的 IDD repo）、agent、session（掛載目標 repo 與 IDD repo，PAT 走 vault 的 environment_variable credential），輪詢事件直到 idle 或 terminated；key 從 keychain 讀、以 stdin 傳給 curl 的 header；`--target-repo` 為 `PsychQuant/issue-driven-development` 時拒絕執行。完成時：2.1 測試中 launcher 的 case 通過。驗證：`bash plugins/issue-driven-dev/scripts/tests/cloud-runtime/test.sh` 全數通過。
+- [ ] 3.5 寫部署說明 `plugins/issue-driven-dev/cloud/README.md`：開頭標明實驗性；Agent SDK 路線的步驟（建 private repo、設 `ANTHROPIC_API_KEY` secret、複製 caller 範本並鎖定版本、以 `gh workflow run` 或 dispatches API 觸發）；Managed Agents 路線的步驟（API key 與 fine-grained PAT 進 keychain、執行 launcher）；兩條路線的已知限制與費用來源。完成時：照文件可以不參考其他檔案完成部署。驗證：人工審閱；4.1 與 5.1 只照這份文件操作。
+
+## 4. Agent SDK 路線實測
+
+- [ ] 4.1 依 requirement「The flow lives in the IDD repository and secrets stay in the deployer's repository」量測 C8：只照 `plugins/issue-driven-dev/cloud/README.md` 在 sandbox 部署 caller workflow（`idd_ref` 指向實作 branch），以 `dry_run: true` 觸發一次。完成時：C8 有結果。驗證：findings 草稿列出 sandbox 新增的檔案與行數、照做時偏離文件之處、該次 workflow run URL。
+- [ ] 4.2 量測 Agent SDK 路線的 C4：以極小 prompt 觸發一次。依 requirement「Every candidate runtime is evaluated against criteria C1 to C8」的 scenario，出現 `Credit balance too low` 就把 C4 記為 fail、停止 4.3 到 4.5，並把那些格子記為 `not measured (stopped after C4 fail)`。完成時：C4 有結果與證據。驗證：findings 草稿記錄 workflow run URL，以及錯誤原文或執行前後的額度。
+- [ ] 4.3 量測 Agent SDK 路線的 C1、C3、C6：以一次 `POST /repos/PsychQuant/idd-cloud-sandbox/dispatches` 觸發，執行 `/issue-driven-dev:idd-list`；記錄載入的 plugin、工具清單（Skill、Agent、TaskCreate、AskUserQuestion、Workflow 逐一列出有無）、SessionStart hook 的輸出、superpowers 與 parallel-ai-agents 的 presence pre-flight 結果。完成時：三格都有結果。驗證：findings 草稿的 C1、C3、C6 三格各附證據。
+- [ ] 4.4 量測 Agent SDK 路線的 C2：在 sandbox 依序做 issue 留言、push branch、開 PR、merge PR。完成時：四個動作各有成功輸出或錯誤原文。驗證：findings 草稿列出每一步的輸出與 PR URL；`PsychQuant/issue-driven-development` 沒有任何來自本 probe 的寫入。
+- [ ] 4.5 量測 Agent SDK 路線的端到端：以 unattended PR mode 對 seed issue #1 執行 `/issue-driven-dev:idd-all`。依「雲端 run 的終點沿用 idd-all」，預期停在開 PR 並 verified；依「雲端 verify 只用 Claude 並標 degraded」與 requirement「Cloud verify runs Claude-only and declares the missing Codex leg」量測 C7（報告沒寫明缺 Codex 即記 fail）；記錄 C5 的費用與耗時。完成時：C5、C7 有結果。驗證：findings 草稿有 run URL、verify 報告連結、費用、耗時。
+
+## 5. Managed Agents 路線實測
+
+- [ ] 5.1 量測 Managed Agents 路線的 C8、C3、C4：只照 README 準備 key 與 PAT 後，以一次 `POST /v1/sessions` 開跑極小 prompt，記錄 session ID、usage 與額度變化。完成時：三格有結果。驗證：findings 草稿三格各附 session ID、額度前後值與偏離文件之處。
+- [ ] 5.2 量測 Managed Agents 路線的 C1、C2、C6：讓 agent 照 idd-list 的 SKILL.md 執行，記錄每一個失敗點（含 superpowers 與 parallel-ai-agents 的 pre-flight）；確認 gh 是否可用、vault 替換後的 token 能否被 gh 接受；在 sandbox 依序留言、push、開 PR、merge，gh 不行時改以 REST API 呼叫並記錄。完成時：三格有結果。驗證：findings 草稿三格各附證據與錯誤原文。
+- [ ] 5.3 量測 Managed Agents 路線的端到端：讓 agent 照 idd-all 的 SKILL.md 處理 seed issue，記錄停止點與原因、C5 的費用與耗時、C7 的 verify 結果。完成時：C5、C7 有結果。驗證：findings 草稿有 session ID、停止原因、費用、耗時。
+
+## 6. 決策與收尾
+
+- [ ] 6.1 依 requirement「The decision record selects one runtime or none with reasons」與「先 spike 兩條路線再選定 runtime」，完成 `openspec/changes/cloud-idd-runtime-spike/findings.md`：兩條路線 × C1 到 C8 的矩陣（無證據者記 `not measured`）、各路線端到端 run 的費用與耗時、決策與它引用的格子；並註明「排除 Claude Code routines」的理由沿用 design。完成時：16 格皆有值，決策段至少引用選定路線的 C1、C2、C3、C4、C8。驗證：人工審閱 findings 的矩陣與決策段。
+- [ ] 6.2 依「正式入口命名為 /idd-all api」，在 findings 寫出選定路線下 `/idd-all api` 要送出的請求形狀，以及參數解析的待決點（`api` 保留字或 `--api` 旗標）；把決策摘要與 findings 連結貼到 #400；撤銷 1.3 建立的 fine-grained PAT。完成時：#400 有決策留言，PAT 已撤銷。驗證：`gh issue view 400 --comments` 看得到決策留言；使用者在 GitHub 設定頁確認 PAT 已刪除。
