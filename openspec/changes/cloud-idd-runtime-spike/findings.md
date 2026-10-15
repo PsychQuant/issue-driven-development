@@ -67,7 +67,7 @@
 - idd-list 輸出：`Repo: PsychQuant/idd-cloud-sandbox`、`#1 [(no phase)] docs: README 把 sandbox 拼成 sandbx`、`Needs diagnosis (1): #1 → /idd-diagnose #1`。agent 為了讓 Step 3.7 的 helper 載得到，自行把 `$CLAUDE_PLUGIN_ROOT` 代成實際路徑。
 - https://github.com/PsychQuant/idd-cloud-sandbox/actions/runs/38685282630
 
-### Agent SDK — C2（task 4.4，進行中）
+### Agent SDK — C2（task 4.4，2026-10-15）
 
 - workflow run 38685626718（`GITHUB_TOKEN`，無 PAT）：
   - `gh issue comment 1` 成功：https://github.com/PsychQuant/idd-cloud-sandbox/issues/1#issuecomment-6184965200
@@ -166,5 +166,5 @@ Authorization: Bearer <部署者自己的 GitHub token>
 
 ## 待記錄的觀察
 
-- 背景安全審查（2026-10-15）：prompt injection 可能讀到 agent 環境變數中的 key、未鎖版本的程式碼與 key 同 job → 已以 `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` 與全面鎖 SHA 處理（IDD commit `f54ef3e`）。Managed Agents 的 repo resource token 是否在沙箱內可讀，待 task 5.2 量測。
-- IDD 的 `check-plugin-presence.sh` 只在 `~/.claude/plugins/cache/` 找依賴 plugin；以本機路徑載入時預期 C1 的 pre-flight 失敗，待 task 4.3 確認。
+- 背景安全審查（2026-10-15）：prompt injection 可能讀到 agent 環境變數中的 key、未鎖版本的程式碼與 key 同 job → 已以 `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` 與全面鎖 SHA 處理（IDD commit `f54ef3e`）。Managed Agents 的 repo resource token 是否在沙箱內可讀：task 5.2 量測，沙箱內找不到（見上）。
+- IDD 的 `check-plugin-presence.sh` 只在 `~/.claude/plugins/cache/` 找依賴 plugin；以本機路徑載入時 C1 的 pre-flight 失敗，task 4.3 已確認（#403）。
