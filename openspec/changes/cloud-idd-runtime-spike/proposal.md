@@ -7,7 +7,7 @@
 ## What Changes
 
 - 在 IDD repo 新增雲端執行流程（實驗性，隨 plugin 發佈）：
-  - Agent SDK 路線：一份 reusable workflow（`on: workflow_call`），由部署者 repo 的 caller workflow 呼叫；一支 Python 執行腳本，從本機路徑載入 IDD、superpowers、parallel-ai-agents 三個 plugin。
+  - Agent SDK 路線：一份 reusable workflow（`on: workflow_call`），由部署者 repo 的 caller workflow 呼叫；一支 Python 執行腳本，從本機路徑載入 IDD 與它的三個依賴 plugin（superpowers、parallel-ai-agents、codex-pro）。
   - Managed Agents 路線：一支 shell launcher，以 Claude API 建立 environment、agent、session，掛載目標 repo 與 IDD repo，並讀取 session 事件。
   - 一份部署說明與一份 caller workflow 範本，讓部署者只需提供自己的 key 與 repo。
   - 一支測試，確認腳本的 dry-run 輸出不含任何 secret，且 reusable workflow 不讀取 IDD repo 自己的 secret。

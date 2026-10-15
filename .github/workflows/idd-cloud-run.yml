@@ -80,7 +80,7 @@ jobs:
       #                        marketplace.json only points at obra/superpowers.git
       #                        and pins commit 5bf4e78011075bcfc0dc295f0724994cd123ee71,
       #                        which is the commit used here. Bump it when that pin moves.
-      - name: Fetch the IDD, superpowers and parallel-ai-agents plugins
+      - name: Fetch the IDD plugin and its three dependency plugins
         shell: bash
         env:
           IDD_REF: ${{ inputs.idd_ref }}
@@ -88,6 +88,9 @@ jobs:
           # PsychQuant/parallel-ai-agents main as of 2026-10-15. Pinned: this code
           # runs in the job that holds the API key, so it must not move by itself.
           PAI_REF: d6c6ceac3e8c56a98590a0683ec329868d711a64
+          # PsychQuant/codex-pro main as of 2026-10-15. IDD declares it as a
+          # dependency; without it IDD does not load (dependency-unsatisfied).
+          CODEX_PRO_REF: 1eec56ceef1d44e09e9c27f3c05ecde6f3e5ab80
         run: |
           set -euo pipefail
           # idd_ref is caller-supplied text that becomes a git argument: allow
@@ -109,6 +112,7 @@ jobs:
           fetch_repo PsychQuant/issue-driven-development "$IDD_REF" "$RUNNER_TEMP/idd"
           fetch_repo obra/superpowers "$SUPERPOWERS_REF" "$RUNNER_TEMP/superpowers"
           fetch_repo PsychQuant/parallel-ai-agents "$PAI_REF" "$RUNNER_TEMP/parallel-ai-agents"
+          fetch_repo PsychQuant/codex-pro "$CODEX_PRO_REF" "$RUNNER_TEMP/codex-pro"
 
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
@@ -182,6 +186,7 @@ jobs:
             --plugin-dir "$RUNNER_TEMP/idd/plugins/issue-driven-dev"
             --plugin-dir "$RUNNER_TEMP/superpowers"
             --plugin-dir "$RUNNER_TEMP/parallel-ai-agents/plugins/parallel-ai-agents"
+            --plugin-dir "$RUNNER_TEMP/codex-pro/plugins/codex-pro"
             --cwd "$GITHUB_WORKSPACE"
             --max-turns "$IDD_MAX_TURNS"
           )

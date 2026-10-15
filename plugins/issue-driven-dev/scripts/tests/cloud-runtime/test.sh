@@ -192,6 +192,9 @@ PY
   # On Linux the scrub needs bubblewrap; without it the CLI exits at startup
   # (first real run, workflow run 38683885702). It must be installed in a step
   # that does not hold the key.
+  for dep in superpowers parallel-ai-agents codex-pro; do
+    assert_grep_re "workflow loads dependency $dep with --plugin-dir" "--plugin-dir .*$dep" "$(cat "$WORKFLOW")"
+  done
   assert_output_grep "bubblewrap is installed for the scrub" "apt-get install -y bubblewrap" "$WORKFLOW"
   BWRAP_LINE=$(grep -n "apt-get install -y bubblewrap" "$WORKFLOW" | head -1 | cut -d: -f1)
   KEY_LINE=$(grep -n 'ANTHROPIC_API_KEY: \${{ secrets.ANTHROPIC_API_KEY }}' "$WORKFLOW" | head -1 | cut -d: -f1)
@@ -200,7 +203,9 @@ PY
   # that holds the key. Every action and every plugin ref must be a commit SHA.
   UNPINNED=$(grep -E '^[[:space:]]*(-[[:space:]]+)?uses:' "$WORKFLOW" | grep -vE '@[0-9a-f]{40}([[:space:]]|$)' || true)
   assert_eq "every uses: is pinned to a commit SHA" "" "$UNPINNED"
-  for ref in SUPERPOWERS_REF PAI_REF; do
+  # IDD's plugin.json declares three dependencies; a missing one stops IDD from
+  # loading at all (dependency-unsatisfied, workflow run 38684015025).
+  for ref in SUPERPOWERS_REF PAI_REF CODEX_PRO_REF; do
     assert_grep_re "$ref is a commit SHA" "^[[:space:]]+$ref: [0-9a-f]{40}[[:space:]]*$" "$(grep -E "^[[:space:]]+$ref:" "$WORKFLOW")"
   done
 fi

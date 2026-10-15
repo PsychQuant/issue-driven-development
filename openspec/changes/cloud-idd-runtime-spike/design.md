@@ -6,7 +6,7 @@
 - **Agent SDK**：Python 版以 `plugins=[{"type": "local", "path": ...}]` 從本機路徑載入 plugin（含 skills、agents、hooks）。額度頁寫涵蓋 Agent SDK、不涵蓋 Claude Code，但沒說 SDK 請求如何與 Claude Code 請求區分。
 - **Claude Code routines**：雲端 session 不安裝 plugin，`gh issue`／`gh pr`（GraphQL）回 403，計費走訂閱用量。
 
-IDD 對 runtime 的既有政策：Claude Code 是 canonical runtime，其他 runtime 只能當相容層；無法等價保留的行為要明確標 degraded，不可靜默弱化 gate（plugin 的 CLAUDE.md〈Runtime Compatibility Policy〉、`references/codex-tools.md`）。IDD 另外依賴兩個 plugin：superpowers 與 parallel-ai-agents（`PsychQuant/parallel-ai-agents`）。superpowers 掛在 `anthropics/claude-plugins-official` 這個 marketplace 下，但它的程式碼不在該 repo 裡：marketplace 的條目指向 `obra/superpowers` 的一個固定 commit。三個來源 repo 都是 public。
+IDD 對 runtime 的既有政策：Claude Code 是 canonical runtime，其他 runtime 只能當相容層；無法等價保留的行為要明確標 degraded，不可靜默弱化 gate（plugin 的 CLAUDE.md〈Runtime Compatibility Policy〉、`references/codex-tools.md`）。IDD 另外依賴三個 plugin（`plugins/issue-driven-dev/.claude-plugin/plugin.json` 的 `dependencies`）：superpowers、parallel-ai-agents（`PsychQuant/parallel-ai-agents`）與 codex-pro（`PsychQuant/codex-pro`）；缺任何一個，IDD 本身就不會載入（第一次真實 run 實測到 `dependency-unsatisfied`）。superpowers 掛在 `anthropics/claude-plugins-official` 這個 marketplace 下，但它的程式碼不在該 repo 裡：marketplace 的條目指向 `obra/superpowers` 的一個固定 commit。三個來源 repo 都是 public。
 
 使用者在 apply 開始時修正了部署形狀：流程要放在 IDD repo、讓其他使用者能部署到自己的 GitHub；API key 留在部署者自己的 private repo。private repo `PsychQuant/idd-cloud-sandbox` 已建立（seed issue #1、secret `ANTHROPIC_API_KEY`，key 來自 che830621 組織），作為第一個部署範例與測試目標。
 
@@ -63,9 +63,9 @@ routines 的雲端 session 對 `gh issue`、`gh pr` 這類 GraphQL 子命令回 
 - 使用者提供的 prompt 一律以環境變數傳進 shell，不以 `${{ }}` 直接插入 `run:` 指令，避免 workflow 指令注入。
 - 兩支執行程式都有 `--dry-run`，只印出將要送出的請求，secret 一律以 `***` 遮蔽；測試確認 dry-run 輸出不含 secret。
 
-### Agent SDK 路線以本機路徑載入三個 plugin
+### Agent SDK 路線以本機路徑載入 IDD 與三個依賴 plugin
 
-reusable workflow 先 checkout 部署者 repo（工作目錄），再把 IDD（以 `idd_ref` 指定版本）、superpowers（`obra/superpowers`，鎖在官方 marketplace 當下指定的 commit）、parallel-ai-agents 三個 repo 以 git 抓到 runner 的暫存目錄（`actions/checkout` 不接受 workspace 以外的路徑，抓進 workspace 又會在部署者 repo 留下未追蹤檔案），執行腳本以 `plugins=[{"type": "local", "path": ...}]` 逐一載入。GitHub runner 預裝 gh，`GH_TOKEN` 取自 `GITHUB_TOKEN`。
+reusable workflow 先 checkout 部署者 repo（工作目錄），再把 IDD（以 `idd_ref` 指定版本）、superpowers（`obra/superpowers`，鎖在官方 marketplace 當下指定的 commit）、parallel-ai-agents、codex-pro 四個 repo 以 git 抓到 runner 的暫存目錄（`actions/checkout` 不接受 workspace 以外的路徑，抓進 workspace 又會在部署者 repo 留下未追蹤檔案），執行腳本以 `plugins=[{"type": "local", "path": ...}]` 逐一載入。GitHub runner 預裝 gh，`GH_TOKEN` 取自 `GITHUB_TOKEN`。
 
 ### Managed Agents 路線以讀檔方式執行 IDD skill
 
@@ -106,7 +106,7 @@ spike 的端到端 run 以 unattended PR mode 跑 `/idd-all`。#392 落地前，
 - 觸發：只有 `on: workflow_call`；不因 IDD repo 自己的 push 或 PR 而執行。
 - inputs：`prompt`（string，必填）、`idd_ref`（string，預設 `main`，指定要 checkout 的 IDD 版本）、`max_turns`（number，預設 80）、`dry_run`（boolean，預設 false）。
 - secrets：`ANTHROPIC_API_KEY`（必填）。不宣告、不讀取其他 secret。
-- 行為：checkout 部署者 repo；把 IDD、superpowers（`obra/superpowers` 的固定 commit）、parallel-ai-agents 抓到 `$RUNNER_TEMP`，`idd_ref` 先驗證只含分支或 commit 允許的字元；安裝 Python 與 `claude-agent-sdk`（版本在實作時鎖定並記進 findings）；以環境變數傳入 prompt 後呼叫 `sdk_run.py`；`timeout-minutes: 60`。
+- 行為：checkout 部署者 repo；把 IDD、superpowers（`obra/superpowers` 的固定 commit）、parallel-ai-agents、codex-pro 抓到 `$RUNNER_TEMP`，`idd_ref` 先驗證只含分支或 commit 允許的字元；安裝 Python 與 `claude-agent-sdk`（版本在實作時鎖定並記進 findings）；以環境變數傳入 prompt 後呼叫 `sdk_run.py`；`timeout-minutes: 60`。
 - 權限：不自行提升權限；實際權限由 caller 的 `permissions` 決定。
 
 **caller workflow 範本（`plugins/issue-driven-dev/cloud/caller-example.yml`）：**
