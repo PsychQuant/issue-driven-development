@@ -6,7 +6,7 @@
 - **Agent SDK**：Python 版以 `plugins=[{"type": "local", "path": ...}]` 從本機路徑載入 plugin（含 skills、agents、hooks）。額度頁寫涵蓋 Agent SDK、不涵蓋 Claude Code，但沒說 SDK 請求如何與 Claude Code 請求區分。
 - **Claude Code routines**：雲端 session 不安裝 plugin，`gh issue`／`gh pr`（GraphQL）回 403，計費走訂閱用量。
 
-IDD 對 runtime 的既有政策：Claude Code 是 canonical runtime，其他 runtime 只能當相容層；無法等價保留的行為要明確標 degraded，不可靜默弱化 gate（plugin 的 CLAUDE.md〈Runtime Compatibility Policy〉、`references/codex-tools.md`）。IDD 另外依賴兩個 plugin：superpowers（`anthropics/claude-plugins-official`）與 parallel-ai-agents（`PsychQuant/parallel-ai-agents`），三個來源 repo 都是 public。
+IDD 對 runtime 的既有政策：Claude Code 是 canonical runtime，其他 runtime 只能當相容層；無法等價保留的行為要明確標 degraded，不可靜默弱化 gate（plugin 的 CLAUDE.md〈Runtime Compatibility Policy〉、`references/codex-tools.md`）。IDD 另外依賴兩個 plugin：superpowers 與 parallel-ai-agents（`PsychQuant/parallel-ai-agents`）。superpowers 掛在 `anthropics/claude-plugins-official` 這個 marketplace 下，但它的程式碼不在該 repo 裡：marketplace 的條目指向 `obra/superpowers` 的一個固定 commit。三個來源 repo 都是 public。
 
 使用者在 apply 開始時修正了部署形狀：流程要放在 IDD repo、讓其他使用者能部署到自己的 GitHub；API key 留在部署者自己的 private repo。private repo `PsychQuant/idd-cloud-sandbox` 已建立（seed issue #1、secret `ANTHROPIC_API_KEY`，key 來自 che830621 組織），作為第一個部署範例與測試目標。
 
@@ -65,11 +65,11 @@ routines 的雲端 session 對 `gh issue`、`gh pr` 這類 GraphQL 子命令回 
 
 ### Agent SDK 路線以本機路徑載入三個 plugin
 
-reusable workflow 先 checkout 部署者 repo（工作目錄），再把 IDD（以 `idd_ref` 指定版本）、superpowers、parallel-ai-agents 三個 repo clone 到 runner 的暫存目錄，執行腳本以 `plugins=[{"type": "local", "path": ...}]` 逐一載入。GitHub runner 預裝 gh，`GH_TOKEN` 取自 `GITHUB_TOKEN`。
+reusable workflow 先 checkout 部署者 repo（工作目錄），再把 IDD（以 `idd_ref` 指定版本）、superpowers（`obra/superpowers`，鎖在官方 marketplace 當下指定的 commit）、parallel-ai-agents 三個 repo 以 git 抓到 runner 的暫存目錄（`actions/checkout` 不接受 workspace 以外的路徑，抓進 workspace 又會在部署者 repo 留下未追蹤檔案），執行腳本以 `plugins=[{"type": "local", "path": ...}]` 逐一載入。GitHub runner 預裝 gh，`GH_TOKEN` 取自 `GITHUB_TOKEN`。
 
 ### Managed Agents 路線以讀檔方式執行 IDD skill
 
-Managed Agents 只從 repo 根目錄的 `.claude/skills/<name>/SKILL.md` 探索 skill，IDD 的 skills 在 `plugins/issue-driven-dev/skills/` 底下，無法被自動探索。launcher 把目標 repo 與 IDD repo 以 `github_repository` resource 掛進 session，agent 的 system prompt 指示它直接讀對應的 SKILL.md 並照做，並在 environment 裡設定 `CLAUDE_PLUGIN_ROOT` 指向掛載路徑。gh 以 environment 的 packages 安裝，裝不到就改下載官方 release binary。
+Managed Agents 只從 repo 根目錄的 `.claude/skills/<name>/SKILL.md` 探索 skill，IDD 的 skills 在 `plugins/issue-driven-dev/skills/` 底下，無法被自動探索。launcher 把目標 repo 與 IDD repo 以 `github_repository` resource 掛進 session，agent 的 system prompt 指示它直接讀對應的 SKILL.md 並照做。environment 沒有文件記載的環境變數欄位，所以 `CLAUDE_PLUGIN_ROOT` 改由 system prompt 指示 agent 自行 `export` 為掛載路徑；它能否跨多次 bash 呼叫存活，由 spike 記錄。gh 以 environment 的 packages 安裝，裝不到就改下載官方 release binary。
 
 替代方案：用 `POST /v1/skills` 上傳每個 idd-* skill。沒採用，因為 IDD 的 skill 共用 plugin 層的 `scripts/`，逐一上傳會把共用腳本切散；若讀檔方式失敗，再於 findings 記錄是否值得改用上傳。
 
@@ -106,7 +106,7 @@ spike 的端到端 run 以 unattended PR mode 跑 `/idd-all`。#392 落地前，
 - 觸發：只有 `on: workflow_call`；不因 IDD repo 自己的 push 或 PR 而執行。
 - inputs：`prompt`（string，必填）、`idd_ref`（string，預設 `main`，指定要 checkout 的 IDD 版本）、`max_turns`（number，預設 80）、`dry_run`（boolean，預設 false）。
 - secrets：`ANTHROPIC_API_KEY`（必填）。不宣告、不讀取其他 secret。
-- 行為：checkout 部署者 repo；把 IDD、superpowers、parallel-ai-agents clone 到 `$RUNNER_TEMP`；安裝 Python 與 `claude-agent-sdk`（版本在實作時鎖定並記進 findings）；以環境變數傳入 prompt 後呼叫 `sdk_run.py`；`timeout-minutes: 60`。
+- 行為：checkout 部署者 repo；把 IDD、superpowers（`obra/superpowers` 的固定 commit）、parallel-ai-agents 抓到 `$RUNNER_TEMP`，`idd_ref` 先驗證只含分支或 commit 允許的字元；安裝 Python 與 `claude-agent-sdk`（版本在實作時鎖定並記進 findings）；以環境變數傳入 prompt 後呼叫 `sdk_run.py`；`timeout-minutes: 60`。
 - 權限：不自行提升權限；實際權限由 caller 的 `permissions` 決定。
 
 **caller workflow 範本（`plugins/issue-driven-dev/cloud/caller-example.yml`）：**
@@ -125,8 +125,8 @@ spike 的端到端 run 以 unattended PR mode 跑 `/idd-all`。#392 落地前，
 **Managed Agents launcher（`plugins/issue-driven-dev/cloud/ma_run.sh`）的介面：**
 
 - 參數：`--prompt-file <path>`（必填）、`--target-repo <owner/repo>`（必填）、`--keychain-account <name>`（必填，API key 所在的 keychain account）、`--github-token-keychain <service>:<account>`（必填，fine-grained PAT 所在處）、`--dry-run`。
-- 行為：依序建立 environment、agent、session，session 掛載目標 repo 與 IDD repo；輪詢 session 事件直到 idle 或 terminated；印出 session ID、停止原因與 usage。
-- `--dry-run`：只印出三個請求的 body，token 與 key 一律顯示為 `***`，不讀 keychain、不送請求。
+- 行為：依序送出五個請求：建立 environment、agent、vault、vault 裡的 PAT credential、session（掛載目標 repo 與 IDD repo，設 session budget）；輪詢 session 狀態直到 idle 或 terminated；印出 session ID、停止原因與 usage；結束時（含失敗）封存 vault，清掉存放的 PAT。
+- `--dry-run`：只印出五個請求的 body，token 與 key 一律顯示為 `***`，不讀 keychain、不送請求。
 - 失敗：缺 key 或 token 時非零結束並點名缺少的 keychain entry；任何 HTTP 非 2xx 時印出狀態碼與回應 body（遮蔽後）並以非零狀態結束。
 
 **部署說明（`plugins/issue-driven-dev/cloud/README.md`）：** 兩條路線各自的部署步驟、需要的 key 與權限、觸發方式、實驗性聲明與已知限制；C8 只照這份文件做。
@@ -146,6 +146,8 @@ spike 的端到端 run 以 unattended PR mode 跑 `/idd-all`。#392 落地前，
 - [gh 拒絕 vault 替換後的 token 格式] → 改以 `github_repository` resource 的 token 做 push，以 curl 帶 header 呼叫 REST API 開 PR 與 merge；兩種結果都記錄。
 - [spike 花費失控] → Managed Agents 設 session budget；SDK 設 `--max-turns`；workflow 設 `timeout-minutes: 60`。每次端到端 run 前先跑最小 probe。
 - [IDD 的 pre-flight 在 Managed Agents 上必然失敗] → 這本身就是 C1 要量測的結果；記錄失敗點，不為了通過而改 pre-flight。
+- [IDD 的 presence pre-flight 在 Agent SDK 路線上也可能失敗] → `check-plugin-presence.sh` 只在 `~/.claude/plugins/cache/` 找依賴，以本機路徑載入的 plugin 不在那裡；同樣記為 C1 的結果，不設 `IDD_SKIP_PLUGIN_CHECK` 繞過。
+- [superpowers 的固定 commit 會過時] → workflow 寫明它取自官方 marketplace 的條目；正式 change 再決定要不要在執行時讀 marketplace 取最新指定值。
 - [Claude-only verify 漏掉只有跨模型才抓得到的問題] → 已接受的取捨；C7 只量測能否跑完與是否明示缺口。
 - [實驗性流程隨 plugin 發佈到其他使用者手上] → 檔案只在被主動部署時才會執行；README 開頭標明實驗性與可能變動。
 

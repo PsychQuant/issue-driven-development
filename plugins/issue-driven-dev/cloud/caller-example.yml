@@ -1,0 +1,65 @@
+# Caller workflow template for running IDD in the cloud (EXPERIMENTAL, #400).
+#
+# What this is
+#   A few-line workflow that calls IDD's reusable workflow. The flow lives in
+#   the IDD repo and is maintained with the plugin; only this file and your API
+#   key live in your own repo. Nothing else from IDD is copied or forked.
+#
+# Where to put it
+#   Copy this file into YOUR private repo as .github/workflows/idd-cloud.yml
+#   (the workflow name below, "idd-cloud", is what `gh workflow run` takes).
+#
+# What the repo needs
+#   A repository secret named ANTHROPIC_API_KEY
+#   (Settings -> Secrets and variables -> Actions -> New repository secret).
+#   It is passed to the reusable workflow explicitly below, and it is the only
+#   secret that leaves this repo. Do not replace that with a blanket pass-through
+#   of all secrets.
+#
+# How to trigger
+#   gh workflow run idd-cloud -f prompt='/idd-all #12'
+#
+#   curl -X POST \
+#     -H "Authorization: Bearer $GITHUB_TOKEN" \
+#     -H "Accept: application/vnd.github+json" \
+#     https://api.github.com/repos/{owner}/{repo}/dispatches \
+#     -d '{"event_type":"idd-run","client_payload":{"prompt":"/idd-all #12"}}'
+#
+#   That is POST /repos/{owner}/{repo}/dispatches, body
+#   {"event_type":"idd-run","client_payload":{"prompt":"..."}}. Add
+#   "dry_run": true to client_payload to print the planned request without
+#   calling the API.
+#
+# Permissions
+#   The run can write to this repo's contents, issues and pull requests, and
+#   nothing else. The reusable workflow does not raise them.
+
+name: idd-cloud
+
+on:
+  workflow_dispatch:
+    inputs:
+      prompt:
+        description: 'Instruction for the IDD agent, for example "/idd-all #12"'
+        type: string
+        required: true
+  repository_dispatch:
+    types: [idd-run]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  idd:
+    # Pin a tag or a commit SHA instead of @main so an IDD update cannot change
+    # what runs in your repo unannounced. Pass the same ref as idd_ref below.
+    uses: PsychQuant/issue-driven-development/.github/workflows/idd-cloud-run.yml@main
+    with:
+      prompt: ${{ github.event.inputs.prompt || github.event.client_payload.prompt }}
+      # Same pin as the uses: ref above (tag or commit SHA).
+      idd_ref: main
+      dry_run: ${{ github.event.client_payload.dry_run || false }}
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

@@ -1,0 +1,167 @@
+# idd-cloud-run.yml — run the issue-driven-dev plugin in the cloud, EXPERIMENTAL (#400).
+#
+# This is a reusable workflow. It is called from a deployer's own private repo
+# through `workflow_call` and has no other trigger, so nothing in this repo
+# runs it on its own. The flow (this file, plugins/issue-driven-dev/cloud/
+# sdk_run.py) lives in the public IDD repo; the API key lives only in the
+# deployer's repo, as a repository secret that the caller passes in by name.
+# This repo stores no key, and this workflow reads no secret of its own.
+#
+# Deployment steps, the caller template and the known limits:
+#   plugins/issue-driven-dev/cloud/README.md
+#
+# How it works: it checks out the caller's repo (the agent's working
+# directory), fetches IDD, superpowers and parallel-ai-agents into
+# $RUNNER_TEMP, installs the Claude Agent SDK, and hands the prompt to
+# sdk_run.py, which loads the three plugins from those local paths.
+#
+# Permissions: this file sets none on purpose. In a reusable workflow the
+# caller's `permissions` decide what the job token may do, and this file may
+# only narrow them. The caller template grants write on contents, issues and
+# pull-requests and nothing else.
+#
+# Injection guard: every workflow input reaches the shell through `env:` and is
+# read as a shell variable. No `run:` value contains an expression
+# interpolation, so a prompt cannot become shell code. The test
+# plugins/issue-driven-dev/scripts/tests/cloud-runtime/test.sh checks this.
+
+name: idd-cloud-run
+
+on:
+  workflow_call:
+    inputs:
+      prompt:
+        description: "What the agent should do, for example: /issue-driven-dev:idd-all #12"
+        type: string
+        required: true
+      idd_ref:
+        description: Branch, tag or full commit SHA of the IDD repo to run; pin a tag or SHA outside experiments
+        type: string
+        required: false
+        default: main
+      max_turns:
+        description: Upper bound on agent turns
+        type: number
+        required: false
+        default: 80
+      dry_run:
+        description: Print the SDK options without calling the API
+        type: boolean
+        required: false
+        default: false
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: true
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      # The caller's repo is the agent's working tree. fetch-depth 0 gives it the
+      # history that branch, diff and PR work needs. The default persisted
+      # credential is what lets the agent's own `git push` work.
+      - name: Check out the caller repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # The three plugin repos go into $RUNNER_TEMP with plain git, not into the
+      # workspace with actions/checkout. Reasons: actions/checkout refuses a path
+      # outside the workspace, and a clone inside the workspace would show up as
+      # untracked files in the caller's repo, where the agent could commit them.
+      #
+      # Where each plugin sits, checked against the public repos on 2026-10-15:
+      #   IDD:                 plugins/issue-driven-dev (its .claude-plugin/plugin.json)
+      #   parallel-ai-agents:  plugins/parallel-ai-agents (the repo's marketplace.json
+      #                        lists "./plugins/parallel-ai-agents")
+      #   superpowers:         the root of obra/superpowers. It is NOT inside
+      #                        anthropics/claude-plugins-official: that repo's
+      #                        marketplace.json only points at obra/superpowers.git
+      #                        and pins commit 5bf4e78011075bcfc0dc295f0724994cd123ee71,
+      #                        which is the commit used here. Bump it when that pin moves.
+      - name: Fetch the IDD, superpowers and parallel-ai-agents plugins
+        shell: bash
+        env:
+          IDD_REF: ${{ inputs.idd_ref }}
+          SUPERPOWERS_REF: 5bf4e78011075bcfc0dc295f0724994cd123ee71
+          PAI_REF: main
+        run: |
+          set -euo pipefail
+          # idd_ref is caller-supplied text that becomes a git argument: allow
+          # only ref-name characters and refuse a leading dash.
+          case "$IDD_REF" in
+            ""|-*|*[!A-Za-z0-9._/-]*)
+              echo "idd_ref must be a branch, tag or commit SHA made of letters, digits, . _ / -" >&2
+              exit 1
+              ;;
+          esac
+          fetch_repo() {
+            # $1 owner/repo, $2 ref, $3 destination
+            git init --quiet "$3"
+            git -C "$3" remote add origin "https://github.com/$1.git"
+            git -C "$3" fetch --quiet --depth 1 origin "$2"
+            git -C "$3" checkout --quiet --detach FETCH_HEAD
+            echo "$1 at $(git -C "$3" rev-parse HEAD)"
+          }
+          fetch_repo PsychQuant/issue-driven-development "$IDD_REF" "$RUNNER_TEMP/idd"
+          fetch_repo obra/superpowers "$SUPERPOWERS_REF" "$RUNNER_TEMP/superpowers"
+          fetch_repo PsychQuant/parallel-ai-agents "$PAI_REF" "$RUNNER_TEMP/parallel-ai-agents"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The Python SDK wheel bundles the Claude Code CLI, so Node and a separate
+      # `npm i -g @anthropic-ai/claude-code` are not needed:
+      #   https://pypi.org/project/claude-agent-sdk/ ("The Claude Code CLI is
+      #   automatically bundled with the package"), and
+      #   https://code.claude.com/docs/en/agent-sdk/quickstart.md (both SDKs
+      #   bundle a native binary; only a source install, as on ARM64 Windows,
+      #   has none). The ubuntu-latest runner gets the manylinux_2_17_x86_64 wheel.
+      # 0.2.167 was the latest release on PyPI on 2026-10-15 (needs Python 3.10+).
+      - name: Install the Claude Agent SDK
+        shell: bash
+        run: python3 -m pip install claude-agent-sdk==0.2.167
+
+      # The agent commits to the caller's repo; a runner has no git identity.
+      - name: Set the git identity for agent commits
+        shell: bash
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      # Only this step sees the API key. The install and fetch steps above run
+      # third-party code and get no secret.
+      - name: Run the agent
+        shell: bash
+        env:
+          IDD_PROMPT: ${{ inputs.prompt }}
+          IDD_MAX_TURNS: ${{ inputs.max_turns }}
+          IDD_DRY_RUN: ${{ inputs.dry_run }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          # Newer models get no TaskCreate/TaskList/TaskUpdate unless this is set,
+          # and every IDD skill's Step 0 depends on them. Matches the maintainer's
+          # local Claude Code setting, so the cloud run behaves like the local one.
+          CLAUDE_CODE_ENABLE_TODO_TOOLS: "1"
+        run: |
+          set -euo pipefail
+          case "$IDD_MAX_TURNS" in
+            ""|*[!0-9]*)
+              echo "max_turns must be a whole number" >&2
+              exit 1
+              ;;
+          esac
+          args=(
+            --prompt="$IDD_PROMPT"
+            --plugin-dir "$RUNNER_TEMP/idd/plugins/issue-driven-dev"
+            --plugin-dir "$RUNNER_TEMP/superpowers"
+            --plugin-dir "$RUNNER_TEMP/parallel-ai-agents/plugins/parallel-ai-agents"
+            --cwd "$GITHUB_WORKSPACE"
+            --max-turns "$IDD_MAX_TURNS"
+          )
+          if [ "$IDD_DRY_RUN" = "true" ]; then
+            args+=(--dry-run)
+          fi
+          python3 "$RUNNER_TEMP/idd/plugins/issue-driven-dev/cloud/sdk_run.py" "${args[@]}"
