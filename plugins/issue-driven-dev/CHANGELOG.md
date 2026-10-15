@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.4.0] - 2026-10-14
+## [3.4.0] - 2026-10-15
 
 ### Added
 
@@ -28,12 +28,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     Complexity signal after diagnosis, or make `idd-all` skip verify and the push after implement, and kept
     finding ways to hide a `## Type` from a markdown reader. That reader (`idd_issue_type`) was removed before
     release.
+  - **`idd-diagnose` writes `meeting` only from a trusted source.** The author filter says who posted a
+    Diagnosis, not where its `### Type` came from, and `idd-all` runs `idd-diagnose` on every run. So
+    `idd-diagnose` Step 1 records `meeting` only for a `meeting` type label or for a body `## Type: meeting` whose
+    issue author is OWNER / MEMBER / COLLABORATOR, and never infers it from content; an outside author who wants
+    a meeting route asks a maintainer to add the label.
   - **Consumers dispatch on `TYPE=meeting` before any tier.** `idd-all`: attended → meeting `/idd-plan`;
     unattended → stops at `diagnosed` with an Action item (`/idd-plan` or `/idd-close` — a plan is optional);
     never implement, verify, push or PR. In PR mode it returns to the default branch: the attachment manifest
     written by diagnose is committed on the Phase 0.5 branch, which is kept and not pushed, and an empty branch is
-    deleted. The branch unwind, verify, push and report read the type from the trusted Diagnosis again. Phase 6
-    prints a meeting report instead of claiming a verify and a PR. `idd-plan` writes the Meeting Plan.
+    deleted. The branch unwind, verify, push and report read the type from the trusted Diagnosis again; if Phase 4
+    or Phase 5 finds a meeting Diagnosis that appeared after Phase 2 routed the issue as code work, the run stops
+    without verifying or pushing and says where the commits are. Phase 6 prints a meeting report instead of
+    claiming a verify and a PR, and adds no Action item to a non-meeting run. `idd-plan` writes the Meeting Plan.
     `idd-implement` refuses an actionable meeting with a meeting message. `idd-list` suggests `/idd-plan` or
     `/idd-close` (`planning`) and adds no group. Every gate block prints `TYPE=` on its machine line.
   - **`idd-update` reads `## Meeting Plan` as `planning`.**
