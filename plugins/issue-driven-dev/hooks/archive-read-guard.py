@@ -92,7 +92,11 @@ def _hits(candidate):
 # quoted string is still scanned, because `sh -c "cat <archive>"` and
 # `python3 -c "open('<archive>')"` read the archive from inside a quoted string.
 MESSAGE_FLAGS = ("-m", "--message", "--body", "--title", "--notes", "--subject")
-MESSAGE_COMMANDS = ("git", "gh", "hg", "jj", "svn")
+MESSAGE_COMMANDS = ("git", "gh", "hg", "jj", "svn", "gh-egress.sh", "idd-edit-helper.py")
+# A script run through an interpreter is named by the script (IDD posts through
+# `bash .../gh-egress.sh comment N --body "..."` — verify #351 round 4).
+INTERPRETERS = ("bash", "sh", "zsh", "env", "python", "python3")
+_ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 SEPARATORS = (";", "&&", "||", "|", "&")
 PERMISSION_COMMANDS = ("chmod", "chown", "chgrp", "chflags", "setfacl")
 
@@ -111,10 +115,16 @@ def _command_words(command):
     """Path candidates in a shell command: every shell word, and every piece of
     a word split on whitespace and quoting/grouping characters — except the
     value of a message option, which is prose."""
-    previous, command_name = "", None
+    previous, command_name, via_interpreter = "", None, False
     for word in _split_words(command):
-        if command_name is None:
-            command_name = os.path.basename(word)
+        if command_name is None or via_interpreter:
+            # `NAME=value cmd` and `bash script` name the command by what runs.
+            if _ENV_ASSIGNMENT.match(word) or (via_interpreter and word.startswith("-")):
+                pass
+            else:
+                base = os.path.basename(word)
+                via_interpreter = command_name is None and base in INTERPRETERS
+                command_name = base
         is_message = command_name in MESSAGE_COMMANDS and (
             previous in MESSAGE_FLAGS
             or any(word.startswith(flag + "=") for flag in MESSAGE_FLAGS if flag.startswith("--"))
@@ -125,7 +135,7 @@ def _command_words(command):
         # A message value is prose only if the shell will not execute part of
         # it: `--body "$(cat <archive>)"` posts the archive (parser differential
         # between shlex and the real shell).
-        if is_message and not any(t in word for t in ("$", "`", "<(", ">(")):
+        if is_message and not any(t in word for t in ("$", "`", "<", ">")):
             continue
         for piece in re.split(r"[\s'\"`()=;|&<>]+", word):
             if piece:
@@ -141,6 +151,19 @@ def _archive_below(target):
         if os.path.isdir(candidate) and _hits(_norm_path(candidate)):
             return True
     return False
+
+
+def _archives_around(cwd):
+    """Archive directories of the repositories at or above cwd."""
+    found, d = [], os.path.abspath(cwd)
+    while True:
+        candidate = os.path.join(d, NEEDLE)
+        if os.path.isdir(candidate):
+            found.append(os.path.normpath(candidate))
+        parent = os.path.dirname(d)
+        if parent == d:
+            return found
+        d = parent
 
 
 def _recursive_permission_change(command, cwd):
@@ -161,11 +184,19 @@ def _recursive_permission_change(command, cwd):
             a == "--recursive" or (a.startswith("-") and not a.startswith("--") and "R" in a)
             for a in args
         )
-        if recursive and any(
-            _archive_below(os.path.normpath(os.path.join(cwd, os.path.expanduser(a))))
-            for a in args if not a.startswith("-")
-        ):
-            return True
+        if not recursive:
+            continue
+        archives = _archives_around(cwd)
+        for a in args:
+            if a.startswith("-"):
+                continue
+            target = os.path.normpath(os.path.join(cwd, os.path.expanduser(a)))
+            # The archive itself, a directory just above it, or any directory
+            # that contains this repository's archive (`chmod -R u+r ..`, round 4).
+            if _archive_below(target) or any(
+                arch == target or arch.startswith(target.rstrip(os.sep) + os.sep) for arch in archives
+            ):
+                return True
     return False
 
 

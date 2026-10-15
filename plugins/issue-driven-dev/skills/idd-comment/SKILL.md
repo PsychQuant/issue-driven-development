@@ -342,7 +342,10 @@ case $? in
   0) ERRATA_ROUTE=correct ;;
   4) ERRATA_ROUTE=comment ;;
   *) printf '%s\n' "$AUTHOR_ERR" >&2
-     echo "✗ 無法判定 comment $TARGET_COMMENT 的作者 — 不猜路徑，abort" >&2; exit 1 ;;
+     # 無法判定作者時改貼 errata：不改原文（不猜是不是你的），但錯誤至少有一則
+     # 指向正確內容的更正；之前直接 abort，什麼都沒留下（#351 verify 第 4 輪）。
+     echo "⚠ 無法判定 comment $TARGET_COMMENT 的作者 — 不就地更正，改貼 errata" >&2
+     ERRATA_ROUTE=comment ;;
 esac
 ```
 
@@ -359,8 +362,9 @@ IDD_CALLER=idd-comment-errata \
 | idd-edit 結束碼 | 意思 | 本 skill 接著做 |
 |---|---|---|
 | 0 | 已就地更正 | 回報「已更正」與 backup id，不貼任何 comment |
-| 5 | 使用者在預覽時拒絕 | 回報「使用者拒絕」，不貼、不改 |
-| 4（或其他非 0） | 更正被拒絕（受管區、egress、作者無法判定、寫入後無法確認…） | **改貼 errata**：照下方「其他作者」的路徑，以 `--correction-file` 的內容摘要寫成 errata 說明貼出，並在說明中註明「就地更正未成功：<idd-edit 的拒絕原因>」——錯的原文至少有一則指向正確內容的更正 |
+| 9 | 使用者在預覽時拒絕 | 回報「使用者拒絕」，不貼、不改 |
+| 7 | 已寫入，但讀回失敗或內容不符 | 回報「已寫入但無法確認，請手動檢查該 comment」，**不貼 errata**（更正其實已經寫進去，貼「未成功」會留下一句錯的話） |
+| 4、2、3、5（或其他非 0） | 更正被拒絕、寫入失敗，或參數有誤（例如 `--correction-file` 讀不到） | **改貼 errata**：照下方「其他作者」的路徑，以 `--correction-file` 的內容摘要寫成 errata 說明貼出，並在說明中註明「就地更正未成功：<idd-edit 的拒絕原因>」——錯的原文至少有一則指向正確內容的更正 |
 
 **其他作者 → 只 post errata comment**：不呼叫 idd-edit、target comment 不動，也不提示 `--override-user-content`（協作者的 comment 屬 verbatim-preserve，`--correct` 沒有 override）。`--body` 是 errata 說明：
 

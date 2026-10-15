@@ -344,4 +344,24 @@ expect_allow chmodOk  "{\"tool_name\":\"Bash\",\"cwd\":\"$REPO\",\"tool_input\":
 expect_deny  sortm    '{"tool_name":"Bash","tool_input":{"command":"sort -m .claude/.idd/archive/edits/a.md"}}'
 expect_allow gitm     '{"tool_name":"Bash","tool_input":{"command":"git commit -m .claude/.idd/archive/edits"}}'
 
+# ── I. round 5 (verify #351 round 4) ──────────────────────────────────────
+echo "I. round 5"
+
+# I1. a recursive permission change above the repository root
+mkdir -p "$REPO/sub"
+expect_deny  chmodUp  "{\"tool_name\":\"Bash\",\"cwd\":\"$REPO/sub\",\"tool_input\":{\"command\":\"chmod -R u+r ../..\"}}"
+# I2. IDD's own posts and env-prefixed commands keep the message exemption
+expect_allow egressBody '{"tool_name":"Bash","tool_input":{"command":"bash plugins/issue-driven-dev/scripts/gh-egress.sh comment 1 --body \"the archive lives in .claude/.idd/archive/edits\""}}'
+expect_allow envGh      '{"tool_name":"Bash","tool_input":{"command":"GH_PAGER=cat gh issue comment 1 --body \"see .claude/.idd/archive/edits\""}}'
+expect_allow envGit     '{"tool_name":"Bash","tool_input":{"command":"GIT_EDITOR=true git commit -m \"keep .claude/.idd/archive out\""}}'
+# I3. a redirection in a message value is not prose
+expect_deny  msgRedir   '{"tool_name":"Bash","tool_input":{"command":"git commit -m <.claude/.idd/archive/edits/a.md"}}'
+
+# I4. archive refuses a repository that tracks anything under the archive path
+TA="$WORK/tracks"; mkdir -p "$TA/.claude/.idd/archive/edits"; git -C "$TA" init -q
+printf 'x' >"$TA/.claude/.idd/archive/edits/planted.md"
+git -C "$TA" add -f .claude >/dev/null 2>&1
+run_in "$TA" i4 archive comment 21 --from-file "$WORK/old.md" --repo o/r
+assert_exit "archive in a repository that tracks the archive path → exit 7" 7 "$RC"
+
 print_summary "correction-archive"

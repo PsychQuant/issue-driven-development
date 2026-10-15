@@ -116,7 +116,7 @@ Override pathway:`--override-user-content --reason="<rationale>"` 顯式同意�
 
 ```
 TaskCreate(name="parse_and_resolve_target", description="Parse comment:<id> / #NNN [--last] / issue:<N>，解析成 RESOLVED_TARGETS（每項 kind:number，每個 iteration 自己決定目標）")
-TaskCreate(name="fetch_body_and_backup", description="gh api 取現 body 並寫入 /tmp/idd-edit-backup/comment-<id>-<ts>.md")
+TaskCreate(name="fetch_body_and_backup", description="gh api 取現 body 寫入本次執行的私有工作目錄（mktemp -d 於 ${TMPDIR:-/tmp}）；失敗 → fetch-failed")
 TaskCreate(name="show_original", description="顯示原 comment 前 30 行讓使用者看清楚要動什麼")
 TaskCreate(name="build_new_body", description="按 mode（append / replace / prepend-note）組新 body 字串")
 TaskCreate(name="check_correction", description="--correct only：helper check-correction 擋受管區與 Original text 引用區塊（exit 6；section 不存在 → section-not-found），再以 compose-correction 組出預覽全文")
@@ -178,7 +178,8 @@ for target in "${TARGETS[@]}"; do
             # Validate issue number is numeric before substitution into gh api URL
             [[ "$ISSUE_NUMBER" =~ ^[0-9]+$ ]] || { echo "ERROR: invalid issue number: $ISSUE_NUMBER" >&2; exit 2; }
             if [ "$LAST" = "true" ]; then
-                id=$(gh api repos/$REPO/issues/$ISSUE_NUMBER/comments --jq '.[-1].id')
+                # every page: the newest comment is on the last one (round 4)
+                id=$(gh api "repos/$REPO/issues/$ISSUE_NUMBER/comments" --paginate --jq '.[-1].id' | tail -1)
             else
                 gh api repos/$REPO/issues/$ISSUE_NUMBER/comments \
                   --jq '.[] | "\(.id) | \(.created_at) | \(.body | .[0:80])"'
@@ -205,12 +206,16 @@ done
 # One private directory per run (mode 0700): every working copy lives here, so
 # no other local user can swap one between the preview and the write (verify
 # #351 round 3 — a shared fixed directory under /tmp allowed it).
+# macOS puts $TMPDIR under /var; the helper's path gate accepts the user's own
+# temp directory (verify #351 round 4 — before that, archive refused every
+# working copy here after the user had confirmed).
 WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/idd-edit-XXXXXX") || {
   echo "✗ cannot create a private working directory — nothing was changed" >&2; exit 1; }
 EDITED_COUNT=0        # incremented after each successful per-target Step 7 verify
 REFUSED_TARGETS=()    # "<kind:number> <reason>" — reason: R5 / author-unknown / fetch-failed / stage-failed / protected / section-not-found / parser-unavailable / check-failed / egress / changed-since-preview / differs-from-preview / archive / replace (#158 (i): recorded, not fatal)
 DECLINED_TARGETS=()   # the user answered NO at Step 5 — reported, not a refusal
 UNVERIFIED_TARGETS=() # written, but the re-read at Step 7 failed or did not match
+WRITE_FAILED_TARGETS=() # gh itself failed the PATCH (rc 1–9): not a refusal (#273), but nothing was written
 EGRESS_REFUSED_TARGETS=()   # egress-band refusals rc>=10（#273 — tier-floor/privacy/mention/empty-body），warn-continue
 for TARGET in "${RESOLVED_TARGETS[@]}"; do
     TARGET_KIND="${TARGET%%:*}"     # comment | issue — derived per iteration
@@ -238,6 +243,9 @@ done
 for did in ${DECLINED_TARGETS[@]+"${DECLINED_TARGETS[@]}"}; do
   echo "  – DECLINED $did（使用者在預覽時拒絕，未寫入）"
 done
+for wid in ${WRITE_FAILED_TARGETS[@]+"${WRITE_FAILED_TARGETS[@]}"}; do
+  echo "  ✗ FAILED(write) $wid（gh 自身錯誤，未寫入）"
+done
 for uid in ${UNVERIFIED_TARGETS[@]+"${UNVERIFIED_TARGETS[@]}"}; do
   echo "  ⚠ UNVERIFIED $uid（已寫入，但重讀失敗或內容不符 — 請手動確認）"
 done
@@ -247,12 +255,16 @@ done
 # Exit contract（fixture 14/15；M = REFUSED_TOTAL；M>0 → exit 4，單 target 退化等價）：
 # final exit 仍不套 #227 碼帶 — batch 的聚合碼是 idd-edit 自身空間（任一 refusal = 4）；
 # per-comment 分類消費 band（10–15）— 這正是 band 存在的目的（#273）。
-# 4 = a refusal, or a write that could not be confirmed; 5 = nothing refused
-# but the user declined at least one preview — callers such as idd-comment's
-# errata path tell "declined" from "corrected" by this code (verify #351 round 3).
+# Final exit codes, first match wins (verify #351 rounds 3–4). Callers such as
+# idd-comment's errata path route on them, so none overlaps an argument error
+# (2 / 3 / 5 come straight from parse-args, before anything is fetched):
+#   4 = something was refused or a write failed — nothing was changed for it
+#   7 = written, but the read-back failed or differed — check it by hand
+#   9 = nothing refused or failed, but the user declined at least one preview
 [ "$REFUSED_TOTAL" -gt 0 ] && exit 4
-[ "${#UNVERIFIED_TARGETS[@]}" -gt 0 ] && exit 4
-[ "${#DECLINED_TARGETS[@]}" -gt 0 ] && exit 5
+[ "${#WRITE_FAILED_TARGETS[@]}" -gt 0 ] && exit 4
+[ "${#UNVERIFIED_TARGETS[@]}" -gt 0 ] && exit 7
+[ "${#DECLINED_TARGETS[@]}" -gt 0 ] && exit 9
 exit 0
 ```
 
@@ -281,8 +293,9 @@ case $VALIDATE_EXIT in
     continue
     ;;
   1)
-    # --correct and the gh user is unknown: whether this is your content is not
-    # established, so nothing is guessed (stderr says why).
+    # Only --correct turns "the gh user is unknown" into exit 1; elsewhere an
+    # exit 1 is a transport error and ends the run as before (round 4).
+    [ "$MODE" = "--correct" ] || exit 1
     REFUSED_TARGETS+=("$TARGET author-unknown")
     continue
     ;;
@@ -599,6 +612,9 @@ elif [ "$EGRESS_RC" -ne 0 ]; then
     # 0 < rc < 10 = gh 自身錯誤（auth / network），非 refusal — 誠實分流，不進 refused 桶
     echo "✗ gh api PATCH failed for $TARGET (rc=$EGRESS_RC, gh 自身碼) — skip this target" >&2
     [ "$MODE" = "--correct" ] && rm -f "$BACKUP_FILE"
+    # Its own bucket and a non-zero exit: without it a single failed write ended
+    # with exit 0 and idd-comment reported the comment as corrected (round 4).
+    WRITE_FAILED_TARGETS+=("$TARGET rc=$EGRESS_RC")
     continue
 fi
 # --correct：舊版已在歸檔，刪掉 /tmp 工作副本（它含錯誤內容，且 hook 不擋 /tmp）
@@ -692,7 +708,7 @@ EDITED_COUNT=$((EDITED_COUNT + 1))
 
 ## 鐵律
 
-- **原 body 必 backup**：`--append`/`--replace`/`--prepend-note` 存 `/tmp/idd-edit-backup/`（暫存）；`--correct` 確認後歸檔到 correction archive（永久、不進 git、AI 讀不到），PATCH 後刪 `/tmp` 副本
+- **原 body 必 backup**：`--append`/`--replace`/`--prepend-note` 存在本次執行的私有工作目錄 `${TMPDIR:-/tmp}/idd-edit-XXXXXX/`（暫存，Step 2 印出路徑）；`--correct` 確認後歸檔到 correction archive（永久、不進 git、AI 讀不到），PATCH 後刪 `/tmp` 副本
 - **Preview 必 show**：即使是 `--append` 也要 show 最終 body 讓使用者確認
 - **`-F body=@file` 不是 `-f body=""`**：避免 backtick escape（`gh api` 會把 heredoc 裡的 backtick escape 成 `\`）
 - **Metadata marker 不覆蓋**：每次 edit 加新 marker，保留 history

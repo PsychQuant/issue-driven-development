@@ -58,6 +58,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 
 # ── R4/R5 helpful messages (constants, must match bash reference substrings) ──
 R4_MSG = (
@@ -138,7 +139,7 @@ def emit_assignment(key, value):
     # Control characters go through ANSI-C quoting too: bash command
     # substitution drops a NUL, so `\<NUL>;` from the backslash form collapsed
     # into `\;` + a live `;` under eval (verify #351 round 3).
-    if "\n" in value or any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in value):
+    if "\n" in value or any(ord(ch) < 0x20 or ord(ch) >= 0x7F for ch in value):
         # ANSI-C quoting ($'...'). The raw form this replaced (KEY=<line0>
         # newline <line1>...) made `eval` run every line after the first as a
         # shell command — `$(...)` and backticks in a body file executed — and
@@ -165,6 +166,11 @@ def ansi_c_quote(value):
             out.append("\\r")
         elif ord(ch) < 0x20 or ord(ch) == 0x7F:
             out.append("\\x%02x" % ord(ch))
+        elif ord(ch) > 0x7F:
+            # Raw multibyte text is read per the shell's locale; in zh_TW.Big5 a
+            # trail byte 0x5C is a backslash to zsh (verify #351 round 4). Byte
+            # escapes rebuild the exact UTF-8 bytes whatever the locale.
+            out.extend("\\x%02x" % b for b in ch.encode("utf-8"))
         else:
             out.append(ch)
     return "$'" + "".join(out) + "'"
@@ -231,8 +237,20 @@ def validate_body_file_path(raw_path):
     # to its true target before we inspect it.
     canonical = os.path.realpath(raw_path)
 
+    # The user's own temporary directory is not a system path, even where it
+    # lives under /var (macOS: /var/folders/<..>/T). Refusing it made every
+    # idd-edit working copy unreadable to `archive` on macOS (verify #351
+    # round 4). Only a directory strictly below it counts, and only when the
+    # temp root is not itself one of the refused roots.
+    tmp_root = os.path.realpath(tempfile.gettempdir())
+    in_user_tmp = (
+        tmp_root not in ("/",) + _REFUSED_SYSTEM_PREFIXES
+        and canonical != tmp_root
+        and _path_is_under(canonical, tmp_root)
+    )
+
     # Refuse sensitive absolute system paths (component-aware prefix match).
-    for prefix in _REFUSED_SYSTEM_PREFIXES:
+    for prefix in () if in_user_tmp else _REFUSED_SYSTEM_PREFIXES:
         if _path_is_under(canonical, prefix):
             err(f"ERROR: --body-file refuses sensitive system path: {raw_path}")
             err(
@@ -462,7 +480,7 @@ def parse_args_subcmd(argv):
                 "subsection scope."
             )
             return 3
-        if not state["body_input"]:
+        if not state["body_input"].strip():
             err(
                 "Refuse: --correct needs the corrected text (--body or --body-file); "
                 "without it the region would be emptied (#351)."
@@ -475,6 +493,10 @@ def parse_args_subcmd(argv):
                 "quotation and the sections owned by idd-update and idd-clarify."
             )
             return 3
+
+    if not targets:
+        err("ERROR: no target given (comment:<id>, #<issue> or issue:<N>); nothing to edit")
+        return 2
 
     # ── R5-pair guard: --override-user-content requires --reason ──
     if state["override"] == "true" and not state["reason"]:
@@ -714,7 +736,9 @@ class _Blocks:
             )
         self.opaque, self.code, self.html_starts = set(), set(), set()
         self.headings, self.rules = {}, set()
-        for token in MarkdownIt("commonmark").parse("\n".join(lines)):
+        # Tables on, like the gh-egress scanner: without the rule a GFM table
+        # followed by `---` reads as one setext heading (verify #351 round 4).
+        for token in MarkdownIt("commonmark").enable("table").parse("\n".join(lines)):
             if token.map is None:
                 continue
             if token.type in ("fence", "code_block", "html_block"):
@@ -961,6 +985,10 @@ def _managed_ranges(lines):
             continue
         level = _line_heading(line) or 3
         end = len(lines)
+        if owner == "idd-update":
+            # idd-update rewrites from its heading to the end of the body.
+            ranges.append((i, end, owner, line))
+            continue
         for j in range(i + 1, len(lines)):
             lvl = _line_heading(lines[j])
             if lvl and lvl <= level:
@@ -970,17 +998,31 @@ def _managed_ranges(lines):
     return ranges
 
 
-def _verbatim_runs(lines):
-    """(block text, the line after it or None) for each verbatim block."""
-    runs, run = [], []
+def _verbatim_runs(lines, opaque=frozenset(), offset=0):
+    """(block text, the line after it or None, hidden) for each verbatim block;
+    hidden = some line of it sits in a code or HTML block (index + offset)."""
+    runs, run, first = [], [], 0
     for idx, line in enumerate(lines + [None]):
         if line is not None and line.startswith(">"):
+            if not run:
+                first = idx
             run.append(line)
             continue
         if run and any(label in r for r in run for label in _VERBATIM_LABELS):
-            runs.append(("\n".join(run), line))
+            hidden = any((k + offset) in opaque for k in range(first, idx))
+            runs.append(("\n".join(run), line, hidden))
         run = []
     return runs
+
+
+def _is_marker(line):
+    return bool(IDD_MARKER_LINE_RE.fullmatch(line))
+
+
+def _opening_line(lines):
+    """The line readers identify a comment by: the first non-blank line that is
+    not an IDD marker (dashboard comments put the marker on line 1)."""
+    return next((l for l in lines if l.strip() and not _is_marker(l)), "")
 
 
 def check_correction_subcmd(argv):
@@ -1003,12 +1045,17 @@ def check_correction_subcmd(argv):
     # Line view, fenced or not: idd-update and idd-clarify find their heading by
     # exact line match, so even a fenced copy could be taken for the real one.
     for line in new_lines:
-        if line == _CURRENT_STATUS or line.startswith(_CLARITY_PREFIX):
+        if line.startswith(_CURRENT_STATUS) or line.startswith(_CLARITY_PREFIX):
             err(
                 f"Refuse: the replacement introduces '{line}', a heading managed by "
-                f"{'idd-update' if line == _CURRENT_STATUS else 'idd-clarify'} (#351)."
+                f"{'idd-update' if line.startswith(_CURRENT_STATUS) else 'idd-clarify'} (#351)."
             )
             return 6
+    try:
+        new_blocks = _Blocks(new_lines)
+    except ParserUnavailable as e:
+        err(f"ERROR: {e}; the correction was not checked")
+        return EXIT_PARSER
 
     if heading == "-":
         start, end = 0, len(old_lines)
@@ -1018,6 +1065,15 @@ def check_correction_subcmd(argv):
             err(f"ERROR: heading not found in input: {heading}")
             return 1
         start, end = rng
+        # A heading of the target's level or higher, or a thematic break, would
+        # split the section: the next correction would reach only part of it.
+        level = blocks.headings[start]
+        if any(lvl <= level for lvl in new_blocks.headings.values()) or new_blocks.rules:
+            err(
+                "Refuse: the replacement adds a heading of the section's level or higher, "
+                "or a thematic break, which would split the corrected section (#351)."
+            )
+            return 6
     # The protection scan reads lines the way the owners do. A whole-comment
     # target contains every managed region in it (round 2); a nested heading
     # under Clarity Surface belongs to idd-clarify (round 3).
@@ -1036,8 +1092,8 @@ def check_correction_subcmd(argv):
     if heading == "-":
         # Other skills find a comment by its opening heading (## Diagnosis,
         # ## Implementation Complete, …); a whole-comment correction keeps it.
-        old_first = next((l for l in old_lines if l.strip()), "")
-        new_first = next((l for l in new_lines if l.strip()), "")
+        old_first = _opening_line(old_lines)
+        new_first = _opening_line(new_lines)
         if _line_heading(old_first) and new_first != old_first:
             err(
                 f"Refuse: the comment opens with '{old_first}', which other skills use "
@@ -1047,12 +1103,12 @@ def check_correction_subcmd(argv):
     else:
         start += 1  # the heading line itself is kept
 
-    old_runs = _verbatim_runs(old_lines[start:end])
-    new_runs = _verbatim_runs(new_lines)
-    if sorted(b for b, _ in old_runs) != sorted(b for b, _ in new_runs):
+    old_runs = _verbatim_runs(old_lines[start:end], blocks.opaque, start)
+    new_runs = _verbatim_runs(new_lines, new_blocks.opaque)
+    if sorted(b for b, _, _ in old_runs) != sorted(b for b, _, _ in new_runs):
         # Multiset equality, not substring: appending to a quote, adding a quote
         # line, or un-quoting it all used to pass (verify #351 round 1).
-        for block, _ in old_runs or new_runs:
+        for block, _, _ in old_runs or new_runs:
             first = block.split("\n", 1)[0]
             err(
                 "Refuse: the replacement does not preserve an Original text quotation "
@@ -1064,8 +1120,16 @@ def check_correction_subcmd(argv):
     # A non-blank line right after the quotation joins it as a lazy
     # continuation, so the rendered quote changes while the bytes match
     # (verify #351 round 3). Allowed only where the original already had it.
-    old_follow = {(b, f) for b, f in old_runs}
-    for block, follow in new_runs:
+    old_follow = {(b, f) for b, f, _ in old_runs}
+    old_hidden = {b for b, _, h in old_runs if h}
+    for block, _, hidden in new_runs:
+        if hidden and block not in old_hidden:
+            err(
+                "Refuse: the replacement moves an Original text quotation into a code "
+                "block or an HTML comment, where it no longer shows (#351)."
+            )
+            return 6
+    for block, follow, _ in new_runs:
         if follow is not None and follow.strip() and (block, follow) not in old_follow:
             err(
                 "Refuse: the line after an Original text quotation would join the "
@@ -1113,8 +1177,14 @@ def compose_correction_subcmd(argv):
         return EXIT_PARSER
 
     if heading == "-":
-        start, end = -1, len(old_lines)
-        head, tail = [], []
+        # Markers at the top stay at the top: a dashboard comment's first line
+        # is its marker (verify #351 round 4).
+        lead = 0
+        while lead < len(old_lines) and (_is_marker(old_lines[lead]) or not old_lines[lead].strip()):
+            lead += 1
+        head = [l for l in old_lines[:lead] if _is_marker(l)]
+        start, end = lead - 1, len(old_lines)
+        tail = []
     else:
         rng = _section_range(old_lines, heading, stop_at_rule=True, blocks=blocks)
         if rng is None:
@@ -1127,10 +1197,19 @@ def compose_correction_subcmd(argv):
         head, tail = old_lines[: start + 1], old_lines[end:]
     # Line view, like the owners of these markers: every IDD marker line in the
     # replaced region is kept once, before the new marker.
-    in_body = set(body_lines)
+    try:
+        body_blocks = _Blocks(body_lines)
+    except ParserUnavailable as e:
+        err(f"ERROR: {e}; nothing was composed")
+        return EXIT_PARSER
+    # A marker inside a fenced example is text, not a marker (round 4): it is
+    # neither carried nor allowed to stand in for a live one.
+    in_body = {l for i, l in enumerate(body_lines) if i not in body_blocks.code}
     carried = []
-    for line in old_lines[start + 1 : end]:
-        if IDD_MARKER_LINE_RE.fullmatch(line) and line not in in_body and line not in carried and line != marker:
+    for i in range(start + 1, end):
+        line = old_lines[i]
+        if (_is_marker(line) and i not in blocks.code and line not in in_body
+                and line not in carried and line != marker and line not in head):
             carried.append(line)
     region = body_lines + [""] + carried + [marker]
     out = head + region + ([""] + tail if tail else [])
@@ -1308,6 +1387,21 @@ def _archive_path_problem(root):
     return None
 
 
+def _tracks_archive(root):
+    """A message when the repository tracks anything under the archive path in
+    any letter case, else None. A case-insensitive filesystem resolves
+    .claude/... to a tracked .CLAUDE/... that ls-files does not match by name
+    (round 3); archive refuses too, or it would hand out an id restore rejects
+    (round 4)."""
+    listing = _git(["ls-files", "-z"], cwd=root)
+    if listing is None or listing.returncode != 0:
+        return "cannot list tracked files to confirm the archive path is untracked"
+    prefix = ARCHIVE_IGNORE_PATTERN.casefold()
+    if any(p.casefold().startswith(prefix) for p in listing.stdout.split("\0") if p):
+        return "the repository tracks files under the archive path"
+    return None
+
+
 def _is_ignored(root, rel_path):
     proc = _git(["check-ignore", "-q", "--", rel_path], cwd=root)
     return proc is not None and proc.returncode == 0
@@ -1345,9 +1439,9 @@ def archive_subcmd(argv):
     if root is None:
         err("Refuse: the correction archive needs a git work tree; run from inside the repository clone (#351).")
         return 7
-    problem = _archive_path_problem(root)
+    problem = _archive_path_problem(root) or _tracks_archive(root)
     if problem:
-        err(f"Refuse: {problem}; the archive is only written to real directories. Nothing was written (#351).")
+        err(f"Refuse: {problem}; nothing was written (#351).")
         return 7
     prefix = f"comment-{target_id}" if kind == "comment" else f"issue-{target_id}-body"
     base_id = f"{prefix}-{now.strftime('%Y%m%dT%H%M%SZ')}"
@@ -1387,10 +1481,15 @@ def archive_subcmd(argv):
             return 7
         try:
             sfd = os.open(side, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        except OSError:
+        except FileExistsError:
             os.close(fd)
             os.remove(path)
             continue
+        except OSError as e:
+            os.close(fd)
+            os.remove(path)
+            err(f"Refuse: cannot create the archive sidecar: {e.strerror}")
+            return 7
         try:
             with os.fdopen(fd, "wb") as out:
                 out.write(data)
@@ -1448,16 +1547,9 @@ def restore_subcmd(argv):
     if tracked is not None and tracked.returncode == 0:
         err(f"Refuse: {backup_id} is tracked by git, so this helper did not write it; nothing was read.")
         return 2
-    # A case-insensitive filesystem resolves .claude/... to a tracked
-    # .CLAUDE/... that ls-files does not match by name (round 3): refuse when
-    # the repository tracks anything under the archive path in any case.
-    listing = _git(["ls-files", "-z"], cwd=root)
-    if listing is None or listing.returncode != 0:
-        err("Refuse: cannot list tracked files to confirm the entry is untracked; nothing was read.")
-        return 2
-    prefix = ARCHIVE_IGNORE_PATTERN.casefold()
-    if any(p.casefold().startswith(prefix) for p in listing.stdout.split("\0") if p):
-        err("Refuse: the repository tracks files under the archive path, so its entries are not this helper's; nothing was read.")
+    tracked_problem = _tracks_archive(root)
+    if tracked_problem:
+        err(f"Refuse: {tracked_problem}, so its entries are not this helper's; nothing was read.")
         return 2
     side = path[:-3] + ".repo"
     try:

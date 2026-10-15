@@ -538,8 +538,100 @@ assert_output_grep "--replace checks section-replace's exit code" 'section-repla
 assert_output_grep "a staging failure is recorded, not fatal" "stage-failed" "$EDIT_SKILL"
 assert_output_grep "working copies live in a private per-run directory" 'WORK_DIR=$(mktemp -d' "$EDIT_SKILL"
 assert_output_grep "the written body is compared with the preview" "differs-from-preview" "$EDIT_SKILL"
-assert_output_grep "a run where something was declined exits 5" '[ "${#DECLINED_TARGETS[@]}" -gt 0 ] && exit 5' "$EDIT_SKILL"
+assert_output_grep "a run where something was declined exits 9" '[ "${#DECLINED_TARGETS[@]}" -gt 0 ] && exit 9' "$EDIT_SKILL"
 assert_output_grep "a failed eval stops the run" 'eval "$PARSE_OUT" ||' "$EDIT_SKILL"
 assert_output_grep "idd-comment falls back to an errata comment when idd-edit refuses" "改貼 errata" "$SKILLS/idd-comment/SKILL.md"
+
+# ── H. round 5 (verify #351 round 4) ──────────────────────────────────────
+echo "H. round 5"
+
+# H1. the SKILL's working directory is one archive --from-file accepts, even
+#     where TMPDIR is under /var (macOS) — executed, not just grepped
+WD_LINE="$(grep -m1 -E '^WORK_DIR=\$\(mktemp -d ' "$EDIT_SKILL")"
+assert_output_grep "the SKILL uses the sanctioned temp idiom" 'WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/idd-edit-XXXXXX")' "$EDIT_SKILL"
+H1REPO="$WORK/h1repo"; mkdir -p "$H1REPO"; git -C "$H1REPO" init -q
+WORK_DIR=""; TMPDIR_SAVE="${TMPDIR-}"; eval "export TMPDIR=/var/tmp; ${WD_LINE%%||*}"
+printf 'old text\n' >"$WORK_DIR/comment-1-abc"
+(cd "$H1REPO" && IDD_EDIT_HELPER_TEST_MODE=1 IDD_EDIT_HELPER_NOW=2026-10-16T00:00:00Z python3 "$HELPER" archive comment 1 --from-file "$WORK_DIR/comment-1-abc" --repo o/r) >"$WORK/h1.out" 2>"$WORK/h1.err"
+assert_exit "archive accepts a working copy from the SKILL's own working directory" 0 "$?"
+chmod -R u+rwx "$H1REPO" 2>/dev/null; rm -rf "$WORK_DIR"
+# the gate still refuses real system files while it accepts the user's temp dir
+printf 'x\n' >"/var/tmp/idd-edit-gate-$$"
+run_helper h1b parse-args comment:1 --correct --scope whole-comment --body-file "/var/tmp/idd-edit-gate-$$" --reason r
+assert_exit "a body file under the user's temp directory is accepted" 0 "$RC"
+rm -f "/var/tmp/idd-edit-gate-$$"
+run_helper h1c parse-args comment:1 --correct --scope whole-comment --body-file /etc/hosts --reason r
+assert_exit "/etc/hosts is still refused" 5 "$RC"
+if [ -n "$TMPDIR_SAVE" ]; then export TMPDIR="$TMPDIR_SAVE"; else unset TMPDIR; fi
+
+# H2/H3. skill contracts: a failed write is a refusal; exit codes do not overlap
+assert_output_grep "a failed PATCH is recorded in its own bucket" 'WRITE_FAILED_TARGETS+=("$TARGET rc=$EGRESS_RC")' "$EDIT_SKILL"
+assert_output_grep "a failed write makes the run exit 4" '[ "${#WRITE_FAILED_TARGETS[@]}" -gt 0 ] && exit 4' "$EDIT_SKILL"
+assert_output_grep "unverified writes exit 7" '[ "${#UNVERIFIED_TARGETS[@]}" -gt 0 ] && exit 7' "$EDIT_SKILL"
+assert_output_grep "idd-comment reads exit 9 as declined" "| 9 |" "$SKILLS/idd-comment/SKILL.md"
+assert_output_grep "idd-comment reads exit 7 as written but unconfirmed" "| 7 |" "$SKILLS/idd-comment/SKILL.md"
+assert_output_grep "--last reads every page of comments" 'comments" --paginate' "$EDIT_SKILL"
+
+# H5. a marker inside a fenced example is not a live marker
+printf '## Notes\nwrong\n\n```md\n<!-- idd:comment type=errata date=2026-01-01 target-comment=5 -->\n```\n\n<!-- idd:comment type=errata date=2026-10-01 target-comment=7 -->\n\n## Next\n' >"$WORK/fenced-marker.md"
+run_helper h5a compose-correction "$WORK/fenced-marker.md" "## Notes" "$WORK/r-fix.md" "$MARK"
+refute_output_grep "a fenced example marker is not carried out of its fence" "target-comment=5" "$WORK/h5a.out"
+assert_output_grep "the live marker is carried" "target-comment=7" "$WORK/h5a.out"
+printf 'fixed\n\n```md\n<!-- idd:comment type=errata date=2026-10-01 target-comment=7 -->\n```\n' >"$WORK/r-fencedcopy.md"
+run_helper h5b compose-correction "$WORK/fenced-marker.md" "## Notes" "$WORK/r-fencedcopy.md" "$MARK"
+assert_eq "a fenced copy in the replacement does not swallow the live marker" "2" "$(grep -c 'target-comment=7' "$WORK/h5b.out")"
+
+# H7. a comment whose first line is a marker (dashboard)
+printf '<!-- idd:dashboard -->\n## For Reviewer\nwrong\n' >"$WORK/dash.md"
+run_helper h7a check-correction "$WORK/dash.md" - "$WORK/r-fix.md"
+assert_exit "dropping the heading under a leading marker → exit 6" 6 "$RC"
+printf '## For Reviewer\nright\n' >"$WORK/r-dash.md"
+run_helper h7b compose-correction "$WORK/dash.md" - "$WORK/r-dash.md" "$MARK"
+assert_eq "the leading marker stays on line 1" "<!-- idd:dashboard -->" "$(head -1 "$WORK/h7b.out")"
+
+# H8. GFM tables are parsed as tables
+printf '### Root cause\n| a | b |\n|---|---|\n| 1 | 2 |\n---\n\n### Strategy\nkeep\n' >"$WORK/table.md"
+run_helper h8 section-replace "$WORK/table.md" "### Root cause" "$WORK/r-fix.md"
+refute_output_grep "the table under the heading is replaced" "| 1 | 2 |" "$WORK/h8.out"
+assert_output_grep "the next section survives" "### Strategy" "$WORK/h8.out"
+
+# H10. an Original text quotation may not be hidden in an HTML comment or a fence
+printf '<!--\n\n%s\n\n-->\n\nnew interpretation\n' "$QUOTE" >"$WORK/r-hidden.md"
+run_helper h10a check-correction "$WORK/body.md" "## Problem" "$WORK/r-hidden.md"
+assert_exit "a quotation moved into an HTML comment → exit 6" 6 "$RC"
+printf '```\n\n%s\n\n```\n\nnew interpretation\n' "$QUOTE" >"$WORK/r-fencedq.md"
+run_helper h10b check-correction "$WORK/body.md" "## Problem" "$WORK/r-fencedq.md"
+assert_exit "a quotation moved into a fence → exit 6" 6 "$RC"
+
+# H11. non-ASCII bytes are emitted as escapes (no locale-dependent trail bytes)
+run_helper h11 parse-args comment:1 --correct --scope whole-comment --body '許;x' --reason r
+assert_output_grep "non-ASCII goes through ANSI-C byte escapes" "BODY_INPUT=\$'\\xe8\\xa8\\xb1;x'" "$WORK/h11.out"
+if command -v zsh >/dev/null 2>&1; then
+  assert_eq "zsh eval restores the text" "許;x" "$(zsh -c 'eval "$(cat "$1")"; print -r -- "$BODY_INPUT"' _ "$WORK/h11.out" 2>/dev/null)"
+fi
+
+# H12. ## Current Status owns the rest of the body
+printf '## Problem\nx\n\n## Current Status\n\n**Phase**: diagnosed\n\n# Notes\nwrong\n' >"$WORK/cs-tail.md"
+run_helper h12 check-correction "$WORK/cs-tail.md" "# Notes" "$WORK/r-fix.md"
+assert_exit "a heading after ## Current Status is still idd-update's" 6 "$RC"
+
+# H16. smaller gaps
+run_helper h16a parse-args comment:1 --correct --scope whole-comment --body '   ' --reason r
+assert_exit "--correct with whitespace-only text → exit 2" 2 "$RC"
+run_helper h16b parse-args --correct --scope whole-comment --body x --reason r
+assert_exit "no target → exit 2" 2 "$RC"
+printf 'fixed\n\n## Other\nmore\n' >"$WORK/r-split.md"
+run_helper h16c check-correction "$WORK/body.md" "## Expected" "$WORK/r-split.md"
+assert_exit "a replacement that adds a same-level heading → exit 6" 6 "$RC"
+printf 'fixed\n\n---\n\nmore\n' >"$WORK/r-hr.md"
+run_helper h16d check-correction "$WORK/body.md" "## Expected" "$WORK/r-hr.md"
+assert_exit "a replacement that adds a thematic break → exit 6" 6 "$RC"
+printf 'fixed\n## Current Status (old)\n' >"$WORK/r-csprefix.md"
+run_helper h16e check-correction "$WORK/body.md" "## Expected" "$WORK/r-csprefix.md"
+assert_exit "a replacement that adds a Current Status variant → exit 6" 6 "$RC"
+
+# H17. author-unknown only for --correct; idd-comment fallbacks
+assert_output_grep "Step 1.5 exit 1 is author-unknown only under --correct" '[ "$MODE" = "--correct" ] || exit 1' "$EDIT_SKILL"
+assert_output_grep "idd-comment posts errata when the author cannot be determined" "無法判定作者時改貼 errata" "$SKILLS/idd-comment/SKILL.md"
 
 print_summary "in-place-correction"

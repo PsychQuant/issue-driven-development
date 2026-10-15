@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     tool call.
   - **Protected regions** (`check-correction`, exit 6): `Original text` / `**Original**` quotations must survive unchanged;
     `## Current Status` (idd-update) and `### Clarity Surface` (idd-clarify) are refused as targets, and a
-    corrected section ends at either heading or at `---`, so it never swallows them. Only the invoking user's own content is corrected (see the author gate below); `--correct` has
+    corrected section ends at either heading or at a thematic break, so it never swallows them. Only the invoking user's own content is corrected (see the author gate below); `--correct` has
     no `--override-user-content`.
   - The marker `<!-- idd:edit mode="correct" backup-id="…" -->` ends the replaced region and carries no path.
 - `idd-verify`, `idd-diagnose` and `idd-reorganize` add `### Proposed Corrections` when their findings show a
@@ -97,8 +97,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`existing-mentions`), so a body gh-egress would refuse is never archived. `idd-comment --type errata` posts the
   errata when the correction is refused.
 - Working copies live in a private per-run directory; the body is composed again and compared with the preview before
-  archiving; the target is read back after the write (a failed or different read is reported as unverified, exit 4);
-  a run where the user declined exits 5; `--replace --section` checks section-replace's exit code; a staging failure
+  archiving; the target is read back after the write (a failed or different read is reported as unverified);
+  a run where the user declined is told apart from a successful one (exit codes in round 5); `--replace --section` checks section-replace's exit code; a staging failure
   skips the target instead of ending the run.
 - `archive` creates the entry and its sidecar exclusively; `archive` and `restore` refuse a nested git repository on
   the archive path, and `restore` refuses when the repository tracks anything under the archive path in any letter
@@ -107,6 +107,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `validate-target --correct` ignores `--override-user-content` and answers "unknown" (exit 1) when the gh user cannot
   be determined; a missing Markdown parser is exit 8 with its own refusal reason. The archive is an ignored file, so
   `git clean -X` deletes it — documented, with relocation tracked in #407; the marker date's time zone is #406.
+
+### Fixed (verify round 5, before release)
+
+- **The path gate accepts the user's own temporary directory.** On macOS `$TMPDIR` is under `/var`, which the
+  `--body-file`/`--from-file` gate refused as a system path, so round 4's private working directory made every
+  `--correct` fail at the archive step after confirmation. Files strictly below the user's temp directory now pass
+  (system and credential paths are still refused); a test runs the SKILL's own directory line with
+  `TMPDIR=/var/tmp` and archives from it. idd-verify's note that `$TMPDIR` is refused is updated.
+- **Exit codes no longer overlap.** 4 = refused or a write failed (gh's own PATCH errors now have their own bucket,
+  so a failed write no longer ends with exit 0), 7 = written but not confirmed on read-back, 9 = declined; 2/3/5 stay
+  argument errors from parse-args. `idd-comment --type errata` routes on them: it posts the errata when the
+  correction did not happen, reports and posts nothing on 7 and 9, and posts the errata when the author cannot be
+  determined.
+- Non-ASCII text is emitted as UTF-8 byte escapes, so `eval` does not depend on the shell's locale (a Big5 trail byte
+  `0x5C` read as a backslash under zsh). Tables are parsed as GFM tables; `## Current Status` owns the rest of the
+  body; a replacement may not add a heading of the section's level or a thematic break, hide an Original text
+  quotation in a code or HTML block, or introduce a `## Current Status…` variant. A dashboard comment keeps its
+  marker on line 1, and the heading check reads past it. A marker inside a fenced example is neither carried nor
+  counted. `--correct` with only whitespace and an invocation without a target are refused; `--last` reads every page.
+- `archive` refuses a repository that tracks anything under the archive path; a sidecar that cannot be created for
+  another reason is refused instead of retried. The read guard keeps the message exemption for IDD's own posts
+  (`bash …/gh-egress.sh … --body`) and `NAME=value` prefixes, scans message values that contain a redirection, and
+  denies a recursive permission change on a directory above the repository. The unclosed `<details>` case is #409;
+  the coverage of the verbatim labels is #410.
 - `idd-update` rebuilds Key Decisions on every run instead of only appending, so a corrected decision does not
   survive in the summary.
 - `/idd-edit --correct` re-reads the target after confirmation and refuses when it changed since the preview.

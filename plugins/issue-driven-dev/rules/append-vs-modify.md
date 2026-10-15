@@ -91,7 +91,7 @@ The `scope` qualifier names the targeted section / field / artifact when relevan
 
 `--override-user-content --reason="..."` still exists for `--append` / `--replace` / `--prepend-note` as an explicit, audited exception for third-party comments; it is never accepted with `--correct`.
 
-Issue-body prose written by the issue author or by an IDD skill (interpretation paragraphs, Expected, Actual, Impact) is **not** in this zone: it is correctable through `in-place-correction`. Before #351 the whole body above the `---` separator was listed here, which made every wrong interpretation permanent and pushed corrections into appended errata that downstream readers kept missing.
+Issue-body prose in an issue opened by the OWNER or the invoking user — interpretation paragraphs, Expected, Actual, Impact, including text an IDD skill wrote there — is **not** in this zone: it is correctable through `in-place-correction`. An issue body opened by anyone else is third-party content (item 2). Before #351 the whole body above the `---` separator was listed here, which made every wrong interpretation permanent and pushed corrections into appended errata that downstream readers kept missing.
 
 **Examples**:
 - The `> **Original text**: …` blockquote under `## Problem` (per IC_R007)
