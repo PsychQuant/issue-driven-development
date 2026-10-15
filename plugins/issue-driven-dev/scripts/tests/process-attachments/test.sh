@@ -73,6 +73,9 @@ while [ $# -gt 0 ]; do
   shift
 done
 [ -n "$out" ] || exit 1
+case "${CURL_STUB_MODE:-success}:$url" in
+  all_fail:*|mixed:*/files/2/*) exit 22 ;;
+esac
 printf 'stub-bytes for %s' "$url" > "$out"
 CURLSTUB
 chmod +x "$STUB/curl"
@@ -272,9 +275,8 @@ require "f13c the SAFE attachment beside it is still collected" \
 require "f13c2 ...and actually landed on disk" \
   test -f ".claude/.idd/attachments/issue-22/safe.pdf"
 require "f13d and the refusal is visible on stderr" grep -q 'refusing an unsafe' "$W/err13.txt"
-# `RC13` was captured and never read. A run that produces the manifest and then
-# exits non-zero passes every assertion above while a real caller aborts.
-require "f13e ...and the run itself still succeeds" bash -c '[ "$0" = 0 ]' "$RC13"
+assert_exit "f13e incomplete download exits 1 after writing the full manifest" 1 "$RC13"
+require "f13f failure count is visible on stderr" grep -q '1 attachment(s) failed or refused' "$W/err13.txt"
 
 # ── Fixture 14: the refusal must not poison the two manifest CONSUMERS ──
 #
@@ -413,6 +415,33 @@ require "f16f ...and each file matches the URL its manifest row names" \
       grep -qF -- "$u" "$d/$fn" || exit 1
     done' "$MAN16"
 cd /; rm -rf "$W"
+
+# ── Fixture 17 (#394): transient failures are visible to the caller ──
+for mode in all_fail mixed success; do
+  W="$(mktemp -d)"; cd "$W"
+  export GH_STUB_MODE=collide CURL_STUB_MODE="$mode"
+  run_pa download 34 > "$W/out.txt" 2> "$W/err.txt"; RC=$?
+  MAN=".claude/.idd/attachments/issue-34/_manifest.json"
+  assert_eq "$mode records every attempted URL" 3 "$(jq '.files | length' "$MAN")"
+  case "$mode" in
+    all_fail) expected_rc=1; failures=3 ;;
+    mixed) expected_rc=1; failures=1 ;;
+    success) expected_rc=0; failures=0 ;;
+  esac
+  assert_exit "$mode reports download outcome" "$expected_rc" "$RC"
+  assert_eq "$mode records exact failure count" "$failures" "$(jq '[.files[] | select(.error == "download_failed")] | length' "$MAN")"
+  if [ "$failures" -gt 0 ]; then
+    require "$mode reports failure summary on stderr" grep -q "$failures attachment(s) failed or refused" "$W/err.txt"
+  fi
+  if [ "$mode" = mixed ]; then
+    require "mixed failure preserves later successful download" bash -c '
+      f=$(jq -r ".files[] | select(.url | endswith(\"/files/3/report.pdf\")) | .filename" "$1")
+      test -f ".claude/.idd/attachments/issue-34/$f"
+    ' _ "$MAN"
+  fi
+  cd /; rm -rf "$W"
+done
+unset CURL_STUB_MODE
 
 rm -rf "$STUB"
 print_summary

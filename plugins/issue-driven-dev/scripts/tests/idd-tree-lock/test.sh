@@ -19,7 +19,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER="$HERE/../../idd-tree-lock.sh"
 . "$HERE/../../lib/assert-helpers.sh"
 
-mk_repo() { mktemp -d; }
+mk_repo() { local d; d="$(mktemp -d)"; git -C "$d" init -q; printf '%s\n' "$d"; }
 acq()  { bash "$HELPER" acquire --repo "$1" --id "$2" --pid "$3"; }   # repo id pid
 rel()  { bash "$HELPER" release --repo "$1" --id "$2"; }
 lockpid()        { sed -n 's/^pid=//p'    "$1/.claude/.idd/tree-lock" | head -1; }
@@ -62,9 +62,9 @@ assert_eq "f4c recorded pid == invoking persistent shell (helper's \$PPID)" "$$"
 rm -rf "$R"
 
 # ── Fixture 5: unwritable lock location -> exit 4 (caller fails open) ──
-R="$(mk_repo)"; chmod 000 "$R"
+R="$(mk_repo)"; touch "$R/.claude" # cannot be a directory, even as root
 bash "$HELPER" acquire --repo "$R" --id A --pid "$$" >/dev/null 2>&1; rc=$?
-chmod 755 "$R"; rm -rf "$R"
+rm -rf "$R"
 assert_exit "f5 unwritable lock dir -> exit 4 (fail-open signal)" 4 "$rc"
 
 # ── Fixture 6: release is holder-scoped — B cannot release A's live lock ──
@@ -128,6 +128,59 @@ SHIM
 chmod +x "$SHIMDIR/stat"
 ( export PATH="$SHIMDIR:$PATH"; bash "$HELPER" acquire --repo "$R" --id A --pid "$$" ) >/dev/null 2>&1
 assert_exit "f11 GNU-stat shim: fresh empty lock still held (BSD-first file_mtime regression #245)" 3 $?
+rm -rf "$R" "$SHIMDIR"
+
+# ── Fixture 12 (#346/#396): per-clone excludes, no tracked-file writes ──
+R="$(mk_repo)"
+printf '.claude/.idd/*\n!.claude/.idd/local.json\n' > "$R/.gitignore"
+cp "$R/.gitignore" "$R/original-ignore"
+printf '# custom rule\n*.local-only\n' > "$R/.git/info/exclude"
+acq "$R" A "$$" >/dev/null 2>&1
+require "f12a acquire preserves host ignore policy byte-for-byte" cmp -s "$R/.gitignore" "$R/original-ignore"
+require "f12b lock is ignored" git -C "$R" check-ignore -q .claude/.idd/tree-lock
+refute "f12c local config exception survives" git -C "$R" check-ignore -q .claude/.idd/local.json
+require "f12d existing local excludes survive" git -C "$R" check-ignore -q example.local-only
+acq "$R" A "$$" >/dev/null 2>&1
+assert_eq "f12e shared exclude block is idempotent" 1 "$(grep -cxF '.claude/.idd/tree-lock' "$R/.git/info/exclude")"
+# --pid does not select a release identity. The explicit acquire id must match.
+bash "$HELPER" release --repo "$R" --pid "$$" --id B > "$R/out" 2> "$R/err"
+require "f12f mismatched release reports preserved owner" grep -q 'held by A, not B' "$R/err"
+require "f12g mismatched release leaves lock present" test -f "$R/.claude/.idd/tree-lock"
+rel "$R" A > "$R/out" 2> "$R/err"
+assert_exit "f12h matched release succeeds" 0 $?
+require "f12i matched release reports outcome" grep -q 'released' "$R/err"
+refute "f12j matched release removes lock" test -e "$R/.claude/.idd/tree-lock"
+rel "$R" A > "$R/out" 2> "$R/err"
+require "f12k no-op release reports already free" grep -q 'already free' "$R/err"
+rm -rf "$R"
+
+# ── Fixture 13: an rm failure must not be reported as successful release ──
+R="$(mk_repo)"; acq "$R" A "$$" >/dev/null 2>&1
+SHIMDIR="$(mktemp -d)"
+printf '#!/bin/sh\nexit 1\n' > "$SHIMDIR/rm"; chmod +x "$SHIMDIR/rm"
+PATH="$SHIMDIR:$PATH" bash "$HELPER" release --repo "$R" --id A > "$R/out" 2> "$R/err"
+assert_exit "f13a failed removal returns infrastructure error" 4 $?
+require "f13b failed removal is reported" grep -q 'could not release' "$R/err"
+require "f13c failed removal leaves lock available for inspection" test -f "$R/.claude/.idd/tree-lock"
+rm -rf "$R" "$SHIMDIR"
+
+# ── Fixture 14: the actual close snippet must preserve release diagnostics ──
+R="$(mk_repo)"; acq "$R" A "$$" >/dev/null 2>&1
+CLOSE_SNIPPET="$(python3 - "$HERE/../../../skills/idd-close/SKILL.md" <<'PY'
+import pathlib, re, sys
+text = pathlib.Path(sys.argv[1]).read_text().split('### Step 6.8: Tree-lock Release', 1)[1]
+print(re.search(r'```bash\n(.*?)\n```', text, re.S).group(1))
+PY
+)"
+require "f14a close release snippet is present" test -n "$CLOSE_SNIPPET"
+CLAUDE_PLUGIN_ROOT="$HERE/../../.." CWD="$R" IDD_SESSION_ID=B bash -e -c "$CLOSE_SNIPPET" > "$R/out" 2> "$R/err"
+assert_exit "f14b different holder remains best-effort" 0 $?
+require "f14c close displays the different holder" grep -q 'held by A, not B' "$R/err"
+SHIMDIR="$(mktemp -d)"
+printf '#!/bin/sh\nexit 1\n' > "$SHIMDIR/rm"; chmod +x "$SHIMDIR/rm"
+PATH="$SHIMDIR:$PATH" CLAUDE_PLUGIN_ROOT="$HERE/../../.." CWD="$R" IDD_SESSION_ID=A bash -e -c "$CLOSE_SNIPPET" > "$R/out" 2> "$R/err"
+assert_exit "f14d failed release does not abort an already completed close" 0 $?
+require "f14e close displays removal failure" grep -q 'release failed (exit 4)' "$R/err"
 rm -rf "$R" "$SHIMDIR"
 
 print_summary

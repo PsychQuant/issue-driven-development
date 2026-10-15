@@ -8,7 +8,7 @@ Defines the **shared-working-tree lock + asymmetric escalation** (`scripts/idd-t
 
 ### Requirement: Shared-working-tree lock
 
-The system SHALL provide a lock over a repository's shared working tree at `.claude/.idd/tree-lock`, acquired and released by a helper (`scripts/idd-tree-lock.sh`). Acquisition SHALL be atomic so that two simultaneous starts cannot both win. The lock SHALL record the holder's session id, PID, and a heartbeat timestamp. The lock SHALL live under the gitignored `.claude/.idd/` namespace (tooling state), not under version control.
+The system SHALL provide a lock over a repository's shared working tree at `.claude/.idd/tree-lock`, acquired and released by a helper (`scripts/idd-tree-lock.sh`). Acquisition SHALL be atomic so that two simultaneous starts cannot both win. The lock SHALL record the holder's session id, PID, and a heartbeat timestamp. The lock SHALL live under the gitignored `.claude/.idd/` namespace (tooling state), not under version control. Its local ignore rule SHALL be written through the canonical ignore-block writer to the common Git directory's `info/exclude`, never to tracked `.gitignore`. Existing host ignore rules, including exceptions for `local.json`, SHALL remain unchanged.
 
 #### Scenario: two concurrent acquires yield exactly one winner
 
@@ -72,3 +72,10 @@ The recorded PID SHALL be a **persistent process that represents the holder's li
 
 - **WHEN** the lock directory cannot be written
 - **THEN** the session proceeds on the main tree with a visible warning rather than aborting
+
+#### Scenario: release reports the actual outcome
+
+- **WHEN** `release` runs
+- **THEN** stderr reports released, already free, or held by a different session
+- **AND** a different holder's lock is preserved, with guidance to reuse the acquire `--id` (`--pid` is not an identity selector)
+- **AND** a failed removal returns exit 4 with a diagnostic rather than success
