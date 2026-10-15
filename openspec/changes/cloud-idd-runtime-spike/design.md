@@ -151,7 +151,7 @@ spike 的端到端 run 以 unattended PR mode 跑 `/idd-all`。#392 落地前，
 - [gh 拒絕 vault 替換後的 token 格式] → 改以 `github_repository` resource 的 token 做 push，以 curl 帶 header 呼叫 REST API 開 PR 與 merge；兩種結果都記錄。
 - [spike 花費失控] → Managed Agents 設 session budget；SDK 設 `--max-turns`；workflow 設 `timeout-minutes: 60`。每次端到端 run 前先跑最小 probe。
 - [IDD 的 pre-flight 在 Managed Agents 上必然失敗] → 這本身就是 C1 要量測的結果；記錄失敗點，不為了通過而改 pre-flight。
-- [IDD 的 presence pre-flight 在 Agent SDK 路線上也可能失敗] → `check-plugin-presence.sh` 只在 `~/.claude/plugins/cache/` 找依賴，以本機路徑載入的 plugin 不在那裡；同樣記為 C1 的結果，不設 `IDD_SKIP_PLUGIN_CHECK` 繞過。
+- [IDD 的 presence pre-flight 在 Agent SDK 路線上失敗] → `check-plugin-presence.sh` 與 `check-ralph-loop.sh` 只在 `~/.claude/plugins/cache/` 找依賴，以本機路徑載入的 plugin 不在那裡（task 4.3 實測）。C1 已記錄這個失敗；為了量測後面的階段（C5、C7），workflow 設 `IDD_SKIP_PLUGIN_CHECK=1`，理由是 workflow 自己載入了每個依賴，每次 run 的 `LOADED_PLUGINS` 可證。正式修法是讓檢查認得以路徑載入的 plugin（另開 issue）。
 - [superpowers 的固定 commit 會過時] → workflow 寫明它取自官方 marketplace 的條目；正式 change 再決定要不要在執行時讀 marketplace 取最新指定值。
 - [Claude-only verify 漏掉只有跨模型才抓得到的問題] → 已接受的取捨；C7 只量測能否跑完與是否明示缺口。
 - [實驗性流程隨 plugin 發佈到其他使用者手上] → 檔案只在被主動部署時才會執行；README 開頭標明實驗性與可能變動。

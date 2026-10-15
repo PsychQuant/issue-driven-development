@@ -203,12 +203,15 @@ PY
   refute_grep_re  "workflow declares no third secret" "SECRET_DECL=([^,]*,){2}"  "$(grep '^SECRET_DECL=' "$REPORT")"
   assert_output_grep "GH_TOKEN falls back to the job token" 'GH_TOKEN: ${{ secrets.IDD_GITHUB_TOKEN || github.token }}' "$WORKFLOW"
   assert_grep_re "the PAT secret is optional" "IDD_GITHUB_TOKEN:" "$(cat "$WORKFLOW")"
-  # The Bash sandbox leaves empty placeholder dotfiles in the working directory
-  # (sandbox run 38685626718: .bashrc, .gitconfig, .mcp.json, ...). They must not
-  # end up in a commit made with `git add -A`.
-  for f in .bashrc .bash_profile .profile .zshrc .zprofile .gitconfig .ripgreprc .mcp.json; do
-    assert_grep_re "sandbox placeholder $f is excluded from git" "^[[:space:]]*\\$f\$" "$(sed -n '/BEGIN sandbox placeholders/,/END sandbox placeholders/p' "$WORKFLOW")"
+  # The Bash sandbox leaves empty placeholders in the working directory (sandbox
+  # runs 38685626718 and 38706723482). An untracked one dirties the tree, which
+  # PR mode refuses, and `git add -A` would commit it. Each name is excluded only
+  # when the repo did not already have it at checkout, so a real scripts/ stays.
+  PH_LINE=$(grep -E '^[[:space:]]+SANDBOX_PLACEHOLDERS=' "$WORKFLOW" | head -1)
+  for f in .bashrc .bash_profile .profile .zshrc .zprofile .gitconfig .ripgreprc .mcp.json .idea .vscode scripts; do
+    assert_grep "sandbox placeholder $f is on the exclude list" " $f" "$PH_LINE "
   done
+  assert_output_grep "placeholders are excluded only when absent at checkout" '[ -e "$GITHUB_WORKSPACE/$p" ] ||' "$WORKFLOW"
   assert_output_grep "no \${{ }} inside run: blocks" "RUN_INTERPOLATION_LINES=" "$REPORT"
   refute_grep_re  "run: blocks are free of \${{ }}" "RUN_INTERPOLATION_LINES=[0-9]" "$(grep '^RUN_INTERPOLATION_LINES=' "$REPORT")"
   assert_output_grep "prompt reaches the runner through env" "IDD_PROMPT" "$WORKFLOW"
@@ -218,12 +221,18 @@ PY
   # On Linux the scrub needs bubblewrap; without it the CLI exits at startup
   # (first real run, workflow run 38683885702). It must be installed in a step
   # that does not hold the key.
-  for dep in issue-driven-dev superpowers parallel-ai-agents codex-pro; do
+  # ralph-loop drives idd-all's (PR, unattended) verify-fix loop; without it
+  # idd-all degrades to direct-commit + attended (Step 0.6).
+  for dep in issue-driven-dev superpowers parallel-ai-agents codex-pro ralph-loop; do
     assert_grep_re "workflow loads $dep from inside the workspace" "--plugin-dir \"\\\$GITHUB_WORKSPACE/\\.idd-cloud/plugins/$dep\"" "$(cat "$WORKFLOW")"
   done
   assert_output_grep "the plugin copies are excluded from the caller's git" ".git/info/exclude" "$WORKFLOW"
   # The Bash sandbox also needs socat (sandbox run 38684924067: "Sandbox
   # dependencies not available: socat not installed").
+  # IDD's presence pre-flight only reads the install cache; the workflow loads
+  # every dependency itself (LOADED_PLUGINS in each run), so the check is skipped
+  # on purpose. C1 records the gap; the real fix is a path-aware check.
+  assert_output_grep "presence pre-flight is skipped on purpose" 'IDD_SKIP_PLUGIN_CHECK: "1"' "$WORKFLOW"
   assert_output_grep "bubblewrap and socat are installed for the sandbox" "apt-get install -y bubblewrap socat" "$WORKFLOW"
   BWRAP_LINE=$(grep -n "apt-get install -y bubblewrap socat" "$WORKFLOW" | head -1 | cut -d: -f1)
   KEY_LINE=$(grep -n 'ANTHROPIC_API_KEY: \${{ secrets.ANTHROPIC_API_KEY }}' "$WORKFLOW" | head -1 | cut -d: -f1)
@@ -234,7 +243,7 @@ PY
   assert_eq "every uses: is pinned to a commit SHA" "" "$UNPINNED"
   # IDD's plugin.json declares three dependencies; a missing one stops IDD from
   # loading at all (dependency-unsatisfied, workflow run 38684015025).
-  for ref in SUPERPOWERS_REF PAI_REF CODEX_PRO_REF; do
+  for ref in SUPERPOWERS_REF PAI_REF CODEX_PRO_REF CLAUDE_PLUGINS_OFFICIAL_REF; do
     assert_grep_re "$ref is a commit SHA" "^[[:space:]]+$ref: [0-9a-f]{40}[[:space:]]*$" "$(grep -E "^[[:space:]]+$ref:" "$WORKFLOW")"
   done
 fi

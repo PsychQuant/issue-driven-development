@@ -13,7 +13,7 @@
 # How it works: it checks out the caller's repo (the agent's working
 # directory), fetches IDD, superpowers and parallel-ai-agents into
 # $RUNNER_TEMP, installs the Claude Agent SDK, and hands the prompt to
-# sdk_run.py, which loads IDD and its three dependency plugins from copies
+# sdk_run.py, which loads IDD, its three dependency plugins and ralph-loop from copies
 # exported into the workspace.
 #
 # Permissions: this file sets none on purpose. In a reusable workflow the
@@ -87,7 +87,7 @@ jobs:
       #                        marketplace.json only points at obra/superpowers.git
       #                        and pins commit 5bf4e78011075bcfc0dc295f0724994cd123ee71,
       #                        which is the commit used here. Bump it when that pin moves.
-      - name: Fetch the IDD plugin and its three dependency plugins
+      - name: Fetch the IDD plugin, its three dependencies and ralph-loop
         shell: bash
         env:
           IDD_REF: ${{ inputs.idd_ref }}
@@ -98,6 +98,9 @@ jobs:
           # PsychQuant/codex-pro main as of 2026-10-15. IDD declares it as a
           # dependency; without it IDD does not load (dependency-unsatisfied).
           CODEX_PRO_REF: 1eec56ceef1d44e09e9c27f3c05ecde6f3e5ab80
+          # anthropics/claude-plugins-official main as of 2026-10-15, for ralph-loop,
+          # which drives idd-all's (PR, unattended) verify-fix loop.
+          CLAUDE_PLUGINS_OFFICIAL_REF: 8f814f49002ff824e8a9ba43cf96112dc7f5948d
         run: |
           set -euo pipefail
           # idd_ref is caller-supplied text that becomes a git argument: allow
@@ -120,6 +123,7 @@ jobs:
           fetch_repo obra/superpowers "$SUPERPOWERS_REF" "$RUNNER_TEMP/superpowers"
           fetch_repo PsychQuant/parallel-ai-agents "$PAI_REF" "$RUNNER_TEMP/parallel-ai-agents"
           fetch_repo PsychQuant/codex-pro "$CODEX_PRO_REF" "$RUNNER_TEMP/codex-pro"
+          fetch_repo anthropics/claude-plugins-official "$CLAUDE_PLUGINS_OFFICIAL_REF" "$RUNNER_TEMP/claude-plugins-official"
 
           # Export each plugin into the workspace. Claude Code's Bash sandbox can
           # write only inside the working directory; a plugin passed as an extra
@@ -143,23 +147,17 @@ jobs:
           export_plugin "$RUNNER_TEMP/superpowers" . superpowers
           export_plugin "$RUNNER_TEMP/parallel-ai-agents" plugins/parallel-ai-agents parallel-ai-agents
           export_plugin "$RUNNER_TEMP/codex-pro" plugins/codex-pro codex-pro
+          export_plugin "$RUNNER_TEMP/claude-plugins-official" plugins/ralph-loop ralph-loop
           printf '%s\n' '.idd-cloud/' >> "$GITHUB_WORKSPACE/.git/info/exclude"
-          # Claude Code's Bash sandbox leaves empty placeholder files in the working
-          # directory (sandbox run 38685626718). Keep them out of `git add -A`.
-          # Only names that are never project content here; a placeholder named
-          # like a real project path (e.g. scripts) is left visible on purpose.
-          cat >> "$GITHUB_WORKSPACE/.git/info/exclude" <<'EXCLUDE'
-          # BEGIN sandbox placeholders
-          .bashrc
-          .bash_profile
-          .profile
-          .zshrc
-          .zprofile
-          .gitconfig
-          .ripgreprc
-          .mcp.json
-          # END sandbox placeholders
-          EXCLUDE
+          # Claude Code's Bash sandbox leaves empty placeholders in the working
+          # directory (sandbox runs 38685626718, 38706723482). Untracked, they make
+          # the tree dirty (idd-all's PR mode refuses to start) and `git add -A`
+          # would commit them. Exclude each name only when the repository did not
+          # already have it at checkout, so a real scripts/ or .vscode/ stays visible.
+          SANDBOX_PLACEHOLDERS=" .bashrc .bash_profile .profile .zshrc .zprofile .gitconfig .ripgreprc .mcp.json .idea .vscode scripts"
+          for p in $SANDBOX_PLACEHOLDERS; do
+            [ -e "$GITHUB_WORKSPACE/$p" ] || printf '/%s\n' "$p" >> "$GITHUB_WORKSPACE/.git/info/exclude"
+          done
 
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
@@ -223,6 +221,11 @@ jobs:
           # purpose for gh; it is bounded by the caller's permissions and the job's
           # lifetime. See code.claude.com/docs/en/env-vars (subprocess env scrub).
           CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
+          # IDD's presence pre-flight (check-plugin-presence.sh, check-ralph-loop.sh)
+          # only reads ~/.claude/plugins/cache. This workflow loads every dependency
+          # itself and each run prints LOADED_PLUGINS, so the check is skipped here.
+          # The gap is recorded as a C1 finding; the real fix is a path-aware check.
+          IDD_SKIP_PLUGIN_CHECK: "1"
         run: |
           set -euo pipefail
           case "$IDD_MAX_TURNS" in
@@ -237,6 +240,7 @@ jobs:
             --plugin-dir "$GITHUB_WORKSPACE/.idd-cloud/plugins/superpowers"
             --plugin-dir "$GITHUB_WORKSPACE/.idd-cloud/plugins/parallel-ai-agents"
             --plugin-dir "$GITHUB_WORKSPACE/.idd-cloud/plugins/codex-pro"
+            --plugin-dir "$GITHUB_WORKSPACE/.idd-cloud/plugins/ralph-loop"
             --cwd "$GITHUB_WORKSPACE"
             --max-turns "$IDD_MAX_TURNS"
           )
