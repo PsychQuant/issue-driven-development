@@ -192,6 +192,15 @@ PY
   # On Linux the scrub needs bubblewrap; without it the CLI exits at startup
   # (first real run, workflow run 38683885702). It must be installed in a step
   # that does not hold the key.
+  # bypassPermissions was silently downgraded to default in sandbox run 38684230150:
+  # a non-interactive session needs the acceptance recorded in user or managed
+  # settings, and the runner loads only project settings. Managed settings always
+  # load; written before the key appears.
+  assert_output_grep "bypass acceptance is recorded in managed settings" "/etc/claude-code/managed-settings.json" "$WORKFLOW"
+  assert_output_grep "acceptance key is set" "skipDangerousModePermissionPrompt" "$WORKFLOW"
+  MS_LINE=$(grep -n "/etc/claude-code/managed-settings.json" "$WORKFLOW" | head -1 | cut -d: -f1)
+  KEY_LINE2=$(grep -n 'ANTHROPIC_API_KEY: \${{ secrets.ANTHROPIC_API_KEY }}' "$WORKFLOW" | head -1 | cut -d: -f1)
+  assert_true "managed settings are written before the key appears" "[ -n '$MS_LINE' ] && [ -n '$KEY_LINE2' ] && [ '$MS_LINE' -lt '$KEY_LINE2' ]"
   for dep in superpowers parallel-ai-agents codex-pro; do
     assert_grep_re "workflow loads dependency $dep with --plugin-dir" "--plugin-dir .*$dep" "$(cat "$WORKFLOW")"
   done

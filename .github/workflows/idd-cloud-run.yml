@@ -146,6 +146,22 @@ jobs:
           fi
           bwrap --ro-bind / / true && echo "bubblewrap works"
 
+      # A non-interactive session honours bypassPermissions only when the
+      # acceptance is recorded in user or managed settings; otherwise the request
+      # is dropped without a message and the session runs in default mode (sandbox
+      # run 38684230150: every Bash call and the Skill call were denied). The
+      # runner loads only project settings, so the acceptance goes into managed
+      # settings, which always load. See code.claude.com/docs/en/settings-reference
+      # (skipDangerousModePermissionPrompt) and /en/managed-settings (Linux path).
+      - name: Record the bypassPermissions acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo mkdir -p /etc/claude-code
+          printf '{\n  "skipDangerousModePermissionPrompt": true\n}\n' \
+            | sudo tee /etc/claude-code/managed-settings.json >/dev/null
+          cat /etc/claude-code/managed-settings.json
+
       # The agent commits to the caller's repo; a runner has no git identity.
       - name: Set the git identity for agent commits
         shell: bash
