@@ -11,7 +11,7 @@
 | C1 plugin 載入 | not measured | not measured |
 | C2 GitHub 寫入 | not measured | not measured |
 | C3 API 觸發 | partial — dispatches API 觸發 dry run 成功（見 C8 證據）；尚未以真實 run 量測 | not measured |
-| C4 Max API 額度 | not measured | not measured |
+| C4 Max API 額度 | pass — 只持有 Max 額度的組織接受 SDK 請求，promotional credit 由 US$139.83 降到 US$139.73（run 回報 US$0.097） | not measured |
 | C5 成本與時間 | not measured | not measured |
 | C6 工具可用性 | not measured | not measured |
 | C7 degraded verify | not measured | not measured |
@@ -34,6 +34,18 @@
   - 三個 plugin 依鎖定版本抓取：IDD `f54ef3e…`、`obra/superpowers` `5bf4e78…`、`PsychQuant/parallel-ai-agents` `d6c6cea…`。
   - runner 輸出 `MODE: dry-run`、三個 `PLUGIN_DIR`、`PERMISSION_MODE: bypassPermissions`、`SETTING_SOURCES: project`、`ANTHROPIC_API_KEY: *** (set)`；log 中 key 一律為 `***`。
   - https://github.com/PsychQuant/idd-cloud-sandbox/actions/runs/38683706991
+
+### Agent SDK — C4 計費（task 4.2，2026-10-15）
+
+- 基準：04:53Z 讀 Console 帳務頁（che830621’s Individual Org）：Purchased US$0.00、**US$139.83 promotional credit available**。
+- 第一次真實 run（workflow run 38683885702）在 CLI 啟動時失敗：`bubblewrap is required for subprocess env scrubbing and isolation`。失敗在送出 API 請求之前，額度未變。修正：workflow 在不持有 key 的步驟安裝 bubblewrap（IDD commit `cb48707`）。
+- 第二次 run（workflow run 38684015025，prompt「Reply with the single word OK and nothing else.」）：`RESULT: OK`、`RESULT_SUBTYPE: success`、`COST_USD: 0.0974`、`DURATION_MS: 2573`、`NUM_TURNS: 1`、`MODEL: claude-opus-5-5`、`API_KEY_SOURCE: ANTHROPIC_API_KEY`、`CLAUDE_CODE_VERSION: 2.1.300`、`SDK_VERSION: 0.2.167`。沒有出現「Credit balance too low」。
+- 之後 04:56Z 重讀：**US$139.73 promotional credit available**，減少 US$0.10，與 run 回報一致。結論：Agent SDK 的請求由 Max 附送額度支付，不被當成 Claude Code。
+- 同一次 run 的附帶觀察（C1、C6 尚未正式量測）：
+  - `PLUGIN_ERRORS`：`issue-driven-dev@inline` 為 `dependency-unsatisfied`（缺 `codex-pro@codex-pro`），IDD 沒有載入；superpowers、parallel-ai-agents 有載入。已補上 codex-pro（IDD commit `2cf02d9`）。
+  - `WATCHED_TOOLS: Skill=present Agent=present(as Task) TaskCreate=present AskUserQuestion=absent Workflow=present`。
+  - 預設模型為 Opus 5.5；只回一個字就要 US$0.097，多半是系統提示與 plugin 內容的固定成本。
+  - https://github.com/PsychQuant/idd-cloud-sandbox/actions/runs/38684015025
 
 ## 待記錄的觀察
 
