@@ -8,12 +8,12 @@
 
 | 準則 | Agent SDK on GitHub Actions | Managed Agents |
 |---|---|---|
-| C1 plugin 載入 | partial — IDD 與三個依賴 plugin 全部載入、無 plugin error，`idd-list` 跑完；但 superpowers 與 parallel-ai-agents 的 presence pre-flight 回報找不到（只查 `~/.claude/plugins/cache/`） | not measured |
-| C2 GitHub 寫入 | pass — 留言、push、開 PR、squash merge 都成功（PR #2）；開 PR 需要選填的 `IDD_GITHUB_TOKEN`，因為 PsychQuant org 禁止 Actions 開 PR | not measured |
+| C1 plugin 載入 | partial — IDD 與三個依賴 plugin 全部載入、無 plugin error，`idd-list` 跑完；但 superpowers 與 parallel-ai-agents 的 presence pre-flight 回報找不到（只查 `~/.claude/plugins/cache/`） | partial — 沒有 plugin 機制；agent 讀 SKILL.md 照做，`idd-list` 跑完（記下 4 個退化步驟）；`export CLAUDE_PLUGIN_ROOT` 可跨 bash 呼叫存活；superpowers 未掛載，presence 檢查 exit 1；掛載的 IDD repo 根目錄的 CLAUDE.md、AGENTS.md 被注入 context |
+| C2 GitHub 寫入 | pass — 留言、push、開 PR、squash merge 都成功（PR #2）；開 PR 需要選填的 `IDD_GITHUB_TOKEN`，因為 PsychQuant org 禁止 Actions 開 PR | pass — 留言、push、開 PR #5、squash merge 都以 gh 完成；gh 接受 vault 代換的 placeholder token；沙箱內的 git 設定與檔案找不到任何像 token 的字串 |
 | C3 API 觸發 | pass — 每次 run 都由一次 `POST /repos/PsychQuant/idd-cloud-sandbox/dispatches` 開跑（例：38685282630） | pass — `POST /v1/sessions` 開跑；launcher 另送 environment、agent、vault、credential 四個設定請求（environment 與 agent 可重用） |
 | C4 Max API 額度 | pass — 只持有 Max 額度的組織接受 SDK 請求，promotional credit 由 US$139.83 降到 US$139.73（run 回報 US$0.097） | pass — US$133.42 → US$133.40，與 session 的 `list_cost` 2 美分一致 |
 | C5 成本與時間 | 一張單行 docs 修正跑完整個 idd-all：US$3.37、329 秒、58 輪（Opus 5.5） | not measured |
-| C6 工具可用性 | pass（有一項缺口）— Skill、Agent（Task）、TaskCreate、Workflow 都在；AskUserQuestion 不在，IDD 須走 unattended 預設；權限受 env scrub 強制為 default，靠 allowlist 放行 | not measured |
+| C6 工具可用性 | pass（有一項缺口）— Skill、Agent（Task）、TaskCreate、Workflow 都在；AskUserQuestion 不在，IDD 須走 unattended 預設；權限受 env scrub 強制為 default，靠 allowlist 放行 | fail — 只有 bash、edit、read、write、glob、grep、web_fetch、web_search；沒有 Skill、Agent、TaskCreate、AskUserQuestion、Workflow，IDD 的 Step 0 task list 與 verify 的平行 reviewer 都做不到 |
 | C7 degraded verify | pass — verify 報告開頭寫「Codex leg did not run」，Process Gaps 說明原因並以 fail-closed 記為 INFO | not measured |
 | C8 可部署性 | pass — 部署者 repo 只新增 caller workflow、IDD 設定檔與兩個 secret；照 README 即可。期間 README 補上 PAT 步驟；sandbox 為端到端另設 `max_turns: 400` | pass — 只需 keychain 裡的 API key 與 PAT，照 README 執行 launcher；PAT 以 `che-keychain set --stdin` 存入（README 寫的是 `security add-generic-password`，效果相同） |
 
@@ -101,6 +101,17 @@
   - 結束時封存 vault（存放的 PAT 已清除）。事件 9 筆：status_running、user.message、model_request、agent.message、usage、status_idle。
 - 08:48Z 重讀：**US$133.40**，減少 US$0.02，與 `list_cost` 一致。
 - 與 SDK 路線相比：同樣只回一個字，SDK（Opus 5.5、載入四個 plugin）US$0.097，Managed Agents（Sonnet 5.5、未載入 plugin）US$0.02；差距主要來自模型與 plugin 內容的固定成本。
+
+### Managed Agents — C1、C2、C6（task 5.2，2026-10-15）
+
+- session `sesn_01HZT4M4XbQZMnhUEvV1Y5Ny`：idle、`end_turn`；usage `active_seconds 74.5`、`cache_read 476417`、`cache_creation 5m 59876`、`output_tokens 6651`、`list_cost 27`（美分）。結束時 vault 已封存。
+- 工具：`bash, edit, read, write, glob, grep, web_fetch, web_search`。
+- presence 檢查：`exit=1`，「superpowers plugin not found」。agent 沒有繞過。
+- idd-list：讀 SKILL.md 執行成功，輸出 `#3 [verified] → gh pr review 4 → gh pr merge 4 → /idd-close #3`。退化：Step 0 的 TaskCreate／TaskUpdate 不存在、Step 3.7 改以 `set -uo pipefail` 內聯執行、Step 4 未算相對時間。
+- gh：`gh version 2.45.0`（apt 套件），`gh auth status` 顯示以 GH_TOKEN 登入 kiki830621，token 欄位是 placeholder；寫入成功，代表代換在出口完成。
+- clone token：`git remote -v`、git config 的 url／extraheader／credential、`~/.git-credentials`、credential helper、`~/.gitconfig`、`~/.netrc`、gh hosts 檔都沒有像 token 的字串；remote 為一般 URL，push 仍成功，憑證由網路層注入。design 中「repo resource token 可能可讀」的風險此次未觀察到。
+- 寫入：留言 https://github.com/PsychQuant/idd-cloud-sandbox/issues/3#issuecomment-6188232400 ；commit `d643778` push 到 `spike/ma-c2-probe`；PR https://github.com/PsychQuant/idd-cloud-sandbox/pull/5 ；squash merge `mergedAt 2026-10-15T08:50:24Z`。
+- 附帶：掛載的 IDD repo 根目錄的 CLAUDE.md、AGENTS.md 與 `.claude/skills` 清單被注入 agent 的 context（IDD 開發用的 Spectra 規則）。正式版若走這條路線，應只掛載 plugin 目錄或改用上傳的 skills。
 
 ## 待記錄的觀察
 
