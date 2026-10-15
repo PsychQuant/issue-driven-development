@@ -33,4 +33,4 @@
 ## 6. 決策與收尾
 
 - [x] 6.1 依 requirement「The decision record selects one runtime or none with reasons」與「先 spike 兩條路線再選定 runtime」，完成 `openspec/changes/cloud-idd-runtime-spike/findings.md`：兩條路線 × C1 到 C8 的矩陣（無證據者記 `not measured`）、各路線端到端 run 的費用與耗時、決策與它引用的格子；並註明「排除 Claude Code routines」的理由沿用 design。完成時：16 格皆有值，決策段至少引用選定路線的 C1、C2、C3、C4、C8。驗證：人工審閱 findings 的矩陣與決策段。
-- [ ] 6.2 依「正式入口命名為 /idd-all api」，在 findings 寫出選定路線下 `/idd-all api` 要送出的請求形狀，以及參數解析的待決點（`api` 保留字或 `--api` 旗標）；把決策摘要與 findings 連結貼到 #400；1.3 建立的 fine-grained PAT 依使用者 2026-10-15 的決定不提前撤銷，留到 2026-10-17 到期，供 #392 的手動驗收沿用 sandbox。完成時：#400 有決策留言，findings 記下 PAT 的處置。驗證：`gh issue view 400 --comments` 看得到決策留言；findings 的〈PAT 處置〉段。
+- [x] 6.2 依「正式入口命名為 /idd-all api」，在 findings 寫出選定路線下 `/idd-all api` 要送出的請求形狀，以及參數解析的待決點（`api` 保留字或 `--api` 旗標）；把決策摘要與 findings 連結貼到 #400；1.3 建立的 fine-grained PAT 依使用者 2026-10-15 的決定不提前撤銷，留到 2026-10-17 到期，供 #392 的手動驗收沿用 sandbox。完成時：#400 有決策留言，findings 記下 PAT 的處置。驗證：`gh issue view 400 --comments` 看得到決策留言；findings 的〈PAT 處置〉段。
