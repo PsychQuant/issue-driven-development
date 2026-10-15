@@ -114,7 +114,7 @@ allowed-tools:
 #   2  → 無法判定（未 CLOSED / 截斷 / 抓取或解析失敗）→ abort
 #   10 → 沒認出 marker → 否決沒觸發。**還不能 post**，往下走到「許可由讀者供給」。
 # 沒有 rc == 0 這個東西：helper 在 gate 模式下不會回 0（回 0 是它自己的內部錯誤）。
-# `$CLAUDE_PLUGIN_ROOT` 必須有值，**沒有 CWD-relative fallback**。原本用的是
+# `${CLAUDE_PLUGIN_ROOT}` 必須有值，**沒有 CWD-relative fallback**。原本用的是
 # shell 的「未設就取預設值」寫法、預設值是一個**相對路徑**——它從當前工作目錄
 # 解析 gate 的執行檔，而 `/idd-close` 跑在使用者的 repo 裡。任何一個 clone 下來
 # 的 repo 只要在那個相對位置自備一個同名檔，就同時拿到「任意程式碼執行」與
@@ -130,7 +130,7 @@ allowed-tools:
 # One character short of the fix it was written to be.
 case "${CLAUDE_PLUGIN_ROOT:?未設 —— 中止：gate 的路徑不得從當前工作目錄解析（被稽核的 repo 可以自備一個同名檔）}" in
   /*) : ;;
-  *)  echo "✗ CLAUDE_PLUGIN_ROOT 必須是絕對路徑（現在是 '$CLAUDE_PLUGIN_ROOT'）—— 相對路徑會從被稽核的 repo 解析 gate" >&2; exit 1 ;;
+  *)  echo "✗ CLAUDE_PLUGIN_ROOT 必須是絕對路徑（現在是 '${CLAUDE_PLUGIN_ROOT}'）—— 相對路徑會從被稽核的 repo 解析 gate" >&2; exit 1 ;;
 esac
 HELPER="${CLAUDE_PLUGIN_ROOT}/scripts/check-closed-without-summary.sh"
 [ -f "$HELPER" ] || { echo "✗ 找不到 gate helper：$HELPER —— 中止（找不到 gate 等於沒有 gate）" >&2; exit 1; }
@@ -336,8 +336,8 @@ TaskCreate(name="publish_and_close", description="經 gh-egress.sh comment 派�
 TaskCreate(name="auto_update_body", description="跑 /idd-update #NNN 把 issue body 的 Current Status phase 改 closed（Step 6，常被漏）")
 TaskCreate(name="doc_sync_sweep", description="Step 6.3 (v2.92+, #220): git ls-files case-insensitive 枚舉 README*/CLAUDE.md（含 localized 變體）→ per-file staleness 語意判定（以本 issue diff+summary 為據）→ 更新 commit 或 surface 到 closing summary「### Doc-sync 檢查」段；結果必留痕（N files checked 一行）")
 TaskCreate(name="distribution_sync_chain_detection", description="Step 6.5 (v2.56.0+, #45): infer_distribution_type detection per references/distribution-detection.md; if hit → AskUserQuestion 3-option (chain to plugin-update/mcp-deploy/cli-deploy / skip — manual later / not applicable); patch closing comment with ### Distribution Sync section. Silent skip for non-distribution repos. IDD_DISTRIBUTION_SYNC_PROMPT=false env var bypasses prompt entirely (still 1-line audit).")
-TaskCreate(name="worktree_gc", description="Step 6.7 (v2.75.0+, #167): best-effort worktree GC — bash $CLAUDE_PLUGIN_ROOT/scripts/idd-worktree.sh cleanup <N>; absent helper or dirty-refuse (exit 5) → one-line warning + close still completes; never blocks close")
-TaskCreate(name="release_tree_lock", description="Step 6.8 (v2.85.0+, #183): best-effort release of the shared working-tree lock from idd-implement Step 0.4 — bash $CLAUDE_PLUGIN_ROOT/scripts/idd-tree-lock.sh release --repo <cwd> --id <session>; holder-scoped + idempotent (no lock / not-holder / absent helper → silent no-op); stale lock otherwise auto-reclaimed by next acquire via PID liveness. Never blocks close")
+TaskCreate(name="worktree_gc", description="Step 6.7 (v2.75.0+, #167): best-effort worktree GC — bash ${CLAUDE_PLUGIN_ROOT}/scripts/idd-worktree.sh cleanup <N>; absent helper or dirty-refuse (exit 5) → one-line warning + close still completes; never blocks close")
+TaskCreate(name="release_tree_lock", description="Step 6.8 (v2.85.0+, #183): best-effort release of the shared working-tree lock from idd-implement Step 0.4 — bash ${CLAUDE_PLUGIN_ROOT}/scripts/idd-tree-lock.sh release --repo <cwd> --id <session>; holder-scoped + idempotent; show released / already-free / different-holder outcomes and warn on absent helper or removal failure; stale lock otherwise auto-reclaimed by next acquire via PID liveness. Never blocks close")
 TaskCreate(name="report_result", description="輸出關閉後的 issue URL 與 commits chain")
 ```
 
@@ -368,7 +368,7 @@ git log --oneline --grep="#$NUMBER" | head -10
 依 [`rules/process-attachments.md`](../../rules/process-attachments.md):
 
 ```bash
-IDD_CALLER=idd-close bash $CLAUDE_PLUGIN_ROOT/scripts/process-attachments.sh verify $NUMBER
+IDD_CALLER=idd-close bash ${CLAUDE_PLUGIN_ROOT}/scripts/process-attachments.sh verify $NUMBER
 ```
 
 Exit code:
@@ -386,7 +386,7 @@ Exit code:
 # #366: 引用本 issue 的 open PR 來自共用 helper（唯一的比對實作，契約 references/pr-issue-matching.md）。
 # gate 語意不變：任何 open PR 引用本 issue（E1 宣告或 E2 只提及，自家或別人的）都擋 ——
 # Open PR = 「這個改動還沒進 main」，PR 路徑沒走完就不能結案。
-EW_JSON=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/check-existing-work.sh" --cwd "${WORKDIR:-$PWD}" "$GITHUB_REPO" "$NUMBER") || {
+EW_JSON=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/check-existing-work.sh" --cwd "${WORKDIR:-$PWD}" "$GITHUB_REPO" "$NUMBER") || {
   echo "✗ Step 1.5: existing-work lookup produced no result — refusing to close (fail-closed; retry)" >&2; exit 1; }
 # 查詢 open PR 本身失敗或列表達上限時拒絕結案：結案不可逆，「不知道有沒有 open PR」不能當成「沒有」。
 # （比 #366 之前更嚴：以前 gh 失敗時 OPEN_PRS 為空，gate 安靜通過。）
@@ -463,7 +463,7 @@ else
   else
     DEFAULT=$(gh repo view "$GITHUB_REPO" --json defaultBranchRef -q .defaultBranchRef.name)
     git -C "$WORKDIR" fetch -q origin -- "$DEFAULT" 2>/dev/null   # fresh baseline (-- guards $DEFAULT)
-    OUT=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/check-merge-completeness.sh" \
+    OUT=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/check-merge-completeness.sh" \
             --repo "$WORKDIR" --branch "$BRANCH_REF" --baseline "origin/$DEFAULT" 2>/dev/null)
     RC=$?
     case "$RC" in
@@ -741,7 +741,7 @@ for item in $selected_items; do
   ROOT_ID_FOR_MANIFEST="${IDD_CHAIN_CURRENT_ROOT_ID:-${NUMBER:-}}"
   if [ -n "$ROOT_ID_FOR_MANIFEST" ]; then
     NEW_ISSUE=$(basename "$NEW_ISSUE_URL")
-    bash "$CLAUDE_PLUGIN_ROOT/scripts/manifest-append.sh" \
+    bash "${CLAUDE_PLUGIN_ROOT}/scripts/manifest-append.sh" \
       "$REPO_ROOT" "$NEW_ISSUE" "idd-close" "Step 3.6 residue acknowledgement" \
       "residue-followup" "$item_same_file" "$item_same_skill" "$item_title" "$ROOT_ID_FOR_MANIFEST" \
       2>/dev/null || true   # silent skip when chain context inactive
@@ -782,7 +782,7 @@ The closing summary (Step 2 已 drafted but not yet posted, same pattern as Step
 # （#226）egress 經 gh-egress.sh 派送：$SCRUB_LEVEL 依 rules/privacy-scrubbing.md 解析
 # （third-party=enforce / own-public=warn / private=light），派送前先跑 LLM 隱私自審；
 # 有 @mention 時另帶 --mention-attested（rules/tagging-collaborators.md 5-step 後）。
-CLOSING_COMMENT_URL=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $NUMBER --repo $GITHUB_REPO --body "$CLOSING_COMMENT" --scrub-attested "$SCRUB_LEVEL") || {
+CLOSING_COMMENT_URL=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-egress.sh" comment $NUMBER --repo $GITHUB_REPO --body "$CLOSING_COMMENT" --scrub-attested "$SCRUB_LEVEL") || {
   echo "ERROR: gh issue comment failed for #$NUMBER" >&2
   exit 1
 }
@@ -891,7 +891,7 @@ echo "→ doc-sync sweep: $(echo "$DOC_FILES" | grep -c .) file(s) enumerated"
 
 ### Step 6.5: Distribution Sync chain (v2.56.0+, #45)
 
-> **Monorepo host 消歧（v2.92+, #68）**：`resolve_plugin_name` 在 marketplace host（一 repo 多 plugin）下有歧義 — 改用 `. "$CLAUDE_PLUGIN_ROOT/scripts/lib/resolve-plugin-candidates.sh"` 的 `resolve_plugin_candidates "$CWD" "$PWD"`：0 候選 → silent skip；1 → proceed；N>1 → attended 用 AskUserQuestion（top-3 依 cwd specificity + Other）、unattended 取首位 + audit note。
+> **Monorepo host 消歧（v2.92+, #68）**：`resolve_plugin_name` 在 marketplace host（一 repo 多 plugin）下有歧義 — 改用 `. "${CLAUDE_PLUGIN_ROOT}/scripts/lib/resolve-plugin-candidates.sh"` 的 `resolve_plugin_candidates "$CWD" "$PWD"`：0 候選 → silent skip；1 → proceed；N>1 → attended 用 AskUserQuestion（top-3 依 cwd specificity + Other）、unattended 取首位 + audit note。
 
 **Compliance**: this step implements close-tier distribution-sync checkpoint per IC_R011-style 3-option AskUserQuestion + audit trail pattern (canonical reference: [`references/ic-r011-checkpoint.md`](../../references/ic-r011-checkpoint.md)). Complements `che-claude-config/rules/common-release-flow.md` (release-tier trigger).
 
@@ -1215,8 +1215,8 @@ Issue 關閉後,**best-effort** 回收這個 issue 的並行 worktree(`.claude/w
 
 ```bash
 # 此時 issue 已 closed(Step 4)。worktree GC 是 post-close cleanup,不影響 close 結果。
-# helper 路徑用 $CLAUDE_PLUGIN_ROOT 解析;舊版 plugin 沒這個 script → 視為「helper 缺席」分支。
-WT_HELPER="$CLAUDE_PLUGIN_ROOT/scripts/idd-worktree.sh"
+# helper 路徑用 ${CLAUDE_PLUGIN_ROOT} 解析;舊版 plugin 沒這個 script → 視為「helper 缺席」分支。
+WT_HELPER="${CLAUDE_PLUGIN_ROOT}/scripts/idd-worktree.sh"
 
 if [ ! -f "$WT_HELPER" ]; then
   # Helper 缺席(older plugin / 未安裝)— 一行 warning,close 已完成。
@@ -1249,16 +1249,23 @@ fi
 
 ### Step 6.8: Tree-lock Release（v2.85.0+, #183）
 
-釋放 `idd-implement` Step 0.4 取得的 shared working-tree lock，讓下一個 session 能立刻 acquire（而非等 stale-reclaim TTL）。同 worktree GC 一樣 **best-effort**：lock 不存在、helper 缺席、或非本 session 持有都靜默無害（release 是 holder-scoped + idempotent）。
+釋放 `idd-implement` Step 0.4 取得的 shared working-tree lock，讓下一個 session 能立刻 acquire（而非等 stale-reclaim TTL）。同 worktree GC 一樣 **best-effort**，但必須顯示實際結果：已釋放、原本就空、不同 holder 而保留，或 helper／刪除失敗。release 是 holder-scoped + idempotent；不可隱藏 stderr 讓未釋放的 lock 看似成功。
 
 ```bash
-TREE_LOCK="$CLAUDE_PLUGIN_ROOT/scripts/idd-tree-lock.sh"
+TREE_LOCK="${CLAUDE_PLUGIN_ROOT}/scripts/idd-tree-lock.sh"
 if [ -f "$TREE_LOCK" ]; then
   # Same id derivation as idd-implement Step 0.4 (tree-$PPID, the persistent
   # harness shell) so release matches within the same claude instance. A
   # different instance / mismatched id → holder-scoped no-op (lock left for the
   # holder's own close or for liveness reclaim — never steals another's lock).
-  bash "$TREE_LOCK" release --repo "${CWD:-$PWD}" --id "${IDD_SESSION_ID:-tree-$PPID}" 2>/dev/null
+  if bash "$TREE_LOCK" release --repo "${CWD:-$PWD}" --id "${IDD_SESSION_ID:-tree-$PPID}"; then
+    : # helper reports the actual outcome on stderr, including a different holder
+  else
+    TREE_LOCK_RC=$?
+    echo "⚠ tree lock release failed (exit $TREE_LOCK_RC); inspect the lock before retrying. Close remains complete." >&2
+  fi
+else
+  echo "⚠ tree lock release skipped: helper missing: $TREE_LOCK" >&2
 fi
 ```
 

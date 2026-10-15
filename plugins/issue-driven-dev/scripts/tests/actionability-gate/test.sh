@@ -584,7 +584,7 @@ REF="$HERE/../../../references/actionability-gate.md"
 for c in idd-list idd-all idd-implement idd-plan; do
   f="$SKILLS/$c/SKILL.md"
   assert_output_grep "$c: sources the shared helper"           'scripts/lib/actionability.sh' "$f"
-  assert_output_grep "$c: fails loud when helper is missing"   'FATAL: missing $CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh' "$f"
+  assert_output_grep "$c: fails loud when helper is missing"   'FATAL: missing ${CLAUDE_PLUGIN_ROOT}/scripts/lib/actionability.sh' "$f"
   assert_output_grep "$c: actually calls the verdict"          'idd_actionability_verdict --complexity-exit "$CEXIT" --parking-label "$HAS_PARKING" --blocking-section "$BLOCKING"' "$f"
   assert_output_grep "$c: reads ### Blocking through the helper" 'idd_blocking_section' "$f"
   assert_output_grep "$c: set -e safe conditional capture"     'if TIER=$(idd_parse_complexity "$LATEST_DIAGNOSIS" 2>/dev/null); then CEXIT=0; else CEXIT=$?; fi' "$f"

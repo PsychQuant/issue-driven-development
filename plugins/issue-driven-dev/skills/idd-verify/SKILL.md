@@ -819,7 +819,7 @@ done
 依 [`rules/process-attachments.md`](../../rules/process-attachments.md):
 
 ```bash
-IDD_CALLER=idd-verify bash $CLAUDE_PLUGIN_ROOT/scripts/process-attachments.sh check $NUMBER
+IDD_CALLER=idd-verify bash ${CLAUDE_PLUGIN_ROOT}/scripts/process-attachments.sh check $NUMBER
 ```
 
 Exit code:
@@ -1233,7 +1233,7 @@ sed "s|__MASTER_URL__|$MASTER_URL|g" "$VERIFY_DIR/pointer_template.md" > "$VERIF
 
 # 3. Post pointer to each ref'd issue in parallel
 for I in $REFD_ISSUES; do
-  bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $I --repo $GITHUB_REPO --body-file "$VERIFY_DIR/pointer.md" --scrub-attested "$SCRUB_LEVEL" &
+  bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-egress.sh" comment $I --repo $GITHUB_REPO --body-file "$VERIFY_DIR/pointer.md" --scrub-attested "$SCRUB_LEVEL" &
 done
 wait
 ```
@@ -1256,7 +1256,7 @@ This issue's findings: see "#__ISSUE__" section in the linked report.
 # （#226）egress 經 gh-egress.sh 派送：$SCRUB_LEVEL 依 rules/privacy-scrubbing.md 解析
 # （third-party=enforce / own-public=warn / private=light），派送前先跑 LLM 隱私自審；
 # 有 @mention 時另帶 --mention-attested（rules/tagging-collaborators.md 5-step 後）。
-bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $NUMBER --repo $GITHUB_REPO --body "$MERGED_FINDINGS" --scrub-attested "$SCRUB_LEVEL"
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-egress.sh" comment $NUMBER --repo $GITHUB_REPO --body "$MERGED_FINDINGS" --scrub-attested "$SCRUB_LEVEL"
 ```
 
 Cluster（≥2 issue 共用一份 verify report）：
@@ -1271,14 +1271,14 @@ Cluster（≥2 issue 共用一份 verify report）：
 # text that gets posted to someone's issue — so a stale or half-written file at
 # a shared fixed path does not fail loudly, it publishes the wrong comment.
 # 1. Post master, capture URL
-MASTER_URL=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $HUB_ISSUE --repo $REPO --body-file "$VERIFY_DIR/master.md" --scrub-attested "$SCRUB_LEVEL" 2>&1 | tail -1)
+MASTER_URL=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-egress.sh" comment $HUB_ISSUE --repo $REPO --body-file "$VERIFY_DIR/master.md" --scrub-attested "$SCRUB_LEVEL" 2>&1 | tail -1)
 
 # 2. Compose pointer body using captured URL
 sed "s|__MASTER_URL__|$MASTER_URL|g" "$VERIFY_DIR/pointer_template.md" > "$VERIFY_DIR/pointer.md"
 
 # 3. Post pointers in parallel
 for I in $POINTER_ISSUES; do
-  bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $I --repo $REPO --body-file "$VERIFY_DIR/pointer.md" --scrub-attested "$SCRUB_LEVEL" &
+  bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-egress.sh" comment $I --repo $REPO --body-file "$VERIFY_DIR/pointer.md" --scrub-attested "$SCRUB_LEVEL" &
 done
 wait
 ```
@@ -1507,7 +1507,7 @@ git diff > "$QUICK_DIR/diff.patch"
 當 invocation 含 `--loop` flag,**Step 0 Bootstrap 之前**先 invoke detector:
 
 ```bash
-"$CLAUDE_PLUGIN_ROOT/scripts/check-ralph-loop.sh" || exit 1
+"${CLAUDE_PLUGIN_ROOT}/scripts/check-ralph-loop.sh" || exit 1
 ```
 
 helper 行為見 `scripts/check-ralph-loop.sh`:exit 0 if installed, exit 1 with structured message + install hint if missing。Bypass 用 `IDD_SKIP_RALPH_CHECK=1`。

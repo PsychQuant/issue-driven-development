@@ -29,6 +29,7 @@
 #   IDD_WORKTREE_NO_GH=1   skip the gh-title slug derivation (offline / hermetic)
 
 set -u
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/runtime-ignore.sh"
 
 PROG="$(basename "$0")"
 
@@ -162,21 +163,8 @@ is_registered_worktree() {
 }
 
 ensure_gitignore() {
-  local gi="$REPO_ROOT/.gitignore"
-  # Refuse to append through a symlinked .gitignore (would write to the link
-  # target). Warn + continue — not gitignoring the worktree dir is degraded but
-  # non-fatal (it shows as untracked). (#167 verify LOW — agents:security)
-  if [ -L "$gi" ]; then
-    err "⚠ $gi is a symlink — not appending '.claude/worktrees/' (add it manually if desired)."
-    return 0
-  fi
-  if ! grep -qxF '.claude/worktrees/' "$gi" 2>/dev/null; then
-    {
-      [ -s "$gi" ] && printf '\n'
-      printf '# IDD parallel worktree isolation (idd-worktree.sh #167) — not tracked in main tree\n'
-      printf '.claude/worktrees/\n'
-    } >> "$gi"
-  fi
+  idd_ignore_runtime_paths "$REPO_ROOT" || \
+    err "⚠ could not install local runtime excludes for $REPO_ROOT; check untracked state before staging"
 }
 
 # --- subcommands --------------------------------------------------------------

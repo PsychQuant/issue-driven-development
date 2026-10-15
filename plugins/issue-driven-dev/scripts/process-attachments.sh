@@ -21,6 +21,7 @@
 # Exit codes:
 #   0 — success / no attachments / up-to-date
 #   1 — manifest missing / new attachments detected / files missing on disk
+#       / download incomplete (download_failed or unsafe_filename in manifest)
 #   2 — usage error / cannot resolve repo / attachment-list fetch failure
 #       (gh/jq — network, auth, malformed JSON; detect_urls returns 2, #186)
 #       / corrupt or malformed _manifest.json (not a JSON object with a 'files'
@@ -329,6 +330,11 @@ case "$CMD" in
       > "$MANIFEST"
 
     echo "✓ Manifest: $MANIFEST"
+    FAILED_COUNT=$(jq '[.files[] | select(.error != null)] | length' "$MANIFEST")
+    if [ "$FAILED_COUNT" -gt 0 ]; then
+      echo "⚠ $FAILED_COUNT attachment(s) failed or refused; see $MANIFEST" >&2
+      exit 1
+    fi
     ;;
 
   check)

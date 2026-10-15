@@ -54,7 +54,7 @@ Issues 沿用 **`idd-find` 的 search backend** 契約（[Step 2](../idd-find/SK
 Discussions 使用 [discussion-capture 的 Reader 與引用契約](../../references/discussion-capture.md#reader-與引用)：
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-discussions-read.py" search \
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-discussions-read.py" search \
   --repo "$GITHUB_REPO" --query "$QUERY" --limit "$LIMIT"
 ```
 
@@ -67,7 +67,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-discussions-read.py" search \
 gh issue view "$N" --repo "$GITHUB_REPO" --json number,title,state,body,comments,url
 
 # 每個入選 Discussion：根文、分頁 comments 與 replies；所有留言共用界限。
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-discussions-read.py" get \
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-discussions-read.py" get \
   --repo "$GITHUB_REPO" --number "$N" --max-comments 500
 ```
 

@@ -113,4 +113,28 @@ printf 'l1\nl2\n' > "$R/sp ace.txt"; git -C "$R" add -A && git -C "$R" commit -q
 assert_exit "fixture-7 spaced filename squash NOT flagged" 0 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
+# ── Fixture 8 (#399): intermediate content rewritten before squash ──
+R="$(mk_repo)"
+git -C "$R" checkout -q -b feat
+printf 'draft\n' > "$R/sp ace.txt"; git -C "$R" add -A && git -C "$R" commit -qm draft
+printf 'final\n' > "$R/sp ace.txt"; git -C "$R" add -A && git -C "$R" commit -qm final
+git -C "$R" checkout -q main
+git -C "$R" merge --squash feat >/dev/null && git -C "$R" commit -qm squash
+assert_exit "fixture-8 rewritten intermediate content is NOT an orphan" 0 "$(run_helper "$R" feat main)"
+# Main can move ahead in unrelated files without reviving superseded content.
+printf 'unrelated\n' > "$R/other.txt"; git -C "$R" add -A && git -C "$R" commit -qm unrelated
+assert_exit "fixture-8b landed final paths survive unrelated main changes" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# ── Fixture 9: only the intermediate version landed -> still an orphan ──
+R="$(mk_repo)"
+git -C "$R" checkout -q -b feat
+printf 'draft\n' > "$R/edited.txt"; git -C "$R" add -A && git -C "$R" commit -qm draft
+FIRST=$(git -C "$R" rev-parse HEAD)
+printf 'final\n' > "$R/edited.txt"; git -C "$R" add -A && git -C "$R" commit -qm final
+git -C "$R" checkout -q main
+git -C "$R" cherry-pick "$FIRST" >/dev/null
+assert_exit "fixture-9 missing final edit is flagged" 3 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
 print_summary

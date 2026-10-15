@@ -115,7 +115,7 @@ TaskCreate(name="report_and_stop", description="Phase 4: 印 forest tree printou
 
 ### Phase 0: Pre-flight + cluster branch setup
 
-> **Unattended signal + 依賴 gate（v2.92+ #123/#211）**：chain 模式 = `(direct-commit, unattended)`，chain shell 在建 cluster branch 前先：(1) `. "$CLAUDE_PLUGIN_ROOT/scripts/lib/unattended-state.sh" && mark_unattended "$CWD" "idd-all-chain"`（契約見 `references/unattended-contract.md`；Phase 4 report 後與所有 abort path `clear_unattended`）；(2) superpowers hard gate（`check-plugin-presence.sh claude-plugins-official superpowers || abort`）+ spectra warn（同 idd-all Step 0.35 — 缺席時 unattended chain 中途 abort 留孤兒的正是本 gate 防的）。
+> **Unattended signal + 依賴 gate（v2.92+ #123/#211）**：chain 模式 = `(direct-commit, unattended)`，chain shell 在建 cluster branch 前先：(1) `. "${CLAUDE_PLUGIN_ROOT}/scripts/lib/unattended-state.sh" && mark_unattended "$CWD" "idd-all-chain"`（契約見 `references/unattended-contract.md`；Phase 4 report 後與所有 abort path `clear_unattended`）；(2) superpowers hard gate（`check-plugin-presence.sh claude-plugins-official superpowers || abort`）+ spectra warn（同 idd-all Step 0.35 — 缺席時 unattended chain 中途 abort 留孤兒的正是本 gate 防的）。
 
 
 #### Step 0.1: Argument Parsing
@@ -197,7 +197,7 @@ Delegated to `scripts/check-diagnosis-readiness.sh` (v2.57.0+, #51) — variadic
 # Multi-root (v2.60+, #46): pass all roots in one invocation; helper aggregates.
 set -e
 
-READINESS_JSON=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/check-diagnosis-readiness.sh" \
+READINESS_JSON=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/check-diagnosis-readiness.sh" \
                   "$GITHUB_REPO" "${ROOT_ISSUES_SORTED[@]}")
 
 # Parse: count not_ready entries (aggregated across all roots).
@@ -284,7 +284,7 @@ gh issue edit "$ROOT_ISSUE" -R "$GITHUB_REPO" --body "$NEW_BODY"
 與上面的 diagnosis-readiness 並列、同樣在建 cluster branch 與 manifest **之前**（user 在這裡停下時沒有任何東西要清）：對每個 root 問「是否已有 PR 或 branch 在處理它」。查詢只有一個實作 `scripts/check-existing-work.sh`（契約 [`references/pr-issue-matching.md`](../../references/pr-issue-matching.md)，行為 spec `idd-existing-work-lookup`）；本 skill 不自帶 PR 比對。每個 root 的 verdict 處置與 `idd-all` Step 0.5.1 的表**相同**（`clear` 繼續；`unknown` 印出並繼續；`resume` 在該 branch 上繼續；`blocked` attended 問三選一、unattended 停該 root），不在此重寫一份。
 
 ```bash
-EW_JSON=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/check-existing-work.sh" --cwd "$CWD" "$GITHUB_REPO" "${ROOT_ISSUES_SORTED[@]}") || EW_JSON='{}'   # 不是空字串：jq 收到空輸入什麼都不印，verdict 會變成空的
+EW_JSON=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/check-existing-work.sh" --cwd "$CWD" "$GITHUB_REPO" "${ROOT_ISSUES_SORTED[@]}") || EW_JSON='{}'   # 不是空字串：jq 收到空輸入什麼都不印，verdict 會變成空的
 for ROOT_ISSUE in "${ROOT_ISSUES_SORTED[@]}"; do
   V=$(printf '%s' "$EW_JSON" | jq -r --arg n "$ROOT_ISSUE" '.issues[$n].verdict // "unknown"')
   R=$(printf '%s' "$EW_JSON" | jq -r --arg n "$ROOT_ISSUE" '.issues[$n].reason // "lookup produced no result"')
