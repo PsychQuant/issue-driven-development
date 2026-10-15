@@ -76,6 +76,7 @@
   - `git status --porcelain` 顯示沙箱留下的未追蹤佔位：`.bash_profile .bashrc .gitconfig .idea .mcp.json .profile .ripgreprc .vscode .zprofile .zshrc scripts`。
   - agent 自動在 commit 加 `Co-Authored-By: Claude Opus 5.5`、在 PR body 加「Generated with Claude Code」：雲端沒有關閉 attribution 的設定。
 - 處理（IDD commit `4fc8dd5`）：reusable workflow 接選填的 `IDD_GITHUB_TOKEN`（使用者選擇以 sandbox 專用 PAT 處理，不改 org 政策）；不可能是專案內容的佔位 dotfile 寫進 `.git/info/exclude`，`scripts`、`.idea`、`.vscode` 刻意不排除。
+- 背景安全審查（commit `4fc8dd5`）：PAT 在 agent 的 shell 可見，且以 PAT 產生的事件會觸發 workflow、可被用來連鎖 dispatch。spike 期間接受（理由與正式版修法見 design 的 Risks）。
 - 待使用者建立 PAT（task 1.3）後重測開 PR 與 merge。
 
 ## 待記錄的觀察

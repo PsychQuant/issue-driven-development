@@ -185,7 +185,12 @@ waits for the result.
   Bash command, hook and MCP server the agent starts. `GH_TOKEN` stays (gh needs it).
   The job's own token can only write to your repository and expires when the job
   ends; an `IDD_GITHUB_TOKEN` you add lives until its expiry, so scope it to this
-  one repository and keep the expiry short.
+  one repository and keep the expiry short. Events created with a personal token,
+  unlike the job's token, start other workflows, and a token with Contents write
+  can send dispatches: an agent steered by a planted instruction could start more
+  runs. Until the PR step moves out of the agent's session (planned for the
+  supported version), use the token only on repositories whose issue authors you
+  trust, and revoke it when you are done experimenting.
 - **Route B never sends your API key to the sandbox.** The GitHub token reaches the
   sandbox in two ways: as `GH_TOKEN`, which the platform substitutes at the network
   edge so the agent never sees the value, and as the token used to clone your

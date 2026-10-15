@@ -144,7 +144,7 @@ spike 的端到端 run 以 unattended PR mode 跑 `/idd-all`。#392 落地前，
 - [reusable workflow 被用來注入指令] → prompt 只經環境變數進 shell；caller 範本限定權限；`repository_dispatch` 本來就只有持有部署者 repo 寫入權限的 token 能觸發。
 - [issue 內文的 prompt injection 讓 agent 外洩 secret] → Agent SDK 路線設 `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`，Bash、hooks、MCP 子程序拿不到 `ANTHROPIC_API_KEY`；`GH_TOKEN` 依官方設計保留，風險由 caller 的最小權限與 job 生命週期限制。Managed Agents 路線的 API key 不進沙箱，`GH_TOKEN` 經 vault 在出口代換。部署說明寫明只在 issue 作者可信任的 repo 部署。
 - [Managed Agents 的 repo resource token 在沙箱內可讀] → 該 token 不經 vault，可能出現在沙箱的 git 設定裡；task 5.2 量測是否可讀（只回報有無，不印值）；部署說明要求最短效期並在結束後撤銷。
-- [選填的 PAT 比 GITHUB_TOKEN 活得久] → agent 的 shell 看得到 `GH_TOKEN`（scrub 依設計保留）；PAT 只授權部署者 repo、Contents／Issues／Pull requests 三項權限、效期最短，部署說明寫明。
+- [選填的 PAT 比 GITHUB_TOKEN 活得久，而且以它產生的事件會觸發 workflow] → 背景安全審查（2026-10-15）指出兩點：agent 的 shell 看得到 `GH_TOKEN`（scrub 依設計保留），且持有 Contents 寫入權的 PAT 可以被 prompt injection 用來再送 dispatch、連鎖開新的 run。spike 期間接受此風險（sandbox 為 private、issue 作者只有使用者本人、PAT 只授權 sandbox 且效期最短、task 6.2 撤銷）。正式 change 必須改成 PAT 不進 agent 的 session：agent 只 push branch，開 PR 與 merge 由 agent 結束後、不持有 API key 的 workflow 步驟以 PAT 執行。
 - [Bash 沙箱在工作目錄留下佔位檔] → workflow 把不可能是專案內容的佔位 dotfile 寫進 `.git/info/exclude`；名稱像專案路徑的佔位（如 `scripts`）刻意不排除，記在 findings。
 - [抓進 job 的程式碼被上游改動] → actions 與 superpowers、parallel-ai-agents 一律鎖 commit SHA，測試檢查；`claude-agent-sdk` 鎖版本但未鎖 hash，列為殘餘風險；`idd_ref` 由部署者在 caller 裡鎖定。
 - [部署者的 caller 指向 `@main`，IDD 改版會直接影響他們] → caller 範本與文件建議鎖定 tag 或 commit；`idd_ref` 預設與文件說明一致。
