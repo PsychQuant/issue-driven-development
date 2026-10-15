@@ -10,12 +10,12 @@
 |---|---|---|
 | C1 plugin 載入 | partial — IDD 與三個依賴 plugin 全部載入、無 plugin error，`idd-list` 跑完；但 superpowers 與 parallel-ai-agents 的 presence pre-flight 回報找不到（只查 `~/.claude/plugins/cache/`） | not measured |
 | C2 GitHub 寫入 | pass — 留言、push、開 PR、squash merge 都成功（PR #2）；開 PR 需要選填的 `IDD_GITHUB_TOKEN`，因為 PsychQuant org 禁止 Actions 開 PR | not measured |
-| C3 API 觸發 | pass — 每次 run 都由一次 `POST /repos/PsychQuant/idd-cloud-sandbox/dispatches` 開跑（例：38685282630） | not measured |
-| C4 Max API 額度 | pass — 只持有 Max 額度的組織接受 SDK 請求，promotional credit 由 US$139.83 降到 US$139.73（run 回報 US$0.097） | not measured |
+| C3 API 觸發 | pass — 每次 run 都由一次 `POST /repos/PsychQuant/idd-cloud-sandbox/dispatches` 開跑（例：38685282630） | pass — `POST /v1/sessions` 開跑；launcher 另送 environment、agent、vault、credential 四個設定請求（environment 與 agent 可重用） |
+| C4 Max API 額度 | pass — 只持有 Max 額度的組織接受 SDK 請求，promotional credit 由 US$139.83 降到 US$139.73（run 回報 US$0.097） | pass — US$133.42 → US$133.40，與 session 的 `list_cost` 2 美分一致 |
 | C5 成本與時間 | 一張單行 docs 修正跑完整個 idd-all：US$3.37、329 秒、58 輪（Opus 5.5） | not measured |
 | C6 工具可用性 | pass（有一項缺口）— Skill、Agent（Task）、TaskCreate、Workflow 都在；AskUserQuestion 不在，IDD 須走 unattended 預設；權限受 env scrub 強制為 default，靠 allowlist 放行 | not measured |
 | C7 degraded verify | pass — verify 報告開頭寫「Codex leg did not run」，Process Gaps 說明原因並以 fail-closed 記為 INFO | not measured |
-| C8 可部署性 | pass — 部署者 repo 只新增 caller workflow、IDD 設定檔與兩個 secret；照 README 即可。期間 README 補上 PAT 步驟；sandbox 為端到端另設 `max_turns: 400` | not measured |
+| C8 可部署性 | pass — 部署者 repo 只新增 caller workflow、IDD 設定檔與兩個 secret；照 README 即可。期間 README 補上 PAT 步驟；sandbox 為端到端另設 `max_turns: 400` | pass — 只需 keychain 裡的 API key 與 PAT，照 README 執行 launcher；PAT 以 `che-keychain set --stdin` 存入（README 寫的是 `security add-generic-password`，效果相同） |
 
 ## 證據
 
@@ -91,6 +91,16 @@
   - verify 報告（https://github.com/PsychQuant/idd-cloud-sandbox/issues/3#issuecomment-6188138093）：「manual fan-out (4 lens Agents + sequenced DA, model: opus) + Codex … — **Codex leg did not run** (see Process Gaps)」；Process Gaps 說明 `codex-call` 是 macOS 專用 Swift script，在 Linux runner 編譯失敗、也沒有 Codex 認證，以 fail-closed 記為 INFO。
   - agent 回報的退化：`.claude/` 在沙箱內唯讀，unattended 狀態檔、附件資料夾、tree lock 都建不了（各自有文件化的 fallback）；verify reviewer 寫不了自己的 findings 檔，由主 agent 轉存；發 comment 的腳本缺 Python Markdown 套件，agent 自行裝到 `$TMPDIR`；`git push -u` 寫不了 upstream 設定。
   - https://github.com/PsychQuant/idd-cloud-sandbox/actions/runs/38707216442 、https://github.com/PsychQuant/idd-cloud-sandbox/pull/4
+
+### Managed Agents — C3、C4、C8（task 5.1，2026-10-15）
+
+- 基準：08:47Z 讀 che830621 的帳務頁：**US$133.42 promotional credit available**（SDK 路線的實測都已結束）。
+- 照 README Route B 執行 `ma_run.sh`（prompt「Reply with the single word OK and nothing else.」、`--max-wait-minutes 15`），使用者在兩次 keychain 授權視窗按「允許」。
+  - environment `env_01UW16BQbepRgin5sGTjXq72`、agent `agent_01SwmYE3J3TEQTsPZPRQDfUk`、vault `vlt_011Cg3jSGjzPZZjtkXEBKZ35`、session `sesn_01VfLMyoN3pfrNUvcsiBu6Zc`。
+  - 08:47:36 running → 08:47:51 idle，`stop_reason=end_turn`，最後訊息 `OK`；usage：`input_tokens 4`、`output_tokens 4`、`cache_creation 5m 8458`、`active_seconds 1.786`、`list_cost 2`（美分）。模型 Sonnet 5.5。
+  - 結束時封存 vault（存放的 PAT 已清除）。事件 9 筆：status_running、user.message、model_request、agent.message、usage、status_idle。
+- 08:48Z 重讀：**US$133.40**，減少 US$0.02，與 `list_cost` 一致。
+- 與 SDK 路線相比：同樣只回一個字，SDK（Opus 5.5、載入四個 plugin）US$0.097，Managed Agents（Sonnet 5.5、未載入 plugin）US$0.02；差距主要來自模型與 plugin 內容的固定成本。
 
 ## 待記錄的觀察
 
