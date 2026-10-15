@@ -1202,12 +1202,12 @@ out=$(p5_run bug direct-commit); rc=$?
 assert_eq "phase 5 (run): direct-commit makes no issue fetch, so a failing gh cannot abort it (r2 #5)" "0" "$rc"
 out=$(p5_run bug PR "" ); rc=$?
 assert_eq "phase 5 (run): a failed comment fetch on the PR path stops before pushing" "1" "$rc"
+refute_grep "phase 5 (run): ... and never pushes" 'PUSH-CALLED' "$out"
 out=$( UW_TYPE=bug N=7 GITHUB_REPO= CWD=/nonexistent PATH_AXIS=PR IN_CHAIN= BRANCH=idd/7-x CLAUDE_PLUGIN_ROOT="$HERE/../../.." bash -c "$p5ok_stub"$'\n'"$P5_SRC" 2>&1 ); rc=$?
 assert_eq "phase 5 (run): a lost GITHUB_REPO stops before pushing (r6 #14)" "1" "$rc"
 refute_grep "phase 5 (run): ... and never pushes" 'PUSH-CALLED' "$out"
 out=$( N=7 GITHUB_REPO=o/r CWD=/nonexistent PATH_AXIS=PR IN_CHAIN= BRANCH=idd/7-x CLAUDE_PLUGIN_ROOT="$HERE/../../.." bash -c 'git() { case "$*" in *push*) echo PUSH-CALLED ;; esac; return 0; }; gh() { case "$1" in api) echo "not json" ;; pr) echo PR-CALLED ;; esac; }'$'\n'"$P5_SRC" 2>&1 ); rc=$?
 assert_eq "phase 5 (run): an unreadable comment list stops before pushing (r6 #12)" "1" "$rc"
-refute_grep "phase 5 (run): ... and never pushes" 'PUSH-CALLED' "$out"
 refute_grep "phase 5 (run): ... and never pushes" 'PUSH-CALLED' "$out"
 # r2 (#9): the meeting report carries the #123 cleanup and names the Action-items section
 assert_output_grep "idd-all: the meeting report clears the unattended flag (#123)" 'meeting report 印出後同樣 `clear_unattended "$CWD"`' "$IA_"
@@ -1318,8 +1318,10 @@ mkdir "$RWD/b" && uw_repo "$RWD/b" && out=$( cd "$RWD/b" && raw_env "$RAW_TRUSTE
 assert_eq "author filter (run): ... positive control: a MEMBER's meeting Diagnosis is unwound" "main" "$(git -C "$RWD/b" branch --show-current)"
 # r6 #14 / #12 in the unwind: lost GITHUB_REPO is loud; an unreadable list only warns
 mkdir "$RWD/c" && uw_repo "$RWD/c" && out=$( cd "$RWD/c" && N=7 GITHUB_REPO= CWD="$RWD/c" PATH_AXIS=PR CLAUDE_PLUGIN_ROOT="$HERE/../../.." bash -c 'gh() { echo GH-CALLED; }'$'\n'"$UW_SRC" 2>&1 ); rc=$?
-assert_eq "unwind (run): a lost GITHUB_REPO is a loud failure (r6 #14)" "1" "$rc"
+assert_eq "unwind (run): a lost GITHUB_REPO does not abort the run (PR #398 review; r4 #3)" "0" "$rc"
+assert_grep "unwind (run): ... it names the lost shell state" 'GITHUB_REPO is empty (shell state lost)' "$out"
 refute_grep "unwind (run): ... before any gh call" 'GH-CALLED' "$out"
+assert_eq "unwind (run): ... and the branch is left as is" "idd/7-x" "$(git -C "$RWD/c" branch --show-current)"
 mkdir "$RWD/d" && uw_repo "$RWD/d" && out=$( cd "$RWD/d" && N=7 GITHUB_REPO=o/r CWD="$RWD/d" PATH_AXIS=PR CLAUDE_PLUGIN_ROOT="$HERE/../../.." bash -c 'gh() { echo "not json"; }'$'\n'"$UW_SRC" 2>&1 ); rc=$?
 assert_eq "unwind (run): an unreadable comment list only warns (r6 #12)" "0" "$rc"
 assert_grep "unwind (run): ... saying so" 'comment list of #7 is not readable' "$out"
@@ -1383,6 +1385,7 @@ assert_eq "idd-diagnose (run): a non-numeric issue number does not stop diagnosi
 assert_grep "idd-diagnose (run): ... it is not trusted" 'BODY_MEETING_TRUSTED=no' "$out"
 refute_grep "idd-diagnose (run): ... and no gh call is made" 'GH-CALLED' "$out"
 assert_eq "idd-diagnose (run): the trust line names its issue (r6 #22)" "#7 issue author association: OWNER → BODY_MEETING_TRUSTED=yes" "$(dg_run 7 OWNER)"
+assert_eq "idd-diagnose (run): an issue number written as #7 is still looked up (PR #398 review)" "#7 issue author association: OWNER → BODY_MEETING_TRUSTED=yes" "$(dg_run '#7' OWNER)"
 assert_output_grep "idd-diagnose: a body meeting needs BODY_MEETING_TRUSTED=yes" '只有下方採信判斷印出 `BODY_MEETING_TRUSTED=yes` 才採用' "$ID_"
 assert_output_grep "idd-diagnose: inference never yields meeting"               '推斷永遠不得產生 `meeting`' "$ID_"
 refute_output_grep "idd-diagnose: no bare 'default non-meeting' that inference could override" '依內容推斷，**預設非 meeting**' "$ID_"

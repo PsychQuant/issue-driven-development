@@ -203,14 +203,15 @@ gh issue view $NUMBER --repo $GITHUB_REPO --json title,body,labels,comments
 
 ```bash
 # issue 號進 REST path 前先驗型；不是數字就不查、視同不受信任——不中止 diagnose（r6 #18：只有本文宣告 meeting 時才用得到這個結果）
-ISSUE_AUTHOR_ASSOC=""
-case "$NUMBER" in
+# 先剝掉開頭的 `#`（`/idd-diagnose #7` 的寫法），否則維護者本文的 meeting 會被當成不受信任（PR #398 review）
+ISSUE_AUTHOR_ASSOC=""; ISSUE_NUM="${NUMBER#\#}"
+case "$ISSUE_NUM" in
   ''|*[!0-9]*) ;;
-  *) ISSUE_AUTHOR_ASSOC=$(gh api "repos/$GITHUB_REPO/issues/$NUMBER" --jq '.author_association // ""' 2>/dev/null) || ISSUE_AUTHOR_ASSOC="" ;;
+  *) ISSUE_AUTHOR_ASSOC=$(gh api "repos/$GITHUB_REPO/issues/$ISSUE_NUM" --jq '.author_association // ""' 2>/dev/null) || ISSUE_AUTHOR_ASSOC="" ;;
 esac
 case "$ISSUE_AUTHOR_ASSOC" in OWNER|MEMBER|COLLABORATOR) BODY_MEETING_TRUSTED=yes ;; *) BODY_MEETING_TRUSTED=no ;; esac
 # 行首帶 issue 號：batch 模式逐張跑時，不得把上一張的判定套到下一張（r6 #22）
-printf '#%s issue author association: %s → BODY_MEETING_TRUSTED=%s\n' "$NUMBER" "${ISSUE_AUTHOR_ASSOC:-unknown}" "$BODY_MEETING_TRUSTED"
+printf '#%s issue author association: %s → BODY_MEETING_TRUSTED=%s\n' "$ISSUE_NUM" "${ISSUE_AUTHOR_ASSOC:-unknown}" "$BODY_MEETING_TRUSTED"
 ```
 
 ### Step 1.5: 下載 Attachment(強制)

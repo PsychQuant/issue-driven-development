@@ -632,8 +632,9 @@ fi
 # type 只信最新受信任 Diagnosis 的 ### Type，不看 issue 本文（r4 #19／#35：本文由 issue 作者自由改寫）。
 # 先判 type（只需要 issue 號）：非 meeting 的 run 不因下面任何 shell 狀態遺失而中止（r4 #3／#8、r5 #10）
 . "$CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh" || { echo "FATAL: meeting unwind: actionability helper missing — branch left as is" >&2; exit 1; }
-# GITHUB_REPO 是 Phase 0.3 的 shell 狀態。遺失不是暫時性的 fetch 失敗：明講（r6 #14，同 r3 #2 對 PATH_AXIS 的處理）
-[ -n "${GITHUB_REPO:-}" ] || { echo "FATAL: meeting unwind: GITHUB_REPO is empty — the shell state was lost; re-run its resolution. Branch left as is" >&2; exit 1; }
+# GITHUB_REPO 是 Phase 0.3 的 shell 狀態，少了它就讀不到 type。讀不到 type 時與 fetch 失敗同樣只警告、不中止：
+# 非 meeting 的 run 不因 shell 狀態遺失而中止（r4 #3／#8）。訊息分開寫，看得出是遺失而不是暫時性失敗（r6 #14、PR #398 review）
+[ -n "${GITHUB_REPO:-}" ] || { echo "⚠ meeting unwind: GITHUB_REPO is empty (shell state lost) — cannot read the Diagnosis type of #$N; branch left as is. If #$N is a meeting issue, re-run the repo resolution and then the unwind, or commit .claude/.idd/attachments/issue-$N on the idd/$N-* branch and return to the default branch by hand"; exit 0; }
 # 查詢失敗時不知道 type：branch 原樣保留本來就是非 meeting run 該有的結果，所以只警告、不中止（r5 #14）
 UW_PAGES=$(gh api "repos/$GITHUB_REPO/issues/$N/comments" --paginate --jq '[.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") | .body | select(split("\n") | any(startswith("## Diagnosis")))]') \
   || { echo "⚠ meeting unwind: could not read the Diagnosis type of #$N (comment fetch failed) — branch left as is; if #$N is a meeting issue, commit .claude/.idd/attachments/issue-$N on the idd/$N-* branch and return to the default branch by hand"; exit 0; }
@@ -1283,7 +1284,7 @@ fi
 | Diagnosis 缺 `### Complexity` 區段(helper cexit=4) | Phase 2 abort,提示手動跑 idd-diagnose。**非 meeting;meeting 只在完全沒有受信任的 Diagnosis 時才 abort**——有 Diagnosis 的 meeting 走分派表的 meeting 列(#383 verify r2) |
 | Phase 4 type guard:issue 號不是數字、helper 缺失,或最新受信任 Diagnosis 記 meeting(Phase 2 之後 type 被改了)| Phase 4 abort,**不 verify、不 push**;本次做過的 commits 原地保留,訊息提醒查 git log,沒有 commit 時去跑 meeting unwind;照下方 abort 職責 `clear_unattended`(#383 verify r5 #11、#12)。**`GITHUB_REPO` 遺失、comment fetch 或 jq 失敗不 abort**:讀不到 type 時照 Phase 2 選的 code 路線進 verify,只印警告(r6 #2、#14)|
 | Phase 5 type guard 失敗(PR 路徑):issue 號不是數字、helper 缺失、`GITHUB_REPO` 遺失、comment fetch 失敗、comment 清單無法用 jq 讀取,或最新受信任 Diagnosis 記 meeting | Phase 5 abort,**不 push、不開 PR**;branch 與 commits 保留,照下方 abort 職責 `clear_unattended`。direct-commit / `--in-chain` 不跑這個 guard(#383 verify r2、r5) |
-| meeting unwind 失敗(helper、`GITHUB_REPO` 遺失、`CWD` 遺失、manifest commit、checkout 任一步) | Phase 2 abort,印出停在哪個 branch;不刪任何 branch(#383 verify r2、r5 #10、r6 #14)。**comment fetch 或 jq 失敗不 abort**:不知道 type 時 branch 原樣保留本來就是非 meeting run 該有的結果,只印警告,說明若是 meeting 要怎麼手動收(r5 #14)|
+| meeting unwind 失敗(helper、`CWD` 遺失、manifest commit、checkout 任一步) | Phase 2 abort,印出停在哪個 branch;不刪任何 branch(#383 verify r2、r5 #10)。**`GITHUB_REPO` 遺失、comment fetch 或 jq 失敗不 abort**:不知道 type 時 branch 原樣保留本來就是非 meeting run 該有的結果,只印警告,說明若是 meeting 要怎麼手動收(r5 #14)|
 | actionability gate 判 not-actionable(`VEXIT=1`:`### Complexity` 不可路由 exit 3/4/5、`parking-lot` label、`### Blocking` 非空)| Phase 2 abort,印出 `$REASONS` 與原文(`$COMPLEXITY_ERR` / label 名 / `$BLOCK_LINE`);不截斷、不降級成任何 tier;`complexity-deferral-marker` / `parking-lot-label` 是合法延期狀態,不要求「修正」|
 | spectra-discuss 沒 emit `Conclusion:` line(unattended hint 失敗)| Re-prompt 一次;再失敗 abort,branch 保留 |
 | spectra-propose 沒 emit `Change:` line | 同上 |

@@ -71,6 +71,7 @@
 - [x] 11.2 `idd-all`：Phase 4 只在確定讀到 meeting 時中止，讀不到 type 時警告後照常 verify；Phase 5 與 unwind 補 `GITHUB_REPO` 檢查，錯誤處理掛在 jq 那一步；中止訊息不再宣稱一定 implement 過；Phase 6 依實際路線選報告、重讀只做交叉核對、Action items 先於清理、查不到 type 只在 unattended 時列（#1、#2、#8、#9、#11、#12、#13、#14、#17、#23、#27、#29、#32）。驗證：Phase 4／5、unwind、Phase 6 新增情境實跑
 - [x] 11.3 （#3）作者過濾以原始 comment 清單實跑：unwind、Phase 4、Phase 5、Phase 6 各一列「外部作者的 meeting Diagnosis 被忽略」與一列 MEMBER 正向對照。驗證：刪掉 idd-all 的作者過濾後，這四列全部失敗
 - [x] 11.4 文件：spec delta 補 code run 中途讀到 meeting 的 scenario、兩個 label 與 `### Type` 行的規則與 scenario；proposal Success Criteria 與 design 的 Behavior／Acceptance／Interface；`actionability.sh` contract-4 註解與 reference 改為五步邊界；reference 信任說法寫明是指示、適用範圍與限制；tasks 註記；CHANGELOG 新增 Changed、修正 Action item 說法；plugin 描述（#5、#6、#7、#15、#26、#31、#33）。follow-up：#397（程式層 backstop、自動加的 label、舊 Diagnosis、查不到時的處理）
+- [x] 11.5 PR #398 review（獨立 reviewer 審 tag 之後兩個 commit，無 blocking）：unwind 遺失 `GITHUB_REPO` 改為警告不中止（避免非 meeting run 被擋，回到 r4 #3 的原則）；spec scenario 限定「讀得到 type 時」；label 規則寫成「唯一的 IDD type label」；idd-diagnose 先剝 issue 號開頭的 `#`；Phase 5 測試斷言歸位。Phase 6 Action items 不看路線那一項併入 #384。驗證：`test.sh` 943 passed
 
 ## 實作備註
 
