@@ -52,11 +52,19 @@
 - [x] 9.2 helper：`_Blocks`（parser 的不透明區塊、頂層標題、分隔線）取代逐行判斷；受管區改為逐行比對（含 Clarity Surface 子標題）；`check-correction` 整則保留開頭標題、lazy continuation；`compose-correction` 保留全部 IDD 標記並做不變量檢查；引號與 NUL；`--correct` 需要內文；`validate-target` 的 mode 判斷順序與 exit 1；`existing-mentions`；sidecar 獨佔；巢狀 repo 與大小寫檢查；parser exit 8。hook：遞迴 chmod、`-m` 只對訊息指令。驗證：9.1 的 helper 與 hook 斷言轉綠，`idd-edit`、`idd-edit-contract` 全綠。
 - [x] 9.3 SKILL 與其他文件：私有工作目錄、stage-failed、egress 預檢與 mention、與預覽比對、讀回確認、exit 5、`--replace` 結束碼、eval 檢查、Step 1.5 的 exit 1；idd-comment 退路；規則檔、兩份 spec、design、proposal、CHANGELOG 的 bot 殘留與過頭宣稱；`git clean -X` 警告；idd-issue 措辭。驗證：`spectra validate`、`run-all-tests.sh` 全綠。
 - [x] 9.4 Verify 第 4 輪：FAIL，CRITICAL 為第 4 輪的工作目錄回歸（[report](https://github.com/PsychQuant/issue-driven-development/issues/351#issuecomment-6198383293)），follow-up #409、#410。
-- [ ] 10.5 套用 Proposed Correction（#351 正文 `## Related` 中 #347 那一行），在主 repo 以本 branch 的 helper 執行，讓歸檔留在長期存在的 clone。驗證：#351 正文。
+- [ ] 11.6 套用 Proposed Correction（#351 正文 `## Related` 中 #347 那一行），在主 repo 以本 branch 的 helper 執行，讓歸檔留在長期存在的 clone。驗證：#351 正文。
 
 ## 10. Verify 第 4 輪修正
 
 - [x] 10.1 先寫會失敗的測試（`in-place-correction` H 節、`correction-archive` I 節）：以 `TMPDIR=/var/tmp` 執行 SKILL 自己的工作目錄那一行再 archive（exit 0），路徑閘門對使用者暫存目錄放行、`/etc/hosts` 照擋；write-failed 桶與 exit 4、unverified exit 7、declined exit 9、idd-comment 的對應；`--last` 讀全部分頁；fence 內的範例標記不搬、不頂替；dashboard 第一行標記；GFM 表格；引文移進 HTML 註解或 fence；非 ASCII 的位元組跳脫；`## Current Status` 管到結尾；只有空白的內文、沒有 target；替換內容加入同級標題、分隔線、Current Status 變體；Step 1.5 的 exit 1 只限 `--correct`；idd-comment 作者無法判定改貼 errata；hook 的 repo 根目錄以上、gh-egress 與環境變數前綴、訊息值的重導向；archive 的追蹤檢查。驗證：新斷言以「尚未實作」失敗。
 - [x] 10.2 實作：helper（位元組跳脫、空白內文、沒有 target、表格規則、Current Status 範圍、`_verbatim_runs` 的隱藏判定、`_opening_line`、替換內容的結構檢查、compose 的開頭標記與 code 內標記、`_tracks_archive`、sidecar 錯誤）、hook（`INTERPRETERS`、環境變數前綴、`<`／`>`、`_archives_around`）、helper 路徑閘門放行使用者自己的暫存目錄（`/tmp` 固定前綴會被 verify-scratch-paths 擋，`$HOME` 會讓標記帶出使用者名稱）；SKILL（`WRITE_FAILED_TARGETS`、exit 7／9、Step 1.5、`--paginate`）、idd-comment 分流表。驗證：四個相關 suite 全綠。
 - [x] 10.3 spec 與文件：受管區條件依序編號並加入 (5)(6)、作者 requirement 改名並寫 exit 1、errata 退路、標記與 exit code、表格規則、引數的非 ASCII 與 target、archive 追蹤檢查、hook 的新規則；規則檔的 issue 作者；CHANGELOG 第 5 輪段落並修正第 4 輪段落的 exit code。驗證：`spectra validate`、`run-all-tests.sh` 全綠。
-- [ ] 10.4 決定下一步：直接跑 verify 第 5 輪，或先把 `--correct` 的流程搬進 helper（以假的 gh 做端到端測試）再驗。由使用者決定。
+- [x] 10.4 決定下一步：使用者 2026-10-16 選定先把 `--correct` 的流程搬進 helper（第 11 節），正文更正等流程定案後再套用。
+
+## 11. `--correct` 的流程搬進 helper
+
+- [x] 11.1 先寫會失敗的端到端測試 `plugins/issue-driven-dev/scripts/tests/correct-flow/`（假的 gh、`TMPDIR=/var/tmp`）：comment section 確認後更正並歸檔、拒絕後不留檔、預覽後目標變了、既有 mention 放行而新 mention 在 prepare 就被擋、寫入失敗、讀回不符 exit 7、抓不到原文、issue 正文經 `gh issue edit`、bot 作者、工作目錄被動過、受管區、不是 prepare 建的目錄。驗證：新 suite 以「尚未實作」失敗。
+- [x] 11.2 helper：拆出 `_archive_write`、`_compose`、`_existing_mentions`、`_correct_marker`；新增 `correct-prepare`、`correct-apply`、`correct-discard`（工作目錄驗證、sha256 狀態、行程內歸檔、gh-egress 寫入、讀回）。驗證：`correct-flow` 全綠，既有 suite 仍全綠。
+- [x] 11.3 SKILL：新增 Step 1.6，`--correct` 只呼叫三個子命令；刪除 Step 5.5 與 Steps 2–7 裡的 `--correct` 分支；task 清單改名；restore 範例的 `BACKUP_ID`。契約測試改指向 helper。驗證：`idd-edit`、`idd-edit-contract`、`in-place-correction` 全綠。
+- [x] 11.4 spec、design（新增 decision 與三個子命令的契約）、CHANGELOG。驗證：`spectra validate`。
+- [ ] 11.5 Verify 第 5 輪。驗證：#351 的 verify 留言。

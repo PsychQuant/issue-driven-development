@@ -131,6 +131,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`bash …/gh-egress.sh … --body`) and `NAME=value` prefixes, scans message values that contain a redirection, and
   denies a recursive permission change on a directory above the repository. The unclosed `<details>` case is #409;
   the coverage of the verbatim labels is #410.
+
+### Changed (round 6, before release)
+
+- **The `--correct` flow runs in the helper.** `correct-prepare` (read, author gate, checks, composed preview, egress
+  check), `correct-apply` (re-read, compare with the preview, archive, write through gh-egress, read back) and
+  `correct-discard` replace the skill's shell steps; the skill only prepares, shows the preview and applies or
+  discards. Four verify rounds kept finding defects in the shell version, which only string contracts covered; the
+  new `scripts/tests/correct-flow` suite runs the whole flow against a fake gh, with `TMPDIR` under `/var`. The
+  archive is written in-process, so the working copy no longer passes through the `--from-file` gate.
 - `idd-update` rebuilds Key Decisions on every run instead of only appending, so a corrected decision does not
   survive in the summary.
 - `/idd-edit --correct` re-reads the target after confirmation and refuses when it changed since the preview.

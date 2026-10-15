@@ -80,6 +80,10 @@ hook 腳本 `hooks/archive-read-guard.py` 用 stdlib `json` 解析 stdin，與 h
 
 OWNER 或目前 gh 使用者本人的 comment → 轉給 `idd-edit --correct`，不另貼 errata comment。其他人的 comment（含 bot）→ 只貼 errata comment，不再嘗試 prepend-note（舊流程會被 R5 擋下並印出 override 提示，而新規則下協作者 comment 不改，提示 override 會誤導）。
 
+### --correct 的流程在 helper，不在 SKILL 的 bash
+
+第 1 到第 4 輪 verify 每輪都在 SKILL.md 的 `--correct` bash 流程上找到缺陷，第 3、4 輪的 blocking 還都出自前一輪自己的修正（findings 42 → 52 → 63）。共同原因是這段流程（讀原文、檢查、組內文、egress、歸檔、寫入、讀回）只有字串層的契約測試，從沒有被實際執行過——第 4 輪的 CRITICAL（macOS 的 `$TMPDIR` 被路徑閘門擋下）就是這樣溜過去的。這與 #154 → #155 同類，處理方式也相同：流程搬進 helper 的 `correct-prepare`／`correct-apply`／`correct-discard`，SKILL 只剩「準備、顯示預覽、套用或丟棄」，`scripts/tests/correct-flow/` 用假的 gh 端到端地跑整條流程（含 `TMPDIR` 在 `/var` 下的情況）。歸檔改在行程內呼叫，不再經過 `--from-file` 的路徑閘門。使用者 2026-10-16 選定此做法。
+
 ## Implementation Contract
 
 **helper 子命令（`plugins/issue-driven-dev/scripts/idd-edit-helper.py`）**
@@ -91,6 +95,9 @@ OWNER 或目前 gh 使用者本人的 comment → 轉給 `idd-edit --correct`，
 | `check-correction <old-file> <section-heading|-> <new-file>` | 原文、目標段落（`-` 表示整則 comment）、新段落 | 無輸出，exit 0 | 受管區或 verbatim 區塊被改 → exit 6，stderr 指名區域與負責 skill |
 | `validate-target <comment-id|issue:<N>> <repo> <override> [<mode>]` | 新增 `issue:<N>`（檢查 issue 作者）與「目前登入的 gh 使用者本人」放行（四種 mode 都適用）；第 4 個參數為 `--correct` 時只放行 OWNER 與本人（bot 不放行、override 不適用，判斷在 override 之前）；test mode 不呼叫 `gh api user`，`GH_USER` 只在作者資料也是 mock 時採用 | exit 0 | 作者不是 OWNER、bot 或目前登入的 gh 使用者（且未 override）→ exit 4；`--correct` 時 bot 或他人 exit 4，訊息指向 errata、不提 override；`--correct` 且查不到 gh 使用者 → exit 1 |
 | `compose-correction <old-file> <section|-> <body-file> <marker>` | 原文、目標段落（`-` 為整則）、更正內容、標記（預覽用 `(assigned after confirmation)` 佔位） | 寫入用的完整內文：段落換成新內容，開頭重複的目標標題去掉，區段內所有整行 IDD 標記（`<!-- idd:… -->`）保留一次、放在新標記之前 | 檔案不可讀 → exit 5；標記格式不符 → exit 2；段落不存在 → exit 1；組好的內文在區段外的解析結果改變、或標記不自成 HTML 區塊／落在 code 裡（替換內容留下沒關閉的 fence 或 HTML 註解）→ exit 6；Markdown parser 缺或版本不符 → exit 8 |
+| `correct-prepare --target T --repo R (--section H \| --scope whole-comment) --body-file F [--scrub-attested L]` | 目標、repo、範圍、更正內容 | stdout `WORK=`、`PREVIEW=`；工作目錄（使用者暫存目錄下、0700）存 backup、body、preview 與帶 sha256 的 state.json | 參數錯 → exit 2；body file 被擋 → exit 5；其餘拒絕 → exit 4 並印 `RESULT=refused`、`REASON=`（R5、author-unknown、fetch-failed、protected、section-not-found、parser-unavailable、egress、check-failed），工作目錄刪除 |
+| `correct-apply --work W` | prepare 印出的工作目錄 | `RESULT=edited`、`BACKUP_ID=`、`URL=`；結束時刪除工作目錄 | 不是 prepare 建的目錄 → exit 2；檔案被動過、重組不等於預覽 → `differs-from-preview`；重抓失敗 → `fetch-failed`；目標變了 → `changed-since-preview`；歸檔失敗 → `archive`；egress 拒絕 → `egress`（以上 exit 4）；gh 寫入失敗 → `RESULT=write-failed`（exit 4，歸檔已寫）；讀回不符 → `RESULT=unverified`（exit 7） |
+| `correct-discard --work W` | 同上 | 刪除工作目錄 | 不是 prepare 建的目錄 → exit 2 |
 | `existing-mentions <file>` | 目標原文 | 以逗號分隔的、原文已經提及的帳號（用 gh-egress 同一個 parser 與 token 規則） | 掃描失敗 → exit 1 |
 | `section-replace ... [--stop-at-rule]` | 既有子命令，新增 `--stop-at-rule` | 取代後全文 | 段落邊界取自 Markdown parser：同級或更高的頂層標題（含 setext）；`--stop-at-rule` 時另有頂層分隔線與受管標題；code、HTML 區塊內的行不結束段落；`--section` 不是標題 → exit 2；parser 缺或版本不符 → exit 8，不改任何東西 |
 | `parse-args` | — | 每個值 eval 後與原值相同：含換行或控制字元的值用 ANSI-C quoting，`=` 一律跳脫 | `--section` 不是 markdown 標題行 → exit 2（每個 mode）；`--correct` 沒有替換內容 → exit 2；`--body-file` 含 NUL → exit 5 |

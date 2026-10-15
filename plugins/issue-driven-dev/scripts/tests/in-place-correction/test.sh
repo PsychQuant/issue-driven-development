@@ -193,8 +193,8 @@ assert_grep "verbatim-preserve names Original text quotations" "Original text" "
 refute_grep "verbatim-preserve no longer claims the whole body above ---" "Issue body above the \`---\` separator" "$VERBATIM"
 
 assert_output_grep "idd-edit declares the category" "(category: in-place-correction)" "$SKILLS/idd-edit/SKILL.md"
-assert_output_grep "idd-edit lists the check_correction task" "check_correction" "$SKILLS/idd-edit/SKILL.md"
-assert_output_grep "idd-edit lists the archive_before_patch task" "archive_before_patch" "$SKILLS/idd-edit/SKILL.md"
+assert_output_grep "idd-edit lists the correct_prepare task" "correct_prepare" "$SKILLS/idd-edit/SKILL.md"
+assert_output_grep "idd-edit lists the correct_apply task" "correct_apply" "$SKILLS/idd-edit/SKILL.md"
 
 ERRATA="$(awk '/^#### Template: `errata`/{f=1} f&&/^#### Template: /&&!/errata/{exit} f' "$SKILLS/idd-comment/SKILL.md")"
 assert_grep "errata routes OWNER/bot targets to idd-edit --correct" "--correct" "$ERRATA"
@@ -299,7 +299,10 @@ assert_output_grep "idd-update rebuilds Key Decisions from current comments" "æ¯
 for s in idd-verify idd-diagnose idd-reorganize; do
   assert_output_grep "$s stores replacement files under ~/.cache/idd/corrections" ".cache/idd/corrections" "$SKILLS/$s/SKILL.md"
 done
-assert_output_grep "idd-edit re-reads the target after confirmation" "changed since preview" "$SKILLS/idd-edit/SKILL.md"
+# Round 6: the --correct flow moved into the helper; its behavior is exercised
+# end to end in scripts/tests/correct-flow (re-read E3, fetch failure E7, â€¦).
+assert_output_grep "idd-edit delegates --correct to correct-apply" "correct-apply" "$SKILLS/idd-edit/SKILL.md"
+assert_output_grep "correct-apply re-reads the target after confirmation" 'return _refused("changed-since-preview")' "$HELPER"
 refute_output_grep "idd-edit has no global ISSUE_BODY_TARGET routing" "ISSUE_BODY_TARGET" "$SKILLS/idd-edit/SKILL.md"
 assert_output_grep "idd-comment errata self path takes --correction-file" "--correction-file" "$SKILLS/idd-comment/SKILL.md"
 refute_output_grep "idd-comment does not declare the in-place-correction category" "(category: in-place-correction)" "$SKILLS/idd-comment/SKILL.md"
@@ -406,8 +409,9 @@ fi
 
 # F2 + F11. skill contract: fetch failures and declines have their own buckets
 EDIT_SKILL="$SKILLS/idd-edit/SKILL.md"
-require "both gh fetches check the exit code (Step 2 and the re-read)" \
-  test "$(grep -c 'REFUSED_TARGETS+=("$TARGET fetch-failed")' "$EDIT_SKILL")" -ge 2
+assert_output_grep "Step 2 checks the fetch's exit code" 'REFUSED_TARGETS+=("$TARGET fetch-failed")' "$EDIT_SKILL"
+require "both --correct fetches refuse as fetch-failed (prepare and apply)" \
+  test "$(grep -c '_refused("fetch-failed"' "$HELPER")" -ge 2
 assert_output_grep "a missing section has its own refusal reason" "section-not-found" "$EDIT_SKILL"
 assert_output_grep "a declined preview cleans up and is reported" "declined" "$EDIT_SKILL"
 assert_output_grep "the preview shows the composed full text" "compose-correction" "$EDIT_SKILL"
@@ -532,7 +536,7 @@ run_helper g11 existing-mentions "$WORK/mentions.md"
 assert_eq "only the live mention is listed" "alice" "$(cat "$WORK/g11.out")"
 
 # G12. skill contracts
-assert_output_grep "egress is checked before anything is archived" 'gh-egress.sh" check' "$EDIT_SKILL"
+assert_output_grep "correct-prepare runs the egress check before anything is archived" '_egress(["check", "--body-file", preview' "$HELPER"
 assert_output_grep "existing mentions are attested" "existing-mentions" "$EDIT_SKILL"
 assert_output_grep "--replace checks section-replace's exit code" 'section-replace "$BACKUP_FILE" "$SECTION_FLAG" "$REPL_FILE") || {' "$EDIT_SKILL"
 assert_output_grep "a staging failure is recorded, not fatal" "stage-failed" "$EDIT_SKILL"

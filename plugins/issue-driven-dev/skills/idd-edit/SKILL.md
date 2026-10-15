@@ -119,9 +119,9 @@ TaskCreate(name="parse_and_resolve_target", description="Parse comment:<id> / #N
 TaskCreate(name="fetch_body_and_backup", description="gh api 取現 body 寫入本次執行的私有工作目錄（mktemp -d 於 ${TMPDIR:-/tmp}）；失敗 → fetch-failed")
 TaskCreate(name="show_original", description="顯示原 comment 前 30 行讓使用者看清楚要動什麼")
 TaskCreate(name="build_new_body", description="按 mode（append / replace / prepend-note）組新 body 字串")
-TaskCreate(name="check_correction", description="--correct only：helper check-correction 擋受管區與 Original text 引用區塊（exit 6；section 不存在 → section-not-found），再以 compose-correction 組出預覽全文")
-TaskCreate(name="preview_and_confirm", description="顯示新 body 並用 AskUserQuestion 確認；--replace / --correct 模式必須通過；--correct 顯示 compose-correction 組好的全文；拒絕 → 刪工作副本、記 declined")
-TaskCreate(name="archive_before_patch", description="--correct only：確認後重抓目標與預覽比對（不同 → changed since preview，拒絕），helper archive --from-file --repo 歸檔舊版（exit 7 → 不 PATCH），加 backup-id 標記、compose-correction 組出 NEW_BODY（與預覽同一個子命令，失敗即拒絕）；PATCH 後刪 /tmp 工作副本")
+TaskCreate(name="correct_prepare", description="--correct only（Step 1.6）：helper correct-prepare —— 讀原文、作者閘門、受管區與引文檢查、組出預覽全文、egress 預檢；拒絕 → REASON 進對應的桶")
+TaskCreate(name="preview_and_confirm", description="顯示新 body 並用 AskUserQuestion 確認；--replace / --correct 模式必須通過；--correct 讀 $CORRECT_PREVIEW 完整顯示；拒絕 → --correct 跑 correct-discard，記 declined")
+TaskCreate(name="correct_apply", description="--correct only（Step 1.6）：使用者確認後 helper correct-apply —— 重抓比對、重組比對預覽、歸檔、經 gh-egress 寫入、讀回確認；RESULT 決定進哪個桶")
 TaskCreate(name="execute_patch", description="經 gh-egress.sh edit-comment 派送 PATCH（#273 — 全網套用；rc>=10 → EGRESS_REFUSED 桶 warn-continue）；-F body=@file 避免 escape")
 TaskCreate(name="verify_and_report", description="re-fetch comment 比對寫入結果，輸出 ✓ Edit applied + diff summary")
 ```
@@ -303,6 +303,71 @@ case $VALIDATE_EXIT in
 esac
 ```
 
+### Step 1.6: `--correct` runs in the helper（#351）
+
+`(category: in-place-correction)` — 內容確定是錯的，使用者確認後就地取代。整條流程都在 helper 裡：讀原文、作者閘門、受管區與引文檢查、組出要寫入的全文、egress 預檢（原文已有的 mention 列為已確認），使用者確認後再重抓比對、重組比對預覽、歸檔、經 gh-egress 寫入、讀回確認。端到端測試在 `scripts/tests/correct-flow/`。之前這段寫在本 skill 的 bash 裡，四輪 verify 都在它身上找到缺陷，而它只有字串層的測試（#351）。`--correct` 不經過下面的 Steps 2–7。
+
+```bash
+if [ "$MODE" = "--correct" ]; then
+    REPL_FILE=$(mktemp "$WORK_DIR/repl-XXXXXX") || {
+        echo "✗ cannot stage the replacement text for $TARGET — skipped" >&2
+        REFUSED_TARGETS+=("$TARGET stage-failed"); continue; }
+    printf '%s\n' "$BODY_INPUT" > "$REPL_FILE"
+    SCRUB_LEVEL="${SCRUB_LEVEL:-warn}"   # 依 rules/privacy-scrubbing.md 解析（同 Step 6）
+    if [ -n "$SECTION_FLAG" ]; then
+        PREP_OUT=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" correct-prepare \
+            --target "$TARGET" --repo "$REPO" --section "$SECTION_FLAG" \
+            --body-file "$REPL_FILE" --scrub-attested "$SCRUB_LEVEL")
+    else
+        PREP_OUT=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" correct-prepare \
+            --target "$TARGET" --repo "$REPO" --scope whole-comment \
+            --body-file "$REPL_FILE" --scrub-attested "$SCRUB_LEVEL")
+    fi
+    PREP_RC=$?
+    rm -f "$REPL_FILE"
+    if [ "$PREP_RC" -ne 0 ]; then
+        # stderr 已說明原因；REASON ∈ R5 / author-unknown / fetch-failed / protected /
+        # section-not-found / parser-unavailable / egress / check-failed
+        PREP_REASON=$(printf '%s\n' "$PREP_OUT" | sed -n 's/^REASON=//p')
+        REFUSED_TARGETS+=("$TARGET ${PREP_REASON:-check-failed}")
+        continue
+    fi
+    CORRECT_WORK=$(printf '%s\n' "$PREP_OUT" | sed -n 's/^WORK=//p')
+    CORRECT_PREVIEW=$(printf '%s\n' "$PREP_OUT" | sed -n 's/^PREVIEW=//p')
+fi
+```
+
+用 Read 工具讀 `$CORRECT_PREVIEW` 並**完整**顯示（它是更正後的全文，不含舊版；`(assigned after confirmation)` 在確認後換成實際的 backup id），再用 AskUserQuestion 確認，預設 NO。
+
+使用者拒絕：
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" correct-discard --work "$CORRECT_WORK"
+DECLINED_TARGETS+=("$TARGET")
+continue
+```
+
+使用者確認：
+
+```bash
+APPLY_OUT=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" correct-apply --work "$CORRECT_WORK")
+APPLY_RC=$?
+APPLY_RESULT=$(printf '%s\n' "$APPLY_OUT" | sed -n 's/^RESULT=//p')
+APPLY_REASON=$(printf '%s\n' "$APPLY_OUT" | sed -n 's/^REASON=//p')
+case "$APPLY_RC:$APPLY_RESULT" in
+  0:edited)
+    echo "✓ $TARGET corrected"
+    printf '%s\n' "$APPLY_OUT" | sed -n 's/^URL=/  URL: /p; s/^BACKUP_ID=/  Backup id: /p'
+    EDITED_COUNT=$((EDITED_COUNT + 1)) ;;
+  7:*) UNVERIFIED_TARGETS+=("$TARGET") ;;                       # 已寫入、讀回不符
+  4:write-failed) WRITE_FAILED_TARGETS+=("$TARGET") ;;          # gh 自身錯誤，目標未變（歸檔已寫）
+  *) REFUSED_TARGETS+=("$TARGET ${APPLY_REASON:-check-failed}") ;; # changed-since-preview / differs-from-preview / archive / egress …
+esac
+continue   # Steps 2–7 are for --append / --replace / --prepend-note
+```
+
+helper 自己算歸檔路徑；**本 skill 執行的 bash 不寫出歸檔路徑**，否則會被 archive-read-guard hook 擋下。GitHub 沒有條件式寫入，apply 重抓到寫入之間仍有極短的競爭窗。
+
 ### Step 2: Fetch current body + backup
 
 ```bash
@@ -312,11 +377,7 @@ esac
 BACKUP_FILE=$(mktemp "$WORK_DIR/${TARGET_KIND}-${TARGET_NUM}-XXXXXX") || {
   echo "✗ cannot stage the working copy of $TARGET — skipped" >&2
   REFUSED_TARGETS+=("$TARGET stage-failed"); continue; }
-if [ "$TARGET_KIND" = "issue" ]; then
-    TARGET_ENDPOINT="repos/$REPO/issues/$TARGET_NUM"            # issue body (--correct only)
-else
-    TARGET_ENDPOINT="repos/$REPO/issues/comments/$COMMENT_ID"
-fi
+TARGET_ENDPOINT="repos/$REPO/issues/comments/$COMMENT_ID"   # issue bodies are --correct only (Step 1.6)
 if ! gh api "$TARGET_ENDPOINT" --jq '.body' > "$BACKUP_FILE"; then
     # An empty file is not the target's body: comparing two failed fetches
     # would match and archive nothing (verify #351 round 2).
@@ -423,58 +484,7 @@ fi
 
 #### Mode: `--correct`（#351）
 
-`(category: in-place-correction)` — 內容確定是錯的，使用者確認後就地取代。先檢查保護區，再預覽；**歸檔與標記在 Step 5.5（確認之後）**，所以這一步只準備取代內容，不產生 `NEW_BODY`。
-
-```bash
-REPL_FILE=$(mktemp "$WORK_DIR/repl-XXXXXX") || {
-  echo "✗ cannot stage the replacement text for $TARGET — skipped" >&2
-  rm -f "$BACKUP_FILE"; REFUSED_TARGETS+=("$TARGET stage-failed"); continue; }
-printf '%s\n' "$BODY_INPUT" > "$REPL_FILE"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
-    check-correction "$BACKUP_FILE" "${SECTION_FLAG:--}" "$REPL_FILE"
-CHECK_RC=$?
-if [ "$CHECK_RC" -ne 0 ]; then
-    rm -f "$REPL_FILE" "$BACKUP_FILE"
-    case $CHECK_RC in
-      6) REFUSED_TARGETS+=("$TARGET protected") ;;          # stderr 已指名區域與負責的 skill
-      1) REFUSED_TARGETS+=("$TARGET section-not-found") ;;
-      8) REFUSED_TARGETS+=("$TARGET parser-unavailable") ;; # 安裝 scripts/requirements-egress.txt
-      *) REFUSED_TARGETS+=("$TARGET check-failed") ;;
-    esac
-    continue
-fi
-# The preview is the text that will be written: the same subcommand composes
-# it again in Step 5.5 with the real backup id (verify #351 round 2 — the
-# preview used to show only the replacement, not the assembled body).
-PLACEHOLDER_MARKER='<!-- idd:edit mode="correct" backup-id="(assigned after confirmation)" -->'
-PREVIEW_BODY=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
-    compose-correction "$BACKUP_FILE" "${SECTION_FLAG:--}" "$REPL_FILE" "$PLACEHOLDER_MARKER") || {
-    COMPOSE_RC=$?
-    rm -f "$REPL_FILE" "$BACKUP_FILE"
-    case $COMPOSE_RC in
-      6) REFUSED_TARGETS+=("$TARGET protected") ;;          # a fence or HTML comment left open
-      8) REFUSED_TARGETS+=("$TARGET parser-unavailable") ;;
-      *) REFUSED_TARGETS+=("$TARGET check-failed") ;;
-    esac
-    continue
-}
-# The egress gates run on the composed body BEFORE the preview, so a body that
-# gh-egress would refuse never reaches confirmation or the archive (verify #351
-# round 3 — a refusal after archiving left an orphan entry each time).
-PREVIEW_FILE=$(mktemp "$WORK_DIR/preview-XXXXXX") || {
-    rm -f "$REPL_FILE" "$BACKUP_FILE"; REFUSED_TARGETS+=("$TARGET stage-failed"); continue; }
-printf '%s\n' "$PREVIEW_BODY" > "$PREVIEW_FILE"
-SCRUB_LEVEL="${SCRUB_LEVEL:-warn}"   # 依 rules/privacy-scrubbing.md 解析（同 Step 6）
-if ! bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" check --body-file "$PREVIEW_FILE" \
-       --scrub-attested "$SCRUB_LEVEL" ${EXISTING_MENTIONS:+--mention-attested="$EXISTING_MENTIONS"}; then
-    rm -f "$PREVIEW_FILE" "$REPL_FILE" "$BACKUP_FILE"
-    REFUSED_TARGETS+=("$TARGET egress")   # stderr 已說明是哪一道（隱私、mention、…）
-    continue
-fi
-rm -f "$PREVIEW_FILE"
-```
-
-預覽（Step 5）顯示 `$PREVIEW_BODY` **全文**（不截斷），並註明「確認後舊版會歸檔、`(assigned after confirmation)` 換成實際的 backup id」。替換內容若以目標標題開頭，`compose-correction` 會去掉重複的那一行；同一段先前的更正標記會保留，新標記排在最後。
+見 Step 1.6，`--correct` 不經過這一步。
 
 #### Mode: `--prepend-note`
 
@@ -507,68 +517,13 @@ fi
 Confirm edit? (y/n)
 ```
 
-使用 AskUserQuestion。預設 NO（破壞性動作）。`--correct` 的預覽是 `$PREVIEW_BODY` 全文，不只首 40 行。
+使用 AskUserQuestion。預設 NO（破壞性動作）。（`--correct` 的預覽在 Step 1.6。）
 
 使用者拒絕（NO）時：
 
 ```bash
-# The working copies hold the wrong text; /tmp is outside the read guard.
-[ "$MODE" = "--correct" ] && rm -f "$REPL_FILE" "$BACKUP_FILE"
 DECLINED_TARGETS+=("$TARGET")
 continue
-```
-
-### Step 5.5: Archive before PATCH（`--correct` only）
-
-確認之後才歸檔，歸檔成功才 PATCH（使用者拒絕 = 刪掉工作副本、不留任何檔案）。helper 自己算歸檔路徑；**本 skill 執行的 bash 不寫出歸檔路徑**，否則會被 archive-read-guard hook 擋下。
-
-確認後先重抓目標：預覽期間若有人（或 `idd-update`）改過，這次更正會蓋掉那些修改，所以內容不同就拒絕（changed since preview），請使用者重跑。GitHub 沒有條件式寫入，重抓到 PATCH 之間仍有極短的競爭窗。
-
-```bash
-CURRENT_FILE=$(mktemp "$WORK_DIR/${TARGET_KIND}-${TARGET_NUM}-now-XXXXXX") || {
-    rm -f "$REPL_FILE" "$BACKUP_FILE"; REFUSED_TARGETS+=("$TARGET stage-failed"); continue; }
-if ! gh api "$TARGET_ENDPOINT" --jq '.body' > "$CURRENT_FILE"; then
-    echo "✗ cannot re-read $TARGET — nothing archived or written" >&2
-    rm -f "$CURRENT_FILE" "$REPL_FILE" "$BACKUP_FILE"
-    REFUSED_TARGETS+=("$TARGET fetch-failed")
-    continue
-fi
-if ! cmp -s "$BACKUP_FILE" "$CURRENT_FILE"; then
-    echo "✗ $TARGET changed since preview — nothing archived or written; run again to see the new version" >&2
-    rm -f "$CURRENT_FILE" "$REPL_FILE" "$BACKUP_FILE"
-    REFUSED_TARGETS+=("$TARGET changed-since-preview")
-    continue
-fi
-rm -f "$CURRENT_FILE"
-# What gets archived and written must be what was previewed: compose again with
-# the placeholder and compare, before anything is archived (verify #351 round 3).
-RECHECK_BODY=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
-    compose-correction "$BACKUP_FILE" "${SECTION_FLAG:--}" "$REPL_FILE" "$PLACEHOLDER_MARKER")
-if [ "$?" -ne 0 ] || [ "$RECHECK_BODY" != "$PREVIEW_BODY" ]; then
-    echo "✗ the body to be written differs from the preview — nothing archived or written" >&2
-    rm -f "$REPL_FILE" "$BACKUP_FILE"
-    REFUSED_TARGETS+=("$TARGET differs-from-preview")
-    continue
-fi
-BACKUP_ID=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
-    archive "$TARGET_KIND" "$TARGET_NUM" --from-file "$BACKUP_FILE" --repo "$REPO") || {
-    # exit 7：不在 git work tree / 路徑沒被 ignore / 寫入失敗；exit 5：路徑閘門 — 目標不動
-    rm -f "$REPL_FILE" "$BACKUP_FILE"
-    REFUSED_TARGETS+=("$TARGET archive")
-    continue
-}
-CORRECT_MARKER=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
-    emit-audit-marker edit mode=correct backup-id="$BACKUP_ID")
-# 標記是被取代區段的最後一行，不會落進 idd-update 管的 ## Current Status。
-# compose-correction 與預覽同一個子命令：`---`、受管標題與下一個同級標題結束
-# 區段，code block 裡的行不算；先前的更正標記保留在新標記之前。
-NEW_BODY=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
-    compose-correction "$BACKUP_FILE" "${SECTION_FLAG:--}" "$REPL_FILE" "$CORRECT_MARKER") || {
-    rm -f "$REPL_FILE" "$BACKUP_FILE"
-    REFUSED_TARGETS+=("$TARGET replace")   # archived already; target untouched
-    continue
-}
-rm -f "$REPL_FILE"
 ```
 
 ### Step 6: Execute PATCH
@@ -583,45 +538,31 @@ rm -f "$REPL_FILE"
 # same comment, and the loser's text is what gets published.
 TMP_BODY_FILE=$(mktemp "$WORK_DIR/new-XXXXXX") || {
   echo "✗ cannot stage the new body for $TARGET — skipped" >&2
-  [ "$MODE" = "--correct" ] && rm -f "$BACKUP_FILE"
   REFUSED_TARGETS+=("$TARGET stage-failed"); continue; }
 printf '%s\n' "$NEW_BODY" > "$TMP_BODY_FILE"   # printf, not echo: zsh echo rewrites backslashes (#330)
 
 # #273：comment surgery 進 egress 網 — 原 raw `gh api` PATCH 完全繞過所有網
 # （#226 rollout 的 tracked-separately 欠帳，於此結清）。
 SCRUB_LEVEL="${SCRUB_LEVEL:-warn}"   # 依 rules/privacy-scrubbing.md 解析（repo tier；互動預設 warn，#226 慣例）
-if [ "$TARGET_KIND" = "issue" ]; then
-    # issue 正文（--correct only）走 gh issue edit
-    bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit "$TARGET_NUM" \
-        --repo "$REPO" --body-file "$TMP_BODY_FILE" --scrub-attested "$SCRUB_LEVEL" \
-        ${EXISTING_MENTIONS:+--mention-attested="$EXISTING_MENTIONS"}
-else
-    bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit-comment "$COMMENT_ID" \
-        --repo "$REPO" --body-file "$TMP_BODY_FILE" --scrub-attested "$SCRUB_LEVEL" \
-        ${EXISTING_MENTIONS:+--mention-attested="$EXISTING_MENTIONS"}
-fi
+bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit-comment "$COMMENT_ID" \
+    --repo "$REPO" --body-file "$TMP_BODY_FILE" --scrub-attested "$SCRUB_LEVEL" \
+    ${EXISTING_MENTIONS:+--mention-attested="$EXISTING_MENTIONS"}
 EGRESS_RC=$?
 rm "$TMP_BODY_FILE"
 if [ "$EGRESS_RC" -ge 10 ]; then
     # wrapper refusal band（#227）— per-comment 分類消費 band（10–15）：
     # 記錄 + warn-continue（#158 語意 (i) 同款）。wrapper 已對本 target 印明確 stderr。
     EGRESS_REFUSED_TARGETS+=("$TARGET rc=$EGRESS_RC")
-    [ "$MODE" = "--correct" ] && rm -f "$BACKUP_FILE"
     continue
 elif [ "$EGRESS_RC" -ne 0 ]; then
     # 0 < rc < 10 = gh 自身錯誤（auth / network），非 refusal — 誠實分流，不進 refused 桶
     echo "✗ gh api PATCH failed for $TARGET (rc=$EGRESS_RC, gh 自身碼) — skip this target" >&2
-    [ "$MODE" = "--correct" ] && rm -f "$BACKUP_FILE"
     # Its own bucket and a non-zero exit: without it a single failed write ended
     # with exit 0 and idd-comment reported the comment as corrected (round 4).
     WRITE_FAILED_TARGETS+=("$TARGET rc=$EGRESS_RC")
     continue
 fi
-# --correct：舊版已在歸檔，刪掉 /tmp 工作副本（它含錯誤內容，且 hook 不擋 /tmp）
-[ "$MODE" = "--correct" ] && rm -f "$BACKUP_FILE"
 ```
-
-> `--correct` 的 PATCH 若失敗：歸檔已寫入但目標沒變。歸檔檔留著無害（不進 git、AI 讀不到）；重跑會產生新的 backup-id。
 
 ### Step 7: Verify edit + report
 
@@ -641,7 +582,7 @@ if [ "$UPDATED" != "$NEW_BODY" ]; then
 fi
 echo "✓ $TARGET updated"
 echo "  URL: $(gh api "$TARGET_ENDPOINT" --jq '.html_url')"
-[ "$MODE" = "--correct" ] && echo "  Backup id: $BACKUP_ID" || echo "  Backup: $BACKUP_FILE"
+echo "  Backup: $BACKUP_FILE"
 echo "  First 5 lines of new body: $(printf '%s\n' "$UPDATED" | head -5)"
 EDITED_COUNT=$((EDITED_COUNT + 1))
 ```
@@ -742,6 +683,7 @@ gh api "repos/$REPO/issues/comments/<id>" \
 **`--correct`**：舊版在 correction archive，用 backup id（標記裡那個）還原。內容直接送給 GitHub、不顯示；還原的是**整個**目標，更正之後的修改（例如 `idd-update` 重建的 Current Status）會一起被蓋掉，執行前用 AskUserQuestion 說明這點並確認。
 
 ```bash
+BACKUP_ID="<the backup-id in the comment's correction marker>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" restore "$BACKUP_ID" --repo "$REPO"
 ```
 

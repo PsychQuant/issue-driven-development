@@ -56,6 +56,7 @@ import html
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1150,22 +1151,18 @@ CORRECT_MARKER_RE = re.compile(
 IDD_MARKER_LINE_RE = re.compile(r"<!-- idd:[^\n]*-->")
 
 
-def compose_correction_subcmd(argv):
+def _compose(old_file, heading, body_file, marker):
     """Print the full corrected body: the section (or whole comment) replaced
     by the new text, the IDD markers it held, and the new marker last. The
     skill shows this exact text at confirmation and PATCHes it afterwards, so
     the preview is the write (verify #351 round 2)."""
-    if len(argv) != 4:
-        err("ERROR: compose-correction requires <old-file> <section-heading|-> <body-file> <marker>")
-        return 2
-    old_file, heading, body_file, marker = argv
     for f in (old_file, body_file):
         if not os.path.isfile(f) or not os.access(f, os.R_OK):
             err(f"ERROR: file not readable: {f}")
-            return 5
+            return 5, None
     if not CORRECT_MARKER_RE.fullmatch(marker):
         err("ERROR: the marker must be one emit-audit-marker wrote for mode=correct")
-        return 2
+        return 2, None
     old_lines = _lines_of(_read_normalized(old_file))
     body_lines = _read_normalized(body_file).split("\n")
     while body_lines and body_lines[-1].strip() == "":
@@ -1174,7 +1171,7 @@ def compose_correction_subcmd(argv):
         blocks = _Blocks(old_lines)
     except ParserUnavailable as e:
         err(f"ERROR: {e}; nothing was composed")
-        return EXIT_PARSER
+        return EXIT_PARSER, None
 
     if heading == "-":
         # Markers at the top stay at the top: a dashboard comment's first line
@@ -1189,7 +1186,7 @@ def compose_correction_subcmd(argv):
         rng = _section_range(old_lines, heading, stop_at_rule=True, blocks=blocks)
         if rng is None:
             err(f"ERROR: heading not found in input: {heading}")
-            return 1
+            return 1, None
         start, end = rng
         # A replacement that starts with the target heading would print it twice.
         if body_lines and body_lines[0] == heading:
@@ -1201,7 +1198,7 @@ def compose_correction_subcmd(argv):
         body_blocks = _Blocks(body_lines)
     except ParserUnavailable as e:
         err(f"ERROR: {e}; nothing was composed")
-        return EXIT_PARSER
+        return EXIT_PARSER, None
     # A marker inside a fenced example is text, not a marker (round 4): it is
     # neither carried nor allowed to stand in for a live one.
     in_body = {l for i, l in enumerate(body_lines) if i not in body_blocks.code}
@@ -1223,7 +1220,7 @@ def compose_correction_subcmd(argv):
         new_blocks = _Blocks(out)
     except ParserUnavailable as e:
         err(f"ERROR: {e}; nothing was composed")
-        return EXIT_PARSER
+        return EXIT_PARSER, None
     marker_lines = range(len(head) + len(body_lines) + 1, len(head) + len(region))
     broken = any(i in new_blocks.code or i not in new_blocks.html_starts for i in marker_lines)
     tail_at = len(head) + len(region) + 1
@@ -1238,10 +1235,19 @@ def compose_correction_subcmd(argv):
             "the marker or the text after the corrected region would render as code. "
             "Close it and try again (#351)."
         )
-        return 6
-    sys.stdout.write("\n".join(out) + "\n")
-    return 0
+        return 6, None
+    return 0, "\n".join(out) + "\n"
 
+
+
+def compose_correction_subcmd(argv):
+    if len(argv) != 4:
+        err("ERROR: compose-correction requires <old-file> <section-heading|-> <body-file> <marker>")
+        return 2
+    rc, text = _compose(*argv)
+    if rc == 0:
+        sys.stdout.write(text)
+    return rc
 
 def existing_mentions_subcmd(argv):
     """Logins the target already mentions, found exactly the way gh-egress finds
@@ -1251,16 +1257,278 @@ def existing_mentions_subcmd(argv):
     if len(argv) != 1 or not os.path.isfile(argv[0]):
         err("ERROR: existing-mentions requires <file>")
         return 2
+    ok, logins = _existing_mentions(argv[0])
+    if not ok:
+        return 1
+    print(logins)
+    return 0
+
+
+def _existing_mentions(path):
+    """(True, "a,b") with the logins `path` already mentions, or (False, "")."""
     scanner = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib", "mention_scan_text.py")
-    with open(argv[0], "rb") as fh:
+    with open(path, "rb") as fh:
         data = fh.read()
     proc = subprocess.run([sys.executable, scanner], input=data, capture_output=True)
     if proc.returncode != 0:
         err("ERROR: the mention scan failed (install scripts/requirements-egress.txt)")
-        return 1
+        return False, ""
     text = proc.stdout.decode("utf-8", errors="replace")
     logins = sorted({m for m in re.findall(r"(?:^|[^A-Za-z0-9_])@([A-Za-z0-9][A-Za-z0-9-]*)", text)})
-    print(",".join(logins))
+    return True, ",".join(logins)
+
+
+# ───────────────────────────────────────────────────────────────────────
+# Subcommands: correct-prepare / correct-apply / correct-discard (#351)
+# ───────────────────────────────────────────────────────────────────────
+# The whole --correct flow lives here, not in SKILL.md bash: four verify rounds
+# kept finding defects in a bash flow whose only tests were string contracts
+# (same class as #154 → #155). The skill now runs prepare, shows the preview,
+# then runs apply or discard; scripts/tests/correct-flow runs it end to end.
+#
+# stdout carries only KEY=value lines: WORK / PREVIEW from prepare; RESULT
+# (edited | refused | write-failed | unverified), REASON, BACKUP_ID, URL from
+# apply. Exit codes: 0 done, 2 usage, 4 not done (RESULT/REASON say why),
+# 5 body file refused, 7 written but not confirmed on read-back.
+CORRECT_WORK_PREFIX = "idd-correct-"
+PLACEHOLDER_MARKER = '<!-- idd:edit mode="correct" backup-id="(assigned after confirmation)" -->'
+_TARGET_RE = re.compile(r"(comment|issue):([0-9]+)")
+_SCRUB_LEVELS = ("enforce", "warn", "light")
+
+
+def _sha256(path):
+    import hashlib
+    with open(path, "rb") as fh:
+        return hashlib.sha256(fh.read()).hexdigest()
+
+
+def _gh(args):
+    try:
+        return subprocess.run(["gh"] + args, capture_output=True)
+    except FileNotFoundError:
+        return None
+
+
+def _endpoint(kind, num, repo):
+    return f"repos/{repo}/issues/comments/{num}" if kind == "comment" else f"repos/{repo}/issues/{num}"
+
+
+def _fetch_body(endpoint, dest):
+    proc = _gh(["api", endpoint, "--jq", ".body"])
+    if proc is None or proc.returncode != 0:
+        return False
+    with open(dest, "wb") as fh:
+        fh.write(proc.stdout)
+    return True
+
+
+def _egress(args):
+    """Run gh-egress.sh; its stdout goes to our stderr so stdout keeps only the
+    KEY=value lines. Returns the exit code."""
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gh-egress.sh")
+    proc = subprocess.run(["bash", script] + args, stdout=subprocess.PIPE)
+    if proc.stdout:
+        sys.stderr.write(proc.stdout.decode("utf-8", errors="replace"))
+    return proc.returncode
+
+
+def _correct_marker(backup_id):
+    stamp = re.search(r"-([0-9]{8})T", backup_id).group(1)
+    return f'<!-- idd:edit mode="correct" backup-id="{backup_id}" date="{stamp[:4]}-{stamp[4:6]}-{stamp[6:]}" -->'
+
+
+def _refused(reason, work=None, extra=()):
+    if work:
+        shutil.rmtree(work, ignore_errors=True)
+    print("RESULT=refused")
+    print(f"REASON={reason}")
+    for line in extra:
+        print(line)
+    return 4
+
+
+def _mention_args(mentions):
+    return [f"--mention-attested={mentions}"] if mentions else []
+
+
+def correct_prepare_subcmd(argv):
+    target, rest = _take_flag(argv, "--target")
+    repo, rest = _take_flag(rest, "--repo")
+    section, rest = _take_flag(rest, "--section")
+    scope, rest = _take_flag(rest, "--scope")
+    body_file, rest = _take_flag(rest, "--body-file")
+    scrub, rest = _take_flag(rest, "--scrub-attested")
+    scrub = scrub or "warn"
+    m = _TARGET_RE.fullmatch(target or "")
+    if rest or not m or not repo or not body_file or not _REPO_RE.fullmatch(repo) or ".." in repo:
+        err("ERROR: correct-prepare requires --target comment:<id>|issue:<n> --repo <owner/repo> "
+            "(--section <heading> | --scope whole-comment) --body-file <path> [--scrub-attested <level>]")
+        return 2
+    kind, num = m.group(1), m.group(2)
+    if bool(section) == bool(scope) or (scope and scope != "whole-comment"):
+        err("ERROR: pass exactly one of --section <heading> or --scope whole-comment")
+        return 2
+    if kind == "issue" and scope:
+        err("Refuse: an issue-body correction requires --section <heading> (#351).")
+        return 2
+    if section and not _ATX_HEADING_RE.fullmatch(section):
+        err(f"ERROR: --section must be a markdown heading line (got: {section})")
+        return 2
+    if scrub not in _SCRUB_LEVELS:
+        err(f"ERROR: --scrub-attested must be one of {', '.join(_SCRUB_LEVELS)}")
+        return 2
+    ok, code, content = read_body_file(body_file)
+    if not ok:
+        return code
+    if not content.strip():
+        err("Refuse: --correct needs the corrected text; the body file is empty (#351).")
+        return 2
+
+    work = tempfile.mkdtemp(prefix=CORRECT_WORK_PREFIX)   # mode 0700
+    backup, body, preview = (os.path.join(work, n) for n in ("backup.md", "body.md", "preview.md"))
+    with open(body, "w", encoding="utf-8") as fh:
+        fh.write(content)
+    endpoint = _endpoint(kind, num, repo)
+    # Read first: a target that cannot be read is fetch-failed, not an author
+    # question.
+    if not _fetch_body(endpoint, backup):
+        err(f"✗ cannot read {target} — nothing changed")
+        return _refused("fetch-failed", work)
+    rc = validate_target_subcmd([num if kind == "comment" else f"issue:{num}", repo, "false", "--correct"])
+    if rc != 0:
+        return _refused({4: "R5", 1: "author-unknown"}.get(rc, "check-failed"), work)
+    heading = section or "-"
+    rc = check_correction_subcmd([backup, heading, body])
+    if rc != 0:
+        return _refused({6: "protected", 1: "section-not-found", EXIT_PARSER: "parser-unavailable"}.get(rc, "check-failed"), work)
+    rc, text = _compose(backup, heading, body, PLACEHOLDER_MARKER)
+    if rc != 0:
+        return _refused({6: "protected", 1: "section-not-found", EXIT_PARSER: "parser-unavailable"}.get(rc, "check-failed"), work)
+    with open(preview, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    ok, mentions = _existing_mentions(backup)
+    if not ok:
+        return _refused("egress", work)
+    # The egress gates run before the preview, so a body gh-egress would refuse
+    # is never confirmed or archived (round 3). Mentions the target already had
+    # were published already; a mention the correction adds is still refused.
+    if _egress(["check", "--body-file", preview, "--scrub-attested", scrub] + _mention_args(mentions)) != 0:
+        return _refused("egress", work)
+    state = {
+        "target": target, "kind": kind, "num": num, "repo": repo, "heading": heading,
+        "scrub": scrub, "mentions": mentions,
+        "sha": {n: _sha256(os.path.join(work, n)) for n in ("backup.md", "body.md", "preview.md")},
+    }
+    with open(os.path.join(work, "state.json"), "w", encoding="utf-8") as fh:
+        json.dump(state, fh)
+    print(f"WORK={work}")
+    print(f"PREVIEW={preview}")
+    return 0
+
+
+def _own_work_dir(work):
+    """The working directory prepare made, else None: a direct child of this
+    user's temp directory with the prefix, a real directory owned by this user
+    and closed to others, holding state.json."""
+    if not work:
+        return None
+    real = os.path.realpath(work)
+    if (os.path.dirname(real) != os.path.realpath(tempfile.gettempdir())
+            or not os.path.basename(real).startswith(CORRECT_WORK_PREFIX)
+            or os.path.islink(work)):
+        return None
+    try:
+        st = os.lstat(real)
+    except OSError:
+        return None
+    if st.st_uid != os.getuid() or st.st_mode & 0o077 or not os.path.isfile(os.path.join(real, "state.json")):
+        return None
+    return real
+
+
+def correct_discard_subcmd(argv):
+    work, rest = _take_flag(argv, "--work")
+    real = _own_work_dir(work)
+    if rest or real is None:
+        err("ERROR: correct-discard requires --work <the WORK directory correct-prepare printed>")
+        return 2
+    shutil.rmtree(real, ignore_errors=True)
+    return 0
+
+
+def correct_apply_subcmd(argv):
+    work, rest = _take_flag(argv, "--work")
+    real = _own_work_dir(work)
+    if rest or real is None:
+        err("ERROR: correct-apply requires --work <the WORK directory correct-prepare printed>")
+        return 2
+    try:
+        return _correct_apply(real)
+    finally:
+        # The working copies hold the wrong text; nothing of them outlives apply.
+        shutil.rmtree(real, ignore_errors=True)
+
+
+def _correct_apply(work):
+    with open(os.path.join(work, "state.json"), encoding="utf-8") as fh:
+        state = json.load(fh)
+    backup, body, preview = (os.path.join(work, n) for n in ("backup.md", "body.md", "preview.md"))
+    for name in ("backup.md", "body.md", "preview.md"):
+        path = os.path.join(work, name)
+        if not os.path.isfile(path) or _sha256(path) != state["sha"][name]:
+            err(f"✗ {name} changed after the preview — nothing archived or written")
+            return _refused("differs-from-preview")
+    kind, num, repo, heading = state["kind"], state["num"], state["repo"], state["heading"]
+    endpoint = _endpoint(kind, num, repo)
+    current = os.path.join(work, "current.md")
+    if not _fetch_body(endpoint, current):
+        err(f"✗ cannot re-read {state['target']} — nothing archived or written")
+        return _refused("fetch-failed")
+    if _sha256(current) != state["sha"]["backup.md"]:
+        err(f"✗ {state['target']} changed since the preview — nothing archived or written; run again to see the new version")
+        return _refused("changed-since-preview")
+    rc, text = _compose(backup, heading, body, PLACEHOLDER_MARKER)
+    with open(preview, encoding="utf-8") as fh:
+        if rc != 0 or text != fh.read():
+            return _refused("differs-from-preview")
+    with open(backup, "rb") as fh:
+        rc, backup_id = _archive_write(kind, num, fh.read(), repo)
+    if rc != 0:
+        return _refused("archive")
+    rc, new_text = _compose(backup, heading, body, _correct_marker(backup_id))
+    if rc != 0:
+        return _refused("replace", extra=(f"BACKUP_ID={backup_id}",))
+    new_file = os.path.join(work, "new.md")
+    with open(new_file, "w", encoding="utf-8") as fh:
+        fh.write(new_text)
+    verb = ["edit-comment", num] if kind == "comment" else ["edit", num]
+    rc = _egress(verb + ["--repo", repo, "--body-file", new_file, "--scrub-attested", state["scrub"]]
+                 + _mention_args(state["mentions"]))
+    if rc >= 10:
+        return _refused("egress", extra=(f"BACKUP_ID={backup_id}",))
+    if rc != 0:
+        err(f"✗ gh failed the write for {state['target']} (rc={rc}); the archive {backup_id} stays, the target is unchanged")
+        print("RESULT=write-failed")
+        print(f"RC={rc}")
+        print(f"BACKUP_ID={backup_id}")
+        return 4
+    readback = os.path.join(work, "readback.md")
+    def _norm(s):
+        return s.replace("\r\n", "\n").rstrip("\n")
+    confirmed = _fetch_body(endpoint, readback)
+    if confirmed:
+        with open(readback, encoding="utf-8", errors="replace") as fh:
+            confirmed = _norm(fh.read()) == _norm(new_text)
+    if not confirmed:
+        err(f"⚠ {state['target']} was written but does not read back as sent — check it by hand")
+        print("RESULT=unverified")
+        print(f"BACKUP_ID={backup_id}")
+        return 7
+    proc = _gh(["api", endpoint, "--jq", ".html_url"])
+    url = proc.stdout.decode("utf-8", errors="replace").strip() if proc is not None and proc.returncode == 0 else ""
+    print("RESULT=edited")
+    print(f"BACKUP_ID={backup_id}")
+    print(f"URL={url}")
     return 0
 
 
@@ -1431,33 +1699,43 @@ def archive_subcmd(argv):
     if not os.path.isfile(from_file) or not os.access(from_file, os.R_OK):
         err(f"ERROR: --from-file not readable: {from_file}")
         return 5
+    with open(from_file, "rb") as fh:
+        data = fh.read()
+    rc, backup_id = _archive_write(kind, target_id, data, repo)
+    if rc == 0:
+        print(backup_id)
+    return rc
+
+
+def _archive_write(kind, target_id, data, repo):
+    """Write `data` as the archive entry for a target; (0, backup_id) or
+    (code, None) after printing the reason. Called in-process by correct-apply,
+    so the working copy never goes through the --from-file gate (round 4)."""
     now = _now_utc()
     if now is None:
-        return 2
+        return 2, None
 
     root = _main_worktree()
     if root is None:
         err("Refuse: the correction archive needs a git work tree; run from inside the repository clone (#351).")
-        return 7
+        return 7, None
     problem = _archive_path_problem(root) or _tracks_archive(root)
     if problem:
         err(f"Refuse: {problem}; nothing was written (#351).")
-        return 7
+        return 7, None
     prefix = f"comment-{target_id}" if kind == "comment" else f"issue-{target_id}-body"
     base_id = f"{prefix}-{now.strftime('%Y%m%dT%H%M%SZ')}"
     problem = _ensure_ignored(root, os.path.join(ARCHIVE_REL, base_id + ".md"))
     if problem:
         err(f"Refuse: {problem}. The archive must never be tracked; nothing was written (#351).")
-        return 7
+        return 7, None
 
-    with open(from_file, "rb") as fh:
-        data = fh.read()
     archive_dir = os.path.join(root, ARCHIVE_REL)
     try:
         os.makedirs(archive_dir, mode=0o700, exist_ok=True)
     except OSError as e:
         err(f"Refuse: cannot create the archive directory: {e.strerror}")
-        return 7
+        return 7, None
     for n in range(1, _MAX_COLLISIONS + 1):
         backup_id = base_id if n == 1 else f"{base_id}-{n}"
         rel = os.path.join(ARCHIVE_REL, backup_id + ".md")
@@ -1471,14 +1749,14 @@ def archive_subcmd(argv):
         # rule can re-include `<id>-2.md` alone (verify #351 round 1).
         if not _is_ignored(root, rel) or not _is_ignored(root, rel[:-3] + ".repo"):
             err(f"Refuse: {rel} is not ignored by git. The archive must never be tracked; nothing was written (#351).")
-            return 7
+            return 7, None
         try:
             fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         except FileExistsError:
             continue
         except OSError as e:
             err(f"Refuse: cannot create the archive file: {e.strerror}")
-            return 7
+            return 7, None
         try:
             sfd = os.open(side, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         except FileExistsError:
@@ -1489,7 +1767,7 @@ def archive_subcmd(argv):
             os.close(fd)
             os.remove(path)
             err(f"Refuse: cannot create the archive sidecar: {e.strerror}")
-            return 7
+            return 7, None
         try:
             with os.fdopen(fd, "wb") as out:
                 out.write(data)
@@ -1504,11 +1782,10 @@ def archive_subcmd(argv):
                 except OSError:
                     pass
             err(f"Refuse: writing the archive file failed: {e.strerror}")
-            return 7
-        print(backup_id)
-        return 0
+            return 7, None
+        return 0, backup_id
     err(f"Refuse: more than {_MAX_COLLISIONS} archives share the id {base_id}")
-    return 7
+    return 7, None
 
 
 def restore_subcmd(argv):
@@ -1637,6 +1914,12 @@ Exit codes:
 
   existing-mentions <file>
       Print, comma-separated, the logins the file already mentions (gh-egress's scan).
+
+  correct-prepare --target comment:<id>|issue:<n> --repo R (--section H | --scope whole-comment)
+                  --body-file F [--scrub-attested L]
+      The whole --correct flow up to the preview; prints WORK= and PREVIEW=.
+  correct-apply --work <dir>     Archive, write and read back; prints RESULT= / BACKUP_ID= / URL=.
+  correct-discard --work <dir>   Throw the prepared correction away (the user declined).
 """
 
 
@@ -1658,6 +1941,12 @@ def main(argv):
         return compose_correction_subcmd(rest)
     if subcmd == "existing-mentions":
         return existing_mentions_subcmd(rest)
+    if subcmd == "correct-prepare":
+        return correct_prepare_subcmd(rest)
+    if subcmd == "correct-apply":
+        return correct_apply_subcmd(rest)
+    if subcmd == "correct-discard":
+        return correct_discard_subcmd(rest)
     if subcmd == "archive":
         return archive_subcmd(rest)
     if subcmd == "restore":
