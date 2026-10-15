@@ -132,15 +132,16 @@ jobs:
 
       # CLAUDE_CODE_SUBPROCESS_ENV_SCRUB (set on the run step) isolates the
       # agent's subprocesses with bubblewrap on Linux; without it the Claude Code
-      # CLI exits at startup. Ubuntu 24.04 confines unprivileged user namespaces
+      # CLI exits at startup. The Bash sandbox it then requires also needs socat,
+      # or every Bash call fails (sandbox run 38684924067). Ubuntu 24.04 confines unprivileged user namespaces
       # through AppArmor, which bubblewrap needs, so the restriction is lifted on
       # this throwaway runner. Runs before any step that holds the key.
-      - name: Install bubblewrap for subprocess isolation
+      - name: Install bubblewrap and socat for the Bash sandbox
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y bubblewrap
+          sudo apt-get install -y bubblewrap socat
           if sysctl -n kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi

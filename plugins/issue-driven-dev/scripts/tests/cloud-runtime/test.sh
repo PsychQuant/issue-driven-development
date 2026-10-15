@@ -205,8 +205,10 @@ PY
   for dep in superpowers parallel-ai-agents codex-pro; do
     assert_grep_re "workflow loads dependency $dep with --plugin-dir" "--plugin-dir .*$dep" "$(cat "$WORKFLOW")"
   done
-  assert_output_grep "bubblewrap is installed for the scrub" "apt-get install -y bubblewrap" "$WORKFLOW"
-  BWRAP_LINE=$(grep -n "apt-get install -y bubblewrap" "$WORKFLOW" | head -1 | cut -d: -f1)
+  # The Bash sandbox also needs socat (sandbox run 38684924067: "Sandbox
+  # dependencies not available: socat not installed").
+  assert_output_grep "bubblewrap and socat are installed for the sandbox" "apt-get install -y bubblewrap socat" "$WORKFLOW"
+  BWRAP_LINE=$(grep -n "apt-get install -y bubblewrap socat" "$WORKFLOW" | head -1 | cut -d: -f1)
   KEY_LINE=$(grep -n 'ANTHROPIC_API_KEY: \${{ secrets.ANTHROPIC_API_KEY }}' "$WORKFLOW" | head -1 | cut -d: -f1)
   assert_true "bubblewrap is installed before the key appears" "[ -n '$BWRAP_LINE' ] && [ -n '$KEY_LINE' ] && [ '$BWRAP_LINE' -lt '$KEY_LINE' ]"
   # Code fetched by tag or branch can change under us and then runs in the job
