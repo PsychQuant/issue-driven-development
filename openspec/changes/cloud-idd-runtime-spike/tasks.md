@@ -28,9 +28,9 @@
 
 - [x] 5.1 量測 Managed Agents 路線的 C8、C3、C4：只照 README 準備 key 與 PAT 後，先讀額度當基準，再以一次 `POST /v1/sessions` 開跑極小 prompt，記錄 session ID、usage 與額度變化。完成時：三格有結果。驗證：findings 草稿三格各附 session ID、額度前後值與偏離文件之處。
 - [x] 5.2 量測 Managed Agents 路線的 C1、C2、C6：讓 agent 照 idd-list 的 SKILL.md 執行，記錄每一個失敗點（含 superpowers 與 parallel-ai-agents 的 pre-flight）；確認 gh 是否可用、vault 替換後的 token 能否被 gh 接受；檢查掛載 repo 用的 token 在沙箱內是否可讀（`git remote -v`、`.git/config`、credential helper），只回報是否出現像 token 的字串、不印出值；在 sandbox 依序留言、push、開 PR、merge，gh 不行時改以 REST API 呼叫並記錄。完成時：三格有結果。驗證：findings 草稿三格各附證據與錯誤原文。
-- [ ] 5.3 量測 Managed Agents 路線的端到端：讓 agent 照 idd-all 的 SKILL.md 處理 seed issue，記錄停止點與原因、C5 的費用與耗時、C7 的 verify 結果。完成時：C5、C7 有結果。驗證：findings 草稿有 session ID、停止原因、費用、耗時。
+- [x] 5.3 量測 Managed Agents 路線的端到端：讓 agent 照 idd-all 的 SKILL.md 處理 seed issue，記錄停止點與原因、C5 的費用與耗時、C7 的 verify 結果。完成時：C5、C7 有結果。驗證：findings 草稿有 session ID、停止原因、費用、耗時。
 
 ## 6. 決策與收尾
 
-- [ ] 6.1 依 requirement「The decision record selects one runtime or none with reasons」與「先 spike 兩條路線再選定 runtime」，完成 `openspec/changes/cloud-idd-runtime-spike/findings.md`：兩條路線 × C1 到 C8 的矩陣（無證據者記 `not measured`）、各路線端到端 run 的費用與耗時、決策與它引用的格子；並註明「排除 Claude Code routines」的理由沿用 design。完成時：16 格皆有值，決策段至少引用選定路線的 C1、C2、C3、C4、C8。驗證：人工審閱 findings 的矩陣與決策段。
+- [x] 6.1 依 requirement「The decision record selects one runtime or none with reasons」與「先 spike 兩條路線再選定 runtime」，完成 `openspec/changes/cloud-idd-runtime-spike/findings.md`：兩條路線 × C1 到 C8 的矩陣（無證據者記 `not measured`）、各路線端到端 run 的費用與耗時、決策與它引用的格子；並註明「排除 Claude Code routines」的理由沿用 design。完成時：16 格皆有值，決策段至少引用選定路線的 C1、C2、C3、C4、C8。驗證：人工審閱 findings 的矩陣與決策段。
 - [ ] 6.2 依「正式入口命名為 /idd-all api」，在 findings 寫出選定路線下 `/idd-all api` 要送出的請求形狀，以及參數解析的待決點（`api` 保留字或 `--api` 旗標）；把決策摘要與 findings 連結貼到 #400；撤銷 1.3 建立的 fine-grained PAT。完成時：#400 有決策留言，PAT 已撤銷。驗證：`gh issue view 400 --comments` 看得到決策留言；使用者在 GitHub 設定頁確認 PAT 已刪除。
