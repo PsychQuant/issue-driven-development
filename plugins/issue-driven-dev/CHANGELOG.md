@@ -15,6 +15,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `refactor`, `docs`, `meeting`, `unknown`, `none`; out of domain is exit 2. Without the flag, or with any value
   but `meeting`, every verdict is unchanged — all three frozen corpora run both ways.
 
+### Changed
+
+- **`idd-diagnose` adopts a body `## Type: meeting` only from a repository member (#383).** Without a type label,
+  a body declaration counts only when the issue author is OWNER / MEMBER / COLLABORATOR; otherwise, or when the
+  association cannot be read, the type comes from content inference, which never yields `meeting`. Two or more
+  IDD type labels count as none. An outside author who wants a meeting route asks a maintainer to add the label.
+  The rule is an instruction the model follows; a code backstop and Diagnoses written before 3.4.0 are tracked
+  in #397.
+- **`idd-all` stops a code run whose Diagnosis turns `meeting` mid-run (#383).** Phase 4 (before verify) and
+  Phase 5 (before the push) stop and say where the commits are; Phase 4 aborts only on a positive read and
+  continues into verify when the type cannot be read.
+
 ### Fixed
 
 - **A `meeting` issue is no longer withheld by the actionability gate as `complexity-unparseable` (#383)**
@@ -28,11 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     Complexity signal after diagnosis, or make `idd-all` skip verify and the push after implement, and kept
     finding ways to hide a `## Type` from a markdown reader. That reader (`idd_issue_type`) was removed before
     release.
-  - **`idd-diagnose` writes `meeting` only from a trusted source.** The author filter says who posted a
-    Diagnosis, not where its `### Type` came from, and `idd-all` runs `idd-diagnose` on every run. So
-    `idd-diagnose` Step 1 records `meeting` only for a `meeting` type label or for a body `## Type: meeting` whose
-    issue author is OWNER / MEMBER / COLLABORATOR, and never infers it from content; an outside author who wants
-    a meeting route asks a maintainer to add the label.
+  - **`idd-diagnose` writes `meeting` only from a trusted source** (see Changed). The author filter says who
+    posted a Diagnosis, not where its `### Type` came from, and `idd-all` runs `idd-diagnose` on every run.
   - **Consumers dispatch on `TYPE=meeting` before any tier.** `idd-all`: attended → meeting `/idd-plan`;
     unattended → stops at `diagnosed` with an Action item (`/idd-plan` or `/idd-close` — a plan is optional);
     never implement, verify, push or PR. In PR mode it returns to the default branch: the attachment manifest
@@ -40,7 +49,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     deleted. The branch unwind, verify, push and report read the type from the trusted Diagnosis again; if Phase 4
     or Phase 5 finds a meeting Diagnosis that appeared after Phase 2 routed the issue as code work, the run stops
     without verifying or pushing and says where the commits are. Phase 6 prints a meeting report instead of
-    claiming a verify and a PR, and adds no Action item to a non-meeting run. `idd-plan` writes the Meeting Plan.
+    claiming a verify and a PR; the report follows the route the run took and warns if the type changed. A
+    non-meeting run gets no Action item unless it is unattended and lost its issue number or its type lookup. `idd-plan` writes the Meeting Plan.
     `idd-implement` refuses an actionable meeting with a meeting message. `idd-list` suggests `/idd-plan` or
     `/idd-close` (`planning`) and adds no group. Every gate block prints `TYPE=` on its machine line.
   - **`idd-update` reads `## Meeting Plan` as `planning`.**

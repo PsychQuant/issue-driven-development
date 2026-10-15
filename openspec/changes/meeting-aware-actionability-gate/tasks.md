@@ -12,7 +12,7 @@
 ## 3. gate block 與呼叫端
 
 - [x] 3.1 gate block 機器行加 TYPE 欄位：`plugins/issue-driven-dev/references/actionability-gate.md` 的 canonical gate block 與四份副本（`idd-implement` Step 0.35 與 Step 2.5、`idd-plan` Step 1、`idd-all` Phase 2）以相同改法加入 `ISSUE_TYPE=$(idd_issue_type …)`（labels 取自 `ISSUE_JSON`）、把 `--issue-type "$ISSUE_TYPE"` 傳給 verdict，機器行改為 `gate #N: VEXIT= TIER= REASONS= TYPE=`；同步更新 `test.sh` 的 canonical shape assertion。驗證：`test.sh` 的「gate block 逐 byte 相同」與「canonical shape」assertion 通過（→ 由 9.3 取代：gate block 改為 `DIAG_TYPE=$(idd_diagnosis_type "$LATEST_DIAGNOSIS")`）
-- [x] 3.2 `idd-all`（Routing consumers honour the meeting type）：分派表加 meeting 列——attended 送 meeting 版 `/idd-plan`；unattended 下 meeting 停在 diagnosed，並在 Phase 6 Action items 記「meeting 需要有人在場跑 /idd-plan」；兩種模式都跳過 Phase 3a／3b、Phase 4 verify 與 Phase 5 push／PR。驗證：在 `test.sh` 加 grep assertion，確認 `plugins/issue-driven-dev/skills/idd-all/SKILL.md` 含 meeting 分派列、unattended 的 Action item 文字與 Phase 4 的 meeting skip
+- [x] 3.2 `idd-all`（Routing consumers honour the meeting type）：分派表加 meeting 列——attended 送 meeting 版 `/idd-plan`；unattended 下 meeting 停在 diagnosed，並在 Phase 6 Action items 記「meeting 需要有人在場跑 /idd-plan」；兩種模式都跳過 Phase 3a／3b、Phase 4 verify 與 Phase 5 push／PR。驗證：在 `test.sh` 加 grep assertion，確認 `plugins/issue-driven-dev/skills/idd-all/SKILL.md` 含 meeting 分派列、unattended 的 Action item 文字與 Phase 4 的 meeting skip（→ 由 6.3 取代：plan 選填，Action item 指向 `/idd-plan` 或 `/idd-close`）
 - [x] 3.3 `idd-plan`：Step 1 的 gate 表加 meeting 列——`TYPE=meeting` 且 VEXIT=0 時進入 meeting-adapted Plan，不再走 tier 分派。驗證：`test.sh` grep assertion 確認 `plugins/issue-driven-dev/skills/idd-plan/SKILL.md` 的 meeting 列存在
 - [x] 3.4 `idd-implement`：gate 表加 meeting 列——拒絕並說明 meeting 不走 implement、下一步是 `/idd-plan` 或 `/idd-close`，不要求修正 Diagnosis。驗證：`test.sh` grep assertion 確認 `plugins/issue-driven-dev/skills/idd-implement/SKILL.md` 的訊息存在，且「gate 在建 branch 之前」的既有 assertion 仍通過
 - [x] 3.5 [P] idd-list 不新增 meeting 群組：`plugins/issue-driven-dev/skills/idd-list/SKILL.md` Step 3.7 把 issue type 傳入 verdict，Step 5 對 actionable 的 meeting issue 依 phase 建議 `/idd-plan`（`diagnosed`）或 `/idd-close`（已有 Meeting Plan）。驗證：`test.sh` 既有的 blocked 群組標題、banner、footer 逐字 assertion 仍通過，新增的 meeting 下一步 assertion 通過（→ 由 9.3 取代：傳入的是 Diagnosis type，不是 issue type）
@@ -55,7 +55,7 @@
 - [x] 9.1 spec：三訊號 requirement 定義「diagnosed meeting issue」並禁止從 label／本文取 type；Deferral 的 parenthetical scenario 限定非 meeting（r4 blocking #2／#5／#9）；ADDED requirement 改為「The meeting type is read from the latest trusted Diagnosis」；meeting-issue-type delta 改寫並加 scenario（本文被改寫不影響路由；undiagnosed scenario 限定，#11）。這次逐條檢查了 delta 自己的每個 scenario，不只 canonical spec
 - [x] 9.2 helper：新增 `idd_diagnosis_type`（與 `### Complexity` 同一支 section reader）；verdict 以 `--diagnosis-type` 取代 `--issue-type` 與 `--diagnosis-present`；移除 `idd_issue_type` 與它的 markdown reader（r4 #19／#35 與 reader 一整類）。驗證：fixture 10 列、Diagnosis type 12 條、誤用與舊旗標、三份 corpus × 6 個非 meeting 值（1284 組）
 - [x] 9.3 五個 gate block 改為 `DIAG_TYPE=$(idd_diagnosis_type "$LATEST_DIAGNOSIS")`；gate block 實跑加「本文改成 meeting、Diagnosis 寫 bug → 仍被擋」
-- [x] 9.4 idd-all：unwind、Phase 5、Phase 6 改讀受信任 Diagnosis；unwind 先判 type 再要求 PATH_AXIS（#3／#8）、direct-commit 說明 manifest（#26）、kept-branch 據實描述並提醒重跑會停在 Phase 0.5（#17／#25）；Phase 6 只排除 blocked 行（#4）、遺失狀態要列（#12）、phase 非 diagnosed 的提示（#16）；Phase 5 註解（#20）；Next Step、task 清單、idd-plan description（#14）。驗證：行為測試，含撇號造成的語法錯誤被實跑抓到
+- [x] 9.4 idd-all：unwind、Phase 5、Phase 6 改讀受信任 Diagnosis；unwind 先判 type 再要求 PATH_AXIS（#3／#8）、direct-commit 說明 manifest（#26）、kept-branch 據實描述並提醒重跑會停在 Phase 0.5（#17／#25）；Phase 6 只排除 blocked 行（#4）、遺失狀態要列（#12）、phase 非 diagnosed 的提示（#16）；Phase 5 註解（#20）；Next Step、task 清單、idd-plan description（#14）。驗證：行為測試，含撇號造成的語法錯誤被實跑抓到（→ 「遺失狀態要列」由 10.2 取代：非 meeting 的 run 遺失狀態時不列）
 - [x] 9.5 reference meeting 一節與 contract 表（#22）；版本 3.3.1 → 3.4.0（新增 helper 與旗標，#34；5.2 的 3.3.1 由此取代）；CHANGELOG 3.4.0。驗證：`test.sh` 853 passed
 
 ## 10. verify round 5 修正（maintainer 2026-10-15 裁決：修 producer 端，再跑第 6 輪）
@@ -64,6 +64,13 @@
 - [x] 10.2 `idd-all`：Phase 4 加 code guard、Phase 5 讀到 meeting 改為 fail-closed（#11），兩者先驗 `$N`（#12）；unwind 先判 type、查詢失敗只警告（#14）、meeting 才要求 `$CWD`（#10）；Phase 6 先用 issue 號判 type，非 meeting 不印也不抓本文，attended 不查，INTERACTION 遺失時先問 state file，phase 只讀 `## Current Status`（#2、#13、#28）；meeting report 的判斷重讀受信任 Diagnosis（#7）；abort 表更新（#15）。驗證：行為測試（Phase 4 四種、Phase 5 fail-closed 與驗型、unwind 三種、Phase 6 七種）
 - [x] 10.3 `idd-plan` 何時用表補 meeting 列（#4）、Step 2／6 明講依 Step 1 gate 的 `TYPE=meeting`（#9）；`idd-implement` meeting 列刪去「沒有 Diagnosis」（#5）；reference 機器行改為七個 Diagnosis type（#6）；actionability-gate delta 的 scenario 改用定義詞（#17），type 字邊界改寫為五步封閉列舉並補範例（#32）
 - [x] 10.4 被取代的勾選項加註取代來源（#8）；plugin 與 root README 版本表 3.4.0（#16、#19）；CHANGELOG 3.4.0 補 producer 規則與 fail-closed。驗證：`test.sh` 906 passed；`scripts/tests/` 58 個 suite exit 0，`plan-routing-consistency` 只剩 #335 那一項
+
+## 11. verify round 6 修正（PASS，0 blocking；tag `idd-383-verified` = `ea2ceb3`，以下修在 tag 之後）
+
+- [x] 11.1 `idd-diagnose`：採信區塊不再 hard-exit、行首帶 issue 號、查不到時的說明句與「不是成員」分開；`### Type` 行只寫採用的值；兩個以上 IDD type label 視同沒有 label；最壞情況與 label 信任的說法更正（#4、#10、#16、#18、#19、#21、#22）。驗證：採信區塊實跑、prose pin
+- [x] 11.2 `idd-all`：Phase 4 只在確定讀到 meeting 時中止，讀不到 type 時警告後照常 verify；Phase 5 與 unwind 補 `GITHUB_REPO` 檢查，錯誤處理掛在 jq 那一步；中止訊息不再宣稱一定 implement 過；Phase 6 依實際路線選報告、重讀只做交叉核對、Action items 先於清理、查不到 type 只在 unattended 時列（#1、#2、#8、#9、#11、#12、#13、#14、#17、#23、#27、#29、#32）。驗證：Phase 4／5、unwind、Phase 6 新增情境實跑
+- [x] 11.3 （#3）作者過濾以原始 comment 清單實跑：unwind、Phase 4、Phase 5、Phase 6 各一列「外部作者的 meeting Diagnosis 被忽略」與一列 MEMBER 正向對照。驗證：刪掉 idd-all 的作者過濾後，這四列全部失敗
+- [x] 11.4 文件：spec delta 補 code run 中途讀到 meeting 的 scenario、兩個 label 與 `### Type` 行的規則與 scenario；proposal Success Criteria 與 design 的 Behavior／Acceptance／Interface；`actionability.sh` contract-4 註解與 reference 改為五步邊界；reference 信任說法寫明是指示、適用範圍與限制；tasks 註記；CHANGELOG 新增 Changed、修正 Action item 說法；plugin 描述（#5、#6、#7、#15、#26、#31、#33）。follow-up：#397（程式層 backstop、自動加的 label、舊 Diagnosis、查不到時的處理）
 
 ## 實作備註
 
