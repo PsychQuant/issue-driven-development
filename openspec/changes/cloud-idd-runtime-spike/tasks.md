@@ -18,7 +18,7 @@
 
 ## 4. Agent SDK 路線實測
 
-- [ ] 4.1 依 requirement「The flow lives in the IDD repository and secrets stay in the deployer's repository」量測 C8：只照 `plugins/issue-driven-dev/cloud/README.md` 在 sandbox 部署 caller workflow（`idd_ref` 指向實作 branch），以 `dry_run: true` 觸發一次。完成時：C8 有結果。驗證：findings 草稿列出 sandbox 新增的檔案與行數、照做時偏離文件之處、該次 workflow run URL。
+- [x] 4.1 依 requirement「The flow lives in the IDD repository and secrets stay in the deployer's repository」量測 C8：只照 `plugins/issue-driven-dev/cloud/README.md` 在 sandbox 部署 caller workflow（`idd_ref` 指向實作 branch），以 `dry_run: true` 觸發一次。完成時：C8 有結果。驗證：findings 草稿列出 sandbox 新增的檔案與行數、照做時偏離文件之處、該次 workflow run URL。
 - [ ] 4.2 量測 Agent SDK 路線的 C4：先讀 che830621 組織的額度當基準，再以極小 prompt 觸發一次，之後再讀一次。依 requirement「Every candidate runtime is evaluated against criteria C1 to C8」的 scenario，出現 `Credit balance too low` 就把 C4 記為 fail、停止 4.3 到 4.5，並把那些格子記為 `not measured (stopped after C4 fail)`。完成時：C4 有結果與證據。驗證：findings 草稿記錄 workflow run URL，以及錯誤原文或執行前後的額度。
 - [ ] 4.3 量測 Agent SDK 路線的 C1、C3、C6：以一次 `POST /repos/PsychQuant/idd-cloud-sandbox/dispatches` 觸發，執行 `/issue-driven-dev:idd-list`；記錄載入的 plugin、工具清單（Skill、Agent、TaskCreate、AskUserQuestion、Workflow 逐一列出有無）、SessionStart hook 的輸出、superpowers 與 parallel-ai-agents 的 presence pre-flight 結果。完成時：三格都有結果。驗證：findings 草稿的 C1、C3、C6 三格各附證據。
 - [ ] 4.4 量測 Agent SDK 路線的 C2：在 sandbox 依序做 issue 留言、push branch、開 PR、merge PR。完成時：四個動作各有成功輸出或錯誤原文。驗證：findings 草稿列出每一步的輸出與 PR URL；`PsychQuant/issue-driven-development` 沒有任何來自本 probe 的寫入。
