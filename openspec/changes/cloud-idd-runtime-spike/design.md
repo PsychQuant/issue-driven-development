@@ -46,7 +46,7 @@ routines 的雲端 session 對 `gh issue`、`gh pr` 這類 GraphQL 子命令回 
 
 ### 流程放在 IDD repo，key 留在部署者的 private repo
 
-使用者在 apply 開始時定案：流程（reusable workflow、執行腳本、launcher、部署說明）放在 IDD repo，跟 plugin 一起維護；API key 與一份幾行的 caller workflow 放在部署者自己的 private repo。Agent SDK 路線用 GitHub 的 reusable workflow 實現這個分工：IDD repo 的 `.github/workflows/idd-cloud-run.yml` 宣告 `on: workflow_call` 並要求部署者傳入 `ANTHROPIC_API_KEY` secret；部署者 repo 的 caller workflow 以 `uses: PsychQuant/issue-driven-development/.github/workflows/idd-cloud-run.yml@<ref>` 呼叫它。IDD repo 不存放任何 API key，reusable workflow 也不讀取 IDD repo 自己的 secret。
+使用者在 apply 開始時定案：流程（reusable workflow、執行腳本、launcher、部署說明）放在 IDD repo，跟 plugin 一起維護；API key 與一份幾行的 caller workflow 放在部署者自己的 private repo。Agent SDK 路線用 GitHub 的 reusable workflow 實現這個分工：IDD repo 的 `.github/workflows/idd-cloud-run.yml` 宣告 `on: workflow_call` 並要求部署者傳入 `ANTHROPIC_API_KEY` secret，另接一個選填的 `IDD_GITHUB_TOKEN`（只授權部署者 repo 的 fine-grained PAT），供禁止 GitHub Actions 開 PR 的 org 使用；部署者 repo 的 caller workflow 以 `uses: PsychQuant/issue-driven-development/.github/workflows/idd-cloud-run.yml@<ref>` 呼叫它。IDD repo 不存放任何 API key，reusable workflow 也不讀取 IDD repo 自己的 secret。PsychQuant org 就禁止 Actions 開 PR（sandbox run 38685626718），使用者在 apply 時選擇以 sandbox 專用的 PAT 處理，不改 org 政策。
 
 執行腳本與 launcher 放在 `plugins/issue-driven-dev/cloud/`，隨 plugin 發佈；部署說明 `plugins/issue-driven-dev/cloud/README.md` 標明實驗性。
 
@@ -59,7 +59,7 @@ routines 的雲端 session 對 `gh issue`、`gh pr` 這類 GraphQL 子命令回 
 ### 憑證不進 repo 也不進 log
 
 - Anthropic API key：Agent SDK 路線存成部署者 repo 的 repository secret，由 caller 明確傳給 reusable workflow（不用 `secrets: inherit`，只傳這一個）；Managed Agents 路線從 macOS keychain（service `anthropic-api`）即時讀，以 stdin 傳給 curl 的 header，不放進 argv。
-- GitHub token：Agent SDK 路線用 workflow 的 `GITHUB_TOKEN`，權限由 caller 的 `permissions` 限定為 contents、issues、pull-requests 的 write，只作用在部署者 repo。Managed Agents 路線用一把只授權 sandbox repo 的 fine-grained PAT，由使用者建立並存進 keychain，經 vault 的 environment_variable credential 提供給 session。
+- GitHub token：Agent SDK 路線預設用 workflow 的 `GITHUB_TOKEN`，權限由 caller 的 `permissions` 限定為 contents、issues、pull-requests 的 write，只作用在部署者 repo、job 結束即失效；部署者提供 `IDD_GITHUB_TOKEN` 時改用它（只授權部署者 repo 的 fine-grained PAT，效期越短越好）。Managed Agents 路線用一把只授權 sandbox repo 的 fine-grained PAT，由使用者建立並存進 keychain，經 vault 的 environment_variable credential 提供給 session。
 - 使用者提供的 prompt 一律以環境變數傳進 shell，不以 `${{ }}` 直接插入 `run:` 指令，避免 workflow 指令注入。
 - 兩支執行程式都有 `--dry-run`，只印出將要送出的請求，secret 一律以 `***` 遮蔽；測試確認 dry-run 輸出不含 secret。
 
@@ -105,7 +105,7 @@ spike 的端到端 run 以 unattended PR mode 跑 `/idd-all`。#392 落地前，
 
 - 觸發：只有 `on: workflow_call`；不因 IDD repo 自己的 push 或 PR 而執行。
 - inputs：`prompt`（string，必填）、`idd_ref`（string，預設 `main`，指定要 checkout 的 IDD 版本）、`max_turns`（number，預設 80）、`dry_run`（boolean，預設 false）。
-- secrets：`ANTHROPIC_API_KEY`（必填）。不宣告、不讀取其他 secret。
+- secrets：`ANTHROPIC_API_KEY`（必填）、`IDD_GITHUB_TOKEN`（選填；有則作為 `GH_TOKEN`，無則用 `github.token`）。不宣告、不讀取其他 secret。
 - 行為：checkout 部署者 repo；把 IDD、superpowers（`obra/superpowers` 的固定 commit）、parallel-ai-agents、codex-pro 抓到 `$RUNNER_TEMP`，`idd_ref` 先驗證只含分支或 commit 允許的字元；安裝 Python 與 `claude-agent-sdk`（版本在實作時鎖定並記進 findings）；以環境變數傳入 prompt 後呼叫 `sdk_run.py`；`timeout-minutes: 60`。
 - 權限：不自行提升權限；實際權限由 caller 的 `permissions` 決定。
 
@@ -113,7 +113,7 @@ spike 的端到端 run 以 unattended PR mode 跑 `/idd-all`。#392 落地前，
 
 - 觸發：`workflow_dispatch`（輸入 `prompt`）與 `repository_dispatch`（type `idd-run`，`client_payload.prompt`）。
 - `permissions`：contents、issues、pull-requests 為 write，其餘不給。
-- 只把 `ANTHROPIC_API_KEY` 明確傳給 reusable workflow，不用 `secrets: inherit`。
+- 只把 `ANTHROPIC_API_KEY` 與 `IDD_GITHUB_TOKEN` 明確傳給 reusable workflow，不用 `secrets: inherit`。
 
 **Agent SDK 執行腳本（`plugins/issue-driven-dev/cloud/sdk_run.py`）的介面：**
 
@@ -144,6 +144,8 @@ spike 的端到端 run 以 unattended PR mode 跑 `/idd-all`。#392 落地前，
 - [reusable workflow 被用來注入指令] → prompt 只經環境變數進 shell；caller 範本限定權限；`repository_dispatch` 本來就只有持有部署者 repo 寫入權限的 token 能觸發。
 - [issue 內文的 prompt injection 讓 agent 外洩 secret] → Agent SDK 路線設 `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`，Bash、hooks、MCP 子程序拿不到 `ANTHROPIC_API_KEY`；`GH_TOKEN` 依官方設計保留，風險由 caller 的最小權限與 job 生命週期限制。Managed Agents 路線的 API key 不進沙箱，`GH_TOKEN` 經 vault 在出口代換。部署說明寫明只在 issue 作者可信任的 repo 部署。
 - [Managed Agents 的 repo resource token 在沙箱內可讀] → 該 token 不經 vault，可能出現在沙箱的 git 設定裡；task 5.2 量測是否可讀（只回報有無，不印值）；部署說明要求最短效期並在結束後撤銷。
+- [選填的 PAT 比 GITHUB_TOKEN 活得久] → agent 的 shell 看得到 `GH_TOKEN`（scrub 依設計保留）；PAT 只授權部署者 repo、Contents／Issues／Pull requests 三項權限、效期最短，部署說明寫明。
+- [Bash 沙箱在工作目錄留下佔位檔] → workflow 把不可能是專案內容的佔位 dotfile 寫進 `.git/info/exclude`；名稱像專案路徑的佔位（如 `scripts`）刻意不排除，記在 findings。
 - [抓進 job 的程式碼被上游改動] → actions 與 superpowers、parallel-ai-agents 一律鎖 commit SHA，測試檢查；`claude-agent-sdk` 鎖版本但未鎖 hash，列為殘餘風險；`idd_ref` 由部署者在 caller 裡鎖定。
 - [部署者的 caller 指向 `@main`，IDD 改版會直接影響他們] → caller 範本與文件建議鎖定 tag 或 commit；`idd_ref` 預設與文件說明一致。
 - [gh 拒絕 vault 替換後的 token 格式] → 改以 `github_repository` resource 的 token 做 push，以 curl 帶 header 呼叫 REST API 開 PR 與 merge；兩種結果都記錄。

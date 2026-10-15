@@ -63,3 +63,6 @@ jobs:
       dry_run: ${{ github.event.client_payload.dry_run || false }}
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      # Optional: a fine-grained PAT for this repository only, needed when your
+      # organization does not let GitHub Actions open pull requests.
+      IDD_GITHUB_TOKEN: ${{ secrets.IDD_GITHUB_TOKEN }}

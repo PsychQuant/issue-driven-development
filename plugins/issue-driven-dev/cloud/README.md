@@ -66,9 +66,22 @@ pull requests are created there, using that repository's own `GITHUB_TOKEN`.
    Without it, IDD tries to detect the target from the git remote and can stop
    to ask, which nobody can answer in the cloud.
 
-4. **Commit and push** the two files to your default branch.
+4. **If your organization does not let GitHub Actions open pull requests**
+   (Settings → Actions → General → Workflow permissions, often locked at the
+   organization level), create a **fine-grained** token for this repository only
+   (Contents, Issues, Pull requests: Read and write; shortest expiry) and store it
+   as a second secret:
 
-5. **Try a dry run first.** It prints the options the runner would use and makes
+   ```bash
+   gh secret set IDD_GITHUB_TOKEN -R <owner>/<repo>   # paste the token at the prompt
+   ```
+
+   Without it the run uses the job's own token, which can comment and push but
+   cannot open a pull request under such a policy.
+
+5. **Commit and push** the two files to your default branch.
+
+6. **Try a dry run first.** It prints the options the runner would use and makes
    no API call:
 
    ```bash
@@ -79,7 +92,7 @@ pull requests are created there, using that repository's own `GITHUB_TOKEN`.
    gh run watch -R <owner>/<repo>
    ```
 
-6. **Run it.**
+7. **Run it.**
 
    ```bash
    gh workflow run idd-cloud -R <owner>/<repo> \
@@ -169,8 +182,10 @@ waits for the result.
   collaborators can write issues; on a public one, anyone can.
 - **Route A keeps the API key out of the agent's shell.** The workflow sets
   `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`, which removes `ANTHROPIC_API_KEY` from every
-  Bash command, hook and MCP server the agent starts. `GH_TOKEN` stays (gh needs it);
-  it can only write to your repository and expires when the job ends.
+  Bash command, hook and MCP server the agent starts. `GH_TOKEN` stays (gh needs it).
+  The job's own token can only write to your repository and expires when the job
+  ends; an `IDD_GITHUB_TOKEN` you add lives until its expiry, so scope it to this
+  one repository and keep the expiry short.
 - **Route B never sends your API key to the sandbox.** The GitHub token reaches the
   sandbox in two ways: as `GH_TOKEN`, which the platform substitutes at the network
   edge so the agent never sees the value, and as the token used to clone your

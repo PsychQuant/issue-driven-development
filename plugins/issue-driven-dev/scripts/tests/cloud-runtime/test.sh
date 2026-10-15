@@ -169,7 +169,7 @@ for l in lines:
     if re.match(r"^\s+secrets:\s*$", l) and indent(l) == 4:
         in_secrets, base = True, indent(l); continue
     if in_secrets:
-        if l.strip() == "": continue
+        if l.strip() == "" or l.lstrip().startswith("#"): continue
         if indent(l) <= base: in_secrets = False; continue
         if indent(l) == base + 2: decl.append(l.strip().rstrip(":"))
 print("SECRET_DECL=" + ",".join(decl))
@@ -193,10 +193,22 @@ print("RUN_INTERPOLATION_LINES=" + ",".join(map(str, bad)))
 PY
   assert_output_grep "workflow trigger is workflow_call only" "TRIGGERS=workflow_call" "$REPORT"
   refute_grep_re  "workflow has no other trigger" "TRIGGERS=.*,"  "$(grep '^TRIGGERS=' "$REPORT")"
-  assert_output_grep "workflow reads only secrets.ANTHROPIC_API_KEY" "SECRET_REFS=ANTHROPIC_API_KEY" "$REPORT"
-  refute_grep_re  "workflow reads no other secret" "SECRET_REFS=.*,"  "$(grep '^SECRET_REFS=' "$REPORT")"
-  assert_output_grep "workflow declares only ANTHROPIC_API_KEY" "SECRET_DECL=ANTHROPIC_API_KEY" "$REPORT"
-  refute_grep_re  "workflow declares no other secret" "SECRET_DECL=.*,"  "$(grep '^SECRET_DECL=' "$REPORT")"
+  # Two secrets, no more: the API key, and an optional fine-grained PAT for orgs
+  # that forbid GitHub Actions from opening pull requests (PsychQuant does; sandbox
+  # run 38685626718: "GitHub Actions is not permitted to create or approve pull
+  # requests"). Without the PAT the run falls back to the job's GITHUB_TOKEN.
+  assert_output_grep "workflow reads exactly the two allowed secrets" "SECRET_REFS=ANTHROPIC_API_KEY,IDD_GITHUB_TOKEN" "$REPORT"
+  refute_grep_re  "workflow reads no third secret" "SECRET_REFS=([^,]*,){2}"  "$(grep '^SECRET_REFS=' "$REPORT")"
+  assert_output_grep "workflow declares exactly the two allowed secrets" "SECRET_DECL=ANTHROPIC_API_KEY,IDD_GITHUB_TOKEN" "$REPORT"
+  refute_grep_re  "workflow declares no third secret" "SECRET_DECL=([^,]*,){2}"  "$(grep '^SECRET_DECL=' "$REPORT")"
+  assert_output_grep "GH_TOKEN falls back to the job token" 'GH_TOKEN: ${{ secrets.IDD_GITHUB_TOKEN || github.token }}' "$WORKFLOW"
+  assert_grep_re "the PAT secret is optional" "IDD_GITHUB_TOKEN:" "$(cat "$WORKFLOW")"
+  # The Bash sandbox leaves empty placeholder dotfiles in the working directory
+  # (sandbox run 38685626718: .bashrc, .gitconfig, .mcp.json, ...). They must not
+  # end up in a commit made with `git add -A`.
+  for f in .bashrc .bash_profile .profile .zshrc .zprofile .gitconfig .ripgreprc .mcp.json; do
+    assert_grep_re "sandbox placeholder $f is excluded from git" "^[[:space:]]*\\$f\$" "$(sed -n '/BEGIN sandbox placeholders/,/END sandbox placeholders/p' "$WORKFLOW")"
+  done
   assert_output_grep "no \${{ }} inside run: blocks" "RUN_INTERPOLATION_LINES=" "$REPORT"
   refute_grep_re  "run: blocks are free of \${{ }}" "RUN_INTERPOLATION_LINES=[0-9]" "$(grep '^RUN_INTERPOLATION_LINES=' "$REPORT")"
   assert_output_grep "prompt reaches the runner through env" "IDD_PROMPT" "$WORKFLOW"
@@ -234,6 +246,8 @@ if [ -f "$CALLER" ]; then
     "uses: PsychQuant/issue-driven-development/.github/workflows/idd-cloud-run.yml@" "$CALLER"
   assert_output_grep "caller passes ANTHROPIC_API_KEY explicitly" \
     "ANTHROPIC_API_KEY: \${{ secrets.ANTHROPIC_API_KEY }}" "$CALLER"
+  assert_output_grep "caller passes the optional PAT explicitly" \
+    "IDD_GITHUB_TOKEN: \${{ secrets.IDD_GITHUB_TOKEN }}" "$CALLER"
   # POSIX classes, not \s: BSD sed on macOS treats \s as a literal 's'.
   WRITES=$(grep -E '^[[:space:]]+[a-z-]+:[[:space:]]*write[[:space:]]*$' "$CALLER" \
     | sed -E 's/^[[:space:]]+//; s/:.*//' | sort | tr '\n' ',')

@@ -53,6 +53,12 @@ on:
     secrets:
       ANTHROPIC_API_KEY:
         required: true
+      # Optional fine-grained PAT, scoped to the caller's repository only, for
+      # organizations that forbid GitHub Actions from opening pull requests
+      # (the job's GITHUB_TOKEN then gets "GitHub Actions is not permitted to
+      # create or approve pull requests"). Unset: the job's GITHUB_TOKEN is used.
+      IDD_GITHUB_TOKEN:
+        required: false
 
 jobs:
   run:
@@ -138,6 +144,22 @@ jobs:
           export_plugin "$RUNNER_TEMP/parallel-ai-agents" plugins/parallel-ai-agents parallel-ai-agents
           export_plugin "$RUNNER_TEMP/codex-pro" plugins/codex-pro codex-pro
           printf '%s\n' '.idd-cloud/' >> "$GITHUB_WORKSPACE/.git/info/exclude"
+          # Claude Code's Bash sandbox leaves empty placeholder files in the working
+          # directory (sandbox run 38685626718). Keep them out of `git add -A`.
+          # Only names that are never project content here; a placeholder named
+          # like a real project path (e.g. scripts) is left visible on purpose.
+          cat >> "$GITHUB_WORKSPACE/.git/info/exclude" <<'EXCLUDE'
+          # BEGIN sandbox placeholders
+          .bashrc
+          .bash_profile
+          .profile
+          .zshrc
+          .zprofile
+          .gitconfig
+          .ripgreprc
+          .mcp.json
+          # END sandbox placeholders
+          EXCLUDE
 
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
@@ -188,7 +210,9 @@ jobs:
           IDD_MAX_TURNS: ${{ inputs.max_turns }}
           IDD_DRY_RUN: ${{ inputs.dry_run }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          GH_TOKEN: ${{ github.token }}
+          # The PAT outlives the job, unlike GITHUB_TOKEN; scope it to one repo
+          # and give it the shortest expiry (see cloud/README.md, Security notes).
+          GH_TOKEN: ${{ secrets.IDD_GITHUB_TOKEN || github.token }}
           # Newer models get no TaskCreate/TaskList/TaskUpdate unless this is set,
           # and every IDD skill's Step 0 depends on them. Matches the maintainer's
           # local Claude Code setting, so the cloud run behaves like the local one.

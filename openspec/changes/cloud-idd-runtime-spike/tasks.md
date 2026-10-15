@@ -2,7 +2,7 @@
 
 - [x] 1.1 依「spike 只在專用 scratch repo 上執行」與 requirement「Spike writes target only the dedicated scratch repository」，經使用者確認後建立 private repo `PsychQuant/idd-cloud-sandbox`，並開一張 seed issue（README 把 sandbox 拼成 sandbx）。完成時：repo 存在且為 private、seed issue #1 存在。驗證：`gh repo view PsychQuant/idd-cloud-sandbox --json isPrivate` 回 `true`，`gh issue view 1 -R PsychQuant/idd-cloud-sandbox` 讀得到。
 - [x] 1.2 依「憑證不進 repo 也不進 log」，把 che830621 組織的 API key 由 keychain 經 stdin 存成 sandbox 的 repository secret `ANTHROPIC_API_KEY`（不經 argv），並確認 Console 帳務頁屬於 che830621 組織。C4 的基準額度不在此時讀，改在 4.2 與 5.1 的 probe 前一刻讀，避免中間其他用量混入。完成時：secret 存在。驗證：`gh secret list -R PsychQuant/idd-cloud-sandbox` 列出 `ANTHROPIC_API_KEY`；帳務頁顯示「che830621’s Individual Org」。
-- [ ] 1.3 依「憑證不進 repo 也不進 log」，請使用者建立一把只授權 `PsychQuant/idd-cloud-sandbox` 的 fine-grained PAT（contents、issues、pull-requests 為 read and write），由使用者以 `che-keychain set --service github-pat --account idd-cloud-sandbox --from-clipboard` 存進 keychain，值不經過 AI。完成時：keychain 有該 entry。驗證：`security find-generic-password -s github-pat -a idd-cloud-sandbox` 找得到 entry（不加 `-w`，不讀出值）。
+- [ ] 1.3 依「憑證不進 repo 也不進 log」，請使用者建立一把只授權 `PsychQuant/idd-cloud-sandbox` 的 fine-grained PAT（contents、issues、pull-requests 為 read and write），由使用者以 `che-keychain set --service github-pat --account idd-cloud-sandbox --from-clipboard` 存進 keychain，值不經過 AI；再由 keychain 經 stdin 存成 sandbox 的 repository secret `IDD_GITHUB_TOKEN`（PsychQuant org 禁止 Actions 開 PR，Agent SDK 路線也要用它）。完成時：keychain 有該 entry，sandbox 有該 secret。驗證：`security find-generic-password -s github-pat -a idd-cloud-sandbox` 找得到 entry（不加 `-w`，不讀出值）。
 
 ## 2. 測試（TDD：先寫測試）
 
