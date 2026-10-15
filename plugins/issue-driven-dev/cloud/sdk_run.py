@@ -211,8 +211,6 @@ def print_options(printer: Printer, plugin_dirs: list[str], cwd: str, args: argp
     printer.out(f"MAX_TURNS: {args.max_turns}")
     printer.out(f"PERMISSION_MODE: {PERMISSION_MODE}")
     printer.out(f"ALLOWED_TOOLS: {', '.join(ALLOWED_TOOLS)}")
-    for path in plugin_dirs:
-        printer.out(f"ADD_DIR: {path}")
     printer.out(f"SETTING_SOURCES: {','.join(SETTING_SOURCES)}")
     printer.out(f"{API_KEY_ENV}: {presence(API_KEY_ENV)}")
 
@@ -350,17 +348,17 @@ def import_sdk(printer: Printer) -> Any:
 
 
 def build_options(printer: Printer, sdk: Any, plugin_dirs: list[str], cwd: str, max_turns: int) -> Any:
-    """SDK options. add_dirs lets the agent read the plugins, which live outside
-    cwd (default mode otherwise confines Bash and reads to the working directory).
-    The stderr callback surfaces CLI warnings such as the forced-default notice,
-    which the SDK would otherwise drop."""
+    """SDK options. The plugins are expected inside cwd (the workflow exports
+    them there); granting them as extra directories breaks the Bash sandbox
+    (bwrap cannot create its protected .mcp.json in a read-only dir). The stderr
+    callback surfaces CLI warnings such as the forced-default notice, which the
+    SDK would otherwise drop."""
     return sdk.ClaudeAgentOptions(
         plugins=[{"type": "local", "path": path} for path in plugin_dirs],
         cwd=cwd,
         max_turns=max_turns,
         permission_mode=PERMISSION_MODE,
         allowed_tools=list(ALLOWED_TOOLS),
-        add_dirs=list(plugin_dirs),
         setting_sources=SETTING_SOURCES,
         stderr=lambda line: printer.out(f"CLI_STDERR: {line.rstrip()}"),
     )

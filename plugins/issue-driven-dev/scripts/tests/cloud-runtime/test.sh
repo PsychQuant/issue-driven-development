@@ -83,7 +83,11 @@ if [ -f "$RUNNER" ]; then
   assert_output_grep "runner asks for the default permission mode" "PERMISSION_MODE: default" "$OUT"
   assert_output_grep "runner pre-approves Bash" "ALLOWED_TOOLS: " "$OUT"
   assert_grep_re "allowlist includes Bash, Skill and Workflow" "ALLOWED_TOOLS: .*Bash.*Skill.*Workflow" "$(grep '^ALLOWED_TOOLS: ' "$OUT")"
-  assert_output_grep "runner grants each plugin dir as an extra directory" "ADD_DIR: $PLUGIN_ROOT" "$OUT"
+  # add_dirs made bwrap try to create a protected .mcp.json inside each plugin
+  # dir, which is read-only in the sandbox (sandbox run 38685072135). Plugins now
+  # live inside the working directory instead, so no extra directory is granted.
+  refute_output_grep "runner grants no extra directories" "ADD_DIR:" "$OUT"
+  refute_output_grep "runner does not pass add_dirs" "add_dirs=" "$RUNNER"
   assert_output_grep "runner wires the CLI stderr callback" "stderr=" "$RUNNER"
 
   OUT="$WORK/runner-nokey.out"; ERR="$WORK/runner-nokey.err"
@@ -202,9 +206,10 @@ PY
   # On Linux the scrub needs bubblewrap; without it the CLI exits at startup
   # (first real run, workflow run 38683885702). It must be installed in a step
   # that does not hold the key.
-  for dep in superpowers parallel-ai-agents codex-pro; do
-    assert_grep_re "workflow loads dependency $dep with --plugin-dir" "--plugin-dir .*$dep" "$(cat "$WORKFLOW")"
+  for dep in issue-driven-dev superpowers parallel-ai-agents codex-pro; do
+    assert_grep_re "workflow loads $dep from inside the workspace" "--plugin-dir \"\\\$GITHUB_WORKSPACE/\\.idd-cloud/plugins/$dep\"" "$(cat "$WORKFLOW")"
   done
+  assert_output_grep "the plugin copies are excluded from the caller's git" ".git/info/exclude" "$WORKFLOW"
   # The Bash sandbox also needs socat (sandbox run 38684924067: "Sandbox
   # dependencies not available: socat not installed").
   assert_output_grep "bubblewrap and socat are installed for the sandbox" "apt-get install -y bubblewrap socat" "$WORKFLOW"
