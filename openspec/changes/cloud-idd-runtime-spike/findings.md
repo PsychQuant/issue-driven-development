@@ -164,6 +164,10 @@ Authorization: Bearer <部署者自己的 GitHub token>
 
 **參數解析的待決點**：idd-all 的 from-scratch mode 收自由文字，描述若以「api」開頭會被誤判成這個 mode。兩個選項：`api` 當保留字（自由文字以 api 開頭時必須加引號），或改成 `--api` 旗標。名稱維持使用者定的 `/idd-all api`。
 
+## PAT 處置
+
+spike 用的 fine-grained PAT（只授權 sandbox，Contents、Issues、Pull requests 讀寫）依使用者 2026-10-15 的決定**不提前撤銷**，2026-10-17 到期。用途是讓 #392 的手動驗收沿用 sandbox。這兩天內，design〈Risks〉第二條的風險仍在：agent 的 shell 看得到這把 PAT，PAT 送出的事件也能觸發 workflow。限制它的條件不變：sandbox 為 private、issue 作者只有使用者本人、PAT 只授權 sandbox。存放位置是 keychain 與 sandbox secret `IDD_GITHUB_TOKEN`；到期後兩處都要刪。
+
 ## 待記錄的觀察
 
 - 背景安全審查（2026-10-15）：prompt injection 可能讀到 agent 環境變數中的 key、未鎖版本的程式碼與 key 同 job → 已以 `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` 與全面鎖 SHA 處理（IDD commit `f54ef3e`）。Managed Agents 的 repo resource token 是否在沙箱內可讀：task 5.2 量測，沙箱內找不到（見上）。
