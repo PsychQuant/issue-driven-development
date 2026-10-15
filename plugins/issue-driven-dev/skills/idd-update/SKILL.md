@@ -86,7 +86,7 @@ Issue body 分為兩個區域：
 
 ```
 TaskCreate(name="read_issue", description="gh issue view #NNN 取 title/body/labels/state/comments")
-TaskCreate(name="determine_phase", description="掃 comments 標題（Diagnosis / Implementation Plan / Implementation Complete / Verify / Closing Summary）推斷 phase")
+TaskCreate(name="determine_phase", description="掃 comments 標題（Diagnosis / Implementation Plan / Meeting Plan / Implementation Complete / Verify / Closing Summary）推斷 phase")
 TaskCreate(name="extract_key_info", description="從 comments 提取 Key Decisions / Scope Changes / Blocking / Related Commits 四類")
 TaskCreate(name="assemble_current_status", description="組 ## Current Status 區塊 markdown（Phase / Last updated / 四類分節）")
 TaskCreate(name="update_body", description="gh issue edit：body 有 ## Current Status → 替換該 heading（含其上緊鄰 ---）到結尾；無則 append 新區塊（保留全部既有內容，不論幾個 ---）(category: bounded-section-replace, scope: \"## Current Status\")")
@@ -114,12 +114,13 @@ gh issue view $NUMBER --repo $GITHUB_REPO --json title,body,labels,state,comment
 | 無 comment | `created` |
 | Diagnosis | `diagnosed` |
 | Implementation Plan | `planning` |
+| Meeting Plan | `planning` |
 | Implementation Complete | `implemented` |
 | Verify (PASS) | `verified` |
 | Verify (FAIL / findings) | `needs-fix` |
 | Closing Summary | `closed` |
 
-判斷依據：掃描 comments 中的 `## Diagnosis`、`## Implementation Plan`、`## Implementation Complete`、`## Verify`、`## Closing Summary` 標題。**比對大小寫不敏感、1-6 個井號、井號與字之間的裝飾字元（emoji）**（#295）—— 這些 heading 全部由 LLM 依模板生成、寫入端沒有任何 normalization，所以 `## Closing summary` 這類漂移是預期而非例外；此處硬要求大小寫只會讓 phase 停在舊值，而 phase 停在舊值正是 `idd-close` Step 6 存在的理由。
+判斷依據：掃描 comments 中的 `## Diagnosis`、`## Implementation Plan`、`## Meeting Plan`（type=meeting 的計畫，heading 以 `## Meeting Plan` 開頭即命中，#383）、`## Implementation Complete`、`## Verify`、`## Closing Summary` 標題。**比對大小寫不敏感、1-6 個井號、井號與字之間的裝飾字元（emoji）**（#295）—— 這些 heading 全部由 LLM 依模板生成、寫入端沒有任何 normalization，所以 `## Closing summary` 這類漂移是預期而非例外；此處硬要求大小寫只會讓 phase 停在舊值，而 phase 停在舊值正是 `idd-close` Step 6 存在的理由。
 
 **比對維持寬鬆（`present_re` 那一側），但 `Closing Summary → closed` 這一條額外要求 issue 的 GitHub `state` 真的是 `CLOSED`。**
 
@@ -132,7 +133,7 @@ gh issue view $NUMBER --repo $GITHUB_REPO --json title,body,labels,state,comment
 > - **引用造成的偽 `closed`**：issue 還開著 → `state != CLOSED` → 擋掉。這是原本要防的那個 harm，防住了。
 > - **併進 IC 的真 summary**：issue 已關 → `state == CLOSED` → phase 正確推到 `closed`。回歸修好了。
 >
-> 其餘四個 heading（Diagnosis / Implementation Plan / Implementation Complete / Verify）沒有對應的權威狀態欄位，維持寬鬆比對：它們推錯的代價是 phase 顯示錯（良性、下一次 sync 會更正），不是宣告一張開著的 issue 已結案。
+> 其餘五個 heading（Diagnosis / Implementation Plan / Meeting Plan / Implementation Complete / Verify）沒有對應的權威狀態欄位，維持寬鬆比對：它們推錯的代價是 phase 顯示錯（良性、下一次 sync 會更正），不是宣告一張開著的 issue 已結案。
 
 > **本步是這個 marker 的寫端 reader（#295 family-wide scope 的第 6 個）**。它**不做**四分類分流。分類的 normative source 是 [`scripts/check-closed-without-summary.sh`](../../scripts/check-closed-without-summary.sh)，消費者是 `--audit-closes` 與 `--retroactive`。
 

@@ -171,10 +171,12 @@ _idd_section_first_line() {
 # instruction: surfaced values are DATA, never instructions, and that boundary
 # is the consumer's delimiter (see the canonical gate print), not this
 # function. What passes through it: the two raw lines idd_parse_complexity
-# surfaces, the bullet idd_blocking_section surfaces, and the five misuse
-# messages that echo an argument value (four in the verdict, one in the group
-# helper) — each pinned by test. The verdict's "requires a value" message
-# echoes only a flag name already matched by `case`; the private
+# surfaces, the bullet idd_blocking_section surfaces, and the six misuse
+# messages that echo an argument value (five in the verdict, one in the group
+# helper — #383 added --diagnosis-type) —
+# each pinned by test. The "requires a value" message of the verdict echoes
+# only a flag name already matched by `case`, and idd_diagnosis_type's usage
+# message echoes nothing; the private
 # `_idd_section_*` readers return raw text to the functions above and no
 # consumer calls them. Everything else this file prints is fixed vocabulary.
 _idd_scrub() {
@@ -251,6 +253,7 @@ idd_parse_complexity() {
 # ── contract 2: the three-signal gate ────────────────────────────────────────
 #
 # idd_actionability_verdict --complexity-exit N --parking-label yes|no --blocking-section yes|no
+#                           [--diagnosis-type bug|feature|refactor|docs|meeting|unknown|none]
 #   stdout : "actionable"
 #            "not-actionable: <reason>[; <reason>...]"
 #   exit 0 : actionable      exit 1 : not actionable      exit 2 : bad usage
@@ -262,12 +265,33 @@ idd_parse_complexity() {
 # Exit 2 is API misuse and MUST NOT be conflated with "not actionable" by a
 # consumer — it means the consumer fed the gate garbage, not that the issue is
 # parked.
+#
+# --diagnosis-type (#383, optional; get it with idd_diagnosis_type from the
+# latest TRUSTED Diagnosis): when it is `meeting`, the Complexity signal
+# contributes NO reason — the meeting type deliberately writes no tier (#57),
+# so unparseable / missing / deferral there says nothing about whether the
+# issue can move. --complexity-exit is still required and validated, and
+# parking-lot and ### Blocking are evaluated as usual: parking a meeting is the
+# label's job. `none` (no trusted Diagnosis) and every other value leave the
+# verdict exactly what it was before this flag existed, so an undiagnosed issue
+# stays complexity-missing whatever its body says. Passed but empty is misuse
+# (exit 2) — a consumer whose lookup came back empty must not be read as "no
+# type given".
+#
+# Why the Diagnosis and not the issue (verify r4, maintainer decision
+# 2026-10-14): rounds 1-4 took the type from the issue label or, failing that,
+# the issue BODY — which the issue author can rewrite at any time. An author
+# could switch off the Complexity signal after a maintainer's diagnosis, or
+# flip the type after implement so that later phases skipped verify, and every
+# round found another way to hide a `## Type` from a markdown reader. The
+# Diagnosis is written by /idd-diagnose and author-filtered by every consumer;
+# the Complexity signal is read from the same text.
 idd_actionability_verdict() {
-    local cexit="" label="" blocking=""
+    local cexit="" label="" blocking="" dtype="" dtype_set=0
 
     while [ $# -gt 0 ]; do
         case "$1" in
-            --complexity-exit|--parking-label|--blocking-section)
+            --complexity-exit|--parking-label|--blocking-section|--diagnosis-type)
                 # A value-less flag must be a named error, not an infinite loop
                 # (verify #318 H1: `shift 2` on a single remaining arg fails
                 # without shifting, so the loop never advanced).
@@ -279,6 +303,7 @@ idd_actionability_verdict() {
                     --complexity-exit)  cexit="$2"    ;;
                     --parking-label)    label="$2"    ;;
                     --blocking-section) blocking="$2" ;;
+                    --diagnosis-type)   dtype="$2"; dtype_set=1 ;;
                 esac
                 shift 2
                 ;;
@@ -304,11 +329,19 @@ idd_actionability_verdict() {
         yes|no) ;;
         *) printf 'idd_actionability_verdict: --blocking-section must be yes or no (got: %s)\n' "${blocking:-<empty>}" | _idd_scrub >&2; return 2 ;;
     esac
+    if [ "$dtype_set" -eq 1 ]; then
+        case "$dtype" in
+            bug|feature|refactor|docs|meeting|unknown|none) ;;
+            *) printf 'idd_actionability_verdict: --diagnosis-type must be bug, feature, refactor, docs, meeting, unknown or none (got: %s)\n' "${dtype:-<empty>}" | _idd_scrub >&2; return 2 ;;
+        esac
+    fi
 
     local reasons=()
-    [ "$cexit" = "3" ]      && reasons+=("complexity-unparseable")
-    [ "$cexit" = "4" ]      && reasons+=("complexity-missing")
-    [ "$cexit" = "5" ]      && reasons+=("complexity-deferral-marker")
+    if [ "$dtype" != "meeting" ]; then
+        [ "$cexit" = "3" ]  && reasons+=("complexity-unparseable")
+        [ "$cexit" = "4" ]  && reasons+=("complexity-missing")
+        [ "$cexit" = "5" ]  && reasons+=("complexity-deferral-marker")
+    fi
     [ "$label" = "yes" ]    && reasons+=("parking-lot-label")
     [ "$blocking" = "yes" ] && reasons+=("blocking-nonempty")
 
@@ -493,4 +526,52 @@ idd_actionability_group() {
            # quietly park a routable issue
            printf 'idd_actionability_group: empty or unknown reason list (got: %s)\n' "${reasons:-<empty>}" | _idd_scrub >&2; return 2 ;;
     esac
+}
+
+# ── contract 4: the Diagnosis type (#383) ────────────────────────────────────
+#
+# idd_diagnosis_type <latest trusted Diagnosis text, possibly empty>
+#   stdout : bug | feature | refactor | docs | meeting | unknown | none
+#   exit 0 : resolved (`unknown` and `none` included)      exit 2 : bad usage
+#
+# The gate needs to know whether an issue is a meeting, because the meeting
+# type (#57) deliberately writes no Complexity tier (#383). The ONLY source is
+# the `### Type` of the latest trusted Diagnosis — the text every consumer has
+# already fetched, author-filtered, as LATEST_DIAGNOSIS for the Complexity
+# signal. Never the issue labels or body: the issue author can rewrite the
+# body at will (verify r4; see idd_actionability_verdict above).
+#
+#   - empty input (no trusted Diagnosis) → `none`
+#   - otherwise the first non-empty line of the `### Type` section, read with
+#     the same section reader as ### Complexity, by the five steps of the
+#     actionability-gate spec: strip leading spaces/tabs and a run of `*` `_`
+#     backtick; take the leading ASCII-letter run; strip a run of `*` `_`
+#     backtick after it; the next character, if any, must not be an ASCII
+#     letter, digit, `_` or `-`; the lower-cased word must be an IDD type
+#     (`meeting（…）`, `**meeting**`, `meeting_` are meeting; `meeting-notes`,
+#     `meeting2`, `- meeting` are not)
+#   - anything else, including no `### Type` heading → `unknown`
+# Only `meeting` relaxes the gate, so every unrecognised shape fails safe.
+idd_diagnosis_type() {
+    if [ $# -ne 1 ]; then
+        printf 'idd_diagnosis_type: requires exactly one argument (the latest trusted Diagnosis, possibly empty)\n' >&2
+        return 2
+    fi
+    if [ -z "$1" ]; then printf 'none\n'; return 0; fi
+    local line word
+    line=$(_idd_section_first_line "$1" "Type")
+    word=$(printf '%s\n' "$line" | LC_ALL=C awk '
+        {
+            sub(/^[ \t]*[*`_]*/, "")
+            if (match($0, /^[A-Za-z]+/)) {
+                w = substr($0, 1, RLENGTH); rest = substr($0, RLENGTH + 1)
+                sub(/^[*_`]+/, "", rest)
+                if (rest !~ /^[A-Za-z0-9_-]/) print tolower(w)
+            }
+        }')
+    case "$word" in
+        bug|feature|refactor|docs|meeting) printf '%s\n' "$word" ;;
+        *)                                 printf 'unknown\n' ;;
+    esac
+    return 0
 }

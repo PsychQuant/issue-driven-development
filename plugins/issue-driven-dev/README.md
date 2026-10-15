@@ -159,6 +159,7 @@ See `references/config-protocol.md` (in-plugin) for the full algorithm.
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v3.4.0 | 2026-10-15 | **meeting issue 不再被 actionability gate 擋下**（[#383](https://github.com/PsychQuant/issue-driven-development/issues/383)）— gate 新增 Diagnosis type 輸入（`idd_diagnosis_type`、`--diagnosis-type`），type 只取最新受信任 Diagnosis 的 `### Type`；meeting 只略過 Complexity 訊號，`parking-lot` 與 `### Blocking` 照評。idd-all／idd-plan／idd-implement／idd-list 依 `TYPE=meeting` 分派，idd-update 認得 `## Meeting Plan`；idd-diagnose 只採信受信任作者在本文宣告的 meeting。詳見 CHANGELOG.md。 |
 | v3.3.0 | 2026-10-07 | **既有工作偵測**（[#366](https://github.com/PsychQuant/issue-driven-development/issues/366)）— `scripts/check-existing-work.sh` 在 diagnose / implement 之前一次查完所有 issue 是否已有 open PR 或既有分支在處理，回傳 `blocked` / `resume` / `unknown` / `clear`；idd-all、idd-all-chain、idd-diagnose、idd-implement、idd-close 接上這個判斷，不再在已有 PR 的 issue 上重做一遍。詳見 CHANGELOG.md。 |
 | v3.2.0 | 2026-10-07 | **`idd-discuss` + Discussion-aware `idd-ask`**（[#331](https://github.com/PsychQuant/issue-driven-development/issues/331)，PR #334）— 把選定的人機對話存成 append-only 的 GitHub Discussion snapshot（來源、穩定 ID、重試對帳）；`idd-ask` 預設納入 Discussions（`--corpus issues|discussions|all`）。**egress 新增前置需求**：markdown-it-py 4.0.0 與 linkify-it-py 2.0.3（`scripts/requirements-egress.txt`），缺少時拒絕發送（#332）。詳見 CHANGELOG.md。 |
 | v3.1.1 | 2026-10-07 | **`--blocked-by` 原生依賴修正**（[#353](https://github.com/PsychQuant/issue-driven-development/issues/353)，PR #358）— 改呼叫 GitHub 實際存在的 `addBlockedBy` mutation，失敗時原樣印出 GitHub 的錯誤。詳見 CHANGELOG.md。 |
