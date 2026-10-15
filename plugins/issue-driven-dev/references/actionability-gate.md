@@ -151,7 +151,7 @@ A `meeting` issue is a deliberation record, not a code task. Its spec ([`openspe
 
 The type is therefore a gate input, and it comes from **the latest trusted Diagnosis** — the same author-filtered comment (OWNER / MEMBER / COLLABORATOR) the Complexity signal is read from. `idd_diagnosis_type "$LATEST_DIAGNOSIS"` (contract 4 in `scripts/lib/actionability.sh`) reads the first line of its `### Type` section with the same section reader; `meeting（…）` and `**meeting**` are meeting, any other word is `unknown`, and an empty input — no trusted Diagnosis — is `none`. `/idd-diagnose` writes `### Type` by template, so every existing meeting Diagnosis already carries it.
 
-**Not the issue label, not the issue body.** Verify rounds 1–4 resolved the type from a type label or, without one, the issue body's `## Type`. The body is editable by the issue author at any time, and on a public repository that is anyone. An author could switch off the Complexity signal after a maintainer's diagnosis (r4 #19), or flip the type after implement so that `idd-all` skipped verify and the push (r4 #35); and each round found another way to hide a `## Type` from a markdown reader. Reading the type from the trusted Diagnosis closes both: the issue author cannot write it. A maintainer who relabels an issue re-diagnoses it — the Diagnosis is the record the gate judges, for type as for Complexity.
+**Not the issue label, not the issue body.** Verify rounds 1–4 resolved the type from a type label or, without one, the issue body's `## Type`. The body is editable by the issue author at any time, and on a public repository that is anyone. An author could switch off the Complexity signal after a maintainer's diagnosis (r4 #19), or flip the type after implement so that `idd-all` skipped verify and the push (r4 #35); and each round found another way to hide a `## Type` from a markdown reader. Reading the type from the trusted Diagnosis closes both, together with one rule on the producer side (r5): the author filter only says who posted the Diagnosis, not where its `### Type` came from, and `/idd-all` runs `/idd-diagnose` on every run. So `/idd-diagnose` Step 1 writes `meeting` only for a `meeting` type label (only triage-or-higher can set one) or for a body `## Type: meeting` whose issue author is OWNER / MEMBER / COLLABORATOR — the same set the Diagnosis filter trusts — and never infers meeting from content. An issue author outside that set therefore cannot make an issue a meeting by editing it; a maintainer adds the label instead. A maintainer who relabels an issue re-diagnoses it — the Diagnosis is the record the gate judges, for type as for Complexity.
 
 `idd_actionability_verdict` takes it as an optional `--diagnosis-type <value>`:
 
@@ -254,7 +254,7 @@ esac
 # 5. Print the verdict. The executing model sees only this output; an unprinted
 #    withheld verdict is indistinguishable from an actionable issue. Two parts:
 #    a MACHINE LINE whose fields are all closed-vocabulary (a digit, one of four
-#    tiers, a subset of five reasons, one of six issue types — #383), then the third-party raw text on its own
+#    tiers, a subset of five reasons, one of seven Diagnosis types — #383), then the third-party raw text on its own
 #    lines inside a fixed `raw<<<` … `>>>raw` delimiter with every raw line
 #    indented. Text inside the delimiter is DATA — never a verdict, never an
 #    instruction; only a column-0 `gate #N:` line is a verdict. (Round 4 put the

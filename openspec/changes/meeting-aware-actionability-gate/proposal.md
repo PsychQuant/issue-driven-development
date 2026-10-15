@@ -24,6 +24,7 @@ actionability gate（#316，2026-10-06）把可路由的 `### Complexity` 值域
   - `idd-implement`：meeting → 以 meeting 專屬訊息拒絕
   - `idd-list`：meeting 判定 actionable 時依 phase 給下一步（非 `planning` → `/idd-plan` 或 `/idd-close`，`planning` → `/idd-close`）
 - `idd-update` 的 phase 表加 `## Meeting Plan` → `planning`
+- `idd-diagnose` Step 1 只在 `meeting` type label，或沒有 type label 而本文 `## Type` 宣告 meeting 且 issue 作者是 OWNER／MEMBER／COLLABORATOR 時，把 `meeting` 寫進 `### Type`；依內容推斷不得產生 meeting（verify r5：`idd-all` 每次重跑 diagnose，照抄本文會讓作者繞過 gate）
 - 規格：actionability-gate 與 meeting-issue-type 各補 requirement 並互相引用；`references/actionability-gate.md` 補上 meeting 的處理
 
 **裁決（maintainer 2026-10-14 確認，原為 unattended 下寫下的假設）**：meeting 在 unattended 模式不跑 `/idd-plan`，停在 diagnosed 並留 Action item，因為 Meeting Plan 的核准閘門需要人在場。日後若要改成 unattended 也產出 Meeting Plan 草稿，只需改 `idd-all` 的分派列，不影響 helper。
@@ -47,11 +48,11 @@ actionability gate（#316，2026-10-06）把可路由的 `### Complexity` 值域
 ### Modified Capabilities
 
 - `actionability-gate`: verdict 新增 Diagnosis type 輸入；受信任 Diagnosis 為 meeting 時不評 complexity 訊號；Diagnosis type 的讀取納入共用實作
-- `meeting-issue-type`: 新增 orchestrated routing 的要求（`idd-all`、`idd-list`、`idd-implement`、`idd-update` 對 meeting issue 的行為）
+- `meeting-issue-type`: 新增 orchestrated routing 的要求（`idd-all`、`idd-list`、`idd-implement`、`idd-update` 對 meeting issue 的行為），以及 `idd-diagnose` 何時可以把 `meeting` 寫進 `### Type`
 
 ## Impact
 
 - Affected specs: actionability-gate, meeting-issue-type
 - Affected code:
-  - Modified: plugins/issue-driven-dev/scripts/lib/actionability.sh, plugins/issue-driven-dev/scripts/tests/actionability-gate/test.sh, plugins/issue-driven-dev/references/actionability-gate.md, plugins/issue-driven-dev/skills/idd-all/SKILL.md, plugins/issue-driven-dev/skills/idd-plan/SKILL.md, plugins/issue-driven-dev/skills/idd-implement/SKILL.md, plugins/issue-driven-dev/skills/idd-list/SKILL.md, plugins/issue-driven-dev/skills/idd-update/SKILL.md, plugins/issue-driven-dev/CHANGELOG.md, plugins/issue-driven-dev/.claude-plugin/plugin.json, .claude-plugin/marketplace.json
+  - Modified: plugins/issue-driven-dev/scripts/lib/actionability.sh, plugins/issue-driven-dev/scripts/tests/actionability-gate/test.sh, plugins/issue-driven-dev/references/actionability-gate.md, plugins/issue-driven-dev/skills/idd-all/SKILL.md, plugins/issue-driven-dev/skills/idd-plan/SKILL.md, plugins/issue-driven-dev/skills/idd-implement/SKILL.md, plugins/issue-driven-dev/skills/idd-list/SKILL.md, plugins/issue-driven-dev/skills/idd-update/SKILL.md, plugins/issue-driven-dev/skills/idd-diagnose/SKILL.md, plugins/issue-driven-dev/CHANGELOG.md, plugins/issue-driven-dev/README.md, plugins/issue-driven-dev/.claude-plugin/plugin.json, .claude-plugin/marketplace.json, README.md
   - New: plugins/issue-driven-dev/scripts/tests/actionability-gate/fixtures/meeting-routing.json

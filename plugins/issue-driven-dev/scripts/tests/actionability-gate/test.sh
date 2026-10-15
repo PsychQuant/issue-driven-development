@@ -1030,6 +1030,11 @@ assert_eq "diagnosis type: Meeting (ASCII case) → meeting"             "meetin
 assert_eq "diagnosis type: bug → bug"                                  "bug"     "$(dt_ "$(td_ bug)")"
 assert_eq "diagnosis type: docs → docs"                                "docs"    "$(dt_ "$(td_ docs)")"
 assert_eq "diagnosis type: meeting-notes is not meeting → unknown"     "unknown" "$(dt_ "$(td_ 'meeting-notes')")"
+# r5 #32: the spec's five-step boundary, row by row (the spec example table)
+assert_eq "diagnosis type: meeting（…） → meeting (step 4: a full-width bracket may follow)" "meeting" "$(dt_ "$(td_ 'meeting（本文 ## Type）')")"
+assert_eq "diagnosis type: meeting_ → meeting (step 3 strips a trailing _)"                "meeting" "$(dt_ "$(td_ 'meeting_')")"
+assert_eq "diagnosis type: - meeting → unknown (step 1 does not strip a list bullet)"      "unknown" "$(dt_ "$(td_ '- meeting')")"
+assert_eq "diagnosis type: type=meeting → unknown (step 2 takes the word type, which step 5 rejects)"      "unknown" "$(dt_ "$(td_ 'type=meeting')")"
 assert_eq "diagnosis type: meeting2 is not meeting → unknown"          "unknown" "$(dt_ "$(td_ 'meeting2')")"
 assert_eq "diagnosis type: a non-type word → unknown"                  "unknown" "$(dt_ "$(td_ 'deliberation')")"
 assert_eq "diagnosis type: no ### Type heading → unknown"              "unknown" "$(dt_ $'## Diagnosis\n\n### Complexity\n\nSimple\n')"
@@ -1054,7 +1059,8 @@ IA_="$SKILLS/idd-all/SKILL.md"; IP_="$SKILLS/idd-plan/SKILL.md"; IM_="$SKILLS/id
 IL_="$SKILLS/idd-list/SKILL.md"; IU_="$SKILLS/idd-update/SKILL.md"
 assert_output_grep "idd-all: a meeting dispatch row comes before the tier rows"   '| `TYPE=meeting` · `VEXIT=0` |' "$IA_"
 # verify #383 r1 (#16): a Meeting Plan is optional — the item names both next steps
-assert_output_grep "idd-all: unattended meeting action item names /idd-plan or /idd-close" 'stopped at diagnosed (unattended); next: attended /idd-plan' "$IA_"
+assert_output_grep "idd-all: unattended meeting action item names /idd-plan or /idd-close" 'NEXT="next: attended /idd-plan #${RN} for a Meeting Plan, or /idd-close #${RN}' "$IA_"
+assert_output_grep "idd-all: the stopped-at-diagnosed item carries that next step" 'stopped at diagnosed (unattended); ${NEXT}' "$IA_"
 refute_output_grep "idd-all: no action item calls the plan a requirement"         'needs an attended /idd-plan' "$IA_"
 assert_output_grep "idd-all: Phase 4 verify is skipped for meeting"               '`TYPE=meeting` → 跳過 Phase 4' "$IA_"
 assert_output_grep "idd-all: Phase 5 push / PR is skipped for meeting"            '`TYPE=meeting` → 跳過 push 與 PR' "$IA_"
@@ -1062,7 +1068,7 @@ assert_output_grep "idd-all: Phase 5 push / PR is skipped for meeting"          
 refute_output_grep "idd-all: no MEETING_ITEMS shell variable carried across phases" 'MEETING_ITEMS' "$IA_"
 assert_output_grep "idd-all: Phase 6 re-resolves the type from the trusted Diagnosis" 'MT_PAGES=$(gh api "repos/$GITHUB_REPO/issues/$RN/comments"' "$IA_"
 # r1 (#30): Phase 5 has a code guard, not only prose
-assert_output_grep "idd-all: Phase 5 bash skips a meeting issue in code"          'Phase 5 skipped (no push, no PR)' "$IA_"
+assert_output_grep "idd-all: Phase 5 bash stops a mid-run meeting in code (r5 #11)" 'FATAL: Phase 5: the latest trusted Diagnosis of #$N now records meeting' "$IA_"
 # r1 (#7, #23): the Phase 0.5 branch is unwound for a meeting issue in PR mode
 assert_output_grep "idd-all: meeting dispatch unwinds the empty Phase 0.5 branch" 'removed the empty Phase 0.5 branch' "$IA_"
 # ── verify #383 r2 (#4, #6, #12/C2): BEHAVIOUR, not prose. The meeting unwind
@@ -1129,14 +1135,51 @@ refute_grep "unwind (run): ... no gh call on direct-commit" 'GH-CALLED' "$out"
 mkdir "$UWD/g" && uw_repo "$UWD/g" && mkdir -p "$UWD/g/.claude/.idd/attachments/issue-7" \
   && printf '{"files": []}\n' > "$UWD/g/.claude/.idd/attachments/issue-7/_manifest.json" && out=$(uw_run "$UWD/g" meeting)
 assert_grep "unwind (run): the kept-branch line says what to do with it (r3 #3)" 'push it with a later PR' "$out"
+# r5 #10: a lost CWD is loud for a meeting run, and harmless for a non-meeting one
+mkdir "$UWD/j" && uw_repo "$UWD/j"
+out=$( cd "$UWD/j" && UW_TYPE=meeting N=7 GITHUB_REPO=o/r CWD= PATH_AXIS=PR CLAUDE_PLUGIN_ROOT="$HERE/../../.." bash -c "$uw_stub"$'\n'"$UW_SRC" 2>&1 ); rc=$?
+assert_eq "unwind (run): a meeting run with CWD lost is a loud failure (r5 #10)" "1" "$rc"
+assert_grep "unwind (run): ... naming CWD" 'CWD is empty' "$out"
+assert_eq "unwind (run): ... and the branch is left as is" "idd/7-x" "$(git -C "$UWD/j" branch --show-current)"
+out=$( cd "$UWD/j" && UW_TYPE=bug N=7 GITHUB_REPO=o/r CWD= PATH_AXIS=PR CLAUDE_PLUGIN_ROOT="$HERE/../../.." bash -c "$uw_stub"$'\n'"$UW_SRC" 2>&1 ); rc=$?
+assert_eq "unwind (run): a non-meeting run with CWD lost exits 0 (r5 #10)" "0" "$rc"
+# r5 #14: a failed comment fetch leaves the branch and does not abort the run
+mkdir "$UWD/k" && uw_repo "$UWD/k"
+out=$( cd "$UWD/k" && N=7 GITHUB_REPO=o/r CWD="$UWD/k" PATH_AXIS=PR CLAUDE_PLUGIN_ROOT="$HERE/../../.." bash -c 'gh() { case "$1" in api) return 1 ;; repo) echo main ;; esac; }'$'\n'"$UW_SRC" 2>&1 ); rc=$?
+assert_eq "unwind (run): a failed comment fetch does not abort the run (r5 #14)" "0" "$rc"
+assert_grep "unwind (run): ... it says the type is unknown and how to unwind by hand" 'could not read the Diagnosis type of #7' "$out"
+assert_eq "unwind (run): ... and the branch is left as is" "idd/7-x" "$(git -C "$UWD/k" branch --show-current)"
 rm -rf "$UWD"
+# r5 #11/#12: Phase 4 has a guard in code. A meeting run never reaches Phase 4
+# (Phase 2 sends it to Phase 6), so a meeting Diagnosis here means the type
+# changed after Phase 2 routed the issue as code work: stop, do not verify.
+P4_SRC=$(ia_block_after '> **`TYPE=meeting` → 跳過 Phase 4')
+assert_true "idd-all: the Phase 4 guard is extractable" "[ -n \"\$P4_SRC\" ]"
+p4_run() {   # $1 = Diagnosis type (FAIL = the comment fetch fails), $2 = N
+  ( P4T="$1" N="${2-7}" GITHUB_REPO=o/r CLAUDE_PLUGIN_ROOT="$HERE/../../.." \
+      bash -c 'gh() { echo GH-CALLED >&2; [ "$P4T" = FAIL ] && return 1; echo "[\"## Diagnosis\\n\\n### Type\\n$P4T\\n\"]"; }'$'\n'"$P4_SRC" 2>&1 )
+}
+out=$(p4_run meeting); rc=$?
+assert_eq "phase 4 (run): a meeting Diagnosis after implement stops the run (r5 #11)" "1" "$rc"
+assert_grep "phase 4 (run): ... saying verify was not run and why" 'now records meeting, but Phase 2 routed this run as code work' "$out"
+out=$(p4_run bug); rc=$?
+assert_eq "phase 4 (run): a non-meeting run passes the guard" "0" "$rc"
+refute_grep "phase 4 (run): ... silently" 'FATAL' "$out"
+out=$(p4_run FAIL); rc=$?
+assert_eq "phase 4 (run): a failed comment fetch stops before verify" "1" "$rc"
+assert_grep "phase 4 (run): ... naming the fetch" 'comment fetch failed' "$out"
+out=$(p4_run bug '7/../x'); rc=$?
+assert_eq "phase 4 (run): a non-numeric issue number is fatal (r5 #12)" "1" "$rc"
+refute_grep "phase 4 (run): ... before any gh call" 'GH-CALLED' "$out"
+assert_output_grep "idd-all: the abort table lists the Phase 4 guard (r5 #11)" '| Phase 4 type guard:' "$IA_"
 # Phase 5: the guard lives in the same shell as the push, on the PR path only.
 P5_SRC=$(ia_block_after '**Conditional push + PR creation**')
 assert_true "idd-all: the Phase 5 block is extractable" "[ -n \"\$P5_SRC\" ]"
 p5_stub='git() { case "$*" in *push*) echo "PUSH-CALLED"; return 0 ;; esac; command git "$@"; }; gh() { case "$1" in api) if [ "$UW_TYPE" = meeting ]; then echo "[\"## Diagnosis\\n\\n### Type\\nmeeting\\n\"]"; else return 1; fi ;; pr) echo "PR-CALLED" ;; esac; }'
 p5_run() { ( UW_TYPE="$1" N=7 GITHUB_REPO=o/r CWD=/nonexistent PATH_AXIS="$2" IN_CHAIN="${3:-}" BRANCH=idd/7-x CLAUDE_PLUGIN_ROOT="$HERE/../../.." bash -c "$p5_stub"$'\n'"$P5_SRC" 2>&1 ); }
 out=$(p5_run meeting PR); rc=$?
-assert_eq "phase 5 (run): a meeting issue in PR mode exits 0" "0" "$rc"
+assert_eq "phase 5 (run): a meeting Diagnosis at Phase 5 fails closed (r5 #11)" "1" "$rc"
+assert_grep "phase 5 (run): ... saying the type changed after Phase 2 routed it" 'now records meeting, but Phase 2 routed this run as code work' "$out"
 refute_grep "phase 5 (run): a meeting issue never reaches git push (r2 #12, C2)" 'PUSH-CALLED' "$out"
 refute_grep "phase 5 (run): a meeting issue never opens a PR" 'PR-CALLED' "$out"
 # r3 #27: positive control — a non-meeting PR run still reaches git push
@@ -1145,10 +1188,13 @@ p5ok_stub='git() { case "$*" in *push*) echo "PUSH-CALLED"; return 0 ;; esac; re
 out=$( UW_TYPE=bug N=7 GITHUB_REPO=o/r CWD=/nonexistent PATH_AXIS=PR IN_CHAIN= BRANCH=idd/7-x CLAUDE_PLUGIN_ROOT="$HERE/../../.." bash -c "$p5ok_stub"$'\n'"$P5_SRC" 2>&1 )
 assert_grep "phase 5 (run): a non-meeting PR run does call git push (positive control)" 'PUSH-CALLED' "$out"
 assert_grep "phase 5 (run): ... even when the issue body was rewritten to meeting after implement (r4 #35)" 'PR-CALLED' "$out"
+out=$( UW_TYPE=bug N='7/../x' GITHUB_REPO=o/r CWD=/nonexistent PATH_AXIS=PR IN_CHAIN= BRANCH=idd/7-x CLAUDE_PLUGIN_ROOT="$HERE/../../.." bash -c "$p5ok_stub"$'\n'"$P5_SRC" 2>&1 ); rc=$?
+assert_eq "phase 5 (run): a non-numeric issue number stops before any fetch (r5 #12)" "1" "$rc"
+refute_grep "phase 5 (run): ... and never pushes" 'PUSH-CALLED' "$out"
 out=$(p5_run bug direct-commit); rc=$?
 assert_eq "phase 5 (run): direct-commit makes no issue fetch, so a failing gh cannot abort it (r2 #5)" "0" "$rc"
 out=$(p5_run bug PR "" ); rc=$?
-assert_eq "phase 5 (run): a failed issue fetch on the PR path stops before pushing" "1" "$rc"
+assert_eq "phase 5 (run): a failed comment fetch on the PR path stops before pushing" "1" "$rc"
 refute_grep "phase 5 (run): ... and never pushes" 'PUSH-CALLED' "$out"
 # r2 (#9): the meeting report carries the #123 cleanup and names the Action-items section
 assert_output_grep "idd-all: the meeting report clears the unattended flag (#123)" 'meeting report 印出後同樣 `clear_unattended "$CWD"`' "$IA_"
@@ -1166,25 +1212,49 @@ assert_output_grep "idd-all: the abort table lists the Phase 5 type-guard FATALs
 # body phase is diagnosed, and a non-meeting unattended run must print nothing.
 P6_SRC=$(ia_block_after '#### Phase 6 Action items surface')
 assert_true "idd-all: the Phase 6 Action-items block is extractable" "[ -n \"\$P6_SRC\" ]"
-p6_run() {   # $1 = Diagnosis type, $2 = issue body (\n escapes), $3 = gh mode, $4 = EXISTING_WORK_ITEMS, $5 = INTERACTION
-  ( N=7 INTERACTION="${5-unattended}" GITHUB_REPO=o/r CWD=/nonexistent CLAUDE_PLUGIN_ROOT="$HERE/../../.." P6D="$1" P6B="$2" P6M="${3:-ok}" EXISTING_WORK_ITEMS="${4:-}" \
+p6_run() {   # $1 = Diagnosis type, $2 = issue body (\n escapes), $3 = gh mode, $4 = EXISTING_WORK_ITEMS, $5 = INTERACTION, $6 = N, $7 = CWD
+  ( N="${6-7}" INTERACTION="${5-unattended}" IDD_ALL_UNATTENDED= GITHUB_REPO=o/r CWD="${7-/nonexistent}" CLAUDE_PLUGIN_ROOT="$HERE/../../.." P6D="$1" P6B="$2" P6M="${3:-ok}" EXISTING_WORK_ITEMS="${4:-}" \
       bash -c 'gh() { [ "$P6M" = fail ] && return 1; case "$1" in issue) [ -z "$3" ] && return 1; printf "%b\n" "$P6B" ;; api) case "$2" in *"/issues//"*) return 1 ;; esac; echo "[\"## Diagnosis\\n\\n### Type\\n$P6D\\n\"]" ;; esac; }; git() { return 0; }'$'\n'"$P6_SRC" 2>&1 )
 }
-out=$(p6_run bug '## Problem\n\n**Phase**: diagnosed\n')
+out=$(p6_run bug '## Problem\n\n---\n\n## Current Status\n\n**Phase**: diagnosed\n')
 assert_eq "phase 6 (run): a non-meeting unattended run prints no Action items (r3 #4)" "" "$out"
-out=$(p6_run meeting '## Problem\n\n**Phase**: diagnosed\n')
+out=$(p6_run meeting '## Problem\n\n---\n\n## Current Status\n\n**Phase**: diagnosed\n')
 assert_grep "phase 6 (run): a diagnosed meeting root gets its item, numbered from \$N" '#7: type=meeting — stopped at diagnosed' "$out"
-out=$(p6_run meeting '## Problem\n\n**Phase**: created\n')
+assert_grep "phase 6 (run): ... naming both next steps" 'next: attended /idd-plan #7 for a Meeting Plan, or /idd-close #7' "$out"
+out=$(p6_run meeting '## Problem\n\n---\n\n## Current Status\n\n**Phase**: created\n')
 refute_grep "phase 6 (run): a meeting root that never reached diagnosed gets no stopped-at-diagnosed item (r3 #21)" 'stopped at diagnosed' "$out"
 assert_grep "phase 6 (run): ... but it is told that the body is not at diagnosed (r4 #16)" 'does not show phase diagnosed' "$out"
 out=$(p6_run '' '' fail)
 assert_grep "phase 6 (run): a failed re-resolve is itself an item" 'could not re-resolve the issue type' "$out"
-out=$(p6_run meeting '## Problem\n\n**Phase**: diagnosed\n' ok $'\n- #7: existing-work lookup unknown (gh api timeout) — check by hand')
+out=$(p6_run meeting '## Problem\n\n---\n\n## Current Status\n\n**Phase**: diagnosed\n' ok $'\n- #7: existing-work lookup unknown (gh api timeout) — check by hand')
 assert_grep "phase 6 (run): an unknown existing-work line does not suppress the meeting item (r4 #4)" '#7: type=meeting — stopped at diagnosed' "$out"
-out=$(p6_run meeting '## Problem\n\n**Phase**: diagnosed\n' ok $'\n- #7: existing PR #12 declares it — not started; review it (/idd-verify #7 --pr 12) or run /idd-all #7 interactively')
+out=$(p6_run meeting '## Problem\n\n---\n\n## Current Status\n\n**Phase**: diagnosed\n' ok $'\n- #7: existing PR #12 declares it — not started; review it (/idd-verify #7 --pr 12) or run /idd-all #7 interactively')
 refute_grep "phase 6 (run): an issue Step 0.5.1 blocked gets no stopped-at-diagnosed item (r3 #21)" 'type=meeting — stopped at diagnosed' "$out"
-out=$(p6_run meeting '## Problem\n\n**Phase**: diagnosed\n' ok '' '')
+out=$(p6_run meeting '## Problem\n\n---\n\n## Current Status\n\n**Phase**: diagnosed\n' ok '' '')
 assert_grep "phase 6 (run): a lost interaction mode is itself an item (r4 #12)" 'interaction mode of this run was lost' "$out"
+# r5 #2: lost shell state adds nothing to a NON-meeting run
+out=$(p6_run bug '## Problem\n\n---\n\n## Current Status\n\n**Phase**: diagnosed\n' ok '' '')
+assert_eq "phase 6 (run): a non-meeting run with INTERACTION lost prints nothing (r5 #2)" "" "$out"
+out=$(p6_run bug '## Problem\n\n---\n\n## Current Status\n\n**Phase**: diagnosed\n' ok '' '' '')
+assert_eq "phase 6 (run): a run with both N and INTERACTION lost prints nothing (r5 #2)" "" "$out"
+out=$(p6_run bug '' ok '' unattended '')
+assert_grep "phase 6 (run): an unattended run that lost N says so" 'issue number of this run was lost' "$out"
+# r5 #13: attended runs make no lookup; non-meeting runs never fetch the body
+out=$(p6_run meeting '' fail '' attended)
+assert_eq "phase 6 (run): an attended run makes no type lookup (r5 #13)" "" "$out"
+out=$( N=7 INTERACTION=unattended IDD_ALL_UNATTENDED= GITHUB_REPO=o/r CWD=/nonexistent CLAUDE_PLUGIN_ROOT="$HERE/../../.." \
+  bash -c 'gh() { case "$1" in issue) echo BODY-FETCHED >&2 ;; api) echo "[\"## Diagnosis\\n\\n### Type\\nbug\\n\"]" ;; esac; }; git() { return 0; }'$'\n'"$P6_SRC" 2>&1 )
+assert_eq "phase 6 (run): a non-meeting unattended run does not fetch the issue body (r5 #13)" "" "$out"
+# INTERACTION lost but the unattended state file is still there → treated as unattended
+P6S=$(mktemp -d) && mkdir -p "$P6S/.claude/.idd/state" \
+  && printf '{"active":true,"by":"idd-all","started_at":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$P6S/.claude/.idd/state/unattended.json"
+out=$(p6_run meeting '## Problem\n\n---\n\n## Current Status\n\n**Phase**: diagnosed\n' ok '' '' 7 "$P6S")
+assert_grep "phase 6 (run): a lost INTERACTION is recovered from the unattended state file" '#7: type=meeting — stopped at diagnosed' "$out"
+rm -rf "$P6S"
+# r5 #28: the phase is read from ## Current Status only, not from author-written lines
+out=$(p6_run meeting '## Problem\n\n**Phase**: diagnosed\n')
+refute_grep "phase 6 (run): a **Phase** line outside ## Current Status does not count (r5 #28)" 'stopped at diagnosed' "$out"
+assert_grep "phase 6 (run): ... the item says the body does not show the phase" 'does not show phase diagnosed' "$out"
 # r1 (#6, #8, #14): Phase 6 has a meeting report that claims no verify / PR
 assert_output_grep "idd-all: Phase 6 has a meeting report"                        '✓ idd-all stopped (type=meeting)' "$IA_"
 assert_output_grep "idd-all: the terminal-phase rule names its meeting exception" 'Verify is the terminal phase regardless of mode**（meeting issue 例外' "$IA_"
@@ -1210,5 +1280,34 @@ assert_output_grep "reference: a section on the issue type input (#383)"        
 assert_output_grep "reference: cites the meeting-issue-type spec"                'openspec/specs/meeting-issue-type/spec.md' "$REF"
 assert_output_grep "reference: states why there is no meeting sentinel in Complexity" 'no `meeting` sentinel' "$REF"
 assert_output_grep "reference: the non-routable default names its meeting exception" 'except for a diagnosed `meeting` issue' "$REF"
+assert_output_grep "reference: the trust claim names the producer rule (r5 #3/#27)" 'never infers meeting from content' "$REF"
+assert_output_grep "reference: TYPE is one of seven Diagnosis types (r5 #6)"    'one of seven Diagnosis types' "$REF"
+
+# ── verify #383 r5 (#3): the PRODUCER. idd-all re-runs idd-diagnose on every run,
+#    so a body `## Type: meeting` copied from an outside author would produce a
+#    trusted meeting Diagnosis and switch the Complexity signal off. The block
+#    that decides whether a body meeting may be adopted is extracted and run. ──
+ID_="$SKILLS/idd-diagnose/SKILL.md"
+block_after_in() { awk -v h="$1" 'index($0, h) == 1 { f = 1; next } f && /^```bash$/ { inb = 1; next } inb && /^```$/ { exit } inb { print }' "$2"; }
+DG_SRC=$(block_after_in '**本文 meeting 的採信條件' "$ID_")
+assert_true "idd-diagnose: the body-meeting trust block is extractable" "[ -n \"\$DG_SRC\" ]"
+dg_run() {   # $1 = issue number, $2 = author_association the stubbed gh returns (FAIL = the lookup fails)
+  ( NUMBER="$1" GITHUB_REPO=o/r DGA="$2" bash -c 'gh() { [ "$DGA" = FAIL ] && return 1; echo "$DGA"; }'$'\n'"$DG_SRC" 2>&1 )
+}
+for a_ in OWNER MEMBER COLLABORATOR; do
+  assert_grep "idd-diagnose (run): a $a_ author's body meeting is adoptable" 'BODY_MEETING_TRUSTED=yes' "$(dg_run 7 "$a_")"
+done
+for a_ in NONE CONTRIBUTOR FIRST_TIME_CONTRIBUTOR FIRST_TIMER MANNEQUIN ''; do
+  assert_grep "idd-diagnose (run): a '${a_:-empty}' author's body meeting is not adopted" 'BODY_MEETING_TRUSTED=no' "$(dg_run 7 "$a_")"
+done
+out=$(dg_run 7 FAIL); rc=$?
+assert_eq "idd-diagnose (run): a failed association lookup does not stop diagnosis" "0" "$rc"
+assert_grep "idd-diagnose (run): ... and is not trusted (fail-safe)" 'unknown → BODY_MEETING_TRUSTED=no' "$out"
+out=$( NUMBER='7/../x' GITHUB_REPO=o/r bash -c 'gh() { echo GH-CALLED; echo OWNER; }'$'\n'"$DG_SRC" 2>&1 ); rc=$?
+assert_eq "idd-diagnose (run): a non-numeric issue number is fatal" "1" "$rc"
+refute_grep "idd-diagnose (run): ... before any gh call" 'GH-CALLED' "$out"
+assert_output_grep "idd-diagnose: a body meeting needs BODY_MEETING_TRUSTED=yes" '只有下方採信判斷印出 `BODY_MEETING_TRUSTED=yes` 才採用' "$ID_"
+assert_output_grep "idd-diagnose: inference never yields meeting"               '推斷永遠不得產生 `meeting`' "$ID_"
+refute_output_grep "idd-diagnose: no bare 'default non-meeting' that inference could override" '依內容推斷，**預設非 meeting**' "$ID_"
 
 print_summary "actionability-gate"

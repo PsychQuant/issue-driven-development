@@ -46,6 +46,31 @@ For a diagnosed meeting issue — one whose latest trusted Diagnosis comment rec
 - **WHEN** `/idd-list` shows an issue whose body declares `meeting` but that has no trusted Diagnosis comment, no `parking-lot` label and an empty `### Blocking` section
 - **THEN** it appears in the undiagnosed group with `/idd-diagnose` as the next action
 
+### Requirement: Diagnose records meeting only from a trusted source
+
+`/idd-diagnose` SHALL record `meeting` under the Diagnosis `### Type` only in two cases: the issue carries the `meeting` type label; or the issue carries no type label, its body's `## Type` declares `meeting`, and the issue's author association is `OWNER`, `MEMBER` or `COLLABORATOR` (the set whose Diagnosis comments the gate trusts). It SHALL NOT infer `meeting` from the issue's content. When the body declares `meeting` but the author association is outside that set or cannot be read, `/idd-diagnose` SHALL resolve the type as if the body declared no type, and the Diagnosis SHALL say that a maintainer can add the `meeting` label. Because `/idd-all` runs `/idd-diagnose` on every run, this rule is what keeps an issue author outside that set from switching off the Complexity signal by editing the body.
+
+#### Scenario: an outside author's body declaration is not adopted
+
+- **WHEN** an issue with no type label, opened by an author whose association is `NONE` or `CONTRIBUTOR`, declares `meeting` in its body's `## Type`
+- **THEN** `/idd-diagnose` does not record `meeting` under `### Type`
+- **AND** a later `/idd-all` run on the issue, which diagnoses it again, still evaluates its Complexity signal
+
+#### Scenario: a maintainer's body declaration is adopted
+
+- **WHEN** an issue with no type label, opened by an author whose association is `OWNER`, declares `meeting` in its body's `## Type`
+- **THEN** `/idd-diagnose` records `meeting` under `### Type`
+
+#### Scenario: the meeting label is adopted whoever opened the issue
+
+- **WHEN** an issue opened by an author whose association is `NONE` carries the `meeting` type label
+- **THEN** `/idd-diagnose` records `meeting` under `### Type`
+
+#### Scenario: an unreadable author association is not trusted
+
+- **WHEN** the body of an issue with no type label declares `meeting` and the author association lookup fails
+- **THEN** `/idd-diagnose` does not record `meeting` under `### Type`
+
 ### Requirement: Meeting Plan advances the phase to planning
 
 `/idd-update` SHALL infer the phase `planning` when the latest phase-bearing comment is a Meeting Plan, identified by a heading that begins with `## Meeting Plan`, using the same tolerant heading match it applies to the other phase headings.

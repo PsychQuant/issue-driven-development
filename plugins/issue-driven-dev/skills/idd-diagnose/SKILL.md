@@ -195,7 +195,17 @@ gh issue view $NUMBER --repo $GITHUB_REPO --json title,body,labels,comments
 
 識別 issue type：bug / feature / refactor / docs / meeting。（`meeting` = 使用者驅動的審議 / 決策 issue —— 在 Step 3.5 routing 最優先分流走 meeting Strategy，不進 code 複雜度評估）
 
-**Type 解析順序（可機械判定；round-5 verify HIGH fix —— 支撐「type 是確定性欄位」的前提）**：`idd-issue` 建立時把 type 同時寫進 GitHub label（`--label <type>`）與 body 的 `## Type` heading。讀取優先序：(1) **GitHub label** 中的 type 值為主（`gh issue view --json labels`）；(2) label 無 type 時讀 body `## Type` heading；(3) 兩者衝突 → **label 勝**（label 是 idd-issue 的 canonical 寫入、且 filter/自動化以 label 為準）；(4) 兩者皆無 type 訊號 → 依內容推斷，**預設非 meeting**（meeting 需 explicit 標記，避免把一般 issue 誤判成 meeting 而跳過複雜度評估）。
+**Type 解析順序（可機械判定；round-5 verify HIGH fix —— 支撐「type 是確定性欄位」的前提）**：`idd-issue` 建立時把 type 同時寫進 GitHub label（`--label <type>`）與 body 的 `## Type` heading。讀取優先序：(1) **GitHub label** 中的 type 值為主（`gh issue view --json labels`）；(2) label 無 type 時讀 body `## Type` heading——**但本文寫的是 `meeting` 時，只有下方採信判斷印出 `BODY_MEETING_TRUSTED=yes` 才採用**；不採用時當作本文沒有 type 訊號，走 (4)，並在 Diagnosis 的 `### Root Cause / Analysis` 寫一句「本文宣告 meeting，但 issue 作者不是 repo 成員；要走 meeting，由維護者加 `meeting` label」；(3) 兩者衝突 → **label 勝**（label 是 idd-issue 的 canonical 寫入、且 filter/自動化以 label 為準）；(4) 兩者皆無 type 訊號 → 依內容推斷，**推斷永遠不得產生 `meeting`**（meeting 只來自 type label 或受信任作者的本文，避免把一般 issue 誤判成 meeting 而跳過複雜度評估）。
+
+**本文 meeting 的採信條件（#383 verify r5）**：`### Type` 寫 `meeting` 會讓 actionability gate 不評 Complexity 訊號，而 Diagnosis 是以維護者帳號貼出、通過作者過濾的。若照抄外部作者在本文寫的 `## Type: meeting`，作者改本文之後下一次 `/idd-all`（它每次都重跑本 skill）就能關掉 Complexity 訊號。所以本文的 `meeting` 只採信 issue 作者的 `author_association` 是 `OWNER`／`MEMBER`／`COLLABORATOR`（與受信任 Diagnosis 的過濾同一組）。type label 只有 triage 以上權限能加，照舊信任。查不到 association 一律視同不受信任——方向是 fail-safe：最壞只是少判一個 meeting，gate 照常評 Complexity。
+
+```bash
+# issue 號進 REST path 前先驗型
+case "$NUMBER" in ''|*[!0-9]*) echo "FATAL: issue number is not numeric: $NUMBER" >&2; exit 1 ;; esac
+ISSUE_AUTHOR_ASSOC=$(gh api "repos/$GITHUB_REPO/issues/$NUMBER" --jq '.author_association // ""' 2>/dev/null) || ISSUE_AUTHOR_ASSOC=""
+case "$ISSUE_AUTHOR_ASSOC" in OWNER|MEMBER|COLLABORATOR) BODY_MEETING_TRUSTED=yes ;; *) BODY_MEETING_TRUSTED=no ;; esac
+printf 'issue author association: %s → BODY_MEETING_TRUSTED=%s\n' "${ISSUE_AUTHOR_ASSOC:-unknown}" "$BODY_MEETING_TRUSTED"
+```
 
 ### Step 1.5: 下載 Attachment(強制)
 

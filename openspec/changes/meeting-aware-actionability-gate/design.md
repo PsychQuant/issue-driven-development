@@ -18,13 +18,13 @@ meeting 類型（#57）比 gate 早三個月上線，規格明定 meeting 不產
 
 - type=meeting 的 issue 能通過 gate，並被各呼叫端送到 meeting 的正確下一步
 - `parking-lot` label 與 `### Blocking` 對 meeting issue 照樣生效
-- meeting 的判定只依受信任的 Diagnosis，issue 作者改不到
+- meeting 的判定只依受信任的 Diagnosis；`/idd-diagnose` 只在 type label 或受信任作者的本文宣告 meeting 時才寫進 `### Type`，所以 repo 成員以外的 issue 作者改本文不能讓 issue 變成 meeting
 - `idd-update` 能把有 `## Meeting Plan` 的 issue 推到 `planning`
 - 未傳新參數的呼叫行為與現在逐 byte 相同
 
 **Non-Goals:**
 
-- 不改 `/idd-diagnose` 的 meeting 分支與它寫出的 Diagnosis 格式；它如何從 label／本文判定 type 屬 #385
+- 不改 `/idd-diagnose` 的 meeting 分支與它寫出的 Diagnosis 格式。type 判定只改 meeting 這一項（見決策「本文的 meeting 只採信受信任作者」）；其他 type 如何從 label／本文判定仍屬 #385
 - 不改 `/idd-close` 的 meeting 專屬 gate
 - 不在 unattended 模式自動產出 Meeting Plan（見決策「unattended 下 meeting 停在 diagnosed」）
 - 不改 `idd-all` 的 SLUG 截斷行為（#388）
@@ -41,7 +41,15 @@ meeting 類型（#57）比 gate 早三個月上線，規格明定 meeting 不產
 - 沒有 label 的 issue，type 來自 issue 作者可以隨時改寫的本文。作者可以在 maintainer 診斷之後把本文改成 meeting，關掉 Complexity 訊號（r4 #19）；也可以在 implement 跑完之後改，讓 `idd-all` 的 Phase 4／5 跳過 verify 與 push（r4 #35）。
 - 本文的 `## Type` 要照 GitHub 的渲染判斷「看得見的那一個」。四輪 verify 每一輪都找到新的隱藏寫法（清單裡的 fence、各類 HTML block、setext heading、渲染器 tag 清單差異），reader 永遠追不完。
 
-Diagnosis 的 `### Type` 是 `/idd-diagnose` 依模板寫的，作者已經過濾，issue 作者改不到；Complexity 訊號本來就讀同一份文字。meeting 的 Diagnosis 依模板一定有 `### Type` / `meeting`（educator#318 已查證：該 issue 沒有 IDD type label，OWNER 寫的 Diagnosis 記 `meeting（…）`）。
+Diagnosis 的 `### Type` 是 `/idd-diagnose` 依模板寫的，comment 經作者過濾；Complexity 訊號本來就讀同一份文字。meeting 的 Diagnosis 依模板一定有 `### Type` / `meeting`（已在一張真實 issue 上查證：沒有 IDD type label，OWNER 寫的 Diagnosis 記 `meeting（…）`）。
+
+作者過濾只保證「誰貼的」，不保證「`### Type` 的值從哪來」：`/idd-diagnose` 在沒有 type label 時照抄本文的 `## Type`。r5 #3 指出這條路——`/idd-all` 每次都重跑 `/idd-diagnose`，所以作者改本文之後的下一次 run 就會貼出一份 meeting 的受信任 Diagnosis。下一個決策把這個值的來源也收緊。
+
+### 本文的 meeting 只採信受信任作者
+
+`/idd-diagnose` Step 1 只在兩種情況把 `meeting` 寫進 `### Type`：issue 有 `meeting` type label；或沒有 type label、本文 `## Type` 宣告 meeting，且 issue 作者的 `author_association` 是 OWNER／MEMBER／COLLABORATOR（與 Diagnosis 過濾同一組）。依內容推斷不得產生 meeting；查不到 association 視同不受信任。外部作者要走 meeting，由維護者加 label——label 只有 triage 以上權限能加。
+
+這是 r5 之後的裁決（maintainer 2026-10-15）。替代方案「接受殘餘、交給 #385」被否決：r4 裁決的前提是「issue 作者改不到」，這一步讓那個前提對 repo 成員以外的作者成立（成員本來就在信任集合內）。只收緊 meeting，因為 gate 只對 `meeting` 放寬（`idd_actionability_verdict` 只比對這個值）；其他 type 的判定不影響 gate，留在 #385。
 
 替代方案：保留 `idd_issue_type` 並繼續補 reader（選項「維持設計」）。被否決，理由如上。`idd_issue_type` 在本 change 尚未發布，直接移除，連同它的 markdown reader。
 
@@ -114,12 +122,13 @@ meeting 判定為 actionable 時，`idd-list` 照常列在 actionable 區，只�
 
 **Scope**
 
-- In scope：共用 helper、四份 gate block、四個呼叫端的 meeting 分派、`idd-all` 的 meeting unwind 與 Phase 4／5／6、`idd-update` 的 phase 表、`references/actionability-gate.md`、兩份規格的 delta、CHANGELOG 與版本號
-- Out of scope：`/idd-diagnose` 與 `/idd-close` 的 meeting 行為、`idd-all` 的 SLUG 截斷、非 meeting 類型的路由
+- In scope：共用 helper、四份 gate block、四個呼叫端的 meeting 分派、`idd-all` 的 meeting unwind 與 Phase 4／5／6、`idd-update` 的 phase 表、`/idd-diagnose` Step 1 對本文 meeting 的採信條件、`references/actionability-gate.md`、兩份規格的 delta、CHANGELOG 與版本號
+- Out of scope：`/idd-diagnose` 的 meeting 分支與 Diagnosis 格式、`/idd-close` 的 meeting 行為、非 meeting type 的判定（#385）、`idd-all` 的 SLUG 截斷、非 meeting 類型的路由
 
 ## Risks / Trade-offs
 
-- [type 誤判成 meeting，一般 issue 跳過 complexity gate] → 只有受信任 Diagnosis 的 `### Type` 明寫 meeting 才算；issue 作者改不到
+- [type 誤判成 meeting，一般 issue 跳過 complexity gate] → 只有受信任 Diagnosis 的 `### Type` 明寫 meeting 才算；而 `/idd-diagnose` 只在 type label 或受信任作者的本文宣告時寫 meeting，所以 repo 成員以外的 issue 作者改不到
+- [同一張 issue 同時有兩個 run，或受信任成員在 implement 之後貼出 meeting 的 Diagnosis] → `idd-all` Phase 4／5 讀到 meeting 時 fail-closed：不 verify、不 push，明講 commit 留在哪（r5 #11）
 - [maintainer 改了 type label 但沒重新 diagnose] → gate 仍依舊 Diagnosis 判斷，直到重新 diagnose；與 Complexity 訊號的既有語意一致（Diagnosis 是判定的紀錄）
 - [四份 gate block 改不一致] → 既有的逐 byte 相同 assertion 會擋下
 - [機器行格式變更影響讀這一行的人或工具] → 只在行尾加 `TYPE=` 欄位，既有欄位順序與名稱不變；reference 文件與測試一起更新
@@ -135,3 +144,4 @@ meeting 判定為 actionable 時，`idd-list` 照常列在 actionable 區，只�
 - r2：unwind 只靠註解限定 meeting，會刪掉非 meeting 的 branch → 在 code 裡判斷；spec 殘留兩條無條件 scenario
 - r3：spec 又一條無條件 scenario；spec 與保留 branch 的行為不一致
 - r4：Deferral 的 parenthetical scenario 未限定；type 來自作者可改的本文（#19、#35）→ 改以受信任 Diagnosis 為準
+- r5：`idd-all` 每次重跑 `/idd-diagnose`，而它照抄本文的 `## Type`，r4 #19 在這條路徑上沒有關閉（#3）→ `/idd-diagnose` 只採信受信任作者本文的 meeting

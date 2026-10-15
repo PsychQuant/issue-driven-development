@@ -24,10 +24,11 @@ allowed-tools:
 
 ## 何時用 idd-plan vs idd-implement vs spectra-discuss
 
-由 `idd-diagnose` Step 3.5 的 Complexity verdict 決定（見 [`rules/sdd-integration.md`](../../rules/sdd-integration.md)）：
+由 `idd-diagnose` Step 3.5 的 Complexity verdict 決定（見 [`rules/sdd-integration.md`](../../rules/sdd-integration.md)）；meeting issue 沒有 Complexity verdict，依最新受信任 Diagnosis 的 `### Type` 決定（#383）：
 
 | Verdict | Skill | 場景 |
 |---------|-------|------|
+| `### Type` = `meeting`（Step 1 gate 印出 `TYPE=meeting`，不看 Complexity）| `/idd-plan #NNN` (本 skill，寫 `## Meeting Plan`) | 使用者驅動的審議／決策 issue；Plan 是選填，approve 後不接 `/idd-implement`（Step 6 skip-chain）|
 | `Simple` | `/idd-implement #NNN` | clear root cause、單檔 fix、follow existing pattern |
 | `Plan` | `/idd-plan #NNN` (本 skill) | 2+ 互依檔案 / 5+ ordered steps / decision-heavy / risk-sensitive boundary，**但無 published API contract** |
 | `Spectra` | `/spectra-discuss` then `/spectra-propose` | 對外 API/protocol/skill/tool 給 future callers + spec contract 需要 frozen |
@@ -175,7 +176,7 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$IMPLEMENTATION_PLAN"
 
 > **為什麼比 idd-implement 的 plan 詳盡？** Plan tier 的 user 審查是事前 deliberation 的 core moment — plan 越具體，user 越容易抓出 missing case / wrong assumption / better alternative。idd-implement 的 plan 是「執行清單」，本 plan 是「decision artifact」。
 
-> **`type=meeting` 用 meeting-adapted Plan body schema（#57）**：上面的 code-centric 模板（Files & Changes / Sequencing / Test Plan）**不適用** meeting。`type=meeting` 改用審議 Plan body：
+> **`type=meeting` 用 meeting-adapted Plan body schema（#57）**：這裡的 `type=meeting` 指 Step 1 gate 機器行印出的 `TYPE=meeting`（`$DIAG_TYPE`，讀自最新受信任 Diagnosis 的 `### Type`），不另外看 label 或 issue 本文——那兩者 issue 作者改得到，而 gate 已據 `$DIAG_TYPE` 判定過（#383 verify r5）。上面的 code-centric 模板（Files & Changes / Sequencing / Test Plan）**不適用** meeting。`type=meeting` 改用審議 Plan body：
 >
 > ```markdown
 > ## Meeting Plan: Issue #NNN
@@ -245,7 +246,7 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$IMPLEMENTATION_PLAN"
 
 ### Step 6: Chain to /idd-implement
 
-> **`type=meeting` → 跳過本步（skip-chain，#57）**：meeting 是 user-driven deliberation，不是 TDD loop。`type=meeting` 的 plan 用 **meeting-adapted Plan body** schema（Phase A/B/C 審議計畫：議程 → 決策點 → 行動項，非 code-centric 的 Files & Changes），且 **不 chain 到 /idd-implement**（輸出不含對 `/idd-implement` 的邀請 / 呼叫）。plan 過 user approve 後即結束於 deliberation artifact；closing 走 decision→action mapping、無 `/idd-verify` TDD pass（見 idd-close）。以下 chain 僅適用於 code-centric（bug / feature / refactor）plan。
+> **`type=meeting` → 跳過本步（skip-chain，#57）**：判斷依據同 Step 2，是 Step 1 gate 的 `TYPE=meeting`，不重新從 label 或本文解析（#383 verify r5）。meeting 是 user-driven deliberation，不是 TDD loop。`type=meeting` 的 plan 用 **meeting-adapted Plan body** schema（Phase A/B/C 審議計畫：議程 → 決策點 → 行動項，非 code-centric 的 Files & Changes），且 **不 chain 到 /idd-implement**（輸出不含對 `/idd-implement` 的邀請 / 呼叫）。plan 過 user approve 後即結束於 deliberation artifact；closing 走 decision→action mapping、無 `/idd-verify` TDD pass（見 idd-close）。以下 chain 僅適用於 code-centric（bug / feature / refactor）plan。
 
 User approved → invoke idd-implement skill 繼續 TDD loop：
 

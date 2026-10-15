@@ -122,7 +122,7 @@ When a `### Complexity` value cannot be routed for any reason, the system SHALL 
 
 #### Scenario: Missing section is distinguished from a non-routable value
 
-- **WHEN** a Diagnosis comment of a non-meeting issue contains no `### Complexity` section
+- **WHEN** a Diagnosis comment of an issue that is not a diagnosed `meeting` issue contains no `### Complexity` section
 - **THEN** the issue is reported as not actionable with reason `complexity-missing`
 
 #### Scenario: One bad value does not suppress other issues
@@ -185,7 +185,7 @@ Existing Diagnosis comments SHALL NOT be rewritten, and no label SHALL be backfi
 
 ### Requirement: The meeting type is read from the latest trusted Diagnosis
 
-The shared implementation SHALL provide the Diagnosis type that consumers pass to the gate, so that no consumer parses it on its own and no consumer takes it from issue labels or the issue body. Given the latest trusted Diagnosis comment, the result SHALL be the leading word of the first non-empty line under its `### Type` heading, read with the same section reader as `### Complexity`, after leading markdown decoration is stripped, compared in ASCII lower case, and accepted only if it is one of `bug`, `feature`, `refactor`, `docs`, `meeting` and ends at a non-word character; any other content, or no `### Type` heading, SHALL yield `unknown`; an empty input (no trusted Diagnosis) SHALL yield `none`. Only `meeting` relaxes the gate. A call with other than exactly one argument SHALL fail loudly with exit status 2.
+The shared implementation SHALL provide the Diagnosis type that consumers pass to the gate, so that no consumer parses it on its own and no consumer takes it from issue labels or the issue body. Given the latest trusted Diagnosis comment, the result SHALL be read from the first non-empty line under its `### Type` heading, found with the same section reader as `### Complexity`, by these five steps and no others: (1) remove leading spaces and tabs, then any leading run of `*`, `_` and backtick characters; (2) take the leading run of ASCII letters as the word; (3) remove any run of `*`, `_` and backtick characters directly after the word; (4) the character that then follows, if there is one, SHALL NOT be an ASCII letter, an ASCII digit, `_` or `-`; (5) the word in ASCII lower case SHALL be one of `bug`, `feature`, `refactor`, `docs`, `meeting`. A line that fails any step, or no `### Type` heading, SHALL yield `unknown`; an empty input (no trusted Diagnosis) SHALL yield `none`. Only `meeting` relaxes the gate. A call with other than exactly one argument SHALL fail loudly with exit status 2.
 
 #### Scenario: A meeting Diagnosis is read as meeting
 
@@ -205,5 +205,9 @@ The shared implementation SHALL provide the Diagnosis type that consumers pass t
 | `### Type` / `**meeting**` | `meeting` |
 | `### Type` / `bug` | `bug` |
 | `### Type` / `meeting-notes` | `unknown` |
+| `### Type` / `meeting（本文 ## Type）` | `meeting` |
+| `### Type` / `meeting_` | `meeting` |
+| `### Type` / `- meeting` | `unknown` |
+| `### Type` / `type=meeting` | `unknown` |
 | no `### Type` heading | `unknown` |
 | (no trusted Diagnosis) | `none` |
