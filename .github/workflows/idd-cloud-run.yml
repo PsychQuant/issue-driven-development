@@ -62,7 +62,7 @@ jobs:
       # history that branch, diff and PR work needs. The default persisted
       # credential is what lets the agent's own `git push` work.
       - name: Check out the caller repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           fetch-depth: 0
 
@@ -85,7 +85,9 @@ jobs:
         env:
           IDD_REF: ${{ inputs.idd_ref }}
           SUPERPOWERS_REF: 5bf4e78011075bcfc0dc295f0724994cd123ee71
-          PAI_REF: main
+          # PsychQuant/parallel-ai-agents main as of 2026-10-15. Pinned: this code
+          # runs in the job that holds the API key, so it must not move by itself.
+          PAI_REF: d6c6ceac3e8c56a98590a0683ec329868d711a64
         run: |
           set -euo pipefail
           # idd_ref is caller-supplied text that becomes a git argument: allow
@@ -108,7 +110,7 @@ jobs:
           fetch_repo obra/superpowers "$SUPERPOWERS_REF" "$RUNNER_TEMP/superpowers"
           fetch_repo PsychQuant/parallel-ai-agents "$PAI_REF" "$RUNNER_TEMP/parallel-ai-agents"
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
           python-version: "3.12"
 
@@ -145,6 +147,12 @@ jobs:
           # and every IDD skill's Step 0 depends on them. Matches the maintainer's
           # local Claude Code setting, so the cloud run behaves like the local one.
           CLAUDE_CODE_ENABLE_TODO_TOOLS: "1"
+          # Strips ANTHROPIC_API_KEY (and other credential-looking variables) from
+          # every Bash command, hook and stdio MCP server Claude Code starts, so a
+          # prompt-injected `env` or `curl` cannot read the key. GH_TOKEN is kept on
+          # purpose for gh; it is bounded by the caller's permissions and the job's
+          # lifetime. See code.claude.com/docs/en/env-vars (subprocess env scrub).
+          CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
         run: |
           set -euo pipefail
           case "$IDD_MAX_TURNS" in

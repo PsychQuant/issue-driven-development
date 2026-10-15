@@ -186,6 +186,16 @@ PY
   assert_output_grep "no \${{ }} inside run: blocks" "RUN_INTERPOLATION_LINES=" "$REPORT"
   refute_grep_re  "run: blocks are free of \${{ }}" "RUN_INTERPOLATION_LINES=[0-9]" "$(grep '^RUN_INTERPOLATION_LINES=' "$REPORT")"
   assert_output_grep "prompt reaches the runner through env" "IDD_PROMPT" "$WORKFLOW"
+  # Prompt injection could make the agent print its environment. The scrub takes
+  # ANTHROPIC_API_KEY out of every Bash / hook / MCP subprocess Claude Code starts.
+  assert_output_grep "subprocess env scrub is on" 'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"' "$WORKFLOW"
+  # Code fetched by tag or branch can change under us and then runs in the job
+  # that holds the key. Every action and every plugin ref must be a commit SHA.
+  UNPINNED=$(grep -E '^[[:space:]]*(-[[:space:]]+)?uses:' "$WORKFLOW" | grep -vE '@[0-9a-f]{40}([[:space:]]|$)' || true)
+  assert_eq "every uses: is pinned to a commit SHA" "" "$UNPINNED"
+  for ref in SUPERPOWERS_REF PAI_REF; do
+    assert_grep_re "$ref is a commit SHA" "^[[:space:]]+$ref: [0-9a-f]{40}[[:space:]]*$" "$(grep -E "^[[:space:]]+$ref:" "$WORKFLOW")"
+  done
 fi
 
 echo "── caller template ──"

@@ -163,6 +163,19 @@ waits for the result.
 
 ## Security notes
 
+- **Deploy only where you trust the issue authors.** The agent reads issue bodies
+  and comments and acts on them with shell access and no permission prompts. Text
+  planted in an issue can steer it (prompt injection). On a private repository only
+  collaborators can write issues; on a public one, anyone can.
+- **Route A keeps the API key out of the agent's shell.** The workflow sets
+  `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`, which removes `ANTHROPIC_API_KEY` from every
+  Bash command, hook and MCP server the agent starts. `GH_TOKEN` stays (gh needs it);
+  it can only write to your repository and expires when the job ends.
+- **Route B never sends your API key to the sandbox.** The GitHub token reaches the
+  sandbox in two ways: as `GH_TOKEN`, which the platform substitutes at the network
+  edge so the agent never sees the value, and as the token used to clone your
+  repository, which the agent may be able to read. Give that token the shortest
+  expiry GitHub offers and revoke it after the run.
 - Your API key is read at run time and is never written to a file in either
   repository or printed. Both entry points have a `--dry-run` that masks secrets.
 - The reusable workflow (`.github/workflows/idd-cloud-run.yml` in this repository)
