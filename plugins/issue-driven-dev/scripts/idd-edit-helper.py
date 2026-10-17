@@ -1923,7 +1923,8 @@ def _correct_apply(work, state_sha, scrub=None):
     attested = scrub or state["scrub"]
     if _floor(attested, preview) != attested:
         # before the archive: the write would be refused anyway (#272, round 12)
-        err(f"✗ {state['target']} quotes user-pasted points (#272): attest warn after the #272 question — nothing archived or written")
+        err(f"✗ {state['target']} quotes user-pasted points (#272): prepare it again with --scrub-attested warn "
+            "after the #272 question — nothing archived or written")
         return _refused("egress")
     with open(backup, "rb") as fh:
         rc, backup_id = _archive_write(kind, num, fh.read(), repo)
@@ -3195,8 +3196,9 @@ One /idd-edit run, all modes (the skill calls only these; #351 round 9):
   apply --run RUN --target T --scrub-attested SCRUB [--state STATE]
       Write after the user confirmed; prints RESULT= (edited | refused | write-failed |
       unverified). SCRUB is the run's tier or stricter, attested after the privacy
-      review. A reply quoting user-pasted points needs warn (#272): prepare prints
-      FLOOR=272 and SCRUB=warn, and apply refuses light for it (exit 2).
+      review. A reply quoting user-pasted points (#272): prepare prints FLOOR=272 at
+      any tier, the user answers the #272 question, and apply refuses light for it
+      (exit 2) — attest warn instead.
   discard --run RUN --target T   The user declined.
   finish --run RUN
       Print the outcome report, remove the run; exit 4 refused or failed, 7 unverified,

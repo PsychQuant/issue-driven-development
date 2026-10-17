@@ -21,12 +21,15 @@ mode is what guarantees an unreadable archive; this hook only stops the
 ordinary `cat`/`grep`/Read that would otherwise happen by accident.
 
 Shell commands are checked word by word, quoted strings included (`sh -c`,
-`python3 -c` read files from inside them). Only the value of a message option
-(-m, --message, --body, --title, --notes, --subject, and idd-edit's --reason)
-given to a command that takes messages (git, gh, hg, jj, svn, the IDD
-helpers) is skipped: a commit message or issue
-body that mentions the path does not open it, while `sort -m <archive>` still
-names a file (verify #351 round 3).
+`python3 -c` read files from inside them); `#` is text, not a comment, so a
+comment line cannot hide the commands after it (round 13). Only the value of a
+message option (-m, --message, --body, --title, --notes, --subject, and
+idd-edit's --reason) is skipped, and only when it is prose (it holds
+whitespace) given to a subcommand that takes a message (`git commit`, `gh
+issue`, … or any subcommand of the IDD helpers) before a `--`: a commit message
+or issue body that mentions the path does not open it, while `sort -m
+<archive>` and `git diff -m <archive>` still name a file (verify #351 rounds
+3, 11–13).
 
 A recursive permission change (chmod/chown/chgrp/chflags/setfacl with -R) on
 the archive or any directory above it is denied too: it would undo the second
@@ -53,10 +56,10 @@ REASON = (
     "these files. To put a corrected comment or issue body back, run the "
     "idd-edit helper's restore subcommand, which sends the archived text to "
     "GitHub without displaying it. A commit or PR message that only mentions "
-    "the path is fine single-quoted, with no $, backtick, < or > (git commit "
-    "-m '...', gh issue comment --body '...'); otherwise pass it from a file "
-    "(-F, --body-file). A $(...) or heredoc inside the message is checked as "
-    "a command."
+    "the path is fine as a separate single-quoted -m or --body value of more "
+    "than one word, with no $, backtick, < or > (git commit -m '...', gh issue "
+    "comment --body '...'); otherwise pass it from a file (-F, --body-file). A "
+    "$(...) or heredoc inside the message is checked as a command."
 )
 
 PATH_FIELDS = {
@@ -102,19 +105,25 @@ MESSAGE_COMMANDS = ("git", "gh", "hg", "jj", "svn", "gh-egress.sh", "idd-edit-he
 # flag such as `git diff -m` takes no value and the next word is a path
 # (verify #351 round 12). Closed lists; IDD's own scripts take one everywhere.
 MESSAGE_SUBCOMMANDS = {
-    "git": ("commit", "tag", "notes", "merge", "stash"),
+    "git": ("commit", "commit-tree", "tag", "notes", "merge", "stash"),
     "gh": ("issue", "pr", "release"),
-    "hg": ("commit", "ci", "tag"),
-    "jj": ("commit", "describe", "new", "split"),
-    "svn": ("commit", "ci", "import", "mkdir", "copy", "cp", "move", "mv", "delete", "del", "rm", "remove"),
+    "hg": ("commit", "ci", "tag", "amend", "import", "backout", "shelve"),
+    "jj": ("commit", "describe", "new", "split", "squash"),
+    "svn": ("commit", "ci", "import", "mkdir", "copy", "cp", "move", "mv", "delete", "del", "rm", "remove", "lock"),
 }
 # options before the subcommand that take a value (`git -C <dir> commit`)
-_PRE_SUBCOMMAND_VALUE_OPTIONS = ("-C", "-c", "--git-dir", "--work-tree", "--namespace", "-R", "--repo", "--cwd")
+_PRE_SUBCOMMAND_VALUE_OPTIONS = (
+    "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--attr-source",
+    "-R", "--repo", "--repository", "--cwd", "--config", "--encoding", "--at-op", "--color",
+    "--username", "--password", "--config-dir", "--config-option",
+)
+# git's combined short options ending in m (`git commit -am '...'`)
+_COMBINED_MESSAGE_FLAG = re.compile(r"-[A-Za-z]+m")
 # A script run through an interpreter is named by the script (IDD posts through
 # `bash .../gh-egress.sh comment N --body "..."` — verify #351 round 4).
 INTERPRETERS = ("bash", "sh", "zsh", "env", "python", "python3")
 _ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
-SEPARATORS = (";", "&&", "||", "|", "&")
+SEPARATORS = (";", "&&", "||", "|", "&", "|&", "&|")
 PERMISSION_COMMANDS = ("chmod", "chown", "chgrp", "chflags", "setfacl")
 
 
@@ -125,6 +134,9 @@ def _newlines_as_separators(command):
     out, quote, i = [], None, 0
     while i < len(command):
         c = command[i]
+        if c == "\\" and quote is None and command[i + 1:i + 2] == "\n":
+            i += 2   # a line continuation joins the lines (round 13)
+            continue
         if c == "\\" and quote != "'" and i + 1 < len(command):
             out.append(command[i:i + 2])
             i += 2
@@ -153,6 +165,9 @@ def _split_words(command):
         # the shell reads them (round 12).
         lex = shlex.shlex(command, posix=True, punctuation_chars=";&|")
         lex.whitespace_split = True
+        # shlex.split turns comments off; a bare shlex.shlex reads `#` as one,
+        # even mid-word, and dropped the rest of the command (round 13)
+        lex.commenters = ""
         return list(lex)
     except ValueError:
         return command.split()
@@ -162,34 +177,43 @@ def _command_words(command):
     """Path candidates in a shell command: every shell word, and every piece of
     a word split on whitespace and quoting/grouping characters — except the
     value of a message option, which is prose."""
-    previous, command_name, via_interpreter, subcommand = "", None, False, None
+    previous, command_name, via_interpreter, subcommand, options_ended = "", None, False, None, False
     for word in _split_words(command):
         if command_name is None or via_interpreter:
-            # `NAME=value cmd` and `bash script` name the command by what runs.
+            # `NAME=value cmd` and `bash script` name the command by what runs,
+            # through a chain such as `env A=1 python3 script`.
             if _ENV_ASSIGNMENT.match(word) or (via_interpreter and word.startswith("-")):
                 pass
             else:
                 base = os.path.basename(word)
-                via_interpreter = command_name is None and base in INTERPRETERS
-                command_name, subcommand = base, None
+                via_interpreter = base in INTERPRETERS and (command_name is None or via_interpreter)
+                command_name, subcommand, options_ended = base, None, False
         elif (subcommand is None and not word.startswith("-")
                 and previous not in _PRE_SUBCOMMAND_VALUE_OPTIONS):
             subcommand = word
         allowed = MESSAGE_SUBCOMMANDS.get(command_name)
+        flag = previous in MESSAGE_FLAGS or (command_name == "git" and _COMBINED_MESSAGE_FLAG.fullmatch(previous))
         is_message = (
             command_name in MESSAGE_COMMANDS and (allowed is None or subcommand in allowed)
-            and (previous in MESSAGE_FLAGS
-                 or any(word.startswith(flag + "=") for flag in MESSAGE_FLAGS if flag.startswith("--")))
+            and not options_ended
+            and (flag or any(word.startswith(f + "=") for f in MESSAGE_FLAGS if f.startswith("--")))
         )
+        if word == "--" and command_name in MESSAGE_SUBCOMMANDS:
+            # after `--`, git's `-m` is a pathspec (round 13); run-start uses
+            # `--` to pass /idd-edit's own arguments, --reason among them
+            options_ended = True
         # `2>&1`: an `&` after a redirection is not a separator
         separator = (word in SEPARATORS and not (word == "&" and previous.endswith((">", "<")))) or word.endswith(";")
         previous = word
         if separator:
             command_name = subcommand = None
+            options_ended = False
         # A message value is prose only if the shell will not execute part of
         # it: `--body "$(cat <archive>)"` posts the archive (parser differential
-        # between shlex and the real shell).
-        if is_message and not any(t in word for t in ("$", "`", "<", ">")):
+        # between shlex and the real shell). Prose has whitespace: a one-word
+        # value is scanned, so a separator this parser misses cannot carry a
+        # path through as a message (rounds 11–13).
+        if is_message and not any(t in word for t in ("$", "`", "<", ">")) and re.search(r"\s", word):
             continue
         for piece in re.split(r"[\s'\"`()=;|&<>]+", word):
             if piece:

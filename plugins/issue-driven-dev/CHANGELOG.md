@@ -303,7 +303,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The #272 floor is attested by the agent again.** Round 12 raised a user-pasted reply from `light` to `warn`
   inside the helper, which let new third-party text reach the remote without the #272 question. `prepare` now checks
   at `warn` and prints `FLOOR=272`, the SKILL asks the question (with a redact option), and `apply` refuses `light`
-  for such a body (exit 2, retryable).
+  for such a body (exit 2, retryable). *(Round 14: asked at every tier, and prepare prints no `SCRUB=` line.)*
 - `restore --target` lists the versions this clone archived for the target (oldest first) and says whether each
   one's marker is still on the target: a `--replace` or a restore removes the marker, and the version was then
   unreachable. Only entries whose sidecar names the repository are listed.
@@ -315,7 +315,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the sweep keeps the run's own `--correct` working copies; `emit-audit-marker` uses the local date too.
 - The read guard skips a message value only when it is prose (has whitespace), so `git diff --no-index -m <archive>`
   is denied; its denial names the characters that still need a message file. *(Superseded in round 14: the skip is
-  tied to message-taking subcommands instead, since a path can contain spaces.)*
+  tied to message-taking subcommands instead, since a path can contain spaces; round 15 requires both.)*
 - Quoting happens once, in idd-edit Step 1: the proposal skills pass their rebuilt arguments as typed, and
   idd-comment's delegation single-quotes its values. The PICK listing blanks U+2028 / U+2029 / U+0085, which JSON
   leaves raw; TARGETs are processed before PICKs; `run-start` notes that `--correct` does not publish `--reason`.
@@ -329,13 +329,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   archiving.
 - **Read guard:** a message flag is prose only for subcommands that take a message (`git commit`, `gh issue`/`pr`/
   `release`, …), so after `git diff -m` the next word is scanned even when the path contains spaces; an unquoted
-  newline and a glued `&&`, `||`, `|` end a command. A one-word `git commit -m <text>` is allowed again.
+  newline and a glued `&&`, `||`, `|` end a command. A one-word `git commit -m <text>` is allowed again. *(Round 15:
+  one-word values are scanned again, and this round's tokenizer read `#` as a comment — see below.)*
 - `restore --target` refuses, as `restore <id>` does, a symlinked archive path or a repository that tracks archive
   entries, skips a sidecar that is not a regular file, and lists same-second versions in the order they were written.
 - A PICK whose author read fails stays open too; issue numbers longer than eighteen digits are refused (exit 2, not a
-  traceback); the PICK listing reads a null body as empty; a lone `\r` in the preview diff is shown as a line end;
+  traceback; `#N` and `--pick` only); the PICK listing reads a null body as empty; a lone `\r` in the preview diff is shown as a line end;
   the report for `not-applied` says no write was made rather than that nothing was confirmed; the proposal skills and
   idd-comment write a quote inside a single-quoted value as `'\''` again.
+
+### Fixed (round 15 — verify round 13 findings, before release)
+
+- **Read guard: `#` hid everything after it.** Round 14's tokenizer (`shlex.shlex`) kept shlex's default comment
+  character, so one unquoted `#` — a `# step` comment line, `--grep=#351`, an issue URL's `#issuecomment` — dropped
+  the rest of the command, later lines and a `chmod -R` included, from both checks. `#` is text again, as it was
+  with `shlex.split`.
+- The read guard skips a message value only when it is prose (whitespace) **and** the subcommand takes a message,
+  and not after a `--` (`git commit -- -m <path>` is a pathspec); `|&` and `&|` end a command, a backslash-newline
+  joins lines, `git commit -am` counts as `-m`, more pre-subcommand value options and message subcommands are known,
+  and `env A=1 python3 <helper>` is recognised. A one-word message after `-m` is scanned again.
+- The #272 question asks about the text this edit adds, says declining only cancels the edit, and offers redaction
+  of the body file in every mode; the SKILL orders it before the final confirmation and documents the PICK
+  `author-unknown` retry and the lookup's exit-2 refusals; the not-applied spec wording, the path-gate spec sentence
+  and the `--help` text match the code.
 
 ### Changed
 
@@ -394,7 +410,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `--prepend-note`.
 - Editing a reply that quotes user-pasted points (`type=reply` + `points-from=user-pasted`) asks the #272 question in
   every mode and at every tier (`FLOOR=272` from prepare), and `apply` refuses `--scrub-attested light` for it
-  (exit 2, retryable); 3.4.0 asked nothing and gh-egress refused the write at `light`.
+  (exit 2, retryable); 3.4.0 asked nothing (it attested `warn` whatever the repository).
 - A target edited by someone else after the preview is refused as `changed-since-preview` (exit 4) in every mode,
   instead of being overwritten with the previewed text as in 3.4.0.
 

@@ -133,4 +133,12 @@
 - [x] 19.1 先寫會失敗的測試：edit-run A12（warn 等級也印 `FLOOR=272`、prepare 不印 `SCRUB=`、作者讀取失敗的 PICK 可重試、超長的 issue 號碼）、Step 0 的 `reply_272_gate`、PICK 列表的 null body、diff 的單獨 `\r`；correct-flow（同一秒的版本依寫入順序、追蹤歸檔的 repo 被查詢拒絕、獨立 correct-apply 在 light 先擋再歸檔）；correction-archive（含空白的路徑接在 `git diff -m` 後、黏住的 `&&`／`||`、換行、`git -C`、多行訊息、`gh pr create`、單一 token 的 commit 訊息恢復放行）；fake gh 的 `fail-author-read`。驗證：新斷言在 45273ec 上失敗。
 - [x] 19.2 helper：`_reply_272` 與 `_print_floor`（不論等級、不印 `SCRUB=`）、獨立 `_correct_apply` 的 #272 檢查、PICK 的 `author-unknown` 不記錄、一到十八位數、diff 的單獨 `\r`、`not-applied` 的報告措辭、restore 查詢的路徑與追蹤檢查、sidecar 必須是一般檔案、同一秒版本的排序；hook 以子命令判斷訊息旗標、換行與黏住的分隔符、拒絕訊息。驗證：edit-run、correct-flow、correction-archive 全綠。
 - [x] 19.3 SKILL 與文件：idd-edit（`reply_272_gate`、`FLOOR=272` 不論等級、只有 `--replace` 能遮蔽、重跑的收尾、`apply_or_discard` 的說明、PICK 列表的 null body）；三個提議 skill 與 idd-comment 恢復單引號內的跳脫寫法、idd-comment 的 exit 9 列；兩份 spec（#272、PICK、diff、read guard 的子命令清單與分隔符、restore 查詢）；design；CHANGELOG（第 14 輪、Changed 的 #272 與路徑閘門）。驗證：`spectra validate`、`run-all-tests.sh`。
-- [ ] 19.4 Verify 第 13 輪（只審第 14 輪的差異）；沒有 HIGH 以上就合併。驗證：#351 的 verify 留言。
+- [x] 19.4 Verify 第 13 輪（只審第 14 輪的差異）；沒有 HIGH 以上就合併。驗證：#351 的 verify 留言。
+- [x] 19.5 19.4 的結果：第 13 輪 FAIL，findings 43（HIGH 6／MEDIUM 2／LOW 23／INFO 12）。六則 HIGH 同一個根因，是第 14 輪造成的退步：read guard 改用 `shlex.shlex` 時保留了預設的 `#` 註解字元，一個未加引號的 `#` 之後的指令（含 `chmod -R`）都不再檢查。報告在 #351 的 verify 留言（comment 6242229710）。
+
+## 20. Verify 第 13 輪修正（第 15 輪）
+
+- [x] 20.1 先寫會失敗的測試（correction-archive）：註解行之後的讀取、行尾註解後換行、字中的 `#`、`--grep=#351`、註解行之後的 `chmod -R`、`git commit -- -m <歸檔>`、`|&` 之後含空白的路徑；放行：`git commit -am`、反斜線續行、`env A=1 python3 <helper>`、`hg --repository`；單一 token 的 `-m` 值改回拒絕。驗證：12 條在 116aead 上失敗。
+- [x] 20.2 hook：`lex.commenters = ""`；訊息值須同時是多字詞的文字、在收訊息的子命令裡、在 `--` 之前（`--` 只對 git／gh／hg／jj／svn）；`|&`／`&|` 分隔符；反斜線續行；git 的 `-am` 類合併旗標；更多的子命令前選項與收訊息的子命令；`env` 鏈；docstring 與拒絕訊息。驗證：correction-archive 194 條全綠，各輪 reviewer 列過的繞法逐一實跑。
+- [x] 20.3 文件：idd-edit SKILL（#272 那一題問這次新加的文字、四種 mode 都能遮蔽、Step 0 順序、PICK 的 `author-unknown`、restore 查詢的 exit 2）；兩份 spec（not-applied 措辭、路徑閘門、#272 遮蔽、read guard 的規則清單）；`--help` 與獨立 correct-apply 的訊息；CHANGELOG（第 15 輪、兩處被推翻的條目加註、3.4.0 的 #272 說法）。驗證：`spectra validate`、`run-all-tests.sh`。
+- [ ] 20.4 Verify 第 14 輪（只審第 15 輪的差異）；沒有 HIGH 以上，就請使用者確認合併（合併即發佈 3.5.0）。驗證：#351 的 verify 留言。

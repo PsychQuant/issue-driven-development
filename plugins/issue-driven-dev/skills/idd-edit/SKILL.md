@@ -129,8 +129,8 @@ Override pathway:`--override-user-content --reason="<rationale>"` 顯式同意�
 TaskCreate(name="start_run", description="Step 1：依 config-protocol 解析 repo（<REPO>），run-start 解析引數（R4 等閘門）、解析 target 與隱私等級；記下 RUN= / SCRUB= / 每個 TARGET=；PICK=#N 時列出 comments 讓使用者選")
 TaskCreate(name="prepare_targets", description="Step 2：每個 target 一次 prepare —— 作者閘門、讀原文、備份、組新內文、egress 預檢；RESULT=refused 就換下一個 target")
 TaskCreate(name="privacy_scrub_gate", description="Step 3：依 SCRUB 等級對 PREVIEW 做 rules/privacy-scrubbing.md 的語意自審；enforce 命中 → 顯示 redaction diff、使用者確認前不 apply")
-TaskCreate(name="preview_and_confirm", description="Step 3：顯示 DIFF 與 PREVIEW（--correct 顯示完整全文），AskUserQuestion 確認，預設 NO")
 TaskCreate(name="reply_272_gate", description="Step 3：prepare 印了 FLOOR=272（reply 引用了使用者貼來的第三方原話）→ 不論等級，另用 AskUserQuestion 問 #272 那一題；沒確認就 discard")
+TaskCreate(name="preview_and_confirm", description="Step 3：顯示 DIFF 與 PREVIEW（--correct 顯示完整全文），AskUserQuestion 確認，預設 NO")
 TaskCreate(name="apply_or_discard", description="Step 4：確認 → apply（照抄 RUN / TARGET / Step 1 的 SCRUB，--correct 另帶 STATE；FLOOR=272 而 SCRUB 是 light 時，答完 #272 那一題才填 warn）；拒絕 → discard")
 TaskCreate(name="finish_run", description="Step 5：finish —— 印 outcome report，其結束碼就是這次 /idd-edit 的結束碼（0／4／7／9）")
 ```
@@ -166,7 +166,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" run-start --default-r
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" prepare --run '<RUN>' --target '<TARGET>' --pick '<PICK>'
 ```
 
-- `RESULT=refused` 與 `REASON=`：這個 target 不改（R5、author-unknown、fetch-failed、stage-failed、egress、protected、setext、unclosed-block、empty、section-not-found、section-ambiguous、parser-unavailable、archive、check-failed、not-in-pick，stderr 有原因），直接換下一個 TARGET。拒絕已記在 run 裡，`finish` 會列出。例外：帶 `<PICK>` 時讀不到那則 comment（`REASON=fetch-failed`）不記錄，那個 PICK 仍可重試；選到不屬於 #N 的 comment 是 `not-in-pick`，那個 PICK 就此結束。
+- `RESULT=refused` 與 `REASON=`：這個 target 不改（R5、author-unknown、fetch-failed、stage-failed、egress、protected、setext、unclosed-block、empty、section-not-found、section-ambiguous、parser-unavailable、archive、check-failed、not-in-pick，stderr 有原因），直接換下一個 TARGET。拒絕已記在 run 裡，`finish` 會列出。例外：帶 `<PICK>` 時讀不到那則 comment 或它的作者（`REASON=fetch-failed`、`author-unknown`）不記錄，那個 PICK 仍可重試（沒重試的話 finish 會列為 `not-picked`）；選到不屬於 #N 的 comment 是 `not-in-pick`，那個 PICK 就此結束。
 - `FLOOR=272`：這則 reply 帶 `type=reply` 與 `points-from=user-pasted` 標記，引用了使用者貼來的第三方原話（#272）。不論這個 repo 的等級，Step 3 都要另問 #272 那一題（`reply_272_gate`）；helper 至少以 `warn` 預檢。prepare 不印 `SCRUB=`：Step 4 的 `<SCRUB>` 照 Step 1 的值，只有那個值是 `light` 時，答完那一題改填 `warn`。
 - `RESULT=merged`（只會出現在 PICK）：選到的 comment 已是這次的 TARGET，由它處理；這個 PICK 跳過 Step 3–4。
 - 成功時印出 `PREVIEW=`（新內文全文）與 `DIFF=`（目前內容 → 新內文的差異）；`--append`／`--replace`／`--prepend-note` 另印 `BACKUP=`（原內文的備份），`--correct` 另印 `WORK=` 與 `STATE=`。
@@ -180,7 +180,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" prepare --run '<RUN>'
 1. 用 Read 工具讀 `DIFF=` 那一行的路徑並完整顯示：使用者要看得出哪些內容被刪掉或改寫（#351 verify 第 7 輪：只給新全文時看不出來）。
 2. 用 Read 工具讀 `PREVIEW=` 那一行的路徑：`--correct` **完整**顯示（`(assigned after confirmation)` 在確認後換成實際的 backup id）；其他 mode 至少顯示前 40 行。
 3. 隱私自審（`privacy_scrub_gate`）：依 `SCRUB` 等級（prepare 印了 `FLOOR=272` 而 SCRUB 是 `light` 時用 `warn`），對 PREVIEW 做 [`rules/privacy-scrubbing.md`](../../rules/privacy-scrubbing.md) 的語意檢查（本機路徑、未公開的協作者真名、未發表的內容）。`enforce` 命中 → 顯示 redaction diff，使用者確認前不進 Step 4；要送出遮蔽後的版本，就 discard 這個 target、改好 body file 後從 Step 1 重跑（apply 只寫 prepare 組好的內文）。`warn` 命中 → 印一行提醒。
-4. prepare 印了 `FLOOR=272`（`reply_272_gate`，不論等級）：先另用 AskUserQuestion 問「這段第三方逐字內容確認可以放上 remote？」。`--replace` 時選項含「遮蔽後再送」：discard 這個 target、跑 Step 5 的 finish 結束這個 run、改好 body file 後從 Step 1 開新的 run，呼叫端看新 run 的結束碼；`--append`、`--prepend-note`、`--correct` 保留原文裡的引文（`--correct` 的 `**Point i**` 引文必須原樣保留），遮蔽不了，只能選放上或不放。使用者沒有確認，就 discard。這是 #272 要求的確認，不能由下一題代替（[`rules/privacy-scrubbing.md`](../../rules/privacy-scrubbing.md) § Reply layer-3 payload tier floor）。
+4. prepare 印了 `FLOOR=272`（`reply_272_gate`，不論等級）：先另用 AskUserQuestion 問「這次加入或改寫的文字裡，若有第三方逐字內容，確認可以放上 remote？」。說清楚原文已有的引文本來就在 GitHub 上、不受這一題影響，回答「否」只會取消這次編輯，不會把已公開的文字拿掉。選項含「遮蔽後再送」（四種 mode 都適用，遮蔽的是這次 body file 裡的文字；`--correct` 的 `**Point i**` 引文仍須原樣保留）：discard 這個 target、跑 Step 5 的 finish 結束這個 run、改好 body file 後從 Step 1 開新的 run，呼叫端看新 run 的結束碼。使用者沒有確認，就 discard。內文只是提到這兩個標記字串（例如 verify 報告）也會觸發這一題，照實問即可。這是 #272 要求的確認，不能由下一題代替（[`rules/privacy-scrubbing.md`](../../rules/privacy-scrubbing.md) § Reply layer-3 payload tier floor）。
 5. AskUserQuestion 確認，預設 NO（破壞性動作）。
 
 ### Step 4: Apply or discard
@@ -321,7 +321,7 @@ gh api 'repos/<REPO>/issues/comments/<id>' -X PATCH -F 'body=@<the BACKUP= path 
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" restore --target '<TARGET>' --repo '<REPO>'
 ```
 
-`<TARGET>` 是 `comment:<id>` 或 `issue:<N>`，`<REPO>` 是 `owner/repo`。標記是 GitHub 上誰都能寫的內容，所以 agent 不從標記抄任何值進指令（#351 verify 第 8、9 輪：抄進引號的 id 可以跳出引號）；哪些標記還留著也是別人改得到的，所以只有一個版本時也要讓使用者看過（第 10 輪）。查詢結束碼：1 讀不到目標、2 這份 clone 沒有這個目標的歸檔（或引數格式不符）、7 不在有歸檔的 git work tree —— 都照實告訴使用者，不寫入。有版本時，用 AskUserQuestion 列出 helper 印出的 `BACKUP_ID=`（id 裡有更正的 UTC 時間；每個版本還原的是**那次更正之前**的內容），說明還原的是**整個**目標、更正之後的修改（例如 `idd-update` 重建的 Current Status）會一起被蓋掉，請使用者選定版本並確認。再寫回，`<BACKUP_ID>` 只照抄 helper 印出的值；內容直接送給 GitHub、不顯示：
+`<TARGET>` 是 `comment:<id>` 或 `issue:<N>`，`<REPO>` 是 `owner/repo`。標記是 GitHub 上誰都能寫的內容，所以 agent 不從標記抄任何值進指令（#351 verify 第 8、9 輪：抄進引號的 id 可以跳出引號）；哪些標記還留著也是別人改得到的，所以只有一個版本時也要讓使用者看過（第 10 輪）。查詢結束碼：1 讀不到目標、2 這份 clone 沒有這個目標的歸檔、歸檔路徑上有 symlink、這個 repo 追蹤了歸檔檔案（不是這個 helper 寫的，不提供），或引數格式不符（stderr 會說是哪一種）、7 不在有歸檔的 git work tree —— 都照實告訴使用者，不寫入。有版本時，用 AskUserQuestion 列出 helper 印出的 `BACKUP_ID=`（id 裡有更正的 UTC 時間；每個版本還原的是**那次更正之前**的內容），說明還原的是**整個**目標、更正之後的修改（例如 `idd-update` 重建的 Current Status）會一起被蓋掉，請使用者選定版本並確認。再寫回，`<BACKUP_ID>` 只照抄 helper 印出的值；內容直接送給 GitHub、不顯示：
 
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" restore '<BACKUP_ID>' --repo '<REPO>'
