@@ -144,12 +144,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   survive in the summary.
 - `/idd-edit --correct` re-reads the target after confirmation and refuses when it changed since the preview.
 
+### Fixed (round 7 — verify round 5 findings, before release)
+
+- **A corrected section ends only at an ATX heading.** A paragraph line over `---` is a setext heading to the parser
+  and a separator to a reader, so the two disagreed about where the section ends; a setext heading inside the
+  section being corrected is now refused (exit 6). `--replace` keeps replacing through it.
+- **A heading that occurs twice is refused** (exit 9, `section-ambiguous`) by `section-replace`, `check-correction`
+  and `compose-correction`, instead of silently taking the first.
+- **`correct-apply` is bound to what the user saw.** `correct-prepare` prints `STATE=` (the digest of its state
+  file); the skill keeps it and passes `--state`, and apply refuses a state file with another digest or a malformed
+  field. Apply also re-runs the author gate and the protected-region checks on the text fetched after confirmation.
+- Fetches take the API's JSON `body` exactly; the `--jq .body` form added a newline, so a comment without a final
+  newline was compared and archived one byte off.
+- A gh error on the write is followed by a read: unchanged → `write-failed` (exit 4); changed or unreadable →
+  `unverified` (exit 7), since the write may have landed. Every archived result prints its backup id.
+- `correct-prepare` checks the archive location before the preview and fetches before the author gate (an unreadable
+  target is `fetch-failed`, not `author-unknown`); working directories left for more than a day are removed. The
+  skill skips Step 1.5 for `--correct`. A whole-comment replacement that repeats the opening marker no longer
+  duplicates it.
+- The test-only `IDD_EDIT_HELPER_GH_USER` is honoured only together with the gh mock.
+- `idd-diagnose` and `idd-reorganize` give the same reason as `idd-verify` for not writing corrections under
+  `$TMPDIR` (the path gate now accepts it; the files may be gone by the time the user runs the command).
+
 ### Changed
 
 - **BREAKING (behavior) — `/idd-comment --type errata`** on a comment by the OWNER or the invoking user now delegates to
   `/idd-edit --correct` and posts nothing; it no longer appends an errata comment plus a `--prepend-note`
   warning. When the correction is refused it posts the errata comment instead. On anyone else's comment, a bot's
-  included, it posts the errata comment only and no longer tries to edit the target.
+  included, it posts the errata comment and does not correct the target. After any errata comment, when the target
+  was written by the OWNER, the invoking user or a bot, it proposes `/idd-edit --prepend-note` on the target pointing
+  to the errata, under idd-edit's own confirmation.
+- `/idd-edit --append`/`--replace`/`--prepend-note`: content written by the invoking `gh` user passes the author gate
+  in every mode, not only `--correct` — a maintainer whose org association is `MEMBER` no longer needs
+  `--override-user-content` for their own comments.
 
 ### Notes
 

@@ -84,9 +84,9 @@ def main(argv):
             write_body(path, body)
             return 0
         rec = load(path)
-        body = rec.get("body", "")
         if rec.get("written") and os.path.exists(os.path.join(STORE, "mangle-read")):
-            body = body + "\nTAMPERED"
+            rec["body"] = rec.get("body", "") + "\nTAMPERED"   # every read form, like GitHub would
+        body = rec.get("body", "")
         if jq == ".body":
             print(body)
         elif jq == ".html_url":

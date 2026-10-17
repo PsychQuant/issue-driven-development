@@ -85,7 +85,7 @@ Step 1 那個錯的 artifact 與 Step 3 判為 `redo` / `invalidate` 的項目�
 | 1 | comment:<id> | ### Root Cause / Analysis | root cause 層級判錯，正確是 `gh` 取得層 | `/idd-edit comment:<id> --correct --section "### Root Cause / Analysis" --body-file "$HOME/.cache/idd/corrections/correction-<N>-1.md" --reason "root cause was in the fetch layer"` |
 ```
 
-- `<id>` 是數字 REST id（URL 的 `#issuecomment-` 後綴）；issue body 寫 `issue:<N>`，只能 `--section`。替換內容附在表下 `<details>`，執行時寫進 `$HOME/.cache/idd/corrections/correction-<N>-<k>.md`（先 `mkdir -p "$HOME/.cache/idd/corrections"`），`--body-file` 指向它；不放 `$VERIFY_DIR` 或 `$TMPDIR`（macOS 在 `/var` 下，`/idd-edit` 會拒絕）。
+- `<id>` 是數字 REST id（URL 的 `#issuecomment-` 後綴）；issue body 寫 `issue:<N>`，只能 `--section`。替換內容附在表下 `<details>`，執行時寫進 `$HOME/.cache/idd/corrections/correction-<N>-<k>.md`（先 `mkdir -p "$HOME/.cache/idd/corrections"`），`--body-file` 指向它；不放 `$VERIFY_DIR` 或 `$TMPDIR`（那是這一輪的暫存，使用者決定執行時可能已被清掉）。
 - 「錯在哪」只寫位置與錯誤類型加正確內容，不重述錯的值 —— 重述就等於再留一份錯誤。
 - 替換內容須原樣保留 `Original text` 引文；`## Current Status`、`### Clarity Surface` 不提議（`/idd-edit` 會拒絕）。目標 comment 作者不是 OWNER 或你自己（目前登入的 gh 使用者；bot 寫的也算其他人）→ 改提 `/idd-comment #N --type errata --target-comment <id> --body "..."`。
 - **attended**：Re-baseline 貼出後逐項 `AskUserQuestion`（現在執行 / 先不要）；選執行才呼叫該 `/idd-edit`，它仍走自己的 preview + confirm。**unattended 只列不做**：不呼叫 `/idd-edit`。

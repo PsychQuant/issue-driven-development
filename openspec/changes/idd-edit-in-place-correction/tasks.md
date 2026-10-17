@@ -52,7 +52,6 @@
 - [x] 9.2 helper：`_Blocks`（parser 的不透明區塊、頂層標題、分隔線）取代逐行判斷；受管區改為逐行比對（含 Clarity Surface 子標題）；`check-correction` 整則保留開頭標題、lazy continuation；`compose-correction` 保留全部 IDD 標記並做不變量檢查；引號與 NUL；`--correct` 需要內文；`validate-target` 的 mode 判斷順序與 exit 1；`existing-mentions`；sidecar 獨佔；巢狀 repo 與大小寫檢查；parser exit 8。hook：遞迴 chmod、`-m` 只對訊息指令。驗證：9.1 的 helper 與 hook 斷言轉綠，`idd-edit`、`idd-edit-contract` 全綠。
 - [x] 9.3 SKILL 與其他文件：私有工作目錄、stage-failed、egress 預檢與 mention、與預覽比對、讀回確認、exit 5、`--replace` 結束碼、eval 檢查、Step 1.5 的 exit 1；idd-comment 退路；規則檔、兩份 spec、design、proposal、CHANGELOG 的 bot 殘留與過頭宣稱；`git clean -X` 警告；idd-issue 措辭。驗證：`spectra validate`、`run-all-tests.sh` 全綠。
 - [x] 9.4 Verify 第 4 輪：FAIL，CRITICAL 為第 4 輪的工作目錄回歸（[report](https://github.com/PsychQuant/issue-driven-development/issues/351#issuecomment-6198383293)），follow-up #409、#410。
-- [ ] 11.6 套用 Proposed Correction（#351 正文 `## Related` 中 #347 那一行），在主 repo 以本 branch 的 helper 執行，讓歸檔留在長期存在的 clone。驗證：#351 正文。
 
 ## 10. Verify 第 4 輪修正
 
@@ -67,4 +66,14 @@
 - [x] 11.2 helper：拆出 `_archive_write`、`_compose`、`_existing_mentions`、`_correct_marker`；新增 `correct-prepare`、`correct-apply`、`correct-discard`（工作目錄驗證、sha256 狀態、行程內歸檔、gh-egress 寫入、讀回）。驗證：`correct-flow` 全綠，既有 suite 仍全綠。
 - [x] 11.3 SKILL：新增 Step 1.6，`--correct` 只呼叫三個子命令；刪除 Step 5.5 與 Steps 2–7 裡的 `--correct` 分支；task 清單改名；restore 範例的 `BACKUP_ID`。契約測試改指向 helper。驗證：`idd-edit`、`idd-edit-contract`、`in-place-correction` 全綠。
 - [x] 11.4 spec、design（新增 decision 與三個子命令的契約）、CHANGELOG。驗證：`spectra validate`。
-- [ ] 11.5 Verify 第 5 輪。驗證：#351 的 verify 留言。
+- [x] 11.5 Verify 第 5 輪：FAIL，findings 40（第 1–4 輪 42、52、63），CRITICAL 0；DA 因額度未跑完。報告在 #351 的 verify 留言（comment 6229416722）。
+- [ ] 11.6 套用 Proposed Correction（#351 正文 `## Related` 中 #347 那一行），在主 repo 以本 branch 的 helper 執行，讓歸檔留在長期存在的 clone。驗證：#351 正文。
+
+## 12. Verify 第 5 輪修正
+
+- [x] 12.1 先寫會失敗的測試：`correct-flow` R6 節（state 雜湊、欄位格式、apply 重跑作者閘門與受管區、JSON 原樣抓取、寫入報錯後重讀分流、歸檔前置檢查、先抓原文再判作者、殘留工作目錄清理、整則更正不重複開頭標記）；`in-place-correction`（setext 標題被拒、`--replace` 照舊取代、標題重複 exit 9、Step 1.5 對 `--correct` 跳過）。驗證：新斷言以「尚未實作」失敗。
+- [x] 12.2 helper：`_section_end` 只認 ATX、`_heading_count`、`EXIT_AMBIGUOUS`、`_archive_preflight`、`_remove_stale_work_dirs`、`_state_problem`、`_fetch_body` 改取 JSON、apply 的 `--state` 與重跑閘門、寫入報錯後重讀、`_compose` 去重開頭標記。驗證：`correct-flow` 全綠。
+- [x] 12.3 SKILL：Step 1.5 對 `--correct` 跳過；Step 1.6 保存並傳回 `STATE`、兩個區塊包在 mode 判斷裡、印 backup id；`--replace` 對應 exit 9；Step 0、鐵律、閘門表。idd-comment 貼 errata 後提議 `--prepend-note`；規則檔、idd-diagnose／idd-reorganize 的暫存目錄理由。驗證：`idd-edit`、`idd-edit-contract`、`in-place-correction` 全綠。
+- [x] 12.4 spec、design、CHANGELOG。驗證：`spectra validate`。
+- [ ] 12.5 Verify 第 6 輪（含 DA）。驗證：#351 的 verify 留言。
+

@@ -459,11 +459,18 @@ refute_output_grep "a heading inside an HTML comment does not end the section" "
 assert_output_grep "the real next heading survives" "## Next" "$WORK/g1c.out"
 refute_output_grep "no orphan comment terminator is left" "-->" "$WORK/g1c.out"
 
+# Round 6: sections are delimited by ATX headings and thematic breaks only;
+# --replace replaces through a setext heading as it always did, and
+# check-correction refuses a range that holds one (verify #351 round 5).
 printf '## Notes\nwrong\n\nSub title\n---\nkeep sub\n\n## Next\n' >"$WORK/setext.md"
-run_helper g1d section-replace "$WORK/setext.md" "## Notes" "$WORK/r-fix.md" --stop-at-rule
-assert_output_grep "a setext H2 ends the section" "Sub title" "$WORK/g1d.out"
-assert_output_grep "the setext section's body stays" "keep sub" "$WORK/g1d.out"
-refute_output_grep "the corrected text is gone" "wrong" "$WORK/g1d.out"
+run_helper g1d section-replace "$WORK/setext.md" "## Notes" "$WORK/r-fix.md"
+refute_output_grep "--replace replaces through a setext heading" "Sub title" "$WORK/g1d.out"
+assert_output_grep "the next ATX heading stays" "## Next" "$WORK/g1d.out"
+run_helper g1e check-correction "$WORK/setext.md" "## Notes" "$WORK/r-fix.md"
+assert_exit "--correct refuses a range with a setext heading" 6 "$RC"
+printf '## A\nfirst\n\n## A\nsecond\n' >"$WORK/dup.md"
+run_helper g1f section-replace "$WORK/dup.md" "## A" "$WORK/r-fix.md"
+assert_exit "section-replace refuses a repeated heading" 9 "$RC"
 
 # G2. NUL and control characters never reach eval unquoted
 printf 'x\000;touch %s/PWNED' "$WORK" >"$WORK/nul.md"
@@ -635,7 +642,9 @@ run_helper h16e check-correction "$WORK/body.md" "## Expected" "$WORK/r-csprefix
 assert_exit "a replacement that adds a Current Status variant → exit 6" 6 "$RC"
 
 # H17. author-unknown only for --correct; idd-comment fallbacks
-assert_output_grep "Step 1.5 exit 1 is author-unknown only under --correct" '[ "$MODE" = "--correct" ] || exit 1' "$EDIT_SKILL"
+assert_output_grep "Step 1.5 does not run for --correct (correct-prepare gates the author after reading)" 'if [ "$MODE" != "--correct" ]; then' "$EDIT_SKILL"
+run_helper h17t parse-args 'comment:1' '#許' --append --body x --reason r
+refute_output_grep "TARGETS never carry raw non-ASCII" "許" "$WORK/h17t.out"
 assert_output_grep "idd-comment posts errata when the author cannot be determined" "無法判定作者時改貼 errata" "$SKILLS/idd-comment/SKILL.md"
 
 print_summary "in-place-correction"

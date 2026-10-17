@@ -83,6 +83,9 @@ idd-issue source.docx       # auto-trigger when source contains ≥2 findings
 | `--correct` override | `--correct` 併用 `--override-user-content` → refuse（協作者 comment 只提議、不改） | exit 2 |
 | Protected regions | `check-correction`：目標是或包含 `## Current Status`／`### Clarity Surface`（含其下的子標題，逐行比對、與 idd-update 相同）、替換內容帶入這些標題、`Original text`／`**Original**` 引用被改或後面緊接文字、整則更正拿掉開頭的型別標題 → refuse。`compose-correction`：替換內容留下沒關閉的 fence 或 HTML 註解 → refuse。段落邊界取自 Markdown parser（頂層標題、分隔線；code 與 HTML 區塊裡的行不算） | exit 6 |
 | Markdown parser | `section-replace`／`check-correction`／`compose-correction` 需要 `markdown-it-py` 4.0.0（`scripts/requirements-egress.txt`）；缺或版本不符 → refuse、不改任何東西 | exit 8 |
+| Ambiguous section | `--section` 的標題在原文出現不只一次 → refuse（不選第一個） | exit 9 |
+
+> 上表是 helper 各子命令的結束碼；一次 `/idd-edit` 執行的結束碼另見 Step 7.5（4、7、9 在那裡的意思不同）。
 | Archive | 不在 git work tree、歸檔路徑沒被 ignore、寫入失敗 → refuse，不 PATCH | exit 7 |
 
 Override pathway:`--override-user-content --reason="<rationale>"` 顯式同意修改 user content。 Audit marker `<!-- idd:edit override-user-content date=... reason="..." -->` 自動 append。
@@ -116,13 +119,13 @@ Override pathway:`--override-user-content --reason="<rationale>"` 顯式同意�
 
 ```
 TaskCreate(name="parse_and_resolve_target", description="Parse comment:<id> / #NNN [--last] / issue:<N>，解析成 RESOLVED_TARGETS（每項 kind:number，每個 iteration 自己決定目標）")
-TaskCreate(name="fetch_body_and_backup", description="gh api 取現 body 寫入本次執行的私有工作目錄（mktemp -d 於 ${TMPDIR:-/tmp}）；失敗 → fetch-failed")
+TaskCreate(name="fetch_body_and_backup", description="（--correct 以外的 mode）gh api 取現 body 寫入本次執行的私有工作目錄（mktemp -d 於 ${TMPDIR:-/tmp}）；失敗 → fetch-failed")
 TaskCreate(name="show_original", description="顯示原 comment 前 30 行讓使用者看清楚要動什麼")
 TaskCreate(name="build_new_body", description="按 mode（append / replace / prepend-note）組新 body 字串")
 TaskCreate(name="correct_prepare", description="--correct only（Step 1.6）：helper correct-prepare —— 讀原文、作者閘門、受管區與引文檢查、組出預覽全文、egress 預檢；拒絕 → REASON 進對應的桶")
 TaskCreate(name="preview_and_confirm", description="顯示新 body 並用 AskUserQuestion 確認；--replace / --correct 模式必須通過；--correct 讀 $CORRECT_PREVIEW 完整顯示；拒絕 → --correct 跑 correct-discard，記 declined")
 TaskCreate(name="correct_apply", description="--correct only（Step 1.6）：使用者確認後 helper correct-apply —— 重抓比對、重組比對預覽、歸檔、經 gh-egress 寫入、讀回確認；RESULT 決定進哪個桶")
-TaskCreate(name="execute_patch", description="經 gh-egress.sh edit-comment 派送 PATCH（#273 — 全網套用；rc>=10 → EGRESS_REFUSED 桶 warn-continue）；-F body=@file 避免 escape")
+TaskCreate(name="execute_patch", description="（--correct 以外的 mode；--correct 由 correct_apply 寫入）經 gh-egress.sh edit-comment 派送 PATCH（#273 — 全網套用；rc>=10 → EGRESS_REFUSED 桶 warn-continue）；-F body=@file 避免 escape")
 TaskCreate(name="verify_and_report", description="re-fetch comment 比對寫入結果，輸出 ✓ Edit applied + diff summary")
 ```
 
@@ -273,16 +276,17 @@ exit 0
 **v2.81.0+ (#154)**: R5 gate refuses modifications to content whose author is not `OWNER`, a bot, or the authenticated `gh` user, unless `--override-user-content --reason="..."` provided（`gh` 使用者本人的內容在 org repo 是 `MEMBER`，所以本人另外放行 —— 四種 mode 都適用，#351）。Helper does single `gh api` call, checks `author_association` + `user.login`。**`--correct` 不放行 bot**：review bot 的 comment 是第三方原話，只能另貼 errata（#351 verify 第 2 輪）。
 
 ```bash
-# comment → its author; issue:<N> → the issue author. OWNER, a bot, or the
-# authenticated gh user pass (org maintainers are MEMBER — #351); with
-# --correct a bot does not (its words are a third party's).
+# comment → its author. OWNER, a bot, or the authenticated gh user pass
+# (org maintainers are MEMBER — #351). --correct skips this step: correct-prepare
+# reads the target first, then runs the same gate with mode --correct, so an
+# unreadable target is fetch-failed rather than author-unknown (round 5).
+if [ "$MODE" != "--correct" ]; then
 VALIDATE_ARG="$COMMENT_ID"
-[ "$TARGET_KIND" = "issue" ] && VALIDATE_ARG="issue:$TARGET_NUM"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
     validate-target "$VALIDATE_ARG" "$REPO" "$OVERRIDE_USER_CONTENT" "$MODE"
 VALIDATE_EXIT=$?
 case $VALIDATE_EXIT in
-  0) ;;   # proceed (OWNER, bot outside --correct, own content, or override active)
+  0) ;;   # proceed (OWNER, bot, own content, or override active)
   4)
     # R5 refuse — actionable message already on stderr.
     # (--correct has no override: a collaborator's comment is corrected by
@@ -292,15 +296,9 @@ case $VALIDATE_EXIT in
     REFUSED_TARGETS+=("$TARGET R5")
     continue
     ;;
-  1)
-    # Only --correct turns "the gh user is unknown" into exit 1; elsewhere an
-    # exit 1 is a transport error and ends the run as before (round 4).
-    [ "$MODE" = "--correct" ] || exit 1
-    REFUSED_TARGETS+=("$TARGET author-unknown")
-    continue
-    ;;
   *) exit $VALIDATE_EXIT ;;
 esac
+fi
 ```
 
 ### Step 1.6: `--correct` runs in the helper（#351）
@@ -334,6 +332,8 @@ if [ "$MODE" = "--correct" ]; then
     fi
     CORRECT_WORK=$(printf '%s\n' "$PREP_OUT" | sed -n 's/^WORK=//p')
     CORRECT_PREVIEW=$(printf '%s\n' "$PREP_OUT" | sed -n 's/^PREVIEW=//p')
+    # Kept here, handed back to apply: binds apply to the state the user saw.
+    CORRECT_STATE=$(printf '%s\n' "$PREP_OUT" | sed -n 's/^STATE=//p')
 fi
 ```
 
@@ -342,28 +342,35 @@ fi
 使用者拒絕：
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" correct-discard --work "$CORRECT_WORK"
-DECLINED_TARGETS+=("$TARGET")
-continue
+if [ "$MODE" = "--correct" ]; then
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" correct-discard --work "$CORRECT_WORK"
+    DECLINED_TARGETS+=("$TARGET")
+    continue
+fi
 ```
 
 使用者確認：
 
 ```bash
-APPLY_OUT=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" correct-apply --work "$CORRECT_WORK")
-APPLY_RC=$?
-APPLY_RESULT=$(printf '%s\n' "$APPLY_OUT" | sed -n 's/^RESULT=//p')
-APPLY_REASON=$(printf '%s\n' "$APPLY_OUT" | sed -n 's/^REASON=//p')
-case "$APPLY_RC:$APPLY_RESULT" in
-  0:edited)
-    echo "✓ $TARGET corrected"
-    printf '%s\n' "$APPLY_OUT" | sed -n 's/^URL=/  URL: /p; s/^BACKUP_ID=/  Backup id: /p'
-    EDITED_COUNT=$((EDITED_COUNT + 1)) ;;
-  7:*) UNVERIFIED_TARGETS+=("$TARGET") ;;                       # 已寫入、讀回不符
-  4:write-failed) WRITE_FAILED_TARGETS+=("$TARGET") ;;          # gh 自身錯誤，目標未變（歸檔已寫）
-  *) REFUSED_TARGETS+=("$TARGET ${APPLY_REASON:-check-failed}") ;; # changed-since-preview / differs-from-preview / archive / egress …
-esac
-continue   # Steps 2–7 are for --append / --replace / --prepend-note
+if [ "$MODE" = "--correct" ]; then
+    APPLY_OUT=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" correct-apply \
+        --work "$CORRECT_WORK" --state "$CORRECT_STATE")
+    APPLY_RC=$?
+    APPLY_RESULT=$(printf '%s\n' "$APPLY_OUT" | sed -n 's/^RESULT=//p')
+    APPLY_REASON=$(printf '%s\n' "$APPLY_OUT" | sed -n 's/^REASON=//p')
+    # Any result that got as far as the archive names its backup id (round 5).
+    printf '%s\n' "$APPLY_OUT" | sed -n 's/^BACKUP_ID=/  Backup id: /p'
+    case "$APPLY_RC:$APPLY_RESULT" in
+      0:edited)
+        echo "✓ $TARGET corrected"
+        printf '%s\n' "$APPLY_OUT" | sed -n 's/^URL=/  URL: /p'
+        EDITED_COUNT=$((EDITED_COUNT + 1)) ;;
+      7:*) UNVERIFIED_TARGETS+=("$TARGET") ;;                       # 寫入結果與送出的不符，或寫入報錯但目標已變
+      4:write-failed) WRITE_FAILED_TARGETS+=("$TARGET") ;;          # gh 自身錯誤，重讀確認目標未變
+      *) REFUSED_TARGETS+=("$TARGET ${APPLY_REASON:-check-failed}") ;; # changed-since-preview / differs-from-preview / archive / egress …
+    esac
+    continue   # Steps 2–7 are for --append / --replace / --prepend-note
+fi
 ```
 
 helper 自己算歸檔路徑；**本 skill 執行的 bash 不寫出歸檔路徑**，否則會被 archive-read-guard hook 擋下。GitHub 沒有條件式寫入，apply 重抓到寫入之間仍有極短的競爭窗。
@@ -460,6 +467,7 @@ elif [ -n "$SECTION_FLAG" ]; then
         rm -f "$REPL_FILE"
         case $SR_RC in
           8) REFUSED_TARGETS+=("$TARGET parser-unavailable") ;;
+          9) REFUSED_TARGETS+=("$TARGET section-ambiguous") ;;   # the heading occurs more than once
           *) REFUSED_TARGETS+=("$TARGET section-not-found") ;;
         esac
         continue
@@ -649,13 +657,13 @@ EDITED_COUNT=$((EDITED_COUNT + 1))
 
 ## 鐵律
 
-- **原 body 必 backup**：`--append`/`--replace`/`--prepend-note` 存在本次執行的私有工作目錄 `${TMPDIR:-/tmp}/idd-edit-XXXXXX/`（暫存，Step 2 印出路徑）；`--correct` 確認後歸檔到 correction archive（永久、不進 git、AI 讀不到），PATCH 後刪 `/tmp` 副本
+- **原 body 必 backup**：`--append`/`--replace`/`--prepend-note` 存在本次執行的私有工作目錄 `${TMPDIR:-/tmp}/idd-edit-XXXXXX/`（暫存，Step 2 印出路徑）；`--correct` 確認後歸檔到 correction archive（永久、不進 git、AI 讀不到）；它的工作副本在使用者暫存目錄的 `idd-correct-*`，由 correct-apply／correct-discard 刪除，未完成的一天後由下一次 prepare 清掉
 - **Preview 必 show**：即使是 `--append` 也要 show 最終 body 讓使用者確認
 - **`-F body=@file` 不是 `-f body=""`**：避免 backtick escape（`gh api` 會把 heredoc 裡的 backtick escape 成 `\`）
 - **Metadata marker 不覆蓋**：每次 edit 加新 marker，保留 history
 - **`--replace` 預設 confirm = NO**：破壞性動作不自動 yes
 - **Log 每次 edit**：顯示 URL 讓使用者能立即 verify
-- **`--body-file` path safety（#155）**：helper **canonicalize（`os.path.realpath`）後拒絕** sensitive system paths（`/etc` `/var` `/sys` `/proc` `/private/etc|var`）+ credential dirs（`.ssh` `.aws` `.gnupg` `.kube` `.docker`），含 `//etc` / `/tmp/../etc` / symlink / relative-traversal bypass vectors → exit 5 refuse。Escape hatch：`IDD_EDIT_HELPER_ALLOW_UNSAFE_BODY_FILE=1`（須自審 reason）。合法 repo / `/tmp` / `$HOME/Developer` 路徑照常讀。Preview gate 仍是最後一道防線。
+- **`--body-file` path safety（#155）**：helper **canonicalize（`os.path.realpath`）後拒絕** sensitive system paths（`/etc` `/var` `/sys` `/proc` `/private/etc|var`）+ credential dirs（`.ssh` `.aws` `.gnupg` `.kube` `.docker`），含 `//etc` / `/tmp/../etc` / symlink / relative-traversal bypass vectors → exit 5 refuse。Escape hatch：`IDD_EDIT_HELPER_ALLOW_UNSAFE_BODY_FILE=1`（須自審 reason）。合法 repo / `/tmp` / `$HOME/Developer` 路徑照常讀；使用者自己的暫存目錄底下（macOS 在 `/var/folders/…`）也放行（#351）。Preview gate 仍是最後一道防線。
 
 ## 與 idd-comment 的配合
 

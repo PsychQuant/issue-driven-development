@@ -131,7 +131,7 @@ Issue-body prose in an issue opened by the OWNER or the invoking user — interp
 **Examples**:
 - `/idd-edit comment:<id> --correct --section "### Strategy"` replaces a Diagnosis strategy that named the wrong backup location
 - `/idd-edit issue:<N> --correct --section "## Expected"` replaces an Expected paragraph that misread the request, keeping the `Original text` quotation above it untouched
-- `/idd-comment --type errata --target-comment <id>` on an OWNER-authored comment delegates to `/idd-edit --correct` instead of appending an errata comment
+- `/idd-comment --type errata --target-comment <id>` on a comment by the OWNER or the invoking user delegates to `/idd-edit --correct` instead of appending an errata comment
 
 ## Decision tree for classifying new modify-actions
 

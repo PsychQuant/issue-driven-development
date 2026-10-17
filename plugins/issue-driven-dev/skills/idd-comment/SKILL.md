@@ -379,6 +379,15 @@ This notice concerns [comment {target-comment}](https://github.com/{repo}/issues
 <!-- idd:comment type=errata date=YYYY-MM-DD target-comment={target-comment} -->
 ```
 
+**貼出 errata 之後，在原 comment 頂端留指標**（#351 verify 第 5 輪）：errata 是另一則 comment，直接讀原 comment 的人或 AI session 看不到它。原 comment 若是 OWNER、你自己或 bot 寫的（validate-target 不帶 `--correct` 時回 0），接著跑：
+
+```
+IDD_CALLER=idd-comment-errata \
+  /idd-edit comment:{target-comment} --prepend-note --reason "此 comment 有誤，更正見 {errata comment URL}"
+```
+
+這一步走 idd-edit 自己的預覽與確認；使用者拒絕或被擋下時只回報，不影響已貼出的 errata。協作者寫的 comment 不加（verbatim-preserve，也不提示 `--override-user-content`）。
+
 #### Template: `reply`（v2.100.0+，#269 — human-facing 逐點回覆）
 
 ```markdown
