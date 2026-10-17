@@ -76,7 +76,7 @@ The 8 categories SHALL be: `state-field-update`, `bounded-section-replace`, `aud
 
 ### Requirement: in-place-correction SHALL replace confirmed errors only after archiving the prior version
 
-The `in-place-correction` category SHALL cover replacing content that the user has confirmed to be wrong, in an issue body or a comment whose author is the OWNER or the authenticated `gh` user (never a bot's comment), including content that would otherwise fall under `append-only` (published comments) or the issue body above the `---` separator. An action in this category SHALL (a) archive the prior full text of the target before writing, (b) obtain explicit user confirmation, (c) leave a marker that identifies the archive entry without a filesystem path, and (d) refuse the regions that remain `verbatim-preserve`. `/idd-edit --correct` SHALL be the only action declared in this category; other skills SHALL reach it by invoking `/idd-edit`.
+The `in-place-correction` category SHALL cover replacing content that the user has confirmed to be wrong, in an issue body or a comment whose author is the authenticated `gh` user (never a bot's comment, and not the OWNER's unless the OWNER runs it), including content that would otherwise fall under `append-only` (published comments) or the issue body above the `---` separator. An action in this category SHALL (a) archive the prior full text of the target before writing, (b) obtain explicit user confirmation, (c) leave a marker that identifies the archive entry without a filesystem path, and (d) refuse the regions that remain `verbatim-preserve`. `/idd-edit --correct` SHALL be the only action declared in this category; other skills SHALL reach it by invoking `/idd-edit`.
 
 #### Scenario: Correction declared in idd-edit
 

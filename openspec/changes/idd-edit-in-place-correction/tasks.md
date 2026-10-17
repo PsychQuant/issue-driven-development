@@ -66,7 +66,7 @@
 - [x] 11.2 helper：拆出 `_archive_write`、`_compose`、`_existing_mentions`、`_correct_marker`；新增 `correct-prepare`、`correct-apply`、`correct-discard`（工作目錄驗證、sha256 狀態、行程內歸檔、gh-egress 寫入、讀回）。驗證：`correct-flow` 全綠，既有 suite 仍全綠。
 - [x] 11.3 SKILL：新增 Step 1.6，`--correct` 只呼叫三個子命令；刪除 Step 5.5 與 Steps 2–7 裡的 `--correct` 分支；task 清單改名；restore 範例的 `BACKUP_ID`。契約測試改指向 helper。驗證：`idd-edit`、`idd-edit-contract`、`in-place-correction` 全綠。
 - [x] 11.4 spec、design（新增 decision 與三個子命令的契約）、CHANGELOG。驗證：`spectra validate`。
-- [x] 11.5 Verify 第 5 輪：FAIL，findings 40（第 1–4 輪 42、52、63），CRITICAL 0；DA 因額度未跑完。報告在 #351 的 verify 留言（comment 6229416722）。
+- [x] 11.5 Verify 第 5 輪：FAIL，findings 40（第 2–4 輪 42、52、63），CRITICAL 0；DA 因額度未跑完。報告在 #351 的 verify 留言（comment 6229416722）。
 - [ ] 11.6 套用 Proposed Correction（#351 正文 `## Related` 中 #347 那一行），在主 repo 以本 branch 的 helper 執行，讓歸檔留在長期存在的 clone。驗證：#351 正文。
 
 ## 12. Verify 第 5 輪修正
@@ -75,5 +75,13 @@
 - [x] 12.2 helper：`_section_end` 只認 ATX、`_heading_count`、`EXIT_AMBIGUOUS`、`_archive_preflight`、`_remove_stale_work_dirs`、`_state_problem`、`_fetch_body` 改取 JSON、apply 的 `--state` 與重跑閘門、寫入報錯後重讀、`_compose` 去重開頭標記。驗證：`correct-flow` 全綠。
 - [x] 12.3 SKILL：Step 1.5 對 `--correct` 跳過；Step 1.6 保存並傳回 `STATE`、兩個區塊包在 mode 判斷裡、印 backup id；`--replace` 對應 exit 9；Step 0、鐵律、閘門表。idd-comment 貼 errata 後提議 `--prepend-note`；規則檔、idd-diagnose／idd-reorganize 的暫存目錄理由。驗證：`idd-edit`、`idd-edit-contract`、`in-place-correction` 全綠。
 - [x] 12.4 spec、design、CHANGELOG。驗證：`spectra validate`。
-- [ ] 12.5 Verify 第 6 輪（含 DA）。驗證：#351 的 verify 留言。
+- [x] 12.5 Verify 第 6 輪（含 DA）：FAIL，findings 52（HIGH 1／MEDIUM 10／LOW 30／INFO 11），CRITICAL 0；DA 完成。報告在 #351 的 verify 留言（comment 6229867499）。
+
+## 13. Verify 第 6 輪修正
+
+- [x] 13.1 先寫會失敗的測試（`correct-flow` R8 節；在 `fec3c07` 上 17 條失敗）：把 SKILL 的 Step 1.6 三個區塊抽出來、分兩個 shell 執行；apply 端重跑作者閘門與受管區、state 欄位、寫入生效後才報錯、殘留目錄、另一個 repo、CRLF 與無結尾換行、讀回多一個換行、dashboard 標記被移到結尾、null body、只有標題、新增 setext、歸檔目錄被檔案擋住、缺 `--scrub-attested`、OWNER 不是自己。fake gh 依 owner/repo 路由、新增 `fail-after-patch`／`pad-read`；暫存目錄改為每次執行私有。驗證：DA 的五個突變（拿掉 apply 端作者閘門、受管區重跑、state 欄位檢查、殘留清理、寫入報錯一律算 write-failed）各自都有測試失敗。
+- [x] 13.2 helper：`_raw_lines` 與逐位元組保留的 `_compose`、頂端標記固定、`_check_correction` 回傳拒絕原因（`setext` 獨立）、`_adds_setext`、`_fetch_body` 對缺欄位與 null 的處理、`--scrub-attested` 必填、去掉標題後為空的檢查、歸檔前置檢查加目錄可建立、`_correct_apply` 單次讀 state 與閘門前移、`_correct_write` 的例外處理、讀回逐位元組比對；`--correct` 只放行本人（使用者 2026-10-17 決定）。驗證：`correct-flow` 全綠。
+- [x] 13.3 SKILL 與文件：Step 1.6 印出並照抄 WORK／PREVIEW／STATE、scrub 分級解析；閘門表、批次 exit 契約、REASON 清單、help；idd-comment 的 exit 2／3／5 不貼、指標只在自己的 comment 更正失敗後且開頭不是 IDD 標題時提議、errata_pointer task；OWNER 規則與無標題文字限制同步到 idd-edit、idd-comment、idd-diagnose、idd-verify、idd-reorganize、規則檔；spec、design、CHANGELOG 第 8 輪與第 6、7 輪說得過頭處的註記。開 #413（idd-update Branch B）。驗證：`spectra validate`、`run-all-tests.sh`。
+- [ ] 13.4 Verify 第 7 輪。驗證：#351 的 verify 留言。
+
 

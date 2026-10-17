@@ -91,7 +91,7 @@ The `scope` qualifier names the targeted section / field / artifact when relevan
 
 `--override-user-content --reason="..."` still exists for `--append` / `--replace` / `--prepend-note` as an explicit, audited exception for third-party comments; it is never accepted with `--correct`.
 
-Issue-body prose in an issue opened by the OWNER or the invoking user — interpretation paragraphs, Expected, Actual, Impact, including text an IDD skill wrote there — is **not** in this zone: it is correctable through `in-place-correction`. An issue body opened by anyone else is third-party content (item 2). Before #351 the whole body above the `---` separator was listed here, which made every wrong interpretation permanent and pushed corrections into appended errata that downstream readers kept missing.
+Issue-body prose in an issue opened by the invoking user — interpretation paragraphs, Expected, Actual, Impact, including text an IDD skill wrote there — is **not** in this zone: it is correctable through `in-place-correction`. An issue body opened by anyone else is third-party content (item 2). Before #351 the whole body above the `---` separator was listed here, which made every wrong interpretation permanent and pushed corrections into appended errata that downstream readers kept missing.
 
 **Examples**:
 - The `> **Original text**: …` blockquote under `## Problem` (per IC_R007)
@@ -124,14 +124,14 @@ Issue-body prose in an issue opened by the OWNER or the invoking user — interp
 
 ### 8. `in-place-correction`
 
-**Definition**: Replace content that the user has confirmed to be wrong, in place, so that later readers — humans and AI sessions that re-read the issue as memory — stop inheriting the error (#351). Applies only to the invoking user's own content — issue bodies and comments whose author is the OWNER or the invoking user's own `gh` login (org maintainers show as `MEMBER`, so the login check is what admits them) — including published comments that are otherwise `append-only`. A bot's comment is not included: it is a third party's words, answered with an errata comment (verify #351 round 2).
+**Definition**: Replace content that the user has confirmed to be wrong, in place, so that later readers — humans and AI sessions that re-read the issue as memory — stop inheriting the error (#351). Applies only to the invoking user's own content — issue bodies and comments whose author is the invoking user's own `gh` login (org maintainers show as `MEMBER`; the repository OWNER's content counts only when the OWNER runs it — user decision 2026-10-17) — including published comments that are otherwise `append-only`. A bot's comment is not included: it is a third party's words, answered with an errata comment (verify #351 round 2).
 
 **Scope boundary**: One bounded region — a whole comment (`--scope whole-comment`) or one named section (`--section <heading>`; the only form allowed for an issue body). The action SHALL (a) show the original and the replacement and get explicit confirmation, (b) archive the prior full text under `.claude/.idd/archive/edits/` of the main worktree (not a linked worktree, so the archive outlives worktree cleanup) before writing — the archive is never tracked by git and Claude's tools are denied access to it — (c) end the replaced region with a marker that carries the backup id and no path, and (d) refuse `verbatim-preserve` content and the regions owned by other skills (`## Current Status` → `idd-update`, `### Clarity Surface` → `idd-clarify`). `/idd-edit --correct` is the only action declared in this category; other skills reach it by proposing the command.
 
 **Examples**:
 - `/idd-edit comment:<id> --correct --section "### Strategy"` replaces a Diagnosis strategy that named the wrong backup location
 - `/idd-edit issue:<N> --correct --section "## Expected"` replaces an Expected paragraph that misread the request, keeping the `Original text` quotation above it untouched
-- `/idd-comment --type errata --target-comment <id>` on a comment by the OWNER or the invoking user delegates to `/idd-edit --correct` instead of appending an errata comment
+- `/idd-comment --type errata --target-comment <id>` on the invoking user's own comment delegates to `/idd-edit --correct` instead of appending an errata comment
 
 ## Decision tree for classifying new modify-actions
 

@@ -3,9 +3,14 @@
 
 Records: comment-<id>.json and issue-<n>.json, each
   {"body": ..., "user": {"login": ...}, "author_association": ..., "html_url": ...}
-The file `user` holds the authenticated login. Switches (files in the store):
-  fail-patch   — every write exits 1
-  mangle-read  — reads after a write return the body with a suffix
+The file `user` holds the authenticated login. Only the repository
+$FAKE_GH_REPO (default o/r) exists: any other owner/repo is a 404, so a write
+aimed at the wrong repository fails here as it would on GitHub (verify #351
+round 6). Switches (files in the store):
+  fail-patch        — every write exits 1 and writes nothing
+  fail-after-patch  — the write lands, then gh exits 1 (a 502 after the fact)
+  mangle-read       — reads after a write return the body with a suffix
+  pad-read          — reads after a write return the body plus one newline
 Every call is appended to calls.log.
 """
 import json
@@ -13,6 +18,7 @@ import os
 import sys
 
 STORE = os.environ["FAKE_GH_STORE"]
+REPO = os.environ.get("FAKE_GH_REPO", "o/r")
 
 
 def log(argv):
@@ -22,6 +28,8 @@ def log(argv):
 
 def record_path(endpoint):
     parts = endpoint.strip("/").split("/")          # repos/<owner>/<repo>/issues/...
+    if len(parts) < 3 or "/".join(parts[1:3]) != REPO:
+        return None
     if len(parts) == 6 and parts[3] == "issues" and parts[4] == "comments":
         return os.path.join(STORE, f"comment-{parts[5]}.json")
     if len(parts) == 5 and parts[3] == "issues":
@@ -47,6 +55,9 @@ def write_body(path, body):
     rec["body"] = body
     rec["written"] = True
     save(path, rec)
+    if os.path.exists(os.path.join(STORE, "fail-after-patch")):
+        print("HTTP 502: bad gateway", file=sys.stderr)
+        sys.exit(1)
     print(json.dumps({"html_url": rec.get("html_url", "")}))
 
 
@@ -80,13 +91,15 @@ def main(argv):
             return 1
         if method == "PATCH":
             src = field.split("=@", 1)[1]
-            body = sys.stdin.read() if src == "-" else open(src, encoding="utf-8").read()
+            body = sys.stdin.read() if src == "-" else open(src, encoding="utf-8", newline="").read()
             write_body(path, body)
             return 0
         rec = load(path)
         if rec.get("written") and os.path.exists(os.path.join(STORE, "mangle-read")):
             rec["body"] = rec.get("body", "") + "\nTAMPERED"   # every read form, like GitHub would
-        body = rec.get("body", "")
+        if rec.get("written") and os.path.exists(os.path.join(STORE, "pad-read")):
+            rec["body"] = rec.get("body", "") + "\n"
+        body = rec.get("body") or ""
         if jq == ".body":
             print(body)
         elif jq == ".html_url":
@@ -98,8 +111,13 @@ def main(argv):
         return 0
     if argv[:2] == ["issue", "edit"]:
         n = argv[2]
+        repo = argv[argv.index("--repo") + 1] if "--repo" in argv else None
+        path = os.path.join(STORE, f"issue-{n}.json")
+        if repo != REPO or not os.path.exists(path):
+            print(f"GraphQL: Could not resolve to an issue ({repo}#{n})", file=sys.stderr)
+            return 1
         body_file = argv[argv.index("--body-file") + 1]
-        write_body(os.path.join(STORE, f"issue-{n}.json"), open(body_file, encoding="utf-8").read())
+        write_body(path, open(body_file, encoding="utf-8", newline="").read())
         return 0
     print(f"fake gh: unsupported call: {' '.join(argv)}", file=sys.stderr)
     return 2

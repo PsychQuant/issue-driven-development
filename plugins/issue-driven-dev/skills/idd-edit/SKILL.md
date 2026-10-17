@@ -28,7 +28,7 @@ allowed-tools:
 **v2.81.0+ R4/R5 在 batch mode 下 per-target 評估**:
 - R4 (`--replace` 必要 scope) 一次套用全 batch
 - R5 (author check) **per-target**:mixed OWNER + non-OWNER 批次採**語意 (i) per-comment refuse + 繼續**（#158 拍板 2026-07-11）— OWNER 的照做、non-OWNER 的逐條 refuse 記錄後 `continue`,絕不因單一 refuse 殺整批;`--override-user-content` 語意為 **all-targets + reason 共用**（全 batch 啟用 override,一個 reason 進所有 audit markers）
-- 批次結束輸出 outcome report（`edited / refused` + 顯著標記,見 Step 7.5）;exit contract:全數成功 → 0,任一 refused（M>0 → exit 4,單 target 退化等價 — 契約鎖於 tests/idd-edit fixture 14）
+- 批次結束輸出 outcome report（`edited / refused` + 顯著標記,見 Step 7.5）;exit contract 依序比對、先中者為準:任一 refused 或寫入失敗 → exit 4（M>0,單 target 退化等價 — 契約鎖於 tests/idd-edit fixture 14）;已寫入但讀回失敗或不符 → 7;使用者拒絕任一預覽 → 9;其餘 → 0（詳見 Step 7.5）
 
 完整契約見 [batch-and-cluster.md](../../references/batch-and-cluster.md)。罕見場景：跨 issue 的 typo 統一修、補同一段 errata note、把多個 stale comment 統一標 deprecated。
 
@@ -78,15 +78,15 @@ idd-issue source.docx       # auto-trigger when source contains ≥2 findings
 | Requirement | Gate | Refuse code |
 |-------------|------|-------------|
 | **R4** (spec) | `--replace` without `--scope`/`--section` → refuse | exit 3 |
-| **R5** (spec) | 作者不是 OWNER、bot 或你自己（目前的 gh 使用者），且沒有 `--override-user-content --reason="..."` → refuse；`--correct` 只放行 OWNER 與你自己（bot 也拒絕、沒有 override；查不到 gh 使用者 → exit 1） | exit 4 |
+| **R5** (spec) | 作者不是 OWNER、bot 或你自己（目前的 gh 使用者），且沒有 `--override-user-content --reason="..."` → refuse；`--correct` 只放行你自己寫的（OWNER 由別人執行時也拒絕、bot 也拒絕、沒有 override；查不到 gh 使用者 → exit 1） | exit 4 |
 | `--correct` scope | 缺 `--scope`/`--section`，或 `issue:<N>` 用 whole scope → refuse | exit 3 |
 | `--correct` override | `--correct` 併用 `--override-user-content` → refuse（協作者 comment 只提議、不改） | exit 2 |
-| Protected regions | `check-correction`：目標是或包含 `## Current Status`／`### Clarity Surface`（含其下的子標題，逐行比對、與 idd-update 相同）、替換內容帶入這些標題、`Original text`／`**Original**` 引用被改或後面緊接文字、整則更正拿掉開頭的型別標題 → refuse。`compose-correction`：替換內容留下沒關閉的 fence 或 HTML 註解 → refuse。段落邊界取自 Markdown parser（頂層標題、分隔線；code 與 HTML 區塊裡的行不算） | exit 6 |
+| Protected regions | `check-correction`：目標是或包含 `## Current Status`／`### Clarity Surface`（含其下的子標題，逐行比對、與 idd-update 相同）、替換內容帶入這些標題、`Original text`／`**Original**` 引用被改或後面緊接文字、整則更正拿掉開頭的型別標題 → refuse。`compose-correction`：替換內容留下沒關閉的 fence 或 HTML 註解 → refuse。段落邊界取自 Markdown parser（頂層 ATX 標題、分隔線；code 與 HTML 區塊裡的行不算）；`--correct` 範圍內有 setext 標題、或替換內容新增 setext 標題 → refuse（`REASON=setext`） | exit 6 |
 | Markdown parser | `section-replace`／`check-correction`／`compose-correction` 需要 `markdown-it-py` 4.0.0（`scripts/requirements-egress.txt`）；缺或版本不符 → refuse、不改任何東西 | exit 8 |
 | Ambiguous section | `--section` 的標題在原文出現不只一次 → refuse（不選第一個） | exit 9 |
+| Archive | `archive` 子命令：不在 git work tree、歸檔路徑沒被 ignore、寫入失敗 → refuse，不 PATCH。`--correct` 在 prepare（預覽之前）就檢查，記為 `REASON=archive` | exit 7 |
 
-> 上表是 helper 各子命令的結束碼；一次 `/idd-edit` 執行的結束碼另見 Step 7.5（4、7、9 在那裡的意思不同）。
-| Archive | 不在 git work tree、歸檔路徑沒被 ignore、寫入失敗 → refuse，不 PATCH | exit 7 |
+> 上表是 helper 各子命令的結束碼；一次 `/idd-edit` 執行的結束碼另見 Step 7.5（4、7、9 在那裡的意思不同：`--correct` 的拒絕一律算 4）。
 
 Override pathway:`--override-user-content --reason="<rationale>"` 顯式同意修改 user content。 Audit marker `<!-- idd:edit override-user-content date=... reason="..." -->` 自動 append。
 
@@ -123,7 +123,7 @@ TaskCreate(name="fetch_body_and_backup", description="（--correct 以外的 mod
 TaskCreate(name="show_original", description="顯示原 comment 前 30 行讓使用者看清楚要動什麼")
 TaskCreate(name="build_new_body", description="按 mode（append / replace / prepend-note）組新 body 字串")
 TaskCreate(name="correct_prepare", description="--correct only（Step 1.6）：helper correct-prepare —— 讀原文、作者閘門、受管區與引文檢查、組出預覽全文、egress 預檢；拒絕 → REASON 進對應的桶")
-TaskCreate(name="preview_and_confirm", description="顯示新 body 並用 AskUserQuestion 確認；--replace / --correct 模式必須通過；--correct 讀 $CORRECT_PREVIEW 完整顯示；拒絕 → --correct 跑 correct-discard，記 declined")
+TaskCreate(name="preview_and_confirm", description="顯示新 body 並用 AskUserQuestion 確認；--replace / --correct 模式必須通過；--correct 讀 Step 1.6 印出的 PREVIEW= 路徑完整顯示，apply／discard 照抄它印出的 WORK= 與 STATE=；拒絕 → --correct 跑 correct-discard，記 declined")
 TaskCreate(name="correct_apply", description="--correct only（Step 1.6）：使用者確認後 helper correct-apply —— 重抓比對、重組比對預覽、歸檔、經 gh-egress 寫入、讀回確認；RESULT 決定進哪個桶")
 TaskCreate(name="execute_patch", description="（--correct 以外的 mode；--correct 由 correct_apply 寫入）經 gh-egress.sh edit-comment 派送 PATCH（#273 — 全網套用；rc>=10 → EGRESS_REFUSED 桶 warn-continue）；-F body=@file 避免 escape")
 TaskCreate(name="verify_and_report", description="re-fetch comment 比對寫入結果，輸出 ✓ Edit applied + diff summary")
@@ -215,7 +215,7 @@ done
 WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/idd-edit-XXXXXX") || {
   echo "✗ cannot create a private working directory — nothing was changed" >&2; exit 1; }
 EDITED_COUNT=0        # incremented after each successful per-target Step 7 verify
-REFUSED_TARGETS=()    # "<kind:number> <reason>" — reason: R5 / author-unknown / fetch-failed / stage-failed / protected / section-not-found / parser-unavailable / check-failed / egress / changed-since-preview / differs-from-preview / archive / replace (#158 (i): recorded, not fatal)
+REFUSED_TARGETS=()    # "<kind:number> <reason>" — reason: R5 / author-unknown / fetch-failed / stage-failed / protected / setext / section-not-found / section-ambiguous / parser-unavailable / check-failed / egress / changed-since-preview / differs-from-preview / archive / replace (#158 (i): recorded, not fatal)
 DECLINED_TARGETS=()   # the user answered NO at Step 5 — reported, not a refusal
 UNVERIFIED_TARGETS=() # written, but the re-read at Step 7 failed or did not match
 WRITE_FAILED_TARGETS=() # gh itself failed the PATCH (rc 1–9): not a refusal (#273), but nothing was written
@@ -273,7 +273,7 @@ exit 0
 
 ### Step 1.5: Validate target (R5 author gate)
 
-**v2.81.0+ (#154)**: R5 gate refuses modifications to content whose author is not `OWNER`, a bot, or the authenticated `gh` user, unless `--override-user-content --reason="..."` provided（`gh` 使用者本人的內容在 org repo 是 `MEMBER`，所以本人另外放行 —— 四種 mode 都適用，#351）。Helper does single `gh api` call, checks `author_association` + `user.login`。**`--correct` 不放行 bot**：review bot 的 comment 是第三方原話，只能另貼 errata（#351 verify 第 2 輪）。
+**v2.81.0+ (#154)**: R5 gate refuses modifications to content whose author is not `OWNER`, a bot, or the authenticated `gh` user, unless `--override-user-content --reason="..."` provided（`gh` 使用者本人的內容在 org repo 是 `MEMBER`，所以本人另外放行 —— 四種 mode 都適用，#351）。Helper does single `gh api` call, checks `author_association` + `user.login`。**`--correct` 只放行你自己寫的**：bot 的 comment 是第三方原話（#351 verify 第 2 輪）；OWNER 不是你時，OWNER 寫的也是（2026-10-17 使用者決定，之前 OWNER 一律放行，有寫入權的協作者能改寫 owner 的原話，舊版只歸檔在協作者本機）。兩者都只能另貼 errata。
 
 ```bash
 # comment → its author. OWNER, a bot, or the authenticated gh user pass
@@ -311,7 +311,16 @@ if [ "$MODE" = "--correct" ]; then
         echo "✗ cannot stage the replacement text for $TARGET — skipped" >&2
         REFUSED_TARGETS+=("$TARGET stage-failed"); continue; }
     printf '%s\n' "$BODY_INPUT" > "$REPL_FILE"
-    SCRUB_LEVEL="${SCRUB_LEVEL:-warn}"   # 依 rules/privacy-scrubbing.md 解析（同 Step 6）
+    # 依 rules/privacy-scrubbing.md 的分級解析（--correct 不經過 Step 6）：third-party → enforce、
+    # 自己的 public repo → warn、private → light。helper 不代填預設值（#351 verify 第 6 輪）。
+    if [ -z "${SCRUB_LEVEL:-}" ]; then
+        RJ=$(gh repo view "$REPO" --json viewerPermission,isPrivate 2>/dev/null)
+        case "$(printf '%s' "$RJ" | jq -r '.viewerPermission // empty')" in
+          WRITE|MAINTAIN|ADMIN)
+            if [ "$(printf '%s' "$RJ" | jq -r '.isPrivate // false')" = "true" ]; then SCRUB_LEVEL=light; else SCRUB_LEVEL=warn; fi ;;
+          *) SCRUB_LEVEL=enforce ;;   # READ / TRIAGE / 查不到 → third-party 的保守預設
+        esac
+    fi
     if [ -n "$SECTION_FLAG" ]; then
         PREP_OUT=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" correct-prepare \
             --target "$TARGET" --repo "$REPO" --section "$SECTION_FLAG" \
@@ -324,25 +333,25 @@ if [ "$MODE" = "--correct" ]; then
     PREP_RC=$?
     rm -f "$REPL_FILE"
     if [ "$PREP_RC" -ne 0 ]; then
-        # stderr 已說明原因；REASON ∈ R5 / author-unknown / fetch-failed / protected /
-        # section-not-found / parser-unavailable / egress / check-failed
+        # stderr 已說明原因；REASON ∈ archive / fetch-failed / R5 / author-unknown / protected /
+        # setext / section-not-found / section-ambiguous / parser-unavailable / egress / check-failed
         PREP_REASON=$(printf '%s\n' "$PREP_OUT" | sed -n 's/^REASON=//p')
         REFUSED_TARGETS+=("$TARGET ${PREP_REASON:-check-failed}")
         continue
     fi
-    CORRECT_WORK=$(printf '%s\n' "$PREP_OUT" | sed -n 's/^WORK=//p')
-    CORRECT_PREVIEW=$(printf '%s\n' "$PREP_OUT" | sed -n 's/^PREVIEW=//p')
-    # Kept here, handed back to apply: binds apply to the state the user saw.
-    CORRECT_STATE=$(printf '%s\n' "$PREP_OUT" | sed -n 's/^STATE=//p')
+    # 確認前後是不同的 Bash 呼叫，變數不會留下：WORK / PREVIEW / STATE 一定要印出來，
+    # 下面兩個區塊照抄這裡印的值（#351 verify 第 6 輪：沒印時 apply 收到空值，每次都失敗）。
+    printf '%s\n' "$PREP_OUT"
 fi
 ```
 
-用 Read 工具讀 `$CORRECT_PREVIEW` 並**完整**顯示（它是更正後的全文，不含舊版；`(assigned after confirmation)` 在確認後換成實際的 backup id），再用 AskUserQuestion 確認，預設 NO。
+用 Read 工具讀上面 `PREVIEW=` 那一行的路徑並**完整**顯示（它是更正後的全文，不含舊版；`(assigned after confirmation)` 在確認後換成實際的 backup id），再用 AskUserQuestion 確認，預設 NO。
 
 使用者拒絕：
 
 ```bash
 if [ "$MODE" = "--correct" ]; then
+    CORRECT_WORK="<the WORK= value Step 1.6 printed>"
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" correct-discard --work "$CORRECT_WORK"
     DECLINED_TARGETS+=("$TARGET")
     continue
@@ -353,6 +362,10 @@ fi
 
 ```bash
 if [ "$MODE" = "--correct" ]; then
+    # 照抄 Step 1.6 印出的值；不要重跑 prepare、也不要自己算 STATE —— 那會讓 apply 比對的
+    # 不再是使用者看過的預覽。
+    CORRECT_WORK="<the WORK= value Step 1.6 printed>"
+    CORRECT_STATE="<the STATE= value Step 1.6 printed>"
     APPLY_OUT=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" correct-apply \
         --work "$CORRECT_WORK" --state "$CORRECT_STATE")
     APPLY_RC=$?
@@ -671,8 +684,10 @@ EDITED_COUNT=$((EDITED_COUNT + 1))
 
 ```
 /idd-comment #NNN --type=errata --target-comment=XXX ...
-  ├─ XXX 是你本人或 OWNER 寫的 → /idd-edit comment:XXX --correct ...（不另貼 comment）
-  └─ 其他作者（含 bot）       → 只貼 errata comment，不呼叫 idd-edit
+  ├─ XXX 是你本人寫的        → /idd-edit comment:XXX --correct ...（不另貼 comment）
+  │                              └─ 更正被拒或寫入失敗（exit 4）→ 改貼 errata，再提議 --prepend-note 指向它
+  │                                 （原 comment 以 IDD 標題或標記開頭時不加）
+  └─ 其他作者（含 OWNER、bot）→ 只貼 errata comment，不呼叫 idd-edit
 ```
 
 ## Backup 管理

@@ -81,7 +81,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed (verify round 4, before release)
 
-- **Section boundaries come from the Markdown parser.** A top-level heading (setext included) or thematic break ends a
+- **Section boundaries come from the Markdown parser.** A top-level heading (setext included — *changed in round 7: ATX headings only; `--correct` refuses a setext heading in its range*) or thematic break ends a
   section; nothing inside a code block or an HTML block does. The protection scan stays line by line, the way
   `idd-update` and `idd-clarify` find their headings, so an unclosed fence can no longer hide `## Current Status` from
   it, and a subsection of `### Clarity Surface` is protected too. `compose-correction` refuses (exit 6) a body whose
@@ -138,7 +138,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   check), `correct-apply` (re-read, compare with the preview, archive, write through gh-egress, read back) and
   `correct-discard` replace the skill's shell steps; the skill only prepares, shows the preview and applies or
   discards. Four verify rounds kept finding defects in the shell version, which only string contracts covered; the
-  new `scripts/tests/correct-flow` suite runs the whole flow against a fake gh, with `TMPDIR` under `/var`. The
+  new `scripts/tests/correct-flow` suite runs the helper's flow against a fake gh, with `TMPDIR` under `/var`
+  (*it tests the helper's control flow, not its contract with the real gh — round 8 made the fake check the
+  repository and added a write that lands before gh errors; still no live run, see task 11.6*). The
   archive is written in-process, so the working copy no longer passes through the `--from-file` gate.
 - `idd-update` rebuilds Key Decisions on every run instead of only appending, so a corrected decision does not
   survive in the summary.
@@ -151,9 +153,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   section being corrected is now refused (exit 6). `--replace` keeps replacing through it.
 - **A heading that occurs twice is refused** (exit 9, `section-ambiguous`) by `section-replace`, `check-correction`
   and `compose-correction`, instead of silently taking the first.
-- **`correct-apply` is bound to what the user saw.** `correct-prepare` prints `STATE=` (the digest of its state
+- **`correct-apply` takes the state prepare made.** `correct-prepare` prints `STATE=` (the digest of its state
   file); the skill keeps it and passes `--state`, and apply refuses a state file with another digest or a malformed
-  field. Apply also re-runs the author gate and the protected-region checks on the text fetched after confirmation.
+  field. (*Round 8: this guards against a mismatched WORK/STATE pair, not against a process running as the same
+  user; what binds apply to the confirmed text is recomposing the preview. The skill did not print STATE at all
+  until round 8.*) Apply also re-runs the author gate and the protected-region checks on the text fetched after confirmation.
 - Fetches take the API's JSON `body` exactly; the `--jq .body` form added a newline, so a comment without a final
   newline was compared and archived one byte off.
 - A gh error on the write is followed by a read: unchanged → `write-failed` (exit 4); changed or unreadable →
@@ -166,17 +170,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `idd-diagnose` and `idd-reorganize` give the same reason as `idd-verify` for not writing corrections under
   `$TMPDIR` (the path gate now accepts it; the files may be gone by the time the user runs the command).
 
+### Fixed (round 8 — verify round 6 findings, before release)
+
+- **Step 1.6 hands its values to the next call.** The preview, the confirmation and the apply are separate tool
+  calls, and shell variables do not survive them; Step 1.6 printed nothing, so every `--correct` reached apply with
+  an empty `--work` and was recorded as refused. It now prints `WORK=`, `PREVIEW=` and `STATE=`, and the decline and
+  confirm blocks take the printed values. `correct-flow` runs the skill's own Step 1.6 blocks in separate shells.
+- **Bytes outside the corrected section are kept**: CRLF line endings and a missing final newline survive, and the
+  read-back must equal the sent body byte for byte (an extra newline is `unverified`). A whole-comment correction
+  keeps the original's top marker on line 1 wherever the replacement puts its copy.
+- **Refused earlier, before the preview**: a replacement that is only the target heading (exit 2), one that adds a
+  setext heading (`setext`, now its own reason instead of `protected`), and an archive directory that cannot be
+  created. `correct-prepare` requires `--scrub-attested`; the skill resolves the tier per the privacy-scrubbing rule
+  (enforce for a third-party repository) instead of defaulting to `warn`.
+- `correct-apply` reads its state file once, runs the author and protected-region gates before the re-fetch (so the
+  window between the re-fetch and the write holds no network round-trips), reports an error after the archive as
+  `unverified` with the backup id, and tells a failed re-read from a changed target. A comment whose `body` is null
+  or missing is a failed read.
+- `idd-comment` no longer summarises a correction file that `/idd-edit` refused (exit 2, 3 or 5 — the path gate
+  among them) into a public errata; it reports the argument error.
+- **Known limitation** (user decision 2026-10-17): text that belongs to no heading — below an issue body's last
+  `---`, such as the IC_R011 `**Source**` footnote — cannot be corrected in place; skills propose an errata for it.
+  The writer side of the setext shape (`idd-update` Branch B) is #413.
+- `correct-flow` checks the repository (a write aimed at another repository fails), lets a write land before gh
+  errors, covers the apply-side gates, a malformed state field, stale working directories, CRLF and null bodies,
+  and uses a private temp directory (two overlapping runs no longer fail each other).
+
 ### Changed
 
-- **BREAKING (behavior) — `/idd-comment --type errata`** on a comment by the OWNER or the invoking user now delegates to
+- **BREAKING (behavior) — `/idd-comment --type errata`** on the invoking user's own comment now delegates to
   `/idd-edit --correct` and posts nothing; it no longer appends an errata comment plus a `--prepend-note`
-  warning. When the correction is refused it posts the errata comment instead. On anyone else's comment, a bot's
-  included, it posts the errata comment and does not correct the target. After any errata comment, when the target
-  was written by the OWNER, the invoking user or a bot, it proposes `/idd-edit --prepend-note` on the target pointing
-  to the errata, under idd-edit's own confirmation.
+  warning. When the correction is refused or its write fails it posts the errata comment instead and proposes a
+  `--prepend-note` pointer on the original (not when it opens with an IDD heading or marker). On anyone else's
+  comment — the repository OWNER's (when the OWNER is not the one running it) and a bot's included — it posts the
+  errata comment only and leaves the target alone.
+- **`--correct` corrects only your own content** (user decision 2026-10-17): the author must be the authenticated
+  `gh` user. Earlier any OWNER content passed, so a collaborator with write access could rewrite the owner's words
+  while the only archive stayed on the collaborator's machine.
 - `/idd-edit --append`/`--replace`/`--prepend-note`: content written by the invoking `gh` user passes the author gate
   in every mode, not only `--correct` — a maintainer whose org association is `MEMBER` no longer needs
-  `--override-user-content` for their own comments.
+  `--override-user-content` for their own comments. These modes also attest the mentions the target already has
+  (GitHub does not notify them again on an edit), so editing a comment that mentions someone is no longer refused
+  at egress.
+- `--replace --section` boundaries come from the Markdown parser: besides headings inside code or HTML blocks
+  (ignored) and a repeated heading (exit 9), a target heading that only appears inside an HTML block is now
+  `section-not-found`, and a heading indented one to three spaces ends the section.
 
 ### Notes
 

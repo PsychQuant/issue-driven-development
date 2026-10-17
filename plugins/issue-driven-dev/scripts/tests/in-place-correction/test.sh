@@ -197,9 +197,14 @@ assert_output_grep "idd-edit lists the correct_prepare task" "correct_prepare" "
 assert_output_grep "idd-edit lists the correct_apply task" "correct_apply" "$SKILLS/idd-edit/SKILL.md"
 
 ERRATA="$(awk '/^#### Template: `errata`/{f=1} f&&/^#### Template: /&&!/errata/{exit} f' "$SKILLS/idd-comment/SKILL.md")"
-assert_grep "errata routes OWNER/bot targets to idd-edit --correct" "--correct" "$ERRATA"
-assert_grep "errata routing names the OWNER check" "OWNER" "$ERRATA"
+assert_grep "errata routes your own comment to idd-edit --correct" "--correct" "$ERRATA"
+assert_grep "errata routing counts the OWNER as someone else when it is not you" "OWNER 不是你時，OWNER 寫的 comment 算其他作者" "$ERRATA"
 refute_output_grep "errata no longer auto-prepends a warning" 'prepend-note --reason="See errata' "$SKILLS/idd-comment/SKILL.md"
+# R8: the pointer only follows a failed correction of your own comment, never
+# another author's (user decision 2026-10-17), and is tracked as a task
+assert_grep "the errata pointer is limited to the exit-4 row" "只有上表 exit 4 那一列" "$ERRATA"
+refute_grep "no pointer on an OWNER's or a bot's comment" "原 comment 若是 OWNER、你自己或 bot 寫的" "$ERRATA"
+assert_output_grep "idd-comment tracks the pointer step" 'TaskCreate(name="errata_pointer"' "$SKILLS/idd-comment/SKILL.md"
 
 for s in idd-verify idd-diagnose idd-reorganize; do
   F="$SKILLS/$s/SKILL.md"
@@ -414,7 +419,7 @@ require "both --correct fetches refuse as fetch-failed (prepare and apply)" \
   test "$(grep -c '_refused("fetch-failed"' "$HELPER")" -ge 2
 assert_output_grep "a missing section has its own refusal reason" "section-not-found" "$EDIT_SKILL"
 assert_output_grep "a declined preview cleans up and is reported" "declined" "$EDIT_SKILL"
-assert_output_grep "the preview shows the composed full text" '用 Read 工具讀 `$CORRECT_PREVIEW` 並**完整**顯示' "$EDIT_SKILL"
+assert_output_grep "the preview shows the composed full text" '用 Read 工具讀上面 `PREVIEW=` 那一行的路徑並**完整**顯示' "$EDIT_SKILL"
 assert_output_grep "validate-target receives the mode" 'validate-target "$VALIDATE_ARG" "$REPO" "$OVERRIDE_USER_CONTENT" "$MODE"' "$EDIT_SKILL"
 
 # F5 / F9 / F10 / F12. doc contracts
@@ -646,5 +651,9 @@ assert_output_grep "Step 1.5 does not run for --correct (correct-prepare gates t
 run_helper h17t parse-args 'comment:1' '#許' --append --body x --reason r
 refute_output_grep "TARGETS never carry raw non-ASCII" "許" "$WORK/h17t.out"
 assert_output_grep "idd-comment posts errata when the author cannot be determined" "無法判定作者時改貼 errata" "$SKILLS/idd-comment/SKILL.md"
+
+# R8 (verify #351 round 6): a refused correction file is never summarised in public
+assert_output_grep "idd-comment does not read a correction file idd-edit refused" '**不貼、也不讀那個檔案**' "$SKILLS/idd-comment/SKILL.md"
+refute_output_grep "exit 5 no longer routes to a summary of the file" '| 4、2、3、5（或其他非 0） |' "$SKILLS/idd-comment/SKILL.md"
 
 print_summary "in-place-correction"

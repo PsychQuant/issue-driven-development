@@ -15,7 +15,8 @@ Subcommands:
                                — Enforce R5: refuse an author who is not OWNER,
                                  a bot, or the gh user, unless
                                  --override-user-content is active. With mode
-                                 --correct a bot is refused too (#351).
+                                 --correct only the gh user's own content
+                                 passes (#351).
   section-replace <input-file> <heading-line> <replacement-file>
                                — Replace a named markdown section, level-aware,
                                  CRLF-safe. Emits modified body to stdout.
@@ -474,7 +475,7 @@ def parse_args_subcmd(argv):
         if state["override"] == "true":
             err(
                 "Refuse: --correct cannot override user-authored content. It rewrites only "
-                "content by the OWNER or by you; for anyone else's comment, a bot's "
+                "your own content; for anyone else's comment, the OWNER's and a bot's "
                 "included, propose the correction with /idd-comment --type errata (#351)."
             )
             return 2
@@ -658,8 +659,10 @@ def validate_target_subcmd(argv):
         err(f"✓ Bot author: {login} (skip R5 gate)")
         return 0
 
-    # OWNER passes.
-    if assoc == "OWNER":
+    # OWNER passes — except for --correct, which rewrites only your own words:
+    # when someone else is the OWNER, the OWNER's comment is a third party's
+    # too (user decision 2026-10-17, verify #351 round 6).
+    if assoc == "OWNER" and mode != "--correct":
         err(f"✓ OWNER author: {login} (skip R5 gate)")
         return 0
 
@@ -683,7 +686,7 @@ def validate_target_subcmd(argv):
             return 1
         err(
             f"Refuse: {comment_id} was written by {login} ({assoc}); --correct only "
-            "rewrites content by the OWNER or by you. Propose the correction with "
+            "rewrites your own content. Propose the correction with "
             "/idd-comment --type errata instead (#351)."
         )
         return 4
@@ -981,6 +984,15 @@ def _lines_of(text):
     return lines
 
 
+def _raw_lines(path):
+    """The file's lines with their own endings, one per _lines_of line, so the
+    text outside a corrected section is written back byte for byte (CRLF from
+    the web editor, no final newline — verify #351 round 6)."""
+    with open(path, "r", encoding="utf-8", errors="replace", newline="") as fh:
+        raw = fh.read()
+    return re.findall(r"[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+$", raw) or [""], raw
+
+
 def _section_range(lines, heading_line, stop_at_rule=False, blocks=None):
     """(start, end) of the section headed by heading_line, end exclusive, or
     None when absent. Same boundary rule as section-replace."""
@@ -1061,25 +1073,42 @@ def _opening_line(lines):
     return next((l for l in lines if l.strip() and not _is_marker(l)), "")
 
 
+def _adds_setext(old_lines, blocks, start, end, new_lines, new_blocks):
+    """A correction must not create the setext shape it refuses: the next
+    correction of the section would be refused (verify #351 round 6)."""
+    old_setext = {old_lines[i] for i in blocks.setext if start <= i < end}
+    if any(new_lines[i] not in old_setext for i in new_blocks.setext):
+        err("Refuse: the replacement adds a setext heading (a line of text over '---' or '==='); "
+            "use an ATX heading or put a blank line before the '---' (#351).")
+        return True
+    return False
+
+
 def check_correction_subcmd(argv):
+    return _check_correction(argv)[0]
+
+
+def _check_correction(argv):
+    """(exit code, refusal reason) — the reason feeds correct-prepare/apply's
+    REASON=; the CLI keeps the exit code only."""
     if len(argv) != 3:
         err("ERROR: check-correction requires <old-file> <section-heading|-> <new-file>")
-        return 2
+        return 2, "check-failed"
     old_file, heading, new_file = argv
     for f in (old_file, new_file):
         if not os.path.isfile(f) or not os.access(f, os.R_OK):
             err(f"ERROR: file not readable: {f}")
-            return 5
+            return 5, "check-failed"
     old_lines = _lines_of(_read_normalized(old_file))
     new_lines = _strip_target_heading(_lines_of(_read_normalized(new_file)), heading)
     try:
         blocks = _Blocks(old_lines)
     except ParserUnavailable as e:
         err(f"ERROR: {e}; the correction was not checked")
-        return EXIT_PARSER
+        return EXIT_PARSER, "parser-unavailable"
     if heading != "-" and _heading_count(old_lines, heading, blocks) > 1:
         err(f"Refuse: '{heading}' occurs more than once, so it does not name one section (#351).")
-        return EXIT_AMBIGUOUS
+        return EXIT_AMBIGUOUS, "section-ambiguous"
 
     # Line view, fenced or not: idd-update and idd-clarify find their heading by
     # exact line match, so even a fenced copy could be taken for the real one.
@@ -1089,20 +1118,22 @@ def check_correction_subcmd(argv):
                 f"Refuse: the replacement introduces '{line}', a heading managed by "
                 f"{'idd-update' if line.startswith(_CURRENT_STATUS) else 'idd-clarify'} (#351)."
             )
-            return 6
+            return 6, "protected"
     try:
         new_blocks = _Blocks(new_lines)
     except ParserUnavailable as e:
         err(f"ERROR: {e}; the correction was not checked")
-        return EXIT_PARSER
+        return EXIT_PARSER, "parser-unavailable"
 
     if heading == "-":
         start, end = 0, len(old_lines)
+        if _adds_setext(old_lines, blocks, start, end, new_lines, new_blocks):
+            return 6, "setext"
     else:
         rng = _section_range(old_lines, heading, stop_at_rule=True, blocks=blocks)
         if rng is None:
             err(f"ERROR: heading not found in input: {heading}")
-            return 1
+            return 1, "section-not-found"
         start, end = rng
         if any(i in blocks.setext for i in range(start + 1, end)):
             err(
@@ -1110,7 +1141,9 @@ def check_correction_subcmd(argv):
                 "'==='), so where it ends is ambiguous; put a blank line before the '---' or "
                 "make it an ATX heading, then correct (#351)."
             )
-            return 6
+            return 6, "setext"
+        if _adds_setext(old_lines, blocks, start, end, new_lines, new_blocks):
+            return 6, "setext"
         # A heading of the target's level or higher, or a thematic break, would
         # split the section: the next correction would reach only part of it.
         level = blocks.headings[start]
@@ -1119,7 +1152,7 @@ def check_correction_subcmd(argv):
                 "Refuse: the replacement adds a heading of the section's level or higher, "
                 "or a thematic break, which would split the corrected section (#351)."
             )
-            return 6
+            return 6, "protected"
     # The protection scan reads lines the way the owners do. A whole-comment
     # target contains every managed region in it (round 2); a nested heading
     # under Clarity Surface belongs to idd-clarify (round 3).
@@ -1133,7 +1166,7 @@ def check_correction_subcmd(argv):
                     f"Refuse: the target {what} {where} '{m_heading}', which is managed by "
                     f"{who}; update it with {who} instead of --correct (#351)."
                 )
-                return 6
+                return 6, "protected"
 
     if heading == "-":
         # Other skills find a comment by its opening heading (## Diagnosis,
@@ -1145,7 +1178,7 @@ def check_correction_subcmd(argv):
                 f"Refuse: the comment opens with '{old_first}', which other skills use "
                 "to recognise it; keep it as the first line of the replacement (#351)."
             )
-            return 6
+            return 6, "protected"
     else:
         start += 1  # the heading line itself is kept
 
@@ -1162,7 +1195,7 @@ def check_correction_subcmd(argv):
                 "quotations are verbatim-preserve; keep the block and correct the "
                 "text around it (#351)."
             )
-            return 6
+            return 6, "protected"
     # A non-blank line right after the quotation joins it as a lazy
     # continuation, so the rendered quote changes while the bytes match
     # (verify #351 round 3). Allowed only where the original already had it.
@@ -1174,15 +1207,15 @@ def check_correction_subcmd(argv):
                 "Refuse: the replacement moves an Original text quotation into a code "
                 "block or an HTML comment, where it no longer shows (#351)."
             )
-            return 6
+            return 6, "protected"
     for block, follow, _ in new_runs:
         if follow is not None and follow.strip() and (block, follow) not in old_follow:
             err(
                 "Refuse: the line after an Original text quotation would join the "
                 "quotation when rendered; leave a blank line after it (#351)."
             )
-            return 6
-    return 0
+            return 6, "protected"
+    return 0, None
 
 
 # The marker emit-audit-marker writes for --correct. Earlier markers in the
@@ -1248,10 +1281,19 @@ def _compose(old_file, heading, body_file, marker):
         return EXIT_PARSER, None
     # A marker inside a fenced example is text, not a marker (round 4): it is
     # neither carried nor allowed to stand in for a live one.
+    if heading == "-" and head:
+        # The original's top markers stay on top (a dashboard comment is found
+        # by its first line); a copy in the replacement is dropped, wherever the
+        # replacement put it (verify #351 round 6).
+        body_lines = [l for i, l in enumerate(body_lines) if i in body_blocks.code or l not in head]
+        while body_lines and not body_lines[0].strip():
+            body_lines.pop(0)
+        try:
+            body_blocks = _Blocks(body_lines)
+        except ParserUnavailable as e:
+            err(f"ERROR: {e}; nothing was composed")
+            return EXIT_PARSER, None
     in_body = {l for i, l in enumerate(body_lines) if i not in body_blocks.code}
-    if heading == "-":
-        # A top marker the replacement repeats stays where the replacement puts it.
-        head = [l for l in head if l not in in_body]
     carried = []
     for i in range(start + 1, end):
         line = old_lines[i]
@@ -1286,7 +1328,17 @@ def _compose(old_file, heading, body_file, marker):
             "Close it and try again (#351)."
         )
         return 6, None
-    return 0, "\n".join(out) + "\n"
+    raw_lines, raw = _raw_lines(old_file)
+    ends_open = raw.endswith(("\n", "\r"))
+    if heading == "-":
+        return 0, "\n".join(head + region) + ("\n" if ends_open else "")
+    # Head and tail are the original's own bytes; only the region is new.
+    head_text = "".join(raw_lines[: start + 1])
+    if not head_text.endswith(("\n", "\r")):
+        head_text += "\n"
+    tail_text = "".join(raw_lines[end:])
+    region_text = "\n".join(region) + ("\n" if tail_text or ends_open else "")
+    return 0, head_text + region_text + ("\n" + tail_text if tail_text else "")
 
 
 
@@ -1367,13 +1419,22 @@ def _endpoint(kind, num, repo):
 def _fetch_body(endpoint, dest):
     """The target's body, byte for byte. `--jq .body` prints text plus a
     newline, so the archive and restore were not exact (round 5); the JSON is
-    decoded here instead."""
+    decoded here instead. A response without a body field, or a null comment
+    body, is a failed read, not an empty one (round 6); an issue body may be
+    null, which is empty."""
     proc = _gh(["api", endpoint])
     if proc is None or proc.returncode != 0:
         return False
     try:
-        body = json.loads(proc.stdout.decode("utf-8")).get("body") or ""
-    except (ValueError, AttributeError):
+        record = json.loads(proc.stdout.decode("utf-8"))
+    except ValueError:
+        return False
+    if not isinstance(record, dict) or "body" not in record:
+        return False
+    body = record["body"]
+    if body is None and "/issues/comments/" not in endpoint:
+        body = ""
+    if not isinstance(body, str):
         return False
     with open(dest, "w", encoding="utf-8", newline="") as fh:
         fh.write(body)
@@ -1416,11 +1477,13 @@ def correct_prepare_subcmd(argv):
     scope, rest = _take_flag(rest, "--scope")
     body_file, rest = _take_flag(rest, "--body-file")
     scrub, rest = _take_flag(rest, "--scrub-attested")
-    scrub = scrub or "warn"
     m = _TARGET_RE.fullmatch(target or "")
-    if rest or not m or not repo or not body_file or not _REPO_RE.fullmatch(repo) or ".." in repo:
+    # The privacy self-review is attested by the caller, never assumed here:
+    # gh-egress refuses a missing attestation (D2), and a default would defeat
+    # it (verify #351 round 6).
+    if rest or not m or not repo or not body_file or not scrub or not _REPO_RE.fullmatch(repo) or ".." in repo:
         err("ERROR: correct-prepare requires --target comment:<id>|issue:<n> --repo <owner/repo> "
-            "(--section <heading> | --scope whole-comment) --body-file <path> [--scrub-attested <level>]")
+            "(--section <heading> | --scope whole-comment) --body-file <path> --scrub-attested <level>")
         return 2
     kind, num = m.group(1), m.group(2)
     if bool(section) == bool(scope) or (scope and scope != "whole-comment"):
@@ -1438,7 +1501,9 @@ def correct_prepare_subcmd(argv):
     ok, code, content = read_body_file(body_file)
     if not ok:
         return code
-    if not content.strip():
+    if not content.strip() or not "\n".join(_strip_target_heading(
+            _lines_of(content.replace("\r\n", "\n").replace("\r", "\n")), section or "-")).strip():
+        # Only the target heading is no text either: it would empty the section.
         err("Refuse: --correct needs the corrected text; the body file is empty (#351).")
         return 2
 
@@ -1463,13 +1528,13 @@ def correct_prepare_subcmd(argv):
     if rc != 0:
         return _refused({4: "R5", 1: "author-unknown"}.get(rc, "check-failed"), work)
     heading = section or "-"
-    rc = check_correction_subcmd([backup, heading, body])
+    rc, reason = _check_correction([backup, heading, body])
     if rc != 0:
-        return _refused(_CHECK_REASONS.get(rc, "check-failed"), work)
+        return _refused(reason or "check-failed", work)
     rc, text = _compose(backup, heading, body, PLACEHOLDER_MARKER)
     if rc != 0:
         return _refused(_CHECK_REASONS.get(rc, "check-failed"), work)
-    with open(preview, "w", encoding="utf-8") as fh:
+    with open(preview, "w", encoding="utf-8", newline="") as fh:
         fh.write(text)
     ok, mentions = _existing_mentions(backup)
     if not ok:
@@ -1507,6 +1572,18 @@ def _archive_preflight():
     problem = _archive_path_problem(root) or _tracks_archive(root)
     if problem:
         return problem
+    # Every existing component must be a directory and the deepest one
+    # writable, or the archive write fails after confirmation (round 6).
+    path = root
+    for part in ARCHIVE_REL.split(os.sep):
+        path = os.path.join(path, part)
+        if not os.path.exists(path):
+            path = os.path.dirname(path)
+            break
+        if not os.path.isdir(path):
+            return f"cannot create the archive directory: {os.path.relpath(path, root)} is not a directory"
+    if not os.access(path, os.W_OK | os.X_OK):
+        return f"cannot create the archive directory: {os.path.relpath(path, root)} is not writable"
     return _ensure_ignored(root, os.path.join(ARCHIVE_REL, "preflight.md"))
 
 
@@ -1592,13 +1669,19 @@ def correct_apply_subcmd(argv):
 
 
 def _correct_apply(work, state_sha):
+    import hashlib
     state_path = os.path.join(work, "state.json")
-    if _sha256(state_path) != state_sha:
+    # One read: the bytes that are hashed are the bytes that are used (round 6).
+    with open(state_path, "rb") as fh:
+        state_bytes = fh.read()
+    if hashlib.sha256(state_bytes).hexdigest() != state_sha:
         err("✗ the prepared state changed after the preview — nothing archived or written")
         return _refused("differs-from-preview")
-    with open(state_path, encoding="utf-8") as fh:
-        state = json.load(fh)
-    problem = _state_problem(state)
+    try:
+        state = json.loads(state_bytes.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        state = {}
+    problem = _state_problem(state) if isinstance(state, dict) else "the prepared state is malformed"
     if problem:
         err(f"✗ {problem} — nothing archived or written")
         return _refused("differs-from-preview")
@@ -1609,6 +1692,19 @@ def _correct_apply(work, state_sha):
             err(f"✗ {name} changed after the preview — nothing archived or written")
             return _refused("differs-from-preview")
     kind, num, repo, heading = state["kind"], state["num"], state["repo"], state["heading"]
+    # The gates run again before anything is written — on the previewed copy,
+    # which the re-fetch below must still equal — so the network round-trips
+    # they need sit before the re-fetch, not between it and the write (round 6).
+    rc = validate_target_subcmd([num if kind == "comment" else f"issue:{num}", repo, "false", "--correct"])
+    if rc != 0:
+        return _refused({4: "R5", 1: "author-unknown"}.get(rc, "check-failed"))
+    rc, reason = _check_correction([backup, heading, body])
+    if rc != 0:
+        return _refused(reason or "check-failed")
+    rc, text = _compose(backup, heading, body, PLACEHOLDER_MARKER)
+    with open(preview, encoding="utf-8", newline="") as fh:
+        if rc != 0 or text != fh.read():
+            return _refused("differs-from-preview")
     endpoint = _endpoint(kind, num, repo)
     current = os.path.join(work, "current.md")
     if not _fetch_body(endpoint, current):
@@ -1617,26 +1713,29 @@ def _correct_apply(work, state_sha):
     if _sha256(current) != state["sha"]["backup.md"]:
         err(f"✗ {state['target']} changed since the preview — nothing archived or written; run again to see the new version")
         return _refused("changed-since-preview")
-    # The gates run again on what is about to be written, not only at prepare.
-    rc = validate_target_subcmd([num if kind == "comment" else f"issue:{num}", repo, "false", "--correct"])
-    if rc != 0:
-        return _refused({4: "R5", 1: "author-unknown"}.get(rc, "check-failed"))
-    rc = check_correction_subcmd([backup, heading, body])
-    if rc != 0:
-        return _refused(_CHECK_REASONS.get(rc, "check-failed"))
-    rc, text = _compose(backup, heading, body, PLACEHOLDER_MARKER)
-    with open(preview, encoding="utf-8") as fh:
-        if rc != 0 or text != fh.read():
-            return _refused("differs-from-preview")
     with open(backup, "rb") as fh:
         rc, backup_id = _archive_write(kind, num, fh.read(), repo)
     if rc != 0:
         return _refused("archive")
+    try:
+        return _correct_write(work, state, endpoint, backup, body, backup_id)
+    except Exception as exc:   # noqa: BLE001 — after the archive, report honestly
+        # The write may or may not have happened; "nothing changed" would be a
+        # guess. The archive exists, so its id is printed (round 6).
+        err(f"⚠ {state['target']}: {type(exc).__name__}: {exc} after archiving — check it by hand")
+        print("RESULT=unverified")
+        print("REASON=exception")
+        print(f"BACKUP_ID={backup_id}")
+        return 7
+
+
+def _correct_write(work, state, endpoint, backup, body, backup_id):
+    kind, num, repo, heading = state["kind"], state["num"], state["repo"], state["heading"]
     rc, new_text = _compose(backup, heading, body, _correct_marker(backup_id))
     if rc != 0:
         return _refused("replace", extra=(f"BACKUP_ID={backup_id}",))
     new_file = os.path.join(work, "new.md")
-    with open(new_file, "w", encoding="utf-8") as fh:
+    with open(new_file, "w", encoding="utf-8", newline="") as fh:
         fh.write(new_text)
     verb = ["edit-comment", num] if kind == "comment" else ["edit", num]
     rc = _egress(verb + ["--repo", repo, "--body-file", new_file, "--scrub-attested", state["scrub"]]
@@ -1646,23 +1745,25 @@ def _correct_apply(work, state_sha):
     if rc != 0:
         # A failed call does not prove nothing was written: read it back (round 5).
         after = os.path.join(work, "after-failure.md")
-        if _fetch_body(endpoint, after) and _sha256(after) == state["sha"]["backup.md"]:
+        readable = _fetch_body(endpoint, after)
+        if readable and _sha256(after) == state["sha"]["backup.md"]:
             err(f"✗ gh failed the write for {state['target']} (rc={rc}); re-read shows it unchanged. The archive {backup_id} stays.")
             print("RESULT=write-failed")
             print(f"RC={rc}")
             print(f"BACKUP_ID={backup_id}")
             return 4
-        err(f"⚠ gh reported a failed write for {state['target']} (rc={rc}), but the target no longer reads as before — check it by hand")
+        why = "no longer reads as before" if readable else "could not be read again"
+        err(f"⚠ gh reported a failed write for {state['target']} (rc={rc}), but the target {why} — check it by hand")
         print("RESULT=unverified")
         print(f"BACKUP_ID={backup_id}")
         return 7
+    # Byte for byte: a body with extra newlines or other line endings is not
+    # what was sent (round 6).
     readback = os.path.join(work, "readback.md")
-    def _norm(s):
-        return s.replace("\r\n", "\n").rstrip("\n")
     confirmed = _fetch_body(endpoint, readback)
     if confirmed:
-        with open(readback, encoding="utf-8", errors="replace") as fh:
-            confirmed = _norm(fh.read()) == _norm(new_text)
+        with open(readback, "rb") as fh:
+            confirmed = fh.read() == new_text.encode("utf-8")
     if not confirmed:
         err(f"⚠ {state['target']} was written but does not read back as sent — check it by hand")
         print("RESULT=unverified")
@@ -2031,7 +2132,7 @@ Subcommands:
 
   validate-target <comment-id> <repo> <override-flag> [<mode>]
       Enforce R5: refuse an author who is not OWNER, a bot, or the gh user unless
-      override flag is "true"; mode --correct also refuses a bot.
+      override flag is "true"; mode --correct passes only the gh user's own content.
 
   section-replace <input-file> <heading-line> <replacement-file>
       Replace named markdown section (level-aware, CRLF-safe).
@@ -2061,9 +2162,14 @@ Exit codes:
       Print, comma-separated, the logins the file already mentions (gh-egress's scan).
 
   correct-prepare --target comment:<id>|issue:<n> --repo R (--section H | --scope whole-comment)
-                  --body-file F [--scrub-attested L]
-      The whole --correct flow up to the preview; prints WORK= and PREVIEW=.
-  correct-apply --work <dir>     Archive, write and read back; prints RESULT= / BACKUP_ID= / URL=.
+                  --body-file F --scrub-attested L
+      The whole --correct flow up to the preview; prints WORK=, PREVIEW= and STATE=
+      (the caller keeps all three for the next call). Refusals print RESULT=refused and
+      REASON= (archive, fetch-failed, R5, author-unknown, protected, setext,
+      section-not-found, section-ambiguous, parser-unavailable, egress, check-failed).
+  correct-apply --work <dir> --state <digest>
+      Re-check, re-read, archive, write and read back byte for byte; prints RESULT=
+      (edited | refused | write-failed | unverified), REASON=, BACKUP_ID=, URL=.
   correct-discard --work <dir>   Throw the prepared correction away (the user declined).
 """
 
