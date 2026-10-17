@@ -25,12 +25,12 @@ Before writing, the helper SHALL ensure `.claude/.idd/archive/` is listed in the
 #### Scenario: Re-include rule detected
 
 - **WHEN** the repository's `.gitignore` contains `!.claude/.idd/archive/` so the archive path is not ignored after the exclude block is written
-- **THEN** the helper SHALL exit 7 with a message naming the path, and the correction SHALL be aborted with the target unchanged
+- **THEN** the `archive` subcommand SHALL exit 7 with a message naming the path, and `correct-prepare` SHALL refuse the target as `archive` before the preview, leaving the target unchanged
 
 #### Scenario: Not a git work tree
 
 - **WHEN** `/idd-edit --correct` runs from a directory that is not inside a git work tree
-- **THEN** the helper SHALL exit 7 and the target SHALL be unchanged
+- **THEN** `correct-prepare` SHALL refuse the target as `archive` before the preview (the run exits 4), and the target SHALL be unchanged
 
 ### Requirement: Archive files SHALL be unreadable at rest
 

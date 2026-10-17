@@ -41,11 +41,14 @@ Exit codes:
   2  — usage error (missing/invalid args)
   3  — R4 gate refused (--replace missing --scope/--section)
   4  — R5 gate refused (author is neither OWNER, a bot, nor you; no
-       --override-user-content), or --correct on anyone else's content
+       --override-user-content), or --correct on anyone else's content;
+       correct-prepare / correct-apply: not done (RESULT= / REASON= say why)
   5  — --body-file unreadable / refused
   6  — check-correction refused a protected region
-  7  — archive refused: not a git work tree / path not ignored / write failed
+  7  — archive: refused (not a git work tree / path not ignored / write
+       failed); correct-apply: written but not confirmed on read-back
   8  — the pinned Markdown parser (markdown-it-py 4.0.0) is missing or differs
+  9  — the --section heading occurs more than once (section-ambiguous)
 
 Each subcommand prints diagnostics to stderr; stdout is reserved for
 machine-parseable output (eval lines / extracted text / markers).
@@ -1333,10 +1336,11 @@ def _existing_mentions(path):
 # (same class as #154 → #155). The skill now runs prepare, shows the preview,
 # then runs apply or discard; scripts/tests/correct-flow runs it end to end.
 #
-# stdout carries only KEY=value lines: WORK / PREVIEW from prepare; RESULT
-# (edited | refused | write-failed | unverified), REASON, BACKUP_ID, URL from
-# apply. Exit codes: 0 done, 2 usage, 4 not done (RESULT/REASON say why),
-# 5 body file refused, 7 written but not confirmed on read-back.
+# stdout carries only KEY=value lines: WORK / PREVIEW / STATE from prepare;
+# RESULT (edited | refused | write-failed | unverified), REASON, BACKUP_ID, URL
+# from apply. Exit codes: 0 done, 2 usage, 3 scope error (prepare), 4 not done
+# (RESULT/REASON say why; a failed write too), 5 body file refused, 7 written
+# but not confirmed on read-back.
 CORRECT_WORK_PREFIX = "idd-correct-"
 PLACEHOLDER_MARKER = '<!-- idd:edit mode="correct" backup-id="(assigned after confirmation)" -->'
 _TARGET_RE = re.compile(r"(comment|issue):([0-9]+)")
@@ -2049,8 +2053,9 @@ Subcommands:
       PATCH the target back to its archived text; print URL and byte count.
 
 Exit codes:
-  0=success, 1=generic, 2=usage, 3=R4-refuse, 4=R5-refuse, 5=unreadable-file,
-  6=protected-region, 7=archive-refused, 8=markdown-parser-unavailable
+  0=success, 1=generic, 2=usage, 3=R4-refuse, 4=R5-refuse (correct-*: not done),
+  5=unreadable-file, 6=protected-region, 7=archive-refused (correct-apply:
+  written but unverified), 8=markdown-parser-unavailable, 9=ambiguous-section
 
   existing-mentions <file>
       Print, comma-separated, the logins the file already mentions (gh-egress's scan).

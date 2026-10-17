@@ -414,7 +414,7 @@ require "both --correct fetches refuse as fetch-failed (prepare and apply)" \
   test "$(grep -c '_refused("fetch-failed"' "$HELPER")" -ge 2
 assert_output_grep "a missing section has its own refusal reason" "section-not-found" "$EDIT_SKILL"
 assert_output_grep "a declined preview cleans up and is reported" "declined" "$EDIT_SKILL"
-assert_output_grep "the preview shows the composed full text" "compose-correction" "$EDIT_SKILL"
+assert_output_grep "the preview shows the composed full text" '用 Read 工具讀 `$CORRECT_PREVIEW` 並**完整**顯示' "$EDIT_SKILL"
 assert_output_grep "validate-target receives the mode" 'validate-target "$VALIDATE_ARG" "$REPO" "$OVERRIDE_USER_CONTENT" "$MODE"' "$EDIT_SKILL"
 
 # F5 / F9 / F10 / F12. doc contracts
