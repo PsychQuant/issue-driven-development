@@ -157,7 +157,7 @@ Options (視 type 而定)：
 - `--target-comment=<id>` — 目標 comment ID（errata type 必填）
 - `--scope whole-comment` / `--section="<heading>"` — 更正範圍（errata 的就地更正路徑，原樣轉交 idd-edit `--correct`）
 - `--correction-file=<path>` — 更正後內容檔（同上，轉交 idd-edit 為 `--body-file`；path 安全檢查由 idd-edit 做）
-- `--reason="..."` — 更正理由（同上，選填）
+- `--reason="..."` — 就地更正路徑不轉交給 idd-edit：`--correct` 不會把理由發佈到任何地方（標記只帶 backup id 與日期）
 - `--deadline=YYYY-MM-DD` — 未決問題的期限（question type 可選）
 - `--points-from=<comment-url|issue-body>` — 逐點來源（reply type 必填；值解析走 Reply drafting pipeline 的三層鏈）
 - `--mention <login>[,<login>...]` — tag 人到 comment（**v2.32.0+**，強制走 [`rules/tagging-collaborators.md`](../../rules/tagging-collaborators.md)）
@@ -352,8 +352,10 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" validate-target '<TAR
 ```
 IDD_CALLER=idd-comment-errata \
   /idd-edit comment:{target-comment} --repo {GITHUB_REPO} --correct (--scope whole-comment | --section "{heading}") \
-    --body-file {correction-file} [--reason "..."]
+    --body-file {correction-file}
 ```
+
+指令不帶 `--reason`：`--correct` 不會把理由發佈到任何地方（它的標記只帶 backup id 與日期）。
 
 依 idd-edit 的結束碼收尾（#351 verify 第 3 輪：更正被擋下時，舊流程什麼都沒留下）：
 

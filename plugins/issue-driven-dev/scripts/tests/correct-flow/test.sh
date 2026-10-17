@@ -493,13 +493,38 @@ helper r99p correct-prepare --target comment:430 --repo o/r --section "## Notes"
 helper r99a correct-apply --work "$(val WORK "$WORK/r99p.out")" --state "$(val STATE "$WORK/r99p.out")"
 helper r99r restore --target comment:430 --repo o/r
 assert_exit "restore --target finds the one archived correction" 0 "$RC"
-assert_eq "and puts the old text back" "$SECTION_BODY" "$(body_of comment-430.json)"
+R99ID="$(val BACKUP_ID "$WORK/r99r.out")"
+assert_eq "it prints the checked id" "$(val BACKUP_ID "$WORK/r99a.out")" "$R99ID"
+refute_output_grep "and writes nothing: the user confirms the version first (round 10)" "wrong text" <(body_of comment-430.json)
+helper r99w restore "$R99ID" --repo o/r
+assert_eq "restore <id> puts the old text back" "$SECTION_BODY" "$(body_of comment-430.json)"
+# R10.2 restore --target outside a git work tree says so (round 10)
+NOGIT="$WORK/no-git"; mkdir -p "$NOGIT"
+(cd "$NOGIT" && python3 "$HELPER" restore --target comment:430 --repo o/r) >"$WORK/r102.out" 2>"$WORK/r102.err"
+assert_exit "outside a work tree restore --target refuses with exit 7" 7 "$?"
+assert_output_grep "and names the work tree, not a missing marker" "needs the git work tree" "$WORK/r102.err"
 mkrec comment-431.json kiki830621 MEMBER "## Notes
 x
 <!-- idd:edit mode=\"correct\" backup-id=\"x'\$(touch $WORK/PWNED)'\" date=\"2026-10-17\" -->"
 helper r99f restore --target comment:431 --repo o/r
 assert_exit "a marker whose id is not an id restores nothing" 2 "$RC"
 refute "and runs nothing" test -e "$WORK/PWNED"
+
+# R10.1 a CRLF quotation inside the corrected section survives prepare, apply
+# and the exact read-back with its own bytes (verify #351 round 10)
+python3 - "$FAKE_GH_STORE/comment-440.json" "$TMPFIX/quote.md" <<'PYX'
+import json, sys
+json.dump({"body": "## Notes\r\n> **Original text**: keep me\r\n\r\nwrong text\r\n\r\n## Next\r\n- keep me",
+           "user": {"login": "kiki830621"}, "author_association": "MEMBER",
+           "html_url": "https://github.com/o/r/x"}, open(sys.argv[1], "w"))
+open(sys.argv[2], "w").write("> **Original text**: keep me\n\nright text\n")
+PYX
+helper r101p correct-prepare --target comment:440 --repo o/r --section "## Notes" --body-file "$TMPFIX/quote.md" --scrub-attested warn
+assert_exit "a correction that copies a CRLF quotation is prepared" 0 "$RC"
+helper r101a correct-apply --work "$(val WORK "$WORK/r101p.out")" --state "$(val STATE "$WORK/r101p.out")"
+assert_eq "it is applied and reads back exactly" "edited" "$(val RESULT "$WORK/r101a.out")"
+r101() { python3 -c 'import json,sys;b=json.load(open(sys.argv[1]))["body"];print(eval(sys.argv[2]))' "$FAKE_GH_STORE/comment-440.json" "$1"; }
+assert_eq "the quotation keeps its CRLF bytes" "True" "$(r101 '"## Notes\r\n> **Original text**: keep me\r\n\nright text\n" in b')"
 
 # no refusal or apply leaves a working directory behind
 assert_eq "no working directory outlives prepare refusals or apply" "$BEFORE" "$(count_work)"

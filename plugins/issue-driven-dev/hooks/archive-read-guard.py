@@ -52,7 +52,10 @@ REASON = (
     "error back into this session. Do not read, search, list, copy or chmod "
     "these files. To put a corrected comment or issue body back, run the "
     "idd-edit helper's restore subcommand, which sends the archived text to "
-    "GitHub without displaying it."
+    "GitHub without displaying it. A commit or PR message that only mentions "
+    "the path is fine: pass it single-quoted (-m '...', --body '...') or from "
+    "a file (-F, --body-file); a $(...) or heredoc inside the message is "
+    "checked as a command."
 )
 
 PATH_FIELDS = {

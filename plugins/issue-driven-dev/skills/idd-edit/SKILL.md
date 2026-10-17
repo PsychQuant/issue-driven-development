@@ -4,7 +4,7 @@ description: |
   編輯既有 GitHub issue comment。支援 append/replace/prepend-note/correct 四種 mode；`--correct` 也能更正 issue 正文（`issue:<N>`，#351）。
   必 show 原 body + preview 新 body 讓 user confirm。用 `gh api -F body=@file` 避免 backtick escape bug。
   支援 batch mode（v2.34.0+）：多個 comment 套同一段 edit（如 `comment:NNN comment:MMM --replace --body '...'`），每個 comment 仍 per-confirm。
-  Use when: 補既有 comment 說明（如圖片下方解釋）；內容有錯（打錯字、事實錯誤、被推翻的結論都算）→ `--correct` 就地取代（舊版歸檔、AI 讀不到）。
+  Use when: 補既有 comment 說明（如圖片下方解釋）；你自己寫的內容有錯（打錯字、事實錯誤、被推翻的結論都算）→ `--correct` 就地取代（舊版歸檔、AI 讀不到；別人寫的不改，走 `/idd-comment --type errata`）。
   防止的失敗：手動 `gh api PATCH` 字串 escape 錯誤、誤覆蓋未 backup 的原內容。
 argument-hint: "comment:<id>[ comment:<id>...]|#issue --last|issue:<N> (--append|--replace [--scope whole-comment|--section <heading>]|--prepend-note|--correct (--scope whole-comment|--section <heading>)) [--body=... | --body-file=...] [--reason=...] [--override-user-content --reason='...']"
 allowed-tools:
@@ -152,7 +152,8 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" run-start --default-r
 ```
 
 - 結束碼 2、3、5：引數錯誤（沒有 mode、`--correct` 的內文只有目標標題、`#N --last` 而 #N 沒有 comment → 2；R4 → 3；`--body-file` 讀不到或被路徑閘門擋 → 5），stderr 有說明；結束碼 1：讀不到 #N 的 comments。**這就是整次執行的結束碼**，不必再跑後面的步驟。同一個 target 寫兩次只會列一次。
-- `PICK=#N`：使用者寫了 `#N` 但沒有 `--last`。列出 #N 的 comments（`gh api "repos/<REPO>/issues/N/comments" --paginate --jq '.[] | "\(.id) | \(.created_at) | \(.body | .[0:80])"'`），用 AskUserQuestion 選一則，把 `comment:<選中的 id>` 當成一個 TARGET，Step 2 的 `<PICK>` 填 N（helper 會確認那則 comment 屬於 #N；選到的若已是這次的 TARGET，記為已處理）。其他 TARGET 的 `<PICK>` 填空字串。prepare 只接受 Step 1 列出的 TARGET 與 PICK 選出的 comment。
+- `PICK=#N`：使用者寫了 `#N` 但沒有 `--last`。列出 #N 的 comments（`gh api 'repos/<REPO>/issues/N/comments' --paginate --jq '.[] | "\(.id)\t\(.created_at)\t\(.body[0:80] | @json)"'`；body 以 JSON 字串印出，裡面的換行不會偽造出另一列），用 AskUserQuestion 選一則，把 `comment:<選中的 id>` 當成一個 TARGET，Step 2 的 `<PICK>` 填 N（helper 會確認那則 comment 屬於 #N；選到的若已是這次的 TARGET，記為已處理）。其他 TARGET 的 `<PICK>` 填空字串。prepare 只接受 Step 1 列出的 TARGET 與 PICK 選出的 comment。
+- **貼進指令的值先核對形狀**：`<TARGET>` 必須是 `comment:` 或 `issue:` 加上一串數字，`<PICK>` 必須是一串數字或空字串；不是就停下，不要貼。PICK 的 id 是從 GitHub 列表選來的，下面的步驟一律用單引號包 placeholder（#351 verify 第 10 輪：雙引號裡的 `$(...)` 會在 helper 檢查之前就執行）。
 - `SCRUB=` 是這個 repo 的隱私等級（third-party → `enforce`、自己的 public → `warn`、private → `light`，見 [`rules/privacy-scrubbing.md`](../../rules/privacy-scrubbing.md)）。
 
 ### Step 2: Prepare one target
@@ -160,11 +161,12 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" run-start --default-r
 每個 TARGET 依序做 Step 2–4，一次一個（batch mode 也是逐一確認，#158）。
 
 ```bash
-# step: prepare — one call per target; <PICK> is N when the target was chosen for PICK=#N, empty ("") otherwise
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" prepare --run "<RUN>" --target "<TARGET>" --pick "<PICK>"
+# step: prepare — one call per target; <PICK> is N when the target was chosen for PICK=#N, empty ('') otherwise
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" prepare --run '<RUN>' --target '<TARGET>' --pick '<PICK>'
 ```
 
-- `RESULT=refused` 與 `REASON=`：這個 target 不改（R5、author-unknown、fetch-failed、stage-failed、egress、protected、setext、unclosed-block、empty、section-not-found、section-ambiguous、parser-unavailable、archive、check-failed，stderr 有原因），直接換下一個 TARGET。拒絕已記在 run 裡，`finish` 會列出。
+- `RESULT=refused` 與 `REASON=`：這個 target 不改（R5、author-unknown、fetch-failed、stage-failed、egress、protected、setext、unclosed-block、empty、section-not-found、section-ambiguous、parser-unavailable、archive、check-failed、not-in-pick，stderr 有原因），直接換下一個 TARGET。拒絕已記在 run 裡，`finish` 會列出。例外：帶 `<PICK>` 時讀不到那則 comment（`REASON=fetch-failed`）不記錄，那個 PICK 仍可重試；選到不屬於 #N 的 comment 是 `not-in-pick`，那個 PICK 就此結束。
+- `RESULT=merged`（只會出現在 PICK）：選到的 comment 已是這次的 TARGET，由它處理；這個 PICK 跳過 Step 3–4。
 - 成功時印出 `PREVIEW=`（新內文全文）與 `DIFF=`（目前內容 → 新內文的差異）；`--append`／`--replace`／`--prepend-note` 另印 `BACKUP=`（原內文的備份），`--correct` 另印 `WORK=` 與 `STATE=`。
 
 `--correct`（`(category: in-place-correction)`）在 prepare 這一步跑完讀原文、作者閘門（只放行你自己寫的）、受管區與引文檢查、組出要寫入的全文、egress 預檢；確認後的 apply 會再重抓比對、重組比對預覽、歸檔、寫入、讀回。helper 自己算歸檔路徑；**本 skill 執行的 bash 不寫出歸檔路徑**，否則會被 archive-read-guard hook 擋下。
@@ -175,7 +177,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" prepare --run "<RUN>"
 
 1. 用 Read 工具讀 `DIFF=` 那一行的路徑並完整顯示：使用者要看得出哪些內容被刪掉或改寫（#351 verify 第 7 輪：只給新全文時看不出來）。
 2. 用 Read 工具讀 `PREVIEW=` 那一行的路徑：`--correct` **完整**顯示（`(assigned after confirmation)` 在確認後換成實際的 backup id）；其他 mode 至少顯示前 40 行。
-3. 隱私自審（`privacy_scrub_gate`）：依 `SCRUB` 等級，對 PREVIEW 做 [`rules/privacy-scrubbing.md`](../../rules/privacy-scrubbing.md) 的語意檢查（本機路徑、未公開的協作者真名、未發表的內容）。`enforce` 命中 → 顯示 redaction diff，使用者確認前不進 Step 4；要送出遮蔽後的版本，就 discard 這個 target、改好 body file 後從 Step 1 重跑（apply 只寫 prepare 組好的內文）。`warn` 命中 → 印一行提醒。
+3. 隱私自審（`privacy_scrub_gate`）：依 `SCRUB` 等級（reply comment 帶 `type=reply` 與 `points-from=user-pasted` 標記時至少 `warn`：helper 依 #272 以 `warn` 檢查與寫入，這裡的確認就是 #272 要求的確認——那些引文已在 GitHub 上），對 PREVIEW 做 [`rules/privacy-scrubbing.md`](../../rules/privacy-scrubbing.md) 的語意檢查（本機路徑、未公開的協作者真名、未發表的內容）。`enforce` 命中 → 顯示 redaction diff，使用者確認前不進 Step 4；要送出遮蔽後的版本，就 discard 這個 target、改好 body file 後從 Step 1 重跑（apply 只寫 prepare 組好的內文）。`warn` 命中 → 印一行提醒。
 4. AskUserQuestion 確認，預設 NO（破壞性動作）。
 
 ### Step 4: Apply or discard
@@ -183,33 +185,33 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" prepare --run "<RUN>"
 使用者確認：
 
 ```bash
-# step: apply — after the user confirmed; <STATE> is the STATE= value for --correct, empty ("") otherwise
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" apply --run "<RUN>" --target "<TARGET>" --scrub-attested "<SCRUB>" --state "<STATE>"
+# step: apply — after the user confirmed; <STATE> is the STATE= value for --correct, empty ('') otherwise
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" apply --run '<RUN>' --target '<TARGET>' --scrub-attested '<SCRUB>' --state '<STATE>'
 ```
 
-`--scrub-attested` 填 Step 1 印出的 `SCRUB`（自審後認為要更嚴，可填更嚴的 `enforce`），表示 Step 3 的隱私自審做過了；比這個 run 的等級寬 → exit 2。`<STATE>` 抄錯 → exit 2，重新抄一次即可（預覽還在，沒有記錄任何結果）；重抄後仍不符，表示預覽之後狀態被動過，discard 這個 target 後從 Step 1 重跑。印出 `RESULT=`：`edited`（另有 `URL=`）、`refused`（`REASON=`）、`write-failed`（gh 自身錯誤，重讀確認未寫入）、`unverified`（已寫入但讀回不符，請手動檢查）；`--correct` 有歸檔時另印 `BACKUP_ID=`。不要重跑 prepare、也不要自己算 STATE —— 那會讓 apply 比對的不再是使用者看過的預覽。
+`--scrub-attested` 填 Step 1 印出的 `SCRUB`（自審後認為要更嚴，可填更嚴的 `enforce`），表示 Step 3 的隱私自審做過了；比這個 run 的等級寬 → exit 2。`<STATE>` 抄錯 → exit 2，重新抄一次即可（預覽還在，沒有記錄任何結果）；重抄後仍不符，表示預覽之後狀態被動過：discard 這個 target、跑 Step 5 的 finish 結束這個 run（它會列為 DECLINED），再從 Step 1 開一個新的 run（同一個 run 不能再 prepare 同一個 target）；新 run 的結束碼才是這次的結果。印出 `RESULT=`：`edited`（另有 `URL=`）、`refused`（`REASON=`）、`write-failed`（gh 自身錯誤，重讀確認未寫入）、`unverified`（已寫入但讀回不符，請手動檢查）；`--correct` 有歸檔時另印 `BACKUP_ID=`。不要重跑 prepare、也不要自己算 STATE —— 那會讓 apply 比對的不再是使用者看過的預覽。
 
 使用者拒絕：
 
 ```bash
 # step: discard — the user declined
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" discard --run "<RUN>" --target "<TARGET>"
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" discard --run '<RUN>' --target '<TARGET>'
 ```
 
 ### Step 5: Finish（outcome report 與結束碼，#158）
 
-所有 TARGET 都處理完（或使用者中止）後一定要跑：
+所有 TARGET 都處理完（或使用者中止）後一定要跑。使用者中止時，先對每個已 prepare、還沒 apply 的 TARGET 跑 discard：沒有 discard 的會記為 `not-applied`（exit 4），而 idd-comment 會把 exit 4 當成「改貼 errata」。
 
 ```bash
 # step: finish — after every target; prints the outcome report and exits 0 / 4 / 7 / 9
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" finish --run "<RUN>"
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" finish --run '<RUN>'
 ```
 
 部分成功絕不偽裝成全成功：report 逐一列出 EDITED／REFUSED(<reason>)／REFUSED(egress)／DECLINED／FAILED(write)／UNVERIFIED。結束碼依序比對、先中者為準：
 
 | 結束碼 | 意思 |
 |---|---|
-| 4 | 有 target 被拒（含 egress 拒絕；prepare 後沒有 apply 或 discard 的 `not-applied`；Step 1 列出卻沒有 prepare 的 `not-prepared`；沒有選的 PICK `not-picked`），或寫入失敗 —— 它沒有被改 |
+| 4 | 有 target 被拒（含 egress 拒絕；prepare 後沒有 apply 或 discard 的 `not-applied`；Step 1 列出卻沒有 prepare 的 `not-prepared`；沒有選的 PICK `not-picked`；選到別的 issue 的 comment `not-in-pick`），或寫入失敗 —— 它沒有被改 |
 | 7 | 已寫入，但讀回失敗或不符 —— 請手動檢查 |
 | 9 | 沒有拒絕或失敗，但使用者拒絕了至少一個預覽 |
 | 0 | 全部完成 |
@@ -266,13 +268,13 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" finish --run "<RUN>"
 
 ```
 /idd-edit comment:4241327867 --correct --section "### Strategy" \
-  --body-file=~/notes/fixed-strategy.md \
-  --reason="備份位置寫錯，實際不進 git"
+  --body-file=~/notes/fixed-strategy.md
 
 /idd-edit issue:351 --correct --section "## Expected" \
-  --body-file=~/notes/fixed-expected.md \
-  --reason="誤讀了需求"
+  --body-file=~/notes/fixed-expected.md
 ```
+
+`--correct` 不發布 `--reason`：標記只帶 backup id 與日期（理由可能重述錯的內容）。要留下為什麼改，就在對話裡說明，或另用 `--append` 補一段。
 
 別人發的 comment（含 OWNER 由你以外的人執行時、bot）不用 `--correct`：改用 `/idd-comment --type errata` 另貼更正（`--correct` 沒有 override）；是你用另一個 GitHub 帳號寫的，就 `gh auth switch` 切過去再跑。issue 正文以開 issue 的人為作者，別人開的 issue 正文裡的錯誤改用 `/idd-comment --type correction`。
 
@@ -286,7 +288,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" finish --run "<RUN>"
 - **Metadata marker 不覆蓋**：每次 edit 加新 marker，保留 history
 - **`--replace` 預設 confirm = NO**：破壞性動作不自動 yes
 - **Log 每次 edit**：顯示 URL 讓使用者能立即 verify
-- **`--body-file` path safety（#155）**：helper **canonicalize（`os.path.realpath`）後拒絕** sensitive system paths（`/etc` `/var` `/sys` `/proc` `/private/etc|var`）+ credential dirs（`.ssh` `.aws` `.gnupg` `.kube` `.docker`），含 `//etc` / `/tmp/../etc` / symlink / relative-traversal bypass vectors → exit 5 refuse。Escape hatch：`IDD_EDIT_HELPER_ALLOW_UNSAFE_BODY_FILE=1`（須自審 reason）。合法 repo / `/tmp` / `$HOME/Developer` 路徑照常讀；使用者自己的暫存目錄底下（macOS 在 `/var/folders/…`）也放行（#351）。Preview gate 仍是最後一道防線。
+- **`--body-file` path safety（#155）**：helper **canonicalize（`os.path.realpath`）後拒絕** sensitive system paths（`/etc` `/var` `/sys` `/proc` `/private/etc|var`）+ credential dirs（`.ssh` `.aws` `.gnupg` `.kube` `.docker`，不分大小寫：macOS 的 APFS 把 `~/.SSH` 當成 `~/.ssh`）與 gh 的 token 目錄（`GH_CONFIG_DIR`、`$XDG_CONFIG_HOME/gh`、`~/.config/gh`，escape hatch 也不放行），含 `//etc` / `/tmp/../etc` / symlink / relative-traversal bypass vectors → exit 5 refuse。Escape hatch：`IDD_EDIT_HELPER_ALLOW_UNSAFE_BODY_FILE=1`（須自審 reason）。合法 repo / `/tmp` / `$HOME/Developer` 路徑照常讀；使用者自己的暫存目錄底下（macOS 在 `/var/folders/…`）也放行（#351）。Preview gate 仍是最後一道防線。
 
 ## 與 idd-comment 的配合
 
@@ -311,13 +313,17 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" finish --run "<RUN>"
 gh api 'repos/<REPO>/issues/comments/<id>' -X PATCH -F 'body=@<the BACKUP= path from Step 2>'
 ```
 
-**`--correct`**：舊版在 correction archive，用目標本身還原：helper 自己讀目標上的更正標記，只採用格式正確、指向這個目標、本機也有歸檔的 backup id。內容直接送給 GitHub、不顯示；還原的是**整個**目標，更正之後的修改（例如 `idd-update` 重建的 Current Status）會一起被蓋掉，執行前用 AskUserQuestion 說明這點並確認。
+**`--correct`**：舊版在 correction archive，分兩步還原。先查：helper 自己讀目標上的更正標記，只採用格式正確、指向這個目標、本機也有歸檔的 backup id，每個印一行 `BACKUP_ID=`，不寫入任何東西。
 
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" restore --target '<TARGET>' --repo '<REPO>'
 ```
 
-`<TARGET>` 是 `comment:<id>` 或 `issue:<N>`，`<REPO>` 是 `owner/repo`。標記是 GitHub 上誰都能寫的內容，所以 agent 不從標記抄任何值進指令（#351 verify 第 8、9 輪：抄進引號的 id 可以跳出引號）。同一個目標被更正過好幾次時，helper 印出各個已檢查過的 `BACKUP_ID=` 並回 exit 2；讓使用者選一個，再跑 `restore '<BACKUP_ID>' --repo '<REPO>'`，`<BACKUP_ID>` 只照抄 helper 印出的值。
+`<TARGET>` 是 `comment:<id>` 或 `issue:<N>`，`<REPO>` 是 `owner/repo`。標記是 GitHub 上誰都能寫的內容，所以 agent 不從標記抄任何值進指令（#351 verify 第 8、9 輪：抄進引號的 id 可以跳出引號）；哪些標記還留著也是別人改得到的，所以只有一個版本時也要讓使用者看過（第 10 輪）。用 AskUserQuestion 列出 helper 印出的 `BACKUP_ID=`（id 裡有更正的 UTC 時間），說明還原的是**整個**目標、更正之後的修改（例如 `idd-update` 重建的 Current Status）會一起被蓋掉，請使用者選定版本並確認。再寫回，`<BACKUP_ID>` 只照抄 helper 印出的值；內容直接送給 GitHub、不顯示：
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" restore '<BACKUP_ID>' --repo '<REPO>'
+```
 
 歸檔檔不經過 Claude 讀取（hook 會擋、檔案權限 0000）。人要看舊版時，在自己的終端機 `chmod u+r` 該檔後用編輯器開，不要透過 Claude；看完 `chmod 000` 改回，否則 `grep -r` 這類不寫出路徑的遞迴讀取會讀到它。
 

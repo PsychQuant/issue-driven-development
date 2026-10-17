@@ -233,21 +233,44 @@ def _path_is_under(canonical, prefix):
     return canonical.startswith(prefix + "/")
 
 
+def _under_folded(path, prefix):
+    """_path_is_under, ignoring letter case: APFS, macOS's default, opens
+    ~/.SSH/x as ~/.ssh/x, and realpath keeps the case it was given (verify
+    #351 round 10)."""
+    return _path_is_under(path.casefold(), prefix.casefold())
+
+
+def _gh_config_dirs():
+    """Where gh may keep its token store (hosts.yml), found the way gh finds
+    it: GH_CONFIG_DIR, then $XDG_CONFIG_HOME/gh, then ~/.config/gh. All three
+    are refused, not only the one gh uses now (verify #351 round 10)."""
+    dirs = [os.environ.get("GH_CONFIG_DIR", "")]
+    if os.environ.get("XDG_CONFIG_HOME"):
+        dirs.append(os.path.join(os.environ["XDG_CONFIG_HOME"], "gh"))
+    dirs.append(os.path.join(os.path.expanduser("~"), ".config", "gh"))
+    return [os.path.realpath(d) for d in dirs if d]
+
+
 def validate_body_file_path(raw_path):
     """Refuse sensitive system/credential paths for --body-file.
 
     Canonicalizes the raw input first, then checks the canonical path against
     refused prefixes. Honors the IDD_EDIT_HELPER_ALLOW_UNSAFE_BODY_FILE=1
-    escape hatch. Returns (ok, exit_code).
+    escape hatch, except for gh's token store. Returns (ok, exit_code).
     """
-    # Escape hatch (documented advanced use).
-    if os.environ.get("IDD_EDIT_HELPER_ALLOW_UNSAFE_BODY_FILE") == "1":
-        return True, 0
-
     # Canonicalize FIRST. realpath resolves `..`, duplicate slashes, and
     # symlinks against the real filesystem, collapsing every bypass vector
     # to its true target before we inspect it.
     canonical = os.path.realpath(raw_path)
+
+    # gh's own token store is never a body, escape hatch or not (#351 rounds 9–10)
+    if any(_under_folded(canonical, d) for d in _gh_config_dirs()):
+        err(f"ERROR: --body-file refuses credential path: {raw_path}")
+        return False, 5
+
+    # Escape hatch (documented advanced use).
+    if os.environ.get("IDD_EDIT_HELPER_ALLOW_UNSAFE_BODY_FILE") == "1":
+        return True, 0
 
     # The user's own temporary directory is not a system path, even where it
     # lives under /var (macOS: /var/folders/<..>/T). Refusing it made every
@@ -275,15 +298,15 @@ def validate_body_file_path(raw_path):
     # landing in any `.ssh` / `.aws` / ... directory is caught regardless of
     # which home it lives under.
     home = os.environ.get("HOME", "")
-    components = canonical.split(os.sep)
+    components = canonical.casefold().split(os.sep)
     for cred in _REFUSED_CREDENTIAL_DIRS:
-        if cred in components:
+        if cred.casefold() in components:
             # Only refuse credential dirs under a home directory: matches the
             # bash reference's $HOME/.ssh/* etc. scope while staying robust to
             # symlinks that resolve into the real home.
             if home and (
-                _path_is_under(canonical, os.path.join(home, cred))
-                or canonical.startswith(os.path.realpath(home) + os.sep)
+                _under_folded(canonical, os.path.join(home, cred))
+                or _under_folded(canonical, os.path.realpath(home))
             ):
                 err(f"ERROR: --body-file refuses credential path: {raw_path}")
                 err(
@@ -291,10 +314,6 @@ def validate_body_file_path(raw_path):
                     "override (audit your reason)."
                 )
                 return False, 5
-    # gh's own token store (`hosts.yml`), two components deep (#351 round 9)
-    if home and _path_is_under(canonical, os.path.realpath(os.path.join(home, ".config", "gh"))):
-        err(f"ERROR: --body-file refuses credential path: {raw_path}")
-        return False, 5
 
     return True, 0
 
@@ -448,17 +467,18 @@ def _parse_args(argv):
         return 2, None, None
 
     # ── R4 gate: --replace requires --scope=whole-comment OR --section ──
-    if state["mode"] == "--replace":
-        if not state["scope_flag"] and not state["section_flag"]:
-            err(R4_MSG)
-            return 3, None, None
-        if state["scope_flag"] and state["scope_flag"] != "whole-comment":
-            err(
-                "Refuse: --scope value must be 'whole-comment' (got: "
-                f"'{state['scope_flag']}'). Use --section <heading> for named "
-                "subsection scope."
-            )
-            return 3, None, None
+    if state["mode"] == "--replace" and not state["scope_flag"] and not state["section_flag"]:
+        err(R4_MSG)
+        return 3, None, None
+    # Every mode reads --scope the same way. --append and --prepend-note took
+    # any value here, and every later step refused the run (verify #351 round 10).
+    if state["scope_flag"] and state["scope_flag"] != "whole-comment":
+        err(
+            "Refuse: --scope value must be 'whole-comment' (got: "
+            f"'{state['scope_flag']}'). Use --section <heading> for named "
+            "subsection scope."
+        )
+        return 3, None, None
 
     # --section names an ATX heading line: section-replace matches it as a whole
     # line and reads its level from the leading '#'s, so `Expected` or
@@ -501,13 +521,6 @@ def _parse_args(argv):
             return 3, None, None
         if state["scope_flag"] and state["section_flag"]:
             err("Refuse: --correct takes exactly one of --scope whole-comment or --section <heading>.")
-            return 3, None, None
-        if state["scope_flag"] and state["scope_flag"] != "whole-comment":
-            err(
-                "Refuse: --scope value must be 'whole-comment' (got: "
-                f"'{state['scope_flag']}'). Use --section <heading> for named "
-                "subsection scope."
-            )
             return 3, None, None
         if not state["body_input"].strip():
             err(
@@ -1088,21 +1101,46 @@ def _managed_ranges(lines):
     return ranges
 
 
+def _verbatim_spans(lines):
+    """(first, end) of each verbatim block, end exclusive: a maximal run of
+    lines starting with `>` in which some line holds one of _VERBATIM_LABELS."""
+    spans, first = [], None
+    for idx, line in enumerate(lines + [None]):
+        if line is not None and line.startswith(">"):
+            if first is None:
+                first = idx
+            continue
+        if first is not None and any(label in l for l in lines[first:idx] for label in _VERBATIM_LABELS):
+            spans.append((first, idx))
+        first = None
+    return spans
+
+
 def _verbatim_runs(lines, opaque=frozenset(), offset=0):
     """(block text, the line after it or None, hidden) for each verbatim block;
     hidden = some line of it sits in a code or HTML block (index + offset)."""
-    runs, run, first = [], [], 0
-    for idx, line in enumerate(lines + [None]):
-        if line is not None and line.startswith(">"):
-            if not run:
-                first = idx
-            run.append(line)
+    return [
+        ("\n".join(lines[first:end]), lines[end] if end < len(lines) else None,
+         any((k + offset) in opaque for k in range(first, end)))
+        for first, end in _verbatim_spans(lines)
+    ]
+
+
+def _region_text(region, originals):
+    """region's lines, each ending in LF, except an Original text quotation the
+    replaced region held: that is written with the original's own bytes. The
+    check compares quotations with line endings normalised, so a CRLF quotation
+    copied into an LF replacement passes it (verify #351 round 10)."""
+    spans, out, i = dict(_verbatim_spans(region)), [], 0
+    while i < len(region):
+        own = originals.get("\n".join(region[i:spans[i]])) if i in spans else None
+        if own:
+            out.extend(r if r.endswith(("\n", "\r")) else r + "\n" for r in own.pop(0))
+            i = spans[i]
             continue
-        if run and any(label in r for r in run for label in _VERBATIM_LABELS):
-            hidden = any((k + offset) in opaque for k in range(first, idx))
-            runs.append(("\n".join(run), line, hidden))
-        run = []
-    return runs
+        out.append(region[i] + "\n")
+        i += 1
+    return "".join(out)
 
 
 def _is_marker(line):
@@ -1367,7 +1405,12 @@ def _compose(old_file, heading, body_file, marker):
         except ParserUnavailable as e:
             err(f"ERROR: {e}; nothing was composed")
             return EXIT_PARSER, None
-    in_body = {l for i, l in enumerate(body_lines) if i not in body_blocks.code}
+    # A copy in the replacement stands in for a live marker only where it is
+    # still one: outside code and the first line of its own HTML block. A copy
+    # moved inside a <script> or <div> block is text there (verify #351 round 10).
+    present = [i for i, l in enumerate(body_lines)
+               if _is_marker(l) and i not in body_blocks.code and i in body_blocks.html_starts]
+    in_body = {body_lines[i] for i in present}
     carried = []
     for i in range(start + 1, end):
         line = old_lines[i]
@@ -1387,7 +1430,10 @@ def _compose(old_file, heading, body_file, marker):
     except ParserUnavailable as e:
         err(f"ERROR: {e}; nothing was composed")
         return EXIT_PARSER, None
-    marker_lines = range(len(head) + len(body_lines) + 1, len(head) + len(region))
+    # Every marker the body keeps, carried or standing in, is checked where it
+    # ends up in the composed body.
+    marker_lines = [len(head) + i for i in present]
+    marker_lines += range(len(head) + len(body_lines) + 1, len(head) + len(region))
     broken = any(i in new_blocks.code or i not in new_blocks.html_starts for i in marker_lines)
     tail_at = len(head) + len(region) + 1
     for k in range(len(tail)):
@@ -1404,14 +1450,21 @@ def _compose(old_file, heading, body_file, marker):
         return 6, None
     raw_lines, raw = _raw_lines(old_file)
     ends_open = raw.endswith(("\n", "\r"))
+    originals = {}
+    for first, stop in _verbatim_spans(old_lines[start + 1:end]):
+        first, stop = first + start + 1, stop + start + 1
+        originals.setdefault("\n".join(old_lines[first:stop]), []).append(raw_lines[first:stop])
+    region_text = _region_text(region, originals)
     if heading == "-":
-        return 0, "\n".join(head + region) + ("\n" if ends_open else "")
+        text = "".join(l + "\n" for l in head) + region_text
+        return 0, text if ends_open else text[:-1]
     # Head and tail are the original's own bytes; only the region is new.
     head_text = "".join(raw_lines[: start + 1])
     if not head_text.endswith(("\n", "\r")):
         head_text += "\n"
     tail_text = "".join(raw_lines[end:])
-    region_text = "\n".join(region) + ("\n" if tail_text or ends_open else "")
+    if not (tail_text or ends_open):
+        region_text = region_text[:-1]
     return 0, head_text + region_text + ("\n" + tail_text if tail_text else "")
 
 
@@ -1526,8 +1579,22 @@ def _egress(args):
 
 
 def _correct_marker(backup_id):
-    stamp = re.search(r"-([0-9]{8})T", backup_id).group(1)
-    return f'<!-- idd:edit mode="correct" backup-id="{backup_id}" date="{stamp[:4]}-{stamp[4:6]}-{stamp[6:]}" -->'
+    # The local date, as the other modes' markers have; the backup id keeps
+    # UTC with its Z (verify #351 round 10, #406).
+    return f'<!-- idd:edit mode="correct" backup-id="{backup_id}" date="{datetime.date.today().isoformat()}" -->'
+
+
+def _floor(scrub, path):
+    """The tier a body is checked and written at. A reply quoting user-pasted
+    points carries both markers of idd-comment's reply template, and gh-egress
+    refuses it at light (#272). The points are on GitHub already and the user
+    confirms the whole preview, so the floor is applied, as idd-comment does,
+    rather than every edit of such a reply refused (verify #351 round 10)."""
+    if scrub != "light":
+        return scrub
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        text = fh.read()
+    return "warn" if "type=reply" in text and "points-from=user-pasted" in text else scrub
 
 
 def _refused(reason, work=None, extra=()):
@@ -1578,7 +1645,7 @@ def correct_prepare_subcmd(argv):
     return _correct_prepare_text(target, kind, num, repo, section, scrub, content)
 
 
-def _correct_prepare_text(target, kind, num, repo, section, scrub, content):
+def _correct_prepare_text(target, kind, num, repo, section, scrub, content, keep=None):
     """correct-prepare once the corrected text is in hand. A run passes the
     text of its own body.md here instead of a path: the body-file gate only
     admits the temp dir of the current call, and a run may move between a
@@ -1589,7 +1656,7 @@ def _correct_prepare_text(target, kind, num, repo, section, scrub, content):
         err("Refuse: --correct needs the corrected text; the body file is empty (#351).")
         return 2
 
-    _remove_stale_work_dirs()
+    _remove_stale_work_dirs(keep=keep)
     work = tempfile.mkdtemp(prefix=CORRECT_WORK_PREFIX)   # mode 0700
     try:
         return _correct_prepare(work, target, kind, num, repo, section, scrub, content)
@@ -1641,7 +1708,8 @@ def _correct_prepare(work, target, kind, num, repo, section, scrub, content):
     # The egress gates run before the preview, so a body gh-egress would refuse
     # is never confirmed or archived (round 3). Mentions the target already had
     # were published already; a mention the correction adds is still refused.
-    if _egress(["check", "--body-file", preview, "--scrub-attested", scrub] + _mention_args(mentions)) != 0:
+    if _egress(["check", "--body-file", preview, "--scrub-attested", _floor(scrub, preview)]
+               + _mention_args(mentions)) != 0:
         return _refused("egress", work)
     state = {
         "target": target, "kind": kind, "num": num, "repo": repo, "heading": heading,
@@ -1689,9 +1757,11 @@ def _archive_preflight():
     return _ensure_ignored(root, os.path.join(ARCHIVE_REL, "preflight.md"))
 
 
-def _remove_stale_work_dirs(max_age=86400):
+def _remove_stale_work_dirs(max_age=86400, keep=None):
     """Working directories left by a run that never reached apply or discard
-    (a closed session) hold the uncorrected text; drop those older than a day."""
+    (a closed session) hold the uncorrected text; drop those older than a day.
+    `keep` is the run being served: a user may answer the next day (verify
+    #351 round 10)."""
     tmp = os.path.realpath(tempfile.gettempdir())
     try:
         names = os.listdir(tmp)
@@ -1703,6 +1773,8 @@ def _remove_stale_work_dirs(max_age=86400):
         if not name.startswith((CORRECT_WORK_PREFIX, RUN_PREFIX)):
             continue
         path = os.path.join(tmp, name)
+        if keep and os.path.realpath(path) == keep:
+            continue
         try:
             st = os.lstat(path)
         except OSError:
@@ -1849,6 +1921,7 @@ def _correct_write(work, state, endpoint, backup, body, backup_id):
     new_file = os.path.join(work, "new.md")
     with open(new_file, "w", encoding="utf-8", newline="") as fh:
         fh.write(new_text)
+    state = dict(state, scrub=_floor(state["scrub"], new_file))
     print(f"SCRUB={state['scrub']}")   # the tier the write goes out at
     verb = ["edit-comment", num] if kind == "comment" else ["edit", num]
     rc = _egress(verb + ["--repo", repo, "--body-file", new_file, "--scrub-attested", state["scrub"]]
@@ -1908,10 +1981,12 @@ _OUTCOMES = ("prepared", "edited", "refused", "declined", "write-failed", "unver
 
 def _write_diff(old_path, new_path, dest):
     import difflib
+    # Lines end at \n only: splitlines also breaks at \x0c, \x85 and the like,
+    # which GitHub does not, and marked those as the end of the file (round 10).
     with open(old_path, encoding="utf-8", errors="replace", newline="") as fh:
-        old = fh.read().splitlines(keepends=True)
+        old = re.findall(r"[^\n]*\n|[^\n]+$", fh.read())
     with open(new_path, encoding="utf-8", errors="replace", newline="") as fh:
-        new = fh.read().splitlines(keepends=True)
+        new = re.findall(r"[^\n]*\n|[^\n]+$", fh.read())
     with open(dest, "w", encoding="utf-8", newline="") as fh:
         for line in difflib.unified_diff(old, new, "current", "after this edit"):
             # as diff(1) does: a last line without a newline would otherwise be
@@ -2014,12 +2089,13 @@ def _run_meta_problem(meta):
 
 
 def _comment_issue(repo, num):
-    """The issue number a comment belongs to, or None."""
+    """(True, the issue number a comment belongs to, or None), or (False, None)
+    when the comment cannot be read."""
     proc = _gh(["api", f"repos/{repo}/issues/comments/{num}", "--jq", ".issue_url"])
     if proc is None or proc.returncode != 0:
-        return None
+        return False, None
     m = re.search(r"/issues/([0-9]+)$", proc.stdout.decode("utf-8", errors="replace").strip())
-    return m.group(1) if m else None
+    return True, (m.group(1) if m else None)
 
 
 def _record(real, target, outcome, **extra):
@@ -2027,6 +2103,7 @@ def _record(real, target, outcome, **extra):
     rec.update({k: v for k, v in extra.items() if v})
     with open(os.path.join(real, "ledger.jsonl"), "a", encoding="utf-8") as fh:
         fh.write(json.dumps(rec) + "\n")
+    os.utime(real)   # a run in use is not stale: the sweep reads the directory's mtime
 
 
 def _latest(real):
@@ -2080,6 +2157,7 @@ def run_start_subcmd(argv):
         if not re.fullmatch(r"[0-9]+", number):
             err(f"ERROR: invalid issue number: {target}")
             return 2
+        number = str(int(number))   # #007 is #7 (verify #351 round 10)
         if state["last"] != "true":
             picks.append(number)
             continue
@@ -2136,6 +2214,8 @@ def prepare_subcmd(argv):
     real, target, values = parsed
     meta = _run_meta(real)
     pick = values["--pick"] or ""
+    if pick.isdigit():
+        pick = str(int(pick))   # #007 is #7 (verify #351 round 10)
     rows = dict(_latest(real))
     if pick:
         # A PICK is settled by its own record: which #N chose which comment,
@@ -2144,7 +2224,15 @@ def prepare_subcmd(argv):
         if pick not in meta["picks"] or f"#{pick}" in rows or any(r.get("pick") == pick for r in rows.values()):
             err(f"ERROR: #{pick} is not an open PICK of this run")
             return 2
-        if not target.startswith("comment:") or _comment_issue(meta["repo"], target.split(":", 1)[1]) != pick:
+        readable, issue = (_comment_issue(meta["repo"], target.split(":", 1)[1])
+                           if target.startswith("comment:") else (True, None))
+        if not readable:
+            # not recorded: the PICK stays open for a retry (verify #351 round 10)
+            err(f"✗ cannot read {target} — nothing changed; #{pick} can be prepared again")
+            print("RESULT=refused")
+            print("REASON=fetch-failed")
+            return 4
+        if issue != pick:
             err(f"✗ {target} is not a comment of #{pick} — nothing changed")
             _record(real, f"#{pick}", "refused", reason="not-in-pick")
             print("RESULT=refused")
@@ -2167,7 +2255,7 @@ def prepare_subcmd(argv):
             content = fh.read()
         kind, num = target.split(":", 1)
         rc, out = _captured(_correct_prepare_text, target, kind, num, meta["repo"],
-                            meta["section"] or None, meta["scrub"], content)
+                            meta["section"] or None, meta["scrub"], content, real)
         result = _kv(out)
         if rc == 0:
             _record(real, target, "prepared", work=result.get("WORK"), pick=pick)
@@ -2318,7 +2406,8 @@ def _edit_prepare(real, meta, target, num, pick=""):
     _write_diff(old, new, diff)
     # The egress gates run before the preview, so a body gh-egress would refuse
     # is never shown for confirmation (round 9; --correct did this since round 3).
-    if _egress(["check", "--body-file", new, "--scrub-attested", meta["scrub"]] + _mention_args(mentions)) != 0:
+    if _egress(["check", "--body-file", new, "--scrub-attested", _floor(meta["scrub"], new)]
+               + _mention_args(mentions)) != 0:
         return _edit_refused(real, target, "egress", pick)
     with open(os.path.join(work, "state.json"), "w", encoding="utf-8") as fh:
         json.dump({"sha": _sha256(new), "old_sha": _sha256(old), "mentions": mentions}, fh)
@@ -2406,10 +2495,11 @@ def _edit_apply(real, meta, target, stage):
     if _sha256(current) != st["old_sha"]:
         err(f"✗ {target} changed since the preview — nothing written; run again to see the new version")
         return _edit_refused(real, target, "changed-since-preview")
-    print(f"SCRUB={meta['scrub']}")   # the tier the write goes out at
+    tier = _floor(meta["scrub"], new)
+    print(f"SCRUB={tier}")   # the tier the write goes out at
     stage["writing"] = True
     rc = _egress(["edit-comment", num, "--repo", meta["repo"], "--body-file", new,
-                  "--scrub-attested", meta["scrub"]] + _mention_args(st["mentions"]))
+                  "--scrub-attested", tier] + _mention_args(st["mentions"]))
     if rc >= 10:
         # wrapper refusal band (#227): its own bucket, warn-continue (#273).
         # The run's exit is idd-edit's own space (any refusal = 4); the band
@@ -2828,20 +2918,23 @@ def restore_subcmd(argv):
         if rest or not _TARGET_RE.fullmatch(target) or not repo or not _REPO_RE.fullmatch(repo) or ".." in repo:
             err("ERROR: restore requires --target comment:<id>|issue:<n> --repo <owner/repo>")
             return 2
+        if _main_worktree() is None:
+            err("Refuse: restore needs the git work tree that holds the archive.")
+            return 7
         ids = _marker_backup_ids(target, repo)
         if ids is None:
             err(f"✗ cannot read {target}; nothing was restored")
             return 1
-        if len(ids) != 1:
-            if not ids:
-                err(f"ERROR: {target} carries no correction marker with an archive entry in this clone")
-            else:
-                err(f"{target} was corrected {len(ids)} times; pick the version to put back and run "
-                    "`restore <BACKUP_ID> --repo …` with one of these (checked) ids:")
-                for bid in ids:
-                    print(f"BACKUP_ID={bid}")
+        if not ids:
+            err(f"ERROR: {target} carries no correction marker with an archive entry in this clone")
             return 2
-        rest = [ids[0]]
+        # A lookup, never a write: which marker remains is GitHub text others
+        # can edit, so the user confirms the version (verify #351 round 10).
+        err(f"{target}: {len(ids)} archived version(s); show them to the user and run "
+            "`restore '<BACKUP_ID>' --repo …` with the one they confirm:")
+        for bid in ids:
+            print(f"BACKUP_ID={bid}")
+        return 0
     if len(rest) != 1 or not repo:
         err("ERROR: restore requires <backup-id> --repo <owner/repo> (or --target <target> --repo <owner/repo>)")
         return 2
@@ -2957,9 +3050,12 @@ Subcommands:
   archive <comment|issue> <id> --from-file <path> --repo <owner/repo>
       Archive the prior text (never tracked, mode 0000, <id>.repo sidecar); print the backup id.
 
-  restore (--target comment:<id>|issue:<n> | <backup-id>) --repo <owner/repo>
-      PATCH the target back to its archived text; print URL and byte count. With
-      --target, the id is read from the target's own correction marker and checked.
+  restore <backup-id> --repo <owner/repo>
+      PATCH the target back to its archived text; print URL and byte count.
+  restore --target comment:<id>|issue:<n> --repo <owner/repo>
+      Look up only: print BACKUP_ID= for each checked id the target's own correction
+      markers name (the user then confirms one); exit 1 when the target cannot be
+      read, 2 when it names none, 7 outside the git work tree.
 
 Exit codes:
   0=success, 1=generic, 2=usage, 3=R4-refuse, 4=R5-refuse (correct-*: not done),
@@ -2971,10 +3067,11 @@ Exit codes:
 
   correct-prepare --target comment:<id>|issue:<n> --repo R (--section H | --scope whole-comment)
                   --body-file F --scrub-attested L
-      The whole --correct flow up to the preview; prints WORK=, PREVIEW= and STATE=
-      (the caller keeps all three for the next call). Refusals print RESULT=refused and
-      REASON= (archive, fetch-failed, R5, author-unknown, protected, setext,
-      section-not-found, section-ambiguous, parser-unavailable, egress, check-failed).
+      The whole --correct flow up to the preview; prints WORK=, PREVIEW=, DIFF= and
+      STATE= (the caller keeps WORK and STATE for the next call). Refusals print
+      RESULT=refused and REASON= (archive, fetch-failed, R5, author-unknown, protected,
+      setext, unclosed-block, empty, section-not-found, section-ambiguous,
+      parser-unavailable, egress, check-failed).
   correct-apply --work <dir> --state <digest>
       Re-check, re-read, archive, write and read back byte for byte; prints RESULT=
       (edited | refused | write-failed | unverified), REASON=, BACKUP_ID=, URL=.
@@ -2984,12 +3081,16 @@ One /idd-edit run, all modes (the skill calls only these; #351 round 9):
   run-start [--default-repo owner/repo] -- <the /idd-edit arguments>
       Parse (R4 and the other parse-args gates), resolve the targets and the privacy
       tier; prints RUN=, REPO=, SCRUB=, then TARGET= (and PICK=#N to choose from).
-  prepare --run RUN --target T
+  prepare --run RUN --target T [--pick N]
       Author gate, fetch, backup, compose, egress check; prints PREVIEW=, DIFF= and
       BACKUP= (or WORK=, PREVIEW=, DIFF=, STATE= for --correct), or RESULT=refused.
+      Takes a target run-start listed, or with --pick N a comment of issue N chosen
+      for PICK=#N (REASON=not-in-pick otherwise; RESULT=merged when it is a listed
+      target; an unreadable comment is fetch-failed and the PICK stays open).
   apply --run RUN --target T --scrub-attested SCRUB [--state STATE]
       Write after the user confirmed; prints RESULT= (edited | refused | write-failed |
-      unverified). SCRUB must be the run's tier, attested after the privacy review.
+      unverified). SCRUB is the run's tier or stricter, attested after the privacy
+      review; a reply quoting user-pasted points goes out at least at warn (#272).
   discard --run RUN --target T   The user declined.
   finish --run RUN
       Print the outcome report, remove the run; exit 4 refused or failed, 7 unverified,

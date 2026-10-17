@@ -396,6 +396,91 @@ h a9ip prepare --run "$RUN" --target issue:25
 assert_output_grep "a bot's issue body points to --type correction" "--type correction" "$WORK/a9ip.err"
 h a9if finish --run "$RUN"
 
+echo "A10. round 12 (verify #351 round 10)"
+# a run idle for days is not swept by its own prepare (the sweep keeps the live run)
+mkrec comment-250.json kiki830621 MEMBER "$SECTION_BODY"
+mkrec comment-251.json kiki830621 MEMBER "$SECTION_BODY"
+start a10a comment:250 comment:251 --correct --section "## Notes" --body-file "$WORK/fix.md"
+h a10ap prepare --run "$RUN" --target comment:250
+h a10ad discard --run "$RUN" --target comment:250
+touch -t 202610010000 "$RUN"
+h a10aq prepare --run "$RUN" --target comment:251
+assert_exit "a run idle for days is prepared again, not swept" 0 "$RC"
+require "the run directory is still there" test -d "$RUN"
+h a10ar discard --run "$RUN" --target comment:251
+h a10af finish --run "$RUN"
+assert_exit "and finish still reads it (both declined → 9)" 9 "$RC"
+# --scope is checked at start in every mode
+h a10b run-start --default-repo o/r -- comment:100 --append --scope bogus --body-file "$WORK/fix.md" --reason r
+assert_exit "--append with a --scope other than whole-comment is refused at start (exit 3)" 3 "$RC"
+h a10b2 run-start --default-repo o/r -- comment:100 --prepend-note --scope section --reason r
+assert_exit "--prepend-note too" 3 "$RC"
+# a reply comment quoting user-pasted points, in a private repo (light): the
+# #272 floor raises the check and the write to warn instead of refusing them
+printf '{"viewerPermission": "WRITE", "isPrivate": true}' >"$FAKE_GH_STORE/repo.json"
+REPLY_BODY='## Reply
+**Point 1**: a quoted point
+done in abc123
+<!-- idd:comment type=reply date=2026-10-01 points-from=user-pasted calibrated=no -->'
+mkrec comment-252.json kiki830621 MEMBER "$REPLY_BODY"
+start a10c comment:252 --append --body-file "$WORK/fix.md" --reason r
+assert_eq "the run's tier is light" "light" "$SCRUB"
+h a10cp prepare --run "$RUN" --target comment:252
+assert_exit "--append on a user-pasted reply is prepared at the floor" 0 "$RC"
+h a10ca apply --run "$RUN" --target comment:252 --scrub-attested "$SCRUB"
+assert_eq "and written at warn" "edited warn" "$(val RESULT "$WORK/a10ca.out") $(val SCRUB "$WORK/a10ca.out")"
+h a10cf finish --run "$RUN"
+mkrec comment-253.json kiki830621 MEMBER "$REPLY_BODY"
+printf '## Reply\n**Point 1**: a quoted point\nnot done yet\n' >"$WORK/reply-fix.md"
+start a10c2 comment:253 --correct --scope whole-comment --body-file "$WORK/reply-fix.md"
+h a10c2p prepare --run "$RUN" --target comment:253
+assert_exit "--correct on a user-pasted reply is prepared at the floor" 0 "$RC"
+h a10c2a apply --run "$RUN" --target comment:253 --scrub-attested "$SCRUB" --state "$(val STATE "$WORK/a10c2p.out")"
+assert_eq "and written" "edited" "$(val RESULT "$WORK/a10c2a.out")"
+h a10c2f finish --run "$RUN"
+printf '{"viewerPermission": "ADMIN", "isPrivate": false}' >"$FAKE_GH_STORE/repo.json"
+# a PICK whose comment cannot be read stays open: fetch-failed, retry allowed
+mkrec_in comment-254.json kiki830621 23 "x"
+start a10d '#23' --append --body-file "$WORK/fix.md" --reason r
+h a10dw prepare --run "$RUN" --target comment:299 --pick 23
+assert_eq "an unreadable comment is fetch-failed, not not-in-pick" "fetch-failed" "$(val REASON "$WORK/a10dw.out")"
+h a10dp prepare --run "$RUN" --target comment:254 --pick 23
+assert_exit "the PICK is still open for a retry" 0 "$RC"
+h a10da apply --run "$RUN" --target comment:254 --scrub-attested "$SCRUB"
+h a10df finish --run "$RUN"
+assert_exit "and the run exits 0" 0 "$RC"
+# issue numbers are numbers: #007 is #7
+start a10e '#007' '#7' --append --body-file "$WORK/fix.md" --reason r
+assert_eq "#007 and #7 are one PICK, #7" "#7" "$(vals PICK "$WORK/a10e.out" | tr '\n' ' ' | sed 's/ $//')"
+h a10ef finish --run "$RUN"
+# the diff marks only the true last line, not a line broken at \x0c
+python3 - "$FAKE_GH_STORE/comment-255.json" <<'PY'
+import json, sys
+json.dump({"body": "line one\x0cstill one\nlast", "user": {"login": "kiki830621"}, "author_association": "MEMBER",
+           "html_url": "https://github.com/o/r/x"}, open(sys.argv[1], "w"))
+PY
+start a10f comment:255 --append --body-file "$WORK/fix.md" --reason r
+h a10fp prepare --run "$RUN" --target comment:255
+assert_eq "one no-newline mark, for the last line" "1" "$(grep -c '^\\ No newline at end of file$' "$(val DIFF "$WORK/a10fp.out")")"
+h a10ff finish --run "$RUN"
+# the --correct marker's date is the local date, like the other modes'
+mkrec comment-256.json kiki830621 MEMBER "$SECTION_BODY"
+export TZ=Etc/GMT-14
+start a10g comment:256 --correct --section "## Notes" --body-file "$WORK/fix.md"
+h a10gp prepare --run "$RUN" --target comment:256
+h a10ga apply --run "$RUN" --target comment:256 --scrub-attested "$SCRUB" --state "$(val STATE "$WORK/a10gp.out")"
+assert_output_grep "the marker's date is the local date" "date=\"$(date +%Y-%m-%d)\"" <(body_of comment-256.json)
+h a10gf finish --run "$RUN"
+unset TZ
+# credential paths: case variants (APFS is case-insensitive) and gh's other
+# config locations (GH_CONFIG_DIR, then XDG_CONFIG_HOME/gh) are refused too
+H4="$WORK/home4"; mkdir -p "$H4/.ssh" "$H4/.config/gh" "$H4/xdg/gh" "$H4/ghc"
+for f in .ssh/id .config/gh/hosts.yml xdg/gh/hosts.yml ghc/hosts.yml; do printf 'secret\n' >"$H4/$f"; done
+for f in .SSH/id .CONFIG/gh/hosts.yml .config/GH/hosts.yml xdg/gh/hosts.yml ghc/hosts.yml; do
+  (HOME="$H4" XDG_CONFIG_HOME="$H4/xdg" GH_CONFIG_DIR="$H4/ghc" python3 "$HELPER" run-start --default-repo o/r -- comment:100 --append --body-file "$H4/$f" --reason r) >"$WORK/a10h.out" 2>"$WORK/a10h.err"
+  assert_output_grep "$f is refused as a credential path" "refuses credential path" "$WORK/a10h.err"
+done
+
 # ═══ Part B — the SKILL's own blocks, one fresh shell each ═════════════════
 # What an agent gets: Claude Code substitutes ${CLAUDE_PLUGIN_ROOT} when it
 # loads a plugin skill (only the braced form — verify #351 round 8), and the
@@ -432,6 +517,10 @@ for body in re.findall(r"```bash\n(.*?)```", text, re.S):
     sys.stdout.write(body.replace("${CLAUDE_PLUGIN_ROOT}", "/plugin") + "\n")
 PY
 refute_grep_re "no bash block in the SKILL reads a shell variable" '\$\{?[A-Za-z_]' "$(cat "$WORK/all-blocks.txt")"
+# Placeholders are single-quoted: a value pasted inside double quotes would
+# run its $(...) before the helper checks it (verify #351 round 10).
+refute_grep_re "no placeholder in a bash block is double-quoted" '"<[A-Z_]+>"' "$(cat "$WORK/all-blocks.txt")"
+assert_output_grep "the PICK listing prints each body as JSON, so a newline cannot forge a row" '@json' "$SKILL"
 mkdir -p "$WORK/home"
 PYUSERBASE="$(python3 -m site --user-base)"
 # step <shell> <label> <name> <key=value>... — the block with its placeholders
@@ -543,6 +632,12 @@ for SH in $SHELLS; do
   step "$SH" "b$n-s" start "REPO=o/r" "ARGS='#9' --append --body-file '$WORK/fix.md' --reason r"
   step "$SH" "b$n-f" finish "RUN=$(val RUN "$WORK/b$n-s.out")"
   assert_exit "$SH: a PICK nobody resolved exits 4" 4 "$RC"
+  n=$((n + 1)); mkrec "comment-$n.json" kiki830621 MEMBER "x"
+  step "$SH" "b$n-s" start "REPO=o/r" "ARGS=comment:$n --append --body-file '$WORK/fix.md' --reason r"
+  R="$(val RUN "$WORK/b$n-s.out")"
+  step "$SH" "b$n-x" prepare "RUN=$R" "TARGET=comment:$n\$(touch $WORK/PWNED-$SH)" "PICK="
+  refute "$SH: a forged TARGET pasted into the prepare block runs nothing" test -e "$WORK/PWNED-$SH"
+  step "$SH" "b$n-d" finish "RUN=$R"
 done
 assert_eq "no run directory is left after part B" "0" "$(count_runs)"
 

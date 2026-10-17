@@ -141,7 +141,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   discards. Four verify rounds kept finding defects in the shell version, which only string contracts covered; the
   new `scripts/tests/correct-flow` suite runs the helper's flow against a fake gh, with `TMPDIR` under `/var`
   (*it tests the helper's control flow, not its contract with the real gh — round 8 made the fake check the
-  repository and added a write that lands before gh errors; still no live run, see task 11.6*). The
+  repository and added a write that lands before gh errors; still no live run, see task 11.6* — *live acceptance
+  2026-10-17: two issue-body corrections of #351, tasks 11.6–11.7*). The
   archive is written in-process, so the working copy no longer passes through the `--from-file` gate.
 - `idd-update` rebuilds Key Decisions on every run instead of only appending, so a corrected decision does not
   survive in the summary.
@@ -267,6 +268,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exception; gh's token store (`~/.config/gh`) is a refused body file; when `idd-edit-backup` belongs to someone
   else a per-user name, then a fresh private directory, is used.
 
+### Fixed (round 12 — verify round 10 findings, before release)
+
+- A quotation inside the corrected region is written back with its own bytes. The check compares quotations with
+  line endings normalised, so a CRLF quotation (the web editor's) copied into an LF replacement passed it and came
+  back as LF.
+- A marker copy the replacement moves inside another HTML block (`<script>`, `<div>`) no longer stands in for the
+  live marker, which is carried as its own block; every marker the body keeps is checked where it ends up.
+- **Security — the SKILL's placeholders are single-quoted in every step.** A PICK's comment id comes from a GitHub
+  listing; pasted into the double-quoted prepare / apply / discard / finish blocks, a `$(...)` in it ran before the
+  helper checked anything. The listing prints each body as JSON (a newline in a body cannot forge a row), and the
+  SKILL checks a value's shape before pasting it.
+- A reply quoting user-pasted points (`type=reply` + `points-from=user-pasted`) in a private repository is checked
+  and written at `warn`, the #272 floor, in every mode; every edit of such a reply used to be refused as `egress`.
+- `run-start` refuses a `--scope` other than `whole-comment` in every mode (exit 3); `--append` / `--prepend-note`
+  accepted any value and every later step then refused the run.
+- The stale-run cleanup never removes the run it serves, and a recorded outcome keeps the run fresh: a run left a day
+  before the user answered was deleted by its own next `prepare`.
+- `restore --target` only looks up: it prints the checked `BACKUP_ID=` lines and writes nothing; the version is put
+  back by `restore '<BACKUP_ID>'` after the user confirms it (which markers remain is GitHub text others can edit).
+  Outside the git work tree it says so (exit 7).
+- Credential paths are matched without regard to letter case (`~/.SSH` on macOS), and gh's token store is refused
+  wherever gh may keep it (`GH_CONFIG_DIR`, `$XDG_CONFIG_HOME/gh`, `~/.config/gh`), the escape hatch included.
+- A PICK whose comment cannot be read is `fetch-failed` and stays open; `#007` is `#7`; the preview diff breaks lines
+  at `\n` only; the `--correct` marker's `date` is the local date (#406); the read guard's denial says how to pass a
+  message that only mentions the archive path; `--correct` does not publish `--reason` (the SKILL, idd-comment and
+  the proposed-correction commands no longer pass it).
+- `references/usecase-routing.md` routes wrong content you wrote to `--correct` and others' to
+  `/idd-comment --type errata`; the proposed-correction commands of idd-verify / idd-diagnose / idd-reorganize are
+  single-quoted proposals whose arguments are rebuilt, not pasted.
+
 ### Changed
 
 - **BREAKING (behavior) — `/idd-edit` exit codes for the existing modes** (`--append`, `--replace`,
@@ -288,7 +319,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `idd-update` regenerates Key Decisions from the current comments on its next run for every issue: a decision
   that no current comment backs — added by hand, summarised from chat, or from a deleted comment — is dropped, and
   the order and wording are re-derived each time.
-- `/idd-comment --type errata` gained `--correction-file`, `--scope`, `--section` and `--reason`: on your own comment
+- `/idd-comment --type errata` gained `--correction-file`, `--scope` and `--section` (a `--reason` is not passed on:
+  `--correct` publishes no reason): on your own comment
   it needs a scope and `--correction-file` (the replacement), not `--body` alone. The errata template merges
   `### 錯在哪` and `### 正確內容` into `### 錯在哪與正確內容`.
 - **BREAKING (behavior) — `/idd-comment --type errata`** on the invoking user's own comment now delegates to
@@ -306,10 +338,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (GitHub does not notify them again on an edit), so editing a comment that mentions someone is no longer refused
   at egress.
 - `--replace --section` boundaries come from the Markdown parser: besides headings inside code or HTML blocks
-  (ignored) and a repeated heading (exit 9), a target heading that only appears inside an HTML block is now
+  (ignored) and a repeated heading (reported as `REFUSED(section-ambiguous)`, and the run exits 4; exit 9 is the
+  `section-replace` subcommand's own code), a target heading that only appears inside an HTML block is now
   `section-not-found`, and a heading indented one to three spaces ends the section.
+- `--body-file` files strictly below the user's temporary directory pass the path gate in every mode. 3.4.0
+  refused everything under `/var` (exit 5), which on macOS includes `$TMPDIR` (`/var/folders/…`).
+- `--section` must be an ATX heading line (`## Title`) in every mode; any other value exits 2. 3.4.0 accepted any
+  value, and `--append`/`--prepend-note` ignored `--section` altogether (`--append --section X` appended).
+- A `--body-file` that contains a NUL byte is refused (exit 5) in every mode; 3.4.0 read it.
+- gh's token store (`~/.config/gh`, which holds `hosts.yml`) is refused as a `--body-file` (exit 5) in every mode;
+  3.4.0 read it like any other file.
+- A target edited by someone else after the preview is refused as `changed-since-preview` (exit 4) in every mode,
+  instead of being overwritten with the previewed text as in 3.4.0.
+
+### Security
+
+- **`parse-args` output was executed as shell commands, from 2.81.0 through 3.4.0, in every `/idd-edit` mode.**
+  `parse-args` printed a multi-line `--body-file` raw, and the skill `eval`ed that output, so every line of the body
+  after the first ran as a shell command under `--append`, `--replace` and `--prepend-note` alike. Round 2 ANSI-C
+  quotes such values, round 4 makes every value survive `eval` exactly (a NUL byte is refused, `=` is escaped for
+  zsh), and round 9 removes the `eval`: the skill runs `run-start`, which parses the arguments in-process, and copies
+  only the values it prints.
 
 ### Notes
+
+- Live acceptance (2026-10-17, before release): from the main clone, `/idd-edit issue:351 --correct --section …`
+  corrected two sections of #351's body (archives `issue-351-body-20261017T145233Z` and
+  `issue-351-body-20261017T145544Z`); both read back equal, `finish` exited 0, the archive files are mode 0000 and
+  ignored, and `restore --target issue:351` listed both checked ids against the real GitHub and wrote nothing
+  (#351 comment 6235380442; tasks 11.6–11.7).
 
 - After archiving the change, update the Purpose paragraph of `openspec/specs/append-vs-modify-discipline/spec.md`
   from 7 to 8 categories (Purpose is outside the delta).

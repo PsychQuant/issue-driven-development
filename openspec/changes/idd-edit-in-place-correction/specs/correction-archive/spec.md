@@ -43,7 +43,7 @@ After writing an archive file the helper SHALL set its permission bits to `0000`
 
 ### Requirement: Restore SHALL return a target to its archived version without displaying the content
 
-`idd-edit-helper.py restore <backup-id> --repo <owner/repo>` SHALL validate the backup id against the pattern `^(comment-[0-9]+|issue-[0-9]+-body)-[0-9]{8}T[0-9]{6}Z(-[0-9]+)?$`, refuse any other value with exit 2, derive the target from the id, and PATCH the target with the archived text passed on stdin. On success it SHALL print only the target URL and the number of bytes restored. The restore SHALL replace the whole target, and the skill SHALL ask for confirmation stating that changes made after the correction will be lost. `restore --target comment:<id>|issue:<N> --repo <owner/repo>` SHALL read the target's own correction markers and use only the ids that match the pattern above, encode that same target and have an archive entry in this clone; it SHALL restore when exactly one remains and otherwise print the checked ids as `BACKUP_ID=` lines and exit 2. The skill SHALL pass only the target and the repository, never a value copied from a marker, because a marker is GitHub text anyone on the issue can write.
+`idd-edit-helper.py restore <backup-id> --repo <owner/repo>` SHALL validate the backup id against the pattern `^(comment-[0-9]+|issue-[0-9]+-body)-[0-9]{8}T[0-9]{6}Z(-[0-9]+)?$`, refuse any other value with exit 2, derive the target from the id, and PATCH the target with the archived text passed on stdin. On success it SHALL print only the target URL and the number of bytes restored. The restore SHALL replace the whole target, and the skill SHALL ask for confirmation stating that changes made after the correction will be lost. `restore --target comment:<id>|issue:<N> --repo <owner/repo>` SHALL only look up: it SHALL read the target's own correction markers, keep only the ids that match the pattern above, encode that same target and have an archive entry in this clone, print each as a `BACKUP_ID=` line and write nothing (exit 0; exit 2 when none remains, 1 when the target cannot be read, 7 outside the git work tree). The skill SHALL show those ids to the user and pass the one the user confirms to `restore <backup-id>`, even when only one remains, because which markers remain is GitHub text others can edit. The skill SHALL never copy a value from a marker into a command; it passes only the target, the repository and an id the helper printed after checking it.
 
 #### Scenario: Path traversal refused
 
@@ -54,6 +54,11 @@ After writing an archive file the helper SHALL set its permission bits to `0000`
 
 - **WHEN** a valid backup id is restored
 - **THEN** stdout SHALL contain the target URL and a byte count, and SHALL NOT contain any line of the archived text
+
+#### Scenario: Restore by target looks up only
+
+- **WHEN** a comment corrected once is given as `restore --target comment:5 --repo owner/repo`
+- **THEN** the helper SHALL print that correction's id as a `BACKUP_ID=` line, exit 0 and leave the comment unchanged, and the comment SHALL be restored only by a later `restore <that id> --repo owner/repo`
 
 ### Requirement: A PreToolUse hook SHALL deny Claude tool access to the archive
 
@@ -110,12 +115,17 @@ The issue-driven-dev plugin SHALL register a PreToolUse hook for the tools `Read
 
 ### Requirement: The read guard SHALL match path tokens and honour an unlock flag
 
-For Bash and PowerShell the hook SHALL split the command into shell words, split each word further on whitespace and quoting or grouping characters, and deny when any piece, after `os.path.normpath`, contains `.claude/.idd/archive` as a path segment (followed by `/` or the end of the piece). The only words skipped are values of the message options `-m`, `--message`, `--body`, `--title`, `--notes` and `--subject` (closed list) given to a command that takes messages (`git`, `gh`, `hg`, `jj`, `svn`, or the scripts `gh-egress.sh` and `idd-edit-helper.py`, also when run through `bash`, `sh`, `zsh`, `env` or `python3`, and after leading `NAME=value` words), and only when the value contains no `$`, backtick, `<` or `>`, so `sh -c "cat <archive path>"` and `sort -m <archive path>` are denied while a commit message that mentions the path is allowed. The hook SHALL also deny a recursive permission change (`chmod`, `chown`, `chgrp`, `chflags` or `setfacl` with `-R` or `--recursive`) whose target, resolved against the call's working directory, is the archive or a directory above it — including directories above the repository root that contains the working directory. The hook SHALL allow every call while the file `~/.cache/idd/archive-read-guard.disabled` exists.
+For Bash and PowerShell the hook SHALL split the command into shell words, split each word further on whitespace and quoting or grouping characters, and deny when any piece, after `os.path.normpath`, contains `.claude/.idd/archive` as a path segment (followed by `/` or the end of the piece). The only words skipped are values of the message options `-m`, `--message`, `--body`, `--title`, `--notes`, `--subject` and `--reason` (closed list) given to a command that takes messages (`git`, `gh`, `hg`, `jj`, `svn`, or the scripts `gh-egress.sh` and `idd-edit-helper.py`, also when run through `bash`, `sh`, `zsh`, `env`, `python` or `python3`, and after leading `NAME=value` words), and only when the value contains no `$`, backtick, `<` or `>`, so `sh -c "cat <archive path>"` and `sort -m <archive path>` are denied while a commit message that mentions the path is allowed. A message passed through `$(...)` or a heredoc is checked as a command and denied when it names the path; the denial SHALL say that such text can be passed single-quoted or from a file. The hook SHALL also deny a recursive permission change (`chmod`, `chown`, `chgrp`, `chflags` or `setfacl` with `-R` or `--recursive`) whose target, resolved against the call's working directory, is the archive or a directory above it — including directories above the repository root that contains the working directory. The hook SHALL allow every call while the file `~/.cache/idd/archive-read-guard.disabled` exists.
 
 #### Scenario: Commit message that mentions the path
 
 - **WHEN** Claude runs `git commit -m "keep .claude/.idd/archive/ out of git"`
 - **THEN** the hook SHALL allow the call
+
+#### Scenario: A reason that mentions the path
+
+- **WHEN** Claude runs the idd-edit helper with `--reason 'the backups live in .claude/.idd/archive/edits, not in git'`
+- **THEN** the hook SHALL allow the call, and SHALL deny the same call with `--reason "$(cat .claude/.idd/archive/edits/a.md)"`
 
 #### Scenario: Read through sh -c
 

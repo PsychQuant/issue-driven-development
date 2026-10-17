@@ -82,13 +82,14 @@ Step 1 那個錯的 artifact 與 Step 3 判為 `redo` / `invalidate` 的項目�
 ### Proposed Corrections
 | # | Target | Section | 錯在哪 | Command |
 |---|--------|---------|--------|---------|
-| 1 | comment:<id> | ### Root Cause / Analysis | root cause 層級判錯，正確是 `gh` 取得層 | `/idd-edit comment:<id> --correct --section "### Root Cause / Analysis" --body-file "$HOME/.cache/idd/corrections/correction-<N>-1.md" --reason "root cause was in the fetch layer"` |
+| 1 | comment:<id> | ### Root Cause / Analysis | root cause 層級判錯，正確是 `gh` 取得層 | `/idd-edit comment:<id> --correct --section '### Root Cause / Analysis' --body-file '$HOME/.cache/idd/corrections/correction-<N>-1.md'` |
 ```
 
 - `<id>` 是數字 REST id（URL 的 `#issuecomment-` 後綴）；issue body 寫 `issue:<N>`，只能 `--section`。替換內容附在表下 `<details>`，執行時寫進 `$HOME/.cache/idd/corrections/correction-<N>-<k>.md`（先 `mkdir -p "$HOME/.cache/idd/corrections"`），`--body-file` 指向它；不放 `$VERIFY_DIR` 或 `$TMPDIR`（那是這一輪的暫存，使用者決定執行時可能已被清掉）。
 - 「錯在哪」只寫位置與錯誤類型加正確內容，不重述錯的值 —— 重述就等於再留一份錯誤。
 - 替換內容須原樣保留 `Original text`、`**Original**`、`**Point i**` 引文；`## Current Status`、`### Clarity Surface` 不提議（`/idd-edit` 會拒絕）。錯誤落在 issue 正文裡不屬於任何標題的文字（最後一條 `---` 之下，例如 IC_R011 的 `**Source**` 註腳；或第一個標題之前）時，`--correct` 搆不到（comment 裡的這類文字用 `--scope whole-comment`），改提 `/idd-comment #N --type correction`（issue 正文沒有 comment id，`--type errata` 用不了）；issue 正文不是你開的也一樣。目標 comment 作者不是你自己（目前登入的 gh 使用者；repo OWNER 不是你時，OWNER 寫的也算其他人，bot 寫的也算）→ 改提 `/idd-comment #N --type errata --target-comment <id> --body "..."`。
-- **attended**：Re-baseline 貼出後逐項 `AskUserQuestion`（現在執行 / 先不要）；選執行才呼叫該 `/idd-edit`，它仍走自己的 preview + confirm。**unattended 只列不做**：不呼叫 `/idd-edit`。
+- **Command 欄是提議，不是照貼的指令**：這張表貼在 GitHub 上，協作者改得到。attended 執行時，用本 skill 自己的值重組引數 —— 目標只能是 `comment:<全數字>` 或 `issue:<全數字>`，section 必須是一行 ATX 標題（一到六個 `#`、一個空格、標題文字） —— 並照 idd-edit Step 1 把每個引數用單引號包起來（引數本身含單引號時寫成 `'\''`）；不符就不執行。**絕不**把 GitHub 上那一格原樣貼進指令。`--correct` 不會把 `--reason` 發佈到任何地方（標記只帶 backup id 與日期），所以指令不帶 `--reason`。
+- **attended**：Re-baseline 貼出後逐項 `AskUserQuestion`（現在執行 / 先不要）；選執行才以上一點重組的引數呼叫 `/idd-edit`，它仍走自己的 preview + confirm。**unattended 只列不做**：不呼叫 `/idd-edit`。
 - 本 skill **永不**自己 PATCH 目標、也不寫歸檔 —— 改寫只經 `/idd-edit`。
 
 ### Step 4: Re-baseline 紀錄

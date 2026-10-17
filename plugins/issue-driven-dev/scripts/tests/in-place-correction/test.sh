@@ -657,4 +657,40 @@ assert_output_grep "idd-comment posts errata when the author cannot be determine
 assert_output_grep "idd-comment does not read a correction file idd-edit refused" '**不貼、也不讀那個檔案**' "$SKILLS/idd-comment/SKILL.md"
 refute_output_grep "exit 5 no longer routes to a summary of the file" '| 4、2、3、5（或其他非 0） |' "$SKILLS/idd-comment/SKILL.md"
 
+# R10 (verify #351 round 10, Codex)
+# R10.1 a quotation inside the replaced region keeps its own bytes: the check
+# compares quotations with line endings normalised, so a CRLF quotation copied
+# into an LF replacement passes it, and compose must write the original back
+python3 - "$WORK" <<'PYX'
+import sys
+w = sys.argv[1]
+open(w + "/crlf-quote.md", "wb").write(b"## Notes\r\n> **Original text**: keep me\r\n> second\r\n\r\nwrong\r\n\r\n## Next\r\nx\r\n")
+open(w + "/r-crlf-quote.md", "wb").write(b"> **Original text**: keep me\n> second\n\nright\n")
+open(w + "/crlf-whole.md", "wb").write(b"> **Original text**: q\r\n\r\nwrong\r\n")
+open(w + "/r-crlf-whole.md", "wb").write(b"> **Original text**: q\n\nright\n")
+PYX
+bytes_in() { python3 -c 'import sys,ast;print(ast.literal_eval(sys.argv[2]) in open(sys.argv[1],"rb").read())' "$1" "$2"; }
+run_helper r101a check-correction "$WORK/crlf-quote.md" "## Notes" "$WORK/r-crlf-quote.md"
+assert_exit "an LF copy of a CRLF quotation passes the check" 0 "$RC"
+run_helper r101b compose-correction "$WORK/crlf-quote.md" "## Notes" "$WORK/r-crlf-quote.md" "$MARK"
+assert_exit "and composes" 0 "$RC"
+assert_eq "the quotation is written with its own CRLF bytes" "True" "$(bytes_in "$WORK/r101b.out" 'b"\r\n> **Original text**: keep me\r\n> second\r\n\nright\n"')"
+run_helper r101c compose-correction "$WORK/crlf-whole.md" - "$WORK/r-crlf-whole.md" "$MARK"
+assert_exit "a whole-comment correction composes" 0 "$RC"
+assert_eq "and keeps the quotation's CRLF too" "True" "$(bytes_in "$WORK/r101c.out" 'b"> **Original text**: q\r\n\nright\n"')"
+
+# R10.2 a kept marker moved into an HTML block no longer stands as a marker, so
+# it does not stand in for the live one: the live one is carried
+printf '## Notes\nwrong\n\n<!-- idd:comment type=errata date=2026-10-01 target-comment=7 -->\n\n## Next\nx\n' >"$WORK/html-marker.md"
+printf 'fixed\n\n<script>\n<!-- idd:comment type=errata date=2026-10-01 target-comment=7 -->\n</script>\n' >"$WORK/r-script.md"
+run_helper r102a compose-correction "$WORK/html-marker.md" "## Notes" "$WORK/r-script.md" "$MARK"
+assert_exit "a marker moved into a script block composes" 0 "$RC"
+assert_eq "the live marker is carried as its own block" "True" "$(bytes_in "$WORK/r102a.out" 'b"</script>\n\n<!-- idd:comment type=errata date=2026-10-01 target-comment=7 -->\n<!-- idd:edit"')"
+printf 'fixed\n<div>\n<!-- idd:comment type=errata date=2026-10-01 target-comment=7 -->\n</div>\n' >"$WORK/r-div.md"
+run_helper r102b compose-correction "$WORK/html-marker.md" "## Notes" "$WORK/r-div.md" "$MARK"
+assert_eq "inside a div block too" "True" "$(bytes_in "$WORK/r102b.out" 'b"</div>\n\n<!-- idd:comment type=errata date=2026-10-01 target-comment=7 -->\n<!-- idd:edit"')"
+printf 'fixed\n\n<!-- idd:comment type=errata date=2026-10-01 target-comment=7 -->\n' >"$WORK/r-own.md"
+run_helper r102c compose-correction "$WORK/html-marker.md" "## Notes" "$WORK/r-own.md" "$MARK"
+assert_eq "a marker kept as its own block is not written twice" "1" "$(grep -c 'target-comment=7' "$WORK/r102c.out")"
+
 print_summary "in-place-correction"

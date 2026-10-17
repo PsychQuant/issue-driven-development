@@ -67,7 +67,8 @@
 - [x] 11.3 SKILL：新增 Step 1.6，`--correct` 只呼叫三個子命令；刪除 Step 5.5 與 Steps 2–7 裡的 `--correct` 分支；task 清單改名；restore 範例的 `BACKUP_ID`。契約測試改指向 helper。驗證：`idd-edit`、`idd-edit-contract`、`in-place-correction` 全綠。
 - [x] 11.4 spec、design（新增 decision 與三個子命令的契約）、CHANGELOG。驗證：`spectra validate`。
 - [x] 11.5 Verify 第 5 輪：FAIL，findings 40（第 2–4 輪 42、52、63），CRITICAL 0；DA 因額度未跑完。報告在 #351 的 verify 留言（comment 6229416722）。
-- [x] 11.6 套用 Proposed Correction：2026-10-17 以本 branch（`6cc4f75`）的 `/idd-edit --correct` 從主 repo 照 SKILL 逐步執行，兩筆都先給使用者看差異與預覽、確認後寫入 —— `## Related` 的 #347 那一行（backup id `issue-351-body-20261017T145233Z`），與 `### 已定案` 的「只改你自己寫的內容」（`issue-351-body-20261017T145544Z`）。兩筆都讀回一致、finish exit 0、歸檔權限 0000 且被 ignore、沒有殘留的工作目錄；`restore --target issue:351` 對真實 GitHub 列出兩個已檢查的 id、exit 2、正文未變。這是搬進 helper 之後第一次對真實 GitHub 執行。
+- [x] 11.6 套用 Proposed Correction（#351 正文 `## Related` 中 #347 那一行），在主 repo 以本 branch 的 helper 執行，讓歸檔留在長期存在的 clone。驗證：#351 正文。
+- [x] 11.7 11.6 的結果（#351 的留言 comment 6235380442）：2026-10-17 以本 branch（`6cc4f75`）的 `/idd-edit --correct` 從主 repo 照 SKILL 逐步執行，更正 #351 正文兩處，兩筆都先給使用者看差異與預覽、確認後寫入 —— `## Related` 的 #347 那一行（歸檔 `issue-351-body-20261017T145233Z`），與 `### 已定案` 的「只改你自己寫的內容」（歸檔 `issue-351-body-20261017T145544Z`）。兩筆都讀回一致、finish exit 0、歸檔權限 0000 且被 ignore、沒有殘留的工作目錄；`restore --target issue:351` 對真實 GitHub 列出兩個已檢查的 id、exit 2、什麼都沒寫（正文未變）。這是搬進 helper 之後第一次對真實 GitHub 執行。（8a78706 曾把這段寫進 11.6 的原文，第 12 輪還原 11.6、改記在這裡。）驗證：#351 正文與 comment 6235380442。
 
 ## 12. Verify 第 5 輪修正
 
@@ -104,8 +105,19 @@
 - [x] 16.1 先寫會失敗的測試：edit-run A9（`--correct` 以較嚴等級寫入、沒列出的 target、PICK 的逐一對帳與不屬於該 issue 的 comment、PICK 指向已有的 target、跨 TMPDIR 的 `--correct`、外來 run 目錄、diff 的結尾換行、`$HOME//`、gh token 目錄、bot 開的 issue 正文）與所有區塊不讀變數的靜態檢查；correct-flow R9.9（restore --target、偽造標記）、E4 實際數工作目錄；correction-archive 的 `--reason` 提到歸檔路徑。驗證：新斷言以「尚未實作」失敗。
 - [x] 16.2 helper：`_correct_prepare_text`（run 傳文字不傳路徑）、`_correct_apply` 的 scrub、SCRUB= 輸出、`_run_meta_problem` 與 body.md 檢查、`_comment_issue` 與 PICK 紀錄、prepare 的 target 閘門、`_latest` 沿用 pick、apply 的例外分段、`_write_diff` 的結尾換行、`_home_path`、bot 正文訊息、PICK 去重、備份目錄的第三個退路、gh token 目錄、`restore --target`；hook 的 `--reason`。驗證：edit-run、correct-flow、correction-archive 全綠。
 - [x] 16.3 SKILL 與文件：prepare 的 `--pick`、restore 改用 `--target`、`<REPO>` 單引號與格式、備份找回、STATE 重抄仍不符的處置、untitled 限制只限正文（idd-edit 與三個提議 skill）；spec（STATE、等級、untitled、備份退路、PICK、run 內容、跨暫存目錄、parse-args、restore --target）；design 四處過時描述；proposal 的 run 決定與兩個 BREAKING；plugin 與 marketplace 描述；CHANGELOG 第 11 輪與 3.4.0 讀不到目標的基準。驗證：`spectra validate`、`run-all-tests.sh`。
-- [x] 16.4 使用者 2026-10-17 選定：先實機驗收（11.6，通過），再跑第 10 輪 verify。
-- [ ] 16.5 Verify 第 10 輪；沒有 HIGH 以上就準備合併。驗證：#351 的 verify 留言。
+- [x] 16.4 Verify 第 10 輪，或改走驗收（11.6 實機套用）後合併 —— 由使用者決定。驗證：#351 的留言。
+- [x] 16.5 Verify 第 10 輪；沒有 HIGH 以上就準備合併。驗證：#351 的 verify 留言。
+- [x] 16.6 16.4 的決定：使用者 2026-10-17 選定先實機驗收（11.6，通過，結果見 11.7），再跑第 10 輪 verify（16.5）。（8a78706 曾把這段寫進 16.4 的原文，第 12 輪還原 16.4、改記在這裡。）驗證：#351 的留言。
+- [x] 16.7 16.5 的結果：第 10 輪 FAIL，findings 50（MEDIUM 10／LOW 27／INFO 13），CRITICAL 0、HIGH 0；第一次執行時 5 個 agent 撞到每週額度，重置後以同一個 run 續跑完成。依「同一個 PR 修乾淨再合」，先做第 12 輪修正（§17），合併判定套用在修正後的 HEAD。報告在 #351 的 verify 留言（comment 6239594311）。
+
+## 17. Verify 第 10 輪修正（第 12 輪）
+
+- [x] 17.1 先寫會失敗的測試：in-place-correction R10.1（CRLF 引文經 LF 取代後以原位元組寫回，段落與整則兩種）、R10.2（標記被移進 `<script>`／`<div>` 時照樣補上獨立的標記，已獨立的標記不重複）；correct-flow R10.1（CRLF 引文經 prepare、apply、讀回比對）。驗證：新斷言在 8a78706 的 helper 上失敗（in-place 4 條、correct-flow 1 條）。
+- [x] 17.2 helper：`_verbatim_spans`（`_verbatim_runs` 共用同一個引文定義）、`_region_text`（取代區內與原文相符的引文用原位元組）、`_compose` 只把仍是獨立 HTML block 的標記算成已保留，並在組好的正文裡檢查它們。驗證：in-place-correction、correct-flow 全綠。
+- [x] 17.3 文件：spec（標記保留條款、組好後的檢查、引文換行情境）、CHANGELOG 第 12 輪。驗證：`spectra validate`。
+- [x] 17.4 先寫會失敗的測試（其餘 MEDIUM 與 LOW）：edit-run A10（閒置的 run 不被自己的 prepare 清掉、各 mode 的 `--scope` 在 start 檢查、private repo 的 user-pasted reply 以 warn 檢查與寫入（`--append` 與 `--correct`）、讀不到的 PICK comment 是 fetch-failed 且可重試、`#007`、diff 只在換行處斷行、`--correct` 標記用本地日期、大小寫變體與 `GH_CONFIG_DIR`／`XDG_CONFIG_HOME` 的憑證路徑）、所有區塊的 placeholder 不在雙引號裡、PICK 列表用 `@json`、偽造的 TARGET 貼進 prepare 區塊不執行；correct-flow（`restore --target` 只查不寫、git 工作樹外 exit 7）；correction-archive（heredoc 訊息被擋時說明替代寫法）。驗證：新斷言在 8a78706 上失敗（edit-run 25 條、correct-flow 4 條）。
+- [x] 17.5 helper：`_gh_config_dirs`／`_under_folded`（不分大小寫、gh 的 token 目錄在 escape hatch 之前）、`--scope` 在每個 mode 檢查、`_floor`（#272 下限，prepare 的檢查與兩種 apply 的寫入）、`_remove_stale_work_dirs(keep=)` 與 `_record` 更新 run 的 mtime、`_comment_issue` 分開讀取失敗、PICK 數字正規化、`_write_diff` 只在 `\n` 斷行、`_correct_marker` 用本地日期（#406）、`restore --target` 改為只查（工作樹外 exit 7）、`--help`；hook 的拒絕訊息。驗證：edit-run、correct-flow、correction-archive 全綠。
+- [x] 17.6 SKILL 與文件：idd-edit 的區塊一律單引號、PICK 列表 `@json` 與貼值前的形狀檢查、Step 2 的 `merged`／`not-in-pick`／PICK 的 fetch-failed、STATE 重抄仍不符與中止時的處置、#272 下限、restore 兩步、路徑安全清單、frontmatter 的「只改自己的內容」、`--correct` 不發布 `--reason`；兩份 spec（read guard 封閉列舉補 `--reason`／`python`、restore 只查、run 的下限／清理／PICK／`--scope`、跨暫存目錄的 work dir、run-start 的 exit 1、標記日期、憑證路徑、四個情境）；usecase-routing、design 契約表與 Context、tasks 11.6／16.4 還原原文並追加 11.7／16.6、CHANGELOG（Security、Changed 補列、實機驗收、exit 9 更正、第 12 輪）、plugin 與 marketplace 描述、plugin CLAUDE.md、README、三個提議 skill 的指令格、idd-comment 的委派；gh-egress-rollout 兩條字串契約。驗證：`spectra validate`、`run-all-tests.sh`。
 
 
 
