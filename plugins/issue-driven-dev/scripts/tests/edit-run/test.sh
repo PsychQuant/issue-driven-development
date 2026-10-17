@@ -427,7 +427,7 @@ start a10c comment:252 --append --body-file "$WORK/fix.md" --reason r
 assert_eq "the run's tier is light" "light" "$SCRUB"
 h a10cp prepare --run "$RUN" --target comment:252
 assert_exit "--append on a user-pasted reply is prepared at the floor" 0 "$RC"
-assert_eq "prepare says the #272 floor applies and the tier to attest" "272 warn" "$(val FLOOR "$WORK/a10cp.out") $(val SCRUB "$WORK/a10cp.out")"
+assert_eq "prepare says the #272 floor applies, and prints no SCRUB= to copy (round 14)" "272 " "$(val FLOOR "$WORK/a10cp.out") $(val SCRUB "$WORK/a10cp.out")"
 h a10cl apply --run "$RUN" --target comment:252 --scrub-attested "$SCRUB"
 assert_exit "apply at light is refused until the agent attests warn (round 13)" 2 "$RC"
 refute_output_grep "nothing was written" "right text" <(body_of comment-252.json)
@@ -527,7 +527,7 @@ json.dump({"body": "x\ry\n", "user": {"login": "kiki830621"}, "author_associatio
 PY
 start a11g comment:261 --append --body-file "$WORK/fix.md" --reason r
 h a11gp prepare --run "$RUN" --target comment:261
-assert_eq "a lone \\r ends a diff line" "True" "$(python3 -c 'import sys;print(b"x\r y\n" in open(sys.argv[1],"rb").read())' "$(val DIFF "$WORK/a11gp.out")")"
+assert_eq "a lone \\r ends a diff line, shown as a line end" "True" "$(python3 -c 'import sys;print(b" x\n y\n" in open(sys.argv[1],"rb").read())' "$(val DIFF "$WORK/a11gp.out")")"
 h a11gd discard --run "$RUN" --target comment:261
 h a11gf finish --run "$RUN"
 # the sweep keeps the run's own --correct working copies too
@@ -545,6 +545,38 @@ h a11hf finish --run "$RUN"
 h a11i run-start --default-repo o/r -- comment:100 --correct --scope whole-comment --body-file "$WORK/fix.md" --reason r
 assert_output_grep "run-start says --correct does not publish --reason" "does not publish --reason" "$WORK/a11i.err"
 h a11if finish --run "$(val RUN "$WORK/a11i.out")"
+
+echo "A12. round 14 (verify #351 round 12)"
+# the #272 question is asked at every tier: FLOOR=272 at warn too
+REPLY_BODY2='## Reply
+**Point 1**: a quoted point
+done
+<!-- idd:comment type=reply date=2026-10-01 points-from=user-pasted calibrated=no -->'
+mkrec comment-270.json kiki830621 MEMBER "$REPLY_BODY2"
+start a12a comment:270 --append --body-file "$WORK/fix.md" --reason r
+assert_eq "a public repo you own is warn" "warn" "$SCRUB"
+h a12ap prepare --run "$RUN" --target comment:270
+assert_eq "FLOOR=272 is printed at warn too" "272" "$(val FLOOR "$WORK/a12ap.out")"
+h a12ad discard --run "$RUN" --target comment:270
+h a12af finish --run "$RUN"
+# a PICK whose author read fails stays open too
+mkrec_in comment-271.json kiki830621 25 "x"
+start a12b '#25' --append --body-file "$WORK/fix.md" --reason r
+: >"$FAKE_GH_STORE/fail-author-read"
+h a12bw prepare --run "$RUN" --target comment:271 --pick 25
+rm -f "$FAKE_GH_STORE/fail-author-read"
+assert_eq "a failed author read is author-unknown" "author-unknown" "$(val REASON "$WORK/a12bw.out")"
+h a12bp prepare --run "$RUN" --target comment:271 --pick 25
+assert_exit "and the PICK can still be retried" 0 "$RC"
+h a12bd discard --run "$RUN" --target comment:271
+h a12bf finish --run "$RUN"
+# an over-long issue number is a usage error, not a traceback
+h a12c run-start --default-repo o/r -- "#$(printf '1%.0s' $(seq 1 30))" --append --body-file "$WORK/fix.md" --reason r
+assert_exit "a 30-digit issue number is refused (exit 2)" 2 "$RC"
+start a12d '#25' --append --body-file "$WORK/fix.md" --reason r
+h a12dp prepare --run "$RUN" --target comment:271 --pick "$(printf '2%.0s' $(seq 1 30))"
+assert_exit "a 30-digit --pick is refused (exit 2)" 2 "$RC"
+h a12df finish --run "$RUN"
 
 # ═══ Part B — the SKILL's own blocks, one fresh shell each ═════════════════
 # What an agent gets: Claude Code substitutes ${CLAUDE_PLUGIN_ROOT} when it
@@ -588,6 +620,8 @@ refute_grep_re "no placeholder in a bash block is double-quoted" '"<[A-Z_]+>"' "
 assert_output_grep "the PICK listing prints each body as JSON, so a newline cannot forge a row" '@json' "$SKILL"
 assert_output_grep "the PICK listing blanks U+2028 / U+2029 / U+0085, which JSON leaves raw" '\u2028' "$SKILL"
 assert_output_grep "the SKILL asks the #272 question when prepare prints FLOOR=272" 'FLOOR=272' "$SKILL"
+assert_output_grep "Step 0 tracks the #272 question as its own task" 'TaskCreate(name="reply_272_gate"' "$SKILL"
+assert_output_grep "the PICK listing reads a null body as empty" '(.body // "")' "$SKILL"
 mkdir -p "$WORK/home"
 PYUSERBASE="$(python3 -m site --user-base)"
 # step <shell> <label> <name> <key=value>... — the block with its placeholders

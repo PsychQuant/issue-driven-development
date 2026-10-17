@@ -53,8 +53,8 @@ REASON = (
     "these files. To put a corrected comment or issue body back, run the "
     "idd-edit helper's restore subcommand, which sends the archived text to "
     "GitHub without displaying it. A commit or PR message that only mentions "
-    "the path is fine as one single-quoted value with spaces and no $, "
-    "backtick, < or > (-m '...', --body '...'); otherwise pass it from a file "
+    "the path is fine single-quoted, with no $, backtick, < or > (git commit "
+    "-m '...', gh issue comment --body '...'); otherwise pass it from a file "
     "(-F, --body-file). A $(...) or heredoc inside the message is checked as "
     "a command."
 )
@@ -98,6 +98,18 @@ def _hits(candidate):
 # `python3 -c "open('<archive>')"` read the archive from inside a quoted string.
 MESSAGE_FLAGS = ("-m", "--message", "--body", "--title", "--notes", "--subject", "--reason")
 MESSAGE_COMMANDS = ("git", "gh", "hg", "jj", "svn", "gh-egress.sh", "idd-edit-helper.py")
+# For these commands only the listed subcommands take a message; elsewhere a
+# flag such as `git diff -m` takes no value and the next word is a path
+# (verify #351 round 12). Closed lists; IDD's own scripts take one everywhere.
+MESSAGE_SUBCOMMANDS = {
+    "git": ("commit", "tag", "notes", "merge", "stash"),
+    "gh": ("issue", "pr", "release"),
+    "hg": ("commit", "ci", "tag"),
+    "jj": ("commit", "describe", "new", "split"),
+    "svn": ("commit", "ci", "import", "mkdir", "copy", "cp", "move", "mv", "delete", "del", "rm", "remove"),
+}
+# options before the subcommand that take a value (`git -C <dir> commit`)
+_PRE_SUBCOMMAND_VALUE_OPTIONS = ("-C", "-c", "--git-dir", "--work-tree", "--namespace", "-R", "--repo", "--cwd")
 # A script run through an interpreter is named by the script (IDD posts through
 # `bash .../gh-egress.sh comment N --body "..."` — verify #351 round 4).
 INTERPRETERS = ("bash", "sh", "zsh", "env", "python", "python3")
@@ -106,12 +118,42 @@ SEPARATORS = (";", "&&", "||", "|", "&")
 PERMISSION_COMMANDS = ("chmod", "chown", "chgrp", "chflags", "setfacl")
 
 
+def _newlines_as_separators(command):
+    """An unquoted newline ends a command, as `;` does; a backslash before it
+    continues the line (verify #351 round 12: the next line kept the previous
+    command's name)."""
+    out, quote, i = [], None, 0
+    while i < len(command):
+        c = command[i]
+        if c == "\\" and quote != "'" and i + 1 < len(command):
+            out.append(command[i:i + 2])
+            i += 2
+            continue
+        if quote:
+            if c == quote:
+                quote = None
+        elif c in "'\"":
+            quote = c
+        elif c == "\n":
+            out.append(" ; ")
+            i += 1
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def _split_words(command):
+    command = _newlines_as_separators(command)
     # Backslashes become '/' before splitting: PowerShell paths use them as
     # separators, and POSIX shlex would otherwise eat them as escapes.
     command = command.replace("\\", "/")
     try:
-        return shlex.split(command, posix=True)
+        # `;`, `&` and `|` split words even when glued to them (`a&&b`), as
+        # the shell reads them (round 12).
+        lex = shlex.shlex(command, posix=True, punctuation_chars=";&|")
+        lex.whitespace_split = True
+        return list(lex)
     except ValueError:
         return command.split()
 
@@ -120,7 +162,7 @@ def _command_words(command):
     """Path candidates in a shell command: every shell word, and every piece of
     a word split on whitespace and quoting/grouping characters — except the
     value of a message option, which is prose."""
-    previous, command_name, via_interpreter = "", None, False
+    previous, command_name, via_interpreter, subcommand = "", None, False, None
     for word in _split_words(command):
         if command_name is None or via_interpreter:
             # `NAME=value cmd` and `bash script` name the command by what runs.
@@ -129,20 +171,25 @@ def _command_words(command):
             else:
                 base = os.path.basename(word)
                 via_interpreter = command_name is None and base in INTERPRETERS
-                command_name = base
-        is_message = command_name in MESSAGE_COMMANDS and (
-            previous in MESSAGE_FLAGS
-            or any(word.startswith(flag + "=") for flag in MESSAGE_FLAGS if flag.startswith("--"))
+                command_name, subcommand = base, None
+        elif (subcommand is None and not word.startswith("-")
+                and previous not in _PRE_SUBCOMMAND_VALUE_OPTIONS):
+            subcommand = word
+        allowed = MESSAGE_SUBCOMMANDS.get(command_name)
+        is_message = (
+            command_name in MESSAGE_COMMANDS and (allowed is None or subcommand in allowed)
+            and (previous in MESSAGE_FLAGS
+                 or any(word.startswith(flag + "=") for flag in MESSAGE_FLAGS if flag.startswith("--")))
         )
+        # `2>&1`: an `&` after a redirection is not a separator
+        separator = (word in SEPARATORS and not (word == "&" and previous.endswith((">", "<")))) or word.endswith(";")
         previous = word
-        if word in SEPARATORS or word.endswith(";"):
-            command_name = None
+        if separator:
+            command_name = subcommand = None
         # A message value is prose only if the shell will not execute part of
         # it: `--body "$(cat <archive>)"` posts the archive (parser differential
         # between shlex and the real shell).
-        # Prose has whitespace; a single token after `-m` may be a path to a
-        # command whose -m takes no value (`git diff -m <archive>`, round 11).
-        if is_message and not any(t in word for t in ("$", "`", "<", ">")) and re.search(r"\s", word):
+        if is_message and not any(t in word for t in ("$", "`", "<", ">")):
             continue
         for piece in re.split(r"[\s'\"`()=;|&<>]+", word):
             if piece:

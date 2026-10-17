@@ -504,6 +504,33 @@ mkrec comment-430.json kiki830621 MEMBER "replaced by hand, no marker"
 helper r111 restore --target comment:430 --repo o/r
 assert_eq "an archived version whose marker is gone is still listed" "$R99ID" "$(val BACKUP_ID "$WORK/r111.out")"
 assert_output_grep "and the listing says its marker is no longer on the target" "marker: gone" "$WORK/r111.err"
+# R12.1 versions from the same second are listed in the order they were written
+for s in "" -2 -10; do
+  f="$ARCH/comment-430-20261018T000000Z$s"
+  printf 'v\n' >"$f.md"; printf 'o/r' >"$f.repo"; chmod 0 "$f.md"
+done
+helper r121 restore --target comment:430 --repo o/r
+assert_eq "same-second ids follow their suffix order" "comment-430-20261018T000000Z comment-430-20261018T000000Z-2 comment-430-20261018T000000Z-10" \
+  "$(sed -n 's/^BACKUP_ID=//p' "$WORK/r121.out" | grep 20261018T000000Z | tr '\n' ' ' | sed 's/ $//')"
+# R12.2 the lookup refuses what restore refuses: a repository that tracks archive entries
+TR="$WORK/tracked-repo"; mkdir -p "$TR/.claude/.idd/archive/edits"; git -C "$TR" init -q
+printf 'old\n' >"$TR/.claude/.idd/archive/edits/comment-430-20260101T000000Z.md"
+printf 'o/r' >"$TR/.claude/.idd/archive/edits/comment-430-20260101T000000Z.repo"
+git -C "$TR" add -A && git -C "$TR" -c user.email=t@t -c user.name=t commit -qm planted
+(cd "$TR" && python3 "$HELPER" restore --target comment:430 --repo o/r) >"$WORK/r122.out" 2>"$WORK/r122.err"
+assert_exit "a repository that ships archive entries is refused by the lookup (exit 2)" 2 "$?"
+refute_output_grep "and none of its entries is offered" "BACKUP_ID=" "$WORK/r122.out"
+# R12.3 standalone correct-apply refuses a #272 body at light before archiving
+python3 - "$FAKE_GH_STORE/comment-460.json" <<'PYX'
+import json, sys
+json.dump({"body": "## Notes\nwrong\n<!-- idd:comment type=reply date=2026-10-01 points-from=user-pasted calibrated=no -->",
+           "user": {"login": "kiki830621"}, "author_association": "MEMBER", "html_url": "https://github.com/o/r/x"}, open(sys.argv[1], "w"))
+PYX
+helper r123p correct-prepare --target comment:460 --repo o/r --section "## Notes" --body-file "$WORK/fix.md" --scrub-attested light
+assert_eq "standalone prepare prints FLOOR=272" "272" "$(val FLOOR "$WORK/r123p.out")"
+helper r123a correct-apply --work "$(val WORK "$WORK/r123p.out")" --state "$(val STATE "$WORK/r123p.out")"
+assert_eq "standalone apply at light is refused" "refused" "$(val RESULT "$WORK/r123a.out")"
+assert_eq "before anything is archived" "0" "$(find "$ARCH" -name 'comment-460-*' | wc -l | tr -d ' ')"
 # R10.2 restore --target outside a git work tree says so (round 10)
 NOGIT="$WORK/no-git"; mkdir -p "$NOGIT"
 (cd "$NOGIT" && python3 "$HELPER" restore --target comment:430 --repo o/r) >"$WORK/r102.out" 2>"$WORK/r102.err"

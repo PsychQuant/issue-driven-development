@@ -314,10 +314,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A PICK whose comment cannot be read at any read stays open; PICK numbers are ASCII digits (`²` was a traceback);
   the sweep keeps the run's own `--correct` working copies; `emit-audit-marker` uses the local date too.
 - The read guard skips a message value only when it is prose (has whitespace), so `git diff --no-index -m <archive>`
-  is denied; its denial names the characters that still need a message file.
+  is denied; its denial names the characters that still need a message file. *(Superseded in round 14: the skip is
+  tied to message-taking subcommands instead, since a path can contain spaces.)*
 - Quoting happens once, in idd-edit Step 1: the proposal skills pass their rebuilt arguments as typed, and
   idd-comment's delegation single-quotes its values. The PICK listing blanks U+2028 / U+2029 / U+0085, which JSON
   leaves raw; TARGETs are processed before PICKs; `run-start` notes that `--correct` does not publish `--reason`.
+
+### Fixed (round 14 — verify round 12 findings, before release)
+
+- **The #272 question is asked at every tier.** `prepare` prints `FLOOR=272` whenever the body quotes user-pasted
+  points, not only in a `light` repository, and no longer prints a `SCRUB=warn` that the SKILL's copy-the-value rule
+  would carry into `apply` without the question. The SKILL tracks the question as its own task (`reply_272_gate`)
+  and offers redaction only for `--replace`; standalone `correct-apply` refuses such a body at `light` before
+  archiving.
+- **Read guard:** a message flag is prose only for subcommands that take a message (`git commit`, `gh issue`/`pr`/
+  `release`, …), so after `git diff -m` the next word is scanned even when the path contains spaces; an unquoted
+  newline and a glued `&&`, `||`, `|` end a command. A one-word `git commit -m <text>` is allowed again.
+- `restore --target` refuses, as `restore <id>` does, a symlinked archive path or a repository that tracks archive
+  entries, skips a sidecar that is not a regular file, and lists same-second versions in the order they were written.
+- A PICK whose author read fails stays open too; issue numbers longer than eighteen digits are refused (exit 2, not a
+  traceback); the PICK listing reads a null body as empty; a lone `\r` in the preview diff is shown as a line end;
+  the report for `not-applied` says no write was made rather than that nothing was confirmed; the proposal skills and
+  idd-comment write a quote inside a single-quoted value as `'\''` again.
 
 ### Changed
 
@@ -369,10 +387,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A `--body-file` that contains a NUL byte is refused (exit 5) in every mode; 3.4.0 read it.
 - gh's token store (`~/.config/gh`, which holds `hosts.yml`, and wherever `GH_CONFIG_DIR` or `XDG_CONFIG_HOME`
   puts it) is refused as a `--body-file` (exit 5) in every mode, the escape hatch included; 3.4.0 read it like any
-  other file. System paths and credential directories are matched without regard to letter case, under both `HOME`
-  and the account's home directory, by the path as given and as resolved.
+  other file. Credential directories are matched without regard to letter case, under both `HOME` and the account's
+  home directory, by the path as given and as resolved; system paths are matched without regard to case on the
+  resolved path.
 - `--scope` other than `whole-comment` is refused at start (exit 3) in every mode; 3.4.0 ignored it for `--append`
   and `--prepend-note`.
+- Editing a reply that quotes user-pasted points (`type=reply` + `points-from=user-pasted`) asks the #272 question in
+  every mode and at every tier (`FLOOR=272` from prepare), and `apply` refuses `--scrub-attested light` for it
+  (exit 2, retryable); 3.4.0 asked nothing and gh-egress refused the write at `light`.
 - A target edited by someone else after the preview is refused as `changed-since-preview` (exit 4) in every mode,
   instead of being overwritten with the previewed text as in 3.4.0.
 

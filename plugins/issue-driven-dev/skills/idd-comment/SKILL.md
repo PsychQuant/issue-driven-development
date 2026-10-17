@@ -355,14 +355,14 @@ IDD_CALLER=idd-comment-errata \
     --body-file '{correction-file}'
 ```
 
-指令不帶 `--reason`：`--correct` 不會把理由發佈到任何地方（它的標記只帶 backup id 與日期）。`{heading}` 是 comment 裡的標題文字（別人改得到），必須是一行 ATX 標題；實際貼進 shell 的單引號由 idd-edit Step 1 統一包，只包這一次。
+指令不帶 `--reason`：`--correct` 不會把理由發佈到任何地方（它的標記只帶 backup id 與日期）。`{heading}` 是 comment 裡的標題文字（別人改得到），必須是一行 ATX 標題；含單引號時寫成 `'\''`。idd-edit Step 1 先照 shell 規則切開、再重新包，不會疊成兩層。
 
 依 idd-edit 的結束碼收尾（#351 verify 第 3 輪：更正被擋下時，舊流程什麼都沒留下）：
 
 | idd-edit 結束碼 | 意思 | 本 skill 接著做 |
 |---|---|---|
 | 0 | 已就地更正 | 回報「已更正」與 backup id，不貼任何 comment |
-| 9 | 使用者在預覽時拒絕 | 回報「使用者拒絕」，不貼、不改 |
+| 9 | 使用者在預覽時拒絕，或預覽後沒有寫入（沒有完成 apply，也沒有 discard） | 照 idd-edit 的 report 回報（拒絕或沒有寫入），不貼、不改 |
 | 7 | 已寫入，但讀回失敗或內容不符 | 回報「已寫入但無法確認，請手動檢查該 comment」，**不貼 errata**（更正其實已經寫進去，貼「未成功」會留下一句錯的話） |
 | 4 | 更正被拒絕，或寫入失敗 | **改貼 errata**：照下方「其他作者」的路徑，以 `--correction-file` 的內容摘要寫成 errata 說明貼出，並在說明中註明「就地更正未成功：<idd-edit 的拒絕原因>」——錯的原文至少有一則指向正確內容的更正。**例外**：idd-edit 的 report 寫 `REFUSED(egress)` 時不摘要更正內容（那是 egress 擋下的文字，轉述等於繞過它），只說明「更正被 egress 擋下」並請使用者處理（#351 verify 第 7 輪） |
 | 2、3、5（或其他非 0） | 參數有誤，或 `--correction-file` 讀不到、被路徑閘門擋下 | **不貼、也不讀那個檔案**：回報參數錯誤，請使用者修正後重跑。被 #155 路徑閘門擋下的檔案，不能改由 Read 讀出、摘要後公開（#351 verify 第 6 輪） |

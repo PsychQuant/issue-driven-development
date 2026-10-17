@@ -197,6 +197,15 @@ assert_output_grep "the denial points to a single-quoted message or a message fi
 # (whitespace); `git diff -m` takes no value, so the path after it is read
 expect_deny  diff-m '{"tool_name":"Bash","tool_input":{"command":"git diff --no-index -m .claude/.idd/archive/edits/a.md /dev/null"}}'
 assert_output_grep "the denial names the characters that still need a file" "from a file" "$WORK/hook-diff-m.out"
+# #351 round 14: -m is a message only for message-taking subcommands, and a
+# newline or a glued &&, ||, | ends a command
+expect_deny  diff-m-sp '{"tool_name":"Bash","tool_input":{"command":"git diff --no-index -m \u0027/x/My Repo/.claude/.idd/archive/edits/a.md\u0027 /dev/null"}}'
+expect_deny  glued-and '{"tool_name":"Bash","tool_input":{"command":"git status&&bash -c -m \u0027cat .claude/.idd/archive/edits/x.md\u0027"}}'
+expect_deny  glued-or  '{"tool_name":"Bash","tool_input":{"command":"git status||sh -c -m \u0027cat .claude/.idd/archive/edits/x.md\u0027"}}'
+expect_deny  newline   '{"tool_name":"Bash","tool_input":{"command":"git status\nbash -c -m \u0027cat .claude/.idd/archive/edits/x.md\u0027"}}'
+expect_allow git-C     '{"tool_name":"Bash","tool_input":{"command":"git -C repo commit -m \u0027see .claude/.idd/archive/ docs\u0027"}}'
+expect_allow multiline '{"tool_name":"Bash","tool_input":{"command":"git commit -m \u0027first line\nkeep .claude/.idd/archive/ out of git\u0027"}}'
+expect_allow gh-pr     '{"tool_name":"Bash","tool_input":{"command":"gh pr create --title t --body \u0027archive under .claude/.idd/archive/edits\u0027"}}'
 expect_allow helper   '{"tool_name":"Bash","tool_input":{"command":"python3 \"$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py\" archive comment 5805214375 --from-file \"$BACKUP_FILE\" --repo \"$REPO\""}}'
 expect_allow skill    '{"tool_name":"Read","tool_input":{"file_path":"plugins/issue-driven-dev/skills/idd-edit/SKILL.md"}}'
 expect_allow grep-re  '{"tool_name":"Grep","tool_input":{"pattern":".claude/.idd/archive","path":"plugins"}}'
@@ -354,9 +363,9 @@ expect_deny  chmodR   "{\"tool_name\":\"Bash\",\"cwd\":\"$REPO\",\"tool_input\":
 expect_deny  chmodRd  "{\"tool_name\":\"Bash\",\"cwd\":\"$REPO\",\"tool_input\":{\"command\":\"chmod -R u+rw .\"}}"
 expect_allow chmodOk  "{\"tool_name\":\"Bash\",\"cwd\":\"$REPO\",\"tool_input\":{\"command\":\"chmod u+x scripts/run.sh\"}}"
 expect_deny  sortm    '{"tool_name":"Bash","tool_input":{"command":"sort -m .claude/.idd/archive/edits/a.md"}}'
-# round 13: a message value without whitespace is not skipped (it may be a path
-# after a flag that takes none, `git diff -m <archive>`), so this one is denied
-expect_deny  gitm     '{"tool_name":"Bash","tool_input":{"command":"git commit -m .claude/.idd/archive/edits"}}'
+# round 14: a message flag is prose only for subcommands that take a message,
+# so a one-word commit message is allowed again (round 13 denied it)
+expect_allow gitm     '{"tool_name":"Bash","tool_input":{"command":"git commit -m .claude/.idd/archive/edits"}}'
 
 # ── I. round 5 (verify #351 round 4) ──────────────────────────────────────
 echo "I. round 5"

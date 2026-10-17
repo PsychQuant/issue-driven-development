@@ -1609,11 +1609,16 @@ def _floor(scrub, path):
     agent asks the #272 question and attests warn itself — apply refuses light
     for such a body and never raises the tier on the agent's behalf (verify
     #351 rounds 10–11)."""
-    if scrub != "light":
-        return scrub
+    return "warn" if scrub == "light" and _reply_272(path) else scrub
+
+
+def _reply_272(path):
+    """The body quotes user-pasted points: both markers of idd-comment's reply
+    template. The #272 question is asked at every tier, as idd-comment asks it
+    (rules/privacy-scrubbing.md; verify #351 round 12)."""
     with open(path, encoding="utf-8", errors="replace") as fh:
         text = fh.read()
-    return "warn" if "type=reply" in text and "points-from=user-pasted" in text else scrub
+    return "type=reply" in text and "points-from=user-pasted" in text
 
 
 def _refused(reason, work=None, extra=()):
@@ -1744,7 +1749,7 @@ def _correct_prepare(work, target, kind, num, repo, section, scrub, content):
     print(f"WORK={work}")
     print(f"PREVIEW={preview}")
     print(f"DIFF={diff}")
-    _print_floor(scrub, floor)
+    _print_floor(preview)
     # The caller keeps this hash and hands it back to apply: the binding to what
     # the user confirmed lives outside the working directory (round 5).
     print(f"STATE={_sha256(state_path)}")
@@ -1915,6 +1920,11 @@ def _correct_apply(work, state_sha, scrub=None):
     if _sha256(current) != state["sha"]["backup.md"]:
         err(f"✗ {state['target']} changed since the preview — nothing archived or written; run again to see the new version")
         return _refused("changed-since-preview")
+    attested = scrub or state["scrub"]
+    if _floor(attested, preview) != attested:
+        # before the archive: the write would be refused anyway (#272, round 12)
+        err(f"✗ {state['target']} quotes user-pasted points (#272): attest warn after the #272 question — nothing archived or written")
+        return _refused("egress")
     with open(backup, "rb") as fh:
         rc, backup_id = _archive_write(kind, num, fh.read(), repo)
     if rc != 0:
@@ -2011,6 +2021,9 @@ def _write_diff(old_path, new_path, dest):
         new = split.findall(fh.read())
     with open(dest, "w", encoding="utf-8", newline="") as fh:
         for line in difflib.unified_diff(old, new, "current", "after this edit"):
+            if line.endswith("\r"):
+                # a lone \r would put the next record on the same screen line (round 12)
+                line = line[:-1] + "\n"
             # as diff(1) does: a last line without a newline would otherwise be
             # glued to the next one on screen (verify #351 round 9)
             fh.write(line if line.endswith(("\n", "\r")) else line + "\n\\ No newline at end of file\n")
@@ -2105,7 +2118,7 @@ def _run_meta_problem(meta):
         return "section"
     targets, picks = meta.get("targets"), meta.get("picks")
     if (not isinstance(targets, list) or not all(isinstance(x, str) and _TARGET_RE.fullmatch(x) for x in targets)
-            or not isinstance(picks, list) or not all(isinstance(x, str) and re.fullmatch(r"[0-9]+", x) for x in picks)):
+            or not isinstance(picks, list) or not all(isinstance(x, str) and re.fullmatch(r"[0-9]{1,18}", x) for x in picks)):
         return "targets"
     return None
 
@@ -2179,7 +2192,7 @@ def run_start_subcmd(argv):
             resolved.append(target)
             continue
         number = target[1:]
-        if not re.fullmatch(r"[0-9]+", number):
+        if not re.fullmatch(r"[0-9]{1,18}", number):
             err(f"ERROR: invalid issue number: {target}")
             return 2
         number = str(int(number))   # #007 is #7 (verify #351 round 10)
@@ -2239,7 +2252,7 @@ def prepare_subcmd(argv):
     real, target, values = parsed
     meta = _run_meta(real)
     pick = values["--pick"] or ""
-    if pick and not re.fullmatch(r"[0-9]+", pick):
+    if pick and not re.fullmatch(r"[0-9]{1,18}", pick):
         err(f"ERROR: --pick takes an issue number (got: {pick})")
         return 2
     if pick:
@@ -2289,7 +2302,7 @@ def prepare_subcmd(argv):
         result = _kv(out)
         if rc == 0:
             _record(real, target, "prepared", work=result.get("WORK"), pick=pick)
-        elif not (pick and result.get("REASON") == "fetch-failed"):
+        elif not (pick and result.get("REASON") in _UNREAD):
             # a PICK whose comment could not be read stays open (round 11)
             _record(real, target, "refused", reason=result.get("REASON") or "check-failed", pick=pick)
         return rc
@@ -2300,8 +2313,12 @@ def prepare_subcmd(argv):
     return _edit_prepare(real, meta, target, num, pick)
 
 
+# a read that failed: a PICK it happened on stays open for a retry (rounds 11–12)
+_UNREAD = ("fetch-failed", "author-unknown")
+
+
 def _edit_refused(real, target, reason, pick=""):
-    if not (pick and reason == "fetch-failed"):
+    if not (pick and reason in _UNREAD):
         # a PICK whose comment could not be read stays open (round 11)
         _record(real, target, "refused", reason=reason, pick=pick)
     print("RESULT=refused")
@@ -2452,15 +2469,16 @@ def _edit_prepare(real, meta, target, num, pick=""):
     print(f"PREVIEW={new}")
     print(f"DIFF={diff}")
     print(f"BACKUP={backup}")
-    _print_floor(meta["scrub"], floor)
+    _print_floor(new)
     return 0
 
 
-def _print_floor(scrub, floor):
-    """FLOOR=272 and the tier to attest, when the #272 floor raised it."""
-    if floor != scrub:
+def _print_floor(path):
+    """FLOOR=272 when the body falls under #272, at any tier. No SCRUB= line:
+    the agent copies SCRUB= into apply, and a printed warn would skip the
+    question (verify #351 round 12); it attests warn itself once asked."""
+    if _reply_272(path):
         print("FLOOR=272")
-        print(f"SCRUB={floor}")
 
 
 def apply_subcmd(argv):
@@ -2659,7 +2677,7 @@ def finish_subcmd(argv):
         elif o == "egress-refused":
             print(f"  ✗ REFUSED(egress) {target} {why} — band 語意見 #227（10 privacy / 11 mention / 13 tier-floor #272 / 15 empty-body #275）")
         elif o == "declined" and why == "not-applied":
-            print(f"  – DECLINED {target}（預覽後沒有確認也沒有拒絕，視同拒絕，未寫入）")
+            print(f"  – DECLINED {target}（預覽後沒有寫入：沒有完成 apply，也沒有 discard）")
         elif o == "declined":
             print(f"  – DECLINED {target}（使用者在預覽時拒絕，未寫入）")
         elif o == "write-failed":
@@ -2972,7 +2990,8 @@ def _archived_versions(target, repo):
             continue
         path = os.path.join(edits, name)
         side = path[:-3] + ".repo"
-        if os.path.islink(path) or not os.path.isfile(path) or os.path.islink(side):
+        if (os.path.islink(path) or not os.path.isfile(path)
+                or os.path.islink(side) or not os.path.isfile(side)):
             continue
         try:
             with open(side, encoding="utf-8") as fh:
@@ -2981,7 +3000,11 @@ def _archived_versions(target, repo):
         except OSError:
             continue
         versions.append((name[:-3], name[:-3] in marked))
-    return versions
+    # oldest first: the time, then the -N a same-second write got (round 12)
+    def order(version):
+        suffix = BACKUP_ID_RE.fullmatch(version[0]).group(2) or ""
+        return (version[0][: len(version[0]) - len(suffix)], int(suffix[1:]) if suffix else 1)
+    return sorted(versions, key=order)
 
 
 def restore_subcmd(argv):
@@ -2991,9 +3014,15 @@ def restore_subcmd(argv):
         if rest or not _TARGET_RE.fullmatch(target) or not repo or not _REPO_RE.fullmatch(repo) or ".." in repo:
             err("ERROR: restore requires --target comment:<id>|issue:<n> --repo <owner/repo>")
             return 2
-        if _main_worktree() is None:
+        root = _main_worktree()
+        if root is None:
             err("Refuse: restore needs the git work tree that holds the archive.")
             return 7
+        # what restore <id> refuses, the lookup does not offer (round 12)
+        problem = _archive_path_problem(root) or _tracks_archive(root)
+        if problem:
+            err(f"Refuse: {problem}, so its entries are not this helper's; nothing is offered.")
+            return 2
         versions = _archived_versions(target, repo)
         if versions is None:
             err(f"✗ cannot read {target}; nothing was restored")

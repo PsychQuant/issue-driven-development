@@ -12,6 +12,7 @@ round 6). Switches (files in the store):
   mangle-read       — reads after a write return the body with a suffix
   pad-read          — reads after a write return the body plus one newline
   fail-body-read    — the raw read of a body fails (--jq reads still work)
+  fail-author-read  — the author read ({login…} / .user.login) fails
 Other files: repo.json answers `gh repo view <repo> --json …` (absent → error);
 issue-<n>-comment-ids lists the comment ids of issue n, oldest first, for
 `--paginate --jq '.[-1].id'`.
@@ -111,6 +112,9 @@ def main(argv):
             body = sys.stdin.read() if src == "-" else open(src, encoding="utf-8", newline="").read()
             write_body(path, body)
             return 0
+        if jq and ("login" in jq or "author_association" in jq) and os.path.exists(os.path.join(STORE, "fail-author-read")):
+            print("HTTP 502: Bad Gateway", file=sys.stderr)
+            return 1
         if not jq and os.path.exists(os.path.join(STORE, "fail-body-read")):
             print("HTTP 502: Bad Gateway", file=sys.stderr)
             return 1
