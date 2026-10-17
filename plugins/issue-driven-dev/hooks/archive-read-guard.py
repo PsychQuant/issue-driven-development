@@ -22,8 +22,9 @@ ordinary `cat`/`grep`/Read that would otherwise happen by accident.
 
 Shell commands are checked word by word, quoted strings included (`sh -c`,
 `python3 -c` read files from inside them). Only the value of a message option
-(-m, --message, --body, --title, --notes, --subject) given to a command that
-takes messages (git, gh, hg, jj, svn) is skipped: a commit message or issue
+(-m, --message, --body, --title, --notes, --subject, and idd-edit's --reason)
+given to a command that takes messages (git, gh, hg, jj, svn, the IDD
+helpers) is skipped: a commit message or issue
 body that mentions the path does not open it, while `sort -m <archive>` still
 names a file (verify #351 round 3).
 
@@ -91,7 +92,7 @@ def _hits(candidate):
 # they may mention the archive without reading it. Closed list — every other
 # quoted string is still scanned, because `sh -c "cat <archive>"` and
 # `python3 -c "open('<archive>')"` read the archive from inside a quoted string.
-MESSAGE_FLAGS = ("-m", "--message", "--body", "--title", "--notes", "--subject")
+MESSAGE_FLAGS = ("-m", "--message", "--body", "--title", "--notes", "--subject", "--reason")
 MESSAGE_COMMANDS = ("git", "gh", "hg", "jj", "svn", "gh-egress.sh", "idd-edit-helper.py")
 # A script run through an interpreter is named by the script (IDD posts through
 # `bash .../gh-egress.sh comment N --body "..."` — verify #351 round 4).

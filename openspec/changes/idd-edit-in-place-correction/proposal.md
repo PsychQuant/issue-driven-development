@@ -10,13 +10,16 @@ Issue 是下游 skill 與日後 session 的記憶。錯誤內容留在原處、�
 - IDD plugin 新增 PreToolUse hook：Claude 的 Read、Grep、Glob、Edit、Write 與 Bash 只要指向歸檔路徑一律拒絕，並說明原因。
 - `idd-comment --type errata` 對你自己的 comment 改走 `idd-edit --correct`（更正被拒絕時改貼 errata）；別人寫的 comment（含 OWNER 由別人執行時、bot）維持只貼更正 comment、不改原文（2026-10-17 使用者決定）。
 - `idd-verify`、`idd-diagnose`、`idd-reorganize` 發現 issue 既有內容有錯時，列出更正提議與可直接執行的 `/idd-edit --correct` 指令；只有使用者確認才執行，unattended 只列不做。
+- **整次 `/idd-edit` 的狀態搬進 helper**（四種 mode，2026-10-17 使用者決定）：`run-start` → `prepare` → `apply`／`discard` → `finish`，SKILL 每一步是一行指令、只帶前一步印出的值，結束碼由 `finish` 算；`scripts/tests/edit-run/` 照 agent 的方式逐段執行 SKILL。既有 mode 的備份改到使用者暫存目錄下的 `idd-edit-backup/`。
+- `idd-update` 每次從目前的 comment 重建 Key Decisions。
 - **BREAKING**（行為面）：`idd-comment --type errata` 對自己的 comment 不再追加 errata comment 與頂端警示，改為就地取代。
+- **BREAKING**（行為面）：`/idd-edit` 既有 mode 的結束碼 —— 拒絕預覽 9、寫入失敗 4、讀回不符 7（3.4.0 都是 0）；讀不到目標由 exit 1 中止整批，改為記為拒絕、繼續其他 target、最後 4。
 
 ## Capabilities
 
 ### New Capabilities
 
-- `in-place-correction`: `idd-edit --correct` 的目標、範圍、保護區、確認、標記，以及其他 skill 只能提議的規則
+- `in-place-correction`: `idd-edit --correct` 的目標、範圍、保護區、確認、標記，其他 skill 只能提議的規則，以及四種 mode 共用的 run（狀態在 helper）
 - `correction-archive`: 歸檔的位置、命名、不進 git 與不可讀的保證、還原，以及擋讀取的 hook
 
 ### Modified Capabilities
@@ -27,6 +30,6 @@ Issue 是下游 skill 與日後 session 的記憶。錯誤內容留在原處、�
 
 - Affected specs: `in-place-correction`（新）、`correction-archive`（新）、`append-vs-modify-discipline`（修改）
 - Affected code:
-  - New: plugins/issue-driven-dev/hooks/archive-read-guard.py, plugins/issue-driven-dev/scripts/tests/correction-archive/test.sh, plugins/issue-driven-dev/scripts/tests/in-place-correction/test.sh
-  - Modified: plugins/issue-driven-dev/rules/append-vs-modify.md, plugins/issue-driven-dev/scripts/idd-edit-helper.py, plugins/issue-driven-dev/skills/idd-edit/SKILL.md, plugins/issue-driven-dev/skills/idd-comment/SKILL.md, plugins/issue-driven-dev/skills/idd-verify/SKILL.md, plugins/issue-driven-dev/skills/idd-diagnose/SKILL.md, plugins/issue-driven-dev/skills/idd-reorganize/SKILL.md, plugins/issue-driven-dev/hooks/hooks.json, plugins/issue-driven-dev/CHANGELOG.md, plugins/issue-driven-dev/.claude-plugin/plugin.json, .gitignore
+  - New: plugins/issue-driven-dev/hooks/archive-read-guard.py, plugins/issue-driven-dev/scripts/tests/correction-archive/test.sh, plugins/issue-driven-dev/scripts/tests/in-place-correction/test.sh, plugins/issue-driven-dev/scripts/tests/correct-flow/test.sh, plugins/issue-driven-dev/scripts/tests/correct-flow/fake-gh.py, plugins/issue-driven-dev/scripts/tests/edit-run/test.sh
+  - Modified: plugins/issue-driven-dev/rules/append-vs-modify.md, plugins/issue-driven-dev/scripts/idd-edit-helper.py, plugins/issue-driven-dev/skills/idd-edit/SKILL.md, plugins/issue-driven-dev/skills/idd-comment/SKILL.md, plugins/issue-driven-dev/skills/idd-verify/SKILL.md, plugins/issue-driven-dev/skills/idd-diagnose/SKILL.md, plugins/issue-driven-dev/skills/idd-reorganize/SKILL.md, plugins/issue-driven-dev/skills/idd-update/SKILL.md, plugins/issue-driven-dev/skills/idd-issue/SKILL.md, plugins/issue-driven-dev/hooks/hooks.json, .github/workflows/tests.yml, plugins/issue-driven-dev/CHANGELOG.md, plugins/issue-driven-dev/.claude-plugin/plugin.json, .gitignore
 - Related issues: #351（本 change）、#347（`idd-edit` 編輯正文；本 change 只實作 `--correct` 的正文目標，其餘模式留在 #347）

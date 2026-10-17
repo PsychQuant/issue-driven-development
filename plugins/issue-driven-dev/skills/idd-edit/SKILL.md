@@ -142,17 +142,17 @@ TaskCreate(name="finish_run", description="Step 5：finish —— 印 outcome re
 
 ### Step 1: Start the run
 
-`<REPO>` 依下方 Configuration（config-protocol）解析（解析不到就填空字串，使用者的 `--repo` 會優先）；`<ARGS>` 是使用者給 `/idd-edit` 的引數原樣，每個引數用單引號包起來（引數本身含單引號時寫成 `'\''`）。單引號裡 `~` 與 `$HOME` 不會被 shell 展開；`--body-file` 開頭的 `~`、`$HOME`、`${HOME}` 由 helper 展開成你的家目錄。
+`<REPO>` 依下方 Configuration（config-protocol）解析，只能是 `owner/repo`（英數、`.`、`_`、`-`；不符就當成解析不到），解析不到就填空字串，使用者的 `--repo` 會優先；`<ARGS>` 是使用者給 `/idd-edit` 的引數原樣，每個引數用單引號包起來（引數本身含單引號時寫成 `'\''`）。單引號裡 `~` 與 `$HOME` 不會被 shell 展開；`--body-file` 開頭的 `~`、`$HOME`、`${HOME}` 由 helper 展開成你的家目錄。
 
 `${CLAUDE_PLUGIN_ROOT}` 由 Claude Code 載入本 skill 時代換成 plugin 的路徑（只代換有大括號的寫法；Bash 工具的環境裡沒有這個變數，#401）。
 
 ```bash
 # step: start — one call; prints RUN=, REPO=, SCRUB=, then TARGET= / PICK= lines
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" run-start --default-repo "<REPO>" -- <ARGS>
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" run-start --default-repo '<REPO>' -- <ARGS>
 ```
 
 - 結束碼 2、3、5：引數錯誤（沒有 mode、`--correct` 的內文只有目標標題、`#N --last` 而 #N 沒有 comment → 2；R4 → 3；`--body-file` 讀不到或被路徑閘門擋 → 5），stderr 有說明；結束碼 1：讀不到 #N 的 comments。**這就是整次執行的結束碼**，不必再跑後面的步驟。同一個 target 寫兩次只會列一次。
-- `PICK=#N`：使用者寫了 `#N` 但沒有 `--last`。列出 #N 的 comments（`gh api "repos/<REPO>/issues/N/comments" --paginate --jq '.[] | "\(.id) | \(.created_at) | \(.body | .[0:80])"'`），用 AskUserQuestion 選一則，把 `comment:<選中的 id>` 當成一個 TARGET。
+- `PICK=#N`：使用者寫了 `#N` 但沒有 `--last`。列出 #N 的 comments（`gh api "repos/<REPO>/issues/N/comments" --paginate --jq '.[] | "\(.id) | \(.created_at) | \(.body | .[0:80])"'`），用 AskUserQuestion 選一則，把 `comment:<選中的 id>` 當成一個 TARGET，Step 2 的 `<PICK>` 填 N（helper 會確認那則 comment 屬於 #N；選到的若已是這次的 TARGET，記為已處理）。其他 TARGET 的 `<PICK>` 填空字串。prepare 只接受 Step 1 列出的 TARGET 與 PICK 選出的 comment。
 - `SCRUB=` 是這個 repo 的隱私等級（third-party → `enforce`、自己的 public → `warn`、private → `light`，見 [`rules/privacy-scrubbing.md`](../../rules/privacy-scrubbing.md)）。
 
 ### Step 2: Prepare one target
@@ -160,8 +160,8 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" run-start --default-r
 每個 TARGET 依序做 Step 2–4，一次一個（batch mode 也是逐一確認，#158）。
 
 ```bash
-# step: prepare — one call per target
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" prepare --run "<RUN>" --target "<TARGET>"
+# step: prepare — one call per target; <PICK> is N when the target was chosen for PICK=#N, empty ("") otherwise
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" prepare --run "<RUN>" --target "<TARGET>" --pick "<PICK>"
 ```
 
 - `RESULT=refused` 與 `REASON=`：這個 target 不改（R5、author-unknown、fetch-failed、stage-failed、egress、protected、setext、unclosed-block、empty、section-not-found、section-ambiguous、parser-unavailable、archive、check-failed，stderr 有原因），直接換下一個 TARGET。拒絕已記在 run 裡，`finish` 會列出。
@@ -187,7 +187,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" prepare --run "<RUN>"
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" apply --run "<RUN>" --target "<TARGET>" --scrub-attested "<SCRUB>" --state "<STATE>"
 ```
 
-`--scrub-attested` 填 Step 1 印出的 `SCRUB`（自審後認為要更嚴，可填更嚴的 `enforce`），表示 Step 3 的隱私自審做過了；比這個 run 的等級寬 → exit 2。`<STATE>` 抄錯 → exit 2，重新抄一次即可（預覽還在，沒有記錄任何結果）。印出 `RESULT=`：`edited`（另有 `URL=`）、`refused`（`REASON=`）、`write-failed`（gh 自身錯誤，重讀確認未寫入）、`unverified`（已寫入但讀回不符，請手動檢查）；`--correct` 有歸檔時另印 `BACKUP_ID=`。不要重跑 prepare、也不要自己算 STATE —— 那會讓 apply 比對的不再是使用者看過的預覽。
+`--scrub-attested` 填 Step 1 印出的 `SCRUB`（自審後認為要更嚴，可填更嚴的 `enforce`），表示 Step 3 的隱私自審做過了；比這個 run 的等級寬 → exit 2。`<STATE>` 抄錯 → exit 2，重新抄一次即可（預覽還在，沒有記錄任何結果）；重抄後仍不符，表示預覽之後狀態被動過，discard 這個 target 後從 Step 1 重跑。印出 `RESULT=`：`edited`（另有 `URL=`）、`refused`（`REASON=`）、`write-failed`（gh 自身錯誤，重讀確認未寫入）、`unverified`（已寫入但讀回不符，請手動檢查）；`--correct` 有歸檔時另印 `BACKUP_ID=`。不要重跑 prepare、也不要自己算 STATE —— 那會讓 apply 比對的不再是使用者看過的預覽。
 
 使用者拒絕：
 
@@ -276,7 +276,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" finish --run "<RUN>"
 
 別人發的 comment（含 OWNER 由你以外的人執行時、bot）不用 `--correct`：改用 `/idd-comment --type errata` 另貼更正（`--correct` 沒有 override）；是你用另一個 GitHub 帳號寫的，就 `gh auth switch` 切過去再跑。issue 正文以開 issue 的人為作者，別人開的 issue 正文裡的錯誤改用 `/idd-comment --type correction`。
 
-**改不到的地方（已知限制，2026-10-17 使用者決定）**：不屬於任何標題的文字 —— issue 正文最後一條 `---` 之下（例如 IC_R011 的 `**Source**` 註腳）、或第一個標題之前 —— `--section` 搆不到，issue 正文也沒有整則範圍。這類錯誤用 `/idd-comment --type correction` 追加更正。
+**改不到的地方（已知限制，2026-10-17 使用者決定，只限 issue 正文）**：正文裡不屬於任何標題的文字 —— 最後一條 `---` 之下（例如 IC_R011 的 `**Source**` 註腳）、或第一個標題之前 —— `--section` 搆不到，正文也沒有整則範圍。comment 裡的這類文字用 `--scope whole-comment` 改得到。這類錯誤用 `/idd-comment --type correction` 追加更正。
 
 ## 鐵律
 
@@ -304,21 +304,20 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" finish --run "<RUN>"
 
 **`--append` / `--replace` / `--prepend-note`**：備份在使用者暫存目錄下的 `idd-edit-backup/`（目錄權限 0700），檔名 `comment-<id>-<unix time>.md`，同一秒再有一份就加 `-2`；Step 2 印出完整路徑（`BACKUP=`）。3.4.0 以前在 `/tmp/idd-edit-backup/`；macOS 的使用者暫存目錄在 `/var/folders/…` 底下。
 
-```bash
-ls -la "${TMPDIR:-/tmp}/idd-edit-backup/"
-# 回復（災難復原刻意走 raw gh api、不經 egress 網 — 還原的是先前已公開發佈的內容）
-gh api "repos/<REPO>/issues/comments/<id>" \
-    -X PATCH \
-    -F body=@"<Step 2 印出的 BACKUP= 路徑>"
-```
-
-**`--correct`**：舊版在 correction archive，用 backup id（更正標記 `backup-id="…"` 裡那個，填進 `<BACKUP_ID>`）還原。內容直接送給 GitHub、不顯示；還原的是**整個**目標，更正之後的修改（例如 `idd-update` 重建的 Current Status）會一起被蓋掉，執行前用 AskUserQuestion 說明這點並確認。
+回復時用 Step 2 印出的 `BACKUP=` 路徑（暫存目錄因呼叫而異：sandbox 內外不同，所以不要用 `$TMPDIR` 重組）。目錄名稱被別人先佔用時，備份會落在 `idd-edit-backup-<uid>` 或另一個 `idd-edit-backup-*`；`--replace` 標記的 `backup=` 記的就是這個目錄名稱加檔名。
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" restore '<BACKUP_ID>' --repo '<REPO>'
+# 災難復原刻意走 raw gh api、不經 egress 網 — 還原的是先前已公開發佈的內容
+gh api 'repos/<REPO>/issues/comments/<id>' -X PATCH -F 'body=@<the BACKUP= path from Step 2>'
 ```
 
-backup id 來自 GitHub 上的標記，是外部內容：用**單引號**包，`$()` 與反引號才不會在 helper 驗證格式之前被 shell 執行（#351 verify 第 8 輪）。
+**`--correct`**：舊版在 correction archive，用目標本身還原：helper 自己讀目標上的更正標記，只採用格式正確、指向這個目標、本機也有歸檔的 backup id。內容直接送給 GitHub、不顯示；還原的是**整個**目標，更正之後的修改（例如 `idd-update` 重建的 Current Status）會一起被蓋掉，執行前用 AskUserQuestion 說明這點並確認。
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" restore --target '<TARGET>' --repo '<REPO>'
+```
+
+`<TARGET>` 是 `comment:<id>` 或 `issue:<N>`，`<REPO>` 是 `owner/repo`。標記是 GitHub 上誰都能寫的內容，所以 agent 不從標記抄任何值進指令（#351 verify 第 8、9 輪：抄進引號的 id 可以跳出引號）。同一個目標被更正過好幾次時，helper 印出各個已檢查過的 `BACKUP_ID=` 並回 exit 2；讓使用者選一個，再跑 `restore '<BACKUP_ID>' --repo '<REPO>'`，`<BACKUP_ID>` 只照抄 helper 印出的值。
 
 歸檔檔不經過 Claude 讀取（hook 會擋、檔案權限 0000）。人要看舊版時，在自己的終端機 `chmod u+r` 該檔後用編輯器開，不要透過 Claude；看完 `chmod 000` 改回，否則 `grep -r` 這類不寫出路徑的遞迴讀取會讀到它。
 

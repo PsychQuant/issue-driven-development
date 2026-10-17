@@ -291,6 +291,10 @@ def validate_body_file_path(raw_path):
                     "override (audit your reason)."
                 )
                 return False, 5
+    # gh's own token store (`hosts.yml`), two components deep (#351 round 9)
+    if home and _path_is_under(canonical, os.path.realpath(os.path.join(home, ".config", "gh"))):
+        err(f"ERROR: --body-file refuses credential path: {raw_path}")
+        return False, 5
 
     return True, 0
 
@@ -302,7 +306,7 @@ def _home_path(raw_path):
     `$HOME/.cache/idd/corrections/…` (verify #351 round 8)."""
     for prefix in ("$HOME/", "${HOME}/"):
         if raw_path.startswith(prefix):
-            return os.path.join(os.path.expanduser("~"), raw_path[len(prefix):])
+            return os.path.join(os.path.expanduser("~"), raw_path[len(prefix):].lstrip("/"))
     return os.path.expanduser(raw_path) if raw_path.startswith("~") else raw_path
 
 
@@ -676,7 +680,8 @@ def validate_target_subcmd(argv):
             err(
                 f"Refuse: {comment_id} was written by {login}, a bot; --correct only "
                 "rewrites your own content. Propose the correction with "
-                "/idd-comment --type errata instead (#351)."
+                + ("/idd-comment --type correction (an issue body has no comment id for --type errata)"
+                   if is_issue else "/idd-comment --type errata") + " instead (#351)."
             )
             return 4
         err(f"✓ Bot author: {login} (skip R5 gate)")
@@ -1570,6 +1575,14 @@ def correct_prepare_subcmd(argv):
     ok, code, content = read_body_file(body_file)
     if not ok:
         return code
+    return _correct_prepare_text(target, kind, num, repo, section, scrub, content)
+
+
+def _correct_prepare_text(target, kind, num, repo, section, scrub, content):
+    """correct-prepare once the corrected text is in hand. A run passes the
+    text of its own body.md here instead of a path: the body-file gate only
+    admits the temp dir of the current call, and a run may move between a
+    sandboxed and an unsandboxed one (verify #351 round 9)."""
     if not content.strip() or not "\n".join(_strip_target_heading(
             _lines_of(content.replace("\r\n", "\n").replace("\r", "\n")), section or "-")).strip():
         # Only the target heading is no text either: it would empty the section.
@@ -1764,7 +1777,7 @@ def correct_apply_subcmd(argv):
         shutil.rmtree(real, ignore_errors=True)
 
 
-def _correct_apply(work, state_sha):
+def _correct_apply(work, state_sha, scrub=None):
     import hashlib
     state_path = os.path.join(work, "state.json")
     # One read: the bytes that are hashed are the bytes that are used (round 6).
@@ -1813,6 +1826,9 @@ def _correct_apply(work, state_sha):
         rc, backup_id = _archive_write(kind, num, fh.read(), repo)
     if rc != 0:
         return _refused("archive")
+    if scrub:
+        # the tier the privacy review attested at apply, at least the prepared one (round 9)
+        state = dict(state, scrub=scrub)
     try:
         return _correct_write(work, state, endpoint, backup, body, backup_id)
     except Exception as exc:   # noqa: BLE001 — after the archive, report honestly
@@ -1833,6 +1849,7 @@ def _correct_write(work, state, endpoint, backup, body, backup_id):
     new_file = os.path.join(work, "new.md")
     with open(new_file, "w", encoding="utf-8", newline="") as fh:
         fh.write(new_text)
+    print(f"SCRUB={state['scrub']}")   # the tier the write goes out at
     verb = ["edit-comment", num] if kind == "comment" else ["edit", num]
     rc = _egress(verb + ["--repo", repo, "--body-file", new_file, "--scrub-attested", state["scrub"]]
                  + _mention_args(state["mentions"]))
@@ -1896,7 +1913,10 @@ def _write_diff(old_path, new_path, dest):
     with open(new_path, encoding="utf-8", errors="replace", newline="") as fh:
         new = fh.read().splitlines(keepends=True)
     with open(dest, "w", encoding="utf-8", newline="") as fh:
-        fh.writelines(difflib.unified_diff(old, new, "current", "after this edit"))
+        for line in difflib.unified_diff(old, new, "current", "after this edit"):
+            # as diff(1) does: a last line without a newline would otherwise be
+            # glued to the next one on screen (verify #351 round 9)
+            fh.write(line if line.endswith("\n") else line + "\n\\ No newline at end of file\n")
 
 
 def _captured(fn, *args):
@@ -1951,12 +1971,55 @@ def _own_run_dir(run):
         return None
     if st.st_uid != os.getuid() or st.st_mode & 0o077 or not os.path.isfile(os.path.join(real, "run.json")):
         return None
+    # What run-start writes, and nothing else: a run directory is found by its
+    # path alone, so its contents are checked as run-start would have made
+    # them — the same gates (R5's reason pair, the repo shape, the tier), and a
+    # body that is a plain file, not a link to one (verify #351 round 9).
+    body = os.path.join(real, "body.md")
+    if os.path.islink(body) or not os.path.isfile(body):
+        return None
+    try:
+        meta = _run_meta(real)
+    except (OSError, ValueError):
+        return None
+    if _run_meta_problem(meta):
+        return None
     return real
 
 
 def _run_meta(real):
     with open(os.path.join(real, "run.json"), encoding="utf-8") as fh:
         return json.load(fh)
+
+
+def _run_meta_problem(meta):
+    if not isinstance(meta, dict) or meta.get("mode") not in _MODE_FLAGS:
+        return "mode"
+    repo = str(meta.get("repo", ""))
+    if not _REPO_RE.fullmatch(repo) or ".." in repo:
+        return "repo"
+    if meta.get("scrub") not in _SCRUB_LEVELS or meta.get("override") not in ("true", "false"):
+        return "settings"
+    if meta["override"] == "true" and not meta.get("reason"):
+        return "override without reason"
+    if meta.get("scope") not in ("", "whole-comment"):
+        return "scope"
+    if meta.get("section") and not _ATX_HEADING_RE.fullmatch(str(meta["section"])):
+        return "section"
+    targets, picks = meta.get("targets"), meta.get("picks")
+    if (not isinstance(targets, list) or not all(isinstance(x, str) and _TARGET_RE.fullmatch(x) for x in targets)
+            or not isinstance(picks, list) or not all(isinstance(x, str) and x.isdigit() for x in picks)):
+        return "targets"
+    return None
+
+
+def _comment_issue(repo, num):
+    """The issue number a comment belongs to, or None."""
+    proc = _gh(["api", f"repos/{repo}/issues/comments/{num}", "--jq", ".issue_url"])
+    if proc is None or proc.returncode != 0:
+        return None
+    m = re.search(r"/issues/([0-9]+)$", proc.stdout.decode("utf-8", errors="replace").strip())
+    return m.group(1) if m else None
 
 
 def _record(real, target, outcome, **extra):
@@ -1977,6 +2040,8 @@ def _latest(real):
                 rec = json.loads(line)
                 if rec["target"] not in last:
                     order.append(rec["target"])
+                elif last[rec["target"]].get("pick") and not rec.get("pick"):
+                    rec["pick"] = last[rec["target"]]["pick"]   # which #N it came from stays known
                 last[rec["target"]] = rec
     except FileNotFoundError:
         pass
@@ -2029,6 +2094,7 @@ def run_start_subcmd(argv):
             return 2
         resolved.append(f"comment:{ids[-1]}")
     resolved = list(dict.fromkeys(resolved))   # a target named twice is edited once
+    picks = list(dict.fromkeys(picks))
     _remove_stale_work_dirs()   # every mode, not only --correct, leaves runs holding old text
     scrub = _scrub_tier(repo)
     run = tempfile.mkdtemp(prefix=RUN_PREFIX)   # mode 0700
@@ -2063,35 +2129,60 @@ def _run_args(argv, *flags):
 
 
 def prepare_subcmd(argv):
-    parsed = _run_args(argv)
+    parsed = _run_args(argv, "--pick")
     if parsed is None:
-        err("ERROR: prepare requires --run <RUN> --target <TARGET>, as run-start printed them")
+        err("ERROR: prepare requires --run <RUN> --target <TARGET> [--pick <N>], as run-start printed them")
         return 2
-    real, target, _ = parsed
+    real, target, values = parsed
     meta = _run_meta(real)
-    if any(t == target for t, _ in _latest(real)):
+    pick = values["--pick"] or ""
+    rows = dict(_latest(real))
+    if pick:
+        # A PICK is settled by its own record: which #N chose which comment,
+        # checked to be that issue's comment (verify #351 round 9: counting
+        # extra targets named the wrong #N, or let a wrong one through).
+        if pick not in meta["picks"] or f"#{pick}" in rows or any(r.get("pick") == pick for r in rows.values()):
+            err(f"ERROR: #{pick} is not an open PICK of this run")
+            return 2
+        if not target.startswith("comment:") or _comment_issue(meta["repo"], target.split(":", 1)[1]) != pick:
+            err(f"✗ {target} is not a comment of #{pick} — nothing changed")
+            _record(real, f"#{pick}", "refused", reason="not-in-pick")
+            print("RESULT=refused")
+            print("REASON=not-in-pick")
+            return 4
+        if target in rows:
+            # the pick names a target this run already has: settled by it
+            _record(real, f"#{pick}", "merged", via=target)
+            print(f"RESULT=merged")
+            return 0
+    elif target not in meta["targets"]:
+        err(f"ERROR: {target} is not a target of this run; run-start printed its targets "
+            "(a comment chosen for a PICK=#N is prepared with --pick N)")
+        return 2
+    if target in rows:
         err(f"ERROR: {target} was already prepared in this run")
         return 2
     if meta["mode"] == "--correct":
-        argv = ["--target", target, "--repo", meta["repo"]]
-        argv += ["--section", meta["section"]] if meta["section"] else ["--scope", "whole-comment"]
-        argv += ["--body-file", os.path.join(real, "body.md"), "--scrub-attested", meta["scrub"]]
-        rc, out = _captured(correct_prepare_subcmd, argv)
-        values = _kv(out)
+        with open(os.path.join(real, "body.md"), encoding="utf-8", newline="") as fh:
+            content = fh.read()
+        kind, num = target.split(":", 1)
+        rc, out = _captured(_correct_prepare_text, target, kind, num, meta["repo"],
+                            meta["section"] or None, meta["scrub"], content)
+        result = _kv(out)
         if rc == 0:
-            _record(real, target, "prepared", work=values.get("WORK"))
+            _record(real, target, "prepared", work=result.get("WORK"), pick=pick)
         else:
-            _record(real, target, "refused", reason=values.get("REASON") or "check-failed")
+            _record(real, target, "refused", reason=result.get("REASON") or "check-failed", pick=pick)
         return rc
     kind, num = target.split(":", 1)
     if kind != "comment":
         err("Refuse: an issue:<N> target is only accepted with --correct")
         return 2
-    return _edit_prepare(real, meta, target, num)
+    return _edit_prepare(real, meta, target, num, pick)
 
 
-def _edit_refused(real, target, reason):
-    _record(real, target, "refused", reason=reason)
+def _edit_refused(real, target, reason, pick=""):
+    _record(real, target, "refused", reason=reason, pick=pick)
     print("RESULT=refused")
     print(f"REASON={reason}")
     return 4
@@ -2139,7 +2230,12 @@ def _backup_dir():
             except OSError:
                 continue
         return base
-    return None
+    # Both names taken by someone else (a shared /tmp): a fresh private one,
+    # printed as BACKUP= like any other (verify #351 round 9).
+    try:
+        return tempfile.mkdtemp(prefix=f"{BACKUP_DIR_NAME}-")
+    except OSError:
+        return None
 
 
 def _backup_ref(path):
@@ -2190,31 +2286,31 @@ def _edit_compose(meta, old_text, body_path, backup, work):
     return None, text + "\n"
 
 
-def _edit_prepare(real, meta, target, num):
+def _edit_prepare(real, meta, target, num, pick=""):
     repo = meta["repo"]
     rc = validate_target_subcmd([num, repo, meta["override"], meta["mode"]])
     if rc == 4:
-        return _edit_refused(real, target, "R5")
+        return _edit_refused(real, target, "R5", pick)
     if rc != 0:
-        return _edit_refused(real, target, "author-unknown" if rc == 1 else "check-failed")
+        return _edit_refused(real, target, "author-unknown" if rc == 1 else "check-failed", pick)
     work = os.path.join(real, f"comment-{num}")
     os.mkdir(work, 0o700)
     old = os.path.join(work, "old.md")
     if not _fetch_body(_endpoint("comment", num, repo), old):
         err(f"✗ cannot read {target} — nothing changed")
-        return _edit_refused(real, target, "fetch-failed")
+        return _edit_refused(real, target, "fetch-failed", pick)
     ok, mentions = _existing_mentions(old)
     if not ok:
-        return _edit_refused(real, target, "egress")
+        return _edit_refused(real, target, "egress", pick)
     with open(old, encoding="utf-8", newline="") as fh:
         old_text = fh.read()
     backup = _edit_backup(num, old_text)
     if backup is None:
         err(f"✗ cannot write the backup of {target} — nothing changed")
-        return _edit_refused(real, target, "stage-failed")
+        return _edit_refused(real, target, "stage-failed", pick)
     reason, new_text = _edit_compose(meta, old_text, os.path.join(real, "body.md"), backup, work)
     if reason:
-        return _edit_refused(real, target, reason)
+        return _edit_refused(real, target, reason, pick)
     new = os.path.join(work, "new.md")
     with open(new, "w", encoding="utf-8", newline="") as fh:
         fh.write(new_text)
@@ -2223,10 +2319,10 @@ def _edit_prepare(real, meta, target, num):
     # The egress gates run before the preview, so a body gh-egress would refuse
     # is never shown for confirmation (round 9; --correct did this since round 3).
     if _egress(["check", "--body-file", new, "--scrub-attested", meta["scrub"]] + _mention_args(mentions)) != 0:
-        return _edit_refused(real, target, "egress")
+        return _edit_refused(real, target, "egress", pick)
     with open(os.path.join(work, "state.json"), "w", encoding="utf-8") as fh:
         json.dump({"sha": _sha256(new), "old_sha": _sha256(old), "mentions": mentions}, fh)
-    _record(real, target, "prepared", backup=backup)
+    _record(real, target, "prepared", backup=backup, pick=pick)
     print(f"PREVIEW={new}")
     print(f"DIFF={diff}")
     print(f"BACKUP={backup}")
@@ -2263,23 +2359,31 @@ def apply_subcmd(argv):
             err(f"ERROR: --state is not the STATE= prepare printed for {target}; copy it again")
             return 2
         try:
-            rc, out = _captured(_correct_apply, work, state)
+            rc, out = _captured(_correct_apply, work, state, attested)
+        except Exception as exc:   # noqa: BLE001 — before the archive (after it, _correct_apply reports)
+            err(f"✗ {target}: {type(exc).__name__}: {exc} — nothing archived or written")
+            rc, out = 4, "RESULT=refused\nREASON=check-failed\n"
+            print(out, end="")
         finally:
             shutil.rmtree(work, ignore_errors=True)
         result = _kv(out)
         outcome = result.get("RESULT") if result.get("RESULT") in ("edited", "write-failed", "unverified") else "refused"
         _record(real, target, outcome, reason=result.get("REASON"), backup_id=result.get("BACKUP_ID"), url=result.get("URL"))
         return rc
+    stage = {"writing": False}
     try:
-        return _edit_apply(real, meta, target)
-    except Exception as exc:   # noqa: BLE001 — the write may have happened
-        err(f"⚠ {target}: {type(exc).__name__}: {exc} — check it by hand")
+        return _edit_apply(real, meta, target, stage)
+    except Exception as exc:   # noqa: BLE001 — report what is known
+        if not stage["writing"]:
+            err(f"✗ {target}: {type(exc).__name__}: {exc} — nothing written")
+            return _edit_refused(real, target, "check-failed")
+        err(f"⚠ {target}: {type(exc).__name__}: {exc} — the write may have happened; check it by hand")
         _record(real, target, "unverified", reason="exception")
         print("RESULT=unverified")
         return 7
 
 
-def _edit_apply(real, meta, target):
+def _edit_apply(real, meta, target, stage):
     num = target.split(":", 1)[1]
     work = os.path.join(real, f"comment-{num}")
     with open(os.path.join(work, "state.json"), encoding="utf-8") as fh:
@@ -2302,6 +2406,8 @@ def _edit_apply(real, meta, target):
     if _sha256(current) != st["old_sha"]:
         err(f"✗ {target} changed since the preview — nothing written; run again to see the new version")
         return _edit_refused(real, target, "changed-since-preview")
+    print(f"SCRUB={meta['scrub']}")   # the tier the write goes out at
+    stage["writing"] = True
     rc = _egress(["edit-comment", num, "--repo", meta["repo"], "--body-file", new,
                   "--scrub-attested", meta["scrub"]] + _mention_args(st["mentions"]))
     if rc >= 10:
@@ -2375,11 +2481,11 @@ def finish_subcmd(argv):
     # A target run-start listed but nobody prepared, or a #N nobody picked, is
     # not a success (round 8: a half-done batch reported 0).
     seen = {t for t, _ in rows}
-    listed = meta.get("targets", [])
-    picked = [t for t in seen if t not in listed]
-    rows += [(t, {"target": t, "outcome": "refused", "reason": "not-prepared"}) for t in listed if t not in seen]
+    settled = {r.get("pick") for _, r in rows if r.get("pick")} | {t[1:] for t in seen if t.startswith("#")}
+    rows += [(t, {"target": t, "outcome": "refused", "reason": "not-prepared"})
+             for t in meta["targets"] if t not in seen]
     rows += [(f"#{n}", {"target": f"#{n}", "outcome": "refused", "reason": "not-picked"})
-             for n in meta.get("picks", [])[len(picked):]]
+             for n in meta["picks"] if n not in settled]
     for target, rec in rows:
         if rec["outcome"] == "prepared":
             # Prepared but neither applied nor discarded: nothing was written,
@@ -2395,8 +2501,11 @@ def finish_subcmd(argv):
     print(f"edited: {count['edited']} / refused: {refused}")
     for target, rec in rows:
         o, why = rec["outcome"], rec.get("reason", "")
-        if o == "edited":
-            print(f"  ✓ EDITED {target}" + (f"  {rec['url']}" if rec.get("url") else ""))
+        if o == "merged":
+            print(f"  = {target} → {rec.get('via', '')}（已在這次執行裡）")
+        elif o == "edited":
+            print(f"  ✓ EDITED {target}" + (f"  {rec['url']}" if rec.get("url") else "")
+                  + (f"（#{rec['pick']}）" if rec.get("pick") else ""))
         elif o == "refused":
             hint = ""
             if why == "R5" and meta["mode"] != "--correct":
@@ -2684,10 +2793,57 @@ def _archive_write(kind, target_id, data, repo):
     return 7, None
 
 
+def _marker_backup_ids(target, repo):
+    """The backup ids the target's own correction markers name, checked: the
+    id format, the target it encodes, and a local archive entry. The marker
+    is GitHub text anyone on the issue could write, so nothing from it reaches
+    a shell — the skill passes only --target and --repo (verify #351 round 9)."""
+    kind, num = target.split(":", 1)
+    work = tempfile.mkdtemp(prefix=CORRECT_WORK_PREFIX)
+    try:
+        body = os.path.join(work, "current.md")
+        if not _fetch_body(_endpoint(kind, num, repo), body):
+            return None
+        with open(body, encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    want = f"comment-{num}" if kind == "comment" else f"issue-{num}-body"
+    root = _main_worktree()
+    ids = []
+    for m in CORRECT_MARKER_RE.finditer(text):
+        found = re.search(r'backup-id="([^"]*)"', m.group(0))
+        bid = found.group(1) if found else ""
+        idm = BACKUP_ID_RE.fullmatch(bid)
+        if (idm and idm.group(1) == want and bid not in ids and root is not None
+                and os.path.isfile(os.path.join(root, ARCHIVE_REL, bid + ".md"))):
+            ids.append(bid)
+    return ids
+
+
 def restore_subcmd(argv):
     repo, rest = _take_flag(argv, "--repo")
+    target, rest = _take_flag(rest, "--target")
+    if target is not None:
+        if rest or not _TARGET_RE.fullmatch(target) or not repo or not _REPO_RE.fullmatch(repo) or ".." in repo:
+            err("ERROR: restore requires --target comment:<id>|issue:<n> --repo <owner/repo>")
+            return 2
+        ids = _marker_backup_ids(target, repo)
+        if ids is None:
+            err(f"✗ cannot read {target}; nothing was restored")
+            return 1
+        if len(ids) != 1:
+            if not ids:
+                err(f"ERROR: {target} carries no correction marker with an archive entry in this clone")
+            else:
+                err(f"{target} was corrected {len(ids)} times; pick the version to put back and run "
+                    "`restore <BACKUP_ID> --repo …` with one of these (checked) ids:")
+                for bid in ids:
+                    print(f"BACKUP_ID={bid}")
+            return 2
+        rest = [ids[0]]
     if len(rest) != 1 or not repo:
-        err("ERROR: restore requires <backup-id> --repo <owner/repo>")
+        err("ERROR: restore requires <backup-id> --repo <owner/repo> (or --target <target> --repo <owner/repo>)")
         return 2
     backup_id = rest[0]
     m = BACKUP_ID_RE.fullmatch(backup_id)
@@ -2801,8 +2957,9 @@ Subcommands:
   archive <comment|issue> <id> --from-file <path> --repo <owner/repo>
       Archive the prior text (never tracked, mode 0000, <id>.repo sidecar); print the backup id.
 
-  restore <backup-id> --repo <owner/repo>
-      PATCH the target back to its archived text; print URL and byte count.
+  restore (--target comment:<id>|issue:<n> | <backup-id>) --repo <owner/repo>
+      PATCH the target back to its archived text; print URL and byte count. With
+      --target, the id is read from the target's own correction marker and checked.
 
 Exit codes:
   0=success, 1=generic, 2=usage, 3=R4-refuse, 4=R5-refuse (correct-*: not done),

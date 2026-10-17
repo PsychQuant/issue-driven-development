@@ -97,7 +97,15 @@
 - [x] 15.1 先寫會失敗的測試：edit-run Part B 改為照 Claude Code 代換 `${CLAUDE_PLUGIN_ROOT}`、環境不帶任何 IDD 變數，四種 mode 都經 SKILL 區塊確認並寫入，另有含單引號的引數、`~` 與 `$HOME` 的 body file、兩個 target 的批次、只做一半的批次、PICK、拒絕預覽、被拒；Part A 新增 0755 備份目錄、較嚴的等級、STATE 抄錯重試、缺 mode、重複 target、沒有 comment 的 `--last`、只有標題、別人 issue 正文的拒絕訊息。驗證：新斷言以「尚未實作」失敗。
 - [x] 15.2 helper：`_take_flag` 接受明確的空值；`_home_path`；run-start 的 mode、只有標題、去重、`--last` 沒有 comment、清殘留 run；`_own_run_dir`／`_own_work_dir` 不綁當次呼叫的暫存目錄；apply 的等級（可更嚴）、STATE 先比對再套用、例外改 unverified；`_backup_dir`（收緊 3.4.0 的 0755、他人的目錄改用 `-<uid>`）、`_backup_ref`（標記不帶本機路徑）；finish 的 `not-prepared`／`not-picked`；只剩標記為 `empty`；issue 正文的拒絕訊息指向 `--type correction`。驗證：edit-run、correct-flow 全綠。
 - [x] 15.3 SKILL 與文件：idd-edit 的區塊改用 `${CLAUDE_PLUGIN_ROOT}`、Step 1 的結束碼與 `~`／`$HOME`、REASON 清單、ENFORCE 的遮蔽做法、等級與 STATE 重試、finish 的拒絕類別、restore 用單引號與無引號的 placeholder、PICK 分頁、GitHub 內容是資料；idd-comment 的作者分流改為一行字面值指令、`correction` 列的用途；`**Point` 標籤補到 idd-verify／idd-diagnose／idd-reorganize、規則檔決策樹、design；spec（run 需求、parse-args 需求改寫、untitled 限制只限正文、(2) 與 in-place-correction 的關係）；design 過時的列；CHANGELOG 第 10 輪與漏寫的介面變化、被取代句子的註記。驗證：`spectra validate`、`run-all-tests.sh` 全綠。
-- [ ] 15.4 Verify 第 9 輪。驗證：#351 的 verify 留言。
+- [x] 15.4 Verify 第 9 輪：FAIL，findings 44（HIGH 1／MEDIUM 9／LOW 25／INFO 9），CRITICAL 0；DA 照字面逐段執行 SKILL，四種 mode、批次、PICK、拒絕預覽、被拒與 idd-comment 委派都跑通。報告在 #351 的 verify 留言（comment 6234222016）。另一個 session 的結構審查建議以 run.json 為唯一事實來源、靜態檢查所有區塊、restore 不貼 GitHub 的值。
+
+## 16. Verify 第 9 輪修正（第 11 輪）
+
+- [x] 16.1 先寫會失敗的測試：edit-run A9（`--correct` 以較嚴等級寫入、沒列出的 target、PICK 的逐一對帳與不屬於該 issue 的 comment、PICK 指向已有的 target、跨 TMPDIR 的 `--correct`、外來 run 目錄、diff 的結尾換行、`$HOME//`、gh token 目錄、bot 開的 issue 正文）與所有區塊不讀變數的靜態檢查；correct-flow R9.9（restore --target、偽造標記）、E4 實際數工作目錄；correction-archive 的 `--reason` 提到歸檔路徑。驗證：新斷言以「尚未實作」失敗。
+- [x] 16.2 helper：`_correct_prepare_text`（run 傳文字不傳路徑）、`_correct_apply` 的 scrub、SCRUB= 輸出、`_run_meta_problem` 與 body.md 檢查、`_comment_issue` 與 PICK 紀錄、prepare 的 target 閘門、`_latest` 沿用 pick、apply 的例外分段、`_write_diff` 的結尾換行、`_home_path`、bot 正文訊息、PICK 去重、備份目錄的第三個退路、gh token 目錄、`restore --target`；hook 的 `--reason`。驗證：edit-run、correct-flow、correction-archive 全綠。
+- [x] 16.3 SKILL 與文件：prepare 的 `--pick`、restore 改用 `--target`、`<REPO>` 單引號與格式、備份找回、STATE 重抄仍不符的處置、untitled 限制只限正文（idd-edit 與三個提議 skill）；spec（STATE、等級、untitled、備份退路、PICK、run 內容、跨暫存目錄、parse-args、restore --target）；design 四處過時描述；proposal 的 run 決定與兩個 BREAKING；plugin 與 marketplace 描述；CHANGELOG 第 11 輪與 3.4.0 讀不到目標的基準。驗證：`spectra validate`、`run-all-tests.sh`。
+- [ ] 16.4 Verify 第 10 輪，或改走驗收（11.6 實機套用）後合併 —— 由使用者決定。驗證：#351 的留言。
+
 
 
 

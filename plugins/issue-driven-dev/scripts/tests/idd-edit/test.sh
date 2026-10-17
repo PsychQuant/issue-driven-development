@@ -165,7 +165,7 @@ f14() { # name mode(assert|refute) needle [file]
         FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name"); echo "FAIL: $name (needle: $needle)"
     fi
 }
-f14 "f14a: R5 refusal is recorded per target"                   assert '_edit_refused(real, target, "R5")' "$HELPER_PY"
+f14 "f14a: R5 refusal is recorded per target"                   assert '_edit_refused(real, target, "R5", pick)' "$HELPER_PY"
 f14 "f14a2: a refusal does not stop the batch"                  assert '不中斷 batch（#158 語意 (i)）'
 f14 "f14b: batch outcome report sums both refusal buckets"      assert 'refused = count["refused"] + count["egress-refused"]' "$HELPER_PY"
 f14 "f14b2: refused rows carry their reason tag (#351)"         assert '✗ REFUSED({why' "$HELPER_PY"

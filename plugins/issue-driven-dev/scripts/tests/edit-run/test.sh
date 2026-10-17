@@ -302,6 +302,100 @@ h a8gp prepare --run "$RUN" --target issue:12
 assert_output_grep "an issue body's refusal names --type correction" "--type correction" "$WORK/a8gp.err"
 h a8gf finish --run "$RUN"
 
+echo "A9. round 11 (verify #351 round 9)"
+# mkrec_in <file> <login> <issue number> <body> — a comment that belongs to an issue
+mkrec_in() {
+  python3 - "$FAKE_GH_STORE/$1" "$2" "$3" "$4" <<'PY'
+import json, sys
+path, login, issue, body = sys.argv[1:]
+json.dump({"body": body, "user": {"login": login}, "author_association": "MEMBER",
+           "html_url": "https://github.com/o/r/x", "issue_url": f"https://api.github.com/repos/o/r/issues/{issue}"},
+          open(path, "w"))
+PY
+}
+# a --correct written at the stricter tier the review attested
+mkrec comment-240.json kiki830621 MEMBER "$SECTION_BODY"
+start a9a comment:240 --correct --section "## Notes" --body-file "$WORK/fix.md" --reason r
+h a9ap prepare --run "$RUN" --target comment:240
+h a9aa apply --run "$RUN" --target comment:240 --scrub-attested enforce --state "$(val STATE "$WORK/a9ap.out")"
+assert_eq "--correct writes at the stricter attested tier" "enforce" "$(val SCRUB "$WORK/a9aa.out")"
+h a9af finish --run "$RUN"
+# a target the run did not list is not prepared
+mkrec comment-241.json kiki830621 MEMBER "listed"
+mkrec comment-242.json kiki830621 MEMBER "not listed"
+start a9b comment:241 --append --body-file "$WORK/fix.md" --reason r
+h a9bp prepare --run "$RUN" --target comment:242
+assert_exit "a target outside the run is a usage error" 2 "$RC"
+h a9bf finish --run "$RUN"
+# PICKs are settled one by one: the comment must belong to that issue
+mkrec_in comment-243.json kiki830621 20 "from twenty"
+mkrec_in comment-244.json kiki830621 21 "from twenty-one"
+start a9c '#20' '#21' '#20' --append --body-file "$WORK/fix.md" --reason r
+assert_eq "a PICK named twice is listed once" "2" "$(vals PICK "$WORK/a9c.out" | wc -l | tr -d ' ')"
+h a9cw prepare --run "$RUN" --target comment:244 --pick 20
+assert_eq "a comment from another issue does not resolve the PICK" "not-in-pick" "$(val REASON "$WORK/a9cw.out")"
+h a9cp prepare --run "$RUN" --target comment:244 --pick 21
+h a9ca apply --run "$RUN" --target comment:244 --scrub-attested "$SCRUB"
+h a9cf finish --run "$RUN"
+assert_exit "one PICK left unresolved exits 4" 4 "$RC"
+assert_output_grep "the report names #20, the one that was refused" "REFUSED(not-in-pick) #20" "$WORK/a9cf.out"
+refute_output_grep "and not #21, which was edited" "not-picked) #21" "$WORK/a9cf.out"
+# a PICK that resolves to a target already in the run is settled, not refused
+mkrec_in comment-245.json kiki830621 22 "both"
+start a9d comment:245 '#22' --append --body-file "$WORK/fix.md" --reason r
+h a9dp prepare --run "$RUN" --target comment:245
+h a9da apply --run "$RUN" --target comment:245 --scrub-attested "$SCRUB"
+h a9dk prepare --run "$RUN" --target comment:245 --pick 22
+assert_exit "a PICK naming a target already in the run is accepted" 0 "$RC"
+h a9df finish --run "$RUN"
+assert_exit "and the run exits 0" 0 "$RC"
+# a --correct run moves between temp dirs (sandboxed and unsandboxed calls)
+mkrec comment-246.json kiki830621 MEMBER "$SECTION_BODY"
+OTHER_TMP="$(mktemp -d /var/tmp/idd-er-other-XXXXXX)"
+start a9e comment:246 --correct --section "## Notes" --body-file "$WORK/fix.md" --reason r
+(cd "$REPO" && TMPDIR="$OTHER_TMP" python3 "$HELPER" prepare --run "$RUN" --target comment:246) >"$WORK/a9ep.out" 2>"$WORK/a9ep.err"
+assert_exit "prepare under another TMPDIR accepts the run's own body" 0 "$?"
+(cd "$REPO" && TMPDIR="$OTHER_TMP" python3 "$HELPER" apply --run "$RUN" --target comment:246 --scrub-attested "$SCRUB" --state "$(val STATE "$WORK/a9ep.out")") >"$WORK/a9ea.out" 2>"$WORK/a9ea.err"
+assert_eq "and apply there writes it" "edited" "$(val RESULT "$WORK/a9ea.out")"
+h a9ef finish --run "$RUN"
+rm -rf "$OTHER_TMP"
+# a run directory whose run.json run-start could not have written is refused
+EVIL="$WORK/elsewhere/idd-run-evil"; mkdir -p "$EVIL"; chmod 700 "$EVIL"
+printf '{"mode": "--append", "override": "true", "reason": "", "scrub": "light", "repo": "o/r", "targets": ["comment:241"], "picks": []}' >"$EVIL/run.json"
+ln -s /etc/hosts "$EVIL/body.md"
+h a9f prepare --run "$EVIL" --target comment:241
+assert_exit "a run.json with an override and no reason is not a run" 2 "$RC"
+printf '{"mode": "--append", "override": "false", "reason": "r", "scrub": "warn", "repo": "o/r", "targets": ["comment:241"], "picks": []}' >"$EVIL/run.json"
+h a9f2 prepare --run "$EVIL" --target comment:241
+assert_exit "a symlinked body.md is not a run's body" 2 "$RC"
+# the diff marks a last line without a newline
+mkrec comment-247.json kiki830621 MEMBER "no newline at the end"
+start a9g comment:247 --append --body-file "$WORK/fix.md" --reason r
+h a9gp prepare --run "$RUN" --target comment:247
+assert_output_grep "the diff says the old text had no final newline" '\ No newline at end of file' "$(val DIFF "$WORK/a9gp.out")"
+refute_output_grep "and does not glue two lines together" "-no newline at the end+" "$(val DIFF "$WORK/a9gp.out")"
+h a9gf finish --run "$RUN"
+# $HOME//x is still under the home directory
+mkdir -p "$WORK/home2"; printf 'from home\n' >"$WORK/home2/h.md"
+mkrec comment-248.json kiki830621 MEMBER "h"
+(cd "$REPO" && HOME="$WORK/home2" python3 "$HELPER" run-start --default-repo o/r -- comment:248 --append --body-file '$HOME//h.md' --reason r) >"$WORK/a9h.out" 2>"$WORK/a9h.err"
+assert_exit "\$HOME//file is read from the home directory" 0 "$?"
+h a9hf finish --run "$(val RUN "$WORK/a9h.out")"
+# gh's own token store is a credential path
+mkdir -p "$WORK/home3/.config/gh"; printf 'oauth_token: x\n' >"$WORK/home3/.config/gh/hosts.yml"
+(HOME="$WORK/home3" python3 "$HELPER" run-start --default-repo o/r -- comment:248 --append --body-file "$WORK/home3/.config/gh/hosts.yml" --reason r) >"$WORK/a9t.out" 2>"$WORK/a9t.err"
+assert_exit "gh's hosts.yml is refused as a body file" 5 "$?"
+# a bot-opened issue body: the refusal names --type correction
+python3 - "$FAKE_GH_STORE/issue-25.json" <<'PY'
+import json, sys
+json.dump({"body": "## Expected\nwrong", "user": {"login": "renovate[bot]"}, "author_association": "NONE",
+           "html_url": "https://github.com/o/r/issues/25"}, open(sys.argv[1], "w"))
+PY
+start a9i issue:25 --correct --section "## Expected" --body-file "$WORK/fix.md" --reason r
+h a9ip prepare --run "$RUN" --target issue:25
+assert_output_grep "a bot's issue body points to --type correction" "--type correction" "$WORK/a9ip.err"
+h a9if finish --run "$RUN"
+
 # ═══ Part B — the SKILL's own blocks, one fresh shell each ═════════════════
 # What an agent gets: Claude Code substitutes ${CLAUDE_PLUGIN_ROOT} when it
 # loads a plugin skill (only the braced form — verify #351 round 8), and the
@@ -328,6 +422,16 @@ for s in start prepare apply discard finish; do
   refute_grep_re "step $s names the plugin root the way Claude Code substitutes it (braced)" '\$CLAUDE_PLUGIN_ROOT' "$(cat "$WORK/blk-$s.raw")"
   refute_grep_re "step $s reads no shell variable" '\$\{?[A-Za-z_]' "$(cat "$WORK/blk-$s.sh")"
 done
+# Every bash block of the SKILL, not only the five steps part B runs, reads no
+# shell variable: a later edit cannot bring back a value an earlier block set
+# (the round 6-7 class), and GitHub text never reaches a command through one.
+python3 - "$SKILL" >"$WORK/all-blocks.txt" <<'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+for body in re.findall(r"```bash\n(.*?)```", text, re.S):
+    sys.stdout.write(body.replace("${CLAUDE_PLUGIN_ROOT}", "/plugin") + "\n")
+PY
+refute_grep_re "no bash block in the SKILL reads a shell variable" '\$\{?[A-Za-z_]' "$(cat "$WORK/all-blocks.txt")"
 mkdir -p "$WORK/home"
 PYUSERBASE="$(python3 -m site --user-base)"
 # step <shell> <label> <name> <key=value>... — the block with its placeholders
@@ -362,7 +466,7 @@ confirmed() {
   r="$(val RUN "$WORK/$l-s.out")"; s="$(val SCRUB "$WORK/$l-s.out")"
   APPLY_RCS=""
   for tg in $targets; do
-    step "$sh" "$l-p-${tg#*:}" prepare "RUN=$r" "TARGET=$tg"
+    step "$sh" "$l-p-${tg#*:}" prepare "RUN=$r" "TARGET=$tg" "PICK="
     step "$sh" "$l-a-${tg#*:}" apply "RUN=$r" "TARGET=$tg" "SCRUB=$s" "STATE=$(val STATE "$WORK/$l-p-${tg#*:}.out")"
     APPLY_RCS="$APPLY_RCS$RC"
   done
@@ -406,7 +510,7 @@ for SH in $SHELLS; do
   n=$((n + 1)); mkrec "comment-$n.json" kiki830621 MEMBER "$SECTION_BODY"
   step "$SH" "b$n-s" start "REPO=o/r" "ARGS=comment:$n --replace --section '## Notes' --body-file '$WORK/fix.md' --reason r"
   R="$(val RUN "$WORK/b$n-s.out")"
-  step "$SH" "b$n-p" prepare "RUN=$R" "TARGET=comment:$n"
+  step "$SH" "b$n-p" prepare "RUN=$R" "TARGET=comment:$n" "PICK="
   step "$SH" "b$n-d" discard "RUN=$R" "TARGET=comment:$n"
   step "$SH" "b$n-f" finish "RUN=$R"
   assert_exit "$SH: a declined run exits 9 — what idd-comment routes on" 9 "$RC"
@@ -414,24 +518,24 @@ for SH in $SHELLS; do
   n=$((n + 1)); mkrec "comment-$n.json" collaborator MEMBER "theirs"
   step "$SH" "b$n-s" start "REPO=o/r" "ARGS=comment:$n --append --body-file '$WORK/fix.md' --reason r"
   R="$(val RUN "$WORK/b$n-s.out")"
-  step "$SH" "b$n-p" prepare "RUN=$R" "TARGET=comment:$n"
+  step "$SH" "b$n-p" prepare "RUN=$R" "TARGET=comment:$n" "PICK="
   step "$SH" "b$n-f" finish "RUN=$R"
   assert_exit "$SH: a refused run exits 4, not 0" 4 "$RC"
   n=$((n + 1)); a=$n; mkrec "comment-$n.json" kiki830621 MEMBER "one"
   n=$((n + 1)); b=$n; mkrec "comment-$n.json" kiki830621 MEMBER "two"
   step "$SH" "b$n-s" start "REPO=o/r" "ARGS=comment:$a comment:$b --append --body-file '$WORK/fix.md' --reason r"
   R="$(val RUN "$WORK/b$n-s.out")"; S="$(val SCRUB "$WORK/b$n-s.out")"
-  step "$SH" "b$n-p" prepare "RUN=$R" "TARGET=comment:$a"
+  step "$SH" "b$n-p" prepare "RUN=$R" "TARGET=comment:$a" "PICK="
   step "$SH" "b$n-a" apply "RUN=$R" "TARGET=comment:$a" "SCRUB=$S" "STATE="
   step "$SH" "b$n-f" finish "RUN=$R"
   assert_exit "$SH: a batch whose second target was never prepared exits 4" 4 "$RC"
   assert_output_grep "$SH: and names it" "REFUSED(not-prepared) comment:$b" "$WORK/b$n-f.out"
-  n=$((n + 1)); mkrec "comment-$n.json" kiki830621 MEMBER "picked"
+  n=$((n + 1)); mkrec_in "comment-$n.json" kiki830621 9 "picked"
   printf '%s\n' 5 "$n" >"$FAKE_GH_STORE/issue-9-comment-ids"
   step "$SH" "b$n-s" start "REPO=o/r" "ARGS='#9' --append --body-file '$WORK/fix.md' --reason r"
   assert_eq "$SH: #N without --last asks to pick" "#9" "$(val PICK "$WORK/b$n-s.out")"
   R="$(val RUN "$WORK/b$n-s.out")"; S="$(val SCRUB "$WORK/b$n-s.out")"
-  step "$SH" "b$n-p" prepare "RUN=$R" "TARGET=comment:$n"
+  step "$SH" "b$n-p" prepare "RUN=$R" "TARGET=comment:$n" "PICK=9"
   step "$SH" "b$n-a" apply "RUN=$R" "TARGET=comment:$n" "SCRUB=$S" "STATE="
   step "$SH" "b$n-f" finish "RUN=$R"
   assert_exit "$SH: the picked comment is edited and the run exits 0" 0 "$RC"

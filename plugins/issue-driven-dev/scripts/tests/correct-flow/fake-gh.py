@@ -120,6 +120,8 @@ def main(argv):
             print(body)
         elif jq == ".html_url":
             print(rec.get("html_url", ""))
+        elif jq == ".issue_url":
+            print(rec.get("issue_url", ""))
         elif jq and jq.startswith("{login"):
             print(json.dumps({"login": rec["user"]["login"], "assoc": rec["author_association"]}))
         else:

@@ -185,6 +185,10 @@ expect_deny bash      '{"tool_name":"Bash","tool_input":{"command":"cat .claude/
 expect_deny pwsh      '{"tool_name":"PowerShell","tool_input":{"command":"Get-Content .claude\\.idd\\archive\\edits\\x.md"}}'
 assert_output_grep "deny reason points to restore" "restore" "$WORK/hook-read.out"
 
+# #351 round 11: idd-edit's --reason is prose; a reason that mentions the archive
+# (the correction of #351's own Expected would) does not read it
+expect_allow edit-reason '{"tool_name":"Bash","tool_input":{"command":"python3 /p/scripts/idd-edit-helper.py run-start --default-repo o/r -- issue:351 --correct --section \u0027## Expected\u0027 --body-file /t/x.md --reason \u0027the backups live in .claude/.idd/archive/edits, not in git\u0027"}}'
+expect_deny  edit-reason-subst '{"tool_name":"Bash","tool_input":{"command":"python3 /p/scripts/idd-edit-helper.py run-start -- comment:1 --append --reason \"$(cat .claude/.idd/archive/edits/a.md)\""}}'
 expect_allow helper   '{"tool_name":"Bash","tool_input":{"command":"python3 \"$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py\" archive comment 5805214375 --from-file \"$BACKUP_FILE\" --repo \"$REPO\""}}'
 expect_allow skill    '{"tool_name":"Read","tool_input":{"file_path":"plugins/issue-driven-dev/skills/idd-edit/SKILL.md"}}'
 expect_allow grep-re  '{"tool_name":"Grep","tool_input":{"pattern":".claude/.idd/archive","path":"plugins"}}'

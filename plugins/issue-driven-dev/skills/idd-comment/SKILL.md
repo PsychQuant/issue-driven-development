@@ -333,10 +333,10 @@ See also: {target}
 
 錯的內容留在原處，之後讀 issue 的 AI session 會照著做（#351）；所以能改的就地改，不能改的才另貼。先用 idd-edit 的 R5 helper 判定 target comment 作者：
 
-一次 Bash 呼叫、一行指令，只帶字面值（新的呼叫裡沒有前面設的 shell 變數，#351 verify 第 8 輪）：`<TARGET_COMMENT>` 填 `--target-comment` 的數字 id，`<REPO>` 填本 skill 解析出的 owner/repo。
+一次 Bash 呼叫、一行指令，只帶字面值（新的呼叫裡沒有前面設的 shell 變數，#351 verify 第 8 輪）：`<TARGET_COMMENT>` 填 `--target-comment` 的數字 id（只有數字），`<REPO>` 填本 skill 解析出的 owner/repo（只有英數、`.`、`_`、`-` 與一個 `/`）；不符就不執行，改貼 errata。
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" validate-target "<TARGET_COMMENT>" "<REPO>" false --correct
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" validate-target '<TARGET_COMMENT>' '<REPO>' false --correct
 ```
 
 依結束碼分流：

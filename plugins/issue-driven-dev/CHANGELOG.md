@@ -247,12 +247,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read from the home directory (single-quoted arguments do not expand it); the `restore` example single-quotes the
   backup id, which comes from GitHub; the refusal for someone else's issue body points to `--type correction`.
 
+### Fixed (round 11 — verify round 9 findings, before release)
+
+- **One source of truth for a run.** Values the agent copies between calls are confirmations of what `run-start`
+  recorded, not new facts: `prepare` takes only a listed target or a comment chosen for an open PICK (`--pick N`,
+  checked to be a comment of #N, settled by its own record — counting extra targets named the wrong #N or let a
+  half-done run exit 0); a mismatched STATE is a retryable usage error; a stricter attested tier is the tier the
+  write goes out at, `--correct` included (it used to write at prepare's tier); a run directory holds only what
+  `run-start` writes (`run.json` passes the argument gates, `body.md` is not a link).
+- `--correct` works when a run moves between a sandboxed and an unsandboxed call: the run hands its own text to
+  `correct-prepare` instead of a path the current call's gate refuses.
+- `restore --target` reads the correction marker itself and uses only a checked id with a local archive entry; the
+  SKILL no longer pastes a GitHub-sourced id into a quoted command, which a `'` in a forged marker could break
+  out of. `<REPO>` and `<TARGET>` are single-quoted and must match their shapes.
+- Every bash block of the idd-edit SKILL is checked to read no shell variable (edit-run), not only the five steps
+  part B runs. The read guard treats idd-edit's `--reason` as prose; the diff marks a last line without a newline;
+  `$HOME//x` stays in the home directory; a duplicate PICK is listed once; a bot-opened issue body points to
+  `--type correction`; an exception before the write is a refusal, not `unverified`; `--correct` apply reports an
+  exception; gh's token store (`~/.config/gh`) is a refused body file; when `idd-edit-backup` belongs to someone
+  else a per-user name, then a fresh private directory, is used.
+
 ### Changed
 
 - **BREAKING (behavior) — `/idd-edit` exit codes for the existing modes** (`--append`, `--replace`,
   `--prepend-note`), compared with 3.4.0: declining the preview exits 9 (was 0); a gh write failure exits 4 (was
-  0); a read-back that fails or differs exits 7 (new); an unreadable target is refused (exit 4) instead of
-  continuing with an empty backup; a staging failure skips that target instead of ending the run; no target is
+  0); a read-back that fails or differs exits 7 (new); a target whose author or body cannot be read is refused and
+  the batch goes on (exit 4) — 3.4.0 stopped the whole batch with exit 1; a staging failure skips that target instead of ending the run; no target is
   exit 2 (was a silent 0). Callers that treat any non-zero exit as failure will now see one on a plain decline.
 - **Backups of the existing modes moved** from `/tmp/idd-edit-backup/` to `idd-edit-backup/` under the user's
   temporary directory (on macOS under `/var/folders/…`; on Linux usually still `/tmp`, where a 0755 directory left

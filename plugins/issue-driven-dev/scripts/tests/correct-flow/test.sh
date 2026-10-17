@@ -110,10 +110,12 @@ helper e4a correct-prepare --target comment:103 --repo o/r --section "## Notes" 
 assert_exit "an existing mention is attested" 0 "$RC"
 helper e4a2 correct-discard --work "$(val WORK "$WORK/e4a.out")"
 printf 'fixed, cc @bob\n' >"$WORK/fix-mention-new.md"
+E4_BEFORE="$(count_work)"
 helper e4b correct-prepare --target comment:103 --repo o/r --section "## Notes" --body-file "$WORK/fix-mention-new.md" --scrub-attested warn
 assert_exit "a new mention is refused at prepare" 4 "$RC"
 assert_eq "reason is egress" "egress" "$(val REASON "$WORK/e4b.out")"
-refute "no working directory is left" test -n "$(val WORK "$WORK/e4b.out")"
+refute "the refusal prints no working directory" test -n "$(val WORK "$WORK/e4b.out")"
+assert_eq "and leaves none on disk" "$E4_BEFORE" "$(count_work)"
 
 # ── E5. gh fails the write ─────────────────────────────────────────────────
 echo "E5. failed write"
@@ -484,6 +486,20 @@ assert_output_grep "the refusal points to another account" "gh auth switch" "$WO
 # R9.8 validate-target refuses a malformed repository
 helper r98 validate-target 1 "../x" false --correct
 assert_exit "a malformed repo is a usage error" 2 "$RC"
+
+# R9.9 restore reads the marker itself: no GitHub value is pasted into a command
+mkrec comment-430.json kiki830621 MEMBER "$SECTION_BODY"
+helper r99p correct-prepare --target comment:430 --repo o/r --section "## Notes" --body-file "$WORK/fix.md" --scrub-attested warn
+helper r99a correct-apply --work "$(val WORK "$WORK/r99p.out")" --state "$(val STATE "$WORK/r99p.out")"
+helper r99r restore --target comment:430 --repo o/r
+assert_exit "restore --target finds the one archived correction" 0 "$RC"
+assert_eq "and puts the old text back" "$SECTION_BODY" "$(body_of comment-430.json)"
+mkrec comment-431.json kiki830621 MEMBER "## Notes
+x
+<!-- idd:edit mode=\"correct\" backup-id=\"x'\$(touch $WORK/PWNED)'\" date=\"2026-10-17\" -->"
+helper r99f restore --target comment:431 --repo o/r
+assert_exit "a marker whose id is not an id restores nothing" 2 "$RC"
+refute "and runs nothing" test -e "$WORK/PWNED"
 
 # no refusal or apply leaves a working directory behind
 assert_eq "no working directory outlives prepare refusals or apply" "$BEFORE" "$(count_work)"
