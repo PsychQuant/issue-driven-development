@@ -298,6 +298,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/idd-comment --type errata`; the proposed-correction commands of idd-verify / idd-diagnose / idd-reorganize are
   single-quoted proposals whose arguments are rebuilt, not pasted.
 
+### Fixed (round 13 — verify round 11 findings, before release)
+
+- **The #272 floor is attested by the agent again.** Round 12 raised a user-pasted reply from `light` to `warn`
+  inside the helper, which let new third-party text reach the remote without the #272 question. `prepare` now checks
+  at `warn` and prints `FLOOR=272`, the SKILL asks the question (with a redact option), and `apply` refuses `light`
+  for such a body (exit 2, retryable).
+- `restore --target` lists the versions this clone archived for the target (oldest first) and says whether each
+  one's marker is still on the target: a `--replace` or a restore removes the marker, and the version was then
+  unreachable. Only entries whose sidecar names the repository are listed.
+- A prepared target never applied or discarded counts as declined (exit 9), not refused, so idd-comment does not
+  post an errata for a preview the user abandoned.
+- A CR-only quotation is written with LF (its lone `\r` would join the next line and the new text would join the
+  quotation); the preview diff breaks lines at `\r\n`, `\r` or `\n`.
+- A PICK whose comment cannot be read at any read stays open; PICK numbers are ASCII digits (`²` was a traceback);
+  the sweep keeps the run's own `--correct` working copies; `emit-audit-marker` uses the local date too.
+- The read guard skips a message value only when it is prose (has whitespace), so `git diff --no-index -m <archive>`
+  is denied; its denial names the characters that still need a message file.
+- Quoting happens once, in idd-edit Step 1: the proposal skills pass their rebuilt arguments as typed, and
+  idd-comment's delegation single-quotes its values. The PICK listing blanks U+2028 / U+2029 / U+0085, which JSON
+  leaves raw; TARGETs are processed before PICKs; `run-start` notes that `--correct` does not publish `--reason`.
+
 ### Changed
 
 - **BREAKING (behavior) — `/idd-edit` exit codes for the existing modes** (`--append`, `--replace`,
@@ -346,16 +367,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--section` must be an ATX heading line (`## Title`) in every mode; any other value exits 2. 3.4.0 accepted any
   value, and `--append`/`--prepend-note` ignored `--section` altogether (`--append --section X` appended).
 - A `--body-file` that contains a NUL byte is refused (exit 5) in every mode; 3.4.0 read it.
-- gh's token store (`~/.config/gh`, which holds `hosts.yml`) is refused as a `--body-file` (exit 5) in every mode;
-  3.4.0 read it like any other file.
+- gh's token store (`~/.config/gh`, which holds `hosts.yml`, and wherever `GH_CONFIG_DIR` or `XDG_CONFIG_HOME`
+  puts it) is refused as a `--body-file` (exit 5) in every mode, the escape hatch included; 3.4.0 read it like any
+  other file. System paths and credential directories are matched without regard to letter case, under both `HOME`
+  and the account's home directory, by the path as given and as resolved.
+- `--scope` other than `whole-comment` is refused at start (exit 3) in every mode; 3.4.0 ignored it for `--append`
+  and `--prepend-note`.
 - A target edited by someone else after the preview is refused as `changed-since-preview` (exit 4) in every mode,
   instead of being overwritten with the previewed text as in 3.4.0.
 
 ### Security
 
 - **`parse-args` output was executed as shell commands, from 2.81.0 through 3.4.0, in every `/idd-edit` mode.**
-  `parse-args` printed a multi-line `--body-file` raw, and the skill `eval`ed that output, so every line of the body
-  after the first ran as a shell command under `--append`, `--replace` and `--prepend-note` alike. Round 2 ANSI-C
+  `parse-args` printed a multi-line `--body` or `--body-file` value raw, and the skill `eval`ed that output, so
+  after the first word every word of the body ran under `eval` — the rest of the first line as a command, and each
+  later line too — under `--append`, `--replace` and `--prepend-note` alike. Round 2 ANSI-C
   quotes such values, round 4 makes every value survive `eval` exactly (a NUL byte is refused, `=` is escaped for
   zsh), and round 9 removes the `eval`: the skill runs `run-start`, which parses the arguments in-process, and copies
   only the values it prints.

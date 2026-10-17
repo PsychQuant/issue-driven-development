@@ -38,7 +38,7 @@ refute_output_grep "idd-edit: raw Step-6 comment PATCH gone (#273)" 'issues/comm
 EDIT_HELPER="$SK/../scripts/idd-edit-helper.py"
 assert_output_grep "idd-edit: the helper writes via the edit-comment verb" '_egress(["edit-comment", num' "$EDIT_HELPER"
 assert_output_grep "idd-edit: the helper runs gh-egress.sh" '"gh-egress.sh")' "$EDIT_HELPER"
-assert_output_grep "idd-edit: the helper carries a scrub attestation" '"--scrub-attested", _floor(meta["scrub"], new)' "$EDIT_HELPER"
+assert_output_grep "idd-edit: the helper carries a scrub attestation" '"--scrub-attested", tier] + _mention_args(st["mentions"])' "$EDIT_HELPER"
 assert_output_grep "idd-edit: the SKILL attests after its privacy review" "--scrub-attested '<SCRUB>'" "$SK/idd-edit/SKILL.md"
 
 for sk in idd-comment idd-diagnose idd-implement idd-verify idd-close idd-update; do

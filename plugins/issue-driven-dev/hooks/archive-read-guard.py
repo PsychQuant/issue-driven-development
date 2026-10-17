@@ -53,9 +53,10 @@ REASON = (
     "these files. To put a corrected comment or issue body back, run the "
     "idd-edit helper's restore subcommand, which sends the archived text to "
     "GitHub without displaying it. A commit or PR message that only mentions "
-    "the path is fine: pass it single-quoted (-m '...', --body '...') or from "
-    "a file (-F, --body-file); a $(...) or heredoc inside the message is "
-    "checked as a command."
+    "the path is fine as one single-quoted value with spaces and no $, "
+    "backtick, < or > (-m '...', --body '...'); otherwise pass it from a file "
+    "(-F, --body-file). A $(...) or heredoc inside the message is checked as "
+    "a command."
 )
 
 PATH_FIELDS = {
@@ -139,7 +140,9 @@ def _command_words(command):
         # A message value is prose only if the shell will not execute part of
         # it: `--body "$(cat <archive>)"` posts the archive (parser differential
         # between shlex and the real shell).
-        if is_message and not any(t in word for t in ("$", "`", "<", ">")):
+        # Prose has whitespace; a single token after `-m` may be a path to a
+        # command whose -m takes no value (`git diff -m <archive>`, round 11).
+        if is_message and not any(t in word for t in ("$", "`", "<", ">")) and re.search(r"\s", word):
             continue
         for piece in re.split(r"[\s'\"`()=;|&<>]+", word):
             if piece:

@@ -240,15 +240,29 @@ def _under_folded(path, prefix):
     return _path_is_under(path.casefold(), prefix.casefold())
 
 
+def _homes():
+    """HOME and the account's home directory: overriding or unsetting HOME
+    must not move the credential directories out of reach (verify #351 round 11)."""
+    homes = [os.environ.get("HOME", "")]
+    try:
+        import pwd
+        homes.append(pwd.getpwuid(os.getuid()).pw_dir)
+    except (ImportError, KeyError):
+        pass
+    return [h for h in dict.fromkeys(homes) if h]
+
+
 def _gh_config_dirs():
     """Where gh may keep its token store (hosts.yml), found the way gh finds
-    it: GH_CONFIG_DIR, then $XDG_CONFIG_HOME/gh, then ~/.config/gh. All three
-    are refused, not only the one gh uses now (verify #351 round 10)."""
+    it: GH_CONFIG_DIR, then $XDG_CONFIG_HOME/gh, then ~/.config/gh. All of
+    them are refused, not only the one gh uses now (verify #351 round 10)."""
     dirs = [os.environ.get("GH_CONFIG_DIR", "")]
     if os.environ.get("XDG_CONFIG_HOME"):
         dirs.append(os.path.join(os.environ["XDG_CONFIG_HOME"], "gh"))
-    dirs.append(os.path.join(os.path.expanduser("~"), ".config", "gh"))
-    return [os.path.realpath(d) for d in dirs if d]
+    dirs += [os.path.join(home, ".config", "gh") for home in _homes()]
+    # as named and as resolved, like the path compared with them (/tmp is a
+    # link on macOS)
+    return [form(d) for d in dirs if d for form in (os.path.abspath, os.path.realpath)]
 
 
 def validate_body_file_path(raw_path):
@@ -262,9 +276,12 @@ def validate_body_file_path(raw_path):
     # symlinks against the real filesystem, collapsing every bypass vector
     # to its true target before we inspect it.
     canonical = os.path.realpath(raw_path)
+    # A link inside a credential directory is refused by the name it was given
+    # as well as by what it resolves to (verify #351 round 11).
+    named = (os.path.abspath(raw_path), canonical)
 
     # gh's own token store is never a body, escape hatch or not (#351 rounds 9–10)
-    if any(_under_folded(canonical, d) for d in _gh_config_dirs()):
+    if any(_under_folded(path, d) for path in named for d in _gh_config_dirs()):
         err(f"ERROR: --body-file refuses credential path: {raw_path}")
         return False, 5
 
@@ -286,7 +303,7 @@ def validate_body_file_path(raw_path):
 
     # Refuse sensitive absolute system paths (component-aware prefix match).
     for prefix in () if in_user_tmp else _REFUSED_SYSTEM_PREFIXES:
-        if _path_is_under(canonical, prefix):
+        if _under_folded(canonical, prefix):
             err(f"ERROR: --body-file refuses sensitive system path: {raw_path}")
             err(
                 "       Use IDD_EDIT_HELPER_ALLOW_UNSAFE_BODY_FILE=1 to "
@@ -297,16 +314,17 @@ def validate_body_file_path(raw_path):
     # Refuse credential directories. Check by path component so a realpath
     # landing in any `.ssh` / `.aws` / ... directory is caught regardless of
     # which home it lives under.
-    home = os.environ.get("HOME", "")
-    components = canonical.casefold().split(os.sep)
     for cred in _REFUSED_CREDENTIAL_DIRS:
-        if cred.casefold() in components:
+        for path in named:
+            if cred.casefold() not in path.casefold().split(os.sep):
+                continue
             # Only refuse credential dirs under a home directory: matches the
             # bash reference's $HOME/.ssh/* etc. scope while staying robust to
             # symlinks that resolve into the real home.
-            if home and (
-                _under_folded(canonical, os.path.join(home, cred))
-                or _under_folded(canonical, os.path.realpath(home))
+            if any(
+                _under_folded(path, os.path.join(home, cred))
+                or _under_folded(path, os.path.realpath(home))
+                for home in _homes()
             ):
                 err(f"ERROR: --body-file refuses credential path: {raw_path}")
                 err(
@@ -980,7 +998,6 @@ def _audit_marker(argv):
         marker += " override-user-content"
 
     has_date = False
-    backup_day = None
     for kv in rest:
         if "=" not in kv:
             err(f"ERROR: emit-audit-marker arg must be key=value (got: {kv})")
@@ -992,17 +1009,15 @@ def _audit_marker(argv):
             if not m:
                 err(f"ERROR: backup-id is not a correction backup id (got: {val})")
                 return 2, None
-            stamp = re.search(r"-([0-9]{8})T", val).group(1)
-            backup_day = f"{stamp[:4]}-{stamp[4:6]}-{stamp[6:]}"
         val = _sanitize_marker_value(val)
         marker += f' {key}="{val}"'
         if key == "date":
             has_date = True
 
     if not has_date:
-        # Same day as the backup id (UTC) when there is one, so the marker and
-        # the id never disagree across the Taipei midnight-to-08:00 window.
-        marker += f' date="{backup_day or datetime.date.today().isoformat()}"'
+        # The local date, as the --correct write uses; the backup id keeps its
+        # UTC time with Z (verify #351 round 11, #406).
+        marker += f' date="{datetime.date.today().isoformat()}"'
 
     marker += " -->"
     return 0, marker
@@ -1134,7 +1149,10 @@ def _region_text(region, originals):
     spans, out, i = dict(_verbatim_spans(region)), [], 0
     while i < len(region):
         own = originals.get("\n".join(region[i:spans[i]])) if i in spans else None
-        if own:
+        # A lone \r ending the quotation would join the next LF line into one
+        # CRLF and swallow the blank line after it: such a quotation is written
+        # with LF (verify #351 round 11).
+        if own and not any(r.endswith("\r") for r in own[0]):
             out.extend(r if r.endswith(("\n", "\r")) else r + "\n" for r in own.pop(0))
             i = spans[i]
             continue
@@ -1585,11 +1603,12 @@ def _correct_marker(backup_id):
 
 
 def _floor(scrub, path):
-    """The tier a body is checked and written at. A reply quoting user-pasted
-    points carries both markers of idd-comment's reply template, and gh-egress
-    refuses it at light (#272). The points are on GitHub already and the user
-    confirms the whole preview, so the floor is applied, as idd-comment does,
-    rather than every edit of such a reply refused (verify #351 round 10)."""
+    """The least tier a body may go out at. A reply quoting user-pasted points
+    carries both markers of idd-comment's reply template, and gh-egress refuses
+    it at light (#272). prepare checks at the floor and prints FLOOR=272; the
+    agent asks the #272 question and attests warn itself — apply refuses light
+    for such a body and never raises the tier on the agent's behalf (verify
+    #351 rounds 10–11)."""
     if scrub != "light":
         return scrub
     with open(path, encoding="utf-8", errors="replace") as fh:
@@ -1708,7 +1727,8 @@ def _correct_prepare(work, target, kind, num, repo, section, scrub, content):
     # The egress gates run before the preview, so a body gh-egress would refuse
     # is never confirmed or archived (round 3). Mentions the target already had
     # were published already; a mention the correction adds is still refused.
-    if _egress(["check", "--body-file", preview, "--scrub-attested", _floor(scrub, preview)]
+    floor = _floor(scrub, preview)
+    if _egress(["check", "--body-file", preview, "--scrub-attested", floor]
                + _mention_args(mentions)) != 0:
         return _refused("egress", work)
     state = {
@@ -1724,6 +1744,7 @@ def _correct_prepare(work, target, kind, num, repo, section, scrub, content):
     print(f"WORK={work}")
     print(f"PREVIEW={preview}")
     print(f"DIFF={diff}")
+    _print_floor(scrub, floor)
     # The caller keeps this hash and hands it back to apply: the binding to what
     # the user confirmed lives outside the working directory (round 5).
     print(f"STATE={_sha256(state_path)}")
@@ -1760,8 +1781,8 @@ def _archive_preflight():
 def _remove_stale_work_dirs(max_age=86400, keep=None):
     """Working directories left by a run that never reached apply or discard
     (a closed session) hold the uncorrected text; drop those older than a day.
-    `keep` is the run being served: a user may answer the next day (verify
-    #351 round 10)."""
+    `keep` holds the run being served and its working copies: a user may
+    answer the next day (verify #351 rounds 10–11)."""
     tmp = os.path.realpath(tempfile.gettempdir())
     try:
         names = os.listdir(tmp)
@@ -1773,7 +1794,7 @@ def _remove_stale_work_dirs(max_age=86400, keep=None):
         if not name.startswith((CORRECT_WORK_PREFIX, RUN_PREFIX)):
             continue
         path = os.path.join(tmp, name)
-        if keep and os.path.realpath(path) == keep:
+        if keep and os.path.realpath(path) in keep:
             continue
         try:
             st = os.lstat(path)
@@ -1921,7 +1942,6 @@ def _correct_write(work, state, endpoint, backup, body, backup_id):
     new_file = os.path.join(work, "new.md")
     with open(new_file, "w", encoding="utf-8", newline="") as fh:
         fh.write(new_text)
-    state = dict(state, scrub=_floor(state["scrub"], new_file))
     print(f"SCRUB={state['scrub']}")   # the tier the write goes out at
     verb = ["edit-comment", num] if kind == "comment" else ["edit", num]
     rc = _egress(verb + ["--repo", repo, "--body-file", new_file, "--scrub-attested", state["scrub"]]
@@ -1981,17 +2001,19 @@ _OUTCOMES = ("prepared", "edited", "refused", "declined", "write-failed", "unver
 
 def _write_diff(old_path, new_path, dest):
     import difflib
-    # Lines end at \n only: splitlines also breaks at \x0c, \x85 and the like,
-    # which GitHub does not, and marked those as the end of the file (round 10).
+    # Lines end at \r\n, \r or \n, as CommonMark and GitHub read them:
+    # splitlines also breaks at \x0c, \x85 and the like and marked those as
+    # the end of the file (rounds 10–11).
+    split = re.compile(r"[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+$")
     with open(old_path, encoding="utf-8", errors="replace", newline="") as fh:
-        old = re.findall(r"[^\n]*\n|[^\n]+$", fh.read())
+        old = split.findall(fh.read())
     with open(new_path, encoding="utf-8", errors="replace", newline="") as fh:
-        new = re.findall(r"[^\n]*\n|[^\n]+$", fh.read())
+        new = split.findall(fh.read())
     with open(dest, "w", encoding="utf-8", newline="") as fh:
         for line in difflib.unified_diff(old, new, "current", "after this edit"):
             # as diff(1) does: a last line without a newline would otherwise be
             # glued to the next one on screen (verify #351 round 9)
-            fh.write(line if line.endswith("\n") else line + "\n\\ No newline at end of file\n")
+            fh.write(line if line.endswith(("\n", "\r")) else line + "\n\\ No newline at end of file\n")
 
 
 def _captured(fn, *args):
@@ -2083,7 +2105,7 @@ def _run_meta_problem(meta):
         return "section"
     targets, picks = meta.get("targets"), meta.get("picks")
     if (not isinstance(targets, list) or not all(isinstance(x, str) and _TARGET_RE.fullmatch(x) for x in targets)
-            or not isinstance(picks, list) or not all(isinstance(x, str) and x.isdigit() for x in picks)):
+            or not isinstance(picks, list) or not all(isinstance(x, str) and re.fullmatch(r"[0-9]+", x) for x in picks)):
         return "targets"
     return None
 
@@ -2137,6 +2159,9 @@ def run_start_subcmd(argv):
         # without one, prepare treated the run as a --replace (round 8)
         err("ERROR: give a mode: --append, --replace, --prepend-note or --correct")
         return 2
+    if state["mode"] == "--correct" and state["reason"]:
+        err("Note: --correct does not publish --reason (its marker carries only the backup id "
+            "and the date); say why in the conversation, or add an --append note (#351).")
     if state["mode"] == "--correct" and not "\n".join(_strip_target_heading(
             _lines_of(state["body_input"].replace("\r\n", "\n")), state["section_flag"] or "-")).strip():
         err("Refuse: --correct needs the corrected text; the body holds only the target heading (#351).")
@@ -2214,7 +2239,10 @@ def prepare_subcmd(argv):
     real, target, values = parsed
     meta = _run_meta(real)
     pick = values["--pick"] or ""
-    if pick.isdigit():
+    if pick and not re.fullmatch(r"[0-9]+", pick):
+        err(f"ERROR: --pick takes an issue number (got: {pick})")
+        return 2
+    if pick:
         pick = str(int(pick))   # #007 is #7 (verify #351 round 10)
     rows = dict(_latest(real))
     if pick:
@@ -2254,12 +2282,15 @@ def prepare_subcmd(argv):
         with open(os.path.join(real, "body.md"), encoding="utf-8", newline="") as fh:
             content = fh.read()
         kind, num = target.split(":", 1)
+        # the run and the working copies its ledger names are the run's own
+        keep = {real} | {os.path.realpath(r["work"]) for r in rows.values() if r.get("work")}
         rc, out = _captured(_correct_prepare_text, target, kind, num, meta["repo"],
-                            meta["section"] or None, meta["scrub"], content, real)
+                            meta["section"] or None, meta["scrub"], content, keep)
         result = _kv(out)
         if rc == 0:
             _record(real, target, "prepared", work=result.get("WORK"), pick=pick)
-        else:
+        elif not (pick and result.get("REASON") == "fetch-failed"):
+            # a PICK whose comment could not be read stays open (round 11)
             _record(real, target, "refused", reason=result.get("REASON") or "check-failed", pick=pick)
         return rc
     kind, num = target.split(":", 1)
@@ -2270,7 +2301,9 @@ def prepare_subcmd(argv):
 
 
 def _edit_refused(real, target, reason, pick=""):
-    _record(real, target, "refused", reason=reason, pick=pick)
+    if not (pick and reason == "fetch-failed"):
+        # a PICK whose comment could not be read stays open (round 11)
+        _record(real, target, "refused", reason=reason, pick=pick)
     print("RESULT=refused")
     print(f"REASON={reason}")
     return 4
@@ -2382,6 +2415,9 @@ def _edit_prepare(real, meta, target, num, pick=""):
     if rc != 0:
         return _edit_refused(real, target, "author-unknown" if rc == 1 else "check-failed", pick)
     work = os.path.join(real, f"comment-{num}")
+    # the target has no record yet: a copy here is from a PICK attempt whose
+    # read failed and was not recorded (round 11)
+    shutil.rmtree(work, ignore_errors=True)
     os.mkdir(work, 0o700)
     old = os.path.join(work, "old.md")
     if not _fetch_body(_endpoint("comment", num, repo), old):
@@ -2406,7 +2442,8 @@ def _edit_prepare(real, meta, target, num, pick=""):
     _write_diff(old, new, diff)
     # The egress gates run before the preview, so a body gh-egress would refuse
     # is never shown for confirmation (round 9; --correct did this since round 3).
-    if _egress(["check", "--body-file", new, "--scrub-attested", _floor(meta["scrub"], new)]
+    floor = _floor(meta["scrub"], new)
+    if _egress(["check", "--body-file", new, "--scrub-attested", floor]
                + _mention_args(mentions)) != 0:
         return _edit_refused(real, target, "egress", pick)
     with open(os.path.join(work, "state.json"), "w", encoding="utf-8") as fh:
@@ -2415,7 +2452,15 @@ def _edit_prepare(real, meta, target, num, pick=""):
     print(f"PREVIEW={new}")
     print(f"DIFF={diff}")
     print(f"BACKUP={backup}")
+    _print_floor(meta["scrub"], floor)
     return 0
+
+
+def _print_floor(scrub, floor):
+    """FLOOR=272 and the tier to attest, when the #272 floor raised it."""
+    if floor != scrub:
+        print("FLOOR=272")
+        print(f"SCRUB={floor}")
 
 
 def apply_subcmd(argv):
@@ -2435,6 +2480,14 @@ def apply_subcmd(argv):
     last = dict(_latest(real)).get(target)
     if not last or last["outcome"] != "prepared":
         err(f"ERROR: {target} has no prepared edit in this run")
+        return 2
+    prepared = (os.path.join(last["work"], "preview.md") if last.get("work")
+                else os.path.join(real, f"comment-{target.split(':', 1)[1]}", "new.md"))
+    if os.path.isfile(prepared) and _floor(attested, prepared) != attested:
+        # Not recorded: retried with --scrub-attested warn once the user has
+        # answered the #272 question (verify #351 round 11).
+        err(f"ERROR: {target} quotes user-pasted points (#272): ask the user whether that third-party "
+            "text may be posted, then pass --scrub-attested warn (or enforce)")
         return 2
     if meta["mode"] == "--correct":
         work = _own_work_dir(last.get("work"), any_parent=True)
@@ -2495,7 +2548,7 @@ def _edit_apply(real, meta, target, stage):
     if _sha256(current) != st["old_sha"]:
         err(f"✗ {target} changed since the preview — nothing written; run again to see the new version")
         return _edit_refused(real, target, "changed-since-preview")
-    tier = _floor(meta["scrub"], new)
+    tier = meta["scrub"]
     print(f"SCRUB={tier}")   # the tier the write goes out at
     stage["writing"] = True
     rc = _egress(["edit-comment", num, "--repo", meta["repo"], "--body-file", new,
@@ -2583,7 +2636,9 @@ def finish_subcmd(argv):
             work = _own_work_dir(rec.get("work"), any_parent=True) if rec.get("work") else None
             if work:
                 shutil.rmtree(work, ignore_errors=True)
-            rec.update(outcome="refused", reason="not-applied")
+            # Never confirmed: counted with the declines (9), so a caller such
+            # as idd-comment does not act on an abandoned preview (round 11).
+            rec.update(outcome="declined", reason="not-applied")
     shutil.rmtree(real, ignore_errors=True)
     count = {o: sum(1 for _, r in rows if r["outcome"] == o) for o in _OUTCOMES}
     refused = count["refused"] + count["egress-refused"]
@@ -2603,6 +2658,8 @@ def finish_subcmd(argv):
             print(f"  ✗ REFUSED({why or 'check-failed'}) {target}{hint}")
         elif o == "egress-refused":
             print(f"  ✗ REFUSED(egress) {target} {why} — band 語意見 #227（10 privacy / 11 mention / 13 tier-floor #272 / 15 empty-body #275）")
+        elif o == "declined" and why == "not-applied":
+            print(f"  – DECLINED {target}（預覽後沒有確認也沒有拒絕，視同拒絕，未寫入）")
         elif o == "declined":
             print(f"  – DECLINED {target}（使用者在預覽時拒絕，未寫入）")
         elif o == "write-failed":
@@ -2883,11 +2940,13 @@ def _archive_write(kind, target_id, data, repo):
     return 7, None
 
 
-def _marker_backup_ids(target, repo):
-    """The backup ids the target's own correction markers name, checked: the
-    id format, the target it encodes, and a local archive entry. The marker
-    is GitHub text anyone on the issue could write, so nothing from it reaches
-    a shell — the skill passes only --target and --repo (verify #351 round 9)."""
+def _archived_versions(target, repo):
+    """[(backup id, whether the target still carries its marker)] for every
+    archive entry this clone holds for the target and this repository, oldest
+    first, or None when the target cannot be read. The archive is the source,
+    not the markers: a --replace or a restore removes a correction's marker
+    from GitHub while its archived text stays restorable (verify #351 round
+    11). Nothing from GitHub reaches a shell; the markers only annotate."""
     kind, num = target.split(":", 1)
     work = tempfile.mkdtemp(prefix=CORRECT_WORK_PREFIX)
     try:
@@ -2898,17 +2957,31 @@ def _marker_backup_ids(target, repo):
             text = fh.read()
     finally:
         shutil.rmtree(work, ignore_errors=True)
+    marked = {found for m in CORRECT_MARKER_RE.finditer(text)
+              for found in re.findall(r'backup-id="([^"]*)"', m.group(0))}
     want = f"comment-{num}" if kind == "comment" else f"issue-{num}-body"
-    root = _main_worktree()
-    ids = []
-    for m in CORRECT_MARKER_RE.finditer(text):
-        found = re.search(r'backup-id="([^"]*)"', m.group(0))
-        bid = found.group(1) if found else ""
-        idm = BACKUP_ID_RE.fullmatch(bid)
-        if (idm and idm.group(1) == want and bid not in ids and root is not None
-                and os.path.isfile(os.path.join(root, ARCHIVE_REL, bid + ".md"))):
-            ids.append(bid)
-    return ids
+    edits = os.path.join(_main_worktree(), ARCHIVE_REL)
+    try:
+        names = sorted(os.listdir(edits))
+    except OSError:
+        names = []
+    versions = []
+    for name in names:
+        idm = BACKUP_ID_RE.fullmatch(name[:-3]) if name.endswith(".md") else None
+        if not idm or idm.group(1) != want:
+            continue
+        path = os.path.join(edits, name)
+        side = path[:-3] + ".repo"
+        if os.path.islink(path) or not os.path.isfile(path) or os.path.islink(side):
+            continue
+        try:
+            with open(side, encoding="utf-8") as fh:
+                if fh.read().strip() != repo:
+                    continue
+        except OSError:
+            continue
+        versions.append((name[:-3], name[:-3] in marked))
+    return versions
 
 
 def restore_subcmd(argv):
@@ -2921,19 +2994,21 @@ def restore_subcmd(argv):
         if _main_worktree() is None:
             err("Refuse: restore needs the git work tree that holds the archive.")
             return 7
-        ids = _marker_backup_ids(target, repo)
-        if ids is None:
+        versions = _archived_versions(target, repo)
+        if versions is None:
             err(f"✗ cannot read {target}; nothing was restored")
             return 1
-        if not ids:
-            err(f"ERROR: {target} carries no correction marker with an archive entry in this clone")
+        if not versions:
+            err(f"ERROR: this clone holds no archived version of {target} for {repo}")
             return 2
-        # A lookup, never a write: which marker remains is GitHub text others
-        # can edit, so the user confirms the version (verify #351 round 10).
-        err(f"{target}: {len(ids)} archived version(s); show them to the user and run "
+        # A lookup, never a write: the user confirms the version (verify #351
+        # round 10). Each id puts back the text from before that correction.
+        err(f"{target}: {len(versions)} archived version(s), oldest first. Each puts back the text "
+            "from before that correction (the id carries its UTC time). Show them to the user and run "
             "`restore '<BACKUP_ID>' --repo …` with the one they confirm:")
-        for bid in ids:
+        for bid, marked in versions:
             print(f"BACKUP_ID={bid}")
+            err(f"  {bid}  marker: {'on the target' if marked else 'gone'}")
         return 0
     if len(rest) != 1 or not repo:
         err("ERROR: restore requires <backup-id> --repo <owner/repo> (or --target <target> --repo <owner/repo>)")
@@ -3053,9 +3128,10 @@ Subcommands:
   restore <backup-id> --repo <owner/repo>
       PATCH the target back to its archived text; print URL and byte count.
   restore --target comment:<id>|issue:<n> --repo <owner/repo>
-      Look up only: print BACKUP_ID= for each checked id the target's own correction
-      markers name (the user then confirms one); exit 1 when the target cannot be
-      read, 2 when it names none, 7 outside the git work tree.
+      Look up only: print BACKUP_ID= for each version this clone archived for the
+      target and repository, oldest first (stderr says whether its marker is still
+      on the target; the user then confirms one); exit 1 when the target cannot be
+      read, 2 when there is none, 7 outside the git work tree.
 
 Exit codes:
   0=success, 1=generic, 2=usage, 3=R4-refuse, 4=R5-refuse (correct-*: not done),
@@ -3090,11 +3166,12 @@ One /idd-edit run, all modes (the skill calls only these; #351 round 9):
   apply --run RUN --target T --scrub-attested SCRUB [--state STATE]
       Write after the user confirmed; prints RESULT= (edited | refused | write-failed |
       unverified). SCRUB is the run's tier or stricter, attested after the privacy
-      review; a reply quoting user-pasted points goes out at least at warn (#272).
+      review. A reply quoting user-pasted points needs warn (#272): prepare prints
+      FLOOR=272 and SCRUB=warn, and apply refuses light for it (exit 2).
   discard --run RUN --target T   The user declined.
   finish --run RUN
       Print the outcome report, remove the run; exit 4 refused or failed, 7 unverified,
-      9 declined, 0 otherwise.
+      9 declined (a prepared target never applied or discarded included), 0 otherwise.
 """
 
 

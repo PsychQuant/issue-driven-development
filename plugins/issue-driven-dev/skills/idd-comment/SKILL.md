@@ -351,11 +351,11 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" validate-target '<TAR
 
 ```
 IDD_CALLER=idd-comment-errata \
-  /idd-edit comment:{target-comment} --repo {GITHUB_REPO} --correct (--scope whole-comment | --section "{heading}") \
-    --body-file {correction-file}
+  /idd-edit comment:{target-comment} --repo {GITHUB_REPO} --correct (--scope whole-comment | --section '{heading}') \
+    --body-file '{correction-file}'
 ```
 
-指令不帶 `--reason`：`--correct` 不會把理由發佈到任何地方（它的標記只帶 backup id 與日期）。
+指令不帶 `--reason`：`--correct` 不會把理由發佈到任何地方（它的標記只帶 backup id 與日期）。`{heading}` 是 comment 裡的標題文字（別人改得到），必須是一行 ATX 標題；實際貼進 shell 的單引號由 idd-edit Step 1 統一包，只包這一次。
 
 依 idd-edit 的結束碼收尾（#351 verify 第 3 輪：更正被擋下時，舊流程什麼都沒留下）：
 

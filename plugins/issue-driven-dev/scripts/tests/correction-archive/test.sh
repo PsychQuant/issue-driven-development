@@ -193,6 +193,10 @@ expect_deny  edit-reason-subst '{"tool_name":"Bash","tool_input":{"command":"pyt
 # denied (the shell runs $(...)), but the reason says how to pass the text
 expect_deny  heredoc '{"tool_name":"Bash","tool_input":{"command":"git commit -m \"$(cat <<'EOF'\nkeep .claude/.idd/archive/ out of git\nEOF\n)\""}}'
 assert_output_grep "the denial points to a single-quoted message or a message file" "single-quoted" "$WORK/hook-heredoc.out"
+# #351 round 13: -m is skipped as a message only when its value is prose
+# (whitespace); `git diff -m` takes no value, so the path after it is read
+expect_deny  diff-m '{"tool_name":"Bash","tool_input":{"command":"git diff --no-index -m .claude/.idd/archive/edits/a.md /dev/null"}}'
+assert_output_grep "the denial names the characters that still need a file" "from a file" "$WORK/hook-diff-m.out"
 expect_allow helper   '{"tool_name":"Bash","tool_input":{"command":"python3 \"$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py\" archive comment 5805214375 --from-file \"$BACKUP_FILE\" --repo \"$REPO\""}}'
 expect_allow skill    '{"tool_name":"Read","tool_input":{"file_path":"plugins/issue-driven-dev/skills/idd-edit/SKILL.md"}}'
 expect_allow grep-re  '{"tool_name":"Grep","tool_input":{"pattern":".claude/.idd/archive","path":"plugins"}}'
@@ -350,7 +354,9 @@ expect_deny  chmodR   "{\"tool_name\":\"Bash\",\"cwd\":\"$REPO\",\"tool_input\":
 expect_deny  chmodRd  "{\"tool_name\":\"Bash\",\"cwd\":\"$REPO\",\"tool_input\":{\"command\":\"chmod -R u+rw .\"}}"
 expect_allow chmodOk  "{\"tool_name\":\"Bash\",\"cwd\":\"$REPO\",\"tool_input\":{\"command\":\"chmod u+x scripts/run.sh\"}}"
 expect_deny  sortm    '{"tool_name":"Bash","tool_input":{"command":"sort -m .claude/.idd/archive/edits/a.md"}}'
-expect_allow gitm     '{"tool_name":"Bash","tool_input":{"command":"git commit -m .claude/.idd/archive/edits"}}'
+# round 13: a message value without whitespace is not skipped (it may be a path
+# after a flag that takes none, `git diff -m <archive>`), so this one is denied
+expect_deny  gitm     '{"tool_name":"Bash","tool_input":{"command":"git commit -m .claude/.idd/archive/edits"}}'
 
 # ── I. round 5 (verify #351 round 4) ──────────────────────────────────────
 echo "I. round 5"

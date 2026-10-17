@@ -498,6 +498,12 @@ assert_eq "it prints the checked id" "$(val BACKUP_ID "$WORK/r99a.out")" "$R99ID
 refute_output_grep "and writes nothing: the user confirms the version first (round 10)" "wrong text" <(body_of comment-430.json)
 helper r99w restore "$R99ID" --repo o/r
 assert_eq "restore <id> puts the old text back" "$SECTION_BODY" "$(body_of comment-430.json)"
+# R11.1 the lookup lists the local archive, not only the markers left on GitHub:
+# a later --replace (or a restore) removes the marker (verify #351 round 11)
+mkrec comment-430.json kiki830621 MEMBER "replaced by hand, no marker"
+helper r111 restore --target comment:430 --repo o/r
+assert_eq "an archived version whose marker is gone is still listed" "$R99ID" "$(val BACKUP_ID "$WORK/r111.out")"
+assert_output_grep "and the listing says its marker is no longer on the target" "marker: gone" "$WORK/r111.err"
 # R10.2 restore --target outside a git work tree says so (round 10)
 NOGIT="$WORK/no-git"; mkdir -p "$NOGIT"
 (cd "$NOGIT" && python3 "$HELPER" restore --target comment:430 --repo o/r) >"$WORK/r102.out" 2>"$WORK/r102.err"

@@ -172,8 +172,8 @@ mkrec comment-208.json kiki830621 MEMBER "d"
 start a5c comment:208 --append --body-file "$WORK/fix.md" --reason r
 h a5cp prepare --run "$RUN" --target comment:208
 h a5cf finish --run "$RUN"
-assert_exit "a prepared target that was never applied exits 4" 4 "$RC"
-assert_output_grep "and is reported as not applied" "REFUSED(not-applied) comment:208" "$WORK/a5cf.out"
+assert_exit "a prepared target never confirmed counts as declined: exit 9, not 4 (round 13)" 9 "$RC"
+assert_output_grep "and is reported as not applied" "DECLINED comment:208" "$WORK/a5cf.out"
 
 echo "A6. failed and unverified writes, egress, the attested tier"
 mkrec comment-209.json kiki830621 MEMBER "e"
@@ -251,7 +251,7 @@ start a7n comment:215 --correct --section "## Notes" --body-file "$WORK/fix.md" 
 h a7np prepare --run "$RUN" --target comment:215
 A7NW="$(val WORK "$WORK/a7np.out")"
 h a7nf finish --run "$RUN"
-assert_exit "a correction never applied exits 4" 4 "$RC"
+assert_exit "a correction never applied counts as declined: exit 9 (round 13)" 9 "$RC"
 refute "finish removes its working copy (it holds the wrong text)" test -d "$A7NW"
 assert_eq "no run directory is left" "0" "$(count_runs)"
 
@@ -427,16 +427,22 @@ start a10c comment:252 --append --body-file "$WORK/fix.md" --reason r
 assert_eq "the run's tier is light" "light" "$SCRUB"
 h a10cp prepare --run "$RUN" --target comment:252
 assert_exit "--append on a user-pasted reply is prepared at the floor" 0 "$RC"
-h a10ca apply --run "$RUN" --target comment:252 --scrub-attested "$SCRUB"
-assert_eq "and written at warn" "edited warn" "$(val RESULT "$WORK/a10ca.out") $(val SCRUB "$WORK/a10ca.out")"
+assert_eq "prepare says the #272 floor applies and the tier to attest" "272 warn" "$(val FLOOR "$WORK/a10cp.out") $(val SCRUB "$WORK/a10cp.out")"
+h a10cl apply --run "$RUN" --target comment:252 --scrub-attested "$SCRUB"
+assert_exit "apply at light is refused until the agent attests warn (round 13)" 2 "$RC"
+refute_output_grep "nothing was written" "right text" <(body_of comment-252.json)
+h a10ca apply --run "$RUN" --target comment:252 --scrub-attested warn
+assert_eq "and written at warn once attested" "edited warn" "$(val RESULT "$WORK/a10ca.out") $(val SCRUB "$WORK/a10ca.out")"
 h a10cf finish --run "$RUN"
 mkrec comment-253.json kiki830621 MEMBER "$REPLY_BODY"
 printf '## Reply\n**Point 1**: a quoted point\nnot done yet\n' >"$WORK/reply-fix.md"
 start a10c2 comment:253 --correct --scope whole-comment --body-file "$WORK/reply-fix.md"
 h a10c2p prepare --run "$RUN" --target comment:253
 assert_exit "--correct on a user-pasted reply is prepared at the floor" 0 "$RC"
-h a10c2a apply --run "$RUN" --target comment:253 --scrub-attested "$SCRUB" --state "$(val STATE "$WORK/a10c2p.out")"
-assert_eq "and written" "edited" "$(val RESULT "$WORK/a10c2a.out")"
+h a10c2l apply --run "$RUN" --target comment:253 --scrub-attested "$SCRUB" --state "$(val STATE "$WORK/a10c2p.out")"
+assert_exit "--correct at light is refused too (round 13)" 2 "$RC"
+h a10c2a apply --run "$RUN" --target comment:253 --scrub-attested warn --state "$(val STATE "$WORK/a10c2p.out")"
+assert_eq "and written at warn" "edited warn" "$(val RESULT "$WORK/a10c2a.out") $(val SCRUB "$WORK/a10c2a.out")"
 h a10c2f finish --run "$RUN"
 printf '{"viewerPermission": "ADMIN", "isPrivate": false}' >"$FAKE_GH_STORE/repo.json"
 # a PICK whose comment cannot be read stays open: fetch-failed, retry allowed
@@ -481,6 +487,65 @@ for f in .SSH/id .CONFIG/gh/hosts.yml .config/GH/hosts.yml xdg/gh/hosts.yml ghc/
   assert_output_grep "$f is refused as a credential path" "refuses credential path" "$WORK/a10h.err"
 done
 
+echo "A11. round 13 (verify #351 round 11)"
+# a PICK whose body read fails after its issue was read still stays open
+mkrec_in comment-260.json kiki830621 24 "x"
+start a11a '#24' --append --body-file "$WORK/fix.md" --reason r
+: >"$FAKE_GH_STORE/fail-body-read"
+h a11aw prepare --run "$RUN" --target comment:260 --pick 24
+rm -f "$FAKE_GH_STORE/fail-body-read"
+assert_eq "a failed body read is fetch-failed" "fetch-failed" "$(val REASON "$WORK/a11aw.out")"
+h a11ap prepare --run "$RUN" --target comment:260 --pick 24
+assert_exit "and the PICK can still be retried" 0 "$RC"
+h a11ad discard --run "$RUN" --target comment:260
+h a11af finish --run "$RUN"
+# issue numbers are ASCII digits: no traceback, no other scripts' digits
+start a11b '#24' --append --body-file "$WORK/fix.md" --reason r
+h a11bp prepare --run "$RUN" --target comment:260 --pick '²'
+assert_exit "a superscript digit is a usage error, not a traceback" 2 "$RC"
+h a11bf finish --run "$RUN"
+h a11c run-start --default-repo o/r -- '#١٢' --append --body-file "$WORK/fix.md" --reason r
+assert_exit "Arabic-Indic digits are not an issue number" 2 "$RC"
+# the credential gate does not depend on HOME: the account's home counts too
+PWHOME="$(python3 -c 'import os,pwd;print(pwd.getpwuid(os.getuid()).pw_dir)')"
+for f in .ssh/idd-test-none .config/gh/idd-test-none; do
+  (HOME="$WORK/not-home" python3 "$HELPER" run-start --default-repo o/r -- comment:100 --append --body-file "$PWHOME/$f" --reason r) >"$WORK/a11d.out" 2>"$WORK/a11d.err"
+  assert_output_grep "with HOME elsewhere, the account's $f is still refused" "refuses credential path" "$WORK/a11d.err"
+done
+# a hosts.yml that is itself a symlink is refused by the path it was named by
+H5="$WORK/home5"; mkdir -p "$H5/ghc"; printf 'x\n' >"$WORK/elsewhere.yml"; ln -s "$WORK/elsewhere.yml" "$H5/ghc/hosts.yml"
+(GH_CONFIG_DIR="$H5/ghc" python3 "$HELPER" run-start --default-repo o/r -- comment:100 --append --body-file "$H5/ghc/hosts.yml" --reason r) >"$WORK/a11e.out" 2>"$WORK/a11e.err"
+assert_output_grep "a symlinked hosts.yml is refused" "refuses credential path" "$WORK/a11e.err"
+# system paths are matched without regard to case, like the credential ones
+h a11f run-start --default-repo o/r -- comment:100 --append --body-file /PRIVATE/ETC/hosts --reason r
+assert_output_grep "/PRIVATE/ETC is a system path" "refuses sensitive system path" "$WORK/a11f.err"
+# the diff breaks lines at a lone \r, as GitHub does
+python3 - "$FAKE_GH_STORE/comment-261.json" <<'PY'
+import json, sys
+json.dump({"body": "x\ry\n", "user": {"login": "kiki830621"}, "author_association": "MEMBER",
+           "html_url": "https://github.com/o/r/x"}, open(sys.argv[1], "w"))
+PY
+start a11g comment:261 --append --body-file "$WORK/fix.md" --reason r
+h a11gp prepare --run "$RUN" --target comment:261
+assert_eq "a lone \\r ends a diff line" "True" "$(python3 -c 'import sys;print(b"x\r y\n" in open(sys.argv[1],"rb").read())' "$(val DIFF "$WORK/a11gp.out")")"
+h a11gd discard --run "$RUN" --target comment:261
+h a11gf finish --run "$RUN"
+# the sweep keeps the run's own --correct working copies too
+mkrec comment-262.json kiki830621 MEMBER "$SECTION_BODY"
+mkrec comment-263.json kiki830621 MEMBER "$SECTION_BODY"
+start a11h comment:262 comment:263 --correct --section "## Notes" --body-file "$WORK/fix.md"
+h a11hp prepare --run "$RUN" --target comment:262
+touch -t 202610010000 "$(val WORK "$WORK/a11hp.out")"
+h a11hq prepare --run "$RUN" --target comment:263
+require "the first target's working copy survives the second prepare" test -d "$(val WORK "$WORK/a11hp.out")"
+h a11hd discard --run "$RUN" --target comment:262
+h a11he discard --run "$RUN" --target comment:263
+h a11hf finish --run "$RUN"
+# --reason under --correct is accepted but said not to be published
+h a11i run-start --default-repo o/r -- comment:100 --correct --scope whole-comment --body-file "$WORK/fix.md" --reason r
+assert_output_grep "run-start says --correct does not publish --reason" "does not publish --reason" "$WORK/a11i.err"
+h a11if finish --run "$(val RUN "$WORK/a11i.out")"
+
 # ═══ Part B — the SKILL's own blocks, one fresh shell each ═════════════════
 # What an agent gets: Claude Code substitutes ${CLAUDE_PLUGIN_ROOT} when it
 # loads a plugin skill (only the braced form — verify #351 round 8), and the
@@ -521,6 +586,8 @@ refute_grep_re "no bash block in the SKILL reads a shell variable" '\$\{?[A-Za-z
 # run its $(...) before the helper checks it (verify #351 round 10).
 refute_grep_re "no placeholder in a bash block is double-quoted" '"<[A-Z_]+>"' "$(cat "$WORK/all-blocks.txt")"
 assert_output_grep "the PICK listing prints each body as JSON, so a newline cannot forge a row" '@json' "$SKILL"
+assert_output_grep "the PICK listing blanks U+2028 / U+2029 / U+0085, which JSON leaves raw" '\u2028' "$SKILL"
+assert_output_grep "the SKILL asks the #272 question when prepare prints FLOOR=272" 'FLOOR=272' "$SKILL"
 mkdir -p "$WORK/home"
 PYUSERBASE="$(python3 -m site --user-base)"
 # step <shell> <label> <name> <key=value>... — the block with its placeholders

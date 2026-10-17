@@ -293,9 +293,9 @@ printf '> **Original** (2026-09-24)：\n> 「直接做 X」\n\nnote\n' >"$WORK/d
 run_helper e5d check-correction "$WORK/dec.md" - "$WORK/dec-new.md"
 assert_exit "decision-template **Original** quote is protected → exit 6" 6 "$RC"
 
-# E6. marker: date comes from the backup id (UTC day)
-run_helper e6 emit-audit-marker edit mode=correct backup-id=comment-1-20261009T230000Z
-assert_output_grep "marker date is the backup id's UTC day" 'date="2026-10-09"' "$WORK/e6.out"
+# E6. marker: the date is the local date, as the write uses (round 13; #406)
+TZ=Etc/GMT-14 python3 "$HELPER" emit-audit-marker edit mode=correct backup-id=comment-1-20261009T230000Z >"$WORK/e6.out" 2>"$WORK/e6.err"
+assert_output_grep "marker date is the local date" "date=\"$(TZ=Etc/GMT-14 date +%Y-%m-%d)\"" "$WORK/e6.out"
 
 # E7. doc contracts for round 2
 UPD="$SKILLS/idd-update/SKILL.md"
@@ -692,5 +692,15 @@ assert_eq "inside a div block too" "True" "$(bytes_in "$WORK/r102b.out" 'b"</div
 printf 'fixed\n\n<!-- idd:comment type=errata date=2026-10-01 target-comment=7 -->\n' >"$WORK/r-own.md"
 run_helper r102c compose-correction "$WORK/html-marker.md" "## Notes" "$WORK/r-own.md" "$MARK"
 assert_eq "a marker kept as its own block is not written twice" "1" "$(grep -c 'target-comment=7' "$WORK/r102c.out")"
+
+# R11 (verify #351 round 11): a CR-only quotation falls back to LF, so the blank
+# line after it survives and the new text does not join the quotation
+python3 - "$WORK" <<'PYX'
+import sys
+open(sys.argv[1] + "/cr-quote.md", "wb").write(b"## Notes\r> **Original text**: keep me\r\rwrong\r\r## Next\rx")
+open(sys.argv[1] + "/r-cr-quote.md", "wb").write(b"> **Original text**: keep me\n\nright\n")
+PYX
+run_helper r111 compose-correction "$WORK/cr-quote.md" "## Notes" "$WORK/r-cr-quote.md" "$MARK"
+assert_eq "the blank line after a CR-only quotation survives" "True" "$(bytes_in "$WORK/r111.out" 'b"keep me\n\nright\n"')"
 
 print_summary "in-place-correction"
