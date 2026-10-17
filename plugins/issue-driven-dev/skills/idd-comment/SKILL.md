@@ -53,7 +53,7 @@ idd-issue source.docx       # auto-trigger when source contains ≥2 findings
 | `decision` | 使用者/老師做的決定 | `--quote`, `--body` | 🎯 |
 | `note` | 外部 context（meeting、paper、advisor feedback） | `--source`, `--body` | 📝 |
 | `question` | 開放性待決問題 | `--body` | ❓ |
-| `correction` | 修正外部 data / interpretation | `--body` | 🔧 |
+| `correction` | 修正外部 data / interpretation；也用於 issue 正文的錯誤 —— 正文不是你開的，或錯在不屬於任何標題的文字（`/idd-edit --correct` 改不到，`errata` 又需要 comment id，#351） | `--body` | 🔧 |
 | `link` | 交叉引用其他 issue | `--target`, `--body` | 🔗 |
 | `errata` | 更正既有 comment 的錯誤：你自己（目前登入的 gh 使用者）寫的就地更正（委派 idd-edit `--correct`），其他人（含 OWNER 與 bot）寫的另貼 errata | `--target-comment` ＋ 依作者（見 Step 2） | ⚠️ |
 | `reply` | Human-facing 逐點回覆（給 review 提出者等人類 collaborator；v2.100.0+，#269） | `--points-from` | 🧑‍🏫 |
@@ -333,23 +333,19 @@ See also: {target}
 
 錯的內容留在原處，之後讀 issue 的 AI session 會照著做（#351）；所以能改的就地改，不能改的才另貼。先用 idd-edit 的 R5 helper 判定 target comment 作者：
 
+一次 Bash 呼叫、一行指令，只帶字面值（新的呼叫裡沒有前面設的 shell 變數，#351 verify 第 8 輪）：`<TARGET_COMMENT>` 填 `--target-comment` 的數字 id，`<REPO>` 填本 skill 解析出的 owner/repo。
+
 ```bash
-# exit 0 = 目前登入的 gh 使用者本人；4 = 其他作者，OWNER 與 bot 也是（mode --correct：別人的話是第三方原話，
-# 只能另貼 errata — 少了這個參數，bot 會被分去就地更正、再被 idd-edit 拒絕，errata 一則都沒貼，#351 verify 第 2 輪；
-# OWNER 由別人執行時也算其他作者，2026-10-17 使用者決定）。
-# helper 的 stderr 是給 idd-edit 的拒絕訊息，分流時不印。
-AUTHOR_ERR=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
-    validate-target "$TARGET_COMMENT" "$GITHUB_REPO" false --correct 2>&1 >/dev/null)
-case $? in
-  0) ERRATA_ROUTE=correct ;;
-  4) ERRATA_ROUTE=comment ;;
-  *) printf '%s\n' "$AUTHOR_ERR" >&2
-     # 無法判定作者時改貼 errata：不改原文（不猜是不是你的），但錯誤至少有一則
-     # 指向正確內容的更正；之前直接 abort，什麼都沒留下（#351 verify 第 4 輪）。
-     echo "⚠ 無法判定 comment $TARGET_COMMENT 的作者 — 不就地更正，改貼 errata" >&2
-     ERRATA_ROUTE=comment ;;
-esac
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" validate-target "<TARGET_COMMENT>" "<REPO>" false --correct
 ```
+
+依結束碼分流：
+
+| 結束碼 | 作者 | 路徑 |
+|---|---|---|
+| 0 | 目前登入的 gh 使用者本人 | 就地更正（下方「你自己」） |
+| 4 | 其他人，OWNER（由別人執行時）與 bot 也是 —— 別人的話是第三方原話（bot：#351 verify 第 2 輪；OWNER：2026-10-17 使用者決定） | 只貼 errata（下方「其他作者」） |
+| 其他（1 = 查不到目前的 gh 使用者、2 = 參數錯） | 無法判定 | 把 stderr 的原因告訴使用者，改貼 errata、不改原文：不猜是不是你的，但錯誤至少有一則指向正確內容的更正（#351 verify 第 4 輪） |
 
 **你自己（目前登入的 gh 使用者） → 就地更正**（OWNER 不是你時，OWNER 寫的 comment 算其他作者；bot 也是；都走另貼 errata）：不 post 任何 comment（跳過 Step 2.5–4），委派 idd-edit；修改本身、預覽、確認（預設 NO）、歸檔舊版都由它執行。更正內容只取自 `--correction-file`；沒給就用 AskUserQuestion 要檔案路徑，**不得**拿 `--body` 當替換內容：
 

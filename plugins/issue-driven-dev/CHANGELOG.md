@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Claude cannot read the archive.** A PreToolUse hook (`hooks/archive-read-guard.py`) denies Read / Grep /
     Glob / Edit / Write / NotebookEdit / Bash / PowerShell calls that name the archive path. About 31 ms per
     tool call.
-  - **Protected regions** (`check-correction`, exit 6): `Original text` / `**Original**` quotations must survive unchanged;
+  - **Protected regions** (`check-correction`, exit 6): `Original text` / `**Original**` / `**Point i**` quotations must survive unchanged;
     `## Current Status` (idd-update) and `### Clarity Surface` (idd-clarify) are refused as targets, and a
     corrected section ends at either heading or at a thematic break, so it never swallows them. Only the invoking user's own content is corrected (see the author gate below); `--correct` has
     no `--override-user-content`.
@@ -49,7 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A thematic break ends a corrected section (round 4 reads it from the Markdown parser), so a correction cannot swallow the
   body's `## Current Status` block.
 - Verbatim blocks are compared as multisets and recognised by exactly two labels, `Original text` and
-  `**Original**`.
+  `**Original**` (*round 9 added a third, the reply template's `**Point i**`*).
 - The read-guard hook matches the archive path as a shell word, so a quoted commit or comment message that
   mentions it is allowed, and it honours `~/.cache/idd/archive-read-guard.disabled` as an off switch.
 
@@ -192,7 +192,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `idd-comment` no longer summarises a correction file that `/idd-edit` refused (exit 2, 3 or 5 — the path gate
   among them) into a public errata; it reports the argument error.
 - **Known limitation** (user decision 2026-10-17): text that belongs to no heading — below an issue body's last
-  `---`, such as the IC_R011 `**Source**` footnote — cannot be corrected in place; skills propose an errata for it.
+  `---`, such as the IC_R011 `**Source**` footnote — cannot be corrected in place; skills propose an errata for it (*round 9: `/idd-comment --type correction`, since
+  an issue body has no comment id for an errata*).
   The writer side of the setext shape (`idd-update` Branch B) is #413.
 - `correct-flow` checks the repository (a write aimed at another repository fails), lets a write land before gh
   errors, covers the apply-side gates, a malformed state field, stale working directories, CRLF and null bodies,
@@ -228,6 +229,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   issue body you did not open, or under no heading, are answered with `/idd-comment --type correction` (the
   errata type needs a comment id).
 
+### Fixed (round 10 — verify round 8 findings, before release)
+
+- **Every mode can be applied as the SKILL writes it.** The apply step passes `--state ""` for the modes without a
+  STATE, and the helper took an empty value for a missing one: every confirmed `--append`, `--replace` and
+  `--prepend-note` exited 2 and wrote nothing (fail-closed). An explicit empty value is now a value.
+- **The SKILL names the plugin root as `${CLAUDE_PLUGIN_ROOT}`**, the only form Claude Code substitutes when it loads
+  a plugin skill; the Bash tool has no such variable, so the unbraced form ran `/scripts/idd-edit-helper.py`. The
+  rest of the plugin is #401. idd-comment's author routing is one literal command too.
+- `edit-run` part B now runs every mode through the SKILL's own blocks with `${CLAUDE_PLUGIN_ROOT}` substituted
+  as Claude Code does and no IDD variable in the environment: each mode confirmed, a quoted argument, `~` and
+  `$HOME` body files, a batch of two, a half-done batch, a PICK, a decline and a refusal, under zsh and bash.
+- `finish` counts a listed target nobody prepared (`not-prepared`) and an unresolved PICK (`not-picked`) as
+  refusals; an exception after the write is `unverified`; no mode is a usage error (it ran as `--replace`); a
+  mistyped STATE can be retried; a stricter attested tier is accepted; the run is found by its own path, not by
+  the temp dir of the current call (sandboxed calls see another); a `--body-file` starting with `~` or `$HOME` is
+  read from the home directory (single-quoted arguments do not expand it); the `restore` example single-quotes the
+  backup id, which comes from GitHub; the refusal for someone else's issue body points to `--type correction`.
+
 ### Changed
 
 - **BREAKING (behavior) — `/idd-edit` exit codes for the existing modes** (`--append`, `--replace`,
@@ -236,15 +255,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   continuing with an empty backup; a staging failure skips that target instead of ending the run; no target is
   exit 2 (was a silent 0). Callers that treat any non-zero exit as failure will now see one on a plain decline.
 - **Backups of the existing modes moved** from `/tmp/idd-edit-backup/` to `idd-edit-backup/` under the user's
-  temporary directory (on macOS under `/var/folders/…`); `prepare` prints the path as `BACKUP=`, and the
-  `--replace` marker's `backup=` names it. The 3.4.0 recovery command (`ls /tmp/idd-edit-backup/`) finds nothing
-  for edits made with 3.5.0.
+  temporary directory (on macOS under `/var/folders/…`; on Linux usually still `/tmp`, where a 0755 directory left
+  by 3.4.0 is made private); `prepare` prints the path as `BACKUP=`, and the `--replace` marker's `backup=` now
+  reads `idd-edit-backup/<file>` instead of a local absolute path. On macOS the 3.4.0 recovery command
+  (`ls /tmp/idd-edit-backup/`) finds nothing for edits made with 3.5.0.
 - Smaller changes to the existing modes: the new body is written byte for byte (no shell `echo`, which rewrote
   backslashes under zsh); the edit count in the report is real (it always read `edited: 0`); the egress gates also run before the
-  preview; a bare `#` line ends a `--replace --section`.
+  preview; a bare `#` line ends a `--replace --section`; the privacy attestation follows the repository's tier
+  (`light` private, `warn` own public, `enforce` third-party or unknown) instead of a fixed `warn`, with a
+  redaction step under `enforce`; a target named twice is edited once; `#N --last` on an issue with no comments
+  exits 2 and an unreadable comment list exits 1.
 - `idd-update` regenerates Key Decisions from the current comments on its next run for every issue: a decision
   that no current comment backs — added by hand, summarised from chat, or from a deleted comment — is dropped, and
   the order and wording are re-derived each time.
+- `/idd-comment --type errata` gained `--correction-file`, `--scope`, `--section` and `--reason`: on your own comment
+  it needs a scope and `--correction-file` (the replacement), not `--body` alone. The errata template merges
+  `### 錯在哪` and `### 正確內容` into `### 錯在哪與正確內容`.
 - **BREAKING (behavior) — `/idd-comment --type errata`** on the invoking user's own comment now delegates to
   `/idd-edit --correct` and posts nothing; it no longer appends an errata comment plus a `--prepend-note`
   warning. When the correction is refused or its write fails it posts the errata comment instead and proposes a

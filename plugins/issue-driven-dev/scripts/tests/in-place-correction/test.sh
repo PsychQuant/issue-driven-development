@@ -306,7 +306,7 @@ for s in idd-verify idd-diagnose idd-reorganize; do
 done
 # Round 6: the --correct flow moved into the helper; its behavior is exercised
 # end to end in scripts/tests/correct-flow (re-read E3, fetch failure E7, …).
-assert_output_grep "the run delegates --correct to correct-apply" "_captured(correct_apply_subcmd" "$HELPER"
+assert_output_grep "the run delegates --correct to the correct-apply flow" "_captured(_correct_apply, work, state)" "$HELPER"
 assert_output_grep "correct-apply re-reads the target after confirmation" 'return _refused("changed-since-preview")' "$HELPER"
 refute_output_grep "idd-edit has no global ISSUE_BODY_TARGET routing" "ISSUE_BODY_TARGET" "$SKILLS/idd-edit/SKILL.md"
 assert_output_grep "idd-comment errata self path takes --correction-file" "--correction-file" "$SKILLS/idd-comment/SKILL.md"
@@ -425,7 +425,7 @@ assert_output_grep "validate-target receives the mode" 'validate_target_subcmd([
 
 # F5 / F9 / F10 / F12. doc contracts
 assert_output_grep "idd-comment errata routing asks with --correct, so a bot goes to errata" \
-  'validate-target "$TARGET_COMMENT" "$GITHUB_REPO" false --correct' "$SKILLS/idd-comment/SKILL.md"
+  'validate-target "<TARGET_COMMENT>" "<REPO>" false --correct' "$SKILLS/idd-comment/SKILL.md"
 refute_output_grep "no skill still says OWNER, a bot, or you are correctable" "OWNER、bot" "$SKILLS/idd-comment/SKILL.md"
 assert_output_grep "idd-edit says the archive lives in one clone" "那份 clone" "$EDIT_SKILL"
 assert_output_grep "idd-edit says to chmod the archive back" "chmod 000" "$EDIT_SKILL"
@@ -651,7 +651,7 @@ assert_exit "a replacement that adds a Current Status variant → exit 6" 6 "$RC
 assert_output_grep "--correct goes straight to correct-prepare (it gates the author after reading)" 'rc, out = _captured(correct_prepare_subcmd, argv)' "$HELPER"
 run_helper h17t parse-args 'comment:1' '#許' --append --body x --reason r
 refute_output_grep "TARGETS never carry raw non-ASCII" "許" "$WORK/h17t.out"
-assert_output_grep "idd-comment posts errata when the author cannot be determined" "無法判定作者時改貼 errata" "$SKILLS/idd-comment/SKILL.md"
+assert_output_grep "idd-comment posts errata when the author cannot be determined" "| 無法判定 | 把 stderr 的原因告訴使用者，改貼 errata" "$SKILLS/idd-comment/SKILL.md"
 
 # R8 (verify #351 round 6): a refused correction file is never summarised in public
 assert_output_grep "idd-comment does not read a correction file idd-edit refused" '**不貼、也不讀那個檔案**' "$SKILLS/idd-comment/SKILL.md"

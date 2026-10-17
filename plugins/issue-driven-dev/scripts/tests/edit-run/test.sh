@@ -6,9 +6,11 @@
 # write are separate tool calls, so shell variables, arrays, `continue` and the
 # run's exit code did not survive. The run's state now lives in the helper
 # (run-start → prepare → apply | discard → finish). Part A tests the helper
-# against a fake gh; part B runs the SKILL's own step blocks, one fresh shell
-# per block with an empty environment and only the documented values pasted
-# in — under zsh (the agent's Bash tool) and bash.
+# against a fake gh; part B runs the SKILL's own step blocks — every mode
+# confirmed, plus a decline, a refusal, a half-done batch and a PICK — one
+# fresh shell per block, with ${CLAUDE_PLUGIN_ROOT} substituted the way Claude
+# Code does, an environment holding no IDD variable, and only the documented
+# values pasted in, under zsh (the agent's Bash tool) and bash.
 #
 # Change: openspec/changes/idd-edit-in-place-correction (tasks section 14)
 set -u
@@ -177,8 +179,8 @@ echo "A6. failed and unverified writes, egress, the attested tier"
 mkrec comment-209.json kiki830621 MEMBER "e"
 start a6 comment:209 --append --body-file "$WORK/fix.md" --reason r
 h a6p prepare --run "$RUN" --target comment:209
-h a6x apply --run "$RUN" --target comment:209 --scrub-attested enforce
-assert_exit "a tier other than the run's is a usage error" 2 "$RC"
+h a6x apply --run "$RUN" --target comment:209 --scrub-attested light
+assert_exit "a tier looser than the run's is a usage error" 2 "$RC"
 : >"$FAKE_GH_STORE/fail-patch"
 h a6a apply --run "$RUN" --target comment:209 --scrub-attested "$SCRUB"
 rm -f "$FAKE_GH_STORE/fail-patch"
@@ -253,9 +255,61 @@ assert_exit "a correction never applied exits 4" 4 "$RC"
 refute "finish removes its working copy (it holds the wrong text)" test -d "$A7NW"
 assert_eq "no run directory is left" "0" "$(count_runs)"
 
+echo "A8. round 10 (verify #351 round 8)"
+# a 0755 backup directory left by 3.4.0 is tightened, not refused
+BK="$(cd "$TMPDIR" && pwd -P)/idd-edit-backup"
+chmod 755 "$BK"
+mkrec comment-230.json kiki830621 MEMBER "x"
+start a8a comment:230 --append --body-file "$WORK/fix.md" --reason r
+h a8ap prepare --run "$RUN" --target comment:230
+assert_exit "an upgraded 0755 backup directory still takes the backup" 0 "$RC"
+assert_eq "and is now private" "700" "$(stat -f '%Lp' "$BK" 2>/dev/null || stat -c '%a' "$BK")"
+# a stricter tier than the run's is accepted; the write goes out at that tier
+h a8aa apply --run "$RUN" --target comment:230 --scrub-attested enforce
+assert_eq "a stricter attested tier is accepted" "edited" "$(val RESULT "$WORK/a8aa.out")"
+h a8af finish --run "$RUN"
+# a mistyped STATE can be retried
+mkrec comment-231.json kiki830621 MEMBER "$SECTION_BODY"
+start a8b comment:231 --correct --section "## Notes" --body-file "$WORK/fix.md" --reason r
+h a8bp prepare --run "$RUN" --target comment:231
+h a8bx apply --run "$RUN" --target comment:231 --scrub-attested "$SCRUB" --state "0000000000000000000000000000000000000000000000000000000000000000"
+assert_exit "a wrong STATE is a usage error" 2 "$RC"
+h a8ba apply --run "$RUN" --target comment:231 --scrub-attested "$SCRUB" --state "$(val STATE "$WORK/a8bp.out")"
+assert_eq "and the right one still applies" "edited" "$(val RESULT "$WORK/a8ba.out")"
+h a8bf finish --run "$RUN"
+# a mode is required; a target named twice is edited once; --last on no comments
+h a8c run-start --default-repo o/r -- comment:230 --scope whole-comment --body-file "$WORK/fix.md"
+assert_exit "no mode is a usage error, not a silent --replace" 2 "$RC"
+start a8d comment:230 comment:230 --append --body-file "$WORK/fix.md" --reason r
+assert_eq "a target named twice is listed once" "1" "$(vals TARGET "$WORK/a8d.out" | wc -l | tr -d ' ')"
+h a8df finish --run "$RUN"
+: >"$FAKE_GH_STORE/issue-11-comment-ids"
+h a8e run-start --default-repo o/r -- '#11' --last --append --body-file "$WORK/fix.md" --reason r
+assert_exit "--last on an issue with no comments is exit 2" 2 "$RC"
+assert_output_grep "and says so" "has no comments" "$WORK/a8e.err"
+# a --correct body that is only the target heading is refused at run-start
+printf '## Notes\n' >"$WORK/only-heading.md"
+h a8f run-start --default-repo o/r -- comment:231 --correct --section "## Notes" --body-file "$WORK/only-heading.md" --reason r
+assert_exit "a heading-only --correct body is exit 2 at run-start" 2 "$RC"
+# someone else's issue body: the refusal points to --type correction
+python3 - "$FAKE_GH_STORE/issue-12.json" <<'PY'
+import json, sys
+json.dump({"body": "## Expected\nwrong", "user": {"login": "reporter"}, "author_association": "NONE",
+           "html_url": "https://github.com/o/r/issues/12"}, open(sys.argv[1], "w"))
+PY
+start a8g issue:12 --correct --section "## Expected" --body-file "$WORK/fix.md" --reason r
+h a8gp prepare --run "$RUN" --target issue:12
+assert_output_grep "an issue body's refusal names --type correction" "--type correction" "$WORK/a8gp.err"
+h a8gf finish --run "$RUN"
+
 # ═══ Part B — the SKILL's own blocks, one fresh shell each ═════════════════
-# block <step> — the fenced bash block whose first line is `# step: <step>`
-python3 - "$SKILL" "$WORK/blk" <<'PY'
+# What an agent gets: Claude Code substitutes ${CLAUDE_PLUGIN_ROOT} when it
+# loads a plugin skill (only the braced form — verify #351 round 8), and the
+# Bash tool has no IDD variables at all. So the blocks are taken from the
+# SKILL, ${CLAUDE_PLUGIN_ROOT} replaced by the plugin path, the placeholders
+# replaced by the values earlier blocks printed, and each run in an empty
+# environment under zsh (the Bash tool's shell) and bash.
+python3 - "$SKILL" "$WORK/blk" "$PLUGIN" <<'PY'
 import re, sys
 text = open(sys.argv[1], encoding="utf-8").read()
 blocks = {}
@@ -265,13 +319,17 @@ for body in re.findall(r"```bash\n(.*?)```", text, re.S):
         blocks.setdefault(m.group(1), []).append(body)
 for name in ("start", "prepare", "apply", "discard", "finish"):
     assert len(blocks.get(name, [])) == 1, (name, len(blocks.get(name, [])))
-    open(f"{sys.argv[2]}-{name}.sh", "w", encoding="utf-8").write(blocks[name][0])
+    open(f"{sys.argv[2]}-{name}.raw", "w", encoding="utf-8").write(blocks[name][0])
+    open(f"{sys.argv[2]}-{name}.sh", "w", encoding="utf-8").write(blocks[name][0].replace("${CLAUDE_PLUGIN_ROOT}", sys.argv[3]))
 PY
 assert_exit "the SKILL has exactly one block per step (start, prepare, apply, discard, finish)" 0 "$?"
 for s in start prepare apply discard finish; do
   refute_output_grep "step $s needs no loop" "continue" "$WORK/blk-$s.sh"
-  refute_grep_re "step $s reads no shell variable but CLAUDE_PLUGIN_ROOT" '\$\{?[A-Z_]*[A-Z]' "$(sed 's/\$CLAUDE_PLUGIN_ROOT//g; s/\${CLAUDE_PLUGIN_ROOT}//g' "$WORK/blk-$s.sh")"
+  refute_grep_re "step $s names the plugin root the way Claude Code substitutes it (braced)" '\$CLAUDE_PLUGIN_ROOT' "$(cat "$WORK/blk-$s.raw")"
+  refute_grep_re "step $s reads no shell variable" '\$\{?[A-Za-z_]' "$(cat "$WORK/blk-$s.sh")"
 done
+mkdir -p "$WORK/home"
+PYUSERBASE="$(python3 -m site --user-base)"
 # step <shell> <label> <name> <key=value>... — the block with its placeholders
 # filled, run alone in an empty environment
 step() {
@@ -288,48 +346,99 @@ sys.stdout.write(text)
 PY
   # zsh -f: no ~/.zshenv, which may put the real gh ahead of the fake on PATH
   local flags=""; [ "$sh" = zsh ] && flags="-f"
-  (cd "$REPO" && env -i PATH="$PATH" HOME="$HOME" TMPDIR="$TMPDIR" \
-     CLAUDE_PLUGIN_ROOT="$PLUGIN" FAKE_GH_STORE="$FAKE_GH_STORE" \
-     GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+  # HOME is a test home (for the ~ and $HOME body-file cases); Python keeps
+  # finding the user's site-packages (markdown-it-py) through PYTHONUSERBASE
+  (cd "$REPO" && env -i PATH="$PATH" HOME="$WORK/home" TMPDIR="$TMPDIR" PYTHONUSERBASE="$PYUSERBASE" \
+     FAKE_GH_STORE="$FAKE_GH_STORE" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
      "$sh" $flags -c "$(cat "$WORK/$label.sh")") >"$WORK/$label.out" 2>"$WORK/$label.err"
   RC=$?
+}
+# confirmed <shell> <label> <targets> <args> — start, prepare and apply every
+# target, finish; START_RC, APPLY_RCS (one digit per target), RC = finish's
+confirmed() {
+  local sh="$1" l="$2" targets="$3" args="$4" tg r s
+  step "$sh" "$l-s" start "REPO=o/r" "ARGS=$args"
+  START_RC=$RC
+  r="$(val RUN "$WORK/$l-s.out")"; s="$(val SCRUB "$WORK/$l-s.out")"
+  APPLY_RCS=""
+  for tg in $targets; do
+    step "$sh" "$l-p-${tg#*:}" prepare "RUN=$r" "TARGET=$tg"
+    step "$sh" "$l-a-${tg#*:}" apply "RUN=$r" "TARGET=$tg" "SCRUB=$s" "STATE=$(val STATE "$WORK/$l-p-${tg#*:}.out")"
+    APPLY_RCS="$APPLY_RCS$RC"
+  done
+  step "$sh" "$l-f" finish "RUN=$r"
 }
 SHELLS="bash"; command -v zsh >/dev/null 2>&1 && SHELLS="zsh bash"
 [ -n "${CI:-}" ] && ! command -v zsh >/dev/null 2>&1 && fail "zsh is installed on CI" "the agent's Bash tool runs zsh"
 n=300
 for SH in $SHELLS; do
-  echo "B. $SH: --correct, confirmed"
+  echo "B. $SH: every mode, confirmed, through the SKILL's own blocks"
   n=$((n + 1)); mkrec "comment-$n.json" kiki830621 MEMBER "$SECTION_BODY"
   printf '## Notes\nright text\n' >"$WORK/b-fix.md"
-  step "$SH" "b$n-s" start "REPO=o/r" "ARGS=comment:$n --correct --section '## Notes' --body-file '$WORK/b-fix.md' --reason fixed"
-  assert_exit "$SH: start" 0 "$RC"
-  R="$(val RUN "$WORK/b$n-s.out")"; S="$(val SCRUB "$WORK/b$n-s.out")"
-  step "$SH" "b$n-p" prepare "RUN=$R" "TARGET=comment:$n"
-  assert_exit "$SH: prepare" 0 "$RC"
-  step "$SH" "b$n-a" apply "RUN=$R" "TARGET=comment:$n" "SCRUB=$S" "STATE=$(val STATE "$WORK/b$n-p.out")"
-  assert_exit "$SH: apply, with only the printed values" 0 "$RC"
-  step "$SH" "b$n-f" finish "RUN=$R"
-  assert_exit "$SH: finish exits 0" 0 "$RC"
-  assert_eq "$SH: the comment is corrected" "right text" "$(body_of "comment-$n.json" | sed -n 2p)"
+  confirmed "$SH" "b$n" "comment:$n" "comment:$n --correct --section '## Notes' --body-file '$WORK/b-fix.md' --reason fixed"
+  assert_eq "$SH: --correct — start, apply and finish exit 0" "0 0 0" "$START_RC $APPLY_RCS $RC"
+  assert_eq "$SH: --correct writes the new text" "right text" "$(body_of "comment-$n.json" | sed -n 2p)"
+  n=$((n + 1)); mkrec "comment-$n.json" kiki830621 MEMBER "first"
+  confirmed "$SH" "b$n" "comment:$n" "comment:$n --append --body-file '$WORK/fix.md' --reason 'it'\\''s a note'"
+  assert_eq "$SH: --append (a reason with a quote) — start, apply and finish exit 0" "0 0 0" "$START_RC $APPLY_RCS $RC"
+  assert_output_grep "$SH: --append writes the reason intact" "**: it's a note" <(body_of "comment-$n.json")
+  n=$((n + 1)); mkrec "comment-$n.json" kiki830621 MEMBER "$SECTION_BODY"
+  confirmed "$SH" "b$n" "comment:$n" "comment:$n --replace --section '## Notes' --body-file '$WORK/fix.md' --reason r"
+  assert_eq "$SH: --replace --section — exits 0 0 0" "0 0 0" "$START_RC $APPLY_RCS $RC"
+  refute_output_grep "$SH: --replace --section removes the old text" "wrong text" <(body_of "comment-$n.json")
+  n=$((n + 1)); mkrec "comment-$n.json" kiki830621 MEMBER "old whole"
+  printf 'whole new\n' >"$WORK/home/new-whole.md"
+  confirmed "$SH" "b$n" "comment:$n" "comment:$n --replace --scope whole-comment --body-file '\$HOME/new-whole.md' --reason r"
+  assert_eq "$SH: --replace whole, body file as \$HOME/… in single quotes — exits 0 0 0" "0 0 0" "$START_RC $APPLY_RCS $RC"
+  assert_output_grep "$SH: the \$HOME path was read" "whole new" <(body_of "comment-$n.json")
+  refute_output_grep "$SH: the marker names no local path" "$TMPDIR" <(body_of "comment-$n.json")
+  n=$((n + 1)); mkrec "comment-$n.json" kiki830621 MEMBER "stale"
+  confirmed "$SH" "b$n" "comment:$n" "comment:$n --prepend-note --reason superseded"
+  assert_eq "$SH: --prepend-note — exits 0 0 0" "0 0 0" "$START_RC $APPLY_RCS $RC"
+  n=$((n + 1)); a=$n; mkrec "comment-$n.json" kiki830621 MEMBER "one"
+  n=$((n + 1)); b=$n; mkrec "comment-$n.json" kiki830621 MEMBER "two"
+  printf 'more\n' >"$WORK/home/more.md"
+  confirmed "$SH" "b$n" "comment:$a comment:$b" "comment:$a comment:$b --append --body-file '~/more.md' --reason r"
+  assert_eq "$SH: a batch of two, body file as ~/… — exits 0 00 0" "0 00 0" "$START_RC $APPLY_RCS $RC"
+  assert_output_grep "$SH: the batch report counts two edits" "edited: 2 / refused: 0" "$WORK/b$n-f.out"
 
-  echo "B. $SH: --replace, declined"
+  echo "B. $SH: declined, refused, half a batch, PICK"
   n=$((n + 1)); mkrec "comment-$n.json" kiki830621 MEMBER "$SECTION_BODY"
   step "$SH" "b$n-s" start "REPO=o/r" "ARGS=comment:$n --replace --section '## Notes' --body-file '$WORK/fix.md' --reason r"
   R="$(val RUN "$WORK/b$n-s.out")"
   step "$SH" "b$n-p" prepare "RUN=$R" "TARGET=comment:$n"
   step "$SH" "b$n-d" discard "RUN=$R" "TARGET=comment:$n"
-  assert_exit "$SH: discard" 0 "$RC"
   step "$SH" "b$n-f" finish "RUN=$R"
   assert_exit "$SH: a declined run exits 9 — what idd-comment routes on" 9 "$RC"
-  assert_eq "$SH: the comment is unchanged" "$SECTION_BODY" "$(body_of "comment-$n.json")"
-
-  echo "B. $SH: --append, refused at prepare"
+  assert_eq "$SH: the declined comment is unchanged" "$SECTION_BODY" "$(body_of "comment-$n.json")"
   n=$((n + 1)); mkrec "comment-$n.json" collaborator MEMBER "theirs"
   step "$SH" "b$n-s" start "REPO=o/r" "ARGS=comment:$n --append --body-file '$WORK/fix.md' --reason r"
   R="$(val RUN "$WORK/b$n-s.out")"
   step "$SH" "b$n-p" prepare "RUN=$R" "TARGET=comment:$n"
   step "$SH" "b$n-f" finish "RUN=$R"
   assert_exit "$SH: a refused run exits 4, not 0" 4 "$RC"
+  n=$((n + 1)); a=$n; mkrec "comment-$n.json" kiki830621 MEMBER "one"
+  n=$((n + 1)); b=$n; mkrec "comment-$n.json" kiki830621 MEMBER "two"
+  step "$SH" "b$n-s" start "REPO=o/r" "ARGS=comment:$a comment:$b --append --body-file '$WORK/fix.md' --reason r"
+  R="$(val RUN "$WORK/b$n-s.out")"; S="$(val SCRUB "$WORK/b$n-s.out")"
+  step "$SH" "b$n-p" prepare "RUN=$R" "TARGET=comment:$a"
+  step "$SH" "b$n-a" apply "RUN=$R" "TARGET=comment:$a" "SCRUB=$S" "STATE="
+  step "$SH" "b$n-f" finish "RUN=$R"
+  assert_exit "$SH: a batch whose second target was never prepared exits 4" 4 "$RC"
+  assert_output_grep "$SH: and names it" "REFUSED(not-prepared) comment:$b" "$WORK/b$n-f.out"
+  n=$((n + 1)); mkrec "comment-$n.json" kiki830621 MEMBER "picked"
+  printf '%s\n' 5 "$n" >"$FAKE_GH_STORE/issue-9-comment-ids"
+  step "$SH" "b$n-s" start "REPO=o/r" "ARGS='#9' --append --body-file '$WORK/fix.md' --reason r"
+  assert_eq "$SH: #N without --last asks to pick" "#9" "$(val PICK "$WORK/b$n-s.out")"
+  R="$(val RUN "$WORK/b$n-s.out")"; S="$(val SCRUB "$WORK/b$n-s.out")"
+  step "$SH" "b$n-p" prepare "RUN=$R" "TARGET=comment:$n"
+  step "$SH" "b$n-a" apply "RUN=$R" "TARGET=comment:$n" "SCRUB=$S" "STATE="
+  step "$SH" "b$n-f" finish "RUN=$R"
+  assert_exit "$SH: the picked comment is edited and the run exits 0" 0 "$RC"
+  n=$((n + 1))
+  step "$SH" "b$n-s" start "REPO=o/r" "ARGS='#9' --append --body-file '$WORK/fix.md' --reason r"
+  step "$SH" "b$n-f" finish "RUN=$(val RUN "$WORK/b$n-s.out")"
+  assert_exit "$SH: a PICK nobody resolved exits 4" 4 "$RC"
 done
 assert_eq "no run directory is left after part B" "0" "$(count_runs)"
 

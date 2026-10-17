@@ -40,11 +40,11 @@
 正文目標語法 `issue:<N>`，只接受 `--section <heading>`。整段取代正文會一起覆蓋 `Original text`、`## Current Status`、`### Clarity Surface`，所以不開放。保護區判定由 helper 的 `check-correction` 子命令執行：
 
 - 受管區：`## Current Status`（含其下巢狀標題，歸 `idd-update`）與 `### Clarity Surface`（歸 `idd-clarify`）。目標段落本身是受管區 → exit 6。`### Clarity Surface` 常巢狀在 `## Related` 底下：第 1 版把「包含受管區」也一律拒絕，手動驗收發現這讓 `## Related` 永遠改不了，所以改成更正的段落遇到受管標題（或 `---`）就結束，只換它上面的內容（使用者 2026-10-10 決定）。
-- verbatim 區塊：原 section 中「連續以 `>` 開頭、且其中一行含 `Original text`」的最大區塊，必須在取代內容中逐 byte 出現 → 否則 exit 6。
+- verbatim 區塊：原 section 中「連續以 `>` 開頭、且其中一行含 `Original text`、`**Original**` 或 `**Point `（封閉列舉三個標籤）」的最大區塊，必須在取代內容中逐 byte 出現 → 否則 exit 6。
 
 ### 確認後才歸檔，歸檔成功才 PATCH
 
-順序是預覽 → 確認 → 重抓目標比對 → `archive` → PATCH。確認之後重新抓一次目標，與預覽時的原文比對；不一致就拒絕、不歸檔也不 PATCH，避免使用者確認的版本與實際被取代的內容不同。`archive` 以 `--from-file` 讀入預覽時給使用者看的那份原文，不自己向 GitHub 重抓：重抓可能拿到中間被改過的版本，歸檔就不再等於實際被取代的內容。PATCH 成功後刪掉 `/tmp` 裡的工作副本。歸檔是受保護、Claude 的工具讀不到的那一份，不是唯一的一份：GitHub 的編輯紀錄保有舊版，暫存與 scratch 副本也可能留下舊版，後者在 #378 追蹤。使用者拒絕時不留任何檔案；歸檔失敗（不在 git work tree、路徑沒被 ignore、寫入失敗）一律 exit 7，skill 不 PATCH。替代方案「先歸檔再確認」會在拒絕時留下沒有對應更正的歸檔檔。
+順序是預覽 → 確認 → 重抓目標比對 → `archive` → PATCH。確認之後重新抓一次目標，與預覽時的原文比對；不一致就拒絕、不歸檔也不 PATCH，避免使用者確認的版本與實際被取代的內容不同。歸檔的是預覽時給使用者看的那份原文（第 5 輪起由 correct-apply 在行程內寫入，不再經過 `archive --from-file`），不自己向 GitHub 重抓：重抓可能拿到中間被改過的版本，歸檔就不再等於實際被取代的內容。apply 結束時刪掉工作副本。歸檔是受保護、Claude 的工具讀不到的那一份，不是唯一的一份：GitHub 的編輯紀錄保有舊版，暫存與 scratch 副本也可能留下舊版，後者在 #378 追蹤。使用者拒絕時不留任何檔案；歸檔失敗（不在 git work tree、路徑沒被 ignore、寫入失敗）一律 exit 7，skill 不 PATCH。替代方案「先歸檔再確認」會在拒絕時留下沒有對應更正的歸檔檔。
 
 ### 歸檔寫進 .git/info/exclude，不改 tracked 的 .gitignore
 
@@ -98,19 +98,19 @@ issue 正文最後一條 `---` 之下（IC_R011 的 `**Source**` 註腳）或第
 
 | 子命令 | 輸入 | 成功輸出 | 失敗 |
 | --- | --- | --- | --- |
-| `parse-args` | 新增 `--correct` 與 `issue:<N>` target | eval 用的 assignments，`MODE=--correct`（沿用既有以旗標為值的慣例），`TARGETS` 保留 `issue:<N>` 原樣、由 SKILL 依前綴分辨目標類型；多行 `--body-file` 內容以 ANSI-C quoting（`$'...'`）輸出 | `--correct` 缺 scope/section 或正文用 whole → exit 3；`--correct` 併用 `--override-user-content` → exit 2；`issue:<N>` 配 `--correct` 以外的模式 → exit 2 並指向 #347；id 非數字 → exit 2 |
+| `parse-args` | 新增 `--correct` 與 `issue:<N>` target | eval 用的 assignments，`MODE=--correct`（沿用既有以旗標為值的慣例），`TARGETS` 保留 `issue:<N>` 原樣（第 9 輪起 SKILL 不再 eval 這些輸出：run-start 在行程內解析）；多行 `--body-file` 內容以 ANSI-C quoting（`$'...'`）輸出 | `--correct` 缺 scope/section 或正文用 whole → exit 3；`--correct` 併用 `--override-user-content` → exit 2；`issue:<N>` 配 `--correct` 以外的模式 → exit 2 並指向 #347；id 非數字 → exit 2 |
 | `check-correction <old-file> <section|-> <new-file>` 的段落不存在 | — | — | exit 1（與 `section-replace` 一致） |
 | `check-correction <old-file> <section-heading|-> <new-file>` | 原文、目標段落（`-` 表示整則 comment）、新段落（開頭與目標相同的標題行先去掉） | 無輸出，exit 0 | 受管區或 verbatim 區塊被改、替換內容新增同級以上標題或分隔線 → exit 6，stderr 指名區域與負責 skill；範圍內有 setext 標題、或替換內容新增 setext 標題 → exit 6（prepare／apply 記為 `setext`）；標題重複 → exit 9 |
 | `validate-target <comment-id|issue:<N>> <repo> <override> [<mode>]` | 新增 `issue:<N>`（檢查 issue 作者）與「目前登入的 gh 使用者本人」放行（四種 mode 都適用）；第 4 個參數為 `--correct` 時只放行本人（OWNER 由別人執行時不放行、bot 不放行、override 不適用，判斷在 override 之前；2026-10-17 使用者決定）；test mode 不呼叫 `gh api user`，`GH_USER` 只在作者資料也是 mock 時採用 | exit 0 | 作者不是 OWNER、bot 或目前登入的 gh 使用者（且未 override）→ exit 4；`--correct` 時 bot 或他人 exit 4，訊息指向 errata、不提 override；`--correct` 且查不到 gh 使用者 → exit 1 |
 | `compose-correction <old-file> <section|-> <body-file> <marker>` | 原文、目標段落（`-` 為整則）、更正內容、標記（預覽用 `(assigned after confirmation)` 佔位） | 寫入用的完整內文：段落換成新內容，開頭重複的目標標題去掉，區段內所有整行 IDD 標記（`<!-- idd:… -->`）保留一次、放在新標記之前；替換範圍以外的內容逐位元組保留（CRLF、結尾有無換行）；整則更正時原文頂端的標記固定在頂端，替換內容裡的重複一份刪掉 | 檔案不可讀 → exit 5；標記格式不符 → exit 2；段落不存在 → exit 1；標題重複 → exit 9；組好的內文在區段外的解析結果改變、或標記不自成 HTML 區塊／落在 code 裡（替換內容留下沒關閉的 fence 或 HTML 註解）→ exit 6；Markdown parser 缺或版本不符 → exit 8 |
-| `correct-prepare --target T --repo R (--section H \| --scope whole-comment) --body-file F --scrub-attested L` | 目標、repo、範圍、更正內容 | stdout `WORK=`、`PREVIEW=`、`STATE=`（state.json 的 sha256，由 SKILL 保存、交給 apply）；工作目錄（使用者暫存目錄下、0700）存 backup、body、preview 與帶各檔 sha256 的 state.json；開始前清掉一天以上的殘留工作目錄 | 參數錯、缺 `--scrub-attested`（helper 不代填）、更正內容去掉目標標題後為空 → exit 2；範圍錯（issue 正文用 whole-comment 等）→ exit 3；body file 被擋 → exit 5；其餘拒絕 → exit 4 並印 `RESULT=refused`、`REASON=`（archive〔歸檔前置檢查，含目錄能否建立〕、fetch-failed〔含回應沒有 body 欄位、comment 的 body 為 null〕、R5、author-unknown、protected、setext、section-not-found、section-ambiguous、parser-unavailable、egress、check-failed），工作目錄刪除。順序：歸檔前置檢查 → 抓原文（`gh api` 的 JSON `body`，原樣）→ 作者閘門 → 受管區與範圍檢查 → 組預覽 → egress 預檢 |
+| `correct-prepare --target T --repo R (--section H \| --scope whole-comment) --body-file F --scrub-attested L` | 目標、repo、範圍、更正內容 | stdout `WORK=`、`PREVIEW=`、`STATE=`（state.json 的 sha256，由 SKILL 保存、交給 apply）；工作目錄（使用者暫存目錄下、0700）存 backup、body、preview 與帶各檔 sha256 的 state.json；開始前清掉一天以上的殘留工作目錄 | 參數錯、缺 `--scrub-attested`（helper 不代填）、更正內容去掉目標標題後為空 → exit 2；範圍錯（issue 正文用 whole-comment 等）→ exit 3；body file 被擋 → exit 5；其餘拒絕 → exit 4 並印 `RESULT=refused`、`REASON=`（fetch-failed〔含回應沒有 body 欄位、comment 的 body 為 null〕、R5、author-unknown、archive〔歸檔前置檢查，含目錄能否建立〕、empty〔整則更正只剩頂端標記〕、protected、setext、unclosed-block、section-not-found、section-ambiguous、parser-unavailable、egress、check-failed），工作目錄刪除；stdout 另有 `DIFF=`。順序：抓原文（`gh api` 的 JSON `body`，原樣）→ 作者閘門 → 歸檔前置檢查（被拒的目標不在 repo 裡留下任何東西）→ 受管區與範圍檢查 → 組預覽 → egress 預檢 |
 | `correct-apply --work W --state S` | prepare 印出的工作目錄與 `STATE`（SKILL 從 Step 1.6 印出的值照抄） | `RESULT=edited`、`BACKUP_ID=`、`URL=`；結束時刪除工作目錄 | 不是 prepare 建的目錄 → exit 2；state.json 只讀一次（算雜湊與解析用同一份位元組），sha 不符、欄位格式不對、檔案被動過、重組不等於預覽 → `differs-from-preview`；作者閘門與受管區檢查在重抓之前重跑，拒絕理由同 prepare；重抓失敗 → `fetch-failed`；目標變了 → `changed-since-preview`；歸檔失敗 → `archive`；egress 拒絕 → `egress`（以上 exit 4）；gh 寫入報錯時重讀一次：仍等於 backup → `RESULT=write-failed`（exit 4，歸檔已寫），否則（含讀不到）→ `RESULT=unverified`（exit 7）；讀回與送出的不是逐位元組相同 → `RESULT=unverified`（exit 7）；歸檔之後的任何例外 → `RESULT=unverified`、`REASON=exception`（exit 7）。已歸檔的結果都印 `BACKUP_ID=` |
 | `correct-discard --work W` | 同上 | 刪除工作目錄 | 不是 prepare 建的目錄 → exit 2 |
-| `run-start [--default-repo R] -- <args>` | `/idd-edit` 的引數（經 parse-args 的全部閘門）、config 解析出的 repo | stdout `RUN=`、`REPO=`、`SCRUB=`（隱私等級：third-party enforce／own public warn／private light，查不到 → enforce）、每個 target 一行 `TARGET=`，`#N` 沒有 `--last` 時 `PICK=#N`；run 目錄（使用者暫存目錄下、`idd-run-` 開頭、0700）存解析結果與內文 | parse-args 的碼原樣（2／3／5）；沒有 repo → exit 2；`--last` 讀不到 comments → exit 1 |
+| `run-start [--default-repo R] -- <args>`（`--body-file` 開頭的 `~`／`$HOME` 展開為家目錄；同一 target 只列一次；沒有 mode、`--correct` 只剩目標標題、`#N --last` 沒有 comment → exit 2） | `/idd-edit` 的引數（經 parse-args 的全部閘門）、config 解析出的 repo | stdout `RUN=`、`REPO=`、`SCRUB=`（隱私等級：third-party enforce／own public warn／private light，查不到 → enforce）、每個 target 一行 `TARGET=`，`#N` 沒有 `--last` 時 `PICK=#N`；run 目錄（使用者暫存目錄下、`idd-run-` 開頭、0700）存解析結果與內文 | parse-args 的碼原樣（2／3／5）；沒有 repo → exit 2；`--last` 讀不到 comments → exit 1 |
 | `prepare --run RUN --target T` | run 與 target | `--correct`：轉給 correct-prepare，另印 `DIFF=`；其他 mode：作者閘門（含 override）、讀原文、備份到使用者暫存目錄的 `idd-edit-backup/`、組新內文、egress 預檢，印 `PREVIEW=`、`DIFF=`、`BACKUP=` | 拒絕 → exit 4，`RESULT=refused`、`REASON=`（R5、author-unknown、fetch-failed、stage-failed、egress、section-not-found、section-ambiguous、parser-unavailable，及 correct-prepare 的各項）；同一 target 第二次 prepare → exit 2 |
-| `apply --run RUN --target T --scrub-attested L [--state S]` | 前一步印出的值 | `RESULT=edited`、`URL=`（`--correct` 另有 `BACKUP_ID=`） | L 不是這個 run 的等級 → exit 2；沒有 prepared 的紀錄 → exit 2；新內文被動過 → `differs-from-preview`；作者閘門重跑（R5／author-unknown）；重抓失敗 → `fetch-failed`；目標在預覽後被改過 → `changed-since-preview`（與 `--correct` 相同，不覆蓋別人的新修改）；egress 拒絕（rc ≥ 10）→ egress 桶；gh 寫入報錯 → 重讀：未變 `write-failed`（exit 4）、已變或讀不到 `unverified`（exit 7）；讀回不是逐位元組相同 → `unverified` |
+| `apply --run RUN --target T --scrub-attested L [--state S]` | 前一步印出的值 | `RESULT=edited`、`URL=`（`--correct` 另有 `BACKUP_ID=`） | L 比這個 run 的等級寬 → exit 2（更嚴可以）；`--state` 與 prepare 印的不符 → exit 2、不記錄，可重抄再試；`--state ""` 是空值（非 `--correct`）；沒有 prepared 的紀錄 → exit 2；新內文被動過 → `differs-from-preview`；作者閘門重跑（R5／author-unknown）；重抓失敗 → `fetch-failed`；目標在預覽後被改過 → `changed-since-preview`（與 `--correct` 相同，不覆蓋別人的新修改）；egress 拒絕（rc ≥ 10）→ egress 桶；gh 寫入報錯 → 重讀：未變 `write-failed`（exit 4）、已變或讀不到 `unverified`（exit 7）；讀回不是逐位元組相同 → `unverified` |
 | `discard --run RUN --target T` | 同上 | 記為 declined，刪除工作副本 | 沒有 prepared 的紀錄 → exit 2 |
-| `finish --run RUN` | 同上 | outcome report；刪除 run 目錄，以及 prepare 後沒有 apply／discard 的 `--correct` 工作副本（記為 `not-applied`） | 結束碼依序：有拒絕或寫入失敗 4、有 unverified 7、有 declined 9、否則 0；沒有任何 target 被 prepare → 4 |
+| `finish --run RUN` | 同上 | outcome report；刪除 run 目錄，以及 prepare 後沒有 apply／discard 的 `--correct` 工作副本（記為 `not-applied`） | 結束碼依序：有拒絕（含 Step 1 列出卻沒 prepare 的 `not-prepared`、沒選的 PICK `not-picked`）或寫入失敗 4、有 unverified 7、有 declined 9、否則 0；沒有任何 target 被 prepare → 4 |
 | `existing-mentions <file>` | 目標原文 | 以逗號分隔的、原文已經提及的帳號（用 gh-egress 同一個 parser 與 token 規則） | 掃描失敗 → exit 1 |
 | `section-replace ... [--stop-at-rule]` | 既有子命令，新增 `--stop-at-rule` | 取代後全文 | 段落邊界取自 Markdown parser：同級或更高的頂層 ATX 標題（setext 不結束段落，`--replace` 照舊取代過去）；標題重複 → exit 9；`--stop-at-rule` 時另有頂層分隔線與受管標題；code、HTML 區塊內的行不結束段落；`--section` 不是標題 → exit 2；parser 缺或版本不符 → exit 8，不改任何東西 |
 | `parse-args` | — | 每個值 eval 後與原值相同：含換行或控制字元的值用 ANSI-C quoting，`=` 一律跳脫 | `--section` 不是 markdown 標題行 → exit 2（每個 mode）；`--correct` 沒有替換內容 → exit 2；`--body-file` 含 NUL → exit 5 |
@@ -122,7 +122,7 @@ issue 正文最後一條 `---` 之下（IC_R011 的 `**Source**` 註腳）或第
 
 **hook（`plugins/issue-driven-dev/hooks/archive-read-guard.py`）**：輸入為 PreToolUse JSON；命中時輸出 `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"..."}}` 並 exit 0；未命中或無法解析時無輸出、exit 0。
 
-**`idd-edit` SKILL.md**：`--correct` 模式標註 `(category: in-place-correction)`；Task 清單新增 `check_correction` 與 `archive_before_patch`；執行的 bash 中不得出現歸檔路徑字面值；「Backup 管理」改寫為 `restore` 用法，並說明人要讀歸檔時在自己的終端機 `chmod u+r`，不要經過 Claude。
+**`idd-edit` SKILL.md**：`--correct` 模式標註 `(category: in-place-correction)`；Task 清單是五個步驟（start_run、prepare_targets、privacy_scrub_gate、preview_and_confirm、apply_or_discard、finish_run；第 9 輪起取代 `check_correction` 與 `archive_before_patch`）；執行的 bash 中不得出現歸檔路徑字面值；「Backup 管理」改寫為 `restore` 用法，並說明人要讀歸檔時在自己的終端機 `chmod u+r`，不要經過 Claude。
 
 **驗收（自動化）**：`scripts/tests/in-place-correction/test.sh` 涵蓋 parse-args、check-correction 的四列範例、標記格式與位置；`scripts/tests/correction-archive/test.sh` 涵蓋 archive 的命名、碰撞、exclude 與 check-ignore、權限 0000、遞迴 grep 讀不到、restore 的 id 驗證與輸出不含內容、hook 對每種工具與欄位的 deny／allow；兩支都納入 `run-all-tests`。既有 `scripts/tests/idd-edit/` 與 `scripts/tests/idd-edit-contract/` 維持全綠。
 
@@ -143,7 +143,7 @@ issue 正文最後一條 `---` 之下（IC_R011 的 `**Source**` 註腳）或第
 ## Migration Plan
 
 1. 實作與測試完成後 bump plugin 版本、更新 CHANGELOG 與 `plugin.json` 描述，經 `/plugin-update` 發佈。
-2. 既有 `/tmp/idd-edit-backup/` 的備份不搬遷（本來就是暫存）；`--replace` 仍寫 `/tmp`，行為不變。
+2. 既有 mode 的備份改到使用者暫存目錄下的 `idd-edit-backup/`（Linux 上通常仍是 `/tmp`；macOS 在 `/var/folders/…`），3.4.0 留下的 0755 目錄由 helper 收緊為 0700；舊備份不搬遷（本來就是暫存）。`--replace` 標記的 `backup=` 改寫成 `idd-edit-backup/<檔名>`，不帶本機絕對路徑。結束碼見 run 的契約列：拒絕預覽 9、寫入失敗 4、讀回不符 7（3.4.0 都是 0）。
 3. 封存（archive）本 change 後，把 `append-vs-modify-discipline` spec 的 Purpose 段落從「7-category」改為「8-category」（Purpose 不在 delta 範圍內，封存不會改到）。
 4. 回滾：移除 `hooks.json` 中的 PreToolUse 項目、revert 規則與 SKILL.md；已寫入的歸檔檔留在原處，不影響其他功能。
 

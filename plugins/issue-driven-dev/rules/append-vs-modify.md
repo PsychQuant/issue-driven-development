@@ -143,7 +143,7 @@ Does the action publish to a permanent place (GitHub comment, archived spec)?
 │   ├─ Yes  → category: inline-replace-before-publish
 │   └─ No   → Continue ↓
 │
-Is the target verbatim-preserve content (an Original-text / **Original** quotation,
+Is the target verbatim-preserve content (an Original-text / **Original** / **Point i** quotation,
 or a comment or issue body authored by someone other than the OWNER, a bot, or the invoking user)?
 ├─ Yes → REFUSE the action entirely (this zone is verbatim-preserve)
 │

@@ -295,8 +295,20 @@ def validate_body_file_path(raw_path):
     return True, 0
 
 
+def _home_path(raw_path):
+    """A leading `~`, `$HOME` or `${HOME}` names the user's home: the skill
+    single-quotes its arguments, so the shell no longer expands them, and the
+    proposed commands of idd-verify / idd-diagnose / idd-reorganize use
+    `$HOME/.cache/idd/corrections/…` (verify #351 round 8)."""
+    for prefix in ("$HOME/", "${HOME}/"):
+        if raw_path.startswith(prefix):
+            return os.path.join(os.path.expanduser("~"), raw_path[len(prefix):])
+    return os.path.expanduser(raw_path) if raw_path.startswith("~") else raw_path
+
+
 def read_body_file(raw_path):
     """Validate path safety + readability, return (ok, exit_code, content)."""
+    raw_path = _home_path(raw_path)
     ok, code = validate_body_file_path(raw_path)
     if not ok:
         return False, code, None
@@ -699,7 +711,8 @@ def validate_target_subcmd(argv):
             f"Refuse: {comment_id} was written by {login} ({assoc}); --correct only "
             "rewrites your own content. If you wrote it under another GitHub account, "
             "switch to it (`gh auth switch`) and run again; otherwise propose the correction with "
-            "/idd-comment --type errata instead (#351)."
+            + ("/idd-comment --type correction (an issue body has no comment id for --type errata)"
+               if is_issue else "/idd-comment --type errata") + " instead (#351)."
         )
         return 4
 
@@ -1599,8 +1612,7 @@ def _correct_prepare(work, target, kind, num, repo, section, scrub, content):
         if not "\n".join(_drop_top_markers(old_lines, _lines_of(content.replace("\r\n", "\n")))).strip():
             # Only a copy of the top marker is no text either (round 7).
             err("Refuse: --correct needs the corrected text; the replacement holds only the comment's marker (#351).")
-            shutil.rmtree(work, ignore_errors=True)
-            return 2
+            return _refused("empty", work)
     rc, reason = _check_correction([backup, heading, body])
     if rc != 0:
         return _refused(reason or "check-failed", work)
@@ -1706,14 +1718,16 @@ def _state_problem(state):
     return None
 
 
-def _own_work_dir(work):
+def _own_work_dir(work, any_parent=False):
     """The working directory prepare made, else None: a direct child of this
     user's temp directory with the prefix, a real directory owned by this user
-    and closed to others, holding state.json."""
+    and closed to others, holding state.json. Within a run (any_parent), the
+    path comes from the run's own ledger and may sit in another call's temp
+    dir (round 8)."""
     if not work:
         return None
     real = os.path.realpath(work)
-    if (os.path.dirname(real) != os.path.realpath(tempfile.gettempdir())
+    if ((not any_parent and os.path.dirname(real) != os.path.realpath(tempfile.gettempdir()))
             or not os.path.basename(real).startswith(CORRECT_WORK_PREFIX)
             or os.path.islink(work)):
         return None
@@ -1885,13 +1899,13 @@ def _write_diff(old_path, new_path, dest):
         fh.writelines(difflib.unified_diff(old, new, "current", "after this edit"))
 
 
-def _captured(fn, argv):
+def _captured(fn, *args):
     """(exit code, stdout) of a subcommand function, its stdout replayed."""
     import contextlib
     import io
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
-        rc = fn(argv)
+        rc = fn(*args)
     out = buf.getvalue()
     sys.stdout.write(out)
     return rc, out
@@ -1922,14 +1936,14 @@ def _scrub_tier(repo):
 
 
 def _own_run_dir(run):
-    """The run directory run-start made, else None (same checks as a --correct
-    working directory)."""
+    """The run directory run-start made, else None: named idd-run-*, a real
+    directory owned by this user and closed to others, holding run.json. Not
+    tied to this call's temp dir: a sandboxed call and an unsandboxed one see
+    different TMPDIRs, and a run must survive both (verify #351 round 8)."""
     if not run:
         return None
     real = os.path.realpath(run)
-    if (os.path.dirname(real) != os.path.realpath(tempfile.gettempdir())
-            or not os.path.basename(real).startswith(RUN_PREFIX)
-            or os.path.islink(run)):
+    if not os.path.basename(real).startswith(RUN_PREFIX) or os.path.islink(run):
         return None
     try:
         st = os.lstat(real)
@@ -1977,6 +1991,14 @@ def run_start_subcmd(argv):
     rc, state, targets = _parse_args(rest[1:])
     if rc != 0:
         return rc
+    if not state["mode"]:
+        # without one, prepare treated the run as a --replace (round 8)
+        err("ERROR: give a mode: --append, --replace, --prepend-note or --correct")
+        return 2
+    if state["mode"] == "--correct" and not "\n".join(_strip_target_heading(
+            _lines_of(state["body_input"].replace("\r\n", "\n")), state["section_flag"] or "-")).strip():
+        err("Refuse: --correct needs the corrected text; the body holds only the target heading (#351).")
+        return 2
     repo = state["repo"] or default_repo or ""
     if not _REPO_RE.fullmatch(repo) or ".." in repo:
         err("ERROR: no repository: pass --repo owner/repo, or --default-repo from the IDD config")
@@ -1998,17 +2020,23 @@ def run_start_subcmd(argv):
             continue
         # every page: the newest comment is on the last one (round 4)
         proc = _gh(["api", f"repos/{repo}/issues/{number}/comments", "--paginate", "--jq", ".[-1].id"])
-        ids = proc.stdout.decode("utf-8", errors="replace").split() if proc is not None and proc.returncode == 0 else []
-        if not ids or not re.fullmatch(r"[0-9]+", ids[-1]):
+        if proc is None or proc.returncode != 0:
             err(f"✗ cannot read the comments of #{number}; nothing was changed")
             return 1
+        ids = proc.stdout.decode("utf-8", errors="replace").split()
+        if not ids or not re.fullmatch(r"[0-9]+", ids[-1]):
+            err(f"ERROR: #{number} has no comments; nothing to edit")
+            return 2
         resolved.append(f"comment:{ids[-1]}")
+    resolved = list(dict.fromkeys(resolved))   # a target named twice is edited once
+    _remove_stale_work_dirs()   # every mode, not only --correct, leaves runs holding old text
     scrub = _scrub_tier(repo)
     run = tempfile.mkdtemp(prefix=RUN_PREFIX)   # mode 0700
     with open(os.path.join(run, "body.md"), "w", encoding="utf-8", newline="") as fh:
         fh.write(state["body_input"])
     meta = {"mode": state["mode"], "scope": state["scope_flag"], "section": state["section_flag"],
-            "reason": state["reason"], "override": state["override"], "repo": repo, "scrub": scrub}
+            "reason": state["reason"], "override": state["override"], "repo": repo, "scrub": scrub,
+            "targets": resolved, "picks": picks}
     with open(os.path.join(run, "run.json"), "w", encoding="utf-8") as fh:
         json.dump(meta, fh)
     print(f"RUN={run}")
@@ -2072,13 +2100,8 @@ def _edit_refused(real, target, reason):
 def _edit_backup(num, text):
     """A copy of the comment before the edit, kept after the run so it can be
     put back: <temp dir>/idd-edit-backup/comment-<id>-<unix time>.md."""
-    base = os.path.join(os.path.realpath(tempfile.gettempdir()), BACKUP_DIR_NAME)
-    try:
-        os.makedirs(base, mode=0o700, exist_ok=True)
-        st = os.lstat(base)
-    except OSError:
-        return None
-    if os.path.islink(base) or st.st_uid != os.getuid() or st.st_mode & 0o077:
+    base = _backup_dir()
+    if base is None:
         return None
     stem = f"comment-{num}-{int(datetime.datetime.now().timestamp())}"
     for k in range(1, 100):
@@ -2093,6 +2116,37 @@ def _edit_backup(num, text):
             fh.write(text)
         return path
     return None
+
+
+def _backup_dir():
+    """<temp dir>/idd-edit-backup, private to this user. 3.4.0 made it with
+    `mkdir -p` (0755): ours, so it is tightened rather than refused, which
+    failed every edit after an upgrade on Linux (verify #351 round 8). One
+    owned by someone else, or a symlink, is not used; a per-user name is."""
+    root = os.path.realpath(tempfile.gettempdir())
+    for name in (BACKUP_DIR_NAME, f"{BACKUP_DIR_NAME}-{os.getuid()}"):
+        base = os.path.join(root, name)
+        try:
+            os.makedirs(base, mode=0o700, exist_ok=True)
+            st = os.lstat(base)
+        except OSError:
+            continue
+        if os.path.islink(base) or not os.path.isdir(base) or st.st_uid != os.getuid():
+            continue
+        if st.st_mode & 0o077:
+            try:
+                os.chmod(base, 0o700)
+            except OSError:
+                continue
+        return base
+    return None
+
+
+def _backup_ref(path):
+    """How a --replace marker names its backup: the directory and file name,
+    not the machine's temp path (it was published, and refused by egress when
+    the temp dir sits under /Users — verify #351 round 8)."""
+    return os.path.join(os.path.basename(os.path.dirname(path)), os.path.basename(path))
 
 
 def _edit_compose(meta, old_text, body_path, backup, work):
@@ -2110,7 +2164,7 @@ def _edit_compose(meta, old_text, body_path, backup, work):
         rc, marker = _audit_marker(["edit", "mode=prepend-note"])
         text = f"> ⚠️ **Edit {today}**: {reason}\n\n---\n\n{old}\n\n{marker}"
     elif meta["scope"] == "whole-comment":
-        rc, marker = _audit_marker(["edit", "mode=replace", "scope=whole-comment", f"backup={backup}"])
+        rc, marker = _audit_marker(["edit", "mode=replace", "scope=whole-comment", f"backup={_backup_ref(backup)}"])
         text = f"{body_input}\n\n{marker}"
     else:
         repl = os.path.join(work, "replacement.md")
@@ -2124,7 +2178,7 @@ def _edit_compose(meta, old_text, body_path, backup, work):
             src = section_replace_subcmd([old_file, meta["section"], repl])
         if src != 0:
             return {8: "parser-unavailable", EXIT_AMBIGUOUS: "section-ambiguous"}.get(src, "section-not-found"), None
-        rc, marker = _audit_marker(["edit", "mode=replace", f"section={meta['section']}", f"backup={backup}"])
+        rc, marker = _audit_marker(["edit", "mode=replace", f"section={meta['section']}", f"backup={_backup_ref(backup)}"])
         text = f"{buf.getvalue().rstrip(chr(10))}\n\n{marker}"
     if rc != 0:
         return "check-failed", None
@@ -2186,23 +2240,43 @@ def apply_subcmd(argv):
         return 2
     real, target, values = parsed
     meta = _run_meta(real)
-    if values["--scrub-attested"] != meta["scrub"]:
-        err(f"ERROR: --scrub-attested must be this run's tier ({meta['scrub']}), given after the "
-            "privacy self-review of the preview (rules/privacy-scrubbing.md)")
+    attested = values["--scrub-attested"]
+    if attested not in _SCRUB_LEVELS or _SCRUB_LEVELS.index(attested) > _SCRUB_LEVELS.index(meta["scrub"]):
+        # _SCRUB_LEVELS runs strictest first; a review may raise the tier, never lower it (round 8)
+        err(f"ERROR: --scrub-attested must be this run's tier ({meta['scrub']}) or stricter, given after "
+            "the privacy self-review of the preview (rules/privacy-scrubbing.md)")
         return 2
+    meta = dict(meta, scrub=attested)
     last = dict(_latest(real)).get(target)
     if not last or last["outcome"] != "prepared":
         err(f"ERROR: {target} has no prepared edit in this run")
         return 2
     if meta["mode"] == "--correct":
-        rc, out = _captured(correct_apply_subcmd, ["--work", last.get("work", ""), "--state", values["--state"] or ""])
+        work = _own_work_dir(last.get("work"), any_parent=True)
+        if work is None:
+            err(f"ERROR: the working copy of {target} is gone; run /idd-edit again")
+            return 2
+        state = values["--state"] or ""
+        if _sha256(os.path.join(work, "state.json")) != state:
+            # A mistyped STATE is retried, not recorded: the preview the user
+            # confirmed is still there (round 8).
+            err(f"ERROR: --state is not the STATE= prepare printed for {target}; copy it again")
+            return 2
+        try:
+            rc, out = _captured(_correct_apply, work, state)
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
         result = _kv(out)
-        if rc == 2 and "RESULT" not in result:
-            return 2   # a malformed --state; nothing recorded, so it can be retried
         outcome = result.get("RESULT") if result.get("RESULT") in ("edited", "write-failed", "unverified") else "refused"
         _record(real, target, outcome, reason=result.get("REASON"), backup_id=result.get("BACKUP_ID"), url=result.get("URL"))
         return rc
-    return _edit_apply(real, meta, target)
+    try:
+        return _edit_apply(real, meta, target)
+    except Exception as exc:   # noqa: BLE001 — the write may have happened
+        err(f"⚠ {target}: {type(exc).__name__}: {exc} — check it by hand")
+        _record(real, target, "unverified", reason="exception")
+        print("RESULT=unverified")
+        return 7
 
 
 def _edit_apply(real, meta, target):
@@ -2280,7 +2354,7 @@ def discard_subcmd(argv):
         err(f"ERROR: {target} has no prepared edit in this run")
         return 2
     if last.get("work"):
-        work = _own_work_dir(last["work"])
+        work = _own_work_dir(last["work"], any_parent=True)
         if work:
             shutil.rmtree(work, ignore_errors=True)
     else:
@@ -2298,11 +2372,19 @@ def finish_subcmd(argv):
         return 2
     rows = _latest(real)
     meta = _run_meta(real)
+    # A target run-start listed but nobody prepared, or a #N nobody picked, is
+    # not a success (round 8: a half-done batch reported 0).
+    seen = {t for t, _ in rows}
+    listed = meta.get("targets", [])
+    picked = [t for t in seen if t not in listed]
+    rows += [(t, {"target": t, "outcome": "refused", "reason": "not-prepared"}) for t in listed if t not in seen]
+    rows += [(f"#{n}", {"target": f"#{n}", "outcome": "refused", "reason": "not-picked"})
+             for n in meta.get("picks", [])[len(picked):]]
     for target, rec in rows:
         if rec["outcome"] == "prepared":
             # Prepared but neither applied nor discarded: nothing was written,
             # and a --correct working copy holds the wrong text — remove it.
-            work = _own_work_dir(rec.get("work")) if rec.get("work") else None
+            work = _own_work_dir(rec.get("work"), any_parent=True) if rec.get("work") else None
             if work:
                 shutil.rmtree(work, ignore_errors=True)
             rec.update(outcome="refused", reason="not-applied")
@@ -2404,14 +2486,16 @@ def _now_utc():
 
 def _take_flag(argv, flag):
     """Split `flag value` / `flag=value` out of argv → (value or None, rest).
-    A missing value or a value starting with '--' yields value "" (usage error)."""
+    A missing value or a value starting with '--' yields value "" (usage error).
+    An explicit empty word (`--state ""`) is the value "" and is consumed —
+    before, it stayed in rest and the call was a usage error (verify #351 round 8)."""
     rest, value, i = [], None, 0
     while i < len(argv):
         a = argv[i]
         if a == flag:
-            nxt = argv[i + 1] if i + 1 < len(argv) else ""
-            value = "" if nxt.startswith("--") else nxt
-            i += 2 if value else 1
+            has_next = i + 1 < len(argv) and not argv[i + 1].startswith("--")
+            value = argv[i + 1] if has_next else ""
+            i += 2 if has_next else 1
             continue
         if a.startswith(flag + "="):
             value = a.partition("=")[2]

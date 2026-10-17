@@ -458,7 +458,7 @@ mkrec comment-422.json kiki830621 MEMBER "<!-- idd:dashboard -->
 wrong"
 printf '<!-- idd:dashboard -->\n' >"$WORK/fix-marker-only.md"
 helper r93 correct-prepare --target comment:422 --repo o/r --scope whole-comment --body-file "$WORK/fix-marker-only.md" --scrub-attested warn
-assert_exit "only the marker is refused as empty" 2 "$RC"
+assert_eq "only the marker is refused as empty" "empty" "$(val REASON "$WORK/r93.out")"
 # R9.4 an unclosed fence has its own reason
 mkrec comment-423.json kiki830621 MEMBER "$SECTION_BODY"
 printf 'right\n```\nnever closed\n' >"$WORK/fix-fence.md"

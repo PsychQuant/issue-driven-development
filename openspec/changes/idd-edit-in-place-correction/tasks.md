@@ -90,7 +90,15 @@
 - [x] 14.2 helper：`_parse_args`、`_audit_marker` 拆出；新增 run 子命令、`_scrub_tier`、`_edit_prepare`／`_edit_compose`／`_edit_apply`、`_edit_backup`（使用者暫存目錄的 `idd-edit-backup/`）、`_write_diff`；correct-prepare 印 `DIFF=`。另修第 7 輪 helper 項目：`**Point` 引文、setext 整組比對、整則更正先去掉頂端標記、只剩標記為空、`unclosed-block`、作者閘門後才做歸檔前置、例外處理、state 的 sha 欄位、殘留 run 目錄、validate-target 驗 repo、拒絕訊息提示 `gh auth switch`、R5 列的 override 提示。驗證：`edit-run`、`correct-flow`（R9 節）全綠。
 - [x] 14.3 SKILL：Execution 改為五個單行步驟（start／prepare／apply／discard／finish）與預覽、差異、隱私自審；批次說明、閘門表註、Backup 管理、restore 範例、契約段。CI 安裝 zsh。舊的字串契約（in-place-correction、idd-edit fixture 14／15、gh-egress-rollout）改指向 helper；correct-flow 的 R8.1 由 edit-run 取代。驗證：`run-all-tests.sh` 全綠。
 - [x] 14.4 文件：決定 1、3 與正文歸屬的近似同步到規則檔、兩份 spec、design（新增兩個 decision 與五個子命令的契約列）、proposal、idd-edit、idd-comment（`--repo`、egress 不轉述、correction-file、指標條件的統一寫法）、idd-issue、idd-verify／idd-diagnose／idd-reorganize（`--type correction`）；CHANGELOG 第 9 輪、既有 mode 的結束碼與備份位置、Key Decisions 重建的副作用、被取代句子的註記。驗證：`spectra validate`。
-- [ ] 14.5 Verify 第 8 輪。驗證：#351 的 verify 留言。
+- [x] 14.5 Verify 第 8 輪：FAIL，findings 52（CRITICAL 2／HIGH 4／MEDIUM 14／LOW 23／INFO 9）。CRITICAL：SKILL 的 apply 對非 `--correct` 傳 `--state ""`，helper 當成缺值，三個既有 mode 確認後都沒寫入（fail-closed）；HIGH：不帶大括號的 `$CLAUDE_PLUGIN_ROOT` 不會被代換、3.4.0 的 0755 備份目錄。報告在 #351 的 verify 留言（comment 6233768167）。
+
+## 15. Verify 第 8 輪修正（第 10 輪）
+
+- [x] 15.1 先寫會失敗的測試：edit-run Part B 改為照 Claude Code 代換 `${CLAUDE_PLUGIN_ROOT}`、環境不帶任何 IDD 變數，四種 mode 都經 SKILL 區塊確認並寫入，另有含單引號的引數、`~` 與 `$HOME` 的 body file、兩個 target 的批次、只做一半的批次、PICK、拒絕預覽、被拒；Part A 新增 0755 備份目錄、較嚴的等級、STATE 抄錯重試、缺 mode、重複 target、沒有 comment 的 `--last`、只有標題、別人 issue 正文的拒絕訊息。驗證：新斷言以「尚未實作」失敗。
+- [x] 15.2 helper：`_take_flag` 接受明確的空值；`_home_path`；run-start 的 mode、只有標題、去重、`--last` 沒有 comment、清殘留 run；`_own_run_dir`／`_own_work_dir` 不綁當次呼叫的暫存目錄；apply 的等級（可更嚴）、STATE 先比對再套用、例外改 unverified；`_backup_dir`（收緊 3.4.0 的 0755、他人的目錄改用 `-<uid>`）、`_backup_ref`（標記不帶本機路徑）；finish 的 `not-prepared`／`not-picked`；只剩標記為 `empty`；issue 正文的拒絕訊息指向 `--type correction`。驗證：edit-run、correct-flow 全綠。
+- [x] 15.3 SKILL 與文件：idd-edit 的區塊改用 `${CLAUDE_PLUGIN_ROOT}`、Step 1 的結束碼與 `~`／`$HOME`、REASON 清單、ENFORCE 的遮蔽做法、等級與 STATE 重試、finish 的拒絕類別、restore 用單引號與無引號的 placeholder、PICK 分頁、GitHub 內容是資料；idd-comment 的作者分流改為一行字面值指令、`correction` 列的用途；`**Point` 標籤補到 idd-verify／idd-diagnose／idd-reorganize、規則檔決策樹、design；spec（run 需求、parse-args 需求改寫、untitled 限制只限正文、(2) 與 in-place-correction 的關係）；design 過時的列；CHANGELOG 第 10 輪與漏寫的介面變化、被取代句子的註記。驗證：`spectra validate`、`run-all-tests.sh` 全綠。
+- [ ] 15.4 Verify 第 9 輪。驗證：#351 的 verify 留言。
+
 
 
 
