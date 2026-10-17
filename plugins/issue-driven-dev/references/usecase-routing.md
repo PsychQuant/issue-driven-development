@@ -21,7 +21,10 @@
 ├── 列 open issues 看下一步                                  → idd-list
 ├── 寫進度報告到 GitHub Discussions                         → idd-report
 ├── 補一條決策 / 筆記 / 問題到既有 issue                     → idd-comment
-├── 編輯既有 comment（不 append 新的）                      → idd-edit
+├── 既有內容有錯（打錯字、事實錯誤、被推翻的結論）
+│   ├── 你自己寫的 comment / 你開的 issue 正文                → idd-edit --correct（就地更正，row 19）
+│   └── 別人寫的（含 OWNER 由你以外的人執行時、bot）          → idd-comment --type errata / correction（row 19b）
+├── 編輯既有 comment，但不是更正錯誤（補說明、改寫、標示過時）→ idd-edit --append / --prepend-note / --replace（row 19c）
 └── 看 / 修 .claude/.idd/local.json config                   → idd-config
 ```
 
@@ -57,7 +60,9 @@
 | **16** | Bundle close — 一個 PR 在 main merge 後，要關 N 個 issues | `idd-close #98 #105 #107` | （cluster-PR mode 自動觸發；要求 PR 已 merged）| [batch-and-cluster.md](batch-and-cluster.md), [pr-flow.md](pr-flow.md) |
 | **17** | Issue body 過時，要把 N 條 comments 收斂到 Current Status | `idd-update #98` 或 batch `idd-update #34 #36 #38` | （無）| `skills/idd-update/SKILL.md` |
 | **18** | 補一條決策 / 補述到既有 issue（不是 verify findings）| `idd-comment #98 --type decision --body '...'` | `--type` decision/note/question/correction/link/errata | `skills/idd-comment/SKILL.md` |
-| **19** | 編輯既有 comment（typo / 結論翻盤）| `idd-edit <comment-url> --mode replace` | `--mode` append/replace/prepend-note | `skills/idd-edit/SKILL.md` |
+| **19** | 既有內容有錯（打錯字、事實錯誤、被推翻的結論），而且是**你自己**（目前登入的 gh 使用者）寫的 comment 或開的 issue 正文 | `idd-edit comment:<id> --correct (--scope whole-comment \| --section '<heading>') --body-file <file>`；issue 正文：`idd-edit issue:<N> --correct --section '<heading>' --body-file <file>` | `--correct`（就地取代、舊版歸檔且 AI 讀不到；issue 正文只接受 `--section`；只改你自己的內容，沒有 `--override-user-content`；#351）| `skills/idd-edit/SKILL.md` |
+| **19b** | 既有內容有錯，但是**別人**寫的（含 OWNER 由你以外的人執行時、bot）——別人的話不就地改 | comment：`idd-comment #N --type errata --target-comment <id> --body '...'`（依作者分流：你自己的 → 委派 `idd-edit --correct`、不另貼；別人的 → 另貼 errata comment、原文不動）；issue 正文（不是你開的，或錯在不屬於任何標題的文字，如最後一條 `---` 之下）：`idd-comment #N --type correction --body '...'` | `--type errata` / `--type correction` | `skills/idd-comment/SKILL.md` |
+| **19c** | 編輯既有 comment，但不是更正錯誤 | 加註、不改原意：`idd-edit comment:<id> --append` 或 `--prepend-note`（如補圖說明、標示「此 comment 已過時」）；非更正的改寫：`idd-edit comment:<id> --replace (--scope whole-comment \| --section '<heading>')` | 四種 mode：`--append` \| `--replace` \| `--prepend-note` \| `--correct`（錯誤更正走 row 19）| `skills/idd-edit/SKILL.md` |
 | **20** | Spectra-discuss 中途要 comment 回 issue（保留 round-trip context）| `idd-comment #98 --resume-spectra="topic"` | `--resume-spectra="<topic>"` | `rules/spectra-bridge.md` |
 | **21** | 第一次跑 IDD，要設 config | `idd-config init` | `init`（first-time setup）| `skills/idd-config/SKILL.md` |
 | **22** | 想知道 cwd 落在哪個 candidate / group repo | `idd-config which` | `which`（dry-run resolution）| [config-protocol.md](config-protocol.md) |

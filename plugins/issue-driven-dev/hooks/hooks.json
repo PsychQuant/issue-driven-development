@@ -6,6 +6,14 @@
           { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/session-start-commit-rule.sh\"" }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Read|Grep|Glob|Edit|Write|NotebookEdit|Bash|PowerShell",
+        "hooks": [
+          { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/archive-read-guard.py\"" }
+        ]
+      }
     ]
   }
 }

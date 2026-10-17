@@ -53,9 +53,9 @@ idd-issue source.docx       # auto-trigger when source contains ≥2 findings
 | `decision` | 使用者/老師做的決定 | `--quote`, `--body` | 🎯 |
 | `note` | 外部 context（meeting、paper、advisor feedback） | `--source`, `--body` | 📝 |
 | `question` | 開放性待決問題 | `--body` | ❓ |
-| `correction` | 修正外部 data / interpretation | `--body` | 🔧 |
+| `correction` | 修正外部 data / interpretation；也用於 issue 正文的錯誤 —— 正文不是你開的，或錯在不屬於任何標題的文字（`/idd-edit --correct` 改不到，`errata` 又需要 comment id，#351） | `--body` | 🔧 |
 | `link` | 交叉引用其他 issue | `--target`, `--body` | 🔗 |
-| `errata` | 標記既有 comment 內容錯了（配 idd-edit 用） | `--target-comment`, `--body` | ⚠️ |
+| `errata` | 更正既有 comment 的錯誤：你自己（目前登入的 gh 使用者）寫的就地更正（委派 idd-edit `--correct`），其他人（含 OWNER 與 bot）寫的另貼 errata | `--target-comment` ＋ 依作者（見 Step 2） | ⚠️ |
 | `reply` | Human-facing 逐點回覆（給 review 提出者等人類 collaborator；v2.100.0+，#269） | `--points-from` | 🧑‍🏫 |
 
 ## Configuration
@@ -75,17 +75,19 @@ idd-issue source.docx       # auto-trigger when source contains ≥2 findings
 **在動任何事之前**先用 `TaskCreate` 為這個 stage 建 todo list,確保每個 sub-step 都被追蹤:
 
 ```
-TaskCreate(name="parse_args", description="Parse #NNN + --type + --body / --quote / --source / --target / --target-comment / --deadline / --mention / --resume-spectra 等 options")
+TaskCreate(name="parse_args", description="Parse #NNN + --type + --body / --quote / --source / --target / --target-comment / --correction-file / --deadline / --mention / --resume-spectra 等 options")
 TaskCreate(name="detect_spectra_context", description="Step 0.7: 偵測是否從 spectra-discuss 中斷進來（--resume-spectra flag / --source 含 spectra / spectra list 有 in-flight / .claude/.idd/state/bridge.json（legacy fallback: .claude/state/idd-bridge.json）— 詳見 rules/spectra-bridge.md")
 TaskCreate(name="validate_type_requirements", description="依 type 檢查必填欄位（decision 要 quote、note 要 source、link 要 target、errata 要 target-comment）")
+TaskCreate(name="route_errata", description="（errata 專屬）validate-target --correct 解析 target comment 作者：你自己 → 委派 /idd-edit --correct（更正內容取自 --correction-file）、不 post；其他作者（含 OWNER 與 bot）→ 只 post errata comment（Template: errata）")
+TaskCreate(name="errata_pointer", description="（errata 專屬）就地更正被拒或寫入失敗（idd-edit exit 4）、改貼 errata 之後：原 comment 的第一個非空行不是 ATX 標題或 IDD 標記時，提議 /idd-edit --prepend-note 指向 errata（走 idd-edit 的預覽與確認）；其他作者的 comment 不加")
 TaskCreate(name="resolve_mentions", description="Step 1.5: 若有 --mention 或 body 含 @xxx，強制走 rules/tagging-collaborators.md 協定（gh api 取 collaborators → fuzzy match → AskUserQuestion fallback → 用 @login 不用 display name）")
 TaskCreate(name="resolve_points_source", description="（reply 專屬，排在 build_comment_body 之前 — 順序是契約）--points-from 三層鏈解析：comment URL / `issue-body` → issue body Original text blockquote → fallback 要求使用者貼原文；verbatim，禁止 paraphrase（Reply drafting pipeline R1）")
 TaskCreate(name="verify_before_claim", description="（reply 專屬，排在 build_comment_body 之前）每點宣稱已解決前 per-point 驗證證據：git log --grep 只是入口，找到的 commit / PR 須實際含處理『該點』的改動；無對應改動寫 open / pending（R2）")
 TaskCreate(name="build_comment_body", description="按 type 對應 template 組 markdown（emoji header + blockquote + body + metadata marker），插入已驗證的 @login mentions。**reply 時本步即 pipeline R3（referent 錨定）**，consume 前兩步 resolve_points_source + verify_before_claim 的產物，故排在其後")
 TaskCreate(name="calibrate_or_degrade", description="（reply 專屬，排在 build_comment_body/R3 之後）check-plugin-presence perspective-writer 命中 → calibration（不得改動錨定事實）；缺席 → 印安裝指令照 post（R4/R5 graceful degrade）")
 TaskCreate(name="verify_mentions", description="post 前 grep body 的 @\\w+ 全部 cross-check 已驗證的 collaborator set；未驗證 token 直接 abort")
-TaskCreate(name="post_comment", description="經 gh-egress.sh comment 派送（#226；--scrub-attested 依 rules/privacy-scrubbing.md 解析，mention 帶 --mention-attested），--body-file 避免 escape 問題；errata type 額外 auto-call idd-edit")
-TaskCreate(name="report_result", description="輸出 ✓ Comment posted + URL；errata type 加報 idd-edit 結果")
+TaskCreate(name="post_comment", description="經 gh-egress.sh comment 派送（#226；--scrub-attested 依 rules/privacy-scrubbing.md 解析，mention 帶 --mention-attested），--body-file 避免 escape 問題；errata 的就地更正路徑不 post")
+TaskCreate(name="report_result", description="輸出 ✓ Comment posted + URL；errata 的就地更正路徑改報 idd-edit 結果")
 TaskCreate(name="auto_update_body", description="跑 /idd-update #NNN 同步 issue body Current Status（強制，常被漏；同 idd-close Step 6 模式）")
 TaskCreate(name="spectra_bridge_resume", description="Step 7: 若 SPECTRA_BRIDGE_ACTIVE，寫 .claude/.idd/state/bridge.json bookmark + 輸出 ↩ Resume spectra-discuss 區塊（rules/spectra-bridge.md）")
 ```
@@ -153,6 +155,9 @@ Options (視 type 而定)：
 - `--source="..."` — 外部來源（note type 必填）
 - `--target=#XX` — 目標 issue（link type 必填）
 - `--target-comment=<id>` — 目標 comment ID（errata type 必填）
+- `--scope whole-comment` / `--section="<heading>"` — 更正範圍（errata 的就地更正路徑，原樣轉交 idd-edit `--correct`）
+- `--correction-file=<path>` — 更正後內容檔（同上，轉交 idd-edit 為 `--body-file`；path 安全檢查由 idd-edit 做）
+- `--reason="..."` — 就地更正路徑不轉交給 idd-edit：`--correct` 不會把理由發佈到任何地方（標記只帶 backup id 與日期）
 - `--deadline=YYYY-MM-DD` — 未決問題的期限（question type 可選）
 - `--points-from=<comment-url|issue-body>` — 逐點來源（reply type 必填；值解析走 Reply drafting pipeline 的三層鏈）
 - `--mention <login>[,<login>...]` — tag 人到 comment（**v2.32.0+**，強制走 [`rules/tagging-collaborators.md`](../../rules/tagging-collaborators.md)）
@@ -168,7 +173,7 @@ Options (視 type 而定)：
 | question | `--body` 必存在 |
 | correction | `--body` 必存在 |
 | link | `--target` + `--body` 必存在 |
-| errata | `--target-comment` + `--body` 必存在 |
+| errata | `--target-comment` 必存在，再依作者分流（Template: `errata`）：你自己（目前登入的 gh 使用者） → `--scope whole-comment` 或 `--section` ＋ `--correction-file`（更正後內容；缺就問，不拿 `--body` 頂替）；其他作者 → `--body`（errata 說明） |
 | reply | `--points-from` 必存在（`--body` 選填：per-point 處理說明素材） |
 
 缺必填 → 用 AskUserQuestion 詢問。
@@ -324,54 +329,65 @@ See also: {target}
 <!-- idd:comment type=link date=YYYY-MM-DD target={target} -->
 ```
 
-#### Template: `errata` (SPECIAL BEHAVIOUR)
+#### Template: `errata`（依作者分流）
+
+錯的內容留在原處，之後讀 issue 的 AI session 會照著做（#351）；所以能改的就地改，不能改的才另貼。先用 idd-edit 的 R5 helper 判定 target comment 作者：
+
+一次 Bash 呼叫、一行指令，只帶字面值（新的呼叫裡沒有前面設的 shell 變數，#351 verify 第 8 輪）：`<TARGET_COMMENT>` 填 `--target-comment` 的數字 id（只有數字），`<REPO>` 填本 skill 解析出的 owner/repo（只有英數、`.`、`_`、`-` 與一個 `/`）；不符就不執行，改貼 errata。
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" validate-target '<TARGET_COMMENT>' '<REPO>' false --correct
+```
+
+依結束碼分流：
+
+| 結束碼 | 作者 | 路徑 |
+|---|---|---|
+| 0 | 目前登入的 gh 使用者本人 | 就地更正（下方「你自己」） |
+| 4 | 其他人，OWNER（由別人執行時）與 bot 也是 —— 別人的話是第三方原話（bot：#351 verify 第 2 輪；OWNER：2026-10-17 使用者決定） | 只貼 errata（下方「其他作者」） |
+| 其他（1 = 查不到目前的 gh 使用者、2 = 參數錯） | 無法判定 | 把 stderr 的原因告訴使用者，改貼 errata、不改原文：不猜是不是你的，但錯誤至少有一則指向正確內容的更正（#351 verify 第 4 輪） |
+
+**你自己（目前登入的 gh 使用者） → 就地更正**（OWNER 不是你時，OWNER 寫的 comment 算其他作者；bot 也是；都走另貼 errata）：不 post 任何 comment（跳過 Step 2.5–4），委派 idd-edit；修改本身、預覽、確認（預設 NO）、歸檔舊版都由它執行。更正內容只取自 `--correction-file`；沒給就用 AskUserQuestion 要檔案路徑，**不得**拿 `--body` 當替換內容：
+
+```
+IDD_CALLER=idd-comment-errata \
+  /idd-edit comment:{target-comment} --repo {GITHUB_REPO} --correct (--scope whole-comment | --section '{heading}') \
+    --body-file '{correction-file}'
+```
+
+指令不帶 `--reason`：`--correct` 不會把理由發佈到任何地方（它的標記只帶 backup id 與日期）。`{heading}` 是 comment 裡的標題文字（別人改得到），必須是一行 ATX 標題；含單引號時寫成 `'\''`。idd-edit Step 1 先照 shell 規則切開、再重新包，不會疊成兩層。
+
+依 idd-edit 的結束碼收尾（#351 verify 第 3 輪：更正被擋下時，舊流程什麼都沒留下）：
+
+| idd-edit 結束碼 | 意思 | 本 skill 接著做 |
+|---|---|---|
+| 0 | 已就地更正 | 回報「已更正」與 backup id，不貼任何 comment |
+| 9 | 使用者在預覽時拒絕，或預覽後沒有寫入（沒有完成 apply，也沒有 discard） | 照 idd-edit 的 report 回報（拒絕或沒有寫入），不貼、不改 |
+| 7 | 已寫入，但讀回失敗或內容不符 | 回報「已寫入但無法確認，請手動檢查該 comment」，**不貼 errata**（更正其實已經寫進去，貼「未成功」會留下一句錯的話） |
+| 4 | 更正被拒絕，或寫入失敗 | **改貼 errata**：照下方「其他作者」的路徑，以 `--correction-file` 的內容摘要寫成 errata 說明貼出，並在說明中註明「就地更正未成功：<idd-edit 的拒絕原因>」——錯的原文至少有一則指向正確內容的更正。**例外**：idd-edit 的 report 寫 `REFUSED(egress)` 時不摘要更正內容（那是 egress 擋下的文字，轉述等於繞過它），只說明「更正被 egress 擋下」並請使用者處理（#351 verify 第 7 輪） |
+| 2、3、5（或其他非 0） | 參數有誤，或 `--correction-file` 讀不到、被路徑閘門擋下 | **不貼、也不讀那個檔案**：回報參數錯誤，請使用者修正後重跑。被 #155 路徑閘門擋下的檔案，不能改由 Read 讀出、摘要後公開（#351 verify 第 6 輪） |
+
+**其他作者 → 只 post errata comment**：不呼叫 idd-edit、target comment 不動，也不提示 `--override-user-content`（協作者的 comment 屬 verbatim-preserve，`--correct` 沒有 override）。`--body` 是 errata 說明；這條路徑不讀 `--correction-file`（它只給你自己的 comment 用，路徑檢查在 idd-edit 裡）。若那則 comment 是你用另一個 GitHub 帳號寫的，切到那個帳號（`gh auth switch`）再跑一次，就會走就地更正：
 
 ```markdown
 ## ⚠️ Errata
 
 This notice concerns [comment {target-comment}](https://github.com/{repo}/issues/{issue}#issuecomment-{target-comment}).
 
-### 錯在哪
+### 錯在哪與正確內容
 {body}
-
-### 正確內容
-請見本 errata 以下的新 comment（如有），或下方標示。
 
 <!-- idd:comment type=errata date=YYYY-MM-DD target-comment={target-comment} -->
 ```
 
-**Errata 的 auto-call idd-edit**：
+**就地更正沒成功、改貼 errata 之後，在原 comment 頂端留指標**（#351 verify 第 5、6 輪）：errata 是另一則 comment，直接讀原 comment 的人或 AI session 看不到它。只有上表 exit 4 那一列（你自己的 comment）才做；原 comment 的第一個非空行是 ATX 標題（`## Diagnosis` 等）或 IDD 標記時不做——提示會把它擠到下面，其他 skill 就認不出這則 comment——只回報「已貼 errata，原 comment 未加提示」。其餘情況接著跑：
 
-建立 errata comment 後，**自動呼叫 idd-edit** 在 target comment 頂部加警示（prepend-note mode）：
-
-```bash
-# 自動執行（OWNER comment 或 bot comment）：
+```
 IDD_CALLER=idd-comment-errata \
-  /idd-edit comment:{target-comment} --prepend-note --reason="See errata at <new comment URL>"
+  /idd-edit comment:{target-comment} --repo {GITHUB_REPO} --prepend-note --reason "此 comment 有誤，更正見 {errata comment URL}"
 ```
 
-這讓 target comment 讀者看到「⚠️ 本 comment 已有 errata（下方）」的警示。
-
-**v2.81.0+ (#154) R5 行為**：當 target comment 是 user-authored（非 OWNER 非 bot）時，`/idd-edit` 會 refuse with exit code 4 + 印 helpful message（per [#154](https://github.com/PsychQuant/issue-driven-development/issues/154) D2 decision — 不 auto-override per IC_R007 user-authored-intent spirit）。 處理:
-
-```bash
-# Auto-call 偵測 exit code 4 → idd-comment 顯示 hint:
-if [ $EDIT_EXIT -eq 4 ]; then
-  cat <<EOF >&2
-
-Errata target comment $TARGET_COMMENT is user-authored.
-Per IDD R5 discipline (rules/append-vs-modify.md), modifying user content requires explicit consent.
-
-Manually run:
-  /idd-edit comment:$TARGET_COMMENT --prepend-note \\
-    --override-user-content \\
-    --reason='errata clarification per IDD discipline — see new errata at $NEW_ERRATA_URL'
-EOF
-  # errata comment 本身已成功 post — 只 prepend-note marker 需 user 顯式 consent
-fi
-```
-
-完整 R4/R5 規範 + override pathway 見 [`/idd-edit` SKILL.md](../idd-edit/SKILL.md) `## Runtime gates (#154, v2.81.0+)`。
+這一步走 idd-edit 自己的預覽與確認；使用者拒絕或被擋下時只回報，不影響已貼出的 errata。其他作者（含 OWNER 與 bot）的 comment 不加：那是第三方原話（2026-10-17 使用者決定），也不提示 `--override-user-content`。
 
 #### Template: `reply`（v2.100.0+，#269 — human-facing 逐點回覆）
 
@@ -532,7 +548,7 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment $NUMBER --repo $GITHUB_R
   URL: {comment URL}
 ```
 
-如果 type = errata → 額外報告 idd-edit 的結果。
+errata 的就地更正路徑沒有新 comment → 改報 idd-edit 的結果（已更正 / 使用者拒絕 / refuse）。
 
 ### Step 6: Auto-Update Issue Body（強制，不可省略）
 
@@ -622,15 +638,21 @@ HTML comment 在 GitHub 不渲染，但可 parse：
   --body="老師同意採用 Primary + Boundary framing，但希望保留 Dual Mechanism 名稱作為 abstract 層級的簡稱。"
 ```
 
-### Errata (自動 prepend 警示)
+### Errata（依作者分流）
 
 ```
-/idd-comment #17 --type=errata \
-  --target-comment=4241327867 \
+/idd-comment #351 --type=errata --target-comment=5805214375 \
+  --section="### Strategy" --correction-file=fixed.md
+```
+
+→ 你自己寫的 comment：不 post，委派 `/idd-edit comment:5805214375 --correct --section "### Strategy" --body-file fixed.md`，經它的預覽與確認後就地取代。
+
+```
+/idd-comment #17 --type=errata --target-comment=4241327867 \
   --body="原 comment 聲稱 'Holm 校正後 p=.049 顯著'，實際 Holm 未正確校正。真正校正後 p=.146 n.s."
 ```
 
-→ 自動在 comment 4241327867 頂部加「⚠️ See errata below」警示。
+→ 協作者寫的 comment：只 post errata comment，原 comment 不動。
 
 ### Note with mention (v2.32.0+)
 
@@ -671,7 +693,7 @@ HTML comment 在 GitHub 不渲染，但可 parse：
 - **第一段必 prose**：`decision` / `note` / `correction` 三個長 body 的 types，body 必須以**至少一段完整論述段落（3+ 句）**開頭，解釋 context 與推論鏈條。之後才能接 tables / bullets 作 supporting evidence。**避免通篇 bullet-only**——bullets 容易把邏輯 gap 隱藏在排版底下，三個月後回讀無法重建脈絡。
 - **原文必 blockquote**：`decision` type 的 `--quote` 必用 `>` 包住
 - **Timestamp 必加**：所有 types 的 metadata marker 含 date
-- **errata 必 auto-call idd-edit**：確保 target comment 本體也被警示
+- **errata 依作者分流**：你自己（目前登入的 gh 使用者）的 comment 委派 `/idd-edit --correct` 就地更正、不另貼；其他人（含 OWNER 與 bot）的只貼 errata、不改原文。就地更正沒成功而改貼 errata 時，才提議在你自己的原 comment 頂端加指標（第一個非空行是 ATX 標題或 IDD 標記時不加）
 - **不走 phase detection**：idd-comment 是 ad-hoc，不觸發 phase 推斷（那是 idd-update 的事）
 - **Comment body 要自我解釋**：三個月後回來看，光看 comment 就知道 context。這是「第一段 prose」的動機。
 - **任何 @xxx 必走 collaborator API**（v2.32.0+）：禁止從訓練記憶 / 聊天歷史 / git log 推測 handle。違反 = 通知錯人，不可逆。詳見 [`rules/tagging-collaborators.md`](../../rules/tagging-collaborators.md)。
@@ -696,7 +718,4 @@ HTML comment 在 GitHub 不渲染，但可 parse：
 
 一般情境：comment 後繼續當前 phase（diagnose / implement / verify）。
 
-Errata 情境：comment 後若要同時改 target comment 內容，手動執行：
-```
-/idd-edit comment:<target-id> --replace --body-file=...
-```
+Errata 情境：就地更正路徑的更正已由 idd-edit 完成；協作者的 comment 不改，errata comment 就是更正紀錄。

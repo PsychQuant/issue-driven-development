@@ -5,6 +5,449 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.0] - 2026-10-16
+
+### Added
+
+- **`/idd-edit --correct` — wrong issue content is replaced in place, not followed by errata (#351)**
+  An issue is the memory that later skills and sessions read. An error left in place and corrected by a later
+  comment is still read and followed. `--correct` replaces one bounded region — a whole comment, or one
+  `--section` (the only form for an issue body, `issue:<N>`) — after a preview and a confirmation (default NO).
+  - **Archive first.** The prior text goes to `.claude/.idd/archive/edits/<backup-id>.md` before the PATCH. The
+    archive is never tracked (written to `.git/info/exclude`, checked with `git check-ignore`; exit 7 otherwise),
+    files are mode 0000, and `restore <backup-id>` puts a target back without printing the text. The archive is
+    the copy Claude's tools cannot read, not the only copy: GitHub's edit history and temporary files also hold
+    the old text (#378).
+  - **Claude cannot read the archive.** A PreToolUse hook (`hooks/archive-read-guard.py`) denies Read / Grep /
+    Glob / Edit / Write / NotebookEdit / Bash / PowerShell calls that name the archive path. About 31 ms per
+    tool call.
+  - **Protected regions** (`check-correction`, exit 6): `Original text` / `**Original**` / `**Point i**` quotations must survive unchanged;
+    `## Current Status` (idd-update) and `### Clarity Surface` (idd-clarify) are refused as targets, and a
+    corrected section ends at either heading or at a thematic break, so it never swallows them. Only the invoking user's own content is corrected (see the author gate below); `--correct` has
+    no `--override-user-content`.
+  - The marker `<!-- idd:edit mode="correct" backup-id="…" -->` ends the replaced region and carries no path.
+- `idd-verify`, `idd-diagnose` and `idd-reorganize` add `### Proposed Corrections` when their findings show a
+  published statement is wrong: attended asks per entry, unattended only lists. They never edit the target.
+- `rules/append-vs-modify.md`: category 8 `in-place-correction`; `verbatim-preserve` narrowed to `Original text`
+  quotations and third-party content.
+
+### Fixed (verify round 2, before release)
+
+- **Own-content author gate**: a comment or issue body is correctable only when its author is the OWNER or
+  the authenticated `gh` user; in an organization repository a maintainer's own comment is `MEMBER`. Round 3
+  removed the bot pass (below); *round 8 removed the OWNER pass — only your own content (user decision
+  2026-10-17)*. The same
+  gate applies to issue-body targets (`issue:<N>`), checked against the issue author.
+- **Security — multi-line `--body-file` content is ANSI-C quoted** in `parse-args` output. Before this fix the
+  skill's `eval` executed continuation lines as shell commands; this affected every `/idd-edit` mode, not only
+  `--correct`.
+- `restore` refuses a symlinked archive or sidecar, an archive entry tracked by git, and an archive written for
+  another repository (exit 2); `archive` writes a `<backup-id>.repo` sidecar naming the repository.
+- `archive --from-file` goes through the #155 path gate.
+- The archive root is the main worktree, so an archive written from a linked worktree survives
+  `git worktree remove`.
+- A thematic break ends a corrected section (round 4 reads it from the Markdown parser), so a correction cannot swallow the
+  body's `## Current Status` block.
+- Verbatim blocks are compared as multisets and recognised by exactly two labels, `Original text` and
+  `**Original**` (*round 9 added a third, the reply template's `**Point i**`*).
+- The read-guard hook matches the archive path as a shell word, so a quoted commit or comment message that
+  mentions it is allowed, and it honours `~/.cache/idd/archive-read-guard.disabled` as an off switch.
+
+### Fixed (verify round 3, before release)
+
+- **BREAKING for `--correct` only — a bot's comment is no longer correctable.** A review bot's words are a third
+  party's; `--correct` refuses them (exit 4) and points to `/idd-comment --type errata`. `--append`, `--replace`
+  and `--prepend-note` keep the bot pass. `idd-comment --type errata` now routes a bot's comment to a posted
+  errata instead of a correction that idd-edit would refuse.
+- A whole-comment `--correct` is checked for managed regions like a section is: dropping a `### Clarity Surface` or
+  `## Current Status` block from the comment is refused (exit 6).
+- Section boundaries skip code: a `# comment` or `---` inside a fenced or indented code block no longer ends the
+  section early. Code ranges come from the pinned `markdown-it-py` 4.0.0, the parser gh-egress already requires;
+  without it `section-replace`, `check-correction` and `compose-correction` refuse and change nothing (exit 8 since
+  round 4).
+- New `compose-correction` subcommand builds the body that is both previewed and written: the confirmation shows the
+  full composed text, a replacement that repeats the target heading no longer prints it twice, and earlier
+  correction markers in the section are kept before the new one.
+- `--section` must be a heading line (`## Title`); anything else is refused (exit 2) in every mode.
+- Both `gh api` fetches (before the preview, after confirmation) check the exit code: a failed fetch is reported as
+  `fetch-failed` instead of comparing two empty files and archiving nothing. Refusals are bucketed
+  (`section-not-found`, `check-failed`), and a declined preview deletes the working copies and is reported.
+- `archive` and `restore` refuse when any directory on the archive path is a symlink, not only the entry itself.
+- Test mode never runs `gh api user`; a value starting with `=` is escaped for zsh's `eval`; a `--correct` refusal
+  no longer suggests `--override-user-content`.
+- Docs: the author gate reads "the OWNER or you" in every skill and rule (*round 8: "you" only*); the archive lives in the clone that wrote
+  it; `chmod 000` the archive file again after reading it; `idd-update` leaves out decisions an errata overturned;
+  `idd-reorganize` separates superseded judgments from wrong statements; `idd-issue` multi-finding sends wrong
+  body content to `--correct`; README lists the read-guard hook.
+
+### Fixed (verify round 4, before release)
+
+- **Section boundaries come from the Markdown parser.** A top-level heading (setext included — *changed in round 7: ATX headings only; `--correct` refuses a setext heading in its range*) or thematic break ends a
+  section; nothing inside a code block or an HTML block does. The protection scan stays line by line, the way
+  `idd-update` and `idd-clarify` find their headings, so an unclosed fence can no longer hide `## Current Status` from
+  it, and a subsection of `### Clarity Surface` is protected too. `compose-correction` refuses (exit 6) a body whose
+  text outside the corrected region would parse differently, which is what a replacement leaving a fence or an HTML
+  comment open does.
+- **Security — `parse-args` output survives `eval` exactly.** A NUL byte in `--body-file` is refused (exit 5); any value
+  with a control character goes through ANSI-C quoting (a NUL used to cancel the escaping backslash under bash and let
+  a `;` through); every `=` is escaped for zsh; the skill stops when the evaluation fails.
+- Corrections keep every IDD marker in the replaced region (`idd:comment`, `idd:dashboard`, earlier `idd:edit`), once;
+  a whole-comment correction must keep the comment's opening heading (`## Diagnosis` …); a line glued to an
+  `Original text` quotation is refused; `--correct` without replacement text is refused.
+- The egress gates run on the composed body before the preview, with the target's existing mentions attested
+  (`existing-mentions`), so a body gh-egress would refuse is never archived. `idd-comment --type errata` posts the
+  errata when the correction is refused.
+- Working copies live in a private per-run directory; the body is composed again and compared with the preview before
+  archiving; the target is read back after the write (a failed or different read is reported as unverified);
+  a run where the user declined is told apart from a successful one (exit codes in round 5); `--replace --section` checks section-replace's exit code; a staging failure
+  skips the target instead of ending the run.
+- `archive` creates the entry and its sidecar exclusively; `archive` and `restore` refuse a nested git repository on
+  the archive path, and `restore` refuses when the repository tracks anything under the archive path in any letter
+  case. The read guard denies a recursive `chmod`/`chown` on the archive or a directory above it, and treats `-m` as a
+  message only for git, gh, hg, jj and svn.
+- `validate-target --correct` ignores `--override-user-content` and answers "unknown" (exit 1) when the gh user cannot
+  be determined; a missing Markdown parser is exit 8 with its own refusal reason. The archive is an ignored file, so
+  `git clean -X` deletes it — documented, with relocation tracked in #407; the marker date's time zone is #406.
+
+### Fixed (verify round 5, before release)
+
+- **The path gate accepts the user's own temporary directory.** On macOS `$TMPDIR` is under `/var`, which the
+  `--body-file`/`--from-file` gate refused as a system path, so round 4's private working directory made every
+  `--correct` fail at the archive step after confirmation. Files strictly below the user's temp directory now pass
+  (system and credential paths are still refused); a test runs the SKILL's own directory line with
+  `TMPDIR=/var/tmp` and archives from it. idd-verify's note that `$TMPDIR` is refused is updated.
+- **Exit codes no longer overlap.** 4 = refused or a write failed (gh's own PATCH errors now have their own bucket,
+  so a failed write no longer ends with exit 0), 7 = written but not confirmed on read-back, 9 = declined; 2/3/5 stay
+  argument errors from parse-args. `idd-comment --type errata` routes on them: it posts the errata when the
+  correction did not happen, reports and posts nothing on 7 and 9, and posts the errata when the author cannot be
+  determined.
+- Non-ASCII text is emitted as UTF-8 byte escapes, so `eval` does not depend on the shell's locale (a Big5 trail byte
+  `0x5C` read as a backslash under zsh). Tables are parsed as GFM tables; `## Current Status` owns the rest of the
+  body; a replacement may not add a heading of the section's level or a thematic break, hide an Original text
+  quotation in a code or HTML block, or introduce a `## Current Status…` variant. A dashboard comment keeps its
+  marker on line 1, and the heading check reads past it. A marker inside a fenced example is neither carried nor
+  counted. `--correct` with only whitespace and an invocation without a target are refused; `--last` reads every page.
+- `archive` refuses a repository that tracks anything under the archive path; a sidecar that cannot be created for
+  another reason is refused instead of retried. The read guard keeps the message exemption for IDD's own posts
+  (`bash …/gh-egress.sh … --body`) and `NAME=value` prefixes, scans message values that contain a redirection, and
+  denies a recursive permission change on a directory above the repository. The unclosed `<details>` case is #409;
+  the coverage of the verbatim labels is #410.
+
+### Changed (round 6, before release)
+
+- **The `--correct` flow runs in the helper.** `correct-prepare` (read, author gate, checks, composed preview, egress
+  check), `correct-apply` (re-read, compare with the preview, archive, write through gh-egress, read back) and
+  `correct-discard` replace the skill's shell steps; the skill only prepares, shows the preview and applies or
+  discards. Four verify rounds kept finding defects in the shell version, which only string contracts covered; the
+  new `scripts/tests/correct-flow` suite runs the helper's flow against a fake gh, with `TMPDIR` under `/var`
+  (*it tests the helper's control flow, not its contract with the real gh — round 8 made the fake check the
+  repository and added a write that lands before gh errors; still no live run, see task 11.6* — *live acceptance
+  2026-10-17: two issue-body corrections of #351, tasks 11.6–11.7*). The
+  archive is written in-process, so the working copy no longer passes through the `--from-file` gate.
+- `idd-update` rebuilds Key Decisions on every run instead of only appending, so a corrected decision does not
+  survive in the summary.
+- `/idd-edit --correct` re-reads the target after confirmation and refuses when it changed since the preview.
+
+### Fixed (round 7 — verify round 5 findings, before release)
+
+- **A corrected section ends only at an ATX heading.** A paragraph line over `---` is a setext heading to the parser
+  and a separator to a reader, so the two disagreed about where the section ends; a setext heading inside the
+  section being corrected is now refused (exit 6). `--replace` keeps replacing through it.
+- **A heading that occurs twice is refused** (exit 9, `section-ambiguous`) by `section-replace`, `check-correction`
+  and `compose-correction`, instead of silently taking the first.
+- **`correct-apply` takes the state prepare made.** `correct-prepare` prints `STATE=` (the digest of its state
+  file); the skill keeps it and passes `--state`, and apply refuses a state file with another digest or a malformed
+  field. (*Round 8: this guards against a mismatched WORK/STATE pair, not against a process running as the same
+  user; what binds apply to the confirmed text is recomposing the preview. The skill did not print STATE at all
+  until round 8.*) Apply also re-runs the author gate and the protected-region checks on the text fetched after confirmation
+  (*round 8: before the re-fetch, on the previewed copy the re-fetch must equal*).
+- Fetches take the API's JSON `body` exactly; the `--jq .body` form added a newline, so a comment without a final
+  newline was compared and archived one byte off.
+- A gh error on the write is followed by a read: unchanged → `write-failed` (exit 4); changed or unreadable →
+  `unverified` (exit 7), since the write may have landed. Every archived result prints its backup id.
+- `correct-prepare` checks the archive location before the preview and fetches before the author gate (an unreadable
+  target is `fetch-failed`, not `author-unknown`); working directories left for more than a day are removed. The
+  skill skips Step 1.5 for `--correct`. A whole-comment replacement that repeats the opening marker no longer
+  duplicates it.
+- The test-only `IDD_EDIT_HELPER_GH_USER` is honoured only together with the gh mock.
+- `idd-diagnose` and `idd-reorganize` give the same reason as `idd-verify` for not writing corrections under
+  `$TMPDIR` (the path gate now accepts it; the files may be gone by the time the user runs the command).
+
+### Fixed (round 8 — verify round 6 findings, before release)
+
+- **Step 1.6 hands its values to the next call.** The preview, the confirmation and the apply are separate tool
+  calls, and shell variables do not survive them; Step 1.6 printed nothing, so every `--correct` reached apply with
+  an empty `--work` and was recorded as refused. It now prints `WORK=`, `PREVIEW=` and `STATE=`, and the decline and
+  confirm blocks take the printed values. `correct-flow` runs the skill's own Step 1.6 blocks in separate shells.
+- **Bytes outside the corrected section are kept**: CRLF line endings and a missing final newline survive, and the
+  read-back must equal the sent body byte for byte (an extra newline is `unverified`). A whole-comment correction
+  keeps the original's top marker on line 1 wherever the replacement puts its copy.
+- **Refused earlier, before the preview**: a replacement that is only the target heading (exit 2), one that adds a
+  setext heading (`setext`, now its own reason instead of `protected`), and an archive directory that cannot be
+  created. `correct-prepare` requires `--scrub-attested`; the skill resolves the tier per the privacy-scrubbing rule
+  (enforce for a third-party repository) instead of defaulting to `warn`.
+- `correct-apply` reads its state file once, runs the author and protected-region gates before the re-fetch (so the
+  window between the re-fetch and the write holds no network round-trips), reports an error after the archive as
+  `unverified` with the backup id, and tells a failed re-read from a changed target. A comment whose `body` is null
+  or missing is a failed read.
+- `idd-comment` no longer summarises a correction file that `/idd-edit` refused (exit 2, 3 or 5 — the path gate
+  among them) into a public errata; it reports the argument error.
+- **Known limitation** (user decision 2026-10-17): text that belongs to no heading — below an issue body's last
+  `---`, such as the IC_R011 `**Source**` footnote — cannot be corrected in place; skills propose an errata for it (*round 9: `/idd-comment --type correction`, since
+  an issue body has no comment id for an errata*).
+  The writer side of the setext shape (`idd-update` Branch B) is #413.
+- `correct-flow` checks the repository (a write aimed at another repository fails), lets a write land before gh
+  errors, covers the apply-side gates, a malformed state field, stale working directories, CRLF and null bodies,
+  and uses a private temp directory (two overlapping runs no longer fail each other).
+
+### Fixed (round 9 — verify round 7 findings, before release)
+
+- **The whole `/idd-edit` run lives in the helper.** Rounds 6 and 7 found the same defect twice: the skill was one
+  bash script spanning the user's confirmation, but the preview and the write are separate tool calls, so the
+  confirm block read `MODE`, `TARGET`, result arrays and a loop that a new call did not have — written as printed,
+  it did nothing and exited 0; under zsh (the agent's shell) a `continue` outside a loop ended a successful write
+  with exit 1; and the run's exit code, which idd-comment routes on, could report a refused correction as 0. The
+  same applied to `--append`/`--replace`/`--prepend-note` after this branch. Every mode now runs as `run-start` →
+  `prepare` → `apply` | `discard` → `finish`; the skill's blocks are one command each and carry only values an
+  earlier block printed (`RUN`, `TARGET`, `SCRUB`, `STATE`); the exit code comes from `finish`. The new
+  `scripts/tests/edit-run` runs the SKILL's own blocks one per fresh shell, with an empty environment, under zsh
+  and bash; CI installs zsh. The round-8 two-shell test, which seeded the missing variables, is gone.
+- `apply` in the existing modes also runs the author gate again and re-reads the target, refusing as
+  `changed-since-preview` when it changed after the preview — before, an `--append` or `--replace` rebuilt from the
+  previewed text overwrote an edit made in between (as in 3.4.0).
+- The preview shows the diff from the current text as well as the new text; `apply` takes `--scrub-attested` only
+  after the privacy self-review of the preview, at the run's tier.
+- The reply template's `> **Point i**` quotation of a reviewer is protected like `Original text`; a setext heading
+  is matched whole (text and underline) and counted; a whole-comment correction is checked after the copies of the
+  top marker are dropped, and a replacement holding only that marker is empty; an unclosed block is
+  `unclosed-block`, not `protected`; `correct-prepare` checks the archive after the author gate and leaves nothing
+  in the repository for a refused target; a malformed state, an exception, or an abandoned run directory no longer
+  leaves the wrong text behind or ends without a result.
+- idd-comment passes `--repo` to `/idd-edit`, does not restate a correction that egress refused, and reads
+  `--correction-file` only on the own-comment route. A refusal under `--correct` mentions `gh auth switch` for
+  content written under another of your accounts (user decision 2026-10-17). Decision 1 (own content only) and the
+  limitation for text under no heading are now in every skill, the rule file, both specs and design; errors in an
+  issue body you did not open, or under no heading, are answered with `/idd-comment --type correction` (the
+  errata type needs a comment id).
+
+### Fixed (round 10 — verify round 8 findings, before release)
+
+- **Every mode can be applied as the SKILL writes it.** The apply step passes `--state ""` for the modes without a
+  STATE, and the helper took an empty value for a missing one: every confirmed `--append`, `--replace` and
+  `--prepend-note` exited 2 and wrote nothing (fail-closed). An explicit empty value is now a value.
+- **The SKILL names the plugin root as `${CLAUDE_PLUGIN_ROOT}`**, the only form Claude Code substitutes when it loads
+  a plugin skill; the Bash tool has no such variable, so the unbraced form ran `/scripts/idd-edit-helper.py`. The
+  rest of the plugin is #401. idd-comment's author routing is one literal command too.
+- `edit-run` part B now runs every mode through the SKILL's own blocks with `${CLAUDE_PLUGIN_ROOT}` substituted
+  as Claude Code does and no IDD variable in the environment: each mode confirmed, a quoted argument, `~` and
+  `$HOME` body files, a batch of two, a half-done batch, a PICK, a decline and a refusal, under zsh and bash.
+- `finish` counts a listed target nobody prepared (`not-prepared`) and an unresolved PICK (`not-picked`) as
+  refusals; an exception after the write is `unverified`; no mode is a usage error (it ran as `--replace`); a
+  mistyped STATE can be retried; a stricter attested tier is accepted; the run is found by its own path, not by
+  the temp dir of the current call (sandboxed calls see another); a `--body-file` starting with `~` or `$HOME` is
+  read from the home directory (single-quoted arguments do not expand it); the `restore` example single-quotes the
+  backup id, which comes from GitHub; the refusal for someone else's issue body points to `--type correction`.
+
+### Fixed (round 11 — verify round 9 findings, before release)
+
+- **One source of truth for a run.** Values the agent copies between calls are confirmations of what `run-start`
+  recorded, not new facts: `prepare` takes only a listed target or a comment chosen for an open PICK (`--pick N`,
+  checked to be a comment of #N, settled by its own record — counting extra targets named the wrong #N or let a
+  half-done run exit 0); a mismatched STATE is a retryable usage error; a stricter attested tier is the tier the
+  write goes out at, `--correct` included (it used to write at prepare's tier); a run directory holds only what
+  `run-start` writes (`run.json` passes the argument gates, `body.md` is not a link).
+- `--correct` works when a run moves between a sandboxed and an unsandboxed call: the run hands its own text to
+  `correct-prepare` instead of a path the current call's gate refuses.
+- `restore --target` reads the correction marker itself and uses only a checked id with a local archive entry; the
+  SKILL no longer pastes a GitHub-sourced id into a quoted command, which a `'` in a forged marker could break
+  out of. `<REPO>` and `<TARGET>` are single-quoted and must match their shapes.
+- Every bash block of the idd-edit SKILL is checked to read no shell variable (edit-run), not only the five steps
+  part B runs. The read guard treats idd-edit's `--reason` as prose; the diff marks a last line without a newline;
+  `$HOME//x` stays in the home directory; a duplicate PICK is listed once; a bot-opened issue body points to
+  `--type correction`; an exception before the write is a refusal, not `unverified`; `--correct` apply reports an
+  exception; gh's token store (`~/.config/gh`) is a refused body file; when `idd-edit-backup` belongs to someone
+  else a per-user name, then a fresh private directory, is used.
+
+### Fixed (round 12 — verify round 10 findings, before release)
+
+- A quotation inside the corrected region is written back with its own bytes. The check compares quotations with
+  line endings normalised, so a CRLF quotation (the web editor's) copied into an LF replacement passed it and came
+  back as LF.
+- A marker copy the replacement moves inside another HTML block (`<script>`, `<div>`) no longer stands in for the
+  live marker, which is carried as its own block; every marker the body keeps is checked where it ends up.
+- **Security — the SKILL's placeholders are single-quoted in every step.** A PICK's comment id comes from a GitHub
+  listing; pasted into the double-quoted prepare / apply / discard / finish blocks, a `$(...)` in it ran before the
+  helper checked anything. The listing prints each body as JSON (a newline in a body cannot forge a row), and the
+  SKILL checks a value's shape before pasting it.
+- A reply quoting user-pasted points (`type=reply` + `points-from=user-pasted`) in a private repository is checked
+  and written at `warn`, the #272 floor, in every mode; every edit of such a reply used to be refused as `egress`.
+- `run-start` refuses a `--scope` other than `whole-comment` in every mode (exit 3); `--append` / `--prepend-note`
+  accepted any value and every later step then refused the run.
+- The stale-run cleanup never removes the run it serves, and a recorded outcome keeps the run fresh: a run left a day
+  before the user answered was deleted by its own next `prepare`.
+- `restore --target` only looks up: it prints the checked `BACKUP_ID=` lines and writes nothing; the version is put
+  back by `restore '<BACKUP_ID>'` after the user confirms it (which markers remain is GitHub text others can edit).
+  Outside the git work tree it says so (exit 7).
+- Credential paths are matched without regard to letter case (`~/.SSH` on macOS), and gh's token store is refused
+  wherever gh may keep it (`GH_CONFIG_DIR`, `$XDG_CONFIG_HOME/gh`, `~/.config/gh`), the escape hatch included.
+- A PICK whose comment cannot be read is `fetch-failed` and stays open; `#007` is `#7`; the preview diff breaks lines
+  at `\n` only; the `--correct` marker's `date` is the local date (#406); the read guard's denial says how to pass a
+  message that only mentions the archive path; `--correct` does not publish `--reason` (the SKILL, idd-comment and
+  the proposed-correction commands no longer pass it).
+- `references/usecase-routing.md` routes wrong content you wrote to `--correct` and others' to
+  `/idd-comment --type errata`; the proposed-correction commands of idd-verify / idd-diagnose / idd-reorganize are
+  single-quoted proposals whose arguments are rebuilt, not pasted.
+
+### Fixed (round 13 — verify round 11 findings, before release)
+
+- **The #272 floor is attested by the agent again.** Round 12 raised a user-pasted reply from `light` to `warn`
+  inside the helper, which let new third-party text reach the remote without the #272 question. `prepare` now checks
+  at `warn` and prints `FLOOR=272`, the SKILL asks the question (with a redact option), and `apply` refuses `light`
+  for such a body (exit 2, retryable). *(Round 14: asked at every tier, and prepare prints no `SCRUB=` line.)*
+- `restore --target` lists the versions this clone archived for the target (oldest first) and says whether each
+  one's marker is still on the target: a `--replace` or a restore removes the marker, and the version was then
+  unreachable. Only entries whose sidecar names the repository are listed.
+- A prepared target never applied or discarded counts as declined (exit 9), not refused, so idd-comment does not
+  post an errata for a preview the user abandoned.
+- A CR-only quotation is written with LF (its lone `\r` would join the next line and the new text would join the
+  quotation); the preview diff breaks lines at `\r\n`, `\r` or `\n`.
+- A PICK whose comment cannot be read at any read stays open; PICK numbers are ASCII digits (`²` was a traceback);
+  the sweep keeps the run's own `--correct` working copies; `emit-audit-marker` uses the local date too.
+- The read guard skips a message value only when it is prose (has whitespace), so `git diff --no-index -m <archive>`
+  is denied; its denial names the characters that still need a message file. *(Superseded in round 14: the skip is
+  tied to message-taking subcommands instead, since a path can contain spaces; round 15 requires both.)*
+- Quoting happens once, in idd-edit Step 1: the proposal skills pass their rebuilt arguments as typed, and
+  idd-comment's delegation single-quotes its values. The PICK listing blanks U+2028 / U+2029 / U+0085, which JSON
+  leaves raw; TARGETs are processed before PICKs; `run-start` notes that `--correct` does not publish `--reason`.
+
+### Fixed (round 14 — verify round 12 findings, before release)
+
+- **The #272 question is asked at every tier.** `prepare` prints `FLOOR=272` whenever the body quotes user-pasted
+  points, not only in a `light` repository, and no longer prints a `SCRUB=warn` that the SKILL's copy-the-value rule
+  would carry into `apply` without the question. The SKILL tracks the question as its own task (`reply_272_gate`)
+  and offers redaction only for `--replace` *(round 15: in every mode, for the body file's text)*; standalone `correct-apply` refuses such a body at `light` before
+  archiving.
+- **Read guard:** a message flag is prose only for subcommands that take a message (`git commit`, `gh issue`/`pr`/
+  `release`, …), so after `git diff -m` the next word is scanned even when the path contains spaces; an unquoted
+  newline and a glued `&&`, `||`, `|` end a command. A one-word `git commit -m <text>` is allowed again. *(Round 15:
+  one-word values are scanned again, and this round's tokenizer read `#` as a comment — see below.)*
+- `restore --target` refuses, as `restore <id>` does, a symlinked archive path or a repository that tracks archive
+  entries, skips a sidecar that is not a regular file, and lists same-second versions in the order they were written.
+- A PICK whose author read fails stays open too; issue numbers longer than eighteen digits are refused (exit 2, not a
+  traceback; `#N` and `--pick` only); the PICK listing reads a null body as empty; a lone `\r` in the preview diff is shown as a line end;
+  the report for `not-applied` says no write was made rather than that nothing was confirmed; the proposal skills and
+  idd-comment write a quote inside a single-quoted value as `'\''` again.
+
+### Fixed (round 15 — verify round 13 findings, before release)
+
+- **Read guard: `#` hid everything after it.** Round 14's tokenizer (`shlex.shlex`) kept shlex's default comment
+  character, so one unquoted `#` — a `# step` comment line, `--grep=#351`, an issue URL's `#issuecomment` — dropped
+  the rest of the command, later lines and a `chmod -R` included, from both checks. `#` is text again, as it was
+  with `shlex.split`.
+- The read guard skips a message value only when it is prose (whitespace) **and** the subcommand takes a message,
+  and not after a `--` (`git commit -- -m <path>` is a pathspec); `|&` and `&|` end a command, a backslash-newline
+  joins lines, `git commit -am` counts as `-m` *(round 16: no longer — git reads `-Fm` as `-F m`)*, more pre-subcommand value options and message subcommands are known,
+  and `env A=1 python3 <helper>` is recognised. A one-word message after `-m` is scanned again.
+- The #272 question asks about the text this edit adds, says declining only cancels the edit, and offers redaction
+  of the body file in every mode; the SKILL orders it before the final confirmation and documents the PICK
+  `author-unknown` retry and the lookup's exit-2 refusals; the not-applied spec wording, the path-gate spec sentence
+  and the `--help` text match the code.
+
+### Fixed (round 16 — verify round 14 findings, before release)
+
+- **Read guard: a quote inside a comment hid the next line.** With `#` read as text (round 15), the apostrophe in a
+  comment such as `# Let's fix the permissions` opened a quote that swallowed the following `chmod -R` (a gap
+  45273ec had too). An unquoted `#` at the start of a word now begins a comment to the end of the line, as in the
+  shell; `$#`, `${#x}` and `a#b` stay text. Backslashes are escapes except in PowerShell input, so IDD's own
+  `'\''` parses as the shell reads it; an `&` is not a separator only right after a redirection operator; when the
+  quotes cannot be balanced, every piece is scanned and the `chmod -R` check still sees its target. The read
+  guard was checked against the rounds 11–14 bypass list (47 cases) and a shell-oracle corpus.
+- `-am`-style flag clusters are scanned again: git reads `-Fm <x>` as `-F m`, so the next word is a path.
+- The #272 question is also asked when the current body carries the reply marker, so a `--replace` that drops
+  the marker no longer skips it.
+
+### Changed
+
+- **BREAKING (behavior) — `/idd-edit` exit codes for the existing modes** (`--append`, `--replace`,
+  `--prepend-note`), compared with 3.4.0: declining the preview exits 9 (was 0); a gh write failure exits 4 (was
+  0); a read-back that fails or differs exits 7 (new); a target whose author or body cannot be read is refused and
+  the batch goes on (exit 4) — 3.4.0 stopped the whole batch with exit 1; a staging failure skips that target instead of ending the run; no target is
+  exit 2 (was a silent 0). Callers that treat any non-zero exit as failure will now see one on a plain decline.
+- **Backups of the existing modes moved** from `/tmp/idd-edit-backup/` to `idd-edit-backup/` under the user's
+  temporary directory (on macOS under `/var/folders/…`; on Linux usually still `/tmp`, where a 0755 directory left
+  by 3.4.0 is made private); `prepare` prints the path as `BACKUP=`, and the `--replace` marker's `backup=` now
+  reads `idd-edit-backup/<file>` instead of a local absolute path. On macOS the 3.4.0 recovery command
+  (`ls /tmp/idd-edit-backup/`) finds nothing for edits made with 3.5.0.
+- Smaller changes to the existing modes: the new body is written byte for byte (no shell `echo`, which rewrote
+  backslashes under zsh); the edit count in the report is real (it always read `edited: 0`); the egress gates also run before the
+  preview; a bare `#` line ends a `--replace --section`; the privacy attestation follows the repository's tier
+  (`light` private, `warn` own public, `enforce` third-party or unknown) instead of a fixed `warn`, with a
+  redaction step under `enforce`; a target named twice is edited once; `#N --last` on an issue with no comments
+  exits 2 and an unreadable comment list exits 1.
+- `idd-update` regenerates Key Decisions from the current comments on its next run for every issue: a decision
+  that no current comment backs — added by hand, summarised from chat, or from a deleted comment — is dropped, and
+  the order and wording are re-derived each time.
+- `/idd-comment --type errata` gained `--correction-file`, `--scope` and `--section` (a `--reason` is not passed on:
+  `--correct` publishes no reason): on your own comment
+  it needs a scope and `--correction-file` (the replacement), not `--body` alone. The errata template merges
+  `### 錯在哪` and `### 正確內容` into `### 錯在哪與正確內容`.
+- **BREAKING (behavior) — `/idd-comment --type errata`** on the invoking user's own comment now delegates to
+  `/idd-edit --correct` and posts nothing; it no longer appends an errata comment plus a `--prepend-note`
+  warning. When the correction is refused or its write fails it posts the errata comment instead and proposes a
+  `--prepend-note` pointer on the original (not when its first non-blank line is an ATX heading or an IDD marker). On anyone else's
+  comment — the repository OWNER's (when the OWNER is not the one running it) and a bot's included — it posts the
+  errata comment only and leaves the target alone.
+- **`--correct` corrects only your own content** (user decision 2026-10-17): the author must be the authenticated
+  `gh` user. Earlier any OWNER content passed, so a collaborator with write access could rewrite the owner's words
+  while the only archive stayed on the collaborator's machine.
+- `/idd-edit --append`/`--replace`/`--prepend-note`: content written by the invoking `gh` user passes the author gate
+  in every mode, not only `--correct` — a maintainer whose org association is `MEMBER` no longer needs
+  `--override-user-content` for their own comments. These modes also attest the mentions the target already has
+  (GitHub does not notify them again on an edit), so editing a comment that mentions someone is no longer refused
+  at egress.
+- `--replace --section` boundaries come from the Markdown parser: besides headings inside code or HTML blocks
+  (ignored) and a repeated heading (reported as `REFUSED(section-ambiguous)`, and the run exits 4; exit 9 is the
+  `section-replace` subcommand's own code), a target heading that only appears inside an HTML block is now
+  `section-not-found`, and a heading indented one to three spaces ends the section.
+- `--body-file` files strictly below the user's temporary directory pass the path gate in every mode. 3.4.0
+  refused everything under `/var` (exit 5), which on macOS includes `$TMPDIR` (`/var/folders/…`).
+- `--section` must be an ATX heading line (`## Title`) in every mode; any other value exits 2. 3.4.0 accepted any
+  value, and `--append`/`--prepend-note` ignored `--section` altogether (`--append --section X` appended).
+- A `--body-file` that contains a NUL byte is refused (exit 5) in every mode; 3.4.0 read it.
+- gh's token store (`~/.config/gh`, which holds `hosts.yml`, and wherever `GH_CONFIG_DIR` or `XDG_CONFIG_HOME`
+  puts it) is refused as a `--body-file` (exit 5) in every mode, the escape hatch included; 3.4.0 read it like any
+  other file. Credential directories are matched without regard to letter case, under both `HOME` and the account's
+  home directory, by the path as given and as resolved; system paths are matched without regard to case on the
+  resolved path.
+- `--scope` other than `whole-comment` is refused at start (exit 3) in every mode; 3.4.0 ignored it for `--append`
+  and `--prepend-note`.
+- Editing a reply that quotes user-pasted points (`type=reply` + `points-from=user-pasted`) asks the #272 question in
+  every mode and at every tier (`FLOOR=272` from prepare), and `apply` refuses `--scrub-attested light` for it
+  (exit 2, retryable); 3.4.0 asked nothing (it attested `warn` unless the caller had set another tier).
+- A target edited by someone else after the preview is refused as `changed-since-preview` (exit 4) in every mode,
+  instead of being overwritten with the previewed text as in 3.4.0.
+
+### Security
+
+- **`parse-args` output was executed as shell commands, from 2.81.0 through 3.4.0, in every `/idd-edit` mode.**
+  `parse-args` printed a multi-line `--body` or `--body-file` value raw, and the skill `eval`ed that output, so
+  after the first word every word of the body ran under `eval` — the rest of the first line as a command, and each
+  later line too — under `--append`, `--replace` and `--prepend-note` alike. Round 2 ANSI-C
+  quotes such values, round 4 makes every value survive `eval` exactly (a NUL byte is refused, `=` is escaped for
+  zsh), and round 9 removes the `eval`: the skill runs `run-start`, which parses the arguments in-process, and copies
+  only the values it prints.
+
+### Notes
+
+- Live acceptance (2026-10-17, before release): from the main clone, `/idd-edit issue:351 --correct --section …`
+  corrected two sections of #351's body (archives `issue-351-body-20261017T145233Z` and
+  `issue-351-body-20261017T145544Z`); both read back equal, `finish` exited 0, the archive files are mode 0000 and
+  ignored, and `restore --target issue:351` listed both checked ids against the real GitHub and wrote nothing
+  (#351 comment 6235380442; tasks 11.6–11.7).
+
+- After archiving the change, update the Purpose paragraph of `openspec/specs/append-vs-modify-discipline/spec.md`
+  from 7 to 8 categories (Purpose is outside the delta).
+
 ## [3.4.0] - 2026-10-15
 
 ### Added

@@ -38,6 +38,7 @@ allowed-tools:
 TaskCreate(name="name_the_wrong_artifact", description="Step 1: 明確指出哪一個上游 artifact 錯了（issue framing / diagnosis 的 root cause / Strategy / plan / spec 的某條 acceptance criterion），以及它錯在哪 —— 一句話，不是一段")
 TaskCreate(name="enumerate_downstream", description="Step 2: 機械枚舉所有建立在它之上的產物：後續 comment、plan、spec/proposal/tasks、branch、PR、已 merge 的 commit、以及引用本 issue 的其他 issue")
 TaskCreate(name="adjudicate_each", description="Step 3: 逐一裁定 still-valid / redo / invalidate，每一項都要寫理由（無理由的裁定等於沒裁定）")
+TaskCreate(name="propose_corrections", description="Step 3.5 (#351): 判為 redo / invalidate 且屬 issue body / comment 內容的項目 → Re-baseline 加 ### Proposed Corrections（目標、段落、錯在哪、/idd-edit ... --correct 指令）；attended 逐項 AskUserQuestion，unattended 只列不做；絕不自己 PATCH 目標或寫歸檔")
 TaskCreate(name="post_rebaseline_record", description="Step 4: post 一則 ## Re-baseline comment，記錄錯在哪、影響了什麼、每一項的裁定與理由")
 TaskCreate(name="execute_redo", description="Step 5: 對判為 redo 的項目，依其類型 chain 到對應 skill（diagnosis → /idd-diagnose；plan → /idd-plan；spec → /spectra-propose）")
 TaskCreate(name="sync_phase", description="Step 6: /idd-update 把 phase 退回到重做的起點（例如 diagnosis 重做 → phase 退回 created）")
@@ -73,6 +74,24 @@ gh issue list --repo $REPO --state all --search "#$N"             # 引用本 is
 
 **`still-valid` 要最嚴格地審。** 「看起來沒關係」是這個 skill 最常見的失效方式：下游產物往往在不明顯的地方繼承了上游的前提（一句措辭、一個測試的斷言理由、一段 CHANGELOG 的因果敘述）。
 
+### Step 3.5: Proposed Corrections（#351）
+
+Step 1 那個錯的 artifact 與 Step 3 判為 `redo` / `invalidate` 的項目，若是 **issue body 或 issue comment 的內容**，就提議就地更正；spec / plan 檔、code、PR 不走這條（`/idd-edit` 不處理，照 Step 5 重做）。附在 Step 4 的 Re-baseline comment 末尾，一項一列：
+
+```markdown
+### Proposed Corrections
+| # | Target | Section | 錯在哪 | Command |
+|---|--------|---------|--------|---------|
+| 1 | comment:<id> | ### Root Cause / Analysis | root cause 層級判錯，正確是 `gh` 取得層 | `/idd-edit comment:<id> --correct --section '### Root Cause / Analysis' --body-file '$HOME/.cache/idd/corrections/correction-<N>-1.md'` |
+```
+
+- `<id>` 是數字 REST id（URL 的 `#issuecomment-` 後綴）；issue body 寫 `issue:<N>`，只能 `--section`。替換內容附在表下 `<details>`，執行時寫進 `$HOME/.cache/idd/corrections/correction-<N>-<k>.md`（先 `mkdir -p "$HOME/.cache/idd/corrections"`），`--body-file` 指向它；不放 `$VERIFY_DIR` 或 `$TMPDIR`（那是這一輪的暫存，使用者決定執行時可能已被清掉）。
+- 「錯在哪」只寫位置與錯誤類型加正確內容，不重述錯的值 —— 重述就等於再留一份錯誤。
+- 替換內容須原樣保留 `Original text`、`**Original**`、`**Point i**` 引文；`## Current Status`、`### Clarity Surface` 不提議（`/idd-edit` 會拒絕）。錯誤落在 issue 正文裡不屬於任何標題的文字（最後一條 `---` 之下，例如 IC_R011 的 `**Source**` 註腳；或第一個標題之前）時，`--correct` 搆不到（comment 裡的這類文字用 `--scope whole-comment`），改提 `/idd-comment #N --type correction`（issue 正文沒有 comment id，`--type errata` 用不了）；issue 正文不是你開的也一樣。目標 comment 作者不是你自己（目前登入的 gh 使用者；repo OWNER 不是你時，OWNER 寫的也算其他人，bot 寫的也算）→ 改提 `/idd-comment #N --type errata --target-comment <id> --body "..."`。
+- **Command 欄是提議，不是照貼的指令**：這張表貼在 GitHub 上，協作者改得到。attended 執行時，用本 skill 自己的值重組引數 —— 目標只能是 `comment:<全數字>` 或 `issue:<全數字>`，section 必須是一行 ATX 標題（一到六個 `#`、一個空格、標題文字） —— 交給 idd-edit 的引數照 shell 的寫法：每個值用單引號包住（值本身含單引號時寫成 `'\''`，GitHub 上的標題可能含單引號）；idd-edit Step 1 先照 shell 規則切開、再重新包，所以不會疊成兩層。不符就不執行。**絕不**把 GitHub 上那一格原樣貼進指令。`--correct` 不會把 `--reason` 發佈到任何地方（標記只帶 backup id 與日期），所以指令不帶 `--reason`。
+- **attended**：Re-baseline 貼出後逐項 `AskUserQuestion`（現在執行 / 先不要）；選執行才以上一點重組的引數呼叫 `/idd-edit`，它仍走自己的 preview + confirm。**unattended 只列不做**：不呼叫 `/idd-edit`。
+- 本 skill **永不**自己 PATCH 目標、也不寫歸檔 —— 改寫只經 `/idd-edit`。
+
 ### Step 4: Re-baseline 紀錄
 
 ```markdown
@@ -104,7 +123,9 @@ gh issue list --repo $REPO --state all --search "#$N"             # 引用本 is
 - **不用本 skill 掩蓋「還沒想清楚」。** Step 1 說不出一句話就回去 diagnose。
 - **枚舉必須機械。** 憑印象列下游 = 重演本 skill 要修的失敗。
 - **`still-valid` 要寫理由。** 沒有理由的 still-valid 就是沒有裁定。
-- **不刪除既有 artifact。** 錯的 diagnosis 留著並標記為 superseded，不要抹掉 —— 「當時為什麼那樣想」是下次的資料。
+- **不刪除既有 artifact，但錯的敘述不留在 AI 讀得到的地方。** 兩種情況分開處理：
+  - **判斷被後來的資訊推翻**（當時依手上的資料是合理的）→ 原 diagnosis 留著並標 superseded —— 「當時為什麼那樣想」是下次的資料。
+  - **敘述本身確定是錯的**（事實、數字、root cause 判錯）→ 依 Step 3.5 提議 `/idd-edit --correct` 就地更正；舊版由它歸檔（可 restore，不是抹掉），改了什麼記在 Re-baseline comment。只標 superseded 而不更正，錯的敘述會繼續被之後的 session 當成記憶讀進去（#351）。
 - **phase 要退回。** 否則工具鏈會對這張 issue 說謊。
 
 ## 實例（本 repo，PR #297）

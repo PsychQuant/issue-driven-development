@@ -20,5 +20,9 @@ jobs:
           python-version: "3.12"
       - name: Install egress parser and skill test dependencies
         run: python3 -m pip install PyYAML==6.0.2 -r plugins/issue-driven-dev/scripts/requirements-egress.txt
+      # scripts/tests/edit-run runs idd-edit's SKILL blocks under zsh, the
+      # shell of the agent's Bash tool (#351 verify round 7)
+      - name: Install zsh
+        run: sudo apt-get update -q && sudo apt-get install -y -q zsh
       - name: Run all fixture suites
         run: bash plugins/issue-driven-dev/scripts/run-all-tests.sh
