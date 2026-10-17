@@ -141,4 +141,12 @@
 - [x] 20.1 先寫會失敗的測試（correction-archive）：註解行之後的讀取、行尾註解後換行、字中的 `#`、`--grep=#351`、註解行之後的 `chmod -R`、`git commit -- -m <歸檔>`、`|&` 之後含空白的路徑；放行：`git commit -am`、反斜線續行、`env A=1 python3 <helper>`、`hg --repository`；單一 token 的 `-m` 值改回拒絕。驗證：12 條在 116aead 上失敗。
 - [x] 20.2 hook：`lex.commenters = ""`；訊息值須同時是多字詞的文字、在收訊息的子命令裡、在 `--` 之前（`--` 只對 git／gh／hg／jj／svn）；`|&`／`&|` 分隔符；反斜線續行；git 的 `-am` 類合併旗標；更多的子命令前選項與收訊息的子命令；`env` 鏈；docstring 與拒絕訊息。驗證：correction-archive 194 條全綠，各輪 reviewer 列過的繞法逐一實跑。
 - [x] 20.3 文件：idd-edit SKILL（#272 那一題問這次新加的文字、四種 mode 都能遮蔽、Step 0 順序、PICK 的 `author-unknown`、restore 查詢的 exit 2）；兩份 spec（not-applied 措辭、路徑閘門、#272 遮蔽、read guard 的規則清單）；`--help` 與獨立 correct-apply 的訊息；CHANGELOG（第 15 輪、兩處被推翻的條目加註、3.4.0 的 #272 說法）。驗證：`spectra validate`、`run-all-tests.sh`。
-- [ ] 20.4 Verify 第 14 輪（只審第 15 輪的差異）；沒有 HIGH 以上，就請使用者確認合併（合併即發佈 3.5.0）。驗證：#351 的 verify 留言。
+- [x] 20.4 Verify 第 14 輪（只審第 15 輪的差異）；沒有 HIGH 以上，就請使用者確認合併（合併即發佈 3.5.0）。驗證：#351 的 verify 留言。
+- [x] 20.5 20.4 的結果：第 14 輪 FAIL，findings 29（HIGH 3／MEDIUM 4／LOW 9／INFO 13）。HIGH：第 15 輪的 `-am` 合併旗標把 `-Fm` 當成 `-m`（第 15 輪造成）；註解裡的撇號開出引號、吞掉下一行的 `chmod -R`（DA：45273ec 就有，不是退步）。MEDIUM：`--replace` 拿掉 reply 標記就不問 #272。DA 的原型修法以 shell 比對語料驗證。報告在 #351 的 verify 留言。
+
+## 21. Verify 第 14 輪修正（第 16 輪）
+
+- [x] 21.1 先寫會失敗的測試：correction-archive（`-Fm` 後含空白的路徑、`-am` 改回掃描、註解撇號後的 `chmod -R` 四種、註解裡的引號吞掉下一行兩種、IDD 的單引號跳脫寫法；放行：`2>&1`、`${#arr[@]}`）；edit-run A13（`--replace` 拿掉 reply 標記仍印 `FLOOR=272`、light 被拒）。驗證：11 條在 caf9791 上失敗。
+- [x] 21.2 hook：詞首的 `#` 起註解到行尾、引號在註解裡是文字；反斜線只在 PowerShell 改成 `/`；`&` 只在重導向運算子之後不算分隔符；引號不平衡時的退路拿掉引號、切開黏住的分隔符；拿掉 `-am` 合併旗標；`chmod -R` 檢查帶 PowerShell 旗標。helper：`_reply_272`／`_floor` 同時看新內文與目前內文。驗證：correction-archive 216 條、edit-run 203 條全綠；DA 的已知繞法 47 條全擋、shell 比對語料只剩 1 條比對誤判（續行把 `sort` 接成參數）。
+- [x] 21.3 文件：兩份 spec、hook docstring 與拒絕訊息、idd-edit SKILL 的 `FLOOR=272`、CHANGELOG（第 16 輪、兩處被推翻的條目加註、3.4.0 的 #272 說法）。驗證：`spectra validate`、`run-all-tests.sh`。
+- [ ] 21.4 Verify 第 15 輪（只審第 16 輪的差異）；沒有 HIGH 以上，就請使用者確認合併。驗證：#351 的 verify 留言。

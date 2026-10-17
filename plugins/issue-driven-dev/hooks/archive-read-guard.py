@@ -21,8 +21,10 @@ mode is what guarantees an unreadable archive; this hook only stops the
 ordinary `cat`/`grep`/Read that would otherwise happen by accident.
 
 Shell commands are checked word by word, quoted strings included (`sh -c`,
-`python3 -c` read files from inside them); `#` is text, not a comment, so a
-comment line cannot hide the commands after it (round 13). Only the value of a
+`python3 -c` read files from inside them). A `#` at the start of a word begins
+a comment to the end of the line, as in the shell; its quotes are text, so a
+comment can neither hide the next line nor open a quote that swallows it
+(rounds 13–14). Only the value of a
 message option (-m, --message, --body, --title, --notes, --subject, and
 idd-edit's --reason) is skipped, and only when it is prose (it holds
 whitespace) given to a subcommand that takes a message (`git commit`, `gh
@@ -56,10 +58,11 @@ REASON = (
     "these files. To put a corrected comment or issue body back, run the "
     "idd-edit helper's restore subcommand, which sends the archived text to "
     "GitHub without displaying it. A commit or PR message that only mentions "
-    "the path is fine as a separate single-quoted -m or --body value of more "
-    "than one word, with no $, backtick, < or > (git commit -m '...', gh issue "
-    "comment --body '...'); otherwise pass it from a file (-F, --body-file). A "
-    "$(...) or heredoc inside the message is checked as a command."
+    "the path is fine as a separate single-quoted -m or --body value that "
+    "contains a space and no $, backtick, < or > (git commit -m '...', gh issue "
+    "comment --body '...'); if it was denied anyway, pass the text from a file "
+    "(-F, --body-file). A $(...) or heredoc inside the message is checked as a "
+    "command."
 )
 
 PATH_FIELDS = {
@@ -117,8 +120,6 @@ _PRE_SUBCOMMAND_VALUE_OPTIONS = (
     "-R", "--repo", "--repository", "--cwd", "--config", "--encoding", "--at-op", "--color",
     "--username", "--password", "--config-dir", "--config-option",
 )
-# git's combined short options ending in m (`git commit -am '...'`)
-_COMBINED_MESSAGE_FLAG = re.compile(r"-[A-Za-z]+m")
 # A script run through an interpreter is named by the script (IDD posts through
 # `bash .../gh-egress.sh comment N --body "..."` — verify #351 round 4).
 INTERPRETERS = ("bash", "sh", "zsh", "env", "python", "python3")
@@ -144,6 +145,13 @@ def _newlines_as_separators(command):
         if quote:
             if c == quote:
                 quote = None
+        elif c == "#" and (not out or out[-1][-1:] in " \t;&|()"):
+            # A comment runs to the end of the line, as the shell reads it: its
+            # quotes and backslashes are text and must not open a quote that
+            # swallows the next line (round 14). `$#`, `${#x}`, `a#b` are text.
+            while i < len(command) and command[i] != "\n":
+                i += 1
+            continue
         elif c in "'\"":
             quote = c
         elif c == "\n":
@@ -155,11 +163,13 @@ def _newlines_as_separators(command):
     return "".join(out)
 
 
-def _split_words(command):
+def _split_words(command, powershell=False):
     command = _newlines_as_separators(command)
-    # Backslashes become '/' before splitting: PowerShell paths use them as
-    # separators, and POSIX shlex would otherwise eat them as escapes.
-    command = command.replace("\\", "/")
+    # PowerShell paths use backslashes as separators, and POSIX shlex would eat
+    # them as escapes. In a POSIX shell they are escapes, and IDD's own `'\''`
+    # needs them read as such (round 14).
+    if powershell:
+        command = command.replace("\\", "/")
     try:
         # `;`, `&` and `|` split words even when glued to them (`a&&b`), as
         # the shell reads them (round 12).
@@ -170,15 +180,17 @@ def _split_words(command):
         lex.commenters = ""
         return list(lex)
     except ValueError:
-        return command.split()
+        # Unbalanced quotes: every piece is scanned, quotes dropped and glued
+        # separators split, so the chmod -R check still sees its target (round 14).
+        return [w.strip("'\"") for w in re.findall(r"[;&|]+|[^\s;&|]+", command)]
 
 
-def _command_words(command):
+def _command_words(command, powershell=False):
     """Path candidates in a shell command: every shell word, and every piece of
     a word split on whitespace and quoting/grouping characters — except the
     value of a message option, which is prose."""
     previous, command_name, via_interpreter, subcommand, options_ended = "", None, False, None, False
-    for word in _split_words(command):
+    for word in _split_words(command, powershell):
         if command_name is None or via_interpreter:
             # `NAME=value cmd` and `bash script` name the command by what runs,
             # through a chain such as `env A=1 python3 script`.
@@ -192,7 +204,9 @@ def _command_words(command):
                 and previous not in _PRE_SUBCOMMAND_VALUE_OPTIONS):
             subcommand = word
         allowed = MESSAGE_SUBCOMMANDS.get(command_name)
-        flag = previous in MESSAGE_FLAGS or (command_name == "git" and _COMBINED_MESSAGE_FLAG.fullmatch(previous))
+        # only the flag itself: git reads `-Fm` as `-F m` (round 14), so a
+        # combined cluster such as `-am` is scanned, not skipped
+        flag = previous in MESSAGE_FLAGS
         is_message = (
             command_name in MESSAGE_COMMANDS and (allowed is None or subcommand in allowed)
             and not options_ended
@@ -203,7 +217,7 @@ def _command_words(command):
             # `--` to pass /idd-edit's own arguments, --reason among them
             options_ended = True
         # `2>&1`: an `&` after a redirection is not a separator
-        separator = (word in SEPARATORS and not (word == "&" and previous.endswith((">", "<")))) or word.endswith(";")
+        separator = (word in SEPARATORS and not (word == "&" and re.fullmatch(r"[0-9]*[<>]", previous))) or word.endswith(";")
         previous = word
         if separator:
             command_name = subcommand = None
@@ -244,10 +258,10 @@ def _archives_around(cwd):
         d = parent
 
 
-def _recursive_permission_change(command, cwd):
+def _recursive_permission_change(command, cwd, powershell=False):
     """A -R permission change whose target is the archive or a directory above
     it (resolved against the tool call's working directory)."""
-    words = _split_words(command)
+    words = _split_words(command, powershell)
     i = 0
     while i < len(words):
         if os.path.basename(words[i]) not in PERMISSION_COMMANDS:
@@ -280,7 +294,7 @@ def _recursive_permission_change(command, cwd):
 
 def _candidates(tool, tool_input):
     if tool in COMMAND_TOOLS:
-        yield from _command_words(_as_text(tool_input.get("command")))
+        yield from _command_words(_as_text(tool_input.get("command")), tool == "PowerShell")
         return
     for field in PATH_FIELDS.get(tool, ()):
         yield _norm_path(_as_text(tool_input.get(field)))
@@ -313,7 +327,7 @@ def main():
     cwd = _as_text(event.get("cwd")) or os.getcwd()
     command = _as_text(tool_input.get("command")) if tool in COMMAND_TOOLS else ""
     if any(_hits(c) for c in _candidates(tool, tool_input)) or (
-        command and _recursive_permission_change(command, cwd)
+        command and _recursive_permission_change(command, cwd, tool == "PowerShell")
     ):
         print(json.dumps({
             "hookSpecificOutput": {

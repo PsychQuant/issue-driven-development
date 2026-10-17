@@ -215,10 +215,24 @@ expect_deny  hash-grep '{"tool_name":"Bash","tool_input":{"command":"git log --o
 expect_deny  hash-chmod "{\"tool_name\":\"Bash\",\"cwd\":\"$REPO\",\"tool_input\":{\"command\":\"# fix perms\nchmod -R u+r .claude\"}}"
 expect_deny  dashdash '{"tool_name":"Bash","tool_input":{"command":"git commit -- -m .claude/.idd/archive/edits/a.md"}}'
 expect_deny  pipe-amp  '{"tool_name":"Bash","tool_input":{"command":"git commit -m \u0027a b\u0027 |& sort -m \u0027/x/My Repo/.claude/.idd/archive/edits/a.md\u0027"}}'
-expect_allow commit-am '{"tool_name":"Bash","tool_input":{"command":"git commit -am \u0027see .claude/.idd/archive/ docs\u0027"}}'
+# round 16: combined short flags are not read as -m (git reads -Fm as -F m)
+expect_deny  commit-am '{"tool_name":"Bash","tool_input":{"command":"git commit -am \u0027see .claude/.idd/archive/ docs\u0027"}}'
 expect_allow contline  '{"tool_name":"Bash","tool_input":{"command":"git \\\n commit -m \u0027see .claude/.idd/archive/ docs\u0027"}}'
 expect_allow env-py    '{"tool_name":"Bash","tool_input":{"command":"env A=1 python3 /p/scripts/idd-edit-helper.py run-start --reason \u0027see .claude/.idd/archive/ x\u0027"}}'
 expect_allow hg-repo   '{"tool_name":"Bash","tool_input":{"command":"hg --repository r commit -m \u0027see .claude/.idd/archive/ x\u0027"}}'
+# #351 round 16: a shell comment runs to the end of the line and its quotes
+# are text; -Fm is not -m; IDD's own '\'' idiom parses as the shell reads it
+expect_deny  fm-path   '{"tool_name":"Bash","tool_input":{"command":"git commit -Fm \u0027/repo with spaces/.claude/.idd/archive/edits/a.md\u0027"}}'
+expect_deny  c-apos1   "{\"tool_name\":\"Bash\",\"cwd\":\"$REPO\",\"tool_input\":{\"command\":\"# Let\u0027s make it readable\nchmod -R u+r \u0027.claude\u0027\"}}"
+expect_deny  c-apos2   "{\"tool_name\":\"Bash\",\"cwd\":\"$REPO\",\"tool_input\":{\"command\":\"chmod -R u+r \u0027.claude/.idd\u0027  # it\u0027s needed\"}}"
+expect_deny  c-apos3   "{\"tool_name\":\"Bash\",\"cwd\":\"$REPO\",\"tool_input\":{\"command\":\"chmod -R u+r .claude/.idd;ls  # don\u0027t\"}}"
+expect_deny  c-apos4   "{\"tool_name\":\"Bash\",\"cwd\":\"$REPO\",\"tool_input\":{\"command\":\"# Let\u0027s fix the permissions\nchmod -R u+rw .\n# Now let\u0027s retry\ngrep -rn wrong .\"}}"
+expect_deny  c-msg     '{"tool_name":"Bash","tool_input":{"command":"git commit -m #x\u0027\ncat .claude/.idd/archive/edits/a.md #\u0027"}}'
+expect_deny  c-ls      '{"tool_name":"Bash","tool_input":{"command":"ls # ; git commit -m \u0027\ncat .claude/.idd/archive/edits/a.md #\u0027"}}'
+expect_allow idiom     '{"tool_name":"Bash","tool_input":{"command":"python3 /p/scripts/idd-edit-helper.py run-start -- comment:1 --append --reason \u0027it\u0027\\\u0027\u0027s in .claude/.idd/archive/ now\u0027"}}'
+expect_deny  idiom-ch  "{\"tool_name\":\"Bash\",\"cwd\":\"$REPO\",\"tool_input\":{\"command\":\"git commit -m \u0027it\u0027\\\u0027\u0027s\u0027; chmod -R u+r .claude\"}}"
+expect_allow redir     '{"tool_name":"Bash","tool_input":{"command":"git commit -m \u0027see .claude/.idd/archive/ docs\u0027 2>&1"}}'
+expect_allow hash-var  '{"tool_name":"Bash","tool_input":{"command":"echo ${#arr[@]} $# foo#bar"}}'
 expect_allow helper   '{"tool_name":"Bash","tool_input":{"command":"python3 \"$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py\" archive comment 5805214375 --from-file \"$BACKUP_FILE\" --repo \"$REPO\""}}'
 expect_allow skill    '{"tool_name":"Read","tool_input":{"file_path":"plugins/issue-driven-dev/skills/idd-edit/SKILL.md"}}'
 expect_allow grep-re  '{"tool_name":"Grep","tool_input":{"pattern":".claude/.idd/archive","path":"plugins"}}'

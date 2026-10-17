@@ -167,7 +167,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" prepare --run '<RUN>'
 ```
 
 - `RESULT=refused` 與 `REASON=`：這個 target 不改（R5、author-unknown、fetch-failed、stage-failed、egress、protected、setext、unclosed-block、empty、section-not-found、section-ambiguous、parser-unavailable、archive、check-failed、not-in-pick，stderr 有原因），直接換下一個 TARGET。拒絕已記在 run 裡，`finish` 會列出。例外：帶 `<PICK>` 時讀不到那則 comment 或它的作者（`REASON=fetch-failed`、`author-unknown`）不記錄，那個 PICK 仍可重試（沒重試的話 finish 會列為 `not-picked`）；選到不屬於 #N 的 comment 是 `not-in-pick`，那個 PICK 就此結束。
-- `FLOOR=272`：這則 reply 帶 `type=reply` 與 `points-from=user-pasted` 標記，引用了使用者貼來的第三方原話（#272）。不論這個 repo 的等級，Step 3 都要另問 #272 那一題（`reply_272_gate`）；helper 至少以 `warn` 預檢。prepare 不印 `SCRUB=`：Step 4 的 `<SCRUB>` 照 Step 1 的值，只有那個值是 `light` 時，答完那一題改填 `warn`。
+- `FLOOR=272`：這則 reply（新內文或目前的內文）帶 `type=reply` 與 `points-from=user-pasted` 標記，引用了使用者貼來的第三方原話（#272）。不論這個 repo 的等級，Step 3 都要另問 #272 那一題（`reply_272_gate`）；helper 至少以 `warn` 預檢。prepare 不印 `SCRUB=`：Step 4 的 `<SCRUB>` 照 Step 1 的值，只有那個值是 `light` 時，答完那一題改填 `warn`。
 - `RESULT=merged`（只會出現在 PICK）：選到的 comment 已是這次的 TARGET，由它處理；這個 PICK 跳過 Step 3–4。
 - 成功時印出 `PREVIEW=`（新內文全文）與 `DIFF=`（目前內容 → 新內文的差異）；`--append`／`--replace`／`--prepend-note` 另印 `BACKUP=`（原內文的備份），`--correct` 另印 `WORK=` 與 `STATE=`。
 

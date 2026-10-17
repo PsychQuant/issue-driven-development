@@ -325,7 +325,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The #272 question is asked at every tier.** `prepare` prints `FLOOR=272` whenever the body quotes user-pasted
   points, not only in a `light` repository, and no longer prints a `SCRUB=warn` that the SKILL's copy-the-value rule
   would carry into `apply` without the question. The SKILL tracks the question as its own task (`reply_272_gate`)
-  and offers redaction only for `--replace`; standalone `correct-apply` refuses such a body at `light` before
+  and offers redaction only for `--replace` *(round 15: in every mode, for the body file's text)*; standalone `correct-apply` refuses such a body at `light` before
   archiving.
 - **Read guard:** a message flag is prose only for subcommands that take a message (`git commit`, `gh issue`/`pr`/
   `release`, …), so after `git diff -m` the next word is scanned even when the path contains spaces; an unquoted
@@ -346,12 +346,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with `shlex.split`.
 - The read guard skips a message value only when it is prose (whitespace) **and** the subcommand takes a message,
   and not after a `--` (`git commit -- -m <path>` is a pathspec); `|&` and `&|` end a command, a backslash-newline
-  joins lines, `git commit -am` counts as `-m`, more pre-subcommand value options and message subcommands are known,
+  joins lines, `git commit -am` counts as `-m` *(round 16: no longer — git reads `-Fm` as `-F m`)*, more pre-subcommand value options and message subcommands are known,
   and `env A=1 python3 <helper>` is recognised. A one-word message after `-m` is scanned again.
 - The #272 question asks about the text this edit adds, says declining only cancels the edit, and offers redaction
   of the body file in every mode; the SKILL orders it before the final confirmation and documents the PICK
   `author-unknown` retry and the lookup's exit-2 refusals; the not-applied spec wording, the path-gate spec sentence
   and the `--help` text match the code.
+
+### Fixed (round 16 — verify round 14 findings, before release)
+
+- **Read guard: a quote inside a comment hid the next line.** With `#` read as text (round 15), the apostrophe in a
+  comment such as `# Let's fix the permissions` opened a quote that swallowed the following `chmod -R` (a gap
+  45273ec had too). An unquoted `#` at the start of a word now begins a comment to the end of the line, as in the
+  shell; `$#`, `${#x}` and `a#b` stay text. Backslashes are escapes except in PowerShell input, so IDD's own
+  `'\''` parses as the shell reads it; an `&` is not a separator only right after a redirection operator; when the
+  quotes cannot be balanced, every piece is scanned and the `chmod -R` check still sees its target. The read
+  guard was checked against the rounds 11–14 bypass list (47 cases) and a shell-oracle corpus.
+- `-am`-style flag clusters are scanned again: git reads `-Fm <x>` as `-F m`, so the next word is a path.
+- The #272 question is also asked when the current body carries the reply marker, so a `--replace` that drops
+  the marker no longer skips it.
 
 ### Changed
 
@@ -410,7 +423,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `--prepend-note`.
 - Editing a reply that quotes user-pasted points (`type=reply` + `points-from=user-pasted`) asks the #272 question in
   every mode and at every tier (`FLOOR=272` from prepare), and `apply` refuses `--scrub-attested light` for it
-  (exit 2, retryable); 3.4.0 asked nothing (it attested `warn` whatever the repository).
+  (exit 2, retryable); 3.4.0 asked nothing (it attested `warn` unless the caller had set another tier).
 - A target edited by someone else after the preview is refused as `changed-since-preview` (exit 4) in every mode,
   instead of being overwritten with the previewed text as in 3.4.0.
 

@@ -1602,23 +1602,27 @@ def _correct_marker(backup_id):
     return f'<!-- idd:edit mode="correct" backup-id="{backup_id}" date="{datetime.date.today().isoformat()}" -->'
 
 
-def _floor(scrub, path):
+def _floor(scrub, *paths):
     """The least tier a body may go out at. A reply quoting user-pasted points
     carries both markers of idd-comment's reply template, and gh-egress refuses
     it at light (#272). prepare checks at the floor and prints FLOOR=272; the
     agent asks the #272 question and attests warn itself — apply refuses light
     for such a body and never raises the tier on the agent's behalf (verify
     #351 rounds 10–11)."""
-    return "warn" if scrub == "light" and _reply_272(path) else scrub
+    return "warn" if scrub == "light" and _reply_272(*paths) else scrub
 
 
-def _reply_272(path):
-    """The body quotes user-pasted points: both markers of idd-comment's reply
+def _reply_272(*paths):
+    """A body quotes user-pasted points: both markers of idd-comment's reply
     template. The #272 question is asked at every tier, as idd-comment asks it
-    (rules/privacy-scrubbing.md; verify #351 round 12)."""
-    with open(path, encoding="utf-8", errors="replace") as fh:
-        text = fh.read()
-    return "type=reply" in text and "points-from=user-pasted" in text
+    (rules/privacy-scrubbing.md; verify #351 round 12). The old body counts
+    too: a --replace that drops the marker must not skip the question (round 14)."""
+    for path in paths:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+        if "type=reply" in text and "points-from=user-pasted" in text:
+            return True
+    return False
 
 
 def _refused(reason, work=None, extra=()):
@@ -1732,7 +1736,7 @@ def _correct_prepare(work, target, kind, num, repo, section, scrub, content):
     # The egress gates run before the preview, so a body gh-egress would refuse
     # is never confirmed or archived (round 3). Mentions the target already had
     # were published already; a mention the correction adds is still refused.
-    floor = _floor(scrub, preview)
+    floor = _floor(scrub, preview, backup)
     if _egress(["check", "--body-file", preview, "--scrub-attested", floor]
                + _mention_args(mentions)) != 0:
         return _refused("egress", work)
@@ -1749,7 +1753,7 @@ def _correct_prepare(work, target, kind, num, repo, section, scrub, content):
     print(f"WORK={work}")
     print(f"PREVIEW={preview}")
     print(f"DIFF={diff}")
-    _print_floor(preview)
+    _print_floor(preview, backup)
     # The caller keeps this hash and hands it back to apply: the binding to what
     # the user confirmed lives outside the working directory (round 5).
     print(f"STATE={_sha256(state_path)}")
@@ -1921,7 +1925,7 @@ def _correct_apply(work, state_sha, scrub=None):
         err(f"✗ {state['target']} changed since the preview — nothing archived or written; run again to see the new version")
         return _refused("changed-since-preview")
     attested = scrub or state["scrub"]
-    if _floor(attested, preview) != attested:
+    if _floor(attested, preview, backup) != attested:
         # before the archive: the write would be refused anyway (#272, round 12)
         err(f"✗ {state['target']} quotes user-pasted points (#272): prepare it again with --scrub-attested warn "
             "after the #272 question — nothing archived or written")
@@ -2460,7 +2464,7 @@ def _edit_prepare(real, meta, target, num, pick=""):
     _write_diff(old, new, diff)
     # The egress gates run before the preview, so a body gh-egress would refuse
     # is never shown for confirmation (round 9; --correct did this since round 3).
-    floor = _floor(meta["scrub"], new)
+    floor = _floor(meta["scrub"], new, old)
     if _egress(["check", "--body-file", new, "--scrub-attested", floor]
                + _mention_args(mentions)) != 0:
         return _edit_refused(real, target, "egress", pick)
@@ -2470,15 +2474,15 @@ def _edit_prepare(real, meta, target, num, pick=""):
     print(f"PREVIEW={new}")
     print(f"DIFF={diff}")
     print(f"BACKUP={backup}")
-    _print_floor(new)
+    _print_floor(new, old)
     return 0
 
 
-def _print_floor(path):
+def _print_floor(*paths):
     """FLOOR=272 when the body falls under #272, at any tier. No SCRUB= line:
     the agent copies SCRUB= into apply, and a printed warn would skip the
     question (verify #351 round 12); it attests warn itself once asked."""
-    if _reply_272(path):
+    if _reply_272(*paths):
         print("FLOOR=272")
 
 
@@ -2500,9 +2504,9 @@ def apply_subcmd(argv):
     if not last or last["outcome"] != "prepared":
         err(f"ERROR: {target} has no prepared edit in this run")
         return 2
-    prepared = (os.path.join(last["work"], "preview.md") if last.get("work")
-                else os.path.join(real, f"comment-{target.split(':', 1)[1]}", "new.md"))
-    if os.path.isfile(prepared) and _floor(attested, prepared) != attested:
+    folder = last.get("work") or os.path.join(real, f"comment-{target.split(':', 1)[1]}")
+    bodies = [os.path.join(folder, n) for n in (("preview.md", "backup.md") if last.get("work") else ("new.md", "old.md"))]
+    if all(os.path.isfile(b) for b in bodies) and _floor(attested, *bodies) != attested:
         # Not recorded: retried with --scrub-attested warn once the user has
         # answered the #272 question (verify #351 round 11).
         err(f"ERROR: {target} quotes user-pasted points (#272): ask the user whether that third-party "

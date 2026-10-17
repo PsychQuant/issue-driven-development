@@ -578,6 +578,21 @@ h a12dp prepare --run "$RUN" --target comment:271 --pick "$(printf '2%.0s' $(seq
 assert_exit "a 30-digit --pick is refused (exit 2)" 2 "$RC"
 h a12df finish --run "$RUN"
 
+echo "A13. round 16 (verify #351 round 14)"
+# a --replace that drops the reply marker still asks the #272 question: the
+# old body carries it (otherwise the replacement removes it without asking)
+printf '{"viewerPermission": "WRITE", "isPrivate": true}' >"$FAKE_GH_STORE/repo.json"
+mkrec comment-280.json kiki830621 MEMBER "$REPLY_BODY2"
+printf 'a plain note, no marker\n' >"$WORK/plain.md"
+start a13a comment:280 --replace --scope whole-comment --body-file "$WORK/plain.md" --reason r
+h a13ap prepare --run "$RUN" --target comment:280
+assert_eq "FLOOR=272 comes from the old body too" "272" "$(val FLOOR "$WORK/a13ap.out")"
+h a13al apply --run "$RUN" --target comment:280 --scrub-attested "$SCRUB"
+assert_exit "and apply at light is refused" 2 "$RC"
+h a13ad discard --run "$RUN" --target comment:280
+h a13af finish --run "$RUN"
+printf '{"viewerPermission": "ADMIN", "isPrivate": false}' >"$FAKE_GH_STORE/repo.json"
+
 # ═══ Part B — the SKILL's own blocks, one fresh shell each ═════════════════
 # What an agent gets: Claude Code substitutes ${CLAUDE_PLUGIN_ROOT} when it
 # loads a plugin skill (only the braced form — verify #351 round 8), and the
