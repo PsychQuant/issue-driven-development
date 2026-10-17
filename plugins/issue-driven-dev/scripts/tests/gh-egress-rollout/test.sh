@@ -33,9 +33,15 @@ HELPERS="$HERE/../../lib/assert-helpers.sh"
 # ── every rolled-out skill routes egress through the wrapper ──
 # #273: comment surgery wired — the raw Step-6 PATCH line is refuted verbatim
 refute_output_grep "idd-edit: raw Step-6 comment PATCH gone (#273)" 'issues/comments/$COMMENT_ID \' "$SK/idd-edit/SKILL.md"
-assert_output_grep "idd-edit: Step 6 dispatches via edit-comment verb" 'gh-egress.sh" edit-comment' "$SK/idd-edit/SKILL.md"
+# #351 round 9: idd-edit's writes moved into its helper (shell state did not
+# survive the user's confirmation); the helper dispatches through the wrapper.
+EDIT_HELPER="$SK/../scripts/idd-edit-helper.py"
+assert_output_grep "idd-edit: the helper writes via the edit-comment verb" '_egress(["edit-comment", num' "$EDIT_HELPER"
+assert_output_grep "idd-edit: the helper runs gh-egress.sh" '"gh-egress.sh")' "$EDIT_HELPER"
+assert_output_grep "idd-edit: the helper carries a scrub attestation" '"--scrub-attested", meta["scrub"]' "$EDIT_HELPER"
+assert_output_grep "idd-edit: the SKILL attests after its privacy review" '--scrub-attested "<SCRUB>"' "$SK/idd-edit/SKILL.md"
 
-for sk in idd-comment idd-diagnose idd-implement idd-verify idd-close idd-update idd-edit; do
+for sk in idd-comment idd-diagnose idd-implement idd-verify idd-close idd-update; do
   assert_output_grep "$sk: routes egress via gh-egress.sh" "gh-egress.sh" "$SK/$sk/SKILL.md"
   assert_output_grep "$sk: carries a scrub attestation"    "--scrub-attested" "$SK/$sk/SKILL.md"
 done

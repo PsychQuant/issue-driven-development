@@ -294,52 +294,9 @@ require "the target was re-read after the failed write" \
 # ── R8. round 8 (verify #351 round 6) ─────────────────────────────────────
 echo "R8. round 8"
 
-# R8.1 the SKILL's own Step 1.6, run the way an agent runs it: prepare in one
-# shell, the confirm or decline block in another, values copied from what the
-# first shell printed (the round-6 HIGH: nothing was printed).
-SKILL="$PLUGIN/skills/idd-edit/SKILL.md"
-python3 - "$SKILL" "$WORK/s16" <<'PYX'
-import re, sys
-t = open(sys.argv[1], encoding="utf-8").read()
-sec = t[t.index("### Step 1.6"):t.index("### Step 2")]
-blocks = re.findall(r"```bash\n(.*?)```", sec, re.S)
-assert len(blocks) == 3, len(blocks)
-for i, b in enumerate(blocks):
-    open(f"{sys.argv[2]}-{i}.sh", "w", encoding="utf-8").write(b)
-PYX
-# skill_block <label> <block> <target> [work] [state] — one Bash call of the skill
-skill_block() {
-  local label="$1" block="$2" target="$3" w="${4:-}" s="${5:-}"
-  python3 - "$WORK/s16-$block.sh" "$w" "$s" >"$WORK/$label.sh" <<'PYX'
-import re, sys
-src, w, s = sys.argv[1:]
-text = open(src, encoding="utf-8").read()
-text = re.sub(r'CORRECT_WORK="<[^"]*>"', lambda _: f'CORRECT_WORK="{w}"', text)
-text = re.sub(r'CORRECT_STATE="<[^"]*>"', lambda _: f'CORRECT_STATE="{s}"', text)
-print(text)
-PYX
-  (cd "$REPO" && CLAUDE_PLUGIN_ROOT="$PLUGIN" MODE=--correct TARGET="$target" \
-     SECTION_FLAG="## Notes" BODY_INPUT="right text" SCRUB_LEVEL=warn bash -c '
-       REPO=o/r; WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/idd-edit-XXXXXX")
-       REFUSED_TARGETS=(); DECLINED_TARGETS=(); UNVERIFIED_TARGETS=(); WRITE_FAILED_TARGETS=(); EDITED_COUNT=0
-       for _once in 1; do . "$1"; done
-       echo "EDITED=$EDITED_COUNT REFUSED=${REFUSED_TARGETS[*]-} DECLINED=${DECLINED_TARGETS[*]-}"
-       rm -rf "$WORK_DIR"' _ "$WORK/$label.sh") >"$WORK/$label.out" 2>"$WORK/$label.err"
-}
-mkrec comment-400.json kiki830621 MEMBER "$SECTION_BODY"
-skill_block s1p 0 comment:400
-for k in WORK PREVIEW STATE; do
-  require "Step 1.6 prints $k= for the next Bash call" test -n "$(val "$k" "$WORK/s1p.out")"
-done
-skill_block s1a 2 comment:400 "$(val WORK "$WORK/s1p.out")" "$(val STATE "$WORK/s1p.out")"
-assert_output_grep "the confirm block, run in a new shell, corrects the target" "comment:400 corrected" "$WORK/s1a.out"
-assert_output_grep "it counts one edit" "EDITED=1" "$WORK/s1a.out"
-assert_eq "the target holds the new text" "right text" "$(body_of comment-400.json | sed -n 2p)"
-mkrec comment-401.json kiki830621 MEMBER "$SECTION_BODY"
-skill_block s2p 0 comment:401
-skill_block s2d 1 comment:401 "$(val WORK "$WORK/s2p.out")"
-assert_output_grep "the decline block, run in a new shell, records the decline" "DECLINED=comment:401" "$WORK/s2d.out"
-refute "the decline block removes the working directory" test -d "$(val WORK "$WORK/s2p.out")"
+# R8.1 (the SKILL's own Step 1.6 in two shells) moved to scripts/tests/edit-run
+# part B in round 9: it seeded variables, a loop and bash where an agent has
+# none of them and runs zsh (verify #351 round 7).
 
 # R8.2 apply runs the author gate again: the gh user changed after the preview
 mkrec comment-402.json kiki830621 MEMBER "$SECTION_BODY"
@@ -429,6 +386,7 @@ wrong"
 printf '## For Reviewer\nright\n\n<!-- idd:dashboard -->\n' >"$WORK/fix-dash-end.md"
 helper r810p correct-prepare --target comment:408 --repo o/r --scope whole-comment --body-file "$WORK/fix-dash-end.md" --scrub-attested warn
 helper r810a correct-apply --work "$(val WORK "$WORK/r810p.out")" --state "$(val STATE "$WORK/r810p.out")"
+assert_eq "the correction is applied" "edited" "$(val RESULT "$WORK/r810a.out")"
 assert_eq "the marker is line 1" "<!-- idd:dashboard -->" "$(body_of comment-408.json | head -1)"
 assert_eq "the marker appears once" "1" "$(body_of comment-408.json | grep -c 'idd:dashboard')"
 
@@ -471,6 +429,61 @@ helper r816b correct-prepare --target comment:411 --repo o/r --section "## Notes
 printf 'kiki830621' >"$FAKE_GH_STORE/user"
 assert_exit "the OWNER's own comment, corrected by the OWNER, is prepared" 0 "$RC"
 helper r816c correct-discard --work "$(val WORK "$WORK/r816b.out")"
+
+# ── R9. round 9 (verify #351 round 7) ─────────────────────────────────────
+echo "R9. round 9"
+# R9.1 a reply's quotation of a reviewer is verbatim-preserve
+mkrec comment-420.json kiki830621 MEMBER "## 🧑‍🏫 Reply
+
+> **Point 1**（review 2026-10-01）：
+> 「The bound in Lemma 2 is wrong for n < 3.」
+
+Fixed in a1b2c3."
+printf '## 🧑‍🏫 Reply\n\n> **Point 1**（review 2026-10-01）：\n> 「The reviewer thinks Lemma 2 is slightly loose.」\n\nFixed in a1b2c3.\n' >"$WORK/fix-reply.md"
+helper r91 correct-prepare --target comment:420 --repo o/r --scope whole-comment --body-file "$WORK/fix-reply.md" --scrub-attested warn
+assert_eq "a rewritten reviewer quotation is refused" "protected" "$(val REASON "$WORK/r91.out")"
+# R9.2 a setext heading is matched whole: a changed underline is a new one
+mkrec comment-421.json kiki830621 MEMBER "Summary
+-------
+wrong"
+printf 'Summary\n=======\nright\n' >"$WORK/fix-underline.md"
+helper r92 correct-prepare --target comment:421 --repo o/r --scope whole-comment --body-file "$WORK/fix-underline.md" --scrub-attested warn
+assert_eq "a changed setext underline is refused" "setext" "$(val REASON "$WORK/r92.out")"
+printf 'Summary\n-------\nright\n\nSummary\n-------\nagain\n' >"$WORK/fix-twice.md"
+helper r92b correct-prepare --target comment:421 --repo o/r --scope whole-comment --body-file "$WORK/fix-twice.md" --scrub-attested warn
+assert_eq "a second copy of a setext heading is refused" "setext" "$(val REASON "$WORK/r92b.out")"
+# R9.3 a replacement that is only the dashboard marker is empty
+mkrec comment-422.json kiki830621 MEMBER "<!-- idd:dashboard -->
+## For Reviewer
+wrong"
+printf '<!-- idd:dashboard -->\n' >"$WORK/fix-marker-only.md"
+helper r93 correct-prepare --target comment:422 --repo o/r --scope whole-comment --body-file "$WORK/fix-marker-only.md" --scrub-attested warn
+assert_exit "only the marker is refused as empty" 2 "$RC"
+# R9.4 an unclosed fence has its own reason
+mkrec comment-423.json kiki830621 MEMBER "$SECTION_BODY"
+printf 'right\n```\nnever closed\n' >"$WORK/fix-fence.md"
+helper r94 correct-prepare --target comment:423 --repo o/r --section "## Notes" --body-file "$WORK/fix-fence.md" --scrub-attested warn
+assert_eq "an unclosed fence is unclosed-block, not protected" "unclosed-block" "$(val REASON "$WORK/r94.out")"
+# R9.5 a state without its file hashes is refused, even with a matching digest
+mkrec comment-424.json kiki830621 MEMBER "$SECTION_BODY"
+helper r95p correct-prepare --target comment:424 --repo o/r --section "## Notes" --body-file "$WORK/fix.md" --scrub-attested warn
+R95W="$(val WORK "$WORK/r95p.out")"
+helper r95a correct-apply --work "$R95W" --state "$(restate "$R95W" 'del s["sha"]')"
+assert_eq "a state without sha is refused with a reason" "differs-from-preview" "$(val REASON "$WORK/r95a.out")"
+# R9.6 an abandoned run directory is removed too
+STALE_RUN="$(mktemp -d "$TMPDIR/idd-run-XXXXXX")"; : >"$STALE_RUN/run.json"; touch -t 202001010000 "$STALE_RUN"
+helper r96 correct-prepare --target comment:9999 --repo o/r --section "## Notes" --body-file "$WORK/fix.md" --scrub-attested warn
+refute "a stale run directory is removed" test -d "$STALE_RUN"
+# R9.7 a target refused at the author gate writes nothing into the repository
+NG9="$WORK/fresh-repo"; mkdir -p "$NG9"; git -C "$NG9" init -q
+mkrec comment-425.json someone-else MEMBER "$SECTION_BODY"
+(cd "$NG9" && python3 "$HELPER" correct-prepare --target comment:425 --repo o/r --section "## Notes" --body-file "$WORK/fix.md" --scrub-attested warn) >"$WORK/r97.out" 2>"$WORK/r97.err"
+assert_eq "it is refused as R5" "R5" "$(val REASON "$WORK/r97.out")"
+refute_output_grep "the exclude block is not written for it" "idd" "$NG9/.git/info/exclude"
+assert_output_grep "the refusal points to another account" "gh auth switch" "$WORK/r97.err"
+# R9.8 validate-target refuses a malformed repository
+helper r98 validate-target 1 "../x" false --correct
+assert_exit "a malformed repo is a usage error" 2 "$RC"
 
 # no refusal or apply leaves a working directory behind
 assert_eq "no working directory outlives prepare refusals or apply" "$BEFORE" "$(count_work)"

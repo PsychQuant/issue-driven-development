@@ -11,6 +11,9 @@ round 6). Switches (files in the store):
   fail-after-patch  — the write lands, then gh exits 1 (a 502 after the fact)
   mangle-read       — reads after a write return the body with a suffix
   pad-read          — reads after a write return the body plus one newline
+Other files: repo.json answers `gh repo view <repo> --json …` (absent → error);
+issue-<n>-comment-ids lists the comment ids of issue n, oldest first, for
+`--paginate --jq '.[-1].id'`.
 Every call is appended to calls.log.
 """
 import json
@@ -85,6 +88,19 @@ def main(argv):
                 login = fh.read().strip()
             print(login if jq == ".login" else json.dumps({"login": login}))
             return 0
+        parts = endpoint.strip("/").split("/")
+        if (len(parts) == 6 and parts[3] == "issues" and parts[5] == "comments"
+                and "/".join(parts[1:3]) == REPO):
+            ids_path = os.path.join(STORE, f"issue-{parts[4]}-comment-ids")
+            if not os.path.exists(ids_path):
+                print("HTTP 404: Not Found", file=sys.stderr)
+                return 1
+            ids = open(ids_path, encoding="utf-8").read().split()
+            if jq == ".[-1].id":
+                print(ids[-1] if ids else "")
+            else:
+                print(json.dumps([{"id": int(i)} for i in ids]))
+            return 0
         path = record_path(endpoint)
         if path is None or not os.path.exists(path):
             print("HTTP 404: Not Found", file=sys.stderr)
@@ -108,6 +124,13 @@ def main(argv):
             print(json.dumps({"login": rec["user"]["login"], "assoc": rec["author_association"]}))
         else:
             print(json.dumps(rec))
+        return 0
+    if argv[:2] == ["repo", "view"]:
+        path = os.path.join(STORE, "repo.json")
+        if len(argv) < 3 or argv[2] != REPO or not os.path.exists(path):
+            print("GraphQL: Could not resolve to a Repository", file=sys.stderr)
+            return 1
+        print(open(path, encoding="utf-8").read())
         return 0
     if argv[:2] == ["issue", "edit"]:
         n = argv[2]

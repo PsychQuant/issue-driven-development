@@ -1228,7 +1228,7 @@ fi
 
 - `<id>` 是數字 REST id（comment URL 的 `#issuecomment-` 後綴），不是 GraphQL node id；issue body 寫 `issue:<N>`，只能用 `--section`。替換內容附在表下 `<details>`，執行時寫進 `$HOME/.cache/idd/corrections/correction-<N>-<k>.md`（先 `mkdir -p "$HOME/.cache/idd/corrections"`），`--body-file` 指向它；不放 `$VERIFY_DIR` 或 `$TMPDIR`（那是這一輪的暫存，使用者決定執行時可能已被清掉）。
 - 「錯在哪」只寫位置與錯誤類型加正確內容，不重述錯的值 —— 重述就等於再留一份錯誤。
-- 替換內容須原樣保留 `Original text` 引文；`## Current Status`、`### Clarity Surface` 不提議（`/idd-edit` 會拒絕）。錯誤落在不屬於任何標題的文字（正文最後一條 `---` 之下，例如 IC_R011 的 `**Source**` 註腳；或第一個標題之前）時，`--correct` 搆不到，也改提 errata。目標 comment 作者不是你自己（目前登入的 gh 使用者；repo OWNER 不是你時，OWNER 寫的也算其他人，bot 寫的也算）→ 該項改提 `/idd-comment #N --type errata --target-comment <id> --body "..."`。
+- 替換內容須原樣保留 `Original text` 引文；`## Current Status`、`### Clarity Surface` 不提議（`/idd-edit` 會拒絕）。錯誤落在不屬於任何標題的文字（正文最後一條 `---` 之下，例如 IC_R011 的 `**Source**` 註腳；或第一個標題之前）時，`--correct` 搆不到，改提 `/idd-comment #N --type correction`（issue 正文沒有 comment id，`--type errata` 用不了）；issue 正文不是你開的也一樣。目標 comment 作者不是你自己（目前登入的 gh 使用者；repo OWNER 不是你時，OWNER 寫的也算其他人，bot 寫的也算）→ 該項改提 `/idd-comment #N --type errata --target-comment <id> --body "..."`。
 - **attended**：報告貼出後逐項 `AskUserQuestion`（現在執行 / 先不要）；選執行才呼叫該指令，`/idd-edit` 仍走自己的 preview + confirm。**unattended 只列不做**：不呼叫 `/idd-edit`。
 - 本 skill **永不**自己 PATCH 目標、也不寫歸檔 —— 改寫只經 `/idd-edit`。
 

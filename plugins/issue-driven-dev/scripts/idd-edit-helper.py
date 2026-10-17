@@ -338,7 +338,8 @@ _MODE_FLAGS = ("--append", "--replace", "--prepend-note", "--correct")
 _ATX_HEADING_RE = re.compile(r"#{1,6}[ \t]+\S.*")
 
 
-def parse_args_subcmd(argv):
+def _parse_args(argv):
+    """(exit code, parsed state, targets) — parse-args and run-start share it."""
     state = {
         "mode": "",
         "scope_flag": "",
@@ -362,7 +363,7 @@ def parse_args_subcmd(argv):
         if arg in _MODE_FLAGS:
             if state["mode"] and state["mode"] != arg:
                 err(f"ERROR: conflicting mode flags: {state['mode']} and {arg}")
-                return 2
+                return 2, None, None
             state["mode"] = arg
             i += 1
             continue
@@ -384,7 +385,7 @@ def parse_args_subcmd(argv):
                 if flag == "--body-file":
                     ok, code, content = read_body_file(value)
                     if not ok:
-                        return code
+                        return code, None, None
                     state["body_file"] = value
                     state["body_input"] = content
                 else:
@@ -392,14 +393,14 @@ def parse_args_subcmd(argv):
                 i += 1
                 continue
             err(f"ERROR: unknown argument: {arg}")
-            return 2
+            return 2, None, None
 
         # Space-form value flags (--flag value): GUARDED.
         if arg in _VALUE_FLAGS:
             # Missing-value guard: flag is the last argument.
             if i + 1 >= n:
                 err(f"ERROR: {arg} requires value (no argument follows)")
-                return 2
+                return 2, None, None
             nxt = argv[i + 1]
             # Next-flag-eats-value guard: a following token that looks like a
             # flag means the user forgot the value (do NOT consume it).
@@ -408,11 +409,11 @@ def parse_args_subcmd(argv):
                     f"ERROR: {arg} value cannot start with '--' (got: {nxt}). "
                     "Did you forget the value?"
                 )
-                return 2
+                return 2, None, None
             if arg == "--body-file":
                 ok, code, content = read_body_file(nxt)
                 if not ok:
-                    return code
+                    return code, None, None
                 state["body_file"] = nxt
                 state["body_input"] = content
             else:
@@ -428,20 +429,20 @@ def parse_args_subcmd(argv):
             continue
 
         err(f"ERROR: unknown argument: {arg}")
-        return 2
+        return 2, None, None
 
     # ── R4 gate: --replace requires --scope=whole-comment OR --section ──
     if state["mode"] == "--replace":
         if not state["scope_flag"] and not state["section_flag"]:
             err(R4_MSG)
-            return 3
+            return 3, None, None
         if state["scope_flag"] and state["scope_flag"] != "whole-comment":
             err(
                 "Refuse: --scope value must be 'whole-comment' (got: "
                 f"'{state['scope_flag']}'). Use --section <heading> for named "
                 "subsection scope."
             )
-            return 3
+            return 3, None, None
 
     # --section names an ATX heading line: section-replace matches it as a whole
     # line and reads its level from the leading '#'s, so `Expected` or
@@ -451,26 +452,26 @@ def parse_args_subcmd(argv):
             "Refuse: --section must be a markdown heading line such as '## Expected' "
             f"(one to six '#', a space, then the title; got: '{state['section_flag']}')."
         )
-        return 2
+        return 2, None, None
 
     # ── --correct gates (#351) ──
     issue_targets = [t for t in targets if t.startswith("issue:")]
     for t in issue_targets:
         if not re.fullmatch(r"issue:[0-9]+", t):
             err(f"ERROR: issue target must be issue:<numeric issue number> (got: {t})")
-            return 2
+            return 2, None, None
     if issue_targets and len(targets) > 1:
         err(
             "Refuse: an issue:<N> target must be the only target of the invocation "
             "(mixing it with comment targets, or naming two issues, is not supported)."
         )
-        return 2
+        return 2, None, None
     if issue_targets and state["mode"] != "--correct":
         err(
             "Refuse: an issue:<N> (issue body) target is only accepted with --correct. "
             "Other edit modes on the issue body are tracked in #347."
         )
-        return 2
+        return 2, None, None
     if state["mode"] == "--correct":
         if state["override"] == "true":
             err(
@@ -478,37 +479,37 @@ def parse_args_subcmd(argv):
                 "your own content; for anyone else's comment, the OWNER's and a bot's "
                 "included, propose the correction with /idd-comment --type errata (#351)."
             )
-            return 2
+            return 2, None, None
         if not state["scope_flag"] and not state["section_flag"]:
             err(CORRECT_SCOPE_MSG)
-            return 3
+            return 3, None, None
         if state["scope_flag"] and state["section_flag"]:
             err("Refuse: --correct takes exactly one of --scope whole-comment or --section <heading>.")
-            return 3
+            return 3, None, None
         if state["scope_flag"] and state["scope_flag"] != "whole-comment":
             err(
                 "Refuse: --scope value must be 'whole-comment' (got: "
                 f"'{state['scope_flag']}'). Use --section <heading> for named "
                 "subsection scope."
             )
-            return 3
+            return 3, None, None
         if not state["body_input"].strip():
             err(
                 "Refuse: --correct needs the corrected text (--body or --body-file); "
                 "without it the region would be emptied (#351)."
             )
-            return 2
+            return 2, None, None
         if issue_targets and state["scope_flag"]:
             err(
                 "Refuse: an issue-body correction requires --section <heading>; "
                 "replacing the whole body would also overwrite the Original text "
                 "quotation and the sections owned by idd-update and idd-clarify."
             )
-            return 3
+            return 3, None, None
 
     if not targets:
         err("ERROR: no target given (comment:<id>, #<issue> or issue:<N>); nothing to edit")
-        return 2
+        return 2, None, None
 
     # ── R5-pair guard: --override-user-content requires --reason ──
     if state["override"] == "true" and not state["reason"]:
@@ -516,8 +517,15 @@ def parse_args_subcmd(argv):
             "ERROR: --override-user-content requires "
             '--reason="<rationale>" (spec Requirement 5 audit)'
         )
-        return 2
+        return 2, None, None
 
+    return 0, state, targets
+
+
+def parse_args_subcmd(argv):
+    rc, state, targets = _parse_args(argv)
+    if rc != 0:
+        return rc
     # ── Emit eval-friendly output ──
     emit_assignment("MODE", state["mode"])
     emit_assignment("SCOPE_FLAG", state["scope_flag"])
@@ -622,6 +630,9 @@ def validate_target_subcmd(argv):
     if not comment_id or not repo:
         err("ERROR: validate-target requires <comment-id> <repo> <override>")
         return 2
+    if not _REPO_RE.fullmatch(repo) or ".." in repo:
+        err(f"ERROR: repo must be owner/repo (got: {repo})")
+        return 2
 
     # `issue:<N>` checks the issue author (issue-body corrections, #351).
     is_issue = comment_id.startswith("issue:")
@@ -686,7 +697,8 @@ def validate_target_subcmd(argv):
             return 1
         err(
             f"Refuse: {comment_id} was written by {login} ({assoc}); --correct only "
-            "rewrites your own content. Propose the correction with "
+            "rewrites your own content. If you wrote it under another GitHub account, "
+            "switch to it (`gh auth switch`) and run again; otherwise propose the correction with "
             "/idd-comment --type errata instead (#351)."
         )
         return 4
@@ -752,6 +764,7 @@ class _Blocks:
         self.opaque, self.code, self.html_starts = set(), set(), set()
         self.headings, self.rules = {}, set()
         self.atx, self.setext = set(), set()
+        self.setext_spans = {}   # first line → (text lines…, underline) as a tuple
         # Tables on, like the gh-egress scanner: without the rule a GFM table
         # followed by `---` reads as one setext heading (verify #351 round 4).
         for token in MarkdownIt("commonmark").enable("table").parse("\n".join(lines)):
@@ -766,6 +779,8 @@ class _Blocks:
             elif token.type == "heading_open" and token.level == 0:
                 self.headings[token.map[0]] = int(token.tag[1])
                 (self.atx if token.markup.startswith("#") else self.setext).add(token.map[0])
+                if not token.markup.startswith("#"):
+                    self.setext_spans[token.map[0]] = tuple(lines[token.map[0]:token.map[1]])
             elif token.type == "hr" and token.level == 0:
                 self.rules.add(token.map[0])
 
@@ -911,15 +926,23 @@ BACKUP_ID_RE = re.compile(
 
 
 def emit_audit_marker_subcmd(argv):
+    rc, marker = _audit_marker(argv)
+    if rc == 0:
+        print(marker)
+    return rc
+
+
+def _audit_marker(argv):
+    """(exit code, marker line) — emit-audit-marker and the run's composer."""
     if not argv:
         err("ERROR: emit-audit-marker requires <kind> arg")
-        return 2
+        return 2, None
     kind = argv[0]
     rest = argv[1:]
 
     if kind not in ("edit", "override"):
         err(f"ERROR: emit-audit-marker kind must be 'edit' or 'override' (got: {kind})")
-        return 2
+        return 2, None
 
     marker = "<!-- idd:edit"
     if kind == "override":
@@ -930,14 +953,14 @@ def emit_audit_marker_subcmd(argv):
     for kv in rest:
         if "=" not in kv:
             err(f"ERROR: emit-audit-marker arg must be key=value (got: {kv})")
-            return 2
+            return 2, None
         key, _, val = kv.partition("=")
         key = _sanitize_marker_key(key)
         if key == "backup-id":
             m = BACKUP_ID_RE.fullmatch(val)
             if not m:
                 err(f"ERROR: backup-id is not a correction backup id (got: {val})")
-                return 2
+                return 2, None
             stamp = re.search(r"-([0-9]{8})T", val).group(1)
             backup_day = f"{stamp[:4]}-{stamp[4:6]}-{stamp[6:]}"
         val = _sanitize_marker_value(val)
@@ -951,8 +974,7 @@ def emit_audit_marker_subcmd(argv):
         marker += f' date="{backup_day or datetime.date.today().isoformat()}"'
 
     marker += " -->"
-    print(marker)
-    return 0
+    return 0, marker
 
 
 # ───────────────────────────────────────────────────────────────────────
@@ -966,9 +988,11 @@ def emit_audit_marker_subcmd(argv):
 #   3. verbatim blocks: a maximal run of lines starting with `>` in which some
 #      line contains `Original text`; it must survive byte-identical.
 _CURRENT_STATUS = "## Current Status"
-# Closed list of two labels (spec in-place-correction): the idd-issue template's
-# `Original text` and the idd-comment decision template's `**Original**`.
-_VERBATIM_LABELS = ("Original text", "**Original**")
+# Closed list of three labels (spec in-place-correction): the idd-issue
+# template's `Original text`, the idd-comment decision template's `**Original**`
+# and the idd-comment reply template's `**Point i**` (a reviewer's words quoted
+# verbatim — verify #351 round 7).
+_VERBATIM_LABELS = ("Original text", "**Original**", "**Point ")
 _CLARITY_PREFIX = "### Clarity Surface"
 
 
@@ -1073,11 +1097,39 @@ def _opening_line(lines):
     return next((l for l in lines if l.strip() and not _is_marker(l)), "")
 
 
+def _top_markers(old_lines):
+    """The IDD marker lines at the top of a comment (a dashboard's line 1)."""
+    lead = 0
+    while lead < len(old_lines) and (_is_marker(old_lines[lead]) or not old_lines[lead].strip()):
+        lead += 1
+    return [l for l in old_lines[:lead] if _is_marker(l)]
+
+
+def _drop_top_markers(old_lines, new_lines):
+    """The replacement without its copies of the original's top markers
+    (outside code), leading blank lines trimmed."""
+    head = _top_markers(old_lines)
+    if not head:
+        return new_lines
+    try:
+        code = _Blocks(new_lines).code
+    except ParserUnavailable:
+        code = set()
+    kept = [l for i, l in enumerate(new_lines) if i in code or l not in head]
+    while kept and not kept[0].strip():
+        kept.pop(0)
+    return kept
+
+
 def _adds_setext(old_lines, blocks, start, end, new_lines, new_blocks):
     """A correction must not create the setext shape it refuses: the next
     correction of the section would be refused (verify #351 round 6)."""
-    old_setext = {old_lines[i] for i in blocks.setext if start <= i < end}
-    if any(new_lines[i] not in old_setext for i in new_blocks.setext):
+    # Whole headings, text and underline, counted: a changed underline or a
+    # second copy is a setext heading the correction adds (round 7).
+    from collections import Counter
+    old_setext = Counter(span for i, span in blocks.setext_spans.items() if start <= i < end)
+    new_setext = Counter(new_blocks.setext_spans.values())
+    if any(n > old_setext[span] for span, n in new_setext.items()):
         err("Refuse: the replacement adds a setext heading (a line of text over '---' or '==='); "
             "use an ATX heading or put a blank line before the '---' (#351).")
         return True
@@ -1101,6 +1153,10 @@ def _check_correction(argv):
             return 5, "check-failed"
     old_lines = _lines_of(_read_normalized(old_file))
     new_lines = _strip_target_heading(_lines_of(_read_normalized(new_file)), heading)
+    if heading == "-":
+        # compose keeps the original's top markers on top and drops a copy of
+        # them from the replacement; check what compose will write (round 7).
+        new_lines = _drop_top_markers(old_lines, new_lines)
     try:
         blocks = _Blocks(old_lines)
     except ParserUnavailable as e:
@@ -1508,13 +1564,15 @@ def correct_prepare_subcmd(argv):
         return 2
 
     _remove_stale_work_dirs()
-    # The archive must be writable before the user is asked to confirm
-    # (round 5: a non-git cwd was refused only after confirmation).
-    problem = _archive_preflight()
-    if problem:
-        err(f"Refuse: {problem}; nothing was prepared (#351).")
-        return _refused("archive")
     work = tempfile.mkdtemp(prefix=CORRECT_WORK_PREFIX)   # mode 0700
+    try:
+        return _correct_prepare(work, target, kind, num, repo, section, scrub, content)
+    except Exception as exc:   # noqa: BLE001 — never leave the wrong text behind
+        err(f"✗ {target}: {type(exc).__name__}: {exc} — nothing was prepared")
+        return _refused("check-failed", work)
+
+
+def _correct_prepare(work, target, kind, num, repo, section, scrub, content):
     backup, body, preview = (os.path.join(work, n) for n in ("backup.md", "body.md", "preview.md"))
     with open(body, "w", encoding="utf-8") as fh:
         fh.write(content)
@@ -1527,13 +1585,29 @@ def correct_prepare_subcmd(argv):
     rc = validate_target_subcmd([num if kind == "comment" else f"issue:{num}", repo, "false", "--correct"])
     if rc != 0:
         return _refused({4: "R5", 1: "author-unknown"}.get(rc, "check-failed"), work)
+    # The archive must be writable before the user is asked to confirm (round
+    # 5); checked after the read and the author gate, so a target that will be
+    # refused anyway leaves nothing behind in the repository (round 7).
+    problem = _archive_preflight()
+    if problem:
+        err(f"Refuse: {problem}; nothing was prepared (#351).")
+        return _refused("archive", work)
     heading = section or "-"
+    if heading == "-":
+        with open(backup, encoding="utf-8", errors="replace") as fh:
+            old_lines = _lines_of(fh.read().replace("\r\n", "\n").replace("\r", "\n"))
+        if not "\n".join(_drop_top_markers(old_lines, _lines_of(content.replace("\r\n", "\n")))).strip():
+            # Only a copy of the top marker is no text either (round 7).
+            err("Refuse: --correct needs the corrected text; the replacement holds only the comment's marker (#351).")
+            shutil.rmtree(work, ignore_errors=True)
+            return 2
     rc, reason = _check_correction([backup, heading, body])
     if rc != 0:
         return _refused(reason or "check-failed", work)
     rc, text = _compose(backup, heading, body, PLACEHOLDER_MARKER)
     if rc != 0:
-        return _refused(_CHECK_REASONS.get(rc, "check-failed"), work)
+        # compose's own exit 6 is a block the replacement leaves open (round 7)
+        return _refused("unclosed-block" if rc == 6 else _CHECK_REASONS.get(rc, "check-failed"), work)
     with open(preview, "w", encoding="utf-8", newline="") as fh:
         fh.write(text)
     ok, mentions = _existing_mentions(backup)
@@ -1552,8 +1626,11 @@ def correct_prepare_subcmd(argv):
     state_path = os.path.join(work, "state.json")
     with open(state_path, "w", encoding="utf-8") as fh:
         json.dump(state, fh)
+    diff = os.path.join(work, "diff.txt")
+    _write_diff(backup, preview, diff)
     print(f"WORK={work}")
     print(f"PREVIEW={preview}")
+    print(f"DIFF={diff}")
     # The caller keeps this hash and hands it back to apply: the binding to what
     # the user confirmed lives outside the working directory (round 5).
     print(f"STATE={_sha256(state_path)}")
@@ -1597,7 +1674,8 @@ def _remove_stale_work_dirs(max_age=86400):
         return
     now = datetime.datetime.now().timestamp()
     for name in names:
-        if not name.startswith(CORRECT_WORK_PREFIX):
+        # a --correct working copy or an abandoned run: both hold the old text
+        if not name.startswith((CORRECT_WORK_PREFIX, RUN_PREFIX)):
             continue
         path = os.path.join(tmp, name)
         try:
@@ -1621,6 +1699,10 @@ def _state_problem(state):
         return "the prepared section is malformed"
     if state.get("scrub") not in _SCRUB_LEVELS or not re.fullmatch(r"[A-Za-z0-9,-]*", str(state.get("mentions", ""))):
         return "the prepared egress settings are malformed"
+    sha = state.get("sha")
+    if (not isinstance(sha, dict) or set(sha) != {"backup.md", "body.md", "preview.md"}
+            or not all(isinstance(v, str) and re.fullmatch(r"[0-9a-f]{64}", v) for v in sha.values())):
+        return "the prepared file hashes are malformed"
     return None
 
 
@@ -1774,6 +1856,478 @@ def _correct_write(work, state, endpoint, backup, body, backup_id):
     print("RESULT=edited")
     print(f"BACKUP_ID={backup_id}")
     print(f"URL={url}")
+    return 0
+
+
+
+# ───────────────────────────────────────────────────────────────────────
+# One /idd-edit run: run-start → prepare → apply | discard → finish (#351)
+# ───────────────────────────────────────────────────────────────────────
+# The preview, the user's confirmation and the write are separate tool calls,
+# and shell state does not survive them: verify rounds 6 and 7 found a skill
+# whose post-confirmation blocks read variables, arrays, a loop and an exit
+# code that a new call no longer had. The run's state lives here instead, in a
+# private run directory; every skill block is one command that takes only the
+# values an earlier block printed (RUN, TARGET, SCRUB, and STATE for
+# --correct). The run's exit code comes from `finish`.
+RUN_PREFIX = "idd-run-"
+BACKUP_DIR_NAME = "idd-edit-backup"
+_OUTCOMES = ("prepared", "edited", "refused", "declined", "write-failed", "unverified", "egress-refused")
+
+
+def _write_diff(old_path, new_path, dest):
+    import difflib
+    with open(old_path, encoding="utf-8", errors="replace", newline="") as fh:
+        old = fh.read().splitlines(keepends=True)
+    with open(new_path, encoding="utf-8", errors="replace", newline="") as fh:
+        new = fh.read().splitlines(keepends=True)
+    with open(dest, "w", encoding="utf-8", newline="") as fh:
+        fh.writelines(difflib.unified_diff(old, new, "current", "after this edit"))
+
+
+def _captured(fn, argv):
+    """(exit code, stdout) of a subcommand function, its stdout replayed."""
+    import contextlib
+    import io
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = fn(argv)
+    out = buf.getvalue()
+    sys.stdout.write(out)
+    return rc, out
+
+
+def _kv(text):
+    out = {}
+    for line in text.splitlines():
+        key, sep, value = line.partition("=")
+        if sep and re.fullmatch(r"[A-Z_]+", key) and key not in out:
+            out[key] = value
+    return out
+
+
+def _scrub_tier(repo):
+    """rules/privacy-scrubbing.md: third-party → enforce, own public → warn,
+    own private → light. A failed probe is third-party (fail-safe)."""
+    proc = _gh(["repo", "view", repo, "--json", "viewerPermission,isPrivate"])
+    data = {}
+    if proc is not None and proc.returncode == 0:
+        try:
+            data = json.loads(proc.stdout.decode("utf-8"))
+        except ValueError:
+            data = {}
+    if isinstance(data, dict) and data.get("viewerPermission") in ("WRITE", "MAINTAIN", "ADMIN"):
+        return "light" if data.get("isPrivate") is True else "warn"
+    return "enforce"
+
+
+def _own_run_dir(run):
+    """The run directory run-start made, else None (same checks as a --correct
+    working directory)."""
+    if not run:
+        return None
+    real = os.path.realpath(run)
+    if (os.path.dirname(real) != os.path.realpath(tempfile.gettempdir())
+            or not os.path.basename(real).startswith(RUN_PREFIX)
+            or os.path.islink(run)):
+        return None
+    try:
+        st = os.lstat(real)
+    except OSError:
+        return None
+    if st.st_uid != os.getuid() or st.st_mode & 0o077 or not os.path.isfile(os.path.join(real, "run.json")):
+        return None
+    return real
+
+
+def _run_meta(real):
+    with open(os.path.join(real, "run.json"), encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def _record(real, target, outcome, **extra):
+    rec = {"target": target, "outcome": outcome}
+    rec.update({k: v for k, v in extra.items() if v})
+    with open(os.path.join(real, "ledger.jsonl"), "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(rec) + "\n")
+
+
+def _latest(real):
+    """[(target, its last record)] in the order targets first appeared."""
+    order, last = [], {}
+    try:
+        with open(os.path.join(real, "ledger.jsonl"), encoding="utf-8") as fh:
+            for line in fh:
+                if not line.strip():
+                    continue
+                rec = json.loads(line)
+                if rec["target"] not in last:
+                    order.append(rec["target"])
+                last[rec["target"]] = rec
+    except FileNotFoundError:
+        pass
+    return [(t, last[t]) for t in order]
+
+
+def run_start_subcmd(argv):
+    default_repo, rest = _take_flag(argv, "--default-repo")
+    if not rest or rest[0] != "--":
+        err("ERROR: run-start requires [--default-repo owner/repo] -- <the /idd-edit arguments>")
+        return 2
+    rc, state, targets = _parse_args(rest[1:])
+    if rc != 0:
+        return rc
+    repo = state["repo"] or default_repo or ""
+    if not _REPO_RE.fullmatch(repo) or ".." in repo:
+        err("ERROR: no repository: pass --repo owner/repo, or --default-repo from the IDD config")
+        return 2
+    resolved, picks = [], []
+    for target in targets:
+        if target.startswith(("comment:", "issue:")):
+            if not _TARGET_RE.fullmatch(target):
+                err(f"ERROR: invalid target (the id must be numeric): {target}")
+                return 2
+            resolved.append(target)
+            continue
+        number = target[1:]
+        if not re.fullmatch(r"[0-9]+", number):
+            err(f"ERROR: invalid issue number: {target}")
+            return 2
+        if state["last"] != "true":
+            picks.append(number)
+            continue
+        # every page: the newest comment is on the last one (round 4)
+        proc = _gh(["api", f"repos/{repo}/issues/{number}/comments", "--paginate", "--jq", ".[-1].id"])
+        ids = proc.stdout.decode("utf-8", errors="replace").split() if proc is not None and proc.returncode == 0 else []
+        if not ids or not re.fullmatch(r"[0-9]+", ids[-1]):
+            err(f"✗ cannot read the comments of #{number}; nothing was changed")
+            return 1
+        resolved.append(f"comment:{ids[-1]}")
+    scrub = _scrub_tier(repo)
+    run = tempfile.mkdtemp(prefix=RUN_PREFIX)   # mode 0700
+    with open(os.path.join(run, "body.md"), "w", encoding="utf-8", newline="") as fh:
+        fh.write(state["body_input"])
+    meta = {"mode": state["mode"], "scope": state["scope_flag"], "section": state["section_flag"],
+            "reason": state["reason"], "override": state["override"], "repo": repo, "scrub": scrub}
+    with open(os.path.join(run, "run.json"), "w", encoding="utf-8") as fh:
+        json.dump(meta, fh)
+    print(f"RUN={run}")
+    print(f"REPO={repo}")
+    print(f"SCRUB={scrub}")
+    for target in resolved:
+        print(f"TARGET={target}")
+    for number in picks:
+        print(f"PICK=#{number}")
+    return 0
+
+
+def _run_args(argv, *flags):
+    """(run dir, target, {flag: value}) or None when the call is malformed."""
+    run, rest = _take_flag(argv, "--run")
+    target, rest = _take_flag(rest, "--target")
+    values = {}
+    for flag in flags:
+        values[flag], rest = _take_flag(rest, flag)
+    real = _own_run_dir(run)
+    if rest or real is None or not _TARGET_RE.fullmatch(target or ""):
+        return None
+    return real, target, values
+
+
+def prepare_subcmd(argv):
+    parsed = _run_args(argv)
+    if parsed is None:
+        err("ERROR: prepare requires --run <RUN> --target <TARGET>, as run-start printed them")
+        return 2
+    real, target, _ = parsed
+    meta = _run_meta(real)
+    if any(t == target for t, _ in _latest(real)):
+        err(f"ERROR: {target} was already prepared in this run")
+        return 2
+    if meta["mode"] == "--correct":
+        argv = ["--target", target, "--repo", meta["repo"]]
+        argv += ["--section", meta["section"]] if meta["section"] else ["--scope", "whole-comment"]
+        argv += ["--body-file", os.path.join(real, "body.md"), "--scrub-attested", meta["scrub"]]
+        rc, out = _captured(correct_prepare_subcmd, argv)
+        values = _kv(out)
+        if rc == 0:
+            _record(real, target, "prepared", work=values.get("WORK"))
+        else:
+            _record(real, target, "refused", reason=values.get("REASON") or "check-failed")
+        return rc
+    kind, num = target.split(":", 1)
+    if kind != "comment":
+        err("Refuse: an issue:<N> target is only accepted with --correct")
+        return 2
+    return _edit_prepare(real, meta, target, num)
+
+
+def _edit_refused(real, target, reason):
+    _record(real, target, "refused", reason=reason)
+    print("RESULT=refused")
+    print(f"REASON={reason}")
+    return 4
+
+
+def _edit_backup(num, text):
+    """A copy of the comment before the edit, kept after the run so it can be
+    put back: <temp dir>/idd-edit-backup/comment-<id>-<unix time>.md."""
+    base = os.path.join(os.path.realpath(tempfile.gettempdir()), BACKUP_DIR_NAME)
+    try:
+        os.makedirs(base, mode=0o700, exist_ok=True)
+        st = os.lstat(base)
+    except OSError:
+        return None
+    if os.path.islink(base) or st.st_uid != os.getuid() or st.st_mode & 0o077:
+        return None
+    stem = f"comment-{num}-{int(datetime.datetime.now().timestamp())}"
+    for k in range(1, 100):
+        path = os.path.join(base, stem + ("" if k == 1 else f"-{k}") + ".md")
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            continue
+        except OSError:
+            return None
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
+            fh.write(text)
+        return path
+    return None
+
+
+def _edit_compose(meta, old_text, body_path, backup, work):
+    """(reason or None, new body) for --append / --replace / --prepend-note —
+    the text the skill's Step 4 built in bash before (#351 round 9)."""
+    with open(body_path, encoding="utf-8", newline="") as fh:
+        body_input = fh.read()
+    mode, reason = meta["mode"], meta["reason"]
+    today = datetime.date.today().isoformat()   # local date, as `date +%Y-%m-%d`
+    old = old_text.rstrip("\n")                  # as $(cat file) read it
+    if mode == "--append":
+        rc, marker = _audit_marker(["edit", "mode=append"])
+        text = f"{old}\n\n---\n\n**Edit {today}**: {reason}\n\n{body_input}\n\n{marker}"
+    elif mode == "--prepend-note":
+        rc, marker = _audit_marker(["edit", "mode=prepend-note"])
+        text = f"> ⚠️ **Edit {today}**: {reason}\n\n---\n\n{old}\n\n{marker}"
+    elif meta["scope"] == "whole-comment":
+        rc, marker = _audit_marker(["edit", "mode=replace", "scope=whole-comment", f"backup={backup}"])
+        text = f"{body_input}\n\n{marker}"
+    else:
+        repl = os.path.join(work, "replacement.md")
+        old_file = os.path.join(work, "old.md")
+        with open(repl, "w", encoding="utf-8", newline="") as fh:
+            fh.write(body_input + "\n")
+        import contextlib
+        import io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            src = section_replace_subcmd([old_file, meta["section"], repl])
+        if src != 0:
+            return {8: "parser-unavailable", EXIT_AMBIGUOUS: "section-ambiguous"}.get(src, "section-not-found"), None
+        rc, marker = _audit_marker(["edit", "mode=replace", f"section={meta['section']}", f"backup={backup}"])
+        text = f"{buf.getvalue().rstrip(chr(10))}\n\n{marker}"
+    if rc != 0:
+        return "check-failed", None
+    if meta["override"] == "true":
+        rc, override = _audit_marker(["override", f"mode={mode[2:]}", f"reason={reason}"])
+        if rc != 0:
+            return "check-failed", None
+        text += f"\n\n{override}"
+    return None, text + "\n"
+
+
+def _edit_prepare(real, meta, target, num):
+    repo = meta["repo"]
+    rc = validate_target_subcmd([num, repo, meta["override"], meta["mode"]])
+    if rc == 4:
+        return _edit_refused(real, target, "R5")
+    if rc != 0:
+        return _edit_refused(real, target, "author-unknown" if rc == 1 else "check-failed")
+    work = os.path.join(real, f"comment-{num}")
+    os.mkdir(work, 0o700)
+    old = os.path.join(work, "old.md")
+    if not _fetch_body(_endpoint("comment", num, repo), old):
+        err(f"✗ cannot read {target} — nothing changed")
+        return _edit_refused(real, target, "fetch-failed")
+    ok, mentions = _existing_mentions(old)
+    if not ok:
+        return _edit_refused(real, target, "egress")
+    with open(old, encoding="utf-8", newline="") as fh:
+        old_text = fh.read()
+    backup = _edit_backup(num, old_text)
+    if backup is None:
+        err(f"✗ cannot write the backup of {target} — nothing changed")
+        return _edit_refused(real, target, "stage-failed")
+    reason, new_text = _edit_compose(meta, old_text, os.path.join(real, "body.md"), backup, work)
+    if reason:
+        return _edit_refused(real, target, reason)
+    new = os.path.join(work, "new.md")
+    with open(new, "w", encoding="utf-8", newline="") as fh:
+        fh.write(new_text)
+    diff = os.path.join(work, "diff.txt")
+    _write_diff(old, new, diff)
+    # The egress gates run before the preview, so a body gh-egress would refuse
+    # is never shown for confirmation (round 9; --correct did this since round 3).
+    if _egress(["check", "--body-file", new, "--scrub-attested", meta["scrub"]] + _mention_args(mentions)) != 0:
+        return _edit_refused(real, target, "egress")
+    with open(os.path.join(work, "state.json"), "w", encoding="utf-8") as fh:
+        json.dump({"sha": _sha256(new), "old_sha": _sha256(old), "mentions": mentions}, fh)
+    _record(real, target, "prepared", backup=backup)
+    print(f"PREVIEW={new}")
+    print(f"DIFF={diff}")
+    print(f"BACKUP={backup}")
+    return 0
+
+
+def apply_subcmd(argv):
+    parsed = _run_args(argv, "--scrub-attested", "--state")
+    if parsed is None:
+        err("ERROR: apply requires --run <RUN> --target <TARGET> --scrub-attested <SCRUB> [--state <STATE>]")
+        return 2
+    real, target, values = parsed
+    meta = _run_meta(real)
+    if values["--scrub-attested"] != meta["scrub"]:
+        err(f"ERROR: --scrub-attested must be this run's tier ({meta['scrub']}), given after the "
+            "privacy self-review of the preview (rules/privacy-scrubbing.md)")
+        return 2
+    last = dict(_latest(real)).get(target)
+    if not last or last["outcome"] != "prepared":
+        err(f"ERROR: {target} has no prepared edit in this run")
+        return 2
+    if meta["mode"] == "--correct":
+        rc, out = _captured(correct_apply_subcmd, ["--work", last.get("work", ""), "--state", values["--state"] or ""])
+        result = _kv(out)
+        if rc == 2 and "RESULT" not in result:
+            return 2   # a malformed --state; nothing recorded, so it can be retried
+        outcome = result.get("RESULT") if result.get("RESULT") in ("edited", "write-failed", "unverified") else "refused"
+        _record(real, target, outcome, reason=result.get("REASON"), backup_id=result.get("BACKUP_ID"), url=result.get("URL"))
+        return rc
+    return _edit_apply(real, meta, target)
+
+
+def _edit_apply(real, meta, target):
+    num = target.split(":", 1)[1]
+    work = os.path.join(real, f"comment-{num}")
+    with open(os.path.join(work, "state.json"), encoding="utf-8") as fh:
+        st = json.load(fh)
+    new = os.path.join(work, "new.md")
+    if _sha256(new) != st["sha"]:
+        err(f"✗ the prepared body of {target} changed after the preview — nothing written")
+        return _edit_refused(real, target, "differs-from-preview")
+    endpoint = _endpoint("comment", num, meta["repo"])
+    rc = _egress(["edit-comment", num, "--repo", meta["repo"], "--body-file", new,
+                  "--scrub-attested", meta["scrub"]] + _mention_args(st["mentions"]))
+    if rc >= 10:
+        # wrapper refusal band (#227): its own bucket, warn-continue (#273).
+        # The run's exit is idd-edit's own space (any refusal = 4); the band
+        # (10–15) is consumed per comment — per-comment 分類消費 band（10–15）.
+        _record(real, target, "egress-refused", reason=f"rc={rc}")
+        print("RESULT=refused")
+        print("REASON=egress")
+        return 4
+    if rc != 0:
+        after = os.path.join(work, "after.md")
+        readable = _fetch_body(endpoint, after)
+        if readable and _sha256(after) == st["old_sha"]:
+            err(f"✗ gh failed the write for {target} (rc={rc}); re-read shows it unchanged")
+            _record(real, target, "write-failed", reason=f"rc={rc}")
+            print("RESULT=write-failed")
+            return 4
+        why = "no longer reads as before" if readable else "could not be read again"
+        err(f"⚠ gh reported a failed write for {target} (rc={rc}), but the target {why} — check it by hand")
+        _record(real, target, "unverified")
+        print("RESULT=unverified")
+        return 7
+    readback = os.path.join(work, "readback.md")
+    confirmed = _fetch_body(endpoint, readback)
+    if confirmed:
+        with open(readback, "rb") as fh, open(new, "rb") as fn:
+            confirmed = fh.read() == fn.read()
+    if not confirmed:
+        err(f"⚠ {target} was written but does not read back as sent — check it by hand")
+        _record(real, target, "unverified")
+        print("RESULT=unverified")
+        return 7
+    proc = _gh(["api", endpoint, "--jq", ".html_url"])
+    url = proc.stdout.decode("utf-8", errors="replace").strip() if proc is not None and proc.returncode == 0 else ""
+    _record(real, target, "edited", url=url)
+    print("RESULT=edited")
+    print(f"URL={url}")
+    return 0
+
+
+def discard_subcmd(argv):
+    parsed = _run_args(argv)
+    if parsed is None:
+        err("ERROR: discard requires --run <RUN> --target <TARGET>, as run-start printed them")
+        return 2
+    real, target, _ = parsed
+    last = dict(_latest(real)).get(target)
+    if not last or last["outcome"] != "prepared":
+        err(f"ERROR: {target} has no prepared edit in this run")
+        return 2
+    if last.get("work"):
+        work = _own_work_dir(last["work"])
+        if work:
+            shutil.rmtree(work, ignore_errors=True)
+    else:
+        shutil.rmtree(os.path.join(real, f"comment-{target.split(':', 1)[1]}"), ignore_errors=True)
+    _record(real, target, "declined")
+    print("RESULT=declined")
+    return 0
+
+
+def finish_subcmd(argv):
+    run, rest = _take_flag(argv, "--run")
+    real = _own_run_dir(run)
+    if rest or real is None:
+        err("ERROR: finish requires --run <RUN>, as run-start printed it")
+        return 2
+    rows = _latest(real)
+    meta = _run_meta(real)
+    for target, rec in rows:
+        if rec["outcome"] == "prepared":
+            # Prepared but neither applied nor discarded: nothing was written,
+            # and a --correct working copy holds the wrong text — remove it.
+            work = _own_work_dir(rec.get("work")) if rec.get("work") else None
+            if work:
+                shutil.rmtree(work, ignore_errors=True)
+            rec.update(outcome="refused", reason="not-applied")
+    shutil.rmtree(real, ignore_errors=True)
+    count = {o: sum(1 for _, r in rows if r["outcome"] == o) for o in _OUTCOMES}
+    refused = count["refused"] + count["egress-refused"]
+    print("── idd-edit batch outcome ──")
+    print(f"edited: {count['edited']} / refused: {refused}")
+    for target, rec in rows:
+        o, why = rec["outcome"], rec.get("reason", "")
+        if o == "edited":
+            print(f"  ✓ EDITED {target}" + (f"  {rec['url']}" if rec.get("url") else ""))
+        elif o == "refused":
+            hint = ""
+            if why == "R5" and meta["mode"] != "--correct":
+                hint = "（override: --override-user-content --reason='...'）"   # --correct has none
+            print(f"  ✗ REFUSED({why or 'check-failed'}) {target}{hint}")
+        elif o == "egress-refused":
+            print(f"  ✗ REFUSED(egress) {target} {why} — band 語意見 #227（10 privacy / 11 mention / 13 tier-floor #272 / 15 empty-body #275）")
+        elif o == "declined":
+            print(f"  – DECLINED {target}（使用者在預覽時拒絕，未寫入）")
+        elif o == "write-failed":
+            print(f"  ✗ FAILED(write) {target}（gh 自身錯誤，重讀確認未寫入）")
+        elif o == "unverified":
+            print(f"  ⚠ UNVERIFIED {target}（已寫入，但重讀失敗或內容不符 — 請手動確認）")
+        if rec.get("backup_id"):
+            print(f"    backup id: {rec['backup_id']}")
+    if not rows:
+        print("  nothing was prepared")
+        return 4
+    # First match wins. idd-comment's errata path routes on these; none
+    # overlaps an argument error (2 / 3 / 5 come from run-start).
+    if refused or count["write-failed"]:
+        return 4
+    if count["unverified"]:
+        return 7
+    if count["declined"]:
+        return 9
     return 0
 
 
@@ -2171,6 +2725,21 @@ Exit codes:
       Re-check, re-read, archive, write and read back byte for byte; prints RESULT=
       (edited | refused | write-failed | unverified), REASON=, BACKUP_ID=, URL=.
   correct-discard --work <dir>   Throw the prepared correction away (the user declined).
+
+One /idd-edit run, all modes (the skill calls only these; #351 round 9):
+  run-start [--default-repo owner/repo] -- <the /idd-edit arguments>
+      Parse (R4 and the other parse-args gates), resolve the targets and the privacy
+      tier; prints RUN=, REPO=, SCRUB=, then TARGET= (and PICK=#N to choose from).
+  prepare --run RUN --target T
+      Author gate, fetch, backup, compose, egress check; prints PREVIEW=, DIFF= and
+      BACKUP= (or WORK=, PREVIEW=, DIFF=, STATE= for --correct), or RESULT=refused.
+  apply --run RUN --target T --scrub-attested SCRUB [--state STATE]
+      Write after the user confirmed; prints RESULT= (edited | refused | write-failed |
+      unverified). SCRUB must be the run's tier, attested after the privacy review.
+  discard --run RUN --target T   The user declined.
+  finish --run RUN
+      Print the outcome report, remove the run; exit 4 refused or failed, 7 unverified,
+      9 declined, 0 otherwise.
 """
 
 
@@ -2198,6 +2767,16 @@ def main(argv):
         return correct_apply_subcmd(rest)
     if subcmd == "correct-discard":
         return correct_discard_subcmd(rest)
+    if subcmd == "run-start":
+        return run_start_subcmd(rest)
+    if subcmd == "prepare":
+        return prepare_subcmd(rest)
+    if subcmd == "apply":
+        return apply_subcmd(rest)
+    if subcmd == "discard":
+        return discard_subcmd(rest)
+    if subcmd == "finish":
+        return finish_subcmd(rest)
     if subcmd == "archive":
         return archive_subcmd(rest)
     if subcmd == "restore":

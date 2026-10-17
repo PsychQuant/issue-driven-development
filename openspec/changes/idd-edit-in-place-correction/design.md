@@ -29,7 +29,7 @@
 
 ### 新增第 8 類 in-place-correction，不放寬既有類別
 
-在封閉列舉加一類，並把 `verbatim-preserve` 縮成「`Original text` 引用區塊＋OWNER、bot、目前 gh 使用者以外的人寫的 comment」兩種。bot 的 comment 不在 `verbatim-preserve` 內，但仍是第三方的話，`--correct` 不改（verify 第 2 輪）。替代方案是直接放寬 `append-only`，但 `append-only` 也管 CHANGELOG 與 Spectra 歸檔快照，一起放寬會讓不該改的東西變得可改。spec 的類別數寫進了需求名稱（`Canonical 7-category enumeration ...`），因此以 REMOVED＋ADDED 換成不含數字的名稱，避免下次加類別又要改名。
+在封閉列舉加一類，並把 `verbatim-preserve` 縮成「`Original text` 引用區塊＋OWNER、bot、目前 gh 使用者以外的人寫的 comment」兩種。bot 的 comment 不在 `verbatim-preserve` 內，但仍是第三方的話，`--correct` 不改（verify 第 2 輪）；OWNER 寫的內容在別人執行時也一樣，`--correct` 只改執行者自己寫的（2026-10-17 使用者決定）。issue 正文的作者以開 issue 的人為準，這是近似：別人開的 issue 正文裡後來由維護者或 IDD skill 寫入的段落改不到，你的 issue 正文裡協作者寫的段落改得到；使用者接受這個近似（2026-10-17），前者用 `/idd-comment --type correction` 追加更正。替代方案是直接放寬 `append-only`，但 `append-only` 也管 CHANGELOG 與 Spectra 歸檔快照，一起放寬會讓不該改的東西變得可改。spec 的類別數寫進了需求名稱（`Canonical 7-category enumeration ...`），因此以 REMOVED＋ADDED 換成不含數字的名稱，避免下次加類別又要改名。
 
 ### --correct 是獨立模式，不是 --replace 加旗標
 
@@ -78,11 +78,19 @@ hook 腳本 `hooks/archive-read-guard.py` 用 stdlib `json` 解析 stdin，與 h
 
 ### idd-comment errata 依作者分流
 
-OWNER 或目前 gh 使用者本人的 comment → 轉給 `idd-edit --correct`，不另貼 errata comment。其他人的 comment（含 bot）→ 只貼 errata comment，不再嘗試 prepend-note（舊流程會被 R5 擋下並印出 override 提示，而新規則下協作者 comment 不改，提示 override 會誤導）。
+目前 gh 使用者本人的 comment → 轉給 `idd-edit --correct --repo <檢查作者時用的 repo>`，不另貼 errata comment；更正被拒絕或寫入失敗（exit 4）時改貼 errata，再提議 `--prepend-note` 指向它（第一個非空行是 ATX 標題或 IDD 標記時不加，以免其他 skill 認不出這則 comment；拒絕原因是 egress 時不轉述更正內容）。其他人的 comment（含 OWNER 由別人執行時、bot）→ 只貼 errata comment，不加指標（2026-10-17 使用者決定：別人的話不動）。
 
 ### --correct 的流程在 helper，不在 SKILL 的 bash
 
 第 1 到第 4 輪 verify 每輪都在 SKILL.md 的 `--correct` bash 流程上找到缺陷，第 3、4 輪的 blocking 還都出自前一輪自己的修正（findings 42 → 52 → 63）。共同原因是這段流程（讀原文、檢查、組內文、egress、歸檔、寫入、讀回）只有字串層的契約測試，從沒有被實際執行過——第 4 輪的 CRITICAL（macOS 的 `$TMPDIR` 被路徑閘門擋下）就是這樣溜過去的。這與 #154 → #155 同類，處理方式也相同：流程搬進 helper 的 `correct-prepare`／`correct-apply`／`correct-discard`，SKILL 只剩「準備、顯示預覽、套用或丟棄」，`scripts/tests/correct-flow/` 用假的 gh 端到端地跑整條流程（含 `TMPDIR` 在 `/var` 下的情況）。歸檔改在行程內呼叫，不再經過 `--from-file` 的路徑閘門。使用者 2026-10-16 選定此做法。
+
+### 整次執行的狀態在 helper，不在 shell（第 9 輪）
+
+第 6、7 輪的 HIGH 同源：SKILL 把一次 `/idd-edit` 寫成橫跨使用者確認的一段 bash，但預覽、確認、寫入是不同的 Bash 呼叫，shell 變數、陣列、迴圈的 `continue` 與整次的結束碼都留不下來。第 8 輪只補印了 WORK／STATE，確認區塊仍讀 `MODE`、`TARGET`、結果陣列，而且在 zsh 下 `continue` 會讓已寫入的呼叫以 exit 1 結束；本分支還讓 `--append` 等既有 mode 的確認後步驟依賴前面設的變數。使用者 2026-10-17 選定把整次執行的狀態搬進 helper：`run-start`／`prepare`／`apply`／`discard`／`finish`，狀態放在私有 run 目錄，SKILL 每一步只是一行指令、只帶前一步印出的字面值，結束碼由 `finish` 算。`scripts/tests/edit-run/` 把 SKILL 的每個區塊抽出來，用空環境的 zsh 與 bash 各跑一次。替代方案是只讓 `--correct` 的區塊自足、其他 mode 還原：改動較小，但兩套做法並存，而既有 mode 的同一個缺陷仍在。
+
+### 不屬於任何標題的文字是已知限制
+
+issue 正文最後一條 `---` 之下（IC_R011 的 `**Source**` 註腳）或第一個標題之前的文字，`--section` 搆不到，issue 正文也沒有整則範圍。使用者 2026-10-17 決定列為已知限制、不新增範圍：這類錯誤用 `/idd-comment --type correction` 追加更正（`--type errata` 需要 comment id，正文沒有）。
 
 ## Implementation Contract
 
@@ -98,6 +106,11 @@ OWNER 或目前 gh 使用者本人的 comment → 轉給 `idd-edit --correct`，
 | `correct-prepare --target T --repo R (--section H \| --scope whole-comment) --body-file F --scrub-attested L` | 目標、repo、範圍、更正內容 | stdout `WORK=`、`PREVIEW=`、`STATE=`（state.json 的 sha256，由 SKILL 保存、交給 apply）；工作目錄（使用者暫存目錄下、0700）存 backup、body、preview 與帶各檔 sha256 的 state.json；開始前清掉一天以上的殘留工作目錄 | 參數錯、缺 `--scrub-attested`（helper 不代填）、更正內容去掉目標標題後為空 → exit 2；範圍錯（issue 正文用 whole-comment 等）→ exit 3；body file 被擋 → exit 5；其餘拒絕 → exit 4 並印 `RESULT=refused`、`REASON=`（archive〔歸檔前置檢查，含目錄能否建立〕、fetch-failed〔含回應沒有 body 欄位、comment 的 body 為 null〕、R5、author-unknown、protected、setext、section-not-found、section-ambiguous、parser-unavailable、egress、check-failed），工作目錄刪除。順序：歸檔前置檢查 → 抓原文（`gh api` 的 JSON `body`，原樣）→ 作者閘門 → 受管區與範圍檢查 → 組預覽 → egress 預檢 |
 | `correct-apply --work W --state S` | prepare 印出的工作目錄與 `STATE`（SKILL 從 Step 1.6 印出的值照抄） | `RESULT=edited`、`BACKUP_ID=`、`URL=`；結束時刪除工作目錄 | 不是 prepare 建的目錄 → exit 2；state.json 只讀一次（算雜湊與解析用同一份位元組），sha 不符、欄位格式不對、檔案被動過、重組不等於預覽 → `differs-from-preview`；作者閘門與受管區檢查在重抓之前重跑，拒絕理由同 prepare；重抓失敗 → `fetch-failed`；目標變了 → `changed-since-preview`；歸檔失敗 → `archive`；egress 拒絕 → `egress`（以上 exit 4）；gh 寫入報錯時重讀一次：仍等於 backup → `RESULT=write-failed`（exit 4，歸檔已寫），否則（含讀不到）→ `RESULT=unverified`（exit 7）；讀回與送出的不是逐位元組相同 → `RESULT=unverified`（exit 7）；歸檔之後的任何例外 → `RESULT=unverified`、`REASON=exception`（exit 7）。已歸檔的結果都印 `BACKUP_ID=` |
 | `correct-discard --work W` | 同上 | 刪除工作目錄 | 不是 prepare 建的目錄 → exit 2 |
+| `run-start [--default-repo R] -- <args>` | `/idd-edit` 的引數（經 parse-args 的全部閘門）、config 解析出的 repo | stdout `RUN=`、`REPO=`、`SCRUB=`（隱私等級：third-party enforce／own public warn／private light，查不到 → enforce）、每個 target 一行 `TARGET=`，`#N` 沒有 `--last` 時 `PICK=#N`；run 目錄（使用者暫存目錄下、`idd-run-` 開頭、0700）存解析結果與內文 | parse-args 的碼原樣（2／3／5）；沒有 repo → exit 2；`--last` 讀不到 comments → exit 1 |
+| `prepare --run RUN --target T` | run 與 target | `--correct`：轉給 correct-prepare，另印 `DIFF=`；其他 mode：作者閘門（含 override）、讀原文、備份到使用者暫存目錄的 `idd-edit-backup/`、組新內文、egress 預檢，印 `PREVIEW=`、`DIFF=`、`BACKUP=` | 拒絕 → exit 4，`RESULT=refused`、`REASON=`（R5、author-unknown、fetch-failed、stage-failed、egress、section-not-found、section-ambiguous、parser-unavailable，及 correct-prepare 的各項）；同一 target 第二次 prepare → exit 2 |
+| `apply --run RUN --target T --scrub-attested L [--state S]` | 前一步印出的值 | `RESULT=edited`、`URL=`（`--correct` 另有 `BACKUP_ID=`） | L 不是這個 run 的等級 → exit 2；沒有 prepared 的紀錄 → exit 2；新內文被動過 → `differs-from-preview`；egress 拒絕（rc ≥ 10）→ egress 桶；gh 寫入報錯 → 重讀：未變 `write-failed`（exit 4）、已變或讀不到 `unverified`（exit 7）；讀回不是逐位元組相同 → `unverified` |
+| `discard --run RUN --target T` | 同上 | 記為 declined，刪除工作副本 | 沒有 prepared 的紀錄 → exit 2 |
+| `finish --run RUN` | 同上 | outcome report；刪除 run 目錄，以及 prepare 後沒有 apply／discard 的 `--correct` 工作副本（記為 `not-applied`） | 結束碼依序：有拒絕或寫入失敗 4、有 unverified 7、有 declined 9、否則 0；沒有任何 target 被 prepare → 4 |
 | `existing-mentions <file>` | 目標原文 | 以逗號分隔的、原文已經提及的帳號（用 gh-egress 同一個 parser 與 token 規則） | 掃描失敗 → exit 1 |
 | `section-replace ... [--stop-at-rule]` | 既有子命令，新增 `--stop-at-rule` | 取代後全文 | 段落邊界取自 Markdown parser：同級或更高的頂層 ATX 標題（setext 不結束段落，`--replace` 照舊取代過去）；標題重複 → exit 9；`--stop-at-rule` 時另有頂層分隔線與受管標題；code、HTML 區塊內的行不結束段落；`--section` 不是標題 → exit 2；parser 缺或版本不符 → exit 8，不改任何東西 |
 | `parse-args` | — | 每個值 eval 後與原值相同：含換行或控制字元的值用 ANSI-C quoting，`=` 一律跳脫 | `--section` 不是 markdown 標題行 → exit 2（每個 mode）；`--correct` 沒有替換內容 → exit 2；`--body-file` 含 NUL → exit 5 |

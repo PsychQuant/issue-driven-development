@@ -27,8 +27,8 @@ allowed-tools:
 
 **v2.81.0+ R4/R5 在 batch mode 下 per-target 評估**:
 - R4 (`--replace` 必要 scope) 一次套用全 batch
-- R5 (author check) **per-target**:mixed OWNER + non-OWNER 批次採**語意 (i) per-comment refuse + 繼續**（#158 拍板 2026-07-11）— OWNER 的照做、non-OWNER 的逐條 refuse 記錄後 `continue`,絕不因單一 refuse 殺整批;`--override-user-content` 語意為 **all-targets + reason 共用**（全 batch 啟用 override,一個 reason 進所有 audit markers）
-- 批次結束輸出 outcome report（`edited / refused` + 顯著標記,見 Step 7.5）;exit contract 依序比對、先中者為準:任一 refused 或寫入失敗 → exit 4（M>0,單 target 退化等價 — 契約鎖於 tests/idd-edit fixture 14）;已寫入但讀回失敗或不符 → 7;使用者拒絕任一預覽 → 9;其餘 → 0（詳見 Step 7.5）
+- R5 (author check) **per-target**:mixed OWNER + non-OWNER 批次採**語意 (i) per-comment refuse + 繼續**（#158 拍板 2026-07-11）— OWNER 的照做、non-OWNER 的 prepare 記為 refused 後換下一個 target,絕不因單一 refuse 殺整批（不中斷 batch（#158 語意 (i)））;`--override-user-content` 語意為 **all-targets + reason 共用**（全 batch 啟用 override,一個 reason 進所有 audit markers）
+- 批次結束由 Step 5 `finish` 輸出 outcome report（`edited / refused` + 顯著標記）;exit contract 依序比對、先中者為準:任一 refused 或寫入失敗 → exit 4（M>0 → exit 4,單 target 退化等價 — 契約鎖於 tests/edit-run）;已寫入但讀回失敗或不符 → 7;使用者拒絕任一預覽 → 9;其餘 → 0
 
 完整契約見 [batch-and-cluster.md](../../references/batch-and-cluster.md)。罕見場景：跨 issue 的 typo 統一修、補同一段 errata note、把多個 stale comment 統一標 deprecated。
 
@@ -86,7 +86,7 @@ idd-issue source.docx       # auto-trigger when source contains ≥2 findings
 | Ambiguous section | `--section` 的標題在原文出現不只一次 → refuse（不選第一個） | exit 9 |
 | Archive | `archive` 子命令：不在 git work tree、歸檔路徑沒被 ignore、寫入失敗 → refuse，不 PATCH。`--correct` 在 prepare（預覽之前）就檢查，記為 `REASON=archive` | exit 7 |
 
-> 上表是 helper 各子命令的結束碼；一次 `/idd-edit` 執行的結束碼另見 Step 7.5（4、7、9 在那裡的意思不同：`--correct` 的拒絕一律算 4）。
+> 上表是 helper 各子命令的結束碼；一次 `/idd-edit` 執行的結束碼是 Step 5 `finish` 的（4、7、9 在那裡的意思不同：prepare 或 apply 的拒絕一律算 4）。
 
 Override pathway:`--override-user-content --reason="<rationale>"` 顯式同意修改 user content。 Audit marker `<!-- idd:edit override-user-content date=... reason="..." -->` 自動 append。
 
@@ -113,500 +113,104 @@ Override pathway:`--override-user-content --reason="<rationale>"` 顯式同意�
 
 ## Execution
 
+一次 `/idd-edit` 分成五步，每一步是**一次** Bash 呼叫、**一行** helper 指令。使用者確認前後是不同的 Bash 呼叫，shell 變數、陣列、迴圈都不會留下（#351 verify 第 6、7 輪：舊版把整次執行寫成橫跨確認的一段 bash，確認後的區塊讀不到 `MODE`、`TARGET`、結果陣列，被拒的更正還會回報 0）。所以：
+
+- 一次執行的狀態（解析好的引數、每個 target 的進度與結果）存在 helper 的 run 目錄裡，不在 shell 變數裡。
+- 每一步只帶**前一步印出的字面值**：`<REPO>`、`<ARGS>`、`<RUN>`、`<TARGET>`、`<SCRUB>`、`<STATE>`。照抄上一步的輸出填進角括號，不要自己組、不要重跑前一步。
+- 整次執行的結束碼是 Step 5 `finish` 的結束碼（idd-comment 的 errata 路徑依它分流）。
+
+`scripts/tests/edit-run/` 把下面每個區塊抽出來，一個區塊開一個空環境的 shell（zsh 與 bash）執行，只代入這些字面值。
+
 ### Step 0: Bootstrap Stage Task List（強制)
 
 **在動任何事之前**先用 `TaskCreate` 為這個 stage 建 todo list,確保每個 sub-step 都被追蹤:
 
 ```
-TaskCreate(name="parse_and_resolve_target", description="Parse comment:<id> / #NNN [--last] / issue:<N>，解析成 RESOLVED_TARGETS（每項 kind:number，每個 iteration 自己決定目標）")
-TaskCreate(name="fetch_body_and_backup", description="（--correct 以外的 mode）gh api 取現 body 寫入本次執行的私有工作目錄（mktemp -d 於 ${TMPDIR:-/tmp}）；失敗 → fetch-failed")
-TaskCreate(name="show_original", description="顯示原 comment 前 30 行讓使用者看清楚要動什麼")
-TaskCreate(name="build_new_body", description="按 mode（append / replace / prepend-note）組新 body 字串")
-TaskCreate(name="correct_prepare", description="--correct only（Step 1.6）：helper correct-prepare —— 讀原文、作者閘門、受管區與引文檢查、組出預覽全文、egress 預檢；拒絕 → REASON 進對應的桶")
-TaskCreate(name="preview_and_confirm", description="顯示新 body 並用 AskUserQuestion 確認；--replace / --correct 模式必須通過；--correct 讀 Step 1.6 印出的 PREVIEW= 路徑完整顯示，apply／discard 照抄它印出的 WORK= 與 STATE=；拒絕 → --correct 跑 correct-discard，記 declined")
-TaskCreate(name="correct_apply", description="--correct only（Step 1.6）：使用者確認後 helper correct-apply —— 重抓比對、重組比對預覽、歸檔、經 gh-egress 寫入、讀回確認；RESULT 決定進哪個桶")
-TaskCreate(name="execute_patch", description="（--correct 以外的 mode；--correct 由 correct_apply 寫入）經 gh-egress.sh edit-comment 派送 PATCH（#273 — 全網套用；rc>=10 → EGRESS_REFUSED 桶 warn-continue）；-F body=@file 避免 escape")
-TaskCreate(name="verify_and_report", description="re-fetch comment 比對寫入結果，輸出 ✓ Edit applied + diff summary")
+TaskCreate(name="start_run", description="Step 1：依 config-protocol 解析 repo（<REPO>），run-start 解析引數（R4 等閘門）、解析 target 與隱私等級；記下 RUN= / SCRUB= / 每個 TARGET=；PICK=#N 時列出 comments 讓使用者選")
+TaskCreate(name="prepare_targets", description="Step 2：每個 target 一次 prepare —— 作者閘門、讀原文、備份、組新內文、egress 預檢；RESULT=refused 就換下一個 target")
+TaskCreate(name="privacy_scrub_gate", description="Step 3：依 SCRUB 等級對 PREVIEW 做 rules/privacy-scrubbing.md 的語意自審；enforce 命中 → 顯示 redaction diff、使用者確認前不 apply")
+TaskCreate(name="preview_and_confirm", description="Step 3：顯示 DIFF 與 PREVIEW（--correct 顯示完整全文），AskUserQuestion 確認，預設 NO")
+TaskCreate(name="apply_or_discard", description="Step 4：確認 → apply（照抄 RUN / TARGET / SCRUB，--correct 另帶 STATE）；拒絕 → discard")
+TaskCreate(name="finish_run", description="Step 5：finish —— 印 outcome report，其結束碼就是這次 /idd-edit 的結束碼（0／4／7／9）")
 ```
 
 完成每一步立即 `TaskUpdate → completed`。**靜默完成 = 違規**。**TaskCreate 清單 = 真實的步驟清單；任何寫在 skill 裡但沒列進 TaskCreate 的步驟，都視為 skill 的 bug，必須補進 Task 清單。**
 
-特別提醒：**idd-edit 是破壞性動作**，每一步都必須在 task list 留痕。`fetch_body_and_backup` 跳過 = 沒有 backup，誤改後無法復原；`preview_and_confirm` 跳過 = 跳過使用者把關。
+特別提醒：**idd-edit 是破壞性動作**，每一步都必須在 task list 留痕。`prepare_targets` 跳過 = 沒有 backup；`preview_and_confirm` 跳過 = 跳過使用者把關；`finish_run` 跳過 = 沒有結束碼，呼叫端（idd-comment）無從分流。
 
 ---
 
-### Step 1: Parse arguments via helper (R4 gate enforced)
+### Step 1: Start the run
 
-**#155 Python layer**: parsing + enforcement live in `plugins/issue-driven-dev/scripts/idd-edit-helper.py parse-args` (per [`#154`](https://github.com/PsychQuant/issue-driven-development/issues/154) → [`#155`](https://github.com/PsychQuant/issue-driven-development/issues/155): R1/R2/R3 bash-inline failure on PR #159 — 3 verify rounds, fix-velocity 91%→55%→40%, each pass introduced new parser bugs → bash ruled empirically non-convergent → ratified Python). The helper is a stdlib-only argparse-style parser with missing-value / next-`--`-eats-value / eq-form guards, **`--body-file` path safety via `os.path.realpath` canonicalize-first** (refuses `/etc`, credential dirs, and the `//etc` / `/tmp/../etc` / symlink bypass vectors), the R4 gate, and the R5 override-reason guard — all by-construction, covered by `plugins/issue-driven-dev/scripts/tests/idd-edit/` 23 adversarial fixtures.
-
-```bash
-# Parse + R4 gate (refuse if --replace lacks --scope/--section)
-# CRITICAL: split stdout (eval-safe assignments) from stderr (diagnostic text).
-# Closes #154 verify Round 1 H2 — previously used `2>&1` which mixed
-# stderr (potentially containing $() from cat-on-directory failure etc.)
-# into the eval input, defeating printf %q quoting safety.
-PARSE_ERR_FILE="/tmp/idd-edit-parse-err-$$"
-PARSE_OUT=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" parse-args "$@" 2>"$PARSE_ERR_FILE")
-PARSE_EXIT=$?
-PARSE_ERR=$(cat "$PARSE_ERR_FILE")
-rm -f "$PARSE_ERR_FILE"
-
-case $PARSE_EXIT in
-  0) eval "$PARSE_OUT" || { echo "✗ the parsed arguments did not evaluate — nothing was changed" >&2; exit 2; } ;;   # imports MODE/SCOPE_FLAG/SECTION_FLAG/BODY_INPUT/etc.
-  3) echo "$PARSE_ERR" >&2; exit 3 ;;   # R4 refuse — actionable message
-  *) echo "$PARSE_ERR" >&2; exit $PARSE_EXIT ;;
-esac
-
-# Resolve TARGETS array → RESOLVED_TARGETS array, one `kind:number` entry per
-# target (`comment:<id>` or `issue:<N>`). Each iteration derives its own kind —
-# a global flag here once sent a comment's correction to the issue body (#351).
-# Closes R2 H7 (#154 Round 2): previously this loop closed BEFORE Steps 1.5-7,
-# so batch mode `comment:NNN comment:MMM` silently only processed the LAST target.
-# Fix: resolution loop accumulates; per-target processing happens in OUTER loop
-# wrapping Steps 1.5 through 7 (see "Per-target outer loop" note below).
-RESOLVED_TARGETS=()
-for target in "${TARGETS[@]}"; do
-    local id=""
-    case "$target" in
-        issue:*)
-            # --correct only, and the only target (parse-args refused anything else)
-            RESOLVED_TARGETS+=("$target")
-            continue
-            ;;
-        comment:*)
-            id="${target#comment:}"
-            ;;
-        \#*)
-            ISSUE_NUMBER="${target#\#}"
-            # Validate issue number is numeric before substitution into gh api URL
-            [[ "$ISSUE_NUMBER" =~ ^[0-9]+$ ]] || { echo "ERROR: invalid issue number: $ISSUE_NUMBER" >&2; exit 2; }
-            if [ "$LAST" = "true" ]; then
-                # every page: the newest comment is on the last one (round 4)
-                id=$(gh api "repos/$REPO/issues/$ISSUE_NUMBER/comments" --paginate --jq '.[-1].id' | tail -1)
-            else
-                gh api repos/$REPO/issues/$ISSUE_NUMBER/comments \
-                  --jq '.[] | "\(.id) | \(.created_at) | \(.body | .[0:80])"'
-                # Use AskUserQuestion to select → id="<selected-id>"
-            fi
-            ;;
-    esac
-
-    # R4/R5 security gate: id MUST be numeric before any URL / filename substitution.
-    # Closes #154 verify finding C2 — unsanitized id flows into:
-    #   - gh api repos/.../comments/$id (REST path traversal)
-    #   - /tmp/idd-edit-repl-${id}.md (arbitrary local file write via embedded `/` + `..`)
-    [[ "$id" =~ ^[0-9]+$ ]] || { echo "ERROR: invalid comment ID (must be numeric): $id" >&2; exit 2; }
-
-    RESOLVED_TARGETS+=("comment:$id")
-done
-```
-
-#### Per-target outer loop (wraps Steps 1.5 — 7)
-
-**v2.81.0+ (#154 R3 fix for H7)**: Each resolved target runs through the full pipeline (validate → fetch → preview → confirm → PATCH → verify) independently. Batch mode = N iterations of the same sequence, per-comment confirmation discipline preserved.
+`<REPO>` 依下方 Configuration（config-protocol）解析；`<ARGS>` 是使用者給 `/idd-edit` 的引數原樣，每個引數用單引號包起來（引數本身含單引號時寫成 `'\''`）。
 
 ```bash
-# One private directory per run (mode 0700): every working copy lives here, so
-# no other local user can swap one between the preview and the write (verify
-# #351 round 3 — a shared fixed directory under /tmp allowed it).
-# macOS puts $TMPDIR under /var; the helper's path gate accepts the user's own
-# temp directory (verify #351 round 4 — before that, archive refused every
-# working copy here after the user had confirmed).
-WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/idd-edit-XXXXXX") || {
-  echo "✗ cannot create a private working directory — nothing was changed" >&2; exit 1; }
-EDITED_COUNT=0        # incremented after each successful per-target Step 7 verify
-REFUSED_TARGETS=()    # "<kind:number> <reason>" — reason: R5 / author-unknown / fetch-failed / stage-failed / protected / setext / section-not-found / section-ambiguous / parser-unavailable / check-failed / egress / changed-since-preview / differs-from-preview / archive / replace (#158 (i): recorded, not fatal)
-DECLINED_TARGETS=()   # the user answered NO at Step 5 — reported, not a refusal
-UNVERIFIED_TARGETS=() # written, but the re-read at Step 7 failed or did not match
-WRITE_FAILED_TARGETS=() # gh itself failed the PATCH (rc 1–9): not a refusal (#273), but nothing was written
-EGRESS_REFUSED_TARGETS=()   # egress-band refusals rc>=10（#273 — tier-floor/privacy/mention/empty-body），warn-continue
-for TARGET in "${RESOLVED_TARGETS[@]}"; do
-    TARGET_KIND="${TARGET%%:*}"     # comment | issue — derived per iteration
-    TARGET_NUM="${TARGET#*:}"
-    COMMENT_ID=""
-    [ "$TARGET_KIND" = "comment" ] && COMMENT_ID="$TARGET_NUM"
-    # === Steps 1.5 through 7 run here, per-target ===
-    # ...
-done
+# step: start — one call; prints RUN=, REPO=, SCRUB=, then TARGET= / PICK= lines
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" run-start --default-repo "<REPO>" -- <ARGS>
 ```
 
-#### Step 7.5: Batch outcome report（#158，語意 (i) 落地）
+- 結束碼 2、3、5：引數錯誤（R4 → 3、`--body-file` 讀不到或被路徑閘門擋 → 5），stderr 有說明。**這就是整次執行的結束碼**，不必再跑後面的步驟。
+- `PICK=#N`：使用者寫了 `#N` 但沒有 `--last`。列出 #N 的 comments（`gh api "repos/<REPO>/issues/N/comments" --jq '.[] | "\(.id) | \(.created_at) | \(.body | .[0:80])"'`），用 AskUserQuestion 選一則，把 `comment:<選中的 id>` 當成一個 TARGET。
+- `SCRUB=` 是這個 repo 的隱私等級（third-party → `enforce`、自己的 public → `warn`、private → `light`，見 [`rules/privacy-scrubbing.md`](../../rules/privacy-scrubbing.md)）。
 
-批次（含退化的單 target）跑完後**必須**輸出 outcome report — 部分成功絕不偽裝成全成功：
+### Step 2: Prepare one target
+
+每個 TARGET 依序做 Step 2–4，一次一個（batch mode 也是逐一確認，#158）。
 
 ```bash
-echo "── idd-edit batch outcome ──"
-REFUSED_TOTAL=$(( ${#REFUSED_TARGETS[@]} + ${#EGRESS_REFUSED_TARGETS[@]} ))
-echo "edited: $EDITED_COUNT / refused: $REFUSED_TOTAL"
-for entry in ${REFUSED_TARGETS[@]+"${REFUSED_TARGETS[@]}"}; do
-  # entry = "<kind:number> <reason>"; reason ∈ the list at REFUSED_TARGETS above.
-  # Only R5 has an override, and only outside --correct.
-  echo "  ✗ REFUSED(${entry##* }) ${entry% *}"
-done
-for did in ${DECLINED_TARGETS[@]+"${DECLINED_TARGETS[@]}"}; do
-  echo "  – DECLINED $did（使用者在預覽時拒絕，未寫入）"
-done
-for wid in ${WRITE_FAILED_TARGETS[@]+"${WRITE_FAILED_TARGETS[@]}"}; do
-  echo "  ✗ FAILED(write) $wid（gh 自身錯誤，未寫入）"
-done
-for uid in ${UNVERIFIED_TARGETS[@]+"${UNVERIFIED_TARGETS[@]}"}; do
-  echo "  ⚠ UNVERIFIED $uid（已寫入，但重讀失敗或內容不符 — 請手動確認）"
-done
-for rid in ${EGRESS_REFUSED_TARGETS[@]+"${EGRESS_REFUSED_TARGETS[@]}"}; do
-  echo "  ✗ REFUSED(egress) $rid — band 語意見 #227（10 privacy / 11 mention / 13 tier-floor #272 / 15 empty-body #275）"
-done
-# Exit contract（fixture 14/15；M = REFUSED_TOTAL；M>0 → exit 4，單 target 退化等價）：
-# final exit 仍不套 #227 碼帶 — batch 的聚合碼是 idd-edit 自身空間（任一 refusal = 4）；
-# per-comment 分類消費 band（10–15）— 這正是 band 存在的目的（#273）。
-# Final exit codes, first match wins (verify #351 rounds 3–4). Callers such as
-# idd-comment's errata path route on them, so none overlaps an argument error
-# (2 / 3 / 5 come straight from parse-args, before anything is fetched):
-#   4 = something was refused or a write failed — nothing was changed for it
-#   7 = written, but the read-back failed or differed — check it by hand
-#   9 = nothing refused or failed, but the user declined at least one preview
-[ "$REFUSED_TOTAL" -gt 0 ] && exit 4
-[ "${#WRITE_FAILED_TARGETS[@]}" -gt 0 ] && exit 4
-[ "${#UNVERIFIED_TARGETS[@]}" -gt 0 ] && exit 7
-[ "${#DECLINED_TARGETS[@]}" -gt 0 ] && exit 9
-exit 0
+# step: prepare — one call per target
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" prepare --run "<RUN>" --target "<TARGET>"
 ```
 
-### Step 1.5: Validate target (R5 author gate)
+- `RESULT=refused` 與 `REASON=`：這個 target 不改（R5、fetch-failed、egress、protected、setext、section-not-found、section-ambiguous、archive …，stderr 有原因），直接換下一個 TARGET。拒絕已記在 run 裡，`finish` 會列出。
+- 成功時印出 `PREVIEW=`（新內文全文）與 `DIFF=`（目前內容 → 新內文的差異）；`--append`／`--replace`／`--prepend-note` 另印 `BACKUP=`（原內文的備份），`--correct` 另印 `WORK=` 與 `STATE=`。
 
-**v2.81.0+ (#154)**: R5 gate refuses modifications to content whose author is not `OWNER`, a bot, or the authenticated `gh` user, unless `--override-user-content --reason="..."` provided（`gh` 使用者本人的內容在 org repo 是 `MEMBER`，所以本人另外放行 —— 四種 mode 都適用，#351）。Helper does single `gh api` call, checks `author_association` + `user.login`。**`--correct` 只放行你自己寫的**：bot 的 comment 是第三方原話（#351 verify 第 2 輪）；OWNER 不是你時，OWNER 寫的也是（2026-10-17 使用者決定，之前 OWNER 一律放行，有寫入權的協作者能改寫 owner 的原話，舊版只歸檔在協作者本機）。兩者都只能另貼 errata。
+`--correct`（`(category: in-place-correction)`）在 prepare 這一步跑完讀原文、作者閘門（只放行你自己寫的）、受管區與引文檢查、組出要寫入的全文、egress 預檢；確認後的 apply 會再重抓比對、重組比對預覽、歸檔、寫入、讀回。helper 自己算歸檔路徑；**本 skill 執行的 bash 不寫出歸檔路徑**，否則會被 archive-read-guard hook 擋下。
 
-```bash
-# comment → its author. OWNER, a bot, or the authenticated gh user pass
-# (org maintainers are MEMBER — #351). --correct skips this step: correct-prepare
-# reads the target first, then runs the same gate with mode --correct, so an
-# unreadable target is fetch-failed rather than author-unknown (round 5).
-if [ "$MODE" != "--correct" ]; then
-VALIDATE_ARG="$COMMENT_ID"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
-    validate-target "$VALIDATE_ARG" "$REPO" "$OVERRIDE_USER_CONTENT" "$MODE"
-VALIDATE_EXIT=$?
-case $VALIDATE_EXIT in
-  0) ;;   # proceed (OWNER, bot, own content, or override active)
-  4)
-    # R5 refuse — actionable message already on stderr.
-    # (--correct has no override: a collaborator's comment is corrected by
-    #  proposing an errata comment, never by editing it — #351.)
-    # #158 語意 (i)：記錄後 continue,不中斷 batch（#158 語意 (i)）— 本 target 跳過
-    # Steps 2-7,其餘 targets 照常;單 target 退化等價（記錄 → loop 自然結束 → report → exit 4）。
-    REFUSED_TARGETS+=("$TARGET R5")
-    continue
-    ;;
-  *) exit $VALIDATE_EXIT ;;
-esac
-fi
-```
+### Step 3: Preview, privacy review, confirm
 
-### Step 1.6: `--correct` runs in the helper（#351）
+1. 用 Read 工具讀 `DIFF=` 那一行的路徑並完整顯示：使用者要看得出哪些內容被刪掉或改寫（#351 verify 第 7 輪：只給新全文時看不出來）。
+2. 用 Read 工具讀 `PREVIEW=` 那一行的路徑：`--correct` **完整**顯示（`(assigned after confirmation)` 在確認後換成實際的 backup id）；其他 mode 至少顯示前 40 行。
+3. 隱私自審（`privacy_scrub_gate`）：依 `SCRUB` 等級，對 PREVIEW 做 [`rules/privacy-scrubbing.md`](../../rules/privacy-scrubbing.md) 的語意檢查（本機路徑、未公開的協作者真名、未發表的內容）。`enforce` 命中 → 顯示 redaction diff，使用者確認前不進 Step 4；`warn` 命中 → 印一行提醒。
+4. AskUserQuestion 確認，預設 NO（破壞性動作）。
 
-`(category: in-place-correction)` — 內容確定是錯的，使用者確認後就地取代。整條流程都在 helper 裡：讀原文、作者閘門、受管區與引文檢查、組出要寫入的全文、egress 預檢（原文已有的 mention 列為已確認），使用者確認後再重抓比對、重組比對預覽、歸檔、經 gh-egress 寫入、讀回確認。端到端測試在 `scripts/tests/correct-flow/`。之前這段寫在本 skill 的 bash 裡，四輪 verify 都在它身上找到缺陷，而它只有字串層的測試（#351）。`--correct` 不經過下面的 Steps 2–7。
-
-```bash
-if [ "$MODE" = "--correct" ]; then
-    REPL_FILE=$(mktemp "$WORK_DIR/repl-XXXXXX") || {
-        echo "✗ cannot stage the replacement text for $TARGET — skipped" >&2
-        REFUSED_TARGETS+=("$TARGET stage-failed"); continue; }
-    printf '%s\n' "$BODY_INPUT" > "$REPL_FILE"
-    # 依 rules/privacy-scrubbing.md 的分級解析（--correct 不經過 Step 6）：third-party → enforce、
-    # 自己的 public repo → warn、private → light。helper 不代填預設值（#351 verify 第 6 輪）。
-    if [ -z "${SCRUB_LEVEL:-}" ]; then
-        RJ=$(gh repo view "$REPO" --json viewerPermission,isPrivate 2>/dev/null)
-        case "$(printf '%s' "$RJ" | jq -r '.viewerPermission // empty')" in
-          WRITE|MAINTAIN|ADMIN)
-            if [ "$(printf '%s' "$RJ" | jq -r '.isPrivate // false')" = "true" ]; then SCRUB_LEVEL=light; else SCRUB_LEVEL=warn; fi ;;
-          *) SCRUB_LEVEL=enforce ;;   # READ / TRIAGE / 查不到 → third-party 的保守預設
-        esac
-    fi
-    if [ -n "$SECTION_FLAG" ]; then
-        PREP_OUT=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" correct-prepare \
-            --target "$TARGET" --repo "$REPO" --section "$SECTION_FLAG" \
-            --body-file "$REPL_FILE" --scrub-attested "$SCRUB_LEVEL")
-    else
-        PREP_OUT=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" correct-prepare \
-            --target "$TARGET" --repo "$REPO" --scope whole-comment \
-            --body-file "$REPL_FILE" --scrub-attested "$SCRUB_LEVEL")
-    fi
-    PREP_RC=$?
-    rm -f "$REPL_FILE"
-    if [ "$PREP_RC" -ne 0 ]; then
-        # stderr 已說明原因；REASON ∈ archive / fetch-failed / R5 / author-unknown / protected /
-        # setext / section-not-found / section-ambiguous / parser-unavailable / egress / check-failed
-        PREP_REASON=$(printf '%s\n' "$PREP_OUT" | sed -n 's/^REASON=//p')
-        REFUSED_TARGETS+=("$TARGET ${PREP_REASON:-check-failed}")
-        continue
-    fi
-    # 確認前後是不同的 Bash 呼叫，變數不會留下：WORK / PREVIEW / STATE 一定要印出來，
-    # 下面兩個區塊照抄這裡印的值（#351 verify 第 6 輪：沒印時 apply 收到空值，每次都失敗）。
-    printf '%s\n' "$PREP_OUT"
-fi
-```
-
-用 Read 工具讀上面 `PREVIEW=` 那一行的路徑並**完整**顯示（它是更正後的全文，不含舊版；`(assigned after confirmation)` 在確認後換成實際的 backup id），再用 AskUserQuestion 確認，預設 NO。
-
-使用者拒絕：
-
-```bash
-if [ "$MODE" = "--correct" ]; then
-    CORRECT_WORK="<the WORK= value Step 1.6 printed>"
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" correct-discard --work "$CORRECT_WORK"
-    DECLINED_TARGETS+=("$TARGET")
-    continue
-fi
-```
+### Step 4: Apply or discard
 
 使用者確認：
 
 ```bash
-if [ "$MODE" = "--correct" ]; then
-    # 照抄 Step 1.6 印出的值；不要重跑 prepare、也不要自己算 STATE —— 那會讓 apply 比對的
-    # 不再是使用者看過的預覽。
-    CORRECT_WORK="<the WORK= value Step 1.6 printed>"
-    CORRECT_STATE="<the STATE= value Step 1.6 printed>"
-    APPLY_OUT=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" correct-apply \
-        --work "$CORRECT_WORK" --state "$CORRECT_STATE")
-    APPLY_RC=$?
-    APPLY_RESULT=$(printf '%s\n' "$APPLY_OUT" | sed -n 's/^RESULT=//p')
-    APPLY_REASON=$(printf '%s\n' "$APPLY_OUT" | sed -n 's/^REASON=//p')
-    # Any result that got as far as the archive names its backup id (round 5).
-    printf '%s\n' "$APPLY_OUT" | sed -n 's/^BACKUP_ID=/  Backup id: /p'
-    case "$APPLY_RC:$APPLY_RESULT" in
-      0:edited)
-        echo "✓ $TARGET corrected"
-        printf '%s\n' "$APPLY_OUT" | sed -n 's/^URL=/  URL: /p'
-        EDITED_COUNT=$((EDITED_COUNT + 1)) ;;
-      7:*) UNVERIFIED_TARGETS+=("$TARGET") ;;                       # 寫入結果與送出的不符，或寫入報錯但目標已變
-      4:write-failed) WRITE_FAILED_TARGETS+=("$TARGET") ;;          # gh 自身錯誤，重讀確認目標未變
-      *) REFUSED_TARGETS+=("$TARGET ${APPLY_REASON:-check-failed}") ;; # changed-since-preview / differs-from-preview / archive / egress …
-    esac
-    continue   # Steps 2–7 are for --append / --replace / --prepend-note
-fi
+# step: apply — after the user confirmed; <STATE> is the STATE= value for --correct, empty ("") otherwise
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" apply --run "<RUN>" --target "<TARGET>" --scrub-attested "<SCRUB>" --state "<STATE>"
 ```
 
-helper 自己算歸檔路徑；**本 skill 執行的 bash 不寫出歸檔路徑**，否則會被 archive-read-guard hook 擋下。GitHub 沒有條件式寫入，apply 重抓到寫入之間仍有極短的競爭窗。
+`--scrub-attested` 填 Step 1 印出的 `SCRUB`，表示 Step 3 的隱私自審做過了；與這個 run 的等級不符 → exit 2。印出 `RESULT=`：`edited`（另有 `URL=`）、`refused`（`REASON=`）、`write-failed`（gh 自身錯誤，重讀確認未寫入）、`unverified`（已寫入但讀回不符，請手動檢查）；`--correct` 有歸檔時另印 `BACKUP_ID=`。不要重跑 prepare、也不要自己算 STATE —— 那會讓 apply 比對的不再是使用者看過的預覽。
 
-### Step 2: Fetch current body + backup
+使用者拒絕：
 
 ```bash
-# In the run's private $WORK_DIR: an unpredictable name in a directory only
-# this user can write, so nothing else can swap the file between the preview
-# and the archive step.
-BACKUP_FILE=$(mktemp "$WORK_DIR/${TARGET_KIND}-${TARGET_NUM}-XXXXXX") || {
-  echo "✗ cannot stage the working copy of $TARGET — skipped" >&2
-  REFUSED_TARGETS+=("$TARGET stage-failed"); continue; }
-TARGET_ENDPOINT="repos/$REPO/issues/comments/$COMMENT_ID"   # issue bodies are --correct only (Step 1.6)
-if ! gh api "$TARGET_ENDPOINT" --jq '.body' > "$BACKUP_FILE"; then
-    # An empty file is not the target's body: comparing two failed fetches
-    # would match and archive nothing (verify #351 round 2).
-    echo "✗ cannot read $TARGET — nothing changed" >&2
-    rm -f "$BACKUP_FILE"
-    REFUSED_TARGETS+=("$TARGET fetch-failed")
-    continue
-fi
-# Logins the target already mentions: published already, so keeping them in
-# an edit notifies no one new. They are attested to gh-egress (Step 4 check and
-# Step 6); a mention the edit ADDS is still refused there (verify #351 round 3 —
-# any existing mention used to make every edit of the target fail at egress).
-EXISTING_MENTIONS=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" existing-mentions "$BACKUP_FILE") || {
-    echo "✗ cannot scan $TARGET for existing mentions — skipped" >&2
-    rm -f "$BACKUP_FILE"
-    REFUSED_TARGETS+=("$TARGET egress"); continue; }
-
-echo "✓ Backup: $BACKUP_FILE"
+# step: discard — the user declined
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" discard --run "<RUN>" --target "<TARGET>"
 ```
 
-### Step 3: Show original body
+### Step 5: Finish（outcome report 與結束碼，#158）
 
-```
-=== Original ($TARGET) ===
-{首 30 行 + "..."}
-===
-```
-
-### Step 4: Build new body per mode
-
-> **v2.81.0+ (#154)**: audit markers are built via `python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" emit-audit-marker` — centralizes HTML-comment-escape (`-->` stripping) so attacker-controlled `$REASON` / `$SECTION_FLAG` cannot forge audit trail (closes #154 verify finding C3).
-
-#### Mode: `--append`
+所有 TARGET 都處理完（或使用者中止）後一定要跑：
 
 ```bash
-EDIT_MARKER=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" emit-audit-marker edit mode=append)
-NEW_BODY="$(cat $BACKUP_FILE)
-
----
-
-**Edit $(date +%Y-%m-%d)**: $REASON
-
-$BODY_INPUT
-
-$EDIT_MARKER"
-
-# Append R5 override audit marker if applicable
-if [ "$OVERRIDE_USER_CONTENT" = "true" ]; then
-    OVERRIDE_MARKER=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" emit-audit-marker override mode=append reason="$REASON")
-    NEW_BODY="$NEW_BODY
-
-$OVERRIDE_MARKER"
-fi
+# step: finish — after every target; prints the outcome report and exits 0 / 4 / 7 / 9
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" finish --run "<RUN>"
 ```
 
-#### Mode: `--replace`
+部分成功絕不偽裝成全成功：report 逐一列出 EDITED／REFUSED(<reason>)／REFUSED(egress)／DECLINED／FAILED(write)／UNVERIFIED。結束碼依序比對、先中者為準：
 
-R4 gate already enforced in Step 1 — `SCOPE_FLAG` or `SECTION_FLAG` is guaranteed non-empty here.
+| 結束碼 | 意思 |
+|---|---|
+| 4 | 有 target 被拒（含 egress 拒絕、prepare 後沒有 apply 或 discard 的 `not-applied`），或寫入失敗 —— 它沒有被改 |
+| 7 | 已寫入，但讀回失敗或不符 —— 請手動檢查 |
+| 9 | 沒有拒絕或失敗，但使用者拒絕了至少一個預覽 |
+| 0 | 全部完成 |
 
-```bash
-if [ "$SCOPE_FLAG" = "whole-comment" ]; then
-    # Whole-comment replacement
-    EDIT_MARKER=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" emit-audit-marker edit mode=replace scope=whole-comment backup="$BACKUP_FILE")
-    NEW_BODY="$BODY_INPUT
-
-$EDIT_MARKER"
-elif [ -n "$SECTION_FLAG" ]; then
-    # Named section replacement via getline pattern (closes R3 C3 BSD awk newline reject)
-    # Per-run, because this file becomes part of an edited GitHub comment.
-    # The #288 scan exempted this whole directory on the strength of a reason
-    # that named only the backup directory — so two egress bodies inherited an
-    # exemption written for something else.
-    REPL_FILE=$(mktemp "$WORK_DIR/repl-XXXXXX") || {
-      echo "✗ cannot stage the replacement text for $TARGET — skipped" >&2
-      REFUSED_TARGETS+=("$TARGET stage-failed"); continue; }
-    printf '%s\n' "$BODY_INPUT" > "$REPL_FILE"
-    NEW_BODY=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" \
-                  section-replace "$BACKUP_FILE" "$SECTION_FLAG" "$REPL_FILE") || {
-        SR_RC=$?   # an empty NEW_BODY here used to be written as the section (verify #351 round 3)
-        rm -f "$REPL_FILE"
-        case $SR_RC in
-          8) REFUSED_TARGETS+=("$TARGET parser-unavailable") ;;
-          9) REFUSED_TARGETS+=("$TARGET section-ambiguous") ;;   # the heading occurs more than once
-          *) REFUSED_TARGETS+=("$TARGET section-not-found") ;;
-        esac
-        continue
-    }
-    rm -f "$REPL_FILE"
-    EDIT_MARKER=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" emit-audit-marker edit mode=replace section="$SECTION_FLAG" backup="$BACKUP_FILE")
-    NEW_BODY="$NEW_BODY
-
-$EDIT_MARKER"
-fi
-
-# Append R5 override audit marker if applicable
-if [ "$OVERRIDE_USER_CONTENT" = "true" ]; then
-    OVERRIDE_MARKER=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" emit-audit-marker override mode=replace reason="$REASON")
-    NEW_BODY="$NEW_BODY
-
-$OVERRIDE_MARKER"
-fi
-```
-
-**警告**：`--replace` 是 `bounded-section-replace` 動作（per [#150 rule](../../rules/append-vs-modify.md)）。必顯示 diff preview，使用者確認後才 PATCH。 R4 強制 `--scope`/`--section` 避免「忘記講動作範圍 = 全 comment overwrite」silent footgun。
-
-#### Mode: `--correct`（#351）
-
-見 Step 1.6，`--correct` 不經過這一步。
-
-#### Mode: `--prepend-note`
-
-```bash
-EDIT_MARKER=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" emit-audit-marker edit mode=prepend-note)
-NEW_BODY="> ⚠️ **Edit $(date +%Y-%m-%d)**: $REASON
-
----
-
-$(cat $BACKUP_FILE)
-
-$EDIT_MARKER"
-
-# Append R5 override audit marker if applicable
-if [ "$OVERRIDE_USER_CONTENT" = "true" ]; then
-    OVERRIDE_MARKER=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" emit-audit-marker override mode=prepend-note reason="$REASON")
-    NEW_BODY="$NEW_BODY
-
-$OVERRIDE_MARKER"
-fi
-```
-
-### Step 5: Preview + confirm
-
-```
-=== Preview (new body, mode: $MODE) ===
-{首 40 行 + "..."}
-===
-
-Confirm edit? (y/n)
-```
-
-使用 AskUserQuestion。預設 NO（破壞性動作）。（`--correct` 的預覽在 Step 1.6。）
-
-使用者拒絕（NO）時：
-
-```bash
-DECLINED_TARGETS+=("$TARGET")
-continue
-```
-
-### Step 6: Execute PATCH
-
-> **Scrub level**：`$SCRUB_LEVEL` 依 [`rules/privacy-scrubbing.md`](../../rules/privacy-scrubbing.md) 解析（repo visibility → tier；#226 rollout 慣例），互動情境預設 `warn`。
-
-**關鍵**：用 `-F body=@file`（不是 `-f body=""`）避免 backtick / 多行字串的 escape bug。
-
-```bash
-# Per-run: this is the body that gets PATCHed into someone's comment. A fixed
-# name keyed only on the comment id collides between two sessions editing the
-# same comment, and the loser's text is what gets published.
-TMP_BODY_FILE=$(mktemp "$WORK_DIR/new-XXXXXX") || {
-  echo "✗ cannot stage the new body for $TARGET — skipped" >&2
-  REFUSED_TARGETS+=("$TARGET stage-failed"); continue; }
-printf '%s\n' "$NEW_BODY" > "$TMP_BODY_FILE"   # printf, not echo: zsh echo rewrites backslashes (#330)
-
-# #273：comment surgery 進 egress 網 — 原 raw `gh api` PATCH 完全繞過所有網
-# （#226 rollout 的 tracked-separately 欠帳，於此結清）。
-SCRUB_LEVEL="${SCRUB_LEVEL:-warn}"   # 依 rules/privacy-scrubbing.md 解析（repo tier；互動預設 warn，#226 慣例）
-bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit-comment "$COMMENT_ID" \
-    --repo "$REPO" --body-file "$TMP_BODY_FILE" --scrub-attested "$SCRUB_LEVEL" \
-    ${EXISTING_MENTIONS:+--mention-attested="$EXISTING_MENTIONS"}
-EGRESS_RC=$?
-rm "$TMP_BODY_FILE"
-if [ "$EGRESS_RC" -ge 10 ]; then
-    # wrapper refusal band（#227）— per-comment 分類消費 band（10–15）：
-    # 記錄 + warn-continue（#158 語意 (i) 同款）。wrapper 已對本 target 印明確 stderr。
-    EGRESS_REFUSED_TARGETS+=("$TARGET rc=$EGRESS_RC")
-    continue
-elif [ "$EGRESS_RC" -ne 0 ]; then
-    # 0 < rc < 10 = gh 自身錯誤（auth / network），非 refusal — 誠實分流，不進 refused 桶
-    echo "✗ gh api PATCH failed for $TARGET (rc=$EGRESS_RC, gh 自身碼) — skip this target" >&2
-    # Its own bucket and a non-zero exit: without it a single failed write ended
-    # with exit 0 and idd-comment reported the comment as corrected (round 4).
-    WRITE_FAILED_TARGETS+=("$TARGET rc=$EGRESS_RC")
-    continue
-fi
-```
-
-### Step 7: Verify edit + report
-
-```bash
-# Re-fetch 確認：讀回失敗或內容不符，就不算成功（verify #351 round 3）
-UPDATED=$(gh api "$TARGET_ENDPOINT" --jq '.body')
-UPDATED_RC=$?
-if [ "$UPDATED_RC" -ne 0 ]; then
-    echo "⚠ $TARGET was written but could not be read back — check it by hand" >&2
-    UNVERIFIED_TARGETS+=("$TARGET")
-    continue
-fi
-if [ "$UPDATED" != "$NEW_BODY" ]; then
-    echo "⚠ $TARGET reads back differently from what was sent — check it by hand" >&2
-    UNVERIFIED_TARGETS+=("$TARGET")
-    continue
-fi
-echo "✓ $TARGET updated"
-echo "  URL: $(gh api "$TARGET_ENDPOINT" --jq '.html_url')"
-echo "  Backup: $BACKUP_FILE"
-echo "  First 5 lines of new body: $(printf '%s\n' "$UPDATED" | head -5)"
-EDITED_COUNT=$((EDITED_COUNT + 1))
-```
+2、3、5 只來自 Step 1（引數錯誤），不會與上表重疊。這張表就是 batch 的 exit contract（單 target 退化等價），由 `scripts/tests/edit-run/` 的行為測試鎖定。
 
 ## Metadata Marker
 
@@ -666,11 +270,13 @@ EDITED_COUNT=$((EDITED_COUNT + 1))
   --reason="誤讀了需求"
 ```
 
-協作者發的 comment 不用 `--correct`：改用 `/idd-comment --type errata` 另貼更正（`--correct` 沒有 override）。
+別人發的 comment（含 OWNER 由你以外的人執行時、bot）不用 `--correct`：改用 `/idd-comment --type errata` 另貼更正（`--correct` 沒有 override）；是你用另一個 GitHub 帳號寫的，就 `gh auth switch` 切過去再跑。issue 正文以開 issue 的人為作者，別人開的 issue 正文裡的錯誤改用 `/idd-comment --type correction`。
+
+**改不到的地方（已知限制，2026-10-17 使用者決定）**：不屬於任何標題的文字 —— issue 正文最後一條 `---` 之下（例如 IC_R011 的 `**Source**` 註腳）、或第一個標題之前 —— `--section` 搆不到，issue 正文也沒有整則範圍。這類錯誤用 `/idd-comment --type correction` 追加更正。
 
 ## 鐵律
 
-- **原 body 必 backup**：`--append`/`--replace`/`--prepend-note` 存在本次執行的私有工作目錄 `${TMPDIR:-/tmp}/idd-edit-XXXXXX/`（暫存，Step 2 印出路徑）；`--correct` 確認後歸檔到 correction archive（永久、不進 git、AI 讀不到）；它的工作副本在使用者暫存目錄的 `idd-correct-*`，由 correct-apply／correct-discard 刪除，未完成的一天後由下一次 prepare 清掉
+- **原 body 必 backup**：`--append`/`--replace`/`--prepend-note` 由 prepare 存到使用者暫存目錄下的 `idd-edit-backup/comment-<id>-<unix time>.md`（Step 2 印出 `BACKUP=`，run 結束後仍保留）；`--correct` 確認後歸檔到 correction archive（永久、不進 git、AI 讀不到）；它的工作副本在使用者暫存目錄的 `idd-correct-*`，由 apply／discard／finish 刪除，未完成的一天後由下一次 prepare 清掉
 - **Preview 必 show**：即使是 `--append` 也要 show 最終 body 讓使用者確認
 - **`-F body=@file` 不是 `-f body=""`**：避免 backtick escape（`gh api` 會把 heredoc 裡的 backtick escape 成 `\`）
 - **Metadata marker 不覆蓋**：每次 edit 加新 marker，保留 history
@@ -686,28 +292,26 @@ EDITED_COUNT=$((EDITED_COUNT + 1))
 /idd-comment #NNN --type=errata --target-comment=XXX ...
   ├─ XXX 是你本人寫的        → /idd-edit comment:XXX --correct ...（不另貼 comment）
   │                              └─ 更正被拒或寫入失敗（exit 4）→ 改貼 errata，再提議 --prepend-note 指向它
-  │                                 （原 comment 以 IDD 標題或標記開頭時不加）
+  │                                 （原 comment 的第一個非空行是 ATX 標題或 IDD 標記時不加）
   └─ 其他作者（含 OWNER、bot）→ 只貼 errata comment，不呼叫 idd-edit
 ```
 
 ## Backup 管理
 
-**`--append` / `--replace` / `--prepend-note`**：備份在這次執行的私有工作目錄（`${TMPDIR:-/tmp}/idd-edit-XXXXXX/`，權限 0700），由 `mktemp` 命名 `<kind>-<number>-XXXXXX`；Step 2 會印出完整路徑。
+**`--append` / `--replace` / `--prepend-note`**：備份在使用者暫存目錄下的 `idd-edit-backup/`（目錄權限 0700），檔名 `comment-<id>-<unix time>.md`，同一秒再有一份就加 `-2`；Step 2 印出完整路徑（`BACKUP=`）。3.4.0 以前在 `/tmp/idd-edit-backup/`；macOS 的使用者暫存目錄在 `/var/folders/…` 底下。
 
 ```bash
-ls -la "${TMPDIR:-/tmp}"/idd-edit-*/
-# 回復（set REPO=owner/repo first；災難復原刻意走 raw gh api、不經 egress 網 —
-#  還原的是先前已公開發佈的內容，#273 接線範圍是 Step 6 正常路徑）
-gh api "repos/$REPO/issues/comments/<id>" \
+ls -la "${TMPDIR:-/tmp}/idd-edit-backup/"
+# 回復（災難復原刻意走 raw gh api、不經 egress 網 — 還原的是先前已公開發佈的內容）
+gh api "repos/<REPO>/issues/comments/<id>" \
     -X PATCH \
-    -F body=@"<Step 2 印出的備份路徑>"
+    -F body=@"<Step 2 印出的 BACKUP= 路徑>"
 ```
 
 **`--correct`**：舊版在 correction archive，用 backup id（標記裡那個）還原。內容直接送給 GitHub、不顯示；還原的是**整個**目標，更正之後的修改（例如 `idd-update` 重建的 Current Status）會一起被蓋掉，執行前用 AskUserQuestion 說明這點並確認。
 
 ```bash
-BACKUP_ID="<the backup-id in the comment's correction marker>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" restore "$BACKUP_ID" --repo "$REPO"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py" restore "<the backup-id in the comment's correction marker>" --repo "<REPO>"
 ```
 
 歸檔檔不經過 Claude 讀取（hook 會擋、檔案權限 0000）。人要看舊版時，在自己的終端機 `chmod u+r` 該檔後用編輯器開，不要透過 Claude；看完 `chmod 000` 改回，否則 `grep -r` 這類不寫出路徑的遞迴讀取會讀到它。
@@ -723,6 +327,6 @@ Edit 後通常不需要後續 skill。如果是修 diagnosis comment，可能要
 
 ## SKILL↔helper Contract（#163）
 
-本 SKILL 的 bash 與 `scripts/idd-edit-helper.py` 之間的變數契約由 **`scripts/tests/idd-edit-contract/`** 靜態鎖定：SKILL fenced bash 內消費的每個大寫 `$VAR` 必有出處 —（a）SKILL block 內賦值、（b）helper `emit_assignment` / `TARGETS` emit（**helper 源碼即 source of truth**，本節不重列變數清單）、（c）環境 allowlist（`CLAUDE_PLUGIN_ROOT`、`IDD_CALLER` #161 等，明文列於 checker）。此層封殺 #154 R1 B1（`$APPEND_BODY`）/ B2（`$GITHUB_REPO`）的「fixtures 全綠、production 壞掉」class。
+本 SKILL 的每個步驟區塊只讀 `$CLAUDE_PLUGIN_ROOT`，其餘都是前一步印出的字面值（`<RUN>` 等）；`scripts/tests/edit-run/` 實際執行這些區塊。舊的變數契約由 **`scripts/tests/idd-edit-contract/`** 靜態鎖定：SKILL fenced bash 內消費的每個大寫 `$VAR` 必有出處 —（a）SKILL block 內賦值、（b）helper `emit_assignment` / `TARGETS` emit（**helper 源碼即 source of truth**，本節不重列變數清單）、（c）環境 allowlist（`CLAUDE_PLUGIN_ROOT`、`IDD_CALLER` #161 等，明文列於 checker）。此層封殺 #154 R1 B1（`$APPEND_BODY`）/ B2（`$GITHUB_REPO`）的「fixtures 全綠、production 壞掉」class。
 
 **掃描邊界**：只掃 fenced bash blocks（heredoc 在內 — B1 就住在 heredoc）；single-quote 不展開造成的 false positive 由 allowlist 消化；loop 結構 class（R2 H7）不在此層 — 由 `scripts/tests/idd-edit/` fixture 14 的 prose 契約覆蓋。編輯本 SKILL 引入新變數時：在 block 內賦值、或經 helper emit、或（僅環境變數）進 checker allowlist — 三者皆非會被 suite 擋下。

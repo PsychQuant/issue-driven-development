@@ -35,7 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Own-content author gate**: a comment or issue body is correctable only when its author is the OWNER or
   the authenticated `gh` user; in an organization repository a maintainer's own comment is `MEMBER`. Round 3
-  removed the bot pass (below). The same
+  removed the bot pass (below); *round 8 removed the OWNER pass — only your own content (user decision
+  2026-10-17)*. The same
   gate applies to issue-body targets (`issue:<N>`), checked against the issue author.
 - **Security — multi-line `--body-file` content is ANSI-C quoted** in `parse-args` output. Before this fix the
   skill's `eval` executed continuation lines as shell commands; this affected every `/idd-edit` mode, not only
@@ -74,7 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `archive` and `restore` refuse when any directory on the archive path is a symlink, not only the entry itself.
 - Test mode never runs `gh api user`; a value starting with `=` is escaped for zsh's `eval`; a `--correct` refusal
   no longer suggests `--override-user-content`.
-- Docs: the author gate reads "the OWNER or you" in every skill and rule; the archive lives in the clone that wrote
+- Docs: the author gate reads "the OWNER or you" in every skill and rule (*round 8: "you" only*); the archive lives in the clone that wrote
   it; `chmod 000` the archive file again after reading it; `idd-update` leaves out decisions an errata overturned;
   `idd-reorganize` separates superseded judgments from wrong statements; `idd-issue` multi-finding sends wrong
   body content to `--correct`; README lists the read-guard hook.
@@ -157,7 +158,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file); the skill keeps it and passes `--state`, and apply refuses a state file with another digest or a malformed
   field. (*Round 8: this guards against a mismatched WORK/STATE pair, not against a process running as the same
   user; what binds apply to the confirmed text is recomposing the preview. The skill did not print STATE at all
-  until round 8.*) Apply also re-runs the author gate and the protected-region checks on the text fetched after confirmation.
+  until round 8.*) Apply also re-runs the author gate and the protected-region checks on the text fetched after confirmation
+  (*round 8: before the re-fetch, on the previewed copy the re-fetch must equal*).
 - Fetches take the API's JSON `body` exactly; the `--jq .body` form added a newline, so a comment without a final
   newline was compared and archived one byte off.
 - A gh error on the write is followed by a read: unchanged → `write-failed` (exit 4); changed or unreadable →
@@ -196,12 +198,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   errors, covers the apply-side gates, a malformed state field, stale working directories, CRLF and null bodies,
   and uses a private temp directory (two overlapping runs no longer fail each other).
 
+### Fixed (round 9 — verify round 7 findings, before release)
+
+- **The whole `/idd-edit` run lives in the helper.** Rounds 6 and 7 found the same defect twice: the skill was one
+  bash script spanning the user's confirmation, but the preview and the write are separate tool calls, so the
+  confirm block read `MODE`, `TARGET`, result arrays and a loop that a new call did not have — written as printed,
+  it did nothing and exited 0; under zsh (the agent's shell) a `continue` outside a loop ended a successful write
+  with exit 1; and the run's exit code, which idd-comment routes on, could report a refused correction as 0. The
+  same applied to `--append`/`--replace`/`--prepend-note` after this branch. Every mode now runs as `run-start` →
+  `prepare` → `apply` | `discard` → `finish`; the skill's blocks are one command each and carry only values an
+  earlier block printed (`RUN`, `TARGET`, `SCRUB`, `STATE`); the exit code comes from `finish`. The new
+  `scripts/tests/edit-run` runs the SKILL's own blocks one per fresh shell, with an empty environment, under zsh
+  and bash; CI installs zsh. The round-8 two-shell test, which seeded the missing variables, is gone.
+- The preview shows the diff from the current text as well as the new text; `apply` takes `--scrub-attested` only
+  after the privacy self-review of the preview, at the run's tier.
+- The reply template's `> **Point i**` quotation of a reviewer is protected like `Original text`; a setext heading
+  is matched whole (text and underline) and counted; a whole-comment correction is checked after the copies of the
+  top marker are dropped, and a replacement holding only that marker is empty; an unclosed block is
+  `unclosed-block`, not `protected`; `correct-prepare` checks the archive after the author gate and leaves nothing
+  in the repository for a refused target; a malformed state, an exception, or an abandoned run directory no longer
+  leaves the wrong text behind or ends without a result.
+- idd-comment passes `--repo` to `/idd-edit`, does not restate a correction that egress refused, and reads
+  `--correction-file` only on the own-comment route. A refusal under `--correct` mentions `gh auth switch` for
+  content written under another of your accounts (user decision 2026-10-17). Decision 1 (own content only) and the
+  limitation for text under no heading are now in every skill, the rule file, both specs and design; errors in an
+  issue body you did not open, or under no heading, are answered with `/idd-comment --type correction` (the
+  errata type needs a comment id).
+
 ### Changed
 
+- **BREAKING (behavior) — `/idd-edit` exit codes for the existing modes** (`--append`, `--replace`,
+  `--prepend-note`), compared with 3.4.0: declining the preview exits 9 (was 0); a gh write failure exits 4 (was
+  0); a read-back that fails or differs exits 7 (new); an unreadable target is refused (exit 4) instead of
+  continuing with an empty backup; a staging failure skips that target instead of ending the run; no target is
+  exit 2 (was a silent 0). Callers that treat any non-zero exit as failure will now see one on a plain decline.
+- **Backups of the existing modes moved** from `/tmp/idd-edit-backup/` to `idd-edit-backup/` under the user's
+  temporary directory (on macOS under `/var/folders/…`); `prepare` prints the path as `BACKUP=`, and the
+  `--replace` marker's `backup=` names it. The 3.4.0 recovery command (`ls /tmp/idd-edit-backup/`) finds nothing
+  for edits made with 3.5.0.
+- Smaller changes to the existing modes: the new body is written byte for byte (no shell `echo`, which rewrote
+  backslashes under zsh); the edit count in the report is real (it always read `edited: 0`); the egress gates also run before the
+  preview; a bare `#` line ends a `--replace --section`.
+- `idd-update` regenerates Key Decisions from the current comments on its next run for every issue: a decision
+  that no current comment backs — added by hand, summarised from chat, or from a deleted comment — is dropped, and
+  the order and wording are re-derived each time.
 - **BREAKING (behavior) — `/idd-comment --type errata`** on the invoking user's own comment now delegates to
   `/idd-edit --correct` and posts nothing; it no longer appends an errata comment plus a `--prepend-note`
   warning. When the correction is refused or its write fails it posts the errata comment instead and proposes a
-  `--prepend-note` pointer on the original (not when it opens with an IDD heading or marker). On anyone else's
+  `--prepend-note` pointer on the original (not when its first non-blank line is an ATX heading or an IDD marker). On anyone else's
   comment — the repository OWNER's (when the OWNER is not the one running it) and a bot's included — it posts the
   errata comment only and leaves the target alone.
 - **`--correct` corrects only your own content** (user decision 2026-10-17): the author must be the authenticated

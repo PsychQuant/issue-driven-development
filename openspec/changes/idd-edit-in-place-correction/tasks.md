@@ -82,6 +82,15 @@
 - [x] 13.1 先寫會失敗的測試（`correct-flow` R8 節；在 `fec3c07` 上 17 條失敗）：把 SKILL 的 Step 1.6 三個區塊抽出來、分兩個 shell 執行；apply 端重跑作者閘門與受管區、state 欄位、寫入生效後才報錯、殘留目錄、另一個 repo、CRLF 與無結尾換行、讀回多一個換行、dashboard 標記被移到結尾、null body、只有標題、新增 setext、歸檔目錄被檔案擋住、缺 `--scrub-attested`、OWNER 不是自己。fake gh 依 owner/repo 路由、新增 `fail-after-patch`／`pad-read`；暫存目錄改為每次執行私有。驗證：DA 的五個突變（拿掉 apply 端作者閘門、受管區重跑、state 欄位檢查、殘留清理、寫入報錯一律算 write-failed）各自都有測試失敗。
 - [x] 13.2 helper：`_raw_lines` 與逐位元組保留的 `_compose`、頂端標記固定、`_check_correction` 回傳拒絕原因（`setext` 獨立）、`_adds_setext`、`_fetch_body` 對缺欄位與 null 的處理、`--scrub-attested` 必填、去掉標題後為空的檢查、歸檔前置檢查加目錄可建立、`_correct_apply` 單次讀 state 與閘門前移、`_correct_write` 的例外處理、讀回逐位元組比對；`--correct` 只放行本人（使用者 2026-10-17 決定）。驗證：`correct-flow` 全綠。
 - [x] 13.3 SKILL 與文件：Step 1.6 印出並照抄 WORK／PREVIEW／STATE、scrub 分級解析；閘門表、批次 exit 契約、REASON 清單、help；idd-comment 的 exit 2／3／5 不貼、指標只在自己的 comment 更正失敗後且開頭不是 IDD 標題時提議、errata_pointer task；OWNER 規則與無標題文字限制同步到 idd-edit、idd-comment、idd-diagnose、idd-verify、idd-reorganize、規則檔；spec、design、CHANGELOG 第 8 輪與第 6、7 輪說得過頭處的註記。開 #413（idd-update Branch B）。驗證：`spectra validate`、`run-all-tests.sh`。
-- [ ] 13.4 Verify 第 7 輪。驗證：#351 的 verify 留言。
+- [x] 13.4 Verify 第 7 輪：FAIL，findings 52（HIGH 2／MEDIUM 15／LOW 27／INFO 8），CRITICAL 0；趨勢 66 → 42 → 52 → 63 → 40 → 52 → 52 未收斂。兩個 HIGH 與第 6 輪同源：確認後的區塊仍依賴新呼叫裡沒有的 `MODE`、`TARGET`、結果陣列與迴圈。報告在 #351 的 verify 留言（comment 6231476603）。使用者 2026-10-17 決定：整次執行的狀態搬進 helper；issue 正文維持以開 issue 的人判定歸屬並寫明；拒絕訊息提示切換帳號。
+
+## 14. 整次執行的狀態搬進 helper（第 9 輪）
+
+- [x] 14.1 先寫會失敗的測試 `plugins/issue-driven-dev/scripts/tests/edit-run/`：Part A 測 helper 的 `run-start`／`prepare`／`apply`／`discard`／`finish`（四種 mode、R5 與 override、拒絕／拒絕預覽／沒 apply／寫入失敗／寫入後才報錯／egress／隱私等級、`--correct` 經 run 的各種結局）；Part B 把 SKILL 每個步驟區塊抽出來，一個區塊一個空環境的 zsh 與 bash，只代入前一步印出的值。驗證：新 suite 以「尚未實作」失敗（63 條）。
+- [x] 14.2 helper：`_parse_args`、`_audit_marker` 拆出；新增 run 子命令、`_scrub_tier`、`_edit_prepare`／`_edit_compose`／`_edit_apply`、`_edit_backup`（使用者暫存目錄的 `idd-edit-backup/`）、`_write_diff`；correct-prepare 印 `DIFF=`。另修第 7 輪 helper 項目：`**Point` 引文、setext 整組比對、整則更正先去掉頂端標記、只剩標記為空、`unclosed-block`、作者閘門後才做歸檔前置、例外處理、state 的 sha 欄位、殘留 run 目錄、validate-target 驗 repo、拒絕訊息提示 `gh auth switch`、R5 列的 override 提示。驗證：`edit-run`、`correct-flow`（R9 節）全綠。
+- [x] 14.3 SKILL：Execution 改為五個單行步驟（start／prepare／apply／discard／finish）與預覽、差異、隱私自審；批次說明、閘門表註、Backup 管理、restore 範例、契約段。CI 安裝 zsh。舊的字串契約（in-place-correction、idd-edit fixture 14／15、gh-egress-rollout）改指向 helper；correct-flow 的 R8.1 由 edit-run 取代。驗證：`run-all-tests.sh` 全綠。
+- [x] 14.4 文件：決定 1、3 與正文歸屬的近似同步到規則檔、兩份 spec、design（新增兩個 decision 與五個子命令的契約列）、proposal、idd-edit、idd-comment（`--repo`、egress 不轉述、correction-file、指標條件的統一寫法）、idd-issue、idd-verify／idd-diagnose／idd-reorganize（`--type correction`）；CHANGELOG 第 9 輪、既有 mode 的結束碼與備份位置、Key Decisions 重建的副作用、被取代句子的註記。驗證：`spectra validate`。
+- [ ] 14.5 Verify 第 8 輪。驗證：#351 的 verify 留言。
+
 
 

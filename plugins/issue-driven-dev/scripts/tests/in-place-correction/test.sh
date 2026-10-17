@@ -193,8 +193,8 @@ assert_grep "verbatim-preserve names Original text quotations" "Original text" "
 refute_grep "verbatim-preserve no longer claims the whole body above ---" "Issue body above the \`---\` separator" "$VERBATIM"
 
 assert_output_grep "idd-edit declares the category" "(category: in-place-correction)" "$SKILLS/idd-edit/SKILL.md"
-assert_output_grep "idd-edit lists the correct_prepare task" "correct_prepare" "$SKILLS/idd-edit/SKILL.md"
-assert_output_grep "idd-edit lists the correct_apply task" "correct_apply" "$SKILLS/idd-edit/SKILL.md"
+assert_output_grep "idd-edit lists the prepare task" 'TaskCreate(name="prepare_targets"' "$SKILLS/idd-edit/SKILL.md"
+assert_output_grep "idd-edit lists the apply task" 'TaskCreate(name="apply_or_discard"' "$SKILLS/idd-edit/SKILL.md"
 
 ERRATA="$(awk '/^#### Template: `errata`/{f=1} f&&/^#### Template: /&&!/errata/{exit} f' "$SKILLS/idd-comment/SKILL.md")"
 assert_grep "errata routes your own comment to idd-edit --correct" "--correct" "$ERRATA"
@@ -306,7 +306,7 @@ for s in idd-verify idd-diagnose idd-reorganize; do
 done
 # Round 6: the --correct flow moved into the helper; its behavior is exercised
 # end to end in scripts/tests/correct-flow (re-read E3, fetch failure E7, …).
-assert_output_grep "idd-edit delegates --correct to correct-apply" "correct-apply" "$SKILLS/idd-edit/SKILL.md"
+assert_output_grep "the run delegates --correct to correct-apply" "_captured(correct_apply_subcmd" "$HELPER"
 assert_output_grep "correct-apply re-reads the target after confirmation" 'return _refused("changed-since-preview")' "$HELPER"
 refute_output_grep "idd-edit has no global ISSUE_BODY_TARGET routing" "ISSUE_BODY_TARGET" "$SKILLS/idd-edit/SKILL.md"
 assert_output_grep "idd-comment errata self path takes --correction-file" "--correction-file" "$SKILLS/idd-comment/SKILL.md"
@@ -414,13 +414,14 @@ fi
 
 # F2 + F11. skill contract: fetch failures and declines have their own buckets
 EDIT_SKILL="$SKILLS/idd-edit/SKILL.md"
-assert_output_grep "Step 2 checks the fetch's exit code" 'REFUSED_TARGETS+=("$TARGET fetch-failed")' "$EDIT_SKILL"
+assert_output_grep "prepare checks the fetch" '_edit_refused(real, target, "fetch-failed")' "$HELPER"
 require "both --correct fetches refuse as fetch-failed (prepare and apply)" \
   test "$(grep -c '_refused("fetch-failed"' "$HELPER")" -ge 2
 assert_output_grep "a missing section has its own refusal reason" "section-not-found" "$EDIT_SKILL"
 assert_output_grep "a declined preview cleans up and is reported" "declined" "$EDIT_SKILL"
-assert_output_grep "the preview shows the composed full text" '用 Read 工具讀上面 `PREVIEW=` 那一行的路徑並**完整**顯示' "$EDIT_SKILL"
-assert_output_grep "validate-target receives the mode" 'validate-target "$VALIDATE_ARG" "$REPO" "$OVERRIDE_USER_CONTENT" "$MODE"' "$EDIT_SKILL"
+assert_output_grep "the preview shows the composed full text" '用 Read 工具讀 `PREVIEW=` 那一行的路徑：`--correct` **完整**顯示' "$EDIT_SKILL"
+assert_output_grep "the preview shows the diff" '用 Read 工具讀 `DIFF=` 那一行的路徑並完整顯示' "$EDIT_SKILL"
+assert_output_grep "validate-target receives the mode" 'validate_target_subcmd([num, repo, meta["override"], meta["mode"]])' "$HELPER"
 
 # F5 / F9 / F10 / F12. doc contracts
 assert_output_grep "idd-comment errata routing asks with --correct, so a bot goes to errata" \
@@ -549,13 +550,13 @@ assert_eq "only the live mention is listed" "alice" "$(cat "$WORK/g11.out")"
 
 # G12. skill contracts
 assert_output_grep "correct-prepare runs the egress check before anything is archived" '_egress(["check", "--body-file", preview' "$HELPER"
-assert_output_grep "existing mentions are attested" "existing-mentions" "$EDIT_SKILL"
-assert_output_grep "--replace checks section-replace's exit code" 'section-replace "$BACKUP_FILE" "$SECTION_FLAG" "$REPL_FILE") || {' "$EDIT_SKILL"
-assert_output_grep "a staging failure is recorded, not fatal" "stage-failed" "$EDIT_SKILL"
-assert_output_grep "working copies live in a private per-run directory" 'WORK_DIR=$(mktemp -d' "$EDIT_SKILL"
-assert_output_grep "the written body is compared with the preview" "differs-from-preview" "$EDIT_SKILL"
-assert_output_grep "a run where something was declined exits 9" '[ "${#DECLINED_TARGETS[@]}" -gt 0 ] && exit 9' "$EDIT_SKILL"
-assert_output_grep "a failed eval stops the run" 'eval "$PARSE_OUT" ||' "$EDIT_SKILL"
+assert_output_grep "existing mentions are attested at the write" '+ _mention_args(st["mentions"])' "$HELPER"
+assert_output_grep "--replace checks section-replace's exit code" '"section-ambiguous"}.get(src, "section-not-found")' "$HELPER"
+assert_output_grep "a staging failure is recorded, not fatal" '_edit_refused(real, target, "stage-failed")' "$HELPER"
+assert_output_grep "working copies live in a private per-run directory" 'tempfile.mkdtemp(prefix=RUN_PREFIX)' "$HELPER"
+assert_output_grep "the written body is compared with the preview" '_edit_refused(real, target, "differs-from-preview")' "$HELPER"
+assert_output_grep "a run where something was declined exits 9" 'if count["declined"]:' "$HELPER"
+refute_output_grep "the SKILL evals nothing any more" 'eval "' "$EDIT_SKILL"
 assert_output_grep "idd-comment falls back to an errata comment when idd-edit refuses" "改貼 errata" "$SKILLS/idd-comment/SKILL.md"
 
 # ── H. round 5 (verify #351 round 4) ──────────────────────────────────────
@@ -563,10 +564,10 @@ echo "H. round 5"
 
 # H1. the SKILL's working directory is one archive --from-file accepts, even
 #     where TMPDIR is under /var (macOS) — executed, not just grepped
-WD_LINE="$(grep -m1 -E '^WORK_DIR=\$\(mktemp -d ' "$EDIT_SKILL")"
-assert_output_grep "the SKILL uses the sanctioned temp idiom" 'WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/idd-edit-XXXXXX")' "$EDIT_SKILL"
+#     (round 9: the SKILL no longer makes its own directory; the helper's
+#     run directory sits in the same place, so the idiom is tested directly)
 H1REPO="$WORK/h1repo"; mkdir -p "$H1REPO"; git -C "$H1REPO" init -q
-WORK_DIR=""; TMPDIR_SAVE="${TMPDIR-}"; eval "export TMPDIR=/var/tmp; ${WD_LINE%%||*}"
+TMPDIR_SAVE="${TMPDIR-}"; export TMPDIR=/var/tmp; WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/idd-edit-XXXXXX")"
 printf 'old text\n' >"$WORK_DIR/comment-1-abc"
 (cd "$H1REPO" && IDD_EDIT_HELPER_TEST_MODE=1 IDD_EDIT_HELPER_NOW=2026-10-16T00:00:00Z python3 "$HELPER" archive comment 1 --from-file "$WORK_DIR/comment-1-abc" --repo o/r) >"$WORK/h1.out" 2>"$WORK/h1.err"
 assert_exit "archive accepts a working copy from the SKILL's own working directory" 0 "$?"
@@ -581,12 +582,12 @@ assert_exit "/etc/hosts is still refused" 5 "$RC"
 if [ -n "$TMPDIR_SAVE" ]; then export TMPDIR="$TMPDIR_SAVE"; else unset TMPDIR; fi
 
 # H2/H3. skill contracts: a failed write is a refusal; exit codes do not overlap
-assert_output_grep "a failed PATCH is recorded in its own bucket" 'WRITE_FAILED_TARGETS+=("$TARGET rc=$EGRESS_RC")' "$EDIT_SKILL"
-assert_output_grep "a failed write makes the run exit 4" '[ "${#WRITE_FAILED_TARGETS[@]}" -gt 0 ] && exit 4' "$EDIT_SKILL"
-assert_output_grep "unverified writes exit 7" '[ "${#UNVERIFIED_TARGETS[@]}" -gt 0 ] && exit 7' "$EDIT_SKILL"
+assert_output_grep "a failed PATCH is recorded in its own bucket" '_record(real, target, "write-failed"' "$HELPER"
+assert_output_grep "a failed write makes the run exit 4" 'if refused or count["write-failed"]:' "$HELPER"
+assert_output_grep "unverified writes exit 7" 'if count["unverified"]:' "$HELPER"
 assert_output_grep "idd-comment reads exit 9 as declined" "| 9 |" "$SKILLS/idd-comment/SKILL.md"
 assert_output_grep "idd-comment reads exit 7 as written but unconfirmed" "| 7 |" "$SKILLS/idd-comment/SKILL.md"
-assert_output_grep "--last reads every page of comments" 'comments" --paginate' "$EDIT_SKILL"
+assert_output_grep "--last reads every page of comments" '"--paginate", "--jq", ".[-1].id"' "$HELPER"
 
 # H5. a marker inside a fenced example is not a live marker
 printf '## Notes\nwrong\n\n```md\n<!-- idd:comment type=errata date=2026-01-01 target-comment=5 -->\n```\n\n<!-- idd:comment type=errata date=2026-10-01 target-comment=7 -->\n\n## Next\n' >"$WORK/fenced-marker.md"
@@ -647,7 +648,7 @@ run_helper h16e check-correction "$WORK/body.md" "## Expected" "$WORK/r-csprefix
 assert_exit "a replacement that adds a Current Status variant → exit 6" 6 "$RC"
 
 # H17. author-unknown only for --correct; idd-comment fallbacks
-assert_output_grep "Step 1.5 does not run for --correct (correct-prepare gates the author after reading)" 'if [ "$MODE" != "--correct" ]; then' "$EDIT_SKILL"
+assert_output_grep "--correct goes straight to correct-prepare (it gates the author after reading)" 'rc, out = _captured(correct_prepare_subcmd, argv)' "$HELPER"
 run_helper h17t parse-args 'comment:1' '#許' --append --body x --reason r
 refute_output_grep "TARGETS never carry raw non-ASCII" "許" "$WORK/h17t.out"
 assert_output_grep "idd-comment posts errata when the author cannot be determined" "無法判定作者時改貼 errata" "$SKILLS/idd-comment/SKILL.md"

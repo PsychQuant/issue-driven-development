@@ -147,37 +147,39 @@ for fixture in "$FIXTURES_DIR"/*/; do
     fi
 done
 
-# ── Fixture 14 (#158): batch × R5 per-comment-refuse SKILL contract ──────────
-# The batch/R5 semantics live in SKILL.md prose (the per-target outer loop is
-# AI-executed bash); the falsifiable form is a prose-contract check integrated
-# into this suite's counters. Decided 2026-07-11: (i) per-comment refuse +
-# continue; override = all-targets + shared reason; exit 4 iff any refused.
+# ── Fixture 14 (#158) + 15 (#273): batch outcome and the egress band ───────
+# Round 9 (#351) moved the run's state and its exit code from SKILL bash into
+# the helper (run-start / prepare / apply / discard / finish), because shell
+# state did not survive the user's confirmation. scripts/tests/edit-run runs
+# these semantics end to end; the needles here pin where they live. Decided
+# 2026-07-11: (i) per-comment refuse + continue; override = all-targets +
+# shared reason; exit 4 iff any refused.
 SKILL_MD="$REPO_ROOT/plugins/issue-driven-dev/skills/idd-edit/SKILL.md"
-f14() { # name mode(assert|refute) needle
-    local name="$1" mode="$2" needle="$3" hit=0
-    grep -qF -- "$needle" "$SKILL_MD" && hit=1
+HELPER_PY="$REPO_ROOT/plugins/issue-driven-dev/scripts/idd-edit-helper.py"
+f14() { # name mode(assert|refute) needle [file]
+    local name="$1" mode="$2" needle="$3" file="${4:-$SKILL_MD}" hit=0
+    grep -qF -- "$needle" "$file" && hit=1
     if { [ "$mode" = assert ] && [ "$hit" = 1 ]; } || { [ "$mode" = refute ] && [ "$hit" = 0 ]; }; then
         PASS=$((PASS + 1)); echo "PASS: $name"
     else
         FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name"); echo "FAIL: $name (needle: $needle)"
     fi
 }
-f14 "f14a: R5 refuse records + continues (no batch kill)"      assert 'REFUSED_TARGETS+=("$TARGET R5")'
-f14 "f14a2: refuse branch continues the loop"                  assert '不中斷 batch（#158 語意 (i)）'
-f14 "f14b: batch outcome report sums both refusal buckets"     assert 'edited: $EDITED_COUNT / refused: $REFUSED_TOTAL'
-f14 "f14b2: refused rows carry their reason tag (#351)"         assert '✗ REFUSED(${entry##* })'
-f14 "f14c: override semantics = all-targets + shared reason"   assert 'all-targets + reason 共用'
-f14 "f14d: deferred-to-158 note removed (decision landed)"     refute '設計 deferred to **[#158]'
-f14 "f14e: single-target degenerate equivalence documented"    assert '單 target 退化等價'
-f14 "f14f: exit contract — 4 iff any refused"                  assert 'M>0 → exit 4'
-
-# ── fixture 15 (#273): egress refusal band enters the batch outcome ──
-f14 "f15a: egress refusal bucket exists"                       assert 'EGRESS_REFUSED_TARGETS+='
-f14 "f15b: rc>=10 classified as refusal (band consumed)"       assert '-ge 10'
-f14 "f15c: egress refused rows highlighted with source tag"    assert '✗ REFUSED(egress)'
-f14 "f15d: Step 6 dispatches via the edit-comment verb"        assert 'gh-egress.sh" edit-comment'
-f14 "f15e: band-consumption doctrine sentence present"         assert 'per-comment 分類消費 band（10–15）'
-f14 "f15f: final exit covers both buckets"                     assert '[ "$REFUSED_TOTAL" -gt 0 ] && exit 4'
+f14 "f14a: R5 refusal is recorded per target"                   assert '_edit_refused(real, target, "R5")' "$HELPER_PY"
+f14 "f14a2: a refusal does not stop the batch"                  assert '不中斷 batch（#158 語意 (i)）'
+f14 "f14b: batch outcome report sums both refusal buckets"      assert 'refused = count["refused"] + count["egress-refused"]' "$HELPER_PY"
+f14 "f14b2: refused rows carry their reason tag (#351)"         assert '✗ REFUSED({why' "$HELPER_PY"
+f14 "f14c: override semantics = all-targets + shared reason"    assert 'all-targets + reason 共用'
+f14 "f14d: deferred-to-158 note removed (decision landed)"      refute '設計 deferred to **[#158]'
+f14 "f14e: single-target degenerate equivalence documented"     assert '單 target 退化等價'
+f14 "f14f: exit contract — 4 iff any refused"                   assert 'M>0 → exit 4'
+f15() { f14 "$1" "$2" "$3" "$HELPER_PY"; }
+f15 "f15a: egress refusal bucket exists"                        assert '_record(real, target, "egress-refused"'
+f15 "f15b: rc>=10 classified as refusal (band consumed)"        assert 'if rc >= 10:'
+f15 "f15c: egress refused rows highlighted with source tag"     assert '✗ REFUSED(egress)'
+f15 "f15d: the write dispatches via the edit-comment verb"      assert '_egress(["edit-comment", num'
+f15 "f15e: band-consumption doctrine sentence present"          assert 'per-comment 分類消費 band（10–15）'
+f15 "f15f: final exit covers both buckets"                      assert 'if refused or count["write-failed"]:'
 
 echo ""
 echo "================================"
