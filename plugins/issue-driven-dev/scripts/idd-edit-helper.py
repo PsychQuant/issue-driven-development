@@ -2214,7 +2214,20 @@ def _edit_apply(real, meta, target):
     if _sha256(new) != st["sha"]:
         err(f"✗ the prepared body of {target} changed after the preview — nothing written")
         return _edit_refused(real, target, "differs-from-preview")
+    # What prepare checked, checked again right before the write, as --correct
+    # does: the author gate, then the target itself — an edit made after the
+    # preview would otherwise be overwritten with the old text (round 9).
+    rc = validate_target_subcmd([num, meta["repo"], meta["override"], meta["mode"]])
+    if rc != 0:
+        return _edit_refused(real, target, "R5" if rc == 4 else ("author-unknown" if rc == 1 else "check-failed"))
     endpoint = _endpoint("comment", num, meta["repo"])
+    current = os.path.join(work, "current.md")
+    if not _fetch_body(endpoint, current):
+        err(f"✗ cannot re-read {target} — nothing written")
+        return _edit_refused(real, target, "fetch-failed")
+    if _sha256(current) != st["old_sha"]:
+        err(f"✗ {target} changed since the preview — nothing written; run again to see the new version")
+        return _edit_refused(real, target, "changed-since-preview")
     rc = _egress(["edit-comment", num, "--repo", meta["repo"], "--body-file", new,
                   "--scrub-attested", meta["scrub"]] + _mention_args(st["mentions"]))
     if rc >= 10:

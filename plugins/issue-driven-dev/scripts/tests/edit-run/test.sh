@@ -201,6 +201,25 @@ h a6cp prepare --run "$RUN" --target comment:211
 assert_eq "a mention the edit adds is refused before the preview" "egress" "$(val REASON "$WORK/a6cp.out")"
 h a6cf finish --run "$RUN"
 
+echo "A6b. apply checks again what prepare checked"
+mkrec comment-216.json kiki830621 MEMBER "before"
+start a6d comment:216 --append --body-file "$WORK/fix.md" --reason r
+h a6dp prepare --run "$RUN" --target comment:216
+mkrec comment-216.json kiki830621 MEMBER "someone edited it after the preview"
+h a6da apply --run "$RUN" --target comment:216 --scrub-attested "$SCRUB"
+assert_eq "a comment changed after the preview is not overwritten" "changed-since-preview" "$(val REASON "$WORK/a6da.out")"
+assert_eq "the newer text survives" "someone edited it after the preview" "$(body_of comment-216.json)"
+h a6df finish --run "$RUN"
+mkrec comment-217.json kiki830621 MEMBER "mine"
+start a6e comment:217 --replace --scope whole-comment --body-file "$WORK/fix.md" --reason r
+h a6ep prepare --run "$RUN" --target comment:217
+printf 'someone-else' >"$FAKE_GH_STORE/user"
+h a6ea apply --run "$RUN" --target comment:217 --scrub-attested "$SCRUB"
+printf 'kiki830621' >"$FAKE_GH_STORE/user"
+assert_eq "apply runs the author gate again" "R5" "$(val REASON "$WORK/a6ea.out")"
+assert_eq "the comment is unchanged" "mine" "$(body_of comment-217.json)"
+h a6ef finish --run "$RUN"
+
 echo "A7. --correct through the run"
 mkrec comment-212.json kiki830621 MEMBER "$SECTION_BODY"
 start a7 comment:212 --correct --section "## Notes" --body-file "$WORK/fix.md" --reason r

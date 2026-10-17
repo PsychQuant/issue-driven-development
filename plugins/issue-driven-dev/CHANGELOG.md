@@ -210,6 +210,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   earlier block printed (`RUN`, `TARGET`, `SCRUB`, `STATE`); the exit code comes from `finish`. The new
   `scripts/tests/edit-run` runs the SKILL's own blocks one per fresh shell, with an empty environment, under zsh
   and bash; CI installs zsh. The round-8 two-shell test, which seeded the missing variables, is gone.
+- `apply` in the existing modes also runs the author gate again and re-reads the target, refusing as
+  `changed-since-preview` when it changed after the preview — before, an `--append` or `--replace` rebuilt from the
+  previewed text overwrote an edit made in between (as in 3.4.0).
 - The preview shows the diff from the current text as well as the new text; `apply` takes `--scrub-attested` only
   after the privacy self-review of the preview, at the run's tier.
 - The reply template's `> **Point i**` quotation of a reviewer is protected like `Original text`; a setext heading
