@@ -263,7 +263,7 @@ mkrec comment-230.json kiki830621 MEMBER "x"
 start a8a comment:230 --append --body-file "$WORK/fix.md" --reason r
 h a8ap prepare --run "$RUN" --target comment:230
 assert_exit "an upgraded 0755 backup directory still takes the backup" 0 "$RC"
-assert_eq "and is now private" "700" "$(stat -f '%Lp' "$BK" 2>/dev/null || stat -c '%a' "$BK")"
+assert_eq "and is now private" "700" "$(python3 -c 'import os,sys; print(format(os.stat(sys.argv[1]).st_mode & 0o777, "o"))' "$BK")"
 # a stricter tier than the run's is accepted; the write goes out at that tier
 h a8aa apply --run "$RUN" --target comment:230 --scrub-attested enforce
 assert_eq "a stricter attested tier is accepted" "edited" "$(val RESULT "$WORK/a8aa.out")"
