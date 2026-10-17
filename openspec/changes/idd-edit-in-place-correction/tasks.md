@@ -67,7 +67,7 @@
 - [x] 11.3 SKILL：新增 Step 1.6，`--correct` 只呼叫三個子命令；刪除 Step 5.5 與 Steps 2–7 裡的 `--correct` 分支；task 清單改名；restore 範例的 `BACKUP_ID`。契約測試改指向 helper。驗證：`idd-edit`、`idd-edit-contract`、`in-place-correction` 全綠。
 - [x] 11.4 spec、design（新增 decision 與三個子命令的契約）、CHANGELOG。驗證：`spectra validate`。
 - [x] 11.5 Verify 第 5 輪：FAIL，findings 40（第 2–4 輪 42、52、63），CRITICAL 0；DA 因額度未跑完。報告在 #351 的 verify 留言（comment 6229416722）。
-- [ ] 11.6 套用 Proposed Correction（#351 正文 `## Related` 中 #347 那一行），在主 repo 以本 branch 的 helper 執行，讓歸檔留在長期存在的 clone。驗證：#351 正文。
+- [x] 11.6 套用 Proposed Correction：2026-10-17 以本 branch（`6cc4f75`）的 `/idd-edit --correct` 從主 repo 照 SKILL 逐步執行，兩筆都先給使用者看差異與預覽、確認後寫入 —— `## Related` 的 #347 那一行（backup id `issue-351-body-20261017T145233Z`），與 `### 已定案` 的「只改你自己寫的內容」（`issue-351-body-20261017T145544Z`）。兩筆都讀回一致、finish exit 0、歸檔權限 0000 且被 ignore、沒有殘留的工作目錄；`restore --target issue:351` 對真實 GitHub 列出兩個已檢查的 id、exit 2、正文未變。這是搬進 helper 之後第一次對真實 GitHub 執行。
 
 ## 12. Verify 第 5 輪修正
 
@@ -104,7 +104,8 @@
 - [x] 16.1 先寫會失敗的測試：edit-run A9（`--correct` 以較嚴等級寫入、沒列出的 target、PICK 的逐一對帳與不屬於該 issue 的 comment、PICK 指向已有的 target、跨 TMPDIR 的 `--correct`、外來 run 目錄、diff 的結尾換行、`$HOME//`、gh token 目錄、bot 開的 issue 正文）與所有區塊不讀變數的靜態檢查；correct-flow R9.9（restore --target、偽造標記）、E4 實際數工作目錄；correction-archive 的 `--reason` 提到歸檔路徑。驗證：新斷言以「尚未實作」失敗。
 - [x] 16.2 helper：`_correct_prepare_text`（run 傳文字不傳路徑）、`_correct_apply` 的 scrub、SCRUB= 輸出、`_run_meta_problem` 與 body.md 檢查、`_comment_issue` 與 PICK 紀錄、prepare 的 target 閘門、`_latest` 沿用 pick、apply 的例外分段、`_write_diff` 的結尾換行、`_home_path`、bot 正文訊息、PICK 去重、備份目錄的第三個退路、gh token 目錄、`restore --target`；hook 的 `--reason`。驗證：edit-run、correct-flow、correction-archive 全綠。
 - [x] 16.3 SKILL 與文件：prepare 的 `--pick`、restore 改用 `--target`、`<REPO>` 單引號與格式、備份找回、STATE 重抄仍不符的處置、untitled 限制只限正文（idd-edit 與三個提議 skill）；spec（STATE、等級、untitled、備份退路、PICK、run 內容、跨暫存目錄、parse-args、restore --target）；design 四處過時描述；proposal 的 run 決定與兩個 BREAKING；plugin 與 marketplace 描述；CHANGELOG 第 11 輪與 3.4.0 讀不到目標的基準。驗證：`spectra validate`、`run-all-tests.sh`。
-- [ ] 16.4 Verify 第 10 輪，或改走驗收（11.6 實機套用）後合併 —— 由使用者決定。驗證：#351 的留言。
+- [x] 16.4 使用者 2026-10-17 選定：先實機驗收（11.6，通過），再跑第 10 輪 verify。
+- [ ] 16.5 Verify 第 10 輪；沒有 HIGH 以上就準備合併。驗證：#351 的 verify 留言。
 
 
 
