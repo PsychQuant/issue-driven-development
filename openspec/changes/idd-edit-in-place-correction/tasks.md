@@ -179,7 +179,15 @@
 
 ## 25. Verify 第 18 輪修正（第 20 輪）
 
-- [x] 25.1 先寫會失敗的測試（correction-archive）：黏住的 `;`／`&&`、註解撇號、`cd`／`pushd` 後的相對目標、`.*`、PowerShell `-Recurse | ForEach-Object`、repo 外的含空白目標與變數目標、兄弟 repo 的 `..`、裝 repo 的資料夾的 `.`；放行：repo 外的 `chmod -R u+x scripts` 與 `grep -R chmod .`、repo 內的非遞迴 chmod 與 `ls -lrt`；`chmod-ok`、`grep-chmod` 改為拒絕。驗證：13 條在 71df95b 上失敗。
+- [x] 25.1 先寫會失敗的測試（correction-archive）：黏住的 `;`／`&&`、註解撇號、`cd`／`pushd` 後的相對目標、`.*`、PowerShell `-Recurse | ForEach-Object`、repo 外的含空白目標與變數目標、兄弟 repo 的 `..`、裝 repo 的資料夾的 `.`；放行：repo 外的 `chmod -R u+x scripts` 與 `grep -R chmod .`、repo 內的非遞迴 chmod 與 `ls -lrt`；`chmod-ok`、`grep-chmod` 改為拒絕。驗證：12 條在 71df95b 上失敗（apos-cmt 在 repo 內，測的是 repo 內規則）。
 - [x] 25.2 hook：`_permission_change_in` 不再把詞歸給指令——含歸檔的 repo 內一律拒絕；別處每個詞都當目標，含 `$`、反引號、萬用字元或 shlex 無法配對的引號就拒絕；`_archive_below` 加查直接子目錄；`_RECURSIVE` 只有大寫 `R` 算短旗標；PowerShell `-Recurse`／`ForEach-Object`、`gchmod` 等、反引號＋CRLF；檢查出錯時拒絕該次呼叫。驗證：correction-archive 322 條全綠；47 個已知繞法、12,000 筆網格、400 筆註解網格、360 筆 chmod 網格以真實 bash／zsh 比對全擋。
 - [x] 25.3 文件：correction-archive spec（新規則與兩個 scenario、matcher 含 Monitor）、hook docstring（接受的落差、輸入錯誤的處理）、design（新增 fail-closed 決定、Risks、延遲 40–45 ms）、README、idd-edit SKILL（`--reason` 含路徑時先問使用者）、CHANGELOG（第 20 輪、Changed、Added 的工具清單與延遲、舊條目加註）、測試標題。驗證：`spectra validate`、`run-all-tests.sh`。
-- [ ] 25.4 Verify 第 19 輪（只審第 20 輪的差異）；沒有 HIGH 以上，就請使用者確認合併。驗證：#351 的 verify 留言。
+- [x] 25.4 Verify 第 19 輪（只審第 20 輪的差異）；沒有 HIGH 以上，就請使用者確認合併。驗證：#351 的 verify 留言。
+- [x] 25.5 25.4 的結果：第 19 輪 FAIL，findings 43（HIGH 7／MEDIUM 9／LOW 16／INFO 11）。HIGH 全在「工作目錄在 repo 外」時的目標解析（黏住的運算子、括號路徑被 `strip` 剝掉的 regression、`cd` 後的相對目標、無法列出的目錄放行）；DA 以使用者真實紀錄量到無歸檔 repo 的誤擋從 1 筆增為 237 筆。使用者決定（2026-10-18）：遞迴改權限只在歸檔附近檢查。
+
+## 26. Verify 第 19 輪修正（第 21 輪）
+
+- [x] 26.1 先寫會失敗的測試（correction-archive）：repo 外的 out-*、sibling-up 改為放行（已知限制）；新增無歸檔 repo 的 join 誤擋（fp-join）、 `.claude/.idd` 內的相對讀取與 chmod、同一行 `cd` 後的相對讀取、無法列出的工作目錄、PowerShell `-r`／`%`、`gfind`／`gxargs`、檢查出錯時拒絕且不提解除開關；放行：無歸檔 repo 裡寫 script 的 heredoc、`cd .claude/.idd && ls attachments`。
+- [x] 26.2 hook：`_permission_change_in` 只看工作目錄是否在歸檔附近（`_near_archive`：歸檔在其上、其直接子目錄是含歸檔的 repo、或無法列出），不再解析目標，刪掉 `_archive_below`、`_shell_words`、`$`／萬用字元規則與 shlex；`_candidates` 把每個片段也以工作目錄與指令中存在的目錄解析（只在含 `archive` 時 join）；`_decide` 抽出；拒絕訊息補上分開執行、Write 工具、請使用者執行；檢查出錯的訊息不再叫 agent 建立解除開關。join 只在所指的歸檔確實存在時才算（無歸檔 repo 的 `.claude/.idd` 加上無關的 `archive/` 資料夾不再誤擋）。驗證：correction-archive 347 條全綠；歸檔附近 68,040 筆網格以真實 bash／zsh 比對全擋，7 個相對路徑情境全擋；使用者真實紀錄中無歸檔目錄的誤擋為 0（9394aaf 為 198），歸檔附近 59 筆（多為本 repo 的 verify 腳本）；`run-all-tests.sh` 63 個 suite 全綠。
+- [x] 26.3 文件：spec（新規則、兩個 scenario、Monitor 欄位）、docstring、design（決定改寫、Risks、輪次）、README、CHANGELOG（第 21 輪、Changed、第 19／20 輪加註）。驗證：`spectra validate`、`run-all-tests.sh`。
+- [ ] 26.4 Verify 第 20 輪（只審第 21 輪的差異）；沒有 HIGH 以上，就請使用者確認合併。驗證：#351 的 verify 留言。

@@ -392,7 +392,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ~380 to ~220 lines. Checked against real bash and zsh: the 47 known bypasses, the 12,000-command grid and a
   400-command grid of comments on later lines are all denied.
 
+### Fixed (round 21 — verify round 19 findings, before release)
+
+- Read guard, recursive permission changes: round 20 still resolved targets when the working directory was outside
+  the repository, and verify round 19 found seven ways past it (a spaced or parenthesised path glued to `>`, `;`,
+  `&&`; a `cd` before `chmod`; `strip` eating a path's `)`; a folder the hook could not list). It also denied
+  ordinary scripts in repositories without an archive (237 of 1,697 permission-related commands in real sessions,
+  against 1 before). By user decision the check now runs only near the archive — inside a repository that holds it,
+  in the folder directly above one, or where the working directory cannot be listed — and denies there whatever the
+  target; elsewhere it is not checked (documented limit). Target resolution, shlex and the `$`/glob rule are gone.
+- Paths in a command are also resolved against the working directory and against every existing directory the
+  command names, so `cat archive/edits/a.md` or `chmod u+r ../archive/edits/a.md` from inside `.claude/.idd`, and
+  `cd .claude/.idd && head archive/edits/a.md` from the repository, are denied. A joined path counts only when the
+  archive directory it names exists, so a repository with `.claude/.idd` and an unrelated `archive/` folder is not.
+- PowerShell `-r`/`-rec` abbreviations and the `%`/`foreach` aliases, and `gfind`/`gxargs`/`fdfind`, count as
+  recursive markers.
+- The permission denial says to run unrelated parts separately and to write file contents with the Write tool; the
+  checking-error denial no longer tells the agent to turn the guard off.
+
 ### Fixed (round 20 — verify round 18 findings, before release)
+
+*(Round 21: the "elsewhere" rule below was removed — recursive permission changes are now checked only near the
+archive.)*
 
 - Read guard, recursive permission changes: round 19 attributed the flag and target to the words after the permission
   command, which a glued `;` (`true;chmod -R u+r "<repo with a space>"`), an apostrophe in a comment that stops shlex,
@@ -405,6 +426,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   way out.
 
 ### Fixed (round 19 — verify round 17 findings, before release)
+
+*(Rounds 20–21: the target rules below were replaced — the words are not attributed to commands, and recursive
+permission changes are checked only near the archive.)*
 
 - Read guard: a backslash-newline joins a path or a command name in the shell (`arch\` + newline + `ive`, `chm\` +
   newline + `od`); each command is now checked in two readings — continuations joined, and read as line breaks (a
@@ -475,11 +499,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The read guard denies any Bash / PowerShell / Monitor command that names `.claude/.idd/archive`, a commit
   message or issue body included (3.4.0 had no guard; within 3.5.0 earlier rounds exempted message values). Leave
   the path out of the text, or write it to a file with the Write tool and pass `git commit -F` / `gh … --body-file`.
-  Recursive permission changes: inside a repository that holds the archive every `chmod`/`chown`/`chgrp`/`chflags`/
-  `setfacl` with `-R` (or run by `find`/`xargs`/`fd`) is denied, whatever its target — and so is any command that
-  merely contains both words, such as `grep -R chmod .` (use the Grep tool); elsewhere one is denied when a word is
-  the archive, a repository that holds one or the folder directly above it, or when the command holds `$`, a
-  backtick, a glob or brace character, or unbalanced quotes. Change the files you mean without `-R`.
+  Recursive permission changes are checked only near the archive: when the working directory is inside a
+  repository that holds it or is the folder directly above one, any command that contains a permission command
+  (`chmod`, `chown`, `chgrp`, `chflags`, `setfacl`) and a recursive marker (`-R`, `--recursive`, or `find`/`xargs`/
+  `fd`) is denied, whatever its target — `grep -R chmod .`, `cp -R a b && chmod +x b/run` and a heredoc that writes
+  a script mentioning both included. Run the parts separately, write files with the Write tool, search with the Grep
+  tool, or change the files without `-R`. From any other directory they are not checked.
 - `--scope` other than `whole-comment` is refused at start (exit 3) in every mode; 3.4.0 ignored it for `--append`
   and `--prepend-note`.
 - Editing a reply that quotes user-pasted points (`type=reply` + `points-from=user-pasted`) asks the #272 question in

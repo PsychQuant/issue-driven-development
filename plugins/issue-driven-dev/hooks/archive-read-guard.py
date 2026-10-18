@@ -9,15 +9,21 @@ again, which is the failure #351 exists to stop.
 
 This hook is the first of two layers. It denies any Read / Grep / Glob / Edit /
 Write / NotebookEdit call whose path argument points into the archive, and any
-Bash / PowerShell / Monitor command whose text names it. It can only compare strings, so
+Bash / PowerShell / Monitor command whose text names it; each path-like piece is
+also resolved against the working directory and against every existing
+directory the command names, so `cat archive/edits/a.md` from inside
+.claude/.idd and `cd .claude/.idd && cat archive/edits/a.md` are caught; a
+joined path counts only when the archive directory it names exists
+(round 21). It can only compare strings, so
 a recursive read that never spells the path (`grep -r .`) passes here; the
 second layer — archive files are mode 0000 — covers that case.
 
 Threat model: accidental reads, not an agent deliberately working around the
 guard. This hook compares text while the shell runs it, so the two can always
 be made to disagree (a path or a flag assembled from variables, globs, brace
-expansion, the escapes inside $'…', eval, another program that changes modes
-such as a python -c one-liner). Those differentials are accepted: the file
+expansion, the escapes inside $'…', eval, a relative path after more than one
+cd step, another program that changes modes such as a python -c
+one-liner). Those differentials are accepted: the file
 mode is what guarantees an unreadable archive; this hook only stops the
 ordinary `cat`/`grep`/Read that would otherwise happen by accident.
 
@@ -35,14 +41,15 @@ as line breaks — so either can only deny more (round 19).
 A recursive permission change would undo the second layer, after which a
 recursive read gets the files (round 3). A command that holds a permission
 command (chmod, chown, chgrp, chflags, setfacl) and a recursive marker (-R,
---recursive, -Recurse, or find / xargs / fd / ForEach-Object) is therefore
-refused from inside a repository that holds the archive, whatever its target;
-elsewhere it is refused when any word is the archive, a repository root that
-holds one, or a folder directly above such a repository, or when the command
-holds something the guard cannot resolve ($, a backtick, a glob or brace
-character, quotes shlex cannot balance). The words are not attributed to
-commands: every attempt to do so was beaten (rounds 18–20). A directory more
-than one level above a repository is not searched from outside it. The file
+--recursive; for PowerShell -r, -rec, -Recurse; or a walker such as find,
+xargs, fd, ForEach-Object, %) anywhere is
+therefore refused when the working directory is inside a repository that holds
+the archive or is the folder directly above one (or cannot be listed),
+whatever the command's target. The words are not attributed to commands and
+targets are not resolved: every attempt to do either was beaten (rounds
+18–20). From any other working directory a recursive permission change is not
+checked (round 21, user decision 2026-10-18): checking it there meant resolving
+targets, and it denied scripts in repositories that have no archive. The file
 ~/.cache/idd/archive-read-guard.disabled, created by a human, turns the guard
 off.
 
@@ -54,7 +61,6 @@ that call (round 20).
 import json
 import os
 import re
-import shlex
 import sys
 
 NEEDLE = ".claude/.idd/archive"
@@ -72,15 +78,17 @@ REASON = (
     "--body-file (a heredoc that names the path is denied too)."
 )
 PERMISSION_REASON = (
-    "Blocked: a recursive permission change (chmod, chown, chgrp, chflags or "
-    "setfacl with -R / --recursive, or run by find, xargs, fd or ForEach-Object). "
-    "Inside a repository that holds the IDD correction archive every one is "
-    "refused, and elsewhere one whose target is the archive, a directory above "
-    "it, or something the guard cannot resolve (a variable, a glob, a command "
-    "substitution) — the archive files are mode 0000 so that no recursive read "
-    "reaches them (#351). Change the files you mean without -R (for example "
-    "chmod u+x path/to/file), and search text with the Grep tool rather than a "
-    "shell command that mentions chmod -R."
+    "Blocked: this command holds a permission command (chmod, chown, chgrp, "
+    "chflags or setfacl) and a recursive marker (-R, --recursive, -Recurse, or "
+    "find / xargs / fd / ForEach-Object), run from inside a repository that "
+    "holds the IDD correction archive or from the folder directly above one. "
+    "The archive files are mode 0000 so that no recursive read reaches them "
+    "(#351). The words are not attributed to commands, so another program's -R, "
+    "a heredoc that writes a script, or a search for 'chmod' counts too. Change "
+    "the files you mean without -R (for example chmod u+x path/to/file), run "
+    "unrelated parts as separate calls, write file contents with the Write tool, "
+    "and search with the Grep tool. If a recursive permission change is really "
+    "needed, ask the user to run it."
 )
 
 PATH_FIELDS = {
@@ -126,10 +134,12 @@ def _hits(candidate):
 # so the guard fails closed instead (user decision 2026-10-18).
 PERMISSION_COMMANDS = ("chmod", "chown", "chgrp", "chflags", "setfacl", "gchmod", "gchown", "gchgrp")
 # commands that apply another command to a whole tree, as -R does
-_TREE_WALKERS = ("find", "xargs", "fd", "foreach-object")
+_TREE_WALKERS = ("find", "xargs", "fd", "gfind", "gxargs", "fdfind", "foreach-object", "foreach", "%")
 # -R in a short-flag cluster (capital R only: -r is not recursive for these
 # commands), --recursive and its GNU abbreviations (--rec…), PowerShell -Recurse
 _RECURSIVE = re.compile(r"-[A-Za-z]*R[A-Za-z]*|(?i:--rec[a-z]*|-recurse)")
+# PowerShell parameters ignore case and may be abbreviated: -r, -rec, -Recurs…
+_PS_RECURSIVE = re.compile(r"(?i)-r(e(c(u(r(se?)?)?)?)?)?")
 _NOT_PATH = re.compile(r"[^\w./~+@%-]+")
 
 
@@ -163,31 +173,19 @@ def _flat(text, powershell=False):
     return text.replace("'", "").replace('"', "")
 
 
-def _command_words(command, powershell=False):
-    """Path candidates in a shell command: every path-like piece of the flat
-    text of each reading, whatever the shell would make of the syntax."""
+def _command_pieces(command, powershell=False):
+    """Path-like pieces of the flat text of each reading, as written."""
     for reading in _variants(command, powershell):
         for piece in _NOT_PATH.split(_flat(reading, powershell)):
             if piece:
-                yield _norm_path(piece)
+                yield piece
 
 
-def _archive_below(target):
-    """True if `target` is the archive or inside it, a repository root that
-    holds one (or its .claude / .claude/.idd), or a folder whose direct
-    subdirectory is such a repository (`..` from a sibling repository).
-    A directory further up is not searched (round 20)."""
-    if _hits(_norm_path(target)):
-        return True
-    for suffix in (NEEDLE, ".idd/archive", "archive"):
-        candidate = os.path.join(target, suffix)
-        if os.path.isdir(candidate) and _hits(_norm_path(candidate)):
-            return True
-    try:
-        children = os.listdir(target) if os.path.isdir(target) else ()
-    except OSError:
-        return False
-    return any(os.path.isdir(os.path.join(target, c, NEEDLE)) for c in children)
+def _command_words(command, powershell=False):
+    """Normalized path-like pieces of the flat text of each reading, whatever
+    the shell would make of the syntax."""
+    for piece in _command_pieces(command, powershell):
+        yield _norm_path(piece)
 
 
 def _archives_around(cwd):
@@ -203,49 +201,35 @@ def _archives_around(cwd):
         d = parent
 
 
-def _shell_words(text, powershell=False):
-    """The shell's own words of one reading, a quoted path with a space kept
-    whole and glued operators trimmed (`"a b";`), or None when shlex cannot
-    split it (round 19–20)."""
+def _near_archive(cwd):
+    """True if cwd is inside a repository that holds the archive, or is the
+    folder directly above one; a folder the hook cannot list counts as near
+    (round 21)."""
+    if _archives_around(cwd):
+        return True
     try:
-        words = shlex.split(text.replace("\\", "/") if powershell else text)
-    except ValueError:
-        return None
-    return [w.strip(";&|()<>") for w in words]
+        children = os.listdir(cwd)
+    except OSError:
+        return True
+    return any(os.path.isdir(os.path.join(cwd, c, NEEDLE)) for c in children)
 
 
 def _permission_change_in(text, cwd, powershell=False):
-    """A recursive permission change that could reach the archive, in one
-    reading. A permission command and a recursive marker (-R, --recursive and
-    its abbreviations, -Recurse, or a tree walker such as find / xargs / fd /
-    ForEach-Object) anywhere in the command make it one; the words are not
-    attributed to commands (round 20: every attribution rule was beaten).
-    - From inside a repository that holds the archive, every such command is
-      refused, whatever its target.
-    - Elsewhere, every word counts as a target — the flat pieces and the
-      shell's whole words — and the command is refused when one is the archive
-      or a directory above it, or when a target cannot be resolved: a
-      variable, a command substitution, a glob or brace pattern, or quotes
-      shlex cannot balance."""
+    """A recursive permission change near the archive, in one reading: a
+    permission command and a recursive marker (-R, --recursive and its
+    abbreviations, -Recurse, or a tree walker such as find / xargs / fd /
+    ForEach-Object) anywhere in the command, from a working directory near the
+    archive. The words are not attributed to commands and targets are not
+    resolved: every attempt to do either was beaten (rounds 18–21). From
+    anywhere else a recursive permission change is not checked."""
     flat = [w for w in re.split(r"[\s;&|<>()`{}]+", _flat(text, powershell)) if w]
     names = {os.path.basename(w).casefold() for w in flat}
     if not names & set(PERMISSION_COMMANDS):
         return False
-    if not (names & set(_TREE_WALKERS) or any(_RECURSIVE.fullmatch(w) for w in flat)):
+    marker = _PS_RECURSIVE if powershell else _RECURSIVE
+    if not (names & set(_TREE_WALKERS) or any(_RECURSIVE.fullmatch(w) or marker.fullmatch(w) for w in flat)):
         return False
-    if _archives_around(cwd):
-        return True
-    if re.search(r"[$`*?\[{]", text):
-        return True
-    shell = _shell_words(text, powershell)
-    if shell is None:
-        return True
-    for w in flat + shell:
-        if not w or w.startswith("-"):
-            continue
-        if _archive_below(os.path.normpath(os.path.join(cwd, os.path.expanduser(w)))):
-            return True
-    return False
+    return _near_archive(cwd)
 
 
 def _recursive_permission_change(command, cwd, powershell=False):
@@ -253,10 +237,43 @@ def _recursive_permission_change(command, cwd, powershell=False):
     return any(_permission_change_in(r, cwd, powershell) for r in _variants(command, powershell))
 
 
-def _candidates(tool, tool_input):
+def _candidates(tool, tool_input, cwd):
+    """Path-like strings of the call, each also resolved against the working
+    directory and, for a command, against every existing directory the
+    command names — so `cat archive/edits/a.md` from inside .claude/.idd and
+    `cd .claude/.idd && cat archive/edits/a.md` are caught (round 21). The
+    words are not attributed to commands. A join can name the archive only if
+    the piece or the base contains "archive", so only those joins are made,
+    and a join counts only when the archive it names exists — a repository
+    without one may still have .claude/.idd next to an unrelated archive/
+    folder."""
     if tool in COMMAND_TOOLS:
-        yield from _command_words(_as_text(tool_input.get("command")), tool == "PowerShell")
-        return
+        pieces = list(dict.fromkeys(_command_pieces(_as_text(tool_input.get("command")), tool == "PowerShell")))
+    else:
+        pieces = [c for c in _raw_candidates(tool, tool_input) if c]
+    bases = [cwd]
+    if tool in COMMAND_TOOLS:
+        bases += [d for d in (os.path.join(cwd, os.path.expanduser(p)) for p in pieces) if os.path.isdir(d)]
+    near = [p for p in pieces if "archive" in p.lower()]
+    for piece in pieces:
+        yield _norm_path(piece)
+    for base in dict.fromkeys(bases):
+        for piece in (pieces if "archive" in base.lower() else near):
+            joined = os.path.normpath(os.path.join(base, os.path.expanduser(piece)))
+            if _names_existing_archive(joined):
+                yield _norm_path(joined)
+
+
+_ARCHIVE_SEGMENT = re.compile(r"\.claude/\.idd/archive(?=/|$)", re.I)
+
+
+def _names_existing_archive(path):
+    """True if `path` passes through a .claude/.idd/archive directory that
+    exists on disk."""
+    return any(os.path.isdir(path[:m.end()]) for m in _ARCHIVE_SEGMENT.finditer(path))
+
+
+def _raw_candidates(tool, tool_input):
     for field in PATH_FIELDS.get(tool, ()):
         yield _norm_path(_as_text(tool_input.get(field)))
     base = _as_text(tool_input.get("path"))
@@ -268,6 +285,16 @@ def _candidates(tool, tool_input):
     if extra:
         yield _norm_path(extra)
         yield _norm_path(os.path.join(base, extra) if base else extra)
+
+
+def _decide(tool, tool_input, cwd):
+    """The denial reason for one well-formed call, or None to allow it."""
+    if any(_hits(c) for c in _candidates(tool, tool_input, cwd)):
+        return REASON
+    command = _as_text(tool_input.get("command")) if tool in COMMAND_TOOLS else ""
+    if command and _recursive_permission_change(command, cwd, tool == "PowerShell"):
+        return PERMISSION_REASON
+    return None
 
 
 def main():
@@ -286,17 +313,13 @@ def main():
         return 0  # a human created the unlock flag (archive-first style switch)
 
     cwd = _as_text(event.get("cwd")) or os.getcwd()
-    command = _as_text(tool_input.get("command")) if tool in COMMAND_TOOLS else ""
-    reason = None
     try:
-        if any(_hits(c) for c in _candidates(tool, tool_input)):
-            reason = REASON
-        elif command and _recursive_permission_change(command, cwd, tool == "PowerShell"):
-            reason = PERMISSION_REASON
+        reason = _decide(tool, tool_input, cwd)
     except Exception as exc:   # noqa: BLE001 — fail closed on this call (round 20)
         print(f"archive-read-guard: could not check this call ({type(exc).__name__}: {exc}); denying", file=sys.stderr)
-        reason = ("Blocked: the IDD archive read guard could not check this call (see stderr); "
-                  "rephrase the command, or create ~/.cache/idd/archive-read-guard.disabled to turn the guard off.")
+        reason = ("Blocked: the IDD archive read guard hit an error while checking this call. "
+                  "Split the command into simpler calls and try again; if it keeps happening, "
+                  "tell the user — only they can turn the guard off.")
     if reason:
         print(json.dumps({
             "hookSpecificOutput": {
