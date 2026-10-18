@@ -166,4 +166,12 @@
 - [x] 23.1 測試：correction-archive 中訊息提到路徑的放行案例改為拒絕（16 條）、拒絕訊息改指向訊息檔；新增 `arch\ive`／`arch""ive`／`'arch'ive`、第 2 行以後註解藏 `chmod -R`、heredoc 之後的註解、here-string、`find -exec chmod`、黏住的括號；放行：沒提到路徑的註解與 commit、`--body "$(cat <<'EOF' …)"`、`chmod -R u+x scripts`。
 - [x] 23.2 hook：`_flat`（去掉引號、解開跳脫，PowerShell 的反斜線當路徑分隔）＋路徑片段比對；`_recursive_permission_change` 看整段指令的每個詞，`find`／`xargs`／`fd` 視同遞迴；移除訊息例外、斷詞模型、註解與 heredoc 處理。驗證：correction-archive 264 條全綠；47 個已知繞法、12,000 筆網格、第 2 行以後註解的 400 筆網格以真實 bash／zsh 比對全擋。
 - [x] 23.3 文件：correction-archive spec（需求改寫、兩個 scenario 改為拒絕、新增註解 scenario）、hook docstring 與拒絕訊息、CHANGELOG（第 18 輪、Changed、舊條目加註）。驗證：`spectra validate`、`run-all-tests.sh`。
-- [ ] 23.4 Verify 第 17 輪（只審第 18 輪的差異）；沒有 HIGH 以上，就請使用者確認合併。驗證：#351 的 verify 留言。
+- [x] 23.4 Verify 第 17 輪（只審第 18 輪的差異）；沒有 HIGH 以上，就請使用者確認合併。驗證：#351 的 verify 留言。
+- [x] 23.5 23.4 的結果：第 17 輪 FAIL，findings 52（HIGH 3／MEDIUM 6／LOW 23／INFO 20）。HIGH：反斜線續行把路徑或指令名稱切開（另由背景安全審查回報）；`chmod -R` 的目標去掉引號後被空白拆開（第 18 輪造成）。DA：fail-closed 的前提成立，剩下的是字元層級；沒有 IDD skill 無路可走。
+
+## 24. Verify 第 17 輪修正（第 19 輪）
+
+- [x] 24.1 先寫會失敗的測試（correction-archive）：續行切開路徑與指令名稱、含空白的 `chmod -R` 目標（加引號、跳脫、相對）、巢狀反斜線、`$'…'`、PowerShell 反引號、`$PWD`／`$(git rev-parse --show-toplevel)` 目標、`--recurs`、Monitor 工具；放行：`grep -R chmod .`、非遞迴的 chmod；權限規則的拒絕訊息。驗證：11 條在 9e784fc 上失敗。
+- [x] 24.2 hook：`_variants`（續行接起與當成換行兩種讀法都查、跳脫成對掃描）、`_flat`（去掉所有跳脫字元、`$'…'`、PowerShell 反引號）、`_shell_words`（shlex 的完整詞與平面詞取聯集）、`_permission_change_in`（旗標與目標在權限指令之後、樹走訪器例外、無法解析的目標拒絕、不分大小寫）、`PERMISSION_REASON`、Monitor 納入 matcher。驗證：correction-archive 292 條全綠；47 個已知繞法、12,000 筆網格、400 筆註解網格以真實 bash／zsh 比對全擋。
+- [x] 24.3 文件：correction-archive spec、hook docstring、design（fail-closed 決定與代價）、README、idd-edit SKILL（`--reason`／`--body` 不寫出路徑）、CHANGELOG（第 19 輪、Changed、舊條目加註）、測試註解。驗證：`spectra validate`、`run-all-tests.sh`。
+- [ ] 24.4 Verify 第 18 輪（只審第 19 輪的差異）；沒有 HIGH 以上，就請使用者確認合併。驗證：#351 的 verify 留言。

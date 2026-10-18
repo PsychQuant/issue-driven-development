@@ -262,7 +262,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   SKILL no longer pastes a GitHub-sourced id into a quoted command, which a `'` in a forged marker could break
   out of. `<REPO>` and `<TARGET>` are single-quoted and must match their shapes.
 - Every bash block of the idd-edit SKILL is checked to read no shell variable (edit-run), not only the five steps
-  part B runs. The read guard treats idd-edit's `--reason` as prose; the diff marks a last line without a newline;
+  part B runs. The read guard treats idd-edit's `--reason` as prose *(Round 18: no message is exempt any more.)*; the diff marks a last line without a newline;
   `$HOME//x` stays in the home directory; a duplicate PICK is listed once; a bot-opened issue body points to
   `--type correction`; an exception before the write is a refusal, not `unverified`; `--correct` apply reports an
   exception; gh's token store (`~/.config/gh`) is a refused body file; when `idd-edit-backup` belongs to someone
@@ -315,7 +315,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the sweep keeps the run's own `--correct` working copies; `emit-audit-marker` uses the local date too.
 - The read guard skips a message value only when it is prose (has whitespace), so `git diff --no-index -m <archive>`
   is denied; its denial names the characters that still need a message file. *(Superseded in round 14: the skip is
-  tied to message-taking subcommands instead, since a path can contain spaces; round 15 requires both.)*
+  tied to message-taking subcommands instead, since a path can contain spaces; round 15 requires both. Round 18: no message is exempt any more.)*
 - Quoting happens once, in idd-edit Step 1: the proposal skills pass their rebuilt arguments as typed, and
   idd-comment's delegation single-quotes its values. The PICK listing blanks U+2028 / U+2029 / U+0085, which JSON
   leaves raw; TARGETs are processed before PICKs; `run-start` notes that `--correct` does not publish `--reason`.
@@ -392,6 +392,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ~380 to ~220 lines. Checked against real bash and zsh: the 47 known bypasses, the 12,000-command grid and a
   400-command grid of comments on later lines are all denied.
 
+### Fixed (round 19 — verify round 17 findings, before release)
+
+- Read guard: a backslash-newline joins a path or a command name in the shell (`arch\` + newline + `ive`, `chm\` +
+  newline + `od`); each command is now checked in two readings — continuations joined, and read as line breaks (a
+  comment's `\` does not continue it) — escapes are scanned in pairs, and nested escapes (`bash -c` with a doubled
+  backslash), `$'…'` quotes and PowerShell's backtick are resolved.
+- The recursive-permission check reads a quoted or escaped target with a space as one word (`chmod -R u+r "My
+  Repo"`), ignores letter case, refuses a target it cannot resolve (`"$PWD"`, `"$(pwd)"`, `"$(git rev-parse
+  --show-toplevel)"`), knows `--rec…` abbreviations, and requires the flag and target to follow the permission
+  command, so `grep -R chmod .` is a search again; it has its own denial text. The Monitor tool's command is checked
+  too.
+- The denial says the way out: leave the path out of the text, or write it with the Write tool and pass the file
+  (`-F`, `--body-file`); a heredoc that names the path is denied too. IDD's own posts (idd-update, idd-verify,
+  idd-close, …) that quote text naming the path get one denial and go through with `--body-file`.
+
 ### Changed
 
 - **BREAKING (behavior) — `/idd-edit` exit codes for the existing modes** (`--append`, `--replace`,
@@ -445,9 +460,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   other file. Credential directories are matched without regard to letter case, under both `HOME` and the account's
   home directory, by the path as given and as resolved; system paths are matched without regard to case on the
   resolved path.
-- The read guard denies any Bash / PowerShell command that names `.claude/.idd/archive`, a commit message or issue
-  body included (3.4.0 had no guard; within 3.5.0 earlier rounds exempted message values). Pass such text from a
-  file: `git commit -F`, `gh … --body-file`.
+- The read guard denies any Bash / PowerShell / Monitor command that names `.claude/.idd/archive`, a commit
+  message or issue body included (3.4.0 had no guard; within 3.5.0 earlier rounds exempted message values). Leave
+  the path out of the text, or write it to a file with the Write tool and pass `git commit -F` / `gh … --body-file`.
+  A command that holds a permission command with a recursive flag and names a directory above the archive (`.`,
+  `..`, the repository root) is denied too, even when the two belong to different commands on one line.
 - `--scope` other than `whole-comment` is refused at start (exit 3) in every mode; 3.4.0 ignored it for `--append`
   and `--prepend-note`.
 - Editing a reply that quotes user-pasted points (`type=reply` + `points-from=user-pasted`) asks the #272 question in

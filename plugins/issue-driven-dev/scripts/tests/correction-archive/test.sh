@@ -185,19 +185,19 @@ expect_deny bash      '{"tool_name":"Bash","tool_input":{"command":"cat .claude/
 expect_deny pwsh      '{"tool_name":"PowerShell","tool_input":{"command":"Get-Content .claude\\.idd\\archive\\edits\\x.md"}}'
 assert_output_grep "deny reason points to restore" "restore" "$WORK/hook-read.out"
 
-# #351 round 11: idd-edit's --reason is prose; a reason that mentions the archive
+# #351 round 11: idd-edit's --reason is prose; a reason that mentions the archive (round 18: fail-closed — such cases are denied now)
 # (the correction of #351's own Expected would) does not read it
 expect_deny  edit-reason '{"tool_name":"Bash","tool_input":{"command":"python3 /p/scripts/idd-edit-helper.py run-start --default-repo o/r -- issue:351 --correct --section \u0027## Expected\u0027 --body-file /t/x.md --reason \u0027the backups live in .claude/.idd/archive/edits, not in git\u0027"}}'
 expect_deny  edit-reason-subst '{"tool_name":"Bash","tool_input":{"command":"python3 /p/scripts/idd-edit-helper.py run-start -- comment:1 --append --reason \"$(cat .claude/.idd/archive/edits/a.md)\""}}'
-# #351 round 12: a heredoc commit message that mentions the archive is still
+# #351 round 12: a heredoc commit message that mentions the archive is still (round 18: fail-closed — such cases are denied now)
 # denied (the shell runs $(...)), but the reason says how to pass the text
 expect_deny  heredoc '{"tool_name":"Bash","tool_input":{"command":"git commit -m \"$(cat <<'EOF'\nkeep .claude/.idd/archive/ out of git\nEOF\n)\""}}'
 assert_output_grep "the denial points to a message file" "--body-file" "$WORK/hook-heredoc.out"
-# #351 round 13: -m is skipped as a message only when its value is prose
+# #351 round 13: -m is skipped as a message only when its value is prose (round 18: fail-closed — such cases are denied now)
 # (whitespace); `git diff -m` takes no value, so the path after it is read
 expect_deny  diff-m '{"tool_name":"Bash","tool_input":{"command":"git diff --no-index -m .claude/.idd/archive/edits/a.md /dev/null"}}'
 assert_output_grep "the denial says any command naming the path is denied" "Any command that names this path is denied" "$WORK/hook-diff-m.out"
-# #351 round 14: -m is a message only for message-taking subcommands, and a
+# #351 round 14: -m is a message only for message-taking subcommands, and a (round 18: fail-closed — such cases are denied now)
 # newline or a glued &&, ||, | ends a command
 expect_deny  diff-m-sp '{"tool_name":"Bash","tool_input":{"command":"git diff --no-index -m \u0027/x/My Repo/.claude/.idd/archive/edits/a.md\u0027 /dev/null"}}'
 expect_deny  glued-and '{"tool_name":"Bash","tool_input":{"command":"git status&&bash -c -m \u0027cat .claude/.idd/archive/edits/x.md\u0027"}}'
@@ -206,7 +206,7 @@ expect_deny  newline   '{"tool_name":"Bash","tool_input":{"command":"git status\
 expect_deny  git-C     '{"tool_name":"Bash","tool_input":{"command":"git -C repo commit -m \u0027see .claude/.idd/archive/ docs\u0027"}}'
 expect_deny  multiline '{"tool_name":"Bash","tool_input":{"command":"git commit -m \u0027first line\nkeep .claude/.idd/archive/ out of git\u0027"}}'
 expect_deny  gh-pr     '{"tool_name":"Bash","tool_input":{"command":"gh pr create --title t --body \u0027archive under .claude/.idd/archive/edits\u0027"}}'
-# #351 round 15: shlex must not read # as a comment (the rest of the command,
+# #351 round 15: shlex must not read # as a comment (the rest of the command, (round 18: fail-closed — such cases are denied now)
 # later lines and a chmod -R hid behind it); `--` ends options; |& separates
 expect_deny  hash-line '{"tool_name":"Bash","tool_input":{"command":"# look at the old version\ncat .claude/.idd/archive/edits/a.md"}}'
 expect_deny  hash-tail '{"tool_name":"Bash","tool_input":{"command":"git status  # check first\ncat .claude/.idd/archive/edits/a.md"}}'
@@ -260,8 +260,27 @@ expect_deny  herestr    "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "
 expect_deny  find-chmod "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "find . -type f -exec chmod u+r {} +"}}' | sed "s|__REPO__|$REPO|")"
 expect_deny  glued-par  "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "(cd sub)&&chmod -R u+r .claude"}}' | sed "s|__REPO__|$REPO|")"
 expect_allow plain-cmt  '{"tool_name": "Bash", "tool_input": {"command": "git status\n# Let'\''s commit the read guard fix\ngit commit -m '\''fix the read guard'\''"}}'
-expect_allow plain-hd   '{"tool_name": "Bash", "tool_input": {"command": "gh pr create --title t --body \"$(cat <<'\''EOF'\''\nRefs #351, it'\''s done\nEOF\n)\""}}'
 expect_allow chmod-ok   "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "chmod -R u+x scripts"}}' | sed "s|__REPO__|$REPO|")"
+# #351 round 19: a line continuation joins a path or a command name; a
+# chmod -R target is also read as the shell's whole word (spaces kept)
+SPACE="$WORK/My Repo"; mkdir -p "$SPACE/.claude/.idd/archive/edits" "$SPACE/sub"
+expect_deny  cont-path  '{"tool_name": "Bash", "tool_input": {"command": "cat .claude/.idd/arch\\\nive/edits/a.md"}}'
+expect_deny  cont-cmd   "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "chm\\\nod -R u+r .claude"}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g")"
+expect_deny  sp-quoted  "$(printf %s '{"tool_name": "Bash", "cwd": "__SPACE__/sub", "tool_input": {"command": "chmod -R u+r \"__SPACE__\""}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g")"
+hook_case sp-esc "$(python3 -c 'import json,sys; s=sys.argv[1]; print(json.dumps({"tool_name": "Bash", "cwd": s + "/sub", "tool_input": {"command": "chmod -R u+r " + s.replace(" ", "\\ ")}}))' "$SPACE")"
+assert_output_grep "an escaped space in a chmod -R target is one word" '"permissionDecision": "deny"' "$WORK/hook-sp-esc.out"
+expect_deny  sp-rel     "$(printf %s '{"tool_name": "Bash", "cwd": "__SPACE__/sub", "tool_input": {"command": "chmod -R u+rw \"../.claude\""}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g")"
+expect_deny  nested-bs  '{"tool_name": "Bash", "tool_input": {"command": "bash -c \"cat .claude\\\\/.idd/archive/edits/a.md\""}}'
+expect_deny  ansi-c     '{"tool_name": "Bash", "tool_input": {"command": "cat .claude/.idd/$'\''arch'\''ive/edits/a.md"}}'
+expect_deny  ps-tick    '{"tool_name": "PowerShell", "tool_input": {"command": "Get-Content .claude/.idd/arch`ive/edits/a.md"}}'
+expect_deny  pwd-var    "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "chmod -R u+r \"$PWD\""}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g")"
+expect_deny  toplevel   "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "chmod -R u+r \"$(git rev-parse --show-toplevel)\""}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g")"
+expect_deny  rec-abbr   "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "chmod --recurs u+r .claude"}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g")"
+expect_allow grep-chmod "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "grep -R chmod ."}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g")"
+expect_deny  monitor    '{"tool_name": "Monitor", "tool_input": {"command": "tail -f .claude/.idd/archive/edits/a.md", "description": "x", "timeout_ms": 1000}}'
+expect_allow chmod-file "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "chmod u+x scripts/run.sh"}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g")"
+hook_case permreason "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "chmod -R u+r ."}}' | sed "s|__REPO__|$REPO|g")"
+assert_output_grep "a recursive permission change gets its own reason" "recursive permission change" "$WORK/hook-permreason.out"
 expect_allow helper   '{"tool_name":"Bash","tool_input":{"command":"python3 \"$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py\" archive comment 5805214375 --from-file \"$BACKUP_FILE\" --repo \"$REPO\""}}'
 expect_allow skill    '{"tool_name":"Read","tool_input":{"file_path":"plugins/issue-driven-dev/skills/idd-edit/SKILL.md"}}'
 expect_allow grep-re  '{"tool_name":"Grep","tool_input":{"pattern":".claude/.idd/archive","path":"plugins"}}'
@@ -273,7 +292,7 @@ require "hooks.json registers the guard with the exact matcher and keeps Session
 import json, sys
 h = json.load(open(sys.argv[1]))["hooks"]
 pre = h.get("PreToolUse", [])
-ok = any(e.get("matcher") == "Read|Grep|Glob|Edit|Write|NotebookEdit|Bash|PowerShell"
+ok = any(e.get("matcher") == "Read|Grep|Glob|Edit|Write|NotebookEdit|Bash|PowerShell|Monitor"
          and any("archive-read-guard.py" in x.get("command", "") for x in e.get("hooks", []))
          for e in pre)
 sys.exit(0 if ok and h.get("SessionStart") else 1)
@@ -414,12 +433,12 @@ if [ -d "$CS/.claude/.idd/archive/edits" ]; then
   refute "gh not called for the case variant" test -e "$WORK/gh_args"
 fi
 
-# H4. hook: a recursive chmod above the archive is denied; -m is prose only for message-taking commands
+# H4. hook: a recursive chmod above the archive is denied; -m is prose only for message-taking commands (round 18: fail-closed — such cases are denied now)
 expect_deny  chmodR   "{\"tool_name\":\"Bash\",\"cwd\":\"$REPO\",\"tool_input\":{\"command\":\"chmod -R u+r .claude\"}}"
 expect_deny  chmodRd  "{\"tool_name\":\"Bash\",\"cwd\":\"$REPO\",\"tool_input\":{\"command\":\"chmod -R u+rw .\"}}"
 expect_allow chmodOk  "{\"tool_name\":\"Bash\",\"cwd\":\"$REPO\",\"tool_input\":{\"command\":\"chmod u+x scripts/run.sh\"}}"
 expect_deny  sortm    '{"tool_name":"Bash","tool_input":{"command":"sort -m .claude/.idd/archive/edits/a.md"}}'
-# round 15: a message value is skipped only when it is prose in a message-taking
+# round 15: a message value is skipped only when it is prose in a message-taking (round 18: fail-closed — such cases are denied now)
 # subcommand (whitespace and subcommand both), so a one-word -m value is scanned
 expect_deny  gitm     '{"tool_name":"Bash","tool_input":{"command":"git commit -m .claude/.idd/archive/edits"}}'
 
@@ -429,11 +448,11 @@ echo "I. round 5"
 # I1. a recursive permission change above the repository root
 mkdir -p "$REPO/sub"
 expect_deny  chmodUp  "{\"tool_name\":\"Bash\",\"cwd\":\"$REPO/sub\",\"tool_input\":{\"command\":\"chmod -R u+r ../..\"}}"
-# I2. IDD's own posts and env-prefixed commands keep the message exemption
+# I2. IDD's own posts and env-prefixed commands keep the message exemption (round 18: fail-closed — such cases are denied now)
 expect_deny  egressBody '{"tool_name":"Bash","tool_input":{"command":"bash plugins/issue-driven-dev/scripts/gh-egress.sh comment 1 --body \"the archive lives in .claude/.idd/archive/edits\""}}'
 expect_deny  envGh      '{"tool_name":"Bash","tool_input":{"command":"GH_PAGER=cat gh issue comment 1 --body \"see .claude/.idd/archive/edits\""}}'
 expect_deny  envGit     '{"tool_name":"Bash","tool_input":{"command":"GIT_EDITOR=true git commit -m \"keep .claude/.idd/archive out\""}}'
-# I3. a redirection in a message value is not prose
+# I3. a redirection in a message value is not prose (round 18: fail-closed — such cases are denied now)
 expect_deny  msgRedir   '{"tool_name":"Bash","tool_input":{"command":"git commit -m <.claude/.idd/archive/edits/a.md"}}'
 
 # I4. archive refuses a repository that tracks anything under the archive path
