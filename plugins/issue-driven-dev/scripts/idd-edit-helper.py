@@ -2506,7 +2506,8 @@ def apply_subcmd(argv):
         return 2
     folder = last.get("work") or os.path.join(real, f"comment-{target.split(':', 1)[1]}")
     bodies = [os.path.join(folder, n) for n in (("preview.md", "backup.md") if last.get("work") else ("new.md", "old.md"))]
-    if all(os.path.isfile(b) for b in bodies) and _floor(attested, *bodies) != attested:
+    present = [b for b in bodies if os.path.isfile(b)]   # one missing must not skip the check (round 15)
+    if present and _floor(attested, *present) != attested:
         # Not recorded: retried with --scrub-attested warn once the user has
         # answered the #272 question (verify #351 round 11).
         err(f"ERROR: {target} quotes user-pasted points (#272): ask the user whether that third-party "

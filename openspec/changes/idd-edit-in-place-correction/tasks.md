@@ -149,4 +149,12 @@
 - [x] 21.1 先寫會失敗的測試：correction-archive（`-Fm` 後含空白的路徑、`-am` 改回掃描、註解撇號後的 `chmod -R` 四種、註解裡的引號吞掉下一行兩種、IDD 的單引號跳脫寫法；放行：`2>&1`、`${#arr[@]}`）；edit-run A13（`--replace` 拿掉 reply 標記仍印 `FLOOR=272`、light 被拒）。驗證：11 條在 caf9791 上失敗。
 - [x] 21.2 hook：詞首的 `#` 起註解到行尾、引號在註解裡是文字；反斜線只在 PowerShell 改成 `/`；`&` 只在重導向運算子之後不算分隔符；引號不平衡時的退路拿掉引號、切開黏住的分隔符；拿掉 `-am` 合併旗標；`chmod -R` 檢查帶 PowerShell 旗標。helper：`_reply_272`／`_floor` 同時看新內文與目前內文。驗證：correction-archive 216 條、edit-run 203 條全綠；DA 的已知繞法 47 條全擋、shell 比對語料只剩 1 條比對誤判（續行把 `sort` 接成參數）。
 - [x] 21.3 文件：兩份 spec、hook docstring 與拒絕訊息、idd-edit SKILL 的 `FLOOR=272`、CHANGELOG（第 16 輪、兩處被推翻的條目加註、3.4.0 的 #272 說法）。驗證：`spectra validate`、`run-all-tests.sh`。
-- [ ] 21.4 Verify 第 15 輪（只審第 16 輪的差異）；沒有 HIGH 以上，就請使用者確認合併。驗證：#351 的 verify 留言。
+- [x] 21.4 Verify 第 15 輪（只審第 16 輪的差異）；沒有 HIGH 以上，就請使用者確認合併。驗證：#351 的 verify 留言。
+- [x] 21.5 21.4 的結果：第 15 輪 FAIL，findings 35（HIGH 1／MEDIUM 5／LOW 15／INFO 14）。HIGH：`$(true)# x; chmod -R` 的 `#` 被當成註解跳過，藏住 `chmod -R`（第 16 輪造成）；MEDIUM：跳脫字元後的 `#`、heredoc 本文裡的 `#`（含 `#351`）、PowerShell 結尾反斜線，同一根因。DA：相對 caf9791 是淨改善、沒有其他 HIGH。
+
+## 22. Verify 第 15 輪修正（第 17 輪）
+
+- [x] 22.1 先寫會失敗的測試（correction-archive，以 `json.dumps` 產生）：`$(true)#`、`foo\ #x`、`a\;#b`、heredoc 本文裡的 `#351 $(cat …)`、`# Summary: $(cat …)`、`PR_BODY=$(cat <<EOF`、heredoc 撇號奇偶藏住 `chmod -R` 兩種、PowerShell 結尾反斜線、`x=( a b )\` 續行接 `chmod`、`>|`；放行：`# step` 註解行之後的 commit、`gh pr create --body "$(cat <<'EOF' …)"`。驗證：11 條在 4c5a0e4 上失敗。
+- [x] 22.2 hook：`_normalize`（註解文字與 heredoc 本文保留並掃描、只空白掉引號與反斜線；PowerShell 先換反斜線）；`(`、`)` 分隔；`>|` 是重導向；退路的切分含括號。helper：apply 的 #272 檢查看存在的內文。驗證：correction-archive 242 條全綠；第 14 輪已知繞法 47 條全擋；第 15 輪 DA 的 12,000 筆網格以真實 bash／zsh 比對，放行且真的會讀到的是 0 筆。
+- [x] 22.3 文件：correction-archive spec 的 read guard 規則、CHANGELOG（第 17 輪、兩處加註）、hook docstring。驗證：`spectra validate`、`run-all-tests.sh`。
+- [ ] 22.4 Verify 第 16 輪（只審第 17 輪的差異）；沒有 HIGH 以上，就請使用者確認合併。驗證：#351 的 verify 留言。

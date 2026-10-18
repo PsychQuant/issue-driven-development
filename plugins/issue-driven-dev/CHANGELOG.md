@@ -343,7 +343,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Read guard: `#` hid everything after it.** Round 14's tokenizer (`shlex.shlex`) kept shlex's default comment
   character, so one unquoted `#` — a `# step` comment line, `--grep=#351`, an issue URL's `#issuecomment` — dropped
   the rest of the command, later lines and a `chmod -R` included, from both checks. `#` is text again, as it was
-  with `shlex.split`.
+  with `shlex.split`. *(Round 17: comment text is scanned and only its quotes are ignored.)*
 - The read guard skips a message value only when it is prose (whitespace) **and** the subcommand takes a message,
   and not after a `--` (`git commit -- -m <path>` is a pathspec); `|&` and `&|` end a command, a backslash-newline
   joins lines, `git commit -am` counts as `-m` *(round 16: no longer — git reads `-Fm` as `-F m`)*, more pre-subcommand value options and message subcommands are known,
@@ -358,13 +358,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Read guard: a quote inside a comment hid the next line.** With `#` read as text (round 15), the apostrophe in a
   comment such as `# Let's fix the permissions` opened a quote that swallowed the following `chmod -R` (a gap
   45273ec had too). An unquoted `#` at the start of a word now begins a comment to the end of the line, as in the
-  shell; `$#`, `${#x}` and `a#b` stay text. Backslashes are escapes except in PowerShell input, so IDD's own
+  shell; `$#`, `${#x}` and `a#b` stay text. *(Round 17: the comment's text is no longer skipped — a `#` after
+  `$(…)` or an escape, or inside a heredoc body, is not a comment in the shell.)* Backslashes are escapes except in PowerShell input, so IDD's own
   `'\''` parses as the shell reads it; an `&` is not a separator only right after a redirection operator; when the
   quotes cannot be balanced, every piece is scanned and the `chmod -R` check still sees its target. The read
   guard was checked against the rounds 11–14 bypass list (47 cases) and a shell-oracle corpus.
 - `-am`-style flag clusters are scanned again: git reads `-Fm <x>` as `-F m`, so the next word is a path.
 - The #272 question is also asked when the current body carries the reply marker, so a `--replace` that drops
   the marker no longer skips it.
+
+### Fixed (round 17 — verify round 15 findings, before release)
+
+- **Read guard: comment text and heredoc bodies are scanned again.** Round 16 skipped a comment to the end of the
+  line, so a `#` the shell does not treat as a comment (`echo $(true)# x; chmod -R u+r .claude`, `foo\ #x`, `#351`
+  inside a heredoc body that runs `$(cat <archive>)`) hid what followed it. Comment text and heredoc bodies
+  (`<<[-]WORD` up to `WORD`) are now kept and scanned, with only their quotes and backslashes ignored, so they can
+  neither hide a command nor open a quote that swallows one; misjudging either only scans more. PowerShell
+  backslashes become path separators before any other rule; `(` and `)` separate words (`x=( a )\` + newline +
+  `chmod`); `>|` is a redirection. On the round-15 reviewers' 12,000-command grid, checked against real bash and zsh
+  with stub commands, no command the guard allows reads the archive or runs a `chmod -R` on it.
+- `apply` checks the #272 floor against whichever prepared bodies exist, so a missing one cannot skip it.
 
 ### Changed
 

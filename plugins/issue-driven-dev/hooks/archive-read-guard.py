@@ -21,10 +21,9 @@ mode is what guarantees an unreadable archive; this hook only stops the
 ordinary `cat`/`grep`/Read that would otherwise happen by accident.
 
 Shell commands are checked word by word, quoted strings included (`sh -c`,
-`python3 -c` read files from inside them). A `#` at the start of a word begins
-a comment to the end of the line, as in the shell; its quotes are text, so a
-comment can neither hide the next line nor open a quote that swallows it
-(rounds 13–14). Only the value of a
+`python3 -c` read files from inside them). Comment text and heredoc bodies are
+scanned too, with only their quotes ignored: they can neither hide a command
+nor open a quote that swallows one (rounds 13–15). Only the value of a
 message option (-m, --message, --body, --title, --notes, --subject, and
 idd-edit's --reason) is skipped, and only when it is prose (it holds
 whitespace) given to a subcommand that takes a message (`git commit`, `gh
@@ -124,39 +123,71 @@ _PRE_SUBCOMMAND_VALUE_OPTIONS = (
 # `bash .../gh-egress.sh comment N --body "..."` — verify #351 round 4).
 INTERPRETERS = ("bash", "sh", "zsh", "env", "python", "python3")
 _ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
-SEPARATORS = (";", "&&", "||", "|", "&", "|&", "&|")
+SEPARATORS = (";", "&&", "||", "|", "&", "|&", "&|", "(", ")")
 PERMISSION_COMMANDS = ("chmod", "chown", "chgrp", "chflags", "setfacl")
 
 
-def _newlines_as_separators(command):
-    """An unquoted newline ends a command, as `;` does; a backslash before it
-    continues the line (verify #351 round 12: the next line kept the previous
-    command's name)."""
-    out, quote, i = [], None, 0
-    while i < len(command):
+# `<<WORD`, `<<-WORD`, `<<'WORD'`, `<<"WORD"` (not the here-string `<<<`)
+_HEREDOC = re.compile(r"<<(-?)[ \t]*(?:'([^'\n]*)'|\"([^\"\n]*)\"|([^\s;&|<>()'\"]+))")
+
+
+def _blank(text):
+    """Text the shell does not tokenize: its quotes and backslashes cannot open
+    a quote or an escape for the guard (rounds 14–15)."""
+    return "".join(" " if ch in "'\"\\" else ch for ch in text)
+
+
+def _normalize(command):
+    """The command as the splitter reads it, with three shell rules applied
+    (verify #351 rounds 12–15):
+    - an unquoted newline ends a command, as `;` does; a backslash-newline
+      joins two lines;
+    - a comment (an unquoted, word-initial `#` to the end of the line) is kept
+      and scanned, only its quotes and backslashes blanked: it can neither hide
+      what follows it nor open a quote that swallows the next line;
+    - a heredoc body (after `<<[-]WORD`, up to the line `WORD`) is data, kept
+      and scanned line by line with its quotes and backslashes blanked.
+    Where the guard misjudges a comment or a heredoc, it only scans more."""
+    out, quote, i, pending, n = [], None, 0, [], len(command)
+    while i < n:
         c = command[i]
         if c == "\\" and quote is None and command[i + 1:i + 2] == "\n":
             i += 2   # a line continuation joins the lines (round 13)
             continue
-        if c == "\\" and quote != "'" and i + 1 < len(command):
+        if c == "\\" and quote != "'" and i + 1 < n:
             out.append(command[i:i + 2])
             i += 2
             continue
         if quote:
             if c == quote:
                 quote = None
-        elif c == "#" and (not out or out[-1][-1:] in " \t;&|()"):
-            # A comment runs to the end of the line, as the shell reads it: its
-            # quotes and backslashes are text and must not open a quote that
-            # swallows the next line (round 14). `$#`, `${#x}`, `a#b` are text.
-            while i < len(command) and command[i] != "\n":
-                i += 1
+        elif c == "#" and (not out or (len(out[-1]) == 1 and out[-1] in " \t;&|()")):
+            stop = command.find("\n", i)
+            stop = n if stop < 0 else stop
+            out.append(_blank(command[i:stop]))
+            i = stop
             continue
+        elif c == "<" and command.startswith("<<", i) and not command.startswith("<<<", i):
+            m = _HEREDOC.match(command, i)
+            if m:
+                pending.append((m.group(2) or m.group(3) or m.group(4) or "", m.group(1) == "-"))
+                out.append(command[i:m.end()])
+                i = m.end()
+                continue
         elif c in "'\"":
             quote = c
         elif c == "\n":
             out.append(" ; ")
             i += 1
+            while pending:   # the bodies of this line's heredocs, in order
+                delimiter, tabs = pending.pop(0)
+                while i < n:
+                    stop = command.find("\n", i)
+                    stop = n if stop < 0 else stop
+                    line, i = command[i:stop], stop + 1
+                    out.append(" ; " if (line.lstrip("\t") if tabs else line) == delimiter else _blank(line) + " ; ")
+                    if (line.lstrip("\t") if tabs else line) == delimiter:
+                        break
             continue
         out.append(c)
         i += 1
@@ -164,16 +195,16 @@ def _newlines_as_separators(command):
 
 
 def _split_words(command, powershell=False):
-    command = _newlines_as_separators(command)
     # PowerShell paths use backslashes as separators, and POSIX shlex would eat
-    # them as escapes. In a POSIX shell they are escapes, and IDD's own `'\''`
-    # needs them read as such (round 14).
+    # them as escapes; replaced first, so no pass reads them as escapes. In a
+    # POSIX shell they are escapes, and IDD's own `'\''` needs them (round 14).
     if powershell:
         command = command.replace("\\", "/")
+    command = _normalize(command)
     try:
-        # `;`, `&` and `|` split words even when glued to them (`a&&b`), as
-        # the shell reads them (round 12).
-        lex = shlex.shlex(command, posix=True, punctuation_chars=";&|")
+        # `;`, `&`, `|`, `(` and `)` split words even when glued to them
+        # (`a&&b`, `x=( a )chmod`), as the shell reads them (rounds 12, 15).
+        lex = shlex.shlex(command, posix=True, punctuation_chars=";&|()")
         lex.whitespace_split = True
         # shlex.split turns comments off; a bare shlex.shlex reads `#` as one,
         # even mid-word, and dropped the rest of the command (round 13)
@@ -182,7 +213,7 @@ def _split_words(command, powershell=False):
     except ValueError:
         # Unbalanced quotes: every piece is scanned, quotes dropped and glued
         # separators split, so the chmod -R check still sees its target (round 14).
-        return [w.strip("'\"") for w in re.findall(r"[;&|]+|[^\s;&|]+", command)]
+        return [w.strip("'\"") for w in re.findall(r"[;&|()]+|[^\s;&|()]+", command)]
 
 
 def _command_words(command, powershell=False):
@@ -217,7 +248,10 @@ def _command_words(command, powershell=False):
             # `--` to pass /idd-edit's own arguments, --reason among them
             options_ended = True
         # `2>&1`: an `&` after a redirection is not a separator
-        separator = (word in SEPARATORS and not (word == "&" and re.fullmatch(r"[0-9]*[<>]", previous))) or word.endswith(";")
+        # `2>&1` and `>|` are redirections, not separators (rounds 14–15)
+        separator = (word in SEPARATORS
+                     and not (word == "&" and re.fullmatch(r"[0-9]*[<>]", previous))
+                     and not (word == "|" and previous.endswith(">"))) or word.endswith(";")
         previous = word
         if separator:
             command_name = subcommand = None

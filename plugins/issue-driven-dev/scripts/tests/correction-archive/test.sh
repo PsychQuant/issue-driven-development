@@ -233,6 +233,21 @@ expect_allow idiom     '{"tool_name":"Bash","tool_input":{"command":"python3 /p/
 expect_deny  idiom-ch  "{\"tool_name\":\"Bash\",\"cwd\":\"$REPO\",\"tool_input\":{\"command\":\"git commit -m \u0027it\u0027\\\u0027\u0027s\u0027; chmod -R u+r .claude\"}}"
 expect_allow redir     '{"tool_name":"Bash","tool_input":{"command":"git commit -m \u0027see .claude/.idd/archive/ docs\u0027 2>&1"}}'
 expect_allow hash-var  '{"tool_name":"Bash","tool_input":{"command":"echo ${#arr[@]} $# foo#bar"}}'
+# #351 round 17: comment text and heredoc bodies are scanned, only their quotes
+# are ignored; PowerShell backslashes are separators before anything else
+expect_deny  subst-hash "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "echo $(true)# note; chmod -R u+r .claude"}}' | sed "s|__REPO__|$REPO|")"
+expect_deny  esc-hash   '{"tool_name": "Bash", "tool_input": {"command": "cat foo\\ #x .claude/.idd/archive/edits/a.md"}}'
+expect_deny  esc-semi   '{"tool_name": "Bash", "tool_input": {"command": "cat a\\;#b .claude/.idd/archive/edits/a.md"}}'
+expect_deny  hd-issue   '{"tool_name": "Bash", "tool_input": {"command": "cat <<EOF\nIssue #351 $(cat .claude/.idd/archive/edits/a.md)\nEOF"}}'
+expect_deny  hd-hashln  '{"tool_name": "Bash", "tool_input": {"command": "cat <<EOF\n# Summary: $(cat .claude/.idd/archive/edits/a.md)\nEOF"}}'
+expect_deny  hd-prbody  '{"tool_name": "Bash", "tool_input": {"command": "PR_BODY=$(cat <<EOF\nRefs #351 - prior wording: $(head -1 .claude/.idd/archive/edits/a.md)\nEOF\n)"}}'
+expect_deny  hd-parity  "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "cat > /tmp/notes.md <<EOF\n## Why it'\''s wrong\nIt'\''s the archive mode.\nEOF\nchmod -R u+rw .claude/.idd\n# Let'\''s check again\nls -la .claude/.idd"}}' | sed "s|__REPO__|$REPO|")"
+expect_deny  hd-two     "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "cat > a.txt <<'\''EOF'\''\nWe don'\''t need it.\nEOF\nchmod -R u+r .claude\ncat > b.txt <<'\''EOF'\''\nIt won'\''t matter.\nEOF"}}' | sed "s|__REPO__|$REPO|")"
+expect_deny  ps-trail   '{"tool_name": "PowerShell", "tool_input": {"command": "git -C \"C:\\repo\\\" commit -m \"fix #351\"; Get-Content .claude\\.idd\\archive\\edits\\a.md"}}'
+expect_deny  paren-cont "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "x=( a b )\\\nchmod -R u+r .claude"}}' | sed "s|__REPO__|$REPO|")"
+expect_deny  noclobber  '{"tool_name": "Bash", "tool_input": {"command": "sort >| git commit -m '\''/x/My Repo/.claude/.idd/archive/edits/a.md'\''"}}'
+expect_allow step-cmt   '{"tool_name": "Bash", "tool_input": {"command": "# step: commit\ngit commit -m '\''mention .claude/.idd/archive/ path here'\''"}}'
+expect_allow hd-plain   '{"tool_name": "Bash", "tool_input": {"command": "gh pr create --title t --body \"$(cat <<'\''EOF'\''\nRefs #351, it'\''s done\nEOF\n)\""}}'
 expect_allow helper   '{"tool_name":"Bash","tool_input":{"command":"python3 \"$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py\" archive comment 5805214375 --from-file \"$BACKUP_FILE\" --repo \"$REPO\""}}'
 expect_allow skill    '{"tool_name":"Read","tool_input":{"file_path":"plugins/issue-driven-dev/skills/idd-edit/SKILL.md"}}'
 expect_allow grep-re  '{"tool_name":"Grep","tool_input":{"pattern":".claude/.idd/archive","path":"plugins"}}'
