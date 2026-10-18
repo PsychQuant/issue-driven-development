@@ -187,25 +187,25 @@ assert_output_grep "deny reason points to restore" "restore" "$WORK/hook-read.ou
 
 # #351 round 11: idd-edit's --reason is prose; a reason that mentions the archive
 # (the correction of #351's own Expected would) does not read it
-expect_allow edit-reason '{"tool_name":"Bash","tool_input":{"command":"python3 /p/scripts/idd-edit-helper.py run-start --default-repo o/r -- issue:351 --correct --section \u0027## Expected\u0027 --body-file /t/x.md --reason \u0027the backups live in .claude/.idd/archive/edits, not in git\u0027"}}'
+expect_deny  edit-reason '{"tool_name":"Bash","tool_input":{"command":"python3 /p/scripts/idd-edit-helper.py run-start --default-repo o/r -- issue:351 --correct --section \u0027## Expected\u0027 --body-file /t/x.md --reason \u0027the backups live in .claude/.idd/archive/edits, not in git\u0027"}}'
 expect_deny  edit-reason-subst '{"tool_name":"Bash","tool_input":{"command":"python3 /p/scripts/idd-edit-helper.py run-start -- comment:1 --append --reason \"$(cat .claude/.idd/archive/edits/a.md)\""}}'
 # #351 round 12: a heredoc commit message that mentions the archive is still
 # denied (the shell runs $(...)), but the reason says how to pass the text
 expect_deny  heredoc '{"tool_name":"Bash","tool_input":{"command":"git commit -m \"$(cat <<'EOF'\nkeep .claude/.idd/archive/ out of git\nEOF\n)\""}}'
-assert_output_grep "the denial points to a single-quoted message or a message file" "single-quoted" "$WORK/hook-heredoc.out"
+assert_output_grep "the denial points to a message file" "--body-file" "$WORK/hook-heredoc.out"
 # #351 round 13: -m is skipped as a message only when its value is prose
 # (whitespace); `git diff -m` takes no value, so the path after it is read
 expect_deny  diff-m '{"tool_name":"Bash","tool_input":{"command":"git diff --no-index -m .claude/.idd/archive/edits/a.md /dev/null"}}'
-assert_output_grep "the denial names the characters that still need a file" "from a file" "$WORK/hook-diff-m.out"
+assert_output_grep "the denial says any command naming the path is denied" "Any command that names this path is denied" "$WORK/hook-diff-m.out"
 # #351 round 14: -m is a message only for message-taking subcommands, and a
 # newline or a glued &&, ||, | ends a command
 expect_deny  diff-m-sp '{"tool_name":"Bash","tool_input":{"command":"git diff --no-index -m \u0027/x/My Repo/.claude/.idd/archive/edits/a.md\u0027 /dev/null"}}'
 expect_deny  glued-and '{"tool_name":"Bash","tool_input":{"command":"git status&&bash -c -m \u0027cat .claude/.idd/archive/edits/x.md\u0027"}}'
 expect_deny  glued-or  '{"tool_name":"Bash","tool_input":{"command":"git status||sh -c -m \u0027cat .claude/.idd/archive/edits/x.md\u0027"}}'
 expect_deny  newline   '{"tool_name":"Bash","tool_input":{"command":"git status\nbash -c -m \u0027cat .claude/.idd/archive/edits/x.md\u0027"}}'
-expect_allow git-C     '{"tool_name":"Bash","tool_input":{"command":"git -C repo commit -m \u0027see .claude/.idd/archive/ docs\u0027"}}'
-expect_allow multiline '{"tool_name":"Bash","tool_input":{"command":"git commit -m \u0027first line\nkeep .claude/.idd/archive/ out of git\u0027"}}'
-expect_allow gh-pr     '{"tool_name":"Bash","tool_input":{"command":"gh pr create --title t --body \u0027archive under .claude/.idd/archive/edits\u0027"}}'
+expect_deny  git-C     '{"tool_name":"Bash","tool_input":{"command":"git -C repo commit -m \u0027see .claude/.idd/archive/ docs\u0027"}}'
+expect_deny  multiline '{"tool_name":"Bash","tool_input":{"command":"git commit -m \u0027first line\nkeep .claude/.idd/archive/ out of git\u0027"}}'
+expect_deny  gh-pr     '{"tool_name":"Bash","tool_input":{"command":"gh pr create --title t --body \u0027archive under .claude/.idd/archive/edits\u0027"}}'
 # #351 round 15: shlex must not read # as a comment (the rest of the command,
 # later lines and a chmod -R hid behind it); `--` ends options; |& separates
 expect_deny  hash-line '{"tool_name":"Bash","tool_input":{"command":"# look at the old version\ncat .claude/.idd/archive/edits/a.md"}}'
@@ -217,9 +217,9 @@ expect_deny  dashdash '{"tool_name":"Bash","tool_input":{"command":"git commit -
 expect_deny  pipe-amp  '{"tool_name":"Bash","tool_input":{"command":"git commit -m \u0027a b\u0027 |& sort -m \u0027/x/My Repo/.claude/.idd/archive/edits/a.md\u0027"}}'
 # round 16: combined short flags are not read as -m (git reads -Fm as -F m)
 expect_deny  commit-am '{"tool_name":"Bash","tool_input":{"command":"git commit -am \u0027see .claude/.idd/archive/ docs\u0027"}}'
-expect_allow contline  '{"tool_name":"Bash","tool_input":{"command":"git \\\n commit -m \u0027see .claude/.idd/archive/ docs\u0027"}}'
-expect_allow env-py    '{"tool_name":"Bash","tool_input":{"command":"env A=1 python3 /p/scripts/idd-edit-helper.py run-start --reason \u0027see .claude/.idd/archive/ x\u0027"}}'
-expect_allow hg-repo   '{"tool_name":"Bash","tool_input":{"command":"hg --repository r commit -m \u0027see .claude/.idd/archive/ x\u0027"}}'
+expect_deny  contline  '{"tool_name":"Bash","tool_input":{"command":"git \\\n commit -m \u0027see .claude/.idd/archive/ docs\u0027"}}'
+expect_deny  env-py    '{"tool_name":"Bash","tool_input":{"command":"env A=1 python3 /p/scripts/idd-edit-helper.py run-start --reason \u0027see .claude/.idd/archive/ x\u0027"}}'
+expect_deny  hg-repo   '{"tool_name":"Bash","tool_input":{"command":"hg --repository r commit -m \u0027see .claude/.idd/archive/ x\u0027"}}'
 # #351 round 16: a shell comment runs to the end of the line and its quotes
 # are text; -Fm is not -m; IDD's own '\'' idiom parses as the shell reads it
 expect_deny  fm-path   '{"tool_name":"Bash","tool_input":{"command":"git commit -Fm \u0027/repo with spaces/.claude/.idd/archive/edits/a.md\u0027"}}'
@@ -229,9 +229,9 @@ expect_deny  c-apos3   "{\"tool_name\":\"Bash\",\"cwd\":\"$REPO\",\"tool_input\"
 expect_deny  c-apos4   "{\"tool_name\":\"Bash\",\"cwd\":\"$REPO\",\"tool_input\":{\"command\":\"# Let\u0027s fix the permissions\nchmod -R u+rw .\n# Now let\u0027s retry\ngrep -rn wrong .\"}}"
 expect_deny  c-msg     '{"tool_name":"Bash","tool_input":{"command":"git commit -m #x\u0027\ncat .claude/.idd/archive/edits/a.md #\u0027"}}'
 expect_deny  c-ls      '{"tool_name":"Bash","tool_input":{"command":"ls # ; git commit -m \u0027\ncat .claude/.idd/archive/edits/a.md #\u0027"}}'
-expect_allow idiom     '{"tool_name":"Bash","tool_input":{"command":"python3 /p/scripts/idd-edit-helper.py run-start -- comment:1 --append --reason \u0027it\u0027\\\u0027\u0027s in .claude/.idd/archive/ now\u0027"}}'
+expect_deny  idiom     '{"tool_name":"Bash","tool_input":{"command":"python3 /p/scripts/idd-edit-helper.py run-start -- comment:1 --append --reason \u0027it\u0027\\\u0027\u0027s in .claude/.idd/archive/ now\u0027"}}'
 expect_deny  idiom-ch  "{\"tool_name\":\"Bash\",\"cwd\":\"$REPO\",\"tool_input\":{\"command\":\"git commit -m \u0027it\u0027\\\u0027\u0027s\u0027; chmod -R u+r .claude\"}}"
-expect_allow redir     '{"tool_name":"Bash","tool_input":{"command":"git commit -m \u0027see .claude/.idd/archive/ docs\u0027 2>&1"}}'
+expect_deny  redir     '{"tool_name":"Bash","tool_input":{"command":"git commit -m \u0027see .claude/.idd/archive/ docs\u0027 2>&1"}}'
 expect_allow hash-var  '{"tool_name":"Bash","tool_input":{"command":"echo ${#arr[@]} $# foo#bar"}}'
 # #351 round 17: comment text and heredoc bodies are scanned, only their quotes
 # are ignored; PowerShell backslashes are separators before anything else
@@ -246,8 +246,22 @@ expect_deny  hd-two     "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "
 expect_deny  ps-trail   '{"tool_name": "PowerShell", "tool_input": {"command": "git -C \"C:\\repo\\\" commit -m \"fix #351\"; Get-Content .claude\\.idd\\archive\\edits\\a.md"}}'
 expect_deny  paren-cont "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "x=( a b )\\\nchmod -R u+r .claude"}}' | sed "s|__REPO__|$REPO|")"
 expect_deny  noclobber  '{"tool_name": "Bash", "tool_input": {"command": "sort >| git commit -m '\''/x/My Repo/.claude/.idd/archive/edits/a.md'\''"}}'
-expect_allow step-cmt   '{"tool_name": "Bash", "tool_input": {"command": "# step: commit\ngit commit -m '\''mention .claude/.idd/archive/ path here'\''"}}'
+expect_deny  step-cmt   '{"tool_name": "Bash", "tool_input": {"command": "# step: commit\ngit commit -m '\''mention .claude/.idd/archive/ path here'\''"}}'
 expect_allow hd-plain   '{"tool_name": "Bash", "tool_input": {"command": "gh pr create --title t --body \"$(cat <<'\''EOF'\''\nRefs #351, it'\''s done\nEOF\n)\""}}'
+# #351 round 18 (fail-closed, user decision 2026-10-18): any command that
+# names the path is denied, messages included; escapes and quotes are
+# resolved before matching, and a chmod -R is found anywhere in the command
+expect_deny  esc-arch   '{"tool_name": "Bash", "tool_input": {"command": "cat <<EOF\n$(cat .claude/.idd/arch\\ive/edits/a.md)\nEOF"}}'
+expect_deny  dq-arch    '{"tool_name": "Bash", "tool_input": {"command": "cat .claude/.idd/arch\"\"ive/edits/a.md"}}'
+expect_deny  sq-arch    '{"tool_name": "Bash", "tool_input": {"command": "cat .claude/.idd/'\''arch'\''ive/edits/a.md"}}'
+expect_deny  ln2-cmt    "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "echo start\n# Let'\''s go\nchmod -R u+r .claude\n# That'\''s it"}}' | sed "s|__REPO__|$REPO|")"
+expect_deny  hd-cmt     "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "cat > /tmp/n.md <<'\''EOF'\''\nnotes\nEOF\n# Let'\''s fix perms\nchmod -R u+r .claude\n# that'\''s all"}}' | sed "s|__REPO__|$REPO|")"
+expect_deny  herestr    "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "cat <<< '\''x'\''\n# it'\''s\nchmod -R u+r .claude\n# it'\''s"}}' | sed "s|__REPO__|$REPO|")"
+expect_deny  find-chmod "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "find . -type f -exec chmod u+r {} +"}}' | sed "s|__REPO__|$REPO|")"
+expect_deny  glued-par  "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "(cd sub)&&chmod -R u+r .claude"}}' | sed "s|__REPO__|$REPO|")"
+expect_allow plain-cmt  '{"tool_name": "Bash", "tool_input": {"command": "git status\n# Let'\''s commit the read guard fix\ngit commit -m '\''fix the read guard'\''"}}'
+expect_allow plain-hd   '{"tool_name": "Bash", "tool_input": {"command": "gh pr create --title t --body \"$(cat <<'\''EOF'\''\nRefs #351, it'\''s done\nEOF\n)\""}}'
+expect_allow chmod-ok   "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "chmod -R u+x scripts"}}' | sed "s|__REPO__|$REPO|")"
 expect_allow helper   '{"tool_name":"Bash","tool_input":{"command":"python3 \"$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py\" archive comment 5805214375 --from-file \"$BACKUP_FILE\" --repo \"$REPO\""}}'
 expect_allow skill    '{"tool_name":"Read","tool_input":{"file_path":"plugins/issue-driven-dev/skills/idd-edit/SKILL.md"}}'
 expect_allow grep-re  '{"tool_name":"Grep","tool_input":{"pattern":".claude/.idd/archive","path":"plugins"}}'
@@ -318,15 +332,15 @@ assert_exit "collision name that is not ignored → exit 7" 7 "$RC"
 refute "no -2 file written" test -e "$CI/.claude/.idd/archive/edits/comment-5-20261009T100000Z-2.md"
 
 # F5. hook: word-level matching, dot-dot, prefix, unlock flag
-expect_allow commit   '{"tool_name":"Bash","tool_input":{"command":"git commit -m \"keep .claude/.idd/archive/ out of git\""}}'
-expect_allow ghbody   '{"tool_name":"Bash","tool_input":{"command":"gh issue comment 351 --body \"archive lives in .claude/.idd/archive/edits\""}}'
+expect_deny  commit   '{"tool_name":"Bash","tool_input":{"command":"git commit -m \"keep .claude/.idd/archive/ out of git\""}}'
+expect_deny  ghbody   '{"tool_name":"Bash","tool_input":{"command":"gh issue comment 351 --body \"archive lives in .claude/.idd/archive/edits\""}}'
 expect_deny  dotdot   '{"tool_name":"Bash","tool_input":{"command":"cat .claude/x/../.idd/archive/edits/a.md"}}'
 expect_deny  dblslash '{"tool_name":"Bash","tool_input":{"command":"cat .claude//.idd/archive/edits/a.md"}}'
 expect_allow prefix   '{"tool_name":"Read","tool_input":{"file_path":"/r/.claude/.idd/archive-notes.md"}}'
 expect_deny  shc      '{"tool_name":"Bash","tool_input":{"command":"sh -c \"cat .claude/.idd/archive/edits/a.md\""}}'
 expect_deny  pyc      '{"tool_name":"Bash","tool_input":{"command":"python3 -c \"print(open(\u0027.claude/.idd/archive/edits/a.md\u0027).read())\""}}'
 expect_deny  quoted   '{"tool_name":"Bash","tool_input":{"command":"cat \".claude/.idd/archive/edits/a b.md\""}}'
-expect_allow commitF  '{"tool_name":"Bash","tool_input":{"command":"git commit --message=\"see .claude/.idd/archive/ docs\""}}'
+expect_deny  commitF  '{"tool_name":"Bash","tool_input":{"command":"git commit --message=\"see .claude/.idd/archive/ docs\""}}'
 expect_deny  subst    '{"tool_name":"Bash","tool_input":{"command":"gh issue comment 1 --body \"$(cat .claude/.idd/archive/edits/a.md)\""}}'
 expect_deny  backtick '{"tool_name":"Bash","tool_input":{"command":"git commit -m \"`cat .claude/.idd/archive/edits/a.md`\""}}'
 expect_deny  procsub  '{"tool_name":"Bash","tool_input":{"command":"gh issue comment 1 --body-file <(cat .claude/.idd/archive/edits/a.md)"}}'
@@ -416,9 +430,9 @@ echo "I. round 5"
 mkdir -p "$REPO/sub"
 expect_deny  chmodUp  "{\"tool_name\":\"Bash\",\"cwd\":\"$REPO/sub\",\"tool_input\":{\"command\":\"chmod -R u+r ../..\"}}"
 # I2. IDD's own posts and env-prefixed commands keep the message exemption
-expect_allow egressBody '{"tool_name":"Bash","tool_input":{"command":"bash plugins/issue-driven-dev/scripts/gh-egress.sh comment 1 --body \"the archive lives in .claude/.idd/archive/edits\""}}'
-expect_allow envGh      '{"tool_name":"Bash","tool_input":{"command":"GH_PAGER=cat gh issue comment 1 --body \"see .claude/.idd/archive/edits\""}}'
-expect_allow envGit     '{"tool_name":"Bash","tool_input":{"command":"GIT_EDITOR=true git commit -m \"keep .claude/.idd/archive out\""}}'
+expect_deny  egressBody '{"tool_name":"Bash","tool_input":{"command":"bash plugins/issue-driven-dev/scripts/gh-egress.sh comment 1 --body \"the archive lives in .claude/.idd/archive/edits\""}}'
+expect_deny  envGh      '{"tool_name":"Bash","tool_input":{"command":"GH_PAGER=cat gh issue comment 1 --body \"see .claude/.idd/archive/edits\""}}'
+expect_deny  envGit     '{"tool_name":"Bash","tool_input":{"command":"GIT_EDITOR=true git commit -m \"keep .claude/.idd/archive out\""}}'
 # I3. a redirection in a message value is not prose
 expect_deny  msgRedir   '{"tool_name":"Bash","tool_input":{"command":"git commit -m <.claude/.idd/archive/edits/a.md"}}'
 

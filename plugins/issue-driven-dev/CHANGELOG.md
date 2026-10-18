@@ -51,7 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Verbatim blocks are compared as multisets and recognised by exactly two labels, `Original text` and
   `**Original**` (*round 9 added a third, the reply template's `**Point i**`*).
 - The read-guard hook matches the archive path as a shell word, so a quoted commit or comment message that
-  mentions it is allowed, and it honours `~/.cache/idd/archive-read-guard.disabled` as an off switch.
+  mentions it is allowed, and it honours `~/.cache/idd/archive-read-guard.disabled` as an off switch. *(Round 18: no message is exempt any more — see below.)*
 
 ### Fixed (verify round 3, before release)
 
@@ -128,7 +128,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   marker on line 1, and the heading check reads past it. A marker inside a fenced example is neither carried nor
   counted. `--correct` with only whitespace and an invocation without a target are refused; `--last` reads every page.
 - `archive` refuses a repository that tracks anything under the archive path; a sidecar that cannot be created for
-  another reason is refused instead of retried. The read guard keeps the message exemption for IDD's own posts
+  another reason is refused instead of retried. The read guard keeps the message exemption *(Round 18: no message is exempt any more — see below.)* for IDD's own posts
   (`bash …/gh-egress.sh … --body`) and `NAME=value` prefixes, scans message values that contain a redirection, and
   denies a recursive permission change on a directory above the repository. The unclosed `<details>` case is #409;
   the coverage of the verbatim labels is #410.
@@ -330,7 +330,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Read guard:** a message flag is prose only for subcommands that take a message (`git commit`, `gh issue`/`pr`/
   `release`, …), so after `git diff -m` the next word is scanned even when the path contains spaces; an unquoted
   newline and a glued `&&`, `||`, `|` end a command. A one-word `git commit -m <text>` is allowed again. *(Round 15:
-  one-word values are scanned again, and this round's tokenizer read `#` as a comment — see below.)*
+  one-word values are scanned again, and this round's tokenizer read `#` as a comment — see below.)* *(Round 18: no message is exempt any more — see below.)*
 - `restore --target` refuses, as `restore <id>` does, a symlinked archive path or a repository that tracks archive
   entries, skips a sidecar that is not a regular file, and lists same-second versions in the order they were written.
 - A PICK whose author read fails stays open too; issue numbers longer than eighteen digits are refused (exit 2, not a
@@ -347,7 +347,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The read guard skips a message value only when it is prose (whitespace) **and** the subcommand takes a message,
   and not after a `--` (`git commit -- -m <path>` is a pathspec); `|&` and `&|` end a command, a backslash-newline
   joins lines, `git commit -am` counts as `-m` *(round 16: no longer — git reads `-Fm` as `-F m`)*, more pre-subcommand value options and message subcommands are known,
-  and `env A=1 python3 <helper>` is recognised. A one-word message after `-m` is scanned again.
+  and `env A=1 python3 <helper>` is recognised. A one-word message after `-m` is scanned again. *(Round 18: no message is exempt any more — see below.)*
 - The #272 question asks about the text this edit adds, says declining only cancels the edit, and offers redaction
   of the body file in every mode; the SKILL orders it before the final confirmation and documents the PICK
   `author-unknown` retry and the lookup's exit-2 refusals; the not-applied spec wording, the path-gate spec sentence
@@ -378,6 +378,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `chmod`); `>|` is a redirection. On the round-15 reviewers' 12,000-command grid, checked against real bash and zsh
   with stub commands, no command the guard allows reads the archive or runs a `chmod -R` on it.
 - `apply` checks the #272 floor against whichever prepared bodies exist, so a missing one cannot skip it.
+
+### Fixed (round 18 — verify round 16 findings, before release)
+
+- **The read guard fails closed (user decision 2026-10-18).** Rounds 12–16 each found a way past the guard that the
+  round before had opened, all in the model of shell word splitting the guard needed to let a commit message or
+  issue body that mentions the archive path through (round 17's own: a `#` comment on line 2 or later was not seen
+  as one, and blanking a heredoc's escapes split `arch\ive` apart). That exemption is gone: every Bash /
+  PowerShell command is read as flat text — quotes removed, escapes resolved — cut into path-like pieces, and any
+  piece naming the archive denies the call, a message, comment or heredoc body included; such text goes in a file
+  (`-F`, `--body-file`). A permission command, a recursive marker (`-R`, `--recursive`, or `find` / `xargs` / `fd`)
+  and a word naming the archive or a directory above it anywhere in one command deny it too. The hook shrinks from
+  ~380 to ~220 lines. Checked against real bash and zsh: the 47 known bypasses, the 12,000-command grid and a
+  400-command grid of comments on later lines are all denied.
 
 ### Changed
 
@@ -432,6 +445,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   other file. Credential directories are matched without regard to letter case, under both `HOME` and the account's
   home directory, by the path as given and as resolved; system paths are matched without regard to case on the
   resolved path.
+- The read guard denies any Bash / PowerShell command that names `.claude/.idd/archive`, a commit message or issue
+  body included (3.4.0 had no guard; within 3.5.0 earlier rounds exempted message values). Pass such text from a
+  file: `git commit -F`, `gh … --body-file`.
 - `--scope` other than `whole-comment` is refused at start (exit 3) in every mode; 3.4.0 ignored it for `--append`
   and `--prepend-note`.
 - Editing a reply that quotes user-pasted points (`type=reply` + `points-from=user-pasted`) asks the #272 question in

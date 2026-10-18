@@ -157,4 +157,13 @@
 - [x] 22.1 先寫會失敗的測試（correction-archive，以 `json.dumps` 產生）：`$(true)#`、`foo\ #x`、`a\;#b`、heredoc 本文裡的 `#351 $(cat …)`、`# Summary: $(cat …)`、`PR_BODY=$(cat <<EOF`、heredoc 撇號奇偶藏住 `chmod -R` 兩種、PowerShell 結尾反斜線、`x=( a b )\` 續行接 `chmod`、`>|`；放行：`# step` 註解行之後的 commit、`gh pr create --body "$(cat <<'EOF' …)"`。驗證：11 條在 4c5a0e4 上失敗。
 - [x] 22.2 hook：`_normalize`（註解文字與 heredoc 本文保留並掃描、只空白掉引號與反斜線；PowerShell 先換反斜線）；`(`、`)` 分隔；`>|` 是重導向；退路的切分含括號。helper：apply 的 #272 檢查看存在的內文。驗證：correction-archive 242 條全綠；第 14 輪已知繞法 47 條全擋；第 15 輪 DA 的 12,000 筆網格以真實 bash／zsh 比對，放行且真的會讀到的是 0 筆。
 - [x] 22.3 文件：correction-archive spec 的 read guard 規則、CHANGELOG（第 17 輪、兩處加註）、hook docstring。驗證：`spectra validate`、`run-all-tests.sh`。
-- [ ] 22.4 Verify 第 16 輪（只審第 17 輪的差異）；沒有 HIGH 以上，就請使用者確認合併。驗證：#351 的 verify 留言。
+- [x] 22.4 Verify 第 16 輪（只審第 17 輪的差異）；沒有 HIGH 以上，就請使用者確認合併。驗證：#351 的 verify 留言。
+- [x] 22.5 22.4 的結果：第 16 輪 FAIL，findings 37（HIGH 6／MEDIUM 12／LOW 9／INFO 10），全部在 read guard，都是第 17 輪改寫造成：第 2 行以後的 `#` 註解認不出、heredoc 本文的跳脫被換成空白而拆開路徑、heredoc 誤判、括號 token、`>|`。報告在 #351 的 verify 留言（comment 6243761496）。
+- [x] 22.6 使用者 2026-10-18 決定：read guard 改成 fail-closed——拿掉訊息例外，指令文字只要提到歸檔路徑就擋（訊息改用檔案傳）。
+
+## 23. read guard 改為 fail-closed（第 18 輪）
+
+- [x] 23.1 測試：correction-archive 中訊息提到路徑的放行案例改為拒絕（16 條）、拒絕訊息改指向訊息檔；新增 `arch\ive`／`arch""ive`／`'arch'ive`、第 2 行以後註解藏 `chmod -R`、heredoc 之後的註解、here-string、`find -exec chmod`、黏住的括號；放行：沒提到路徑的註解與 commit、`--body "$(cat <<'EOF' …)"`、`chmod -R u+x scripts`。
+- [x] 23.2 hook：`_flat`（去掉引號、解開跳脫，PowerShell 的反斜線當路徑分隔）＋路徑片段比對；`_recursive_permission_change` 看整段指令的每個詞，`find`／`xargs`／`fd` 視同遞迴；移除訊息例外、斷詞模型、註解與 heredoc 處理。驗證：correction-archive 264 條全綠；47 個已知繞法、12,000 筆網格、第 2 行以後註解的 400 筆網格以真實 bash／zsh 比對全擋。
+- [x] 23.3 文件：correction-archive spec（需求改寫、兩個 scenario 改為拒絕、新增註解 scenario）、hook docstring 與拒絕訊息、CHANGELOG（第 18 輪、Changed、舊條目加註）。驗證：`spectra validate`、`run-all-tests.sh`。
+- [ ] 23.4 Verify 第 17 輪（只審第 18 輪的差異）；沒有 HIGH 以上，就請使用者確認合併。驗證：#351 的 verify 留言。
