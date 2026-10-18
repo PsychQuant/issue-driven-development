@@ -290,7 +290,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" finish --run '<RUN>'
 - **Metadata marker 不覆蓋**：每次 edit 加新 marker，保留 history
 - **`--replace` 預設 confirm = NO**：破壞性動作不自動 yes
 - **Log 每次 edit**：顯示 URL 讓使用者能立即 verify
-- **提到歸檔路徑的文字**：archive-read-guard hook 會擋下指令文字裡寫出 `.claude/.idd/archive` 的任何呼叫，`--body`、`--reason` 也一樣（fail-closed，#351）。使用者給的 `--reason` 若寫出這個路徑，Step 1 照原樣貼上會被擋：先告訴使用者，請使用者改寫，或同意你改寫成不含路徑的說法，不要自行改寫後照跑。更正或附加的內文若必須提到它，用 Write 工具寫進檔案、以 `--body-file` 傳入（helper 讀檔內容，hook 不看檔案內容）。
+- **提到歸檔路徑的文字**：archive-read-guard hook 會擋下指令文字裡寫出 `.claude/.idd/archive` 的任何呼叫，`--body`、`--reason` 也一樣（fail-closed，#351）。使用者給的 `--reason` 若寫出這個路徑，Step 1 照原樣貼上會被擋：先告訴使用者，請使用者改寫，或同意你改寫成不含路徑的說法，不要自行改寫後照跑。更正或附加的內文若必須提到它，用 Write 工具寫進檔案、以 `--body-file` 傳入（helper 讀檔內容，hook 不看檔案內容）。在含歸檔的 repo 裡，指令文字同時含權限指令（`chmod`、`chown`…）與遞迴標記（`-R`、`find`、`xargs`）也會被擋，`--body`／`--reason` 一樣；內文改用 `--body-file`，`--reason` 照上面的方式請使用者改寫。
 - **`--body-file` path safety（#155）**：helper **canonicalize（`os.path.realpath`）後拒絕** sensitive system paths（`/etc` `/var` `/sys` `/proc` `/private/etc|var`）+ credential dirs（`.ssh` `.aws` `.gnupg` `.kube` `.docker`，不分大小寫：macOS 的 APFS 把 `~/.SSH` 當成 `~/.ssh`）與 gh 的 token 目錄（`GH_CONFIG_DIR`、`$XDG_CONFIG_HOME/gh`、`~/.config/gh`，escape hatch 也不放行），含 `//etc` / `/tmp/../etc` / symlink / relative-traversal bypass vectors → exit 5 refuse。Escape hatch：`IDD_EDIT_HELPER_ALLOW_UNSAFE_BODY_FILE=1`（須自審 reason）。合法 repo / `/tmp` / `$HOME/Developer` 路徑照常讀；使用者自己的暫存目錄底下（macOS 在 `/var/folders/…`）也放行（#351）。Preview gate 仍是最後一道防線。
 
 ## 與 idd-comment 的配合

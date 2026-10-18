@@ -66,6 +66,8 @@ hook 腳本 `hooks/archive-read-guard.py` 用 stdlib `json` 解析 stdin，與 h
 
 遞迴改權限的檢查重蹈同一條路：第 19 輪把旗標與目標歸給「權限指令之後」的詞，第 20 輪改成不歸屬、但在 repo 外解析每個目標，verify 第 18、19 輪各找到 5 與 7 個 HIGH（黏住的運算子、撇號、`cd` 後的相對目標、括號路徑），而且在沒有歸檔的 repo 裡把寫 script 的 heredoc 擋下（使用者真實紀錄：1 筆增為 237 筆）。2026-10-18 使用者第二次決定（第 21 輪）：只在歸檔附近檢查——工作目錄在含歸檔的 repo 內、或是其上一層資料夾、或無法列出時，指令同時含權限指令與遞迴標記就擋，不看目標；其他地方不檢查，寫成已知限制。
 
+第 22 輪：歸檔附近的相對路徑也改成純文字判斷——指向 `archive/` 之下的相對路徑，配上工作目錄或指令裡的 `.claude`／`.claude/.idd`，就擋；不再 stat 指令裡的詞。Windows：正規化改用 `posixpath`，第一層的字串比對在 Windows 上才會成立；第二層（權限 `0000`）在 Windows 上本來就無效，且未在 Windows 實機測過。
+
 代價：在含歸檔的 repo 與其上一層資料夾，同時含兩個字的指令都被擋（別的程式的 `-R`、`cp -R` 加 `chmod +x`、`gh … -R owner/repo` 加 `chmod 600`、寫 script 的 heredoc、`grep -R chmod .`），拒絕訊息指向分開執行、Write 工具、Grep 工具與不加 `-R` 的寫法。限制：從其他目錄指名這個 repo（或在同一行 `cd` 進去）的遞迴改權限不檢查。
 
 ### 標記只留 backup-id，放在被取代區段末端
@@ -141,13 +143,13 @@ helper 子命令既有的 exit code（0／1／2／3／4／5）語意不變；一
 
 ## Risks / Trade-offs
 
-- [hook 比對文字、實際執行的是 shell，兩者必然有落差（變數或萬用字元拼出的路徑與旗標、`$'…'` 內的跳脫、eval、`python -c` 這類其他改權限的程式；連續多次 `cd` 之後的相對路徑（單次 `cd` 指到的目錄會當作解析基準）；從 repo 及其上一層資料夾以外的目錄執行的遞迴改權限）] → 接受：hook 只擋無意間的 `cat`／`grep`／Read；保證讀不到的是第二層權限 `0000`。threat model 是「無意間讀到」，不是刻意繞過。fail-closed 的決定與代價見 Decisions〈read guard fail-closed〉。另一個代價：IDD 自己的發文若在指令裡帶了提到路徑的文字，會先被擋一次，改用 `--body-file` 即可。
+- [hook 比對文字、實際執行的是 shell，兩者必然有落差（變數或萬用字元拼出的路徑與旗標、`$'…'` 內的跳脫、eval、`python -c` 這類其他改權限的程式；指令替換、`~+` 這類 tilde 前綴；經過不提到 `.claude`／`.claude/.idd` 的 `cd` 之後的相對路徑；PowerShell 的 `.ForEach()` 與逗號陣列；從 repo 及其上一層資料夾以外的目錄執行的遞迴改權限）] → 接受：hook 只擋無意間的 `cat`／`grep`／Read；保證讀不到的是第二層權限 `0000`。threat model 是「無意間讀到」，不是刻意繞過。fail-closed 的決定與代價見 Decisions〈read guard fail-closed〉。另一個代價：IDD 自己的發文若在指令裡帶了提到路徑的文字，會先被擋一次，改用 `--body-file` 即可。
 - [以 root 執行的程序不受權限限制] → 不處理；IDD 不以 root 執行。
 - [本機歸檔只在一台機器] → GitHub 編輯紀錄保有每一版；歸檔是可用 ID 找到的本機副本。
 - [restore 會蓋掉更正之後的修改] → 確認提示明說；還原後可再跑 `idd-update` 重建 Current Status。
 - [ripgrep 遇到權限 0000 的檔案會在 stderr 印 Permission denied] → 只洩漏檔名，檔名本身只含 comment id 與時間。
 - [errata 對自己 comment 的行為改變] → CHANGELOG 標為行為面 BREAKING，說明新舊差異。
-- [hook 套用在所有 IDD 使用者的每一次 Read／Grep／Glob／Edit／Write／NotebookEdit／Bash／PowerShell／Monitor 呼叫，實測每次約 40–45 ms（Python 啟動；第 20 輪量測）] → 接受：比對以字串運算為主，只有遞迴改權限的指令才查工作目錄（一次 `listdir`）；若日後成為瓶頸，改成先用 shell 內建字串比對過濾、命中才啟動 Python。
+- [hook 套用在所有 IDD 使用者的每一次 Read／Grep／Glob／Edit／Write／NotebookEdit／Bash／PowerShell／Monitor 呼叫，實測每次約 40–45 ms（Python 啟動；第 20 輪量測）] → 接受：比對全是字串運算，從不 stat 指令裡的詞（第 21 輪曾對每個詞 `isdir`，一個卡住的掛載點就讓呼叫卡到逾時，第 22 輪拿掉）；只有在含權限指令與遞迴標記、或出現指向歸檔內部的相對路徑時，才查工作目錄（往上各層一次 `stat`、一次 `listdir`）。hook 設 10 秒逾時，逾時時 Claude Code 照常執行該呼叫，由第二層權限兜底；若日後成為瓶頸，改成先用 shell 內建字串比對過濾、命中才啟動 Python。
 
 ## Migration Plan
 

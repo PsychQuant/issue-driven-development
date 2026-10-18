@@ -317,6 +317,33 @@ expect_allow cd-plain   "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "
 # archive that has .claude/.idd and an unrelated archive/ folder is not denied
 mkdir -p "$PLAIN/.claude/.idd"
 expect_allow fp-join    "$(printf %s '{"tool_name": "Bash", "cwd": "__PLAIN__", "tool_input": {"command": "ls -la .claude/.idd/ && sed -n 1p archive/README.md"}}' | sed "s|__PLAIN__|$PLAIN|g")"
+# round 22: relative references are lexical — no stat of command words. A cd
+# target with a space or parenthesis, or a command substitution, followed by a
+# path into archive/ is denied near the archive; a bare word 'archive' is not
+mkdir -p "$WORK/proj (1)/.claude/.idd/archive/edits"
+expect_deny  cd-space   "$(printf %s '{"tool_name": "Bash", "cwd": "__SPACE__", "tool_input": {"command": "cd \"__SPACE__/.claude/.idd\" && chmod u+r archive/edits/a.md && cat archive/edits/a.md"}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g; s|__WORK__|$WORK|g")"
+expect_deny  cd-paren   "$(printf %s '{"tool_name": "Bash", "cwd": "__WORK__", "tool_input": {"command": "cd \"proj (1)/.claude/.idd\" && cat archive/edits/a.md"}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g; s|__WORK__|$WORK|g")"
+expect_deny  cd-subst   "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "cd \"$(git rev-parse --show-toplevel)/.claude/.idd\" && cat archive/edits/a.md"}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g; s|__WORK__|$WORK|g")"
+expect_deny  cd-up      "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "cd .claude/.idd/attachments && cat ../archive/edits/a.md"}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g; s|__WORK__|$WORK|g")"
+expect_allow bare-word1 "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "git status --short; ls -la .claude/.idd/ 2>/dev/null | head; grep -n \"archive\" .git/info/exclude"}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g; s|__WORK__|$WORK|g")"
+expect_allow bare-word2 "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "ls .claude/.idd && spectra archive my-change"}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g; s|__WORK__|$WORK|g")"
+expect_allow bare-word3 "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__/.claude/.idd", "tool_input": {"command": "git log --oneline | grep archive"}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g; s|__WORK__|$WORK|g")"
+expect_allow bash-mod   "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "chmod u+x run.sh; echo $((7 % 3))"}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g; s|__WORK__|$WORK|g")"
+expect_deny  glob-rel   "$(printf %s '{"tool_name": "Glob", "cwd": "__REPO__/.claude/.idd", "tool_input": {"pattern": "*.md", "path": "archive/edits"}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g; s|__WORK__|$WORK|g")"
+if [ "$(id -u)" != 0 ]; then
+  mkdir -p "$WORK/w2/proj/.claude/.idd/archive"; chmod 600 "$WORK/w2/proj"
+  expect_deny  eacces     "$(printf %s '{"tool_name": "Bash", "cwd": "__WORK__/w2", "tool_input": {"command": "chmod -R u+rwx ."}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g; s|__WORK__|$WORK|g")"
+  chmod 755 "$WORK/w2/proj"
+fi
+# no file system access for a command that names no archive and no permission command
+assert_true "no stat for ordinary commands" "python3 - \"$HOOK\" <<'PYNOSTAT'
+import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location(\"g\", sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+def boom(*a, **k): raise AssertionError(\"file system touched\")
+for name in (\"isdir\", \"exists\", \"isfile\"): setattr(m.os.path, name, boom)
+m.os.stat = boom; m.os.listdir = boom
+assert m._decide(\"Bash\", {\"command\": \"echo /Volumes/NAS/proj; ls /net/host/x https://example.com/a\"}, \"/tmp/nowhere\") is None
+PYNOSTAT"
 # round 21: recursive permission changes are checked only from inside a
 # repository that holds the archive or the folder directly above one (the
 # out-* and sibling-up cases above are allowed now: a documented limit);

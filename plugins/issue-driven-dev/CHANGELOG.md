@@ -392,6 +392,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ~380 to ~220 lines. Checked against real bash and zsh: the 47 known bypasses, the 12,000-command grid and a
   400-command grid of comments on later lines are all denied.
 
+### Fixed (round 22 — verify round 20 findings, before release)
+
+- Read guard: round 21 stat'ed every path-like word of every command to find directories it names; a stuck mount (an
+  evicted iCloud file, an unreachable network share) stalled the call until the hook timed out, after which Claude
+  Code runs the call unguarded, and a literal mention of the archive waited for those stats. The words are no longer
+  stat'ed: near the archive, a relative path that goes below `.claude/.idd/archive/` is denied when it lands there
+  from the working directory, or when it starts with `archive/…` or `.idd/archive/…` and the working directory or a
+  word of the command is a `.claude` or `.claude/.idd` directory — so a `cd` into a path with spaces or parentheses,
+  or into `$(git rev-parse --show-toplevel)/.claude/.idd`, no longer gets a plain `chmod u+r` and `cat` through. The
+  bare word `archive` (`spectra archive`, `grep archive`) no longer counts. The hook has a 10-second timeout.
+- A stat error other than "not found" counts as an archive when deciding whether the working directory is near one,
+  and a symlinked working directory is checked with its real path too.
+- `%` and `foreach` count as walkers only in PowerShell; `bfs` and PowerShell `-Depth` count everywhere they apply.
+- Path normalization uses POSIX rules on every platform, so the string match also works on Windows (untested there;
+  the file-mode layer does not work on Windows).
+- The permission denial names the unlistable-directory case and says to pass message text from a file; the read
+  denial mentions relative paths.
+
 ### Fixed (round 21 — verify round 19 findings, before release)
 
 - Read guard, recursive permission changes: round 20 still resolved targets when the working directory was outside
@@ -405,6 +423,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   command names, so `cat archive/edits/a.md` or `chmod u+r ../archive/edits/a.md` from inside `.claude/.idd`, and
   `cd .claude/.idd && head archive/edits/a.md` from the repository, are denied. A joined path counts only when the
   archive directory it names exists, so a repository with `.claude/.idd` and an unrelated `archive/` folder is not.
+  *(Round 22: replaced by a textual rule — the words of a command are no longer stat'ed.)*
 - PowerShell `-r`/`-rec` abbreviations and the `%`/`foreach` aliases, and `gfind`/`gxargs`/`fdfind`, count as
   recursive markers.
 - The permission denial says to run unrelated parts separately and to write file contents with the Write tool; the
@@ -504,7 +523,8 @@ permission changes are checked only near the archive.)*
   (`chmod`, `chown`, `chgrp`, `chflags`, `setfacl`) and a recursive marker (`-R`, `--recursive`, or `find`/`xargs`/
   `fd`) is denied, whatever its target — `grep -R chmod .`, `cp -R a b && chmod +x b/run` and a heredoc that writes
   a script mentioning both included. Run the parts separately, write files with the Write tool, search with the Grep
-  tool, or change the files without `-R`. From any other directory they are not checked.
+  tool, pass message text from a file, or change the files without `-R`. The same holds when the working directory
+  cannot be listed (a deleted directory, for example). From any other directory they are not checked.
 - `--scope` other than `whole-comment` is refused at start (exit 3) in every mode; 3.4.0 ignored it for `--append`
   and `--prepend-note`.
 - Editing a reply that quotes user-pasted points (`type=reply` + `points-from=user-pasted`) asks the #272 question in

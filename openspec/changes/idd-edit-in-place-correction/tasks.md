@@ -190,4 +190,12 @@
 - [x] 26.1 先寫會失敗的測試（correction-archive）：repo 外的 out-*、sibling-up 改為放行（已知限制）；新增無歸檔 repo 的 join 誤擋（fp-join）、 `.claude/.idd` 內的相對讀取與 chmod、同一行 `cd` 後的相對讀取、無法列出的工作目錄、PowerShell `-r`／`%`、`gfind`／`gxargs`、檢查出錯時拒絕且不提解除開關；放行：無歸檔 repo 裡寫 script 的 heredoc、`cd .claude/.idd && ls attachments`。
 - [x] 26.2 hook：`_permission_change_in` 只看工作目錄是否在歸檔附近（`_near_archive`：歸檔在其上、其直接子目錄是含歸檔的 repo、或無法列出），不再解析目標，刪掉 `_archive_below`、`_shell_words`、`$`／萬用字元規則與 shlex；`_candidates` 把每個片段也以工作目錄與指令中存在的目錄解析（只在含 `archive` 時 join）；`_decide` 抽出；拒絕訊息補上分開執行、Write 工具、請使用者執行；檢查出錯的訊息不再叫 agent 建立解除開關。join 只在所指的歸檔確實存在時才算（無歸檔 repo 的 `.claude/.idd` 加上無關的 `archive/` 資料夾不再誤擋）。驗證：correction-archive 347 條全綠；歸檔附近 68,040 筆網格以真實 bash／zsh 比對全擋，7 個相對路徑情境全擋；使用者真實紀錄中無歸檔目錄的誤擋為 0（9394aaf 為 198），歸檔附近 59 筆（多為本 repo 的 verify 腳本）；`run-all-tests.sh` 63 個 suite 全綠。
 - [x] 26.3 文件：spec（新規則、兩個 scenario、Monitor 欄位）、docstring、design（決定改寫、Risks、輪次）、README、CHANGELOG（第 21 輪、Changed、第 19／20 輪加註）。驗證：`spectra validate`、`run-all-tests.sh`。
-- [ ] 26.4 Verify 第 20 輪（只審第 21 輪的差異）；沒有 HIGH 以上，就請使用者確認合併。驗證：#351 的 verify 留言。
+- [x] 26.4 Verify 第 20 輪（只審第 21 輪的差異）；沒有 HIGH 以上，就請使用者確認合併。驗證：#351 的 verify 留言（6256335129）。
+- [x] 26.5 26.4 的結果：第 20 輪 FAIL，findings 43（HIGH 3／MEDIUM 9／LOW 18／INFO 13）。HIGH：第 21 輪對每個指令片段 `isdir`，卡住的掛載點讓呼叫卡到 hook 逾時（逾時即放行）；`cd` 到含空白／括號的目錄後的相對路徑不被解析。DA：使用者接受的限制沒有藏住別的東西。背景安全審查另報「repo 外不檢查」為 fail-open——即使用者選定的限制，不改。
+
+## 27. Verify 第 20 輪修正（第 22 輪）
+
+- [x] 27.1 先寫會失敗的測試（correction-archive）：`cd` 到含空白、括號的目錄與 `$(git rev-parse …)` 之後的相對讀取、`cd .claude/.idd/attachments` 後的 `../archive/…`、Glob 的相對 path、子 repo 無搜尋權限（EACCES）時的遞迴改權限；放行：只提到 `archive` 這個字的三種指令、Bash 的 `%` 算術；一般指令不碰檔案系統（patch `os.stat`／`listdir`／`isdir` 為拋例外）。驗證：10 條在 30afcec 上失敗。
+- [x] 27.2 hook：刪掉逐詞 `isdir` 與 `_names_existing_archive`；新增 `_relative_archive_reference`（純文字：接上工作目錄落在 `archive/` 之下，或 `archive/…`／`.idd/archive/…` 配上工作目錄或指令裡的 `.claude`／`.claude/.idd`），歸檔附近才擋；`_isdir_or_unknown`（stat 錯誤非「不存在」即視為有）；`_near_archive` 也查 realpath；`%`／`foreach` 只限 PowerShell，加 `bfs`、PowerShell `-Depth`；`_norm_path` 用 posixpath；拒絕訊息補上相對路徑、unlistable 目錄與訊息改由檔案傳；hooks.json 設 10 秒逾時。驗證：correction-archive 368 條全綠；歸檔附近 68,040 筆網格與 12 個相對路徑情境以真實 bash／zsh 比對全擋；使用者真實紀錄中無歸檔目錄的誤擋 0、歸檔附近 55（與 9394aaf 相同）；`run-all-tests.sh` 63 個 suite 全綠。
+- [x] 27.3 文件：spec（相對路徑規則、純文字、symlink／EACCES、PowerShell 標記、10 秒逾時、scenario）、docstring、design（第 22 輪、Windows、Risks 的檔案系統存取與逾時）、README、idd-edit SKILL（權限規則對 `--body`／`--reason` 的影響）、CHANGELOG（第 22 輪、第 21 輪加註、Changed）。驗證：`spectra validate`。
+- [ ] 27.4 Verify 第 21 輪（只審第 22 輪的差異）；沒有 HIGH 以上，就把 PR #408 標為 ready，合併留給使用者。驗證：#351 的 verify 留言。
