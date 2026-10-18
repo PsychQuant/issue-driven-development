@@ -15,8 +15,9 @@ second layer — archive files are mode 0000 — covers that case.
 
 Threat model: accidental reads, not an agent deliberately working around the
 guard. This hook compares text while the shell runs it, so the two can always
-be made to disagree (a path assembled from variables, globs, brace expansion,
-eval). Those differentials are accepted: the file
+be made to disagree (a path or a flag assembled from variables, globs, brace
+expansion, the escapes inside $'…', eval, another program that changes modes
+such as a python -c one-liner). Those differentials are accepted: the file
 mode is what guarantees an unreadable archive; this hook only stops the
 ordinary `cat`/`grep`/Read that would otherwise happen by accident.
 
@@ -31,18 +32,24 @@ of shell word splitting that could always be made to disagree with the shell
 Each command is checked in two readings — line continuations joined, and read
 as line breaks — so either can only deny more (round 19).
 
-A recursive permission change (chmod/chown/chgrp/chflags/setfacl with -R or
---recursive, or run by find / xargs / fd) on the archive or any directory above
-it is denied too: it would undo the second layer, after which a recursive read
-gets the files (round 3). The flag and the target must follow the permission
-command, a quoted target with a space is one word, letter case is ignored, and
-a target the guard cannot resolve (a variable, a command substitution) is
-refused (rounds 18–19). The file ~/.cache/idd/archive-read-guard.disabled,
-created by a human, turns the guard off.
+A recursive permission change would undo the second layer, after which a
+recursive read gets the files (round 3). A command that holds a permission
+command (chmod, chown, chgrp, chflags, setfacl) and a recursive marker (-R,
+--recursive, -Recurse, or find / xargs / fd / ForEach-Object) is therefore
+refused from inside a repository that holds the archive, whatever its target;
+elsewhere it is refused when any word is the archive, a repository root that
+holds one, or a folder directly above such a repository, or when the command
+holds something the guard cannot resolve ($, a backtick, a glob or brace
+character, quotes shlex cannot balance). The words are not attributed to
+commands: every attempt to do so was beaten (rounds 18–20). A directory more
+than one level above a repository is not searched from outside it. The file
+~/.cache/idd/archive-read-guard.disabled, created by a human, turns the guard
+off.
 
-Input that cannot be parsed is allowed (a note goes to stderr): a bug in this
-hook must not block every tool call in the session, and the file mode still
-protects the archive.
+Input that is not a JSON object is allowed (a note goes to stderr): a bug in
+the caller must not block every tool call in the session, and the file mode
+still protects the archive. An error while checking a well-formed call denies
+that call (round 20).
 """
 import json
 import os
@@ -65,13 +72,15 @@ REASON = (
     "--body-file (a heredoc that names the path is denied too)."
 )
 PERMISSION_REASON = (
-    "Blocked: this looks like a recursive permission change (-R, --recursive, "
-    "or find / xargs / fd running chmod, chown, chgrp, chflags or setfacl) on "
-    ".claude/.idd/archive/ or a directory above it, or on a target the guard "
-    "cannot resolve (a variable or a command substitution). The archive files "
-    "are mode 0000 so that no recursive read reaches them (#351). Name the "
-    "directories you mean explicitly, below the archive's parent; if the "
-    "command does not change permissions, run its parts separately."
+    "Blocked: a recursive permission change (chmod, chown, chgrp, chflags or "
+    "setfacl with -R / --recursive, or run by find, xargs, fd or ForEach-Object). "
+    "Inside a repository that holds the IDD correction archive every one is "
+    "refused, and elsewhere one whose target is the archive, a directory above "
+    "it, or something the guard cannot resolve (a variable, a glob, a command "
+    "substitution) — the archive files are mode 0000 so that no recursive read "
+    "reaches them (#351). Change the files you mean without -R (for example "
+    "chmod u+x path/to/file), and search text with the Grep tool rather than a "
+    "shell command that mentions chmod -R."
 )
 
 PATH_FIELDS = {
@@ -107,7 +116,7 @@ def _hits(candidate):
     return False
 
 
-# Every Bash / PowerShell command is read as flat text: quotes removed and
+# Every Bash / PowerShell / Monitor command is read as flat text: quotes removed and
 # escapes resolved, as the shell joins its words (`arch\ive`, `arch""ive` and
 # `'a b'`), then cut into path-like pieces. Nothing is skipped — not a commit
 # message, a comment or a heredoc body — so a command that only mentions the
@@ -115,11 +124,12 @@ def _hits(candidate):
 # #351 rounds 3–16 let message values through, which needed a model of shell
 # word splitting; every rewrite of that model opened a new way past the guard,
 # so the guard fails closed instead (user decision 2026-10-18).
-PERMISSION_COMMANDS = ("chmod", "chown", "chgrp", "chflags", "setfacl")
+PERMISSION_COMMANDS = ("chmod", "chown", "chgrp", "chflags", "setfacl", "gchmod", "gchown", "gchgrp")
 # commands that apply another command to a whole tree, as -R does
-_TREE_WALKERS = ("find", "xargs", "fd")
-# -R in a short-flag cluster, --recursive and its GNU abbreviations (--rec…)
-_RECURSIVE = re.compile(r"-[A-Za-z]*R[A-Za-z]*|--rec[a-z]*")
+_TREE_WALKERS = ("find", "xargs", "fd", "foreach-object")
+# -R in a short-flag cluster (capital R only: -r is not recursive for these
+# commands), --recursive and its GNU abbreviations (--rec…), PowerShell -Recurse
+_RECURSIVE = re.compile(r"-[A-Za-z]*R[A-Za-z]*|(?i:--rec[a-z]*|-recurse)")
 _NOT_PATH = re.compile(r"[^\w./~+@%-]+")
 
 
@@ -134,6 +144,7 @@ def _variants(command, powershell=False):
     scanned in pairs, so an escaped backslash before a newline is no
     continuation (round 19). PowerShell continues a line with a backtick."""
     if powershell:
+        command = command.replace("`\r\n", "`\n")
         return (command.replace("`\n", ""), command.replace("`\n", "\n"))
     return (_ESCAPE.sub(lambda m: "" if m.group(1) == "\n" else m.group(0), command),
             _ESCAPE.sub(lambda m: "\n" if m.group(1) == "\n" else m.group(0), command))
@@ -162,14 +173,21 @@ def _command_words(command, powershell=False):
 
 
 def _archive_below(target):
-    """True if `target` is the archive, inside it, or a directory above it."""
+    """True if `target` is the archive or inside it, a repository root that
+    holds one (or its .claude / .claude/.idd), or a folder whose direct
+    subdirectory is such a repository (`..` from a sibling repository).
+    A directory further up is not searched (round 20)."""
     if _hits(_norm_path(target)):
         return True
     for suffix in (NEEDLE, ".idd/archive", "archive"):
         candidate = os.path.join(target, suffix)
         if os.path.isdir(candidate) and _hits(_norm_path(candidate)):
             return True
-    return False
+    try:
+        children = os.listdir(target) if os.path.isdir(target) else ()
+    except OSError:
+        return False
+    return any(os.path.isdir(os.path.join(target, c, NEEDLE)) for c in children)
 
 
 def _archives_around(cwd):
@@ -187,51 +205,45 @@ def _archives_around(cwd):
 
 def _shell_words(text, powershell=False):
     """The shell's own words of one reading, a quoted path with a space kept
-    whole, as far as shlex can tell; nothing when it cannot (round 19)."""
+    whole and glued operators trimmed (`"a b";`), or None when shlex cannot
+    split it (round 19–20)."""
     try:
-        return shlex.split(text.replace("\\", "/") if powershell else text)
+        words = shlex.split(text.replace("\\", "/") if powershell else text)
     except ValueError:
-        return []
-
-
-def _after_permission(words):
-    """The words after the first permission command, or None without one."""
-    for i, w in enumerate(words):
-        if os.path.basename(w) in PERMISSION_COMMANDS:
-            return words[i + 1:]
-    return None
+        return None
+    return [w.strip(";&|()<>") for w in words]
 
 
 def _permission_change_in(text, cwd, powershell=False):
-    """A recursive permission change on the archive or a directory above it.
-    Words are not attributed to one command, but the recursive flag and the
-    target must follow the permission command, as they do in one (so `grep -R
-    chmod .` is a search); a tree walker (find / xargs / fd) makes the whole
-    command count. A target the guard cannot resolve — a variable or a command
-    substitution — denies (round 19)."""
-    flat = [w for w in re.split(r"[\s;&|<>()`]+", _flat(text, powershell)) if w]
-    after = _after_permission(flat)
-    if after is None:
+    """A recursive permission change that could reach the archive, in one
+    reading. A permission command and a recursive marker (-R, --recursive and
+    its abbreviations, -Recurse, or a tree walker such as find / xargs / fd /
+    ForEach-Object) anywhere in the command make it one; the words are not
+    attributed to commands (round 20: every attribution rule was beaten).
+    - From inside a repository that holds the archive, every such command is
+      refused, whatever its target.
+    - Elsewhere, every word counts as a target — the flat pieces and the
+      shell's whole words — and the command is refused when one is the archive
+      or a directory above it, or when a target cannot be resolved: a
+      variable, a command substitution, a glob or brace pattern, or quotes
+      shlex cannot balance."""
+    flat = [w for w in re.split(r"[\s;&|<>()`{}]+", _flat(text, powershell)) if w]
+    names = {os.path.basename(w).casefold() for w in flat}
+    if not names & set(PERMISSION_COMMANDS):
         return False
-    walker = any(os.path.basename(w) in _TREE_WALKERS for w in flat)
-    scope = flat if walker else after
-    if not walker and not any(_RECURSIVE.fullmatch(w) for w in scope):
+    if not (names & set(_TREE_WALKERS) or any(_RECURSIVE.fullmatch(w) for w in flat)):
         return False
-    if "$" in text or (not powershell and "`" in text):
-        return True   # `$PWD`, `$(pwd)`, `$(git rev-parse --show-toplevel)`: unresolved, refused
+    if _archives_around(cwd):
+        return True
+    if re.search(r"[$`*?\[{]", text):
+        return True
     shell = _shell_words(text, powershell)
-    shell_after = _after_permission(shell)
-    targets = scope + ((shell if walker else shell_after) or [])
-    archives = [a.casefold() for a in _archives_around(cwd)]
-    for w in targets:
-        if w.startswith("-"):
+    if shell is None:
+        return True
+    for w in flat + shell:
+        if not w or w.startswith("-"):
             continue
-        target = os.path.normpath(os.path.join(cwd, os.path.expanduser(w)))
-        folded = target.casefold().rstrip(os.sep)
-        # The archive itself, a directory just above it, or any directory
-        # that contains this repository's archive (`chmod -R u+r ..`, round 4);
-        # letter case ignored, as on APFS (round 19).
-        if _archive_below(target) or any(a == folded or a.startswith(folded + os.sep) for a in archives):
+        if _archive_below(os.path.normpath(os.path.join(cwd, os.path.expanduser(w)))):
             return True
     return False
 
@@ -276,10 +288,15 @@ def main():
     cwd = _as_text(event.get("cwd")) or os.getcwd()
     command = _as_text(tool_input.get("command")) if tool in COMMAND_TOOLS else ""
     reason = None
-    if any(_hits(c) for c in _candidates(tool, tool_input)):
-        reason = REASON
-    elif command and _recursive_permission_change(command, cwd, tool == "PowerShell"):
-        reason = PERMISSION_REASON
+    try:
+        if any(_hits(c) for c in _candidates(tool, tool_input)):
+            reason = REASON
+        elif command and _recursive_permission_change(command, cwd, tool == "PowerShell"):
+            reason = PERMISSION_REASON
+    except Exception as exc:   # noqa: BLE001 — fail closed on this call (round 20)
+        print(f"archive-read-guard: could not check this call ({type(exc).__name__}: {exc}); denying", file=sys.stderr)
+        reason = ("Blocked: the IDD archive read guard could not check this call (see stderr); "
+                  "rephrase the command, or create ~/.cache/idd/archive-read-guard.disabled to turn the guard off.")
     if reason:
         print(json.dumps({
             "hookSpecificOutput": {

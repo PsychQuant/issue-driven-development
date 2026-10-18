@@ -58,7 +58,11 @@ helper 用既有的 `scripts/git-ignore-block.sh --direction exclude` 把 `.clau
 
 ### hook 以 Python 實作，輸入無法解析時放行
 
-hook 腳本 `hooks/archive-read-guard.py` 用 stdlib `json` 解析 stdin，與 helper 同屬 Python 層（bash 字串解析在 #154 已證明難收斂）。輸入無法解析時放行並寫一行 stderr：若改成拒絕，hook 本身的 bug 會擋掉整個 session 的所有工具呼叫；第二層權限仍在。matcher 用確切名稱清單 `Read|Grep|Glob|Edit|Write|NotebookEdit|Bash|PowerShell`（官方文件：只含字母與 `|` 的 matcher 是精確比對，`Bash` 不會誤中其他工具）。
+hook 腳本 `hooks/archive-read-guard.py` 用 stdlib `json` 解析 stdin，與 helper 同屬 Python 層（bash 字串解析在 #154 已證明難收斂）。輸入不是 JSON 物件時放行並寫一行 stderr：若改成拒絕，呼叫端的 bug 會擋掉整個 session 的所有工具呼叫；第二層權限仍在。輸入正常、但檢查過程出錯時，拒絕這一次呼叫（第 20 輪）。matcher 用確切名稱清單 `Read|Grep|Glob|Edit|Write|NotebookEdit|Bash|PowerShell|Monitor`（官方文件：只含字母與 `|` 的 matcher 是精確比對，`Bash` 不會誤中其他工具）。
+
+### read guard fail-closed：不豁免訊息，遞迴改權限不歸屬指令（第 18–20 輪）
+
+第 3 到 17 輪 hook 讓「提到路徑的訊息參數」放行，為此得模擬 shell 的斷詞；每次改寫都被 verify 找到新的繞法（第 12–16 輪連續 HIGH）。2026-10-18 使用者決定 fail-closed：指令文字只要提到歸檔路徑就擋，訊息改由檔案傳（`-F`、`--body-file`）。第 19 輪又試著把 `chmod -R` 的旗標與目標歸給「權限指令之後」的詞，第 18 輪 verify 以黏住的 `;`、註解裡的撇號、`cd` 之後的相對目標三種方式繞過——同一個問題換了位置。第 20 輪因此不再歸屬：在含歸檔的 repo 裡，任何遞迴改權限一律擋；在別處，每個詞都當目標檢查，含 `$`、反引號、萬用字元或無法配對的引號就擋。代價：含歸檔的 repo 裡 `grep -R chmod .`、`chmod -R u+x scripts` 也被擋，改用 Grep 工具或不加 `-R`；別的 repo 裡用變數當目標的遞迴改權限會被擋。
 
 ### 標記只留 backup-id，放在被取代區段末端
 
@@ -133,13 +137,13 @@ helper 子命令既有的 exit code（0／1／2／3／4／5）語意不變；一
 
 ## Risks / Trade-offs
 
-- [hook 用 shlex 解析、實際執行的是 shell，兩者必然有解析差異（變數拼出路徑、ANSI-C 跳脫、eval）；背景安全審查連續回報三次] → 接受：hook 只擋無意間的 `cat`／`grep`／Read；保證讀不到的是第二層權限 `0000`。threat model 是「無意間讀到」，不是刻意繞過。第 3 到 17 輪曾讓「提到路徑的訊息參數」放行，為此得模擬 shell 的斷詞，而每次改寫都被 verify 找到新的繞法（第 12–16 輪連續 HIGH）；2026-10-18 使用者決定 fail-closed：指令文字只要提到歸檔路徑就擋，訊息改由檔案傳（`-F`、`--body-file`），hook 只比對去掉引號、解開跳脫後的文字片段，兩種續行讀法都查（第 18–19 輪）。代價：IDD 自己的發文若在指令裡帶了提到路徑的文字，會先被擋一次，改用 `--body-file` 即可。
+- [hook 比對文字、實際執行的是 shell，兩者必然有落差（變數或萬用字元拼出的路徑與旗標、`$'…'` 內的跳脫、eval、`python -c` 這類其他改權限的程式；從 repo 外對更上層目錄的 `chmod -R`）] → 接受：hook 只擋無意間的 `cat`／`grep`／Read；保證讀不到的是第二層權限 `0000`。threat model 是「無意間讀到」，不是刻意繞過。fail-closed 的決定與代價見 Decisions〈read guard fail-closed〉。另一個代價：IDD 自己的發文若在指令裡帶了提到路徑的文字，會先被擋一次，改用 `--body-file` 即可。
 - [以 root 執行的程序不受權限限制] → 不處理；IDD 不以 root 執行。
 - [本機歸檔只在一台機器] → GitHub 編輯紀錄保有每一版；歸檔是可用 ID 找到的本機副本。
 - [restore 會蓋掉更正之後的修改] → 確認提示明說；還原後可再跑 `idd-update` 重建 Current Status。
 - [ripgrep 遇到權限 0000 的檔案會在 stderr 印 Permission denied] → 只洩漏檔名，檔名本身只含 comment id 與時間。
 - [errata 對自己 comment 的行為改變] → CHANGELOG 標為行為面 BREAKING，說明新舊差異。
-- [hook 套用在所有 IDD 使用者的每一次 Read／Grep／Glob／Edit／Write／Bash 呼叫，實測每次約 31 ms（Python 啟動）] → 接受：比對只做字串運算、無 I/O；若日後成為瓶頸，改成先用 shell 內建字串比對過濾、命中才啟動 Python。
+- [hook 套用在所有 IDD 使用者的每一次 Read／Grep／Glob／Edit／Write／NotebookEdit／Bash／PowerShell／Monitor 呼叫，實測每次約 40–45 ms（Python 啟動；第 20 輪量測）] → 接受：比對以字串運算為主，只有遞迴改權限的指令才查檔案系統；若日後成為瓶頸，改成先用 shell 內建字串比對過濾、命中才啟動 Python。
 
 ## Migration Plan
 

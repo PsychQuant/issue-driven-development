@@ -260,7 +260,7 @@ expect_deny  herestr    "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "
 expect_deny  find-chmod "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "find . -type f -exec chmod u+r {} +"}}' | sed "s|__REPO__|$REPO|")"
 expect_deny  glued-par  "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "(cd sub)&&chmod -R u+r .claude"}}' | sed "s|__REPO__|$REPO|")"
 expect_allow plain-cmt  '{"tool_name": "Bash", "tool_input": {"command": "git status\n# Let'\''s commit the read guard fix\ngit commit -m '\''fix the read guard'\''"}}'
-expect_allow chmod-ok   "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "chmod -R u+x scripts"}}' | sed "s|__REPO__|$REPO|")"
+expect_deny  chmod-ok   "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "chmod -R u+x scripts"}}' | sed "s|__REPO__|$REPO|")"
 # #351 round 19: a line continuation joins a path or a command name; a
 # chmod -R target is also read as the shell's whole word (spaces kept)
 SPACE="$WORK/My Repo"; mkdir -p "$SPACE/.claude/.idd/archive/edits" "$SPACE/sub"
@@ -276,9 +276,31 @@ expect_deny  ps-tick    '{"tool_name": "PowerShell", "tool_input": {"command": "
 expect_deny  pwd-var    "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "chmod -R u+r \"$PWD\""}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g")"
 expect_deny  toplevel   "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "chmod -R u+r \"$(git rev-parse --show-toplevel)\""}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g")"
 expect_deny  rec-abbr   "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "chmod --recurs u+r .claude"}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g")"
-expect_allow grep-chmod "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "grep -R chmod ."}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g")"
+expect_deny  grep-chmod "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "grep -R chmod ."}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g")"
 expect_deny  monitor    '{"tool_name": "Monitor", "tool_input": {"command": "tail -f .claude/.idd/archive/edits/a.md", "description": "x", "timeout_ms": 1000}}'
 expect_allow chmod-file "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "chmod u+x scripts/run.sh"}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g")"
+# #351 round 20: inside a repository that holds the archive every recursive
+# permission change is refused (chmod-ok and grep-chmod above are denied now);
+# elsewhere every word counts as a target and an unresolvable one refuses
+PLAIN="$WORK/plain"; mkdir -p "$PLAIN/scripts"
+expect_deny  glued-semi "$(printf %s '{"tool_name": "Bash", "cwd": "__SPACE__/sub", "tool_input": {"command": "true;chmod -R u+r \"__SPACE__\""}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g; s|__PLAIN__|$PLAIN|g")"
+expect_deny  apos-cmt   "$(printf %s '{"tool_name": "Bash", "cwd": "__SPACE__", "tool_input": {"command": "chmod -R u+r \"__SPACE__\" # it'\''s done"}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g; s|__PLAIN__|$PLAIN|g")"
+expect_deny  cd-rel     "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "cd .claude && chmod -R u+rw .idd"}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g; s|__PLAIN__|$PLAIN|g")"
+expect_deny  pushd-rel  "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "pushd .claude >/dev/null; chmod -R u+r .idd"}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g; s|__PLAIN__|$PLAIN|g")"
+expect_deny  dot-glob   "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "chmod -R u+rw .*"}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g; s|__PLAIN__|$PLAIN|g")"
+expect_deny  ps-recurse "$(printf %s '{"tool_name": "PowerShell", "cwd": "__REPO__", "tool_input": {"command": "Get-ChildItem -Recurse | ForEach-Object { chmod u+r $_ }"}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g; s|__PLAIN__|$PLAIN|g")"
+expect_deny  out-space  "$(printf %s '{"tool_name": "Bash", "cwd": "__PLAIN__", "tool_input": {"command": "chmod -R u+r \"__SPACE__\""}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g; s|__PLAIN__|$PLAIN|g")"
+expect_deny  out-glued  "$(printf %s '{"tool_name": "Bash", "cwd": "__PLAIN__", "tool_input": {"command": "true&&chmod -R u+r \"__SPACE__\""}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g; s|__PLAIN__|$PLAIN|g")"
+expect_deny  out-cd     "$(printf %s '{"tool_name": "Bash", "cwd": "__PLAIN__", "tool_input": {"command": "cd \"__SPACE__\" && chmod -R u+r ."}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g; s|__PLAIN__|$PLAIN|g")"
+expect_deny  out-var    "$(printf %s '{"tool_name": "Bash", "cwd": "__PLAIN__", "tool_input": {"command": "chmod -R u+r \"$TARGET\""}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g; s|__PLAIN__|$PLAIN|g")"
+expect_allow out-plain  "$(printf %s '{"tool_name": "Bash", "cwd": "__PLAIN__", "tool_input": {"command": "chmod -R u+x scripts"}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g; s|__PLAIN__|$PLAIN|g")"
+expect_allow out-search "$(printf %s '{"tool_name": "Bash", "cwd": "__PLAIN__", "tool_input": {"command": "grep -R chmod ."}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g; s|__PLAIN__|$PLAIN|g")"
+expect_allow in-nonrec  "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "chmod u+x scripts/run.sh"}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g; s|__PLAIN__|$PLAIN|g")"
+# round 20: a lowercase r flag is not recursive; a folder that holds a
+# repository with an archive counts as a directory above it
+expect_allow lrt-flag   "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "ls -lrt && chmod u+x scripts/run.sh"}}' | sed "s|__REPO__|$REPO|g; s|__PLAIN__|$PLAIN|g")"
+expect_deny  sibling-up "$(printf %s '{"tool_name": "Bash", "cwd": "__PLAIN__", "tool_input": {"command": "chmod -R u+r .."}}' | sed "s|__REPO__|$REPO|g; s|__PLAIN__|$PLAIN|g")"
+expect_deny  folder-dot "$(printf %s '{"tool_name": "Bash", "cwd": "__PLAIN__/..", "tool_input": {"command": "chmod -R u+r ."}}' | sed "s|__REPO__|$REPO|g; s|__PLAIN__|$PLAIN|g")"
 hook_case permreason "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "chmod -R u+r ."}}' | sed "s|__REPO__|$REPO|g")"
 assert_output_grep "a recursive permission change gets its own reason" "recursive permission change" "$WORK/hook-permreason.out"
 expect_allow helper   '{"tool_name":"Bash","tool_input":{"command":"python3 \"$CLAUDE_PLUGIN_ROOT/scripts/idd-edit-helper.py\" archive comment 5805214375 --from-file \"$BACKUP_FILE\" --repo \"$REPO\""}}'
@@ -350,7 +372,7 @@ run_in "$CI" f4b archive comment 5 --from-file "$WORK/old.md" --repo o/r
 assert_exit "collision name that is not ignored → exit 7" 7 "$RC"
 refute "no -2 file written" test -e "$CI/.claude/.idd/archive/edits/comment-5-20261009T100000Z-2.md"
 
-# F5. hook: word-level matching, dot-dot, prefix, unlock flag
+# F5. hook: path-segment matching, dot-dot, prefix, unlock flag (round 18: every word is scanned, messages included)
 expect_deny  commit   '{"tool_name":"Bash","tool_input":{"command":"git commit -m \"keep .claude/.idd/archive/ out of git\""}}'
 expect_deny  ghbody   '{"tool_name":"Bash","tool_input":{"command":"gh issue comment 351 --body \"archive lives in .claude/.idd/archive/edits\""}}'
 expect_deny  dotdot   '{"tool_name":"Bash","tool_input":{"command":"cat .claude/x/../.idd/archive/edits/a.md"}}'

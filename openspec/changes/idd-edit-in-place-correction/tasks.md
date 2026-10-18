@@ -174,4 +174,12 @@
 - [x] 24.1 先寫會失敗的測試（correction-archive）：續行切開路徑與指令名稱、含空白的 `chmod -R` 目標（加引號、跳脫、相對）、巢狀反斜線、`$'…'`、PowerShell 反引號、`$PWD`／`$(git rev-parse --show-toplevel)` 目標、`--recurs`、Monitor 工具；放行：`grep -R chmod .`、非遞迴的 chmod；權限規則的拒絕訊息。驗證：11 條在 9e784fc 上失敗。
 - [x] 24.2 hook：`_variants`（續行接起與當成換行兩種讀法都查、跳脫成對掃描）、`_flat`（去掉所有跳脫字元、`$'…'`、PowerShell 反引號）、`_shell_words`（shlex 的完整詞與平面詞取聯集）、`_permission_change_in`（旗標與目標在權限指令之後、樹走訪器例外、無法解析的目標拒絕、不分大小寫）、`PERMISSION_REASON`、Monitor 納入 matcher。驗證：correction-archive 292 條全綠；47 個已知繞法、12,000 筆網格、400 筆註解網格以真實 bash／zsh 比對全擋。
 - [x] 24.3 文件：correction-archive spec、hook docstring、design（fail-closed 決定與代價）、README、idd-edit SKILL（`--reason`／`--body` 不寫出路徑）、CHANGELOG（第 19 輪、Changed、舊條目加註）、測試註解。驗證：`spectra validate`、`run-all-tests.sh`。
-- [ ] 24.4 Verify 第 18 輪（只審第 19 輪的差異）；沒有 HIGH 以上，就請使用者確認合併。驗證：#351 的 verify 留言。
+- [x] 24.4 Verify 第 18 輪（只審第 19 輪的差異）；沒有 HIGH 以上，就請使用者確認合併。驗證：#351 的 verify 留言。
+- [x] 24.5 24.4 的結果：第 18 輪 FAIL，findings 40（HIGH 5／MEDIUM 3／LOW 18／INFO 14）。HIGH 全在遞迴改權限：黏住的 `;`、註解裡的撇號讓 shlex 放棄、`cd` 之後的相對目標（第 19 輪「旗標與目標須在權限指令之後」造成）；另一則是 `$` 在任何 repo 都擋（DA 校正為過度拒絕，非安全退步）。
+
+## 25. Verify 第 18 輪修正（第 20 輪）
+
+- [x] 25.1 先寫會失敗的測試（correction-archive）：黏住的 `;`／`&&`、註解撇號、`cd`／`pushd` 後的相對目標、`.*`、PowerShell `-Recurse | ForEach-Object`、repo 外的含空白目標與變數目標、兄弟 repo 的 `..`、裝 repo 的資料夾的 `.`；放行：repo 外的 `chmod -R u+x scripts` 與 `grep -R chmod .`、repo 內的非遞迴 chmod 與 `ls -lrt`；`chmod-ok`、`grep-chmod` 改為拒絕。驗證：13 條在 71df95b 上失敗。
+- [x] 25.2 hook：`_permission_change_in` 不再把詞歸給指令——含歸檔的 repo 內一律拒絕；別處每個詞都當目標，含 `$`、反引號、萬用字元或 shlex 無法配對的引號就拒絕；`_archive_below` 加查直接子目錄；`_RECURSIVE` 只有大寫 `R` 算短旗標；PowerShell `-Recurse`／`ForEach-Object`、`gchmod` 等、反引號＋CRLF；檢查出錯時拒絕該次呼叫。驗證：correction-archive 322 條全綠；47 個已知繞法、12,000 筆網格、400 筆註解網格、360 筆 chmod 網格以真實 bash／zsh 比對全擋。
+- [x] 25.3 文件：correction-archive spec（新規則與兩個 scenario、matcher 含 Monitor）、hook docstring（接受的落差、輸入錯誤的處理）、design（新增 fail-closed 決定、Risks、延遲 40–45 ms）、README、idd-edit SKILL（`--reason` 含路徑時先問使用者）、CHANGELOG（第 20 輪、Changed、Added 的工具清單與延遲、舊條目加註）、測試標題。驗證：`spectra validate`、`run-all-tests.sh`。
+- [ ] 25.4 Verify 第 19 輪（只審第 20 輪的差異）；沒有 HIGH 以上，就請使用者確認合併。驗證：#351 的 verify 留言。

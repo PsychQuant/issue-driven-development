@@ -19,8 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the copy Claude's tools cannot read, not the only copy: GitHub's edit history and temporary files also hold
     the old text (#378).
   - **Claude cannot read the archive.** A PreToolUse hook (`hooks/archive-read-guard.py`) denies Read / Grep /
-    Glob / Edit / Write / NotebookEdit / Bash / PowerShell calls that name the archive path. About 31 ms per
-    tool call.
+    Glob / Edit / Write / NotebookEdit / Bash / PowerShell / Monitor calls that name the archive path, and recursive
+    permission changes that could reach it. About 40–45 ms per tool call.
   - **Protected regions** (`check-correction`, exit 6): `Original text` / `**Original**` / `**Point i**` quotations must survive unchanged;
     `## Current Status` (idd-update) and `### Clarity Surface` (idd-clarify) are refused as targets, and a
     corrected section ends at either heading or at a thematic break, so it never swallows them. Only the invoking user's own content is corrected (see the author gate below); `--correct` has
@@ -327,7 +327,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   would carry into `apply` without the question. The SKILL tracks the question as its own task (`reply_272_gate`)
   and offers redaction only for `--replace` *(round 15: in every mode, for the body file's text)*; standalone `correct-apply` refuses such a body at `light` before
   archiving.
-- **Read guard:** a message flag is prose only for subcommands that take a message (`git commit`, `gh issue`/`pr`/
+- **Read guard** *(Round 18: no message is exempt any more.)*: a message flag is prose only for subcommands that take a message (`git commit`, `gh issue`/`pr`/
   `release`, …), so after `git diff -m` the next word is scanned even when the path contains spaces; an unquoted
   newline and a glued `&&`, `||`, `|` end a command. A one-word `git commit -m <text>` is allowed again. *(Round 15:
   one-word values are scanned again, and this round's tokenizer read `#` as a comment — see below.)* *(Round 18: no message is exempt any more — see below.)*
@@ -344,7 +344,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   character, so one unquoted `#` — a `# step` comment line, `--grep=#351`, an issue URL's `#issuecomment` — dropped
   the rest of the command, later lines and a `chmod -R` included, from both checks. `#` is text again, as it was
   with `shlex.split`. *(Round 17: comment text is scanned and only its quotes are ignored.)*
-- The read guard skips a message value only when it is prose (whitespace) **and** the subcommand takes a message,
+- The read guard *(round 18: no message is exempt any more)* skipped a message value only when it is prose (whitespace) **and** the subcommand takes a message,
   and not after a `--` (`git commit -- -m <path>` is a pathspec); `|&` and `&|` end a command, a backslash-newline
   joins lines, `git commit -am` counts as `-m` *(round 16: no longer — git reads `-Fm` as `-F m`)*, more pre-subcommand value options and message subcommands are known,
   and `env A=1 python3 <helper>` is recognised. A one-word message after `-m` is scanned again. *(Round 18: no message is exempt any more — see below.)*
@@ -391,6 +391,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and a word naming the archive or a directory above it anywhere in one command deny it too. The hook shrinks from
   ~380 to ~220 lines. Checked against real bash and zsh: the 47 known bypasses, the 12,000-command grid and a
   400-command grid of comments on later lines are all denied.
+
+### Fixed (round 20 — verify round 18 findings, before release)
+
+- Read guard, recursive permission changes: round 19 attributed the flag and target to the words after the permission
+  command, which a glued `;` (`true;chmod -R u+r "<repo with a space>"`), an apostrophe in a comment that stops shlex,
+  and a relative target after `cd .claude &&` all got past. The words are no longer attributed: inside a repository
+  that holds the archive every recursive permission change is denied; elsewhere every word is checked and a command
+  holding `$`, a backtick, a glob or brace character or unbalanced quotes is denied, `..` from a sibling repository
+  and the folder that holds the repository included. PowerShell `-Recurse` and `ForEach-Object`, `gchmod`/`gchown`/
+  `gchgrp`, a backtick+CRLF continuation and case-insensitive command names count; `-r` does not.
+- An error while checking a well-formed call denies that call instead of allowing it; the denial texts give a working
+  way out.
 
 ### Fixed (round 19 — verify round 17 findings, before release)
 
@@ -463,8 +475,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The read guard denies any Bash / PowerShell / Monitor command that names `.claude/.idd/archive`, a commit
   message or issue body included (3.4.0 had no guard; within 3.5.0 earlier rounds exempted message values). Leave
   the path out of the text, or write it to a file with the Write tool and pass `git commit -F` / `gh … --body-file`.
-  A command that holds a permission command with a recursive flag and names a directory above the archive (`.`,
-  `..`, the repository root) is denied too, even when the two belong to different commands on one line.
+  Recursive permission changes: inside a repository that holds the archive every `chmod`/`chown`/`chgrp`/`chflags`/
+  `setfacl` with `-R` (or run by `find`/`xargs`/`fd`) is denied, whatever its target — and so is any command that
+  merely contains both words, such as `grep -R chmod .` (use the Grep tool); elsewhere one is denied when a word is
+  the archive, a repository that holds one or the folder directly above it, or when the command holds `$`, a
+  backtick, a glob or brace character, or unbalanced quotes. Change the files you mean without `-R`.
 - `--scope` other than `whole-comment` is refused at start (exit 3) in every mode; 3.4.0 ignored it for `--append`
   and `--prepend-note`.
 - Editing a reply that quotes user-pasted points (`type=reply` + `points-from=user-pasted`) asks the #272 question in
