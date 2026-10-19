@@ -368,6 +368,13 @@ assert_true "the hook compiles with warnings as errors" "python3 -W error -c \"i
 hook_case relocreason "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__/.claude/.idd/attachments", "tool_input": {"command": "chmod +x foo.sh"}}' | sed "s|__REPO__|$REPO|g")"
 assert_output_grep "the relocated denial says how to leave .claude/.idd" "separate call" "$WORK/hook-relocreason.out"
 assert_output_grep "the relocated denial covers messages" "--body-file" "$WORK/hook-relocreason.out"
+# round 26: module-qualified PowerShell cmdlets change directory; a symlinked
+# working directory into .claude counts for the relative-path rule too
+ln -sfn "$REPO/.claude" "$REPO/cl-link"
+expect_deny  ps-modq    "$(printf %s '{"tool_name": "PowerShell", "cwd": "__REPO__", "tool_input": {"command": "Microsoft.PowerShell.Management\\Set-Location .claude\\.idd; chmod u+r foo"}}' | sed "s|__REPO__|$REPO|g")"
+expect_deny  sym-claude "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__/cl-link", "tool_input": {"command": "chmod u+r .idd/archive/edits/a.md"}}' | sed "s|__REPO__|$REPO|g")"
+hook_case unlistreason "$(printf %s '{"tool_name": "Bash", "cwd": "/nonexistent-idd-dir", "tool_input": {"command": "cd x && chmod +x y"}}')"
+assert_output_grep "the relocated denial names the unlistable directory" "cannot list" "$WORK/hook-unlistreason.out"
 assert_true "a stalled check denies" "python3 - \"$HOOK\" <<'PYSLOW' | grep -q 'took too long'
 import importlib.util, io, sys, time
 spec = importlib.util.spec_from_file_location(\"g\", sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)

@@ -222,4 +222,12 @@
 - [x] 30.1 先寫會失敗的測試（correction-archive）：symlink 進 `.claude/.idd/archive` 的工作目錄下 `chmod u+r`；`chmod +x tools/cd` 放行；以 warnings-as-errors 編譯 hook；拒絕訊息含「separate call」與 `--body-file`。驗證：4 條在 e1b1d4f 上失敗。
 - [x] 30.2 hook：`_relocated_permission_change` 以工作目錄與其 realpath 判斷是否在 `.claude/.idd` 內；換目錄字比整個字；模組 docstring 改為 raw；`RELOCATED_REASON` 補上離開 `.claude/.idd` 與訊息改由檔案傳。驗證：correction-archive 416 條全綠。
 - [x] 30.3 文件：spec（已知限制、symlink、整字比對、scenario）、docstring 接受清單、design（第 25 輪、Risks、實測代價的母體）、README、CHANGELOG。驗證：`spectra validate`。
-- [ ] 30.4 Verify 第 24 輪（只審第 25 輪的差異）；沒有 HIGH 以上，就把 PR #408 標為 ready，合併留給使用者。驗證：#351 的 verify 留言。
+- [x] 30.4 Verify 第 24 輪（只審第 25 輪的差異）；沒有 HIGH 以上，就把 PR #408 標為 ready，合併留給使用者。驗證：#351 的 verify 留言。
+- [x] 30.5 30.4 的結果：第 24 輪 findings 31（HIGH 1／MEDIUM 6／LOW 12／INFO 12）。唯一的 HIGH 是 DA 因網路錯誤（ENOTFOUND）未完成；實質 findings 最高 MEDIUM：PowerShell 模組限定 cmdlet 的退步、symlink 到 `.claude` 的工作目錄、已知限制清單各文件不一致、實測代價的母體。Codex：本輪差異沒有新缺陷。
+
+## 31. Verify 第 24 輪修正（第 26 輪）
+
+- [x] 31.1 先寫會失敗的測試（correction-archive）：PowerShell `Microsoft.PowerShell.Management\Set-Location` 後的 chmod、symlink 到 `.claude` 的工作目錄下 `chmod u+r .idd/archive/…`、無法列出的工作目錄的拒絕訊息。驗證：3 條在 49430ef 上失敗。
+- [x] 31.2 hook：PowerShell 讀法也比對換目錄字的最後一段；相對路徑規則在文字提到 archive 時也以 realpath 判斷工作目錄；`RELOCATED_REASON` 補上無法列出的目錄與 Grep 工具。驗證：correction-archive 421 條全綠。
+- [x] 31.3 文件：已知限制整理成一份完整清單，spec、hook docstring、design Risks、CHANGELOG 同一份；實測代價改寫（62／32、1.4%、往後 1,298 筆）。驗證：`spectra validate`。
+- [ ] 31.4 Verify 第 25 輪（只審第 26 輪的差異，DA 重跑）；沒有 HIGH 以上，就把 PR #408 標為 ready，合併留給使用者。驗證：#351 的 verify 留言。

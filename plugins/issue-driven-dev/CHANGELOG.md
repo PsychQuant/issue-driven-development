@@ -392,6 +392,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ~380 to ~220 lines. Checked against real bash and zsh: the 47 known bypasses, the 12,000-command grid and a
   400-command grid of comments on later lines are all denied.
 
+### Fixed (round 26 — verify round 24 findings, before release)
+
+- Read guard: a module-qualified PowerShell cmdlet (`Microsoft.PowerShell.Management\Set-Location`) counts as a change
+  of directory again (round 25's whole-word match had dropped it); the relative-path rule also reads a symlinked
+  working directory with symlinks resolved.
+- The relocated-permission denial covers a working directory the guard cannot list and points searches to the Grep
+  tool.
+- Measured cost of the cd-plus-permission rule (user transcripts): 94 new denials near the archive — 62 in this
+  repository (about 1.4% of its commands), 32 from working directories that no longer exist; 1,298 commands with both
+  words, across 19 top-level directories, would be denied once those repositories hold an archive.
+- Documented limits (the complete list, as in the spec and the hook):
+  1. paths or flags assembled from variables, globs, brace expansion, `$'…'` escapes, eval, command substitution or tilde prefixes such as `~+`
+  2. another program that changes modes (a `python -c` one-liner, for example)
+  3. recursive permission changes run from a directory that is not near the archive (user decision 2026-10-18)
+  4. a program option that changes directory before the permission command — `env -C`/`--chdir`, `sudo -D`, `make -C`, `git -C`, `uv --directory`, `pwsh -WorkingDirectory`, … (user decision 2026-10-19)
+  5. a `.claude` named after an earlier `cd`, or split by a character outside `[\w./~+@%-]`, from a directory not near the archive
+  6. a working directory under `.claude/` that is neither `.claude` nor inside `.claude/.idd` (a worktree), followed by a `cd`
+  7. other ways to change directory: the zsh two-argument `cd`, an alias of `cd`, zsh `AUTO_CD`, PowerShell's `SessionState.Path.SetLocation`
+  8. a symlink named in the command
+  9. a read without a permission change after a `cd` into the archive — it fails on mode 0000, except as root, which ignores the mode, and on Windows, where mode 0000 does not apply
+  10. PowerShell reads with backslash paths run from Bash, PowerShell's `.ForEach()` and comma arrays
+
 ### Fixed (round 25 — verify round 23 findings, before release)
 
 - Read guard: a symlinked working directory that points into `.claude/.idd` counts as inside it; change-of-directory

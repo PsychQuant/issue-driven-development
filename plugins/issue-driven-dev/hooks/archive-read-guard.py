@@ -30,19 +30,19 @@ second layer — archive files are mode 0000 — covers that case.
 
 Threat model: accidental reads, not an agent deliberately working around the
 guard. This hook compares text while the shell runs it, so the two can always
-be made to disagree (a path or a flag assembled from variables, globs, brace
-expansion, the escapes inside $'…', eval, command substitution, a tilde prefix
-such as ~+, a read (not a permission change) after cd steps into the archive —
-the files are mode 0000, so it fails without a chmod — a .claude named
-relative to an earlier cd or split by a character outside [\w./~+@%-] when the
-working directory is not near the archive, a working directory under .claude/
-that is not .claude/.idd (a worktree), the zsh two-argument cd, and on Windows
-(where mode 0000 does not apply) any read after a cd; a program option that
-changes directory before the permission command (env -C / --chdir, sudo -D,
-make -C, git -C, uv --directory, pwsh -WorkingDirectory, …; user decision
-2026-10-19); a PowerShell read with backslash paths run from Bash; root, which
-ignores mode 0000; another program that changes modes such as a python -c
-one-liner, PowerShell's .ForEach() or comma arrays). Those differentials are
+be made to disagree. The documented limits — the same list as the spec, the
+design Risks and the CHANGELOG — are:
+  1. paths or flags assembled from variables, globs, brace expansion, $'…' escapes, eval, command substitution or tilde prefixes such as ~+
+  2. another program that changes modes (a python -c one-liner, for example)
+  3. recursive permission changes run from a directory that is not near the archive (user decision 2026-10-18)
+  4. a program option that changes directory before the permission command — env -C/--chdir, sudo -D, make -C, git -C, uv --directory, pwsh -WorkingDirectory, … (user decision 2026-10-19)
+  5. a .claude named after an earlier cd, or split by a character outside [\w./~+@%-], from a directory not near the archive
+  6. a working directory under .claude/ that is neither .claude nor inside .claude/.idd (a worktree), followed by a cd
+  7. other ways to change directory: the zsh two-argument cd, an alias of cd, zsh AUTO_CD, PowerShell's SessionState.Path.SetLocation
+  8. a symlink named in the command
+  9. a read without a permission change after a cd into the archive — it fails on mode 0000, except as root, which ignores the mode, and on Windows, where mode 0000 does not apply
+  10. PowerShell reads with backslash paths run from Bash, PowerShell's .ForEach() and comma arrays
+Those differentials are
 accepted: the file
 mode is what guarantees an unreadable archive; this hook only stops the
 ordinary `cat`/`grep`/Read that would otherwise happen by accident.
@@ -131,9 +131,11 @@ RELOCATED_REASON = (
     "command from the working directory with the path spelled out (for example "
     "chmod u+x scripts/run.sh), or as a separate call without a cd. Inside "
     ".claude/.idd every permission command is denied: leave that directory in a "
-    "separate call first. If the words are only in a message, pass the text from "
-    "a file (git commit -F, gh … --body-file); write file contents with the Write "
-    "tool."
+    "separate call first. A working directory the guard cannot list (one that "
+    "was deleted, for example) counts as near the archive: cd to an existing "
+    "directory in a separate call. If the words are only in a message, pass the "
+    "text from a file (git commit -F, gh … --body-file); write file contents "
+    "with the Write tool; search with the Grep tool."
 )
 
 PATH_FIELDS = {
@@ -308,8 +310,11 @@ def _relocated_permission_change(command, cwd, powershell, named_holder):
         bases = {posixpath.normpath(d.replace("\\", "/")) for d in (cwd, os.path.realpath(cwd))}
         if any(_IN_IDD.search(b) for b in bases) and _near_archive(cwd):
             return True
-        # whole words only: a path ending in /cd is not a change of directory (round 25)
-        if {w.casefold() for w in words} & set(_CD_COMMANDS) and (_near_archive(cwd) or named_holder()):
+        # whole words only: a path ending in /cd is not a change of directory (round 25);
+        # in PowerShell a module-qualified cmdlet (Microsoft.PowerShell.Management\Set-Location)
+        # is one, so the last segment counts there (round 26)
+        cd_words = {w.casefold() for w in words} | (names if powershell else set())
+        if cd_words & set(_CD_COMMANDS) and (_near_archive(cwd) or named_holder()):
             return True
     return False
 
@@ -380,7 +385,7 @@ def _relative_archive_reference(tool, tool_input, cwd):
     else:
         pieces = _raw_candidates(tool, tool_input)
     base = posixpath.normpath(cwd.replace("\\", "/"))
-    in_idd = bool(_CWD_IDD.search(base))
+    bases = [base]
     named, relative = [], []
     for raw in dict.fromkeys(p for p in pieces if p):
         written = raw.replace("\\", "/")
@@ -390,9 +395,14 @@ def _relative_archive_reference(tool, tool_input, cwd):
             named.append(m.group(1))
         if not piece.startswith(("/", "~")):
             relative.append((written, piece))
+    # a symlinked working directory is also read with symlinks resolved, but only
+    # once the text mentions "archive" (round 26)
+    if any("archive" in w.lower() for w, _ in relative):
+        bases.append(posixpath.normpath(os.path.realpath(cwd).replace("\\", "/")))
+    in_idd = any(_CWD_IDD.search(b) for b in bases)
     found = False
     for written, piece in relative:
-        joined = (posixpath.join(base, written), posixpath.normpath(posixpath.join(base, piece)))
+        joined = tuple(j for b in bases for j in (posixpath.join(b, written), posixpath.normpath(posixpath.join(b, piece))))
         if any(_INTO_ARCHIVE.search(j) for j in joined):
             found = True
         elif (in_idd or named) and any(_REL_INTO_ARCHIVE.match(_LEADING_UP.sub("", f)) for f in (written, piece)):
