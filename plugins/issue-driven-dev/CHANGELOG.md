@@ -392,6 +392,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ~380 to ~220 lines. Checked against real bash and zsh: the 47 known bypasses, the 12,000-command grid and a
   400-command grid of comments on later lines are all denied.
 
+### Fixed (round 28 — verify round 26 findings, before release)
+
+- Read guard: `pwsh`/`powershell` run from Bash (including `pwsh-preview`) is read as PowerShell for the literal path
+  check and both permission rules, so a backtick escape (`` ch`mod ``, `` .i`dd ``) no longer hides a permission
+  command or the archive path; zsh's `zf_chmod`/`zf_chown`/`zf_chgrp` builtins count as permission commands; a
+  dot-sourced or call-operator module-qualified cmdlet and a doubled separator count as a change of directory.
+- Limit 7 also names bash `shopt -s autocd`.
+
 ### Fixed (round 27 — verify round 25 findings, before release)
 
 - Read guard: only a module-qualified PowerShell cmdlet counts by its last segment (round 26 matched any path ending
@@ -417,7 +425,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   4. a program option that changes directory before the permission command — `env -C`/`--chdir`, `sudo -D`, `make -C`, `git -C`, `uv --directory`, `pwsh -WorkingDirectory`, … (user decision 2026-10-19)
   5. a `.claude` named after an earlier `cd`, or split by a character outside `[\w./~+@%-]`, from a directory not near the archive
   6. a working directory under `.claude/` that is neither `.claude` nor inside `.claude/.idd` (a worktree), followed by a `cd`
-  7. other ways to change directory: the zsh two-argument `cd`, an alias of `cd`, zsh `AUTO_CD`, PowerShell's `SessionState.Path.SetLocation`
+  7. other ways to change directory: the zsh two-argument `cd`, an alias of `cd`, zsh `AUTO_CD` and bash `shopt -s autocd`, PowerShell's `SessionState.Path.SetLocation`
   8. a symlink named in the command
   9. a read without a permission change after a `cd` into the archive — it fails on mode 0000, except as root, which ignores the mode, and on Windows, where mode 0000 does not apply
   10. PowerShell reads with backslash paths run from Bash, PowerShell's `.ForEach()` and comma arrays
@@ -429,7 +437,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   made Python print a SyntaxWarning on every call, and under warnings-as-errors the hook could not start, which lets
   every call through.
 - The relocated-permission denial says to leave `.claude/.idd` in a separate call and to pass message text from a file.
-- Documented limits *(round 26: superseded by the complete list below)* (user decision 2026-10-19): a program option that changes directory before the permission command
+- Documented limits *(round 26: superseded by the complete list in the round-26 section above)* (user decision 2026-10-19): a program option that changes directory before the permission command
   (`env -C`, `sudo -D`, `make -C`, `git -C`, `uv --directory`, `pwsh -WorkingDirectory`, …), a `.claude` named after
   an earlier `cd` from a directory away from the archive, PowerShell reads with backslash paths run from Bash, and
   root.

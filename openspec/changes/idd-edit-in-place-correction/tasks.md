@@ -238,4 +238,12 @@
 - [x] 32.1 先寫會失敗的測試：PowerShell `chmod +x tools/cd`、`chmod +x ./cd` 放行；從 Bash 跑 `pwsh -c 'Microsoft.PowerShell.Management\Set-Location …; chmod …'`、`=chmod -R u+r .`、`.claude/.idd` 內的 `=chmod` 拒絕。驗證：5 條在 5a91733 上失敗。
 - [x] 32.2 hook：`_MODULE_QUALIFIED`（點分模組名前綴才算）、`pwsh`／`powershell` 從 Bash 執行時加讀 PowerShell 讀法、指令名去掉開頭的 `=`。驗證：correction-archive 431 條全綠。
 - [x] 32.3 文件：design Risks 只留一份完整清單、root 指回清單；spec 補 realpath 與模組限定的範圍、`=chmod`；CHANGELOG 第 27 輪、代價的篩選說明、第 25 輪清單加註。驗證：`spectra validate`。
-- [ ] 32.4 Verify 第 26 輪（只審第 27 輪的差異）；沒有 HIGH 以上，就把 PR #408 標為 ready，合併留給使用者。驗證：#351 的 verify 留言。
+- [x] 32.4 Verify 第 26 輪（只審第 27 輪的差異）；沒有 HIGH 以上，就把 PR #408 標為 ready，合併留給使用者。驗證：#351 的 verify 留言。
+- [x] 32.5 32.4 的結果：第 26 輪 findings 30（MEDIUM 2／LOW 13／INFO 15），**沒有 HIGH**（連續第二輪）。MEDIUM：從 Bash 跑 `pwsh` 時只有換目錄字用 PowerShell 讀法（DA：屬刻意跳脫，MEDIUM 偏高）。
+
+## 33. Verify 第 26 輪修正（第 28 輪）
+
+- [x] 33.1 先寫會失敗的測試：從 Bash 跑 `pwsh` 的反引號 `ch`mod`、`.i`dd` 路徑、`zf_chmod -R`、dot-source 的模組限定 cmdlet、`pwsh-preview`。驗證：4 條在 67d5cf3 上失敗。
+- [x] 33.2 hook：`_with_pwsh_reading`（兩條權限規則的指令名與字詞）、字面路徑檢查也走 PowerShell 讀法、`zf_*`、`_names_pwsh`（含套件名）、`_MODULE_QUALIFIED` 接受前導 `.`／`&` 與多個分隔字元。驗證：correction-archive 441 條全綠。
+- [x] 33.3 文件：限制第 7 項加 bash `autocd`、spec、docstring、design（第 26–28 輪）、CHANGELOG 指向修正。驗證：`spectra validate`。
+- [ ] 33.4 最後一輪差異審查（verify 第 27 輪）；沒有 HIGH 以上就把 PR #408 標為 ready，剩下的 MEDIUM／LOW 記入報告，合併留給使用者。驗證：#351 的 verify 留言。

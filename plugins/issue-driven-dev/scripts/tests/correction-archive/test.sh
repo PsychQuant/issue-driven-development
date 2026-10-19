@@ -382,6 +382,13 @@ expect_allow ps-dotcd   "$(printf %s '{"tool_name": "PowerShell", "cwd": "__REPO
 expect_deny  pwsh-modq  "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "pwsh -c '\''Microsoft.PowerShell.Management\\Set-Location .claude; chmod u+r x'\''"}}' | sed "s|__REPO__|$REPO|g")"
 expect_deny  zsh-eq-R   "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "=chmod -R u+r ."}}' | sed "s|__REPO__|$REPO|g")"
 expect_deny  zsh-eq-idd "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__/.claude/.idd", "tool_input": {"command": "=chmod u+r edits/a.md"}}' | sed "s|__REPO__|$REPO|g")"
+# round 28: pwsh run from Bash is read as PowerShell for command names and
+# paths too; zsh zf_chmod; pwsh-preview; dot-sourced module-qualified cmdlets
+expect_deny  pwsh-bt-cd "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "pwsh -c '\''Set-Location .claude; ch`mod u+r x'\''"}}' | sed "s|__REPO__|$REPO|g")"
+expect_deny  pwsh-bt-pa "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "pwsh -c '\''cat .claude/.i`dd/archive/edits/x'\''"}}' | sed "s|__REPO__|$REPO|g")"
+expect_deny  zf-chmod   "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "zmodload zsh/files; zf_chmod -R u+r ."}}' | sed "s|__REPO__|$REPO|g")"
+expect_deny  pwsh-prev  "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "pwsh-preview -c '\''Set-Location .claude; chmod u+r x'\''"}}' | sed "s|__REPO__|$REPO|g")"
+expect_deny  ps-dotsrc  "$(printf %s '{"tool_name": "PowerShell", "cwd": "__REPO__", "tool_input": {"command": ".'\''Microsoft.PowerShell.Management\\Set-Location'\'' .claude; chmod u+r x"}}' | sed "s|__REPO__|$REPO|g")"
 assert_true "a stalled check denies" "python3 - \"$HOOK\" <<'PYSLOW' | grep -q 'took too long'
 import importlib.util, io, sys, time
 spec = importlib.util.spec_from_file_location(\"g\", sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)

@@ -20,7 +20,8 @@ The words of a command are never stat'ed; only a named .claude directory is,
 after the text has matched (rounds 22–23). Near the archive, or naming a
 .claude/.idd that holds one, a permission command together with any change of
 directory (cd, chdir, pushd, popd, Set-Location, sl, Push-Location,
-Pop-Location) is denied, and so is any permission command run from inside
+Pop-Location, and in PowerShell — the tool, or pwsh run from Bash, which is
+also read as PowerShell — a module-qualified cmdlet) is denied, and so is any permission command run from inside
 .claude/.idd (round 24, user decision 2026-10-19): rounds 20–22 tried to
 recognize every spelling of a cd into the archive, and the step that lifts
 mode 0000 is the chmod. A check that takes longer than 5 seconds denies the
@@ -38,7 +39,7 @@ design Risks and the CHANGELOG — are:
   4. a program option that changes directory before the permission command — env -C/--chdir, sudo -D, make -C, git -C, uv --directory, pwsh -WorkingDirectory, … (user decision 2026-10-19)
   5. a .claude named after an earlier cd, or split by a character outside [\w./~+@%-], from a directory not near the archive
   6. a working directory under .claude/ that is neither .claude nor inside .claude/.idd (a worktree), followed by a cd
-  7. other ways to change directory: the zsh two-argument cd, an alias of cd, zsh AUTO_CD, PowerShell's SessionState.Path.SetLocation
+  7. other ways to change directory: the zsh two-argument cd, an alias of cd, zsh AUTO_CD and bash shopt -s autocd, PowerShell's SessionState.Path.SetLocation
   8. a symlink named in the command
   9. a read without a permission change after a cd into the archive — it fails on mode 0000, except as root, which ignores the mode, and on Windows, where mode 0000 does not apply
   10. PowerShell reads with backslash paths run from Bash, PowerShell's .ForEach() and comma arrays
@@ -181,7 +182,8 @@ def _hits(candidate):
 # #351 rounds 3–16 let message values through, which needed a model of shell
 # word splitting; every rewrite of that model opened a new way past the guard,
 # so the guard fails closed instead (user decision 2026-10-18).
-PERMISSION_COMMANDS = ("chmod", "chown", "chgrp", "chflags", "setfacl", "gchmod", "gchown", "gchgrp")
+PERMISSION_COMMANDS = ("chmod", "chown", "chgrp", "chflags", "setfacl", "gchmod", "gchown", "gchgrp",
+                       "zf_chmod", "zf_chown", "zf_chgrp")   # zsh/files builtins (round 28)
 # commands that apply another command to a whole tree, as -R does
 _TREE_WALKERS = ("find", "xargs", "fd", "gfind", "gxargs", "fdfind", "bfs")
 # PowerShell-only walkers: in Bash % is arithmetic and foreach a csh/zsh loop
@@ -291,8 +293,22 @@ _CD_COMMANDS = ("cd", "chdir", "pushd", "popd", "set-location", "sl", "push-loca
 _IN_IDD = re.compile(r"(^|/)\.claude/\.idd(/|$)", re.I)
 # a PowerShell module-qualified cmdlet, Microsoft.PowerShell.Management\Set-Location,
 # after _flat turned the backslash into /: a dotted module name, then the cmdlet
-_MODULE_QUALIFIED = re.compile(r"^[a-z][\w]*(?:\.[\w]+)+/([\w-]+)$", re.I)
-_PWSH = {"pwsh", "pwsh.exe", "powershell", "powershell.exe"}
+_MODULE_QUALIFIED = re.compile(r"^[.&]?[a-z][\w]*(?:\.[\w]+)+/+([\w-]+)$", re.I)
+
+
+def _names_pwsh(names):
+    """pwsh / powershell, including packaged names such as pwsh-preview."""
+    return any(n.startswith(("pwsh", "powershell")) for n in names)
+
+
+def _with_pwsh_reading(reading, words):
+    """When pwsh / powershell runs from Bash, add the words of the PowerShell
+    reading (backtick escapes, backslash paths) to the Bash words (round 28)."""
+    names = {os.path.basename(w).lstrip("=").casefold() for w in words}
+    if _names_pwsh(names):
+        words = words + _flat_words(reading, True)
+        names |= {os.path.basename(w).lstrip("=").casefold() for w in words}
+    return words, names
 
 
 def _relocated_permission_change(command, cwd, powershell, named_holder):
@@ -307,11 +323,11 @@ def _relocated_permission_change(command, cwd, powershell, named_holder):
     needed."""
     for reading in _variants(command, powershell):
         words = _flat_words(reading, powershell)
-        names = {os.path.basename(w).lstrip("=").casefold() for w in words}
-        ps = powershell or bool(names & _PWSH)
-        if ps and not powershell:
-            # pwsh run from Bash: also read the text as PowerShell (round 27)
-            words = words + _flat_words(reading, True)
+        if not powershell:
+            words, names = _with_pwsh_reading(reading, words)
+        else:
+            names = {os.path.basename(w).lstrip("=").casefold() for w in words}
+        ps = powershell or _names_pwsh(names)
         if not names & set(PERMISSION_COMMANDS):
             continue
         # the working directory as given and with symlinks resolved (round 25)
@@ -319,8 +335,8 @@ def _relocated_permission_change(command, cwd, powershell, named_holder):
         if any(_IN_IDD.search(b) for b in bases) and _near_archive(cwd):
             return True
         # whole words only: a path ending in /cd is not a change of directory (round 25);
-        # in PowerShell a module-qualified cmdlet (Microsoft.PowerShell.Management\Set-Location)
-        # is one, so the last segment counts there (round 26)
+        # in PowerShell — the tool, or pwsh run from Bash — a module-qualified cmdlet
+        # (Microsoft.PowerShell.Management\Set-Location, a dotted module prefix) is one (rounds 26–28)
         cd_words = {w.casefold() for w in words}
         if ps:
             cd_words |= {m.group(1).casefold() for m in map(_MODULE_QUALIFIED.match, words) if m}
@@ -340,10 +356,13 @@ def _permission_change_in(text, cwd, powershell=False):
     -r / -rec / -Recurse / -Depth and ForEach-Object / foreach / % count for the
     PowerShell tool and when pwsh / powershell appears in the command."""
     flat = _flat_words(text, powershell)
-    names = {os.path.basename(w).lstrip("=").casefold() for w in flat}
+    if not powershell:
+        flat, names = _with_pwsh_reading(text, flat)
+    else:
+        names = {os.path.basename(w).lstrip("=").casefold() for w in flat}
     if not names & set(PERMISSION_COMMANDS):
         return False
-    powershell = powershell or bool(names & _PWSH)
+    powershell = powershell or _names_pwsh(names)
     marker = _PS_RECURSIVE if powershell else _RECURSIVE
     walkers = set(_TREE_WALKERS + (_PS_WALKERS if powershell else ()))
     if not (names & walkers or any(_RECURSIVE.fullmatch(w) or marker.fullmatch(w) for w in flat)):
@@ -359,7 +378,10 @@ def _recursive_permission_change(command, cwd, powershell=False):
 def _candidates(tool, tool_input):
     """Path-like strings of the call as written; string comparison only."""
     if tool in COMMAND_TOOLS:
-        yield from _command_words(_as_text(tool_input.get("command")), tool == "PowerShell")
+        command = _as_text(tool_input.get("command"))
+        yield from _command_words(command, tool == "PowerShell")
+        if tool != "PowerShell" and re.search(r"(?i)pwsh|powershell", command):
+            yield from _command_words(command, True)   # pwsh run from Bash (round 28)
         return
     yield from _raw_candidates(tool, tool_input)
 
