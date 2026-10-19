@@ -330,6 +330,28 @@ expect_allow bare-word2 "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "
 expect_allow bare-word3 "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__/.claude/.idd", "tool_input": {"command": "git log --oneline | grep archive"}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g; s|__WORK__|$WORK|g")"
 expect_allow bash-mod   "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "chmod u+x run.sh; echo $((7 % 3))"}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g; s|__WORK__|$WORK|g")"
 expect_deny  glob-rel   "$(printf %s '{"tool_name": "Glob", "cwd": "__REPO__/.claude/.idd", "tool_input": {"pattern": "*.md", "path": "archive/edits"}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g; s|__WORK__|$WORK|g")"
+# round 23: pieces are normalized before matching (//, /./, mid-path ..); a
+# named .claude/.idd that holds an archive counts from any working directory;
+# cd archive counts; a worktree under .claude/ does not turn the rule on;
+# pwsh -c from Bash uses the PowerShell markers; a stalled check denies
+expect_deny  norm-dbl   "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "cd .claude/.idd && chmod u+r archive//edits/a.md && cat archive//edits/a.md"}}' | sed "s|__REPO__|$REPO|g; s|__PLAIN__|$PLAIN|g")"
+expect_deny  norm-cd    "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "cd .claude//.idd && cat archive/edits/a.md"}}' | sed "s|__REPO__|$REPO|g; s|__PLAIN__|$PLAIN|g")"
+expect_deny  norm-mid   "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "cd .claude/.idd && cat attachments/../archive/edits/a.md"}}' | sed "s|__REPO__|$REPO|g; s|__PLAIN__|$PLAIN|g")"
+expect_deny  norm-dot   "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "cd .claude && cat .idd/./archive/edits/a.md"}}' | sed "s|__REPO__|$REPO|g; s|__PLAIN__|$PLAIN|g")"
+expect_deny  far-rel    "$(printf %s '{"tool_name": "Bash", "cwd": "__PLAIN__", "tool_input": {"command": "cd ../repo/.claude/.idd && chmod u+r archive/edits/a.md && cat archive/edits/a.md"}}' | sed "s|__REPO__|$REPO|g; s|__PLAIN__|$PLAIN|g")"
+expect_deny  far-abs    "$(printf %s '{"tool_name": "Bash", "cwd": "__PLAIN__", "tool_input": {"command": "cd \"__REPO__/.claude\" && cat .idd/archive/edits/a.md"}}' | sed "s|__REPO__|$REPO|g; s|__PLAIN__|$PLAIN|g")"
+expect_deny  cd-archive "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "cd .claude/.idd && cd archive && chmod u+r edits/a.md && cat edits/a.md"}}' | sed "s|__REPO__|$REPO|g; s|__PLAIN__|$PLAIN|g")"
+expect_allow worktree   "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__/.claude/worktrees/wt", "tool_input": {"command": "cat archive/notes/a.md"}}' | sed "s|__REPO__|$REPO|g; s|__PLAIN__|$PLAIN|g")"
+expect_deny  pwsh-bash  "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "pwsh -c \"Get-ChildItem -r | % { chmod u+r $_ }\""}}' | sed "s|__REPO__|$REPO|g; s|__PLAIN__|$PLAIN|g")"
+mkdir -p "$REPO/.claude/worktrees/wt"
+assert_true "a stalled check denies" "python3 - \"$HOOK\" <<'PYSLOW' | grep -q 'took too long'
+import importlib.util, io, sys, time
+spec = importlib.util.spec_from_file_location(\"g\", sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+m.DEADLINE_SECONDS = 0.3
+m._decide = lambda *a, **k: time.sleep(5)
+sys.stdin = io.StringIO(\"{\\\"tool_name\\\": \\\"Bash\\\", \\\"tool_input\\\": {\\\"command\\\": \\\"ls\\\"}}\")
+m.main()
+PYSLOW"
 if [ "$(id -u)" != 0 ]; then
   mkdir -p "$WORK/w2/proj/.claude/.idd/archive"; chmod 600 "$WORK/w2/proj"
   expect_deny  eacces     "$(printf %s '{"tool_name": "Bash", "cwd": "__WORK__/w2", "tool_input": {"command": "chmod -R u+rwx ."}}' | sed "s|__REPO__|$REPO|g; s|__SPACE__|$SPACE|g; s|__WORK__|$WORK|g")"

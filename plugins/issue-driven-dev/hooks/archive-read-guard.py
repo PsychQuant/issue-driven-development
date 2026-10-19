@@ -9,14 +9,18 @@ again, which is the failure #351 exists to stop.
 
 This hook is the first of two layers. It denies any Read / Grep / Glob / Edit /
 Write / NotebookEdit call whose path argument points into the archive, and any
-Bash / PowerShell / Monitor command whose text names it. Near an archive it also
-denies a relative path that goes below .claude/.idd/archive/ — joined to the
-working directory, or written as archive/… or .idd/archive/… while the working
-directory or a word of the command is a .claude or .claude/.idd directory — so
-`cat archive/edits/a.md` from inside .claude/.idd and
-`cd "<path with spaces>/.claude/.idd" && cat archive/edits/a.md` are caught.
-These checks are textual: the words of a command are never stat'ed (round 22;
-round 21 did, and one stuck mount stalled the call). It can only compare strings, so
+Bash / PowerShell / Monitor command whose text names it. It also denies a
+relative path that goes below .claude/.idd/archive/ — after POSIX
+normalization of each piece, joined to the working directory, or written as
+archive/… or .idd/archive/… (or `cd archive`) while the working directory is a
+.claude/.idd or .claude directory or a word of the command names one — when the
+working directory is near the archive or a named .claude directory holds one.
+So `cat archive/edits/a.md` from inside .claude/.idd,
+`cd "<path with spaces>/.claude/.idd" && cat archive/edits/a.md` and
+`cd ../repo/.claude/.idd && cat archive//edits/a.md` are caught. The words of
+a command are never stat'ed; only a named .claude directory is, after the text
+has matched (rounds 22–23). A check that takes longer than 5 seconds denies
+the call (a watchdog; a timed-out hook would let it run). It can only compare strings, so
 a recursive read that never spells the path (`grep -r .`) passes here; the
 second layer — archive files are mode 0000 — covers that case.
 
@@ -24,8 +28,9 @@ Threat model: accidental reads, not an agent deliberately working around the
 guard. This hook compares text while the shell runs it, so the two can always
 be made to disagree (a path or a flag assembled from variables, globs, brace
 expansion, the escapes inside $'…', eval, command substitution, a tilde prefix
-such as ~+, a relative path after cd steps that do not name .claude or
-.claude/.idd, another program that changes modes such as a python -c
+such as ~+, a relative path after cd steps that do not name .claude,
+.claude/.idd or archive, a named .claude path split by a space when the
+working directory is not near the archive, another program that changes modes such as a python -c
 one-liner, PowerShell's .ForEach() or comma arrays). Those differentials are
 accepted: the file
 mode is what guarantees an unreadable archive; this hook only stops the
@@ -45,8 +50,9 @@ as line breaks — so either can only deny more (round 19).
 A recursive permission change would undo the second layer, after which a
 recursive read gets the files (round 3). A command that holds a permission
 command (chmod, chown, chgrp, chflags, setfacl) and a recursive marker (-R,
---recursive; for PowerShell -r, -rec, -Recurse; or a walker such as find,
-xargs, fd, ForEach-Object, %) anywhere is
+--recursive, or a walker such as find, xargs, fd, bfs; for PowerShell — or
+pwsh / powershell run from Bash — also -r, -rec, -Recurse, -Depth and
+ForEach-Object, foreach, %) anywhere is
 therefore refused when the working directory is inside a repository that holds
 the archive or is the folder directly above one (or cannot be listed),
 whatever the command's target. The words are not attributed to commands and
@@ -62,12 +68,14 @@ the caller must not block every tool call in the session, and the file mode
 still protects the archive. An error while checking a well-formed call denies
 that call (round 20).
 """
+import functools
 import json
 import os
 import posixpath
 import re
 import stat
 import sys
+import threading
 
 NEEDLE = ".claude/.idd/archive"
 UNLOCK_FLAG = os.path.join("~", ".cache", "idd", "archive-read-guard.disabled")
@@ -229,6 +237,7 @@ def _archives_around(cwd):
         d = parent
 
 
+@functools.lru_cache(maxsize=8)
 def _near_archive(cwd):
     """True if cwd — as given or with symlinks resolved — is inside a
     repository that holds the archive, or is the folder directly above one; a
@@ -257,6 +266,7 @@ def _permission_change_in(text, cwd, powershell=False):
     names = {os.path.basename(w).casefold() for w in flat}
     if not names & set(PERMISSION_COMMANDS):
         return False
+    powershell = powershell or bool(names & {"pwsh", "pwsh.exe", "powershell", "powershell.exe"})
     marker = _PS_RECURSIVE if powershell else _RECURSIVE
     walkers = set(_TREE_WALKERS + (_PS_WALKERS if powershell else ()))
     if not (names & walkers or any(_RECURSIVE.fullmatch(w) or marker.fullmatch(w) for w in flat)):
@@ -277,40 +287,62 @@ def _candidates(tool, tool_input):
     yield from _raw_candidates(tool, tool_input)
 
 
-# A relative path into the archive (round 22): judged on the text alone, no
-# file system access — round 21 stat'ed every word of every command, and one
-# stuck mount stalled the call (verify round 20).
+# A relative path into the archive (rounds 22–23): judged on the text, after
+# POSIX normalization of each piece (`archive//x`, `.claude/./.idd`,
+# `attachments/../archive` — verify round 21). The words of a command are not
+# stat'ed; round 21 did, and one stuck mount stalled the call (verify round 20).
 _INTO_ARCHIVE = re.compile(r"(^|/)\.claude/\.idd/archive/[^/]", re.I)
 _REL_INTO_ARCHIVE = re.compile(r"(\.idd/)?archive/[^/]", re.I)
-_NAMES_IDD = re.compile(r"(^|/)\.claude(/\.idd)?/?$|(^|/)\.claude/\.idd/", re.I)
-_UNDER_CLAUDE = re.compile(r"(^|/)\.claude(/|$)", re.I)
-_LEADING_DOTS = re.compile(r"^(\.\.?/)+")
+# a word naming a .claude/.idd directory (or a .claude directory); group 1 is
+# the part up to and including .claude
+_IDD_DIR = re.compile(r"^(.*?(?:^|/)\.claude)(?:/\.idd(?:/|$)|/?$)", re.I)
+# a working directory that is a .claude/.idd directory (or inside one), or a .claude directory
+_CWD_IDD = re.compile(r"(^|/)\.claude/\.idd(/|$)|(^|/)\.claude$", re.I)
+_LEADING_UP = re.compile(r"^(\.\./)+")
+# `cd archive` / `pushd archive` — the archive itself as the next base
+_CD_ARCHIVE = re.compile(r"(?:^|[\s;&|(])(?:cd|pushd)\s+[\"']?(?:\./)?archive/?[\"']?(?=$|[\s;&|)])", re.I)
 
 
 def _relative_archive_reference(tool, tool_input, cwd):
-    """A relative path that goes below .claude/.idd/archive/: joined to the
-    working directory it lands there, or it starts with archive/… or
-    .idd/archive/… (after any ./ and ../) while the working directory or a word
-    of the command is a .claude or .claude/.idd directory. That covers
-    `cd "<path with spaces>/.claude/.idd" && cat archive/edits/a.md` and
-    `cd "$(git rev-parse --show-toplevel)/.claude/.idd"`. Only a path below
-    archive/ counts, so the word "archive" alone does not."""
+    """A relative path that goes below .claude/.idd/archive/, judged on text:
+    joined to the working directory it lands there, or it starts with
+    archive/… or .idd/archive/… (after any ../), or the command runs
+    `cd archive`, while the working directory is a .claude/.idd (or .claude)
+    directory or a word of the command names one. Returns None, or the list of
+    .claude directories the command names (relative to cwd or absolute) so the
+    caller can check whether one holds an archive. The bare word "archive"
+    does not count. No file system access."""
+    command = _as_text(tool_input.get("command")) if tool in COMMAND_TOOLS else ""
     if tool in COMMAND_TOOLS:
-        pieces = _command_pieces(_as_text(tool_input.get("command")), tool == "PowerShell")
+        pieces = _command_pieces(command, tool == "PowerShell")
     else:
         pieces = _raw_candidates(tool, tool_input)
-    base = cwd.replace("\\", "/")
-    names_idd = bool(_UNDER_CLAUDE.search(base))
-    relative = []
-    for piece in dict.fromkeys(p.replace("\\", "/") for p in pieces if p):
-        if _NAMES_IDD.search(piece):
-            names_idd = True
+    base = posixpath.normpath(cwd.replace("\\", "/"))
+    in_idd = bool(_CWD_IDD.search(base))
+    named, relative = [], []
+    for raw in dict.fromkeys(p for p in pieces if p):
+        piece = posixpath.normpath(raw.replace("\\", "/"))
+        m = _IDD_DIR.match(piece)
+        if m:
+            named.append(m.group(1))
         if not piece.startswith(("/", "~")):
             relative.append(piece)
+    found = False
     for piece in relative:
         if _INTO_ARCHIVE.search(posixpath.normpath(posixpath.join(base, piece))):
-            return True
-        if names_idd and _REL_INTO_ARCHIVE.match(_LEADING_DOTS.sub("", piece)):
+            found = True
+        elif (in_idd or named) and _REL_INTO_ARCHIVE.match(_LEADING_UP.sub("", piece)):
+            found = True
+    if not found and (in_idd or named) and command and _CD_ARCHIVE.search(_flat(command, tool == "PowerShell")):
+        found = True
+    return named if found else None
+
+
+def _names_archive_holder(named, cwd):
+    """True if one of the named .claude directories holds the archive."""
+    for claude in named:
+        target = os.path.join(cwd, os.path.expanduser(claude), ".idd", "archive")
+        if _isdir_or_unknown(target):
             return True
     return False
 
@@ -333,12 +365,32 @@ def _decide(tool, tool_input, cwd):
     """The denial reason for one well-formed call, or None to allow it."""
     if any(_hits(c) for c in _candidates(tool, tool_input)):
         return REASON
-    if _relative_archive_reference(tool, tool_input, cwd) and _near_archive(cwd):
+    named = _relative_archive_reference(tool, tool_input, cwd)
+    if named is not None and (_near_archive(cwd) or _names_archive_holder(named, cwd)):
         return REASON
     command = _as_text(tool_input.get("command")) if tool in COMMAND_TOOLS else ""
     if command and _recursive_permission_change(command, cwd, tool == "PowerShell"):
         return PERMISSION_REASON
     return None
+
+
+DEADLINE_SECONDS = 5.0
+DEADLINE_REASON = (
+    "Blocked: the IDD archive read guard took too long to check this call (a "
+    "slow or unreachable file system?). Run the command from a responsive "
+    "directory or split it into simpler calls; if it keeps happening, tell the "
+    "user — only they can turn the guard off."
+)
+
+
+def _emit(reason):
+    print(json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
+        }
+    }), flush=True)
 
 
 def main():
@@ -356,6 +408,24 @@ def main():
     if os.path.exists(os.path.expanduser(UNLOCK_FLAG)):
         return 0  # a human created the unlock flag (archive-first style switch)
 
+    # A check that stalls (a stuck file system) must not run into Claude Code's
+    # hook timeout: a timed-out hook lets the call go ahead. The watchdog denies
+    # first (round 23). onFailure "block" is not used: it would also block every
+    # call when python3 is missing or the hook cannot start.
+    lock, done = threading.Lock(), []
+
+    def deadline():
+        with lock:
+            if not done:
+                done.append(True)
+                print("archive-read-guard: check took too long; denying", file=sys.stderr)
+                _emit(DEADLINE_REASON)
+                os._exit(0)
+
+    timer = threading.Timer(DEADLINE_SECONDS, deadline)
+    timer.daemon = True
+    timer.start()
+
     cwd = _as_text(event.get("cwd")) or os.getcwd()
     try:
         reason = _decide(tool, tool_input, cwd)
@@ -364,14 +434,13 @@ def main():
         reason = ("Blocked: the IDD archive read guard hit an error while checking this call. "
                   "Split the command into simpler calls and try again; if it keeps happening, "
                   "tell the user — only they can turn the guard off.")
-    if reason:
-        print(json.dumps({
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": reason,
-            }
-        }))
+    with lock:
+        if done:
+            return 0
+        done.append(True)
+        timer.cancel()
+        if reason:
+            _emit(reason)
     return 0
 
 

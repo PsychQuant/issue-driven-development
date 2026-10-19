@@ -392,6 +392,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ~380 to ~220 lines. Checked against real bash and zsh: the 47 known bypasses, the 12,000-command grid and a
   400-command grid of comments on later lines are all denied.
 
+### Fixed (round 23 — verify round 21 findings, before release)
+
+- Read guard: each piece is POSIX-normalized before the relative-path rule, so `archive//edits/a.md`,
+  `.claude/./.idd` and `attachments/../archive/…` no longer get a `chmod u+r` and `cat` through after a `cd`.
+- A command that names a `.claude/.idd` directory holding the archive and then reaches below `archive/` is denied
+  from any working directory (round 22 checked this only near the archive); the named directory is stat'ed only after
+  the text has matched. `cd archive` counts; a working directory merely under `.claude/` (a worktree) does not turn
+  the rule on.
+- A check that takes longer than 5 seconds denies the call (a timed-out hook would let it run). `onFailure: "block"`
+  is not used: it would block every call when python3 is missing or the hook cannot start.
+- `pwsh -c` / `powershell -c` from Bash use the PowerShell recursive markers and walkers.
+
 ### Fixed (round 22 — verify round 20 findings, before release)
 
 - Read guard: round 21 stat'ed every path-like word of every command to find directories it names; a stuck mount (an
@@ -401,7 +413,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from the working directory, or when it starts with `archive/…` or `.idd/archive/…` and the working directory or a
   word of the command is a `.claude` or `.claude/.idd` directory — so a `cd` into a path with spaces or parentheses,
   or into `$(git rev-parse --show-toplevel)/.claude/.idd`, no longer gets a plain `chmod u+r` and `cat` through. The
-  bare word `archive` (`spectra archive`, `grep archive`) no longer counts. The hook has a 10-second timeout.
+  bare word `archive` (`spectra archive`, `grep archive`) no longer counts. The hook has a 10-second timeout. *(Round 23:
+  pieces are normalized first, a named `.claude/.idd` holding the archive counts from anywhere, and a 5-second
+  watchdog denies a stalled check.)*
 - A stat error other than "not found" counts as an archive when deciding whether the working directory is near one,
   and a symlinked working directory is checked with its real path too.
 - `%` and `foreach` count as walkers only in PowerShell; `bfs` and PowerShell `-Depth` count everywhere they apply.

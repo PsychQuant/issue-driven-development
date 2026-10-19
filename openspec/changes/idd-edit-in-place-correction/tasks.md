@@ -198,4 +198,12 @@
 - [x] 27.1 先寫會失敗的測試（correction-archive）：`cd` 到含空白、括號的目錄與 `$(git rev-parse …)` 之後的相對讀取、`cd .claude/.idd/attachments` 後的 `../archive/…`、Glob 的相對 path、子 repo 無搜尋權限（EACCES）時的遞迴改權限；放行：只提到 `archive` 這個字的三種指令、Bash 的 `%` 算術；一般指令不碰檔案系統（patch `os.stat`／`listdir`／`isdir` 為拋例外）。驗證：10 條在 30afcec 上失敗。
 - [x] 27.2 hook：刪掉逐詞 `isdir` 與 `_names_existing_archive`；新增 `_relative_archive_reference`（純文字：接上工作目錄落在 `archive/` 之下，或 `archive/…`／`.idd/archive/…` 配上工作目錄或指令裡的 `.claude`／`.claude/.idd`），歸檔附近才擋；`_isdir_or_unknown`（stat 錯誤非「不存在」即視為有）；`_near_archive` 也查 realpath；`%`／`foreach` 只限 PowerShell，加 `bfs`、PowerShell `-Depth`；`_norm_path` 用 posixpath；拒絕訊息補上相對路徑、unlistable 目錄與訊息改由檔案傳；hooks.json 設 10 秒逾時。驗證：correction-archive 368 條全綠；歸檔附近 68,040 筆網格與 12 個相對路徑情境以真實 bash／zsh 比對全擋；使用者真實紀錄中無歸檔目錄的誤擋 0、歸檔附近 55（與 9394aaf 相同）；`run-all-tests.sh` 63 個 suite 全綠。
 - [x] 27.3 文件：spec（相對路徑規則、純文字、symlink／EACCES、PowerShell 標記、10 秒逾時、scenario）、docstring、design（第 22 輪、Windows、Risks 的檔案系統存取與逾時）、README、idd-edit SKILL（權限規則對 `--body`／`--reason` 的影響）、CHANGELOG（第 22 輪、第 21 輪加註、Changed）。驗證：`spectra validate`。
-- [ ] 27.4 Verify 第 21 輪（只審第 22 輪的差異）；沒有 HIGH 以上，就把 PR #408 標為 ready，合併留給使用者。驗證：#351 的 verify 留言。
+- [x] 27.4 Verify 第 21 輪（只審第 22 輪的差異）；沒有 HIGH 以上，就把 PR #408 標為 ready，合併留給使用者。驗證：#351 的 verify 留言（6257481651）。
+- [x] 27.5 27.4 的結果：第 21 輪 FAIL，findings 37（HIGH 3／MEDIUM 12／LOW 11／INFO 11）。HIGH：相對路徑片段未正規化（`archive//`、`.claude/./.idd`、中間的 `..`）；DA 因 session 額度未完成。MEDIUM：第 22 輪丟掉 repo 外指名 `.claude/.idd` 的情況、`.claude/` 下的 worktree 誤觸發、`cd archive`、逾時即放行、量測 fixture 在 `~/.claude/` 下。
+
+## 28. Verify 第 21 輪修正（第 23 輪）
+
+- [x] 28.1 先寫會失敗的測試（correction-archive）：`archive//`、`.claude//.idd`、`attachments/../archive`、`.idd/./archive`、兄弟目錄的相對與絕對 `cd`、`cd archive`、`pwsh -c` 從 Bash、檢查卡住時拒絕；放行：`.claude/worktrees/wt` 下的 `archive/…`。驗證：10 條在 cd81099 上失敗。
+- [x] 28.2 hook：片段先 POSIX 正規化；`_relative_archive_reference` 回傳指名的 `.claude` 目錄，`_names_archive_holder` 只在文字符合後 stat 它們；`cd archive`；工作目錄須是 `.claude/.idd` 或 `.claude` 本身；`_near_archive` 加 lru_cache；`pwsh`／`powershell` 觸發 PowerShell 標記；5 秒 watchdog（不採用 `onFailure: "block"`）。驗證：correction-archive 387 條全綠；`~/.claude` 以外的 fixture 上，歸檔附近 68,040 筆網格與 21 個相對路徑情境以真實 bash／zsh 比對全擋；使用者真實紀錄中無歸檔目錄的誤擋 0、歸檔附近 55；`run-all-tests.sh` 63 個 suite 全綠。
+- [x] 28.3 文件：spec（正規化、指名的 `.claude/.idd`、`cd archive`、worktree、5 秒 watchdog、POSIX normpath）、docstring（規則、接受清單、walker 清單）、design（第 23 輪、`onFailure` 不採用的理由、Risks）、README、idd-edit SKILL、CHANGELOG。驗證：`spectra validate`。
+- [ ] 28.4 Verify 第 22 輪（只審第 23 輪的差異，DA 重跑）；沒有 HIGH 以上，就把 PR #408 標為 ready，合併留給使用者。驗證：#351 的 verify 留言。
