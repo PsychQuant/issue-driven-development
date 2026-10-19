@@ -358,6 +358,16 @@ expect_deny  in-idd-x   "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__/.cl
 expect_deny  far-cdP    "$(printf %s '{"tool_name": "Bash", "cwd": "__PLAIN__", "tool_input": {"command": "cd ../repo/.claude/.idd && cd -P archive && chmod u+r edits/a.md"}}' | sed "s|__REPO__|$REPO|g; s|__PLAIN__|$PLAIN|g")"
 expect_allow plain-cd-x "$(printf %s '{"tool_name": "Bash", "cwd": "__PLAIN__", "tool_input": {"command": "cd scripts && chmod +x run.sh"}}' | sed "s|__REPO__|$REPO|g; s|__PLAIN__|$PLAIN|g")"
 expect_allow repo-cd    "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "cd scripts && ls -la"}}' | sed "s|__REPO__|$REPO|g; s|__PLAIN__|$PLAIN|g")"
+# round 25: a symlinked working directory into .claude/.idd counts; a path
+# ending in /cd is not a change of directory; the hook compiles with warnings
+# as errors; the relocated denial says how to leave .claude/.idd
+ln -sfn "$REPO/.claude/.idd/archive" "$REPO/archive-link"
+expect_deny  sym-cwd    "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__/archive-link", "tool_input": {"command": "chmod u+r edits/a.md && cat edits/a.md"}}' | sed "s|__REPO__|$REPO|g")"
+expect_allow path-cd    "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "chmod +x tools/cd"}}' | sed "s|__REPO__|$REPO|g")"
+assert_true "the hook compiles with warnings as errors" "python3 -W error -c \"import sys; compile(open(sys.argv[1]).read(), sys.argv[1], 'exec')\" \"$HOOK\""
+hook_case relocreason "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__/.claude/.idd/attachments", "tool_input": {"command": "chmod +x foo.sh"}}' | sed "s|__REPO__|$REPO|g")"
+assert_output_grep "the relocated denial says how to leave .claude/.idd" "separate call" "$WORK/hook-relocreason.out"
+assert_output_grep "the relocated denial covers messages" "--body-file" "$WORK/hook-relocreason.out"
 assert_true "a stalled check denies" "python3 - \"$HOOK\" <<'PYSLOW' | grep -q 'took too long'
 import importlib.util, io, sys, time
 spec = importlib.util.spec_from_file_location(\"g\", sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)

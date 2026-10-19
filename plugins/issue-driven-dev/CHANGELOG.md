@@ -392,6 +392,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ~380 to ~220 lines. Checked against real bash and zsh: the 47 known bypasses, the 12,000-command grid and a
   400-command grid of comments on later lines are all denied.
 
+### Fixed (round 25 — verify round 23 findings, before release)
+
+- Read guard: a symlinked working directory that points into `.claude/.idd` counts as inside it; change-of-directory
+  words match only as whole words (`chmod +x tools/cd` is not a cd); the module docstring is a raw string — its `\w`
+  made Python print a SyntaxWarning on every call, and under warnings-as-errors the hook could not start, which lets
+  every call through.
+- The relocated-permission denial says to leave `.claude/.idd` in a separate call and to pass message text from a file.
+- Documented limits (user decision 2026-10-19): a program option that changes directory before the permission command
+  (`env -C`, `sudo -D`, `make -C`, `git -C`, `uv --directory`, `pwsh -WorkingDirectory`, …), a `.claude` named after
+  an earlier `cd` from a directory away from the archive, PowerShell reads with backslash paths run from Bash, and
+  root.
+
 ### Fixed (round 24 — verify round 22 findings, before release)
 
 - Read guard: rounds 20–23 kept missing ways to `cd` into the archive and then `chmod u+r` a file and read it (`cd -P

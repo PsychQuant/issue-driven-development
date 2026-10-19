@@ -214,4 +214,12 @@
 - [x] 29.1 先寫會失敗的測試（correction-archive）：`cd archive/.`、`cd -P archive`、`cd archive>/dev/null`、`cd ../archive`、續行拆字、PowerShell `sl`、`cd scripts && chmod +x`（代價）、`.claude/.idd` 內的 `chmod +x`、兄弟目錄經指名的 `.claude/.idd` 再 `cd -P archive`；放行：無歸檔目錄的 `cd scripts && chmod +x`、含歸檔 repo 的 `cd scripts && ls`；worktree 測試的 fixture 先建。驗證：9 條在 a972e2c 上失敗。
 - [x] 29.2 hook：`_relocated_permission_change`（換目錄字＋權限指令，兩種讀法；`.claude/.idd` 內任何權限指令），`RELOCATED_REASON`；刪掉 `_CD_ARCHIVE`；相對路徑原始與正規化兩種都比對；watchdog 在任何檔案系統存取前啟動、先寫 deny 再寫 stderr。驗證：correction-archive 409 條全綠；`~/.claude` 以外重建的 fixture 上，38 個相對路徑情境（含審查列的 cd 寫法）以真實 bash／zsh 比對 0 缺口，68,040 筆網格 0 缺口；使用者真實紀錄中無歸檔目錄的誤擋 0、歸檔附近新增 94 筆（全為換目錄＋改權限）；`run-all-tests.sh` 61 個 suite 通過、edit-run 與 actionability-gate 在負載下逾時，單獨重跑皆綠（203／943）。
 - [x] 29.3 文件：spec（換目錄＋改權限、原始與正規化）、docstring（規則與接受清單）、design（第 24 輪決定與實測代價）、README、idd-edit SKILL、CHANGELOG。驗證：`spectra validate`。
-- [ ] 29.4 Verify 第 23 輪（只審第 24 輪的差異）；沒有 HIGH 以上，就把 PR #408 標為 ready，合併留給使用者。驗證：#351 的 verify 留言。
+- [x] 29.4 Verify 第 23 輪（只審第 24 輪的差異）；沒有 HIGH 以上，就把 PR #408 標為 ready，合併留給使用者。驗證：#351 的 verify 留言。
+- [x] 29.5 29.4 的結果：第 23 輪 FAIL，findings 33（HIGH 3／MEDIUM 10／LOW 12／INFO 8）。HIGH：symlink 工作目錄繞過「`.claude/.idd` 內」判斷；`env -C`、`sudo -D` 等程式選項換目錄（DA：非本輪造成，清單本質開放）。MEDIUM：docstring 的 `\w` 跳脫、拒絕訊息的建議在 `.claude/.idd` 內無效、文件與實測代價描述。使用者決定（2026-10-19）：程式選項換目錄寫成已知限制。
+
+## 30. Verify 第 23 輪修正（第 25 輪）
+
+- [x] 30.1 先寫會失敗的測試（correction-archive）：symlink 進 `.claude/.idd/archive` 的工作目錄下 `chmod u+r`；`chmod +x tools/cd` 放行；以 warnings-as-errors 編譯 hook；拒絕訊息含「separate call」與 `--body-file`。驗證：4 條在 e1b1d4f 上失敗。
+- [x] 30.2 hook：`_relocated_permission_change` 以工作目錄與其 realpath 判斷是否在 `.claude/.idd` 內；換目錄字比整個字；模組 docstring 改為 raw；`RELOCATED_REASON` 補上離開 `.claude/.idd` 與訊息改由檔案傳。驗證：correction-archive 416 條全綠。
+- [x] 30.3 文件：spec（已知限制、symlink、整字比對、scenario）、docstring 接受清單、design（第 25 輪、Risks、實測代價的母體）、README、CHANGELOG。驗證：`spectra validate`。
+- [ ] 30.4 Verify 第 24 輪（只審第 25 輪的差異）；沒有 HIGH 以上，就把 PR #408 標為 ready，合併留給使用者。驗證：#351 的 verify 留言。

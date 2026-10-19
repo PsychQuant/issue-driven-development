@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""archive-read-guard.py — PreToolUse hook: keep Claude's tools out of the
+r"""archive-read-guard.py — PreToolUse hook: keep Claude's tools out of the
 correction archive (#351).
 
 `/idd-edit --correct` archives the prior version of a corrected comment or
@@ -37,7 +37,11 @@ the files are mode 0000, so it fails without a chmod — a .claude named
 relative to an earlier cd or split by a character outside [\w./~+@%-] when the
 working directory is not near the archive, a working directory under .claude/
 that is not .claude/.idd (a worktree), the zsh two-argument cd, and on Windows
-(where mode 0000 does not apply) any read after a cd; another program that changes modes such as a python -c
+(where mode 0000 does not apply) any read after a cd; a program option that
+changes directory before the permission command (env -C / --chdir, sudo -D,
+make -C, git -C, uv --directory, pwsh -WorkingDirectory, …; user decision
+2026-10-19); a PowerShell read with backslash paths run from Bash; root, which
+ignores mode 0000; another program that changes modes such as a python -c
 one-liner, PowerShell's .ForEach() or comma arrays). Those differentials are
 accepted: the file
 mode is what guarantees an unreadable archive; this hook only stops the
@@ -125,7 +129,11 @@ RELOCATED_REASON = (
     ".claude/.idd. The archive files are mode 0000 (#351), and a cd can lead a "
     "relative chmod into the archive without naming it. Run the permission "
     "command from the working directory with the path spelled out (for example "
-    "chmod u+x scripts/run.sh), or as a separate call without a cd."
+    "chmod u+x scripts/run.sh), or as a separate call without a cd. Inside "
+    ".claude/.idd every permission command is denied: leave that directory in a "
+    "separate call first. If the words are only in a message, pass the text from "
+    "a file (git commit -F, gh … --body-file); write file contents with the Write "
+    "tool."
 )
 
 PATH_FIELDS = {
@@ -291,14 +299,17 @@ def _relocated_permission_change(command, cwd, powershell, named_holder):
     that lifts mode 0000 is the permission command, so that is what is
     stopped. Checked in both readings; `named_holder` is called only if
     needed."""
-    base = posixpath.normpath(cwd.replace("\\", "/"))
     for reading in _variants(command, powershell):
-        names = {os.path.basename(w).casefold() for w in _flat_words(reading, powershell)}
+        words = _flat_words(reading, powershell)
+        names = {os.path.basename(w).casefold() for w in words}
         if not names & set(PERMISSION_COMMANDS):
             continue
-        if _IN_IDD.search(base) and _near_archive(cwd):
+        # the working directory as given and with symlinks resolved (round 25)
+        bases = {posixpath.normpath(d.replace("\\", "/")) for d in (cwd, os.path.realpath(cwd))}
+        if any(_IN_IDD.search(b) for b in bases) and _near_archive(cwd):
             return True
-        if names & set(_CD_COMMANDS) and (_near_archive(cwd) or named_holder()):
+        # whole words only: a path ending in /cd is not a change of directory (round 25)
+        if {w.casefold() for w in words} & set(_CD_COMMANDS) and (_near_archive(cwd) or named_holder()):
             return True
     return False
 
