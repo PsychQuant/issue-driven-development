@@ -392,13 +392,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ~380 to ~220 lines. Checked against real bash and zsh: the 47 known bypasses, the 12,000-command grid and a
   400-command grid of comments on later lines are all denied.
 
+### Fixed (round 24 — verify round 22 findings, before release)
+
+- Read guard: rounds 20–23 kept missing ways to `cd` into the archive and then `chmod u+r` a file and read it (`cd -P
+  archive`, `cd archive/.`, `cd ../archive`, a line continuation inside the word, backticks, zsh `chdir`, PowerShell
+  `Set-Location`). By user decision, near the archive — or when the command names a `.claude/.idd` that holds one — a
+  command with both a change-of-directory word and a permission command is denied, and any permission command run
+  from inside `.claude/.idd` is too. The literal `cd archive` rule is gone. Cost: in a repository that holds the
+  archive, any command with a `cd` (even `cd /tmp`) and a `chmod` is denied, such as `cd scripts && chmod +x run.sh`;
+  write `chmod +x scripts/run.sh`, or run the chmod as a separate call.
+- The relative-path rule matches each piece both as written and normalized, so `archive/.` no longer collapses into
+  the bare word.
+- The 5-second watchdog starts before any file-system access, and writes the deny before its stderr note.
+
 ### Fixed (round 23 — verify round 21 findings, before release)
 
 - Read guard: each piece is POSIX-normalized before the relative-path rule, so `archive//edits/a.md`,
   `.claude/./.idd` and `attachments/../archive/…` no longer get a `chmod u+r` and `cat` through after a `cd`.
 - A command that names a `.claude/.idd` directory holding the archive and then reaches below `archive/` is denied
   from any working directory (round 22 checked this only near the archive); the named directory is stat'ed only after
-  the text has matched. `cd archive` counts; a working directory merely under `.claude/` (a worktree) does not turn
+  the text has matched. `cd archive` counts *(round 24: replaced by the cd-plus-permission rule)*; a working directory merely under `.claude/` (a worktree) does not turn
   the rule on.
 - A check that takes longer than 5 seconds denies the call (a timed-out hook would let it run). `onFailure: "block"`
   is not used: it would block every call when python3 is missing or the hook cannot start.

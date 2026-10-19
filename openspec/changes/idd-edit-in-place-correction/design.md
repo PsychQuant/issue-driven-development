@@ -66,6 +66,8 @@ hook 腳本 `hooks/archive-read-guard.py` 用 stdlib `json` 解析 stdin，與 h
 
 遞迴改權限的檢查重蹈同一條路：第 19 輪把旗標與目標歸給「權限指令之後」的詞，第 20 輪改成不歸屬、但在 repo 外解析每個目標，verify 第 18、19 輪各找到 5 與 7 個 HIGH（黏住的運算子、撇號、`cd` 後的相對目標、括號路徑），而且在沒有歸檔的 repo 裡把寫 script 的 heredoc 擋下（使用者真實紀錄：1 筆增為 237 筆）。2026-10-18 使用者第二次決定（第 21 輪）：只在歸檔附近檢查——工作目錄在含歸檔的 repo 內、或是其上一層資料夾、或無法列出時，指令同時含權限指令與遞迴標記就擋，不看目標；其他地方不檢查，寫成已知限制。
 
+第 24 輪（使用者 2026-10-19 決定）：第 20–22 輪都在補「用某種寫法 cd 進歸檔，再非遞迴 `chmod u+r` 加 `cat`」，每輪都有新寫法（`cd -P`、`cd archive/.`、`cd ../archive`、續行、反引號、zsh `chdir`、PowerShell `Set-Location`）。解除 `0000` 的那一步是改權限，所以改擋那一步：在歸檔附近（或指令指名有歸檔的 `.claude/.idd`），指令同時含換目錄字與權限指令就擋；工作目錄在 `.claude/.idd` 內時任何權限指令都擋。不再辨認 cd 的寫法（刪掉 `_CD_ARCHIVE`）；相對路徑規則原始與正規化兩種都比對。代價：含歸檔的 repo 裡，同一個指令只要有任何 `cd`（包括 `cd /tmp` 這種與歸檔無關的目錄）又有 `chmod`，就被擋，例如 `cd scripts && chmod +x run.sh`、`cd /tmp && … && chmod +x probe.sh`；改成不 cd、寫出路徑，或把 chmod 拆成另一個呼叫。使用者真實紀錄中，歸檔附近的這類拒絕新增 94 筆（2 萬 4 千筆指令中）。cd 進歸檔之後只讀不改權限，會因 `0000` 讀不到；Windows 沒有 `0000`，此時無保護（已列入限制）。
+
 第 23 輪：每個片段先做 POSIX 正規化（`archive//`、`.claude/./.idd`、中間的 `..`）；指令裡指名的 `.claude/.idd` 若確實有歸檔，從任何工作目錄都擋（只在文字已符合後 stat 那個目錄）；`cd archive` 也算；工作目錄只是在 `.claude/` 底下（例如 worktree）不觸發；檢查超過 5 秒由 watchdog 拒絕。`onFailure: "block"` 不採用：它在 python3 不存在或 hook 無法啟動時會擋下每一個呼叫，與「hook 的 bug 不得擋住整個 session」相衝。
 
 第 22 輪：歸檔附近的相對路徑也改成純文字判斷——指向 `archive/` 之下的相對路徑，配上工作目錄或指令裡的 `.claude`／`.claude/.idd`，就擋；不再 stat 指令裡的詞。Windows：正規化改用 `posixpath`，第一層的字串比對在 Windows 上才會成立；第二層（權限 `0000`）在 Windows 上本來就無效，且未在 Windows 實機測過。

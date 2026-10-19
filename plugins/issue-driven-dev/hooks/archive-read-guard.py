@@ -12,15 +12,19 @@ Write / NotebookEdit call whose path argument points into the archive, and any
 Bash / PowerShell / Monitor command whose text names it. It also denies a
 relative path that goes below .claude/.idd/archive/ — after POSIX
 normalization of each piece, joined to the working directory, or written as
-archive/… or .idd/archive/… (or `cd archive`) while the working directory is a
-.claude/.idd or .claude directory or a word of the command names one — when the
-working directory is near the archive or a named .claude directory holds one.
-So `cat archive/edits/a.md` from inside .claude/.idd,
-`cd "<path with spaces>/.claude/.idd" && cat archive/edits/a.md` and
-`cd ../repo/.claude/.idd && cat archive//edits/a.md` are caught. The words of
-a command are never stat'ed; only a named .claude directory is, after the text
-has matched (rounds 22–23). A check that takes longer than 5 seconds denies
-the call (a watchdog; a timed-out hook would let it run). It can only compare strings, so
+archive/… or .idd/archive/… while the working directory is or is inside a
+.claude/.idd directory (or is a .claude directory) or a word of the command
+names one — when the working directory is near the archive or a named .claude
+directory holds one; each piece is matched as written and POSIX-normalized.
+The words of a command are never stat'ed; only a named .claude directory is,
+after the text has matched (rounds 22–23). Near the archive, or naming a
+.claude/.idd that holds one, a permission command together with any change of
+directory (cd, chdir, pushd, popd, Set-Location, sl, Push-Location,
+Pop-Location) is denied, and so is any permission command run from inside
+.claude/.idd (round 24, user decision 2026-10-19): rounds 20–22 tried to
+recognize every spelling of a cd into the archive, and the step that lifts
+mode 0000 is the chmod. A check that takes longer than 5 seconds denies the
+call (a watchdog; a timed-out hook would let it run). It can only compare strings, so
 a recursive read that never spells the path (`grep -r .`) passes here; the
 second layer — archive files are mode 0000 — covers that case.
 
@@ -28,9 +32,12 @@ Threat model: accidental reads, not an agent deliberately working around the
 guard. This hook compares text while the shell runs it, so the two can always
 be made to disagree (a path or a flag assembled from variables, globs, brace
 expansion, the escapes inside $'…', eval, command substitution, a tilde prefix
-such as ~+, a relative path after cd steps that do not name .claude,
-.claude/.idd or archive, a named .claude path split by a space when the
-working directory is not near the archive, another program that changes modes such as a python -c
+such as ~+, a read (not a permission change) after cd steps into the archive —
+the files are mode 0000, so it fails without a chmod — a .claude named
+relative to an earlier cd or split by a character outside [\w./~+@%-] when the
+working directory is not near the archive, a working directory under .claude/
+that is not .claude/.idd (a worktree), the zsh two-argument cd, and on Windows
+(where mode 0000 does not apply) any read after a cd; another program that changes modes such as a python -c
 one-liner, PowerShell's .ForEach() or comma arrays). Those differentials are
 accepted: the file
 mode is what guarantees an unreadable archive; this hook only stops the
@@ -109,6 +116,16 @@ PERMISSION_REASON = (
     "the text from a file (git commit -F, gh … --body-file). If a recursive "
     "permission change is really "
     "needed, ask the user to run it."
+)
+
+RELOCATED_REASON = (
+    "Blocked: near the IDD correction archive, this command changes directory "
+    "(cd, pushd, chdir, Set-Location, …) and runs a permission command (chmod, "
+    "chown, chgrp, chflags or setfacl), or runs a permission command from inside "
+    ".claude/.idd. The archive files are mode 0000 (#351), and a cd can lead a "
+    "relative chmod into the archive without naming it. Run the permission "
+    "command from the working directory with the path spelled out (for example "
+    "chmod u+x scripts/run.sh), or as a separate call without a cd."
 )
 
 PATH_FIELDS = {
@@ -254,6 +271,38 @@ def _near_archive(cwd):
     return False
 
 
+def _flat_words(text, powershell=False):
+    """The words of one reading, split at shell operators and grouping."""
+    return [w for w in re.split(r"[\s;&|<>()`{}]+", _flat(text, powershell)) if w]
+
+
+# words that change the working directory, in POSIX shells, zsh and PowerShell
+_CD_COMMANDS = ("cd", "chdir", "pushd", "popd", "set-location", "sl", "push-location", "pop-location")
+_IN_IDD = re.compile(r"(^|/)\.claude/\.idd(/|$)", re.I)
+
+
+def _relocated_permission_change(command, cwd, powershell, named_holder):
+    """A permission command that may act inside the archive without naming it
+    (round 24, user decision 2026-10-19): run from inside a .claude/.idd
+    directory near the archive, or together with any change of directory
+    while the working directory is near the archive or the command names a
+    .claude/.idd that holds one. Rounds 20–22 tried to recognize every way
+    of spelling a cd into the archive and were beaten each time; the step
+    that lifts mode 0000 is the permission command, so that is what is
+    stopped. Checked in both readings; `named_holder` is called only if
+    needed."""
+    base = posixpath.normpath(cwd.replace("\\", "/"))
+    for reading in _variants(command, powershell):
+        names = {os.path.basename(w).casefold() for w in _flat_words(reading, powershell)}
+        if not names & set(PERMISSION_COMMANDS):
+            continue
+        if _IN_IDD.search(base) and _near_archive(cwd):
+            return True
+        if names & set(_CD_COMMANDS) and (_near_archive(cwd) or named_holder()):
+            return True
+    return False
+
+
 def _permission_change_in(text, cwd, powershell=False):
     """A recursive permission change near the archive, in one reading: a
     permission command and a recursive marker (-R, --recursive and its
@@ -261,8 +310,10 @@ def _permission_change_in(text, cwd, powershell=False):
     ForEach-Object) anywhere in the command, from a working directory near the
     archive. The words are not attributed to commands and targets are not
     resolved: every attempt to do either was beaten (rounds 18–21). From
-    anywhere else a recursive permission change is not checked."""
-    flat = [w for w in re.split(r"[\s;&|<>()`{}]+", _flat(text, powershell)) if w]
+    anywhere else a recursive permission change is not checked. PowerShell's
+    -r / -rec / -Recurse / -Depth and ForEach-Object / foreach / % count for the
+    PowerShell tool and when pwsh / powershell appears in the command."""
+    flat = _flat_words(text, powershell)
     names = {os.path.basename(w).casefold() for w in flat}
     if not names & set(PERMISSION_COMMANDS):
         return False
@@ -298,20 +349,20 @@ _REL_INTO_ARCHIVE = re.compile(r"(\.idd/)?archive/[^/]", re.I)
 _IDD_DIR = re.compile(r"^(.*?(?:^|/)\.claude)(?:/\.idd(?:/|$)|/?$)", re.I)
 # a working directory that is a .claude/.idd directory (or inside one), or a .claude directory
 _CWD_IDD = re.compile(r"(^|/)\.claude/\.idd(/|$)|(^|/)\.claude$", re.I)
-_LEADING_UP = re.compile(r"^(\.\./)+")
-# `cd archive` / `pushd archive` — the archive itself as the next base
-_CD_ARCHIVE = re.compile(r"(?:^|[\s;&|(])(?:cd|pushd)\s+[\"']?(?:\./)?archive/?[\"']?(?=$|[\s;&|)])", re.I)
+_LEADING_UP = re.compile(r"^(\.\.?/+)+")
 
 
 def _relative_archive_reference(tool, tool_input, cwd):
     """A relative path that goes below .claude/.idd/archive/, judged on text:
     joined to the working directory it lands there, or it starts with
-    archive/… or .idd/archive/… (after any ../), or the command runs
-    `cd archive`, while the working directory is a .claude/.idd (or .claude)
-    directory or a word of the command names one. Returns None, or the list of
-    .claude directories the command names (relative to cwd or absolute) so the
-    caller can check whether one holds an archive. The bare word "archive"
-    does not count. No file system access."""
+    archive/… or .idd/archive/… (after any ./ and ../), while the working
+    directory is or is inside a .claude/.idd directory (or is a .claude
+    directory) or a word of the command names one. Each piece is matched both
+    as written and POSIX-normalized, so either form can only deny more
+    (`archive/.` normalizes to the bare word). Returns (found, named): named
+    lists the .claude directories the command names, relative to cwd or
+    absolute, so the caller can check whether one holds an archive. The bare
+    word "archive" does not count. No file system access."""
     command = _as_text(tool_input.get("command")) if tool in COMMAND_TOOLS else ""
     if tool in COMMAND_TOOLS:
         pieces = _command_pieces(command, tool == "PowerShell")
@@ -321,21 +372,21 @@ def _relative_archive_reference(tool, tool_input, cwd):
     in_idd = bool(_CWD_IDD.search(base))
     named, relative = [], []
     for raw in dict.fromkeys(p for p in pieces if p):
-        piece = posixpath.normpath(raw.replace("\\", "/"))
+        written = raw.replace("\\", "/")
+        piece = posixpath.normpath(written)
         m = _IDD_DIR.match(piece)
         if m:
             named.append(m.group(1))
         if not piece.startswith(("/", "~")):
-            relative.append(piece)
+            relative.append((written, piece))
     found = False
-    for piece in relative:
-        if _INTO_ARCHIVE.search(posixpath.normpath(posixpath.join(base, piece))):
+    for written, piece in relative:
+        joined = (posixpath.join(base, written), posixpath.normpath(posixpath.join(base, piece)))
+        if any(_INTO_ARCHIVE.search(j) for j in joined):
             found = True
-        elif (in_idd or named) and _REL_INTO_ARCHIVE.match(_LEADING_UP.sub("", piece)):
+        elif (in_idd or named) and any(_REL_INTO_ARCHIVE.match(_LEADING_UP.sub("", f)) for f in (written, piece)):
             found = True
-    if not found and (in_idd or named) and command and _CD_ARCHIVE.search(_flat(command, tool == "PowerShell")):
-        found = True
-    return named if found else None
+    return found, named
 
 
 def _names_archive_holder(named, cwd):
@@ -365,12 +416,15 @@ def _decide(tool, tool_input, cwd):
     """The denial reason for one well-formed call, or None to allow it."""
     if any(_hits(c) for c in _candidates(tool, tool_input)):
         return REASON
-    named = _relative_archive_reference(tool, tool_input, cwd)
-    if named is not None and (_near_archive(cwd) or _names_archive_holder(named, cwd)):
+    found, named = _relative_archive_reference(tool, tool_input, cwd)
+    if found and (_near_archive(cwd) or _names_archive_holder(named, cwd)):
         return REASON
     command = _as_text(tool_input.get("command")) if tool in COMMAND_TOOLS else ""
     if command and _recursive_permission_change(command, cwd, tool == "PowerShell"):
         return PERMISSION_REASON
+    if command and _relocated_permission_change(command, cwd, tool == "PowerShell",
+                                                lambda: _names_archive_holder(named, cwd)):
+        return RELOCATED_REASON
     return None
 
 
@@ -405,9 +459,6 @@ def main():
         print(f"archive-read-guard: input not understood ({exc}); allowing", file=sys.stderr)
         return 0
 
-    if os.path.exists(os.path.expanduser(UNLOCK_FLAG)):
-        return 0  # a human created the unlock flag (archive-first style switch)
-
     # A check that stalls (a stuck file system) must not run into Claude Code's
     # hook timeout: a timed-out hook lets the call go ahead. The watchdog denies
     # first (round 23). onFailure "block" is not used: it would also block every
@@ -418,13 +469,19 @@ def main():
         with lock:
             if not done:
                 done.append(True)
-                print("archive-read-guard: check took too long; denying", file=sys.stderr)
                 _emit(DEADLINE_REASON)
+                print("archive-read-guard: check took too long; denying", file=sys.stderr, flush=True)
                 os._exit(0)
 
     timer = threading.Timer(DEADLINE_SECONDS, deadline)
     timer.daemon = True
     timer.start()
+
+    if os.path.exists(os.path.expanduser(UNLOCK_FLAG)):
+        with lock:
+            done.append(True)
+            timer.cancel()
+        return 0  # a human created the unlock flag (archive-first style switch)
 
     cwd = _as_text(event.get("cwd")) or os.getcwd()
     try:

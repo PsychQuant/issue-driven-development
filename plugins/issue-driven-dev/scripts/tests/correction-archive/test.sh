@@ -341,9 +341,23 @@ expect_deny  norm-dot   "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "
 expect_deny  far-rel    "$(printf %s '{"tool_name": "Bash", "cwd": "__PLAIN__", "tool_input": {"command": "cd ../repo/.claude/.idd && chmod u+r archive/edits/a.md && cat archive/edits/a.md"}}' | sed "s|__REPO__|$REPO|g; s|__PLAIN__|$PLAIN|g")"
 expect_deny  far-abs    "$(printf %s '{"tool_name": "Bash", "cwd": "__PLAIN__", "tool_input": {"command": "cd \"__REPO__/.claude\" && cat .idd/archive/edits/a.md"}}' | sed "s|__REPO__|$REPO|g; s|__PLAIN__|$PLAIN|g")"
 expect_deny  cd-archive "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "cd .claude/.idd && cd archive && chmod u+r edits/a.md && cat edits/a.md"}}' | sed "s|__REPO__|$REPO|g; s|__PLAIN__|$PLAIN|g")"
+mkdir -p "$REPO/.claude/worktrees/wt"
 expect_allow worktree   "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__/.claude/worktrees/wt", "tool_input": {"command": "cat archive/notes/a.md"}}' | sed "s|__REPO__|$REPO|g; s|__PLAIN__|$PLAIN|g")"
 expect_deny  pwsh-bash  "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "pwsh -c \"Get-ChildItem -r | % { chmod u+r $_ }\""}}' | sed "s|__REPO__|$REPO|g; s|__PLAIN__|$PLAIN|g")"
-mkdir -p "$REPO/.claude/worktrees/wt"
+# round 24 (user decision): near the archive, a permission command together with
+# any change of directory is denied; from inside .claude/.idd every permission
+# command is; raw and normalized pieces are both matched
+expect_deny  rel-dot    "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__/.claude/.idd", "tool_input": {"command": "cd archive/. && chmod u+r edits/a.md && cat edits/a.md"}}' | sed "s|__REPO__|$REPO|g; s|__PLAIN__|$PLAIN|g")"
+expect_deny  rel-cdP    "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "cd .claude/.idd && cd -P archive && chmod u+r edits/a.md && cat edits/a.md"}}' | sed "s|__REPO__|$REPO|g; s|__PLAIN__|$PLAIN|g")"
+expect_deny  rel-redir  "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "cd .claude/.idd && cd archive>/dev/null && chmod u+r edits/a.md"}}' | sed "s|__REPO__|$REPO|g; s|__PLAIN__|$PLAIN|g")"
+expect_deny  rel-up     "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__/.claude/.idd/attachments", "tool_input": {"command": "cd ../archive && chmod u+r edits/a.md && cat edits/a.md"}}' | sed "s|__REPO__|$REPO|g; s|__PLAIN__|$PLAIN|g")"
+expect_deny  rel-cont   "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "cd .claude/.idd && cd arch\\\nive && chmod u+r edits/a.md"}}' | sed "s|__REPO__|$REPO|g; s|__PLAIN__|$PLAIN|g")"
+expect_deny  ps-sl      "$(printf %s '{"tool_name": "PowerShell", "cwd": "__REPO__", "tool_input": {"command": "sl .claude; sl .idd; sl archive; chmod u+r edits/a.md"}}' | sed "s|__REPO__|$REPO|g; s|__PLAIN__|$PLAIN|g")"
+expect_deny  cd-chmod-x "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "cd scripts && chmod +x run.sh"}}' | sed "s|__REPO__|$REPO|g; s|__PLAIN__|$PLAIN|g")"
+expect_deny  in-idd-x   "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__/.claude/.idd/attachments", "tool_input": {"command": "chmod +x foo.sh"}}' | sed "s|__REPO__|$REPO|g; s|__PLAIN__|$PLAIN|g")"
+expect_deny  far-cdP    "$(printf %s '{"tool_name": "Bash", "cwd": "__PLAIN__", "tool_input": {"command": "cd ../repo/.claude/.idd && cd -P archive && chmod u+r edits/a.md"}}' | sed "s|__REPO__|$REPO|g; s|__PLAIN__|$PLAIN|g")"
+expect_allow plain-cd-x "$(printf %s '{"tool_name": "Bash", "cwd": "__PLAIN__", "tool_input": {"command": "cd scripts && chmod +x run.sh"}}' | sed "s|__REPO__|$REPO|g; s|__PLAIN__|$PLAIN|g")"
+expect_allow repo-cd    "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "cd scripts && ls -la"}}' | sed "s|__REPO__|$REPO|g; s|__PLAIN__|$PLAIN|g")"
 assert_true "a stalled check denies" "python3 - \"$HOOK\" <<'PYSLOW' | grep -q 'took too long'
 import importlib.util, io, sys, time
 spec = importlib.util.spec_from_file_location(\"g\", sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)

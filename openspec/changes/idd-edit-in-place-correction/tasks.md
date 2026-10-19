@@ -206,4 +206,12 @@
 - [x] 28.1 先寫會失敗的測試（correction-archive）：`archive//`、`.claude//.idd`、`attachments/../archive`、`.idd/./archive`、兄弟目錄的相對與絕對 `cd`、`cd archive`、`pwsh -c` 從 Bash、檢查卡住時拒絕；放行：`.claude/worktrees/wt` 下的 `archive/…`。驗證：10 條在 cd81099 上失敗。
 - [x] 28.2 hook：片段先 POSIX 正規化；`_relative_archive_reference` 回傳指名的 `.claude` 目錄，`_names_archive_holder` 只在文字符合後 stat 它們；`cd archive`；工作目錄須是 `.claude/.idd` 或 `.claude` 本身；`_near_archive` 加 lru_cache；`pwsh`／`powershell` 觸發 PowerShell 標記；5 秒 watchdog（不採用 `onFailure: "block"`）。驗證：correction-archive 387 條全綠；`~/.claude` 以外的 fixture 上，歸檔附近 68,040 筆網格與 21 個相對路徑情境以真實 bash／zsh 比對全擋；使用者真實紀錄中無歸檔目錄的誤擋 0、歸檔附近 55；`run-all-tests.sh` 63 個 suite 全綠。
 - [x] 28.3 文件：spec（正規化、指名的 `.claude/.idd`、`cd archive`、worktree、5 秒 watchdog、POSIX normpath）、docstring（規則、接受清單、walker 清單）、design（第 23 輪、`onFailure` 不採用的理由、Risks）、README、idd-edit SKILL、CHANGELOG。驗證：`spectra validate`。
-- [ ] 28.4 Verify 第 22 輪（只審第 23 輪的差異，DA 重跑）；沒有 HIGH 以上，就把 PR #408 標為 ready，合併留給使用者。驗證：#351 的 verify 留言。
+- [x] 28.4 Verify 第 22 輪（只審第 23 輪的差異，DA 重跑）；沒有 HIGH 以上，就把 PR #408 標為 ready，合併留給使用者。驗證：#351 的 verify 留言（6259972606）。
+- [x] 28.5 28.4 的結果：第 22 輪 FAIL，findings 35（HIGH 7／MEDIUM 7／LOW 13／INFO 8），七則 HIGH 同一類：用某種寫法 cd 進歸檔再非遞迴 `chmod u+r` 加 `cat`（含第 23 輪正規化造成的 `archive/.` 退步）。使用者決定（2026-10-19）：擋「換目錄＋改權限」。
+
+## 29. Verify 第 22 輪修正（第 24 輪）
+
+- [x] 29.1 先寫會失敗的測試（correction-archive）：`cd archive/.`、`cd -P archive`、`cd archive>/dev/null`、`cd ../archive`、續行拆字、PowerShell `sl`、`cd scripts && chmod +x`（代價）、`.claude/.idd` 內的 `chmod +x`、兄弟目錄經指名的 `.claude/.idd` 再 `cd -P archive`；放行：無歸檔目錄的 `cd scripts && chmod +x`、含歸檔 repo 的 `cd scripts && ls`；worktree 測試的 fixture 先建。驗證：9 條在 a972e2c 上失敗。
+- [x] 29.2 hook：`_relocated_permission_change`（換目錄字＋權限指令，兩種讀法；`.claude/.idd` 內任何權限指令），`RELOCATED_REASON`；刪掉 `_CD_ARCHIVE`；相對路徑原始與正規化兩種都比對；watchdog 在任何檔案系統存取前啟動、先寫 deny 再寫 stderr。驗證：correction-archive 409 條全綠；`~/.claude` 以外重建的 fixture 上，38 個相對路徑情境（含審查列的 cd 寫法）以真實 bash／zsh 比對 0 缺口，68,040 筆網格 0 缺口；使用者真實紀錄中無歸檔目錄的誤擋 0、歸檔附近新增 94 筆（全為換目錄＋改權限）；`run-all-tests.sh` 61 個 suite 通過、edit-run 與 actionability-gate 在負載下逾時，單獨重跑皆綠（203／943）。
+- [x] 29.3 文件：spec（換目錄＋改權限、原始與正規化）、docstring（規則與接受清單）、design（第 24 輪決定與實測代價）、README、idd-edit SKILL、CHANGELOG。驗證：`spectra validate`。
+- [ ] 29.4 Verify 第 23 輪（只審第 24 輪的差異）；沒有 HIGH 以上，就把 PR #408 標為 ready，合併留給使用者。驗證：#351 的 verify 留言。
