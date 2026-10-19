@@ -392,6 +392,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ~380 to ~220 lines. Checked against real bash and zsh: the 47 known bypasses, the 12,000-command grid and a
   400-command grid of comments on later lines are all denied.
 
+### Fixed (round 27 — verify round 25 findings, before release)
+
+- Read guard: only a module-qualified PowerShell cmdlet counts by its last segment (round 26 matched any path ending
+  in `/cd`, so `chmod +x tools/cd` was denied in PowerShell); `pwsh`/`powershell` run from Bash is also read as
+  PowerShell for this rule; zsh's `=chmod` (expanded to chmod's path) counts as `chmod` in every permission rule.
+- The cost figures say how they were filtered (commands that test the guard itself are excluded; 107 without the
+  filter).
+
 ### Fixed (round 26 — verify round 24 findings, before release)
 
 - Read guard: a module-qualified PowerShell cmdlet (`Microsoft.PowerShell.Management\Set-Location`) counts as a change
@@ -421,7 +429,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   made Python print a SyntaxWarning on every call, and under warnings-as-errors the hook could not start, which lets
   every call through.
 - The relocated-permission denial says to leave `.claude/.idd` in a separate call and to pass message text from a file.
-- Documented limits (user decision 2026-10-19): a program option that changes directory before the permission command
+- Documented limits *(round 26: superseded by the complete list below)* (user decision 2026-10-19): a program option that changes directory before the permission command
   (`env -C`, `sudo -D`, `make -C`, `git -C`, `uv --directory`, `pwsh -WorkingDirectory`, …), a `.claude` named after
   an earlier `cd` from a directory away from the archive, PowerShell reads with backslash paths run from Bash, and
   root.

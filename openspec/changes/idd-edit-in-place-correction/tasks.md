@@ -230,4 +230,12 @@
 - [x] 31.1 先寫會失敗的測試（correction-archive）：PowerShell `Microsoft.PowerShell.Management\Set-Location` 後的 chmod、symlink 到 `.claude` 的工作目錄下 `chmod u+r .idd/archive/…`、無法列出的工作目錄的拒絕訊息。驗證：3 條在 49430ef 上失敗。
 - [x] 31.2 hook：PowerShell 讀法也比對換目錄字的最後一段；相對路徑規則在文字提到 archive 時也以 realpath 判斷工作目錄；`RELOCATED_REASON` 補上無法列出的目錄與 Grep 工具。驗證：correction-archive 421 條全綠。
 - [x] 31.3 文件：已知限制整理成一份完整清單，spec、hook docstring、design Risks、CHANGELOG 同一份；實測代價改寫（62／32、1.4%、往後 1,298 筆）。驗證：`spectra validate`。
-- [ ] 31.4 Verify 第 25 輪（只審第 26 輪的差異，DA 重跑）；沒有 HIGH 以上，就把 PR #408 標為 ready，合併留給使用者。驗證：#351 的 verify 留言。
+- [x] 31.4 Verify 第 25 輪（只審第 26 輪的差異，DA 重跑）；沒有 HIGH 以上，就把 PR #408 標為 ready，合併留給使用者。驗證：#351 的 verify 留言。
+- [x] 31.5 31.4 的結果：第 25 輪 findings 25（MEDIUM 4／LOW 12／INFO 9），**沒有 HIGH**，DA 完成。MEDIUM：PowerShell 最後一段比對過寬（`tools/cd`）、從 Bash 跑 `pwsh` 的模組限定 cmdlet、zsh `=chmod` 展開；依使用者「同一個 PR 修乾淨」的偏好在第 27 輪修。
+
+## 32. Verify 第 25 輪修正（第 27 輪）
+
+- [x] 32.1 先寫會失敗的測試：PowerShell `chmod +x tools/cd`、`chmod +x ./cd` 放行；從 Bash 跑 `pwsh -c 'Microsoft.PowerShell.Management\Set-Location …; chmod …'`、`=chmod -R u+r .`、`.claude/.idd` 內的 `=chmod` 拒絕。驗證：5 條在 5a91733 上失敗。
+- [x] 32.2 hook：`_MODULE_QUALIFIED`（點分模組名前綴才算）、`pwsh`／`powershell` 從 Bash 執行時加讀 PowerShell 讀法、指令名去掉開頭的 `=`。驗證：correction-archive 431 條全綠。
+- [x] 32.3 文件：design Risks 只留一份完整清單、root 指回清單；spec 補 realpath 與模組限定的範圍、`=chmod`；CHANGELOG 第 27 輪、代價的篩選說明、第 25 輪清單加註。驗證：`spectra validate`。
+- [ ] 32.4 Verify 第 26 輪（只審第 27 輪的差異）；沒有 HIGH 以上，就把 PR #408 標為 ready，合併留給使用者。驗證：#351 的 verify 留言。

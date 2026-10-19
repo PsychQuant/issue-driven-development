@@ -289,6 +289,10 @@ def _flat_words(text, powershell=False):
 # words that change the working directory, in POSIX shells, zsh and PowerShell
 _CD_COMMANDS = ("cd", "chdir", "pushd", "popd", "set-location", "sl", "push-location", "pop-location")
 _IN_IDD = re.compile(r"(^|/)\.claude/\.idd(/|$)", re.I)
+# a PowerShell module-qualified cmdlet, Microsoft.PowerShell.Management\Set-Location,
+# after _flat turned the backslash into /: a dotted module name, then the cmdlet
+_MODULE_QUALIFIED = re.compile(r"^[a-z][\w]*(?:\.[\w]+)+/([\w-]+)$", re.I)
+_PWSH = {"pwsh", "pwsh.exe", "powershell", "powershell.exe"}
 
 
 def _relocated_permission_change(command, cwd, powershell, named_holder):
@@ -303,7 +307,11 @@ def _relocated_permission_change(command, cwd, powershell, named_holder):
     needed."""
     for reading in _variants(command, powershell):
         words = _flat_words(reading, powershell)
-        names = {os.path.basename(w).casefold() for w in words}
+        names = {os.path.basename(w).lstrip("=").casefold() for w in words}
+        ps = powershell or bool(names & _PWSH)
+        if ps and not powershell:
+            # pwsh run from Bash: also read the text as PowerShell (round 27)
+            words = words + _flat_words(reading, True)
         if not names & set(PERMISSION_COMMANDS):
             continue
         # the working directory as given and with symlinks resolved (round 25)
@@ -313,7 +321,9 @@ def _relocated_permission_change(command, cwd, powershell, named_holder):
         # whole words only: a path ending in /cd is not a change of directory (round 25);
         # in PowerShell a module-qualified cmdlet (Microsoft.PowerShell.Management\Set-Location)
         # is one, so the last segment counts there (round 26)
-        cd_words = {w.casefold() for w in words} | (names if powershell else set())
+        cd_words = {w.casefold() for w in words}
+        if ps:
+            cd_words |= {m.group(1).casefold() for m in map(_MODULE_QUALIFIED.match, words) if m}
         if cd_words & set(_CD_COMMANDS) and (_near_archive(cwd) or named_holder()):
             return True
     return False
@@ -330,10 +340,10 @@ def _permission_change_in(text, cwd, powershell=False):
     -r / -rec / -Recurse / -Depth and ForEach-Object / foreach / % count for the
     PowerShell tool and when pwsh / powershell appears in the command."""
     flat = _flat_words(text, powershell)
-    names = {os.path.basename(w).casefold() for w in flat}
+    names = {os.path.basename(w).lstrip("=").casefold() for w in flat}
     if not names & set(PERMISSION_COMMANDS):
         return False
-    powershell = powershell or bool(names & {"pwsh", "pwsh.exe", "powershell", "powershell.exe"})
+    powershell = powershell or bool(names & _PWSH)
     marker = _PS_RECURSIVE if powershell else _RECURSIVE
     walkers = set(_TREE_WALKERS + (_PS_WALKERS if powershell else ()))
     if not (names & walkers or any(_RECURSIVE.fullmatch(w) or marker.fullmatch(w) for w in flat)):
@@ -378,7 +388,8 @@ def _relative_archive_reference(tool, tool_input, cwd):
     (`archive/.` normalizes to the bare word). Returns (found, named): named
     lists the .claude directories the command names, relative to cwd or
     absolute, so the caller can check whether one holds an archive. The bare
-    word "archive" does not count. No file system access."""
+    word "archive" does not count. The only file system access is
+    realpath(cwd), once a relative piece mentions archive."""
     command = _as_text(tool_input.get("command")) if tool in COMMAND_TOOLS else ""
     if tool in COMMAND_TOOLS:
         pieces = _command_pieces(command, tool == "PowerShell")

@@ -375,6 +375,13 @@ expect_deny  ps-modq    "$(printf %s '{"tool_name": "PowerShell", "cwd": "__REPO
 expect_deny  sym-claude "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__/cl-link", "tool_input": {"command": "chmod u+r .idd/archive/edits/a.md"}}' | sed "s|__REPO__|$REPO|g")"
 hook_case unlistreason "$(printf %s '{"tool_name": "Bash", "cwd": "/nonexistent-idd-dir", "tool_input": {"command": "cd x && chmod +x y"}}')"
 assert_output_grep "the relocated denial names the unlistable directory" "cannot list" "$WORK/hook-unlistreason.out"
+# round 27: only a module-qualified PowerShell cmdlet counts by its last
+# segment; pwsh run from Bash is read as PowerShell; zsh =chmod is chmod
+expect_allow ps-toolscd "$(printf %s '{"tool_name": "PowerShell", "cwd": "__REPO__", "tool_input": {"command": "chmod +x tools/cd"}}' | sed "s|__REPO__|$REPO|g")"
+expect_allow ps-dotcd   "$(printf %s '{"tool_name": "PowerShell", "cwd": "__REPO__", "tool_input": {"command": "chmod +x ./cd"}}' | sed "s|__REPO__|$REPO|g")"
+expect_deny  pwsh-modq  "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "pwsh -c '\''Microsoft.PowerShell.Management\\Set-Location .claude; chmod u+r x'\''"}}' | sed "s|__REPO__|$REPO|g")"
+expect_deny  zsh-eq-R   "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "=chmod -R u+r ."}}' | sed "s|__REPO__|$REPO|g")"
+expect_deny  zsh-eq-idd "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__/.claude/.idd", "tool_input": {"command": "=chmod u+r edits/a.md"}}' | sed "s|__REPO__|$REPO|g")"
 assert_true "a stalled check denies" "python3 - \"$HOOK\" <<'PYSLOW' | grep -q 'took too long'
 import importlib.util, io, sys, time
 spec = importlib.util.spec_from_file_location(\"g\", sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
