@@ -332,7 +332,7 @@ Ad-hoc analysis script 同理:當 question 答完,script 進 archive,不會被 f
 
 ## See also: action-scoped modify discipline(v2.73.0+, #150)
 
-每個 IDD modify-action SHALL declare scope category(`state-field-update` / `bounded-section-replace` / `audit-block-append` / `inline-replace-before-publish` / `verbatim-preserve` / `append-only` / `free-rewrite`)。 Undeclared modify-action → REFUSE。 完整規範見 [`rules/append-vs-modify.md`](rules/append-vs-modify.md)。
+每個 IDD modify-action SHALL declare scope category(`state-field-update` / `bounded-section-replace` / `audit-block-append` / `inline-replace-before-publish` / `verbatim-preserve` / `append-only` / `free-rewrite` / `in-place-correction`，第 8 類於 #351 加入)。 Undeclared modify-action → REFUSE。 完整規範見 [`rules/append-vs-modify.md`](rules/append-vs-modify.md)。
 
 ---
 
