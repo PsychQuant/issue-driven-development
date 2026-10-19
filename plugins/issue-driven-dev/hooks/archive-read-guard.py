@@ -39,10 +39,10 @@ design Risks and the CHANGELOG — are:
   4. a program option that changes directory before the permission command — env -C/--chdir, sudo -D, make -C, git -C, uv --directory, pwsh -WorkingDirectory, … (user decision 2026-10-19)
   5. a .claude named after an earlier cd, or split by a character outside [\w./~+@%-], from a directory not near the archive
   6. a working directory under .claude/ that is neither .claude nor inside .claude/.idd (a worktree), followed by a cd
-  7. other ways to change directory: the zsh two-argument cd, an alias of cd, zsh AUTO_CD and bash shopt -s autocd, PowerShell's SessionState.Path.SetLocation
+  7. other ways to change directory: the zsh two-argument cd, an alias of cd, zsh AUTO_CD and bash shopt -s autocd, a cd inside a sourced file or a shell function, PowerShell's SessionState.Path.SetLocation
   8. a symlink named in the command
   9. a read without a permission change after a cd into the archive — it fails on mode 0000, except as root, which ignores the mode, and on Windows, where mode 0000 does not apply
-  10. PowerShell reads with backslash paths run from Bash, PowerShell's .ForEach() and comma arrays
+  10. PowerShell's .ForEach() and comma arrays, and a pwsh run from Bash through a path the guard does not read as a program name (a quoted Windows path to pwsh.exe)
 Those differentials are
 accepted: the file
 mode is what guarantees an unreadable archive; this hook only stops the
@@ -296,9 +296,19 @@ _IN_IDD = re.compile(r"(^|/)\.claude/\.idd(/|$)", re.I)
 _MODULE_QUALIFIED = re.compile(r"^[.&]?[a-z][\w]*(?:\.[\w]+)+/+([\w-]+)$", re.I)
 
 
+_PWSH_NAME = re.compile(r"(pwsh|powershell)(-preview|-lts)?(\.exe)?", re.I)
+
+
 def _names_pwsh(names):
-    """pwsh / powershell, including packaged names such as pwsh-preview."""
-    return any(n.startswith(("pwsh", "powershell")) for n in names)
+    """pwsh / powershell as a program name — pwsh-preview, pwsh-lts and .exe
+    included, a file such as powershell.log not (round 29)."""
+    return any(_PWSH_NAME.fullmatch(n) for n in names)
+
+
+def _runs_pwsh(command):
+    """The same test on a whole command: one trigger for every rule (round 29)."""
+    return any(_names_pwsh({os.path.basename(w).lstrip("=").casefold() for w in _flat_words(r)})
+               for r in _variants(command))
 
 
 def _with_pwsh_reading(reading, words):
@@ -380,8 +390,8 @@ def _candidates(tool, tool_input):
     if tool in COMMAND_TOOLS:
         command = _as_text(tool_input.get("command"))
         yield from _command_words(command, tool == "PowerShell")
-        if tool != "PowerShell" and re.search(r"(?i)pwsh|powershell", command):
-            yield from _command_words(command, True)   # pwsh run from Bash (round 28)
+        if tool != "PowerShell" and _runs_pwsh(command):
+            yield from _command_words(command, True)   # pwsh run from Bash (rounds 28–29)
         return
     yield from _raw_candidates(tool, tool_input)
 
@@ -414,7 +424,9 @@ def _relative_archive_reference(tool, tool_input, cwd):
     realpath(cwd), once a relative piece mentions archive."""
     command = _as_text(tool_input.get("command")) if tool in COMMAND_TOOLS else ""
     if tool in COMMAND_TOOLS:
-        pieces = _command_pieces(command, tool == "PowerShell")
+        pieces = list(_command_pieces(command, tool == "PowerShell"))
+        if tool != "PowerShell" and _runs_pwsh(command):
+            pieces += list(_command_pieces(command, True))   # pwsh run from Bash (round 29)
     else:
         pieces = _raw_candidates(tool, tool_input)
     base = posixpath.normpath(cwd.replace("\\", "/"))

@@ -246,4 +246,11 @@
 - [x] 33.1 先寫會失敗的測試：從 Bash 跑 `pwsh` 的反引號 `ch`mod`、`.i`dd` 路徑、`zf_chmod -R`、dot-source 的模組限定 cmdlet、`pwsh-preview`。驗證：4 條在 67d5cf3 上失敗。
 - [x] 33.2 hook：`_with_pwsh_reading`（兩條權限規則的指令名與字詞）、字面路徑檢查也走 PowerShell 讀法、`zf_*`、`_names_pwsh`（含套件名）、`_MODULE_QUALIFIED` 接受前導 `.`／`&` 與多個分隔字元。驗證：correction-archive 441 條全綠。
 - [x] 33.3 文件：限制第 7 項加 bash `autocd`、spec、docstring、design（第 26–28 輪）、CHANGELOG 指向修正。驗證：`spectra validate`。
-- [ ] 33.4 最後一輪差異審查（verify 第 27 輪）；沒有 HIGH 以上就把 PR #408 標為 ready，剩下的 MEDIUM／LOW 記入報告，合併留給使用者。驗證：#351 的 verify 留言。
+- [x] 33.4 最後一輪差異審查（verify 第 27 輪）；沒有 HIGH 以上就把 PR #408 標為 ready，剩下的 MEDIUM／LOW 記入報告，合併留給使用者。驗證：#351 的 verify 留言。
+- [x] 33.5 33.4 的結果：第 27 輪 findings 31（MEDIUM 1／LOW 16／INFO 14），**沒有 HIGH**（連續第三輪）；DA 以真實 shell 確認沒有放寬。MEDIUM（DA 改評 LOW）：相對路徑規則沒有 PowerShell 讀法、CHANGELOG 說過頭。
+
+## 34. Verify 第 27 輪修正（第 29 輪）
+
+- [x] 34.1 先寫會失敗的測試：`chmod -r powershell.log` 放行；`.claude/.idd` 內從 Bash 跑 `pwsh -c 'Get-Content arch`ive/…'`、`pw''sh` 拒絕；`pwsh-preview` 測試改成需要 PowerShell 讀法的形式。驗證：3 條在 52eedc3 上失敗。
+- [x] 34.2 hook：`_PWSH_NAME` 只認程式名、`_runs_pwsh` 一個觸發條件給所有規則、相對路徑規則加 PowerShell 讀法。驗證：correction-archive 447 條全綠。
+- [x] 34.3 文件：限制第 7 項加 sourced 檔與 shell 函式內的 `cd`、第 10 項收窄，四份文件同步；CHANGELOG 第 29 輪。驗證：`spectra validate`。
