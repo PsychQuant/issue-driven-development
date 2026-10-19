@@ -394,9 +394,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed (round 29 — verify round 27 findings, before release)
 
-- Read guard: only `pwsh`/`powershell` as a program name (with `-preview`, `-lts` or `.exe`) switches on the PowerShell
-  reading — round 28 matched any word starting with those letters, so `chmod -r powershell.log` was denied; one test
-  decides it for every rule; the relative-path rule also gets the PowerShell reading, so `pwsh -c 'Get-Content
+- Read guard: the extra PowerShell reading of a Bash command (which can only deny more) is switched on by any trace of
+  `pwsh`/`powershell` in the text, however quoted or escaped; switching to PowerShell's recursive markers (`-r`, `%`)
+  needs the exact program name (`pwsh`, `powershell`, with `-preview`, `-lts` or `.exe`) — round 28 matched any word
+  starting with those letters, so `chmod -r powershell.log` was denied; the relative-path rule also gets the PowerShell reading, so `pwsh -c 'Get-Content
   arch`ive/…'` from inside `.claude/.idd` is denied.
 - Limits 7 and 10 updated: a `cd` inside a sourced file or shell function; limit 10 narrowed to what is still open.
 

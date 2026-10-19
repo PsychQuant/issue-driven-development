@@ -305,17 +305,23 @@ def _names_pwsh(names):
     return any(_PWSH_NAME.fullmatch(n) for n in names)
 
 
+# Any trace of pwsh / powershell in the text, however it is quoted or escaped.
+# It only adds the PowerShell reading, which can only deny more, so it is broad
+# (fail-closed); switching to PowerShell's recursive markers (-r, %) uses the
+# exact program names above (round 29, background security review).
+_PWSH_TEXT = re.compile(r"(?i)p\W*w\W*s\W*h|p\W*o\W*w\W*e\W*r\W*s\W*h\W*e\W*l\W*l")
+
+
 def _runs_pwsh(command):
-    """The same test on a whole command: one trigger for every rule (round 29)."""
-    return any(_names_pwsh({os.path.basename(w).lstrip("=").casefold() for w in _flat_words(r)})
-               for r in _variants(command))
+    """True if the command may run pwsh / powershell: add the PowerShell reading."""
+    return bool(_PWSH_TEXT.search(command))
 
 
 def _with_pwsh_reading(reading, words):
     """When pwsh / powershell runs from Bash, add the words of the PowerShell
     reading (backtick escapes, backslash paths) to the Bash words (round 28)."""
     names = {os.path.basename(w).lstrip("=").casefold() for w in words}
-    if _names_pwsh(names):
+    if _runs_pwsh(reading):
         words = words + _flat_words(reading, True)
         names |= {os.path.basename(w).lstrip("=").casefold() for w in words}
     return words, names
@@ -337,7 +343,7 @@ def _relocated_permission_change(command, cwd, powershell, named_holder):
             words, names = _with_pwsh_reading(reading, words)
         else:
             names = {os.path.basename(w).lstrip("=").casefold() for w in words}
-        ps = powershell or _names_pwsh(names)
+        ps = powershell or _runs_pwsh(reading)
         if not names & set(PERMISSION_COMMANDS):
             continue
         # the working directory as given and with symlinks resolved (round 25)

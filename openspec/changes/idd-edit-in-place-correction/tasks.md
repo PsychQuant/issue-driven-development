@@ -252,5 +252,5 @@
 ## 34. Verify 第 27 輪修正（第 29 輪）
 
 - [x] 34.1 先寫會失敗的測試：`chmod -r powershell.log` 放行；`.claude/.idd` 內從 Bash 跑 `pwsh -c 'Get-Content arch`ive/…'`、`pw''sh` 拒絕；`pwsh-preview` 測試改成需要 PowerShell 讀法的形式。驗證：3 條在 52eedc3 上失敗。
-- [x] 34.2 hook：`_PWSH_NAME` 只認程式名、`_runs_pwsh` 一個觸發條件給所有規則、相對路徑規則加 PowerShell 讀法。驗證：correction-archive 447 條全綠。
+- [x] 34.2 hook：`_PWSH_NAME` 只認程式名（只用於切換 PowerShell 的遞迴標記）；額外的 PowerShell 讀法只會多擋，所以由寬的 `_PWSH_TEXT`（任何引號、跳脫寫法）觸發（背景安全審查）；相對路徑規則加 PowerShell 讀法。驗證：correction-archive 447 條全綠。
 - [x] 34.3 文件：限制第 7 項加 sourced 檔與 shell 函式內的 `cd`、第 10 項收窄，四份文件同步；CHANGELOG 第 29 輪。驗證：`spectra validate`。

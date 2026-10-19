@@ -394,6 +394,7 @@ expect_deny  ps-dotsrc  "$(printf %s '{"tool_name": "PowerShell", "cwd": "__REPO
 expect_allow pwsh-file  "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "chmod -r powershell.log"}}' | sed "s|__REPO__|$REPO|g")"
 expect_deny  pwsh-rel   "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__/.claude/.idd", "tool_input": {"command": "pwsh -c '\''Get-Content arch`ive/edits/a.md'\''"}}' | sed "s|__REPO__|$REPO|g")"
 expect_deny  pwsh-q     "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "pw'\'''\''sh -c '\''cat .claude/.i`dd/archive/edits/x'\''"}}' | sed "s|__REPO__|$REPO|g")"
+expect_deny  pwsh-esc   "$(printf %s '{"tool_name": "Bash", "cwd": "__REPO__", "tool_input": {"command": "p\\wsh -c '\''cat .claude/.i`dd/archive/edits/x'\''"}}' | sed "s|__REPO__|$REPO|g")"
 assert_true "a stalled check denies" "python3 - \"$HOOK\" <<'PYSLOW' | grep -q 'took too long'
 import importlib.util, io, sys, time
 spec = importlib.util.spec_from_file_location(\"g\", sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
