@@ -10,26 +10,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **`idd-close` Step 1.55 no longer flags a squash-merged branch as orphaned (#399).** The merge-completeness
-  helper checked each branch commit's added lines against the baseline. A squash keeps the branch's final
+  helper checked each branch commit's added lines against the baseline tip. A squash keeps the branch's final
   content, so a line one commit added and a later commit rewrote exists in no final tree, and that commit was
-  reported as missing from main — 39 false orphans on PR #408. Two changes in `check-merge-completeness.sh`:
-  - **The per-commit check skips a line the branch head itself no longer has** (a later branch commit rewrote
-    it). Its absence from main says nothing about whether the branch landed.
-  - **A containment step runs first.** It walks the first-parent baseline commits that descend from the
-    merge-base (the oldest 200) and exits 0 when merging the branch head into one of them is clean and leaves
-    its tree unchanged: the branch's net change landed there. Checking every such commit, not only the tip,
-    covers a follow-up that edits the same lines after the squash (#408: a release date); the three-way merge
-    covers a squash of a branch that was never rebased. It is not trusted when every path the branch changed
-    is back to its merge-base state at the tip (a wholesale revert), it ignores commits that are not
-    descendants of the merge-base, and it neutralises repo merge drivers (empty attribute source) so a
-    `merge=ours` driver cannot make a conflict look contained.
-  - On exit 3 the helper prints what the containment step concluded.
-  - **What it accepts is "landed at some point".** If a later baseline commit overwrote only *part* of the
-    landed change, that cannot be told apart from a follow-up edit and is no longer reported (the old helper
-    reported it for multi-commit branches, as a side effect). Other limits: a squash whose conflicts were
-    resolved by hand differs from the branch head and can still be flagged; git older than 2.40 (no
-    `merge-tree --write-tree` / `--attr-source`) skips the containment step; merge-tree writes unreachable
-    objects into the repository's object store, which `git gc` prunes.
+  reported as missing from main — 39 false orphans on PR #408, where a follow-up commit also edited the
+  branch's lines after the squash. `check-merge-completeness.sh` now answers one question, "did the branch's
+  content land":
+  - **Landing commit.** Walking the baseline's first-parent history back from the tip (the newest 200 commits
+    that descend from the merge-base), the helper finds the newest commit that holds the branch's whole net
+    change: merging the branch head into it is clean and leaves its tree unchanged. A squash of a branch that
+    was never rebased counts too. merge-tree runs in a throwaway bare repository that borrows the repository's
+    objects, so no merge driver (`.gitattributes`, `.git/info/attributes`, `merge.default`) decides, and no
+    objects are left behind.
+  - **Line check against it.** Each candidate commit's added lines are checked against the landing commit (the
+    tip when there is none). A line the branch head itself no longer has in those files is skipped, because a
+    later branch commit rewrote or deleted it. A commit whose lines are in the branch head but not in the
+    landing commit is still reported, for example one that restores a value from the merge-base and was left
+    out of the squash.
+  - Patches and file contents are read with plumbing (`diff-tree`, `cat-file`), so `diff.external`, textconv
+    and `color.ui=always` cannot hide added lines, and paths are read NUL-separated, so a non-ASCII name is not
+    quoted into a missing file. On exit 3 the helper prints the landing commit, or why there was none.
+  - **Out of scope by design: what main did after the branch landed.** A revert or a later overwrite of the
+    landed change is main's own history and is not reported. The old helper reported a revert only after a
+    multi-commit squash, as a side effect; after a single-commit squash, a merge commit or a rebase-merge it
+    never did.
+  - Other limits: a squash whose conflicts were resolved by hand differs from the branch head, so no landing
+    commit is found and lines main edited afterwards can still be flagged; a landing commit more than 200
+    first-parent commits behind the tip is not found; git older than 2.38 (no `merge-tree --write-tree`) skips
+    the landing step and checks against the tip, where the #408 shape is still flagged.
 
 ## [3.5.0] - 2026-10-20
 
