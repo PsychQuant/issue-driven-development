@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.1] - 2026-10-21
+
+### Fixed
+
+- **`idd-close` Step 1.55 no longer flags a squash-merged branch as orphaned (#399).** The merge-completeness
+  helper checked each branch commit's added lines against the baseline. A squash keeps the branch's final
+  content, so a line one commit added and a later commit rewrote exists in no final tree, and that commit was
+  reported as missing from main — 39 false orphans on PR #408. `check-merge-completeness.sh` now first walks the
+  first-parent baseline commits after the merge-base (oldest first, at most 200) and exits 0 when merging the
+  branch head into one of them is clean and leaves its tree unchanged: every branch change is already there.
+  Checking every commit, not only the tip, covers a follow-up commit that touches the same file after the squash
+  (spectra-archive, a release date); the three-way merge covers a squash of a branch that was never rebased while
+  main changed the same file. Anything it cannot decide falls through to the per-commit check, so a genuine
+  orphan is still flagged. Limits: a squash whose conflicts were resolved by hand differs from the branch head
+  and can still be flagged; past 200 baseline commits, or on git older than 2.38 (no `merge-tree --write-tree`),
+  only the per-commit check runs.
+
 ## [3.5.0] - 2026-10-20
 
 ### Added
