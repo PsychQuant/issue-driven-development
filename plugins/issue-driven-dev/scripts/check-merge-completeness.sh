@@ -36,11 +36,11 @@
 #      branch head into L is clean and leaves L's tree unchanged) is where the
 #      branch landed. When the whole branch never landed, the newest 20 of the
 #      branch's earlier commits are tried, newest first: commits up to the newest
-#      one that landed are checked at its landing commit, the rest at the tip. When
-#      git cherry shows a branch commit's patch arriving in the baseline after that
-#      commit, the branch came in piece by piece and the tip is used. At most 200
-#      merge-tree calls in all; git < 2.38 (no `merge-tree --write-tree`) skips
-#      this step.
+#      one that landed are checked at its landing commit, the rest at the tip. A
+#      branch with no net change "lands" at the merge-base; if git cherry shows some
+#      of its commits in the baseline as separate patches, it came in piece by
+#      piece and the tip is used. At most 200 merge-tree calls in all; git < 2.38
+#      (no `merge-tree --write-tree`) skips this step.
 #   3. CONTENT-VERIFY each candidate by *line presence*, NOT cherry-pick. A
 #      cherry-pick is a 3-way merge and conflicts when the same file was touched
 #      by >1 commit and then squash-merged — the common TDD branch shape — which
@@ -49,17 +49,23 @@
 #      (the tip's when there is no L)? Squash → lines present → not an orphan.
 #      Partial merge → the dropped commit's lines are absent → orphan. A line the
 #      branch head itself no longer has in those files (a later branch commit
-#      rewrote or deleted it) is skipped (#399).
+#      rewrote or deleted it) is skipped (#399). When no commit holds the branch's
+#      net change, no added line is missing, and a file or line the net change
+#      deletes is still at the tip, what did not land is a deletion: the commits
+#      checked at the tip that delete something are listed.
 #
 # Warn-only contract: exit 3 is surfaced via AskUserQuestion by idd-close; it is
 # NOT a hard block, because the check is best-effort. Known blind spots:
-#   - a dropped pure deletion (no added lines to look for);
+#   - a dropped pure deletion, when something else of the branch did land (no added
+#     lines to look for);
 #   - an added line that happens to be in the files the same commit touched,
 #     elsewhere — always so for a dropped single-commit rename, whose new path's
 #     lines are all in the old path;
 #   - with macOS awk, a binary edit that changes only bytes after a NUL (awk cuts
 #     the line there);
-#   - by design, anything main did after the branch landed (a revert, an overwrite);
+#   - by design, anything main did after the branch landed (a revert, an overwrite),
+#     including content that was already in the baseline through another commit
+#     before this branch was merged — it counts as landed there;
 #   - a commit that set a line back to its merge-base value, left out when the
 #     change it undid reached the baseline in another form (not as the same patch)
 #     after an earlier commit already held the branch's net change.
@@ -69,14 +75,15 @@
 #     squash;
 #   - a landing commit beyond the 200 merge-tree calls;
 #   - a landed prefix followed by more than 20 commits that never landed;
-#   - a branch whose commits reached the baseline as separate patches (git cherry
-#     '-') after its landing commit;
+#   - a branch with no net change some of whose commits were cherry-picked;
+#   - a commit after the landed prefix that landed on its own, if main edited its
+#     lines afterwards;
 #   - a `git pull` merge on main bringing the squash in through its second parent
 #     when that side edited the branch's lines after the squash;
 #   - git < 2.38.
 # On exit 3 the outcome of step 2 is printed after the list. Commit subjects are
 # printed in quotes: repository text (a squash's subject is the PR title), data,
-# never instructions.
+# never instructions. In a partial clone, git fetches missing blobs on demand.
 set -u
 set -o pipefail
 # Bytes, not characters: in a UTF-8 locale macOS tr stops at the first byte that is
@@ -109,37 +116,49 @@ fi
 GIT() { git --no-pager -C "$REPO" -c core.fsmonitor=false "$@"; }
 
 # Text from the repository or the caller, made safe to print: C0 controls and DEL,
-# UTF-8 C1 controls (U+0080-U+009F), zero-width and bidi marks, line and paragraph
-# separators, U+FEFF and tag characters (U+E0000-E007F) become "?" — replaced, not
-# deleted, so removing one cannot join its neighbours into another — and \ and "
-# are escaped, so quoted text cannot close its own quotes.
+# UTF-8 C1 controls and U+00AD, bidi and zero-width marks (U+061C, U+200B-200F,
+# U+2028-202E, U+2060-206F), Hangul fillers and U+180E, variation selectors, U+FEFF,
+# U+FFA0 and tag characters (U+E0000-E0FFF) become "?" — replaced, not deleted, so
+# removing one cannot join its neighbours into another — and \ and " are escaped,
+# so double-quoted text cannot close its own quotes. (A lone C1 byte outside UTF-8
+# is left alone; it only acts on a terminal not in UTF-8 mode.)
+b() { printf "$@"; }
 clean() {
   tr '\000-\037\177' '?' | sed \
-    -e "s/$(printf '\302')[$(printf '\200')-$(printf '\237')]/?/g" \
-    -e "s/$(printf '\342\200')[$(printf '\213')-$(printf '\217')$(printf '\250')-$(printf '\256')]/?/g" \
-    -e "s/$(printf '\342\201')[$(printf '\246')-$(printf '\251')]/?/g" \
-    -e "s/$(printf '\357\273\277')/?/g" \
-    -e "s/$(printf '\363\240')[$(printf '\200\201')][$(printf '\200')-$(printf '\277')]/?/g" \
+    -e "s/$(b '\302')[$(b '\200')-$(b '\237')$(b '\255')]/?/g" \
+    -e "s/$(b '\330\234')/?/g" \
+    -e "s/$(b '\341\240\216')/?/g" \
+    -e "s/$(b '\341\205')[$(b '\237\240')]/?/g" \
+    -e "s/$(b '\342\200')[$(b '\213')-$(b '\217')$(b '\250')-$(b '\256')]/?/g" \
+    -e "s/$(b '\342\201')[$(b '\240')-$(b '\257')]/?/g" \
+    -e "s/$(b '\343\205\244')/?/g" \
+    -e "s/$(b '\357\270')[$(b '\200')-$(b '\217')]/?/g" \
+    -e "s/$(b '\357\273\277')/?/g" \
+    -e "s/$(b '\357\276\240')/?/g" \
+    -e "s/$(b '\363\240')[$(b '\200')-$(b '\277')][$(b '\200')-$(b '\277')]/?/g" \
     -e 's/\\/\\\\/g' -e 's/"/\\"/g'
 }
 # Could not verify: say why on stderr and exit 4, which the caller reports and
 # never treats as clean or as a block.
-skip() { printf 'check-merge-completeness: %s\n' "$(printf '%s' "$*" | clean)" >&2; exit 4; }
+skip() { printf 'check-merge-completeness: %s\n' "$*" >&2; exit 4; }
+# The caller's refs, cleaned once, always printed in double quotes.
+B="\"$(printf '%s' "$BRANCH" | clean)\""; S="\"$(printf '%s' "$BASELINE" | clean)\""
+RP="\"$(printf '%s' "$REPO" | clean)\""
 
 # Resolve both inputs to commit SHAs up front. `--end-of-options` prevents an
 # option-shaped ref (attacker-controllable PR branch name like `--upload-pack=x`)
 # from being parsed as a git option (#184 S1). A SHA can never be option-shaped,
 # so every downstream git call is injection-safe. Unresolvable → skip (exit 4).
 BRANCH_SHA="$(GIT rev-parse --verify --quiet --end-of-options "${BRANCH}^{commit}" 2>/dev/null)" \
-  || skip "cannot resolve branch '$BRANCH' in $REPO"
+  || skip "cannot resolve branch $B in $RP"
 BASELINE_SHA="$(GIT rev-parse --verify --quiet --end-of-options "${BASELINE}^{commit}" 2>/dev/null)" \
-  || skip "cannot resolve baseline '$BASELINE' in $REPO"
+  || skip "cannot resolve baseline $S in $RP"
 
 # Candidate orphans = '+'-marked commits (patch-id absent from baseline).
 CHERRY="$(GIT cherry "$BASELINE_SHA" "$BRANCH_SHA" 2>/dev/null)" || skip "git cherry failed"
 CANDIDATES=$(printf '%s\n' "$CHERRY" | awk '$1=="+"{print $2}') || skip "cannot read git cherry's output"
 [ -n "$CANDIDATES" ] || exit 0
-CHERRY_DASH=$(printf '%s\n' "$CHERRY" | awk '$1=="-"{print $2; exit}')
+CHERRY_DASH=$(printf '%s\n' "$CHERRY" | awk '$1=="-" && !f { print $2; f = 1 }') || skip "cannot read git cherry's output"
 
 SCRATCH="$(mktemp -d)" || skip "cannot create a temp dir"
 trap 'rm -rf "$SCRATCH"' EXIT
@@ -147,11 +166,13 @@ short() { GIT rev-parse --short "$1" 2>/dev/null; }
 # Subjects are author-controlled (a squash's subject is the PR title): no signature
 # check (log.showSignature would run the user's gpg program), cleaned, and printed
 # in quotes so they read as quoted repository text, not as the helper's own words.
-subject() { GIT log -1 --no-show-signature --format=%s "$1" 2>/dev/null | clean; }
-# Paths go to awk one per line, so a path containing LF cannot be checked (a CR
-# stays inside the line and matches exactly). rev-list --stdin also drops a
-# trailing CR, so the landing walk does not path-limit when a path has either.
-has_lf() { [ "$(tr -cd '\n' < "$1" | wc -c | tr -d ' ')" != 0 ]; }
+subject() { printf '%s' "$(GIT log -1 --no-show-signature --format=%s "$1" 2>/dev/null)" | clean; }
+# Paths go to awk one per line, so a candidate path containing LF cannot be checked
+# (a CR stays inside the line and matches exactly). In tree listings an LF inside a
+# path is swapped for \001, so such a path elsewhere in the tree changes nothing;
+# \001 is therefore refused in candidate paths too. rev-list --stdin also drops a
+# trailing CR, so the landing walk does not path-limit when a path has CR or LF.
+has_lf() { [ "$(tr -cd '\n\001' < "$1" | wc -c | tr -d ' ')" != 0 ]; }
 has_crlf() { [ "$(tr -cd '\r\n' < "$1" | wc -c | tr -d ' ')" != 0 ]; }
 
 # ── Landing commit (#399) ──
@@ -261,12 +282,12 @@ find_landing() { # <rev>
 # ones against the tip, so a genuine orphan does not drag main's later edits of
 # landed lines into the list.
 PREFIX_TRIES=20
-LANDING="" ; PREFIX_TIP="" ; LANDING_NOTE=""
+LANDING="" ; PREFIX_TIP="" ; LANDING_NOTE="" ; LANDING_AT_MB="" ; WHOLE_NONE=""
 if iso_init; then
   if find_landing "$BRANCH_SHA"; then
-    LANDING="$LAND"
+    LANDING="$LAND"; LANDING_AT_MB="$LAND_AT_MB"
   else
-    LANDING_NOTE="$LAND_NOTE"
+    LANDING_NOTE="$LAND_NOTE"; WHOLE_NONE="$LAND_NONE"
     if [ -n "$LAND_NONE" ] && MB="$(GIT merge-base "$BASELINE_SHA" "$BRANCH_SHA" 2>/dev/null)"; then
       for b in $(GIT rev-list --first-parent "$MB..$BRANCH_SHA" 2>/dev/null | sed 1d | head -n "$PREFIX_TRIES"); do
         if find_landing "$b"; then
@@ -283,28 +304,14 @@ else
   LANDING_NOTE="skipped: $ISO_STATE"
 fi
 
-# Some branch commits are in the baseline as separate patches ('-' from git cherry).
-# Where those copies sit decides whether the landing commit means anything: a copy
-# that is not in the landing commit's history arrived later, so the branch reached
-# the baseline piece by piece (cherry-picks, a partial rebase), and the earliest
-# commit holding the net change can predate it — a commit that set a line back to
-# its merge-base value would then pass although its counterpart was picked and it
-# was not. Then the tip is used, as before #399. A copy at or before the landing
-# commit (the squash itself, when the branch's net diff equals one commit's patch)
-# changes nothing.
-if [ -n "$LANDING" ] && [ -n "$CHERRY_DASH" ]; then
-  MB="$(GIT merge-base "$BASELINE_SHA" "$BRANCH_SHA" 2>/dev/null)" || skip "no merge-base between branch and baseline"
-  COPIES="$(GIT cherry "$BRANCH_SHA" "$BASELINE_SHA" "$MB" 2>/dev/null | awk '$1=="-"{print $2}')" \
-    || skip "git cherry failed on the baseline side"
-  for c in $COPIES; do
-    GIT merge-base --is-ancestor "$c" "$LANDING" 2>/dev/null; rc=$?
-    case "$rc" in
-      0) ;;
-      1) LANDING_NOTE="$(short "$c") brought a branch commit's patch into '$BASELINE' after $(short "$LANDING"), so the branch arrived piece by piece and has no single landing commit"
-         LANDING=""; PREFIX_TIP=""; break ;;
-      *) skip "cannot place $(short "$c") relative to $(short "$LANDING")" ;;
-    esac
-  done
+# A branch with no net change "lands" at the merge-base. If some of its commits are
+# also in the baseline as separate patches ('-' from git cherry), the branch did
+# reach the baseline, commit by commit, after that point — e.g. a change that was
+# cherry-picked while the commit that set the line back was left behind. The
+# merge-base says nothing about that, so the tip is used, as before #399.
+if [ -n "$LANDING_AT_MB" ] && [ -n "$CHERRY_DASH" ]; then
+  LANDING_NOTE="the branch has no net change, and $(short "$CHERRY_DASH") reached $S as a separate patch"
+  LANDING=""; PREFIX_TIP=""
 fi
 
 # ── Content-verify each candidate by line presence ──
@@ -327,7 +334,7 @@ use_landing() { # <candidate> -> 0: against LANDING, 1: against the tip, other: 
 for sha in $CANDIDATES; do
   GIT diff-tree --root --no-commit-id --ignore-submodules=none --name-only -r -z "$sha" \
     > "$SCRATCH/names" 2>/dev/null || skip "cannot list the paths $(short "$sha") touched"
-  has_lf "$SCRATCH/names" && skip "$(short "$sha") touches a path with a newline in its name"
+  has_lf "$SCRATCH/names" && skip "$(short "$sha") touches a path with a newline (or \\001) in its name"
   tr '\000' '\n' < "$SCRATCH/names" | awk -v k="$k" '{ print k "\t" $0 }' >> "$SCRATCH/pairs" \
     || skip "cannot index the paths $(short "$sha") touched"
   [ -s "$SCRATCH/names" ] && NPATHS="$NPATHS $k"
@@ -353,8 +360,7 @@ for k in $NPATHS; do [ -s "$SCRATCH/c.$k" ] || skip "lost the path list of candi
 # be read is an error, never an empty file.
 classify() { # <rev> <side> -> $SCRATCH/<side>.map, one line per path in $SCRATCH/paths
   GIT ls-tree -r -z --full-tree "$1" > "$SCRATCH/$2.tree" 2>/dev/null || return 1
-  has_lf "$SCRATCH/$2.tree" && return 2   # a path with a newline would split records
-  tr '\000' '\n' < "$SCRATCH/$2.tree" | LC_ALL=C awk -v paths="$SCRATCH/paths" -v out="$SCRATCH/$2.map" '
+  tr '\n\000' '\001\n' < "$SCRATCH/$2.tree" | LC_ALL=C awk -v paths="$SCRATCH/paths" -v out="$SCRATCH/$2.map" '
     BEGIN { while ((r = getline p < paths) > 0) need[p] = n++; if (r < 0) bad = 1; close(paths) }
     { i = index($0, "\t"); p = substr($0, i + 1)
       if (!(p in need)) next
@@ -369,12 +375,7 @@ SIDES="head"
 if [ -f "$SCRATCH/paths" ]; then
   for side in $SIDES; do
     case "$side" in head) rev="$BRANCH_SHA" ;; land) rev="$LANDING" ;; tip) rev="$BASELINE_SHA" ;; esac
-    classify "$rev" "$side"; rc=$?
-    case "$rc" in
-      0) ;;
-      2) skip "the tree of $(short "$rev") has a path with a newline in its name" ;;
-      *) skip "cannot list the tree of $(short "$rev")" ;;
-    esac
+    classify "$rev" "$side" || skip "cannot list the tree of $(short "$rev")"
   done
   for side in $SIDES; do cat "$SCRATCH/$side.map"; done | awk '$1 == "blob" { print $2 }' | sort -u \
     > "$SCRATCH/blobs" || skip "cannot list the blobs to read"
@@ -385,10 +386,11 @@ if [ -f "$SCRATCH/paths" ]; then
   done < "$SCRATCH/blobs"
 fi
 
-orphan_p() { # <commit-sha> <candidate number> <land|tip> -> 0 orphan, 1 landed, other: error
-  [ -s "$SCRATCH/c.$2" ] || return 1
+orphan_p() { # <commit-sha> <candidate number> <land|tip> -> 10 orphan, 11 landed, other: error
+  [ -s "$SCRATCH/c.$2" ] || return 11
   GIT diff-tree --root --no-commit-id -r -p --text --no-ext-diff --no-textconv --no-color \
     --ignore-submodules=none --submodule=short "$1" > "$SCRATCH/patch" 2>/dev/null || return 2
+  # Exit 10 = orphan, 11 = landed; anything else (a crash, a read error) is an error.
   # Orphan when some added line, not blank, is in the branch head's version of the
   # files and not in the target's. A line the head no longer has was superseded
   # within the branch itself (#399), so its absence says nothing. Added lines are
@@ -423,27 +425,75 @@ orphan_p() { # <commit-sha> <candidate number> <land|tip> -> 0 orphan, 1 landed,
       if (line ~ /^[ \t\r\f\v]*$/) next
       if ((line in head) && !(line in target)) { found = 1; exit }
     }
-    END { if (bad) exit 2; exit !found }' "$SCRATCH/patch"
+    END { if (bad) exit 2; exit (found ? 10 : 11) }' "$SCRATCH/patch"
 }
 
-ORPHANS="" ; k=0
+ORPHANS="" ; k=0 ; TIPSIDE=""
 set -- $SIDE_OF
 for sha in $CANDIDATES; do
   side="$1"; shift
   orphan_p "$sha" "$k" "$side"; rc=$?
   case "$rc" in
-    0) ORPHANS="$ORPHANS$sha"$'\n' ;;
-    1) ;;
+    10) ORPHANS="$ORPHANS$sha"$'\n' ;;
+    11) [ "$side" = tip ] && TIPSIDE="$TIPSIDE $sha" ;;
     *) skip "cannot verify $(short "$sha") (exit $rc)" ;;
   esac
   k=$((k + 1))
 done
 
 ORPHANS="$(printf '%s' "$ORPHANS" | sed '/^$/d')"
+# The walk found no commit holding the branch's net change (and did not stop on an
+# error or the budget), so something of the branch is missing from the baseline.
+# When no added line is, what is missing is a deletion — a commit that only removed
+# lines or files cannot be seen line by line, and the lines it removed made earlier
+# commits' additions look superseded. List the tip-side commits that delete
+# something (all of them if none does: a line is then present by coincidence).
+# Evidence that a deletion did not land: a file the branch's net change deletes still
+# exists at the tip, or a non-blank line it deletes is at the tip as many times as at
+# the merge-base. (A squash whose conflicts were resolved by hand also holds no net
+# change, but there the deletions are made, so nothing is listed.)
+deletion_missing() { # -> 0 when such a deletion is found, 1 when none, other: error
+  local mb st f
+  mb="$(GIT merge-base "$BASELINE_SHA" "$BRANCH_SHA" 2>/dev/null)" || return 2
+  GIT diff-tree -r -z --no-renames --name-status --ignore-submodules=none "$mb" "$BRANCH_SHA" \
+    > "$SCRATCH/netstat" 2>/dev/null || return 2
+  while IFS= read -r -d '' st && IFS= read -r -d '' f; do
+    case "$st" in
+      D) GIT cat-file -e "$BASELINE_SHA:$f" 2>/dev/null && return 0 ;;
+      M) GIT cat-file blob "$mb:$f" > "$SCRATCH/dmb" 2>/dev/null || continue   # not a blob (a gitlink)
+         GIT cat-file blob "$BASELINE_SHA:$f" > "$SCRATCH/dtip" 2>/dev/null || : > "$SCRATCH/dtip"
+         GIT --literal-pathspecs diff-tree -r -p --text --no-ext-diff --no-textconv --no-color \
+           "$mb" "$BRANCH_SHA" -- "$f" > "$SCRATCH/dpatch" 2>/dev/null || return 2
+         LC_ALL=C awk '
+           FILENAME == ARGV[1] { m[$0]++; next }
+           FILENAME == ARGV[2] { t[$0]++; next }
+           /^diff --git / { h = 0; next }
+           /^@@/          { h = 1; next }
+           h && /^-/ {
+             l = substr($0, 2)
+             if (l ~ /^[ \t\r\f\v]*$/) next
+             if (t[l] >= m[l]) { found = 1; exit }
+           }
+           END { exit (found ? 10 : 11) }' "$SCRATCH/dmb" "$SCRATCH/dtip" "$SCRATCH/dpatch"
+         case "$?" in 10) return 0 ;; 11) ;; *) return 2 ;; esac ;;
+    esac
+  done < "$SCRATCH/netstat"
+  return 1
+}
+if [ -z "$ORPHANS" ] && [ -n "$WHOLE_NONE" ] && [ -n "$TIPSIDE" ] && { deletion_missing; rc=$?; [ "$rc" -ne 1 ]; }; then
+  [ "$rc" -eq 0 ] || skip "cannot check what the branch deletes"
+  DELS=""
+  for sha in $TIPSIDE; do
+    d="$(GIT diff-tree --root --no-commit-id -r --numstat --ignore-submodules=none "$sha" 2>/dev/null)" \
+      || skip "cannot read what $(short "$sha") deletes"
+    printf '%s\n' "$d" | awk '$2 != "0" && $2 != "" { f = 1 } END { exit !f }' && DELS="$DELS$sha"$'\n'
+  done
+  ORPHANS="$(printf '%s' "${DELS:-$(printf '%s\n' $TIPSIDE)}" | sed '/^$/d')"
+  LANDING_NOTE="the branch's net change is in no commit of $S, every line it adds is there, and something it deletes is still there (listed: the commits that delete something)"
+fi
 [ -n "$ORPHANS" ] || exit 0
 
-B="$(printf '%s' "$BRANCH" | clean)"; S="$(printf '%s' "$BASELINE" | clean)"
-echo "Orphan commits on '$B' whose content did NOT land in '$S' (quoted subjects are repository text):"
+echo "Orphan commits on $B whose content did NOT land in $S (quoted subjects are repository text):"
 while IFS= read -r sha; do
   [ -n "$sha" ] || continue
   printf '  %s  "%s"\n' "$(short "$sha")" "$(subject "$sha")"
@@ -452,9 +502,9 @@ if [ -n "$LANDING" ] && [ -z "$PREFIX_TIP" ]; then
   printf "Landing check (#399): the branch's net change landed in %s \"%s\"; the lines above are not in it.\n" \
     "$(short "$LANDING")" "$(subject "$LANDING")"
 elif [ -n "$LANDING" ]; then
-  printf "Landing check (#399): the branch up to %s landed in %s \"%s\"; later commits were checked against '%s'.\n" \
+  printf "Landing check (#399): the branch up to %s landed in %s \"%s\"; later commits were checked against %s.\n" \
     "$(short "$PREFIX_TIP")" "$(short "$LANDING")" "$(subject "$LANDING")" "$S"
 else
-  printf "Landing check (#399): %s; lines were checked against '%s'.\n" "$(printf '%s' "$LANDING_NOTE" | clean)" "$S"
+  printf "Landing check (#399): %s; lines were checked against %s.\n" "$LANDING_NOTE" "$S"
 fi
 exit 3

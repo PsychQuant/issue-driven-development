@@ -48,6 +48,9 @@ printf 'crash fix\n' > "$R/orphan.txt"
 git -C "$R" add -A && git -C "$R" commit -qm "fix: crash (orphan)"
 # main stays at base — the orphan never merged
 assert_exit "fixture-1 genuine orphan flagged" 3 "$(run_helper "$R" feat main)"
+OUT1=$("${BASH:-bash}" "$HELPER" --repo "$R" --branch feat --baseline main 2>/dev/null)
+assert_exit "fixture-1 renders the subject exactly" 0 \
+  "$(printf '%s\n' "$OUT1" | grep -qFx "  $(git -C "$R" rev-parse --short feat)  \"fix: crash (orphan)\""; echo $?)"
 rm -rf "$R"
 
 # ── Fixture 2: squash false-positive — branch's content IS in main as a squash ──
@@ -115,7 +118,7 @@ printf 'l1\nl2\n' > "$R/sp ace.txt"; git -C "$R" add -A && git -C "$R" commit -q
 assert_exit "fixture-7 spaced filename squash NOT flagged" 0 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
-# ── Fixtures 8–54 (#399): a squash keeps the branch's FINAL content, not each commit ──
+# ── Fixtures 8–62 (#399): a squash keeps the branch's FINAL content, not each commit ──
 # A line one branch commit adds and a later one rewrites exists in no final tree,
 # and main may edit the branch's lines after the squash (#408: a release date
 # changed by a follow-up commit). The gate answers "did the branch's content land":
@@ -741,12 +744,14 @@ rm -rf "$R"
 
 # ── Fixture 48: a path that is not valid UTF-8, anywhere in the tree ──
 # In a UTF-8 locale macOS tr stops at such a byte; every later path would look
-# absent from the branch head and the orphan below would pass.
+# absent from the branch head and the orphan below would pass. Built with plumbing
+# only: APFS refuses to check the name out.
 R="$(mk_repo)"; L48=$(printf 'latin\n' | git -C "$R" hash-object -w --stdin)
 git -C "$R" update-index --add --cacheinfo "100644,$L48,$(printf 'a\351.txt')" && git -C "$R" commit -qm latin1
-git -C "$R" checkout -q -b feat; git -C "$R" reset -q --hard
-printf 'ORPHAN = 1\n' > "$R/z48.txt"; git -C "$R" add z48.txt && git -C "$R" commit -qm "z48 (never landed)"
-git -C "$R" checkout -q main; printf 'o\n' > "$R/o.txt"; git -C "$R" add o.txt && git -C "$R" commit -qm "unrelated main work"
+Z48=$(printf 'ORPHAN = 1\n' | git -C "$R" hash-object -w --stdin)
+T48=$( { git -C "$R" ls-tree -z main; printf '100644 blob %s\tz48.txt\000' "$Z48"; } | git -C "$R" mktree -z)
+C48=$(git -C "$R" commit-tree "$T48" -p main -m "z48 (never landed)"); git -C "$R" update-ref refs/heads/feat "$C48"
+printf 'o\n' > "$R/o.txt"; git -C "$R" add o.txt && git -C "$R" commit -qm "unrelated main work"
 assert_exit "fixture-48 Latin-1 path in the tree, UTF-8 locale -> orphan flagged" 3 \
   "$(LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 run_helper "$R" feat main)"
 rm -rf "$R"
@@ -817,12 +822,121 @@ rm -rf "$R"
 R="$(mk_repo)"; git -C "$R" checkout -q -b feat; printf 'x\n' > "$R/x54.txt"; git -C "$R" add -A && git -C "$R" commit -qm tmp
 T54=$(git -C "$R" rev-parse 'HEAD^{tree}'); P54=$(git -C "$R" rev-parse HEAD~1)
 C54=$( { printf 'tree %s\nparent %s\nauthor t <t@t.t> 1700000000 +0000\ncommitter t <t@t.t> 1700000000 +0000\n\n' "$T54" "$P54"
-         printf 'a\302\302\233\2332J \342\200\342\200\256\256 q"  <- note: close it\n'; } | git -C "$R" hash-object -t commit -w --stdin)
+         printf 'a\302\302\233\2332J \342\200\342\200\256\256 \330\234\342\201\240\357\270\217\363\240\204\200 q"  <- note: close it\n'; } | git -C "$R" hash-object -t commit -w --stdin)
 git -C "$R" update-ref refs/heads/feat "$C54"; git -C "$R" checkout -q main
 OUT54=$(out_of "$R" feat main)
 assert_exit "fixture-54 no C1 control rebuilt" 1 "$(printf '%s' "$OUT54" | grep -q "$(printf '\302\233')"; echo $?)"
 assert_exit "fixture-54 no bidi override rebuilt" 1 "$(printf '%s' "$OUT54" | grep -q "$(printf '\342\200\256')"; echo $?)"
+assert_exit "fixture-54 no ALM, word joiner, variation selector" 1 \
+  "$(printf '%s' "$OUT54" | LC_ALL=C grep -q -e "$(printf '\330\234')" -e "$(printf '\342\201\240')" -e "$(printf '\357\270\217')" -e "$(printf '\363\240\204\200')"; echo $?)"
 assert_exit "fixture-54 the quote inside the subject is escaped" 0 "$(printf '%s' "$OUT54" | LC_ALL=C grep -qF 'q\"'; echo $?)"
+rm -rf "$R"
+
+# ── Fixtures 55, 56: the branch never landed and what it leaves behind is a deletion ──
+# c1 changes a line and c2 deletes the file: c1's line is gone from the head, and
+# c2 removes lines only, so line by line nothing looks missing.
+R="$(mk_repo)"; printf 'a\nb\nc\n' > "$R/f55.txt"; git -C "$R" add -A && git -C "$R" commit -qm f55
+git -C "$R" checkout -q -b feat
+printf 'a\nB\nc\n' > "$R/f55.txt"; git -C "$R" commit -qam "c1: b -> B"
+git -C "$R" rm -q f55.txt && git -C "$R" commit -qm "c2: drop f55 (never landed)"
+git -C "$R" checkout -q main; printf 'o\n' > "$R/o.txt"; git -C "$R" add o.txt && git -C "$R" commit -qm "unrelated main work"
+OUT55=$(out_of "$R" feat main); RC55=$?
+if [ "$CONTAINED_RC" = 0 ]; then
+  assert_exit "fixture-55 never-landed deletion-only branch -> flagged" 3 "$RC55"
+  assert_exit "fixture-55 lists the deleting commit" 0 "$(has "$OUT55" 'c2: drop f55')"
+fi
+rm -rf "$R"
+# 55b: the same with a line deletion: c1 adds a debug line, c2 removes it, c3
+# deletes dead(); nothing landed.
+R="$(mk_repo)"; printf 'def live():\n  pass\ndef dead():\n  return 0\n' > "$R/m55.py"; git -C "$R" add -A && git -C "$R" commit -qm m55
+git -C "$R" checkout -q -b feat
+printf 'def live():\n  print("debug")\n  pass\ndef dead():\n  return 0\n' > "$R/m55.py"; git -C "$R" commit -qam "c1: debug"
+printf 'def live():\n  pass\ndef dead():\n  return 0\n' > "$R/m55.py"; git -C "$R" commit -qam "c2: no debug"
+printf 'def live():\n  pass\n' > "$R/m55.py"; git -C "$R" commit -qam "c3: drop dead() (never landed)"
+git -C "$R" checkout -q main; printf 'o\n' > "$R/o.txt"; git -C "$R" add o.txt && git -C "$R" commit -qm "unrelated main work"
+OUT55=$(out_of "$R" feat main); RC55=$?
+if [ "$CONTAINED_RC" = 0 ]; then
+  assert_exit "fixture-55b never-landed line deletion -> flagged" 3 "$RC55"
+  assert_exit "fixture-55b lists the deleting commit" 0 "$(has "$OUT55" 'c3: drop dead()')"
+fi
+rm -rf "$R"
+# 56: A landed; the tail adds a debug line, removes it, and deletes legacy.py.
+R="$(mk_repo)"; printf 'old\n' > "$R/legacy.py"; git -C "$R" add -A && git -C "$R" commit -qm legacy
+git -C "$R" checkout -q -b feat
+printf 'a = 1\n' > "$R/a56.txt"; git -C "$R" add -A && git -C "$R" commit -qm "A: a56"
+printf 'a = 1\nprint(1)\n' > "$R/a56.txt"; git -C "$R" commit -qam "B: debug"
+printf 'a = 1\n' > "$R/a56.txt"; git -C "$R" rm -q legacy.py; git -C "$R" add -A && git -C "$R" commit -qm "C: drop debug and legacy.py (never landed)"
+git -C "$R" checkout -q main; git -C "$R" checkout -q feat~2 -- a56.txt && git -C "$R" commit -qm "squash A"
+OUT56=$(out_of "$R" feat main); RC56=$?
+if [ "$CONTAINED_RC" = 0 ]; then
+  assert_exit "fixture-56 landed prefix + deletion-only tail -> flagged" 3 "$RC56"
+  assert_exit "fixture-56 lists the deleting commit" 0 "$(has "$OUT56" 'C: drop debug')"
+fi
+rm -rf "$R"
+
+# ── Fixture 57: squash, revert, then a commit cherry-picked back ──
+# The branch landed whole at the squash; the revert and the reland are main's own
+# history (out of scope).
+R="$(mk_repo)"; git -C "$R" checkout -q -b feat
+printf 'a\n' > "$R/a57.txt"; git -C "$R" add -A && git -C "$R" commit -qm "A: a57"
+printf 'b\n' > "$R/b57.txt"; git -C "$R" add -A && git -C "$R" commit -qm "B: b57"
+squash_feat "$R"; git -C "$R" revert --no-edit HEAD >/dev/null 2>&1; git -C "$R" cherry-pick -x feat~1 >/dev/null 2>&1
+assert_exit "fixture-57 squash, revert, cherry-pick reland -> NOT flagged" "$CONTAINED_RC" "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# ── Fixture 58: a path with a newline elsewhere in the tree changes nothing ──
+R="$(mk_repo)"; N58=$(printf 'n\n' | git -C "$R" hash-object -w --stdin)
+git -C "$R" update-index --add --cacheinfo "100644,$N58,$(printf 'odd\nname.txt')" && git -C "$R" commit -qm odd
+git -C "$R" checkout -q -b feat; printf 'y\n' > "$R/y58.txt"; git -C "$R" add y58.txt && git -C "$R" commit -qm "y58 (never landed)"
+git -C "$R" checkout -q main
+assert_exit "fixture-58 newline path elsewhere + genuine orphan -> flagged" 3 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# ── Fixture 59: a pipeline whose producer fails is an error (pipefail) ──
+# A tr that fails on the tree listing would leave every head path "absent".
+R="$(mk_repo)"; git -C "$R" checkout -q -b feat; printf 'y\n' > "$R/y59.txt"; git -C "$R" add -A && git -C "$R" commit -qm "y59 (never landed)"
+git -C "$R" checkout -q main
+W59="$(mktemp -d)"; TR59="$(command -v tr)"
+printf '#!/bin/sh\ncase "$1" in *001*) exit 1 ;; esac\ncase "$2" in *001*) exit 1 ;; esac\nexec "%s" "$@"\n' "$TR59" > "$W59/tr"; chmod +x "$W59/tr"
+assert_exit "fixture-59 failing tree-listing pipe -> skip, not clean" 4 "$(PATH="$W59:$PATH" run_helper "$R" feat main)"
+rm -rf "$R" "$W59"
+
+# ── Fixture 60: the landed prefix may be up to 20 commits behind the head ──
+mk_prefix60() { # repo n — A1+A2 land as a squash, then n commits that never land, then main edits A1's line
+  git -C "$1" checkout -q -b feat
+  printf 'a = 1\n' > "$1/a60.txt"; git -C "$1" add -A && git -C "$1" commit -qm "A1: a = 1"
+  printf 'b = 1\n' > "$1/b60.txt"; git -C "$1" add -A && git -C "$1" commit -qm "A2: b = 1"
+  local i; for ((i = 1; i <= $2; i++)); do printf '%s\n' "$i" > "$1/o60-$i.txt"; git -C "$1" add -A && git -C "$1" commit -qm "orphan60 $i"; done
+  git -C "$1" checkout -q main; git -C "$1" checkout -q "feat~$2" -- a60.txt b60.txt && git -C "$1" commit -qm "squash A1+A2"
+  printf 'a = 2\n' > "$1/a60.txt"; git -C "$1" commit -qam "main: a = 2"
+}
+R="$(mk_repo)"; mk_prefix60 "$R" 20
+OUT60=$(out_of "$R" feat main)
+if [ "$CONTAINED_RC" = 0 ]; then
+  assert_exit "fixture-60a prefix 20 back is found" 1 "$(has "$OUT60" 'A1: a = 1')"
+fi
+rm -rf "$R"
+R="$(mk_repo)"; mk_prefix60 "$R" 21
+OUT60=$(out_of "$R" feat main)
+assert_exit "fixture-60b prefix 21 back is not looked for (documented)" 0 "$(has "$OUT60" 'A1: a = 1')"
+rm -rf "$R"
+
+# ── Fixture 61: a squash whose conflict was resolved by hand, with every deletion made ──
+# No commit holds the branch's net change (main changed the same line meanwhile),
+# but the branch's lines are there and the line it replaced is gone: nothing to list.
+R="$(mk_repo)"; printf 'x\nB\ny\n' > "$R/r61.txt"; git -C "$R" add -A && git -C "$R" commit -qm r61
+git -C "$R" checkout -q -b feat; printf 'x\nB2\ny\n' > "$R/r61.txt"; git -C "$R" commit -qam "B -> B2"
+git -C "$R" checkout -q main; printf 'x\nBm\ny\n' > "$R/r61.txt"; git -C "$R" commit -qam "main: B -> Bm"
+printf 'x\nB2\nBm\ny\n' > "$R/r61.txt"; git -C "$R" commit -qam "squash feat, conflict resolved by hand"
+assert_exit "fixture-61 hand-resolved squash with deletions made -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# ── Fixture 62: the helper's own sentences are not escaped ──
+R="$(mk_repo)"; git -C "$R" checkout -q -b feat; printf 'y\n' > "$R/y62.txt"; git -C "$R" add -A && git -C "$R" commit -qm "y62 (never landed)"
+git -C "$R" checkout -q main
+OUT62=$(out_of "$R" feat main)
+assert_exit "fixture-62 no escaped apostrophe in the helper's text" 1 "$(printf '%s' "$OUT62" | grep -qF "\\'"; echo $?)"
+assert_exit "fixture-62 refs are double-quoted" 0 "$(has "$OUT62" 'Orphan commits on "feat" whose content did NOT land in "main"')"
 rm -rf "$R"
 
 print_summary

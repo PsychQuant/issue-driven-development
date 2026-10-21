@@ -22,22 +22,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     and so does a stacked branch squashed before its base branch was merged.
   - **Partial merges.** When the whole branch never landed, the newest 20 of its earlier commits are tried.
     Commits up to the newest one that landed are checked where they landed and only the rest against the tip,
-    so a genuine orphan does not drag lines main edited after landing into the list. When `git cherry` shows a
-    branch commit's patch arriving after the landing commit (cherry-picks, a partial rebase), the branch came in
-    piece by piece and every commit is checked against the tip.
+    so a genuine orphan does not drag lines main edited after landing into the list. A branch with no net change
+    "lands" at the merge-base; when `git cherry` shows some of its commits in the baseline as separate patches
+    (a change cherry-picked while the commit that undid it was left behind), it is checked against the tip.
   - **Line check.** Each candidate's added lines are checked against its landing commit. A line the branch
     head itself no longer has in those files is skipped, because a later branch commit rewrote or deleted it.
     A commit whose lines are in the branch head but not where the branch landed is still reported, for
     example one that restores a value from the merge-base and was left out of the squash.
+  - **Deletions.** When no commit holds the branch's net change, no added line is missing, and a file or a
+    non-blank line the net change deletes is still at the tip, what did not land is a deletion (for example a
+    branch that edits a file and then deletes it, or adds a debug line, removes it and deletes dead code): the
+    commits checked at the tip that delete something are listed. A squash whose conflicts were resolved by hand
+    also holds no net change, but its deletions are made, so nothing is listed.
   - **Reading.** merge-tree runs in a throwaway bare repository that borrows the repository's objects (and its
     shallow file and object format); no config and no attributes reach it, so no merge driver runs and no
     objects are added. Everything runs from the repository's top level, in the C locale, with pipefail. Each
     side's tree is read with one `ls-tree -r -z` and matched by exact path, each distinct blob is read once,
     and patches come from `diff-tree --text --ignore-submodules=none`: diff drivers, textconv, color,
     `binary`/`-diff` attributes, `submodule.<name>.ignore`, and non-ASCII, non-UTF-8 or CR-containing names
-    cannot hide added lines, and submodule pointers compare as `Subproject commit <oid>` on any git version.
-    Commit subjects are printed quoted, with control bytes, C1 controls, zero-width and bidi marks replaced by
-    `?`, quotes escaped, and no signature checks.
+    (or a newline in a name elsewhere in the tree) cannot hide added lines, and submodule pointers compare as `Subproject commit <oid>` on any git version.
+    Commit subjects are printed quoted, with control bytes, C1 controls, zero-width, bidi and other invisible
+    marks (variation selectors, tag characters) replaced by `?`, quotes escaped, and no signature checks.
+  - **The gate now runs from idd-close.** Step 1.55 called the helper through an unbraced
+    `$CLAUDE_PLUGIN_ROOT`, which the skill runtime does not substitute, so the call failed and printed "gate
+    errored"; it now uses `${CLAUDE_PLUGIN_ROOT}`. Expect the rc=3 question and rc=4 notes to appear. idd-close
+    prints the helper's output with `printf`, so zsh's `echo` cannot undo its escaping.
   - **Errors are not "clean".** Outside the landing step, a failed git or awk command, an unreadable object or
     a path with a newline exits 4 with a `check-merge-completeness:` reason on stderr, which idd-close prints.
     A failure inside the landing step falls back to the tip and is explained on exit 3.
@@ -45,7 +54,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     landed change is main's own history and is not reported. The old helper reported a revert only after a
     multi-commit squash, as a side effect; after a single-commit squash, a merge commit or a rebase-merge it
     never did.
-  - Still not seen: a dropped pure deletion; an added line that happens to be elsewhere in the files the same
+  - Still not seen: a dropped pure deletion when something else of the branch did land; content that was
+    already in main through another commit before this branch was merged (it counts as landed there); an added line that happens to be elsewhere in the files the same
     commit touched (always so for a dropped single-commit rename); with macOS awk, a binary edit that changes
     only bytes after a NUL; a commit that set a line back to its merge-base value, left out when the change it
     undid reached main in another form (not the same patch) after an earlier commit already held the branch's
@@ -53,13 +63,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Falls back to the tip, where lines main edited after landing can be flagged: a squash whose conflicts
     were resolved by hand; a branch commit that restored a merge-base value main had changed before the
     squash; a landing commit beyond 200 merge-tree calls; a landed prefix followed by more than 20 commits that
-    never landed; a branch whose commits came in as separate patches; a `git pull` merge on main that brought
+    never landed; a branch with no net change some of whose commits were cherry-picked; a commit after the
+    landed prefix that landed on its own, if main edited its lines afterwards; a `git pull` merge on main that brought
     the squash in through its second parent after that side edited the branch's lines; git older than 2.38 (no
     `merge-tree --write-tree`), where the #408 shape is still flagged.
   - Timing on this repository: PR #408 about 3 s (old helper about 5 s); a branch that moves 2000 files about
     13 s (old about 13 s); a never-landed branch about 4 s when main often touches its files (old under 1 s),
     and about 9 s for a 150-commit branch (old about 6 s). The worst case is the 200 merge-tree calls on a very
     wide tree: tens of seconds for a never-landed branch in a repository with 100,000 files in one directory.
+    In a partial clone, git fetches missing blobs on demand while the helper reads them.
 
 ## [3.5.0] - 2026-10-20
 
