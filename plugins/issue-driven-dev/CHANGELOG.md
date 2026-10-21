@@ -15,38 +15,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reported as missing from main — 39 false orphans on PR #408, where a follow-up commit also edited the
   branch's lines after the squash. `check-merge-completeness.sh` now answers one question, "did the branch's
   content land":
-  - **Landing commit.** Walking the baseline's first-parent history back from the tip — only commits that touch
-    the paths the branch changed, then the merge-base — the helper takes the first run of commits that hold the
-    branch's whole net change (merging the branch head into one is clean and leaves its tree unchanged) and
-    uses the oldest of them: where the branch landed. A squash of a branch that was never rebased counts too.
-  - **Partial merges.** When the whole branch never landed, the branch's earlier commits are tried newest
-    first. Commits up to the newest one that landed are checked where they landed and only the rest against
-    the tip, so a genuine orphan does not drag lines main edited after landing into the list.
+  - **Landing commit.** Walking the baseline's first-parent history forward from the merge-base — the
+    merge-base itself, the first descendant, then descendants that touch the paths the branch changed — the
+    earliest commit that holds the branch's whole net change (merging the branch head into it is clean and
+    leaves its tree unchanged) is where the branch landed. A squash of a branch that was never rebased counts,
+    and so does a stacked branch squashed before its base branch was merged.
+  - **Partial merges.** When the whole branch never landed, the newest 20 of its earlier commits are tried.
+    Commits up to the newest one that landed are checked where they landed and only the rest against the tip,
+    so a genuine orphan does not drag lines main edited after landing into the list.
   - **Line check.** Each candidate's added lines are checked against its landing commit. A line the branch
     head itself no longer has in those files is skipped, because a later branch commit rewrote or deleted it.
     A commit whose lines are in the branch head but not where the branch landed is still reported, for
     example one that restores a value from the merge-base and was left out of the squash.
   - **Reading.** merge-tree runs in a throwaway bare repository that borrows the repository's objects (and its
     shallow file and object format); no config and no attributes reach it, so no merge driver runs and no
-    objects are left behind. Patches are read with `diff-tree --text`, contents with `cat-file` (each distinct
-    blob once), paths NUL-separated, so `diff.external`, textconv, color, `binary`/`-diff` attributes and
-    non-ASCII names cannot hide added lines; submodule pointers compare as `Subproject commit <oid>`. Commit
-    subjects are printed without signature checks or control bytes.
-  - **Errors are not "clean".** A failed git command or a path with a newline in its name exits 4 with the
-    reason on stderr, and idd-close prints it. On exit 3 the helper prints the landing commit, or why there
-    was none.
+    objects are added. Each side's tree is read with one `ls-tree -r -z` and matched by exact path, each
+    distinct blob is read once, and patches come from `diff-tree --text --ignore-submodules=none`: diff
+    drivers, textconv, color, `binary`/`-diff` attributes, `submodule.<name>.ignore` and non-ASCII names
+    cannot hide added lines, and submodule pointers compare as `Subproject commit <oid>` on any git version.
+    Commit subjects are printed quoted, without signature checks, control bytes or bidi overrides.
+  - **Errors are not "clean".** Outside the landing step, a failed git or awk command, an unreadable object or
+    a path with a CR or LF exits 4 with a `check-merge-completeness:` reason on stderr, which idd-close
+    prints. A failure inside the landing step falls back to the tip and is explained on exit 3.
   - **Out of scope by design: what main did after the branch landed.** A revert or a later overwrite of the
     landed change is main's own history and is not reported. The old helper reported a revert only after a
     multi-commit squash, as a side effect; after a single-commit squash, a merge commit or a rebase-merge it
     never did.
-  - Other limits: a squash whose conflicts were resolved by hand differs from the branch head, so no landing
-    commit is found and lines main edited afterwards can still be flagged; so can a branch commit that
-    restored a merge-base value main had changed before the squash; a landing commit beyond 200 merge-tree
-    calls, or reachable only through a merge's second parent (a `git pull` merge on main), is not found; git
-    older than 2.38 (no `merge-tree --write-tree`) skips the landing step and checks against the tip, where
-    the #408 shape is still flagged. Timing on this repository: PR #408 about 3 s (old helper about 6 s); a
-    branch that moves 2000 files about 13 s (old about 15 s); a never-landed branch up to about 5 s, spent on
-    the 200 merge-tree calls (old under 1 s).
+  - Still not seen: a dropped pure deletion; an added line that happens to be elsewhere in the files the same
+    commit touched (always so for a dropped single-commit rename); with macOS awk, a binary edit that changes
+    only bytes after a NUL.
+  - Falls back to the tip, where lines main edited after landing can be flagged: a squash whose conflicts
+    were resolved by hand; a branch commit that restored a merge-base value main had changed before the
+    squash; a landing commit beyond 200 merge-tree calls; a `git pull` merge on main that brought the squash
+    in through its second parent after that side edited the branch's lines; git older than 2.38 (no
+    `merge-tree --write-tree`), where the #408 shape is still flagged.
+  - Timing on this repository: PR #408 about 3 s (old helper about 5 s); a branch that moves 2000 files about
+    13 s (old about 13 s); a never-landed branch about 4 s when main often touches its files (old under 1 s),
+    and about 9 s for a 150-commit branch (old about 6 s).
 
 ## [3.5.0] - 2026-10-20
 
