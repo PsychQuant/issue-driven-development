@@ -60,6 +60,31 @@ GIT() { git -C "$REPO" "$@"; }
 BRANCH_SHA="$(GIT rev-parse --verify --quiet --end-of-options "${BRANCH}^{commit}" 2>/dev/null)"   || exit 4
 BASELINE_SHA="$(GIT rev-parse --verify --quiet --end-of-options "${BASELINE}^{commit}" 2>/dev/null)" || exit 4
 
+# Containment (#399): a squash keeps the branch's FINAL content, not each commit.
+# If some first-parent baseline commit C after the merge-base already holds the
+# branch's whole net change — merging the branch head into C is clean and leaves
+# C's tree unchanged — nothing on the branch is missing, whatever its intermediate
+# commits added. Checking every C, not only the tip, lets a later follow-up on the
+# same file (spectra-archive, a release date) pass; the 3-way merge lets a squash of
+# a never-rebased branch pass. Anything this cannot decide falls through to the
+# per-commit check below, which can only flag more, never less.
+MERGE_TREE_CAP=200   # ~24 ms per merge-tree; beyond the cap, fall through
+contained_in_baseline() {
+  local mb list c t
+  mb="$(GIT merge-base "$BASELINE_SHA" "$BRANCH_SHA" 2>/dev/null)" || return 1
+  # `merge-tree --write-tree` needs git >= 2.38; an older git fails this probe
+  GIT merge-tree --write-tree "$BASELINE_SHA" "$BASELINE_SHA" >/dev/null 2>&1 || return 1
+  list="$(GIT rev-list --first-parent --reverse "${mb}..${BASELINE_SHA}" 2>/dev/null)" || return 1
+  [ -n "$list" ] || return 1
+  [ "$(printf '%s\n' "$list" | grep -c .)" -le "$MERGE_TREE_CAP" ] || return 1
+  while IFS= read -r c; do
+    t="$(GIT merge-tree --write-tree "$c" "$BRANCH_SHA" 2>/dev/null)" || continue   # conflict or error: not this C
+    [ "${t%%$'\n'*}" = "$(GIT rev-parse "${c}^{tree}")" ] && return 0
+  done <<< "$list"
+  return 1
+}
+contained_in_baseline && exit 0
+
 # Candidate orphans = '+'-marked commits (patch-id absent from baseline).
 CANDIDATES=$(GIT cherry "$BASELINE_SHA" "$BRANCH_SHA" 2>/dev/null | awk '$1=="+"{print $2}')
 [ -n "$CANDIDATES" ] || exit 0

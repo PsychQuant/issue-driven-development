@@ -113,4 +113,63 @@ printf 'l1\nl2\n' > "$R/sp ace.txt"; git -C "$R" add -A && git -C "$R" commit -q
 assert_exit "fixture-7 spaced filename squash NOT flagged" 0 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
+# ── Fixtures 8–11 (#399): a squash keeps the branch's FINAL content, not each commit ──
+# A line one branch commit adds and a later one rewrites exists in no final tree,
+# so per-commit line presence flags that commit. These fixtures pin the containment
+# check: a squash that holds the branch's net change is clean even when (9) the
+# baseline gained a follow-up on the same file afterwards, or (10) the branch was
+# never rebased and main changed the same file meanwhile. (11) keeps a genuine
+# orphan flagged next to that rewrite shape.
+mk_rewrite_branch() { # repo -> feat: x added, then rewritten
+  printf 'h1\nh2\nh3\n' > "$1/a.py"; git -C "$1" add -A && git -C "$1" commit -qm "a.py"
+  git -C "$1" checkout -q -b feat
+  printf 'h1\nh2\nh3\nx = 1\n' > "$1/a.py"; git -C "$1" commit -qam "add x"
+  printf 'h1\nh2\nh3\nx = 2\n' > "$1/a.py"; git -C "$1" commit -qam "change x"
+}
+
+R="$(mk_repo)"; mk_rewrite_branch "$R"
+git -C "$R" checkout -q main
+git -C "$R" merge -q --squash feat >/dev/null 2>&1 && git -C "$R" commit -qm "squash feat"
+assert_exit "fixture-8 rewritten line, squash -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+R="$(mk_repo)"; mk_rewrite_branch "$R"
+git -C "$R" checkout -q main
+git -C "$R" merge -q --squash feat >/dev/null 2>&1 && git -C "$R" commit -qm "squash feat"
+printf 'h1\nh2\nh3\nx = 2\ny = 3\n' > "$R/a.py"; git -C "$R" commit -qam "follow-up on the same file"
+assert_exit "fixture-9 squash + later follow-up on the same file -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+R="$(mk_repo)"; mk_rewrite_branch "$R"
+git -C "$R" checkout -q main
+printf 'H1\nh2\nh3\n' > "$R/a.py"; git -C "$R" commit -qam "concurrent main edit"
+git -C "$R" merge -q --squash feat >/dev/null 2>&1 && git -C "$R" commit -qm "squash feat (not rebased)"
+assert_exit "fixture-10 non-rebased squash, main changed the same file -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+R="$(mk_repo)"; mk_rewrite_branch "$R"
+printf 'orphan\n' > "$R/orphan11.txt"; git -C "$R" add -A && git -C "$R" commit -qm "orphan (never landed)"
+git -C "$R" checkout -q main
+git -C "$R" checkout -q feat~1 -- a.py && git -C "$R" commit -qm "land a.py only"
+assert_exit "fixture-11 rewrite shape + a genuine orphan -> flagged" 3 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# ── Fixture 12 (#399): the containment walk is capped at 200 baseline commits ──
+# Past the cap the helper skips containment and falls back to per-commit line
+# presence — today's behaviour, so the rewrite shape is flagged again (rc=3).
+# Empty commits via commit-tree keep this fast.
+add_empty_commits() { # repo n — append n empty commits on main
+  local t p i; t=$(git -C "$1" rev-parse 'main^{tree}'); p=$(git -C "$1" rev-parse main)
+  for ((i = 0; i < $2; i++)); do p=$(git -C "$1" commit-tree "$t" -p "$p" -m "noise $i"); done
+  git -C "$1" update-ref refs/heads/main "$p"
+}
+R="$(mk_repo)"; mk_rewrite_branch "$R"
+git -C "$R" checkout -q main
+git -C "$R" merge -q --squash feat >/dev/null 2>&1 && git -C "$R" commit -qm "squash feat"
+add_empty_commits "$R" 199   # merge-base is the a.py commit; squash + 199 = 200 commits after it
+assert_exit "fixture-12a 200 baseline commits -> containment still runs" 0 "$(run_helper "$R" feat main)"
+add_empty_commits "$R" 1     # 201
+assert_exit "fixture-12b 201 baseline commits -> falls back to per-commit check" 3 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
 print_summary
