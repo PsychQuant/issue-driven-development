@@ -20,6 +20,12 @@
 #   4 — skip: branch or baseline unresolvable — caller skips the gate, never blocks
 #
 # Method:
+#   0. CONTAINMENT (#399). A squash keeps the branch's final content, not each
+#      commit, so first ask whether some first-parent baseline commit after the
+#      merge-base already holds the branch's whole net change (`git merge-tree`
+#      of the branch head into it is clean and leaves its tree unchanged). Yes →
+#      exit 0. At most 200 commits are walked; past that, or on a git without
+#      `merge-tree --write-tree` (< 2.38), steps 1–2 decide alone.
 #   1. `git cherry <baseline> <branch>` → '+'-marked commits are patch-id-absent
 #      from the baseline (candidate orphans).
 #   2. CONTENT-VERIFY each candidate by *line presence*, NOT cherry-pick. A
@@ -32,7 +38,9 @@
 #
 # Warn-only contract: exit 3 is surfaced via AskUserQuestion by idd-close; it is
 # NOT a hard block, because line-presence is best-effort (it cannot see a dropped
-# pure-deletion, and a line could coincidentally appear elsewhere).
+# pure-deletion, and a line could coincidentally appear elsewhere). A squash whose
+# conflicts were resolved by hand differs from the branch head, so step 0 cannot
+# match it and steps 1–2 may still flag rewritten lines there.
 set -u
 
 usage() { echo "usage: $0 --branch <ref> --baseline <ref> [--repo <root>]" >&2; exit 2; }
