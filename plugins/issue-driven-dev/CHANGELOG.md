@@ -12,15 +12,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`idd-close` Step 1.55 no longer flags a squash-merged branch as orphaned (#399).** The merge-completeness
   helper checked each branch commit's added lines against the baseline. A squash keeps the branch's final
   content, so a line one commit added and a later commit rewrote exists in no final tree, and that commit was
-  reported as missing from main — 39 false orphans on PR #408. `check-merge-completeness.sh` now first walks the
-  first-parent baseline commits after the merge-base (oldest first, at most 200) and exits 0 when merging the
-  branch head into one of them is clean and leaves its tree unchanged: every branch change is already there.
-  Checking every commit, not only the tip, covers a follow-up commit that touches the same file after the squash
-  (spectra-archive, a release date); the three-way merge covers a squash of a branch that was never rebased while
-  main changed the same file. Anything it cannot decide falls through to the per-commit check, so a genuine
-  orphan is still flagged. Limits: a squash whose conflicts were resolved by hand differs from the branch head
-  and can still be flagged; past 200 baseline commits, or on git older than 2.38 (no `merge-tree --write-tree`),
-  only the per-commit check runs.
+  reported as missing from main — 39 false orphans on PR #408. Two changes in `check-merge-completeness.sh`:
+  - **The per-commit check skips a line the branch head itself no longer has** (a later branch commit rewrote
+    it). Its absence from main says nothing about whether the branch landed.
+  - **A containment step runs first.** It walks the first-parent baseline commits that descend from the
+    merge-base (the oldest 200) and exits 0 when merging the branch head into one of them is clean and leaves
+    its tree unchanged: the branch's net change landed there. Checking every such commit, not only the tip,
+    covers a follow-up that edits the same lines after the squash (#408: a release date); the three-way merge
+    covers a squash of a branch that was never rebased. It is not trusted when every path the branch changed
+    is back to its merge-base state at the tip (a wholesale revert), it ignores commits that are not
+    descendants of the merge-base, and it neutralises repo merge drivers (empty attribute source) so a
+    `merge=ours` driver cannot make a conflict look contained.
+  - On exit 3 the helper prints what the containment step concluded.
+  - **What it accepts is "landed at some point".** If a later baseline commit overwrote only *part* of the
+    landed change, that cannot be told apart from a follow-up edit and is no longer reported (the old helper
+    reported it for multi-commit branches, as a side effect). Other limits: a squash whose conflicts were
+    resolved by hand differs from the branch head and can still be flagged; git older than 2.40 (no
+    `merge-tree --write-tree` / `--attr-source`) skips the containment step; merge-tree writes unreachable
+    objects into the repository's object store, which `git gc` prunes.
 
 ## [3.5.0] - 2026-10-20
 

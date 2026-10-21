@@ -113,31 +113,48 @@ printf 'l1\nl2\n' > "$R/sp ace.txt"; git -C "$R" add -A && git -C "$R" commit -q
 assert_exit "fixture-7 spaced filename squash NOT flagged" 0 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
-# ── Fixtures 8–11 (#399): a squash keeps the branch's FINAL content, not each commit ──
-# A line one branch commit adds and a later one rewrites exists in no final tree,
-# so per-commit line presence flags that commit. These fixtures pin the containment
-# check: a squash that holds the branch's net change is clean even when (9) the
-# baseline gained a follow-up on the same file afterwards, or (10) the branch was
-# never rebased and main changed the same file meanwhile. (11) keeps a genuine
-# orphan flagged next to that rewrite shape.
+# ── Fixtures 8–17 (#399): a squash keeps the branch's FINAL content, not each commit ──
+# A line one branch commit adds and a later one rewrites exists in no final tree.
+# Two mechanisms cover that: (a) the per-commit check skips an added line the
+# branch head itself no longer has, and (b) a containment step accepts a squash
+# whose content main edited AFTER it landed (#408: a release date changed by a
+# follow-up commit). Containment must not accept what never landed or what was
+# reverted, and must not let repo merge drivers decide.
+#
+# Containment needs `git merge-tree --write-tree` and `--attr-source` (git >= 2.40).
+# On an older git the helper falls back to the per-commit check; the fixtures that
+# only containment can clear expect that fallback instead of failing.
+if git merge-tree --write-tree HEAD HEAD >/dev/null 2>&1 \
+   && git --attr-source="$(git hash-object -t tree /dev/null)" version >/dev/null 2>&1; then
+  CONTAINED_RC=0
+else
+  CONTAINED_RC=3
+  echo "  (git without merge-tree --write-tree / --attr-source: containment fixtures expect the per-commit fallback)"
+fi
+
 mk_rewrite_branch() { # repo -> feat: x added, then rewritten
   printf 'h1\nh2\nh3\n' > "$1/a.py"; git -C "$1" add -A && git -C "$1" commit -qm "a.py"
   git -C "$1" checkout -q -b feat
   printf 'h1\nh2\nh3\nx = 1\n' > "$1/a.py"; git -C "$1" commit -qam "add x"
   printf 'h1\nh2\nh3\nx = 2\n' > "$1/a.py"; git -C "$1" commit -qam "change x"
 }
+squash_feat() { git -C "$1" checkout -q main && git -C "$1" merge -q --squash feat >/dev/null 2>&1 && git -C "$1" commit -qm "squash feat"; }
 
-R="$(mk_repo)"; mk_rewrite_branch "$R"
-git -C "$R" checkout -q main
-git -C "$R" merge -q --squash feat >/dev/null 2>&1 && git -C "$R" commit -qm "squash feat"
+R="$(mk_repo)"; mk_rewrite_branch "$R"; squash_feat "$R"
 assert_exit "fixture-8 rewritten line, squash -> NOT flagged" 0 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
-R="$(mk_repo)"; mk_rewrite_branch "$R"
-git -C "$R" checkout -q main
-git -C "$R" merge -q --squash feat >/dev/null 2>&1 && git -C "$R" commit -qm "squash feat"
+R="$(mk_repo)"; mk_rewrite_branch "$R"; squash_feat "$R"
 printf 'h1\nh2\nh3\nx = 2\ny = 3\n' > "$R/a.py"; git -C "$R" commit -qam "follow-up on the same file"
-assert_exit "fixture-9 squash + later follow-up on the same file -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+assert_exit "fixture-9a squash + later follow-up adding to the same file -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 9b is the #408 shape: a follow-up edits the very line the branch added. Only
+# containment can clear it — the per-commit check sees `x = 2` in the branch head
+# and not at the tip.
+R="$(mk_repo)"; mk_rewrite_branch "$R"; squash_feat "$R"
+printf 'h1\nh2\nh3\nx = 3\n' > "$R/a.py"; git -C "$R" commit -qam "follow-up edits the branch's line"
+assert_exit "fixture-9b squash + follow-up editing the branch's line -> NOT flagged" "$CONTAINED_RC" "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 R="$(mk_repo)"; mk_rewrite_branch "$R"
@@ -151,25 +168,76 @@ R="$(mk_repo)"; mk_rewrite_branch "$R"
 printf 'orphan\n' > "$R/orphan11.txt"; git -C "$R" add -A && git -C "$R" commit -qm "orphan (never landed)"
 git -C "$R" checkout -q main
 git -C "$R" checkout -q feat~1 -- a.py && git -C "$R" commit -qm "land a.py only"
-assert_exit "fixture-11 rewrite shape + a genuine orphan -> flagged" 3 "$(run_helper "$R" feat main)"
+OUT11=$(bash "$HELPER" --repo "$R" --branch feat --baseline main 2>/dev/null); RC11=$?
+assert_exit "fixture-11 rewrite shape + a genuine orphan -> flagged" 3 "$RC11"
+assert_exit "fixture-11 lists the genuine orphan" 0 "$(printf '%s\n' "$OUT11" | grep -q 'orphan (never landed)'; echo $?)"
+assert_exit "fixture-11 does not list the rewritten 'add x'" 1 "$(printf '%s\n' "$OUT11" | grep -q 'add x'; echo $?)"
 rm -rf "$R"
 
-# ── Fixture 12 (#399): the containment walk is capped at 200 baseline commits ──
-# Past the cap the helper skips containment and falls back to per-commit line
-# presence — today's behaviour, so the rewrite shape is flagged again (rc=3).
-# Empty commits via commit-tree keep this fast.
+# ── Fixture 12: containment walks the OLDEST 200 baseline commits after the merge-base ──
+# The squash is normally among the first; past 200 the rest are not tried.
 add_empty_commits() { # repo n — append n empty commits on main
   local t p i; t=$(git -C "$1" rev-parse 'main^{tree}'); p=$(git -C "$1" rev-parse main)
   for ((i = 0; i < $2; i++)); do p=$(git -C "$1" commit-tree "$t" -p "$p" -m "noise $i"); done
   git -C "$1" update-ref refs/heads/main "$p"
 }
-R="$(mk_repo)"; mk_rewrite_branch "$R"
-git -C "$R" checkout -q main
-git -C "$R" merge -q --squash feat >/dev/null 2>&1 && git -C "$R" commit -qm "squash feat"
-add_empty_commits "$R" 199   # merge-base is the a.py commit; squash + 199 = 200 commits after it
-assert_exit "fixture-12a 200 baseline commits -> containment still runs" 0 "$(run_helper "$R" feat main)"
-add_empty_commits "$R" 1     # 201
-assert_exit "fixture-12b 201 baseline commits -> falls back to per-commit check" 3 "$(run_helper "$R" feat main)"
+edit_x() { printf 'h1\nh2\nh3\nx = 3\n' > "$1/a.py"; git -C "$1" commit -qam "follow-up edits the branch's line"; }
+R="$(mk_repo)"; mk_rewrite_branch "$R"; squash_feat "$R"; edit_x "$R"
+add_empty_commits "$R" 199   # squash is commit 1 of 201 after the merge-base
+assert_exit "fixture-12a squash within the oldest 200 -> found" "$CONTAINED_RC" "$(run_helper "$R" feat main)"
+rm -rf "$R"
+R="$(mk_repo)"; mk_rewrite_branch "$R"; git -C "$R" checkout -q main
+add_empty_commits "$R" 200; git -C "$R" checkout -q main
+git -C "$R" merge -q --squash feat >/dev/null 2>&1 && git -C "$R" commit -qm "squash feat"; edit_x "$R"
+assert_exit "fixture-12b squash is commit 201 -> not walked, per-commit check flags" 3 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# ── Fixture 13: a squash that main reverted wholesale is NOT landed ──
+R="$(mk_repo)"; git -C "$R" checkout -q -b feat
+printf 'f1\n' > "$R/f.txt"; git -C "$R" add -A && git -C "$R" commit -qm "add f"
+printf 'f1\nf2\n' > "$R/f.txt"; git -C "$R" commit -qam "extend f"
+squash_feat "$R"; git -C "$R" revert --no-edit HEAD >/dev/null 2>&1
+assert_exit "fixture-13 squash then revert -> flagged" 3 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# ── Fixture 14: a baseline commit that is not a descendant of the merge-base ──
+# feat forks from a side branch, undoes it (v=1) and adds w.txt; main had a
+# parallel commit that added the same w.txt before merging side. That parallel
+# commit is reachable from main but not from the merge-base, and measured against
+# its own (older) merge-base the branch's net change — w.txt only — is already in
+# it. The restore of v=1 never landed. (w.txt keeps the wholesale-revert check
+# from deciding first, so this pins --ancestry-path itself.)
+R="$(mk_repo)"
+printf 'v = 1\n' > "$R/v.txt"; git -C "$R" add -A && git -C "$R" commit -qm "v=1"
+git -C "$R" checkout -q -b side; printf 'v = 2\n' > "$R/v.txt"; git -C "$R" commit -qam "side: v=2"
+git -C "$R" checkout -q -b feat; printf 'v = 1\n' > "$R/v.txt"; printf 'w\n' > "$R/w.txt"
+git -C "$R" add -A && git -C "$R" commit -qm "restore v=1 + add w (restore never landed)"
+git -C "$R" checkout -q main; printf 'w\n' > "$R/w.txt"; git -C "$R" add -A && git -C "$R" commit -qm "parallel main commit adds w"
+git -C "$R" merge -q --no-ff -m "merge side" side
+assert_exit "fixture-14 non-descendant baseline commit does not count -> flagged" 3 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# ── Fixture 15: a repo merge driver must not decide containment ──
+# `merge=keepours` resolves every conflict to main's version, which would make a
+# branch change that never landed look contained.
+R="$(mk_repo)"
+printf 'a.py merge=keepours\n' > "$R/.gitattributes"; printf 'v = 1\n' > "$R/a.py"
+git -C "$R" add -A && git -C "$R" commit -qm "attrs + a.py"
+git -C "$R" config merge.keepours.driver true
+git -C "$R" checkout -q -b feat; printf 'v = 2\n' > "$R/a.py"; git -C "$R" commit -qam "fix: v=2 (never landed)"
+git -C "$R" checkout -q main; printf 'v = 9\n' > "$R/a.py"; git -C "$R" commit -qam "main: v=9"
+assert_exit "fixture-15 keep-ours merge driver ignored -> flagged" 3 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# ── Fixture 16 (documented limit): main overwrote PART of a landed squash ──
+# The branch's change is not wholly undone at the tip, so containment still
+# accepts the squash commit. A later edit and a partial revert cannot be told
+# apart; this pins the accepted trade-off rather than leaving it unstated.
+R="$(mk_repo)"; git -C "$R" checkout -q -b feat
+printf 'A\n' > "$R/g.txt"; git -C "$R" add -A && git -C "$R" commit -qm "add A"
+printf 'A\nB\n' > "$R/g.txt"; git -C "$R" commit -qam "add B"
+squash_feat "$R"; printf 'A\n' > "$R/g.txt"; git -C "$R" commit -qam "later edit drops B"
+assert_exit "fixture-16 partial overwrite after landing -> NOT flagged (documented limit)" "$CONTAINED_RC" "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 print_summary
