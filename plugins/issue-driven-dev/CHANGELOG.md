@@ -15,28 +15,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reported as missing from main — 39 false orphans on PR #408, where a follow-up commit also edited the
   branch's lines after the squash. `check-merge-completeness.sh` now answers one question, "did the branch's
   content land":
-  - **Landing commit.** Walking the baseline's first-parent history back from the tip (the newest 200 commits
-    that descend from the merge-base), the helper finds the newest commit that holds the branch's whole net
-    change: merging the branch head into it is clean and leaves its tree unchanged. A squash of a branch that
-    was never rebased counts too. merge-tree runs in a throwaway bare repository that borrows the repository's
-    objects, so no merge driver (`.gitattributes`, `.git/info/attributes`, `merge.default`) decides, and no
-    objects are left behind.
-  - **Line check against it.** Each candidate commit's added lines are checked against the landing commit (the
-    tip when there is none). A line the branch head itself no longer has in those files is skipped, because a
-    later branch commit rewrote or deleted it. A commit whose lines are in the branch head but not in the
-    landing commit is still reported, for example one that restores a value from the merge-base and was left
-    out of the squash.
-  - Patches and file contents are read with plumbing (`diff-tree`, `cat-file`), so `diff.external`, textconv
-    and `color.ui=always` cannot hide added lines, and paths are read NUL-separated, so a non-ASCII name is not
-    quoted into a missing file. On exit 3 the helper prints the landing commit, or why there was none.
+  - **Landing commit.** Walking the baseline's first-parent history back from the tip — only commits that touch
+    the paths the branch changed, then the merge-base — the helper takes the first run of commits that hold the
+    branch's whole net change (merging the branch head into one is clean and leaves its tree unchanged) and
+    uses the oldest of them: where the branch landed. A squash of a branch that was never rebased counts too.
+  - **Partial merges.** When the whole branch never landed, the branch's earlier commits are tried newest
+    first. Commits up to the newest one that landed are checked where they landed and only the rest against
+    the tip, so a genuine orphan does not drag lines main edited after landing into the list.
+  - **Line check.** Each candidate's added lines are checked against its landing commit. A line the branch
+    head itself no longer has in those files is skipped, because a later branch commit rewrote or deleted it.
+    A commit whose lines are in the branch head but not where the branch landed is still reported, for
+    example one that restores a value from the merge-base and was left out of the squash.
+  - **Reading.** merge-tree runs in a throwaway bare repository that borrows the repository's objects (and its
+    shallow file and object format); no config and no attributes reach it, so no merge driver runs and no
+    objects are left behind. Patches are read with `diff-tree --text`, contents with `cat-file` (each distinct
+    blob once), paths NUL-separated, so `diff.external`, textconv, color, `binary`/`-diff` attributes and
+    non-ASCII names cannot hide added lines; submodule pointers compare as `Subproject commit <oid>`. Commit
+    subjects are printed without signature checks or control bytes.
+  - **Errors are not "clean".** A failed git command or a path with a newline in its name exits 4 with the
+    reason on stderr, and idd-close prints it. On exit 3 the helper prints the landing commit, or why there
+    was none.
   - **Out of scope by design: what main did after the branch landed.** A revert or a later overwrite of the
     landed change is main's own history and is not reported. The old helper reported a revert only after a
     multi-commit squash, as a side effect; after a single-commit squash, a merge commit or a rebase-merge it
     never did.
   - Other limits: a squash whose conflicts were resolved by hand differs from the branch head, so no landing
-    commit is found and lines main edited afterwards can still be flagged; a landing commit more than 200
-    first-parent commits behind the tip is not found; git older than 2.38 (no `merge-tree --write-tree`) skips
-    the landing step and checks against the tip, where the #408 shape is still flagged.
+    commit is found and lines main edited afterwards can still be flagged; so can a branch commit that
+    restored a merge-base value main had changed before the squash; a landing commit beyond 200 merge-tree
+    calls, or reachable only through a merge's second parent (a `git pull` merge on main), is not found; git
+    older than 2.38 (no `merge-tree --write-tree`) skips the landing step and checks against the tip, where
+    the #408 shape is still flagged. Timing on this repository: PR #408 about 3 s (old helper about 6 s); a
+    branch that moves 2000 files about 13 s (old about 15 s); a never-landed branch up to about 5 s, spent on
+    the 200 merge-tree calls (old under 1 s).
 
 ## [3.5.0] - 2026-10-20
 
