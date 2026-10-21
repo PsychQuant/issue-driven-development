@@ -18,8 +18,9 @@
 #   2 — usage error
 #   3 — genuine orphan(s) found; SHAs + subjects printed to stdout
 #   4 — skip: could not verify (branch or baseline unresolvable, no temp dir, a git
-#       or awk failure outside the landing step, an unreadable object, a path with
-#       a newline); one "check-merge-completeness: <reason>" line goes to stderr.
+#       or awk failure outside the landing step, an unreadable object, a checked
+#       commit touching a path with a newline in its name); one
+#       "check-merge-completeness: <reason>" line goes to stderr.
 #       The caller reports it and never treats it as clean or as a block. A failure
 #       inside the landing step (step 2) falls back to the tip instead and is
 #       explained on exit 3.

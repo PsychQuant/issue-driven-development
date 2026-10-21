@@ -10,8 +10,13 @@
 #   exit 0 = clean (no genuine orphan)
 #   exit 3 = genuine orphan(s) found
 #   exit 4 = skip: could not verify (unresolvable ref, a git or awk failure outside
-#            the landing step, an unreadable object, a path with a newline);
-#            never clean, never a block
+#            the landing step, an unreadable object, a checked commit touching a
+#            path with a newline in its name); never clean, never a block
+#
+# Defenses no fixture pins (removing one still passes the suite): the
+# --literal-pathspecs and --full-tree flags, the break when a prefix's walk
+# errors, GIT_ATTR_NOSYSTEM, and the blank-line skip (removing that one only
+# adds false positives).
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
