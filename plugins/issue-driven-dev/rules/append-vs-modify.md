@@ -124,14 +124,27 @@ Issue-body prose in an issue opened by the invoking user — interpretation para
 
 ### 8. `in-place-correction`
 
-**Definition**: Replace content that the user has confirmed to be wrong, in place, so that later readers — humans and AI sessions that re-read the issue as memory — stop inheriting the error (#351). Applies only to the invoking user's own content — issue bodies and comments whose author is the invoking user's own `gh` login (org maintainers show as `MEMBER`; the repository OWNER's content counts only when the OWNER runs it — user decision 2026-10-17) — including published comments that are otherwise `append-only`. A bot's comment is not included: it is a third party's words, answered with an errata comment (verify #351 round 2).
+**Definition**: Replace content found to be wrong — by the user, or by the AI in a discussion of the issue or in a skill that detects a published error (#424) — in place, so that later readers — humans and AI sessions that re-read the issue as memory — stop inheriting the error (#351). Applies only to the invoking user's own content — issue bodies and comments whose author is the invoking user's own `gh` login (org maintainers show as `MEMBER`; the repository OWNER's content counts only when the OWNER runs it — user decision 2026-10-17) — including published comments that are otherwise `append-only`. A bot's comment is not included: it is a third party's words, answered with an errata comment (verify #351 round 2).
 
-**Scope boundary**: One bounded region — a whole comment (`--scope whole-comment`) or one named section (`--section <heading>`; the only form allowed for an issue body). Known limitation (user decision 2026-10-17): text that belongs to no heading — below an issue body's last `---`, such as the IC_R011 `**Source**` footnote, or before its first heading — cannot be reached; an error there is answered with `/idd-comment --type correction`. The action SHALL (a) show the original and the replacement and get explicit confirmation, (b) archive the prior full text under `.claude/.idd/archive/edits/` of the main worktree (not a linked worktree, so the archive outlives worktree cleanup) before writing — the archive is never tracked by git and Claude's tools are denied access to it — (c) end the replaced region with a marker that carries the backup id and no path, and (d) refuse `verbatim-preserve` content and the regions owned by other skills (`## Current Status` → `idd-update`, `### Clarity Surface` → `idd-clarify`). `/idd-edit --correct` is the only action declared in this category; other skills reach it by proposing the command.
+**Scope boundary**: One bounded region — a whole comment (`--scope whole-comment`) or one named section (`--section <heading>`; the only form allowed for an issue body). Known limitation (user decision 2026-10-17): text that belongs to no heading — below an issue body's last `---`, such as the IC_R011 `**Source**` footnote, or before its first heading — cannot be reached; an error there is answered with `/idd-comment --type correction`. The action SHALL (a) show the diff and the full replacement in the conversation and then apply without asking for confirmation (#424 D1; a privacy hit at `enforce` or a declined #272 question discards it instead), (b) archive the prior full text under `.claude/.idd/archive/edits/` of the main worktree (not a linked worktree, so the archive outlives worktree cleanup) before writing — the archive is never tracked by git and Claude's tools are denied access to it — (c) end the replaced region with a marker that carries the backup id and no path, and (d) refuse `verbatim-preserve` content and the regions owned by other skills (`## Current Status` → `idd-update`, `### Clarity Surface` → `idd-clarify`). `/idd-edit --correct` is the only action declared in this category; other skills reach it by invoking the command and reporting the result under `### Applied Corrections` (#424 D4).
 
 **Examples**:
 - `/idd-edit comment:<id> --correct --section "### Strategy"` replaces a Diagnosis strategy that named the wrong backup location
 - `/idd-edit issue:<N> --correct --section "## Expected"` replaces an Expected paragraph that misread the request, keeping the `Original text` quotation above it untouched
 - `/idd-comment --type errata --target-comment <id>` on the invoking user's own comment delegates to `/idd-edit --correct` instead of appending an errata comment
+
+### Discussion write-back (#424)
+
+[`issue-write-back.md`](issue-write-back.md) routes each change raised while an issue is discussed to one place; each place maps to one category of this rule:
+
+| Change | Written with | Category |
+|---|---|---|
+| The problem (question, scope, `## Expected`) | `/idd-edit issue:<N> --correct --section <heading>` | `in-place-correction` |
+| The diagnosis (root cause, strategy, routing), and the affected Implementation Plan sections | `/idd-edit comment:<id> --correct --section <heading>` | `in-place-correction` |
+| One line on each existing verify report after the diagnosis is corrected | `/idd-edit comment:<id> --prepend-note` | `audit-block-append` |
+| New information, a decision, the course of the discussion | `/idd-comment #N --type <decision\|note\|question\|link>` | `append-only` (a new comment) |
+
+Someone else's content is never rewritten: their comment gets `/idd-comment --type errata`, their issue body `/idd-comment --type correction`, both new comments.
 
 ## Decision tree for classifying new modify-actions
 
@@ -147,7 +160,7 @@ Is the target verbatim-preserve content (an Original-text / **Original** / **Poi
 or a comment or issue body authored by someone other than the OWNER, a bot, or the invoking user)?
 ├─ Yes → REFUSE the action entirely (this zone is verbatim-preserve)
 │
-Is the action replacing content the user has confirmed to be wrong?
+Is the action replacing content found to be wrong (a discussion write-back of a problem or diagnosis change counts)?
 ├─ Yes → category: in-place-correction (only via /idd-edit --correct; your own content only —
 │          anyone else's, the OWNER's and a bot's included, gets an errata comment instead)
 │

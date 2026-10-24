@@ -206,11 +206,16 @@ assert_grep "the errata pointer is limited to the exit-4 row" "只有上表 exit
 refute_grep "no pointer on an OWNER's or a bot's comment" "原 comment 若是 OWNER、你自己或 bot 寫的" "$ERRATA"
 assert_output_grep "idd-comment tracks the pointer step" 'TaskCreate(name="errata_pointer"' "$SKILLS/idd-comment/SKILL.md"
 
+# #424 D4: detecting skills apply the correction and report it, attended and
+# unattended alike — the propose-only wording must not come back
 for s in idd-verify idd-diagnose idd-reorganize; do
   F="$SKILLS/$s/SKILL.md"
-  assert_output_grep "$s has a Proposed Corrections block" "### Proposed Corrections" "$F"
-  assert_output_grep "$s proposes /idd-edit --correct" "--correct" "$F"
-  assert_output_grep "$s lists only, under unattended (只列不做)" "只列不做" "$F"
+  assert_output_grep "$s has an Applied Corrections block" "### Applied Corrections" "$F"
+  assert_output_grep "$s applies /idd-edit --correct" "--correct" "$F"
+  assert_output_grep "$s decides own content with the strict author check" "false --correct" "$F"
+  assert_output_grep "$s tracks the apply step" 'TaskCreate(name="apply_corrections"' "$F"
+  refute_output_grep "$s no longer has a Proposed Corrections block" "### Proposed Corrections" "$F"
+  refute_output_grep "$s no longer lists only under unattended" "只列不做" "$F"
   refute_output_grep "$s never calls the archive subcommand" "idd-edit-helper.py\" archive" "$F"
 done
 

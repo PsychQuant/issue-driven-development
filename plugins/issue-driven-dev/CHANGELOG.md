@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.7.0] - 2026-11-03
+
+### Added
+
+- **Living-issue write-back (#424)** — `rules/issue-write-back.md`. While an issue is discussed, each change is
+  written back to the place that owns it, so the issue body and the Diagnosis stay current instead of stopping at
+  their first version. Three kinds, a closed list: the problem (question, scope, `## Expected`) goes to the issue
+  body section with `/idd-edit issue:<N> --correct --section`; the diagnosis (root cause, strategy, routing) goes
+  to the Diagnosis comment section with `/idd-edit comment:<id> --correct --section`; new information, a decision,
+  or the course of the discussion goes to a new `/idd-comment`. The AI decides the kind, writes without asking,
+  and reports each write-back (kind, target, link, backup id). Only the invoking user's own content is rewritten,
+  decided by the strict author check (`validate-target <id> <repo> false --correct`); someone else's comment gets
+  `/idd-comment --type errata`, someone else's issue body `--type correction`. The privacy review runs before
+  every write-back. Triggers, a closed list: a session discussion, and a comment by anyone, seen the next time
+  the issue is read. A corrected diagnosis also corrects the affected Implementation Plan sections and prepends
+  one line to each existing verify report; the findings of a verify report are not rewritten.
+- SessionStart hook: a fifth line carries the write-back rule; the title becomes 「IDD 紀律」. The output stays at
+  five lines (drift guard unchanged).
+
+### Changed
+
+- **BREAKING** `/idd-edit --correct` no longer asks for confirmation. It shows the diff and the full preview,
+  then applies; a privacy hit at `enforce`, or a declined #272 question, discards the target instead (exit 9).
+  The author gate, protected regions, egress check, archive, and re-read before apply are unchanged.
+  `--prepend-note` skips the confirmation only when its target passes the strict author check; `--append` and
+  `--replace` still ask (default NO).
+- **BREAKING** `idd-verify` (Step 3.5), `idd-diagnose` (Step 3.8) and `idd-reorganize` (Step 3.5) apply the
+  corrections they find instead of proposing them, attended and unattended alike, and report them under
+  `### Applied Corrections` (target, section, what was wrong, backup id / comment link / refusal reason). The
+  task `propose_corrections` is renamed `apply_corrections`.
+- `idd-diagnose` Stage 1: adjusting a diagnosis rewrites the affected Diagnosis section with
+  `/idd-edit --correct` instead of appending a correction comment.
+- `rules/append-vs-modify.md`: `in-place-correction` no longer requires an explicit confirmation; a new
+  "Discussion write-back" table maps each write-back to its category. `idd-comment --type errata` wording follows.
+
 ## [3.6.0] - 2026-11-03
 
 ### Fixed

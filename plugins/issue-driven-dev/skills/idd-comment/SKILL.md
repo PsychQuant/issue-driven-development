@@ -347,7 +347,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" validate-target '<TAR
 | 4 | 其他人，OWNER（由別人執行時）與 bot 也是 —— 別人的話是第三方原話（bot：#351 verify 第 2 輪；OWNER：2026-10-17 使用者決定） | 只貼 errata（下方「其他作者」） |
 | 其他（1 = 查不到目前的 gh 使用者、2 = 參數錯） | 無法判定 | 把 stderr 的原因告訴使用者，改貼 errata、不改原文：不猜是不是你的，但錯誤至少有一則指向正確內容的更正（#351 verify 第 4 輪） |
 
-**你自己（目前登入的 gh 使用者） → 就地更正**（OWNER 不是你時，OWNER 寫的 comment 算其他作者；bot 也是；都走另貼 errata）：不 post 任何 comment（跳過 Step 2.5–4），委派 idd-edit；修改本身、預覽、確認（預設 NO）、歸檔舊版都由它執行。更正內容只取自 `--correction-file`；沒給就用 AskUserQuestion 要檔案路徑，**不得**拿 `--body` 當替換內容：
+**你自己（目前登入的 gh 使用者） → 就地更正**（OWNER 不是你時，OWNER 寫的 comment 算其他作者；bot 也是；都走另貼 errata）：不 post 任何 comment（跳過 Step 2.5–4），委派 idd-edit；修改本身、預覽與回報（`--correct` 不問，#424）、歸檔舊版都由它執行。更正內容只取自 `--correction-file`；沒給就用 AskUserQuestion 要檔案路徑，**不得**拿 `--body` 當替換內容：
 
 ```
 IDD_CALLER=idd-comment-errata \
@@ -362,7 +362,7 @@ IDD_CALLER=idd-comment-errata \
 | idd-edit 結束碼 | 意思 | 本 skill 接著做 |
 |---|---|---|
 | 0 | 已就地更正 | 回報「已更正」與 backup id，不貼任何 comment |
-| 9 | 使用者在預覽時拒絕，或預覽後沒有寫入（沒有完成 apply，也沒有 discard） | 照 idd-edit 的 report 回報（拒絕或沒有寫入），不貼、不改 |
+| 9 | 預覽後被捨棄（隱私自審或 #272 那一題擋下），或預覽後沒有寫入（沒有完成 apply，也沒有 discard） | 照 idd-edit 的 report 回報（擋下或沒有寫入），不貼、不改 |
 | 7 | 已寫入，但讀回失敗或內容不符 | 回報「已寫入但無法確認，請手動檢查該 comment」，**不貼 errata**（更正其實已經寫進去，貼「未成功」會留下一句錯的話） |
 | 4 | 更正被拒絕，或寫入失敗 | **改貼 errata**：照下方「其他作者」的路徑，以 `--correction-file` 的內容摘要寫成 errata 說明貼出，並在說明中註明「就地更正未成功：<idd-edit 的拒絕原因>」——錯的原文至少有一則指向正確內容的更正。**例外**：idd-edit 的 report 寫 `REFUSED(egress)` 時不摘要更正內容（那是 egress 擋下的文字，轉述等於繞過它），只說明「更正被 egress 擋下」並請使用者處理（#351 verify 第 7 輪） |
 | 2、3、5（或其他非 0） | 參數有誤，或 `--correction-file` 讀不到、被路徑閘門擋下 | **不貼、也不讀那個檔案**：回報參數錯誤，請使用者修正後重跑。被 #155 路徑閘門擋下的檔案，不能改由 Read 讀出、摘要後公開（#351 verify 第 6 輪） |
@@ -387,7 +387,7 @@ IDD_CALLER=idd-comment-errata \
   /idd-edit comment:{target-comment} --repo {GITHUB_REPO} --prepend-note --reason "此 comment 有誤，更正見 {errata comment URL}"
 ```
 
-這一步走 idd-edit 自己的預覽與確認；使用者拒絕或被擋下時只回報，不影響已貼出的 errata。其他作者（含 OWNER 與 bot）的 comment 不加：那是第三方原話（2026-10-17 使用者決定），也不提示 `--override-user-content`。
+這一步走 idd-edit 自己的預覽；目標是你自己的 comment，通過嚴格作者檢查就不問（#424 D1b），被擋下時只回報，不影響已貼出的 errata。其他作者（含 OWNER 與 bot）的 comment 不加：那是第三方原話（2026-10-17 使用者決定），也不提示 `--override-user-content`。
 
 #### Template: `reply`（v2.100.0+，#269 — human-facing 逐點回覆）
 

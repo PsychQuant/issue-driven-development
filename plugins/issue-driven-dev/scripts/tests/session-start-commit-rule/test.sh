@@ -93,4 +93,14 @@ assert_grep "rules file carries the adjacency verb (鄰接)" "鄰接" "$RULES"
 assert_grep_re "hook output names the #-digit object" '#<?數字>?' "$OUT"
 assert_grep_re "rules file names the #-digit object" '#<?數字>?' "$RULES"
 
+# --- write-back line (#424, spec issue-write-back) ----------------------------
+WB_RULES="$PLUGIN_ROOT/rules/issue-write-back.md"
+assert_grep "hook title covers more than commits (IDD 紀律)" "── IDD 紀律" "$OUT"
+for tok in "rules/issue-write-back.md" "--correct" "errata"; do
+  assert_grep "hook output contains write-back token: $tok" "$tok" "$OUT"
+done
+assert_grep "hook output says write-back does not ask first" "不先問" "$OUT"
+assert_file_exists "write-back rules file exists" "$WB_RULES"
+assert_grep "write-back rules file says it does not ask first" "不先問" "$(cat "$WB_RULES" 2>/dev/null || echo "")"
+
 print_summary "session-start-commit-rule"
