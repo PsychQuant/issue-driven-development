@@ -13,10 +13,16 @@
 #            the landing step, an unreadable object, a checked commit touching a
 #            path with a newline in its name); never clean, never a block
 #
-# Defenses no fixture pins (removing one still passes the suite): the
-# --literal-pathspecs and --full-tree flags, the break when a prefix's walk
-# errors, GIT_ATTR_NOSYSTEM, and the blank-line skip (removing that one only
-# adds false positives).
+# Defenses no fixture pins (removing one still passes the suite; only these):
+# the --literal-pathspecs and --full-tree flags, the break when a prefix's walk
+# errors, GIT_ATTR_NOSYSTEM, the walk's fallback for a CR or LF in a changed path,
+# the refusal of byte \001 in a candidate path, -c core.fsmonitor=false, the
+# scratch repo's --template=, --end-of-options on ref resolution, the `|| skip` on
+# CHERRY_DASH, the error on a deleted path missing from the path index (it cannot
+# happen while the index is built from the same listing), and the blank-line skips
+# for added and deleted lines (removing those only adds false positives). A failed
+# listing of a commit's deleted paths is pinned only through awk, which refuses the
+# missing file.
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -123,7 +129,7 @@ printf 'l1\nl2\n' > "$R/sp ace.txt"; git -C "$R" add -A && git -C "$R" commit -q
 assert_exit "fixture-7 spaced filename squash NOT flagged" 0 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
-# ── Fixtures 8–62 (#399): a squash keeps the branch's FINAL content, not each commit ──
+# ── Fixtures 8–75 (#399): a squash keeps the branch's FINAL content, not each commit ──
 # A line one branch commit adds and a later one rewrites exists in no final tree,
 # and main may edit the branch's lines after the squash (#408: a release date
 # changed by a follow-up commit). The gate answers "did the branch's content land":
@@ -846,10 +852,8 @@ printf 'a\nB\nc\n' > "$R/f55.txt"; git -C "$R" commit -qam "c1: b -> B"
 git -C "$R" rm -q f55.txt && git -C "$R" commit -qm "c2: drop f55 (never landed)"
 git -C "$R" checkout -q main; printf 'o\n' > "$R/o.txt"; git -C "$R" add o.txt && git -C "$R" commit -qm "unrelated main work"
 OUT55=$(out_of "$R" feat main); RC55=$?
-if [ "$CONTAINED_RC" = 0 ]; then
-  assert_exit "fixture-55 never-landed deletion-only branch -> flagged" 3 "$RC55"
-  assert_exit "fixture-55 lists the deleting commit" 0 "$(has "$OUT55" 'c2: drop f55')"
-fi
+assert_exit "fixture-55 never-landed deletion-only branch -> flagged" 3 "$RC55"
+assert_exit "fixture-55 lists the deleting commit" 0 "$(has "$OUT55" 'c2: drop f55')"
 rm -rf "$R"
 # 55b: the same with a line deletion: c1 adds a debug line, c2 removes it, c3
 # deletes dead(); nothing landed.
@@ -860,10 +864,9 @@ printf 'def live():\n  pass\ndef dead():\n  return 0\n' > "$R/m55.py"; git -C "$
 printf 'def live():\n  pass\n' > "$R/m55.py"; git -C "$R" commit -qam "c3: drop dead() (never landed)"
 git -C "$R" checkout -q main; printf 'o\n' > "$R/o.txt"; git -C "$R" add o.txt && git -C "$R" commit -qm "unrelated main work"
 OUT55=$(out_of "$R" feat main); RC55=$?
-if [ "$CONTAINED_RC" = 0 ]; then
-  assert_exit "fixture-55b never-landed line deletion -> flagged" 3 "$RC55"
-  assert_exit "fixture-55b lists the deleting commit" 0 "$(has "$OUT55" 'c3: drop dead()')"
-fi
+assert_exit "fixture-55b never-landed line deletion -> flagged" 3 "$RC55"
+assert_exit "fixture-55b lists the deleting commit" 0 "$(has "$OUT55" 'c3: drop dead()')"
+assert_exit "fixture-55b does not list the commit that removed the branch's own debug line" 1 "$(has "$OUT55" 'c2: no debug')"
 rm -rf "$R"
 # 56: A landed; the tail adds a debug line, removes it, and deletes legacy.py.
 R="$(mk_repo)"; printf 'old\n' > "$R/legacy.py"; git -C "$R" add -A && git -C "$R" commit -qm legacy
@@ -873,10 +876,8 @@ printf 'a = 1\nprint(1)\n' > "$R/a56.txt"; git -C "$R" commit -qam "B: debug"
 printf 'a = 1\n' > "$R/a56.txt"; git -C "$R" rm -q legacy.py; git -C "$R" add -A && git -C "$R" commit -qm "C: drop debug and legacy.py (never landed)"
 git -C "$R" checkout -q main; git -C "$R" checkout -q feat~2 -- a56.txt && git -C "$R" commit -qm "squash A"
 OUT56=$(out_of "$R" feat main); RC56=$?
-if [ "$CONTAINED_RC" = 0 ]; then
-  assert_exit "fixture-56 landed prefix + deletion-only tail -> flagged" 3 "$RC56"
-  assert_exit "fixture-56 lists the deleting commit" 0 "$(has "$OUT56" 'C: drop debug')"
-fi
+assert_exit "fixture-56 landed prefix + deletion-only tail -> flagged" 3 "$RC56"
+assert_exit "fixture-56 lists the deleting commit" 0 "$(has "$OUT56" 'C: drop debug')"
 rm -rf "$R"
 
 # ── Fixture 57: squash, revert, then a commit cherry-picked back ──
@@ -942,6 +943,148 @@ git -C "$R" checkout -q main
 OUT62=$(out_of "$R" feat main)
 assert_exit "fixture-62 no escaped apostrophe in the helper's text" 1 "$(printf '%s' "$OUT62" | grep -qF "\\'"; echo $?)"
 assert_exit "fixture-62 refs are double-quoted" 0 "$(has "$OUT62" 'Orphan commits on "feat" whose content did NOT land in "main"')"
+rm -rf "$R"
+
+# ── Fixtures 63–75: deletions are checked commit by commit, like added lines ──
+# 63: a deletion-only branch that never landed, with the merge-tree budget used up
+# by main commits touching the same file: the tip check still sees the deletion.
+R="$(mk_repo)"; printf 'h1\nh2\nh3\n' > "$R/a.py"; git -C "$R" add -A && git -C "$R" commit -qm "a.py"
+git -C "$R" checkout -q -b feat; printf 'h1\nh3\n' > "$R/a.py"; git -C "$R" commit -qam "drop h2 (never landed)"
+git -C "$R" checkout -q main; add_touching_commits "$R" 205
+assert_exit "fixture-63 deletion-only, budget used up -> flagged" 3 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 64: a squash whose conflict was resolved by hand, and the branch moved a line:
+# the moved line is still in the head, so its deletion says nothing.
+R="$(mk_repo)"; printf 'import a\nimport b\n' > "$R/imp.py"; printf 'k = 1\n' > "$R/conf.txt"
+git -C "$R" add -A && git -C "$R" commit -qm i64
+git -C "$R" checkout -q -b feat
+printf 'import b\nimport a\n' > "$R/imp.py"; git -C "$R" commit -qam "sort imports"
+printf 'k = 2\n' > "$R/conf.txt"; git -C "$R" commit -qam "k = 2"
+git -C "$R" checkout -q main; printf 'k = 9\n' > "$R/conf.txt"; git -C "$R" commit -qam "main: k = 9"
+printf 'import b\nimport a\n' > "$R/imp.py"; printf 'k = 2\nk9 = 9\n' > "$R/conf.txt"; git -C "$R" commit -qam "squash feat, conflict resolved by hand"
+assert_exit "fixture-64 hand-resolved squash + moved line -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 65: the same with a deleted function whose closing brace main also has elsewhere.
+R="$(mk_repo)"; printf 'int a() {\n  return 1;\n}\nint dead() {\n  return 0;\n}\n' > "$R/f65.c"
+git -C "$R" add -A && git -C "$R" commit -qm f65
+git -C "$R" checkout -q -b feat
+printf 'int a() {\n  return 1;\n}\n' > "$R/f65.c"; git -C "$R" commit -qam "drop dead()"
+printf 'g\n' > "$R/g65.txt"; git -C "$R" add -A && git -C "$R" commit -qm "add g65"
+git -C "$R" checkout -q main
+printf 'int a() {\n  return 1;\n}\nint dead() {\n  return 2;\n}\nint b() {\n  return 3;\n}\n' > "$R/f65.c"; git -C "$R" commit -qam "main: tweak dead(), add b()"
+printf 'int a() {\n  return 1;\n}\nint b() {\n  return 3;\n}\n' > "$R/f65.c"; printf 'g\n' > "$R/g65.txt"
+git -C "$R" add -A && git -C "$R" commit -qm "squash feat, conflict resolved by hand"
+assert_exit "fixture-65 hand-resolved squash, a shared closing brace -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+printf 'int c() {\n}\n' >> "$R/f65.c"; git -C "$R" commit -qam "main: add c() later"
+assert_exit "fixture-65b ...and main adds another closing brace later -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 66: the landed prefix deleted a line that main put back later (main's own history);
+# the commit after the prefix is in main and deletes nothing that is still there.
+# (c1 reached main as the same patch, so git cherry does not make it a candidate.)
+R="$(mk_repo)"; printf 'import os\nx = 1\n' > "$R/m66.py"; printf '1\n' > "$R/v66.txt"
+git -C "$R" add -A && git -C "$R" commit -qm m66
+git -C "$R" checkout -q -b feat
+printf 'x = 1\n' > "$R/m66.py"; git -C "$R" commit -qam "c1: drop import os"
+printf '2\n' > "$R/v66.txt"; git -C "$R" commit -qam "c2: bump version"
+git -C "$R" checkout -q main; git -C "$R" checkout -q feat~1 -- m66.py && git -C "$R" commit -qm "squash c1"
+printf '2\nbuild 7\n' > "$R/v66.txt"; git -C "$R" commit -qam "main: bump version by hand"
+printf 'import os\nx = 1\n' > "$R/m66.py"; git -C "$R" commit -qam "main: import os again"
+assert_exit "fixture-66 deletion undone by main after the prefix landed -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 67: A landed; a pure deletion B and an added file C were both dropped.
+R="$(mk_repo)"; printf 'old\n' > "$R/lg67.txt"; git -C "$R" add -A && git -C "$R" commit -qm lg67
+git -C "$R" checkout -q -b feat
+printf 'a\n' > "$R/a67.txt"; git -C "$R" add -A && git -C "$R" commit -qm "A: a67"
+git -C "$R" rm -q lg67.txt && git -C "$R" commit -qm "B: drop lg67 (never landed)"
+printf 'c\n' > "$R/c67.txt"; git -C "$R" add -A && git -C "$R" commit -qm "C: c67 (never landed)"
+git -C "$R" checkout -q main; git -C "$R" checkout -q feat~2 -- a67.txt && git -C "$R" commit -qm "squash A"
+OUT67=$(out_of "$R" feat main); RC67=$?
+assert_exit "fixture-67 dropped deletion next to a dropped addition -> flagged" 3 "$RC67"
+assert_exit "fixture-67 lists the deletion" 0 "$(has "$OUT67" 'B: drop lg67')"
+assert_exit "fixture-67 lists the addition" 0 "$(has "$OUT67" 'C: c67')"
+rm -rf "$R"
+
+# 68: a submodule removal that never landed.
+R="$(mk_repo)"; mk_gitlink "$R" "$G1" "sub at 1"
+git -C "$R" checkout -q -b feat; git -C "$R" rm -q --cached sub && git -C "$R" commit -qm "drop sub (never landed)"
+git -C "$R" checkout -q main; printf 'o\n' > "$R/o.txt"; git -C "$R" add o.txt && git -C "$R" commit -qm "unrelated main work"
+assert_exit "fixture-68 dropped submodule removal -> flagged" 3 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 69: a failing count of the bytes in a commit's path list is an error, not "none".
+R="$(mk_repo)"; git -C "$R" checkout -q -b feat; printf 'y\n' > "$R/y69.txt"; git -C "$R" add -A && git -C "$R" commit -qm "y69 (never landed)"
+git -C "$R" checkout -q main
+W69="$(mktemp -d)"; TR69="$(command -v tr)"
+printf '#!/bin/sh\n[ "$1" = -cd ] && case "$2" in *001*) exit 1 ;; esac\nexec "%s" "$@"\n' "$TR69" > "$W69/tr"; chmod +x "$W69/tr"
+assert_exit "fixture-69 failing newline count -> skip, not a verdict" 4 "$(PATH="$W69:$PATH" run_helper "$R" feat main)"
+rm -rf "$R" "$W69"
+
+# 70: subjects with other invisible characters (CGJ, interlinear annotation, an
+# Arabic number sign, a Mongolian variation selector, a musical format control).
+R="$(mk_repo)"; git -C "$R" checkout -q -b feat; printf 'x\n' > "$R/x70.txt"; git -C "$R" add -A && git -C "$R" commit -qm tmp
+T70=$(git -C "$R" rev-parse 'HEAD^{tree}'); P70=$(git -C "$R" rev-parse HEAD~1)
+C70=$( { printf 'tree %s\nparent %s\nauthor t <t@t.t> 1700000000 +0000\ncommitter t <t@t.t> 1700000000 +0000\n\n' "$T70" "$P70"
+         printf 'a\315\217b\357\277\271c\330\200d\341\240\213e\360\235\205\263f\n'; } | git -C "$R" hash-object -t commit -w --stdin)
+git -C "$R" update-ref refs/heads/feat "$C70"; git -C "$R" checkout -q main
+OUT70=$(out_of "$R" feat main)
+assert_exit "fixture-70 the subject is printed with each mark replaced" 0 "$(has "$OUT70" '"a?b?c?d?e?f"')"
+rm -rf "$R"
+
+# 70b: $ and ` in a subject are escaped too, so the quoted text is a safe shell word.
+R="$(mk_repo)"; git -C "$R" checkout -q -b feat; printf 'z\n' > "$R/z70.txt"; git -C "$R" add -A
+git -C "$R" commit -qm 'x $(touch y) `z` (never landed)'; git -C "$R" checkout -q main
+OUT70=$(out_of "$R" feat main)
+assert_exit "fixture-70b \$ and backtick are escaped" 0 "$(has "$OUT70" '"x \$(touch y) \`z\` (never landed)"')"
+rm -rf "$R"
+
+# 71: a rename that never landed: the old path is still in the target and the head
+# no longer has it. 71b: the same rename squashed into main.
+R="$(mk_repo)"; printf 'alpha\nbeta\n' > "$R/r71.txt"; git -C "$R" add -A && git -C "$R" commit -qm r71
+git -C "$R" checkout -q -b feat; git -C "$R" mv r71.txt s71.txt && git -C "$R" commit -qm "rename r71 (never landed)"
+git -C "$R" checkout -q main; printf 'o\n' > "$R/o.txt"; git -C "$R" add o.txt && git -C "$R" commit -qm "unrelated main work"
+assert_exit "fixture-71 dropped rename -> flagged" 3 "$(run_helper "$R" feat main)"
+squash_feat "$R"
+assert_exit "fixture-71b landed rename -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 72: deleting an empty file, and a file of blank lines, that never landed.
+R="$(mk_repo)"; : > "$R/e72.txt"; printf '\n\n' > "$R/w72.txt"; git -C "$R" add -A && git -C "$R" commit -qm e72
+git -C "$R" checkout -q -b feat; git -C "$R" rm -q e72.txt w72.txt && git -C "$R" commit -qm "drop e72, w72 (never landed)"
+git -C "$R" checkout -q main
+assert_exit "fixture-72 dropped deletion of files with no lines -> flagged" 3 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 73: a branch that only deletes, squashed into main: nothing to list.
+R="$(mk_repo)"; printf 'keep\ndrop me\n' > "$R/k73.txt"; printf 'gone\n' > "$R/g73.txt"; git -C "$R" add -A && git -C "$R" commit -qm k73
+git -C "$R" checkout -q -b feat; printf 'keep\n' > "$R/k73.txt"; git -C "$R" rm -q g73.txt; git -C "$R" add -A && git -C "$R" commit -qm "drop lines and g73"
+squash_feat "$R"
+assert_exit "fixture-73 landed deletion-only branch -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 74: in a partial clone a missing blob is not fetched into the user's repository;
+# the helper says it could not verify (git >= 2.44 honours GIT_NO_LAZY_FETCH).
+if git --no-lazy-fetch version >/dev/null 2>&1; then
+  R="$(mk_repo)"; git -C "$R" config uploadpack.allowFilter true
+  git -C "$R" checkout -q -b feat; printf 'y\n' > "$R/y74.txt"; git -C "$R" add -A && git -C "$R" commit -qm "y74 (never landed)"
+  git -C "$R" checkout -q main
+  W74="$(mktemp -d)"; git clone -q --filter=blob:none --no-checkout "file://$R" "$W74/c" 2>/dev/null
+  P74=$(ls "$W74/c/.git/objects/pack" | wc -l)
+  assert_exit "fixture-74 partial clone -> skip, nothing fetched" 4 "$(run_helper "$W74/c" origin/feat origin/main)"
+  assert_exit "fixture-74 no pack was added" 0 "$([ "$(ls "$W74/c/.git/objects/pack" | wc -l)" = "$P74" ]; echo $?)"
+  rm -rf "$R" "$W74"
+fi
+
+# 75: a path the branch deleted and later re-created is in the head, so its
+# deletion says nothing once the branch landed.
+R="$(mk_repo)"; printf 'v1\n' > "$R/p75.txt"; git -C "$R" add -A && git -C "$R" commit -qm p75
+git -C "$R" checkout -q -b feat; git -C "$R" rm -q p75.txt && git -C "$R" commit -qm "drop p75"
+printf 'v2\n' > "$R/p75.txt"; git -C "$R" add -A && git -C "$R" commit -qm "p75 again"
+squash_feat "$R"
+assert_exit "fixture-75 deleted then re-created path, squashed -> NOT flagged" 0 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 print_summary
