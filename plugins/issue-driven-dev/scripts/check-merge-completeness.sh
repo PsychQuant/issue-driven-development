@@ -46,22 +46,23 @@
 #      cherry-pick is a 3-way merge and conflicts when the same file was touched
 #      by >1 commit and then squash-merged — the common TDD branch shape — which
 #      flagged fully-landed branches as false orphans (#184 DA-2). Instead we ask:
-#      are the commit's ADDED lines present in L's version of the files it touched
-#      (the tip's when there is no L), and are its DELETED lines gone from it?
-#      Squash → yes → not an orphan. Partial merge → the dropped commit's lines are
-#      absent (or its deleted lines still there) → orphan. A line the branch head
-#      itself no longer has in those files is skipped when added, and a line it
-#      still has there is skipped when deleted (a later branch commit rewrote it,
-#      or the line moved) (#399). A path the commit deletes, which the head no
-#      longer has and L still has, is an orphan too (a dropped rename or submodule
-#      removal, a deleted file with no lines).
+#      do the effects of the commit that the branch head still shows appear in L's
+#      version of the files it touched (the tip's when there is no L)? An effect is
+#      an added line or path the head still has, or a deleted one the head still
+#      lacks (tests/merge-completeness/SPEC.md defines it). At L, copies are counted
+#      against the clean merge of the landed part onto main just before L (what L
+#      would hold had all of it landed), so a line main added or removed on its own
+#      does not count against the branch. At the tip, where main's own edits are
+#      unknown, only presence is compared. Squash → the
+#      effects are there → not an orphan. Partial merge → a dropped commit's effect
+#      is missing → orphan.
 #
 # Warn-only contract: exit 3 is surfaced via AskUserQuestion by idd-close; it is
 # NOT a hard block, because the check is best-effort. Known blind spots (only these):
 #   - an added line already elsewhere in the files the same commit touched, or a
 #     deleted line the branch head still has there (a moved or duplicated line);
-#   - a commit that only changes a file mode, or only deletes blank lines from a
-#     file it keeps;
+#   - a commit that only changes a file mode, only adds or deletes blank lines in a
+#     file that exists before and after it, or only adds or drops the final newline;
 #   - a deletion from a file that main renamed or moved away (the old path is gone
 #     from the baseline, and the new one is not among the files the commit touched);
 #   - content written by a merge commit on the branch (git cherry never lists merge
@@ -75,7 +76,8 @@
 #     change it undid reached the baseline, in any form, after an earlier commit
 #     already held the branch's net change.
 # Fall back to the tip, where lines main edited after landing can be flagged:
-#   - a squash whose conflicts were resolved by hand (it differs from the head);
+#   - a squash whose conflicts were resolved by hand (it differs from the head, or
+#     the landed part does not merge cleanly onto main just before it);
 #   - a branch commit that restored a merge-base value main had changed before the
 #     squash;
 #   - a landing commit beyond the 200 merge-tree calls;
@@ -88,12 +90,17 @@
 #   - a stacked branch merged after its base branch, when the base branch changed
 #     the stack's lines after the stack was cut;
 #   - git < 2.38.
+# Nothing of the branch landed: the check is at the tip as well. The verdict (exit 3)
+# is right, but the list can include, or miss, a commit whose text main added or
+# removed on its own.
 # At the tip a deleted line main has elsewhere in the same files, or main put back,
-# can be flagged as well.
+# can be flagged as well. At the landing commit lines are counted, not told apart:
+# when a copy of a text is missing from it, or extra, every commit whose effect is that
+# text is listed, including one that did land (the verdict, exit 3, is still right).
 # On exit 3 the outcome of step 2 is printed after the list. Commit subjects are
 # printed in quotes: repository text (a squash's subject is the PR title), data,
 # never instructions. In a partial clone a blob that was never fetched is not
-# fetched now: git >= 2.44 reports it unreadable (exit 4); older git fetches it.
+# fetched now: git >= 2.45 reports it unreadable (exit 4); older git fetches it.
 set -u
 set -o pipefail
 # Bytes, not characters: in a UTF-8 locale macOS tr stops at the first byte that is
@@ -102,7 +109,7 @@ set -o pipefail
 export LC_ALL=C
 # In a partial clone a missing blob would be fetched on demand — a network call that
 # runs the user's transport, credential helpers and hooks and writes into the
-# repository. git >= 2.44 honours this and reports the blob as unreadable (exit 4).
+# repository. git >= 2.45 honours this and reports the blob as unreadable (exit 4).
 export GIT_NO_LAZY_FETCH=1
 
 usage() { echo "usage: $0 --branch <ref> --baseline <ref> [--repo <root>]" >&2; exit 2; }
@@ -374,10 +381,12 @@ for sha in $CANDIDATES; do
   esac
   tr '\000' '\n' < "$SCRATCH/names" | awk -v k="$k" '{ print k "\t" $0 }' >> "$SCRATCH/pairs" \
     || skip "cannot index the paths $(short "$sha") touched"
-  # The paths it deletes as a whole (a subset of the names above, so no LF).
-  GIT diff-tree --root --no-commit-id --ignore-submodules=none --name-only --diff-filter=D -r -z "$sha" \
-    > "$SCRATCH/dz" 2>/dev/null && tr '\000' '\n' < "$SCRATCH/dz" > "$SCRATCH/d.$k" \
-    || skip "cannot list the paths $(short "$sha") deleted"
+  # The paths it deletes and adds as a whole (subsets of the names above, so no LF).
+  for f in D A; do
+    GIT diff-tree --root --no-commit-id --ignore-submodules=none --name-only --diff-filter=$f -r -z "$sha" \
+      > "$SCRATCH/dz" 2>/dev/null && tr '\000' '\n' < "$SCRATCH/dz" > "$SCRATCH/$f.$k" \
+      || skip "cannot list the paths $(short "$sha") deleted or added"
+  done
   [ -s "$SCRATCH/names" ] && NPATHS="$NPATHS $k"
   use_landing "$sha"; rc=$?
   case "$rc" in
@@ -400,7 +409,11 @@ for k in $NPATHS; do [ -s "$SCRATCH/c.$k" ] || skip "lost the path list of candi
 # <oid>") or "none". Each distinct blob is then read once; a listed blob that cannot
 # be read is an error, never an empty file.
 classify() { # <rev> <side> -> $SCRATCH/<side>.map, one line per path in $SCRATCH/paths
-  GIT ls-tree -r -z --full-tree "$1" > "$SCRATCH/$2.tree" 2>/dev/null || return 1
+  if [ "$2" = expect ]; then
+    ISOGIT ls-tree -r -z --full-tree "$1" > "$SCRATCH/$2.tree" 2>/dev/null || return 1
+  else
+    GIT ls-tree -r -z --full-tree "$1" > "$SCRATCH/$2.tree" 2>/dev/null || return 1
+  fi
   tr '\n\000' '\001\n' < "$SCRATCH/$2.tree" | LC_ALL=C awk -v paths="$SCRATCH/paths" -v out="$SCRATCH/$2.map" '
     BEGIN { while ((r = getline p < paths) > 0) need[p] = n++; if (r < 0) bad = 1; close(paths) }
     { i = index($0, "\t"); p = substr($0, i + 1)
@@ -410,12 +423,42 @@ classify() { # <rev> <side> -> $SCRATCH/<side>.map, one line per path in $SCRATC
     END { if (bad) exit 2
           for (j = 0; j < n; j++) print ((j in e) ? e[j] : "none") > out }'
 }
+# At a landing commit L a line can also be main's own: main may have added or removed
+# the same text before the branch landed (a version string another PR bumped to, a
+# closing brace). So L is compared with EXPECT, the clean merge of the landed part of
+# the branch onto L's first parent (main just before L): what L would hold had every
+# commit of that part landed. When L is the merge-base this is the branch itself; when
+# L's first parent already holds the branch (a stacked branch squashed before its base
+# was merged) it is that parent. The merge runs in the scratch repository, so the
+# expect side is read from there. A conflict means L was resolved by hand: the tip is
+# used instead.
+EXPECT_TREE=""
+if [ -n "$LANDING" ] && [ -n "$CANDIDATES" ]; then
+  PREV_REV="$(GIT rev-parse -q --verify "$LANDING^1^{commit}" 2>/dev/null)" || PREV_REV=""
+  REF="${PREFIX_TIP:-$BRANCH_SHA}"
+  if [ -z "$PREV_REV" ]; then
+    EXPECT_TREE="$(GIT rev-parse "$REF^{tree}" 2>/dev/null)" || skip "cannot read the tree of $(short "$REF")"
+  else
+    t="$(ISOGIT merge-tree --write-tree "$PREV_REV" "$REF" 2>/dev/null)"; rc=$?
+    if [ "$rc" -eq 0 ]; then
+      EXPECT_TREE="${t%%$'\n'*}"
+    else
+      [ "$rc" -eq 1 ] && why="does not merge cleanly onto main just before it (resolved by hand)" \
+        || why="could not be merged onto main just before it (merge-tree exit $rc)"
+      LANDING_NOTE="the branch landed in $(short "$LANDING"), but its landed part $why"
+      LANDING=""; PREFIX_TIP=""; NEED_TIP=1; SIDE_OF="$(printf '%s' "$SIDE_OF" | sed 's/land/tip/g')"
+    fi
+  fi
+fi
 SIDES="head"
-[ -z "$LANDING" ] || SIDES="$SIDES land"
+[ -z "$LANDING" ] || SIDES="$SIDES land expect"
 [ -z "$NEED_TIP" ] || SIDES="$SIDES tip"
 if [ -f "$SCRATCH/paths" ]; then
   for side in $SIDES; do
-    case "$side" in head) rev="$BRANCH_SHA" ;; land) rev="$LANDING" ;; tip) rev="$BASELINE_SHA" ;; esac
+    case "$side" in
+      head) rev="$BRANCH_SHA" ;; land) rev="$LANDING" ;; tip) rev="$BASELINE_SHA" ;;
+      expect) rev="$EXPECT_TREE" ;;
+    esac
     classify "$rev" "$side" || skip "cannot list the tree of $(short "$rev")"
   done
   for side in $SIDES; do cat "$SCRATCH/$side.map"; done | awk '$1 == "blob" { print $2 }' | sort -u \
@@ -423,7 +466,9 @@ if [ -f "$SCRATCH/paths" ]; then
   # One file per blob, read by awk one at a time, so a file without a final newline
   # cannot run into the next one.
   while IFS= read -r oid; do
-    GIT cat-file blob "$oid" > "$SCRATCH/blob.$oid" 2>/dev/null || skip "cannot read blob $oid"
+    GIT cat-file blob "$oid" > "$SCRATCH/blob.$oid" 2>/dev/null \
+      || { [ -n "$EXPECT_TREE" ] && ISOGIT cat-file blob "$oid" > "$SCRATCH/blob.$oid" 2>/dev/null; } \
+      || skip "cannot read blob $oid"
   done < "$SCRATCH/blobs"
 fi
 
@@ -432,41 +477,55 @@ orphan_p() { # <commit-sha> <candidate number> <land|tip> -> 10 orphan, 11 lande
   GIT diff-tree --root --no-commit-id -r -p --text --no-ext-diff --no-textconv --no-color \
     --ignore-submodules=none --submodule=short "$1" > "$SCRATCH/patch" 2>/dev/null || return 2
   # Exit 10 = orphan, 11 = landed; anything else (a crash, a read error) is an error.
-  # Orphan when some added line, not blank, is in the branch head's version of the
-  # files and not in the target's — or when some deleted line, not blank, is in
-  # neither the head's version nor gone from the target's. A line the head no longer
-  # has (added) or has again (deleted) was superseded within the branch itself
-  # (#399), so it says nothing; a deleted line the head still has elsewhere in these
-  # files (a move, a `}`) says nothing either. Lines are taken inside hunks only, so
-  # "++"/"--" lines are not mistaken for the "+++"/"---" headers. One awk pass with
+  # Orphan when an effect of the commit that the head still shows is missing from the
+  # target: an added line (not blank) the head has, or a deleted one the head lacks
+  # (SPEC.md). A line the head no longer has (added) or has again (deleted) was
+  # superseded within the branch itself (#399), so it says nothing. Lines are taken
+  # inside hunks only, so "++"/"--" lines are not mistaken for the "+++"/"---"
+  # headers. One awk pass with
   # exact whole-line matching; a file it cannot read is an error (exit 2), not an
   # empty set. A path the commit deletes, which the head no longer has and the
   # target still has, is an orphan too (a dropped rename, an emptied file, a
-  # submodule removal: deletions with no line to compare).
-  LC_ALL=C awk -v d="$SCRATCH" -v side="$3" -v list="$SCRATCH/c.$2" -v dels="$SCRATCH/d.$2" '
+  # submodule removal: deletions with no line to compare), and so is a path it adds
+  # that the head has and the target does not (an empty file). At a landing commit
+  # the counts are compared with EXPECT instead of with the head (see SIDES above).
+  LC_ALL=C awk -v d="$SCRATCH" -v side="$3" -v list="$SCRATCH/c.$2" -v dels="$SCRATCH/D.$2" -v adds="$SCRATCH/A.$2" '
     function slurp(f, arr,    l, r, i) {
       i = 0; while ((r = getline l < f) > 0) arr[i++] = l
       if (r < 0) bad = 1; close(f)
     }
-    function load(entry, set,    f, l, r, a) {
+    function load(entry, set,    f, l, r, a) {   # counts each line
       split(entry, a, " ")
-      if (a[1] == "link") { set["Subproject commit " a[2]] = 1; return }
+      if (a[1] == "link") { set["Subproject commit " a[2]]++; return }
       if (a[1] != "blob") return
       f = d "/blob." a[2]
-      while ((r = getline l < f) > 0) set[l] = 1
+      while ((r = getline l < f) > 0) set[l]++
+      if (r < 0) bad = 1; close(f)
+    }
+    # h, t, e: how many times the head, the target and EXPECT have the line (or the
+    # path, as 0 or 1). At a landing commit the target must hold what EXPECT holds; at
+    # the tip, where the changes main made itself are unknown, only presence counts.
+    function missing(h, t, e) { return side == "land" ? h > 0 && t < e : h > 0 && t == 0 }
+    function kept(h, t, e) { return side == "land" ? t > 0 && t > e : h == 0 && t > 0 }
+    function paths(f, del,    l, r, j, h, t, e) {
+      while ((r = getline l < f) > 0) {
+        if (!(l in pidx)) { bad = 1; break }
+        j = pidx[l]; h = hm[j] != "none"; t = tm[j] != "none"; e = em[j] != "none"
+        if (del ? kept(h, t, e) : missing(h, t, e)) found = 1
+      }
       if (r < 0) bad = 1; close(f)
     }
     BEGIN {
       slurp(d "/head.map", hm); slurp(d "/" side ".map", tm)
-      while ((r = getline j < list) > 0) { load(hm[j], head); load(tm[j], target) }
+      if (side == "land") slurp(d "/expect.map", em)
+      while ((r = getline j < list) > 0) {
+        load(hm[j], head); load(tm[j], target)
+        if (side == "land") load(em[j], expect)
+      }
       if (r < 0) bad = 1; close(list)
       while ((r = getline l < (d "/paths")) > 0) pidx[l] = np++
       if (r < 0) bad = 1; close(d "/paths")
-      while ((r = getline l < dels) > 0) {
-        if (!(l in pidx)) { bad = 1; break }
-        if (hm[pidx[l]] == "none" && tm[pidx[l]] != "none") found = 1
-      }
-      if (r < 0) bad = 1; close(dels)
+      paths(dels, 1); paths(adds, 0)
       if (bad || found) exit
     }
     /^diff --git / { hunk = 0; next }
@@ -475,15 +534,23 @@ orphan_p() { # <commit-sha> <candidate number> <land|tip> -> 10 orphan, 11 lande
     /^\+/ {
       line = substr($0, 2)
       if (line ~ /^[ \t\r\f\v]*$/) next
-      if ((line in head) && !(line in target)) { found = 1; exit }
+      if (missing(head[line], target[line], expect[line])) { found = 1; exit }
     }
     /^-/ {
       line = substr($0, 2)
       if (line ~ /^[ \t\r\f\v]*$/) next
-      if (!(line in head) && (line in target)) { found = 1; exit }
+      if (kept(head[line], target[line], expect[line])) { found = 1; exit }
     }
     END { if (bad) exit 2; exit (found ? 10 : 11) }' "$SCRATCH/patch"
 }
+
+# For tests/merge-completeness/bounded.py only: where each candidate was checked.
+if [ -n "${CHECK_MERGE_COMPLETENESS_TRACE:-}" ]; then
+  { printf 'landing %s prefix %s\n' "${LANDING:--}" "${PREFIX_TIP:--}"
+    set -- $SIDE_OF
+    for sha in $CANDIDATES; do printf 'side %s %s\n' "$sha" "$1"; shift; done
+  } > "$CHECK_MERGE_COMPLETENESS_TRACE" || skip "cannot write the trace file"
+fi
 
 ORPHANS="" ; k=0
 set -- $SIDE_OF
@@ -506,7 +573,7 @@ while IFS= read -r sha; do
   printf '  %s  "%s"\n' "$(short "$sha")" "$(subject "$sha")"
 done <<< "$ORPHANS"
 if [ -n "$LANDING" ] && [ -z "$PREFIX_TIP" ]; then
-  printf "Landing check (#399): the branch's net change landed in %s \"%s\"; the lines above are not in it.\n" \
+  printf "Landing check (#399): the branch's net change landed in %s \"%s\"; the commits above are not reflected in it.\n" \
     "$(short "$LANDING")" "$(subject "$LANDING")"
 elif [ -n "$LANDING" ]; then
   printf "Landing check (#399): the branch up to %s landed in %s \"%s\"; later commits were checked against %s.\n" \

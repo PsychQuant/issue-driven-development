@@ -129,7 +129,7 @@ printf 'l1\nl2\n' > "$R/sp ace.txt"; git -C "$R" add -A && git -C "$R" commit -q
 assert_exit "fixture-7 spaced filename squash NOT flagged" 0 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
-# ── Fixtures 8–75 (#399): a squash keeps the branch's FINAL content, not each commit ──
+# ── Fixtures 8–88 (#399): a squash keeps the branch's FINAL content, not each commit ──
 # A line one branch commit adds and a later one rewrites exists in no final tree,
 # and main may edit the branch's lines after the squash (#408: a release date
 # changed by a follow-up commit). The gate answers "did the branch's content land":
@@ -1066,7 +1066,7 @@ assert_exit "fixture-73 landed deletion-only branch -> NOT flagged" 0 "$(run_hel
 rm -rf "$R"
 
 # 74: in a partial clone a missing blob is not fetched into the user's repository;
-# the helper says it could not verify (git >= 2.44 honours GIT_NO_LAZY_FETCH).
+# the helper says it could not verify (git >= 2.45 honours GIT_NO_LAZY_FETCH).
 if git --no-lazy-fetch version >/dev/null 2>&1; then
   R="$(mk_repo)"; git -C "$R" config uploadpack.allowFilter true
   git -C "$R" checkout -q -b feat; printf 'y\n' > "$R/y74.txt"; git -C "$R" add -A && git -C "$R" commit -qm "y74 (never landed)"
@@ -1085,6 +1085,198 @@ git -C "$R" checkout -q -b feat; git -C "$R" rm -q p75.txt && git -C "$R" commit
 printf 'v2\n' > "$R/p75.txt"; git -C "$R" add -A && git -C "$R" commit -qm "p75 again"
 squash_feat "$R"
 assert_exit "fixture-75 deleted then re-created path, squashed -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# ── Fixtures 76–80: at a landing commit, a deleted line can be main's own ──
+# 76: two plugins share a version string: another PR bumps y to 1.2.0 while the
+# branch moves x from 1.2.0 to 1.3.0; after the squash, "1.2.0" is y's line.
+R="$(mk_repo)"; printf '{\n  "x": {\n    "version": "1.2.0"\n  },\n  "y": {\n    "version": "1.1.0"\n  }\n}\n' > "$R/m76.json"
+git -C "$R" add -A && git -C "$R" commit -qm m76
+git -C "$R" checkout -q -b feat; printf 'fix\n' > "$R/x76.txt"; git -C "$R" add -A && git -C "$R" commit -qm "x: fix"
+printf '{\n  "x": {\n    "version": "1.3.0"\n  },\n  "y": {\n    "version": "1.1.0"\n  }\n}\n' > "$R/m76.json"; git -C "$R" commit -qam "release x 1.3.0"
+git -C "$R" checkout -q main
+printf '{\n  "x": {\n    "version": "1.2.0"\n  },\n  "y": {\n    "version": "1.2.0"\n  }\n}\n' > "$R/m76.json"; git -C "$R" commit -qam "release y 1.2.0"
+squash_feat "$R"
+assert_exit "fixture-76 squash after another PR took the old version string -> NOT flagged" "$CONTAINED_RC" "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 77: the branch drops a line that main added a copy of, elsewhere in the file,
+# before the squash.
+R="$(mk_repo)"; printf 'import os\nx = 1\n' > "$R/m77.py"; printf 'a\n' > "$R/o77.txt"; git -C "$R" add -A && git -C "$R" commit -qm m77
+git -C "$R" checkout -q -b feat; printf 'x = 1\n' > "$R/m77.py"; git -C "$R" commit -qam "drop import os"
+printf 'b\n' > "$R/o77.txt"; git -C "$R" commit -qam "o77 b"
+git -C "$R" checkout -q main; printf 'import os\nx = 1\nimport os\n' > "$R/m77.py"; git -C "$R" commit -qam "main: import os at the end"
+squash_feat "$R"
+assert_exit "fixture-77 squash, main had added a copy of the deleted line -> NOT flagged" "$CONTAINED_RC" "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 78: the branch creates and later deletes a scratch file; main created its own file
+# at that path before the squash.
+R="$(mk_repo)"; git -C "$R" checkout -q -b feat
+printf 'scratch\n' > "$R/n78.md"; git -C "$R" add -A && git -C "$R" commit -qm "scratch notes"
+printf 'real\n' > "$R/r78.txt"; git -C "$R" add -A && git -C "$R" commit -qm "real change"
+git -C "$R" rm -q n78.md && git -C "$R" commit -qm "drop scratch notes"
+git -C "$R" checkout -q main; printf 'main notes\n' > "$R/n78.md"; git -C "$R" add -A && git -C "$R" commit -qm "main: notes"
+squash_feat "$R"
+assert_exit "fixture-78 squash, main had its own file at a path the branch deleted -> NOT flagged" "$CONTAINED_RC" "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 79: the deletion mirror of fixture 19: c1 adds a line, c2 removes it again, and
+# only c1 reached the squash. The squash holds the branch's net change, yet c2 did
+# not land.
+R="$(mk_repo)"; printf 'a\n' > "$R/f79.txt"; git -C "$R" add -A && git -C "$R" commit -qm f79
+git -C "$R" checkout -q -b feat
+printf 'y\n' > "$R/y79.txt"; git -C "$R" add -A && git -C "$R" commit -qm "y79"
+printf 'a\nDEBUG\n' > "$R/f79.txt"; git -C "$R" commit -qam "c1: debug"
+printf 'a\n' > "$R/f79.txt"; git -C "$R" commit -qam "c2: no debug (never landed)"
+git -C "$R" checkout -q main; git -C "$R" checkout -q feat~1 -- y79.txt f79.txt && git -C "$R" commit -qm "squash without c2"
+OUT79=$(out_of "$R" feat main); RC79=$?
+assert_exit "fixture-79 the commit that removed the branch's own line was dropped -> flagged" 3 "$RC79"
+assert_exit "fixture-79 lists it" 0 "$(has "$OUT79" 'c2: no debug')"
+rm -rf "$R"
+
+# 80: a commit that only adds an empty file, dropped from the squash.
+R="$(mk_repo)"; git -C "$R" checkout -q -b feat
+printf 'p\n' > "$R/p80.py"; git -C "$R" add -A && git -C "$R" commit -qm "p80"
+mkdir -p "$R/pkg80"; : > "$R/pkg80/__init__.py"; git -C "$R" add -A && git -C "$R" commit -qm "pkg80 package marker (never landed)"
+git -C "$R" checkout -q main; git -C "$R" checkout -q feat~1 -- p80.py && git -C "$R" commit -qm "squash p80"
+OUT80=$(out_of "$R" feat main); RC80=$?
+assert_exit "fixture-80 dropped empty-file addition -> flagged" 3 "$RC80"
+assert_exit "fixture-80 lists it" 0 "$(has "$OUT80" 'pkg80 package marker')"
+rm -rf "$R"
+
+# ── Fixtures 81–83: copies of a line main added or removed on its own ──
+# 81: main removed its own copy of a line before the squash; the branch adds the
+# same line elsewhere. At the landing commit the copy count is main's plus the
+# branch's net change, so the branch's copy is there.
+R="$(mk_repo)"; printf 'x = 1\na\nb\nc\nd\ne\nf\n' > "$R/m81.py"; git -C "$R" add -A && git -C "$R" commit -qm m81
+git -C "$R" checkout -q -b feat
+printf 'x = 1\na\nb\nc\nd\ne\nf\nx = 1\n' > "$R/m81.py"; git -C "$R" commit -qam "c1: x at the end"
+printf 'y\n' > "$R/y81.txt"; git -C "$R" add -A && git -C "$R" commit -qm "c2: y81"
+git -C "$R" checkout -q main; printf 'a\nb\nc\nd\ne\nf\n' > "$R/m81.py"; git -C "$R" commit -qam "main: drop x at the top"
+squash_feat "$R"
+assert_exit "fixture-81 squash, main had dropped its own copy of the added line -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 82: fixture 19 where the restored line also appears elsewhere in the file. The
+# dropped commit's line is still missing from the landing commit, by count.
+R="$(mk_repo)"
+printf 'LOG = "info"\na\nb\nc\nd\ne\nLOG = "info"\n' > "$R/cfg82.py"; git -C "$R" add -A && git -C "$R" commit -qm cfg82
+git -C "$R" checkout -q -b feat
+printf 'LOG = "debug"\na\nb\nc\nd\ne\nLOG = "info"\nRETRIES = 3\n' > "$R/cfg82.py"; git -C "$R" commit -qam "P: debug + retries"
+printf 'LOG = "info"\na\nb\nc\nd\ne\nLOG = "info"\nRETRIES = 3\n' > "$R/cfg82.py"; git -C "$R" commit -qam "O: back to info (never landed)"
+git -C "$R" checkout -q main
+printf 'LOG = "debug"\na\nb\nc\nd\ne\nLOG = "info"\nRETRIES = 3\n' > "$R/cfg82.py"; git -C "$R" commit -qam "land P only"
+# At the tip O is still listed: the "debug" line it deleted is in the tip and not in
+# the head. Where it landed, its "info" copy is missing as well.
+OUT82=$(out_of "$R" feat main); RC82=$?
+assert_exit "fixture-82 dropped restore whose line is also elsewhere -> flagged" 3 "$RC82"
+assert_exit "fixture-82 lists O" 0 "$(has "$OUT82" 'O: back to info')"
+rm -rf "$R"
+
+# 83: a squash resolved by hand (checked at the tip): the branch adds a function,
+# and main removed another one on its own, so the tip has one closing brace fewer
+# than the head. At the tip only presence counts.
+R="$(mk_repo)"; printf 'int a() {\n  return 1;\n}\nint dead() {\n  return 0;\n}\nint z() {\n  return 9;\n}\n' > "$R/f83.c"
+git -C "$R" add -A && git -C "$R" commit -qm f83
+git -C "$R" checkout -q -b feat
+printf 'int a() {\n  return 1;\n}\nint e() {\n  return 5;\n}\nint dead() {\n  return 0;\n}\nint z() {\n  return 9;\n}\n' > "$R/f83.c"; git -C "$R" commit -qam "add e()"
+printf 'g\n' > "$R/g83.txt"; git -C "$R" add -A && git -C "$R" commit -qm "add g83"
+git -C "$R" checkout -q main
+printf 'int a() {\n  return 1;\n}\nint dead(void) {\n  return 0;\n}\n' > "$R/f83.c"; git -C "$R" commit -qam "main: dead(void), drop z()"
+printf 'int a() {\n  return 1;\n}\nint e() {\n  return 5;\n}\nint dead(void) {\n  return 0;\n}\n' > "$R/f83.c"; printf 'g\n' > "$R/g83.txt"
+git -C "$R" add -A && git -C "$R" commit -qm "squash feat, conflict resolved by hand"
+assert_exit "fixture-83 hand-resolved squash, main dropped a closing brace of its own -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# ── Fixtures 84, 85: the landing commit is compared with the clean merge of the
+# branch onto main just before it ──
+# 84: c1 adds a second X, c2 drops B, c3 drops c1's X and never landed; main had
+# dropped its own X before the squash. The squash has one X, the merge of the branch
+# onto main before it has none, so c3's deletion did not land. (Round 9 compared
+# with the head's count and missed it.)
+R="$(mk_repo)"; printf 'X = 1\na\nb\nc\nd\ne\nf\nB = 2\ng\nh\ni\n' > "$R/f84.py"; git -C "$R" add -A && git -C "$R" commit -qm f84
+git -C "$R" checkout -q -b feat
+printf 'X = 1\na\nb\nc\nX = 1\nd\ne\nf\nB = 2\ng\nh\ni\n' > "$R/f84.py"; git -C "$R" commit -qam "c1: X in the middle"
+printf 'X = 1\na\nb\nc\nX = 1\nd\ne\nf\ng\nh\ni\n' > "$R/f84.py"; git -C "$R" commit -qam "c2: drop B"
+printf 'X = 1\na\nb\nc\nd\ne\nf\ng\nh\ni\n' > "$R/f84.py"; git -C "$R" commit -qam "c3: drop the middle X (never landed)"
+git -C "$R" checkout -q main
+printf 'a\nb\nc\nd\ne\nf\nB = 2\ng\nh\ni\n' > "$R/f84.py"; git -C "$R" commit -qam "main: drop X at the top"
+printf 'a\nb\nc\nX = 1\nd\ne\nf\ng\nh\ni\n' > "$R/f84.py"; git -C "$R" commit -qam "squash c1 and c2"
+EXP84=3; [ "$CONTAINED_RC" = 0 ] || EXP84=0   # at the tip the head still has an X (D2)
+OUT84=$(out_of "$R" feat main); RC84=$?
+assert_exit "fixture-84 deletion that did not land, main dropped its own copy -> flagged where it landed" "$EXP84" "$RC84"
+if [ "$EXP84" = 3 ]; then
+  assert_exit "fixture-84 lists c3" 0 "$(has "$OUT84" 'c3: drop the middle X')"
+  assert_exit "fixture-84 does not list c1" 1 "$(has "$OUT84" 'c1: X in the middle')"
+fi
+rm -rf "$R"
+
+# 85: the squash kept the branch's v over main's own v (resolved by hand): it holds
+# the branch, but the branch does not merge cleanly onto main just before it, so the
+# check is at the tip, and the note says why.
+R="$(mk_repo)"; printf 'v = 0\na\nb\nc\n' > "$R/f85.py"; git -C "$R" add -A && git -C "$R" commit -qm f85
+git -C "$R" checkout -q -b feat
+printf 'v = 2\na\nb\nc\n' > "$R/f85.py"; git -C "$R" commit -qam "c1: v = 2"
+printf 'w\n' > "$R/w85.txt"; git -C "$R" add -A && git -C "$R" commit -qm "c2: w85 (never landed)"
+git -C "$R" checkout -q main
+printf 'v = 1\na\nb\nc\n' > "$R/f85.py"; git -C "$R" commit -qam "main: v = 1"
+printf 'v = 2\na\nb\nc\n' > "$R/f85.py"; git -C "$R" commit -qam "squash c1, conflict resolved to the branch's v"
+OUT85=$(out_of "$R" feat main); RC85=$?
+assert_exit "fixture-85 hand-resolved squash plus a dropped commit -> flagged" 3 "$RC85"
+assert_exit "fixture-85 lists c2" 0 "$(has "$OUT85" 'c2: w85')"
+assert_exit "fixture-85 does not list c1" 1 "$(has "$OUT85" 'c1: v = 2')"
+[ "$CONTAINED_RC" = 0 ] && assert_exit "fixture-85 note says the landing commit does not merge cleanly" 0 "$(has "$OUT85" 'does not merge cleanly')"
+rm -rf "$R"
+
+# ── Fixtures 86–88: the expectation is the clean merge of the LANDED PART ──
+# 86: b1 drops x, b2 adds y in the middle, b3 puts x back and never landed; main had
+# turned its own y at the bottom into x before squashing b1 and b2. The squash has
+# one x, the merge of the branch onto main before it has two, so b3's x is missing
+# even though the text is elsewhere. (Round 9 missed it; presence would too.)
+R="$(mk_repo)"; printf 'x = 1\na\nb\nc\nd\ne\nf\ny = 2\ng\nh\ni\n' > "$R/f86.py"; git -C "$R" add -A && git -C "$R" commit -qm f86
+git -C "$R" checkout -q -b feat
+printf 'a\nb\nc\nd\ne\nf\ny = 2\ng\nh\ni\n' > "$R/f86.py"; git -C "$R" commit -qam "b1: drop x"
+printf 'a\nb\nc\ny = 2\nd\ne\nf\ny = 2\ng\nh\ni\n' > "$R/f86.py"; git -C "$R" commit -qam "b2: y in the middle"
+printf 'x = 1\na\nb\nc\ny = 2\nd\ne\nf\ny = 2\ng\nh\ni\n' > "$R/f86.py"; git -C "$R" commit -qam "b3: x back (never landed)"
+git -C "$R" checkout -q main
+printf 'x = 1\na\nb\nc\nd\ne\nf\nx = 1\ng\nh\ni\n' > "$R/f86.py"; git -C "$R" commit -qam "main: y at the bottom becomes x"
+printf 'a\nb\nc\ny = 2\nd\ne\nf\nx = 1\ng\nh\ni\n' > "$R/f86.py"; git -C "$R" commit -qam "squash b1 and b2"
+EXP86=3; [ "$CONTAINED_RC" = 0 ] || EXP86=0   # at the tip x is present (D2)
+OUT86=$(out_of "$R" feat main); RC86=$?
+assert_exit "fixture-86 restored line whose text main has elsewhere, dropped -> flagged where it landed" "$EXP86" "$RC86"
+if [ "$EXP86" = 3 ]; then
+  assert_exit "fixture-86 lists b3" 0 "$(has "$OUT86" 'b3: x back')"
+  assert_exit "fixture-86 does not list b1" 1 "$(has "$OUT86" 'b1: drop x')"
+fi
+rm -rf "$R"
+
+# 87: c1 and c1b landed as one squash; c2 adds a second copy of c1's line and a line
+# of its own, and never landed. c1 is compared with the merge of the landed part
+# (one copy), not of the whole branch (two copies).
+R="$(mk_repo)"; printf 'a\nb\nc\nd\ne\nf\n' > "$R/f87.py"; git -C "$R" add -A && git -C "$R" commit -qm f87
+git -C "$R" checkout -q -b feat
+printf 'a\nb\nc\nd\ne\nf\nX = 1\n' > "$R/f87.py"; git -C "$R" commit -qam "c1: X"
+printf 'y\n' > "$R/y87.txt"; git -C "$R" add -A && git -C "$R" commit -qm "c1b: y87"
+printf 'X = 1\na\nb\nc\nd\ne\nf\nX = 1\nZ = 3\n' > "$R/f87.py"; git -C "$R" commit -qam "c2: X again and Z (never landed)"
+git -C "$R" checkout -q main
+printf 'a\nb\nc\nd\ne\nf\nX = 1\n' > "$R/f87.py"; printf 'y\n' > "$R/y87.txt"; git -C "$R" add -A && git -C "$R" commit -qm "squash c1 and c1b"
+OUT87=$(out_of "$R" feat main); RC87=$?
+assert_exit "fixture-87 landed prefix + a dropped commit sharing its line -> flagged" 3 "$RC87"
+assert_exit "fixture-87 lists c2" 0 "$(has "$OUT87" 'c2: X again')"
+[ "$CONTAINED_RC" = 0 ] && assert_exit "fixture-87 does not list c1 (it landed)" 1 "$(has "$OUT87" 'c1: X')"
+rm -rf "$R"
+
+# 88: c1 adds X and c2 drops it again (the head no longer shows c1's X); main had an X
+# of its own, which the landing commit also dropped. c1 says nothing about X.
+R="$(mk_repo)"; printf 'a\nb\nc\nd\ne\nf\ng\nh\ni\n' > "$R/f88.py"; git -C "$R" add -A && git -C "$R" commit -qm f88
+git -C "$R" checkout -q -b feat
+printf 'a\nb\nc\nd\ne\nf\ng\nh\ni\nX = 1\n' > "$R/f88.py"; git -C "$R" commit -qam "c1: X at the end"
+printf 'a\nb\nC\nd\ne\nf\ng\nh\ni\n' > "$R/f88.py"; git -C "$R" commit -qam "c2: drop X, C"
+git -C "$R" checkout -q main
+printf 'X = 1\na\nb\nc\nd\ne\nf\ng\nh\ni\n' > "$R/f88.py"; git -C "$R" commit -qam "main: X at the top"
+printf 'a\nb\nC\nd\ne\nf\ng\nh\ni\n' > "$R/f88.py"; git -C "$R" commit -qam "squash feat, and drop main's X"
+assert_exit "fixture-88 a superseded line whose text the landing commit dropped from main -> NOT flagged" 0 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 print_summary
