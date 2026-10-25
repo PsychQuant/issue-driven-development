@@ -46,6 +46,12 @@ attached to the session. What differs from a local session:
 - **Not supported in the cloud:** `idd-find`, `idd-report`, `idd-discuss`, `idd-ask` (search API /
   Discussions GraphQL), the Spectra tier (no `spectra` CLI), and repositories not attached to the
   session. These stop with the reason instead of failing silently.
+- **Not migrated (outside the `/idd-all` path):** `idd-close`, `idd-comment`, `idd-edit`, `idd-config`,
+  `idd-reorganize`, `idd-all-chain`. Their own `gh issue …` / `gh pr …` calls fail with GitHub's 403 in
+  a cloud session — close the issue with `/idd-close` from a local session.
+- **Status — experimental:** verified in a cloud container are the GraphQL / REST behavior, `gh-rest.sh`
+  reads against the real API, and plugins loading after a session restart. A fresh session started from
+  the setup script and an end-to-end cloud `/idd-all` run are not yet verified.
 
 Plugins load only at session start, so put this in the cloud environment's setup script (cloud
 environment menu in the session title bar → Edit):

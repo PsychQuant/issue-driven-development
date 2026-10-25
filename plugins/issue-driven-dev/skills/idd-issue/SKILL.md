@@ -353,8 +353,8 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" <create|comment|edit> <原本的
 
 wrapper deterministically enforce「自審跑過」(缺 `--scrub-attested` → refuse,
 exit 3)+ 攔 2 個 zero-tolerance 機械項(literal `/Users/<name>` 與 verbatim
-`~/.claude.json` 內容,exit 4)。wrapper stdout/exit code 與 raw `gh issue` 位元一致
-(捕捉 `URL=$(...)` 的既有 site 不受影響)。**`sanitize_source_label`（#75）不變** —
+`~/.claude.json` 內容,exit 4)。wrapper 經 GitHub REST 派送(3.6.0+,#416),成功時 stdout 只有一行
+issue／comment URL(捕捉 `URL=$(...)` 的既有 site 不受影響),失敗時 stdout 為空、exit code 是 gh 的。**`sanitize_source_label`（#75）不變** —
 privacy scrubbing 是疊在上面的新語意層。
 
 ---

@@ -26,8 +26,8 @@
 
 **範圍**
 
-- In scope：`idd-all` 路徑上的 skill（`idd-issue`、`idd-diagnose`、`idd-plan`、`idd-implement`、`idd-verify`、`idd-update`、`idd-clarify`）＋ `idd-list`；`gh-egress.sh` 與 4 支讀取 script
-- Out of scope：`idd-close`、`idd-comment`、`idd-edit`、`idd-config`、`idd-reorganize`、`idd-all-chain`、`check-closed-without-summary.sh`；Discussions、search、`--blocked-by` 原生關聯；#400 的 Actions 路線
+- In scope：`idd-all` 路徑上的 skill（`idd-issue`、`idd-diagnose`、`idd-plan`、`idd-implement`、`idd-verify`、`idd-update`、`idd-clarify`）＋ `idd-list`（含 `--audit-closes`）；`gh-egress.sh` 與 5 支讀取 script（含 `check-closed-without-summary.sh`，verify 第 1 輪補回——使用者核可的是 6 支 script）
+- Out of scope：`idd-close`、`idd-comment`、`idd-edit`、`idd-config`、`idd-reorganize`、`idd-all-chain` 的 skill 本體；Discussions、search、`--blocked-by` 原生關聯；#400 的 Actions 路線
 
 ## Decisions
 
@@ -64,13 +64,15 @@ edit 的增刪呼叫：加 label `POST repos/<R>/issues/<N>/labels {"labels":[�
 
 旗標值接受 `--flag value`、`--flag=value`、以及 `gh-egress.sh` 已支援的短旗標黏著形式（`-bX`、`-tX`、`-FX`）。label／assignee 值依 gh 的慣例以逗號分隔且可重複。
 
-repo 解析順序：`--repo` 值（`OWNER/REPO`；`HOST/OWNER/REPO` 時加 `--hostname HOST`，`github.com` 不加）→ issue 參數是 URL 時取 URL 的 owner/repo → 字面 `{owner}/{repo}`（由 gh 依目前目錄的 git remote 解析，與 `gh issue` 省略 `--repo` 的行為一致）。
+repo 解析順序（與 gh 相同）：issue 參數是 URL 時取 URL 的 owner/repo → `--repo` 值（`OWNER/REPO`；`HOST/OWNER/REPO` 時加 `--hostname HOST`，`github.com` 不加）→ 字面 `{owner}/{repo}`（由 gh 依目前目錄的 git remote 解析，與 `gh issue` 省略 `--repo` 的行為一致）。owner／repo 只接受 `[A-Za-z0-9_.-]+` 且不得是 `.`／`..`，host 只接受主機名（可帶 port，不得有 `user@`）；issue URL 必須正好是 `https://HOST/OWNER/REPO/issues/N`。否則 exit 14、不送任何請求（verify 第 1 輪 security：`https://github.com/o/r#/issues/5` 曾把 `--remove-label` 變成 `DELETE /repos/o/r`）。
 
-查詢：milestone 名稱以 `gh api repos/<R>/milestones?state=all&per_page=100&page=K` 分頁比對**完全相同**的 title，找不到 → exit 14；`@me` assignee 以 `gh api user --jq .login` 解析。
+查詢（與 gh 相同的語意）：milestone 名稱以 `gh api repos/<R>/milestones?state=open&per_page=100&page=K` 分頁、忽略大小寫比對 title，找不到 → exit 14；`edit --milestone ""` 移除 milestone；label 先以 `gh api repos/<R>/labels/<name>` 確認存在（REST 會默默建立不存在的 label，gh 則拒絕）→ 404 時 exit 14；移除 issue 沒有的 label 是 no-op；`@me` assignee 以 `gh api user` 解析。
 
-**Exit band 維持 #227 不變式**：翻譯器自己的拒絕（缺 title、缺 issue、不支援的旗標、未知 milestone、多餘的 positional）一律 exit 14；任何 `gh` 呼叫失敗 → 以該呼叫的 exit code 結束（gh 的 code 都 < 10），其 stderr 原樣轉出。edit 的前置增刪呼叫失敗時，不再送出後續呼叫。
+**Exit band 維持 #227 不變式**：翻譯器自己的拒絕（缺 title、缺 issue、不支援的旗標、未知 milestone／label、多餘的 positional、可疑的 issue URL）一律 exit 14；非 UTF-8 的參數或 body file 為 exit 12；任何 `gh` 呼叫失敗 → 以該呼叫的 exit code 結束（gh 的 code 都 < 10）。edit 的前置增刪呼叫失敗時，不再送出後續呼叫。
 
-**stdout 契約**：成功時 stdout 只有一行 URL（create／edit 是 issue URL，comment 是 comment URL）。既有 `URL=$(bash gh-egress.sh create …)` 的 caller 不受影響；header 由「byte-for-byte 等同 `gh issue <verb>`」改寫成這個契約。
+**stdout 契約**：成功時 stdout 只有一行 URL（create／edit 是 issue URL，comment 是 comment URL）；失敗時 stdout 為空——`gh api` 會把 JSON 錯誤本文印在 stdout，若轉出去，`URL=$(…)` 的 caller 會把它當成 URL——gh 的訊息、該 JSON 與 `hint:` 行一律走 stderr。既有 `URL=$(bash gh-egress.sh create …)` 的 caller 不受影響；header 由「byte-for-byte 等同 `gh issue <verb>`」改寫成這個契約。
+
+**wrapper 的參數解析與 gh 一致**（verify 第 1 輪 security／logic）：`--body`／`--title`／`--body-file`／`--repo` 一律把下一個 token 當值，不論它長得像不像旗標（pflag 與翻譯器都這樣讀）。原本 wrapper 會把 `-b "--repo=…"` 的值當成旗標重讀，掃描到的與實際送出的不同，隱私、mention、empty-body 三道 net 都可被繞過（此漏洞 main 上即存在，換 transport 時一併封住）。wrapper 自己的旗標（`--scrub-attested` 等）出現在待值位置仍以 exit 14 拒絕（#203 item 6）。
 
 payload 經 stdin 傳給 gh：先寫入暫存檔、開成 fd、刪檔，再以該 fd 當 stdin 執行 gh（不留檔、不經 argv，body 不出現在 process list）。body file 以原始位元組讀入（不做換行轉換，CRLF 保留），與 `gh issue … --body-file` 一致。
 
@@ -81,8 +83,8 @@ payload 經 stdin 傳給 gh：先寫入暫存檔、開成 fd、刪檔，再以�
 | 子命令 | REST | 可用欄位（`--json` 必填，逗號分隔） |
 |---|---|---|
 | `issue-view <N\|URL> [--repo R]` | `repos/R/issues/N`（`comments` 欄位另分頁讀 `…/comments`） | `number,title,state,body,url,createdAt,updatedAt,closedAt,author,labels,assignees,milestone,comments` |
-| `issue-list [--repo R] [--state open\|closed\|all] [--label L]… [--limit N]` | `repos/R/issues`，濾掉 `pull_request` | 同上，但不含 `comments` |
-| `pr-list [--repo R] [--state open\|closed\|merged\|all] [--limit N]` | `repos/R/pulls`（`merged` = closed 且 `merged_at` 非空） | `number,title,body,state,url,createdAt,updatedAt,closedAt,mergedAt,headRefName,headRefOid,baseRefName,isDraft,author` |
+| `issue-list [--repo R] [--state open\|closed\|all] [--label L]… [--sort created\|updated] [--closed-since DATE] [--limit N]` | `repos/R/issues`（`--sort updated` → `sort=updated&direction=desc`，server 端先排再截，#299；`--closed-since` → `since=` 收窄後再保留 `closed_at ≥ DATE`，limit 數的是保留下來的），濾掉 `pull_request` | 同上（`comments` 每個 issue 另分頁讀完，沒有 gh 的 100 則上限） |
+| `pr-list [--repo R] [--state open\|closed\|merged\|all] [--limit N]` | `repos/R/pulls`（`merged` = closed 且 `merged_at` 非空） | `number,title,body,state,url,createdAt,updatedAt,closedAt,mergedAt,headRefName,headRefOid,baseRefName,isDraft,author,mergeable`（`mergeable` 每個 PR 另讀 `repos/R/pulls/N`，`true`/`false`/`null` → `MERGEABLE`/`CONFLICTING`/`UNKNOWN`） |
 | `repo-view [--repo R]` | `repos/R` | `nameWithOwner,defaultBranchRef,isFork,visibility,url,viewerPermission` |
 
 正規化（輸出與 `gh … --json` 同名同形）：`created_at`→`createdAt` 等 camelCase；`state` 大寫（`OPEN`／`CLOSED`／`MERGED`）；`author` 為 `{login}`；`labels` 為 `[{name}]`；`assignees` 為 `[{login}]`；`milestone` 為 `{title,number}` 或 `null`；`headRefName`／`headRefOid`／`baseRefName` 取自 `head.ref`／`head.sha`／`base.ref`；`isDraft`←`draft`；`defaultBranchRef` 為 `{name}`；`isFork`←`fork`；`visibility` 大寫；`viewerPermission` 由 `permissions` 推導為 `ADMIN`／`MAINTAIN`／`WRITE`／`TRIAGE`／`READ`。comment 物件為 `{id, databaseId, author:{login}, authorAssociation, body, createdAt, url}`。
@@ -99,6 +101,7 @@ payload 經 stdin 傳給 gh：先寫入暫存檔、開成 fd、刪檔，再以�
 | `check-diagnosis-readiness.sh` | `gh issue view --json comments` | `gh-rest.sh issue-view --json comments` |
 | `process-attachments.sh` | `gh issue view --json body,comments` | `gh-rest.sh issue-view --json body,comments` |
 | `idd-worktree.sh` | `gh issue view --json title -q .title` | `gh-rest.sh issue-view --json title` + `jq -r .title`（失敗時沿用既有的「無 slug」fallback） |
+| `check-closed-without-summary.sh` | `gh repo view`、`gh issue view`、`gh issue list --json comments --search "closed:>=DATE"` | `gh-rest.sh repo-view`／`issue-view`／`issue-list --closed-since DATE`（comments 已是全量，原本的「≥100 則補抓」迴圈保留為無害的安全網） |
 
 既有測試以 PATH shim 假造 `gh`；shim 改為回應對應的 `gh api` REST 路徑（回 REST 形狀的 JSON），證明正規化後 script 行為不變。
 
@@ -120,7 +123,9 @@ payload 經 stdin 傳給 gh：先寫入暫存檔、開成 fd、刪檔，再以�
 
 Phase 0.6（ralph-loop gate）：本機行為不變。雲端下 `(PR, unattended)` 缺 ralph-loop 時**不得**降級成 direct-commit（會遺失工作），改為 unwind 剛建的 branch 後 abort，印出一步安裝指令。`(PR, attended)` 不經此 gate（使用者在場，不需要 loop driver）。
 
-Phase 0.3 auth gate：`gh auth status` 改為 `gh api user --jq .login`（本機與雲端皆可用；`gh auth status` 在任一 host 憑證壞掉時也會失敗，`gh api user` 只檢查實際要用的 API）。
+Phase 0.3 auth gate：`gh auth status || gh api user --jq .login`。`gh auth status` 在雲端一律失敗，`gh api user` 補上；`gh auth status` 仍放前面，因為 GitHub App installation token（如 Actions 的 `GITHUB_TOKEN`）呼叫不了 `GET /user`（verify 第 1 輪 regression）。
+
+Phase 5：只有 verify PASS 才開 PR。`(PR, attended)` 交回 blocking findings 時不開 PR；雲端仍 push branch（未 push 的 commit 會隨 container 消失），本機不 push。PR 改經 REST `POST repos/R/pulls` 建立（本機雲端同一路徑），PR body 的 Verification 行在雲端寫明 Claude-only。Phase 6 報告同步（verify 第 1 輪 requirements）。
 
 PR path 的 unattended hint 依 interaction 軸決定（`(PR, attended)` 不傳 `UNATTENDED MODE`），spec「PR path preserves v2.40.0 behavior」同步修訂；`(PR, unattended)` 的行為逐字不變。
 
@@ -128,7 +133,7 @@ PR path 的 unattended hint 依 interaction 軸決定（`(PR, attended)` 不傳 
 
 新增 `references/claude-code-remote-tools.md`：偵測訊號、porcelain→REST 對照表（含 `gh-rest.sh` 子命令、`gh pr create`→`POST repos/R/pulls`、`gh auth status`→`gh api user`、CCR 的 PR routes）、寫入一律經 `gh-egress.sh`、不支援清單與各自的錯誤訊息、setup script 範本。
 
-SKILL.md 不改寫 porcelain，只在開頭加一行 runtime note，兩種措辭：
+SKILL.md 不改寫 porcelain，只在開頭加一行 runtime note，兩種措辭（唯一例外：`idd-all` 自己會改變狀態的步驟——Step 0.4、Phase 0.5 建 branch、Phase 0.6 unwind、Phase 5 開 PR——直接呼叫 REST（`gh api repos/R`、`…/issues/N`、`…/pulls`；不經 `gh-rest.sh`，讓 skill 片段不必多開一個 process，也能被測試的 shell stub 攔截），因為 agent 在這裡翻譯錯，結果是錯的 branch 或沒有 PR；verify 第 1 輪 logic）：
 
 - 支援（`idd-all`、`idd-issue`、`idd-diagnose`、`idd-plan`、`idd-implement`、`idd-verify`、`idd-update`、`idd-clarify`、`idd-list`）：雲端時 porcelain 依 reference 改走 REST，寫入仍經 `gh-egress.sh`
 - 不支援（`idd-find`、`idd-report`、`idd-discuss`、`idd-ask`）：雲端時停下，印出原因與「改在本機 session 執行」
@@ -137,7 +142,7 @@ SKILL.md 不改寫 porcelain，只在開頭加一行 runtime note，兩種措辭
 
 ### D7 — 雲端 verify：Claude-only（沿用 #400 的判定）
 
-`idd-verify` 在 engine 選擇前：`idd_is_cloud_session` 成立 → `CODEX_ENABLED=false`，跳過 codex-pro 治理解析（不需要也拿不到 Codex 憑證），workflow args 帶 `codexEnabled: false`，manual fan-out 不啟動 Codex 呼叫。master report 的 Engine 行與 Process Gaps 明寫 `Codex leg not run — cloud session (degraded: Claude-only)`。缺 Codex 本身不是 blocking finding。本機行為不變。
+`idd-verify` 在 engine 選擇前：`idd_is_cloud_session` 成立 → `CODEX_ENABLED=false`，跳過 codex-pro 治理解析（不需要也拿不到 Codex 憑證；pseudo-code 以 `若 [ "$CODEX_ENABLED" = true ]:` 明確包住），workflow args 帶 JSON boolean `codexEnabled: false`（字串 `"false"` 會被 pai 的 `!!` 判成 true），manual fan-out 不啟動 Codex 呼叫，Engine 行拿掉「+ Codex …」。master report 的 Engine 行與 Process Gaps 明寫 `Codex leg not run — cloud session (degraded: Claude-only)`。缺 Codex 本身不是 blocking finding。本機行為不變。
 
 ### D8 — 不支援面的明確失敗
 
@@ -147,12 +152,19 @@ SKILL.md 不改寫 porcelain，只在開頭加一行 runtime note，兩種措辭
 - 未 attach 的 repo：D3 的 `hint:`
 - Spectra CLI：沿用 `idd-all` Step 0.35 警告與 Phase 3b hard gate
 
+### D9 — 未做的 spec delta（verify 第 1 輪 requirements #7）
+
+- `runtime-compatibility-guidance`：這個 capability 只存在於尚未 archive 的 change `codify-claude-canonical-runtime`，main specs 裡沒有，無法對它寫 MODIFIED delta；雲端 runtime 的契約改放在新的 `cloud-session-runtime`，兩者 archive 後可再合併。
+- `idd-existing-work-lookup`：requirement 規範的是行為（讀不到 open PR 清單或 issue 就 fail-closed），scenario 裡的 `gh pr list --state open`／`gh issue view N` 是示意性的錯誤描述；行為不變（由 check-existing-work 測試的 idd-close 片段實際執行驗證），所以不寫 delta。
+
 ## Risks / Trade-offs
 
 - **本機 transport 改變**：所有寫入改走 REST。緩解：gate 與 stdout 契約不變；翻譯器對不支援的旗標 fail-loud；測試鎖定每個 verb 的 argv 與 payload
 - **欄位正規化漏欄**：REST 與 porcelain 欄位語意不完全一致（例如 comment 的 `id`）。緩解：helper 只提供表列欄位，其他欄位以 exit 2 拒絕，不靜默回空值
 - **平台訊號漂移**：`CLAUDE_CODE_REMOTE`、`CLAUDE_CODE_SESSION_ATTENDED` 是平台行為。緩解：判準嚴格（只認 `true`／`1`），缺席方向安全（判成本機 → 撞到帶說明的 403；判成 unattended → 少問問題）
 - **`CLAUDE_CODE_SESSION_ATTENDED` 在排程／API 起的 session 中的值未實測**：D1 的缺席判 unattended 已涵蓋未設定的情況
+- **環境變數可被偽造**（verify 第 1 輪 security LOW）：本機若設 `CLAUDE_CODE_REMOTE=true`（例如經 repo 的 `.claude/settings.json` `env`），verify 會少跑 Codex leg（報告會寫 degraded，不會靜默）、`--no-pr` 會被覆寫成 PR（有通知）。能改 project settings 的人本來就能跑 hook，額外風險小；記錄在此，不另加防護
+- **REST 讀取的呼叫數**：`issue-list --json comments` 與 `pr-list --json mergeable` 每筆多一次呼叫；`--state merged` 可能翻過所有 closed PR 才湊滿 limit
 - **SKILL.md porcelain 靠 agent 依 reference 翻譯**：非確定性。緩解：確定性要求最高的寫入與 script 讀取已由 D2／D3 承擔；reference 對照表逐條列出
 
 ## Implementation Contract

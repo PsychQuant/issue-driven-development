@@ -78,7 +78,29 @@ assert_eq "issue-list honours --limit" "[1]" "$(printf '%s' "$OUT" | j "[i['numb
 reset; fx "repos/o/r/issues?state=closed&labels=bug,ui&per_page=100&page=1" '[{"number":4,"state":"closed"}]'
 OUT="$(run issue-list --repo o/r --state closed --label bug --label ui --json number,state)"
 assert_eq "issue-list passes state and labels" "[{'number': 4, 'state': 'CLOSED'}]" "$(printf '%s' "$OUT" | j "d")"
-run issue-list --repo o/r --json comments >/dev/null; assert_exit "issue-list refuses comments (use issue-view)" 2 $?
+# idd-list's fetch (#416 verify, requirements lens): server-side sort before the limit (#299), full comments
+reset
+fx "repos/o/r/issues?state=open&sort=updated&direction=desc&per_page=100&page=1" '[{"number":8,"title":"new","state":"open","body":null},{"number":2,"title":"old","state":"open","body":"b"}]'
+fx "repos/o/r/issues/8/comments?per_page=100&page=1" "$(comments 1 2)"
+fx "repos/o/r/issues/2/comments?per_page=100&page=1" '[]'
+OUT="$(run issue-list --repo o/r --sort updated --json number,body,comments)"
+assert_exit "issue-list --sort updated with comments exits 0" 0 $?
+assert_eq "server-side order kept, comments attached per issue" "[(8, 2), (2, 0)]" "$(printf '%s' "$OUT" | j "[(i['number'], len(i['comments'])) for i in d]")"
+assert_eq "an empty body is \"\" like gh, not null" "''" "$(printf '%s' "$OUT" | j "repr(d[0]['body'])")"
+run issue-list --repo o/r --sort bogus --json number >/dev/null; assert_exit "unknown --sort → exit 2" 2 $?
+# a fetched number goes into the comments path: it must be an integer, or the whole read fails (no partial rows)
+reset
+fx "repos/o/r/issues?state=open&per_page=100&page=1" '[{"number":"4245 --hostname evil.example","state":"open"}]'
+run issue-list --repo o/r --json number,comments >/dev/null; assert_exit "non-numeric fetched number → exit 1" 1 $?
+refute_grep "…and it never reaches an api path" "4245" "$(cat "$FX/calls.log")"
+
+# --closed-since (check-closed-without-summary's audit): REST `since` narrows by update time, the filter keeps
+# issues CLOSED on/after the date, and --limit counts kept issues (not the raw page)
+reset
+fx "repos/o/r/issues?state=closed&since=2026-01-01T00:00:00Z&per_page=100&page=1" '[{"number":5,"state":"closed","closed_at":"2026-02-01T00:00:00Z"},{"number":4,"state":"closed","closed_at":"2025-12-30T00:00:00Z"},{"number":3,"state":"closed","closed_at":"2026-01-01T09:00:00Z"}]'
+OUT="$(run issue-list --repo o/r --state closed --closed-since 2026-01-01 --limit 2 --json number,closedAt)"
+assert_eq "--closed-since keeps issues closed on/after the date, limit after the filter" "[5, 3]" "$(printf '%s' "$OUT" | j "[i['number'] for i in d]")"
+run issue-list --repo o/r --state closed --closed-since 'yesterday' --json number >/dev/null; assert_exit "--closed-since needs a date (exit 2)" 2 $?
 
 # ── pr-list ─────────────────────────────────────────────────────────────────
 PRS='[{"number":3,"title":"m","body":"Refs #9","state":"closed","html_url":"https://x/pull/3","created_at":"2026-10-03T00:00:00Z","updated_at":"u","closed_at":"c","merged_at":"2026-10-04T00:00:00Z","head":{"ref":"idd/9-x","sha":"abc"},"base":{"ref":"main"},"draft":false,"user":{"login":"alice"}},
@@ -94,6 +116,19 @@ assert_eq "closed includes merged (gh semantics)" "[(3, 'MERGED', False), (4, 'C
 reset; fx "repos/o/r/pulls?state=open&per_page=100&page=1" '[{"number":7,"state":"open","merged_at":null,"head":{"ref":"a","sha":"1"},"base":{"ref":"main"}}]'
 OUT="$(run pr-list --repo o/r --json number,state)"
 assert_eq "pr-list defaults to open" "[{'number': 7, 'state': 'OPEN'}]" "$(printf '%s' "$OUT" | j "d")"
+
+# mergeable needs the single-PR endpoint (the list endpoint does not carry it)
+reset; fx "repos/o/r/pulls?state=open&per_page=100&page=1" '[{"number":7,"state":"open","merged_at":null,"head":{"ref":"a","sha":"1"},"base":{"ref":"main"}},{"number":9,"state":"open","merged_at":null,"head":{"ref":"b","sha":"2"},"base":{"ref":"main"}}]'
+fx "repos/o/r/pulls/7" '{"number":7,"mergeable":false}'
+fx "repos/o/r/pulls/9" '{"number":9,"mergeable":null}'
+OUT="$(run pr-list --repo o/r --json number,mergeable)"
+assert_eq "mergeable mapped like gh (false → CONFLICTING, null → UNKNOWN)" "[(7, 'CONFLICTING'), (9, 'UNKNOWN')]" "$(printf '%s' "$OUT" | j "[(p['number'], p['mergeable']) for p in d]")"
+fx "repos/o/r/pulls/9" '{"number":9,"mergeable":true}'
+assert_eq "mergeable true → MERGEABLE" "MERGEABLE" "$(run pr-list --repo o/r --json number,mergeable | j "d[1]['mergeable']")"
+reset; fx "repos/o/r/pulls?state=open&per_page=100&page=1" '[{"number":7,"state":"open","merged_at":null,"body":null,"head":{"ref":"a","sha":"1"},"base":{"ref":"main"}}]'
+OUT="$(run pr-list --repo o/r --json number,body)"
+refute_grep "no single-PR fetch unless mergeable is asked" "pulls/7" "$(cat "$FX/calls.log")"
+assert_eq "an empty PR body is \"\" like gh" "''" "$(printf '%s' "$OUT" | j "repr(d[0]['body'])")"
 
 # pr-list paging stops at --limit without requesting further pages
 reset

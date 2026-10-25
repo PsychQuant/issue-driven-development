@@ -22,4 +22,5 @@
 
 ## 5. 驗證
 
+- [x] 5.0 verify 第 1 輪（4 個 lens，Claude-only）的修正：issue URL／repo 嚴格解析（security HIGH：URL 可把 `--remove-label` 變成 `DELETE /repos/o/r`）；wrapper 旗標值解析與 gh 一致；label 必須存在、milestone 依 gh 語意、移除不存在的 label 為 no-op、失敗時 stdout 為空並附 `hint:`、非 UTF-8 參數 exit 12、`-b=x`；`gh-rest` 加 `--sort`、`--closed-since`、全量 `comments`、`mergeable`、空 body 為 `""`；`check-closed-without-summary.sh` 改用 gh-rest（補回使用者核可的第 6 支）；`idd-all` Phase 0.6 改明確 `exit 1`、Phase 0.5／Step 0.4／Phase 0.6／Phase 5 直接走 REST（`gh api`）、只在 verify PASS 開 PR（雲端 blocking 仍 push）、PR body 與報告寫明 Claude-only、auth gate 加回 `gh auth status`；`idd-verify` 治理段明確條件化、boolean、Engine 行不自相矛盾；文件補未遷移清單、實驗性狀態、reference 對照與已知限制。驗證：`gh-egress`（151）、`gh-rest`（50）、`cloud-session`（含 Phase 0.6／Phase 5 實際執行）、`check-closed-without-summary`（含 REST live path）套件全綠。
 - [ ] 5.1 全套測試與審查：`bash plugins/issue-driven-dev/scripts/run-all-tests.sh` 除 `idd-repo-map`、`idd-tree-lock`（以 root 執行時的既有權限測試失敗）外全數通過；以獨立 reviewer 依 requirements／logic／security／regression 四個面向加 devil's advocate 審查 diff（雲端 Claude-only，報告寫明缺 Codex），修正所有 blocking finding 後把 Verify 報告貼到 #416。完成時：Verify 報告無未處理的 blocking finding。驗證：#416 上有 `## Verify` comment，且列出測試結果與 degraded 註記。

@@ -11,8 +11,12 @@ whose transport (gh_egress_rest.py) imports the shared helpers below.
 
 Usage (stdout: JSON; exit 0 ok · 1 GitHub/gh failure · 2 usage error):
   gh-rest.sh issue-view <N|issue URL> [--repo R] --json f1,f2,…
-  gh-rest.sh issue-list [--repo R] [--state open|closed|all] [--label L]… [--limit N] --json …
+  gh-rest.sh issue-list [--repo R] [--state open|closed|all] [--label L]… [--sort created|updated]
+                        [--closed-since YYYY-MM-DD] [--limit N] --json …
+                        (comments: fully paged per issue — one call per issue; --closed-since keeps issues
+                         closed on/after the date, and --limit counts the kept ones)
   gh-rest.sh pr-list    [--repo R] [--state open|closed|merged|all] [--limit N] --json …
+                        (mergeable: one single-PR call per PR — the list endpoint does not carry it)
   gh-rest.sh repo-view  [--repo R] --json …
 R is OWNER/REPO or HOST/OWNER/REPO; without it gh resolves {owner}/{repo} from the current
 directory's git remote, as `gh issue … ` does without --repo.
@@ -33,10 +37,20 @@ DEFAULT_LIMIT = 30  # gh's own default for list commands
 ISSUE_FIELDS = ("number", "title", "state", "body", "url", "createdAt", "updatedAt", "closedAt",
                 "author", "labels", "assignees", "milestone", "comments")
 PR_FIELDS = ("number", "title", "body", "state", "url", "createdAt", "updatedAt", "closedAt", "mergedAt",
-             "headRefName", "headRefOid", "baseRefName", "isDraft", "author")
+             "headRefName", "headRefOid", "baseRefName", "isDraft", "author", "mergeable")
 REPO_FIELDS = ("nameWithOwner", "defaultBranchRef", "isFork", "visibility", "url", "viewerPermission")
 
 PLACEHOLDER = "{owner}/{repo}"
+
+# Owner / repository names and hosts that may enter a REST path. Strict on purpose: a `#`, `?`, `.`/`..`
+# segment or `user@` in an issue URL once turned `edit <url> --remove-label x` into DELETE /repos/o/r
+# (#416 verify, security lens). `.` and `..` match the name class, so they are refused separately.
+_NAME = re.compile(r"[A-Za-z0-9_.-]+")
+_HOST = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?(?::[0-9]+)?")
+
+
+def _name_ok(part):
+    return bool(_NAME.fullmatch(part)) and part not in (".", "..")
 
 
 class GhError(Exception):
@@ -65,10 +79,10 @@ def split_repo(spec):
     """OWNER/REPO | HOST/OWNER/REPO | None → (host or None, 'OWNER/REPO' or the gh placeholder)."""
     if not spec:
         return None, PLACEHOLDER
-    parts = spec.strip("/").split("/")
-    if len(parts) == 2 and all(re.fullmatch(r"[A-Za-z0-9_.-]+", p) for p in parts):
-        return None, spec.strip("/")
-    if len(parts) == 3 and all(re.fullmatch(r"[A-Za-z0-9_.-]+", p) for p in parts):
+    parts = spec.split("/")
+    if len(parts) == 2 and all(_name_ok(p) for p in parts):
+        return None, spec
+    if len(parts) == 3 and _HOST.fullmatch(parts[0]) and all(_name_ok(p) for p in parts[1:]):
         host = parts[0]
         return (None if host == "github.com" else host), f"{parts[1]}/{parts[2]}"
     raise UsageError(f"bad repository '{spec}' (expected OWNER/REPO or HOST/OWNER/REPO)")
@@ -76,10 +90,14 @@ def split_repo(spec):
 
 def parse_issue_ref(ref, repo_flag):
     """'9' / '#9' / 'https://HOST/OWNER/REPO/issues/9' → (host, repo, number)."""
-    m = re.fullmatch(r"https?://([^/]+)/([^/]+)/([^/]+)/(?:issues|pull)/(\d+)/?", ref or "")
+    m = re.fullmatch(r"https?://([^/]+)/([^/]+)/([^/]+)/(?:issues|pull)/([1-9][0-9]*)/?", ref or "")
     if m:
-        host = None if m.group(1) == "github.com" else m.group(1)
-        return host, f"{m.group(2)}/{m.group(3)}", int(m.group(4))
+        host, owner, name = m.group(1), m.group(2), m.group(3)
+        if not (_HOST.fullmatch(host) and _name_ok(owner) and _name_ok(name)):
+            raise UsageError(f"bad issue URL '{ref}' (host, owner or repository has characters a REST path cannot carry)")
+        return (None if host == "github.com" else host), f"{owner}/{name}", int(m.group(4))
+    if (ref or "").startswith(("http://", "https://")):
+        raise UsageError(f"bad issue URL '{ref}' (expected https://HOST/OWNER/REPO/issues/N)")
     m = re.fullmatch(r"#?([1-9]\d*)", ref or "")
     if not m:
         raise UsageError(f"bad issue reference '{ref}' (expected a number or an issue URL)")
@@ -154,7 +172,7 @@ def _issue_value(obj, field):
         "number": lambda: obj.get("number"),
         "title": lambda: obj.get("title"),
         "state": lambda: (obj.get("state") or "").upper() or None,
-        "body": lambda: obj.get("body"),
+        "body": lambda: obj.get("body") or "",   # gh returns "" for an empty body; REST returns null
         "url": lambda: obj.get("html_url"),
         "createdAt": lambda: obj.get("created_at"),
         "updatedAt": lambda: obj.get("updated_at"),
@@ -178,7 +196,7 @@ def _pr_value(obj, field):
     return {
         "number": lambda: obj.get("number"),
         "title": lambda: obj.get("title"),
-        "body": lambda: obj.get("body"),
+        "body": lambda: obj.get("body") or "",
         "state": lambda: "MERGED" if obj.get("merged_at") else (obj.get("state") or "").upper() or None,
         "url": lambda: obj.get("html_url"),
         "createdAt": lambda: obj.get("created_at"),
@@ -241,14 +259,38 @@ def issue_view(a):
 
 
 def issue_list(a):
-    fields = fields_of(a.json, tuple(f for f in ISSUE_FIELDS if f != "comments"), "issue-list (use issue-view for comments)")
+    fields = fields_of(a.json, ISSUE_FIELDS, "issue-list")
     host, repo = split_repo(a.repo)
     query = f"state={a.state}"
     if a.label:
         query += "&labels=" + ",".join(urllib.parse.quote(lb, safe="") for lb in a.label)
-    items = pages(f"repos/{repo}/issues", query, host, "issue-list", subject(repo), a.limit,
-                  keep=lambda it: "pull_request" not in it)
-    return [{f: _issue_value(it, f) for f in fields} for it in items]
+    if a.sort:   # server-side order BEFORE the limit cuts, or "N arbitrary issues, sorted" (#299)
+        query += f"&sort={a.sort}&direction=desc"
+    since = None
+    if a.closed_since:   # REST `since` is update time — closing updates an issue, so it only narrows
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}Z)?", a.closed_since):
+            raise UsageError("--closed-since needs a date: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ")
+        since = a.closed_since if "T" in a.closed_since else a.closed_since + "T00:00:00Z"
+        query += f"&since={since}"
+    def keep(it):
+        if "pull_request" in it:
+            return False
+        return since is None or (it.get("closed_at") or "") >= since
+    items = pages(f"repos/{repo}/issues", query, host, "issue-list", subject(repo), a.limit, keep=keep)
+    out = []
+    for it in items:
+        row = {}
+        for f in fields:
+            if f == "comments":   # every comment, not gh's oldest-100 cap
+                n = it.get("number")
+                if type(n) is not int or n < 1:   # fetched data about to enter an API path
+                    raise GhError(f"issue-list returned a non-numeric issue number: {str(n)[:40]!r}")
+                row[f] = [comment_shape(c) for c in pages(f"repos/{repo}/issues/{n}/comments", "", host,
+                                                          "issue-list comments", f"{subject(repo)}#{n}")]
+            else:
+                row[f] = _issue_value(it, f)
+        out.append(row)
+    return out
 
 
 def pr_list(a):
@@ -257,7 +299,21 @@ def pr_list(a):
     rest_state = {"open": "open", "closed": "closed", "merged": "closed", "all": "all"}[a.state]
     keep = (lambda it: bool(it.get("merged_at"))) if a.state == "merged" else (lambda it: True)
     items = pages(f"repos/{repo}/pulls", f"state={rest_state}", host, "pr-list", subject(repo), a.limit, keep)
-    return [{f: _pr_value(it, f) for f in fields} for it in items]
+    out = []
+    for it in items:
+        row = {}
+        for f in fields:
+            if f == "mergeable":   # only the single-PR endpoint computes it; null while GitHub is computing
+                pn = it.get("number")
+                if type(pn) is not int or pn < 1:   # fetched data about to enter an API path
+                    raise GhError(f"pr-list returned a non-numeric pull request number: {str(pn)[:40]!r}")
+                one = api(f"repos/{repo}/pulls/{pn}", host, "pr-list mergeable", f"{subject(repo)}#{pn}")
+                m = one.get("mergeable") if isinstance(one, dict) else None
+                row[f] = {True: "MERGEABLE", False: "CONFLICTING"}.get(m, "UNKNOWN")
+            else:
+                row[f] = _pr_value(it, f)
+        out.append(row)
+    return out
 
 
 def repo_view(a):
@@ -291,6 +347,8 @@ def build_parser():
             s.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
         if name == "issue-list":
             s.add_argument("--label", "-l", action="append")
+            s.add_argument("--sort", choices=("created", "updated"))
+            s.add_argument("--closed-since")
     return p
 
 

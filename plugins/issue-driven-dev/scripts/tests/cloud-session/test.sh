@@ -64,8 +64,8 @@ assert_output_grep "idd-all: sources the cloud-session helper" 'scripts/lib/clou
 assert_true "idd-all: cloud rule precedes fork detection in the resolution bash" \
   'before "$(line "$ALL" "elif idd_is_cloud_session")" "$(line "$ALL" "IS_FORK_RAW=")"'
 assert_output_grep "idd-all: precedence table names (PR, attended)" "(PR, attended)" "$ALL"
-assert_output_grep "idd-all: auth gate uses gh api user" 'gh api user --jq .login > /dev/null 2>&1 || abort' "$ALL"
-refute_output_grep "idd-all: no gh auth status gate" 'gh auth status > /dev/null' "$ALL"
+assert_output_grep "idd-all: auth gate falls back to gh api user" '{ gh auth status > /dev/null 2>&1 || gh api user --jq .login > /dev/null 2>&1; }' "$ALL"
+refute_output_grep "idd-all: no bare gh auth status gate" 'gh auth status > /dev/null 2>&1 || abort' "$ALL"
 # executed, not grepped: run idd-all's own Phase 0.5 resolution block per scenario
 block_with() { awk -v needle="$2" '/^```bash/{buf=""; f=1; next} f&&/^```/{if (index(buf, needle)) {printf "%s", buf; exit} f=0; next} f{buf=buf $0 "\n"}' "$1"; }
 RESOLVE="$(block_with "$ALL" 'PR_POLICY="absent"')"
@@ -92,6 +92,60 @@ assert_grep "cloud + --pr → (PR, unattended), unchanged"            "PR unatte
 assert_grep "local --no-pr → (direct-commit, attended), unchanged"  "direct-commit attended | flag=--no-pr" "$(resolve "" "" --no-pr)"
 assert_grep "local pr_policy=never → (direct-commit, attended), unchanged" "direct-commit attended | pr_policy=never" "$(resolve "" "" "" never false)"
 assert_grep "local, fork lookup fails → fail-closed (PR, unattended), unchanged" "PR unattended | fork detected" "$(resolve "" "" "")"
+
+# executed: Phase 0.6 (ralph-loop gate) and Phase 5 (push + PR) in a real repo with a bare origin.
+# A fake plugin root links the real libs and supplies a failing ralph-loop check, so the result does
+# not depend on what the host has installed.
+GIT_ENV=(-c user.name=t -c user.email=t@t -c init.defaultBranch=main)
+FR="$W/root"; mkdir -p "$FR/scripts/lib"
+for f in "$HERE/../../lib/"*; do ln -s "$f" "$FR/scripts/lib/$(basename "$f")"; done
+printf '#!/usr/bin/env bash\nexit 1\n' > "$FR/scripts/check-ralph-loop.sh"; chmod +x "$FR/scripts/check-ralph-loop.sh"
+mkdir -p "$W/gh2"; cat > "$W/gh2/gh" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$GH2_LOG"
+[ "$1" = "api" ] || { echo "unexpected porcelain gh $*" >&2; exit 1; }
+case "$2" in
+  repos/o/r)                 case " $* " in *" --jq .default_branch "*) echo main ;; *) echo '{"full_name":"o/r","default_branch":"main"}' ;; esac ;;
+  repos/o/r/issues/5/comments) echo '[]' ;;
+  repos/o/r/pulls)           for a in "$@"; do case "$a" in body=@*) cp "${a#body=@}" "$GH2_PRBODY" ;; esac; done
+                             echo "https://github.com/o/r/pull/77" ;;
+  *) echo "unexpected api $2" >&2; exit 1 ;;
+esac
+STUB
+chmod +x "$W/gh2/gh"; export GH2_LOG="$W/gh2.log" GH2_PRBODY="$W/prbody.md"
+newrepo() { # → $W/repo-<name> on main with an idd/5-x branch checked out, bare origin
+  local r="$W/repo-$1"
+  git "${GIT_ENV[@]}" init -q --bare "$r.git"; git "${GIT_ENV[@]}" clone -q "$r.git" "$r" 2>/dev/null
+  ( cd "$r" && git "${GIT_ENV[@]}" checkout -q -b main && git "${GIT_ENV[@]}" commit -q --allow-empty -m init \
+    && git "${GIT_ENV[@]}" push -q origin main 2>/dev/null && git "${GIT_ENV[@]}" checkout -q -b idd/5-x ); }
+P06="$(block_with "$ALL" 'check-ralph-loop.sh')"
+P5="$(block_with "$ALL" 'VERIFY_LINE=')"
+assert_true "idd-all: Phase 0.6 and Phase 5 blocks were found" '[ -n "$P06" ] && [ -n "$P5" ]'
+run_block() { # remote block repo [extra env…] → combined output; returns the block's exit code
+  local remote="$1" block="$2" repo="$3"; shift 3
+  OUT="$(env -u CLAUDE_CODE_REMOTE -u CLAUDE_CODE_SESSION_ATTENDED ${remote:+CLAUDE_CODE_REMOTE="$remote"} \
+    PATH="$W/gh2:$PATH" CLAUDE_PLUGIN_ROOT="$FR" CWD="$repo" GITHUB_REPO=o/r N=5 BRANCH=idd/5-x IN_CHAIN="" \
+    PATH_AXIS=PR INTERACTION=unattended REASON=test PR_TITLE="T" COMMIT_COUNT=1 "$@" \
+    bash -c "$block" 2>&1)"; local rc=$?; printf '%s' "$OUT"; return $rc; }
+newrepo a; OUT="$(run_block true "$P06" "$W/repo-a")"; RC=$?
+assert_exit "Phase 0.6 cloud + no ralph-loop → stops (exit 1), even without an abort helper" 1 "$RC"
+assert_grep "…saying ralph-loop is required" "ralph-loop is required" "$OUT"
+refute_grep "…never degrading to direct-commit" "Path: direct-commit" "$OUT"
+refute "…and the new branch was removed" git -C "$W/repo-a" show-ref --verify --quiet refs/heads/idd/5-x
+newrepo b; OUT="$(run_block "" "$P06" "$W/repo-b")"
+assert_grep "Phase 0.6 local + no ralph-loop → degrades as before" "Path: direct-commit (attended)" "$OUT"
+newrepo c; : > "$GH2_LOG"; OUT="$(run_block true "$P5" "$W/repo-c" VERIFY_STATE=PASS)"; RC=$?
+assert_exit "Phase 5 cloud + PASS completes" 0 "$RC"
+assert_grep "…pushes the branch" "idd/5-x" "$(git -C "$W/repo-c.git" branch --list)"
+assert_grep "…opens the PR through REST" "api repos/o/r/pulls -X POST" "$(cat "$GH2_LOG")"
+assert_grep "…from the branch onto the default branch" "head=idd/5-x -f base=main" "$(cat "$GH2_LOG")"
+assert_output_grep "…and the PR body says the verify was Claude-only" "Claude-only verification PASS(cloud session" "$GH2_PRBODY"
+newrepo d; : > "$GH2_LOG"; OUT="$(run_block true "$P5" "$W/repo-d" VERIFY_STATE=BLOCKING INTERACTION=attended)"
+assert_grep "Phase 5 cloud + blocking findings: branch pushed" "idd/5-x" "$(git -C "$W/repo-d.git" branch --list)"
+refute_grep "…but no PR opened" "repos/o/r/pulls" "$(cat "$GH2_LOG")"
+newrepo e; : > "$GH2_LOG"; run_block "" "$P5" "$W/repo-e" VERIFY_STATE=PASS >/dev/null
+assert_output_grep "Phase 5 local + PASS: PR body keeps the 6-AI line" "6-AI cross-model verification PASS" "$GH2_PRBODY"
+refute_grep "Phase 5: no porcelain reaches gh" "unexpected porcelain" "$(cat "$GH2_LOG") $OUT"
 
 assert_output_grep "idd-verify: resolves CODEX_ENABLED from the cloud signal" 'CODEX_ENABLED=false' "$VER"
 assert_output_grep "idd-verify: workflow args pass the resolved flag" 'codexEnabled: $CODEX_ENABLED' "$VER"

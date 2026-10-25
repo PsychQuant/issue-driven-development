@@ -25,7 +25,7 @@ The plugin SHALL decide whether it runs inside a Claude Code cloud session, and 
 
 ### Requirement: Issue egress dispatches through the GitHub REST API
 
-`scripts/gh-egress.sh` SHALL remain the only path for issue create, comment, and edit egress, and SHALL keep its attestation check, mechanical nets, empty-body guard, and exit-code band unchanged. After every gate passes, it SHALL dispatch `create`, `comment`, and `edit` through `gh api` REST calls in every environment (not only in cloud sessions), via `scripts/lib/gh_egress_rest.py`. On success, standard output SHALL be exactly one line holding the created or edited issue URL (for `create` and `edit`) or the comment URL (for `comment`). The translator SHALL support the flags listed in the design (D2) and SHALL refuse any other flag, a missing `create` title, a missing issue reference, an extra positional argument, or a milestone title with no exact match, with exit code 14 and a message naming the cause. A failing `gh` call SHALL end the dispatch with that call's own exit code and stderr. The issue body SHALL reach `gh` through standard input, never through argv.
+`scripts/gh-egress.sh` SHALL remain the only path for issue create, comment, and edit egress, and SHALL keep its attestation check, mechanical nets, empty-body guard, and exit-code band unchanged. After every gate passes, it SHALL dispatch `create`, `comment`, and `edit` through `gh api` REST calls in every environment (not only in cloud sessions), via `scripts/lib/gh_egress_rest.py`. On success, standard output SHALL be exactly one line holding the created or edited issue URL (for `create` and `edit`) or the comment URL (for `comment`). The translator SHALL support the flags listed in the design (D2) and SHALL refuse any other flag, a missing `create` title, a missing issue reference, an extra positional argument, a label that does not exist in the repository (REST would create it silently; `gh issue` refuses it), or a milestone title that matches no open milestone (compared ignoring case, as `gh` does), with exit code 14 and a message naming the cause; arguments that are not UTF-8 text SHALL be refused with exit code 12. Issue references SHALL be parsed strictly: an owner, repository or host that could alter the REST path (`#`, `?`, `.` or `..` segments, `user@` hosts) SHALL be refused with exit code 14 before any request. A failing `gh` call SHALL end the dispatch with that call's own exit code, SHALL leave standard output empty, and SHALL put `gh`'s message (and a `hint:` line for a repository the cloud session cannot reach) on standard error. The issue body SHALL reach `gh` through standard input, never through argv. The wrapper SHALL read a value-taking flag's next token as its value whatever its shape, as `gh` does, so the gates scan exactly the text that is sent.
 
 #### Scenario: create dispatches a REST POST and prints the URL
 
@@ -55,6 +55,22 @@ The plugin SHALL decide whether it runs inside a Claude Code cloud session, and 
 - **THEN** the wrapper exits 14 and stderr names `--project`
 - **AND** no `gh` call is made
 
+#### Scenario: unknown label is refused, not created
+
+- **GIVEN** label `missing` does not exist in `o/r`
+- **WHEN** `gh-egress.sh create --repo o/r --title T --body x --label missing --scrub-attested warn` runs
+- **THEN** the wrapper exits 14 naming the label, and no issue is created
+
+#### Scenario: an issue URL cannot redirect the request
+
+- **WHEN** `gh-egress.sh edit 'https://github.com/o/r#/issues/5' --remove-label bug --scrub-attested warn` runs
+- **THEN** the wrapper exits 14 and no `gh` call is made (in particular, no request to `repos/o/r`)
+
+#### Scenario: a flag-shaped body value is scanned as the body
+
+- **WHEN** `gh-egress.sh comment 5 --repo o/r -b "--title=cc @victim" --scrub-attested warn` runs
+- **THEN** the mention net refuses it with exit 11, exactly as for the same text without the prefix
+
 #### Scenario: gate refusals still happen before any dispatch
 
 - **GIVEN** a body containing an unattested raw `@login` token
@@ -63,7 +79,7 @@ The plugin SHALL decide whether it runs inside a Claude Code cloud session, and 
 
 ### Requirement: Scripts read GitHub through the REST read helper
 
-Scripts on the `idd-all` path that read GitHub (`check-existing-work.sh`, `check-diagnosis-readiness.sh`, `process-attachments.sh`, `idd-worktree.sh`) SHALL read through `scripts/lib/gh-rest.sh`, never through `gh issue`, `gh pr`, or `gh repo` porcelain. The helper SHALL offer the read-only subcommands `issue-view`, `issue-list`, `pr-list`, and `repo-view`; SHALL return JSON whose field names and shapes match `gh … --json` for the fields listed in the design (D3); SHALL page through results until a short page or the `--limit`; SHALL treat `pr-list --state merged` as closed pull requests with a merge time; SHALL exclude pull requests from `issue-list`; and SHALL exit 2 for an unknown subcommand or field, 1 for a GitHub failure, and 0 on success. On failure caused by a cloud session that cannot reach the repository, stderr SHALL carry a `hint:` line telling the user to attach the repository to the session.
+Scripts that read GitHub (`check-existing-work.sh`, `check-diagnosis-readiness.sh`, `process-attachments.sh`, `idd-worktree.sh`, `check-closed-without-summary.sh`) SHALL read through `scripts/lib/gh-rest.sh`, never through `gh issue`, `gh pr`, or `gh repo` porcelain. The helper SHALL offer the read-only subcommands `issue-view`, `issue-list`, `pr-list`, and `repo-view`; SHALL return JSON whose field names and shapes match `gh … --json` for the fields listed in the design (D3), with an empty body as `""`; SHALL page through results until a short page or the `--limit`; SHALL treat `pr-list --state merged` as closed pull requests with a merge time; SHALL exclude pull requests from `issue-list`; SHALL sort `issue-list --sort updated` on the server before the limit applies; SHALL return every comment for `comments` (no 100-comment cap); SHALL apply `issue-list --closed-since DATE` before the limit; and SHALL exit 2 for an unknown subcommand or field, 1 for a GitHub failure, and 0 on success. On failure caused by a cloud session that cannot reach the repository, stderr SHALL carry a `hint:` line telling the user to attach the repository to the session.
 
 #### Scenario: porcelain field names from REST data
 
@@ -98,7 +114,7 @@ Scripts on the `idd-all` path that read GitHub (`check-existing-work.sh`, `check
 
 ### Requirement: Runtime reference maps porcelain to REST
 
-The plugin SHALL ship `references/claude-code-remote-tools.md` describing the cloud runtime: the detection signals, a table mapping each `gh` porcelain form used by in-scope skills (`gh issue view`, `gh issue list`, `gh issue create`, `gh issue comment`, `gh issue edit`, `gh pr list`, `gh pr view`, `gh pr create`, `gh repo view`, `gh label list`, `gh auth status`) to its REST replacement, the rule that issue writes still go through `scripts/gh-egress.sh`, the unsupported surfaces with the message each one prints, and a setup-script template. Each in-scope skill (`idd-all`, `idd-issue`, `idd-diagnose`, `idd-plan`, `idd-implement`, `idd-verify`, `idd-update`, `idd-clarify`, `idd-list`) SHALL carry a runtime note pointing to the reference; each unsupported skill (`idd-find`, `idd-report`, `idd-discuss`, `idd-ask`) SHALL carry a runtime note telling the agent to stop in a cloud session and print the reason. Skill bodies SHALL NOT be rewritten from porcelain to REST.
+The plugin SHALL ship `references/claude-code-remote-tools.md` describing the cloud runtime: the detection signals, a table mapping each `gh` porcelain form used by in-scope skills (`gh issue view`, `gh issue list`, `gh issue create`, `gh issue comment`, `gh issue edit`, `gh pr list`, `gh pr view`, `gh pr create`, `gh repo view`, `gh label list`, `gh auth status`) to its REST replacement, the rule that issue writes still go through `scripts/gh-egress.sh`, the unsupported surfaces with the message each one prints, and a setup-script template. Each in-scope skill (`idd-all`, `idd-issue`, `idd-diagnose`, `idd-plan`, `idd-implement`, `idd-verify`, `idd-update`, `idd-clarify`, `idd-list`) SHALL carry a runtime note pointing to the reference; each unsupported skill (`idd-find`, `idd-report`, `idd-discuss`, `idd-ask`) SHALL carry a runtime note telling the agent to stop in a cloud session and print the reason. Skill bodies SHALL NOT be rewritten from porcelain to REST, with one exception: `idd-all`'s own state-changing steps (feature-branch setup and PR creation) SHALL call the REST API directly (`gh api`), because an agent translating them wrongly would create the wrong branch or no PR.
 
 #### Scenario: in-scope skill carries the supported note
 

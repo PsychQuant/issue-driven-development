@@ -17,9 +17,11 @@ porcelain call returns 403, and so does `gh auth status` — while `gh api` REST
   `idd_cloud_interaction` (`attended` only when `CLAUDE_CODE_SESSION_ATTENDED` is exactly `1`; absent means
   `unattended`, because attended questions never time out).
 - **`scripts/lib/gh-rest.sh` (#416)** — read-only REST helper (`issue-view`, `issue-list`, `pr-list`, `repo-view`)
-  that returns the field names and shapes of `gh … --json`, pages until a short page or `--limit`, treats
-  `--state merged` as closed with a merge time, and adds a `hint:` line when a cloud session cannot reach the
-  repository. Unknown fields exit 2.
+  that returns the field names and shapes of `gh … --json` (an empty body is `""`), pages until a short page or
+  `--limit`, treats `--state merged` as closed with a merge time, sorts on the server with `issue-list --sort
+  updated` (#299), filters `--closed-since` before the limit, returns every comment (no 100-comment cap) and
+  `mergeable` on request, and adds a `hint:` line when a cloud session cannot reach the repository. Unknown
+  fields exit 2.
 - **`references/claude-code-remote-tools.md` (#416)** — detection signals, the porcelain → REST table, the cloud
   PR routes, the unsupported surfaces and what each prints, and the setup script (plugins + egress parser).
 - **`(PR, attended)` (#416)** — the cloud-session tuple: branch, push and PR, with sub-skills still asking.
@@ -29,16 +31,24 @@ porcelain call returns 403, and so does `gh auth status` — while `gh api` REST
 - **`gh-egress.sh` dispatches through the GitHub REST API in every environment (#416).** Attestation, the
   four nets, the empty-body guard and the exit band are unchanged; `lib/gh_egress_rest.py` turns the forwarded
   `gh issue create|comment|edit` arguments into `gh api` calls. Stdout is one URL line, so
-  `URL=$(gh-egress.sh create …)` callers are unaffected; the body reaches gh on stdin; body files keep their
-  bytes. Flags outside the supported set (see the header), a missing title or issue, a stray positional and an
-  unknown milestone title are refused with exit 14 instead of being dropped.
-- **`check-existing-work.sh`, `check-diagnosis-readiness.sh`, `process-attachments.sh`, `idd-worktree.sh` read
-  through `gh-rest.sh` (#416).** Matching logic is unchanged. `check-existing-work`'s error labels are now
+  `URL=$(gh-egress.sh create …)` callers are unaffected, and on failure stdout stays empty (gh's JSON error body
+  goes to stderr with a `hint:`); the body reaches gh on stdin; body files keep their bytes. Where REST and
+  `gh issue` differ, gh's behavior is kept: a label must already exist (REST would create it), a milestone
+  matches an open milestone ignoring case, `edit --milestone ""` removes it, removing a label the issue lacks
+  is a no-op. Flags outside the supported set (see the header), a missing title or issue, a stray positional,
+  an unknown label or milestone and a malformed issue URL are refused with exit 14 instead of being dropped;
+  non-UTF-8 arguments exit 12.
+- **`check-existing-work.sh`, `check-diagnosis-readiness.sh`, `process-attachments.sh`, `idd-worktree.sh` and
+  `check-closed-without-summary.sh` read through `gh-rest.sh` (#416).** `idd-list --audit-closes` therefore works
+  in a cloud session too; its `--dry-run` prints the `gh-rest.sh issue-list … --closed-since` call. Matching logic is unchanged. `check-existing-work`'s error labels are now
   `pr-list --state open` / `issue-view N`; `idd-close` Step 1.5 matches `issue-view` as well as the old label.
 - **`idd-all` (#416):** a cloud session forces the PR path, with the interaction from the attended signal, ahead
   of fork detection (which always 403s there); `--no-pr` is overridden with a notice; `(PR, unattended)` without
   ralph-loop aborts in a cloud session (after removing the new branch) instead of degrading to direct-commit.
-  The auth gate is `gh api user` instead of `gh auth status`. Local resolution is unchanged.
+  The PR is opened only after verify PASS; with blocking findings a cloud session still pushes the branch.
+  Branch setup and PR creation call REST directly (`gh api repos/R`, `POST repos/R/pulls`; also locally). The PR body
+  and report say when verify was Claude-only. The auth gate is `gh auth status || gh api user`. Local mode
+  resolution is unchanged.
 - **`idd-verify` (#416):** in a cloud session the Codex leg is not run (`codexEnabled: false`, no codex-pro
   governance) and the engine line and process gaps say `Codex leg not run — cloud session (degraded:
   Claude-only)`. Local behavior is unchanged.
@@ -47,11 +57,19 @@ porcelain call returns 403, and so does `gh auth status` — while `gh api` REST
   `idd-discuss` and `idd-ask` stop in a cloud session and say why. Skill bodies are not rewritten.
 - **`discussions_api` refuses in a cloud session (#416)** before sending a request: Discussions are GraphQL-only.
 
+### Fixed
+
+- **`gh-egress.sh` scanned something other than what it sent (#416 verify).** A flag-shaped value after a
+  value-taking flag (`-b "--repo=…"`, `--body "-t …"`) was re-read by the wrapper as a flag, while gh took it
+  as the body — the privacy, mention and empty-body nets could all be skipped. The wrapper now reads the next
+  token as the value, as gh does. Present on 3.5.0 as well.
+
 ### Not in this release
 
-- `idd-close`, `idd-comment`, `idd-edit`, `idd-config`, `idd-reorganize`, `idd-all-chain` and
-  `check-closed-without-summary.sh` are not migrated; in a cloud session their porcelain calls fail with
-  GitHub's own 403 message.
+- The `idd-close`, `idd-comment`, `idd-edit`, `idd-config`, `idd-reorganize` and `idd-all-chain` skill bodies are
+  not migrated; in a cloud session their own porcelain calls fail with GitHub's 403 message.
+- Not yet verified live: a fresh cloud session started from the setup script, and an end-to-end cloud
+  `/idd-all` run (see the Status section of `references/claude-code-remote-tools.md`).
 - `CLAUDE_CODE_SESSION_ATTENDED` was observed in a web session only; scheduled / API-started sessions are
   covered by the absent-means-unattended rule.
 

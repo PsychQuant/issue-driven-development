@@ -202,10 +202,11 @@ git -C "$CWD" rev-parse --git-dir > /dev/null 2>&1 \
      - cd to the target repo first, then re-run /idd-all
      - OR pass --cwd /path/to/local/clone"
 
-# 2. 必須能呼叫 GitHub API。用 `gh api user` 而非 `gh auth status`（#416）：雲端 session 的 GH_TOKEN
-#    是佔位值、由 proxy 注入真正的憑證，`gh auth status` 在那裡一律失敗；本機上 `gh auth status`
-#    也會因為「任何一個 host」的憑證壞掉而失敗。`gh api user` 只檢查這次 run 實際要用的 API。
-gh api user --jq .login > /dev/null 2>&1 || abort "gh cannot reach the GitHub API (gh api user failed). Run: gh auth login"
+# 2. 必須 gh auth。`gh auth status` 在雲端 session 一律失敗（GH_TOKEN 是佔位值、由 proxy 注入真正的
+#    憑證，#416），所以它失敗時再以 `gh api user` 確認實際要用的 API 可用。`gh auth status` 仍放前面：
+#    GitHub App installation token（如 Actions 的 GITHUB_TOKEN）呼叫不了 GET /user，但 `gh auth status` 認得它。
+{ gh auth status > /dev/null 2>&1 || gh api user --jq .login > /dev/null 2>&1; } \
+  || abort "gh CLI not authenticated (gh auth status and gh api user both failed). Run: gh auth login"
 ```
 
 > **Mode-specific gates(working tree clean、on default branch)移到 Phase 0.5**:那些 gate 只在 PR mode 必須,direct-commit mode 預設留在 user 當前 branch + 容許未 commit 變更(由 user 自負其責)。
@@ -229,7 +230,7 @@ fi
 
 #### Step 0.4: Resolve Issue Number
 
-- **from-issue mode**(`/idd-all #19`): 確認 issue #19 存在且 OPEN(`gh issue view 19 -R "$GITHUB_REPO" --json state -q .state`); 若 state=CLOSED → abort
+- **from-issue mode**(`/idd-all #19`): 確認 issue #19 存在且 OPEN(`gh api "repos/$GITHUB_REPO/issues/19" --jq .state` → `open`／`closed`——REST，本機與雲端皆可用，#416); 若 state=CLOSED → abort
 - **from-scratch mode**: skip 到 Phase 1 跑 idd-issue
 - **interactive mode**: AskUserQuestion 兩選一
 - **開工前檢查（已有 PR／branch 在處理這張 issue？）**: 見 Step 0.5.1。它需要先知道 interaction 軸，所以排在 mode 解析之後、建 branch 之前
@@ -410,7 +411,10 @@ if [ "$PATH_AXIS" = "PR" ]; then
   fi
 
   CURRENT=$(git -C "$CWD" branch --show-current)
-  DEFAULT=$(gh repo view "$GITHUB_REPO" --json defaultBranchRef -q .defaultBranchRef.name)
+  # REST (#416): `gh repo view` / `gh issue view` are GraphQL, blocked in cloud sessions,
+  # where an empty DEFAULT would abort with "must start from ''".
+  DEFAULT=$(gh api "repos/$GITHUB_REPO" --jq .default_branch)
+  [ -n "$DEFAULT" ] || abort "could not read the default branch of $GITHUB_REPO (see the gh error above)"
   if [ "$CURRENT" != "$DEFAULT" ]; then
     abort "$CWD is currently on '$CURRENT'. PR mode must start from '$DEFAULT'.
    Run: git -C $CWD checkout $DEFAULT"
@@ -418,7 +422,7 @@ if [ "$PATH_AXIS" = "PR" ]; then
 
   # Build feature branch name
   N="19"  # 從 args 或 idd-issue 結果取得
-  TITLE=$(gh issue view "$N" -R "$GITHUB_REPO" --json title -q .title)
+  TITLE=$(gh api "repos/$GITHUB_REPO/issues/$N" --jq .title)
   # SLUG sanitization — POSIX-portable; avoids BSD/GNU sed `\|` divergence (#6 fix)
   SLUG=$(echo "$TITLE" | tr '[:upper:]' '[:lower:]' \
       | sed -E 's/[^a-z0-9]/-/g; s/-+/-/g; s/^-//; s/-$//' \
@@ -511,9 +515,9 @@ if [ "$PATH_AXIS" = "PR" ] && [ "$INTERACTION" = "unattended" ]; then
     # and checked it out. Without unwinding, degrade leaves user committing to
     # a dangling feature branch they never wanted (silent state corruption per
     # verify finding F2). MUST unwind before flipping mode — or before aborting.
-    # Default branch via lib/gh-rest.sh: `gh repo view` is GraphQL, blocked in cloud sessions (#416).
+    # Default branch via REST: `gh repo view` is GraphQL, blocked in cloud sessions (#416).
     if [ -n "${BRANCH:-}" ] && git -C "$CWD" show-ref --verify --quiet "refs/heads/$BRANCH"; then
-      DEFAULT=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/lib/gh-rest.sh" repo-view --repo "$GITHUB_REPO" --json defaultBranchRef | jq -r .defaultBranchRef.name)
+      DEFAULT=$(gh api "repos/$GITHUB_REPO" --jq .default_branch)
       echo "→ Unwinding Phase 0.5 PR-mode branch setup:"
       echo "    git checkout $DEFAULT"
       git -C "$CWD" checkout "$DEFAULT" 2>&1 | tail -1
@@ -522,10 +526,13 @@ if [ "$PATH_AXIS" = "PR" ] && [ "$INTERACTION" = "unattended" ]; then
     fi
 
     if idd_is_cloud_session; then
-      # #416: no degrade in a cloud session — direct-commit work dies with the container
-      abort "ralph-loop is required for (PR, unattended) in a cloud session, and degrading to direct-commit would lose the work.
-   Install (one step, then re-run): claude plugin install ralph-loop@claude-plugins-official
-   (add it to the cloud environment's setup script — references/claude-code-remote-tools.md)"
+      # #416: no degrade in a cloud session — direct-commit work dies with the container.
+      # Explicit exit, not the `abort` convention: this block runs in its own shell, where an undefined
+      # `abort` would print "command not found" and fall through into the degrade below.
+      echo "✗ ralph-loop is required for (PR, unattended) in a cloud session, and degrading to direct-commit would lose the work." >&2
+      echo "  Install (one step, then re-run): claude plugin install ralph-loop@claude-plugins-official" >&2
+      echo "  (add it to the cloud environment's setup script — references/claude-code-remote-tools.md)" >&2
+      exit 1
     fi
     echo "  Degrading to (direct-commit, attended) for backward-compat (#28 B4 design)."
     echo "  To restore (PR, unattended): claude plugin install ralph-loop@claude-plugins-official"
@@ -1002,11 +1009,13 @@ for round in 1..MAX_ROUND:
     findings = parse_verify_report(latest verify comment)
 
     if findings.blocking_count == 0:
+        VERIFY_STATE = "PASS"
         break  # PASS
 
     if INTERACTION == "attended":
         # User is in session — surface findings and let them decide whether to keep iterating.
         # Do NOT auto-fix in attended mode; that defeats the purpose of HITL.
+        VERIFY_STATE = "BLOCKING"   # Phase 5 opens no PR; in a cloud session it still pushes the branch (#416)
         report_findings_and_exit_to_user()
         break
 
@@ -1065,12 +1074,30 @@ elif [ "$PATH_AXIS" = "PR" ]; then
   # meeting run 不會到這裡（Phase 2 → Phase 6）；到這裡才讀到 meeting = Phase 2 之後 type 被改了：fail-closed（r5 #11）
   if [ "$P5_TYPE" = meeting ]; then echo "FATAL: Phase 5: the latest trusted Diagnosis of #$N now records meeting, but Phase 2 routed this run as code work — not pushing, no PR; any commits this run made stay on $BRANCH (check git log). Re-run /idd-diagnose #$N, then decide by hand (r5 #11)" >&2; exit 1; fi
   # PR mode (v2.40.0 behaviour below; #383 adds the type guard above, which fails closed before the push — r4 #20)
+  . "$CLAUDE_PLUGIN_ROOT/scripts/lib/cloud-session.sh"
+  # #416: a PR is opened only after verify PASS. (PR, attended) can reach here with blocking findings
+  # (Phase 4 hands them back): no PR then — but in a cloud session the branch is still pushed, because
+  # unpushed commits die with the container.
+  if [ "${VERIFY_STATE:-PASS}" != "PASS" ]; then
+    if idd_is_cloud_session; then
+      git -C "$CWD" push -u origin "$BRANCH"
+      echo "→ verify has blocking findings: branch $BRANCH pushed (cloud session), no PR opened"
+    else
+      echo "→ verify has blocking findings: no push, no PR — commits stay on $BRANCH"
+    fi
+    PR_URL=""
+  else
   # WARNING (#7): heredoc below is NOT quoted — variable expansion happens.
   # Do NOT insert untrusted strings (e.g. issue titles) into the body without
   # sanitization. Current placeholders {...} are markdown-style note text, not
   # ${...} shell expansions, so safe today; future maintainers must keep it that way.
   git -C "$CWD" push -u origin "$BRANCH"
 
+  if idd_is_cloud_session; then   # #416: say which verify ran — cloud verify is Claude-only
+    VERIFY_LINE="Claude-only verification PASS(cloud session — Codex leg not run, degraded)。詳見 issue #${N} 的 Verify comment。"
+  else
+    VERIFY_LINE="6-AI cross-model verification PASS(Agent Team + Codex xhigh)。詳見 issue #${N} 的 Verify comment。"
+  fi
   PR_BODY=$(cat <<EOF
 Refs #${N}
 
@@ -1078,7 +1105,7 @@ Refs #${N}
 {從 issue title + diagnosis 的 Strategy 摘要}
 
 ## Verification
-6-AI cross-model verification PASS(Agent Team + Codex xhigh)。詳見 issue #${N} 的 Verify comment。
+${VERIFY_LINE}
 
 ## Checklist
 - [x] Diagnose ✓
@@ -1094,8 +1121,16 @@ Refs #${N}
 EOF
 )
 
-  gh pr create -R "$GITHUB_REPO" --title "$PR_TITLE" --body "$PR_BODY" \
-      --base "$DEFAULT" --head "$BRANCH"
+  # REST (#416): `gh pr create` is GraphQL, blocked in cloud sessions; this call works in both.
+  DEFAULT=$(gh api "repos/$GITHUB_REPO" --jq .default_branch)
+  [ -n "$DEFAULT" ] || { echo "FATAL: Phase 5: could not read the default branch — branch $BRANCH is pushed, open the PR by hand" >&2; exit 1; }
+  PR_BODY_FILE=$(mktemp) && printf '%s\n' "$PR_BODY" > "$PR_BODY_FILE"
+  PR_URL=$(gh api "repos/$GITHUB_REPO/pulls" -X POST -f title="$PR_TITLE" -f head="$BRANCH" -f base="$DEFAULT" \
+      -F body=@"$PR_BODY_FILE" --jq .html_url) \
+    || { rm -f "$PR_BODY_FILE"; echo "FATAL: Phase 5: PR creation failed — branch $BRANCH is pushed, open the PR by hand" >&2; exit 1; }
+  rm -f "$PR_BODY_FILE"
+  echo "→ PR: $PR_URL"
+  fi
 fi
 # Both branches fall through to Phase 6 below.
 ```
@@ -1147,6 +1182,19 @@ Default (`REVIEW_FLAG=""`):
   Follow-ups:   ${FOLLOWUP_ISSUE_LIST or "(none)"}
 
 Next: merge ${PR_URL}, then run /idd-close #${N}
+```
+
+雲端 session（#416）：`Verify:` 行寫 `verify-gated PASS (Claude-only — cloud session, Codex leg not run)`。`VERIFY_STATE=BLOCKING`（attended 交回 findings）時不印上面的樣板，改印：
+
+```
+✗ idd-all stopped before the PR (verify has blocking findings)
+
+  Issue:        #${N} — ${TITLE}
+  Branch:       ${BRANCH} (pushed: cloud session) | ${BRANCH} (local only)
+  Verify:       ${BLOCKING_COUNT} blocking finding(s) — see the Verify comment on #${N}
+  PR:           not opened
+
+Next: fix the findings, re-run /idd-verify #${N}, then /idd-all #${N} (resumes ${BRANCH}) or open the PR by hand
 ```
 
 With `--review` (`REVIEW_FLAG="--review"`):

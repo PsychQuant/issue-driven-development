@@ -1191,7 +1191,8 @@ refute_grep "phase 5 (run): a meeting issue never reaches git push (r2 #12, C2)"
 refute_grep "phase 5 (run): a meeting issue never opens a PR" 'PR-CALLED' "$out"
 # r3 #27: positive control — a non-meeting PR run still reaches git push
 # r4 #35: the issue body says meeting (as if the author rewrote it after implement); the trusted Diagnosis says bug
-p5ok_stub='git() { case "$*" in *push*) echo "PUSH-CALLED"; return 0 ;; esac; return 0; }; gh() { case "$1" in api) echo "[\"## Diagnosis\\n\\n### Type\\nbug\\n\"]" ;; issue) echo "{\"labels\":[],\"body\":\"## Type\\nmeeting\\n\"}" ;; pr) echo "PR-CALLED" ;; *) return 0 ;; esac; }'
+# #416: Phase 5 reads the default branch and opens the PR through REST (`gh api repos/R`, `gh api …/pulls`)
+p5ok_stub='git() { case "$*" in *push*) echo "PUSH-CALLED"; return 0 ;; esac; return 0; }; gh() { case "$1" in api) case "$2" in */pulls) echo "PR-CALLED" ;; repos/o/r) echo main ;; *) echo "[\"## Diagnosis\\n\\n### Type\\nbug\\n\"]" ;; esac ;; issue) echo "{\"labels\":[],\"body\":\"## Type\\nmeeting\\n\"}" ;; pr) echo "PR-CALLED" ;; *) return 0 ;; esac; }'
 out=$( UW_TYPE=bug N=7 GITHUB_REPO=o/r CWD=/nonexistent PATH_AXIS=PR IN_CHAIN= BRANCH=idd/7-x CLAUDE_PLUGIN_ROOT="$HERE/../../.." bash -c "$p5ok_stub"$'\n'"$P5_SRC" 2>&1 )
 assert_grep "phase 5 (run): a non-meeting PR run does call git push (positive control)" 'PUSH-CALLED' "$out"
 assert_grep "phase 5 (run): ... even when the issue body was rewritten to meeting after implement (r4 #35)" 'PR-CALLED' "$out"

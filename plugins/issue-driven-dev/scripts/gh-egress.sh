@@ -149,6 +149,26 @@ BODY_PARTS=()       # body-channel prose only — mention net (GitHub never noti
 next_is=""          # "body" | "title" | "bodyfile" when the previous arg expects a value
 while [ $# -gt 0 ]; do
   arg="$1"
+  # A pending --body / --title / --body-file / --repo takes the NEXT token as its value, whatever it
+  # looks like — that is how gh (pflag) and the REST transport read it. Re-reading a flag-shaped value
+  # (`-b "--repo=…"`, `--body "-bX"`) as a flag here scanned something other than what was sent, so the
+  # privacy, mention and empty-body nets could be skipped (#416 verify, security lens). The wrapper's
+  # own flags still refuse as split tokens (#203 item 6) through their case arms below.
+  if [ -n "$next_is" ]; then
+    case "$arg" in
+      --mention-attested|--mention-attested=*|--scrub-attested|--scrub-attested=*|--allow-empty-body) : ;;
+      *)
+        GH_ARGS+=("$arg")
+        case "$next_is" in
+          body)       SCAN_PARTS+=("$arg"); BODY_PARTS+=("$arg") ;;
+          title)      SCAN_PARTS+=("$arg") ;;
+          repo)       EC_REPO="$arg" ;;
+          bodyfile)   require_scannable_bodyfile "$arg"; BODYFILE_PATH="$arg"; FCONTENT="$(cat "$arg")"
+                      SCAN_PARTS+=("$FCONTENT"); BODY_PARTS+=("$FCONTENT") ;;
+        esac
+        next_is=""; shift; continue ;;
+    esac
+  fi
   case "$arg" in
     --mention-attested|--mention-attested=*)
       # Same malformed-shape guard as --scrub-attested (#203 item 6 / #117).
@@ -213,18 +233,12 @@ while [ $# -gt 0 ]; do
       BODYFILE_PATH="$f"
       FCONTENT="$(cat "$f")"; SCAN_PARTS+=("$FCONTENT"); BODY_PARTS+=("$FCONTENT"); shift; continue ;;
     *)
+      # a positional (pending values were taken above)
       GH_ARGS+=("$arg")
-      case "$next_is" in
-        body)       SCAN_PARTS+=("$arg"); BODY_PARTS+=("$arg") ;;
-        title)      SCAN_PARTS+=("$arg") ;;
-        repo)       EC_REPO="$arg" ;;
-        bodyfile)   require_scannable_bodyfile "$arg"; BODYFILE_PATH="$arg"; FCONTENT="$(cat "$arg")"
-                    SCAN_PARTS+=("$FCONTENT"); BODY_PARTS+=("$FCONTENT") ;;
-        *)          if [ "$VERB" = "edit-comment" ] && [ -z "$EC_ID" ]; then
-                      case "$arg" in ''|*[!0-9]*) : ;; *) EC_ID="$arg" ;; esac
-                    fi ;;
-      esac
-      next_is=""; shift; continue ;;
+      if [ "$VERB" = "edit-comment" ] && [ -z "$EC_ID" ]; then
+        case "$arg" in ''|*[!0-9]*) : ;; *) EC_ID="$arg" ;; esac
+      fi
+      shift; continue ;;
   esac
 done
 

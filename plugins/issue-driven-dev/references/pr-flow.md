@@ -256,6 +256,7 @@ The check is signal-based, not state-based: if a PR ref exists, IDD assumes PR p
 
 | Resolved | `(path, interaction)` | When |
 |----------|----------------------|------|
+| `--in-chain` flag | `(direct-commit, unattended)` | Called by `/idd-all-chain`; stays on the cluster branch, no per-issue PR |
 | `--pr` flag | `(PR, unattended)` | Explicit override; matches v2.40.0 default + `/loop` automation |
 | `--no-pr` flag | `(direct-commit, attended)` | Explicit HITL override (outside a cloud session) |
 | `--no-pr` flag in a Claude Code cloud session | `(PR, <cloud interaction>)` + override notice | A direct commit would be lost when the container is reclaimed (#416) |

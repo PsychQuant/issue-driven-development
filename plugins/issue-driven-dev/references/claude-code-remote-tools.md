@@ -39,21 +39,25 @@ Where a skill uses `--jq EXPR` / `-q EXPR`, pipe the helper's output to `jq -r E
 | Porcelain in a skill | Cloud replacement |
 |---|---|
 | `gh issue view N --repo R --json F` | `bash "$LIB/gh-rest.sh" issue-view N --repo R --json F` (fields: `number,title,state,body,url,createdAt,updatedAt,closedAt,author,labels,assignees,milestone,comments`) |
-| `gh issue list --repo R --state S --label L --limit K --json F` | `bash "$LIB/gh-rest.sh" issue-list --repo R --state S --label L --limit K --json F` (pull requests excluded; `--search` is unsupported — it needs the search API) |
+| `gh issue list --repo R --state S --label L --limit K --json F` | `bash "$LIB/gh-rest.sh" issue-list --repo R --state S --label L --limit K --json F` (pull requests excluded; `comments` is every comment, one extra call per issue) |
+| `gh issue list … --search "sort:updated-desc"` (`idd-list`) | `… issue-list … --sort updated` — GitHub sorts before the limit cuts (#299). `--search "closed:>=DATE"` → `--closed-since DATE`. Any other `--search` query needs the search API: unsupported |
 | `gh issue create …` | `bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" create …` — same arguments; the wrapper already dispatches through REST |
 | `gh issue comment N …` | `bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment N …` |
 | `gh issue edit N …` | `bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit N …` (flags: `--title --body --body-file --add-label --remove-label --add-assignee --remove-assignee --milestone --remove-milestone`) |
-| `gh pr list --repo R --state S --limit K --json F` | `bash "$LIB/gh-rest.sh" pr-list --repo R --state S --limit K --json F` (`S` = `open`/`closed`/`merged`/`all`) |
+| `gh pr list --repo R --state S --limit K --json F` | `bash "$LIB/gh-rest.sh" pr-list --repo R --state S --limit K --json F` (`S` = `open`/`closed`/`merged`/`all`; `mergeable` costs one extra call per PR; `--search` is unsupported) |
 | `gh pr view P --repo R --json F` | `gh api repos/R/pulls/P` — `state` + `merged_at` (merged when non-null), `head.ref`, `head.sha`, `base.ref`, `draft`, `mergeable` (`true`/`false`/`null` ↔ porcelain `MERGEABLE`/`CONFLICTING`/`UNKNOWN`) |
 | `gh pr create --title T --body-file B --base D --head H` | `gh api repos/R/pulls -X POST -f title=T -f head=H -f base=D -F body=@B --jq .html_url` |
 | `gh repo view R --json F` | `bash "$LIB/gh-rest.sh" repo-view --repo R --json F` (fields: `nameWithOwner,defaultBranchRef,isFork,visibility,url,viewerPermission`) |
 | `gh label list --repo R` | `gh api "repos/R/labels?per_page=100" --paginate --jq '.[].name'` |
-| `gh auth status` | `gh api user --jq .login` (works locally too; checks the API the run will use) |
+| `gh auth status` | `gh auth status \|\| gh api user --jq .login` (`gh auth status` always fails in a cloud session; `gh api user` checks the API the run will use, and GitHub App tokens that cannot call `/user` still pass the first) |
+| `gh issue close N --repo R` (not on the `idd-all` path) | `gh api repos/R/issues/N -X PATCH -f state=closed -f state_reason=completed` — and only through `/idd-close`, never by hand |
 
 Pull-request operations that are GraphQL-only on github.com have cloud-session REST routes:
 `PUT`/`DELETE repos/R/pulls/P/ccr/auto_merge`, `POST repos/R/pulls/P/ccr/ready_for_review`,
 `POST repos/R/pulls/P/ccr/convert_to_draft`, `GET repos/R/pulls/P/ccr/review_threads`,
-`POST repos/R/pulls/P/ccr/comments/{comment_id}/resolve` (or `/unresolve`).
+`POST repos/R/pulls/P/ccr/comments/{comment_id}/resolve` (or `/unresolve`). Their existence is not
+permission: verify PASS is a state, not a merge authorization — no IDD skill merges or enables
+auto-merge, and `gh pr merge` stays a human action.
 
 Issue writes always go through `scripts/gh-egress.sh`, cloud or not: it is the only egress path and
 runs the privacy, mention and attestation gates. Never write an issue body with a raw `gh api -X POST`.
@@ -65,6 +69,10 @@ runs the privacy, mention and attestation gates. Never write an issue body with 
   notice; `--pr` and `--in-chain` keep their meaning. Spec: `idd-pr-hitl-modes`.
 - `(PR, unattended)` in a cloud session needs the ralph-loop plugin; when it is missing, `idd-all`
   aborts after removing the branch it created instead of degrading to direct-commit.
+- The PR is opened only after verify PASS. When `(PR, attended)` ends with blocking findings, a cloud
+  session still pushes the branch (no PR) so the commits survive the container.
+- `idd-all`'s own state-changing steps (issue check, branch setup, unwind, PR creation) already call
+  REST directly (`gh api repos/R`, `…/issues/N`, `…/pulls`); there is nothing to translate there.
 - Push before the session ends: `.claude/.idd/state/` and every unpushed commit live only as long
   as the container.
 
@@ -84,9 +92,18 @@ Claude Code session.
 | `idd-find`, issue retrieval in `idd-ask` | GitHub search API is blocked | the skill's runtime note: stop and say it is unsupported |
 | `idd-report`, `idd-discuss` publishing, Discussions in `idd-ask` | Discussions are GraphQL-only | `discussions_api` raises `GitHub Discussions need GraphQL, which Claude Code cloud sessions block …` |
 | `idd-issue --blocked-by` native relation | GraphQL mutation | GitHub's 403 is printed verbatim (existing behavior); the body blockquote is still written |
-| `--target` / group issues in a repository not attached to the session | session is bound to attached repositories | `gh-rest.sh` adds `hint: this cloud session cannot reach R; attach the repository …` |
+| `--target` / group issues in a repository not attached to the session | session is bound to attached repositories | `gh-rest.sh` and `gh-egress.sh` add `hint: this cloud session cannot reach R; attach the repository …` |
 | Spectra tier (`spectra` CLI) | not installed in the container | `idd-all` Step 0.35 warning, Phase 3b hard gate |
-| `idd-close`, `idd-comment`, `idd-edit`, `idd-config`, `idd-reorganize`, `idd-all-chain`, `idd-list --audit-closes` | not migrated (outside the `idd-all` path) | their porcelain calls fail with GitHub's own 403 message |
+| `idd-close`, `idd-comment`, `idd-edit`, `idd-config`, `idd-reorganize`, `idd-all-chain` | not migrated (outside the `idd-all` path) | their porcelain calls fail with GitHub's own 403 message; their `gh-egress.sh` writes and `check-*` script reads work |
+| private attachment downloads (`process-attachments.sh download`) | it authenticates with `gh auth token`, a placeholder in a cloud session | unverified in a cloud session; public attachment URLs are unaffected |
+
+## Status
+
+Verified in a cloud container (2026-10-19 / 25): GraphQL and `gh auth status` fail while REST works;
+`gh-rest.sh` reads (issue, repo, merged PRs, an unattached repo's hint) against the real API; plugins
+installed into the user scope load after a session restart. Not yet verified: a fresh session started
+from the setup script below, and an end-to-end `/idd-all` run in a cloud session. Issue writes through
+the REST transport are covered by tests against a stub `gh`, not by a live cloud write.
 
 ## Setup script
 

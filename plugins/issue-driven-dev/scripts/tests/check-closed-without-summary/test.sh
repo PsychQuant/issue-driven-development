@@ -284,7 +284,34 @@ DRY=$(bash "$HELPER" --repo foo/bar --since 2026-01-01 --limit 5 --dry-run 2>/de
 assert_grep    "--dry-run gh args have '--state closed'" "--state closed"      "$DRY"
 assert_grep    "--dry-run gh args have '--repo foo/bar'" "--repo foo/bar"      "$DRY"
 assert_grep    "--dry-run gh args have '--limit 5'"      "--limit 5"           "$DRY"
-assert_grep    "--dry-run composes '--since' search"     "closed:>=2026-01-01" "$DRY"
+assert_grep    "--dry-run composes '--since' as --closed-since" "--closed-since 2026-01-01" "$DRY"
+assert_grep    "--dry-run reads through gh-rest (REST, #416)"   "gh-rest.sh issue-list" "$DRY"
+
+# The live branches, through a REST-only gh stub (#416): porcelain is GraphQL and refused here, as in a
+# Claude Code cloud session. Audit and gate must reach the same verdicts as from an offline payload.
+LIVE="$(mktemp -d)"; trap 'rm -rf "$LIVE"' EXIT
+cat > "$LIVE/gh" <<'STUB'
+#!/usr/bin/env bash
+[ "$1" = "api" ] || { echo "unexpected porcelain gh $*" >&2; exit 1; }
+case "$2" in
+  'repos/foo/bar/issues?state=closed&per_page=100&page=1')
+    echo '[{"number":101,"title":"no summary","state":"closed","closed_at":"2026-02-01T00:00:00Z"},{"number":100,"title":"has summary","state":"closed","closed_at":"2026-02-01T00:00:00Z"}]' ;;
+  'repos/foo/bar/issues/101/comments?per_page=100&page=1') echo '[{"body":"## Diagnosis\n\nx","author_association":"OWNER"}]' ;;
+  'repos/foo/bar/issues/100/comments?per_page=100&page=1') echo '[{"body":"## Closing Summary\n\n### Problem\nfoo","author_association":"OWNER"}]' ;;
+  repos/foo/bar/issues/101) echo '{"number":101,"title":"no summary","state":"closed"}' ;;
+  repos/foo/bar/issues/101/comments) echo '[{"body":"## Diagnosis\n\nx","author_association":"OWNER"}]' ;;
+  *) echo "unexpected api $2" >&2; exit 1 ;;
+esac
+STUB
+chmod +x "$LIVE/gh"
+LIVE_OUT=$(PATH="$LIVE:$PATH" bash "$HELPER" --repo foo/bar --limit 5 2>&1)
+LIVE_MISSING=$(printf '%s\n' "$LIVE_OUT" | awk 'index($0,"MISSING —"){f=1;next} f&&/^[^ ]/{f=0} f')
+assert_grep "live audit (REST): #101 is MISSING" "#101" "$LIVE_MISSING"
+refute_grep "live audit (REST): #100 is not flagged" "#100" "$LIVE_MISSING"
+refute_grep "live audit: no porcelain call" "unexpected porcelain" "$LIVE_OUT"
+GATE_LIVE=$(PATH="$LIVE:$PATH" bash "$HELPER" --repo foo/bar --issue 101 2>/dev/null)
+assert_eq "live gate (REST): #101 has no recognised marker" "unrecognised" "$(printf '%s' "$GATE_LIVE" | jq -r .class 2>/dev/null)"
+assert_eq "live gate (REST): the full comment set was read" "true" "$(printf '%s' "$GATE_LIVE" | jq -r .comments_complete 2>/dev/null)"
 
 # Malformed JSON must NOT yield a false "all-clear" (safety-net direction, #151 verify logic LOW).
 MAL=$(bash "$HELPER" --json-file "$HERE/fixtures/malformed.json" 2>/dev/null); MRC=$?
