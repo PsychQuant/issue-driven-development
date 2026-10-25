@@ -179,6 +179,7 @@ SKILL.md 不改寫 porcelain，只在開頭加一行 runtime note，兩種措辭
 - **平台訊號漂移**：`CLAUDE_CODE_REMOTE`、`CLAUDE_CODE_SESSION_ATTENDED` 是平台行為。緩解：判準嚴格（只認 `true`／`1`），缺席方向安全（判成本機 → 撞到帶說明的 403；判成 unattended → 少問問題）
 - **`CLAUDE_CODE_SESSION_ATTENDED` 在排程／API 起的 session 中的值未實測**：D1 的缺席判 unattended 已涵蓋未設定的情況
 - **環境變數可被偽造**（verify 第 1 輪 security LOW）：本機若設 `CLAUDE_CODE_REMOTE=true`（例如經 repo 的 `.claude/settings.json` `env`），verify 會少跑 Codex leg（報告會寫 degraded，不會靜默）、`--no-pr` 會被覆寫成 PR（有通知）。能改 project settings 的人本來就能跑 hook，額外風險小；記錄在此，不另加防護
+- **assignee 未預先檢查**（最終審查）：label 會先查存在與否，assignee 不查；REST 對無法指派的 login 會略過而不報錯（gh 會報錯）。目前沒有任何 IDD caller 傳 assignee，記錄於 CHANGELOG，不另加一次呼叫
 - **REST 讀取的呼叫數**：`issue-list --json comments` 與 `pr-list --json mergeable` 每筆多一次呼叫；`--state merged` 可能翻過所有 closed PR 才湊滿 limit
 - **SKILL.md porcelain 靠 agent 依 reference 翻譯**：非確定性。緩解：確定性要求最高的寫入與 script 讀取已由 D2／D3 承擔；reference 對照表逐條列出
 

@@ -94,6 +94,9 @@ fx "repos/o/r/issues?state=open&per_page=100&page=1" '[{"number":"4245 --hostnam
 run issue-list --repo o/r --json number,comments >/dev/null; assert_exit "non-numeric fetched number → exit 1" 1 $?
 refute_grep "…and it never reaches an api path" "4245" "$(cat "$FX/calls.log")"
 
+# an absurdly long issue number is a usage error, not a ValueError crash (int() refuses 4300+ digits)
+run issue-view "$(printf '9%.0s' $(seq 1 5000))" --repo o/r --json number >/dev/null 2>&1; assert_exit "a 5000-digit issue number → exit 2" 2 $?
+
 # --closed-since (check-closed-without-summary's audit): REST `since` narrows by update time, the filter keeps
 # issues CLOSED on/after the date, and --limit counts kept issues (not the raw page)
 reset

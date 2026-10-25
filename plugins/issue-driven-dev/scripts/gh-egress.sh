@@ -109,6 +109,10 @@ case "$VERB" in
 esac
 
 # --- parse: pull out --scrub-attested, forward everything else verbatim -------
+read_bodyfile() { # path → FCONTENT. A failed read refuses: an unchecked `cat "-x.md"` (read as options)
+  # scanned "" while the transport sent the real file (#416 final review; older than #416).
+  FCONTENT="$(cat -- "$1")" || { echo "✗ gh-egress: REFUSED — could not read --body-file '$1'." >&2; exit 12; }
+}
 require_scannable_bodyfile() {
   # Refuse '-' (stdin), FIFOs, process substitutions and anything that is not a
   # readable REGULAR file (#203 item 3): the gate cannot scan a stream without
@@ -166,7 +170,7 @@ while [ $# -gt 0 ]; do
           title)      SCAN_PARTS+=("$arg") ;;
           repo)       EC_REPO="$arg" ;;
           meta)       : ;;   # label / assignee / milestone value: forwarded, not prose
-          bodyfile)   require_scannable_bodyfile "$arg"; BODYFILE_PATH="$arg"; FCONTENT="$(cat "$arg")"
+          bodyfile)   require_scannable_bodyfile "$arg"; BODYFILE_PATH="$arg"; read_bodyfile "$arg"
                       SCAN_PARTS+=("$FCONTENT"); BODY_PARTS+=("$FCONTENT"); BODY_SOURCES=$((BODY_SOURCES + 1)) ;;
         esac
         next_is=""; shift; continue ;;
@@ -237,11 +241,11 @@ while [ $# -gt 0 ]; do
       GH_ARGS+=("$arg"); f="${arg#-F}"; f="${f#=}"
       require_scannable_bodyfile "$f"
       BODYFILE_PATH="$f"
-      FCONTENT="$(cat "$f")"; SCAN_PARTS+=("$FCONTENT"); BODY_PARTS+=("$FCONTENT"); BODY_SOURCES=$((BODY_SOURCES + 1)); next_is=""; shift; continue ;;
+      read_bodyfile "$f"; SCAN_PARTS+=("$FCONTENT"); BODY_PARTS+=("$FCONTENT"); BODY_SOURCES=$((BODY_SOURCES + 1)); next_is=""; shift; continue ;;
     --body-file=*) GH_ARGS+=("$arg"); next_is=""; f="${arg#--body-file=}"
       require_scannable_bodyfile "$f"
       BODYFILE_PATH="$f"
-      FCONTENT="$(cat "$f")"; SCAN_PARTS+=("$FCONTENT"); BODY_PARTS+=("$FCONTENT"); BODY_SOURCES=$((BODY_SOURCES + 1)); shift; continue ;;
+      read_bodyfile "$f"; SCAN_PARTS+=("$FCONTENT"); BODY_PARTS+=("$FCONTENT"); BODY_SOURCES=$((BODY_SOURCES + 1)); shift; continue ;;
     *)
       # a positional (pending values were taken above)
       GH_ARGS+=("$arg")

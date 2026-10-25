@@ -35,7 +35,9 @@ porcelain call returns 403, and so does `gh auth status` — while `gh api` REST
   goes to stderr with a `hint:`); the body reaches gh on stdin; body files keep their bytes. Where REST and
   `gh issue` differ, gh's behavior is kept: a label must already exist (REST would create it), a milestone
   matches an open milestone ignoring case, `edit --milestone ""` removes it, removing a label the issue lacks
-  is a no-op. Flags outside the supported set (see the header), a missing title or issue, a stray positional,
+  is a no-op, `create` needs a body (as non-interactive `gh issue create` did). One difference remains: assignee
+  logins are not checked first, and REST skips a login it cannot assign where gh errored (no IDD caller passes
+  assignees). Flags outside the supported set (see the header), a missing title or issue, a stray positional,
   an unknown label or milestone and a malformed issue URL are refused with exit 14 instead of being dropped;
   non-UTF-8 arguments exit 12.
 - **`check-existing-work.sh`, `check-diagnosis-readiness.sh`, `process-attachments.sh`, `idd-worktree.sh` and
@@ -77,6 +79,13 @@ porcelain call returns 403, and so does `gh auth status` — while `gh api` REST
 - **Repeated `--body` / `--body-file` slipped past the empty-body guard (#416 verify).** gh sends only the last
   one, but the #275 guard checked them all joined, so `--body "<decoy>" --body ""` wiped an issue body. A call
   now takes one body source; more exit 14. Present since #275.
+- **A body file whose name starts with `-` was scanned as empty (#416 verify).** `cat` read the name as options
+  and failed unchecked, so with `--allow-empty-body` the nets passed an empty string while gh sent the file. The
+  read is now `cat --` and a failed read exits 12. Present on 3.5.0 as well.
+- **`idd-list --audit-closes` counted outsiders' closing summaries (#416 verify).** The author filter read
+  `author_association`, but the audit's comments carry `authorAssociation` (porcelain and gh-rest alike), so an
+  outside account's `## Closing Summary` hid an issue from the audit. Both spellings are read now. Present on
+  3.5.0 as well.
 - **`gh-egress.sh edit-comment` put `--repo` into the REST path unchecked (#416 verify).** It now has to be
   `OWNER/REPO` without `.`/`..` segments, and the comment id a number; anything else exits 14. Present since
   `edit-comment` was added.

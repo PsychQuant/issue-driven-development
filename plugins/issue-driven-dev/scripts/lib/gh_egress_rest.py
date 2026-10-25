@@ -165,8 +165,8 @@ def check_labels(names, host, repo):
                         gh_rest.subject(repo))
         except gh_rest.GhError as exc:
             if "HTTP 404" in str(exc):
-                raise Refuse(f"label '{name}' not found in {gh_rest.subject(repo)} (create it first; "
-                             f"gh issue refuses unknown labels too)")
+                raise Refuse(f"label '{name}' not found in {gh_rest.subject(repo)} (create it first — gh issue refuses "
+                             f"unknown labels too — or, if the repository itself is not reachable, check --repo)")
             raise
 
 
@@ -203,10 +203,10 @@ def create(opts, pos):
         host, repo = gh_rest.split_repo(opts.get("repo"))
     except gh_rest.UsageError as exc:
         raise Refuse(str(exc))
-    payload = {"title": opts["title"]}
     body = body_of(opts)
-    if body is not None:
-        payload["body"] = body
+    if body is None:   # non-interactive `gh issue create` refuses a missing body; it catches a body lost upstream
+        raise Refuse("`create` needs --body or --body-file (gh issue create refuses without one when not interactive)")
+    payload = {"title": opts["title"], "body": body}
     if opts.get("label"):
         check_labels(opts["label"], host, repo)
         payload["labels"] = opts["label"]

@@ -68,11 +68,6 @@ class UsageError(Exception):
     pass
 
 
-def is_cloud_session():
-    """Same literal rule as scripts/lib/cloud-session.sh."""
-    return os.environ.get("CLAUDE_CODE_REMOTE") == "true"
-
-
 def gh_bin():
     return os.environ.get("IDD_GH_BIN") or "gh"
 
@@ -92,7 +87,7 @@ def split_repo(spec):
 
 def parse_issue_ref(ref, repo_flag):
     """'9' / '#9' / 'https://HOST/OWNER/REPO/issues/9' → (host, repo, number)."""
-    m = re.fullmatch(r"https?://([^/]+)/([^/]+)/([^/]+)/(?:issues|pull)/([1-9][0-9]*)/?", ref or "")
+    m = re.fullmatch(r"https?://([^/]+)/([^/]+)/([^/]+)/(?:issues|pull)/([1-9][0-9]{0,9})/?", ref or "")
     if m:
         host, owner, name = m.group(1), m.group(2), m.group(3)
         if not (_HOST.fullmatch(host) and _name_ok(owner) and _name_ok(name)):
@@ -100,7 +95,7 @@ def parse_issue_ref(ref, repo_flag):
         return (None if host == "github.com" else host), f"{owner}/{name}", int(m.group(4))
     if (ref or "").startswith(("http://", "https://")):
         raise UsageError(f"bad issue URL '{ref}' (expected https://HOST/OWNER/REPO/issues/N)")
-    m = re.fullmatch(r"#?([1-9]\d*)", ref or "")
+    m = re.fullmatch(r"#?([1-9][0-9]{0,9})", ref or "")   # bounded: int() refuses 4300+ digits
     if not m:
         raise UsageError(f"bad issue reference '{ref}' (expected a number or an issue URL)")
     host, repo = split_repo(repo_flag)

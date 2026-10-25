@@ -295,7 +295,8 @@ cat > "$LIVE/gh" <<'STUB'
 [ "$1" = "api" ] || { echo "unexpected porcelain gh $*" >&2; exit 1; }
 case "$2" in
   'repos/foo/bar/issues?state=closed&per_page=100&page=1')
-    echo '[{"number":101,"title":"no summary","state":"closed","closed_at":"2026-02-01T00:00:00Z"},{"number":100,"title":"has summary","state":"closed","closed_at":"2026-02-01T00:00:00Z"}]' ;;
+    echo '[{"number":101,"title":"no summary","state":"closed","closed_at":"2026-02-01T00:00:00Z"},{"number":100,"title":"has summary","state":"closed","closed_at":"2026-02-01T00:00:00Z"},{"number":102,"title":"outsider summary","state":"closed","closed_at":"2026-02-01T00:00:00Z"}]' ;;
+  'repos/foo/bar/issues/102/comments?per_page=100&page=1') echo '[{"body":"## Closing Summary\n\n### Problem\nnot mine to say","author_association":"NONE"}]' ;;
   'repos/foo/bar/issues/101/comments?per_page=100&page=1') echo '[{"body":"## Diagnosis\n\nx","author_association":"OWNER"}]' ;;
   'repos/foo/bar/issues/100/comments?per_page=100&page=1') echo '[{"body":"## Closing Summary\n\n### Problem\nfoo","author_association":"OWNER"}]' ;;
   repos/foo/bar/issues/101) echo '{"number":101,"title":"no summary","state":"closed"}' ;;
@@ -308,6 +309,8 @@ LIVE_OUT=$(PATH="$LIVE:$PATH" bash "$HELPER" --repo foo/bar --limit 5 2>&1)
 LIVE_MISSING=$(printf '%s\n' "$LIVE_OUT" | awk 'index($0,"MISSING —"){f=1;next} f&&/^[^ ]/{f=0} f')
 assert_grep "live audit (REST): #101 is MISSING" "#101" "$LIVE_MISSING"
 refute_grep "live audit (REST): #100 is not flagged" "#100" "$LIVE_MISSING"
+# the author filter binds on the audit path too: gh-rest spells the field authorAssociation (#416 final review)
+assert_grep "live audit (REST): an outsider's Closing Summary does not count (#102 MISSING)" "#102" "$LIVE_MISSING"
 refute_grep "live audit: no porcelain call" "unexpected porcelain" "$LIVE_OUT"
 GATE_LIVE=$(PATH="$LIVE:$PATH" bash "$HELPER" --repo foo/bar --issue 101 2>/dev/null)
 assert_eq "live gate (REST): #101 has no recognised marker" "unrecognised" "$(printf '%s' "$GATE_LIVE" | jq -r .class 2>/dev/null)"

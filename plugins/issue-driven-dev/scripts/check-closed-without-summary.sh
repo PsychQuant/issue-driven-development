@@ -807,9 +807,13 @@ CLASSIFY='
   # A MISSING association counts as trusted. Offline payloads and older fixtures
   # carry no such field, and refusing them would silently reclassify every issue
   # in a test corpus. Stated rather than hidden: the filter binds on the live
-  # path, where the field is always present.
+  # path, where the field is always present — spelled `authorAssociation` by
+  # gh-rest (audit) and `author_association` by the REST fetch of the gate; both
+  # are read (the audit read only the second, so the filter never bound there —
+  # #416 final review). No apostrophes in this comment: it sits inside a
+  # single-quoted jq program.
   | [$i.comments[]?
-     | select((.author_association // "OWNER") as $a
+     | select((.author_association // .authorAssociation // "OWNER") as $a
               | $a == "OWNER" or $a == "MEMBER" or $a == "COLLABORATOR"
                 or ($a | test("BOT"; "i")))
      | .body // ""] as $bodies

@@ -309,7 +309,7 @@ assert_exit "HOME+IDD_CLAUDE_JSON unset → no crash, dispatch (#203 item 4, exi
 # REST argv is exactly 8 NUL-terminated fields. Field count via NUL bytes —
 # command substitution strips trailing newlines so a string compare is blind
 # to the phantom. No --repo → gh's {owner}/{repo} placeholder (#416).
-bash "$SCRIPT" create --title T "${ATT[@]}" >/dev/null 2>&1
+bash "$SCRIPT" create --title T --body "minimal body" "${ATT[@]}" >/dev/null 2>&1   # body via stdin, not argv
 assert_exit "minimal create dispatches (no phantom positional, #203 item 5)" 0 $?
 NFIELDS="$(tr -cd '\0' < "$FAKE_GH_ARGV" | wc -c | tr -d ' ')"
 assert_eq "minimal create argv has exactly 8 fields (#203 item 5)" "8" "$NFIELDS"
@@ -504,6 +504,20 @@ bash "$SCRIPT" comment 5 --repo o/r -F="$WORK/leakbody.md" "${ATT[@]}" >/dev/nul
 assert_exit "-F=<file> scans that file (privacy net, exit 10)" 10 $?
 bash "$SCRIPT" create --repo o/r -t="crash in /Users/bob/x" -b "clean" "${ATT[@]}" >/dev/null 2>&1
 assert_exit "-t=<title> is scanned as the title (privacy net, exit 10)" 10 $?
+# a body file whose name starts with `-`: `cat` read it as options and the nets scanned "" while the
+# transport sent the file (#416 final review; older than #416)
+( cd "$WORK" && printf 'see /Users/alice/secret and @victim' > ./-x.md \
+  && bash "$SCRIPT" comment 5 --repo o/r --body-file -x.md --allow-empty-body "${ATT[@]}" >/dev/null 2>&1 ); rc=$?
+assert_exit "a '-'-named body file is scanned like any other (privacy net, exit 10)" 10 "$rc"
+calls_reset
+bash "$SCRIPT" create --repo o/r --title T "${ATT[@]}" >/dev/null 2>&1
+assert_exit "create without a body is refused, as non-interactive gh issue create does (exit 14)" 14 $?
+assert_eq "…and nothing is sent" "0" "$(ncalls)"
+calls_reset
+bash "$SCRIPT" edit 7 --repo o/r --remove-assignee @me "${ATT[@]}" >/dev/null 2>&1
+assert_exit "remove-assignee @me dispatches" 0 $?
+assert_grep "…as a DELETE on the assignees endpoint" "repos/o/r/issues/7/assignees -X DELETE" "$(cat "$FAKE_GH_CALLS")"
+assert_eq "…with the resolved login in the body" '{"assignees": ["me-login"]}' "$(payload 2)"
 # edit-comment's --repo enters a REST path too (pre-existing, #273)
 printf '%s' "a clean replacement body for the edit-comment repo checks" > "$WORK/ec-body.md"
 for bad in 'o/r#' 'o/r/issues/comments/999?' '../r' 'orepo'; do
