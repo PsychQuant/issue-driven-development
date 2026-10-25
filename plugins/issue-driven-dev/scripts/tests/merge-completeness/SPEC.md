@@ -63,6 +63,9 @@ copy is an effect too.
 | 21 | Branch drops a line, adds another, then puts the first back; main had turned a line of its own into the same text; squash of the first two | all but the last | 3: the last commit (its copy is missing although the text is elsewhere) | 86 |
 | 22 | Two commits landed as one squash; a later commit adds a second copy of their line plus a line of its own, and never landed | the first two | 3: the later commit only | 87 |
 | 23 | A commit adds a line the branch later drops again; main had the same text and the landing commit dropped it too | all | 0 | 88 |
+| 24 | Squash edited by hand: the branch moves a line, and the squash also turns one of main's lines into the same text | all | 0: undoing the moving commit on the landing commit changes it, so its change is there (git 2.38 and 2.39, which count, list it: fixture 94) | 89, 94 |
+| 25 | Release merge: the squash lands on a side branch next to another PR that adds the same text as a line the branch dropped; main merges the side branch | all | 0 | 90 |
+| 26 | Branch has no net change; its first commits were squashed, the commits that undid them were not | the first ones | 3: the undoing commits | 91, 92 |
 
 ## The small world (`bounded.py`)
 
@@ -75,6 +78,11 @@ copy is an effect too.
 - **Main.** An unrelated commit. Optionally one edit of its own to a unit the branch does not
   touch; its text can collide with the branch's. Then, unless S is empty, one squash of S, for
   every subset S of the branch that applies cleanly.
+- `--landing own` makes that squash also carry one edit of main's own (a squash edited by
+  hand), to a unit neither the branch nor main's earlier edit touched. `--landing merge` puts
+  the squash on a side branch, optionally followed there by another PR's edit of such a unit,
+  while main gets one more unrelated commit; main then merges the side branch (a release merge,
+  or a `git pull` merge). In both modes S is never empty.
 - `--after` adds one more main edit after the squash, to a unit the branch touched. This is
   out of scope by decision A.
 - `--old-git` puts a `git` shim first on PATH that refuses `merge-tree --write-tree`, the way
@@ -85,9 +93,13 @@ disagreement belongs to a class below.
 
 ## Known deviations (only these)
 
-`bounded.py` decides each class from the model, never from the helper's own answer. It
-reads one thing from the helper besides the answer: where each commit was checked (the
-landing commit or the tip), from a trace the helper writes only for this test.
+`bounded.py` decides each class from the model, never from the helper's own answer. Where
+each commit is checked (the landing commit or the tip) comes from a model of the landing step
+written from the helper's header; the helper also writes where it checked each commit to a
+trace file (only when the test sets `CHECK_MERGE_COMPLETENESS_TRACE`), and a trace that differs
+from the model is a bug in the landing step, whatever the list says. Round 10 took the sides
+from the trace itself, so a helper with the landing step switched off still came out with
+nothing unexplained.
 
 - **D1, tip fallback.** Some commits have no landing commit to be checked at, and are
   checked at the tip: the case runs with `--old-git` or `--after`; nothing landed (S = ∅);
@@ -100,35 +112,61 @@ landing commit or the tip), from a trace the helper writes only for this test.
   a line or path it adds is in the head and not in the tip, or one it deletes is not in the
   head and is in the tip. A text that is elsewhere in the tip or the head can therefore hide
   a commit or list one.
-- **D3, shared text at the landing commit.** At the landing commit lines are counted, not
-  told apart: when a copy of a text is missing from it, or extra, every commit whose effect
-  is that text is listed, including one that did land. Only over-listing, and only with the
-  right verdict (exit 3).
+- **D3, its place, not its value.** At the landing commit each commit is checked in its own
+  place: it is listed when undoing it changes the head and changes nothing on the landing
+  commit. The check sees where a change is, not which commit made it: a commit that landed
+  and was undone by a later commit that landed too, then changed again by a commit that did
+  not land, is listed along with that last commit; so is a commit that did not land and added a
+  line that a later commit, which did not land either, rewrote (the head shows the rewrite, not
+  the line). Only over-listing, and only with the right verdict (exit 3), since the later commit
+  that did not land is listed too.
+- **D4, git 2.38 and 2.39 only.** The check in place needs `merge-tree --merge-base` (git
+  2.40). Without it lines are counted against the clean merge of the landed part onto main
+  just before the landing commit (round 10's rule), and an edit of main's own in the landing
+  step that touches a branch commit's text (a squash edited by hand, a release merge, a
+  `git pull` merge) can list a commit that landed or hide one that did not. `bounded.py` runs
+  with a git that has the option, so it never sees this class; fixture 94 pins it with a shim,
+  and the `merge-completeness-count` suite runs every fixture under that shim.
 - **B1, a listed blind spot.** A commit that set its line back to the merge-base value, left
   out after an earlier commit already held the branch's net change (here: the branch has no
-  net change, so it lands at the merge-base). The helper's header lists it; it is the one
-  class with a wrong verdict (exit 0).
+  net change, so it lands at the merge-base) and no prefix of the branch landed later. Round 11
+  runs the prefix search in that case too, which removed every B1 case of round 10's samples;
+  the class stays in the list because the earlier commits can reach main in a form no earlier
+  state of the branch matches (a squash of them edited by hand), and then nothing lands later
+  than the merge-base. Its verdict is wrong (exit 0).
 
 A disagreement is known when every commit the two answers differ on falls in one of these:
 checked at the tip and the tip rule (D2), computed on the model's head and tip, gives the
-helper's answer; or checked at the landing commit, listed, sharing a text with another
-branch commit, with the right verdict (D3); or checked at the landing commit, missed, and
-B1 holds in the model.
+helper's answer; or checked at the landing commit, listed, with the right verdict (D3); or
+checked at the landing commit, missed, and B1 holds in the model, including that no prefix
+lands after the merge-base. At the landing commit the model also decides the helper's
+answer: for a one-unit edit, undoing it changes the head when the head no longer holds the
+unit's value from before the edit, and changes nothing on the landing commit when that commit
+still holds it. A commit checked there whose listing differs from that is a bug.
 
 ## Results
 
-Runs of 2026-10-25 against the round-10 helper (`python3 bounded.py --max-len N [--sample K
---seed S] [mode]`). "Tip" is D1+D2; "D3" counts cases whose only class is D3, "tip+D3" cases
-with both.
+Runs of 2026-10-25 against the round-11 helper (`python3 bounded.py --max-len N [--sample K
+--seed S] [mode]`). "Tip" counts cases whose only class is D1+D2; no other class occurred.
+"Wrong verdict" counts the known cases whose exit code differs from the definition's;
+"Landing" counts cases in which at least one commit was checked at a landing commit (a run
+that never gets there says nothing about the landing step).
 
-| Mode | Branch length | Cases | Agree | Tip | D3 | Tip+D3 | B1 | Unexplained |
-|------|---------------|-------|-------|-----|----|--------|----|-------------|
-| default | 1 | 412 (all) | 384 | 28 | 0 | 0 | 0 | 0 |
-| default | ≤ 2 | 7058 (all) | 5902 | 1156 | 0 | 0 | 0 | 0 |
-| default | ≤ 3 | 6000 of 109,788, seed 399 | 4259 | 1632 | 82 | 11 | 16 | 0 |
-| default | ≤ 3 | 6000 of 109,788, seed 4242 | 4205 | 1663 | 107 | 12 | 13 | 0 |
-| `--old-git` | 1 | 412 (all) | 384 | 28 | 0 | 0 | 0 | 0 |
-| `--after` | 1 | 530 (all) | 530 | 0 | 0 | 0 | 0 | 0 |
+| Mode | Branch length | Cases | Agree | Tip | Wrong verdict | Landing | Unexplained |
+|------|---------------|-------|-------|-----|---------------|---------|-------------|
+| default | ≤ 2 | 7,058 (all) | 5,902 | 1,156 | 752 (3 → 0) | 2,000 | 0 |
+| default | ≤ 3 | 6,000 of 109,788, seed 399 | 4,353 | 1,647 | 577 (3 → 0) | 2,526 | 0 |
+| default | ≤ 3 | 6,000 of 109,788, seed 4242 | 4,320 | 1,680 | 606 (3 → 0) | 2,451 | 0 |
+| `--landing own` | ≤ 2 | 22,440 (all) | 19,452 | 2,988 | 2,364 (3 → 0) | 17,472 | 0 |
+| `--landing own` | ≤ 3 | 3,000 of 300,448, seed 399 | 2,265 | 735 | 271 (3 → 0) | 2,084 | 0 |
+| `--landing merge` | ≤ 2 | 27,498 (all) | 24,490 | 3,008 | 3,008 (3 → 0) | 9,898 | 0 |
+| `--landing merge` | ≤ 3 | 3,000 of 392,358, seed 399 | 2,260 | 740 | 258 (3 → 0) | 1,473 | 0 |
+| `--old-git` | 1 | 412 (all) | 384 | 28 | 28 (3 → 0) | 0 | 0 |
+| `--after` | ≤ 2 | 3,000 of 22,350, seed 399 | 2,451 | 549 | 528 (3 → 0), 21 (0 → 3) | 1,025 | 0 |
+
+Every wrong verdict is at the tip (D1+D2): presence cannot tell main's own copy of a line
+from the branch's, and three slots holding three texts make such copies common. At the
+landing commit every answer agrees with the definition in these runs.
 
 How the numbers got here:
 
@@ -136,22 +174,34 @@ How the numbers got here:
   had made an edit of its own, and that edit shared text with the branch. That is the tip
   fallback (D1), whose definition then covered only `--old-git` and `--after`. D1 was widened
   to every commit checked at the tip; the helper did not change.
-- **Round 9, length ≤ 3 (seed 399).** 228 disagreements at the landing commit. Under the final
-  classes, 19 stay unexplained, all of them exit-code misses (3 → 0): the landing commit was
-  compared with the head's count of a line (the guards `t < h`, `t > h`) and with main's state
-  just before it plus the branch's net change, which is wrong when the landing commit is the
-  merge-base, when its first parent already holds the branch (a stacked branch), and when only a
-  prefix landed. Fixtures 84 and 86 are two of them.
-- **Round 10.** The landing commit is compared with the clean merge of the landed part onto
-  main just before it. The same 6000 cases: 0 unexplained; a second sample with another seed:
-  0 unexplained. The remaining disagreements at the landing commit are over-listing with the
-  right verdict (D3) and the listed blind spot B1.
-- The classifier can still find bugs: under the final classes it leaves round 9 with 19
-  unexplained cases, so D3 and B1 do not absorb everything at the landing commit.
+- **Round 9, length ≤ 3 (seed 399).** 19 exit-code misses (3 → 0): the landing commit was
+  compared with the head's count of a line and with main's state just before it plus the
+  branch's net change, which is wrong when the landing commit is the merge-base, when its first
+  parent already holds the branch (a stacked branch), and when only a prefix landed. Fixtures
+  84 and 86 are two of them.
+- **Round 10.** The landing commit was compared with the clean merge of the landed part onto
+  main just before it. Both length-3 samples: 0 unexplained, with 93 and 119 cases of
+  over-listing at the landing commit (D3, right verdict) and 16 and 13 misses of the blind spot
+  B1 (wrong verdict).
+- **Round 10 verify.** The world could not build a landing step that carries main's own edits,
+  and the classifier took where each commit was checked from the helper's own trace: with the
+  landing step switched off it still reported nothing unexplained. Round 11 added
+  `--landing own` and `--landing merge` and decides the sides from a model. Against the
+  round-10 helper, samples of 400 left 73 (own) and 48 (merge) cases unexplained.
+- **Round 11, two rules that did not hold.** Counting only lines outside the landed part's net
+  change missed dropped commits whose text the branch also changed elsewhere (23 and 16 in the
+  two length-3 samples). Keeping the count and dropping a listed commit whose change was in
+  place still listed pairs of dropped commits that cancel out, and missed a dropped restore
+  when main's own edit evened the count (72 and 59 in the own and merge length-3 samples).
+- **Round 11, the rule kept.** Each commit is checked in its own place at the landing commit.
+  The runs above: 0 unexplained, and D3 and B1 are gone from both length-3 samples (the same
+  cases as round 10's).
 - In `--old-git` runs every commit is checked at the tip, so the run measures the tip rule
-  only. With `--after` there was no disagreement at length 1: the landing commit was found
-  before main's later edit in every case.
+  only. `--after` needs length 2: a single-commit squash is matched by `git cherry`, so no
+  length-1 case reaches the landing step.
 - Not covered: branches longer than 3 (and length 3 only by sampling), more than one file
-  with lines, merge commits on the branch, renames, and the 200-call and 20-commit limits
-  (fixtures 12 and 60 pin those). The model tracks each line by its slot; the helper sees only
-  text, so collisions between equal texts are exactly where the two can differ.
+  with lines, merge commits on the branch, renames, git 2.38 and 2.39 (D4; fixture 94 and the `merge-completeness-count` suite), and the
+  200-call and 20-commit limits (fixtures 12 and 60 pin those). The model tracks each line by
+  its slot and every edit touches one slot; the helper checks each commit in its own place at
+  the landing commit and by text at the tip, so equal texts at the tip, and commits touching
+  several places, are where the two can differ.

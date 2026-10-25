@@ -23,31 +23,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Partial merges.** When the whole branch never landed, the newest 20 of its earlier commits are tried.
     Commits up to the newest one that landed are checked where they landed and only the rest against the tip,
     so a genuine orphan does not drag lines main edited after landing into the list. A branch with no net change
-    "lands" at the merge-base; when `git cherry` shows some of its commits in the baseline as separate patches
-    (a change cherry-picked while the commit that undid it was left behind), it is checked against the tip.
-  - **Line check.** The effects of each candidate that the branch head still shows — an added line or path the
-    head still has, a deleted one the head still lacks — must be reflected where the branch landed. At the
-    landing commit copies are counted against the clean merge of the landed part onto main just before it (what
-    the landing commit would hold had all of it landed; a `git merge-tree` in the same scratch repository), so a
-    line main added or removed on its own neither hides nor flags a branch commit (a branch that deletes a line
-    main had added elsewhere before the squash is not reported). When that merge conflicts — a squash resolved
-    by hand — the tip is used. At the tip, where main's own edits are unknown, only presence is compared. Lines
-    are counted, not told apart: when a copy of a text is missing or extra, every commit whose effect is that
-    text is listed, including one that did land. A line a later branch commit rewrote or deleted is not an effect the
-    head shows, so it is skipped; a commit whose lines are in the branch head but not where the branch landed is
-    still reported, for example one that restores a value from the merge-base and was left out of the squash.
-  - **Deletions and paths.** A commit is also reported when a line it deleted is still where the branch landed
-    (the tip when it did not), or when a path it deleted is still there or an empty file it added is not: a
-    dropped clean-up, a rename or submodule removal that never landed, a deleted or added empty file. Deletions
-    are checked commit by commit, like added lines, on every git version. A squash whose conflicts were resolved
-    by hand makes its deletions, so it lists nothing.
+    "lands" at the merge-base; the same search then looks for a prefix of it that landed later (a squash of its
+    first commits, without the commits that undid them), and when there is none but `git cherry` shows some of
+    its commits in the baseline as separate patches (a change cherry-picked while the commit that undid it was
+    left behind), it is checked against the tip.
+  - **Commit check.** The effects of each candidate that the branch head still shows must be reflected where the
+    branch landed. At the landing commit each commit is checked in its own place: undoing it (a
+    `git merge-tree --merge-base` of the tree and the commit's parent, with the commit as the base, in the same
+    scratch repository) must change the branch head — the head still shows its change — and change nothing on
+    the landing commit for it to be reported. A line main added or removed on its own, before the landing
+    commit or in it (a release merge, a `git pull` merge, a squash edited by hand changing a shared `}` or
+    `return 0;`), therefore neither hides nor flags a branch commit; a commit undone later in the branch is not
+    reported; a commit that restores a value from the merge-base and was left out of the squash is. Git 2.38
+    and 2.39 lack `--merge-base`: there lines are counted against the clean merge of the landed part onto main
+    just before the landing commit, and an edit of main's own in the landing step can list a commit that landed
+    or hide one that did not. When that merge conflicts — a squash resolved by hand — the tip is used. At the
+    tip, where main's own edits are unknown, an added line or path the head still has must be present and a
+    deleted one the head still lacks must be absent; a line a later branch commit rewrote or deleted is skipped.
+  - **Deletions and paths (new check).** 3.5.0 checked only added lines. A commit is now also reported when a
+    line it deleted is still where the branch landed (the tip when it did not), or when a path it deleted is
+    still there or an empty file it added is not: a dropped clean-up, a rename or submodule removal that never
+    landed, a deleted or added empty file. Deletions are checked commit by commit, like added lines, on every git
+    version. A squash whose conflicts were resolved by hand makes its deletions, so it lists nothing. At the tip
+    (on git older than 2.38, always) this brings a false report 3.5.0 did not have: a deleted line that main
+    has elsewhere in the same files, or put back.
   - **Specification and exhaustive check.** `scripts/tests/merge-completeness/SPEC.md` defines the right
     answer (a branch commit is an orphan when an effect the head still shows is missing from what main
     received), a decision table, and the only deviations allowed; `bounded.py` runs the helper on every
     history of a small world (branches of up to two commits, and samples of three-commit branches) and checks
-    each answer against the definition. The comparison with the clean merge came out of it: the previous count
-    rule missed 19 cases (exit 0 instead of 3) in a 6000-case sample of three-commit branches; now none is
-    unexplained.
+    each answer against the definition. Main can also receive the commits in a squash carrying an edit of its
+    own, or through a merge of a side branch carrying another PR. The check in place came out of it: counting
+    lines missed 19 cases in a 6000-case sample of three-commit branches (round 9), and once the landing step
+    could carry main's own edits it listed commits that landed and missed dropped ones (round 10). In the
+    final runs no case is unexplained, and every answer that differs from the definition comes from the tip
+    check (SPEC.md lists the counts).
   - **Reading.** merge-tree runs in a throwaway bare repository that borrows the repository's objects (and its
     shallow file and object format); no config and no attributes reach it, so no merge driver runs and no
     objects are added. Everything runs from the repository's top level, in the C locale, with pipefail. Each
@@ -59,10 +68,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     bidi and format characters the helper lists replaced by `?`; `\`, `"`, `$` and backticks escaped; no
     signature checks. In a partial clone a missing blob is not fetched into the repository: git 2.45 or newer
     reports it unreadable (exit 4).
-  - **The gate now runs from idd-close.** Step 1.55 called the helper through an unbraced
-    `$CLAUDE_PLUGIN_ROOT`, which the skill runtime does not substitute, so the call failed and printed "gate
-    errored"; it now uses `${CLAUDE_PLUGIN_ROOT}`. Expect the rc=3 question and rc=4 notes to appear. idd-close
-    prints the helper's output with `printf`, so zsh's `echo` cannot undo its escaping.
+  - **The gate's path no longer depends on the shell.** Step 1.55 called the helper through an unbraced
+    `$CLAUDE_PLUGIN_ROOT`, which the skill runtime does not substitute (the #401 class), so the call worked
+    only when the shell happened to have that variable — #399 itself saw it return rc=3 on 2026-10-15 — and
+    errored otherwise. It now uses `${CLAUDE_PLUGIN_ROOT}`; the other unbraced uses in `idd-close` are left to
+    #401. idd-close prints the helper's output with `printf`, so zsh's `echo` cannot undo its escaping.
   - **Errors are not "clean".** Outside the landing step, a failed git or awk command, an unreadable object or
     a checked commit touching a path with a newline (or byte `\001`) exits 4 with a `check-merge-completeness:`
     reason on stderr, which idd-close prints.
@@ -76,8 +86,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     blank lines in a file that exists before and after it, or only adds or drops the final newline; a deletion from a file main renamed or moved away; content written by a merge
     commit on the branch; content that was already in main through another commit before this branch was
     merged (it counts as landed there); with macOS awk, a binary edit that changes only bytes after a NUL; a
-    commit that set a line back to its merge-base value, left out when the change it undid reached main, in any
-    form, after an earlier commit already held the branch's net change.
+    commit in a branch with no net change that set a line back to its merge-base value, left out when the change
+    it undid reached main in a form no earlier state of the branch matches (a squash of the earlier commits edited
+    by hand) and not as a separate patch.
   - Falls back to the tip, where lines main edited after landing can be flagged: a squash whose conflicts
     were resolved by hand (or whose landed part does not merge cleanly onto main just before it); a branch commit that restored a merge-base value main had changed before the
     squash; a landing commit beyond 200 merge-tree calls; a landed prefix followed by more than 20 commits that
@@ -89,6 +100,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     landed, the check is at the tip as well: the verdict (exit 3) is right, but the list can include, or miss, a
     commit whose text main added or removed on its own. At the tip a deleted line main has elsewhere in the same
     files, or put back, can be flagged as well.
+  - **Test runner.** `scripts/run-all-tests.sh` reads a `timeout` file next to a suite's `test.sh` and uses the
+    larger of it and `IDD_SUITE_TIMEOUT` (default 180 s). The merge-completeness suite and the new
+    `merge-completeness-count` suite (the same fixtures under a shim that refuses `merge-tree --merge-base`, so
+    the git 2.38/2.39 count stays tested on newer git) take about two minutes each on macOS and ask for 300 s.
   - Timing on this repository: PR #408 about 3 s (old helper about 5 s); a branch that moves 2000 files about
     13 s (old about 13 s); a never-landed branch about 4 s when main often touches its files (old under 1 s),
     and about 9 s for a 150-commit branch (old about 6 s). The worst case is the 200 merge-tree calls on a very

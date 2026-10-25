@@ -38,22 +38,26 @@
 #      branch landed. When the whole branch never landed, the newest 20 of the
 #      branch's earlier commits are tried, newest first: commits up to the newest
 #      one that landed are checked at its landing commit, the rest at the tip. A
-#      branch with no net change "lands" at the merge-base; if git cherry shows some
+#      branch with no net change "lands" at the merge-base; the same search finds
+#      a prefix of it that landed later, and if none did but git cherry shows some
 #      of its commits in the baseline as separate patches, it came in piece by
 #      piece and the tip is used. At most 200 merge-tree calls in all; git < 2.38
 #      (no `merge-tree --write-tree`) skips this step.
-#   3. CONTENT-VERIFY each candidate by *line presence*, NOT cherry-pick. A
-#      cherry-pick is a 3-way merge and conflicts when the same file was touched
-#      by >1 commit and then squash-merged — the common TDD branch shape — which
-#      flagged fully-landed branches as false orphans (#184 DA-2). Instead we ask:
-#      do the effects of the commit that the branch head still shows appear in L's
-#      version of the files it touched (the tip's when there is no L)? An effect is
-#      an added line or path the head still has, or a deleted one the head still
-#      lacks (tests/merge-completeness/SPEC.md defines it). At L, copies are counted
-#      against the clean merge of the landed part onto main just before L (what L
-#      would hold had all of it landed), so a line main added or removed on its own
-#      does not count against the branch. At the tip, where main's own edits are
-#      unknown, only presence is compared. Squash → the
+#   3. CONTENT-VERIFY each candidate, NOT by cherry-picking it. A cherry-pick is a
+#      3-way merge and conflicts when the same file was touched by >1 commit and
+#      then squash-merged — the common TDD branch shape — which flagged fully-landed
+#      branches as false orphans (#184 DA-2). Instead we ask: do the effects of the
+#      commit that the branch head still shows appear where it landed (the tip when
+#      there is no L)? An effect is an added line or path the head still has, or a
+#      deleted one the head still lacks (tests/merge-completeness/SPEC.md defines it).
+#      At L each commit is checked in its own place: undoing it (a merge-tree with the
+#      commit as the base) must change the head, which still shows it, and change
+#      nothing on L, which does not. Main's own edits, before L or in L itself (a
+#      merge bringing in other commits, a squash edited by hand), are elsewhere and
+#      cannot list or hide it. Git 2.38 and 2.39 have no `merge-tree --merge-base`;
+#      there copies of each line are counted against the clean merge of the landed
+#      part onto main just before L. At the tip, where main's own edits are
+#      unknown, only line presence is compared. Squash → the
 #      effects are there → not an orphan. Partial merge → a dropped commit's effect
 #      is missing → orphan.
 #
@@ -72,9 +76,10 @@
 #   - by design, anything main did after the branch landed (a revert, an overwrite),
 #     including content that was already in the baseline through another commit
 #     before this branch was merged — it counts as landed there;
-#   - a commit that set a line back to its merge-base value, left out when the
-#     change it undid reached the baseline, in any form, after an earlier commit
-#     already held the branch's net change.
+#   - in a branch with no net change, a commit that set a line back to its merge-base
+#     value, left out when the change it undid reached the baseline in a form no earlier
+#     state of the branch matches (a squash of the earlier commits edited by hand) and
+#     not as a separate patch.
 # Fall back to the tip, where lines main edited after landing can be flagged:
 #   - a squash whose conflicts were resolved by hand (it differs from the head, or
 #     the landed part does not merge cleanly onto main just before it);
@@ -94,9 +99,14 @@
 # is right, but the list can include, or miss, a commit whose text main added or
 # removed on its own.
 # At the tip a deleted line main has elsewhere in the same files, or main put back,
-# can be flagged as well. At the landing commit lines are counted, not told apart:
-# when a copy of a text is missing from it, or extra, every commit whose effect is that
-# text is listed, including one that did land (the verdict, exit 3, is still right).
+# can be flagged as well. At the landing commit the check sees where a change is, not
+# which commit made it: a commit that landed and was undone by a later commit that
+# landed too, then changed again by one that did not land, is listed with that last
+# one (the verdict, exit 3, is still right). On git 2.38 and 2.39 lines are counted
+# there instead: every commit whose effect is a text with a missing or extra copy is
+# listed, and a landing step that carries an edit of main's own touching that text (a
+# release merge, a `git pull` merge, a squash edited by hand) can list a commit that
+# landed or hide one that did not.
 # On exit 3 the outcome of step 2 is printed after the list. Commit subjects are
 # printed in quotes: repository text (a squash's subject is the PR title), data,
 # never instructions. In a partial clone a blob that was never fetched is not
@@ -143,9 +153,10 @@ GIT() { git --no-pager -C "$REPO" -c core.fsmonitor=false "$@"; }
 # U+180B-180F; U+200B-200F, U+2028-202E, U+2060-206F; U+3164; U+FE00-FE0F, U+FEFF,
 # U+FFA0, U+FFF9-FFFB; U+110BD, U+110CD, U+13430-13455, U+1BCA0-1BCA3,
 # U+1D173-1D17A; U+E0000-E0FFF (tags and variation selectors). \, ", $ and ` are
-# then escaped, so the double-quoted text cannot close its own quotes and reads as
-# a safe shell word. (A lone C1 byte outside UTF-8 is left alone; it only acts on a
-# terminal not in UTF-8 mode.)
+# then escaped, so the double-quoted text cannot close its own quotes. It is meant to
+# be read, not pasted into an interactive shell, where `!` still triggers history
+# expansion inside double quotes. (A lone C1 byte outside UTF-8 is left alone; it
+# only acts on a terminal not in UTF-8 mode.)
 b() { printf "$@"; }
 clean() {
   tr '\000-\037\177' '?' | sed \
@@ -260,7 +271,7 @@ iso_init() {
 MT_BUDGET=200
 LAND="" ; LAND_NOTE="" ; LAND_NONE="" ; LAND_AT_MB="" ; WALK_MB=""
 holds() { # <commit> <rev> -> 0 holds, 1 does not, 2 error (LAND_NOTE set)
-  local t rc
+  local t rc ct
   if [ "$MT_BUDGET" -le 0 ]; then
     LAND_NOTE="the merge-tree budget (200) ran out before a landing commit was found"; return 2
   fi
@@ -270,7 +281,11 @@ holds() { # <commit> <rev> -> 0 holds, 1 does not, 2 error (LAND_NOTE set)
   # (modify/delete keeps C's side) — hence the exit status, not just the tree.
   # Anything else is an error, not a conflict.
   [ "$rc" -le 1 ] || { LAND_NOTE="merge-tree failed on $(short "$1") (exit $rc)"; return 2; }
-  [ "$rc" -eq 0 ] && [ "${t%%$'\n'*}" = "$(GIT rev-parse "${1}^{tree}" 2>/dev/null)" ]
+  [ "$rc" -eq 0 ] || return 1
+  # A tree that cannot be read is an error, not "does not hold": the walk would go
+  # on and pick a later commit, where main's later edits are counted.
+  ct="$(GIT rev-parse "${1}^{tree}" 2>/dev/null)" || { LAND_NOTE="cannot read the tree of $(short "$1")"; return 2; }
+  [ "${t%%$'\n'*}" = "$ct" ]
 }
 find_landing() { # <rev>
   local rev="$1" mb c n=0 rc fail="cannot list the baseline's commits"
@@ -322,22 +337,41 @@ find_landing() { # <rev>
 # ones against the tip, so a genuine orphan does not drag main's later edits of
 # landed lines into the list.
 PREFIX_TRIES=20
-LANDING="" ; PREFIX_TIP="" ; LANDING_NOTE="" ; LANDING_AT_MB=""
+LANDING="" ; PREFIX_TIP="" ; LANDING_NOTE="" ; LANDING_AT_MB="" ; PREFIX_NOTE=""
+prefix_search() { # -> 0 a prefix landed after the merge-base (LANDING, PREFIX_TIP set), 1 none, 2 error
+  local mb b
+  mb="$(GIT merge-base "$BASELINE_SHA" "$BRANCH_SHA" 2>/dev/null)" || { PREFIX_NOTE="no merge-base between branch and baseline"; return 2; }
+  for b in $(GIT rev-list --first-parent "$mb..$BRANCH_SHA" 2>/dev/null | sed 1d | head -n "$PREFIX_TRIES"); do
+    if find_landing "$b"; then
+      # A prefix that undid itself holds its (empty) net change at the merge-base;
+      # nothing of the branch landed there, so keep looking.
+      [ -z "$LAND_AT_MB" ] || continue
+      LANDING="$LAND"; PREFIX_TIP="$b"; return 0
+    fi
+    [ -n "$LAND_NONE" ] || { PREFIX_NOTE="$LAND_NOTE"; return 2; }
+  done
+  return 1
+}
 if iso_init; then
   if find_landing "$BRANCH_SHA"; then
     LANDING="$LAND"; LANDING_AT_MB="$LAND_AT_MB"
+    # A branch with no net change "lands" at the merge-base whatever reached main.
+    # When a prefix of it landed later (a squash of its first commits, before the
+    # commits that undid them), that prefix is where it landed, and the commits
+    # after it are checked at the tip. Without this a dropped restore was missed
+    # (3.5.0 caught it; #399 verify round 10).
+    if [ -n "$LANDING_AT_MB" ]; then
+      prefix_search; rc=$?
+      case "$rc" in
+        0) LANDING_AT_MB="" ;;
+        2) LANDING_NOTE="$PREFIX_NOTE"; LANDING=""; LANDING_AT_MB="" ;;
+      esac
+    fi
   else
     LANDING_NOTE="$LAND_NOTE"
-    if [ -n "$LAND_NONE" ] && MB="$(GIT merge-base "$BASELINE_SHA" "$BRANCH_SHA" 2>/dev/null)"; then
-      for b in $(GIT rev-list --first-parent "$MB..$BRANCH_SHA" 2>/dev/null | sed 1d | head -n "$PREFIX_TRIES"); do
-        if find_landing "$b"; then
-          # A prefix that undid itself holds its (empty) net change at the merge-base;
-          # nothing of the branch landed there, so keep looking.
-          [ -z "$LAND_AT_MB" ] || continue
-          LANDING="$LAND"; PREFIX_TIP="$b"; LANDING_NOTE=""; break
-        fi
-        [ -n "$LAND_NONE" ] || { LANDING_NOTE="$LAND_NOTE"; break; }
-      done
+    if [ -n "$LAND_NONE" ]; then
+      prefix_search; rc=$?
+      case "$rc" in 0) LANDING_NOTE="" ;; 2) LANDING_NOTE="$PREFIX_NOTE" ;; esac
     fi
   fi
 else
@@ -545,18 +579,57 @@ orphan_p() { # <commit-sha> <candidate number> <land|tip> -> 10 orphan, 11 lande
 }
 
 # For tests/merge-completeness/bounded.py only: where each candidate was checked.
-if [ -n "${CHECK_MERGE_COMPLETENESS_TRACE:-}" ]; then
-  { printf 'landing %s prefix %s\n' "${LANDING:--}" "${PREFIX_TIP:--}"
-    set -- $SIDE_OF
-    for sha in $CANDIDATES; do printf 'side %s %s\n' "$sha" "$1"; shift; done
-  } > "$CHECK_MERGE_COMPLETENESS_TRACE" || skip "cannot write the trace file"
+# It only ever creates a new file (noclobber; an existing file or symlink is left
+# alone), and a failed write is ignored, so a stray variable cannot overwrite a file
+# or change the gate's answer.
+if [ -n "${CHECK_MERGE_COMPLETENESS_TRACE:-}" ] && [ ! -e "$CHECK_MERGE_COMPLETENESS_TRACE" ] \
+   && [ ! -L "$CHECK_MERGE_COMPLETENESS_TRACE" ]; then
+  ( set -C
+    { printf 'landing %s prefix %s\n' "${LANDING:--}" "${PREFIX_TIP:--}"
+      set -- $SIDE_OF
+      for sha in $CANDIDATES; do printf 'side %s %s\n' "$sha" "$1"; shift; done
+    } > "$CHECK_MERGE_COMPLETENESS_TRACE" ) 2>/dev/null || :
 fi
 
+# At a landing commit L each commit is checked in its own place rather than by
+# counting lines. Undoing a commit c on a tree X is a merge-tree of X and c's parent
+# with c as the base: it changes nothing exactly when c's change is not in X (X holds
+# what was there before c, in c's lines and paths); it changes X, or conflicts, when
+# c's change, or a later edit of the same lines, is there. c is an orphan when undoing
+# it changes the branch head (the head still shows its change) and changes nothing on
+# L (L does not). Counting copies of a text against EXPECT could not tell a dropped
+# commit from an edit of main's own in the landing step (a release merge bringing in
+# other commits, a `git pull` merge, a squash edited by hand) that adds or removes a
+# copy of the same text elsewhere: it listed commits that landed, and missed dropped
+# ones when that edit made the count come out even (#399 verify round 10, round 11).
+# `merge-tree --merge-base` needs git 2.40; on git 2.38 and 2.39, for a commit with no
+# parent, and when merge-tree fails, the count against EXPECT is used instead.
+undo_noop() { # <commit> <rev> -> 0 undoing the commit on rev changes nothing, 1 it does, 2 cannot tell
+  local p t rc rt
+  p="$(GIT rev-parse -q --verify "$1^1^{commit}" 2>/dev/null)" || return 2
+  rt="$(GIT rev-parse "$2^{tree}" 2>/dev/null)" || return 2
+  t="$(ISOGIT merge-tree --write-tree --merge-base="$1" "$2" "$p" 2>/dev/null)"; rc=$?
+  case "$rc" in
+    0) [ "${t%%$'\n'*}" = "$rt" ] && return 0; return 1 ;;
+    1) return 1 ;;
+    *) return 2 ;;
+  esac
+}
+land_orphan_p() { # <commit-sha> <candidate number> -> 10 orphan, 11 landed, other: error
+  [ -s "$SCRATCH/c.$2" ] || return 11
+  undo_noop "$1" "$LANDING"
+  case $? in
+    1) return 11 ;;
+    0) undo_noop "$1" "$BRANCH_SHA"
+       case $? in 0) return 11 ;; 1) return 10 ;; esac ;;
+  esac
+  orphan_p "$1" "$2" land
+}
 ORPHANS="" ; k=0
 set -- $SIDE_OF
 for sha in $CANDIDATES; do
   side="$1"; shift
-  orphan_p "$sha" "$k" "$side"; rc=$?
+  if [ "$side" = land ]; then land_orphan_p "$sha" "$k"; else orphan_p "$sha" "$k" "$side"; fi; rc=$?
   case "$rc" in
     10) ORPHANS="$ORPHANS$sha"$'\n' ;;
     11) ;;

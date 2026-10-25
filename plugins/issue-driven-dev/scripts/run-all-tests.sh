@@ -7,7 +7,10 @@
 # Behavior:
 #   - runs EVERY suite (no fail-fast) and prints a per-suite summary table
 #   - per-suite timeout (default 180s, IDD_SUITE_TIMEOUT to override) so a
-#     hung suite (FIFO writer class, #117 incident) cannot wedge CI
+#     hung suite (FIFO writer class, #117 incident) cannot wedge CI. A suite that
+#     needs longer puts the seconds in a `timeout` file next to its test.sh; the
+#     larger of the two applies (#399: the merge-completeness suites take about
+#     two minutes on macOS, where process start-up is slow)
 #   - exit 0 iff every suite passed; 1 otherwise
 #
 # Env:
@@ -47,12 +50,17 @@ shopt -s nullglob
 for t in "$TESTS_DIR"/*/test.sh; do
   name="$(basename "$(dirname "$t")")"
   TOTAL=$((TOTAL + 1))
+  secs="$SUITE_TIMEOUT"
+  if [ -f "$(dirname "$t")/timeout" ]; then
+    own="$(tr -cd '0-9' < "$(dirname "$t")/timeout")"
+    [ -n "$own" ] && [ "$own" -gt "$secs" ] && secs="$own"
+  fi
   start=$(date +%s)
-  if run_with_timeout "$SUITE_TIMEOUT" bash "$t" > /tmp/idd-suite-"$name".log 2>&1; then
+  if run_with_timeout "$secs" bash "$t" > /tmp/idd-suite-"$name".log 2>&1; then
     rc=0; verdict="PASS"
   else
     rc=$?; FAILED=$((FAILED + 1))
-    if [ "$rc" -ge 124 ]; then verdict="TIMEOUT(${SUITE_TIMEOUT}s)"; else verdict="FAIL(rc=$rc)"; fi
+    if [ "$rc" -ge 124 ]; then verdict="TIMEOUT(${secs}s)"; else verdict="FAIL(rc=$rc)"; fi
   fi
   dur=$(( $(date +%s) - start ))
   ROWS+=("$(printf '%-32s %-14s %3ss' "$name" "$verdict" "$dur")")

@@ -33,6 +33,17 @@ IDD_TESTS_DIR="$W/tests" IDD_SUITE_TIMEOUT=2 bash "$AGG" > "$W/out3" 2>&1
 assert_exit "hung suite → 1 (timeout)" 1 $?
 assert_grep "timeout verdict shown" "TIMEOUT" "$(cat "$W/out3")"
 
+# a suite's own `timeout` file raises its limit above the global one (#399)
+rm -rf "$W/tests/hang"
+mk_suite slow 'sleep 3'
+printf '20\n' > "$W/tests/slow/timeout"
+IDD_TESTS_DIR="$W/tests" IDD_SUITE_TIMEOUT=1 bash "$AGG" > "$W/out5" 2>&1
+assert_exit "suite timeout file raises the limit → 0" 0 $?
+# ...and never lowers it below the global one
+printf '1\n' > "$W/tests/slow/timeout"
+IDD_TESTS_DIR="$W/tests" IDD_SUITE_TIMEOUT=20 bash "$AGG" > "$W/out6" 2>&1
+assert_exit "suite timeout file never lowers the limit → 0" 0 $?
+
 # empty dir → non-zero (zero suites must not read as success)
 mkdir -p "$W/empty"
 IDD_TESTS_DIR="$W/empty" bash "$AGG" > "$W/out4" 2>&1
