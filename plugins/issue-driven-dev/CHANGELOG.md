@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.0] - 2026-10-25
+
+`/idd-all` in Claude Code cloud sessions (#416, Spectra change `cloud-session-idd-all`). Cloud sessions
+(claude.ai/code, the mobile app, scheduled sessions) block GitHub GraphQL — every `gh issue …` / `gh pr …`
+porcelain call returns 403, and so does `gh auth status` — while `gh api` REST works.
+
+### Added
+
+- **`scripts/lib/cloud-session.sh` (#416)** — `idd_is_cloud_session` (`CLAUDE_CODE_REMOTE` exactly `true`) and
+  `idd_cloud_interaction` (`attended` only when `CLAUDE_CODE_SESSION_ATTENDED` is exactly `1`; absent means
+  `unattended`, because attended questions never time out).
+- **`scripts/lib/gh-rest.sh` (#416)** — read-only REST helper (`issue-view`, `issue-list`, `pr-list`, `repo-view`)
+  that returns the field names and shapes of `gh … --json`, pages until a short page or `--limit`, treats
+  `--state merged` as closed with a merge time, and adds a `hint:` line when a cloud session cannot reach the
+  repository. Unknown fields exit 2.
+- **`references/claude-code-remote-tools.md` (#416)** — detection signals, the porcelain → REST table, the cloud
+  PR routes, the unsupported surfaces and what each prints, and the setup script (plugins + egress parser).
+- **`(PR, attended)` (#416)** — the cloud-session tuple: branch, push and PR, with sub-skills still asking.
+
+### Changed
+
+- **`gh-egress.sh` dispatches through the GitHub REST API in every environment (#416).** Attestation, the
+  four nets, the empty-body guard and the exit band are unchanged; `lib/gh_egress_rest.py` turns the forwarded
+  `gh issue create|comment|edit` arguments into `gh api` calls. Stdout is one URL line, so
+  `URL=$(gh-egress.sh create …)` callers are unaffected; the body reaches gh on stdin; body files keep their
+  bytes. Flags outside the supported set (see the header), a missing title or issue, a stray positional and an
+  unknown milestone title are refused with exit 14 instead of being dropped.
+- **`check-existing-work.sh`, `check-diagnosis-readiness.sh`, `process-attachments.sh`, `idd-worktree.sh` read
+  through `gh-rest.sh` (#416).** Matching logic is unchanged. `check-existing-work`'s error labels are now
+  `pr-list --state open` / `issue-view N`; `idd-close` Step 1.5 matches `issue-view` as well as the old label.
+- **`idd-all` (#416):** a cloud session forces the PR path, with the interaction from the attended signal, ahead
+  of fork detection (which always 403s there); `--no-pr` is overridden with a notice; `(PR, unattended)` without
+  ralph-loop aborts in a cloud session (after removing the new branch) instead of degrading to direct-commit.
+  The auth gate is `gh api user` instead of `gh auth status`. Local resolution is unchanged.
+- **`idd-verify` (#416):** in a cloud session the Codex leg is not run (`codexEnabled: false`, no codex-pro
+  governance) and the engine line and process gaps say `Codex leg not run — cloud session (degraded:
+  Claude-only)`. Local behavior is unchanged.
+- **Runtime notes (#416):** `idd-all`, `idd-issue`, `idd-diagnose`, `idd-plan`, `idd-implement`, `idd-verify`,
+  `idd-update`, `idd-clarify` and `idd-list` point to the cloud reference; `idd-find`, `idd-report`,
+  `idd-discuss` and `idd-ask` stop in a cloud session and say why. Skill bodies are not rewritten.
+- **`discussions_api` refuses in a cloud session (#416)** before sending a request: Discussions are GraphQL-only.
+
+### Not in this release
+
+- `idd-close`, `idd-comment`, `idd-edit`, `idd-config`, `idd-reorganize`, `idd-all-chain` and
+  `check-closed-without-summary.sh` are not migrated; in a cloud session their porcelain calls fail with
+  GitHub's own 403 message.
+- `CLAUDE_CODE_SESSION_ATTENDED` was observed in a web session only; scheduled / API-started sessions are
+  covered by the absent-means-unattended rule.
+
 ## [3.5.0] - 2026-10-20
 
 ### Added

@@ -22,6 +22,7 @@ skill source tree；既有 `SKILL.md` 可以繼續使用 Claude-native tool cont
 - 不把 canonical `SKILL.md` 大量改寫成平台中立抽象語言。
 - 只有在具體 skill 證明無法透過 compatibility mapping 保留語意時，才可提案局部 fork。
 - Runtime 對照表見 [`references/claude-code-tools.md`](references/claude-code-tools.md) 與 [`references/codex-tools.md`](references/codex-tools.md)。
+- Claude Code 雲端 session（web／手機／排程）是同一個 runtime、不同的 GitHub 存取路徑：GraphQL 被封鎖，所以 GitHub 讀寫走 REST（寫入 `scripts/gh-egress.sh`、讀取 `scripts/lib/gh-rest.sh`），SKILL.md 只加一行 runtime note、不改寫 porcelain。對照與不支援清單見 [`references/claude-code-remote-tools.md`](references/claude-code-remote-tools.md)（#416）。
 
 ## 鐵律:Step 0 Bootstrap Stage Task List(v2.18.0+)
 

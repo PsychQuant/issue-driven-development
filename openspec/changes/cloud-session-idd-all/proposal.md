@@ -65,6 +65,10 @@
     - plugins/issue-driven-dev/scripts/tests/process-attachments/test.sh
     - plugins/issue-driven-dev/scripts/tests/idd-worktree/test.sh
     - plugins/issue-driven-dev/scripts/tests/discussion-reader/test_reader.py
+    - plugins/issue-driven-dev/scripts/tests/correct-flow/fake-gh.py
+    - plugins/issue-driven-dev/scripts/tests/correct-flow/test.sh
+    - plugins/issue-driven-dev/scripts/tests/mention-markdown/test_mention_markdown.py
+    - plugins/issue-driven-dev/skills/idd-close/SKILL.md
     - plugins/issue-driven-dev/skills/idd-all/SKILL.md
     - plugins/issue-driven-dev/skills/idd-verify/SKILL.md
     - plugins/issue-driven-dev/skills/idd-issue/SKILL.md

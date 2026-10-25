@@ -72,7 +72,7 @@ repo 解析順序：`--repo` 值（`OWNER/REPO`；`HOST/OWNER/REPO` 時加 `--ho
 
 **stdout 契約**：成功時 stdout 只有一行 URL（create／edit 是 issue URL，comment 是 comment URL）。既有 `URL=$(bash gh-egress.sh create …)` 的 caller 不受影響；header 由「byte-for-byte 等同 `gh issue <verb>`」改寫成這個契約。
 
-payload 經 stdin 傳給 gh：先寫入暫存檔、開成 fd、刪檔，再以該 fd 當 stdin 執行 gh（不留檔、不經 argv，body 不出現在 process list）。
+payload 經 stdin 傳給 gh：先寫入暫存檔、開成 fd、刪檔，再以該 fd 當 stdin 執行 gh（不留檔、不經 argv，body 不出現在 process list）。body file 以原始位元組讀入（不做換行轉換，CRLF 保留），與 `gh issue … --body-file` 一致。
 
 ### D3 — 讀取 helper：`scripts/lib/gh-rest.sh` + `scripts/lib/gh_rest.py`
 
@@ -101,6 +101,8 @@ payload 經 stdin 傳給 gh：先寫入暫存檔、開成 fd、刪檔，再以�
 | `idd-worktree.sh` | `gh issue view --json title -q .title` | `gh-rest.sh issue-view --json title` + `jq -r .title`（失敗時沿用既有的「無 slug」fallback） |
 
 既有測試以 PATH shim 假造 `gh`；shim 改為回應對應的 `gh api` REST 路徑（回 REST 形狀的 JSON），證明正規化後 script 行為不變。
+
+`check-existing-work.sh` 的錯誤標籤隨之改為 `pr-list --state open`／`issue-view N`。`idd-close` Step 1.5 以比對這些標籤來 fail-closed（讀不到 issue 或 open PR 清單就拒絕結案），所以它的比對式同步加上 `issue-view`（舊標籤 `gh issue view` 仍保留）——否則「讀不到 issue」會被誤判為沒有證據而放行。這是實作時由既有測試抓到的 consumer，`idd-close` 在雲端的完整流程仍不在範圍內。
 
 ### D5 — `idd-all` 模式解析（spec `idd-pr-hitl-modes` MODIFIED）
 

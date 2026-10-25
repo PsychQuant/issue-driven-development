@@ -4,6 +4,8 @@ Claude Code is the canonical runtime for IDD skills. This reference records the 
 
 Non-Claude runtimes can load or interpret the same skills, but they must preserve these workflow semantics or explicitly mark a degraded fallback.
 
+Claude Code cloud sessions (web, mobile, scheduled) run this same runtime with a different GitHub access path — GraphQL is blocked there. See [`claude-code-remote-tools.md`](claude-code-remote-tools.md).
+
 ## AskUserQuestion
 
 `AskUserQuestion` is the native attended-decision primitive. IDD uses it when a decision changes workflow state, repository targeting, issue scope, follow-up filing, or PR/direct-commit path.
