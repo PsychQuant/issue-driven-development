@@ -29,6 +29,7 @@
 #   IDD_WORKTREE_NO_GH=1   skip the gh-title slug derivation (offline / hermetic)
 
 set -u
+GH_REST="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gh-rest.sh"
 
 PROG="$(basename "$0")"
 
@@ -137,7 +138,10 @@ resolve_slug() {
   if [ -n "$SLUG" ]; then slugify "$SLUG"; return; fi
   if [ -z "${IDD_WORKTREE_NO_GH:-}" ] && command -v gh >/dev/null 2>&1; then
     local title
-    title="$(gh issue view "$N" --json title -q .title 2>/dev/null)" || title=""
+    # REST through lib/gh-rest.sh (the porcelain issue read is GraphQL, which Claude Code cloud
+    # sessions block — #416), from the repo root so gh resolves that repository.
+    title="$(cd "$REPO_ROOT" && bash "$GH_REST" issue-view "$N" --json title 2>/dev/null \
+      | python3 -c 'import json,sys; print(json.load(sys.stdin).get("title") or "")' 2>/dev/null)" || title=""
     if [ -n "$title" ]; then slugify "$title"; return; fi
   fi
   printf ''   # bare → branch idd/<N>

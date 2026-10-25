@@ -87,6 +87,28 @@ assert_exit "create bare (no slug, no gh) exits 0" 0 "$RC"
 assert_true "create bare makes branch idd/200" \
   "git -C '$RB' show-ref --verify --quiet refs/heads/idd/200"
 
+# 7b. slug from the issue title, read through lib/gh-rest.sh (REST, #416): the
+# stub answers only `gh api repos/{owner}/{repo}/issues/N` and refuses porcelain
+GHB="$(mktemp -d)"; track "$GHB"
+cat > "$GHB/gh" <<'STUB'
+#!/usr/bin/env bash
+[ "$1" = "api" ] || { echo "unexpected porcelain gh $*" >&2; exit 1; }
+case "$2" in
+  'repos/{owner}/{repo}/issues/201') echo '{"number":201,"title":"Fix Login Crash!"}' ;;
+  *) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+esac
+STUB
+chmod +x "$GHB/gh"
+RT="$(new_repo)"; track "$RT"
+PATH="$GHB:$PATH" "$SCRIPT" create 201 --repo-root "$RT" >/dev/null 2>&1; RC=$?
+assert_exit "create with title from REST exits 0" 0 "$RC"
+assert_true "title slug → branch idd/201-fix-login-crash" \
+  "git -C '$RT' show-ref --verify --quiet refs/heads/idd/201-fix-login-crash"
+PATH="$GHB:$PATH" "$SCRIPT" create 202 --repo-root "$RT" >/dev/null 2>&1; RC=$?
+assert_exit "title lookup failing still creates (exit 0)" 0 "$RC"
+assert_true "title lookup failing → bare branch idd/202" \
+  "git -C '$RT' show-ref --verify --quiet refs/heads/idd/202"
+
 echo "== cleanup =="
 
 # 8. cleanup clean → worktree gone, branch kept

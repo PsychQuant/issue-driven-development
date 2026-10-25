@@ -12,28 +12,37 @@ W="$(mktemp -d)"; trap 'rm -rf "$W"' EXIT
 GIT_ENV=(-c user.name=t -c user.email=t@t -c init.defaultBranch=main)
 
 # ── hermetic gh ─────────────────────────────────────────────────────────────
+# REST only (#416): the script reads through scripts/lib/gh-rest.sh, so the shim answers `gh api` paths and
+# refuses porcelain. Fixtures stay in the porcelain shape the assertions read; the shim serves them in the
+# REST shape (head.ref, created_at, lower-case state …), which is exactly what gh-rest has to undo.
 FX="$W/fx"; mkdir -p "$W/bin" "$FX"
 cat > "$W/bin/gh" <<'SHIM'
 #!/usr/bin/env bash
 echo "$*" >> "$FX/calls.log"
-case "$1 $2" in
-  "pr list")
-    state=open; prev=""
-    for a in "$@"; do [ "$prev" = "--state" ] && state="$a"; prev="$a"; done
-    [ -f "$FX/fail_pr_$state" ] && { echo "boom" >&2; exit 1; }
-    if [ -f "$FX/pr_$state.jsonl" ]; then jq -s . "$FX/pr_$state.jsonl"; else echo '[]'; fi ;;
-  "repo view")
-    [ -f "$FX/fail_repo_view" ] && { echo "boom" >&2; exit 1; }
-    echo '{"defaultBranchRef":{"name":"main"}}' ;;
-  "issue view")
-    n="$3"; [ -f "$FX/issue_$n.json" ] && cat "$FX/issue_$n.json" || { echo "no issue" >&2; exit 1; } ;;
-  "api repos"*|"api "*)
-    case "$2" in
-      repos/*/issues/*/events) n="${2#repos/*/issues/}"; n="${n%/events}"
-        [ -f "$FX/events_$n.json" ] && cat "$FX/events_$n.json" || echo '[]' ;;
-      *) echo "unexpected api $2" >&2; exit 1 ;;
+[ "$1" = "api" ] || { echo "unexpected porcelain gh $*" >&2; exit 1; }
+path="$2"
+rest_prs() { # porcelain jsonl → REST pulls array
+  if [ -f "$1" ]; then
+    jq -s 'map({number, body, html_url:.url, created_at:.createdAt, merged_at:.mergedAt,
+                state:(if .mergedAt then "closed" else "open" end), head:{ref:.headRefName, sha:.headRefOid}})' "$1"
+  else echo '[]'; fi; }
+case "$path" in
+  repos/*/issues/*/events) n="${path#repos/*/issues/}"; n="${n%/events}"
+    [ -f "$FX/events_$n.json" ] && cat "$FX/events_$n.json" || echo '[]' ;;
+  repos/*/pulls\?*)
+    case "$path" in *"&page=1") : ;; *) echo '[]'; exit 0 ;; esac
+    case "$path" in
+      *state=open*)   [ -f "$FX/fail_pr_open" ] && { echo "boom" >&2; exit 1; }; rest_prs "$FX/pr_open.jsonl" ;;
+      *state=closed*) [ -f "$FX/fail_pr_merged" ] && { echo "boom" >&2; exit 1; }; rest_prs "$FX/pr_merged.jsonl" ;;
+      *) echo "unexpected pulls query $path" >&2; exit 1 ;;
     esac ;;
-  *) echo "unexpected gh $*" >&2; exit 1 ;;
+  repos/*/issues/*) n="${path##*/}"
+    [ -f "$FX/issue_$n.json" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
+    jq '{created_at:.createdAt, state:(.state|ascii_downcase)}' "$FX/issue_$n.json" ;;
+  repos/*/*)
+    [ -f "$FX/fail_repo_view" ] && { echo "boom" >&2; exit 1; }
+    echo '{"full_name":"test/repo","default_branch":"main"}' ;;
+  *) echo "unexpected api $path" >&2; exit 1 ;;
 esac
 SHIM
 chmod +x "$W/bin/gh"
@@ -165,8 +174,9 @@ assert_eq "…and an issue without evidence is unknown, not clear" "unknown" "$(
 # ── 8. one fetch for the whole call ─────────────────────────────────────────
 reset_fx; issue 1 OPEN $ISSUE_T; issue 2 OPEN $ISSUE_T; issue 3 OPEN $ISSUE_T
 run 1 2 3 >/dev/null
-assert_eq "open PR list fetched once for three issues" "1" "$(grep -c 'pr list.*--state open' "$FX/calls.log")"
-assert_eq "merged PR list fetched once for three issues" "1" "$(grep -c 'pr list.*--state merged' "$FX/calls.log")"
+assert_eq "open PR list fetched once for three issues" "1" "$(grep -c 'pulls?state=open' "$FX/calls.log")"
+assert_eq "merged PR list fetched once for three issues" "1" "$(grep -c 'pulls?state=closed' "$FX/calls.log")"
+refute_grep_re "no porcelain call reaches gh (#416)" '^(pr|issue|repo) ' "$(cat "$FX/calls.log")"
 assert_eq "one entry per issue" "['1', '2', '3']" "$(field "$(run 1 2 3)" "sorted(d['issues'])")"
 
 # ── 9. usage ────────────────────────────────────────────────────────────────

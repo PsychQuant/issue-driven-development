@@ -31,6 +31,7 @@ set -euo pipefail
 CMD="${1:-}"
 NUMBER="${2:-}"
 REPO=""
+GH_REST="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gh-rest.sh"
 
 # Shift positional args, then parse flags
 if [ $# -ge 2 ]; then shift 2; fi
@@ -125,7 +126,9 @@ detect_urls() {
   # default (bash `inherit_errexit` is opt-in since 4.4) — relying on set -e
   # here silently downgrades a gh outage into "no attachments".
   local raw content
-  raw=$(gh issue view "$NUMBER" --repo "$REPO" --json body,comments) || return 2
+  # Read through lib/gh-rest.sh (REST, porcelain field names): the porcelain issue read is
+  # GraphQL, which Claude Code cloud sessions block (#416).
+  raw=$(bash "$GH_REST" issue-view "$NUMBER" --repo "$REPO" --json body,comments) || return 2
   content=$(printf '%s\n' "$raw" | jq -r '.body, .comments[].body') || return 2
   # The character class excluded `)` and whitespace only, which covers a
   # markdown link and nothing else. Real issue bodies wrap URLs three more ways,

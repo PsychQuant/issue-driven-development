@@ -4,6 +4,7 @@ import contextlib
 import io
 import sys
 import json
+import os
 import pathlib
 import subprocess
 import unittest
@@ -35,9 +36,43 @@ DISCUSSION = {'id': 'D1', 'number': 1, 'title': 'Topic', 'url': 'https://github.
               'repository': {'nameWithOwner': 'o/r'}}
 
 
+class CloudSessionTests(unittest.TestCase):
+    """#416: Discussions need GraphQL, which Claude Code cloud sessions block — refuse before any request."""
+
+    def setUp(self):
+        self.assertIsNotNone(api, 'shared Discussions reader has not been implemented')
+        env = patch.dict(os.environ)
+        env.start()
+        self.addCleanup(env.stop)
+        run = patch.object(api.subprocess, 'run', side_effect=AssertionError('gh must not be started'))
+        self.run = run.start()
+        self.addCleanup(run.stop)
+
+    def test_cloud_session_refuses_before_any_request(self):
+        os.environ['CLAUDE_CODE_REMOTE'] = 'true'
+        with self.assertRaises(api.DiscussionError) as caught:
+            api.GitHub().repo('o/r')
+        message = str(caught.exception)
+        self.assertIn('GraphQL', message)
+        self.assertIn('cloud session', message)
+        self.run.assert_not_called()
+
+    def test_only_the_literal_true_means_cloud(self):
+        for value in ('1', 'TRUE', 'false', ''):
+            os.environ['CLAUDE_CODE_REMOTE'] = value
+            with self.assertRaises(AssertionError):   # reached gh (mocked to fail loudly), so no cloud refusal
+                api.GitHub().graphql('query { viewer { login } }', {})
+
+
 class ReaderTests(unittest.TestCase):
     def setUp(self):
         self.assertIsNotNone(api, 'shared Discussions reader has not been implemented')
+        # Hermetic across hosts: a Claude Code cloud session sets CLAUDE_CODE_REMOTE=true, which turns the
+        # GraphQL path into the cloud refusal (#416); these tests exercise the GraphQL path itself.
+        env = patch.dict(os.environ)
+        env.start()
+        self.addCleanup(env.stop)
+        os.environ.pop('CLAUDE_CODE_REMOTE', None)
         self.requests = []
         self.queue = []
         self.mock = patch.object(api.subprocess, 'run', side_effect=self.run_gh)
