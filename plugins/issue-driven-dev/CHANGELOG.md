@@ -49,7 +49,7 @@ porcelain call returns 403, and so does `gh auth status` — while `gh api` REST
   ralph-loop aborts in a cloud session (after removing the new branch) instead of degrading to direct-commit.
   The PR is opened only after verify PASS; with blocking findings, or when the unattended verify-fix loop gives
   up, a cloud session still pushes the branch (not when a blocking finding is a security finding — a push could
-  publish a committed secret). Phase 5 never reads a missing verdict as PASS: without
+  publish a committed secret; Phase 4 then sets `VERIFY_STATE=BLOCKING_SECURITY`). Phase 5 never reads a missing verdict as PASS: without
   `VERIFY_STATE` it stops before pushing (this applies locally too). A failed push, or a default branch or issue
   title that cannot be read, stops the run instead of feeding gh's error text into a branch name or PR base;
   PR-mode branch setup stops with a real `exit` (it relied on an undefined `abort` and fell through into

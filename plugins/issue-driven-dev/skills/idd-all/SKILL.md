@@ -555,7 +555,9 @@ if [ "$PATH_AXIS" = "PR" ] && [ "$INTERACTION" = "unattended" ]; then
 
     PATH_AXIS="direct-commit"
     INTERACTION="attended"
-    REASON="$REASON + ralph-loop missing → graceful degrade (#28)"
+    # The unattended flag Phase 0.5 set stays on purpose: this caller asked for (PR, unattended) — often
+    # /loop — so sub-skills keep reading it as unattended and do not ask questions nobody may answer (#416 verify r4).
+    REASON="$REASON + ralph-loop missing → graceful degrade (#28; sub-skills stay unattended)"
     BRANCH=$(git -C "$CWD" branch --show-current)
     echo "→ Path: ${PATH_AXIS} (${INTERACTION}) — ${REASON}"
     echo "→ Will commit to current branch: ${BRANCH}"
@@ -1030,7 +1032,9 @@ for round in 1..MAX_ROUND:
     if INTERACTION == "attended":
         # User is in session — surface findings and let them decide whether to keep iterating.
         # Do NOT auto-fix in attended mode; that defeats the purpose of HITL.
-        VERIFY_STATE = "BLOCKING"   # Phase 5 opens no PR; in a cloud session it still pushes the branch (#416)
+        # Phase 5 opens no PR; in a cloud session it still pushes the branch (#416) — not when a blocking
+        # finding is a security one: the commits may carry a secret (verify r4)
+        VERIFY_STATE = "BLOCKING_SECURITY" if any(f.is_security for f in findings.blocking) else "BLOCKING"
         report_findings_and_exit_to_user()
         break
 
@@ -1100,10 +1104,15 @@ elif [ "$PATH_AXIS" = "PR" ]; then
   # unpushed commits die with the container. The verdict does not survive the Bash call that set it;
   # a missing one is never read as PASS — set VERIFY_STATE from Phase 4's result and run this block again.
   case "${VERIFY_STATE:-}" in
-    PASS|BLOCKING) ;;
-    *) echo "FATAL: Phase 5: VERIFY_STATE is '${VERIFY_STATE:-}' (shell state lost?) — set it to PASS or BLOCKING from Phase 4's verdict and re-run; not pushing, no PR" >&2; exit 1 ;;
+    PASS|BLOCKING|BLOCKING_SECURITY) ;;
+    *) echo "FATAL: Phase 5: VERIFY_STATE is '${VERIFY_STATE:-}' (shell state lost?) — set it to PASS, BLOCKING or BLOCKING_SECURITY from Phase 4's verdict and re-run; not pushing, no PR" >&2; exit 1 ;;
   esac
-  if [ "$VERIFY_STATE" = BLOCKING ]; then
+  if [ "$VERIFY_STATE" = BLOCKING_SECURITY ]; then
+    # a security finding: never push automatically — the commits may carry a secret (verify r4)
+    echo "→ verify has a blocking security finding: no push, no PR — commits stay on $BRANCH"
+    idd_is_cloud_session && echo "  ⚠ cloud session: $BRANCH exists only in this container — check the commits for secrets, then push by hand before the session ends"
+    PR_URL=""
+  elif [ "$VERIFY_STATE" = BLOCKING ]; then
     if idd_is_cloud_session; then
       git -C "$CWD" push -u origin "$BRANCH" \
         || { echo "FATAL: Phase 5: git push failed — $BRANCH exists only in this container; push it by hand before the session ends" >&2; exit 1; }
@@ -1211,7 +1220,7 @@ Default (`REVIEW_FLAG=""`):
 Next: merge ${PR_URL}, then run /idd-close #${N}
 ```
 
-雲端 session（#416）：`Verify:` 行寫 `verify-gated PASS (Claude-only — cloud session, Codex leg not run)`。`VERIFY_STATE=BLOCKING`（attended 交回 findings）時不印上面的樣板，改印：
+雲端 session（#416）：`Verify:` 行寫 `verify-gated PASS (Claude-only — cloud session, Codex leg not run)`。`VERIFY_STATE=BLOCKING`／`BLOCKING_SECURITY`（attended 交回 findings）時不印上面的樣板，改印（`BLOCKING_SECURITY` 一律 local only——安全 finding 不自動 push）：
 
 ```
 ✗ idd-all stopped before the PR (verify has blocking findings)
@@ -1395,7 +1404,7 @@ fi
 | spectra-propose 遇到 unrecoverable validation error | Phase 3b abort,artifacts 保留,提示手動 `/spectra-propose` |
 | spectra-apply 留下 unfinished tasks | 不 abort — Phase 4 verify 會抓出來 |
 | Verify 2 round 後仍 blocking | Phase 4 abort,留 branch 給 user 手動修;雲端 session 先 push branch(不開 PR,#416)——blocking 裡有安全 finding 時不 push |
-| Phase 5 `VERIFY_STATE` 不是 `PASS`／`BLOCKING`(shell 狀態遺失)| Phase 5 abort,**不 push、不開 PR**;從 Phase 4 的結果設好 `VERIFY_STATE` 再跑一次(#416:缺值絕不當 PASS)|
+| Phase 5 `VERIFY_STATE` 不是 `PASS`／`BLOCKING`／`BLOCKING_SECURITY`(shell 狀態遺失)| Phase 5 abort,**不 push、不開 PR**;從 Phase 4 的結果設好 `VERIFY_STATE` 再跑一次(#416:缺值絕不當 PASS)|
 | Phase 5 `git push` 失敗 | Phase 5 abort,不開 PR;commits 留在本地 branch(雲端 session:只存在 container 裡,session 結束前手動 push)|
 | PR 建立失敗(REST `POST repos/R/pulls`)| Phase 5 abort,branch 已 push,提示手動開 PR |
 

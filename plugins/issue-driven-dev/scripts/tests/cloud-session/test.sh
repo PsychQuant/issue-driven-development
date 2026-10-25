@@ -157,6 +157,11 @@ assert_output_grep "…and the PR body says the verify was Claude-only" "Claude-
 newrepo d; : > "$GH2_LOG"; OUT="$(run_block true "$P5" "$W/repo-d" VERIFY_STATE=BLOCKING INTERACTION=attended)"
 assert_grep "Phase 5 cloud + blocking findings: branch pushed" "idd/5-x" "$(git -C "$W/repo-d.git" branch --list)"
 refute_grep "…but no PR opened" "repos/o/r/pulls" "$(cat "$GH2_LOG")"
+newrepo s; : > "$GH2_LOG"; OUT="$(run_block true "$P5" "$W/repo-s" VERIFY_STATE=BLOCKING_SECURITY INTERACTION=attended)"; RC=$?
+assert_exit "Phase 5 cloud + blocking security finding completes (report, no abort)" 0 "$RC"
+refute_grep "…never pushes a possible secret" "idd/5-x" "$(git -C "$W/repo-s.git" branch --list)"
+refute_grep "…opens no PR" "repos/o/r/pulls" "$(cat "$GH2_LOG")"
+assert_grep "…and says the branch exists only in the container" "exists only in this container" "$OUT"
 newrepo f; : > "$GH2_LOG"; OUT="$(run_block true "$P5" "$W/repo-f")"; RC=$?
 assert_exit "Phase 5 with VERIFY_STATE unset (shell state lost) → stops" 1 "$RC"
 refute_grep "…pushing nothing" "idd/5-x" "$(git -C "$W/repo-f.git" branch --list)"

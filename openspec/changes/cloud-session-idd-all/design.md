@@ -132,6 +132,7 @@ verify 第 2 輪（devil's advocate）補強，本機同樣適用：
 - 判決 fail-closed：`VERIFY_STATE` 由 Phase 4 設定，但 shell 狀態不跨 Bash 呼叫；Phase 5 只接受 `PASS`／`BLOCKING`，缺值或其他值一律停在 push 之前並要求重設——缺值絕不當 PASS（原本的 `${VERIFY_STATE:-PASS}` 會讓遺失的狀態直接開 PR）。
 - unattended verify-fix 迴圈 `MAX_ROUND` 用盡時，雲端先 push branch（不開 PR）再 abort；但 blocking 裡有安全 finding 時不 push（commit 可能帶著 secret，push 就公開了——verify 第 3 輪），安全漏洞的 abort 同樣不 push。刻意不 push 的 abort（Phase 4／5 type guard、安全 finding、shell 狀態遺失、push 失敗）在雲端要提醒 session 結束前手動 push。
 - `git push` 與 `gh api` 的失敗以 exit status 判斷：`gh api` 遇 HTTP 錯誤會把錯誤 body 印到 stdout（不套用 `--jq`），所以 `DEFAULT`／`TITLE` 用 `|| DEFAULT=""`／`|| abort`，不讓錯誤 JSON 變成 branch slug 或 PR base；Phase 0.6 讀不到 default branch 時不 unwind，也不降級（降級會把 commit 落在懸空的 feature branch，即 F2），本機雲端都停下；abort 前照 #123 清掉 unattended flag。
+- 第 4 輪：`(PR, attended)` 交回的 blocking findings 若含安全 finding，Phase 4 設 `VERIFY_STATE=BLOCKING_SECURITY`，Phase 5 不 push（雲端也不），只提醒 commits 只在 container 裡、先檢查 secret 再手動 push——和 unattended 迴圈的規則一致。本機降級後刻意保留 unattended flag（原 caller 多半是 `/loop`，清掉會讓 sub-skill 對沒人的 session 發問），在程式碼註解與 notice 寫明。
 - 第 3 輪：Phase 0.5 PR setup 原本用未定義的 `abort`（全檔慣例），在 Bash 裡會印 command not found 後繼續 `git checkout -b`——讀不到 title 時 branch 名稱變成錯誤 JSON 的 slug。改用區塊內定義的 `pr_setup_stop`（印訊息、清 unattended flag、`exit 1`），由 cloud-session 測試實際執行。
 
 PR path 的 unattended hint 依 interaction 軸決定（`(PR, attended)` 不傳 `UNATTENDED MODE`），spec「PR path preserves v2.40.0 behavior」同步修訂；`(PR, unattended)` 的行為逐字不變。
