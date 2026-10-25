@@ -5,7 +5,7 @@
 
 ## 2. 寫入 transport
 
-- [ ] 2.1 依「D2 — 寫入 transport」與 requirement「Issue egress dispatches through the GitHub REST API」：先改 `plugins/issue-driven-dev/scripts/tests/gh-egress/test.sh`——stub 另存 stdin；把「pass-through argv byte-identical」改為 REST argv 與 stdin JSON 斷言（create／comment／edit 各一，含 issue URL、`--label`、`--milestone` 查詢、`--add-label`／`--remove-label` 的呼叫順序、`@me`、`HOST/OWNER/REPO`）；新增不支援旗標 exit 14、缺 title exit 14、未知 milestone exit 14、前置呼叫失敗時不送後續呼叫並傳出其 exit code；所有既有 gate 斷言保留，確認 RED。再寫 `plugins/issue-driven-dev/scripts/lib/gh_egress_rest.py`，把 `plugins/issue-driven-dev/scripts/gh-egress.sh` 的最後 dispatch 換成它，並改寫 header 的 stdout 契約段。完成時：gh-egress 套件全綠。驗證：`bash plugins/issue-driven-dev/scripts/tests/gh-egress/test.sh` 與 `bash plugins/issue-driven-dev/scripts/tests/gh-egress-rollout/test.sh` 全部通過。
+- [x] 2.1 依「D2 — 寫入 transport」與 requirement「Issue egress dispatches through the GitHub REST API」：先改 `plugins/issue-driven-dev/scripts/tests/gh-egress/test.sh`——stub 另存 stdin；把「pass-through argv byte-identical」改為 REST argv 與 stdin JSON 斷言（create／comment／edit 各一，含 issue URL、`--label`、`--milestone` 查詢、`--add-label`／`--remove-label` 的呼叫順序、`@me`、`HOST/OWNER/REPO`）；新增不支援旗標 exit 14、缺 title exit 14、未知 milestone exit 14、前置呼叫失敗時不送後續呼叫並傳出其 exit code；所有既有 gate 斷言保留，確認 RED。再寫 `plugins/issue-driven-dev/scripts/lib/gh_egress_rest.py`，把 `plugins/issue-driven-dev/scripts/gh-egress.sh` 的最後 dispatch 換成它，並改寫 header 的 stdout 契約段。完成時：gh-egress 套件全綠。驗證：`bash plugins/issue-driven-dev/scripts/tests/gh-egress/test.sh` 與 `bash plugins/issue-driven-dev/scripts/tests/gh-egress-rollout/test.sh` 全部通過。
 
 ## 3. 讀取 script 改用 helper
 

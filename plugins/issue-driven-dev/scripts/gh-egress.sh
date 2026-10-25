@@ -59,28 +59,38 @@
 #   gh-egress.sh edit-comment <comment-id> --repo owner/repo --body-file <f> \   # #273: comment-PATCH surgery, all nets apply
 #                --scrub-attested <enforce|warn|light>
 #
-#   On success the wrapper `exec`s the real gh so stdout / stderr / exit code are
-#   byte-for-byte the same as calling `gh issue <verb> ...` directly (backward
-#   compat: callers that capture `URL=$(... )` are unaffected).
+#   The arguments are `gh issue <verb>` arguments, but dispatch goes through the
+#   GitHub REST API (`gh api`, via lib/gh_egress_rest.py) in every environment:
+#   porcelain `gh issue …` is GraphQL, which Claude Code cloud sessions block
+#   (#416, change cloud-session-idd-all D2). On success stdout is exactly one URL
+#   line — the issue URL for create / edit, the comment URL for comment — so
+#   callers that capture `URL=$(... )` are unaffected. Supported flags:
+#     create   --repo/-R --title/-t --body/-b --body-file/-F --label/-l --assignee/-a --milestone/-m
+#     comment  <issue|URL> --repo/-R --body/-b --body-file/-F
+#     edit     <issue|URL> --repo/-R --title/-t --body/-b --body-file/-F --add-label --remove-label
+#              --add-assignee --remove-assignee --milestone/-m --remove-milestone
+#   Any other flag is refused (exit 14), never dropped. The body reaches gh on
+#   stdin, never in argv.
 #
 # EXIT CODES — wrapper-origin codes live in a dedicated refusal band >=10 (#227).
 #   INVARIANT: this wrapper never exits with its own code below 10; any exit <10
 #   observed by a caller is gh's OWN code flowing through the final `exec` (so an
 #   unattended caller can mechanically split "gate refusal -> fix content/args"
 #   from "gh failure -> fix auth/network" on $? alone).
-#   0   dispatched (exec gh -- gh's exit codes flow through from here, all <10)
+#   0   dispatched (the failing gh call's own exit code flows through, all <10)
 #   10  privacy net hit (absolute /Users/<name> path / verbatim ~/.claude.json content)
 #   11  mention net hit (unattested @login token / entity-encoded @ form)
-#   12  unscannable body (unreadable file or unavailable/failed Markdown parser)
+#   12  unscannable body (unreadable file or unavailable/failed Markdown parser; body file not UTF-8)
 #   13  attestation missing/invalid (--scrub-attested absent or bad level)
-#   14  usage error (bad/missing verb, malformed/split-token args, flag missing its value)
+#   14  usage error (bad/missing verb, malformed/split-token args, flag missing its value;
+#       REST transport: unsupported flag, missing title / issue, stray positional, unknown milestone)
 #   15  empty/near-empty body on the body channel (#275 — the signature of upstream
 #       composition failing silently; edit additionally floors at 10 stripped chars
 #       because its overwrite semantics turn an empty dispatch into data loss.
 #       Explicit intent escape: --allow-empty-body, consumed by the wrapper)
 #
 # TEST OVERRIDES (test-only; never set in production)
-#   IDD_GH_BIN       gh binary to exec       (default: gh)
+#   IDD_GH_BIN       gh binary to call       (default: gh; read by the REST transport too)
 #   IDD_CLAUDE_JSON  claude.json to probe    (default: $HOME/.claude.json)
 
 set -u
@@ -465,7 +475,7 @@ if [ "$VERB" = "check" ]; then
   exit 0
 fi
 
-# --- dispatch: byte-for-byte identical to raw `gh issue <verb> ...` -----------
+# --- dispatch: GitHub REST via gh api (#416) ------------------------------------
 GH_BIN="${IDD_GH_BIN:-gh}"
 # ${arr[@]+...} idiom: empty array expands to NOTHING (":-" would yield one
 # phantom '' positional, #203 item 5); bash-3.2 safe.
@@ -478,4 +488,6 @@ if [ "$VERB" = "edit-comment" ]; then
   fi
   exec "$GH_BIN" api "repos/${EC_REPO}/issues/comments/${EC_ID}" -X PATCH -F body=@"$BODYFILE_PATH"
 fi
-exec "$GH_BIN" issue "$VERB" ${GH_ARGS[@]+"${GH_ARGS[@]}"}
+# create / comment / edit: the forwarded `gh issue <verb>` args become REST calls.
+# The transport runs only past this line — every gate above has already passed.
+IDD_GH_BIN="$GH_BIN" exec python3 "$SCRIPT_DIR/lib/gh_egress_rest.py" "$VERB" ${GH_ARGS[@]+"${GH_ARGS[@]}"}
