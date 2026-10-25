@@ -1,8 +1,8 @@
 ---
 name: idd-all
 description: |
-  自動串連 IDD 完整 workflow（issue → diagnose → implement → verify），按 pr_policy 解析 path 與 interaction 兩軸：PR + unattended（自動化、/loop friendly）或 direct-commit + attended（HITL、user 在 keyboard，sub-skill AskUserQuestion 自然 fire）。停在 verified 等 user 自己 close（永不 auto-close）。
-  Use when: 想一次跑完整條 IDD pipeline、信任 6-AI verify 會抓錯、希望 fire-and-forget；HITL 模式則用於 solo repo 想被 sub-skill 諮詢的情境。
+  自動串連 IDD 完整 workflow（issue → diagnose → implement → verify），按 pr_policy 解析 path 與 interaction 兩軸：PR + unattended（自動化、/loop friendly）或 direct-commit + attended（HITL、user 在 keyboard，sub-skill AskUserQuestion 自然 fire）；Claude Code 雲端 session 一律走 PR path，有人在場時為 PR + attended。停在 verified 等 user 自己 close（永不 auto-close）。
+  Use when: 想一次跑完整條 IDD pipeline、信任 verify 會抓錯（本機 6-AI、雲端 Claude-only）、希望 fire-and-forget；HITL 模式則用於 solo repo 想被 sub-skill 諮詢的情境。
   防止的失敗：手動跑 5 個 idd-* skill 太繁瑣、忘記中間某一步、orchestration 一致性。
 argument-hint: "[#NNN | 'issue description'] [--pr | --no-pr] [--review] [--cwd /path/to/clone] (empty = interactive; --no-pr 觸發 HITL direct-commit + attended; --review opt-in re-opens Foresay confirmation loop at terminal report)"
 allowed-tools:
@@ -513,6 +513,14 @@ Phase 0.5 解析出 `(PATH_AXIS, INTERACTION)` 後,若 tuple 是 `(PR, unattende
 
 ```bash
 . "$CLAUDE_PLUGIN_ROOT/scripts/lib/cloud-session.sh"   # shell state does not cross Bash calls (#416)
+# Lost state must not skip the gate silently (#416 verify r5): the tuple, and in PR mode the branch to unwind.
+case "${PATH_AXIS:-}:${INTERACTION:-}" in
+  PR:attended|PR:unattended|direct-commit:attended|direct-commit:unattended) ;;
+  *) echo "FATAL: Phase 0.6: (PATH_AXIS, INTERACTION) = (${PATH_AXIS:-}, ${INTERACTION:-}) — shell state lost? Set them from the Phase 0.5 notice and re-run" >&2; exit 1 ;;
+esac
+if [ "$PATH_AXIS" = "PR" ] && [ -z "${BRANCH:-}" ]; then
+  echo "FATAL: Phase 0.6: BRANCH is empty — set it to the idd/<N>-<slug> branch Phase 0.5 checked out and re-run" >&2; exit 1
+fi
 if [ "$PATH_AXIS" = "PR" ] && [ "$INTERACTION" = "unattended" ]; then
   if ! "$CLAUDE_PLUGIN_ROOT/scripts/check-ralph-loop.sh" 2>/dev/null; then
     echo "⚠ ralph-loop plugin not detected — required to drive (PR, unattended) verify-fix loop."
@@ -755,7 +763,11 @@ IMPL_ARGS="#$N --cwd $CWD"
 # #366: 本 skill 已在 Step 0.5.1 做過存在工作檢查，idd-implement 不必再問
 IMPL_ARGS="$IMPL_ARGS --existing-work-checked"
 if [ "$PATH_AXIS" = "PR" ]; then
-  IMPL_ARGS="$IMPL_ARGS --pr"
+  # idd-implement's Step 5.5 would push and open a PR before verify; Phase 5 opens it only after verify
+  # PASS (spec idd-pr-hitl-modes: no PR while verify reports blocking findings — #416 verify r5)
+  IMPL_ARGS="$IMPL_ARGS --pr
+
+ORCHESTRATED BY /idd-all — skip Step 5.5 (no push, no PR): /idd-all Phase 5 pushes and opens the PR after verify PASS."
 elif [ "$PATH_AXIS" = "direct-commit" ]; then
   IMPL_ARGS="$IMPL_ARGS --no-pr"
 fi
@@ -780,7 +792,7 @@ Skill(skill="issue-driven-dev:idd-implement", args="$IMPL_ARGS")
 - PR mode → idd-implement 看到 `--pr` flag + 已在 feature branch → reuse(Step 0.5 fork detection 直接認得)
 - direct-commit mode → idd-implement 看到 `--no-pr` flag → 不再開 branch,直接在當前 branch commit
 
-**PR creation timing**: PR mode 下,idd-implement 的 Step 5.5(PR creation)用 `gh pr list --head $BRANCH` 先查當前 branch 有沒有 open PR,有就 skip — 與 idd-all Phase 5 自然相容(idd-all 在 verify PASS 後才開 PR with verify result)。direct-commit mode 下 idd-implement 收到 `--no-pr` 不會嘗試開 PR,Phase 5 也直接 skip。
+**PR creation timing**: PR mode 下 idd-all 傳 `ORCHESTRATED BY /idd-all` directive,idd-implement 跳過 Step 5.5(不 push、不開 PR)—— PR 只由 idd-all Phase 5 在 verify PASS 後開(#416 verify r5)。舊說法「Step 5.5 先查有沒有 open PR,有就 skip,所以自然相容」不成立:idd-all 不會預先開 PR,Step 5.5 一定會在 verify 之前開出一個。direct-commit mode 下 idd-implement 收到 `--no-pr` 不會嘗試開 PR,Phase 5 也直接 skip。
 
 ### Phase 3b: SDD Path — discuss → propose → apply (mode-aware chain)
 
@@ -1035,7 +1047,7 @@ for round in 1..MAX_ROUND:
         # Phase 5 opens no PR; in a cloud session it still pushes the branch (#416) — not when a blocking
         # finding is a security one: the commits may carry a secret (verify r4)
         VERIFY_STATE = "BLOCKING_SECURITY" if any(f.is_security for f in findings.blocking) else "BLOCKING"
-        report_findings_and_exit_to_user()
+        report_findings_and_hand_back()   # then Phase 5 (cloud: push, no PR) and the Phase 6 report — not a stop here
         break
 
     # unattended path: auto-fix attempt
@@ -1167,8 +1179,15 @@ EOF
   rm -f "$PR_BODY_FILE"
   echo "→ PR: $PR_URL"
   fi
+else
+  # PATH_AXIS lost: shell state does not cross Bash calls. Never a silent no-op — in a cloud session that
+  # would end the run with the commits unpushed (#416 verify r5).
+  echo "FATAL: Phase 5: PATH_AXIS is '${PATH_AXIS:-}' (shell state lost?) — set PATH_AXIS, IN_CHAIN, BRANCH and VERIFY_STATE from Phase 0.5 / Phase 4 and re-run; nothing pushed, no PR" >&2
+  . "$CLAUDE_PLUGIN_ROOT/scripts/lib/cloud-session.sh" && idd_is_cloud_session \
+    && echo "  ⚠ cloud session: the commits exist only in this container — do not end the session before Phase 5 has run" >&2
+  exit 1
 fi
-# Both branches fall through to Phase 6 below.
+# Every branch above either falls through to Phase 6 below or exits.
 ```
 
 > **絕對不能在 PR body 用 Closes/Fixes/Resolves trailer**。User-facing canonical 紀律見 [`rules/commit-issue-reference.md`](../../rules/commit-issue-reference.md)（#214）；理由見 idd-implement skill 裡的 trailer 禁令說明 — auto-close 會繞過 idd-close 的 checklist gate 和 closing summary。
@@ -1502,21 +1521,39 @@ Phase 0.5 印 `→ Path: PR (unattended) — pr_policy absent (v2.40.0 default)`
 
 ```
 ⚠ ralph-loop plugin not detected — required to drive (PR, unattended) verify-fix loop.
+→ Unwinding Phase 0.5 PR-mode branch setup:
+    git checkout main
+Switched to branch 'main'
+    git branch -d idd/42-bug-foo (no commits yet — safe delete)
+Deleted branch idd/42-bug-foo (was 0e9bb99).
   Degrading to (direct-commit, attended) for backward-compat (#28 B4 design).
   To restore (PR, unattended): claude plugin install ralph-loop@claude-plugins-official
 
-→ Unwinding Phase 0.5 PR-mode branch setup before degrade:
-    git checkout main
-    Switched to branch 'main'
-    git branch -d idd/42-bug-foo (no commits yet — safe delete)
-    Deleted branch idd/42-bug-foo (was 0e9bb99).
-→ Path: direct-commit (attended) — pr_policy absent (v2.40.0 default) + ralph-loop missing → graceful degrade (#28)
+→ Path: direct-commit (attended) — pr_policy absent (v2.40.0 default) + ralph-loop missing → graceful degrade (#28; sub-skills stay unattended)
 → Will commit to current branch: main
 ```
 
-後續 sub-skill 全部進 attended 模式(像 Trace 2),user 在 keyboard 自然推進。final report 標明 degrade 原因。
+idd-all 之後不再注入 `UNATTENDED MODE` directive,但 Phase 0.5 寫下的 unattended flag 刻意保留:原 caller 要的是 unattended(多半是 `/loop`),sub-skill 依 #123 仍判 unattended,不會對可能沒人的 session 發問。final report 標明 degrade 原因。雲端 session 不降級(見 Phase 0.6;branch unwind 後 abort)。
 
 無 abort、無 silent break — backward-compat 對 v2.40.0 既有 caller 維持。
+
+### Trace 5: `(PR, attended)` — Claude Code 雲端 session,有人在場(#416)
+
+web 上開的雲端 session(`CLAUDE_CODE_REMOTE=true`、`CLAUDE_CODE_SESSION_ATTENDED=1`),config 是 `pr_policy: never`:
+
+```
+/idd-all #42
+```
+
+```
+→ Path: PR (attended) — cloud session (CLAUDE_CODE_REMOTE; attended signal 1)
+```
+
+- Phase 0.5 照 PR mode 建 `idd/42-<slug>`(default branch 與 title 經 REST 讀);Phase 0.6 不經 ralph-loop gate(使用者在場)
+- sub-skill 不收 `UNATTENDED MODE` directive,會照常發問;idd-implement 收到 `ORCHESTRATED BY /idd-all`,不自己開 PR
+- Phase 4 verify 是 Claude-only(`Codex leg not run — cloud session (degraded: Claude-only)`);attended 下有 blocking findings 時交回使用者
+- Phase 5:PASS → push + REST `POST repos/R/pulls`,PR body 寫明 Claude-only;`BLOCKING` → 只 push branch、不開 PR;`BLOCKING_SECURITY` → 不 push(提醒先查 secret)
+- Phase 6 印 PR mode report(`Verify: verify-gated PASS (Claude-only — cloud session, Codex leg not run)`)或「stopped before the PR」樣板
 
 ### 從零開始 — 文字描述
 

@@ -146,6 +146,11 @@ refute_grep "…never checking out the gh error text" "Not Found\"" "$(git -C "$
 newrepo a4; OUT="$(run_block "" "$P06" "$W/repo-a4" GH2_FAIL_REPO=1)"; RC=$?
 assert_exit "Phase 0.6 local, default branch unreadable → stops instead of degrading onto the feature branch" 1 "$RC"
 refute_grep "…no degrade" "Path: direct-commit" "$OUT"
+newrepo a5; OUT="$(run_block true "$P06" "$W/repo-a5" PATH_AXIS=)"; RC=$?
+assert_exit "Phase 0.6 with PATH_AXIS lost stops instead of skipping the gate" 1 "$RC"
+newrepo a6; OUT="$(run_block true "$P06" "$W/repo-a6" BRANCH=)"; RC=$?
+assert_exit "Phase 0.6 with BRANCH lost in PR mode stops" 1 "$RC"
+assert_grep "…naming the lost branch" "BRANCH is empty" "$OUT"
 newrepo b; OUT="$(run_block "" "$P06" "$W/repo-b")"
 assert_grep "Phase 0.6 local + no ralph-loop → degrades as before" "Path: direct-commit (attended)" "$OUT"
 newrepo c; : > "$GH2_LOG"; OUT="$(run_block true "$P5" "$W/repo-c" VERIFY_STATE=PASS)"; RC=$?
@@ -162,6 +167,10 @@ assert_exit "Phase 5 cloud + blocking security finding completes (report, no abo
 refute_grep "…never pushes a possible secret" "idd/5-x" "$(git -C "$W/repo-s.git" branch --list)"
 refute_grep "…opens no PR" "repos/o/r/pulls" "$(cat "$GH2_LOG")"
 assert_grep "…and says the branch exists only in the container" "exists only in this container" "$OUT"
+newrepo t; : > "$GH2_LOG"; OUT="$(run_block true "$P5" "$W/repo-t" PATH_AXIS= VERIFY_STATE=PASS)"; RC=$?
+assert_exit "Phase 5 with PATH_AXIS lost stops (never a silent no-op)" 1 "$RC"
+assert_grep "…warning that the commits exist only in the container" "exist only in this container" "$OUT"
+refute_grep "…and pushes nothing" "idd/5-x" "$(git -C "$W/repo-t.git" branch --list)"
 newrepo f; : > "$GH2_LOG"; OUT="$(run_block true "$P5" "$W/repo-f")"; RC=$?
 assert_exit "Phase 5 with VERIFY_STATE unset (shell state lost) → stops" 1 "$RC"
 refute_grep "…pushing nothing" "idd/5-x" "$(git -C "$W/repo-f.git" branch --list)"

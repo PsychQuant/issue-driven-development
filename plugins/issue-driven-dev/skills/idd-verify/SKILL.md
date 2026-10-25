@@ -579,7 +579,7 @@ TaskCreate(name="get_diff_and_issue", description="依 input source 取 diff（g
 TaskCreate(name="check_attachments", description="確認 .claude/.idd/attachments/issue-NNN/ 存在,把 attachment 路徑塞進 reviewer agent prompt 作為 source-of-truth context。manifest 缺漏 → 警告繼續(reviewer 仍跑,但 verification 完整度受限)。依 rules/process-attachments.md。")
 TaskCreate(name="collect_external_writes", description="#315: 用 REST --paginate 抓每個 refd issue 的**全部** comment **以及 issue body**(`Linked-Context Siblings Filed` 是 PATCH 進 body 的,只掃 comment 會讓那一類永遠回報 UNKNOWN),掃 $EW_SECTIONS 列出的 audit-trail heading(它們散在不同 comment 裡),組成 $EW_BLOCK。**不要**用 gh issue view --json comments —— 那是只回最舊 100 則的 connection,而要找的紀錄通常較新。$EW_BLOCK 兩個 backend 共用(Tier 1 併進 CONTEXT_BLOCK、manual fan-out 進每個 prompt + codex --instructions)。**沒有紀錄時報 UNKNOWN,不報「沒有外部寫入」** —— 漏跑的 sweep 與跑了沒找到的 sweep 痕跡一樣")
 TaskCreate(name="resolve_dispatch_model", description="解析 $AGENT_MODEL — IDD_AGENT_MODEL 未設 → opus；非法值 → abort with usage error（#205；兩個 backend 共用，Workflow args 傳 agentModel、manual 模板填 model）；#264 同步解析 codex 治理（check-plugin-presence.sh codex-pro codex-pro → CP defaults.json + profile.yaml 兩層 → CODEX_MODEL/EFFORT/MAX_TIME，缺席 fail-fast；雲端 session CODEX_ENABLED=false 時跳過治理解析，#416）")
-TaskCreate(name="launch_parallel_reviewers", description="第一波 5 個 tool calls 同一 message: 4 lens Agent(subagent_type=general-purpose, model=$AGENT_MODEL) for requirements/logic/security/regression + 1 Bash codex(run_in_background:true)；DA 不在此波（#130 sequenced）。prompt 引用 attachment 路徑 + 強制 file-output rule (per #52)")
+TaskCreate(name="launch_parallel_reviewers", description="第一波 5 個 tool calls 同一 message: 4 lens Agent(subagent_type=general-purpose, model=$AGENT_MODEL) for requirements/logic/security/regression + 1 Bash codex(run_in_background:true；雲端 CODEX_ENABLED=false 時不送，第一波只有 4 個 call，#416)；DA 不在此波（#130 sequenced）。prompt 引用 attachment 路徑 + 強制 file-output rule (per #52)")
 TaskCreate(name="spawn_sequenced_da", description="#130: 4 份 lens findings 檔全部就緒（non-empty）後，coordinator 序列 spawn Devil's Advocate（model=$AGENT_MODEL，prompt 直附 4 檔路徑，無 polling）")
 TaskCreate(name="wait_for_claude_agents", description="4 lens Agent calls return 後 ls $VERIFY_DIR/findings_*.md 確認 4 檔 non-empty（DA 檔在 sequenced spawn 後另計）;缺者進 Step 2.5 Recovery Protocol")
 TaskCreate(name="recovery_protocol", description="Step 2.5 (NEW per #52): 缺 findings 檔者 SendMessage retry with FULL context re-paste(不假設 context 倖存 idle/wake);二次 idle → coordinator self-review for that role + 在 master report 標 process gap")
@@ -1525,6 +1525,12 @@ Full integration contract: [`references/agent-routing.md`](../../references/agen
 只用 Codex，不開 team。適合小改動：
 
 ```bash
+# 雲端 session 沒有 Codex（#416）：這個 engine 只有 Codex，沒有可退的 Claude leg —— 明說後停下
+. "$CLAUDE_PLUGIN_ROOT/scripts/lib/cloud-session.sh"
+if idd_is_cloud_session; then
+  echo "✗ --engine codex needs Codex, which a Claude Code cloud session does not have — use the default engine (Claude-only here) or run from a local session" >&2
+  exit 1
+fi
 # codex-call 是單次 completion（非 agentic）→ 顯式把 diff 餵進去
 QUICK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/idd-quick-XXXXXX")
 git diff > "$QUICK_DIR/diff.patch"

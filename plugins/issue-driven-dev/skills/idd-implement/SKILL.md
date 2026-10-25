@@ -697,7 +697,7 @@ EOF
 
 ### Step 5.5: Open PR (PR path only, idempotent)
 
-**Skip if direct-commit path was chosen in Step 0.5.**
+**Skip if direct-commit path was chosen in Step 0.5**, or if the args carry `ORCHESTRATED BY /idd-all` — `/idd-all` pushes and opens the PR itself, only after verify PASS (#416).
 
 Idempotent — if a PR already targeting `$BRANCH` is open, skip creation. This makes orchestration safe: `idd-all` may have pre-created a PR; verify-fix iterations re-running idd-implement won't duplicate.
 
