@@ -179,6 +179,10 @@ calls_reset
 printf 'a body from a file, kept out of argv' > "$WORK/fbody.md"
 bash "$SCRIPT" comment 5 --repo o/r --body-file "$WORK/fbody.md" "${ATT[@]}" >/dev/null 2>&1
 assert_eq "body-file content rides stdin" '{"body": "a body from a file, kept out of argv"}' "$(payload 1)"
+calls_reset
+printf 'line one\r\nline two\r\n' > "$WORK/crlf.md"
+bash "$SCRIPT" comment 5 --repo o/r --body-file "$WORK/crlf.md" "${ATT[@]}" >/dev/null 2>&1
+assert_eq "body-file CRLF bytes are kept (no newline translation)" '{"body": "line one\r\nline two\r\n"}' "$(payload 1)"
 
 # translator refusals: exit 14, named cause, no gh call at all
 calls_reset

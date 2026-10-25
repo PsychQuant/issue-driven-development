@@ -165,7 +165,7 @@ assert_exit "apply succeeds for an issue body" 0 "$RC"
 body_of issue-351.json >"$WORK/e8.body"
 assert_output_grep "the issue body is corrected" "the right claim" "$WORK/e8.body"
 assert_output_grep "Current Status is untouched" "**Phase**: diagnosed" "$WORK/e8.body"
-assert_output_grep "the issue body is written through gh issue edit" "issue edit 351" "$FAKE_GH_STORE/calls.log"
+assert_output_grep "the issue body is written through gh-egress's REST PATCH (#416)" "api repos/o/r/issues/351 -X PATCH --input -" "$FAKE_GH_STORE/calls.log"
 
 # ── E9. a bot's comment ────────────────────────────────────────────────────
 echo "E9. bot author"

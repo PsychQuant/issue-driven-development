@@ -90,7 +90,7 @@ def body_of(opts):
         raise Refuse("pass only one of --body or --body-file")
     if "body_file" in opts:
         try:
-            with open(opts["body_file"], encoding="utf-8") as f:
+            with open(opts["body_file"], encoding="utf-8", newline="") as f:   # bytes as written: keep CRLF
                 return f.read()
         except UnicodeDecodeError:
             raise Refuse(f"body file {opts['body_file']} is not UTF-8 text", code=12)
