@@ -256,6 +256,14 @@ User approved → invoke idd-implement skill 繼續 TDD loop：
 Skill(skill="issue-driven-dev:idd-implement", args="#NNN")
 ```
 
+**由 `/idd-all` 呼叫時（#416）**：本 skill 的 args 若帶 `ORCHESTRATED BY /idd-all — skip Step 5.5 …` directive（idd-all 的 PR path），把 `--pr` 與該行原樣轉傳——PR 只由 idd-all Phase 5 在 verify PASS 後開，idd-implement 不能在 verify 之前自己開一個：
+
+```
+Skill(skill="issue-driven-dev:idd-implement", args="#NNN --pr
+
+ORCHESTRATED BY /idd-all — skip Step 5.5 (no push, no PR): /idd-all Phase 5 pushes and opens the PR after verify PASS.")
+```
+
 idd-implement 會偵測到 issue 已有 `## Implementation Plan` comment（Step 2 post 的），跳過自己 Step 2 的 plan drafting，直接進 Step 2.5 bootstrap TaskList + Step 3 TDD loop。
 
 > **為什麼 chain 而不是把 idd-implement 的內容 inline？** 保持 single source of truth — idd-implement 的 TDD discipline / scope guard / commit conventions / PR flow 全部由 idd-implement 定義，idd-plan 只在前面加 approval gate。Inline 會 drift。

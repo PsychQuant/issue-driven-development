@@ -666,7 +666,7 @@ Dispatch **先看 `$VEXIT`**(gate 判定),`0` 才依 `$TIER` 分派;**`$DIAG_TYP
 |--------------|--------|
 | `TYPE=meeting` · `VEXIT=0` | **meeting(#383),先於任何 tier 分派**:**attended → Phase 3m: `/idd-plan #$N`**(meeting 版 Plan;approve 後**不** chain 到 idd-implement);**unattended → 停在 diagnosed**,不跑 `/idd-plan`(Meeting Plan 是人核准的審議紀錄,unattended 沒有人可核准;plan 是選填,meeting 的 close gate 在沒有 plan 時退回 Diagnosis 的 Phase C),Phase 6 的 Action items 會為它列一條(在 Phase 6 用 issue 號重新解析 type,不靠 Phase 2 的變數)。兩種模式都先跑下方「meeting 分派前的 branch unwind」,再跳過 Phase 3a／3b、Phase 4、Phase 5,Phase 6 印 meeting report。完全沒有 Diagnosis 的 meeting 是 `complexity-missing`(gate 要求 Diagnosis 存在才豁免),照 abort 列處理;meeting 的其他 `VEXIT=1`(`parking-lot-label` / `blocking-nonempty`)照下面的 parked／blocked 列處理 |
 | `0` · `0` · `Simple` | Phase 3a: idd-implement |
-| `0` · `0` · `Plan` | **attended → Phase 3p: `/idd-plan`**（該 skill 擁有 `EnterPlanMode` 閘門，approve 後自己 chain 到 idd-implement）;**unattended → Phase 3a: idd-implement**，並在 final report 標記 `[Plan tier deliberation skipped under unattended mode]` |
+| `0` · `0` · `Plan` | **attended → Phase 3p: `/idd-plan`**（該 skill 擁有 `EnterPlanMode` 閘門，approve 後自己 chain 到 idd-implement；PR path 時 args 附同一行 `ORCHESTRATED BY /idd-all — skip Step 5.5 …` directive，idd-plan Step 6 轉傳給 idd-implement，PR 只由 Phase 5 在 verify PASS 後開，#416）;**unattended → Phase 3a: idd-implement**，並在 final report 標記 `[Plan tier deliberation skipped under unattended mode]` |
 | `0` · `0` · `Plan`（原值 `Plan via Layer V`,v2.50+）| 同上 — helper 只取開頭的 tier,` via <來源>` 後綴與同行理由皆不影響;verdict 是 user 在 idd-diagnose Step 3.4 選 escalate 觸發,routing 行為跟 bare `Plan` 一致 |
 | `0` · `0` · `Spectra` | Phase 3b: spectra-discuss → spectra-propose → spectra-apply(unattended → 一輪收斂;attended → multi-turn 對話自然進行) |
 | `0` · `0` · `SDD-warranted` (legacy alias) | 視同 `Spectra` 處理(v2.36.0+ backward compat) |
@@ -1424,6 +1424,7 @@ fi
 | spectra-apply 留下 unfinished tasks | 不 abort — Phase 4 verify 會抓出來 |
 | Verify 2 round 後仍 blocking | Phase 4 abort,留 branch 給 user 手動修;雲端 session 先 push branch(不開 PR,#416)——blocking 裡有安全 finding 時不 push |
 | Phase 5 `VERIFY_STATE` 不是 `PASS`／`BLOCKING`／`BLOCKING_SECURITY`(shell 狀態遺失)| Phase 5 abort,**不 push、不開 PR**;從 Phase 4 的結果設好 `VERIFY_STATE` 再跑一次(#416:缺值絕不當 PASS)|
+| 狀態遺失的停止(Phase 0.6 tuple／`BRANCH`、Phase 5 `PATH_AXIS`／`VERIFY_STATE`)| 停下並要求從前面的 notice 補回變數後**重跑同一段**——這是重試,不是 abort,所以不清 unattended flag(run 還在進行;清掉會讓剩下的步驟失去 unattended 訊號)。雲端 session 另提醒 commits 只在 container 裡(#416)|
 | Phase 5 `git push` 失敗 | Phase 5 abort,不開 PR;commits 留在本地 branch(雲端 session:只存在 container 裡,session 結束前手動 push)|
 | PR 建立失敗(REST `POST repos/R/pulls`)| Phase 5 abort,branch 已 push,提示手動開 PR |
 
@@ -1550,7 +1551,7 @@ web 上開的雲端 session(`CLAUDE_CODE_REMOTE=true`、`CLAUDE_CODE_SESSION_ATT
 ```
 
 - Phase 0.5 照 PR mode 建 `idd/42-<slug>`(default branch 與 title 經 REST 讀);Phase 0.6 不經 ralph-loop gate(使用者在場)
-- sub-skill 不收 `UNATTENDED MODE` directive,會照常發問;idd-implement 收到 `ORCHESTRATED BY /idd-all`,不自己開 PR
+- sub-skill 不收 `UNATTENDED MODE` directive,會照常發問;idd-implement 收到 `ORCHESTRATED BY /idd-all`(Simple 由 Phase 3a 給;Plan 走 Phase 3p,由 `/idd-plan` Step 6 轉傳),不自己開 PR
 - Phase 4 verify 是 Claude-only(`Codex leg not run — cloud session (degraded: Claude-only)`);attended 下有 blocking findings 時交回使用者
 - Phase 5:PASS → push + REST `POST repos/R/pulls`,PR body 寫明 Claude-only;`BLOCKING` → 只 push branch、不開 PR;`BLOCKING_SECURITY` → 不 push(提醒先查 secret)
 - Phase 6 印 PR mode report(`Verify: verify-gated PASS (Claude-only — cloud session, Codex leg not run)`)或「stopped before the PR」樣板

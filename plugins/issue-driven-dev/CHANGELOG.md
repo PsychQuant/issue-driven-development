@@ -55,7 +55,11 @@ porcelain call returns 403, and so does `gh auth status` — while `gh api` REST
   `VERIFY_STATE` it stops before pushing (this applies locally too). A failed push, or a default branch or issue
   title that cannot be read, stops the run instead of feeding gh's error text into a branch name or PR base;
   PR-mode branch setup stops with a real `exit` (it relied on an undefined `abort` and fell through into
-  `git checkout -b`), and Phase 0.6 stops instead of degrading when it cannot read the default branch.
+  `git checkout -b`), and Phase 0.6 stops instead of degrading when it cannot read the default branch. When the
+  agent loses a variable between Bash calls (`PATH_AXIS`, `INTERACTION`, `BRANCH`, `VERIFY_STATE`), Phase 0.6 and
+  Phase 5 stop and ask for it instead of skipping silently. On the PR path `idd-implement` no longer opens a PR
+  before verify: `idd-all` passes `ORCHESTRATED BY /idd-all` (through `/idd-plan` on the Plan tier) and
+  `idd-implement` skips Step 5.5.
   Branch setup and PR creation call REST directly (`gh api repos/R`, `POST repos/R/pulls`; also locally). The PR body
   and report say when verify was Claude-only. The auth gate is `gh auth status || gh api user`. Local mode
   resolution is unchanged.

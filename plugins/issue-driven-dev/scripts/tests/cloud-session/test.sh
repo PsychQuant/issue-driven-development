@@ -209,6 +209,11 @@ newrepo e; : > "$GH2_LOG"; run_block "" "$P5" "$W/repo-e" VERIFY_STATE=PASS >/de
 assert_output_grep "Phase 5 local + PASS: PR body keeps the 6-AI line" "6-AI cross-model verification PASS" "$GH2_PRBODY"
 refute_grep "Phase 5: no porcelain reaches gh" "unexpected porcelain" "$(cat "$GH2_LOG") $OUT"
 
+# no PR before verify on the PR path: idd-all → (idd-plan →) idd-implement carry the directive, Step 5.5 honors it
+DIRECTIVE='ORCHESTRATED BY /idd-all — skip Step 5.5'
+assert_output_grep "idd-all: Phase 3a passes the no-early-PR directive" "$DIRECTIVE" "$ALL"
+assert_output_grep "idd-plan: Step 6 forwards the directive to idd-implement" "$DIRECTIVE" "$HERE/../../../skills/idd-plan/SKILL.md"
+assert_output_grep "idd-implement: Step 5.5 skips on the directive" 'args carry `ORCHESTRATED BY /idd-all`' "$HERE/../../../skills/idd-implement/SKILL.md"
 assert_output_grep "idd-verify: resolves CODEX_ENABLED from the cloud signal" 'CODEX_ENABLED=false' "$VER"
 assert_output_grep "idd-verify: workflow args pass the resolved flag" 'codexEnabled: $CODEX_ENABLED' "$VER"
 assert_output_grep "idd-verify: report states the degraded leg" 'Codex leg not run — cloud session (degraded: Claude-only)' "$VER"
