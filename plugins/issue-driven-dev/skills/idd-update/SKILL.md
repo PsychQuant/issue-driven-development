@@ -17,6 +17,8 @@ allowed-tools:
 
 # /idd-update — 同步 Issue 現狀
 
+> **Cloud session（#416）**：在 Claude Code 雲端 session（`CLAUDE_CODE_REMOTE=true`）裡，本 skill 的 `gh issue|pr|label|repo` porcelain 與 `gh auth status` 一律依 [`references/claude-code-remote-tools.md`](../../references/claude-code-remote-tools.md) 改走 REST（讀取用 `scripts/lib/gh-rest.sh`，issue 寫入仍經 `scripts/gh-egress.sh`）——GraphQL 在雲端被封鎖。
+
 保持 issue body 永遠反映最新狀態，不用翻 comments 就知道現在在哪。
 
 ## 核心原則

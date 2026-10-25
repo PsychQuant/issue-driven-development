@@ -21,6 +21,8 @@ allowed-tools:
 
 # /idd-all — 自動 IDD Pipeline
 
+> **Cloud session（#416）**：在 Claude Code 雲端 session（`CLAUDE_CODE_REMOTE=true`）裡，本 skill 的 `gh issue|pr|label|repo` porcelain 與 `gh auth status` 一律依 [`references/claude-code-remote-tools.md`](../../references/claude-code-remote-tools.md) 改走 REST（讀取用 `scripts/lib/gh-rest.sh`，issue 寫入仍經 `scripts/gh-egress.sh`）——GraphQL 在雲端被封鎖。
+
 把 idd-issue → idd-diagnose → idd-implement → idd-verify 串成一條自動跑的鏈。**Mode 由 `pr_policy` config 與 `--pr/--no-pr` flag 共同推導**：PR mode 在 feature branch + 開 PR + sub-skill unattended；direct-commit mode 留在當前 branch + 不開 PR + sub-skill attended。停在 verified 讓 user 親自 close — **不論 mode 都不 auto-close**。
 
 ## 核心原則
@@ -30,6 +32,7 @@ allowed-tools:
 > - **Two-axis mode resolution**: idd-all 在 Phase 0.5 從 `pr_policy` config + `--pr/--no-pr` flag 解析 `(path, interaction)` tuple — 兩軸從同一 source 推導,避免 duplicate config surface。完整 algorithm 見 [pr-flow.md](../../references/pr-flow.md)。
 >   - `(PR, unattended)`: 強制 feature branch、push、開 PR;sub-skill 收到 `UNATTENDED MODE` directive 抑制 `AskUserQuestion`。**v2.40.0 既有 caller(如 `/loop`)的 default 行為**。
 >   - `(direct-commit, attended)`: 留在當前 branch、不 push、不開 PR;sub-skill 不收 unattended hint,native attended 行為(`AskUserQuestion`、`EnterPlanMode`、`Park/Apply` prompt)自然 fire。HITL 場景。
+>   - `(PR, attended)`（#416）: Claude Code 雲端 session 有人在場時。feature branch + push + PR（container 會被回收，不 push 工作就消失），sub-skill 照常問問題。雲端規則見 [claude-code-remote-tools.md](../../references/claude-code-remote-tools.md)。
 > - **Attended assumes user in session**: attended interaction 模式下,idd-all **不**對 sub-skill `AskUserQuestion` / `EnterPlanMode` prompt 設任何 silent timeout。user 沒回應就一直等。Attended mode = user 在 keyboard 是契約前提;若 user 預期不在,該選 unattended。
 > - **Branch behavior follows path**: PR mode 從 default branch 開 `idd/<N>-<slug>` feature branch;direct-commit mode 留在 user 當前 checkout 的 branch(可能是 main、可能是 feature branch、可能是 wip/foo)。
 > - **Verify is the terminal phase regardless of mode**（meeting issue 例外：不跑 verify，停在 planning 或 diagnosed，見 Phase 6 meeting report）: 不論 PR 或 direct-commit,idd-all 都停在 Phase 6 report,**永不**自動跑 `idd-close`。Closing summary 含 root cause + solution narrative,該由人寫才有審計價值。
@@ -199,8 +202,10 @@ git -C "$CWD" rev-parse --git-dir > /dev/null 2>&1 \
      - cd to the target repo first, then re-run /idd-all
      - OR pass --cwd /path/to/local/clone"
 
-# 2. 必須 gh auth
-gh auth status > /dev/null 2>&1 || abort "gh CLI not authenticated. Run: gh auth login"
+# 2. 必須能呼叫 GitHub API。用 `gh api user` 而非 `gh auth status`（#416）：雲端 session 的 GH_TOKEN
+#    是佔位值、由 proxy 注入真正的憑證，`gh auth status` 在那裡一律失敗；本機上 `gh auth status`
+#    也會因為「任何一個 host」的憑證壞掉而失敗。`gh api user` 只檢查這次 run 實際要用的 API。
+gh api user --jq .login > /dev/null 2>&1 || abort "gh cannot reach the GitHub API (gh api user failed). Run: gh auth login"
 ```
 
 > **Mode-specific gates(working tree clean、on default branch)移到 Phase 0.5**:那些 gate 只在 PR mode 必須,direct-commit mode 預設留在 user 當前 branch + 容許未 commit 變更(由 user 自負其責)。
@@ -238,7 +243,9 @@ fi
 ```
 1. --in-chain flag                                → (direct-commit, unattended)  [v2.55+ #44 chain context tuple]
 2. --pr flag                                      → (PR, unattended)
-3. --no-pr flag                                   → (direct-commit, attended)
+3. --no-pr flag                                   → 本機 (direct-commit, attended)
+                                                    雲端 (PR, <cloud interaction>) + 覆寫通知  [#416]
+3.5 Claude Code 雲端 session（CLAUDE_CODE_REMOTE）→ (PR, <cloud interaction>)  [#416；attended 只在 CLAUDE_CODE_SESSION_ATTENDED=1]
 4. Fork detected (gh repo view --json isFork)     → (PR, unattended)  [override config]
 5. pr_policy: always                              → (PR, unattended)
 6. pr_policy: never                               → (direct-commit, attended)
@@ -248,6 +255,8 @@ fi
 ```
 
 > **Step 1 (v2.55+ #44, `--in-chain` chain context)**: `/idd-all-chain` 在 Phase 0 已建好 cluster branch 並透過 `--in-chain` 呼叫 sub `/idd-all`。第 4 種 mode tuple `(direct-commit, unattended)` 確保 sub-skill 不再建自己的 feature branch (Phase 0.5 PR mode skip)、不開自己的 PR (Phase 5.5 skip)、不 fire AskUserQuestion (UNATTENDED MODE directive)。**`--in-chain` 與 `--pr` / `--no-pr` 互斥**(在 Step 0.2 parse-time abort)。
+>
+> **Step 3 / 3.5 雲端規則（#416）**：雲端 container 會被回收，direct-commit 的工作會隨之消失，所以雲端一律走 PR path（`--no-pr` 也覆寫，並印出原因）；interaction 由 `scripts/lib/cloud-session.sh` 的 `idd_cloud_interaction` 決定——有 attended 訊號才是 `attended`，訊號缺席一律 `unattended`（attended 的提問沒有逾時，沒人看的 session 判成 attended 會永遠等）。雲端規則排在 fork／`pr_policy` 之前：`gh repo view --json isFork` 在雲端必定 403。spec：`idd-pr-hitl-modes`、`cloud-session-runtime`。
 >
 > **Step 7 vs Step 8 distinction (Task: P1 finding 3, proposal "no backward incompat")**: 顯式 `"pr_policy": "ask"` = user 明確要被問 → 用 AskUserQuestion Claude tool。Config 完全沒寫(field 缺或 file 不存在)= /loop 等舊 caller 場景 → 默認 PR mode 維持 v2.40.0 行為,不卡住自動化。
 
@@ -260,11 +269,22 @@ else
   PR_POLICY=$(jq -r '.pr_policy // "absent"' "$CONFIG_PATH" 2>/dev/null || echo "absent")
 fi
 
+# Cloud-session signals (#416): idd_is_cloud_session / idd_cloud_interaction
+. "$CLAUDE_PLUGIN_ROOT/scripts/lib/cloud-session.sh"
+
 # 1. --in-chain flag (v2.55+ #44 chain context tuple) — highest precedence
 if   [ -n "$IN_CHAIN" ];          then PATH_AXIS="direct-commit"; INTERACTION="unattended"; REASON="flag=--in-chain"
 # 2-3. Explicit flags
 elif [ "$PR_FLAG" = "--pr" ];     then PATH_AXIS="PR";            INTERACTION="unattended"; REASON="flag=--pr"
+elif [ "$PR_FLAG" = "--no-pr" ] && idd_is_cloud_session; then
+  # 3 (cloud): a direct commit would be lost when the container is reclaimed — keep the PR path
+  PATH_AXIS="PR"; INTERACTION="$(idd_cloud_interaction)"
+  REASON="flag=--no-pr overridden: cloud session (CLAUDE_CODE_REMOTE) — a direct commit would be lost with the container"
 elif [ "$PR_FLAG" = "--no-pr" ];  then PATH_AXIS="direct-commit"; INTERACTION="attended";   REASON="flag=--no-pr"
+# 3.5 Cloud session (#416) — before fork detection, which always 403s there
+elif idd_is_cloud_session; then
+  PATH_AXIS="PR"; INTERACTION="$(idd_cloud_interaction)"
+  REASON="cloud session (CLAUDE_CODE_REMOTE; attended signal ${CLAUDE_CODE_SESSION_ATTENDED:-absent})"
 else
   # 3. Fork detection — fail-closed (#5 fix). gh failure defaults IS_FORK="true"
   # so we resolve to PR mode for safety. Direct-commit fall-through on a real
@@ -479,28 +499,37 @@ fi
 
 #### Step 0.6: ralph-loop graceful degrade gate（v2.53+, #28）
 
-Phase 0.5 解析出 `(PATH_AXIS, INTERACTION)` 後,若 tuple 是 `(PR, unattended)`(無論來自 flag、fork detection、`pr_policy=always`、或 v2.40.0 default),**必須**檢查 ralph-loop 是否 installed。缺失則 graceful degrade 而非 abort。
+Phase 0.5 解析出 `(PATH_AXIS, INTERACTION)` 後,若 tuple 是 `(PR, unattended)`(無論來自 flag、fork detection、`pr_policy=always`、或 v2.40.0 default),**必須**檢查 ralph-loop 是否 installed。缺失則 graceful degrade 而非 abort——**雲端 session 例外**（#416）：降級成 direct-commit 會讓工作隨 container 消失，所以雲端改為 unwind branch 後 abort，印出一步安裝指令。`(PR, attended)` 不經此 gate（使用者在場，不需要 loop driver）。
 
 ```bash
+. "$CLAUDE_PLUGIN_ROOT/scripts/lib/cloud-session.sh"   # shell state does not cross Bash calls (#416)
 if [ "$PATH_AXIS" = "PR" ] && [ "$INTERACTION" = "unattended" ]; then
   if ! "$CLAUDE_PLUGIN_ROOT/scripts/check-ralph-loop.sh" 2>/dev/null; then
     echo "⚠ ralph-loop plugin not detected — required to drive (PR, unattended) verify-fix loop."
-    echo "  Degrading to (direct-commit, attended) for backward-compat (#28 B4 design)."
-    echo "  To restore (PR, unattended): claude plugin install ralph-loop@claude-plugins-official"
-    echo ""
 
     # F2 fix: Phase 0.5 PR mode branch setup already created `idd/<N>-<slug>`
     # and checked it out. Without unwinding, degrade leaves user committing to
     # a dangling feature branch they never wanted (silent state corruption per
-    # verify finding F2). MUST unwind before flipping mode.
+    # verify finding F2). MUST unwind before flipping mode — or before aborting.
+    # Default branch via lib/gh-rest.sh: `gh repo view` is GraphQL, blocked in cloud sessions (#416).
     if [ -n "${BRANCH:-}" ] && git -C "$CWD" show-ref --verify --quiet "refs/heads/$BRANCH"; then
-      DEFAULT=$(gh repo view "$GITHUB_REPO" --json defaultBranchRef -q .defaultBranchRef.name)
-      echo "→ Unwinding Phase 0.5 PR-mode branch setup before degrade:"
+      DEFAULT=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/lib/gh-rest.sh" repo-view --repo "$GITHUB_REPO" --json defaultBranchRef | jq -r .defaultBranchRef.name)
+      echo "→ Unwinding Phase 0.5 PR-mode branch setup:"
       echo "    git checkout $DEFAULT"
       git -C "$CWD" checkout "$DEFAULT" 2>&1 | tail -1
       echo "    git branch -d $BRANCH (no commits yet — safe delete)"
       git -C "$CWD" branch -d "$BRANCH" 2>&1 | tail -1
     fi
+
+    if idd_is_cloud_session; then
+      # #416: no degrade in a cloud session — direct-commit work dies with the container
+      abort "ralph-loop is required for (PR, unattended) in a cloud session, and degrading to direct-commit would lose the work.
+   Install (one step, then re-run): claude plugin install ralph-loop@claude-plugins-official
+   (add it to the cloud environment's setup script — references/claude-code-remote-tools.md)"
+    fi
+    echo "  Degrading to (direct-commit, attended) for backward-compat (#28 B4 design)."
+    echo "  To restore (PR, unattended): claude plugin install ralph-loop@claude-plugins-official"
+    echo ""
 
     PATH_AXIS="direct-commit"
     INTERACTION="attended"

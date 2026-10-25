@@ -29,6 +29,8 @@ allowed-tools:
 
 # /idd-verify — 驗證實作
 
+> **Cloud session（#416）**：在 Claude Code 雲端 session（`CLAUDE_CODE_REMOTE=true`）裡，本 skill 的 `gh issue|pr|label|repo` porcelain 與 `gh auth status` 一律依 [`references/claude-code-remote-tools.md`](../../references/claude-code-remote-tools.md) 改走 REST（讀取用 `scripts/lib/gh-rest.sh`，issue 寫入仍經 `scripts/gh-egress.sh`）——GraphQL 在雲端被封鎖。
+
 6 個獨立 AI 交叉驗證。Claude 修、獨立 AI 群驗。
 
 ## 核心原則
@@ -188,6 +190,18 @@ esac
 # 共通前置（Tier 1/2 都需要）
 write $DIFF 到 temp 檔 $DIFF_FILE   # 大 diff 不塞 inline args (Workflow tool 會把 args JSON-stringify；兩個引擎都防禦性 parse 並支援 diffFile 讓 agents 用 file-read tool 讀)
 
+# ── 雲端 session：Claude-only（#416，沿用 #400 的判定）──
+# Claude Code 雲端 container 沒有 Codex 認證與 executable：codex leg 一定失敗，fail-closed 會把它合成
+# integrity finding。所以雲端在派發前就不跑 codex leg，並在報告寫明 degraded——缺 Codex 本身不是 blocking finding。
+. "$CLAUDE_PLUGIN_ROOT/scripts/lib/cloud-session.sh"
+if idd_is_cloud_session; then
+  CODEX_ENABLED=false
+  CODEX_SKIP_NOTE="Codex leg not run — cloud session (degraded: Claude-only)"
+else
+  CODEX_ENABLED=true
+  CODEX_SKIP_NOTE=""
+fi
+
 # ── codex 通道依賴解析（#264：完全依賴，superpowers 形狀 — vendored codex-call 已刪除）──
 # executable 歸 pai（design D3 分工）：PAI_DIR 前置先解析，engine 路徑與 codex-call 路徑兩用。
 PAI_DIR=$(ls -d ~/.claude/plugins/cache/parallel-ai-agents/parallel-ai-agents/*/ 2>/dev/null | grep -E '/[0-9]+\.[0-9]+\.[0-9]+/$' | sort -V | tail -1)   # semver 目錄才參賽（防 latest/current 誤入版本比較）
@@ -196,6 +210,7 @@ PAI_CODEX_CALL="${PAI_DIR}bin/codex-call"   # 取代舊 vendored copy（divergen
 
 # 治理歸 codex-pro（EXTERNAL-CONSUMER CONTRACT：references/profile-contract.md + defaults.json）——
 # IDD pin 契約不 pin 值：樹內零 model 字面，換代只動 codex-pro 一處。
+# 下列 codex-pro 治理解析（含其 fail-fast abort）只在 CODEX_ENABLED=true 時執行；雲端（false）整段跳過。
 MIN_CODEX_PRO="0.7.0"   # defaults.json + profile-contract 起點（codex-pro#7）
 CP_DIR=$(ls -d ~/.claude/plugins/cache/codex-pro/codex-pro/*/ 2>/dev/null | grep -E '/[0-9]+\.[0-9]+\.[0-9]+/$' | sort -V | tail -1)
 CP_VER=$(basename "$CP_DIR" 2>/dev/null)
@@ -510,7 +525,7 @@ PAI_ENGINE="${PAI_DIR}workflows/ensemble-workflow.js"
                               daFocus: "adversarially refute the other reviewers' judgments: hunt for defects where they passed, false positives in their findings, and requirements-coverage claims the diff does not actually satisfy." + $DA_FOCUS_SUFFIX,
                               contextBlock: $CONTEXT_BLOCK,
                               diffFile: $DIFF_FILE,
-                              codexEnabled, codexCallPath: $PAI_CODEX_CALL,
+                              codexEnabled: $CODEX_ENABLED, codexCallPath: $PAI_CODEX_CALL,   # 雲端 false（#416）
                               codexModel: $CODEX_MODEL, codexEffort: $CODEX_EFFORT,   # #264：codex-pro 治理值（pai 2.19.0 契約 args）
                               agentModel: $AGENT_MODEL})   # = Step 2 前解析的 IDD_AGENT_MODEL 值（#205）；pai 端顯式非法值派發前 throw
     BACKEND_DESC="pai-ensemble ${PAI_VER} (canonical #207) — 4 IDD lenses + DA + Codex (gpt-5.x)"
@@ -525,6 +540,9 @@ PAI_ENGINE="${PAI_DIR}workflows/ensemble-workflow.js"
     findings = Step 2 manual fan-out
     BACKEND_DESC="manual fan-out (4 lens Agents + sequenced DA, model: ${AGENT_MODEL}, file-based output) + Codex (gpt-5.x, run_in_background)"
     印一行 notice: "→ verify backend: manual fan-out"
+
+# 雲端（#416）：Engine 行明寫少了 Codex leg
+若 [ -n "$CODEX_SKIP_NOTE" ]: BACKEND_DESC="${BACKEND_DESC} — ${CODEX_SKIP_NOTE}"
 ```
 
 **customLenses focus 字面即 Implementation Contract**（#219 後 vendored 引擎已刪，contract 固定於本檔）；lens 鍵沿用 IDD 命名，pai harness 強制 attribution，master report 的 Source 欄零改動。canonical tier 的 Engine 行揭露 `pai-ensemble <ver> (model: <stats.dispatchModel>)`。
@@ -1039,6 +1057,8 @@ If you receive a later SendMessage with the same prompt re-pasted, treat as retr
 
 #### 2b. Codex（背景執行，via vendored `codex-call` HTTP wrapper，#147）
 
+> **雲端 session（#416）**：`CODEX_ENABLED=false` 時**不執行**本步，並在 master report 的 `### Process Gaps` 寫 `- codex: Codex leg not run — cloud session (degraded: Claude-only)`。缺 Codex 本身不是 blocking finding；本機行為不變。
+
 透過 pai 的 `codex-call`（`$PAI_CODEX_CALL`；HTTP，非 `codex exec` subprocess → 無 pipe hang）執行 review，model/effort 帶共通前置解析的 codex-pro 治理值（#264）。**注意語意差異**：`codex exec --full-auto` 是 agentic（codex 自己讀 working-tree diff）；`codex-call` 是單次 completion（非 agentic），所以 diff 必須**顯式**用 `--prompt-file` 餵進去 —— 用 Step 1 已寫好的 `"$VERIFY_DIR/diff.patch"`，review 框架放 `--instructions`：
 
 ```bash
@@ -1174,6 +1194,7 @@ Step 4 master report **必須** 標示 process gap：
 ```markdown
 ### Process Gaps (if any)
 - requirements: Agent failed → coordinator fallback (lower-quality review)
+- codex: Codex leg not run — cloud session (degraded: Claude-only)   ← 雲端 session 一律有這行（#416）
 - (other roles as applicable)
 ```
 

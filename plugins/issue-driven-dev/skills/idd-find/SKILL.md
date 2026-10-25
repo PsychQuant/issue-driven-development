@@ -19,6 +19,8 @@ allowed-tools:
 
 # /idd-find — 語意查找（surfacing-only）
 
+> **Cloud session（#416）— 不支援**：在 Claude Code 雲端 session（`CLAUDE_CODE_REMOTE=true`）裡，本 skill 需要的 GitHub GraphQL／search API 被封鎖。停下並印出「本 skill 在雲端 session 不支援：需要 GitHub GraphQL／search API；請改在本機 Claude Code session 執行」，不嘗試替代路徑。見 [`references/claude-code-remote-tools.md`](../../references/claude-code-remote-tools.md)。
+
 對目標 repo 的 **open+closed** 全語料跑 GitHub search relevance，輸出 ranked hits 並疊加 IDD 資訊。回答「有沒有處理過類似 X」— 不是 triage（那是 `idd-list`）、不是 lifecycle step。
 
 ## 核心原則

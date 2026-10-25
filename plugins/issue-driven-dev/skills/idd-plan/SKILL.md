@@ -14,6 +14,8 @@ allowed-tools:
 
 # /idd-plan — Plan-mode 實作
 
+> **Cloud session（#416）**：在 Claude Code 雲端 session（`CLAUDE_CODE_REMOTE=true`）裡，本 skill 的 `gh issue|pr|label|repo` porcelain 與 `gh auth status` 一律依 [`references/claude-code-remote-tools.md`](../../references/claude-code-remote-tools.md) 改走 REST（讀取用 `scripts/lib/gh-rest.sh`，issue 寫入仍經 `scripts/gh-egress.sh`）——GraphQL 在雲端被封鎖。
+
 「**Think before leap, but no spec contract**」的 IDD 路徑。在 TDD execution 之前插入 `EnterPlanMode` approval gate — 使用者在 plan-mode UI 看完整 Implementation Plan，approve 後才執行任何 stateful tool。
 
 ## 核心原則
