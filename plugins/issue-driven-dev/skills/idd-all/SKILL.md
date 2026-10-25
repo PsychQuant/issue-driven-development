@@ -412,8 +412,9 @@ if [ "$PATH_AXIS" = "PR" ]; then
 
   CURRENT=$(git -C "$CWD" branch --show-current)
   # REST (#416): `gh repo view` / `gh issue view` are GraphQL, blocked in cloud sessions,
-  # where an empty DEFAULT would abort with "must start from ''".
-  DEFAULT=$(gh api "repos/$GITHUB_REPO" --jq .default_branch)
+  # where an empty DEFAULT would abort with "must start from ''". On an HTTP error `gh api` prints
+  # the error body on stdout (`--jq` is not applied), so the exit status decides, not the output.
+  DEFAULT=$(gh api "repos/$GITHUB_REPO" --jq .default_branch) || DEFAULT=""
   [ -n "$DEFAULT" ] || abort "could not read the default branch of $GITHUB_REPO (see the gh error above)"
   if [ "$CURRENT" != "$DEFAULT" ]; then
     abort "$CWD is currently on '$CURRENT'. PR mode must start from '$DEFAULT'.
@@ -422,7 +423,8 @@ if [ "$PATH_AXIS" = "PR" ]; then
 
   # Build feature branch name
   N="19"  # 從 args 或 idd-issue 結果取得
-  TITLE=$(gh api "repos/$GITHUB_REPO/issues/$N" --jq .title)
+  TITLE=$(gh api "repos/$GITHUB_REPO/issues/$N" --jq .title) \
+    || abort "could not read the title of #$N (see the gh error above)"   # or the error JSON becomes the slug
   # SLUG sanitization — POSIX-portable; avoids BSD/GNU sed `\|` divergence (#6 fix)
   SLUG=$(echo "$TITLE" | tr '[:upper:]' '[:lower:]' \
       | sed -E 's/[^a-z0-9]/-/g; s/-+/-/g; s/^-//; s/-$//' \
@@ -517,12 +519,16 @@ if [ "$PATH_AXIS" = "PR" ] && [ "$INTERACTION" = "unattended" ]; then
     # verify finding F2). MUST unwind before flipping mode — or before aborting.
     # Default branch via REST: `gh repo view` is GraphQL, blocked in cloud sessions (#416).
     if [ -n "${BRANCH:-}" ] && git -C "$CWD" show-ref --verify --quiet "refs/heads/$BRANCH"; then
-      DEFAULT=$(gh api "repos/$GITHUB_REPO" --jq .default_branch)
-      echo "→ Unwinding Phase 0.5 PR-mode branch setup:"
-      echo "    git checkout $DEFAULT"
-      git -C "$CWD" checkout "$DEFAULT" 2>&1 | tail -1
-      echo "    git branch -d $BRANCH (no commits yet — safe delete)"
-      git -C "$CWD" branch -d "$BRANCH" 2>&1 | tail -1
+      DEFAULT=$(gh api "repos/$GITHUB_REPO" --jq .default_branch) || DEFAULT=""
+      if [ -n "$DEFAULT" ]; then
+        echo "→ Unwinding Phase 0.5 PR-mode branch setup:"
+        echo "    git checkout $DEFAULT"
+        git -C "$CWD" checkout "$DEFAULT" 2>&1 | tail -1
+        echo "    git branch -d $BRANCH (no commits yet — safe delete)"
+        git -C "$CWD" branch -d "$BRANCH" 2>&1 | tail -1
+      else
+        echo "⚠ could not read the default branch — $BRANCH left checked out; switch back and delete it by hand"
+      fi
     fi
 
     if idd_is_cloud_session; then
@@ -532,6 +538,7 @@ if [ "$PATH_AXIS" = "PR" ] && [ "$INTERACTION" = "unattended" ]; then
       echo "✗ ralph-loop is required for (PR, unattended) in a cloud session, and degrading to direct-commit would lose the work." >&2
       echo "  Install (one step, then re-run): claude plugin install ralph-loop@claude-plugins-official" >&2
       echo "  (add it to the cloud environment's setup script — references/claude-code-remote-tools.md)" >&2
+      . "$CLAUDE_PLUGIN_ROOT/scripts/lib/unattended-state.sh" && clear_unattended "$CWD"   # abort duty (#123)
       exit 1
     fi
     echo "  Degrading to (direct-commit, attended) for backward-compat (#28 B4 design)."
@@ -1021,6 +1028,8 @@ for round in 1..MAX_ROUND:
 
     # unattended path: auto-fix attempt
     if round == MAX_ROUND:
+        if is_cloud_session():   # #416: unpushed commits die with the container — push, no PR
+            git_push_branch_without_pr()   # git -C "$CWD" push -u origin "$BRANCH"; report a push failure
         abort_with_message(f"verify still failing after {MAX_ROUND} rounds; manual intervention needed")
 
     attempt_auto_fix(findings.blocking)
@@ -1034,7 +1043,7 @@ for round in 1..MAX_ROUND:
 
 - 文法/拼字/字串 typo → 安全可修
 - 邏輯錯誤(null check, edge case) → 嘗試但 risky
-- 安全漏洞 → **不 auto-fix**,直接 abort 讓 user 處理
+- 安全漏洞 → **不 auto-fix**,直接 abort 讓 user 處理(雲端 session 先 push branch、不開 PR,#416)
 
 每個 auto-fix commit:`fix: address verify finding — {finding summary} (#$N)`
 
@@ -1077,10 +1086,16 @@ elif [ "$PATH_AXIS" = "PR" ]; then
   . "$CLAUDE_PLUGIN_ROOT/scripts/lib/cloud-session.sh"
   # #416: a PR is opened only after verify PASS. (PR, attended) can reach here with blocking findings
   # (Phase 4 hands them back): no PR then — but in a cloud session the branch is still pushed, because
-  # unpushed commits die with the container.
-  if [ "${VERIFY_STATE:-PASS}" != "PASS" ]; then
+  # unpushed commits die with the container. The verdict does not survive the Bash call that set it;
+  # a missing one is never read as PASS — set VERIFY_STATE from Phase 4's result and run this block again.
+  case "${VERIFY_STATE:-}" in
+    PASS|BLOCKING) ;;
+    *) echo "FATAL: Phase 5: VERIFY_STATE is '${VERIFY_STATE:-}' (shell state lost?) — set it to PASS or BLOCKING from Phase 4's verdict and re-run; not pushing, no PR" >&2; exit 1 ;;
+  esac
+  if [ "$VERIFY_STATE" = BLOCKING ]; then
     if idd_is_cloud_session; then
-      git -C "$CWD" push -u origin "$BRANCH"
+      git -C "$CWD" push -u origin "$BRANCH" \
+        || { echo "FATAL: Phase 5: git push failed — $BRANCH exists only in this container; push it by hand before the session ends" >&2; exit 1; }
       echo "→ verify has blocking findings: branch $BRANCH pushed (cloud session), no PR opened"
     else
       echo "→ verify has blocking findings: no push, no PR — commits stay on $BRANCH"
@@ -1091,7 +1106,8 @@ elif [ "$PATH_AXIS" = "PR" ]; then
   # Do NOT insert untrusted strings (e.g. issue titles) into the body without
   # sanitization. Current placeholders {...} are markdown-style note text, not
   # ${...} shell expansions, so safe today; future maintainers must keep it that way.
-  git -C "$CWD" push -u origin "$BRANCH"
+  git -C "$CWD" push -u origin "$BRANCH" \
+    || { echo "FATAL: Phase 5: git push failed — no PR opened; commits stay on local $BRANCH" >&2; exit 1; }
 
   if idd_is_cloud_session; then   # #416: say which verify ran — cloud verify is Claude-only
     VERIFY_LINE="Claude-only verification PASS(cloud session — Codex leg not run, degraded)。詳見 issue #${N} 的 Verify comment。"
@@ -1122,7 +1138,7 @@ EOF
 )
 
   # REST (#416): `gh pr create` is GraphQL, blocked in cloud sessions; this call works in both.
-  DEFAULT=$(gh api "repos/$GITHUB_REPO" --jq .default_branch)
+  DEFAULT=$(gh api "repos/$GITHUB_REPO" --jq .default_branch) || DEFAULT=""
   [ -n "$DEFAULT" ] || { echo "FATAL: Phase 5: could not read the default branch — branch $BRANCH is pushed, open the PR by hand" >&2; exit 1; }
   PR_BODY_FILE=$(mktemp) && printf '%s\n' "$PR_BODY" > "$PR_BODY_FILE"
   PR_URL=$(gh api "repos/$GITHUB_REPO/pulls" -X POST -f title="$PR_TITLE" -f head="$BRANCH" -f base="$DEFAULT" \
@@ -1367,14 +1383,17 @@ fi
 | spectra-propose 沒 emit `Change:` line | 同上 |
 | spectra-propose 遇到 unrecoverable validation error | Phase 3b abort,artifacts 保留,提示手動 `/spectra-propose` |
 | spectra-apply 留下 unfinished tasks | 不 abort — Phase 4 verify 會抓出來 |
-| Verify 2 round 後仍 blocking | Phase 4 abort,留 branch 給 user 手動修 |
-| `gh pr create` fail | Phase 5 abort,branch 已 push,提示手動開 PR |
+| Verify 2 round 後仍 blocking | Phase 4 abort,留 branch 給 user 手動修;雲端 session 先 push branch(不開 PR,#416)|
+| Phase 5 `VERIFY_STATE` 不是 `PASS`／`BLOCKING`(shell 狀態遺失)| Phase 5 abort,**不 push、不開 PR**;從 Phase 4 的結果設好 `VERIFY_STATE` 再跑一次(#416:缺值絕不當 PASS)|
+| Phase 5 `git push` 失敗 | Phase 5 abort,不開 PR;commits 留在本地 branch(雲端 session:只存在 container 裡,session 結束前手動 push)|
+| PR 建立失敗(REST `POST repos/R/pulls`)| Phase 5 abort,branch 已 push,提示手動開 PR |
 
 abort 時:
 - `clear_unattended "$CWD"`（#123 — 絕不留 stale unattended flag 誤導下一個 attended session）
 - TaskList 標記當前 phase 為 in_progress(不要 mark completed)
 - 顯示「自己手動接手」的具體命令(例:`/idd-verify #19` 或 `gh pr create ...`)
 - branch 不刪除(保留進度,user 可繼續)
+- 雲端 session(#416):不 push 的 abort(Phase 4／5 type guard、shell 狀態遺失、`git push` 失敗)讓 commits 只留在 container 裡 —— 訊息要提醒 session 結束前手動 `git -C $CWD push -u origin $BRANCH`(不開 PR)
 
 ---
 

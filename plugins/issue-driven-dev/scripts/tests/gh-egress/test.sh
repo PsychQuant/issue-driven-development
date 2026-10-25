@@ -461,6 +461,40 @@ assert_exit "flag-shaped near-empty edit body hits the overwrite floor (exit 15)
 bash "$SCRIPT" comment 5 --repo o/r --body "-t cc @victim" "${ATT[@]}" >/dev/null 2>&1
 assert_exit "'-t …' as a body value is scanned whole (mention net, exit 11)" 11 $?
 
+# #416 verify round 2 (devil's advocate): every flag the REST transport reads a
+# value for is one the wrapper reads a value for too — otherwise
+# `--remove-label -b --body-file=x` had the wrapper scan one thing while the
+# transport sent another. Drift guard + a leak behind each transport value flag.
+WRAP_FLAGS="$(grep -oE '^ *[-a-zA-Z|]+\) *# value flags.*' "$SCRIPT" | head -1 | sed 's/^ *//')"
+for flag in $(python3 -c '
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("t", sys.argv[1]); m = importlib.util.module_from_spec(spec)
+sys.path.insert(0, sys.argv[2]); spec.loader.exec_module(m)
+print(" ".join(sorted({f for v in m.VALUE_FLAGS.values() for f in v})))' "$HERE/../../lib/gh_egress_rest.py" "$HERE/../../lib"); do
+  case "$flag" in -b|--body|-t|--title|-F|--body-file) continue ;; esac   # the scanned ones, handled separately
+  assert_grep "wrapper reads a value for transport flag $flag" "|$flag|" "|${WRAP_FLAGS%%)*}|"
+done
+printf 'log at /Users/alice/secret.sh @victim' > "$WORK/leakbody.md"
+for pre in "--remove-label" "--add-label" "--label" "-l" "--milestone" "-m" "--assignee" "-a" "--add-assignee" "--remove-assignee" "-R"; do
+  bash "$SCRIPT" edit 5 --repo o/r "$pre" -b --body-file="$WORK/leakbody.md" "${ATT[@]}" >/dev/null 2>&1; rc=$?
+  case "$rc" in 10|11|14) pass "leak behind '$pre -b --body-file=…' is refused or never sent (rc=$rc)" ;;
+    *) fail "leak behind '$pre -b --body-file=…' is refused or never sent" "rc=$rc" ;; esac
+done
+# `-b=X` / `-t=X` / `-F=F` mean X / F to gh and the transport — so to the wrapper too
+bash "$SCRIPT" create --repo o/r --title T -b= "${ATT[@]}" >/dev/null 2>&1
+assert_exit "-b= is an empty body: the #275 guard fires (exit 15)" 15 $?
+calls_reset
+bash "$SCRIPT" comment 5 --repo o/r -F="$WORK/leakbody.md" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "-F=<file> scans that file (privacy net, exit 10)" 10 $?
+bash "$SCRIPT" create --repo o/r -t="crash in /Users/bob/x" -b "clean" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "-t=<title> is scanned as the title (privacy net, exit 10)" 10 $?
+# edit-comment's --repo enters a REST path too (pre-existing, #273)
+printf '%s' "a clean replacement body for the edit-comment repo checks" > "$WORK/ec-body.md"
+for bad in 'o/r#' 'o/r/issues/comments/999?' '../r' 'orepo'; do
+  bash "$SCRIPT" edit-comment 9 --repo "$bad" --body-file "$WORK/ec-body.md" "${ATT[@]}" >/dev/null 2>&1
+  assert_exit "edit-comment refuses --repo '$bad' (exit 14)" 14 $?
+done
+
 # #416 security review: an issue URL is parsed strictly — owner / repo / host may
 # not smuggle `#`, `?`, `.`/`..` or `user@` into the REST path, which once turned
 # `edit <url> --remove-label x` into DELETE /repos/o/r (the repository).

@@ -163,6 +163,7 @@ while [ $# -gt 0 ]; do
           body)       SCAN_PARTS+=("$arg"); BODY_PARTS+=("$arg") ;;
           title)      SCAN_PARTS+=("$arg") ;;
           repo)       EC_REPO="$arg" ;;
+          meta)       : ;;   # label / assignee / milestone value: forwarded, not prose
           bodyfile)   require_scannable_bodyfile "$arg"; BODYFILE_PATH="$arg"; FCONTENT="$(cat "$arg")"
                       SCAN_PARTS+=("$FCONTENT"); BODY_PARTS+=("$FCONTENT") ;;
         esac
@@ -207,8 +208,12 @@ while [ $# -gt 0 ]; do
         exit 14
       fi
       ALLOW_EMPTY_BODY=1; shift; continue ;;
-    --repo)
-      GH_ARGS+=("$arg"); next_is="repo"; shift; continue ;;
+    --repo|-R|-l|--label|-a|--assignee|-m|--milestone|--add-label|--remove-label|--add-assignee|--remove-assignee) # value flags ⊇ the REST transport's (drift-guarded in the gh-egress suite)
+      # Each of these takes the next token as its value in gh and in the transport, so it does here too:
+      # otherwise `--remove-label -b --body-file=x` had this parser scan one thing while the transport
+      # sent another (#416 verify round 2). Metadata values are forwarded, not scanned.
+      GH_ARGS+=("$arg"); case "$arg" in --repo|-R) next_is="repo" ;; *) next_is="meta" ;; esac
+      shift; continue ;;
     --repo=*)
       GH_ARGS+=("$arg"); EC_REPO="${arg#--repo=}"; shift; continue ;;
     -b|--body|-t|--title)
@@ -219,12 +224,15 @@ while [ $# -gt 0 ]; do
     --title=*)  GH_ARGS+=("$arg"); SCAN_PARTS+=("${arg#--title=}");  shift; continue ;;
     -F|--body-file)
       GH_ARGS+=("$arg"); next_is="bodyfile"; shift; continue ;;
+    # Attached short forms: `-bX` is X and `-b=X` is X too (pflag strips one `=`; so does the transport).
     -b?*)
-      GH_ARGS+=("$arg"); SCAN_PARTS+=("${arg#-b}"); BODY_PARTS+=("${arg#-b}"); next_is=""; shift; continue ;;
+      v="${arg#-b}"; v="${v#=}"
+      GH_ARGS+=("$arg"); SCAN_PARTS+=("$v"); BODY_PARTS+=("$v"); next_is=""; shift; continue ;;
     -t?*)
-      GH_ARGS+=("$arg"); SCAN_PARTS+=("${arg#-t}"); next_is=""; shift; continue ;;
+      v="${arg#-t}"; v="${v#=}"
+      GH_ARGS+=("$arg"); SCAN_PARTS+=("$v"); next_is=""; shift; continue ;;
     -F?*)
-      GH_ARGS+=("$arg"); f="${arg#-F}"
+      GH_ARGS+=("$arg"); f="${arg#-F}"; f="${f#=}"
       require_scannable_bodyfile "$f"
       BODYFILE_PATH="$f"
       FCONTENT="$(cat "$f")"; SCAN_PARTS+=("$FCONTENT"); BODY_PARTS+=("$FCONTENT"); next_is=""; shift; continue ;;
@@ -500,6 +508,12 @@ if [ "$VERB" = "edit-comment" ]; then
     echo "✗ gh-egress: edit-comment needs <comment-id> --repo owner/repo --body-file <file>." >&2
     usage; exit 14
   fi
+  # --repo enters the REST path: OWNER/REPO only, no `.`/`..` segments (#416 verify round 2; #273 left it raw)
+  case "$EC_REPO" in
+    */*/*|.*/*|*/.|*/..|*[!A-Za-z0-9_./-]*|/*|*/|"${EC_REPO%%/*}")   # last: no slash at all
+      echo "✗ gh-egress: REFUSED — edit-comment --repo '$EC_REPO' is not OWNER/REPO." >&2; exit 14 ;;
+  esac
+  case "$EC_ID" in ''|0*|*[!0-9]*) echo "✗ gh-egress: REFUSED — comment id '$EC_ID' is not a number." >&2; exit 14 ;; esac
   exec "$GH_BIN" api "repos/${EC_REPO}/issues/comments/${EC_ID}" -X PATCH -F body=@"$BODYFILE_PATH"
 fi
 # create / comment / edit: the forwarded `gh issue <verb>` args become REST calls.

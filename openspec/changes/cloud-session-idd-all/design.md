@@ -127,6 +127,12 @@ Phase 0.3 auth gate：`gh auth status || gh api user --jq .login`。`gh auth sta
 
 Phase 5：只有 verify PASS 才開 PR。`(PR, attended)` 交回 blocking findings 時不開 PR；雲端仍 push branch（未 push 的 commit 會隨 container 消失），本機不 push。PR 改經 REST `POST repos/R/pulls` 建立（本機雲端同一路徑），PR body 的 Verification 行在雲端寫明 Claude-only。Phase 6 報告同步（verify 第 1 輪 requirements）。
 
+verify 第 2 輪（devil's advocate）補強，本機同樣適用：
+
+- 判決 fail-closed：`VERIFY_STATE` 由 Phase 4 設定，但 shell 狀態不跨 Bash 呼叫；Phase 5 只接受 `PASS`／`BLOCKING`，缺值或其他值一律停在 push 之前並要求重設——缺值絕不當 PASS（原本的 `${VERIFY_STATE:-PASS}` 會讓遺失的狀態直接開 PR）。
+- unattended verify-fix 迴圈放棄時（`MAX_ROUND` 用盡、遇到安全漏洞不 auto-fix），雲端先 push branch（不開 PR）再 abort；刻意不 push 的 abort（Phase 4／5 type guard、shell 狀態遺失、push 失敗）在雲端要提醒 session 結束前手動 push。
+- `git push` 與 `gh api` 的失敗以 exit status 判斷：`gh api` 遇 HTTP 錯誤會把錯誤 body 印到 stdout（不套用 `--jq`），所以 `DEFAULT`／`TITLE` 用 `|| DEFAULT=""`／`|| abort`，不讓錯誤 JSON 變成 branch slug 或 PR base；Phase 0.6 讀不到 default branch 時不 unwind，印出 branch 留在原處；雲端 abort 前照 #123 清掉 unattended flag。
+
 PR path 的 unattended hint 依 interaction 軸決定（`(PR, attended)` 不傳 `UNATTENDED MODE`），spec「PR path preserves v2.40.0 behavior」同步修訂；`(PR, unattended)` 的行為逐字不變。
 
 ### D6 — Runtime reference 與 skill 指標
@@ -150,12 +156,17 @@ SKILL.md 不改寫 porcelain，只在開頭加一行 runtime note，兩種措辭
 - `idd-find`／`idd-report`／`idd-discuss`／`idd-ask`：D6 的不支援 runtime note
 - `idd-issue --blocked-by`：既有行為已把 GraphQL 錯誤原樣印出並繼續（body blockquote 照寫），雲端 proxy 的 403 訊息本身就點明原因；reference 記錄此限制
 - 未 attach 的 repo：D3 的 `hint:`
+- `check-closed-without-summary.sh --since`：gh-rest 以 exit 2 回報看不懂的日期，script 據此印「參數被拒」而不是「auth／network 失敗」（audit 模式仍 exit 0）；`--closed-since` 接受舊 search qualifier 接受的寫法（`2026-1-5`、帶 `Z` 或時差的時間戳），一律換算成 UTC `Z` 再比較（verify 第 2 輪）
 - Spectra CLI：沿用 `idd-all` Step 0.35 警告與 Phase 3b hard gate
 
 ### D9 — 未做的 spec delta（verify 第 1 輪 requirements #7）
 
 - `runtime-compatibility-guidance`：這個 capability 只存在於尚未 archive 的 change `codify-claude-canonical-runtime`，main specs 裡沒有，無法對它寫 MODIFIED delta；雲端 runtime 的契約改放在新的 `cloud-session-runtime`，兩者 archive 後可再合併。
 - `idd-existing-work-lookup`：requirement 規範的是行為（讀不到 open PR 清單或 issue 就 fail-closed），scenario 裡的 `gh pr list --state open`／`gh issue view N` 是示意性的錯誤描述；行為不變（由 check-existing-work 測試的 idd-close 片段實際執行驗證），所以不寫 delta。
+
+### D10 — wrapper 與 transport 的旗標對等（verify 第 2 輪）
+
+第 1 輪讓 wrapper 把 `--body`／`--title`／`--body-file` 的下一個 token 當值讀；第 2 輪的 devil's advocate 指出其他取值旗標（`--label`、`--assignee`、`--milestone`、`--add-label` 等）仍有同一個洞：`edit 5 --remove-label -b --body-file=x` 在 transport 裡 `-b` 是 label 值、`x` 是 body file，wrapper 卻把 `--body-file=x` 字串當 body 掃描，檔案內容沒經過 gate。修法：wrapper 的取值旗標集合 ⊇ transport 的 `VALUE_FLAGS`（gh-egress 測試以 drift guard 鎖定），metadata 值轉送不掃描；`-b=X`／`-t=X`／`-F=X` 與 pflag、transport 一樣去掉一個 `=`。`edit-comment` 的 `--repo` 原本未驗證就進 REST path（#273 起），改為只接受 `OWNER/REPO`（無 `.`／`..` segment），comment id 必須是數字，否則 exit 14。
 
 ## Risks / Trade-offs
 

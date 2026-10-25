@@ -537,7 +537,7 @@ PAI_ENGINE="${PAI_DIR}workflows/ensemble-workflow.js"
     印 fail-fast 安裝指引（#219 — vendored fork 已刪除，per deep-integration-over-hardcode「不留平行複本」；成熟條件見 #207 Residue 對照）:
       "⚠ canonical pai-ensemble unavailable（pai cache 缺席 / 無 semver 目錄 / $PAI_VER < $MIN_PAI / workflows/ensemble-workflow.js 缺檔 / workflow primitive 不可用——五者印其一，不籠統）"
       "  Install (one step): claude plugin install parallel-ai-agents@psychquant-claude-plugins"
-      "  Falling back to manual fan-out（品質等價：同 4 lens + DA + Codex，較慢）"
+      "  Falling back to manual fan-out（品質等價：同 4 lens + DA + Codex，較慢；雲端 session 無 Codex leg，#416）"
     findings = Step 2 manual fan-out
     BACKEND_DESC="manual fan-out (4 lens Agents + sequenced DA, model: ${AGENT_MODEL}, file-based output) + Codex (gpt-5.x, run_in_background)"
     印一行 notice: "→ verify backend: manual fan-out"

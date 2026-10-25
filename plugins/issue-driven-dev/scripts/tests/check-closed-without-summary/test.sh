@@ -312,6 +312,13 @@ refute_grep "live audit: no porcelain call" "unexpected porcelain" "$LIVE_OUT"
 GATE_LIVE=$(PATH="$LIVE:$PATH" bash "$HELPER" --repo foo/bar --issue 101 2>/dev/null)
 assert_eq "live gate (REST): #101 has no recognised marker" "unrecognised" "$(printf '%s' "$GATE_LIVE" | jq -r .class 2>/dev/null)"
 assert_eq "live gate (REST): the full comment set was read" "true" "$(printf '%s' "$GATE_LIVE" | jq -r .comments_complete 2>/dev/null)"
+# a bad --since is a usage error, not an outage: the note says so (still advisory exit 0)
+BADSINCE=$(PATH="$LIVE:$PATH" bash "$HELPER" --repo foo/bar --since yesterday 2>&1); BSRC=$?
+assert_grep "bad --since: the note names the refused argument" "arguments were refused" "$BADSINCE"
+refute_grep "bad --since: not reported as auth / network" "auth / network" "$BADSINCE"
+assert_exit "bad --since: advisory exit 0" 0 "$BSRC"
+DOWN=$(PATH="$LIVE:$PATH" bash "$HELPER" --repo other/repo 2>&1)
+assert_grep "a GitHub failure is still reported as one" "auth / network" "$DOWN"
 
 # Malformed JSON must NOT yield a false "all-clear" (safety-net direction, #151 verify logic LOW).
 MAL=$(bash "$HELPER" --json-file "$HERE/fixtures/malformed.json" 2>/dev/null); MRC=$?

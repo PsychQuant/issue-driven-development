@@ -105,7 +105,8 @@ mkdir -p "$W/gh2"; cat > "$W/gh2/gh" <<'STUB'
 printf '%s\n' "$*" >> "$GH2_LOG"
 [ "$1" = "api" ] || { echo "unexpected porcelain gh $*" >&2; exit 1; }
 case "$2" in
-  repos/o/r)                 case " $* " in *" --jq .default_branch "*) echo main ;; *) echo '{"full_name":"o/r","default_branch":"main"}' ;; esac ;;
+  repos/o/r)                 [ -n "${GH2_FAIL_REPO:-}" ] && { echo '{"message":"Not Found","status":"404"}'; echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
+                             case " $* " in *" --jq .default_branch "*) echo main ;; *) echo '{"full_name":"o/r","default_branch":"main"}' ;; esac ;;
   repos/o/r/issues/5/comments) echo '[]' ;;
   repos/o/r/pulls)           for a in "$@"; do case "$a" in body=@*) cp "${a#body=@}" "$GH2_PRBODY" ;; esac; done
                              echo "https://github.com/o/r/pull/77" ;;
@@ -132,6 +133,13 @@ assert_exit "Phase 0.6 cloud + no ralph-loop → stops (exit 1), even without an
 assert_grep "…saying ralph-loop is required" "ralph-loop is required" "$OUT"
 refute_grep "…never degrading to direct-commit" "Path: direct-commit" "$OUT"
 refute "…and the new branch was removed" git -C "$W/repo-a" show-ref --verify --quiet refs/heads/idd/5-x
+newrepo a2; mkdir -p "$W/repo-a2/.claude/.idd/state"; echo '{}' > "$W/repo-a2/.claude/.idd/state/unattended.json"
+run_block true "$P06" "$W/repo-a2" >/dev/null
+refute "…and clears the unattended flag Phase 0.5 set (abort duty, #123)" test -e "$W/repo-a2/.claude/.idd/state/unattended.json"
+newrepo a3; OUT="$(run_block true "$P06" "$W/repo-a3" GH2_FAIL_REPO=1)"; RC=$?
+assert_exit "Phase 0.6 cloud, default branch unreadable → still stops" 1 "$RC"
+assert_grep "…saying the branch was left in place" "left checked out" "$OUT"
+refute_grep "…never checking out the gh error text" "Not Found\"" "$(git -C "$W/repo-a3" branch --list)"
 newrepo b; OUT="$(run_block "" "$P06" "$W/repo-b")"
 assert_grep "Phase 0.6 local + no ralph-loop → degrades as before" "Path: direct-commit (attended)" "$OUT"
 newrepo c; : > "$GH2_LOG"; OUT="$(run_block true "$P5" "$W/repo-c" VERIFY_STATE=PASS)"; RC=$?
@@ -143,6 +151,20 @@ assert_output_grep "…and the PR body says the verify was Claude-only" "Claude-
 newrepo d; : > "$GH2_LOG"; OUT="$(run_block true "$P5" "$W/repo-d" VERIFY_STATE=BLOCKING INTERACTION=attended)"
 assert_grep "Phase 5 cloud + blocking findings: branch pushed" "idd/5-x" "$(git -C "$W/repo-d.git" branch --list)"
 refute_grep "…but no PR opened" "repos/o/r/pulls" "$(cat "$GH2_LOG")"
+newrepo f; : > "$GH2_LOG"; OUT="$(run_block true "$P5" "$W/repo-f")"; RC=$?
+assert_exit "Phase 5 with VERIFY_STATE unset (shell state lost) → stops" 1 "$RC"
+refute_grep "…pushing nothing" "idd/5-x" "$(git -C "$W/repo-f.git" branch --list)"
+refute_grep "…and opening no PR" "repos/o/r/pulls" "$(cat "$GH2_LOG")"
+newrepo g; rm -rf "$W/repo-g.git"; : > "$GH2_LOG"; OUT="$(run_block true "$P5" "$W/repo-g" VERIFY_STATE=PASS)"; RC=$?
+assert_exit "Phase 5 push failure → stops" 1 "$RC"
+assert_grep "…saying the push failed" "git push failed" "$OUT"
+refute_grep "…before any PR is opened" "repos/o/r/pulls" "$(cat "$GH2_LOG")"
+newrepo h; rm -rf "$W/repo-h.git"; OUT="$(run_block true "$P5" "$W/repo-h" VERIFY_STATE=BLOCKING)"; RC=$?
+assert_exit "Phase 5 cloud + blocking + push failure → stops" 1 "$RC"
+assert_grep "…warning the branch exists only in the container" "only in this container" "$OUT"
+newrepo i; : > "$GH2_LOG"; OUT="$(run_block true "$P5" "$W/repo-i" VERIFY_STATE=PASS GH2_FAIL_REPO=1)"; RC=$?
+assert_exit "Phase 5 default branch unreadable → stops" 1 "$RC"
+refute_grep "…the gh error body never becomes the PR base" "repos/o/r/pulls" "$(cat "$GH2_LOG")"
 newrepo e; : > "$GH2_LOG"; run_block "" "$P5" "$W/repo-e" VERIFY_STATE=PASS >/dev/null
 assert_output_grep "Phase 5 local + PASS: PR body keeps the 6-AI line" "6-AI cross-model verification PASS" "$GH2_PRBODY"
 refute_grep "Phase 5: no porcelain reaches gh" "unexpected porcelain" "$(cat "$GH2_LOG") $OUT"

@@ -120,7 +120,7 @@ Inside a cloud session, the Phase 0.6 ralph-loop gate MUST NOT degrade `(PR, una
 
 ### Requirement: PR path preserves v2.40.0 behavior
 
-When the resolved path is `PR`, `idd-all` SHALL enforce a feature branch off the default branch, push the branch, and create a PR after verify PASS. It SHALL NOT create a PR while verify reports blocking findings; in a cloud session it SHALL still push the branch in that case, because unpushed commits are lost with the container. When the resolved tuple is `(PR, unattended)`, `idd-all` SHALL additionally pass an unattended hint to every sub-skill invocation, so that `(PR, unattended)` behaves identically to v2.40.0 and no existing caller (including `/loop` automation) observes behavioral drift. When the resolved tuple is `(PR, attended)`, `idd-all` SHALL NOT pass the unattended hint.
+When the resolved path is `PR`, `idd-all` SHALL enforce a feature branch off the default branch, push the branch, and create a PR after verify PASS. It SHALL NOT create a PR while verify reports blocking findings; in a cloud session it SHALL still push the branch in that case, including when the unattended verify-fix loop gives up, because unpushed commits are lost with the container. A missing verify verdict SHALL NOT be read as PASS: when Phase 5 cannot tell whether verify passed, `idd-all` SHALL stop before pushing and say so. A failed push SHALL stop the run before any PR is created. When the resolved tuple is `(PR, unattended)`, `idd-all` SHALL additionally pass an unattended hint to every sub-skill invocation, so that `(PR, unattended)` behaves identically to v2.40.0 and no existing caller (including `/loop` automation) observes behavioral drift. When the resolved tuple is `(PR, attended)`, `idd-all` SHALL NOT pass the unattended hint.
 
 #### Scenario: PR path enforces feature branch
 
@@ -147,6 +147,13 @@ When the resolved path is `PR`, `idd-all` SHALL enforce a feature branch off the
 - **AND** resolved path is `PR`
 - **WHEN** Phase 5 executes
 - **THEN** `idd-all` runs `git push -u origin <branch>` followed by a PR creation (REST `POST repos/<R>/pulls`) with body containing `Refs #<N>` and forbidding any `Closes` / `Fixes` / `Resolves` trailer
+
+#### Scenario: a lost verify verdict stops before the push
+
+- **GIVEN** resolved path is `PR`
+- **AND** the Phase 5 shell does not carry the verify verdict (for example, the shell state was lost between tool calls)
+- **WHEN** Phase 5 executes
+- **THEN** `idd-all` exits non-zero before `git push`, creates no PR, and names the missing verdict
 
 #### Scenario: attended cloud run with blocking findings pushes but opens no PR
 

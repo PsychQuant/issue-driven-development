@@ -318,7 +318,15 @@ else
     printf 'gh-rest.sh %s\n' "${GH_ARGS[*]}"
     exit 0
   fi
-  if ! ISSUES_JSON=$(bash "$GH_REST" "${GH_ARGS[@]}" 2>/dev/null); then
+  # gh-rest exits 2 for a usage error (a --since that is not a date, a --limit that is not a number) and 1
+  # for a GitHub failure; say which, or a typo reads as an outage. Still exit 0 — audit mode is advisory.
+  GH_REST_ERR=$(mktemp) || { echo "note: could not create a temp file — audit skipped." >&2; exit 0; }
+  ISSUES_JSON=$(bash "$GH_REST" "${GH_ARGS[@]}" 2>"$GH_REST_ERR"); GH_REST_RC=$?
+  GH_REST_MSG=$(grep -v '^usage:' "$GH_REST_ERR" | tail -1); rm -f "$GH_REST_ERR"
+  if [ "$GH_REST_RC" -eq 2 ]; then
+    echo "note: the arguments were refused (--since '$SINCE', --limit '$LIMIT'): ${GH_REST_MSG:-usage error} — audit skipped." >&2
+    exit 0
+  elif [ "$GH_REST_RC" -ne 0 ]; then
     echo "note: reading the closed issues failed (auth / network / repo not reachable) — audit skipped." >&2
     exit 0
   fi

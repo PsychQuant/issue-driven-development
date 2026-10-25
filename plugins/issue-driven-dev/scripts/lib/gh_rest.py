@@ -12,9 +12,10 @@ whose transport (gh_egress_rest.py) imports the shared helpers below.
 Usage (stdout: JSON; exit 0 ok · 1 GitHub/gh failure · 2 usage error):
   gh-rest.sh issue-view <N|issue URL> [--repo R] --json f1,f2,…
   gh-rest.sh issue-list [--repo R] [--state open|closed|all] [--label L]… [--sort created|updated]
-                        [--closed-since YYYY-MM-DD] [--limit N] --json …
+                        [--closed-since DATE] [--limit N] --json …
                         (comments: fully paged per issue — one call per issue; --closed-since keeps issues
-                         closed on/after the date, and --limit counts the kept ones)
+                         closed on/after DATE — YYYY-MM-DD or an ISO timestamp, normalised to UTC — and --limit
+                         counts the kept ones)
   gh-rest.sh pr-list    [--repo R] [--state open|closed|merged|all] [--limit N] --json …
                         (mergeable: one single-PR call per PR — the list endpoint does not carry it)
   gh-rest.sh repo-view  [--repo R] --json …
@@ -24,6 +25,7 @@ directory's git remote, as `gh issue … ` does without --repo.
 Test override: IDD_GH_BIN (gh binary to call; default gh).
 """
 import argparse
+import datetime
 import json
 import os
 import re
@@ -258,6 +260,29 @@ def issue_view(a):
     return out
 
 
+def closed_since_utc(value):
+    """`--closed-since` → `YYYY-MM-DDTHH:MM:SSZ` (UTC), the form `closed_at` uses, so the keep filter can
+    compare strings. Accepts what `closed:>=` accepted in search: a date (`2026-10-01`, `2026-1-5`) or a
+    timestamp with `Z` or an offset (`2026-10-01T08:00:00+08:00`)."""
+    m = re.fullmatch(r"(\d{4})-(\d{1,2})-(\d{1,2})(?:T(\d{2}):(\d{2})(?::(\d{2}))?(Z|[+-]\d{2}:?\d{2}))?", value)
+    try:
+        if not m:
+            raise ValueError
+        y, mo, d, hh, mm, ss, tz = m.groups()
+        when = datetime.datetime(int(y), int(mo), int(d), int(hh or 0), int(mm or 0), int(ss or 0),
+                                 tzinfo=datetime.timezone.utc)
+        if tz and tz != "Z":
+            sign = 1 if tz[0] == "+" else -1
+            digits = tz[1:].replace(":", "")
+            if int(digits[:2]) > 14 or int(digits[2:]) > 59:
+                raise ValueError
+            when -= sign * datetime.timedelta(hours=int(digits[:2]), minutes=int(digits[2:]))
+    except (ValueError, OverflowError):
+        raise UsageError(f"--closed-since needs a date: YYYY-MM-DD, or a timestamp such as 2026-10-01T08:00:00Z "
+                         f"or 2026-10-01T08:00:00+08:00 (got {value[:40]!r})")
+    return when.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def issue_list(a):
     fields = fields_of(a.json, ISSUE_FIELDS, "issue-list")
     host, repo = split_repo(a.repo)
@@ -268,9 +293,7 @@ def issue_list(a):
         query += f"&sort={a.sort}&direction=desc"
     since = None
     if a.closed_since:   # REST `since` is update time — closing updates an issue, so it only narrows
-        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}Z)?", a.closed_since):
-            raise UsageError("--closed-since needs a date: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ")
-        since = a.closed_since if "T" in a.closed_since else a.closed_since + "T00:00:00Z"
+        since = closed_since_utc(a.closed_since)
         query += f"&since={since}"
     def keep(it):
         if "pull_request" in it:

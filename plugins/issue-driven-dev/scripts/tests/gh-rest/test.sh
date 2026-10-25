@@ -101,6 +101,17 @@ fx "repos/o/r/issues?state=closed&since=2026-01-01T00:00:00Z&per_page=100&page=1
 OUT="$(run issue-list --repo o/r --state closed --closed-since 2026-01-01 --limit 2 --json number,closedAt)"
 assert_eq "--closed-since keeps issues closed on/after the date, limit after the filter" "[5, 3]" "$(printf '%s' "$OUT" | j "[i['number'] for i in d]")"
 run issue-list --repo o/r --state closed --closed-since 'yesterday' --json number >/dev/null; assert_exit "--closed-since needs a date (exit 2)" 2 $?
+run issue-list --repo o/r --state closed --closed-since 2026-02-30 --json number >/dev/null; assert_exit "--closed-since rejects an impossible date (exit 2)" 2 $?
+# what search's `closed:>=` accepted still works: a single-digit date, and an offset timestamp (normalised to UTC Z,
+# the form closed_at uses — otherwise the string compare in the filter is wrong)
+reset
+fx "repos/o/r/issues?state=closed&since=2026-01-05T00:00:00Z&per_page=100&page=1" '[{"number":7,"state":"closed","closed_at":"2026-01-05T00:00:00Z"}]'
+OUT="$(run issue-list --repo o/r --state closed --closed-since 2026-1-5 --json number)"
+assert_eq "--closed-since YYYY-M-D is zero-padded" "[7]" "$(printf '%s' "$OUT" | j "[i['number'] for i in d]")"
+reset
+fx "repos/o/r/issues?state=closed&since=2026-01-01T00:00:00Z&per_page=100&page=1" '[{"number":8,"state":"closed","closed_at":"2026-01-01T00:30:00Z"},{"number":6,"state":"closed","closed_at":"2025-12-31T23:59:00Z"}]'
+OUT="$(run issue-list --repo o/r --state closed --closed-since 2026-01-01T08:00:00+08:00 --json number)"
+assert_eq "--closed-since with an offset compares in UTC" "[8]" "$(printf '%s' "$OUT" | j "[i['number'] for i in d]")"
 
 # ── pr-list ─────────────────────────────────────────────────────────────────
 PRS='[{"number":3,"title":"m","body":"Refs #9","state":"closed","html_url":"https://x/pull/3","created_at":"2026-10-03T00:00:00Z","updated_at":"u","closed_at":"c","merged_at":"2026-10-04T00:00:00Z","head":{"ref":"idd/9-x","sha":"abc"},"base":{"ref":"main"},"draft":false,"user":{"login":"alice"}},
