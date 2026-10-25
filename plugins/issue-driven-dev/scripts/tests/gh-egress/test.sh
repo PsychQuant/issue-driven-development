@@ -477,9 +477,25 @@ done
 printf 'log at /Users/alice/secret.sh @victim' > "$WORK/leakbody.md"
 for pre in "--remove-label" "--add-label" "--label" "-l" "--milestone" "-m" "--assignee" "-a" "--add-assignee" "--remove-assignee" "-R"; do
   bash "$SCRIPT" edit 5 --repo o/r "$pre" -b --body-file="$WORK/leakbody.md" "${ATT[@]}" >/dev/null 2>&1; rc=$?
-  case "$rc" in 10|11|14) pass "leak behind '$pre -b --body-file=…' is refused or never sent (rc=$rc)" ;;
-    *) fail "leak behind '$pre -b --body-file=…' is refused or never sent" "rc=$rc" ;; esac
+  # exactly 10: the wrapper reads `-b` as $pre's value and scans the file; before the fix most of these
+  # exited 14 in the transport, which proved nothing about the scan (round 3)
+  assert_exit "leak behind '$pre -b --body-file=…' is scanned (privacy net, exit 10)" 10 "$rc"
 done
+# one body source per call: gh and the transport send only the last, the guard read them all (round 3)
+printf '%s' "a long enough replacement body for the decoy" > "$WORK/good.md"; : > "$WORK/empty.md"; printf 'x' > "$WORK/tiny.md"
+calls_reset
+bash "$SCRIPT" edit 5 --repo o/r --body "a long enough decoy body text" --body "" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "a decoy --body before an empty one is refused (exit 14)" 14 $?
+assert_eq "…and nothing is sent" "0" "$(ncalls)"
+bash "$SCRIPT" edit 5 --repo o/r -F "$WORK/good.md" -F "$WORK/empty.md" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "two -F files are refused (exit 14)" 14 $?
+bash "$SCRIPT" comment 5 --repo o/r --body-file="$WORK/good.md" -b"x" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "--body-file= plus -bX is refused (exit 14)" 14 $?
+bash "$SCRIPT" edit-comment 9 --repo o/r --body-file "$WORK/good.md" --body-file "$WORK/empty.md" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "edit-comment with two body files is refused (exit 14)" 14 $?
+bash "$SCRIPT" edit-comment 9 --repo o/r --body "a long enough decoy body text" --body-file "$WORK/tiny.md" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "edit-comment --body decoy plus a tiny file is refused (exit 14)" 14 $?
+assert_eq "…and nothing is sent" "0" "$(ncalls)"
 # `-b=X` / `-t=X` / `-F=F` mean X / F to gh and the transport — so to the wrapper too
 bash "$SCRIPT" create --repo o/r --title T -b= "${ATT[@]}" >/dev/null 2>&1
 assert_exit "-b= is an empty body: the #275 guard fires (exit 15)" 15 $?

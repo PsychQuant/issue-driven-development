@@ -71,8 +71,10 @@ runs the privacy, mention and attestation gates. Never write an issue body with 
   aborts after removing the branch it created instead of degrading to direct-commit.
 - The PR is opened only after verify PASS. When `(PR, attended)` ends with blocking findings, or the
   unattended verify-fix loop gives up, a cloud session still pushes the branch (no PR) so the commits
-  survive the container. Aborts that deliberately do not push (the Phase 4/5 type guards, lost shell
-  state, a failed push) say so: push the branch by hand before the session ends.
+  survive the container — unless a blocking finding is a security finding: a push could publish a
+  committed secret. Aborts that deliberately do not push (the Phase 4/5 type guards, security findings,
+  lost shell state, a failed push) say so: push the branch by hand before the session ends, after
+  checking the commits for secrets when a security finding stopped the run.
 - `idd-all`'s own state-changing steps (issue check, branch setup, unwind, PR creation) already call
   REST directly (`gh api repos/R`, `…/issues/N`, `…/pulls`); there is nothing to translate there.
 - Push before the session ends: `.claude/.idd/state/` and every unpushed commit live only as long

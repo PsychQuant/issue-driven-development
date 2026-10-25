@@ -41,16 +41,19 @@ porcelain call returns 403, and so does `gh auth status` — while `gh api` REST
 - **`check-existing-work.sh`, `check-diagnosis-readiness.sh`, `process-attachments.sh`, `idd-worktree.sh` and
   `check-closed-without-summary.sh` read through `gh-rest.sh` (#416).** `idd-list --audit-closes` therefore works
   in a cloud session too; its `--dry-run` prints the `gh-rest.sh issue-list … --closed-since` call. `--since`
-  takes what the old search qualifier took (`2026-1-5`, or a timestamp with `Z` or an offset, compared in UTC); a
+  takes what the old search qualifier took (`2026-1-5`, or a timestamp with `Z`, an offset or neither, compared in UTC); a
   value it cannot read is reported as a refused argument, not as an auth / network failure. Matching logic is unchanged. `check-existing-work`'s error labels are now
   `pr-list --state open` / `issue-view N`; `idd-close` Step 1.5 matches `issue-view` as well as the old label.
 - **`idd-all` (#416):** a cloud session forces the PR path, with the interaction from the attended signal, ahead
   of fork detection (which always 403s there); `--no-pr` is overridden with a notice; `(PR, unattended)` without
   ralph-loop aborts in a cloud session (after removing the new branch) instead of degrading to direct-commit.
   The PR is opened only after verify PASS; with blocking findings, or when the unattended verify-fix loop gives
-  up, a cloud session still pushes the branch. Phase 5 never reads a missing verdict as PASS: without
+  up, a cloud session still pushes the branch (not when a blocking finding is a security finding — a push could
+  publish a committed secret). Phase 5 never reads a missing verdict as PASS: without
   `VERIFY_STATE` it stops before pushing (this applies locally too). A failed push, or a default branch or issue
-  title that cannot be read, stops the run instead of feeding gh's error text into a branch name or PR base.
+  title that cannot be read, stops the run instead of feeding gh's error text into a branch name or PR base;
+  PR-mode branch setup stops with a real `exit` (it relied on an undefined `abort` and fell through into
+  `git checkout -b`), and Phase 0.6 stops instead of degrading when it cannot read the default branch.
   Branch setup and PR creation call REST directly (`gh api repos/R`, `POST repos/R/pulls`; also locally). The PR body
   and report say when verify was Claude-only. The auth gate is `gh auth status || gh api user`. Local mode
   resolution is unchanged.
@@ -71,6 +74,9 @@ porcelain call returns 403, and so does `gh auth status` — while `gh api` REST
   token as the value, as gh does, for every value-taking flag the transport accepts (`--label`, `--assignee`,
   `--milestone`, `--add-label` …, not only the body and title flags), and reads `-b=X` / `-t=X` / `-F=X` as `X`.
   Present on 3.5.0 as well.
+- **Repeated `--body` / `--body-file` slipped past the empty-body guard (#416 verify).** gh sends only the last
+  one, but the #275 guard checked them all joined, so `--body "<decoy>" --body ""` wiped an issue body. A call
+  now takes one body source; more exit 14. Present since #275.
 - **`gh-egress.sh edit-comment` put `--repo` into the REST path unchecked (#416 verify).** It now has to be
   `OWNER/REPO` without `.`/`..` segments, and the comment id a number; anything else exits 14. Present since
   `edit-comment` was added.

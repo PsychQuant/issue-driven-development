@@ -130,8 +130,9 @@ Phase 5：只有 verify PASS 才開 PR。`(PR, attended)` 交回 blocking findin
 verify 第 2 輪（devil's advocate）補強，本機同樣適用：
 
 - 判決 fail-closed：`VERIFY_STATE` 由 Phase 4 設定，但 shell 狀態不跨 Bash 呼叫；Phase 5 只接受 `PASS`／`BLOCKING`，缺值或其他值一律停在 push 之前並要求重設——缺值絕不當 PASS（原本的 `${VERIFY_STATE:-PASS}` 會讓遺失的狀態直接開 PR）。
-- unattended verify-fix 迴圈放棄時（`MAX_ROUND` 用盡、遇到安全漏洞不 auto-fix），雲端先 push branch（不開 PR）再 abort；刻意不 push 的 abort（Phase 4／5 type guard、shell 狀態遺失、push 失敗）在雲端要提醒 session 結束前手動 push。
-- `git push` 與 `gh api` 的失敗以 exit status 判斷：`gh api` 遇 HTTP 錯誤會把錯誤 body 印到 stdout（不套用 `--jq`），所以 `DEFAULT`／`TITLE` 用 `|| DEFAULT=""`／`|| abort`，不讓錯誤 JSON 變成 branch slug 或 PR base；Phase 0.6 讀不到 default branch 時不 unwind，印出 branch 留在原處；雲端 abort 前照 #123 清掉 unattended flag。
+- unattended verify-fix 迴圈 `MAX_ROUND` 用盡時，雲端先 push branch（不開 PR）再 abort；但 blocking 裡有安全 finding 時不 push（commit 可能帶著 secret，push 就公開了——verify 第 3 輪），安全漏洞的 abort 同樣不 push。刻意不 push 的 abort（Phase 4／5 type guard、安全 finding、shell 狀態遺失、push 失敗）在雲端要提醒 session 結束前手動 push。
+- `git push` 與 `gh api` 的失敗以 exit status 判斷：`gh api` 遇 HTTP 錯誤會把錯誤 body 印到 stdout（不套用 `--jq`），所以 `DEFAULT`／`TITLE` 用 `|| DEFAULT=""`／`|| abort`，不讓錯誤 JSON 變成 branch slug 或 PR base；Phase 0.6 讀不到 default branch 時不 unwind，也不降級（降級會把 commit 落在懸空的 feature branch，即 F2），本機雲端都停下；abort 前照 #123 清掉 unattended flag。
+- 第 3 輪：Phase 0.5 PR setup 原本用未定義的 `abort`（全檔慣例），在 Bash 裡會印 command not found 後繼續 `git checkout -b`——讀不到 title 時 branch 名稱變成錯誤 JSON 的 slug。改用區塊內定義的 `pr_setup_stop`（印訊息、清 unattended flag、`exit 1`），由 cloud-session 測試實際執行。
 
 PR path 的 unattended hint 依 interaction 軸決定（`(PR, attended)` 不傳 `UNATTENDED MODE`），spec「PR path preserves v2.40.0 behavior」同步修訂；`(PR, unattended)` 的行為逐字不變。
 
@@ -156,7 +157,7 @@ SKILL.md 不改寫 porcelain，只在開頭加一行 runtime note，兩種措辭
 - `idd-find`／`idd-report`／`idd-discuss`／`idd-ask`：D6 的不支援 runtime note
 - `idd-issue --blocked-by`：既有行為已把 GraphQL 錯誤原樣印出並繼續（body blockquote 照寫），雲端 proxy 的 403 訊息本身就點明原因；reference 記錄此限制
 - 未 attach 的 repo：D3 的 `hint:`
-- `check-closed-without-summary.sh --since`：gh-rest 以 exit 2 回報看不懂的日期，script 據此印「參數被拒」而不是「auth／network 失敗」（audit 模式仍 exit 0）；`--closed-since` 接受舊 search qualifier 接受的寫法（`2026-1-5`、帶 `Z` 或時差的時間戳），一律換算成 UTC `Z` 再比較（verify 第 2 輪）
+- `check-closed-without-summary.sh --since`：gh-rest 以 exit 2 回報看不懂的日期，script 據此印「參數被拒」而不是「auth／network 失敗」（audit 模式仍 exit 0）；`--closed-since` 接受舊 search qualifier 接受的寫法（`2026-1-5`、帶 `Z`、時差或不帶時區（視為 UTC）的時間戳），一律換算成 UTC `Z` 再比較（verify 第 2、3 輪）
 - Spectra CLI：沿用 `idd-all` Step 0.35 警告與 Phase 3b hard gate
 
 ### D9 — 未做的 spec delta（verify 第 1 輪 requirements #7）
@@ -167,6 +168,8 @@ SKILL.md 不改寫 porcelain，只在開頭加一行 runtime note，兩種措辭
 ### D10 — wrapper 與 transport 的旗標對等（verify 第 2 輪）
 
 第 1 輪讓 wrapper 把 `--body`／`--title`／`--body-file` 的下一個 token 當值讀；第 2 輪的 devil's advocate 指出其他取值旗標（`--label`、`--assignee`、`--milestone`、`--add-label` 等）仍有同一個洞：`edit 5 --remove-label -b --body-file=x` 在 transport 裡 `-b` 是 label 值、`x` 是 body file，wrapper 卻把 `--body-file=x` 字串當 body 掃描，檔案內容沒經過 gate。修法：wrapper 的取值旗標集合 ⊇ transport 的 `VALUE_FLAGS`（gh-egress 測試以 drift guard 鎖定），metadata 值轉送不掃描；`-b=X`／`-t=X`／`-F=X` 與 pflag、transport 一樣去掉一個 `=`。`edit-comment` 的 `--repo` 原本未驗證就進 REST path（#273 起），改為只接受 `OWNER/REPO`（無 `.`／`..` segment），comment id 必須是數字，否則 exit 14。
+
+第 3 輪：gh 與 transport 只送最後一個 `--body`／`--body-file`（`edit-comment` 只送最後一個檔案），#275 empty-body guard 卻檢查全部合併後的內容——`--body "<夠長的誘餌>" --body ""` 通過 guard、送出空 body。wrapper 改為每次呼叫只接受一個 body 來源，多於一個 exit 14。privacy 與 mention net 掃描的是超集，不受影響。
 
 ## Risks / Trade-offs
 

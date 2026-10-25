@@ -263,8 +263,8 @@ def issue_view(a):
 def closed_since_utc(value):
     """`--closed-since` → `YYYY-MM-DDTHH:MM:SSZ` (UTC), the form `closed_at` uses, so the keep filter can
     compare strings. Accepts what `closed:>=` accepted in search: a date (`2026-10-01`, `2026-1-5`) or a
-    timestamp with `Z` or an offset (`2026-10-01T08:00:00+08:00`)."""
-    m = re.fullmatch(r"(\d{4})-(\d{1,2})-(\d{1,2})(?:T(\d{2}):(\d{2})(?::(\d{2}))?(Z|[+-]\d{2}:?\d{2}))?", value)
+    timestamp with `Z`, an offset (`2026-10-01T08:00:00+08:00`) or neither (read as UTC)."""
+    m = re.fullmatch(r"(\d{4})-(\d{1,2})-(\d{1,2})(?:T(\d{2}):(\d{2})(?::(\d{2}))?(Z|[+-]\d{2}:?\d{2})?)?", value)
     try:
         if not m:
             raise ValueError

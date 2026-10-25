@@ -108,6 +108,8 @@ case "$2" in
   repos/o/r)                 [ -n "${GH2_FAIL_REPO:-}" ] && { echo '{"message":"Not Found","status":"404"}'; echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
                              case " $* " in *" --jq .default_branch "*) echo main ;; *) echo '{"full_name":"o/r","default_branch":"main"}' ;; esac ;;
   repos/o/r/issues/5/comments) echo '[]' ;;
+  repos/o/r/issues/19)       [ -n "${GH2_FAIL_TITLE:-}" ] && { echo '{"message":"Not Found","documentation_url":"https://docs.github.com/rest","status":"404"}'; echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
+                             echo "Some Title" ;;
   repos/o/r/pulls)           for a in "$@"; do case "$a" in body=@*) cp "${a#body=@}" "$GH2_PRBODY" ;; esac; done
                              echo "https://github.com/o/r/pull/77" ;;
   *) echo "unexpected api $2" >&2; exit 1 ;;
@@ -121,6 +123,7 @@ newrepo() { # → $W/repo-<name> on main with an idd/5-x branch checked out, bar
     && git "${GIT_ENV[@]}" push -q origin main 2>/dev/null && git "${GIT_ENV[@]}" checkout -q -b idd/5-x ); }
 P06="$(block_with "$ALL" 'check-ralph-loop.sh')"
 P5="$(block_with "$ALL" 'VERIFY_LINE=')"
+P05PR="$(block_with "$ALL" 'PR-mode-only preconditions')"
 assert_true "idd-all: Phase 0.6 and Phase 5 blocks were found" '[ -n "$P06" ] && [ -n "$P5" ]'
 run_block() { # remote block repo [extra env…] → combined output; returns the block's exit code
   local remote="$1" block="$2" repo="$3"; shift 3
@@ -140,6 +143,9 @@ newrepo a3; OUT="$(run_block true "$P06" "$W/repo-a3" GH2_FAIL_REPO=1)"; RC=$?
 assert_exit "Phase 0.6 cloud, default branch unreadable → still stops" 1 "$RC"
 assert_grep "…saying the branch was left in place" "left checked out" "$OUT"
 refute_grep "…never checking out the gh error text" "Not Found\"" "$(git -C "$W/repo-a3" branch --list)"
+newrepo a4; OUT="$(run_block "" "$P06" "$W/repo-a4" GH2_FAIL_REPO=1)"; RC=$?
+assert_exit "Phase 0.6 local, default branch unreadable → stops instead of degrading onto the feature branch" 1 "$RC"
+refute_grep "…no degrade" "Path: direct-commit" "$OUT"
 newrepo b; OUT="$(run_block "" "$P06" "$W/repo-b")"
 assert_grep "Phase 0.6 local + no ralph-loop → degrades as before" "Path: direct-commit (attended)" "$OUT"
 newrepo c; : > "$GH2_LOG"; OUT="$(run_block true "$P5" "$W/repo-c" VERIFY_STATE=PASS)"; RC=$?
@@ -165,6 +171,26 @@ assert_grep "…warning the branch exists only in the container" "only in this c
 newrepo i; : > "$GH2_LOG"; OUT="$(run_block true "$P5" "$W/repo-i" VERIFY_STATE=PASS GH2_FAIL_REPO=1)"; RC=$?
 assert_exit "Phase 5 default branch unreadable → stops" 1 "$RC"
 refute_grep "…the gh error body never becomes the PR base" "repos/o/r/pulls" "$(cat "$GH2_LOG")"
+# Phase 0.5 PR setup (N is the block's own example value, 19): every stop is a real exit — no block
+# defines `abort`, so a stop that relied on it fell through into `git checkout -b` (verify round 3)
+assert_true "idd-all: the Phase 0.5 PR setup block was found" '[ -n "$P05PR" ]'
+p05() { newrepo "$1"; git -C "$W/repo-$1" checkout -q "${2:-main}" 2>/dev/null || git -C "$W/repo-$1" checkout -q -b "$2"; shift 2; }
+p05 p1 main; OUT="$(run_block true "$P05PR" "$W/repo-p1")"; RC=$?
+assert_exit "Phase 0.5 PR setup on a clean default branch succeeds" 0 "$RC"
+assert_eq "…and checks out idd/19-some-title" "idd/19-some-title" "$(git -C "$W/repo-p1" branch --show-current)"
+p05 p2 main; mkdir -p "$W/repo-p2/.claude/.idd/state"; echo '{}' > "$W/repo-p2/.claude/.idd/state/unattended.json"
+printf '.claude/\n' >> "$W/repo-p2/.git/info/exclude"
+OUT="$(run_block true "$P05PR" "$W/repo-p2" GH2_FAIL_TITLE=1)"; RC=$?
+assert_exit "Phase 0.5: an unreadable issue title stops the run" 1 "$RC"
+assert_grep "…saying why" "could not read the title" "$OUT"
+assert_eq "…without creating a branch from the error text" "main" "$(git -C "$W/repo-p2" branch --show-current)"
+refute "…and clears the unattended flag (abort duty, #123)" test -e "$W/repo-p2/.claude/.idd/state/unattended.json"
+p05 p3 feature-x; OUT="$(run_block true "$P05PR" "$W/repo-p3" GH2_FAIL_REPO=1)"; RC=$?
+assert_exit "Phase 0.5: an unreadable default branch stops the run" 1 "$RC"
+assert_eq "…without branching off feature-x" "feature-x" "$(git -C "$W/repo-p3" branch --show-current)"
+p05 p4 feature-x; OUT="$(run_block "" "$P05PR" "$W/repo-p4")"; RC=$?
+assert_exit "Phase 0.5: off the default branch stops the run (local too)" 1 "$RC"
+refute_grep "…never 'command not found'" "command not found" "$OUT"
 newrepo e; : > "$GH2_LOG"; run_block "" "$P5" "$W/repo-e" VERIFY_STATE=PASS >/dev/null
 assert_output_grep "Phase 5 local + PASS: PR body keeps the 6-AI line" "6-AI cross-model verification PASS" "$GH2_PRBODY"
 refute_grep "Phase 5: no porcelain reaches gh" "unexpected porcelain" "$(cat "$GH2_LOG") $OUT"

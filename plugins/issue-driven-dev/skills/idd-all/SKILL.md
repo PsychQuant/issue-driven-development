@@ -403,11 +403,15 @@ blocked 的 outcome 文字：E1 → `existing PR #P`；E3 → `already merged in
 
 ```bash
 if [ "$PATH_AXIS" = "PR" ]; then
+  # Explicit stop, not the `abort` convention: no block defines `abort`, so it would print "command not
+  # found" and fall through into `git checkout -b` (#416 verify round 3). Clears the unattended flag
+  # Phase 0.5 just set (abort duty, #123).
+  pr_setup_stop() { echo "✗ $*" >&2; . "$CLAUDE_PLUGIN_ROOT/scripts/lib/unattended-state.sh" && clear_unattended "$CWD"; exit 1; }
   # PR-mode-only preconditions
   if [ -n "$(git -C "$CWD" status --porcelain)" ]; then
     echo "Uncommitted changes detected in $CWD. PR mode needs a clean working tree."
     git -C "$CWD" status --short
-    abort "Run 'git -C $CWD stash' or commit first, then re-run /idd-all."
+    pr_setup_stop "Run 'git -C $CWD stash' or commit first, then re-run /idd-all."
   fi
 
   CURRENT=$(git -C "$CWD" branch --show-current)
@@ -415,16 +419,16 @@ if [ "$PATH_AXIS" = "PR" ]; then
   # where an empty DEFAULT would abort with "must start from ''". On an HTTP error `gh api` prints
   # the error body on stdout (`--jq` is not applied), so the exit status decides, not the output.
   DEFAULT=$(gh api "repos/$GITHUB_REPO" --jq .default_branch) || DEFAULT=""
-  [ -n "$DEFAULT" ] || abort "could not read the default branch of $GITHUB_REPO (see the gh error above)"
+  [ -n "$DEFAULT" ] || pr_setup_stop "could not read the default branch of $GITHUB_REPO (see the gh error above)"
   if [ "$CURRENT" != "$DEFAULT" ]; then
-    abort "$CWD is currently on '$CURRENT'. PR mode must start from '$DEFAULT'.
+    pr_setup_stop "$CWD is currently on '$CURRENT'. PR mode must start from '$DEFAULT'.
    Run: git -C $CWD checkout $DEFAULT"
   fi
 
   # Build feature branch name
   N="19"  # 從 args 或 idd-issue 結果取得
   TITLE=$(gh api "repos/$GITHUB_REPO/issues/$N" --jq .title) \
-    || abort "could not read the title of #$N (see the gh error above)"   # or the error JSON becomes the slug
+    || pr_setup_stop "could not read the title of #$N (see the gh error above)"   # or the error JSON becomes the slug
   # SLUG sanitization — POSIX-portable; avoids BSD/GNU sed `\|` divergence (#6 fix)
   SLUG=$(echo "$TITLE" | tr '[:upper:]' '[:lower:]' \
       | sed -E 's/[^a-z0-9]/-/g; s/-+/-/g; s/^-//; s/-$//' \
@@ -520,15 +524,19 @@ if [ "$PATH_AXIS" = "PR" ] && [ "$INTERACTION" = "unattended" ]; then
     # Default branch via REST: `gh repo view` is GraphQL, blocked in cloud sessions (#416).
     if [ -n "${BRANCH:-}" ] && git -C "$CWD" show-ref --verify --quiet "refs/heads/$BRANCH"; then
       DEFAULT=$(gh api "repos/$GITHUB_REPO" --jq .default_branch) || DEFAULT=""
-      if [ -n "$DEFAULT" ]; then
-        echo "→ Unwinding Phase 0.5 PR-mode branch setup:"
-        echo "    git checkout $DEFAULT"
-        git -C "$CWD" checkout "$DEFAULT" 2>&1 | tail -1
-        echo "    git branch -d $BRANCH (no commits yet — safe delete)"
-        git -C "$CWD" branch -d "$BRANCH" 2>&1 | tail -1
-      else
-        echo "⚠ could not read the default branch — $BRANCH left checked out; switch back and delete it by hand"
+      if [ -z "$DEFAULT" ]; then
+        # Without the default branch there is no safe unwind, and degrading here would commit onto the
+        # dangling feature branch (the F2 failure) — stop instead, local and cloud alike (#416 verify r3).
+        echo "✗ could not read the default branch of $GITHUB_REPO — $BRANCH left checked out; switch back, delete it, then re-run" >&2
+        echo "  (ralph-loop: claude plugin install ralph-loop@claude-plugins-official)" >&2
+        . "$CLAUDE_PLUGIN_ROOT/scripts/lib/unattended-state.sh" && clear_unattended "$CWD"   # abort duty (#123)
+        exit 1
       fi
+      echo "→ Unwinding Phase 0.5 PR-mode branch setup:"
+      echo "    git checkout $DEFAULT"
+      git -C "$CWD" checkout "$DEFAULT" 2>&1 | tail -1
+      echo "    git branch -d $BRANCH (no commits yet — safe delete)"
+      git -C "$CWD" branch -d "$BRANCH" 2>&1 | tail -1
     fi
 
     if idd_is_cloud_session; then
@@ -1028,7 +1036,10 @@ for round in 1..MAX_ROUND:
 
     # unattended path: auto-fix attempt
     if round == MAX_ROUND:
-        if is_cloud_session():   # #416: unpushed commits die with the container — push, no PR
+        # #416: unpushed commits die with the container — push, no PR. Not when a blocking finding is a
+        # security one: the commits may carry a secret, and a push publishes it (verify r3). Then the
+        # message says the commits exist only in this container and need a human look before any push.
+        if is_cloud_session() and not any(f.is_security for f in findings.blocking):
             git_push_branch_without_pr()   # git -C "$CWD" push -u origin "$BRANCH"; report a push failure
         abort_with_message(f"verify still failing after {MAX_ROUND} rounds; manual intervention needed")
 
@@ -1043,7 +1054,7 @@ for round in 1..MAX_ROUND:
 
 - 文法/拼字/字串 typo → 安全可修
 - 邏輯錯誤(null check, edge case) → 嘗試但 risky
-- 安全漏洞 → **不 auto-fix**,直接 abort 讓 user 處理(雲端 session 先 push branch、不開 PR,#416)
+- 安全漏洞 → **不 auto-fix**,直接 abort 讓 user 處理。雲端 session 也**不 push**(commit 可能帶著 secret,push 就公開了);訊息要說明 commits 只在 container 裡,請人看過再決定要不要 push(#416 verify r3)
 
 每個 auto-fix commit:`fix: address verify finding — {finding summary} (#$N)`
 
@@ -1383,7 +1394,7 @@ fi
 | spectra-propose 沒 emit `Change:` line | 同上 |
 | spectra-propose 遇到 unrecoverable validation error | Phase 3b abort,artifacts 保留,提示手動 `/spectra-propose` |
 | spectra-apply 留下 unfinished tasks | 不 abort — Phase 4 verify 會抓出來 |
-| Verify 2 round 後仍 blocking | Phase 4 abort,留 branch 給 user 手動修;雲端 session 先 push branch(不開 PR,#416)|
+| Verify 2 round 後仍 blocking | Phase 4 abort,留 branch 給 user 手動修;雲端 session 先 push branch(不開 PR,#416)——blocking 裡有安全 finding 時不 push |
 | Phase 5 `VERIFY_STATE` 不是 `PASS`／`BLOCKING`(shell 狀態遺失)| Phase 5 abort,**不 push、不開 PR**;從 Phase 4 的結果設好 `VERIFY_STATE` 再跑一次(#416:缺值絕不當 PASS)|
 | Phase 5 `git push` 失敗 | Phase 5 abort,不開 PR;commits 留在本地 branch(雲端 session:只存在 container 裡,session 結束前手動 push)|
 | PR 建立失敗(REST `POST repos/R/pulls`)| Phase 5 abort,branch 已 push,提示手動開 PR |
@@ -1393,7 +1404,7 @@ abort 時:
 - TaskList 標記當前 phase 為 in_progress(不要 mark completed)
 - 顯示「自己手動接手」的具體命令(例:`/idd-verify #19` 或 `gh pr create ...`)
 - branch 不刪除(保留進度,user 可繼續)
-- 雲端 session(#416):不 push 的 abort(Phase 4／5 type guard、shell 狀態遺失、`git push` 失敗)讓 commits 只留在 container 裡 —— 訊息要提醒 session 結束前手動 `git -C $CWD push -u origin $BRANCH`(不開 PR)
+- 雲端 session(#416):不 push 的 abort(Phase 4／5 type guard、安全 finding、shell 狀態遺失、`git push` 失敗)讓 commits 只留在 container 裡 —— 訊息要提醒 session 結束前手動 `git -C $CWD push -u origin $BRANCH`(不開 PR;安全 finding 先確認 commit 裡沒有 secret)
 
 ---
 

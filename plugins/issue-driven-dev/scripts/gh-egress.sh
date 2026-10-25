@@ -82,8 +82,9 @@
 #   11  mention net hit (unattested @login token / entity-encoded @ form)
 #   12  unscannable body (unreadable file or unavailable/failed Markdown parser; body file not UTF-8)
 #   13  attestation missing/invalid (--scrub-attested absent or bad level)
-#   14  usage error (bad/missing verb, malformed/split-token args, flag missing its value;
-#       REST transport: unsupported flag, missing title / issue, stray positional, unknown milestone)
+#   14  usage error (bad/missing verb, malformed/split-token args, flag missing its value, more than
+#       one --body / --body-file outside `check`; REST transport: unsupported flag, missing title / issue, stray
+#       positional, unknown label / milestone)
 #   15  empty/near-empty body on the body channel (#275 — the signature of upstream
 #       composition failing silently; edit additionally floors at 10 stripped chars
 #       because its overwrite semantics turn an empty dispatch into data loss.
@@ -141,6 +142,7 @@ ALLOW_EMPTY_BODY=""   # #275 escape hatch: explicit intent to dispatch an empty/
 EC_ID=""            # edit-comment: target comment id (first bare numeric positional, #273)
 EC_REPO=""          # edit-comment: owner/repo (from --repo)
 BODYFILE_PATH=""    # edit-comment: dispatch needs the PATH, not just the content
+BODY_SOURCES=0      # --body / --body-file values seen — at most one (#416 verify round 3)
 MENTION_ATTESTED=""   # comma-separated logins vetted via rules/tagging-collaborators.md 5-step (#117)
 GH_ARGS=()          # forwarded to gh, byte-identical minus the attestation flag
 SCAN_PARTS=()       # all drafted prose (--body / --title / --body-file) — privacy nets
@@ -160,12 +162,12 @@ while [ $# -gt 0 ]; do
       *)
         GH_ARGS+=("$arg")
         case "$next_is" in
-          body)       SCAN_PARTS+=("$arg"); BODY_PARTS+=("$arg") ;;
+          body)       SCAN_PARTS+=("$arg"); BODY_PARTS+=("$arg"); BODY_SOURCES=$((BODY_SOURCES + 1)) ;;
           title)      SCAN_PARTS+=("$arg") ;;
           repo)       EC_REPO="$arg" ;;
           meta)       : ;;   # label / assignee / milestone value: forwarded, not prose
           bodyfile)   require_scannable_bodyfile "$arg"; BODYFILE_PATH="$arg"; FCONTENT="$(cat "$arg")"
-                      SCAN_PARTS+=("$FCONTENT"); BODY_PARTS+=("$FCONTENT") ;;
+                      SCAN_PARTS+=("$FCONTENT"); BODY_PARTS+=("$FCONTENT"); BODY_SOURCES=$((BODY_SOURCES + 1)) ;;
         esac
         next_is=""; shift; continue ;;
     esac
@@ -220,14 +222,14 @@ while [ $# -gt 0 ]; do
       GH_ARGS+=("$arg")
       case "$arg" in -t|--title) next_is="title" ;; *) next_is="body" ;; esac
       shift; continue ;;
-    --body=*)   GH_ARGS+=("$arg"); SCAN_PARTS+=("${arg#--body=}"); BODY_PARTS+=("${arg#--body=}"); shift; continue ;;
+    --body=*)   GH_ARGS+=("$arg"); SCAN_PARTS+=("${arg#--body=}"); BODY_PARTS+=("${arg#--body=}"); BODY_SOURCES=$((BODY_SOURCES + 1)); shift; continue ;;
     --title=*)  GH_ARGS+=("$arg"); SCAN_PARTS+=("${arg#--title=}");  shift; continue ;;
     -F|--body-file)
       GH_ARGS+=("$arg"); next_is="bodyfile"; shift; continue ;;
     # Attached short forms: `-bX` is X and `-b=X` is X too (pflag strips one `=`; so does the transport).
     -b?*)
       v="${arg#-b}"; v="${v#=}"
-      GH_ARGS+=("$arg"); SCAN_PARTS+=("$v"); BODY_PARTS+=("$v"); next_is=""; shift; continue ;;
+      GH_ARGS+=("$arg"); SCAN_PARTS+=("$v"); BODY_PARTS+=("$v"); BODY_SOURCES=$((BODY_SOURCES + 1)); next_is=""; shift; continue ;;
     -t?*)
       v="${arg#-t}"; v="${v#=}"
       GH_ARGS+=("$arg"); SCAN_PARTS+=("$v"); next_is=""; shift; continue ;;
@@ -235,11 +237,11 @@ while [ $# -gt 0 ]; do
       GH_ARGS+=("$arg"); f="${arg#-F}"; f="${f#=}"
       require_scannable_bodyfile "$f"
       BODYFILE_PATH="$f"
-      FCONTENT="$(cat "$f")"; SCAN_PARTS+=("$FCONTENT"); BODY_PARTS+=("$FCONTENT"); next_is=""; shift; continue ;;
+      FCONTENT="$(cat "$f")"; SCAN_PARTS+=("$FCONTENT"); BODY_PARTS+=("$FCONTENT"); BODY_SOURCES=$((BODY_SOURCES + 1)); next_is=""; shift; continue ;;
     --body-file=*) GH_ARGS+=("$arg"); next_is=""; f="${arg#--body-file=}"
       require_scannable_bodyfile "$f"
       BODYFILE_PATH="$f"
-      FCONTENT="$(cat "$f")"; SCAN_PARTS+=("$FCONTENT"); BODY_PARTS+=("$FCONTENT"); shift; continue ;;
+      FCONTENT="$(cat "$f")"; SCAN_PARTS+=("$FCONTENT"); BODY_PARTS+=("$FCONTENT"); BODY_SOURCES=$((BODY_SOURCES + 1)); shift; continue ;;
     *)
       # a positional (pending values were taken above)
       GH_ARGS+=("$arg")
@@ -249,6 +251,15 @@ while [ $# -gt 0 ]; do
       shift; continue ;;
   esac
 done
+
+# One body source per call (#416 verify round 3). gh and the REST transport keep only the LAST
+# --body / --body-file (edit-comment sends only the last file), while the nets and the #275 guard
+# read every one — so `--body "<long decoy>" --body ""` passed the guard and sent an empty body.
+# `check` sends nothing, so several inputs there are fine (each is scanned on its own markdown boundary).
+if [ "$VERB" != "check" ] && [ "$BODY_SOURCES" -gt 1 ]; then
+  echo "✗ gh-egress: REFUSED — give the body once (one --body or --body-file, not $BODY_SOURCES): gh sends only the last, the gates would check them all." >&2
+  exit 14
+fi
 
 # --- (a) attestation enforcement (deterministic) -----------------------------
 case "$ATTESTED" in
