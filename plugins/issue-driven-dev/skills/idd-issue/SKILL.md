@@ -692,6 +692,7 @@ URL=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" create \
 EOF
 )" \
   --label "$TYPE"); CREATE_RC=$?
+URL="${URL%$'\r'}"   # a CR from a CRLF-printing gh would make the number non-numeric
 NUMBER="${URL##*/}"
 case "$NUMBER" in ''|0*|*[!0-9]*) NUMBER="" ;; esac
 if [ "$CREATE_RC" -ne 0 ] && [ -n "$NUMBER" ]; then
@@ -1022,6 +1023,7 @@ fi
 **#142 Safeguard 1 — VERIFY by reading back**（auto-create 路徑）。`gh label create` 成功時**無 stdout**，且對「已存在」case 也 silently noop —— exit code + stdout 無法區分「剛建成」「早就有」「靜默失敗」。唯一可靠偵測是建完再讀回：
 
 ```bash
+# label_exists() is the function from the Safeguard 2 block — define it in this same Bash call (#414)
 gh label create "$LABEL_NAME" --repo "$GITHUB_REPO" \
   --description "$LABEL_DESC" --color "$LABEL_COLOR" 2>/dev/null
 if label_exists "$LABEL_NAME"; then
@@ -1029,7 +1031,7 @@ if label_exists "$LABEL_NAME"; then
   FRESH_LABEL_CREATED=1        # 給 Step 5 Safeguard 3 hint 用（只在真的新建時提示）
 else
   echo "✗ ABORT: gh label create 之後讀不回 label（不存在，或讀取失敗、訊息見上）— 查 API quota / 權限 / 網路後重跑"
-  return 1
+  exit 1
 fi
 ```
 
@@ -1068,7 +1070,7 @@ AUTO_TAG_ENABLED=$(jq -r '.auto_tag.enabled // true' "$CONFIG_PATH" 2>/dev/null 
 ```bash
 BASELINE_FMT=$(jq -r '.auto_tag.baseline_format // "idd-{N}-baseline"' "$CONFIG_PATH" 2>/dev/null || echo "idd-{N}-baseline")
 PUSH_REMOTE=$(jq -r '.auto_tag.push_remote // "origin"' "$CONFIG_PATH" 2>/dev/null || echo origin)
-TAG="${BASELINE_FMT/\{N\}/$NUMBER}"                       # idd-{N}-baseline → idd-42-baseline
+TAG="${BASELINE_FMT/\{N\}/${NUMBER:-}}"                   # idd-{N}-baseline → idd-42-baseline (guarded below)
 DEFAULT_BRANCH=$(gh repo view "$GITHUB_REPO" --json defaultBranchRef -q .defaultBranchRef.name)
 # #412: tag only a real issue number. An empty or non-numeric $NUMBER (the issue was not created, or a mode
 # that keeps its number in another variable) would tag `idd--baseline`, and the idempotent check below would

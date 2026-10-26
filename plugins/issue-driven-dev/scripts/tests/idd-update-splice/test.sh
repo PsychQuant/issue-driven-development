@@ -38,8 +38,15 @@ cat > "$TMP/bin/gh" <<'STUB'
 printf '%s\n' "$STUB_BODY"
 STUB
 chmod +x "$TMP/bin/gh"
+# the block also sends the result (gh-egress edit) in the same call; the stub records what would be sent
+mkdir -p "$TMP/root/scripts"
+cat > "$TMP/root/scripts/gh-egress.sh" <<'STUB'
+#!/usr/bin/env bash
+while [ $# -gt 0 ]; do case "$1" in --body) printf '%s' "$2" > "$SENT"; shift 2 ;; *) shift ;; esac; done
+STUB
+export SENT="$TMP/sent.txt"
 splice() { # $1 = body → UPDATED_BODY on stdout (exact bytes, via a trailing sentinel)
-  PATH="$TMP/bin:$PATH" STUB_BODY="$1" NUMBER=7 GITHUB_REPO=o/r NEW_STATUS="$NEW_STATUS" \
+  PATH="$TMP/bin:$PATH" STUB_BODY="$1" NUMBER=7 GITHUB_REPO=o/r NEW_STATUS="$NEW_STATUS" CLAUDE_PLUGIN_ROOT="$TMP/root" SCRUB_LEVEL=warn \
     bash -c "$SPLICE"$'\n''printf "%s<END>" "$UPDATED_BODY"'
 }
 check() { # $1 = label, $2 = body, $3 = expected prefix that must survive verbatim
@@ -81,18 +88,28 @@ check "A, audit block above is kept"     $'Problem.\n\n---\n\n### Clarity Surfac
 # fences, the CommonMark way (verify r1): a quoted heading inside ~~~ or a 4-backtick fence is not the anchor
 check "B, ~~~ fence quoting the heading"   $'Text.\n\n~~~\n## Current Status\nquoted\n~~~'   $'Text.\n\n~~~\n## Current Status\nquoted\n~~~'
 check "B, 4-backtick fence holding a 3-backtick line" $'````\n```\n## Current Status\n````'  $'````\n```\n## Current Status\n````'
-check "A, a line starting with inline triple backticks is not a fence" $'```x``` is inline\n\n---\n\n## Current Status\nold status' $'```x``` is inline'
+# a backtick in the info string means "not a fence": read as a fence, the line would hide the heading and the
+# later fences would leave it closed, so the old status would be kept and a second one appended
+check "A, a line starting with inline triple backticks is not a fence" $'```x``` is inline\n\n## Current Status\nold status\n\n```\ncode\n```' $'```x``` is inline'
 # an unclosed fence (#290): repeated runs must not keep appending Current Status blocks
 U=$'Problem.\n\n```\nunclosed fence'
 for run in 1 2 3; do U="$(splice "$U")"; U="${U%<END>}"; done
 assert_eq "unclosed fence: three runs leave one Current Status line" "1" "$(printf '%s\n' "$U" | grep -c '^## Current Status$')"
 assert_grep "unclosed fence: the original text is still there" "unclosed fence" "$U"
 
+# the first Current Status outside fences is the anchor: duplicates an older run left are merged into one
+check "A, two Current Status blocks are merged" $'Problem.\n\n---\n\n## Current Status\nold status\n\n---\n\n## Current Status\nold status again' $'Problem.'
+# what is sent is exactly the spliced body
+: > "$SENT"; OUT="$(splice $'Text\n')"; OUT="${OUT%<END>}"
+assert_eq "the body sent through gh-egress is the spliced body" "$OUT" "$(cat "$SENT")"
+
 # the block refuses to write when its inputs are missing or the body cannot be read (shell state lost, #414)
 OUT="$(PATH="$TMP/bin:$PATH" STUB_BODY=x NUMBER=7 GITHUB_REPO=o/r NEW_STATUS="" bash -c "$SPLICE" 2>&1)"; RC=$?
 assert_exit "an empty NEW_STATUS stops the splice" 1 "$RC"
 OUT="$(PATH="$TMP/bin:$PATH" STUB_BODY=x NUMBER= GITHUB_REPO=o/r NEW_STATUS="$NEW_STATUS" bash -c "$SPLICE" 2>&1)"; RC=$?
 assert_exit "a lost NUMBER stops the splice" 1 "$RC"
+OUT="$(PATH="$TMP/bin:$PATH" STUB_BODY=x NUMBER=7 GITHUB_REPO= NEW_STATUS="$NEW_STATUS" bash -c "$SPLICE" 2>&1)"; RC=$?
+assert_exit "a lost GITHUB_REPO stops the splice" 1 "$RC"
 OUT="$(PATH="$TMP/bin:$PATH" STUB_FAIL=1 NUMBER=7 GITHUB_REPO=o/r NEW_STATUS="$NEW_STATUS" bash -c "$SPLICE"$'\n''echo "UPDATED=[$UPDATED_BODY]"' 2>&1)"; RC=$?
 assert_exit "a failed body read stops the splice (no status-only overwrite)" 1 "$RC"
 refute_grep "…before any UPDATED_BODY exists" "UPDATED=[" "$OUT"

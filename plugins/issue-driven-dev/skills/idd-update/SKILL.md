@@ -339,18 +339,18 @@ HEAD_PART=$(printf '%s\n' "$BODY" | awk '
     for (i = 1; i <= m; i++) print L[i]
   }')
 UPDATED_BODY="${HEAD_PART}"$'\n\n'"${NEW_STATUS}"
+# Send in this same call — UPDATED_BODY does not survive into another Bash call (#414).
+# （#226）egress 經 gh-egress.sh 派送：$SCRUB_LEVEL 依 rules/privacy-scrubbing.md 解析
+# （third-party=enforce / own-public=warn / private=light），派送前先跑 LLM 隱私自審；
+# 有 @mention 時另帶 --mention-attested（rules/tagging-collaborators.md 5-step 後）。
+bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit "$NUMBER" --repo "$GITHUB_REPO" --body "$UPDATED_BODY" --scrub-attested "$SCRUB_LEVEL"
 ```
 
 > **為何不錨在第一個 `---`（#178）**：`/idd-issue` 的 parking-lot seed 在第一個 `---` 下放的是 **audit blocks**（`### Clarity Surface` / `### Linked-Context Siblings`），不是 Current Status。錨在「第一個 `---` 以下全替換」會**靜默刪掉**這些 audit。`---` 在 IDD body 語意不唯一（既分隔 original/audit，也分隔 audit/status），不能當 managed-zone 的唯一錨。
 >
 > **Backward-compat**：既有「`---` 緊鄰 `## Current Status`」的 body，Branch A 與舊「replace below first `---`」產出**同結果**。只有「多個 `---`、audit 夾在中間」的 body 行為改變 —— 那正是修復（舊邏輯誤刪、新邏輯保留）。Fix **strictly safer**：只保留更多、不刪更多。
 
-```bash
-# （#226）egress 經 gh-egress.sh 派送：$SCRUB_LEVEL 依 rules/privacy-scrubbing.md 解析
-# （third-party=enforce / own-public=warn / private=light），派送前先跑 LLM 隱私自審；
-# 有 @mention 時另帶 --mention-attested（rules/tagging-collaborators.md 5-step 後）。
-bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit $NUMBER --repo $GITHUB_REPO --body "$UPDATED_BODY" --scrub-attested "$SCRUB_LEVEL"
-```
+寫回在上面同一段裡送出（經 `gh-egress.sh edit`）：接合結果只活在那一個 Bash 呼叫裡。
 
 ### Step 6: Report Update
 

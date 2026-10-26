@@ -61,6 +61,12 @@ OUT="$(run36 "$TMP/r-good" 42 "$S36")"; RC=$?
 assert_exit "Step 3.6, NUMBER=42: succeeds" 0 "$RC"
 assert_eq "Step 3.6, NUMBER=42: tags idd-42-baseline on the remote" "idd-42-baseline" "$(remote_tags "$TMP/r-good")"
 
+# under `set -u` an unset NUMBER still skips gracefully (TAG is built before the guard)
+newrepo unset
+OUT="$( cd "$TMP/r-unset" && PATH="$TMP/bin:$PATH" GITHUB_REPO=o/r CONFIG_PATH="$TMP/no-config.json" bash -u -c "$S36" 2>&1 )"; RC=$?
+assert_exit "Step 3.6 under set -u, NUMBER unset: never aborts" 0 "$RC"
+assert_grep "…and skips with a reason" "graceful-skip" "$OUT"
+
 # positive control: neutralise the guard → the empty number tags idd--baseline again
 MUTANT="$(printf '%s' "$S36" | sed 's/BASELINE_SKIP="no valid issue number[^;]*;/BASELINE_SKIP="";/')"
 assert_true "control: the guard line is present to neutralise" '[ "$MUTANT" != "$S36" ]'
@@ -77,13 +83,14 @@ case "${STUB_MODE:-ok}" in
   fail)    echo "could not add label: 'P0' not found" >&2; exit 1 ;;
   refused) echo "✗ gh-egress: REFUSED — privacy net" >&2; exit 10 ;;
   garbage) echo "oops" ;;
+  crlf)    printf 'https://github.com/o/r/issues/79\r\n' ;;
   url_then_fail) echo "https://github.com/o/r/issues/78"; echo "gh: later step failed" >&2; exit 1 ;;
 esac
 STUB
 chmod +x "$FR/scripts/gh-egress.sh"
-run3a() { # $1 STUB_MODE → output + the numbers left behind; returns the block's exit code
-  STUB_MODE="$1" CLAUDE_PLUGIN_ROOT="$FR" GITHUB_REPO=o/r TITLE=T TYPE=bug SCRUB_LEVEL=warn NUMBER=999 \
-    bash -c "$S3A"$'\n''echo "NUMBER=[$NUMBER] NEW=[${NEW_ISSUE_NUMBER:-}]"' 2>&1
+run3a() { # $1 STUB_MODE → output + the numbers left behind (also on exit); returns the block's exit code
+  STUB_MODE="$1" CLAUDE_PLUGIN_ROOT="$FR" GITHUB_REPO=o/r TITLE=T TYPE=bug SCRUB_LEVEL=warn NUMBER=999 NEW_ISSUE_NUMBER=999 \
+    bash -c 'trap '"'"'echo "EXIT-NUMBER=[${NUMBER:-}] EXIT-NEW=[${NEW_ISSUE_NUMBER:-}]"'"'"' EXIT'$'\n'"$S3A"$'\n''echo "NUMBER=[$NUMBER] NEW=[${NEW_ISSUE_NUMBER:-}]"' 2>&1
 }
 OUT="$(run3a ok)"; RC=$?
 assert_exit "Step 3.A, created: continues" 0 "$RC"
@@ -93,9 +100,12 @@ for mode in fail refused garbage; do
   OUT="$(run3a "$mode")"; RC=$?
   assert_exit "Step 3.A, $mode: stops" 1 "$RC"
   assert_grep "Step 3.A, $mode: says the issue was not created" "issue was not created" "$OUT"
-  refute_grep "Step 3.A, $mode: a stale number from before is not kept" "NUMBER=[999]" "$OUT"
+  assert_grep "Step 3.A, $mode: a stale number from before is not kept" "EXIT-NUMBER=[] EXIT-NEW=[]" "$OUT"
 done
 
+OUT="$(run3a crlf)"; RC=$?
+assert_exit "Step 3.A, URL printed with a CR: continues" 0 "$RC"
+assert_grep "…with the number" "NUMBER=[79]" "$OUT"
 OUT="$(run3a url_then_fail)"; RC=$?
 assert_exit "Step 3.A, URL printed but non-zero exit: stops" 1 "$RC"
 assert_grep "…saying the issue may exist (no blind retry)" "the issue may exist" "$OUT"
