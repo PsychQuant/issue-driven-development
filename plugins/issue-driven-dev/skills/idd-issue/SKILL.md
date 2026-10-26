@@ -661,7 +661,11 @@ if new_match exists AND new_match != tentative_default:
 
 ```bash
 # egress via privacy-scrubbing choke-point wrapper (Step 0.6 / #202) — never raw `gh issue create`
-bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" create \
+# Capture the URL and check the number (#412). On every failure — gh's own error, a missing label, a
+# gh-egress refusal (exit 10-15) — stdout is empty, so an unchecked capture became NUMBER="" and Step 3.6
+# tagged `idd--baseline`. Reset first, so a number left over from an earlier step cannot survive a failure.
+NUMBER=""; NEW_ISSUE_NUMBER=""
+URL=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" create \
   --repo $GITHUB_REPO \
   --title "$TITLE" \
   --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"} \
@@ -687,8 +691,18 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" create \
 ...
 EOF
 )" \
-  --label "$TYPE"
+  --label "$TYPE"); CREATE_RC=$?
+NUMBER="${URL##*/}"
+case "$CREATE_RC:$NUMBER" in 0:[1-9]*) case "$NUMBER" in *[!0-9]*) NUMBER="" ;; esac ;; *) NUMBER="" ;; esac
+if [ -z "$NUMBER" ]; then
+  echo "✗ issue was not created (gh-egress exit $CREATE_RC; its message is above) — stopping: Step 3.5 onward (labels, baseline tag, attachments, Clarity) does not run" >&2
+  exit 1
+fi
+NEW_ISSUE_NUMBER="$NUMBER"   # the name Step 4.6 reads
+echo "→ created $URL"
 ```
+
+建立失敗就停在這裡，Step 5 回報失敗原因（gh-egress 已把 gh 的訊息或拒絕原因印在上面）；之後的 Step 3.5～4.6 都需要一個真的 issue 號（#412）。
 
 > **CRITICAL**: 來自文件的 issue **必須**逐字引用原文。AI 摘要會失真，原文是唯一不會漂移的東西。
 
@@ -1025,7 +1039,7 @@ AskUserQuestion:
 
 ### Step 3.6: Baseline auto-tag（rollback anchor，v2.94.0+，#85）
 
-Issue 建立成功、拿到 `$NUMBER` 之後，`tag_baseline` step 在當前 repo 打一個 **rollback baseline** tag，標記「issue 開案當下的 main HEAD」，方便日後一秒切回開工前的乾淨狀態（`git checkout idd-{N}-baseline`），不用記 commit hash。
+Issue 建立成功、拿到 Step 3.A 驗證過的 `$NUMBER` 之後，`tag_baseline` step 在當前 repo 打一個 **rollback baseline** tag，標記「issue 開案當下的 main HEAD」，方便日後一秒切回開工前的乾淨狀態（`git checkout idd-{N}-baseline`），不用記 commit hash。
 
 **Config gate（預設 on，可 opt-out）** — 讀 walked-up config 的 `auto_tag`（schema 見 [`references/config-protocol.md`](../../references/config-protocol.md#auto_tag-field)）：
 
@@ -1041,9 +1055,15 @@ BASELINE_FMT=$(jq -r '.auto_tag.baseline_format // "idd-{N}-baseline"' "$CONFIG_
 PUSH_REMOTE=$(jq -r '.auto_tag.push_remote // "origin"' "$CONFIG_PATH" 2>/dev/null || echo origin)
 TAG="${BASELINE_FMT/\{N\}/$NUMBER}"                       # idd-{N}-baseline → idd-42-baseline
 DEFAULT_BRANCH=$(gh repo view "$GITHUB_REPO" --json defaultBranchRef -q .defaultBranchRef.name)
+# #412: tag only a real issue number. An empty or non-numeric $NUMBER (the issue was not created, or a mode
+# that keeps its number in another variable) would tag `idd--baseline`, and the idempotent check below would
+# then hide every later failure as "already exists".
+case "${NUMBER:-}" in ''|0*|*[!0-9]*) BASELINE_SKIP="no valid issue number ('${NUMBER:-}')" ;; *) BASELINE_SKIP="" ;; esac
 
+if [ -n "$BASELINE_SKIP" ]; then
+    echo "⚠ auto_tag baseline: $BASELINE_SKIP — graceful-skip, not tagging"
 # idempotent: a tag that already exists is skipped (re-running idd-issue never re-tags)
-if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+elif git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
     echo "→ $TAG already exists — skip (idempotent)"
 else
     # baseline = the LOCAL default-branch HEAD (where main was when the issue opened)
