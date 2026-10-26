@@ -295,9 +295,32 @@ Phase 4     idd-verify 的 Auto-Update → idd-update（無 flag）→ 整段重
 
 Managed zone 錨在 **`## Current Status` heading**，**不是**第一個 `---`。依 body 現狀走兩分支：
 
-**Branch A — body 已有 `## Current Status`**：從該 heading 起（含其上**緊鄰**的 `---`，若有）到 body 結尾，整段替換為新的 Current Status 區塊。`## Current Status` 以上的所有內容（原始記錄 + 任何 audit blocks）**逐字保留**。
+**Branch A — body 已有 `## Current Status`**：從該 heading 起（含其上**緊鄰**的 `---`，若有）到 body 結尾，整段替換為新的 Current Status 區塊。`## Current Status` 以上的所有內容（原始記錄 + 任何 audit blocks）**逐字保留**，只有一個例外：接合處一律是一個空行（見下方接合規則）。
 
-**Branch B — body 無 `## Current Status`**：**append** 新區塊（`\n---\n\n## Current Status...`）到 body 結尾，**保留所有既有內容**，不論 body 有幾個 `---`、`---` 下是什麼。
+**Branch B — body 無 `## Current Status`**：把新區塊接在 body 結尾，**保留所有既有內容**，不論 body 有幾個 `---`、`---` 下是什麼。
+
+**接合規則（兩個分支都一樣，#413）**：先去掉 body 結尾的換行，再以 `\n\n` 接上 Step 4 組好的區塊（以 `---` 開頭）。body 的最後一行絕不能直接接著 `---`：CommonMark 會把「段落的最後一行＋`---`」讀成 setext 標題，之後 `/idd-edit --correct` 就拒絕更正 Current Status 上一節。GitHub 網頁編輯的 body 常常沒有結尾換行，經過 `$(...)` 取得的 body 更是一律被刪掉結尾換行，所以不能依賴 body 自帶換行。Branch A 照同樣規則重接，舊版 Branch B 寫出的 setext 形狀（本 repo 有 23 個）會在下一次更新時自動修好。
+
+```bash
+# BODY = Step 1 讀到的 body；NEW_STATUS = Step 4 組好的區塊（以 `---` 開頭）。兩者要在同一個 Bash 呼叫裡設好 ——
+# shell 狀態不跨呼叫，空的 NEW_STATUS 會把 Current Status 寫成空白（#414）。
+[ -n "${NEW_STATUS:-}" ] || { echo "✗ idd-update Step 5: NEW_STATUS is empty (shell state lost?) — set it from Step 4 and re-run; body not changed" >&2; exit 1; }
+# Branch A: keep what is above `## Current Status` (outside code fences), minus the `---` right above it.
+# Both branches: drop trailing blank lines and newlines, then join with exactly one blank line (#413).
+HEAD_PART=$(printf '%s\n' "${BODY:-}" | awk '
+  /^[[:space:]]*```/ { infence = !infence }
+  !infence && /^## Current Status[[:space:]]*$/ { found = 1; exit }
+  { line[++n] = $0 }
+  END {
+    if (found) {
+      while (n > 0 && line[n] ~ /^[[:space:]]*$/) n--
+      if (n > 0 && line[n] ~ /^---[[:space:]]*$/) n--
+    }
+    while (n > 0 && line[n] ~ /^[[:space:]]*$/) n--
+    for (i = 1; i <= n; i++) print line[i]
+  }')
+UPDATED_BODY="${HEAD_PART}"$'\n\n'"${NEW_STATUS}"
+```
 
 > **為何不錨在第一個 `---`（#178）**：`/idd-issue` 的 parking-lot seed 在第一個 `---` 下放的是 **audit blocks**（`### Clarity Surface` / `### Linked-Context Siblings`），不是 Current Status。錨在「第一個 `---` 以下全替換」會**靜默刪掉**這些 audit。`---` 在 IDD body 語意不唯一（既分隔 original/audit，也分隔 audit/status），不能當 managed-zone 的唯一錨。
 >
@@ -363,7 +386,7 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit $NUMBER --repo $GITHUB_REPO
 
 ## 鐵律
 
-- **永遠不改 `## Current Status` managed zone 以外的內容**。原始記錄 + audit blocks（`### Clarity Surface` / `### Linked-Context Siblings` 等）都是審計軌跡。錨在 `## Current Status` heading，**不是**第一個 `---`（`---` 語意不唯一，錨在它會誤刪 audit — #178）。
+- **永遠不改 `## Current Status` managed zone 以外的內容**（唯一例外：Step 5 的接合規則確保 managed zone 上方有一個空行，#413）。原始記錄 + audit blocks（`### Clarity Surface` / `### Linked-Context Siblings` 等）都是審計軌跡。錨在 `## Current Status` heading，**不是**第一個 `---`（`---` 語意不唯一，錨在它會誤刪 audit — #178）。
 - **Key Decisions 每次重建**：每次執行都從 comments 目前的內容重新推導，不沿用上一版。來源被 `/idd-edit --correct` 就地更正的決定，下次執行就會消失；來源是別人的 comment、只能另貼 errata 的，由 errata 指名的決定在重建時排除（#351）。
 - **簡潔**。每個 bullet 一行，不超過 100 字。
 - **Phase 必須準確**。如果推斷不出來，標 `unknown` 並提醒使用者。
