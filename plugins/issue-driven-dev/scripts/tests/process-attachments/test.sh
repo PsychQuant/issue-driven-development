@@ -23,8 +23,11 @@ SCRIPT="$HERE/../../process-attachments.sh"
 STUB="$(mktemp -d)"
 cat > "$STUB/gh" <<'GHSTUB'
 #!/usr/bin/env bash
-case "${1:-}" in
-  issue)  # gh issue view N --repo R --json body,comments
+# REST only (#416): the script reads the issue through lib/gh-rest.sh, i.e.
+# `gh api repos/R/issues/N` + `…/comments?per_page=100&page=K`. porcelain() keeps
+# each mode's issue in the old `gh issue view --json body,comments` shape; the
+# api branch below serves it in the REST shape.
+porcelain() {
     case "${GH_STUB_MODE:-empty}" in
       empty)    printf '{"body":"## Problem\\nno attachment urls here","comments":[{"body":"plain comment"}]}\n' ;;
       with_url) printf '{"body":"spec: https://github.com/user-attachments/files/123/spec.docx ok","comments":[]}\n' ;;
@@ -44,6 +47,16 @@ case "${1:-}" in
       # suffix actually distinguishes them.
       collide)  printf '{"body":"a https://github.com/user-attachments/files/1/report.pdf and b https://github.com/user-attachments/files/2/report.pdf and c https://github.com/user-attachments/files/3/report.pdf","comments":[]}\n' ;;
       fail)     echo "gh: network error (stub)" >&2; exit 1 ;;
+    esac
+}
+case "${1:-}" in
+  api)
+    json="$(porcelain)" || exit 1
+    case "$2" in
+      repos/*/issues/*/comments\?*)
+        case "$2" in *"&page=1") printf '%s' "$json" | jq '[.comments[] | {body}]' ;; *) echo '[]' ;; esac ;;
+      repos/*/issues/*) printf '%s' "$json" | jq '{body}' ;;
+      *) echo "gh-stub: unhandled api $2" >&2; exit 1 ;;
     esac ;;
   auth)   echo "stub-token" ;;
   *)      echo "gh-stub: unhandled: $*" >&2; exit 1 ;;

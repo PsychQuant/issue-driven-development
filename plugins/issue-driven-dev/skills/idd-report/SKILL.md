@@ -16,6 +16,8 @@ allowed-tools:
 
 # /idd-report — 進度報告
 
+> **Cloud session（#416）— 不支援**：在 Claude Code 雲端 session（`CLAUDE_CODE_REMOTE=true`）裡，本 skill 需要的 GitHub GraphQL／search API 被封鎖。停下並印出「本 skill 在雲端 session 不支援：需要 GitHub GraphQL／search API；請改在本機 Claude Code session 執行」，不嘗試替代路徑。見 [`references/claude-code-remote-tools.md`](../../references/claude-code-remote-tools.md)。
+
 從 GitHub Issues 彙整進度，發布到 GitHub Discussions。
 
 ## 核心原則

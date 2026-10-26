@@ -70,7 +70,7 @@ def main(argv):
     log(argv)
     if argv[:1] == ["api"]:
         args = argv[1:]
-        method, jq, field, endpoint, paginate = "GET", None, None, None, False
+        method, jq, field, endpoint, paginate, input_src = "GET", None, None, None, False, None
         i = 0
         while i < len(args):
             a = args[i]
@@ -82,6 +82,8 @@ def main(argv):
                 field = args[i + 1]; i += 2; continue
             if a == "--paginate":
                 paginate = True; i += 1; continue
+            if a == "--input":
+                input_src = args[i + 1]; i += 2; continue
             if endpoint is None:
                 endpoint = a
             i += 1
@@ -108,6 +110,10 @@ def main(argv):
             print("HTTP 404: Not Found", file=sys.stderr)
             return 1
         if method == "PATCH":
+            if input_src is not None:   # gh-egress's REST transport: a JSON payload on stdin (#416)
+                raw = sys.stdin.read() if input_src == "-" else open(input_src, encoding="utf-8", newline="").read()
+                write_body(path, json.loads(raw)["body"])
+                return 0
             src = field.split("=@", 1)[1]
             body = sys.stdin.read() if src == "-" else open(src, encoding="utf-8", newline="").read()
             write_body(path, body)

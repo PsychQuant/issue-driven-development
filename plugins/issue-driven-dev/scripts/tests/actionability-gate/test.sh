@@ -1191,10 +1191,16 @@ refute_grep "phase 5 (run): a meeting issue never reaches git push (r2 #12, C2)"
 refute_grep "phase 5 (run): a meeting issue never opens a PR" 'PR-CALLED' "$out"
 # r3 #27: positive control — a non-meeting PR run still reaches git push
 # r4 #35: the issue body says meeting (as if the author rewrote it after implement); the trusted Diagnosis says bug
-p5ok_stub='git() { case "$*" in *push*) echo "PUSH-CALLED"; return 0 ;; esac; return 0; }; gh() { case "$1" in api) echo "[\"## Diagnosis\\n\\n### Type\\nbug\\n\"]" ;; issue) echo "{\"labels\":[],\"body\":\"## Type\\nmeeting\\n\"}" ;; pr) echo "PR-CALLED" ;; *) return 0 ;; esac; }'
-out=$( UW_TYPE=bug N=7 GITHUB_REPO=o/r CWD=/nonexistent PATH_AXIS=PR IN_CHAIN= BRANCH=idd/7-x CLAUDE_PLUGIN_ROOT="$HERE/../../.." bash -c "$p5ok_stub"$'\n'"$P5_SRC" 2>&1 )
+# #416: Phase 5 reads the default branch and opens the PR through REST (`gh api repos/R`, `gh api …/pulls`)
+p5ok_stub='git() { case "$*" in *push*) echo "PUSH-CALLED"; return 0 ;; esac; return 0; }; gh() { case "$1" in api) case "$2" in */pulls) echo "PR-CALLED" ;; repos/o/r) echo main ;; *) echo "[\"## Diagnosis\\n\\n### Type\\nbug\\n\"]" ;; esac ;; issue) echo "{\"labels\":[],\"body\":\"## Type\\nmeeting\\n\"}" ;; pr) echo "PR-CALLED" ;; *) return 0 ;; esac; }'
+out=$( UW_TYPE=bug VERIFY_STATE=PASS N=7 GITHUB_REPO=o/r CWD=/nonexistent PATH_AXIS=PR IN_CHAIN= BRANCH=idd/7-x CLAUDE_PLUGIN_ROOT="$HERE/../../.." bash -c "$p5ok_stub"$'\n'"$P5_SRC" 2>&1 )
 assert_grep "phase 5 (run): a non-meeting PR run does call git push (positive control)" 'PUSH-CALLED' "$out"
 assert_grep "phase 5 (run): ... even when the issue body was rewritten to meeting after implement (r4 #35)" 'PR-CALLED' "$out"
+# #416: the verify verdict does not survive a Bash call; a missing one is not PASS
+out=$( UW_TYPE=bug N=7 GITHUB_REPO=o/r CWD=/nonexistent PATH_AXIS=PR IN_CHAIN= BRANCH=idd/7-x CLAUDE_PLUGIN_ROOT="$HERE/../../.." bash -c "$p5ok_stub"$'\n'"$P5_SRC" 2>&1 ); rc=$?
+assert_eq "phase 5 (run): an unset VERIFY_STATE stops before pushing (#416)" "1" "$rc"
+refute_grep "phase 5 (run): ... and never pushes" 'PUSH-CALLED' "$out"
+refute_grep "phase 5 (run): ... and opens no PR" 'PR-CALLED' "$out"
 out=$( UW_TYPE=bug N='7/../x' GITHUB_REPO=o/r CWD=/nonexistent PATH_AXIS=PR IN_CHAIN= BRANCH=idd/7-x CLAUDE_PLUGIN_ROOT="$HERE/../../.." bash -c "$p5ok_stub"$'\n'"$P5_SRC" 2>&1 ); rc=$?
 assert_eq "phase 5 (run): a non-numeric issue number stops before any fetch (r5 #12)" "1" "$rc"
 refute_grep "phase 5 (run): ... and never pushes" 'PUSH-CALLED' "$out"
@@ -1302,9 +1308,9 @@ out=$(raw_env "$RAW_UNTRUSTED" bash -c "$RAWC_STUB"$'\n'"$P4_SRC" 2>&1); rc=$?
 assert_eq "author filter (run): Phase 4 ignores an outside author's meeting Diagnosis (r6 #3)" "0" "$rc"
 out=$(raw_env "$RAW_TRUSTED" bash -c "$RAWC_STUB"$'\n'"$P4_SRC" 2>&1); rc=$?
 assert_eq "author filter (run): ... positive control: a MEMBER's meeting Diagnosis stops Phase 4" "1" "$rc"
-out=$(raw_env "$RAW_UNTRUSTED" CWD=/nonexistent PATH_AXIS=PR IN_CHAIN= BRANCH=idd/7-x bash -c 'git() { case "$*" in *push*) echo PUSH-CALLED ;; esac; return 0; }'$'\n'"$RAWC_STUB"$'\n'"$P5_SRC" 2>&1)
+out=$(raw_env "$RAW_UNTRUSTED" VERIFY_STATE=PASS CWD=/nonexistent PATH_AXIS=PR IN_CHAIN= BRANCH=idd/7-x bash -c 'git() { case "$*" in *push*) echo PUSH-CALLED ;; esac; return 0; }'$'\n'"$RAWC_STUB"$'\n'"$P5_SRC" 2>&1)
 assert_grep "author filter (run): Phase 5 ignores an outside author's meeting Diagnosis and pushes (r6 #3)" 'PUSH-CALLED' "$out"
-out=$(raw_env "$RAW_TRUSTED" CWD=/nonexistent PATH_AXIS=PR IN_CHAIN= BRANCH=idd/7-x bash -c 'git() { case "$*" in *push*) echo PUSH-CALLED ;; esac; return 0; }'$'\n'"$RAWC_STUB"$'\n'"$P5_SRC" 2>&1)
+out=$(raw_env "$RAW_TRUSTED" VERIFY_STATE=PASS CWD=/nonexistent PATH_AXIS=PR IN_CHAIN= BRANCH=idd/7-x bash -c 'git() { case "$*" in *push*) echo PUSH-CALLED ;; esac; return 0; }'$'\n'"$RAWC_STUB"$'\n'"$P5_SRC" 2>&1)
 refute_grep "author filter (run): ... positive control: a MEMBER's meeting Diagnosis stops the push" 'PUSH-CALLED' "$out"
 CS6='## Problem\n\n---\n\n## Current Status\n\n**Phase**: diagnosed\n'
 out=$(raw_env "$RAW_UNTRUSTED" INTERACTION=unattended CWD=/nonexistent P6B="$CS6" bash -c 'git() { return 0; }'$'\n'"$RAWC_STUB"$'\n'"$P6_SRC" 2>&1)

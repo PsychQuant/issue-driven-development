@@ -29,6 +29,42 @@ Runtime mapping references:
 
 - [`references/claude-code-tools.md`](references/claude-code-tools.md) — native Claude Code tool contracts
 - [`references/codex-tools.md`](references/codex-tools.md) — Codex compatibility mapping and degraded fallback rules
+- [`references/claude-code-remote-tools.md`](references/claude-code-remote-tools.md) — Claude Code cloud sessions (web, mobile, scheduled): GraphQL is blocked there, so GitHub access goes through REST
+
+### Claude Code cloud sessions (3.6.0, #416)
+
+`/idd-all #N` runs in a Claude Code cloud session (claude.ai/code, the mobile app) for repositories
+attached to the session. What differs from a local session:
+
+- **GitHub through REST.** Cloud sessions block GitHub GraphQL, which every `gh issue …` / `gh pr …`
+  porcelain call uses. `scripts/gh-egress.sh` dispatches issue writes through `gh api` REST (in every
+  environment, keeping all its gates), and scripts read through `scripts/lib/gh-rest.sh`.
+- **Mode.** The PR path is forced (an unpushed commit is lost when the container is reclaimed). With a
+  person present the tuple is `(PR, attended)`: branch, push and PR, and sub-skills still ask their
+  questions. Without the attended signal it is `(PR, unattended)`.
+- **Verify** runs Claude-only and says so (`Codex leg not run — cloud session (degraded: Claude-only)`).
+- **Not supported in the cloud:** `idd-find`, `idd-report`, `idd-discuss`, `idd-ask` (search API /
+  Discussions GraphQL), the Spectra tier (no `spectra` CLI), and repositories not attached to the
+  session. These stop with the reason instead of failing silently.
+- **Not migrated (outside the `/idd-all` path):** `idd-close`, `idd-comment`, `idd-edit`, `idd-config`,
+  `idd-reorganize`, `idd-all-chain`. Their own `gh issue …` / `gh pr …` calls fail with GitHub's 403 in
+  a cloud session — close the issue with `/idd-close` from a local session.
+- **Status — experimental:** verified in a cloud container are the GraphQL / REST behavior, `gh-rest.sh`
+  reads against the real API, and plugins loading after a session restart. A fresh session started from
+  the setup script and an end-to-end cloud `/idd-all` run are not yet verified.
+
+Plugins load only at session start, so put this in the cloud environment's setup script (cloud
+environment menu in the session title bar → Edit):
+
+```bash
+claude plugin marketplace add PsychQuant/issue-driven-development
+claude plugin marketplace add anthropics/claude-plugins-official
+claude plugin marketplace add PsychQuant/parallel-ai-agents
+claude plugin marketplace add PsychQuant/codex-pro
+claude plugin install issue-driven-dev@issue-driven-development
+claude plugin install ralph-loop@claude-plugins-official
+python3 -m pip install markdown-it-py==4.0.0 linkify-it-py==2.0.3 uc-micro-py==2.0.0
+```
 
 The project does not maintain a `skills-codex/` fork. Forked skill trees are a last resort and need
 a documented incompatibility that cannot be handled through references, adapters, or plugin shell
@@ -159,6 +195,7 @@ See `references/config-protocol.md` (in-plugin) for the full algorithm.
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v3.6.0 | 2026-10-25 | **在 Claude Code 雲端 session 跑 `/idd-all`**（[#416](https://github.com/PsychQuant/issue-driven-development/issues/416)，Spectra `cloud-session-idd-all`）— 雲端封鎖 GitHub GraphQL：`gh-egress.sh` 的 issue 寫入改走 `gh api` REST（本機雲端同一路徑，所有 gate 不變，stdout 仍是一行 URL，不支援的旗標 exit 14），`idd-all` 路徑上的 script 改經 `scripts/lib/gh-rest.sh` 讀取；雲端 `idd-all` 強制 PR path，有人在場時新增 `(PR, attended)`；雲端 verify 為 Claude-only 並明寫 degraded；`idd-find`／`idd-report`／`idd-discuss`／`idd-ask` 在雲端明確停下。setup script 見 Runtime support。詳見 CHANGELOG.md。 |
 | v3.5.0 | 2026-10-20 | **`/idd-edit --correct` 就地更正錯誤內容**（[#351](https://github.com/PsychQuant/issue-driven-development/issues/351)，Spectra `idd-edit-in-place-correction`）— 只更正你自己（目前登入的 gh 使用者）寫的 comment 或開的 issue 正文（整則 comment 或一個 `--section`；issue 正文用 `issue:<N> --section`），預覽、確認後取代；舊版歸檔在 `.claude/.idd/archive/edits/`（不進 git、權限 0000、PreToolUse hook 擋 AI 讀取），可用 `restore` 還原。idd-verify／idd-diagnose／idd-reorganize 只提議 `### Proposed Corrections`，不自己改。每種 `/idd-edit` mode 改由 helper 分步執行（run-start → prepare → apply／discard → finish）。**BREAKING**：`--append`／`--replace`／`--prepend-note` 拒絕預覽 exit 9、寫入失敗 4、讀回不符 7（原本都是 0），備份移到使用者暫存目錄的 `idd-edit-backup/`；`/idd-comment --type errata` 對你自己的 comment 改為委派 `/idd-edit --correct` 就地更正，不再另貼 errata（更正被拒或寫入失敗時仍會改貼）。另修 2.81.0–3.4.0 的 `parse-args` 輸出被 `eval` 當成 shell 指令執行的問題。詳見 CHANGELOG.md。 |
 | v3.4.0 | 2026-10-15 | **meeting issue 不再被 actionability gate 擋下**（[#383](https://github.com/PsychQuant/issue-driven-development/issues/383)）— gate 新增 Diagnosis type 輸入（`idd_diagnosis_type`、`--diagnosis-type`），type 只取最新受信任 Diagnosis 的 `### Type`；meeting 只略過 Complexity 訊號，`parking-lot` 與 `### Blocking` 照評。idd-all／idd-plan／idd-implement／idd-list 依 `TYPE=meeting` 分派，idd-update 認得 `## Meeting Plan`；idd-diagnose 只採信受信任作者在本文宣告的 meeting。詳見 CHANGELOG.md。 |
 | v3.3.0 | 2026-10-07 | **既有工作偵測**（[#366](https://github.com/PsychQuant/issue-driven-development/issues/366)）— `scripts/check-existing-work.sh` 在 diagnose / implement 之前一次查完所有 issue 是否已有 open PR 或既有分支在處理，回傳 `blocked` / `resume` / `unknown` / `clear`；idd-all、idd-all-chain、idd-diagnose、idd-implement、idd-close 接上這個判斷，不再在已有 PR 的 issue 上重做一遍。詳見 CHANGELOG.md。 |
@@ -301,7 +338,8 @@ IDD 遵循「**深度整合 >> hard-coded**」原則（#209/#214）：生態系�
 |------|-----------------|-------------|-----|---------------------|
 | `idd-implement`（TDD / 完成前驗證）+ `idd-diagnose`（bug RCA） | `superpowers` | `claude-plugins-official` | process-discipline delegation（#209 hard dependency；正常情況由 `dependencies` 自動安裝，不會缺席） | **fail-fast abort** + install hint |
 | `idd-verify --loop` | `ralph-loop` | `claude-plugins-official` | outer driver for verify-fix loop | **fail-fast abort** + install hint |
-| `idd-all` (PR, unattended) (default) | `ralph-loop` | 同上 | unattended 在 verify findings 後需 driver 觸發下一輪 | **graceful degrade** to `(direct-commit, attended)` + warning(保護 v2.40.0 caller backward compat) |
+| `idd-all` (PR, unattended) (default) | `ralph-loop` | 同上 | unattended 在 verify findings 後需 driver 觸發下一輪 | **graceful degrade** to `(direct-commit, attended)` + warning(保護 v2.40.0 caller backward compat)；**雲端 session 改為 abort**（direct-commit 會隨 container 消失，#416） |
+| `idd-all` (PR, attended)（雲端 session 有人在場，#416） | (none) | n/a | user 在場自然推進 | n/a |
 | `idd-all --no-pr` (direct-commit, attended) | (none) | n/a | user 在 keyboard 自然推進 | n/a |
 | Single-skill calls (no `--loop`) | (none) | n/a | atomic skill 自完成 | n/a |
 

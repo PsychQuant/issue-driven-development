@@ -8,7 +8,7 @@ A Claude Code plugin marketplace for the [Issue-Driven Development (IDD)](https:
 
 | Plugin | Version | Purpose |
 |--------|---------|---------|
-| [`issue-driven-dev`](./plugins/issue-driven-dev) | 3.5.0 | Core IDD workflow — issue → diagnose → implement → verify → close. 19 skills(含 `/idd-all-chain` chain-solve 與 `idd-issue` multi-finding source mode for batch routing across new + existing issues from a single source document) + 8 rules + 28 references. |
+| [`issue-driven-dev`](./plugins/issue-driven-dev) | 3.6.0 | Core IDD workflow — issue → diagnose → implement → verify → close. 19 skills(含 `/idd-all-chain` chain-solve 與 `idd-issue` multi-finding source mode for batch routing across new + existing issues from a single source document) + 8 rules + 29 references. |
 | `idd-route` (coming) | 0.1.0 | Data-driven agent routing: recommends Codex / Claude Opus / Sonnet / Haiku per IDD issue based on observed track record. Wraps the [PsychQuant/idd-route-swift](https://github.com/PsychQuant/idd-route-swift) binary. |
 
 ## Installation
@@ -27,6 +27,7 @@ IDD core 是零依賴的 — 純文字 issue / `/idd-issue` 直接貼描述、`/
 - **`.docx` / Telegram / Apple Mail / Apple Notes 來源** — `/idd-issue` 從這些來源讀文字 + 抽附件需對應 MCP plugin
 - **`idd-verify --loop` / `idd-all` (PR, unattended) mode** — 需要 [`ralph-loop`](https://github.com/anthropics/claude-plugins-official) 作為 outer driver(#28 預計補完整文件)
 - **`idd-verify` 6-AI ensemble** — 需要 [OpenAI Codex CLI](https://github.com/openai/codex) + ChatGPT Pro
+- **Claude Code 雲端 session（3.6.0，#416）** — 在環境的 setup script 安裝 plugin 與 egress 依賴；雲端 GitHub 存取走 REST、verify 為 Claude-only。見 [`references/claude-code-remote-tools.md`](./plugins/issue-driven-dev/references/claude-code-remote-tools.md)
 
 完整 matrix 與 install 指令見 [`plugins/issue-driven-dev/README.md#requirements`](./plugins/issue-driven-dev/README.md#requirements)。
 

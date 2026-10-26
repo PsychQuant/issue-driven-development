@@ -5,6 +5,106 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.0] - 2026-10-25
+
+`/idd-all` in Claude Code cloud sessions (#416, Spectra change `cloud-session-idd-all`). Cloud sessions
+(claude.ai/code, the mobile app, scheduled sessions) block GitHub GraphQL — every `gh issue …` / `gh pr …`
+porcelain call returns 403, and so does `gh auth status` — while `gh api` REST works.
+
+### Added
+
+- **`scripts/lib/cloud-session.sh` (#416)** — `idd_is_cloud_session` (`CLAUDE_CODE_REMOTE` exactly `true`) and
+  `idd_cloud_interaction` (`attended` only when `CLAUDE_CODE_SESSION_ATTENDED` is exactly `1`; absent means
+  `unattended`, because attended questions never time out).
+- **`scripts/lib/gh-rest.sh` (#416)** — read-only REST helper (`issue-view`, `issue-list`, `pr-list`, `repo-view`)
+  that returns the field names and shapes of `gh … --json` (an empty body is `""`), pages until a short page or
+  `--limit`, treats `--state merged` as closed with a merge time, sorts on the server with `issue-list --sort
+  updated` (#299), filters `--closed-since` before the limit, returns every comment (no 100-comment cap) and
+  `mergeable` on request, and adds a `hint:` line when a cloud session cannot reach the repository. Unknown
+  fields exit 2.
+- **`references/claude-code-remote-tools.md` (#416)** — detection signals, the porcelain → REST table, the cloud
+  PR routes, the unsupported surfaces and what each prints, and the setup script (plugins + egress parser).
+- **`(PR, attended)` (#416)** — the cloud-session tuple: branch, push and PR, with sub-skills still asking.
+
+### Changed
+
+- **`gh-egress.sh` dispatches through the GitHub REST API in every environment (#416).** Attestation, the
+  four nets, the empty-body guard and the exit band are unchanged; `lib/gh_egress_rest.py` turns the forwarded
+  `gh issue create|comment|edit` arguments into `gh api` calls. Stdout is one URL line, so
+  `URL=$(gh-egress.sh create …)` callers are unaffected, and on failure stdout stays empty (gh's JSON error body
+  goes to stderr with a `hint:`); the body reaches gh on stdin; body files keep their bytes. Where REST and
+  `gh issue` differ, gh's behavior is kept: a label must already exist (REST would create it), a milestone
+  matches an open milestone ignoring case, `edit --milestone ""` removes it, removing a label the issue lacks
+  is a no-op, `create` needs a body (as non-interactive `gh issue create` did). One difference remains: assignee
+  logins are not checked first, and REST skips a login it cannot assign where gh errored (no IDD caller passes
+  assignees). Flags outside the supported set (see the header), a missing title or issue, a stray positional,
+  an unknown label or milestone and a malformed issue URL are refused with exit 14 instead of being dropped;
+  non-UTF-8 arguments exit 12.
+- **`check-existing-work.sh`, `check-diagnosis-readiness.sh`, `process-attachments.sh`, `idd-worktree.sh` and
+  `check-closed-without-summary.sh` read through `gh-rest.sh` (#416).** `idd-list --audit-closes` therefore works
+  in a cloud session too; its `--dry-run` prints the `gh-rest.sh issue-list … --closed-since` call. `--since`
+  takes what the old search qualifier took (`2026-1-5`, or a timestamp with `Z`, an offset or neither, compared in UTC); a
+  value it cannot read is reported as a refused argument, not as an auth / network failure. Matching logic is unchanged. `check-existing-work`'s error labels are now
+  `pr-list --state open` / `issue-view N`; `idd-close` Step 1.5 matches `issue-view` as well as the old label.
+- **`idd-all` (#416):** a cloud session forces the PR path, with the interaction from the attended signal, ahead
+  of fork detection (which always 403s there); `--no-pr` is overridden with a notice; `(PR, unattended)` without
+  ralph-loop aborts in a cloud session (after removing the new branch) instead of degrading to direct-commit.
+  The PR is opened only after verify PASS; with blocking findings, or when the unattended verify-fix loop gives
+  up, a cloud session still pushes the branch (not when a blocking finding is a security finding — a push could
+  publish a committed secret; Phase 4 then sets `VERIFY_STATE=BLOCKING_SECURITY`). Phase 5 never reads a missing verdict as PASS: without
+  `VERIFY_STATE` it stops before pushing (this applies locally too). A failed push, or a default branch or issue
+  title that cannot be read, stops the run instead of feeding gh's error text into a branch name or PR base;
+  PR-mode branch setup stops with a real `exit` (it relied on an undefined `abort` and fell through into
+  `git checkout -b`), and Phase 0.6 stops instead of degrading when it cannot read the default branch. When the
+  agent loses a variable between Bash calls (`PATH_AXIS`, `INTERACTION`, `BRANCH`, `VERIFY_STATE`), Phase 0.6 and
+  Phase 5 stop and ask for it instead of skipping silently. On the PR path `idd-implement` no longer opens a PR
+  before verify: `idd-all` passes `ORCHESTRATED BY /idd-all` (through `/idd-plan` on the Plan tier) and
+  `idd-implement` skips Step 5.5.
+  Branch setup and PR creation call REST directly (`gh api repos/R`, `POST repos/R/pulls`; also locally). The PR body
+  and report say when verify was Claude-only. The auth gate is `gh auth status || gh api user`. Local mode
+  resolution is unchanged.
+- **`idd-verify` (#416):** in a cloud session the Codex leg is not run (`codexEnabled: false`, no codex-pro
+  governance) and the engine line and process gaps say `Codex leg not run — cloud session (degraded:
+  Claude-only)`. Local behavior is unchanged.
+- **Runtime notes (#416):** `idd-all`, `idd-issue`, `idd-diagnose`, `idd-plan`, `idd-implement`, `idd-verify`,
+  `idd-update`, `idd-clarify` and `idd-list` point to the cloud reference; `idd-find`, `idd-report`,
+  `idd-discuss` and `idd-ask` stop in a cloud session and say why. Skill bodies are not rewritten, except
+  `idd-all`'s own branch setup and PR creation (above).
+- **`discussions_api` refuses in a cloud session (#416)** before sending a request: Discussions are GraphQL-only.
+
+### Fixed
+
+- **`gh-egress.sh` scanned something other than what it sent (#416 verify).** A flag-shaped value after a
+  value-taking flag (`-b "--repo=…"`, `--body "-t …"`) was re-read by the wrapper as a flag, while gh took it
+  as the body — the privacy, mention and empty-body nets could all be skipped. The wrapper now reads the next
+  token as the value, as gh does, for every value-taking flag the transport accepts (`--label`, `--assignee`,
+  `--milestone`, `--add-label` …, not only the body and title flags), and reads `-b=X` / `-t=X` / `-F=X` as `X`.
+  Present on 3.5.0 as well.
+- **Repeated `--body` / `--body-file` slipped past the empty-body guard (#416 verify).** gh sends only the last
+  one, but the #275 guard checked them all joined, so `--body "<decoy>" --body ""` wiped an issue body. A call
+  now takes one body source; more exit 14. Present since #275.
+- **A body file whose name starts with `-` was scanned as empty (#416 verify).** `cat` read the name as options
+  and failed unchecked, so with `--allow-empty-body` the nets passed an empty string while gh sent the file. The
+  read is now `cat --` and a failed read exits 12. Present on 3.5.0 as well.
+- **`idd-list --audit-closes` counted outsiders' closing summaries (#416 verify).** The author filter read
+  `author_association`, but the audit's comments carry `authorAssociation` (porcelain and gh-rest alike), so an
+  outside account's `## Closing Summary` hid an issue from the audit. Both spellings are read now. Present on
+  3.5.0 as well.
+- **`gh-egress.sh edit-comment` put `--repo` into the REST path unchecked (#416 verify).** It now has to be
+  `OWNER/REPO` without `.`/`..` segments, and the comment id a number; anything else exits 14. Present since
+  `edit-comment` was added.
+
+### Not in this release
+
+- The `idd-close`, `idd-comment`, `idd-edit`, `idd-config`, `idd-reorganize` and `idd-all-chain` skill bodies are
+  not migrated; in a cloud session their own porcelain calls fail with GitHub's 403 message.
+- Tags cannot be created from a cloud session (tag pushes and the git refs API are refused), so `idd-verify`'s
+  verified tag is skipped there with its existing warning; tag from a local session.
+- Not yet verified live: a fresh cloud session started from the setup script, and an end-to-end cloud
+  `/idd-all` run (see the Status section of `references/claude-code-remote-tools.md`).
+- `CLAUDE_CODE_SESSION_ATTENDED` was observed in a web session only; scheduled / API-started sessions are
+  covered by the absent-means-unattended rule.
+
 ## [3.5.0] - 2026-10-20
 
 ### Added

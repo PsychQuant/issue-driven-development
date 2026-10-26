@@ -36,14 +36,17 @@ STUB=$(mktemp -d)
 cat > "$STUB/gh" <<'STUBEOF'
 #!/usr/bin/env bash
 # $GATE_STUB selects the scenario. Anything unset behaves as a clean success.
-case "$1" in
-  issue)
+# REST only (#416): the issue and the repo are read through lib/gh-rest.sh, so the
+# stub answers `gh api` paths and refuses porcelain.
+[ "$1" = "api" ] || { echo "unexpected porcelain gh $*" >&2; exit 1; }
+case "$2" in
+  repos/o/r/issues/42)
     case "${GATE_STUB:-success}" in
       issue-view-fails) echo "gh: HTTP 502" >&2; exit 1 ;;
-      open-issue) printf '%s\n' '{"number":42,"title":"still open","state":"OPEN"}' ;;
-      *) printf '%s\n' '{"number":42,"title":"newest comment is a real closing summary","state":"CLOSED"}' ;;
+      open-issue) printf '%s\n' '{"number":42,"title":"still open","state":"open"}' ;;
+      *) printf '%s\n' '{"number":42,"title":"newest comment is a real closing summary","state":"closed"}' ;;
     esac ;;
-  api)
+  repos/o/r/issues/42/comments)
     case "${GATE_STUB:-success}" in
       total-failure)      echo "gh: HTTP 403: API rate limit exceeded" >&2; exit 1 ;;
       partial-pagination) printf '%s\n' '[{"body":"## Diagnosis"}]'; echo "gh: HTTP 502 on page 2" >&2; exit 1 ;;
@@ -52,11 +55,12 @@ case "$1" in
       *)                  printf '%s\n' '[{"body":"## Diagnosis"}]'
                           printf '%s\n' '[{"body":"## Closing Summary"},{"body":"real content"}]' ;;
     esac ;;
-  repo)
+  'repos/{owner}/{repo}')
     case "${GATE_STUB:-success}" in
       no-repo) exit 1 ;;
-      *) printf '%s\n' 'o/r' ;;
+      *) printf '%s\n' '{"full_name":"o/r"}' ;;
     esac ;;
+  *) echo "unexpected api $2" >&2; exit 1 ;;
 esac
 STUBEOF
 chmod +x "$STUB/gh"

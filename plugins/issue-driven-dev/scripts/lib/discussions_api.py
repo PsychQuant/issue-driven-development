@@ -5,6 +5,7 @@ index results, not an exhaustive or immediately consistent repository corpus.
 Schema reference: https://docs.github.com/en/graphql/reference/discussions
 """
 import json
+import os
 from datetime import datetime
 import re
 import subprocess
@@ -153,6 +154,11 @@ class GitHub:
 
     def graphql(self, query, variables):
         """Run gh without a shell; partial GraphQL errors are failures too."""
+        # Same literal rule as scripts/lib/cloud-session.sh (#416). Discussions have no REST API, so in a
+        # cloud session this is a stated refusal before any request, never a silent fallback.
+        if os.environ.get('CLAUDE_CODE_REMOTE') == 'true':
+            raise DiscussionError('GitHub Discussions need GraphQL, which Claude Code cloud sessions block '
+                                  '(CLAUDE_CODE_REMOTE=true); run this from a local Claude Code session')
         try:
             result = subprocess.run(
                 ['gh', 'api', 'graphql', '--input', '-'],

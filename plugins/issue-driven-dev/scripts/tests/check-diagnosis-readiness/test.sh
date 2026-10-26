@@ -14,13 +14,18 @@ W="$(mktemp -d)"; trap 'rm -rf "$W"' EXIT
 mkdir -p "$W/bin" "$W/bodies"
 cat > "$W/bin/gh" <<'SHIM'
 #!/usr/bin/env bash
-# expects: gh issue view <N> -R <repo> --json comments
-n="$3"
+# expects (REST, via lib/gh-rest.sh — #416): gh api repos/<repo>/issues/<N>/comments?per_page=100&page=K
+[ "$1" = "api" ] || { echo "unexpected porcelain gh $*" >&2; exit 1; }
+case "$2" in
+  repos/test/repo/issues/*/comments\?*"&page=1") n="${2#repos/test/repo/issues/}"; n="${n%%/*}" ;;
+  repos/test/repo/issues/*/comments\?*) echo '[]'; exit 0 ;;
+  *) echo "unexpected api $2" >&2; exit 1 ;;
+esac
 body_file="$FIXTURE_BODIES/$n.txt"
-if [ ! -f "$body_file" ]; then echo "not found" >&2; exit 1; fi
+if [ ! -f "$body_file" ]; then echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi
 python3 - "$body_file" <<'PY'
 import json,sys
-print(json.dumps({"comments":[{"body":open(sys.argv[1]).read()}]}))
+print(json.dumps([{"body":open(sys.argv[1]).read()}]))
 PY
 SHIM
 chmod +x "$W/bin/gh"

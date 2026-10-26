@@ -30,17 +30,37 @@ WORK="$(mktemp -d)"
 cleanup() { rm -rf "$WORK"; }
 trap cleanup EXIT
 
-# --- stub gh: record NUL-delimited argv, print a fake issue URL, exit 0 -------
+# --- stub gh: record argv (last call NUL-delimited + every call one line), save
+# the stdin payload of `--input -` calls, answer the two lookups the REST
+# transport makes (milestones, user), print a fake issue URL otherwise -------
 STUB="$WORK/fake-gh"
 cat > "$STUB" <<'STUBEOF'
 #!/usr/bin/env bash
 : > "$FAKE_GH_ARGV"
 for a in "$@"; do printf '%s\0' "$a" >> "$FAKE_GH_ARGV"; done
+printf '%s\n' "$*" >> "$FAKE_GH_CALLS"
+n="$(wc -l < "$FAKE_GH_CALLS" | tr -d ' ')"
+for a in "$@"; do [ "$a" = "--input" ] && { cat > "$FAKE_GH_STDIN.$n"; break; }; done
+case "${2:-}" in
+  */milestones*) echo '[{"title":"Sprint 1","number":4},{"title":"Sprint 10","number":5}]'; exit 0 ;;
+  user)          echo '{"login":"me-login"}'; exit 0 ;;
+  repos/o/r/labels/missing|repos/o/r/labels/nope)
+                 echo "gh: Not Found (HTTP 404)" >&2; echo '{"message":"Not Found"}'; exit 1 ;;
+  repos/o/r/labels/*) echo '{"name":"x"}'; exit 0 ;;
+  repos/o/r/issues/*/labels/notthere)
+                 echo "gh: Label does not exist (HTTP 404)" >&2; echo '{"message":"Label does not exist"}'; exit 1 ;;
+esac
+case " $* " in *" --silent "*) exit 0 ;; esac
 echo "https://github.com/o/r/issues/123"
 STUBEOF
 chmod +x "$STUB"
 export IDD_GH_BIN="$STUB"
-export FAKE_GH_ARGV="$WORK/argv"
+export FAKE_GH_ARGV="$WORK/argv" FAKE_GH_CALLS="$WORK/calls" FAKE_GH_STDIN="$WORK/stdin"
+: > "$FAKE_GH_CALLS"
+calls_reset() { : > "$FAKE_GH_CALLS"; rm -f "$FAKE_GH_STDIN".*; }
+call_n() { sed -n "${1}p" "$FAKE_GH_CALLS"; }          # the n-th gh call of the last dispatch, space-joined
+ncalls() { wc -l < "$FAKE_GH_CALLS" | tr -d ' '; }
+payload() { python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1])), sort_keys=True))' "$FAKE_GH_STDIN.$1" 2>/dev/null; }
 
 # --- fixture ~/.claude.json (redirect the probe away from the real one) -------
 # One project key under /Users/ (also caught by the home-path net) and one under
@@ -65,12 +85,13 @@ bash "$SCRIPT" create --repo o/r --title T --body "clean" --scrub-attested bogus
 assert_exit "invalid attestation level → refuse (exit 13)" 13 $?
 
 # attestation flag is consumed by the wrapper, never forwarded to gh
+calls_reset
 bash "$SCRIPT" comment 5 --repo o/r --body "hello world" "${ATT[@]}" >/dev/null 2>&1
 ARGV="$(tr '\0' '\n' < "$FAKE_GH_ARGV")"
 refute_grep "wrapper strips --scrub-attested from gh argv" "--scrub-attested" "$ARGV"
-assert_grep  "gh argv keeps the verb"            "comment" "$ARGV"
-assert_grep  "gh argv keeps the issue number"    "5"       "$ARGV"
-assert_grep  "gh argv keeps the body value"      "hello world" "$ARGV"
+assert_grep  "comment targets the issue's comments endpoint" "repos/o/r/issues/5/comments" "$ARGV"
+assert_eq    "comment body rides stdin as JSON"  '{"body": "hello world"}' "$(payload 1)"
+refute_grep  "body never appears in gh argv (#416: stdin only)" "hello world" "$ARGV"
 
 # ── §2.2 mechanical last-resort net ─────────────────────────────────────────
 # literal /Users/<name> caught even WITH a valid attestation (LLM missed it)
@@ -113,19 +134,134 @@ bash "$SCRIPT" create --repo o/r --title T \
 assert_exit "semantic-only private id NOT caught by wrapper (exit 0)" 0 $?
 
 # a metadata-only edit (no --body/--title) needs attestation but has nothing to
-# scan — must dispatch cleanly (byte-preserved milestone assignment path)
+# scan — must dispatch cleanly (milestone title resolved to its number)
+calls_reset
 bash "$SCRIPT" edit 5 --repo o/r --milestone "Sprint 1" "${ATT[@]}" >/dev/null 2>&1
 assert_exit "metadata-only edit dispatches with attestation (exit 0)" 0 $?
+assert_eq "milestone title → number in the PATCH payload (exact title, not 'Sprint 10')" '{"milestone": 4}' "$(payload "$(ncalls)")"
 
-# ── §7 backward-compat: transparent pass-through (byte-preserved forwarding) ──
-# With attestation present and no mechanical hit, the argv reaching gh MUST be
-# EXACTLY `issue <verb> <original args>` — the attestation flag removed, nothing
-# else added/reordered. This is what keeps existing idd-issue capture sites
-# (URL=$(gh issue create ...)), the JSONL audit and the footer byte-identical.
-bash "$SCRIPT" create --repo o/r --title "T" --body "clean body" --label bug "${ATT[@]}" >/dev/null 2>&1
-EXPECT=$'issue\ncreate\n--repo\no/r\n--title\nT\n--body\nclean body\n--label\nbug'
+# ── §7 REST transport (#416, change cloud-session-idd-all D2) ────────────────
+# Porcelain `gh issue …` is GraphQL, which Claude Code cloud sessions block, so
+# the wrapper dispatches through `gh api` REST in every environment. The
+# contract that callers rely on is stdout = one URL line (URL=$(… create …)).
+calls_reset
+OUT="$(bash "$SCRIPT" create --repo o/r --title "T" --body "clean body" --label bug "${ATT[@]}" 2>/dev/null)"
+EXPECT=$'api\nrepos/o/r/issues\n-X\nPOST\n--input\n-\n--jq\n.html_url'
 GOT="$(tr '\0' '\n' < "$FAKE_GH_ARGV")"
-assert_eq "pass-through argv is byte-identical to raw gh (attestation stripped, order kept)" "$EXPECT" "$GOT"
+assert_eq "create argv is the REST POST (attestation stripped)" "$EXPECT" "$GOT"
+assert_eq "create payload carries title, body, labels" '{"body": "clean body", "labels": ["bug"], "title": "T"}' "$(payload 2)"
+assert_eq "stdout is exactly the URL line gh printed" "https://github.com/o/r/issues/123" "$OUT"
+assert_eq "label existence is checked first (gh refuses unknown labels)" "api repos/o/r/labels/bug" "$(call_n 1)"
+assert_eq "two gh calls: label lookup, then the POST" "2" "$(ncalls)"
+
+calls_reset
+bash "$SCRIPT" create --repo o/r --title T --body x --label bug,ui --label x -a @me --milestone "Sprint 1" "${ATT[@]}" >/dev/null 2>&1
+assert_eq "create resolves milestone + @me, comma-splits labels" \
+  '{"assignees": ["me-login"], "body": "x", "labels": ["bug", "ui", "x"], "milestone": 4, "title": "T"}' "$(payload "$(ncalls)")"
+assert_grep "the last call is the POST" "api repos/o/r/issues -X POST" "$(call_n "$(ncalls)")"
+
+calls_reset
+bash "$SCRIPT" comment https://github.com/o/r/issues/5 --body "done" "${ATT[@]}" >/dev/null 2>&1
+assert_eq "comment on an issue URL → that repo's comments endpoint" "api repos/o/r/issues/5/comments -X POST --input - --jq .html_url" "$(call_n 1)"
+
+calls_reset
+bash "$SCRIPT" edit 7 --repo o/r --add-label triage --remove-label "needs review" --body "new body text here" "${ATT[@]}" >/dev/null 2>&1
+assert_eq "edit call 1: label lookup"        "api repos/o/r/labels/triage" "$(call_n 1)"
+assert_eq "edit call 2: add labels"          "api repos/o/r/issues/7/labels -X POST --input - --silent" "$(call_n 2)"
+assert_eq "edit call 2 payload"              '{"labels": ["triage"]}' "$(payload 2)"
+assert_eq "edit call 3: remove label (url-encoded)" "api repos/o/r/issues/7/labels/needs%20review -X DELETE --silent" "$(call_n 3)"
+assert_eq "edit call 4: PATCH body last"     "api repos/o/r/issues/7 -X PATCH --input - --jq .html_url" "$(call_n 4)"
+assert_eq "edit PATCH payload"               '{"body": "new body text here"}' "$(payload 4)"
+
+calls_reset
+bash "$SCRIPT" edit 7 --repo o/r --remove-milestone --add-assignee @me "${ATT[@]}" >/dev/null 2>&1
+assert_eq "remove-assignee/add-assignee resolve @me" '{"assignees": ["me-login"]}' "$(payload 2)"
+assert_eq "--remove-milestone → milestone null" '{"milestone": null}' "$(payload 3)"
+
+calls_reset
+bash "$SCRIPT" create --repo ghe.example.com/o/r --title T --body x "${ATT[@]}" >/dev/null 2>&1
+assert_eq "HOST/OWNER/REPO → --hostname on the call" "api repos/o/r/issues -X POST --input - --jq .html_url --hostname ghe.example.com" "$(call_n 1)"
+
+calls_reset
+printf 'a body from a file, kept out of argv' > "$WORK/fbody.md"
+bash "$SCRIPT" comment 5 --repo o/r --body-file "$WORK/fbody.md" "${ATT[@]}" >/dev/null 2>&1
+assert_eq "body-file content rides stdin" '{"body": "a body from a file, kept out of argv"}' "$(payload 1)"
+calls_reset
+printf 'line one\r\nline two\r\n' > "$WORK/crlf.md"
+bash "$SCRIPT" comment 5 --repo o/r --body-file "$WORK/crlf.md" "${ATT[@]}" >/dev/null 2>&1
+assert_eq "body-file CRLF bytes are kept (no newline translation)" '{"body": "line one\r\nline two\r\n"}' "$(payload 1)"
+
+# translator refusals: exit 14, named cause, no gh call at all
+calls_reset
+bash "$SCRIPT" create --repo o/r --title T --body x --project Roadmap "${ATT[@]}" >/dev/null 2>"$WORK/err"
+assert_exit "unsupported flag refused, not dropped (exit 14)" 14 $?
+assert_grep "refusal names the flag" "--project" "$(cat "$WORK/err")"
+assert_eq "no gh call for an unsupported flag" "0" "$(ncalls)"
+bash "$SCRIPT" create --repo o/r --body "no title here" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "create without --title refused (exit 14)" 14 $?
+bash "$SCRIPT" create --repo o/r --title T --body x stray "${ATT[@]}" >/dev/null 2>&1
+assert_exit "create with a stray positional refused (exit 14)" 14 $?
+bash "$SCRIPT" comment --repo o/r --body "no issue given" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "comment without an issue refused (exit 14)" 14 $?
+calls_reset
+bash "$SCRIPT" edit 5 --repo o/r --milestone "Nope" "${ATT[@]}" >/dev/null 2>"$WORK/err"
+assert_exit "unknown milestone refused (exit 14)" 14 $?
+refute_grep "no PATCH after a failed milestone lookup" "PATCH" "$(cat "$FAKE_GH_CALLS")"
+
+# an earlier edit call failing stops the sequence and passes gh's code through
+FAILLABEL="$WORK/fail-label-gh"
+cat > "$FAILLABEL" <<'STUBEOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FAKE_GH_CALLS"
+case "$2" in */labels*) echo "gh: Validation Failed (HTTP 422)" >&2; exit 3 ;; esac
+cat >/dev/null; echo "https://github.com/o/r/issues/7"
+STUBEOF
+chmod +x "$FAILLABEL"
+calls_reset
+IDD_GH_BIN="$FAILLABEL" bash "$SCRIPT" edit 7 --repo o/r --add-label x --body "body long enough here" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "failing label call → its exit code (3) passes through" 3 $?
+refute_grep "the PATCH is not sent after a failed earlier call" "PATCH" "$(cat "$FAKE_GH_CALLS")"
+
+# gh semantics kept where REST differs (#416 verify, logic + regression lenses)
+calls_reset
+bash "$SCRIPT" create --repo o/r --title T --body x --label missing "${ATT[@]}" >/dev/null 2>"$WORK/err"
+assert_exit "unknown label refused instead of silently created (exit 14)" 14 $?
+assert_grep "…naming the label" "label 'missing' not found" "$(cat "$WORK/err")"
+refute_grep "…and no issue is created" "-X POST" "$(cat "$FAKE_GH_CALLS")"
+bash "$SCRIPT" edit 7 --repo o/r --add-label nope "${ATT[@]}" >/dev/null 2>&1
+assert_exit "unknown --add-label refused (exit 14)" 14 $?
+calls_reset
+bash "$SCRIPT" edit 7 --repo o/r --remove-label notthere --body "body long enough here" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "removing a label the issue lacks is a no-op, like gh (exit 0)" 0 $?
+assert_grep "…and the PATCH still runs" "api repos/o/r/issues/7 -X PATCH" "$(cat "$FAKE_GH_CALLS")"
+calls_reset
+bash "$SCRIPT" edit 5 --repo o/r --milestone "sprint 1" "${ATT[@]}" >/dev/null 2>&1
+assert_eq "milestone title matches ignoring case (open milestones, like gh)" '{"milestone": 4}' "$(payload "$(ncalls)")"
+assert_grep "…looked up among open milestones" "milestones?state=open" "$(cat "$FAKE_GH_CALLS")"
+calls_reset
+bash "$SCRIPT" edit 5 --repo o/r --milestone "" "${ATT[@]}" >/dev/null 2>&1
+assert_eq "edit --milestone \"\" removes the milestone, like gh" '{"milestone": null}' "$(payload "$(ncalls)")"
+calls_reset
+bash "$SCRIPT" comment 5 --repo o/r -b=hello "${ATT[@]}" >/dev/null 2>&1
+assert_eq "-b=value is the value, like gh" '{"body": "hello"}' "$(payload 1)"
+bash "$SCRIPT" create --repo o/r --title $'caf\xe9' --body x "${ATT[@]}" >/dev/null 2>&1
+assert_exit "non-UTF-8 title refused in the wrapper band (exit 12)" 12 $?
+
+# failure path: stdout stays empty (gh api prints the JSON error body there), stderr explains
+BLOCKED="$WORK/blocked-gh"
+cat > "$BLOCKED" <<'STUBEOF'
+#!/usr/bin/env bash
+cat >/dev/null
+echo "gh: GitHub access to this repository is not enabled for this session. (HTTP 403)" >&2
+printf '%s' '{"message":"GitHub access to this repository is not enabled for this session."}'
+exit 1
+STUBEOF
+chmod +x "$BLOCKED"
+OUT="$(IDD_GH_BIN="$BLOCKED" bash "$SCRIPT" comment 5 --repo x/y --body "clean body" "${ATT[@]}" 2>"$WORK/err")"; RC=$?
+assert_exit "a failed write passes gh's exit code through" 1 "$RC"
+assert_eq "…with nothing on stdout (no JSON where callers expect a URL)" "" "$OUT"
+assert_grep "…gh's message on stderr" "not enabled for this session" "$(cat "$WORK/err")"
+assert_grep "…plus the attach hint" "hint: this cloud session cannot reach x/y#5" "$(cat "$WORK/err")"
 
 # ── verb / usage validation ─────────────────────────────────────────────────
 bash "$SCRIPT" delete 5 "${ATT[@]}" >/dev/null 2>&1
@@ -168,13 +304,16 @@ env -u HOME -u IDD_CLAUDE_JSON IDD_GH_BIN="$STUB" FAKE_GH_ARGV="$FAKE_GH_ARGV" \
   bash "$SCRIPT" create --repo o/r --title T --body "clean prose" "${ATT[@]}" >/dev/null 2>&1
 assert_exit "HOME+IDD_CLAUDE_JSON unset → no crash, dispatch (#203 item 4, exit 0)" 0 $?
 
-# item 5: zero forwarded args → argv is exactly 2 NUL-terminated fields
-# (issue, create) with NO phantom '' third field. Field count via NUL bytes —
+# item 5: minimal forwarded args → no phantom '' positional reaches the
+# transport (a phantom would be refused as a stray positional, exit 14) and the
+# REST argv is exactly 8 NUL-terminated fields. Field count via NUL bytes —
 # command substitution strips trailing newlines so a string compare is blind
-# to the phantom.
-bash "$SCRIPT" create "${ATT[@]}" >/dev/null 2>&1
+# to the phantom. No --repo → gh's {owner}/{repo} placeholder (#416).
+bash "$SCRIPT" create --title T --body "minimal body" "${ATT[@]}" >/dev/null 2>&1   # body via stdin, not argv
+assert_exit "minimal create dispatches (no phantom positional, #203 item 5)" 0 $?
 NFIELDS="$(tr -cd '\0' < "$FAKE_GH_ARGV" | wc -c | tr -d ' ')"
-assert_eq "zero-arg dispatch has no phantom empty positional (#203 item 5, argv fields)" "2" "$NFIELDS"
+assert_eq "minimal create argv has exactly 8 fields (#203 item 5)" "8" "$NFIELDS"
+assert_grep "no --repo → {owner}/{repo} placeholder" "repos/{owner}/{repo}/issues" "$(tr '\0' '\n' < "$FAKE_GH_ARGV")"
 
 # item 6: --scrub-attested where a --body value is expected → malformed, usage refuse
 bash "$SCRIPT" create --repo o/r --body --scrub-attested warn >/dev/null 2>&1
@@ -304,10 +443,108 @@ if command -v zsh >/dev/null 2>&1; then
   assert_exit "zsh template =-form expansion dispatches vetted mention (117-C, exit 0)" 0 $?
 fi
 
-# 203-C: attached short-form must reset pending next_is (parser hygiene) —
-# `--body -bX Y` : -bX consumes as attached body, Y must NOT be eaten as body
+# 203-C / #416 security review: a pending --body / --title / --body-file / --repo
+# takes the NEXT token as its value whatever it looks like — exactly how gh (pflag)
+# and the REST transport read it. The wrapper used to re-read a flag-shaped value
+# (`-b "--repo=…"`, `--body "-bX"`) as a flag, so what it scanned and what was
+# sent differed: privacy, mention and empty-body nets could all be skipped.
+calls_reset
 bash "$SCRIPT" create --repo o/r --body "-binline body" --title T "${ATT[@]}" >/dev/null 2>&1
-assert_exit "attached form after pending --body keeps parser state sane (exit 0)" 0 $?
+assert_exit "dash-leading body value dispatches (exit 0)" 0 $?
+assert_eq "…and is sent whole, as the value of --body" '{"body": "-binline body", "title": "T"}' "$(payload 1)"
+bash "$SCRIPT" comment 5 --repo o/r --scrub-attested light -b "--repo=hi @victim see /Users/alice/secret" >/dev/null 2>&1
+assert_exit "flag-shaped -b value is scanned as the body (privacy net, exit 10)" 10 $?
+bash "$SCRIPT" comment 5 --repo o/r -b "--title=cc @victim" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "flag-shaped -b value is scanned as the body (mention net, exit 11)" 11 $?
+bash "$SCRIPT" edit 5 --repo o/r -b "--repo=" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "flag-shaped near-empty edit body hits the overwrite floor (exit 15)" 15 $?
+bash "$SCRIPT" comment 5 --repo o/r --body "-t cc @victim" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "'-t …' as a body value is scanned whole (mention net, exit 11)" 11 $?
+
+# #416 verify round 2 (devil's advocate): every flag the REST transport reads a
+# value for is one the wrapper reads a value for too — otherwise
+# `--remove-label -b --body-file=x` had the wrapper scan one thing while the
+# transport sent another. Drift guard + a leak behind each transport value flag.
+WRAP_FLAGS="$(grep -oE '^ *[-a-zA-Z|]+\) *# value flags.*' "$SCRIPT" | head -1 | sed 's/^ *//')"
+for flag in $(python3 -c '
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("t", sys.argv[1]); m = importlib.util.module_from_spec(spec)
+sys.path.insert(0, sys.argv[2]); spec.loader.exec_module(m)
+print(" ".join(sorted({f for v in m.VALUE_FLAGS.values() for f in v})))' "$HERE/../../lib/gh_egress_rest.py" "$HERE/../../lib"); do
+  case "$flag" in -b|--body|-t|--title|-F|--body-file) continue ;; esac   # the scanned ones, handled separately
+  assert_grep "wrapper reads a value for transport flag $flag" "|$flag|" "|${WRAP_FLAGS%%)*}|"
+done
+printf 'log at /Users/alice/secret.sh @victim' > "$WORK/leakbody.md"
+for pre in "--remove-label" "--add-label" "--label" "-l" "--milestone" "-m" "--assignee" "-a" "--add-assignee" "--remove-assignee" "-R"; do
+  bash "$SCRIPT" edit 5 --repo o/r "$pre" -b --body-file="$WORK/leakbody.md" "${ATT[@]}" >/dev/null 2>&1; rc=$?
+  # exactly 10: the wrapper reads `-b` as $pre's value and scans the file; before the fix most of these
+  # exited 14 in the transport, which proved nothing about the scan (round 3)
+  assert_exit "leak behind '$pre -b --body-file=…' is scanned (privacy net, exit 10)" 10 "$rc"
+done
+# one body source per call: gh and the transport send only the last, the guard read them all (round 3)
+printf '%s' "a long enough replacement body for the decoy" > "$WORK/good.md"; : > "$WORK/empty.md"; printf 'x' > "$WORK/tiny.md"
+calls_reset
+bash "$SCRIPT" edit 5 --repo o/r --body "a long enough decoy body text" --body "" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "a decoy --body before an empty one is refused (exit 14)" 14 $?
+assert_eq "…and nothing is sent" "0" "$(ncalls)"
+bash "$SCRIPT" edit 5 --repo o/r -F "$WORK/good.md" -F "$WORK/empty.md" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "two -F files are refused (exit 14)" 14 $?
+bash "$SCRIPT" comment 5 --repo o/r --body-file="$WORK/good.md" -b"x" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "--body-file= plus -bX is refused (exit 14)" 14 $?
+bash "$SCRIPT" edit-comment 9 --repo o/r --body-file "$WORK/good.md" --body-file "$WORK/empty.md" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "edit-comment with two body files is refused (exit 14)" 14 $?
+bash "$SCRIPT" edit-comment 9 --repo o/r --body "a long enough decoy body text" --body-file "$WORK/tiny.md" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "edit-comment --body decoy plus a tiny file is refused (exit 14)" 14 $?
+assert_eq "…and nothing is sent" "0" "$(ncalls)"
+# `-b=X` / `-t=X` / `-F=F` mean X / F to gh and the transport — so to the wrapper too
+bash "$SCRIPT" create --repo o/r --title T -b= "${ATT[@]}" >/dev/null 2>&1
+assert_exit "-b= is an empty body: the #275 guard fires (exit 15)" 15 $?
+calls_reset
+bash "$SCRIPT" comment 5 --repo o/r -F="$WORK/leakbody.md" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "-F=<file> scans that file (privacy net, exit 10)" 10 $?
+bash "$SCRIPT" create --repo o/r -t="crash in /Users/bob/x" -b "clean" "${ATT[@]}" >/dev/null 2>&1
+assert_exit "-t=<title> is scanned as the title (privacy net, exit 10)" 10 $?
+# a body file whose name starts with `-`: `cat` read it as options and the nets scanned "" while the
+# transport sent the file (#416 final review; older than #416)
+( cd "$WORK" && printf 'see /Users/alice/secret and @victim' > ./-x.md \
+  && bash "$SCRIPT" comment 5 --repo o/r --body-file -x.md --allow-empty-body "${ATT[@]}" >/dev/null 2>&1 ); rc=$?
+assert_exit "a '-'-named body file is scanned like any other (privacy net, exit 10)" 10 "$rc"
+calls_reset
+bash "$SCRIPT" create --repo o/r --title T "${ATT[@]}" >/dev/null 2>&1
+assert_exit "create without a body is refused, as non-interactive gh issue create does (exit 14)" 14 $?
+assert_eq "…and nothing is sent" "0" "$(ncalls)"
+calls_reset
+bash "$SCRIPT" edit 7 --repo o/r --remove-assignee @me "${ATT[@]}" >/dev/null 2>&1
+assert_exit "remove-assignee @me dispatches" 0 $?
+assert_grep "…as a DELETE on the assignees endpoint" "repos/o/r/issues/7/assignees -X DELETE" "$(cat "$FAKE_GH_CALLS")"
+assert_eq "…with the resolved login in the body" '{"assignees": ["me-login"]}' "$(payload 2)"
+# edit-comment's --repo enters a REST path too (pre-existing, #273)
+printf '%s' "a clean replacement body for the edit-comment repo checks" > "$WORK/ec-body.md"
+for bad in 'o/r#' 'o/r/issues/comments/999?' '../r' 'orepo'; do
+  bash "$SCRIPT" edit-comment 9 --repo "$bad" --body-file "$WORK/ec-body.md" "${ATT[@]}" >/dev/null 2>&1
+  assert_exit "edit-comment refuses --repo '$bad' (exit 14)" 14 $?
+done
+
+# #416 security review: an issue URL is parsed strictly — owner / repo / host may
+# not smuggle `#`, `?`, `.`/`..` or `user@` into the REST path, which once turned
+# `edit <url> --remove-label x` into DELETE /repos/o/r (the repository).
+for ref in 'https://github.com/o/r#/issues/5' 'https://github.com/o/r?/issues/5' \
+           'https://github.com/../r/issues/5' 'https://github.com/o/../issues/5' \
+           'https://x@evil.example/o/r/issues/5' 'https://github.com/o/r/issues/5?x=1'; do
+  calls_reset
+  bash "$SCRIPT" edit "$ref" --remove-label bug "${ATT[@]}" >/dev/null 2>&1
+  assert_exit "malformed issue URL refused: $ref (exit 14)" 14 $?
+  assert_eq "…and nothing is sent: $ref" "0" "$(ncalls)"
+done
+for repo in '../r' 'o/..' './r'; do
+  calls_reset
+  bash "$SCRIPT" comment 5 --repo "$repo" --body "clean body" "${ATT[@]}" >/dev/null 2>&1
+  assert_exit "dot-segment --repo refused: $repo (exit 14)" 14 $?
+done
+calls_reset
+bash "$SCRIPT" edit 5 --repo o/r --remove-label .. "${ATT[@]}" >/dev/null 2>&1
+assert_exit "label name '..' refused (exit 14)" 14 $?
+assert_eq "…and nothing is sent" "0" "$(ncalls)"
 
 
 # ── #227 exit-code band: wrapper-origin ≥10; gh native codes pass through <10 ──

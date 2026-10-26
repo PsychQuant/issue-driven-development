@@ -18,6 +18,8 @@ allowed-tools:
 
 # /idd-discuss — 可追溯的討論快照
 
+> **Cloud session（#416）— 不支援**：在 Claude Code 雲端 session（`CLAUDE_CODE_REMOTE=true`）裡，本 skill 需要的 GitHub GraphQL／search API 被封鎖。停下並印出「本 skill 在雲端 session 不支援：需要 GitHub GraphQL／search API；請改在本機 Claude Code session 執行」，不嘗試替代路徑。見 [`references/claude-code-remote-tools.md`](../../references/claude-code-remote-tools.md)。
+
 只處理此次指定、實際可見的訊息。預設產生本地草稿；使用者明確要求「發布／建立 Discussion／追加到這篇」即為該次寫入授權，完成既有 gate 後直接執行，不重複索取相同授權。只說「整理」不等於發布。沒有常駐收集、背景監聽或自動追蹤。
 
 ## Step 0: Bootstrap Stage Task List（第一個動作）

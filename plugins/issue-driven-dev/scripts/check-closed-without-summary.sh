@@ -84,6 +84,9 @@
 # same marker idd-list Step 3 keys on for phase inference.
 
 set -u
+# GitHub reads go through lib/gh-rest.sh (REST, porcelain field names): porcelain `gh repo view` /
+# `gh issue view` / `gh issue list` are GraphQL, which Claude Code cloud sessions block (#416).
+GH_REST="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gh-rest.sh"
 
 JSON_FILE=""
 REPO=""
@@ -271,9 +274,9 @@ else
     # closing summary is by construction the NEWEST comment. The audit path
     # repairs that after the fact; the gate simply never takes the broken road.
     GATE_REPO="$REPO"
-    [ -z "$GATE_REPO" ] && GATE_REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)
+    [ -z "$GATE_REPO" ] && GATE_REPO=$(bash "$GH_REST" repo-view --json nameWithOwner 2>/dev/null | jq -r '.nameWithOwner // empty' 2>/dev/null)
     [ -n "$GATE_REPO" ] || gate_out "" "" false "could not resolve the target repo" 2
-    META=$(gh issue view "$GATE_ISSUE" --repo "$GATE_REPO" --json number,title,state 2>/dev/null) \
+    META=$(bash "$GH_REST" issue-view "$GATE_ISSUE" --repo "$GATE_REPO" --json number,title,state 2>/dev/null) \
       || gate_out "" "" false "could not fetch issue #$GATE_ISSUE from $GATE_REPO" 2
     # `gh ... | jq -s 'add // []'` in one pipeline was the #320 CRITICAL, found
     # independently by four lenses. This script sets `set -u` and nothing else,
@@ -304,17 +307,27 @@ else
     ISSUES_JSON=$(printf '%s' "$META" | jq --argjson c "$CMTS" '[. + {comments: $c}]' 2>/dev/null) \
       || gate_out "" "" false "could not assemble the issue payload" 2
   else
-  GH_ARGS=(issue list --state closed --json number,title,state,comments --limit "$LIMIT")
+  # REST through gh-rest (#416). `--closed-since` keeps issues closed on/after the date and the limit
+  # counts the kept ones — the same set the old `--search "closed:>=DATE"` asked GitHub search for.
+  GH_ARGS=(issue-list --state closed --json number,title,state,comments --limit "$LIMIT")
   [ -n "$REPO" ]  && GH_ARGS+=(--repo "$REPO")
-  [ -n "$SINCE" ] && GH_ARGS+=(--search "closed:>=$SINCE")
+  [ -n "$SINCE" ] && GH_ARGS+=(--closed-since "$SINCE")
   if [ "$DRY_RUN" = "1" ]; then
-    # Print the composed gh invocation + exit (no network). Lets the test suite
-    # assert repo-resolution + arg composition for the live-gh branch (#151 verify).
-    printf 'gh %s\n' "${GH_ARGS[*]}"
+    # Print the composed invocation + exit (no network). Lets the test suite
+    # assert repo-resolution + arg composition for the live branch (#151 verify).
+    printf 'gh-rest.sh %s\n' "${GH_ARGS[*]}"
     exit 0
   fi
-  if ! ISSUES_JSON=$(gh "${GH_ARGS[@]}" 2>/dev/null); then
-    echo "note: 'gh issue list' failed (auth / network / old gh CLI) — audit skipped." >&2
+  # gh-rest exits 2 for a usage error (a --since that is not a date, a --limit that is not a number) and 1
+  # for a GitHub failure; say which, or a typo reads as an outage. Still exit 0 — audit mode is advisory.
+  GH_REST_ERR=$(mktemp) || { echo "note: could not create a temp file — audit skipped." >&2; exit 0; }
+  ISSUES_JSON=$(bash "$GH_REST" "${GH_ARGS[@]}" 2>"$GH_REST_ERR"); GH_REST_RC=$?
+  GH_REST_MSG=$(grep -v '^usage:' "$GH_REST_ERR" | tail -1); rm -f "$GH_REST_ERR"
+  if [ "$GH_REST_RC" -eq 2 ]; then
+    echo "note: the arguments were refused (--since '$SINCE', --limit '$LIMIT'): ${GH_REST_MSG:-usage error} — audit skipped." >&2
+    exit 0
+  elif [ "$GH_REST_RC" -ne 0 ]; then
+    echo "note: reading the closed issues failed (auth / network / repo not reachable) — audit skipped." >&2
     exit 0
   fi
 
@@ -344,7 +357,7 @@ else
   TRUNCATED=$(printf '%s' "$ISSUES_JSON" | jq -r '[.[] | select((.comments | length) >= 100) | .number] | .[]' 2>/dev/null)
   if [ -n "$TRUNCATED" ]; then
     RESOLVED_REPO="$REPO"
-    [ -z "$RESOLVED_REPO" ] && RESOLVED_REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)
+    [ -z "$RESOLVED_REPO" ] && RESOLVED_REPO=$(bash "$GH_REST" repo-view --json nameWithOwner 2>/dev/null | jq -r '.nameWithOwner // empty' 2>/dev/null)
     for n in $TRUNCATED; do
       # `gh api --paginate --jq` emits ONE JSON ARRAY PER PAGE, concatenated —
       # NOT one value. Verified against microsoft/vscode#301011 (155 comments):
@@ -794,9 +807,13 @@ CLASSIFY='
   # A MISSING association counts as trusted. Offline payloads and older fixtures
   # carry no such field, and refusing them would silently reclassify every issue
   # in a test corpus. Stated rather than hidden: the filter binds on the live
-  # path, where the field is always present.
+  # path, where the field is always present — spelled `authorAssociation` by
+  # gh-rest (audit) and `author_association` by the REST fetch of the gate; both
+  # are read (the audit read only the second, so the filter never bound there —
+  # #416 final review). No apostrophes in this comment: it sits inside a
+  # single-quoted jq program.
   | [$i.comments[]?
-     | select((.author_association // "OWNER") as $a
+     | select((.author_association // .authorAssociation // "OWNER") as $a
               | $a == "OWNER" or $a == "MEMBER" or $a == "COLLABORATOR"
                 or ($a | test("BOT"; "i")))
      | .body // ""] as $bodies

@@ -59,28 +59,39 @@
 #   gh-egress.sh edit-comment <comment-id> --repo owner/repo --body-file <f> \   # #273: comment-PATCH surgery, all nets apply
 #                --scrub-attested <enforce|warn|light>
 #
-#   On success the wrapper `exec`s the real gh so stdout / stderr / exit code are
-#   byte-for-byte the same as calling `gh issue <verb> ...` directly (backward
-#   compat: callers that capture `URL=$(... )` are unaffected).
+#   The arguments are `gh issue <verb>` arguments, but dispatch goes through the
+#   GitHub REST API (`gh api`, via lib/gh_egress_rest.py) in every environment:
+#   porcelain `gh issue …` is GraphQL, which Claude Code cloud sessions block
+#   (#416, change cloud-session-idd-all D2). On success stdout is exactly one URL
+#   line — the issue URL for create / edit, the comment URL for comment — so
+#   callers that capture `URL=$(... )` are unaffected. Supported flags:
+#     create   --repo/-R --title/-t --body/-b --body-file/-F --label/-l --assignee/-a --milestone/-m
+#     comment  <issue|URL> --repo/-R --body/-b --body-file/-F
+#     edit     <issue|URL> --repo/-R --title/-t --body/-b --body-file/-F --add-label --remove-label
+#              --add-assignee --remove-assignee --milestone/-m --remove-milestone
+#   Any other flag is refused (exit 14), never dropped. The body reaches gh on
+#   stdin, never in argv.
 #
 # EXIT CODES — wrapper-origin codes live in a dedicated refusal band >=10 (#227).
 #   INVARIANT: this wrapper never exits with its own code below 10; any exit <10
 #   observed by a caller is gh's OWN code flowing through the final `exec` (so an
 #   unattended caller can mechanically split "gate refusal -> fix content/args"
 #   from "gh failure -> fix auth/network" on $? alone).
-#   0   dispatched (exec gh -- gh's exit codes flow through from here, all <10)
+#   0   dispatched (the failing gh call's own exit code flows through, all <10)
 #   10  privacy net hit (absolute /Users/<name> path / verbatim ~/.claude.json content)
 #   11  mention net hit (unattested @login token / entity-encoded @ form)
-#   12  unscannable body (unreadable file or unavailable/failed Markdown parser)
+#   12  unscannable body (unreadable file or unavailable/failed Markdown parser; body file not UTF-8)
 #   13  attestation missing/invalid (--scrub-attested absent or bad level)
-#   14  usage error (bad/missing verb, malformed/split-token args, flag missing its value)
+#   14  usage error (bad/missing verb, malformed/split-token args, flag missing its value, more than
+#       one --body / --body-file outside `check`; REST transport: unsupported flag, missing title / issue, stray
+#       positional, unknown label / milestone)
 #   15  empty/near-empty body on the body channel (#275 — the signature of upstream
 #       composition failing silently; edit additionally floors at 10 stripped chars
 #       because its overwrite semantics turn an empty dispatch into data loss.
 #       Explicit intent escape: --allow-empty-body, consumed by the wrapper)
 #
 # TEST OVERRIDES (test-only; never set in production)
-#   IDD_GH_BIN       gh binary to exec       (default: gh)
+#   IDD_GH_BIN       gh binary to call       (default: gh; read by the REST transport too)
 #   IDD_CLAUDE_JSON  claude.json to probe    (default: $HOME/.claude.json)
 
 set -u
@@ -98,6 +109,10 @@ case "$VERB" in
 esac
 
 # --- parse: pull out --scrub-attested, forward everything else verbatim -------
+read_bodyfile() { # path → FCONTENT. A failed read refuses: an unchecked `cat "-x.md"` (read as options)
+  # scanned "" while the transport sent the real file (#416 final review; older than #416).
+  FCONTENT="$(cat -- "$1")" || { echo "✗ gh-egress: REFUSED — could not read --body-file '$1'." >&2; exit 12; }
+}
 require_scannable_bodyfile() {
   # Refuse '-' (stdin), FIFOs, process substitutions and anything that is not a
   # readable REGULAR file (#203 item 3): the gate cannot scan a stream without
@@ -131,6 +146,7 @@ ALLOW_EMPTY_BODY=""   # #275 escape hatch: explicit intent to dispatch an empty/
 EC_ID=""            # edit-comment: target comment id (first bare numeric positional, #273)
 EC_REPO=""          # edit-comment: owner/repo (from --repo)
 BODYFILE_PATH=""    # edit-comment: dispatch needs the PATH, not just the content
+BODY_SOURCES=0      # --body / --body-file values seen — at most one (#416 verify round 3)
 MENTION_ATTESTED=""   # comma-separated logins vetted via rules/tagging-collaborators.md 5-step (#117)
 GH_ARGS=()          # forwarded to gh, byte-identical minus the attestation flag
 SCAN_PARTS=()       # all drafted prose (--body / --title / --body-file) — privacy nets
@@ -139,6 +155,27 @@ BODY_PARTS=()       # body-channel prose only — mention net (GitHub never noti
 next_is=""          # "body" | "title" | "bodyfile" when the previous arg expects a value
 while [ $# -gt 0 ]; do
   arg="$1"
+  # A pending --body / --title / --body-file / --repo takes the NEXT token as its value, whatever it
+  # looks like — that is how gh (pflag) and the REST transport read it. Re-reading a flag-shaped value
+  # (`-b "--repo=…"`, `--body "-bX"`) as a flag here scanned something other than what was sent, so the
+  # privacy, mention and empty-body nets could be skipped (#416 verify, security lens). The wrapper's
+  # own flags still refuse as split tokens (#203 item 6) through their case arms below.
+  if [ -n "$next_is" ]; then
+    case "$arg" in
+      --mention-attested|--mention-attested=*|--scrub-attested|--scrub-attested=*|--allow-empty-body) : ;;
+      *)
+        GH_ARGS+=("$arg")
+        case "$next_is" in
+          body)       SCAN_PARTS+=("$arg"); BODY_PARTS+=("$arg"); BODY_SOURCES=$((BODY_SOURCES + 1)) ;;
+          title)      SCAN_PARTS+=("$arg") ;;
+          repo)       EC_REPO="$arg" ;;
+          meta)       : ;;   # label / assignee / milestone value: forwarded, not prose
+          bodyfile)   require_scannable_bodyfile "$arg"; BODYFILE_PATH="$arg"; read_bodyfile "$arg"
+                      SCAN_PARTS+=("$FCONTENT"); BODY_PARTS+=("$FCONTENT"); BODY_SOURCES=$((BODY_SOURCES + 1)) ;;
+        esac
+        next_is=""; shift; continue ;;
+    esac
+  fi
   case "$arg" in
     --mention-attested|--mention-attested=*)
       # Same malformed-shape guard as --scrub-attested (#203 item 6 / #117).
@@ -177,46 +214,56 @@ while [ $# -gt 0 ]; do
         exit 14
       fi
       ALLOW_EMPTY_BODY=1; shift; continue ;;
-    --repo)
-      GH_ARGS+=("$arg"); next_is="repo"; shift; continue ;;
+    --repo|-R|-l|--label|-a|--assignee|-m|--milestone|--add-label|--remove-label|--add-assignee|--remove-assignee) # value flags ⊇ the REST transport's (drift-guarded in the gh-egress suite)
+      # Each of these takes the next token as its value in gh and in the transport, so it does here too:
+      # otherwise `--remove-label -b --body-file=x` had this parser scan one thing while the transport
+      # sent another (#416 verify round 2). Metadata values are forwarded, not scanned.
+      GH_ARGS+=("$arg"); case "$arg" in --repo|-R) next_is="repo" ;; *) next_is="meta" ;; esac
+      shift; continue ;;
     --repo=*)
       GH_ARGS+=("$arg"); EC_REPO="${arg#--repo=}"; shift; continue ;;
     -b|--body|-t|--title)
       GH_ARGS+=("$arg")
       case "$arg" in -t|--title) next_is="title" ;; *) next_is="body" ;; esac
       shift; continue ;;
-    --body=*)   GH_ARGS+=("$arg"); SCAN_PARTS+=("${arg#--body=}"); BODY_PARTS+=("${arg#--body=}"); shift; continue ;;
+    --body=*)   GH_ARGS+=("$arg"); SCAN_PARTS+=("${arg#--body=}"); BODY_PARTS+=("${arg#--body=}"); BODY_SOURCES=$((BODY_SOURCES + 1)); shift; continue ;;
     --title=*)  GH_ARGS+=("$arg"); SCAN_PARTS+=("${arg#--title=}");  shift; continue ;;
     -F|--body-file)
       GH_ARGS+=("$arg"); next_is="bodyfile"; shift; continue ;;
+    # Attached short forms: `-bX` is X and `-b=X` is X too (pflag strips one `=`; so does the transport).
     -b?*)
-      GH_ARGS+=("$arg"); SCAN_PARTS+=("${arg#-b}"); BODY_PARTS+=("${arg#-b}"); next_is=""; shift; continue ;;
+      v="${arg#-b}"; v="${v#=}"
+      GH_ARGS+=("$arg"); SCAN_PARTS+=("$v"); BODY_PARTS+=("$v"); BODY_SOURCES=$((BODY_SOURCES + 1)); next_is=""; shift; continue ;;
     -t?*)
-      GH_ARGS+=("$arg"); SCAN_PARTS+=("${arg#-t}"); next_is=""; shift; continue ;;
+      v="${arg#-t}"; v="${v#=}"
+      GH_ARGS+=("$arg"); SCAN_PARTS+=("$v"); next_is=""; shift; continue ;;
     -F?*)
-      GH_ARGS+=("$arg"); f="${arg#-F}"
+      GH_ARGS+=("$arg"); f="${arg#-F}"; f="${f#=}"
       require_scannable_bodyfile "$f"
       BODYFILE_PATH="$f"
-      FCONTENT="$(cat "$f")"; SCAN_PARTS+=("$FCONTENT"); BODY_PARTS+=("$FCONTENT"); next_is=""; shift; continue ;;
+      read_bodyfile "$f"; SCAN_PARTS+=("$FCONTENT"); BODY_PARTS+=("$FCONTENT"); BODY_SOURCES=$((BODY_SOURCES + 1)); next_is=""; shift; continue ;;
     --body-file=*) GH_ARGS+=("$arg"); next_is=""; f="${arg#--body-file=}"
       require_scannable_bodyfile "$f"
       BODYFILE_PATH="$f"
-      FCONTENT="$(cat "$f")"; SCAN_PARTS+=("$FCONTENT"); BODY_PARTS+=("$FCONTENT"); shift; continue ;;
+      read_bodyfile "$f"; SCAN_PARTS+=("$FCONTENT"); BODY_PARTS+=("$FCONTENT"); BODY_SOURCES=$((BODY_SOURCES + 1)); shift; continue ;;
     *)
+      # a positional (pending values were taken above)
       GH_ARGS+=("$arg")
-      case "$next_is" in
-        body)       SCAN_PARTS+=("$arg"); BODY_PARTS+=("$arg") ;;
-        title)      SCAN_PARTS+=("$arg") ;;
-        repo)       EC_REPO="$arg" ;;
-        bodyfile)   require_scannable_bodyfile "$arg"; BODYFILE_PATH="$arg"; FCONTENT="$(cat "$arg")"
-                    SCAN_PARTS+=("$FCONTENT"); BODY_PARTS+=("$FCONTENT") ;;
-        *)          if [ "$VERB" = "edit-comment" ] && [ -z "$EC_ID" ]; then
-                      case "$arg" in ''|*[!0-9]*) : ;; *) EC_ID="$arg" ;; esac
-                    fi ;;
-      esac
-      next_is=""; shift; continue ;;
+      if [ "$VERB" = "edit-comment" ] && [ -z "$EC_ID" ]; then
+        case "$arg" in ''|*[!0-9]*) : ;; *) EC_ID="$arg" ;; esac
+      fi
+      shift; continue ;;
   esac
 done
+
+# One body source per call (#416 verify round 3). gh and the REST transport keep only the LAST
+# --body / --body-file (edit-comment sends only the last file), while the nets and the #275 guard
+# read every one — so `--body "<long decoy>" --body ""` passed the guard and sent an empty body.
+# `check` sends nothing, so several inputs there are fine (each is scanned on its own markdown boundary).
+if [ "$VERB" != "check" ] && [ "$BODY_SOURCES" -gt 1 ]; then
+  echo "✗ gh-egress: REFUSED — give the body once (one --body or --body-file, not $BODY_SOURCES): gh sends only the last, the gates would check them all." >&2
+  exit 14
+fi
 
 # --- (a) attestation enforcement (deterministic) -----------------------------
 case "$ATTESTED" in
@@ -465,7 +512,7 @@ if [ "$VERB" = "check" ]; then
   exit 0
 fi
 
-# --- dispatch: byte-for-byte identical to raw `gh issue <verb> ...` -----------
+# --- dispatch: GitHub REST via gh api (#416) ------------------------------------
 GH_BIN="${IDD_GH_BIN:-gh}"
 # ${arr[@]+...} idiom: empty array expands to NOTHING (":-" would yield one
 # phantom '' positional, #203 item 5); bash-3.2 safe.
@@ -476,6 +523,14 @@ if [ "$VERB" = "edit-comment" ]; then
     echo "✗ gh-egress: edit-comment needs <comment-id> --repo owner/repo --body-file <file>." >&2
     usage; exit 14
   fi
+  # --repo enters the REST path: OWNER/REPO only, no `.`/`..` segments (#416 verify round 2; #273 left it raw)
+  case "$EC_REPO" in
+    */*/*|.*/*|*/.|*/..|*[!A-Za-z0-9_./-]*|/*|*/|"${EC_REPO%%/*}")   # last: no slash at all
+      echo "✗ gh-egress: REFUSED — edit-comment --repo '$EC_REPO' is not OWNER/REPO." >&2; exit 14 ;;
+  esac
+  case "$EC_ID" in ''|0*|*[!0-9]*) echo "✗ gh-egress: REFUSED — comment id '$EC_ID' is not a number." >&2; exit 14 ;; esac
   exec "$GH_BIN" api "repos/${EC_REPO}/issues/comments/${EC_ID}" -X PATCH -F body=@"$BODYFILE_PATH"
 fi
-exec "$GH_BIN" issue "$VERB" ${GH_ARGS[@]+"${GH_ARGS[@]}"}
+# create / comment / edit: the forwarded `gh issue <verb>` args become REST calls.
+# The transport runs only past this line — every gate above has already passed.
+IDD_GH_BIN="$GH_BIN" exec python3 "$SCRIPT_DIR/lib/gh_egress_rest.py" "$VERB" ${GH_ARGS[@]+"${GH_ARGS[@]}"}

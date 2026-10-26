@@ -24,10 +24,14 @@
 # A PR created before the issue is never reported (pr-issue-matching.md, #305).
 # stale-merged: the branch tip equals the head commit of a merged PR (decided by commit, not by name).
 # Branches come from `git fetch` + remote-tracking refs, so --cwd must be a clone of the repo. The default branch
-# comes from `gh repo view`, not from the clone's origin/HEAD (which can be stale).
+# comes from GitHub (repo-view), not from the clone's origin/HEAD (which can be stale).
+# GitHub is read through lib/gh-rest.sh (REST, porcelain field names): porcelain `gh pr list` / `gh repo view` /
+# `gh issue view` are GraphQL, which Claude Code cloud sessions block (#416).
 set -u
-exec python3 - "$@" <<'PY'
-import json, re, subprocess, sys
+IDD_GH_REST="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gh-rest.sh" exec python3 - "$@" <<'PY'
+import json, os, re, subprocess, sys
+
+GH_REST = ["bash", os.environ["IDD_GH_REST"]]
 
 LIMIT = 100
 DECL = re.compile(r'^\s*(refs|closes|fixes|resolves)\b', re.I)
@@ -95,9 +99,9 @@ def own(head, n):
 
 
 # ── fetch once for the whole call ────────────────────────────────────────────
-base = ["gh", "pr", "list", "--repo", repo, "--limit", str(LIMIT)]
-open_prs = gh_json(base + ["--state", "open", "--json", "number,body,headRefName,headRefOid,createdAt,url"], "gh pr list --state open")
-merged_prs = gh_json(base + ["--state", "merged", "--json", "number,body,headRefName,headRefOid,createdAt,mergedAt,url"], "gh pr list --state merged")
+base = GH_REST + ["pr-list", "--repo", repo, "--limit", str(LIMIT)]
+open_prs = gh_json(base + ["--state", "open", "--json", "number,body,headRefName,headRefOid,createdAt,url"], "pr-list --state open")
+merged_prs = gh_json(base + ["--state", "merged", "--json", "number,body,headRefName,headRefOid,createdAt,mergedAt,url"], "pr-list --state merged")
 open_prs = open_prs or []
 merged_prs = merged_prs or []
 if len(open_prs) >= LIMIT:
@@ -122,7 +126,7 @@ else:
 # The default branch comes from GitHub. The clone's refs/remotes/origin/HEAD is a snapshot from clone time and can
 # point at an old feature branch (seen on a real clone), which makes every commit on the real default branch look
 # unmerged. It is only the fallback when GitHub cannot be asked.
-rv = gh_json(["gh", "repo", "view", repo, "--json", "defaultBranchRef"], "gh repo view")
+rv = gh_json(GH_REST + ["repo-view", "--repo", repo, "--json", "defaultBranchRef"], "repo-view")
 default = ((rv or {}).get("defaultBranchRef") or {}).get("name")
 if default is None:
     h = run(["git", "-C", cwd, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"])
@@ -166,7 +170,7 @@ def reopened_after(n, when):
 
 out = {}
 for n in issues:
-    meta = gh_json(["gh", "issue", "view", str(n), "--repo", repo, "--json", "createdAt,state"], f"gh issue view {n}")
+    meta = gh_json(GH_REST + ["issue-view", str(n), "--repo", repo, "--json", "createdAt,state"], f"issue-view {n}")
     ev, issue_errs = [], []
     if meta is None:
         out[str(n)] = {"verdict": "unknown", "reason": f"could not read issue #{n}", "evidence": []}

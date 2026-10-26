@@ -1,8 +1,8 @@
 ---
 name: idd-all
 description: |
-  自動串連 IDD 完整 workflow（issue → diagnose → implement → verify），按 pr_policy 解析 path 與 interaction 兩軸：PR + unattended（自動化、/loop friendly）或 direct-commit + attended（HITL、user 在 keyboard，sub-skill AskUserQuestion 自然 fire）。停在 verified 等 user 自己 close（永不 auto-close）。
-  Use when: 想一次跑完整條 IDD pipeline、信任 6-AI verify 會抓錯、希望 fire-and-forget；HITL 模式則用於 solo repo 想被 sub-skill 諮詢的情境。
+  自動串連 IDD 完整 workflow（issue → diagnose → implement → verify），按 pr_policy 解析 path 與 interaction 兩軸：PR + unattended（自動化、/loop friendly）或 direct-commit + attended（HITL、user 在 keyboard，sub-skill AskUserQuestion 自然 fire）；Claude Code 雲端 session 一律走 PR path，有人在場時為 PR + attended。停在 verified 等 user 自己 close（永不 auto-close）。
+  Use when: 想一次跑完整條 IDD pipeline、信任 verify 會抓錯（本機 6-AI、雲端 Claude-only）、希望 fire-and-forget；HITL 模式則用於 solo repo 想被 sub-skill 諮詢的情境。
   防止的失敗：手動跑 5 個 idd-* skill 太繁瑣、忘記中間某一步、orchestration 一致性。
 argument-hint: "[#NNN | 'issue description'] [--pr | --no-pr] [--review] [--cwd /path/to/clone] (empty = interactive; --no-pr 觸發 HITL direct-commit + attended; --review opt-in re-opens Foresay confirmation loop at terminal report)"
 allowed-tools:
@@ -21,6 +21,8 @@ allowed-tools:
 
 # /idd-all — 自動 IDD Pipeline
 
+> **Cloud session（#416）**：在 Claude Code 雲端 session（`CLAUDE_CODE_REMOTE=true`）裡，本 skill 的 `gh issue|pr|label|repo` porcelain 與 `gh auth status` 一律依 [`references/claude-code-remote-tools.md`](../../references/claude-code-remote-tools.md) 改走 REST（讀取用 `scripts/lib/gh-rest.sh`，issue 寫入仍經 `scripts/gh-egress.sh`）——GraphQL 在雲端被封鎖。
+
 把 idd-issue → idd-diagnose → idd-implement → idd-verify 串成一條自動跑的鏈。**Mode 由 `pr_policy` config 與 `--pr/--no-pr` flag 共同推導**：PR mode 在 feature branch + 開 PR + sub-skill unattended；direct-commit mode 留在當前 branch + 不開 PR + sub-skill attended。停在 verified 讓 user 親自 close — **不論 mode 都不 auto-close**。
 
 ## 核心原則
@@ -30,6 +32,7 @@ allowed-tools:
 > - **Two-axis mode resolution**: idd-all 在 Phase 0.5 從 `pr_policy` config + `--pr/--no-pr` flag 解析 `(path, interaction)` tuple — 兩軸從同一 source 推導,避免 duplicate config surface。完整 algorithm 見 [pr-flow.md](../../references/pr-flow.md)。
 >   - `(PR, unattended)`: 強制 feature branch、push、開 PR;sub-skill 收到 `UNATTENDED MODE` directive 抑制 `AskUserQuestion`。**v2.40.0 既有 caller(如 `/loop`)的 default 行為**。
 >   - `(direct-commit, attended)`: 留在當前 branch、不 push、不開 PR;sub-skill 不收 unattended hint,native attended 行為(`AskUserQuestion`、`EnterPlanMode`、`Park/Apply` prompt)自然 fire。HITL 場景。
+>   - `(PR, attended)`（#416）: Claude Code 雲端 session 有人在場時。feature branch + push + PR（container 會被回收，不 push 工作就消失），sub-skill 照常問問題。雲端規則見 [claude-code-remote-tools.md](../../references/claude-code-remote-tools.md)。
 > - **Attended assumes user in session**: attended interaction 模式下,idd-all **不**對 sub-skill `AskUserQuestion` / `EnterPlanMode` prompt 設任何 silent timeout。user 沒回應就一直等。Attended mode = user 在 keyboard 是契約前提;若 user 預期不在,該選 unattended。
 > - **Branch behavior follows path**: PR mode 從 default branch 開 `idd/<N>-<slug>` feature branch;direct-commit mode 留在 user 當前 checkout 的 branch(可能是 main、可能是 feature branch、可能是 wip/foo)。
 > - **Verify is the terminal phase regardless of mode**（meeting issue 例外：不跑 verify，停在 planning 或 diagnosed，見 Phase 6 meeting report）: 不論 PR 或 direct-commit,idd-all 都停在 Phase 6 report,**永不**自動跑 `idd-close`。Closing summary 含 root cause + solution narrative,該由人寫才有審計價值。
@@ -199,8 +202,11 @@ git -C "$CWD" rev-parse --git-dir > /dev/null 2>&1 \
      - cd to the target repo first, then re-run /idd-all
      - OR pass --cwd /path/to/local/clone"
 
-# 2. 必須 gh auth
-gh auth status > /dev/null 2>&1 || abort "gh CLI not authenticated. Run: gh auth login"
+# 2. 必須 gh auth。`gh auth status` 在雲端 session 一律失敗（GH_TOKEN 是佔位值、由 proxy 注入真正的
+#    憑證，#416），所以它失敗時再以 `gh api user` 確認實際要用的 API 可用。`gh auth status` 仍放前面：
+#    GitHub App installation token（如 Actions 的 GITHUB_TOKEN）呼叫不了 GET /user，但 `gh auth status` 認得它。
+{ gh auth status > /dev/null 2>&1 || gh api user --jq .login > /dev/null 2>&1; } \
+  || abort "gh CLI not authenticated (gh auth status and gh api user both failed). Run: gh auth login"
 ```
 
 > **Mode-specific gates(working tree clean、on default branch)移到 Phase 0.5**:那些 gate 只在 PR mode 必須,direct-commit mode 預設留在 user 當前 branch + 容許未 commit 變更(由 user 自負其責)。
@@ -224,7 +230,7 @@ fi
 
 #### Step 0.4: Resolve Issue Number
 
-- **from-issue mode**(`/idd-all #19`): 確認 issue #19 存在且 OPEN(`gh issue view 19 -R "$GITHUB_REPO" --json state -q .state`); 若 state=CLOSED → abort
+- **from-issue mode**(`/idd-all #19`): 確認 issue #19 存在且 OPEN(`gh api "repos/$GITHUB_REPO/issues/19" --jq .state` → `open`／`closed`——REST，本機與雲端皆可用，#416); 若 state=CLOSED → abort
 - **from-scratch mode**: skip 到 Phase 1 跑 idd-issue
 - **interactive mode**: AskUserQuestion 兩選一
 - **開工前檢查（已有 PR／branch 在處理這張 issue？）**: 見 Step 0.5.1。它需要先知道 interaction 軸，所以排在 mode 解析之後、建 branch 之前
@@ -238,7 +244,9 @@ fi
 ```
 1. --in-chain flag                                → (direct-commit, unattended)  [v2.55+ #44 chain context tuple]
 2. --pr flag                                      → (PR, unattended)
-3. --no-pr flag                                   → (direct-commit, attended)
+3. --no-pr flag                                   → 本機 (direct-commit, attended)
+                                                    雲端 (PR, <cloud interaction>) + 覆寫通知  [#416]
+3.5 Claude Code 雲端 session（CLAUDE_CODE_REMOTE）→ (PR, <cloud interaction>)  [#416；attended 只在 CLAUDE_CODE_SESSION_ATTENDED=1]
 4. Fork detected (gh repo view --json isFork)     → (PR, unattended)  [override config]
 5. pr_policy: always                              → (PR, unattended)
 6. pr_policy: never                               → (direct-commit, attended)
@@ -248,6 +256,8 @@ fi
 ```
 
 > **Step 1 (v2.55+ #44, `--in-chain` chain context)**: `/idd-all-chain` 在 Phase 0 已建好 cluster branch 並透過 `--in-chain` 呼叫 sub `/idd-all`。第 4 種 mode tuple `(direct-commit, unattended)` 確保 sub-skill 不再建自己的 feature branch (Phase 0.5 PR mode skip)、不開自己的 PR (Phase 5.5 skip)、不 fire AskUserQuestion (UNATTENDED MODE directive)。**`--in-chain` 與 `--pr` / `--no-pr` 互斥**(在 Step 0.2 parse-time abort)。
+>
+> **Step 3 / 3.5 雲端規則（#416）**：雲端 container 會被回收，direct-commit 的工作會隨之消失，所以雲端一律走 PR path（`--no-pr` 也覆寫，並印出原因）；interaction 由 `scripts/lib/cloud-session.sh` 的 `idd_cloud_interaction` 決定——有 attended 訊號才是 `attended`，訊號缺席一律 `unattended`（attended 的提問沒有逾時，沒人看的 session 判成 attended 會永遠等）。雲端規則排在 fork／`pr_policy` 之前：`gh repo view --json isFork` 在雲端必定 403。spec：`idd-pr-hitl-modes`、`cloud-session-runtime`。
 >
 > **Step 7 vs Step 8 distinction (Task: P1 finding 3, proposal "no backward incompat")**: 顯式 `"pr_policy": "ask"` = user 明確要被問 → 用 AskUserQuestion Claude tool。Config 完全沒寫(field 缺或 file 不存在)= /loop 等舊 caller 場景 → 默認 PR mode 維持 v2.40.0 行為,不卡住自動化。
 
@@ -260,11 +270,22 @@ else
   PR_POLICY=$(jq -r '.pr_policy // "absent"' "$CONFIG_PATH" 2>/dev/null || echo "absent")
 fi
 
+# Cloud-session signals (#416): idd_is_cloud_session / idd_cloud_interaction
+. "$CLAUDE_PLUGIN_ROOT/scripts/lib/cloud-session.sh"
+
 # 1. --in-chain flag (v2.55+ #44 chain context tuple) — highest precedence
 if   [ -n "$IN_CHAIN" ];          then PATH_AXIS="direct-commit"; INTERACTION="unattended"; REASON="flag=--in-chain"
 # 2-3. Explicit flags
 elif [ "$PR_FLAG" = "--pr" ];     then PATH_AXIS="PR";            INTERACTION="unattended"; REASON="flag=--pr"
+elif [ "$PR_FLAG" = "--no-pr" ] && idd_is_cloud_session; then
+  # 3 (cloud): a direct commit would be lost when the container is reclaimed — keep the PR path
+  PATH_AXIS="PR"; INTERACTION="$(idd_cloud_interaction)"
+  REASON="flag=--no-pr overridden: cloud session (CLAUDE_CODE_REMOTE) — a direct commit would be lost with the container"
 elif [ "$PR_FLAG" = "--no-pr" ];  then PATH_AXIS="direct-commit"; INTERACTION="attended";   REASON="flag=--no-pr"
+# 3.5 Cloud session (#416) — before fork detection, which always 403s there
+elif idd_is_cloud_session; then
+  PATH_AXIS="PR"; INTERACTION="$(idd_cloud_interaction)"
+  REASON="cloud session (CLAUDE_CODE_REMOTE; attended signal ${CLAUDE_CODE_SESSION_ATTENDED:-absent})"
 else
   # 3. Fork detection — fail-closed (#5 fix). gh failure defaults IS_FORK="true"
   # so we resolve to PR mode for safety. Direct-commit fall-through on a real
@@ -382,23 +403,32 @@ blocked 的 outcome 文字：E1 → `existing PR #P`；E3 → `already merged in
 
 ```bash
 if [ "$PATH_AXIS" = "PR" ]; then
+  # Explicit stop, not the `abort` convention: no block defines `abort`, so it would print "command not
+  # found" and fall through into `git checkout -b` (#416 verify round 3). Clears the unattended flag
+  # Phase 0.5 just set (abort duty, #123).
+  pr_setup_stop() { echo "✗ $*" >&2; . "$CLAUDE_PLUGIN_ROOT/scripts/lib/unattended-state.sh" && clear_unattended "$CWD"; exit 1; }
   # PR-mode-only preconditions
   if [ -n "$(git -C "$CWD" status --porcelain)" ]; then
     echo "Uncommitted changes detected in $CWD. PR mode needs a clean working tree."
     git -C "$CWD" status --short
-    abort "Run 'git -C $CWD stash' or commit first, then re-run /idd-all."
+    pr_setup_stop "Run 'git -C $CWD stash' or commit first, then re-run /idd-all."
   fi
 
   CURRENT=$(git -C "$CWD" branch --show-current)
-  DEFAULT=$(gh repo view "$GITHUB_REPO" --json defaultBranchRef -q .defaultBranchRef.name)
+  # REST (#416): `gh repo view` / `gh issue view` are GraphQL, blocked in cloud sessions,
+  # where an empty DEFAULT would abort with "must start from ''". On an HTTP error `gh api` prints
+  # the error body on stdout (`--jq` is not applied), so the exit status decides, not the output.
+  DEFAULT=$(gh api "repos/$GITHUB_REPO" --jq .default_branch) || DEFAULT=""
+  [ -n "$DEFAULT" ] || pr_setup_stop "could not read the default branch of $GITHUB_REPO (see the gh error above)"
   if [ "$CURRENT" != "$DEFAULT" ]; then
-    abort "$CWD is currently on '$CURRENT'. PR mode must start from '$DEFAULT'.
+    pr_setup_stop "$CWD is currently on '$CURRENT'. PR mode must start from '$DEFAULT'.
    Run: git -C $CWD checkout $DEFAULT"
   fi
 
   # Build feature branch name
   N="19"  # 從 args 或 idd-issue 結果取得
-  TITLE=$(gh issue view "$N" -R "$GITHUB_REPO" --json title -q .title)
+  TITLE=$(gh api "repos/$GITHUB_REPO/issues/$N" --jq .title) \
+    || pr_setup_stop "could not read the title of #$N (see the gh error above)"   # or the error JSON becomes the slug
   # SLUG sanitization — POSIX-portable; avoids BSD/GNU sed `\|` divergence (#6 fix)
   SLUG=$(echo "$TITLE" | tr '[:upper:]' '[:lower:]' \
       | sed -E 's/[^a-z0-9]/-/g; s/-+/-/g; s/^-//; s/-$//' \
@@ -479,32 +509,63 @@ fi
 
 #### Step 0.6: ralph-loop graceful degrade gate（v2.53+, #28）
 
-Phase 0.5 解析出 `(PATH_AXIS, INTERACTION)` 後,若 tuple 是 `(PR, unattended)`(無論來自 flag、fork detection、`pr_policy=always`、或 v2.40.0 default),**必須**檢查 ralph-loop 是否 installed。缺失則 graceful degrade 而非 abort。
+Phase 0.5 解析出 `(PATH_AXIS, INTERACTION)` 後,若 tuple 是 `(PR, unattended)`(無論來自 flag、fork detection、`pr_policy=always`、或 v2.40.0 default),**必須**檢查 ralph-loop 是否 installed。缺失則 graceful degrade 而非 abort——**雲端 session 例外**（#416）：降級成 direct-commit 會讓工作隨 container 消失，所以雲端改為 unwind branch 後 abort，印出一步安裝指令。`(PR, attended)` 不經此 gate（使用者在場，不需要 loop driver）。
 
 ```bash
+. "$CLAUDE_PLUGIN_ROOT/scripts/lib/cloud-session.sh"   # shell state does not cross Bash calls (#416)
+# Lost state must not skip the gate silently (#416 verify r5): the tuple, and in PR mode the branch to unwind.
+case "${PATH_AXIS:-}:${INTERACTION:-}" in
+  PR:attended|PR:unattended|direct-commit:attended|direct-commit:unattended) ;;
+  *) echo "FATAL: Phase 0.6: (PATH_AXIS, INTERACTION) = (${PATH_AXIS:-}, ${INTERACTION:-}) — shell state lost? Set them from the Phase 0.5 notice and re-run" >&2; exit 1 ;;
+esac
+if [ "$PATH_AXIS" = "PR" ] && [ -z "${BRANCH:-}" ]; then
+  echo "FATAL: Phase 0.6: BRANCH is empty — set it to the idd/<N>-<slug> branch Phase 0.5 checked out and re-run" >&2; exit 1
+fi
 if [ "$PATH_AXIS" = "PR" ] && [ "$INTERACTION" = "unattended" ]; then
   if ! "$CLAUDE_PLUGIN_ROOT/scripts/check-ralph-loop.sh" 2>/dev/null; then
     echo "⚠ ralph-loop plugin not detected — required to drive (PR, unattended) verify-fix loop."
-    echo "  Degrading to (direct-commit, attended) for backward-compat (#28 B4 design)."
-    echo "  To restore (PR, unattended): claude plugin install ralph-loop@claude-plugins-official"
-    echo ""
 
     # F2 fix: Phase 0.5 PR mode branch setup already created `idd/<N>-<slug>`
     # and checked it out. Without unwinding, degrade leaves user committing to
     # a dangling feature branch they never wanted (silent state corruption per
-    # verify finding F2). MUST unwind before flipping mode.
+    # verify finding F2). MUST unwind before flipping mode — or before aborting.
+    # Default branch via REST: `gh repo view` is GraphQL, blocked in cloud sessions (#416).
     if [ -n "${BRANCH:-}" ] && git -C "$CWD" show-ref --verify --quiet "refs/heads/$BRANCH"; then
-      DEFAULT=$(gh repo view "$GITHUB_REPO" --json defaultBranchRef -q .defaultBranchRef.name)
-      echo "→ Unwinding Phase 0.5 PR-mode branch setup before degrade:"
+      DEFAULT=$(gh api "repos/$GITHUB_REPO" --jq .default_branch) || DEFAULT=""
+      if [ -z "$DEFAULT" ]; then
+        # Without the default branch there is no safe unwind, and degrading here would commit onto the
+        # dangling feature branch (the F2 failure) — stop instead, local and cloud alike (#416 verify r3).
+        echo "✗ could not read the default branch of $GITHUB_REPO — $BRANCH left checked out; switch back, delete it, then re-run" >&2
+        echo "  (ralph-loop: claude plugin install ralph-loop@claude-plugins-official)" >&2
+        . "$CLAUDE_PLUGIN_ROOT/scripts/lib/unattended-state.sh" && clear_unattended "$CWD"   # abort duty (#123)
+        exit 1
+      fi
+      echo "→ Unwinding Phase 0.5 PR-mode branch setup:"
       echo "    git checkout $DEFAULT"
       git -C "$CWD" checkout "$DEFAULT" 2>&1 | tail -1
       echo "    git branch -d $BRANCH (no commits yet — safe delete)"
       git -C "$CWD" branch -d "$BRANCH" 2>&1 | tail -1
     fi
 
+    if idd_is_cloud_session; then
+      # #416: no degrade in a cloud session — direct-commit work dies with the container.
+      # Explicit exit, not the `abort` convention: this block runs in its own shell, where an undefined
+      # `abort` would print "command not found" and fall through into the degrade below.
+      echo "✗ ralph-loop is required for (PR, unattended) in a cloud session, and degrading to direct-commit would lose the work." >&2
+      echo "  Install (one step, then re-run): claude plugin install ralph-loop@claude-plugins-official" >&2
+      echo "  (add it to the cloud environment's setup script — references/claude-code-remote-tools.md)" >&2
+      . "$CLAUDE_PLUGIN_ROOT/scripts/lib/unattended-state.sh" && clear_unattended "$CWD"   # abort duty (#123)
+      exit 1
+    fi
+    echo "  Degrading to (direct-commit, attended) for backward-compat (#28 B4 design)."
+    echo "  To restore (PR, unattended): claude plugin install ralph-loop@claude-plugins-official"
+    echo ""
+
     PATH_AXIS="direct-commit"
     INTERACTION="attended"
-    REASON="$REASON + ralph-loop missing → graceful degrade (#28)"
+    # The unattended flag Phase 0.5 set stays on purpose: this caller asked for (PR, unattended) — often
+    # /loop — so sub-skills keep reading it as unattended and do not ask questions nobody may answer (#416 verify r4).
+    REASON="$REASON + ralph-loop missing → graceful degrade (#28; sub-skills stay unattended)"
     BRANCH=$(git -C "$CWD" branch --show-current)
     echo "→ Path: ${PATH_AXIS} (${INTERACTION}) — ${REASON}"
     echo "→ Will commit to current branch: ${BRANCH}"
@@ -605,7 +666,7 @@ Dispatch **先看 `$VEXIT`**(gate 判定),`0` 才依 `$TIER` 分派;**`$DIAG_TYP
 |--------------|--------|
 | `TYPE=meeting` · `VEXIT=0` | **meeting(#383),先於任何 tier 分派**:**attended → Phase 3m: `/idd-plan #$N`**(meeting 版 Plan;approve 後**不** chain 到 idd-implement);**unattended → 停在 diagnosed**,不跑 `/idd-plan`(Meeting Plan 是人核准的審議紀錄,unattended 沒有人可核准;plan 是選填,meeting 的 close gate 在沒有 plan 時退回 Diagnosis 的 Phase C),Phase 6 的 Action items 會為它列一條(在 Phase 6 用 issue 號重新解析 type,不靠 Phase 2 的變數)。兩種模式都先跑下方「meeting 分派前的 branch unwind」,再跳過 Phase 3a／3b、Phase 4、Phase 5,Phase 6 印 meeting report。完全沒有 Diagnosis 的 meeting 是 `complexity-missing`(gate 要求 Diagnosis 存在才豁免),照 abort 列處理;meeting 的其他 `VEXIT=1`(`parking-lot-label` / `blocking-nonempty`)照下面的 parked／blocked 列處理 |
 | `0` · `0` · `Simple` | Phase 3a: idd-implement |
-| `0` · `0` · `Plan` | **attended → Phase 3p: `/idd-plan`**（該 skill 擁有 `EnterPlanMode` 閘門，approve 後自己 chain 到 idd-implement）;**unattended → Phase 3a: idd-implement**，並在 final report 標記 `[Plan tier deliberation skipped under unattended mode]` |
+| `0` · `0` · `Plan` | **attended → Phase 3p: `/idd-plan`**（該 skill 擁有 `EnterPlanMode` 閘門，approve 後自己 chain 到 idd-implement；PR path 時 args 附同一行 `ORCHESTRATED BY /idd-all — skip Step 5.5 …` directive，idd-plan Step 6 轉傳給 idd-implement，PR 只由 Phase 5 在 verify PASS 後開，#416）;**unattended → Phase 3a: idd-implement**，並在 final report 標記 `[Plan tier deliberation skipped under unattended mode]` |
 | `0` · `0` · `Plan`（原值 `Plan via Layer V`,v2.50+）| 同上 — helper 只取開頭的 tier,` via <來源>` 後綴與同行理由皆不影響;verdict 是 user 在 idd-diagnose Step 3.4 選 escalate 觸發,routing 行為跟 bare `Plan` 一致 |
 | `0` · `0` · `Spectra` | Phase 3b: spectra-discuss → spectra-propose → spectra-apply(unattended → 一輪收斂;attended → multi-turn 對話自然進行) |
 | `0` · `0` · `SDD-warranted` (legacy alias) | 視同 `Spectra` 處理(v2.36.0+ backward compat) |
@@ -702,7 +763,11 @@ IMPL_ARGS="#$N --cwd $CWD"
 # #366: 本 skill 已在 Step 0.5.1 做過存在工作檢查，idd-implement 不必再問
 IMPL_ARGS="$IMPL_ARGS --existing-work-checked"
 if [ "$PATH_AXIS" = "PR" ]; then
-  IMPL_ARGS="$IMPL_ARGS --pr"
+  # idd-implement's Step 5.5 would push and open a PR before verify; Phase 5 opens it only after verify
+  # PASS (spec idd-pr-hitl-modes: no PR while verify reports blocking findings — #416 verify r5)
+  IMPL_ARGS="$IMPL_ARGS --pr
+
+ORCHESTRATED BY /idd-all — skip Step 5.5 (no push, no PR): /idd-all Phase 5 pushes and opens the PR after verify PASS."
 elif [ "$PATH_AXIS" = "direct-commit" ]; then
   IMPL_ARGS="$IMPL_ARGS --no-pr"
 fi
@@ -727,7 +792,7 @@ Skill(skill="issue-driven-dev:idd-implement", args="$IMPL_ARGS")
 - PR mode → idd-implement 看到 `--pr` flag + 已在 feature branch → reuse(Step 0.5 fork detection 直接認得)
 - direct-commit mode → idd-implement 看到 `--no-pr` flag → 不再開 branch,直接在當前 branch commit
 
-**PR creation timing**: PR mode 下,idd-implement 的 Step 5.5(PR creation)用 `gh pr list --head $BRANCH` 先查當前 branch 有沒有 open PR,有就 skip — 與 idd-all Phase 5 自然相容(idd-all 在 verify PASS 後才開 PR with verify result)。direct-commit mode 下 idd-implement 收到 `--no-pr` 不會嘗試開 PR,Phase 5 也直接 skip。
+**PR creation timing**: PR mode 下 idd-all 傳 `ORCHESTRATED BY /idd-all` directive,idd-implement 跳過 Step 5.5(不 push、不開 PR)—— PR 只由 idd-all Phase 5 在 verify PASS 後開(#416 verify r5)。舊說法「Step 5.5 先查有沒有 open PR,有就 skip,所以自然相容」不成立:idd-all 不會預先開 PR,Step 5.5 一定會在 verify 之前開出一個。direct-commit mode 下 idd-implement 收到 `--no-pr` 不會嘗試開 PR,Phase 5 也直接 skip。
 
 ### Phase 3b: SDD Path — discuss → propose → apply (mode-aware chain)
 
@@ -973,16 +1038,25 @@ for round in 1..MAX_ROUND:
     findings = parse_verify_report(latest verify comment)
 
     if findings.blocking_count == 0:
+        VERIFY_STATE = "PASS"
         break  # PASS
 
     if INTERACTION == "attended":
         # User is in session — surface findings and let them decide whether to keep iterating.
         # Do NOT auto-fix in attended mode; that defeats the purpose of HITL.
-        report_findings_and_exit_to_user()
+        # Phase 5 opens no PR; in a cloud session it still pushes the branch (#416) — not when a blocking
+        # finding is a security one: the commits may carry a secret (verify r4)
+        VERIFY_STATE = "BLOCKING_SECURITY" if any(f.is_security for f in findings.blocking) else "BLOCKING"
+        report_findings_and_hand_back()   # then Phase 5 (cloud: push, no PR) and the Phase 6 report — not a stop here
         break
 
     # unattended path: auto-fix attempt
     if round == MAX_ROUND:
+        # #416: unpushed commits die with the container — push, no PR. Not when a blocking finding is a
+        # security one: the commits may carry a secret, and a push publishes it (verify r3). Then the
+        # message says the commits exist only in this container and need a human look before any push.
+        if is_cloud_session() and not any(f.is_security for f in findings.blocking):
+            git_push_branch_without_pr()   # git -C "$CWD" push -u origin "$BRANCH"; report a push failure
         abort_with_message(f"verify still failing after {MAX_ROUND} rounds; manual intervention needed")
 
     attempt_auto_fix(findings.blocking)
@@ -996,7 +1070,7 @@ for round in 1..MAX_ROUND:
 
 - 文法/拼字/字串 typo → 安全可修
 - 邏輯錯誤(null check, edge case) → 嘗試但 risky
-- 安全漏洞 → **不 auto-fix**,直接 abort 讓 user 處理
+- 安全漏洞 → **不 auto-fix**,直接 abort 讓 user 處理。雲端 session 也**不 push**(commit 可能帶著 secret,push 就公開了);訊息要說明 commits 只在 container 裡,請人看過再決定要不要 push(#416 verify r3)
 
 每個 auto-fix commit:`fix: address verify finding — {finding summary} (#$N)`
 
@@ -1036,12 +1110,42 @@ elif [ "$PATH_AXIS" = "PR" ]; then
   # meeting run 不會到這裡（Phase 2 → Phase 6）；到這裡才讀到 meeting = Phase 2 之後 type 被改了：fail-closed（r5 #11）
   if [ "$P5_TYPE" = meeting ]; then echo "FATAL: Phase 5: the latest trusted Diagnosis of #$N now records meeting, but Phase 2 routed this run as code work — not pushing, no PR; any commits this run made stay on $BRANCH (check git log). Re-run /idd-diagnose #$N, then decide by hand (r5 #11)" >&2; exit 1; fi
   # PR mode (v2.40.0 behaviour below; #383 adds the type guard above, which fails closed before the push — r4 #20)
+  . "$CLAUDE_PLUGIN_ROOT/scripts/lib/cloud-session.sh"
+  # #416: a PR is opened only after verify PASS. (PR, attended) can reach here with blocking findings
+  # (Phase 4 hands them back): no PR then — but in a cloud session the branch is still pushed, because
+  # unpushed commits die with the container. The verdict does not survive the Bash call that set it;
+  # a missing one is never read as PASS — set VERIFY_STATE from Phase 4's result and run this block again.
+  case "${VERIFY_STATE:-}" in
+    PASS|BLOCKING|BLOCKING_SECURITY) ;;
+    *) echo "FATAL: Phase 5: VERIFY_STATE is '${VERIFY_STATE:-}' (shell state lost?) — set it to PASS, BLOCKING or BLOCKING_SECURITY from Phase 4's verdict and re-run; not pushing, no PR" >&2; exit 1 ;;
+  esac
+  if [ "$VERIFY_STATE" = BLOCKING_SECURITY ]; then
+    # a security finding: never push automatically — the commits may carry a secret (verify r4)
+    echo "→ verify has a blocking security finding: no push, no PR — commits stay on $BRANCH"
+    idd_is_cloud_session && echo "  ⚠ cloud session: $BRANCH exists only in this container — check the commits for secrets, then push by hand before the session ends"
+    PR_URL=""
+  elif [ "$VERIFY_STATE" = BLOCKING ]; then
+    if idd_is_cloud_session; then
+      git -C "$CWD" push -u origin "$BRANCH" \
+        || { echo "FATAL: Phase 5: git push failed — $BRANCH exists only in this container; push it by hand before the session ends" >&2; exit 1; }
+      echo "→ verify has blocking findings: branch $BRANCH pushed (cloud session), no PR opened"
+    else
+      echo "→ verify has blocking findings: no push, no PR — commits stay on $BRANCH"
+    fi
+    PR_URL=""
+  else
   # WARNING (#7): heredoc below is NOT quoted — variable expansion happens.
   # Do NOT insert untrusted strings (e.g. issue titles) into the body without
   # sanitization. Current placeholders {...} are markdown-style note text, not
   # ${...} shell expansions, so safe today; future maintainers must keep it that way.
-  git -C "$CWD" push -u origin "$BRANCH"
+  git -C "$CWD" push -u origin "$BRANCH" \
+    || { echo "FATAL: Phase 5: git push failed — no PR opened; commits stay on local $BRANCH" >&2; exit 1; }
 
+  if idd_is_cloud_session; then   # #416: say which verify ran — cloud verify is Claude-only
+    VERIFY_LINE="Claude-only verification PASS(cloud session — Codex leg not run, degraded)。詳見 issue #${N} 的 Verify comment。"
+  else
+    VERIFY_LINE="6-AI cross-model verification PASS(Agent Team + Codex xhigh)。詳見 issue #${N} 的 Verify comment。"
+  fi
   PR_BODY=$(cat <<EOF
 Refs #${N}
 
@@ -1049,7 +1153,7 @@ Refs #${N}
 {從 issue title + diagnosis 的 Strategy 摘要}
 
 ## Verification
-6-AI cross-model verification PASS(Agent Team + Codex xhigh)。詳見 issue #${N} 的 Verify comment。
+${VERIFY_LINE}
 
 ## Checklist
 - [x] Diagnose ✓
@@ -1065,10 +1169,25 @@ Refs #${N}
 EOF
 )
 
-  gh pr create -R "$GITHUB_REPO" --title "$PR_TITLE" --body "$PR_BODY" \
-      --base "$DEFAULT" --head "$BRANCH"
+  # REST (#416): `gh pr create` is GraphQL, blocked in cloud sessions; this call works in both.
+  DEFAULT=$(gh api "repos/$GITHUB_REPO" --jq .default_branch) || DEFAULT=""
+  [ -n "$DEFAULT" ] || { echo "FATAL: Phase 5: could not read the default branch — branch $BRANCH is pushed, open the PR by hand" >&2; exit 1; }
+  PR_BODY_FILE=$(mktemp) && printf '%s\n' "$PR_BODY" > "$PR_BODY_FILE"
+  PR_URL=$(gh api "repos/$GITHUB_REPO/pulls" -X POST -f title="$PR_TITLE" -f head="$BRANCH" -f base="$DEFAULT" \
+      -F body=@"$PR_BODY_FILE" --jq .html_url) \
+    || { rm -f "$PR_BODY_FILE"; echo "FATAL: Phase 5: PR creation failed — branch $BRANCH is pushed, open the PR by hand" >&2; exit 1; }
+  rm -f "$PR_BODY_FILE"
+  echo "→ PR: $PR_URL"
+  fi
+else
+  # PATH_AXIS lost: shell state does not cross Bash calls. Never a silent no-op — in a cloud session that
+  # would end the run with the commits unpushed (#416 verify r5).
+  echo "FATAL: Phase 5: PATH_AXIS is '${PATH_AXIS:-}' (shell state lost?) — set PATH_AXIS, IN_CHAIN, BRANCH and VERIFY_STATE from Phase 0.5 / Phase 4 and re-run; nothing pushed, no PR" >&2
+  . "$CLAUDE_PLUGIN_ROOT/scripts/lib/cloud-session.sh" && idd_is_cloud_session \
+    && echo "  ⚠ cloud session: the commits exist only in this container — do not end the session before Phase 5 has run" >&2
+  exit 1
 fi
-# Both branches fall through to Phase 6 below.
+# Every branch above either falls through to Phase 6 below or exits.
 ```
 
 > **絕對不能在 PR body 用 Closes/Fixes/Resolves trailer**。User-facing canonical 紀律見 [`rules/commit-issue-reference.md`](../../rules/commit-issue-reference.md)（#214）；理由見 idd-implement skill 裡的 trailer 禁令說明 — auto-close 會繞過 idd-close 的 checklist gate 和 closing summary。
@@ -1118,6 +1237,19 @@ Default (`REVIEW_FLAG=""`):
   Follow-ups:   ${FOLLOWUP_ISSUE_LIST or "(none)"}
 
 Next: merge ${PR_URL}, then run /idd-close #${N}
+```
+
+雲端 session（#416）：`Verify:` 行寫 `verify-gated PASS (Claude-only — cloud session, Codex leg not run)`。`VERIFY_STATE=BLOCKING`／`BLOCKING_SECURITY`（attended 交回 findings）時不印上面的樣板，改印（`BLOCKING_SECURITY` 一律 local only——安全 finding 不自動 push）：
+
+```
+✗ idd-all stopped before the PR (verify has blocking findings)
+
+  Issue:        #${N} — ${TITLE}
+  Branch:       ${BRANCH} (pushed: cloud session) | ${BRANCH} (local only)
+  Verify:       ${BLOCKING_COUNT} blocking finding(s) — see the Verify comment on #${N}
+  PR:           not opened
+
+Next: fix the findings, re-run /idd-verify #${N}, then /idd-all #${N} (resumes ${BRANCH}) or open the PR by hand
 ```
 
 With `--review` (`REVIEW_FLAG="--review"`):
@@ -1290,14 +1422,18 @@ fi
 | spectra-propose 沒 emit `Change:` line | 同上 |
 | spectra-propose 遇到 unrecoverable validation error | Phase 3b abort,artifacts 保留,提示手動 `/spectra-propose` |
 | spectra-apply 留下 unfinished tasks | 不 abort — Phase 4 verify 會抓出來 |
-| Verify 2 round 後仍 blocking | Phase 4 abort,留 branch 給 user 手動修 |
-| `gh pr create` fail | Phase 5 abort,branch 已 push,提示手動開 PR |
+| Verify 2 round 後仍 blocking | Phase 4 abort,留 branch 給 user 手動修;雲端 session 先 push branch(不開 PR,#416)——blocking 裡有安全 finding 時不 push |
+| Phase 5 `VERIFY_STATE` 不是 `PASS`／`BLOCKING`／`BLOCKING_SECURITY`(shell 狀態遺失)| Phase 5 abort,**不 push、不開 PR**;從 Phase 4 的結果設好 `VERIFY_STATE` 再跑一次(#416:缺值絕不當 PASS)|
+| 狀態遺失的停止(Phase 0.6 tuple／`BRANCH`、Phase 5 `PATH_AXIS`／`VERIFY_STATE`)| 停下並要求從前面的 notice 補回變數後**重跑同一段**——這是重試,不是 abort,所以不清 unattended flag(run 還在進行;清掉會讓剩下的步驟失去 unattended 訊號)。雲端 session 另提醒 commits 只在 container 裡(#416)|
+| Phase 5 `git push` 失敗 | Phase 5 abort,不開 PR;commits 留在本地 branch(雲端 session:只存在 container 裡,session 結束前手動 push)|
+| PR 建立失敗(REST `POST repos/R/pulls`)| Phase 5 abort,branch 已 push,提示手動開 PR |
 
 abort 時:
 - `clear_unattended "$CWD"`（#123 — 絕不留 stale unattended flag 誤導下一個 attended session）
 - TaskList 標記當前 phase 為 in_progress(不要 mark completed)
 - 顯示「自己手動接手」的具體命令(例:`/idd-verify #19` 或 `gh pr create ...`)
 - branch 不刪除(保留進度,user 可繼續)
+- 雲端 session(#416):不 push 的 abort(Phase 4／5 type guard、安全 finding、shell 狀態遺失、`git push` 失敗)讓 commits 只留在 container 裡 —— 訊息要提醒 session 結束前手動 `git -C $CWD push -u origin $BRANCH`(不開 PR;安全 finding 先確認 commit 裡沒有 secret)
 
 ---
 
@@ -1386,21 +1522,39 @@ Phase 0.5 印 `→ Path: PR (unattended) — pr_policy absent (v2.40.0 default)`
 
 ```
 ⚠ ralph-loop plugin not detected — required to drive (PR, unattended) verify-fix loop.
+→ Unwinding Phase 0.5 PR-mode branch setup:
+    git checkout main
+Switched to branch 'main'
+    git branch -d idd/42-bug-foo (no commits yet — safe delete)
+Deleted branch idd/42-bug-foo (was 0e9bb99).
   Degrading to (direct-commit, attended) for backward-compat (#28 B4 design).
   To restore (PR, unattended): claude plugin install ralph-loop@claude-plugins-official
 
-→ Unwinding Phase 0.5 PR-mode branch setup before degrade:
-    git checkout main
-    Switched to branch 'main'
-    git branch -d idd/42-bug-foo (no commits yet — safe delete)
-    Deleted branch idd/42-bug-foo (was 0e9bb99).
-→ Path: direct-commit (attended) — pr_policy absent (v2.40.0 default) + ralph-loop missing → graceful degrade (#28)
+→ Path: direct-commit (attended) — pr_policy absent (v2.40.0 default) + ralph-loop missing → graceful degrade (#28; sub-skills stay unattended)
 → Will commit to current branch: main
 ```
 
-後續 sub-skill 全部進 attended 模式(像 Trace 2),user 在 keyboard 自然推進。final report 標明 degrade 原因。
+idd-all 之後不再注入 `UNATTENDED MODE` directive,但 Phase 0.5 寫下的 unattended flag 刻意保留:原 caller 要的是 unattended(多半是 `/loop`),sub-skill 依 #123 仍判 unattended,不會對可能沒人的 session 發問。final report 標明 degrade 原因。雲端 session 不降級(見 Phase 0.6;branch unwind 後 abort)。
 
 無 abort、無 silent break — backward-compat 對 v2.40.0 既有 caller 維持。
+
+### Trace 5: `(PR, attended)` — Claude Code 雲端 session,有人在場(#416)
+
+web 上開的雲端 session(`CLAUDE_CODE_REMOTE=true`、`CLAUDE_CODE_SESSION_ATTENDED=1`),config 是 `pr_policy: never`:
+
+```
+/idd-all #42
+```
+
+```
+→ Path: PR (attended) — cloud session (CLAUDE_CODE_REMOTE; attended signal 1)
+```
+
+- Phase 0.5 照 PR mode 建 `idd/42-<slug>`(default branch 與 title 經 REST 讀);Phase 0.6 不經 ralph-loop gate(使用者在場)
+- sub-skill 不收 `UNATTENDED MODE` directive,會照常發問;idd-implement 收到 `ORCHESTRATED BY /idd-all`(Simple 由 Phase 3a 給;Plan 走 Phase 3p,由 `/idd-plan` Step 6 轉傳),不自己開 PR
+- Phase 4 verify 是 Claude-only(`Codex leg not run — cloud session (degraded: Claude-only)`);attended 下有 blocking findings 時交回使用者
+- Phase 5:PASS → push + REST `POST repos/R/pulls`,PR body 寫明 Claude-only;`BLOCKING` → 只 push branch、不開 PR;`BLOCKING_SECURITY` → 不 push(提醒先查 secret)
+- Phase 6 印 PR mode report(`Verify: verify-gated PASS (Claude-only — cloud session, Codex leg not run)`)或「stopped before the PR」樣板
 
 ### 從零開始 — 文字描述
 

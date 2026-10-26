@@ -256,15 +256,20 @@ The check is signal-based, not state-based: if a PR ref exists, IDD assumes PR p
 
 | Resolved | `(path, interaction)` | When |
 |----------|----------------------|------|
+| `--in-chain` flag | `(direct-commit, unattended)` | Called by `/idd-all-chain`; stays on the cluster branch, no per-issue PR |
 | `--pr` flag | `(PR, unattended)` | Explicit override; matches v2.40.0 default + `/loop` automation |
-| `--no-pr` flag | `(direct-commit, attended)` | Explicit HITL override |
+| `--no-pr` flag | `(direct-commit, attended)` | Explicit HITL override (outside a cloud session) |
+| `--no-pr` flag in a Claude Code cloud session | `(PR, <cloud interaction>)` + override notice | A direct commit would be lost when the container is reclaimed (#416) |
+| Claude Code cloud session (`CLAUDE_CODE_REMOTE=true`) | `(PR, attended)` when `CLAUDE_CODE_SESSION_ATTENDED=1`, else `(PR, unattended)` | Before fork / `pr_policy`: the fork probe always 403s there (#416) |
 | Fork detected | `(PR, unattended)` | Always — overrides `pr_policy: never` |
 | `pr_policy: always` | `(PR, unattended)` | Config-driven |
 | `pr_policy: never` | `(direct-commit, attended)` | Config-driven HITL |
 | `pr_policy: ask` (explicitly set) | first answer locks both axes | Interactive prompt via `AskUserQuestion` (Claude tool) |
 | `pr_policy` absent (no config / field missing) | `(PR, unattended)` | v2.40.0 backward-compat default; `/loop` callers never hang |
 
-**Why "two axes from one source"**: a `(PR, attended)` mix would mean opening a PR but pausing on every sub-skill prompt — defeats automation. A `(direct-commit, unattended)` mix would mean fire-and-forget commits to whatever branch the user happened to be on — too dangerous. The two paired tuples cover the real-world use cases (`/loop` automation vs solo HITL); orthogonal flags would just multiply the failure modes. If a future use case demands a mixed tuple, an explicit `--attended/--unattended` flag can be added without restructuring this contract.
+**Why "two axes from one source"**: a `(PR, attended)` mix would mean opening a PR but pausing on every sub-skill prompt — defeats automation on a local machine, which is why no local precedence step produces it. A `(direct-commit, unattended)` mix would mean fire-and-forget commits to whatever branch the user happened to be on — too dangerous. The two paired tuples cover the real-world use cases (`/loop` automation vs solo HITL); orthogonal flags would just multiply the failure modes. If a future use case demands a mixed tuple, an explicit `--attended/--unattended` flag can be added without restructuring this contract.
+
+**`(PR, attended)` — the cloud-session tuple (#416)**: in a Claude Code cloud session the person is present (web or mobile) but the container is temporary, so the work must ship as a pushed branch + PR while sub-skills keep asking their questions. It comes only from the cloud-session rule, which reads both axes from one source too (`scripts/lib/cloud-session.sh`): `CLAUDE_CODE_REMOTE` forces the path, `CLAUDE_CODE_SESSION_ATTENDED` sets the interaction, and an absent attended signal means `unattended` (attended questions never time out). `(PR, attended)` skips the Phase 0.6 ralph-loop gate; in a cloud session `(PR, unattended)` without ralph-loop aborts instead of degrading to direct-commit. Full cloud contract: [`claude-code-remote-tools.md`](claude-code-remote-tools.md).
 
 **Resolved-tuple notice**: `idd-all` MUST print one line before any state-mutating action, e.g. `→ Path: direct-commit (attended) — pr_policy=never`. The notice line cites the precedence reason (flag, fork, or config) so the user can see which gate fired.
 

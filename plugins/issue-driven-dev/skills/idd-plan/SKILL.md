@@ -14,6 +14,8 @@ allowed-tools:
 
 # /idd-plan — Plan-mode 實作
 
+> **Cloud session（#416）**：在 Claude Code 雲端 session（`CLAUDE_CODE_REMOTE=true`）裡，本 skill 的 `gh issue|pr|label|repo` porcelain 與 `gh auth status` 一律依 [`references/claude-code-remote-tools.md`](../../references/claude-code-remote-tools.md) 改走 REST（讀取用 `scripts/lib/gh-rest.sh`，issue 寫入仍經 `scripts/gh-egress.sh`）——GraphQL 在雲端被封鎖。
+
 「**Think before leap, but no spec contract**」的 IDD 路徑。在 TDD execution 之前插入 `EnterPlanMode` approval gate — 使用者在 plan-mode UI 看完整 Implementation Plan，approve 後才執行任何 stateful tool。
 
 ## 核心原則
@@ -252,6 +254,14 @@ User approved → invoke idd-implement skill 繼續 TDD loop：
 
 ```
 Skill(skill="issue-driven-dev:idd-implement", args="#NNN")
+```
+
+**由 `/idd-all` 呼叫時（#416）**：本 skill 的 args 若帶 `ORCHESTRATED BY /idd-all — skip Step 5.5 …` directive（idd-all 的 PR path），把 `--pr` 與該行原樣轉傳——PR 只由 idd-all Phase 5 在 verify PASS 後開，idd-implement 不能在 verify 之前自己開一個：
+
+```
+Skill(skill="issue-driven-dev:idd-implement", args="#NNN --pr
+
+ORCHESTRATED BY /idd-all — skip Step 5.5 (no push, no PR): /idd-all Phase 5 pushes and opens the PR after verify PASS.")
 ```
 
 idd-implement 會偵測到 issue 已有 `## Implementation Plan` comment（Step 2 post 的），跳過自己 Step 2 的 plan drafting，直接進 Step 2.5 bootstrap TaskList + Step 3 TDD loop。

@@ -18,8 +18,9 @@ class MentionMarkdownTests(unittest.TestCase):
     def check(self, body, expected, attested=None, env=None, verb='check'):
         bodyfile = self.work / 'body.md'
         bodyfile.write_bytes(body.encode('utf-8'))
-        args = ['bash', str(GATE), verb, '--body-file', str(bodyfile),
-                '--scrub-attested', 'warn']
+        # comment dispatches need an issue: gh-egress's REST transport refuses a missing one (#416)
+        args = ['bash', str(GATE), verb] + (['5'] if verb == 'comment' else []) + [
+                '--body-file', str(bodyfile), '--scrub-attested', 'warn']
         if attested:
             args += ['--mention-attested', attested]
         result = subprocess.run(args, env=env or self.env, text=True, capture_output=True)

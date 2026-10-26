@@ -32,6 +32,7 @@
 # See: plugins/issue-driven-dev/references/chain-flow.md for chain-shell context
 
 set -u
+GH_REST="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gh-rest.sh"
 
 usage() {
   cat >&2 <<EOF
@@ -79,7 +80,9 @@ for n in "$@"; do
   # widen the anchor from strict ^## to ^[ ]{0,3}## so user-pasted comment bodies
   # with legal indent don't false-negative. (4+ space is a code block per spec —
   # `[ ]{0,3}` correctly excludes that.)
-  count=$(gh issue view "$n" -R "$GITHUB_REPO" --json comments 2>/dev/null \
+  # Read through lib/gh-rest.sh (REST, porcelain field names): the porcelain issue read is
+  # GraphQL, which Claude Code cloud sessions block (#416).
+  count=$(bash "$GH_REST" issue-view "$n" --repo "$GITHUB_REPO" --json comments 2>/dev/null \
     | jq -r '[.comments[] | select(.body | test("(?m)^[ ]{0,3}## Diagnosis"))] | length' \
     2>/dev/null)
 

@@ -29,6 +29,8 @@ allowed-tools:
 
 # /idd-verify — 驗證實作
 
+> **Cloud session（#416）**：在 Claude Code 雲端 session（`CLAUDE_CODE_REMOTE=true`）裡，本 skill 的 `gh issue|pr|label|repo` porcelain 與 `gh auth status` 一律依 [`references/claude-code-remote-tools.md`](../../references/claude-code-remote-tools.md) 改走 REST（讀取用 `scripts/lib/gh-rest.sh`，issue 寫入仍經 `scripts/gh-egress.sh`）——GraphQL 在雲端被封鎖。
+
 6 個獨立 AI 交叉驗證。Claude 修、獨立 AI 群驗。
 
 ## 核心原則
@@ -188,6 +190,18 @@ esac
 # 共通前置（Tier 1/2 都需要）
 write $DIFF 到 temp 檔 $DIFF_FILE   # 大 diff 不塞 inline args (Workflow tool 會把 args JSON-stringify；兩個引擎都防禦性 parse 並支援 diffFile 讓 agents 用 file-read tool 讀)
 
+# ── 雲端 session：Claude-only（#416，沿用 #400 的判定）──
+# Claude Code 雲端 container 沒有 Codex 認證與 executable：codex leg 一定失敗，fail-closed 會把它合成
+# integrity finding。所以雲端在派發前就不跑 codex leg，並在報告寫明 degraded——缺 Codex 本身不是 blocking finding。
+. "$CLAUDE_PLUGIN_ROOT/scripts/lib/cloud-session.sh"
+if idd_is_cloud_session; then
+  CODEX_ENABLED=false
+  CODEX_SKIP_NOTE="Codex leg not run — cloud session (degraded: Claude-only)"
+else
+  CODEX_ENABLED=true
+  CODEX_SKIP_NOTE=""
+fi
+
 # ── codex 通道依賴解析（#264：完全依賴，superpowers 形狀 — vendored codex-call 已刪除）──
 # executable 歸 pai（design D3 分工）：PAI_DIR 前置先解析，engine 路徑與 codex-call 路徑兩用。
 PAI_DIR=$(ls -d ~/.claude/plugins/cache/parallel-ai-agents/parallel-ai-agents/*/ 2>/dev/null | grep -E '/[0-9]+\.[0-9]+\.[0-9]+/$' | sort -V | tail -1)   # semver 目錄才參賽（防 latest/current 誤入版本比較）
@@ -196,16 +210,18 @@ PAI_CODEX_CALL="${PAI_DIR}bin/codex-call"   # 取代舊 vendored copy（divergen
 
 # 治理歸 codex-pro（EXTERNAL-CONSUMER CONTRACT：references/profile-contract.md + defaults.json）——
 # IDD pin 契約不 pin 值：樹內零 model 字面，換代只動 codex-pro 一處。
-MIN_CODEX_PRO="0.7.0"   # defaults.json + profile-contract 起點（codex-pro#7）
-CP_DIR=$(ls -d ~/.claude/plugins/cache/codex-pro/codex-pro/*/ 2>/dev/null | grep -E '/[0-9]+\.[0-9]+\.[0-9]+/$' | sort -V | tail -1)
-CP_VER=$(basename "$CP_DIR" 2>/dev/null)
-CP_DEFAULTS="${CP_DIR}references/defaults.json"
-若 [ ! -f "$CP_DEFAULTS" ] 或 [ "$(printf '%s\n%s\n' "$MIN_CODEX_PRO" "$CP_VER" | sort -V | head -1)" != "$MIN_CODEX_PRO" ]:
-    abort（fail-fast，無 soft fallback —— 靜默跑錯 model 比失敗糟，#205 判準）:
-    "✗ codex-pro governance unavailable（缺席 / $CP_VER < $MIN_CODEX_PRO / defaults.json 缺檔——三者印其一）"
-    "  Install (one step): claude plugin install codex-pro@codex-pro"
-# 解析（per contract §2：defaults.json 起底 → ~/.codex-pro/profile.yaml → ./.codex-pro/profile.yaml，per-field 高層蓋低層）：
-CODEX_MODEL / CODEX_EFFORT / CODEX_MAX_TIME ← python3 讀 $CP_DEFAULTS 起底，再逐層疊 profile.yaml 同名欄位（扁平 YAML regex parse，同 codex-pro 慣例、不依賴 PyYAML）
+# 治理解析（含 fail-fast abort）只在 CODEX_ENABLED=true 時執行；雲端（false）整段跳過，CODEX_MODEL／EFFORT／MAX_TIME 留空（#416）。
+若 [ "$CODEX_ENABLED" = true ]:
+    MIN_CODEX_PRO="0.7.0"   # defaults.json + profile-contract 起點（codex-pro#7）
+    CP_DIR=$(ls -d ~/.claude/plugins/cache/codex-pro/codex-pro/*/ 2>/dev/null | grep -E '/[0-9]+\.[0-9]+\.[0-9]+/$' | sort -V | tail -1)
+    CP_VER=$(basename "$CP_DIR" 2>/dev/null)
+    CP_DEFAULTS="${CP_DIR}references/defaults.json"
+    若 [ ! -f "$CP_DEFAULTS" ] 或 [ "$(printf '%s\n%s\n' "$MIN_CODEX_PRO" "$CP_VER" | sort -V | head -1)" != "$MIN_CODEX_PRO" ]:
+        abort（fail-fast，無 soft fallback —— 靜默跑錯 model 比失敗糟，#205 判準）:
+        "✗ codex-pro governance unavailable（缺席 / $CP_VER < $MIN_CODEX_PRO / defaults.json 缺檔——三者印其一）"
+        "  Install (one step): claude plugin install codex-pro@codex-pro"
+    # 解析（per contract §2：defaults.json 起底 → ~/.codex-pro/profile.yaml → ./.codex-pro/profile.yaml，per-field 高層蓋低層）：
+    CODEX_MODEL / CODEX_EFFORT / CODEX_MAX_TIME ← python3 讀 $CP_DEFAULTS 起底，再逐層疊 profile.yaml 同名欄位（扁平 YAML regex parse，同 codex-pro 慣例、不依賴 PyYAML）
 # （Tier 3 manual fan-out 消費 $PAI_CODEX_CALL 與治理三值；pai 連 cache 都缺席時 codex leg 無 executable →
 #   沿用 fail-closed INFO finding「cross-model pass incomplete」，不 abort 整個 verify）
 
@@ -510,7 +526,7 @@ PAI_ENGINE="${PAI_DIR}workflows/ensemble-workflow.js"
                               daFocus: "adversarially refute the other reviewers' judgments: hunt for defects where they passed, false positives in their findings, and requirements-coverage claims the diff does not actually satisfy." + $DA_FOCUS_SUFFIX,
                               contextBlock: $CONTEXT_BLOCK,
                               diffFile: $DIFF_FILE,
-                              codexEnabled, codexCallPath: $PAI_CODEX_CALL,
+                              codexEnabled: $CODEX_ENABLED, codexCallPath: $PAI_CODEX_CALL,   # 雲端 false（#416）——JSON boolean，不是字串 "false"（pai 以 !!A.codexEnabled 判斷，字串會把 Codex 打開）
                               codexModel: $CODEX_MODEL, codexEffort: $CODEX_EFFORT,   # #264：codex-pro 治理值（pai 2.19.0 契約 args）
                               agentModel: $AGENT_MODEL})   # = Step 2 前解析的 IDD_AGENT_MODEL 值（#205）；pai 端顯式非法值派發前 throw
     BACKEND_DESC="pai-ensemble ${PAI_VER} (canonical #207) — 4 IDD lenses + DA + Codex (gpt-5.x)"
@@ -521,10 +537,13 @@ PAI_ENGINE="${PAI_DIR}workflows/ensemble-workflow.js"
     印 fail-fast 安裝指引（#219 — vendored fork 已刪除，per deep-integration-over-hardcode「不留平行複本」；成熟條件見 #207 Residue 對照）:
       "⚠ canonical pai-ensemble unavailable（pai cache 缺席 / 無 semver 目錄 / $PAI_VER < $MIN_PAI / workflows/ensemble-workflow.js 缺檔 / workflow primitive 不可用——五者印其一，不籠統）"
       "  Install (one step): claude plugin install parallel-ai-agents@psychquant-claude-plugins"
-      "  Falling back to manual fan-out（品質等價：同 4 lens + DA + Codex，較慢）"
+      "  Falling back to manual fan-out（品質等價：同 4 lens + DA + Codex，較慢；雲端 session 無 Codex leg，#416）"
     findings = Step 2 manual fan-out
     BACKEND_DESC="manual fan-out (4 lens Agents + sequenced DA, model: ${AGENT_MODEL}, file-based output) + Codex (gpt-5.x, run_in_background)"
     印一行 notice: "→ verify backend: manual fan-out"
+
+# 雲端（#416）：Engine 行拿掉「+ Codex …」並明寫少了 Codex leg
+若 [ -n "$CODEX_SKIP_NOTE" ]: BACKEND_DESC="${BACKEND_DESC% + Codex*} — ${CODEX_SKIP_NOTE}"
 ```
 
 **customLenses focus 字面即 Implementation Contract**（#219 後 vendored 引擎已刪，contract 固定於本檔）；lens 鍵沿用 IDD 命名，pai harness 強制 attribution，master report 的 Source 欄零改動。canonical tier 的 Engine 行揭露 `pai-ensemble <ver> (model: <stats.dispatchModel>)`。
@@ -559,8 +578,8 @@ TaskCreate(name="resolve_scratch_dir", description="Step 0.4 (#288): VERIFY_DIR=
 TaskCreate(name="get_diff_and_issue", description="依 input source 取 diff（gh pr diff / git diff HEAD~N / git diff origin/<default>...<branch>） + gh issue view,存 diff 到 $VERIFY_DIR/diff.patch 供 agents 讀取,並記 FROZEN_SHA=$(git rev-parse HEAD)（PR mode 記 PR head oid — #228 freshness 錨點）；PR mode 額外做 gh pr checkout 並記住原 branch")
 TaskCreate(name="check_attachments", description="確認 .claude/.idd/attachments/issue-NNN/ 存在,把 attachment 路徑塞進 reviewer agent prompt 作為 source-of-truth context。manifest 缺漏 → 警告繼續(reviewer 仍跑,但 verification 完整度受限)。依 rules/process-attachments.md。")
 TaskCreate(name="collect_external_writes", description="#315: 用 REST --paginate 抓每個 refd issue 的**全部** comment **以及 issue body**(`Linked-Context Siblings Filed` 是 PATCH 進 body 的,只掃 comment 會讓那一類永遠回報 UNKNOWN),掃 $EW_SECTIONS 列出的 audit-trail heading(它們散在不同 comment 裡),組成 $EW_BLOCK。**不要**用 gh issue view --json comments —— 那是只回最舊 100 則的 connection,而要找的紀錄通常較新。$EW_BLOCK 兩個 backend 共用(Tier 1 併進 CONTEXT_BLOCK、manual fan-out 進每個 prompt + codex --instructions)。**沒有紀錄時報 UNKNOWN,不報「沒有外部寫入」** —— 漏跑的 sweep 與跑了沒找到的 sweep 痕跡一樣")
-TaskCreate(name="resolve_dispatch_model", description="解析 $AGENT_MODEL — IDD_AGENT_MODEL 未設 → opus；非法值 → abort with usage error（#205；兩個 backend 共用，Workflow args 傳 agentModel、manual 模板填 model）；#264 同步解析 codex 治理（check-plugin-presence.sh codex-pro codex-pro → CP defaults.json + profile.yaml 兩層 → CODEX_MODEL/EFFORT/MAX_TIME，缺席 fail-fast）")
-TaskCreate(name="launch_parallel_reviewers", description="第一波 5 個 tool calls 同一 message: 4 lens Agent(subagent_type=general-purpose, model=$AGENT_MODEL) for requirements/logic/security/regression + 1 Bash codex(run_in_background:true)；DA 不在此波（#130 sequenced）。prompt 引用 attachment 路徑 + 強制 file-output rule (per #52)")
+TaskCreate(name="resolve_dispatch_model", description="解析 $AGENT_MODEL — IDD_AGENT_MODEL 未設 → opus；非法值 → abort with usage error（#205；兩個 backend 共用，Workflow args 傳 agentModel、manual 模板填 model）；#264 同步解析 codex 治理（check-plugin-presence.sh codex-pro codex-pro → CP defaults.json + profile.yaml 兩層 → CODEX_MODEL/EFFORT/MAX_TIME，缺席 fail-fast；雲端 session CODEX_ENABLED=false 時跳過治理解析，#416）")
+TaskCreate(name="launch_parallel_reviewers", description="第一波 5 個 tool calls 同一 message: 4 lens Agent(subagent_type=general-purpose, model=$AGENT_MODEL) for requirements/logic/security/regression + 1 Bash codex(run_in_background:true；雲端 CODEX_ENABLED=false 時不送，第一波只有 4 個 call，#416)；DA 不在此波（#130 sequenced）。prompt 引用 attachment 路徑 + 強制 file-output rule (per #52)")
 TaskCreate(name="spawn_sequenced_da", description="#130: 4 份 lens findings 檔全部就緒（non-empty）後，coordinator 序列 spawn Devil's Advocate（model=$AGENT_MODEL，prompt 直附 4 檔路徑，無 polling）")
 TaskCreate(name="wait_for_claude_agents", description="4 lens Agent calls return 後 ls $VERIFY_DIR/findings_*.md 確認 4 檔 non-empty（DA 檔在 sequenced spawn 後另計）;缺者進 Step 2.5 Recovery Protocol")
 TaskCreate(name="recovery_protocol", description="Step 2.5 (NEW per #52): 缺 findings 檔者 SendMessage retry with FULL context re-paste(不假設 context 倖存 idle/wake);二次 idle → coordinator self-review for that role + 在 master report 標 process gap")
@@ -1039,6 +1058,8 @@ If you receive a later SendMessage with the same prompt re-pasted, treat as retr
 
 #### 2b. Codex（背景執行，via vendored `codex-call` HTTP wrapper，#147）
 
+> **雲端 session（#416）**：`CODEX_ENABLED=false` 時**不執行**本步，並在 master report 的 `### Process Gaps` 寫 `- codex: Codex leg not run — cloud session (degraded: Claude-only)`。缺 Codex 本身不是 blocking finding；本機行為不變。
+
 透過 pai 的 `codex-call`（`$PAI_CODEX_CALL`；HTTP，非 `codex exec` subprocess → 無 pipe hang）執行 review，model/effort 帶共通前置解析的 codex-pro 治理值（#264）。**注意語意差異**：`codex exec --full-auto` 是 agentic（codex 自己讀 working-tree diff）；`codex-call` 是單次 completion（非 agentic），所以 diff 必須**顯式**用 `--prompt-file` 餵進去 —— 用 Step 1 已寫好的 `"$VERIFY_DIR/diff.patch"`，review 框架放 `--instructions`：
 
 ```bash
@@ -1174,6 +1195,7 @@ Step 4 master report **必須** 標示 process gap：
 ```markdown
 ### Process Gaps (if any)
 - requirements: Agent failed → coordinator fallback (lower-quality review)
+- codex: Codex leg not run — cloud session (degraded: Claude-only)   ← 雲端 session 一律有這行（#416）
 - (other roles as applicable)
 ```
 
@@ -1401,6 +1423,8 @@ for N in $ISSUE_NUMBERS; do                                # cluster: tag each r
 done
 ```
 
+> **雲端 session（#416）**：proxy 拒絕推 tag，也拒絕 `POST repos/R/git/refs`（HTTP 403 `Write access to this GitHub API path is not permitted through this proxy`）—— 上面一定走 graceful-skip，tag 只留在 container 裡。verified tag 要在本機補打；不要找別的 API 繞過。
+
 **鐵律 — graceful-skip，never abort**：同 baseline —— tag/push 失敗只 warn，絕不 abort verify（結果已 post，tag 是附加便利）。**Aggregate PASS 是唯一觸發條件**；FAIL run 不留 verified tag，避免把未過的 code 標成「已驗證」。cluster mode（多 `#N`）每個 issue 各打自己的 `idd-{N}-verified`。
 
 ### Step 5: 後續動作
@@ -1503,6 +1527,12 @@ Full integration contract: [`references/agent-routing.md`](../../references/agen
 只用 Codex，不開 team。適合小改動：
 
 ```bash
+# 雲端 session 沒有 Codex（#416）：這個 engine 只有 Codex，沒有可退的 Claude leg —— 明說後停下
+. "$CLAUDE_PLUGIN_ROOT/scripts/lib/cloud-session.sh"
+if idd_is_cloud_session; then
+  echo "✗ --engine codex needs Codex, which a Claude Code cloud session does not have — use the default engine (Claude-only here) or run from a local session" >&2
+  exit 1
+fi
 # codex-call 是單次 completion（非 agentic）→ 顯式把 diff 餵進去
 QUICK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/idd-quick-XXXXXX")
 git diff > "$QUICK_DIR/diff.patch"
