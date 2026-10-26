@@ -98,6 +98,8 @@ porcelain call returns 403, and so does `gh auth status` — while `gh api` REST
 
 - The `idd-close`, `idd-comment`, `idd-edit`, `idd-config`, `idd-reorganize` and `idd-all-chain` skill bodies are
   not migrated; in a cloud session their own porcelain calls fail with GitHub's 403 message.
+- Tags cannot be created from a cloud session (tag pushes and the git refs API are refused), so `idd-verify`'s
+  verified tag is skipped there with its existing warning; tag from a local session.
 - Not yet verified live: a fresh cloud session started from the setup script, and an end-to-end cloud
   `/idd-all` run (see the Status section of `references/claude-code-remote-tools.md`).
 - `CLAUDE_CODE_SESSION_ATTENDED` was observed in a web session only; scheduled / API-started sessions are

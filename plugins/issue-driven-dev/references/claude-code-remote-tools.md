@@ -98,6 +98,7 @@ Claude Code session.
 | `idd-issue --blocked-by` native relation | GraphQL mutation | GitHub's 403 is printed verbatim (existing behavior); the body blockquote is still written |
 | `--target` / group issues in a repository not attached to the session | session is bound to attached repositories | `gh-rest.sh` and `gh-egress.sh` add `hint: this cloud session cannot reach R; attach the repository …` |
 | Spectra tier (`spectra` CLI) | not installed in the container | `idd-all` Step 0.35 warning, Phase 3b hard gate |
+| `idd-verify` verified tag (`idd-N-verified`) | the session proxy refuses tag pushes and `POST repos/R/git/refs` (HTTP 403 `Write access to this GitHub API path is not permitted through this proxy`) | Step 4.5's graceful-skip warning; tag the snapshot from a local session |
 | `idd-close`, `idd-comment`, `idd-edit`, `idd-config`, `idd-reorganize`, `idd-all-chain` | not migrated (outside the `idd-all` path) | their porcelain calls fail with GitHub's own 403 message; their `gh-egress.sh` writes and `check-*` script reads work |
 | private attachment downloads (`process-attachments.sh download`) | it authenticates with `gh auth token`, a placeholder in a cloud session | unverified in a cloud session; public attachment URLs are unaffected |
 

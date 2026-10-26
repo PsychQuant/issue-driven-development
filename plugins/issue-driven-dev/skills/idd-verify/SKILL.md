@@ -1423,6 +1423,8 @@ for N in $ISSUE_NUMBERS; do                                # cluster: tag each r
 done
 ```
 
+> **雲端 session（#416）**：proxy 拒絕推 tag，也拒絕 `POST repos/R/git/refs`（HTTP 403 `Write access to this GitHub API path is not permitted through this proxy`）—— 上面一定走 graceful-skip，tag 只留在 container 裡。verified tag 要在本機補打；不要找別的 API 繞過。
+
 **鐵律 — graceful-skip，never abort**：同 baseline —— tag/push 失敗只 warn，絕不 abort verify（結果已 post，tag 是附加便利）。**Aggregate PASS 是唯一觸發條件**；FAIL run 不留 verified tag，避免把未過的 code 標成「已驗證」。cluster mode（多 `#N`）每個 issue 各打自己的 `idd-{N}-verified`。
 
 ### Step 5: 後續動作
