@@ -989,15 +989,23 @@ AskUserQuestion:
 **#142 Safeguard 2 — Pre-add existence check**（`--add-label` 路徑，label 已存在的假設要先驗）。`gh issue edit --add-label X` 對不存在的 label 行為 inconsistent（有時 error、有時 server-side 用 default 白色 silently auto-create），故 add 前先讀：
 
 ```bash
-label_exists() { # $1=name — exact-match probe（--search 是 fuzzy，靠 grep -qx 收斂成精確比對，
-                 # 且不把 name 裸插進 jq 表達式 → 對含引號的 custom label 名也安全）
-  gh label list --repo "$REPO" --search "$1" --json name --jq '.[].name' | grep -qx "$1"
+label_exists() { # $1=name → 0 exists · 1 missing · 2 lookup failed — exact REST lookup (#411)
+  # Not `gh label list --search`: that is a best-match search capped at 30 results (an existing label can be
+  # absent from it), it is GraphQL (blocked in cloud sessions), and `grep -qx` read the name as a pattern.
+  # GitHub matches label names ignoring case, as `gh issue edit --add-label` does.
+  case "$1" in ''|.|..) return 1 ;; esac   # `labels/.` resolves to the list endpoint and would answer "exists"
+  local enc err
+  enc=$(printf '%s' "$1" | jq -sRr @uri) || return 2
+  err=$(gh api "repos/$GITHUB_REPO/labels/$enc" --silent 2>&1) && return 0
+  case "$err" in *"HTTP 404"*) return 1 ;; esac
+  printf '⚠ label lookup for %s failed: %s\n' "$1" "$err" >&2   # auth / rate limit / network — not "missing"
+  return 2
 }
 # 只對非 default-set label 跑（discussion / epic / custom）；bug/feature/refactor/docs 是 repo 預設，跳過。
 if label_exists "$LABEL_NAME"; then
-  gh issue edit "$NUMBER" --repo "$REPO" --add-label "$LABEL_NAME"   # verified-exist → 安全 add
+  gh issue edit "$NUMBER" --repo "$GITHUB_REPO" --add-label "$LABEL_NAME"   # verified-exist → 安全 add
 else
-  echo "⚠ Label '$LABEL_NAME' 不存在於 $REPO — 不 blind add（--add-label 對不存在 label 行為 inconsistent，"
+  echo "⚠ Label '$LABEL_NAME' 不存在於 $GITHUB_REPO（或查詢失敗，訊息見上）— 不 blind add（--add-label 對不存在 label 行為 inconsistent，"
   echo "  有時 server-side 用 default 白色 silently auto-create，正是 #142 S2 要防的 edge case）。"
   echo "  → 回上面 AskUserQuestion：option 2（auto-create，走下方 Safeguard 1 的 verify-by-read）或 option 3（skip）。"
   # 兩條路都不落到未驗證的 blind add：auto-create 建好 + verify 後才 add；skip 則不 add。
@@ -1007,13 +1015,13 @@ fi
 **#142 Safeguard 1 — VERIFY by reading back**（auto-create 路徑）。`gh label create` 成功時**無 stdout**，且對「已存在」case 也 silently noop —— exit code + stdout 無法區分「剛建成」「早就有」「靜默失敗」。唯一可靠偵測是建完再讀回：
 
 ```bash
-gh label create "$LABEL_NAME" --repo "$REPO" \
+gh label create "$LABEL_NAME" --repo "$GITHUB_REPO" \
   --description "$LABEL_DESC" --color "$LABEL_COLOR" 2>/dev/null
 if label_exists "$LABEL_NAME"; then
-  echo "✓ Label '$LABEL_NAME' verified in $REPO"
+  echo "✓ Label '$LABEL_NAME' verified in $GITHUB_REPO"
   FRESH_LABEL_CREATED=1        # 給 Step 5 Safeguard 3 hint 用（只在真的新建時提示）
 else
-  echo "✗ ABORT: gh label create 回報成功但 label 不在 list — 查 API quota / 權限 / 網路後重跑"
+  echo "✗ ABORT: gh label create 之後讀不回 label（不存在，或讀取失敗、訊息見上）— 查 API quota / 權限 / 網路後重跑"
   return 1
 fi
 ```
