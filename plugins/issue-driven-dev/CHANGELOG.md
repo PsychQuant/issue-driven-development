@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Version number left to the merge: PR #426 and #424 both claim 3.6.0 and PR #418 claims 3.5.1.
+
+### Fixed
+
+- **`idd-issue` no longer tags `idd--baseline` when the issue was not created (#412).** Step 3.A captures the URL
+  from `gh-egress.sh`, checks that it ends in an issue number and stops otherwise (every failure — gh's error, a
+  missing label, a gate refusal — leaves stdout empty); it also sets `NEW_ISSUE_NUMBER`, which Step 4.6 reads.
+  Step 3.6 tags only a numeric number and prints a graceful-skip reason otherwise.
+- **`idd-issue`'s `label_exists()` finds labels that exist (#411).** It GETs `repos/$GITHUB_REPO/labels/<name>`
+  instead of `gh label list --search … | grep -qx`, which missed labels outside the 30 best matches, treated the
+  name as a regex and is GraphQL (blocked in cloud sessions). A failed lookup is reported as such (exit 2), not as
+  a missing label, and Step 3.5 (b) uses `$GITHUB_REPO` instead of the bare repo name.
+- **`idd-update` no longer writes a setext heading above Current Status (#413).** Step 5 joins the new block with
+  exactly one blank line after stripping the body's trailing newlines, in both branches; Branch A therefore also
+  repairs bodies an older Branch B wrote as `last line\n---` (23 in this repo). That blank line is the one stated
+  exception to "never change content outside the managed zone".
+
 ## [3.5.0] - 2026-10-20
 
 ### Added
