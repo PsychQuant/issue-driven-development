@@ -22,7 +22,7 @@ Version number left to the merge: PR #426 and #424 both claim 3.6.0 and PR #418 
   instead of `gh label list --search … | grep -qx`, which missed labels outside the 30 best matches, treated the
   name as a regex and is GraphQL (blocked in cloud sessions). A failed lookup is reported as such (exit 2), not as
   a missing label, and Step 3.5 (b) uses `$GITHUB_REPO` instead of the bare repo name. Names now match ignoring
-  case, as GitHub and `gh issue edit --add-label` do; a name that is or contains a `.`/`..` path part is reported
+  case, as GitHub and `gh issue edit --add-label` do; a name that is or contains a `.`/`..` or empty path part is reported
   missing without a request.
 - **`idd-update` no longer writes a setext heading above Current Status (#413).** Step 5 joins the new block with
   exactly one blank line after stripping the body's trailing newlines, in both branches; Branch A therefore also

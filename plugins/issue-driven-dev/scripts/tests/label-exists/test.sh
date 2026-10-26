@@ -64,7 +64,7 @@ done
 assert_grep "the name is URL-encoded in the path" "repos/o/r/labels/good%20first%20issue" "$(cat "$GH_LOG")"
 : > "$GH_LOG"; probe "$FN" "nothere" >/dev/null; RC=$?
 assert_exit "a missing label is reported missing (exit 1)" 1 "$RC"
-for l in . .. "" ./bug bug/. a/../bug; do
+for l in . .. "" ./bug bug/. a/../bug /bug bug/ a//b; do
   : > "$GH_LOG"; probe "$FN" "$l" >/dev/null; RC=$?
   refute "'$l' is never reported as existing" test "$RC" -eq 0
   assert_eq "…and makes no request (labels/. would read the label list)" "" "$(cat "$GH_LOG")"

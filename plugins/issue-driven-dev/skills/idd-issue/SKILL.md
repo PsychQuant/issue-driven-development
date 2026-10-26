@@ -1000,8 +1000,8 @@ label_exists() { # $1=name → 0 exists · 1 missing · 2 lookup failed — exac
   # absent from it), it is GraphQL (blocked in cloud sessions), and `grep -qx` read the name as a pattern.
   # GitHub matches label names ignoring case, as `gh issue edit --add-label` does.
   # `.`/`..` as the name or as a `/`-separated part: `labels/.` resolves to the list endpoint, and a proxy that
-  # decodes %2F normalises `./bug` to `bug` — both would answer "exists" for a label that does not
-  case "/$1/" in //|*/./*|*/../*) return 1 ;; esac
+  # decodes %2F normalises `./bug` (and an empty part: `/bug`, `bug/`) to `bug` — all would answer "exists"
+  case "/$1/" in *//*|*/./*|*/../*) return 1 ;; esac
   local enc err
   enc=$(printf '%s' "$1" | jq -sRr @uri) || return 2
   err=$(gh api "repos/$GITHUB_REPO/labels/$enc" --silent 2>&1) && return 0
