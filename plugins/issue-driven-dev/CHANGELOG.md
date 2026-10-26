@@ -14,15 +14,25 @@ Version number left to the merge: PR #426 and #424 both claim 3.6.0 and PR #418 
 - **`idd-issue` no longer tags `idd--baseline` when the issue was not created (#412).** Step 3.A captures the URL
   from `gh-egress.sh`, checks that it ends in an issue number and stops otherwise (every failure — gh's error, a
   missing label, a gate refusal — leaves stdout empty); it also sets `NEW_ISSUE_NUMBER`, which Step 4.6 reads.
-  Step 3.6 tags only a numeric number and prints a graceful-skip reason otherwise.
+  Step 3.6 tags only a numeric number and prints a graceful-skip reason otherwise. When gh-egress prints an issue
+  URL but still exits non-zero, Step 3.A says the issue may exist instead of "not created", so it is not retried
+  into a duplicate. Group mode (Step 3.G keeps its number in `PRIMARY_NUM`) therefore skips the baseline tag
+  until #438; on 3.5.0 it tagged `idd--baseline`.
 - **`idd-issue`'s `label_exists()` finds labels that exist (#411).** It GETs `repos/$GITHUB_REPO/labels/<name>`
   instead of `gh label list --search … | grep -qx`, which missed labels outside the 30 best matches, treated the
   name as a regex and is GraphQL (blocked in cloud sessions). A failed lookup is reported as such (exit 2), not as
-  a missing label, and Step 3.5 (b) uses `$GITHUB_REPO` instead of the bare repo name.
+  a missing label, and Step 3.5 (b) uses `$GITHUB_REPO` instead of the bare repo name. Names now match ignoring
+  case, as GitHub and `gh issue edit --add-label` do; a name that is or contains a `.`/`..` path part is reported
+  missing without a request.
 - **`idd-update` no longer writes a setext heading above Current Status (#413).** Step 5 joins the new block with
   exactly one blank line after stripping the body's trailing newlines, in both branches; Branch A therefore also
   repairs bodies an older Branch B wrote as `last line\n---` (23 in this repo). That blank line is the one stated
-  exception to "never change content outside the managed zone".
+  exception to "never change content outside the managed zone". The splice reads the body itself (REST) in the
+  same call and stops when the read, `NUMBER`, `GITHUB_REPO` or the new block is missing, so a body lost between
+  Bash calls can no longer overwrite the issue with the status alone. The `## Current Status` anchor follows
+  CommonMark fences (``` and ~~~, fence length): a heading quoted inside a fence is not the anchor, and with a fence
+  left open at the end the status an earlier run appended is replaced instead of appended again (#290 grew one
+  block per run).
 
 ## [3.5.0] - 2026-10-20
 

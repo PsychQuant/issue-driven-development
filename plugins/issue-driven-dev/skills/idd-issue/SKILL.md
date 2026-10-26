@@ -693,7 +693,12 @@ EOF
 )" \
   --label "$TYPE"); CREATE_RC=$?
 NUMBER="${URL##*/}"
-case "$CREATE_RC:$NUMBER" in 0:[1-9]*) case "$NUMBER" in *[!0-9]*) NUMBER="" ;; esac ;; *) NUMBER="" ;; esac
+case "$NUMBER" in ''|0*|*[!0-9]*) NUMBER="" ;; esac
+if [ "$CREATE_RC" -ne 0 ] && [ -n "$NUMBER" ]; then
+  # an issue URL and a failure together: the issue may exist — a blind retry would file a duplicate
+  echo "✗ gh-egress exited $CREATE_RC after printing $URL — the issue may exist; check it before re-running (stopping: Step 3.5 onward does not run)" >&2
+  NUMBER=""; exit 1
+fi
 if [ -z "$NUMBER" ]; then
   echo "✗ issue was not created (gh-egress exit $CREATE_RC; its message is above) — stopping: Step 3.5 onward (labels, baseline tag, attachments, Clarity) does not run" >&2
   exit 1
@@ -993,7 +998,9 @@ label_exists() { # $1=name → 0 exists · 1 missing · 2 lookup failed — exac
   # Not `gh label list --search`: that is a best-match search capped at 30 results (an existing label can be
   # absent from it), it is GraphQL (blocked in cloud sessions), and `grep -qx` read the name as a pattern.
   # GitHub matches label names ignoring case, as `gh issue edit --add-label` does.
-  case "$1" in ''|.|..) return 1 ;; esac   # `labels/.` resolves to the list endpoint and would answer "exists"
+  # `.`/`..` as the name or as a `/`-separated part: `labels/.` resolves to the list endpoint, and a proxy that
+  # decodes %2F normalises `./bug` to `bug` — both would answer "exists" for a label that does not
+  case "/$1/" in //|*/./*|*/../*) return 1 ;; esac
   local enc err
   enc=$(printf '%s' "$1" | jq -sRr @uri) || return 2
   err=$(gh api "repos/$GITHUB_REPO/labels/$enc" --silent 2>&1) && return 0

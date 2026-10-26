@@ -302,22 +302,41 @@ Managed zone 錨在 **`## Current Status` heading**，**不是**第一個 `---`�
 **接合規則（兩個分支都一樣，#413）**：先去掉 body 結尾的換行，再以 `\n\n` 接上 Step 4 組好的區塊（以 `---` 開頭）。body 的最後一行絕不能直接接著 `---`：CommonMark 會把「段落的最後一行＋`---`」讀成 setext 標題，之後 `/idd-edit --correct` 就拒絕更正 Current Status 上一節。GitHub 網頁編輯的 body 常常沒有結尾換行，經過 `$(...)` 取得的 body 更是一律被刪掉結尾換行，所以不能依賴 body 自帶換行。Branch A 照同樣規則重接，舊版 Branch B 寫出的 setext 形狀（本 repo 有 23 個）會在下一次更新時自動修好。
 
 ```bash
-# BODY = Step 1 讀到的 body；NEW_STATUS = Step 4 組好的區塊（以 `---` 開頭）。兩者要在同一個 Bash 呼叫裡設好 ——
-# shell 狀態不跨呼叫，空的 NEW_STATUS 會把 Current Status 寫成空白（#414）。
+# NEW_STATUS = Step 4 組好的區塊（以 `---` 開頭）。這段要在同一個 Bash 呼叫裡跑完：shell 狀態不跨呼叫（#414），
+# 所以 body 在這裡讀、讀取失敗就停 —— 沿用前一個呼叫的 BODY 會是空字串，接上去等於把整個 issue 覆蓋成只剩
+# Current Status（verify r1）。
+case "${NUMBER:-}" in ''|0*|*[!0-9]*) echo "✗ idd-update Step 5: NUMBER '${NUMBER:-}' is not an issue number (shell state lost?) — body not changed" >&2; exit 1 ;; esac
+[ -n "${GITHUB_REPO:-}" ] || { echo "✗ idd-update Step 5: GITHUB_REPO is empty (shell state lost?) — body not changed" >&2; exit 1; }
 [ -n "${NEW_STATUS:-}" ] || { echo "✗ idd-update Step 5: NEW_STATUS is empty (shell state lost?) — set it from Step 4 and re-run; body not changed" >&2; exit 1; }
-# Branch A: keep what is above `## Current Status` (outside code fences), minus the `---` right above it.
+BODY=$(gh api "repos/$GITHUB_REPO/issues/$NUMBER" --jq '.body // ""') \
+  || { echo "✗ idd-update Step 5: could not read the body of #$NUMBER (gh's message above) — body not changed" >&2; exit 1; }
+# Branch A: keep what is above the first `## Current Status` outside code fences, minus the `---` right above it.
+# Fences follow CommonMark: ``` or ~~~, at least as long to close, up to 3 spaces of indent, no backtick in a
+# backtick fence's info string. A fence left open at the end hides everything after it; then the last
+# `## Current Status` inside it is the one an earlier run appended, and is used as the anchor so the status is
+# replaced instead of appended again (#290 grew one block per run).
 # Both branches: drop trailing blank lines and newlines, then join with exactly one blank line (#413).
-HEAD_PART=$(printf '%s\n' "${BODY:-}" | awk '
-  /^[[:space:]]*```/ { infence = !infence }
-  !infence && /^## Current Status[[:space:]]*$/ { found = 1; exit }
-  { line[++n] = $0 }
-  END {
-    if (found) {
-      while (n > 0 && line[n] ~ /^[[:space:]]*$/) n--
-      if (n > 0 && line[n] ~ /^---[[:space:]]*$/) n--
+HEAD_PART=$(printf '%s\n' "$BODY" | awk '
+  { n++; L[n] = $0; t = $0; sub(/\r$/, "", t)
+    sp = match(t, /^ */) ? RLENGTH : 0; rest = substr(t, sp + 1)
+    if (fch == "") {
+      if (sp <= 3 && (substr(rest, 1, 3) == "```" || substr(rest, 1, 3) == "~~~")) {
+        c = substr(rest, 1, 1); k = 0; while (substr(rest, k + 1, 1) == c) k++
+        if (!(c == "`" && index(substr(rest, k + 1), "`"))) { fch = c; flen = k; fopen = n; incode = 0; next }
+      }
+      if (!anchor && t ~ /^## Current Status[ \t]*$/) anchor = n
+    } else {
+      if (sp <= 3) { k = 0; while (substr(rest, k + 1, 1) == fch) k++
+        if (k >= flen && substr(rest, k + 1) ~ /^[ \t]*$/) { fch = ""; next } }
+      if (t ~ /^## Current Status[ \t]*$/) incode = n
     }
-    while (n > 0 && line[n] ~ /^[[:space:]]*$/) n--
-    for (i = 1; i <= n; i++) print line[i]
+  }
+  END {
+    if (!anchor && fch != "" && incode > fopen) anchor = incode
+    m = anchor ? anchor - 1 : n
+    if (anchor) { while (m > 0 && L[m] ~ /^[[:space:]]*$/) m--; if (m > 0 && L[m] ~ /^---[[:space:]]*$/) m-- }
+    while (m > 0 && L[m] ~ /^[[:space:]]*$/) m--
+    for (i = 1; i <= m; i++) print L[i]
   }')
 UPDATED_BODY="${HEAD_PART}"$'\n\n'"${NEW_STATUS}"
 ```

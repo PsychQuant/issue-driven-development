@@ -77,6 +77,7 @@ case "${STUB_MODE:-ok}" in
   fail)    echo "could not add label: 'P0' not found" >&2; exit 1 ;;
   refused) echo "✗ gh-egress: REFUSED — privacy net" >&2; exit 10 ;;
   garbage) echo "oops" ;;
+  url_then_fail) echo "https://github.com/o/r/issues/78"; echo "gh: later step failed" >&2; exit 1 ;;
 esac
 STUB
 chmod +x "$FR/scripts/gh-egress.sh"
@@ -94,5 +95,10 @@ for mode in fail refused garbage; do
   assert_grep "Step 3.A, $mode: says the issue was not created" "issue was not created" "$OUT"
   refute_grep "Step 3.A, $mode: a stale number from before is not kept" "NUMBER=[999]" "$OUT"
 done
+
+OUT="$(run3a url_then_fail)"; RC=$?
+assert_exit "Step 3.A, URL printed but non-zero exit: stops" 1 "$RC"
+assert_grep "…saying the issue may exist (no blind retry)" "the issue may exist" "$OUT"
+refute_grep "…and not claiming it was not created" "issue was not created" "$OUT"
 
 print_summary "baseline-tag-guard (#412)"

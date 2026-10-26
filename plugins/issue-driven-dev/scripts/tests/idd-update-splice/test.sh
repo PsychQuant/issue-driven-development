@@ -27,8 +27,20 @@ SPLICE="$(awk '/^```bash/{buf=""; f=1; next} f&&/^```/{if (index(buf, "HEAD_PART
 assert_true "Step 5 splice block is extractable" '[ -n "$SPLICE" ]'
 
 NEW_STATUS=$'---\n\n## Current Status\n\n**Phase**: diagnosed\n\n### Blocking\n- (none)'
+# The block reads the body itself (gh api repos/R/issues/N --jq '.body // ""'); the stub serves STUB_BODY.
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/idd-update-splice-XXXXXX") || exit 1
+trap 'rm -rf "$TMP"' EXIT
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+[ -n "${STUB_FAIL:-}" ] && { echo "gh: HTTP 502" >&2; exit 1; }
+[ "$1 $2" = "api repos/o/r/issues/7" ] || { echo "unexpected gh $*" >&2; exit 1; }
+printf '%s\n' "$STUB_BODY"
+STUB
+chmod +x "$TMP/bin/gh"
 splice() { # $1 = body → UPDATED_BODY on stdout (exact bytes, via a trailing sentinel)
-  BODY="$1" NEW_STATUS="$NEW_STATUS" bash -c "$SPLICE"$'\n''printf "%s<END>" "$UPDATED_BODY"'
+  PATH="$TMP/bin:$PATH" STUB_BODY="$1" NUMBER=7 GITHUB_REPO=o/r NEW_STATUS="$NEW_STATUS" \
+    bash -c "$SPLICE"$'\n''printf "%s<END>" "$UPDATED_BODY"'
 }
 check() { # $1 = label, $2 = body, $3 = expected prefix that must survive verbatim
   local out; out="$(splice "$2")"; out="${out%<END>}"
@@ -66,9 +78,26 @@ check "A, setext shape an old Branch B wrote" $'Problem line\n---\n\n## Current 
 check "A, no --- above the heading"      $'Problem.\n\n## Current Status\n\nold status' $'Problem.'
 check "A, audit block above is kept"     $'Problem.\n\n---\n\n### Clarity Surface\n\n| t |\n|---|\n| x |\n\n---\n\n## Current Status\nold status' $'Problem.\n\n---\n\n### Clarity Surface\n\n| t |\n|---|\n| x |'
 
-# the block refuses to write when the assembled status is missing (shell state lost, #414)
-OUT="$(BODY="x" NEW_STATUS="" bash -c "$SPLICE" 2>&1)"; RC=$?
+# fences, the CommonMark way (verify r1): a quoted heading inside ~~~ or a 4-backtick fence is not the anchor
+check "B, ~~~ fence quoting the heading"   $'Text.\n\n~~~\n## Current Status\nquoted\n~~~'   $'Text.\n\n~~~\n## Current Status\nquoted\n~~~'
+check "B, 4-backtick fence holding a 3-backtick line" $'````\n```\n## Current Status\n````'  $'````\n```\n## Current Status\n````'
+check "A, a line starting with inline triple backticks is not a fence" $'```x``` is inline\n\n---\n\n## Current Status\nold status' $'```x``` is inline'
+# an unclosed fence (#290): repeated runs must not keep appending Current Status blocks
+U=$'Problem.\n\n```\nunclosed fence'
+for run in 1 2 3; do U="$(splice "$U")"; U="${U%<END>}"; done
+assert_eq "unclosed fence: three runs leave one Current Status line" "1" "$(printf '%s\n' "$U" | grep -c '^## Current Status$')"
+assert_grep "unclosed fence: the original text is still there" "unclosed fence" "$U"
+
+# the block refuses to write when its inputs are missing or the body cannot be read (shell state lost, #414)
+OUT="$(PATH="$TMP/bin:$PATH" STUB_BODY=x NUMBER=7 GITHUB_REPO=o/r NEW_STATUS="" bash -c "$SPLICE" 2>&1)"; RC=$?
 assert_exit "an empty NEW_STATUS stops the splice" 1 "$RC"
+OUT="$(PATH="$TMP/bin:$PATH" STUB_BODY=x NUMBER= GITHUB_REPO=o/r NEW_STATUS="$NEW_STATUS" bash -c "$SPLICE" 2>&1)"; RC=$?
+assert_exit "a lost NUMBER stops the splice" 1 "$RC"
+OUT="$(PATH="$TMP/bin:$PATH" STUB_FAIL=1 NUMBER=7 GITHUB_REPO=o/r NEW_STATUS="$NEW_STATUS" bash -c "$SPLICE"$'\n''echo "UPDATED=[$UPDATED_BODY]"' 2>&1)"; RC=$?
+assert_exit "a failed body read stops the splice (no status-only overwrite)" 1 "$RC"
+refute_grep "…before any UPDATED_BODY exists" "UPDATED=[" "$OUT"
+# the body is read in this block, never taken from a BODY left over from an earlier call
+assert_true "the splice block reads the body itself" 'printf "%s" "$SPLICE" | grep -q "BODY=\$(gh api \"repos/\$GITHUB_REPO/issues/\$NUMBER\""'
 
 refute_output_grep "the bare \\n--- append is gone from Branch B" 'append 新區塊（`\n---\n\n## Current Status...`）' "$SKILL"
 print_summary "idd-update-splice (#413)"
