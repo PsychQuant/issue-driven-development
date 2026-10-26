@@ -661,7 +661,11 @@ if new_match exists AND new_match != tentative_default:
 
 ```bash
 # egress via privacy-scrubbing choke-point wrapper (Step 0.6 / #202) — never raw `gh issue create`
-bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" create \
+# Capture the URL and check the number (#412). On every failure — gh's own error, a missing label, a
+# gh-egress refusal (exit 10-15) — stdout is empty, so an unchecked capture became NUMBER="" and Step 3.6
+# tagged `idd--baseline`. Reset first, so a number left over from an earlier step cannot survive a failure.
+NUMBER=""; NEW_ISSUE_NUMBER=""
+URL=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" create \
   --repo $GITHUB_REPO \
   --title "$TITLE" \
   --scrub-attested "$SCRUB_LEVEL" ${MENTION_ATTESTED:+--mention-attested="$MENTION_ATTESTED"} \
@@ -687,8 +691,24 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" create \
 ...
 EOF
 )" \
-  --label "$TYPE"
+  --label "$TYPE"); CREATE_RC=$?
+URL="${URL%$'\r'}"   # a CR from a CRLF-printing gh would make the number non-numeric
+NUMBER="${URL##*/}"
+case "$NUMBER" in ''|0*|*[!0-9]*) NUMBER="" ;; esac
+if [ "$CREATE_RC" -ne 0 ] && [ -n "$NUMBER" ]; then
+  # an issue URL and a failure together: the issue may exist — a blind retry would file a duplicate
+  echo "✗ gh-egress exited $CREATE_RC after printing $URL — the issue may exist; check it before re-running (stopping: Step 3.5 onward does not run)" >&2
+  NUMBER=""; exit 1
+fi
+if [ -z "$NUMBER" ]; then
+  echo "✗ issue was not created (gh-egress exit $CREATE_RC; its message is above) — stopping: Step 3.5 onward (labels, baseline tag, attachments, Clarity) does not run" >&2
+  exit 1
+fi
+NEW_ISSUE_NUMBER="$NUMBER"   # the name Step 4.6 reads
+echo "→ created $URL"
 ```
+
+建立失敗就停在這裡，Step 5 回報失敗原因（gh-egress 已把 gh 的訊息或拒絕原因印在上面）；之後的 Step 3.5～4.6 都需要一個真的 issue 號（#412）。
 
 > **CRITICAL**: 來自文件的 issue **必須**逐字引用原文。AI 摘要會失真，原文是唯一不會漂移的東西。
 
@@ -975,15 +995,25 @@ AskUserQuestion:
 **#142 Safeguard 2 — Pre-add existence check**（`--add-label` 路徑，label 已存在的假設要先驗）。`gh issue edit --add-label X` 對不存在的 label 行為 inconsistent（有時 error、有時 server-side 用 default 白色 silently auto-create），故 add 前先讀：
 
 ```bash
-label_exists() { # $1=name — exact-match probe（--search 是 fuzzy，靠 grep -qx 收斂成精確比對，
-                 # 且不把 name 裸插進 jq 表達式 → 對含引號的 custom label 名也安全）
-  gh label list --repo "$REPO" --search "$1" --json name --jq '.[].name' | grep -qx "$1"
+label_exists() { # $1=name → 0 exists · 1 missing · 2 lookup failed — exact REST lookup (#411)
+  # Not `gh label list --search`: that is a best-match search capped at 30 results (an existing label can be
+  # absent from it), it is GraphQL (blocked in cloud sessions), and `grep -qx` read the name as a pattern.
+  # GitHub matches label names ignoring case, as `gh issue edit --add-label` does.
+  # `.`/`..` as the name or as a `/`-separated part: `labels/.` resolves to the list endpoint, and a proxy that
+  # decodes %2F normalises `./bug` (and an empty part: `/bug`, `bug/`) to `bug` — all would answer "exists"
+  case "/$1/" in *//*|*/./*|*/../*) return 1 ;; esac
+  local enc err
+  enc=$(printf '%s' "$1" | jq -sRr @uri) || return 2
+  err=$(gh api "repos/$GITHUB_REPO/labels/$enc" --silent 2>&1) && return 0
+  case "$err" in *"HTTP 404"*) return 1 ;; esac
+  printf '⚠ label lookup for %s failed: %s\n' "$1" "$err" >&2   # auth / rate limit / network — not "missing"
+  return 2
 }
 # 只對非 default-set label 跑（discussion / epic / custom）；bug/feature/refactor/docs 是 repo 預設，跳過。
 if label_exists "$LABEL_NAME"; then
-  gh issue edit "$NUMBER" --repo "$REPO" --add-label "$LABEL_NAME"   # verified-exist → 安全 add
+  gh issue edit "$NUMBER" --repo "$GITHUB_REPO" --add-label "$LABEL_NAME"   # verified-exist → 安全 add
 else
-  echo "⚠ Label '$LABEL_NAME' 不存在於 $REPO — 不 blind add（--add-label 對不存在 label 行為 inconsistent，"
+  echo "⚠ Label '$LABEL_NAME' 不存在於 $GITHUB_REPO（或查詢失敗，訊息見上）— 不 blind add（--add-label 對不存在 label 行為 inconsistent，"
   echo "  有時 server-side 用 default 白色 silently auto-create，正是 #142 S2 要防的 edge case）。"
   echo "  → 回上面 AskUserQuestion：option 2（auto-create，走下方 Safeguard 1 的 verify-by-read）或 option 3（skip）。"
   # 兩條路都不落到未驗證的 blind add：auto-create 建好 + verify 後才 add；skip 則不 add。
@@ -993,14 +1023,15 @@ fi
 **#142 Safeguard 1 — VERIFY by reading back**（auto-create 路徑）。`gh label create` 成功時**無 stdout**，且對「已存在」case 也 silently noop —— exit code + stdout 無法區分「剛建成」「早就有」「靜默失敗」。唯一可靠偵測是建完再讀回：
 
 ```bash
-gh label create "$LABEL_NAME" --repo "$REPO" \
+# label_exists() is the function from the Safeguard 2 block — define it in this same Bash call (#414)
+gh label create "$LABEL_NAME" --repo "$GITHUB_REPO" \
   --description "$LABEL_DESC" --color "$LABEL_COLOR" 2>/dev/null
 if label_exists "$LABEL_NAME"; then
-  echo "✓ Label '$LABEL_NAME' verified in $REPO"
+  echo "✓ Label '$LABEL_NAME' verified in $GITHUB_REPO"
   FRESH_LABEL_CREATED=1        # 給 Step 5 Safeguard 3 hint 用（只在真的新建時提示）
 else
-  echo "✗ ABORT: gh label create 回報成功但 label 不在 list — 查 API quota / 權限 / 網路後重跑"
-  return 1
+  echo "✗ ABORT: gh label create 之後讀不回 label（不存在，或讀取失敗、訊息見上）— 查 API quota / 權限 / 網路後重跑"
+  exit 1
 fi
 ```
 
@@ -1025,7 +1056,7 @@ AskUserQuestion:
 
 ### Step 3.6: Baseline auto-tag（rollback anchor，v2.94.0+，#85）
 
-Issue 建立成功、拿到 `$NUMBER` 之後，`tag_baseline` step 在當前 repo 打一個 **rollback baseline** tag，標記「issue 開案當下的 main HEAD」，方便日後一秒切回開工前的乾淨狀態（`git checkout idd-{N}-baseline`），不用記 commit hash。
+Issue 建立成功、拿到 Step 3.A 驗證過的 `$NUMBER` 之後，`tag_baseline` step 在當前 repo 打一個 **rollback baseline** tag，標記「issue 開案當下的 main HEAD」，方便日後一秒切回開工前的乾淨狀態（`git checkout idd-{N}-baseline`），不用記 commit hash。
 
 **Config gate（預設 on，可 opt-out）** — 讀 walked-up config 的 `auto_tag`（schema 見 [`references/config-protocol.md`](../../references/config-protocol.md#auto_tag-field)）：
 
@@ -1039,11 +1070,17 @@ AUTO_TAG_ENABLED=$(jq -r '.auto_tag.enabled // true' "$CONFIG_PATH" 2>/dev/null 
 ```bash
 BASELINE_FMT=$(jq -r '.auto_tag.baseline_format // "idd-{N}-baseline"' "$CONFIG_PATH" 2>/dev/null || echo "idd-{N}-baseline")
 PUSH_REMOTE=$(jq -r '.auto_tag.push_remote // "origin"' "$CONFIG_PATH" 2>/dev/null || echo origin)
-TAG="${BASELINE_FMT/\{N\}/$NUMBER}"                       # idd-{N}-baseline → idd-42-baseline
+TAG="${BASELINE_FMT/\{N\}/${NUMBER:-}}"                   # idd-{N}-baseline → idd-42-baseline (guarded below)
 DEFAULT_BRANCH=$(gh repo view "$GITHUB_REPO" --json defaultBranchRef -q .defaultBranchRef.name)
+# #412: tag only a real issue number. An empty or non-numeric $NUMBER (the issue was not created, or a mode
+# that keeps its number in another variable) would tag `idd--baseline`, and the idempotent check below would
+# then hide every later failure as "already exists".
+case "${NUMBER:-}" in ''|0*|*[!0-9]*) BASELINE_SKIP="no valid issue number ('${NUMBER:-}')" ;; *) BASELINE_SKIP="" ;; esac
 
+if [ -n "$BASELINE_SKIP" ]; then
+    echo "⚠ auto_tag baseline: $BASELINE_SKIP — graceful-skip, not tagging"
 # idempotent: a tag that already exists is skipped (re-running idd-issue never re-tags)
-if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+elif git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
     echo "→ $TAG already exists — skip (idempotent)"
 else
     # baseline = the LOCAL default-branch HEAD (where main was when the issue opened)

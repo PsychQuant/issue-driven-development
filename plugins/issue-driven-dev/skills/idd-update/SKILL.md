@@ -295,20 +295,62 @@ Phase 4     idd-verify 的 Auto-Update → idd-update（無 flag）→ 整段重
 
 Managed zone 錨在 **`## Current Status` heading**，**不是**第一個 `---`。依 body 現狀走兩分支：
 
-**Branch A — body 已有 `## Current Status`**：從該 heading 起（含其上**緊鄰**的 `---`，若有）到 body 結尾，整段替換為新的 Current Status 區塊。`## Current Status` 以上的所有內容（原始記錄 + 任何 audit blocks）**逐字保留**。
+**Branch A — body 已有 `## Current Status`**：從該 heading 起（含其上**緊鄰**的 `---`，若有）到 body 結尾，整段替換為新的 Current Status 區塊。`## Current Status` 以上的所有內容（原始記錄 + 任何 audit blocks）**逐字保留**，只有一個例外：接合處一律是一個空行（見下方接合規則）。
 
-**Branch B — body 無 `## Current Status`**：**append** 新區塊（`\n---\n\n## Current Status...`）到 body 結尾，**保留所有既有內容**，不論 body 有幾個 `---`、`---` 下是什麼。
+**Branch B — body 無 `## Current Status`**：把新區塊接在 body 結尾，**保留所有既有內容**，不論 body 有幾個 `---`、`---` 下是什麼。
+
+**接合規則（兩個分支都一樣，#413）**：先去掉 body 結尾的換行，再以 `\n\n` 接上 Step 4 組好的區塊（以 `---` 開頭）。body 的最後一行絕不能直接接著 `---`：CommonMark 會把「段落的最後一行＋`---`」讀成 setext 標題，之後 `/idd-edit --correct` 就拒絕更正 Current Status 上一節。GitHub 網頁編輯的 body 常常沒有結尾換行，經過 `$(...)` 取得的 body 更是一律被刪掉結尾換行，所以不能依賴 body 自帶換行。Branch A 照同樣規則重接，舊版 Branch B 寫出的 setext 形狀（本 repo 有 23 個）會在下一次更新時自動修好。
+
+```bash
+# NEW_STATUS = Step 4 組好的區塊（以 `---` 開頭）。這段要在同一個 Bash 呼叫裡跑完：shell 狀態不跨呼叫（#414），
+# 所以 body 在這裡讀、讀取失敗就停 —— 沿用前一個呼叫的 BODY 會是空字串，接上去等於把整個 issue 覆蓋成只剩
+# Current Status（verify r1）。
+case "${NUMBER:-}" in ''|0*|*[!0-9]*) echo "✗ idd-update Step 5: NUMBER '${NUMBER:-}' is not an issue number (shell state lost?) — body not changed" >&2; exit 1 ;; esac
+[ -n "${GITHUB_REPO:-}" ] || { echo "✗ idd-update Step 5: GITHUB_REPO is empty (shell state lost?) — body not changed" >&2; exit 1; }
+[ -n "${NEW_STATUS:-}" ] || { echo "✗ idd-update Step 5: NEW_STATUS is empty (shell state lost?) — set it from Step 4 and re-run; body not changed" >&2; exit 1; }
+BODY=$(gh api "repos/$GITHUB_REPO/issues/$NUMBER" --jq '.body // ""') \
+  || { echo "✗ idd-update Step 5: could not read the body of #$NUMBER (gh's message above) — body not changed" >&2; exit 1; }
+# Branch A: keep what is above the first `## Current Status` outside code fences, minus the `---` right above it.
+# Fences follow CommonMark: ``` or ~~~, at least as long to close, up to 3 spaces of indent, no backtick in a
+# backtick fence's info string. A fence left open at the end hides everything after it; then the last
+# `## Current Status` inside it is the one an earlier run appended, and is used as the anchor so the status is
+# replaced instead of appended again (#290 grew one block per run).
+# Both branches: drop trailing blank lines and newlines, then join with exactly one blank line (#413).
+HEAD_PART=$(printf '%s\n' "$BODY" | awk '
+  { n++; L[n] = $0; t = $0; sub(/\r$/, "", t)
+    sp = match(t, /^ */) ? RLENGTH : 0; rest = substr(t, sp + 1)
+    if (fch == "") {
+      if (sp <= 3 && (substr(rest, 1, 3) == "```" || substr(rest, 1, 3) == "~~~")) {
+        c = substr(rest, 1, 1); k = 0; while (substr(rest, k + 1, 1) == c) k++
+        if (!(c == "`" && index(substr(rest, k + 1), "`"))) { fch = c; flen = k; fopen = n; incode = 0; next }
+      }
+      if (!anchor && t ~ /^## Current Status[ \t]*$/) anchor = n
+    } else {
+      if (sp <= 3) { k = 0; while (substr(rest, k + 1, 1) == fch) k++
+        if (k >= flen && substr(rest, k + 1) ~ /^[ \t]*$/) { fch = ""; next } }
+      if (t ~ /^## Current Status[ \t]*$/) incode = n
+    }
+  }
+  END {
+    if (!anchor && fch != "" && incode > fopen) anchor = incode
+    m = anchor ? anchor - 1 : n
+    if (anchor) { while (m > 0 && L[m] ~ /^[[:space:]]*$/) m--; if (m > 0 && L[m] ~ /^---[[:space:]]*$/) m-- }
+    while (m > 0 && L[m] ~ /^[[:space:]]*$/) m--
+    for (i = 1; i <= m; i++) print L[i]
+  }')
+UPDATED_BODY="${HEAD_PART}"$'\n\n'"${NEW_STATUS}"
+# Send in this same call — UPDATED_BODY does not survive into another Bash call (#414).
+# （#226）egress 經 gh-egress.sh 派送：$SCRUB_LEVEL 依 rules/privacy-scrubbing.md 解析
+# （third-party=enforce / own-public=warn / private=light），派送前先跑 LLM 隱私自審；
+# 有 @mention 時另帶 --mention-attested（rules/tagging-collaborators.md 5-step 後）。
+bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit "$NUMBER" --repo "$GITHUB_REPO" --body "$UPDATED_BODY" --scrub-attested "$SCRUB_LEVEL"
+```
 
 > **為何不錨在第一個 `---`（#178）**：`/idd-issue` 的 parking-lot seed 在第一個 `---` 下放的是 **audit blocks**（`### Clarity Surface` / `### Linked-Context Siblings`），不是 Current Status。錨在「第一個 `---` 以下全替換」會**靜默刪掉**這些 audit。`---` 在 IDD body 語意不唯一（既分隔 original/audit，也分隔 audit/status），不能當 managed-zone 的唯一錨。
 >
 > **Backward-compat**：既有「`---` 緊鄰 `## Current Status`」的 body，Branch A 與舊「replace below first `---`」產出**同結果**。只有「多個 `---`、audit 夾在中間」的 body 行為改變 —— 那正是修復（舊邏輯誤刪、新邏輯保留）。Fix **strictly safer**：只保留更多、不刪更多。
 
-```bash
-# （#226）egress 經 gh-egress.sh 派送：$SCRUB_LEVEL 依 rules/privacy-scrubbing.md 解析
-# （third-party=enforce / own-public=warn / private=light），派送前先跑 LLM 隱私自審；
-# 有 @mention 時另帶 --mention-attested（rules/tagging-collaborators.md 5-step 後）。
-bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit $NUMBER --repo $GITHUB_REPO --body "$UPDATED_BODY" --scrub-attested "$SCRUB_LEVEL"
-```
+寫回在上面同一段裡送出（經 `gh-egress.sh edit`）：接合結果只活在那一個 Bash 呼叫裡。
 
 ### Step 6: Report Update
 
@@ -363,7 +405,7 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" edit $NUMBER --repo $GITHUB_REPO
 
 ## 鐵律
 
-- **永遠不改 `## Current Status` managed zone 以外的內容**。原始記錄 + audit blocks（`### Clarity Surface` / `### Linked-Context Siblings` 等）都是審計軌跡。錨在 `## Current Status` heading，**不是**第一個 `---`（`---` 語意不唯一，錨在它會誤刪 audit — #178）。
+- **永遠不改 `## Current Status` managed zone 以外的內容**（唯一例外：Step 5 的接合規則確保 managed zone 上方有一個空行，#413）。原始記錄 + audit blocks（`### Clarity Surface` / `### Linked-Context Siblings` 等）都是審計軌跡。錨在 `## Current Status` heading，**不是**第一個 `---`（`---` 語意不唯一，錨在它會誤刪 audit — #178）。
 - **Key Decisions 每次重建**：每次執行都從 comments 目前的內容重新推導，不沿用上一版。來源被 `/idd-edit --correct` 就地更正的決定，下次執行就會消失；來源是別人的 comment、只能另貼 errata 的，由 errata 指名的決定在重建時排除（#351）。
 - **簡潔**。每個 bullet 一行，不超過 100 字。
 - **Phase 必須準確**。如果推斷不出來，標 `unknown` 並提醒使用者。
