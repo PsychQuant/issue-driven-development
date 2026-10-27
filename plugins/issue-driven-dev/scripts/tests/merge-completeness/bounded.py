@@ -10,6 +10,7 @@ SPEC.md enumerates them, or a bug.
 
   python3 bounded.py [--max-len N] [--sample K] [--seed S] [--jobs J]
                      [--old-git SHIM_DIR] [--after] [--show N]
+                     [--landing plain|own|merge] [--adjacent] [--pairs] [--touch]
 
 Exit 0 when every disagreement is a known deviation, 1 otherwise.
 """
@@ -25,7 +26,11 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-HELPER = os.path.join(HERE, "..", "..", "check-merge-completeness.sh")
+HELPER = os.environ.get("BOUNDED_HELPER") or os.path.join(HERE, "..", "..", "check-merge-completeness.sh")
+# The helper's rule, for the model below: "place" (round 12: landing and the check at
+# the landing commit by two-way diffs, position by position). "undo" models round 11's
+# three-way merge, kept to compare the two (BOUNDED_HELPER points at another helper).
+RULE = os.environ.get("BOUNDED_RULE", "place")
 
 # ── The world ───────────────────────────────────────────────────────────────
 # Units: three line slots in f.txt (a slot holds one line or nothing), a file g.txt
@@ -33,15 +38,34 @@ HELPER = os.path.join(HERE, "..", "..", "check-merge-completeness.sh")
 SLOTS = 3
 TEXTS = ("A", "B", "C")
 UNITS = tuple(range(SLOTS)) + ("g", "e")
+# Extensions (#399 verify round 11, which found three shapes this world could not
+# build). They are read from the environment so the worker processes, which import
+# this module afresh, see them as well; main() sets both.
+#   adjacent: the slots are consecutive lines, so edits of two slots touch, and git's
+#             three-way merge treats them as one conflict
+#   pairs:    a commit may edit two units at once (a commit with several effects)
+#   touch:    main's own edits, before landing and in the landing step, may edit units
+#             the branch edits too; a squash that conflicts with them is resolved by
+#             hand, taking the branch side
+ADJACENT = os.environ.get("BOUNDED_ADJACENT") == "1"
+PAIRS = os.environ.get("BOUNDED_PAIRS") == "1"
+TOUCH = os.environ.get("BOUNDED_TOUCH") == "1"
+#   distinct: a slot's line carries its slot number (A0, A1, ...), so no two slots
+#             ever hold the same text; with adjacent this isolates adjacency from
+#             text collisions, which no tool reading text can tell apart
+DISTINCT = os.environ.get("BOUNDED_DISTINCT") == "1"
 
 
 def render(state):
     files = {"base.txt": "base\n"}
     body = []
+    if ADJACENT:
+        body = ["-- top %s --" % x for x in ("a", "b", "c")]
     for i in range(SLOTS):
-        body += ["-- slot %d %s --" % (i, x) for x in ("a", "b", "c")]
+        if not ADJACENT:
+            body += ["-- slot %d %s --" % (i, x) for x in ("a", "b", "c")]
         if state[i] is not None:
-            body.append(state[i])
+            body.append(state[i] + (str(i) if DISTINCT else ""))
     files["f.txt"] = "\n".join(body + ["-- end --"]) + "\n"
     if state["g"]:
         files["g.txt"] = "G\n"
@@ -51,7 +75,8 @@ def render(state):
 
 
 def ops_from(state):
-    """Every single-unit edit possible from `state`: (unit, from, to)."""
+    """Every commit possible from `state`: one unit edit (unit, from, to), and with
+    pairs also every two edits of different units together."""
     out = []
     for i in range(SLOTS):
         for v in (None,) + TEXTS:
@@ -59,16 +84,44 @@ def ops_from(state):
                 out.append((i, state[i], v))
     for u in ("g", "e"):
         out.append((u, state[u], not state[u]))
+    if PAIRS:
+        singles = list(out)
+        for a, b in itertools.combinations(singles, 2):
+            if a[0] != b[0]:
+                out.append((a, b))
     return out
 
 
+def edits(op):
+    """The unit edits a commit makes: one (unit, from, to), or several."""
+    return op if isinstance(op[0], tuple) else (op,)
+
+
 def apply_strict(state, op):
-    unit, frm, to = op
-    if state[unit] != frm:
-        return None
     new = dict(state)
-    new[unit] = to
+    for unit, frm, to in edits(op):
+        if new[unit] != frm:
+            return None
+        new[unit] = to
     return new
+
+
+def compose(mb, ops, S):
+    """The state S's commits make from the merge-base, in branch order; None when
+    they do not apply in that order (no squash holds exactly S)."""
+    st = dict(mb)
+    for k in sorted(S):
+        st = apply_strict(st, ops[k])
+        if st is None:
+            return None
+    return st
+
+
+def land(before, mb, net):
+    """main right after squashing S: a unit S changed takes S's value (a conflict
+    with an edit of main's own is resolved by hand, taking the branch side); every
+    other unit keeps main's."""
+    return {u: (net[u] if net[u] != mb[u] else before[u]) for u in UNITS}
 
 
 # ── Ground truth (SPEC.md, "Definition") ────────────────────────────────────
@@ -82,21 +135,25 @@ def oracle(mb, ops, S, main_before, extra=None):
     for op in ops:
         head = apply_strict(head, op)
     R = dict(main_before)
-    for k in sorted(S):
-        R = apply_strict(R, ops[k])
-        if R is None:
+    if S:
+        net = compose(mb, ops, S)
+        if net is None:
             return None   # main could not have received S as one squash
+        R = land(main_before, mb, net)
     if extra is not None:
         R = apply_strict(R, extra)
+        if R is None:
+            return None
     present = lambda v: v not in (None, False)
     orphans = set()
-    for k, (u, frm, to) in enumerate(ops):
+    for k, op in enumerate(ops):
         if k in S:
             continue
-        set_missing = present(to) and head[u] == to and R[u] != to
-        removal_missing = present(frm) and head[u] != frm and R[u] == frm
-        if set_missing or removal_missing:
-            orphans.add(k)
+        for u, frm, to in edits(op):
+            set_missing = present(to) and head[u] == to and R[u] != to
+            removal_missing = present(frm) and head[u] != frm and R[u] == frm
+            if set_missing or removal_missing:
+                orphans.add(k)
     return (3 if orphans else 0, frozenset(orphans))
 
 
@@ -142,9 +199,7 @@ def fast_import_stream(mb, ops, S, main_op, after_op, extra=None, landing="plain
         mstate = apply_strict(mstate, main_op)
         emit("refs/heads/main", 3, [last], "main own edit", mstate, utext)
         last = 3
-    RS = dict(mstate)
-    for k in sorted(S):
-        RS = apply_strict(RS, ops[k])
+    RS = land(mstate, mb, compose(mb, ops, S)) if S else dict(mstate)
     R = apply_strict(dict(RS), extra) if extra is not None else RS
     if S and landing in ("plain", "own"):
         emit("refs/heads/main", 4, [last], "squash", R, utext)
@@ -229,7 +284,7 @@ def branches(mb, max_len):
 def main_ops(mb, touched):
     yield None
     for u in UNITS:
-        if u in touched:
+        if u in touched and not TOUCH:
             continue
         if u in ("g", "e"):
             yield (u, mb[u], not mb[u])
@@ -250,10 +305,11 @@ def after_ops(R, touched):
 
 
 def extra_ops(before, touched, mop):
-    """An edit of main's own in the landing step: a unit the branch does not touch
-    and main's earlier edit did not touch either."""
+    """An edit of main's own in the landing step, made on top of the squash: a unit
+    main's earlier edit did not touch, and (unless touch) one the branch does not
+    touch either."""
     for u in UNITS:
-        if u in touched or (mop is not None and u == mop[0]):
+        if (u in touched and not TOUCH) or (mop is not None and u == mop[0]):
             continue
         if u in ("g", "e"):
             yield (u, before[u], not before[u])
@@ -268,21 +324,25 @@ def cases(args):
     for mb in MBS:
         for ops in branches(mb, args.max_len):
             n = len(ops)
-            touched = {op[0] for op in ops}
+            touched = {e[0] for op in ops for e in edits(op)}
             for r in range(0, n + 1):
                 for S in itertools.combinations(range(n), r):
                     if args.landing != "plain" and not S:
+                        continue
+                    net = compose(mb, ops, set(S)) if S else None
+                    if S and net is None:
                         continue
                     for mop in main_ops(mb, touched):
                         before = dict(mb)
                         if mop is not None:
                             before = apply_strict(before, mop)
+                        squashed = land(before, mb, net) if S else before
                         if args.landing == "plain":
                             extras = [None]
                         elif args.landing == "own":
-                            extras = list(extra_ops(before, touched, mop))
+                            extras = list(extra_ops(squashed, touched, mop))
                         else:
-                            extras = [None] + list(extra_ops(before, touched, mop))
+                            extras = [None] + list(extra_ops(squashed, touched, mop))
                         for extra in extras:
                             exp = oracle(mb, ops, set(S), before, extra)
                             if exp is None:
@@ -290,9 +350,7 @@ def cases(args):
                             if not args.after:
                                 out.append((mb, ops, frozenset(S), mop, None, extra, args.landing, exp))
                             elif S:
-                                R = dict(before)
-                                for k in S:
-                                    R = apply_strict(R, ops[k])
+                                R = dict(squashed)
                                 if extra is not None:
                                     R = apply_strict(R, extra)
                                 for aop in after_ops(R, touched):
@@ -316,20 +374,21 @@ def model_sides(mb, ops, S, mop, aop, extra, landing, minus, old_git):
         states.append(apply_strict(states[-1], op))
     head = states[-1]
     before = apply_strict(dict(mb), mop) if mop is not None else dict(mb)
-    RS = dict(before)
-    for k in sorted(S):
-        RS = apply_strict(RS, ops[k])
+    RS = land(before, mb, compose(mb, ops, S)) if S else dict(before)
     R = apply_strict(dict(RS), extra) if extra is not None else RS
     # main's first-parent commits after the merge-base: (state, paths it touched)
     def touched(a, b):
         return {path_of(u) for u in UNITS if a[u] != b[u]}
     seq = [(dict(mb), {"u"})]
+    received = None   # index of the commit that brings S in
     if mop is not None:
         seq.append((before, touched(mb, before)))
     if S and landing in ("plain", "own"):
+        received = len(seq)
         seq.append((R, touched(before, R)))
     elif S and landing == "merge":
         seq.append((before, {"u"}))
+        received = len(seq)
         seq.append((R, touched(before, R)))
     if aop is not None:
         after = dict(R)
@@ -337,6 +396,11 @@ def model_sides(mb, ops, S, mop, aop, extra, landing, minus, old_git):
         seq.append((after, touched(R, after)))
 
     def holds(c, ref):
+        if RULE == "place":
+            # each unit the net change sets is in place; each unit it empties no longer
+            # holds the merge-base's value
+            return all((c[u] == ref[u]) if ref[u] not in (None, False) else (c[u] != mb[u])
+                       for u in UNITS if ref[u] != mb[u])
         return all(c[u] == ref[u] for u in UNITS if ref[u] != mb[u])
 
     def find_landing(ref):
@@ -359,7 +423,9 @@ def model_sides(mb, ops, S, mop, aop, extra, landing, minus, old_git):
         return None, None
 
     L, prefix, later = (None, None, False)
-    if not old_git:
+    # Round 11 needed merge-tree --write-tree (git 2.38) and checked everything at the
+    # tip without it; round 12 reads only `git diff`, so the shim changes nothing.
+    if not old_git or RULE == "place":
         L = find_landing(head)
         if L is None:
             L, prefix = prefix_search()
@@ -372,7 +438,7 @@ def model_sides(mb, ops, S, mop, aop, extra, landing, minus, old_git):
         if L is not None and L != "mb":
             prev = seq[L - 1][0] if L > 0 else mb
             ref = states[prefix] if prefix else head
-            if any(prev[u] != mb[u] and ref[u] != mb[u] and prev[u] != ref[u] for u in UNITS):
+            if RULE != "place" and any(prev[u] != mb[u] and ref[u] != mb[u] and prev[u] != ref[u] for u in UNITS):
                 L, prefix = None, None
     sides = {}
     for k in range(n):
@@ -385,7 +451,11 @@ def model_sides(mb, ops, S, mop, aop, extra, landing, minus, old_git):
         land_state = dict(mb)
     elif L is not None:
         land_state = seq[L][0]
-    return sides, later, land_state
+    # the landing commit is one main made itself, not the commit that brought S in:
+    # main held the branch's net change on its own, before receiving S or after
+    # (SPEC B2)
+    land_own = isinstance(L, int) and L != received
+    return sides, later, land_state, land_own
 
 
 # ── Known deviations (SPEC.md, "Known deviations") ──────────────────────────
@@ -393,38 +463,40 @@ def tip_says_orphan(op, head, tip):
     """The helper's tip rule (SPEC.md D2) applied to the model: an added line or path
     the head has and the tip lacks, or a deleted one the head lacks and the tip has.
     Lines are compared by presence over f.txt; g.txt holds the line "G"."""
-    unit, frm, to = op
+    def txt(v, u):
+        return v + (str(u) if DISTINCT else "")
     def lines(state):
-        return {state[u] for u in range(SLOTS) if state[u] is not None}
-    if unit == "g":
-        return (head["g"] and not tip["g"]) if to else (not head["g"] and tip["g"])
-    if unit == "e":
-        return (head["e"] and not tip["e"]) if to else (not head["e"] and tip["e"])
+        return {txt(state[u], u) for u in range(SLOTS) if state[u] is not None}
     h, t = lines(head), lines(tip)
-    added = to is not None and to in h and to not in t
-    kept = frm is not None and frm not in h and frm in t
-    return added or kept
+    def one(unit, frm, to):
+        if unit == "g":
+            return (head["g"] and not tip["g"]) if to else (not head["g"] and tip["g"])
+        if unit == "e":
+            return (head["e"] and not tip["e"]) if to else (not head["e"] and tip["e"])
+        added = to is not None and txt(to, unit) in h and txt(to, unit) not in t
+        kept = frm is not None and txt(frm, unit) not in h and txt(frm, unit) in t
+        return added or kept
+    return any(one(*e) for e in edits(op))
 
 
 def classify(case, exp, got, args, text, sides):
     """Name the SPEC.md deviation a disagreement belongs to, or None (a bug).
     Nothing here is taken from the helper's own answer: where each commit is
-    checked comes from the model of the landing algorithm (model_sides), and a
-    trace that disagrees with it is a bug in the landing step, whatever the list
-    says. Then every commit the two answers differ on must fall in one class:
-    checked at the tip, and the tip rule (D2) computed on the model's head and tip
-    gives the helper's answer (D1+D2); checked at the landing commit, listed,
-    sharing a text with another branch commit, with the right verdict (D3);
-    checked at the landing commit while the landing step carried an edit of main's
-    own (own, merge) touching a text the commit added or removed, where that text
-    is not in the landed part's net change on the same side, so the helper counts
-    it (D4); or checked at the landing commit, missed, and B1 holds in the model."""
+    checked, and the answer at the landing commit, come from the model of the
+    landing algorithm (model_sides, placed_orphan); a trace or a listing that
+    disagrees with the model is a bug, whatever the definition says. Then every
+    commit the two answers differ on must fall in one class: checked at the tip,
+    and the tip rule (D2) computed on the model's head and tip gives the helper's
+    answer (D1+D2); listed at the landing commit with the right verdict (D3);
+    listed with the wrong verdict while main's own edit touched a unit the commit
+    edits (D4); missed at the landing commit when main made the landing commit
+    itself (B2), or when B1 holds in the model."""
     mb, ops, S, mop, aop, extra, landing = case
     rc, listed, minus = got
     erc, elisted = exp
     if rc not in (0, 3):
         return None
-    want, later, land_state = model_sides(mb, ops, S, mop, aop, extra, landing, minus, bool(args.old_git))
+    want, later, land_state, land_own = model_sides(mb, ops, S, mop, aop, extra, landing, minus, bool(args.old_git))
     if any(sides.get(name) != side for name, side in want.items()):
         return None
     diff = (elisted - listed) | (listed - elisted)
@@ -436,25 +508,37 @@ def classify(case, exp, got, args, text, sides):
     tip = dict(mb)
     if mop is not None:
         tip = apply_strict(tip, mop)
-    for k in sorted(S):
-        tip = apply_strict(tip, ops[k])
+    if S:
+        tip = land(tip, mb, compose(mb, ops, S))
     if extra is not None:
         tip = apply_strict(tip, extra)
     if aop is not None:
         tip = dict(tip)
         tip[aop[0]] = aop[2]
     def texts(op):
-        unit, frm, to = op
-        if unit in ("g", "e"):
-            return {unit}
-        return {frm, to} - {None}
+        out = set()
+        for unit, frm, to in edits(op):
+            out |= {unit} if unit in ("g", "e") else ({frm, to} - {None})
+        return out
     # At the landing commit the helper checks each commit in its own place: undoing
     # it changes the head (for a one-unit edit, the head no longer holds the value
     # from before it) and changes nothing on the landing commit (which still holds
     # that value). That is the helper's answer for every commit checked there.
+    def undo_noop(op, state):
+        # undoing a commit on `state`, unit by unit: unchanged where the state holds
+        # the value from before the commit, changed where it holds the commit's,
+        # a conflict anywhere else; the whole undo changes nothing only when every
+        # unit is unchanged
+        return all(state[u] == frm for u, frm, to in edits(op))
     def placed_orphan(op):
-        unit, frm, to = op
-        return land_state is not None and land_state[unit] == frm and head[unit] != frm
+        if land_state is None:
+            return False
+        if RULE == "place":
+            present = lambda v: v not in (None, False)
+            return any((present(to) and head[u] == to and land_state[u] != to)
+                       or (present(frm) and head[u] != frm and land_state[u] == frm)
+                       for u, frm, to in edits(op))
+        return undo_noop(op, land_state) and not undo_noop(op, head)
     classes = set()
     for name in diff:
         k = int(name[1:]) - 1
@@ -467,11 +551,19 @@ def classify(case, exp, got, args, text, sides):
                 return None
             classes.add("D1+D2 tip check")
         elif side == "land" and name in listed:
-            if rc != erc:
+            if rc == erc:
+                classes.add("D3 its place, not its value")
+            elif k in S and any(o is not None and set(e[0] for e in edits(o)) & set(e[0] for e in edits(op))
+                                for o in (mop, extra)):
+                classes.add("D4 main's own edit of the commit's line")
+            else:
                 return None
-            classes.add("D3 its place, not its value")
+        elif side == "land" and land_own:
+            classes.add("B2 main's own commit holds the net change")
         elif side == "land":
-            if op[2] != mb[op[0]] or not S or head != mb or later:
+            # the branch has no net change and no prefix landed later: it "lands" at the
+            # merge-base, whether main received some of it or none (fixture 34b)
+            if not all(to == mb[u] for u, frm, to in edits(op)) or head != mb or later:
                 return None
             classes.add("B1 restore to the merge-base")
         else:
@@ -494,15 +586,26 @@ def main():
     ap.add_argument("--sample", type=int, default=0, help="run a random sample of this size (0 = all)")
     ap.add_argument("--seed", type=int, default=399)
     ap.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) - 2))
-    ap.add_argument("--old-git", default="", help="a directory with a git shim that refuses merge-tree --write-tree")
+    ap.add_argument("--old-git", default="",
+                    help="a directory with a git shim that refuses merge-tree --write-tree (round 12 never calls it)")
     ap.add_argument("--after", action="store_true", help="add one main edit after the squash (out of scope by decision A)")
     ap.add_argument("--landing", choices=("plain", "own", "merge"), default="plain",
                     help="how main receives S: one squash (plain), a squash with an edit of main's own (own), "
                          "or a merge of a side branch holding the squash and another PR's edit (merge)")
+    ap.add_argument("--adjacent", action="store_true", help="put the slots on consecutive lines")
+    ap.add_argument("--pairs", action="store_true", help="let a commit edit two units")
+    ap.add_argument("--distinct", action="store_true", help="give each slot its own texts (A0, A1, ...)")
+    ap.add_argument("--touch", action="store_true",
+                    help="let main's own edits touch units the branch edits (squash conflicts resolved for the branch)")
     ap.add_argument("--show", type=int, default=10)
     ap.add_argument("--dump", default="", help="write every unexplained case to this file, one JSON object per line")
     ap.add_argument("--reclassify", default="", help="classify the cases of a --dump file again, without running the helper")
     args = ap.parse_args()
+    global ADJACENT, PAIRS, TOUCH, DISTINCT
+    ADJACENT, PAIRS, TOUCH, DISTINCT = args.adjacent, args.pairs, args.touch, args.distinct
+    for name, on in (("BOUNDED_ADJACENT", ADJACENT), ("BOUNDED_PAIRS", PAIRS), ("BOUNDED_TOUCH", TOUCH),
+                     ("BOUNDED_DISTINCT", DISTINCT)):
+        os.environ[name] = "1" if on else "0"
 
     def tup(v):
         return tuple(v) if v else None
@@ -513,7 +616,7 @@ def main():
         for line in open(args.reclassify):
             r = json.loads(line)
             mb = {(int(k) if k.isdigit() else k): v for k, v in r["mb"].items()}
-            ops = [tuple(o) for o in r["ops"]]
+            ops = [tuple(tuple(e) for e in o) if isinstance(o[0], list) else tuple(o) for o in r["ops"]]
             case = (mb, ops, frozenset(r["S"]), tup(r["main_op"]), tup(r["after"]),
                     tup(r.get("extra")), r.get("landing", "plain"))
             exp = (r["expected"][0], frozenset(r["expected"][1]))
