@@ -124,7 +124,22 @@ restating_files() {   # $1 = tree to scan
   # this repo is written in) never reached the awk at all. The claim is dropped
   # and the forms this repo actually uses are listed. Widening this list is the
   # maintenance cost of the approach, and it is stated rather than hidden.
-  grep -rliE --include='*.md' -- 'Plan[ -]tier|Plan path|Plan 層|Plan 層級|計畫層級|計劃層級|Plan 路徑' "$1" 2>/dev/null \
+  #
+  # A git work tree is enumerated through git, not the disk (#335): ignored
+  # files (.spectra/ snapshots, .claude/worktrees/ checkouts) are not the repo's
+  # text. `--untracked` keeps files that are untracked but not ignored — the
+  # scope canaries below are exactly that. The positive controls scan a plain
+  # temp dir, which has no toplevel and keeps the filesystem walk.
+  local tokens='Plan[ -]tier|Plan path|Plan 層|Plan 層級|計畫層級|計劃層級|Plan 路徑'
+  local top
+  top=$(git -C "$1" rev-parse --show-toplevel 2>/dev/null) || top=""
+  if [ -n "$top" ] && [ "$top" = "$(cd "$1" && pwd -P)" ]; then
+    # -z: unquoted names (core.quotePath would escape non-ASCII ones)
+    git -C "$1" grep -lzIiE --untracked -e "$tokens" -- '*.md' 2>/dev/null \
+      | while IFS= read -r -d '' p; do printf '%s/%s\n' "$1" "$p"; done
+  else
+    grep -rliE --include='*.md' -- "$tokens" "$1" 2>/dev/null
+  fi \
     | grep -v '/CHANGELOG.md$' \
     | grep -v '/openspec/changes/archive/' \
     | while IFS= read -r f; do
@@ -369,6 +384,34 @@ SELF_CONTRA=$(awk '
 ' "$NORMATIVE_FILE" || true)
 require "the normative source never attributes EnterPlanMode to idd-implement" \
   bash -c '[ -z "$0" ] || { printf "%s\n" "$0"; exit 1; }' "$SELF_CONTRA"
+
+# ── the scan sees what the repo has, not what the disk has (#335) ──
+#
+# `$ROOT` on a working machine also holds files git ignores: spectra's
+# `.spectra/snapshots/` (frozen copies of old specs) and idd-worktree.sh's
+# `.claude/worktrees/idd-<N>/` (a whole second checkout, normative source
+# included). Scanned from disk, each one is a restatement nobody committed —
+# green on a clean checkout, red on every machine that ran spectra. Ignored
+# files must stay out; untracked ones that are not ignored must stay in, or the
+# scope canaries below could no longer be planted. Checked in a throwaway repo,
+# never by planting files in the real one.
+GI_REPO=$(mktemp -d); trap 'rm -rf "$PC_DIR" "$GI_REPO"' EXIT HUP INT TERM
+git -C "$GI_REPO" init -q
+printf '.spectra/\n' > "$GI_REPO/.gitignore"
+mkdir -p "$GI_REPO/.spectra/snapshots/old/specs" "$GI_REPO/notes"
+RESTATEMENT='Under unattended mode a Plan tier issue still reaches EnterPlanMode via Phase 3a.'
+printf '%s\n' "$RESTATEMENT" > "$GI_REPO/.spectra/snapshots/old/specs/gi-ignored.md"
+printf '%s\n' "$RESTATEMENT" > "$GI_REPO/notes/gi-loose.md"
+printf '%s\n' "$RESTATEMENT" > "$GI_REPO/gi-committed.md"
+git -C "$GI_REPO" add .gitignore gi-committed.md
+git -C "$GI_REPO" -c user.email=t@t.t -c user.name=t commit -q -m init
+GI_SEEN=$(restating_files "$GI_REPO" || true)
+assert_eq "#335: a restatement in a gitignored path is not reported" \
+  "0" "$(printf '%s\n' "$GI_SEEN" | grep -c 'gi-ignored.md' || true)"
+assert_eq "#335: an untracked, not-ignored restatement is still reported" \
+  "1" "$(printf '%s\n' "$GI_SEEN" | grep -c 'notes/gi-loose.md' || true)"
+assert_eq "#335: a committed restatement is still reported" \
+  "1" "$(printf '%s\n' "$GI_SEEN" | grep -c 'gi-committed.md' || true)"
 
 # ── the scan SCOPE has to have weight ──
 #
