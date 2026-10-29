@@ -111,4 +111,31 @@ assert_exit "#194: .gitignore basename allowed → exit 0" 0 $?
 bash "$SCRIPT" --target "$RA/.git/info/exclude" --marker "$MARKER" --direction exclude ".claude/.idd/"
 assert_exit "#194: exclude basename allowed → exit 0" 0 $?
 
+# --- Test 10: an `exclude` target must be <git-dir>/info/exclude of a real repo (#431)
+# Outside a work tree `git rev-parse --git-dir` prints nothing, so the callers'
+# "$(git rev-parse --git-dir)/info/exclude" becomes /info/exclude. That case runs
+# only where /info does not exist; a helper that still writes it fails here and
+# leaves /info/exclude for the person running the tests to remove.
+if [ ! -e /info ]; then
+  bash "$SCRIPT" --target "/info/exclude" --marker m --direction exclude ".x" 2>/dev/null
+  assert_exit "#431: empty git-dir (/info/exclude) rejected → exit 2" 2 $?
+  assert_file_absent "#431: /info/exclude not created" /info/exclude
+fi
+NG="$(mktemp -d)"; TMPDIRS+=("$NG")
+bash "$SCRIPT" --target "$NG/info/exclude" --marker m --direction exclude ".x" 2>/dev/null
+assert_exit "#431: info/exclude under a non-git dir rejected → exit 2" 2 $?
+assert_file_absent "#431: non-git info/ not created" "$NG/info"
+RB="$(mk)"
+bash "$SCRIPT" --target "$RB/.git/hooks/exclude" --marker m --direction exclude ".x" 2>/dev/null
+assert_exit "#431: <git-dir>/hooks/exclude (not info/) rejected → exit 2" 2 $?
+assert_file_absent "#431: hooks/exclude not created" "$RB/.git/hooks/exclude"
+bash "$SCRIPT" --target "$NG/some/where/exclude" --marker m --direction exclude ".x" 2>/dev/null
+assert_exit "#431: arbitrary <dir>/exclude rejected → exit 2" 2 $?
+assert_file_absent "#431: arbitrary parent dir not created" "$NG/some"
+# the form the callers pass from a repo's top level is relative: .git/info/exclude
+RR="$(mk)"
+( cd "$RR" && bash "$SCRIPT" --target "$(git rev-parse --git-dir)/info/exclude" --marker "$MARKER" --direction exclude ".claude/.idd/" )
+assert_exit "#431: relative .git/info/exclude from the top level → exit 0" 0 $?
+require "#431: relative target is effective" git -C "$RR" check-ignore -q .claude/.idd/local.json
+
 print_summary "git-ignore-block"
