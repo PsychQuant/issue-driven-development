@@ -14,10 +14,15 @@ Version number left to the merge, as in PR #442.
 - **`plan-routing-consistency` no longer reads gitignored files (#335).** Its scan of the repo root walked the
   filesystem, so a machine that had run spectra (`.spectra/snapshots/`, `.gitignore:1`) or opened an
   `idd-worktree.sh` worktree (`.claude/worktrees/idd-<N>/`, a full second checkout) failed the suite on text
-  nobody committed — green on a clean checkout, red locally. A git work tree is now enumerated with
-  `git grep --untracked`, which keeps untracked-but-not-ignored files (the scope canaries rely on them); a plain
-  directory (the positive controls) still uses `grep -r`. A new control checks both in a throwaway repo. The
-  other recursive scans in `scripts/tests/` stay under `$PLUGIN`, which holds no ignored `.md` today.
+  nobody committed — green on a clean checkout, red locally. When the scanned directory is a git work-tree
+  top level it is now enumerated with `git grep --untracked`, which keeps untracked-but-not-ignored files (the
+  scope canaries rely on them); any other directory (the positive controls) still uses `grep -r`. The git
+  enumeration ignores personal excludes (`core.excludesFile`, `~/.config/git/ignore`) and color settings. New
+  controls in a throwaway repo check three cases (ignored, untracked, committed) plus an upper-case claim and a
+  non-ASCII file name; the suite unsets an inherited `GIT_DIR` / `GIT_INDEX_FILE` and keeps the throwaway repo
+  free of the caller's config, hooks and signing — git exports those variables to hooks, `rebase -x` and
+  `bisect run` in a linked worktree, where an earlier draft of this change committed into the caller's branch.
+  The other recursive scans in `scripts/tests/` stay under `$PLUGIN`, which holds no ignored `.md` today.
 
 ## [3.5.0] - 2026-10-20
 

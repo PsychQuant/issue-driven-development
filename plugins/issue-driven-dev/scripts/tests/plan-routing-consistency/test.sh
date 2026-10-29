@@ -16,6 +16,10 @@ set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN="$(cd "$HERE/../../.." && pwd)"
 . "$(cd "$HERE/../../lib" && pwd)/assert-helpers.sh"
+# The scan and the throwaway repo below run git; neither may act on a repository
+# inherited from the caller. git exports these to hooks, `rebase -x`, `bisect run`
+# and `!` aliases — in a linked worktree too (#335 verify).
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
 
 PLAN=$(cat "$PLUGIN/skills/idd-plan/SKILL.md")
 ALL=$(cat "$PLUGIN/skills/idd-all/SKILL.md")
@@ -131,12 +135,15 @@ restating_files() {   # $1 = tree to scan
   # scope canaries below are exactly that. The positive controls scan a plain
   # temp dir, which has no toplevel and keeps the filesystem walk.
   local tokens='Plan[ -]tier|Plan path|Plan 層|Plan 層級|計畫層級|計劃層級|Plan 路徑'
-  local top
-  top=$(git -C "$1" rev-parse --show-toplevel 2>/dev/null) || top=""
-  if [ -n "$top" ] && [ "$top" = "$(cd "$1" && pwd -P)" ]; then
-    # -z: unquoted names (core.quotePath would escape non-ASCII ones)
-    git -C "$1" grep -lzIiE --untracked -e "$tokens" -- '*.md' 2>/dev/null \
-      | while IFS= read -r -d '' p; do printf '%s/%s\n' "$1" "$p"; done
+  local top dir="${1%/}"
+  top=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null) || top=""
+  if [ -n "$top" ] && [ "$top" = "$(cd "$dir" && pwd -P)" ]; then
+    # -z: unquoted names (core.quotePath would escape non-ASCII ones).
+    # --no-color: color.ui=always would wrap every name in escape codes.
+    # No -I: a .gitattributes `binary` / `-diff` must not hide a tracked file.
+    # Personal excludes (core.excludesFile, ~/.config/git/ignore) are not the repo's.
+    git -C "$dir" -c core.excludesFile=/dev/null grep --no-color -lziE --untracked -e "$tokens" -- '*.md' 2>/dev/null \
+      | while IFS= read -r -d '' p; do printf '%s/%s\n' "$dir" "$p"; done
   else
     grep -rliE --include='*.md' -- "$tokens" "$1" 2>/dev/null
   fi \
@@ -220,7 +227,8 @@ require "no file restates idd-all's Plan routing without deferring to it" \
 # mutation. A control that exercises a different function than the assertion is
 # not a control. This one plants a restatement and requires the DETECTOR to name
 # it, and plants a deferring file and requires the detector to stay silent.
-PC_DIR=$(mktemp -d); trap 'rm -rf "$PC_DIR"' EXIT HUP INT TERM
+PC_DIR=$(mktemp -d) || { echo "FATAL: mktemp -d failed" >&2; exit 1; }
+trap 'rm -rf "$PC_DIR"' EXIT HUP INT TERM
 cat > "$PC_DIR/restates.md" <<'CANARY'
 Under unattended mode a Plan tier issue still reaches EnterPlanMode via Phase 3a.
 CANARY
@@ -395,16 +403,28 @@ require "the normative source never attributes EnterPlanMode to idd-implement" \
 # files must stay out; untracked ones that are not ignored must stay in, or the
 # scope canaries below could no longer be planted. Checked in a throwaway repo,
 # never by planting files in the real one.
-GI_REPO=$(mktemp -d); trap 'rm -rf "$PC_DIR" "$GI_REPO"' EXIT HUP INT TERM
-git -C "$GI_REPO" init -q
-printf '.spectra/\n' > "$GI_REPO/.gitignore"
-mkdir -p "$GI_REPO/.spectra/snapshots/old/specs" "$GI_REPO/notes"
-RESTATEMENT='Under unattended mode a Plan tier issue still reaches EnterPlanMode via Phase 3a.'
-printf '%s\n' "$RESTATEMENT" > "$GI_REPO/.spectra/snapshots/old/specs/gi-ignored.md"
-printf '%s\n' "$RESTATEMENT" > "$GI_REPO/notes/gi-loose.md"
-printf '%s\n' "$RESTATEMENT" > "$GI_REPO/gi-committed.md"
-git -C "$GI_REPO" add .gitignore gi-committed.md
-git -C "$GI_REPO" -c user.email=t@t.t -c user.name=t commit -q -m init
+GI_REPO=$(mktemp -d) || { echo "FATAL: mktemp -d failed" >&2; exit 1; }
+trap 'rm -rf "$PC_DIR" "$GI_REPO"' EXIT HUP INT TERM
+# This is the suite's only git write: it must land in GI_REPO (the GIT_* unset at
+# the top) and run nothing of the caller's — no global or system config
+# (hooksPath, signing, fsmonitor), no template hooks.
+(
+  export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+  git -C "$GI_REPO" init -q --template= &&
+  git -C "$GI_REPO" config core.excludesFile /dev/null &&   # ~/.config/git/ignore is read even without global config
+  printf '.spectra/\n' > "$GI_REPO/.gitignore" &&
+  mkdir -p "$GI_REPO/.spectra/snapshots/old/specs" "$GI_REPO/notes" &&
+  RESTATEMENT='Under unattended mode a Plan tier issue still reaches EnterPlanMode via Phase 3a.' &&
+  printf '%s\n' "$RESTATEMENT" > "$GI_REPO/.spectra/snapshots/old/specs/gi-ignored.md" &&
+  printf '%s\n' "$RESTATEMENT" > "$GI_REPO/notes/gi-loose.md" &&
+  printf '%s\n' "$RESTATEMENT" > "$GI_REPO/gi-committed.md" &&
+  # the git branch's own -i and -z: an upper-case claim, and a non-ASCII name
+  printf '%s\n' 'PLAN TIER, unattended: EnterPlanMode still fires via Phase 3a.' > "$GI_REPO/notes/gi-upper.md" &&
+  printf '%s\n' "$RESTATEMENT" > "$GI_REPO/notes/計畫-gi.md" &&
+  git -C "$GI_REPO" add .gitignore gi-committed.md &&
+  git -C "$GI_REPO" -c user.email=t@t.t -c user.name=t -c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m init
+) || fail "#335: throwaway repo set up" "git init/add/commit in $GI_REPO failed"
+require "#335: the throwaway repo has a commit" git -C "$GI_REPO" rev-parse -q --verify HEAD
 GI_SEEN=$(restating_files "$GI_REPO" || true)
 assert_eq "#335: a restatement in a gitignored path is not reported" \
   "0" "$(printf '%s\n' "$GI_SEEN" | grep -c 'gi-ignored.md' || true)"
@@ -412,6 +432,10 @@ assert_eq "#335: an untracked, not-ignored restatement is still reported" \
   "1" "$(printf '%s\n' "$GI_SEEN" | grep -c 'notes/gi-loose.md' || true)"
 assert_eq "#335: a committed restatement is still reported" \
   "1" "$(printf '%s\n' "$GI_SEEN" | grep -c 'gi-committed.md' || true)"
+assert_eq "#335: an upper-case restatement is reported (git grep -i)" \
+  "1" "$(printf '%s\n' "$GI_SEEN" | grep -c 'notes/gi-upper.md' || true)"
+assert_eq "#335: a non-ASCII file name is reported as written (git grep -z)" \
+  "1" "$(printf '%s\n' "$GI_SEEN" | grep -cF "$GI_REPO/notes/計畫-gi.md" || true)"
 
 # ── the scan SCOPE has to have weight ──
 #
