@@ -118,11 +118,13 @@ Script 只下載 + 寫 manifest,**parse 不是 script 的工作**。Skill 在 do
 
 ```
 # 不上傳 attachment 內容到遠端,但保留 manifest
-.claude/.idd/attachments/**
-!.claude/.idd/attachments/**/_manifest.json
+.claude/.idd/attachments/*/*
+!.claude/.idd/attachments/*/_manifest.json
 ```
 
 只 ignore 二進位內容,保留 manifest(讓協作者知道有 attachment、URL 是什麼,需要時自行 fetch)。
+
+不要寫成 `.claude/.idd/attachments/**`:`**` 連 `issue-N/` 目錄本身都匹配,git 排除目錄後不再往下看,底下的 `!…/_manifest.json` 撈不回來,manifest 會跟著被忽略(#432)。`*/*` 只匹配 `issue-N/` 底下的檔案,`git add .claude/.idd/attachments/issue-N` 只會加入 manifest。`scripts/tests/attachments-gitignore-example/` 對本段範例逐字驗證。
 
 ## Iron rules
 
