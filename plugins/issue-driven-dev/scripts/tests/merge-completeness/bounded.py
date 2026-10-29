@@ -3,8 +3,9 @@
 
 Every history in the world is built the way SPEC.md defines its ground truth: the
 branch is a sequence of single-unit edits on top of a merge-base, and main receives
-a known subset S of the branch commits as one squash (or nothing), possibly after
-a commit of its own. The oracle computes the expected verdict from S (and P0: no
+a known subset S of the branch commits as one squash, or as two (--landing two), or
+nothing, possibly after a commit of its own. The oracle computes the expected verdict
+from S and the step where the branch landed (and P0: no
 orphan when the tip has the head's content on every path a candidate touched); the
 helper has to infer it from the trees. In every case the helper's route is checked
 against the model of the landing algorithm (whether it stopped at P0, and where it
@@ -17,7 +18,7 @@ real git merges by the fixtures and by fuzz runs (SPEC.md, Results).
 
   python3 bounded.py [--max-len N] [--sample K] [--seed S] [--jobs J]
                      [--old-git SHIM_DIR] [--after] [--show N]
-                     [--landing plain|own|merge] [--adjacent] [--pairs] [--touch]
+                     [--landing plain|own|merge|two] [--adjacent] [--pairs] [--touch]
 
 Exit 0 when every disagreement is a known deviation, 1 otherwise.
 """
@@ -133,8 +134,34 @@ def land(before, mb, net):
     return {u: (net[u] if net[u] != mb[u] else before[u]) for u in UNITS}
 
 
+def split_of(landing):
+    """The first squash of a two-step landing ("two:0,2" -> {0, 2}), else None."""
+    if not landing.startswith("two:"):
+        return None
+    return frozenset(int(x) for x in landing[4:].split(","))
+
+
+def landed_states(mb, ops, S, before, landing):
+    """The states main passes through as S lands, in order: one squash, or (two-step)
+    a squash of S1 and then a squash of the rest of S on top of it (an earlier PR of
+    the same branch, then the PR that completes it). None when S cannot land that way."""
+    if not S:
+        return [dict(before)]
+    net = compose(mb, ops, S)
+    if net is None:
+        return None
+    S1 = split_of(landing)
+    if S1 is None:
+        return [land(before, mb, net)]
+    base2 = compose(mb, ops, S1)
+    if base2 is None:
+        return None
+    R1 = land(before, mb, base2)
+    return [R1, land(R1, base2, net)]
+
+
 # ── Ground truth (SPEC.md, "Definition") ────────────────────────────────────
-def oracle(mb, ops, S, main_before, extra=None):
+def oracle(mb, ops, S, main_before, extra=None, landing="plain"):
     """Expected (rc, orphans). R is main right after it received S (main_before
     when S is empty), including an edit of its own made in the same step (extra).
     A commit outside S is an orphan when an effect of it that the head still shows
@@ -143,12 +170,18 @@ def oracle(mb, ops, S, main_before, extra=None):
     head = dict(mb)
     for op in ops:
         head = apply_strict(head, op)
-    R = dict(main_before)
-    if S:
-        net = compose(mb, ops, S)
-        if net is None:
-            return None   # main could not have received S as one squash
-        R = land(main_before, mb, net)
+    steps = landed_states(mb, ops, S, main_before, landing)
+    if steps is None:
+        return None   # main could not have received S that way
+    # In several steps the branch landed at the first after which main holds the head's
+    # net change; a later step is main's history after landing (decision A).
+    def holds_net(st):
+        return all((st[u] == head[u]) if head[u] not in (None, False) else (st[u] != mb[u])
+                   for u in UNITS if head[u] != mb[u])
+    R = next((st for st in steps[:-1] if holds_net(st)), steps[-1])
+    S1 = split_of(landing)
+    if S1 is not None and R is steps[0]:
+        S = set(S1)   # the commits main received by the step the branch landed in
     if extra is not None:
         R = apply_strict(R, extra)
         if R is None:
@@ -208,9 +241,14 @@ def fast_import_stream(mb, ops, S, main_op, after_op, extra=None, landing="plain
         mstate = apply_strict(mstate, main_op)
         emit("refs/heads/main", 3, [last], "main own edit", mstate, utext)
         last = 3
-    RS = land(mstate, mb, compose(mb, ops, S)) if S else dict(mstate)
+    steps = landed_states(mb, ops, S, mstate, landing)
+    RS = steps[-1]
     R = apply_strict(dict(RS), extra) if extra is not None else RS
-    if S and landing in ("plain", "own"):
+    if S and split_of(landing) is not None:
+        emit("refs/heads/main", 4, [last], "squash 1", steps[0], utext)
+        emit("refs/heads/main", 6, [4], "squash 2", R, utext)
+        last = 6
+    elif S and landing in ("plain", "own"):
         emit("refs/heads/main", 4, [last], "squash", R, utext)
         last = 4
     elif S and landing == "merge":
@@ -340,32 +378,42 @@ def cases(args):
                 for S in itertools.combinations(range(n), r):
                     if args.landing != "plain" and not S:
                         continue
+                    if args.landing == "two" and len(S) < 2:
+                        continue
                     net = compose(mb, ops, set(S)) if S else None
                     if S and net is None:
                         continue
-                    for mop in main_ops(mb, touched):
+                    if args.landing == "two":
+                        landings = ["two:" + ",".join(map(str, S1)) for r1 in range(1, len(S))
+                                    for S1 in itertools.combinations(S, r1)]
+                    else:
+                        landings = [args.landing]
+                    for mop, landing in itertools.product(list(main_ops(mb, touched)), landings):
                         before = dict(mb)
                         if mop is not None:
                             before = apply_strict(before, mop)
-                        squashed = land(before, mb, net) if S else before
-                        if args.landing == "plain":
+                        steps = landed_states(mb, ops, set(S), before, landing)
+                        if steps is None:
+                            continue
+                        squashed = steps[-1]
+                        if args.landing in ("plain", "two"):
                             extras = [None]
                         elif args.landing == "own":
                             extras = list(extra_ops(squashed, touched, mop))
                         else:
                             extras = [None] + list(extra_ops(squashed, touched, mop))
                         for extra in extras:
-                            exp = oracle(mb, ops, set(S), before, extra)
+                            exp = oracle(mb, ops, set(S), before, extra, landing)
                             if exp is None:
                                 continue
                             if not args.after:
-                                out.append((mb, ops, frozenset(S), mop, None, extra, args.landing, exp))
+                                out.append((mb, ops, frozenset(S), mop, None, extra, landing, exp))
                             elif S:
                                 R = dict(squashed)
                                 if extra is not None:
                                     R = apply_strict(R, extra)
                                 for aop in after_ops(R, touched):
-                                    out.append((mb, ops, frozenset(S), mop, aop, extra, args.landing, exp))
+                                    out.append((mb, ops, frozenset(S), mop, aop, extra, landing, exp))
     return out
 
 
@@ -385,49 +433,102 @@ def model_sides(mb, ops, S, mop, aop, extra, landing, minus, old_git):
         states.append(apply_strict(states[-1], op))
     head = states[-1]
     before = apply_strict(dict(mb), mop) if mop is not None else dict(mb)
-    RS = land(before, mb, compose(mb, ops, S)) if S else dict(before)
+    steps = landed_states(mb, ops, S, before, landing)
+    RS = steps[-1]
     R = apply_strict(dict(RS), extra) if extra is not None else RS
     # main's first-parent commits after the merge-base: (state, paths it touched)
     def touched(a, b):
         return {path_of(u) for u in UNITS if a[u] != b[u]}
     seq = [(dict(mb), {"u"})]
     received = None   # index of the commit that brings S in
+    branch_landings = set()   # every commit of main that brings branch commits in
+    merges = set()            # merge commits: the copy rule never decides at them
     if mop is not None:
         seq.append((before, touched(mb, before)))
-    if S and landing in ("plain", "own"):
+    if S and split_of(landing) is not None:
+        branch_landings.add(len(seq))
+        seq.append((steps[0], touched(before, steps[0])))
+        received = len(seq)
+        seq.append((R, touched(steps[0], R)))
+    elif S and landing in ("plain", "own"):
         received = len(seq)
         seq.append((R, touched(before, R)))
     elif S and landing == "merge":
         seq.append((before, {"u"}))
         received = len(seq)
+        merges.add(received)
         seq.append((R, touched(before, R)))
     if aop is not None:
         after = dict(R)
         after[aop[0]] = aop[2]
         seq.append((after, touched(R, after)))
 
-    def holds(c, ref):
+    def cnt(state, text):
+        return sum(1 for v in range(SLOTS) if state[v] is not None and txt_of(state[v], v) == text)
+
+    def touches(j, text):
+        # op j adds or deletes a line of the text, or changes its number of copies
+        return any(isinstance(u, int) and any(x is not None and txt_of(x, u) == text for x in (frm, to))
+                   for u, frm, to in edits(ops[j])) or cnt(states[j + 1], text) != cnt(states[j], text)
+
+    def holds(c, ref, prev=None, kref=None):
         if RULE == "place":
             # each unit the net change sets is in place; each unit it empties no longer
             # holds the merge-base's value
-            return all((c[u] == ref[u]) if ref[u] not in (None, False) else (c[u] != mb[u])
-                       for u in UNITS if ref[u] != mb[u])
+            failing = []
+            for u in UNITS:
+                if ref[u] == mb[u]:
+                    continue
+                if ref[u] not in (None, False):
+                    if c[u] != ref[u]:
+                        failing.append((u, ref[u]))                     # the added line
+                        if mb[u] not in (None, False) and c[u] == mb[u]:
+                            failing.append((u, mb[u]))                  # the deleted line
+                elif c[u] == mb[u]:
+                    failing.append((u, mb[u]))                          # the deleted line
+            if not failing:
+                return True
+            # the helper's holds_by_copies: a commit other than the merge-base, whose
+            # failing lines all have a text that repeats in the branch's file or the
+            # merge-base's, and which at most one commit of the whole branch touches,
+            # holds when its own step changes each such text's copies as the net
+            # change does
+            if prev is None or kref is None:
+                return False
+            # some line of the net change must be in place by position (a commit of
+            # main's own adding the same text elsewhere carries none of it)
+            net_lines = sum((ref[u] is not None) + (mb[u] is not None) for u in range(SLOTS) if ref[u] != mb[u]) \
+                + (1 if ref["g"] != mb["g"] else 0)
+            if net_lines <= len(failing):
+                return False
+            for u, v in failing:
+                if not isinstance(u, int):
+                    return False
+                text = txt_of(v, u)
+                if cnt(ref, text) < 2 and cnt(mb, text) < 2:
+                    return False
+                if sum(1 for j in range(n) if touches(j, text)) > 1:
+                    return False
+                if cnt(c, text) - cnt(prev, text) != cnt(ref, text) - cnt(mb, text):
+                    return False
+            return True
         return all(c[u] == ref[u] for u in UNITS if ref[u] != mb[u])
 
-    def find_landing(ref):
+    def find_landing(kref):
+        ref = states[kref]
         if holds(mb, ref):
             return "mb"
         net = {path_of(u) for u in UNITS if ref[u] != mb[u]}
         for i, (st, paths) in enumerate(seq):
             if i > 0 and not (paths & net):
                 continue
-            if holds(st, ref):
+            if holds(st, ref, seq[i - 1][0] if i > 0 else mb, None if i in merges else kref):
                 return i
         return None
 
     def prefix_search():
         for k in range(n - 1, 0, -1)[:20]:
-            lk = find_landing(states[k])
+            lk = find_landing(k)
             if lk == "mb" or lk is None:
                 continue
             return lk, k
@@ -437,7 +538,7 @@ def model_sides(mb, ops, S, mop, aop, extra, landing, minus, old_git):
     # Round 11 needed merge-tree --write-tree (git 2.38) and checked everything at the
     # tip without it; round 12 reads only `git diff`, so the shim changes nothing.
     if not old_git or RULE == "place":
-        L = find_landing(head)
+        L = find_landing(n)
         if L is None:
             L, prefix = prefix_search()
         elif L == "mb":
@@ -467,8 +568,47 @@ def model_sides(mb, ops, S, mop, aop, extra, landing, minus, old_git):
     # the landing commit is one main made itself, not the commit that brought S in:
     # main held the branch's net change on its own, before receiving S or after
     # (SPEC B2)
-    land_own = isinstance(L, int) and L != received
-    return sides, later, land_state, land_own, land_prev, land_ref
+    branch_landings.add(received)
+    land_own = isinstance(L, int) and L not in branch_landings
+    # the slots main itself changed in the landing step (R1's cause): every change when
+    # the landing commit is main's own; else an edit of main's own the step carries (in
+    # the squash, or another PR in the merge) and a conflict resolved over an edit of
+    # main's own. The branch's own changes in the step never count.
+    step_main = set()
+    if isinstance(L, int):
+        lp = seq[L - 1][0] if L > 0 else dict(mb)
+        st = seq[L][0]
+        if land_own:
+            step_main = {v for v in range(SLOTS) if lp[v] != st[v]}
+        else:
+            S1 = split_of(landing)
+            if S1 is not None and L != received:
+                base, net = dict(mb), compose(mb, ops, S1)
+            elif S1 is not None:
+                base, net = compose(mb, ops, S1), compose(mb, ops, S)
+            else:
+                base, net = dict(mb), compose(mb, ops, S)
+            for v in range(SLOTS):
+                if net[v] != base[v]:
+                    if lp[v] != base[v] or st[v] != net[v]:
+                        step_main.add(v)
+                elif st[v] != lp[v]:
+                    step_main.add(v)
+    # the helper's part_landed: L^1 holds the net change of an earlier part of what
+    # landed (a prefix with a net change of its own); R1 then keeps its findings
+    part = False
+    if isinstance(L, int) and split_of(landing) is not None and len(split_of(landing)) == 1 and L == received:
+        part = True   # git cherry finds the first squash's one commit in L^1
+    if isinstance(L, int) and not part:
+        lp = seq[L - 1][0] if L > 0 else dict(mb)
+        lpp = (seq[L - 2][0] if L > 1 else mb) if L > 0 else None
+        for k in range((prefix or n) - 1, 0, -1)[:20]:
+            if holds(mb, states[k]):
+                continue
+            if holds(lp, states[k], lpp, None if (L - 1) in merges else k):
+                part = True
+                break
+    return sides, later, land_state, land_own, land_prev, land_ref, part, step_main
 
 
 SHORTCUT = "@shortcut"   # a key in the trace's sides: the helper stopped at P0
@@ -488,8 +628,7 @@ def head_tip(case):
     tip = dict(mb)
     if mop is not None:
         tip = apply_strict(tip, mop)
-    if S:
-        tip = land(tip, mb, compose(mb, ops, S))
+    tip = landed_states(mb, ops, S, tip, landing)[-1]
     if extra is not None:
         tip = apply_strict(tip, extra)
     if aop is not None:
@@ -547,7 +686,7 @@ def classify(case, exp, got, args, text, sides):
     erc, elisted = exp
     if rc not in (0, 3):
         return None
-    want, later, land_state, land_own, land_prev, land_ref = model_sides(mb, ops, S, mop, aop, extra, landing, minus, bool(args.old_git))
+    want, later, land_state, land_own, land_prev, land_ref, part, step_main = model_sides(mb, ops, S, mop, aop, extra, landing, minus, bool(args.old_git))
     if any(sides.get(name) != side for name, side in want.items()):
         return None
     diff = (elisted - listed) | (listed - elisted)
@@ -581,32 +720,61 @@ def classify(case, exp, got, args, text, sides):
     def copies(state, text):
         # copies of a line of f.txt; the helper counts lines of the file (path f)
         return sum(1 for u in range(SLOTS) if state[u] is not None and txt_of(state[u], u) == text)
+    def main_in_step(text, u_missing):
+        # SPEC.md R1's cause: in the landing step main itself changed another copy of
+        # the text (model_sides' step_main: an edit of its own in that commit, another
+        # PR in the merge, a conflict resolved over an edit of main's own, or a landing
+        # commit that is main's own)
+        return any(v != u_missing and any(x is not None and txt_of(x, v) == text for x in (land_prev[v], land_state[v]))
+                   for v in step_main)
+    def other_copies(k, text):
+        # the helper's restriction: another branch commit changes the number of copies
+        st = dict(mb)
+        for j, o in enumerate(ops):
+            nxt = apply_strict(dict(st), o)
+            if j != k and copies(st, text) != copies(nxt, text):
+                return True
+            st = nxt
+        return False
     def r1_landed(k, op):
         # SPEC.md R1: a finding on a line whose text repeats stands only when the copies
         # agree; True when, for every effect of op the model finds missing, the helper's
-        # count reads it as landed
-        if land_state is None or land_prev is None:
+        # count reads it as landed AND the model has R1's cause (main changed another
+        # copy in the landing step). Without the cause, a count that clears a missing
+        # effect is a bug, not the documented deviation (#399 verify round 13).
+        if land_state is None or land_prev is None or part:
             return False
         before = dict(mb)
         for o in ops[:k]:
             before = apply_strict(before, o)
         after = apply_strict(dict(before), op)
         missing = []
+        present = lambda v: v not in (None, False)
         for u, frm, to in edits(op):
             if not isinstance(u, int):
-                return False
+                # R1 counts lines of f.txt only: a file effect that is missing keeps the
+                # finding; one that landed says nothing
+                if (present(to) and head[u] == to and land_state[u] != to) or \
+                   (present(frm) and head[u] != frm and land_state[u] == frm):
+                    return False
+                continue
             if to is not None and head[u] == to and land_state[u] != to:
-                missing.append(("A", txt_of(to, u), after))
+                missing.append(("A", txt_of(to, u), after, u))
             if frm is not None and head[u] != frm and land_state[u] == frm:
-                missing.append(("D", txt_of(frm, u), before))
+                missing.append(("D", txt_of(frm, u), before, u))
         if not missing:
             return False
-        for t, text, src in missing:
+        for t, text, src, u in missing:
             n_src, n_head, n_ref, n_land = copies(src, text), copies(head, text), copies(land_ref, text), copies(land_state, text)
             if max(n_src, n_head, n_ref, n_land) < 2:
                 return False
-            adj = n_land - copies(land_prev, text) + copies(mb, text)
+            n_prev, n_mb = copies(land_prev, text), copies(mb, text)
+            if n_prev != n_mb and other_copies(k, text):
+                return False
+            adj = n_land - n_prev + n_mb
             if (t == "A" and adj < n_ref) or (t == "D" and adj > n_ref):
+                return False
+            if not main_in_step(text, u):
                 return False
         return True
     classes = set()
@@ -662,9 +830,10 @@ def main():
     ap.add_argument("--old-git", default="",
                     help="a directory with a git shim that refuses merge-tree --write-tree (round 12 never calls it)")
     ap.add_argument("--after", action="store_true", help="add one main edit after the squash (out of scope by decision A)")
-    ap.add_argument("--landing", choices=("plain", "own", "merge"), default="plain",
+    ap.add_argument("--landing", choices=("plain", "own", "merge", "two"), default="plain",
                     help="how main receives S: one squash (plain), a squash with an edit of main's own (own), "
-                         "or a merge of a side branch holding the squash and another PR's edit (merge)")
+                         "a merge of a side branch holding the squash and another PR's edit (merge), "
+                         "or two squashes, an earlier PR of the branch and the one that completes it (two)")
     ap.add_argument("--adjacent", action="store_true", help="put the slots on consecutive lines")
     ap.add_argument("--pairs", action="store_true", help="let a commit edit two units")
     ap.add_argument("--distinct", action="store_true", help="give each slot its own texts (A0, A1, ...)")
@@ -726,7 +895,7 @@ def main():
         if shortcut:
             exp_named = (0, frozenset())
         route_ok = (SHORTCUT in sides) == shortcut and rc in (0, 3)
-        if route_ok and not shortcut and sides:
+        if route_ok and not shortcut:
             want = model_sides(mb, ops, S, mop, aop, extra, landing, minus, bool(args.old_git))[0]
             route_ok = all(sides.get(name) == side for name, side in want.items())
         if not route_ok:
