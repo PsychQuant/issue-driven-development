@@ -13,32 +13,42 @@
 #            the landing step, an unreadable object, a checked commit touching a
 #            path with a newline in its name); never clean, never a block
 #
-# Defenses no fixture pins (removing one still passes the suite; only these):
-# the --literal-pathspecs and --full-tree flags, the error return when a prefix's
-# landing search fails, the walk's fallback for a CR or LF in a changed path,
-# -c core.fsmonitor=false, --end-of-options on ref resolution, the `|| skip` on
-# CHERRY_DASH, and the error on a deleted path missing from the path index (it cannot
-# happen while the index is built from the same listing). A failed
+# Defenses no fixture pins (removing one still passes the suite; only these, checked
+# by mutating each in round 13): the --literal-pathspecs and --full-tree flags, the
+# error return when a prefix's landing search fails, the walk's fallback for a CR or
+# LF in a changed path, -c core.fsmonitor=false, --end-of-options on ref resolution,
+# the `|| skip` on CHERRY_DASH, and the error on a deleted path missing from the path
+# index (it cannot happen while the index is built from the same listing). A failed
 # listing of a commit's deleted paths is pinned only through awk, which refuses the
 # missing file. Belt and braces that git already provides in these calls, so no
 # fixture can tell them apart from their absence: --no-ext-diff, --no-textconv and
 # --no-color on diff-tree (plumbing ignores diff.external, textconv and color
 # config), --no-renames on diff-tree (plumbing does not detect renames by default),
 # --no-pager (the output is never a terminal), and --diff-algorithm=myers and
-# --indent-heuristic on the two-way diffs (git's defaults; only a user's
-# diff.algorithm or diff.indentHeuristic changes them, and no fixture sets one).
-# Pinned by no fixture although they could matter: --no-renames on the two-way diffs
-# (fixture 105 renames a file and edits it; no fixture found where detecting the
-# rename changes an answer), the empty tree as the parent of a root commit (a root
-# commit reaches the check only when the branch merged an unrelated history, and
-# merge commits on the branch are outside what this suite builds), and the
-# merge-base half of the net-change cache key (equivalent: the baseline is fixed for
-# a run, so the merge-base is a function of the revision). Also
-# unpinned: the note when the prefix search after a merge-base landing fails (it
-# needs the check budget to run out inside that search), and the `! -e` / `! -L`
-# tests before the trace file is written (noclobber already refuses an existing
-# regular file; the tests matter only for a FIFO or a device, which a fixture cannot
-# use without hanging).
+# --indent-heuristic on the two-way diffs (fixture 128 sets another algorithm and
+# turns the heuristic off, and no answer changes). Backstops behind another defense:
+# pparse keeping only the listed paths (fixture 117 needs only that a landing commit
+# have the head's files among the net change's paths, which fixtures 102, 102b and 130
+# pin), pparse giving up on a stray
+# line inside a hunk (the pinned options leave none), and pparse pairing equal lines
+# at one offset (inside a -U0 hunk only a final-newline change puts them there, and
+# the no-newline pairing covers it). Speed only: whether the paths go on the command
+# line (below 64 KB) or the trees are compared whole. Pinned by no fixture although
+# they could matter: present() reporting an unreadable tree as an error (only a
+# damaged repository gets there) and taking only a file or a submodule for present (the
+# landing step compares files with diff-tree, so a directory reaches present() only at
+# a path outside the net change); a commit's added or deleted empty file checked at
+# the landing commit (the landing commit has every path the net change touches, so
+# only a path outside the net change, which main itself changed before landing, gets
+# there); the empty tree as the parent of a root commit (a root commit reaches the
+# check only when the branch merged an unrelated history, and merge commits on the
+# branch are outside what this suite builds); and the merge-base half of the
+# net-change cache key (equivalent: the baseline is fixed for a run, so the
+# merge-base is a function of the revision). Also unpinned: the note when the prefix
+# search after a merge-base landing fails (it needs the check budget to run out
+# inside that search), and the `! -e` / `! -L` tests before the trace file is
+# written (noclobber already refuses an existing regular file; the tests matter only
+# for a FIFO or a device, which a fixture cannot use without hanging).
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -145,20 +155,17 @@ printf 'l1\nl2\n' > "$R/sp ace.txt"; git -C "$R" add -A && git -C "$R" commit -q
 assert_exit "fixture-7 spaced filename squash NOT flagged" 0 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
-# ── Fixtures 8–111 (#399): a squash keeps the branch's FINAL content, not each commit ──
+# ── Fixtures 8–133 (#399): a squash keeps the branch's FINAL content, not each commit ──
 # A line one branch commit adds and a later one rewrites exists in no final tree,
 # and main may edit the branch's lines after the squash (#408: a release date
 # changed by a follow-up commit). The gate answers "did the branch's content land":
-# it finds the earliest baseline commit, the merge-base itself included, that
+# when the tip already has the head's content on every path the branch touched, it
+# did; otherwise the gate finds the earliest baseline commit, the merge-base itself included, that
 # holds the branch's whole net change (the landing commit) and checks each commit's lines
 # against THAT, skipping lines the branch head itself no longer has. What main did after landing — a follow-up, a
 # revert — is out of scope. Finding the landing commit must not accept what never
 # landed, and no merge driver, diff driver or color setting may decide.
-#
-# Every git version answers the same way: the landing step reads only `git diff`
-# (round 12 dropped merge-tree and its git 2.38 / 2.40 requirements). The name stays
-# because many fixtures below were written against it.
-CONTAINED_RC=0
+
 
 mk_rewrite_branch() { # repo -> feat: x added, then rewritten
   printf 'h1\nh2\nh3\n' > "$1/a.py"; git -C "$1" add -A && git -C "$1" commit -qm "a.py"
@@ -183,7 +190,7 @@ rm -rf "$R"
 # 9b is the #408 shape: a follow-up edits the very line the branch added. Only the
 # landing step can clear it — `x = 2` is in the branch head and not at the tip.
 R="$(mk_repo)"; mk_rewrite_branch "$R"; squash_feat "$R"; edit_x "$R"
-assert_exit "fixture-9b squash + follow-up editing the branch's line -> NOT flagged" "$CONTAINED_RC" "$(run_helper "$R" feat main)"
+assert_exit "fixture-9b squash + follow-up editing the branch's line -> NOT flagged" 0 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 R="$(mk_repo)"; mk_rewrite_branch "$R"
@@ -201,9 +208,7 @@ OUT11=$(out_of "$R" feat main); RC11=$?
 assert_exit "fixture-11 rewrite shape + a genuine orphan -> flagged" 3 "$RC11"
 assert_exit "fixture-11 lists the genuine orphan" 0 "$(has "$OUT11" 'orphan (never landed)')"
 assert_exit "fixture-11 does not list the rewritten 'add x'" 1 "$(has "$OUT11" 'add x')"
-if [ "$CONTAINED_RC" = 0 ]; then
-  assert_exit "fixture-11 note: the branch landed up to 'change x', the orphan checked at the tip" 0 "$(has "$OUT11" "the branch up to")"
-fi
+assert_exit "fixture-11 note: the branch landed up to 'change x', the orphan checked at the tip" 0 "$(has "$OUT11" "the branch up to")"
 assert_exit "fixture-11 note does not claim a revert" 1 "$(has "$OUT11" 'revert')"
 rm -rf "$R"
 
@@ -222,14 +227,12 @@ add_touching_commits() { # repo n — append n commits on main that rewrite a.py
   git -C "$1" update-ref refs/heads/main "$p"
 }
 R="$(mk_repo)"; mk_rewrite_branch "$R"; add_touching_commits "$R" 198; squash_feat "$R"; edit_x "$R"
-assert_exit "fixture-12a squash is the 200th check -> found" "$CONTAINED_RC" "$(run_helper "$R" feat main)"
+assert_exit "fixture-12a squash is the 200th check -> found" 0 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 R="$(mk_repo)"; mk_rewrite_branch "$R"; add_touching_commits "$R" 199; squash_feat "$R"; edit_x "$R"
 OUT12=$(out_of "$R" feat main); RC12=$?
 assert_exit "fixture-12b squash would be the 201st -> not tried, flagged" 3 "$RC12"
-if [ "$CONTAINED_RC" = 0 ]; then
-  assert_exit "fixture-12b note says the budget ran out" 0 "$(has "$OUT12" 'budget of 200')"
-fi
+assert_exit "fixture-12b note says the budget ran out" 0 "$(has "$OUT12" 'budget of 200')"
 rm -rf "$R"
 
 # ── Fixture 13: a revert after landing is main's own history — out of scope ──
@@ -237,7 +240,7 @@ R="$(mk_repo)"; git -C "$R" checkout -q -b feat
 printf 'f1\n' > "$R/f.txt"; git -C "$R" add -A && git -C "$R" commit -qm "add f"
 printf 'f1\nf2\n' > "$R/f.txt"; git -C "$R" commit -qam "extend f"
 squash_feat "$R"; git -C "$R" revert --no-edit HEAD >/dev/null 2>&1
-assert_exit "fixture-13 squash then revert -> NOT flagged (landed; revert out of scope)" "$CONTAINED_RC" "$(run_helper "$R" feat main)"
+assert_exit "fixture-13 squash then revert -> NOT flagged (landed; revert out of scope)" 0 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 # ── Fixture 14: a baseline commit that is not a descendant of the merge-base ──
@@ -282,7 +285,7 @@ R="$(mk_repo)"; git -C "$R" checkout -q -b feat
 printf 'A\n' > "$R/g.txt"; git -C "$R" add -A && git -C "$R" commit -qm "add A"
 printf 'A\nB\n' > "$R/g.txt"; git -C "$R" commit -qam "add B"
 squash_feat "$R"; printf 'A\n' > "$R/g.txt"; git -C "$R" commit -qam "later edit drops B"
-assert_exit "fixture-16 partial overwrite after landing -> NOT flagged (out of scope)" "$CONTAINED_RC" "$(run_helper "$R" feat main)"
+assert_exit "fixture-16 partial overwrite after landing -> NOT flagged (out of scope)" 0 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 # ── Fixture 19: a commit that restores a merge-base value never landed ──
@@ -299,10 +302,8 @@ printf 'LOG = "debug"\na\nb\nc\nd\ne\nRETRIES = 3\n' > "$R/cfg.py"; git -C "$R" 
 OUT19=$(out_of "$R" feat main); RC19=$?
 assert_exit "fixture-19 dropped restore-to-merge-base commit -> flagged" 3 "$RC19"
 assert_exit "fixture-19 lists O" 0 "$(has "$OUT19" 'O: back to info')"
-if [ "$CONTAINED_RC" = 0 ]; then
-  assert_exit "fixture-19 note names the landing commit" 0 "$(has "$OUT19" "landed in")"
-  assert_exit "fixture-19 note names its subject" 0 "$(has "$OUT19" "land P only")"
-fi
+assert_exit "fixture-19 note names the landing commit" 0 "$(has "$OUT19" "landed in")"
+assert_exit "fixture-19 note names its subject" 0 "$(has "$OUT19" "land P only")"
 rm -rf "$R"
 
 # ── Fixture 20: diff settings must not hide added lines ──
@@ -363,7 +364,7 @@ printf 'h1\nh2\nh3\nx = 2\n' > "$R/a.py"; git -C "$R" commit -qam "change x"
 git -C "$R" checkout -q side; printf 's1\ns2\n' > "$R/s.txt"; git -C "$R" commit -qam s2
 git -C "$R" checkout -q main; git -C "$R" merge -q --no-ff -m "merge side" side
 squash_feat "$R"; edit_x "$R"
-assert_exit "fixture-23 stacked branch squash + follow-up -> NOT flagged" "$CONTAINED_RC" "$(run_helper "$R" feat main)"
+assert_exit "fixture-23 stacked branch squash + follow-up -> NOT flagged" 0 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 # ── Fixture 24: a file the branch added and later deleted is not looked for ──
@@ -501,10 +502,7 @@ git -C "$R" revert --no-edit HEAD~1 >/dev/null 2>&1
 squash_feat "$R"
 printf 'timeout = 45\na\nb\nc\nd\ne\nf\ng\nh\nn = 1\n' > "$R/cfg.py"; git -C "$R" commit -qam "follow-up: timeout 45"
 OUT28=$(out_of "$R" feat main); RC28=$?
-assert_exit "fixture-28 restored line edited after landing -> NOT flagged" "$CONTAINED_RC" "$RC28"
-if [ "$CONTAINED_RC" = 0 ]; then :; else
-  assert_exit "fixture-28 (old git) the flag is the restore" 0 "$(has "$OUT28" 'Revert')"
-fi
+assert_exit "fixture-28 restored line edited after landing -> NOT flagged" 0 "$RC28"
 rm -rf "$R"
 
 # ── Fixtures 29, 30: one genuine orphan must not drag main's later edits into the list ──
@@ -516,9 +514,7 @@ git -C "$R" checkout -q main; edit_x "$R"
 OUT29=$(out_of "$R" feat main); RC29=$?
 assert_exit "fixture-29 9b shape + orphan -> flagged" 3 "$RC29"
 assert_exit "fixture-29 lists the orphan" 0 "$(has "$OUT29" 'orphan29')"
-if [ "$CONTAINED_RC" = 0 ]; then
-  assert_exit "fixture-29 does not list 'change x' (main edited it after landing)" 1 "$(has "$OUT29" 'change x')"
-fi
+assert_exit "fixture-29 does not list 'change x' (main edited it after landing)" 1 "$(has "$OUT29" 'change x')"
 rm -rf "$R"
 R="$(mk_repo)"; git -C "$R" checkout -q -b feat
 printf 'A\n' > "$R/g.txt"; git -C "$R" add -A && git -C "$R" commit -qm "add A"
@@ -529,9 +525,7 @@ git -C "$R" checkout -q main
 OUT30=$(out_of "$R" feat main); RC30=$?
 assert_exit "fixture-30 16 shape + orphan -> flagged" 3 "$RC30"
 assert_exit "fixture-30 lists the orphan" 0 "$(has "$OUT30" 'orphan30')"
-if [ "$CONTAINED_RC" = 0 ]; then
-  assert_exit "fixture-30 does not list 'add B' (main dropped it after landing)" 1 "$(has "$OUT30" 'add B')"
-fi
+assert_exit "fixture-30 does not list 'add B' (main dropped it after landing)" 1 "$(has "$OUT30" 'add B')"
 rm -rf "$R"
 
 # ── Fixture 31: a submodule pointer is a gitlink, not a blob ──
@@ -583,7 +577,7 @@ rm -rf "$R"
 R="$(mk_repo)"; mk_rewrite_branch "$R"; squash_feat "$R"
 git -C "$R" checkout -q feat; git -C "$R" merge -q --no-edit main >/dev/null 2>&1
 git -C "$R" checkout -q main; edit_x "$R"
-assert_exit "fixture-34 branch with no net change after merging main -> NOT flagged" "$CONTAINED_RC" "$(run_helper "$R" feat main)"
+assert_exit "fixture-34 branch with no net change after merging main -> NOT flagged" 0 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 R="$(mk_repo)"; printf 'L = 0\na\nb\n' > "$R/l.py"; git -C "$R" add -A && git -C "$R" commit -qm l
@@ -591,13 +585,13 @@ git -C "$R" checkout -q -b feat
 printf 'L = 1\na\nb\n' > "$R/l.py"; git -C "$R" commit -qam "try L = 1"
 printf 'L = 0\na\nb\n' > "$R/l.py"; git -C "$R" commit -qam "back to L = 0"
 git -C "$R" checkout -q main; printf 'L = 2\na\nb\n' > "$R/l.py"; git -C "$R" commit -qam "main: L = 2"
-assert_exit "fixture-34b change then change back, main edits the line later -> NOT flagged" "$CONTAINED_RC" "$(run_helper "$R" feat main)"
+assert_exit "fixture-34b change then change back, main edits the line later -> NOT flagged" 0 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 # ── Fixture 35: a shallow clone ──
 R="$(mk_repo)"; mk_rewrite_branch "$R"; squash_feat "$R"; edit_x "$R"
 SH35="$(mktemp -d)"; git clone -q --depth 3 --no-single-branch "file://$R" "$SH35/c" 2>/dev/null
-assert_exit "fixture-35 #408 shape in a shallow clone -> NOT flagged" "$CONTAINED_RC" \
+assert_exit "fixture-35 #408 shape in a shallow clone -> NOT flagged" 0 \
   "$(run_helper "$SH35/c" origin/feat origin/main)"
 rm -rf "$R" "$SH35"
 
@@ -607,7 +601,7 @@ if git -C "$R" init -q --object-format=sha256 2>/dev/null; then
   git -C "$R" config user.email t@t.t; git -C "$R" config user.name t; git -C "$R" config commit.gpgsign false
   printf 'base\n' > "$R/base.txt"; git -C "$R" add -A && git -C "$R" commit -qm base; git -C "$R" branch -M main
   mk_rewrite_branch "$R"; squash_feat "$R"; edit_x "$R"
-  assert_exit "fixture-36 #408 shape in a SHA-256 repo -> NOT flagged" "$CONTAINED_RC" "$(run_helper "$R" feat main)"
+  assert_exit "fixture-36 #408 shape in a SHA-256 repo -> NOT flagged" 0 "$(run_helper "$R" feat main)"
 fi
 rm -rf "$R"
 
@@ -689,7 +683,7 @@ squash_feat "$R"
 printf 'timeout = 45\na\nb\nc\nd\ne\nf\ng\nh\nn = 1\n' > "$R/cfg.py"; git -C "$R" commit -qam "follow-up: timeout 45"
 printf 'timeout = 45\na\nb\nc\nd\ne\nf\ng\nh\nn = 2\n' > "$R/cfg.py"; git -C "$R" commit -qam "M2: n = 2"
 git -C "$R" revert --no-edit HEAD >/dev/null 2>&1
-assert_exit "fixture-42 hold broken and restored after landing -> NOT flagged" "$CONTAINED_RC" "$(run_helper "$R" feat main)"
+assert_exit "fixture-42 hold broken and restored after landing -> NOT flagged" 0 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 # ── Fixtures 43, 44: which commits a landed prefix covers ──
@@ -718,9 +712,7 @@ printf 'a = 2\n' > "$R/a44.txt"; git -C "$R" commit -qam "main: a = 2"
 OUT44=$(out_of "$R" feat main); RC44=$?
 assert_exit "fixture-44 partial merge -> flagged" 3 "$RC44"
 assert_exit "fixture-44 lists the orphan" 0 "$(has "$OUT44" 'orphan44')"
-if [ "$CONTAINED_RC" = 0 ]; then
-  assert_exit "fixture-44 does not list A (main edited it after landing)" 1 "$(has "$OUT44" 'A: a = 1')"
-fi
+assert_exit "fixture-44 does not list A (main edited it after landing)" 1 "$(has "$OUT44" 'A: a = 1')"
 rm -rf "$R"
 
 # ── Fixture 45: submodule.<name>.ignore=all must not hide a gitlink ──
@@ -743,7 +735,7 @@ printf 'h1\nh2\nh3\nx = 2\n' > "$R/a.py"; git -C "$R" commit -qam "change x"
 squash_feat "$R"
 git -C "$R" merge -q --no-ff --no-edit side >/dev/null 2>&1
 edit_x "$R"
-assert_exit "fixture-46 squash before the base branch's merge + follow-up -> NOT flagged" "$CONTAINED_RC" "$(run_helper "$R" feat main)"
+assert_exit "fixture-46 squash before the base branch's merge + follow-up -> NOT flagged" 0 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 # ── Fixture 47: a listed blob that cannot be read is an error, not an empty file ──
@@ -782,7 +774,7 @@ rm -rf "$R"
 # ── Fixture 49: a CR-named file elsewhere in the tree (macOS Icon\r) changes nothing ──
 R="$(mk_repo)"; : > "$R/$(printf 'Icon\r')"; git -C "$R" add -A && git -C "$R" commit -qm icon
 mk_rewrite_branch "$R"; squash_feat "$R"; edit_x "$R"
-assert_exit "fixture-49a Icon<CR> in the tree + #408 shape -> NOT flagged" "$CONTAINED_RC" "$(run_helper "$R" feat main)"
+assert_exit "fixture-49a Icon<CR> in the tree + #408 shape -> NOT flagged" 0 "$(run_helper "$R" feat main)"
 git -C "$R" checkout -q -b feat2; printf 'y\n' > "$R/y49.txt"; git -C "$R" add y49.txt && git -C "$R" commit -qm "y49 (never landed)"
 git -C "$R" checkout -q main
 assert_exit "fixture-49b Icon<CR> in the tree + genuine orphan -> flagged" 3 "$(run_helper "$R" feat2 main)"
@@ -796,7 +788,7 @@ R="$(mk_repo)"; mkdir -p "$R/sub"; printf 'k\n' > "$R/sub/keep.txt"; git -C "$R"
 mk_rewrite_branch "$R"; git -C "$R" checkout -q main
 printf 'H1\nh2\nh3\n' > "$R/a.py"; git -C "$R" commit -qam "main edits a.py first"
 git -C "$R" merge -q --squash feat >/dev/null 2>&1 && git -C "$R" commit -qm "squash feat"; edit_x "$R"
-assert_exit "fixture-50 --repo is a subdirectory -> NOT flagged" "$CONTAINED_RC" "$(run_helper "$R/sub" feat main)"
+assert_exit "fixture-50 --repo is a subdirectory -> NOT flagged" 0 "$(run_helper "$R/sub" feat main)"
 rm -rf "$R"
 
 # ── Fixture 51: a branch commit was cherry-picked; the one that undid it was not ──
@@ -833,10 +825,8 @@ git -C "$R" checkout -q main; git -C "$R" checkout -q feat~3 -- a53.txt b53.txt 
 printf 'a = 2\n' > "$R/a53.txt"; git -C "$R" commit -qam "main: a = 2"
 OUT53=$(out_of "$R" feat main); RC53=$?
 assert_exit "fixture-53 partial merge -> flagged" 3 "$RC53"
-if [ "$CONTAINED_RC" = 0 ]; then
-  assert_exit "fixture-53 note names the landed prefix" 0 "$(has "$OUT53" 'the branch up to')"
-  assert_exit "fixture-53 does not list A1 (main edited it after landing)" 1 "$(has "$OUT53" 'A1: a = 1')"
-fi
+assert_exit "fixture-53 note names the landed prefix" 0 "$(has "$OUT53" 'the branch up to')"
+assert_exit "fixture-53 does not list A1 (main edited it after landing)" 1 "$(has "$OUT53" 'A1: a = 1')"
 rm -rf "$R"
 
 # ── Fixture 54: a crafted subject cannot rebuild a control sequence or close its quotes ──
@@ -899,7 +889,7 @@ R="$(mk_repo)"; git -C "$R" checkout -q -b feat
 printf 'a\n' > "$R/a57.txt"; git -C "$R" add -A && git -C "$R" commit -qm "A: a57"
 printf 'b\n' > "$R/b57.txt"; git -C "$R" add -A && git -C "$R" commit -qm "B: b57"
 squash_feat "$R"; git -C "$R" revert --no-edit HEAD >/dev/null 2>&1; git -C "$R" cherry-pick -x feat~1 >/dev/null 2>&1
-assert_exit "fixture-57 squash, revert, cherry-pick reland -> NOT flagged" "$CONTAINED_RC" "$(run_helper "$R" feat main)"
+assert_exit "fixture-57 squash, revert, cherry-pick reland -> NOT flagged" 0 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 # ── Fixture 58: a path with a newline elsewhere in the tree changes nothing ──
@@ -930,9 +920,7 @@ mk_prefix60() { # repo n — A1+A2 land as a squash, then n commits that never l
 }
 R="$(mk_repo)"; mk_prefix60 "$R" 20
 OUT60=$(out_of "$R" feat main)
-if [ "$CONTAINED_RC" = 0 ]; then
-  assert_exit "fixture-60a prefix 20 back is found" 1 "$(has "$OUT60" 'A1: a = 1')"
-fi
+assert_exit "fixture-60a prefix 20 back is found" 1 "$(has "$OUT60" 'A1: a = 1')"
 rm -rf "$R"
 R="$(mk_repo)"; mk_prefix60 "$R" 21
 OUT60=$(out_of "$R" feat main)
@@ -1109,7 +1097,7 @@ printf '{\n  "x": {\n    "version": "1.3.0"\n  },\n  "y": {\n    "version": "1.1
 git -C "$R" checkout -q main
 printf '{\n  "x": {\n    "version": "1.2.0"\n  },\n  "y": {\n    "version": "1.2.0"\n  }\n}\n' > "$R/m76.json"; git -C "$R" commit -qam "release y 1.2.0"
 squash_feat "$R"
-assert_exit "fixture-76 squash after another PR took the old version string -> NOT flagged" "$CONTAINED_RC" "$(run_helper "$R" feat main)"
+assert_exit "fixture-76 squash after another PR took the old version string -> NOT flagged" 0 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 # 77: the branch drops a line that main added a copy of, elsewhere in the file,
@@ -1119,7 +1107,7 @@ git -C "$R" checkout -q -b feat; printf 'x = 1\n' > "$R/m77.py"; git -C "$R" com
 printf 'b\n' > "$R/o77.txt"; git -C "$R" commit -qam "o77 b"
 git -C "$R" checkout -q main; printf 'import os\nx = 1\nimport os\n' > "$R/m77.py"; git -C "$R" commit -qam "main: import os at the end"
 squash_feat "$R"
-assert_exit "fixture-77 squash, main had added a copy of the deleted line -> NOT flagged" "$CONTAINED_RC" "$(run_helper "$R" feat main)"
+assert_exit "fixture-77 squash, main had added a copy of the deleted line -> NOT flagged" 0 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 # 78: the branch creates and later deletes a scratch file; main created its own file
@@ -1130,7 +1118,7 @@ printf 'real\n' > "$R/r78.txt"; git -C "$R" add -A && git -C "$R" commit -qm "re
 git -C "$R" rm -q n78.md && git -C "$R" commit -qm "drop scratch notes"
 git -C "$R" checkout -q main; printf 'main notes\n' > "$R/n78.md"; git -C "$R" add -A && git -C "$R" commit -qm "main: notes"
 squash_feat "$R"
-assert_exit "fixture-78 squash, main had its own file at a path the branch deleted -> NOT flagged" "$CONTAINED_RC" "$(run_helper "$R" feat main)"
+assert_exit "fixture-78 squash, main had its own file at a path the branch deleted -> NOT flagged" 0 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 # 79: the deletion mirror of fixture 19: c1 adds a line, c2 removes it again, and
@@ -1213,7 +1201,7 @@ printf 'X = 1\na\nb\nc\nd\ne\nf\ng\nh\ni\n' > "$R/f84.py"; git -C "$R" commit -q
 git -C "$R" checkout -q main
 printf 'a\nb\nc\nd\ne\nf\nB = 2\ng\nh\ni\n' > "$R/f84.py"; git -C "$R" commit -qam "main: drop X at the top"
 printf 'a\nb\nc\nX = 1\nd\ne\nf\ng\nh\ni\n' > "$R/f84.py"; git -C "$R" commit -qam "squash c1 and c2"
-EXP84=3; [ "$CONTAINED_RC" = 0 ] || EXP84=0   # at the tip the head still has an X (D2)
+EXP84=3
 OUT84=$(out_of "$R" feat main); RC84=$?
 assert_exit "fixture-84 deletion that did not land, main dropped its own copy -> flagged where it landed" "$EXP84" "$RC84"
 if [ "$EXP84" = 3 ]; then
@@ -1252,7 +1240,7 @@ printf 'x = 1\na\nb\nc\ny = 2\nd\ne\nf\ny = 2\ng\nh\ni\n' > "$R/f86.py"; git -C 
 git -C "$R" checkout -q main
 printf 'x = 1\na\nb\nc\nd\ne\nf\nx = 1\ng\nh\ni\n' > "$R/f86.py"; git -C "$R" commit -qam "main: y at the bottom becomes x"
 printf 'a\nb\nc\ny = 2\nd\ne\nf\nx = 1\ng\nh\ni\n' > "$R/f86.py"; git -C "$R" commit -qam "squash b1 and b2"
-EXP86=3; [ "$CONTAINED_RC" = 0 ] || EXP86=0   # at the tip x is present (D2)
+EXP86=3
 OUT86=$(out_of "$R" feat main); RC86=$?
 assert_exit "fixture-86 restored line whose text main has elsewhere, dropped -> flagged where it landed" "$EXP86" "$RC86"
 if [ "$EXP86" = 3 ]; then
@@ -1274,7 +1262,7 @@ printf 'a\nb\nc\nd\ne\nf\nX = 1\n' > "$R/f87.py"; printf 'y\n' > "$R/y87.txt"; g
 OUT87=$(out_of "$R" feat main); RC87=$?
 assert_exit "fixture-87 landed prefix + a dropped commit sharing its line -> flagged" 3 "$RC87"
 assert_exit "fixture-87 lists c2" 0 "$(has "$OUT87" 'c2: X again')"
-[ "$CONTAINED_RC" = 0 ] && assert_exit "fixture-87 does not list c1 (it landed)" 1 "$(has "$OUT87" 'c1: X')"
+assert_exit "fixture-87 does not list c1 (it landed)" 1 "$(has "$OUT87" 'c1: X')"
 rm -rf "$R"
 
 # 88: c1 adds X and c2 drops it again (the head no longer shows c1's X); main had an X
@@ -1301,7 +1289,6 @@ printf 'x = 1\np\nq\nr\nx = 1\ns\nt\nu\ny = 2\n' > "$R/f89.py"; git -C "$R" comm
 printf 'z = 3\np\nq\nr\nx = 1\ns\nt\nu\ny = 2\n' > "$R/f89.py"; git -C "$R" commit -qam "b2: z at the top"
 git -C "$R" checkout -q main
 printf 'z = 3\np\nq\nr\nx = 1\ns\nt\nu\nx = 1\n' > "$R/f89.py"; git -C "$R" commit -qam "squash feat, and y becomes x"
-# (At the tip, git < 2.38, presence alone clears this shape.)
 EXP89=0
 assert_exit "fixture-89 hand-edited squash with a copy of a moved line -> NOT flagged" "$EXP89" "$(run_helper "$R" feat main)"
 rm -rf "$R"
@@ -1476,19 +1463,31 @@ OUT101=$(out_of "$R" feat main)
 assert_exit "fixture-101 fullwidth and curly double quotes become ?" 1 "$(printf '%s' "$OUT101" | grep -q '＂\|“\|”'; echo $?)"
 rm -rf "$R"
 
-# ── Fixtures 102–107 (#399 round 12): pins for the two-way-diff checks ──
+# ── Fixtures 102–111 (#399 round 12): pins for the two-way-diff checks ──
 
-# 102: the branch's whole net change is a line and an empty file; another PR put the
-# same line in main first. That commit does not hold the net change (no empty file
-# there), so the branch landed at the squash, not before it. The squash carries a
-# file of its own, so git cherry does not match the one commit.
+# 102 (round 13: a follow-up keeps P0 from deciding it): the branch's whole net change
+# is a line and an empty file; another PR put the same line in main first. That commit
+# does not hold the net change (no empty file there), so the branch landed at the squash.
 R="$(mk_repo)"; printf 'a\nb\n' > "$R/f102.py"; git -C "$R" add -A && git -C "$R" commit -qm f102
 git -C "$R" checkout -q -b feat
 printf 'a\nb\nx = 1\n' > "$R/f102.py"; : > "$R/e102.txt"; git -C "$R" add -A && git -C "$R" commit -qm "c1: x and an empty file"
 git -C "$R" checkout -q main
 printf 'a\nb\nx = 1\n' > "$R/f102.py"; git -C "$R" commit -qam "another PR: the same x"
 : > "$R/e102.txt"; printf 'v\n' > "$R/v102.txt"; git -C "$R" add -A && git -C "$R" commit -qm "squash feat, with a version file"
+printf 'a\nb\nx = 2\n' > "$R/f102.py"; git -C "$R" commit -qam "follow-up: x 2"
 assert_exit "fixture-102 an empty file decides where the branch landed -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 102b: the mirror: the branch deletes an empty file; another PR made the same line
+# change but kept the file, so its commit does not hold the net change either.
+R="$(mk_repo)"; printf 'a\nb\n' > "$R/f102b.py"; : > "$R/e102b.txt"; git -C "$R" add -A && git -C "$R" commit -qm f102b
+git -C "$R" checkout -q -b feat
+printf 'a\nb\nx = 1\n' > "$R/f102b.py"; git -C "$R" rm -q e102b.txt; git -C "$R" add -A && git -C "$R" commit -qm "c1: x, the empty file deleted"
+git -C "$R" checkout -q main
+printf 'a\nb\nx = 1\n' > "$R/f102b.py"; git -C "$R" commit -qam "another PR: the same x"
+git -C "$R" rm -q e102b.txt; printf 'v\n' > "$R/v102b.txt"; git -C "$R" add -A && git -C "$R" commit -qm "squash feat, with a version file"
+printf 'a\nb\nx = 2\n' > "$R/f102b.py"; git -C "$R" commit -qam "follow-up: x 2"
+assert_exit "fixture-102b a deleted empty file decides where the branch landed -> NOT flagged" 0 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 # 103, 104: a final newline and a blank line are not effects, so a squash that left
@@ -1607,6 +1606,363 @@ r.txt"
 M111=$(git -C "$R" commit-tree "$(GIT_INDEX_FILE="$I111" git -C "$R" write-tree)" -p main -m "main: its own q-LF-r")
 git -C "$R" update-ref refs/heads/main "$M111"; rm -f "$I111"
 assert_exit "fixture-111 a candidate path with byte 001 -> skip, not a verdict" 4 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# ── Fixtures 112–119 (#399 round 13): settings and names the two-way diffs must not follow ──
+
+# 112, 113: diff.interHunkContext and GIT_DIFF_OPTS put context lines between nearby
+# changes. A dropped restore (decision-table row 16) next to a landed change must
+# still be listed, and a squash followed by main's edit of the branch's line (#399's
+# second shape) must still be clean.
+mk112() { # -> repo: base 1..20; c1 line 14 -> Y; c2 restores it (never landed); c3 line 10 -> X
+  local R; R="$(mk_repo)"; seq 1 20 > "$R/n.txt"; git -C "$R" add -A && git -C "$R" commit -qm n
+  git -C "$R" checkout -q -b feat
+  sed 's/^14$/Y/' "$R/n.txt" > "$R/t" && mv "$R/t" "$R/n.txt"; git -C "$R" commit -qam "c1: 14 to Y"
+  sed 's/^Y$/14/' "$R/n.txt" > "$R/t" && mv "$R/t" "$R/n.txt"; git -C "$R" commit -qam "c2: 14 back (never landed)"
+  sed 's/^10$/X/' "$R/n.txt" > "$R/t" && mv "$R/t" "$R/n.txt"; git -C "$R" commit -qam "c3: 10 to X"
+  git -C "$R" checkout -q main; printf 'o\n' > "$R/other.txt"; git -C "$R" add -A && git -C "$R" commit -qm "another PR"
+  seq 1 20 | sed -e 's/^14$/Y/' -e 's/^10$/X/' > "$R/n.txt"; git -C "$R" commit -qam "squash c1 c3"
+  echo "$R"
+}
+mk112b() { # -> repo: base a..e; c1 a -> A; c2 c -> C; main b -> B; squash; main then c -> C2
+  local R; R="$(mk_repo)"; printf 'a\nb\nc\nd\ne\n' > "$R/f.txt"; git -C "$R" add -A && git -C "$R" commit -qm f
+  git -C "$R" checkout -q -b feat
+  printf 'A\nb\nc\nd\ne\n' > "$R/f.txt"; git -C "$R" commit -qam "c1: A"
+  printf 'A\nb\nC\nd\ne\n' > "$R/f.txt"; git -C "$R" commit -qam "c2: C"
+  git -C "$R" checkout -q main
+  printf 'a\nB\nc\nd\ne\n' > "$R/f.txt"; git -C "$R" commit -qam "another PR: B"
+  printf 'A\nB\nC\nd\ne\n' > "$R/f.txt"; git -C "$R" commit -qam "squash feat"
+  printf 'A\nB\nC2\nd\ne\n' > "$R/f.txt"; git -C "$R" commit -qam "follow-up: C2"
+  echo "$R"
+}
+R="$(mk112)"; git -C "$R" config diff.interHunkContext 5
+OUT112=$(out_of "$R" feat main); RC112=$?
+assert_exit "fixture-112 diff.interHunkContext: a dropped restore next to a landed change -> flagged" 3 "$RC112"
+assert_exit "fixture-112 lists c2" 0 "$(has "$OUT112" 'c2: 14 back')"
+rm -rf "$R"
+R="$(mk112b)"; git -C "$R" config diff.interHunkContext 1
+assert_exit "fixture-112b diff.interHunkContext: squash, then main edits the branch's line -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+R="$(mk112)"
+OUT113=$(GIT_DIFF_OPTS=--unified=3 out_of "$R" feat main); RC113=$?
+assert_exit "fixture-113 GIT_DIFF_OPTS: a dropped restore next to a landed change -> flagged" 3 "$RC113"
+assert_exit "fixture-113 lists c2" 0 "$(has "$OUT113" 'c2: 14 back')"
+rm -rf "$R"
+R="$(mk112b)"
+assert_exit "fixture-113b GIT_DIFF_OPTS: squash, then main edits the branch's line -> NOT flagged" 0 "$(GIT_DIFF_OPTS=-u1 run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 114: a git without --no-relative (before 2.28) answers the same: the two-way diffs
+# do not use it (the helper runs at the top level, where diff.relative changes nothing).
+R="$(mk112b)"; W114="$(mktemp -d)"; G114="$(command -v git)"
+printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = --no-relative ] && { echo "error: unknown option" >&2; exit 129; }; done\nexec "%s" "$@"\n' "$G114" > "$W114/git"
+chmod +x "$W114/git"
+assert_exit "fixture-114 git without --no-relative: squash, then main edits the branch's line -> NOT flagged" 0 "$(PATH="$W114:$PATH" run_helper "$R" feat main)"
+rm -rf "$R" "$W114"
+
+# 115: a last line without a final newline, re-added with it after lines another PR
+# appended: the same line, not a change.
+R="$(mk_repo)"; printf 'top\n' > "$R/f115.py"; git -C "$R" add -A && git -C "$R" commit -qm f115
+git -C "$R" checkout -q -b feat
+printf 'top\nadded = 1' > "$R/f115.py"; git -C "$R" commit -qam "c1: added, no final newline"
+printf 'top\nadded = 1\nz = 9\n' > "$R/f115.py"; git -C "$R" commit -qam "c2: z"
+git -C "$R" checkout -q main
+printf 'top\nm = 0\n' > "$R/f115.py"; git -C "$R" commit -qam "another PR: m"
+printf 'top\nm = 0\nadded = 1\nz = 9\n' > "$R/f115.py"; git -C "$R" commit -qam "squash feat"
+assert_exit "fixture-115 no final newline, re-added after another PR's lines -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 116: row 9 with a name that has a space and a character git quotes: git writes the
+# quoted name followed by a tab.
+R="$(mk_repo)"; printf 'k\n' > "$R/keep.txt"; git -C "$R" add -A && git -C "$R" commit -qm keep
+F116="$(printf 'caf\303\251 x.txt')"
+git -C "$R" checkout -q -b feat
+printf 's\n' > "$R/$F116"; git -C "$R" add -A && git -C "$R" commit -qm "c1: scratch"
+git -C "$R" rm -q -- "$F116" && git -C "$R" commit -qm "c2: scratch deleted"
+printf 'k2\n' > "$R/keep.txt"; git -C "$R" commit -qam "c3: keep"
+git -C "$R" checkout -q main
+printf 'm\n' > "$R/$F116"; git -C "$R" add -A && git -C "$R" commit -qm "main: its own file by that name"
+printf 'k2\n' > "$R/keep.txt"; printf 'v\n' > "$R/v116.txt"; git -C "$R" add -A && git -C "$R" commit -qm "squash feat, with a version file"
+assert_exit "fixture-116 a name with a space and a quoted character -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 117: a file under a directory named like a path the branch touched is not one of
+# the branch's paths, whatever its name: a name that decodes to a newline and a
+# forged record cannot hide the commit whose deletion never landed.
+R="$(mk_repo)"; printf '1\n2\n3\n4\n5\n' > "$R/f117.txt"; git -C "$R" add -A && git -C "$R" commit -qm f117
+git -C "$R" checkout -q -b feat
+printf '1\n2\n4\n5\n' > "$R/f117.txt"; : > "$R/x117"; git -C "$R" add -A && git -C "$R" commit -qm "c1: drop 3, add x117 (never landed)"
+printf 'g\n' > "$R/g117.txt"; git -C "$R" add -A && git -C "$R" commit -qm "c2: g"
+git -C "$R" checkout -q main
+B117=$(printf 'z\n' | git -C "$R" hash-object -w --stdin); I117="$(mktemp)"; rm -f "$I117"
+GIT_INDEX_FILE="$I117" git -C "$R" read-tree main
+GIT_INDEX_FILE="$I117" git -C "$R" update-index --add --cacheinfo "100644,$B117,x117/q
+C	3	f117.txt"
+M117=$(git -C "$R" commit-tree "$(GIT_INDEX_FILE="$I117" git -C "$R" write-tree)" -p main -m "main: a file under x117/")
+git -C "$R" update-ref refs/heads/main "$M117"; rm -f "$I117"; git -C "$R" checkout -q -f main
+printf 'g\n' > "$R/g117.txt"; git -C "$R" add g117.txt && git -C "$R" commit -qm "squash c2"
+OUT117=$(out_of "$R" feat main); RC117=$?
+assert_exit "fixture-117 a forged name under a directory of the branch's path -> flagged" 3 "$RC117"
+assert_exit "fixture-117 lists c1" 0 "$(has "$OUT117" 'c1: drop 3')"
+rm -rf "$R"
+
+# 118: git's own messages never reach the helper's stderr: an invalid attribute name
+# in .gitattributes is printed by git diff verbatim, escape bytes included.
+R="$(mk_repo)"; printf '* \033[31mREAD-THIS\033[0m\n* check-merge-completeness:\n' > "$R/.gitattributes"
+printf 'x = 1\n' > "$R/f118.py"; git -C "$R" add -A && git -C "$R" commit -qm f118
+git -C "$R" checkout -q -b feat
+printf 'x = 2\n' > "$R/f118.py"; git -C "$R" commit -qam "c1: x 2"
+printf 'x = 2\ny = 1\n' > "$R/f118.py"; git -C "$R" commit -qam "c2: y"
+git -C "$R" checkout -q main
+printf 'x = 2\ny = 1\n' > "$R/f118.py"; git -C "$R" commit -qam "squash feat"
+printf 'x = 3\ny = 1\n' > "$R/f118.py"; git -C "$R" commit -qam "follow-up"
+E118="$(mktemp)"; "${BASH:-bash}" "$HELPER" --repo "$R" --branch feat --baseline main > /dev/null 2> "$E118"
+assert_exit "fixture-118 no escape byte reaches stderr" 1 "$(LC_ALL=C grep -q "$(printf '\033')" "$E118"; echo $?)"
+assert_exit "fixture-118 stderr has no line but the helper's own" 1 "$(grep -v '^check-merge-completeness: ' "$E118" | grep -q .; echo $?)"
+rm -rf "$R" "$E118"
+
+# 119: a commit with more paths than the helper puts on a command line (over 64 KB
+# of names): the two trees are compared whole and the listed paths kept.
+R="$(mk_repo)"; printf 'x = 1\n' > "$R/f119.py"; git -C "$R" add -A && git -C "$R" commit -qm f119
+git -C "$R" checkout -q -b feat
+B119=$(printf 'v\n' | git -C "$R" hash-object -w --stdin)
+awk -v b="$B119" 'BEGIN { for (i = 0; i < 6000; i++) printf "100644 %s 0\tvendor/package-%05d/module.txt\n", b, i }' \
+  | git -C "$R" update-index --add --index-info
+git -C "$R" commit -qm "c1: vendor 6000 files"
+git -C "$R" rm -rq --cached vendor && git -C "$R" commit -qm "c2: unvendor"
+printf 'x = 2\n' > "$R/f119.py"; git -C "$R" commit -qam "c3: x 2"
+printf 'x = 2\ny = 1\n' > "$R/f119.py"; git -C "$R" commit -qam "c4: y"
+git -C "$R" checkout -q main
+printf 'x = 2\ny = 1\n' > "$R/f119.py"; git -C "$R" commit -qam "squash feat"
+assert_exit "fixture-119 a commit with 6000 paths -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 120–122: renames. A moved file is not all new lines: main's edit of the file
+# before the squash (merge-ort follows the rename) does not keep the branch from
+# landing, and a rename that never landed is still listed.
+R="$(mk_repo)"; mkdir -p "$R/src"; printf 'import os\n\ndef run():\n    return os.getcwd()\n' > "$R/src/u120.py"
+git -C "$R" add -A && git -C "$R" commit -qm u120
+git -C "$R" checkout -q -b feat
+mkdir -p "$R/lib"; git -C "$R" mv src/u120.py lib/u120.py && git -C "$R" commit -qm "c1: move u120 to lib"
+printf 'r\n' > "$R/r120.txt"; git -C "$R" add -A && git -C "$R" commit -qm "c2: r120"
+git -C "$R" checkout -q main
+printf 'import os\n\ndef run():\n    return os.getcwd() or "."\n' > "$R/src/u120.py"; git -C "$R" commit -qam "another PR: fallback"
+git -C "$R" merge -q --squash feat >/dev/null 2>&1 && git -C "$R" commit -qm "squash feat" >/dev/null 2>&1
+assert_exit "fixture-120 a moved file main edited before the squash -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+mk121() { # -> repo: c1 renames o121.py to n121.py and edits r1; c2 adds z121; main edits r8
+  local R; R="$(mk_repo)"; printf 'r1\nr2\nr3\nr4\nr5\nr6\nr7\nr8\n' > "$R/o121.py"; git -C "$R" add -A && git -C "$R" commit -qm o121
+  git -C "$R" checkout -q -b feat
+  git -C "$R" mv o121.py n121.py; printf 'R1\nr2\nr3\nr4\nr5\nr6\nr7\nr8\n' > "$R/n121.py"
+  git -C "$R" add -A && git -C "$R" commit -qm "c1: rename to n121, edit r1"
+  printf 'z\n' > "$R/z121.py"; git -C "$R" add -A && git -C "$R" commit -qm "c2: z121"
+  git -C "$R" checkout -q main
+  printf 'r1\nr2\nr3\nr4\nr5\nr6\nr7\nr8 = main\n' > "$R/o121.py"; git -C "$R" commit -qam "another PR: r8"
+  echo "$R"
+}
+R="$(mk121)"
+git -C "$R" merge -q --squash feat >/dev/null 2>&1 && git -C "$R" commit -qm "squash feat" >/dev/null 2>&1
+assert_exit "fixture-121 renamed and edited, main edited another line first -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+R="$(mk121)"
+printf 'z\n' > "$R/z121.py"; git -C "$R" add -A && git -C "$R" commit -qm "squash c2 only"
+OUT122=$(out_of "$R" feat main); RC122=$?
+assert_exit "fixture-122 the rename never landed -> flagged" 3 "$RC122"
+assert_exit "fixture-122 lists c1" 0 "$(has "$OUT122" 'c1: rename to n121')"
+rm -rf "$R"
+
+# 123: the tip has the head's content on every path the branch touched: nothing to
+# land, whatever commit holds the net change first (#399's Expected). (a) the squash
+# was resolved to the branch's tree after another PR set the same line and added the
+# same file; (b) the squash kept main's value and main set the branch's value later.
+mk123() { # -> repo: c1 v 2, c2 v back to 1, c3 adds g123; main: another PR sets v 3 and adds g123
+  local R; R="$(mk_repo)"; printf 'v = 1\n' > "$R/f123.py"; git -C "$R" add -A && git -C "$R" commit -qm f123
+  git -C "$R" checkout -q -b feat
+  printf 'v = 2\n' > "$R/f123.py"; git -C "$R" commit -qam "c1: v 2"
+  printf 'v = 1\n' > "$R/f123.py"; git -C "$R" commit -qam "c2: v back to 1"
+  printf 'z\n' > "$R/g123.txt"; git -C "$R" add -A && git -C "$R" commit -qm "c3: g123"
+  git -C "$R" checkout -q main
+  printf 'v = 3\n' > "$R/f123.py"; printf 'z\n' > "$R/g123.txt"; git -C "$R" add -A && git -C "$R" commit -qm "another PR: v 3, g123"
+  echo "$R"
+}
+R="$(mk123)"
+printf 'v = 1\n' > "$R/f123.py"; git -C "$R" commit -qam "squash feat, resolved to the branch"
+assert_exit "fixture-123a the squash's tree is the head's -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+R="$(mk123)"
+printf 'w\n' > "$R/w123.txt"; git -C "$R" add -A && git -C "$R" commit -qm "squash feat, keeping v 3"
+printf 'v = 1\n' > "$R/f123.py"; git -C "$R" commit -qam "main: v back to 1"
+assert_exit "fixture-123b main later set the head's value -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 124, 125: repeated lines. A position says where a line is only while its text is
+# unique: with two copies, git may put main's edit on one copy when it builds the
+# squash and pair the copies the other way in the diffs that check a commit. A clean
+# squash is not flagged for that (#399 verify round 12). (A copy that never landed is
+# still flagged when the copies agree: fixtures 82 and 84.)
+R="$(mk_repo)"; printf 'def load(path):\n    with open(path) as f:\n        data = f.read()\n    return data\n' > "$R/io124.py"
+git -C "$R" add -A && git -C "$R" commit -qm io124
+git -C "$R" checkout -q -b feat
+printf 'def load(path):\n    with open(path) as f:\n        data = f.read()\n    return data\n\ndef load_bytes(path):\n    with open(path) as f:\n        data = f.read()\n    return data\n' > "$R/io124.py"
+git -C "$R" commit -qam "c1: load_bytes, a copy of load"
+printf 'def load_text(path):\n    with open(path) as f:\n        data = f.read()\n    return data\n\ndef load_bytes(path):\n    with open(path) as f:\n        data = f.read()\n    return data\n' > "$R/io124.py"
+git -C "$R" commit -qam "c2: load renamed load_text"
+git -C "$R" checkout -q main
+printf 'def load(path):\n    with open(path) as f:\n        data = f.read().strip()\n    return data\n' > "$R/io124.py"; git -C "$R" commit -qam "another PR: strip"
+git -C "$R" merge -q --squash feat >/dev/null 2>&1 && git -C "$R" commit -qm "squash feat" >/dev/null 2>&1
+assert_exit "fixture-124 a copied function, main's edit put on the copy by the squash -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+R="$(mk_repo)"; printf 'A\nB\n' > "$R/f125.txt"; git -C "$R" add -A && git -C "$R" commit -qm f125
+git -C "$R" checkout -q -b feat
+printf 'A\nB\nA\nB\n' > "$R/f125.txt"; git -C "$R" commit -qam "c1: the block twice"
+printf 'A1\nB\nA\nB\n' > "$R/f125.txt"; git -C "$R" commit -qam "c2: A to A1"
+git -C "$R" checkout -q main
+printf 'A\nBm\n' > "$R/f125.txt"; git -C "$R" commit -qam "another PR: B to Bm"
+git -C "$R" merge -q --squash feat >/dev/null 2>&1 && git -C "$R" commit -qm "squash feat" >/dev/null 2>&1
+assert_exit "fixture-125 a duplicated block, main's edit of one copy -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+
+# 127: a branch with no net change whose landed prefix is older than the newest 20
+# earlier commits: the search runs out, so the tip is used (it was left at the
+# merge-base, where no commit can be an orphan, and exited 0).
+R="$(mk_repo)"; printf 'x = 1\n' > "$R/f127.py"; printf 'w\n' > "$R/w127.txt"; git -C "$R" add -A && git -C "$R" commit -qm f127
+git -C "$R" checkout -q -b feat
+printf 'w\nnote\n' > "$R/w127.txt"; git -C "$R" commit -qam "c0: note"
+printf 'x = 2\n' > "$R/f127.py"; git -C "$R" commit -qam "c1: x 2"
+printf 'x = 2\ny = 0\n' > "$R/f127.py"; git -C "$R" commit -qam "c2: y"
+for i in $(seq 1 21); do printf 'x = 2\ny = %s\n' "$i" > "$R/f127.py"; git -C "$R" commit -qam "y $i"; done
+printf 'x = 1\n' > "$R/f127.py"; printf 'w\n' > "$R/w127.txt"; git -C "$R" commit -qam "last: back to the start"
+git -C "$R" checkout -q main
+printf 'o\n' > "$R/o127.txt"; git -C "$R" add -A && git -C "$R" commit -qm "another PR"
+printf 'x = 2\n' > "$R/f127.py"; printf 'w\nnote\n' > "$R/w127.txt"; git -C "$R" commit -qam "squash c0 c1"
+OUT127=$(out_of "$R" feat main); RC127=$?
+assert_exit "fixture-127 no net change, landed prefix beyond the tries -> flagged at the tip" 3 "$RC127"
+assert_exit "fixture-127 lists the last commit" 0 "$(has "$OUT127" 'last: back to the start')"
+rm -rf "$R"
+
+# 128: the user's porcelain diff settings change nothing (each one is overridden on
+# the command line): no prefixes, mnemonic prefixes, no rename detection, raw
+# non-ASCII names, color, another algorithm, a submodule log format.
+cfg128() { for kv in diff.noprefix=true diff.mnemonicPrefix=true diff.renames=false core.quotePath=false \
+                     color.diff=always color.ui=always diff.algorithm=histogram diff.indentHeuristic=false \
+                     diff.submodule=log diff.interHunkContext=4 diff.suppressBlankEmpty=true; do
+             git -C "$1" config "${kv%%=*}" "${kv#*=}"; done; }
+R="$(mk121)"
+git -C "$R" merge -q --squash feat >/dev/null 2>&1 && git -C "$R" commit -qm "squash feat" >/dev/null 2>&1
+cfg128 "$R"
+assert_exit "fixture-128 hostile diff settings: rename and edit, main's edit first -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+R="$(mk112)"; cfg128 "$R"
+OUT128=$(out_of "$R" feat main); RC128=$?
+assert_exit "fixture-128 hostile diff settings: a dropped restore -> flagged" 3 "$RC128"
+assert_exit "fixture-128 lists c2" 0 "$(has "$OUT128" 'c2: 14 back')"
+rm -rf "$R"
+R="$(mk_repo)"; F128="$(printf 'caf\303\251.txt')"; printf 'k\n' > "$R/$F128"; git -C "$R" add -A && git -C "$R" commit -qm f128
+git -C "$R" checkout -q -b feat
+printf 'k\nx = 1\n' > "$R/$F128"; git -C "$R" commit -qam "c1: x 1"
+printf 'k\nx = 1\ny = 1\n' > "$R/$F128"; git -C "$R" commit -qam "c2: y"
+git -C "$R" checkout -q main
+printf 'k\nx = 1\ny = 1\n' > "$R/$F128"; git -C "$R" commit -qam "squash feat"
+printf 'k\nx = 2\ny = 1\n' > "$R/$F128"; git -C "$R" commit -qam "follow-up"
+cfg128 "$R"
+assert_exit "fixture-128 hostile diff settings: a non-ASCII name, squash, then main's edit -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 129: the other marks that look like a double quote are replaced as well (U+2033,
+# U+02BA, U+3003, U+201E, U+275E, U+05F4).
+R="$(mk_repo)"; git -C "$R" checkout -q -b feat
+printf 'q\n' > "$R/q129.txt"; git -C "$R" add -A && git -C "$R" commit -qm "$(printf 'fix\342\200\263 a\312\272 b\343\200\203 c\342\200\236 d\342\235\236 e\327\264')"
+git -C "$R" checkout -q main
+OUT129=$(out_of "$R" feat main)
+assert_exit "fixture-129 the subject's quote lookalikes become ?" 0 "$(has "$OUT129" '"fix? a? b? c? d? e?"')"
+rm -rf "$R"
+
+# 115b: the mirror of 115: the squash writes the branch's last line without its final
+# newline, after a line another PR appended; a follow-up then edits it (at the tip the
+# line is gone, so only the landing commit can clear the commit).
+R="$(mk_repo)"; printf 'top\n' > "$R/f115b.py"; git -C "$R" add -A && git -C "$R" commit -qm f115b
+git -C "$R" checkout -q -b feat
+printf 'top\nadded = 1\n' > "$R/f115b.py"; git -C "$R" commit -qam "c1: added"
+printf 'z\n' > "$R/z115b.txt"; git -C "$R" add -A && git -C "$R" commit -qm "c2: z"
+git -C "$R" checkout -q main
+printf 'top\nm = 0\n' > "$R/f115b.py"; git -C "$R" commit -qam "another PR: m"
+printf 'top\nm = 0\nadded = 1' > "$R/f115b.py"; printf 'z\n' > "$R/z115b.txt"; git -C "$R" add -A && git -C "$R" commit -qm "squash feat, no final newline"
+printf 'top\nm = 0\nadded = 2' > "$R/f115b.py"; git -C "$R" commit -qam "follow-up: added 2"
+assert_exit "fixture-115b the branch's last line written without its final newline -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 130: a directory at a path where the branch added an empty file is not that file:
+# another PR's commit with x130/ and the same line does not hold the branch's net
+# change, and the squash never happened, so the commit is listed.
+R="$(mk_repo)"; printf 'a\n' > "$R/f130.py"; git -C "$R" add -A && git -C "$R" commit -qm f130
+git -C "$R" checkout -q -b feat
+printf 'a\nx = 1\n' > "$R/f130.py"; : > "$R/x130"; git -C "$R" add -A && git -C "$R" commit -qm "c1: x and an empty file x130 (never landed)"
+git -C "$R" checkout -q main
+mkdir "$R/x130"; printf 'k\n' > "$R/x130/keep"; printf 'a\nx = 1\n' > "$R/f130.py"; git -C "$R" add -A && git -C "$R" commit -qm "another PR: x, and a directory x130"
+printf 'a\nx = 2\n' > "$R/f130.py"; git -C "$R" commit -qam "follow-up: x 2"
+OUT130=$(out_of "$R" feat main); RC130=$?
+assert_exit "fixture-130 a directory where the branch added an empty file -> flagged" 3 "$RC130"
+assert_exit "fixture-130 lists c1" 0 "$(has "$OUT130" 'c1: x and an empty file')"
+rm -rf "$R"
+
+# 131: a restore that never landed is checked where the branch landed (its change and
+# the change it undid cancel out in the net change), and its text is in the file
+# twice: the copies agree that one is missing (the landing commit has one, what
+# landed has two).
+R="$(mk_repo)"; printf 'x = 1\na\nb\nx = 1\n' > "$R/f131.py"; git -C "$R" add -A && git -C "$R" commit -qm f131
+git -C "$R" checkout -q -b feat
+printf 'a\nb\nx = 1\n' > "$R/f131.py"; git -C "$R" commit -qam "c1: first x dropped"
+printf 'a\nb\nx = 1\nc\n' > "$R/f131.py"; git -C "$R" commit -qam "c2: c"
+printf 'x = 1\na\nb\nx = 1\nc\n' > "$R/f131.py"; git -C "$R" commit -qam "c3: first x back (never landed)"
+git -C "$R" checkout -q main
+printf 'o\n' > "$R/o131.txt"; git -C "$R" add -A && git -C "$R" commit -qm "another PR"
+printf 'a\nb\nx = 1\nc\n' > "$R/f131.py"; git -C "$R" commit -qam "squash c1 c2"
+OUT131=$(out_of "$R" feat main); RC131=$?
+assert_exit "fixture-131 a repeated line restored, never landed -> flagged where it landed" 3 "$RC131"
+assert_exit "fixture-131 lists c3" 0 "$(has "$OUT131" 'c3: first x back')"
+rm -rf "$R"
+
+# 132: the copies are counted against what landed, not the head: only b1 landed (a
+# squash after main's own A -> B), b2 deleted an A and never landed, and b3, after
+# the landed part, added an A of its own. Against the head b3's missing copy would
+# cancel the copy b2 left behind. (The slots are laid out as in bounded.py, where
+# this case was found.)
+f132() { # <slot0> <slot1> <slot2>: three slots, each after three separator lines
+  local s
+  for s in 0 1 2; do printf -- '-- slot %s a --\n-- slot %s b --\n-- slot %s c --\n' "$s" "$s" "$s"
+    eval "[ -z \"\${$((s + 1))}\" ] || printf '%s\n' \"\${$((s + 1))}\""; done
+  printf -- '-- end --\n'
+}
+R="$(mk_repo)"; f132 A "" B > "$R/f132.txt"; git -C "$R" add -A && git -C "$R" commit -qm f132
+git -C "$R" checkout -q -b feat
+f132 A "" A > "$R/f132.txt"; git -C "$R" commit -qam "b1: slot 2 to A"
+f132 A "" "" > "$R/f132.txt"; git -C "$R" commit -qam "b2: slot 2 emptied (never landed)"
+f132 A A "" > "$R/f132.txt"; git -C "$R" commit -qam "b3: slot 1 A (never landed)"
+git -C "$R" checkout -q main
+f132 B "" B > "$R/f132.txt"; git -C "$R" commit -qam "main: slot 0 to B"
+f132 B "" A > "$R/f132.txt"; git -C "$R" commit -qam "squash b1"
+OUT132=$(out_of "$R" feat main); RC132=$?
+assert_exit "fixture-132 copies counted against the landed part -> flagged" 3 "$RC132"
+assert_exit "fixture-132 lists b2" 0 "$(has "$OUT132" 'b2: slot 2 emptied')"
+rm -rf "$R"
+
+# 133: the mirror of 132 for an added copy: b2 put back the first A and landed with
+# b1 in a squash edited by hand that left that A out; b3, after the landed part,
+# deleted the other A. Against the head, b3's deletion would cancel the missing copy.
+R="$(mk_repo)"; printf 'A\nk1\nk2\nA\nk3\n' > "$R/f133.txt"; git -C "$R" add -A && git -C "$R" commit -qm f133
+git -C "$R" checkout -q -b feat
+printf 'k1\nk2\nA\nk3\nx\n' > "$R/f133.txt"; git -C "$R" commit -qam "b1: first A dropped, x"
+printf 'A\nk1\nk2\nA\nk3\nx\ny\n' > "$R/f133.txt"; git -C "$R" commit -qam "b2: first A back, y"
+printf 'A\nk1\nk2\nk3\nx\ny\n' > "$R/f133.txt"; git -C "$R" commit -qam "b3: second A dropped (never landed)"
+git -C "$R" checkout -q main
+printf 'o\n' > "$R/o133.txt"; git -C "$R" add -A && git -C "$R" commit -qm "another PR"
+printf 'k1\nk2\nA\nk3\nx\ny\n' > "$R/f133.txt"; git -C "$R" commit -qam "squash b1 b2, the first A left out"
+OUT133=$(out_of "$R" feat main); RC133=$?
+assert_exit "fixture-133 an added copy counted against the landed part -> flagged" 3 "$RC133"
+assert_exit "fixture-133 lists b2" 0 "$(has "$OUT133" 'b2: first A back')"
 rm -rf "$R"
 
 print_summary

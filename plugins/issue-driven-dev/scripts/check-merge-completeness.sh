@@ -27,16 +27,20 @@
 #
 # Method:
 #   1. `git cherry <baseline> <branch>` → '+'-marked commits are patch-id-absent
-#      from the baseline (candidate orphans). None → exit 0.
+#      from the baseline (candidate orphans). None → exit 0. On every path a
+#      candidate touched the tip has exactly what the head has → exit 0: nothing is
+#      left to land, however main got there (#399's first test).
 #   2. LANDING COMMIT (#399). The gate answers "did the branch's content land":
 #      what main did after it landed — a follow-up edit, a revert — is main's own
 #      history and out of scope. Walking the baseline's first-parent history
 #      forward from the merge-base (the merge-base itself, the first descendant,
 #      then descendants that touch the paths the branch changed), the EARLIEST
 #      commit L that holds the branch's whole net change is where the branch landed:
-#      every line the net change adds is in place in L and every line it deletes is
-#      no longer in place there, compared by two-way diffs (no merge, so main's own
-#      edits elsewhere, even on the next line, do not matter). When the whole branch
+#      every line the net change adds is in place in L, every line it deletes is no
+#      longer in place there, and L has exactly the paths the head has among those
+#      the net change touches. Two-way diffs with renames detected (no merge, so
+#      main's own edits elsewhere, even on the next line, do not matter, nor does
+#      main's edit of a file the branch moved). When the whole branch
 #      never landed, the newest 20 of the branch's earlier commits are tried, newest
 #      first: commits up to the newest one that landed are checked at its landing
 #      commit, the rest at the tip. A branch with no net change "lands" at the
@@ -53,8 +57,13 @@
 #      At L each effect is checked in its own place, by two-way diffs: a line the
 #      commit added is missing when the head still has it there and L does not; a
 #      line it deleted is missing when the head no longer has it there and L still
-#      does. At the tip, where main's own edits are unknown, only line presence is
-#      compared. Squash → the effects are there → not an orphan. Partial merge → a
+#      does. A position identifies a line only while its text is unique: for a line
+#      whose text occurs more than once, git may have put main's edit on one copy when
+#      it built L and paired the copies the other way here, so such a finding stands
+#      only when the copies agree (L, less what main added or removed before L, has
+#      fewer copies of an added line than what landed there, or more of a deleted
+#      one). At the
+#      tip, where main's own edits are unknown, only line presence is compared. Squash → the effects are there → not an orphan. Partial merge → a
 #      dropped commit's effect is missing → orphan.
 #   Every comparison reads trees with `git diff`, `ls-tree` and `cat-file`: no merge,
 #   so no merge driver or attribute can steer the answer, and no git-version floor.
@@ -72,6 +81,13 @@
 #     commits);
 #   - with macOS awk, a binary edit that changes only bytes after a NUL (awk cuts
 #     the line there);
+#   - at the landing commit, a copy of a line next to an identical line, or next to
+#     an identical line another PR inserted: diff may pair the copies either way, so
+#     a copy that never landed (or a deletion that did not) can read as in place,
+#     and a branch can look landed where only part of it did; and a copy that never
+#     landed, of a text main also changed elsewhere in the landing step itself (a
+#     squash edited by hand, another PR in a release merge), which the copy count
+#     cannot see;
 #   - by design, anything main did after the branch landed (a revert, an overwrite),
 #     including content that was already in the baseline through another commit
 #     before this branch was merged — it counts as landed there — and a commit of
@@ -100,7 +116,8 @@
 # can be flagged as well. At the landing commit the check sees where a change is, not
 # which commit made it: a commit that landed and was undone by a later commit that
 # landed too, then changed again by one that did not land, is listed with that last
-# one (the verdict, exit 3, is still right); and when main itself edited a line a
+# one, and so is a commit that did not land whose line a later commit, which did not
+# land either, rewrote (the verdict, exit 3, is still right); and when main itself edited a line a
 # commit edited, before landing or in the landing step, so that L holds the value from
 # before that commit (or a third value), the commit is listed although it landed. The
 # trees are the same as if it had been dropped, so no check that reads trees can tell.
@@ -118,6 +135,10 @@ export LC_ALL=C
 # runs the user's transport, credential helpers and hooks and writes into the
 # repository. git >= 2.45 honours this and reports the blob as unreadable (exit 4).
 export GIT_NO_LAZY_FETCH=1
+# GIT_DIFF_OPTS overrides -U on any diff command line and would put context lines
+# into the two-way diffs below, shifting every position they report (#399 verify
+# round 12).
+unset GIT_DIFF_OPTS
 
 usage() { echo "usage: $0 --branch <ref> --baseline <ref> [--repo <root>]" >&2; exit 2; }
 
@@ -149,8 +170,10 @@ GIT() { git --no-pager -C "$REPO" -c core.fsmonitor=false "$@"; }
 # U+061C, U+06DD, U+070F, U+0890-0891, U+08E2; U+115F-1160, U+17B4-17B5,
 # U+180B-180F; U+200B-200F, U+2028-202E, U+2060-206F; U+3164; U+FE00-FE0F, U+FEFF,
 # U+FFA0, U+FFF9-FFFB; U+110BD, U+110CD, U+13430-13455, U+1BCA0-1BCA3,
-# the quotation marks that look like the closing quote, U+201C, U+201D and U+FF02
-# (a subject could otherwise appear to end and be followed by text of the helper's own);
+# marks that look like a double quote, U+02BA, U+02DD, U+05F4, U+201C-201F, U+2033,
+# U+2036, U+275D-275E, U+3003, U+301E-301F and U+FF02 (a subject could otherwise
+# appear to end and be followed by text of the helper's own; the list is a best
+# effort, since the quotes are a visual cue and not a trust boundary);
 # U+1D173-1D17A; U+E0000-E0FFF (tags and variation selectors). \, ", $ and ` are
 # then escaped, so the double-quoted text cannot close its own quotes. It is meant to
 # be read, not pasted into an interactive shell, where `!` still triggers history
@@ -167,7 +190,9 @@ clean() {
     -e "s/$(b '\341\205')[$(b '\237\240')]/?/g" \
     -e "s/$(b '\341\236')[$(b '\264\265')]/?/g" \
     -e "s/$(b '\341\240')[$(b '\213')-$(b '\217')]/?/g" \
-    -e "s/$(b '\342\200')[$(b '\213')-$(b '\217')$(b '\234\235')$(b '\250')-$(b '\256')]/?/g" \
+    -e "s/$(b '\342\200')[$(b '\213')-$(b '\217')$(b '\234\235\236\237\263\266')$(b '\250')-$(b '\256')]/?/g" \
+    -e "s/$(b '\312\272')/?/g" -e "s/$(b '\313\235')/?/g" -e "s/$(b '\327\264')/?/g" \
+    -e "s/$(b '\342\235')[$(b '\235\236')]/?/g" -e "s/$(b '\343\200')[$(b '\203\236\237')]/?/g" \
     -e "s/$(b '\357\274\202')/?/g" \
     -e "s/$(b '\342\201')[$(b '\240')-$(b '\257')]/?/g" \
     -e "s/$(b '\343\205\244')/?/g" \
@@ -229,35 +254,94 @@ count_of() { # <bytes> <file> -> prints how many of those bytes the file has; fa
 has_lf() { local n; n="$(count_of '\n\001' "$1")" || return 2; [ "$n" != 0 ]; }    # 0 yes, 1 no, 2 error
 has_crlf() { local n; n="$(count_of '\r\n' "$1")" || return 2; [ "$n" != 0 ]; }
 
+# The test-only trace (bounded.py): never overwrites a file, never changes the answer.
+trace_out() { # stdin -> $CHECK_MERGE_COMPLETENESS_TRACE
+  if [ -n "${CHECK_MERGE_COMPLETENESS_TRACE:-}" ] && [ ! -e "$CHECK_MERGE_COMPLETENESS_TRACE" ] \
+     && [ ! -L "$CHECK_MERGE_COMPLETENESS_TRACE" ]; then
+    ( set -C; cat > "$CHECK_MERGE_COMPLETENESS_TRACE" ) 2>/dev/null || :
+  else
+    cat > /dev/null
+  fi
+}
+
+# ── The head's content is already at the tip (#399) ──
+# The issue's own first test: when, on every path a candidate touched, the tip has
+# exactly what the head has (the same blob, or no file on either side), there is
+# nothing left to land, however main got there (a squash resolved by hand to the
+# head's tree, a later commit of main's own). Plumbing, so no diff setting applies.
+# A candidate path with a newline is left to the check below, which refuses it.
+GIT diff-tree -r -z --name-only --no-renames --ignore-submodules=none "$BRANCH_SHA" "$BASELINE_SHA" \
+  > "$SCRATCH/headtip.z" 2>/dev/null || skip "cannot compare the branch head with $S"
+: > "$SCRATCH/cand.z"
+for sha in $CANDIDATES; do
+  GIT diff-tree --root --no-commit-id --ignore-submodules=none --name-only -r -z "$sha" \
+    >> "$SCRATCH/cand.z" 2>/dev/null || skip "cannot list the paths $(short "$sha") touched"
+done
+has_lf "$SCRATCH/cand.z"; rc=$?
+if [ "$rc" -eq 1 ]; then
+  tr '\000' '\n' < "$SCRATCH/headtip.z" > "$SCRATCH/headtip" \
+    && tr '\000' '\n' < "$SCRATCH/cand.z" > "$SCRATCH/cand" || skip "cannot read the paths the branch touched"
+  # exit 3: a candidate touched a path where the head and the tip differ
+  LC_ALL=C awk -v d="$SCRATCH/headtip" '
+    BEGIN { while ((r = getline l < d) > 0) differ[l] = 1; if (r < 0) exit 2 }
+    ($0 in differ) { exit 3 }' "$SCRATCH/cand"; rc=$?
+  if [ "$rc" -eq 0 ]; then
+    printf 'landing - prefix -\nshortcut\n' | trace_out
+    exit 0
+  fi
+fi
+
 # ── Comparing two trees line by line, in place (#399) ──
 # Everything at a landing commit is decided by two-way diffs read position by
 # position: which old-side lines a diff changes, and which lines it adds or deletes.
 # There is no three-way merge anywhere: a merge conflicts when two edits merely sit
 # on adjacent lines, and round 11 read such a conflict as "landed" (#399 verify
-# round 11). Every option that shapes the alignment is pinned, so no config,
-# attribute or external program changes it: no external diff, no textconv, --text
-# for files git calls binary, no rename pairing, myers with the indent heuristic
-# (git's defaults, which diff.algorithm or diff.indentHeuristic could change), fixed
-# a/ and b/ prefixes, no color, and submodules as "Subproject commit <oid>" lines.
+# round 11). Every option that shapes the output is pinned, so no config, attribute
+# or external program changes it: no context lines between hunks
+# (diff.interHunkContext; GIT_DIFF_OPTS is unset above), no external diff, no
+# textconv, --text for files git calls binary, rename detection with git's default
+# threshold and limit (diff.renames, diff.renameLimit), myers with the indent
+# heuristic (diff.algorithm, diff.indentHeuristic), fixed a/ and b/ prefixes
+# (diff.noprefix, diff.mnemonicPrefix), quoted names (core.quotePath), no color,
+# and submodules as "Subproject commit <oid>" lines (diff.submodule). Renames are
+# detected because a moved file is otherwise all new lines, and one line main edited
+# in it makes no commit hold the branch's net change (round 12). The helper runs at
+# the top level, where diff.relative changes nothing. git's messages are discarded:
+# they can quote repository text (an invalid attribute name).
 EMPTY_TREE="$(GIT hash-object -t tree /dev/null 2>/dev/null)" || skip "cannot name the empty tree"
-pdiff() { # <a> <b> <paths file, NUL-separated> -> unified diff with no context, limited to those paths
-  local p
+pdiff() { # <a> <b> <paths file, NUL-separated> -> unified diff with no context
+  local p n
   local -a ps
   ps=()
-  while IFS= read -r -d '' p; do ps+=("$p"); done < "$3"
-  [ "${#ps[@]}" -gt 0 ] || return 0
-  GIT -c core.quotePath=true --literal-pathspecs diff -U0 --no-color --no-ext-diff --no-textconv \
-    --text --no-renames --diff-algorithm=myers --indent-heuristic --src-prefix=a/ --dst-prefix=b/ \
-    --no-relative --ignore-submodules=none --submodule=short "$1" "$2" -- "${ps[@]}"
+  [ -r "$3" ] || return 2
+  n="$(wc -c < "$3" | tr -d ' ')" || return 2
+  [ "$n" -gt 0 ] || return 0
+  # The paths go on the command line only while they fit easily; beyond that the
+  # whole trees are compared and pparse keeps the listed paths.
+  if [ "$n" -le 65536 ]; then
+    while IFS= read -r -d '' p; do ps+=("$p"); done < "$3" || return 2
+  fi
+  GIT -c core.quotePath=true --literal-pathspecs diff -U0 --inter-hunk-context=0 --no-color \
+    --no-ext-diff --no-textconv --text --find-renames -l1000 --diff-algorithm=myers --indent-heuristic \
+    --src-prefix=a/ --dst-prefix=b/ --ignore-submodules=none --submodule=short "$1" "$2" \
+    -- ${ps[@]+"${ps[@]}"} 2>/dev/null
 }
 # One record per line, "<kind><TAB><line number><TAB><path>": C, an old-side line the
 # diff changes; A, a new-side line it adds; D, an old-side line it deletes (A and D
 # skip blank lines, which SPEC.md's definition ignores). Within a hunk an old and a
-# new line at the same offset with the same text are unchanged (a dropped final
-# newline, or two equal lines diff happened to pair). Paths come from the ---/+++
-# lines, C-unquoted when git quoted them.
-pparse() {
-  LC_ALL=C awk '
+# new line at the same offset with the same text are unchanged (two equal lines diff
+# happened to pair), and so is a last line whose final newline alone changed, paired
+# with the equal line on the other side wherever it sits in the hunk. Paths come
+# from the ---/+++ lines (the new name for a renamed file), C-unquoted when git
+# quoted them, and only the paths in <paths file> are kept: a pathspec also matches
+# what lies under a directory of that name, and a decoded name with a newline in it
+# would split a record (the listed paths have none; those were refused above).
+# Anything unexpected inside a hunk (a context line, from a setting the options
+# above do not cover) fails the whole read (exit 2) rather than shift a position.
+pparse() { # <paths file, NUL-separated>
+  local list="$SCRATCH/pparse.list"
+  tr '\000' '\n' < "$1" > "$list" || return 2
+  LC_ALL=C awk -v list="$list" '
     function unq(s,    out, i, c, d) {
       if (substr(s, 1, 1) != "\"") return s
       s = substr(s, 2, length(s) - 2); out = ""
@@ -272,30 +356,49 @@ pparse() {
       }
       return out
     }
+    # git ends a ---/+++ line with a tab when the name has a space in it, quoted or not
+    function name(s) { if (substr(s, length(s)) == "\t") s = substr(s, 1, length(s) - 1); return unq(s) }
     function blank(t) { return t ~ /^[ \t\r\f\v]*$/ }
-    function flush(   i) {
-      for (i = 0; i < no; i++) if (!(i < nn && O[i] == N[i])) {
-        print "C\t" (os + i) "\t" path
-        if (!blank(O[i])) print "D\t" (os + i) "\t" path
+    function flush(   i, j) {
+      for (i = 0; i < no; i++) po[i] = 0
+      for (j = 0; j < nn; j++) pn[j] = 0
+      for (i = 0; i < no && i < nn; i++) if (O[i] == N[i]) { po[i] = 1; pn[i] = 1 }
+      if (onl >= 0 && !po[onl]) for (j = 0; j < nn; j++) if (!pn[j] && N[j] == O[onl]) { po[onl] = 1; pn[j] = 1; break }
+      if (nnl >= 0 && !pn[nnl]) for (i = 0; i < no; i++) if (!po[i] && O[i] == N[nnl]) { po[i] = 1; pn[nnl] = 1; break }
+      if (keep) {
+        for (i = 0; i < no; i++) if (!po[i]) {
+          print "C\t" (os + i) "\t" path
+          if (!blank(O[i])) print "D\t" (os + i) "\t" path
+        }
+        for (j = 0; j < nn; j++) if (!pn[j] && !blank(N[j])) print "A\t" (ns + j) "\t" path
       }
-      for (i = 0; i < nn; i++) if (!(i < no && O[i] == N[i]) && !blank(N[i])) print "A\t" (ns + i) "\t" path
-      no = 0; nn = 0
+      no = 0; nn = 0; onl = -1; nnl = -1; last = ""
     }
+    BEGIN { while ((r = getline l < list) > 0) want[l] = 1; if (r < 0) { bad = 1; exit }; onl = -1; nnl = -1 }
     /^diff --git / { flush(); h = 0; oldp = ""; next }
-    # git ends a ---/+++ line with a tab when an unquoted name has a space in it
-    function name(s) { if (substr(s, 1, 1) != "\"" && substr(s, length(s)) == "\t") s = substr(s, 1, length(s) - 1); return unq(s) }
     !h && /^--- / { oldp = name(substr($0, 5)); next }
     !h && /^\+\+\+ / { p = name(substr($0, 5))
       if (p == "/dev/null") p = oldp
-      path = substr(p, 3); next }
+      path = substr(p, 3); keep = (path in want); next }
     /^@@ / { flush(); split($2, o, ","); os = substr(o[1], 2) + 0
              split($3, n, ","); ns = substr(n[1], 2) + 0; h = 1; next }
     !h { next }
-    /^-/ { O[no++] = substr($0, 2); next }
-    /^\+/ { N[nn++] = substr($0, 2); next }
-    END { flush() }'
+    /^-/ { O[no++] = substr($0, 2); last = "O"; next }
+    /^\+/ { N[nn++] = substr($0, 2); last = "N"; next }
+    /^\\/ { if (last == "O") onl = no - 1; else if (last == "N") nnl = nn - 1; next }
+    { bad = 1; exit }
+    END { if (bad) exit 2; flush() }'
 }
-present() { GIT cat-file -e "$1:$2" 2>/dev/null; }   # <rev> <path>: does <rev> have it
+# <rev> <path>: 0 when <rev> has a file or a submodule at exactly <path>, 1 when it
+# does not (a directory there counts as no file), 2 when the tree cannot be read.
+present() {
+  local out
+  out="$(GIT --literal-pathspecs ls-tree -z --full-tree "$1" -- "$2" 2>/dev/null | tr '\000' '\n')" || return 2
+  case "$out" in
+    *" blob "*"	$2"|*" commit "*"	$2") [ "${out#*	}" = "$2" ] && return 0 ;;
+  esac
+  return 1
+}
 
 # Where <rev>'s net change since its merge-base with the baseline landed: the
 # EARLIEST commit, walking the baseline's first-parent history forward from the
@@ -314,24 +417,38 @@ present() { GIT cat-file -e "$1:$2" 2>/dev/null; }   # <rev> <path>: does <rev> 
 # calls, so the prefix search below is bounded too (each attempt tries at least the
 # merge-base).
 BUDGET=200
-LAND="" ; LAND_NOTE="" ; LAND_NONE="" ; LAND_AT_MB="" ; WALK_MB="" ; NET_KEY=""
-net_of() { # <merge-base> <rev> -> $SCRATCH/net.{z,diff,bare} for that pair, cached
+LAND="" ; LAND_MB="" ; LAND_NOTE="" ; LAND_NONE="" ; LAND_AT_MB="" ; WALK_MB="" ; NET_KEY=""
+net_of() { # <merge-base> <rev> -> $SCRATCH/net.{z,list,diff} for that pair, cached
   [ "$NET_KEY" = "$1 $2" ] && return 0
   GIT diff-tree -r -z --name-only --no-renames --ignore-submodules=none "$1" "$2" \
     > "$SCRATCH/net.z" 2>/dev/null || return 1
   # A path with LF in its name cannot go through the line-based steps below.
   has_lf "$SCRATCH/net.z"; [ $? -eq 1 ] || return 1
-  pdiff "$1" "$2" "$SCRATCH/net.z" | pparse > "$SCRATCH/net.diff" || return 1
-  # The paths with no line to compare, and whether <rev> has each.
-  tr '\000' '\n' < "$SCRATCH/net.z" | LC_ALL=C awk -v d="$SCRATCH/net.diff" '
-    BEGIN { while ((r = getline l < d) > 0) { if (l ~ /^[AD]\t/) { i = index(substr(l, 3), "\t"); seen[substr(l, 3 + i)] = 1 } }
-            if (r < 0) exit 2 }
-    !($0 in seen) { print }' > "$SCRATCH/net.bare" || return 1
-  : > "$SCRATCH/net.has"
-  while IFS= read -r p; do
-    if present "$2" "$p"; then printf '1\t%s\n' "$p"; else printf '0\t%s\n' "$p"; fi
-  done < "$SCRATCH/net.bare" > "$SCRATCH/net.has" || return 1
+  pdiff "$1" "$2" "$SCRATCH/net.z" | pparse "$SCRATCH/net.z" > "$SCRATCH/net.diff" || return 1
+  tr '\000' '\n' < "$SCRATCH/net.z" > "$SCRATCH/net.list" || return 1
   NET_KEY="$1 $2"
+}
+# A commit that holds the net change has a file exactly where <rev> has one among the
+# paths the net change touches (a file the branch moved is at its new name only, an empty
+# file the branch added is there, a file it deleted is gone, and a directory is not a
+# file): diff-tree reports none of them added or deleted between <rev> and the commit.
+# One plumbing call per commit, whatever the number of paths.
+same_paths() { # <rev> <commit> -> 0 the same, 1 not, 2 error
+  local p n
+  local -a ps
+  ps=()
+  n="$(wc -c < "$SCRATCH/net.z" | tr -d ' ')" || return 2
+  if [ "$n" -le 65536 ]; then
+    while IFS= read -r -d '' p; do ps+=("$p"); done < "$SCRATCH/net.z" || return 2
+  fi
+  GIT --literal-pathspecs diff-tree -r -z --no-renames --name-status --ignore-submodules=none "$1" "$2" \
+    -- ${ps[@]+"${ps[@]}"} > "$SCRATCH/same.z" 2>/dev/null || return 2
+  # "<status> NUL <path> NUL" pairs; an LF in a name elsewhere becomes \001, so it can
+  # match no listed path
+  tr '\n\000' '\001\n' < "$SCRATCH/same.z" | LC_ALL=C awk -v list="$SCRATCH/net.list" '
+    BEGIN { while ((r = getline l < list) > 0) want[l] = 1; if (r < 0) exit 2 }
+    NR % 2 == 1 { st = $0; next }
+    (st == "A" || st == "D") && ($0 in want) { exit 1 }'
 }
 holds() { # <commit> <rev> -> 0 holds, 1 does not, 2 error (LAND_NOTE set); HOLD_MB is <rev>'s merge-base
   local c="$1" rev="$2" p want
@@ -340,8 +457,8 @@ holds() { # <commit> <rev> -> 0 holds, 1 does not, 2 error (LAND_NOTE set); HOLD
   fi
   BUDGET=$((BUDGET - 1))
   net_of "$HOLD_MB" "$rev" || { LAND_NOTE="cannot read the net change of $(short "$rev")"; return 2; }
-  { pdiff "$rev" "$c" "$SCRATCH/net.z" | pparse > "$SCRATCH/h.rev" \
-    && pdiff "$HOLD_MB" "$c" "$SCRATCH/net.z" | pparse > "$SCRATCH/h.mb"; } \
+  { pdiff "$rev" "$c" "$SCRATCH/net.z" | pparse "$SCRATCH/net.z" > "$SCRATCH/h.rev" \
+    && pdiff "$HOLD_MB" "$c" "$SCRATCH/net.z" | pparse "$SCRATCH/net.z" > "$SCRATCH/h.mb"; } \
     || { LAND_NOTE="cannot compare $(short "$c") with the branch"; return 2; }
   LC_ALL=C awk -F '\t' -v net="$SCRATCH/net.diff" -v hrev="$SCRATCH/h.rev" -v hmb="$SCRATCH/h.mb" '
     function key(l) { return substr(l, 3) }       # "<line number><TAB><path>"
@@ -359,10 +476,8 @@ holds() { # <commit> <rev> -> 0 holds, 1 does not, 2 error (LAND_NOTE set); HOLD
       exit 0
     }'
   case $? in 0) ;; 1) return 1 ;; *) LAND_NOTE="cannot compare $(short "$c") with the branch"; return 2 ;; esac
-  while IFS= read -r p; do
-    want="${p%%$'\t'*}"; p="${p#*$'\t'}"
-    if present "$c" "$p"; then [ "$want" = 1 ] || return 1; else [ "$want" = 0 ] || return 1; fi
-  done < "$SCRATCH/net.has"
+  same_paths "$rev" "$c"
+  case $? in 0) ;; 1) return 1 ;; *) LAND_NOTE="cannot compare the files of $(short "$c") with the branch"; return 2 ;; esac
   return 0
 }
 find_landing() { # <rev>
@@ -372,7 +487,7 @@ find_landing() { # <rev>
     || { LAND_NOTE="no merge-base between branch and baseline"; return 1; }
   HOLD_MB="$mb"
   n=1; holds "$mb" "$rev"; rc=$?
-  case "$rc" in 0) LAND="$mb"; LAND_AT_MB=1; return 0 ;; 2) return 1 ;; esac
+  case "$rc" in 0) LAND="$mb"; LAND_MB="$mb"; LAND_AT_MB=1; return 0 ;; 2) return 1 ;; esac
   GIT diff-tree -r --no-renames --ignore-submodules=none --name-only -z "$mb" "$rev" \
     > "$SCRATCH/netnames" 2>/dev/null || { LAND_NOTE="cannot list the paths the branch changed"; return 1; }
   if [ "$mb" != "$WALK_MB" ]; then   # the prefix search mostly shares one merge-base
@@ -400,7 +515,7 @@ find_landing() { # <rev>
   while IFS= read -r c; do
     [ -n "$c" ] || continue
     n=$((n + 1)); holds "$c" "$rev"; rc=$?
-    case "$rc" in 0) LAND="$c"; return 0 ;; 2) return 1 ;; esac
+    case "$rc" in 0) LAND="$c"; LAND_MB="$mb"; return 0 ;; 2) return 1 ;; esac
   done < "$SCRATCH/walk"
   LAND_NONE=1
   LAND_NOTE="neither the merge-base nor any baseline commit after it holds the branch's net change ($n tried)"
@@ -416,40 +531,47 @@ find_landing() { # <rev>
 # ones against the tip, so a genuine orphan does not drag main's later edits of
 # landed lines into the list.
 PREFIX_TRIES=20
-LANDING="" ; PREFIX_TIP="" ; LANDING_NOTE="" ; LANDING_AT_MB="" ; PREFIX_NOTE=""
-prefix_search() { # -> 0 a prefix landed after the merge-base (LANDING, PREFIX_TIP set), 1 none, 2 error
-  local mb b
+LANDING="" ; LANDING_MB="" ; PREFIX_TIP="" ; LANDING_NOTE="" ; LANDING_AT_MB="" ; PREFIX_NOTE=""
+prefix_search() { # -> 0 a prefix landed after the merge-base (LANDING, PREFIX_TIP set), 1 none, 2 error, 3 none among the tries
+  local mb b total
   mb="$(GIT merge-base "$BASELINE_SHA" "$BRANCH_SHA" 2>/dev/null)" || { PREFIX_NOTE="no merge-base between branch and baseline"; return 2; }
-  for b in $(GIT rev-list --first-parent "$mb..$BRANCH_SHA" 2>/dev/null | sed 1d | head -n "$PREFIX_TRIES"); do
+  GIT rev-list --first-parent "$mb..$BRANCH_SHA" > "$SCRATCH/prefixes" 2>/dev/null \
+    || { PREFIX_NOTE="cannot list the branch's commits"; return 2; }
+  total=$(( $(wc -l < "$SCRATCH/prefixes") - 1 ))
+  for b in $(sed 1d "$SCRATCH/prefixes" | head -n "$PREFIX_TRIES"); do
     if find_landing "$b"; then
       # A prefix that undid itself holds its (empty) net change at the merge-base;
       # nothing of the branch landed there, so keep looking.
       [ -z "$LAND_AT_MB" ] || continue
-      LANDING="$LAND"; PREFIX_TIP="$b"; return 0
+      LANDING="$LAND"; LANDING_MB="$LAND_MB"; PREFIX_TIP="$b"; return 0
     fi
     [ -n "$LAND_NONE" ] || { PREFIX_NOTE="$LAND_NOTE"; return 2; }
   done
-  return 1
+  [ "$total" -gt "$PREFIX_TRIES" ] || return 1
+  PREFIX_NOTE="no prefix among the branch's newest $PREFIX_TRIES earlier commits landed"
+  return 3
 }
 if find_landing "$BRANCH_SHA"; then
-  LANDING="$LAND"; LANDING_AT_MB="$LAND_AT_MB"
+  LANDING="$LAND"; LANDING_MB="$LAND_MB"; LANDING_AT_MB="$LAND_AT_MB"
   # A branch with no net change "lands" at the merge-base whatever reached main.
   # When a prefix of it landed later (a squash of its first commits, before the
   # commits that undid them), that prefix is where it landed, and the commits
   # after it are checked at the tip. Without this a dropped restore was missed
   # (3.5.0 caught it; #399 verify round 10).
+  # When the search ran out of tries, an older prefix may have landed: the tip is used.
   if [ -n "$LANDING_AT_MB" ]; then
     prefix_search; rc=$?
     case "$rc" in
       0) LANDING_AT_MB="" ;;
-      2) LANDING_NOTE="$PREFIX_NOTE"; LANDING=""; LANDING_AT_MB="" ;;
+      1) ;;
+      *) LANDING_NOTE="$PREFIX_NOTE"; LANDING=""; LANDING_AT_MB="" ;;
     esac
   fi
 else
   LANDING_NOTE="$LAND_NOTE"
   if [ -n "$LAND_NONE" ]; then
     prefix_search; rc=$?
-    case "$rc" in 0) LANDING_NOTE="" ;; 2) LANDING_NOTE="$PREFIX_NOTE" ;; esac
+    case "$rc" in 0) LANDING_NOTE="" ;; 1) ;; *) LANDING_NOTE="$PREFIX_NOTE" ;; esac
   fi
 fi
 
@@ -463,12 +585,12 @@ if [ -n "$LANDING_AT_MB" ] && [ -n "$CHERRY_DASH" ]; then
   LANDING=""; PREFIX_TIP=""
 fi
 
-# ── Content-verify each candidate by line presence ──
-# Against LANDING (for a candidate up to PREFIX_TIP when only a prefix landed), else
-# against the tip. Plumbing only (diff-tree, ls-tree, cat-file): porcelain `git
-# show` applies diff.external, textconv and color, and any of them can leave a
-# patch with no `+` lines; --text keeps a file git treats as binary (a NUL byte, a
-# `binary` or `-diff` attribute) from collapsing into "Binary files differ", and
+# ── Content-verify each candidate ──
+# At LANDING (for a candidate up to PREFIX_TIP when only a prefix landed), in place,
+# with the two-way diffs above; else at the tip, by line presence, reading trees and
+# blobs with plumbing only (diff-tree, ls-tree, cat-file), which no diff setting
+# reaches: --text keeps a file git treats as binary (a NUL byte, a `binary` or
+# `-diff` attribute) from collapsing into "Binary files differ", and
 # --ignore-submodules=none keeps submodule.<name>.ignore from hiding a gitlink.
 use_landing() { # <candidate> -> 0: against LANDING, 1: against the tip, other: error
   [ -n "$LANDING" ] || return 1
@@ -616,14 +738,10 @@ orphan_p() { # <commit-sha> <candidate number> -> 10 orphan, 11 landed, other: e
 # It only ever creates a new file (noclobber; an existing file or symlink is left
 # alone), and a failed write is ignored, so a stray variable cannot overwrite a file
 # or change the gate's answer.
-if [ -n "${CHECK_MERGE_COMPLETENESS_TRACE:-}" ] && [ ! -e "$CHECK_MERGE_COMPLETENESS_TRACE" ] \
-   && [ ! -L "$CHECK_MERGE_COMPLETENESS_TRACE" ]; then
-  ( set -C
-    { printf 'landing %s prefix %s\n' "${LANDING:--}" "${PREFIX_TIP:--}"
-      set -- $SIDE_OF
-      for sha in $CANDIDATES; do printf 'side %s %s\n' "$sha" "$1"; shift; done
-    } > "$CHECK_MERGE_COMPLETENESS_TRACE" ) 2>/dev/null || :
-fi
+{ printf 'landing %s prefix %s\n' "${LANDING:--}" "${PREFIX_TIP:--}"
+  set -- $SIDE_OF
+  for sha in $CANDIDATES; do printf 'side %s %s\n' "$sha" "$1"; shift; done
+} | trace_out
 
 # At a landing commit L each commit c is checked in its own place, the way SPEC.md
 # defines an orphan. Over the paths c touched: a line c added (not blank) is an effect
@@ -634,18 +752,65 @@ fi
 # the head has it and L does not, or the other way round. Main's own edits elsewhere
 # in L, even on the next line, and main's own copy of the same text elsewhere, do not
 # count; a mode change, a blank line and a final newline are not effects.
+# A position says where a line is only while its text is unique. When the text of a
+# line found missing above occurs more than once (in the file at the commit or its
+# parent, the head or the landing commit), git may have paired the copies one way
+# when it built the landing commit and another way in the diffs above: main's edit of
+# one copy then reads as the commit's own line changed (#399 verify round 12). Such a
+# finding stands only if the copies say so too: the landing commit, less the copies
+# main itself added or removed before it (L^ against the merge-base), has fewer copies
+# of an added line than what landed there (the landed prefix's last commit, or the
+# head), or more copies of a deleted one. Not the head when only a prefix landed: the
+# later commits never reached L, and a copy one of them added would cancel a copy
+# the checked commit failed to delete. Unique lines are
+# judged by position alone, which also sees main's own edits inside the landing step.
+count_of_line() { # <rev> <path> <text file> -> copies of that line in <rev>:<path>, 0 when absent, "x" for a submodule
+  local rc
+  present "$1" "$2"; rc=$?
+  case "$rc" in 1) echo 0; return 0 ;; 0) ;; *) return 2 ;; esac
+  [ "$(GIT cat-file -t "$1:$2" 2>/dev/null)" = blob ] || { echo x; return 0; }
+  GIT cat-file blob "$1:$2" > "$SCRATCH/cnt.blob" 2>/dev/null || return 2
+  LC_ALL=C awk -v t="$3" 'BEGIN { if ((getline x < t) < 0) exit 2 } $0 == x { n++ } END { print n + 0 }' "$SCRATCH/cnt.blob"
+}
+confirm() { # <commit> <parent> <"A|D<TAB>line<TAB>path"> -> 0 missing, 1 landed after all, 2 error
+  local c="$1" par="$2" t line path src n_src n_head n_ref n_land n_prev n_mb
+  t="${3%%$'\t'*}"; line="${3#*$'\t'}"; path="${line#*$'\t'}"; line="${line%%$'\t'*}"
+  [ "$t" = A ] && src="$c" || src="$par"
+  [ "$src" != "$EMPTY_TREE" ] || return 0
+  GIT cat-file blob "$src:$path" 2>/dev/null | LC_ALL=C awk -v k="$line" 'NR == k { print; f = 1 } END { exit !f }' \
+    > "$SCRATCH/cnt.text" || return 2
+  n_src="$(count_of_line "$src" "$path" "$SCRATCH/cnt.text")" || return 2
+  n_head="$(count_of_line "$BRANCH_SHA" "$path" "$SCRATCH/cnt.text")" || return 2
+  n_ref="$(count_of_line "${PREFIX_TIP:-$BRANCH_SHA}" "$path" "$SCRATCH/cnt.text")" || return 2
+  n_land="$(count_of_line "$LANDING" "$path" "$SCRATCH/cnt.text")" || return 2
+  case "$n_src$n_head$n_ref$n_land" in *x*) return 0 ;; esac
+  [ "$n_src" -ge 2 ] || [ "$n_head" -ge 2 ] || [ "$n_ref" -ge 2 ] || [ "$n_land" -ge 2 ] || return 0
+  # main's own copies before the landing commit
+  n_prev=0; n_mb=0
+  if [ -n "$LANDING_MB" ] && [ "$LANDING" != "$LANDING_MB" ]; then
+    n_prev="$(count_of_line "$LANDING^1" "$path" "$SCRATCH/cnt.text")" || return 2
+    n_mb="$(count_of_line "$LANDING_MB" "$path" "$SCRATCH/cnt.text")" || return 2
+    case "$n_prev$n_mb" in *x*) return 0 ;; esac
+  fi
+  if [ "$t" = A ]; then
+    [ $((n_land - n_prev + n_mb)) -lt "$n_ref" ] && return 0
+  else
+    [ $((n_land - n_prev + n_mb)) -gt "$n_ref" ] && return 0
+  fi
+  return 1
+}
 land_orphan_p() { # <commit-sha> <candidate number> -> 10 orphan, 11 landed, other: error
-  local c="$1" par p
+  local c="$1" par p hb lb
   [ -s "$SCRATCH/c.$2" ] || return 11
   par="$(GIT rev-parse -q --verify "$c^1^{commit}" 2>/dev/null)" || par="$EMPTY_TREE"
   # the candidate's paths, NUL-separated (none has LF: those were refused above)
   LC_ALL=C awk -v paths="$SCRATCH/paths" 'BEGIN { while ((getline l < paths) > 0) P[n++] = l }
     { printf "%s%c", P[$0], 0 }' "$SCRATCH/c.$2" > "$SCRATCH/cp.z" || return 2
-  { pdiff "$par" "$c" "$SCRATCH/cp.z" | pparse > "$SCRATCH/l.own" \
-    && pdiff "$c" "$BRANCH_SHA" "$SCRATCH/cp.z" | pparse > "$SCRATCH/l.hc" \
-    && pdiff "$c" "$LANDING" "$SCRATCH/cp.z" | pparse > "$SCRATCH/l.lc" \
-    && pdiff "$par" "$BRANCH_SHA" "$SCRATCH/cp.z" | pparse > "$SCRATCH/l.hp" \
-    && pdiff "$par" "$LANDING" "$SCRATCH/cp.z" | pparse > "$SCRATCH/l.lp"; } || return 2
+  { pdiff "$par" "$c" "$SCRATCH/cp.z" | pparse "$SCRATCH/cp.z" > "$SCRATCH/l.own" \
+    && pdiff "$c" "$BRANCH_SHA" "$SCRATCH/cp.z" | pparse "$SCRATCH/cp.z" > "$SCRATCH/l.hc" \
+    && pdiff "$c" "$LANDING" "$SCRATCH/cp.z" | pparse "$SCRATCH/cp.z" > "$SCRATCH/l.lc" \
+    && pdiff "$par" "$BRANCH_SHA" "$SCRATCH/cp.z" | pparse "$SCRATCH/cp.z" > "$SCRATCH/l.hp" \
+    && pdiff "$par" "$LANDING" "$SCRATCH/cp.z" | pparse "$SCRATCH/cp.z" > "$SCRATCH/l.lp"; } || return 2
   LC_ALL=C awk -v d="$SCRATCH" '
     function load(f, set,    l, r) {
       while ((r = getline l < f) > 0) if (substr(l, 1, 1) == "C") set[substr(l, 3)] = 1
@@ -655,23 +820,28 @@ land_orphan_p() { # <commit-sha> <candidate number> -> 10 orphan, 11 landed, oth
       load(d "/l.hc", hc); load(d "/l.lc", lc); load(d "/l.hp", hp); load(d "/l.lp", lp)
       while ((r = getline l < (d "/l.own")) > 0) {
         t = substr(l, 1, 1); k = substr(l, 3)
-        if (t == "A" && !(k in hc) && (k in lc)) exit 10    # added, still in the head, not in L
-        if (t == "D" && (k in hp) && !(k in lp)) exit 10    # deleted, gone from the head, still in L
+        if (t == "A" && !(k in hc) && (k in lc)) print l    # added, still in the head, not in L
+        if (t == "D" && (k in hp) && !(k in lp)) print l    # deleted, gone from the head, still in L
       }
       if (r < 0) exit 2
-      exit 11
-    }'
-  case $? in 10) return 10 ;; 11) ;; *) return 2 ;; esac
+    }' > "$SCRATCH/l.flag" || return 2
+  while IFS= read -r p; do
+    confirm "$c" "$par" "$p"; case $? in 0) return 10 ;; 1) ;; *) return 2 ;; esac
+  done < "$SCRATCH/l.flag" || return 2
   # Paths the candidate added or deleted whole with no line to compare.
   LC_ALL=C awk -v own="$SCRATCH/l.own" 'BEGIN { while ((getline l < own) > 0) if (l ~ /^[AD]\t/) { i = index(substr(l, 3), "\t"); seen[substr(l, 3 + i)] = 1 } }
     !($0 in seen) { print }' "$SCRATCH/A.$2" > "$SCRATCH/l.bare" || return 2
   while IFS= read -r p; do
-    present "$BRANCH_SHA" "$p" && ! present "$LANDING" "$p" && return 10
+    present "$BRANCH_SHA" "$p"; hb=$?; present "$LANDING" "$p"; lb=$?
+    [ "$hb" -le 1 ] && [ "$lb" -le 1 ] || return 2
+    [ "$hb" = 0 ] && [ "$lb" = 1 ] && return 10
   done < "$SCRATCH/l.bare"
   LC_ALL=C awk -v own="$SCRATCH/l.own" 'BEGIN { while ((getline l < own) > 0) if (l ~ /^[AD]\t/) { i = index(substr(l, 3), "\t"); seen[substr(l, 3 + i)] = 1 } }
     !($0 in seen) { print }' "$SCRATCH/D.$2" > "$SCRATCH/l.bare" || return 2
   while IFS= read -r p; do
-    ! present "$BRANCH_SHA" "$p" && present "$LANDING" "$p" && return 10
+    present "$BRANCH_SHA" "$p"; hb=$?; present "$LANDING" "$p"; lb=$?
+    [ "$hb" -le 1 ] && [ "$lb" -le 1 ] || return 2
+    [ "$hb" = 1 ] && [ "$lb" = 0 ] && return 10
   done < "$SCRATCH/l.bare"
   return 11
 }

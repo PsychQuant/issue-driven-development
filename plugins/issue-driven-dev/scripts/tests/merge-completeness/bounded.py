@@ -4,9 +4,16 @@
 Every history in the world is built the way SPEC.md defines its ground truth: the
 branch is a sequence of single-unit edits on top of a merge-base, and main receives
 a known subset S of the branch commits as one squash (or nothing), possibly after
-a commit of its own. The oracle computes the expected verdict from S; the helper
-has to infer it from the trees. Each disagreement is either a known deviation, as
-SPEC.md enumerates them, or a bug.
+a commit of its own. The oracle computes the expected verdict from S (and P0: no
+orphan when the tip has the head's content on every path a candidate touched); the
+helper has to infer it from the trees. In every case the helper's route is checked
+against the model of the landing algorithm (whether it stopped at P0, and where it
+checked each commit); then each disagreement is either a known deviation, as SPEC.md
+enumerates them, or a bug.
+
+The world separates its slots with distinct lines, so a position in it always says
+which line it is. Repeated lines and renames, where it does not, are exercised with
+real git merges by the fixtures and by fuzz runs (SPEC.md, Results).
 
   python3 bounded.py [--max-len N] [--sample K] [--seed S] [--jobs J]
                      [--old-git SHIM_DIR] [--after] [--show N]
@@ -27,9 +34,11 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HELPER = os.environ.get("BOUNDED_HELPER") or os.path.join(HERE, "..", "..", "check-merge-completeness.sh")
-# The helper's rule, for the model below: "place" (round 12: landing and the check at
-# the landing commit by two-way diffs, position by position). "undo" models round 11's
-# three-way merge, kept to compare the two (BOUNDED_HELPER points at another helper).
+# The helper's rule, for the model below: "place" (rounds 12-13: landing and the check
+# at the landing commit by two-way diffs, position by position; two slots may hold the
+# same text, which brings in round 13's copy count, but the distinct separators keep
+# every position reliable). "undo" models round 11's three-way merge, kept to compare
+# the two (BOUNDED_HELPER points at another helper).
 RULE = os.environ.get("BOUNDED_RULE", "place")
 
 # ── The world ───────────────────────────────────────────────────────────────
@@ -254,6 +263,8 @@ def run_case(case):
                 f = l.split()
                 if f[0] == "side":
                     sides[sha_subj.get(f[1], "?")] = f[2]
+                elif f[0] == "shortcut":
+                    sides[SHORTCUT] = "yes"
         return (r.returncode, listed, frozenset(minus), r.stdout.decode("utf-8", "replace") + r.stderr.decode("utf-8", "replace"), sides)
     finally:
         shutil.rmtree(d, ignore_errors=True)
@@ -451,11 +462,51 @@ def model_sides(mb, ops, S, mop, aop, extra, landing, minus, old_git):
         land_state = dict(mb)
     elif L is not None:
         land_state = seq[L][0]
+    land_prev = seq[L - 1][0] if isinstance(L, int) and L > 0 else (dict(mb) if L is not None else None)
+    land_ref = states[prefix] if prefix else head
     # the landing commit is one main made itself, not the commit that brought S in:
     # main held the branch's net change on its own, before receiving S or after
     # (SPEC B2)
     land_own = isinstance(L, int) and L != received
-    return sides, later, land_state, land_own
+    return sides, later, land_state, land_own, land_prev, land_ref
+
+
+SHORTCUT = "@shortcut"   # a key in the trace's sides: the helper stopped at P0
+
+
+def txt_of(v, u):
+    """The line a slot value renders to in f.txt."""
+    return v + (str(u) if DISTINCT else "")
+
+
+def head_tip(case):
+    """The branch head and the baseline tip of the model."""
+    mb, ops, S, mop, aop, extra, landing = case
+    head = dict(mb)
+    for op in ops:
+        head = apply_strict(head, op)
+    tip = dict(mb)
+    if mop is not None:
+        tip = apply_strict(tip, mop)
+    if S:
+        tip = land(tip, mb, compose(mb, ops, S))
+    if extra is not None:
+        tip = apply_strict(tip, extra)
+    if aop is not None:
+        tip = dict(tip)
+        tip[aop[0]] = aop[2]
+    return head, tip
+
+
+def p0(case, minus):
+    """SPEC.md P0: on every path a candidate (a commit git cherry did not match)
+    touched, the tip has exactly what the head has. f.txt is one path for all slots."""
+    mb, ops, S, mop, aop, extra, landing = case
+    if all("b%d" % (k + 1) in minus for k in range(len(ops))):
+        return False   # no candidate: the helper stops before P0, at exit 0
+    head, tip = head_tip(case)
+    paths = {path_of(e[0]) for k, op in enumerate(ops) if "b%d" % (k + 1) not in minus for e in edits(op)}
+    return all(head[u] == tip[u] for u in UNITS if path_of(u) in paths)
 
 
 # ── Known deviations (SPEC.md, "Known deviations") ──────────────────────────
@@ -496,25 +547,13 @@ def classify(case, exp, got, args, text, sides):
     erc, elisted = exp
     if rc not in (0, 3):
         return None
-    want, later, land_state, land_own = model_sides(mb, ops, S, mop, aop, extra, landing, minus, bool(args.old_git))
+    want, later, land_state, land_own, land_prev, land_ref = model_sides(mb, ops, S, mop, aop, extra, landing, minus, bool(args.old_git))
     if any(sides.get(name) != side for name, side in want.items()):
         return None
     diff = (elisted - listed) | (listed - elisted)
     if not diff:
         return None
-    head = dict(mb)
-    for op in ops:
-        head = apply_strict(head, op)
-    tip = dict(mb)
-    if mop is not None:
-        tip = apply_strict(tip, mop)
-    if S:
-        tip = land(tip, mb, compose(mb, ops, S))
-    if extra is not None:
-        tip = apply_strict(tip, extra)
-    if aop is not None:
-        tip = dict(tip)
-        tip[aop[0]] = aop[2]
+    head, tip = head_tip(case)
     def texts(op):
         out = set()
         for unit, frm, to in edits(op):
@@ -539,11 +578,45 @@ def classify(case, exp, got, args, text, sides):
                        or (present(frm) and head[u] != frm and land_state[u] == frm)
                        for u, frm, to in edits(op))
         return undo_noop(op, land_state) and not undo_noop(op, head)
+    def copies(state, text):
+        # copies of a line of f.txt; the helper counts lines of the file (path f)
+        return sum(1 for u in range(SLOTS) if state[u] is not None and txt_of(state[u], u) == text)
+    def r1_landed(k, op):
+        # SPEC.md R1: a finding on a line whose text repeats stands only when the copies
+        # agree; True when, for every effect of op the model finds missing, the helper's
+        # count reads it as landed
+        if land_state is None or land_prev is None:
+            return False
+        before = dict(mb)
+        for o in ops[:k]:
+            before = apply_strict(before, o)
+        after = apply_strict(dict(before), op)
+        missing = []
+        for u, frm, to in edits(op):
+            if not isinstance(u, int):
+                return False
+            if to is not None and head[u] == to and land_state[u] != to:
+                missing.append(("A", txt_of(to, u), after))
+            if frm is not None and head[u] != frm and land_state[u] == frm:
+                missing.append(("D", txt_of(frm, u), before))
+        if not missing:
+            return False
+        for t, text, src in missing:
+            n_src, n_head, n_ref, n_land = copies(src, text), copies(head, text), copies(land_ref, text), copies(land_state, text)
+            if max(n_src, n_head, n_ref, n_land) < 2:
+                return False
+            adj = n_land - copies(land_prev, text) + copies(mb, text)
+            if (t == "A" and adj < n_ref) or (t == "D" and adj > n_ref):
+                return False
+        return True
     classes = set()
     for name in diff:
         k = int(name[1:]) - 1
         op = ops[k]
         side = want.get(name)
+        if side == "land" and name not in listed and placed_orphan(op) and r1_landed(k, op):
+            classes.add("R1 repeated text counted as landed")
+            continue
         if side == "land" and (name in listed) != placed_orphan(op):
             return None
         if side == "tip":
@@ -643,12 +716,25 @@ def main():
     for c, res in zip(all_cases, results):
         mb, ops, S, mop, aop, extra, landing, exp = c
         rc, listed, minus, text, sides = res
+        case = (mb, ops, S, mop, aop, extra, landing)
         names = frozenset("b%d" % (k + 1) for k in exp[1]) - minus
         exp_named = (3 if names else 0, names)
+        # P0 and where each commit is checked are checked in every case, not only when
+        # the answers differ: a helper that reaches the right list by the wrong route
+        # is a bug (#399 verify round 12).
+        shortcut = p0(case, minus)
+        if shortcut:
+            exp_named = (0, frozenset())
+        route_ok = (SHORTCUT in sides) == shortcut and rc in (0, 3)
+        if route_ok and not shortcut and sides:
+            want = model_sides(mb, ops, S, mop, aop, extra, landing, minus, bool(args.old_git))[0]
+            route_ok = all(sides.get(name) == side for name, side in want.items())
+        if not route_ok:
+            bugs.append((case, exp_named, (rc, listed, minus), text, sides))
+            continue
         if rc == exp_named[0] and (rc != 3 or listed == exp_named[1]):
             ok += 1
             continue
-        case = (mb, ops, S, mop, aop, extra, landing)
         k = classify(case, exp_named, (rc, listed, minus), args, text, sides)
         if k:
             known[k] = known.get(k, 0) + 1
