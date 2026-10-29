@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Version number left to the merge, as in PR #442.
+
+### Fixed
+
+- **The `.gitignore` example in `rules/process-attachments.md` keeps `_manifest.json` trackable (#432).** It
+  used `.claude/.idd/attachments/**` with `!.claude/.idd/attachments/**/_manifest.json`; `**` also matches the
+  `issue-N/` directory, and git cannot re-include a file under an excluded directory, so the manifest was ignored
+  with the binaries and `git add .claude/.idd/attachments/issue-N` failed. The example is now
+  `.claude/.idd/attachments/*/*` with `!.claude/.idd/attachments/*/_manifest.json`. A repo that copied the old
+  example needs those two lines replaced. `scripts/tests/attachments-gitignore-example/` applies the example as
+  written to a throwaway repo.
+
 ## [3.5.0] - 2026-10-20
 
 ### Added
