@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Version number left to the merge, as in PR #442.
+
+### Fixed
+
+- **`plan-routing-consistency` no longer reads gitignored files (#335).** Its scan of the repo root walked the
+  filesystem, so a machine that had run spectra (`.spectra/snapshots/`, `.gitignore:1`) or opened an
+  `idd-worktree.sh` worktree (`.claude/worktrees/idd-<N>/`, a full second checkout) failed the suite on text
+  nobody committed — green on a clean checkout, red locally. A git work tree is now enumerated with
+  `git grep --untracked`, which keeps untracked-but-not-ignored files (the scope canaries rely on them); a plain
+  directory (the positive controls) still uses `grep -r`. A new control checks both in a throwaway repo. The
+  other recursive scans in `scripts/tests/` stay under `$PLUGIN`, which holds no ignored `.md` today.
+
 ## [3.5.0] - 2026-10-20
 
 ### Added
