@@ -49,6 +49,8 @@ set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIBDIR="$(cd "$HERE/../../lib" && pwd)"
 . "$LIBDIR/assert-helpers.sh"
+. "$HERE/../../lib/git-fixture-helpers.sh"
+git_fixture_setup
 
 LIB="$LIBDIR/actionability.sh"
 FIXTURE="$HERE/fixtures/parked-routing.json"
@@ -754,7 +756,7 @@ for c in idd-implement:2 idd-plan:1 idd-all:1; do
     '(^|[^A-Za-z_])(VEXIT|TIER|REASONS|CEXIT|BLOCKING|HAS_PARKING|LATEST_DIAGNOSIS|BLOCK_LINE)=|gate #' "$outside"
 done
 refute_grep "idd-all: its gate block never says \$NUMBER (idd-all defines only \$N)" '$NUMBER' "$(gate_blocks "$IA")"
-GB_RUN=$(mktemp -d); printf '%s' "$gb_035" > "$GB_RUN/block.sh"
+GB_RUN=$(git_fixture_mktemp) || exit 1; printf '%s' "$gb_035" > "$GB_RUN/block.sh"
 gb_stub='gh() { case "$1" in api) [ "$STUB" = commentfail ] && return 1; case "$STUB" in meetingdiag) echo "[{\"body\":\"## Diagnosis\\n\\n### Type\\nmeeting\\n\"}]" ;; bodyflip) echo "[{\"body\":\"## Diagnosis\\n\\n### Type\\nbug\\n\\n### Complexity\\n\\nSimple when triggered\\n\"}]" ;; *) echo "[]" ;; esac ;; issue) [ "$STUB" = issuefail ] && return 1; case "$STUB" in meeting|meetingdiag) echo "{\"labels\":[{\"name\":\"meeting\"}],\"body\":\"\"}" ;; bodyflip) echo "{\"labels\":[],\"body\":\"## Type\\nmeeting\\n\"}" ;; *) echo "{\"labels\":[],\"body\":\"\"}" ;; esac ;; esac; }'
 run_block() { ( cd "$GB_RUN" && STUB="$1" NUMBER=316 GITHUB_REPO=o/r CLAUDE_PLUGIN_ROOT="$HERE/../../.." bash -c "$gb_stub"$'\n'"$(cat block.sh)" 2>&1 ); }
 out=$(run_block commentfail); rc=$?
@@ -1080,7 +1082,7 @@ ia_block_after() { awk -v h="$1" 'index($0, h) == 1 { f = 1; next } f && /^```ba
 UW_SRC=$(ia_block_after '#### meeting 分派前的 branch unwind')
 assert_true "idd-all: the meeting unwind block is extractable" "[ -n \"\$UW_SRC\" ]"
 uw_repo() {   # $1 = scratch dir; leaves a repo on branch idd/7-x with no commits ahead of main
-  git -C "$1" init -q -b main && git -C "$1" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init \
+  git_fixture_init "$1" -b main && git -C "$1" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init \
     && git -C "$1" checkout -q -b idd/7-x
 }
 uw_stub='gh() { case "$1" in repo) echo main ;; api) echo "[\"## Diagnosis\\n\\n### Type\\n$UW_TYPE\\n\"]" ;; issue) echo "{\"labels\":[],\"body\":\"## Type\\nmeeting\\n\"}" ;; esac; }'
@@ -1089,7 +1091,7 @@ uw_run() {   # $1 repo, $2 type
       GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
       bash -c "$uw_stub"$'\n'"$UW_SRC" 2>&1 )
 }
-UWD=$(mktemp -d)
+UWD=$(git_fixture_mktemp) || exit 1
 mkdir "$UWD/a" && uw_repo "$UWD/a" && out=$(uw_run "$UWD/a" bug); rc=$?
 assert_eq "unwind (run): a non-meeting PR run exits 0" "0" "$rc"
 assert_eq "unwind (run): a non-meeting PR run stays on its feature branch (r2 #4)" "idd/7-x" "$(git -C "$UWD/a" branch --show-current)"
@@ -1259,7 +1261,8 @@ out=$( N=7 INTERACTION=unattended IDD_ALL_UNATTENDED= GITHUB_REPO=o/r CWD=/nonex
   bash -c 'gh() { case "$1" in issue) echo BODY-FETCHED >&2 ;; api) echo "[\"## Diagnosis\\n\\n### Type\\nbug\\n\"]" ;; esac; }; git() { return 0; }'$'\n'"$P6_SRC" 2>&1 )
 assert_eq "phase 6 (run): a non-meeting unattended run does not fetch the issue body (r5 #13)" "" "$out"
 # INTERACTION lost but the unattended state file is still there → treated as unattended
-P6S=$(mktemp -d) && mkdir -p "$P6S/.claude/.idd/state" \
+P6S=$(git_fixture_mktemp) || exit 1
+mkdir -p "$P6S/.claude/.idd/state" \
   && printf '{"active":true,"by":"idd-all","started_at":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$P6S/.claude/.idd/state/unattended.json"
 out=$(p6_run meeting '## Problem\n\n---\n\n## Current Status\n\n**Phase**: diagnosed\n' ok '' '' 7 "$P6S")
 assert_grep "phase 6 (run): a lost INTERACTION is recovered from the unattended state file" '#7: type=meeting — stopped at diagnosed' "$out"
@@ -1311,7 +1314,7 @@ out=$(raw_env "$RAW_UNTRUSTED" INTERACTION=unattended CWD=/nonexistent P6B="$CS6
 assert_eq "author filter (run): Phase 6 ignores an outside author's meeting Diagnosis (r6 #3)" "" "$out"
 out=$(raw_env "$RAW_TRUSTED" INTERACTION=unattended CWD=/nonexistent P6B="$CS6" bash -c 'git() { return 0; }'$'\n'"$RAWC_STUB"$'\n'"$P6_SRC" 2>&1)
 assert_grep "author filter (run): ... positive control: a MEMBER's meeting Diagnosis gets the item" '#7: type=meeting — stopped at diagnosed' "$out"
-RWD=$(mktemp -d)
+RWD=$(git_fixture_mktemp) || exit 1
 mkdir "$RWD/a" && uw_repo "$RWD/a" && out=$( cd "$RWD/a" && raw_env "$RAW_UNTRUSTED" CWD="$RWD/a" PATH_AXIS=PR GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t bash -c "$RAWC_STUB"$'\n'"$UW_SRC" 2>&1 )
 assert_eq "author filter (run): the unwind ignores an outside author's meeting Diagnosis (r6 #3)" "idd/7-x" "$(git -C "$RWD/a" branch --show-current)"
 mkdir "$RWD/b" && uw_repo "$RWD/b" && out=$( cd "$RWD/b" && raw_env "$RAW_TRUSTED" CWD="$RWD/b" PATH_AXIS=PR GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t bash -c "$RAWC_STUB"$'\n'"$UW_SRC" 2>&1 )

@@ -7,6 +7,8 @@
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/../../lib/assert-helpers.sh"
+. "$HERE/../../lib/git-fixture-helpers.sh"
+git_fixture_setup
 
 PLUGIN="$(cd "$HERE/../../.." && pwd)"
 HELPER="$PLUGIN/scripts/idd-edit-helper.py"
@@ -14,13 +16,12 @@ HOOK="$PLUGIN/hooks/archive-read-guard.py"
 HOOKS_JSON="$PLUGIN/hooks/hooks.json"
 EDIT_SKILL="$PLUGIN/skills/idd-edit/SKILL.md"
 
-WORK="$(mktemp -d /tmp/idd-ca-XXXXXX)"
+WORK="$(git_fixture_mktemp)" || exit 1
 cleanup() { chmod -R u+rwx "$WORK" 2>/dev/null; rm -rf "$WORK"; }
-trap cleanup EXIT
+trap 'cleanup; git_fixture_cleanup' EXIT
 
 export IDD_EDIT_HELPER_TEST_MODE=1
 export IDD_EDIT_HELPER_NOW=2026-10-09T10:00:00Z
-export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 
 mode_of() { python3 -c 'import os,stat,sys;print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode)))' "$1"; }
 
@@ -34,7 +35,7 @@ run_in() {
 SECRET="WRONG-CONTENT-ALPHA"
 printf '%s first line\nsecond line\n' "$SECRET" >"$WORK/old.md"
 
-REPO="$WORK/repo"; mkdir -p "$REPO"; git -C "$REPO" init -q
+REPO="$WORK/repo"; mkdir -p "$REPO"; git_fixture_init "$REPO"
 ARCH="$REPO/.claude/.idd/archive/edits"
 ID1="comment-5805214375-20261009T100000Z"
 
@@ -84,7 +85,7 @@ run_in "$REPO" b1 archive comment 5805214375 --from-file "$WORK/old.md" --repo o
 EXCL_LINES="$(grep -c 'claude/.idd/archive' "$EXCLUDE")"
 assert_eq "exclude block is written once (idempotent)" "1" "$EXCL_LINES"
 
-REINC="$WORK/reinc"; mkdir -p "$REINC"; git -C "$REINC" init -q
+REINC="$WORK/reinc"; mkdir -p "$REINC"; git_fixture_init "$REINC"
 printf '!.claude/.idd/archive/\n!.claude/.idd/archive/**\n' >"$REINC/.gitignore"
 run_in "$REINC" b2 archive comment 5805214375 --from-file "$WORK/old.md" --repo o/r
 assert_exit "re-include rule → exit 7" 7 "$RC"
@@ -472,7 +473,7 @@ printf 'o/r' >"$ARCH/comment-888-20261009T100000Z.repo"
 run_in "$REPO" f1c restore comment-888-20261009T100000Z --repo o/r
 assert_exit "symlinked archive entry → exit 2" 2 "$RC"
 
-TR="$WORK/tracked"; mkdir -p "$TR/.claude/.idd/archive/edits"; git -C "$TR" init -q
+TR="$WORK/tracked"; mkdir -p "$TR/.claude/.idd/archive/edits"; git_fixture_init "$TR"
 printf 'x' >"$TR/.claude/.idd/archive/edits/comment-9-20261009T100000Z.md"
 printf 'o/r' >"$TR/.claude/.idd/archive/edits/comment-9-20261009T100000Z.repo"
 git -C "$TR" add -f .claude >/dev/null 2>&1
@@ -496,7 +497,7 @@ git -C "$REPO" worktree remove "$WORK/wt" >/dev/null 2>&1
 assert_file_exists "archive survives git worktree remove" "$ARCH/$F3ID.md"
 
 # F4. collision filename is checked against ignore rules
-CI="$WORK/coll"; mkdir -p "$CI"; git -C "$CI" init -q
+CI="$WORK/coll"; mkdir -p "$CI"; git_fixture_init "$CI"
 printf '!.claude/.idd/archive/\n.claude/.idd/archive/edits/*\n!.claude/.idd/archive/edits/comment-5-20261009T100000Z-2.md\n' >"$CI/.gitignore"
 run_in "$CI" f4a archive comment 5 --from-file "$WORK/old.md" --repo o/r
 run_in "$CI" f4b archive comment 5 --from-file "$WORK/old.md" --repo o/r
@@ -526,7 +527,7 @@ echo "G. round 3"
 
 # G1. restore refuses when any directory on the archive path is a symlink
 for link_at in edits archive; do
-  SL="$WORK/sl-$link_at"; mkdir -p "$SL"; git -C "$SL" init -q
+  SL="$WORK/sl-$link_at"; mkdir -p "$SL"; git_fixture_init "$SL"
   ELSE="$WORK/elsewhere-$link_at"; mkdir -p "$ELSE/edits"
   printf 'x' >"$ELSE/edits/comment-9-20261009T100000Z.md"
   printf 'o/r' >"$ELSE/edits/comment-9-20261009T100000Z.repo"
@@ -542,7 +543,7 @@ for link_at in edits archive; do
 done
 
 # G2. archive refuses to write through a symlinked directory
-SW="$WORK/sl-write"; mkdir -p "$SW/.claude/.idd"; git -C "$SW" init -q
+SW="$WORK/sl-write"; mkdir -p "$SW/.claude/.idd"; git_fixture_init "$SW"
 mkdir -p "$WORK/write-elsewhere"; ln -s "$WORK/write-elsewhere" "$SW/.claude/.idd/archive"
 run_in "$SW" g2 archive comment 10 --from-file "$WORK/old.md" --repo o/r
 assert_exit "archive through a symlinked directory → exit 7" 7 "$RC"
@@ -552,7 +553,7 @@ refute "nothing written behind the symlink" test -e "$WORK/write-elsewhere/edits
 echo "H. round 4"
 
 # H1. the sidecar is created exclusively: an orphan or a symlinked .repo is never written through
-OR="$WORK/orphan"; mkdir -p "$OR"; git -C "$OR" init -q
+OR="$WORK/orphan"; mkdir -p "$OR"; git_fixture_init "$OR"
 mkdir -p "$OR/.claude/.idd/archive/edits"
 printf 'someone/else' >"$OR/.claude/.idd/archive/edits/comment-11-20261009T100000Z.repo"
 printf 'victim' >"$WORK/victim.txt"
@@ -564,8 +565,8 @@ run_in "$OR" h1b archive comment 12 --from-file "$WORK/old.md" --repo o/r
 assert_eq "a symlinked sidecar is not written through" "victim" "$(cat "$WORK/victim.txt")"
 
 # H2. a nested repository (submodule) under the archive path is refused
-NR="$WORK/nested"; mkdir -p "$NR"; git -C "$NR" init -q
-mkdir -p "$NR/.claude/.idd/archive/edits"; git -C "$NR/.claude" init -q
+NR="$WORK/nested"; mkdir -p "$NR"; git_fixture_init "$NR"
+mkdir -p "$NR/.claude/.idd/archive/edits"; git_fixture_init "$NR/.claude"
 printf 'x' >"$NR/.claude/.idd/archive/edits/comment-13-20261009T100000Z.md"
 printf 'o/r' >"$NR/.claude/.idd/archive/edits/comment-13-20261009T100000Z.repo"
 git -C "$NR/.claude" add -f . >/dev/null 2>&1
@@ -575,7 +576,7 @@ assert_exit "an entry inside a nested repository → exit 2" 2 "$RC"
 refute "gh not called for a nested-repository entry" test -e "$WORK/gh_args"
 
 # H3. on a case-insensitive filesystem, a tracked .CLAUDE/... entry is still refused
-CS="$WORK/case"; mkdir -p "$CS/.CLAUDE/.IDD/ARCHIVE/EDITS"; git -C "$CS" init -q
+CS="$WORK/case"; mkdir -p "$CS/.CLAUDE/.IDD/ARCHIVE/EDITS"; git_fixture_init "$CS"
 if [ -d "$CS/.claude/.idd/archive/edits" ]; then
   printf 'x' >"$CS/.CLAUDE/.IDD/ARCHIVE/EDITS/comment-14-20261009T100000Z.md"
   printf 'o/r' >"$CS/.CLAUDE/.IDD/ARCHIVE/EDITS/comment-14-20261009T100000Z.repo"
@@ -609,7 +610,7 @@ expect_deny  envGit     '{"tool_name":"Bash","tool_input":{"command":"GIT_EDITOR
 expect_deny  msgRedir   '{"tool_name":"Bash","tool_input":{"command":"git commit -m <.claude/.idd/archive/edits/a.md"}}'
 
 # I4. archive refuses a repository that tracks anything under the archive path
-TA="$WORK/tracks"; mkdir -p "$TA/.claude/.idd/archive/edits"; git -C "$TA" init -q
+TA="$WORK/tracks"; mkdir -p "$TA/.claude/.idd/archive/edits"; git_fixture_init "$TA"
 printf 'x' >"$TA/.claude/.idd/archive/edits/planted.md"
 git -C "$TA" add -f .claude >/dev/null 2>&1
 run_in "$TA" i4 archive comment 21 --from-file "$WORK/old.md" --repo o/r

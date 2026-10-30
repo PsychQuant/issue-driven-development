@@ -8,7 +8,9 @@ set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT="$HERE/../../check-existing-work.sh"
 . "$HERE/../../lib/assert-helpers.sh"
-W="$(mktemp -d)"; trap 'rm -rf "$W"' EXIT
+. "$HERE/../../lib/git-fixture-helpers.sh"
+git_fixture_setup
+W="$(git_fixture_mktemp)" || exit 1; trap 'rm -rf "$W"; git_fixture_cleanup' EXIT
 GIT_ENV=(-c user.name=t -c user.email=t@t -c init.defaultBranch=main)
 
 # ── hermetic gh ─────────────────────────────────────────────────────────────
@@ -40,8 +42,9 @@ chmod +x "$W/bin/gh"
 export FX
 
 # ── real git origin ─────────────────────────────────────────────────────────
-git "${GIT_ENV[@]}" init -q --bare "$W/origin.git"
-git "${GIT_ENV[@]}" clone -q "$W/origin.git" "$W/work" 2>/dev/null
+mkdir -p "$W/origin.git" || exit 1
+git_fixture_init "$W/origin.git" --bare -b main
+git "${GIT_ENV[@]}" clone -q --template= "$W/origin.git" "$W/work" 2>/dev/null || exit 1
 ( cd "$W/work" && git "${GIT_ENV[@]}" checkout -q -b main && git "${GIT_ENV[@]}" commit -q --allow-empty -m "init" \
   && git "${GIT_ENV[@]}" push -q origin main 2>/dev/null && git "${GIT_ENV[@]}" remote set-head origin main >/dev/null 2>&1 )
 

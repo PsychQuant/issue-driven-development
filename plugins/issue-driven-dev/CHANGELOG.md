@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Isolate temporary Git repositories in test suites (#452).** Thirteen suites now
+  use a common fixture helper that clears inherited Git environment variables,
+  isolates global/system config, hooks, fsmonitor, signing, templates and default
+  ignore/attributes files, and stops on temporary-directory or initialization
+  failures. A discovery ceiling also protects callers with TMPDIR inside their
+  checkout. Regression tests exercise disposable callers through linked-worktree
+  aliases, hooks and rebase, and check all fixture suites for caller integrity.
+
 ## [3.5.0] - 2026-10-20
 
 ### Added

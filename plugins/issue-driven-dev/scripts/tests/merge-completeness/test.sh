@@ -15,16 +15,18 @@ set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER="$HERE/../../check-merge-completeness.sh"
 . "$HERE/../../lib/assert-helpers.sh"
+. "$HERE/../../lib/git-fixture-helpers.sh"
+git_fixture_setup
 
 # Isolated temp repo per fixture; deterministic identity, quiet.
 mk_repo() {
-  local d; d="$(mktemp -d)"
-  git -C "$d" init -q
+  local d; d="$(git_fixture_mktemp)" || exit 1
+  git_fixture_init "$d"
   git -C "$d" config user.email t@t.t
   git -C "$d" config user.name t
   git -C "$d" config commit.gpgsign false
   printf 'base\n' > "$d/base.txt"
-  git -C "$d" add -A && git -C "$d" commit -qm base
+  git -C "$d" add -A && git -C "$d" commit -qm base || exit 1
   # Fixtures reference `main` explicitly; machines with unset init.defaultBranch
   # (git default: master — most CI runners too) would 6/7 false-FAIL without
   # this self-sufficient rename (idempotent when already main). Refs #224.
@@ -40,7 +42,7 @@ run_helper() { # repo branch baseline  -> echoes exit code
 echo "merge-completeness gate"
 
 # ── Fixture 1: genuine orphan — branch adds a file the baseline never got ──
-R="$(mk_repo)"
+R="$(mk_repo)" || exit 1
 git -C "$R" checkout -q -b feat
 printf 'crash fix\n' > "$R/orphan.txt"
 git -C "$R" add -A && git -C "$R" commit -qm "fix: crash (orphan)"
@@ -49,7 +51,7 @@ assert_exit "fixture-1 genuine orphan flagged" 3 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 # ── Fixture 2: squash false-positive — branch's content IS in main as a squash ──
-R="$(mk_repo)"
+R="$(mk_repo)" || exit 1
 git -C "$R" checkout -q -b feat
 printf 'b\n' > "$R/b.txt"; git -C "$R" add -A && git -C "$R" commit -qm "add b"
 printf 'c\n' > "$R/c.txt"; git -C "$R" add -A && git -C "$R" commit -qm "add c"
@@ -61,12 +63,12 @@ assert_exit "fixture-2 squash content present -> NOT flagged" 0 "$(run_helper "$
 rm -rf "$R"
 
 # ── Fixture 3: unresolvable branch -> skip (never block) ──
-R="$(mk_repo)"
+R="$(mk_repo)" || exit 1
 assert_exit "fixture-3 missing branch -> skip" 4 "$(run_helper "$R" does-not-exist main)"
 rm -rf "$R"
 
 # ── Fixture 4: mixed — one orphan + one already-present commit on same branch ──
-R="$(mk_repo)"
+R="$(mk_repo)" || exit 1
 git -C "$R" checkout -q -b feat
 printf 'd\n' > "$R/d.txt"; git -C "$R" add -A && git -C "$R" commit -qm "add d (will land)"
 printf 'e\n' > "$R/e.txt"; git -C "$R" add -A && git -C "$R" commit -qm "add e (orphan)"
@@ -80,7 +82,7 @@ rm -rf "$R"
 # This is the common TDD branch shape. The old cherry-pick content-verify
 # conflicts when replaying the intermediate same-file commit onto the squashed
 # tip → false orphan. The line-presence verify must see all added lines present.
-R="$(mk_repo)"
+R="$(mk_repo)" || exit 1
 git -C "$R" checkout -q -b feat
 printf 'line1\n'        > "$R/shared.txt"; git -C "$R" add -A && git -C "$R" commit -qm "shared: add line1"
 printf 'line1\nline2\n' > "$R/shared.txt"; git -C "$R" add -A && git -C "$R" commit -qm "shared: add line2"
@@ -92,7 +94,7 @@ rm -rf "$R"
 # ── Fixture 6 (DA-1): branch ref deleted, resolve by persistent SHA (headRefOid) ──
 # After merge GitHub deletes the head branch; idd-close must pass the head SHA
 # (gh pr view --json headRefOid), which still resolves to the commit object.
-R="$(mk_repo)"
+R="$(mk_repo)" || exit 1
 git -C "$R" checkout -q -b feat
 printf 'orphan2\n' > "$R/orphan2.txt"; git -C "$R" add -A && git -C "$R" commit -qm "orphan2"
 SHA=$(git -C "$R" rev-parse feat)
@@ -104,7 +106,7 @@ rm -rf "$R"
 # ── Fixture 7 (R2): a path with a SPACE must not word-split into false orphans ──
 # Old `for f in $files` split "sp ace.txt" → empty baseline content → landed
 # commit mis-flagged. Same DA-2 false-positive class, retriggered by a space.
-R="$(mk_repo)"
+R="$(mk_repo)" || exit 1
 git -C "$R" checkout -q -b feat
 printf 'l1\n'     > "$R/sp ace.txt"; git -C "$R" add -A && git -C "$R" commit -qm "spaced: l1"
 printf 'l1\nl2\n' > "$R/sp ace.txt"; git -C "$R" add -A && git -C "$R" commit -qm "spaced: l2"

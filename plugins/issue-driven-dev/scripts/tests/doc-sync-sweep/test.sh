@@ -3,11 +3,14 @@
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/../../lib/assert-helpers.sh"
-W="$(mktemp -d)"; trap 'rm -rf "$W"' EXIT
-git -C "$W" init -q; git -C "$W" config user.email t@t.t; git -C "$W" config user.name t
+. "$HERE/../../lib/git-fixture-helpers.sh"
+git_fixture_setup
+W="$(git_fixture_mktemp)" || exit 1
+git_fixture_init "$W"
+git -C "$W" config user.email t@t.t; git -C "$W" config user.name t
 touch "$W/README.md" "$W/README_zh-TW.md" "$W/readme.markdown" "$W/CLAUDE.md" "$W/docs/x" 2>/dev/null
 mkdir -p "$W/plugins/p"; touch "$W/plugins/p/CLAUDE.md" "$W/plugins/p/README.md" "$W/NOTREADME.txt" "$W/build-readme-gen.js"
-( cd "$W" && git add -A && git commit -qm x )
+( cd "$W" && git add -A && git commit -qm x ) || exit 1
 
 ENUM='(^|/)(readme[^/]*\.(md|markdown)|claude\.md)$'
 GOT=$(git -C "$W" ls-files | grep -icE "$ENUM")

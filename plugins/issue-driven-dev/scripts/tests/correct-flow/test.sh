@@ -8,23 +8,25 @@
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/../../lib/assert-helpers.sh"
+. "$HERE/../../lib/git-fixture-helpers.sh"
+git_fixture_setup
 PLUGIN="$(cd "$HERE/../../.." && pwd)"
 HELPER="$PLUGIN/scripts/idd-edit-helper.py"
 
-WORK="$(mktemp -d /tmp/idd-cf-XXXXXX)"
+WORK="$(git_fixture_mktemp)" || exit 1
 cleanup() { chmod -R u+rwx "$WORK" 2>/dev/null; rm -rf "$WORK" "$TMPDIR"; }
-trap cleanup EXIT
-export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+trap 'cleanup; git_fixture_cleanup' EXIT
 # macOS keeps the user's temp dir under /var. A private one per run: counting
 # working directories in a shared /var/tmp made two overlapping runs fail
 # each other (verify #351 round 6).
-export TMPDIR="$(mktemp -d /var/tmp/idd-cf-tmp-XXXXXX)"
+TMPDIR="$(git_fixture_mktemp /var/tmp/idd-cf-tmp-XXXXXX)" || exit 1
+export TMPDIR
 export FAKE_GH_STORE="$WORK/store"; mkdir -p "$FAKE_GH_STORE"
 mkdir -p "$WORK/bin"
 printf '#!/bin/sh\nexec python3 "%s/fake-gh.py" "$@"\n' "$HERE" >"$WORK/bin/gh"; chmod +x "$WORK/bin/gh"
 export PATH="$WORK/bin:$PATH"
 printf 'kiki830621' >"$FAKE_GH_STORE/user"
-REPO="$WORK/repo"; mkdir -p "$REPO"; git -C "$REPO" init -q
+REPO="$WORK/repo"; mkdir -p "$REPO"; git_fixture_init "$REPO"
 ARCH="$REPO/.claude/.idd/archive/edits"
 
 # mkrec <file> <login> <assoc> <body>
@@ -45,7 +47,7 @@ helper() {
   RC=$?
 }
 printf 'right text\n' >"$WORK/fix.md"
-TMPFIX="$(mktemp -d "$TMPDIR/idd-cf-body-XXXXXX")"; printf 'right text\n' >"$TMPFIX/fix.md"
+TMPFIX="$(git_fixture_mktemp "$TMPDIR/idd-cf-body-XXXXXX")" || exit 1; printf 'right text\n' >"$TMPFIX/fix.md"
 count_work() { find "$TMPDIR" -maxdepth 1 -name 'idd-correct-*' -user "$(id -u)" 2>/dev/null | wc -l | tr -d ' '; }
 SECTION_BODY='## Notes
 wrong text
@@ -349,8 +351,8 @@ assert_exit "a landed write with a gh error exits 7" 7 "$RC"
 assert_eq "it is reported unverified" "unverified" "$(val RESULT "$WORK/r85a.out")"
 
 # R8.6 a working directory left for more than a day is removed by the next prepare
-STALE="$(mktemp -d "$TMPDIR/idd-correct-XXXXXX")"; : >"$STALE/state.json"; touch -t 202001010000 "$STALE"
-FRESH="$(mktemp -d "$TMPDIR/idd-correct-XXXXXX")"; : >"$FRESH/state.json"
+STALE="$(git_fixture_mktemp "$TMPDIR/idd-correct-XXXXXX")" || exit 1; : >"$STALE/state.json"; touch -t 202001010000 "$STALE"
+FRESH="$(git_fixture_mktemp "$TMPDIR/idd-correct-XXXXXX")" || exit 1; : >"$FRESH/state.json"
 helper r86 correct-prepare --target comment:9999 --repo o/r --section "## Notes" --body-file "$WORK/fix.md" --scrub-attested warn
 refute "the stale working directory is removed" test -d "$STALE"
 require "a recent one is kept" test -d "$FRESH"
@@ -413,7 +415,7 @@ helper r813 correct-prepare --target comment:410 --repo o/r --section "## Notes"
 assert_eq "an added setext heading is refused" "setext" "$(val REASON "$WORK/r813.out")"
 
 # R8.14 the archive directory must be creatable before the preview
-OBST="$WORK/obstructed"; mkdir -p "$OBST/.claude"; git -C "$OBST" init -q; : >"$OBST/.claude/.idd"
+OBST="$WORK/obstructed"; mkdir -p "$OBST/.claude"; git_fixture_init "$OBST"; : >"$OBST/.claude/.idd"
 (cd "$OBST" && python3 "$HELPER" correct-prepare --target comment:410 --repo o/r --section "## Notes" --body-file "$WORK/fix.md" --scrub-attested warn) >"$WORK/r814.out" 2>"$WORK/r814.err"
 assert_eq "a file where the archive directory goes is refused at prepare" "archive" "$(val REASON "$WORK/r814.out")"
 
@@ -473,11 +475,11 @@ R95W="$(val WORK "$WORK/r95p.out")"
 helper r95a correct-apply --work "$R95W" --state "$(restate "$R95W" 'del s["sha"]')"
 assert_eq "a state without sha is refused with a reason" "differs-from-preview" "$(val REASON "$WORK/r95a.out")"
 # R9.6 an abandoned run directory is removed too
-STALE_RUN="$(mktemp -d "$TMPDIR/idd-run-XXXXXX")"; : >"$STALE_RUN/run.json"; touch -t 202001010000 "$STALE_RUN"
+STALE_RUN="$(git_fixture_mktemp "$TMPDIR/idd-run-XXXXXX")" || exit 1; : >"$STALE_RUN/run.json"; touch -t 202001010000 "$STALE_RUN"
 helper r96 correct-prepare --target comment:9999 --repo o/r --section "## Notes" --body-file "$WORK/fix.md" --scrub-attested warn
 refute "a stale run directory is removed" test -d "$STALE_RUN"
 # R9.7 a target refused at the author gate writes nothing into the repository
-NG9="$WORK/fresh-repo"; mkdir -p "$NG9"; git -C "$NG9" init -q
+NG9="$WORK/fresh-repo"; mkdir -p "$NG9"; git_fixture_init "$NG9"
 mkrec comment-425.json someone-else MEMBER "$SECTION_BODY"
 (cd "$NG9" && python3 "$HELPER" correct-prepare --target comment:425 --repo o/r --section "## Notes" --body-file "$WORK/fix.md" --scrub-attested warn) >"$WORK/r97.out" 2>"$WORK/r97.err"
 assert_eq "it is refused as R5" "R5" "$(val REASON "$WORK/r97.out")"
@@ -513,7 +515,7 @@ helper r121 restore --target comment:430 --repo o/r
 assert_eq "same-second ids follow their suffix order" "comment-430-20261018T000000Z comment-430-20261018T000000Z-2 comment-430-20261018T000000Z-10" \
   "$(sed -n 's/^BACKUP_ID=//p' "$WORK/r121.out" | grep 20261018T000000Z | tr '\n' ' ' | sed 's/ $//')"
 # R12.2 the lookup refuses what restore refuses: a repository that tracks archive entries
-TR="$WORK/tracked-repo"; mkdir -p "$TR/.claude/.idd/archive/edits"; git -C "$TR" init -q
+TR="$WORK/tracked-repo"; mkdir -p "$TR/.claude/.idd/archive/edits"; git_fixture_init "$TR"
 printf 'old\n' >"$TR/.claude/.idd/archive/edits/comment-430-20260101T000000Z.md"
 printf 'o/r' >"$TR/.claude/.idd/archive/edits/comment-430-20260101T000000Z.repo"
 git -C "$TR" add -A && git -C "$TR" -c user.email=t@t -c user.name=t commit -qm planted

@@ -11,7 +11,9 @@
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/../../lib/assert-helpers.sh"
-W="$(mktemp -d)"; trap 'rm -rf "$W"' EXIT
+. "$HERE/../../lib/git-fixture-helpers.sh"
+git_fixture_setup
+W="$(git_fixture_mktemp)" || exit 1; trap 'rm -rf "$W"; git_fixture_cleanup' EXIT
 
 # ── 機制 1：exists ＝ heading 在「且」至少一個可解析項目 ───────────────────
 # checkbox regex 與 idd-close Step 0 同源（`^\s*-\s*\[(.)\]\s*(.+)$`）。
@@ -40,7 +42,7 @@ refute  "heading 缺席不 resolve"                    resolves "$W/absent.md"
 # 回傳的路徑可能指向 sibling worktree。假陽性（讀到別處已完成的清單而放行未完成
 # 的 issue）比假陰性嚴重得多，所以這道圍籬必須用真情境驗。
 R="$W/repo"; mkdir -p "$R"
-git -C "$R" init -q; git -C "$R" config user.email t@t.t; git -C "$R" config user.name t
+git_fixture_init "$R"; git -C "$R" config user.email t@t.t; git -C "$R" config user.name t
 mkdir -p "$R/changes/a"; printf -- '- [x] done\n' > "$R/changes/a/tasks.md"
 ( cd "$R" && git add -A && git commit -qm x )
 git -C "$R" worktree add -q -b other "$W/repo-other" 2>/dev/null
