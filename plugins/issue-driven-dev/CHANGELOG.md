@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Version number left to the merge, as in PR #442.
+
+### Fixed
+
+- **`plan-routing-consistency` no longer reads gitignored files (#335).** Its scan of the repo root walked the
+  filesystem, so a machine that had run spectra (`.spectra/snapshots/`, `.gitignore:1`) or opened an
+  `idd-worktree.sh` worktree (`.claude/worktrees/idd-<N>/`, a full second checkout) failed the suite on text
+  nobody committed — green on a clean checkout, red locally. When the scanned directory is a git work-tree
+  top level it is now enumerated with `git grep --untracked`: tracked files plus untracked files that the
+  standard ignore rules (`.gitignore`, `.git/info/exclude`, the user's excludes file) do not hide — the scope
+  canaries rely on the untracked part, and report SKIP when a local rule hides them. Any other directory (the
+  positive controls) still uses `grep -r`. New controls in a throwaway repo check ignored, untracked and
+  committed restatements plus an upper-case claim and a non-ASCII file name. The suite unsets git's
+  repository-local variables (`git rev-parse --local-env-vars`) and keeps the throwaway repo free of the
+  caller's config, hooks and signing: git exports `GIT_DIR` to hooks, `rebase -x` and `bisect run` in a linked
+  worktree and `GIT_INDEX_FILE` to a pre-commit hook in any worktree, and an earlier draft of this change
+  committed into the caller's branch that way. The other recursive scans in `scripts/tests/` stay under
+  `$PLUGIN`, which holds no ignored `.md` today.
+
 ## [3.5.0] - 2026-10-20
 
 ### Added
