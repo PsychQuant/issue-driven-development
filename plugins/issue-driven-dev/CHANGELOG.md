@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.5.1] - 2026-10-21
+## [3.5.1] - 2026-10-30
 
 ### Fixed
 
@@ -15,7 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reported as missing from main — 39 false orphans on PR #408, where a follow-up commit also edited the
   branch's lines after the squash. `check-merge-completeness.sh` now answers one question, "did the branch's
   content land":
-  - **The head's content already at the tip.** When, on every path a branch commit touched, main's tip has
+  - **The head's content already at the tip.** When, on every path a candidate (a commit `git cherry` does not
+    match) touched, main's tip has
     exactly what the branch head has, nothing is left to land and the helper exits 0 at once, however main got
     there: a squash resolved to the branch's tree after another PR made the same change, a later commit of main's
     own. This is the first test #399 asked for.
@@ -29,10 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     change only on lines whose text repeats in the file (git can pair equal lines one way when it builds the
     squash and another way in these diffs, as when the branch deletes one of two equal lines next to a line main
     edited), it holds the net change when its own step changes the number of copies of each such text as the net
-    change does; only a text at most one branch commit touches (adds or deletes a line of it, a move included) is
-    counted this way, only when some other line of the net change is in place in that commit (a commit of main's
-    own that adds the same text elsewhere carries none of the branch's change), and never at a
-    merge commit, whose step also brings the other commits of the side it merges.
+    change does; only a text at most one branch commit touches (adds or deletes a line of it, a move included) and
+    whose number of copies the net change changes (a move has none to compare) is counted this way, only when some
+    other line of the net change is in place in that commit that its own step brought (a commit of main's own that
+    adds the same text elsewhere carries none of the branch's change, even when an earlier squash of the branch
+    put its other lines in place), and never at a merge commit, whose step also brings the other commits of the
+    side it merges.
   - **Partial merges.** When the whole branch never landed, the newest 20 of its earlier commits are tried.
     Commits up to the newest one that landed are checked where they landed and only the rest against the tip,
     so a genuine orphan does not drag lines main edited after landing into the list. A branch with no net change
@@ -48,16 +51,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     (another PR's key in the same config file, a release merge, a `git pull` merge, a squash edited by hand,
     a shared `}`) — therefore neither hides nor flags a branch commit; a commit undone later in the branch is
     not reported; a commit that restores a value from the merge-base and was left out of the squash is, and so
-    is one with several effects of which only some landed. A position identifies a line only while its text is
-    unique: where a line found missing repeats in the file (a copied function, a duplicated block), git may
-    have put main's edit on the branch's copy when it built the squash, so the finding stands only when the
-    copies agree (the landing commit, less what main added or removed before it, has fewer copies of an added
-    line than what landed there, or more of a deleted one). Copies are counted only in a file the commit edited,
-    each revision's file read under the name it has there, never for a submodule pointer; and they are taken
-    as main's own only when the commit before the landing commit holds no earlier part of the branch (an earlier
-    squash of it, a cherry-pick) and no other branch commit changes their number. At the tip, where main's own edits are unknown, an
-    added line or path the head still has must be present and a deleted one the head still lacks must be
-    absent; a line a later branch commit rewrote or deleted is skipped.
+    is one with several effects of which only some landed. A position identifies a line only while the lines
+    around it say which one it is: git may have put main's edit on the branch's copy of a repeated line when it
+    built the squash (a copied function, a duplicated block), and next to such a block it can pair even a unique
+    line with another. So every finding stands only when the copies agree too (the landing commit, less what
+    main added or removed before it, has fewer copies of an added line than what landed there, or more of a
+    deleted one); a unique line must also be in the landing commit as often as in what landed, before main's own
+    copies are counted, and one the commit moved is judged by its position alone. Copies are counted only in a
+    file the commit edited, each revision's file read under the name it has there, never for a submodule
+    pointer. What the commit before the landing commit gained or lost is main's own, unless another commit of
+    the branch that changes the copies reached it (its own change all in place there): the finding then stands
+    (an earlier squash of the branch, a pick, later commits squashed before an earlier one). At the tip, where main's own edits are unknown, an added line or
+    path the head still has must be present and a deleted one the head still lacks must be absent, each file
+    read under the names it has in the head too (a later commit of the branch may have moved it); a line a
+    later branch commit rewrote or deleted is skipped.
   - **No merges.** Every comparison is a two-way `git diff` with every setting that shapes its output fixed on
     the command line (no context lines between hunks, `GIT_DIFF_OPTS` unset, no external diff, no textconv,
     `--text`, rename detection with git's defaults, myers with the indent heuristic, fixed prefixes, quoted
@@ -65,8 +72,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     tree or blob. Every git call runs with `core.precomposeUnicode` off: the paths the helper passes are git's own
     listings, byte for byte, and with it on (macOS's default) a name stored in NFD matched nothing, so a branch
     that never landed read as landed. Above 64 KB of paths, two trees holding only the listed paths are written
-    to a temporary object store and compared, so renames pair among the same paths as on the command line; the
-    repository itself is never written. Nothing runs `git merge-tree`, so no merge driver or attribute can
+    to a temporary object store and compared, so renames pair among the same paths as on the command line (every
+    listed path must reach those trees, or the read fails rather than skip one; no split index; the repository's
+    own object directory quoted in the alternates list): nothing is written into the repository, though git may
+    refresh the timestamp of a tree it already has. Nothing runs `git merge-tree`, so no merge driver or attribute can
     steer the answer. The helper needs git 2.30 or later (`rev-parse --end-of-options`, as 3.5.0 did). Earlier drafts of this change used `merge-tree`: a three-way merge
     conflicts when two edits merely sit on adjacent lines, and those drafts read such a conflict either as
     "not landed" (a false orphan) or as "landed" (a dropped commit missed).
@@ -113,8 +122,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     commit deleted, which main then replaced); at the landing commit, a copy of a line next to an identical
     line, or next to an identical line another PR inserted (diff may pair the copies either way, so a copy
     that never landed, or a deletion that did not, can read as in place; 3.5.0 missed these at the tip too),
-    or of a text main also changed elsewhere in the landing step itself (a squash edited by hand), which the
-    copy count cannot see, whether it counts a finding or the copies of a commit taken to hold the net change;
+    or a line, unique or not, that main itself put elsewhere in the file in the landing step (a squash edited by
+    hand), which the copy count cannot see, whether it counts a finding or the copies of a commit taken to hold
+    the net change; a part of the branch that reached main before the landing commit in a form that leaves a line
+    of its commits out of place (a squash edited by hand), whose copies then read as main's;
     with macOS awk, a binary edit that changes only bytes
     after a NUL; a commit in a branch with no net change that set a line back to its merge-base value, when no
     prefix of the branch landed later (3.5.0, which compared the tip, listed some of these).
@@ -124,7 +135,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     undone by a later commit that landed, and was then changed again by one that did not, or a commit that did
     not land whose line a later commit, which did not land either, rewrote.
   - Falls back to the tip, where lines main edited after landing can be flagged: a squash whose conflicts were
-    resolved by hand, leaving one of the branch's own lines out of place; a file the branch edited that main moved
+    resolved by hand, leaving one of the branch's own lines out of place; a landing commit that fails by position
+    only on a repeated text that more than one branch commit touches, or that the net change only moves (one
+    commit deletes one of two equal lines, another adds one); a landing in several steps (Rebase and merge, a
+    squash into another branch that is then merged) whose last step fails by position on repeated text; a file the branch edited that main moved
     or renamed before the branch landed (3.5.0 listed these too); a landing commit beyond 200 checks; a
     landed prefix followed by more than 20 commits that never landed; a branch with no net change some of
     whose commits were cherry-picked; a commit after the landed prefix that landed on its own, if main edited
@@ -133,14 +147,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     changed the stack's lines after the stack was cut. When nothing of the branch landed, the check is at the
     tip as well: the verdict (exit 3) is right, but the list can include, or miss, a commit whose text main
     added or removed on its own.
-  - Timing on this repository, as CPU time on a busy machine (other work kept the load between 55 and 115, so
-    wall-clock times were longer and unsteady): PR #408 about 11 s (3.5.0: 7 s, with its false orphans); a squash
-    of a branch that moves 2000 files under 1 s, since the tip already has the head's content (3.5.0: 18 s); the
-    same move with 300 of the files edited, squashed and then edited once more by main, about 2 s (3.5.0: 22 s and
-    a false orphan); a branch that never landed about 1 s, or about 13 s when main often edits its files (3.5.0:
-    under 1 s); a never-landed 150-commit branch about 25 s (3.5.0: 9 s). In a repository with 100,000 files in one
-    directory a never-landed branch takes about 12 s (3.5.0: under 1 s): the landing walk makes at most 200 checks,
-    each limited to the branch's paths, and the tip check reads each side's tree once.
+  - Timing on this repository, as CPU time on a busy machine (other work kept the load between 25 and 80, so
+    wall-clock times were longer and unsteady): PR #408 about 7 s (3.5.0: 5 s, with its false orphans); a squash of
+    a branch that moves 2000 files under 1 s, since the tip already has the head's content (3.5.0: 14 s); the
+    same move with 300 of the files edited, squashed and then edited once more by main, about 2 s (3.5.0: 17 s and
+    a false orphan); a branch that never landed under 1 s, or about 9 s when main often edits its files (3.5.0:
+    under 1 s); a never-landed 150-commit branch about 23 s (3.5.0: 7 s), and about 38 s when its file repeats a
+    heading such as `### Fixed` on every commit (a draft of this change took 245 s there). In a repository with
+    100,000 files in one directory a never-landed branch takes about 8 s (3.5.0: under 1 s), and one that edits
+    3,000 of those files, past 64 KB of paths, about 34 s while main edits them 20 times: the landing walk makes
+    at most 200 checks, each limited to the branch's paths (or to trees filtered to them, built once per revision),
+    and the tip check reads each side's tree once.
 
 ### Added
 
@@ -150,8 +167,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deleted or added empty file. At the tip this brings a false report 3.5.0 did not have: a deleted line that
   main has elsewhere in the same files, or put back.
 - **Test runner.** `scripts/run-all-tests.sh` reads a `timeout` file next to a suite's `test.sh` and uses the
-  larger of it and `IDD_SUITE_TIMEOUT` (default 180 s). The merge-completeness suite takes two to three minutes
-  on macOS and asks for 600 s (it runs far longer on a loaded machine).
+  larger of it and `IDD_SUITE_TIMEOUT` (default 180 s). The merge-completeness suite takes about four minutes on
+  an idle Mac and over ten on a loaded one (under a minute on Linux), and asks for 1200 s.
 
 ### Changed
 

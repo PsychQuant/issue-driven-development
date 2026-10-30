@@ -509,9 +509,28 @@ def model_sides(mb, ops, S, mop, aop, extra, landing, minus, old_git):
                     return False
                 if sum(1 for j in range(n) if touches(j, text)) > 1:
                     return False
+                if cnt(ref, text) == cnt(mb, text):
+                    return False   # a move: no count to compare (round 15)
                 if cnt(c, text) - cnt(prev, text) != cnt(ref, text) - cnt(mb, text):
                     return False
-            return True
+            # and one the step itself brought: in place in the commit, not in its parent
+            # (round 15)
+            def placed(st, u, line):
+                if line == "A":
+                    return st[u] == ref[u]
+                return st[u] != mb[u]
+            brought = False
+            for u in UNITS:
+                if ref[u] == mb[u] or u == "e":
+                    continue
+                for line, val in (("A", ref[u]), ("D", mb[u])):
+                    if val in (None, False):
+                        continue
+                    if (u, val) in failing:
+                        continue
+                    if placed(c, u, line) and not placed(prev, u, line):
+                        brought = True
+            return brought
         return all(c[u] == ref[u] for u in UNITS if ref[u] != mb[u])
 
     def find_landing(kref):
@@ -594,20 +613,7 @@ def model_sides(mb, ops, S, mop, aop, extra, landing, minus, old_git):
                         step_main.add(v)
                 elif st[v] != lp[v]:
                     step_main.add(v)
-    # the helper's part_landed: L^1 holds the net change of an earlier part of what
-    # landed (a prefix with a net change of its own); R1 then keeps its findings
-    part = False
-    if isinstance(L, int) and split_of(landing) is not None and len(split_of(landing)) == 1 and L == received:
-        part = True   # git cherry finds the first squash's one commit in L^1
-    if isinstance(L, int) and not part:
-        lp = seq[L - 1][0] if L > 0 else dict(mb)
-        lpp = (seq[L - 2][0] if L > 1 else mb) if L > 0 else None
-        for k in range((prefix or n) - 1, 0, -1)[:20]:
-            if holds(mb, states[k]):
-                continue
-            if holds(lp, states[k], lpp, None if (L - 1) in merges else k):
-                part = True
-                break
+    part = (L == "mb")   # the helper consults other commits' copies only past the merge-base
     return sides, later, land_state, land_own, land_prev, land_ref, part, step_main
 
 
@@ -669,6 +675,49 @@ def tip_says_orphan(op, head, tip):
     return any(one(*e) for e in edits(op))
 
 
+def d1_cause(case, minus, k):
+    """Whether the case has a cause SPEC.md D1 lists for checking commit k at the tip,
+    read from how the case was built (S, the landing mode, the branch's texts), never
+    from the helper's landing rules: nothing landed (S empty, or commits that cancel
+    out, so no tree shows them); S is not a prefix of the
+    branch, or k comes after it; a squash edited by hand, a merge or a landing in two
+    squashes (several steps); a text whose copies the landing commit must be counted
+    for that more than one commit touches, or that a commit moves; a branch with no net
+    change (it lands at the merge-base, and the commits after a prefix that landed later,
+    in a squash or in a commit of main's own that holds the prefix's net change, B2, are
+    checked at the tip; or some of its commits were cherry-picked)."""
+    mb, ops, S, mop, aop, extra, landing = case
+    n = len(ops)
+    if not S:
+        return True
+    net = compose(mb, ops, S)
+    if net is not None and all(net[u] == mb[u] for u in UNITS):
+        return True   # what landed changes nothing: no tree shows it
+    if set(S) != set(range(len(S))) or k not in S:
+        return True
+    if landing in ("own", "merge") or split_of(landing) is not None:
+        return True
+    head = dict(mb)
+    states = [dict(mb)]
+    for op in ops:
+        states.append(apply_strict(dict(states[-1]), op))
+    head = states[-1]
+    if all(head[u] == mb[u] for u in UNITS):
+        return True
+    def cnt(st, text):
+        return sum(1 for v in range(SLOTS) if st[v] is not None and txt_of(st[v], v) == text)
+    texts = {txt_of(st[v], v) for st in states for v in range(SLOTS) if st[v] is not None}
+    for text in texts:
+        if cnt(head, text) < 2 and cnt(mb, text) < 2:
+            continue
+        touching = [j for j in range(n) if cnt(states[j], text) != cnt(states[j + 1], text)
+                    or any(isinstance(u, int) and any(x is not None and txt_of(x, u) == text for x in (frm, to))
+                           for u, frm, to in edits(ops[j]))]
+        if len(touching) > 1 or cnt(head, text) == cnt(mb, text):
+            return True
+    return False
+
+
 def classify(case, exp, got, args, text, sides):
     """Name the SPEC.md deviation a disagreement belongs to, or None (a bug).
     Nothing here is taken from the helper's own answer: where each commit is
@@ -727,22 +776,32 @@ def classify(case, exp, got, args, text, sides):
         # commit that is main's own)
         return any(v != u_missing and any(x is not None and txt_of(x, v) == text for x in (land_prev[v], land_state[v]))
                    for v in step_main)
+    states = [dict(mb)]
+    for o in ops:
+        states.append(apply_strict(dict(states[-1]), o))
     def other_copies(k, text):
-        # the helper's restriction: another branch commit changes the number of copies
-        st = dict(mb)
+        # the helper's other_copies: another branch commit that changes the number of
+        # copies and reached L^1 (in_l1: each line it added is in place in L^1, each line
+        # it deleted gone)
         for j, o in enumerate(ops):
-            nxt = apply_strict(dict(st), o)
-            if j != k and copies(st, text) != copies(nxt, text):
+            if j == k:
+                continue
+            if copies(states[j], text) == copies(states[j + 1], text):
+                continue
+            recs = [(u, frm, to) for u, frm, to in edits(o) if isinstance(u, int)]
+            checks = [land_prev[u] == to for u, frm, to in recs if to is not None] + \
+                     [land_prev[u] != frm for u, frm, to in recs if frm is not None]
+            if checks and all(checks):
                 return True
-            st = nxt
         return False
     def r1_landed(k, op):
-        # SPEC.md R1: a finding on a line whose text repeats stands only when the copies
-        # agree; True when, for every effect of op the model finds missing, the helper's
-        # count reads it as landed AND the model has R1's cause (main changed another
-        # copy in the landing step). Without the cause, a count that clears a missing
-        # effect is a bug, not the documented deviation (#399 verify round 13).
-        if land_state is None or land_prev is None or part:
+        # SPEC.md R1: a finding stands only when the copies agree (a unique line the
+        # commit moved excepted); True when, for every effect of op the model finds
+        # missing, the helper's count reads it as landed AND the model has R1's cause
+        # (main changed another copy in the landing step). Without the cause, a count
+        # that clears a missing effect is a bug, not the documented deviation (#399
+        # verify round 13).
+        if land_state is None or land_prev is None:
             return False
         before = dict(mb)
         for o in ops[:k]:
@@ -766,13 +825,19 @@ def classify(case, exp, got, args, text, sides):
             return False
         for t, text, src, u in missing:
             n_src, n_head, n_ref, n_land = copies(src, text), copies(head, text), copies(land_ref, text), copies(land_state, text)
+            # a unique text must be in L as often as in what landed, and one the commit
+            # moved keeps its finding (round 15: every other unique line is counted too)
             if max(n_src, n_head, n_ref, n_land) < 2:
-                return False
-            n_prev, n_mb = copies(land_prev, text), copies(mb, text)
-            if n_prev != n_mb and other_copies(k, text):
-                return False
-            adj = n_land - n_prev + n_mb
+                other = before if t == "A" else after
+                if (t == "A" and n_land < n_ref) or (t == "D" and n_land > n_ref):
+                    return False
+                if copies(other, text) == n_src:
+                    return False
+            n_prev = copies(land_prev, text)
+            adj = n_land - n_prev + copies(mb, text)
             if (t == "A" and adj < n_ref) or (t == "D" and adj > n_ref):
+                return False
+            if not part and other_copies(k, text):
                 return False
             if not main_in_step(text, u):
                 return False
@@ -789,6 +854,11 @@ def classify(case, exp, got, args, text, sides):
             return None
         if side == "tip":
             if tip_says_orphan(op, head, tip) != (name in listed):
+                return None
+            # the commit must be at the tip for a reason SPEC.md D1 names, read from the
+            # case itself rather than from the routing model, which follows the helper's
+            # landing rules (#399 verify round 14)
+            if not d1_cause(case, minus, k):
                 return None
             classes.add("D1+D2 tip check")
         elif side == "land" and name in listed:

@@ -104,7 +104,8 @@ copy is an effect too.
 | 53 | A deletion that never landed, in a file the same commit renamed (also in a moved file with repeated text) | all but it | 3: that commit (not exit 4) | 136, 138 |
 | 54 | The branch landed in two squashes (or a cherry-pick, then a squash, also of a later commit first); a restore of a repeated line never landed, also when main's own edit and the first squash's copy cancel out | the landed commits | 3: the restore | 137, 137b, 147, 149 |
 | 55 | More than 64 KB of paths: main moved a file the wide commit touched; a squash, then main's edit; a wide commit that never landed | all / all / ∅ | 0 / 0 / 3 | 139, 140, 141 |
-| 56 | One of two equal adjacent lines deleted next to a line main edited; clean squash; follow-up (also when the branch moved the file) | all | 0 | 142, 146 |
+| 56 | One of two equal adjacent lines deleted next to a line main edited; clean squash; follow-up (also when the branch moved the file), when no other commit of the branch touches that text | all | 0 | 142, 146, 163 |
+| 56b | Row 56 when another commit of the branch adds or deletes a copy of the same text, or the branch landed in several steps (Rebase and merge, a squash into another branch that is then merged) | all | 0 in the definition; the helper finds no landing commit and checks at the tip (D1+D2), where the follow-up lists the commit | — (fuzz runs in Results) |
 | 57 | Row 56 with a restore elsewhere that never landed | all but the restore | 3: the restore only | 142b |
 | 58 | A copy one commit added and the next took away, another copy added; two squashes | all | 0 | 148 |
 | 58b | Only a prefix could have landed, and a later commit brings a copy of its line in the same squash | the later commits | 3 in the definition; the helper checks the prefix at the tip (D1+D2), where the copy hides it | 150 (pins the route) |
@@ -117,6 +118,17 @@ copy is an effect too.
 | 62 | A file turned into a submodule, or back, checked where the branch landed (undone by a later landed commit, redone by one that never landed) | all but the last | 3 (D3: listed with the last), not exit 4 | 152, 152b |
 | 63 | Row 54 when the part in L^1 is neither a prefix of the branch nor a patch `git cherry` finds (two of its commits squashed together, before the first commit) | the landed commits | 3: the restore | 153 |
 | 64 | Row 46 after the branch first moved the file: main's edit of a copy is in the file under its old name | all | 0 (R1, the copies read under each revision's name) | 154 |
+| 65 | A commit adds a line, and a later commit moves its file (with or without an edit); main gets only the move, by a pick or a squash edited by hand | the move | 3: the first commit, its line looked for under the file's name in the head | 158, 158b, 159 |
+| 66 | Row 46 with the function copied twice; or a unique line next to the copies, which the diffs pair with another function's | all | 0 (R1, unique lines counted too) | 160, 161 |
+| 67 | Row 46 or 56 after a commit of the branch (another file) was picked to main early, or after an earlier PR of the branch's unrelated commits | all | 0: a part of the branch in L^1 that changes no copy of the text does not stop R1 | 162, 163 |
+| 68 | Row 54 when the first PR is older than the 20 earlier commits searched for a part in L^1 | the landed commits | 3: the restore (the first PR's commit is in place in L^1) | 164 |
+| 69 | A squash edited by hand dropped a commit adding a copy, or moving one; later main's own commit adds the same text | the other commits | 3 in the definition; the landing is the squash of what landed, not main's commit, and the dropped commit is checked at the tip (D1+D2), where the copies hide it | 165, 166 (pin the route) |
+| 69b | A unique line restored by a commit that never landed, after the commit that moved it landed | all but the restore | 3: the restore (a move is judged by position) | 169 |
+| 69c | A file whose name has a backslash; main's own commit already had the branch's line in another file; squash; follow-up | all | 0 | 170 |
+| 70 | More than 64 KB of paths: a path `update-index` refuses (an NTFS form of `.git`), changed only on the branch; a repository whose path has `:`, with `core.splitIndex` on | ∅ there / all | 3 / 0, and nothing written into the repository's `.git` | 167, 168 |
+| 71 | A restore of a unique line never landed; main had replaced that line itself before the branch landed | the first commit | 3: the restore (the line is not in the landing commit; main's replacement does not count as main removing the branch's copy) | 171 |
+| 72 | A commit dropped after picks of the commits around it, the first pick replacing the line the branch's net change deletes | the picks | 3: the dropped commit | 172 |
+| 73 | Row 71 for a deletion: a commit deleting a unique line never landed, and main had put the same line in the same place itself | all but it | 3: that commit (the line is still in the landing commit) | 173 |
 
 ## The small world (`bounded.py`)
 
@@ -175,11 +187,22 @@ from the trace itself, so a helper with the landing step switched off still came
 nothing unexplained.
 
 - **D1, tip fallback.** Some commits have no landing commit to be checked at, and are
-  checked at the tip: nothing of a branch with a net change landed (S = ∅); the landed
+  checked at the tip: nothing of a branch with a net change landed (S = ∅, or commits that
+  cancel each other out, so no tree shows that they landed); the landed
   commits are not a prefix of the branch; a squash resolved by hand left one of the branch's
   own lines out of place, so no commit holds its net change; main moved or renamed a file
   the branch edited before the branch landed, so no commit has the branch's paths (3.5.0 listed
-  these too); or a branch with no net change reached main through cherry-picks. At the tip main's own edits, before or after landing,
+  these too); a commit that fails by position only on a repeated text that more than one
+  commit of the branch touches, or that the net change only moves, is not counted as holding
+  it (round 14's verify: one commit deletes one of two equal lines, another adds one); a
+  landing in several steps (Rebase and merge, a squash into another branch that is then
+  merged) whose last step fails on repeated text, since only that step's copies are counted
+  and never at a merge commit; or a branch with no net change: it lands at the merge-base,
+  and when a prefix of it landed later (a squash of its first commits, or a commit of main's
+  own that holds the prefix's net change, B2), the commits after that prefix are checked at
+  the tip, as they are when some of its commits reached main through cherry-picks. `bounded.py` requires one of these causes, read from how the case was built,
+  for every disagreement at the tip (round 15; before it, the class followed the routing model,
+  which follows the helper's own landing rules). At the tip main's own edits, before or after landing,
   are part of the target. The helper cannot tell "nothing landed" from "landed, then main
   changed it" there, so only presence is compared (D2), and the deviation is documented
   instead of fixed.
@@ -201,35 +224,55 @@ nothing unexplained.
   trees are exactly those of a history in which the commit was dropped, so no check that reads
   trees can tell; cherry-picking the listed commit would undo main's edit. For a line whose
   text repeats in the file, the copy count (R1) can read the same history as landed instead.
-- **R1, repeated lines.** A position identifies a line only while its text is unique in the
-  file. When a line found missing at the landing commit has a text that occurs more than once
-  (at the commit or its parent, the head or the landing commit), the helper keeps the finding
-  only when the copies agree: the landing commit, less the copies main added or removed before
-  it, has fewer copies of an added line than what landed there (the landed prefix, or the
-  head), or more of a deleted one. Copies are counted only in a file the commit edited, each
-  revision's file under the name it has there, never for a submodule pointer; and L^1's copies
-  are taken as main's only when L^1 holds the net change of no earlier part of the branch,
-  `git cherry` finds none of the branch's commits in L^1, and no other branch commit changes
-  their number (an earlier squash of the branch is in L^1 too:
-  round 13 read its copy as main's and cleared the commit that undid it). The same count
+- **R1, the copies.** A position identifies a line only while the lines around it say which one
+  it is. When a line's text occurs more than once, git may pair the copies one way when it
+  builds the landing commit and another way in the helper's diffs; next to a block of repeated
+  lines it can pair even a unique line with another (round 14's verify: a function copied
+  twice). So every finding at the landing commit stands only when the copies agree too: the
+  landing commit, less the copies main added or removed before it, has fewer copies of an
+  added line than what landed there (the landed prefix, or the head), or more of a deleted
+  one. A unique line has one copy, so main's edit cannot have been put on the branch's copy of
+  it: it must also be in the landing commit as often as in what landed, before main's own
+  copies are counted (otherwise main's own replacement of the line before landing let a
+  restore of it that never landed read as landed, found by `--landing two --touch` in round
+  15); and a unique line the commit moved (its step leaves the number of copies alone) is
+  judged by its position alone. Copies are counted only in a file the commit edited, each
+  revision's file under the name it has there, never for a submodule pointer. What L^1 gained
+  or lost since the merge-base is main's, unless another commit of the branch that changes the
+  copies has its own change all in place in L^1: the finding then stands. That covers every way
+  a part of the branch reaches main before the landing commit: a squash of its first commits
+  (round 13 read its copy as main's and cleared the commit that undid it), a pick, later
+  commits squashed before an earlier one, a squash older than any search would try. Round 14
+  kept the finding whenever another commit changed the copies, or any earlier part of the
+  branch was in L^1, whatever file it touched: a function copied twice, a hotfix picked early,
+  or an earlier PR of the branch then listed a clean squash. Round 15 first subtracted the
+  copies of the newest earlier prefix L^1 holds; `--landing two` showed L^1 can hold a prefix
+  only because a deletion counts as landed once its line is replaced, so the prefix's state is
+  not what L^1 has, and a dropped commit was missed. The same count
   decides a landing commit that positions alone reject: a commit that fails only on lines
   whose text repeats holds the net change when its own step changes the copies of each such
   text as the net change does, for a text at most one commit of the whole branch touches
-  (adds or deletes a line of it: a move leaves the count alone), when some other line of the
-  net change is in place in that commit (a commit of main's own that adds the same text
-  elsewhere carries none of the branch's change), and never at a merge commit (its step brings the other commits of the side
+  (adds or deletes a line of it: a move leaves the count alone) and whose copies the net
+  change changes (a move has no count to compare: round 14 took a squash that dropped one
+  for the landing commit), when some other line of the net change is in place in that commit
+  that its own step brought (a commit of main's own that adds the same text elsewhere carries
+  none of the branch's change, even when an earlier squash put the branch's other lines in
+  place), and never at a merge commit (its step brings the other commits of the side
   it merges; with the count there, `--landing merge` gave 8 more wrong verdicts than round 13
   over all 27,498 cases).
   This removes the false findings of a clean squash whose main edit git put on the branch's
   copy (#399 verify round 12) and the missed landing of a squash that deletes one of two equal
   lines (round 13). The count only ever removes a finding, never adds one, and it cannot see an
   edit main made in the landing step itself (a squash edited by hand, another PR in a release
-  merge): when such an edit changes another copy of the same text, a copy that never landed, or
-  a deletion that did not, reads as landed, at the landing commit or in choosing it.
+  merge): when such an edit puts the same text elsewhere, a line that never landed, or a
+  deletion that did not, reads as landed, at the landing commit or in choosing it; and a part of
+  the branch that reached L^1 in a form that leaves a line of its commits out of place reads as
+  main's.
   `bounded.py` finds these in `--landing own`, `--landing merge` and `--landing two` and decides
   them from the model, not from the helper's count alone: the commit is checked at the landing
-  commit and missed, the model finds its effect missing there, the text occurs at least twice,
-  the helper's count computed on the model's states reads it as landed, and in the model's
+  commit and missed, the model finds its effect missing there (a unique line not one the
+  commit moved), the helper's count computed on the model's states reads it as landed, and in
+  the model's
   landing step main itself changed another copy of that text: an edit of its own in that
   commit, another PR in the merge, a conflict resolved over an edit of main's own, or every
   change when the landing commit is main's own (B2). The branch's own changes in the step
@@ -276,70 +319,73 @@ check for an earlier part of the branch in L^1, as the helper's header states th
 
 ## Results
 
-Runs of 2026-10-30 against the final round-14 helper and `bounded.py`, with `python3 bounded.py
---max-len N [--sample K --seed S] [mode]`. The runs used helper blob `e7fcb30`; the committed
-blob `19f7dd7` differs only in the order of the refusals at the start of `holds_by_copies` (the
-cheapest first) and a count kept per net change, and passes the whole suite as well. Other
-work kept the machine's load between 55 and 640 through the night, so the length-2 `own` and
-`merge` modes ran on samples of 6,000 (round 13 ran all their cases); the rest are the sizes
-round 13 used. "Known" lists the cases by class ("tip" is D1+D2 alone); "Wrong verdict" counts
-the known cases whose exit code differs from the definition's; "Landing" counts cases in which
-at least one commit was checked at a landing commit.
+Runs of 2026-10-30 against the round-15 helper (blob `f8b4759`, the one committed)
+and `bounded.py`, with `python3 bounded.py --max-len N [--sample K --seed S] [mode]`. The machine
+carried other work at a load of 20 to 190 through the morning, so apart from `plain` length 2
+(every case) the samples are smaller than round 14's (600 to 1,000 cases a mode, against 3,000
+to 6,000). "Known" lists the cases by class ("tip" is D1+D2 alone); "Wrong verdict" counts the
+known cases whose exit code differs from the definition's; "Landing" counts cases in which at
+least one commit was checked at a landing commit.
 
 | Mode | Length | Cases | Agree | Known | Wrong verdict | Landing | Unexplained |
 |------|--------|-------|-------|-------|---------------|---------|-------------|
 | default | ≤ 2 | 7,058 (all) | 5,938 | tip 1,120 | 716 (3 → 0) | 1,260 | 0 |
-| default | ≤ 3 | 6,000 of 109,788, seed 399 | 4,391 | tip 1,601, tip+D3 4, D3 4 | 541 (3 → 0) | 1,972 | 0 |
-| default | ≤ 3 | 6,000 of 109,788, seed 4242 | 4,364 | tip 1,630, D3 4, tip+D3 2 | 568 (3 → 0) | 1,888 | 0 |
-| `--landing own` | ≤ 2 | 6,000 of 22,440, seed 399 | 5,226 | tip 737, R1 37 | 622 (3 → 0) | 4,224 | 0 |
-| `--landing own` | ≤ 3 | 3,000 of 300,448, seed 399 | 2,279 | tip 681, R1 20, D3 10, tip+D3 6, tip+R1 4 | 246 (3 → 0) | 1,965 | 0 |
-| `--landing merge` | ≤ 2 | 6,000 of 27,498, seed 399 | 5,379 | tip 607, R1 14 | 621 (3 → 0) | 1,845 | 0 |
-| `--landing merge` | ≤ 3 | 3,000 of 392,358, seed 399 | 2,281 | tip 696, R1 12, D3 8, tip+D3 3 | 242 (3 → 0) | 1,295 | 0 |
-| `--landing two` | ≤ 3 | 3,000, seed 399 | 2,792 | tip 208 | 205 (3 → 0) | 1,100 | 0 |
-| `--landing two` | ≤ 3 | 3,000, seed 4242 | 2,796 | tip 204 | 203 (3 → 0) | 1,078 | 0 |
-| `--landing two --touch` | ≤ 3 | 3,000, seed 12 | 2,743 | tip 230, B2 13, D4 13, R1 1 | 238 (3 → 0), 14 (0 → 3) | 773 | 0 |
-| `--after` | ≤ 2 | 3,000 of 22,350, seed 399 | 2,458 | tip 424, B2 118 | 513 (3 → 0), 29 (0 → 3) | 1,175 | 0 |
-| `--adjacent --distinct` | ≤ 2 | 3,000 of 7,058, seed 12 | 3,000 | — | — | 875 | 0 |
-| `--adjacent --distinct --landing own` | ≤ 2 | 3,000 of 22,440, seed 12 | 3,000 | — | — | 2,098 | 0 |
-| `--adjacent --distinct --landing merge` | ≤ 2 | 3,000 of 27,498, seed 12 | 3,000 | — | — | 1,404 | 0 |
-| `--touch` | ≤ 2 | 3,000 of 11,448, seed 12 | 2,475 | tip 504, B2 14, B1 5, R1 2 | 369 (3 → 0), 7 (0 → 3) | 510 | 0 |
-| `--touch --landing own` | ≤ 2 | 3,000 of 71,070, seed 12 | 2,130 | tip 838, B2 14, R1 9, D4 5, B1 4 | 318 (3 → 0), 295 (0 → 3) | 1,538 | 0 |
-| `--touch --landing merge` | ≤ 2 | 3,000 of 79,350, seed 12 | 2,381 | tip 600, B2 16, D4 2, R1 1 | 373 (3 → 0), 232 (0 → 3) | 834 | 0 |
-| `--pairs` | ≤ 2 | 3,000 of 103,986, seed 12 | 2,589 | tip 411 | 167 (3 → 0) | 523 | 0 |
+| default | ≤ 3 | 1,000 of 109,788, seed 399 | 723 | tip 277 | 105 (3 → 0) | 293 | 0 |
+| default | ≤ 3 | 1,000 of 109,788, seed 4242 | 740 | tip 259, tip+D3 1 | 97 (3 → 0) | 302 | 0 |
+| `--landing own` | ≤ 2 | 800 of 22,440, seed 399 | 692 | tip 100, R1 8 | 84 (3 → 0) | 553 | 0 |
+| `--landing own` | ≤ 3 | 600 of 300,448, seed 399 | 459 | tip 133, R1 7, tip+D3 1 | 42 (3 → 0) | 393 | 0 |
+| `--landing merge` | ≤ 2 | 800 of 27,498, seed 399 | 723 | tip 71, R1 6 | 77 (3 → 0) | 250 | 0 |
+| `--landing merge` | ≤ 3 | 600 of 392,358, seed 399 | 454 | tip 141, R1 4, tip+D3 1 | 50 (3 → 0) | 248 | 0 |
+| `--landing two` | ≤ 3 | 600, seed 399 | 552 | tip 48 | 48 (3 → 0) | 200 | 0 |
+| `--landing two` | ≤ 3 | 600, seed 4242 | 565 | tip 35 | 35 (3 → 0) | 210 | 0 |
+| `--landing two --touch` | ≤ 3 | 600, seed 12 | 548 | tip 44, B2 5, D4 3 | 46 (3 → 0), 4 (0 → 3) | 163 | 0 |
+| `--after` | ≤ 2 | 600 of 22,350, seed 399 | 480 | tip 91, B2 29 | 117 (3 → 0), 3 (0 → 3) | 229 | 0 |
+| `--adjacent --distinct` | ≤ 2 | 600 of 7,058, seed 12 | 600 | — | — | 155 | 0 |
+| `--adjacent --distinct --landing own` | ≤ 2 | 600 of 22,440, seed 12 | 600 | — | — | 424 | 0 |
+| `--adjacent --distinct --landing merge` | ≤ 2 | 600 of 27,498, seed 12 | 600 | — | — | 283 | 0 |
+| `--touch` | ≤ 2 | 600 of 11,448, seed 12 | 498 | tip 100, B2 2 | 77 (3 → 0), 1 (0 → 3) | 103 | 0 |
+| `--touch --landing own` | ≤ 2 | 600 of 71,070, seed 12 | 428 | tip 165, R1 3, B1 2, B2 1, D4 1 | 70 (3 → 0), 52 (0 → 3) | 310 | 0 |
+| `--touch --landing merge` | ≤ 2 | 600 of 79,350, seed 12 | 492 | tip 103, B2 5 | 71 (3 → 0), 36 (0 → 3) | 178 | 0 |
+| `--pairs` | ≤ 2 | 800 of 103,986, seed 12 | 681 | tip 119 | 47 (3 → 0) | 155 | 0 |
 
-Against round 13 on the same runs the answers are the same or within a few cases: `plain` length
-2 agrees on all 7,058 cases exactly as round 13 did (5,938, with 716 wrong verdicts at the tip,
-all 3 → 0), `--pairs` likewise (2,589 and 167), and the other modes differ by at most four cases
-either way. The copy rule's limits show as R1: it reads main's own edit in the landing step (a
-squash edited by hand, a conflict resolved over main's edit) as the branch's copy, whether it
-counts a finding at the landing commit or the copies that make a commit the landing commit. The
-classes are decided from the model's cause (main's own change in the landing step), never from the
-helper's count alone. With adjacent slots and distinct texts every answer agrees with the
-definition. The two-squash modes (`--landing two`) are new in round 14 and have no round-13 row.
+`plain` length 2 gives exactly round 13's and round 14's answers on all 7,058 cases (5,938 agree,
+716 wrong verdicts at the tip, all 3 → 0). In every mode the tip class now also needs a cause D1
+names, read from how the case was built; the first runs found three causes the class had
+taken for granted (a branch with no net change whose prefix main's own commit holds, B2; commits
+in S that cancel out; and the routes the copy rule refuses), which SPEC D1 now names, and
+`--landing two --touch` found that counting a unique line after main's own copies are taken out
+let a restore of a line main had replaced read as landed (fixture 171). Its fix and the drop of
+the prefix subtraction (fixture 172) came before the runs above.
 
 Repeated lines, where git can pair the copies one way when it builds the squash and another way in
-the helper's diffs, are run on real `git merge --squash` histories by two fuzzers (kept with the
-#399 work, not in the repository). `fuzz13.py` (the devil's-advocate reviewer of round 12 wrote
-the first version): a base of 3–7 lines drawn from five repetition-prone code lines, a branch of
-2–3 commits that only insert lines, one edit of main's own, then a squash of the whole branch
-(full: nothing may be listed) or of its first commits (prefix: every later commit is an orphan).
-`fuzzdel2.py` (round 13's requirements reviewer): one commit deletes one of the repeated lines
-and changes the file's last line (in the rename runs it also moves the file), a second adds a
-file, main edits one line first, the whole branch is squashed, and a follow-up edits the
-branch's last line (nothing may be listed). Cases whose squash conflicts are skipped.
+the helper's diffs, are run on real `git merge --squash` histories by fuzzers kept with the #399
+work, not in the repository. `fuzz13.py` (the devil's-advocate reviewer of round 12 wrote the first
+version): a base of 3–7 lines drawn from five repetition-prone code lines, a branch of 2–3 commits
+that only insert lines, one edit of main's own, then a squash of the whole branch (full: nothing
+may be listed) or of its first commits (prefix: every later commit is an orphan). `fuzzdel2.py`
+(round 13's requirements reviewer): one commit deletes one of the repeated lines and changes the
+file's last line (in the rename runs it also moves the file), a second adds a file, main edits one
+line first, the whole branch is squashed, and a follow-up edits the branch's last line (nothing
+may be listed). Round 14's reviewers added `fuzzdel3.py` (`fuzzdel2` plus a commit that adds a copy
+of the deleted text), `fuzzcopies.py` (a function copied into new functions and the original
+renamed; main edits a line of the original; a clean squash, no follow-up), `fuzzrebase.py` (Rebase
+and merge: the commits picked one by one, then a follow-up) and `fuzzrelease.py` (`fuzzdel2`
+squashed into another branch that is then merged). Cases whose squash conflicts are skipped.
 
-| Run | Cases | Round 14 | Round 13 | 3.5.0 |
-|-----|-------|----------|----------|-------|
-| fuzz13 full, seed 1 | 154 | 154 exact, 0 false | 154 exact, 0 false | 154 exact |
-| fuzz13 full, seed 3 | 157 | 157 exact, 0 false | 157 exact, 0 false | 157 exact |
-| fuzz13 prefix, seed 2 | 200 | 127 exact, 78 missed | 127, 78 missed | 0, 272 missed |
-| fuzz13 prefix, seed 4 | 194 | 127 exact, 70 missed | 127, 70 missed | 0, 240 missed |
-| fuzzdel2, seeds 11–13 | 129 | 0 false | 7 false in seed 11's 44 | — |
-| fuzzdel2 with a rename, seeds 11–13 | 129 | 0 false | 7 false in seed 11's 44 | — |
+| Run | Clean cases | Round 15 | Round 14 | Round 13 | 3.5.0 |
+|-----|-------------|----------|----------|----------|-------|
+| fuzz13 full, seeds 1 and 3 | 311 | 0 false | 0 false | 0 false | 0 false |
+| fuzz13 prefix, seeds 2 and 4 | 394 | 0 false, 148 missed | 0 false, 148 missed | 0 false, 148 missed | 0 false, 512 missed |
+| fuzzdel2, seeds 11–13, with and without a rename | 258 | 0 false | 0 false | 7 false in seed 11's 44 (each way) | — |
+| fuzzcopies, seeds 1–3 | 82 | 0 false | 51 false | 30 false | 0 false |
+| fuzzdel3, seeds 11–13 | 64 | 7 false | 7 false | 4 false in seed 11's 23 | 23 false in seed 11's 23 |
+| fuzzrebase, seeds 2–4 | 26 | 1 false | 1 false | — | — |
+| fuzzrelease, seeds 11–13 | 64 | 7 false | 7 false | — | — |
 
-None of the runs lists a commit that landed in the prefix runs; the misses there are at the tip
-(D1+D2: the inserted lines are elsewhere in the file), 3 at the landing commit (R1's adjacent
-copies).
+None of the prefix runs lists a commit that landed; the misses there are at the tip (D1+D2: the
+inserted lines are elsewhere in the file), 3 at the landing commit (R1's adjacent copies). The
+false listings of `fuzzdel3`, `fuzzrebase` and `fuzzrelease` are the D1 routes the copy rule
+refuses (a text two commits touch; a landing in several steps), listed by a follow-up at the tip.
 
 How the numbers got here:
 
@@ -411,6 +457,23 @@ How the numbers got here:
   check of other commits' copies), and later one more (`confirm()` not following the branch's
   rename since the merge-base); fixtures 151–154 were then written against them, each failing
   on its mutant (154 also on round 13).
+- **Round 14 verify.** Four HIGH, two of them from round 14's own rules: with renames detected
+  at the tip, a commit that later moved a file no longer carried the lines an earlier commit
+  added to it, and the earlier commit was read under its own name, which neither the head nor
+  the tip has, so a fix that never landed read as landed; and the check of other commits' copies
+  listed a clean squash of a function copied twice (51 of 82 in the DA's fuzz, 3.5.0 none). The
+  other two were older: a unique line paired with another function's next to repeated bodies,
+  and a repeated text two commits touch, which no landing commit is counted for. The world
+  could build none of these: its slots never repeat a block, and it has one file and no
+  renames. The routing model also followed the helper's landing rules, so a wrong refusal
+  there showed as the tip class.
+- **Round 15.** The tip reads each file under its name in the head as well; every finding at
+  the landing commit is checked against the copies (a unique line the commit moved excepted);
+  L^1's copies are main's less the part of the branch L^1 holds, and only another commit that
+  changes the copies and reached L^1 uncounted keeps a finding; the copy rule needs a count to
+  compare and a line its own step brought. `bounded.py` follows the new rules in its model of
+  the landing step and of R1, and its tip class now needs a cause D1 names, read from how the
+  case was built.
 - `--after` needs length 2: a single-commit squash is matched by `git cherry`, so no length-1
   case reaches the landing step. Rounds 13 and 14 ran no `--old-git` mode: the helper has not
   called merge-tree since round 12.

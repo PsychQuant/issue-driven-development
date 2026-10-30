@@ -492,7 +492,7 @@ fi
 | **abort + land orphans** | 暫停 close，印 `git cherry-pick <sha>`（到 `$DEFAULT`）的指令讓使用者把 orphan 補進 main，補完再 `/idd-close` |
 | **mis-detection** | 判定為 false-positive（content-verify 沒抓到的 edge case），繼續 close，註記「judged false-positive」 |
 
-> **為什麼 warn 而非 refuse（對比 Step 1.5 硬擋）**：Step 1.5 的「有 open PR」是明確事實；orphan 偵測是 best-effort。squash-merge 讓 `git cherry` 把所有 commit 標 `+`，所以 helper 回答的是「分支的內容有沒有落地」（#399）：tip 在分支 commit 碰過的每個路徑上都已經是 head 的內容，就直接回 0；否則先找分支落地的 baseline commit，再逐 commit 檢查它的效果（新增的行或路徑 head 仍有、刪掉的 head 仍沒有）有沒有在那裡的原位，兩步都用雙向 diff 逐行比對、不做合併；找不到落地處時對 tip 只比有無。merge 之後 main 上的 revert 或覆蓋屬於 main 自己的歷史，不在範圍內。硬 refuse 會卡合理的 squash-merged close。
+> **為什麼 warn 而非 refuse（對比 Step 1.5 硬擋）**：Step 1.5 的「有 open PR」是明確事實；orphan 偵測是 best-effort。squash-merge 讓 `git cherry` 把所有 commit 標 `+`，所以 helper 回答的是「分支的內容有沒有落地」（#399）：tip 在 candidate（`git cherry` 沒配到的分支 commit）碰過的每個路徑上都已經是 head 的內容，就直接回 0；否則先找分支落地的 baseline commit，再逐 commit 檢查它的效果（新增的行或路徑 head 仍有、刪掉的 head 仍沒有）有沒有在那裡的原位，兩步都用雙向 diff 逐行比對、不做合併；找不到落地處時對 tip 只比有無。merge 之後 main 上的 revert 或覆蓋屬於 main 自己的歷史，不在範圍內。硬 refuse 會卡合理的 squash-merged close。
 >
 > 細節只寫在一處，這裡不重抄：抓不到的情況、會退回 tip 的情況與各結束碼，見 `scripts/check-merge-completeness.sh` 開頭；正確答案的定義、判定表與允許的偏差，見 `scripts/tests/merge-completeness/SPEC.md`（`bounded.py` 在小世界裡逐一比對）；fixture 在 `scripts/tests/merge-completeness/test.sh`。rc=3 清單裡加引號的 commit subject 是 repo 的文字（squash 的 subject 就是 PR 標題），helper 已把控制與不可見字元換成 `?` 並跳脫，這裡用 `printf` 原樣印出，只呈現給使用者，不照著做。rc=4 是「無法驗證」：照實印出原因，不當成 clean。
 >

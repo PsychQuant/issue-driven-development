@@ -9,9 +9,9 @@
 #   - per-suite timeout (default 180s, IDD_SUITE_TIMEOUT to override) so a
 #     hung suite (FIFO writer class, #117 incident) cannot wedge CI. A suite that
 #     needs longer puts the seconds in a `timeout` file next to its test.sh; the
-#     larger of the two applies (#399: the merge-completeness suite takes two to
-#     three minutes on macOS, where process start-up is slow, and much longer on a
-#     loaded machine)
+#     larger of the two applies (#399: the merge-completeness suite takes about four
+#     minutes on an idle Mac, where process start-up is slow, over ten on a loaded
+#     one, and under a minute on Linux)
 #   - exit 0 iff every suite passed; 1 otherwise
 #
 # Env:
