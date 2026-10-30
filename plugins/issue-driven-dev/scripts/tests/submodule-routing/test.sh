@@ -3,10 +3,12 @@
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/../../lib/assert-helpers.sh"
+. "$HERE/../../lib/git-fixture-helpers.sh"
+git_fixture_setup
 . "$HERE/../../lib/resolve-submodule-route.sh"
-W="$(mktemp -d)"; trap 'rm -rf "$W"' EXIT
+W="$(git_fixture_mktemp)" || exit 1; trap 'rm -rf "$W"; git_fixture_cleanup' EXIT
 
-mkrepo() { git -C "$1" init -q; git -C "$1" config user.email t@t.t; git -C "$1" config user.name t; git -C "$1" config commit.gpgsign false; git -C "$1" config protocol.file.allow always; }
+mkrepo() { git_fixture_init "$1"; git -C "$1" config user.email t@t.t; git -C "$1" config user.name t; git -C "$1" config commit.gpgsign false; git -C "$1" config protocol.file.allow always; }
 
 # fixture: parent repo with a submodule that has its own origin
 mkdir -p "$W/subsrc"; mkrepo "$W/subsrc"

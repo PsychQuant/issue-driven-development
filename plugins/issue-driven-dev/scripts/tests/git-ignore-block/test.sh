@@ -13,40 +13,42 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT="$HERE/../../git-ignore-block.sh"
 
 . "$HERE/../../lib/assert-helpers.sh"
+. "$HERE/../../lib/git-fixture-helpers.sh"
+git_fixture_setup
 
 new_repo() {
   local d
-  d="$(mktemp -d)"
-  git -C "$d" init -b main -q
+  d="$(git_fixture_mktemp)" || exit 1
+  git_fixture_init "$d" -b main
   git -C "$d" config user.email t@t.t
   git -C "$d" config user.name t
   git -C "$d" rev-parse --show-toplevel
 }
 
 TMPDIRS=()
-mk() { local r; r="$(new_repo)"; TMPDIRS+=("$r"); printf '%s' "$r"; }
+mk() { local r; r="$(new_repo)" || exit 1; TMPDIRS+=("$r"); printf '%s' "$r"; }
 cleanup() { for d in "${TMPDIRS[@]:-}"; do [ -n "${d:-}" ] && rm -rf "$d"; done; }
-trap cleanup EXIT
+trap 'cleanup; git_fixture_cleanup' EXIT
 
 MARKER="IDD test block (#192)"
 BEGINLINE="# >>> ${MARKER} >>>"
 
 # --- Test 1: exclude direction → .git/info/exclude ignores the path ---------
-R="$(mk)"
+R="$(mk)" || exit 1
 bash "$SCRIPT" --target "$R/.git/info/exclude" --marker "$MARKER" --direction exclude ".claude/.idd/"
 assert_exit "exclude exits 0" 0 $?
 require "exclude: .claude/.idd/local.json now ignored" git -C "$R" check-ignore -q .claude/.idd/local.json
 refute  "exclude: unrelated path not ignored"          git -C "$R" check-ignore -q src/main.py
 
 # --- Test 2: idempotent re-run (same marker+body) → one block ---------------
-R="$(mk)"
+R="$(mk)" || exit 1
 bash "$SCRIPT" --target "$R/.git/info/exclude" --marker "$MARKER" --direction exclude ".claude/.idd/"
 bash "$SCRIPT" --target "$R/.git/info/exclude" --marker "$MARKER" --direction exclude ".claude/.idd/"
 CNT=$(grep -cF "$BEGINLINE" "$R/.git/info/exclude")
 assert_eq "idempotent: block begin-sentinel appears once" "1" "$CNT"
 
 # --- Test 3: stale block upgrade-in-place (same marker, different body) ------
-R="$(mk)"
+R="$(mk)" || exit 1
 bash "$SCRIPT" --target "$R/.git/info/exclude" --marker "$MARKER" --direction exclude ".claude/old/"
 bash "$SCRIPT" --target "$R/.git/info/exclude" --marker "$MARKER" --direction exclude ".claude/.idd/"
 MCNT=$(grep -cF "$BEGINLINE" "$R/.git/info/exclude")
@@ -55,7 +57,7 @@ require "stale: new pattern ignored" git -C "$R" check-ignore -q .claude/.idd/x
 refute  "stale: old pattern gone"    git -C "$R" check-ignore -q .claude/old/x
 
 # --- Test 4: adjacent user content preserved --------------------------------
-R="$(mk)"
+R="$(mk)" || exit 1
 printf '# user header\n*.log\n' > "$R/.git/info/exclude"
 bash "$SCRIPT" --target "$R/.git/info/exclude" --marker "$MARKER" --direction exclude ".claude/.idd/"
 assert_grep "preserve: user header kept" "# user header" "$(cat "$R/.git/info/exclude")"
@@ -63,7 +65,7 @@ require "preserve: user *.log still effective" git -C "$R" check-ignore -q debug
 require "preserve: new exclude effective"      git -C "$R" check-ignore -q .claude/.idd/y
 
 # --- Test 5: re-include direction → parent-dir-excluded carve-out trackable --
-R="$(mk)"
+R="$(mk)" || exit 1
 printf '.claude/\n' > "$R/.gitignore"
 require "re-include precheck: path ignored before carve-out" git -C "$R" check-ignore -q .claude/.idd/issue-runs/x.jsonl
 bash "$SCRIPT" --target "$R/.gitignore" --marker "$MARKER" --direction re-include ".claude/.idd/issue-runs"
@@ -81,7 +83,7 @@ bash "$SCRIPT" --target 2>/dev/null   # valueless option must not hang/loop
 assert_exit "valueless --target exits 2 (no infinite loop)" 2 $?
 
 # --- Test 7: missing-END corruption → abort, surrounding content preserved ----
-R="$(mk)"
+R="$(mk)" || exit 1
 EXC="$R/.git/info/exclude"
 mkdir -p "$(dirname "$EXC")"
 printf '# >>> %s >>>\n.claude/old/\n# user line AFTER a corrupted (END-less) block\nsecrets/\n' "$MARKER" > "$EXC"
@@ -91,7 +93,7 @@ assert_grep "missing-END: trailing user line preserved" "user line AFTER" "$(cat
 assert_grep "missing-END: secrets/ line preserved" "secrets/" "$(cat "$EXC")"
 
 # --- Test 8: re-include idempotency (run twice → one block) -------------------
-R="$(mk)"
+R="$(mk)" || exit 1
 printf '.claude/\n' > "$R/.gitignore"
 bash "$SCRIPT" --target "$R/.gitignore" --marker "$MARKER" --direction re-include ".claude/.idd/issue-runs"
 bash "$SCRIPT" --target "$R/.gitignore" --marker "$MARKER" --direction re-include ".claude/.idd/issue-runs"
@@ -105,7 +107,7 @@ assert_exit "#194: .git/hooks/pre-commit target rejected → exit 2" 2 $?
 bash "$SCRIPT" --target /tmp/idd-hax/random.txt --marker m --direction exclude ".x" 2>/dev/null
 assert_exit "#194: arbitrary basename rejected → exit 2" 2 $?
 # allowed basenames still work
-RA="$(mk)"
+RA="$(mk)" || exit 1
 bash "$SCRIPT" --target "$RA/.gitignore" --marker "$MARKER" --direction exclude ".claude/.idd/"
 assert_exit "#194: .gitignore basename allowed → exit 0" 0 $?
 bash "$SCRIPT" --target "$RA/.git/info/exclude" --marker "$MARKER" --direction exclude ".claude/.idd/"

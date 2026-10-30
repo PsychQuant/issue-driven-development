@@ -7,13 +7,15 @@
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/../../lib/assert-helpers.sh"
+. "$HERE/../../lib/git-fixture-helpers.sh"
+git_fixture_setup
 
 PLUGIN="$(cd "$HERE/../../.." && pwd)"
 HELPER="$PLUGIN/scripts/idd-edit-helper.py"
 RULE="$PLUGIN/rules/append-vs-modify.md"
 SKILLS="$PLUGIN/skills"
 
-WORK="$(mktemp -d /tmp/idd-ipc-XXXXXX)"; trap 'rm -rf "$WORK"' EXIT
+WORK="$(git_fixture_mktemp)" || exit 1; trap 'rm -rf "$WORK"; git_fixture_cleanup' EXIT
 
 # run_helper <label> <args...> — stdout/stderr land in $WORK/<label>.{out,err},
 # exit code in RC. Output is asserted from files, never re-expanded (#188).
@@ -566,8 +568,8 @@ echo "H. round 5"
 #     where TMPDIR is under /var (macOS) — executed, not just grepped
 #     (round 9: the SKILL no longer makes its own directory; the helper's
 #     run directory sits in the same place, so the idiom is tested directly)
-H1REPO="$WORK/h1repo"; mkdir -p "$H1REPO"; git -C "$H1REPO" init -q
-TMPDIR_SAVE="${TMPDIR-}"; export TMPDIR=/var/tmp; WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/idd-edit-XXXXXX")"
+H1REPO="$WORK/h1repo"; mkdir -p "$H1REPO"; git_fixture_init "$H1REPO"
+TMPDIR_SAVE="${TMPDIR-}"; export TMPDIR=/var/tmp; WORK_DIR="$(git_fixture_mktemp "${TMPDIR:-/tmp}/idd-edit-XXXXXX")" || exit 1
 printf 'old text\n' >"$WORK_DIR/comment-1-abc"
 (cd "$H1REPO" && IDD_EDIT_HELPER_TEST_MODE=1 IDD_EDIT_HELPER_NOW=2026-10-16T00:00:00Z python3 "$HELPER" archive comment 1 --from-file "$WORK_DIR/comment-1-abc" --repo o/r) >"$WORK/h1.out" 2>"$WORK/h1.err"
 assert_exit "archive accepts a working copy from the SKILL's own working directory" 0 "$?"

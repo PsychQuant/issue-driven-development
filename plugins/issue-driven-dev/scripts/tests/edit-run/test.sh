@@ -16,23 +16,25 @@
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/../../lib/assert-helpers.sh"
+. "$HERE/../../lib/git-fixture-helpers.sh"
+git_fixture_setup
 PLUGIN="$(cd "$HERE/../../.." && pwd)"
 HELPER="$PLUGIN/scripts/idd-edit-helper.py"
 SKILL="$PLUGIN/skills/idd-edit/SKILL.md"
 FAKE="$HERE/../correct-flow/fake-gh.py"
 
-WORK="$(mktemp -d /tmp/idd-er-XXXXXX)"
-export TMPDIR="$(mktemp -d /var/tmp/idd-er-tmp-XXXXXX)"
+WORK="$(git_fixture_mktemp)" || exit 1
+TMPDIR="$(git_fixture_mktemp /var/tmp/idd-er-tmp-XXXXXX)" || exit 1
+export TMPDIR
 cleanup() { chmod -R u+rwx "$WORK" "$TMPDIR" 2>/dev/null; rm -rf "$WORK" "$TMPDIR"; }
-trap cleanup EXIT
-export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+trap 'cleanup; git_fixture_cleanup' EXIT
 export FAKE_GH_STORE="$WORK/store"; mkdir -p "$FAKE_GH_STORE"
 mkdir -p "$WORK/bin"
 printf '#!/bin/sh\nexec python3 "%s" "$@"\n' "$FAKE" >"$WORK/bin/gh"; chmod +x "$WORK/bin/gh"
 export PATH="$WORK/bin:$PATH"
 printf 'kiki830621' >"$FAKE_GH_STORE/user"
 printf '{"viewerPermission": "ADMIN", "isPrivate": false}' >"$FAKE_GH_STORE/repo.json"
-REPO="$WORK/repo"; mkdir -p "$REPO"; git -C "$REPO" init -q
+REPO="$WORK/repo"; mkdir -p "$REPO"; git_fixture_init "$REPO"
 
 # mkrec <file> <login> <assoc> <body>
 mkrec() {
@@ -351,7 +353,7 @@ h a9df finish --run "$RUN"
 assert_exit "and the run exits 0" 0 "$RC"
 # a --correct run moves between temp dirs (sandboxed and unsandboxed calls)
 mkrec comment-246.json kiki830621 MEMBER "$SECTION_BODY"
-OTHER_TMP="$(mktemp -d /var/tmp/idd-er-other-XXXXXX)"
+OTHER_TMP="$(git_fixture_mktemp /var/tmp/idd-er-other-XXXXXX)" || exit 1
 start a9e comment:246 --correct --section "## Notes" --body-file "$WORK/fix.md" --reason r
 (cd "$REPO" && TMPDIR="$OTHER_TMP" python3 "$HELPER" prepare --run "$RUN" --target comment:246) >"$WORK/a9ep.out" 2>"$WORK/a9ep.err"
 assert_exit "prepare under another TMPDIR accepts the run's own body" 0 "$?"

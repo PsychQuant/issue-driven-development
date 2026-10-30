@@ -16,18 +16,20 @@ set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER="$HERE/../../git-ignore-block.sh"
 . "$HERE/../../lib/assert-helpers.sh"
+. "$HERE/../../lib/git-fixture-helpers.sh"
+git_fixture_setup
 
 new_repo() {
-  local d; d="$(mktemp -d)"
-  git -C "$d" init -b main -q
+  local d; d="$(git_fixture_mktemp)" || exit 1
+  git_fixture_init "$d" -b main
   git -C "$d" config user.email t@t.t
   git -C "$d" config user.name t
   git -C "$d" rev-parse --show-toplevel
 }
 TMPDIRS=()
-mk() { local r; r="$(new_repo)"; TMPDIRS+=("$r"); printf '%s' "$r"; }
+mk() { local r; r="$(new_repo)" || exit 1; TMPDIRS+=("$r"); printf '%s' "$r"; }
 cleanup() { for d in "${TMPDIRS[@]:-}"; do [ -n "${d:-}" ] && rm -rf "$d"; done; }
-trap cleanup EXIT
+trap 'cleanup; git_fixture_cleanup' EXIT
 
 NEW_SENTINEL="# >>> IDD jsonl run-log carve-out (#55) >>>"
 OLD_MARKER="# IDD multi-finding run log carve-out (idd-issue Stage 4.5, #55)"
@@ -64,7 +66,7 @@ apply_stage45_carveout() {
 }
 
 # --- Test 1: fresh .gitignore with .claude/ → carve-out makes run-log trackable
-R="$(mk)"; G="$R/.gitignore"
+R="$(mk)" || exit 1; G="$R/.gitignore"
 printf '.claude/\n' > "$G"
 require "fresh precheck: run-log ignored before" git -C "$R" check-ignore -q .claude/.idd/issue-runs/x.jsonl
 apply_stage45_carveout "$G"
@@ -73,7 +75,7 @@ require "fresh: sibling .claude/other still ignored" git -C "$R" check-ignore -q
 refute  "fresh: bare .claude/ line removed"      grep -qxF ".claude/" "$G"
 
 # --- Test 2: MIGRATION — pre-#192 OLD-format block stripped, no duplicate ------
-R="$(mk)"; G="$R/.gitignore"
+R="$(mk)" || exit 1; G="$R/.gitignore"
 {
   printf '# user top\n*.log\n.claude/\n'
   printf '%s\n' "$OLD_MARKER"
@@ -91,7 +93,7 @@ require "migration: user *.log still effective"   git -C "$R" check-ignore -q de
 require "migration: user build/ still effective"  git -C "$R" check-ignore -q build/x
 
 # --- Test 3: idempotent — run the refactored flow twice → one block -----------
-R="$(mk)"; G="$R/.gitignore"
+R="$(mk)" || exit 1; G="$R/.gitignore"
 printf '.claude/\n' > "$G"
 apply_stage45_carveout "$G"
 apply_stage45_carveout "$G"
@@ -102,7 +104,7 @@ refute "idempotent: still trackable"              git -C "$R" check-ignore -q .c
 # The historical #55 code had explicit upgrade logic for a 4-line block (marker
 # present but `!.claude` absent). Confirm migration handles it: strip cleanly,
 # no orphan pattern line, no duplicate.
-R="$(mk)"; G="$R/.gitignore"
+R="$(mk)" || exit 1; G="$R/.gitignore"
 {
   printf '# user top\n.claude/\n'
   printf '%s\n' "$OLD_MARKER"
@@ -125,7 +127,7 @@ require "4-line: node_modules/ still effective"   git -C "$R" check-ignore -q no
 # A .gitignore with a BEGIN sentinel but no END makes the helper abort (exit 2).
 # The skill then falls back to skip-commit; crucially the bare-`.claude/` sed must
 # NOT have run (it's gated behind helper success), so the file is not half-edited.
-R="$(mk)"; G="$R/.gitignore"
+R="$(mk)" || exit 1; G="$R/.gitignore"
 printf '# top\n.claude/\n%s\n!.claude\n.claude/*\n' "$NEW_SENTINEL" > "$G"   # BEGIN, no END
 apply_stage45_carveout "$G"; RC=$?
 assert_exit "helper-fail: apply returns non-zero (skill → skip-commit)" 1 "$RC"
