@@ -217,8 +217,9 @@ EOF
 2. 用共用 helper 把 IDD config 寫進 `.git/info/exclude`（per-clone、不 commit/push、不動對方 `.gitignore`）：
 
 ```bash
+# Resolve Git's effective exclude file; linked worktrees share the common directory.
 "$CLAUDE_PLUGIN_ROOT/scripts/git-ignore-block.sh" \
-  --target "$(git rev-parse --git-dir)/info/exclude" \
+  --target "$(git rev-parse --git-path info/exclude)" \
   --marker "IDD third-party clone config (#192)" \
   --direction exclude \
   ".claude/.idd/" ".claude/issue-driven-dev.local.json" ".claude/issue-driven-dev.local.md"
