@@ -20,6 +20,17 @@ Version number left to the merge, as in PR #442.
   Anything else exits 2 before any write. Relative `.git/info/exclude`, linked-worktree git dirs and bare repos
   are still accepted (a linked worktree's own `info/exclude` is not read by git — #446). Symlinked targets, the
   `.gitignore` branch's any-directory rule and unchecked write failures are #447.
+- **The `.gitignore` example in `rules/process-attachments.md` keeps `_manifest.json` trackable (#432).** It
+  used `.claude/.idd/attachments/**` with `!.claude/.idd/attachments/**/_manifest.json`; `**` also matches the
+  `issue-N/` directory, and git cannot re-include a file under an excluded directory, so the manifest was ignored
+  with the binaries and `git add .claude/.idd/attachments/issue-N` failed. The example is now
+  `.claude/.idd/attachments/*/*` with `!.claude/.idd/attachments/*/_manifest.json`. A repo that copied the old
+  example needs those two lines replaced; the new pair covers files inside `issue-N/` only (where IDD writes), so
+  anything placed directly in `attachments/` is no longer ignored. The rule now also says that an earlier rule
+  excluding `.claude/` or `.claude/.idd/` (including Stage 4.5's run-log carve-out chain) keeps the manifest
+  ignored, and how to re-include it. `scripts/tests/attachments-gitignore-example/` applies the example as written
+  to a throwaway repo isolated from the user's git config, with extensionless, hidden and subdirectory fixtures
+  (#449 tracks attachments named `.gitignore` / `_manifest.json`).
 
 ## [3.5.0] - 2026-10-20
 

@@ -118,11 +118,18 @@ Script 只下載 + 寫 manifest,**parse 不是 script 的工作**。Skill 在 do
 
 ```
 # 不上傳 attachment 內容到遠端,但保留 manifest
-.claude/.idd/attachments/**
-!.claude/.idd/attachments/**/_manifest.json
+.claude/.idd/attachments/*/*
+!.claude/.idd/attachments/*/_manifest.json
 ```
 
 只 ignore 二進位內容,保留 manifest(讓協作者知道有 attachment、URL 是什麼,需要時自行 fetch)。
+
+不要寫成 `.claude/.idd/attachments/**`:`**` 連 `issue-N/` 目錄本身都匹配,git 排除目錄後不再往下看,底下的 `!…/_manifest.json` 撈不回來,manifest 會跟著被忽略(#432)。`*/*` 匹配 `issue-N/` 裡的每一個項目(檔案與子目錄),但不匹配 `issue-N/` 本身,所以 `git add .claude/.idd/attachments/issue-N` 只會加入 manifest。`scripts/tests/attachments-gitignore-example/` 對本段範例逐字驗證。
+
+範圍與前提:
+
+- 只涵蓋 `issue-N/` 底下 —— 那是 IDD 唯一寫入附件的位置(見下方 Iron rules 的 Storage location)。直接放在 `.claude/.idd/attachments/` 的檔案不會被忽略
+- 前面的規則若已排除 `.claude/` 或 `.claude/.idd/`,manifest 一樣撈不回來(同一個「被排除的目錄不能從底下 re-include」限制)。IDD 自己的 run-log carve-out(`idd-issue` Stage 4.5 寫的 `.claude/.idd/*` 那一串)也算:在那一串之後、本範例之前加一行 `!.claude/.idd/attachments`
 
 ## Iron rules
 
