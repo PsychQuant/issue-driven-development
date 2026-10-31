@@ -679,15 +679,17 @@ def d1_cause(case, minus, k):
     """Whether the case has a cause SPEC.md D1 lists for checking commit k at the tip,
     read from how the case was built (S, the landing mode, the branch's texts), never
     from the helper's landing rules: nothing landed (S empty, or commits that cancel
-    out, so no tree shows them); S is not a prefix of the branch, or k comes after it;
-    main's own edit in the landing step on a unit the branch edits (a squash edited by
-    hand, a `git pull` merge whose side edited the branch's lines after the squash); a
-    landing in several steps (a merge, two squashes) where some text repeats; a text
-    whose copies the landing commit must be counted
-    for that more than one commit touches, or that a commit moves; a branch with no net
-    change (it lands at the merge-base, and the commits after a prefix that landed later,
-    in a squash or in a commit of main's own that holds the prefix's net change, B2, are
-    checked at the tip; or some of its commits were cherry-picked)."""
+    out, so no tree shows them); S is not a prefix of the branch, or k comes after it
+    (the commits after a landed prefix); main's own edit in the landing step itself on a
+    unit the branch edits (a squash edited by hand, a `git pull` merge whose side edited
+    the branch's lines after the squash; a commit of main's own before the squash is not
+    one, #399 verify round 16); a landing in several steps (a merge, two squashes) where
+    a text the net change puts in place or removes repeats; such a repeated text that
+    more than one commit touches, or whose copies the net change leaves as they were (a
+    move). Each repeated-text cause names a text at a unit the net change changes: a
+    repeated text elsewhere in the file is no reason for the landing commit to fail
+    (round 16's verify: the broader causes would absorb a routing bug on a unique
+    line)."""
     mb, ops, S, mop, aop, extra, landing = case
     n = len(ops)
     if not S:
@@ -701,8 +703,6 @@ def d1_cause(case, minus, k):
     for op in ops:
         states.append(apply_strict(dict(states[-1]), op))
     head = states[-1]
-    if all(head[u] == mb[u] for u in UNITS):
-        return True
     def cnt(st, text):
         return sum(1 for v in range(SLOTS) if st[v] is not None and txt_of(st[v], v) == text)
     texts = {txt_of(st[v], v) for st in states for v in range(SLOTS) if st[v] is not None}
@@ -711,14 +711,17 @@ def d1_cause(case, minus, k):
     # after the squash (a `git pull` merge, a release merge with another PR): main's
     # own edit in the landing step touches a unit the branch edits (round 16: these
     # modes are no longer a cause by themselves)
-    if landing in ("own", "merge") and any(e is not None and e[0] in branch_units for e in (mop, extra)):
+    if landing in ("own", "merge") and extra is not None and extra[0] in branch_units:
         return True
-    # a landing in several steps (a merge, two squashes) where some text repeats: only
+    # the texts at the units the net change changes (in the head or the merge-base)
+    changed = {txt_of(st[v], v) for v in range(SLOTS) if head[v] != mb[v]
+               for st in (head, mb) if st[v] is not None}
+    # a landing in several steps (a merge, two squashes) where such a text repeats: only
     # the last step's copies are counted, and none at a merge commit
     if (landing == "merge" or split_of(landing) is not None) and \
-            any(cnt(head, x) >= 2 or cnt(mb, x) >= 2 for x in texts):
+            any(cnt(head, x) >= 2 or cnt(mb, x) >= 2 for x in changed):
         return True
-    for text in texts:
+    for text in changed:
         if cnt(head, text) < 2 and cnt(mb, text) < 2:
             continue
         touching = [j for j in range(n) if cnt(states[j], text) != cnt(states[j + 1], text)

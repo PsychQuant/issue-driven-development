@@ -134,6 +134,20 @@ copy is an effect too.
 | 76 | Row 63 with the branch moving the file last, the move landing with the last PR | the landed commits | 3: the restore | 176 |
 | 77 | A line set and set back, then the file moved; main took the first change and the move | all but the set-back | 3: the set-back only | 177 |
 | 78 | Rows 55 and 70 with a post-index-change hook in the repository | ∅ | 3, and the hook does not run | 178 |
+| 79 | Row 46 with the file moved twice on the branch (f, then mid/f, then lib/f); the commit edited only under the middle name was picked to main early | the commits up to the last move | 3: the restore (the branch's commits are found by every name the file had) | 181 |
+| 80 | A commit adds (or deletes) a line; a later commit moves the file; a third puts a new file at the old name; main picks the last two | the move and the new file | 3: the first commit (its file is the moved one, not the new file at its old name) | 182, 184 |
+| 81 | Row 65 with the moved file mostly rewritten afterwards (the first commit and the head are below git's rename similarity) | the move, and the rewrite without the first commit's line | 3: the first commit | 183 |
+| 82 | Every commit lands, as picks folded into one squash that moves the file and puts a new file at its old name (git records no move in that squash) | all | 0 | 185 |
+| 83 | A later commit replaces more than 1000 files (no move) / deletes a file an earlier commit edited, where git skipped its rename detection | all / ∅ | 0 / exit 4 with the reason | 186, 186b |
+| 84 | A line set from `1` to `01` and back; main took the first change only | the first | 3: the set-back (lines compare as text) | 187 |
+| 85 | Rows 55 and 70 with a hook defined in the configuration (`hook.<name>.event`), small (a moved file) and wide | ∅ | 3, and the hook does not run | 188, 188b |
+| 86 | A partial clone, with git older than 2.45 (which cannot be told not to fetch) / with 2.45 or newer | — | exit 4 with the reason / the check runs | 189 |
+| 87 | A move over two commits (one deletes a file, the next adds it under another name, edited); main edits another line of it, then squashes | all | 3 by D4 (the second commit re-adds main's edited line), at the squash as the landing commit (one rename detection between the merge-base and the head pairs the two names) | 190 |
+| 88 | Part of the branch lands as picks folded into one squash that moves the file to a name it had before its last one and puts a new file at the old name (git records no move) | the first move, the new file, an edit before them | 3: the commits that never landed, and not the ones that did (the branch's file is the one main created at a name it had on the branch, latest first) | 191 |
+| 89 | Row 56b (two commits touch a repeated text, whose copies the net change changes) with the file moved between them | all | the route of row 56b: no landing commit by the copy rule, the first commit checked at the tip (the branch's commits are found by every name the file had) | 192 |
+| 90 | The branch's newest commit is empty (`--allow-empty`); squash; follow-up | all | 0 (not exit 4: the log's last commit has no entry) | 193 |
+| 91 | Every commit lands as picks folded into one squash: two moves, and a new file at the middle name | all | 0 (main's history follows the file to its last name; the file main created at the middle name is the new file) | 194 |
+| 92 | A move, a new file at the old name; later the file moves on and a new file takes the name it left (never landed); main picks the first moves and the first new file | the first move, the first new file, the second move | 3: the commits that never landed, not the first move (an added path is an effect only while it is still the file's path in the head) | 195 |
 
 ## The small world (`bounded.py`)
 
@@ -194,7 +208,8 @@ nothing unexplained.
 - **D1, tip fallback.** Some commits have no landing commit to be checked at, and are
   checked at the tip: nothing of a branch with a net change landed (S = ∅, or commits that
   cancel each other out, so no tree shows that they landed); the landed
-  commits are not a prefix of the branch; a squash resolved by hand left one of the branch's
+  commits are not a prefix of the branch; the commits after a landed prefix (which never
+  landed, or landed on their own); a squash resolved by hand left one of the branch's
   own lines out of place, so no commit holds its net change; main moved or renamed a file
   the branch edited before the branch landed, so no commit has the branch's paths (3.5.0 listed
   these too); a commit that fails by position only on a repeated text that more than one
@@ -214,9 +229,11 @@ nothing unexplained.
   as known limits on 2026-10-31 (fixtures 179 and 180 pin them). `bounded.py` requires one of
   these causes, read from how the case was built, for every disagreement at the tip (round 15;
   before it, the class followed the routing model, which follows the helper's own landing
-  rules; round 16 stopped counting a landing mode as a cause by itself: a squash edited by hand
-  or a merge counts only when main's own edit in that step touches a unit the branch edits, a
-  merge or two squashes only when some text repeats). At the tip main's own edits, before or after landing,
+  rules; round 16 stopped counting a landing mode as a cause by itself; round 17 narrowed the
+  rest to what this list says: a squash edited by hand or a merge counts only when main's own
+  edit in that step itself touches a unit the branch edits, not a commit of main's own before
+  it; a branch with no net change is no cause by itself; and each repeated-text cause needs the
+  repeated text at a unit the net change changes). At the tip main's own edits, before or after landing,
   are part of the target. The helper cannot tell "nothing landed" from "landed, then main
   changed it" there, so only presence is compared (D2), and the deviation is documented
   instead of fixed.
@@ -333,11 +350,13 @@ check for an earlier part of the branch in L^1, as the helper's header states th
 
 ## Results
 
-Runs of 2026-10-31 against the round-16 helper (blob `f04c4e5`, the one committed)
-and `bounded.py`, with `python3 bounded.py --max-len N [--sample K --seed S] [mode]`. The machine
-carried other work at a load of 20 to 860 through the day, so apart from `plain` length 2 (every
-case) the samples are smaller than round 14's (400 to 1,000 cases a mode, against 3,000 to
-6,000). "Known" lists the cases by class ("tip" is D1+D2 alone); "Wrong verdict" counts the
+Runs of 2026-11-01 against round 17's helper and `bounded.py` (blob `d62273e`), with
+`python3 bounded.py --max-len N [--sample K --seed S] [mode]`. The bounded runs used helper blob
+`2d31d56`; the committed one (`592c6dc`) differs from it only in code that runs when a file some
+move involves is compared (the world builds no moves, so every case takes the same path), and the
+suite and the fuzz runs below used the committed one. The machine carried other work at a load
+of 20 to 160, so apart from `plain` length 2 (every case) the samples are smaller than round
+14's (400 to 1,000 cases a mode, against 3,000 to 6,000). "Known" lists the cases by class ("tip" is D1+D2 alone); "Wrong verdict" counts the
 known cases whose exit code differs from the definition's; "Landing" counts cases in which at
 least one commit was checked at a landing commit.
 
@@ -362,14 +381,14 @@ least one commit was checked at a landing commit.
 | `--touch --landing merge` | ≤ 2 | 600 of 79,350, seed 12 | 492 | tip 103, B2 5 | 71 (3 → 0), 36 (0 → 3) | 178 | 0 |
 | `--pairs` | ≤ 2 | 800 of 103,986, seed 12 | 681 | tip 119 | 47 (3 → 0) | 155 | 0 |
 
-`plain` length 2 gives exactly round 13's, 14's and 15's answers on all 7,058 cases (5,938 agree,
-716 wrong verdicts at the tip, all 3 → 0). In every mode the tip class needs a cause D1 names,
-read from how the case was built; round 16 stopped counting the `own`, `merge` and `two` modes
-as a cause by themselves (a squash edited by hand or a merge counts when main's own edit in that
-step touches a unit the branch edits, a merge or two squashes when some text repeats), and the
-runs above have no case left unexplained by that narrower check. The world builds no renames,
-so round 16's change of record names (fixtures 174–177) shows only in the fixtures and in the
-reviewers' repro scripts.
+Every number in the table is round 16's, mode by mode; `plain` length 2 gives exactly rounds
+13 to 16's answers on all 7,058 cases (5,938 agree, 716 wrong verdicts at the tip, all 3 → 0).
+In every mode the tip class needs a cause D1 names, read from how the case was built, and
+round 17 narrowed that check to D1's wording (no commit of main's own before the squash, no
+branch with no net change by itself, repeated texts only at a unit the net change changes):
+the runs above have no case left unexplained by it. The world builds no moves; round 17's file
+identities are checked by the fixtures (181–195), the reviewers' repro scripts and the rename
+fuzzer below.
 
 Repeated lines, where git can pair the copies one way when it builds the squash and another way in
 the helper's diffs, are run on real `git merge --squash` histories by fuzzers kept with the #399
@@ -386,7 +405,7 @@ renamed; main edits a line of the original; a clean squash, no follow-up), `fuzz
 and merge: the commits picked one by one, then a follow-up) and `fuzzrelease.py` (`fuzzdel2`
 squashed into another branch that is then merged). Cases whose squash conflicts are skipped.
 
-| Run | Clean cases | Rounds 15 and 16 | Round 14 | Round 13 | 3.5.0 |
+| Run | Clean cases | Rounds 15 to 17 | Round 14 | Round 13 | 3.5.0 |
 |-----|-------------|------------------|----------|----------|-------|
 | fuzz13 full, seeds 1 and 3 | 311 | 0 false | 0 false | 0 false | 0 false |
 | fuzz13 prefix, seeds 2 and 4 | 394 | 0 false, 148 missed | 0 false, 148 missed | 0 false, 148 missed | 0 false, 512 missed |
@@ -400,8 +419,27 @@ None of the prefix runs lists a commit that landed; the misses there are at the 
 inserted lines are elsewhere in the file), 3 at the landing commit (R1's adjacent copies). The
 false listings of `fuzzdel3`, `fuzzrebase` and `fuzzrelease` are the D1 routes the copy rule
 refuses (a text two commits touch; a landing in several steps), listed by a follow-up at the tip,
-which the maintainer accepted as known limits on 2026-10-31. Round 16 gives exactly round 15's
-answers in every run.
+which the maintainer accepted as known limits on 2026-10-31. Rounds 16 and 17 give exactly round
+15's answers in every run.
+
+Moves are run by `fuzzrename.py` (round 17, kept with the other fuzzers): one file of 8 to 12
+base lines, a branch of 3 to 6 commits each of which adds a unique marker line, deletes a base
+line, moves the file to a new name, puts a new file at a name the file left, rewrites most of
+the file, or adds an unrelated file; main receives a random subset of the commits as picks
+folded into one squash (all of them in a fifth of the cases), sometimes after a commit of its
+own, sometimes followed by a follow-up on a landed marker. The right answer is known by
+construction: a commit outside the subset is an orphan when an effect of it is still in the
+head (its marker, the base line it deleted while main still has it, its new file, the name it
+moved the file to, the path it left while main still has it). Cases whose picks conflict are
+skipped. A listing the follow-up causes when the landed commits are not a prefix of the branch
+is D1+D2 (they are checked at the tip).
+
+| Run | Cases | Agree | D1+D2 | False clean | False listing | Round 16 |
+|-----|-------|-------|-------|-------------|---------------|----------|
+| fuzzrename, seeds 7, 21, 33, 45 (80 each) | 251 | 243 | 8 | 0 | 0 | 215 agree, 4 D1+D2, 19 false clean, 13 false listing |
+
+Round 17's own drafts gave 0 false clean throughout, and false listings that fixtures 185, 191,
+194 and 195 now pin (and the `same_paths` change).
 
 How the numbers got here:
 
@@ -500,12 +538,39 @@ How the numbers got here:
   the landing commit list the head's names of a candidate's files too. Every git call runs with
   `core.hooksPath=/dev/null`; skipped rename detection is an error. `bounded.py`'s tip causes no
   longer accept a landing mode by itself.
+- **Round 16 verify.** Two HIGH of one kind, which round 16's records did not reach: a file's
+  identity came from one rename detection between two trees, or from the first of four fixed
+  names a revision had. A file moved twice, a file moved away with a new file put at its old
+  name, and a file moved and then mostly rewritten were paired wrongly, and commits that never
+  landed read as landed (the first is a regression from round 15; the others 3.5.0 caught).
+  Skipped rename detection as an error made branches that move nothing exit 4 when a later
+  commit replaced a thousand files. awk compared lines that look like numbers as numbers. The
+  devil's-advocate reviewer pointed out that neither the world nor the fuzzers built any of
+  these shapes.
+- **Round 17.** Every file is followed commit by commit (git's rename detection inside each
+  commit, as `git log --follow`), known by its name in the head, and every diff compares trees
+  that hold each file under that name: no rename detection between two trees is left. On main
+  a file the branch moved is the one main created at its name in the head, when there is one.
+  A skipped rename detection matters only where it deletes a file a candidate touched, read
+  after it (exit 4). Lines compare as text; hooks from the configuration are off; a partial
+  clone with git before 2.45 stops at once. `bounded.py`'s tip causes follow D1's wording
+  (no `mop`, no "no net change" by itself, repeated texts at a unit the net change changes). A
+  rename fuzzer (`fuzzrename.py`, below) builds moves, new files at old names and rewrites,
+  with the right answer known by construction; its first runs found two faults in round
+  17's own first draft: a squash that moves a file and puts a new one at its old name
+  (fixture 185), and a `same_paths` read by key, which let a squash without the move hold a
+  prefix that moved the file; a third run found main landing the file under a name it had
+  before its last one (fixture 191). Reading the draft once more found a log ending on an
+  empty commit read as an error (fixture 193), and the final fuzz runs two more false
+  listings: main's step 1 taking a middle name where history had already followed the
+  move (fixture 194), and an added path counted as an effect when the head's file there is
+  another one (fixture 195).
 - `--after` needs length 2: a single-commit squash is matched by `git cherry`, so no length-1
   case reaches the landing step. Rounds 13 and 14 ran no `--old-git` mode: the helper has not
   called merge-tree since round 12.
 - Not covered by the world: branches longer than 3 (and length 3 only by sampling), more than
   one file with lines, merge commits on the branch, renames and repeated blocks (fixtures
-  103–157 and the fuzz runs above), and the 200-check and 20-commit limits (fixtures 12, 60 and
+  103–189 and the fuzz runs above, `fuzzrename.py` for moves), and the 200-check and 20-commit limits (fixtures 12, 60 and
   127). Adjacent slots holding the same text are not in the results: there even the positions
   are ambiguous in the text, and no check that reads text can tell which slot a line belongs
   to. The model tracks each line by its slot; the helper sees text and positions, so equal

@@ -19,8 +19,11 @@
 #   3 — genuine orphan(s) found; SHAs + subjects printed to stdout
 #   4 — skip: could not verify (branch or baseline unresolvable, no temp dir, a git
 #       or awk failure outside the landing step, an unreadable object, a checked
-#       commit touching a path with a newline in its name, more moved files than git's
-#       rename detection takes, a temp dir whose path has a backslash); one
+#       commit touching a path with a newline in its name, a file a checked commit
+#       touched that a later commit deletes where git skipped its rename detection
+#       (more than 1000 files added and deleted: whether the file moved cannot be
+#       told), a temp dir whose path has a backslash or a newline, a partial clone
+#       with git older than 2.45); one
 #       "check-merge-completeness: <reason>" line goes to stderr.
 #       The caller reports it and never treats it as clean or as a block. A failure
 #       inside the landing step (step 2) falls back to the tip instead and is
@@ -39,9 +42,9 @@
 #      commit L that holds the branch's whole net change is where the branch landed:
 #      every line the net change adds is in place in L, every line it deletes is no
 #      longer in place there, and L has exactly the paths the head has among those
-#      the net change touches. Two-way diffs with renames detected (no merge, so
-#      main's own edits elsewhere, even on the next line, do not matter, nor does
-#      main's edit of a file the branch moved). Where L fails only on lines whose
+#      the net change touches. Two-way diffs, each file compared with itself (no
+#      merge, so main's own edits elsewhere, even on the next line, do not matter,
+#      nor does main's edit of a file the branch moved). Where L fails only on lines whose
 #      text occurs more than once (git may pair equal lines one way when it builds L
 #      and another way here), L holds the net change when its own step changes the
 #      number of copies of each such text exactly as the net change does, for a text
@@ -74,15 +77,17 @@
 #      of an added line than what landed there, or more of a deleted one); a unique
 #      line must also be in L as often as in what landed, before main's copies are
 #      counted, and one the commit moved (its step leaves the number of copies alone)
-#      is judged by its position alone. Each line is matched under the name its file
-#      has in the revision the line's number belongs to, and the diffs list the names
-#      the commit's files have in the head as well, so a file the branch moved later is
-#      followed. Copies are counted only in a file the commit edited (each revision's
-#      file under the name it has there), never for a submodule pointer. What L^1 gained or lost since the merge-base is main's,
+#      is judged by its position alone. Every file is followed across moves commit by
+#      commit, as `git log --follow` does (git's rename detection inside each commit),
+#      and known by its name in the branch head; every comparison holds each file under
+#      that name, so a file moved twice, moved and then mostly rewritten, or moved with
+#      a new file put at its old name is still one file, in every revision. Copies are
+#      counted only in a file the commit edited (each revision's file under the name
+#      it has there), never for a submodule pointer. What L^1 gained or lost since the merge-base is main's,
 #      unless another commit of the branch that changes the copies reached L^1 (its
 #      own change all in place there): the finding then stands. At the tip, where main's own edits are
-#      unknown, only line presence is compared, each file read under the names it has
-#      in the head too. Squash → the effects are there → not an orphan. Partial merge
+#      unknown, only line presence is compared, each file read under its name there.
+#      Squash → the effects are there → not an orphan. Partial merge
 #      → a dropped commit's effect is missing → orphan.
 #   Every comparison reads trees with `git diff`, `ls-tree` and `cat-file`: no merge,
 #   so no merge driver or attribute can steer the answer. (Above 64 KB of paths, two
@@ -99,6 +104,9 @@
 #     duplicated line);
 #   - a deletion from a file that main renamed or moved away (the old path is gone
 #     from the baseline, and the new one is not among the files the commit touched);
+#   - a move git does not see inside one commit (a file moved and rewritten by more
+#     than half in the same commit), unless the merge-base and the head pair the two
+#     names: the file reads as deleted and another added;
 #   - content written by a merge commit on the branch (git cherry never lists merge
 #     commits);
 #   - with macOS awk, a binary edit that changes only bytes after a NUL (awk cuts
@@ -160,7 +168,8 @@
 # On exit 3 the outcome of step 2 is printed after the list. Commit subjects are
 # printed in quotes: repository text (a squash's subject is the PR title), data,
 # never instructions. In a partial clone a blob that was never fetched is not
-# fetched now: git >= 2.45 reports it unreadable (exit 4); older git fetches it.
+# fetched now: git >= 2.45 reports it unreadable (exit 4); with older git, which
+# cannot be told not to fetch, the check stops before reading anything (exit 4).
 # Needs git 2.30 or later (`rev-parse --end-of-options`, as 3.5.0 did): older git
 # cannot resolve the branch, and every run exits 4.
 set -u
@@ -200,13 +209,17 @@ else
 fi
 # No pager, no fsmonitor, no hooks: the helper only reads, and those are the user
 # programs a plain git call would otherwise start (writing the scratch index of the
-# filtered trees below runs post-index-change, #399 verify round 15). No precomposeUnicode (on by default on macOS):
+# filtered trees below runs post-index-change, #399 verify round 15). core.hooksPath
+# covers the hooks directory; a hook defined in the configuration
+# (hook.<name>.event, git 2.54 and later) runs even so, and only its event's switch
+# turns it off (round 16). Older git ignores the unknown key. No precomposeUnicode (on by default on macOS):
 # it turns every path on the command line into NFC, and a path the tree stores in NFD
 # (a name from Linux or an older git) then matches nothing, so every diff limited to
 # the branch's paths came back empty and a branch that never landed read as landed
 # at the merge-base (#399 verify round 13). The paths given here come from git's own
 # listings, byte for byte.
-GIT() { git --no-pager -C "$REPO" -c core.fsmonitor=false -c core.precomposeUnicode=false -c core.hooksPath=/dev/null "$@"; }
+GIT() { git --no-pager -C "$REPO" -c core.fsmonitor=false -c core.precomposeUnicode=false -c core.hooksPath=/dev/null \
+  -c hook.post-index-change.enabled=false "$@"; }
 
 # Text from the repository or the caller, made safe to print. These, and only these,
 # become "?" — replaced, not deleted, so removing one cannot join its neighbours
@@ -268,6 +281,18 @@ BRANCH_SHA="$(GIT rev-parse --verify --quiet --end-of-options "${BRANCH}^{commit
 BASELINE_SHA="$(GIT rev-parse --verify --quiet --end-of-options "${BASELINE}^{commit}" 2>/dev/null)" \
   || skip "cannot resolve baseline $S in $RP"
 
+# In a partial clone, git before 2.45 has no way to refuse fetching a blob it never
+# fetched (GIT_NO_LAZY_FETCH above is 2.45's): the check would run the user's
+# transport and write into the repository (#399 verify round 16).
+if [ -n "$(GIT config --get extensions.partialClone 2>/dev/null)" ]; then
+  GIT_V="$(git version 2>/dev/null | LC_ALL=C awk '{ split($3, v, "."); printf "%d %d", v[1], v[2] }')" \
+    || skip "cannot read git's version"
+  set -- $GIT_V
+  if [ "${1:-0}" -lt 2 ] || { [ "${1:-0}" -eq 2 ] && [ "${2:-0}" -lt 45 ]; }; then
+    skip "this is a partial clone, and git older than 2.45 would fetch the blobs it never fetched (use git 2.45 or newer, or check by hand)"
+  fi
+fi
+
 # Candidate orphans = '+'-marked commits (patch-id absent from baseline).
 CHERRY="$(GIT cherry "$BASELINE_SHA" "$BRANCH_SHA" 2>/dev/null)" || {
   # In a partial clone git cherry needs blobs that were never fetched, and this check
@@ -315,65 +340,395 @@ trace_out() { # stdin -> $CHECK_MERGE_COMPLETENESS_TRACE
   fi
 }
 
-# <commit> -> $SCRATCH/rn.<commit>: the names in the branch head of the files the
-# commit touched that a later commit of the branch moved, one per line (an LF inside
-# a name becomes \001, as in the tree listings), and rn.<commit>.pairs, the commit's
-# name and the head's on two lines for each. Read by a two-tree diff with renames
-# detected, from the commit to the head, so a file moved twice comes out under its
-# last name. A commit's effects are in the head under those names: read under the
-# commit's own name, a file the branch later moved is in neither the head nor the
-# tip, and its unlanded lines read as landed (#399 verify round 14).
-head_names() {
-  [ -f "$SCRATCH/rn.$1" ] && return 0
-  GIT diff-tree --root --no-commit-id --ignore-submodules=none --name-only -r -z "$1" 2>/dev/null \
-    | tr '\n\000' '\001\n' > "$SCRATCH/rn.own" || return 2
-  GIT diff-tree -r -z -M -l1000 --name-status --ignore-submodules=none "$1" "$BRANCH_SHA" 2> "$SCRATCH/rn.err" \
-    | tr '\n\000' '\001\n' | LC_ALL=C awk -v own="$SCRATCH/rn.own" '
-      BEGIN { while ((r = getline l < own) > 0) mine[l] = 1; if (r < 0) exit 2 }
-      want == 0 { st = $0; want = (st ~ /^[RC]/) ? 2 : 1; got = 0; next }
-      { got++; if (got == 1) src = $0
-        if (got == want) { if (st ~ /^R/ && (src in mine)) { print src; print $0 }; want = 0 } }
-      END { if (want) exit 2 }' > "$SCRATCH/rn.tmp" && no_rename_skip "$SCRATCH/rn.err" \
-    && awk 'NR % 2 == 0' "$SCRATCH/rn.tmp" > "$SCRATCH/rn.$1.dst" \
-    && mv "$SCRATCH/rn.tmp" "$SCRATCH/rn.$1.pairs" && mv "$SCRATCH/rn.$1.dst" "$SCRATCH/rn.$1"
+# Paths go on a command line only up to PATHS_MAX bytes. Beyond that, two trees
+# holding only the listed paths are built in a scratch object store (the repository
+# is never written) and compared whole: git then pairs renames among exactly the
+# same paths as on the command line. Comparing the full trees instead let git pair a
+# listed path with one main had moved it to, outside the list, and the listed path's
+# records were dropped (#399 verify round 13).
+PATHS_MAX=65536
+
+# ── Which file is which, across moves (#399 verify round 16) ──
+# Every check below compares one file of the branch across revisions: the branch's
+# commits, the merge-base, the head, and main's commits. A file the branch (or main)
+# moved has other names in some of them. Round 16 paired the names with one rename
+# detection between two trees, or picked the first of four fixed names a revision
+# had; a file moved twice, a file moved away and a new file put at its old name, and
+# a file moved and then mostly rewritten were paired wrongly, and commits that never
+# landed read as landed (#399 verify round 16). Here a file is followed commit by
+# commit, as `git log --follow` does: git's rename detection runs inside each
+# non-merge commit since the fork point (the merge-base of the baseline and the
+# branch's first commit), and a file's name in a revision is what the moves of that
+# revision's own commits make of it, in order. A path that is there before and after
+# keeps its file (deleted and later restored, it is the same file); a path a move
+# left and a new file then took holds another file. Each file is known by its name in
+# the branch head (its last name on the branch when the head no longer has it), and
+# every diff below compares trees holding each file under that name, so no
+# comparison asks git to guess a move between two trees.
+#   - Only the moves, and the additions and deletions of a name some move involves,
+#     matter: every other name is the same file in every revision, and with no move
+#     at all every comparison reads the repository's own trees, as before.
+#   - A move spread over two commits of the branch (one deletes a file, a later one
+#     adds it under another name) is taken from one rename detection between the
+#     merge-base and the head, limited to the files added or deleted between them.
+#   - On main, a file a squash or a pick created is the branch's file when it has a
+#     name that file had on the branch (latest first) and no other file of the branch
+#     came there by its own history.
+#   - A commit whose added times deleted files exceed 1000 x 1000 had git's rename
+#     detection skipped (git warns and pairs nothing more): a file it deleted may have
+#     moved. That matters only when it deletes a file an earlier candidate touched,
+#     whose effects would then look gone from the head; such a candidate cannot be
+#     verified (exit 4). Anywhere else the file is taken as deleted.
+IDENT="" ; FORK="" ; IDENT_MB=""
+# <rev> -> its commit id. A full commit id (the helper passes its own) is taken as it
+# is; anything else ("<id>^1") is resolved.
+commit_of() {
+  case "$1" in
+    ''|*[!0-9a-f]*) ;;
+    *) if [ "${#1}" -eq 40 ] || [ "${#1}" -eq 64 ]; then printf '%s\n' "$1"; return 0; fi ;;
+  esac
+  GIT rev-parse -q --verify "$1^{commit}" 2>/dev/null
 }
-# <commit> <name>: the name the commit's file <name> has in the branch head (itself when
-# the branch did not move it).
-head_name_of() {
-  head_names "$1" || return 2
-  P="$2" LC_ALL=C awk 'BEGIN { p = ENVIRON["P"]; out = p } NR % 2 == 1 { s = $0; next } s == p { out = $0 } END { print out }' \
-    "$SCRATCH/rn.$1.pairs"
+ident_build() { # -> IDENT=0 (nothing a check reads moved) or 1; 2 on error
+  [ -z "$IDENT" ] || return 0
+  local mb first na nd n p lk ta tb
+  local -a ps
+  mb="$(GIT merge-base "$BASELINE_SHA" "$BRANCH_SHA" 2>/dev/null)" || return 2
+  first="$(GIT rev-list --first-parent "$mb..$BRANCH_SHA" 2>/dev/null | tail -n 1)" || return 2
+  FORK="$mb"; IDENT_MB="$mb"
+  if [ -n "$first" ] && GIT rev-parse -q --verify "$first^1^{commit}" > /dev/null 2>&1; then
+    FORK="$(GIT merge-base "$BASELINE_SHA" "$first^1" 2>/dev/null)" || return 2
+  fi
+  # (no order file: a missing diff.orderFile makes git fail, #399 verify round 13)
+  GIT log --no-merges --topo-order --reverse --no-show-signature --no-color -O/dev/null -M -l1000 -z \
+    --ignore-submodules=none --format='%x01%H' --name-status "$BRANCH_SHA" "$BASELINE_SHA" "^$FORK" -- \
+    > "$SCRATCH/ops.raw" 2>/dev/null || return 2
+  # One token per line (an LF inside a name becomes \001, so it matches no name a check
+  # reads: those have none). A commit's header is \001 and its id; the separator after
+  # it reaches the next token as a leading \001. Out: "@" <id>, "R" <old> <new>,
+  # "A" <name>, "D" <name>, one per line; $SCRATCH/unc lists the commits whose rename
+  # detection was skipped, and unc.<id> the files each deleted.
+  : > "$SCRATCH/unc" || return 2
+  tr '\n\000' '\001\n' < "$SCRATCH/ops.raw" | LC_ALL=C awk -v d="$SCRATCH" '
+    function endc(   i, f) {
+      if (cur != "" && na * nd > 1000000) {
+        print cur >> (d "/unc"); f = d "/unc." cur
+        for (i = 1; i <= ndl; i++) print dl[i] > f
+        close(f)
+      }
+      na = 0; nd = 0; ndl = 0
+    }
+    want == 0 && substr($0, 1, 1) == "\001" && substr($0, 2) ~ /^[0-9a-f]+$/ && length($0) >= 41 {
+      endc(); cur = substr($0, 2); print "@"; print cur; sep = 1; next }
+    want == 0 {
+      st = $0; if (sep && substr(st, 1, 1) == "\001") st = substr(st, 2)
+      sep = 0; k = substr(st, 1, 1); want = (k == "R" || k == "C") ? 2 : 1; got = 0; next }
+    { got++; p[got] = $0
+      if (got < want) next
+      want = 0
+      if (k == "R") { print "R"; print p[1]; print p[2] }
+      else if (k == "A") { print "A"; print p[1]; na++ }
+      else if (k == "D") { print "D"; print p[1]; nd++; dl[++ndl] = p[1] } }
+    END { if (want) exit 2; endc() }' > "$SCRATCH/ops.all" || return 2
+  # A move spread over two commits of the branch: the files added or deleted between the
+  # merge-base and the head, paired by one rename detection among them alone ("L" <old>
+  # <new>). Best effort: beyond git's limit no such pair is made, and the file is taken
+  # as deleted and another added (a dropped commit may then be listed; nothing is
+  # missed by it).
+  : > "$SCRATCH/links" || return 2
+  GIT diff-tree -r -z -O/dev/null --no-renames --name-status --diff-filter=AD --ignore-submodules=none "$mb" "$BRANCH_SHA" \
+    > "$SCRATCH/ad.z" 2>/dev/null || return 2
+  : > "$SCRATCH/ad.names" || return 2
+  tr '\n\000' '\001\n' < "$SCRATCH/ad.z" | LC_ALL=C awk -v out="$SCRATCH/ad.names" '
+    NR % 2 == 1 { st = $0; next }
+    index($0, "\001") { next }
+    { printf "%s%c", $0, 0 > out; if (st == "A") na++; else nd++ }
+    END { print na + 0, nd + 0 }' > "$SCRATCH/ad.n" || return 2
+  read -r na nd < "$SCRATCH/ad.n" || return 2
+  n="$(wc -c < "$SCRATCH/ad.names" | tr -d ' ')" || return 2
+  if [ "$na" -gt 0 ] && [ "$nd" -gt 0 ] && [ $((na * nd)) -le 1000000 ]; then
+    if [ "$n" -le "$PATHS_MAX" ]; then
+      ps=()
+      while IFS= read -r -d '' p; do ps+=("$p"); done < "$SCRATCH/ad.names" || return 2
+      GIT --literal-pathspecs diff-tree -r -z -O/dev/null -M -l1000 --name-status --ignore-submodules=none "$mb" "$BRANCH_SHA" \
+        -- "${ps[@]}" > "$SCRATCH/links.z" 2>/dev/null || return 2
+    else
+      # (the trees filtered to those paths, as pdiff does)
+      lk="$(GIT hash-object --stdin < "$SCRATCH/ad.names" 2>/dev/null)" || return 2
+      tr '\000' '\n' < "$SCRATCH/ad.names" > "$SCRATCH/ft.list.$lk" || return 2
+      ta="$(ftree "$mb" "$lk")" && tb="$(ftree "$BRANCH_SHA" "$lk")" || return 2
+      SGIT diff-tree -r -z -O/dev/null -M -l1000 --name-status --ignore-submodules=none "$ta" "$tb" > "$SCRATCH/links.z" 2>/dev/null || return 2
+    fi
+    tr '\n\000' '\001\n' < "$SCRATCH/links.z" | LC_ALL=C awk '
+      want == 0 { st = $0; want = (st ~ /^[RC]/) ? 2 : 1; got = 0; next }
+      { got++; p[got] = $0; if (got < want) next; want = 0
+        if (st ~ /^R/) { print "L"; print p[1]; print p[2] } }
+      END { if (want) exit 2 }' > "$SCRATCH/links" || return 2
+  fi
+  # The names some move involves; nothing else needs following.
+  cat "$SCRATCH/links" "$SCRATCH/ops.all" | LC_ALL=C awk '
+    st == "" { st = $0; need = (st == "R" || st == "L") ? 2 : 1; got = 0; next }
+    { got++; if (st == "R" || st == "L") if (!($0 in seen)) { seen[$0] = 1; print }
+      if (got == need) st = "" }' > "$SCRATCH/tracked" || return 2
+  if [ ! -s "$SCRATCH/tracked" ]; then IDENT=0; return 0; fi
+  # The log reduced to the commits' headers, the moves and the additions and deletions
+  # of those names
+  LC_ALL=C awk -v tr="$SCRATCH/tracked" '
+    BEGIN { while ((r = getline l < tr) > 0) T[l] = 1; if (r < 0) exit 2 }
+    st == "" { st = $0; need = (st == "R") ? 2 : 1; got = 0; next }
+    { v[++got] = $0; if (got < need) next
+      if (st == "@" || st == "R" || ((st == "A" || st == "D") && (v[1] in T))) {
+        print st; print v[1]; if (st == "R") print v[2] }
+      st = "" }' "$SCRATCH/ops.all" > "$SCRATCH/ops.f" || return 2
+  # the tracked names that hold a file at the fork point
+  ps=()
+  while IFS= read -r p; do ps+=("$p"); done < "$SCRATCH/tracked" || return 2
+  : > "$SCRATCH/fork.names" || return 2
+  n="$(wc -c < "$SCRATCH/tracked" | tr -d ' ')" || return 2
+  if [ "$n" -le "$PATHS_MAX" ]; then
+    GIT --literal-pathspecs ls-tree -r -z --full-tree "$FORK" -- "${ps[@]}" > "$SCRATCH/fork.ls" 2>/dev/null || return 2
+  else
+    GIT ls-tree -r -z --full-tree "$FORK" > "$SCRATCH/fork.ls" 2>/dev/null || return 2
+  fi
+  tr '\n\000' '\001\n' < "$SCRATCH/fork.ls" | LC_ALL=C awk -v tr="$SCRATCH/tracked" '
+    BEGIN { while ((r = getline l < tr) > 0) T[l] = 1; if (r < 0) exit 2 }
+    { i = index($0, "\t"); p = substr($0, i + 1); if (p in T) print p }' > "$SCRATCH/fork.names" || return 2
+  # The head's view: every file's name there, or its last one (the key every diff uses)
+  GIT rev-list "$FORK..$BRANCH_SHA" > "$SCRATCH/head.set" 2>/dev/null || return 2
+  ident_sim "$SCRATCH/head.set" > "$SCRATCH/canon" || return 2
+  GIT rev-list "$FORK..$mb" > "$SCRATCH/mb.set" 2>/dev/null || return 2
+  ident_sim "$SCRATCH/mb.set" > "$SCRATCH/ia.mb" || return 2
+  IDENT=1
+}
+# <file of commit ids> -> every file the tracked names ever held, four lines each: its
+# identity, 1 if it exists after those commits (0 if not), its name then (its last
+# one when it does not exist), and every name it had ("\001"-separated, oldest first).
+# The log's commits are applied in order, those of the given set only.
+ident_sim() {
+  LC_ALL=C awk -v ops="$SCRATCH/ops.f" -v links="$SCRATCH/links" -v fork="$SCRATCH/fork.names" -v set="$1" '
+    function newid(n,   id) { id = cur ":" n; ids[++nid] = id; hist[id] = n; return id }
+    function del(o,   id) {
+      id = holder[o]; if (id == "") return
+      delete holder[o]; tomb[o] = id; alive[id] = 0; name[id] = o
+    }
+    # (the moves of one commit at once: a file may move to a name another one left in
+    # the same commit)
+    function flushc(   i, id) {
+      for (i = 1; i <= nq; i++) if (qt[i] == "R") { id = holder[qa[i]]; if (id == "") id = newid(qa[i]); qi[i] = id }
+      for (i = 1; i <= nq; i++) if (qt[i] == "R") delete holder[qa[i]]
+      for (i = 1; i <= nq; i++) if (qt[i] == "R") { id = qi[i]; holder[qb[i]] = id; name[id] = qb[i]; alive[id] = 1; hist[id] = hist[id] "\001" qb[i] }
+      for (i = 1; i <= nq; i++) if (qt[i] == "D") del(qa[i])
+      for (i = 1; i <= nq; i++) if (qt[i] == "A") add(qa[i])
+      nq = 0
+    }
+    function add(n,   id) {
+      if (n in holder) return
+      if (n in tomb) { id = tomb[n]; delete tomb[n] }
+      else if ((n in link) && (link[n] in tomb)) { id = tomb[link[n]]; delete tomb[link[n]]; hist[id] = hist[id] "\001" n }
+      else id = newid(n)
+      holder[n] = id; name[id] = n; alive[id] = 1
+    }
+    BEGIN {
+      while ((r = getline l < fork) > 0) { id = "F:" l; holder[l] = id; name[id] = l; alive[id] = 1; hist[id] = l; ids[++nid] = id }
+      if (r < 0) exit 2
+      while ((r = getline l < set) > 0) inset[l] = 1
+      if (r < 0) exit 2
+      st = ""
+      while ((r = getline l < links) > 0) {
+        if (st == "") { st = l; got = 0; continue }
+        v[++got] = l; if (got < 2) continue
+        link[v[2]] = v[1]; st = ""
+      }
+      if (r < 0) exit 2
+      # Within a commit the moves first, then the deletions, then the additions: git lists
+      # them by path, and an addition read before the deletion it follows would miss it.
+      st = ""; act = 0; nq = 0
+      while ((r = getline l < ops) > 0) {
+        if (st == "") { st = l; need = (l == "R") ? 2 : 1; got = 0; continue }
+        v[++got] = l; if (got < need) continue
+        t = st; st = ""
+        if (t == "@") { flushc(); cur = v[1]; act = (cur in inset); continue }
+        if (!act) continue
+        qt[++nq] = t; qa[nq] = v[1]; qb[nq] = (t == "R") ? v[2] : ""
+      }
+      if (r < 0) exit 2
+      flushc()
+      for (i = 1; i <= nid; i++) { id = ids[i]; print id; print alive[id] + 0; print name[id]; print hist[id] }
+    }'
+}
+# <rev> -> $SCRATCH/nm.<commit id>: each file of the head's view under its name in
+# <rev>, two lines per file: its key (its name in the head) and its name in <rev>
+# (empty when <rev> has none). A revision of the branch's history is read by history
+# alone. For a revision of main, three steps, in order:
+#   1. A file that existed at the merge-base and that the branch moved, which history
+#      leaves at its merge-base name (or nowhere) in <rev>, is the file main itself
+#      created at a name the file had on the branch, latest first (its name in the head,
+#      or an earlier one when only part of the branch landed), when there is one: a
+#      squash that moves a file and puts a new one at its old name records no move
+#      (git sees the old path still there), so by history alone the new file would be
+#      taken for it (round 17's rename fuzz).
+#   2. Every other file of the head's view by history, as on the branch.
+#   3. A file still without a name takes a file main created itself, or one step 1
+#      freed, at a name the file had on the branch, latest first.
+# A key two files share (one gone from the head, one there) is the one there.
+ident_map() {
+  local sha main
+  sha="$(commit_of "$1")" || return 2
+  [ -f "$SCRATCH/nm.$sha" ] && return 0
+  main=0
+  GIT merge-base --is-ancestor "$sha" "$BRANCH_SHA" 2>/dev/null; case $? in 0) ;; 1) main=1 ;; *) return 2 ;; esac
+  GIT rev-list "$FORK..$sha" > "$SCRATCH/ia.set.$sha" 2>/dev/null || return 2
+  ident_sim "$SCRATCH/ia.set.$sha" > "$SCRATCH/ia.$sha" || return 2
+  LC_ALL=C awk -v canon="$SCRATCH/canon" -v x="$SCRATCH/ia.$sha" -v mbf="$SCRATCH/ia.mb" -v main="$main" '
+    function load(f, A, N, own,    r, l, q, id) {
+      q = 0
+      while ((r = getline l < f) > 0) {
+        if (++q == 1) { id = l; if (own) { ho[++nh] = id; hid[id] = 1 } }
+        else if (q == 2) A[id] = l; else if (q == 3) N[id] = l; else { q = 0; if (own) hh[id] = l } }
+      if (r < 0) exit 2
+    }
+    BEGIN {
+      load(canon, ha, hc, 1); load(x, xa, xn, 0); load(mbf, ma, mn, 0)
+      for (id in xa) if (xa[id] == 1) { at[xn[id]] = id; if (!(id in hid)) mo[xn[id]] = id }
+      if (main == 1)       # 1: a moved file main created at a name it had on the branch
+        for (i = 1; i <= nh; i++) {
+          id = ho[i]; c = hc[id]
+          if (ha[id] != 1 || ma[id] != 1 || mn[id] == c || (c in done)) continue
+          if (xa[id] == 1 && xn[id] != mn[id]) continue    # history followed its move there
+          k = split(hh[id], hn, "\001")
+          for (j = k; j >= 1; j--) {
+            if (hn[j] == mn[id] || !(hn[j] in mo) || (hn[j] in used)) continue
+            out[c] = hn[j]; used[hn[j]] = 1; done[c] = 1
+            if (xa[id] == 1) free[xn[id]] = 1
+            break
+          }
+        }
+      # 2: by history, the files the head has first, so a shared key goes to the one there
+      for (pass = 1; pass <= 2; pass++)
+        for (i = 1; i <= nh; i++) {
+          id = ho[i]; c = hc[id]
+          if ((pass == 1) != (ha[id] == 1) || (c in done)) continue
+          if (xa[id] == 1 && !(xn[id] in free) && !(xn[id] in used)) { out[c] = xn[id]; used[xn[id]] = 1; done[c] = 1 }
+        }
+      for (i = 1; i <= nh; i++) {
+        id = ho[i]; c = hc[id]
+        if (c in done) continue
+        done[c] = 1; out[c] = ""
+        if (main != 1) continue
+        k = split(hh[id], hn, "\001")   # 3
+        for (j = k; j >= 1; j--)
+          if (((hn[j] in mo) || (hn[j] in free)) && !(hn[j] in used)) { out[c] = hn[j]; used[hn[j]] = 1; break }
+      }
+      for (c in done) { print c; print out[c] }
+    }' > "$SCRATCH/nm.$sha.tmp" && mv "$SCRATCH/nm.$sha.tmp" "$SCRATCH/nm.$sha"
+}
+# <rev> <in, NUL-separated keys> <out> -> two lines for each key <rev> has a file for:
+# its name in <rev> and the key (a key no move touches is its own name; whether <rev>
+# has a file there is not checked).
+names_in() {
+  local sha
+  if [ "$IDENT" = 1 ]; then
+    sha="$(commit_of "$1")" || return 2
+    ident_map "$sha" || return 2
+  fi
+  tr '\000' '\n' < "$2" | LC_ALL=C awk -v tr="$SCRATCH/tracked" -v nm="${sha:+$SCRATCH/nm.$sha}" -v id="${IDENT:-0}" '
+    BEGIN {
+      if (id == 1) {
+        while ((r = getline l < tr) > 0) T[l] = 1; if (r < 0) exit 2
+        while ((r = getline l < nm) > 0) { if (++q == 1) k = l; else { M[k] = l; q = 0 } }; if (r < 0) exit 2
+      }
+    }
+    { if (id == 1 && ($0 in T)) { if (($0 in M) && M[$0] != "") { print M[$0]; print } }
+      else { print; print } }' > "$3"
+}
+# <rev> <key> -> the name <rev> has the file under (nothing when it has none)
+name_at() {
+  local sha
+  if [ "$IDENT" != 1 ] || ! grep -qxF -- "$2" "$SCRATCH/tracked" 2>/dev/null; then printf '%s' "$2"; return 0; fi
+  sha="$(commit_of "$1")" || return 2
+  ident_map "$sha" || return 2
+  K="$2" LC_ALL=C awk 'BEGIN { k = ENVIRON["K"] } ++q == 1 { c = $0; next } { q = 0; if (c == k) { printf "%s", $0; exit } }' "$SCRATCH/nm.$sha"
+}
+# <key> -> every name the file had on the branch, NUL-separated (the key alone when no
+# move touches it)
+aliases_of() {
+  if [ "$IDENT" != 1 ] || ! grep -qxF -- "$1" "$SCRATCH/tracked" 2>/dev/null; then printf '%s\000' "$1"; return 0; fi
+  K="$1" LC_ALL=C awk 'BEGIN { k = ENVIRON["K"] }
+    { if (++q == 1) id = $0; else if (q == 2) a = $0; else if (q == 3) c = $0
+      else { q = 0; if (c == k) { n = split($0, h, "\001"); for (i = 1; i <= n; i++) if (!(h[i] in s)) { s[h[i]] = 1; printf "%s%c", h[i], 0 } } } }
+    END { if (!(k in s)) printf "%s%c", k, 0 }' "$SCRATCH/canon"
 }
 
-# ── The head's content is already at the tip (#399) ──
-# The issue's own first test: when, on every path a candidate touched, the tip has
-# exactly what the head has (the same blob, or no file on either side), there is
-# nothing left to land, however main got there (a squash resolved by hand to the
-# head's tree, a later commit of main's own). Plumbing, so no diff setting applies.
-# A candidate path with a newline is left to the check below, which refuses it. (A
-# file the branch moved after a candidate is compared too: the commit that moved it
-# carries its content and is a candidate as well: git cherry's patch ids include the
-# content, so only a move of the same content on main matches it.)
-GIT diff-tree -r -z --name-only --no-renames --ignore-submodules=none "$BRANCH_SHA" "$BASELINE_SHA" \
-  > "$SCRATCH/headtip.z" 2>/dev/null || skip "cannot compare the branch head with $S"
-: > "$SCRATCH/cand.z"
-for sha in $CANDIDATES; do
-  GIT diff-tree --root --no-commit-id --ignore-submodules=none --name-only -r -z "$sha" \
-    >> "$SCRATCH/cand.z" 2>/dev/null || skip "cannot list the paths $(short "$sha") touched"
-done
-has_lf "$SCRATCH/cand.z"; rc=$?
-if [ "$rc" -eq 1 ]; then
-  tr '\000' '\n' < "$SCRATCH/headtip.z" > "$SCRATCH/headtip" \
-    && tr '\000' '\n' < "$SCRATCH/cand.z" > "$SCRATCH/cand" || skip "cannot read the paths the branch touched"
-  # exit 3: a candidate touched a path where the head and the tip differ
-  LC_ALL=C awk -v d="$SCRATCH/headtip" '
-    BEGIN { while ((r = getline l < d) > 0) differ[l] = 1; if (r < 0) exit 2 }
-    ($0 in differ) { exit 3 }' "$SCRATCH/cand"; rc=$?
-  if [ "$rc" -eq 0 ]; then
-    printf 'landing - prefix -\nshortcut\n' | trace_out
-    exit 0
+# <rev> <in, NUL-separated names in <rev>> <out> -> two lines per name: the name and
+# its key (a name no move touches is its own key)
+key_pairs() {
+  local sha
+  if [ "$IDENT" != 1 ]; then
+    tr '\000' '\n' < "$2" | LC_ALL=C awk '{ print; print }' > "$3"; return
   fi
-fi
+  sha="$(commit_of "$1")" || return 2
+  ident_map "$sha" || return 2
+  tr '\000' '\n' < "$2" | LC_ALL=C awk -v tr="$SCRATCH/tracked" -v nm="$SCRATCH/nm.$sha" '
+    BEGIN { while ((r = getline l < tr) > 0) T[l] = 1; if (r < 0) exit 2
+            while ((r = getline l < nm) > 0) { if (++q == 1) k = l; else { if (l != "") K[l] = k; q = 0 } }; if (r < 0) exit 2 }
+    { print; print (($0 in T) && ($0 in K)) ? K[$0] : $0 }' > "$3"
+}
+# <rev> <in, NUL-separated names in <rev>> <out, NUL-separated keys, each once>
+keys_of() {
+  key_pairs "$1" "$2" "$3.kp" || return 2
+  LC_ALL=C awk 'NR % 2 == 0 && !($0 in s) { s[$0] = 1; printf "%s%c", $0, 0 }' "$3.kp" > "$3"
+}
+# <NUL-separated keys> -> 0 when one of them is a name some move involves, 1 when none
+# is, 2 on error
+has_tracked() {
+  [ "$IDENT" = 1 ] || return 1
+  tr '\000' '\n' < "$1" | LC_ALL=C awk -v tr="$SCRATCH/tracked" '
+    BEGIN { while ((r = getline l < tr) > 0) T[l] = 1; if (r < 0) { e = 1; exit } }
+    ($0 in T) { f = 1; exit }
+    END { if (e) exit 2; exit !f }'
+}
+# <a> <b> <keys file, NUL-separated> -> 0 when a key some move involves is not, in <a>
+# or in <b>, the file's own name there (so the diff needs the trees by key, ctree); 1 when
+# every such key is (the key's path holds that file in both, and no other), or none of
+# the keys is a name a move involves: the repository's own trees then; 2 on error. One
+# awk over the tracked names and both revisions' name maps.
+diff_by_key() {
+  local sa sb
+  [ "$IDENT" = 1 ] || return 1
+  if [ "$1" = "$EMPTY_TREE" ]; then sa=""; else sa="$(commit_of "$1")" && ident_map "$sa" || return 2; fi
+  if [ "$2" = "$EMPTY_TREE" ]; then sb=""; else sb="$(commit_of "$2")" && ident_map "$sb" || return 2; fi
+  tr '\000' '\n' < "$3" | LC_ALL=C awk -v tr="$SCRATCH/tracked" -v na="${sa:+$SCRATCH/nm.$sa}" -v nb="${sb:+$SCRATCH/nm.$sb}" '
+    function load(f, S,    r, l, q, k) {
+      if (f == "") return
+      while ((r = getline l < f) > 0) { if (++q == 1) k = l; else { q = 0; if (l == k) S[k] = 1 } }
+      if (r < 0) e = 1
+    }
+    BEGIN { while ((r = getline l < tr) > 0) T[l] = 1; if (r < 0) e = 1; load(na, A); load(nb, B); if (e) exit }
+    ($0 in T) && (na == "" || !($0 in A) || nb == "" || !($0 in B)) { f = 1; exit }
+    END { if (e) exit 2; exit !f }'
+}
+# <rev> <keys file, NUL-separated> <out> -> one line per key in the file's order: what
+# <rev> holds for it, "blob <oid>", "link <oid>" (a submodule) or "none". One
+# `ls-tree -r -z`, matched by exact path (no line-based object lookup, which drops a
+# trailing CR and, before git 2.51, reports a gitlink as missing).
+entries_of() {
+  names_in "$1" "$2" "$3.pairs" || return 2
+  GIT ls-tree -r -z --full-tree "$1" 2>/dev/null | tr '\n\000' '\001\n' > "$3.tree" || return 2
+  tr '\000' '\n' < "$2" | LC_ALL=C awk -v pairs="$3.pairs" -v tree="$3.tree" '
+    BEGIN {
+      while ((r = getline l < pairs) > 0) { if (++q == 1) n = l; else { q = 0; nk[n] = nk[n] SUBSEP l } }
+      if (r < 0) exit 2
+      while ((r = getline l < tree) > 0) {
+        i = index(l, "\t"); p = substr(l, i + 1)
+        if (!(p in nk)) continue
+        split(substr(l, 1, i - 1), m, " ")
+        k = split(nk[p], ks, SUBSEP)
+        for (j = 2; j <= k; j++) e[ks[j]] = (m[2] == "commit" ? "link " : "blob ") m[3]
+      }
+      if (r < 0) exit 2
+    }
+    { print (($0 in e) ? e[$0] : "none") }' > "$3"
+}
 
 # ── Comparing two trees line by line, in place (#399) ──
 # Everything at a landing commit is decided by two-way diffs read position by
@@ -383,25 +738,20 @@ fi
 # round 11). Every option that shapes the output is pinned, so no config, attribute
 # or external program changes it: no context lines between hunks
 # (diff.interHunkContext; GIT_DIFF_OPTS is unset above), no external diff, no
-# textconv, --text for files git calls binary, rename detection with git's default
-# threshold and limit (diff.renames, diff.renameLimit), myers with the indent
-# heuristic (diff.algorithm, diff.indentHeuristic), fixed a/ and b/ prefixes
-# (diff.noprefix, diff.mnemonicPrefix), quoted names (core.quotePath), no color, no
-# order file (diff.orderFile: a missing one makes git diff fail, which sent every
-# check to the tip, #399 verify round 13; an existing one is opened and read),
-# and submodules as "Subproject commit <oid>" lines (diff.submodule). Renames are
-# detected because a moved file is otherwise all new lines, and one line main edited
-# in it makes no commit hold the branch's net change (round 12). The helper runs at
-# the top level, where diff.relative changes nothing. git's messages are discarded:
-# they can quote repository text (an invalid attribute name).
+# textconv, --text for files git calls binary, no rename detection (diff.renames),
+# myers with the indent heuristic (diff.algorithm, diff.indentHeuristic), fixed a/
+# and b/ prefixes (diff.noprefix, diff.mnemonicPrefix), quoted names
+# (core.quotePath), no color, no order file (diff.orderFile: a missing one makes git
+# diff fail, which sent every check to the tip, #399 verify round 13; an existing one
+# is opened and read), and submodules as "Subproject commit <oid>" lines
+# (diff.submodule). A moved file is still one file: when the files listed include one
+# some move involves, both sides are trees that hold each file under its name in the
+# head (ctree, from the identities above), so a moved file is not all new lines and
+# one line main edited in it does not keep a commit from holding the branch's net
+# change (round 12), and no rename detection between two trees has to guess (round
+# 16). The helper runs at the top level, where diff.relative changes nothing. git's
+# messages are discarded: they can quote repository text (an invalid attribute name).
 EMPTY_TREE="$(GIT hash-object -t tree /dev/null 2>/dev/null)" || skip "cannot name the empty tree"
-# Paths go on a command line only up to PATHS_MAX bytes. Beyond that, two trees
-# holding only the listed paths are built in a scratch object store (the repository
-# is never written) and compared whole: git then pairs renames among exactly the
-# same paths as on the command line. Comparing the full trees instead let git pair a
-# listed path with one main had moved it to, outside the list, and the listed path's
-# records were dropped (#399 verify round 13).
-PATHS_MAX=65536
 # Set up here, once: pdiff runs inside pipelines (subshells), where a lazy setup
 # would not be remembered.
 SOBJ="$SCRATCH/objects"
@@ -440,53 +790,88 @@ ftree() {
     && [ -s "$out.tmp" ] && mv "$out.tmp" "$out" || return 2
   cat "$out"
 }
+# <rev> <list key> -> a tree holding, under each key in $SCRATCH/ft.list.<key>, the
+# entry <rev> has for that file (at its own name there), built once per commit and list
+# in the scratch store: the diffs between two such trees pair each file with itself,
+# whatever it is called in either revision (#399 verify round 16). A file <rev> has no
+# name for is left out; every entry found must reach the index, as in ftree.
+ctree() {
+  local sha out n p
+  local -a ps
+  if [ "$1" = "$EMPTY_TREE" ]; then printf '%s\n' "$EMPTY_TREE"; return 0; fi
+  sha="$(commit_of "$1")" || return 2
+  out="$SCRATCH/ct.$2.$sha"
+  [ -s "$out" ] && { cat "$out"; return 0; }
+  tr '\n' '\000' < "$SCRATCH/ft.list.$2" > "$SCRATCH/ct.keys" \
+    && names_in "$sha" "$SCRATCH/ct.keys" "$SCRATCH/ct.pairs" || return 2
+  LC_ALL=C awk 'NR % 2 == 1 { printf "%s%c", $0, 0 }' "$SCRATCH/ct.pairs" > "$SCRATCH/ct.names" || return 2
+  n="$(wc -c < "$SCRATCH/ct.names" | tr -d ' ')" || return 2
+  if [ "$n" -eq 0 ]; then printf '%s\n' "$EMPTY_TREE" > "$out"; cat "$out"; return 0; fi
+  if [ "$n" -le "$PATHS_MAX" ]; then
+    ps=()
+    while IFS= read -r -d '' p; do ps+=("$p"); done < "$SCRATCH/ct.names" || return 2
+    GIT --literal-pathspecs ls-tree -r -z --full-tree "$sha" -- ${ps[@]+"${ps[@]}"} > "$SCRATCH/ct.ls" 2>/dev/null || return 2
+  else
+    GIT ls-tree -r -z --full-tree "$sha" > "$SCRATCH/ct.ls" 2>/dev/null || return 2
+  fi
+  rm -f "$SCRATCH/ft.idx"
+  tr '\n\000' '\001\n' < "$SCRATCH/ct.ls" | LC_ALL=C awk -v pairs="$SCRATCH/ct.pairs" '
+    BEGIN { while ((r = getline l < pairs) > 0) { if (++q == 1) n = l; else { q = 0; nk[n] = nk[n] SUBSEP l } }; if (r < 0) exit 2 }
+    { i = index($0, "\t"); p = substr($0, i + 1); if (!(p in nk)) next
+      k = split(nk[p], ks, SUBSEP); for (j = 2; j <= k; j++) print substr($0, 1, i) ks[j] }' > "$SCRATCH/ct.in" || return 2
+  [ -s "$SCRATCH/ct.in" ] || { printf '%s\n' "$EMPTY_TREE" > "$out"; cat "$out"; return 0; }
+  tr '\n' '\000' < "$SCRATCH/ct.in" \
+    | GIT_INDEX_FILE="$SCRATCH/ft.idx" SGIT update-index -z --index-info 2>/dev/null || return 2
+  [ "$(GIT_INDEX_FILE="$SCRATCH/ft.idx" SGIT ls-files -s -z 2>/dev/null | tr -cd '\000' | wc -c | tr -d ' ')" \
+    = "$(wc -l < "$SCRATCH/ct.in" | tr -d ' ')" ] || return 2
+  GIT_INDEX_FILE="$SCRATCH/ft.idx" SGIT write-tree --missing-ok > "$out.tmp" 2>/dev/null \
+    && [ -s "$out.tmp" ] && mv "$out.tmp" "$out" || return 2
+  cat "$out"
+}
 DIFF_OPTS=(-c core.quotePath=true --literal-pathspecs diff -U0 --inter-hunk-context=0 --no-color -O/dev/null
-  --no-ext-diff --no-textconv --text --find-renames -l1000 --diff-algorithm=myers --indent-heuristic
+  --no-ext-diff --no-textconv --text --no-renames --diff-algorithm=myers --indent-heuristic
   --src-prefix=a/ --dst-prefix=b/ --ignore-submodules=none --submodule=short)
-pdiff() { # <a> <b> <paths file, NUL-separated> -> unified diff with no context
-  local p n ta tb lk
+pdiff() { # <a> <b> <keys file, NUL-separated> -> unified diff with no context
+  local p n ta tb lk rc
   local -a ps
   ps=()
   [ -r "$3" ] || return 2
   n="$(wc -c < "$3" | tr -d ' ')" || return 2
   [ "$n" -gt 0 ] || return 0
-  if [ "$n" -le "$PATHS_MAX" ]; then
+  # a file some move involves, which either revision has under another name (or not at
+  # all, its key's path perhaps holding another file): each revision's file under its key
+  diff_by_key "$1" "$2" "$3"; rc=$?
+  if [ "$rc" -eq 0 ]; then
+    lk="$(GIT hash-object --stdin < "$3" 2>/dev/null)" || return 2
+    [ -s "$SCRATCH/ft.list.$lk" ] || tr '\000' '\n' < "$3" > "$SCRATCH/ft.list.$lk" || return 2
+    ta="$(ctree "$1" "$lk")" && tb="$(ctree "$2" "$lk")" || return 2
+    SGIT "${DIFF_OPTS[@]}" "$ta" "$tb" 2>/dev/null || return 2
+  elif [ "$rc" -ne 1 ]; then
+    return 2
+  elif [ "$n" -le "$PATHS_MAX" ]; then
     while IFS= read -r -d '' p; do ps+=("$p"); done < "$3" || return 2
-    GIT "${DIFF_OPTS[@]}" "$1" "$2" -- "${ps[@]}" 2> "$SCRATCH/pdiff.err" || return 2
+    GIT "${DIFF_OPTS[@]}" "$1" "$2" -- "${ps[@]}" 2>/dev/null || return 2
   else
     lk="$(GIT hash-object --stdin < "$3" 2>/dev/null)" || return 2
     [ -s "$SCRATCH/ft.list.$lk" ] || tr '\000' '\n' < "$3" > "$SCRATCH/ft.list.$lk" || return 2
     ta="$(ftree "$1" "$lk")" && tb="$(ftree "$2" "$lk")" || return 2
-    SGIT "${DIFF_OPTS[@]}" "$ta" "$tb" 2> "$SCRATCH/pdiff.err" || return 2
+    SGIT "${DIFF_OPTS[@]}" "$ta" "$tb" 2>/dev/null || return 2
   fi
-  no_rename_skip "$SCRATCH/pdiff.err"
 }
-# <git's stderr>: 1 when git skipped rename detection (more files than -l allows): the
-# moved files then read as deleted and added, and the checks that follow them would
-# read under the wrong names (#399 verify round 15). git's messages are not printed:
-# they can quote repository text.
-no_rename_skip() { ! grep -q 'rename detection was skipped' "$1" 2>/dev/null; }
-# One record per line, "<kind><TAB><line number><TAB><path>": C, an old-side line the
+# One record per line, "<kind><TAB><line number><TAB><key>": C, an old-side line the
 # diff changes; A, a new-side line it adds; D, an old-side line it deletes (A and D
 # skip blank lines, which SPEC.md's definition ignores). Within a hunk an old and a
 # new line at the same offset with the same text are unchanged (two equal lines diff
 # happened to pair), and so is a last line whose final newline alone changed, paired
-# with the equal line on the other side wherever it sits in the hunk. Each record
-# carries the name of the file on the side its line number belongs to: A the new
-# side's name, C and D the old side's (#399 verify round 15: a record keyed by the new
-# side's name could never meet the record of another diff about the same line once
-# the branch had moved the file; joins between diffs match a line by its number on
-# one revision, so the name must be that revision's too). Names come from the
-# ---/+++ lines, C-unquoted when git quoted them, and a file is kept when either of
-# its names is in <paths file>: a pathspec also matches what lies under a directory
-# of that name, and a decoded name with a newline in it would split a record (the
-# listed paths have none; those were refused above). Anything unexpected inside a
-# hunk (a context line, from a setting the options above do not cover) fails the
-# whole read (exit 2) rather than shift a position. A renamed file also gets two
-# records, "N<TAB>0<TAB><new name>" and right after it "O<TAB>0<TAB><old name>", read
-# from its "rename from"/"rename to" lines when it has no hunks (a move with no edit
-# has no ---/+++), so the counts below can read the file under the name each revision
-# has (old_of, new_of); every other reader skips them.
+# with the equal line on the other side wherever it sits in the hunk. The diffs above
+# detect no renames: a file is one key on both sides (a file's name in each revision
+# was resolved before the diff, ctree), so a record joins the records of any other
+# diff by its key and its line number on one revision. Names come from the ---/+++
+# lines, C-unquoted when git quoted them; a file is kept when its name is in <paths
+# file> (a pathspec also matches what lies under a directory of that name). A decoded
+# name with a newline in it would split a record: it fails the whole read (exit 2),
+# and so does anything unexpected inside a hunk (a context line, from a setting the
+# options above do not cover) rather than shift a position.
 pparse() { # <paths file, NUL-separated>
   local list="$SCRATCH/pparse.list"
   tr '\000' '\n' < "$1" > "$list" || return 2
@@ -516,30 +901,21 @@ pparse() { # <paths file, NUL-separated>
       if (nnl >= 0 && !pn[nnl]) for (i = 0; i < no; i++) if (!po[i] && O[i] == N[nnl]) { po[i] = 1; pn[nnl] = 1; break }
       if (keep) {
         for (i = 0; i < no; i++) if (!po[i]) {
-          print "C\t" (os + i) "\t" opath
-          if (!blank(O[i])) print "D\t" (os + i) "\t" opath
+          print "C\t" (os + i) "\t" path
+          if (!blank(O[i])) print "D\t" (os + i) "\t" path
         }
-        for (j = 0; j < nn; j++) if (!pn[j] && !blank(N[j])) print "A\t" (ns + j) "\t" npath
+        for (j = 0; j < nn; j++) if (!pn[j] && !blank(N[j])) print "A\t" (ns + j) "\t" path
       }
       no = 0; nn = 0; onl = -1; nnl = -1; last = ""
     }
-    # a move with no edit: its names only in the "rename from"/"rename to" lines
-    function endfile() {
-      if (!hdr && rfrom != "" && rto != "" && ((rto in want) || (rfrom in want))) {
-        print "N\t0\t" rto; print "O\t0\t" rfrom
-      }
-      hdr = 0; rfrom = ""; rto = ""
-    }
     BEGIN { while ((r = getline l < list) > 0) want[l] = 1; if (r < 0) { bad = 1; exit }; onl = -1; nnl = -1 }
-    /^diff --git / { flush(); endfile(); h = 0; oldp = ""; keep = 0; next }
-    !h && /^rename from / { rfrom = unq(substr($0, 13)); next }
-    !h && /^rename to / { rto = unq(substr($0, 11)); next }
+    /^diff --git / { flush(); h = 0; oldp = ""; keep = 0; next }
+    !h && /^(rename|copy) (from|to) / { bad = 1; exit }
     !h && /^--- / { oldp = name(substr($0, 5)); next }
-    !h && /^\+\+\+ / { p = name(substr($0, 5)); hdr = 1
-      npath = (p == "/dev/null") ? substr(oldp, 3) : substr(p, 3)
-      opath = (oldp == "/dev/null") ? npath : substr(oldp, 3)
-      keep = (npath in want) || (opath in want)
-      if (keep && opath != npath) { print "N\t0\t" npath; print "O\t0\t" opath }
+    !h && /^\+\+\+ / { p = name(substr($0, 5))
+      path = (p == "/dev/null") ? substr(oldp, 3) : substr(p, 3)
+      if (index(path, "\n")) { bad = 1; exit }
+      keep = (path in want)
       next }
     /^@@ / { flush(); split($2, o, ","); os = substr(o[1], 2) + 0
              split($3, n, ","); ns = substr(n[1], 2) + 0; h = 1; next }
@@ -548,7 +924,7 @@ pparse() { # <paths file, NUL-separated>
     /^\+/ { N[nn++] = substr($0, 2); last = "N"; next }
     /^\\/ { if (last == "O") onl = no - 1; else if (last == "N") nnl = nn - 1; next }
     { bad = 1; exit }
-    END { if (bad) exit 2; flush(); endfile() }'
+    END { if (bad) exit 2; flush() }'
 }
 # <rev> <path>: prints "blob" or "commit" (a submodule) and returns 0 when <rev> has
 # one at exactly <path>; 1 when it does not (a directory there counts as no file); 2
@@ -564,6 +940,99 @@ entry_of() {
   esac
   return 1
 }
+
+# Each candidate's files, listed once: the names it touched (refused when one has a
+# newline), the ones it deletes and adds as a whole (D.<n>, A.<n>, with their keys in
+# Dk.<n>, Ak.<n>), and the keys of all of them (keys.<n>), each file's name in the
+# head. Every path a candidate touched is numbered once by one awk pass (bash 3.2 has
+# no associative arrays, and a linear search is quadratic on a wide commit); each
+# candidate's numbers go to its own file, which awk reads later, never argv. -z so a
+# space or a non-ASCII name (quoted by core.quotePath) stays the real path.
+ident_build || skip "cannot follow the files the branch or the baseline moved"
+: > "$SCRATCH/pairs"; k=0; NPATHS=""
+for sha in $CANDIDATES; do
+  GIT diff-tree --root --no-commit-id --no-renames --ignore-submodules=none --name-status -r -z "$sha" \
+    > "$SCRATCH/ns.z" 2>/dev/null || skip "cannot list the paths $(short "$sha") touched"
+  has_lf "$SCRATCH/ns.z"; case "$?" in
+    0) skip "$(short "$sha") touches a path with a newline (or \\001) in its name" ;;
+    1) ;;
+    *) skip "cannot read the paths $(short "$sha") touched" ;;
+  esac
+  # "<status> NUL <path> NUL": a path the commit deleted is in its parent, any other in it
+  : > "$SCRATCH/D.$k.z" && : > "$SCRATCH/A.$k.z" && : > "$SCRATCH/in.z" \
+    && tr '\000' '\n' < "$SCRATCH/ns.z" | LC_ALL=C awk -v d="$SCRATCH" -v k="$k" '
+      NR % 2 == 1 { st = $0; next }
+      { if (st == "D") printf "%s%c", $0, 0 > (d "/D." k ".z")
+        else { printf "%s%c", $0, 0 > (d "/in.z"); if (st == "A") printf "%s%c", $0, 0 > (d "/A." k ".z") } }' \
+    && tr '\000' '\n' < "$SCRATCH/D.$k.z" > "$SCRATCH/D.$k" && tr '\000' '\n' < "$SCRATCH/A.$k.z" > "$SCRATCH/A.$k" \
+    || skip "cannot read the paths $(short "$sha") touched"
+  par="$(GIT rev-parse -q --verify "$sha^1^{commit}" 2>/dev/null)" || par=""
+  if [ -n "$par" ]; then
+    key_pairs "$par" "$SCRATCH/D.$k.z" "$SCRATCH/Dk.$k" || skip "cannot follow the files $(short "$sha") deleted"
+  else
+    : > "$SCRATCH/Dk.$k"
+  fi
+  # (an added path counts as an effect only while it is still that file's path in the
+  # head, its key: a later move took the file elsewhere, and a new file there is
+  # another one, #399 round 17's rename fuzz)
+  key_pairs "$sha" "$SCRATCH/in.z" "$SCRATCH/Ik.$k" && key_pairs "$sha" "$SCRATCH/A.$k.z" "$SCRATCH/Ak.$k" \
+    && LC_ALL=C awk 'NR % 2 == 1 { n = $0; next } $0 == n { print n }' "$SCRATCH/Ak.$k" > "$SCRATCH/As.$k" \
+    || skip "cannot follow the files $(short "$sha") touched"
+  LC_ALL=C awk -v k="$k" 'NR % 2 == 0 && !($0 in s) { s[$0] = 1; print k "\t" $0 }' "$SCRATCH/Ik.$k" "$SCRATCH/Dk.$k" \
+    >> "$SCRATCH/pairs" || skip "cannot index the paths $(short "$sha") touched"
+  [ -s "$SCRATCH/ns.z" ] && NPATHS="$NPATHS $k"
+  k=$((k + 1))
+done
+LC_ALL=C awk -v d="$SCRATCH" '
+  { i = index($0, "\t"); k = substr($0, 1, i - 1); p = substr($0, i + 1)
+    if (!(p in idx)) { idx[p] = n++; print p > (d "/paths") }
+    f = d "/c." k; print idx[p] >> f; close(f) }' "$SCRATCH/pairs" || skip "cannot index the touched paths"
+for k in $NPATHS; do [ -s "$SCRATCH/c.$k" ] || skip "lost the path list of candidate $k"; done
+# <candidate number> -> $SCRATCH/cp.z: its keys, NUL-separated (none has LF: those were
+# refused above)
+cand_keys() {
+  LC_ALL=C awk -v paths="$SCRATCH/paths" 'BEGIN { while ((getline l < paths) > 0) P[n++] = l }
+    { printf "%s%c", P[$0], 0 }' "$SCRATCH/c.$1" > "$SCRATCH/cp.z"
+}
+
+# ── The head's content is already at the tip (#399) ──
+# The issue's own first test: when, on every path a candidate touched, the tip has
+# exactly what the head has (the same blob, or no file on either side), there is
+# nothing left to land, however main got there (a squash resolved by hand to the
+# head's tree, a later commit of main's own). Plumbing, so no diff setting applies.
+# Both the paths and the files: a file a later commit moved is compared under its
+# name in the head and its name in the tip (the commit that moved it may have reached
+# main as a pick, and then it is no candidate; #399 verify round 16).
+GIT diff-tree -r -z --name-only --no-renames --ignore-submodules=none "$BRANCH_SHA" "$BASELINE_SHA" \
+  > "$SCRATCH/headtip.z" 2>/dev/null || skip "cannot compare the branch head with $S"
+: > "$SCRATCH/cand.z"
+for sha in $CANDIDATES; do
+  GIT diff-tree --root --no-commit-id --ignore-submodules=none --name-only -r -z "$sha" \
+    >> "$SCRATCH/cand.z" 2>/dev/null || skip "cannot list the paths $(short "$sha") touched"
+done
+has_lf "$SCRATCH/cand.z"; rc=$?
+if [ "$rc" -eq 1 ]; then
+  tr '\000' '\n' < "$SCRATCH/headtip.z" > "$SCRATCH/headtip" \
+    && tr '\000' '\n' < "$SCRATCH/cand.z" > "$SCRATCH/cand" || skip "cannot read the paths the branch touched"
+  # exit 3: a candidate touched a path where the head and the tip differ
+  LC_ALL=C awk -v d="$SCRATCH/headtip" '
+    BEGIN { while ((r = getline l < d) > 0) differ[l] = 1; if (r < 0) exit 2 }
+    ($0 in differ) { exit 3 }' "$SCRATCH/cand"; rc=$?
+  if [ "$rc" -eq 0 ] && [ "$IDENT" = 1 ]; then
+    for k in $NPATHS; do cand_keys "$k" && cat "$SCRATCH/cp.z"; done > "$SCRATCH/p0.z" \
+      || skip "cannot read the files the branch touched"
+    if has_tracked "$SCRATCH/p0.z"; then
+      entries_of "$BRANCH_SHA" "$SCRATCH/p0.z" "$SCRATCH/p0.h" && entries_of "$BASELINE_SHA" "$SCRATCH/p0.z" "$SCRATCH/p0.t" \
+        || skip "cannot compare the branch head with $S"
+      cmp -s "$SCRATCH/p0.h" "$SCRATCH/p0.t" || rc=3
+    fi
+  fi
+  if [ "$rc" -eq 0 ]; then
+    printf 'landing - prefix -\nshortcut\n' | trace_out
+    exit 0
+  fi
+fi
+
 
 # Where <rev>'s net change since its merge-base with the baseline landed: the
 # EARLIEST commit, walking the baseline's first-parent history forward from the
@@ -585,55 +1054,34 @@ BUDGET=200
 LAND="" ; LAND_MB="" ; LAND_NOTE="" ; LAND_NONE="" ; LAND_AT_MB="" ; WALK_MB="" ; NET_KEY=""
 net_of() { # <merge-base> <rev> -> $SCRATCH/net.{z,list,diff} for that pair, cached
   [ "$NET_KEY" = "$1 $2" ] && return 0
-  GIT diff-tree -r -z --name-only --no-renames --ignore-submodules=none "$1" "$2" \
-    > "$SCRATCH/net.z" 2>/dev/null || return 1
-  # A path with LF in its name cannot go through the line-based steps below.
-  has_lf "$SCRATCH/net.z"; [ $? -eq 1 ] || return 1
+  # The files that differ, by key: a name the change deleted is in the merge-base, any
+  # other in <rev>. A path with LF in its name cannot go through the line-based steps
+  # below.
+  GIT diff-tree -r -z --name-status --no-renames --ignore-submodules=none "$1" "$2" \
+    > "$SCRATCH/net.ns" 2>/dev/null || return 1
+  has_lf "$SCRATCH/net.ns"; [ $? -eq 1 ] || return 1
+  : > "$SCRATCH/net.dn" && : > "$SCRATCH/net.nn" && tr '\000' '\n' < "$SCRATCH/net.ns" | LC_ALL=C awk -v d="$SCRATCH" '
+    NR % 2 == 1 { st = $0; next }
+    { printf "%s%c", $0, 0 > (d (st == "D" ? "/net.dn" : "/net.nn")) }' || return 1
+  keys_of "$1" "$SCRATCH/net.dn" "$SCRATCH/net.dk" && keys_of "$2" "$SCRATCH/net.nn" "$SCRATCH/net.nk" || return 1
+  cat "$SCRATCH/net.nn" "$SCRATCH/net.dn" > "$SCRATCH/net.names" && tr '\000' '\n' < "$SCRATCH/net.names" > "$SCRATCH/net.nlist" || return 1
+  cat "$SCRATCH/net.nk" "$SCRATCH/net.dk" | tr '\000' '\n' \
+    | LC_ALL=C awk '!($0 in s) { s[$0] = 1; printf "%s%c", $0, 0 }' > "$SCRATCH/net.z" || return 1
   pdiff "$1" "$2" "$SCRATCH/net.z" | pparse "$SCRATCH/net.z" > "$SCRATCH/net.diff" || return 1
   tr '\000' '\n' < "$SCRATCH/net.z" > "$SCRATCH/net.list" || return 1
   NET_KEY="$1 $2"; NET_GEN=$((NET_GEN + 1))
 }
 NET_GEN=0 ; NETN_GEN="" ; NETN=0
-# <rev> <path> <out>: <rev>'s file at <path> into <out>, empty when there is none;
-# 1 for a submodule there (no lines to count), 2 on error.
+# <rev> <key> <out>: <rev>'s file of that key (under its name there) into <out>,
+# empty when there is none; 1 for a submodule there (no lines to count), 2 on error.
 file_of() {
-  local ty
-  ty="$(entry_of "$1" "$2")"
+  local ty n
+  n="$(name_at "$1" "$2")" || return 2
+  [ -n "$n" ] || { : > "$3"; return 0; }
+  ty="$(entry_of "$1" "$n")"
   case $? in 1) : > "$3"; return 0 ;; 0) ;; *) return 2 ;; esac
   [ "$ty" = blob ] || return 1
-  GIT cat-file blob "$1:$2" > "$3" 2>/dev/null || return 2
-}
-# <records> <path>: the name <path> had before a rename the pparse records hold
-# (nothing when they hold none). name_in: the name a file has in a revision, the
-# first of the given names it has (nothing when it has none), 2 on error.
-# (Paths reach awk through the environment, never -v, which would decode a backslash
-# in a name: "a\nb" became a newline and matched nothing, #399 verify round 14.)
-old_of() {
-  P="$2" LC_ALL=C awk 'BEGIN { p = ENVIRON["P"] } substr($0, 1, 2) == "N\t" { n = substr($0, 5); next }
-    substr($0, 1, 2) == "O\t" && n == p { print substr($0, 5); exit } { n = "" }' "$1"
-}
-# <records> <path>: the name <path> has after a rename the records hold (nothing when
-# they hold none): new_of reads the pair the other way.
-new_of() {
-  P="$2" LC_ALL=C awk 'BEGIN { p = ENVIRON["P"] } substr($0, 1, 2) == "N\t" { n = substr($0, 5); next }
-    substr($0, 1, 2) == "O\t" && substr($0, 5) == p { print n; exit } { n = "" }' "$1"
-}
-# <records> <path>: NEW_N and OLD_N, the file's names on the new and the old side of
-# the diff the records came from (the same when the records hold no rename of it).
-pair_of() {
-  local o n
-  o="$(old_of "$1" "$2")" && n="$(new_of "$1" "$2")" || return 2
-  if [ -n "$o" ]; then NEW_N="$2"; OLD_N="$o"
-  elif [ -n "$n" ]; then NEW_N="$n"; OLD_N="$2"
-  else NEW_N="$2"; OLD_N="$2"; fi
-}
-name_in() { # <rev> <name> ...: the first of the names <rev> has (empty names skipped)
-  local r="$1" n; shift
-  for n in "$@"; do
-    [ -n "$n" ] || continue
-    entry_of "$r" "$n" > /dev/null
-    case $? in 0) printf '%s' "$n"; return 0 ;; 1) ;; *) return 2 ;; esac
-  done
+  GIT cat-file blob "$1:$n" > "$3" 2>/dev/null || return 2
 }
 # A position says which line it is only while the line's text is unique. When a
 # commit fails to hold the net change only on lines whose text repeats (in the
@@ -655,12 +1103,17 @@ name_in() { # <rev> <name> ...: the first of the names <rev> has (empty names sk
 # step that brought both; and a commit that moved a line of the text, which leaves the
 # number of copies alone, could be dropped unseen. Each of these read as holding the
 # net change (#399 round 14, found by bounded.py --landing two and --pairs). <rev>
-# only names the branch's file the records are read from.
-single_changer() {
-  local b n0 n1 rc side r n key
+# is unused; the file is <key>'s, listed by every name it had on the branch (a commit
+# that edited it under a name it no longer has touches it too, #399 verify round 16).
+single_changer() { # <rev> <key> <records>
+  local b rc side r key p
+  local -a al
   : > "$SCRATCH/sc.texts"
-  key="$({ printf '%s\000%s' "$2" "${3:-}"; } | GIT hash-object --stdin 2>/dev/null)" || return 2
-  GIT --literal-pathspecs rev-list --no-merges "$HOLD_MB..$BRANCH_SHA" -- "$2" ${3:+"$3"} > "$SCRATCH/sc.revs" 2>/dev/null || return 2
+  key="$(printf '%s' "$2" | GIT hash-object --stdin 2>/dev/null)" || return 2
+  aliases_of "$2" > "$SCRATCH/sc.al" || return 2
+  al=()
+  while IFS= read -r -d '' p; do al+=("$p"); done < "$SCRATCH/sc.al" || return 2
+  GIT --literal-pathspecs rev-list --no-merges "$HOLD_MB..$BRANCH_SHA" -- "${al[@]}" > "$SCRATCH/sc.revs" 2>/dev/null || return 2
   while IFS= read -r b; do
     GIT rev-parse -q --verify "$b^1^{commit}" > /dev/null 2>&1 || continue
     # Every text the commit touches in the file, read once per commit and file (the
@@ -668,15 +1121,14 @@ single_changer() {
     # round 14): the texts whose copies it changes, and those of the lines it adds or
     # deletes.
     if [ ! -f "$SCRATCH/sc.t.$b.$key" ]; then
-      n1="$(name_in "$b" "$2" "$3")" && n0="$(name_in "$b^1" "$2" "$3")" || return 2
       for side in 1 0; do
-        [ "$side" = 1 ] && r="$b" n="$n1" || r="$b^1" n="$n0"
-        if [ -n "$n" ]; then file_of "$r" "$n" "$SCRATCH/sc.$side"; rc=$?; else rc=1; fi
+        [ "$side" = 1 ] && r="$b" || r="$b^1"
+        file_of "$r" "$2" "$SCRATCH/sc.$side"; rc=$?
         [ "$rc" -le 1 ] || return 2
         [ "$rc" -eq 0 ] || : > "$SCRATCH/sc.$side"
       done
-      # the commit's own diff of the file (under both names when it moved it)
-      { [ -z "$n1" ] || printf '%s\0' "$n1"; [ -z "$n0" ] || [ "$n0" = "$n1" ] || printf '%s\0' "$n0"; } > "$SCRATCH/sc.z"
+      # the commit's own diff of the file
+      printf '%s\000' "$2" > "$SCRATCH/sc.z"
       pdiff "$b^1" "$b" "$SCRATCH/sc.z" | pparse "$SCRATCH/sc.z" > "$SCRATCH/sc.rec" || return 2
       LC_ALL=C awk -v f1="$SCRATCH/sc.1" -v f0="$SCRATCH/sc.0" -v own="$SCRATCH/sc.rec" 'BEGIN {
           while ((r = getline l < f1) > 0) { N1[++n1] = l; c1[l]++ }
@@ -694,14 +1146,14 @@ single_changer() {
           for (x in hit) print x }' > "$SCRATCH/sc.t.tmp" && mv "$SCRATCH/sc.t.tmp" "$SCRATCH/sc.t.$b.$key" || return 2
     fi
     # the texts of <records> this commit touches
-    LC_ALL=C awk -v rec="$4" 'BEGIN {
+    LC_ALL=C awk -v rec="$3" 'BEGIN {
         while ((r = getline l < rec) > 0) { x = l; for (j = 1; j <= 4; j++) x = substr(x, index(x, "\t") + 1); T[x] = 1 }
         if (r < 0) exit 2 }
       ($0 in T) { print }' "$SCRATCH/sc.t.$b.$key" >> "$SCRATCH/sc.texts" || return 2
   done < "$SCRATCH/sc.revs"
   LC_ALL=C awk -v t="$SCRATCH/sc.texts" 'BEGIN { while ((r = getline l < t) > 0) n[l]++; if (r < 0) exit 2 }
-    { x = $0; for (j = 1; j <= 4; j++) x = substr(x, index(x, "\t") + 1); if (n[x] + 0 <= 1) print }' "$4" > "$4.tmp" \
-    && mv "$4.tmp" "$4"
+    { x = $0; for (j = 1; j <= 4; j++) x = substr(x, index(x, "\t") + 1); if (n[x] + 0 <= 1) print }' "$3" > "$3.tmp" \
+    && mv "$3.tmp" "$3"
 }
 # <path> <rep file>: 0 when every failing record of <path> is in <rep file>, 1 when one
 # is not, 2 on error.
@@ -712,7 +1164,7 @@ in_rep() {
       if (!((substr($0, 1, 1) "\t" substr($0, 3, i - 1)) in want)) exit 1 }' "$SCRATCH/h.fail"
 }
 holds_by_copies() { # <commit> <rev> (the failing records are in $SCRATCH/h.fail)
-  local c="$1" rev="$2" par p i rc n nr rvn mbn rf r
+  local c="$1" rev="$2" par p i rc rf r
   [ "$c" != "$HOLD_MB" ] || return 1
   # Some line of the net change must be in place by position: a squash carries the
   # branch's change, while a commit of main's own that adds the same text elsewhere
@@ -742,19 +1194,12 @@ holds_by_copies() { # <commit> <rev> (the failing records are in $SCRATCH/h.fail
       # each net record of the path whose text occurs at least twice in the branch's
       # file or the merge-base's: "<kind><TAB><line><TAB><copies there><TAB><copies
       # in the merge-base><TAB><text>"
-      # (a file the branch renamed is read in each revision under the name it has
-      # there: an added line's record carries the branch's name, a deleted line's the
-      # merge-base's)
-      pair_of "$SCRATCH/net.diff" "$p" || return 2
-      rvn="$NEW_N"; mbn="$OLD_N"
-      n="$(name_in "$HOLD_MB" "$mbn" "$rvn")" && nr="$(name_in "$rev" "$rvn" "$mbn")" || return 2
+      # (each revision's file read by its key, under the name it has there)
       rc=1
       if [ ! -f "$SCRATCH/rep.$NET_GEN.$i.raw" ]; then
-        if [ -n "$nr" ]; then file_of "$rev" "$nr" "$SCRATCH/rf.rev"; rc=$?; else : > "$SCRATCH/rf.rev"; rc=0; fi
+        file_of "$rev" "$p" "$SCRATCH/rf.rev"; rc=$?
         [ "$rc" -le 1 ] || return 2
-        if [ "$rc" -eq 0 ]; then
-          if [ -n "$n" ]; then file_of "$HOLD_MB" "$n" "$SCRATCH/rf.mb"; rc=$?; else : > "$SCRATCH/rf.mb"; fi
-        fi
+        if [ "$rc" -eq 0 ]; then file_of "$HOLD_MB" "$p" "$SCRATCH/rf.mb"; rc=$?; fi
         [ "$rc" -le 1 ] || return 2
       fi
       if [ "$rc" -eq 0 ]; then
@@ -780,7 +1225,7 @@ holds_by_copies() { # <commit> <rev> (the failing records are in $SCRATCH/h.fail
       in_rep "$p" "$SCRATCH/rep.$NET_GEN.$i.raw"; rc=$?; [ "$rc" -eq 0 ] || return "$rc"
       cp "$SCRATCH/rep.$NET_GEN.$i.raw" "$SCRATCH/rep.$NET_GEN.$i.tmp" || return 2
       if [ -s "$SCRATCH/rep.$NET_GEN.$i.tmp" ]; then
-        single_changer "$rev" "$rvn" "$mbn" "$SCRATCH/rep.$NET_GEN.$i.tmp" || return 2
+        single_changer "$rev" "$p" "$SCRATCH/rep.$NET_GEN.$i.tmp" || return 2
       fi
       mv "$SCRATCH/rep.$NET_GEN.$i.tmp" "$SCRATCH/rep.$NET_GEN.$i" || return 2
       # a path none of whose records repeat refuses every failing line at once next time
@@ -789,12 +1234,9 @@ holds_by_copies() { # <commit> <rev> (the failing records are in $SCRATCH/h.fail
     in_rep "$p" "$SCRATCH/rep.$NET_GEN.$i"; rc=$?; [ "$rc" -eq 0 ] || return "$rc"
   done < "$SCRATCH/h.fpaths" 3< "$SCRATCH/h.fidx"
   while IFS= read -r p && IFS= read -r i <&3; do
-    pair_of "$SCRATCH/net.diff" "$p" || return 2
     for rf in c par; do
       [ "$rf" = c ] && r="$c" || r="$par"
-      n="$(name_in "$r" "$NEW_N" "$OLD_N")" || return 2
-      if [ -n "$n" ]; then file_of "$r" "$n" "$SCRATCH/rf.$rf"; rc=$?; [ "$rc" -eq 0 ] || return "$rc"
-      else : > "$SCRATCH/rf.$rf"; fi
+      file_of "$r" "$p" "$SCRATCH/rf.$rf"; rc=$?; [ "$rc" -eq 0 ] || return "$rc"
     done
     P="$p" LC_ALL=C awk -v rep="$SCRATCH/rep.$NET_GEN.$i" -v fc="$SCRATCH/rf.c" -v fp="$SCRATCH/rf.par" '
       BEGIN { p = ENVIRON["P"]
@@ -845,20 +1287,23 @@ holds_by_copies() { # <commit> <rev> (the failing records are in $SCRATCH/h.fail
 # paths the net change touches (a file the branch moved is at its new name only, an empty
 # file the branch added is there, a file it deleted is gone, and a directory is not a
 # file): diff-tree reports none of them added or deleted between <rev> and the commit.
-# One plumbing call per commit, whatever the number of paths.
+# By the names themselves, not the files' keys: a move that never landed leaves the
+# file at its old name, and the commit then does not hold the net change (round 17's
+# rename fuzz: read by key, a squash without the move held a prefix that moved the
+# file). One plumbing call per commit, whatever the number of paths.
 same_paths() { # <rev> <commit> -> 0 the same, 1 not, 2 error
   local p n
   local -a ps
   ps=()
-  n="$(wc -c < "$SCRATCH/net.z" | tr -d ' ')" || return 2
+  n="$(wc -c < "$SCRATCH/net.names" | tr -d ' ')" || return 2
   if [ "$n" -le "$PATHS_MAX" ]; then
-    while IFS= read -r -d '' p; do ps+=("$p"); done < "$SCRATCH/net.z" || return 2
+    while IFS= read -r -d '' p; do ps+=("$p"); done < "$SCRATCH/net.names" || return 2
   fi
   GIT --literal-pathspecs diff-tree -r -z --no-renames --name-status --ignore-submodules=none "$1" "$2" \
     -- ${ps[@]+"${ps[@]}"} > "$SCRATCH/same.z" 2>/dev/null || return 2
   # "<status> NUL <path> NUL" pairs; an LF in a name elsewhere becomes \001, so it can
   # match no listed path
-  tr '\n\000' '\001\n' < "$SCRATCH/same.z" | LC_ALL=C awk -v list="$SCRATCH/net.list" '
+  tr '\n\000' '\001\n' < "$SCRATCH/same.z" | LC_ALL=C awk -v list="$SCRATCH/net.nlist" '
     BEGIN { while ((r = getline l < list) > 0) want[l] = 1; if (r < 0) exit 2 }
     NR % 2 == 1 { st = $0; next }
     (st == "A" || st == "D") && ($0 in want) { exit 1 }'
@@ -1017,63 +1462,24 @@ use_landing() { # <candidate> -> 0: against LANDING, 1: against the tip, other: 
   [ -z "$PREFIX_TIP" ] || GIT merge-base --is-ancestor "$1" "$PREFIX_TIP" 2>/dev/null
 }
 
-# Every path a candidate touched is numbered once by one awk pass (bash 3.2 has no
-# associative arrays, and a linear search is quadratic on a wide commit); each
-# candidate's numbers go to its own file, which awk reads later, never argv.
-# -z so a space or a non-ASCII name (quoted by core.quotePath) stays the real path.
-: > "$SCRATCH/pairs"; k=0; NEED_TIP=""; NPATHS=""; SIDE_OF=""
+# Where each candidate is checked (its files were listed above).
+k=0; NEED_TIP=""; SIDE_OF=""
 for sha in $CANDIDATES; do
-  GIT diff-tree --root --no-commit-id --ignore-submodules=none --name-only -r -z "$sha" \
-    > "$SCRATCH/names" 2>/dev/null || skip "cannot list the paths $(short "$sha") touched"
-  has_lf "$SCRATCH/names"; case "$?" in
-    0) skip "$(short "$sha") touches a path with a newline (or \\001) in its name" ;;
-    1) ;;
-    *) skip "cannot read the paths $(short "$sha") touched" ;;
-  esac
-  tr '\000' '\n' < "$SCRATCH/names" | awk -v k="$k" '{ print k "\t" $0 }' >> "$SCRATCH/pairs" \
-    || skip "cannot index the paths $(short "$sha") touched"
-  # The paths it deletes and adds as a whole (subsets of the names above, so no LF).
-  for f in D A; do
-    GIT diff-tree --root --no-commit-id --ignore-submodules=none --name-only --diff-filter=$f -r -z "$sha" \
-      > "$SCRATCH/dz" 2>/dev/null && tr '\000' '\n' < "$SCRATCH/dz" > "$SCRATCH/$f.$k" \
-      || skip "cannot list the paths $(short "$sha") deleted or added"
-  done
-  [ -s "$SCRATCH/names" ] && NPATHS="$NPATHS $k"
   use_landing "$sha"; rc=$?
   case "$rc" in
     0) SIDE_OF="$SIDE_OF land" ;;
     1) SIDE_OF="$SIDE_OF tip"; NEED_TIP=1 ;;
     *) skip "cannot tell whether $(short "$sha") is in the landed part of the branch" ;;
   esac
-  # Its lines are looked for under the names its files have in the head too
-  # (head_names above): at the tip, and in the diffs at the landing commit, which can
-  # pair a moved file only when both names are listed (#399 verify rounds 14, 15).
-  head_names "$sha" && awk -v k="$k" '{ print k "\t" $0 }' "$SCRATCH/rn.$sha" >> "$SCRATCH/pairs" \
-    || skip "cannot index the names $(short "$sha")'s files have in the branch head"
   k=$((k + 1))
 done
-LC_ALL=C awk -v d="$SCRATCH" '
-  { i = index($0, "\t"); k = substr($0, 1, i - 1); p = substr($0, i + 1)
-    if (!(p in idx)) { idx[p] = n++; print p > (d "/paths") }
-    f = d "/c." k; print idx[p] >> f; close(f) }' "$SCRATCH/pairs" || skip "cannot index the touched paths"
-for k in $NPATHS; do [ -s "$SCRATCH/c.$k" ] || skip "lost the path list of candidate $k"; done
 
-# What each side has at every touched path: one `ls-tree -r -z` of the whole tree
-# per side, matched by exact path (no line-based object lookup, which drops a
-# trailing CR and, before git 2.51, reports a gitlink as missing). Each path maps
-# to "blob <oid>", "link <oid>" (a gitlink, which diff prints as "Subproject commit
-# <oid>") or "none". Each distinct blob is then read once; a listed blob that cannot
-# be read is an error, never an empty file.
-classify() { # <rev> <side> -> $SCRATCH/<side>.map, one line per path in $SCRATCH/paths
-  GIT ls-tree -r -z --full-tree "$1" > "$SCRATCH/$2.tree" 2>/dev/null || return 1
-  tr '\n\000' '\001\n' < "$SCRATCH/$2.tree" | LC_ALL=C awk -v paths="$SCRATCH/paths" -v out="$SCRATCH/$2.map" '
-    BEGIN { while ((r = getline p < paths) > 0) need[p] = n++; if (r < 0) bad = 1; close(paths) }
-    { i = index($0, "\t"); p = substr($0, i + 1)
-      if (!(p in need)) next
-      split(substr($0, 1, i - 1), m, " ")
-      e[need[p]] = (m[2] == "commit" ? "link " : "blob ") m[3] }
-    END { if (bad) exit 2
-          for (j = 0; j < n; j++) print ((j in e) ? e[j] : "none") > out }'
+# What each side has for every touched file (by key, under its name on that side):
+# "blob <oid>", "link <oid>" (a gitlink, which diff prints as "Subproject commit
+# <oid>") or "none" (entries_of). Each distinct blob is then read once; a listed blob
+# that cannot be read is an error, never an empty file.
+classify() { # <rev> <side> -> $SCRATCH/<side>.map, one line per key in $SCRATCH/paths
+  tr '\n' '\000' < "$SCRATCH/paths" > "$SCRATCH/cls.z" && entries_of "$1" "$SCRATCH/cls.z" "$SCRATCH/$2.map"
 }
 # The tip is compared by line presence (orphan_p), so the head and the tip are listed
 # only when a commit is checked there; the landing commit is compared in place
@@ -1094,17 +1500,29 @@ if [ -n "$NEED_TIP" ] && [ -f "$SCRATCH/paths" ]; then
 fi
 
 orphan_p() { # <commit-sha> <candidate number> -> 10 orphan, 11 landed, other: error (at the tip)
+  local par rc
   [ -s "$SCRATCH/c.$2" ] || return 11
-  # Renames detected, as in the landing step: a moved file is otherwise all new lines,
-  # and every line main edited in it, even before the squash, would list the commit
-  # (#399 verify round 13). A rename that never landed is still seen: its old path is
-  # in the commit's deleted paths and its new one in its added paths (below). The
-  # head and the tip are read under the names the commit's files have in the head as
-  # well (head_names): with renames detected, the commit that later moved a file no
-  # longer carries the lines an earlier commit added to it (#399 verify round 14).
-  GIT diff-tree --root --no-commit-id -r -p --text --no-ext-diff --no-textconv --no-color -M -l1000 \
-    --ignore-submodules=none --submodule=short "$1" > "$SCRATCH/patch" 2> "$SCRATCH/patch.err" || return 2
-  no_rename_skip "$SCRATCH/patch.err" || return 2
+  # The commit's own change of each file, by key (a file it moved is one file, so a
+  # move alone is no line; a moved file is otherwise all new lines, and every line main
+  # edited in it, even before the squash, would list the commit, #399 verify round 13).
+  # A move that never landed is still seen: its old path is in the commit's deleted
+  # paths and its new one in its added paths (below). The head and the tip are read
+  # by key, each under the name the file has there: a file a later commit moved, or
+  # moved and rewrote, or moved and replaced by a new file at the old name, is the
+  # same file (#399 verify rounds 14, 16).
+  # (with no moved file among them, the commit's own patch, unfiltered: a path list too
+  # long for the command line would need the filtered trees, which a path update-index
+  # refuses cannot reach, #399 verify round 14)
+  par="$(GIT rev-parse -q --verify "$1^1^{commit}" 2>/dev/null)" || par="$EMPTY_TREE"
+  cand_keys "$2" || return 2
+  has_tracked "$SCRATCH/cp.z"; rc=$?
+  case $rc in
+    0) pdiff "$par" "$1" "$SCRATCH/cp.z" > "$SCRATCH/patch" || return 2 ;;
+    1) GIT diff-tree --root --no-commit-id -r -p --text --no-ext-diff --no-textconv --no-color --no-renames \
+         --ignore-submodules=none --submodule=short "$1" > "$SCRATCH/patch" 2>/dev/null || return 2 ;;
+    *) return 2 ;;
+  esac
+  listing "$BRANCH_SHA" "$SCRATCH/ls.head" && listing "$BASELINE_SHA" "$SCRATCH/ls.tip" || return 2
   # Exit 10 = orphan, 11 = landed; anything else (a crash, a read error) is an error.
   # Orphan when an effect of the commit that the head still shows is missing from the
   # target: an added line (not blank) the head has, or a deleted one the head lacks
@@ -1118,7 +1536,8 @@ orphan_p() { # <commit-sha> <candidate number> -> 10 orphan, 11 landed, other: e
   # submodule removal: deletions with no line to compare), and so is a path it adds
   # that the head has and the target does not (an empty file). Only presence is
   # compared: at the tip the edits main made itself are unknown (SPEC.md D1, D2).
-  LC_ALL=C awk -v d="$SCRATCH" -v list="$SCRATCH/c.$2" -v dels="$SCRATCH/D.$2" -v adds="$SCRATCH/A.$2" '
+  LC_ALL=C awk -v d="$SCRATCH" -v list="$SCRATCH/c.$2" -v dels="$SCRATCH/D.$2" -v adds="$SCRATCH/As.$2" \
+    -v lsh="$SCRATCH/ls.head" -v lst="$SCRATCH/ls.tip" '
     function slurp(f, arr,    l, r, i) {
       i = 0; while ((r = getline l < f) > 0) arr[i++] = l
       if (r < 0) bad = 1; close(f)
@@ -1134,20 +1553,20 @@ orphan_p() { # <commit-sha> <candidate number> -> 10 orphan, 11 landed, other: e
     # h, t: whether the head and the tip have the line (or the path).
     function missing(h, t) { return h && !t }
     function kept(h, t) { return !h && t }
-    function paths(f, del,    l, r, j, h, t) {
+    # a path, by its name: whether the head and the tip have a file there
+    function paths(f, del,    l, r, h, t) {
       while ((r = getline l < f) > 0) {
-        if (!(l in pidx)) { bad = 1; break }
-        j = pidx[l]; h = hm[j] != "none"; t = tm[j] != "none"
+        h = (l in HP); t = (l in TP)
         if (del ? kept(h, t) : missing(h, t)) found = 1
       }
       if (r < 0) bad = 1; close(f)
     }
+    function set(f, s,    r, l) { while ((r = getline l < f) > 0) s[l] = 1; if (r < 0) bad = 1; close(f) }
     BEGIN {
       slurp(d "/head.map", hm); slurp(d "/tip.map", tm)
       while ((r = getline j < list) > 0) { load(hm[j], head); load(tm[j], target) }
       if (r < 0) bad = 1; close(list)
-      while ((r = getline l < (d "/paths")) > 0) pidx[l] = np++
-      if (r < 0) bad = 1; close(d "/paths")
+      set(lsh, HP); set(lst, TP)
       paths(dels, 1); paths(adds, 0)
       if (bad || found) exit
     }
@@ -1198,44 +1617,27 @@ orphan_p() { # <commit-sha> <candidate number> -> 10 orphan, 11 landed, other: e
 # L, and a copy one of them added would cancel a copy the checked commit failed to
 # delete. A unique line the commit moved is judged by position alone: its step leaves
 # the number of copies as it was, so the count cannot see the move.
-count_of_line() { # <rev> <path> <text file> -> copies of that line in <rev>:<path>, 0 when absent, "x" for a submodule
-  local ty
-  ty="$(entry_of "$1" "$2")"
+count_of_line() { # <rev> <key> <text file> -> copies of that line in <rev>'s file, 0 when absent, "x" for a submodule
+  local ty n
+  n="$(name_at "$1" "$2")" || return 2
+  [ -n "$n" ] || { echo 0; return 0; }
+  ty="$(entry_of "$1" "$n")"
   case $? in 1) echo 0; return 0 ;; 0) ;; *) return 2 ;; esac
   [ "$ty" = blob ] || { echo x; return 0; }
-  GIT cat-file blob "$1:$2" > "$SCRATCH/cnt.blob" 2>/dev/null || return 2
-  LC_ALL=C awk -v t="$3" 'BEGIN { if ((getline x < t) < 0) exit 2 } $0 == x { n++ } END { print n + 0 }' "$SCRATCH/cnt.blob"
+  GIT cat-file blob "$1:$n" > "$SCRATCH/cnt.blob" 2>/dev/null || return 2
+  # Compared as text: awk compares two values that both look like numbers as numbers,
+  # and "1", "01" and "1.0" were counted as copies of one line (#399 verify round 16).
+  LC_ALL=C awk -v t="$3" 'BEGIN { if ((getline x < t) < 0) exit 2 } ("x" $0) == ("x" x) { n++ } END { print n + 0 }' "$SCRATCH/cnt.blob"
 }
-# <rev> <text file> <name> ...: copies of the line in <rev>'s file at the first of the
-# names it has, 0 when it has none, "x" for a submodule.
-count_named() {
-  local r="$1" t="$2" n; shift 2
-  n="$(name_in "$r" "$@")" || return 2
-  [ -n "$n" ] || { echo 0; return 0; }
-  count_of_line "$r" "$n" "$t"
-}
-# $SCRATCH/net.ren: pparse's rename records (N, O) for the branch's whole change since
-# the merge-base, so a file can be found under the name it had there.
-net_renames() {
-  [ -f "$SCRATCH/net.ren" ] && return 0
-  GIT diff-tree -r -z --name-only --no-renames --ignore-submodules=none "$LANDING_MB" "$BRANCH_SHA" \
-    > "$SCRATCH/ren.z" 2>/dev/null || return 2
-  has_lf "$SCRATCH/ren.z"; case $? in 0) : > "$SCRATCH/net.ren"; return 0 ;; 1) ;; *) return 2 ;; esac
-  pdiff "$LANDING_MB" "$BRANCH_SHA" "$SCRATCH/ren.z" | pparse "$SCRATCH/ren.z" \
-    | LC_ALL=C awk 'substr($0, 1, 2) == "N\t" || substr($0, 1, 2) == "O\t"' > "$SCRATCH/net.ren.tmp" \
-    && mv "$SCRATCH/net.ren.tmp" "$SCRATCH/net.ren" || { rm -f "$SCRATCH/net.ren.tmp"; return 2; }
-}
-# <commit> <name> ...: 0 when the commit's own change of the file (under the first of
-# the names it has) is all in place in L^1: each line it added unchanged there, each
+# <commit> <key> ...: 0 when the commit's own change of the file (by key, each
+# revision's file under its name there) is all in place in L^1: each line it added unchanged there, each
 # line it deleted gone. 1 when not, or when the commit has no line in that file to
 # check; 2 on error.
-in_l1() {
-  local b="$1" par lp n
-  shift
+in_l1() { # <commit> <keys file, NUL-separated>
+  local b="$1" par lp
   par="$(GIT rev-parse -q --verify "$b^1^{commit}" 2>/dev/null)" || return 1
   lp="$(GIT rev-parse -q --verify "$LANDING^1^{commit}" 2>/dev/null)" || return 2
-  : > "$SCRATCH/i1.z" || return 2
-  for n in "$@"; do [ -z "$n" ] || printf '%s\000' "$n" >> "$SCRATCH/i1.z"; done || return 2
+  cp "$2" "$SCRATCH/i1.z" || return 2
   { pdiff "$par" "$b" "$SCRATCH/i1.z" | pparse "$SCRATCH/i1.z" > "$SCRATCH/i1.own" \
     && pdiff "$b" "$lp" "$SCRATCH/i1.z" | pparse "$SCRATCH/i1.z" > "$SCRATCH/i1.bc" \
     && pdiff "$par" "$lp" "$SCRATCH/i1.z" | pparse "$SCRATCH/i1.z" > "$SCRATCH/i1.pc"; } || return 2
@@ -1264,60 +1666,61 @@ in_l1() {
 # 14). Subtracting the copies of the newest earlier prefix L^1 holds was tried too, and
 # failed where L^1 holds that prefix only because a deletion counts as landed once its
 # line is replaced: the prefix's state was not what L^1 had (round 15, bounded.py).
-other_copies() { # <commit> <text file> <name> ...
-  local c="$1" t="$2" b n1 n2 n nk rc
-  local -a ns
-  shift 2; ns=()
-  for n in "$@"; do [ -z "$n" ] || ns+=("$n"); done
-  # in_l1 depends on the commit and the file's names only, not on the text: its answer
-  # is kept per commit and names (one finding after another asks again, #399 verify
-  # round 15 measured a landed 150-commit branch five times slower than round 13)
-  nk="$(printf '%s\000' "${ns[@]}" | GIT hash-object --stdin 2>/dev/null)" || return 2
-  GIT --literal-pathspecs rev-list --no-merges "$LANDING_MB..$BRANCH_SHA" -- "${ns[@]}" > "$SCRATCH/cnt.revs" 2>/dev/null || return 2
+other_copies() { # <commit> <text file> <key>
+  local c="$1" t="$2" k="$3" b n1 n2 nk rc p
+  local -a al
+  # in_l1 depends on the commit and the file only, not on the text: its answer is kept
+  # per commit and key (one finding after another asks again, #399 verify round 15
+  # measured a landed 150-commit branch five times slower than round 13). The
+  # branch's commits are listed by every name the file had on the branch: a commit
+  # that edited it under a name it no longer has is one of them (#399 verify round 16:
+  # a file moved twice, edited under its middle name).
+  nk="$(printf '%s' "$k" | GIT hash-object --stdin 2>/dev/null)" || return 2
+  aliases_of "$k" > "$SCRATCH/oc.al" || return 2
+  al=()
+  while IFS= read -r -d '' p; do al+=("$p"); done < "$SCRATCH/oc.al" || return 2
+  GIT --literal-pathspecs rev-list --no-merges "$LANDING_MB..$BRANCH_SHA" -- "${al[@]}" > "$SCRATCH/cnt.revs" 2>/dev/null || return 2
   while IFS= read -r b; do
     [ "$b" != "$c" ] || continue
     GIT rev-parse -q --verify "$b^1^{commit}" > /dev/null 2>&1 || continue
-    n1="$(count_named "$b^1" "$t" "${ns[@]}")" || return 2
-    n2="$(count_named "$b" "$t" "${ns[@]}")" || return 2
+    n1="$(count_of_line "$b^1" "$k" "$t")" || return 2
+    n2="$(count_of_line "$b" "$k" "$t")" || return 2
     [ "$n1" != "$n2" ] || continue
     if [ -f "$SCRATCH/i1c.$b.$nk" ]; then
       rc="$(cat "$SCRATCH/i1c.$b.$nk")"
     else
-      in_l1 "$b" "${ns[@]}"; rc=$?
+      printf '%s\000' "$k" > "$SCRATCH/i1.k"
+      in_l1 "$b" "$SCRATCH/i1.k"; rc=$?
       [ "$rc" -gt 1 ] || echo "$rc" > "$SCRATCH/i1c.$b.$nk"
     fi
     case $rc in 0) return 0 ;; 1) ;; *) return 2 ;; esac
   done < "$SCRATCH/cnt.revs"
   return 1
 }
-confirm() { # <commit> <parent> <"A|D<TAB>line<TAB>path"> -> 0 missing, 1 landed after all, 2 error
-  local c="$1" par="$2" t line path src sname cn pn hn mn ty n_src n_oth n_head n_ref n_land n_prev n_mb
+confirm() { # <commit> <parent> <"A|D<TAB>line<TAB>key"> -> 0 missing, 1 landed after all, 2 error
+  local c="$1" par="$2" t line key src sname ty n_src n_oth n_head n_ref n_land n_prev n_mb
   local T="$SCRATCH/cnt.text"
-  t="${3%%$'\t'*}"; line="${3#*$'\t'}"; path="${line#*$'\t'}"; line="${line%%$'\t'*}"
-  # Only lines of a file the commit edited are counted, each revision's file read
-  # under the name it has there: an added line's record carries the commit's name for
-  # the file, a deleted line's the parent's (pparse), the head may have it under a
-  # later name (head_name_of) and the merge-base under an earlier one (net.ren).
-  # Anything else keeps the finding: a submodule pointer (its record is "Subproject
-  # commit <oid>", not a line of a file), a file the commit deleted for an added line
-  # or created for a deleted one, a root commit (#399 verify round 13). A line in a
-  # file the commit created is counted like any other (round 15's verify: one the two
-  # diffs paired differently stood as missing).
+  t="${3%%$'\t'*}"; line="${3#*$'\t'}"; key="${line#*$'\t'}"; line="${line%%$'\t'*}"
+  # Only lines of a file the commit edited are counted, each revision's file read by
+  # its key, under the name it has there. Anything else keeps the finding: a
+  # submodule pointer (its record is "Subproject commit <oid>", not a line of a file),
+  # a file the commit deleted for an added line or created for a deleted one, a root
+  # commit (#399 verify round 13). A line in a file the commit created is counted like
+  # any other (round 15's verify: one the two diffs paired differently stood as
+  # missing).
   [ "$par" != "$EMPTY_TREE" ] || return 0
-  pair_of "$SCRATCH/l.own" "$path" || return 2
-  cn="$NEW_N"; pn="$OLD_N"
-  hn="$(head_name_of "$c" "$cn")" && net_renames && mn="$(old_of "$SCRATCH/net.ren" "$hn")" || return 2
-  [ -n "$mn" ] || mn="$pn"
-  if [ "$t" = A ]; then src="$c"; sname="$cn"; else src="$par"; sname="$pn"; fi
+  if [ "$t" = A ]; then src="$c"; else src="$par"; fi
+  sname="$(name_at "$src" "$key")" || return 2
+  [ -n "$sname" ] || return 0
   ty="$(entry_of "$src" "$sname")"
   case $? in 0) ;; 1) return 0 ;; *) return 2 ;; esac
   [ "$ty" = blob ] || return 0
   GIT cat-file blob "$src:$sname" 2>/dev/null | LC_ALL=C awk -v k="$line" 'NR == k { print; f = 1 } END { exit !f }' \
     > "$T" || return 2
-  n_src="$(count_of_line "$src" "$sname" "$T")" || return 2
-  n_head="$(count_named "$BRANCH_SHA" "$T" "$hn" "$cn" "$pn" "$mn")" || return 2
-  n_ref="$(count_named "${PREFIX_TIP:-$BRANCH_SHA}" "$T" "$hn" "$cn" "$pn" "$mn")" || return 2
-  n_land="$(count_named "$LANDING" "$T" "$hn" "$cn" "$pn" "$mn")" || return 2
+  n_src="$(count_of_line "$src" "$key" "$T")" || return 2
+  n_head="$(count_of_line "$BRANCH_SHA" "$key" "$T")" || return 2
+  n_ref="$(count_of_line "${PREFIX_TIP:-$BRANCH_SHA}" "$key" "$T")" || return 2
+  n_land="$(count_of_line "$LANDING" "$key" "$T")" || return 2
   case "$n_src$n_head$n_ref$n_land" in *x*) return 0 ;; esac
   # A line whose text is unique and which the commit moved (its own step leaves the
   # number of copies alone) is judged by its position: a count cannot see a move.
@@ -1330,10 +1733,10 @@ confirm() { # <commit> <parent> <"A|D<TAB>line<TAB>path"> -> 0 missing, 1 landed
   # never landed read as landed).
   if [ "$n_src" -le 1 ] && [ "$n_head" -le 1 ] && [ "$n_ref" -le 1 ] && [ "$n_land" -le 1 ]; then
     if [ "$t" = A ]; then
-      n_oth="$(count_of_line "$par" "$pn" "$T")" || return 2
+      n_oth="$(count_of_line "$par" "$key" "$T")" || return 2
       [ "$n_land" -ge "$n_ref" ] || return 0
     else
-      n_oth="$(count_of_line "$c" "$cn" "$T")" || return 2
+      n_oth="$(count_of_line "$c" "$key" "$T")" || return 2
       [ "$n_land" -le "$n_ref" ] || return 0
     fi
     [ "$n_oth" != x ] && [ "$n_oth" != "$n_src" ] || return 0
@@ -1342,8 +1745,8 @@ confirm() { # <commit> <parent> <"A|D<TAB>line<TAB>path"> -> 0 missing, 1 landed
   # merge-base)
   n_prev=0; n_mb=0
   if [ -n "$LANDING_MB" ] && [ "$LANDING" != "$LANDING_MB" ]; then
-    n_prev="$(count_named "$LANDING^1" "$T" "$mn" "$pn" "$cn" "$hn")" || return 2
-    n_mb="$(count_named "$LANDING_MB" "$T" "$mn" "$pn" "$cn" "$hn")" || return 2
+    n_prev="$(count_of_line "$LANDING^1" "$key" "$T")" || return 2
+    n_mb="$(count_of_line "$LANDING_MB" "$key" "$T")" || return 2
     case "$n_prev$n_mb" in *x*) return 0 ;; esac
   fi
   if [ "$t" = A ]; then
@@ -1354,16 +1757,15 @@ confirm() { # <commit> <parent> <"A|D<TAB>line<TAB>path"> -> 0 missing, 1 landed
   # The copies say landed. That holds only if no other commit of the branch that changes
   # them reached L^1.
   [ -n "$LANDING_MB" ] && [ "$LANDING" != "$LANDING_MB" ] || return 1
-  other_copies "$c" "$T" "$hn" "$cn" "$pn" "$mn"
+  other_copies "$c" "$T" "$key"
   case $? in 0) return 0 ;; 1) return 1 ;; *) return 2 ;; esac
 }
 land_orphan_p() { # <commit-sha> <candidate number> -> 10 orphan, 11 landed, other: error
   local c="$1" par f
   [ -s "$SCRATCH/c.$2" ] || return 11
   par="$(GIT rev-parse -q --verify "$c^1^{commit}" 2>/dev/null)" || par="$EMPTY_TREE"
-  # the candidate's paths, NUL-separated (none has LF: those were refused above)
-  LC_ALL=C awk -v paths="$SCRATCH/paths" 'BEGIN { while ((getline l < paths) > 0) P[n++] = l }
-    { printf "%s%c", P[$0], 0 }' "$SCRATCH/c.$2" > "$SCRATCH/cp.z" || return 2
+  # the candidate's files, by key
+  cand_keys "$2" || return 2
   { pdiff "$par" "$c" "$SCRATCH/cp.z" | pparse "$SCRATCH/cp.z" > "$SCRATCH/l.own" \
     && pdiff "$c" "$BRANCH_SHA" "$SCRATCH/cp.z" | pparse "$SCRATCH/cp.z" > "$SCRATCH/l.hc" \
     && pdiff "$c" "$LANDING" "$SCRATCH/cp.z" | pparse "$SCRATCH/cp.z" > "$SCRATCH/l.lc" \
@@ -1391,9 +1793,10 @@ land_orphan_p() { # <commit-sha> <candidate number> -> 10 orphan, 11 landed, oth
   # has and L does not, or deleted one the head lacks and L still has. The two trees
   # are listed once for all candidates: a commit that moves thousands of files has
   # that many such paths (#399 verify round 13).
+  # (by name; a file whose key has a line record is checked by its lines)
   for f in A D; do
-    LC_ALL=C awk -v own="$SCRATCH/l.own" 'BEGIN { while ((r = getline l < own) > 0) if (l ~ /^[AD]\t/) { i = index(substr(l, 3), "\t"); seen[substr(l, 3 + i)] = 1 }; if (r < 0) exit 2 }
-      !($0 in seen) { print }' "$SCRATCH/$f.$2" > "$SCRATCH/l.bare.$f" || return 2
+    LC_ALL=C awk -v f="$f" -v own="$SCRATCH/l.own" 'BEGIN { while ((r = getline l < own) > 0) if (l ~ /^[AD]\t/) { i = index(substr(l, 3), "\t"); seen[substr(l, 3 + i)] = 1 }; if (r < 0) exit 2 }
+      NR % 2 == 1 { n = $0; next } !($0 in seen) && (f != "A" || $0 == n) { print n }' "$SCRATCH/${f}k.$2" > "$SCRATCH/l.bare.$f" || return 2
   done
   [ -s "$SCRATCH/l.bare.A" ] || [ -s "$SCRATCH/l.bare.D" ] || return 11
   listing "$BRANCH_SHA" "$SCRATCH/ls.head" && listing "$LANDING" "$SCRATCH/ls.land" || return 2
@@ -1418,10 +1821,50 @@ listing() {
                       if (m[2] == "blob" || m[2] == "commit") print substr($0, i + 1) }' > "$2.tmp" \
     && mv "$2.tmp" "$2" || { rm -f "$2.tmp"; return 2; }
 }
+# <commit> <candidate number> <revision it is compared with> -> 0, or 1 (UNC_NOTE set)
+# when a later commit whose rename detection git skipped deletes one of its files:
+# that file may have moved, and the commit's lines would then be read in the wrong
+# place; 2 on error. Such a commit is a candidate the check cannot verify. On the
+# branch, any such deletion after the commit (its lines would look gone from the
+# head); on main, before the revision it is compared with, the deletion of a file the
+# head still has (one the branch deleted itself is gone either way: a squash that
+# replaces a thousand files deletes the same ones, #399 verify round 16).
+UNC_NOTE=""
+unc_check() {
+  local u main
+  [ -s "$SCRATCH/unc" ] || return 0
+  cand_keys "$2" && names_in "$BRANCH_SHA" "$SCRATCH/cp.z" "$SCRATCH/unc.h" && listing "$BRANCH_SHA" "$SCRATCH/ls.head" || return 2
+  while IFS= read -r u; do
+    [ "$u" != "$1" ] || continue
+    GIT merge-base --is-ancestor "$u" "$1" 2>/dev/null; case $? in 0) continue ;; 1) ;; *) return 2 ;; esac
+    main=0
+    GIT merge-base --is-ancestor "$u" "$BRANCH_SHA" 2>/dev/null; rc=$?
+    if [ "$rc" -eq 1 ]; then
+      main=1
+      GIT merge-base --is-ancestor "$u" "$3" 2>/dev/null; rc=$?
+      case $rc in 0) ;; 1) continue ;; *) return 2 ;; esac
+    elif [ "$rc" -ne 0 ]; then return 2; fi
+    GIT rev-parse -q --verify "$u^1^{commit}" > /dev/null 2>&1 || continue
+    names_in "$u^1" "$SCRATCH/cp.z" "$SCRATCH/unc.n" || return 2
+    if LC_ALL=C awk -v del="$SCRATCH/unc.$u" -v main="$main" -v hp="$SCRATCH/unc.h" -v ls="$SCRATCH/ls.head" '
+         BEGIN { while ((r = getline l < del) > 0) D[l] = 1; if (r < 0) exit 2
+                 if (main == 1) {
+                   while ((r = getline l < ls) > 0) L[l] = 1; if (r < 0) exit 2
+                   while ((r = getline l < hp) > 0) { if (++q == 1) n = l; else { q = 0; if (n in L) alive[l] = 1 } }; if (r < 0) exit 2 } }
+         NR % 2 == 1 { n = $0; next }
+         (n in D) && (main != 1 || ($0 in alive)) { f = 1; exit } END { exit !f }' "$SCRATCH/unc.n"; then
+      UNC_NOTE="git did not look for moves in $(short "$u") (more than 1000 files added and deleted), which deletes a file $(short "$1") touched; whether that file moved cannot be told (a higher diff.renameLimit does not change this check)"
+      return 1
+    fi
+  done < "$SCRATCH/unc"
+  return 0
+}
 ORPHANS="" ; k=0
 set -- $SIDE_OF
 for sha in $CANDIDATES; do
   side="$1"; shift
+  if [ "$side" = land ]; then tgt="$LANDING"; else tgt="$BASELINE_SHA"; fi
+  unc_check "$sha" "$k" "$tgt"; case $? in 0) ;; 1) skip "cannot verify $(short "$sha"): $UNC_NOTE" ;; *) skip "cannot verify $(short "$sha") (exit 2)" ;; esac
   if [ "$side" = land ]; then land_orphan_p "$sha" "$k"; else orphan_p "$sha" "$k"; fi; rc=$?
   case "$rc" in
     10) ORPHANS="$ORPHANS$sha"$'\n' ;;

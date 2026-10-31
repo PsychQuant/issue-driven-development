@@ -61,24 +61,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     file the commit edited, each revision's file read under the name it has there, never for a submodule
     pointer. What the commit before the landing commit gained or lost is main's own, unless another commit of
     the branch that changes the copies reached it (its own change all in place there): the finding then stands
-    (an earlier squash of the branch, a pick, later commits squashed before an earlier one). Each line is matched
-    under the name its file has in the revision its line number belongs to, and the diffs list the names the
-    commit's files have in the branch head too, so a file the branch moved after the commit is followed at the
-    landing commit as well as at the tip. At the tip, where main's own edits are unknown, an added line or
-    path the head still has must be present and a deleted one the head still lacks must be absent, each file
-    read under the names it has in the head too (a later commit of the branch may have moved it); a line a
-    later branch commit rewrote or deleted is skipped.
+    (an earlier squash of the branch, a pick, later commits squashed before an earlier one). At the tip, where
+    main's own edits are unknown, an added line or path the head still has must be present and a deleted one
+    the head still lacks must be absent; a line a later branch commit rewrote or deleted is skipped.
+  - **Moved files.** Every file is followed across moves commit by commit, as `git log --follow` does (git's
+    rename detection inside each non-merge commit since the fork point), and known by its name in the branch
+    head; every comparison holds each file under that name in each revision, so a file the branch moved twice,
+    moved and then mostly rewrote, or moved and put a new file at its old name is still one file, at the
+    landing commit and at the tip, and the commits that edited it under an earlier name are found by every name
+    it had. A path that holds a file before and after is the same file (deleted and restored); a path a move
+    left and a new file then took holds another one. A move spread over two commits of the branch is taken from
+    one rename detection between the merge-base and the head. On main, a file the branch moved is the file
+    main created at its name in the head when there is one (a squash that moves a file and puts a new one at
+    its old name records no move), and a file the branch created is the one main created at a name it had on
+    the branch. Round 16 paired names with one rename detection between two trees or picked the first of four
+    fixed names, and listed none of: a commit edited only under a middle name and picked to main early; a
+    commit before a move whose old name later held a new file; a commit before a move followed by a rewrite.
   - **No merges.** Every comparison is a two-way `git diff` with every setting that shapes its output fixed on
     the command line (no context lines between hunks, `GIT_DIFF_OPTS` unset, no external diff, no textconv,
-    `--text`, rename detection with git's defaults, myers with the indent heuristic, fixed prefixes, quoted
-    names, no color, no order file, short submodule lines; git's own messages discarded), or a plain read of a
-    tree or blob. Every git call runs with no hooks (`core.hooksPath=/dev/null`; writing the scratch index below
-    would otherwise run `post-index-change`) and with `core.precomposeUnicode` off: the paths the helper passes are git's own
+    `--text`, no rename detection between two trees (each file is paired with itself, above), myers with the
+    indent heuristic, fixed prefixes, quoted names, no color, no order file, short submodule lines; git's own
+    messages discarded), or a plain read of a tree or blob. Every git call runs with no hooks
+    (`core.hooksPath=/dev/null`, and `hook.post-index-change.enabled=false` for a hook defined in the
+    configuration, git 2.54 and later; writing the scratch index below would otherwise run `post-index-change`)
+    and with `core.precomposeUnicode` off: the paths the helper passes are git's own
     listings, byte for byte, and with it on (macOS's default) a name stored in NFD matched nothing, so a branch
-    that never landed read as landed. Above 64 KB of paths, two trees holding only the listed paths are written
-    to a temporary object store and compared, so renames pair among the same paths as on the command line (every
-    listed path must reach those trees, or the read fails rather than skip one; no split index; the repository's
-    own object directory quoted in the alternates list): nothing is written into the repository, though git may
+    that never landed read as landed. Above 64 KB of paths, or when a file a move involves is compared, two trees
+    holding only the listed files are written to a temporary object store and compared (every listed entry must
+    reach those trees, or the read fails rather than skip one; no split index; the repository's own object
+    directory quoted in the alternates list): nothing is written into the repository, though git may
     refresh the timestamp of a tree it already has. Nothing runs `git merge-tree`, so no merge driver or attribute can
     steer the answer. The helper needs git 2.30 or later (`rev-parse --end-of-options`, as 3.5.0 did). Earlier drafts of this change used `merge-tree`: a three-way merge
     conflicts when two edits merely sit on adjacent lines, and those drafts read such a conflict either as
@@ -99,8 +110,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     diffs keep only the paths they were asked about (a pathspec also matches files under a directory of that
     name) and give up rather than guess when their output holds anything unexpected. At the tip each side's
     tree is read with one `ls-tree -r -z` and matched by exact path, each distinct blob is read once, and
-    patches come from `diff-tree --text --ignore-submodules=none` with renames detected (a moved file is not all
-    new lines there either). Diff drivers, textconv, color,
+    patches come from `diff-tree --text --ignore-submodules=none`, each file paired with itself (a moved file is
+    not all new lines there either). Lines are compared as text (awk compared two lines that look like numbers
+    as numbers, and `1`, `01` and `1.0` counted as copies of one line). Diff drivers, textconv, color,
     `binary`/`-diff` attributes, `submodule.<name>.ignore`, and non-ASCII, non-UTF-8, quoted or CR-containing
     names (or a newline in a name elsewhere in the tree) cannot hide a line, and submodule pointers compare as
     `Subproject commit <oid>`. Commit subjects and refs are printed in double quotes, with control bytes, C1
@@ -108,21 +120,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     quote it lists (curly, fullwidth, double prime and others) replaced by `?`; `\`, `"`, `$` and backticks
     escaped; no signature checks. In a partial clone a
     missing blob is not fetched into the repository: git 2.45 or newer reports it unreadable (exit 4), and
-    when `git cherry` itself fails for that reason the message says the clone is partial.
+    when `git cherry` itself fails for that reason the message says the clone is partial; git before 2.45 cannot
+    be told not to fetch, so in a partial clone the check stops before reading anything (exit 4).
   - **The gate's path no longer depends on the shell.** Step 1.55 called the helper through an unbraced
     `$CLAUDE_PLUGIN_ROOT`, which the skill runtime does not substitute (the #401 class), so the call worked
     only when the shell happened to have that variable — #399 itself saw it return rc=3 on 2026-10-15 — and
     errored otherwise. It now uses `${CLAUDE_PLUGIN_ROOT}`; the other unbraced uses in `idd-close` are left to
     #401. idd-close prints the helper's output with `printf`, so zsh's `echo` cannot undo its escaping.
   - **Errors are not "clean".** Outside the landing step, a failed git or awk command, an unreadable object,
-    a checked commit touching a path with a newline (or byte `\001`), more moved files than git's rename
-    detection takes (it would read them as deleted and added), or a temp dir whose path has a backslash exits 4
+    a checked commit touching a path with a newline (or byte `\001`), a file a checked commit touched that a
+    later commit deletes where git skipped its rename detection (more than 1000 files added and deleted in that
+    commit, so whether the file moved cannot be told; a commit that replaces a thousand generated files is no
+    error otherwise), a partial clone with git older than 2.45, or a temp dir whose path has a backslash or a
+    newline exits 4
     with a `check-merge-completeness:`
     reason on stderr, which idd-close prints; nothing else reaches stderr. A failure inside the landing step falls back to the tip and is
     explained on exit 3.
   - Not effects at all (SPEC.md's definition): a file mode, a blank line, a final newline. Still not seen
     (only these): at the tip, an added line already elsewhere in the files the same commit touched, or a
-    deleted line the branch head still has there; a deletion from a file main renamed or moved away; content
+    deleted line the branch head still has there; a deletion from a file main renamed or moved away; a move git
+    does not see inside one commit (a file moved and rewritten by more than half in the same commit), unless
+    the merge-base and the head pair the two names; content
     written by a merge commit on the branch; content that was already in main through another commit before
     this branch was merged (it counts as landed there), or that main itself completed later (a line a dropped
     commit deleted, which main then replaced); at the landing commit, a copy of a line next to an identical
@@ -153,17 +171,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     changed the stack's lines after the stack was cut. When nothing of the branch landed, the check is at the
     tip as well: the verdict (exit 3) is right, but the list can include, or miss, a commit whose text main
     added or removed on its own.
-  - Timing on this repository, as CPU time on a busy machine (other work kept the load between 25 and 80, so
-    wall-clock times were longer and unsteady): PR #408 about 7 s (3.5.0: 5 s, with its false orphans); a squash of
-    a branch that moves 2000 files under 1 s, since the tip already has the head's content (3.5.0: 14 s); the
-    same move with 300 of the files edited, squashed and then edited once more by main, about 2 s (3.5.0: 17 s and
-    a false orphan); a branch that never landed under 1 s, or about 9 s when main often edits its files (3.5.0:
-    under 1 s); a never-landed 150-commit branch about 23 s (3.5.0: 7 s), and about 38 s when its file repeats a
-    heading such as `### Fixed` on every commit (a draft of this change took 245 s there). In a repository with
-    100,000 files in one directory a never-landed branch takes about 8 s (3.5.0: under 1 s), and one that edits
-    3,000 of those files, past 64 KB of paths, about 34 s while main edits them 20 times: the landing walk makes
-    at most 200 checks, each limited to the branch's paths (or to trees filtered to them, built once per revision),
-    and the tip check reads each side's tree once.
+  - Timing, as CPU time on a busy machine (other work kept the load near 110 during the round-17 runs, so
+    the numbers run high and unsteady): PR #408 about 15 s (round 16: 13 s; 3.5.0: 5 s, with its false
+    orphans); a squash-landed 150-commit branch about 48 s (round 16: 53 s, which read every candidate's moves
+    with a diff to the head); the same branch with its file moved by its first commit about 45 s (round 16:
+    35 s; following each file commit by commit costs one `git log` over the commits since the fork point and a
+    tree written per revision read). Measured on rounds 13 to 15: a squash of a branch that moves 2000 files
+    under 1 s, since the tip already has the head's content (3.5.0: 14 s); the same move with 300 of the files
+    edited, squashed and then edited once more by main, about 2 s (3.5.0: 17 s and a false orphan); a branch
+    that never landed under 1 s, or about 9 s when main often edits its files; a never-landed 150-commit branch
+    about 23 s (3.5.0: 7 s); in a repository with 100,000 files in one directory a never-landed branch about
+    8 s (3.5.0: under 1 s), and one that edits 3,000 of those files, past 64 KB of paths, about 34 s while main
+    edits them 20 times: the landing walk makes at most 200 checks, each limited to the branch's paths (or to
+    trees filtered to them, built once per revision), and the tip check reads each side's tree once.
 
 ### Added
 
