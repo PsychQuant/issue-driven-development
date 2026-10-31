@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Version number left to the merge, as in PR #442.
+
+### Fixed
+
+- **`git-ignore-block.sh` writes an `exclude` target only inside a real git dir (#431).** The #194 allowlist
+  checked the basename alone, so any `<dir>/exclude` passed and `mkdir -p` created its parent directories —
+  including `/info/exclude`, which the callers' `"$(git rev-parse --git-dir)/info/exclude"` becomes outside any
+  repository. An `exclude` target must now be `<D>/info/exclude` where `<D>` is a directory and
+  `git --git-dir=<D> rev-parse --git-dir` succeeds; a `--target` containing a control character is refused first
+  (`$(dirname …)` strips trailing newlines, so the check could otherwise test one path and write another).
+  Anything else exits 2 before any write. Relative `.git/info/exclude`, linked-worktree git dirs and bare repos
+  are still accepted (a linked worktree's own `info/exclude` is not read by git — #446). Symlinked targets, the
+  `.gitignore` branch's any-directory rule and unchecked write failures are #447.
+
 ## [3.5.0] - 2026-10-20
 
 ### Added
