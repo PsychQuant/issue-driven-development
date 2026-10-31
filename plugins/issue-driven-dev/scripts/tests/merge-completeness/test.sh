@@ -68,7 +68,14 @@
 # 64 KB of paths), making SCRATCH absolute (macOS mktemp ignores a relative TMPDIR, so the
 # suite cannot build one there), and keying the filtered-tree cache on the path list as
 # well as the tree (the fixtures never filter one revision to two different lists, which
-# the landing walk can do for the net changes of the branch and of a prefix).
+# the landing walk can do for the net changes of the branch and of a prefix). Round 16's
+# mutants (fixtures 174-180 were written for its changes; 174-178 are red on round 15,
+# 179-180 pin the accepted routes) leave unpinned: the rename records pparse takes from
+# "rename from"/"rename to" for a move with no edit (their one reader is confirm()'s name
+# for the file at the merge-base, and in every history built so far another record of the
+# same commit keeps the finding), treating skipped rename detection as an error (it needs
+# more than 1000 moved and edited files), and the `CDPATH=` and backslash checks on the
+# temp dir (macOS mktemp ignores a relative TMPDIR).
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -2778,5 +2785,140 @@ OUT173=$(out_of "$R" feat main); RC173=$?
 assert_exit "fixture-173 a deletion of a unique line main also had, never landed -> flagged" 3 "$RC173"
 assert_exit "fixture-173 lists b2" 0 "$(has "$OUT173" 'b2: T deleted')"
 rm -rf "$R"
+
+# ── Fixtures 174– (#399 round 16): one name for each side of a diff ──
+# Every diff record carries the name of the file on the side its line number belongs
+# to. Round 15 keyed every record by the new side's name, so once the branch had moved
+# a file, records of two diffs about the same line never met.
+
+# 174: found by round 15's verify (logic). Fixture 153 with the branch moving the file
+# after b2; the move reached main in PR 1 together with b2 and b3. b2's deletion is in
+# L^1 under the new name, its own record under the old one: in_l1 read b2 as never in
+# L^1, L^1's copies passed as main's, and b4, a restore that never landed, was cleared.
+R="$(mk_repo)"; P174='p1\np2\np3\np4\np5\np6\np7\np8\n'
+printf "x = 1\na\nb\nx = 1\n$P174" > "$R/f174.py"; git -C "$R" add -A && git -C "$R" commit -qm f174
+git -C "$R" checkout -q -b feat
+printf 'u\n' > "$R/u174.txt"; git -C "$R" add -A && git -C "$R" commit -qm "b1: u174"
+printf "a\nb\nx = 1\n$P174" > "$R/f174.py"; git -C "$R" commit -qam "b2: first x dropped"
+mkdir -p "$R/lib"; git -C "$R" mv f174.py lib/f174.py && git -C "$R" commit -qm "b2r: move to lib"
+printf "a\nb\nx = 1\n${P174}c\n" > "$R/lib/f174.py"; git -C "$R" commit -qam "b3: c"
+printf "x = 1\na\nb\nx = 1\n${P174}c\n" > "$R/lib/f174.py"; git -C "$R" commit -qam "b4: first x back (never landed)"
+git -C "$R" checkout -q main
+git -C "$R" rm -q f174.py; mkdir -p "$R/lib"; printf "a\nb\nx = 1\n${P174}c\n" > "$R/lib/f174.py"
+git -C "$R" add -A && git -C "$R" commit -qm "PR 1: squash b2 b2r b3"
+printf 'u\n' > "$R/u174.txt"; git -C "$R" add -A && git -C "$R" commit -qm "PR 2: squash b1"
+OUT174=$(out_of "$R" feat main); RC174=$?
+assert_exit "fixture-174 fixture 153 after the branch moved the file -> flagged" 3 "$RC174"
+assert_exit "fixture-174 lists b4" 0 "$(has "$OUT174" 'b4: first x back')"
+rm -rf "$R"
+
+# 175: found by round 15's verify (logic). Fixture 146 with the branch's other change an
+# inserted line: the branch moves the file, deletes one of two equal lines next to
+# main's edit and adds a line. The squash is clean, then main edits the added line. The
+# check for a line the squash's own step brought compared the net change (new name)
+# with L^1 (old name), found none, refused the squash and listed c1 at the tip.
+R="$(mk_repo)"; printf 'pad 0\npad 1\n}\n    return data\n    return data\nend\npad 3\npad 4\npad 5\n' > "$R/o175.txt"
+git -C "$R" add -A && git -C "$R" commit -qm o175
+git -C "$R" checkout -q -b feat
+git -C "$R" mv o175.txt n175.txt
+printf 'pad 0\npad 1\n}\n    return data\nend\npad 3\npad 4\npad 5\nbranch line\n' > "$R/n175.txt"
+git -C "$R" add -A && git -C "$R" commit -qm "c1: move to n175, drop a line, add a line"
+git -C "$R" checkout -q main
+printf 'pad 0\npad 1\n} # main\n    return data\n    return data\nend\npad 3\npad 4\npad 5\n' > "$R/o175.txt"; git -C "$R" commit -qam "another PR: main"
+git -C "$R" merge -q --squash feat >/dev/null 2>&1 && git -C "$R" commit -qm "squash feat" >/dev/null 2>&1
+sed 's/^branch line$/branch line, follow-up/' "$R/n175.txt" > "$R/t" && mv "$R/t" "$R/n175.txt"; git -C "$R" commit -qam "follow-up"
+assert_exit "fixture-175 the squash went through" 0 "$(git -C "$R" log -1 --format=%s main~1 | grep -qx 'squash feat'; echo $?)"
+assert_exit "fixture-175 a moved file, one of two equal lines deleted, clean squash, follow-up -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 176: found by round 15's verify (logic). Fixture 153 with the branch moving the file
+# last; PR 2 squashes b1 and the move. At the landing commit b4's lines were read under
+# the file's old name, which neither the head nor the landing commit has, so b4 read
+# as superseded (3.5.0 caught it at the tip).
+R="$(mk_repo)"; P176='p1\np2\np3\np4\np5\np6\np7\np8\n'
+printf "x = 1\na\nb\nx = 1\n$P176" > "$R/f176.py"; git -C "$R" add -A && git -C "$R" commit -qm f176
+git -C "$R" checkout -q -b feat
+printf 'u\n' > "$R/u176.txt"; git -C "$R" add -A && git -C "$R" commit -qm "b1: u176"
+printf "a\nb\nx = 1\n$P176" > "$R/f176.py"; git -C "$R" commit -qam "b2: first x dropped"
+printf "a\nb\nx = 1\n${P176}c\n" > "$R/f176.py"; git -C "$R" commit -qam "b3: c"
+printf "x = 1\na\nb\nx = 1\n${P176}c\n" > "$R/f176.py"; git -C "$R" commit -qam "b4: first x back (never landed)"
+mkdir -p "$R/lib"; git -C "$R" mv f176.py lib/f176.py && git -C "$R" commit -qm "b5: move to lib"
+git -C "$R" checkout -q main
+printf "a\nb\nx = 1\n${P176}c\n" > "$R/f176.py"; git -C "$R" commit -qam "PR 1: squash b2 b3"
+printf 'u\n' > "$R/u176.txt"; mkdir -p "$R/lib"; git -C "$R" mv f176.py lib/f176.py
+git -C "$R" add -A && git -C "$R" commit -qm "PR 2: squash b1 and b5"
+OUT176=$(out_of "$R" feat main); RC176=$?
+assert_exit "fixture-176 a restore that never landed, in a file the branch moved last -> flagged" 3 "$RC176"
+assert_exit "fixture-176 lists b4" 0 "$(has "$OUT176" 'b4: first x back')"
+rm -rf "$R"
+
+# 177: found by round 15's verify (Codex). c1 sets a line from A to B, c2 sets it back
+# and never landed, c3 only moves the file; main took c1 and the move. The net change
+# is a move with no edit, so the landing commit holds it; c2's line, read at the
+# landing commit under the file's old name, read as superseded.
+R="$(mk_repo)"; printf 'p1\np2\nA\np3\np4\np5\n' > "$R/old177.txt"; git -C "$R" add -A && git -C "$R" commit -qm old177
+git -C "$R" checkout -q -b feat
+printf 'p1\np2\nB\np3\np4\np5\n' > "$R/old177.txt"; git -C "$R" commit -qam "c1: A to B"
+printf 'p1\np2\nA\np3\np4\np5\n' > "$R/old177.txt"; git -C "$R" commit -qam "c2: B back to A (never landed)"
+git -C "$R" mv old177.txt new177.txt && git -C "$R" commit -qm "c3: move"
+git -C "$R" checkout -q main
+git -C "$R" mv old177.txt new177.txt; printf 'p1\np2\nB\np3\np4\np5\n' > "$R/new177.txt"
+git -C "$R" add -A && git -C "$R" commit -qm "squash feat (c2 dropped by hand)"
+OUT177=$(out_of "$R" feat main); RC177=$?
+assert_exit "fixture-177 a revert that never landed, before a move that did -> flagged" 3 "$RC177"
+assert_exit "fixture-177 lists c2" 0 "$(has "$OUT177" 'c2: B back to A')"
+assert_exit "fixture-177 does not list c1" 1 "$(has "$OUT177" 'c1: A to B')"
+rm -rf "$R"
+
+# 178: found by round 15's verify (security). Writing the scratch index of the filtered
+# trees (above 64 KB of paths) ran the repository's post-index-change hook. Every git
+# call runs with core.hooksPath=/dev/null.
+R="$(mk_repo)"; mkdir -p "$R/a_fairly_long_directory_name_for_paths"; wide139 "$R" 'v\n' 1200
+git -C "$R" add -A && git -C "$R" commit -qm wide178
+M178="$(mktemp -d)/ran"
+printf '#!/bin/sh\necho ran >> "%s"\n' "$M178" > "$R/.git/hooks/post-index-change"; chmod +x "$R/.git/hooks/post-index-change"
+git -C "$R" checkout -q -b feat
+wide139 "$R" 'v\nw\n' 1200; git -C "$R" add -A && git -C "$R" commit -qm "c1: wide edit (never landed)"
+git -C "$R" checkout -q main; rm -f "$M178"
+assert_exit "fixture-178 a wide commit that never landed -> flagged" 3 "$(run_helper "$R" feat main)"
+assert_exit "fixture-178 the repository's post-index-change hook did not run" 1 "$([ -e "$M178" ]; echo $?)"
+rm -rf "$R" "$(dirname "$M178")"
+
+# 179: an accepted limit (#399, 2026-10-31): two commits touch the same repeated text
+# (c1 deletes one of two equal lines, c2 adds another copy). The clean squash is not
+# counted as the landing commit, the branch is checked at the tip, and main's follow-up
+# lists c1. This pins that route (SPEC D1, row 56b), so a change to it shows here.
+R="$(mk_repo)"; printf 'pad 0\npad 1\npad 2\nx = 1\n    pass\n    pass\nx = 1\npad 3\npad 4\npad 5\n' > "$R/o179.txt"
+git -C "$R" add -A && git -C "$R" commit -qm o179
+git -C "$R" checkout -q -b feat
+printf 'pad 0\npad 1\npad 2\nx = 1\n    pass\nx = 1\npad 3\npad 4\npad 5 = branch\n' > "$R/o179.txt"; git -C "$R" commit -qam "c1: drop a pass, set pad 5"
+printf 'pad 0\n    pass\npad 1\npad 2\nx = 1\n    pass\nx = 1\npad 3\npad 4\npad 5 = branch\n' > "$R/o179.txt"
+printf 'z\n' > "$R/z179.txt"; git -C "$R" add -A && git -C "$R" commit -qm "c2: copy + z"
+git -C "$R" checkout -q main
+printf 'pad 0\npad 1\npad 2\nx = 1 # main\n    pass\n    pass\nx = 1\npad 3\npad 4\npad 5\n' > "$R/o179.txt"; git -C "$R" commit -qam "main edit"
+git -C "$R" merge -q --squash feat >/dev/null 2>&1 && git -C "$R" commit -qm squash >/dev/null 2>&1
+sed 's/^pad 5 = branch$/pad 5 = follow-up/' "$R/o179.txt" > "$R/t" && mv "$R/t" "$R/o179.txt"; git -C "$R" commit -qam follow-up
+T179="$(mktemp -d)/trace"
+CHECK_MERGE_COMPLETENESS_TRACE="$T179" "${BASH:-bash}" "$HELPER" --repo "$R" --branch feat --baseline main > /dev/null 2>&1
+assert_exit "fixture-179 a text two commits touch: no landing commit, c1 checked at the tip" 0 \
+  "$(grep -qx "landing - prefix -" "$T179" && grep -qx "side $(git -C "$R" rev-parse feat~1) tip" "$T179"; echo $?)"
+rm -rf "$R" "$(dirname "$T179")"
+
+# 180: the other accepted limit: Rebase and merge (the commits picked one by one) whose
+# step fails on repeated text. Only c1's pick is found to hold a prefix; c2 is checked
+# at the tip, where main's follow-up lists it (SPEC D1, row 56b).
+R="$(mk_repo)"; printf 'pad 0\npad 1\npad 2\nend\n}\n}\nend\npad 5\n' > "$R/o180.txt"; git -C "$R" add -A && git -C "$R" commit -qm o180
+git -C "$R" checkout -q -b feat
+printf 'pad 0\npad 1\npad 2\nend\n}\nend\npad 5 = branch\n' > "$R/o180.txt"; git -C "$R" commit -qam "c1: drop one of two equal lines, edit last"
+printf 'pad 0\npad 1\npad 2\nend\n}\nend\npad 5 = branch v2\n' > "$R/o180.txt"; git -C "$R" commit -qam "c2: rewrite last line"
+git -C "$R" checkout -q main
+printf 'pad 0\npad 1\npad 2\nend # main\n}\n}\nend\npad 5\n' > "$R/o180.txt"; git -C "$R" commit -qam "main edit"
+git -C "$R" cherry-pick feat~1 >/dev/null 2>&1 && git -C "$R" cherry-pick feat >/dev/null 2>&1
+sed 's/^pad 5 = branch v2$/pad 5 = follow-up/' "$R/o180.txt" > "$R/t" && mv "$R/t" "$R/o180.txt"; git -C "$R" commit -qam follow-up
+T180="$(mktemp -d)/trace"
+CHECK_MERGE_COMPLETENESS_TRACE="$T180" "${BASH:-bash}" "$HELPER" --repo "$R" --branch feat --baseline main > /dev/null 2>&1
+assert_exit "fixture-180 Rebase and merge failing on repeated text: c2 checked at the tip" 0 \
+  "$(grep -qx "side $(git -C "$R" rev-parse feat) tip" "$T180"; echo $?)"
+rm -rf "$R" "$(dirname "$T180")"
 
 print_summary

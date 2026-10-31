@@ -61,7 +61,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     file the commit edited, each revision's file read under the name it has there, never for a submodule
     pointer. What the commit before the landing commit gained or lost is main's own, unless another commit of
     the branch that changes the copies reached it (its own change all in place there): the finding then stands
-    (an earlier squash of the branch, a pick, later commits squashed before an earlier one). At the tip, where main's own edits are unknown, an added line or
+    (an earlier squash of the branch, a pick, later commits squashed before an earlier one). Each line is matched
+    under the name its file has in the revision its line number belongs to, and the diffs list the names the
+    commit's files have in the branch head too, so a file the branch moved after the commit is followed at the
+    landing commit as well as at the tip. At the tip, where main's own edits are unknown, an added line or
     path the head still has must be present and a deleted one the head still lacks must be absent, each file
     read under the names it has in the head too (a later commit of the branch may have moved it); a line a
     later branch commit rewrote or deleted is skipped.
@@ -69,7 +72,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the command line (no context lines between hunks, `GIT_DIFF_OPTS` unset, no external diff, no textconv,
     `--text`, rename detection with git's defaults, myers with the indent heuristic, fixed prefixes, quoted
     names, no color, no order file, short submodule lines; git's own messages discarded), or a plain read of a
-    tree or blob. Every git call runs with `core.precomposeUnicode` off: the paths the helper passes are git's own
+    tree or blob. Every git call runs with no hooks (`core.hooksPath=/dev/null`; writing the scratch index below
+    would otherwise run `post-index-change`) and with `core.precomposeUnicode` off: the paths the helper passes are git's own
     listings, byte for byte, and with it on (macOS's default) a name stored in NFD matched nothing, so a branch
     that never landed read as landed. Above 64 KB of paths, two trees holding only the listed paths are written
     to a temporary object store and compared, so renames pair among the same paths as on the command line (every
@@ -110,8 +114,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     only when the shell happened to have that variable — #399 itself saw it return rc=3 on 2026-10-15 — and
     errored otherwise. It now uses `${CLAUDE_PLUGIN_ROOT}`; the other unbraced uses in `idd-close` are left to
     #401. idd-close prints the helper's output with `printf`, so zsh's `echo` cannot undo its escaping.
-  - **Errors are not "clean".** Outside the landing step, a failed git or awk command, an unreadable object or
-    a checked commit touching a path with a newline (or byte `\001`) exits 4 with a `check-merge-completeness:`
+  - **Errors are not "clean".** Outside the landing step, a failed git or awk command, an unreadable object,
+    a checked commit touching a path with a newline (or byte `\001`), more moved files than git's rename
+    detection takes (it would read them as deleted and added), or a temp dir whose path has a backslash exits 4
+    with a `check-merge-completeness:`
     reason on stderr, which idd-close prints; nothing else reaches stderr. A failure inside the landing step falls back to the tip and is
     explained on exit 3.
   - Not effects at all (SPEC.md's definition): a file mode, a blank line, a final newline. Still not seen

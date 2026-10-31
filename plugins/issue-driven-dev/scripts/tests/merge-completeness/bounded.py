@@ -679,9 +679,11 @@ def d1_cause(case, minus, k):
     """Whether the case has a cause SPEC.md D1 lists for checking commit k at the tip,
     read from how the case was built (S, the landing mode, the branch's texts), never
     from the helper's landing rules: nothing landed (S empty, or commits that cancel
-    out, so no tree shows them); S is not a prefix of the
-    branch, or k comes after it; a squash edited by hand, a merge or a landing in two
-    squashes (several steps); a text whose copies the landing commit must be counted
+    out, so no tree shows them); S is not a prefix of the branch, or k comes after it;
+    main's own edit in the landing step on a unit the branch edits (a squash edited by
+    hand, a `git pull` merge whose side edited the branch's lines after the squash); a
+    landing in several steps (a merge, two squashes) where some text repeats; a text
+    whose copies the landing commit must be counted
     for that more than one commit touches, or that a commit moves; a branch with no net
     change (it lands at the merge-base, and the commits after a prefix that landed later,
     in a squash or in a commit of main's own that holds the prefix's net change, B2, are
@@ -695,9 +697,6 @@ def d1_cause(case, minus, k):
         return True   # what landed changes nothing: no tree shows it
     if set(S) != set(range(len(S))) or k not in S:
         return True
-    if landing in ("own", "merge") or split_of(landing) is not None:
-        return True
-    head = dict(mb)
     states = [dict(mb)]
     for op in ops:
         states.append(apply_strict(dict(states[-1]), op))
@@ -707,6 +706,18 @@ def d1_cause(case, minus, k):
     def cnt(st, text):
         return sum(1 for v in range(SLOTS) if st[v] is not None and txt_of(st[v], v) == text)
     texts = {txt_of(st[v], v) for st in states for v in range(SLOTS) if st[v] is not None}
+    branch_units = {u for op in ops for u, frm, to in edits(op)}
+    # a squash edited by hand (own), or a merge whose side edited the branch's lines
+    # after the squash (a `git pull` merge, a release merge with another PR): main's
+    # own edit in the landing step touches a unit the branch edits (round 16: these
+    # modes are no longer a cause by themselves)
+    if landing in ("own", "merge") and any(e is not None and e[0] in branch_units for e in (mop, extra)):
+        return True
+    # a landing in several steps (a merge, two squashes) where some text repeats: only
+    # the last step's copies are counted, and none at a merge commit
+    if (landing == "merge" or split_of(landing) is not None) and \
+            any(cnt(head, x) >= 2 or cnt(mb, x) >= 2 for x in texts):
+        return True
     for text in texts:
         if cnt(head, text) < 2 and cnt(mb, text) < 2:
             continue
