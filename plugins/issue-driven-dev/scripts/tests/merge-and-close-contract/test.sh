@@ -95,29 +95,22 @@ assert_grep "--in-chain never merges" "--in-chain" "$STAGE"
 assert_grep "meeting never merges" "meeting" "$STAGE"
 assert_grep "a stopped close after a merge says so" "/idd-close #" "$STAGE"
 
-echo "idd-all: the verify-report selector (run, not grepped)"
-# The selector picks the newest comment headed "## Verify: #N". It is an inline jq
-# program in the skill text, so the test runs that exact program on fixtures.
-# Found by the #392 acceptance run: jq's `$` matches only at the end of the string,
-# so "([ \t]|$)" never matched a heading followed by a newline and the close stage
-# read an empty report.
-SEL_FIX='[[{"id":1,"html_url":"u1","body":"## Verify: #8\n\n**PASS** — 0 blocking"},{"id":2,"html_url":"u2","body":"## Verify: #80\n\nother issue"},{"id":3,"html_url":"u3","body":"quoted:\n## Verify: #8\n"}]]'
-for where in "### Phase 4" "### Phase 5c"; do
-  prog=$(section "$ALL" "$where" | python3 -c '
-import sys, re
-m = re.search(r"jq -s --arg n \"\$N\" (\x27[^\x27]*\x27)", sys.stdin.read())
-print(m.group(1)[1:-1] if m else "")')
-  if [ -z "$prog" ]; then
-    fail "$where: selector program found" "no jq -s --arg n program in the section"
-    continue
-  fi
-  got=$(printf '%s' "$SEL_FIX" | jq -c --arg n 8 "$prog" 2>&1 | jq -r '.id // "none"' 2>/dev/null)
-  assert_eq "$where: selector picks the heading followed by a newline, not #80 or a quote" "1" "$got"
-done
+echo "idd-all: the close stage runs in one helper process"
+# The selector, the guardrails and the merge used to be inline bash split over
+# several fences; a Stopped in one fence did not stop the next (#392 verify r1 #9).
+# They now live in scripts/close-stage.py (its own suite: tests/close-stage/).
+assert_grep "Phase 4 judges each round through close-stage.py gate" "close-stage.py\" gate" "$(section "$ALL" "### Phase 4")"
+assert_grep "Phase 4 binds the gate to the current HEAD" "--sha \"\$HEAD_SHA\"" "$(section "$ALL" "### Phase 4")"
+assert_grep "Phase 5c runs close-stage.py run" "close-stage.py\" run" "$STAGE"
+assert_grep "Phase 5c runs it in the background, not split over calls" "run_in_background" "$STAGE"
+assert_grep "Step 0.7 records the run state" "close-stage.py\" init" "$ALL_TXT"
+refute_grep "no hard-coded issue number in the PR body template" "guardrails pass (#392)" "$ALL_TXT"
+refute_grep "no hard-coded issue number in the idd-close directive" "close stage of #392" "$ALL_TXT"
+assert_grep "idd-close is called with --repo" "#\$N --repo \$GITHUB_REPO" "$STAGE"
 
 echo "idd-all: fix loop and report"
 P4=$(section "$ALL" "### Phase 4")
-assert_grep "Phase 4 consults the verify gate each round" "verify-gate.py" "$P4"
+assert_grep "Phase 4 consults the verify gate each round" "verify-gate.py --expect-sha" "$P4"
 assert_grep "Phase 4 fixes In-scope fix findings when unattended" "In-scope fix" "$P4"
 P6=$(section "$ALL" "### Phase 6")
 assert_grep "report starts with Done:" "Done:" "$P6"

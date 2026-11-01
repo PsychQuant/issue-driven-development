@@ -1322,6 +1322,8 @@ ${BACKEND_DESC}, model: ${DISPATCH_MODEL}   <!-- 由解析鏈 BACKEND_DESC + 雙
 ### Aggregate
 **PASS / FAIL** — N blocking, M follow-up
 
+**Reviewed**: `${FROZEN_SHA}`
+
 ### 要求覆蓋率
 X / Y requirements addressed
 
@@ -1335,6 +1337,13 @@ X / Y requirements addressed
 {有沒有超出 issue 範圍的改動}
 ```
 
+**這兩份樣板是 `/idd-all` 自動 merge 的輸入（#392）**，`scripts/verify-gate.py` 照它讀；Step 4 貼出報告時就要符合，不是 Step 5a 才補：
+
+- 恰好一行判定，以 `**PASS**` 或 `**FAIL**` 開頭；其他行不要用粗體大寫英文字開頭。
+- 恰好一行 ``**Reviewed**: `<FROZEN_SHA>` ``，寫出完整的 40 字元 commit（`get_diff_and_issue` 凍結的那一個）。`/idd-all` 只在這個 commit 就是要 merge 或 push 的 commit 時才放行。
+- Findings 表的最後一欄是 `Action`，每一列只填 `Blocking`、`In-scope fix`、`Follow-up` 三者之一（規則見 Step 5a）。
+- 一張表不要被空行切開；引用程式碼用 fence 時要成對關閉。
+
 格式（PR mode，cluster 時 per-issue 分區段）：
 ```markdown
 ## Verify Report — PR #PPP
@@ -1344,6 +1353,8 @@ ${BACKEND_DESC}, model: ${DISPATCH_MODEL}   <!-- 同 local/branch mode 的組成
 
 ### Aggregate
 **PASS / FAIL** — N blocking, M follow-up
+
+**Reviewed**: `${FROZEN_SHA}`
 
 ### Scope coverage
 PR refs: #98, #105

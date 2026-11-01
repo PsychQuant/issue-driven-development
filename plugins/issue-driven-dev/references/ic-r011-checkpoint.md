@@ -104,7 +104,7 @@ options:
 
 The legacy 3-option `AskUserQuestion` (`file all` / `file selected` / `skip`) is preserved for:
 
-1. **SHOULD-tier sites** (`/idd-close` Step 3.5) — closing is mostly mechanical wrap-up;翻 default 增加 friction without proportional value
+1. **SHOULD-tier sites** (`/idd-close` Step 3.5) — closing is mostly mechanical wrap-up;翻 default 增加 friction without proportional value。例外：`/idd-all` 帶 `ORCHESTRATED BY /idd-all` 指示呼叫時不問（#392），見 `skills/idd-close/SKILL.md`〈Orchestrated close〉
 2. **Bypass paths** — `AI_LOW_BAR_ISSUE_FILING=false` env var or `# Disable IC_R011` CLAUDE.md flag reverts SHALL-tier sites to this legacy path
 
 ```
@@ -278,14 +278,14 @@ If both env var and CLAUDE.md directive present → both honored (additive opt-o
 |---|---|---|---|
 | **Deliberation moments** (`/idd-plan`, `/idd-diagnose`, `/spectra-discuss`, `/spectra-propose`) | **SHALL** | File by default + 3-category skip | These are the prime moments where tangential discoveries surface. Empty list is legitimate but step is mandatory. |
 | **Manual reproduction / verify** (`/idd-implement`, `/idd-verify`) | **SHALL** | File by default + 3-category skip | Reproduction reveals same-root-cause sister files (proven by #510 → #518 → #520 cluster). |
-| **Closure** (`/idd-close`) | **SHOULD** (advisory) | **Legacy 3-option ask preserved** | Closing summary keyword scan is mostly mechanical wrap-up action;翻 default 增加 friction without proportional value. |
+| **Closure** (`/idd-close`) | **SHOULD** (advisory) | **Legacy 3-option ask preserved**；例外：`/idd-all` 以 `ORCHESTRATED BY /idd-all` 指示呼叫時不問，取 IC_R011 預設（file，或 `AI_LOW_BAR_ISSUE_FILING=false` 時 implicit (a) skip），#392 | Closing summary keyword scan is mostly mechanical wrap-up action;翻 default 增加 friction without proportional value. |
 | **Issue creation** (`/idd-issue`) | **SHALL** | File by default + 3-category skip | Light-touch grep on linked context;surface only when heuristic clearly hits. Default file applies to the surface-list outcome. |
 | **Mechanical execution** (`/spectra-apply`, `/spectra-archive`, `/spectra-ask`, `/spectra-ingest`, `/spectra-commit`, `/spectra-debug`) | **N/A** (not applicable) | (no checkpoint) | No deliberation phase. These execute pre-decided actions. |
 
 ### Per-site treatment summary
 
 - **5 sites get default-flip**:`/idd-diagnose` Step 3.6, `/idd-plan` Step 2.5, `/idd-implement` Step 5.7, `/idd-issue` Step 4.7, `/idd-verify` Step 5b
-- **1 site preserves legacy**:`/idd-close` Step 3.5 (SHOULD-tier)
+- **1 site preserves legacy**:`/idd-close` Step 3.5 (SHOULD-tier)——除了 `/idd-all` 帶 `ORCHESTRATED BY /idd-all` 指示呼叫時（#392：不問，取 IC_R011 預設並列進輸出）
 - **2 third-party sites get default-flip**:`/spectra-discuss`, `/spectra-propose` (deliberation moments)
 
 ### When in doubt about a new skill

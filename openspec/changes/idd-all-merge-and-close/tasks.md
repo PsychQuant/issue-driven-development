@@ -11,7 +11,7 @@
 
   - ASSUMPTION（apply 時加，2026-11-02）：拿 5 份真實的 verify 留言（#383 round 5、6，PR #418 round 17–19）跑 helper，全部是 `unparseable`：Action 欄實際出現 `No action`、`In-scope`、`Blocking（證據缺口）` 這類三類以外或帶註解的值，粗體標籤（`**更正**`）也會被誤認成判定行。helper 照契約維持嚴格（判定行限粗體大寫英文字；Action 只收三個值，只剝掉外圍的 `*`、`_`、反引號）。為了讓 gate 在實務上會通過，另在 `skills/idd-verify/SKILL.md` Step 5a 補上報告格式的 producer 規則（恰好一行判定、Action 只填三個值、不成立的意見另列、零筆時保留表頭），並把本地模式的報告範本補上 `### Aggregate` 與 `Action` 欄。這個檔案不在 proposal 的 Affected code 清單內，verify 時請一併審。
 
-- [x] 3.1 [P] 寫 `plugins/issue-driven-dev/scripts/tests/merge-and-close-contract/test.sh`，鎖住三層文件一致：idd-all 的 SKILL.md 有 close stage、四道 guardrail、`ORCHESTRATED BY /idd-all` 指示、回報的 `Done:`／`Undo:`／`Stopped:`；idd-close 的 SKILL.md 有五個停點的預設表；MANIFESTO 的 auto-merge 段同時寫出兩個理由、不再把 auto-merge 交給 #37；idd-all 的 SKILL.md、MANIFESTO 與 `references/parallel-orchestration.md` 不再出現「永不 auto-close」「永遠不 auto-merge」「Stop at verified」這類舊句；idd-all 的 description 含 meeting 例外。完成時：測試存在且在現行文件上失敗（RED）。驗證：`bash plugins/issue-driven-dev/scripts/tests/merge-and-close-contract/test.sh` 以非零結束，失敗訊息逐項列出。
+- [x] 3.1 [P] 寫 `plugins/issue-driven-dev/scripts/tests/merge-and-close-contract/test.sh`，鎖住三層文件一致：idd-all 的 SKILL.md 有 close stage、四道 guardrail、`ORCHESTRATED BY /idd-all` 指示、回報的 `Done:`／`Undo:`／`Stopped:`；idd-close 的 SKILL.md 有停點的預設表（apply 時加到六個，見 5.1 的 ASSUMPTION）；MANIFESTO 的 auto-merge 段同時寫出兩個理由、不再把 auto-merge 交給 #37；idd-all 的 SKILL.md、MANIFESTO 與 `references/parallel-orchestration.md` 不再出現「永不 auto-close」「永遠不 auto-merge」「Stop at verified」這類舊句；idd-all 的 description 含 meeting 例外。完成時：測試存在且在現行文件上失敗（RED）。驗證：`bash plugins/issue-driven-dev/scripts/tests/merge-and-close-contract/test.sh` 以非零結束，失敗訊息逐項列出。
 
 ## 4. idd-all
 
@@ -42,3 +42,11 @@
 
 - [ ] 7.2 手動驗收：在一個拋棄式 repo（可沿用 #400 的 scratch repo）以 `claude -p --plugin-dir plugins/issue-driven-dev` 跑兩張 trivial issue：一張 unattended PR mode，確認 PR 被 squash merge、issue 被 close、回報有 `Done:` 與 `Undo:`；一張帶 `--review`，確認停在 verified、沒有 merge。完成時：兩張的結果與 spec scenario 一致。驗證：把兩次的 PR URL、issue 狀態與回報原文貼在 #392 的驗收留言。
   - 進度（2026-11-02）：做了 scripted 驗收，沒做 `claude -p` 的完整端到端。把 SKILL.md 裡 Phase 5c.1–5c.3 的 bash 原文抽出來，在 `PsychQuant/idd-cloud-sandbox` 對真的 PR 跑：trap commit 停在 guardrail 3（PR #9）、乾淨 PR 被 squash merge 且 issue 沒被 GitHub 自動關（PR #10）、direct-commit 的 trap 不推、乾淨的推上 main、不在預設 branch 時停下。第一次跑抓到一個 bug：verify 報告的選擇式用 `([ \t]|$)`，jq 的 `$` 只比對字串結尾，標題後接換行就選不到，close stage 讀到空報告（已修，合約測試改成直接執行 SKILL.md 裡的 jq 程式）。還沒驗的：模型照著 SKILL 走完整條 pipeline、`/idd-close` 收到 ORCHESTRATED 指示時的行為、`--review`。`claude -p` 需要另外設定權限（不用 `--dangerously-skip-permissions`），留到 verify 之後由維護者決定要不要跑。
+
+## 8. verify round 1 修正（#392 comment 6563410294）
+
+- [x] 8.1 `verify-gate.py`：fence 依字元與長度配對、未關閉即 unparseable；GFM 表格（無前導 `|` 的列、一個 `-` 的分隔列）；表格外寫著三類之一的列與加了裝飾的 `Action` 表頭即 unparseable；FAIL 卻沒有 Blocking 與 In-scope fix 即 unparseable；`--expect-sha` 要求恰好一行 `**Reviewed**` 且是該 commit。完成時：`tests/verify-gate/` 全數通過，含新增的 13 個情境。
+- [x] 8.2 `scripts/close-stage.py`（init／gate／run）與 `tests/close-stage/`：run-state、本帳號的報告、SHA 綁定、CI 寬限、strict trap regex、PR 對應、`--match-head-commit`、merge 後確認 `MERGED`、direct-commit 推出範圍。完成時：`tests/close-stage/` 全數通過，每一道停下時都斷言沒有 merge 或 push。
+- [x] 8.3 idd-all：Step 0.7 寫 run-state；Phase 4 改用 `close-stage.py gate --sha`，`--review`／`--in-chain` 不修 In-scope fix；Phase 5 的 PR body 照 gate 結果寫、不寫死 issue 號；Phase 5c 改成一次 helper 呼叫（背景執行）、`/idd-close` 帶 `--repo`、指示不含 `#數字`、結案要有 closing summary；batch 每張結束都回到預設 branch。idd-verify Step 4 樣板加 `**Reviewed**` 與格式規則。idd-close 記下 1.55 的已知代價、只認 args 裡的指示、Step 3.5 照 `AI_LOW_BAR_ISSUE_FILING`。完成時：合約測試通過。
+- [x] 8.4 規格與文件：IC_R011 spec delta 與 reference、attended requirement、guardrail 與 gate 條款；docs/workflows.md、pr-flow.md、idd-all-chain、MANIFESTO（分 mode 的 guardrail）、usecase-routing。完成時：`spectra validate` 通過，`grep` 找不到舊 doctrine。
+- [x] 8.5 全域規則：〈誰來執行〉的「唯一的例外」改成兩個例外；觸發條件從 `/idd-all #N` 改成任何 `/idd-all` 呼叫。完成時：全域規則所在的設定 repo 有本機 commit。

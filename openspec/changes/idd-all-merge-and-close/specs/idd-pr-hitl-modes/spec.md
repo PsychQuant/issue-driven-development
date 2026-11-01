@@ -26,7 +26,7 @@ When the resolved path is `PR`, `idd-all` SHALL behave identically to v2.40.0 up
 
 ### Requirement: Direct-commit path stays on current branch and skips PR
 
-When the resolved path is `direct-commit`, `idd-all` SHALL NOT create a feature branch and SHALL NOT create a PR. Commits land on whichever branch the user currently has checked out. `idd-all` SHALL NOT push during Phases 1 to 4. After a clean verify, `idd-all` SHALL push only when the current branch is the default branch, and only so that the fix exists on the remote default branch before the issue is closed; on any other branch it SHALL stop at verified without pushing. Before the push it SHALL scan the subject and body of every outgoing commit for a `close`, `fix`, or `resolve` keyword adjacent to a `#<digits>` reference, and SHALL stop at verified without pushing when one is found, because GitHub would close the issue from such a commit without `/idd-close`.
+When the resolved path is `direct-commit`, `idd-all` SHALL NOT create a feature branch and SHALL NOT create a PR. Commits land on whichever branch the user currently has checked out. `idd-all` SHALL NOT push during Phases 1 to 4. After a clean verify, `idd-all` SHALL push only when the current branch is the default branch, and only so that the fix exists on the remote default branch before the issue is closed; on any other branch it SHALL stop at verified without pushing. Before the push it SHALL require that every outgoing commit (`origin/<default>..HEAD`) references the issue as `#<N>`, so commits that are not this run's are never pushed, that `HEAD` is the commit named by the verify report, and that no outgoing commit's subject or body carries a `close`, `fix`, or `resolve` keyword before an issue reference (`#<digits>`, `owner/repo#<digits>`, or an issue or pull-request URL, a preceding hyphen or slash included), because GitHub would close the issue from such a commit without `/idd-close`. Any failed condition SHALL stop at verified without pushing.
 
 #### Scenario: direct-commit on default branch
 
@@ -62,6 +62,35 @@ When the resolved path is `direct-commit`, `idd-all` SHALL NOT create a feature 
 - **WHEN** the close stage runs
 - **THEN** `idd-all` does not push and does not close, and the run report contains `Stopped:` stating that the fix is not on the default branch
 
+### Requirement: Attended interaction permits sub-skill questions
+
+When the resolved interaction is `attended`, `idd-all` SHALL NOT inject any `UNATTENDED MODE` directive into sub-skill invocation args. Each sub-skill's own attended-by-default behavior — `/idd-plan`'s `EnterPlanMode` approval, `spectra-discuss` multi-turn pacing, `spectra-propose` Step 10 Park/Apply prompt, `idd-implement` `AskUserQuestion` checkpoints — MUST take effect natively. The one exception is `/idd-close` invoked by the close stage: it carries the `ORCHESTRATED BY /idd-all` directive in both interactions, so its stop points take the defaults that requirement "idd-close honors the orchestrated directive from idd-all" lists instead of asking; only its distribution-sync question is still asked when the interaction is attended.
+
+> The Plan-tier gate lives in `/idd-plan`, not in `idd-implement` (`#292`). Which phase invokes which skill is stated once, in `skills/idd-all/SKILL.md`'s dispatch table; this spec constrains the *directive injection* and defers to that table for routing.
+
+#### Scenario: attended mode allows EnterPlanMode
+
+- **GIVEN** resolved interaction is `attended`
+- **AND** Phase 2 diagnose returns Complexity = `Plan`
+- **WHEN** Phase 3p invokes `/idd-plan` (per the dispatch table in `skills/idd-all/SKILL.md`)
+- **THEN** the args string contains no `UNATTENDED MODE` directive
+- **AND** `/idd-plan` triggers `EnterPlanMode` for user approval, then chains to `idd-implement`
+
+#### Scenario: attended mode allows spectra-discuss multi-turn
+
+- **GIVEN** resolved interaction is `attended`
+- **AND** Phase 2 diagnose returns Complexity = `Spectra`
+- **WHEN** Phase 3b invokes `spectra-discuss`
+- **THEN** the args string contains no `UNATTENDED MODE` directive
+- **AND** `spectra-discuss` paces the discussion across multiple turns using `AskUserQuestion` per its native default
+
+#### Scenario: attended close stage applies idd-close's defaults
+
+- **GIVEN** resolved interaction is `attended` and the verify gate reports `clean`
+- **WHEN** the close stage invokes `/idd-close`
+- **THEN** the args carry the `ORCHESTRATED BY /idd-all` directive and no `UNATTENDED MODE` directive
+- **AND** `/idd-close` does not ask at Step 1.55, 1.6, 3.5, 3.6 or 6.3, and asks at Step 6.5 when it detects a distribution
+
 ## REMOVED Requirements
 
 ### Requirement: Verify is the terminal phase regardless of mode
@@ -74,7 +103,7 @@ When the resolved path is `direct-commit`, `idd-all` SHALL NOT create a feature 
 
 ### Requirement: Clean verify leads to merge and close
 
-After verify, `idd-all` SHALL ask the verify gate whether the latest verify round is clean. When the gate reports `clean`, the path is `PR`, and every merge guardrail passes, `idd-all` SHALL squash-merge the PR, fetch the remote default branch, and invoke `/idd-close #<N>` with the orchestrated directive, without asking the user first. When the path is `direct-commit`, the push-then-close behaviour of the requirement "Direct-commit path stays on current branch and skips PR" applies. `idd-all` SHALL NOT merge or close when the run carries `--review`, when it runs with `--in-chain`, or when the issue type is `meeting`.
+After verify, `idd-all` SHALL ask the verify gate whether the latest verify round is clean. When the gate reports `clean`, the path is `PR`, and every merge guardrail passes, `idd-all` SHALL squash-merge the PR, fetch the remote default branch, and invoke `/idd-close #<N>` with the orchestrated directive, without asking the user first. When the path is `direct-commit`, the push-then-close behaviour of the requirement "Direct-commit path stays on current branch and skips PR" applies. `idd-all` SHALL NOT merge or close when the run carries `--review`, when it runs with `--in-chain`, or when the issue type is `meeting`. Every check that guards the merge or the push SHALL run in the same process as the merge or the push, and the run's flags SHALL be read from a run-state record written when the mode is resolved, not from shell state or the model's memory; a missing record SHALL stop the close stage.
 
 #### Scenario: Clean verify on the PR path
 
@@ -129,7 +158,7 @@ When the resolved interaction is `unattended` and the verify gate reports `not_c
 
 ### Requirement: Merge guardrails gate every automatic merge
 
-Before an automatic merge, `idd-all` SHALL check, in order: the verify gate reports `clean`; every check reported by `gh pr checks` has succeeded, waiting at most 15 minutes for pending checks and treating a PR with no checks as passing; the Step 0.8 auto-close trap scan of the PR body and every commit body is clean; and the squash subject and body that `idd-all` composes reference the issue only as `Refs #<N>` and contain no `close`, `fix`, or `resolve` keyword adjacent to a `#<digits>` reference. If any check fails, `idd-all` SHALL NOT merge, SHALL stop at verified, and SHALL name the failed guardrail in the run report.
+Before an automatic merge, `idd-all` SHALL check, in order: the verify gate reports `clean` for a report posted by the account running the session whose reviewed commit is the PR's head commit; every check reported by `gh pr checks` has succeeded, waiting at most 15 minutes for pending checks, and treating a PR with no checks as passing only when no workflow in the repository runs on `pull_request` and a 90-second grace period has passed; the PR body has no closing reference and no commit subject or body carries a `close`, `fix`, or `resolve` keyword before an issue reference (`#<digits>`, `owner/repo#<digits>`, or an issue or pull-request URL, a preceding hyphen or slash included); and the squash subject and body that `idd-all` composes reference the issue only as `Refs #<N>` and pass the same scan. The merge SHALL be pinned to the verified head commit (`--match-head-commit`), and `idd-all` SHALL confirm that the PR is `MERGED` with a merge commit before invoking `/idd-close`. If any check fails, `idd-all` SHALL NOT merge, SHALL stop at verified, and SHALL name the failed guardrail in the run report.
 
 #### Scenario: A CI check fails
 
@@ -137,6 +166,19 @@ Before an automatic merge, `idd-all` SHALL check, in order: the verify gate repo
 - **AND** `gh pr checks` reports one failed check named `test`
 - **WHEN** the guardrails run
 - **THEN** `idd-all` does not merge and the run report contains `Stopped:` naming the CI guardrail and the check `test`
+
+#### Scenario: The PR head moved after verify
+
+- **GIVEN** the verify report names commit `abc…` as reviewed
+- **AND** a new commit was pushed to the PR branch afterwards
+- **WHEN** the guardrails run
+- **THEN** guardrail 1 reports that the reviewed commit is not the PR head and `idd-all` does not merge
+
+#### Scenario: A report posted by another account
+
+- **GIVEN** the newest `## Verify: #<N>` comment that says PASS was posted by an account other than the one running the session
+- **WHEN** the guardrails run
+- **THEN** that comment is not read as the verify report, and `idd-all` does not merge on the strength of it
 
 #### Scenario: A commit body would auto-close the issue
 
@@ -147,7 +189,7 @@ Before an automatic merge, `idd-all` SHALL check, in order: the verify gate repo
 
 ### Requirement: Verify gate parsing fails closed
 
-The verify gate SHALL read the latest verify master comment and report exactly one of `clean`, `not_clean`, or `unparseable`. It SHALL report `unparseable` when the verdict line or the classification table cannot be found, when a classification value is not one of Blocking, In-scope fix, or Follow-up, or when the verdict is PASS while the table contains a Blocking finding. `idd-all` SHALL treat `unparseable` exactly like a failed guardrail: no merge, no close, and the reason in the run report.
+The verify gate SHALL read the latest verify master comment and report exactly one of `clean`, `not_clean`, or `unparseable`. It SHALL report `unparseable` when the verdict line or the classification table cannot be found, when a classification value is not one of Blocking, In-scope fix, or Follow-up, when the verdict is PASS while the table contains a Blocking finding, when the verdict is FAIL while the table has neither a Blocking nor an In-scope fix finding, when a fenced code block is never closed (fences pair by character and length), when a row naming one of the three classes stands outside any findings table, when a table header ends in a decorated `Action`, and, when the commit to be merged is given, when the report does not carry exactly one `**Reviewed**` line naming that commit. `idd-all` SHALL treat `unparseable` exactly like a failed guardrail: no merge, no close, and the reason in the run report.
 
 #### Scenario: Classification table is missing
 

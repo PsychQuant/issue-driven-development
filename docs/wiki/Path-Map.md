@@ -112,7 +112,7 @@ flowchart TD
 |------|------|
 | `P-pr-verify` | - **Use case**:外部 agent(Codex / Copilot)開的 PR,IDD 6-AI ensemble verify |
 | `P-verify-file-profile` | 非 code deliverable 驗證（#258，v2.97+ |
-| `P-pr-verify-then-merge` | - **Use case**:verify-gated PASS 後 user 主動 merge,**per IDD MANIFESTO**「auto-merge 須走 #3… |
+| `P-pr-verify-then-merge` | - **Use case**:verify 一張**不是** `/idd-all` 開的 PR(外部 agent、人手寫的),verify-gated PASS 後由 use… |
 
 ### F. Resume / continuation paths(mid-work recovery)
 

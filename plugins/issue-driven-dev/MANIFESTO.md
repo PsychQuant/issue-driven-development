@@ -173,12 +173,11 @@ clean verify 之上 auto-merge **是合法的**，理由有兩個，並列（#39
 
 revert 不對稱仍然成立：一個 reviewed change 撤回後，history 留下兩道痕跡；已發出的版本（marketplace 同步、release）收不回。所以 distribution sync 不屬於可逆的範圍 —— `idd-all` 在有人在場時照問，無人在場時略過並列出要跑的命令。
 
-Guardrails 是 mandatory，不是 skipped（`idd-all` Phase 5c）：
+Guardrails 是 mandatory，不是 skipped（`idd-all` Phase 5c，全部在 `scripts/close-stage.py` 的同一個 process 裡檢查，merge 或 push 也在那裡做）：
 
-- verify gate 判定 `clean`（never CONDITIONAL / FAIL / 讀不出來）
-- CI checks 全部通過（pending 最多等 15 分鐘）
-- Step 0.8 auto-close-trap scan 必須 clean（PR body 與每個 commit）
-- Squash commit message 必須 clean（由 idd-all 自己組，只用 `Refs #N`）
+- verify gate 判定 `clean`（never CONDITIONAL / FAIL / 讀不出來），而且報告是本帳號貼的、寫明它審查的 commit 就是要 merge 或 push 的那一個
+- PR mode：CI checks 全部通過（pending 最多等 15 分鐘；有 `pull_request` workflow 就等 check 出現）；auto-close-trap scan 必須 clean（PR body 與每個 commit）；squash commit message 必須 clean（由 idd-all 自己組，只用 `Refs #N`）；merge 綁定 verify 過的 head commit
+- direct-commit mode：沒有 PR 也沒有 merge 前的 CI，所以改成：只在預設 branch 上推、要推出去的每個 commit 都引用這張 issue、沒有 trap 字樣
 
 **auto-merge ≠ auto-close** —— merge 之後 `idd-close` 照跑（closing summary 是 audit artifact，不可省）；idd-all 帶 `ORCHESTRATED BY /idd-all` 指示呼叫它，停點取預設。
 

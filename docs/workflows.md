@@ -279,9 +279,9 @@ idd-verify #N --profile prose --file report.md
 idd-verify --pr 71 → (verify-gated PASS) → gh pr merge 71 --squash
 ```
 
-- **Use case**:verify-gated PASS 後 user 主動 merge,**per IDD MANIFESTO**「auto-merge 須走 #37,目前禁止」
+- **Use case**:verify 一張**不是** `/idd-all` 開的 PR(外部 agent、人手寫的),verify-gated PASS 後由 user merge
 - **Mode**:Attended(merge 由 user 觸發)
-- **Critical**:即使 verify 全 PASS,**禁止** plugin 自動 merge;`idd-close` 仍要跑
+- **Critical**:`idd-verify` 本身不 merge;merge 之後 `idd-close` 仍要跑。`/idd-all` 自己開的 PR 則在 verify gate 乾淨、guardrail 全過時由它的 close stage merge 並 close(#392,MANIFESTO〈auto-merge 的合法性與限制〉)
 
 ---
 
@@ -585,7 +585,7 @@ Q1: 是 single issue 還是 multi issues?
 
 > verify PASS → 自動 `gh issue close`
 
-**Wrong**:MANIFESTO 鐵律「auto-merge ≠ auto-close」;close 仍需 user invoke `idd-close` + closing summary。**verify-gated PASS** 只代表 ready to merge,**不**代表 done。
+**Wrong**:MANIFESTO 鐵律「auto-merge ≠ auto-close」;close 一定要經過 `idd-close`(checklist gate + closing summary),不能直接 `gh issue close`。`/idd-all` 的 close stage 也是呼叫 `idd-close`,不是自己關(#392)。**verify-gated PASS** 只代表可以 merge,**不**代表 done。
 
 ### A6. P-multi-finding 跟 P-bundle 混用
 

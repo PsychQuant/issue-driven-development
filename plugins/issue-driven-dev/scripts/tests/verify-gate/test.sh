@@ -58,7 +58,8 @@ run_gate "bold labels that are not verdicts are ignored" bold-labels.md clean 0 
 # not_clean
 run_gate "Blocking finding" blocking.md not_clean 1 1 0 1
 run_gate "In-scope fix findings" inscope.md not_clean 1 0 2 0
-run_gate "FAIL verdict without Blocking rows" fail-verdict.md not_clean 1 0 0 1
+# #392 verify r1 (logic #40): FAIL with only Follow-up rows contradicts itself, like PASS with a Blocking row
+run_gate "FAIL verdict with only Follow-up rows" fail-verdict.md unparseable 2
 run_gate "a template inside a code fence is ignored" fenced-template.md not_clean 1 1 0 0
 
 # unparseable
@@ -75,6 +76,39 @@ reason_has "PASS with Blocking: reason" "contradict"
 run_gate "two verdict lines" two-verdicts.md unparseable 2
 run_gate "unfilled PASS / FAIL template" template-verdict.md unparseable 2
 run_gate "CONDITIONAL verdict" conditional.md unparseable 2
+
+# round 1 of #392's verify: layouts that used to read as clean
+run_gate "a findings row after a blank line is outside the table" interrupted-table.md unparseable 2
+reason_has "interrupted table: reason" "outside"
+run_gate "a GFM row without a leading pipe still counts" no-leading-pipe.md not_clean 1 0 1 1
+run_gate "a four-backtick fence is not closed by three backticks" fence-length.md unparseable 2
+run_gate "a tilde line inside a backtick fence does not close it" fence-tilde-inside.md not_clean 1 0 1 0
+run_gate "an unclosed fence" unclosed-fence.md unparseable 2
+reason_has "unclosed fence: reason" "fence"
+run_gate "an Action header with decoration" action-header-variant.md unparseable 2
+run_gate "a one-dash GFM divider" short-divider.md not_clean 1 0 1 0
+run_gate "FAIL with no Blocking and no In-scope fix row" fail-no-findings.md unparseable 2
+reason_has "FAIL without findings: reason" "contradict"
+
+# --expect-sha: the report must name the commit it reviewed
+SHA=78e32898e75243a3b6895568adff8b1ae7949824
+run_gate_x() { # name fixture status exit args...
+  local name="$1" fixture="$2" want_status="$3" want_exit="$4"; shift 4
+  local out rc
+  out=$(python3 "$GATE" --comment-file "$FX/$fixture" "$@" 2>/dev/null); rc=$?
+  assert_eq "$name: status" "$want_status" "$(printf '%s' "$out" | json_field status)"
+  assert_exit "$name: exit" "$want_exit" "$rc"
+  LAST_OUT="$out"
+}
+run_gate_x "Reviewed line equals the expected commit" reviewed-ok.md clean 0 --expect-sha "$SHA"
+run_gate_x "a 7-character Reviewed prefix of the expected commit" reviewed-short.md clean 0 --expect-sha "$SHA"
+run_gate_x "Reviewed names another commit" reviewed-other.md unparseable 2 --expect-sha "$SHA"
+reason_has "another commit: reason" "Reviewed"
+run_gate_x "two Reviewed lines" reviewed-twice.md unparseable 2 --expect-sha "$SHA"
+run_gate_x "no Reviewed line while a commit is expected" clean-empty.md unparseable 2 --expect-sha "$SHA"
+run_gate_x "without --expect-sha the Reviewed line is not required" clean-empty.md clean 0
+python3 "$GATE" --comment-file "$FX/reviewed-ok.md" --expect-sha not-a-sha >/dev/null 2>&1; rc=$?
+assert_exit "--expect-sha that is not hex: exit" 64 "$rc"
 
 # file and usage errors
 out=$(python3 "$GATE" --comment-file "$FX/does-not-exist.md" 2>/dev/null); rc=$?

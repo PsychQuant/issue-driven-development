@@ -22,7 +22,7 @@
 
 - 不改 `/idd-all-chain`；chain 是否跟進由 #393 決定。
 - 不改 `type=meeting` 的停點（diagnosed／planning）。
-- 不改手動流程：直接跑 `/idd-verify`、`/idd-close` 的行為不變，包括「In-scope fix 修完不必重跑 verify」的既有規則。
+- 不改手動 `/idd-close` 的流程：沒有 `ORCHESTRATED BY /idd-all` 指示時每個問題照舊。手動 `/idd-verify` 只多了報告格式的規則（一行判定、`**Reviewed**` 一行、Action 欄只填三類），流程與「In-scope fix 修完不必重跑 verify」的既有規則不變。
 - 不自動做 distribution sync 的不可逆部分（發版、推 marketplace）；無人在場時一律略過。
 - 不做 Codex 以外的 verify 改動；雲端 runtime 是 #400 的範圍。
 
@@ -120,6 +120,27 @@ MANIFESTO〈auto-merge 的合法性與限制〉改成兩個理由並列：verify
 ### 吸收 #387 的 meeting 例外
 
 `parallel-orchestration` batch requirement 改寫時，一併寫明 `type=meeting` 停在 diagnosed 或 planning、不 verify、不開 PR；idd-all 的 description 同樣寫明。#387 標為被本 change 取代。
+
+### verify round 1 之後的修正（2026-11-02）
+
+第 1 輪 verify（#392 comment 6563410294）指出把 close stage 寫成 skill 裡的 bash 區塊本身就不安全，改成下面幾點：
+
+- **一個 helper、一個 process**：`scripts/close-stage.py run` 做完所有檢查與 merge／push。skill 的每個 bash 區塊是一次獨立的 tool call，一個區塊判了 `Stopped` 擋不住下一個區塊的 merge（#383 r2 #12 同型），CI 等待也不能拆成好幾次呼叫。helper 用 `run_in_background` 執行。
+- **run-state 檔**：Step 0.7 用 `close-stage.py init` 把 `--review`、`--in-chain`、path、interaction、branch 寫進 `.claude/.idd/state/idd-all-run-<N>.json`。helper 從這裡讀，不靠 shell 變數或模型記得；沒有這個檔就不 merge。
+- **verify 報告綁定 commit**：idd-verify 的報告寫一行 `**Reviewed**: <sha>`；gate 用 `--expect-sha` 要求它等於要 merge（PR head）或要 push（本機 HEAD）的 commit。舊報告、這一輪沒貼出報告、verify 之後 branch 又多了 commit，都讀成 `unparseable`，取代原本「記住上一份報告 id」的做法（跨不過 tool call）。merge 帶 `--match-head-commit`。
+- **只認本帳號的報告**：`author_association` 的 MEMBER／COLLABORATOR 包含只有讀取權限的人，而這份報告決定 merge。
+- **CI 寬限**：PR 剛開時 `gh pr checks` 可能還沒有任何 check。repo 有對 `pull_request` 觸發的 workflow 就等 check 出現；沒有才在 90 秒寬限期後視為通過。
+- **trap regex 不豁免連字號**，並涵蓋 `owner/repo#N` 與 issue／PR 網址（GitHub 會把 `/idd-close #N` 拆開並關掉 issue，#173）。
+- **direct-commit 只推這次 run 的 commit**：`origin/<default>..HEAD` 的每個 commit 都要引用 `#N`，HEAD 要是 verify 報告的 commit。
+- **merge 之後確認 `MERGED`**：merge queue 會讓 `gh pr merge` 回 0 而 PR 仍是 OPEN。
+- **結案要有 closing summary**：只看 issue state 會把「被 GitHub 或別人關掉」誤報成已結案。
+- **PR body 照 gate 結果寫**，停在 verified 的 run 不宣稱 PASS。
+- **`--review`／`--in-chain` 的 run 不修 In-scope fix**：它們不會 merge，維持原本只修 Blocking 的範圍。
+
+兩個沒有改、記錄理由的決定：
+
+- **idd-close Step 1.55 仍然停下**（Diagnosis Decisions）。代價是 #399 的誤報：unattended 修正輪產生「後面的 commit 改寫前面加的行」的 branch，squash 之後 1.55 會報 orphan，PR mode 的自動 close 在 PR #418 merge 前常停在「已 merge、issue 仍開」。把 1.55 改成照樣 close 會讓一張可能沒做完的 issue 在沒有人判斷時被關掉，比停下更糟。
+- **merge 本身就是發佈的 repo**（CI 在 push 到預設 branch 時發版、marketplace 直接服務預設 branch）不在 merge 前另外偵測：偵測只能靠猜 workflow 內容。這類 repo 用 `--review`；repo 層級的開關另開 #460。closing summary 與自動開的 follow-up issue 會發通知、收不回，這是 close 的一部分，依 #392 的決定歸在「做完回報」這一側。
 
 ## Implementation Contract
 
