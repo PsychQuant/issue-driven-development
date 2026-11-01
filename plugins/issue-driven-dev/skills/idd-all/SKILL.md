@@ -974,7 +974,7 @@ fi
 vg_latest() {  # stdout: {id, html_url, body} of the newest trusted comment headed exactly "## Verify: #N"
   gh api "repos/$GITHUB_REPO/issues/$N/comments" --paginate \
      --jq '[.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") | {id, html_url, body}]' \
-  | jq -s --arg n "$N" 'add // [] | map(select(.body | test("^## Verify: #" + $n + "([ \t]|$)"))) | last // {id: null, html_url: null, body: ""}'
+  | jq -s --arg n "$N" 'add // [] | map(select(.body | test("^## Verify: #" + $n + "([^0-9]|$)"))) | last // {id: null, html_url: null, body: ""}'
 }
 VG_BEFORE=$(vg_latest | jq -r '.id // "none"')
 
@@ -1137,7 +1137,7 @@ case "$N" in ''|*[!0-9]*) echo "FATAL: Phase 5c: issue number is not numeric: $N
 VG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/idd-close-stage.XXXXXX")
 gh api "repos/$GITHUB_REPO/issues/$N/comments" --paginate \
    --jq '[.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") | {id, html_url, body}]' \
- | jq -s --arg n "$N" 'add // [] | map(select(.body | test("^## Verify: #" + $n + "([ \t]|$)"))) | last // {id: null, html_url: null, body: ""}' \
+ | jq -s --arg n "$N" 'add // [] | map(select(.body | test("^## Verify: #" + $n + "([^0-9]|$)"))) | last // {id: null, html_url: null, body: ""}' \
  > "$VG_DIR/latest.json"
 jq -r '.body' "$VG_DIR/latest.json" > "$VG_DIR/report.md"
 VERIFY_URL=$(jq -r '.html_url // ""' "$VG_DIR/latest.json")
