@@ -33,7 +33,7 @@
 - [x] 6.1 [P] 依「文件三層一起改」改寫 `plugins/issue-driven-dev/MANIFESTO.md`：〈auto-merge 的合法性與限制〉改成兩個理由並列（verify 保證改得對；可逆讓它免事前確認但必須事後回報），revert 不對稱段改用來說明 distribution sync 為何仍要確認，指向 #37 的句子改指 #392；〈verify-gated 是 terminal 預設 disposition〉改寫成 verify 乾淨即 merge 並 close；自動化 caller 那段改寫。完成時：MANIFESTO 與 close stage 不矛盾。驗證：3.1 測試的 MANIFESTO 斷言通過。
 - [x] 6.2 [P] 同步其餘文件的 idd-all 終點敘述：`plugins/issue-driven-dev/CLAUDE.md` 的 idd-all 列與 PR vs Direct-commit 段、`plugins/issue-driven-dev/README.md`、`plugins/issue-driven-dev/references/usecase-routing.md`、`plugins/issue-driven-dev/references/pr-flow.md`、`docs/commands.md`。完成時：這些檔案不再寫 idd-all 停在 verified（`--review`、chain、meeting 的例外除外）。驗證：`grep -rn "停在 verified" plugins/issue-driven-dev docs` 的剩餘結果都屬於上述例外，逐筆人工確認。
 
-- [x] 6.3 依 2026-11-02 的決定（#392 comment 6562727408）同步本 repo 以外的兩份規則，避免規則與實作互相矛盾：全域 `~/.claude/CLAUDE.md`（che-claude-config）〈指令即確認〉的封閉列舉加一項「`/idd-all #N` 在 verify 乾淨時的 merge／push 與 close」，〈GitHub 紀錄不用問〉裡「關閉 issue（照 IDD，close 由鄭澈決定）」改為除外 `/idd-all`；dev 層 `.claude/rules/human-vs-claude-skills.md` 把「結案只有人能決定」改成「人可以手動結案；`/idd-all` verify 乾淨時自己結案」。完成時：兩份規則不再說 close 一律由人決定。驗證：`grep -n "close 由鄭澈決定\|只有人能決定" ~/.claude/CLAUDE.md .claude/rules/human-vs-claude-skills.md` 沒有與 close stage 矛盾的結果；che-claude-config 有本機 commit。
+- [x] 6.3 依 2026-11-02 的決定（#392 comment 6562727408）同步本 repo 以外的兩份規則，避免規則與實作互相矛盾：使用者的全域 `CLAUDE.md`加一節「`/idd-all #N` 本身就是確認」（在 verify 乾淨時的 merge／push 與 close），〈GitHub 紀錄不用問〉裡「關閉 issue（照 IDD，close 由鄭澈決定）」改為除外 `/idd-all`；dev 層 `.claude/rules/human-vs-claude-skills.md` 把「結案只有人能決定」改成「人可以手動結案；`/idd-all` verify 乾淨時自己結案」。完成時：兩份規則不再說 close 一律由人決定。驗證：`grep -n "close 由鄭澈決定\|只有人能決定" ~/.claude/CLAUDE.md .claude/rules/human-vs-claude-skills.md` 沒有與 close stage 矛盾的結果；全域規則所在的設定 repo 有本機 commit。
 
 ## 7. 收尾
 
