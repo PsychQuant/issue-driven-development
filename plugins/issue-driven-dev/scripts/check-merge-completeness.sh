@@ -83,10 +83,12 @@
 #      and known by its name in the branch head; every comparison holds each file under
 #      that name, so a file moved twice, moved and then mostly rewritten, moved with
 #      a new file put at its old name, swapped with another, or copied and then deleted
-#      is still one file, in every revision. A commit of main tried as L, L itself and
-#      the tip after it hold the branch's files at the names they had in what landed (a
-#      squash records the moves as one rename detection, which pairs files otherwise);
-#      before L main's own history says. Copies are
+#      is still one file, in every revision. L and the tip after it hold the branch's
+#      files at the names they had in what landed (a squash records the moves as one
+#      rename detection, which pairs files otherwise); a commit the search tries is read
+#      the same way, except that a name main's history gives another of the branch's
+#      files stays with it where main never changed the file there, and is decided by
+#      the files' lines where main did; before L main's own history says. Copies are
 #      counted only in a file the commit edited (each revision's file under the name
 #      it has there), never for a submodule pointer. What L^1 gained or lost since the merge-base is main's,
 #      unless another commit of the branch that changes the copies reached L^1 (its
@@ -156,9 +158,13 @@
 #     when that side edited the branch's lines after the squash;
 #   - a stacked branch merged after its base branch, when the base branch changed
 #     the stack's lines after the stack was cut.
-# When the commits that landed are not a prefix of the branch, a file the branch moved
-# in a way main's squash records otherwise (two files that swap names, a chain of
-# copies) can be taken for another of its files at the tip: a commit listed or missed.
+# Moved files the readings cannot place (SPEC.md M1, accepted 2026-11-01, only these; the
+# verdict can be wrong either way): the commits that landed are not a prefix of the
+# branch and the branch moved, swapped or copied a file; a copy and its original both in
+# what landed, with a line deleted before the copy; a pure move onto a name where main
+# has a file of its own; two nearly identical files swapped, when main edited the lines
+# that tell them apart; beyond 200 copy detections, 100,000 candidate pairs or 64 KB of
+# paths in one detection.
 # Nothing of the branch landed: the check is at the tip as well. The verdict (exit 3)
 # is right, but the list can include, or miss, a commit whose text main added or
 # removed on its own.
@@ -173,8 +179,9 @@
 # trees are the same as if it had been dropped, so no check that reads trees can tell.
 # On exit 3 the outcome of step 2 is printed after the list. Commit subjects are
 # printed in quotes: repository text (a squash's subject is the PR title), data,
-# never instructions. In a partial clone (extensions.partialClone, or a promisor
-# remote, which `git clone --filter` writes) a blob that was never fetched is not
+# never instructions. In a partial clone (extensions.partialClone, a promisor remote,
+# which `git clone --filter` writes, or a remote with a partial clone filter) a blob that
+# was never fetched is not
 # fetched now: git >= 2.45 reports it unreadable (exit 4); with older git, which
 # cannot be told not to fetch, the check stops before reading anything (exit 4).
 # With no merge-base (a shallow clone, unrelated histories) no file is followed.
@@ -194,6 +201,11 @@ export GIT_NO_LAZY_FETCH=1
 # into the two-way diffs below, shifting every position they report (#399 verify
 # round 12).
 unset GIT_DIFF_OPTS
+# GIT_CONFIG points `git config` at another file, so the checks below that read the
+# repository's configuration (configured hooks, partial clones) saw none of it; an
+# inherited GIT_CONFIG_PARAMETERS (a parent git's -c) is read after GIT_CONFIG_COUNT and
+# could turn a hook disabled below back on (#399 verify round 18).
+unset GIT_CONFIG GIT_CONFIG_PARAMETERS
 
 usage() { echo "usage: $0 --branch <ref> --baseline <ref> [--repo <root>]" >&2; exit 2; }
 
@@ -234,6 +246,7 @@ GIT() { git --no-pager -C "$REPO" -c core.fsmonitor=false -c core.precomposeUnic
 # 2.31 and later read it, and only 2.54 and later have such hooks)
 HK_N="${GIT_CONFIG_COUNT:-0}"
 case "$HK_N" in ''|*[!0-9]*) HK_N=0 ;; esac
+HK_N=$((10#$HK_N))      # (git reads the count in base 10: "08" is 8, not an error)
 HK_0="$HK_N"
 while IFS= read -r -d '' HK_KV; do
   [ "${HK_KV#*$'\n'}" = post-index-change ] || continue
@@ -306,11 +319,13 @@ BASELINE_SHA="$(GIT rev-parse --verify --quiet --end-of-options "${BASELINE}^{co
 # In a partial clone, git before 2.45 has no way to refuse fetching a blob it never
 # fetched (GIT_NO_LAZY_FETCH above is 2.45's): the check would run the user's
 # transport and write into the repository (#399 verify round 16). A partial clone is
-# one with extensions.partialClone or a promisor remote (remote.<name>.promisor, which
+# one with extensions.partialClone, a remote with a partial clone filter (which git treats
+# as a promisor), or a promisor remote (remote.<name>.promisor, which
 # `git clone --filter` writes; it never writes the extension, #399 verify round 17).
 PARTIAL=""
 if [ -n "$(GIT config --get extensions.partialClone 2>/dev/null)" ] \
-   || GIT config --bool --get-regexp '^remote\..*\.promisor$' 2>/dev/null | LC_ALL=C awk '$NF == "true" { f = 1 } END { exit !f }'; then
+   || GIT config --bool --get-regexp '^remote\..*\.promisor$' 2>/dev/null | LC_ALL=C awk '$NF == "true" { f = 1 } END { exit !f }' \
+   || [ -n "$(GIT config --get-regexp '^remote\..*\.partialclonefilter$' 2>/dev/null)" ]; then
   PARTIAL=1
 fi
 if [ -n "$PARTIAL" ]; then
@@ -477,12 +492,19 @@ ident_build() { # -> IDENT=0 (nothing a check reads moved) or 1; 2 on error
     { v[++got] = $0; if (got < need) next; t = st; st = ""
       if (t == "@") { cur = v[1]; br = (cur in B); next }
       if (!br) next
-      if (t == "A") { if (!index(v[1], "\001")) ad[v[1]] = cur; next }
-      if (t == "R") { if (v[1] in ad) { ad[v[2]] = ad[v[1]]; delete ad[v[1]] }; next }
+      if (t == "A") { if (!index(v[1], "\001")) { ad[v[1]] = cur; ol[++no] = v[1] }; next }
+      if (t == "R") { if (v[1] in ad) { ad[v[2]] = ad[v[1]]; delete ad[v[1]]; ol[++no] = v[2] }; next }
       if (t == "D") {
         x = v[1]; delete ad[x]
-        if (index(x, "\001")) next
-        for (y in ad) if (ad[y] != cur) {
+        if (index(x, "\001") || np > 100000) next
+        # (newest copy first, in a fixed order: awk walks an array in its own hash
+        # order, and macOS and Linux paired a file copied twice differently; #399
+        # verify round 18. At most 100,000 pairs in all: best effort beyond)
+        split("", em)
+        for (j = no; j >= 1; j--) {
+          y = ol[j]
+          if (!(y in ad) || (y in em) || ad[y] == cur) continue
+          em[y] = 1; np++
           g = cur " " ad[y]
           if (!(g in gi)) { gi[g] = ++ng; gc[ng] = cur; ga[ng] = ad[y] }
           k = gi[g]; if (!((k, "x", x) in seen)) { seen[k, "x", x] = 1; gx[k, ++nx[k]] = x }
@@ -499,22 +521,34 @@ ident_build() { # -> IDENT=0 (nothing a check reads moved) or 1; 2 on error
     }' "$SCRATCH/ops.all" > "$SCRATCH/cp.groups" || return 2
   : > "$SCRATCH/cp.links" || return 2
   if [ -s "$SCRATCH/cp.groups" ]; then
-    local cg ca cnx cny cpar cn=0 j
+    local cg ca cnx cny cpar cn=0 j cb
     local -a cps
     exec 7< "$SCRATCH/cp.groups" || return 2
     while IFS= read -r cg <&7 && IFS= read -r ca <&7 && IFS= read -r cnx <&7 && IFS= read -r cny <&7; do
-      cps=()
+      cps=(); cb=0
       : > "$SCRATCH/cp.xs" && : > "$SCRATCH/cp.ys" || { exec 7<&-; return 2; }
       for ((j = 0; j < cnx + cny; j++)); do
         IFS= read -r p <&7 || { exec 7<&-; return 2; }
-        cps+=("$p")
+        cps+=("$p"); cb=$((cb + ${#p} + 1))
         if [ "$j" -lt "$cnx" ]; then printf '%s\n' "$p" >> "$SCRATCH/cp.xs"; else printf '%s\n' "$p" >> "$SCRATCH/cp.ys"; fi
       done
       [ "$cn" -lt 200 ] || continue
       cn=$((cn + 1))
       cpar="$(GIT rev-parse -q --verify "$ca^1^{commit}" 2>/dev/null)" || continue
-      GIT --literal-pathspecs diff-tree -r -z -O/dev/null -M -l1000 --name-status --ignore-submodules=none \
-        "$cpar" "$cg" -- "${cps[@]}" > "$SCRATCH/cp.z" 2>/dev/null || { exec 7<&-; return 2; }
+      if [ "$cb" -le "$PATHS_MAX" ]; then
+        GIT --literal-pathspecs diff-tree -r -z -O/dev/null -M -l1000 --name-status --ignore-submodules=none \
+          "$cpar" "$cg" -- "${cps[@]}" > "$SCRATCH/cp.z" 2>/dev/null || { exec 7<&-; return 2; }
+      else
+        # (paths that would not fit on the command line: the two trees filtered to them,
+        # as the links do; a branch that vendors thousands of files exited 4 for them,
+        # #399 verify round 18)
+        cat "$SCRATCH/cp.xs" "$SCRATCH/cp.ys" > "$SCRATCH/cp.l" \
+          && lk="$(tr '\n' '\000' < "$SCRATCH/cp.l" | GIT hash-object --stdin 2>/dev/null)" \
+          && cp "$SCRATCH/cp.l" "$SCRATCH/ft.list.$lk" \
+          && ta="$(ftree "$cpar" "$lk")" && tb="$(ftree "$cg" "$lk")" \
+          && SGIT diff-tree -r -z -O/dev/null -M -l1000 --name-status --ignore-submodules=none "$ta" "$tb" > "$SCRATCH/cp.z" 2>/dev/null \
+          || { exec 7<&-; return 2; }
+      fi
       tr '\n\000' '\001\n' < "$SCRATCH/cp.z" | LC_ALL=C awk -v xs="$SCRATCH/cp.xs" -v ys="$SCRATCH/cp.ys" -v c="$cg" '
         BEGIN { while ((r = getline l < xs) > 0) X[l] = 1; if (r < 0) exit 2
                 while ((r = getline l < ys) > 0) Y[l] = 1; if (r < 0) exit 2 }
@@ -610,7 +644,7 @@ ident_build() { # -> IDENT=0 (nothing a check reads moved) or 1; 2 on error
   if [ -s "$SCRATCH/links" ]; then
     GIT rev-list "$FORK..$mb" 2>/dev/null | LC_ALL=C awk -v oc="$SCRATCH/ops.commits" '
       BEGIN { while ((r = getline l < oc) > 0) O[l] = 1; if (r < 0) exit 2 } ($0 in O)' > "$SCRATCH/mb.set" \
-      && ident_sim "$SCRATCH/mb.set" "$SCRATCH/links.none" > "$SCRATCH/mb.view" || return 2
+      && present_of "$mb" && ident_sim "$SCRATCH/mb.set" "$SCRATCH/links.none" "$SCRATCH/pr.$mb" > "$SCRATCH/mb.view" || return 2
     LC_ALL=C awk -v view="$SCRATCH/mb.view" '
       BEGIN {
         while ((r = getline l < view) > 0) {
@@ -626,7 +660,7 @@ ident_build() { # -> IDENT=0 (nothing a check reads moved) or 1; 2 on error
   # The head's view: every file's name there, or its last one (the key every diff uses)
   GIT rev-list "$FORK..$BRANCH_SHA" 2>/dev/null | LC_ALL=C awk -v oc="$SCRATCH/ops.commits" '
     BEGIN { while ((r = getline l < oc) > 0) O[l] = 1; if (r < 0) exit 2 } ($0 in O)' > "$SCRATCH/head.set" \
-    && ident_sim "$SCRATCH/head.set" > "$SCRATCH/canon" || return 2
+    && present_of "$BRANCH_SHA" && ident_sim "$SCRATCH/head.set" "" "$SCRATCH/pr.$BRANCH_SHA" > "$SCRATCH/canon" || return 2
   IDENT=1
 }
 # <file of commit ids> -> every file the tracked names ever held, one record each, a
@@ -639,8 +673,32 @@ ident_build() { # -> IDENT=0 (nothing a check reads moved) or 1; 2 on error
 # order the log lists them in, so every view built from any set of commits names the
 # same members (#399 verify round 17: the merge-base after a merge of main kept no file
 # for its key).
-ident_sim() { # <file of commit ids> [<links file>]
-  LC_ALL=C awk -v ops="$SCRATCH/ops.f" -v links="${2:-$SCRATCH/links.id}" -v fork="$SCRATCH/fork.names" -v set="$1" '
+# <rev> -> $SCRATCH/pr.<rev>: the followed names that hold a file in <rev>, one per line
+present_of() {
+  local n p
+  local -a ps
+  [ -f "$SCRATCH/pr.$1" ] && return 0
+  n="$(wc -c < "$SCRATCH/tracked" | tr -d ' ')" || return 2
+  ps=()
+  if [ "$n" -le "$PATHS_MAX" ]; then
+    while IFS= read -r p; do ps+=("$p"); done < "$SCRATCH/tracked" || return 2
+  fi
+  GIT --literal-pathspecs ls-tree -r -z --full-tree "$1" -- ${ps[@]+"${ps[@]}"} 2>/dev/null \
+    | tr '\n\000' '\001\n' | LC_ALL=C awk -v tr="$SCRATCH/tracked" '
+      BEGIN { while ((r = getline l < tr) > 0) T[l] = 1; if (r < 0) exit 2 }
+      { i = index($0, "\t"); split(substr($0, 1, i - 1), m, " ")
+        p = substr($0, i + 1); if ((p in T) && (m[2] == "blob" || m[2] == "commit")) print p }' > "$SCRATCH/pr.$1.tmp" \
+    && mv "$SCRATCH/pr.$1.tmp" "$SCRATCH/pr.$1" || return 2
+}
+# (<present>: the followed names that hold a file in the revision the view is of. A
+# view replays two lines of history into one set of paths; when one line moved a file
+# that both brought to a path, the other line's file there was lost with it, and a
+# commit editing it read as editing nothing (#399 verify round 18). At the end a name
+# the revision holds and the view does not is a file of its own, the same in every view
+# ("Z:<name>"), and a name the view holds and the revision does not is gone.)
+ident_sim() { # <file of commit ids> [<links file>] [<present>]
+  LC_ALL=C awk -v ops="$SCRATCH/ops.f" -v links="${2:-$SCRATCH/links.id}" -v fork="$SCRATCH/fork.names" -v set="$1" \
+    -v present="${3:-}" '
     function find(x) { while (x in up) x = up[x]; return x }
     function join(a, b) {          # a becomes part of b
       a = find(a); b = find(b); if (a == b) return
@@ -712,6 +770,16 @@ ident_sim() { # <file of commit ids> [<links file>]
       # original kept a key of its own, the head had nothing under it, and main, whose
       # squash recorded the move, had the file there: the deletion read as never landed)
       for (n in link) if ((n in holder) && (x = paired(n)) != "" && x != find(holder[n])) join(x, holder[n])
+      if (present != "") {
+        while ((r = getline l < present) > 0) P[l] = 1
+        if (r < 0) exit 2
+        for (n in holder) if (!(n in P)) gone[n] = 1
+        for (n in gone) del(n)
+        for (n in P) if (!(n in holder)) {
+          id = "Z:" n; if (!(id in nh)) { ids[++nid] = id; nh[id] = 0; hadd(id, n) }
+          holder[n] = id; name[id] = n; alive[id] = 1
+        }
+      }
       for (i = 1; i <= nid; i++) { id = ids[i]; if (find(id) != id) { r = find(id); mm[r, ++mc[r]] = id } }
       for (i = 1; i <= nid; i++) {
         id = ids[i]; if (find(id) != id) continue
@@ -752,7 +820,9 @@ ident_sim() { # <file of commit ids> [<links file>]
 #   the head's, and two files the branch swapped stayed swapped there; #399 round 18).
 # <rev>: $SCRATCH/nm.probe lists "<name in rev>", "<key the names give>", "<key history
 # gives>"; $SCRATCH/nm.dec gets "<name>", "<key>" for each: the key whose file in the head
-# shares more lines with <rev>'s file at that name (ties go to the names)
+# shares more lines with <rev>'s file at that name (a tie goes to history: two nearly
+# equal files read by their names let main's own commit hold a swap that never landed,
+# #399 verify round 18)
 nm_decide() {
   local n a b q=0 l
   : > "$SCRATCH/nm.dec" || return 2
@@ -767,7 +837,7 @@ nm_decide() {
         while ((r = getline x < a) > 0) A[x] = 1; if (r < 0) exit 2
         while ((r = getline x < b) > 0) B[x] = 1; if (r < 0) exit 2
         while ((r = getline x < t) > 0) { if (x in A) sa++; if (x in B) sb++ }; if (r < 0) exit 2
-        print ((sa + 0 >= sb + 0) ? "a" : "b")
+        print ((sa + 0 > sb + 0) ? "a" : "b")
       }')" || { exec 6<&-; return 2; }
     printf '%s\n' "$n" >> "$SCRATCH/nm.dec" || { exec 6<&-; return 2; }
     if [ "$l" = a ]; then printf '%s\n' "$a"; else printf '%s\n' "$b"; fi >> "$SCRATCH/nm.dec" || { exec 6<&-; return 2; }
@@ -801,7 +871,8 @@ nm_of() {
     if [ ! -f "$SCRATCH/ia.$sha" ]; then
       GIT rev-list "$FORK..$sha" 2>/dev/null | LC_ALL=C awk -v oc="$SCRATCH/ops.commits" '
         BEGIN { while ((r = getline l < oc) > 0) O[l] = 1; if (r < 0) exit 2 } ($0 in O)' > "$SCRATCH/ia.set" \
-        && ident_sim "$SCRATCH/ia.set" > "$SCRATCH/ia.$sha.tmp" && mv "$SCRATCH/ia.$sha.tmp" "$SCRATCH/ia.$sha" || return 2
+        && present_of "$sha" && ident_sim "$SCRATCH/ia.set" "" "$SCRATCH/pr.$sha" > "$SCRATCH/ia.$sha.tmp" \
+        && mv "$SCRATCH/ia.$sha.tmp" "$SCRATCH/ia.$sha" || return 2
     fi
     if [ -n "$ref" ]; then nm_of "$ref" > /dev/null || return 2; fi
     # (weak: the names main changed since the fork point; history is certain only where
@@ -831,6 +902,15 @@ nm_of() {
     LC_ALL=C awk -v canon="$SCRATCH/canon" -v x="$SCRATCH/ia.$sha" -v main="$main" -v rf="${ref:+$SCRATCH/nm.$ref}" \
       -v weak="$weak" -v chg="$SCRATCH/nm.chg" -v xf="$SCRATCH/nm.$tag.x.tmp" -v rfx="${ref:+$SCRATCH/nm.$ref.x}" \
       -v probe="$([ "$pass" = probe ] && echo 1 || echo 0)" -v pf="$SCRATCH/nm.probe" -v dec="$SCRATCH/nm.dec" '
+      # whether the file history puts at <n> has a place of its own at its name in the
+      # reference, held by a file main created (so <n> is not its: the branch moved it
+      # there and put another file at <n>, which main left as it was; #399 verify round 18)
+      function elsewhere(n,    o, k, m) {
+        o = own[n]; k = hc[o]
+        if (!(k in R)) return 0
+        m = R[k]
+        return (m != "" && m != n && (m in at) && !(m in own) && (!(m in used) || out[k] == m))
+      }
       function load(f, own,    r, l, t, v, id) {
         while ((r = getline l < f) > 0) {
           t = substr(l, 1, 1); v = substr(l, 3)
@@ -860,21 +940,24 @@ nm_of() {
         }
         # 1 (a landed reading): the name each file has in the reference, unless the
         # history of main has the file at another name that no file wants by its name
-        # (the name then holds another file, which history keeps in its place: a move
-        # that landed beside a new file at the old name)
+        # and the head has another file at the reference name (the name then holds that
+        # file, which history keeps in its place: a move that landed beside a new file at
+        # the old name; when the head has no other file there, the reference name holds
+        # a copy of this one, and the file is the copy: #399 verify round 18)
+        for (i = 1; i <= nh; i++) if (ha[ho[i]] == 1) HK[hc[ho[i]]] = ho[i]
         if (rf != "") {
           for (c in R) if (R[c] != "") { want[R[c]] = 1; wk[R[c]] = c }
           # (and the other name of a file the reference holds twice, a copy and its original)
-          while ((r = getline l < rfx) > 0) { if (++q == 1) n = l; else { q = 0; want[n] = 1; wk[n] = l } }
+          while ((r = getline l < rfx) > 0) { if (++q == 1) n = l; else { q = 0; want[n] = 1; wk[n] = l; wks[n] = 1 } }
           if (r < 0) exit 2
           for (pass = 1; pass <= 2; pass++)
             for (i = 1; i <= nh; i++) {
               id = ho[i]; c = hc[id]
               if ((pass == 1) != (ha[id] == 1) || (c in done) || !(c in R) || R[c] == "") continue
               if (!(R[c] in at) || (R[c] in used)) continue
-              if ((id in prov) && prov[id] != R[c] && !(prov[id] in want)) continue
+              if ((id in prov) && prov[id] != R[c] && !(prov[id] in want) && (R[c] in HK) && HK[R[c]] != id) continue
               if (weak == 1 && (R[c] in own) && own[R[c]] != id) {
-                if (!(R[c] in CHG)) continue
+                if (!(R[c] in CHG) && !elsewhere(R[c])) continue
                 if (ha[own[R[c]]] == 1) {
                   if (probe == 1) { print R[c] > pf; print c > pf; print hc[own[R[c]]] > pf; continue }
                   if (DEC[R[c]] != c) continue
@@ -898,8 +981,10 @@ nm_of() {
           if (main != 1) continue
           for (j = hn[id]; j >= 1; j--) {
             n = hh[id, j]
-            if (weak == 1 && (n in own) && own[n] != id && !(n in CHG)) continue
-            if ((n in wk) && wk[n] != c) continue      # a name the reference gives another file
+            if (weak == 1 && (n in own) && own[n] != id && !(n in CHG) && !elsewhere(n)) continue
+            # (a name the reference gives another file: never its other name, the copy and
+            # its original both there; its only name once that file has a place elsewhere)
+            if ((n in wk) && wk[n] != c && ((n in wks) || !(wk[n] in done) || out[wk[n]] == n)) continue
             if ((n in at) && !(n in used) && ((n in mo) || rf != "")) { out[c] = n; used[n] = 1; break }
           }
         }
@@ -1298,8 +1383,8 @@ for k in $NPATHS; do [ -s "$SCRATCH/c.$k" ] || skip "lost the path list of candi
 # <candidate number> -> $SCRATCH/cp.z: its keys, NUL-separated (none has LF: those were
 # refused above)
 cand_keys() {
-  LC_ALL=C awk -v paths="$SCRATCH/paths" 'BEGIN { while ((getline l < paths) > 0) P[n++] = l }
-    { printf "%s%c", P[$0], 0 }' "$SCRATCH/c.$1" > "$SCRATCH/cp.z"
+  LC_ALL=C awk -v paths="$SCRATCH/paths" 'BEGIN { while ((r = getline l < paths) > 0) P[n++] = l; if (r < 0) exit 2 }
+    { if (!($0 in P)) exit 2; printf "%s%c", P[$0], 0 }' "$SCRATCH/c.$1" > "$SCRATCH/cp.z"
 }
 
 # ── The head's content is already at the tip (#399) ──
@@ -1626,8 +1711,11 @@ same_paths() { # <rev> <commit> -> 0 the same, 1 not, 2 error
 # round 18). A commit read as holding what landed of <rev> has them there when it has
 # a file at those names; the merge-base, read by history, has them where they were.
 same_files() { # <rev> <reading of the commit> -> 0 the same, 1 not, 2 error
-  local nr nc nb
+  local nr nc nb rc
   [ "$IDENT" = 1 ] || return 0
+  # (no file the net change touches is followed: nothing moved, nothing to compare)
+  has_tracked "$SCRATCH/net.z"; rc=$?
+  case $rc in 0) ;; 1) return 0 ;; *) return 2 ;; esac
   nr="$(nm_of "$1")" && nc="$(nm_of "$2")" && nb="$(nm_of "$HOLD_MB")" || return 2
   LC_ALL=C awk -v nr="$nr" -v nc="$nc" -v nb="$nb" '
     function load(f, S,    r, l, q, k) {
@@ -1841,7 +1929,25 @@ if [ -n "$NEED_TIP" ] && [ -f "$SCRATCH/paths" ]; then
     f="$(nm_of "$rev")" && cp "$f" "$SCRATCH/tip.nm" && cp "$f.x" "$SCRATCH/tip.nm.x" \
       || skip "cannot follow the files at $(short "$BASELINE_SHA")"
   fi
-  for side in $SIDES; do cat "$SCRATCH/$side.map"; done | awk '$1 == "blob" { print $2 }' | sort -u \
+  # The other names of a file the tip holds twice (a copy and its original): a line a
+  # commit deleted is kept at the tip when either still has it ("<index> <entry>")
+  : > "$SCRATCH/tip.sec" || skip "cannot list the tree of $(short "$BASELINE_SHA")"
+  if [ -s "$SCRATCH/tip.nm.x" ]; then
+    GIT ls-tree -r -z --full-tree "$BASELINE_SHA" 2>/dev/null | tr '\n\000' '\001\n' > "$SCRATCH/tip.secl" \
+      && LC_ALL=C awk -v x="$SCRATCH/tip.nm.x" -v t="$SCRATCH/tip.secl" '
+        BEGIN {
+          while ((r = getline l < x) > 0) { if (++q == 1) n = l; else { q = 0; nn[++m] = n; nk[m] = l; want[n] = 1 } }; if (r < 0) exit 2
+          while ((r = getline l < t) > 0) {
+            i = index(l, "\t"); p = substr(l, i + 1); if (!(p in want)) continue
+            split(substr(l, 1, i - 1), f, " "); ent[p] = (f[2] == "commit" ? "link " : "blob ") f[3]
+          }
+          if (r < 0) exit 2
+        }
+        { idx[$0] = NR - 1 }
+        END { for (i = 1; i <= m; i++) if ((nk[i] in idx) && (nn[i] in ent)) print idx[nk[i]] " " ent[nn[i]] }' \
+        "$SCRATCH/paths" > "$SCRATCH/tip.sec" || skip "cannot list the tree of $(short "$BASELINE_SHA")"
+  fi
+  { for side in $SIDES; do cat "$SCRATCH/$side.map"; done; cut -d' ' -f2- "$SCRATCH/tip.sec"; } | awk '$1 == "blob" { print $2 }' | sort -u \
     > "$SCRATCH/blobs" || skip "cannot list the blobs to read"
   # One file per blob, read by awk one at a time, so a file without a final newline
   # cannot run into the next one.
@@ -1892,7 +1998,7 @@ orphan_p() { # <commit-sha> <candidate number> -> 10 orphan, 11 landed, other: e
   # Two files that swapped names each hold the other's old name, so by name alone a
   # move that never landed read as landed (#399 round 18's rename fuzz).
   LC_ALL=C awk -v d="$SCRATCH" -v list="$SCRATCH/c.$2" -v dels="$SCRATCH/Dk.$2" -v adds="$SCRATCH/Ak.$2" \
-    -v lsh="$SCRATCH/ls.head" -v lst="$SCRATCH/ls.tip" -v nmt="$SCRATCH/tip.nm" -v nmtx="$SCRATCH/tip.nm.x" '
+    -v lsh="$SCRATCH/ls.head" -v lst="$SCRATCH/ls.tip" -v nmt="$SCRATCH/tip.nm" -v nmtx="$SCRATCH/tip.nm.x" -v sec="$SCRATCH/tip.sec" '
     function slurp(f, arr,    l, r, i) {
       i = 0; while ((r = getline l < f) > 0) arr[i++] = l
       if (r < 0) bad = 1; close(f)
@@ -1916,7 +2022,7 @@ orphan_p() { # <commit-sha> <candidate number> -> 10 orphan, 11 landed, other: e
         if (++q == 1) { n = l; continue }
         q = 0
         if (!del && n != l) continue
-        if (l in NMT) { h = (n == l) && (n in HP); t = (NMT[l] == n) || (SEC[n] == l) }
+        if (l in NMT) { h = (n == l) && (n in HP); t = (NMT[l] == n) || (SEC[n] == l) || (del && (n in TP) && !(n in ATTR)) }
         else { h = (n in HP); t = (n in TP) }
         if (del ? kept(h, t) : missing(h, t)) found = 1
       }
@@ -1925,7 +2031,12 @@ orphan_p() { # <commit-sha> <candidate number> -> 10 orphan, 11 landed, other: e
     function set(f, s,    r, l) { while ((r = getline l < f) > 0) s[l] = 1; if (r < 0) bad = 1; close(f) }
     BEGIN {
       slurp(d "/head.map", hm); slurp(d "/tip.map", tm)
-      while ((r = getline j < list) > 0) { load(hm[j], head); load(tm[j], target) }
+      while ((r = getline l < sec) > 0) { i = index(l, " "); sb[substr(l, 1, i - 1), ++ns[substr(l, 1, i - 1)]] = substr(l, i + 1) }
+      if (r < 0) bad = 1; close(sec)
+      while ((r = getline j < list) > 0) {
+        load(hm[j], head); load(tm[j], target); load(tm[j], kt)
+        for (i = 1; i <= ns[j]; i++) load(sb[j, i], kt)
+      }
       if (r < 0) bad = 1; close(list)
       set(lsh, HP); set(lst, TP)
       while ((r = getline l < nmt) > 0) { if (++q == 1) k = l; else { q = 0; NMT[k] = l } }
@@ -1933,6 +2044,12 @@ orphan_p() { # <commit-sha> <candidate number> -> 10 orphan, 11 landed, other: e
       # (a file the tip holds twice, a copy and its original: the other name, too)
       while ((r = getline l < nmtx) > 0) { if (++q == 1) k = l; else { q = 0; SEC[k] = l } }
       if (r < 0) bad = 1; close(nmtx)
+      # (a name the reading gives no file of the head can still hold the one a commit
+      # took away: a name the branch made and removed again is in no net change, and a
+      # squash of some of its commits can keep the file there; such a deletion counts as
+      # not landed, #399 verify round 18)
+      for (k in NMT) if (NMT[k] != "") ATTR[NMT[k]] = 1
+      for (k in SEC) ATTR[k] = 1
       paths(dels, 1); paths(adds, 0)
       if (bad || found) exit
     }
@@ -1947,7 +2064,7 @@ orphan_p() { # <commit-sha> <candidate number> -> 10 orphan, 11 landed, other: e
     /^-/ {
       line = substr($0, 2)
       if (line ~ /^[ \t\r\f\v]*$/) next
-      if (kept(line in head, line in target)) { found = 1; exit }
+      if (kept(line in head, line in kt)) { found = 1; exit }
     }
     END { if (bad) exit 2; exit (found ? 10 : 11) }' "$SCRATCH/patch"
 }
@@ -2181,7 +2298,7 @@ land_orphan_p() { # <commit-sha> <candidate number> -> 10 orphan, 11 landed, oth
       while ((r = getline x < f) > 0) {
         if (++q == 1) { n = x; continue }
         q = 0
-        if (x in NML) { hh = (n == x) && (n in H); tt = (NML[x] == n) || (SEC[n] == x) }
+        if (x in NML) { hh = (n == x) && (n in H); tt = (NML[x] == n) || (SEC[n] == x) || (del && (n in L) && !(n in ATTR)) }
         else { hh = (n in H); tt = (n in L) }
         if (del ? (!hh && tt) : (hh && !tt)) found = 1
       }
@@ -2193,6 +2310,8 @@ land_orphan_p() { # <commit-sha> <candidate number> -> 10 orphan, 11 landed, oth
       if (r < 0) exit 2
       while ((r = getline x < nmlx) > 0) { if (++q == 1) k = x; else { q = 0; SEC[k] = x } }
       if (r < 0) exit 2
+      for (k in NML) if (NML[k] != "") ATTR[NML[k]] = 1
+      for (k in SEC) ATTR[k] = 1
       paths(a, 0); paths(dl, 1)
       if (bad) exit 2
       exit (found ? 10 : 11)

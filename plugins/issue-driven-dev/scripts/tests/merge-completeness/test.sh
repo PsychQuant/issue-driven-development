@@ -108,7 +108,19 @@
 # deletion with earlier copies (208), the oldest of two files winning a key (210), a
 # reference's other names not wanted or given to another file (210, 211), the tip ignoring
 # other names (210), no promisor check (200), hooks not off by name (206), no merge-base
-# as an error (202), a path split on awk's subscript separator (201).
+# as an error (202), a path split on awk's subscript separator (201). Round 19 (fixtures
+# 213-220: 213-216, 218 and 219 are red on round 18; 217 and 220 pin round 19's own rules,
+# 220 against a mutant) leaves unpinned: the tip's route for a deleted name holding a file
+# no head file has there (the landing commit's route is 216's), step 1's check that a file
+# history puts at a name has a place of its own (step 3's, which 214 and 215 pin, gives the
+# same answer), the reference's primary names freed once their file has a place elsewhere,
+# history's exception narrowed to a head file at the reference name, and a content tie
+# going to history (each reached by the round-18 reviewers' repros and the rename fuzzers,
+# not by a fixture). Each other mutant of round 19 is caught: no check of a view against
+# its revision's tree (213), the landing commit's deleted names by file only (216), a place
+# the file already took not counting (214), deleted lines at the tip by the main name only
+# (197 and 29 more), GIT_CONFIG kept (218), no partial clone filter check (219),
+# same_files always passing (205).
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -3590,6 +3602,145 @@ OUT212=$(out_of "$R" feat main); RC212=$?
 assert_exit "fixture-212 a move and a new file at the old name never landed, edits did -> flagged" 3 "$RC212"
 assert_exit "fixture-212 lists c0 and c3" 0 "$({ has "$OUT212" 'c0: move to h212'; has "$OUT212" 'c3: a new f212'; } | tr -d '\n' | grep -qx 00; echo $?)"
 assert_exit "fixture-212 does not list c1 or c2" 0 "$({ has "$OUT212" 'c1: delete base 7'; has "$OUT212" 'c2: rewrite'; } | tr -d '\n' | grep -qx 11; echo $?)"
+rm -rf "$R"
+
+# ── Fixtures 213– (#399 round 19): fewer rules, each where the files decide ──
+
+# 213: found by round 18's verify (logic). feat adds gen213.txt and edits it; main
+# squashes them and then moves the file to lib/gen213.txt; feat merges main (the head has
+# both names) and appends a line to gen213.txt, which never lands. The view of the head
+# joined the two arrivals at gen213.txt into one file, main's move took it, and the line
+# read as no change at all (exit 0). A name the revision holds that the view lost is a
+# file of its own.
+R="$(mk_repo)"; T213=1700000000; t213() { T213=$((T213 + 10)); export GIT_AUTHOR_DATE="@$T213 +0800" GIT_COMMITTER_DATE="@$T213 +0800"; }
+git -C "$R" checkout -q -b feat
+for i in 1 2 3 4 5 6 7 8 9 10 11 12; do echo "G line $i of something unique"; done > "$R/gen213.txt"; git -C "$R" add -A; t213; git -C "$R" commit -qm "b1: add gen213"
+echo "b2 line" >> "$R/gen213.txt"; t213; git -C "$R" commit -qam "b2: edit gen213"
+git -C "$R" checkout -q main; echo own > "$R/own213.txt"; git -C "$R" add -A; t213; git -C "$R" commit -qm "main: own"
+git -C "$R" merge -q --squash feat > /dev/null 2>&1; t213; git -C "$R" commit -qm "squash feat" > /dev/null
+mkdir -p "$R/lib"; git -C "$R" mv gen213.txt lib/gen213.txt; t213; git -C "$R" commit -qm "main: move gen213 to lib"
+git -C "$R" checkout -q feat; t213; git -C "$R" merge -q --no-edit main > /dev/null 2>&1
+echo "b4 line" >> "$R/gen213.txt"; t213; git -C "$R" commit -qam "b4: edit gen213 at its old path (never landed)"
+unset GIT_AUTHOR_DATE GIT_COMMITTER_DATE
+OUT213=$(out_of "$R" feat main); RC213=$?
+assert_exit "fixture-213 the branch merged main, which moved the file; an edit at the old path never landed -> flagged" 3 "$RC213"
+assert_exit "fixture-213 lists b4" 0 "$(has "$OUT213" 'b4: edit gen213')"
+rm -rf "$R"
+
+# 214: found by round 18's verify (devil's advocate). c1 moves x214.txt to y214.txt, c2
+# puts the original x214.txt back; main squashes the branch and later edits y214.txt
+# (#399's own shape). The weak reading kept x214.txt for the moved file, which history
+# puts there and which already had y214.txt: the restored file had no name on main, and
+# both commits were listed. A file history puts at a name keeps it only when it has no
+# place of its own.
+R="$(mk_repo)"; for i in 1 2 3 4 5 6 7 8 9 10; do echo "x line $i"; done > "$R/x214.txt"; git -C "$R" add -A && git -C "$R" commit -qm x214
+git -C "$R" checkout -q -b feat
+git -C "$R" mv x214.txt y214.txt && git -C "$R" commit -qm "c1: move x214 to y214"
+git -C "$R" show HEAD~1:x214.txt > "$R/x214.txt"; git -C "$R" add -A && git -C "$R" commit -qm "c2: restore x214"
+git -C "$R" checkout -q main; git -C "$R" merge -q --squash feat > /dev/null 2>&1 && git -C "$R" commit -qm "PR (squash)" > /dev/null
+sed 's/^x line 3$/x line 3 (main later)/' "$R/y214.txt" > "$R/t" && mv "$R/t" "$R/y214.txt"; git -C "$R" commit -qam "main: later edit"
+assert_exit "fixture-214 a move and the original put back, squashed, main's later edit -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 215: found by round 18's verify (logic). The same with the old name recreated byte for
+# byte and the moved file then edited; main squashes and edits the moved file later.
+R="$(mk_repo)"; for i in 1 2 3 4 5 6 7 8 9 10 11 12; do echo "X line $i of something unique"; done > "$R/x215.txt"; git -C "$R" add -A && git -C "$R" commit -qm x215
+git -C "$R" checkout -q -b feat
+git -C "$R" mv x215.txt y215.txt && git -C "$R" commit -qm "c1: move x215 to y215"
+cp "$R/y215.txt" "$R/x215.txt"; git -C "$R" add -A && git -C "$R" commit -qm "c2: recreate x215"
+echo "feat edit" >> "$R/y215.txt"; git -C "$R" commit -qam "c3: edit y215"
+git -C "$R" checkout -q main; echo own > "$R/own215.txt"; git -C "$R" add -A && git -C "$R" commit -qm "main: own"
+git -C "$R" merge -q --squash feat > /dev/null 2>&1 && git -C "$R" commit -qm "PR (squash)" > /dev/null
+echo "main later" >> "$R/y215.txt"; git -C "$R" commit -qam "main: later edit"
+assert_exit "fixture-215 a move and an identical file at the old name, squashed, main's later edit -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 216: found by round 18's verify (requirements). Two files swap names over three commits
+# (c0-c2), c3 copies the first to lib/f216.txt and c4 deletes it from g216.txt, c5 adds an
+# unrelated file; main squashes picks of c0, c1, c3, c5, so it still has the first file at
+# t216.txt, where c2 took it from. That name is in no net change (the branch made it and
+# removed it again), the whole branch read as landed at the squash, and c2 was missed (exit
+# 0). A name the landing commit (or the tip) gives no file of the head can still hold the
+# file a commit took away: such a deletion counts as not landed.
+R="$(mk_repo)"; L216=""; M216=""; for i in 0 1 2 3 4 5 6 7; do L216="${L216}base A$i\npad A$i a\npad A$i b\n"; M216="${M216}base B$i\npad B$i a\npad B$i b\n"; done
+printf "$L216" > "$R/f216.txt"; printf "$M216" > "$R/g216.txt"; git -C "$R" add -A && git -C "$R" commit -qm fg216
+git -C "$R" checkout -q -b feat
+git -C "$R" mv f216.txt t216.txt && git -C "$R" commit -qm "c0: f to t"
+git -C "$R" mv g216.txt f216.txt && git -C "$R" commit -qm "c1: g to f"
+git -C "$R" mv t216.txt g216.txt && git -C "$R" commit -qm "c2: t to g (never landed)"
+mkdir -p "$R/lib"; { cat "$R/g216.txt"; echo "C3 copy marker"; } > "$R/lib/f216.txt"; git -C "$R" add -A && git -C "$R" commit -qm "c3: copy to lib"
+git -C "$R" rm -q g216.txt && git -C "$R" commit -qm "c4: delete g216 (never landed)"
+printf 'u5\n' > "$R/u216.txt"; git -C "$R" add -A && git -C "$R" commit -qm "c5: other"
+git -C "$R" checkout -q main; B216="$(git -C "$R" rev-parse HEAD)"
+for c in feat~5 feat~4 feat~2 feat; do git -C "$R" cherry-pick "$c" > /dev/null 2>&1; done
+git -C "$R" reset -q --soft "$B216" && git -C "$R" commit -qm "PR (picks of c0, c1, c3, c5, squashed)"
+OUT216=$(out_of "$R" feat main); RC216=$?
+assert_exit "fixture-216 a swap and a copy, the last move never landed, the rest squashed -> flagged" 3 "$RC216"
+assert_exit "fixture-216 lists c2" 0 "$(has "$OUT216" 'c2: t to g')"
+rm -rf "$R"
+
+# 217: found by round 18's verify (regression). g217.txt copied to zz217.txt (c0) and to
+# aa217.txt (c1), deleted (c2, never landed), the first copy edited (c3); main squashes
+# c0, c1 and c3. Which copy the deletion was paired with followed awk's hash order, and
+# macOS listed c1 too. The newest copy, in a fixed order; and a file the head has at the
+# name the reference gives it is that file, not the original history keeps elsewhere.
+R="$(mk_repo)"; L217=""; for i in 0 1 2 3 4 5 6 7; do L217="${L217}base $i\npad $i a\npad $i b\n"; done
+printf "$L217" > "$R/g217.txt"; git -C "$R" add -A && git -C "$R" commit -qm g217
+git -C "$R" checkout -q -b feat
+cp "$R/g217.txt" "$R/zz217.txt"; git -C "$R" add -A && git -C "$R" commit -qm "c0: copy to zz217"
+cp "$R/g217.txt" "$R/aa217.txt"; git -C "$R" add -A && git -C "$R" commit -qm "c1: copy to aa217"
+git -C "$R" rm -q g217.txt && git -C "$R" commit -qm "c2: delete g217 (never landed)"
+echo "c3 line" >> "$R/zz217.txt"; git -C "$R" commit -qam "c3: edit zz217"
+git -C "$R" checkout -q main; echo own > "$R/own217.txt"; git -C "$R" add -A && git -C "$R" commit -qm "main: own"; B217="$(git -C "$R" rev-parse HEAD)"
+for c in feat~3 feat~2 feat; do git -C "$R" cherry-pick "$c" > /dev/null 2>&1; done
+git -C "$R" reset -q --soft "$B217" && git -C "$R" commit -qm "PR (picks of c0, c1, c3, squashed)"
+OUT217=$(out_of "$R" feat main); RC217=$?
+assert_exit "fixture-217 two copies, the original's deletion never landed -> flagged" 3 "$RC217"
+assert_exit "fixture-217 lists c2 and not c1" 0 "$({ has "$OUT217" 'c2: delete g217'; has "$OUT217" 'c1: copy to aa217'; } | tr -d '\n' | grep -qx 01; echo $?)"
+rm -rf "$R"
+
+# 218: found by round 18's verify (security). GIT_CONFIG in the environment points `git
+# config` at another file, and the partial clone check read none of the repository's
+# configuration: with git 2.44, the blobs would have been fetched.
+R="$(mk_repo)"; git -C "$R" checkout -q -b feat; printf 'x\n' > "$R/p218.txt"; git -C "$R" add -A && git -C "$R" commit -qm "c1"
+git -C "$R" checkout -q main; git -C "$R" config remote.origin.promisor true
+B218="$(mktemp -d)"; G218="$(command -v git)"
+printf '#!/bin/sh\nif [ "$1" = version ]; then echo "git version 2.44.0"; exit 0; fi\nexec "%s" "$@"\n' "$G218" > "$B218/git"; chmod +x "$B218/git"
+E218="$(GIT_CONFIG=/dev/null PATH="$B218:$PATH" "${BASH:-bash}" "$HELPER" --repo "$R" --branch feat --baseline main 2>&1 >/dev/null; echo "rc=$?")"
+assert_exit "fixture-218 GIT_CONFIG set, a promisor remote, git 2.44 -> exit 4, naming the partial clone" 0 \
+  "$(printf '%s\n' "$E218" | grep -q '^rc=4$' && printf '%s\n' "$E218" | grep -q 'partial clone'; echo $?)"
+rm -rf "$R" "$B218"
+
+# 219: found by round 18's verify (security). A remote with only a partial clone filter
+# (remote.<name>.partialclonefilter), which git treats as a promisor.
+R="$(mk_repo)"; git -C "$R" checkout -q -b feat; printf 'x\n' > "$R/p219.txt"; git -C "$R" add -A && git -C "$R" commit -qm "c1"
+git -C "$R" checkout -q main; git -C "$R" config remote.origin.partialclonefilter blob:none
+B219="$(mktemp -d)"; G219="$(command -v git)"
+printf '#!/bin/sh\nif [ "$1" = version ]; then echo "git version 2.44.0"; exit 0; fi\nexec "%s" "$@"\n' "$G219" > "$B219/git"; chmod +x "$B219/git"
+E219="$(PATH="$B219:$PATH" "${BASH:-bash}" "$HELPER" --repo "$R" --branch feat --baseline main 2>&1 >/dev/null; echo "rc=$?")"
+assert_exit "fixture-219 a remote with a partial clone filter, git 2.44 -> exit 4" 0 \
+  "$(printf '%s\n' "$E219" | grep -q '^rc=4$' && printf '%s\n' "$E219" | grep -q 'partial clone'; echo $?)"
+rm -rf "$R" "$B219"
+
+# 220: found by round 18's verify (requirements). c0 edits another file (never landed),
+# c1 deletes a line of g220.txt, c2 copies it to t220.txt, c3 deletes g220.txt; main picks
+# c2 alone. No prefix landed, so the commits are checked at the tip, where main has the
+# line in g220.txt, which c3's deletion never removed, and not in the copy: read at the
+# copy alone, c1's deletion read as landed. A line a commit deleted is kept at the tip
+# when any name of the file still has it. (When the prefix up to the copy lands, the copy
+# carries the deletion and the landing commit reads it there: a known limit, SPEC D1.)
+R="$(mk_repo)"; L220=""; for i in 0 1 2 3 4 5 6 7; do L220="${L220}base $i\npad $i a\npad $i b\n"; done
+printf "$L220" > "$R/g220.txt"; printf 'o1\no2\n' > "$R/o220.txt"; git -C "$R" add -A && git -C "$R" commit -qm g220
+git -C "$R" checkout -q -b feat
+printf 'o1\no2 = c0\n' > "$R/o220.txt"; git -C "$R" commit -qam "c0: o2 (never landed)"
+sed '/^base 5$/d' "$R/g220.txt" > "$R/t" && mv "$R/t" "$R/g220.txt"; git -C "$R" commit -qam "c1: delete base 5 (never landed)"
+{ cat "$R/g220.txt"; echo "C2 copy marker"; } > "$R/t220.txt"; git -C "$R" add -A && git -C "$R" commit -qm "c2: copy to t220"
+git -C "$R" rm -q g220.txt && git -C "$R" commit -qm "c3: delete g220 (never landed)"
+git -C "$R" checkout -q main; git -C "$R" cherry-pick feat~1 > /dev/null 2>&1
+OUT220=$(out_of "$R" feat main); RC220=$?
+assert_exit "fixture-220 a copy picked alone, a deletion before it never landed -> flagged" 3 "$RC220"
+assert_exit "fixture-220 lists c1 and c3, not c2" 0 \
+  "$({ has "$OUT220" 'c1: delete base 5'; has "$OUT220" 'c3: delete g220'; has "$OUT220" 'c2: copy to t220'; } | tr -d '\n' | grep -qx 001; echo $?)"
 rm -rf "$R"
 
 print_summary

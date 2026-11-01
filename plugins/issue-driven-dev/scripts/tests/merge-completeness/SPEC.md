@@ -159,15 +159,23 @@ file reached shows only while the file is there.
 | 98 | A path holding byte `\034` (awk's subscript separator); an edit that never landed | ∅ | 3 | 201 |
 | 99 | No merge-base (an orphan branch); main took its file in a commit with another file | — | 0 (no file is followed; the head's content is at the tip) | 202 |
 | 100 | A deletion from a file main moved, never landed | ∅ | 3 (main's file followed to its new name; 3.5.0 and round 16 missed it) | 203 |
-| 101 | Row 94 when nothing landed (main took a commit of its own) | ∅ | 3: the second and third moves and the deletion (main never touched the two files, so its history says where each is; read by the head's names the deletion read as landed) | 204 |
+| 101 | Row 94 when nothing landed (main took a commit of its own) | ∅ | 3: the swap's three moves and the deletion (main never touched the two files, so its history says where each is; read by the head's names the deletion read as landed) | 204 |
 | 102 | Row 94 landed; the branch merges main, swaps the files back and deletes a line (none of it landed) | the first swap | 3: the swap back and the deletion, not the first swap (the squash the branch merged is still read by the names of what landed) | 205 |
 | 103 | Row 55 with git 2.54's hook switches (no event switch, only a hook's own name) | ∅ | 3, and the hook does not run | 206 |
 | 104 | A copy, the original deleted, the copy moved on; main picks the first two | the copy and the deletion | 3: the commits that never landed, not the copy or the deletion (the deleted file and the one at the name the merge-base and the head pair it with are one file) | 207 |
 | 105 | A chain of copies (copy, delete the original, edit, copy again, delete the first copy); main squashes the first copy and deletion | the first two | 3: the last three (each deletion is paired with the copies the branch made before it) | 208 |
-| 106 | Row 94 landed; a later commit moves the first file out of the name the swap gave it (never landed) | the swap | 3: the later commit, not the second move of the swap (at the landing commit a path is compared by file: the file there is not the one the second move took away) | 209 |
+| 106 | Row 94 landed; a later commit moves the first file out of the name the swap gave it (never landed) | the swap | 3: the later commit, and the swap's first move by D3 (it took the file to the name the later commit takes it back to), not the second move (at the landing commit a path is compared by file: the file there is not the one the second move took away) | 209 |
 | 107 | A line, then a copy of the file; the original's deletion never lands; main squashes the first two | the line and the copy | 3: the deletion only (the prefix up to the copy holds the file at both names, and the squash has it at the copy's) | 210 |
 | 108 | A copy picked to main alone; the original's deletion and a new file at its name never land | the copy | 3: the deletion and the new file (a name the landed prefix gives the copied file is no other file's) | 211 |
 | 109 | A move, a deletion, a rewrite, a new file at the old name; main picks the deletion and the rewrite (git applies them at the old name) | the deletion and the rewrite | 3: the move and the new file, not the rewrite (nothing landed by the search; where main changed the file at a name the head gives one file and main's history another, the content says which) | 212 |
+| 110 | The branch adds a file and edits it; main squashes them and moves the file; the branch merges main and edits the file at its old name (never landed) | the add and the edit | 3: the last edit (a name the revision holds that the view of two lines of history lost is a file of its own) | 213 |
+| 111 | A move, then the original put back at the old name; squash; main's later edit | all | 0 (a file history puts at a name keeps it only when it has no place of its own) | 214 |
+| 112 | Row 111 with the old name recreated byte for byte and the moved file edited | all | 0 | 215 |
+| 113 | A swap and a copy, the last move of the swap never landed; main squashes the rest (not a prefix) | the rest | 3: the move that never landed (a name the landing commit gives no file of the head can still hold the file a commit took away) | 216 |
+| 114 | A file copied twice, its deletion never landed, the first copy edited; main squashes the copies and the edit | the copies, the edit | 3: the deletion only (the deletion pairs with the newest copy, in a fixed order; a name the reference gives the file is the file) | 217 |
+| 115 | Row 97 with `GIT_CONFIG` set in the environment | — | exit 4 with the reason (the check reads the repository's configuration) | 218 |
+| 116 | A remote with only `remote.<name>.partialclonefilter`, git older than 2.45 | — | exit 4 with the reason | 219 |
+| 117 | Another commit (never landed), a deletion, a copy, the original deleted; main picks the copy alone | the copy | 3: the deletion before the copy and the original's deletion, not the copy (a line a commit deleted is kept at the tip when any name of the file still has it) | 220 |
 
 ## The small world (`bounded.py`)
 
@@ -245,12 +253,7 @@ nothing unexplained.
   branch's lines after the squash; a stacked branch merged after its base branch changed the
   stack's lines after the stack was cut; and, outside the small world (fixtures 12, 60 and
   127), a landing commit beyond the 200 checks or a landed prefix followed by more than 20
-  commits that never landed. At the tip after landed commits that are not a prefix of the
-  branch, which file is which can be read wrong where the branch moved files in a way main's
-  squash records otherwise (two files that swap names, a copy and then the original deleted,
-  more than once): there is no landing to read the branch's names by, main's history pairs
-  the squash's own way, and the head's names may have moved since, so a commit can be
-  listed or missed (round 18's rename fuzz, below). The maintainer accepted the repeated-text and several-step routes
+  commits that never landed. The maintainer accepted the repeated-text and several-step routes
   as known limits on 2026-10-31 (fixtures 179 and 180 pin them). `bounded.py` requires one of
   these causes, read from how the case was built, for every disagreement at the tip (round 15;
   before it, the class followed the routing model, which follows the helper's own landing
@@ -262,6 +265,22 @@ nothing unexplained.
   are part of the target. The helper cannot tell "nothing landed" from "landed, then main
   changed it" there, so only presence is compared (D2), and the deviation is documented
   instead of fixed.
+- **M1, moved files the readings cannot place (accepted 2026-11-01, only these).** Which
+  file of the branch a name on main holds is read from the names the branch's files had in
+  what landed, from main's history, and where the two disagree on a file main changed, from
+  the files' lines. These five shapes are outside what those readings settle; in them the
+  verdict can be wrong in either direction (a commit that landed listed, one that did not
+  missed), measured by the rename fuzzers in Results:
+  1. the landed commits are not a prefix of the branch and the branch moved, swapped or
+     copied a file (at the landing commit or at the tip);
+  2. a copy and its original are both in what landed: a deletion the branch made before the
+     copy is read from the copy at the landing commit (fixture 220 shows the tip's route);
+  3. a pure move onto a name where main has a file of its own (another PR added it): the
+     move reads as landed (every version so far);
+  4. two nearly identical files the branch swapped, when main edited the lines that tell them
+     apart: main's own commit can read as holding the swap;
+  5. beyond 200 copy detections, 100,000 candidate pairs, or a group of paths over 64 KB: a
+     deletion stays a deletion, not a move onto the copy.
 - **D2, presence at the tip.** At the tip only presence is compared: a commit is listed when
   a line or path it adds is in the head and not in the tip, or one it deletes is not in the
   head and is in the tip. A text that is elsewhere in the tip or the head can therefore hide
@@ -379,7 +398,11 @@ Runs of 2026-11-01 with `bounded.py` (blob `d62273e`) and
 `python3 bounded.py --max-len N [--sample K --seed S] [mode]`. Round 18 ran every mode on helper
 blob `77f9d09`, whose reading of main's files was then reworked once more (`nm_of` only:
 the world builds no moves, so no case reaches it); every number came out exactly as
-round 17's (helper `2d31d56`), shown below. The suite and the fuzz runs used the final helper.
+round 17's (helper `2d31d56`), shown below. Round 19 pairs a deletion with an earlier copy on
+any branch, so it ran five modes again on its helper (`plain` length 2 in full, `--landing own`,
+`--landing merge`, `--after`, `--touch --landing own`): every number the same. The suite and
+the fuzz runs used the final helper (the fuzzers one revision before a change that only reaches
+copy detections over 64 KB of paths).
 The machine carried other work at a load of 20 to 650, so apart from `plain` length 2 (every
 case) the samples are smaller than round 14's (400 to 1,000 cases a mode, against 3,000 to 6,000). "Known" lists the cases by class ("tip" is D1+D2 alone); "Wrong verdict" counts the
 known cases whose exit code differs from the definition's; "Landing" counts cases in which at
@@ -462,16 +485,16 @@ is D1+D2 (they are checked at the tip).
 | Run | Cases | Agree | D1+D2 | False clean | False listing | Round 16 |
 |-----|-------|-------|-------|-------------|---------------|----------|
 | fuzzrename, seeds 7, 21, 33, 45 (80 each) | 251 | 243 | 8 | 0 | 0 | 215 agree, 4 D1+D2, 19 false clean, 13 false listing |
-| the same, round 18 | 251 | 241 | 8 | 0 | 2 | (round 17: the row above) |
+| the same, rounds 18 and 19 | 251 | 241 | 8 | 0 | 2 | (round 17: the row above) |
 
 Round 17's own drafts gave 0 false clean throughout, and false listings that fixtures 185, 191,
 194 and 195 now pin (and the `same_paths` change).
 
-Round 18's two listings are both on D1's route (the landed commits are not a prefix of the
-branch). One is a commit that landed (a move, read at the tip as another file's); the other a
-move that never landed whose old name a new file then took: this fuzzer's ground truth reads
-paths by name and counts it as no orphan, while the definition, which follows the file, counts
-it as one (the head's file at that name is another file).
+The two listings (rounds 18 and 19) are both where the landed commits are not a prefix of the
+branch (M1, shape 1). Seed 45's case 60 lists a move and a new file that landed, where round
+17 listed only the two commits that did not; seed 21's case 60 lists a move that never landed
+whose old name a new file then took: this fuzzer's ground truth reads paths by name and counts
+it as no orphan, while the definition, which follows the file, counts it as one.
 
 `fuzzrename2.py` (round 18) builds the shapes round 17's verify found the first fuzzer never
 did: two files, A and B, each line naming its file, so which file sits at a name is read from
@@ -484,18 +507,37 @@ a quarter of the cases the branch then merges main and adds one to three commits
 main sometimes squashes some too. A commit outside what landed is an orphan when one of its
 effects is in the head and not on main: its marker, the base line it deleted, a file at a
 name (read from the lines), or a file no longer at a name. A disagreement is "not a prefix"
-when the landed commits are not a prefix of the branch: D1 checks those at the tip, where a
-squash of some of the commits can record their moves otherwise and neither main's history nor
-the head's names pair every file (D1 lists this).
+when the landed commits are not a prefix of the branch: M1 (shape 1) accepts wrong answers
+there when the branch moved, swapped or copied a file.
 
 | fuzzrename2, seeds 1–8 (60 each) | Cases | Agree | False clean (prefix / not a prefix) | False listing (prefix / not a prefix) |
 |----------------------------------|-------|-------|-------------------------------------|---------------------------------------|
+| Round 19 | 353 | 343 | 0 / 1 | 1 / 8 |
 | Round 18 | 353 | 340 | 0 / 2 | 1 / 10 |
 | Round 17 | 353 | 277 | 6 / 11 | 44 / 15 |
 | Round 16 | 353 | 302 | 6 / 14 | 17 / 14 |
 
 The one listing on the prefix route is D3: a move that landed, undone by one that landed and
-done again by one that did not, is listed with the last. Round 18's own drafts gave, in turn:
+done again by one that did not, is listed with the last. Round 19's ten disagreements, each with
+the four rounds' lists (the exit code is 3 and right in all ten; only the lists differ):
+
+| Case (seed, case) | Landed | Right list | Round 19 | Round 18 | Round 17 | Round 16 |
+|-------------------|--------|------------|----------|----------|----------|----------|
+| 2, 14 | c0, c2–c4 | c1 | c1–c4 | c1–c4 | c1 | — |
+| 2, 23 | c1–c3 | c0, c4–c7 | c0, c7 | c0, c7 | c0, c7 | c0, c7 |
+| 2, 57 | c0, c1, c3 | c2, c4–c6 | c0, c2, c4–c6 | same | c2, c4–c6 | c0, c2, c4–c6 |
+| 4, 52 | c0–c3, c5 | c4 | c1–c5 | c1–c5 | c4, c5 | c1, c4 |
+| 6, 16 (prefix, D3) | c0–c4 | c5 | c2, c5 | c2, c5 | c0–c3, c5 | c2, c3, c5 |
+| 6, 55 (merges main) | c0, c1, c3–c5 | c2 | c2, c5 | c2 | c2 | c2 |
+| 7, 14 | c0, c3 | c1, c2 | c1–c3 | c1–c3 | c1, c2, c4 | c1, c2 |
+| 8, 24 | c0–c2, c4 | c3 | c2–c4 | c2–c4 | c3 | c3 |
+| 8, 36 (merges main) | c0, c1, c4 | c2, c5 | c2, c3, c5 | same | c2, c5 | c2, c5 |
+| 8, 44 (main moves a file) | c1, c3 | c0, c2 | c0–c2 | c0–c2 | c0, c2 | c1, c2 |
+
+In six of the nine cases off the prefix route round 17's list is right and round 19's is not
+(2/14, 2/57, 6/55, 8/24, 8/36, 8/44): M1 accepts these, and they are the cost of the shapes
+rounds 18 and 19 fixed on the prefix route, where round 17 had 6 false cleans and 44 false
+listings. Round 18's own drafts gave, in turn:
 a merged squash read by history (fixture 205), the swap read by names in the landing search
 and at the tip (197, 204), a copy chain (207, 208), a link joined to the wrong file, a path
 compared by name at the landing commit (209), a copy's original read as another file (210,
@@ -660,6 +702,30 @@ How the numbers got here:
   its first runs found the reading of a merged squash (fixture 205), the swap read by names at
   the tip and in the landing search (197, 204), the copy chains (207), and the link joined to
   the wrong file.
+- **Round 18 verify.** One CRITICAL and three HIGH, most of them the new rules breaking shapes
+  earlier rounds got right: a path two lines of history brought a file to was one file, and a
+  move on one line took the other line's file with it (an edit at the old path read as no
+  change); a name the branch made and removed again, which a squash of some of its commits
+  kept, was in no net change and the commit that left it was missed; a move and the original
+  put back, squashed and edited later by main (#399's own shape), listed both commits; and the
+  new limit was worded narrower than what the fuzzers measured. Also: copy pairing in awk's
+  hash order (macOS and Linux answered differently) and with unbounded paths, `GIT_CONFIG` in
+  the environment, slower runs. On 2026-11-01 the maintainer chose to converge: fix the
+  common shapes and #399's own, and accept the rest as known limits (M1).
+- **Round 19.** Each view of the files is checked against its revision's tree: a name the
+  revision holds and the view lost is a file of its own, and one the view holds and the
+  revision does not is gone. A file history puts at a name keeps it only when it has no
+  place of its own at its name in the reference; the history exception of step 1 applies only
+  when the head has another file at the reference name; a name the reference gives another
+  file is skipped only while that file has no place elsewhere (or when it is the other name
+  of a copy); a tie in the content decision goes to history. At the tip and the landing
+  commit a deleted name that holds a file the reading gives no file of the head counts as not
+  landed, and a deleted line is kept while any name of the file has it (at the tip). Copy
+  pairing runs newest copy first in a fixed order, bounded. `GIT_CONFIG` and an inherited
+  `GIT_CONFIG_PARAMETERS` are unset; `remote.<name>.partialclonefilter` marks a partial
+  clone; `GIT_CONFIG_COUNT` is read in base 10; `cand_keys` fails on a read error;
+  `same_files` runs only when the net change touches a followed file. The rename fuzzers are
+  in this directory.
 - `--after` needs length 2: a single-commit squash is matched by `git cherry`, so no length-1
   case reaches the landing step. Rounds 13 and 14 ran no `--old-git` mode: the helper has not
   called merge-tree since round 12.

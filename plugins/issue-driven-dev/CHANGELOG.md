@@ -70,17 +70,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     moved and then mostly rewrote, or moved and put a new file at its old name is still one file, at the
     landing commit and at the tip, and the commits that edited it under an earlier name are found by every name
     it had. A path that holds a file before and after is the same file (deleted and restored); a path a move
-    left and a new file then took holds another one. A move spread over two commits of the branch (a copy and
-    then the original deleted included) is taken from one rename detection between the merge-base and the
-    head; a path two lines of history bring a file to (a squash main made and then merged into the branch)
-    holds one file. On main a squash records the branch's moves as one step's rename detection, which can pair
-    files otherwise (a copy then a deletion reads as a move; two files that swap names read as two edits), so
-    a commit tried as the landing commit, the landing commit and the tip after it hold the branch's files at
-    the names they had in what landed; before the landing commit main's own history says where each file is,
-    and a file main created stands for a branch file at a name it had on the branch. When nothing landed, the
-    tip has the head's names too, except where main's history puts another of the branch's files at a name:
-    there the file is history's when main never changed it, and otherwise the head file it shares more lines
-    with. At the tip a path a commit added or deleted is compared by file,
+    left and a new file then took holds another one. A move spread over two commits of the branch is taken
+    from one rename detection between the merge-base and the head, and a copy followed by the original's
+    deletion from one rename detection per deletion against the copies the branch made before it (newest
+    first, at most 200); a path two lines of history bring a file to (a squash main made and then merged into
+    the branch) holds one file, and each view is checked against its revision's tree, so a move on one line
+    never takes the other line's file. On main a squash records the branch's moves as one step's rename
+    detection, which can pair files otherwise (a copy then a deletion reads as a move; two files that swap
+    names read as two edits), so the landing commit and the tip after it read the branch's files by the names
+    they had in what landed; each commit the landing search tries, and the tip when nothing landed, are read
+    the same way except where main's history puts another of the branch's files at that name: there the file
+    is history's when main never changed it and it has no other place, and otherwise the head file it shares
+    more lines with. At the tip and the landing commit a path a commit added or deleted is compared by file,
     not by whatever is at the name: two files that swap names each hold the other's old name.
   - **No merges.** Every comparison is a two-way `git diff` with every setting that shapes its output fixed on
     the command line (no context lines between hunks, `GIT_DIFF_OPTS` unset, no external diff, no textconv,
@@ -125,8 +126,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `Subproject commit <oid>`. Commit subjects and refs are printed in double quotes, with control bytes, C1
     controls, the invisible, bidi and format characters the helper lists, and the marks that look like a double
     quote it lists (curly, fullwidth, double prime and others) replaced by `?`; `\`, `"`, `$` and backticks
-    escaped; no signature checks. In a partial clone (`extensions.partialClone`, or a promisor remote, which is
-    what `git clone --filter` writes) a missing blob is not fetched into the repository: git 2.45 or newer
+    escaped; no signature checks. `GIT_CONFIG` and an inherited `GIT_CONFIG_PARAMETERS` are unset, so the
+    checks below read the repository's own configuration. In a partial clone (`extensions.partialClone`, a
+    promisor remote, which is what `git clone --filter` writes, or a remote with a partial clone filter) a
+    missing blob is not fetched into the repository: git 2.45 or newer
     reports it unreadable (exit 4), and when `git cherry` or following the files fails for that reason the
     message says the clone is partial; git before 2.45 cannot be told not to fetch, so in a partial clone the
     check stops before reading anything (exit 4). With no merge-base (a shallow clone, unrelated histories)
@@ -179,15 +182,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     that side edited the branch's lines; a stacked branch merged after its base branch when the base branch
     changed the stack's lines after the stack was cut. When nothing of the branch landed, the check is at the
     tip as well: the verdict (exit 3) is right, but the list can include, or miss, a commit whose text main
-    added or removed on its own. When the commits that landed are not a prefix of the branch, a file the
-    branch moved in a way main's squash records otherwise (two files that swap names, a chain of copies) can be
-    taken for another of its files at the tip, and a commit listed or missed.
-  - Timing, as CPU time on a busy machine (other work kept the load between 50 and 170 during these runs,
-    so the numbers run high and unsteady): PR #408 about 20 s (3.5.0: 8 s, with its false orphans); a
-    squash-landed 150-commit branch about 33 s, or about 60 s when its first commit moves the file (3.5.0:
-    9 s, with a false orphan in both); a branch of 20 commits that moves its file, squashed into a main that
-    made 2000 commits of its own (50 of them renames) since the fork point, about 9 s (3.5.0: 1 s, a false
-    orphan). Following each file commit by commit costs one `git log` over the commits since the fork point,
+    added or removed on its own.
+  - Moved files the readings cannot place, accepted as known limits on 2026-11-01 (only these; the verdict
+    can be wrong either way): the commits that landed are not a prefix of the branch and the branch moved,
+    swapped or copied a file; a copy and its original both in what landed, with a line deleted before the
+    copy; a pure move onto a name where main has a file of its own; two nearly identical files swapped, when
+    main edited the lines that tell them apart; beyond 200 copy detections, 100,000 candidate pairs or 64 KB
+    of paths in one detection. SPEC.md (M1) gives the fuzz counts.
+  - Timing, as CPU time on a shared machine (other work kept the load between 13 and 90 during these runs):
+    PR #408 about 17 s (3.5.0: 8 s, with its false orphans); a squash-landed 150-commit branch about 30 s, or
+    about 49 s when its first commit moves the file (3.5.0: 9 s, with a false orphan in both); a branch of 20
+    commits that moves its file, squashed into a main that made 2000 commits of its own (50 of them renames)
+    since the fork point, about 6 s (3.5.0: 1 s, a false orphan). Following each file commit by commit costs one `git log` over the commits since the fork point,
     a name map per revision read and a tree written per revision compared. Measured on rounds 13 to 15: a squash of a branch that moves 2000 files
     under 1 s, since the tip already has the head's content (3.5.0: 14 s); the same move with 300 of the files
     edited, squashed and then edited once more by main, about 2 s (3.5.0: 17 s and a false orphan); a branch
@@ -206,7 +212,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   main has elsewhere in the same files, or put back.
 - **Test runner.** `scripts/run-all-tests.sh` reads a `timeout` file next to a suite's `test.sh` and uses the
   larger of it and `IDD_SUITE_TIMEOUT` (default 180 s). The merge-completeness suite takes about four minutes on
-  an idle Mac and over ten on a loaded one (under a minute on Linux), and asks for 1200 s.
+  an idle Mac and over ten on a loaded one (under four minutes on Linux), and asks for 2400 s.
 
 ### Changed
 
