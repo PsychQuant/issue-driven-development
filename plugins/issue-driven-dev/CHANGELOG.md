@@ -9,6 +9,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Version number left to the merge, as in PR #442.
 
+### Changed
+
+- **BREAKING — `/idd-all` merges (or pushes) and closes after a clean verify (#392).** The run used to end at
+  verified: PR mode opened the PR, direct-commit mode left local commits, and both asked the user to merge and run
+  `/idd-close`. Now a new close stage (Phase 5c) takes over when the verify gate reports `clean`: PR mode
+  squash-merges after three more guardrails pass (every CI check passes, waiting at most 15 minutes for pending
+  ones and treating a PR with no checks as passing; no auto-close trap in the PR body or any commit; a squash
+  subject and body that idd-all writes itself and that reference the issue only as `Refs #N`); direct-commit mode
+  pushes only from the default branch, after scanning the outgoing commits for close keywords. It then calls
+  `/idd-close` with the `ORCHESTRATED BY /idd-all` directive. Phase 6 reports `Done:` with `Undo:`
+  (`gh issue reopen`, `git revert`), or `Done:` with `Stopped:` naming the check that failed. Callers that need
+  the old end state (`/loop` and other automation that reviews before merging) pass `--review`; `--in-chain`
+  (`/idd-all-chain`, #393) and `type=meeting` runs are unchanged. Unattended runs now fix In-scope fix findings
+  too and run verify again (two verify rounds at most), because automatically fixed code must be verified before
+  it reaches the default branch; manual `/idd-verify` keeps its rule.
+- **`/idd-close` honours `ORCHESTRATED BY /idd-all` (#392).** With the directive it does not ask at its six stop
+  points: Step 1.55 and Step 1.6 warnings stop without closing, Step 3.5 files the follow-ups (IC_R011 default),
+  Step 3.6 records the residue without filing (the #392 decision; the manual default since #304 is to file),
+  Step 6.3 does not commit stale docs but lists them in the closing summary, and Step 6.5 asks only when someone
+  is present. Without the directive nothing changes.
+- **`idd-verify` Step 5a states the report format the gate reads (#392):** exactly one verdict line opening with
+  `**PASS**` or `**FAIL**`, an `Action` cell holding exactly `Blocking`, `In-scope fix` or `Follow-up`, rejected
+  findings kept out of the table, and the header kept when there are no findings. Five earlier verify comments in
+  this repo all read as `unparseable` without these rules. The local-mode report template now has `### Aggregate`
+  and the `Action` column.
+- **MANIFESTO: auto-merge rests on two reasons side by side (#392)** — verify is the gate, and merge and close
+  are reversible, so they run without a prior confirmation provided the run reports what it did and how to undo
+  it. The section no longer hands auto-merge to #37 (closed as not planned).
+
+### Added
+
+- `scripts/verify-gate.py` (#392): reads one verify master comment, prints one JSON line
+  (`clean` / `not_clean` / `unparseable` with the three counts and a reason) and exits 0 / 1 / 2 (64 on a usage
+  error). Fails closed: a missing verdict or findings table, a fourth Action value, an annotated value, two
+  verdict lines, or a PASS verdict next to a Blocking row are all `unparseable`. Fenced code blocks are skipped.
+  Suites: `scripts/tests/verify-gate/` (72 assertions) and `scripts/tests/merge-and-close-contract/` (53), which
+  pins the idd-all skill, the idd-close skill, the MANIFESTO and the batch reference to the new end state.
+
 ### Fixed
 
 - **`git-ignore-block.sh` writes an `exclude` target only inside a real git dir (#431).** The #194 allowlist

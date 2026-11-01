@@ -1559,7 +1559,7 @@ With `--review` opt-in(不進 Phase 5c):
 Next: review PR https://github.com/owner/repo/pull/87, merge after acceptance, then run /idd-close #42
 ```
 
-`/loop` 等自動化 caller 從 3.7.0 起看到的終點是 closed,不再是 verified(CHANGELOG 標 BREAKING);需要舊行為的 caller 帶 `--review`。PR 仍帶 `Refs #42`、不含 `Closes`;issue 由 `/idd-close` 關,不靠 GitHub 的 auto-close。
+`/loop` 等自動化 caller 自 #392 起看到的終點是 closed,不再是 verified(CHANGELOG 標 BREAKING);需要舊行為的 caller 帶 `--review`。PR 仍帶 `Refs #42`、不含 `Closes`;issue 由 `/idd-close` 關,不靠 GitHub 的 auto-close。
 
 ### Trace 2: `(direct-commit, attended)` — HITL 場景
 

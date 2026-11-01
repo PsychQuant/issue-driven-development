@@ -522,7 +522,7 @@
 
 ### `/idd-all`
 
-**Goal**: Run the entire pipeline (issue → diagnose → plan-or-direct → implement → verify) in one call. Resolves a `(path, interaction)` tuple from `pr_policy` so the same `pr_policy:never` user gets `(direct-commit, attended)` (HITL — sub-skills are free to AskUserQuestion) and `pr_policy:always` user gets `(PR, unattended)` (automation-friendly; sub-skills suppress AskUserQuestion). When the verify gate reports clean and the merge guardrails pass, it merges the PR (PR mode) or pushes to the default branch (direct-commit mode) and runs `/idd-close` itself, then reports `Done:` and `Undo:` (v3.7.0, #392). Otherwise it stops at `verified` and reports `Stopped:`.
+**Goal**: Run the entire pipeline (issue → diagnose → plan-or-direct → implement → verify) in one call. Resolves a `(path, interaction)` tuple from `pr_policy` so the same `pr_policy:never` user gets `(direct-commit, attended)` (HITL — sub-skills are free to AskUserQuestion) and `pr_policy:always` user gets `(PR, unattended)` (automation-friendly; sub-skills suppress AskUserQuestion). When the verify gate reports clean and the merge guardrails pass, it merges the PR (PR mode) or pushes to the default branch (direct-commit mode) and runs `/idd-close` itself, then reports `Done:` and `Undo:` (#392). Otherwise it stops at `verified` and reports `Stopped:`.
 
 **Syntax**: `/idd-all [#N | 'issue description'] [--pr | --no-pr] [--review] [--cwd ...]`
 

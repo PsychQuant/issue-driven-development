@@ -1333,7 +1333,8 @@ assert_output_grep "idd-all: a type change during the run is a warning line, not
 assert_output_grep "idd-all: Action items run before clear_unattended (r6 #8)" '**順序:先跑 Action items 區塊,再清理**' "$IA_"
 # r1 (#6, #8, #14): Phase 6 has a meeting report that claims no verify / PR
 assert_output_grep "idd-all: Phase 6 has a meeting report"                        '✓ idd-all stopped (type=meeting)' "$IA_"
-assert_output_grep "idd-all: the terminal-phase rule names its meeting exception" 'Verify is the terminal phase regardless of mode**（meeting issue 例外' "$IA_"
+# #392 replaced the terminal-phase rule with "Clean verify ends in merge and close"; the meeting exception moved with it
+assert_output_grep "idd-all: the end-of-run rule names its meeting exception" 'meeting issue 不跑 verify，停在 planning 或 diagnosed' "$IA_"
 n_tier_=$(grep -n '^| `0` · `0` · `Simple` |' "$IA_" | head -1 | cut -d: -f1)
 n_meet_=$(grep -n -F '| `TYPE=meeting` · `VEXIT=0` |' "$IA_" | head -1 | cut -d: -f1)
 assert_true "idd-all: the meeting row precedes the first tier row (meeting@${n_meet_:-?} < Simple@${n_tier_:-?})" "[ -n '$n_meet_' ] && [ -n '$n_tier_' ] && [ '$n_meet_' -lt '$n_tier_' ]"
