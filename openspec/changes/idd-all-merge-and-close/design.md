@@ -1,0 +1,168 @@
+## Context
+
+`/idd-all` 現在的終點是 verified：PR mode 開了 PR 就停，direct-commit mode 留下本機 commit 就停，兩種都請使用者自己 merge、自己跑 `/idd-close`。這條規則寫在三個層級：
+
+- published spec `idd-pr-hitl-modes`：Requirement「Verify is the terminal phase regardless of mode」規定 idd-all MUST NOT auto-invoke `idd-close`；Requirement「PR path preserves v2.40.0 behavior」保證 `/loop` caller 看不到行為變化；Requirement「Direct-commit path stays on current branch and skips PR」規定 direct-commit SHALL NOT push。`parallel-orchestration` 的 batch requirement 寫 SHALL stop at verified。
+- `MANIFESTO.md`〈auto-merge 的合法性與限制〉：auto-merge 合法的理由寫明是「verify is the gate」而**不是**「merges are reversible」，並把 auto-merge→auto-close 交給 #37；#37 已以 not planned 結案。
+- `skills/idd-all/SKILL.md`：description、Phase 4 到 Phase 6、鐵律、範例都寫死不 merge、不 close；Phase 0.5.1 把 close 說成不可逆。
+
+#392 的使用者決定（Clarity Surface 五題、Diagnosis 確認的兩點、spectra-discuss 的四條結論）都已記在 issue 上，本 design 把它們落成實作契約。2026-11-02 實作前再確認一次 merge 這一步：使用者選「全部自動（照 10-14）」，所有 mode 都不在 merge 前停下（#392 comment 6562727408）。全域規則（`~/.claude/CLAUDE.md`）原本把 push／merge 列為要先確認、且優先於 skill 的「自動執行」，所以同一個變更也在那裡加上 `/idd-all #N` 算是確認的條目。`idd-verify` 已經把 findings 分成 Blocking、In-scope fix、Follow-up 三類，報告開頭有一行 `**PASS / FAIL** — N blocking, M follow-up`。
+
+## Goals / Non-Goals
+
+**Goals:**
+
+- verify 乾淨時，idd-all 自己完成 merge（PR mode）或 push（direct-commit mode）與 close，不停下來問。
+- 「乾淨」有明確、可機械判斷的定義，判斷不了時一律當成不乾淨。
+- `/idd-close` 被 idd-all 呼叫時，每個會停下來問人的點都有明確的預設。
+- 結尾回報讓人事後一眼看出做了什麼、怎麼復原。
+- 三個層級的文件同時改，不留互相矛盾的段落。
+
+**Non-Goals:**
+
+- 不改 `/idd-all-chain`；chain 是否跟進由 #393 決定。
+- 不改 `type=meeting` 的停點（diagnosed／planning）。
+- 不改手動流程：直接跑 `/idd-verify`、`/idd-close` 的行為不變，包括「In-scope fix 修完不必重跑 verify」的既有規則。
+- 不自動做 distribution sync 的不可逆部分（發版、推 marketplace）；無人在場時一律略過。
+- 不做 Codex 以外的 verify 改動；雲端 runtime 是 #400 的範圍。
+
+## Decisions
+
+### verify 乾淨的定義與解析失敗即不乾淨
+
+「乾淨」＝最新一輪 verify 的報告判定為 PASS、Blocking 為 0、In-scope fix 為 0。Follow-up 不擋 merge，照既有規則開 follow-up issue。
+
+計數由一支新的 helper 從 verify master comment 的分類表解析，輸出 JSON。表格缺失、欄位對不上、判定行讀不到、或計數與判定行矛盾（判定 PASS 但有 Blocking）時，helper 回報 `unparseable`，idd-all 一律當成不乾淨、停在 verified。理由：這是唯一會把程式碼自動送進 main 的判斷，寧可漏 merge，不可誤 merge。
+
+替代方案：讓 idd-all 的 LLM 直接讀報告判斷。沒採用，因為 merge 的觸發條件必須可重現、可測試；LLM 判斷錯了沒有可檢查的痕跡。
+
+### 無人在場時 In-scope fix 也要修完並重跑 verify
+
+unattended 時，Blocking 與 In-scope fix 一起在同一個 PR 修，修完重跑 verify；修正最多 2 輪（沿用 Phase 4 既有的 `MAX_ROUND`）。2 輪後仍不乾淨就停在 verified。
+
+這與 `idd-verify` 既有的「In-scope fix 修完不必重跑 verify」不同，差異只適用於 idd-all 的自動 merge 路徑：AI 自動修的程式碼若沒被 verify 看過就自動進 main，等於沒有人審過。手動流程維持原規則。
+
+取捨：verify 幾乎每輪都會再找到新的小問題，嚴門檻會讓一部分 run 停在 verified；選擇嚴門檻＋2 輪上限，而不是帶著已知缺陷 merge。
+
+### 有人在場時照舊不自動修
+
+attended 時，verify 有任何 Blocking 或 In-scope fix 就交回使用者（沿用 Phase 4 既有行為）；只有某一輪乾淨時才 merge 並 close，不再另外詢問。理由：使用者在場時看得到回報，事後確認符合 Foresay 的 traceable 分支。
+
+### merge 前的四道 guardrail
+
+PR mode 在 merge 前依序檢查，任一不過就停在 verified、在回報寫明是哪一道：
+
+1. verify 乾淨（上一個決策）。
+2. CI checks：`gh pr checks` 全部成功；有 pending 時等待（上限 15 分鐘），有失敗就停。沒有任何 check 的 repo 視為通過。
+3. Step 0.8 的 auto-close trap 掃描（PR body 與每個 commit body）乾淨。
+4. squash commit 的 subject 與 body 由 idd-all 自己組，用 `gh pr merge --squash --subject --body` 明確傳入，內容只用 `Refs #N` 引用 issue；組好後再掃一次 close 類關鍵字緊鄰 `#數字` 的寫法。
+
+squash 而不是 merge commit：commit message 由 idd-all 控制，guardrail 4 才有意義；也與 MANIFESTO 既有的「squash commit message 必須 clean」一致。merge 後 `git fetch` 讓本機看到新的預設 branch，再呼叫 `/idd-close`。
+
+### direct-commit 先 push 再 close
+
+direct-commit mode 驗證乾淨後：
+
+- 目前在預設 branch：`git push origin HEAD`，成功後呼叫 `/idd-close`；push 被拒（例如 non-fast-forward）就停在 verified，不自動 rebase。
+- 目前不在預設 branch：停在 verified，回報「修正尚未落到預設 branch」。
+
+理由：issue 關了而修正只在本機，其他人看到的是一張已關、卻找不到修正的 issue。push 與 PR mode 的 merge 同性質（可 revert）。
+
+### idd-close 的 idd-all 呼叫指示
+
+`/idd-all` 呼叫 `/idd-close` 時在 args 加一段 `ORCHESTRATED BY /idd-all` 指示，形狀與既有的 `UNATTENDED MODE` 指示相同，兩者獨立：前者決定「誰在呼叫」，後者決定「有沒有人在場」。`/idd-close` 收到指示時：
+
+| 停點 | 預設 |
+|---|---|
+| Step 1.55 merge-completeness 回報有 commit 未落到預設 branch | 停下、不 close，寫進回報 |
+| Step 1.6 semantic check 警告（打勾項目找不到對應 commit） | 停下、不 close，寫進回報 |
+| Step 3.5 closing summary 裡的 follow-up 關鍵字 | 照 IC_R011 預設開 issue，列進回報 |
+| Step 3.6 Diagnosis 的 Residue | 記為殘留（不開 issue），列進回報 |
+| Step 6.5 distribution sync | 有人在場時照常詢問；無人在場時略過，回報裡列出要跑的命令 |
+
+沒有收到指示時，`/idd-close` 的行為完全不變。
+
+替代方案：直接沿用 unattended contract。沒採用，因為「有人在場、但 residue 與 follow-up 仍取預設」這個組合用單一軸表達不了。
+
+### close 停下時 PR 已經 merge
+
+PR mode 的順序是 merge 後才 close；若 `/idd-close` 因上表的停點停下，結果是 PR 已 merge、issue 仍開著。回報必須寫明這個狀態與原因，並給出 `/idd-close #N` 讓人處理。不在 merge 前先跑 close 的 gate，因為 Step 1.55 要讀已 merge 的 PR 才能判斷。
+
+### --review 照舊停在 verified
+
+`--review` 的語意是使用者想自己再看一次；帶這個旗標時 idd-all 不 merge、不 close，Phase 6 沿用既有的「awaiting human acceptance」措辭。
+
+### 結尾回報照 Foresay 的 operation 格式
+
+Phase 6 回報寫出實際發生的事，不寫預估：
+
+```
+Done:
+  merged PR #<P> into <default> as <sha>   （direct-commit：pushed <n> commits to <default>）
+  closed #<N> — closing summary: <url>
+  changed: <files> files, +<adds>/-<dels>
+  follow-ups filed: #<a>, #<b>   （沒有則 none）
+  residue recorded: <text>   （沒有則 none）
+  distribution sync: <done | asked: <answer> | skipped — run <command>>
+  verify: <reviewers that ran>，degraded: <missing reviewers or none>
+Undo:
+  gh issue reopen <N>
+  git revert <sha>
+```
+
+停在 verified 時，`Done` 只列實際做到的步驟，另起一行 `Stopped: <哪一道 guardrail 或停點>，<原因原文>`。
+
+### 文件三層一起改
+
+MANIFESTO〈auto-merge 的合法性與限制〉改成兩個理由並列：verify 保證改得對；可逆讓它免事前確認、但必須事後回報（Foresay traceable）。revert 不對稱那段保留，改用來說明 distribution sync 為何仍要確認。指向 #37 的句子改指 #392。〈verify-gated 是 terminal 預設 disposition〉改寫成 verify 乾淨即進入 merge 與 close。idd-all 的 description、鐵律、Phase 0.5.1 對 close 可逆性的說法一併修正；新增文字契約測試，鎖住三層不再出現「永不 auto-close」一類的舊說法。
+
+### 吸收 #387 的 meeting 例外
+
+`parallel-orchestration` batch requirement 改寫時，一併寫明 `type=meeting` 停在 diagnosed 或 planning、不 verify、不開 PR；idd-all 的 description 同樣寫明。#387 標為被本 change 取代。
+
+## Implementation Contract
+
+**verify gate helper（`scripts/verify-gate.py`）：**
+
+- 輸入：`--comment-file <path>`（verify master comment 的原文）。
+- 輸出（stdout，一行 JSON）：`{"status": "clean" | "not_clean" | "unparseable", "verdict": "PASS" | "FAIL" | null, "blocking": <int|null>, "in_scope": <int|null>, "follow_up": <int|null>, "reason": <string>}`。
+- `clean`：判定行為 PASS，分類表可解析，Blocking＝0 且 In-scope fix＝0。
+- `not_clean`：可解析但有 Blocking 或 In-scope fix，或判定為 FAIL。
+- `unparseable`：找不到判定行或分類表、分類欄出現三類以外的值、或判定 PASS 卻有 Blocking；`reason` 寫明是哪一種。
+- 結束碼：`clean` 為 0，`not_clean` 為 1，`unparseable` 為 2，用法錯誤為 64。檔案讀不到時以 2 結束。
+
+**idd-all 的終點行為：**
+
+| 情況 | 結果 |
+|---|---|
+| PR mode，gate `clean`，四道 guardrail 全過 | squash merge，fetch，呼叫 `/idd-close`（帶 ORCHESTRATED 指示），回報 Done |
+| PR mode，任一 guardrail 不過 | 不 merge，停在 verified，回報 Stopped |
+| direct-commit，在預設 branch，gate `clean` | push，呼叫 `/idd-close`，回報 Done |
+| direct-commit，不在預設 branch，或 push 被拒 | 停在 verified，回報 Stopped |
+| unattended，gate `not_clean` 且未滿 2 輪 | 修 Blocking 與 In-scope fix，重跑 verify |
+| unattended，滿 2 輪仍 `not_clean` | 停在 verified |
+| attended，gate `not_clean` | 交回使用者（既有行為） |
+| gate `unparseable` | 停在 verified，回報解析失敗的原因 |
+| `--review`、`--in-chain`、`type=meeting` | 終點不變 |
+
+**範圍：**
+
+- In scope：上述 helper 與測試、idd-all Phase 4 到 Phase 6、idd-close 的 ORCHESTRATED 指示、MANIFESTO 與文件、兩份 spec、CHANGELOG 與版本號。
+- Out of scope：`/idd-all-chain`、meeting 停點、手動 `/idd-verify` 與 `/idd-close` 的行為、distribution sync 的自動執行、雲端 runtime。
+
+## Risks / Trade-offs
+
+- [自動 merge 了一個錯的改動] → 四道 guardrail；回報附 `git revert` 命令。revert 會在 history 留痕跡，這是使用者接受的取捨。
+- [嚴門檻讓多數 run 停在 verified] → 回報寫明停在哪一輪、還剩哪些 In-scope fix；2 輪上限避免無限迴圈。
+- [PR 已 merge、close 卻停下] → 回報寫明狀態並給出 `/idd-close #N`；不嘗試回滾 merge。
+- [`/loop` 等 caller 依賴舊的停點] → CHANGELOG 標 BREAKING；需要舊行為的 caller 改帶 `--review`。
+- [批次模式下一張 issue 從過時的預設 branch 開 branch] → 每張 merge 後先 `git pull --ff-only` 再處理下一張；失敗就停止批次並回報。
+- [與 #383 同檔衝突] → 實作等 #383 merge 後才開始；spec 改動只引用 meeting 停點，不複製其內容。
+
+## Migration Plan
+
+沒有資料遷移。發佈為 minor 版本，CHANGELOG 以 BREAKING 標註 idd-all 終點改變，並寫明 `--review` 可取回舊行為。回滾：revert 本 change 的 commit 並發佈新版本。
+
+## Open Questions
+
+(none) — 使用者的決定已記在 #392（Clarity Surface、Diagnosis Decisions、spectra-discuss 結論）。

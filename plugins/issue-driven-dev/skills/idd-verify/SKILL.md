@@ -1319,15 +1319,17 @@ git checkout $ORIGINAL_BRANCH   # Step 0.5 記住的
 ### Engine
 ${BACKEND_DESC}, model: ${DISPATCH_MODEL}   <!-- 由解析鏈 BACKEND_DESC + 雙路徑抽取的 DISPATCH_MODEL 組成（#207）；canonical 例：pai-ensemble 2.18.0 (canonical #207) — 4 IDD lenses + DA + Codex (gpt-5.x), model: opus；Tier 3 manual 的 DESC 自含 model -->
 
+### Aggregate
+**PASS / FAIL** — N blocking, M follow-up
+
 ### 要求覆蓋率
 X / Y requirements addressed
 
 ### Findings（合併後）
-| # | Severity | Finding | Source |
-|---|----------|---------|--------|
-| 1 | P1 | ... | agents:logic+codex |
-| 2 | P2 | ... | agents:security |
-| 3 | — | (devil's advocate 未能反駁) | agents:devils-advocate |
+| # | Severity | Finding | Source | Action |
+|---|----------|---------|--------|--------|
+| 1 | P1 | ... | agents:logic+codex | Blocking |
+| 2 | P2 | ... | agents:security | Follow-up |
 
 ### Scope Check
 {有沒有超出 issue 範圍的改動}
@@ -1424,6 +1426,13 @@ done
 | 2 | MEDIUM | ... | agents:regression | In-scope fix |
 | 3 | LOW | ... | agents:security | Follow-up |
 ```
+
+**報告格式是 `/idd-all` 自動 merge 的輸入（#392）**：`/idd-all` 用 `scripts/verify-gate.py` 讀這份報告，決定能不能 merge 並 close；讀不出來就停在 verified。所以：
+
+- 報告恰好有一行判定，以 `**PASS**` 或 `**FAIL**` 開頭（放在 `### Aggregate` 下）。其他行不要用粗體大寫英文字開頭。
+- Findings 表的最後一欄是 `Action`，每一列只填 `Blocking`、`In-scope fix`、`Follow-up` 三者之一，不加括號註解；說明寫在 Finding 欄或表格外。
+- 判定為不成立、不需處理的意見不是 finding，不放進這張表，另列一節（例如 `### No action`）說明理由。
+- 沒有任何 finding 時仍要寫出表頭（只有表頭與分隔列），代表零筆。
 
 #### Step 5b: Follow-up Issue Triage
 
