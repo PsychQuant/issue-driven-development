@@ -63,7 +63,7 @@ squash 而不是 merge commit：commit message 由 idd-all 控制，guardrail 4 
 
 direct-commit mode 驗證乾淨後：
 
-- 目前在預設 branch：`git push origin HEAD`，成功後呼叫 `/idd-close`；push 被拒（例如 non-fast-forward）就停在 verified，不自動 rebase。
+- 目前在預設 branch：先掃要推出去的 commit 有沒有 close 類關鍵字緊鄰 `#數字`（有就停在 verified：direct-commit 沒有 PR，GitHub 會從這種 commit 直接關掉 issue、繞過 `/idd-close`；apply 時加），再 `git push origin HEAD`，成功後呼叫 `/idd-close`；push 被拒（例如 non-fast-forward）就停在 verified，不自動 rebase。
 - 目前不在預設 branch：停在 verified，回報「修正尚未落到預設 branch」。
 
 理由：issue 關了而修正只在本機，其他人看到的是一張已關、卻找不到修正的 issue。push 與 PR mode 的 merge 同性質（可 revert）。
@@ -77,7 +77,8 @@ direct-commit mode 驗證乾淨後：
 | Step 1.55 merge-completeness 回報有 commit 未落到預設 branch | 停下、不 close，寫進回報 |
 | Step 1.6 semantic check 警告（打勾項目找不到對應 commit） | 停下、不 close，寫進回報 |
 | Step 3.5 closing summary 裡的 follow-up 關鍵字 | 照 IC_R011 預設開 issue，列進回報 |
-| Step 3.6 Diagnosis 的 Residue | 記為殘留（不開 issue），列進回報 |
+| Step 3.6 Diagnosis 的 Residue | 記為殘留（不開 issue），列進回報。這與手動流程的預設（#304：開 follow-up issue）不同，依 Clarity Surface 第 4 列的決定；residue 原文出現在回報裡 |
+| Step 6.3 doc-sync 判定文件過時 | 不 commit，列在 closing summary 的 `### Doc-sync 檢查` 與回報（apply 時加：merge 之後的 commit 沒有經過 verify） |
 | Step 6.5 distribution sync | 有人在場時照常詢問；無人在場時略過，回報裡列出要跑的命令 |
 
 沒有收到指示時，`/idd-close` 的行為完全不變。

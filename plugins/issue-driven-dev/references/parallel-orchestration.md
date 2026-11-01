@@ -71,7 +71,7 @@ The `### Conflict Class` field is an interface; evaluate it through the three le
 2. Re-bucket `D_diagnose_first` issues via a read-only diagnose pass before ordering.
 3. Order: `E` / `D`-resolved cheap items first; `B`/`C` touching the same named resource adjacent (so a reviewer sees them together); same-file issues grouped; `A` order unconstrained.
 4. Run each through the normal `idd-all` pipeline one at a time. `A_parallel_safe` issues MAY acquire an `idd-worktree.sh` worktree so the resulting branches can be **manually** advanced in parallel later.
-5. Stop at verified.
+5. Each issue ends where a single-issue run of the same type ends (#392): merged and closed when its verify gate reports `clean` and the merge guardrails pass; left at verified when it stops at the gate or a guardrail; at diagnosed or planning, with no verify and no PR, for a `type=meeting` issue. After an issue is merged, run `git checkout -q <default> && git pull --ff-only -q` before starting the next one; if that update fails, stop the batch and report the failed step.
 
 Ordering does not buy *safety* (sequential is always safe); it buys review ergonomics + pre-isolation for later manual parallelism. The taxonomy's real payoff is as the parallel-safety contract, not this sequential outer loop.
 

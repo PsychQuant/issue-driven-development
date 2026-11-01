@@ -26,7 +26,7 @@ When the resolved path is `PR`, `idd-all` SHALL behave identically to v2.40.0 up
 
 ### Requirement: Direct-commit path stays on current branch and skips PR
 
-When the resolved path is `direct-commit`, `idd-all` SHALL NOT create a feature branch and SHALL NOT create a PR. Commits land on whichever branch the user currently has checked out. `idd-all` SHALL NOT push during Phases 1 to 4. After a clean verify, `idd-all` SHALL push only when the current branch is the default branch, and only so that the fix exists on the remote default branch before the issue is closed; on any other branch it SHALL stop at verified without pushing.
+When the resolved path is `direct-commit`, `idd-all` SHALL NOT create a feature branch and SHALL NOT create a PR. Commits land on whichever branch the user currently has checked out. `idd-all` SHALL NOT push during Phases 1 to 4. After a clean verify, `idd-all` SHALL push only when the current branch is the default branch, and only so that the fix exists on the remote default branch before the issue is closed; on any other branch it SHALL stop at verified without pushing. Before the push it SHALL scan the subject and body of every outgoing commit for a `close`, `fix`, or `resolve` keyword adjacent to a `#<digits>` reference, and SHALL stop at verified without pushing when one is found, because GitHub would close the issue from such a commit without `/idd-close`.
 
 #### Scenario: direct-commit on default branch
 
@@ -104,7 +104,7 @@ After verify, `idd-all` SHALL ask the verify gate whether the latest verify roun
 
 ### Requirement: Unattended fix loop covers in-scope findings with a two-round limit
 
-When the resolved interaction is `unattended` and the verify gate reports `not_clean`, `idd-all` SHALL fix every Blocking and every In-scope fix finding in the same branch and run verify again, for at most 2 fix rounds in total. If the gate still reports `not_clean` after the second round, `idd-all` SHALL stop at verified without merging or closing. When the resolved interaction is `attended`, `idd-all` SHALL NOT fix findings automatically; it SHALL hand the findings back to the user, and merge and close only follow a later round that the gate reports `clean`.
+When the resolved interaction is `unattended` and the verify gate reports `not_clean`, `idd-all` SHALL fix every Blocking and every In-scope fix finding in the same branch and run verify again, for at most 2 verify rounds in total (one fix pass between them). If the gate still reports `not_clean` after the second verify round, `idd-all` SHALL stop at verified without merging or closing. When the resolved interaction is `attended`, `idd-all` SHALL NOT fix findings automatically; it SHALL hand the findings back to the user, and merge and close only follow a later round that the gate reports `clean`.
 
 #### Scenario: Second round comes back clean
 
@@ -161,7 +161,7 @@ The verify gate SHALL read the latest verify master comment and report exactly o
 
 ### Requirement: idd-close honors the orchestrated directive from idd-all
 
-When `/idd-close` is invoked with the `ORCHESTRATED BY /idd-all` directive, it SHALL apply these defaults instead of asking the user: when Step 1.55 reports commits not on the default branch, or Step 1.6 reports a checked item without a matching commit, it SHALL stop without closing and report why; follow-up mentions found by Step 3.5 SHALL be filed as issues per the IC_R011 default; a non-empty Residue read by Step 3.6 SHALL be recorded as residue without filing an issue; the Step 6.5 distribution sync SHALL ask the user when the interaction is attended and SHALL be skipped, with the command to run listed in the report, when the interaction is unattended. Without the directive, `/idd-close` SHALL behave exactly as before.
+When `/idd-close` is invoked with the `ORCHESTRATED BY /idd-all` directive, it SHALL apply these defaults instead of asking the user: when Step 1.55 reports commits not on the default branch, or Step 1.6 reports a checked item without a matching commit, it SHALL stop without closing and report why; follow-up mentions found by Step 3.5 SHALL be filed as issues per the IC_R011 default; a non-empty Residue read by Step 3.6 SHALL be recorded as residue without filing an issue; a document that the Step 6.3 doc-sync sweep finds stale SHALL NOT be committed and SHALL instead be listed in the closing summary under `### Doc-sync 檢查`; the Step 6.5 distribution sync SHALL ask the user when the interaction is attended and SHALL be skipped, with the command to run listed in the report, when the interaction is unattended. Without the directive, `/idd-close` SHALL behave exactly as before.
 
 #### Scenario: Semantic check warns during an orchestrated close
 

@@ -266,6 +266,8 @@ The check is signal-based, not state-based: if a PR ref exists, IDD assumes PR p
 
 **Why "two axes from one source"**: a `(PR, attended)` mix would mean opening a PR but pausing on every sub-skill prompt — defeats automation. A `(direct-commit, unattended)` mix would mean fire-and-forget commits to whatever branch the user happened to be on — too dangerous. The two paired tuples cover the real-world use cases (`/loop` automation vs solo HITL); orthogonal flags would just multiply the failure modes. If a future use case demands a mixed tuple, an explicit `--attended/--unattended` flag can be added without restructuring this contract.
 
+**End of the run (v3.7.0+, #392)**: in both tuples, a clean verify gate leads to the close stage — `(PR, …)` squash-merges the PR after the CI, auto-close-trap and squash-message guardrails pass; `(direct-commit, …)` pushes only when the current branch is the default branch, after scanning the outgoing commits for close keywords — and then runs `/idd-close` with the `ORCHESTRATED BY /idd-all` directive. `--review` and `--in-chain` stop at verified. Details: `skills/idd-all/SKILL.md` Phase 5c.
+
 **Resolved-tuple notice**: `idd-all` MUST print one line before any state-mutating action, e.g. `→ Path: direct-commit (attended) — pr_policy=never`. The notice line cites the precedence reason (flag, fork, or config) so the user can see which gate fired.
 
 ## Why this lives in references, not in each SKILL.md

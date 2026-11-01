@@ -1,10 +1,10 @@
 ---
 name: idd-all
 description: |
-  自動串連 IDD 完整 workflow（issue → diagnose → implement → verify），按 pr_policy 解析 path 與 interaction 兩軸：PR + unattended（自動化、/loop friendly）或 direct-commit + attended（HITL、user 在 keyboard，sub-skill AskUserQuestion 自然 fire）。停在 verified 等 user 自己 close（永不 auto-close）。
+  自動串連 IDD 完整 workflow（issue → diagnose → implement → verify），按 pr_policy 解析 path 與 interaction 兩軸：PR + unattended（自動化、/loop friendly）或 direct-commit + attended（HITL、user 在 keyboard，sub-skill AskUserQuestion 自然 fire）。verify 乾淨通過就 merge（PR mode）或 push（direct-commit mode，限預設 branch）並跑 /idd-close，最後回報做了什麼與怎麼復原；guardrail 沒過、帶 --review 或 --in-chain 時停在 verified；type=meeting 停在 diagnosed 或 planning，不 verify、不開 PR。
   Use when: 想一次跑完整條 IDD pipeline、信任 6-AI verify 會抓錯、希望 fire-and-forget；HITL 模式則用於 solo repo 想被 sub-skill 諮詢的情境。
   防止的失敗：手動跑 5 個 idd-* skill 太繁瑣、忘記中間某一步、orchestration 一致性。
-argument-hint: "[#NNN | 'issue description'] [--pr | --no-pr] [--review] [--cwd /path/to/clone] (empty = interactive; --no-pr 觸發 HITL direct-commit + attended; --review opt-in re-opens Foresay confirmation loop at terminal report)"
+argument-hint: "[#NNN | 'issue description'] [--pr | --no-pr] [--review] [--cwd /path/to/clone] (empty = interactive; --no-pr 觸發 HITL direct-commit + attended; --review 停在 verified、不 merge 也不 close)"
 allowed-tools:
   - Bash(gh:*)
   - Bash(git:*)
@@ -21,7 +21,7 @@ allowed-tools:
 
 # /idd-all — 自動 IDD Pipeline
 
-把 idd-issue → idd-diagnose → idd-implement → idd-verify 串成一條自動跑的鏈。**Mode 由 `pr_policy` config 與 `--pr/--no-pr` flag 共同推導**：PR mode 在 feature branch + 開 PR + sub-skill unattended；direct-commit mode 留在當前 branch + 不開 PR + sub-skill attended。停在 verified 讓 user 親自 close — **不論 mode 都不 auto-close**。
+把 idd-issue → idd-diagnose → idd-implement → idd-verify 串成一條自動跑的鏈。**Mode 由 `pr_policy` config 與 `--pr/--no-pr` flag 共同推導**：PR mode 在 feature branch + 開 PR + sub-skill unattended；direct-commit mode 留在當前 branch + 不開 PR + sub-skill attended。verify 乾淨通過就自己 merge（或 push）並跑 `/idd-close`，最後回報做了什麼、怎麼復原（#392）。
 
 ## 核心原則
 
@@ -32,7 +32,7 @@ allowed-tools:
 >   - `(direct-commit, attended)`: 留在當前 branch、不 push、不開 PR;sub-skill 不收 unattended hint,native attended 行為(`AskUserQuestion`、`EnterPlanMode`、`Park/Apply` prompt)自然 fire。HITL 場景。
 > - **Attended assumes user in session**: attended interaction 模式下,idd-all **不**對 sub-skill `AskUserQuestion` / `EnterPlanMode` prompt 設任何 silent timeout。user 沒回應就一直等。Attended mode = user 在 keyboard 是契約前提;若 user 預期不在,該選 unattended。
 > - **Branch behavior follows path**: PR mode 從 default branch 開 `idd/<N>-<slug>` feature branch;direct-commit mode 留在 user 當前 checkout 的 branch(可能是 main、可能是 feature branch、可能是 wip/foo)。
-> - **Verify is the terminal phase regardless of mode**（meeting issue 例外：不跑 verify，停在 planning 或 diagnosed，見 Phase 6 meeting report）: 不論 PR 或 direct-commit,idd-all 都停在 Phase 6 report,**永不**自動跑 `idd-close`。Closing summary 含 root cause + solution narrative,該由人寫才有審計價值。
+> - **Clean verify ends in merge and close**（#392）: verify gate（`scripts/verify-gate.py`）判定乾淨、而且 merge guardrail 全過時，PR mode squash-merge PR、direct-commit mode 在預設 branch 上 push，接著以 `ORCHESTRATED BY /idd-all` 指示呼叫 `/idd-close`，不先問人。merge 可 revert、close 可 reopen，依 Foresay 屬於 traceable：做完必須回報（`Done:`／`Undo:`）。gate 判定不乾淨或讀不出來、任一 guardrail 不過、帶 `--review`、或在 `--in-chain` 裡時，停在 verified 並回報 `Stopped:`。meeting issue 不跑 verify，停在 planning 或 diagnosed（見 Phase 6 meeting report）。
 > - **Fail-safe escalation**: 遇到 ambiguity 寧可 abort,絕不亂猜 — 但 SDD path 預設是「文件化 assumption 後繼續」(見 Phase 3b),不是 abort。Abort 是最後手段。
 
 ## 與其他 idd-* skills 的關係
@@ -55,7 +55,7 @@ idd-all 不取代 atomic skills,而是包它們。每個 phase 仍透過 `Skill(
 1. 對每個 `#N` 讀最新 Diagnosis 的 `### Conflict Class`（emit 契約見 `idd-diagnose`）。缺 / 無法 parse → 預設 `D_diagnose_first` 並 **surface**（印出來），不靜默、不預設成 parallel class。
 2. 按 conflict-class discipline 排序處理順序：`E_verified_close`（cheap verify+close）與 `D_diagnose_first`（先 read-only diagnose、再 re-bucket）優先；`B_resource_serialize` / `C_shared_module_coord` 觸碰**同一具名資源**者相鄰序列化、不交錯；`A_parallel_safe` 之間順序不拘。同檔的 issue 視為一組（不拆開）。
 3. 逐一（sequential）跑 `/idd-all #N`。`A_parallel_safe` issue **可選**用 `scripts/idd-worktree.sh create <N>` 隔離工作樹，讓你**事後**能把這些 branch 手動並行推進；serialize-class 不隔離也安全（反正 sequential）。
-4. 停在 verified —— 與單 issue 一致，永不 auto-close / auto-merge。
+4. 每張的終點與單張相同（#392）：verify 乾淨就 merge 並 close；停在 guardrail 的留在 verified；meeting 停在 diagnosed 或 planning。一張 merge 之後，先 `git -C "$CWD" checkout -q <default> && git -C "$CWD" pull --ff-only -q` 更新預設 branch 再開始下一張；更新失敗就停止整批並回報是哪一步失敗。
 
 > **為什麼仍值得排序（即使 sequential）**：sequential 本身永遠安全，所以排序不是為了正確性，而是為了 (a) 把 cheap/E 與 read-first/D 先清掉、(b) 把同資源的 B/C 相鄰處理便於 review、(c) 替「日後手動並行」預先把 class-A 隔離好。真正的價值在 taxonomy 作為**並行安全契約**，而非這個 sequential 外圈本身。
 
@@ -77,9 +77,10 @@ TaskCreate(name="existing_work_check", description="Phase 0.5.1 (#366): 在建�
 TaskCreate(name="ensure_issue", description="Phase 1: 若 from-scratch 則跑 idd-issue; from-issue 則 verify issue 存在")
 TaskCreate(name="diagnose", description="Phase 2: 跑 idd-diagnose,讀回 complexity 判定")
 TaskCreate(name="implement_or_sdd", description="Phase 3: type=meeting → attended 走 meeting 版 /idd-plan、unattended 跳過(#383,先跑 meeting unwind); Simple/Plan → idd-implement; Spectra → spectra-discuss → spectra-propose → spectra-apply。Args 含 UNATTENDED MODE 與否依 Phase 0.5 解析的 interaction 軸決定。")
-TaskCreate(name="verify_loop", description="Phase 4: type=meeting → 跳過(#383); idd-verify; blocking findings 處理(unattended 自動修復最多 2 round, attended 把控制交回 user); follow-ups → 開新 issue")
+TaskCreate(name="verify_loop", description="Phase 4: type=meeting → 跳過(#383); 每輪 idd-verify 後跑 scripts/verify-gate.py 讀這一輪新貼出的報告(#392); clean → 往下; unparseable → STOP_REASON; not_clean: unattended 修 Blocking 與 In-scope fix 後重跑(最多 2 輪 verify), attended 交回 user; follow-ups → 開新 issue")
 TaskCreate(name="open_pr", description="Phase 5: type=meeting → 跳過、不 push(#383); PR mode → git push + gh pr create(body 含 Refs #N, 不含 Closes); direct-commit mode → skip,進 Phase 6")
-TaskCreate(name="report_and_stop", description="Phase 6: 依 mode 顯示對應 next-step(PR → review/merge/close; direct-commit → review last N commits/close; type=meeting → meeting report,#383)。永不 auto-invoke idd-close。")
+TaskCreate(name="close_stage", description="Phase 5c (#392): 不帶 --review、不在 --in-chain、無 STOP_REASON 時才進入。重判 verify gate; PR mode → CI checks(pending 最多等 15 分鐘)、auto-close trap、自組 squash message 三道 guardrail 全過才 gh pr merge --squash; direct-commit → 只在預設 branch 上掃 trap 後 git push origin HEAD; 然後以 ORCHESTRATED BY /idd-all 呼叫 /idd-close。任一道沒過 → Stopped:,不 merge 不 close")
+TaskCreate(name="report_and_stop", description="Phase 6: Done:/Undo: 回報(merge 或 push 的 commit、closed issue 與 closing summary、改動規模、follow-up、residue、distribution sync、verify reviewers); 停下時只列做到的步驟加 Stopped:; --review → awaiting human acceptance 措辭; type=meeting → meeting report(#383)")
 ```
 
 完成每一步立即 `TaskUpdate → completed`。**靜默完成 = 違規**。
@@ -376,7 +377,7 @@ fi
 
 blocked 的 outcome 文字：E1 → `existing PR #P`；E3 → `already merged in PR #P -> /idd-close #N`。Action items 的一行：`- #N: existing PR #P declares it — not started; review it (/idd-verify #N --pr P) or run /idd-all #N interactively`（E3：`- #N: already merged in PR #P — run /idd-close #N`）。
 
-> **為什麼 unknown 不擋**：這個檢查防的是重複實作，可逆；`idd-close` 擋的是不可逆的 close，所以它對失敗維持 fail-closed。兩者的差別是刻意的。
+> **為什麼 unknown 不擋**：這個檢查防的是重複實作，最壞只是多做一次；`idd-close` 擋的是把還沒做完的 issue 結掉——close 能 reopen，但結案摘要一貼出就通知了關注這張的人——所以它對失敗維持 fail-closed。兩者的差別是刻意的。
 
 **PR mode branch setup**(只在 `PATH_AXIS=PR` 執行):
 
@@ -966,39 +967,73 @@ UNATTENDED MODE — called by /idd-all orchestrator. Do not pause for AskUserQue
 fi
 ```
 
+每一輪 verify 之後，用 verify gate（`scripts/verify-gate.py`，#392）讀**這一輪新貼出**的 verify 報告，得到 `clean`／`not_clean`／`unparseable`。判斷由 helper 做，不由模型讀報告自己判：這是唯一會讓程式碼不經人手進預設 branch 的判斷，必須可重現、讀不出來就當成不乾淨。
+
+```bash
+# 每輪呼叫 idd-verify 之前：記下 issue 上最新一份 verify 報告的 id
+vg_latest() {  # stdout: {id, html_url, body} of the newest trusted comment headed exactly "## Verify: #N"
+  gh api "repos/$GITHUB_REPO/issues/$N/comments" --paginate \
+     --jq '[.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") | {id, html_url, body}]' \
+  | jq -s --arg n "$N" 'add // [] | map(select(.body | test("^## Verify: #" + $n + "([ \t]|$)"))) | last // {id: null, html_url: null, body: ""}'
+}
+VG_BEFORE=$(vg_latest | jq -r '.id // "none"')
+
+# …Skill(idd-verify) 跑完之後：只讀比 VG_BEFORE 新的那一份；沒有新的（verify 沒貼出報告）就是 unparseable
+VG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/idd-verify-gate.XXXXXX")
+vg_latest > "$VG_DIR/latest.json"
+if [ "$(jq -r '.id // "none"' "$VG_DIR/latest.json")" != "$VG_BEFORE" ]; then
+  jq -r '.body' "$VG_DIR/latest.json" > "$VG_DIR/report.md"
+  GATE_JSON=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/verify-gate.py" --comment-file "$VG_DIR/report.md")
+else
+  GATE_JSON='{"status":"unparseable","verdict":null,"blocking":null,"in_scope":null,"follow_up":null,"reason":"no new verify report was posted on the issue in this round"}'
+fi
+echo "→ verify gate (round $ROUND): $GATE_JSON"
+```
+
 ```python
-for round in 1..MAX_ROUND:
+MAX_ROUND = 2 if INTERACTION == "unattended" else 1   # verify rounds; at most one fix pass between them
+STOP_REASON = None
+for ROUND in 1..MAX_ROUND:
     Skill(skill="issue-driven-dev:idd-verify", args=VERIFY_ARGS)
+    gate = verify_gate()                     # the bash block above → GATE_JSON
 
-    findings = parse_verify_report(latest verify comment)
+    if gate.status == "clean":
+        break                                # → Phase 5, then Phase 5c merges and closes
 
-    if findings.blocking_count == 0:
-        break  # PASS
+    if gate.status == "unparseable":
+        STOP_REASON = f"verify gate: unparseable — {gate.reason}"
+        break                                # never fix against a report we cannot read; Phase 5c does not run
 
+    # not_clean
     if INTERACTION == "attended":
         # User is in session — surface findings and let them decide whether to keep iterating.
         # Do NOT auto-fix in attended mode; that defeats the purpose of HITL.
         report_findings_and_exit_to_user()
+        STOP_REASON = "verify gate: not_clean — findings handed back to the user"
         break
 
-    # unattended path: auto-fix attempt
-    if round == MAX_ROUND:
-        abort_with_message(f"verify still failing after {MAX_ROUND} rounds; manual intervention needed")
+    if ROUND == MAX_ROUND:
+        if gate.blocking > 0:
+            abort_with_message(f"verify still has Blocking findings after {MAX_ROUND} rounds; manual intervention needed")
+        STOP_REASON = f"verify gate: not_clean after {MAX_ROUND} rounds — {gate.in_scope} In-scope fix finding(s) remain"
+        break                                # 0 Blocking: Phase 5 still opens the PR; Phase 5c does not run
 
-    attempt_auto_fix(findings.blocking)
+    attempt_auto_fix(gate.blocking_findings + gate.in_scope_findings)   # unattended only
 ```
 
-**`MAX_ROUND` defaults**: 2 for unattended (best-effort auto-recover), 1 for attended (one read-out, hand back).
+**`MAX_ROUND`**：unattended 2 輪 verify（中間最多修一次）；attended 1 輪（讀出結果、交回使用者）。
 
 **Auto-fix 策略**(unattended only — best-effort):
 
-對每個 blocking finding,讀其描述 + suggested action,套用 Edit/Write 修正:
+對每個 Blocking 與 In-scope fix finding，讀其描述 + suggested action，套用 Edit/Write 修正：
 
 - 文法/拼字/字串 typo → 安全可修
 - 邏輯錯誤(null check, edge case) → 嘗試但 risky
 - 安全漏洞 → **不 auto-fix**,直接 abort 讓 user 處理
 
 每個 auto-fix commit:`fix: address verify finding — {finding summary} (#$N)`
+
+> **與 `idd-verify` Step 5a 的差異（#392）**：手動流程裡 In-scope fix 修完**不必**重跑 verify。idd-all 的自動 merge 路徑**要**重跑：自動修的程式碼若沒被 verify 看過就自動進預設 branch，等於沒有人審過。手動流程不變。
 
 **Follow-up findings**(設計決策 #4:auto-create issues):
 
@@ -1017,8 +1052,8 @@ if [ -n "$IN_CHAIN" ]; then
   echo "→ chain context (--in-chain): skipping push + PR (cluster PR opened later by /idd-all-chain Phase 3)"
   # v2.55+ #44 — no per-issue PR; cluster PR is opened by /idd-all-chain after chain queue completes.
 elif [ "$PATH_AXIS" = "direct-commit" ]; then
-  echo "→ direct-commit path: skipping push + PR"
-  # No-op — fall through to Phase 6 unconditionally below.
+  echo "→ direct-commit path: skipping PR (a push, if any, happens in Phase 5c after a clean verify)"
+  # No-op — fall through to Phase 5c below.
 elif [ "$PATH_AXIS" = "PR" ]; then
   # #383 verify r2: meeting 不 push、不開 PR。guard 與 push 在同一個 shell、同一個分支裡 ——
   # 放在另一個 fence 時,它的 exit 0 擋不住下一個 fence 的 push(r2 #12);放在分支外時,
@@ -1055,37 +1090,189 @@ Refs #${N}
 - [x] Diagnose ✓
 - [x] Implement(${COMMIT_COUNT} commits)
 - [x] Verify ✓
-- [x] **Verify-gated**: verify PASS — ready to merge → after merge, run /idd-close to finalize this issue (manual gate + closing summary; no auto-close trailer)
+- [x] **Verify-gated**: verify PASS — /idd-all merges this PR and then runs /idd-close when its close-stage guardrails pass (#392); no auto-close trailer
 
 ## Related
 {若有 follow-up issues,列出 #N #M ...}
 
 ---
-🤖 Generated by /idd-all. **Do NOT add a GitHub close trailer** (Closes/Fixes/Resolves) — IDD discipline requires manual /idd-close after merge to enforce checklist gate + closing summary.
+🤖 Generated by /idd-all. **Do NOT add a GitHub close trailer** (Closes/Fixes/Resolves) — IDD discipline requires /idd-close (run by /idd-all's close stage, or by hand) to enforce the checklist gate + closing summary.
 EOF
 )
 
-  gh pr create -R "$GITHUB_REPO" --title "$PR_TITLE" --body "$PR_BODY" \
-      --base "$DEFAULT" --head "$BRANCH"
+  PR_URL=$(gh pr create -R "$GITHUB_REPO" --title "$PR_TITLE" --body "$PR_BODY" \
+      --base "$DEFAULT" --head "$BRANCH") || abort "gh pr create failed — branch $BRANCH is pushed; open the PR by hand"
+  echo "→ opened $PR_URL"   # Phase 5c reads the PR number from this URL
 fi
-# Both branches fall through to Phase 6 below.
+# Every path falls through to Phase 5c below.
 ```
 
 > **絕對不能在 PR body 用 Closes/Fixes/Resolves trailer**。User-facing canonical 紀律見 [`rules/commit-issue-reference.md`](../../rules/commit-issue-reference.md)（#214）；理由見 idd-implement skill 裡的 trailer 禁令說明 — auto-close 會繞過 idd-close 的 checklist gate 和 closing summary。
 
 ---
 
+### Phase 5c: Close stage — merge（或 push）並 `/idd-close`（#392）
+
+verify 乾淨就收尾：PR mode squash-merge PR，direct-commit mode 在預設 branch 上 push，然後以 `ORCHESTRATED BY /idd-all` 指示呼叫 `/idd-close`。**不先問人**：merge 可以 revert、close 可以 reopen，依 Foresay 屬於 traceable 分支——做完必須在 Phase 6 回報實際做了什麼、怎麼復原（MANIFESTO〈auto-merge 的合法性與限制〉）。使用者的全域規則把 `/idd-all #N` 本身視為這幾個動作的確認（#392 comment 6562727408）。
+
+**不進入本階段的情況**——封閉列舉，只有這五種，不得依性質相似類推：
+
+| 情況 | 結果 |
+|---|---|
+| 帶 `--review` | 不 merge、不 close；Phase 6 用「awaiting human acceptance」措辭 |
+| `--in-chain` | 不 merge、不 close；cluster PR 由 `/idd-all-chain` 處理 |
+| `type=meeting` | 不會到這裡（Phase 2 直接到 Phase 6 meeting report） |
+| Phase 4 留下 `STOP_REASON`（gate 為 `not_clean` 或 `unparseable`） | Phase 6 回報 `Stopped: <STOP_REASON>` |
+| Phase 4 或 Phase 5 已 abort | 照 abort 職責處理（見 Failure Modes） |
+
+任何一道檢查沒過：**不 merge、不 push、不 close**，印出一行 `Stopped: <哪一道> — <原因原文>`，結束本階段，Phase 6 照實回報。本階段沒有任何「問使用者要不要繼續」的分支。
+
+#### 5c.1 再判一次 verify gate
+
+Phase 4 的 `GATE_JSON` 不跨 Bash 呼叫存活，這裡重讀最新的 verify 報告（同 Phase 4 的 `vg_latest`，不要求比上一份新），不是 `clean` 就停：
+
+```bash
+case "$N" in ''|*[!0-9]*) echo "FATAL: Phase 5c: issue number is not numeric: $N — not merging" >&2; exit 1 ;; esac
+[ -n "${GITHUB_REPO:-}" ] && [ -n "${CWD:-}" ] || { echo "Stopped: Phase 5c: GITHUB_REPO or CWD is empty (shell state lost) — not merging"; exit 0; }
+VG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/idd-close-stage.XXXXXX")
+gh api "repos/$GITHUB_REPO/issues/$N/comments" --paginate \
+   --jq '[.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") | {id, html_url, body}]' \
+ | jq -s --arg n "$N" 'add // [] | map(select(.body | test("^## Verify: #" + $n + "([ \t]|$)"))) | last // {id: null, html_url: null, body: ""}' \
+ > "$VG_DIR/latest.json"
+jq -r '.body' "$VG_DIR/latest.json" > "$VG_DIR/report.md"
+VERIFY_URL=$(jq -r '.html_url // ""' "$VG_DIR/latest.json")
+GATE_JSON=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/verify-gate.py" --comment-file "$VG_DIR/report.md")
+echo "→ verify gate: $GATE_JSON"
+[ "$(jq -r '.status' <<<"$GATE_JSON")" = clean ] \
+  || { echo "Stopped: guardrail 1 (verify gate) — $(jq -r '.status + ": " + .reason' <<<"$GATE_JSON")"; exit 0; }
+```
+
+#### 5c.2 PR mode：四道 guardrail 全過才 merge
+
+依序檢查（第 1 道是 5c.1）：
+
+| # | Guardrail | 過的條件 |
+|---|---|---|
+| 1 | verify gate | 5c.1 為 `clean` |
+| 2 | CI checks | `gh pr checks` 每一項都是 `pass` 或 `skipping`；有 `pending` 時等待，總共最多 15 分鐘；PR 完全沒有 check 視為通過；`fail` 或 `cancel` 即停 |
+| 3 | auto-close trap | PR body 沒有 closing reference，且每個 commit 的 subject 與 body 都沒有 close 類關鍵字緊鄰 `#數字`（與 `idd-verify` Step 0.8 同兩個 source；`idd-all` 以本地模式呼叫 verify，Step 0.8 沒有跑，所以在這裡跑） |
+| 4 | squash message | squash 的 subject 與 body 由本階段自己組，只用 `Refs #N` 引用 issue；組好後再掃一次 close 類關鍵字緊鄰 `#數字`（這裡**不**排除 `idd-close` 這類帶連字號的寫法：GitHub 會把它拆開，`/idd-close #N` 也會觸發 auto-close，#173） |
+
+```bash
+PR="${PR_URL##*/}"
+case "$PR" in ''|*[!0-9]*) echo "Stopped: Phase 5c: no PR number from Phase 5 ('${PR_URL:-}') — not merging"; exit 0 ;; esac
+
+# Guardrail 2 — CI checks. Pending checks are waited for, 15 minutes in total.
+# A Bash tool call has its own time limit: run this loop in the background, or
+# split it over several calls that keep the same DEADLINE (print it once).
+DEADLINE=${DEADLINE:-$(( $(date +%s) + 900 ))}; echo "→ CI wait deadline: $DEADLINE"
+while :; do
+  CHECKS=$(gh pr checks "$PR" --repo "$GITHUB_REPO" --json name,bucket 2>&1); RC=$?
+  if [ "$RC" -ne 0 ] && [ "$RC" -ne 8 ]; then          # 8 = checks pending (gh pr checks --help)
+    case "$CHECKS" in
+      *"no checks reported"*) CHECKS='[]' ;;           # a PR with no checks passes this guardrail
+      *) echo "Stopped: guardrail 2 (CI checks) — gh pr checks exited $RC: $CHECKS"; exit 0 ;;
+    esac
+  fi
+  BAD=$(jq -r '[.[] | select(.bucket == "fail" or .bucket == "cancel") | .name] | join(", ")' <<<"$CHECKS") \
+    || { echo "Stopped: guardrail 2 (CI checks) — unreadable gh output"; exit 0; }
+  [ -z "$BAD" ] || { echo "Stopped: guardrail 2 (CI checks) — failed: $BAD"; exit 0; }
+  WAIT=$(jq -r '[.[] | select(.bucket == "pending") | .name] | join(", ")' <<<"$CHECKS")
+  [ -z "$WAIT" ] && break
+  [ "$(date +%s)" -lt "$DEADLINE" ] || { echo "Stopped: guardrail 2 (CI checks) — still pending after 15 minutes: $WAIT"; exit 0; }
+  sleep 30
+done
+
+# Guardrail 3 — auto-close trap. Source 1: GitHub's own parse of the PR body.
+REFS=$(gh pr view "$PR" --repo "$GITHUB_REPO" --json closingIssuesReferences -q '[.closingIssuesReferences[].url] | join(" ")') \
+  || { echo "Stopped: guardrail 3 (auto-close trap) — could not read the PR's closing references"; exit 0; }
+[ -z "$REFS" ] || { echo "Stopped: guardrail 3 (auto-close trap) — the PR body would auto-close: $REFS"; exit 0; }
+# Source 2: every commit's subject and body (same regex as idd-verify Step 0.8).
+TRAP_RE='(^|[^-/[:alnum:]])(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]*:?[[:space:]]+#[0-9]+'
+COMMITS=$(gh pr view "$PR" --repo "$GITHUB_REPO" --json commits \
+  --jq '.commits[] | "===\(.oid)===\n\(.messageHeadline // "")\n\(.messageBody // "")"') \
+  || { echo "Stopped: guardrail 3 (auto-close trap) — could not read the PR's commits"; exit 0; }
+HITS=$(printf '%s\n' "$COMMITS" | awk -v re="$TRAP_RE" '
+  /^===[a-f0-9]+===$/ { oid = substr($0, 4, length($0) - 6); next }
+  { if (match(tolower($0), re)) print oid }' | sort -u | tr '\n' ' ')
+[ -z "$HITS" ] || { echo "Stopped: guardrail 3 (auto-close trap) — close keyword next to an issue number in commit(s): $HITS"; exit 0; }
+
+# Guardrail 4 — the squash message this stage writes.
+SUBJ="$(gh pr view "$PR" --repo "$GITHUB_REPO" --json title -q .title) (#$PR)" \
+  || { echo "Stopped: guardrail 4 (squash message) — could not read the PR title"; exit 0; }
+BODY=$(printf 'Refs #%s\n\nMerged by /idd-all after a clean verify: %s\n' "$N" "$VERIFY_URL")
+SQUASH_RE='(^|[^[:alnum:]])(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]*:?[[:space:]]+#[0-9]+'
+if printf '%s\n%s\n' "$SUBJ" "$BODY" | grep -Eiq -- "$SQUASH_RE"; then
+  echo "Stopped: guardrail 4 (squash message) — the subject or body has a close keyword next to an issue number: $SUBJ"; exit 0
+fi
+
+# All four passed — merge. No --delete-branch: deleting the branch is not part of this stage.
+gh pr merge "$PR" --repo "$GITHUB_REPO" --squash --subject "$SUBJ" --body "$BODY" \
+  || { echo "Stopped: merge — gh pr merge failed (message above); PR #$PR is still open"; exit 0; }
+MERGE_SHA=$(gh pr view "$PR" --repo "$GITHUB_REPO" --json mergeCommit -q '.mergeCommit.oid')
+git -C "$CWD" fetch -q origin || echo "⚠ git fetch failed after the merge — /idd-close reads the merged PR from GitHub, so it can continue"
+echo "→ merged PR #$PR as $MERGE_SHA"
+```
+
+#### 5c.3 direct-commit mode：只在預設 branch 上 push
+
+修正要先在遠端的預設 branch 上，issue 才關：不然別人看到的是一張已關、卻找不到修正的 issue。不在預設 branch 上就停；push 被拒就停，不自動 rebase。push 前掃一次要推出去的 commit 有沒有 close 類關鍵字緊鄰 `#數字`——direct-commit 沒有 PR，GitHub 收到這種 commit 會直接關掉 issue、繞過 `/idd-close`（`references/pr-flow.md` 的 #151 警告）。
+
+```bash
+DEFAULT=$(gh repo view "$GITHUB_REPO" --json defaultBranchRef -q .defaultBranchRef.name) && [ -n "$DEFAULT" ] \
+  || { echo "Stopped: push — default branch lookup failed"; exit 0; }
+CUR=$(git -C "$CWD" branch --show-current)
+[ "$CUR" = "$DEFAULT" ] || { echo "Stopped: the fix is on '$CUR', not on the default branch '$DEFAULT' — not pushing, not closing"; exit 0; }
+git -C "$CWD" fetch -q origin "$DEFAULT" || { echo "Stopped: push — git fetch failed"; exit 0; }
+TRAP_RE='(^|[^-/[:alnum:]])(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]*:?[[:space:]]+#[0-9]+'
+HITS=$(git -C "$CWD" log --format='===%H===%n%s%n%b' "origin/$DEFAULT..HEAD" | awk -v re="$TRAP_RE" '
+  /^===[0-9a-f]+===$/ { oid = substr($0, 4, length($0) - 6); next }
+  { if (match(tolower($0), re)) print oid }' | sort -u | tr '\n' ' ')
+[ -z "$HITS" ] || { echo "Stopped: push — close keyword next to an issue number in commit(s): $HITS (GitHub would close the issue without /idd-close)"; exit 0; }
+PUSH_FROM=$(git -C "$CWD" rev-parse "origin/$DEFAULT")
+git -C "$CWD" push origin HEAD || { echo "Stopped: push rejected (no automatic rebase) — not closing"; exit 0; }
+PUSH_TO=$(git -C "$CWD" rev-parse HEAD)
+echo "→ pushed $(git -C "$CWD" rev-list --count "$PUSH_FROM..$PUSH_TO") commit(s) to $DEFAULT ($PUSH_FROM..$PUSH_TO)"
+```
+
+#### 5c.4 呼叫 `/idd-close`
+
+```bash
+CLOSE_ARGS="#$N
+
+ORCHESTRATED BY /idd-all — close stage of #392. Do not ask the user at the stop points; apply the defaults of this skill's 'Orchestrated close' section. List every default you applied. If you stop without closing, end with exactly one line: 'Close stopped: <step> — <reason>'."
+if [ "$INTERACTION" = "unattended" ]; then
+  CLOSE_ARGS="$CLOSE_ARGS
+
+UNATTENDED MODE — called by /idd-all orchestrator. No one is present: skip the Step 6.5 distribution sync and list the command instead."
+fi
+```
+
+然後 `Skill(skill="issue-driven-dev:idd-close", args="$CLOSE_ARGS")`。`/idd-close` 沒有 `--cwd`，它的 shell 區塊以 `$PWD` 為 repo（Step 1.55 寫的是 `WORKDIR="${CWD:-$PWD}"`）：在 `$CWD` 執行它的 shell 區塊。兩個指示互相獨立：`ORCHESTRATED` 決定「誰在呼叫」（停點取預設），`UNATTENDED MODE` 決定「有沒有人在場」（只影響 distribution sync）。
+
+#### 5c.5 close 停下時
+
+```bash
+STATE=$(gh issue view "$N" --repo "$GITHUB_REPO" --json state -q .state)
+[ "$STATE" = CLOSED ] && echo "→ closed #$N" \
+  || echo "Stopped: /idd-close #$N did not close the issue — ${CLOSE_STOPPED:-see the Close stopped line above}; the merge/push already happened. Run /idd-close #$N after dealing with it."
+```
+
+PR 已 merge（或已 push）而 `/idd-close` 停下時，**不回滾**：回報寫明「已 merge、issue 仍開著」、停在哪一步、原因，並給出 `/idd-close #N`。close 的 gate 不在 merge 前先跑，因為 Step 1.55 要讀已 merge 的 PR 才能判斷。
+
+---
+
 ### Phase 6: Report and Stop (mode-aware)
 
-**Verify is the terminal phase regardless of mode**（meeting issue 例外，見下方 meeting report） (Task 5.1) — `idd-all` 在兩個 mode 下都停在這裡,**永不**自動跑 `/idd-close`。
+Phase 6 回報這次 run 實際做到哪裡（#392）：merge（或 push）並 close 都完成時是 `Done:`／`Undo:`；在 gate、guardrail 或 `/idd-close` 停下時是 `Done:` 加上 `Stopped:`；帶 `--review` 時沿用「awaiting human acceptance」措辭；meeting issue 印 meeting report。
 
 #### Meeting report(#383 verify r1)
 
-選樣板看本次**實際走的路線**,不看重讀的 type(r6 #1):Phase 2 走了 meeting 列 → 印下面的 meeting report;Phase 3 有跑(implement、Plan 或 Spectra)→ 印後面的 PR／direct-commit 樣板。
+選樣板看本次**實際走的路線**,不看重讀的 type(r6 #1):Phase 2 走了 meeting 列 → 印下面的 meeting report;Phase 3 有跑(implement、Plan 或 Spectra)→ 印後面的 Run report 樣板。
 
 再照 Phase 5 guard 的寫法(`idd_diagnosis_type` 讀最新受信任 Diagnosis)重新取得 type 做交叉核對,attended 與 unattended 都一樣(meeting-issue-type 規格:後續需要 type 的步驟——unwind、verify、push、final report——都要從受信任 Diagnosis 重新取得,r5 #7)。重讀結果與路線不一致時——例如 direct-commit 或 `--in-chain` 的 run 在 verify 期間被貼了 meeting 的 Diagnosis(Phase 5 guard 只在 PR 路徑跑)——樣板仍照路線印,最上方加一行 `⚠ type changed during this run: the latest trusted Diagnosis of #N now records <type>; re-run /idd-diagnose #N`;重讀失敗時也照路線印,加一行 `⚠ could not re-read the Diagnosis type of #N`(r6 #9、#17)。換樣板會讓一個真的 implement、verify、開了 PR 的 run 印出「no implement, no verify, no push, no PR」。
 
-Phase 2 走 meeting 列的 run 不印 PR／direct-commit 樣板——那些樣板宣稱的 verify、implementation commits、PR 都沒有發生。改印:
+Phase 2 走 meeting 列的 run 不印 Run report 樣板——那些樣板宣稱的 verify、implementation commits、PR 都沒有發生。改印:
 
 ```
 ✓ idd-all stopped (type=meeting)
@@ -1099,28 +1286,52 @@ Phase 2 走 meeting 列的 run 不印 PR／direct-commit 樣板——那些樣�
         unattended → see Action items (an attended /idd-plan, or /idd-close)
 ```
 
-報告由模型照實填寫(Plan 填 `/idd-plan` 貼出的 Meeting Plan comment URL,unattended 時用預設文字)。之後照常附上「Phase 6 Action items surface」那一節的 Action items。**順序:先跑 Action items 區塊,再清理**——INTERACTION 遺失時,那個區塊要靠 unattended state file 回推,清掉之後就讀不到(r6 #8、#11)。meeting report 印出後同樣 `clear_unattended "$CWD"`(#123)——跳過 PR／direct-commit 樣板不代表跳過這個清理(verify r2 #9)。
+報告由模型照實填寫(Plan 填 `/idd-plan` 貼出的 Meeting Plan comment URL,unattended 時用預設文字)。之後照常附上「Phase 6 Action items surface」那一節的 Action items。**順序:先跑 Action items 區塊,再清理**——INTERACTION 遺失時,那個區塊要靠 unattended state file 回推,清掉之後就讀不到(r6 #8、#11)。meeting report 印出後同樣 `clear_unattended "$CWD"`(#123)——跳過 Run report 樣板不代表跳過這個清理(verify r2 #9)。
 
-#### PR mode report
+#### Run report（PR 與 direct-commit 共用，#392）
 
-Terminal disposition wording dispatches on `$REVIEW_FLAG` per the MANIFESTO `Human-in-the-loop: IDD 即 Foresay Confirmation Protocol` doctrine — `verify-gated` is the named terminal default; `--review` re-opens the confirmation loop.
+回報寫實際發生的事，不寫預估；要短——人只需要知道做了什麼、哪裡可能要他處理、怎麼復原。
 
-Default (`REVIEW_FLAG=""`):
+merge（或 push）並 close 都完成時：
 
 ```
-✓ idd-all complete (PR mode)
+✓ idd-all #${N} — ${TITLE}
 
-  Issue:        #${N} — ${TITLE}
-  Branch:       ${BRANCH}
-  Commits:      ${COMMIT_COUNT} (implementation + ${FIX_ROUND_COUNT} verify-fix rounds)
-  PR:           ${PR_URL}
-  Verify:       verify-gated PASS
-  Follow-ups:   ${FOLLOWUP_ISSUE_LIST or "(none)"}
-
-Next: merge ${PR_URL}, then run /idd-close #${N}
+Done:
+  merged PR #${PR} into ${DEFAULT} as ${MERGE_SHA}     (direct-commit: pushed ${K} commit(s) to ${DEFAULT}, ${PUSH_FROM}..${PUSH_TO})
+  closed #${N} — closing summary: ${CLOSING_SUMMARY_URL}
+  changed: ${FILES} files, +${ADDS}/-${DELS}
+  follow-ups filed: ${FOLLOWUPS or "none"}
+  residue recorded: ${RESIDUE or "none"}
+  distribution sync: ${done | asked: <answer> | skipped — run <command> | n/a}
+  verify: ${ENGINE line of the verify report}; degraded: ${missing reviewers or "none"}
+Undo:
+  gh issue reopen ${N}
+  git revert ${MERGE_SHA}                              (direct-commit: git revert ${PUSH_FROM}..${PUSH_TO})
 ```
 
-With `--review` (`REVIEW_FLAG="--review"`):
+`changed` 取自 `git diff --shortstat ${MERGE_SHA}^ ${MERGE_SHA}`（direct-commit：`${PUSH_FROM} ${PUSH_TO}`）；`verify` 照抄 verify 報告的 `### Engine` 那一行。
+
+停下時（gate 不乾淨、guardrail 沒過、push 被拒、`/idd-close` 停下），`Done:` 只列實際做到的步驟，接著一行 `Stopped:`，原因照抄 Phase 4 或 Phase 5c 印出的那一行：
+
+```
+✓ idd-all #${N} — ${TITLE} (stopped)
+
+Done:
+  ${only what happened, e.g. "opened PR #${PR}" or "merged PR #${PR} into ${DEFAULT} as ${MERGE_SHA}"}
+Stopped: ${guardrail or stop point} — ${reason, verbatim}
+Next: ${one line for the human, e.g. "review PR #${PR}; after merging it run /idd-close #${N}" or "run /idd-close #${N}"}
+Undo:                                                   (only when something was merged or pushed)
+  git revert ${MERGE_SHA}
+```
+
+這行 `Next:` 是 Phase 6 唯一要人接手的地方；merge 與 close 都完成時沒有 `Next:`。
+
+#### `--review` report
+
+帶 `--review` 時不進 Phase 5c，沿用「awaiting human acceptance」措辭：
+
+PR mode：
 
 ```
 ✓ idd-all complete (PR mode, --review)
@@ -1135,23 +1346,7 @@ With `--review` (`REVIEW_FLAG="--review"`):
 Next: review PR ${PR_URL}, merge after acceptance, then run /idd-close #${N}
 ```
 
-#### direct-commit mode report
-
-Default (`REVIEW_FLAG=""`):
-
-```
-✓ idd-all complete (direct-commit mode — HITL)
-
-  Issue:        #${N} — ${TITLE}
-  Branch:       ${BRANCH}  (commits landed on user's current checkout)
-  Commits:      ${COMMIT_COUNT} (implementation + ${FIX_ROUND_COUNT} verify-fix rounds)
-  Verify:       verify-gated ${VERIFY_STATE}  (PASS, or findings deferred to user in attended mode)
-  Follow-ups:   ${FOLLOWUP_ISSUE_LIST or "(none)"}
-
-Next: run /idd-close #${N}
-```
-
-With `--review` (`REVIEW_FLAG="--review"`):
+direct-commit mode：
 
 ```
 ✓ idd-all complete (direct-commit mode — HITL, --review)
@@ -1167,7 +1362,7 @@ Next: review last ${COMMIT_COUNT} commits (git log -${COMMIT_COUNT}), then run /
 
 **Cleanup（#123）**：terminal report 與下一節的 Action items 都印出後才 `clear_unattended "$CWD"` — unattended flag 的生命週期 = 本次 orchestration。Action items 區塊在 INTERACTION 遺失時要靠這個 state file 回推，所以不能先清（#383 verify r6 #8、#11）。
 
-**STOP**。不 auto-merge(PR mode)、不 auto-close(both modes)。Per MANIFESTO doctrine,verify-gated PASS 是 terminal default disposition;auto-merge mechanic 屬 **#37** bulk-solve autopilot 範疇,**不**是 idd-all default。`--review` 是 **orchestrator-scope messaging-only** opt-in,不會讓 idd-all 等候 — 它只表態 "user 還想自己再過一次" 並切換 Phase 6 wording。(per #108 DA3: orchestrator-scope qualifier matters — humans/CI downstream may react to the changed text differently, so the flag is messaging-only **at orchestrator scope**, not necessarily end-to-end.)
+**STOP**。Phase 6 之後 idd-all 不再做任何事：merge 與 close 已在 Phase 5c 做完或停下並寫明原因。`--review` 是 **orchestrator-scope** opt-in：它讓 run 停在 verified，不做 merge 與 close，Phase 6 改用「awaiting human acceptance」措辭（per #108 DA3: orchestrator-scope qualifier matters — humans/CI downstream may react to the changed text differently）。
 
 #### Phase 6 Action items surface (v2.74.0+, #137)
 
@@ -1292,6 +1487,10 @@ fi
 | spectra-apply 留下 unfinished tasks | 不 abort — Phase 4 verify 會抓出來 |
 | Verify 2 round 後仍 blocking | Phase 4 abort,留 branch 給 user 手動修 |
 | `gh pr create` fail | Phase 5 abort,branch 已 push,提示手動開 PR |
+| verify gate `unparseable`(報告讀不出來、沒有新報告、判定與表格矛盾) | 不修、不 merge、不 close;停在 verified,Phase 6 `Stopped:` 寫出 gate 的 reason(#392) |
+| Phase 5c 任一道 guardrail 沒過(CI 失敗或 15 分鐘仍 pending、auto-close trap、squash message) | 不 merge;PR 保留,Phase 6 `Stopped:` 寫出是哪一道與原因(#392) |
+| direct-commit 不在預設 branch、push 前掃到 close 關鍵字、或 push 被拒 | 不 push(或 push 失敗)、不 close、不自動 rebase;Phase 6 `Stopped:`(#392) |
+| PR 已 merge(或已 push)但 `/idd-close` 停下 | 不回滾;Phase 6 `Done:` 列出 merge,`Stopped:` 寫出 close 停在哪一步,`Next:` 給 `/idd-close #N`(#392) |
 
 abort 時:
 - `clear_unattended "$CWD"`（#123 — 絕不留 stale unattended flag 誤導下一個 attended session）
@@ -1304,40 +1503,55 @@ abort 時:
 ## 鐵律
 
 - **PR mode 一律在 feature branch**。direct-commit mode 留在 user 當前 branch — 兩者都是合法 path。
-- **永遠停在 verified**。不論 mode,close 是人類 checkpoint(closing summary 含 root cause + solution + verification trail,該由人寫不該由機器猜)。
-- **永遠不 auto-merge PR**(PR mode)。即使 verify PASS,PR review 是另一層保險(CI、其他 reviewer、user 自己再看一次)。
+- **merge 與 close 只跟在乾淨的 verify 之後**(#392)。verify gate 判 `clean`、guardrail 全過才 merge(或 push)並 `/idd-close`;判不出來一律當成不乾淨。closing summary 照 `/idd-close` 的格式寫,root cause、solution、verification trail 都要有,Phase 6 附上它的連結。
+- **做了就回報怎麼復原**。merge 與 close 不先問人(Foresay traceable),所以 Phase 6 一定列出 `Undo:`(`gh issue reopen`、`git revert`)。
 - **Attended mode 沒有 silent timeout**。user 沒回應就一直等;若 user 不在,該選 unattended。
 - **abort 比硬撐好**。任何 ambiguity → 停下、保留進度、告訴 user 怎麼接手。
 
 ## Examples
 
-### Trace 1: `(PR, unattended)` — v2.40.0 regression
+### Trace 1: `(PR, unattended)` — `/loop` 與預設 caller
 
 ```
 /idd-all #42 --pr
 ```
 
-Phase 0.5 印 `→ Path: PR (unattended) — flag=--pr`,sub-skill args 全帶 `UNATTENDED MODE` directive。
+Phase 0.5 印 `→ Path: PR (unattended) — flag=--pr`,sub-skill args 全帶 `UNATTENDED MODE` directive。verify 第 1 輪有 2 項 In-scope fix → 自動修 → 第 2 輪 gate `clean` → Phase 5 開 PR → Phase 5c 四道 guardrail 全過,squash-merge 後以 `ORCHESTRATED BY /idd-all` 跑 `/idd-close`(#392):
 
 ```
-✓ idd-all complete (PR mode)
-  Issue:        #42 — bug: login button stops after 3 failed attempts
-  Branch:       idd/42-bug-login-button-stops-after-3-faile
-  Commits:      3 (implementation + 0 verify-fix rounds)
-  PR:           https://github.com/owner/repo/pull/87
-  Verify:       verify-gated PASS
-  Follow-ups:   (none)
+✓ idd-all #42 — bug: login button stops after 3 failed attempts
 
-Next: merge https://github.com/owner/repo/pull/87, then run /idd-close #42
+Done:
+  merged PR #87 into main as 3f2c1ab
+  closed #42 — closing summary: https://github.com/owner/repo/issues/42#issuecomment-111
+  changed: 3 files, +48/-9
+  follow-ups filed: none
+  residue recorded: none
+  distribution sync: n/a
+  verify: pai-ensemble 2.18.0 — 4 IDD lenses + DA + Codex, model: opus; degraded: none
+Undo:
+  gh issue reopen 42
+  git revert 3f2c1ab
 ```
 
-With `--review` opt-in:
+CI 有一項失敗時,Phase 5c 不 merge:
+
+```
+✓ idd-all #42 — bug: login button stops after 3 failed attempts (stopped)
+
+Done:
+  opened PR #87
+Stopped: guardrail 2 (CI checks) — failed: test
+Next: fix the failing check on PR #87; after merging it run /idd-close #42
+```
+
+With `--review` opt-in(不進 Phase 5c):
 
 ```
 ✓ idd-all complete (PR mode, --review)
   Issue:        #42 — bug: login button stops after 3 failed attempts
   Branch:       idd/42-bug-login-button-stops-after-3-faile
-  Commits:      3 (implementation + 0 verify-fix rounds)
+  Commits:      3 (implementation + 1 verify-fix rounds)
   PR:           https://github.com/owner/repo/pull/87
   Verify:       verify-gated PASS — awaiting human acceptance (re-opened confirmation loop per --review)
   Follow-ups:   (none)
@@ -1345,11 +1559,11 @@ With `--review` opt-in:
 Next: review PR https://github.com/owner/repo/pull/87, merge after acceptance, then run /idd-close #42
 ```
 
-`/loop` 自動化 caller 觀察行為與 v2.40.0 完全一致 — feature branch、push、PR 帶 `Refs #42`、無 `Closes`、停在 verified。Per MANIFESTO `Human-in-the-loop` doctrine: `verify-gated PASS, ready to merge` is a state declaration, NOT a `gh pr merge` authorization — autopilot remains #37 territory.
+`/loop` 等自動化 caller 從 3.7.0 起看到的終點是 closed,不再是 verified(CHANGELOG 標 BREAKING);需要舊行為的 caller 帶 `--review`。PR 仍帶 `Refs #42`、不含 `Closes`;issue 由 `/idd-close` 關,不靠 GitHub 的 auto-close。
 
 ### Trace 2: `(direct-commit, attended)` — HITL 場景
 
-`.claude/issue-driven-dev.local.json` 含 `"pr_policy": "never"`,user 在 keyboard:
+`.claude/issue-driven-dev.local.json` 含 `"pr_policy": "never"`,user 在 keyboard、目前在 `main`:
 
 ```
 /idd-all #42
@@ -1359,20 +1573,26 @@ Phase 0.5 印 `→ Path: direct-commit (attended) — pr_policy=never`,sub-skill
 
 中間流程:
 - Phase 2 diagnose 判定 `Plan` → Phase 3p `/idd-plan` 用 `EnterPlanMode` 把 plan 呈現給 user → user `ExitPlanMode` approve → `/idd-plan` chain 到 `/idd-implement` 跑 TDD
-- Phase 4 verify 找到 1 個 P3 finding → 不 auto-fix(attended mode trade-off),直接 surface 給 user
+- Phase 4 verify gate `clean`(只剩 1 項 Follow-up,照常開 follow-up issue)
+- Phase 5c:在預設 branch 上,push 前的 trap 掃描乾淨 → `git push origin HEAD` → `/idd-close`;Step 6.5 有人在場,照常詢問 distribution sync
 
 ```
-✓ idd-all complete (direct-commit mode — HITL)
-  Issue:        #42 — bug: login button stops after 3 failed attempts
-  Branch:       main  (commits landed on user's current checkout)
-  Commits:      3 (implementation + 0 verify-fix rounds)
-  Verify:       PASS with 1 P3 finding (deferred to user)
-  Follow-ups:   (none)
+✓ idd-all #42 — bug: login button stops after 3 failed attempts
 
-Next: review last 3 commits (git log -3), then run /idd-close #42
+Done:
+  pushed 3 commit(s) to main, 9a1b2c3..4d5e6f7
+  closed #42 — closing summary: https://github.com/owner/repo/issues/42#issuecomment-222
+  changed: 3 files, +48/-9
+  follow-ups filed: #43
+  residue recorded: none
+  distribution sync: asked: skip
+  verify: pai-ensemble 2.18.0 — 4 IDD lenses + DA + Codex, model: opus; degraded: none
+Undo:
+  gh issue reopen 42
+  git revert 9a1b2c3..4d5e6f7
 ```
 
-無 push、無 PR、commits 直接落在 main(或 user 開頭 checkout 的 branch)。
+若 user 一開始在 `wip/foo` 而不是 `main`,Phase 5c 不 push、不 close,回報 `Stopped: the fix is on 'wip/foo', not on the default branch 'main'`。若 verify 有 Blocking,attended 不自動修,findings 交回 user,同樣不進 Phase 5c。
 
 ### Trace 4: `(PR, unattended)` + ralph-loop missing — graceful degrade (v2.53+, #28)
 
@@ -1436,36 +1656,15 @@ idd-all 在指定 local clone 跑完整 pipeline:branch 開在那邊、commits l
 
 ## Next Step
 
-idd-all 結束後,user 接手 — 步驟依 resolved mode 而異。
+merge 與 close 都完成時沒有下一步:Phase 6 的 `Done:` 是給人事後看的紀錄,`Undo:` 是要撤回時的命令。
+
+只有回報裡出現 `Stopped:` 或 `Next:` 時,人才需要接手,做的就是那一行寫的事——通常是兩種之一:
+
+- **停在 verified**(gate 不乾淨、guardrail 沒過、帶 `--review`):看過 PR 或 commit、處理 `Stopped:` 寫的原因,merge 之後跑 `/idd-close #N`;或再跑一次 `/idd-all #N`。
+- **已 merge、`/idd-close` 停下**:處理 close 停下的原因(例如 Step 1.6 的警告),再跑 `/idd-close #N`。
 
 ### meeting run(#383)
 
 最新受信任 Diagnosis 的 `### Type` 是 meeting 時,沒有 PR、沒有 implementation commit 可 review:attended run 寫完 Meeting Plan,做完 Phase C 的行動項後跑 `/idd-close #N`;unattended run 停在 diagnosed,照 Action items 在有人在場時跑 `/idd-plan #N` 或 `/idd-close #N`。PR 模式若保留了只帶 attachment manifest 的 `idd/N-*` branch,先決定 push 或刪除。
 
-### PR mode
-
-```bash
-# 1. Review PR
-gh pr view <PR_URL>
-
-# 2. Merge(approve 後)
-gh pr merge <N> --squash  # or --merge / --rebase
-
-# 3. Close issue with summary
-/issue-driven-dev:idd-close #${N}
-```
-
-### direct-commit mode
-
-```bash
-# 1. Review last N commits (no PR to view)
-git log -<N> --stat
-
-# 2. (Optional) push if commits should land remote
-git push
-
-# 3. Close issue with summary
-/issue-driven-dev:idd-close #${N}
-```
-
-兩個 mode 共通:**`/idd-close` 始終由 user 主動觸發**,idd-all 自身永不 auto-close。
+`/idd-close` 仍是人可以直接呼叫的入口:手動結案的流程與問題都不變,只有 idd-all 帶 `ORCHESTRATED BY /idd-all` 指示呼叫時才取預設。

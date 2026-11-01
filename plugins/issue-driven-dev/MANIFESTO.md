@@ -150,33 +150,41 @@ Foresay 的「Read-Only for Humans」在 IDD 落成一條具體的 cross-skill �
 
 Normative spec：capability `choice-first-decision-rendering`（見 `openspec/changes/add-choice-first-decision-doctrine/`）。
 
-### `verify-gated` 是 terminal 預設 disposition
+### `verify-gated` 是 merge 與 close 的閘門
 
-一次乾淨的 6/6 verify PASS 足以 merge —— issue 是 acceptance contract，verify 確認 delivery。`idd-all` / `idd-all-chain` Phase 6/4 報告的 `verify-gated PASS, ready to merge` 是這個 doctrine 的具體表達。
+一次乾淨的 verify 足以 merge 並 close —— issue 是 acceptance contract，verify 確認 delivery。`idd-all` 在 verify gate（`scripts/verify-gate.py`）判定乾淨、merge guardrail 全過時，接著 merge（PR mode）或 push（direct-commit mode）並跑 `/idd-close`（#392）。`verify-gated PASS` 是這條路的閘門，不再是終點；`idd-all-chain` 是否跟進由 #393 決定，目前仍停在 verified。
 
 把 `idd-verify` 的 6-AI ensemble 通過當成「沒 review」是反向誤讀 —— **AI verify PASS 本身就是 review**：5 個 specialized adversarial agents（requirements / logic / security / regression / devil's advocate）+ 一個獨立 model（Codex），cross-lens、falsifiable，在 correctness 維度上**超過**一個人類 merge reviewer 的 thoroughness。Verify 本身是 acceptance 的 falsifiable 部分。
 
 ### `--review` flag：opt-in 重開 confirmation loop
 
-罕見情境裡，user 想對自己 issue 起疑（"我可能 issue 寫錯了"），可以用 `--review` flag 重開 confirmation loop。Phase 6 報告會從 `verify-gated PASS, ready to merge` 切成 `verify-gated PASS — awaiting human acceptance (re-opened confirmation loop per --review)`。
+罕見情境裡，user 想對自己 issue 起疑（"我可能 issue 寫錯了"），可以用 `--review` flag 重開 confirmation loop：idd-all 停在 verified，不 merge 也不 close，Phase 6 報告改用 `verify-gated PASS — awaiting human acceptance (re-opened confirmation loop per --review)`。
 
 `--review` **不是 quality gate** —— 它是 **orchestrator-scope** opt-in 重開 confirmation loop (per #108 DA3)。Verify 的 falsifiability 不受影響；改變的只是「user 還想自己再過一次」的 explicit 表態。`--review` 是 per-invocation flag，**不是** standing config field —— 一個 exception 不該升格成 standing policy。
 
 ### auto-merge 的合法性與限制
 
-在 `verify-gated PASS` 的 doctrine 下，clean 6/6 verify PASS 之上 auto-merge **是合法的** —— 證成理由是 "verify is the gate"（獨立 ensemble 已抓 catch），**不是** "merges are reversible"（revert 不對稱：一個 reviewed change + 兩個 history scars + distribution 已 ship）。
+clean verify 之上 auto-merge **是合法的**，理由有兩個，並列（#392）：
 
-Guardrails 是 mandatory，不是 skipped：
+1. **verify is the gate**：獨立 ensemble 已經審過。merge 的正確性由 verify 保證，不由「事後可以 revert」保證。
+2. **可逆讓它免事前確認（Foresay traceable）**：merge 可以 revert、close 可以 reopen；意圖清楚又可逆的操作不設事前確認，但做完一定要回報做了什麼、怎麼復原。所以 `idd-all` 的 Phase 6 回報一定有 `Done:` 與 `Undo:`。
 
-- Clean 6/6 PASS only（never CONDITIONAL / FAIL）
-- Step 0.8 auto-close-trap scan 必須 clean
-- Squash commit message 必須 clean
+第二個理由只免除事前確認，不放寬第一個：verify 判不出乾淨，就不 merge。
 
-**auto-merge ≠ auto-close** —— `idd-close` 仍要跑（closing summary 是 audit artifact，不可省）。
+revert 不對稱仍然成立：一個 reviewed change 撤回後，history 留下兩道痕跡；已發出的版本（marketplace 同步、release）收不回。所以 distribution sync 不屬於可逆的範圍 —— `idd-all` 在有人在場時照問，無人在場時略過並列出要跑的命令。
 
-`idd-all` / `idd-all-chain` 預設**不**做 auto-merge（鐵律保留 `永遠不 auto-merge PR`）—— 那是 **#37** bulk-solve autopilot 的 mechanic，由 #37 處理 auto-merge → auto-close 序列細節，**不**在 #102 scope。本 section 只把 `verify-gated` 升格成 named, sanctioned terminal disposition —— 讓 #37 之後接手 autopilot 時有 doctrine 可依。
+Guardrails 是 mandatory，不是 skipped（`idd-all` Phase 5c）：
 
-同樣的約束適用於 `/loop` / `/goal`（native，v2.1.139+）/ `ralph-loop` / 外部 CI 等自動化 caller：把 Phase 6 「verify-gated PASS, ready to merge」當作「請 `gh pr merge`」的 trigger 是**讀錯了**。Doctrine 只 sanction 那個 disposition 為合法 terminal state，**沒有**授權任何 caller 自動 merge。Auto-merge 路徑統一由 **#37** 用 guardrail-aware mechanic 接手；在 #37 ship 前，自動化 caller 仍須停在 Phase 6 report 並由 user / `idd-close` 接手實際 merge。
+- verify gate 判定 `clean`（never CONDITIONAL / FAIL / 讀不出來）
+- CI checks 全部通過（pending 最多等 15 分鐘）
+- Step 0.8 auto-close-trap scan 必須 clean（PR body 與每個 commit）
+- Squash commit message 必須 clean（由 idd-all 自己組，只用 `Refs #N`）
+
+**auto-merge ≠ auto-close** —— merge 之後 `idd-close` 照跑（closing summary 是 audit artifact，不可省）；idd-all 帶 `ORCHESTRATED BY /idd-all` 指示呼叫它，停點取預設。
+
+這條路原本交給 #37 的 bulk-solve autopilot；#37 以 not planned 結案，#392 把它做進 `idd-all` 本身。
+
+自動化 caller（`/loop`、`/goal`（native，v2.1.139+）、`ralph-loop`、外部 CI）不需要自己 merge：`/idd-all` 會做，而且只在上面的 guardrail 全過時做。caller 看到 Phase 6 的 `Stopped:`，代表某一道沒過 —— 那不是 merge 的訊號，也不該繞過它自己 `gh pr merge`。
 
 ---
 
