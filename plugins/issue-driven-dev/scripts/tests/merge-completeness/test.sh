@@ -9,7 +9,8 @@
 #
 #   exit 0 = clean (no genuine orphan)
 #   exit 3 = genuine orphan(s) found
-#   exit 4 = skip: could not verify (unresolvable ref, a git or awk failure outside
+#   exit 4 = skip: could not verify (a file the branch touched was moved or renamed,
+#            SPEC.md's "Moves"; unresolvable ref, a git or awk failure outside
 #            the landing step, an unreadable object, a checked commit touching a
 #            path with a newline in its name, a partial clone with git older than
 #            2.45 or one whose missing blobs a check needs, a file a candidate touched
@@ -134,6 +135,25 @@
 # commit of the branch taken as main's (227), commits at the tip despite a move (222, 224b),
 # no second check after a merge of main (221a), the merges newest first (228), one listing
 # for every landing commit (229), a move after the landing commit not judged (224a).
+# Round 21 (fixtures 230-234, from round 20's verify; 230, 230b and 231 are red on rounds
+# 19 and 20, 232 and 233 on rounds 17 to 20): a move git pairs only once the rewrite is
+# broken (-B: a new file at the old name, or a move onto a name that exists), a directory
+# renamed under a file the branch added, and the Update-branch check done commit by commit
+# at the main commit each merge brought in (a commit pushed before the merge, a first PR
+# that left part out). 234 pins the check of main's moves before the landing commit. The
+# merge order no longer matters (any merged main commit where the commit is in place
+# decides), so 228 pins only the answer. fixture-128's list assertion, removed by mistake
+# in round 20, is back. Mutants of round 21 (and round 20's that still apply) caught: P0
+# over the candidates' paths only (226), a branch move taken as main's (227), main's moves
+# before the landing commit unchecked (230), commits at the tip despite a move (222), no
+# second check after a merge of main (221a), one listing for every landing commit (229), a
+# move after the landing commit not judged (224a), no -B (230), the copy from a broken
+# rewrite not counted (230), no directory rule (231), the directory rule inside one
+# directory too (236), the second check stopping at the first merged commit (235), a move
+# counted by its old name only (237). Unpinned: any merge taken for a merge of main, no
+# move check before a merged main commit (main's moves before it come before the landing
+# commit too, which 230 and 234 pin), the copies' cache not keyed by the landing commit,
+# the second check's merge-base taken from the head (it only feeds the copy count).
 # Unpinned: a move counted by its old name only (a move of main's onto a path the branch
 # touched, from a name it did not), no check of main's moves before the landing commit and
 # before a part's landing commit (the landing commit holds the net change by path, so such a
@@ -1950,6 +1970,7 @@ rm -rf "$R"
 R="$(mk112)"; cfg128 "$R"
 OUT128=$(out_of "$R" feat main); RC128=$?
 assert_exit "fixture-128 hostile diff settings: a dropped restore -> flagged" 3 "$RC128"
+assert_exit "fixture-128 lists c2" 0 "$(has "$OUT128" 'c2: 14 back')"
 rm -rf "$R"
 R="$(mk_repo)"; F128="$(printf 'caf\303\251.txt')"; printf 'k\n' > "$R/$F128"; git -C "$R" add -A && git -C "$R" commit -qm f128
 git -C "$R" checkout -q -b feat
@@ -3858,6 +3879,140 @@ sed 's/^12$/twelve/' "$R/n229.txt" > "$R/t" && mv "$R/t" "$R/n229.txt"; git -C "
 git -C "$R" checkout -q main; git -C "$R" rm -q e229.txt; git -C "$R" commit -qm "main drops e229"
 git -C "$R" merge -q --squash feat > /dev/null 2>&1; git -C "$R" commit -qm "PR2"
 assert_exit "fixture-229 PR1 adds an empty file main drops before PR2 -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# ── Round 21: the shapes round 20's verify found ──
+
+# 230: found by round 20's verify (devil's advocate). c1 deletes `def f7`; in one commit main
+# moves the file to lib/ and puts a shim at its old name (git reports an edit of the old name
+# and an addition, unless it breaks the rewrite); nothing of the branch landed, and main's
+# lib/ file still has the line. Rounds 19 and 20 read the deletion as landed (exit 0). With
+# rename detection on rewrites (-B) the move counts -> exit 4.
+mk230() { # repo -> base a230.txt with def f1..f20, feat c1 deletes def f7
+  local i; for i in $(seq 1 20); do printf 'def f%d():\n    return %d\n' "$i" "$i"; done > "$1/a230.txt"
+  git -C "$1" add -A && git -C "$1" commit -qm a230
+  git -C "$1" checkout -q -b feat
+  grep -v '^def f7():$' "$1/a230.txt" > "$1/t" && mv "$1/t" "$1/a230.txt"; git -C "$1" commit -qam "c1: drop def f7 (never landed)"
+  git -C "$1" checkout -q main
+}
+R="$(mk_repo)"; mk230 "$R"; mkdir "$R/lib"; git -C "$R" mv a230.txt lib/a230.txt
+printf 'from lib.a230 import *\n' > "$R/a230.txt"; git -C "$R" add -A && git -C "$R" commit -qm "main: move to lib/, shim at the old name"
+assert_exit "fixture-230 main moves the file and leaves a shim in one commit -> exit 4 (a move)" 4 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+# 230b: the same deletion; main moves the file onto a name that exists (git mv -f)
+R="$(mk_repo)"; printf 'other\n' > "$R/b230.txt"; git -C "$R" add -A && git -C "$R" commit -qm b230; mk230 "$R"
+git -C "$R" mv -f a230.txt b230.txt && git -C "$R" commit -qm "main: move onto b230.txt"
+assert_exit "fixture-230b main moves the file onto a name that exists -> exit 4 (a move)" 4 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 231: found by round 20's verify (devil's advocate). c1 adds d231/new.txt and c2 edits it;
+# main renames the directory d231/ to e231/ and squashes the branch: merge-ort's directory-
+# rename detection puts the new file at e231/new.txt. Read by path the new file never
+# landed (rounds 19 and 20: exit 3). Main's move of a file out of a directory where the
+# branch added one counts -> exit 4.
+R="$(mk_repo)"; mkdir "$R/d231"; printf 'old\n' > "$R/d231/old.txt"; git -C "$R" add -A && git -C "$R" commit -qm d231
+git -C "$R" checkout -q -b feat
+printf 'n1\n' > "$R/d231/new.txt"; git -C "$R" add -A && git -C "$R" commit -qm "c1: d231/new.txt"
+printf 'n1\nn2\n' > "$R/d231/new.txt"; git -C "$R" commit -qam "c2: n2"
+git -C "$R" checkout -q main; git -C "$R" mv d231 e231 && git -C "$R" commit -qm "main: d231 -> e231"
+git -C "$R" merge -q --squash feat > /dev/null 2>&1; git -C "$R" add -A > /dev/null 2>&1; git -C "$R" commit -qm "squash" > /dev/null 2>&1
+assert_exit "fixture-231 the squash put the new file in the renamed directory" 0 "$([ -f "$R/e231/new.txt" ]; echo $?)"
+assert_exit "fixture-231 main renamed the directory the branch added a file to -> exit 4 (a move)" 4 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 232: found by round 20's verify (logic, regression). The usual GitHub order: PR1 squashes
+# c1, the author pushes c1b, then presses Update branch; c2; main edits c1's line; PR2
+# squashes the branch. The part up to the merge (c1 and c1b) landed nowhere as a whole, so
+# round 20 listed c1 again. c1 itself is in place in PR1 -> NOT flagged.
+R="$(mk_repo)"; seq 1 20 > "$R/n232.txt"; git -C "$R" add -A && git -C "$R" commit -qm n232
+git -C "$R" checkout -q -b feat
+sed 's/^5$/five/' "$R/n232.txt" > "$R/t" && mv "$R/t" "$R/n232.txt"; git -C "$R" commit -qam "c1: five"
+git -C "$R" checkout -q main; git -C "$R" merge -q --squash feat > /dev/null 2>&1; git -C "$R" commit -qm "PR1"
+git -C "$R" checkout -q feat
+sed 's/^9$/nine/' "$R/n232.txt" > "$R/t" && mv "$R/t" "$R/n232.txt"; git -C "$R" commit -qam "c1b: nine"
+git -C "$R" merge -q --no-edit main > /dev/null 2>&1
+sed 's/^12$/twelve/' "$R/n232.txt" > "$R/t" && mv "$R/t" "$R/n232.txt"; git -C "$R" commit -qam "c2: twelve"
+git -C "$R" checkout -q main
+sed 's/^five$/FIVE/' "$R/n232.txt" > "$R/t" && mv "$R/t" "$R/n232.txt"; git -C "$R" commit -qam "follow-up: FIVE"
+git -C "$R" merge -q --squash feat > /dev/null 2>&1; git -C "$R" commit -qm "PR2"
+assert_exit "fixture-232 a commit pushed after PR1 and before Update branch, main's edit, PR2 -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 233: found by round 20's verify (devil's advocate). PR1 squashes c1a and c1b but leaves one
+# of c1b's lines out; the branch merges main, main edits c1a's line, PR2 squashes the rest.
+# The part up to the merge landed nowhere as a whole; c1a itself is in place in PR1 -> NOT
+# flagged.
+R="$(mk_repo)"; seq 1 20 > "$R/n233.txt"; git -C "$R" add -A && git -C "$R" commit -qm n233
+git -C "$R" checkout -q -b feat
+sed 's/^3$/three/' "$R/n233.txt" > "$R/t" && mv "$R/t" "$R/n233.txt"; git -C "$R" commit -qam "c1a: three"
+sed -e 's/^7$/seven/' -e 's/^9$/nine/' "$R/n233.txt" > "$R/t" && mv "$R/t" "$R/n233.txt"; git -C "$R" commit -qam "c1b: seven, nine"
+git -C "$R" checkout -q main; sed -e 's/^3$/three/' -e 's/^7$/seven/' "$R/n233.txt" > "$R/t" && mv "$R/t" "$R/n233.txt"
+git -C "$R" commit -qam "PR1 (left nine out)"
+git -C "$R" checkout -q feat; git -C "$R" merge -q --no-edit main > /dev/null 2>&1
+sed 's/^12$/twelve/' "$R/n233.txt" > "$R/t" && mv "$R/t" "$R/n233.txt"; git -C "$R" commit -qam "c2: twelve"
+git -C "$R" checkout -q main
+sed 's/^three$/THREE/' "$R/n233.txt" > "$R/t" && mv "$R/t" "$R/n233.txt"; git -C "$R" commit -qam "follow-up: THREE"
+git -C "$R" merge -q --squash feat > /dev/null 2>&1; git -C "$R" commit -qm "PR2"
+assert_exit "fixture-233 PR1 left a line of c1b out, Update branch, main's edit of c1a's line, PR2 -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 234: found by round 20's verify (requirements). The Moves rule's second clause: a move of
+# main's own at or before the landing commit. c1 and c2 edit f234.txt; main moves it away and
+# back, then squashes the branch, then edits c1's line. The landing commit holds the net
+# change by path, but main moved the file before it -> exit 4 (without the clause, 0).
+R="$(mk_repo)"; seq 1 20 > "$R/f234.txt"; git -C "$R" add -A && git -C "$R" commit -qm f234
+git -C "$R" checkout -q -b feat
+sed 's/^5$/five/' "$R/f234.txt" > "$R/t" && mv "$R/t" "$R/f234.txt"; git -C "$R" commit -qam "c1: five"
+sed 's/^9$/nine/' "$R/f234.txt" > "$R/t" && mv "$R/t" "$R/f234.txt"; git -C "$R" commit -qam "c2: nine"
+git -C "$R" checkout -q main; git -C "$R" mv f234.txt g234.txt && git -C "$R" commit -qm "main: move away"
+git -C "$R" mv g234.txt f234.txt && git -C "$R" commit -qm "main: move back"
+git -C "$R" merge -q --squash feat > /dev/null 2>&1; git -C "$R" commit -qm "squash"
+sed 's/^five$/FIVE/' "$R/f234.txt" > "$R/t" && mv "$R/t" "$R/f234.txt"; git -C "$R" commit -qam "follow-up"
+assert_exit "fixture-234 main moved the file away and back before the squash -> exit 4 (a move)" 4 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 235: the second check goes on past a merged main commit that lacks the commit. c1 edits
+# line 5; PR1 leaves it out (takes c0 only); the branch merges main; main then takes c1's
+# line in a hotfix of its own; the branch merges main again; main edits c1's line; PR2.
+# c1 is not in place at the first merged commit, and is at the second -> NOT flagged.
+R="$(mk_repo)"; seq 1 20 > "$R/n235.txt"; git -C "$R" add -A && git -C "$R" commit -qm n235
+git -C "$R" checkout -q -b feat
+sed 's/^3$/three/' "$R/n235.txt" > "$R/t" && mv "$R/t" "$R/n235.txt"; git -C "$R" commit -qam "c0: three"
+sed 's/^5$/five/' "$R/n235.txt" > "$R/t" && mv "$R/t" "$R/n235.txt"; git -C "$R" commit -qam "c1: five"
+git -C "$R" checkout -q main; sed 's/^3$/three/' "$R/n235.txt" > "$R/t" && mv "$R/t" "$R/n235.txt"; git -C "$R" commit -qam "PR1 (c0 only)"
+git -C "$R" checkout -q feat; git -C "$R" merge -q --no-edit main > /dev/null 2>&1
+sed 's/^9$/nine/' "$R/n235.txt" > "$R/t" && mv "$R/t" "$R/n235.txt"; git -C "$R" commit -qam "c2: nine"
+git -C "$R" checkout -q main; sed 's/^5$/five/' "$R/n235.txt" > "$R/t" && mv "$R/t" "$R/n235.txt"; git -C "$R" commit -qam "hotfix: five"
+git -C "$R" checkout -q feat; git -C "$R" merge -q --no-edit main > /dev/null 2>&1
+sed 's/^12$/twelve/' "$R/n235.txt" > "$R/t" && mv "$R/t" "$R/n235.txt"; git -C "$R" commit -qam "c3: twelve"
+git -C "$R" checkout -q main; sed 's/^five$/FIVE/' "$R/n235.txt" > "$R/t" && mv "$R/t" "$R/n235.txt"; git -C "$R" commit -qam "follow-up: FIVE"
+git -C "$R" merge -q --squash feat > /dev/null 2>&1; git -C "$R" commit -qm "PR2"
+assert_exit "fixture-235 c1 in place only at the second merged main commit -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 236: a move inside one directory does not carry a file the branch added there along: main
+# renames d236/old.txt to d236/old2.txt, the branch adds d236/new.txt and edits it twice;
+# squash; follow-up. No move counts -> judged (0).
+R="$(mk_repo)"; mkdir "$R/d236"; printf 'old\n' > "$R/d236/old.txt"; git -C "$R" add -A && git -C "$R" commit -qm d236
+git -C "$R" checkout -q -b feat
+printf 'n1\n' > "$R/d236/new.txt"; git -C "$R" add -A && git -C "$R" commit -qm "c1: d236/new.txt"
+printf 'n1\nn2\n' > "$R/d236/new.txt"; git -C "$R" commit -qam "c2: n2"
+git -C "$R" checkout -q main; git -C "$R" mv d236/old.txt d236/old2.txt && git -C "$R" commit -qm "main: old -> old2"
+git -C "$R" merge -q --squash feat > /dev/null 2>&1; git -C "$R" commit -qm "squash"
+printf 'n1\nn2 follow-up\n' > "$R/d236/new.txt"; git -C "$R" commit -qam "follow-up"
+assert_exit "fixture-236 main renames a file inside the directory the branch added to -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 237: a move counts by its new name too: c1 deletes a237.txt (never landed); main moves
+# x237.txt onto a237.txt (git mv -f). Read by path the deletion never landed (exit 3); the
+# move's new name is a path the branch touched -> exit 4.
+# (files over 400 bytes: git does not break a rewrite of a smaller file, so a move onto a small
+# file's name is not seen, SPEC "Moves")
+R="$(mk_repo)"; for i in $(seq 1 20); do printf 'def a%d():\n    return %d\n' "$i" "$i"; done > "$R/a237.txt"
+for i in $(seq 1 20); do printf 'def x%d():\n    return %d\n' "$i" "$((i + 100))"; done > "$R/x237.txt"; git -C "$R" add -A && git -C "$R" commit -qm a237
+git -C "$R" checkout -q -b feat; git -C "$R" rm -q a237.txt && git -C "$R" commit -qm "c1: drop a237 (never landed)"
+git -C "$R" checkout -q main; git -C "$R" mv -f x237.txt a237.txt && git -C "$R" commit -qm "main: x237 onto a237"
+assert_exit "fixture-237 main moves another file onto a path the branch deleted -> exit 4 (a move)" 4 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 print_summary

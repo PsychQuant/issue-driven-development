@@ -51,63 +51,82 @@ def apply_all(state, ops):
     return state
 
 
+def compose(mb, ops, S):
+    st = dict(mb)
+    for k in sorted(S):
+        st = W.apply_strict(st, ops[k])
+        if st is None:
+            return None
+    return st
+
+
 def cases(max_len):
+    """(mb, ops, j, S1, fu, S2): the branch merges main after its first j commits; PR1 is a
+    squash of S1, any subset of those j that applies in order (all of them, or the first i
+    with the rest pushed after PR1 and before the merge, or a squash that left some out);
+    the merge keeps the branch's side where the two differ; fu is main's edit of a unit
+    PR1 changed, after the merge; S2 is what PR2 brings: none, or, when PR1 took the whole
+    first part, any subset of the commits after the merge that applies in order, and
+    otherwise the whole rest of the branch (a squash of the head)."""
     out = []
     for mb in W.MBS:
         for ops in W.branches(mb, max_len):
             n = len(ops)
             for j in range(1, n + 1):
                 p1head = apply_all(dict(mb), ops[:j])
-                touched1 = {e[0] for op in ops[:j] for e in W.edits(op)}
-                # PR1 squashes the whole first part onto main (after its unrelated commit)
-                M1 = W.land(dict(mb), mb, p1head)
-                head = apply_all(dict(M1), ops[j:])
-                if head is None:
-                    continue
-                fus = [None]
-                for u in sorted(touched1, key=str):
-                    if u in ("g", "e"):
-                        fus.append((u, M1[u], not M1[u]))
-                    else:
-                        fus += [(u, M1[u], v) for v in (None,) + W.TEXTS if v != M1[u]]
-                rest = list(range(j, n))
-                for fu in fus:
-                    pre2 = W.apply_strict(dict(M1), fu) if fu else dict(M1)
-                    for r in range(0, len(rest) + 1):
-                        for S2 in itertools.combinations(rest, r):
-                            st = dict(M1)
-                            ok = True
-                            for k in S2:
-                                st = W.apply_strict(st, ops[k])
-                                if st is None:
-                                    ok = False
-                                    break
-                            if not ok:
-                                continue
-                            out.append((mb, tuple(ops), j, fu, frozenset(S2)))
+                for r1 in range(1, j + 1):
+                    for S1 in itertools.combinations(range(j), r1):
+                        n1 = compose(mb, ops, S1)
+                        if n1 is None:
+                            continue
+                        M1 = W.land(dict(mb), mb, n1)
+                        Mg = W.land(dict(M1), mb, p1head)
+                        head = apply_all(dict(Mg), ops[j:])
+                        if head is None:
+                            continue
+                        touched1 = {e[0] for k in S1 for e in W.edits(ops[k])}
+                        fus = [None]
+                        for u in sorted(touched1, key=str):
+                            if u in ("g", "e"):
+                                fus.append((u, M1[u], not M1[u]))
+                            else:
+                                fus += [(u, M1[u], v) for v in (None,) + W.TEXTS if v != M1[u]]
+                        full = set(S1) == set(range(j))
+                        if full:
+                            rest = list(range(j, n))
+                            S2s = [frozenset(c) for r in range(0, len(rest) + 1) for c in itertools.combinations(rest, r)
+                                   if compose(Mg, ops, c) is not None]
+                        else:
+                            S2s = [frozenset(), frozenset(set(range(n)) - set(S1))]
+                        for fu in fus:
+                            for S2 in S2s:
+                                out.append((mb, tuple(ops), j, frozenset(S1), fu, S2))
     return out
 
 
 def model(case):
-    """(head, M1, steps, tip) of the case: steps are main's states right after each PR."""
-    mb, ops, j, fu, S2 = case
+    """(head, M1, steps, tip): M1 is main right after PR1; steps are main's states right
+    after each PR."""
+    mb, ops, j, S1, fu, S2 = case
     p1head = apply_all(dict(mb), ops[:j])
-    M1 = W.land(dict(mb), mb, p1head)
-    head = apply_all(dict(M1), ops[j:])
+    M1 = W.land(dict(mb), mb, compose(mb, ops, S1))
+    Mg = W.land(dict(M1), mb, p1head)
+    head = apply_all(dict(Mg), ops[j:])
     pre2 = W.apply_strict(dict(M1), fu) if fu else dict(M1)
     steps = [M1]
     tip = pre2
     if S2:
-        net2 = dict(M1)
-        for k in sorted(S2):
-            net2 = W.apply_strict(net2, ops[k])
+        if set(S2) | set(S1) == set(range(len(ops))):
+            net2 = head
+        else:
+            net2 = compose(Mg, ops, S2)
         tip = W.land(pre2, M1, net2)
         steps.append(tip)
     return head, M1, steps, tip
 
 
 def oracle(case, minus):
-    mb, ops, j, fu, S2 = case
+    mb, ops, j, S1, fu, S2 = case
     head, M1, steps, tip = model(case)
     cands = [k for k in range(len(ops)) if "b%d" % (k + 1) not in minus]
     if not cands:
@@ -125,7 +144,7 @@ def oracle(case, minus):
     # (none holds it: main right after the last step, as bounded.py's oracle does)
     first = next((i for i, st in enumerate(steps[:-1]) if holds_net(st)), len(steps) - 1)
     R = steps[first]
-    S = set(range(j)) | (set(S2) if first == 1 else set())
+    S = set(S1) | (set(S2) if first == 1 else set())
     present = lambda v: v not in (None, False)  # noqa: E731
     orphans = set()
     for k, op in enumerate(ops):
@@ -138,8 +157,10 @@ def oracle(case, minus):
 
 
 def stream(case):
-    mb, ops, j, fu, S2 = case
+    mb, ops, j, S1, fu, S2 = case
     head, M1, steps, tip = model(case)
+    p1head = apply_all(dict(mb), ops[:j])
+    Mg = W.land(dict(M1), mb, p1head)
     out = []
     t = [1700000000]
 
@@ -168,9 +189,9 @@ def stream(case):
         last = 10 + k
     emit("refs/heads/main", 2, [1], "u", mb, "u\n")
     emit("refs/heads/main", 3, [2], "PR1", M1, "u\n")
-    emit("refs/heads/feat", 4, [last, 3], "Merge main into feat", M1, "u\n")
+    emit("refs/heads/feat", 4, [last, 3], "Merge main into feat", Mg, "u\n")
     last = 4
-    st = dict(M1)
+    st = dict(Mg)
     for k in range(j, len(ops)):
         st = W.apply_strict(st, ops[k])
         emit("refs/heads/feat", 10 + k, [last], "b%d" % (k + 1), st, "u\n")
@@ -220,7 +241,7 @@ def classify(case, exp, got, sides):
     when the first part changes nothing) where the tip rule (D2) computed on the model's head
     and tip gives the helper's answer; B2, a commit checked at main's follow-up taken as the
     landing commit, with its effects in place there."""
-    mb, ops, j, fu, S2 = case
+    mb, ops, j, S1, fu, S2 = case
     rc, listed = got
     if rc not in (0, 3):
         return None
@@ -230,10 +251,14 @@ def classify(case, exp, got, sides):
     # (a branch with no net change lands at the merge-base, and the commits after a prefix
     # that landed later, here in main's own follow-up, are checked at the tip)
     empty_first = all(M1[u] == mb[u] for u in W.UNITS)
+    # and D1's other causes: a commit main never received, or what main received is not a
+    # prefix of the branch (a squash that left some out)
+    received = set(S1) | set(S2)
+    not_prefix = received != set(range(len(received)))
     classes = set()
     for name in (exp[1] - listed) | (listed - exp[1]):
         k = int(name[1:]) - 1
-        if sides.get(name) == "tip" and ((k >= j and k not in S2) or empty_first):
+        if sides.get(name) == "tip" and (k not in received or not_prefix or empty_first):
             if W.tip_says_orphan(ops[k], head, tip) != (name in listed):
                 return None
             classes.add("D1+D2 tip check")
@@ -251,11 +276,11 @@ def classify(case, exp, got, sides):
 
 
 def describe(case):
-    mb, ops, j, fu, S2 = case
+    mb, ops, j, S1, fu, S2 = case
     fmt = lambda op: "%s:%s->%s" % op  # noqa: E731
-    return "mb=%s first=[%s] rest=[%s] follow-up=%s PR2=%s" % (
-        "+ge" if mb["g"] else "-ge", ", ".join(fmt(o) for o in ops[:j]), ", ".join(fmt(o) for o in ops[j:]),
-        fmt(fu) if fu else "-", sorted("b%d" % (k + 1) for k in S2) or "none")
+    return "mb=%s first=[%s] PR1=%s rest=[%s] follow-up=%s PR2=%s" % (
+        "+ge" if mb["g"] else "-ge", ", ".join(fmt(o) for o in ops[:j]), sorted("b%d" % (k + 1) for k in S1),
+        ", ".join(fmt(o) for o in ops[j:]), fmt(fu) if fu else "-", sorted("b%d" % (k + 1) for k in S2) or "none")
 
 
 def main():
@@ -265,12 +290,15 @@ def main():
     ap.add_argument("--sample", type=int, default=0)
     ap.add_argument("--seed", type=int, default=399)
     ap.add_argument("--show", type=int, default=10)
-    ap.add_argument("--empty-first", action="store_true", help="only the cases whose first part changes nothing")
+    ap.add_argument("--empty-first", action="store_true", help="only the cases whose first PR changes nothing")
+    ap.add_argument("--new-shapes", action="store_true",
+                    help="only the cases round 21 added: PR1 not the whole first part")
     args = ap.parse_args()
     all_cases = cases(args.max_len)
     if args.empty_first:
-        all_cases = [c for c in all_cases
-                     if all(W.land(dict(c[0]), c[0], apply_all(dict(c[0]), c[1][:c[2]]))[u] == c[0][u] for u in W.UNITS)]
+        all_cases = [c for c in all_cases if all(model(c)[1][u] == c[0][u] for u in W.UNITS)]
+    if args.new_shapes:
+        all_cases = [c for c in all_cases if set(c[3]) != set(range(c[2]))]
     if args.sample and args.sample < len(all_cases):
         all_cases = random.Random(args.seed).sample(all_cases, args.sample)
     import multiprocessing

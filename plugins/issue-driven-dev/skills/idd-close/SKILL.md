@@ -437,7 +437,7 @@ else
   #    on merge (a bare branch NAME does not; #184 DA-1). Fall back to a local
   #    idd/<N>-* branch ref.
   BRANCH_REF=$(gh pr list --repo "$GITHUB_REPO" --state merged \
-      --search "in:body \"#${NUMBER}\"" --json number,body,createdAt,headRefOid 2>/dev/null \\
+      --search "in:body \"#${NUMBER}\"" --json number,body,createdAt,headRefOid 2>/dev/null \
   | jq -r --argjson n "$NUMBER" --arg t "$ISSUE_CREATED_AT" '
       # GitHub tokenizes `#N`; the search is a COARSE FILTER only (#293/#305).
       # Decide client-side: `#N` must not be preceded by a repo-ref character

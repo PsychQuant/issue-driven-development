@@ -66,14 +66,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **A first PR, GitHub's Update branch, then the PR that completes it.** After the branch merges main, the
     merge-base holds the first PR, so the whole branch lands at the second, and a line of the first PR that main
     edited in between is no longer in place there: every version so far listed the first PR's commit, #399's own
-    symptom. A commit listed at the landing commit is now checked again where the branch up to that merge of main
-    landed (for each first-parent merge of main into the branch, oldest first; the first part that contains the
-    commit decides). `bounded.py`'s new companion `bounded_sync.py` builds this shape.
+    symptom. A commit listed at the landing commit is now checked again, in place, at the main commit each later
+    first-parent merge of main into the branch brought in: in place at any of them, it had landed by then. This
+    holds when the author pushed another commit before pressing Update branch, or the first PR left part of the
+    branch out. `bounded.py`'s new companion `bounded_sync.py` builds these shapes.
   - **Moves are not judged.** Rounds 17 to 19 of this change followed files across moves (git's rename detection
     inside each commit, copies, swaps, files main moved), and each round's rules broke shapes the round before
     had right. The maintainer decided on 2026-11-01 to stop: every file is read by its path. A move counts when
     git's rename detection inside a non-merge commit since the fork point finds one in a commit of the branch
-    the baseline does not have, or one anywhere whose old or new name is a path such a commit touched. Then the
+    the baseline does not have, or one anywhere whose old or new name is a path such a commit touched, or that
+    takes a file out of a directory where such a commit added one (merge-ort carries the added file along). The
+    detection breaks rewrites first (`-B`), so a file moved with another put at its old name, or moved onto a
+    name that exists, is a move too (for a file over 400 bytes: git breaks no smaller rewrite). A copy is an added file (the original stays where it was), and a move no
+    single commit records (moved and mostly rewritten in one commit, or moved over two commits that land
+    separately or not at all) is a deletion and an addition; a squash records a two-commit move as one. Then the
     answer is 0 when the tip has exactly what the head has at every path a candidate touched and at both
     names of every such move (a branch that renamed a file and was squashed as it was); when every such
     move is main's own and came after every landing commit a commit is checked at, with nothing checked at the
@@ -108,7 +114,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     then the one that completes it; the branch landed at the first after which main holds its net change); edits
     can sit on adjacent lines; a commit can have two effects; main can edit the branch's own lines. Its slots are separated by distinct lines, so
     repeated lines and renames are covered by fixtures and by fuzz runs on real `git merge --squash` histories
-    of repetition-prone code lines. In the final runs no case is unexplained in any mode; the answers that still
+    of repetition-prone code lines. In the runs SPEC.md's Results lists (round 20 reran `plain` in full and
+    samples of two other modes on the final reading) no case is unexplained; the answers that still
     differ from the definition come from the tip check and from the classes no check that reads trees can tell
     apart (SPEC.md lists them with counts).
   - **Reading.** Everything runs from the repository's top level, in the C locale, with pipefail. The two-way
@@ -178,11 +185,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     changed the stack's lines after the stack was cut. When nothing of the branch landed, the check is at the
     tip as well: the verdict (exit 3) is right, but the list can include, or miss, a commit whose text main
     added or removed on its own.
-  - Timing, as CPU time on a shared machine (other work kept the load between 190 and 600 during these runs):
-    PR #408 about 11 s (3.5.0: 8 s, with its false orphans); a squash-landed 150-commit branch with a follow-up
-    about 32 s (3.5.0: 9 s, with a false orphan); the same branch when its first commit moves the file stops at
-    exit 4 after about 11 s, and a branch of 20 commits that moves its file, squashed into a main that made 2000
-    commits of its own (50 of them renames) since the fork point, after about 2 s. Looking for moves costs one
+  - Timing, as CPU time on a shared machine at a load of 7 to 27: PR #408 about 8 s (3.5.0: 8 s, with its false
+    orphans); a squash-landed 150-commit branch with a follow-up about 17 s (3.5.0: 9 s, with a false orphan);
+    the same branch when its first commit moves the file stops at exit 4 after about 5 s, and a branch of 20
+    commits that moves its file, squashed into a main that made 2000 commits of its own (50 of them renames)
+    since the fork point, after about 1 s. Looking for moves costs one
     `git log` with rename detection over the commits since the fork point. Measured on rounds 13 to 15: a
     branch that never landed under 1 s, or about 9 s when main often edits its files; a never-landed 150-commit
     branch about 23 s (3.5.0: 7 s); in a repository with 100,000 files in one directory a never-landed branch
@@ -194,12 +201,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Deletions and paths (#399).** 3.5.0 checked only added lines. A commit is now also reported when a line it
   deleted is still where the branch landed (the tip when it did not), or when a path it deleted is still there
-  or an empty file it added is not: a dropped clean-up, a rename or submodule removal that never landed, a
-  deleted or added empty file. At the tip this brings a false report 3.5.0 did not have: a deleted line that
+  or an empty file it added is not: a dropped clean-up, a submodule removal that never landed, a deleted or
+  added empty file (a rename that never landed is a move, exit 4). At the tip this brings a false report 3.5.0 did not have: a deleted line that
   main has elsewhere in the same files, or put back.
 - **Test runner.** `scripts/run-all-tests.sh` reads a `timeout` file next to a suite's `test.sh` and uses the
-  larger of it and `IDD_SUITE_TIMEOUT` (default 180 s). The merge-completeness suite takes about four minutes on
-  an idle Mac and over ten on a loaded one (under four minutes on Linux), and asks for 2400 s.
+  larger of it and `IDD_SUITE_TIMEOUT` (default 180 s). The merge-completeness suite uses about 7 minutes of CPU; it
+  took 11 minutes of wall time on a Mac in run-all-tests after a reboot, up to 3.5 hours on the same Mac at a
+  load of 500 to 600 (round 20), and about two minutes on Linux (git 2.30, mawk). It asks for 3600 s; set
+  `IDD_SUITE_TIMEOUT` higher on a machine that slow.
 
 ### Changed
 

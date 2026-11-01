@@ -87,17 +87,21 @@
 #      unknown, only line presence is compared, each file read under its name there.
 #      Squash → the effects are there → not an orphan. Partial merge
 #      → a dropped commit's effect is missing → orphan. A commit listed at L is checked
-#      again where the branch up to a later merge of main into it landed (a first PR,
-#      GitHub's Update branch, then the PR that completes it): after the merge the
-#      merge-base holds that part, and main may have edited its lines before L.
+#      again, in place, at the main commit each later merge of main into the branch
+#      brought in (a first PR, GitHub's Update branch, then the PR that completes it):
+#      after the merge the merge-base holds that part, and main may have edited its lines
+#      before L.
 #   Moves (the maintainer's decision of 2026-11-01): a move counts when git's rename
-#   detection inside a non-merge commit since the fork point finds one in a commit of the
-#   branch the baseline lacks, or one anywhere whose old or new name is a path such a
-#   commit touched. Then, unless step 1's shortcut holds over those names, the check stops
-#   with exit 4 — except a move on main after every landing commit a candidate is checked
-#   at, with no candidate checked at the tip (main's own history after landing). Rounds
-#   17 to 19 followed files across moves, and each round's rules broke shapes the round
-#   before had right.
+#   detection inside a non-merge commit since the fork point (-B -M: a rewrite is broken,
+#   so a file moved with another put at its old name, or moved onto a name that exists,
+#   is a move too) finds one in a commit of the branch the baseline lacks, or one anywhere
+#   whose old or new name is a path such a commit touched, or that takes a file out of a
+#   directory where such a commit added one. Then, unless step 1's shortcut holds over
+#   those names, the check stops with exit 4 — except a move on main after every landing
+#   commit a candidate is checked at, with no candidate checked at the tip (main's own
+#   history after landing). Rounds 17 to 19 followed files across moves, and each round's
+#   rules broke shapes the round before had right. A copy is an added file: the original
+#   stays where it was.
 #   Every comparison reads trees with `git diff`, `ls-tree` and `cat-file`: no merge,
 #   so no merge driver or attribute can steer the answer. (Above 64 KB of paths, two
 #   trees holding only those paths are written to a temporary object store and
@@ -111,9 +115,12 @@
 #   - at the tip, an added line already elsewhere in the files the same commit
 #     touched, or a deleted line the branch head still has there (a moved or
 #     duplicated line);
-#   - a move git does not see inside one commit (a file moved and rewritten by more
-#     than half in the same commit, or moved over two commits): the file reads as
-#     deleted and another added;
+#   - a move no single commit records, on either side (a file moved and rewritten by
+#     more than half in one commit; a move over two commits that never landed, or
+#     landed as separate commits; a squash records it as one move, which counts; a file
+#     of 400 bytes or less moved with another put at its old name, or moved onto a
+#     name that exists, since git breaks no smaller rewrite): the file reads as deleted
+#     and another added;
 #   - content written by a merge commit on the branch (git cherry never lists merge
 #     commits);
 #   - with macOS awk, a binary edit that changes only bytes after a NUL (awk cuts
@@ -392,21 +399,25 @@ PATHS_MAX=65536
 # detection, run inside each non-merge commit since the fork point (the merge-base of
 # the baseline and the branch's first commit) on either side, finds one in a commit of
 # the branch that the baseline does not have, or one anywhere whose old or new name is a
-# path such a commit touched. Then the answer is 0 when the tip has exactly what the head
-# has at every path a candidate touched and both names of every such move (P0 below);
-# when every such move is main's own, after every landing commit used, with nothing
-# checked at the tip, the check runs as usual; and exit 4 otherwise. A move git does
-# not see inside one commit (a file moved and rewritten by more than half, or moved over
-# two commits) is a deletion and an addition.
+# path such a commit touched, or that takes a file out of a directory where such a commit
+# added one (merge-ort's directory-rename detection carries the added file along). The
+# log runs with -B, so a rewrite is broken first: a file moved with another put at its old
+# name (git reports a copy then) or moved onto a name that exists is a move too (git breaks
+# only a rewrite of a file over 400 bytes). Then the
+# answer is 0 when the tip has exactly what the head has at every path a candidate
+# touched and both names of every such move (P0 below); when every such move is main's
+# own, after every landing commit used, with nothing checked at the tip, the check runs
+# as usual; and exit 4 otherwise. A move no single commit records (a file moved and
+# rewritten by more than half in one commit, or moved over two commits that land
+# separately or not at all) is a deletion and an addition, and a copy is an addition.
 #   - A commit whose added times deleted files exceed 1000 x 1000 had git's rename
 #     detection skipped (git warns and pairs nothing more): a file it deleted may have
 #     moved. That matters only when it deletes a file an earlier candidate touched,
 #     whose effects would then look gone from the head; such a candidate cannot be
-#     verified (exit 4). Anywhere else the file is taken as deleted.
-FORK="" ; MOVED="" ; MOVES_DONE=""
+#     verified (exit 4): the one exit 4 about moves that is not a move that counts, since
+#     git did not look. Anywhere else the file is taken as deleted.
+FORK="" ; MOVED=""
 moves_check() { # -> MOVED set when a move counts ("<commit>"); 2 on error
-  [ -z "$MOVES_DONE" ] || return 0
-  MOVES_DONE=1
   local mb first
   : > "$SCRATCH/unc" || return 2
   # No merge-base (a shallow clone, unrelated histories): no move is looked for (the
@@ -418,7 +429,7 @@ moves_check() { # -> MOVED set when a move counts ("<commit>"); 2 on error
     FORK="$(GIT merge-base "$BASELINE_SHA" "$first^1" 2>/dev/null)" || return 2
   fi
   # (no order file: a missing diff.orderFile makes git fail, #399 verify round 13)
-  GIT log --no-merges --topo-order --reverse --no-show-signature --no-color -O/dev/null -M -l1000 -z \
+  GIT log --no-merges --topo-order --reverse --no-show-signature --no-color -O/dev/null -B -M -l1000 -z \
     --ignore-submodules=none --format='%x01%H' --name-status "$BRANCH_SHA" "$BASELINE_SHA" "^$FORK" -- \
     > "$SCRATCH/ops.raw" 2>/dev/null || return 2
   # One token per line (an LF inside a name becomes \001, so it matches no name a check
@@ -443,7 +454,9 @@ moves_check() { # -> MOVED set when a move counts ("<commit>"); 2 on error
     { got++; p[got] = $0
       if (got < want) next
       want = 0
-      if (k == "R") { print "R"; print p[1]; print p[2] }
+      # (a copy git reports only because -B broke a rewrite of its source: a file moved and
+      # another put at its old name in the same commit, #399 verify round 20)
+      if (k == "R" || k == "C") { print "R"; print p[1]; print p[2] }
       else if (k == "A") { print "A"; print p[1]; na++ }
       else if (k == "D") { print "D"; print p[1]; nd++; dl[++ndl] = p[1] } }
     END { if (want) exit 2; endc() }' > "$SCRATCH/ops.all" || return 2
@@ -454,16 +467,28 @@ moves_check() { # -> MOVED set when a move counts ("<commit>"); 2 on error
   # moves, and each round's rules broke shapes the round before had right).
   GIT rev-list --no-merges "$BRANCH_SHA" "^$BASELINE_SHA" > "$SCRATCH/br.set" 2>/dev/null || return 2
   GIT log --no-merges --no-renames --no-show-signature --no-color -O/dev/null --ignore-submodules=none \
-    --format= --name-only -z "$BRANCH_SHA" "^$BASELINE_SHA" > "$SCRATCH/bp.z" 2>/dev/null || return 2
-  tr '\n\000' '\001\n' < "$SCRATCH/bp.z" | LC_ALL=C awk 'length($0) { print }' > "$SCRATCH/bpaths" || return 2
-  # "<commit>\n<old>\n<new>" for each move that matters
-  LC_ALL=C awk -v bs="$SCRATCH/br.set" -v bp="$SCRATCH/bpaths" '
+    --format= --name-status -z "$BRANCH_SHA" "^$BASELINE_SHA" > "$SCRATCH/bp.z" 2>/dev/null || return 2
+  # "<status>" and "<path>" alternate (the empty format leaves empty tokens between commits);
+  # bpaths: every path, bdirs: the directories of the paths a commit of the branch added
+  tr '\n\000' '\001\n' < "$SCRATCH/bp.z" | LC_ALL=C awk -v d="$SCRATCH/bdirs" '
+    BEGIN { printf "" > d }
+    !length($0) { next }
+    st == "" { st = $0; next }
+    { print; if (st == "A") { i = match($0, /\/[^\/]*$/); if (i > 1) print substr($0, 1, i - 1) > d }; st = "" }' \
+    > "$SCRATCH/bpaths" || return 2
+  # "<commit>\n<old>\n<new>" for each move that matters. A move of a file out of a directory
+  # where the branch added one counts too: merge-ort's directory-rename detection carries the
+  # branch's new file along (#399 verify round 20).
+  LC_ALL=C awk -v bs="$SCRATCH/br.set" -v bp="$SCRATCH/bpaths" -v bd="$SCRATCH/bdirs" '
+    function dir(x,    i) { i = match(x, /\/[^\/]*$/); return (i > 1) ? substr(x, 1, i - 1) : "" }
     BEGIN { while ((r = getline l < bs) > 0) C[l] = 1; if (r < 0) exit 2
-            while ((r = getline l < bp) > 0) P[l] = 1; if (r < 0) exit 2 }
+            while ((r = getline l < bp) > 0) P[l] = 1; if (r < 0) exit 2
+            while ((r = getline l < bd) > 0) AD[l] = 1; if (r < 0) exit 2 }
     st == "" { st = $0; need = (st == "R") ? 2 : 1; got = 0; next }
     { v[++got] = $0; if (got < need) next; t = st; st = ""
       if (t == "@") { cur = v[1]; next }
-      if (t == "R" && ((cur in C) || (v[1] in P) || (v[2] in P))) { print cur; print v[1]; print v[2] } }' \
+      if (t == "R" && ((cur in C) || (v[1] in P) || (v[2] in P) || (dir(v[1]) != dir(v[2]) && (dir(v[1]) in AD)))) {
+        print cur; print v[1]; print v[2] } }' \
     "$SCRATCH/ops.all" > "$SCRATCH/moves" || return 2
   if [ -s "$SCRATCH/moves" ]; then
     MOVED="$(head -n 1 "$SCRATCH/moves")"
@@ -661,10 +686,9 @@ entry_of() {
   return 1
 }
 
-# Each candidate's files, listed once: the names it touched (refused when one has a
-# newline), the ones it deletes and adds as a whole (D.<n>, A.<n>, with their keys in
-# Dk.<n>, Ak.<n>), and the keys of all of them (keys.<n>), each file's name in the
-# head. Every path a candidate touched is numbered once by one awk pass (bash 3.2 has
+# Each candidate's files, listed once: the paths it touched (refused when one has a
+# newline), and the ones it deletes and adds as a whole (Dk.<n>, Ak.<n>, each path twice,
+# as the name and the key the checks below read). Every path a candidate touched is numbered once by one awk pass (bash 3.2 has
 # no associative arrays, and a linear search is quadratic on a wide commit); each
 # candidate's numbers go to its own file, which awk reads later, never argv. -z so a
 # space or a non-ASCII name (quoted by core.quotePath) stays the real path.
@@ -684,17 +708,15 @@ for sha in $CANDIDATES; do
       NR % 2 == 1 { st = $0; next }
       { if (st == "D") printf "%s%c", $0, 0 > (d "/D." k ".z")
         else { printf "%s%c", $0, 0 > (d "/in.z"); if (st == "A") printf "%s%c", $0, 0 > (d "/A." k ".z") } }' \
-    && tr '\000' '\n' < "$SCRATCH/D.$k.z" > "$SCRATCH/D.$k" && tr '\000' '\n' < "$SCRATCH/A.$k.z" > "$SCRATCH/A.$k" \
     || skip "cannot read the paths $(short "$sha") touched"
   par="$(GIT rev-parse -q --verify "$sha^1^{commit}" 2>/dev/null)" || par=""
   if [ -n "$par" ]; then
-    names_in "$par" "$SCRATCH/D.$k.z" "$SCRATCH/Dk.$k" || skip "cannot follow the files $(short "$sha") deleted"
+    names_in "$par" "$SCRATCH/D.$k.z" "$SCRATCH/Dk.$k" || skip "cannot read the files $(short "$sha") deleted"
   else
     : > "$SCRATCH/Dk.$k"
   fi
   names_in "$sha" "$SCRATCH/in.z" "$SCRATCH/Ik.$k" && names_in "$sha" "$SCRATCH/A.$k.z" "$SCRATCH/Ak.$k" \
-    && LC_ALL=C awk 'NR % 2 == 1 { n = $0; next } $0 == n { print n }' "$SCRATCH/Ak.$k" > "$SCRATCH/As.$k" \
-    || skip "cannot follow the files $(short "$sha") touched"
+    || skip "cannot read the files $(short "$sha") touched"
   LC_ALL=C awk -v k="$k" 'NR % 2 == 0 && !($0 in s) { s[$0] = 1; print k "\t" $0 }' "$SCRATCH/Ik.$k" "$SCRATCH/Dk.$k" \
     >> "$SCRATCH/pairs" || skip "cannot index the paths $(short "$sha") touched"
   [ -s "$SCRATCH/ns.z" ] && NPATHS="$NPATHS $k"
@@ -820,7 +842,6 @@ NET_GEN=0 ; NETN_GEN="" ; NETN=0
 file_of() {
   local ty n
   n="$2"
-  [ -n "$n" ] || { : > "$3"; return 0; }
   ty="$(entry_of "$1" "$n")"
   case $? in 1) : > "$3"; return 0 ;; 0) ;; *) return 2 ;; esac
   [ "$ty" = blob ] || return 1
@@ -838,7 +859,7 @@ file_of() {
 # merge, a `git pull`), so the count says nothing there and only positions decide.
 # 0 holds, 1 not, 2 error. The texts and their copies in the branch and the
 # merge-base are cached per net change and path (rep.<generation>.<path number>).
-# <rev> <path> <old name> <records>: keeps only the records whose text at most one
+# <rev> <path> <records>: keeps only the records whose text at most one
 # commit of the whole branch touches (adds or deletes a line of it, or changes how
 # many copies there are). A copy one commit added and a later one took away again
 # would otherwise count in a step that brought in only the first (an earlier squash of
@@ -847,15 +868,11 @@ file_of() {
 # number of copies alone, could be dropped unseen. Each of these read as holding the
 # net change (#399 round 14, found by bounded.py --landing two and --pairs). <rev>
 # is unused.
-single_changer() { # <rev> <key> <records>
-  local b rc side r key p
-  local -a al
+single_changer() { # <rev> <path> <records>
+  local b rc side r key
   : > "$SCRATCH/sc.texts"
   key="$(printf '%s' "$2" | GIT hash-object --stdin 2>/dev/null)" || return 2
-  printf '%s\000' "$2" > "$SCRATCH/sc.al" || return 2
-  al=()
-  while IFS= read -r -d '' p; do al+=("$p"); done < "$SCRATCH/sc.al" || return 2
-  GIT --literal-pathspecs rev-list --no-merges "$HOLD_MB..$BRANCH_SHA" -- "${al[@]}" > "$SCRATCH/sc.revs" 2>/dev/null || return 2
+  GIT --literal-pathspecs rev-list --no-merges "$HOLD_MB..$BRANCH_SHA" -- "$2" > "$SCRATCH/sc.revs" 2>/dev/null || return 2
   while IFS= read -r b; do
     GIT rev-parse -q --verify "$b^1^{commit}" > /dev/null 2>&1 || continue
     # Every text the commit touches in the file, read once per commit and file (the
@@ -1046,7 +1063,7 @@ same_paths() { # <rev> <commit> -> 0 the same, 1 not, 2 error
     (st == "A" || st == "D") && ($0 in want) { exit 1 }'
 }
 holds() { # <commit> <rev> -> 0 holds, 1 does not, 2 error (LAND_NOTE set); HOLD_MB is <rev>'s merge-base
-  local c="$1" rev="$2" p want
+  local c="$1" rev="$2"
   if [ "$BUDGET" -le 0 ]; then
     LAND_NOTE="the budget of 200 checks ran out before a landing commit was found"; return 2
   fi
@@ -1280,14 +1297,12 @@ orphan_p() { # <commit-sha> <candidate number> -> 10 orphan, 11 landed, other: e
     # h, t: whether the head and the tip have the line (or the path).
     function missing(h, t) { return h && !t }
     function kept(h, t) { return !h && t }
-    # a path ("<name>", "<key>" pairs): whether the head and the tip have the file
-    # there (an added path counts only while it is the key of the file, its name in the head)
+    # a path (each listed twice): whether the head and the tip have a file there
     function paths(f, del,    l, r, q, n, h, t) {
       q = 0
       while ((r = getline l < f) > 0) {
         if (++q == 1) { n = l; continue }
         q = 0
-        if (!del && n != l) continue
         h = (n in HP); t = (n in TP)
         if (del ? kept(h, t) : missing(h, t)) found = 1
       }
@@ -1352,7 +1367,6 @@ orphan_p() { # <commit-sha> <candidate number> -> 10 orphan, 11 landed, other: e
 count_of_line() { # <rev> <key> <text file> -> copies of that line in <rev>'s file, 0 when absent, "x" for a submodule
   local ty n
   n="$2"
-  [ -n "$n" ] || { echo 0; return 0; }
   ty="$(entry_of "$1" "$n")"
   case $? in 1) echo 0; return 0 ;; 0) ;; *) return 2 ;; esac
   [ "$ty" = blob ] || { echo x; return 0; }
@@ -1398,16 +1412,12 @@ in_l1() { # <commit> <keys file, NUL-separated>
 # failed where L^1 holds that prefix only because a deletion counts as landed once its
 # line is replaced: the prefix's state was not what L^1 had (round 15, bounded.py).
 other_copies() { # <commit> <text file> <key>
-  local c="$1" t="$2" k="$3" b n1 n2 nk rc p
-  local -a al
+  local c="$1" t="$2" k="$3" b n1 n2 nk rc
   # in_l1 depends on the commit and the file only, not on the text: its answer is kept
-  # per commit and key (one finding after another asks again, #399 verify round 15
+  # per commit and path (one finding after another asks again, #399 verify round 15
   # measured a landed 150-commit branch five times slower than round 13).
   nk="$(printf '%s' "$k" | GIT hash-object --stdin 2>/dev/null)" || return 2
-  printf '%s\000' "$k" > "$SCRATCH/oc.al" || return 2
-  al=()
-  while IFS= read -r -d '' p; do al+=("$p"); done < "$SCRATCH/oc.al" || return 2
-  GIT --literal-pathspecs rev-list --no-merges "$LANDING_MB..$BRANCH_SHA" -- "${al[@]}" > "$SCRATCH/cnt.revs" 2>/dev/null || return 2
+  GIT --literal-pathspecs rev-list --no-merges "$LANDING_MB..$BRANCH_SHA" -- "$k" > "$SCRATCH/cnt.revs" 2>/dev/null || return 2
   while IFS= read -r b; do
     [ "$b" != "$c" ] || continue
     GIT rev-parse -q --verify "$b^1^{commit}" > /dev/null 2>&1 || continue
@@ -1438,7 +1448,6 @@ confirm() { # <commit> <parent> <"A|D<TAB>line<TAB>key"> -> 0 missing, 1 landed 
   [ "$par" != "$EMPTY_TREE" ] || return 0
   if [ "$t" = A ]; then src="$c"; else src="$par"; fi
   sname="$key"
-  [ -n "$sname" ] || return 0
   ty="$(entry_of "$src" "$sname")"
   case $? in 0) ;; 1) return 0 ;; *) return 2 ;; esac
   [ "$ty" = blob ] || return 0
@@ -1523,7 +1532,7 @@ land_orphan_p() { # <commit-sha> <candidate number> -> 10 orphan, 11 landed, oth
   # (a path with a line record is checked by its lines)
   for f in A D; do
     LC_ALL=C awk -v f="$f" -v own="$SCRATCH/l.own" 'BEGIN { while ((r = getline l < own) > 0) if (l ~ /^[AD]\t/) { i = index(substr(l, 3), "\t"); seen[substr(l, 3 + i)] = 1 }; if (r < 0) exit 2 }
-      NR % 2 == 1 { n = $0; next } !($0 in seen) && (f != "A" || $0 == n) { print n; print }' "$SCRATCH/${f}k.$2" > "$SCRATCH/l.bare.$f" || return 2
+      NR % 2 == 1 { n = $0; next } !($0 in seen) { print n; print }' "$SCRATCH/${f}k.$2" > "$SCRATCH/l.bare.$f" || return 2
   done
   [ -s "$SCRATCH/l.bare.A" ] || [ -s "$SCRATCH/l.bare.D" ] || return 11
   listing "$BRANCH_SHA" "$SCRATCH/ls.head" && listing "$LANDING" "$SCRATCH/ls.land.$LANDING" || return 2
@@ -1605,33 +1614,34 @@ unc_check() {
 # branch, then the PR that completes it): after the merge the merge-base holds that part,
 # so the whole branch's landing commit holds only what came after, and main may have
 # edited the first part's lines in between (#399's own shape; every round up to 19 listed
-# them, #399 verify round 19). For each first-parent merge of main into the branch, oldest
-# first, where the branch up to the merge's first parent landed, such a commit before it is
-# checked again where that part landed; the first such part that contains it decides.
+# them, #399 verify round 19). Such a commit is checked again, in place, at the main commit
+# each first-parent merge of main into the branch brought in (its second parent), oldest
+# first: in place at any of them, it had landed by then. The commit itself is checked, not
+# the branch up to the merge: a commit pushed after the first PR and before the merge, or a
+# first PR that left part of the branch out, made the part as a whole land nowhere, and the
+# first PR's commit was listed again (#399 verify round 20).
 SYNC_BUILT=""
-sync_list() { # -> $SCRATCH/syncs: "<first parent> <landing commit> <its merge-base>"
+sync_list() { # -> $SCRATCH/syncs: "<first parent> <second parent>" of each first-parent merge
   local m p1 p2
   : > "$SCRATCH/syncs" || return 2
   GIT rev-list --first-parent --merges --reverse "$BRANCH_SHA" "^$BASELINE_SHA" > "$SCRATCH/syncs.m" 2>/dev/null || return 2
   while IFS= read -r m <&9; do
     p1="$(GIT rev-parse -q --verify "$m^1^{commit}" 2>/dev/null)" && p2="$(GIT rev-parse -q --verify "$m^2^{commit}" 2>/dev/null)" || return 2
     GIT merge-base --is-ancestor "$p2" "$BASELINE_SHA" 2>/dev/null; case $? in 0) ;; 1) continue ;; *) return 2 ;; esac
-    if find_landing "$p1" && [ -z "$LAND_AT_MB" ]; then
-      printf '%s %s %s\n' "$p1" "$LAND" "$LAND_MB" >> "$SCRATCH/syncs" || return 2
-    fi
+    printf '%s %s\n' "$p1" "$p2" >> "$SCRATCH/syncs" || return 2
   done 9< "$SCRATCH/syncs.m"
 }
-sync_retry() { # <commit> <candidate number> -> 11 landed in such a part, 10 not, 2 error
-  local c="$1" p1 l lmb rc sl="$LANDING" sm="$LANDING_MB" sp="$PREFIX_TIP"
+sync_retry() { # <commit> <candidate number> -> 11 in place in a merged main commit, 10 not, 2 error
+  local c="$1" p1 p2 mb rc sl="$LANDING" sm="$LANDING_MB" sp="$PREFIX_TIP"
   if [ -z "$SYNC_BUILT" ]; then sync_list || return 2; SYNC_BUILT=1; fi
-  while read -r p1 l lmb <&9; do
+  while read -r p1 p2 <&9; do
     GIT merge-base --is-ancestor "$c" "$p1" 2>/dev/null; case $? in 0) ;; 1) continue ;; *) return 2 ;; esac
-    [ "$l" != "$sl" ] || return 10
-    moved_before "$l"
-    LANDING="$l"; LANDING_MB="$lmb"; PREFIX_TIP="$p1"
+    mb="$(GIT merge-base "$p2" "$c" 2>/dev/null)" || continue
+    moved_before "$p2"
+    LANDING="$p2"; LANDING_MB="$mb"; PREFIX_TIP="$p1"
     land_orphan_p "$c" "$2"; rc=$?
     LANDING="$sl"; LANDING_MB="$sm"; PREFIX_TIP="$sp"
-    return "$rc"
+    case $rc in 11) return 11 ;; 10) ;; *) return "$rc" ;; esac
   done 9< "$SCRATCH/syncs"
   return 10
 }
