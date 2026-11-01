@@ -120,7 +120,26 @@
 # its revision's tree (213), the landing commit's deleted names by file only (216), a place
 # the file already took not counting (214), deleted lines at the tip by the main name only
 # (197 and 29 more), GIT_CONFIG kept (218), no partial clone filter check (219),
-# same_files always passing (205).
+# same_files always passing (205). Round 20 (the maintainer's decision of 2026-11-01:
+# moves are not judged; SPEC.md, Definition, "Moves"): fixtures 71, 105, 120-122, 128 (the
+# rename case), 136, 138, 139, 143, 146, 151, 154, 158, 158b, 159, 174-177, 181-184, 188,
+# 190-192, 195, 196b, 197-199, 203-205, 207-209, 212-216 now expect exit 4, and their
+# assertions on the list are gone (their comments still describe the answers of rounds 16
+# to 19, which followed files across moves); 99 (main archives the files after the squash)
+# stays 0; 206 moved to the wide path, the only one that still builds a scratch index.
+# Fixtures 221-229 pin round 20: 221a, 221c and 228 are red on rounds 17 and 19 (the first
+# PR's commit listed, as every version since 3.5.0 does), 222, 223b, 224b and 226 on rounds
+# 17 and 19 (an answer, not exit 4; 226's is 0 on round 19, the false clean its verify
+# found). Mutants of round 20 caught: P0 over the candidates' paths only (226), a move in a
+# commit of the branch taken as main's (227), commits at the tip despite a move (222, 224b),
+# no second check after a merge of main (221a), the merges newest first (228), one listing
+# for every landing commit (229), a move after the landing commit not judged (224a).
+# Unpinned: a move counted by its old name only (a move of main's onto a path the branch
+# touched, from a name it did not), no check of main's moves before the landing commit and
+# before a part's landing commit (the landing commit holds the net change by path, so such a
+# move mostly sends the commits to the tip, which 222 pins), any merge taken for a merge of
+# main, a part that lands at its merge-base taken, the copies' cache not keyed by the landing
+# commit.
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -1118,7 +1137,7 @@ rm -rf "$R"
 R="$(mk_repo)"; printf 'alpha\nbeta\n' > "$R/r71.txt"; git -C "$R" add -A && git -C "$R" commit -qm r71
 git -C "$R" checkout -q -b feat; git -C "$R" mv r71.txt s71.txt && git -C "$R" commit -qm "rename r71 (never landed)"
 git -C "$R" checkout -q main; printf 'o\n' > "$R/o.txt"; git -C "$R" add o.txt && git -C "$R" commit -qm "unrelated main work"
-assert_exit "fixture-71 dropped rename -> flagged" 3 "$(run_helper "$R" feat main)"
+assert_exit "fixture-71 dropped rename -> exit 4 (a move)" 4 "$(run_helper "$R" feat main)"
 squash_feat "$R"
 assert_exit "fixture-71b landed rename -> NOT flagged" 0 "$(run_helper "$R" feat main)"
 rm -rf "$R"
@@ -1600,7 +1619,7 @@ printf 'z\n' > "$R/z105.txt"; git -C "$R" add -A && git -C "$R" commit -qm "c2: 
 git -C "$R" checkout -q main
 git -C "$R" merge -q --squash feat >/dev/null 2>&1 && git -C "$R" commit -qm "squash feat" >/dev/null 2>&1
 printf 'r1\nr2\nR3\nr4\nr5\nr6\n' > "$R/s105.txt"; git -C "$R" commit -qam "follow-up: r6"
-assert_exit "fixture-105 rename with an edit, squashed, then a follow-up -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+assert_exit "fixture-105 rename with an edit, squashed, then a follow-up -> exit 4 (a move)" 4 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 # 106: a branch with no net change whose middle commit was cherry-picked alone: no
@@ -1822,7 +1841,7 @@ printf 'r\n' > "$R/r120.txt"; git -C "$R" add -A && git -C "$R" commit -qm "c2: 
 git -C "$R" checkout -q main
 printf 'import os\n\ndef run():\n    return os.getcwd() or "."\n' > "$R/src/u120.py"; git -C "$R" commit -qam "another PR: fallback"
 git -C "$R" merge -q --squash feat >/dev/null 2>&1 && git -C "$R" commit -qm "squash feat" >/dev/null 2>&1
-assert_exit "fixture-120 a moved file main edited before the squash -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+assert_exit "fixture-120 a moved file main edited before the squash -> exit 4 (a move)" 4 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 mk121() { # -> repo: c1 renames o121.py to n121.py and edits r1; c2 adds z121; main edits r8
@@ -1837,13 +1856,12 @@ mk121() { # -> repo: c1 renames o121.py to n121.py and edits r1; c2 adds z121; m
 }
 R="$(mk121)"
 git -C "$R" merge -q --squash feat >/dev/null 2>&1 && git -C "$R" commit -qm "squash feat" >/dev/null 2>&1
-assert_exit "fixture-121 renamed and edited, main edited another line first -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+assert_exit "fixture-121 renamed and edited, main edited another line first -> exit 4 (a move)" 4 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 R="$(mk121)"
 printf 'z\n' > "$R/z121.py"; git -C "$R" add -A && git -C "$R" commit -qm "squash c2 only"
 OUT122=$(out_of "$R" feat main); RC122=$?
-assert_exit "fixture-122 the rename never landed -> flagged" 3 "$RC122"
-assert_exit "fixture-122 lists c1" 0 "$(has "$OUT122" 'c1: rename to n121')"
+assert_exit "fixture-122 the rename never landed -> exit 4 (a move)" 4 "$RC122"
 rm -rf "$R"
 
 # 123: the tip has the head's content on every path the branch touched: nothing to
@@ -1927,12 +1945,11 @@ cfg128() { for kv in diff.noprefix=true diff.mnemonicPrefix=true diff.renames=fa
 R="$(mk121)"
 git -C "$R" merge -q --squash feat >/dev/null 2>&1 && git -C "$R" commit -qm "squash feat" >/dev/null 2>&1
 cfg128 "$R"
-assert_exit "fixture-128 hostile diff settings: rename and edit, main's edit first -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+assert_exit "fixture-128 hostile diff settings: rename and edit, main's edit first -> exit 4 (a move)" 4 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 R="$(mk112)"; cfg128 "$R"
 OUT128=$(out_of "$R" feat main); RC128=$?
 assert_exit "fixture-128 hostile diff settings: a dropped restore -> flagged" 3 "$RC128"
-assert_exit "fixture-128 lists c2" 0 "$(has "$OUT128" 'c2: 14 back')"
 rm -rf "$R"
 R="$(mk_repo)"; F128="$(printf 'caf\303\251.txt')"; printf 'k\n' > "$R/$F128"; git -C "$R" add -A && git -C "$R" commit -qm f128
 git -C "$R" checkout -q -b feat
@@ -2100,8 +2117,7 @@ git -C "$R" checkout -q main
 git -C "$R" rm -q x136.txt; { seq 1 10; echo 'q unique'; seq 11 20; } > "$R/y136.txt"; printf 'o\n' > "$R/o136.txt"
 git -C "$R" add -A && git -C "$R" commit -qm "squash feat, q kept"
 OUT136=$(out_of "$R" feat main); RC136=$?
-assert_exit "fixture-136 a renamed file whose deletion never landed -> flagged (not exit 4)" 3 "$RC136"
-assert_exit "fixture-136 lists c1" 0 "$(has "$OUT136" 'c1: rename to y136')"
+assert_exit "fixture-136 a renamed file whose deletion never landed -> exit 4 (a move)" 4 "$RC136"
 rm -rf "$R"
 
 # 137: the branch landed in two squashes, and c3 (a restore, never landed) puts back a
@@ -2144,8 +2160,7 @@ git -C "$R" checkout -q main
 f132 B "" B > "$R/f138.txt"; git -C "$R" commit -qam "main: slot 0 to B"
 git -C "$R" mv f138.txt g138.txt; f132 B "" A > "$R/g138.txt"; git -C "$R" add -A && git -C "$R" commit -qm "squash b1, and the move"
 OUT138=$(out_of "$R" feat main); RC138=$?
-assert_exit "fixture-138 a deletion in a moved file, never landed -> flagged (not exit 4)" 3 "$RC138"
-assert_exit "fixture-138 lists b2" 0 "$(has "$OUT138" 'b2: moved, slot 2 emptied')"
+assert_exit "fixture-138 a deletion in a moved file, never landed -> exit 4 (a move)" 4 "$RC138"
 rm -rf "$R"
 
 # 139–141: more than 64 KB of paths, where the trees are filtered to the listed paths
@@ -2166,7 +2181,7 @@ wide139 "$R" 'v\nw\n'; printf 'r1 alpha\nr2 beta\n' > "$R/r.txt"; git -C "$R" ad
 git -C "$R" checkout -q main
 git -C "$R" mv r.txt s.txt && git -C "$R" commit -qm "main: r.txt moved to s.txt"
 git -C "$R" checkout -q feat -- a_fairly_long_directory_name_for_paths && git -C "$R" commit -qm "squash feat"
-assert_exit "fixture-139 over 64 KB of paths, main moved a file the commit touched -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+assert_exit "fixture-139 over 64 KB of paths, main moved a file the commit touched -> exit 4 (a move)" 4 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 R="$(mk_repo)"; printf 'x = 1\n' > "$R/f140.py"; git -C "$R" add -A && git -C "$R" commit -qm f140
@@ -2243,7 +2258,7 @@ printf 'z\n' > "$R/z143.txt"; git -C "$R" add -A && git -C "$R" commit -qm "c2: 
 git -C "$R" checkout -q main
 printf 'pad 0\npad 1\npad 2\n} # main\n    return data\n    return data\nend\npad 3\npad 4\npad 5\n' > "$R/o143.txt"; git -C "$R" commit -qam "another PR: main"
 git -C "$R" merge -q --squash feat >/dev/null 2>&1 && git -C "$R" commit -qm "squash feat" >/dev/null 2>&1
-assert_exit "fixture-143 a moved file, main's edit before the squash, checked at the tip -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+assert_exit "fixture-143 a moved file, main's edit before the squash, checked at the tip -> exit 4 (a move)" 4 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 # 144: a diff.orderFile that does not exist makes git diff fail; the helper names no
@@ -2287,7 +2302,7 @@ git -C "$R" checkout -q main
 printf 'pad 0\npad 1\n} # main\n    return data\n    return data\nend\npad 3\npad 4\npad 5\n' > "$R/o146.txt"; git -C "$R" commit -qam "another PR: main"
 git -C "$R" merge -q --squash feat >/dev/null 2>&1 && git -C "$R" commit -qm "squash feat" >/dev/null 2>&1
 sed 's/^pad 5 = branch$/pad 5 = follow-up/' "$R/n146.txt" > "$R/t" && mv "$R/t" "$R/n146.txt"; git -C "$R" commit -qam "follow-up"
-assert_exit "fixture-146 moved, one of two equal lines deleted, main's edit next to them, follow-up -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+assert_exit "fixture-146 moved, one of two equal lines deleted, main's edit next to them, follow-up -> exit 4 (a move)" 4 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 # 147: found by bounded.py --landing two. The branch landed in two squashes (b1, then
@@ -2378,9 +2393,7 @@ git -C "$R" checkout -q main
 printf 'r1\nr2 = main\nr3\nr4\nr5\nr6\n' > "$R/o151.txt"; git -C "$R" commit -qam "another PR: r2"
 git -C "$R" mv o151.txt n151.txt && git -C "$R" commit -qm "squash c2 only"
 OUT151=$(out_of "$R" feat main); RC151=$?
-assert_exit "fixture-151 a move checked at the tip, main's edit before it -> only the dropped commit" 3 "$RC151"
-assert_exit "fixture-151 lists c1" 0 "$(has "$OUT151" 'c1: debug')"
-assert_exit "fixture-151 does not list c2" 1 "$(has "$OUT151" 'c2: move')"
+assert_exit "fixture-151 a move checked at the tip, main's edit before it -> only the dropped commit -> exit 4 (a move)" 4 "$RC151"
 rm -rf "$R"
 
 # 152, 152b: a commit that changed a file into a submodule or back is checked where
@@ -2453,7 +2466,7 @@ git -C "$R" checkout -q main
 printf 'def helper0():\n    return 0\ndef helper1():\n    return 1\ndef helper2():\n    return 2\ndef helper3():\n    return 3\ndef helper4():\n    return 4\ndef helper5():\n    return 5\ndef helper6():\n    return 6\ndef helper7():\n    return 7\ndef load(path):\n    with open(path) as f:\n        data = f.read().strip()\n    return data\n' > "$R/io154.py"; git -C "$R" commit -qam "another PR: strip"
 git -C "$R" merge -q --squash feat >/dev/null 2>&1 && git -C "$R" commit -qm "squash feat" >/dev/null 2>&1
 assert_exit "fixture-154 the squash went through (git followed the move)" 0 "$(git -C "$R" log -1 --format=%s main | grep -qx 'squash feat'; echo $?)"
-assert_exit "fixture-154 fixture 124 after a move: main's copy counted under the old name -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+assert_exit "fixture-154 fixture 124 after a move: main's copy counted under the old name -> exit 4 (a move)" 4 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 # 155: found by bounded.py --pairs. b1 moves a line of repeated text (deletes it in one
@@ -2530,9 +2543,7 @@ printf 'e\n' > "$R/e158.txt"; git -C "$R" add -A && git -C "$R" commit -qm "earl
 git -C "$R" cherry-pick "$C158" >/dev/null 2>&1
 assert_exit "fixture-158 the move was picked without X" 1 "$(git -C "$R" show main:lib/y158.txt | grep -qx 'X = fix'; echo $?)"
 OUT158="$("${BASH:-bash}" "$HELPER" --repo "$R" --branch feat --baseline main 2>/dev/null)"; RC158=$?
-assert_exit "fixture-158 a fix whose file the branch moved later, never landed -> flagged" 3 "$RC158"
-assert_exit "fixture-158 the fix is the commit listed" 0 \
-  "$(printf '%s\n' "$OUT158" | grep -q "^  $(git -C "$R" rev-parse --short feat~1)  "; echo $?)"
+assert_exit "fixture-158 a fix whose file the branch moved later, never landed -> exit 4 (a move)" 4 "$RC158"
 rm -rf "$R"
 
 # 158b: the same shape, landed by a squash resolved by hand that keeps the move and
@@ -2544,7 +2555,7 @@ git -C "$R" mv y158.txt z158.txt && git -C "$R" commit -qm "c2: rename y158 to z
 git -C "$R" checkout -q main
 printf 'e\n' > "$R/e158.txt"; git -C "$R" add -A && git -C "$R" commit -qm "early PR"
 git -C "$R" mv y158.txt z158.txt && git -C "$R" commit -qm "squash feat (X dropped by hand)"
-assert_exit "fixture-158b a squash that kept the move and dropped X -> flagged" 3 "$(run_helper "$R" feat main)"
+assert_exit "fixture-158b a squash that kept the move and dropped X -> exit 4 (a move)" 4 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 # 159: Codex in round 14's verify. A adds a line to old159.txt, B only renames the file
@@ -2557,7 +2568,7 @@ printf 'base\nUNLANDED\nline 2\nline 3\nline 4\n' > "$R/old159.txt"; git -C "$R"
 git -C "$R" mv old159.txt new159.txt && git -C "$R" commit -qm "B: rename"
 git -C "$R" checkout -q main
 git -C "$R" mv old159.txt new159.txt && git -C "$R" commit -qm "main: rename only"
-assert_exit "fixture-159 a line added before a rename main took alone -> flagged" 3 "$(run_helper "$R" feat main)"
+assert_exit "fixture-159 a line added before a rename main took alone -> exit 4 (a move)" 4 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 # 160: found by round 14's verify (DA). Fixture 124 plus a third copy of the function:
@@ -2853,8 +2864,7 @@ git -C "$R" rm -q f174.py; mkdir -p "$R/lib"; printf "a\nb\nx = 1\n${P174}c\n" >
 git -C "$R" add -A && git -C "$R" commit -qm "PR 1: squash b2 b2r b3"
 printf 'u\n' > "$R/u174.txt"; git -C "$R" add -A && git -C "$R" commit -qm "PR 2: squash b1"
 OUT174=$(out_of "$R" feat main); RC174=$?
-assert_exit "fixture-174 fixture 153 after the branch moved the file -> flagged" 3 "$RC174"
-assert_exit "fixture-174 lists b4" 0 "$(has "$OUT174" 'b4: first x back')"
+assert_exit "fixture-174 fixture 153 after the branch moved the file -> exit 4 (a move)" 4 "$RC174"
 rm -rf "$R"
 
 # 175: found by round 15's verify (logic). Fixture 146 with the branch's other change an
@@ -2873,7 +2883,7 @@ printf 'pad 0\npad 1\n} # main\n    return data\n    return data\nend\npad 3\npa
 git -C "$R" merge -q --squash feat >/dev/null 2>&1 && git -C "$R" commit -qm "squash feat" >/dev/null 2>&1
 sed 's/^branch line$/branch line, follow-up/' "$R/n175.txt" > "$R/t" && mv "$R/t" "$R/n175.txt"; git -C "$R" commit -qam "follow-up"
 assert_exit "fixture-175 the squash went through" 0 "$(git -C "$R" log -1 --format=%s main~1 | grep -qx 'squash feat'; echo $?)"
-assert_exit "fixture-175 a moved file, one of two equal lines deleted, clean squash, follow-up -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+assert_exit "fixture-175 a moved file, one of two equal lines deleted, clean squash, follow-up -> exit 4 (a move)" 4 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 # 176: found by round 15's verify (logic). Fixture 153 with the branch moving the file
@@ -2893,8 +2903,7 @@ printf "a\nb\nx = 1\n${P176}c\n" > "$R/f176.py"; git -C "$R" commit -qam "PR 1: 
 printf 'u\n' > "$R/u176.txt"; mkdir -p "$R/lib"; git -C "$R" mv f176.py lib/f176.py
 git -C "$R" add -A && git -C "$R" commit -qm "PR 2: squash b1 and b5"
 OUT176=$(out_of "$R" feat main); RC176=$?
-assert_exit "fixture-176 a restore that never landed, in a file the branch moved last -> flagged" 3 "$RC176"
-assert_exit "fixture-176 lists b4" 0 "$(has "$OUT176" 'b4: first x back')"
+assert_exit "fixture-176 a restore that never landed, in a file the branch moved last -> exit 4 (a move)" 4 "$RC176"
 rm -rf "$R"
 
 # 177: found by round 15's verify (Codex). c1 sets a line from A to B, c2 sets it back
@@ -2910,9 +2919,7 @@ git -C "$R" checkout -q main
 git -C "$R" mv old177.txt new177.txt; printf 'p1\np2\nB\np3\np4\np5\n' > "$R/new177.txt"
 git -C "$R" add -A && git -C "$R" commit -qm "squash feat (c2 dropped by hand)"
 OUT177=$(out_of "$R" feat main); RC177=$?
-assert_exit "fixture-177 a revert that never landed, before a move that did -> flagged" 3 "$RC177"
-assert_exit "fixture-177 lists c2" 0 "$(has "$OUT177" 'c2: B back to A')"
-assert_exit "fixture-177 does not list c1" 1 "$(has "$OUT177" 'c1: A to B')"
+assert_exit "fixture-177 a revert that never landed, before a move that did -> exit 4 (a move)" 4 "$RC177"
 rm -rf "$R"
 
 # 178: found by round 15's verify (security). Writing the scratch index of the filtered
@@ -2990,8 +2997,7 @@ git -C "$R" add -A && git -C "$R" commit -qm "squash b1..b3r (b4 left out)"
 assert_exit "fixture-181 b2 was picked early: main's f181.py lost its first x" 0 \
   "$([ "$(git -C "$R" show main~1:f181.py | head -1)" = a ]; echo $?)"
 OUT181=$(out_of "$R" feat main); RC181=$?
-assert_exit "fixture-181 a file moved twice, edited under its middle name -> flagged" 3 "$RC181"
-assert_exit "fixture-181 lists b4" 0 "$(has "$OUT181" 'b4: first x back')"
+assert_exit "fixture-181 a file moved twice, edited under its middle name -> exit 4 (a move)" 4 "$RC181"
 rm -rf "$R"
 
 # 182: found by round 16's verify (devil's advocate). A adds a line; B moves old.txt to
@@ -3007,8 +3013,7 @@ printf 'shim 1\nshim 2\n' > "$R/old182.txt"; git -C "$R" add -A && git -C "$R" c
 git -C "$R" checkout -q main
 git -C "$R" cherry-pick feat~1 feat > /dev/null 2>&1
 OUT182=$(out_of "$R" feat main); RC182=$?
-assert_exit "fixture-182 a move, then a new file at the old name, the first commit dropped -> flagged" 3 "$RC182"
-assert_exit "fixture-182 lists A182" 0 "$(has "$OUT182" 'A182: add UNLANDED')"
+assert_exit "fixture-182 a move, then a new file at the old name, the first commit dropped -> exit 4 (a move)" 4 "$RC182"
 rm -rf "$R"
 
 # 183: the same with C rewriting most of the moved file instead (A to the head is below
@@ -3023,8 +3028,7 @@ git -C "$R" checkout -q main
 git -C "$R" cherry-pick feat~1 > /dev/null 2>&1
 printf 'l1\nl2\nm3\nm4\nm5\nm6\nm7\nm8\nm9\nm10\nm11\n' > "$R/new183.txt"; git -C "$R" commit -qam "C183 picked without A183's line"
 OUT183=$(out_of "$R" feat main); RC183=$?
-assert_exit "fixture-183 a move, then a rewrite, the first commit dropped -> flagged" 3 "$RC183"
-assert_exit "fixture-183 lists A183" 0 "$(has "$OUT183" 'A183: add UNLANDED')"
+assert_exit "fixture-183 a move, then a rewrite, the first commit dropped -> exit 4 (a move)" 4 "$RC183"
 rm -rf "$R"
 
 # 184: fixture 182 with a deletion: A deletes Z, then the move and the shim; main picks B
@@ -3038,8 +3042,7 @@ printf 'shim 1\nshim 2\n' > "$R/old184.txt"; git -C "$R" add -A && git -C "$R" c
 git -C "$R" checkout -q main
 git -C "$R" cherry-pick feat~1 feat > /dev/null 2>&1
 OUT184=$(out_of "$R" feat main); RC184=$?
-assert_exit "fixture-184 a deletion before a move and a shim, never landed -> flagged" 3 "$RC184"
-assert_exit "fixture-184 lists A184" 0 "$(has "$OUT184" 'A184: delete Z')"
+assert_exit "fixture-184 a deletion before a move and a shim, never landed -> exit 4 (a move)" 4 "$RC184"
 rm -rf "$R"
 
 # 185: found by round 17's rename fuzz. Every commit landed, as picks folded into one
@@ -3125,7 +3128,7 @@ git -C "$R" mv h188.txt g188.txt && git -C "$R" commit -qm "c2: move"
 git -C "$R" checkout -q main
 M188="$(mktemp -d)/ran"
 git -C "$R" config hook.probe188.event post-index-change; git -C "$R" config hook.probe188.command "echo ran >> '$M188'"
-assert_exit "fixture-188 a branch that never landed, a moved file -> flagged" 3 "$(run_helper "$R" feat main)"
+assert_exit "fixture-188 a branch that never landed, a moved file -> exit 4 (a move)" 4 "$(run_helper "$R" feat main)"
 assert_exit "fixture-188 a configured post-index-change hook did not run" 1 "$([ -e "$M188" ]; echo $?)"
 rm -rf "$R"
 # ...and above 64 KB of paths (the filtered trees), where round 16 ran it
@@ -3172,12 +3175,9 @@ git -C "$R" checkout -q main
 printf 'def f():\n    a = 10\n    b = 2\n    c = 3\n    d = 4\n    e = 5\n    return a\n' > "$R/foo190.py"; git -C "$R" commit -qam "main: a = 10"
 git -C "$R" merge -q --squash feat > /dev/null 2>&1 && git -C "$R" commit -qm "squash feat" > /dev/null 2>&1
 assert_exit "fixture-190 the squash put main's edit into bar190.py" 0 "$(git -C "$R" show main:bar190.py | grep -qx '    a = 10'; echo $?)"
-T190="$(mktemp -d)/trace"
-OUT190="$(CHECK_MERGE_COMPLETENESS_TRACE="$T190" "${BASH:-bash}" "$HELPER" --repo "$R" --branch feat --baseline main 2>/dev/null)"
-assert_exit "fixture-190 a move over two commits: the squash is the landing commit" 0 \
-  "$(grep -qx "landing $(git -C "$R" rev-parse main) prefix -" "$T190"; echo $?)"
-assert_exit "fixture-190 c1 is not listed" 1 "$(has "$OUT190" 'c1: drop foo190.py')"
-rm -rf "$R" "$(dirname "$T190")"
+# (round 20: the squash records the move, a move on main at the landing commit -> exit 4)
+assert_exit "fixture-190 a move over two commits, squashed, main's edit first -> exit 4 (a move)" 4 "$(run_helper "$R" feat main)"
+rm -rf "$R"
 
 # 191: found by round 17's rename fuzz. Only part of the branch landed, as picks folded
 # into one squash: c0 (a marker), c2 (f191.txt moved to h191.txt) and c3 (a new file at
@@ -3200,9 +3200,7 @@ git -C "$R" reset -q --soft "$B191" && git -C "$R" commit -qm "PR (picks of c0, 
 assert_exit "fixture-191 main has the marker in h191.txt and the new f191.txt" 0 \
   "$(git -C "$R" show main:h191.txt | grep -qx 'M0 marker' && git -C "$R" show main:f191.txt | grep -qx 'shim 1'; echo $?)"
 OUT191=$(out_of "$R" feat main); RC191=$?
-assert_exit "fixture-191 part of the branch landed under a middle name -> flagged" 3 "$RC191"
-assert_exit "fixture-191 lists c1 and c4" 0 "$({ has "$OUT191" 'c1: pad 6'; has "$OUT191" 'c4: move to g191'; } | tr -d '\n' | grep -qx 00; echo $?)"
-assert_exit "fixture-191 does not list c0 or c3" 0 "$({ has "$OUT191" 'c0: marker'; has "$OUT191" 'c3: a new f191'; } | tr -d '\n' | grep -qx 11; echo $?)"
+assert_exit "fixture-191 part of the branch landed under a middle name -> exit 4 (a move)" 4 "$RC191"
 rm -rf "$R"
 
 # 192: fixture 179's accepted route with the file moved between the two commits that
@@ -3223,11 +3221,8 @@ git -C "$R" checkout -q main
 printf 'pad 0\npad 1\npad 2\nx = 1 # main\n    pass\n    pass\nx = 1\npad 3\npad 4\npad 5\n' > "$R/o192.txt"; git -C "$R" commit -qam "main edit"
 git -C "$R" merge -q --squash feat >/dev/null 2>&1 && git -C "$R" commit -qm squash >/dev/null 2>&1
 sed 's/^pad 5 = branch$/pad 5 = follow-up/' "$R/n192.txt" > "$R/t" && mv "$R/t" "$R/n192.txt"; git -C "$R" commit -qam follow-up
-T192="$(mktemp -d)/trace"
-CHECK_MERGE_COMPLETENESS_TRACE="$T192" "${BASH:-bash}" "$HELPER" --repo "$R" --branch feat --baseline main > /dev/null 2>&1
-assert_exit "fixture-192 a text two commits touch, the file moved between them: no landing commit, c1 checked at the tip" 0 \
-  "$(grep -qx "landing - prefix -" "$T192" && grep -qx "side $(git -C "$R" rev-parse feat~2) tip" "$T192"; echo $?)"
-rm -rf "$R" "$(dirname "$T192")"
+assert_exit "fixture-192 a text two commits touch, the file moved between them -> exit 4 (a move)" 4 "$(run_helper "$R" feat main)"
+rm -rf "$R"
 
 # 193: found reviewing round 17's own draft: the commit-by-commit log ended on a commit
 # with no change (an empty commit, `git commit --allow-empty`), whose header no entry
@@ -3275,9 +3270,7 @@ git -C "$R" checkout -q main; B195="$(git -C "$R" rev-parse HEAD)"
 for c in feat~4 feat~3 feat~1; do git -C "$R" cherry-pick "$c" > /dev/null 2>&1; done
 git -C "$R" reset -q --soft "$B195" && git -C "$R" commit -qm "PR (picks of c0, c1, c3, squashed)"
 OUT195=$(out_of "$R" feat main); RC195=$?
-assert_exit "fixture-195 a path a later move left, taken by a new file that never landed -> flagged" 3 "$RC195"
-assert_exit "fixture-195 lists c2 and c4" 0 "$({ has "$OUT195" 'c2: del base 7'; has "$OUT195" 'c4: a new h195'; } | tr -d '\n' | grep -qx 00; echo $?)"
-assert_exit "fixture-195 does not list c0" 1 "$(has "$OUT195" 'c0: move to h195')"
+assert_exit "fixture-195 a path a later move left, taken by a new file that never landed -> exit 4 (a move)" 4 "$RC195"
 rm -rf "$R"
 
 # ── Fixtures 196– (#399 round 18): main read by names where the branch landed ──
@@ -3297,7 +3290,7 @@ git -C "$R" rm -q a196.txt && git -C "$R" commit -qm "c2: drop a196"
 git -C "$R" checkout -q main; git -C "$R" merge -q --squash feat > /dev/null 2>&1 && git -C "$R" commit -qm squash > /dev/null 2>&1
 assert_exit "fixture-196 a copy then the original deleted, squashed (head = tip) -> NOT flagged" 0 "$(run_helper "$R" feat main)"
 sed 's/^line 3$/line 3 (follow-up)/' "$R/b196.txt" > "$R/t" && mv "$R/t" "$R/b196.txt"; git -C "$R" commit -qam "main: follow-up"
-assert_exit "fixture-196b ...and a follow-up on main (#399's second shape) -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+assert_exit "fixture-196b ...and a follow-up on main (#399's second shape) -> exit 4 (a move)" 4 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 # 197: found by round 17's verify (devil's advocate). Two files swap names over three
@@ -3314,8 +3307,7 @@ git -C "$R" mv t197.txt b197.txt && git -C "$R" commit -qm "c3: t to b"
 sed '/^alpha line 5$/d' "$R/b197.txt" > "$R/t" && mv "$R/t" "$R/b197.txt"; git -C "$R" commit -qam "c4: delete alpha 5 (never landed)"
 git -C "$R" checkout -q main; git -C "$R" merge -q --squash feat~1 > /dev/null 2>&1 && git -C "$R" commit -qm "PR (squash of the swap)" > /dev/null 2>&1
 OUT197=$(out_of "$R" feat main); RC197=$?
-assert_exit "fixture-197 two files swapped names, then a deletion that never landed -> flagged" 3 "$RC197"
-assert_exit "fixture-197 lists c4" 0 "$(has "$OUT197" 'c4: delete alpha 5')"
+assert_exit "fixture-197 two files swapped names, then a deletion that never landed -> exit 4 (a move)" 4 "$RC197"
 rm -rf "$R"
 
 # 198: found by round 17's verify (logic). The branch merges main after main squashed its
@@ -3339,8 +3331,7 @@ sed 's/^line 3 of n$/line 3 of n CHANGED/' "$R/m198.txt" > "$R/t" && mv "$R/t" "
 sed 's/^line 3 of n CHANGED$/line 3 of n/' "$R/m198.txt" > "$R/t" && mv "$R/t" "$R/m198.txt"; t198; git -C "$R" commit -qam "U2"
 unset GIT_AUTHOR_DATE GIT_COMMITTER_DATE
 OUT198=$(out_of "$R" feat main); RC198=$?
-assert_exit "fixture-198 the branch merged main after a partial squash, a deletion never landed -> flagged" 3 "$RC198"
-assert_exit "fixture-198 lists c3" 0 "$(has "$OUT198" 'c3: drop both copies')"
+assert_exit "fixture-198 the branch merged main after a partial squash, a deletion never landed -> exit 4 (a move)" 4 "$RC198"
 rm -rf "$R"
 
 # 199: found by round 17's verify (regression). Fixture 139 with the moved file named so
@@ -3356,7 +3347,7 @@ wide139 "$R" 'v\nw\n'; printf 'r1 alpha\nr2 beta\n' > "$R/Ar199.txt"; git -C "$R
 git -C "$R" checkout -q main
 git -C "$R" mv Ar199.txt As199.txt && git -C "$R" commit -qm "main: Ar199 moved to As199"
 git -C "$R" checkout -q feat -- a_fairly_long_directory_name_for_paths && git -C "$R" commit -qm "squash feat"
-assert_exit "fixture-199 a wide squash, a file main moved sorting first -> NOT flagged (no SIGPIPE)" 0 "$(run_helper "$R" feat main)"
+assert_exit "fixture-199 a wide squash, a file main moved sorting first -> exit 4 (a move)" 4 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 # 200: found by round 17's verify (Codex, requirements, security, devil's advocate). A
@@ -3398,8 +3389,7 @@ R="$(mk_repo)"; printf 'k\nZ = stale\nm\n' > "$R/x203.txt"; git -C "$R" add -A &
 git -C "$R" checkout -q -b feat; printf 'k\nm\n' > "$R/x203.txt"; git -C "$R" commit -qam "c1: delete Z (never landed)"
 git -C "$R" checkout -q main; git -C "$R" mv x203.txt y203.txt && git -C "$R" commit -qm "main: move to y203"
 OUT203=$(out_of "$R" feat main); RC203=$?
-assert_exit "fixture-203 a deletion from a file main moved, never landed -> flagged" 3 "$RC203"
-assert_exit "fixture-203 lists c1" 0 "$(has "$OUT203" 'c1: delete Z')"
+assert_exit "fixture-203 a deletion from a file main moved, never landed -> exit 4 (a move)" 4 "$RC203"
 rm -rf "$R"
 
 # 204: found by round 18's own design review. Two files swap names over three commits
@@ -3417,9 +3407,7 @@ git -C "$R" mv t204.txt b204.txt && git -C "$R" commit -qm "c3: t to b"
 sed '/^alpha line 5$/d' "$R/b204.txt" > "$R/t" && mv "$R/t" "$R/b204.txt"; git -C "$R" commit -qam "c4: delete alpha 5"
 git -C "$R" checkout -q main; printf 'own\n' > "$R/own204.txt"; git -C "$R" add -A && git -C "$R" commit -qm "main: own"
 OUT204=$(out_of "$R" feat main); RC204=$?
-assert_exit "fixture-204 a swap and a deletion, nothing landed -> flagged" 3 "$RC204"
-assert_exit "fixture-204 lists c2, c3 and c4" 0 \
-  "$({ has "$OUT204" 'c2: b to a'; has "$OUT204" 'c3: t to b'; has "$OUT204" 'c4: delete alpha 5'; } | tr -d '\n' | grep -qx 000; echo $?)"
+assert_exit "fixture-204 a swap and a deletion, nothing landed -> exit 4 (a move)" 4 "$RC204"
 rm -rf "$R"
 
 # 205: found by round 18's second rename fuzz. main squashes a swap of two files (c1-c3);
@@ -3442,21 +3430,19 @@ git -C "$R" mv u205.txt f205.txt && git -C "$R" commit -qm "c6: u to f (swapped 
 sed '/^beta line 5$/d' "$R/g205.txt" > "$R/t" && mv "$R/t" "$R/g205.txt"; git -C "$R" commit -qam "c7: delete beta 5"
 git -C "$R" checkout -q main
 OUT205=$(out_of "$R" feat main); RC205=$?
-assert_exit "fixture-205 the branch merged a squash of a swap, swapped back, deleted a line -> flagged" 3 "$RC205"
-assert_exit "fixture-205 lists c5, c6 and c7" 0 \
-  "$({ has "$OUT205" 'c5: f to g'; has "$OUT205" 'c6: u to f'; has "$OUT205" 'c7: delete beta 5'; } | tr -d '\n' | grep -qx 000; echo $?)"
-assert_exit "fixture-205 does not list c1, c2 or c3" 0 \
-  "$({ has "$OUT205" 'c1: f to t'; has "$OUT205" 'c2: g to f'; has "$OUT205" 'c3: t to g'; } | tr -d '\n' | grep -qx 111; echo $?)"
+assert_exit "fixture-205 the branch merged a squash of a swap, swapped back, deleted a line -> exit 4 (a move)" 4 "$RC205"
 rm -rf "$R"
 
 # 206: found by round 17's verify (security). hook.post-index-change.enabled, the
 # event's own switch, is git 2.55's; git 2.54 already runs hooks defined in the
 # configuration and turns one off only by its own name. A git that drops the event
 # switch stands in for 2.54: every hook bound to the event is also turned off by name.
-R="$(mk_repo)"; printf 'a\nb\nc\nd\n' > "$R/h206.txt"; git -C "$R" add -A && git -C "$R" commit -qm h206
+# (round 20: over 64 KB of paths, the filtered trees; a small branch with a move, which
+# round 17 used, now stops before building any tree)
+R="$(mk_repo)"; mkdir -p "$R/a_fairly_long_directory_name_for_paths"; wide139 "$R" 'v\n' 1200
+git -C "$R" add -A && git -C "$R" commit -qm wide206
 git -C "$R" checkout -q -b feat
-printf 'a\nb2\nc\nd\n' > "$R/h206.txt"; git -C "$R" commit -qam "c1: b2 (never landed)"
-git -C "$R" mv h206.txt g206.txt && git -C "$R" commit -qm "c2: move"
+wide139 "$R" 'v\nw\n' 1200; git -C "$R" add -A && git -C "$R" commit -qm "c1: wide edit (never landed)"
 git -C "$R" checkout -q main
 B206="$(mktemp -d)"; M206="$B206/ran"; G206="$(command -v git)"
 git -C "$R" config hook.probe206.event post-index-change; git -C "$R" config hook.probe206.command "echo ran >> '$M206'"
@@ -3493,9 +3479,7 @@ git -C "$R" checkout -q main; B207="$(git -C "$R" rev-parse HEAD)"
 for c in feat~2 feat~1; do git -C "$R" cherry-pick "$c" > /dev/null 2>&1; done
 git -C "$R" reset -q --soft "$B207" && git -C "$R" commit -qm "PR (picks of c1, c2, squashed)"
 OUT207=$(out_of "$R" feat main); RC207=$?
-assert_exit "fixture-207 a copy, the original deleted, the copy moved on; main has the first two -> flagged" 3 "$RC207"
-assert_exit "fixture-207 lists c0 and c3" 0 "$({ has "$OUT207" 'c0: g marker'; has "$OUT207" 'c3: move to t207'; } | tr -d '\n' | grep -qx 00; echo $?)"
-assert_exit "fixture-207 does not list c1 or c2" 0 "$({ has "$OUT207" 'c1: copy to k207'; has "$OUT207" 'c2: delete f207'; } | tr -d '\n' | grep -qx 11; echo $?)"
+assert_exit "fixture-207 a copy, the original deleted, the copy moved on; main has the first two -> exit 4 (a move)" 4 "$RC207"
 rm -rf "$R"
 
 # 208: found by round 18's second rename fuzz. A chain of copies: c1 copies f208.txt to
@@ -3514,10 +3498,7 @@ awk '$0 == "pad 3 a" { print "M3 marker" } { print }' "$R/g208.txt" > "$R/t" && 
 git -C "$R" rm -q g208.txt && git -C "$R" commit -qm "c5: delete g208 (never landed)"
 git -C "$R" checkout -q main; git -C "$R" merge -q --squash feat~3 > /dev/null 2>&1 && git -C "$R" commit -qm "PR (squash of c1, c2)" > /dev/null
 OUT208=$(out_of "$R" feat main); RC208=$?
-assert_exit "fixture-208 a chain of copies, the first link landed -> flagged" 3 "$RC208"
-assert_exit "fixture-208 lists c3, c4 and c5" 0 \
-  "$({ has "$OUT208" 'c3: M3'; has "$OUT208" 'c4: copy to h208'; has "$OUT208" 'c5: delete g208'; } | tr -d '\n' | grep -qx 000; echo $?)"
-assert_exit "fixture-208 does not list c1 or c2" 0 "$({ has "$OUT208" 'c1: copy to g208'; has "$OUT208" 'c2: delete f208'; } | tr -d '\n' | grep -qx 11; echo $?)"
+assert_exit "fixture-208 a chain of copies, the first link landed -> exit 4 (a move)" 4 "$RC208"
 rm -rf "$R"
 
 # 209: found by round 18's second rename fuzz. Two files swap names over three commits
@@ -3534,9 +3515,7 @@ git -C "$R" mv h209.txt g209.txt && git -C "$R" commit -qm "c3: h to g"
 git -C "$R" mv g209.txt h209.txt && git -C "$R" commit -qm "c4: g to h again (never landed)"
 git -C "$R" checkout -q main; git -C "$R" merge -q --squash feat~1 > /dev/null 2>&1 && git -C "$R" commit -qm "PR (squash of the swap)" > /dev/null
 OUT209=$(out_of "$R" feat main); RC209=$?
-assert_exit "fixture-209 a swap landed, a later move never did -> flagged" 3 "$RC209"
-assert_exit "fixture-209 lists c4" 0 "$(has "$OUT209" 'c4: g to h again')"
-assert_exit "fixture-209 does not list c2" 1 "$(has "$OUT209" 'c2: g to f')"
+assert_exit "fixture-209 a swap landed, a later move never did -> exit 4 (a move)" 4 "$RC209"
 rm -rf "$R"
 
 # 210: found by round 18's second rename fuzz. c0 adds a line to g210.txt, c1 copies it
@@ -3599,9 +3578,7 @@ git -C "$R" reset -q --soft "$B212" && git -C "$R" commit -qm "PR (picks of c1, 
 assert_exit "fixture-212 main's f212.txt is the branch's file with c1 and c2" 0 \
   "$(git -C "$R" show main:f212.txt | grep -q '^R2 ' && ! git -C "$R" show main:f212.txt | grep -qx 'base 7'; echo $?)"
 OUT212=$(out_of "$R" feat main); RC212=$?
-assert_exit "fixture-212 a move and a new file at the old name never landed, edits did -> flagged" 3 "$RC212"
-assert_exit "fixture-212 lists c0 and c3" 0 "$({ has "$OUT212" 'c0: move to h212'; has "$OUT212" 'c3: a new f212'; } | tr -d '\n' | grep -qx 00; echo $?)"
-assert_exit "fixture-212 does not list c1 or c2" 0 "$({ has "$OUT212" 'c1: delete base 7'; has "$OUT212" 'c2: rewrite'; } | tr -d '\n' | grep -qx 11; echo $?)"
+assert_exit "fixture-212 a move and a new file at the old name never landed, edits did -> exit 4 (a move)" 4 "$RC212"
 rm -rf "$R"
 
 # ── Fixtures 213– (#399 round 19): fewer rules, each where the files decide ──
@@ -3623,8 +3600,7 @@ git -C "$R" checkout -q feat; t213; git -C "$R" merge -q --no-edit main > /dev/n
 echo "b4 line" >> "$R/gen213.txt"; t213; git -C "$R" commit -qam "b4: edit gen213 at its old path (never landed)"
 unset GIT_AUTHOR_DATE GIT_COMMITTER_DATE
 OUT213=$(out_of "$R" feat main); RC213=$?
-assert_exit "fixture-213 the branch merged main, which moved the file; an edit at the old path never landed -> flagged" 3 "$RC213"
-assert_exit "fixture-213 lists b4" 0 "$(has "$OUT213" 'b4: edit gen213')"
+assert_exit "fixture-213 the branch merged main, which moved the file; an edit at the old path never landed -> exit 4 (a move)" 4 "$RC213"
 rm -rf "$R"
 
 # 214: found by round 18's verify (devil's advocate). c1 moves x214.txt to y214.txt, c2
@@ -3639,7 +3615,7 @@ git -C "$R" mv x214.txt y214.txt && git -C "$R" commit -qm "c1: move x214 to y21
 git -C "$R" show HEAD~1:x214.txt > "$R/x214.txt"; git -C "$R" add -A && git -C "$R" commit -qm "c2: restore x214"
 git -C "$R" checkout -q main; git -C "$R" merge -q --squash feat > /dev/null 2>&1 && git -C "$R" commit -qm "PR (squash)" > /dev/null
 sed 's/^x line 3$/x line 3 (main later)/' "$R/y214.txt" > "$R/t" && mv "$R/t" "$R/y214.txt"; git -C "$R" commit -qam "main: later edit"
-assert_exit "fixture-214 a move and the original put back, squashed, main's later edit -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+assert_exit "fixture-214 a move and the original put back, squashed, main's later edit -> exit 4 (a move)" 4 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 # 215: found by round 18's verify (logic). The same with the old name recreated byte for
@@ -3652,7 +3628,7 @@ echo "feat edit" >> "$R/y215.txt"; git -C "$R" commit -qam "c3: edit y215"
 git -C "$R" checkout -q main; echo own > "$R/own215.txt"; git -C "$R" add -A && git -C "$R" commit -qm "main: own"
 git -C "$R" merge -q --squash feat > /dev/null 2>&1 && git -C "$R" commit -qm "PR (squash)" > /dev/null
 echo "main later" >> "$R/y215.txt"; git -C "$R" commit -qam "main: later edit"
-assert_exit "fixture-215 a move and an identical file at the old name, squashed, main's later edit -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+assert_exit "fixture-215 a move and an identical file at the old name, squashed, main's later edit -> exit 4 (a move)" 4 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 # 216: found by round 18's verify (requirements). Two files swap names over three commits
@@ -3675,8 +3651,7 @@ git -C "$R" checkout -q main; B216="$(git -C "$R" rev-parse HEAD)"
 for c in feat~5 feat~4 feat~2 feat; do git -C "$R" cherry-pick "$c" > /dev/null 2>&1; done
 git -C "$R" reset -q --soft "$B216" && git -C "$R" commit -qm "PR (picks of c0, c1, c3, c5, squashed)"
 OUT216=$(out_of "$R" feat main); RC216=$?
-assert_exit "fixture-216 a swap and a copy, the last move never landed, the rest squashed -> flagged" 3 "$RC216"
-assert_exit "fixture-216 lists c2" 0 "$(has "$OUT216" 'c2: t to g')"
+assert_exit "fixture-216 a swap and a copy, the last move never landed, the rest squashed -> exit 4 (a move)" 4 "$RC216"
 rm -rf "$R"
 
 # 217: found by round 18's verify (regression). g217.txt copied to zz217.txt (c0) and to
@@ -3741,6 +3716,148 @@ OUT220=$(out_of "$R" feat main); RC220=$?
 assert_exit "fixture-220 a copy picked alone, a deletion before it never landed -> flagged" 3 "$RC220"
 assert_exit "fixture-220 lists c1 and c3, not c2" 0 \
   "$({ has "$OUT220" 'c1: delete base 5'; has "$OUT220" 'c3: delete g220'; has "$OUT220" 'c2: copy to t220'; } | tr -d '\n' | grep -qx 001; echo $?)"
+rm -rf "$R"
+
+# ── Round 20 (the maintainer's decision of 2026-11-01): moves are not judged; a part of the
+# branch main received before the branch merged main in is checked where it landed ──
+
+# 221: #399 verify round 19 (devil's advocate). c1 edits line 5; main squashes it (PR1);
+# the branch merges main (GitHub's Update branch) and c2 edits line 12; main edits c1's line
+# (a follow-up) and squashes the branch again (PR2). After the merge the merge-base holds
+# PR1, the whole branch landed at PR2, and c1's line is no longer in place there: every
+# round up to 19 and 3.5.0 listed c1. c1 landed at PR1 (SPEC, Definition).
+mk221() { # repo -> the shape above, up to the merge and c2
+  seq 1 20 > "$1/n221.txt"; git -C "$1" add -A && git -C "$1" commit -qm n221
+  git -C "$1" checkout -q -b feat
+  sed 's/^5$/five/' "$1/n221.txt" > "$1/t" && mv "$1/t" "$1/n221.txt"; git -C "$1" commit -qam "c1: five"
+  git -C "$1" checkout -q main; git -C "$1" merge -q --squash feat > /dev/null 2>&1; git -C "$1" commit -qm "PR1"
+  git -C "$1" checkout -q feat; git -C "$1" merge -q --no-edit main > /dev/null 2>&1
+  sed 's/^12$/twelve/' "$1/n221.txt" > "$1/t" && mv "$1/t" "$1/n221.txt"; git -C "$1" commit -qam "c2: twelve"
+  git -C "$1" checkout -q main
+  sed 's/^five$/FIVE/' "$1/n221.txt" > "$1/t" && mv "$1/t" "$1/n221.txt"; git -C "$1" commit -qam "follow-up: FIVE"
+}
+R="$(mk_repo)"; mk221 "$R"; git -C "$R" merge -q --squash feat > /dev/null 2>&1; git -C "$R" commit -qm "PR2"
+assert_exit "fixture-221a PR1, Update branch, main edits PR1's line, PR2 -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+R="$(mk_repo)"; mk221 "$R"
+OUT221=$(out_of "$R" feat main); RC221=$?
+assert_exit "fixture-221b the same with no PR2 -> flagged" 3 "$RC221"
+assert_exit "fixture-221b lists c2 only" 0 "$({ has "$OUT221" 'c2: twelve'; has "$OUT221" 'c1: five'; } | tr -d '\n' | grep -qx 01; echo $?)"
+rm -rf "$R"
+R="$(mk_repo)"; mk221 "$R"; git -C "$R" checkout -q feat
+sed 's/^15$/fifteen/' "$R/n221.txt" > "$R/t" && mv "$R/t" "$R/n221.txt"; git -C "$R" commit -qam "c3: fifteen (never landed)"
+git -C "$R" checkout -q main; git -C "$R" merge -q --squash feat~1 > /dev/null 2>&1; git -C "$R" commit -qm "PR2 without c3"
+OUT221=$(out_of "$R" feat main); RC221=$?
+assert_exit "fixture-221c PR2 drops c3 -> flagged" 3 "$RC221"
+assert_exit "fixture-221c lists c3 only" 0 "$({ has "$OUT221" 'c3: fifteen'; has "$OUT221" 'c1: five'; has "$OUT221" 'c2: twelve'; } | tr -d '\n' | grep -qx 011; echo $?)"
+rm -rf "$R"
+
+# 222: main moves the file the branch edits, then squashes the branch (git follows the
+# move): the branch's path is not in the landing commit. Not judged; the reason names the
+# commit and no file name (file names are repository text).
+R="$(mk_repo)"; seq 1 20 > "$R/m222.txt"; git -C "$R" add -A && git -C "$R" commit -qm m222
+git -C "$R" checkout -q -b feat; sed 's/^5$/five/' "$R/m222.txt" > "$R/t" && mv "$R/t" "$R/m222.txt"; git -C "$R" commit -qam "c1: five"
+git -C "$R" checkout -q main; git -C "$R" mv m222.txt moved222.txt; git -C "$R" commit -qm "main moves m222"
+git -C "$R" merge -q --squash feat > /dev/null 2>&1; git -C "$R" commit -qm "squash"
+E222="$("${BASH:-bash}" "$HELPER" --repo "$R" --branch feat --baseline main 2>&1 >/dev/null; echo "rc=$?")"
+assert_exit "fixture-222 main moved the branch's file before the squash -> exit 4" 0 \
+  "$(printf '%s\n' "$E222" | grep -q '^rc=4$' && printf '%s\n' "$E222" | grep -q 'moved or renamed (in [0-9a-f]*)' \
+     && ! printf '%s\n' "$E222" | grep -q 'm222'; echo $?)"
+rm -rf "$R"
+
+# 223: the branch renames a file and edits it. Squashed exactly: the tip has the head's
+# content at every name involved -> 0 (P0). Then main edits the line: not judged -> exit 4.
+R="$(mk_repo)"; seq 1 20 > "$R/r223.txt"; git -C "$R" add -A && git -C "$R" commit -qm r223
+git -C "$R" checkout -q -b feat; git -C "$R" mv r223.txt s223.txt; git -C "$R" commit -qm "c1: rename"
+sed 's/^5$/five/' "$R/s223.txt" > "$R/t" && mv "$R/t" "$R/s223.txt"; git -C "$R" commit -qam "c2: five"
+git -C "$R" checkout -q main; git -C "$R" merge -q --squash feat > /dev/null 2>&1; git -C "$R" commit -qm "squash"
+assert_exit "fixture-223a branch renames and edits, squash -> NOT flagged (P0)" 0 "$(run_helper "$R" feat main)"
+sed 's/^five$/FIVE/' "$R/s223.txt" > "$R/t" && mv "$R/t" "$R/s223.txt"; git -C "$R" commit -qam "follow-up"
+assert_exit "fixture-223b ... then main edits the renamed file -> exit 4" 4 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 224: a move only on main, after the landing commit, with every candidate checked there
+# (two commits, so git cherry matches neither to the squash):
+# what main did after landing is out of scope (decision A) -> judged. A squash and a later
+# move with an edit -> 0; a dropped commit, checked at the tip -> exit 4 (the tip reads the
+# moved names).
+R="$(mk_repo)"; seq 1 20 > "$R/a224.txt"; git -C "$R" add -A && git -C "$R" commit -qm a224
+git -C "$R" checkout -q -b feat; sed 's/^5$/five/' "$R/a224.txt" > "$R/t" && mv "$R/t" "$R/a224.txt"; git -C "$R" commit -qam "c1: five"
+sed 's/^7$/seven/' "$R/a224.txt" > "$R/t" && mv "$R/t" "$R/a224.txt"; git -C "$R" commit -qam "c1b: seven"
+git -C "$R" checkout -q main; git -C "$R" merge -q --squash feat > /dev/null 2>&1; git -C "$R" commit -qm "squash"
+mkdir "$R/archive"; git -C "$R" mv a224.txt archive/a224.txt
+sed 's/^five$/FIVE/' "$R/archive/a224.txt" > "$R/t" && mv "$R/t" "$R/archive/a224.txt"; git -C "$R" commit -qam "archive"
+assert_exit "fixture-224a squash, then main moves the file and edits it -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+git -C "$R" checkout -q feat; sed 's/^9$/nine/' "$R/a224.txt" > "$R/t" && mv "$R/t" "$R/a224.txt"; git -C "$R" commit -qam "c2: nine (never landed)"
+assert_exit "fixture-224b ... and a later commit that never landed (checked at the tip) -> exit 4" 4 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 225: main renames a file no commit of the branch touched: no move counts -> judged as
+# before (a squash with a follow-up -> 0; a dropped commit -> 3).
+R="$(mk_repo)"; seq 1 20 > "$R/u225.txt"; echo other > "$R/o225.txt"; git -C "$R" add -A && git -C "$R" commit -qm u225
+git -C "$R" checkout -q -b feat; sed 's/^5$/five/' "$R/u225.txt" > "$R/t" && mv "$R/t" "$R/u225.txt"; git -C "$R" commit -qam "c1: five"
+sed 's/^9$/nine/' "$R/u225.txt" > "$R/t" && mv "$R/t" "$R/u225.txt"; git -C "$R" commit -qam "c2: nine"
+git -C "$R" checkout -q main; git -C "$R" mv o225.txt p225.txt; git -C "$R" commit -qm "main renames o225"
+git -C "$R" merge -q --squash feat~1 > /dev/null 2>&1; git -C "$R" commit -qm "squash c1"
+OUT225=$(out_of "$R" feat main); RC225=$?
+assert_exit "fixture-225 main renames an unrelated file; c2 dropped -> flagged" 3 "$RC225"
+assert_exit "fixture-225 lists c2 only" 0 "$({ has "$OUT225" 'c2: nine'; has "$OUT225" 'c1: five'; } | tr -d '\n' | grep -qx 01; echo $?)"
+rm -rf "$R"
+
+# 226: #399 verify round 19's CRITICAL. b1 adds gen226.txt, b2 appends a line; main takes b1
+# alone and moves the file; the branch merges main. Rounds 18 and 19 read b2 as landed
+# (exit 0); with the move it is not judged.
+R="$(mk_repo)"; git -C "$R" checkout -q -b feat
+seq 1 5 > "$R/gen226.txt"; git -C "$R" add -A && git -C "$R" commit -qm "b1: gen226"
+echo "b2 line" >> "$R/gen226.txt"; git -C "$R" commit -qam "b2: b2 line"
+git -C "$R" checkout -q main; git -C "$R" cherry-pick feat~1 > /dev/null 2>&1
+mkdir "$R/lib"; git -C "$R" mv gen226.txt lib/gen226.txt; git -C "$R" commit -qm "main moves gen226"
+git -C "$R" checkout -q feat; git -C "$R" merge -q --no-edit main > /dev/null 2>&1; git -C "$R" checkout -q main
+assert_exit "fixture-226 b2 before the merge of main, which moved the file -> exit 4 (not 0)" 4 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 227: the branch moves a file and back, then edits it; main squashes the branch (the squash
+# records no move) and edits the line. A move in a commit of the branch counts even when
+# main's history has none -> exit 4.
+R="$(mk_repo)"; seq 1 20 > "$R/a227.txt"; git -C "$R" add -A && git -C "$R" commit -qm a227
+git -C "$R" checkout -q -b feat; git -C "$R" mv a227.txt b227.txt && git -C "$R" commit -qm "c1: move"
+git -C "$R" mv b227.txt a227.txt && git -C "$R" commit -qm "c2: move back"
+sed 's/^5$/five/' "$R/a227.txt" > "$R/t" && mv "$R/t" "$R/a227.txt"; git -C "$R" commit -qam "c3: five"
+git -C "$R" checkout -q main; git -C "$R" merge -q --squash feat > /dev/null 2>&1; git -C "$R" commit -qm "squash"
+sed 's/^five$/FIVE/' "$R/a227.txt" > "$R/t" && mv "$R/t" "$R/a227.txt"; git -C "$R" commit -qam "follow-up"
+assert_exit "fixture-227 a move and back on the branch, squash, follow-up -> exit 4 (a move)" 4 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 228: two merges of main: c1, PR1, the branch merges main, c2, main's unrelated u228, the
+# branch merges main again, c3, main edits c1's line, PR2. The whole branch and the part up
+# to the second merge both land at PR2; c1 is checked again where the part up to the first
+# merge landed (PR1): the oldest merge first.
+R="$(mk_repo)"; seq 1 20 > "$R/n228.txt"; git -C "$R" add -A && git -C "$R" commit -qm n228
+git -C "$R" checkout -q -b feat
+sed 's/^5$/five/' "$R/n228.txt" > "$R/t" && mv "$R/t" "$R/n228.txt"; git -C "$R" commit -qam "c1: five"
+git -C "$R" checkout -q main; git -C "$R" merge -q --squash feat > /dev/null 2>&1; git -C "$R" commit -qm "PR1"
+git -C "$R" checkout -q feat; git -C "$R" merge -q --no-edit main > /dev/null 2>&1
+sed 's/^12$/twelve/' "$R/n228.txt" > "$R/t" && mv "$R/t" "$R/n228.txt"; git -C "$R" commit -qam "c2: twelve"
+git -C "$R" checkout -q main; printf 'u\n' > "$R/u228.txt"; git -C "$R" add -A && git -C "$R" commit -qm "u228"
+git -C "$R" checkout -q feat; git -C "$R" merge -q --no-edit main > /dev/null 2>&1
+sed 's/^15$/fifteen/' "$R/n228.txt" > "$R/t" && mv "$R/t" "$R/n228.txt"; git -C "$R" commit -qam "c3: fifteen"
+git -C "$R" checkout -q main
+sed 's/^five$/FIVE/' "$R/n228.txt" > "$R/t" && mv "$R/t" "$R/n228.txt"; git -C "$R" commit -qam "follow-up: FIVE"
+git -C "$R" merge -q --squash feat > /dev/null 2>&1; git -C "$R" commit -qm "PR2"
+assert_exit "fixture-228 two merges of main, main edits c1's line, PR2 -> NOT flagged" 0 "$(run_helper "$R" feat main)"
+rm -rf "$R"
+
+# 229: fixture 221a where c1 also adds an empty file, which main deletes before PR2: at PR2
+# the file is gone, at PR1 it is there (each landing commit's listing is its own).
+R="$(mk_repo)"; seq 1 20 > "$R/n229.txt"; git -C "$R" add -A && git -C "$R" commit -qm n229
+git -C "$R" checkout -q -b feat
+sed 's/^5$/five/' "$R/n229.txt" > "$R/t" && mv "$R/t" "$R/n229.txt"; : > "$R/e229.txt"; git -C "$R" add -A && git -C "$R" commit -qm "c1: five, e229"
+git -C "$R" checkout -q main; git -C "$R" merge -q --squash feat > /dev/null 2>&1; git -C "$R" commit -qm "PR1"
+git -C "$R" checkout -q feat; git -C "$R" merge -q --no-edit main > /dev/null 2>&1
+sed 's/^12$/twelve/' "$R/n229.txt" > "$R/t" && mv "$R/t" "$R/n229.txt"; git -C "$R" commit -qam "c2: twelve"
+git -C "$R" checkout -q main; git -C "$R" rm -q e229.txt; git -C "$R" commit -qm "main drops e229"
+git -C "$R" merge -q --squash feat > /dev/null 2>&1; git -C "$R" commit -qm "PR2"
+assert_exit "fixture-229 PR1 adds an empty file main drops before PR2 -> NOT flagged" 0 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 print_summary
