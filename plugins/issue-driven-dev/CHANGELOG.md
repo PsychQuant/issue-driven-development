@@ -70,20 +70,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     moved and then mostly rewrote, or moved and put a new file at its old name is still one file, at the
     landing commit and at the tip, and the commits that edited it under an earlier name are found by every name
     it had. A path that holds a file before and after is the same file (deleted and restored); a path a move
-    left and a new file then took holds another one. A move spread over two commits of the branch is taken from
-    one rename detection between the merge-base and the head. On main, a file the branch moved is the file
-    main created at its name in the head when there is one (a squash that moves a file and puts a new one at
-    its old name records no move), and a file the branch created is the one main created at a name it had on
-    the branch. Round 16 paired names with one rename detection between two trees or picked the first of four
-    fixed names, and listed none of: a commit edited only under a middle name and picked to main early; a
-    commit before a move whose old name later held a new file; a commit before a move followed by a rewrite.
+    left and a new file then took holds another one. A move spread over two commits of the branch (a copy and
+    then the original deleted included) is taken from one rename detection between the merge-base and the
+    head; a path two lines of history bring a file to (a squash main made and then merged into the branch)
+    holds one file. On main a squash records the branch's moves as one step's rename detection, which can pair
+    files otherwise (a copy then a deletion reads as a move; two files that swap names read as two edits), so
+    a commit tried as the landing commit, the landing commit and the tip after it hold the branch's files at
+    the names they had in what landed; before the landing commit main's own history says where each file is,
+    and a file main created stands for a branch file at a name it had on the branch. When nothing landed, the
+    tip has the head's names too, except where main's history puts another of the branch's files at a name:
+    there the file is history's when main never changed it, and otherwise the head file it shares more lines
+    with. At the tip a path a commit added or deleted is compared by file,
+    not by whatever is at the name: two files that swap names each hold the other's old name.
   - **No merges.** Every comparison is a two-way `git diff` with every setting that shapes its output fixed on
     the command line (no context lines between hunks, `GIT_DIFF_OPTS` unset, no external diff, no textconv,
     `--text`, no rename detection between two trees (each file is paired with itself, above), myers with the
     indent heuristic, fixed prefixes, quoted names, no color, no order file, short submodule lines; git's own
     messages discarded), or a plain read of a tree or blob. Every git call runs with no hooks
-    (`core.hooksPath=/dev/null`, and `hook.post-index-change.enabled=false` for a hook defined in the
-    configuration, git 2.54 and later; writing the scratch index below would otherwise run `post-index-change`)
+    (`core.hooksPath=/dev/null`; for a hook defined in the configuration, git 2.54 and later,
+    `hook.post-index-change.enabled=false` on git 2.55 and every hook the configuration binds to
+    `post-index-change` turned off by its own name, which is all git 2.54 reads; writing the scratch index below
+    would otherwise run `post-index-change`)
     and with `core.precomposeUnicode` off: the paths the helper passes are git's own
     listings, byte for byte, and with it on (macOS's default) a name stored in NFD matched nothing, so a branch
     that never landed read as landed. Above 64 KB of paths, or when a file a move involves is compared, two trees
@@ -118,10 +125,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `Subproject commit <oid>`. Commit subjects and refs are printed in double quotes, with control bytes, C1
     controls, the invisible, bidi and format characters the helper lists, and the marks that look like a double
     quote it lists (curly, fullwidth, double prime and others) replaced by `?`; `\`, `"`, `$` and backticks
-    escaped; no signature checks. In a partial clone a
-    missing blob is not fetched into the repository: git 2.45 or newer reports it unreadable (exit 4), and
-    when `git cherry` itself fails for that reason the message says the clone is partial; git before 2.45 cannot
-    be told not to fetch, so in a partial clone the check stops before reading anything (exit 4).
+    escaped; no signature checks. In a partial clone (`extensions.partialClone`, or a promisor remote, which is
+    what `git clone --filter` writes) a missing blob is not fetched into the repository: git 2.45 or newer
+    reports it unreadable (exit 4), and when `git cherry` or following the files fails for that reason the
+    message says the clone is partial; git before 2.45 cannot be told not to fetch, so in a partial clone the
+    check stops before reading anything (exit 4). With no merge-base (a shallow clone, unrelated histories)
+    no file is followed and the head's content already at the tip still answers 0.
   - **The gate's path no longer depends on the shell.** Step 1.55 called the helper through an unbraced
     `$CLAUDE_PLUGIN_ROOT`, which the skill runtime does not substitute (the #401 class), so the call worked
     only when the shell happened to have that variable — #399 itself saw it return rc=3 on 2026-10-15 — and
@@ -129,16 +138,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     #401. idd-close prints the helper's output with `printf`, so zsh's `echo` cannot undo its escaping.
   - **Errors are not "clean".** Outside the landing step, a failed git or awk command, an unreadable object,
     a checked commit touching a path with a newline (or byte `\001`), a file a checked commit touched that a
-    later commit deletes where git skipped its rename detection (more than 1000 files added and deleted in that
-    commit, so whether the file moved cannot be told; a commit that replaces a thousand generated files is no
-    error otherwise), a partial clone with git older than 2.45, or a temp dir whose path has a backslash or a
+    later commit deletes where git skipped its rename detection (the files that commit adds times the files it
+    deletes pass 1,000,000, so whether the file moved cannot be told; a commit that replaces a thousand
+    generated files is no error otherwise), a partial clone with git older than 2.45, or a temp dir whose path has a backslash or a
     newline exits 4
     with a `check-merge-completeness:`
     reason on stderr, which idd-close prints; nothing else reaches stderr. A failure inside the landing step falls back to the tip and is
     explained on exit 3.
   - Not effects at all (SPEC.md's definition): a file mode, a blank line, a final newline. Still not seen
     (only these): at the tip, an added line already elsewhere in the files the same commit touched, or a
-    deleted line the branch head still has there; a deletion from a file main renamed or moved away; a move git
+    deleted line the branch head still has there; a move git
     does not see inside one commit (a file moved and rewritten by more than half in the same commit), unless
     the merge-base and the head pair the two names; content
     written by a merge commit on the branch; content that was already in main through another commit before
@@ -170,13 +179,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     that side edited the branch's lines; a stacked branch merged after its base branch when the base branch
     changed the stack's lines after the stack was cut. When nothing of the branch landed, the check is at the
     tip as well: the verdict (exit 3) is right, but the list can include, or miss, a commit whose text main
-    added or removed on its own.
-  - Timing, as CPU time on a busy machine (other work kept the load near 110 during the round-17 runs, so
-    the numbers run high and unsteady): PR #408 about 15 s (round 16: 13 s; 3.5.0: 5 s, with its false
-    orphans); a squash-landed 150-commit branch about 48 s (round 16: 53 s, which read every candidate's moves
-    with a diff to the head); the same branch with its file moved by its first commit about 45 s (round 16:
-    35 s; following each file commit by commit costs one `git log` over the commits since the fork point and a
-    tree written per revision read). Measured on rounds 13 to 15: a squash of a branch that moves 2000 files
+    added or removed on its own. When the commits that landed are not a prefix of the branch, a file the
+    branch moved in a way main's squash records otherwise (two files that swap names, a chain of copies) can be
+    taken for another of its files at the tip, and a commit listed or missed.
+  - Timing, as CPU time on a busy machine (other work kept the load between 50 and 170 during these runs,
+    so the numbers run high and unsteady): PR #408 about 20 s (3.5.0: 8 s, with its false orphans); a
+    squash-landed 150-commit branch about 33 s, or about 60 s when its first commit moves the file (3.5.0:
+    9 s, with a false orphan in both); a branch of 20 commits that moves its file, squashed into a main that
+    made 2000 commits of its own (50 of them renames) since the fork point, about 9 s (3.5.0: 1 s, a false
+    orphan). Following each file commit by commit costs one `git log` over the commits since the fork point,
+    a name map per revision read and a tree written per revision compared. Measured on rounds 13 to 15: a squash of a branch that moves 2000 files
     under 1 s, since the tip already has the head's content (3.5.0: 14 s); the same move with 300 of the files
     edited, squashed and then edited once more by main, about 2 s (3.5.0: 17 s and a false orphan); a branch
     that never landed under 1 s, or about 9 s when main often edits its files; a never-landed 150-commit branch
