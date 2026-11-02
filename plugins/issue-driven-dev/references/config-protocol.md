@@ -466,6 +466,26 @@ Controls whether `idd-implement` opens a PR or commits directly.
 
 `idd-all` always enforces `--pr` regardless of `pr_policy`. Full path contract: [pr-flow.md](pr-flow.md).
 
+### `ci` field (#465)
+
+Which check decides that a commit passes CI. Read only from the walked-up `.claude/.idd/local.json`, by `scripts/idd-ci-gate.sh`.
+
+```json
+{ "ci": { "mode": "local", "command": "bash scripts/ci.sh", "timeout_seconds": 3600 } }
+```
+
+| Field | Default | Meaning |
+|-------|---------|---------|
+| `mode` | `local` | `local` runs `command` on this machine; `remote` runs nothing and the caller follows remote CI. Applies to every repo |
+| `command` | (none) | Shell command, run from a clean checkout of the commit. Not set → exit 3: attended runs ask, unattended runs stop |
+| `timeout_seconds` | `3600` | Positive integer. Exceeding it counts as failure |
+
+**The command comes only from this file, and the file must not be tracked by git** (tracked → exit 4). Nothing in the repository is executed or inferred, so a clone of someone else's repo runs only what you configured here. Candidates may be suggested to you, but are written only after you confirm.
+
+Exit codes of `idd-ci-gate.sh run --commit <sha> [--cwd <clone>]`: `0` pass, `1` fail, `2` timeout, `3` not-configured, `4` error (never counts as passing), `10` remote.
+
+In `local` mode a red remote check is reported and does not block merging. A release still requires green remote checks whatever the mode (`idd-close` Step 6.5), because only remote CI sees the older environments that users run.
+
 ### `collaborators[]` field
 
 An OPTIONAL identity registry so IDD can resolve a person's alias / email / display-name → their GitHub `@login` **without guessing** — the hard rule set by [tagging-collaborators.md](../rules/tagging-collaborators.md). It is a *resolution accelerator*, **not** an authority: a table hit is still existence-verified via `gh api users/<login>` before any mention is posted, because the table can go stale.

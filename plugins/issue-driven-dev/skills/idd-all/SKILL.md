@@ -78,6 +78,7 @@ TaskCreate(name="ensure_issue", description="Phase 1: 若 from-scratch 則跑 id
 TaskCreate(name="diagnose", description="Phase 2: 跑 idd-diagnose,讀回 complexity 判定")
 TaskCreate(name="implement_or_sdd", description="Phase 3: type=meeting → attended 走 meeting 版 /idd-plan、unattended 跳過(#383,先跑 meeting unwind); Simple/Plan → idd-implement; Spectra → spectra-discuss → spectra-propose → spectra-apply。Args 含 UNATTENDED MODE 與否依 Phase 0.5 解析的 interaction 軸決定。")
 TaskCreate(name="verify_loop", description="Phase 4: type=meeting → 跳過(#383); idd-verify; blocking findings 處理(unattended 自動修復最多 2 round, attended 把控制交回 user); follow-ups → 開新 issue")
+TaskCreate(name="ci_gate", description="Phase 4.5 (#465): type=meeting → 跳過; 對 HEAD 跑 scripts/idd-ci-gate.sh，紀錄貼到 issue；只有 exit 0 繼續、exit 10 改看遠端 CI；exit 3 attended 問指令、unattended 停下回報；exit 1/2/4 停下回報")
 TaskCreate(name="open_pr", description="Phase 5: type=meeting → 跳過、不 push(#383); PR mode → git push + gh pr create(body 含 Refs #N, 不含 Closes); direct-commit mode → skip,進 Phase 6")
 TaskCreate(name="report_and_stop", description="Phase 6: 依 mode 顯示對應 next-step(PR → review/merge/close; direct-commit → review last N commits/close; type=meeting → meeting report,#383)。永不 auto-invoke idd-close。")
 ```
@@ -1006,6 +1007,27 @@ for round in 1..MAX_ROUND:
 
 ---
 
+### Phase 4.5: CI gate（#465）
+
+`TYPE=meeting` 跳過。其餘在 verify 之後、push 或收尾之前，對目前的 commit 跑閘門。契約見 spec `local-ci-gate` 與 [`references/config-protocol.md`](../../references/config-protocol.md) 的 `ci` 欄位。
+
+```bash
+GATE_OUT=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/idd-ci-gate.sh" run --commit "$(git -C "$CWD" rev-parse HEAD)" --cwd "$CWD"); GATE_RC=$?
+printf '%s\n' "$GATE_OUT"
+GATE_RECORD=$(printf '%s\n' "$GATE_OUT" | sed -n 's/^RECORD=//p')
+# 紀錄的隱私自審照 rules/privacy-scrubbing.md；輸出末段只換掉了路徑，不保證其他內容安全
+[ -n "$GATE_RECORD" ] && bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment "$N" --repo "$GITHUB_REPO" --body-file "$GATE_RECORD" --scrub-attested "$SCRUB_LEVEL"
+```
+
+紀錄送不出去不改變閘門結果，但要在 Phase 6 回報。依結束碼（封閉列舉）：
+
+| 結束碼 | 動作 |
+|---|---|
+| 0 pass | 繼續 Phase 5 |
+| 10 remote | 不跑本機指令；繼續 Phase 5，由遠端 CI 決定 |
+| 3 not-configured | attended：用 AskUserQuestion 問指令。可列 repo 裡找到的候選（如 `scripts/ci.sh`），**不執行它們**；確認後才寫入 `ci.command`，再跑一次。unattended：不寫 config，跳到 Phase 6，列入 Action items，寫明怎麼設定 `ci.command` 或 `ci.mode` |
+| 1 fail、2 timeout、4 error | 不 push、不開 PR，跳到 Phase 6 回報結果與 `LOG=` 路徑 |
+
 ### Phase 5: Push + Open PR (PR mode only)
 
 > **`TYPE=meeting` → 跳過 push 與 PR**(#383):meeting 沒有 code branch 可推,不論 PR 或 direct-commit mode 都不 push、不開 PR。meeting run 在 Phase 2 就跳到 Phase 6,不會進到這裡;進到這裡才讀到 meeting,代表 Phase 2 之後 type 被改了,下方 guard fail-closed:不 push、不開 PR、abort(r5 #11)。
@@ -1100,6 +1122,10 @@ Phase 2 走 meeting 列的 run 不印 PR／direct-commit 樣板——那些樣�
 ```
 
 報告由模型照實填寫(Plan 填 `/idd-plan` 貼出的 Meeting Plan comment URL,unattended 時用預設文字)。之後照常附上「Phase 6 Action items surface」那一節的 Action items。**順序:先跑 Action items 區塊,再清理**——INTERACTION 遺失時,那個區塊要靠 unattended state file 回推,清掉之後就讀不到(r6 #8、#11)。meeting report 印出後同樣 `clear_unattended "$CWD"`(#123)——跳過 PR／direct-commit 樣板不代表跳過這個清理(verify r2 #9)。
+
+#### 遠端 CI 紅燈（#465）
+
+本機閘門通過（exit 0）而遠端 check 失敗時，報告列出失敗的 check 名稱與連結，**不算阻擋合併**：本機模式下遠端 CI 只回報。查不到 PR 或還沒有結果時照實寫，不寫成通過。
 
 #### PR mode report
 

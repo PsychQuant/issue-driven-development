@@ -1104,7 +1104,19 @@ if [ "$DISTRIBUTION_TYPE" != "n/a" ] && [ "$IDD_DISTRIBUTION_SYNC_PROMPT" = "fal
 fi
 ```
 
-If detection returned a real type AND env var didn't suppress → enter the AskUserQuestion deliberation moment described below.
+If detection returned a real type AND env var didn't suppress → first run the remote-CI gate below, then enter the AskUserQuestion deliberation moment described below.
+
+#### Remote CI gate before a release (#465)
+
+A release requires green remote checks whatever `ci.mode` is. A local pass does not satisfy this: only remote CI sees the older environments users run.
+
+```bash
+SHA=$(git -C "$REPO_ROOT" rev-parse HEAD)
+REMOTE=$(gh api "repos/$GITHUB_REPO/commits/$SHA/check-runs" --paginate --jq '.check_runs[] | "\(.status)/\(.conclusion // "") \(.name)"') || REMOTE="UNREADABLE"
+printf '%s\n' "$REMOTE" | grep -v '^completed/\(success\|neutral\|skipped\) ' 
+```
+
+The last command prints every check that is not green. Anything printed (a failing or running check, or `UNREADABLE`) → do not offer the sync: report those checks, write `- **Detected**: $DISTRIBUTION_TYPE; held, remote CI not green` as the `### Distribution Sync` audit, and skip to Step 7. A commit with no checks prints nothing: proceed, and say in the audit that no remote check ran.
 
 #### AskUserQuestion 3-option (prose — NOT a bash function call)
 
