@@ -2,7 +2,7 @@
 
 ### Requirement: PR path preserves v2.40.0 behavior
 
-When the resolved path is `PR`, `idd-all` SHALL behave identically to v2.40.0 up to and including PR creation: enforce a feature branch off the default branch, pass an unattended hint to every sub-skill invocation, push the branch, and create a PR after verify PASS. After the PR is created, the run SHALL continue under the requirement "Clean verify leads to merge and close"; callers such as `/loop` automation therefore observe the issue closed, not left open at verified, unless the run stops at a guardrail or carries `--review`.
+When the resolved path is `PR`, `idd-all` SHALL behave identically to v2.40.0 up to and including PR creation: enforce a feature branch off the default branch, pass an unattended hint to every sub-skill invocation, push the branch, and create a PR after verify PASS. After the PR is created, the run SHALL continue under the requirement "Clean verify leads to merge and close"; callers such as `/loop` automation therefore observe the issue closed, not left open at verified, unless the run carries `--review`, stops at a guardrail, or stops because its intent was not confirmed or someone else became involved (requirements "The close stage merges only runs whose intent was confirmed" and "The close stage stops when someone else became involved").
 
 #### Scenario: PR path enforces feature branch
 
@@ -133,7 +133,7 @@ After verify, `idd-all` SHALL ask the verify gate whether the latest verify roun
 
 ### Requirement: The close stage merges only runs whose intent was confirmed
 
-The close stage SHALL merge, push or close only when the run's intent was confirmed. It SHALL stop at verified, with the PR left open, when any comment on the issue was posted by an account without write access to the repository, when the issue's Clarity Surface has a row whose status is `surfaced` or `deferred`, when an issue comment or the body carries a Layer V or Clarity deferred record, or when the latest Diagnosis records the Plan tier and no `## Implementation Plan` comment exists. Foresay's traceable branch requires the intent to be clear and the action reversible; unattended runs skip intent confirmations on purpose and record that they did, and comments and attachments steer diagnose and implement.
+The close stage SHALL merge, push or close only when the run's intent was confirmed. It SHALL stop at verified, with the PR left open, when any of these holds (a closed list): a comment on the issue was posted by an account without write access to the repository; a row in any `### Clarity Surface` block of the issue body, outside code fences, still has the status `surfaced` or `deferred`; the latest trusted Diagnosis has no readable Complexity tier; the run was unattended and the latest trusted Diagnosis records the Plan, Spectra or SDD-warranted tier (an unattended run implements those without the approval an attended run asks for); the latest trusted Diagnosis carries, outside code fences, a record line `- **Reason**: <literal>` whose literal is `unattended-auto-Step-3.4-layerV-deferred` or `unattended-auto-Step-4-choice-default`; or the run was unattended and the latest trusted Diagnosis lists Proposed Corrections. Only the latest Diagnosis is read for the tier and the records, so an attended re-diagnosis clears an earlier record. Foresay's traceable branch requires the intent to be clear and the action reversible; unattended runs skip intent confirmations on purpose and record that they did, and comments and attachments steer diagnose and implement. The diagnosis strategy confirmation that every unattended run skips is not on the list: counting it would leave automatic merges to attended runs only, which the decision of 2026-11-02 (comment 6567272352) rejected.
 
 #### Scenario: A comment by someone without write access
 
@@ -142,11 +142,47 @@ The close stage SHALL merge, push or close only when the run's intent was confir
 - **WHEN** the close stage runs
 - **THEN** `idd-all` neither merges nor closes, and the run report names the comment's author under `Stopped:`
 
-#### Scenario: A Plan-tier issue implemented without an approved plan
+#### Scenario: A Plan-tier issue implemented in an unattended run
 
-- **GIVEN** the latest Diagnosis records `Plan` and the unattended run implemented it without `/idd-plan`
+- **GIVEN** the latest Diagnosis records `Plan` and the run is unattended
+- **AND** the run implemented it directly, and idd-implement posted its own `## Implementation Plan` comment
 - **WHEN** the close stage runs
-- **THEN** `idd-all` neither merges nor closes, and the report says the Plan tier was not approved
+- **THEN** `idd-all` neither merges nor closes, and the report says the Plan tier was implemented in an unattended run
+
+#### Scenario: A Plan-tier issue in an attended run
+
+- **GIVEN** the latest Diagnosis records `Plan` and the run is attended (the plan went through `/idd-plan` and its approval)
+- **WHEN** the close stage runs with every guardrail passing
+- **THEN** `idd-all` merges and closes
+
+#### Scenario: A resolved Clarity row keeps its reason
+
+- **GIVEN** a Clarity Surface row reads `| ambiguity | x | y? | resolved | unattended-auto-Step-4.6-deferred |`
+- **WHEN** the close stage runs
+- **THEN** the row does not stop the run, because its status is no longer `deferred`
+
+### Requirement: The close stage stops when someone else became involved
+
+The close stage SHALL stop at verified when, after the run began (the creation time of its run state), any of these happened (a closed list): an account other than the one running the session, and not a bot, posted or edited a comment on the issue; such an account edited the issue body; a comment on the issue by any account other than the one running the session was deleted; the PR received a comment or a review from any account that is not a bot; the PR is a draft; or the PR's review decision is `CHANGES_REQUESTED`. The PR checks SHALL run after the CI wait, right before the merge. The run read the issue when it started; anything that arrives later is intent it never read, and a comment deleted after diagnose read it may have steered the work.
+
+#### Scenario: A teammate comments during the run
+
+- **GIVEN** the verify gate reports `clean`
+- **AND** an account with write access commented on the issue after the run began
+- **WHEN** the close stage runs
+- **THEN** `idd-all` neither merges nor closes, and the report names that account under `Stopped:`
+
+#### Scenario: An outsider deletes a comment after diagnose
+
+- **GIVEN** an account without write access commented, diagnose read the comment, and the account deleted it before the close stage
+- **WHEN** the close stage runs
+- **THEN** `idd-all` neither merges nor closes, because a comment was deleted after the run began
+
+#### Scenario: Changes requested on the PR during the CI wait
+
+- **GIVEN** a reviewer requested changes on the PR while the close stage waited for CI
+- **WHEN** the close stage checks the PR right before merging
+- **THEN** `idd-all` does not merge
 
 ### Requirement: Unattended fix loop covers in-scope findings with a two-round limit
 
@@ -175,7 +211,7 @@ When the resolved interaction is `unattended` and the verify gate reports `not_c
 
 ### Requirement: Merge guardrails gate every automatic merge
 
-Before an automatic merge, `idd-all` SHALL check, in order: the PR's branch is not behind the default branch and does not change `.github/workflows` or `.github/actions`; the verify gate reports `clean` for the newest report posted since the run began by an account with write access (a newer FAIL from a teammate counts), whose reviewed range runs from the merge base of the default branch and the PR head to the PR head (judged again after the CI wait, right before the merge); every check reported by `gh pr checks` has succeeded, waiting at most 15 minutes for pending checks, accepting a result only after the set of checks has stayed unchanged for a 90-second grace period, requiring at least one `pull_request` check when a workflow runs on every pull request, and treating a PR with no checks as passing only when no such workflow exists; the PR body has no closing reference and no commit subject or body (read from local git over the reviewed range, not from a capped list) carries a `close`, `fix`, or `resolve` keyword before an issue reference (`#<digits>`, `owner/repo#<digits>`, or an issue or pull-request URL, a preceding hyphen or slash included); and the squash subject and body that `idd-all` composes reference the issue only as `Refs #<N>` and pass the same scan. The PR SHALL come from this repository (not a fork) and the default branch SHALL have no merge queue. The merge SHALL be pinned to the verified head commit (`--match-head-commit`), and `idd-all` SHALL confirm that the PR is `MERGED` with a merge commit before invoking `/idd-close`; a PR still open after the merge call SHALL have auto-merge disabled and the run SHALL stop, and a merge it cannot confirm SHALL be reported as possibly merged. If any check fails, `idd-all` SHALL NOT merge, SHALL stop at verified, and SHALL name the failed guardrail in the run report.
+Before an automatic merge, `idd-all` SHALL check, in order: the PR's branch is not behind the default branch and does not change `.github/workflows` or `.github/actions`; the newest verify comment this account posted on the issue since the run began is a `## Verify: #<N>` report, the gate reports `clean` for it with no `Rejected` finding, and its reviewed range runs from the merge base of the default branch and the PR head to the PR head; after the CI wait and right before the merge, the default branch SHALL be fetched again and the branch, publishing, CI-edit, merge-queue and verify-gate checks SHALL run again; every check reported by `gh pr checks` has succeeded, waiting at most 15 minutes for pending checks, accepting a result only after the set of checks has stayed unchanged for a 90-second grace period, requiring at least one `pull_request` check when a workflow runs on every pull request, and treating a PR with no checks as passing only when no such workflow exists; the PR body has no closing reference and no commit subject or body (read from local git over the reviewed range, not from a capped list) carries a `close`, `fix`, or `resolve` keyword before an issue reference (`#<digits>`, `owner/repo#<digits>`, or an issue or pull-request URL, a preceding hyphen or slash included); and the squash subject and body that `idd-all` composes reference the issue only as `Refs #<N>` and pass the same scan. The PR SHALL come from this repository (not a fork) and the default branch SHALL have no merge queue. The merge SHALL be pinned to the verified head commit (`--match-head-commit`), and `idd-all` SHALL confirm that the PR is `MERGED` with a merge commit before invoking `/idd-close`; a PR still open after the merge call SHALL have auto-merge disabled and the run SHALL stop, and a merge it cannot confirm SHALL be reported as possibly merged. If any check fails, `idd-all` SHALL NOT merge, SHALL stop at verified, and SHALL name the failed guardrail in the run report.
 
 #### Scenario: A CI check fails
 
@@ -193,9 +229,27 @@ Before an automatic merge, `idd-all` SHALL check, in order: the PR's branch is n
 
 #### Scenario: A report posted by another account
 
-- **GIVEN** the newest `## Verify: #<N>` comment that says PASS was posted by an account other than the one running the session
+- **GIVEN** the newest `## Verify: #<N>` comment that says PASS was posted by an account other than the one running the session, after the run began
 - **WHEN** the guardrails run
-- **THEN** that comment is not read as the verify report, and `idd-all` does not merge on the strength of it
+- **THEN** that comment is not read as the verify report, and `idd-all` does not merge (another account's comment after the run began stops the run on its own)
+
+#### Scenario: A PR-mode verify report posted during the CI wait
+
+- **GIVEN** the account running the session posted `## Verify (via PR #<P>)` on the issue after the run's own `## Verify: #<N>` report
+- **WHEN** the guardrails run
+- **THEN** the gate reports `unparseable` (the newest verify comment is not a `## Verify: #<N>` report) and `idd-all` does not merge
+
+#### Scenario: The default branch moves during the CI wait
+
+- **GIVEN** another PR landed on the default branch while the close stage waited for CI
+- **WHEN** the close stage checks again right before merging
+- **THEN** the branch is behind the default branch and `idd-all` does not merge
+
+#### Scenario: A finding the orchestrator rejected
+
+- **GIVEN** the verify report says PASS and marks one finding `Rejected`
+- **WHEN** the guardrails run
+- **THEN** `idd-all` does not merge and the run report says a person decides whether the rejected finding stands
 
 #### Scenario: A commit body would auto-close the issue
 
@@ -206,7 +260,7 @@ Before an automatic merge, `idd-all` SHALL check, in order: the PR's branch is n
 
 ### Requirement: Verify gate parsing fails closed
 
-The verify gate SHALL read the latest verify master comment and report exactly one of `clean`, `not_clean`, or `unparseable`. It SHALL report `unparseable` when the verdict line or the classification table cannot be found, when a classification value is not one of Blocking, In-scope fix, or Follow-up, when the verdict is PASS while the table contains a Blocking finding, when the verdict is FAIL while the table has neither a Blocking nor an In-scope fix finding, when a fenced code block is never closed (fences pair by character and length), when a row naming one of the three classes stands outside any findings table, when a table header ends in a decorated `Action`, when the verdict line does not state its blocking count or states counts that differ from the table, when a table has an `Action` column that is not its last column, when a row naming one of the three classes stands outside a findings table, and, when the commit to be merged is given, when the report does not carry exactly one `**Reviewed**` line whose head is that full commit and, when a base is given, whose range starts at that base. `idd-all` SHALL treat `unparseable` exactly like a failed guardrail: no merge, no close, and the reason in the run report.
+The verify gate SHALL read the verify master comment as GitHub renders it (the comment's `body_html`), so that every table a person sees on GitHub is a table the gate reads and nothing GitHub hides is read, and SHALL report exactly one of `clean`, `not_clean`, or `unparseable`, together with the counts of Blocking, In-scope fix, Follow-up and Rejected findings. It SHALL report `unparseable` when the verdict line or the classification table cannot be found, when there is more than one verdict line or the verdict line is inside a quote, list or details block, when a classification value is not one of Blocking, In-scope fix, Follow-up or Rejected, when the verdict is PASS while the table contains a Blocking finding, when the verdict is FAIL while the table has neither a Blocking nor an In-scope fix finding, when a cell naming one of the four classes stands in a table without an `Action` column or a line of text with pipes names one outside any table, when a table header ends in a decorated `Action`, when the verdict line does not state its blocking count, states counts that differ from the tables (findings tables inside a details block count), or omits the rejected count while the tables have a Rejected finding, when a table has an `Action` column that is not its last column, when a PASS report's coverage line says fewer requirements were addressed than exist, and, when the commit to be merged is given, when the report does not carry exactly one top-level `**Reviewed**` line whose head is that full commit and, when a base is given, whose range starts at that base. A Rejected finding does not change the status; the close stage stops on it. `idd-all` SHALL treat `unparseable` exactly like a failed guardrail: no merge, no close, and the reason in the run report.
 
 #### Scenario: Classification table is missing
 

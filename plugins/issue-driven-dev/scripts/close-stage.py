@@ -16,8 +16,10 @@ Subcommands
         Every value is required: a value lost between tool calls is a usage
         error (64), never a silent "no" (#392 verify r2 #3).
   gate  --cwd C --repo O/R --issue N --sha SHA [--base SHA]
-        Read the newest '## Verify: #N' report posted by the account running
-        this session and judge it with verify-gate.py --expect-sha [--expect-base].
+        Read the newest verify report this account posted on the issue since
+        the run began, as GitHub renders it (body_html), and judge it with
+        verify-gate.py --expect-sha [--expect-base]. The newest one must be a
+        '## Verify: #N' report (a PR-mode report or pointer is not read here).
         Prints the gate JSON plus comment_id / verify_url.
         Exit 0 clean, 1 not clean, 2 unparseable (including: no such report,
         any error), 64 usage.
@@ -28,8 +30,8 @@ Subcommands
         Exit 0 merged/pushed, 3 stopped (reason in the JSON, including any
         error), 64 usage.
   reset --cwd C --issue N
-        Phase 0.4: remove this issue's run-state and result files before the run
-        records its own (a skipped Step 0.7 must not inherit an earlier run's flags).
+        Abort duty: remove this issue's run-state and result files. (init does the
+        same for the run it records.)
   confirm-close --cwd C --repo O/R --issue N
         After /idd-close: the issue is CLOSED and a comment by this account
         that opens with the canonical '## Closing Summary' heading was posted
@@ -80,8 +82,14 @@ RELEASE_MARKERS = ("gh release", "action-gh-release", "create-release", "npm pub
                    "goreleaser", "gh-action-pypi-publish", "twine upload", "cargo publish", "docker push",
                    "vsce publish", "release-please", "changesets/action", "deploy-pages", "vercel", "netlify",
                    "wrangler", "firebase deploy", "kubectl apply", "aws s3 sync", "gh-pages")
-INTENT_SKIP_MARKERS = ("unattended-auto-Step-3.4-layerV-deferred", "#### Layer V Deferred Record",
-                       "unattended-auto-Step-4.6-deferred")
+# Reason literals of the structured records an unattended run leaves when it
+# takes a decision a person would otherwise confirm (rules/append-vs-modify.md
+# § Reason pattern registry). Matched only as a record's `- **Reason**:` line in
+# the latest Diagnosis, outside code fences, so prose that names them does not count.
+INTENT_SKIP_REASONS = ("unattended-auto-Step-3.4-layerV-deferred", "unattended-auto-Step-4-choice-default")
+# Tiers whose plan or design a person approves in an attended run; an unattended
+# run implements them without that approval (idd-all dispatch table).
+APPROVED_TIERS = ("Plan", "Spectra", "SDD-warranted")
 
 
 class Stop(Exception):
@@ -118,8 +126,9 @@ def gh_json(args, what):
         raise Stop(f"could not read {what}: gh did not return JSON")
 
 
-def gh_paginated(path, jq, what):
-    rc, out, err = run_cmd([GH, "api", path, "--paginate", "--jq", jq])
+def gh_paginated(path, jq, what, accept=None):
+    cmd = [GH, "api", path] + (["-H", f"Accept: {accept}"] if accept else []) + ["--paginate", "--jq", jq]
+    rc, out, err = run_cmd(cmd)
     if rc != 0:
         raise Stop(f"could not read {what}: {err.strip()[:300] or 'gh exited ' + str(rc)}")
     items, dec, i = [], json.JSONDecoder(), 0
@@ -146,6 +155,7 @@ def git(cwd, *args):
 
 
 def state_dir(cwd):
+    cwd = os.path.realpath(cwd)   # a trailing slash or a symlinked ancestor of --cwd must not move the walk (r4 #43)
     d = os.path.join(cwd, ".claude", ".idd", "state")
     probe = d
     while probe and probe != cwd and probe != os.path.dirname(probe):
@@ -208,7 +218,7 @@ def cmd_init(argv):
         return usage("--interaction must be attended or unattended")
     if a["--review"] not in ("yes", "no") or a["--in-chain"] not in ("yes", "no"):
         return usage("--review and --in-chain must be yes or no")
-    cwd = a["--cwd"]
+    cwd = os.path.realpath(a["--cwd"])
     try:
         spath, rpath = state_path(cwd, a["--issue"]), result_path(cwd, a["--issue"])
     except Stop as exc:
@@ -264,41 +274,60 @@ def can_write(repo, login):
     return _WRITE_CACHE[login]
 
 
-def latest_report(repo, n, me, since):
-    """The newest '## Verify: #N' report by an account with write access, posted since the run began.
+def issue_comments(repo, n):
+    """The issue's comments, each with GitHub's own rendering (`body_html`)."""
+    return gh_paginated(f"repos/{repo}/issues/{n}/comments",
+                        "[.[] | {id, html_url, login: .user.login, type: .user.type, assoc: .author_association, "
+                        "created_at, updated_at, body, body_html}]",
+                        f"the comments of #{n}", accept="application/vnd.github.full+json")
 
-    Not `author_association`: MEMBER / COLLABORATOR also cover people with read
-    access, and this report decides a merge (#392 verify r1 #26). Not only this
-    account either: a teammate's newer FAIL must stop the merge (r3 #25).
-    Reports older than the run's state are an earlier run's (r3 #6).
+
+def ts(value):
+    try:
+        return parse_iso(value or "")
+    except ValueError:
+        return 0
+
+
+def latest_report(n, me, since, comments):
+    """The newest verify comment THIS account posted since the run began.
+
+    Only this account: anyone else's comment after the run began stops the
+    close stage on its own (check_others), so a teammate's report is never
+    weighed here. Every verify heading counts when picking the newest, and the
+    newest must be the branch-mode `## Verify: #N` report: a PR-mode report or
+    its `## Verify (via PR #P)` pointer, posted later by someone running
+    /idd-verify --pr with this account, is not read past (r4 #22). Reports older
+    than the run's state are an earlier run's (r3 #6; no slack, r4 #8).
     """
-    comments = gh_paginated(f"repos/{repo}/issues/{n}/comments",
-                            "[.[] | {id, html_url, login: .user.login, created_at, body}]",
-                            f"the comments of #{n}")
-    head = re.compile(rf"^## Verify: #{n}(?![0-9])")
-    found = []
-    for c in comments:
-        if not head.match(c.get("body") or ""):
-            continue
-        if since is not None and parse_iso(c.get("created_at") or "1970-01-01T00:00:00Z") < since:
-            continue
-        login = c.get("login") or ""
-        if login == me or can_write(repo, login):
-            found.append(c)
-    return found[-1] if found else None
+    any_verify = re.compile(r"^#{1,6}[ \t]*Verify\b")
+    found = [c for c in comments if c.get("login") == me and any_verify.match(c.get("body") or "")
+             and (since is None or ts(c.get("created_at")) >= since)]
+    if not found:
+        return None, "none"
+    newest = found[-1]
+    if not re.match(rf"^## Verify: #{n}(?![0-9])", newest.get("body") or ""):
+        return None, (newest.get("body") or "").split("\n", 1)[0][:60]
+    return newest, ""
 
 
 def judge_report(repo, n, sha, base, since):
     me = session_login()
-    report = latest_report(repo, n, me, since)
+    report, other = latest_report(n, me, since, issue_comments(repo, n))
     if report is None:
         when = f" since {iso(since)}" if since is not None else ""
-        return 2, {"status": "unparseable", "reason": f"no '## Verify: #{n}' report by an account with write access{when}"}
-    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as fh:
-        fh.write(report.get("body") or "")
+        if other == "none":
+            return 2, {"status": "unparseable", "reason": f"no verify report by this account{when}"}
+        return 2, {"status": "unparseable",
+                   "reason": f"the newest verify comment by this account{when} is '{other}', not a '## Verify: #{n}' report"}
+    html = report.get("body_html")
+    if not html:
+        return 2, {"status": "unparseable", "reason": "GitHub returned no rendered HTML for the verify report"}
+    with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False, encoding="utf-8") as fh:
+        fh.write(html)
         tmp = fh.name
     try:
-        cmd = [sys.executable, "-I", os.path.join(HERE, "verify-gate.py"), "--comment-file", tmp, "--expect-sha", sha]
+        cmd = [sys.executable, "-I", os.path.join(HERE, "verify-gate.py"), "--html-file", tmp, "--expect-sha", sha]
         if base:
             cmd += ["--expect-base", base]
         rc, out, err = run_cmd(cmd)
@@ -317,7 +346,7 @@ def judge_report(repo, n, sha, base, since):
 def run_since(cwd, n):
     try:
         with open(state_path(cwd, n), encoding="utf-8") as fh:
-            return parse_iso(json.load(fh)["created_at"]) - 60
+            return parse_iso(json.load(fh)["created_at"])
     except (OSError, ValueError, KeyError, TypeError):
         return None
 
@@ -356,12 +385,14 @@ def load_state(cwd, repo, n):
     return st
 
 
-def check_meeting(repo, n):
-    comments = gh_paginated(f"repos/{repo}/issues/{n}/comments",
-                            "[.[] | {assoc: .author_association, body}]", f"the comments of #{n}")
+def latest_diagnosis(comments):
     diag = [c.get("body") or "" for c in comments
             if c.get("assoc") in TRUSTED and re.match(r"^## Diagnosis[ \t]*(\r?\n|$)", c.get("body") or "")]
-    body = diag[-1] if diag else ""
+    return diag[-1] if diag else ""
+
+
+def check_meeting(comments):
+    body = latest_diagnosis(comments)
     rc, out, err = run_cmd(["bash", "-c", '. "$1/lib/actionability.sh" && idd_diagnosis_type "$2"', "_", HERE, body])
     if rc != 0:
         raise Stop("could not re-read the Diagnosis type")
@@ -369,7 +400,22 @@ def check_meeting(repo, n):
         raise Stop("the latest trusted Diagnosis records type meeting — meeting issues are never merged or pushed")
 
 
-def check_issue_authors(repo, n):
+def issue_meta(repo, n):
+    """Author, body edits and comment deletions of the issue, in one GraphQL read."""
+    owner, name = repo.split("/", 1)
+    q = ("query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n)"
+         "{author{login} editor{login} userContentEdits(last:50){nodes{editedAt editor{login}}}"
+         " timelineItems(last:100,itemTypes:[COMMENT_DELETED_EVENT])"
+         "{nodes{... on CommentDeletedEvent{createdAt deletedCommentAuthor{login}}}}}}}")
+    data = gh_json(["api", "graphql", "-f", f"query={q}", "-f", f"o={owner}", "-f", f"r={name}", "-F", f"n={n}"],
+                   "the issue's author, edits and deleted comments")
+    issue = ((data.get("data") or {}).get("repository") or {}).get("issue")
+    if not isinstance(issue, dict):
+        raise Stop("could not read the issue's author, edits and deleted comments — not merging")
+    return issue
+
+
+def check_issue_authors(repo, meta):
     """The issue's author and the last editor of its body must be able to write.
 
     The issue text is what implement builds and verify checks against; on a
@@ -377,14 +423,8 @@ def check_issue_authors(repo, n):
     maintainer read it. Without a person merging, that text must come from
     someone who could have pushed the change anyway (#392 verify r2 #4).
     """
-    owner, name = repo.split("/", 1)
-    q = ("query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n)"
-         "{author{login} editor{login}}}}")
-    data = gh_json(["api", "graphql", "-f", f"query={q}", "-f", f"o={owner}", "-f", f"r={name}", "-F", f"n={n}"],
-                   "the issue's author and editor")
-    issue = ((data.get("data") or {}).get("repository") or {}).get("issue") or {}
-    author = (issue.get("author") or {}).get("login")
-    editor = (issue.get("editor") or {}).get("login")
+    author = (meta.get("author") or {}).get("login")
+    editor = (meta.get("editor") or {}).get("login")
     if not author:
         raise Stop("could not read the issue's author — not merging")
     for role, login in (("author", author), ("last editor", editor)):
@@ -392,50 +432,142 @@ def check_issue_authors(repo, n):
             raise Stop(f"the issue's {role} {login} has no write access — a person reviews and merges this one")
 
 
-def check_intent(repo, n, st):
-    """Merge without a person only when the intent was confirmed (#392 decision, comment 6566557673).
+def check_others(me, since, comments, meta):
+    """Nobody but this account touched the issue after the run began (#392 verify r4 #4, #48).
+
+    The run read the issue when it started; what arrives later is intent the
+    run never read: a new or edited comment (an objection, a scope change), an
+    edit to the issue text, or a comment deleted after diagnose had read it
+    (an outsider can post an instruction and delete it once the Diagnosis
+    notification arrives). Any of these means a person is involved, so the run
+    stays at verified. Bots are exempt: a repo admin installed them. This
+    account's own comments are the run's, and cannot be told apart from a
+    person typing as this account (a known limit).
+    """
+    for c in comments:
+        login = c.get("login") or "an unknown account"
+        if login == me or c.get("type") == "Bot":
+            continue
+        if ts(c.get("created_at")) >= since or ts(c.get("updated_at")) >= since:
+            raise Stop(f"{login} commented on the issue (or edited a comment) after the run started — "
+                       "intent the run never read; a person reviews and merges this one")
+    for e in ((meta.get("userContentEdits") or {}).get("nodes") or []):
+        who = (e.get("editor") or {}).get("login")
+        if who != me and ts(e.get("editedAt")) >= since:
+            raise Stop(f"{who or 'an unknown account'} edited the issue text after the run started — "
+                       "a person reviews and merges this one")
+    for d in ((meta.get("timelineItems") or {}).get("nodes") or []):
+        who = (d.get("deletedCommentAuthor") or {}).get("login")
+        if who != me and ts(d.get("createdAt")) >= since:
+            raise Stop(f"a comment by {who or 'an unknown account'} was deleted after the run started — "
+                       "the run may have read it; a person reviews and merges this one")
+
+
+def unfenced(text):
+    """Lines outside fenced code blocks (``` or ~~~), like idd-diagnose Step 0.5 reads the body."""
+    out, fence = [], None
+    for line in (text or "").splitlines():
+        m = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
+        if fence is None and m:
+            fence = (m.group(1)[0], len(m.group(1)))
+            continue
+        if fence is not None:
+            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= fence[1]:
+                fence = None
+            continue
+        out.append(line)
+    return out
+
+
+def sections(lines, heading):
+    """The lines under every heading (levels 1-3) that starts with `heading`, up to the next such heading."""
+    out, cur = [], None
+    for line in lines:
+        m = re.match(r"^(#{1,3})[ \t]+(.*)$", line)
+        if m:
+            cur = [] if m.group(2).strip().startswith(heading) else None
+            if cur is not None:
+                out.append(cur)
+            continue
+        if cur is not None:
+            cur.append(line)
+    return out
+
+
+def table_cells(line):
+    if "|" not in line:
+        return []
+    s = line.strip().strip("|")
+    return [c.strip().strip("*_`").strip() for c in s.split("|")]
+
+
+def check_intent(repo, n, st, comments, body):
+    """Merge without a person only when the intent was confirmed (#392 decision, comments 6566557673, 6567272352).
 
     Foresay's traceable branch needs the intent to be clear AND the action
-    reversible. Unattended runs skip intent confirmations on purpose and leave a
-    record; comments and attachments steer diagnose and implement. So: every
-    comment comes from someone with write access, no confirmation was skipped,
-    and a Plan-tier issue went through an approved Implementation Plan.
+    reversible. An unattended run takes some decisions a person would
+    otherwise confirm; each such decision either shows in the run's own
+    state (the tier it implemented unattended) or leaves a record. So:
+    - every comment comes from someone with write access (comments and their
+      attachments steer diagnose and implement);
+    - no Clarity Surface row of the issue is still surfaced or deferred (any
+      block, outside code fences; a resolved row keeps its Reason, so the
+      Status cell decides — r4 #18, #27, #30, #31);
+    - the latest Diagnosis has a tier the run could implement without a
+      person: Simple, or any tier when the run was attended (Plan and Spectra
+      ask for approval then). An unattended Plan or Spectra run implemented a
+      plan or a design nobody approved (r4 #2, #13);
+    - the latest Diagnosis carries no record of a skipped confirmation: a
+      Layer V deferral or a choice-first default (by its Reason line), or, in
+      an unattended run, Proposed Corrections it listed but did not apply
+      (r4 #20). Only the latest Diagnosis counts: an attended re-diagnosis
+      clears an old record (r4 #31).
     """
-    comments = gh_paginated(f"repos/{repo}/issues/{n}/comments",
-                            "[.[] | {login: .user.login, assoc: .author_association, body}]", f"the comments of #{n}")
     for c in comments:
         login = c.get("login") or ""
         if not login or not can_write(repo, login):
             raise Stop(f"a comment on the issue is by {login or 'an unknown account'}, who has no write access — "
                        "intent not confirmed; a person reviews and merges this one")
-    body = gh_json(["issue", "view", str(n), "--repo", repo, "--json", "body"], "the issue body").get("body") or ""
-    texts = [body] + [c.get("body") or "" for c in comments]
-    for marker in INTENT_SKIP_MARKERS:
-        if any(marker in t for t in texts):
-            raise Stop(f"an intent confirmation was skipped ({marker}) — a person reviews and merges this one")
-    cs = re.search(r"(?ms)^### Clarity Surface.*?(?=^#{1,3} |\Z)", body)
-    if cs:
-        for line in cs.group(0).splitlines():
-            cells = [x.strip() for x in line.strip().strip("|").split("|")]
-            if len(cells) >= 2 and re.match(r"(surfaced|deferred)\b", cells[-1], re.IGNORECASE):
-                raise Stop("the issue's Clarity Surface has an open question (surfaced or deferred) — intent not confirmed")
-    diag = [c.get("body") or "" for c in comments if re.match(r"^## Diagnosis[ \t]*(\r?\n|$)", c.get("body") or "")]
-    if diag:
-        rc, out, err = run_cmd(["bash", "-c", '. "$1/lib/actionability.sh" && idd_parse_complexity "$2"', "_", HERE, diag[-1]])
-        if rc == 0 and out.strip() == "Plan":
-            if not any(re.match(r"^## Implementation Plan", c.get("body") or "") for c in comments):
-                raise Stop("Plan tier without an approved Implementation Plan (the unattended run went straight to implement) — "
-                           "intent not confirmed; a person reviews and merges this one")
+    for block in sections(unfenced(body), "Clarity Surface"):
+        for line in block:
+            if any(cell.lower() in ("surfaced", "deferred") for cell in table_cells(line)):
+                raise Stop("the issue's Clarity Surface has an open question (surfaced or deferred) — intent not confirmed; "
+                           "a person reviews and merges this one")
+    diag = latest_diagnosis(comments)
+    if not diag:
+        raise Stop("no trusted Diagnosis on the issue — intent not confirmed")
+    rc, out, err = run_cmd(["bash", "-c", '. "$1/lib/actionability.sh" && idd_parse_complexity "$2"', "_", HERE, diag])
+    tier = out.strip() if rc == 0 else ""
+    if not tier:
+        raise Stop("the latest Diagnosis has no readable Complexity tier — intent not confirmed")
+    unattended = st.get("interaction") != "attended"
+    if unattended and tier in APPROVED_TIERS:
+        raise Stop(f"{tier} tier implemented in an unattended run: the plan or design was not approved by a person — "
+                   "a person reviews and merges this one")
+    lines = unfenced(diag)
+    for line in lines:
+        m = re.match(r"^\s*[-*]\s*\*\*Reason\*\*\s*[:：]\s*`?([A-Za-z0-9.-]+)`?\s*$", line)
+        if m and m.group(1) in INTENT_SKIP_REASONS:
+            raise Stop(f"the latest Diagnosis records a skipped confirmation ({m.group(1)}) — "
+                       "a person reviews and merges this one")
+    if unattended:
+        for block in sections(lines, "Proposed Corrections"):
+            rows = [l for l in block if table_cells(l) and not all(re.match(r"^:?-+:?$", c) for c in table_cells(l))]
+            if len(rows) > 1:   # a header row plus at least one correction
+                raise Stop("the latest Diagnosis lists Proposed Corrections to the issue that an unattended run does not apply — "
+                           "the spec it was built from may be wrong; a person reviews and merges this one")
 
 
 def check_origin(cwd, repo):
-    """Both the fetch and the push URL of origin must be github.com/<repo>."""
-    for args in (("remote", "get-url", "origin"), ("remote", "get-url", "--push", "origin")):
-        url = git(cwd, *args)
+    """Every fetch and push URL of origin must be github.com/<repo> (git pushes to each push URL, r4 #33)."""
+    urls = git(cwd, "remote", "get-url", "--all", "origin").splitlines() \
+        + git(cwd, "remote", "get-url", "--push", "--all", "origin").splitlines()
+    for url in [u.strip() for u in urls if u.strip()]:
         if TEST and url.startswith("/"):
             host, path = "github.com", url
         else:
-            m = re.match(r"^(?:https?://(?:[^@/]+@)?|ssh://(?:[^@/]+@)?|git@)([^/:]+)[:/](.+)$", url)
+            # userinfo may be empty (`https://@github.com/...`, r4 #19)
+            m = re.match(r"^(?:https?://(?:[^@/]*@)?|ssh://(?:[^@/]*@)?|git@)([^/:]+)[:/](.+)$", url)
             if not m:
                 raise Stop(f"origin URL {url} is not a GitHub URL — not pushing or merging")
             host, path = m.group(1).lower(), m.group(2)
@@ -590,6 +722,60 @@ def check_merge_queue(repo, branch):
         raise Stop(f"{branch} uses a merge queue; the close stage merges only directly — merge it through the queue by hand")
 
 
+def pr_base(cwd, repo, default, sha):
+    """Fetch the default branch and check what a merge onto its tip would do; return the tip.
+
+    Run before the CI wait and again after it, right before the merge: the
+    wait can last 15 minutes and other PRs land meanwhile (r4 #1, #32, #38, #45).
+    """
+    git(cwd, "fetch", "-q", "origin", default)
+    tip = git(cwd, "rev-parse", f"origin/{default}")
+    if git(cwd, "merge-base", tip, sha) != tip:
+        raise Stop(f"the branch is behind {default} (new commits landed during the run) — the merged tree was never "
+                   "reviewed; update the branch and verify again")
+    published = releases_on_push(cwd, tip, default)
+    if published:
+        raise Stop(f"a workflow publishes on push to {default} ({', '.join(published)}): merging is a release — run with --review")
+    changed_ci = touches_ci(cwd, tip, sha)
+    if changed_ci:
+        raise Stop(f"the change edits CI ({', '.join(changed_ci[:3])}) — workflow changes are merged by a person")
+    check_merge_queue(repo, default)
+    return tip
+
+
+def check_pr_people(repo, pr):
+    """Nobody reviewed or commented on the PR, and it is not a draft (r4 #15, #22).
+
+    The run itself never comments on its PR (verify runs in branch mode and
+    posts on the issue), so any comment or review there — an objection, a
+    CHANGES_REQUESTED review, a PR-mode verify report — came from a person.
+    """
+    owner, name = repo.split("/", 1)
+    q = ("query($o:String!,$r:String!,$p:Int!){repository(owner:$o,name:$r){pullRequest(number:$p){isDraft reviewDecision "
+         "reviews(last:100){nodes{author{login __typename} state}} comments(last:100){nodes{author{login __typename}}}}}}")
+    data = gh_json(["api", "graphql", "-f", f"query={q}", "-f", f"o={owner}", "-f", f"r={name}", "-F", f"p={pr}"],
+                   f"the reviews and comments of PR #{pr}")
+    view = ((data.get("data") or {}).get("repository") or {}).get("pullRequest")
+    if not isinstance(view, dict):
+        raise Stop(f"could not read the reviews and comments of PR #{pr} — not merging")
+    if view.get("isDraft"):
+        raise Stop(f"PR #{pr} is a draft — not merging")
+    if view.get("reviewDecision") == "CHANGES_REQUESTED":
+        raise Stop(f"PR #{pr} has changes requested — a person reviews and merges this one")
+    for kind in ("reviews", "comments"):
+        for node in ((view.get(kind) or {}).get("nodes") or []):
+            author = node.get("author") or {}
+            if author.get("__typename") != "Bot":
+                who = author.get("login") or "an unknown account"
+                raise Stop(f"PR #{pr} has a {kind[:-1]} by {who} — a person is involved; they merge this one")
+
+
+def write_result(cwd, n, result):
+    os.makedirs(state_dir(cwd), exist_ok=True)
+    with open(result_path(cwd, n), "w", encoding="utf-8") as fh:
+        json.dump(result, fh, ensure_ascii=False)
+
+
 def run_pr(st, cwd, repo, n, timeout, grace, partial):
     default = st["default"]
     prs = gh_json(["pr", "list", "--repo", repo, "--head", st["branch"], "--state", "open",
@@ -603,24 +789,15 @@ def run_pr(st, cwd, repo, n, timeout, grace, partial):
     local = git(cwd, "rev-parse", "HEAD")
     if local != sha:
         raise Stop(f"the PR head {sha[:7]} is not this run's commit {local[:7]} — not merging")
-    git(cwd, "fetch", "-q", "origin", default)
-    tip = git(cwd, "rev-parse", f"origin/{default}")
-    base = git(cwd, "merge-base", tip, sha)
-    if base != tip:
-        raise Stop(f"the branch is behind {default} (new commits landed during the run) — the merged tree was never "
-                   "reviewed; update the branch and verify again")
-    published = releases_on_push(cwd, tip, default)
-    if published:
-        raise Stop(f"a workflow publishes on push to {default} ({', '.join(published)}): merging is a release — run with --review")
-    changed_ci = touches_ci(cwd, base, sha)
-    if changed_ci:
-        raise Stop(f"the change edits CI ({', '.join(changed_ci[:3])}) — workflow changes are merged by a person")
-    check_merge_queue(repo, default)
-    since = parse_iso(st["created_at"]) - 60
+    base = pr_base(cwd, repo, default, sha)
+    since = parse_iso(st["created_at"])
 
     rc, gate = judge_report(repo, n, sha, base, since)
     if rc != 0:
         raise Stop(f"guardrail 1 (verify gate) — {gate.get('status')}: {gate.get('reason')}")
+    if gate.get("rejected"):
+        raise Stop(f"guardrail 1 (verify gate) — the report marks {gate['rejected']} finding(s) Rejected: the run judged "
+                   "a reviewer wrong about its own code; a person decides whether they stand")
 
     ci = wait_for_checks(repo, pr["number"], expects_pr_checks(cwd, sha, default), timeout, grace)
 
@@ -640,12 +817,23 @@ def run_pr(st, cwd, repo, n, timeout, grace, partial):
     if trap_hits(subject + "\n" + body):
         raise Stop(f"guardrail 4 (squash message) — close keyword next to an issue reference: {subject[:120]}")
 
-    # The CI wait can take minutes: judge the report again right before the merge.
+    # The CI wait can take minutes: everything that can change meanwhile is read again right before the merge.
+    base = pr_base(cwd, repo, default, sha)
     rc, gate = judge_report(repo, n, sha, base, since)
-    if rc != 0:
-        raise Stop(f"guardrail 1 (verify gate, re-checked after CI) — {gate.get('status')}: {gate.get('reason')}")
+    if rc != 0 or gate.get("rejected"):
+        raise Stop(f"guardrail 1 (verify gate, re-checked after CI) — {gate.get('status')}: {gate.get('reason')}"
+                   + (f"; {gate.get('rejected')} Rejected finding(s)" if gate.get("rejected") else ""))
+    me = session_login()
+    comments = issue_comments(repo, n)
+    check_others(me, since, comments, issue_meta(repo, n))
+    check_pr_people(repo, pr["number"])
 
     partial.update({"pr": pr["number"], "pr_url": pr.get("url"), "verified_sha": sha, "merge_attempted": True})
+    # Written before the merge call: if this process dies after GitHub merged, the
+    # result still says a merge may have happened (r4 #34).
+    write_result(cwd, n, dict(partial, status="stopped",
+                              reason=f"interrupted after the merge call started — PR #{pr['number']} may be merged; check it",
+                              interaction=st.get("interaction", "unknown")))
     rc, out, err = run_cmd([GH, "pr", "merge", str(pr["number"]), "--repo", repo, "--squash",
                             "--subject", subject, "--body", body, "--match-head-commit", sha])
     if rc != 0:
@@ -671,6 +859,7 @@ def run_pr(st, cwd, repo, n, timeout, grace, partial):
     else:
         state = view.get("state") or "unreadable"
         if state == "OPEN":
+            partial["merge_attempted"] = "refused"
             rc2, _, err2 = run_cmd([GH, "pr", "merge", str(pr["number"]), "--repo", repo, "--disable-auto"])
             note = "auto-merge disabled" if rc2 == 0 else f"could not disable auto-merge: {err2.strip()[:120]}"
             raise Stop(f"merge — PR #{pr['number']} is still OPEN after gh pr merge ({note}); not closing — check the PR")
@@ -701,9 +890,12 @@ def run_direct(st, cwd, repo, n, partial):
     changed_ci = touches_ci(cwd, base, head)
     if changed_ci:
         raise Stop(f"the change edits CI ({', '.join(changed_ci[:3])}) — workflow changes are pushed by a person")
-    rc, gate = judge_report(repo, n, head, base, parse_iso(st["created_at"]) - 60)
+    rc, gate = judge_report(repo, n, head, base, parse_iso(st["created_at"]))
     if rc != 0:
         raise Stop(f"guardrail 1 (verify gate) — {gate.get('status')}: {gate.get('reason')}")
+    if gate.get("rejected"):
+        raise Stop(f"guardrail 1 (verify gate) — the report marks {gate['rejected']} finding(s) Rejected: the run judged "
+                   "a reviewer wrong about its own code; a person decides whether they stand")
     # Everything below names `head`, never HEAD: another session can move HEAD
     # or switch the branch while the checks run (#392 verify r2 #1).
     commits, foreign, trapped = scan_commits(cwd, base, head, n)
@@ -717,6 +909,9 @@ def run_direct(st, cwd, repo, n, partial):
     if git(cwd, "rev-parse", "HEAD") != head or git(cwd, "branch", "--show-current") != default:
         raise Stop("HEAD or the branch changed while the checks ran — not pushing")
     partial.update({"verified_sha": head, "push_attempted": True, "push_from": base, "push_to": head})
+    write_result(cwd, n, dict(partial, status="stopped",
+                              reason=f"interrupted after the push started — {default} may already be at {head[:7]}; check it",
+                              interaction=st.get("interaction", "unknown")))
     rc, out, err = run_cmd([GIT, "-C", cwd, "push", "origin", f"{head}:refs/heads/{default}"])
     if rc != 0:
         partial["push_attempted"] = "refused"
@@ -740,7 +935,7 @@ def cmd_run(argv):
         assert math.isfinite(timeout) and math.isfinite(grace) and timeout >= 0 and grace >= 0
     except (ValueError, AssertionError):
         return usage("--ci-timeout and --ci-grace are non-negative seconds")
-    cwd, repo, n = a["--cwd"], a["--repo"], a["--issue"]
+    cwd, repo, n = os.path.realpath(a["--cwd"]), a["--repo"], a["--issue"]
     try:
         if os.path.exists(result_path(cwd, n)):
             os.unlink(result_path(cwd, n))   # never let an earlier run's result stand for this one
@@ -760,9 +955,15 @@ def cmd_run(argv):
         if perm not in WRITE_PERMS:
             raise Stop(f"this account has {perm or 'no'} permission on {repo}; the close stage runs only where it can write")
         check_origin(cwd, repo)
-        check_meeting(repo, n)
-        check_issue_authors(repo, n)
-        check_intent(repo, n, st)
+        me = session_login()
+        since = parse_iso(st["created_at"])
+        comments = issue_comments(repo, n)
+        meta = issue_meta(repo, n)
+        body = gh_json(["issue", "view", str(n), "--repo", repo, "--json", "body"], "the issue body").get("body") or ""
+        check_meeting(comments)
+        check_issue_authors(repo, meta)
+        check_others(me, since, comments, meta)
+        check_intent(repo, n, st, comments, body)
         if st.get("path") == "PR":
             result = run_pr(st, cwd, repo, n, timeout, grace, partial)
         elif st.get("path") == "direct-commit":
@@ -777,9 +978,7 @@ def cmd_run(argv):
         result, code = dict(partial, status="stopped", reason=f"internal error: {exc.__class__.__name__}: {exc}"), 3
     result["interaction"] = st.get("interaction", "unknown")
     try:
-        os.makedirs(state_dir(cwd), exist_ok=True)
-        with open(result_path(cwd, n), "w", encoding="utf-8") as fh:
-            json.dump(result, fh, ensure_ascii=False)
+        write_result(cwd, n, result)
     except (OSError, Stop) as exc:
         result["result_file"] = f"not written: {exc}"
     print(json.dumps(result, ensure_ascii=False))

@@ -5,6 +5,7 @@
 ## What Changes
 
 - **BREAKING**（對 `/loop` 等自動化 caller）：`/idd-all` 的終點從 verified 改成 closed。最新一輪 verify 沒有 Blocking、也沒有 In-scope fix 時，PR mode 會 merge PR 再跑 `/idd-close`；direct-commit mode 在預設 branch 上會先 push 再 close。
+- 自動收尾只用在意圖確認過、而且 run 開始之後沒有別人插手的 run（verify round 3、4 之後的範圍決定，#392 comment 6566557673、6567272352）：issue 與 comment 都出自有寫入權限的人、沒有未解的 Clarity 問題、unattended run 的 tier 是 Simple、最新 Diagnosis 沒有略過確認的紀錄；不符合就停在 verified、PR 照開。
 - 無人在場（unattended）時，In-scope fix 與 Blocking 一起在同一個 PR 修，修完重跑 verify，最多 2 輪；仍不乾淨就停在 verified。有人在場（attended）時照舊不自動修。
 - merge 前必須通過 guardrail（verify round 1–3 之後擴充，完整清單見 design 與 `skills/idd-all/SKILL.md` Phase 5c；最初的四道是）：verify 乾淨、CI checks 全綠、Step 0.8 auto-close trap 掃描乾淨、idd-all 自己組的 squash commit message 不含 close 類關鍵字緊鄰 issue 編號。任一不過就停在 verified 並寫明原因。
 - `/idd-close` 新增「由 idd-all 呼叫」的指示：residue 記為殘留、follow-up 照 IC_R011 預設開 issue、Step 1.6 與 Step 1.55 的警告一律停下不 close、distribution sync 在有人在場時照問、無人在場時略過並寫進回報。

@@ -64,3 +64,11 @@
 - [x] 10.2 `verify-gate.py`：HTML 區塊與重複計數判 unparseable。完成時：`tests/verify-gate/` 全數通過（150）。
 - [x] 10.3 idd-all：Phase 0.4 `reset`、Step 0.7 拿不到 N 報錯且 init 失敗只警告、chain 與 `--review` 維持原本的 verify 範圍、attended 續跑、Phase 5c 兩張表、續跑只沿用自己開的 PR、前景執行的 timeout、abort 時 `reset`、`--review` 報告寫 gate 狀態。idd-verify 三類計數與 HTML 規則；idd-close 的 orchestrated Step 3.5 也照 `# Disable IC_R011`。完成時：合約測試通過（77）。
 - [x] 10.4 規格與文件：hitl-modes 新增「意圖確認過才收尾」requirement 並更新 guardrail 與 push scenario；existing-work-lookup 的「結案不可逆」改寫；MANIFESTO 加意圖確認；proposal、design 的「四道」改成指向完整清單；全域規則改成指向 skill 的封閉列舉。完成時：`spectra validate` 通過。
+
+## 11. verify round 4 修正（#392 comment 6567217569；決定 comment 6567272352：保留 unattended 自動收尾）
+
+- [x] 11.1 `verify-gate.py` 改讀 GitHub 渲染後的 HTML（`--html-file`）：判定行與 Reviewed 行要自成一段、表格照 GitHub 畫出的算（含 `<details>` 裡的）、第四個 Action 值 `Rejected` 與判定行的 rejected 數、PASS 的覆蓋率行要滿、表格外帶 pipe 的 findings 列判 unparseable；fixture 由 `render-fixtures.sh` 以 GitHub 渲染器產生並 commit。完成時：`tests/verify-gate/` 全數通過（244），第 4 輪的五個重現（HTML 第 4 型、清單裡的 fence、單行註解包住的 table、延續列、details 裡的 Blocking）都是 unparseable。
+- [x] 11.2 `close-stage.py`：comment 帶 `body_html`；報告只認本帳號、最新一則 verify comment 必須是 `## Verify: #N`、時間窗不放寬；run 開始後別人插手即停（issue comment 新增或編輯、正文編輯、comment 被刪、PR 的 comment／review／draft／changes requested）；意圖檢查改看 tier＋interaction、最新 Diagnosis 的 `- **Reason**:` 記錄行、unattended 的 Proposed Corrections、所有 Clarity block 的 surfaced／deferred 格；`Rejected` 即停；CI 等完重查預設 branch、gate 與 PR 上的人；origin 的每個 URL、空 userinfo；`--cwd` realpath；merge／push 前先寫「可能已發生」的結果；仍 OPEN 時記 `refused`。完成時：`tests/close-stage/` 全數通過（279）。
+- [x] 11.3 skills：idd-verify 的格式規則（渲染後 HTML、`<details>` 可用、Rejected 留在表內、覆蓋率）；idd-diagnose 的 Choice Default Record 與 registry literal `unattended-auto-Step-4-choice-default`；idd-all 的 Step 0.4／0.7（reset 移到 init 失敗分支）、Phase 4 的 gate（`--review`／`--in-chain` 只比對 head）、Phase 5 的 PR body（Rejected 不承諾 merge）、Phase 5c 兩張表與已知限制、Phase 6 的 Undo（`refused` 不列）與 Action items。完成時：合約測試通過。
+- [x] 11.4 規格與文件：hitl-modes 的意圖 requirement 改寫、新增「別人插手」requirement 與 scenario、guardrail 與 gate 條款；IC_R011 spec 與 reference 補 `# Disable IC_R011`；design 第 4 輪一節與 Implementation Contract；proposal 的範圍；MANIFESTO 與 CHANGELOG。完成時：`spectra validate` 通過。
+

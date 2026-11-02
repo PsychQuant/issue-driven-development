@@ -27,14 +27,21 @@ Version number left to the merge, as in PR #442.
   pushed (the verified commit itself, not whatever `HEAD` is by then); the close-keyword scan covers
   `owner/repo#N`, issue URLs and hyphenated `/idd-close #N`; a direct-commit push refuses commits that do not
   reference the issue. The stage stays at verified unless the intent was confirmed: every comment on the
-  issue comes from someone with write access, no Clarity Surface question is open, no Layer V or Clarity
-  deferral was recorded, and a Plan-tier issue has an approved Implementation Plan. It also stays at verified
+  issue comes from someone with write access, no Clarity Surface row is still surfaced or deferred, an
+  unattended run implemented a Simple-tier issue (Plan, Spectra and SDD-warranted need the approval only an
+  attended run asks for), and the latest Diagnosis records no skipped confirmation (a Layer V deferral, a
+  choice-first default, or Proposed Corrections an unattended run listed but did not apply). It also stays at
+  verified when someone else became involved after the run began: another account (not a bot) commented on
+  the issue or edited a comment or the issue text, a comment was deleted, or the PR got a comment or a
+  review, is a draft or has changes requested. It also stays at verified
   when the run was downgraded from PR mode (no
   ralph-loop), when the issue's author or last editor lacks write access, when a workflow publishes on push
   to the default branch, and when the default branch has a merge queue; it waits for the `pull_request`
-  check a workflow promises (the check set must stay unchanged for 90 seconds) and re-judges the gate after
-  CI; it stops for a branch behind the default branch and for a change that edits CI; only reports posted
-  since the run began by accounts with write access count (a teammate's newer FAIL stops the merge). The
+  check a workflow promises (the check set must stay unchanged for 90 seconds); after the CI wait it fetches
+  the default branch again and repeats the branch, publishing, CI-edit, merge-queue and gate checks; it stops
+  for a branch behind the default branch and for a change that edits CI; only this account's reports posted
+  since the run began count, and the newest of its verify comments must be the branch-mode report; a report
+  that marks a finding `Rejected` stops the run (a person decides whether it stands). The
   issue counts as closed only when this
   account posted a `## Closing Summary` after the merge or push (`close-stage.py confirm-close`).
   Phase 6 reports `Done:` with `Undo:`
@@ -47,14 +54,15 @@ Version number left to the merge, as in PR #442.
   close stops there, so PR-mode runs often end "merged, issue still open".
 - **`/idd-close` honours `ORCHESTRATED BY /idd-all` (#392).** With the directive it does not ask at its six stop
   points: Step 1.55 and Step 1.6 warnings stop without closing, Step 3.5 files the follow-ups (IC_R011 default),
-  Step 3.5 honours `AI_LOW_BAR_ISSUE_FILING=false`; the directive counts only in the invocation arguments, never
+  Step 3.5 honours `AI_LOW_BAR_ISSUE_FILING=false` and `# Disable IC_R011`; the directive counts only in the invocation arguments, never
   in issue text. Step 3.6 records the residue without filing (the #392 decision; the manual default since #304 is to file),
   Step 6.3 does not commit stale docs but lists them in the closing summary, and Step 6.5 asks only when someone
   is present. Without the directive nothing changes.
 - **`idd-verify` reports state the format the gate reads (#392), next to the Step 4 templates:** a
-  `**Reviewed**: <sha>` line naming the reviewed commit, exactly one verdict line opening with
-  `**PASS**` or `**FAIL**`, an `Action` cell holding exactly `Blocking`, `In-scope fix` or `Follow-up`, rejected
-  findings kept out of the table, and the header kept when there are no findings. Five earlier verify comments in
+  `**Reviewed**: <base>..<head>` line naming the reviewed range, exactly one verdict line opening with
+  `**PASS**` or `**FAIL**` that states its counts, an `Action` cell holding exactly `Blocking`, `In-scope fix`,
+  `Follow-up` or `Rejected` (a finding judged not to stand stays in the table, with the reason), a PASS whose
+  coverage line has every requirement addressed, and the header kept when there are no findings. Five earlier verify comments in
   this repo all read as `unparseable` without these rules. The local-mode report template now has `### Aggregate`
   and the `Action` column.
 - **MANIFESTO: auto-merge rests on two reasons side by side (#392)** — verify is the gate, and merge and close
@@ -68,16 +76,18 @@ Version number left to the merge, as in PR #442.
 - `scripts/close-stage.py` (#392): `init` records an `/idd-all` run's flags, `gate` judges the newest verify
   report by the session's account against a commit range, `run` performs the close stage in one process,
   `confirm-close` checks the closing summary, `reset` clears an earlier run's state. Suite
-  `scripts/tests/close-stage/` (205 assertions, a fake `gh`
+  `scripts/tests/close-stage/` (279 assertions, a fake `gh`
   and real git repositories).
-- `scripts/verify-gate.py` (#392): reads one verify master comment, prints one JSON line
-  (`clean` / `not_clean` / `unparseable` with the three counts and a reason) and exits 0 / 1 / 2 (64 on a usage
-  error). Fails closed: a missing verdict or findings table, a fourth Action value, an annotated value, two
-  verdict lines, a PASS verdict next to a Blocking row, a FAIL verdict with no Blocking or In-scope fix row, an
-  unclosed fence (fences pair by character and length), a findings row cut off from its table, a decorated
-  `Action` header, an `Action` column that is not last, a verdict line whose blocking count is missing or differs
-  from the table, or (with `--expect-sha` / `--expect-base`) a missing or different `**Reviewed**` range are all
-  `unparseable`, as is an HTML block. Suites: `scripts/tests/verify-gate/` (150 assertions) and
+- `scripts/verify-gate.py` (#392): reads one verify master comment as GitHub renders it (the comment's
+  `body_html`, so a table is a table exactly when GitHub drew one — markdown parsing kept missing layouts
+  GitHub renders as tables), prints one JSON line (`clean` / `not_clean` / `unparseable` with the four counts and
+  a reason) and exits 0 / 1 / 2 (64 on a usage error). Fails closed: a missing verdict or findings table, a fifth
+  Action value, an annotated value, two verdict lines or one inside a quote, list or details block, a PASS
+  verdict next to a Blocking row (findings tables inside `<details>` count), a FAIL verdict with no Blocking or
+  In-scope fix row, a findings row outside a findings table, a decorated `Action` header, an `Action` column
+  that is not last, a verdict line whose counts are missing or differ from the tables, a PASS whose coverage line
+  is short, or (with `--expect-sha` / `--expect-base`) a missing or different `**Reviewed**` range are all
+  `unparseable`. Fixtures are GitHub's own rendering of the markdown fixtures (`render-fixtures.sh`). Suites: `scripts/tests/verify-gate/` (244 assertions) and
   `scripts/tests/merge-and-close-contract/` (77), which
   pins the idd-all skill, the idd-close skill, the MANIFESTO and the batch reference to the new end state.
 

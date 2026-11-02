@@ -40,22 +40,34 @@ work_commit() { # message (on the current branch)
   echo "$RANDOM" >> "$C/f.txt"; git -C "$C" commit -q -am "$1"; SHA=$(git -C "$C" rev-parse HEAD)
 }
 
-verify_comment() { # login head base verdict-line → append to comments.json
-  python3 - "$S/gh/comments.json" "$1" "$2" "$3" "$4" <<'EOF'
-import json, sys
-path, login, head, base, verdict = sys.argv[1:6]
+verify_comment() { # login head base verdict-line [rows] [heading] → append to comments.json
+  # body_html is what GitHub renders for that body (the gate reads only the HTML).
+  # rows: "Class:Finding;Class:Finding" — findings table rows.
+  python3 - "$S/gh/comments.json" "$1" "$2" "$3" "$4" "${5:-}" "${6:-## Verify: #7 — round 1}" <<'EOF'
+import json, re, sys, html
+path, login, head, base, verdict, rows, heading = sys.argv[1:8]
 reviewed = f"{base}..{head}" if base != "-" else head
-body = (f"## Verify: #7 — round 1\n\n### Aggregate\n{verdict}\n\n**Reviewed**: `{reviewed}`\n\n"
-        "### Findings（合併後）\n| # | Severity | Finding | Source | Action |\n|---|---|---|---|---|\n")
-diag = "## Diagnosis\n\n### Type\nbug\n"
+pairs = [r.split(":", 1) for r in rows.split(";") if r]
+md_rows = "".join(f"| {i} | LOW | {f} | codex | {c} |\n" for i, (c, f) in enumerate(pairs, 1))
+body = (f"{heading}\n\n### Aggregate\n{verdict}\n\n**Reviewed**: `{reviewed}`\n\n"
+        "### Findings（合併後）\n| # | Severity | Finding | Source | Action |\n|---|---|---|---|---|\n" + md_rows)
+strong = lambda t: re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", html.escape(t, quote=False))
+html_rows = "".join(f"<tr><td>{i}</td><td>LOW</td><td>{html.escape(f)}</td><td>codex</td><td>{c}</td></tr>\n"
+                    for i, (c, f) in enumerate(pairs, 1))
+body_html = (f"<h2>{html.escape(heading.lstrip('# '))}</h2>\n<h3>Aggregate</h3>\n<p>{strong(verdict)}</p>\n"
+             f"<p><strong>Reviewed</strong>: <code>{reviewed}</code></p>\n<h3>Findings（合併後）</h3>\n"
+             "<markdown-accessiblity-table><table><thead><tr><th>#</th><th>Severity</th><th>Finding</th><th>Source</th>"
+             f"<th>Action</th></tr></thead><tbody>\n{html_rows}</tbody></table></markdown-accessiblity-table>\n")
+diag = "## Diagnosis\n\n### Type\nbug\n\n### Complexity\nSimple\n"
 try:
     cs = json.load(open(path))
 except Exception:
     cs = [{"id": 1, "html_url": "u1", "user": {"login": "me"}, "author_association": "OWNER",
            "created_at": "2026-01-01T00:00:00Z", "body": diag}]
 import time
-cs.append({"id": len(cs) + 1, "html_url": f"https://example.test/c{len(cs)+1}", "user": {"login": login},
-           "author_association": "MEMBER", "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 5)), "body": body})
+cs.append({"id": len(cs) + 1, "html_url": f"https://example.test/c{len(cs)+1}", "user": {"login": login, "type": "User"},
+           "author_association": "MEMBER", "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 5)),
+           "body": body, "body_html": body_html})
 json.dump(cs, open(path, "w"))
 EOF
 }
@@ -71,11 +83,11 @@ pr_fixture() { # head-sha [title]
   echo '[{"name": "test", "bucket": "pass", "event": "pull_request"}]' > "$S/gh/checks-1.json"
 }
 
-init_state() { # path [requested-path] [review] [in-chain]
-  local path="$1" req="${2:-$1}" review="${3:-no}" chain="${4:-no}"
+init_state() { # path [requested-path] [review] [in-chain] [interaction]
+  local path="$1" req="${2:-$1}" review="${3:-no}" chain="${4:-no}" inter="${5:-unattended}"
   local branch=main; [ "$path" = PR ] && branch="idd/7-x"
   python3 "$CS" init --cwd "$C" --repo $REPO --issue $N --path "$path" --requested-path "$req" \
-    --interaction unattended --branch "$branch" --default main --review "$review" --in-chain "$chain" >/dev/null
+    --interaction "$inter" --branch "$branch" --default main --review "$review" --in-chain "$chain" >/dev/null
 }
 
 run_stage() { # → OUT, RC
@@ -108,7 +120,12 @@ assert_output_grep "squash body references the issue with Refs" 'Refs #7' "$S/gh
 assert_eq "result names the merge commit" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" "$(printf '%s' "$OUT" | field merge_sha)"
 assert_grep "result records when it finished" "T" "$(printf '%s' "$OUT" | field done_at)"
 assert_file_exists "result is written to the state dir" "$C/.claude/.idd/state/idd-all-result-7.json"
-assert_eq "the gate is judged again after the CI wait" "2" "$(calls_with '"api", "user"')"
+after_checks() { # pattern — calls matching pattern made after the last `gh pr checks` call
+  awk -v pat="$1" '/"pr", "checks"/{n=0; seen=1; next} seen && index($0, pat){n++} END{print n+0}' "$S/gh/calls.log"
+}
+assert_eq "the report is read again after the CI wait" "yes" "$([ "$(after_checks '"--jq", "[.[] | {id, html_url')" -ge 1 ] && echo yes)"
+assert_eq "the default branch is fetched again after the CI wait" "1" "$(after_checks 'mergeQueue')"
+assert_eq "the PR's reviews and comments are read after the CI wait" "1" "$(after_checks 'pullRequest(number')"
 
 pr_scenario review; init_state PR PR yes no; run_stage; stop_case "--review" "--review"
 pr_scenario chain; init_state PR PR no yes; run_stage; stop_case "--in-chain" "--in-chain"
@@ -124,9 +141,14 @@ init_state PR PR yes no; run_stage
 assert_eq "an earlier result file is not reused" "stopped" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "$C/.claude/.idd/state/idd-all-result-7.json")"
 pr_scenario forged; rm "$S/gh/comments.json"; verify_comment someone-else "$SHA" "$(base_of "$SHA")" "$PASS_LINE"
 echo '{"permission":"read","role_name":"read"}' > "$S/gh/perm-someone-else.json"; run_stage
-stop_case "a report by an account without write access" "write access"
+stop_case "a report by another account" "after the run started"
 pr_scenario teammate-fail; verify_comment teammate "$SHA" "$(base_of "$SHA")" "**FAIL** — 1 blocking"; run_stage
-stop_case "a newer FAIL by a teammate with write access" "guardrail 1"
+stop_case "a newer FAIL by a teammate with write access" "teammate commented"
+pr_scenario pointer; verify_comment me "$SHA" "$(base_of "$SHA")" "$PASS_LINE" "" "## Verify (via PR #9)"; run_stage
+stop_case "the newest verify comment is a PR-mode pointer (r4 #22)" "not a '## Verify: #7' report"
+pr_scenario rejected; rm "$S/gh/comments.json"
+verify_comment me "$SHA" "$(base_of "$SHA")" "**PASS** — 0 blocking, 0 in-scope fix, 0 follow-up, 1 rejected" "Rejected:claims X"; run_stage
+stop_case "a report with a Rejected finding (r4 #7)" "Rejected"
 pr_scenario old-report; python3 - "$S/gh/comments.json" <<'EOF'
 import json, sys
 cs = json.load(open(sys.argv[1])); cs[-1]["created_at"] = "2026-01-01T00:00:00Z"; json.dump(cs, open(sys.argv[1], "w"))
@@ -188,7 +210,7 @@ pr_scenario stillopen; echo '{"state": "OPEN", "mergeCommit": null}' > "$S/gh/af
 assert_eq "still OPEN after merging: stopped" "stopped" "$(printf '%s' "$OUT" | field status)"
 assert_grep "still OPEN after merging: auto-merge disabled" "auto-merge disabled" "$(printf '%s' "$OUT" | field reason)"
 assert_eq "still OPEN after merging: the disable call was made" "1" "$(calls_with '"--disable-auto"')"
-assert_eq "still OPEN after merging: the result says a merge was attempted" "True" "$(printf '%s' "$OUT" | field merge_attempted)"
+assert_eq "still OPEN after merging: the result says the merge was refused" "refused" "$(printf '%s' "$OUT" | field merge_attempted)"
 pr_scenario lateconfirm; echo 'not json' > "$S/gh/after-merge-1.json"
 echo '{"state": "MERGED", "mergeCommit": {"oid": "cccccccccccccccccccccccccccccccccccccccc"}}' > "$S/gh/after-merge-2.json"; run_stage
 assert_eq "a merge confirmed on the second read: merged" "merged" "$(printf '%s' "$OUT" | field status)"
@@ -229,23 +251,104 @@ echo '{"permission":"read","role_name":"read"}' > "$S/gh/perm-stranger.json"; ru
 stop_case "a comment by someone without write access" "intent not confirmed"
 pr_scenario clarity; printf '%s\n' "### Clarity Surface" "| Type | Source | Q | Status |" "|---|---|---|---|" "| ambiguity | x | y? | surfaced |" > "$S/gh/issue-body"; run_stage
 stop_case "an open Clarity Surface question" "Clarity Surface"
-pr_scenario layerv; python3 - "$S/gh/comments.json" <<'EOF'
+diag_add() { # text appended to the Diagnosis (comment 0)
+  python3 - "$S/gh/comments.json" "$1" <<'EOF'
 import json, sys
-cs = json.load(open(sys.argv[1])); cs[0]["body"] += "\n#### Layer V Deferred Record\nunattended-auto-Step-3.4-layerV-deferred\n"; json.dump(cs, open(sys.argv[1], "w"))
+cs = json.load(open(sys.argv[1])); cs[0]["body"] += sys.argv[2]; json.dump(cs, open(sys.argv[1], "w"))
 EOF
-run_stage; stop_case "a Layer V deferred record" "intent confirmation was skipped"
-plan_diag() { python3 - "$S/gh/comments.json" "$1" <<'EOF'
+}
+merged_case() { # name
+  assert_eq "$1: merged" "merged" "$(printf '%s' "$OUT" | field status)"
+}
+pr_scenario layerv; diag_add $'
+#### Layer V Deferred Record
+
+- **Reason**: unattended-auto-Step-3.4-layerV-deferred
+- **V1**: 4 — x
+'
+run_stage; stop_case "a Layer V deferred record" "skipped confirmation"
+pr_scenario layerv-prose; diag_add $'
+The close stage reads `unattended-auto-Step-3.4-layerV-deferred` records.
+```
+- **Reason**: unattended-auto-Step-3.4-layerV-deferred
+```
+'
+run_stage; merged_case "a Diagnosis that only names the literal (prose and a fence)"
+pr_scenario choice; diag_add $'
+#### Choice Default Record
+
+- **Reason**: unattended-auto-Step-4-choice-default
+- **Decision**: naming
+'
+run_stage; stop_case "a choice-first default taken unattended (r4 #20)" "unattended-auto-Step-4-choice-default"
+pr_scenario corrections; diag_add $'
+### Proposed Corrections
+| # | Target | Section | 錯在哪 | Command |
+|---|---|---|---|---|
+| 1 | issue:7 | ## Problem | 檔名寫錯 | x |
+'
+run_stage; stop_case "Proposed Corrections listed by an unattended run (r4 #20)" "Proposed Corrections"
+pr_scenario corrections-attended; diag_add $'
+### Proposed Corrections
+| # | Target | Section | 錯在哪 | Command |
+|---|---|---|---|---|
+| 1 | issue:7 | ## Problem | 檔名寫錯 | x |
+'
+init_state PR PR no no attended; run_stage; merged_case "Proposed Corrections in an attended run (asked one by one)"
+set_tier() { python3 - "$S/gh/comments.json" "$1" <<'EOF'
 import json, sys
-cs = json.load(open(sys.argv[1])); cs[0]["body"] = "## Diagnosis\n\n### Type\nfeature\n\n### Complexity\nPlan\n"
-if sys.argv[2] == "approved":
-    cs.insert(1, {"id": 60, "html_url": "u60", "user": {"login": "me"}, "author_association": "OWNER",
-                  "created_at": "2026-01-01T00:00:00Z", "body": "## Implementation Plan\n\n- [x] step\n"})
+cs = json.load(open(sys.argv[1])); cs[0]["body"] = cs[0]["body"].replace("### Complexity\nSimple", "### Complexity\n" + sys.argv[2])
 json.dump(cs, open(sys.argv[1], "w"))
 EOF
 }
-pr_scenario plan-skipped; plan_diag skipped; run_stage; stop_case "a Plan-tier issue without an Implementation Plan" "Plan tier"
-pr_scenario plan-ok; plan_diag approved; run_stage
-assert_eq "a Plan-tier issue with an approved Implementation Plan: merged" "merged" "$(printf '%s' "$OUT" | field status)"
+pr_scenario plan-unattended; set_tier Plan; run_stage; stop_case "Plan tier in an unattended run (r4 #2)" "Plan tier implemented in an unattended run"
+pr_scenario spectra-unattended; set_tier "Spectra（decision-heavy）"; run_stage; stop_case "Spectra tier in an unattended run (r4 #13)" "Spectra tier"
+pr_scenario plan-attended; set_tier Plan; init_state PR PR no no attended; run_stage; merged_case "Plan tier in an attended run"
+pr_scenario no-tier; set_tier "TBD"; run_stage; stop_case "a Diagnosis without a readable tier" "Complexity tier"
+clarity_body() { printf '%s
+' "$@" > "$S/gh/issue-body"; }
+pr_scenario clarity-resolved; clarity_body "### Clarity Surface(idd-clarify run x, unattended)" "| Type | Source | Question for you | Status | Reason |" "|---|---|---|---|---|" "| ambiguity | x | y? | resolved | unattended-auto-Step-4.6-deferred |"
+run_stage; merged_case "a resolved Clarity row that keeps its Reason (r4 #18)"
+pr_scenario clarity-deferred-other; clarity_body "### Clarity Surface(idd-clarify run x)" "| Type | Source | Question for you | Status | Reason |" "|---|---|---|---|---|" "| ambiguity | x | y? | deferred | waiting on maintainer |"
+run_stage; stop_case "a deferred Clarity row with another reason (r4 #27)" "Clarity Surface"
+pr_scenario clarity-second; clarity_body "### Clarity Surface(run 1)" "| Type | Source | Question for you | Status |" "|---|---|---|---|" "| (none) | — | no issues detected | passed |" "" "### Clarity Surface(run 2)" "| Type | Source | Question for you | Status |" "|---|---|---|---|" "| ambiguity | x | y? | surfaced |"
+run_stage; stop_case "an open row in the second Clarity block (r4 #30)" "Clarity Surface"
+pr_scenario clarity-fenced; clarity_body '```' "### Clarity Surface" "| a | b | c | surfaced |" '```' "### Clarity Surface(run 1)" "| Type | Source | Question for you | Status |" "|---|---|---|---|" "| (none) | — | none | passed |"
+run_stage; merged_case "a Clarity example inside a code fence"
+others_comment() { # login type created-offset-seconds
+  python3 - "$S/gh/comments.json" "$1" "$2" "$3" <<'EOF'
+import json, sys, time
+cs = json.load(open(sys.argv[1]))
+t = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + int(sys.argv[4])))
+cs.append({"id": 70, "html_url": "u70", "user": {"login": sys.argv[2], "type": sys.argv[3]}, "author_association": "MEMBER",
+           "created_at": t, "updated_at": t, "body": "Please hold off; do it differently."})
+json.dump(cs, open(sys.argv[1], "w"))
+EOF
+}
+pr_scenario teammate-after; others_comment teammate User 5; run_stage
+stop_case "a teammate's comment after the run started (r4 #48)" "after the run started"
+pr_scenario bot-after; others_comment ci-bot Bot 5; run_stage; merged_case "a bot's comment after the run started"
+pr_scenario edited-after; echo '{"data":{"repository":{"issue":{"author":{"login":"me"},"editor":{"login":"me"},"userContentEdits":{"nodes":[{"editedAt":"2099-01-01T00:00:00Z","editor":{"login":"teammate"}},{"editedAt":"2099-01-01T00:00:01Z","editor":{"login":"me"}}]},"timelineItems":{"nodes":[]}}}}}' > "$S/gh/authors.json"
+run_stage; stop_case "the issue text edited by someone else after the run started" "edited the issue text"
+pr_scenario deleted-after; echo '{"data":{"repository":{"issue":{"author":{"login":"me"},"editor":null,"userContentEdits":{"nodes":[]},"timelineItems":{"nodes":[{"createdAt":"2099-01-01T00:00:00Z","deletedCommentAuthor":{"login":"stranger"}}]}}}}}' > "$S/gh/authors.json"
+run_stage; stop_case "a comment deleted after the run started (r4 #4)" "was deleted after the run started"
+pr_scenario deleted-before; echo '{"data":{"repository":{"issue":{"author":{"login":"me"},"editor":null,"userContentEdits":{"nodes":[]},"timelineItems":{"nodes":[{"createdAt":"2020-01-01T00:00:00Z","deletedCommentAuthor":{"login":"stranger"}}]}}}}}' > "$S/gh/authors.json"
+run_stage; merged_case "a comment deleted before the run started"
+pr_people() { printf '{"data":{"repository":{"pullRequest":%s}}}' "$1" > "$S/gh/pr-people.json"; }
+pr_scenario draft; pr_people '{"isDraft":true,"reviewDecision":null,"reviews":{"nodes":[]},"comments":{"nodes":[]}}'; run_stage
+stop_case "a draft PR" "draft"
+pr_scenario changes; pr_people '{"isDraft":false,"reviewDecision":"CHANGES_REQUESTED","reviews":{"nodes":[]},"comments":{"nodes":[]}}'; run_stage
+stop_case "changes requested on the PR (r4 #15)" "changes requested"
+pr_scenario prcomment; pr_people '{"isDraft":false,"reviewDecision":null,"reviews":{"nodes":[]},"comments":{"nodes":[{"author":{"login":"teammate","__typename":"User"}}]}}'; run_stage
+stop_case "a comment on the PR" "comment by teammate"
+pr_scenario prbot; pr_people '{"isDraft":false,"reviewDecision":null,"reviews":{"nodes":[]},"comments":{"nodes":[{"author":{"login":"codecov","__typename":"Bot"}}]}}'; run_stage
+merged_case "a bot comment on the PR"
+pr_scenario moved-during-ci; cat > "$S/gh/on-checks.sh" <<EOF
+cd "$WORK" && rm -rf mdc && git clone -q "$S/o/r.git" mdc && cd mdc && echo y > h.txt && git add h.txt && git -c user.name=t -c user.email=t@e commit -q -m other && git push -q origin main
+EOF
+run_stage; stop_case "the default branch moved during the CI wait (r4 #1)" "behind"
+pr_scenario slash; init_state PR; OUT=$(IDD_GH="$FAKE" FAKE_GH_DIR="$S/gh" python3 "$CS" run --cwd "$C/" --repo $REPO --issue $N --ci-timeout 0.5 --ci-grace 0 2>"$S/err"); RC=$?
+merged_case "--cwd with a trailing slash (r4 #43)"
 pr_scenario crash; OUT=$(IDD_GH=/nonexistent/gh FAKE_GH_DIR="$S/gh" python3 "$CS" run --cwd "$C" --repo $REPO --issue $N 2>/dev/null); RC=$?
 assert_eq "gh missing: stopped, not a traceback" "stopped" "$(printf '%s' "$OUT" | field status)"
 assert_exit "gh missing: exit" 3 "$RC"
@@ -275,6 +378,15 @@ assert_grep "direct: same owner/repo on another host: reason" "not github.com/o/
 direct_scenario dpushurl; BASE=$(git -C "$S/o/r.git" rev-parse main); git -C "$C" remote set-url --push origin "$S/elsewhere/o2/r2.git"; run_stage
 assert_grep "direct: a push URL that points elsewhere: reason" "not github.com/o/r" "$(printf '%s' "$OUT" | field reason)"
 assert_eq "direct: a push URL that points elsewhere: nothing pushed" "$BASE" "$(git -C "$S/o/r.git" rev-parse main)"
+direct_scenario dsecondpush; BASE=$(git -C "$S/o/r.git" rev-parse main)
+git -C "$C" remote set-url --push origin "$S/o/r.git"; git -C "$C" remote set-url --add --push origin "$S/elsewhere/o2/r2.git"; run_stage
+assert_grep "direct: a second push URL that points elsewhere (r4 #33): reason" "not github.com/o/r" "$(printf '%s' "$OUT" | field reason)"
+assert_eq "direct: a second push URL: nothing pushed" "$BASE" "$(git -C "$S/o/r.git" rev-parse main)"
+direct_scenario demptyuser; git -C "$C" remote set-url origin "https://@github.com/o/r.git"; run_stage
+assert_grep "direct: an origin URL with empty userinfo passes the origin check (r4 #19)" "git fetch failed" "$(printf '%s' "$OUT" | field reason)"
+direct_scenario drejected; rm "$S/gh/comments.json"
+verify_comment me "$SHA" "$(base_of "$SHA")" "**PASS** — 0 blocking, 0 in-scope fix, 0 follow-up, 1 rejected" "Rejected:claims X"; run_stage
+assert_grep "direct: a Rejected finding stops the push" "Rejected" "$(printf '%s' "$OUT" | field reason)"
 
 echo "close-stage: confirm-close"
 confirm() { OUT=$(IDD_GH="$FAKE" FAKE_GH_DIR="$S/gh" python3 "$CS" confirm-close --cwd "$C" --repo $REPO --issue $N); RC=$?; }

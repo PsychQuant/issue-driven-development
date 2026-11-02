@@ -1347,10 +1347,11 @@ X / Y requirements addressed
 
 **這兩份樣板是 `/idd-all` 自動 merge 的輸入（#392）**，`scripts/verify-gate.py` 照它讀；Step 4 貼出報告時就要符合，不是 Step 5a 才補：
 
-- 恰好一行判定，以 `**PASS**` 或 `**FAIL**` 開頭，寫出三類的筆數：`N blocking, M in-scope fix, K follow-up`，與 Findings 表一致；其他行不要用粗體大寫英文字開頭。
-- 報告裡不要放 HTML 區塊（`<details>` 之類；單行的 `<!-- ... -->` 可以）：GitHub 會把區塊裡的表格畫出來，gate 卻讀不到，所以 gate 一律判讀不出來。
+- gate 讀的是 GitHub 把這則 comment 渲染出來的 HTML，不是 markdown 原文：GitHub 畫成表格的東西 gate 都會讀到（包括收在 `<details>` 裡的表格），GitHub 不顯示的（HTML 註解）gate 也看不到。`<details>` 可以用，例如 Step 3.5 Proposed Corrections 的替換內容。
+- 恰好一行判定，以 `**PASS**` 或 `**FAIL**` 開頭，自成一段（不在引用、清單或 `<details>` 裡），寫出筆數：`N blocking, M in-scope fix, K follow-up`，有 `Rejected` 的列時再加 `, R rejected`，與 Findings 表一致；其他行不要用粗體大寫英文字開頭。
+- `### 要求覆蓋率` 的 `X / Y requirements addressed` 在判定 PASS 時，X 必須等於 Y；沒滿足的要求是 Blocking finding，不是 PASS。
 - 恰好一行 ``**Reviewed**: `<BASE_SHA>..<FROZEN_SHA>` ``，兩個都寫完整的 40 字元 commit：`FROZEN_SHA` 是 `get_diff_and_issue` 凍結的 head，`BASE_SHA` 是這份 diff 的起點（見 Step 1）。`/idd-all` 只在這段範圍正好是要 merge 或 push 的範圍時才放行；只寫一個 commit 會被當成讀不出來。
-- Findings 表的最後一欄是 `Action`，每一列只填 `Blocking`、`In-scope fix`、`Follow-up` 三者之一（規則見 Step 5a）。
+- Findings 表的最後一欄是 `Action`，每一列只填 `Blocking`、`In-scope fix`、`Follow-up`、`Rejected` 四者之一（規則見 Step 5a）。
 - 一張表不要被空行切開；引用程式碼用 fence 時要成對關閉。
 
 格式（PR mode，cluster 時 per-issue 分區段）：
@@ -1429,13 +1430,14 @@ done
 
 #### Step 5a: 分類 findings
 
-合併後的每個 finding 歸入三類：
+合併後的每個 finding 歸入四類：
 
 | 類別 | 判斷標準 | 處置 |
 |------|---------|------|
 | **Blocking** | 直接違反 issue 要求、邏輯錯誤、安全漏洞 | 必須修復後重跑 verify |
 | **In-scope fix** | 屬於本 issue 範圍但非阻擋性（如 description 不精確、spec 過時） | 本次修復，不需重跑 verify |
 | **Follow-up** | 不屬於本 issue 範圍的改善建議（如共用函式的行為、缺少上限） | → Step 5b 問使用者 |
+| **Rejected** | 查證後不成立的意見（重現不出來、引用的程式碼不是那樣） | 留在表內、寫出理由；`/idd-all` 不越過它自動 merge（#392） |
 
 在 verification report 的 Findings 表加一欄 `Action`：
 
@@ -1450,8 +1452,8 @@ done
 **報告格式是 `/idd-all` 自動 merge 的輸入（#392）**：`/idd-all` 用 `scripts/verify-gate.py` 讀這份報告，決定能不能 merge 並 close；讀不出來就停在 verified。所以：
 
 - 報告恰好有一行判定，以 `**PASS**` 或 `**FAIL**` 開頭（放在 `### Aggregate` 下）。其他行不要用粗體大寫英文字開頭。
-- Findings 表的最後一欄是 `Action`，每一列只填 `Blocking`、`In-scope fix`、`Follow-up` 三者之一，不加括號註解；說明寫在 Finding 欄或表格外。
-- 判定為不成立、不需處理的意見不是 finding，不放進這張表，另列一節（例如 `### No action`）說明理由。
+- Findings 表的最後一欄是 `Action`，每一列只填 `Blocking`、`In-scope fix`、`Follow-up`、`Rejected` 四者之一，不加括號註解；說明寫在 Finding 欄或表格外。
+- **reviewer 的意見判定為不成立時，照樣留在這張表，Action 填 `Rejected`**，Finding 欄寫出不成立的理由（引用程式碼或行號），判定行寫出 `R rejected`。不要把它移到表外：寫這份報告、判定意見不成立的，就是寫這份程式碼的同一個 orchestrator，gate 只讀這張表（#392 verify r4 #7）。`/idd-all` 不會越過 `Rejected` 的 finding 自動 merge，由人決定它是否成立。
 - 沒有任何 finding 時仍要寫出表頭（只有表頭與分隔列），代表零筆。
 
 #### Step 5b: Follow-up Issue Triage

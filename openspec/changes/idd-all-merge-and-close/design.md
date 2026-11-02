@@ -156,30 +156,49 @@ MANIFESTO〈auto-merge 的合法性與限制〉改成兩個理由並列：verify
 ### verify round 3 之後的修正（2026-11-02，範圍縮小：comment 6566557673）
 
 - **意圖確認過才收尾**（範圍決定）：所有 comment 的作者都有寫入權限；Clarity Surface 沒有 surfaced／deferred 的列；沒有 Layer V 或 Clarity 的 deferred 紀錄；Plan tier 有 `## Implementation Plan`。不符合就停在 verified、PR 照開。這把 10-14「所有 mode 都適用」縮成「意圖確認過的 run 都適用」。
-- **報告綁定這次 run**：只認 run-state 建立之後貼的報告；有寫入權限的帳號後貼的 FAIL 也算數（不只本帳號）。Phase 0.4 先 `reset` 上一次的 run-state，Step 0.7 拿不到 N 就報錯，abort 時也 `reset`。
+- **報告綁定這次 run**：只認 run-state 建立之後貼的報告；有寫入權限的帳號後貼的 FAIL 也算數（不只本帳號）。Phase 0.4 先 `reset` 上一次的 run-state，Step 0.7 拿不到 N 就報錯，abort 時也 `reset`。（第 4 輪之後改回只認本帳號，別人的 comment 由「別人插手」停下；reset 移到 Step 0.7，見下一節。）
 - **origin**：fetch 與 push URL 都必須是 `github.com/<repo>`；推完向 GitHub 確認預設 branch 指向 verified commit。
 - **PR commit 從本機 git 的完整範圍讀**，不受 `gh pr view --json commits` 的筆數上限影響。
 - **chain 與 `--review` 不改 verify 的範圍**：只有能走到 close stage 的 run 才以 `--branch` 呼叫 verify。
 - **branch 落後預設 branch 就停**（merge 的結果沒被審過）；**改到 CI 的改動不自動 merge**。
 - **發佈型 workflow 改掃預設 branch 最新的 tree**，只由 tag 觸發的不算，`workflow_run` 與本地 reusable workflow 也看；**`pull_request` 觸發的判定看 trigger 區塊**，有 path 篩選的不算。
 - **CI 要 check 集合連續 90 秒不變**才接受（`needs:` 之後才出現的 check）。
-- **verify-gate**：HTML 區塊判讀不出來（單行 `<!-- -->` 可以）；判定行同一類計數寫兩次也判讀不出來；idd-verify 樣板改成三類計數。
+- **verify-gate**：HTML 區塊判讀不出來（單行 `<!-- -->` 可以）；判定行同一類計數寫兩次也判讀不出來；idd-verify 樣板改成三類計數。（第 4 輪之後 gate 改讀渲染後的 HTML，這條規則取消，見下一節。）
 - **attended**：使用者處理完 findings、說要繼續時，同一個 session 再跑一輪 verify，乾淨了照常收尾。
 
 兩個沒有改、記錄理由的決定：
 
 - **idd-close Step 1.55 仍然停下**（Diagnosis Decisions）。代價是 #399 的誤報：unattended 修正輪產生「後面的 commit 改寫前面加的行」的 branch，squash 之後 1.55 會報 orphan，PR mode 的自動 close 在 PR #418 merge 前常停在「已 merge、issue 仍開」。把 1.55 改成照樣 close 會讓一張可能沒做完的 issue 在沒有人判斷時被關掉，比停下更糟。
-- **merge 本身就是發佈的 repo**（CI 在 push 到預設 branch 時發版、marketplace 直接服務預設 branch）不在 merge 前另外偵測：偵測只能靠猜 workflow 內容。這類 repo 用 `--review`；repo 層級的開關另開 #460。closing summary 與自動開的 follow-up issue 會發通知、收不回，這是 close 的一部分，依 #392 的決定歸在「做完回報」這一側。
+- **workflow 以外的發佈管道**：push 到預設 branch 時發版的 workflow 由 helper 偵測（round 2 起，見上）；不經 workflow 的發佈管道不偵測——plugin marketplace 直接服務預設 branch（本 repo 就是：`.claude-plugin/marketplace.json` 的 source 是 `./plugins/...`）、GitHub Pages 從 branch 部署、Vercel／Netlify 的 Git 整合。這類 repo 的 merge 就是把改動交給下一個安裝或部署的人；要不要偵測、怎麼偵測（repo 層級開關或掃 marketplace.json）留在 #460 由維護者決定，在那之前這類 repo 用 `--review`。closing summary 與自動開的 follow-up issue 會發通知、收不回，這是 close 的一部分，依 #392 的決定歸在「做完回報」這一側。
+
+### verify round 4 之後的修正（2026-11-02，comment 6567272352：保留 unattended 自動收尾）
+
+第 4 輪的 HIGH 幾乎都是「unattended run 自己確認了意圖，close stage 看不出來」，以及 gate 的 markdown 解析又漏了幾種 GitHub 會畫成表格的寫法。使用者選擇保留 unattended 自動收尾、把檢查補齊。
+
+- **gate 改讀 GitHub 渲染後的 HTML**（`body_html`），不再自己解析 markdown。第 3、4 輪各有好幾項是同一類：GitHub 畫成表格、gate 的 parser 沒看到（HTML 區塊第 3–5 型、清單裡的 fence、單行註解包住的 raw table、延續列）。補一條漏一條，改讀渲染結果之後，人看到的表格就是 gate 讀到的表格。`<details>` 因此可以用（Proposed Corrections 的替換內容，r4 #17）；收在 `<details>` 裡的 findings 表照樣計數。測試的輸入是 GitHub 渲染器的真實輸出（`render-fixtures.sh` 產生、commit 進 repo）。
+- **被駁回的意見留在表內**：第四個 Action 值 `Rejected`，判定行寫出筆數；close stage 遇到 `Rejected` 就停，由人決定它是否成立（r4 #7）。判定意見不成立的，就是寫這份程式碼的 orchestrator。
+- **意圖檢查改看 run 自己的狀態與最新 Diagnosis**：
+  - tier：unattended 的 Plan、Spectra、SDD-warranted 一律停（r4 #2、#13）。不再找 `## Implementation Plan` comment：idd-implement 自己也會貼這個標題，找到它不代表有人核准。attended 的 Plan 經過 `/idd-plan` 的核准才會走到 merge，所以不擋。這比使用者選項裡的「補 Plan 降級標記」更直接：降級標記要靠寫入端記得寫，tier 與 interaction 本來就在 Diagnosis 與 run-state 裡。
+  - 紀錄：只讀最新 Diagnosis 裡 `- **Reason**: <literal>` 形式的記錄行（code fence 外），literal 是 Layer V 延後或新登記的 choice-first 預設 `unattended-auto-Step-4-choice-default`（r4 #20）。只讀最新一則，attended 重新診斷就清掉舊紀錄（r4 #31）；只認記錄行，提到 literal 的說明文字不算。
+  - Proposed Corrections：unattended run 只列不做，issue 正文可能寫錯，停（r4 #20）。
+  - Clarity Surface：讀正文裡所有 block（fence 外），看每列有沒有格子仍是 `surfaced` 或 `deferred`；resolved 的列保留 Reason 也不再擋（r4 #18、#27、#30）。
+  - 沒有算進來的：unattended 的 diagnosis 策略確認（Stage 1）。每個 unattended run 都會略過它，算進來就只剩 attended 能自動收尾，與這次的決定相反。
+- **run 開始之後有別人插手就停**（r4 #4、#15、#48）：issue 上別的帳號（非 bot）新增或改了 comment、改了正文、任何不是本帳號的 comment 被刪；PR 上有非 bot 的 comment 或 review、是 draft、或 changes requested。PR 的部分在 CI 等完之後、merge 之前讀。因此報告只認本帳號的（同事的 FAIL 由這一條停下），規格、MANIFESTO 與 docstring 的說法回到一致（r4 #9、#42）。
+- **報告選取**：本帳號在 run 開始之後的最新一則 verify comment（任何 `## Verify` 標題）必須是 `## Verify: #N` 報告，PR mode 的報告與指標不會被跳過（r4 #22）；時間窗不再往前放寬 60 秒（r4 #8）。
+- **CI 等完再查一次**：重新 fetch 預設 branch，落後、發佈 workflow、改 CI、merge queue、gate 全部重判（r4 #1、#32、#38、#45）。
+- **其他**：origin 的每個 fetch 與 push URL 都要對（r4 #33），userinfo 可以是空的（`https://@github.com/...`，r4 #19）；`--cwd` 先 realpath（r4 #43）；merge／push 之前先寫一份「可能已發生」的結果，被中斷也留得下紀錄；`"refused"` 不列 Undo（r4 #23、#34）；reset 移到 Step 0.7 的 init 失敗分支，排在 Step 0.5.1 之後（r4 #47）；`--review`／`--in-chain` 的 gate 只比對 head（r4 #44）；IC_R011 的 spec 與 reference 補上 `# Disable IC_R011`（r4 #24）。
+
+仍留著的限制（SKILL.md Phase 5c〈已知限制〉）：同一帳號分不出 run 與人、最後檢查到 squash 之間的幾秒、direct-commit 不等 CI、workflow 以外的發佈管道（#460）、idd-all 仍可被模型呼叫（#457）、close 的 Step 0 與 1.5 排在 merge 之後、task 7.2 尚未在真的 GitHub 上跑過。
 
 ## Implementation Contract
 
 **verify gate helper（`scripts/verify-gate.py`）：**
 
-- 輸入：`--comment-file <path>`（verify master comment 的原文）。
-- 輸出（stdout，一行 JSON）：`{"status": "clean" | "not_clean" | "unparseable", "verdict": "PASS" | "FAIL" | null, "blocking": <int|null>, "in_scope": <int|null>, "follow_up": <int|null>, "reason": <string>}`。
-- `clean`：判定行為 PASS，分類表可解析，Blocking＝0 且 In-scope fix＝0。
+- 輸入：`--html-file <path>`（GitHub 渲染 verify master comment 得到的 HTML，即 comment 的 `body_html`），可加 `--expect-sha`、`--expect-base`（各 40 個 hex）。
+- 輸出（stdout，一行 JSON）：`{"status": "clean" | "not_clean" | "unparseable", "verdict": "PASS" | "FAIL" | null, "blocking": <int|null>, "in_scope": <int|null>, "follow_up": <int|null>, "rejected": <int|null>, "reason": <string>}`。
+- `clean`：判定行為 PASS，分類表可解析，Blocking＝0 且 In-scope fix＝0（`Rejected` 不影響 status，由 close stage 停下）。
 - `not_clean`：可解析但有 Blocking 或 In-scope fix，或判定為 FAIL。
-- `unparseable`：找不到判定行或分類表、分類欄出現三類以外的值、或判定 PASS 卻有 Blocking；`reason` 寫明是哪一種。
+- `unparseable`：找不到判定行或分類表、分類欄出現四類以外的值、判定與表格或覆蓋率行矛盾等（完整清單見 spec〈Verify gate parsing fails closed〉）；`reason` 寫明是哪一種。
 - 結束碼：`clean` 為 0，`not_clean` 為 1，`unparseable` 為 2，用法錯誤為 64。檔案讀不到時以 2 結束。
 
 **idd-all 的終點行為：**
@@ -195,6 +214,8 @@ MANIFESTO〈auto-merge 的合法性與限制〉改成兩個理由並列：verify
 | attended，gate `not_clean` | 交回使用者（既有行為） |
 | gate `unparseable` | 停在 verified，回報解析失敗的原因 |
 | `--review`、`--in-chain`、`type=meeting` | 終點不變 |
+| 意圖沒有確認過，或 run 開始之後有別人插手 | 停在 verified、PR 照開，回報 Stopped（spec 的兩條對應 requirement） |
+| verify 報告有 `Rejected` 的 finding | 停在 verified，由人決定那則意見是否成立 |
 
 **範圍：**
 

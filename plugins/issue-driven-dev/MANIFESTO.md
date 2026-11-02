@@ -175,8 +175,9 @@ revert 不對稱仍然成立：一個 reviewed change 撤回後，history 留下
 
 Guardrails 是 mandatory，不是 skipped（`idd-all` Phase 5c，全部在 `scripts/close-stage.py` 的同一個 process 裡檢查，merge 或 push 也在那裡做；完整的封閉列舉以 Phase 5c 的兩張表為準，這裡是摘要）：
 
-- **意圖確認過**（Foresay 的 traceable 分支要求意圖清楚**且**可逆）：issue 正文與所有 comment 都出自有寫入權限的人；沒有略過的意圖確認（Clarity Surface 未解的列、Layer V／Clarity 的 deferred 紀錄、沒有核准過 Implementation Plan 的 Plan tier）。不符合就停在 verified、PR 照開
-- verify gate 判定 `clean`（never CONDITIONAL / FAIL / 讀不出來），而且報告是本帳號貼的、寫明它審查的 commit 就是要 merge 或 push 的那一個
+- **意圖確認過**（Foresay 的 traceable 分支要求意圖清楚**且**可逆）：issue 正文與所有 comment 都出自有寫入權限的人；沒有略過的意圖確認（Clarity Surface 仍是 surfaced／deferred 的列、unattended run 做了 Plan／Spectra tier、最新 Diagnosis 有 Layer V 延後或 choice-first 預設的紀錄、unattended run 列了 Proposed Corrections）。不符合就停在 verified、PR 照開
+- **run 開始之後沒有別人插手**：別的帳號（非 bot）沒有在 issue 上留言、改 comment、改正文、刪 comment，PR 上沒有別人的 comment 或 review、不是 draft、沒有 changes requested。run 只照它開始時讀到的意圖做
+- verify gate 判定 `clean`（never CONDITIONAL / FAIL / 讀不出來），gate 讀的是 GitHub 渲染後的報告（人看到的表格就是 gate 讀到的表格）；報告是本帳號貼的、寫明它審查的範圍就是要 merge 或 push 的那一段、沒有被 run 自己判為不成立（`Rejected`）的 finding
 - PR mode：CI checks 全部通過（pending 最多等 15 分鐘；有 `pull_request` workflow 就等 check 出現）；auto-close-trap scan 必須 clean（PR body 與每個 commit）；squash commit message 必須 clean（由 idd-all 自己組，只用 `Refs #N`）；merge 綁定 verify 過的 head commit
 - direct-commit mode：沒有 PR 也沒有 merge 前的 CI，所以改成：只在預設 branch 上推、要推出去的每個 commit 都引用這張 issue、沒有 trap 字樣
 

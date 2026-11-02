@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # verify-gate suite (#392) — scripts/verify-gate.py reads one verify master
-# comment and decides whether /idd-all may merge and close.
+# comment AS GITHUB RENDERS IT and decides whether /idd-all may merge and close.
+#
+# Inputs: fixtures/*.md are the comments as written; fixtures/*.html are
+# GitHub's rendering of them (render-fixtures.sh, committed). The gate reads
+# only the .html, the way close-stage.py hands it a comment's body_html.
 #
 # Contract (design.md of change idd-all-merge-and-close, Implementation Contract):
-#   stdout  one JSON line {status, verdict, blocking, in_scope, follow_up, reason}
+#   stdout  one JSON line {status, verdict, blocking, in_scope, follow_up, rejected, reason}
 #   exit    clean 0 · not_clean 1 · unparseable 2 (also: file unreadable) · usage 64
 # The gate fails closed: anything it cannot read, or that contradicts itself,
 # is `unparseable`, never `clean`.
@@ -30,7 +34,7 @@ print("null" if v is None else v)' "$1"
 run_gate() { # name fixture expected_status expected_exit [blocking in_scope follow_up]
   local name="$1" fixture="$2" want_status="$3" want_exit="$4"
   local out rc
-  out=$(python3 "$GATE" --comment-file "$FX/$fixture" 2>/dev/null); rc=$?
+  out=$(python3 "$GATE" --html-file "$FX/${fixture%.md}.html" 2>/dev/null); rc=$?
   assert_eq "$name: status" "$want_status" "$(printf '%s' "$out" | json_field status)"
   assert_exit "$name: exit" "$want_exit" "$rc"
   if [ $# -ge 7 ]; then
@@ -83,10 +87,10 @@ run_gate "CONDITIONAL verdict" conditional.md unparseable 2
 run_gate "a findings row after a blank line is outside the table" interrupted-table.md unparseable 2
 reason_has "interrupted table: reason" "outside"
 run_gate "a GFM row without a leading pipe still counts" no-leading-pipe.md not_clean 1 0 1 1
-run_gate "a four-backtick fence is not closed by three backticks" fence-length.md unparseable 2
+run_gate "a four-backtick fence is not closed by three backticks (GitHub draws the Blocking table after it)" fence-length.md unparseable 2
 run_gate "a tilde line inside a backtick fence does not close it" fence-tilde-inside.md not_clean 1 0 1 0
-run_gate "an unclosed fence" unclosed-fence.md unparseable 2
-reason_has "unclosed fence: reason" "fence"
+# An unclosed fence runs to the end of the comment: GitHub shows the rest as code, and so does the gate.
+run_gate "an unclosed fence after an empty findings table" unclosed-fence.md clean 0 0 0 0
 run_gate "an Action header with decoration" action-header-variant.md unparseable 2
 run_gate "a one-dash GFM divider" short-divider.md not_clean 1 0 1 0
 run_gate "FAIL with no Blocking and no In-scope fix row" fail-no-findings.md unparseable 2
@@ -97,7 +101,7 @@ SHA=78e32898e75243a3b6895568adff8b1ae7949824
 run_gate_x() { # name fixture status exit args...
   local name="$1" fixture="$2" want_status="$3" want_exit="$4"; shift 4
   local out rc
-  out=$(python3 "$GATE" --comment-file "$FX/$fixture" "$@" 2>/dev/null); rc=$?
+  out=$(python3 "$GATE" --html-file "$FX/${fixture%.md}.html" "$@" 2>/dev/null); rc=$?
   assert_eq "$name: status" "$want_status" "$(printf '%s' "$out" | json_field status)"
   assert_exit "$name: exit" "$want_exit" "$rc"
   LAST_OUT="$out"
@@ -122,26 +126,53 @@ run_gate_x "a Reviewed range is accepted without --expect-base" reviewed-range.m
 run_gate_x "a Reviewed range with another base" reviewed-range-otherbase.md unparseable 2 --expect-sha "$SHA" --expect-base "$BASE"
 reason_has "another base: reason" "range"
 run_gate_x "a single Reviewed commit when a base is expected" reviewed-ok.md unparseable 2 --expect-sha "$SHA" --expect-base "$BASE"
-python3 "$GATE" --comment-file "$FX/reviewed-ok.md" --expect-base "$BASE" >/dev/null 2>&1; rc=$?
+python3 "$GATE" --html-file "$FX/reviewed-ok.html" --expect-base "$BASE" >/dev/null 2>&1; rc=$?
 assert_exit "--expect-base without --expect-sha: exit" 64 "$rc"
-# #392 verify r3: HTML blocks (GitHub renders a table the gate would not see), duplicate counts, three buckets
-run_gate "an HTML block in the report" html-details.md unparseable 2
-reason_has "HTML block: reason" "HTML"
-run_gate "a multi-line HTML comment" html-comment-multiline.md unparseable 2
+# #392 verify r3/r4: what GitHub draws is what counts — HTML blocks, fences, comments
+run_gate "a Blocking table GitHub draws after an HTML block" html-details.md unparseable 2
+reason_has "HTML block: reason" "blocking"
+run_gate "a multi-line HTML comment is hidden by GitHub" html-comment-multiline.md clean 0 0 0 0
 run_gate "a one-line HTML comment is fine" html-comment-oneline.md clean 0 0 0 0
 run_gate "the verdict line states the blocking count twice" verdict-duplicate-count.md unparseable 2
 run_gate "the three-bucket verdict line" verdict-three-buckets.md not_clean 1 0 2 1
-python3 "$GATE" --comment-file "$FX/reviewed-ok.md" --expect-sha not-a-sha >/dev/null 2>&1; rc=$?
+python3 "$GATE" --html-file "$FX/reviewed-ok.html" --expect-sha not-a-sha >/dev/null 2>&1; rc=$?
 assert_exit "--expect-sha that is not hex: exit" 64 "$rc"
 
+# #392 verify r4: layouts GitHub draws as a Blocking table that a markdown parser missed
+run_gate "a CommonMark type-4 HTML block toggles no fence (r4 #11)" html-type4.md unparseable 2
+reason_has "type-4 HTML block: reason" "blocking"
+run_gate "a fence inside a list item ends with the item (r4 #12)" list-fence.md unparseable 2
+run_gate "a raw table on a one-line comment line (r4 #14)" oneline-comment-table.md unparseable 2
+run_gate "a continuation row and an annotated Blocking row (r4 #21)" continuation-row.md unparseable 2
+run_gate "a Blocking table inside a collapsed details block" details-blocking.md unparseable 2
+run_gate "the verdict line inside a quote" verdict-in-quote.md unparseable 2
+reason_has "quoted verdict: reason" "quote"
+# Proposed Corrections keep their <details> replacement text (r4 #17)
+run_gate "Proposed Corrections with a details block" corrections-details.md clean 0 0 0 1
+# Rejected findings stay in the table and are counted (r4 #7)
+run_gate "a Rejected row, stated in the verdict line" rejected.md clean 0 0 0 1
+assert_eq "Rejected row: rejected count" "1" "$(printf '%s' "$LAST_OUT" | json_field rejected)"
+run_gate "a Rejected row the verdict line does not state" rejected-unstated.md unparseable 2
+reason_has "unstated rejected: reason" "rejected"
+# The coverage line
+run_gate "PASS with 3 / 5 requirements addressed" coverage-short.md unparseable 2
+run_gate "PASS with 5 / 5 requirements addressed" coverage-full.md clean 0 0 0 0
+
+# every .md fixture has its rendering committed
+for md in "$FX"/*.md; do
+  assert_file_exists "rendered: $(basename "$md")" "${md%.md}.html"
+done
+
 # file and usage errors
-out=$(python3 "$GATE" --comment-file "$FX/does-not-exist.md" 2>/dev/null); rc=$?
+out=$(python3 "$GATE" --html-file "$FX/does-not-exist.html" 2>/dev/null); rc=$?
 assert_eq "missing file: status" "unparseable" "$(printf '%s' "$out" | json_field status)"
 assert_exit "missing file: exit" 2 "$rc"
 python3 "$GATE" >/dev/null 2>&1; rc=$?
 assert_exit "no arguments: exit" 64 "$rc"
-python3 "$GATE" --comment-file >/dev/null 2>&1; rc=$?
-assert_exit "--comment-file without a value: exit" 64 "$rc"
+python3 "$GATE" --html-file >/dev/null 2>&1; rc=$?
+assert_exit "--html-file without a value: exit" 64 "$rc"
+python3 "$GATE" --comment-file "$FX/clean-empty.md" >/dev/null 2>&1; rc=$?
+assert_exit "the markdown input flag is gone: exit" 64 "$rc"
 python3 "$GATE" --bogus x >/dev/null 2>&1; rc=$?
 assert_exit "unknown flag: exit" 64 "$rc"
 

@@ -6,7 +6,9 @@ Files read (all optional unless the call needs them):
   comments.json         the issue's comments as the REST API returns them
   perm                  viewerPermission of the session account
   perm-<login>.json     collaborator permission of <login> (default: admin)
-  authors.json          GraphQL issue author/editor (default: author me, no editor)
+  authors.json          GraphQL issue author/editor/userContentEdits/timelineItems (default: author me, nothing else)
+  pr-people.json        GraphQL PR isDraft/reviewDecision/reviews/comments (default: none of them)
+  on-checks.sh          run once (bash) on the first `gh pr checks` call — e.g. to move the remote's main
   mq.json               GraphQL mergeQueue answer (default: none)
   prs.json              `gh pr list` result
   checks-<k>.json       `gh pr checks` answers in order (k = 1, 2, ...); the last repeats.
@@ -44,7 +46,11 @@ if argv[:2] == ["api", "graphql"]:
     q = " ".join(argv)
     if "mergeQueue" in q:
         print(read("mq.json", '{"data":{"repository":{"mergeQueue":null}}}')); sys.exit(0)
-    print(read("authors.json", '{"data":{"repository":{"issue":{"author":{"login":"me"},"editor":null}}}}')); sys.exit(0)
+    if "pullRequest" in q:
+        print(read("pr-people.json", '{"data":{"repository":{"pullRequest":{"isDraft":false,"reviewDecision":null,'
+                   '"reviews":{"nodes":[]},"comments":{"nodes":[]}}}}}')); sys.exit(0)
+    print(read("authors.json", '{"data":{"repository":{"issue":{"author":{"login":"me"},"editor":null,'
+               '"userContentEdits":{"nodes":[]},"timelineItems":{"nodes":[]}}}}}')); sys.exit(0)
 if argv[0] == "api" and "/collaborators/" in argv[1]:
     login = argv[1].split("/collaborators/")[1].split("/")[0]
     print(read(f"perm-{login}.json", '{"permission":"admin","role_name":"admin"}')); sys.exit(0)
@@ -65,6 +71,10 @@ if argv[:2] == ["issue", "view"]:
 if argv[:2] == ["pr", "list"]:
     print(read("prs.json", "[]")); sys.exit(0)
 if argv[:2] == ["pr", "checks"]:
+    hook = os.path.join(d, "on-checks.sh")
+    if os.path.exists(hook):
+        os.rename(hook, hook + ".done")
+        subprocess.run(["bash", hook + ".done"], capture_output=True)
     ans = seq("checks")
     if ans is None:
         sys.stderr.write("no checks reported on the 'x' branch\n"); sys.exit(1)
