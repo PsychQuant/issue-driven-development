@@ -32,7 +32,7 @@ ITEM_RE = re.compile(r"""^-\s*(["']?)([^"'#]*?)\1\s*(?:#.*)?$""")
 
 NOT_ON_MERGE = {"schedule", "workflow_dispatch", "repository_dispatch", "issues", "issue_comment", "discussion",
                 "discussion_comment", "label", "milestone", "watch", "fork", "gollum", "public",
-                "pull_request_review", "pull_request_review_comment"}
+                "pull_request_review", "pull_request_review_comment", "release", "workflow_call"}
 MAX_DEPTH = 5
 
 

@@ -46,6 +46,9 @@ if argv[:2] == ["api", "user"]:
     print(read("login", "me").strip()); sys.exit(0)
 if argv[:2] == ["api", "graphql"]:
     q = " ".join(argv)
+    query = next((x[6:] for x in argv if x.startswith("query=")), "")
+    if query.count("{") != query.count("}"):   # a real gh would get a syntax error (#392 verify r7)
+        sys.stderr.write("fake gh: unbalanced GraphQL\n"); sys.exit(1)
     if "mergeQueue" in q:
         print(read("mq.json", '{"data":{"repository":{"mergeQueue":null}}}')); sys.exit(0)
     if "pullRequest" in q:

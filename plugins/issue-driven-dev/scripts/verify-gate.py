@@ -151,8 +151,8 @@ def read_tables(root):
                 if sev is None:
                     raise Unparseable("a findings table has no Severity column (r6 #11)")
                 word = re.search(r"\b(CRITICAL|HIGH|MEDIUM|LOW|INFO|P[0-3])\b", cells[sev].upper())
-                if not word and cells[-1] == "Follow-up":
-                    raise Unparseable(f"a Follow-up row has Severity '{cells[sev]}', which is not readable")
+                if not word and cells[-1] in ("Follow-up", "In-scope fix"):
+                    raise Unparseable(f"a {cells[-1]} row has Severity '{cells[sev]}', which is not readable")
                 values.append((cells[-1], word.group(1) if word else ""))
             continue
         for _, cells in rows:
@@ -228,6 +228,7 @@ def judge(html, expect_sha=None, expect_base=None):
 
     counts = {"blocking": 0, "in_scope": 0, "follow_up": 0, "rejected": 0}
     high_follow_up = 0
+    blocking_scope = 0
     for n, (value, severity) in enumerate(values, 1):
         if value not in CLASSES:
             shown = value if value else "(empty)"
@@ -235,6 +236,9 @@ def judge(html, expect_sha=None, expect_base=None):
         counts[CLASSES[value]] += 1
         if value == "Follow-up" and severity in HIGH_SEVERITIES:
             high_follow_up += 1
+        # LOW and INFO In-scope fixes do not hold a merge back: decision after round 7 (#392).
+        if value == "In-scope fix" and severity not in ("LOW", "INFO", "P3"):
+            blocking_scope += 1
     # A verify that ran degraded (a reviewer failed and the coordinator stood in) says so under
     # `### Process Gaps`; the close stage does not merge on it (r5 #22).
     gaps = any(rendered.norm(rendered.text_of(node)).startswith("Process Gaps")
@@ -260,8 +264,8 @@ def judge(html, expect_sha=None, expect_base=None):
         return emit("unparseable", "the verdict FAIL contradicts the table, which has no Blocking and no In-scope fix finding", verdict, counts, extra)
     if verdict == "FAIL":
         return emit("not_clean", "the verdict is FAIL", verdict, counts, extra)
-    if counts["in_scope"] > 0:
-        return emit("not_clean", f"{counts['in_scope']} In-scope fix finding(s) remain", verdict, counts, extra)
+    if blocking_scope > 0:
+        return emit("not_clean", f"{blocking_scope} In-scope fix finding(s) above LOW remain", verdict, counts, extra)
     # A clean report must state its requirements coverage, and it must be complete (r5 #41).
     if verdict == "PASS":
         cover = [COVERAGE_RE.match(rendered.line_text(run)) for _, run, _ in rendered.lines(root)]

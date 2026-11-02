@@ -173,7 +173,7 @@ Each skill PATCHes its own primary comment to add an audit-trail section after t
 | `/idd-close` | `### Closing Follow-ups Filed (v2.45.0+ #527)` | Closing summary comment |
 | `/idd-diagnose` | `### Sister Concerns Filed (mid-diagnose, v2.47.0+ #528)` | Diagnosis comment |
 | `/idd-issue` | `### Linked-Context Siblings Filed (v2.48.0+ #529)` | New issue body |
-| `/idd-verify` | `### Follow-up Findings Filed (v2.72.0+ #148)` | Verify report (master comment) |
+| `/idd-verify` | `### Follow-up Findings Filed (v2.72.0+ #148)` | 獨立 comment（不編輯 verify report，#392） |
 | `/spectra-discuss` | `### Tangential Observations (post-discuss, v1.1.0+ #530)` | Discussion artifact |
 | `/spectra-propose` | `### Tangential Observations (post-propose, v1.1.0+ #530)` | Proposal artifact |
 

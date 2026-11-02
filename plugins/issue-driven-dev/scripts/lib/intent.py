@@ -35,7 +35,7 @@ def issue_meta(repo, n):
          "CLOSED_EVENT,REOPENED_EVENT]){totalCount nodes{__typename"
          " ... on CommentDeletedEvent{createdAt deletedCommentAuthor{login}}"
          f" ... on LabeledEvent{{{actor}}} ... on UnlabeledEvent{{{actor}}} ... on RenamedTitleEvent{{{actor}}}"
-         f" ... on ClosedEvent{{{actor}}} ... on ReopenedEvent{{{actor}}}}}}}}}}}")
+         f" ... on ClosedEvent{{{actor}}} ... on ReopenedEvent{{{actor}}}}}}}}}}}}}")
     data = gh_json(["api", "graphql", "-f", f"query={q}", "-f", f"o={owner}", "-f", f"r={name}", "-F", f"n={n}"],
                    "the issue's author, edits and deleted comments")
     issue = ((data.get("data") or {}).get("repository") or {}).get("issue")
@@ -226,7 +226,7 @@ def check_pr_people(repo, pr, me):
          "timelineItems(last:100,itemTypes:[LABELED_EVENT,UNLABELED_EVENT,RENAMED_TITLE_EVENT,CONVERT_TO_DRAFT_EVENT,"
          "CLOSED_EVENT,REOPENED_EVENT]){totalCount nodes{__typename"
          f" ... on LabeledEvent{{{actor}}} ... on UnlabeledEvent{{{actor}}} ... on RenamedTitleEvent{{{actor}}}"
-         f" ... on ConvertToDraftEvent{{{actor}}} ... on ClosedEvent{{{actor}}} ... on ReopenedEvent{{{actor}}}}}}}}}}}")
+         f" ... on ConvertToDraftEvent{{{actor}}} ... on ClosedEvent{{{actor}}} ... on ReopenedEvent{{{actor}}}}}}}}}}}}}")
     data = gh_json(["api", "graphql", "-f", f"query={q}", "-f", f"o={owner}", "-f", f"r={name}", "-F", f"p={pr}"],
                    f"the reviews and comments of PR #{pr}")
     view = ((data.get("data") or {}).get("repository") or {}).get("pullRequest")

@@ -1281,6 +1281,7 @@ exit 不是 0 時印 `Stopped: /idd-close did not finish (<reason>); the merge o
 > - **最後檢查到 merge 之間的幾秒**：`--match-head-commit` 只釘住 PR head。最後一次讀預設 branch 之後、GitHub 實際 squash 之前，若有別的 PR 剛好落地，squash 會落在新的 tip 上；GitHub 沒有釘住 base 的 merge 參數。
 > - **direct-commit 不等 CI**：沒有 PR 就沒有 check 可等；推上去之後由 repo 自己的 CI 跑。
 > - **direct-commit 不讀 branch protection**：admin 權限的 token 推送時，GitHub 會讓它越過要求 PR 或 check 的規則（#464）。
+> - **發佈偵測是清單（維護者接受的限制，#392 第 7 輪後）**：清單外的發佈指令（`make ship`、`rsync`、遠端 action、repo 根目錄的 script）偵測不到，merge 就會發佈。會這樣發佈的 repo 帶 `--review`，repo 層級的設定在 #460。
 > - **workflow 以外的發佈管道不偵測**：預設 branch 由 plugin marketplace 直接服務（例如本 repo 的 `.claude-plugin/marketplace.json`）、GitHub Pages 從 branch 部署、Vercel／Netlify 的 Git 整合，merge 就是把改動交給下一個安裝或部署的人。這類 repo 要帶 `--review`，或等 #460 決定怎麼偵測。push 時跑的 workflow 呼叫的 script（不在 `.github/` 下）被這次改動改到，也不偵測。
 > - **`/idd-all` 仍可被模型自己呼叫**：「`/idd-all #N` 本身就是確認」的前提是人下了這個指令；把 idd-all 限定為只由人呼叫的工作在 #457。
 > - **attended 是依 path 推出來的**：`--no-pr`、`pr_policy: never` 的 run 標為 attended，close stage 因此放行 Plan、Spectra tier。以 `claude -p` 或排程無人值守地跑 attended 模式，就沒有人回答 Plan 核准與 sub-skill 的問題；無人值守時用 PR mode。
