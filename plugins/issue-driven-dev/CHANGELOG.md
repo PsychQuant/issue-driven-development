@@ -68,7 +68,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     edited in between is no longer in place there: every version so far listed the first PR's commit, #399's own
     symptom. A commit listed at the landing commit is now checked again, in place, where the branch up to each
     later first-parent merge of main into it landed, and at the main commit that merge brought in: in place at
-    any of them, it had landed by then. This holds when the author pushed another commit before pressing Update
+    any of them, it had landed by then. A commit with a hunk that only sets lines back to their merge-base values is
+    not cleared this way: such a state is no evidence it landed. This holds when the author pushed another commit before pressing Update
     branch, the first PR left part of the branch out, or main edited the first PR's line before the merge and
     the merge kept the branch's side. `bounded.py`'s new companion `bounded_sync.py` builds these shapes.
   - **Moves are not judged.** Rounds of this change that followed files across moves, or looked for more kinds

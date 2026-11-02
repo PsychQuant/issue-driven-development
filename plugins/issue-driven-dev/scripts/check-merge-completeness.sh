@@ -1641,20 +1641,42 @@ sync_at() {
   LANDING="$sl"; LANDING_MB="$sm"; PREFIX_TIP="$sp"
   return "$rc"
 }
+# <commit> <merge-base> -> 0 when a hunk of the commit only sets lines back to the merge-base's
+# (every line it adds is in that file there, every line it deletes is not): such a state at a
+# later main commit that never touched them is no evidence the commit landed, so the second
+# check does not clear it (#399 verify rounds 23 and 24). Repeated text can make a hunk read so;
+# the commit then stays listed, the safe direction. 1 none, 2 error.
+sets_back() {
+  local p rc
+  GIT diff-tree --root --no-commit-id --no-renames --ignore-submodules=none --name-only -r "$1" > "$SCRATCH/sb.p" 2>/dev/null || return 2
+  while IFS= read -r p <&8; do
+    GIT cat-file -p "$2:$p" > "$SCRATCH/sb.mb" 2>/dev/null || : > "$SCRATCH/sb.mb"
+    GIT --literal-pathspecs diff --text --no-ext-diff --no-textconv --no-renames --no-color -O/dev/null \
+      --diff-algorithm=myers -U0 --inter-hunk-context=0 --src-prefix=a/ --dst-prefix=b/ "$1^" "$1" -- "$p" > "$SCRATCH/sb.d" 2>/dev/null \
+      || GIT --literal-pathspecs show --format= --text --no-ext-diff --no-textconv --no-renames --no-color -O/dev/null -U0 "$1" -- "$p" > "$SCRATCH/sb.d" 2>/dev/null || return 2
+    LC_ALL=C awk -v mb="$SCRATCH/sb.mb" '
+      function endh() { if (inh && !bad && (na || nd)) f = 1; inh = 0 }
+      BEGIN { while ((r = getline l < mb) > 0) M[l] = 1; if (r < 0) e = 1 }
+      /^@@ / { endh(); inh = 1; bad = 0; na = 0; nd = 0; next }
+      !inh { next }
+      /^\+/ { na++; if (!(substr($0, 2) in M)) bad = 1; next }
+      /^-/ { nd++; if (substr($0, 2) in M) bad = 1; next }
+      END { endh(); if (e) exit 2; exit (f ? 0 : 1) }' "$SCRATCH/sb.d"; rc=$?
+    case $rc in 0) return 0 ;; 1) ;; *) return 2 ;; esac
+  done 8< "$SCRATCH/sb.p"
+  return 1
+}
 sync_retry() { # <commit> <candidate number> -> 11 in place at one of those commits, 10 not, 2 error
   local c="$1" p1 p2 l lmb mb rc
   if [ -z "$SYNC_BUILT" ]; then sync_list || return 2; SYNC_BUILT=1; fi
   while read -r p1 p2 l lmb <&9; do
     GIT merge-base --is-ancestor "$c" "$p1" 2>/dev/null; case $? in 0) ;; 1) continue ;; *) return 2 ;; esac
+    mb="$(GIT merge-base "$p2" "$c" 2>/dev/null)" || continue
+    sets_back "$c" "$mb"; case $? in 0) return 10 ;; 1) ;; *) return 2 ;; esac
     if [ "$l" != - ] && [ "$l" != "$LANDING" ]; then
       sync_at "$c" "$2" "$l" "$lmb" "$p1"; rc=$?
       case $rc in 11) return 11 ;; 10) ;; *) return "$rc" ;; esac
     fi
-    mb="$(GIT merge-base "$p2" "$c" 2>/dev/null)" || continue
-    # already in place at that merge-base (a commit that sets a line back to its value there):
-    # p2 holding it says nothing about the commit (#399 verify round 23)
-    sync_at "$c" "$2" "$mb" "$mb" "$p1"; rc=$?
-    case $rc in 11) continue ;; 10) ;; *) return "$rc" ;; esac
     sync_at "$c" "$2" "$p2" "$mb" "$p1"; rc=$?
     case $rc in 11) return 11 ;; 10) ;; *) return "$rc" ;; esac
   done 9< "$SCRATCH/syncs"

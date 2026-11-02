@@ -4194,4 +4194,20 @@ f250.txt"; git -C "$R" add -A; git -C "$R" commit -qm squash
 assert_exit "fixture-250 an unrelated path with a newline ending in a candidate's name -> P0 still holds" 0 "$(rc_why "$R" feat main)"
 rm -rf "$R"
 
+# 251: found by round 24's verify. (a) Fixture 249a with a first PR of an unrelated commit: the
+# branch up to the merge landed there, and DEBUG never arrived. (b) A commit mixing the removal
+# of DEBUG with a real edit main also made by hotfix. c1 listed in both.
+mk251() { R="$(mk_repo)"; seq 1 40 > "$R/n251.txt"; git -C "$R" add -A && git -C "$R" commit -qm n251; git -C "$R" checkout -q -b feat; }
+ed251() { sed "$2" "$R/n251.txt" > "$R/t" && mv "$R/t" "$R/n251.txt"; git -C "$R" commit -qam "$1"; }
+mk251; ed251 "c00" 's/^3$/three/'; ed251 "c0" 's/^10$/10\nDEBUG/'; ed251 "c1: back" '/^DEBUG$/d'
+git -C "$R" checkout -q main; ed251 "PR1" 's/^3$/three/'
+git -C "$R" checkout -q feat; git -C "$R" merge -q --no-edit main > /dev/null 2>&1; ed251 "c2" 's/^35$/thirtyfive/'
+git -C "$R" checkout -q main; ed251 "PR2 without c1" 's/^10$/10\nDEBUG/;s/^35$/thirtyfive/'
+assert_exit "fixture-251a set back after a first PR of another commit -> flagged" 3 "$(rc_why "$R" feat main)"; rm -rf "$R"
+mk251; ed251 "c0" 's/^10$/10\nDEBUG/'; ed251 "c1: back" '/^DEBUG$/d;s/^30$/thirty/'; ed251 "c1b" 's/^20$/twenty/'
+git -C "$R" checkout -q main; ed251 "hotfix" 's/^30$/thirty/'
+git -C "$R" checkout -q feat; git -C "$R" merge -q --no-edit main > /dev/null 2>&1; ed251 "c2" 's/^35$/thirtyfive/'
+git -C "$R" checkout -q main; ed251 "squash without c1" 's/^10$/10\nDEBUG/;s/^20$/twenty/;s/^35$/thirtyfive/'
+assert_exit "fixture-251b a set-back hunk mixed with a real edit -> flagged" 3 "$(rc_why "$R" feat main)"; rm -rf "$R"
+
 print_summary
