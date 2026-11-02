@@ -243,7 +243,7 @@ fi
 # the branch's paths came back empty and a branch that never landed read as landed
 # at the merge-base (#399 verify round 13). The paths given here come from git's own
 # listings, byte for byte.
-GIT() { git --no-pager -C "$REPO" -c core.fsmonitor=false -c core.precomposeUnicode=false -c core.hooksPath=/dev/null \
+GIT() { git --no-pager -C "$REPO" -c core.fsmonitor=false -c core.precomposeUnicode=false -c core.hooksPath=/dev/null -c diff.outputIndicatorNew=+ -c diff.outputIndicatorOld=- -c 'diff.outputIndicatorContext= ' \
   -c hook.post-index-change.enabled=false "$@"; }
 # (through GIT_CONFIG_COUNT, so a hook name with any byte in it stays one key; git
 # 2.31 and later read it, and only 2.54 and later have such hooks)

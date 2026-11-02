@@ -51,7 +51,7 @@ copy is an effect too. A file is its path: "a path" is whatever file is at that 
   they are never orphans, whatever main did to their lines afterwards (decision A), before the
   merge or after it. The helper checks a commit listed at the landing commit again, in place,
   where the branch up to the merge landed (when it landed as a whole) and at the main commit
-  the merge brought in; in place at either, it is in S.
+  the merge brought in; in place at either, it takes the commit to be in S. That approximation also clears a set-back that never landed (S1).
 - **Moves.** The helper does not follow a file across moves: rounds 17 to 19 did, rounds 21 and 22
   looked for more kinds of move, and each broke answers that were right (the maintainer's decisions
   of 2026-11-01 and 2026-11-02, #399). Since the fork point (the merge-base of the baseline and the
@@ -76,7 +76,7 @@ copy is an effect too. A file is its path: "a path" is whatever file is at that 
   that exists; a directory main renamed under a file the branch added; a file moved and rewritten
   by more than half in one commit; a move over two commits that never landed or landed separately
   (a squash records it as one, and then it counts); a move inside a merge off the branch's
-  first-parent line.
+  first-parent line; a main move before the fork point of a commit that reaches the head only through a merge's second parent (the fork point follows the first-parent line). The other way round, a branch's merge that spans main's separate deletion and addition reads as one move and exits 4 (the safe direction, fixture 254).
 
   A commit whose rename detection git skipped (its added times deleted files pass 1,000,000) is the
   one other exit 4 about moves: when it deletes a file a candidate touched, whether that file moved
@@ -498,7 +498,7 @@ round 17 narrowed that check to D1's wording (no commit of main's own before the
 branch with no net change by itself, repeated texts only at a unit the net change changes):
 the runs above have no case left unexplained by it. The world builds no moves; since round 20 a move
 ends the check at exit 4 by the Definition, which the fixtures (71–220 where a file moves,
-221–248) and the rename fuzzers below check.
+221–254) and the rename fuzzers below check.
 
 `bounded_sync.py --max-len 2` (every case; answers only, so no "Landing" column). Round 21 widened
 the world from 3,192 cases (a first PR of the whole first part) to 6,264 (first PRs that take part
@@ -902,7 +902,7 @@ How the numbers got here:
   called merge-tree since round 12.
 - Not covered by the world: branches longer than 3 (and length 3 only by sampling), more than
   one file with lines, merge commits on the branch other than `bounded_sync.py`'s one merge of
-  main between two PRs, renames (exit 4 since round 20; fixtures 221–250 and the rename fuzzers
+  main between two PRs, renames (exit 4 since round 20; fixtures 221–254 and the rename fuzzers
   check the moves that count; the known limits are pinned at their by-path answers) and repeated blocks (fixtures 103–220), and the 200-check and 20-commit limits (fixtures 12, 60 and
   127). Adjacent slots holding the same text are not in the results: there even the positions
   are ambiguous in the text, and no check that reads text can tell which slot a line belongs

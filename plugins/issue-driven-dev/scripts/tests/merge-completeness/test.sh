@@ -4168,7 +4168,7 @@ rm -rf "$R"
 # 249: found by round 23's verify (devil's advocate). A commit that sets a line back to its
 # merge-base value never lands; the branch merges main in between. (a) c0 adds DEBUG, c1 removes
 # it; the squash has DEBUG. (b) c0 deletes a line, c1 restores it; the squash deletes it. The merged
-# main commit never touched the line, so its state is no evidence -> c1 listed (round 22, 23: 0).
+# main commit never touched the line, so it reads as in place: known limit S1, not listed.
 for v249 in a b; do
   R="$(mk_repo)"; seq 1 30 > "$R/n249.txt"; printf 'o\n' > "$R/o249.txt"; git -C "$R" add -A && git -C "$R" commit -qm n249
   git -C "$R" checkout -q -b feat; cp "$R/n249.txt" "$R/base249"
@@ -4195,7 +4195,7 @@ rm -rf "$R"
 
 # 251: found by round 24's verify. (a) Fixture 249a with a first PR of an unrelated commit: the
 # branch up to the merge landed there, and DEBUG never arrived. (b) A commit mixing the removal
-# of DEBUG with a real edit main also made by hotfix. c1 listed in both.
+# of DEBUG with a real edit main also made by hotfix. Known limit S1, not listed in both.
 mk251() { R="$(mk_repo)"; seq 1 40 > "$R/n251.txt"; git -C "$R" add -A && git -C "$R" commit -qm n251; git -C "$R" checkout -q -b feat; }
 ed251() { sed "$2" "$R/n251.txt" > "$R/t" && mv "$R/t" "$R/n251.txt"; git -C "$R" commit -qam "$1"; }
 mk251; ed251 "c00" 's/^3$/three/'; ed251 "c0" 's/^10$/10\nDEBUG/'; ed251 "c1: back" '/^DEBUG$/d'
@@ -4209,7 +4209,7 @@ git -C "$R" checkout -q feat; git -C "$R" merge -q --no-edit main > /dev/null 2>
 git -C "$R" checkout -q main; ed251 "squash without c1" 's/^10$/10\nDEBUG/;s/^20$/twenty/;s/^35$/thirtyfive/'
 assert_exit "fixture-251b a set-back hunk mixed with a real edit -> known limit S1" 0 "$(rc_why "$R" feat main)"; rm -rf "$R"
 
-# 252: found by round 25's verify. (a) Fixture 249a in a non-ASCII file: still listed. (b) A first
+# 252: found by round 25's verify. (a) Fixture 249a in a non-ASCII file: known limit S1. (b) A first
 # PR's commit that also adds a blank line, Update branch, main's edit, PR2 -> NOT flagged.
 R="$(mk_repo)"; seq 1 30 > "$R/中252.txt"; git -C "$R" add -A && git -C "$R" commit -qm n
 git -C "$R" checkout -q -b feat; sed 's/^10$/10\nDEBUG/' "$R/中252.txt" > "$R/t" && cp "$R/t" "$R/mid.tmp" && mv "$R/t" "$R/中252.txt"; git -C "$R" add 中252.txt; git -C "$R" commit -qm c0
@@ -4224,5 +4224,20 @@ git -C "$R" checkout -q main; git -C "$R" merge -q --squash feat >/dev/null 2>&1
 git -C "$R" checkout -q feat; git -C "$R" merge -q --no-edit main >/dev/null 2>&1; sed 's/^35$/x35/' "$R/b252.txt" > "$R/t" && mv "$R/t" "$R/b252.txt"; git -C "$R" commit -qam c2
 git -C "$R" checkout -q main; sed 's/^three$/THREE/' "$R/b252.txt" > "$R/t" && mv "$R/t" "$R/b252.txt"; git -C "$R" commit -qam follow; git -C "$R" merge -q --squash feat >/dev/null 2>&1; git -C "$R" commit -qm PR2
 assert_exit "fixture-252b a first PR's commit that also adds a blank line -> NOT flagged" 0 "$(rc_why "$R" feat main)"; rm -rf "$R"
+
+# 253: found by round 26's verify (Codex). A user's diff.outputIndicator* settings must not hide
+# an edit that never landed -> flagged.
+R="$(mk_repo)"; printf 'x = 0\n' > "$R/f253"; git -C "$R" add -A && git -C "$R" commit -qm f
+git -C "$R" checkout -q -b feat; printf 'x = 1\n' > "$R/f253"; git -C "$R" commit -qam c1; printf 'y\n' > "$R/g253"; git -C "$R" add -A; git -C "$R" commit -qm c2
+git -C "$R" checkout -q main; git -C "$R" config diff.outputIndicatorNew '>'; git -C "$R" config diff.outputIndicatorOld '<'
+assert_exit "fixture-253 custom diff indicators, nothing landed -> flagged" 3 "$(rc_why "$R" feat main)"; rm -rf "$R"
+
+# 254: main deletes a file the branch edited and adds a similar one in another commit; the
+# branch's merge spans both, so rename detection pairs them: exit 4 (safe direction, SPEC).
+R="$(mk_repo)"; seq 1 30 > "$R/a254"; git -C "$R" add -A && git -C "$R" commit -qm a
+git -C "$R" checkout -q -b feat; sed 's/^5$/five/' "$R/a254" > "$R/t" && mv "$R/t" "$R/a254"; git -C "$R" commit -qam c1; printf 'z\n' > "$R/z254"; git -C "$R" add -A; git -C "$R" commit -qm c1b
+git -C "$R" checkout -q main; git -C "$R" merge -q --squash feat >/dev/null 2>&1; git -C "$R" commit -qm PR1; cp "$R/a254" "$R/keep254"; git -C "$R" rm -q a254; git -C "$R" commit -qm rm; rm -f "$R/x"; mv "$R/keep254" "$R/b254"; git -C "$R" add -A; git -C "$R" commit -qm add
+git -C "$R" checkout -q feat; git -C "$R" merge -q --no-edit main >/dev/null 2>&1; printf 'w\n' > "$R/w254"; git -C "$R" add -A; git -C "$R" commit -qm c2
+assert_exit "fixture-254 a merge spanning main's separate delete and add -> exit 4" "4 moved" "$(rc_why "$R" feat main)"; rm -rf "$R"
 
 print_summary

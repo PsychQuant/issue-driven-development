@@ -83,7 +83,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     <commit>)", which idd-close prints as a note and goes on. Known limits, read by path, which can give a false clean
     or a false listing: a copy; a file moved with another put at its old name, or onto a name that exists; a directory
     main renamed under a file the branch added; a move and rewrite in one commit; a move over two commits; a move inside a merge off the
-    branch's first-parent line.
+    branch's first-parent line; a main move before the fork of a commit reached only through a merge's second parent.
   - **No merges.** Every comparison is a two-way `git diff` with every setting that shapes its output fixed on
     the command line (no context lines between hunks, `GIT_DIFF_OPTS` unset, no external diff, no textconv,
     `--text`, no rename detection, myers with the
@@ -163,7 +163,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the net change; a part of the branch that reached main before the landing commit in a form that leaves a line
     of its commits out of place (a squash edited by hand), whose copies then read as main's;
     with macOS awk, a binary edit that changes only bytes
-    after a NUL; a commit in a branch with no net change that set a line back to its merge-base value, when no
+    after a NUL; after a merge of main, a commit that set a line back to its merge-base value and never landed; a commit in a branch with no net change that set a line back to its merge-base value, when no
     prefix of the branch landed later (3.5.0, which compared the tip, listed some of these).
   - Listed although it landed: a commit whose line main itself edited, before landing or in the landing step,
     so that the landing commit holds the value from before the commit — the trees are those of a dropped
