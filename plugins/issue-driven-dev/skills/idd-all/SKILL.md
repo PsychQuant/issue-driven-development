@@ -1012,10 +1012,16 @@ for round in 1..MAX_ROUND:
 `TYPE=meeting` 跳過。其餘在 verify 之後、push 或收尾之前，對目前的 commit 跑閘門。契約見 spec `local-ci-gate` 與 [`references/config-protocol.md`](../../references/config-protocol.md) 的 `ci` 欄位。
 
 ```bash
+# 隱私等級照 rules/privacy-scrubbing.md 解析（第三方 enforce、自己的 public warn、private light）；解析不到就用最嚴的
+case "$(gh repo view "$GITHUB_REPO" --json viewerPermission,isPrivate --jq '"\(.viewerPermission)/\(.isPrivate)"' 2>/dev/null)" in
+  ADMIN/true|MAINTAIN/true|WRITE/true) SCRUB_LEVEL=light ;;
+  ADMIN/false|MAINTAIN/false|WRITE/false) SCRUB_LEVEL=warn ;;
+  *) SCRUB_LEVEL=enforce ;;
+esac
 GATE_OUT=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/idd-ci-gate.sh" run --commit "$(git -C "$CWD" rev-parse HEAD)" --cwd "$CWD"); GATE_RC=$?
 printf '%s\n' "$GATE_OUT"
 GATE_RECORD=$(printf '%s\n' "$GATE_OUT" | sed -n 's/^RECORD=//p')
-# 紀錄的隱私自審照 rules/privacy-scrubbing.md；輸出末段只換掉了路徑，不保證其他內容安全
+# 紀錄預設不含指令與輸出；開了 ci.post_output_tail 時輸出末段只換掉路徑與控制字元，不保證其他內容安全，隱私自審照 rules/privacy-scrubbing.md
 [ -n "$GATE_RECORD" ] && bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-egress.sh" comment "$N" --repo "$GITHUB_REPO" --body-file "$GATE_RECORD" --scrub-attested "$SCRUB_LEVEL"
 ```
 
@@ -1025,7 +1031,7 @@ GATE_RECORD=$(printf '%s\n' "$GATE_OUT" | sed -n 's/^RECORD=//p')
 |---|---|
 | 0 pass | 繼續 Phase 5 |
 | 10 remote | 不跑本機指令；繼續 Phase 5，由遠端 CI 決定 |
-| 3 not-configured | attended：用 AskUserQuestion 問指令。可列 repo 裡找到的候選（如 `scripts/ci.sh`），**不執行它們**；確認後才寫入 `ci.command`，再跑一次。unattended：不寫 config，跳到 Phase 6，列入 Action items，寫明怎麼設定 `ci.command` 或 `ci.mode` |
+| 3 not-configured | attended：用 AskUserQuestion 問指令。可列 repo 裡找到的候選（如 `scripts/ci.sh`），**不執行它們**，並說明這類指令會以使用者的環境執行 repo 每個 commit 裡的內容，只適合信任的 repo；確認後才寫入 `ci.command`，再跑一次。unattended：不寫 config，跳到 Phase 6，列入 Action items，寫明怎麼設定 `ci.command` 或 `ci.mode` |
 | 1 fail、2 timeout、4 error | 不 push、不開 PR，跳到 Phase 6 回報結果與 `LOG=` 路徑 |
 
 ### Phase 5: Push + Open PR (PR mode only)

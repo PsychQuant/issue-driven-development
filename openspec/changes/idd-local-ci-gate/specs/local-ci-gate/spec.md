@@ -20,12 +20,32 @@ The gate SHALL treat a missing `ci` object or missing `ci.mode` as `local` in ev
 
 ### Requirement: The command comes only from untracked local configuration
 
-The gate SHALL read the command only from `ci.command` in the walked-up `.claude/.idd/local.json`. It SHALL NOT execute or infer a command from any other repository file. If that config file is tracked by git, the gate SHALL exit 4 without running anything.
+The gate SHALL read the command only from `ci.command` in `.claude/.idd/local.json` at the repository root, or at the main worktree root for a linked worktree, and SHALL NOT search parent directories. It SHALL NOT execute or infer a command from any other repository file. The gate SHALL exit 4 without running anything when that file is tracked by git under any case variant of its name, when asking git fails, when the file or a directory on its path is a symbolic link, belongs to another user, or is writable by group or others. The tracked check SHALL run from the root, not from the config's directory. The gate SHALL also exit 4 when `.claude` or `.claude/.idd` is a submodule or holds a `.git` entry, when the root is not an ordinary work tree whose `.git` is what git reports, and when the config changes during the run. A linked worktree SHALL read only the main worktree's config. The gate SHALL exit 4 when the clone's own git config defines a filter or an include. It SHALL ignore relative `PATH` entries and `BASH_ENV`. Its Python SHALL NOT import from the current directory, and it SHALL NOT prune other worktrees' records. A symlinked `.git`, a submodule checkout, `--separate-git-dir` and worktrees of a bare repository SHALL exit 4 with a message naming them, and git older than 2.31 SHALL exit 4. Its checkout SHALL skip LFS downloads. The gate's git calls SHALL ignore repository hooks, bare-repository discovery and repository-local `GIT_*` variables.
 
 #### Scenario: Repository ships a CI script but no config
 
 - **WHEN** the repository contains `scripts/ci.sh` and `ci.command` is unset
 - **THEN** the gate exits 3 and `scripts/ci.sh` is not executed
+
+#### Scenario: A bare repository beside a tracked config
+
+- **WHEN** a tracked config's directory also holds `HEAD`, `objects` and `refs`
+- **THEN** the gate exits 4 and the command is not executed
+
+#### Scenario: Submodule at .claude
+
+- **WHEN** `.claude` is a populated submodule holding the config
+- **THEN** the gate exits 4 and the command is not executed
+
+#### Scenario: Planted git directory in a subdirectory
+
+- **WHEN** the gate runs from a tracked subdirectory holding `HEAD`, `objects`, `refs`, `config` and a config file
+- **THEN** the gate does not exit 0 and the command is not executed
+
+#### Scenario: Config above the repository
+
+- **WHEN** only a parent directory of the repository has the config
+- **THEN** the gate exits 3 and the command is not executed
 
 #### Scenario: Config file is tracked
 
@@ -66,11 +86,16 @@ The gate SHALL exit 0 only when the command exits 0. It SHALL exit 1 when the co
 
 ### Requirement: Each run produces a record
 
-The gate SHALL write a record containing the commit, command, start and end times with offset, and exit code. On fail or timeout the record SHALL also contain the last 40 output lines with the home directory replaced by `~` and the checkout path replaced by `<checkout>`. On pass it SHALL NOT contain command output.
+The gate SHALL write a record containing the commit, a hash of the command, start and end times with offset, and exit code. The record SHALL NOT contain the command or its output, except that with `ci.post_output_tail: true` a fail or timeout record SHALL contain the last 40 output lines with the home directory replaced by `~`, the checkout path replaced by `<checkout>`, control characters removed, and a code fence longer than any backtick run in them. A non-boolean value SHALL exit 4. The full output SHALL stay in a local log.
+
+#### Scenario: Output stays out by default
+
+- **WHEN** the command prints a token and exits 1, without `ci.post_output_tail`
+- **THEN** the record does not contain the token or the command, and the local log contains the token
 
 #### Scenario: Failure output is normalized
 
-- **WHEN** the command prints a path under the home directory and exits 1
+- **WHEN** `ci.post_output_tail` is true and the command prints a path under the home directory and exits 1
 - **THEN** the record shows that path starting with `~` and does not contain the home directory
 
 ### Requirement: idd-all stops at the gate unless it passes
@@ -93,7 +118,7 @@ In local mode a failing remote check SHALL be reported to the user and SHALL NOT
 
 ### Requirement: Releases still require green remote CI
 
-The `idd-close` distribution sync SHALL NOT proceed to a release while the remote checks of the commit are failing, pending or unreadable, regardless of `ci.mode`.
+The `idd-close` distribution sync SHALL NOT proceed to a release while the check runs or commit statuses of the default branch's commit are failing, pending or unreadable, regardless of `ci.mode`. With no checks at all it SHALL proceed only after the user confirms the repository has no remote CI.
 
 #### Scenario: Release with pending remote check
 

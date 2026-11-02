@@ -1111,12 +1111,23 @@ If detection returned a real type AND env var didn't suppress → first run the 
 A release requires green remote checks whatever `ci.mode` is. A local pass does not satisfy this: only remote CI sees the older environments users run.
 
 ```bash
-SHA=$(git -C "$REPO_ROOT" rev-parse HEAD)
-REMOTE=$(gh api "repos/$GITHUB_REPO/commits/$SHA/check-runs" --paginate --jq '.check_runs[] | "\(.status)/\(.conclusion // "") \(.name)"') || REMOTE="UNREADABLE"
-printf '%s\n' "$REMOTE" | grep -v '^completed/\(success\|neutral\|skipped\) ' 
+# 發版的是預設 branch 的 commit，不是本機 HEAD（squash 合併後 HEAD 可能還在 feature branch）
+DEFAULT=$(gh repo view "$GITHUB_REPO" --json defaultBranchRef -q .defaultBranchRef.name)
+SHA=$(gh api "repos/$GITHUB_REPO/commits/$DEFAULT" --jq .sha) || SHA=""
+NOT_GREEN=""; TOTAL=0
+if [ -z "$SHA" ]; then NOT_GREEN="UNREADABLE commit"
+else
+  RUNS=$(gh api "repos/$GITHUB_REPO/commits/$SHA/check-runs" --paginate --jq '.check_runs[] | "\(.status)/\(.conclusion // "") \(.name)"') || NOT_GREEN="UNREADABLE check-runs"
+  # 舊式 commit status 不在 check-runs 裡
+  STATUSES=$(gh api "repos/$GITHUB_REPO/commits/$SHA/status?per_page=100" --paginate --jq '.statuses[] | "\(.state) \(.context)"') || NOT_GREEN="${NOT_GREEN:+$NOT_GREEN; }UNREADABLE statuses"
+  TOTAL=$(printf '%s\n%s\n' "$RUNS" "$STATUSES" | grep -c . || true)
+  BAD=$( { printf '%s\n' "$RUNS" | grep -v '^completed/\(success\|neutral\|skipped\) ' ; printf '%s\n' "$STATUSES" | grep -v '^success ' ; } | grep . || true)
+  NOT_GREEN="${NOT_GREEN:+$NOT_GREEN; }$BAD"
+fi
+echo "remote CI on ${SHA:-?}: $TOTAL check(s); not green: ${NOT_GREEN:-none}"
 ```
 
-The last command prints every check that is not green. Anything printed (a failing or running check, or `UNREADABLE`) → do not offer the sync: report those checks, write `- **Detected**: $DISTRIBUTION_TYPE; held, remote CI not green` as the `### Distribution Sync` audit, and skip to Step 7. A commit with no checks prints nothing: proceed, and say in the audit that no remote check ran.
+Not green (a failing or running check, or `UNREADABLE`) → do not offer the sync: report those checks, write `- **Detected**: $DISTRIBUTION_TYPE; held, remote CI not green` as the `### Distribution Sync` audit, and skip to Step 7. **Zero checks is not green either:** they may not have registered yet, or remote CI may not be running at all. Ask the user whether this repository really has no remote CI; proceed only if they say so, and record that in the audit.
 
 #### AskUserQuestion 3-option (prose — NOT a bash function call)
 

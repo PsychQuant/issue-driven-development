@@ -468,7 +468,7 @@ Controls whether `idd-implement` opens a PR or commits directly.
 
 ### `ci` field (#465)
 
-Which check decides that a commit passes CI. Read only from the walked-up `.claude/.idd/local.json`, by `scripts/idd-ci-gate.sh`.
+Which check decides that a commit passes CI. Read only from the repository's own `.claude/.idd/local.json` (a linked worktree reads the main worktree's and not its own), by `scripts/idd-ci-gate.sh`. Unlike the other fields, parent directories are not searched.
 
 ```json
 { "ci": { "mode": "local", "command": "bash scripts/ci.sh", "timeout_seconds": 3600 } }
@@ -479,8 +479,9 @@ Which check decides that a commit passes CI. Read only from the walked-up `.clau
 | `mode` | `local` | `local` runs `command` on this machine; `remote` runs nothing and the caller follows remote CI. Applies to every repo |
 | `command` | (none) | Shell command, run from a clean checkout of the commit. Not set → exit 3: attended runs ask, unattended runs stop |
 | `timeout_seconds` | `3600` | Positive integer. Exceeding it counts as failure |
+| `post_output_tail` | `false` | `true` adds the last 40 output lines to the failure record that gets posted. Output can hold secrets, so leave it off for public repositories |
 
-**The command comes only from this file, and the file must not be tracked by git** (tracked → exit 4). Nothing in the repository is executed or inferred, so a clone of someone else's repo runs only what you configured here. Candidates may be suggested to you, but are written only after you confirm.
+**The command comes only from this file. The file must be untracked (compared casefolded, because a case-insensitive filesystem serves `LOCAL.JSON` as `local.json`), owned by you, not writable by group or others, and reached through no symbolic link. Otherwise → exit 4.** Nothing in the repository is executed or inferred, so a clone of someone else's repo does not choose the command. **What you configure can still run repository code:** `bash scripts/ci.sh` runs whatever that file holds in each commit, with your environment, including any tokens in it. Do this only for repositories you trust. Candidates may be suggested to you, but are written only after you confirm. A submodule at `.claude` or `.claude/.idd`, and a repository that is not the ordinary `<root>/.git` shape, are refused. A config that changes during the run makes the result exit 4. **Two limits:** these checks protect a real clone, not a directory or tarball someone gives you, which can carry a planted config that looks like yours; and the command inherits your environment, so anything it runs can read your tokens. Needs git 2.31 or newer. A symlinked `.git`, submodule checkouts, `--separate-git-dir` and worktrees of a bare repository are not supported (exit 4), and LFS objects are not downloaded: a command that needs them fetches them itself.
 
 Exit codes of `idd-ci-gate.sh run --commit <sha> [--cwd <clone>]`: `0` pass, `1` fail, `2` timeout, `3` not-configured, `4` error (never counts as passing), `10` remote.
 
