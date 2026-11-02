@@ -51,7 +51,7 @@ copy is an effect too. A file is its path: "a path" is whatever file is at that 
   they are never orphans, whatever main did to their lines afterwards (decision A), before the
   merge or after it. The helper checks a commit listed at the landing commit again, in place,
   where the branch up to the merge landed (when it landed as a whole) and at the main commit
-  the merge brought in; in place at either, it is in S, unless a hunk of it only sets lines back to their merge-base values (that state is no evidence).
+  the merge brought in; in place at either, it is in S.
 - **Moves.** The helper does not follow a file across moves: rounds 17 to 19 did, rounds 21 and 22
   looked for more kinds of move, and each broke answers that were right (the maintainer's decisions
   of 2026-11-01 and 2026-11-02, #399). Since the fork point (the merge-base of the baseline and the
@@ -237,7 +237,7 @@ copy is an effect too. A file is its path: "a path" is whatever file is at that 
 | 142 | Row 118 where main edits the first PR's line before Update branch, and the merge keeps the branch's side | all | 0: in place where the branch up to the merge landed (round 21: listed) | 245 |
 | 144 | The branch copies a file and turns the original into a shim; full squash; follow-up | all | 0: a copy is read by path | 247 |
 | 145 | The branch's merge of main renames the branch's file (main moved nothing); the PR lands whole; follow-up | all | 4: the merge's move is the branch's (round 20: 0) | 248 |
-| 146 | A commit sets a line back to its merge-base value and never lands; a merge of main; a later commit lands | all but it | 3: being in place at the merged main commit says nothing about it | 249a, 249b, 251a, 251b |
+| 146 | A commit sets a line back to its merge-base value and never lands; a merge of main; a later commit lands | all but it | 0: known limit S1, a false clean | 249a, 249b, 251a, 251b, 252a |
 
 ## The small world (`bounded.py`)
 
@@ -425,7 +425,7 @@ nothing unexplained.
   branch whose earlier commits reached main in a form no earlier state of it matches (a
   squash of them edited by hand). Its verdict is wrong (exit 0). 3.5.0, which compared the
   tip, listed some of these.
-- **S1, the Update-branch check.** A commit that landed in two pieces, part in a first PR (a squash edited by hand) and the rest in the PR that completes it, is listed although it landed. A merge of another branch that main merged too passes for a merge of main, so a commit in place in that branch's commit is not listed.
+- **S1, the Update-branch check.** A commit that landed in two pieces, part in a first PR (a squash edited by hand) and the rest in the PR that completes it, is listed although it landed. A merge of another branch that main merged too passes for a merge of main, so a commit in place in that branch's commit is not listed. A commit that sets lines back to their merge-base values and never landed is not listed after a merge of main: that state is already in place at the merged main commit (a false clean).
 - **B2, main's own commit holds the net change.** When main made a commit of its own —
   before it received S, or after — that holds the branch's net change (it made the same
   edit, or replaced a line the branch deleted), and no earlier commit holds it, that commit
@@ -896,7 +896,7 @@ How the numbers got here:
   21: 71).
 - **Round 22 verify.** Four HIGH, the devil's advocate unfinished (quota): P0 turned off where head and tip were identical; a directory emptied over two commits; a merge off the first-parent line; template copies read as moves. Again answers changed for histories without moves.
 - **Round 23 (the maintainer's decision of 2026-11-02).** Copy detection, blob pairing, the directory rule and their counts are gone; those shapes are known limits (Definition, "Moves"). Renames inside the branch's merges and both Update-branch checks stay. On the 337 merged PRs of this repository and Akashic-Library every answer equals round 20's (all 0 at close time, 4 exit 4 against today's main), at the same CPU. bounded.py and bounded_sync.py give round 22's numbers.
-- **Rounds 23 and 24 verify.** The second check cleared a commit that sets a line back to its merge-base value and never landed, through either check, also when mixed with a real edit. Such a commit is no longer cleared (`sets_back`, fixtures 249, 251); repeated text can leave a landed commit listed, the safe direction. bounded_sync.py builds single-unit commits only, so the mixed shape rests on the fixture. The bounded_sync rows labelled Round 23 were rerun on the final helper.
+- **Rounds 23 to 25 verify.** The second check cleared a commit that sets a line back to its merge-base value and never landed. Guards at the commit and hunk level each left false cleans or brought #399's false listing back, and no criterion separates a set-back from a branch rewriting its own line, so the guard is gone and the shape is in S1.
 - `--after` needs length 2: a single-commit squash is matched by `git cherry`, so no length-1
   case reaches the landing step. Rounds 13 and 14 ran no `--old-git` mode: the helper has not
   called merge-tree since round 12.
