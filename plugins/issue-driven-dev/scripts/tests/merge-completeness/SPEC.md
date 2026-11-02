@@ -48,37 +48,62 @@ copy is an effect too. A file is its path: "a path" is whatever file is at that 
 - **A merge of main into the branch.** After the branch merges main (GitHub's Update
   branch), B is main at that merge, and the part of the branch main had already received (an
   earlier PR of the branch) is in it. Those commits are in S, received by the earlier step, so
-  they are never orphans, whatever main did to their lines afterwards (decision A).
+  they are never orphans, whatever main did to their lines afterwards (decision A), before the
+  merge or after it. The helper checks a commit listed at the landing commit again, in place,
+  where the branch up to the merge landed (when it landed as a whole) and at the main commit
+  the merge brought in; in place at either, it is in S.
 - **Moves.** The helper does not follow a file across moves: rounds 17 to 19 did, and each
   round's rules broke shapes the round before had right (the maintainer's decision of
-  2026-11-01, #399). A move **counts** when git's rename detection, run inside each non-merge
-  commit since the fork point (the merge-base of the baseline and the branch's first commit),
-  finds one in a commit of the branch that the baseline does not have, or one anywhere whose
-  old or new name is a path such a commit touched, or that takes a file out of a directory
-  where such a commit added one (merge-ort's directory-rename detection carries the added
-  file along). The detection breaks rewrites first (`git log -B -M`), so a file moved with
-  another put at its old name in the same commit (git reports a copy then), or moved onto a
-  name that exists, is a move too, when the rewritten file is over 400 bytes (git does not
-  break a smaller one: there such a move is an edit and a deletion, read by path). With a move
-  that counts:
+  2026-11-01, #399). Since the fork point (the merge-base of the baseline and the branch's
+  first commit), on either side, a move **counts** when:
+  - inside a non-merge commit, git finds a rename (`-M`); or a copy of a file whose content the
+    same commit replaced, more than half of its lines gone (`-C`, run on a commit that adds a
+    file and changes one, of the branch or touching a path the branch touched: a file moved
+    with a shim left at its old name, a file split in two); or the commit deletes a file and turns another into exactly its content (a move onto
+    a name that exists, which git pairs in no mode) — and the commit is one of the branch's
+    that the baseline lacks, or the old or new name is a path such a commit touched;
+  - inside a merge on the branch's first-parent line (what it changed against its first
+    parent), git finds a rename whose old or new name is such a path: a merge of main moves
+    the branch's file when main renamed its directory and the conflict was resolved git's way;
+  - on main, a commit's move takes away a directory (nothing is left in it after that commit)
+    that is, or holds, a directory where such a commit added a file: merge-ort's
+    directory-rename detection then suggests moving the added file along (with
+    `merge.directoryRenames` at its default it reports a conflict, and the file moves when
+    the suggestion is accepted). The directory is the moved file's, and its parents for as
+    long as the old and new paths end alike, as merge-ort derives it. A move out of a
+    directory that stays carries nothing and does not count.
+
+  With a move that counts:
   1. the answer is 0 when the tip has exactly what H has at every path a candidate touched
-     and at both names of every such move (P0 over those paths: whichever file is taken to be
-     which, nothing is left to land);
+     and at both names of every move the first two rules count (P0 over those paths:
+     whichever file is taken to be which, nothing is left to land; a sibling a directory rule
+     names says nothing about the branch's file);
   2. otherwise, when every such move is a commit of main's that came after each landing
      commit a candidate is checked at, and no candidate is checked at the tip, the rule above
-     decides (what main did after landing is out of scope);
-  3. otherwise the helper does not judge: exit 4, "a file the branch touched was moved or
-     renamed", naming the commit.
+     decides (what main did after landing is out of scope; the maintainer's decision says
+     "before or after landing", and this case, where the move cannot change what is read, is
+     the implementer's reading, to be confirmed);
+  3. otherwise the helper does not judge: exit 4, "a file the branch touched, or a directory
+     it added a file to, was moved or copied", naming the commit.
 
   A move no single commit records, on either side (a file moved and rewritten by more than
-  half in one commit; a move over two commits that never landed, or landed as separate
-  commits) is a deletion and an addition, read by path; a squash of such a branch records the
-  move as one, and then it counts. A copy is an added file: its original stays where it was
-  (the maintainer's "moved or copied" is read as a copy whose original another commit then
-  deletes, which a squash records as a move; a copy chain that never landed whole is read by
-  path, and no case found gives a wrong exit code, Results). A commit whose rename detection
-  git skipped (its added times deleted files pass 1,000,000) is the one other exit 4 about
-  moves: when it deletes a file a candidate touched, whether that file moved cannot be told.
+  half in one commit; moved onto a name that exists and changed in the same commit; a move
+  over two commits that never landed, or landed as separate commits) is a deletion and an
+  addition, read by path; a squash of such a branch records the move as one, and then it
+  counts. A copy whose original its commit leaves unchanged, or only edits, is an added file:
+  the original is still at its name, so reading by path reads it there (a squash that brings a
+  copy the branch made with the branch's edit of the original is no move either; the
+  maintainer's "moved or copied" is read as a copy whose original's content is replaced in the
+  same commit; this reading is to be confirmed;
+  a copy chain that never landed whole is read by path, and no case found gives a wrong exit
+  code, Results).
+
+  A commit where git skipped a detection (destinations times sources past 1,000,000: for
+  renames the files it adds times those it deletes; for copies the files it adds times those
+  it deletes, changes, renames or copies) is the one other exit 4 about moves: when it deleted
+  a file a candidate touched (for copies, replaced its content), whether that file moved cannot be told,
+  and P0 is not taken for that candidate. When git warns of a skip that this count does not
+  find, the helper stops (exit 4).
 
 ## Decision table
 
@@ -218,14 +243,24 @@ copy is an effect too. A file is its path: "a path" is whatever file is at that 
 | 125 | The branch moves a file and back, then edits it; squash (no move recorded); follow-up | all | 4: a move counts (in a commit of the branch) | 227 |
 | 126 | Row 118 with a second merge of main (after an unrelated commit of main's) before main's edit and the second PR | all | 0: checked again in place at the main commit the first merge brought in | 228 |
 | 127 | Row 118 where the first commit also adds an empty file, which main deletes before the second PR | all | 0 (each landing commit is listed on its own) | 229 |
-| 128 | Main moves the branch's file and puts a new file at its old name in one commit (git reports an edit and an addition unless it breaks the rewrite) / moves it onto a name that exists; a deletion that never landed | ∅ | 4: a move counts (rounds 19 and 20 said 0) | 230, 230b |
-| 129 | Main renames a directory the branch added a file to; the squash puts the file in the new directory | all | 4: a move counts (rounds 19 and 20 listed the commits) | 231 |
+| 128 | Main moves the branch's file and puts a new file at its old name in one commit (git's copy detection pairs the moved file with the changed one) / moves it onto a name that exists (the same content); a deletion that never landed | ∅ | 4: a move counts (rounds 19 and 20 said 0) | 230, 230b |
+| 129 | Main renames a directory the branch added a file to; the squash stops on git's file-location conflict, and accepting the suggestion puts the file in the new directory | all | 4: main's move took the directory away, a move counts (rounds 19 and 20 listed the commits) | 231 |
 | 130 | Row 118 with a commit pushed after the first PR and before Update branch | all | 0: the first PR's commit is in place at the main commit the merge brought in | 232 |
 | 131 | Row 118 with a first PR that left a line of the first part out | all | 0: the commit the first PR took whole is in place there | 233 |
 | 132 | Main moves the branch's file away and back before the squash; follow-up | all | 4: a move of main's before the landing commit counts | 234 |
-| 133 | A first PR without the commit, a merge of main, main's own hotfix with the commit's line, a second merge, main's edit, a second PR | all but the commit (main made its line itself) | 0: in place at the second merged main commit | 235 |
+| 133 | A first PR without the commit, a merge of main, main's own hotfix with the commit's line, a second merge, main's edit, a second PR (a squash of the whole branch) | all (the second PR brings the commit) | 0: in place at the second merged main commit | 235 |
 | 134 | Main renames a file inside the directory the branch added a file to; squash; follow-up | all | 0: a move inside one directory carries nothing along, so none counts | 236 |
 | 135 | A deletion that never landed; main moves another file onto that path | ∅ | 4: a move counts by its new name | 237 |
+| 136 | Main moves the branch's file with a one-line edit in a commit that also changes 1000 files and adds 1001 (git skips copy detection there, not rename detection); squashed after, or a deletion that never landed | all / ∅ | 4: the rename counts (round 21's `-B` lost it when the rewritten files were over 400 bytes: 3 and 0) | 238a, 238b |
+| 137 | Row 128's shim with a file under 400 bytes; also with the moved file edited in that commit | ∅ | 4: the copy counts (round 21: 0) | 239a, 239b |
+| 138 | Row 128's move onto a name that exists, with a small file | ∅ | 4: a move counts (round 21: 0) | 240 |
+| 139 | Main moves a sibling out of a directory the branch added a file to, and the directory stays; a full squash, or a PR that took the first commit only | all / all but c2 | 0 / 3: c2; no move counts (round 21: 4 for both) | 241a, 241b |
+| 140 | Main renames a directory that holds only a subdirectory; the branch added a file directly in it; the squash accepts git's suggestion | all | 4: merge-ort derives the parent's rename, a move counts (rounds 20 and 21: 3) | 242 |
+| 141 | Main renames a directory the branch added a file to; the branch merges main, accepting the suggestion (the merge moves the file); a later commit; main takes only that commit's line | that commit | 4: the merge moved the branch's file, a move counts (rounds 20 and 21: 0) | 243, 244 |
+| 142 | Row 118 where main edits the first PR's line before Update branch, and the merge keeps the branch's side | all | 0: in place where the branch up to the merge landed (round 21: listed) | 245 |
+| 143 | Main renames the branch's file in a commit where git skips rename detection; the branch merges main (merge-ort carries the edit); nothing landed | ∅ | 4: git did not look, and P0 is not taken (rounds 19 to 21: 0) | 246 |
+| 144 | The branch copies a file and turns the original into a shim (a split); full squash; follow-up | all | 4: a copy counts (round 20: 0) | 247 |
+| 145 | The branch's merge of main renames the branch's file (main moved nothing); the PR lands whole; follow-up | all | 4: the merge's move is the branch's (round 20: 0) | 248 |
 
 ## The small world (`bounded.py`)
 
@@ -260,18 +295,19 @@ copy is an effect too. A file is its path: "a path" is whatever file is at that 
   by `git cherry`, so this mode needs branches of length 3.
 - `--after` adds one more main edit after the squash, to a unit the branch touched. This is
   out of scope by decision A.
-- `bounded_sync.py` (round 20, widened in round 21) splits the branch into a first part and the
-  rest: main squashes any subset of the first part that applies in order (a first PR: all of it,
-  its first commits with the rest pushed before the merge, or a squash that left some out), the
-  branch merges main (Update branch, the branch's side kept where the two differ) and makes the
-  rest of its commits, main optionally edits a unit the first PR changed, and then squashes any
-  subset of the rest that applies in order when the first PR took the whole first part, else the
-  whole rest of the branch (none: no second PR). The first PR's commits are received by it; R is
-  main right after the first step that holds the head's net change from the merge-base after the
-  merge. It compares answers only (exit code and list); a disagreement is
+- `bounded_sync.py` (round 20, widened in rounds 21 and 22) splits the branch into a first part
+  and the rest: main squashes any subset of the first part that applies in order (a first PR: all
+  of it, its first commits with the rest pushed before the merge, or a squash that left some
+  out); with `--pre-edit` (round 22) main then edits a unit the first PR changed; the branch
+  merges main (Update branch, the branch's side kept where the two differ) and makes the rest of
+  its commits, main optionally edits a unit the first PR changed, and then squashes any subset of
+  the rest that applies in order when the first PR took the whole first part, else the whole rest
+  of the branch (none: no second PR). The first PR's commits are received by it; R is main right
+  after the first step that holds the head's net change from the merge-base after the merge
+  (main when the branch merged it). It compares answers only (exit code and list); a disagreement is
   known when each differing commit is a commit of the rest checked at the tip whose tip rule (D2)
-  gives the helper's answer (D1+D2), or one checked at main's follow-up taken as the landing commit
-  with its effects in place there (B2).
+  gives the helper's answer (D1+D2), or one checked at a commit of main's own (the follow-up, or
+  the edit before the merge) taken as the landing commit with its effects in place there (B2).
 - **What the world cannot build.** The slots are separated by distinct lines, so in this world
   a position always says which line it is. Where it does not — the same lines repeated, so
   that git may pair the copies one way when it builds the landing commit and another way in
@@ -448,7 +484,7 @@ any branch, so it ran five modes again on its helper (`plain` length 2 in full, 
 files by path, looks for moves (this world has none) and checks a listed commit again after a
 merge of main (this world has none): on its final helper `plain` length 2 in full, `--landing
 own` length 2 (800, seed 399) and `--landing two` length 3 (600, seed 399) gave every number
-below again, and so did round 21's final helper, and `bounded_sync.py` covers the merge of main (its table follows). The suite and
+below again, and so did the final helpers of rounds 21 and 22, and `bounded_sync.py` covers the merge of main (its table follows). The suite and
 the fuzz runs used the final helper.
 The machine carried other work at a load of 20 to 650, so apart from `plain` length 2 (every
 case) the samples are smaller than round 14's (400 to 1,000 cases a mode, against 3,000 to 6,000). "Known" lists the cases by class ("tip" is D1+D2 alone); "Wrong verdict" counts the
@@ -484,7 +520,7 @@ round 17 narrowed that check to D1's wording (no commit of main's own before the
 branch with no net change by itself, repeated texts only at a unit the net change changes):
 the runs above have no case left unexplained by it. The world builds no moves; since round 20 a move
 ends the check at exit 4 by the Definition, which the fixtures (71–220 where a file moves,
-221–234) and the rename fuzzers below check.
+221–248) and the rename fuzzers below check.
 
 `bounded_sync.py --max-len 2` (every case; answers only, so no "Landing" column). Round 21 widened
 the world from 3,192 cases (a first PR of the whole first part) to 6,264 (first PRs that take part
@@ -492,10 +528,21 @@ of it):
 
 | Helper | Cases | Agree | Known | Unexplained |
 |--------|-------|-------|-------|-------------|
+| Round 22 | 6,264 | 5,466 | tip 754, B2 44 | 0 |
+| Round 22, `--pre-edit` | 20,352 | 17,772 | tip 2,264, B2 316 | 0 |
 | Round 21 | 6,264 | 5,466 | tip 754, B2 44 | 0 |
 | Round 20, the 3,072 added cases | 3,072 | 2,052 | tip 532, B2 16 | 472 (the first PR's commit listed) |
 | Round 20 | 3,192 | 2,942 | tip 222, B2 28 | 0 |
 | Round 19 | 3,192 | 2,738 | tip 196, B2 20 | 238 (the first PR's commit listed) |
+
+`--pre-edit` (round 22) adds main's edit of a unit the first PR changed, before the merge. Its
+first run left 436 cases unexplained, then 268, every one of them a class the deviations already
+name, which the classifier did not yet read from the model: D1's "branch with no net change"
+when main's edit before the merge made the head's values itself (the branch then lands at the
+merge-base); B2 when main's own edit before the merge holds the commit's effects at the merged
+main commit (a deletion counts wherever the line is no longer in place), or when main's own
+commit taken as the landing commit has the commit's text elsewhere in the file (the header's
+blind spot). The helper did not change between those runs.
 
 The 26 tip cases beyond round 19's are branches whose first part changes nothing (a line
 deleted and put back): the branch lands at the merge-base, main's own follow-up holds the first
@@ -556,6 +603,7 @@ is D1+D2 (they are checked at the tip).
 | the same, rounds 18 and 19 | 251 | 241 | 8 | 0 | 2 | (round 17: the row above) |
 | the same, round 20 | 251 | 138 | 2 | 0 | 0 | exit 4 (a move counts) in the other 111 |
 | the same, round 21 | 251 | 134 | 2 | 0 | 0 | exit 4 in the other 115 (`-B` pairs four more moves) |
+| the same, round 22 | 251 | 135 | 2 | 0 | 0 | exit 4 in the other 114 (without `-B`, one of round 21's four reads by path and agrees) |
 
 Round 17's own drafts gave 0 false clean throughout, and false listings that fixtures 185, 191,
 194 and 195 now pin (and the `same_paths` change).
@@ -583,6 +631,7 @@ deletes the original in another commit (no move git records).
 
 | fuzzrename2, seeds 1–8 (60 each) | Cases | Agree | False clean (prefix / not a prefix) | False listing (prefix / not a prefix) |
 |----------------------------------|-------|-------|-------------------------------------|---------------------------------------|
+| Round 22 | 353 | 205 (exit 4: 147) | 0 / 1 | 0 / 0 |
 | Round 21 | 353 | 205 (exit 4: 147) | 0 / 1 | 0 / 0 |
 | Round 20 | 353 | 205 (exit 4: 147) | 0 / 1 | 0 / 0 |
 | Round 19 | 353 | 343 | 0 / 1 | 1 / 8 |
@@ -826,13 +875,49 @@ How the numbers got here:
   branch added one counts. A commit listed at the landing commit is checked again in place
   at the main commit each merge of main brought in, not at the landing of the branch up to
   the merge. `bounded_sync.py` adds first PRs that take part of the first part (commits
-  pushed before the merge, squashes that left some out). Fixtures 230–234.
+  pushed before the merge, squashes that left some out). Fixtures 230–237.
+- **Round 21 verify.** Five HIGH and thirteen MEDIUM, three of the HIGH regressions of round
+  21's own: `-B` makes every rewritten file a rename source, so a wide commit passed git's
+  rename limit, git skipped the detection, and the helper's count (added times deleted) did not
+  see it (a move round 20 counted read as a deletion, giving 0 or 3); the directory rule counted
+  a sibling moved out of a directory that stays (a full squash gave 4, a true orphan was
+  masked); and `-B` read every changed blob since the fork point (Akashic-Library's PRs about
+  twice as slow, twice the exit 4 in a blobless clone). Also: a shim left at a small file's old
+  name, which `-B` does not break, read as clean; a merge of main that moved the branch's file
+  (a directory rename accepted in Update branch) read as clean through P0; the directory rule
+  saw only the moved file's own directory; a commit whose line main edited before Update
+  branch, the merge keeping the branch's side, was listed again; P0 came before the check for
+  a commit git did not look in; copies were read by path without the maintainer's
+  confirmation.
+- **Round 22.** `-B` is gone. Renames come from `-M` in every non-merge commit, as in round 20;
+  copies from `-C`, run only on a commit that adds a file and changes one, of the branch or
+  touching a path it touched, and counted when that commit replaced the original's content
+  (more than half of its lines gone; a copy of an edited original made fixtures 186 and 210 exit
+  4 in the round's own runs); a move onto a name that exists from the blobs (a deleted file's
+  content that another file of the same commit now has exactly); a merge on the branch's
+  first-parent line that moves a path the branch touched counts; the directory rule counts only
+  a directory taken away, walking up as merge-ort does, and its names stay out of P0. Git's
+  skipped detection is counted with git's own sources (for copies, the changed files too), a
+  warning the count cannot place stops the check, and P0 is not taken for a candidate that
+  touched a file such a commit deleted or changed. The Update-branch check looks both where the
+  branch up to the merge landed (round 20) and at the merged main commit (round 21).
+  `bounded_sync.py --pre-edit` adds main's edit before the merge. Fixtures 238–248. Its runs
+  found two more: a squash that brings a copy the branch made together with the branch's edit
+  of the original read as a copy (fixture 210), and a squash too wide for copy detection made
+  every file the branch edited one that may have moved (fixture 186); copies now count only when
+  the original's content is replaced. On the 337 merged PRs of this repository and
+  Akashic-Library every answer at close time is 0, as in round 20; against today's main 5 end
+  at exit 4 (round 20: 4; the added one, Akashic-Library #736, is a branch commit that moved
+  three files and left shorter files at their old names, a copy that counts), at about 1 % and
+  7 % more CPU than round 20 (round 21: twice as much on Akashic-Library). In a blobless clone
+  of this repository 60 of its 102 merged PRs end at exit 4 at close time (round 20: 37, round
+  21: 71).
 - `--after` needs length 2: a single-commit squash is matched by `git cherry`, so no length-1
   case reaches the landing step. Rounds 13 and 14 ran no `--old-git` mode: the helper has not
   called merge-tree since round 12.
 - Not covered by the world: branches longer than 3 (and length 3 only by sampling), more than
   one file with lines, merge commits on the branch other than `bounded_sync.py`'s one merge of
-  main between two PRs, renames (exit 4 since round 20; fixtures 221–229 and the rename fuzzers
+  main between two PRs, renames (exit 4 since round 20; fixtures 221–248 and the rename fuzzers
   check that no move gets a wrong 0 or 3) and repeated blocks (fixtures 103–220), and the 200-check and 20-commit limits (fixtures 12, 60 and
   127). Adjacent slots holding the same text are not in the results: there even the positions
   are ambiguous in the text, and no check that reads text can tell which slot a line belongs

@@ -66,26 +66,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **A first PR, GitHub's Update branch, then the PR that completes it.** After the branch merges main, the
     merge-base holds the first PR, so the whole branch lands at the second, and a line of the first PR that main
     edited in between is no longer in place there: every version so far listed the first PR's commit, #399's own
-    symptom. A commit listed at the landing commit is now checked again, in place, at the main commit each later
-    first-parent merge of main into the branch brought in: in place at any of them, it had landed by then. This
-    holds when the author pushed another commit before pressing Update branch, or the first PR left part of the
-    branch out. `bounded.py`'s new companion `bounded_sync.py` builds these shapes.
+    symptom. A commit listed at the landing commit is now checked again, in place, where the branch up to each
+    later first-parent merge of main into it landed, and at the main commit that merge brought in: in place at
+    any of them, it had landed by then. This holds when the author pushed another commit before pressing Update
+    branch, the first PR left part of the branch out, or main edited the first PR's line before the merge and
+    the merge kept the branch's side. `bounded.py`'s new companion `bounded_sync.py` builds these shapes.
   - **Moves are not judged.** Rounds 17 to 19 of this change followed files across moves (git's rename detection
     inside each commit, copies, swaps, files main moved), and each round's rules broke shapes the round before
-    had right. The maintainer decided on 2026-11-01 to stop: every file is read by its path. A move counts when
-    git's rename detection inside a non-merge commit since the fork point finds one in a commit of the branch
-    the baseline does not have, or one anywhere whose old or new name is a path such a commit touched, or that
-    takes a file out of a directory where such a commit added one (merge-ort carries the added file along). The
-    detection breaks rewrites first (`-B`), so a file moved with another put at its old name, or moved onto a
-    name that exists, is a move too (for a file over 400 bytes: git breaks no smaller rewrite). A copy is an added file (the original stays where it was), and a move no
-    single commit records (moved and mostly rewritten in one commit, or moved over two commits that land
-    separately or not at all) is a deletion and an addition; a squash records a two-commit move as one. Then the
-    answer is 0 when the tip has exactly what the head has at every path a candidate touched and at both
-    names of every such move (a branch that renamed a file and was squashed as it was); when every such
-    move is main's own and came after every landing commit a commit is checked at, with nothing checked at the
-    tip, the check runs as usual (main archiving the files after the squash); otherwise the helper exits 4 with
-    "a file the branch touched was moved or renamed (in <commit>)", which idd-close prints as a note and goes on.
-    The reason names the commit, never a file name (repository text).
+    had right. The maintainer decided on 2026-11-01 to stop: every file is read by its path. Since the fork
+    point, a move counts when git finds it inside a non-merge commit — a rename (`-M`); a copy of a file whose
+    content the same commit replaced, more than half of its lines gone (`-C`, run only on commits that add a file
+    and change one, of the branch or touching its paths: a shim left at a moved file's old name, a file split in
+    two); or a file deleted while another file of
+    the commit takes exactly its content (a move onto a name that exists) — in a commit of the branch the
+    baseline lacks, or with its old or new name a path such a commit touched; when a merge on the branch's
+    first-parent line moves such a path (Update branch accepting git's suggestion after main renamed the
+    directory); or when a move on main takes away a directory, or a parent of one, where such a commit added a
+    file (merge-ort suggests moving the added file along; a move out of a directory that stays does not count).
+    A copy whose original its commit leaves unchanged or only edits is an added file (the original is still read
+    at its name), and a
+    move no commit records (moved and mostly rewritten in one commit, moved onto a name that exists and changed
+    in the same commit, or moved over two commits that land separately or not at all) is a deletion and an
+    addition; a squash records a two-commit move as one. Then the answer is 0 when the tip has exactly what the
+    head has at every path a candidate touched and at both names of every such move (a branch that renamed a
+    file and was squashed as it was); when every such move is main's own and came after every landing commit a
+    commit is checked at, with nothing checked at the tip, the check runs as usual (main archiving the files
+    after the squash); otherwise the helper exits 4 with "a file the branch touched, or a directory it added a
+    file to, was moved or copied (in <commit>)", which idd-close prints as a note and goes on. The reason names
+    the commit, never a file name (repository text). Where git skipped the detection (too many files in one
+    commit; for copies the changed files count as sources too) and that commit deleted a file a candidate
+    touched, or replaced its content, the helper exits 4 rather than guess, and when git warns of a skip it cannot place, the
+    check stops (exit 4).
   - **No merges.** Every comparison is a two-way `git diff` with every setting that shapes its output fixed on
     the command line (no context lines between hunks, `GIT_DIFF_OPTS` unset, no external diff, no textconv,
     `--text`, no rename detection, myers with the
@@ -154,8 +165,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Not effects at all (SPEC.md's definition): a file mode, a blank line, a final newline. Still not seen
     (only these): at the tip, an added line already elsewhere in the files the same commit touched, or a
     deleted line the branch head still has there; a move git
-    does not see inside one commit (a file moved and rewritten by more than half in the same commit, or moved
-    over two commits): a deletion and an addition; content
+    does not see inside one commit (a file moved and rewritten by more than half in the same commit, moved onto
+    a name that exists and changed in the same commit, or moved over two commits): a deletion and an addition;
+    content
     written by a merge commit on the branch; content that was already in main through another commit before
     this branch was merged (it counts as landed there), or that main itself completed later (a line a dropped
     commit deleted, which main then replaced); at the landing commit, a copy of a line next to an identical
@@ -170,9 +182,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     prefix of the branch landed later (3.5.0, which compared the tip, listed some of these).
   - Listed although it landed: a commit whose line main itself edited, before landing or in the landing step,
     so that the landing commit holds the value from before the commit — the trees are those of a dropped
-    commit (cherry-picking it would undo main's edit); and, with the right verdict, a commit that landed, was
-    undone by a later commit that landed, and was then changed again by one that did not, or a commit that did
-    not land whose line a later commit, which did not land either, rewrote.
+    commit (cherry-picking it would undo main's edit); a commit that landed in two pieces, part in a first PR
+    and the rest in the PR that completes it after Update branch (a first squash edited by hand); and, with the
+    right verdict, a commit that landed, was undone by a later commit that landed, and was then changed again by
+    one that did not, or a commit that did not land whose line a later commit, which did not land either,
+    rewrote. Not listed although it never reached main's first-parent line: a commit in place in a commit of
+    another branch that both the branch and main merged (a merge of it passes for a merge of main).
   - Falls back to the tip, where lines main edited after landing can be flagged: a squash whose conflicts were
     resolved by hand, leaving one of the branch's own lines out of place; a landing commit that fails by position
     only on a repeated text that more than one branch commit touches, or that the net change only moves (one
@@ -189,8 +204,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     orphans); a squash-landed 150-commit branch with a follow-up about 17 s (3.5.0: 9 s, with a false orphan);
     the same branch when its first commit moves the file stops at exit 4 after about 5 s, and a branch of 20
     commits that moves its file, squashed into a main that made 2000 commits of its own (50 of them renames)
-    since the fork point, after about 1 s. Looking for moves costs one
-    `git log` with rename detection over the commits since the fork point. Measured on rounds 13 to 15: a
+    since the fork point, after about 1 s (round 21; round 22, at a load of 28 to 80, measured the same against
+    round 16: PR #408 0.89 of its time, the 150-commit branch 0.83). Looking for moves costs one `git log` with
+    rename detection over the commits since the fork point, plus copy detection on the commits that add a file
+    and change one the branch touched: on the 337 merged PRs of this repository and Akashic-Library about 1 % and
+    7 % more CPU than rename detection alone. In a blobless partial clone copy detection needs content that was
+    never fetched, so 60 of this repository's 102 merged PRs end at exit 4 at close time (37 without it, and the
+    partial-clone exit 4 stays as decided). Measured on rounds 13 to 15: a
     branch that never landed under 1 s, or about 9 s when main often edits its files; a never-landed 150-commit
     branch about 23 s (3.5.0: 7 s); in a repository with 100,000 files in one directory a never-landed branch
     about 8 s (3.5.0: under 1 s), and one that edits 3,000 of those files, past 64 KB of paths, about 34 s while main
@@ -206,8 +226,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   main has elsewhere in the same files, or put back.
 - **Test runner.** `scripts/run-all-tests.sh` reads a `timeout` file next to a suite's `test.sh` and uses the
   larger of it and `IDD_SUITE_TIMEOUT` (default 180 s). The merge-completeness suite uses about 7 minutes of CPU; it
-  took 11 minutes of wall time on a Mac in run-all-tests after a reboot, up to 3.5 hours on the same Mac at a
-  load of 500 to 600 (round 20), and about two minutes on Linux (git 2.30, mawk). It asks for 3600 s; set
+  took 11 minutes of wall time on a Mac in run-all-tests after a reboot (round 22: 10 minutes at a load of 150),
+  up to 3.5 hours on the same Mac at a load of 500 to 600 (round 20), and about two minutes on Linux (git 2.30, mawk). It asks for 3600 s; set
   `IDD_SUITE_TIMEOUT` higher on a machine that slow.
 
 ### Changed
