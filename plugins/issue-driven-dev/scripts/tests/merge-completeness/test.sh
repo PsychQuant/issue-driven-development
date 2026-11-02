@@ -4210,4 +4210,20 @@ git -C "$R" checkout -q feat; git -C "$R" merge -q --no-edit main > /dev/null 2>
 git -C "$R" checkout -q main; ed251 "squash without c1" 's/^10$/10\nDEBUG/;s/^20$/twenty/;s/^35$/thirtyfive/'
 assert_exit "fixture-251b a set-back hunk mixed with a real edit -> flagged" 3 "$(rc_why "$R" feat main)"; rm -rf "$R"
 
+# 252: found by round 25's verify. (a) Fixture 249a in a non-ASCII file: still listed. (b) A first
+# PR's commit that also adds a blank line, Update branch, main's edit, PR2 -> NOT flagged.
+R="$(mk_repo)"; seq 1 30 > "$R/中252.txt"; git -C "$R" add -A && git -C "$R" commit -qm n
+git -C "$R" checkout -q -b feat; sed 's/^10$/10\nDEBUG/' "$R/中252.txt" > "$R/t" && cp "$R/t" "$R/mid.tmp" && mv "$R/t" "$R/中252.txt"; git -C "$R" add 中252.txt; git -C "$R" commit -qm c0
+sed '/^DEBUG$/d' "$R/中252.txt" > "$R/t" && mv "$R/t" "$R/中252.txt"; git -C "$R" add 中252.txt; git -C "$R" commit -qm "c1: back"
+git -C "$R" checkout -q main; printf 'o\n' > "$R/o252"; git -C "$R" add o252; git -C "$R" commit -qm o
+git -C "$R" checkout -q feat; git -C "$R" merge -q --no-edit main > /dev/null 2>&1; sed 's/^25$/x25/' "$R/中252.txt" > "$R/t" && mv "$R/t" "$R/中252.txt"; git -C "$R" add 中252.txt; git -C "$R" commit -qm c2
+git -C "$R" checkout -q main; sed 's/^25$/x25/' "$R/mid.tmp" > "$R/中252.txt"; git -C "$R" add 中252.txt; git -C "$R" commit -qm "squash without c1"
+assert_exit "fixture-252a a set-back commit in a non-ASCII file -> flagged" 3 "$(rc_why "$R" feat main)"; rm -rf "$R"
+R="$(mk_repo)"; { seq 1 15; echo; seq 16 40; } > "$R/b252.txt"; git -C "$R" add -A && git -C "$R" commit -qm b
+git -C "$R" checkout -q -b feat; sed -e 's/^3$/three/' -e 's/^30$/30\n/' "$R/b252.txt" > "$R/t" && mv "$R/t" "$R/b252.txt"; git -C "$R" commit -qam c1; sed 's/^20$/twenty/' "$R/b252.txt" > "$R/t" && mv "$R/t" "$R/b252.txt"; git -C "$R" commit -qam c1x
+git -C "$R" checkout -q main; git -C "$R" merge -q --squash feat >/dev/null 2>&1; git -C "$R" commit -qm PR1
+git -C "$R" checkout -q feat; git -C "$R" merge -q --no-edit main >/dev/null 2>&1; sed 's/^35$/x35/' "$R/b252.txt" > "$R/t" && mv "$R/t" "$R/b252.txt"; git -C "$R" commit -qam c2
+git -C "$R" checkout -q main; sed 's/^three$/THREE/' "$R/b252.txt" > "$R/t" && mv "$R/t" "$R/b252.txt"; git -C "$R" commit -qam follow; git -C "$R" merge -q --squash feat >/dev/null 2>&1; git -C "$R" commit -qm PR2
+assert_exit "fixture-252b a first PR's commit that also adds a blank line -> NOT flagged" 0 "$(rc_why "$R" feat main)"; rm -rf "$R"
+
 print_summary
