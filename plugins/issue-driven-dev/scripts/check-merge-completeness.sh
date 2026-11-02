@@ -17,14 +17,13 @@
 #   0 — clean: no genuine orphan
 #   2 — usage error
 #   3 — genuine orphan(s) found; SHAs + subjects printed to stdout
-#   4 — skip: could not verify (a file the branch touched, or a directory it added a
-#       file to, was moved or copied, see "Moves" below; branch or baseline
-#       unresolvable, no temp dir, a git or awk failure outside the landing step, an
-#       unreadable object, a checked commit touching a path with a newline in its name,
-#       a file a checked commit touched that a later commit deletes (for copies, whose
-#       content it replaces) where git skipped its detection (destinations times sources
-#       pass 1,000,000: whether the file moved cannot be told), a skip git warns of that
-#       the count cannot place, a temp dir whose path has a backslash
+#   4 — skip: could not verify (a file the branch touched was moved or renamed, see
+#       "Moves" below; branch or baseline unresolvable, no temp dir, a git
+#       or awk failure outside the landing step, an unreadable object, a checked
+#       commit touching a path with a newline in its name, a file a checked commit
+#       touched that a later commit deletes where git skipped its rename detection
+#       (the files that commit adds times the files it deletes pass 1,000,000:
+#       whether the file moved cannot be told), a temp dir whose path has a backslash
 #       or a newline, a partial clone with git older than 2.45 or one whose missing
 #       blobs a check needs); one
 #       "check-merge-completeness: <reason>" line goes to stderr.
@@ -92,21 +91,13 @@
 #      and at the main commit that merge brought in (a first PR, GitHub's Update branch,
 #      then the PR that completes it): after the merge the merge-base holds that part,
 #      and main may have edited its lines before L.
-#   Moves (the maintainer's decision of 2026-11-01): since the fork point, a move or copy
-#   counts when git finds it inside a non-merge commit (renames with -M; copies with -C,
-#   of a file whose content the same commit replaced, such as a shim left at the old name
-#   or a split; and a file deleted where another of the same commit now has exactly its
-#   content, a move onto a name that exists) in a commit of the branch the baseline lacks, or with
-#   its old or new name a path such a commit touched; when rename detection inside a
-#   merge on the branch's first-parent line moves such a path; or when a move on main
-#   takes away a directory that is, or holds, one where such a commit added a file
-#   (merge-ort's directory-rename detection, accepted, moves the added file along).
-#   Then, unless step 1's shortcut holds over those names, the check stops with exit 4
-#   — except a move on main after every landing commit a candidate is checked at, with
-#   no candidate checked at the tip (main's own history after landing). Rounds 17 to 19
-#   followed files across moves, and each round's rules broke shapes the round before
-#   had right. A copy whose original keeps its content (unchanged, or edited with no more
-#   than half of its lines gone) is an added file: the original is still read at its name.
+#   Moves (the maintainer's decisions of 2026-11-01 and 2026-11-02): since the fork point,
+#   a move counts when git's rename detection finds one inside a non-merge commit of the
+#   branch the baseline lacks, one in any non-merge commit with its old or new name a path
+#   such a commit touched, or one with such a name inside a merge on the branch's first-parent
+#   line. Then, unless step 1's shortcut holds over those names, the check stops with exit 4
+#   — except a move on main after every landing commit a candidate is checked at, with no
+#   candidate checked at the tip. Other moves and copies are read by path (known blind spots).
 #   Every comparison reads trees with `git diff`, `ls-tree` and `cat-file`: no merge,
 #   so no merge driver or attribute can steer the answer. (Above 64 KB of paths, two
 #   trees holding only those paths are written to a temporary object store and
@@ -120,11 +111,12 @@
 #   - at the tip, an added line already elsewhere in the files the same commit
 #     touched, or a deleted line the branch head still has there (a moved or
 #     duplicated line);
-#   - a move no single commit records, on either side (a file moved and rewritten by
-#     more than half in one commit; a file moved onto a name that exists and changed in
-#     the same commit; a move over two commits that never landed, or landed as separate
-#     commits; a squash records it as one move, which counts): the file reads as deleted
-#     and another added;
+#   - a move or copy git's rename detection does not record inside one commit (a copy; a
+#     file moved with another put at its old name, or onto a name that exists; a directory
+#     main renamed under a file the branch added; a file moved and rewritten by more than
+#     half; a move over two commits, unless a squash records it as one; a move inside a
+#     merge off the branch's first-parent line): read by path, it can give a false clean or
+#     a false listing;
 #   - content written by a merge commit on the branch (git cherry never lists merge
 #     commits);
 #   - with macOS awk, a binary edit that changes only bytes after a NUL (awk cuts
@@ -401,114 +393,61 @@ trace_out() { # stdin -> $CHECK_MERGE_COMPLETENESS_TRACE
 # records were dropped (#399 verify round 13).
 PATHS_MAX=65536
 
-# ── Moves (#399, the maintainer's decision of 2026-11-01) ──
-# Every check below reads a file by its path. Rounds 17 to 19 followed files across
-# moves, and each round's rules broke shapes the round before had right; so the check
-# no longer judges a branch where a move touches it. Since the fork point (the merge-base
-# of the baseline and the branch's first commit), on either side, a move counts when:
-#   - inside a non-merge commit, git's rename detection (-M) finds one; or its copy
-#     detection (-C, run only on a commit that adds a file and changes one, of the
-#     branch or touching a path the branch touched) finds a copy of a file whose content
-#     the same commit replaced, more than half of its lines gone (a file moved and another
-#     put at its old name, a file split in two); or the commit deletes a file and turns another into exactly its content (a
-#     move onto a name that exists, which git pairs in no mode) — and the commit is one
-#     of the branch's that the baseline lacks, or the old or new name is a path such a
+# ── Moves (#399, the maintainer's decisions of 2026-11-01 and 2026-11-02) ──
+# Every check below reads a file by its path. Rounds 17 to 19 followed files across moves,
+# and rounds 21 and 22 looked for more kinds of move; each broke answers that were right, so
+# the check does not judge a branch where a move git's rename detection records touches it.
+# Since the fork point (the merge-base of the baseline and the branch's first commit), a
+# move counts when:
+#   - inside a non-merge commit, on either side, git's rename detection (-M) finds one in a
+#     commit of the branch the baseline lacks, or one whose old or new name is a path such a
 #     commit touched;
-#   - inside a merge on the branch's first-parent line (what it changed against its
-#     first parent), rename detection finds one whose old or new name is such a path: a
-#     merge of main can carry the branch's file to where main renamed its directory;
-#   - on main, a commit's move takes away a directory (nothing is left in it after that
-#     commit) that is, or holds, a directory where such a commit added a file: merge-ort's
-#     directory-rename detection moves the added file along when the conflict it reports
-#     is resolved its way. The directory is the moved file's, and its parents for as
-#     long as the old and new paths end alike, as merge-ort derives it.
-# Then the answer is 0 when the tip has exactly what the head has at every path a
-# candidate touched and both names of every move the first two rules count (P0 below);
-# when every move that counts is main's own, after every landing commit used, with
-# nothing checked at the tip, the check runs as usual; and exit 4 otherwise. A copy whose
-# original its commit leaves unchanged or only edits is an added file (the original is
-# still read at its name; a squash that brings a copy the branch made together with the
-# branch's edit of the original is not a move). A move no commit records (a file moved and rewritten by more than half; moved
-# onto a name that exists and changed in the same commit; moved over two commits that
-# land separately or not at all) is a deletion and an addition.
-#   - git skips a detection in a commit (it warns, and pairs nothing more there) when the
-#     destinations times the sources pass 1000 x 1000: for renames, the files the commit
-#     adds times those it deletes; for copies, the files it adds times those it deletes,
-#     changes, renames or copies. A file such a commit deleted (for copies, one whose
-#     content it replaced) may have moved. That matters only when it is a file an earlier candidate touched, whose
-#     effects would then look gone from the head; such a candidate cannot be verified
-#     (exit 4), the one exit 4 about moves that is not a move that counts, since git did
-#     not look; and the shortcut of step 1 is not taken for a candidate that touched such
-#     a file. When git warns of a skip in a pass where this count finds none, the check
-#     stops (exit 4).
+#   - inside a merge on the branch's first-parent line (what it changed against its first
+#     parent), rename detection finds one whose old or new name is such a path.
+# Then the answer is 0 when the tip has exactly what the head has at every path a candidate
+# touched and both names of every such move (P0 below); when every such move is main's own,
+# after every landing commit used, with nothing checked at the tip, the check runs as usual;
+# and exit 4 otherwise. Everything else is read by path (known limits, SPEC.md "Moves"): a
+# copy; a file moved with another put at its old name; a file moved onto a name that exists;
+# a directory main renamed under a file the branch added; a file moved and rewritten by more
+# than half in one commit; a move over two commits.
+#   - A commit whose added times deleted files exceed 1000 x 1000 had rename detection
+#     skipped: a file it deleted may have moved. That matters only when it deletes a file an
+#     earlier candidate touched; such a candidate cannot be verified (exit 4), the one exit 4
+#     about moves that is not a move that counts. P0 comes first: head and tip the same at
+#     every candidate path needs no such check (a known limit: a merge of main that carried
+#     the edit to a new name there reads as clean).
 FORK="" ; MOVED=""
-# <mode> on stdin: git's `--raw -z --no-abbrev` output under "%x01%H" headers (a merge's
-# `git diff` gets one put before it) -> one token per line: "@" <id>; "R" <old> <new> (a
-# rename, or a move onto a name that exists); "C" <old> <new> (a copy); "A", "D", "M" <name>
-# (M: changed, or its type changed). In $SCRATCH/unc, the commits whose detection git
-# skipped: mode r (renames) counts the deleted files and lists them in unc.<id>; mode c
-# (copies) counts the deleted, changed, renamed and copied ones and lists the changed ones in
-# uncc.<id> (moves_check keeps those whose content the commit replaced). An LF inside a name
-# becomes \001, so it matches no name a check reads (those have none).
-parse_raw() {
-  tr '\n\000' '\001\n' | LC_ALL=C awk -v d="$SCRATCH" -v mode="$1" '
-    function endc(   i, f, b) {
-      if (cur == "") return
-      # a deletion whose content another file of the same commit now has exactly (not an
-      # empty file: that is no content to have moved)
-      for (i = 1; i <= ndl; i++) { b = dob[i]; if ((b in MB) && !(b in EMPTY)) { print "R"; print dl[i]; print MB[b] } }
-      if (na * ns > 1000000) {
-        print cur >> (d "/unc"); f = d "/unc." cur; printf "" >> f
-        if (mode == "r") { for (i = 1; i <= ndl; i++) print dl[i] >> f }
-        else { close(f); f = d "/uncc." cur; for (i = 1; i <= nml; i++) print ml[i] >> f }
+# stdin: git's `--name-status -z` output under "%x01%H" headers -> "@" <id>, "R" <old> <new>,
+# one token per line; $SCRATCH/unc lists the commits whose rename detection was skipped and
+# unc.<id> the files each deleted. An LF inside a name becomes \001, so it matches no name a
+# check reads (those have none).
+parse_ns() {
+  tr '\n\000' '\001\n' | LC_ALL=C awk -v d="$SCRATCH" '
+    function endc(   i, f) {
+      if (cur != "" && na * nd > 1000000) {
+        print cur >> (d "/unc"); f = d "/unc." cur
+        for (i = 1; i <= ndl; i++) print dl[i] > f
         close(f)
       }
-      na = 0; ns = 0; ndl = 0; nml = 0; split("", MB)
+      na = 0; nd = 0; ndl = 0
     }
-    BEGIN { EMPTY["e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"] = 1
-            EMPTY["473a0f4c3be8a93681a267e3b1e9a7dcda1185436fe141f7749120a303721813"] = 1 }
     want == 0 && substr($0, 1, 1) == "\001" && substr($0, 2) ~ /^[0-9a-f]+$/ && length($0) >= 41 {
       endc(); cur = substr($0, 2); print "@"; print cur; next }
     want == 0 && $0 == "\001" { next }
     want == 0 {
       st = $0; if (substr(st, 1, 1) == "\001") st = substr(st, 2)
-      if (substr(st, 1, 1) != ":" || split(substr(st, 2), f, " ") != 5) exit 2
-      ob = f[3]; nb = f[4]; k = substr(f[5], 1, 1)
-      want = (k == "R" || k == "C") ? 2 : 1; got = 0; next }
+      k = substr(st, 1, 1); want = (k == "R" || k == "C") ? 2 : 1; got = 0; next }
     { got++; p[got] = $0
       if (got < want) next
       want = 0
-      if (k == "R" || k == "C") { print k; print p[1]; print p[2]; if (mode == "c") ns++ }
-      else if (k == "A") { print "A"; print p[1]; na++ }
-      else if (k == "D") { print "D"; print p[1]; ns++; dl[++ndl] = p[1]; dob[ndl] = ob }
-      else { print "M"; print p[1]; if (mode == "c") ns++; ml[++nml] = p[1]; if (!(nb in MB)) MB[nb] = p[1] } }
+      if (k == "R") { print "R"; print p[1]; print p[2] }
+      else if (k == "A") na++
+      else if (k == "D") { nd++; dl[++ndl] = p[1] } }
     END { if (want) exit 2; endc() }'
 }
-# <pass name> <unc lines before the pass>: 3 when git warned of a skipped detection in the
-# pass and the count found none
-unc_warned() {
-  grep -q 'too many files' "$SCRATCH/err.$1" 2>/dev/null || return 0
-  [ "$(wc -l < "$SCRATCH/unc")" -gt "$2" ] && return 0
-  return 3
-}
-# <commit> <path>: 0 when the commit replaced the file's content (more than half of its
-# lines gone: a shim left where a file moved, a file split in two; a binary file, or one
-# that cannot be read, counts), 1 when it only edited it (#399 verify round 22's runs: a
-# squash that brings a copy the branch made and the branch's edit of the original is not a
-# move, and neither is a commit too wide for copy detection that edits the branch's files)
-replaced() {
-  local ns a d n
-  case "$2" in *$'\001'*) return 0 ;; esac
-  ns="$(GIT --literal-pathspecs diff --no-renames --no-ext-diff --no-textconv --numstat -z "$1^" "$1" -- "$2" 2>/dev/null \
-        | tr '\000' '\n' | LC_ALL=C awk 'NR == 1')" || return 0
-  a="${ns%%$'\t'*}"; ns="${ns#*$'\t'}"; d="${ns%%$'\t'*}"
-  case "$a$d" in ''|*[!0-9]*) return 0 ;; esac
-  n="$(GIT cat-file -p "$1^:$2" 2>/dev/null | wc -l)" || return 0
-  [ $((d * 2)) -gt $((n)) ]
-}
-moves_check() { # -> MOVED set when a move counts ("<commit>"); 2 on error; 3 when git
-                # skipped a detection the count cannot place
-  local mb first c o old new u0
+moves_check() { # -> MOVED set when a move counts ("<commit>"); 2 on error
+  local mb first c
   : > "$SCRATCH/unc" || return 2
   # No merge-base (a shallow clone, unrelated histories): no move is looked for (the
   # landing search says there is no merge-base; #399 verify round 17).
@@ -518,120 +457,35 @@ moves_check() { # -> MOVED set when a move counts ("<commit>"); 2 on error; 3 wh
   if [ -n "$first" ] && GIT rev-parse -q --verify "$first^1^{commit}" > /dev/null 2>&1; then
     FORK="$(GIT merge-base "$BASELINE_SHA" "$first^1" 2>/dev/null)" || return 2
   fi
-  # The branch's commits, its merges, the paths its commits touched (bpaths) and every
-  # directory above a path one of them added (bdirs).
   GIT rev-list --no-merges "$BRANCH_SHA" "^$BASELINE_SHA" > "$SCRATCH/br.set" 2>/dev/null || return 2
   GIT rev-list --first-parent --merges "$BRANCH_SHA" "^$BASELINE_SHA" > "$SCRATCH/bm.set" 2>/dev/null || return 2
   GIT log --no-merges --no-renames --no-show-signature --no-color -O/dev/null --ignore-submodules=none \
-    --format= --name-status -z "$BRANCH_SHA" "^$BASELINE_SHA" > "$SCRATCH/bp.z" 2>/dev/null || return 2
-  # ("<status>" and "<path>" alternate; the empty format leaves empty tokens between commits)
-  tr '\n\000' '\001\n' < "$SCRATCH/bp.z" | LC_ALL=C awk -v d="$SCRATCH/bdirs" '
-    BEGIN { printf "" > d }
-    !length($0) { next }
-    st == "" { st = $0; next }
-    { print
-      if (st == "A") { x = $0; while ((i = match(x, /\/[^\/]*$/)) > 1) { x = substr(x, 1, i - 1); print x > d } }
-      st = "" }' > "$SCRATCH/bpaths" || return 2
-  # Pass 1: renames, and moves onto a name that exists, in every non-merge commit (no order
-  # file: a missing diff.orderFile makes git fail, #399 verify round 13).
+    --format= --name-only -z "$BRANCH_SHA" "^$BASELINE_SHA" > "$SCRATCH/bp.z" 2>/dev/null || return 2
+  tr '\n\000' '\001\n' < "$SCRATCH/bp.z" | LC_ALL=C awk 'length($0) { sub(/^\001/, ""); print }' > "$SCRATCH/bpaths" || return 2
+  # (no order file: a missing diff.orderFile makes git fail, #399 verify round 13)
   GIT log --no-merges --topo-order --reverse --no-show-signature --no-color -O/dev/null -M -l1000 -z \
-    --raw --no-abbrev --ignore-submodules=none --format='%x01%H' "$BRANCH_SHA" "$BASELINE_SHA" "^$FORK" -- \
-    > "$SCRATCH/ops1.raw" 2> "$SCRATCH/err.1" || return 2
-  parse_raw r < "$SCRATCH/ops1.raw" > "$SCRATCH/ops1.all" || return 2
-  unc_warned 1 0 || return 3
-  # Pass 2: copies, in the commits that add a file and change one, of the branch or touching
-  # a path the branch touched (-C alone: a later -M would turn copy detection back off). (Copies of a file the commit leaves unchanged would need every
-  # file's content in every commit; the original is still read at its name anyway.)
+    --ignore-submodules=none --format='%x01%H' --name-status "$BRANCH_SHA" "$BASELINE_SHA" "^$FORK" -- \
+    > "$SCRATCH/ops.raw" 2>/dev/null || return 2
+  # The branch's merges (#399 verify round 21: a merge moved the branch's file and the
+  # shortcut compared the old name only).
+  while IFS= read -r c <&9; do
+    printf '\001%s\000' "$c" >> "$SCRATCH/ops.raw" || return 2
+    GIT diff -M -l1000 -z --name-status --no-color -O/dev/null --ignore-submodules=none "$c^1" "$c" -- \
+      >> "$SCRATCH/ops.raw" 2>/dev/null || return 2
+  done 9< "$SCRATCH/bm.set"
+  parse_ns < "$SCRATCH/ops.raw" > "$SCRATCH/ops.all" || return 2
+  # "<commit>\n<old>\n<new>" for each move that counts
   LC_ALL=C awk -v bs="$SCRATCH/br.set" -v bp="$SCRATCH/bpaths" '
-    function endc() { if (cur != "" && ha && hm && (rel || (cur in C))) print cur; ha = 0; hm = 0; rel = 0 }
     BEGIN { while ((r = getline l < bs) > 0) C[l] = 1; if (r < 0) exit 2
             while ((r = getline l < bp) > 0) P[l] = 1; if (r < 0) exit 2 }
-    st == "" { st = $0; need = (st == "R" || st == "C") ? 2 : 1; got = 0; next }
-    { v[++got] = $0; if (got < need) next; t = st; st = ""
-      if (t == "@") { endc(); cur = v[1]; next }
-      if (t == "A") ha = 1; else if (t == "M") hm = 1
-      if ((v[1] in P) || (t == "R" && (v[2] in P))) rel = 1 }
-    END { endc() }' "$SCRATCH/ops1.all" > "$SCRATCH/sel" || return 2
-  : > "$SCRATCH/ops2.all"; : > "$SCRATCH/err.2"
-  if [ -s "$SCRATCH/sel" ]; then
-    u0="$(wc -l < "$SCRATCH/unc")"
-    GIT log --no-walk=unsorted --stdin --no-show-signature --no-color -O/dev/null -C -l1000 -z \
-      --raw --no-abbrev --ignore-submodules=none --format='%x01%H' < "$SCRATCH/sel" \
-      > "$SCRATCH/ops2.raw" 2> "$SCRATCH/err.2" || return 2
-    parse_raw c < "$SCRATCH/ops2.raw" > "$SCRATCH/ops2.all" || return 2
-    unc_warned 2 "$u0" || return 3
-    # where copy detection was skipped, a changed file the branch touched may have moved
-    # only when the commit replaced its content
-    for f in "$SCRATCH"/uncc.*; do
-      [ -f "$f" ] || continue
-      c="${f##*/uncc.}"
-      LC_ALL=C awk -v bp="$SCRATCH/bpaths" 'BEGIN { while ((r = getline l < bp) > 0) P[l] = 1; if (r < 0) exit 2 } ($0 in P)' \
-        "$f" > "$f.bp" || return 2
-      while IFS= read -r o <&9; do
-        ! replaced "$c" "$o" || printf '%s\n' "$o" >> "$SCRATCH/unc.$c" || return 2
-      done 9< "$f.bp"
-    done
-  fi
-  # Pass 3: renames inside each merge on the branch's first-parent line, against its first
-  # parent (#399 verify round 21: a merge of main carried the branch's new file to where main
-  # had renamed its directory, and the shortcut compared the head and the tip at the old
-  # name only).
-  : > "$SCRATCH/ops3.raw"; : > "$SCRATCH/err.3"
-  u0="$(wc -l < "$SCRATCH/unc")"
-  while IFS= read -r c <&9; do
-    printf '\001%s\000' "$c" >> "$SCRATCH/ops3.raw" || return 2
-    GIT diff -M -l1000 -z --raw --no-abbrev --no-color -O/dev/null --ignore-submodules=none "$c^1" "$c" -- \
-      >> "$SCRATCH/ops3.raw" 2>> "$SCRATCH/err.3" || return 2
-  done 9< "$SCRATCH/bm.set"
-  parse_raw r < "$SCRATCH/ops3.raw" > "$SCRATCH/ops3.all" || return 2
-  unc_warned 3 "$u0" || return 3
-  # The moves that count: "<commit>\n<old>\n<new>" in $SCRATCH/moves; the directories a move
-  # on main may have taken away, "<commit>\n<directory>\n<old>\n<new>", in $SCRATCH/dircand.
-  LC_ALL=C awk -v bs="$SCRATCH/br.set" -v bm="$SCRATCH/bm.set" -v bp="$SCRATCH/bpaths" -v bd="$SCRATCH/bdirs" \
-    -v dc="$SCRATCH/dircand" -v cp="$SCRATCH/copies" '
-    function dir(x,    i) { i = match(x, /\/[^\/]*$/); return (i > 1) ? substr(x, 1, i - 1) : "" }
-    function base(x,    i) { i = match(x, /[^\/]*$/); return substr(x, i) }
-    BEGIN { while ((r = getline l < bs) > 0) C[l] = 1; if (r < 0) exit 2
-            while ((r = getline l < bm) > 0) BM[l] = 1; if (r < 0) exit 2
-            while ((r = getline l < bp) > 0) P[l] = 1; if (r < 0) exit 2
-            while ((r = getline l < bd) > 0) AD[l] = 1; if (r < 0) exit 2
-            printf "" > dc; printf "" > cp }
-    st == "" { st = $0; need = (st == "R" || st == "C") ? 2 : 1; got = 0; next }
+    st == "" { st = $0; need = (st == "R") ? 2 : 1; got = 0; next }
     { v[++got] = $0; if (got < need) next; t = st; st = ""
       if (t == "@") { cur = v[1]; next }
-      if (t != "R" && t != "C") next
-      if ((cur in C) || (v[1] in P) || (v[2] in P)) {
-        if (t == "C") { print cur > cp; print v[1] > cp; print v[2] > cp } else { print cur; print v[1]; print v[2] }
-        next }
-      if (t == "C" || (cur in BM)) next
-      # the old directory, then its parents while the two paths end alike (merge-ort)
-      o = dir(v[1]); n = dir(v[2])
-      while (o != "" && o != n) {
-        if ((o in AD) && !((cur "\n" o) in seen)) { seen[cur "\n" o] = 1; print cur > dc; print o > dc; print v[1] > dc; print v[2] > dc }
-        if (n == "" || base(o) != base(n)) break
-        o = dir(o); n = dir(n) } }' \
-    "$SCRATCH/ops1.all" "$SCRATCH/ops2.all" "$SCRATCH/ops3.all" > "$SCRATCH/moves" || return 2
-  # A copy counts when its commit replaced the original's content (a shim, a split): an
-  # original that was only edited is still read at its name.
-  while IFS= read -r c <&9 && IFS= read -r old <&9 && IFS= read -r new <&9; do
-    ! replaced "$c" "$old" || printf '%s\n%s\n%s\n' "$c" "$old" "$new" >> "$SCRATCH/moves" || return 2
-  done 9< "$SCRATCH/copies"
-  # merge-ort renames only a directory that no longer exists on that side: after the move's
-  # commit, nothing is left in it. (A name with a newline cannot be looked up: it counts.)
-  : > "$SCRATCH/moves.dir" || return 2
-  while IFS= read -r c <&9 && IFS= read -r o <&9 && IFS= read -r old <&9 && IFS= read -r new <&9; do
-    case "$o" in
-      *$'\001'*) ;;
-      *) ! GIT rev-parse -q --verify "$c:$o" > /dev/null 2>&1 || continue ;;
-    esac
-    printf '%s\n%s\n%s\n' "$c" "$old" "$new" >> "$SCRATCH/moves.dir" || return 2
-  done 9< "$SCRATCH/dircand"
-  # Both names of the moves the first two rules count go to the shortcut; a directory taken
-  # away does not (a sibling's names say nothing about the branch's file, #399 verify round 21).
-  if [ -s "$SCRATCH/moves" ] || [ -s "$SCRATCH/moves.dir" ]; then
-    LC_ALL=C awk 'NR % 3 != 1' "$SCRATCH/moves" > "$SCRATCH/mnames" || return 2
-    cat "$SCRATCH/moves.dir" >> "$SCRATCH/moves" || return 2
+      if ((cur in C) || (v[1] in P) || (v[2] in P)) { print cur; print v[1]; print v[2] } }' \
+    "$SCRATCH/ops.all" > "$SCRATCH/moves" || return 2
+  if [ -s "$SCRATCH/moves" ]; then
     MOVED="$(head -n 1 "$SCRATCH/moves")"
+    LC_ALL=C awk 'NR % 3 != 1' "$SCRATCH/moves" > "$SCRATCH/mnames" || return 2
   fi
 }
 # <rev> <in, NUL-separated paths> <out> -> two lines per path: the path and its key (a
@@ -831,11 +685,7 @@ entry_of() {
 # no associative arrays, and a linear search is quadratic on a wide commit); each
 # candidate's numbers go to its own file, which awk reads later, never argv. -z so a
 # space or a non-ASCII name (quoted by core.quotePath) stays the real path.
-moves_check; case $? in
-  0) ;;
-  3) skip "git skipped looking for moves in a commit since the fork point (too many files), and the check cannot tell which; check by hand" ;;
-  *) skip "cannot look for the files the branch or the baseline moved${PARTIAL:+ (this is a partial clone: rename detection needs blobs it never fetched; fetch them, or check by hand)}" ;;
-esac
+moves_check || skip "cannot look for the files the branch or the baseline moved${PARTIAL:+ (this is a partial clone: rename detection needs blobs it never fetched; fetch them, or check by hand)}"
 : > "$SCRATCH/pairs"; k=0; NPATHS=""
 for sha in $CANDIDATES; do
   GIT diff-tree --root --no-commit-id --no-renames --ignore-submodules=none --name-status -r -z "$sha" \
@@ -897,26 +747,11 @@ has_lf "$SCRATCH/cand.z"; rc=$?
 if [ "$rc" -eq 1 ]; then
   tr '\000' '\n' < "$SCRATCH/headtip.z" > "$SCRATCH/headtip" \
     && tr '\000' '\n' < "$SCRATCH/cand.z" > "$SCRATCH/cand" || skip "cannot read the paths the branch touched"
-  # A commit where git skipped looking for moves, and which deleted (or, for copies,
-  # changed) a path a candidate touched: what the head has there may be at another name
-  # in the tip, so there is no shortcut (#399 verify round 21: such a deletion, carried to
-  # its new name by the branch's merge of main, read as clean).
-  if [ -s "$SCRATCH/unc" ]; then
-    LC_ALL=C awk -v d="$SCRATCH" '{ f = d "/unc." $0; while ((r = getline l < f) > 0) print l; if (r < 0) exit 2; close(f) }' \
-      "$SCRATCH/unc" > "$SCRATCH/unc.all" || skip "cannot read the commits git skipped looking for moves in"
-    LC_ALL=C awk -v u="$SCRATCH/unc.all" 'BEGIN { while ((r = getline l < u) > 0) U[l] = 1; if (r < 0) exit 2 }
-      ($0 in U) { exit 3 }' "$SCRATCH/cand"; rc=$?
-    case $rc in
-      0) ;;
-      3) printf 'x\001\n' >> "$SCRATCH/cand"; printf 'x\001\n' >> "$SCRATCH/headtip" ;;
-      *) skip "cannot read the commits git skipped looking for moves in" ;;
-    esac
-  fi
-  # With a move that counts by its names: both names of every such move too (the head and
+  # With a move that counts: both names of every such move too (the head and
   # the tip then hold the same thing at every name a candidate's file can have, whichever
   # file is taken to be which). A name with a newline cannot be matched here, so then there
   # is no shortcut.
-  if [ -n "$MOVED" ] && [ -s "$SCRATCH/mnames" ]; then
+  if [ -n "$MOVED" ]; then
     if grep -q "$(printf '\001')" "$SCRATCH/mnames"; then
       printf 'x\001\n' >> "$SCRATCH/cand"; printf 'x\001\n' >> "$SCRATCH/headtip"
     else
@@ -939,7 +774,7 @@ fi
 # before a landing commit read the moved names). The reason names commits only: file
 # names are repository text.
 moved_skip() { printf 'moved\n' | trace_out
-  skip "a file the branch touched, or a directory it added a file to, was moved or copied (in $(short "$1")); the check reads files by their paths and does not judge moves, so check by hand"; }
+  skip "a file the branch touched was moved or renamed (in $(short "$1")); the check reads files by their paths and does not judge moves, so check by hand"; }
 if [ -n "$MOVED" ]; then
   m="$(LC_ALL=C awk -v bs="$SCRATCH/br.set" -v bm="$SCRATCH/bm.set" 'BEGIN { while ((r = getline l < bs) > 0) C[l] = 1; if (r < 0) exit 2
                                                            while ((r = getline l < bm) > 0) C[l] = 1; if (r < 0) exit 2 }
@@ -1726,9 +1561,7 @@ listing() {
     && mv "$2.tmp" "$2" || { rm -f "$2.tmp"; return 2; }
 }
 # <commit> <candidate number> <revision it is compared with> -> 0, or 1 (UNC_NOTE set)
-# when a later commit where git skipped a detection deletes one of its files (where it
-# skipped copy detection, replaces one's content: moves_check lists only those, so a
-# squash that merely edits the branch's files is not one, #399 round 22's runs): that
+# when a later commit whose rename detection git skipped deletes one of its files: that
 # file may have moved, and the commit's lines would then be read in the wrong
 # place; 2 on error. Such a commit is a candidate the check cannot verify. On the
 # branch, any such deletion after the commit (its lines would look gone from the
@@ -1764,7 +1597,7 @@ unc_check() {
          END { if (e) exit 2; exit (f ? 0 : 1) }' "$SCRATCH/unc.n"; rc=$?
     [ "$rc" -le 1 ] || return 2
     if [ "$rc" -eq 0 ]; then
-      UNC_NOTE="git did not look for moves in $(short "$u") (it has so many files that what it adds times what it deletes, or for copies what it deletes, changes, renames or copies, passes 1000 x 1000), which deletes, or replaces the content of, a file $(short "$1") touched; whether that file moved cannot be told (a higher diff.renameLimit does not change this check)"
+      UNC_NOTE="git did not look for moves in $(short "$u") (it adds and deletes so many files that their product passes 1000 x 1000), which deletes a file $(short "$1") touched; whether that file moved cannot be told (a higher diff.renameLimit does not change this check)"
       return 1
     fi
   done < "$SCRATCH/unc"

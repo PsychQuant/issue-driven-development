@@ -334,8 +334,6 @@ def main():
                     help="only the cases round 21 added: PR1 not the whole first part")
     ap.add_argument("--pre-edit", action="store_true",
                     help="only the cases round 22 added: main edits a unit PR1 changed before the merge")
-    ap.add_argument("--save", help="write the helper's results to this file (pickle)")
-    ap.add_argument("--load", help="classify the results saved by --save instead of running the helper")
     args = ap.parse_args()
     all_cases = cases(args.max_len, args.pre_edit)
     if args.empty_first:
@@ -344,21 +342,9 @@ def main():
         all_cases = [c for c in all_cases if set(c[3]) != set(range(c[2]))]
     if args.sample and args.sample < len(all_cases):
         all_cases = random.Random(args.seed).sample(all_cases, args.sample)
-    import pickle
-    if args.load:
-        with open(args.load, "rb") as fh:
-            saved = pickle.load(fh)
-        if [c for c, _ in saved] != all_cases:
-            print("the saved results are for other cases")
-            return 2
-        results = [r for _, r in saved]
-    else:
-        import multiprocessing
-        with multiprocessing.Pool(args.jobs) as pool:
-            results = pool.map(run_case, all_cases, chunksize=4)
-        if args.save:
-            with open(args.save, "wb") as fh:
-                pickle.dump(list(zip(all_cases, results)), fh)
+    import multiprocessing
+    with multiprocessing.Pool(args.jobs) as pool:
+        results = pool.map(run_case, all_cases, chunksize=4)
     ok, bad, known = 0, [], {}
     for case, (rc, listed, minus, text, sides) in zip(all_cases, results):
         exp = oracle(case, minus)

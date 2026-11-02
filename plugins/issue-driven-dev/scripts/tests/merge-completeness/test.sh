@@ -136,36 +136,11 @@
 # commit of the branch taken as main's (227), commits at the tip despite a move (222, 224b),
 # no second check after a merge of main (221a), the merges newest first (228), one listing
 # for every landing commit (229), a move after the landing commit not judged (224a).
-# Round 21 (fixtures 230-237, from round 20's verify) looked for moves with -B and counted a
-# file moved out of a directory where the branch added one; round 22 undid both (round 21's
-# verify). It checked a listed commit again at the main commit each merge of main brought in
-# (232, 233, 235), which round 22 keeps; 234 pins the check of main's moves before the
-# landing commit; fixture-128's list assertion, removed by mistake in round 20, is back.
-# Round 22 (fixtures 238-248, from round 21's verify and the round's own runs; 241a, 241b and
-# 245 are red on round 21 only, 239, 240, 242-244, 246, 247 and 248 on rounds 20 and 21; 238 pins that a skip in copy
-# detection leaves the renames found, which round 21's -B lost for files over 400 bytes; 231 now
-# asserts the squash's file-location conflict, and fixtures 222, 231 and 238-247 check the
-# exit-4 reason with rc_why): renames from -M as in round 20, copies from -C run only on a
-# commit that adds a file and changes one and counted only when that commit replaced the
-# original's content (186 and 210 went to exit 4 without that), a move onto a name that exists from the blobs,
-# renames inside the branch's merges, the directory rule only for a directory taken away
-# (walking up as merge-ort does) and kept out of P0, git's skip counted with its own sources,
-# P0 not taken past a commit git did not look in, and the Update-branch check where the
-# branch up to the merge landed too. Mutants of round 22 (and those of rounds 20 and 21 that
-# still apply) caught: a move counted by its old name only (237), P0 over the candidates' paths
-# only (226), a branch move taken as main's (227), no check of main's moves before the landing
-# commit (230), commits at the tip despite a move (222), no second check after a merge of main
-# (221a), the landing commit's listing not keyed by it (229), a move after the landing commit
-# not judged (224a), no copy detection (230), no move onto a name that exists (230b), no renames
-# inside the branch's merges (243), the directory rule without the directory gone (241b) or on
-# the moved file's directory only (242), copy detection's skip counted like rename detection's
-# (238a), P0 despite a commit git did not look in (246), no check where the branch up to the
-# merge landed (245), none at the merged main commit (232), copy detection run with -C -M (230),
-# a merge's move taken as main's (248), every copy counting (210), every file a commit too wide
-# for copy detection changed counting (186). Unpinned: the first of the two second checks
-# deciding alone when it fails (a commit not in place where the branch up to the merge landed
-# but in place at the merged main commit), the directory rule's names in P0, no check of git's
-# warning of a skip (the count matches git's own wherever a fixture can reach).
+# Rounds 21 and 22 looked for shims, moves onto existing names, copies and renamed directories;
+# each regressed histories without moves, and the maintainer decided on 2026-11-02 to read those
+# by path as known limits: fixtures 230, 230b, 231, 237, 239, 240 and 242 pin the limits, 241 and
+# 247 that no such move counts. 243, 244 and 248 pin renames inside the branch's merges; 232,
+# 233, 235 and 245 the two Update-branch checks; rc_why checks the exit-4 reason.
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -302,8 +277,8 @@ rc_why() { # repo branch baseline
   out="$("${BASH:-bash}" "$HELPER" --repo "$1" --branch "$2" --baseline "$3" 2>&1 >/dev/null)"; rc=$?
   if [ "$rc" -ne 4 ]; then echo "$rc"; return; fi
   case "$out" in
-    *"was moved or copied (in "*) echo "4 moved" ;;
-    *"git did not look for moves"*|*"git skipped looking for moves"*) echo "4 unc" ;;
+    *"was moved or renamed (in "*) echo "4 moved" ;;
+    *"git did not look for moves"*) echo "4 unc" ;;
     *) echo "4 other" ;;
   esac
 }
@@ -3801,7 +3776,7 @@ git -C "$R" checkout -q main; git -C "$R" mv m222.txt moved222.txt; git -C "$R" 
 git -C "$R" merge -q --squash feat > /dev/null 2>&1; git -C "$R" commit -qm "squash"
 E222="$("${BASH:-bash}" "$HELPER" --repo "$R" --branch feat --baseline main 2>&1 >/dev/null; echo "rc=$?")"
 assert_exit "fixture-222 main moved the branch's file before the squash -> exit 4" 0 \
-  "$(printf '%s\n' "$E222" | grep -q '^rc=4$' && printf '%s\n' "$E222" | grep -q 'moved or copied (in [0-9a-f]*)' \
+  "$(printf '%s\n' "$E222" | grep -q '^rc=4$' && printf '%s\n' "$E222" | grep -q 'moved or renamed (in [0-9a-f]*)' \
      && ! printf '%s\n' "$E222" | grep -q 'm222'; echo $?)"
 rm -rf "$R"
 
@@ -3916,12 +3891,12 @@ mk230() { # repo -> base a230.txt with def f1..f20, feat c1 deletes def f7
 }
 R="$(mk_repo)"; mk230 "$R"; mkdir "$R/lib"; git -C "$R" mv a230.txt lib/a230.txt
 printf 'from lib.a230 import *\n' > "$R/a230.txt"; git -C "$R" add -A && git -C "$R" commit -qm "main: move to lib/, shim at the old name"
-assert_exit "fixture-230 main moves the file and leaves a shim in one commit -> exit 4 (a move)" 4 "$(run_helper "$R" feat main)"
+assert_exit "fixture-230 known limit: main moves the file and leaves a shim -> read by path, clean" 0 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 # 230b: the same deletion; main moves the file onto a name that exists (git mv -f)
 R="$(mk_repo)"; printf 'other\n' > "$R/b230.txt"; git -C "$R" add -A && git -C "$R" commit -qm b230; mk230 "$R"
 git -C "$R" mv -f a230.txt b230.txt && git -C "$R" commit -qm "main: move onto b230.txt"
-assert_exit "fixture-230b main moves the file onto a name that exists -> exit 4 (a move)" 4 "$(run_helper "$R" feat main)"
+assert_exit "fixture-230b known limit: main moves the file onto a name that exists -> read by path, clean" 0 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 # 231: found by round 20's verify (devil's advocate). c1 adds d231/new.txt and c2 edits it;
@@ -3940,7 +3915,7 @@ assert_exit "fixture-231 the squash stops on git's file-location conflict" 0 \
   "$([ "$RC231" -ne 0 ] && printf '%s\n' "$M231" | grep -q 'CONFLICT (file location)'; echo $?)"
 git -C "$R" add -A > /dev/null 2>&1; git -C "$R" commit -qm "squash" > /dev/null 2>&1
 assert_exit "fixture-231 accepting git's suggestion put the new file in the renamed directory" 0 "$([ -f "$R/e231/new.txt" ]; echo $?)"
-assert_exit "fixture-231 main took away the directory the branch added a file to -> exit 4 (a move)" "4 moved" "$(rc_why "$R" feat main)"
+assert_exit "fixture-231 known limit: main renamed the directory the branch added a file to -> listed by path" 3 "$(rc_why "$R" feat main)"
 rm -rf "$R"
 
 # 232: found by round 20's verify (logic, regression). The usual GitHub order: PR1 squashes
@@ -4035,42 +4010,10 @@ R="$(mk_repo)"; for i in $(seq 1 20); do printf 'def a%d():\n    return %d\n' "$
 for i in $(seq 1 20); do printf 'def x%d():\n    return %d\n' "$i" "$((i + 100))"; done > "$R/x237.txt"; git -C "$R" add -A && git -C "$R" commit -qm a237
 git -C "$R" checkout -q -b feat; git -C "$R" rm -q a237.txt && git -C "$R" commit -qm "c1: drop a237 (never landed)"
 git -C "$R" checkout -q main; git -C "$R" mv -f x237.txt a237.txt && git -C "$R" commit -qm "main: x237 onto a237"
-assert_exit "fixture-237 main moves another file onto a path the branch deleted -> exit 4 (a move)" 4 "$(run_helper "$R" feat main)"
+assert_exit "fixture-237 known limit: another file moved onto a path the branch deleted -> the deletion listed" 3 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
 # ── Round 22: the shapes round 21's verify found ──
-
-# 238: found by round 21's verify (requirements, logic, security, regression). One main commit
-# moves m238.txt with a one-line edit, changes 1000 other files and adds 1001: git skips copy
-# detection there (the sources include every changed file), not rename detection. c1 edits
-# the moved file: (a) squashed after the move (merge-ort carries the line), (b) a deletion
-# that never lands. The rename counts -> exit 4 (round 21's -B lost such a rename when the
-# rewritten files were over 400 bytes: 3 and 0 in the reviewers' repro).
-mk238() { # repo
-  local i
-  seq 1 40 > "$1/m238.txt"; mkdir "$1/g238" "$1/h238"
-  for i in $(seq 1000 1999); do printf 'g%s\n1\n2\n' "$i" > "$1/g238/f$i.txt"; done
-  git -C "$1" add -A && git -C "$1" commit -qm b238
-}
-mv238() { # repo: the wide main commit
-  local i
-  for i in $(seq 1000 1999); do printf 'g%s\nx\ny\n' "$i" > "$1/g238/f$i.txt"; done
-  for i in $(seq 1000 2000); do printf 'h%s\n' "$i" > "$1/h238/n$i.txt"; done
-  git -C "$1" mv m238.txt n238.txt; sed 's/^40$/forty/' "$1/n238.txt" > "$1/t" && mv "$1/t" "$1/n238.txt"
-  git -C "$1" add -A && git -C "$1" commit -qm "main: move m238, change 1000, add 1001"
-}
-R="$(mk_repo)"; mk238 "$R"
-git -C "$R" checkout -q -b feat; sed 's/^5$/five/' "$R/m238.txt" > "$R/t" && mv "$R/t" "$R/m238.txt"; git -C "$R" commit -qam "c1: five"
-git -C "$R" checkout -q main; mv238 "$R"
-git -C "$R" merge -q --squash feat > /dev/null 2>&1; git -C "$R" commit -qm "squash" > /dev/null 2>&1
-assert_exit "fixture-238a the squash carried c1's line to the moved file" 0 "$(grep -qx five "$R/n238.txt"; echo $?)"
-assert_exit "fixture-238a a move in a commit where git skipped copy detection -> exit 4 (a move)" "4 moved" "$(rc_why "$R" feat main)"
-rm -rf "$R"
-R="$(mk_repo)"; mk238 "$R"
-git -C "$R" checkout -q -b feat; grep -vx 7 "$R/m238.txt" > "$R/t" && mv "$R/t" "$R/m238.txt"; git -C "$R" commit -qam "c1: drop 7 (never landed)"
-git -C "$R" checkout -q main; mv238 "$R"
-assert_exit "fixture-238b the same move, c1's deletion never landed -> exit 4 (a move)" "4 moved" "$(rc_why "$R" feat main)"
-rm -rf "$R"
 
 # 239: found by round 21's verify (requirements). Fixture 230 with a file under 400 bytes
 # (git's -B never breaks so small a rewrite): main moves a239.py to lib239/ and puts a
@@ -4085,11 +4028,11 @@ mk239() { # repo -> a239.py with 8 small defs; feat c1 deletes def f7; back on m
   printf 'from lib239.a239 import *\n' > "$1/a239.py"
 }
 R="$(mk_repo)"; mk239 "$R"; git -C "$R" add -A && git -C "$R" commit -qm "main: move a239 to lib239/, shim at the old name"
-assert_exit "fixture-239a a small file moved, a shim at its old name -> exit 4 (a move)" "4 moved" "$(rc_why "$R" feat main)"
+assert_exit "fixture-239a known limit: a small file moved, a shim at its old name -> clean" 0 "$(rc_why "$R" feat main)"
 rm -rf "$R"
 R="$(mk_repo)"; mk239 "$R"; sed 's/return 1$/return 100/' "$R/lib239/a239.py" > "$R/t" && mv "$R/t" "$R/lib239/a239.py"
 git -C "$R" add -A && git -C "$R" commit -qm "main: move a239 (edited) to lib239/, shim at the old name"
-assert_exit "fixture-239b the same, the moved file edited in that commit -> exit 4 (a move)" "4 moved" "$(rc_why "$R" feat main)"
+assert_exit "fixture-239b known limit: the same, the moved file edited -> clean" 0 "$(rc_why "$R" feat main)"
 rm -rf "$R"
 
 # 240: found by round 21's verify (logic). A small file moved onto a name that exists (git mv
@@ -4098,7 +4041,7 @@ rm -rf "$R"
 R="$(mk_repo)"; seq 1 10 > "$R/a240.txt"; printf 'other\n' > "$R/b240.txt"; git -C "$R" add -A && git -C "$R" commit -qm a240
 git -C "$R" checkout -q -b feat; grep -vx 7 "$R/a240.txt" > "$R/t" && mv "$R/t" "$R/a240.txt"; git -C "$R" commit -qam "c1: drop 7 (never landed)"
 git -C "$R" checkout -q main; git -C "$R" mv -f a240.txt b240.txt && git -C "$R" commit -qm "main: a240 onto b240"
-assert_exit "fixture-240 a small file moved onto a name that exists -> exit 4 (a move)" "4 moved" "$(rc_why "$R" feat main)"
+assert_exit "fixture-240 known limit: a small file moved onto a name that exists -> clean" 0 "$(rc_why "$R" feat main)"
 rm -rf "$R"
 
 # 241: found by round 21's verify (logic, requirements, regression). The branch adds a file
@@ -4136,7 +4079,7 @@ printf 'n1\nn2\n' > "$R/d242/new.txt"; git -C "$R" commit -qam "c2: n2"
 git -C "$R" checkout -q main; git -C "$R" mv d242 e242 && git -C "$R" commit -qm "main: d242 -> e242"
 LC_ALL=C git -C "$R" merge -q --squash feat > /dev/null 2>&1; git -C "$R" add -A > /dev/null 2>&1; git -C "$R" commit -qm "squash" > /dev/null 2>&1
 assert_exit "fixture-242 the squash put the new file in the renamed directory" 0 "$([ -f "$R/e242/new.txt" ]; echo $?)"
-assert_exit "fixture-242 main renamed a directory holding the one the branch added to -> exit 4 (a move)" "4 moved" "$(rc_why "$R" feat main)"
+assert_exit "fixture-242 known limit: main renamed the parent directory -> listed by path" 3 "$(rc_why "$R" feat main)"
 rm -rf "$R"
 
 # 243, 244: found by round 21's verify (logic). Update branch after main renamed a directory
@@ -4186,24 +4129,6 @@ git -C "$R" merge -q --squash feat > /dev/null 2>&1; git -C "$R" commit -qm "PR2
 assert_exit "fixture-245 main edited c1's line before Update branch, the merge kept the branch's side -> NOT flagged" 0 "$(rc_why "$R" feat main)"
 rm -rf "$R"
 
-# 246: found by round 21's verify (devil's advocate). main renames 1001 files and edits each
-# one's first line in one commit, so `git log -M` skips rename detection there; the branch
-# merges main (merge-ort's limit is higher, so c1's edit of d1.js is carried to d1.ts); c1
-# never lands. The shortcut compared the old name only and gave 0 (rounds 19 to 21); a
-# commit git did not look in deleted a file c1 touched -> no shortcut, exit 4.
-R="$(mk_repo)"; mkdir "$R/js246"
-for i in $(seq 1 1001); do printf 'first %s\n2\n3\n4\n5\n6\n7\n%s\n' "$i" "$i" > "$R/js246/d$i.js"; done
-git -C "$R" add -A && git -C "$R" commit -qm js246
-git -C "$R" checkout -q -b feat; sed 's/^5$/five/' "$R/js246/d1.js" > "$R/t" && mv "$R/t" "$R/js246/d1.js"; git -C "$R" commit -qam "c1: five"
-git -C "$R" checkout -q main
-for i in $(seq 1 1001); do git -C "$R" mv "js246/d$i.js" "js246/d$i.ts"; sed 's/^first /FIRST /' "$R/js246/d$i.ts" > "$R/t" && mv "$R/t" "$R/js246/d$i.ts"; done
-git -C "$R" add -A && git -C "$R" commit -qm "main: js -> ts"
-git -C "$R" checkout -q feat; git -C "$R" merge -q --no-edit main > /dev/null 2>&1
-assert_exit "fixture-246 the merge carried c1's line to d1.ts" 0 "$(grep -qx five "$R/js246/d1.ts"; echo $?)"
-git -C "$R" checkout -q main
-assert_exit "fixture-246 git did not look for moves, the merge carried c1, c1 never landed -> exit 4 (git did not look)" "4 unc" "$(rc_why "$R" feat main)"
-rm -rf "$R"
-
 # 247: the branch splits a file: c1 copies u247.py to h247.py and turns u247.py into a shim;
 # c2 edits h247.py; a full squash, then main edits h247.py. Copy detection pairs the copy
 # with the file its commit changed: a file the branch touched was copied -> exit 4 (the
@@ -4214,7 +4139,7 @@ git -C "$R" checkout -q -b feat; cp "$R/u247.py" "$R/h247.py"; printf 'from h247
 sed 's/return 3$/return 30/' "$R/h247.py" > "$R/t" && mv "$R/t" "$R/h247.py"; git -C "$R" commit -qam "c2: 30"
 git -C "$R" checkout -q main; git -C "$R" merge -q --squash feat > /dev/null 2>&1; git -C "$R" commit -qm "squash"
 sed 's/return 30$/return 300/' "$R/h247.py" > "$R/t" && mv "$R/t" "$R/h247.py"; git -C "$R" commit -qam "follow-up: 300"
-assert_exit "fixture-247 the branch copied a file and turned the original into a shim -> exit 4 (a copy)" "4 moved" "$(rc_why "$R" feat main)"
+assert_exit "fixture-247 the branch copied a file and turned the original into a shim, squashed -> NOT flagged" 0 "$(rc_why "$R" feat main)"
 rm -rf "$R"
 
 # 248: the branch's merge of main moves the branch's file (the author renamed it while resolving
