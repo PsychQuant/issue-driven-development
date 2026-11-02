@@ -227,7 +227,7 @@ copy is an effect too. A file is its path: "a path" is whatever file is at that 
 | 131 | Row 118 with a first PR that left a line of the first part out | all | 0: the commit the first PR took whole is in place there | 233 |
 | 132 | Main moves the branch's file away and back before the squash; follow-up | all | 4: a move of main's before the landing commit counts | 234 |
 | 133 | A first PR without the commit, a merge of main, main's own hotfix with the commit's line, a second merge, main's edit, a second PR (a squash of the whole branch) | all (the second PR brings the commit) | 0: in place at the second merged main commit | 235 |
-| 134 | Main renames a file inside the directory the branch added a file to; squash; follow-up | all | 0: a move inside one directory carries nothing along, so none counts | 236 |
+| 134 | Main renames a file inside the directory the branch added a file to; squash; follow-up | all | 0: neither name of that move is a path the branch touched | 236 |
 | 135 | A deletion that never landed; main moves another file onto that path | ∅ | 3: the deletion is listed by path (known limit) | 237 |
 | 137 | Row 128's shim with a small file; also with the moved file edited | ∅ | 0 by path: known limit | 239a, 239b |
 | 138 | Row 128's move onto a name that exists, with a small file | ∅ | 0 by path: known limit | 240 |
@@ -237,6 +237,7 @@ copy is an effect too. A file is its path: "a path" is whatever file is at that 
 | 142 | Row 118 where main edits the first PR's line before Update branch, and the merge keeps the branch's side | all | 0: in place where the branch up to the merge landed (round 21: listed) | 245 |
 | 144 | The branch copies a file and turns the original into a shim; full squash; follow-up | all | 0: a copy is read by path | 247 |
 | 145 | The branch's merge of main renames the branch's file (main moved nothing); the PR lands whole; follow-up | all | 4: the merge's move is the branch's (round 20: 0) | 248 |
+| 146 | A commit sets a line back to its merge-base value and never lands; a merge of main; a later commit lands | all but it | 3: being in place at the merged main commit says nothing about it | 249a, 249b |
 
 ## The small world (`bounded.py`)
 
@@ -900,8 +901,8 @@ How the numbers got here:
   called merge-tree since round 12.
 - Not covered by the world: branches longer than 3 (and length 3 only by sampling), more than
   one file with lines, merge commits on the branch other than `bounded_sync.py`'s one merge of
-  main between two PRs, renames (exit 4 since round 20; fixtures 221–248 and the rename fuzzers
-  check that no move gets a wrong 0 or 3) and repeated blocks (fixtures 103–220), and the 200-check and 20-commit limits (fixtures 12, 60 and
+  main between two PRs, renames (exit 4 since round 20; fixtures 221–250 and the rename fuzzers
+  check the moves that count; the known limits are pinned at their by-path answers) and repeated blocks (fixtures 103–220), and the 200-check and 20-commit limits (fixtures 12, 60 and
   127). Adjacent slots holding the same text are not in the results: there even the positions
   are ambiguous in the text, and no check that reads text can tell which slot a line belongs
   to. The model tracks each line by its slot; the helper sees text and positions, so equal

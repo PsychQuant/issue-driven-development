@@ -9,14 +9,13 @@
 #
 #   exit 0 = clean (no genuine orphan)
 #   exit 3 = genuine orphan(s) found
-#   exit 4 = skip: could not verify (a file the branch touched, or a directory it
-#            added a file to, was moved or copied, SPEC.md's "Moves"; unresolvable
+#   exit 4 = skip: could not verify (a file the branch touched was moved or renamed,
+#            SPEC.md's "Moves"; unresolvable
 #            ref, a git or awk failure outside the landing step, an unreadable object,
 #            a checked commit touching a path with a newline in its name, a partial
 #            clone with git older than 2.45 or one whose missing blobs a check needs, a
-#            file a candidate touched deleted (for copies, its content replaced) later in a commit
-#            where git skipped its detection, a skip git warns of that the count cannot
-#            place); never clean, never a block
+#            file a candidate touched deleted later in a commit
+#            where git skipped its detection); never clean, never a block
 #
 # Defenses no fixture pins (removing one still passes the suite; only these, checked
 # by mutating each in rounds 13 and 14): the --literal-pathspecs and --full-tree flags,
@@ -3877,6 +3876,7 @@ rm -rf "$R"
 
 # ── Round 21: the shapes round 20's verify found ──
 
+# (Since 2026-11-02 read by path, whatever "exit 4" below says: rounds 21-22's rule is gone.)
 # 230: found by round 20's verify (devil's advocate). c1 deletes `def f7`; in one commit main
 # moves the file to lib/ and puts a shim at its old name (git reports an edit of the old name
 # and an addition, unless it breaks the rewrite); nothing of the branch landed, and main's
@@ -3899,6 +3899,7 @@ git -C "$R" mv -f a230.txt b230.txt && git -C "$R" commit -qm "main: move onto b
 assert_exit "fixture-230b known limit: main moves the file onto a name that exists -> read by path, clean" 0 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
+# (Since 2026-11-02 read by path, whatever "exit 4" below says: rounds 21-22's rule is gone.)
 # 231: found by round 20's verify (devil's advocate). c1 adds d231/new.txt and c2 edits it;
 # main renames the directory d231/ to e231/ and squashes the branch. The squash stops on
 # git's file-location conflict (merge.directoryRenames defaults to "conflict"; round 21's
@@ -4001,6 +4002,7 @@ printf 'n1\nn2 follow-up\n' > "$R/d236/new.txt"; git -C "$R" commit -qam "follow
 assert_exit "fixture-236 main renames a file inside the directory the branch added to -> NOT flagged" 0 "$(run_helper "$R" feat main)"
 rm -rf "$R"
 
+# (Since 2026-11-02 read by path, whatever "exit 4" below says: rounds 21-22's rule is gone.)
 # 237: a move counts by its new name too: c1 deletes a237.txt (never landed); main moves
 # x237.txt onto a237.txt (git mv -f). Read by path the deletion never landed (exit 3); the
 # move's new name is a path the branch touched -> exit 4.
@@ -4015,6 +4017,7 @@ rm -rf "$R"
 
 # ── Round 22: the shapes round 21's verify found ──
 
+# (Since 2026-11-02 read by path, whatever "exit 4" below says: rounds 21-22's rule is gone.)
 # 239: found by round 21's verify (requirements). Fixture 230 with a file under 400 bytes
 # (git's -B never breaks so small a rewrite): main moves a239.py to lib239/ and puts a
 # one-line shim at its old name. Copy detection pairs the moved file with the file its
@@ -4035,6 +4038,7 @@ git -C "$R" add -A && git -C "$R" commit -qm "main: move a239 (edited) to lib239
 assert_exit "fixture-239b known limit: the same, the moved file edited -> clean" 0 "$(rc_why "$R" feat main)"
 rm -rf "$R"
 
+# (Since 2026-11-02 read by path, whatever "exit 4" below says: rounds 21-22's rule is gone.)
 # 240: found by round 21's verify (logic). A small file moved onto a name that exists (git mv
 # -f): the commit deletes a240.txt and turns b240.txt into exactly its content. git pairs
 # neither, in any mode; the check pairs them by content -> exit 4 (round 21: 0).
@@ -4069,6 +4073,7 @@ assert_exit "fixture-241b lists c2" 0 "$(has "$OUT241" 'c2: app 2')"
 assert_exit "fixture-241b does not list c1" 1 "$(has "$OUT241" 'c1: docs241/new.md')"
 rm -rf "$R"
 
+# (Since 2026-11-02 read by path, whatever "exit 4" below says: rounds 21-22's rule is gone.)
 # 242: found by round 21's verify (requirements, logic, Codex). The renamed directory holds
 # only a subdirectory: `git mv d242 e242` moves d242/a/x.txt to e242/a/x.txt, and the branch
 # added d242/new.txt. merge-ort derives d242 -> e242 as well (the paths end alike) and, its
@@ -4129,6 +4134,7 @@ git -C "$R" merge -q --squash feat > /dev/null 2>&1; git -C "$R" commit -qm "PR2
 assert_exit "fixture-245 main edited c1's line before Update branch, the merge kept the branch's side -> NOT flagged" 0 "$(rc_why "$R" feat main)"
 rm -rf "$R"
 
+# (Since 2026-11-02 read by path, whatever "exit 4" below says: rounds 21-22's rule is gone.)
 # 247: the branch splits a file: c1 copies u247.py to h247.py and turns u247.py into a shim;
 # c2 edits h247.py; a full squash, then main edits h247.py. Copy detection pairs the copy
 # with the file its commit changed: a file the branch touched was copied -> exit 4 (the
@@ -4157,6 +4163,35 @@ git -C "$R" checkout -q main; git -C "$R" merge -q --squash feat > /dev/null 2>&
 printf 'n1\nn2\nfollow-up\n' > "$R/g248.txt"; git -C "$R" commit -qam "follow-up"
 assert_exit "fixture-248 the merge on the branch moved the file" 0 "$(git -C "$R" cat-file -e feat:g248.txt 2>/dev/null && ! git -C "$R" cat-file -e feat:f248.txt 2>/dev/null; echo $?)"
 assert_exit "fixture-248 the branch's merge moved its file, squash, follow-up -> exit 4 (a move)" "4 moved" "$(rc_why "$R" feat main)"
+rm -rf "$R"
+
+# 249: found by round 23's verify (devil's advocate). A commit that sets a line back to its
+# merge-base value never lands; the branch merges main in between. (a) c0 adds DEBUG, c1 removes
+# it; the squash has DEBUG. (b) c0 deletes a line, c1 restores it; the squash deletes it. The merged
+# main commit never touched the line, so its state is no evidence -> c1 listed (round 22, 23: 0).
+for v249 in a b; do
+  R="$(mk_repo)"; seq 1 30 > "$R/n249.txt"; printf 'o\n' > "$R/o249.txt"; git -C "$R" add -A && git -C "$R" commit -qm n249
+  git -C "$R" checkout -q -b feat; cp "$R/n249.txt" "$R/base249"
+  if [ "$v249" = a ]; then sed 's/^10$/10\nDEBUG/' "$R/base249" > "$R/n249.txt"; else grep -vx 10 "$R/base249" > "$R/n249.txt"; fi
+  cp "$R/n249.txt" "$R/mid249"; git -C "$R" add n249.txt; git -C "$R" commit -qm "c0"
+  cp "$R/base249" "$R/n249.txt"; git -C "$R" add n249.txt; git -C "$R" commit -qm "c1: back"
+  git -C "$R" checkout -q main; printf 'o2\n' > "$R/o249.txt"; git -C "$R" add o249.txt; git -C "$R" commit -qm "main: o"
+  git -C "$R" checkout -q feat; git -C "$R" merge -q --no-edit main > /dev/null 2>&1
+  sed 's/^25$/twentyfive/' "$R/n249.txt" > "$R/t" && mv "$R/t" "$R/n249.txt"; git -C "$R" add n249.txt; git -C "$R" commit -qm "c2"
+  git -C "$R" checkout -q main; sed 's/^25$/twentyfive/' "$R/mid249" > "$R/n249.txt"; git -C "$R" add n249.txt; git -C "$R" commit -qm "squash without c1"
+  OUT249=$(out_of "$R" feat main); RC249=$?
+  assert_exit "fixture-249$v249 a commit back to the merge-base value never landed, a merge of main -> flagged" 3 "$RC249"
+  assert_exit "fixture-249$v249 lists c1" 0 "$(has "$OUT249" 'c1: back')"
+  rm -rf "$R"
+done
+
+# 250: found by round 23's verify (Codex). A path with a newline that differs between head and
+# tip does not split into a name a candidate touched: P0 still holds -> 0.
+R="$(mk_repo)"; seq 1 5 > "$R/f250.txt"; printf 'g\n' > "$R/g250.txt"; git -C "$R" add -A && git -C "$R" commit -qm f250
+git -C "$R" checkout -q -b feat; printf 'x\n' >> "$R/f250.txt"; git -C "$R" commit -qam c1; printf 'g2\n' > "$R/g250.txt"; git -C "$R" commit -qam c2
+git -C "$R" checkout -q main; git -C "$R" merge -q --squash feat > /dev/null 2>&1; printf 'n\n' > "$R/other
+f250.txt"; git -C "$R" add -A; git -C "$R" commit -qm squash
+assert_exit "fixture-250 an unrelated path with a newline ending in a candidate's name -> P0 still holds" 0 "$(rc_why "$R" feat main)"
 rm -rf "$R"
 
 print_summary

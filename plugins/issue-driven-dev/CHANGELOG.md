@@ -81,7 +81,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the check runs as usual; otherwise the helper exits 4 with "a file the branch touched was moved or renamed (in
     <commit>)", which idd-close prints as a note and goes on. Known limits, read by path, which can give a false clean
     or a false listing: a copy; a file moved with another put at its old name, or onto a name that exists; a directory
-    main renamed under a file the branch added; a move and rewrite in one commit; a move over two commits.
+    main renamed under a file the branch added; a move and rewrite in one commit; a move over two commits; a move inside a merge off the
+    branch's first-parent line.
   - **No merges.** Every comparison is a two-way `git diff` with every setting that shapes its output fixed on
     the command line (no context lines between hunks, `GIT_DIFF_OPTS` unset, no external diff, no textconv,
     `--text`, no rename detection, myers with the

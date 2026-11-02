@@ -410,7 +410,8 @@ PATHS_MAX=65536
 # and exit 4 otherwise. Everything else is read by path (known limits, SPEC.md "Moves"): a
 # copy; a file moved with another put at its old name; a file moved onto a name that exists;
 # a directory main renamed under a file the branch added; a file moved and rewritten by more
-# than half in one commit; a move over two commits.
+# than half in one commit; a move over two commits; a move inside a merge off the branch's
+# first-parent line.
 #   - A commit whose added times deleted files exceed 1000 x 1000 had rename detection
 #     skipped: a file it deleted may have moved. That matters only when it deletes a file an
 #     earlier candidate touched; such a candidate cannot be verified (exit 4), the one exit 4
@@ -745,7 +746,7 @@ for sha in $CANDIDATES; do
 done
 has_lf "$SCRATCH/cand.z"; rc=$?
 if [ "$rc" -eq 1 ]; then
-  tr '\000' '\n' < "$SCRATCH/headtip.z" > "$SCRATCH/headtip" \
+  tr '\n\000' '\001\n' < "$SCRATCH/headtip.z" > "$SCRATCH/headtip" \
     && tr '\000' '\n' < "$SCRATCH/cand.z" > "$SCRATCH/cand" || skip "cannot read the paths the branch touched"
   # With a move that counts: both names of every such move too (the head and
   # the tip then hold the same thing at every name a candidate's file can have, whichever
@@ -1650,6 +1651,10 @@ sync_retry() { # <commit> <candidate number> -> 11 in place at one of those comm
       case $rc in 11) return 11 ;; 10) ;; *) return "$rc" ;; esac
     fi
     mb="$(GIT merge-base "$p2" "$c" 2>/dev/null)" || continue
+    # already in place at that merge-base (a commit that sets a line back to its value there):
+    # p2 holding it says nothing about the commit (#399 verify round 23)
+    sync_at "$c" "$2" "$mb" "$mb" "$p1"; rc=$?
+    case $rc in 11) continue ;; 10) ;; *) return "$rc" ;; esac
     sync_at "$c" "$2" "$p2" "$mb" "$p1"; rc=$?
     case $rc in 11) return 11 ;; 10) ;; *) return "$rc" ;; esac
   done 9< "$SCRATCH/syncs"
