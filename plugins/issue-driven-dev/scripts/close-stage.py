@@ -43,26 +43,31 @@ stage. Nothing here asks a person; a stop is reported, not negotiated.
 
 Test seams (honoured only when IDD_CLOSE_STAGE_TEST=1): IDD_GH / IDD_GIT name
 the gh and git executables; IDD_SLEEP=0 makes the wait loops not sleep.
+
+Modules (scripts/lib/): ghread.py reads GitHub and git and fails closed;
+intent.py decides whether the intent was confirmed and whether anyone else got
+involved; workflows.py decides whether a push to the default branch publishes;
+rendered.py reads GitHub's rendering of a comment, shared with verify-gate.py.
 """
 
-import calendar
 import json
 import math
 import os
 import re
-import subprocess
 import sys
 import tempfile
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-TEST = os.environ.get("IDD_CLOSE_STAGE_TEST") == "1"
-GH = os.environ.get("IDD_GH", "gh") if TEST else "gh"
-GIT = os.environ.get("IDD_GIT", "git") if TEST else "git"
-SLEEP = 0 if (TEST and os.environ.get("IDD_SLEEP") == "0") else 1
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.join(HERE, "lib"))
+import workflows  # noqa: E402  scripts/lib/workflows.py — does a push to the default branch publish?
+from ghread import (GH, GIT, SLEEP, TEST, Stop, gh_json, git, issue_comments, issue_view, iso, now,  # noqa: E402
+                    gh_paginated, parse_iso, run_cmd, session_login, ts, first_line)
+from intent import (check_intent, check_issue_authors, check_meeting, check_others,  # noqa: E402
+                    check_pr_people, issue_meta)
+
 WRITE_PERMS = {"WRITE", "MAINTAIN", "ADMIN"}
-WRITE_ROLES = {"admin", "maintain", "write"}
-TRUSTED = {"OWNER", "MEMBER", "COLLABORATOR"}
 STATE_TTL = 24 * 3600
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -75,83 +80,6 @@ TRAP_RE = re.compile(
     r"(#\d+|[\w.-]+/[\w.-]+#\d+|https?://github\.com/[\w.-]+/[\w.-]+/(?:issues|pull)/\d+)",
     re.IGNORECASE,
 )
-# Steps that publish when a workflow runs on a push to the default branch. A
-# merge into such a branch is a release, not the reversible action this stage
-# assumes (#392 verify r2 #8). Heuristic, and deliberately one-sided: a hit stops.
-RELEASE_MARKERS = ("gh release", "action-gh-release", "create-release", "npm publish", "semantic-release",
-                   "goreleaser", "gh-action-pypi-publish", "twine upload", "cargo publish", "docker push",
-                   "vsce publish", "release-please", "changesets/action", "deploy-pages", "vercel", "netlify",
-                   "wrangler", "firebase deploy", "kubectl apply", "aws s3 sync", "gh-pages")
-# Reason literals of the structured records an unattended run leaves when it
-# takes a decision a person would otherwise confirm (rules/append-vs-modify.md
-# § Reason pattern registry). Matched only as a record's `- **Reason**:` line in
-# the latest Diagnosis, outside code fences, so prose that names them does not count.
-INTENT_SKIP_REASONS = ("unattended-auto-Step-3.4-layerV-deferred", "unattended-auto-Step-4-choice-default")
-# Tiers whose plan or design a person approves in an attended run; an unattended
-# run implements them without that approval (idd-all dispatch table).
-APPROVED_TIERS = ("Plan", "Spectra", "SDD-warranted")
-
-
-class Stop(Exception):
-    """A guardrail did not pass; the message is the reason, reported verbatim."""
-
-
-def now():
-    return time.time()
-
-
-def iso(ts):
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts))
-
-
-def parse_iso(text):
-    return calendar.timegm(time.strptime(text, "%Y-%m-%dT%H:%M:%SZ"))
-
-
-def run_cmd(cmd, cwd=None):
-    try:
-        proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace")
-    except OSError as exc:
-        raise Stop(f"could not run {cmd[0]}: {exc.strerror or exc}")
-    return proc.returncode, proc.stdout, proc.stderr
-
-
-def gh_json(args, what):
-    rc, out, err = run_cmd([GH] + args)
-    if rc != 0:
-        raise Stop(f"could not read {what}: {err.strip()[:300] or 'gh exited ' + str(rc)}")
-    try:
-        return json.loads(out)
-    except ValueError:
-        raise Stop(f"could not read {what}: gh did not return JSON")
-
-
-def gh_paginated(path, jq, what, accept=None):
-    cmd = [GH, "api", path] + (["-H", f"Accept: {accept}"] if accept else []) + ["--paginate", "--jq", jq]
-    rc, out, err = run_cmd(cmd)
-    if rc != 0:
-        raise Stop(f"could not read {what}: {err.strip()[:300] or 'gh exited ' + str(rc)}")
-    items, dec, i = [], json.JSONDecoder(), 0
-    out = out.strip()
-    try:
-        while i < len(out):
-            page, j = dec.raw_decode(out, i)
-            if not isinstance(page, list):
-                raise ValueError
-            items.extend(page)
-            i = j
-            while i < len(out) and out[i].isspace():
-                i += 1
-    except ValueError:
-        raise Stop(f"could not read {what}: gh did not return a JSON list")
-    return items
-
-
-def git(cwd, *args):
-    rc, out, err = run_cmd([GIT, "-C", cwd] + list(args))
-    if rc != 0:
-        raise Stop(f"git {args[0]} failed: {err.strip()[:300]}")
-    return out.strip()
 
 
 def state_dir(cwd):
@@ -256,38 +184,6 @@ def cmd_reset(argv):
 
 # ── gate ───────────────────────────────────────────────────────────────────
 
-def session_login():
-    rc, out, err = run_cmd([GH, "api", "user", "--jq", ".login"])
-    login = out.strip()
-    if rc != 0 or not login:
-        raise Stop("could not read the account running this session (gh api user)")
-    return login
-
-
-_WRITE_CACHE = {}
-
-
-def can_write(repo, login):
-    if login not in _WRITE_CACHE:
-        data = gh_json(["api", f"repos/{repo}/collaborators/{login}/permission"], f"the permission of {login}")
-        _WRITE_CACHE[login] = (data.get("permission") in ("admin", "write")) or (data.get("role_name") in WRITE_ROLES)
-    return _WRITE_CACHE[login]
-
-
-def issue_comments(repo, n):
-    """The issue's comments, each with GitHub's own rendering (`body_html`)."""
-    return gh_paginated(f"repos/{repo}/issues/{n}/comments",
-                        "[.[] | {id, html_url, login: .user.login, type: .user.type, assoc: .author_association, "
-                        "created_at, updated_at, body, body_html}]",
-                        f"the comments of #{n}", accept="application/vnd.github.full+json")
-
-
-def ts(value):
-    try:
-        return parse_iso(value or "")
-    except ValueError:
-        return 0
-
 
 def latest_report(n, me, since, comments):
     """The newest verify comment THIS account posted since the run began.
@@ -301,13 +197,13 @@ def latest_report(n, me, since, comments):
     than the run's state are an earlier run's (r3 #6; no slack, r4 #8).
     """
     any_verify = re.compile(r"^#{1,6}[ \t]*Verify\b")
-    found = [c for c in comments if c.get("login") == me and any_verify.match(c.get("body") or "")
+    found = [c for c in comments if c.get("login") == me and any_verify.match(first_line(c.get("body")))
              and (since is None or ts(c.get("created_at")) >= since)]
     if not found:
         return None, "none"
     newest = found[-1]
-    if not re.match(rf"^## Verify: #{n}(?![0-9])", newest.get("body") or ""):
-        return None, (newest.get("body") or "").split("\n", 1)[0][:60]
+    if not re.match(rf"^## Verify: #{n}(?![0-9])", first_line(newest.get("body"))):
+        return None, first_line(newest.get("body"))[:60]
     return newest, ""
 
 
@@ -320,6 +216,16 @@ def judge_report(repo, n, sha, base, since):
             return 2, {"status": "unparseable", "reason": f"no verify report by this account{when}"}
         return 2, {"status": "unparseable",
                    "reason": f"the newest verify comment by this account{when} is '{other}', not a '## Verify: #{n}' report"}
+    # A verdict changes only with a new verify round: a report edited after it was posted is not read (r5 #14),
+    # nor one a maintainer hid as outdated or off-topic.
+    if ts(report.get("updated_at")) != ts(report.get("created_at")):
+        return 2, {"status": "unparseable", "reason": "the verify report was edited after it was posted — run verify again"}
+    if report.get("node_id"):
+        q = "query($id:ID!){node(id:$id){... on IssueComment{isMinimized}}}"
+        node = (gh_json(["api", "graphql", "-f", f"query={q}", "-f", f"id={report['node_id']}"],
+                        "whether the verify report is hidden").get("data") or {}).get("node") or {}
+        if node.get("isMinimized"):
+            return 2, {"status": "unparseable", "reason": "the verify report is hidden on GitHub — a person set it aside"}
     html = report.get("body_html")
     if not html:
         return 2, {"status": "unparseable", "reason": "GitHub returned no rendered HTML for the verify report"}
@@ -385,179 +291,6 @@ def load_state(cwd, repo, n):
     return st
 
 
-def latest_diagnosis(comments):
-    diag = [c.get("body") or "" for c in comments
-            if c.get("assoc") in TRUSTED and re.match(r"^## Diagnosis[ \t]*(\r?\n|$)", c.get("body") or "")]
-    return diag[-1] if diag else ""
-
-
-def check_meeting(comments):
-    body = latest_diagnosis(comments)
-    rc, out, err = run_cmd(["bash", "-c", '. "$1/lib/actionability.sh" && idd_diagnosis_type "$2"', "_", HERE, body])
-    if rc != 0:
-        raise Stop("could not re-read the Diagnosis type")
-    if out.strip() == "meeting":
-        raise Stop("the latest trusted Diagnosis records type meeting — meeting issues are never merged or pushed")
-
-
-def issue_meta(repo, n):
-    """Author, body edits and comment deletions of the issue, in one GraphQL read."""
-    owner, name = repo.split("/", 1)
-    q = ("query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n)"
-         "{author{login} editor{login} userContentEdits(last:50){nodes{editedAt editor{login}}}"
-         " timelineItems(last:100,itemTypes:[COMMENT_DELETED_EVENT])"
-         "{nodes{... on CommentDeletedEvent{createdAt deletedCommentAuthor{login}}}}}}}")
-    data = gh_json(["api", "graphql", "-f", f"query={q}", "-f", f"o={owner}", "-f", f"r={name}", "-F", f"n={n}"],
-                   "the issue's author, edits and deleted comments")
-    issue = ((data.get("data") or {}).get("repository") or {}).get("issue")
-    if not isinstance(issue, dict):
-        raise Stop("could not read the issue's author, edits and deleted comments — not merging")
-    return issue
-
-
-def check_issue_authors(repo, meta):
-    """The issue's author and the last editor of its body must be able to write.
-
-    The issue text is what implement builds and verify checks against; on a
-    public repo anyone can open one, and an author can edit it after a
-    maintainer read it. Without a person merging, that text must come from
-    someone who could have pushed the change anyway (#392 verify r2 #4).
-    """
-    author = (meta.get("author") or {}).get("login")
-    editor = (meta.get("editor") or {}).get("login")
-    if not author:
-        raise Stop("could not read the issue's author — not merging")
-    for role, login in (("author", author), ("last editor", editor)):
-        if login and not can_write(repo, login):
-            raise Stop(f"the issue's {role} {login} has no write access — a person reviews and merges this one")
-
-
-def check_others(me, since, comments, meta):
-    """Nobody but this account touched the issue after the run began (#392 verify r4 #4, #48).
-
-    The run read the issue when it started; what arrives later is intent the
-    run never read: a new or edited comment (an objection, a scope change), an
-    edit to the issue text, or a comment deleted after diagnose had read it
-    (an outsider can post an instruction and delete it once the Diagnosis
-    notification arrives). Any of these means a person is involved, so the run
-    stays at verified. Bots are exempt: a repo admin installed them. This
-    account's own comments are the run's, and cannot be told apart from a
-    person typing as this account (a known limit).
-    """
-    for c in comments:
-        login = c.get("login") or "an unknown account"
-        if login == me or c.get("type") == "Bot":
-            continue
-        if ts(c.get("created_at")) >= since or ts(c.get("updated_at")) >= since:
-            raise Stop(f"{login} commented on the issue (or edited a comment) after the run started — "
-                       "intent the run never read; a person reviews and merges this one")
-    for e in ((meta.get("userContentEdits") or {}).get("nodes") or []):
-        who = (e.get("editor") or {}).get("login")
-        if who != me and ts(e.get("editedAt")) >= since:
-            raise Stop(f"{who or 'an unknown account'} edited the issue text after the run started — "
-                       "a person reviews and merges this one")
-    for d in ((meta.get("timelineItems") or {}).get("nodes") or []):
-        who = (d.get("deletedCommentAuthor") or {}).get("login")
-        if who != me and ts(d.get("createdAt")) >= since:
-            raise Stop(f"a comment by {who or 'an unknown account'} was deleted after the run started — "
-                       "the run may have read it; a person reviews and merges this one")
-
-
-def unfenced(text):
-    """Lines outside fenced code blocks (``` or ~~~), like idd-diagnose Step 0.5 reads the body."""
-    out, fence = [], None
-    for line in (text or "").splitlines():
-        m = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
-        if fence is None and m:
-            fence = (m.group(1)[0], len(m.group(1)))
-            continue
-        if fence is not None:
-            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= fence[1]:
-                fence = None
-            continue
-        out.append(line)
-    return out
-
-
-def sections(lines, heading):
-    """The lines under every heading (levels 1-3) that starts with `heading`, up to the next such heading."""
-    out, cur = [], None
-    for line in lines:
-        m = re.match(r"^(#{1,3})[ \t]+(.*)$", line)
-        if m:
-            cur = [] if m.group(2).strip().startswith(heading) else None
-            if cur is not None:
-                out.append(cur)
-            continue
-        if cur is not None:
-            cur.append(line)
-    return out
-
-
-def table_cells(line):
-    if "|" not in line:
-        return []
-    s = line.strip().strip("|")
-    return [c.strip().strip("*_`").strip() for c in s.split("|")]
-
-
-def check_intent(repo, n, st, comments, body):
-    """Merge without a person only when the intent was confirmed (#392 decision, comments 6566557673, 6567272352).
-
-    Foresay's traceable branch needs the intent to be clear AND the action
-    reversible. An unattended run takes some decisions a person would
-    otherwise confirm; each such decision either shows in the run's own
-    state (the tier it implemented unattended) or leaves a record. So:
-    - every comment comes from someone with write access (comments and their
-      attachments steer diagnose and implement);
-    - no Clarity Surface row of the issue is still surfaced or deferred (any
-      block, outside code fences; a resolved row keeps its Reason, so the
-      Status cell decides — r4 #18, #27, #30, #31);
-    - the latest Diagnosis has a tier the run could implement without a
-      person: Simple, or any tier when the run was attended (Plan and Spectra
-      ask for approval then). An unattended Plan or Spectra run implemented a
-      plan or a design nobody approved (r4 #2, #13);
-    - the latest Diagnosis carries no record of a skipped confirmation: a
-      Layer V deferral or a choice-first default (by its Reason line), or, in
-      an unattended run, Proposed Corrections it listed but did not apply
-      (r4 #20). Only the latest Diagnosis counts: an attended re-diagnosis
-      clears an old record (r4 #31).
-    """
-    for c in comments:
-        login = c.get("login") or ""
-        if not login or not can_write(repo, login):
-            raise Stop(f"a comment on the issue is by {login or 'an unknown account'}, who has no write access — "
-                       "intent not confirmed; a person reviews and merges this one")
-    for block in sections(unfenced(body), "Clarity Surface"):
-        for line in block:
-            if any(cell.lower() in ("surfaced", "deferred") for cell in table_cells(line)):
-                raise Stop("the issue's Clarity Surface has an open question (surfaced or deferred) — intent not confirmed; "
-                           "a person reviews and merges this one")
-    diag = latest_diagnosis(comments)
-    if not diag:
-        raise Stop("no trusted Diagnosis on the issue — intent not confirmed")
-    rc, out, err = run_cmd(["bash", "-c", '. "$1/lib/actionability.sh" && idd_parse_complexity "$2"', "_", HERE, diag])
-    tier = out.strip() if rc == 0 else ""
-    if not tier:
-        raise Stop("the latest Diagnosis has no readable Complexity tier — intent not confirmed")
-    unattended = st.get("interaction") != "attended"
-    if unattended and tier in APPROVED_TIERS:
-        raise Stop(f"{tier} tier implemented in an unattended run: the plan or design was not approved by a person — "
-                   "a person reviews and merges this one")
-    lines = unfenced(diag)
-    for line in lines:
-        m = re.match(r"^\s*[-*]\s*\*\*Reason\*\*\s*[:：]\s*`?([A-Za-z0-9.-]+)`?\s*$", line)
-        if m and m.group(1) in INTENT_SKIP_REASONS:
-            raise Stop(f"the latest Diagnosis records a skipped confirmation ({m.group(1)}) — "
-                       "a person reviews and merges this one")
-    if unattended:
-        for block in sections(lines, "Proposed Corrections"):
-            rows = [l for l in block if table_cells(l) and not all(re.match(r"^:?-+:?$", c) for c in table_cells(l))]
-            if len(rows) > 1:   # a header row plus at least one correction
-                raise Stop("the latest Diagnosis lists Proposed Corrections to the issue that an unattended run does not apply — "
-                           "the spec it was built from may be wrong; a person reviews and merges this one")
-
-
 def check_origin(cwd, repo):
     """Every fetch and push URL of origin must be github.com/<repo> (git pushes to each push URL, r4 #33)."""
     urls = git(cwd, "remote", "get-url", "--all", "origin").splitlines() \
@@ -589,57 +322,19 @@ def workflow_files(cwd, ref):
     return files
 
 
-def trigger_block(text, event):
-    """The lines of the `on:` entry for `event` (empty string when the workflow has none)."""
-    if re.search(rf"^[\"']?on[\"']?[ \t]*:[ \t]*\[?[^\n]*\b{event}\b", text, re.MULTILINE) and \
-            not re.search(r"^[\"']?on[\"']?[ \t]*:[ \t]*$", text, re.MULTILINE):
-        return event   # inline form, e.g. `on: [push, pull_request]`: no filters
-    m = re.search(rf"^(\s+){event}\s*:(.*)$", text, re.MULTILINE)
-    if not m:
-        return ""
-    indent, out = len(m.group(1)), [m.group(0)]
-    for line in text[m.end():].splitlines()[1:]:
-        if line.strip() and (len(line) - len(line.lstrip())) <= indent:
-            break
-        out.append(line)
-    return "\n".join(out)
-
-
-def pushes_default(text, default):
-    block = trigger_block(text, "push")
-    if not block:
-        return bool(trigger_block(text, "workflow_run"))
-    if "tags:" in block and "branches:" not in block:
-        return False
-    if "branches:" in block and not re.search(rf"\b{re.escape(default)}\b|\*\*?", block.split("branches:", 1)[1]):
-        return False
-    return True
+def read_at(cwd, ref, path):
+    rc, out, err = run_cmd([GIT, "-C", cwd, "show", f"{ref}:{path}"])
+    return out if rc == 0 else None
 
 
 def releases_on_push(cwd, ref, default):
-    files = dict(workflow_files(cwd, ref))
-    hits = []
-    for path, text in files.items():
-        if not pushes_default(text, default):
-            continue
-        called = "".join(files.get(m, "") for m in re.findall(r"uses:\s*\./(\.github/workflows/[^\s@]+)", text))
-        if any(marker in text + called for marker in RELEASE_MARKERS):
-            hits.append(path)
-    return hits
+    """Workflows at `ref` that publish when `default` moves (scripts/lib/workflows.py; unknown counts as yes)."""
+    return workflows.publishing(workflow_files(cwd, ref), lambda path: read_at(cwd, ref, path), default)
 
 
 def expects_pr_checks(cwd, ref, default):
     """A workflow that runs on every pull_request into the default branch will report a check."""
-    for path, text in workflow_files(cwd, ref):
-        block = trigger_block(text, "pull_request")
-        if not block:
-            continue
-        if "paths:" in block or "paths-ignore:" in block:
-            continue
-        if "branches:" in block and not re.search(rf"\b{re.escape(default)}\b|\*\*?", block.split("branches:", 1)[1]):
-            continue
-        return True
-    return False
+    return any(workflows.runs_on_every_pr(text, default) for _, text in workflow_files(cwd, ref))
 
 
 def touches_ci(cwd, base, head):
@@ -743,33 +438,6 @@ def pr_base(cwd, repo, default, sha):
     return tip
 
 
-def check_pr_people(repo, pr):
-    """Nobody reviewed or commented on the PR, and it is not a draft (r4 #15, #22).
-
-    The run itself never comments on its PR (verify runs in branch mode and
-    posts on the issue), so any comment or review there — an objection, a
-    CHANGES_REQUESTED review, a PR-mode verify report — came from a person.
-    """
-    owner, name = repo.split("/", 1)
-    q = ("query($o:String!,$r:String!,$p:Int!){repository(owner:$o,name:$r){pullRequest(number:$p){isDraft reviewDecision "
-         "reviews(last:100){nodes{author{login __typename} state}} comments(last:100){nodes{author{login __typename}}}}}}")
-    data = gh_json(["api", "graphql", "-f", f"query={q}", "-f", f"o={owner}", "-f", f"r={name}", "-F", f"p={pr}"],
-                   f"the reviews and comments of PR #{pr}")
-    view = ((data.get("data") or {}).get("repository") or {}).get("pullRequest")
-    if not isinstance(view, dict):
-        raise Stop(f"could not read the reviews and comments of PR #{pr} — not merging")
-    if view.get("isDraft"):
-        raise Stop(f"PR #{pr} is a draft — not merging")
-    if view.get("reviewDecision") == "CHANGES_REQUESTED":
-        raise Stop(f"PR #{pr} has changes requested — a person reviews and merges this one")
-    for kind in ("reviews", "comments"):
-        for node in ((view.get(kind) or {}).get("nodes") or []):
-            author = node.get("author") or {}
-            if author.get("__typename") != "Bot":
-                who = author.get("login") or "an unknown account"
-                raise Stop(f"PR #{pr} has a {kind[:-1]} by {who} — a person is involved; they merge this one")
-
-
 def write_result(cwd, n, result):
     os.makedirs(state_dir(cwd), exist_ok=True)
     with open(result_path(cwd, n), "w", encoding="utf-8") as fh:
@@ -808,7 +476,10 @@ def run_pr(st, cwd, repo, n, timeout, grace, partial):
                    + ", ".join(str(r.get("url", "?")) for r in refs))
     # The PR's commits, read from local git over the exact range (local HEAD == PR head was checked
     # above): `gh pr view --json commits` is capped and would leave later commits unscanned (r3 #2).
-    _, _, hits = scan_commits(cwd, base, sha)
+    _, foreign, hits = scan_commits(cwd, base, sha, n)
+    if foreign:
+        # Only this run's commits go into the squash, as on the direct-commit path (r5 #23)
+        raise Stop(f"commit(s) {', '.join(foreign)} on the branch do not reference #{n} — they are not this run's; not merging")
     if hits:
         raise Stop("guardrail 3 (auto-close trap) — close keyword next to an issue reference in commit(s): " + ", ".join(hits))
 
@@ -826,7 +497,7 @@ def run_pr(st, cwd, repo, n, timeout, grace, partial):
     me = session_login()
     comments = issue_comments(repo, n)
     check_others(me, since, comments, issue_meta(repo, n))
-    check_pr_people(repo, pr["number"])
+    check_pr_people(repo, pr["number"], me)
 
     partial.update({"pr": pr["number"], "pr_url": pr.get("url"), "verified_sha": sha, "merge_attempted": True})
     # Written before the merge call: if this process dies after GitHub merged, the
@@ -959,11 +630,11 @@ def cmd_run(argv):
         since = parse_iso(st["created_at"])
         comments = issue_comments(repo, n)
         meta = issue_meta(repo, n)
-        body = gh_json(["issue", "view", str(n), "--repo", repo, "--json", "body"], "the issue body").get("body") or ""
+        issue = issue_view(repo, n)
         check_meeting(comments)
         check_issue_authors(repo, meta)
         check_others(me, since, comments, meta)
-        check_intent(repo, n, st, comments, body)
+        check_intent(repo, n, st, comments, issue)
         if st.get("path") == "PR":
             result = run_pr(st, cwd, repo, n, timeout, grace, partial)
         elif st.get("path") == "direct-commit":

@@ -3,6 +3,10 @@
 ### Aggregate
 **PASS** — 0 blocking, 1 follow-up
 
+### 要求覆蓋率
+1 / 1 requirements addressed
+
+
 | # | 重現 | 本輪 | 上一輪 | 正確答案 |
 |---|------|------|--------|----------|
 | 1 | probe-a | 0 | 3 | 0 |

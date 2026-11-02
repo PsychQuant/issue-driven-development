@@ -158,6 +158,18 @@ reason_has "unstated rejected: reason" "rejected"
 run_gate "PASS with 3 / 5 requirements addressed" coverage-short.md unparseable 2
 run_gate "PASS with 5 / 5 requirements addressed" coverage-full.md clean 0 0 0 0
 
+# #392 verify r5: rows and verdicts GitHub shows outside a paragraph; signals the close stage stops on
+run_gate "a findings row in a tight list item (r5 #3)" list-orphan-row.md unparseable 2
+reason_has "list row: reason" "outside a findings table"
+run_gate "a findings row as raw text in a details block (r5 #3)" details-raw-row.md unparseable 2
+run_gate "a second verdict in a list item (r5 #10)" verdict-in-list.md unparseable 2
+run_gate "a HIGH finding filed as Follow-up is reported (r5 #4)" high-followup.md clean 0 0 0 2
+assert_eq "HIGH Follow-up: high_follow_up count" "1" "$(printf '%s' "$LAST_OUT" | json_field high_follow_up)"
+run_gate "a Process Gaps section is reported (r5 #22)" process-gaps.md clean 0 0 0 0
+assert_eq "Process Gaps: flag" "True" "$(printf '%s' "$LAST_OUT" | json_field process_gaps)"
+run_gate "a clean report without a coverage line (r5 #41)" coverage-missing.md unparseable 2
+reason_has "missing coverage: reason" "coverage"
+
 # every .md fixture has its rendering committed
 for md in "$FX"/*.md; do
   assert_file_exists "rendered: $(basename "$md")" "${md%.md}.html"

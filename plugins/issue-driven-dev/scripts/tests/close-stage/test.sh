@@ -20,6 +20,7 @@ export IDD_CLOSE_STAGE_TEST=1 IDD_SLEEP=0
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.test GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.test
 REPO=o/r; N=7
+export FX="$HERE/fixtures"   # GitHub's rendering of fixtures/*.md (../verify-gate/render-fixtures.sh <paths>)
 
 field() { python3 -c 'import json,sys; d=json.loads(sys.stdin.read() or "{}"); v=d.get(sys.argv[1], "<missing>"); print(v)' "$1"; }
 
@@ -49,24 +50,29 @@ path, login, head, base, verdict, rows, heading = sys.argv[1:8]
 reviewed = f"{base}..{head}" if base != "-" else head
 pairs = [r.split(":", 1) for r in rows.split(";") if r]
 md_rows = "".join(f"| {i} | LOW | {f} | codex | {c} |\n" for i, (c, f) in enumerate(pairs, 1))
-body = (f"{heading}\n\n### Aggregate\n{verdict}\n\n**Reviewed**: `{reviewed}`\n\n"
+body = (f"{heading}\n\n### Aggregate\n{verdict}\n\n**Reviewed**: `{reviewed}`\n\n### 要求覆蓋率\n1 / 1 requirements addressed\n\n"
         "### Findings（合併後）\n| # | Severity | Finding | Source | Action |\n|---|---|---|---|---|\n" + md_rows)
 strong = lambda t: re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", html.escape(t, quote=False))
 html_rows = "".join(f"<tr><td>{i}</td><td>LOW</td><td>{html.escape(f)}</td><td>codex</td><td>{c}</td></tr>\n"
                     for i, (c, f) in enumerate(pairs, 1))
 body_html = (f"<h2>{html.escape(heading.lstrip('# '))}</h2>\n<h3>Aggregate</h3>\n<p>{strong(verdict)}</p>\n"
-             f"<p><strong>Reviewed</strong>: <code>{reviewed}</code></p>\n<h3>Findings（合併後）</h3>\n"
+             f"<p><strong>Reviewed</strong>: <code>{reviewed}</code></p>\n<h3>要求覆蓋率</h3>\n<p>1 / 1 requirements addressed</p>\n"
+             "<h3>Findings（合併後）</h3>\n"
              "<markdown-accessiblity-table><table><thead><tr><th>#</th><th>Severity</th><th>Finding</th><th>Source</th>"
              f"<th>Action</th></tr></thead><tbody>\n{html_rows}</tbody></table></markdown-accessiblity-table>\n")
-diag = "## Diagnosis\n\n### Type\nbug\n\n### Complexity\nSimple\n"
+import os
+FXD = os.environ["FX"]
+diag = open(f"{FXD}/diag-simple.md").read()
+diag_html = open(f"{FXD}/diag-simple.html").read()
 try:
     cs = json.load(open(path))
 except Exception:
     cs = [{"id": 1, "html_url": "u1", "user": {"login": "me"}, "author_association": "OWNER",
-           "created_at": "2026-01-01T00:00:00Z", "body": diag}]
+           "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z", "body": diag, "body_html": diag_html}]
 import time
-cs.append({"id": len(cs) + 1, "html_url": f"https://example.test/c{len(cs)+1}", "user": {"login": login, "type": "User"},
-           "author_association": "MEMBER", "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 5)),
+t = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 5))
+cs.append({"id": len(cs) + 1, "node_id": f"IC_{len(cs) + 1}", "html_url": f"https://example.test/c{len(cs)+1}",
+           "user": {"login": login, "type": "User"}, "author_association": "MEMBER", "created_at": t, "updated_at": t,
            "body": body, "body_html": body_html})
 json.dump(cs, open(path, "w"))
 EOF
@@ -123,7 +129,7 @@ assert_file_exists "result is written to the state dir" "$C/.claude/.idd/state/i
 after_checks() { # pattern — calls matching pattern made after the last `gh pr checks` call
   awk -v pat="$1" '/"pr", "checks"/{n=0; seen=1; next} seen && index($0, pat){n++} END{print n+0}' "$S/gh/calls.log"
 }
-assert_eq "the report is read again after the CI wait" "yes" "$([ "$(after_checks '"--jq", "[.[] | {id, html_url')" -ge 1 ] && echo yes)"
+assert_eq "the report is read again after the CI wait" "yes" "$([ "$(after_checks '"--jq", "[.[] | {id, node_id, html_url')" -ge 1 ] && echo yes)"
 assert_eq "the default branch is fetched again after the CI wait" "1" "$(after_checks 'mergeQueue')"
 assert_eq "the PR's reviews and comments are read after the CI wait" "1" "$(after_checks 'pullRequest(number')"
 
@@ -218,10 +224,10 @@ pr_scenario unconfirmed; echo '{"state": "MERGED", "mergeCommit": null}' > "$S/g
 assert_grep "merged without a readable merge commit: reason says it may have merged" "may have merged" "$(printf '%s' "$OUT" | field reason)"
 assert_eq "merged without a readable merge commit: PR number kept" "9" "$(printf '%s' "$OUT" | field pr)"
 pr_scenario readonly; echo READ > "$S/gh/perm"; run_stage; stop_case "read-only permission" "permission"
-pr_scenario outsider; echo '{"data":{"repository":{"issue":{"author":{"login":"stranger"},"editor":null}}}}' > "$S/gh/authors.json"
+pr_scenario outsider; echo '{"data":{"repository":{"issue":{"state":"OPEN","author":{"login":"stranger"},"editor":null}}}}' > "$S/gh/authors.json"
 echo '{"permission":"read","role_name":"read"}' > "$S/gh/perm-stranger.json"; run_stage
 stop_case "an issue opened by someone without write access" "author stranger"
-pr_scenario outsider-edit; echo '{"data":{"repository":{"issue":{"author":{"login":"me"},"editor":{"login":"stranger"}}}}}' > "$S/gh/authors.json"
+pr_scenario outsider-edit; echo '{"data":{"repository":{"issue":{"state":"OPEN","author":{"login":"me"},"editor":{"login":"stranger"}}}}}' > "$S/gh/authors.json"
 echo '{"permission":"none","role_name":"none"}' > "$S/gh/perm-stranger.json"; run_stage
 stop_case "an issue body last edited by someone without write access" "last editor stranger"
 pr_scenario meeting; python3 - "$S/gh/comments.json" <<'EOF'
@@ -249,52 +255,45 @@ json.dump(cs, open(sys.argv[1], "w"))
 EOF
 echo '{"permission":"read","role_name":"read"}' > "$S/gh/perm-stranger.json"; run_stage
 stop_case "a comment by someone without write access" "intent not confirmed"
-pr_scenario clarity; printf '%s\n' "### Clarity Surface" "| Type | Source | Q | Status |" "|---|---|---|---|" "| ambiguity | x | y? | surfaced |" > "$S/gh/issue-body"; run_stage
-stop_case "an open Clarity Surface question" "Clarity Surface"
-diag_add() { # text appended to the Diagnosis (comment 0)
-  python3 - "$S/gh/comments.json" "$1" <<'EOF'
-import json, sys
-cs = json.load(open(sys.argv[1])); cs[0]["body"] += sys.argv[2]; json.dump(cs, open(sys.argv[1], "w"))
-EOF
-}
 merged_case() { # name
   assert_eq "$1: merged" "merged" "$(printf '%s' "$OUT" | field status)"
 }
-pr_scenario layerv; diag_add $'
-#### Layer V Deferred Record
-
-- **Reason**: unattended-auto-Step-3.4-layerV-deferred
-- **V1**: 4 — x
-'
-run_stage; stop_case "a Layer V deferred record" "skipped confirmation"
-pr_scenario layerv-prose; diag_add $'
-The close stage reads `unattended-auto-Step-3.4-layerV-deferred` records.
-```
-- **Reason**: unattended-auto-Step-3.4-layerV-deferred
-```
-'
-run_stage; merged_case "a Diagnosis that only names the literal (prose and a fence)"
-pr_scenario choice; diag_add $'
-#### Choice Default Record
-
-- **Reason**: unattended-auto-Step-4-choice-default
-- **Decision**: naming
-'
-run_stage; stop_case "a choice-first default taken unattended (r4 #20)" "unattended-auto-Step-4-choice-default"
-pr_scenario corrections; diag_add $'
-### Proposed Corrections
-| # | Target | Section | 錯在哪 | Command |
-|---|---|---|---|---|
-| 1 | issue:7 | ## Problem | 檔名寫錯 | x |
-'
-run_stage; stop_case "Proposed Corrections listed by an unattended run (r4 #20)" "Proposed Corrections"
-pr_scenario corrections-attended; diag_add $'
-### Proposed Corrections
-| # | Target | Section | 錯在哪 | Command |
-|---|---|---|---|---|
-| 1 | issue:7 | ## Problem | 檔名寫錯 | x |
-'
-init_state PR PR no no attended; run_stage; merged_case "Proposed Corrections in an attended run (asked one by one)"
+diag_fixture() { # fixture — comment 0 (the Diagnosis) becomes fixtures/<name>.md with GitHub's rendering
+  python3 - "$S/gh/comments.json" "$FX/$1" <<'EOF'
+import json, sys
+cs = json.load(open(sys.argv[1])); cs[0]["body"] = open(sys.argv[2] + ".md").read(); cs[0]["body_html"] = open(sys.argv[2] + ".html").read()
+json.dump(cs, open(sys.argv[1], "w"))
+EOF
+}
+add_comment() { # login fixture offset-seconds — append a comment (body + GitHub's rendering) at now+offset
+  python3 - "$S/gh/comments.json" "$1" "$FX/$2" "$3" <<'EOF'
+import json, sys, time
+cs = json.load(open(sys.argv[1])); t = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + int(sys.argv[4])))
+cs.append({"id": 80 + len(cs), "node_id": f"IC_x{len(cs)}", "html_url": "u", "user": {"login": sys.argv[2], "type": "User"},
+           "author_association": "OWNER", "created_at": t, "updated_at": t,
+           "body": open(sys.argv[3] + ".md").read(), "body_html": open(sys.argv[3] + ".html").read()})
+json.dump(cs, open(sys.argv[1], "w"))
+EOF
+}
+pr_scenario layerv; diag_fixture diag-layerv; run_stage; stop_case "a Layer V deferred record" "skipped confirmation"
+pr_scenario layerv-prose; diag_fixture diag-layerv-prose; run_stage; merged_case "a Diagnosis that only names the literal (prose and a fence)"
+pr_scenario layerv-backticks; diag_fixture diag-inline-backticks; run_stage
+stop_case "a record after an inline code span of three backticks (r5 #12)" "skipped confirmation"
+pr_scenario layerv-decided; diag_fixture diag-layerv; add_comment me decision -3600; python3 - "$S/gh/comments.json" <<'EOF'
+import json, sys
+cs = json.load(open(sys.argv[1])); dec = cs.pop(); cs.insert(1, dec); json.dump(cs, open(sys.argv[1], "w"))
+EOF
+run_stage; merged_case "a record answered by a later Decision comment"
+pr_scenario layerv-rerun; diag_fixture diag-layerv; add_comment me diag-simple -1800; run_stage
+stop_case "an unattended re-diagnosis does not clear an earlier record (r5 #18)" "skipped confirmation"
+pr_scenario choice; diag_fixture diag-choice; run_stage; stop_case "a choice-first default taken unattended (r4 #20)" "unattended-auto-Step-4-choice-default"
+pr_scenario choice-own-comment; add_comment me comment-choice -1800; run_stage
+stop_case "a choice default record posted as its own comment (r5 #7)" "unattended-auto-Step-4-choice-default"
+pr_scenario corrections; diag_fixture diag-corrections; run_stage; stop_case "Proposed Corrections listed by an unattended run (r4 #20)" "Proposed Corrections"
+pr_scenario corrections-attended; diag_fixture diag-corrections; init_state PR PR no no attended; run_stage
+merged_case "Proposed Corrections in an attended run (asked one by one)"
+pr_scenario corrections-verify; add_comment me comment-corrections 3; run_stage
+stop_case "Proposed Corrections in a verify report of an unattended run (r5 #5)" "Proposed Corrections"
 set_tier() { python3 - "$S/gh/comments.json" "$1" <<'EOF'
 import json, sys
 cs = json.load(open(sys.argv[1])); cs[0]["body"] = cs[0]["body"].replace("### Complexity\nSimple", "### Complexity\n" + sys.argv[2])
@@ -305,16 +304,15 @@ pr_scenario plan-unattended; set_tier Plan; run_stage; stop_case "Plan tier in a
 pr_scenario spectra-unattended; set_tier "Spectra（decision-heavy）"; run_stage; stop_case "Spectra tier in an unattended run (r4 #13)" "Spectra tier"
 pr_scenario plan-attended; set_tier Plan; init_state PR PR no no attended; run_stage; merged_case "Plan tier in an attended run"
 pr_scenario no-tier; set_tier "TBD"; run_stage; stop_case "a Diagnosis without a readable tier" "Complexity tier"
-clarity_body() { printf '%s
-' "$@" > "$S/gh/issue-body"; }
-pr_scenario clarity-resolved; clarity_body "### Clarity Surface(idd-clarify run x, unattended)" "| Type | Source | Question for you | Status | Reason |" "|---|---|---|---|---|" "| ambiguity | x | y? | resolved | unattended-auto-Step-4.6-deferred |"
-run_stage; merged_case "a resolved Clarity row that keeps its Reason (r4 #18)"
-pr_scenario clarity-deferred-other; clarity_body "### Clarity Surface(idd-clarify run x)" "| Type | Source | Question for you | Status | Reason |" "|---|---|---|---|---|" "| ambiguity | x | y? | deferred | waiting on maintainer |"
-run_stage; stop_case "a deferred Clarity row with another reason (r4 #27)" "Clarity Surface"
-pr_scenario clarity-second; clarity_body "### Clarity Surface(run 1)" "| Type | Source | Question for you | Status |" "|---|---|---|---|" "| (none) | — | no issues detected | passed |" "" "### Clarity Surface(run 2)" "| Type | Source | Question for you | Status |" "|---|---|---|---|" "| ambiguity | x | y? | surfaced |"
-run_stage; stop_case "an open row in the second Clarity block (r4 #30)" "Clarity Surface"
-pr_scenario clarity-fenced; clarity_body '```' "### Clarity Surface" "| a | b | c | surfaced |" '```' "### Clarity Surface(run 1)" "| Type | Source | Question for you | Status |" "|---|---|---|---|" "| (none) | — | none | passed |"
-run_stage; merged_case "a Clarity example inside a code fence"
+pr_scenario rerun-heading; add_comment me diag-rerun-plan -1800; run_stage
+stop_case "the newest Diagnosis Phase 2 routes on, with a suffixed heading (r5 #11)" "Plan tier"
+clarity_fixture() { cp "$FX/$1.md" "$S/gh/issue-body"; cp "$FX/$1.html" "$S/gh/issue-body.html"; }
+pr_scenario clarity; clarity_fixture clarity-surfaced; run_stage; stop_case "an open Clarity Surface question" "Clarity Surface"
+pr_scenario clarity-resolved; clarity_fixture clarity-resolved; run_stage; merged_case "a resolved Clarity row that keeps its Reason (r4 #18)"
+pr_scenario clarity-deferred-other; clarity_fixture clarity-deferred-other; run_stage
+stop_case "a deferred Clarity row with another reason (r4 #27)" "Clarity Surface"
+pr_scenario clarity-second; clarity_fixture clarity-second; run_stage; stop_case "an open row in the second Clarity block (r4 #30)" "Clarity Surface"
+pr_scenario clarity-fenced; clarity_fixture clarity-fenced; run_stage; merged_case "a Clarity example inside a code fence"
 others_comment() { # login type created-offset-seconds
   python3 - "$S/gh/comments.json" "$1" "$2" "$3" <<'EOF'
 import json, sys, time
@@ -328,13 +326,31 @@ EOF
 pr_scenario teammate-after; others_comment teammate User 5; run_stage
 stop_case "a teammate's comment after the run started (r4 #48)" "after the run started"
 pr_scenario bot-after; others_comment ci-bot Bot 5; run_stage; merged_case "a bot's comment after the run started"
-pr_scenario edited-after; echo '{"data":{"repository":{"issue":{"author":{"login":"me"},"editor":{"login":"me"},"userContentEdits":{"nodes":[{"editedAt":"2099-01-01T00:00:00Z","editor":{"login":"teammate"}},{"editedAt":"2099-01-01T00:00:01Z","editor":{"login":"me"}}]},"timelineItems":{"nodes":[]}}}}}' > "$S/gh/authors.json"
+pr_scenario edited-after; echo '{"data":{"repository":{"issue":{"state":"OPEN","author":{"login":"me"},"editor":{"login":"me"},"userContentEdits":{"totalCount":2,"nodes":[{"editedAt":"2099-01-01T00:00:00Z","editor":{"login":"teammate"}},{"editedAt":"2099-01-01T00:00:01Z","editor":{"login":"me"}}]},"timelineItems":{"nodes":[]}}}}}' > "$S/gh/authors.json"
 run_stage; stop_case "the issue text edited by someone else after the run started" "edited the issue text"
-pr_scenario deleted-after; echo '{"data":{"repository":{"issue":{"author":{"login":"me"},"editor":null,"userContentEdits":{"nodes":[]},"timelineItems":{"nodes":[{"createdAt":"2099-01-01T00:00:00Z","deletedCommentAuthor":{"login":"stranger"}}]}}}}}' > "$S/gh/authors.json"
+pr_scenario deleted-after; echo '{"data":{"repository":{"issue":{"state":"OPEN","author":{"login":"me"},"editor":null,"userContentEdits":{"nodes":[]},"timelineItems":{"totalCount":1,"nodes":[{"__typename":"CommentDeletedEvent","createdAt":"2099-01-01T00:00:00Z","deletedCommentAuthor":{"login":"stranger"}}]}}}}}' > "$S/gh/authors.json"
 run_stage; stop_case "a comment deleted after the run started (r4 #4)" "was deleted after the run started"
-pr_scenario deleted-before; echo '{"data":{"repository":{"issue":{"author":{"login":"me"},"editor":null,"userContentEdits":{"nodes":[]},"timelineItems":{"nodes":[{"createdAt":"2020-01-01T00:00:00Z","deletedCommentAuthor":{"login":"stranger"}}]}}}}}' > "$S/gh/authors.json"
+pr_scenario deleted-before; echo '{"data":{"repository":{"issue":{"state":"OPEN","author":{"login":"me"},"editor":null,"userContentEdits":{"nodes":[]},"timelineItems":{"totalCount":1,"nodes":[{"__typename":"CommentDeletedEvent","createdAt":"2020-01-01T00:00:00Z","deletedCommentAuthor":{"login":"stranger"}}]}}}}}' > "$S/gh/authors.json"
 run_stage; merged_case "a comment deleted before the run started"
-pr_people() { printf '{"data":{"repository":{"pullRequest":%s}}}' "$1" > "$S/gh/pr-people.json"; }
+pr_people() { # partial PR JSON, merged over the defaults (author me, nothing else)
+  python3 - "$S/gh/pr-people.json" "$1" <<'EOF'
+import json, sys
+base = {"author": {"login": "me"}, "isDraft": False, "reviewDecision": None, "reviews": {"totalCount": 0, "nodes": []},
+        "comments": {"totalCount": 0, "nodes": []}, "userContentEdits": {"totalCount": 0, "nodes": []},
+        "timelineItems": {"totalCount": 0, "nodes": []}}
+base.update(json.loads(sys.argv[2]))
+json.dump({"data": {"repository": {"pullRequest": base}}}, open(sys.argv[1], "w"))
+EOF
+}
+issue_meta_json() { # partial issue JSON, merged over the defaults (OPEN, author me, nothing else)
+  python3 - "$S/gh/authors.json" "$1" <<'EOF'
+import json, sys
+base = {"state": "OPEN", "author": {"login": "me"}, "editor": None, "userContentEdits": {"totalCount": 0, "nodes": []},
+        "timelineItems": {"totalCount": 0, "nodes": []}}
+base.update(json.loads(sys.argv[2]))
+json.dump({"data": {"repository": {"issue": base}}}, open(sys.argv[1], "w"))
+EOF
+}
 pr_scenario draft; pr_people '{"isDraft":true,"reviewDecision":null,"reviews":{"nodes":[]},"comments":{"nodes":[]}}'; run_stage
 stop_case "a draft PR" "draft"
 pr_scenario changes; pr_people '{"isDraft":false,"reviewDecision":"CHANGES_REQUESTED","reviews":{"nodes":[]},"comments":{"nodes":[]}}'; run_stage
@@ -343,6 +359,58 @@ pr_scenario prcomment; pr_people '{"isDraft":false,"reviewDecision":null,"review
 stop_case "a comment on the PR" "comment by teammate"
 pr_scenario prbot; pr_people '{"isDraft":false,"reviewDecision":null,"reviews":{"nodes":[]},"comments":{"nodes":[{"author":{"login":"codecov","__typename":"Bot"}}]}}'; run_stage
 merged_case "a bot comment on the PR"
+pr_scenario prother; pr_people '{"author":{"login":"teammate"}}'; run_stage
+stop_case "a PR opened by another account (r5 #33)" "not by this account"
+pr_scenario prlabel; pr_people '{"timelineItems":{"totalCount":1,"nodes":[{"__typename":"LabeledEvent","createdAt":"2099-01-01T00:00:00Z","actor":{"login":"teammate","__typename":"User"}}]}}'; run_stage
+stop_case "a label added to the PR by a teammate (r5 #16)" "labelled PR #9"
+pr_scenario prownlabel; pr_people '{"timelineItems":{"totalCount":1,"nodes":[{"__typename":"LabeledEvent","createdAt":"2099-01-01T00:00:00Z","actor":{"login":"me","__typename":"User"}}]}}'; run_stage
+merged_case "a label this account added to its own PR"
+pr_scenario predit; pr_people '{"userContentEdits":{"totalCount":1,"nodes":[{"editor":{"login":"teammate"}}]}}'; run_stage
+stop_case "the PR description edited by a teammate (r5 #16)" "edited PR #9"
+pr_scenario prmany; python3 - "$S/gh" <<'EOF'
+import json, sys
+nodes = [{"author": {"login": f"bot{i}", "__typename": "Bot"}} for i in range(100)]
+open(sys.argv[1] + "/pr-people.json", "w").write(json.dumps({"data": {"repository": {"pullRequest": {
+    "author": {"login": "me"}, "isDraft": False, "reviewDecision": None, "reviews": {"totalCount": 0, "nodes": []},
+    "comments": {"totalCount": 101, "nodes": nodes}, "userContentEdits": {"totalCount": 0, "nodes": []},
+    "timelineItems": {"totalCount": 0, "nodes": []}}}}}))
+EOF
+run_stage; stop_case "a person's comment hidden behind 100 bot comments (r5 #2)" "more comments than one read returns"
+pr_scenario issue-closed; issue_meta_json '{"state":"CLOSED"}'; run_stage
+stop_case "the issue closed during the run (r5 #6)" "someone closed it"
+pr_scenario issue-labelled; issue_meta_json '{"timelineItems":{"totalCount":1,"nodes":[{"__typename":"LabeledEvent","createdAt":"2099-01-01T00:00:00Z","actor":{"login":"teammate","__typename":"User"}}]}}'; run_stage
+stop_case "a label added to the issue by a teammate (r5 #6)" "labelled the issue"
+pr_scenario issue-many; issue_meta_json '{"timelineItems":{"totalCount":150,"nodes":[{"__typename":"LabeledEvent","createdAt":"2099-01-01T00:00:00Z","actor":{"login":"me","__typename":"User"}}]}}'; run_stage
+stop_case "more issue events than one read returns, all after the run began (r5 #2)" "more entries than one read returns"
+pr_scenario edited-report; python3 - "$S/gh/comments.json" <<'EOF'
+import json, sys
+cs = json.load(open(sys.argv[1])); cs[-1]["updated_at"] = "2099-01-01T00:00:00Z"; json.dump(cs, open(sys.argv[1], "w"))
+EOF
+run_stage; stop_case "a verify report edited after it was posted (r5 #14)" "edited after it was posted"
+pr_scenario hidden-report; echo '{"data":{"node":{"isMinimized":true}}}' > "$S/gh/minimized.json"; run_stage
+stop_case "a verify report hidden on GitHub" "hidden on GitHub"
+pr_scenario bot-before; others_comment ci-bot Bot -999999; echo '{"permission":"none","role_name":"none"}' > "$S/gh/perm-ci-bot.json"; run_stage
+merged_case "a bot comment from before the run (bots exempt in the intent check too, r5 #19)"
+pr_scenario foreign; git -C "$C" checkout -q main; echo z > "$C/z.txt"; git -C "$C" add z.txt; git -C "$C" commit -q -m "unrelated local work"
+git -C "$C" checkout -q idd/7-x; git -C "$C" rebase -q main; SHA=$(git -C "$C" rev-parse HEAD); pr_fixture "$SHA"
+rm "$S/gh/comments.json"; verify_comment me "$SHA" "$(base_of "$SHA")" "$PASS_LINE"; run_stage
+stop_case "a commit on the PR branch that is not this run's (r5 #23)" "not this run's"
+pr_scenario quoted-release $'on:
+  "push":
+    branches: [main]
+jobs:
+  r:
+    runs-on: x
+    steps:
+      - run: npm publish
+'; run_stage
+stop_case "a release workflow with a quoted event key (r5 #1)" "publishes on push"
+pr_scenario remote-release $'on: push
+jobs:
+  r:
+    uses: someorg/shared/.github/workflows/release.yml@main
+'; run_stage
+stop_case "a push workflow that calls a workflow in another repository" "another repository"
 pr_scenario moved-during-ci; cat > "$S/gh/on-checks.sh" <<EOF
 cd "$WORK" && rm -rf mdc && git clone -q "$S/o/r.git" mdc && cd mdc && echo y > h.txt && git add h.txt && git -c user.name=t -c user.email=t@e commit -q -m other && git push -q origin main
 EOF

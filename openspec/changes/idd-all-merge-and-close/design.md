@@ -155,7 +155,7 @@ MANIFESTO〈auto-merge 的合法性與限制〉改成兩個理由並列：verify
 
 ### verify round 3 之後的修正（2026-11-02，範圍縮小：comment 6566557673）
 
-- **意圖確認過才收尾**（範圍決定）：所有 comment 的作者都有寫入權限；Clarity Surface 沒有 surfaced／deferred 的列；沒有 Layer V 或 Clarity 的 deferred 紀錄；Plan tier 有 `## Implementation Plan`。不符合就停在 verified、PR 照開。這把 10-14「所有 mode 都適用」縮成「意圖確認過的 run 都適用」。
+- **意圖確認過才收尾**（範圍決定）：所有 comment 的作者都有寫入權限；Clarity Surface 沒有 surfaced／deferred 的列；沒有 Layer V 或 Clarity 的 deferred 紀錄；Plan tier 有 `## Implementation Plan`。不符合就停在 verified、PR 照開。（Plan tier 的判斷在第 4 輪改成看 tier 與 interaction，見下面兩節。）這把 10-14「所有 mode 都適用」縮成「意圖確認過的 run 都適用」。
 - **報告綁定這次 run**：只認 run-state 建立之後貼的報告；有寫入權限的帳號後貼的 FAIL 也算數（不只本帳號）。Phase 0.4 先 `reset` 上一次的 run-state，Step 0.7 拿不到 N 就報錯，abort 時也 `reset`。（第 4 輪之後改回只認本帳號，別人的 comment 由「別人插手」停下；reset 移到 Step 0.7，見下一節。）
 - **origin**：fetch 與 push URL 都必須是 `github.com/<repo>`；推完向 GitHub 確認預設 branch 指向 verified commit。
 - **PR commit 從本機 git 的完整範圍讀**，不受 `gh pr view --json commits` 的筆數上限影響。
@@ -187,6 +187,26 @@ MANIFESTO〈auto-merge 的合法性與限制〉改成兩個理由並列：verify
 - **報告選取**：本帳號在 run 開始之後的最新一則 verify comment（任何 `## Verify` 標題）必須是 `## Verify: #N` 報告，PR mode 的報告與指標不會被跳過（r4 #22）；時間窗不再往前放寬 60 秒（r4 #8）。
 - **CI 等完再查一次**：重新 fetch 預設 branch，落後、發佈 workflow、改 CI、merge queue、gate 全部重判（r4 #1、#32、#38、#45）。
 - **其他**：origin 的每個 fetch 與 push URL 都要對（r4 #33），userinfo 可以是空的（`https://@github.com/...`，r4 #19）；`--cwd` 先 realpath（r4 #43）；merge／push 之前先寫一份「可能已發生」的結果，被中斷也留得下紀錄；`"refused"` 不列 Undo（r4 #23、#34）；reset 移到 Step 0.7 的 init 失敗分支，排在 Step 0.5.1 之後（r4 #47）；`--review`／`--in-chain` 的 gate 只比對 head（r4 #44）；IC_R011 的 spec 與 reference 補上 `# Disable IC_R011`（r4 #24）。
+
+### verify round 5 之後的修正（2026-11-02，comment 6568180861：定威脅模型）
+
+第 5 輪仍有 4 個 HIGH，Blocking 分兩類：判定不完整而放行的機械漏洞，以及自我認證（寫程式碼的 orchestrator 同時產生 gate 讀的每一份材料）。維護者決定：
+
+- **威脅模型**：close stage 防的是 orchestrator 出錯，不是刻意欺騙。讀不準的一律停；自我認證那一類加便宜的擋法，其餘列為已知限制。
+- **Stage 1 不算略過**：「ai的attention也算attention，只是人類的更稀少」。unattended diagnose 自己做的策略確認是一次注意；人的注意力留給偵測器觸發的地方。
+
+照這個威脅模型的修正：
+
+- **共用模組**：`scripts/lib/rendered.py`（讀 GitHub 渲染後的 HTML，gate 與 close stage 共用）、`lib/workflows.py`（workflow 會不會在 push 到預設 branch 時發佈）、`lib/ghread.py`、`lib/intent.py`（從 close-stage.py 拆出，它超過 800 行）。
+- **gate 讀所有可見的文字行**：段落、清單項目、標題、summary、details 裡的原文都算，code block 不算（r5 #3、#10、#15）；表格儲存格不算判定行（粗體的 **HIGH** 不是判定）。乾淨的報告一定要有完整的覆蓋率行（r5 #41）。
+- **自我認證的便宜擋法**：Severity 是 CRITICAL／HIGH／P0／P1 的 Follow-up 停（r5 #4）；報告貼出後被編輯或被藏起來就讀不出來（r5 #14、#16）；報告有 `Process Gaps` 一節就停（verify 降級跑，r5 #22）。
+- **意圖檢查讀 GitHub 的渲染結果**（r5 #12）：略過紀錄與 Proposed Corrections 讀所有 comment，不只最新 Diagnosis（r5 #5、#7、#18、#20）；之後有 Decision comment 才算回應，這也是 r4 #31「紀錄永遠清不掉」的出口。Diagnosis 的選取改成 Phase 2 分派用的那一則（r5 #11）。bot 在意圖檢查裡也豁免（r5 #19、#28、#30）。
+- **別人插手**補上 issue 被關閉、加或拿掉 label、改標題、重開，以及 PR 不是本帳號開的、PR 的 label／標題／描述被別人改（r5 #6、#13、#16、#33）；GraphQL 一次讀不完時停（r5 #2）。
+- **PR 的 commit 都要引用 #N**（r5 #23），PR mode 從剛 fetch 的 `origin/<default>` 開 branch（r5 #21）。
+- **發佈偵測改用 `lib/workflows.py`**：加引號的事件鍵、list 寫法、inline map、否定或方括號的 branch pattern、tag 加 branches-ignore、別的 repo 的 reusable workflow、composite action、`run:` 呼叫的本機 script；讀不懂就當成會發佈（r5 #1、#9、#17、#29）。
+- **reset** 移到 Step 0.5.1 放行之後（r5 #36）；verify-gate 崩潰時輸出 unparseable，不再以 exit 1 結束（r5 #46）。
+
+列為已知限制（SKILL.md Phase 5c）：orchestrator 刻意改分類、不寫紀錄或自己貼 Decision；attended 由 path 推出（r5 #42）；Decision comment 不檢查回應的是哪一則；direct-commit 不受 branch protection 擋（r5 #32）與測試用的環境變數 seam（r5 #47），兩者開在 #464。
 
 仍留著的限制（SKILL.md Phase 5c〈已知限制〉）：同一帳號分不出 run 與人、最後檢查到 squash 之間的幾秒、direct-commit 不等 CI、workflow 以外的發佈管道（#460）、idd-all 仍可被模型呼叫（#457）、close 的 Step 0 與 1.5 排在 merge 之後、task 7.2 尚未在真的 GitHub 上跑過。
 

@@ -31,24 +31,22 @@
 
 - Affected specs: `idd-pr-hitl-modes`、`parallel-orchestration`、`idd-ic-r011-checkpoint`、`idd-existing-work-lookup`
 - Affected code:
-  - New: plugins/issue-driven-dev/scripts/verify-gate.py
+  - New: plugins/issue-driven-dev/scripts/verify-gate.py（讀 GitHub 渲染後的報告，verify round 5 起）
   - New: plugins/issue-driven-dev/scripts/close-stage.py（verify round 1 加：close stage 的單一 process；round 2 加 confirm-close）
-  - New: plugins/issue-driven-dev/scripts/tests/close-stage/test.sh、fake-gh.py
-  - Modified: plugins/issue-driven-dev/references/ic-r011-checkpoint.md、plugins/issue-driven-dev/skills/idd-all-chain/SKILL.md、docs/workflows.md（verify round 1 加）；plugins/issue-driven-dev/references/config-protocol.md（verify round 2 加）
-  - New: plugins/issue-driven-dev/scripts/tests/verify-gate/test.sh
+  - New: plugins/issue-driven-dev/scripts/lib/rendered.py、lib/ghread.py、lib/intent.py、lib/workflows.py（verify round 5 從 close-stage.py 拆出、加入）
+  - New: plugins/issue-driven-dev/scripts/tests/close-stage/test.sh、fake-gh.py、fixtures/
+  - New: plugins/issue-driven-dev/scripts/tests/verify-gate/test.sh、render-fixtures.sh、fixtures/
   - New: plugins/issue-driven-dev/scripts/tests/merge-and-close-contract/test.sh
+  - Modified: plugins/issue-driven-dev/scripts/tests/actionability-gate/test.sh（meeting 例外的措辭）
   - Modified: plugins/issue-driven-dev/skills/idd-all/SKILL.md
   - Modified: plugins/issue-driven-dev/skills/idd-close/SKILL.md
-  - Modified: plugins/issue-driven-dev/skills/idd-verify/SKILL.md（Step 5a 的報告格式規則，apply 時加，見 tasks.md 2.2 的 ASSUMPTION）
-  - Modified: plugins/issue-driven-dev/MANIFESTO.md
-  - Modified: plugins/issue-driven-dev/CLAUDE.md
-  - Modified: plugins/issue-driven-dev/README.md
-  - Modified: plugins/issue-driven-dev/references/usecase-routing.md
-  - Modified: plugins/issue-driven-dev/references/pr-flow.md
-  - Modified: plugins/issue-driven-dev/references/parallel-orchestration.md
-  - Modified: docs/commands.md
-  - Modified: plugins/issue-driven-dev/CHANGELOG.md
-  - Modified: plugins/issue-driven-dev/.claude-plugin/plugin.json
-  - Modified: .claude-plugin/marketplace.json
+  - Modified: plugins/issue-driven-dev/skills/idd-verify/SKILL.md（報告格式規則，apply 時加，見 tasks.md 2.2 的 ASSUMPTION）
+  - Modified: plugins/issue-driven-dev/skills/idd-diagnose/SKILL.md（Choice Default Record，verify round 4 加）
+  - Modified: plugins/issue-driven-dev/skills/idd-all-chain/SKILL.md
+  - Modified: plugins/issue-driven-dev/rules/append-vs-modify.md（registry literal `unattended-auto-Step-4-choice-default`）
+  - Modified: plugins/issue-driven-dev/MANIFESTO.md、CLAUDE.md、README.md、CHANGELOG.md
+  - Modified: plugins/issue-driven-dev/references/usecase-routing.md、pr-flow.md、parallel-orchestration.md、ic-r011-checkpoint.md、config-protocol.md
+  - Modified: docs/commands.md、docs/workflows.md、docs/wiki/Path-Map.md（重新產生）
+  - 不改：`plugin.json` 與 `.claude-plugin/marketplace.json` 的版本號，留給 merge 時決定（CHANGELOG 寫在 Unreleased）
 - 開工順序：#383 的 branch 正在改 `plugins/issue-driven-dev/skills/idd-all/SKILL.md`，實作要等 #383 merge 後才開始。
 - 相關 issue：#392（本張）、#387（併入）、#393（idd-all-chain 是否跟進，另案）、#400（雲端 run 的終點依賴本張）。

@@ -72,3 +72,10 @@
 - [x] 11.3 skills：idd-verify 的格式規則（渲染後 HTML、`<details>` 可用、Rejected 留在表內、覆蓋率）；idd-diagnose 的 Choice Default Record 與 registry literal `unattended-auto-Step-4-choice-default`；idd-all 的 Step 0.4／0.7（reset 移到 init 失敗分支）、Phase 4 的 gate（`--review`／`--in-chain` 只比對 head）、Phase 5 的 PR body（Rejected 不承諾 merge）、Phase 5c 兩張表與已知限制、Phase 6 的 Undo（`refused` 不列）與 Action items。完成時：合約測試通過。
 - [x] 11.4 規格與文件：hitl-modes 的意圖 requirement 改寫、新增「別人插手」requirement 與 scenario、guardrail 與 gate 條款；IC_R011 spec 與 reference 補 `# Disable IC_R011`；design 第 4 輪一節與 Implementation Contract；proposal 的範圍；MANIFESTO 與 CHANGELOG。完成時：`spectra validate` 通過。
 
+## 12. verify round 5 修正（#392 comment 6568097813；決定 comment 6568180861：威脅模型、Stage 1）
+
+- [x] 12.1 共用模組：`lib/rendered.py`（gate 與 close stage 讀 GitHub 的渲染結果）、`lib/workflows.py`（發佈偵測，讀不懂即當成會發佈）；close-stage.py 拆出 `lib/ghread.py`、`lib/intent.py`，主檔 800 行以內。完成時：各 suite 全數通過。
+- [x] 12.2 `verify-gate.py`：所有可見文字行（判定、表格外 findings 列）、表格儲存格不算判定、乾淨報告必須有完整覆蓋率行、回報 `high_follow_up` 與 `process_gaps`、崩潰時 unparseable。完成時：`tests/verify-gate/` 全數通過（272），第 5 輪的重現（tight list、details 原文、清單裡的第二個判定）都是 unparseable。
+- [x] 12.3 `close-stage.py`：報告貼出後被編輯或被藏起來即 unparseable；Rejected、嚴重 Follow-up、Process Gaps 即停；意圖檢查讀渲染結果，紀錄與 Proposed Corrections 掃所有 comment、Decision comment 回應；Diagnosis 選取與 Phase 2 一致；bot 豁免；issue 的 state／label／標題／關閉與 PR 的作者、label、標題、描述；GraphQL 讀不完即停；PR commit 都要引用 #N；發佈偵測改用 workflows 模組。完成時：`tests/close-stage/` 全數通過（350）。
+- [x] 12.4 skills 與文件：idd-all 的 description、Phase 0.5 從 `origin/<default>` 開 branch、reset 移到 Step 0.5.1 之後、Phase 5c 兩張表、威脅模型與已知限制、Action items；idd-verify 的格式規則；idd-diagnose 的紀錄位置；spec delta、design、proposal 的 Impact、MANIFESTO、CHANGELOG。完成時：`spectra validate` 通過、合約測試通過。
+

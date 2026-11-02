@@ -27,21 +27,28 @@ Version number left to the merge, as in PR #442.
   pushed (the verified commit itself, not whatever `HEAD` is by then); the close-keyword scan covers
   `owner/repo#N`, issue URLs and hyphenated `/idd-close #N`; a direct-commit push refuses commits that do not
   reference the issue. The stage stays at verified unless the intent was confirmed: every comment on the
-  issue comes from someone with write access, no Clarity Surface row is still surfaced or deferred, an
-  unattended run implemented a Simple-tier issue (Plan, Spectra and SDD-warranted need the approval only an
-  attended run asks for), and the latest Diagnosis records no skipped confirmation (a Layer V deferral, a
-  choice-first default, or Proposed Corrections an unattended run listed but did not apply). It also stays at
+  issue comes from someone with write access (bots excepted), no Clarity Surface row is still surfaced or
+  deferred, an unattended run implemented a Simple-tier issue (Plan, Spectra and SDD-warranted need the
+  approval only an attended run asks for), and no comment carries a skipped-confirmation record (a Layer V
+  deferral or a choice-first default) or, in an unattended run, Proposed Corrections, unless a later Decision
+  comment answered it. The threat model is an orchestrator that can be wrong, not one that deceives: the
+  checks stop honest mistakes and fail closed on anything they cannot read. It also stays at
   verified when someone else became involved after the run began: another account (not a bot) commented on
-  the issue or edited a comment or the issue text, a comment was deleted, or the PR got a comment or a
-  review, is a draft or has changes requested. It also stays at verified
+  the issue or edited a comment or the issue text, labelled, retitled, closed or reopened the issue, a
+  comment was deleted, or the PR (which must be this account's) got a comment, a review, a label, title or
+  description change, is a draft or has changes requested. It also stays at verified
   when the run was downgraded from PR mode (no
   ralph-loop), when the issue's author or last editor lacks write access, when a workflow publishes on push
   to the default branch, and when the default branch has a merge queue; it waits for the `pull_request`
   check a workflow promises (the check set must stay unchanged for 90 seconds); after the CI wait it fetches
   the default branch again and repeats the branch, publishing, CI-edit, merge-queue and gate checks; it stops
-  for a branch behind the default branch and for a change that edits CI; only this account's reports posted
-  since the run began count, and the newest of its verify comments must be the branch-mode report; a report
-  that marks a finding `Rejected` stops the run (a person decides whether it stands). The
+  for a branch behind the default branch, for a change that edits CI and for a PR commit that does not
+  reference the issue; only this account's reports posted since the run began count, the newest of its
+  verify comments must be the branch-mode report, unedited and not hidden; a report that marks a finding
+  `Rejected`, files a CRITICAL/HIGH/P0/P1 finding as Follow-up, or has a Process Gaps section stops the run.
+  Publishing detection (`scripts/lib/workflows.py`) treats any trigger it cannot read as a push to the
+  default branch, and a push workflow calling another repository's workflow as publishing. PR mode branches
+  from the freshly fetched remote default branch. The
   issue counts as closed only when this
   account posted a `## Closing Summary` after the merge or push (`close-stage.py confirm-close`).
   Phase 6 reports `Done:` with `Undo:`
@@ -75,19 +82,22 @@ Version number left to the merge, as in PR #442.
 
 - `scripts/close-stage.py` (#392): `init` records an `/idd-all` run's flags, `gate` judges the newest verify
   report by the session's account against a commit range, `run` performs the close stage in one process,
-  `confirm-close` checks the closing summary, `reset` clears an earlier run's state. Suite
-  `scripts/tests/close-stage/` (279 assertions, a fake `gh`
+  `confirm-close` checks the closing summary, `reset` clears an earlier run's state. Helpers in
+  `scripts/lib/`: `rendered.py` (GitHub's rendering, shared with the gate), `ghread.py`, `intent.py`,
+  `workflows.py`. Suite `scripts/tests/close-stage/` (350 assertions, a fake `gh`, fixtures rendered by GitHub
   and real git repositories).
 - `scripts/verify-gate.py` (#392): reads one verify master comment as GitHub renders it (the comment's
   `body_html`, so a table is a table exactly when GitHub drew one — markdown parsing kept missing layouts
-  GitHub renders as tables), prints one JSON line (`clean` / `not_clean` / `unparseable` with the four counts and
-  a reason) and exits 0 / 1 / 2 (64 on a usage error). Fails closed: a missing verdict or findings table, a fifth
+  GitHub renders as tables; every line of visible text counts, code blocks excepted), prints one JSON line
+  (`clean` / `not_clean` / `unparseable` with the four counts, the serious Follow-up count, whether there is
+  a Process Gaps section, and a reason) and exits 0 / 1 / 2 (64 on a usage error). A clean report needs a
+  complete coverage line. Fails closed: a missing verdict or findings table, a fifth
   Action value, an annotated value, two verdict lines or one inside a quote, list or details block, a PASS
   verdict next to a Blocking row (findings tables inside `<details>` count), a FAIL verdict with no Blocking or
   In-scope fix row, a findings row outside a findings table, a decorated `Action` header, an `Action` column
   that is not last, a verdict line whose counts are missing or differ from the tables, a PASS whose coverage line
   is short, or (with `--expect-sha` / `--expect-base`) a missing or different `**Reviewed**` range are all
-  `unparseable`. Fixtures are GitHub's own rendering of the markdown fixtures (`render-fixtures.sh`). Suites: `scripts/tests/verify-gate/` (244 assertions) and
+  `unparseable`. Fixtures are GitHub's own rendering of the markdown fixtures (`render-fixtures.sh`). Suites: `scripts/tests/verify-gate/` (272 assertions) and
   `scripts/tests/merge-and-close-contract/` (77), which
   pins the idd-all skill, the idd-close skill, the MANIFESTO and the batch reference to the new end state.
 

@@ -6,8 +6,10 @@ Files read (all optional unless the call needs them):
   comments.json         the issue's comments as the REST API returns them
   perm                  viewerPermission of the session account
   perm-<login>.json     collaborator permission of <login> (default: admin)
-  authors.json          GraphQL issue author/editor/userContentEdits/timelineItems (default: author me, nothing else)
-  pr-people.json        GraphQL PR isDraft/reviewDecision/reviews/comments (default: none of them)
+  authors.json          GraphQL issue state/author/editor/userContentEdits/timelineItems (default: OPEN, author me, nothing else)
+  pr-people.json        GraphQL PR author/isDraft/reviewDecision/reviews/comments/edits/timeline (default: author me, none)
+  minimized.json        GraphQL node isMinimized for the verify report (default: false)
+  issue-body.html       body_html of the issue (REST issues/N with the full+json media type; default empty)
   on-checks.sh          run once (bash) on the first `gh pr checks` call — e.g. to move the remote's main
   mq.json               GraphQL mergeQueue answer (default: none)
   prs.json              `gh pr list` result
@@ -47,13 +49,20 @@ if argv[:2] == ["api", "graphql"]:
     if "mergeQueue" in q:
         print(read("mq.json", '{"data":{"repository":{"mergeQueue":null}}}')); sys.exit(0)
     if "pullRequest" in q:
-        print(read("pr-people.json", '{"data":{"repository":{"pullRequest":{"isDraft":false,"reviewDecision":null,'
-                   '"reviews":{"nodes":[]},"comments":{"nodes":[]}}}}}')); sys.exit(0)
-    print(read("authors.json", '{"data":{"repository":{"issue":{"author":{"login":"me"},"editor":null,'
-               '"userContentEdits":{"nodes":[]},"timelineItems":{"nodes":[]}}}}}')); sys.exit(0)
+        print(read("pr-people.json", '{"data":{"repository":{"pullRequest":{"author":{"login":"me"},"isDraft":false,'
+                   '"reviewDecision":null,"reviews":{"totalCount":0,"nodes":[]},"comments":{"totalCount":0,"nodes":[]},'
+                   '"userContentEdits":{"totalCount":0,"nodes":[]},"timelineItems":{"totalCount":0,"nodes":[]}}}}}')); sys.exit(0)
+    if "node(id" in q:
+        print(read("minimized.json", '{"data":{"node":{"isMinimized":false}}}')); sys.exit(0)
+    print(read("authors.json", '{"data":{"repository":{"issue":{"state":"OPEN","author":{"login":"me"},"editor":null,'
+               '"userContentEdits":{"totalCount":0,"nodes":[]},"timelineItems":{"totalCount":0,"nodes":[]}}}}}')); sys.exit(0)
 if argv[0] == "api" and "/collaborators/" in argv[1]:
     login = argv[1].split("/collaborators/")[1].split("/")[0]
     print(read(f"perm-{login}.json", '{"permission":"admin","role_name":"admin"}')); sys.exit(0)
+import re
+if argv[0] == "api" and re.match(r"^repos/[^/]+/[^/]+/issues/\d+$", argv[1]):
+    print(json.dumps({"state": "open", "title": "t", "labels": [], "body": read("issue-body", ""),
+                      "body_html": read("issue-body.html", "")})); sys.exit(0)
 if argv[0] == "api" and argv[1].endswith("/comments"):
     jq = argv[argv.index("--jq") + 1]
     out = subprocess.run(["jq", "-c", jq], input=read("comments.json", "[]"), capture_output=True, text=True)

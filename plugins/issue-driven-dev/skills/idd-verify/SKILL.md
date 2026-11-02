@@ -1349,7 +1349,10 @@ X / Y requirements addressed
 
 - gate 讀的是 GitHub 把這則 comment 渲染出來的 HTML，不是 markdown 原文：GitHub 畫成表格的東西 gate 都會讀到（包括收在 `<details>` 裡的表格），GitHub 不顯示的（HTML 註解）gate 也看不到。`<details>` 可以用，例如 Step 3.5 Proposed Corrections 的替換內容。
 - 恰好一行判定，以 `**PASS**` 或 `**FAIL**` 開頭，自成一段（不在引用、清單或 `<details>` 裡），寫出筆數：`N blocking, M in-scope fix, K follow-up`，有 `Rejected` 的列時再加 `, R rejected`，與 Findings 表一致；其他行不要用粗體大寫英文字開頭。
-- `### 要求覆蓋率` 的 `X / Y requirements addressed` 在判定 PASS 時，X 必須等於 Y；沒滿足的要求是 Blocking finding，不是 PASS。
+- `### 要求覆蓋率` 的 `X / Y requirements addressed` 一定要寫；判定 PASS 時 X 必須等於 Y（沒滿足的要求是 Blocking finding，不是 PASS），少了這一行 gate 判讀不出來。
+- Severity 是 CRITICAL、HIGH、P0 或 P1 的意見歸成 `Follow-up` 時，`/idd-all` 不會越過它自動 merge：嚴重的意見歸為範圍外，要由人同意（#392 verify r5 #4）。
+- reviewer 沒交出結果、由 coordinator 代審時，照 Step 2.5 寫 `### Process Gaps`；有這一節，`/idd-all` 不自動 merge（verify 降級跑，r5 #22）。
+- 報告貼出後不要編輯。結論變了就再跑一輪 verify、貼新的報告：`/idd-all` 不讀貼出後被改過的報告（r5 #14）。
 - 恰好一行 ``**Reviewed**: `<BASE_SHA>..<FROZEN_SHA>` ``，兩個都寫完整的 40 字元 commit：`FROZEN_SHA` 是 `get_diff_and_issue` 凍結的 head，`BASE_SHA` 是這份 diff 的起點（見 Step 1）。`/idd-all` 只在這段範圍正好是要 merge 或 push 的範圍時才放行；只寫一個 commit 會被當成讀不出來。
 - Findings 表的最後一欄是 `Action`，每一列只填 `Blocking`、`In-scope fix`、`Follow-up`、`Rejected` 四者之一（規則見 Step 5a）。
 - 一張表不要被空行切開；引用程式碼用 fence 時要成對關閉。
