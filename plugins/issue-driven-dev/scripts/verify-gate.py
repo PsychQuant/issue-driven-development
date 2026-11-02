@@ -150,10 +150,12 @@ def read_tables(root):
                     raise Unparseable(f"a findings row has {len(cells)} cells but its header has {len(header)}")
                 if sev is None:
                     raise Unparseable("a findings table has no Severity column (r6 #11)")
-                word = re.search(r"\b(CRITICAL|HIGH|MEDIUM|LOW|INFO|P[0-3])\b", cells[sev].upper())
-                if not word and cells[-1] in ("Follow-up", "In-scope fix"):
+                # Every severity word in the cell, most severe first: "LOW (one reviewer says HIGH)" reads HIGH.
+                words = re.findall(r"\b(CRITICAL|HIGH|MEDIUM|LOW|INFO|P[0-3])\b", cells[sev].upper())
+                if not words and cells[-1] in ("Follow-up", "In-scope fix"):
                     raise Unparseable(f"a {cells[-1]} row has Severity '{cells[sev]}', which is not readable")
-                values.append((cells[-1], word.group(1) if word else ""))
+                rank = ["CRITICAL", "P0", "HIGH", "P1", "MEDIUM", "P2", "LOW", "P3", "INFO"]
+                values.append((cells[-1], min(words, key=rank.index) if words else ""))
             continue
         for _, cells in rows:
             for cell in cells:
