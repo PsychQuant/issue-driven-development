@@ -1,7 +1,7 @@
 ## Verify: #42
 
 ### Aggregate
-**FAIL** — 1 blocking, 0 follow-up
+**FAIL** — 1 blocking, 1 follow-up
 
 ### Findings（合併後）
 | # | Severity | Finding | Source | Action |

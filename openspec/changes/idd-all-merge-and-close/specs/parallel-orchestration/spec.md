@@ -2,7 +2,7 @@
 
 ### Requirement: idd-all multi-issue batch mode (conflict-class-ordered, sequential)
 
-`idd-all` SHALL accept two or more distinct issue references and process them as a conflict-class-ordered **sequential** backlog drain. It SHALL read each issue's `### Conflict Class` (defaulting absent/unparseable to `D_diagnose_first`, surfaced), order the sequence by the discipline (`E_verified_close` and re-bucketed `D_diagnose_first` items first, `B_resource_serialize`/`C_shared_module_coord` issues touching the same named resource adjacent, same-file issues grouped, `A_parallel_safe` order unconstrained), and run each issue through the normal `idd-all` pipeline one at a time. Acquiring an `idd-worktree.sh` worktree for `A_parallel_safe` issues is optional, so the resulting branches can be parallelized manually later. Each issue SHALL end where a single-issue run of the same type ends: a non-meeting issue whose verify gate reports `clean` is merged and closed per the `idd-pr-hitl-modes` requirement "Clean verify leads to merge and close"; a non-meeting issue that stops at a guardrail stays at verified; a `type=meeting` issue stops at diagnosed or planning, runs no verify, and opens no PR. After an issue is merged, `idd-all` SHALL update the local default branch with `git pull --ff-only` before starting the next issue, and SHALL stop the batch and report if that update fails.
+`idd-all` SHALL accept two or more distinct issue references and process them as a conflict-class-ordered **sequential** backlog drain. It SHALL read each issue's `### Conflict Class` (defaulting absent/unparseable to `D_diagnose_first`, surfaced), order the sequence by the discipline (`E_verified_close` and re-bucketed `D_diagnose_first` items first, `B_resource_serialize`/`C_shared_module_coord` issues touching the same named resource adjacent, same-file issues grouped, `A_parallel_safe` order unconstrained), and run each issue through the normal `idd-all` pipeline one at a time. Acquiring an `idd-worktree.sh` worktree for `A_parallel_safe` issues is optional, so the resulting branches can be parallelized manually later. Each issue SHALL end where a single-issue run of the same type ends: a non-meeting issue whose verify gate reports `clean` is merged and closed per the `idd-pr-hitl-modes` requirement "Clean verify leads to merge and close"; a non-meeting issue that stops at a guardrail stays at verified; a `type=meeting` issue stops at diagnosed or planning, runs no verify, and opens no PR. In PR mode, after each issue ends (merged or not), `idd-all` SHALL check out the default branch and update it with `git pull --ff-only` before starting the next issue, and SHALL stop the batch and report if that fails. In direct-commit mode `idd-all` SHALL NOT switch branches between issues: every issue stays on the branch the user started on.
 
 #### Scenario: a mixed backlog is drained in conflict-class order
 
@@ -16,5 +16,10 @@
 
 #### Scenario: the default branch cannot be fast-forwarded between issues
 
-- **WHEN** the first issue of a batch is merged and `git pull --ff-only` on the default branch then fails
+- **WHEN** the first issue of a PR-mode batch is merged and `git pull --ff-only` on the default branch then fails
 - **THEN** `idd-all` stops the batch before starting the second issue and the report names the failed update
+
+#### Scenario: a direct-commit batch stays on the user's branch
+
+- **WHEN** a direct-commit batch starts on `wip/foo` and its first issue stops at verified because the fix is not on the default branch
+- **THEN** the second issue is also committed on `wip/foo`, and `idd-all` does not check out the default branch between the two

@@ -21,10 +21,16 @@ Version number left to the merge, as in PR #442.
   `/idd-close` with the `ORCHESTRATED BY /idd-all` directive. Every check and the merge or push run in one
   process, `scripts/close-stage.py run` (started in the background): checks split over several skill bash
   blocks could not stop each other. The run's flags come from a run-state file written when the mode is
-  resolved (Step 0.7); the verify report must be posted by the session's own account and name the commit it
-  reviewed (`**Reviewed**`), which must be the commit being merged (`--match-head-commit`) or pushed; the
-  close-keyword scan covers `owner/repo#N`, issue URLs and hyphenated `/idd-close #N`; a direct-commit push
-  refuses commits that do not reference the issue; the issue counts as closed only with a closing summary.
+  resolved (Step 0.7, every value explicit, so a lost `--review` is an error rather than a silent "no"); the
+  verify report must be posted by the session's own account and name the range it reviewed
+  (`**Reviewed**: <base>..<head>`), which must be exactly the range being merged (`--match-head-commit`) or
+  pushed (the verified commit itself, not whatever `HEAD` is by then); the close-keyword scan covers
+  `owner/repo#N`, issue URLs and hyphenated `/idd-close #N`; a direct-commit push refuses commits that do not
+  reference the issue. The stage also stays at verified when the run was downgraded from PR mode (no
+  ralph-loop), when the issue's author or last editor lacks write access, when a workflow publishes on push
+  to the default branch, and when the default branch has a merge queue; it waits for the `pull_request`
+  check a workflow promises and re-judges the gate after CI. The issue counts as closed only when this
+  account posted a `## Closing Summary` after the merge or push (`close-stage.py confirm-close`).
   Phase 6 reports `Done:` with `Undo:`
   (`gh issue reopen`, `git revert`), or `Done:` with `Stopped:` naming the check that failed. Callers that need
   the old end state (`/loop` and other automation that reviews before merging) pass `--review`; `--in-chain`
@@ -54,15 +60,18 @@ Version number left to the merge, as in PR #442.
 ### Added
 
 - `scripts/close-stage.py` (#392): `init` records an `/idd-all` run's flags, `gate` judges the newest verify
-  report by the session's account against a commit, `run` performs the close stage in one process. Suite
-  `scripts/tests/close-stage/` (98 assertions, a fake `gh` and real git repositories).
+  report by the session's account against a commit range, `run` performs the close stage in one process,
+  `confirm-close` checks the closing summary. Suite `scripts/tests/close-stage/` (165 assertions, a fake `gh`
+  and real git repositories).
 - `scripts/verify-gate.py` (#392): reads one verify master comment, prints one JSON line
   (`clean` / `not_clean` / `unparseable` with the three counts and a reason) and exits 0 / 1 / 2 (64 on a usage
   error). Fails closed: a missing verdict or findings table, a fourth Action value, an annotated value, two
   verdict lines, a PASS verdict next to a Blocking row, a FAIL verdict with no Blocking or In-scope fix row, an
   unclosed fence (fences pair by character and length), a findings row cut off from its table, a decorated
-  `Action` header, or (with `--expect-sha`) a missing or different `**Reviewed**` commit are all `unparseable`.
-  Suites: `scripts/tests/verify-gate/` (111 assertions) and `scripts/tests/merge-and-close-contract/` (61), which
+  `Action` header, an `Action` column that is not last, a verdict line whose blocking count is missing or differs
+  from the table, or (with `--expect-sha` / `--expect-base`) a missing or different `**Reviewed**` range are all
+  `unparseable`. Suites: `scripts/tests/verify-gate/` (133 assertions) and
+  `scripts/tests/merge-and-close-contract/` (72), which
   pins the idd-all skill, the idd-close skill, the MANIFESTO and the batch reference to the new end state.
 
 ### Fixed

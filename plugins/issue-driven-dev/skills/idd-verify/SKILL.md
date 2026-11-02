@@ -794,7 +794,15 @@ fi
 
 ### Step 1: 取得 diff 和 issue
 
-依 Step 0.5 resolved source：
+依 Step 0.5 resolved source。同時記下這份 diff 的起點 `BASE_SHA`（完整 40 字元），報告的 `**Reviewed**` 那一行要用（#392）：
+
+| source | `BASE_SHA` |
+|---|---|
+| PR mode | `git merge-base origin/$DEFAULT_BRANCH HEAD`（PR head 已 checkout） |
+| `--branch <name>` | `git merge-base origin/$DEFAULT_BRANCH <name>` |
+| `--commits N` | `git rev-parse HEAD~N` |
+| `--since <ref>` | `git rev-parse <ref>` |
+| uncommitted | `git rev-parse HEAD`（範圍是工作樹，`/idd-all` 不會用這種報告 merge） |
 
 ```bash
 # PR mode
@@ -1322,7 +1330,7 @@ ${BACKEND_DESC}, model: ${DISPATCH_MODEL}   <!-- 由解析鏈 BACKEND_DESC + 雙
 ### Aggregate
 **PASS / FAIL** — N blocking, M follow-up
 
-**Reviewed**: `${FROZEN_SHA}`
+**Reviewed**: `${BASE_SHA}..${FROZEN_SHA}`
 
 ### 要求覆蓋率
 X / Y requirements addressed
@@ -1340,7 +1348,7 @@ X / Y requirements addressed
 **這兩份樣板是 `/idd-all` 自動 merge 的輸入（#392）**，`scripts/verify-gate.py` 照它讀；Step 4 貼出報告時就要符合，不是 Step 5a 才補：
 
 - 恰好一行判定，以 `**PASS**` 或 `**FAIL**` 開頭；其他行不要用粗體大寫英文字開頭。
-- 恰好一行 ``**Reviewed**: `<FROZEN_SHA>` ``，寫出完整的 40 字元 commit（`get_diff_and_issue` 凍結的那一個）。`/idd-all` 只在這個 commit 就是要 merge 或 push 的 commit 時才放行。
+- 恰好一行 ``**Reviewed**: `<BASE_SHA>..<FROZEN_SHA>` ``，兩個都寫完整的 40 字元 commit：`FROZEN_SHA` 是 `get_diff_and_issue` 凍結的 head，`BASE_SHA` 是這份 diff 的起點（見 Step 1）。`/idd-all` 只在這段範圍正好是要 merge 或 push 的範圍時才放行；只寫一個 commit 會被當成讀不出來。
 - Findings 表的最後一欄是 `Action`，每一列只填 `Blocking`、`In-scope fix`、`Follow-up` 三者之一（規則見 Step 5a）。
 - 一張表不要被空行切開；引用程式碼用 fence 時要成對關閉。
 
@@ -1354,7 +1362,7 @@ ${BACKEND_DESC}, model: ${DISPATCH_MODEL}   <!-- 同 local/branch mode 的組成
 ### Aggregate
 **PASS / FAIL** — N blocking, M follow-up
 
-**Reviewed**: `${FROZEN_SHA}`
+**Reviewed**: `${BASE_SHA}..${FROZEN_SHA}`
 
 ### Scope coverage
 PR refs: #98, #105

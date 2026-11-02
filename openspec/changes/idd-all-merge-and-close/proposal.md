@@ -31,9 +31,9 @@
 - Affected specs: `idd-pr-hitl-modes`、`parallel-orchestration`、`idd-ic-r011-checkpoint`
 - Affected code:
   - New: plugins/issue-driven-dev/scripts/verify-gate.py
-  - New: plugins/issue-driven-dev/scripts/close-stage.py（verify round 1 加：close stage 的單一 process）
+  - New: plugins/issue-driven-dev/scripts/close-stage.py（verify round 1 加：close stage 的單一 process；round 2 加 confirm-close）
   - New: plugins/issue-driven-dev/scripts/tests/close-stage/test.sh、fake-gh.py
-  - Modified: plugins/issue-driven-dev/references/ic-r011-checkpoint.md、plugins/issue-driven-dev/skills/idd-all-chain/SKILL.md、docs/workflows.md（verify round 1 加）
+  - Modified: plugins/issue-driven-dev/references/ic-r011-checkpoint.md、plugins/issue-driven-dev/skills/idd-all-chain/SKILL.md、docs/workflows.md（verify round 1 加）；plugins/issue-driven-dev/references/config-protocol.md（verify round 2 加）
   - New: plugins/issue-driven-dev/scripts/tests/verify-gate/test.sh
   - New: plugins/issue-driven-dev/scripts/tests/merge-and-close-contract/test.sh
   - Modified: plugins/issue-driven-dev/skills/idd-all/SKILL.md

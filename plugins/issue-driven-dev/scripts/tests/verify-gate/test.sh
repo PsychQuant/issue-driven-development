@@ -72,7 +72,9 @@ reason_has "fourth value: reason names it" "No action"
 run_gate "annotated Action value" annotated-value.md unparseable 2
 run_gate "empty Action cell" empty-action.md unparseable 2
 run_gate "PASS verdict with a Blocking row" pass-with-blocking.md unparseable 2
-reason_has "PASS with Blocking: reason" "contradict"
+reason_has "PASS with Blocking: reason" "blocking"
+run_gate "PASS whose own line admits a Blocking row" pass-with-blocking-stated.md unparseable 2
+reason_has "PASS admitting Blocking: reason" "contradict"
 run_gate "two verdict lines" two-verdicts.md unparseable 2
 run_gate "unfilled PASS / FAIL template" template-verdict.md unparseable 2
 run_gate "CONDITIONAL verdict" conditional.md unparseable 2
@@ -101,12 +103,27 @@ run_gate_x() { # name fixture status exit args...
   LAST_OUT="$out"
 }
 run_gate_x "Reviewed line equals the expected commit" reviewed-ok.md clean 0 --expect-sha "$SHA"
-run_gate_x "a 7-character Reviewed prefix of the expected commit" reviewed-short.md clean 0 --expect-sha "$SHA"
+# #392 verify r2 (security #58): the contract asks for the full commit, so a prefix no longer passes
+run_gate_x "a 7-character Reviewed prefix is not enough" reviewed-short.md unparseable 2 --expect-sha "$SHA"
 run_gate_x "Reviewed names another commit" reviewed-other.md unparseable 2 --expect-sha "$SHA"
 reason_has "another commit: reason" "Reviewed"
 run_gate_x "two Reviewed lines" reviewed-twice.md unparseable 2 --expect-sha "$SHA"
 run_gate_x "no Reviewed line while a commit is expected" clean-empty.md unparseable 2 --expect-sha "$SHA"
 run_gate_x "without --expect-sha the Reviewed line is not required" clean-empty.md clean 0
+# #392 verify r2: the verdict line's own count, tables where Action is not last, the reviewed range
+run_gate "the verdict line says 1 blocking but the table has none" verdict-count-mismatch.md unparseable 2
+reason_has "verdict count: reason" "blocking"
+run_gate "a verdict line without a blocking count" verdict-no-count.md unparseable 2
+run_gate "a table whose Action column is not last" action-not-last.md unparseable 2
+run_gate "a table with a column after Action" action-then-owner.md unparseable 2
+BASE=4fbc947aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+run_gate_x "a Reviewed range whose head and base match" reviewed-range.md clean 0 --expect-sha "$SHA" --expect-base "$BASE"
+run_gate_x "a Reviewed range is accepted without --expect-base" reviewed-range.md clean 0 --expect-sha "$SHA"
+run_gate_x "a Reviewed range with another base" reviewed-range-otherbase.md unparseable 2 --expect-sha "$SHA" --expect-base "$BASE"
+reason_has "another base: reason" "range"
+run_gate_x "a single Reviewed commit when a base is expected" reviewed-ok.md unparseable 2 --expect-sha "$SHA" --expect-base "$BASE"
+python3 "$GATE" --comment-file "$FX/reviewed-ok.md" --expect-base "$BASE" >/dev/null 2>&1; rc=$?
+assert_exit "--expect-base without --expect-sha: exit" 64 "$rc"
 python3 "$GATE" --comment-file "$FX/reviewed-ok.md" --expect-sha not-a-sha >/dev/null 2>&1; rc=$?
 assert_exit "--expect-sha that is not hex: exit" 64 "$rc"
 

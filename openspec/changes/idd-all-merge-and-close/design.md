@@ -137,6 +137,22 @@ MANIFESTO〈auto-merge 的合法性與限制〉改成兩個理由並列：verify
 - **PR body 照 gate 結果寫**，停在 verified 的 run 不宣稱 PASS。
 - **`--review`／`--in-chain` 的 run 不修 In-scope fix**：它們不會 merge，維持原本只修 Blocking 的範圍。
 
+### verify round 2 之後的修正（2026-11-02）
+
+第 2 輪（#392 comment 6564044471）指出 round 1 的修法本身還有幾個缺口，改成：
+
+- **run-state 的值一律必填**：`--review yes|no`、`--in-chain yes|no`、`--requested-path`。shell 變數遺失時 init 報 usage error，不再悄悄記成「沒有 `--review`」。
+- **降級不推**：Step 0.6 因為沒有 ralph-loop 把 PR mode 降成 direct-commit 時，使用者要的是 PR review；close stage 停在 verified。
+- **issue 的作者與最後編輯者要有寫入權限**：issue 正文是 implement 照做、verify 照驗的規格；沒有人 merge 時，它必須出自本來就能推這個改動的人。
+- **verify 的範圍綁定**：idd-all 以 `--branch` 呼叫 verify，報告寫 `**Reviewed**: <base>..<head>`；gate 要求 base 是 `merge-base(origin/<default>, head)`。只綁 head 時，沒提到 `#N` 的 commit 會讓 verify 的範圍比實際 merge 的短。
+- **direct-commit 推 verified sha 本身**，推前再確認 HEAD 與 branch 沒變；`origin` 必須就是這個 repo。
+- **merge queue**：merge 前查，有就停（由人經 queue merge）；merge 後仍是 OPEN 就關掉 auto-merge 並停下；讀不到確認時回報「可能已 merge」並保留 PR 號。
+- **CI**：一律先等 90 秒寬限期；有對每個 `pull_request` 都會跑的 workflow 時，要等到 `pull_request` 事件的 check 出現；gate 在 CI 等完後再判一次。
+- **發佈即 merge 的 repo**：預設 branch 上有 workflow 在 push 時發佈（`gh release`、`npm publish`……）就停下，要人帶 `--review`。這是啟發式偵測，只往「停下」的方向錯；repo 層級的開關仍是 #460。
+- **結案確認改成正面確認**：本帳號在 merge／push 之後貼出、第一行是 `## Closing Summary` 的 comment。plugin 的分類器只能否決，不能拿來放行。
+- **gate 讀不出來時**仍照 #392 之前的方式處理 Blocking（模型讀報告、修、最後一輪仍有就 abort），只是不 merge。
+- **verify-gate**：判定行的 blocking 數要與表格一致；Action 不是最後一欄的表、表格外寫著三類之一的列都判 unparseable；`**Reviewed**` 要完整 40 字元。
+
 兩個沒有改、記錄理由的決定：
 
 - **idd-close Step 1.55 仍然停下**（Diagnosis Decisions）。代價是 #399 的誤報：unattended 修正輪產生「後面的 commit 改寫前面加的行」的 branch，squash 之後 1.55 會報 orphan，PR mode 的自動 close 在 PR #418 merge 前常停在「已 merge、issue 仍開」。把 1.55 改成照樣 close 會讓一張可能沒做完的 issue 在沒有人判斷時被關掉，比停下更糟。

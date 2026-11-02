@@ -143,7 +143,7 @@ skill 不會自動 invoke `/spectra-discuss`。目前覆蓋：`idd-comment`（�
 | Path | 行為 | 適用 |
 |------|------|------|
 | **PR path** | 開 feature branch `idd/<N>-<slug>` + push + `gh pr create` | 多人協作、fork、需 CI / review |
-| **Direct-commit path** | 在當前 branch commit,不 push、不開 PR | Solo project、個人 marketplace、quick fix |
+| **Direct-commit path** | 在當前 branch commit、不開 PR;`idd-all` 在 verify 乾淨、且在預設 branch 上時 push 並 close(#392) | Solo project、個人 marketplace、quick fix |
 
 決策順序(高到低):
 
