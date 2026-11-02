@@ -48,7 +48,7 @@ unattended 時，Blocking 與 In-scope fix 一起在同一個 PR 修，修完重
 
 attended 時，verify 有任何 Blocking 或 In-scope fix 就交回使用者（沿用 Phase 4 既有行為）；只有某一輪乾淨時才 merge 並 close，不再另外詢問。理由：使用者在場時看得到回報，事後確認符合 Foresay 的 traceable 分支。
 
-### merge 前的四道 guardrail
+### merge 前的四道 guardrail（最初版本；verify round 1–3 之後的完整清單見下方各輪修正與 SKILL.md Phase 5c）
 
 PR mode 在 merge 前依序檢查，任一不過就停在 verified、在回報寫明是哪一道：
 
@@ -153,6 +153,19 @@ MANIFESTO〈auto-merge 的合法性與限制〉改成兩個理由並列：verify
 - **gate 讀不出來時**仍照 #392 之前的方式處理 Blocking（模型讀報告、修、最後一輪仍有就 abort），只是不 merge。
 - **verify-gate**：判定行的 blocking 數要與表格一致；Action 不是最後一欄的表、表格外寫著三類之一的列都判 unparseable；`**Reviewed**` 要完整 40 字元。
 
+### verify round 3 之後的修正（2026-11-02，範圍縮小：comment 6566557673）
+
+- **意圖確認過才收尾**（範圍決定）：所有 comment 的作者都有寫入權限；Clarity Surface 沒有 surfaced／deferred 的列；沒有 Layer V 或 Clarity 的 deferred 紀錄；Plan tier 有 `## Implementation Plan`。不符合就停在 verified、PR 照開。這把 10-14「所有 mode 都適用」縮成「意圖確認過的 run 都適用」。
+- **報告綁定這次 run**：只認 run-state 建立之後貼的報告；有寫入權限的帳號後貼的 FAIL 也算數（不只本帳號）。Phase 0.4 先 `reset` 上一次的 run-state，Step 0.7 拿不到 N 就報錯，abort 時也 `reset`。
+- **origin**：fetch 與 push URL 都必須是 `github.com/<repo>`；推完向 GitHub 確認預設 branch 指向 verified commit。
+- **PR commit 從本機 git 的完整範圍讀**，不受 `gh pr view --json commits` 的筆數上限影響。
+- **chain 與 `--review` 不改 verify 的範圍**：只有能走到 close stage 的 run 才以 `--branch` 呼叫 verify。
+- **branch 落後預設 branch 就停**（merge 的結果沒被審過）；**改到 CI 的改動不自動 merge**。
+- **發佈型 workflow 改掃預設 branch 最新的 tree**，只由 tag 觸發的不算，`workflow_run` 與本地 reusable workflow 也看；**`pull_request` 觸發的判定看 trigger 區塊**，有 path 篩選的不算。
+- **CI 要 check 集合連續 90 秒不變**才接受（`needs:` 之後才出現的 check）。
+- **verify-gate**：HTML 區塊判讀不出來（單行 `<!-- -->` 可以）；判定行同一類計數寫兩次也判讀不出來；idd-verify 樣板改成三類計數。
+- **attended**：使用者處理完 findings、說要繼續時，同一個 session 再跑一輪 verify，乾淨了照常收尾。
+
 兩個沒有改、記錄理由的決定：
 
 - **idd-close Step 1.55 仍然停下**（Diagnosis Decisions）。代價是 #399 的誤報：unattended 修正輪產生「後面的 commit 改寫前面加的行」的 branch，squash 之後 1.55 會報 orphan，PR mode 的自動 close 在 PR #418 merge 前常停在「已 merge、issue 仍開」。把 1.55 改成照樣 close 會讓一張可能沒做完的 issue 在沒有人判斷時被關掉，比停下更糟。
@@ -173,7 +186,7 @@ MANIFESTO〈auto-merge 的合法性與限制〉改成兩個理由並列：verify
 
 | 情況 | 結果 |
 |---|---|
-| PR mode，gate `clean`，四道 guardrail 全過 | squash merge，fetch，呼叫 `/idd-close`（帶 ORCHESTRATED 指示），回報 Done |
+| PR mode，gate `clean`，Phase 5c 的檢查全過 | squash merge，fetch，呼叫 `/idd-close`（帶 ORCHESTRATED 指示），回報 Done |
 | PR mode，任一 guardrail 不過 | 不 merge，停在 verified，回報 Stopped |
 | direct-commit，在預設 branch，gate `clean` | push，呼叫 `/idd-close`，回報 Done |
 | direct-commit，不在預設 branch，或 push 被拒 | 停在 verified，回報 Stopped |
@@ -190,7 +203,7 @@ MANIFESTO〈auto-merge 的合法性與限制〉改成兩個理由並列：verify
 
 ## Risks / Trade-offs
 
-- [自動 merge 了一個錯的改動] → 四道 guardrail；回報附 `git revert` 命令。revert 會在 history 留痕跡，這是使用者接受的取捨。
+- [自動 merge 了一個錯的改動] → Phase 5c 的 guardrail；回報附 `git revert` 命令。revert 會在 history 留痕跡，這是使用者接受的取捨。
 - [嚴門檻讓多數 run 停在 verified] → 回報寫明停在哪一輪、還剩哪些 In-scope fix；2 輪上限避免無限迴圈。
 - [PR 已 merge、close 卻停下] → 回報寫明狀態並給出 `/idd-close #N`；不嘗試回滾 merge。
 - [`/loop` 等 caller 依賴舊的停點] → CHANGELOG 標 BREAKING；需要舊行為的 caller 改帶 `--review`。

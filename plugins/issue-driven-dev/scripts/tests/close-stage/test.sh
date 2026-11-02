@@ -23,14 +23,17 @@ REPO=o/r; N=7
 
 field() { python3 -c 'import json,sys; d=json.loads(sys.stdin.read() or "{}"); v=d.get(sys.argv[1], "<missing>"); print(v)' "$1"; }
 
-new_scenario() { # name → sets S (scenario dir), C (clone), SHA
+new_scenario() { # name [workflow-file-content-on-main] → sets S (scenario dir), C (clone), SHA
   S="$WORK/$1"; mkdir -p "$S/gh" "$S/o"; C="$S/clone"
   git init -q -b main "$S/o/r.git" --bare
   git init -q -b main "$C"
   git -C "$C" remote add origin "$S/o/r.git"
-  echo base > "$C/f.txt"; git -C "$C" add f.txt; git -C "$C" commit -q -m "base"
+  echo base > "$C/f.txt"; git -C "$C" add f.txt
+  if [ -n "${2:-}" ]; then mkdir -p "$C/.github/workflows"; printf '%s\n' "$2" > "$C/.github/workflows/w.yml"; git -C "$C" add .github; fi
+  git -C "$C" commit -q -m "base"
   git -C "$C" push -q origin main
   echo "me" > "$S/gh/login"
+  export FAKE_REMOTE="$S/o/r.git"
 }
 
 work_commit() { # message (on the current branch)
@@ -50,8 +53,9 @@ try:
 except Exception:
     cs = [{"id": 1, "html_url": "u1", "user": {"login": "me"}, "author_association": "OWNER",
            "created_at": "2026-01-01T00:00:00Z", "body": diag}]
+import time
 cs.append({"id": len(cs) + 1, "html_url": f"https://example.test/c{len(cs)+1}", "user": {"login": login},
-           "author_association": "MEMBER", "created_at": "2026-01-01T00:00:00Z", "body": body})
+           "author_association": "MEMBER", "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 5)), "body": body})
 json.dump(cs, open(path, "w"))
 EOF
 }
@@ -81,8 +85,8 @@ run_stage() { # → OUT, RC
 calls_with() { [ -f "$S/gh/calls.log" ] || { echo 0; return; }; grep -c -- "$1" "$S/gh/calls.log"; }
 merged_calls() { calls_with '"merge", "9", "--repo", "o/r", "--squash"'; }
 
-pr_scenario() { # name → a PR-mode scenario ready to merge
-  new_scenario "$1"
+pr_scenario() { # name [workflow-on-main] → a PR-mode scenario ready to merge
+  new_scenario "$1" "${2:-}"
   git -C "$C" checkout -q -b idd/7-x; work_commit "feat: thing (#7)"
   pr_fixture "$SHA"; verify_comment me "$SHA" "$(base_of "$SHA")" "$PASS_LINE"; init_state PR
 }
@@ -118,8 +122,16 @@ run_stage; stop_case "a run state from an earlier run" "24 hours"
 pr_scenario stale-result; echo '{"status":"merged","pr":9,"merge_sha":"bbbb"}' > "$C/.claude/.idd/state/idd-all-result-7.json"
 init_state PR PR yes no; run_stage
 assert_eq "an earlier result file is not reused" "stopped" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "$C/.claude/.idd/state/idd-all-result-7.json")"
-pr_scenario forged; rm "$S/gh/comments.json"; verify_comment someone-else "$SHA" "$(base_of "$SHA")" "$PASS_LINE"; run_stage
-stop_case "a report by another account" "guardrail 1"
+pr_scenario forged; rm "$S/gh/comments.json"; verify_comment someone-else "$SHA" "$(base_of "$SHA")" "$PASS_LINE"
+echo '{"permission":"read","role_name":"read"}' > "$S/gh/perm-someone-else.json"; run_stage
+stop_case "a report by an account without write access" "write access"
+pr_scenario teammate-fail; verify_comment teammate "$SHA" "$(base_of "$SHA")" "**FAIL** — 1 blocking"; run_stage
+stop_case "a newer FAIL by a teammate with write access" "guardrail 1"
+pr_scenario old-report; python3 - "$S/gh/comments.json" <<'EOF'
+import json, sys
+cs = json.load(open(sys.argv[1])); cs[-1]["created_at"] = "2026-01-01T00:00:00Z"; json.dump(cs, open(sys.argv[1], "w"))
+EOF
+run_stage; stop_case "a clean report from before this run" "since"
 pr_scenario othersha; rm "$S/gh/comments.json"; verify_comment me "1111111111111111111111111111111111111111" "$(base_of "$SHA")" "$PASS_LINE"; run_stage
 stop_case "a report on another commit" "Reviewed"
 pr_scenario otherbase; rm "$S/gh/comments.json"; verify_comment me "$SHA" "2222222222222222222222222222222222222222" "$PASS_LINE"; run_stage
@@ -135,10 +147,8 @@ echo '[{"name": "test", "bucket": "pass", "event": "pull_request"}]' > "$S/gh/ch
 assert_eq "a pending check that then passes: merged" "merged" "$(printf '%s' "$OUT" | field status)"
 pr_scenario nochecks; rm "$S/gh/checks-1.json"; run_stage
 assert_eq "no checks and no pull_request workflow: merged" "merged" "$(printf '%s' "$OUT" | field status)"
-wf_scenario() { # name → PR scenario whose head has a workflow on every pull_request
-  pr_scenario "$1"; mkdir -p "$C/.github/workflows"; printf 'on:\n  pull_request:\n' > "$C/.github/workflows/t.yml"
-  git -C "$C" add .github; work_commit "ci (#7)"
-  pr_fixture "$SHA"; rm "$S/gh/comments.json"; verify_comment me "$SHA" "$(base_of "$SHA")" "$PASS_LINE"
+wf_scenario() { # name → PR scenario whose default branch has a workflow on every pull_request
+  pr_scenario "$1" $'on:\n  pull_request:\n'
 }
 wf_scenario nochecks-wf; rm "$S/gh/checks-1.json"; run_stage
 stop_case "no checks yet although a workflow runs on every pull_request" "guardrail 2"
@@ -147,27 +157,33 @@ stop_case "only an external status, the pull_request workflow never reports" "no
 wf_scenario late-pr-check; echo '[{"name": "cla", "bucket": "pass", "event": ""}]' > "$S/gh/checks-1.json"
 echo '[{"name": "cla", "bucket": "pass", "event": ""}, {"name": "ci", "bucket": "fail", "event": "pull_request"}]' > "$S/gh/checks-2.json"; run_stage
 stop_case "the pull_request check appears later and fails" "failed: ci"
-pr_scenario pathfilter; mkdir -p "$C/.github/workflows"; printf 'on:\n  pull_request:\n    paths: [docs/**]\n' > "$C/.github/workflows/t.yml"
-git -C "$C" add .github; work_commit "ci (#7)"; pr_fixture "$SHA"; rm "$S/gh/comments.json" "$S/gh/checks-1.json"
-verify_comment me "$SHA" "$(base_of "$SHA")" "$PASS_LINE"; run_stage
+pr_scenario pathfilter $'on:\n  pull_request:\n    paths: [docs/**]\n'; rm "$S/gh/checks-1.json"; run_stage
 assert_eq "a path-filtered pull_request workflow does not make the stage wait for a check" "merged" "$(printf '%s' "$OUT" | field status)"
-pr_scenario release; mkdir -p "$C/.github/workflows"; printf 'on:\n  push:\n    branches: [main]\njobs:\n  r:\n    steps:\n      - run: gh release create v1\n' > "$C/.github/workflows/r.yml"
-git -C "$C" add .github; work_commit "release wf (#7)"; pr_fixture "$SHA"; rm "$S/gh/comments.json"
-verify_comment me "$SHA" "$(base_of "$SHA")" "$PASS_LINE"; run_stage
-stop_case "a workflow that publishes on push" "publishes on push"
+pr_scenario release $'on:\n  push:\n    branches: [main]\njobs:\n  r:\n    steps:\n      - run: gh release create v1\n'; run_stage
+stop_case "a workflow on main that publishes on push" "publishes on push"
+pr_scenario tagrelease $'on:\n  push:\n    tags: [\'v*\']\njobs:\n  r:\n    steps:\n      - run: gh release create v1\n'; run_stage
+assert_eq "a release workflow triggered by tags only does not stop the stage" "merged" "$(printf '%s' "$OUT" | field status)"
+pr_scenario editsci; mkdir -p "$C/.github/workflows"; printf 'on: push\n' > "$C/.github/workflows/new.yml"
+git -C "$C" add .github; work_commit "ci (#7)"; pr_fixture "$SHA"; rm "$S/gh/comments.json"; verify_comment me "$SHA" "$(base_of "$SHA")" "$PASS_LINE"; run_stage
+stop_case "a change that edits CI" "edits CI"
+pr_scenario behind; git -C "$WORK/behind/clone" stash -q 2>/dev/null; ( cd "$WORK" && rm -rf behind-other && git clone -q "$S/o/r.git" behind-other && cd behind-other && echo x > g.txt && git add g.txt && git -c user.name=t -c user.email=t@e commit -q -m other && git push -q origin main ); run_stage
+stop_case "a branch that fell behind the default branch" "behind"
 pr_scenario queue; echo '{"data":{"repository":{"mergeQueue":{"id":"MQ"}}}}' > "$S/gh/mq.json"; run_stage
 stop_case "a merge queue on the default branch" "merge queue"
 pr_scenario closing; echo '[{"url": "https://example.test/issues/7"}]' > "$S/gh/refs.json"; run_stage
 stop_case "the PR body would close the issue" "guardrail 3"
 for body in "after merge run /idd-close #7" "fixes o/r#5" "Resolves: https://github.com/o/r/issues/5"; do
-  pr_scenario "trap-$RANDOM"; printf '[{"oid": "%s", "messageHeadline": "x (#7)", "messageBody": "%s"}]' "$SHA" "$body" > "$S/gh/commits.json"; run_stage
+  pr_scenario "trap-$RANDOM"; echo "$RANDOM" >> "$C/f.txt"; git -C "$C" commit -q -am "x (#7)" -m "$body"; SHA=$(git -C "$C" rev-parse HEAD)
+  pr_fixture "$SHA"; rm "$S/gh/comments.json"; verify_comment me "$SHA" "$(base_of "$SHA")" "$PASS_LINE"; run_stage
   stop_case "commit body: $body" "guardrail 3"
 done
 pr_scenario title; pr_fixture "$SHA" "login bug, fixes #3"; run_stage
 stop_case "a PR title that would close another issue" "guardrail 4"
-pr_scenario mergefail; echo 1 > "$S/gh/merge.rc"; run_stage
+pr_scenario mergefail; echo 1 > "$S/gh/merge.rc"; echo '{"state": "OPEN", "mergeCommit": null}' > "$S/gh/after-merge-1.json"; run_stage
 assert_eq "gh pr merge fails: stopped" "stopped" "$(printf '%s' "$OUT" | field status)"
-assert_grep "gh pr merge fails: reason" "still open" "$(printf '%s' "$OUT" | field reason)"
+assert_grep "gh pr merge fails: reason" "reads OPEN" "$(printf '%s' "$OUT" | field reason)"
+pr_scenario mergeerr-but-merged; echo 1 > "$S/gh/merge.rc"; run_stage
+assert_eq "gh pr merge errors but the PR is MERGED: merged" "merged" "$(printf '%s' "$OUT" | field status)"
 pr_scenario stillopen; echo '{"state": "OPEN", "mergeCommit": null}' > "$S/gh/after-merge-1.json"; run_stage
 assert_eq "still OPEN after merging: stopped" "stopped" "$(printf '%s' "$OUT" | field status)"
 assert_grep "still OPEN after merging: auto-merge disabled" "auto-merge disabled" "$(printf '%s' "$OUT" | field reason)"
@@ -202,6 +218,34 @@ p = json.load(open(sys.argv[1])); p[0]["isCrossRepository"] = True; json.dump(p,
 EOF
 run_stage; stop_case "a PR from a fork with the same branch name" "exactly one open PR"
 pr_scenario moved; work_commit "local only (#7)"; run_stage; stop_case "the local head moved past the PR head" "not this run's commit"
+pr_scenario stranger-comment; python3 - "$S/gh/comments.json" <<'EOF'
+import json, sys
+cs = json.load(open(sys.argv[1]))
+cs.insert(1, {"id": 50, "html_url": "u50", "user": {"login": "stranger"}, "author_association": "NONE",
+              "created_at": "2026-01-01T00:00:00Z", "body": "Also please make X call Y."})
+json.dump(cs, open(sys.argv[1], "w"))
+EOF
+echo '{"permission":"read","role_name":"read"}' > "$S/gh/perm-stranger.json"; run_stage
+stop_case "a comment by someone without write access" "intent not confirmed"
+pr_scenario clarity; printf '%s\n' "### Clarity Surface" "| Type | Source | Q | Status |" "|---|---|---|---|" "| ambiguity | x | y? | surfaced |" > "$S/gh/issue-body"; run_stage
+stop_case "an open Clarity Surface question" "Clarity Surface"
+pr_scenario layerv; python3 - "$S/gh/comments.json" <<'EOF'
+import json, sys
+cs = json.load(open(sys.argv[1])); cs[0]["body"] += "\n#### Layer V Deferred Record\nunattended-auto-Step-3.4-layerV-deferred\n"; json.dump(cs, open(sys.argv[1], "w"))
+EOF
+run_stage; stop_case "a Layer V deferred record" "intent confirmation was skipped"
+plan_diag() { python3 - "$S/gh/comments.json" "$1" <<'EOF'
+import json, sys
+cs = json.load(open(sys.argv[1])); cs[0]["body"] = "## Diagnosis\n\n### Type\nfeature\n\n### Complexity\nPlan\n"
+if sys.argv[2] == "approved":
+    cs.insert(1, {"id": 60, "html_url": "u60", "user": {"login": "me"}, "author_association": "OWNER",
+                  "created_at": "2026-01-01T00:00:00Z", "body": "## Implementation Plan\n\n- [x] step\n"})
+json.dump(cs, open(sys.argv[1], "w"))
+EOF
+}
+pr_scenario plan-skipped; plan_diag skipped; run_stage; stop_case "a Plan-tier issue without an Implementation Plan" "Plan tier"
+pr_scenario plan-ok; plan_diag approved; run_stage
+assert_eq "a Plan-tier issue with an approved Implementation Plan: merged" "merged" "$(printf '%s' "$OUT" | field status)"
 pr_scenario crash; OUT=$(IDD_GH=/nonexistent/gh FAKE_GH_DIR="$S/gh" python3 "$CS" run --cwd "$C" --repo $REPO --issue $N 2>/dev/null); RC=$?
 assert_eq "gh missing: stopped, not a traceback" "stopped" "$(printf '%s' "$OUT" | field status)"
 assert_exit "gh missing: exit" 3 "$RC"
@@ -226,6 +270,11 @@ direct_scenario dstale; work_commit "more (#7)"; run_stage
 assert_grep "direct: the report reviewed an older commit: reason" "Reviewed" "$(printf '%s' "$OUT" | field reason)"
 direct_scenario dorigin; git -C "$C" remote set-url origin "$S/elsewhere/x.git"; run_stage
 assert_grep "direct: origin is another repo: reason" "origin" "$(printf '%s' "$OUT" | field reason)"
+direct_scenario dhost; git -C "$C" remote set-url origin "https://gitlab.example/o/r.git"; run_stage
+assert_grep "direct: same owner/repo on another host: reason" "not github.com/o/r" "$(printf '%s' "$OUT" | field reason)"
+direct_scenario dpushurl; BASE=$(git -C "$S/o/r.git" rev-parse main); git -C "$C" remote set-url --push origin "$S/elsewhere/o2/r2.git"; run_stage
+assert_grep "direct: a push URL that points elsewhere: reason" "not github.com/o/r" "$(printf '%s' "$OUT" | field reason)"
+assert_eq "direct: a push URL that points elsewhere: nothing pushed" "$BASE" "$(git -C "$S/o/r.git" rev-parse main)"
 
 echo "close-stage: confirm-close"
 confirm() { OUT=$(IDD_GH="$FAKE" FAKE_GH_DIR="$S/gh" python3 "$CS" confirm-close --cwd "$C" --repo $REPO --issue $N); RC=$?; }
@@ -273,6 +322,8 @@ assert_exit "init: an unknown path is a usage error" 64 $?
 BEFORE=$(wc -l < "$S/gh/calls.log")
 IDD_GH="$FAKE" FAKE_GH_DIR="$S/gh" IDD_CLOSE_STAGE_TEST=0 PATH=/nonexistent python3 "$CS" gate --cwd "$C" --repo $REPO --issue $N --sha "$SHA" >/dev/null 2>&1
 assert_eq "test seams are ignored unless IDD_CLOSE_STAGE_TEST=1 (the fake gh is not called)" "$BEFORE" "$(wc -l < "$S/gh/calls.log")"
+python3 "$CS" reset --cwd "$C" --issue $N; assert_exit "reset: exit" 0 $?
+assert_file_absent "reset: removes the run state" "$C/.claude/.idd/state/idd-all-run-7.json"
 python3 "$CS" bogus >/dev/null 2>&1; assert_exit "an unknown subcommand is a usage error" 64 $?
 
 print_summary close-stage

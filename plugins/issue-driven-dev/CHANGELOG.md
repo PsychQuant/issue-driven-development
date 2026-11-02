@@ -11,7 +11,7 @@ Version number left to the merge, as in PR #442.
 
 ### Changed
 
-- **BREAKING — `/idd-all` merges (or pushes) and closes after a clean verify (#392).** The run used to end at
+- **BREAKING — `/idd-all` merges (or pushes) and closes after a clean verify, when the intent was confirmed (#392).** The run used to end at
   verified: PR mode opened the PR, direct-commit mode left local commits, and both asked the user to merge and run
   `/idd-close`. Now a new close stage (Phase 5c) takes over when the verify gate reports `clean`: PR mode
   squash-merges after three more guardrails pass (every CI check passes, waiting at most 15 minutes for pending
@@ -26,10 +26,16 @@ Version number left to the merge, as in PR #442.
   (`**Reviewed**: <base>..<head>`), which must be exactly the range being merged (`--match-head-commit`) or
   pushed (the verified commit itself, not whatever `HEAD` is by then); the close-keyword scan covers
   `owner/repo#N`, issue URLs and hyphenated `/idd-close #N`; a direct-commit push refuses commits that do not
-  reference the issue. The stage also stays at verified when the run was downgraded from PR mode (no
+  reference the issue. The stage stays at verified unless the intent was confirmed: every comment on the
+  issue comes from someone with write access, no Clarity Surface question is open, no Layer V or Clarity
+  deferral was recorded, and a Plan-tier issue has an approved Implementation Plan. It also stays at verified
+  when the run was downgraded from PR mode (no
   ralph-loop), when the issue's author or last editor lacks write access, when a workflow publishes on push
   to the default branch, and when the default branch has a merge queue; it waits for the `pull_request`
-  check a workflow promises and re-judges the gate after CI. The issue counts as closed only when this
+  check a workflow promises (the check set must stay unchanged for 90 seconds) and re-judges the gate after
+  CI; it stops for a branch behind the default branch and for a change that edits CI; only reports posted
+  since the run began by accounts with write access count (a teammate's newer FAIL stops the merge). The
+  issue counts as closed only when this
   account posted a `## Closing Summary` after the merge or push (`close-stage.py confirm-close`).
   Phase 6 reports `Done:` with `Undo:`
   (`gh issue reopen`, `git revert`), or `Done:` with `Stopped:` naming the check that failed. Callers that need
@@ -61,7 +67,8 @@ Version number left to the merge, as in PR #442.
 
 - `scripts/close-stage.py` (#392): `init` records an `/idd-all` run's flags, `gate` judges the newest verify
   report by the session's account against a commit range, `run` performs the close stage in one process,
-  `confirm-close` checks the closing summary. Suite `scripts/tests/close-stage/` (165 assertions, a fake `gh`
+  `confirm-close` checks the closing summary, `reset` clears an earlier run's state. Suite
+  `scripts/tests/close-stage/` (205 assertions, a fake `gh`
   and real git repositories).
 - `scripts/verify-gate.py` (#392): reads one verify master comment, prints one JSON line
   (`clean` / `not_clean` / `unparseable` with the three counts and a reason) and exits 0 / 1 / 2 (64 on a usage
@@ -70,8 +77,8 @@ Version number left to the merge, as in PR #442.
   unclosed fence (fences pair by character and length), a findings row cut off from its table, a decorated
   `Action` header, an `Action` column that is not last, a verdict line whose blocking count is missing or differs
   from the table, or (with `--expect-sha` / `--expect-base`) a missing or different `**Reviewed**` range are all
-  `unparseable`. Suites: `scripts/tests/verify-gate/` (133 assertions) and
-  `scripts/tests/merge-and-close-contract/` (72), which
+  `unparseable`, as is an HTML block. Suites: `scripts/tests/verify-gate/` (150 assertions) and
+  `scripts/tests/merge-and-close-contract/` (77), which
   pins the idd-all skill, the idd-close skill, the MANIFESTO and the batch reference to the new end state.
 
 ### Fixed

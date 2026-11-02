@@ -6,7 +6,7 @@
 
 - **BREAKING**（對 `/loop` 等自動化 caller）：`/idd-all` 的終點從 verified 改成 closed。最新一輪 verify 沒有 Blocking、也沒有 In-scope fix 時，PR mode 會 merge PR 再跑 `/idd-close`；direct-commit mode 在預設 branch 上會先 push 再 close。
 - 無人在場（unattended）時，In-scope fix 與 Blocking 一起在同一個 PR 修，修完重跑 verify，最多 2 輪；仍不乾淨就停在 verified。有人在場（attended）時照舊不自動修。
-- merge 前必須通過四道 guardrail：verify 乾淨、CI checks 全綠、Step 0.8 auto-close trap 掃描乾淨、idd-all 自己組的 squash commit message 不含 close 類關鍵字緊鄰 issue 編號。任一不過就停在 verified 並寫明原因。
+- merge 前必須通過 guardrail（verify round 1–3 之後擴充，完整清單見 design 與 `skills/idd-all/SKILL.md` Phase 5c；最初的四道是）：verify 乾淨、CI checks 全綠、Step 0.8 auto-close trap 掃描乾淨、idd-all 自己組的 squash commit message 不含 close 類關鍵字緊鄰 issue 編號。任一不過就停在 verified 並寫明原因。
 - `/idd-close` 新增「由 idd-all 呼叫」的指示：residue 記為殘留、follow-up 照 IC_R011 預設開 issue、Step 1.6 與 Step 1.55 的警告一律停下不 close、distribution sync 在有人在場時照問、無人在場時略過並寫進回報。
 - 新增一支 helper，把 verify 報告的分類表解析成計數；表格讀不出來時一律判定「不乾淨」，不會因解析失敗而 merge。
 - Phase 6 回報改成 Foresay 的 operation 格式：做了什麼、作用在哪、實際改動範圍、開了哪些 follow-up、記下的 residue、略過的 distribution sync，以及復原方式（`gh issue reopen`、`git revert`）。
@@ -28,7 +28,7 @@
 
 ## Impact
 
-- Affected specs: `idd-pr-hitl-modes`、`parallel-orchestration`、`idd-ic-r011-checkpoint`
+- Affected specs: `idd-pr-hitl-modes`、`parallel-orchestration`、`idd-ic-r011-checkpoint`、`idd-existing-work-lookup`
 - Affected code:
   - New: plugins/issue-driven-dev/scripts/verify-gate.py
   - New: plugins/issue-driven-dev/scripts/close-stage.py（verify round 1 加：close stage 的單一 process；round 2 加 confirm-close）

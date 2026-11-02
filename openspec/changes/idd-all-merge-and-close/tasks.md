@@ -57,3 +57,10 @@
 - [x] 9.2 `close-stage.py`：init 的每個值必填（`--review`／`--in-chain` 為 yes／no、`--requested-path`）；run-state 24 小時失效、結果檔每次 run 先刪；降級即停；issue 作者與最後編輯者的寫入權限；`origin` 必須是這個 repo；發佈型 workflow 即停；fork PR 不算；merge queue 即停；CI 寬限期與 `pull_request` check；CI 後再判 gate；merge 後重讀確認、仍 OPEN 就關 auto-merge；direct-commit 推 verified sha、推前再確認；任何例外都輸出 stopped／unparseable；新增 `confirm-close`。完成時：`tests/close-stage/` 全數通過，含 7 個突變中 6 個被抓到（推 HEAD 的突變被推前的再確認擋下，屬預期）。
 - [x] 9.3 idd-all：Step 0.2 的 yes／no 旗標、Phase 0.5 印出 requested path；Phase 4 以 `--branch` 呼叫 verify、gate 帶 `--base`、gate 讀不出來時照舊處理 Blocking；Phase 5 只寫 gate 狀態、`--review` 的措辭、沿用已開的 PR；Phase 5c 的排除表與 guardrail 表、`/idd-close` 只在 merged／pushed 後呼叫並指定 clone、`confirm-close`；Phase 6 的 Undo 完整步驟、Spectra archive 提醒、follow-up 合併、清理；batch 只在 PR mode 切回預設 branch。idd-verify 的 `**Reviewed**` 寫範圍與 `BASE_SHA` 的定義。完成時：合約測試通過。
 - [x] 9.4 文件與規格：plugin CLAUDE.md、config-protocol.md 的 direct-commit 不再寫「不 push」；idd-close 的「結案不可逆」句改寫；parallel-orchestration 的 spec delta 與 reference 改成 PR mode 才切回；hitl-modes delta 補上 run-state 必填、降級、作者權限、範圍、merge queue、CI、gate 條款。完成時：`spectra validate` 通過。
+
+## 10. verify round 3 修正（#392 comment 6566486203；範圍決定 comment 6566557673）
+
+- [x] 10.1 `close-stage.py`：意圖確認的閘門（comment 作者、Clarity Surface、deferred 紀錄、Plan tier）；只認這次 run 開始之後、有寫入權限的帳號貼的最新報告；`reset` 子指令；origin 的 host 與 push URL、推完向 GitHub 確認；PR commit 從本機 git 讀；branch 落後即停；改到 CI 即停；發佈型 workflow 掃預設 branch、略過 tag-only；`pull_request` 觸發的判定看 trigger 區塊；CI 集合穩定 90 秒；merge 失敗後重讀狀態；GraphQL 字串用 `-f`；run-state 不經過 symlink。完成時：`tests/close-stage/` 全數通過（205）。
+- [x] 10.2 `verify-gate.py`：HTML 區塊與重複計數判 unparseable。完成時：`tests/verify-gate/` 全數通過（150）。
+- [x] 10.3 idd-all：Phase 0.4 `reset`、Step 0.7 拿不到 N 報錯且 init 失敗只警告、chain 與 `--review` 維持原本的 verify 範圍、attended 續跑、Phase 5c 兩張表、續跑只沿用自己開的 PR、前景執行的 timeout、abort 時 `reset`、`--review` 報告寫 gate 狀態。idd-verify 三類計數與 HTML 規則；idd-close 的 orchestrated Step 3.5 也照 `# Disable IC_R011`。完成時：合約測試通過（77）。
+- [x] 10.4 規格與文件：hitl-modes 新增「意圖確認過才收尾」requirement 並更新 guardrail 與 push scenario；existing-work-lookup 的「結案不可逆」改寫；MANIFESTO 加意圖確認；proposal、design 的「四道」改成指向完整清單；全域規則改成指向 skill 的封閉列舉。完成時：`spectra validate` 通過。

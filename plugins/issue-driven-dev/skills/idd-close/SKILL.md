@@ -194,7 +194,7 @@ helper 的 `--issue N` 模式另外做了一件審計模式沒做的事：它用
 |---|---|
 | Step 1.55 merge-completeness 回報有 commit 未落到預設 branch（rc=3） | 停下、不 close（等同 `abort + land orphans`），原因寫進輸出 |
 | Step 1.6 semantic check 有警告（打勾項目找不到對應 commit 或 artifact） | 停下、不 close（等同 `Investigate`），原因寫進輸出 |
-| Step 3.5 closing summary 裡有 follow-up 關鍵字 | 照 IC_R011 預設：開 issue（等同 `file all`）；使用者設了 `AI_LOW_BAR_ISSUE_FILING=false` 時改為 implicit (a) skip 並寫 audit 字面（同 unattended fall-back）。開了或略過的都列進輸出 |
+| Step 3.5 closing summary 裡有 follow-up 關鍵字 | 照 IC_R011 預設：開 issue（等同 `file all`）；使用者設了 `AI_LOW_BAR_ISSUE_FILING=false`，或 repo 的 CLAUDE.md 有 `# Disable IC_R011` 時，改為 implicit (a) skip 並寫 audit 字面（同 unattended fall-back：要先問的人不在，就不開）。開了或略過的都列進輸出 |
 | Step 3.6 Diagnosis 的 Residue 非空 | 記為殘留、不開 issue（等同 `still residue — acknowledge as-is`），原文列進輸出 |
 | Step 6.3 doc-sync 判定某份文件過時 | 不 commit；照「過時但無法自動判定」那一列，在 closing summary 追加 `### Doc-sync 檢查` 並列進輸出 |
 | Step 6.5 distribution sync | 有人在場（args 沒有 `UNATTENDED MODE`）時照常詢問；無人在場時略過（等同 `skip — I'll sync manually later`），輸出要跑的命令 |
@@ -653,7 +653,7 @@ for (bullet, reason) in WARNINGS:
 
 **Per IC_R011 follow-up filing checkpoint** (see [`references/ic-r011-checkpoint.md`](../../references/ic-r011-checkpoint.md))。
 
-> **ORCHESTRATED BY /idd-all**（#392）：不問，取 IC_R011 預設（`file all`；`AI_LOW_BAR_ISSUE_FILING=false` 時 implicit (a) skip），結果列進輸出（見〈Orchestrated close〉）。
+> **ORCHESTRATED BY /idd-all**（#392）：不問，取 IC_R011 預設（`file all`；`AI_LOW_BAR_ISSUE_FILING=false` 或 `# Disable IC_R011` 時 implicit (a) skip），結果列進輸出（見〈Orchestrated close〉）。下面「SHOULD-tier、default 不 flip」的規則只適用於沒有這個指示的手動結案。
 
 **SHOULD-tier (not SHALL)**: Per canonical Section 6, closure is a wrap-up moment, NOT a deliberation moment. Default-flip from v2.72.0+ does NOT apply here.
 

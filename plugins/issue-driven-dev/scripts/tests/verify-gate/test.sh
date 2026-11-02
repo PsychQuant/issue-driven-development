@@ -124,6 +124,13 @@ reason_has "another base: reason" "range"
 run_gate_x "a single Reviewed commit when a base is expected" reviewed-ok.md unparseable 2 --expect-sha "$SHA" --expect-base "$BASE"
 python3 "$GATE" --comment-file "$FX/reviewed-ok.md" --expect-base "$BASE" >/dev/null 2>&1; rc=$?
 assert_exit "--expect-base without --expect-sha: exit" 64 "$rc"
+# #392 verify r3: HTML blocks (GitHub renders a table the gate would not see), duplicate counts, three buckets
+run_gate "an HTML block in the report" html-details.md unparseable 2
+reason_has "HTML block: reason" "HTML"
+run_gate "a multi-line HTML comment" html-comment-multiline.md unparseable 2
+run_gate "a one-line HTML comment is fine" html-comment-oneline.md clean 0 0 0 0
+run_gate "the verdict line states the blocking count twice" verdict-duplicate-count.md unparseable 2
+run_gate "the three-bucket verdict line" verdict-three-buckets.md not_clean 1 0 2 1
 python3 "$GATE" --comment-file "$FX/reviewed-ok.md" --expect-sha not-a-sha >/dev/null 2>&1; rc=$?
 assert_exit "--expect-sha that is not hex: exit" 64 "$rc"
 

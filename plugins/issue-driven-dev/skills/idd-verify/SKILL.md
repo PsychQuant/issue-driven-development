@@ -1328,7 +1328,7 @@ git checkout $ORIGINAL_BRANCH   # Step 0.5 記住的
 ${BACKEND_DESC}, model: ${DISPATCH_MODEL}   <!-- 由解析鏈 BACKEND_DESC + 雙路徑抽取的 DISPATCH_MODEL 組成（#207）；canonical 例：pai-ensemble 2.18.0 (canonical #207) — 4 IDD lenses + DA + Codex (gpt-5.x), model: opus；Tier 3 manual 的 DESC 自含 model -->
 
 ### Aggregate
-**PASS / FAIL** — N blocking, M follow-up
+**PASS / FAIL** — N blocking, M in-scope fix, K follow-up
 
 **Reviewed**: `${BASE_SHA}..${FROZEN_SHA}`
 
@@ -1347,7 +1347,8 @@ X / Y requirements addressed
 
 **這兩份樣板是 `/idd-all` 自動 merge 的輸入（#392）**，`scripts/verify-gate.py` 照它讀；Step 4 貼出報告時就要符合，不是 Step 5a 才補：
 
-- 恰好一行判定，以 `**PASS**` 或 `**FAIL**` 開頭；其他行不要用粗體大寫英文字開頭。
+- 恰好一行判定，以 `**PASS**` 或 `**FAIL**` 開頭，寫出三類的筆數：`N blocking, M in-scope fix, K follow-up`，與 Findings 表一致；其他行不要用粗體大寫英文字開頭。
+- 報告裡不要放 HTML 區塊（`<details>` 之類；單行的 `<!-- ... -->` 可以）：GitHub 會把區塊裡的表格畫出來，gate 卻讀不到，所以 gate 一律判讀不出來。
 - 恰好一行 ``**Reviewed**: `<BASE_SHA>..<FROZEN_SHA>` ``，兩個都寫完整的 40 字元 commit：`FROZEN_SHA` 是 `get_diff_and_issue` 凍結的 head，`BASE_SHA` 是這份 diff 的起點（見 Step 1）。`/idd-all` 只在這段範圍正好是要 merge 或 push 的範圍時才放行；只寫一個 commit 會被當成讀不出來。
 - Findings 表的最後一欄是 `Action`，每一列只填 `Blocking`、`In-scope fix`、`Follow-up` 三者之一（規則見 Step 5a）。
 - 一張表不要被空行切開；引用程式碼用 fence 時要成對關閉。
@@ -1360,7 +1361,7 @@ X / Y requirements addressed
 ${BACKEND_DESC}, model: ${DISPATCH_MODEL}   <!-- 同 local/branch mode 的組成規則（#207） -->
 
 ### Aggregate
-**PASS / FAIL** — N blocking, M follow-up
+**PASS / FAIL** — N blocking, M in-scope fix, K follow-up
 
 **Reviewed**: `${BASE_SHA}..${FROZEN_SHA}`
 

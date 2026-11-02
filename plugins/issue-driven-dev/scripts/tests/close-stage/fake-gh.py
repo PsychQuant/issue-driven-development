@@ -17,6 +17,8 @@ Files read (all optional unless the call needs them):
   merge.rc              exit code of gh pr merge (default 0)
   after-merge-<k>.json  `gh pr view --json state,mergeCommit` answers in order; the last repeats
   issue-state           `gh issue view --json state` (default CLOSED)
+  issue-body            `gh issue view --json body` (default empty)
+  $FAKE_REMOTE          bare repository whose `main` answers `gh api repos/o/r/branches/main`
 Every call is appended to calls.log as one JSON array.
 """
 import json, os, subprocess, sys
@@ -52,7 +54,13 @@ if argv[0] == "api" and argv[1].endswith("/comments"):
     sys.stdout.write(out.stdout); sys.exit(out.returncode)
 if argv[:2] == ["repo", "view"]:
     print(json.dumps({"viewerPermission": read("perm", "ADMIN").strip()})); sys.exit(0)
+if argv[0] == "api" and "/branches/" in argv[1]:
+    sha = subprocess.run(["git", "-C", os.environ["FAKE_REMOTE"], "rev-parse", "main"], capture_output=True, text=True).stdout.strip()
+    print(json.dumps({"commit": {"sha": sha}})); sys.exit(0)
 if argv[:2] == ["issue", "view"]:
+    field = argv[argv.index("--json") + 1]
+    if field == "body":
+        print(json.dumps({"body": read("issue-body", "")})); sys.exit(0)
     print(json.dumps({"state": read("issue-state", "CLOSED").strip()})); sys.exit(0)
 if argv[:2] == ["pr", "list"]:
     print(read("prs.json", "[]")); sys.exit(0)
@@ -67,9 +75,12 @@ if argv[:2] == ["pr", "view"]:
         print(json.dumps({"closingIssuesReferences": json.loads(read("refs.json", "[]"))})); sys.exit(0)
     if field == "commits":
         print(json.dumps({"commits": json.loads(read("commits.json", "[]"))})); sys.exit(0)
-    if field == "state,mergeCommit":
+    if field == "state,mergeCommit,mergedAt":
         ans = seq("after-merge")
         print(ans if ans is not None else '{"state":"OPEN","mergeCommit":null}'); sys.exit(0)
+    if field == "state":
+        ans = read("after-merge-1.json", '{"state":"OPEN"}')
+        print(json.dumps({"state": json.loads(ans).get("state")})); sys.exit(0)
 if argv[:2] == ["pr", "merge"]:
     if "--disable-auto" in argv:
         sys.exit(0)

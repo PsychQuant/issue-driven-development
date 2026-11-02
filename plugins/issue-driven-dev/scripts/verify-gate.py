@@ -43,6 +43,12 @@ VERDICT_RE = re.compile(r"^\*\*([A-Z]+(?: / [A-Z]+)*)\*\*")
 FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 # GFM divider cells: one or more dashes, optional colons.
 DIVIDER_CELL_RE = re.compile(r"^:?-+:?$")
+# A line that starts a CommonMark HTML block. Inside such a block a ``` line is
+# not a fence and a table is rendered by GitHub's HTML, which this parser cannot
+# follow, so the gate refuses the report (#392 verify r3 #11). A complete
+# one-line comment (IDD's `<!-- idd:... -->` markers) is allowed.
+HTML_START_RE = re.compile(r"^ {0,3}<(?:!--|/?[A-Za-z][A-Za-z0-9-]*(?:[\s/>]|$))")
+ONE_LINE_COMMENT_RE = re.compile(r"^ {0,3}<!--.*-->\s*$")
 REVIEWED_RE = re.compile(r"^\*\*Reviewed\*\*\s*[:：]\s*`?(?:([0-9a-fA-F]+)\.\.)?([0-9a-fA-F]+)`?")
 COUNT_RE = re.compile(r"(\d+)\s+(blocking|in-scope fix|follow-up)\b", re.IGNORECASE)
 SHA_ARG_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -102,6 +108,8 @@ def unfenced_lines(text):
             if m and not (m.group(1)[0] == "`" and "`" in m.group(2)):
                 fence = (m.group(1)[0], len(m.group(1)))
                 continue
+            if HTML_START_RE.match(line) and not ONE_LINE_COMMENT_RE.match(line):
+                raise Unparseable(f"the report contains an HTML block ({line.strip()[:40]}), which the gate cannot read the way GitHub renders it")
             out.append(line)
         else:
             if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= fence[1] and not m.group(2).strip():
@@ -240,7 +248,10 @@ def judge(text, expect_sha=None, expect_base=None):
             return emit("unparseable", f"findings row {n} has Action '{shown}', which is not Blocking, In-scope fix or Follow-up", verdict)
         counts[CLASSES[value]] += 1
 
-    stated = {k.lower(): int(v) for v, k in COUNT_RE.findall(verdict_lines[0])}
+    pairs = [(k.lower(), int(v)) for v, k in COUNT_RE.findall(verdict_lines[0])]
+    stated = dict(pairs)
+    if len(stated) != len(pairs):
+        return emit("unparseable", "the verdict line states the same count twice", verdict, counts)
     if "blocking" not in stated:
         return emit("unparseable", "the verdict line does not state its blocking count (e.g. '**PASS** — 0 blocking, 2 follow-up')", verdict, counts)
     for key, field in (("blocking", "blocking"), ("in-scope fix", "in_scope"), ("follow-up", "follow_up")):

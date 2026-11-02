@@ -120,6 +120,13 @@ refute_grep "the ask prompt no longer promises no push" "stay on current branch 
 assert_grep "batch: direct-commit does not switch branches" "direct-commit** 的 batch 不切換 branch" "$ALL_TXT"
 assert_grep "Spectra-tier runs are reminded to archive" "/spectra-archive" "$(section "$ALL" "### Phase 6")"
 
+echo "idd-all: round-3 fixes stay in the text"
+assert_grep "Step 0.4 resets the previous run's state" 'close-stage.py" reset --cwd' "$ALL_TXT"
+assert_grep "Step 0.7 refuses a missing issue number" "FATAL: Step 0.7: issue number is missing" "$ALL_TXT"
+assert_grep "chain and --review runs keep the auto-detected verify range" 'VERIFY_ARGS="#$N --cwd $CWD"' "$(section "$ALL" "### Phase 4")"
+assert_grep "the close stage requires confirmed intent" "意圖沒有確認過" "$STAGE"
+assert_grep "abort removes the run state" "close-stage.py reset --cwd" "$(section "$ALL" "## Failure Modes")"
+
 echo "idd-all: fix loop and report"
 P4=$(section "$ALL" "### Phase 4")
 assert_grep "Phase 4 consults the verify gate each round" "verify-gate.py --expect-sha" "$P4"

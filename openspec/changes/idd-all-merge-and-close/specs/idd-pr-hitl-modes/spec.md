@@ -53,7 +53,7 @@ When the resolved path is `direct-commit`, `idd-all` SHALL NOT create a feature 
 - **GIVEN** resolved path is `direct-commit` on the default branch
 - **AND** the verify gate reports `clean`
 - **WHEN** the close stage runs
-- **THEN** `idd-all` runs `git push origin HEAD`, and only after the push succeeds invokes `/idd-close #<N>` with the orchestrated directive
+- **THEN** `idd-all` pushes the verified commit itself (`git push origin <sha>:refs/heads/<default>`), confirms on GitHub that the default branch now points at it, and only then invokes `/idd-close #<N>` with the orchestrated directive
 
 #### Scenario: clean verify on a feature branch stops at verified
 
@@ -103,7 +103,7 @@ When the resolved interaction is `attended`, `idd-all` SHALL NOT inject any `UNA
 
 ### Requirement: Clean verify leads to merge and close
 
-After verify, `idd-all` SHALL ask the verify gate whether the latest verify round is clean. When the gate reports `clean`, the path is `PR`, and every merge guardrail passes, `idd-all` SHALL squash-merge the PR, fetch the remote default branch, and invoke `/idd-close #<N>` with the orchestrated directive, without asking the user first. When the path is `direct-commit`, the push-then-close behaviour of the requirement "Direct-commit path stays on current branch and skips PR" applies. `idd-all` SHALL NOT merge or close when the run carries `--review`, when it runs with `--in-chain`, or when the issue type is `meeting`. Every check that guards the merge or the push SHALL run in the same process as the merge or the push, and the run's flags SHALL be read from a run-state record written when the mode is resolved, not from shell state or the model's memory. Every value in that record SHALL be given explicitly when it is written (a lost value is an error, never a default that allows merging); a missing, foreign or more than 24-hour-old record SHALL stop the close stage. The close stage SHALL also stop when the run was downgraded from the PR path (a missing ralph-loop), when the issue's author or the last editor of its body lacks write access to the repository, when the clone's `origin` is not the repository, and when a workflow publishes on a push to the default branch.
+After verify, `idd-all` SHALL ask the verify gate whether the latest verify round is clean. When the gate reports `clean`, the path is `PR`, and every merge guardrail passes, `idd-all` SHALL squash-merge the PR, fetch the remote default branch, and invoke `/idd-close #<N>` with the orchestrated directive, without asking the user first. When the path is `direct-commit`, the push-then-close behaviour of the requirement "Direct-commit path stays on current branch and skips PR" applies. `idd-all` SHALL NOT merge or close when the run carries `--review`, when it runs with `--in-chain`, or when the issue type is `meeting`. Every check that guards the merge or the push SHALL run in the same process as the merge or the push, and the run's flags SHALL be read from a run-state record written when the mode is resolved, not from shell state or the model's memory. Every value in that record SHALL be given explicitly when it is written (a lost value is an error, never a default that allows merging); a missing, foreign or more than 24-hour-old record SHALL stop the close stage. The close stage SHALL also stop when the run was downgraded from the PR path (a missing ralph-loop), when the issue's author or the last editor of its body lacks write access to the repository, when the fetch or push URL of the clone's `origin` is not `github.com/<repo>`, and when a workflow publishes on a push to the default branch.
 
 #### Scenario: Clean verify on the PR path
 
@@ -130,6 +130,23 @@ After verify, `idd-all` SHALL ask the verify gate whether the latest verify roun
 - **GIVEN** the run carries `--in-chain`
 - **WHEN** verify completes clean
 - **THEN** `idd-all` neither merges nor closes, leaving the cluster PR to `/idd-all-chain`
+
+### Requirement: The close stage merges only runs whose intent was confirmed
+
+The close stage SHALL merge, push or close only when the run's intent was confirmed. It SHALL stop at verified, with the PR left open, when any comment on the issue was posted by an account without write access to the repository, when the issue's Clarity Surface has a row whose status is `surfaced` or `deferred`, when an issue comment or the body carries a Layer V or Clarity deferred record, or when the latest Diagnosis records the Plan tier and no `## Implementation Plan` comment exists. Foresay's traceable branch requires the intent to be clear and the action reversible; unattended runs skip intent confirmations on purpose and record that they did, and comments and attachments steer diagnose and implement.
+
+#### Scenario: A comment by someone without write access
+
+- **GIVEN** the verify gate reports `clean`
+- **AND** one comment on the issue was posted by an account with read access only
+- **WHEN** the close stage runs
+- **THEN** `idd-all` neither merges nor closes, and the run report names the comment's author under `Stopped:`
+
+#### Scenario: A Plan-tier issue implemented without an approved plan
+
+- **GIVEN** the latest Diagnosis records `Plan` and the unattended run implemented it without `/idd-plan`
+- **WHEN** the close stage runs
+- **THEN** `idd-all` neither merges nor closes, and the report says the Plan tier was not approved
 
 ### Requirement: Unattended fix loop covers in-scope findings with a two-round limit
 
@@ -158,7 +175,7 @@ When the resolved interaction is `unattended` and the verify gate reports `not_c
 
 ### Requirement: Merge guardrails gate every automatic merge
 
-Before an automatic merge, `idd-all` SHALL check, in order: the verify gate reports `clean` for a report posted by the account running the session whose reviewed range runs from the merge base of the default branch and the PR head to the PR head (judged again after the CI wait, right before the merge); every check reported by `gh pr checks` has succeeded, waiting at most 15 minutes for pending checks, accepting a result only after a 90-second grace period, requiring at least one `pull_request` check when a workflow runs on every pull request, and treating a PR with no checks as passing only when no such workflow exists; the PR body has no closing reference and no commit subject or body carries a `close`, `fix`, or `resolve` keyword before an issue reference (`#<digits>`, `owner/repo#<digits>`, or an issue or pull-request URL, a preceding hyphen or slash included); and the squash subject and body that `idd-all` composes reference the issue only as `Refs #<N>` and pass the same scan. The PR SHALL come from this repository (not a fork) and the default branch SHALL have no merge queue. The merge SHALL be pinned to the verified head commit (`--match-head-commit`), and `idd-all` SHALL confirm that the PR is `MERGED` with a merge commit before invoking `/idd-close`; a PR still open after the merge call SHALL have auto-merge disabled and the run SHALL stop, and a merge it cannot confirm SHALL be reported as possibly merged. If any check fails, `idd-all` SHALL NOT merge, SHALL stop at verified, and SHALL name the failed guardrail in the run report.
+Before an automatic merge, `idd-all` SHALL check, in order: the PR's branch is not behind the default branch and does not change `.github/workflows` or `.github/actions`; the verify gate reports `clean` for the newest report posted since the run began by an account with write access (a newer FAIL from a teammate counts), whose reviewed range runs from the merge base of the default branch and the PR head to the PR head (judged again after the CI wait, right before the merge); every check reported by `gh pr checks` has succeeded, waiting at most 15 minutes for pending checks, accepting a result only after the set of checks has stayed unchanged for a 90-second grace period, requiring at least one `pull_request` check when a workflow runs on every pull request, and treating a PR with no checks as passing only when no such workflow exists; the PR body has no closing reference and no commit subject or body (read from local git over the reviewed range, not from a capped list) carries a `close`, `fix`, or `resolve` keyword before an issue reference (`#<digits>`, `owner/repo#<digits>`, or an issue or pull-request URL, a preceding hyphen or slash included); and the squash subject and body that `idd-all` composes reference the issue only as `Refs #<N>` and pass the same scan. The PR SHALL come from this repository (not a fork) and the default branch SHALL have no merge queue. The merge SHALL be pinned to the verified head commit (`--match-head-commit`), and `idd-all` SHALL confirm that the PR is `MERGED` with a merge commit before invoking `/idd-close`; a PR still open after the merge call SHALL have auto-merge disabled and the run SHALL stop, and a merge it cannot confirm SHALL be reported as possibly merged. If any check fails, `idd-all` SHALL NOT merge, SHALL stop at verified, and SHALL name the failed guardrail in the run report.
 
 #### Scenario: A CI check fails
 
