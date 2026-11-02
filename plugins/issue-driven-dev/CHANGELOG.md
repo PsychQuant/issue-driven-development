@@ -84,7 +84,7 @@ Version number left to the merge, as in PR #442.
   report by the session's account against a commit range, `run` performs the close stage in one process,
   `confirm-close` checks the closing summary, `reset` clears an earlier run's state. Helpers in
   `scripts/lib/`: `rendered.py` (GitHub's rendering, shared with the gate), `ghread.py`, `intent.py`,
-  `workflows.py`. Suite `scripts/tests/close-stage/` (350 assertions, a fake `gh`, fixtures rendered by GitHub
+  `workflows.py`. Suite `scripts/tests/close-stage/` (378 assertions, run in parallel, a fake `gh`, fixtures rendered by GitHub
   and real git repositories).
 - `scripts/verify-gate.py` (#392): reads one verify master comment as GitHub renders it (the comment's
   `body_html`, so a table is a table exactly when GitHub drew one — markdown parsing kept missing layouts
@@ -97,7 +97,7 @@ Version number left to the merge, as in PR #442.
   In-scope fix row, a findings row outside a findings table, a decorated `Action` header, an `Action` column
   that is not last, a verdict line whose counts are missing or differ from the tables, a PASS whose coverage line
   is short, or (with `--expect-sha` / `--expect-base`) a missing or different `**Reviewed**` range are all
-  `unparseable`. Fixtures are GitHub's own rendering of the markdown fixtures (`render-fixtures.sh`). Suites: `scripts/tests/verify-gate/` (272 assertions) and
+  `unparseable`. Fixtures are GitHub's own rendering of the markdown fixtures (`render-fixtures.sh`). Suites: `scripts/tests/verify-gate/` (278 assertions) and
   `scripts/tests/merge-and-close-contract/` (77), which
   pins the idd-all skill, the idd-close skill, the MANIFESTO and the batch reference to the new end state.
 

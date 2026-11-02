@@ -136,7 +136,10 @@ def latest_diagnosis(comments):
     return diag[-1] if diag else ""
 
 
-def html_root(html):
+def html_root(html, raw=""):
+    """GitHub's rendering; text without a rendering stops rather than reads as empty (r6 #9)."""
+    if not html and (raw or "").strip():
+        raise Stop("GitHub returned no rendering for the issue or a comment — not merging")
     try:
         return rendered.parse(html or "")
     except ValueError:
@@ -144,10 +147,10 @@ def html_root(html):
 
 
 def connection(obj, name, since, field, what):
-    """Nodes of a GraphQL connection read with last:100. When it holds more and the oldest node read is
+    """Nodes of a GraphQL connection read once (at most 100; order differs per connection, r6 #20). When it holds more and the oldest node read is
     still after `since`, older events in the window were not read: stop rather than guess (r5 #2)."""
     conn = obj.get(name) or {}
     nodes = conn.get("nodes") or []
-    if (conn.get("totalCount") or 0) > len(nodes) and (not nodes or ts(nodes[0].get(field)) >= since):
+    if (conn.get("totalCount") or 0) > len(nodes) and (not nodes or min(ts(x.get(field)) for x in nodes) >= since):
         raise Stop(f"{what} has more entries than one read returns — not merging; a person reviews this one")
     return nodes

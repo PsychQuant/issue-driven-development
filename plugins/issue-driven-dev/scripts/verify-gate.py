@@ -148,11 +148,16 @@ def read_tables(root):
             for _, cells in body:
                 if len(cells) != len(header):
                     raise Unparseable(f"a findings row has {len(cells)} cells but its header has {len(header)}")
-                values.append((cells[-1], cells[sev].upper() if sev is not None else ""))
+                if sev is None:
+                    raise Unparseable("a findings table has no Severity column (r6 #11)")
+                word = re.search(r"\b(CRITICAL|HIGH|MEDIUM|LOW|INFO|P[0-3])\b", cells[sev].upper())
+                if not word and cells[-1] == "Follow-up":
+                    raise Unparseable(f"a Follow-up row has Severity '{cells[sev]}', which is not readable")
+                values.append((cells[-1], word.group(1) if word else ""))
             continue
         for _, cells in rows:
             for cell in cells:
-                if cell in CLASSES:
+                if any(cell.lower().startswith(c.lower()) for c in CLASSES):
                     raise Unparseable(f"a table without an Action column has a cell '{cell}': a findings row outside a findings table")
     # A findings row GitHub did not draw as a table row shows as text with pipes —
     # in a paragraph, a list item, a summary, raw text in a details block. The
@@ -161,6 +166,10 @@ def read_tables(root):
     for el, run, _ in rendered.lines(root):
         if el.tag in ("td", "th"):
             continue
+        # A heading or a bold label naming a class is a finding a person reads (r6 #17).
+        label = rendered.leading_strong(run) if el.tag not in rendered.HEADINGS else rendered.line_text(run)
+        if label and label.rstrip(":： ").lower() in {c.lower() for c in CLASSES}:
+            raise Unparseable(f"'{label}' names a finding class outside a findings table")
         for text in rendered.raw_line_texts(run):
             if "|" in text and any(cell.strip() in CLASSES for cell in text.split("|")):
                 raise Unparseable(f"a findings row stands outside a findings table: {text[:80]}")
@@ -230,6 +239,8 @@ def judge(html, expect_sha=None, expect_base=None):
     # `### Process Gaps`; the close stage does not merge on it (r5 #22).
     gaps = any(rendered.norm(rendered.text_of(node)).startswith("Process Gaps")
                for node in rendered.walk(root) if rendered.heading_level(node) is not None)
+    # The default backend writes a missing cross-model pass as a row, not a section (r6 #8, #21).
+    gaps = gaps or "cross-model pass incomplete" in rendered.norm(rendered.text_of(root)).lower()
     extra = {"high_follow_up": high_follow_up, "process_gaps": gaps}
 
     pairs = [(k.lower(), int(v)) for v, k in COUNT_RE.findall(verdict_text)]

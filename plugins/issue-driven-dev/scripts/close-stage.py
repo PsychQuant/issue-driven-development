@@ -220,12 +220,13 @@ def judge_report(repo, n, sha, base, since):
     # nor one a maintainer hid as outdated or off-topic.
     if ts(report.get("updated_at")) != ts(report.get("created_at")):
         return 2, {"status": "unparseable", "reason": "the verify report was edited after it was posted — run verify again"}
-    if report.get("node_id"):
-        q = "query($id:ID!){node(id:$id){... on IssueComment{isMinimized}}}"
-        node = (gh_json(["api", "graphql", "-f", f"query={q}", "-f", f"id={report['node_id']}"],
-                        "whether the verify report is hidden").get("data") or {}).get("node") or {}
-        if node.get("isMinimized"):
-            return 2, {"status": "unparseable", "reason": "the verify report is hidden on GitHub — a person set it aside"}
+    if not report.get("node_id"):
+        return 2, {"status": "unparseable", "reason": "could not tell whether the verify report is hidden (no node id)"}
+    q = "query($id:ID!){node(id:$id){... on IssueComment{isMinimized}}}"
+    node = (gh_json(["api", "graphql", "-f", f"query={q}", "-f", f"id={report['node_id']}"],
+                    "whether the verify report is hidden").get("data") or {}).get("node") or {}
+    if node.get("isMinimized"):
+        return 2, {"status": "unparseable", "reason": "the verify report is hidden on GitHub — a person set it aside"}
     html = report.get("body_html")
     if not html:
         return 2, {"status": "unparseable", "reason": "GitHub returned no rendered HTML for the verify report"}
@@ -247,6 +248,25 @@ def judge_report(repo, n, sha, base, since):
     result["verify_url"] = report.get("html_url")
     result["report_author"] = report.get("login")
     return (rc if rc in (0, 1, 2) else 2), result
+
+
+def gate_stop(rc, gate):
+    """The one predicate every merge and push passes (r6 #1): clean, and nothing a person has to settle.
+    A clean result without these fields stops too."""
+    if rc != 0:
+        raise Stop(f"guardrail 1 (verify gate) — {gate.get('status')}: {gate.get('reason')}")
+    for field in ("rejected", "high_follow_up", "process_gaps"):
+        if field not in gate or gate[field] is None:
+            raise Stop(f"guardrail 1 (verify gate) — the gate did not report {field}")
+    if gate["rejected"]:
+        raise Stop(f"guardrail 1 (verify gate) — the report marks {gate['rejected']} finding(s) Rejected: the run judged "
+                   "a reviewer wrong about its own code; a person decides whether they stand")
+    if gate["high_follow_up"]:
+        raise Stop(f"guardrail 1 (verify gate) — {gate['high_follow_up']} serious finding(s) filed as Follow-up; "
+                   "a person agrees before they are left for later")
+    if gate["process_gaps"]:
+        raise Stop("guardrail 1 (verify gate) — the verify ran degraded (a reviewer or the cross-model pass is missing); "
+                   "a person reviews this one")
 
 
 def run_since(cwd, n):
@@ -428,7 +448,8 @@ def pr_base(cwd, repo, default, sha):
     if git(cwd, "merge-base", tip, sha) != tip:
         raise Stop(f"the branch is behind {default} (new commits landed during the run) — the merged tree was never "
                    "reviewed; update the branch and verify again")
-    published = releases_on_push(cwd, tip, default)
+    # Both trees: a change can add publishing to a script a push workflow already runs (r6 #13).
+    published = releases_on_push(cwd, tip, default) + releases_on_push(cwd, sha, default)
     if published:
         raise Stop(f"a workflow publishes on push to {default} ({', '.join(published)}): merging is a release — run with --review")
     changed_ci = touches_ci(cwd, tip, sha)
@@ -461,11 +482,7 @@ def run_pr(st, cwd, repo, n, timeout, grace, partial):
     since = parse_iso(st["created_at"])
 
     rc, gate = judge_report(repo, n, sha, base, since)
-    if rc != 0:
-        raise Stop(f"guardrail 1 (verify gate) — {gate.get('status')}: {gate.get('reason')}")
-    if gate.get("rejected"):
-        raise Stop(f"guardrail 1 (verify gate) — the report marks {gate['rejected']} finding(s) Rejected: the run judged "
-                   "a reviewer wrong about its own code; a person decides whether they stand")
+    gate_stop(rc, gate)
 
     ci = wait_for_checks(repo, pr["number"], expects_pr_checks(cwd, sha, default), timeout, grace)
 
@@ -491,9 +508,7 @@ def run_pr(st, cwd, repo, n, timeout, grace, partial):
     # The CI wait can take minutes: everything that can change meanwhile is read again right before the merge.
     base = pr_base(cwd, repo, default, sha)
     rc, gate = judge_report(repo, n, sha, base, since)
-    if rc != 0 or gate.get("rejected"):
-        raise Stop(f"guardrail 1 (verify gate, re-checked after CI) — {gate.get('status')}: {gate.get('reason')}"
-                   + (f"; {gate.get('rejected')} Rejected finding(s)" if gate.get("rejected") else ""))
+    gate_stop(rc, gate)
     me = session_login()
     comments = issue_comments(repo, n)
     check_others(me, since, comments, issue_meta(repo, n))
@@ -555,18 +570,14 @@ def run_direct(st, cwd, repo, n, partial):
     base = git(cwd, "rev-parse", f"origin/{default}")
     if git(cwd, "merge-base", base, head) != base:
         raise Stop(f"origin/{default} has commits this clone does not — not pushing (no automatic rebase)")
-    published = releases_on_push(cwd, base, default)
+    published = releases_on_push(cwd, base, default) + releases_on_push(cwd, head, default)
     if published:
         raise Stop(f"a workflow publishes on push to {default} ({', '.join(published)}): pushing is a release — run with --review")
     changed_ci = touches_ci(cwd, base, head)
     if changed_ci:
         raise Stop(f"the change edits CI ({', '.join(changed_ci[:3])}) — workflow changes are pushed by a person")
     rc, gate = judge_report(repo, n, head, base, parse_iso(st["created_at"]))
-    if rc != 0:
-        raise Stop(f"guardrail 1 (verify gate) — {gate.get('status')}: {gate.get('reason')}")
-    if gate.get("rejected"):
-        raise Stop(f"guardrail 1 (verify gate) — the report marks {gate['rejected']} finding(s) Rejected: the run judged "
-                   "a reviewer wrong about its own code; a person decides whether they stand")
+    gate_stop(rc, gate)
     # Everything below names `head`, never HEAD: another session can move HEAD
     # or switch the branch while the checks run (#392 verify r2 #1).
     commits, foreign, trapped = scan_commits(cwd, base, head, n)

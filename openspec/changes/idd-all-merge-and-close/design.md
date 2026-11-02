@@ -208,6 +208,13 @@ MANIFESTO〈auto-merge 的合法性與限制〉改成兩個理由並列：verify
 
 列為已知限制（SKILL.md Phase 5c）：orchestrator 刻意改分類、不寫紀錄或自己貼 Decision；attended 由 path 推出（r5 #42）；Decision comment 不檢查回應的是哪一則；direct-commit 不受 branch protection 擋（r5 #32）與測試用的環境變數 seam（r5 #47），兩者開在 #464。
 
+### verify round 6 之後的修正（2026-11-02，comment 6568962908）
+
+- close stage 真的讀 `high_follow_up`、`process_gaps`（共用 `gate_stop`，欄位缺少也停）；缺 cross-model pass 也算降級。
+- 發佈偵測遞迴追 local workflow、action、script（有深度上限，讀不到的 local action 算會發佈）；只有列舉的事件才算不會因 merge 而跑，`pull_request` 帶 `closed` 算會；merge 前與 merge 後的 tree 都查；補 `build-push-action`、`npm run release` 類指令。發佈偵測仍是清單，清單外的指令放行，列為已知限制。
+- 格式走樣改成停：Severity 欄缺少或 Follow-up 列讀不出嚴重度、略過紀錄的寫法變化、Proposed Corrections 標題層級或非表格、表格外的 Blocking 標題或粗體標籤、留言沒有渲染結果。
+- Decision comment 要以標題開頭並引用 `**Original**`。PR branch 不設 upstream（meeting unwind 讀它）；issue 編輯紀錄的讀取方向；隊友貼的 dashboard 被 run 改寫不算插手。
+
 仍留著的限制（SKILL.md Phase 5c〈已知限制〉）：同一帳號分不出 run 與人、最後檢查到 squash 之間的幾秒、direct-commit 不等 CI、workflow 以外的發佈管道（#460）、idd-all 仍可被模型呼叫（#457）、close 的 Step 0 與 1.5 排在 merge 之後、task 7.2 尚未在真的 GitHub 上跑過。
 
 ## Implementation Contract

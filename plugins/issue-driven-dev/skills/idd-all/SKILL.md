@@ -435,7 +435,7 @@ if [ "$PATH_AXIS" = "PR" ]; then
     # one. A local default that missed a merge makes the close stage stop as "behind" only after
     # implement and verify; one with unpushed commits would put work that is not this issue's in the PR.
     git -C "$CWD" fetch -q origin "$DEFAULT" || abort "Could not fetch origin/$DEFAULT."
-    git -C "$CWD" checkout -b "$BRANCH" "origin/$DEFAULT"
+    git -C "$CWD" checkout --no-track -b "$BRANCH" "origin/$DEFAULT"   # no upstream: the meeting unwind reads it (r6 #18)
   fi
 fi
 ```

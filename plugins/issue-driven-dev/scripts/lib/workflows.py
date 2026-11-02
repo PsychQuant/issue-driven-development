@@ -19,6 +19,7 @@ RELEASE_RE = re.compile(
     r"gh release|action-gh-release|create-release|npm publish|semantic-release|goreleaser|pypi-publish|"
     r"twine upload|cargo publish|docker push|vsce publish|release-please|changesets/action|deploy-pages|"
     r"vercel|netlify|wrangler|firebase deploy|kubectl apply|aws s3 sync|gh-pages|"
+    r"build-push-action|release-it|(?:npm run|yarn|pnpm|make|just|task|rake)\s+\S*(?:release|publish|deploy)|"
     r"\bpublish\b|\bdeploy\b|\brelease\.(?:sh|py|js|mjs|ts|rb)\b",
     re.IGNORECASE,
 )
@@ -27,6 +28,12 @@ LOCAL_USES_RE = re.compile(r"uses:\s*[\"']?\./([^\s@\"']+)")
 LOCAL_SCRIPT_RE = re.compile(r"(?:^|[\s;&|(])(?:bash\s+|sh\s+|python3?\s+|node\s+)?\.?/?((?:scripts|bin|tools|\.github)/[\w./-]+)")
 KEY_RE = re.compile(r"""^(["']?)([A-Za-z_][\w-]*)\1\s*:\s*(.*?)\s*(?:#.*)?$""")
 ITEM_RE = re.compile(r"""^-\s*(["']?)([^"'#]*?)\1\s*(?:#.*)?$""")
+
+
+NOT_ON_MERGE = {"schedule", "workflow_dispatch", "repository_dispatch", "issues", "issue_comment", "discussion",
+                "discussion_comment", "label", "milestone", "watch", "fork", "gollum", "public",
+                "pull_request_review", "pull_request_review_comment"}
+MAX_DEPTH = 5
 
 
 def _indent(line):
@@ -146,8 +153,14 @@ def runs_on_default_push(text, default):
     events = on_events(text)
     if events is None:
         return True
-    if "workflow_run" in events:
-        return True
+    # Only events a merge cannot set off pass; anything else counts as running on a merge (r6 #6).
+    for event, block in events.items():
+        if event in ("pull_request", "pull_request_target"):
+            f = _filters(block) if block is not None else None
+            if block is None or f is None or ("types" in f and (f["types"] is None or "closed" in f["types"])):
+                return True
+        elif event != "push" and event not in NOT_ON_MERGE:
+            return True
     if "push" not in events:
         return False
     block = events["push"]
@@ -192,7 +205,9 @@ def runs_on_every_pr(text, default):
         if "types" in f and f["types"] is not None and not set(f["types"]) & {"opened", "synchronize", "reopened"}:
             continue
         if "branches" in f:
-            pats = f["branches"] or []
+            pats = f["branches"]
+            if pats is None:
+                return True    # unreadable: expect a check (r6 #35)
             if not any(_matches(p, default) is not False for p in pats):
                 continue
         if "branches-ignore" in f and f["branches-ignore"] and any(_matches(p, default) for p in f["branches-ignore"]):
@@ -212,25 +227,43 @@ def publishing(files, read, default):
     for path, text in files:
         if not runs_on_default_push(text, default):
             continue
-        remote = REMOTE_WORKFLOW_RE.findall(text)
-        if remote:
-            hits.append(f"{path} (calls {remote[0]}, a workflow in another repository)")
-            continue
-        texts = [text]
-        for local in LOCAL_USES_RE.findall(text):
-            local = local.rstrip("/")
-            if local in by_path:
-                texts.append(by_path[local])
-            else:
-                for name in ("action.yml", "action.yaml"):
-                    body = read(f"{local}/{name}")
-                    if body is not None:
-                        texts.append(body)
-        for script in set(LOCAL_SCRIPT_RE.findall(text)):
-            body = read(script.rstrip("/"))
-            if body is not None:
-                texts.append(body)
-        m = next((RELEASE_RE.search(t) for t in texts if RELEASE_RE.search(t)), None)
-        if m:
-            hits.append(f"{path} ({m.group(0)})")
+        why = _walk(text, by_path, read, set(), 0)
+        if why:
+            hits.append(f"{path} ({why})")
     return hits
+
+
+def _walk(text, by_path, read, seen, depth):
+    """Why this text publishes, following local workflows, actions and scripts (r6 #2); None when it does not."""
+    if depth > MAX_DEPTH:
+        return "calls nested too deep to read"
+    remote = REMOTE_WORKFLOW_RE.findall(text)
+    if remote:
+        return f"calls {remote[0]}, a workflow in another repository"
+    m = RELEASE_RE.search(text)
+    if m:
+        return m.group(0)
+    for local in LOCAL_USES_RE.findall(text):
+        local = local.rstrip("/")
+        if local in seen:
+            continue
+        seen.add(local)
+        body = by_path.get(local)
+        if body is None:
+            body = next((b for b in (read(f"{local}/{n}") for n in ("action.yml", "action.yaml")) if b is not None), None)
+        if body is None:
+            return f"uses ./{local}, which cannot be read"
+        why = _walk(body, by_path, read, seen, depth + 1)
+        if why:
+            return why
+    for script in LOCAL_SCRIPT_RE.findall(text):
+        script = script.rstrip("/")
+        if script in seen:
+            continue
+        seen.add(script)
+        body = read(script)
+        if body is not None:
+            why = _walk(body, by_path, read, seen, depth + 1)
+            if why:
+                return why
+    return None

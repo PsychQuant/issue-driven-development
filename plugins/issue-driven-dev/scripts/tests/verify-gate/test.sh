@@ -170,6 +170,9 @@ assert_eq "Process Gaps: flag" "True" "$(printf '%s' "$LAST_OUT" | json_field pr
 run_gate "a clean report without a coverage line (r5 #41)" coverage-missing.md unparseable 2
 reason_has "missing coverage: reason" "coverage"
 
+run_gate "a Blocking heading outside a table (r6 #17)" heading-blocking.md unparseable 2
+run_gate "a findings table without Severity (r6 #11)" no-severity.md unparseable 2
+
 # every .md fixture has its rendering committed
 for md in "$FX"/*.md; do
   assert_file_exists "rendered: $(basename "$md")" "${md%.md}.html"

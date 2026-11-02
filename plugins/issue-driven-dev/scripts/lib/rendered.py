@@ -153,7 +153,7 @@ def heading_level(node):
     return None
 
 
-def sections(root, prefix, max_level=3):
+def sections(root, prefix, max_level=3, ignore_case=False):
     """Top-level nodes under every heading (level <= max_level) whose text starts with `prefix`, up to the next such heading."""
     out, cur = [], None
     for node in root.children:
@@ -161,7 +161,8 @@ def sections(root, prefix, max_level=3):
             continue
         level = heading_level(node)
         if level is not None and level <= max_level:
-            cur = [] if norm(text_of(node)).startswith(prefix) else None
+            title = norm(text_of(node))
+            cur = [] if (title.lower() if ignore_case else title).startswith(prefix) else None
             if cur is not None:
                 out.append(cur)
             continue

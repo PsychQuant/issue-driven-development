@@ -20,8 +20,9 @@ SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # the latest Diagnosis, outside code fences, so prose that names them does not count.
 APPROVED_TIERS = ("Plan", "Spectra", "SDD-warranted")
 INTENT_SKIP_REASONS = ("unattended-auto-Step-3.4-layerV-deferred", "unattended-auto-Step-4-choice-default")
-REASON_LINE_RE = re.compile(r"^Reason\s*[:：]\s*(\S+)$")
-DECISION_RE = re.compile(r"^#{1,6}[ \t]*(?:\U0001F3AF[ \t]*)?Decision\b|<!-- idd:comment type=decision")
+REASON_LINE_RE = re.compile(r"^Reason\s*[:：]")
+DECISION_HEAD_RE = re.compile(r"^#{1,6}[ \t]*(?:\U0001F3AF[ \t]*)?Decision\b")
+ORIGINAL_RE = re.compile(r"(?m)^>[ \t]*\*\*Original")
 
 
 def issue_meta(repo, n):
@@ -29,7 +30,7 @@ def issue_meta(repo, n):
     owner, name = repo.split("/", 1)
     actor = "createdAt actor{login __typename}"
     q = ("query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n)"
-         "{state author{login} editor{login} userContentEdits(last:100){totalCount nodes{editedAt editor{login}}}"
+         "{state author{login} editor{login} userContentEdits(first:100){totalCount nodes{editedAt editor{login}}}"
          " timelineItems(last:100,itemTypes:[COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT,RENAMED_TITLE_EVENT,"
          "CLOSED_EVENT,REOPENED_EVENT]){totalCount nodes{__typename"
          " ... on CommentDeletedEvent{createdAt deletedCommentAuthor{login}}"
@@ -85,6 +86,9 @@ def check_others(me, since, comments, meta):
         login = c.get("login") or "an unknown account"
         if login == me or c.get("type") == "Bot":   # bots: installed by a repo admin (also exempt in check_intent)
             continue
+        # The run itself rewrites the dashboard comment, whoever posted it (r6 #39).
+        if ts(c.get("created_at")) < since and "<!-- idd:dashboard -->" in (c.get("body") or ""):
+            continue
         if ts(c.get("created_at")) >= since or ts(c.get("updated_at")) >= since:
             raise Stop(f"{login} commented on the issue (or edited a comment) after the run started — "
                        "intent the run never read; a person reviews and merges this one")
@@ -113,24 +117,31 @@ def check_others(me, since, comments, meta):
                        "a person reviews and merges this one")
 
 
+def is_decision(comment):
+    """A Decision comment opens with the heading (leading HTML comments aside) and quotes what a person said (r6 #15, #19)."""
+    body = comment.get("body") or ""
+    lines = [l for l in body.lstrip("\ufeff").splitlines() if l.strip() and not l.strip().startswith("<!--")]
+    return bool(lines and DECISION_HEAD_RE.match(lines[0].strip()) and ORIGINAL_RE.search(body))
+
+
 def reason_records(comment):
     """Registry literals of the `- **Reason**: <literal>` lines GitHub shows in a comment (code blocks excluded)."""
     out = []
-    for _, run, _ in rendered.lines(html_root(comment.get("body_html"))):
-        if rendered.leading_strong(run) == "Reason":
-            m = REASON_LINE_RE.match(rendered.line_text(run))
-            if m and m.group(1) in INTENT_SKIP_REASONS:
-                out.append(m.group(1))
+    for _, run, _ in rendered.lines(html_root(comment.get("body_html"), comment.get("body"))):
+        text = rendered.line_text(run)   # any line labelled Reason naming a literal: format drift still counts (r6 #12, #16)
+        if REASON_LINE_RE.match(text):
+            out.extend(lit for lit in INTENT_SKIP_REASONS if lit in text)
     return out
 
 
 def has_corrections(comment):
-    root = html_root(comment.get("body_html"))
-    for section in rendered.sections(root, "Proposed Corrections"):
+    root = html_root(comment.get("body_html"), comment.get("body"))
+    for section in rendered.sections(root, "proposed corrections", max_level=6, ignore_case=True):
         for table in rendered.tables(section):
-            rows = rendered.table_rows(table)
-            if any(not head and any(cells) for head, cells in rows):
+            if any(not head and any(cells) for head, cells in rendered.table_rows(table)):
                 return True
+        if not rendered.tables(section) and any(rendered.norm(rendered.text_of(n)) for n in section):
+            return True   # a section GitHub did not draw as a table (r6 #16, #26)
     return False
 
 
@@ -166,7 +177,7 @@ def check_intent(repo, n, st, comments, issue):
         if not login or not can_write(repo, login):
             raise Stop(f"a comment on the issue is by {login or 'an unknown account'}, who has no write access — "
                        "intent not confirmed; a person reviews and merges this one")
-    for section in rendered.sections(html_root(issue.get("body_html")), "Clarity Surface"):
+    for section in rendered.sections(html_root(issue.get("body_html"), issue.get("body")), "Clarity Surface"):
         for table in rendered.tables(section):
             for head, cells in rendered.table_rows(table):
                 if not head and any(cell.lower() in ("surfaced", "deferred") for cell in cells):
@@ -184,7 +195,7 @@ def check_intent(repo, n, st, comments, issue):
         raise Stop(f"{tier} tier implemented in an unattended run: the plan or design was not approved by a person — "
                    "a person reviews and merges this one")
     decided = max([ts(c.get("created_at")) for c in comments
-                   if c.get("type") != "Bot" and DECISION_RE.search(first_line(c.get("body")) + "\n" + (c.get("body") or ""))]
+                   if c.get("type") != "Bot" and is_decision(c)]
                   or [0])
     for c in comments:
         if c.get("type") == "Bot" or ts(c.get("created_at")) <= decided:
@@ -211,7 +222,7 @@ def check_pr_people(repo, pr, me):
     q = ("query($o:String!,$r:String!,$p:Int!){repository(owner:$o,name:$r){pullRequest(number:$p){isDraft reviewDecision "
          "author{login} reviews(last:100){totalCount nodes{author{login __typename} state}} "
          "comments(last:100){totalCount nodes{author{login __typename}}} "
-         "userContentEdits(last:100){totalCount nodes{editor{login}}} "
+         "userContentEdits(first:100){totalCount nodes{editor{login}}} "
          "timelineItems(last:100,itemTypes:[LABELED_EVENT,UNLABELED_EVENT,RENAMED_TITLE_EVENT,CONVERT_TO_DRAFT_EVENT,"
          "CLOSED_EVENT,REOPENED_EVENT]){totalCount nodes{__typename"
          f" ... on LabeledEvent{{{actor}}} ... on UnlabeledEvent{{{actor}}} ... on RenamedTitleEvent{{{actor}}}"

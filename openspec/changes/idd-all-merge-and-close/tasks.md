@@ -79,3 +79,6 @@
 - [x] 12.3 `close-stage.py`：報告貼出後被編輯或被藏起來即 unparseable；Rejected、嚴重 Follow-up、Process Gaps 即停；意圖檢查讀渲染結果，紀錄與 Proposed Corrections 掃所有 comment、Decision comment 回應；Diagnosis 選取與 Phase 2 一致；bot 豁免；issue 的 state／label／標題／關閉與 PR 的作者、label、標題、描述；GraphQL 讀不完即停；PR commit 都要引用 #N；發佈偵測改用 workflows 模組。完成時：`tests/close-stage/` 全數通過（350）。
 - [x] 12.4 skills 與文件：idd-all 的 description、Phase 0.5 從 `origin/<default>` 開 branch、reset 移到 Step 0.5.1 之後、Phase 5c 兩張表、威脅模型與已知限制、Action items；idd-verify 的格式規則；idd-diagnose 的紀錄位置；spec delta、design、proposal 的 Impact、MANIFESTO、CHANGELOG。完成時：`spectra validate` 通過、合約測試通過。
 
+## 13. verify round 6 修正（#392 comment 6568962908）
+
+- [x] 13.1 close-stage 的 `gate_stop`、`lib/workflows.py` 遞迴與 merge 事件、intent 的格式走樣與 Decision 認定、verify-gate 的 Severity 與表格外標籤、`--no-track`。close-stage suite 改平行（`scenarios.sh`＋`run_parallel.py`）。完成時：`tests/close-stage/` 378、`tests/verify-gate/` 278 全數通過。
