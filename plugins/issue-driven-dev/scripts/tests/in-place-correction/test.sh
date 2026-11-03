@@ -206,9 +206,17 @@ assert_grep "the errata pointer is limited to the exit-4 row" "只有上表 exit
 refute_grep "no pointer on an OWNER's or a bot's comment" "原 comment 若是 OWNER、你自己或 bot 寫的" "$ERRATA"
 assert_output_grep "idd-comment tracks the pointer step" 'TaskCreate(name="errata_pointer"' "$SKILLS/idd-comment/SKILL.md"
 
-# #424 D4: detecting skills apply the correction and report it, attended and
-# unattended alike — the propose-only wording must not come back
-for s in idd-verify idd-diagnose idd-reorganize; do
+# #424 D4 as narrowed after verify round 2: idd-verify lists, idd-diagnose and
+# idd-reorganize correct a bug's Diagnosis facts only
+V="$SKILLS/idd-verify/SKILL.md"
+VS="$(awk '/^### Step 3.5:/{f=1;print;next} f&&/^### Step /{exit} f' "$V")"
+assert_grep "idd-verify's Step 3.5 found" "### Step 3.5:" "$VS"
+assert_grep "idd-verify lists published errors as findings" "finding" "$VS"
+assert_grep "idd-verify makes acceptance errors Blocking" "Blocking" "$VS"
+refute_grep "idd-verify does not invoke idd-edit" 'Skill(skill="issue-driven-dev:idd-edit"' "$VS"
+refute_grep "idd-verify posts no errata on its own" "--type errata" "$VS"
+refute_output_grep "idd-verify no longer has a Proposed Corrections block" "### Proposed Corrections" "$V"
+for s in idd-diagnose idd-reorganize; do
   F="$SKILLS/$s/SKILL.md"
   assert_output_grep "$s has an Applied Corrections block" "### Applied Corrections" "$F"
   assert_output_grep "$s applies /idd-edit --correct" "--correct" "$F"
@@ -217,13 +225,19 @@ for s in idd-verify idd-diagnose idd-reorganize; do
   refute_output_grep "$s no longer has a Proposed Corrections block" "### Proposed Corrections" "$F"
   SEC="$(awk '/^### Step [0-9.]+: Applied Corrections/{f=1;print;next} f&&/^### Step /{exit} f' "$F")"
   assert_grep "$s limits the targets to diagnosis facts" '`### Root Cause / Analysis`、`### Impact`、`### Risks`' "$SEC"
+  assert_grep "$s corrects only a bug" '`### Type` 是 `bug`' "$SEC"
+  assert_grep "$s skips a closed issue" "已關閉" "$SEC"
+  assert_grep "$s lists the Implementation Plan" "Implementation Plan" "$SEC"
   assert_grep "$s never moves the acceptance criteria" '`## Expected`' "$SEC"
-  assert_grep "$s requires its own evidence" "親自" "$SEC"
+  assert_grep "$s requires its own evidence from the default branch" "預設分支" "$SEC"
   assert_grep "$s lists other people's content" "listed" "$SEC"
   assert_grep "$s holds the text of a blocked correction back" "held" "$SEC"
   assert_grep "$s reports unverified" "unverified" "$SEC"
   assert_grep "$s uses a private file for each correction" 'mktemp -d' "$SEC"
   assert_grep "$s passes --note" "--note" "$SEC"
+  assert_grep "$s passes --repo" "--repo" "$SEC"
+  refute_grep "$s does not chain into idd-reorganize from here" "走 \`idd-reorganize\`" "$SEC"
+  refute_grep "$s does not update dependent records" "連帶更新" "$SEC"
   refute_grep "$s no longer reuses a shared correction path" '.cache/idd/corrections' "$SEC"
   refute_output_grep "$s never calls the archive subcommand" "idd-edit-helper.py\" archive" "$F"
 done
@@ -720,6 +734,8 @@ assert_eq "the blank line after a CR-only quotation survives" "True" "$(bytes_in
 EW_LINE="$(grep -n "^EW_SECTIONS=" "$SKILLS/idd-verify/SKILL.md")"
 assert_grep "EW_SECTIONS lists Applied Corrections" "Applied Corrections" "$EW_LINE"
 assert_output_grep "idd-verify records the issue version it verified" "updated_at" "$SKILLS/idd-verify/SKILL.md"
+assert_output_grep "idd-verify Step 1 saves the baseline" "req-before" "$SKILLS/idd-verify/SKILL.md"
+assert_output_grep "idd-comment errata passes --note" "--note" "$(awk '/^#### Template: `errata`/{f=1} f&&/^#### Template: /&&!/errata/{exit} f' "$SKILLS/idd-comment/SKILL.md" > "$WORK/errata-tpl.md"; echo "$WORK/errata-tpl.md")"
 assert_output_grep "idd-diagnose applies after Stage 1 when attended" "Stage 1 確認之後" "$SKILLS/idd-diagnose/SKILL.md"
 
 refute_output_grep "idd-comment no longer promises a confirmation for --correct" "預覽與確認後就地取代" "$SKILLS/idd-comment/SKILL.md"

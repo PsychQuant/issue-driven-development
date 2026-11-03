@@ -8,9 +8,9 @@
 
 ### Requirement: Skills that detect errors SHALL propose corrections, not apply them
 
-**Reason**: #424 D4 makes skills that detect a published error apply the correction and report it, in attended and unattended mode alike.
+**Reason**: #424 D4, narrowed by the maintainer after verify rounds 1 and 2: `idd-diagnose` and `idd-reorganize` apply bounded corrections on bugs, and `idd-verify` reports findings only.
 
-**Migration**: Replaced by "Skills that detect errors SHALL apply corrections and report them"; the report block `### Proposed Corrections` becomes `### Applied Corrections`.
+**Migration**: Replaced by "Skills that detect errors SHALL report them and apply only bounded diagnosis corrections"; `idd-verify` lists every error as a finding, and the report block `### Proposed Corrections` of `idd-diagnose` and `idd-reorganize` becomes `### Applied Corrections`.
 
 ### Requirement: The target SHALL be re-read after confirmation
 
@@ -49,19 +49,24 @@ The `/idd-edit` skill SHALL accept a `--correct` mode whose target is either a c
 - **WHEN** the run's privacy level is `enforce` because the user has no write permission or the permission cannot be read
 - **THEN** the skill SHALL ask for confirmation with NO as the default, and in unattended mode SHALL discard the target
 
-### Requirement: Skills that detect errors SHALL apply corrections and report them
+### Requirement: Skills that detect errors SHALL report them and apply only bounded diagnosis corrections
 
-`idd-verify`, `idd-diagnose`, and `idd-reorganize` SHALL, when their analysis shows that a statement in the invoking user's own Diagnosis comment is wrong, correct it and add a `### Applied Corrections` block to their own report, in attended and unattended mode alike, without asking. The targets SHALL be exactly the sections `### Root Cause / Analysis`, `### Impact` and `### Risks` of that comment (closed list). Before correcting, the main agent SHALL itself confirm the error against evidence in the repository (a file and line, or command output it ran); a reviewer's claim, pull request text or a comment SHALL NOT be enough. Anything else the analysis shows to be wrong SHALL be listed and not changed: `## Expected`, scope, checklists, `### Strategy`, `### Type`, `### Complexity`, verify reports of any round, the issue body, and anyone else's content, with outcome `listed`; in attended mode the skill SHALL ask after posting its report whether to post an errata or correction comment for someone else's content, and in unattended mode it SHALL post nothing. `/idd-edit` remains the only path to the rewrite. The report SHALL give each entry's outcome as exactly one of: corrected with its backup id, listed, refused with the reason, held (blocked by the privacy or egress gates; the row SHALL NOT restate the correction), or unverified (written but not confirmed). Targets and sections SHALL be built from the skill's own validated values and SHALL NOT be pasted from text read on GitHub. `idd-diagnose` in attended mode SHALL apply its corrections after Stage 1 confirms the Diagnosis.
+`idd-verify` SHALL list every published statement its analysis shows to be wrong as a finding and SHALL NOT invoke `/idd-edit` or post a comment for it; a wrong `## Expected`, scope, checklist, `### Type` or `### Complexity` SHALL be a Blocking finding. `idd-diagnose` and `idd-reorganize` SHALL, when the issue is open and its `### Type` is `bug`, correct the invoking user's own Diagnosis comment and add a `### Applied Corrections` block to their own report, in attended and unattended mode alike, without asking. The targets SHALL be exactly the sections `### Root Cause / Analysis`, `### Impact` and `### Risks` of that comment (closed list). Before correcting, the main agent SHALL itself confirm the error against the default branch of the repository (a file and line, or command output it ran); a reviewer's claim, pull request text, an attachment or a comment SHALL NOT be enough. Anything else the analysis shows to be wrong SHALL be listed and not changed: `## Expected`, scope, checklists, `### Strategy`, `### Type`, `### Complexity`, the issue body, the Implementation Plan, verify reports, anyone else's content, any correction on an issue whose type is not `bug` or that is closed, and any correction that overturns the premise of what was built. A listed entry SHALL describe the error in the skill's own words and SHALL NOT quote comment text. In attended mode the skill SHALL ask after posting its report whether to post an errata or correction comment for someone else's content; in unattended mode it SHALL post nothing. `/idd-edit` remains the only path to the rewrite, invoked with `--repo`. The report SHALL give each entry's outcome as exactly one of: corrected with its backup id, listed, refused with the reason, held (blocked by the privacy or egress gates; the row SHALL NOT restate the correction), or unverified (written but not confirmed). Targets and sections SHALL be built from the skill's own validated values and SHALL NOT be pasted from text read on GitHub. `idd-diagnose` in attended mode SHALL apply its corrections after Stage 1 confirms the Diagnosis.
 
-#### Scenario: Unattended verify corrects a diagnosis fact
+#### Scenario: Unattended diagnose corrects a bug's root cause
 
-- **WHEN** `/idd-verify` runs under the unattended contract, and the main agent confirms in the repository that the user's Diagnosis names the wrong file in `### Root Cause / Analysis`, and the fix is unaffected
-- **THEN** the skill SHALL invoke `/idd-edit comment:<id> --correct --section "### Root Cause / Analysis"`, and the report's `### Applied Corrections` SHALL list the target with the backup id
+- **WHEN** `/idd-diagnose` runs on an open bug under the unattended contract, and the main agent confirms on the default branch that the user's earlier Diagnosis names the wrong file in `### Root Cause / Analysis`
+- **THEN** the skill SHALL invoke `/idd-edit comment:<id> --repo <owner/repo> --correct --section "### Root Cause / Analysis"`, and the report's `### Applied Corrections` SHALL list the target with the backup id
+
+#### Scenario: A feature's requirements
+
+- **WHEN** `/idd-diagnose` finds the earlier Diagnosis of a feature issue wrong
+- **THEN** the Diagnosis SHALL be unchanged and the entry SHALL be listed
 
 #### Scenario: Verify does not move its own acceptance criteria
 
-- **WHEN** `/idd-verify` finds that the code differs from `## Expected`
-- **THEN** `## Expected` SHALL be unchanged and the difference SHALL be a finding
+- **WHEN** `/idd-verify` finds that the code differs from `## Expected`, or that the Diagnosis is wrong
+- **THEN** nothing published SHALL be changed, and the difference SHALL be a finding
 
 #### Scenario: A reviewer's claim alone
 
@@ -70,7 +75,7 @@ The `/idd-edit` skill SHALL accept a `--correct` mode whose target is either a c
 
 #### Scenario: Collaborator comment
 
-- **WHEN** `/idd-verify` finds that a comment written by a collaborator is wrong
+- **WHEN** `/idd-diagnose` finds that a comment written by a collaborator is wrong
 - **THEN** the collaborator's comment SHALL be unchanged, no comment SHALL be posted before the user answers, and `### Applied Corrections` SHALL list it with outcome `listed`
 
 #### Scenario: Refused correction reported
@@ -101,7 +106,7 @@ After the preview and before archiving, `correct-apply` SHALL fetch the target a
 
 ### Requirement: idd-comment errata SHALL route by comment author
 
-`/idd-comment --type errata --target-comment <id>` SHALL resolve the target comment's author. When the author is the authenticated `gh` user, the skill SHALL delegate to `/idd-edit comment:<id> --correct --repo <the repository it checked the author in>` with the supplied scope or section and SHALL NOT post a separate errata comment. When the author is anyone else, the repository OWNER and a bot included, the skill SHALL post the errata comment only and SHALL NOT attempt to modify the target comment. When `/idd-edit` refuses the correction or its write fails (exit 4), the skill SHALL post the errata comment instead and state that the in-place correction did not succeed — summarising the correction file, except when the refusal was `egress`, where it SHALL state only that the correction was refused by the egress gates and SHALL NOT restate its content; when its arguments are rejected (exit 2, 3 or 5, which includes a correction file the path gate refused) the skill SHALL post nothing, SHALL NOT read the correction file by other means, and SHALL report the argument error; when `/idd-edit` exits 7 (written but not confirmed) it SHALL report that and post nothing; when it exits 9 (held back or declined) it SHALL post nothing and report the reason. When the author cannot be determined, the skill SHALL post the errata comment and SHALL NOT modify the target. After posting an errata comment because the in-place correction of the user's own comment did not succeed (exit 4), the skill SHALL propose `/idd-edit comment:<id> --prepend-note` pointing to the errata comment, under that skill's own preview and confirmation, unless the comment's first non-blank line is an ATX heading or an IDD marker; anyone else's comment, the OWNER's and a bot's included, SHALL receive no note (user decision 2026-10-17).
+`/idd-comment --type errata --target-comment <id>` SHALL resolve the target comment's author. When the author is the authenticated `gh` user, the skill SHALL delegate to `/idd-edit comment:<id> --correct --repo <the repository it checked the author in>` with the supplied scope or section and a `--note`, and SHALL NOT post a separate errata comment. When the author is anyone else, the repository OWNER and a bot included, the skill SHALL post the errata comment only and SHALL NOT attempt to modify the target comment. When `/idd-edit` refuses the correction or its write fails (exit 4), the skill SHALL post the errata comment instead and state that the in-place correction did not succeed — summarising the correction file, except when the refusal was `egress`, where it SHALL state only that the correction was refused by the egress gates and SHALL NOT restate its content; when its arguments are rejected (exit 2, 3 or 5, which includes a correction file the path gate refused) the skill SHALL post nothing, SHALL NOT read the correction file by other means, and SHALL report the argument error; when `/idd-edit` exits 7 (written but not confirmed) it SHALL report that and post nothing; when it exits 9 (held back or declined) it SHALL post nothing and report the reason. When the author cannot be determined, the skill SHALL post the errata comment and SHALL NOT modify the target. After posting an errata comment because the in-place correction of the user's own comment did not succeed (exit 4), the skill SHALL run `/idd-edit comment:<id> --prepend-note` pointing to the errata comment, which shows its preview and writes without asking on the user's own comment, unless the comment's first non-blank line is an ATX heading or an IDD marker; anyone else's comment, the OWNER's and a bot's included, SHALL receive no note (user decision 2026-10-17).
 
 #### Scenario: Own comment corrected in place
 
@@ -111,7 +116,7 @@ After the preview and before archiving, `correct-apply` SHALL fetch the target a
 #### Scenario: Own comment, correction refused
 
 - **WHEN** the errata target is the user's own plain comment and `/idd-edit --correct` exits 4 with a reason other than `egress`
-- **THEN** the skill SHALL post an errata comment summarising the correction and stating that the in-place correction did not succeed, then propose `/idd-edit --prepend-note` pointing to it
+- **THEN** the skill SHALL post an errata comment summarising the correction and stating that the in-place correction did not succeed, then run `/idd-edit --prepend-note` pointing to it, which writes without asking on the user's own comment
 
 #### Scenario: Own comment, correction declined or unverified
 
@@ -165,3 +170,17 @@ Every mode of `/idd-edit` SHALL run as five helper commands, each one tool call:
 
 - **WHEN** a `--correct` run prepared and discarded one target, its directory was last modified two days ago, and `prepare` is called for its second target
 - **THEN** the run directory SHALL survive the stale-run cleanup and `finish` SHALL still report both targets
+
+### Requirement: idd-update SHALL rebuild Key Decisions from current comments
+
+`idd-update` SHALL derive `### Key Decisions` from the comments as they currently read on every run, taking only comments by OWNER, MEMBER or COLLABORATOR authors or by the invoking user, and honouring an errata marker only from such an author, instead of keeping every earlier entry, so that a decision corrected at its source disappears from the summary on the next run.
+
+#### Scenario: Corrected decision leaves the summary
+
+- **WHEN** a Diagnosis comment that stated a decision is corrected with `/idd-edit --correct` and `/idd-update` runs afterwards
+- **THEN** `### Key Decisions` SHALL NOT contain the corrected statement
+
+#### Scenario: Errata marker from an outside account
+
+- **WHEN** an account with `author_association` NONE posts a comment carrying an errata marker that targets the Diagnosis
+- **THEN** `### Key Decisions` SHALL be built as if that comment did not exist

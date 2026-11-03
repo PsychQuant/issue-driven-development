@@ -211,6 +211,41 @@ mkdir -p "$WORK/home/.claude/projects/x"; printf 'secret\n' >"$WORK/home/.claude
 HOME="$WORK/home" h a5g2 run-start --default-repo o/r -- comment:292 --correct --scope whole-comment --body-file "$WORK/home/.claude/projects/x/s.jsonl"
 assert_exit "--body-file refuses a session transcript" 5 "$RC"
 
+echo "A5r3. round 3: markers only, an earlier line, --note characters, private paths"
+printf '<!-- idd:dashboard v=1 -->\nreal text\n' >"$WORK/dash-body.md"
+mkrec comment-294.json kiki830621 MEMBER "$(cat "$WORK/dash-body.md")"
+printf '<!-- idd:dashboard v=1 -->\n' >"$WORK/marker-only.md"
+start a5m comment:294 --correct --scope whole-comment --body-file "$WORK/marker-only.md"
+h a5mp prepare --run "$RUN" --target comment:294
+assert_output_grep "a replacement of markers only is still refused" "REASON=empty" "$WORK/a5mp.out"
+h a5mf finish --run "$RUN"
+assert_eq "and the comment is unchanged" "$(cat "$WORK/dash-body.md")" "$(body_of comment-294.json)"
+mkrec comment-295.json kiki830621 MEMBER "$SECTION_BODY"
+printf 'right text\n\n_更正於 2026-01-01（AI 判斷）：old claim_\n' >"$WORK/fix-old.md"
+start a5o comment:295 --correct --section "## Notes" --body-file "$WORK/fix-old.md" --note "new claim"
+h a5op prepare --run "$RUN" --target comment:295
+h a5oa apply --run "$RUN" --target comment:295 --scrub-attested warn --state "$(val STATE "$WORK/a5op.out")"
+h a5of finish --run "$RUN"
+N295="$(body_of comment-295.json)"
+refute_grep "an earlier visible line in the replacement is dropped" "old claim" "$N295"
+assert_eq "one visible line remains" "1" "$(printf '%s\n' "$N295" | grep -c '^_更正於 ')"
+for bad in 'a <b>' 'a > b' "$(printf 'a\033b')" "$(printf 'a\342\200\250b')" "$(printf 'a\342\200\256b')"; do
+  h a5c run-start --default-repo o/r -- comment:292 --correct --scope whole-comment --body-file "$WORK/fix-n.md" --note "$bad"
+  assert_exit "--note refuses a character it should not carry" 2 "$RC"
+done
+for p in .git-credentials .pgpass .npmrc .env .config/git/credentials .claude/.credentials.json .claude/history.jsonl .claude/CLAUDE.md id_rsa notes/id_ed25519 notes/server.pem; do
+  HFILE="$WORK/home/$p"; mkdir -p "$(dirname "$HFILE")"; printf 'secret\n' >"$HFILE"
+  HOME="$WORK/home" h a5p run-start --default-repo o/r -- comment:292 --correct --scope whole-comment --body-file "$HFILE"
+  assert_exit "--body-file refuses ~/$p" 5 "$RC"
+done
+mkdir -p "$WORK/home/.cache/idd/corrections" "$WORK/home/.claude/jobs/x/tmp" "$WORK/home/notes"
+for p in .cache/idd/corrections/fix.md .claude/jobs/x/tmp/fix.md notes/fix.md; do
+  cp "$WORK/fix-n.md" "$WORK/home/$p"
+  HOME="$WORK/home" h a5q run-start --default-repo o/r -- comment:292 --correct --scope whole-comment --body-file "$WORK/home/$p"
+  assert_exit "--body-file still reads ~/$p" 0 "$RC"
+  h a5qf finish --run "$(val RUN "$WORK/a5q.out")"
+done
+
 echo "A5. declined, mixed batch, never applied"
 mkrec comment-205.json kiki830621 MEMBER "a"
 mkrec comment-206.json collaborator MEMBER "b"

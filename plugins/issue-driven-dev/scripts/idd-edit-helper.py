@@ -64,6 +64,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import unicodedata
 
 # ── R4/R5 helpful messages (constants, must match bash reference substrings) ──
 R4_MSG = (
@@ -220,11 +221,33 @@ _REFUSED_CREDENTIAL_DIRS = (
     ".docker",
 )
 
-# Single files and a directory that hold private text outside any credential
-# directory. --correct no longer stops for a person (#424), so a wrong path would
-# publish them with nobody looking; the path gate has to refuse them itself.
-_REFUSED_PRIVATE_FILES = (".netrc", ".zsh_history", ".bash_history", ".claude.json")
-_REFUSED_PRIVATE_DIRS = (os.path.join(".claude", "projects"),)
+# Private text outside any credential directory. --correct no longer stops for a
+# person (#424), so a wrong path would publish it with nobody looking; the gate has
+# to refuse it itself. A blacklist of names was never complete (verify round 2), so
+# these are rules: any dotfile directly in a home directory, anything under
+# ~/.claude except a job's tmp/, ~/.config/git, and names that hold secrets
+# anywhere. The escape hatch below still applies.
+_PRIVATE_NAME_RE = re.compile(
+    r"credential|^\.env(\.|$)|^id_(rsa|dsa|ecdsa|ed25519)|\.pem$|\.key$|^\.[^/]*history$|^history\.jsonl$",
+    re.IGNORECASE,
+)
+
+
+def _private_path(path):
+    if _PRIVATE_NAME_RE.search(os.path.basename(path)):
+        return True
+    for home in _homes():
+        for base in {home, os.path.realpath(home)}:
+            if not _under_folded(path, base) or path == base:
+                continue
+            parts = [p.casefold() for p in os.path.relpath(path, base).split(os.sep)]
+            if len(parts) == 1 and parts[0].startswith("."):
+                return True
+            if parts[0] == ".claude" and not (len(parts) >= 4 and parts[1] == "jobs" and parts[3] == "tmp"):
+                return True
+            if parts[0] == ".config" and len(parts) > 1 and parts[1] == "git":
+                return True
+    return False
 
 
 def _path_is_under(canonical, prefix):
@@ -318,9 +341,7 @@ def validate_body_file_path(raw_path):
             return False, 5
 
     for path in named:
-        if os.path.basename(path).casefold() in _REFUSED_PRIVATE_FILES or any(
-            _under_folded(path, os.path.join(home, d)) for home in _homes() for d in _REFUSED_PRIVATE_DIRS
-        ):
+        if not in_user_tmp and _private_path(path):
             err(f"ERROR: --body-file refuses private path: {raw_path}")
             err("       Use IDD_EDIT_HELPER_ALLOW_UNSAFE_BODY_FILE=1 to override (audit your reason).")
             return False, 5
@@ -1744,7 +1765,8 @@ def _correct_prepare(work, target, kind, num, repo, section, scrub, content):
     if heading == "-":
         with open(backup, encoding="utf-8", errors="replace") as fh:
             old_lines = _lines_of(fh.read().replace("\r\n", "\n").replace("\r", "\n"))
-        if not "\n".join(_drop_top_markers(old_lines, _lines_of(content.replace("\r\n", "\n")))).strip():
+        kept = [l for l in _lines_of(content.replace("\r\n", "\n")) if not l.startswith(NOTE_LINE_PREFIX)]
+        if not "\n".join(_drop_top_markers(old_lines, kept)).strip():
             # Only a copy of the top marker is no text either (round 7).
             err("Refuse: --correct needs the corrected text; the replacement holds only the comment's marker (#351).")
             return _refused("empty", work)
@@ -2216,10 +2238,19 @@ def run_start_subcmd(argv):
         return 2
     if state["mode"] == "--correct":
         note = state["note"]
-        if len(note) > NOTE_MAX or re.search(r"[\r\n]|<!--|-->", note):
-            err(f"ERROR: --note must be one line of at most {NOTE_MAX} characters, without an HTML comment token")
+        if len(note) > NOTE_MAX or any(ch in "<>" or unicodedata.category(ch) in ("Cc", "Cf", "Zl", "Zp") for ch in note):
+            err(f"ERROR: --note must be one line of at most {NOTE_MAX} characters, without <, >, control or "
+                "bidirectional characters")
             return 2
-        state["body_input"] = state["body_input"].rstrip("\n") + "\n\n" + _correct_note_line(note) + "\n"
+        # A line from an earlier correction at the end of the replacement would
+        # stand next to the new one and may state what is now wrong (round 2).
+        lines = state["body_input"].replace("\r\n", "\n").rstrip("\n").split("\n")
+        while lines and (not lines[-1].strip() or lines[-1].startswith(NOTE_LINE_PREFIX)):
+            lines.pop()
+        if not "\n".join(_strip_target_heading(lines, state["section_flag"] or "-")).strip():
+            err("Refuse: --correct needs the corrected text; the body holds only the target heading (#351).")
+            return 2
+        state["body_input"] = "\n".join(lines) + "\n\n" + _correct_note_line(note) + "\n"
     repo = state["repo"] or default_repo or ""
     if not _REPO_RE.fullmatch(repo) or ".." in repo:
         err("ERROR: no repository: pass --repo owner/repo, or --default-repo from the IDD config")

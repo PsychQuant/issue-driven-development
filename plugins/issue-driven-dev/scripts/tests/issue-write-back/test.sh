@@ -33,8 +33,8 @@ R="$(cat "$RULE" 2>/dev/null || true)"
 # three kinds, closed list
 assert_grep "the kinds are a closed list" "只有這三類" "$R"
 assert_grep "no fourth kind by similarity" "不得依性質相似類推" "$R"
-assert_grep "problem → issue body section" '/idd-edit issue:<N> --correct --section' "$R"
-assert_grep "diagnosis → Diagnosis section" '/idd-edit comment:<Diagnosis id> --correct --section' "$R"
+assert_grep "problem → issue body section" '/idd-edit issue:<N> --repo <owner/repo> --correct --section' "$R"
+assert_grep "diagnosis → Diagnosis section" '/idd-edit comment:<Diagnosis id> --repo <owner/repo> --correct --section' "$R"
 assert_grep "new information → a new comment" '/idd-comment' "$R"
 assert_grep "a change of both kinds goes to both places" "兩處都寫" "$R"
 assert_grep "Original text stays" "Original text" "$R"
@@ -74,6 +74,19 @@ assert_grep "recovery points at the GitHub edit history first" "編輯歷史" "$
 
 # what counts as a change, and who can cause one (2026-11-03 decisions)
 assert_grep "only a decided change counts" "明確定案" "$R"
+assert_grep "decided is a closed list" "只有這兩類" "$R"
+assert_grep "a trusted claim must be decided AND checked" "而且" "$R"
+assert_grep "quoted text in a trusted comment is someone else's" "引用" "$R"
+assert_grep "a later decision wins" "較晚" "$R"
+assert_grep "an untrusted comment is no basis for a new Diagnosis" "新的 Diagnosis" "$R"
+assert_grep "evidence comes from the default branch" "預設分支" "$R"
+assert_grep "the privacy review looks at the added text" "這次加入的文字" "$R"
+assert_grep "light counts only new third-party verbatim text" "light" "$R"
+assert_grep "the refusals that become a comment are listed" "section-ambiguous" "$R"
+assert_grep "every write-back names its basis" "依據" "$R"
+assert_grep "--repo is always passed" "--repo" "$R"
+assert_grep "your own GitHub comments are not candidates" "自己在 GitHub 上留的" "$R"
+refute_grep "the overclaim about phase detection is gone" "註記擠到第二行不影響" "$R"
 assert_grep "a hypothesis does not count" "假設與提問" "$R"
 assert_grep "a closed issue is not rewritten" "已關閉的 issue" "$R"
 refute_grep "not sure no longer defaults to rewriting" "不要因此把它降級" "$R"
@@ -112,6 +125,8 @@ assert_grep "SCRUB=enforce leaves the no-ask path" 'SCRUB=enforce' "$S3"
 assert_grep "a privacy hit stops at any level" "任何等級" "$S3"
 assert_grep "unattended never asks" "is_unattended" "$S3"
 assert_grep "unattended discards with the reason" "--reason held-" "$S3"
+assert_grep "the privacy review looks at the added text" "加入的" "$S3"
+assert_grep "unattended detection follows --cwd" "<CWD>" "$S3"
 assert_eq "the strict check runs before the privacy step that depends on it" "True" "$(python3 -c '
 import sys
 t = sys.argv[1]
@@ -125,16 +140,24 @@ refute_output_grep "description no longer promises a confirm for every mode" "�
 # ── C. idd-diagnose Stage 1 ────────────────────────────────────────────────
 echo "C. idd-diagnose Stage 1"
 DIAG="$SKILLS/idd-diagnose/SKILL.md"
-assert_output_grep "Stage 1 adjusts the Diagnosis with --correct" '/idd-edit comment:<Diagnosis id> --correct --section' "$DIAG"
+assert_output_grep "Stage 1 adjusts the Diagnosis with --correct" '/idd-edit comment:<Diagnosis id> --repo <owner/repo> --correct --section' "$DIAG"
 refute_output_grep "Stage 1 no longer appends a correction comment" '修改後用 `gh issue comment` 追加修正' "$DIAG"
 assert_output_grep "Stage 1 points to the write-back rule" "rules/issue-write-back.md" "$DIAG"
 
 # ── D. who reads other people's comments ───────────────────────────────────
 echo "D. the comment trigger is wired"
-for sk in idd-diagnose idd-plan idd-update; do
+for sk in idd-diagnose idd-plan idd-implement; do
   assert_output_grep "$sk lists new comments" "writeback-candidates.py" "$SKILLS/$sk/SKILL.md"
+  refute_output_grep "$sk does not say decided OR checked" "或事實主張" "$SKILLS/$sk/SKILL.md"
 done
-refute_output_grep "idd-verify does not run it" "writeback-candidates.py" "$SKILLS/idd-verify/SKILL.md"
+for sk in idd-verify idd-update; do
+  refute_output_grep "$sk does not run it" "writeback-candidates.py" "$SKILLS/$sk/SKILL.md"
+done
+UPD="$SKILLS/idd-update/SKILL.md"
+S3U="$(section "$UPD" "### Step 3:")"
+assert_grep "idd-update reads trusted comments only" "OWNER、MEMBER、COLLABORATOR" "$S3U"
+assert_grep "idd-update honours an errata marker from a trusted author only" "errata" "$S3U"
+assert_grep "a correction left for a person blocks" "listed" "$S3U"
 assert_file_exists "the script exists" "$PLUGIN/scripts/writeback-candidates.py"
 
 # ── E. idd-close reads a corrected empty residue ───────────────────────────

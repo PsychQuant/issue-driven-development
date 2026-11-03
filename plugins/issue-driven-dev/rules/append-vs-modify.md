@@ -144,7 +144,7 @@ Issue-body prose in an issue opened by the invoking user — interpretation para
 | One line on each existing verify report after the diagnosis is corrected | `/idd-edit comment:<id> --prepend-note` | `audit-block-append` |
 | New information, a decision, the course of the discussion | `/idd-comment #N --type <decision\|note\|question\|link>` | `append-only` (a new comment) |
 
-Someone else's content is never rewritten: their comment gets `/idd-comment --type errata`, their issue body `/idd-comment --type correction`, both new comments. A skill that detects an error corrects only the invoking user's Diagnosis facts (`### Root Cause / Analysis`, `### Impact`, `### Risks`); the rest is listed. `--correct` ends the replaced text with a visible line (`--note`) before its marker.
+Someone else's content is never rewritten: their comment gets `/idd-comment --type errata`, their issue body `/idd-comment --type correction`, both new comments. `idd-verify` lists a published error as a finding and changes nothing; `idd-diagnose` and `idd-reorganize` correct only the invoking user's Diagnosis facts (`### Root Cause / Analysis`, `### Impact`, `### Risks`) of an open bug, and list the rest. `--correct` ends the replaced text with a visible line (`--note`) before its marker.
 
 ## Decision tree for classifying new modify-actions
 

@@ -179,13 +179,13 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" prepare --run '<RUN>'
 
 1. 用 Read 工具讀 `DIFF=` 那一行的路徑並完整顯示：使用者要看得出哪些內容被刪掉或改寫（#351 verify 第 7 輪：只給新全文時看不出來）。
 2. 用 Read 工具讀 `PREVIEW=` 那一行的路徑：`--correct` **完整**顯示（`(assigned after confirmation)` 在 apply 時換成實際的 backup id；helper 的字樣沿用舊名）；其他 mode 至少顯示前 40 行。
-3. **先決定這個 target 問不問**（#424，見 [`rules/issue-write-back.md`](../../rules/issue-write-back.md)）。下面第一個區塊印出 `UNATTENDED=`；是 1 時，下面每一處「問」都改成 discard 這個 target（`--reason` 見各點），**不用 AskUserQuestion**（`references/unattended-contract.md`）。
+3. **先決定這個 target 問不問**（#424，見 [`rules/issue-write-back.md`](../../rules/issue-write-back.md)）。下面第一個區塊印出 `UNATTENDED=`（`<CWD>` 是 `--cwd` 的值，沒給就填 `.`：idd-all 把旗標寫在它所在的 repo）；是 1 時，下面每一處「問」都改成 discard 這個 target（`--reason` 見各點），**不用 AskUserQuestion**（`references/unattended-contract.md`）。
    - `--correct`：不問，除非 `SCRUB=enforce`（沒有寫入權或查不到權限，由 `run-start` 判定）。作者閘門在 prepare 已確定這是你自己寫的內容。
    - `--prepend-note`：跑下面第二個區塊的嚴格作者檢查 `validate-target`（`<ID>` 是 TARGET 去掉 `comment:` 的那串數字，`<REPO>` 照 Step 1 印出的值）。exit 0（你自己寫的）而且不是 `SCRUB=enforce` → 不問；其他（別人寫的、bot、查不到）→ 問。一般的 R5 閘門會放行 OWNER 與 bot，所以不能拿 prepare 的結果代替這一步。
    - `--append`、`--replace`：問。
-   - `SCRUB=enforce` 的 target，或要問而 unattended 時：`--reason held-unattended`。
-4. 隱私自審（`privacy_scrub_gate`）：依 `SCRUB` 等級（prepare 印了 `FLOOR=272` 而 SCRUB 是 `light` 時用 `warn`），對 PREVIEW 做 [`rules/privacy-scrubbing.md`](../../rules/privacy-scrubbing.md) 的語意檢查（本機路徑、未公開的協作者真名、未發表的內容、新加入的第三方逐字內容）。
-   - **不問的路徑**：**任何等級**命中都不進 apply。沒有人確認，`warn` 的「提醒後照做」不成立（#424 verify 第 1 輪）。attended：顯示 redaction diff，AskUserQuestion（送出／遮蔽後再送／不寫）。unattended：discard，`--reason held-privacy`，回報時不重述被擋的文字。
+   - 要問而 unattended 時（包括 `SCRUB=enforce` 的 target）：discard，`--reason held-unattended`。discard 之後，這個 target 跳過第 4–6 點與 Step 4。
+4. 隱私自審（`privacy_scrub_gate`）：依 `SCRUB` 等級（prepare 印了 `FLOOR=272` 而 SCRUB 是 `light` 時用 `warn`），對這次**加入的**文字（DIFF 的加入行）做 [`rules/privacy-scrubbing.md`](../../rules/privacy-scrubbing.md) 的語意檢查（本機路徑、未公開的協作者真名、未發表的內容、新加入的第三方逐字內容）。目標裡原本就有的內容命中只回報，不擋：那些已經在 GitHub 上。
+   - **不問的路徑**：**任何等級**都會停：`enforce`、`warn` 命中就停，`light` 只有新加入的第三方逐字內容算命中。沒有人確認，`warn` 的「提醒後照做」不成立（#424 verify 第 1 輪）。attended：顯示 redaction diff，AskUserQuestion（送出／遮蔽後再送／不寫）。unattended：discard，`--reason held-privacy`，回報時不重述被擋的文字。
    - **要問的路徑**：`enforce` 命中 → 顯示 redaction diff，使用者確認前不 apply；`warn` 命中 → 印一行提醒，第 6 點一起問。
    - 要送出遮蔽後的版本，就 discard 這個 target、改好 body file 後從 Step 1 重跑（apply 只寫 prepare 組好的內文）。
 5. prepare 印了 `FLOOR=272`（`reply_272_gate`，不論等級）：先另用 AskUserQuestion 問「這次加入或改寫的文字裡，若有第三方逐字內容，確認可以放上 remote？」。說清楚原文已有的引文本來就在 GitHub 上、不受這一題影響，回答「否」只會取消這次編輯，不會把已公開的文字拿掉。選項含「遮蔽後再送」（四種 mode 都適用，遮蔽的是這次 body file 裡的文字；`--correct` 的 `**Point i**` 引文仍須原樣保留）：discard 這個 target、跑 Step 5 的 finish 結束這個 run、改好 body file 後從 Step 1 開新的 run，呼叫端看新 run 的結束碼。使用者沒有確認，就 discard（`--reason held-272`）；unattended 直接 discard（`--reason held-272`）。內文只是提到這兩個標記字串（例如 verify 報告）也會觸發這一題，照實問即可。這是 #272 要求的確認，不能由下一題代替（[`rules/privacy-scrubbing.md`](../../rules/privacy-scrubbing.md) § Reply layer-3 payload tier floor）。
@@ -193,7 +193,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" prepare --run '<RUN>'
 
 ```bash
 # unattended check — prints UNATTENDED=1 or UNATTENDED=0
-. "${CLAUDE_PLUGIN_ROOT}/scripts/lib/unattended-state.sh" && if is_unattended "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"; then echo UNATTENDED=1; else echo UNATTENDED=0; fi
+. "${CLAUDE_PLUGIN_ROOT}/scripts/lib/unattended-state.sh" && if is_unattended "$(git -C '<CWD>' rev-parse --show-toplevel 2>/dev/null || echo '<CWD>')"; then echo UNATTENDED=1; else echo UNATTENDED=0; fi
 ```
 
 ```bash

@@ -63,6 +63,14 @@ D2 的 verify 報告註記要用 `--prepend-note`，但這個 mode 的作者閘�
 - **定案**：只有明確定案才算改變，假設與提問不算。已關閉的 issue 不改，避免和 Closing Summary 對不起來。
 - **可見文字**：`--correct` 由 helper 固定加一行 `_更正於 YYYY-MM-DD（AI 判斷）：原因_`。放在 helper 而非規則，才不會忘；原因寫正確內容，不重述錯的值。GitHub 編輯不寄通知，標記又看不見，沒有這行，讀者無從知道。
 
+### D9 verify 只列；自動更正限 bug、只改 Diagnosis（verify 第 2 輪，2026-11-03 維護者決定）
+
+feature issue 的 `### Root Cause / Analysis` 就是需求拆解，而 verify 查證用的「repo 內的證據」正是受驗的 code，自動更正會變成「把 Diagnosis 改得符合 code」。所以 `idd-verify` 不改任何東西，已發表內容的錯誤一律是 finding；`## Expected`、範圍、checklist、Type、Complexity 的錯誤是 Blocking。`idd-diagnose`、`idd-reorganize` 只在 `### Type` 是 bug、issue 開著時改自己 Diagnosis 的三段，證據取自預設分支；Implementation Plan、前提被推翻的情況都列出。交給人的 `listed` 經 `idd-update` 進 `### Blocking`，既有的 actionability gate 就會停下 unattended 的 run，不另造機制。
+
+### D10 「定案」寫成封閉列舉
+
+第 2 輪指出「明確定案」只靠一句總括判準，無法查核。改成兩類封閉列舉（使用者在 session 說要改或說定了；受信任作者的 decision comment 或明說定案），每次回報寫依據（使用者原話或 comment 連結），寫回一律帶 `--note`。不做 Likert 評分：這是二元判斷，錯了的後果由可見文字與編輯歷史承接。
+
 ### D8 實作後的更正走 idd-reorganize
 
 更正讓既有實作的前提不成立，或問題改變時，只改文字會留下 PASS 與舊的 phase。`idd-reorganize` 本來就處理下游枚舉與退 phase，不另造機制。Spectra tier 的 artifact 也由它處理。
@@ -72,16 +80,16 @@ D2 的 verify 報告註記要用 `--prepend-note`，但這個 mode 的作者閘�
 **行為（使用者看得到的）**
 
 - session 裡討論一張 issue 時，AI 判斷改變屬於三類之一並寫回，不問；每次寫回在對話裡回報一行：類別、目標（`issue:N` 的段落或 `comment:<id>`）、連結，`--correct` 另附 backup id。
-- `/idd-edit ... --correct`：顯示 diff 與預覽後直接 apply，改寫段落尾留一行可見文字；privacy 自審任何等級命中、或 #272 題沒確認時不寫（attended 問，unattended 捨棄），finish 以 9 結束並寫出原因。沒有寫入權的 repo 照舊確認。
+- `/idd-edit ... --correct`：顯示 diff 與預覽後直接 apply，改寫段落尾留一行可見文字；隱私自審只看這次加入的文字，`enforce`、`warn` 命中、`light` 下新加入的第三方逐字內容、或 #272 題沒確認時不寫（attended 問，unattended 捨棄），finish 以 9 結束並寫出原因。沒有寫入權的 repo 照舊確認。
 - `/idd-edit ... --prepend-note`：目標通過嚴格作者檢查時不確認；否則照舊確認。`--append`、`--replace` 照舊確認。unattended 下任何問題都改成捨棄。
-- `idd-verify`、`idd-diagnose`、`idd-reorganize` 的報告：`### Applied Corrections` 取代 `### Proposed Corrections`，範圍只有 D7 列的段落，其餘列出不改；unattended 相同。
+- `idd-verify`、`idd-diagnose`、`idd-reorganize` 的報告：`idd-verify` 只列成 finding；`idd-diagnose`、`idd-reorganize` 的 `### Applied Corrections` 取代 `### Proposed Corrections`，只限 bug、只改 D7 列的段落，其餘列出不改；unattended 相同。
 - `idd-diagnose` Step 4 Stage 1：使用者要調整診斷時，用 `/idd-edit comment:<Diagnosis id> --correct --section ...` 改寫，不追加 comment。
 - SessionStart 輸出第 5 行提醒寫回規則。
 
 **介面**
 
 - 新檔 `plugins/issue-driven-dev/rules/issue-write-back.md`：三類分流表（封閉列舉）、觸發來源兩種（封閉列舉）、作者邊界、回報格式、privacy 自審、相依紀錄更新（Implementation Plan、verify 報告）。
-- helper：`run-start` 接受 `--note`（只限 `--correct`）；`discard` 接受 `--reason held-privacy|held-272|held-unattended`；`--body-file` 路徑閘多擋 `.netrc`、shell 歷史、`.claude.json`、`.claude/projects`。新 script `scripts/writeback-candidates.py --repo <r> --issue <n>`：每列 `TRUSTED|UNTRUSTED <comment id> <login> <association>`，抓不到回 1。
+- helper：`run-start` 接受 `--note`（只限 `--correct`）；`discard` 接受 `--reason held-privacy|held-272|held-unattended`；`--body-file` 路徑閘多擋 `.netrc`、shell 歷史、`.claude.json`、`.claude/projects`。新 script `scripts/writeback-candidates.py --repo <r> --issue <n>`：每列 `TRUSTED|UNTRUSTED <comment id> <login> <association>`，截止點是你自己最新的 Diagnosis、Implementation Plan、Implementation Complete 的 `updated_at` 往前一天，比 comment 的 `updated_at`；bot 一律 UNTRUSTED；抓不到回 1。
 
 **驗收**
 
@@ -100,7 +108,7 @@ D2 的 verify 報告註記要用 `--prepend-note`，但這個 mode 的作者閘�
 - [AI 判斷錯類別，把新決定寫進正文] → 每次寫回都回報類別與目標；段落尾的可見文字讓讀者看得到；舊版用 GitHub 編輯歷史取回，或在同一份 clone 用 `/idd-edit` 的 `restore`（會蓋掉之後的更正）。
 - [不確認後，privacy 自審是語意上唯一的防線] → 任何等級命中都停（D6）；gh-egress 的機械閘照常。自審本身可能漏判，沒有機械防線，這一點接受。
 - [ADMIN 帳號可改別人的 comment] → 不確認的路徑一律先過 `--correct` 的嚴格作者檢查（D1b）。
-- [verify 期間 Diagnosis 或正文被改] → verify 自己不改驗收依據（D7）；另一個 session 可能改，所以 Step 2.9 比對 issue 與 Diagnosis 的 `updated_at`，不同就在報告註明。
+- [verify 期間 Diagnosis 或正文被改] → verify 自己不改任何東西（D9）；另一個 session 可能改，所以 Step 1 記下 issue 正文雜湊與 Diagnosis 的 `updated_at`，Step 2.9 再比，不同就在報告註明。
 - [SessionStart 第 5 行是每個 session 的 context 成本] → 一行、指向規則檔，drift guard 鎖住上限。
 
 ## Migration Plan

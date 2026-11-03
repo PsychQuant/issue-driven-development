@@ -15,14 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Three kinds, a closed list: the problem (question, scope, `## Expected`) goes to the issue body section with
   `/idd-edit issue:<N> --correct --section`; the diagnosis (root cause, strategy, routing) goes to the Diagnosis
   comment section with `/idd-edit comment:<id> --correct --section`; new information, a decision, or the course of
-  the discussion goes to a new `/idd-comment`. In a repository you can write to, the AI decides the kind, writes
-  without asking, and reports each write-back; elsewhere it asks. Only your own content is rewritten; someone
-  else's comment gets `/idd-comment --type errata`, someone else's issue body `--type correction`. A privacy hit
-  at any level stops the write-back (attended asks, unattended discards). Triggers, a closed list: a session
-  discussion, and a comment by someone else, seen by `idd-diagnose`, `idd-plan` and `idd-update` through
-  `scripts/writeback-candidates.py`. Comments are read as data; only OWNER, MEMBER and COLLABORATOR comments can
-  lead to a write-back, factual claims are checked in the repository first, and `### Type` and `### Complexity`
-  never move because of a comment. A corrected diagnosis also corrects your Implementation Plan sections and adds
+  the discussion goes to a new `/idd-comment`. "Decided" is a closed list: the user says so in a session, or a
+  trusted author's decision comment. In a repository that has an IDD config and that you can write to, the AI
+  decides the kind, writes without asking, and reports each write-back with its basis; elsewhere it asks. Only your own content is rewritten; someone
+  else's comment gets `/idd-comment --type errata`, someone else's issue body `--type correction`. The privacy
+  review covers the text being added; a hit at `enforce` or `warn`, or new third-party verbatim text at `light`,
+  stops the write-back (attended asks, unattended discards). Triggers, a closed list: a session discussion, and a
+  comment by someone else, seen when `idd-diagnose`, `idd-plan` or `idd-implement` starts, through
+  `scripts/writeback-candidates.py`; `idd-verify` and `idd-update` do not look. Comments are read as data; only
+  OWNER, MEMBER and COLLABORATOR comments that are not bots can lead to a write-back, a factual claim must be
+  decided and checked on the default branch, and `### Type` and `### Complexity` never move because of a comment. A corrected diagnosis also corrects your Implementation Plan sections and adds
   one note to your verify reports (findings unchanged); when it overturns what was built, or the problem changed,
   `idd-reorganize` takes over.
 - **`--note` on `/idd-edit --correct`.** The replaced text ends with a visible line,
@@ -39,18 +41,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`/idd-edit` no longer asks questions in unattended mode.** A question becomes a discard with its reason
   (`discard --reason held-privacy|held-272|held-unattended`), and `finish` reports HELD instead of saying a user
   declined; it still exits 9.
-- **BREAKING: `idd-verify`, `idd-diagnose` and `idd-reorganize` correct a narrow set themselves.** After the main
-  agent confirms the error against evidence in the repository, they correct your own Diagnosis's
-  `### Root Cause / Analysis`, `### Impact` and `### Risks`, attended and unattended alike. `## Expected`, scope,
-  checklists, `### Strategy`, `### Type`, `### Complexity`, the issue body, verify reports and other people's
-  content are listed and not changed. `### Proposed Corrections` becomes `### Applied Corrections`, with five
-  outcomes (`corrected`, `listed`, `refused`, `held`, `unverified`).
+- **BREAKING: `idd-verify` lists published errors as findings and changes nothing**; an error in `## Expected`,
+  scope, a checklist, `### Type` or `### Complexity` is a Blocking finding. Its `### Proposed Corrections` block
+  is gone.
+- **BREAKING: `idd-diagnose` and `idd-reorganize` correct a narrow set themselves.** On an open issue whose
+  `### Type` is `bug`, after the main agent confirms the error on the default branch, they correct your own
+  Diagnosis's `### Root Cause / Analysis`, `### Impact` and `### Risks`, attended and unattended alike. Everything
+  else, the Implementation Plan included, is listed and not changed. `### Proposed Corrections` becomes
+  `### Applied Corrections`, with five outcomes (`corrected`, `listed`, `refused`, `held`, `unverified`). A listed
+  correction to `## Expected`, scope, a checklist, Type or Complexity goes to `### Blocking`, so an unattended run
+  stops at the actionability gate.
+- `idd-update` takes Key Decisions, Scope Changes, Blocking and errata markers only from OWNER, MEMBER and
+  COLLABORATOR comments and your own.
 - `idd-diagnose` Stage 1 rewrites its own Diagnosis instead of appending a correction comment; in attended mode
   Step 3.8 applies after Stage 1 confirms.
-- `--body-file` also refuses `.netrc`, shell history, `.claude.json` and `.claude/projects`.
+- `--body-file` also refuses dotfiles directly in your home directory, `~/.claude` except a job's `tmp/`,
+  `~/.config/git`, and names that hold secrets (`*credential*`, `.env*`, `id_rsa*` and other keys, `*.pem`,
+  `*.key`, histories). The list is still not complete; the escape hatch is unchanged.
+- `--note` refuses `<`, `>`, control and bidirectional characters. A replacement that holds nothing but markers is
+  refused as empty again; an earlier visible line at the end of the replacement is replaced.
 - `idd-close` Step 3.6 ignores the visible line and the marker when it reads `### Residue`.
-- `idd-verify` scans `### Applied Corrections` as an external write and notes when the Diagnosis or issue body
-  changed during the run.
+- `idd-verify` scans `### Applied Corrections` as an external write, and notes when the Diagnosis or issue body
+  changed during the run (Step 1 records a baseline, Step 2.9 compares it).
 
 ## [3.6.0] - 2026-11-03
 

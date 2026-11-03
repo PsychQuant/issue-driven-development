@@ -22,7 +22,6 @@ allowed-tools:
   - Edit
   - Glob
   - Grep
-  - Skill
   - Agent
   - SendMessage
   - AskUserQuestion
@@ -255,7 +254,7 @@ Source-of-truth attachments (repo-relative; read with your file tools): ${ATTACH
 #   ### Closing Follow-ups Filed   idd-close     → closing summary
 #   ### Tangential Observations    idd-plan      → Implementation Plan
 #   ### Linked-Context Siblings Filed  idd-issue  → the issue BODY (not a comment)
-#   ### Applied Corrections        idd-diagnose / idd-reorganize / earlier verify rounds → edits to the Diagnosis
+#   ### Applied Corrections        idd-diagnose / idd-reorganize → edits to the Diagnosis
 # 它們散在**不同的 comment** 裡，所以掃描對象是全部 comment，不是「最後一則
 # Implementation Complete」——**外加 issue body**，因為 idd-issue 那一個是 PATCH
 # 進 body 的。清單的權威來源是各 skill 自己宣告的 `**Audit trail target**`；測試
@@ -569,7 +568,7 @@ TaskCreate(name="recovery_protocol", description="Step 2.5 (NEW per #52): 缺 fi
 TaskCreate(name="wait_for_codex", description="等 Codex 背景任務完成,讀 $VERIFY_DIR/codex.md")
 TaskCreate(name="freshness_gate", description="Step 2.9 (#228): merge/aggregate 前比對 FROZEN_SHA vs 當前 HEAD（PR mode: PR head oid）— 不一致 → 拒絕 aggregate,要求 re-freeze + 補審 delta round;一致才放行 merge")
 TaskCreate(name="merge_findings", description="合併 6 個來源 findings 去重,severity 取最高")
-TaskCreate(name="apply_corrections", description="Step 3.5 (#351、#424): 只改你自己 Diagnosis 的 ### Root Cause / Analysis、### Impact、### Risks，主 agent 親自用 repo 證據查證後呼叫 /idd-edit ... --correct --note；Expected、Strategy、checklist、Type、Complexity、issue 正文、verify 報告、別人的內容一律列出不改；master report 加 ### Applied Corrections（corrected／listed／refused／held／unverified）；絕不自己 PATCH 目標或寫歸檔")
+TaskCreate(name="list_published_errors", description="Step 3.5 (#351、#424): findings 證明 issue 正文或既有 comment 已發表的敘述有錯 → 寫成 finding（位置、錯誤類型、正確內容，不重述錯的值）；Expected、範圍、checklist、Type、Complexity 的錯是 Blocking；不呼叫 /idd-edit、不貼 comment")
 TaskCreate(name="post_master_and_pointers", description="PR mode: master 貼到 PR + capture URL → 為每個 ref'd issue 貼 pointer comment；本地 mode: 貼到 issue（單 issue 直接貼／多 issue 用 SOP master+pointer）")
 TaskCreate(name="tag_verified", description="Step 4.5 (#85): if config auto_tag.enabled (default on) AND Aggregate PASS, tag idd-{N}-verified at the PR head (PR mode) / current HEAD (local mode) + git push. Idempotent + graceful-skip. Cluster: tag each ref'd #N. Skip on FAIL or auto_tag.enabled=false.")
 TaskCreate(name="restore_working_tree", description="PR mode 結束後 git checkout 回原 branch（Step 0.5 記住的）")
@@ -815,6 +814,15 @@ git diff --stat origin/$DEFAULT_BRANCH...$BRANCH
 for I in $REFD_ISSUES; do
   gh issue view $I --repo $GITHUB_REPO --json title,body > "$VERIFY_DIR/issue_$I.json"
 done
+
+# 需求端的基準（#424）：issue 正文的雜湊與最新 Diagnosis 的 updated_at。Step 2.9 用同一段
+# 指令再算一次，判斷驗證期間 Diagnosis 或正文有沒有被另一個 session 改過。
+req_state() {   # $1 = issue number
+  gh api "repos/$GITHUB_REPO/issues/$1" --jq '.body' | shasum -a 256 | cut -c1-16
+  gh api "repos/$GITHUB_REPO/issues/$1/comments" --paginate \
+    --jq '.[] | select((.body // "") | test("^\\s*## Diagnosis")) | .updated_at' | tail -1
+}
+for I in $REFD_ISSUES; do req_state "$I" > "$VERIFY_DIR/req-before-$I.txt"; done
 ```
 
 ### Step 1.5: 檢查 Attachment(下游,給 reviewer agents 用)
@@ -1203,7 +1211,7 @@ if [ "$CURRENT_SHA" != "$FROZEN_SHA" ]; then
 fi
 ```
 
-**需求端也會動（#424）**：寫回可能由另一個 session 發生，所以 Step 1 另記最新 Diagnosis comment 的 `updated_at` 與 issue 正文的雜湊，這裡再讀一次；不同就在報告的 Engine 下註明「驗證期間 Diagnosis 或正文被改過」，不擋 aggregate（finding 仍對應凍結的 head），讀者要自己判斷。
+**需求端也會動（#424）**：寫回可能由另一個 session 發生。Step 1 存了 `$VERIFY_DIR/req-before-<N>.txt`（issue 正文的雜湊與最新 Diagnosis 的 `updated_at`），這裡用 Step 1 的 `req_state` 再算一次（`req_state "$I" | cmp -s - "$VERIFY_DIR/req-before-$I.txt"`）；不同就在報告的 Engine 下註明「驗證期間 Diagnosis 或正文被改過」，不擋 aggregate（finding 仍對應凍結的 head），讀者要自己判斷。
 
 **紀律句（normative，與 gate 互補）**：verify in-flight 期間不得 commit — orchestrator 收到 findings 的修復**累積到 round 結束**再一次 commit + 觸發下一 round（DA-CRIT-1 當次的處置，自此為正式紀律）。gate 是兜底，紀律是根治：兩者缺一，另一仍能守住。
 
@@ -1217,45 +1225,15 @@ fi
 4. **severity 以最高為準**：如果 logic 說 P2 但 codex 說 P1 → P1
 5. Devil's Advocate 的反駁如果成立 → 升級 severity
 
-### Step 3.5: Applied Corrections（#351、#424）
+### Step 3.5: 已發表內容的錯誤（#351、#424）
 
-**觸發**：合併後的 findings 指出本 issue 的 Diagnosis 已發表的敘述是錯的（例：指錯 root-cause 檔案）；code 寫壞不算，那是 finding。沒有就略過，不加空 block。
+**觸發**：合併後的 findings 指出 issue 正文或某則 comment **已發表**的敘述是錯的（例：Diagnosis 指錯 root-cause 檔案）。code 寫壞是一般的 finding，不在這裡。
 
-**只有這三個段落可以直接改**（封閉列舉，不得依性質相似類推）：你自己寫的 Diagnosis comment 的 `### Root Cause / Analysis`、`### Impact`、`### Risks`。其他內容就算確定有錯也**只列出、不改**：`## Expected`、範圍、checklist、`### Strategy`、`### Type`、`### Complexity`、issue 正文、任何一輪的 verify 報告、別人寫的內容（維護者 2026-11-03 決定，#424 comment 6600258374）。`## Expected`、`### Strategy` 與 checklist 是驗收依據，verify 不能動自己的判準；code 與它們不符就是 finding，停給人（專案 CLAUDE.md：verify 是 execution-fidelity check，意圖在上游確認）。
+**verify 不改任何已發表的內容，也不貼 comment**（維護者 2026-11-03 決定，#424 comment 6611450882）。feature 的 `### Root Cause / Analysis` 就是需求拆解，而 verify 查證用的證據正是受驗的 code；自己改，就會把依據改得符合 code。每一項寫成一則 finding：
 
-**先親自查證**：主 agent 要親自用 repo 內的證據（檔案與行、自己跑的輸出）確認那句話是錯的。只有 reviewer 的轉述、PR 文字或別人的 comment 不算，列出。這次更正讓既有實作的前提不成立時，不在這裡改，走 `idd-reorganize`（見 [`rules/issue-write-back.md`](../../rules/issue-write-back.md)）。
-
-通過這兩關的**直接套用、不先問**，attended 與 unattended 相同。逐項：
-
-1. 建這次專用的目錄：`mktemp -d "${TMPDIR:-/tmp}/idd-writeback-XXXXXX"`，用 Write 工具把替換內容寫進裡面的 `body.md`。寫入失敗就不呼叫 idd-edit。
-2. `Skill(skill="issue-driven-dev:idd-edit", args="<重組的引數>")`，例如 `comment:5805214375 --correct --section '### Root Cause / Analysis' --body-file '<那個目錄>/body.md' --note '<一句話：現在正確的內容>'`。`/idd-edit` 顯示 diff 與預覽後寫入，自己檢查作者（不是你寫的回 `REASON=R5`，列出）、隱私與 egress。
-3. 跑完刪掉那個目錄。
-4. 結果寫在 master report 末尾（cluster 時放進對應 `### #N` 區段），套用在 Step 4 貼出報告之前完成，Outcome 才填得進報告（`(category: audit-block-append, scope: "### Applied Corrections")`），一項一列。
-
-**Audit trail target**: `### Applied Corrections`
-
-```markdown
-### Applied Corrections
-| # | Target | Section | 錯在哪 | Outcome |
-|---|--------|---------|--------|---------|
-| 1 | comment:5805214375 | ### Root Cause / Analysis | 檔案寫錯，root cause 在 `b.py` | corrected, backup id `comment-5805214375-20261025T010203Z` |
-| 2 | comment:5805219999 | ### Strategy | 協作者的 comment，策略已改 | listed |
-| 3 | issue:42 | ## Expected | 與實作不符 | listed |
-| 4 | comment:5805214375 | ### Risks | 位置（內容不列） | held |
-| 5 | comment:5805214375 | ### Impact | 檔名寫錯，應為 `c.py` | refused: section-not-found |
-| 6 | comment:5805214375 | ### Impact | 檔名寫錯，應為 `c.py` | unverified，請手動檢查 |
-```
-
-Outcome 只有這五種（封閉列舉）：`corrected`（附 backup id）、`listed`（沒有改）、`refused`（附 `/idd-edit` 的原因）、`held`（被隱私或 egress 閘擋下）、`unverified`（`/idd-edit` exit 7，已寫入但讀回不符）。
-
-- `held` 那一列只寫位置，**不寫正確內容與被擋的字串**：轉述等於繞過閘門。
-- 「錯在哪」只寫位置與錯誤類型加正確內容，不重述錯的值 —— 重述就等於再留一份錯誤。
-- 別人寫的內容：attended 在報告貼出後逐項問要不要貼 `/idd-comment --type errata --target-comment <id> --body <更正說明>`（issue 正文用 `--type correction --body <更正說明>`）；**unattended 不貼**，通知寄出就收不回。
-- 替換內容須原樣保留 `Original text`、`**Original**`、`**Point i**` 引文。
-- **引數用本 skill 自己的值組**：目標只能是 `comment:<全數字>`，id 取自本 skill 讀到的 Diagnosis comment，不抄 finding 裡的文字；section 只能是上面三個標題之一；每個值用單引號包住（含單引號時寫成 `'\''`）。不符就不執行，Outcome 寫 `refused`。`--correct` 不會把 `--reason` 發佈到任何地方，所以不帶 `--reason`；`--note` 寫現在正確的內容。
-- `/idd-edit` 拒絕或寫入失敗時，不改用別的方式強寫。
-- 目標是 Diagnosis 時，照 [`rules/issue-write-back.md`](../../rules/issue-write-back.md)「診斷更正後，連帶更新」一併處理：你自己的 Implementation Plan 受影響的段落用 `--correct`，你自己的既有 verify 報告各用 `--prepend-note` 加一則指向更正後的 Diagnosis。本輪的報告還沒貼出，不在此列。
-- 本 skill **永不**自己 PATCH 目標、也不寫歸檔 —— 改寫只經 `/idd-edit`。
+- 位置（`issue:<N>` 的段落，或 `comment:<id>` 的段落）、錯誤類型、正確內容；不重述錯的值，不引用 comment 原文。
+- 落在 `## Expected`、範圍、checklist、`### Type`、`### Complexity` 的，Action 是 **Blocking**：要人決定，這一輪因此不會是乾淨的 PASS。其他照 Step 5a 分類。
+- 要改的話，由人在 session 裡定案後依 [`rules/issue-write-back.md`](../../rules/issue-write-back.md) 寫回；bug 的 Diagnosis 事實，下一次 `/idd-diagnose` 會自己查證後更正。
 
 ### Step 4: Comment（master + pointer 規則）
 

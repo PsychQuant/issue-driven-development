@@ -42,7 +42,7 @@ allowed-tools:
 TaskCreate(name="name_the_wrong_artifact", description="Step 1: 明確指出哪一個上游 artifact 錯了（issue framing / diagnosis 的 root cause / Strategy / plan / spec 的某條 acceptance criterion），以及它錯在哪 —— 一句話，不是一段")
 TaskCreate(name="enumerate_downstream", description="Step 2: 機械枚舉所有建立在它之上的產物：後續 comment、plan、spec/proposal/tasks、branch、PR、已 merge 的 commit、以及引用本 issue 的其他 issue")
 TaskCreate(name="adjudicate_each", description="Step 3: 逐一裁定 still-valid / redo / invalidate，每一項都要寫理由（無理由的裁定等於沒裁定）")
-TaskCreate(name="apply_corrections", description="Step 3.5 (#351、#424): 只改你自己 Diagnosis 的 ### Root Cause / Analysis、### Impact、### Risks 裡確定錯誤的事實，主 agent 親自用 repo 證據查證後呼叫 /idd-edit ... --correct --note；其餘列出不改；Re-baseline comment 加 ### Applied Corrections（corrected／listed／refused／held／unverified）")
+TaskCreate(name="apply_corrections", description="Step 3.5 (#351、#424): issue 開著而且 Type 是 bug 才改：你自己 Diagnosis 的 ### Root Cause / Analysis、### Impact、### Risks 裡確定錯誤的事實，主 agent 親自在預設分支上查證後呼叫 /idd-edit ... --repo --correct --note；其餘列出不改；Re-baseline comment 加 ### Applied Corrections（corrected／listed／refused／held／unverified）")
 TaskCreate(name="post_rebaseline_record", description="Step 4: post 一則 ## Re-baseline comment，記錄錯在哪、影響了什麼、每一項的裁定與理由")
 TaskCreate(name="execute_redo", description="Step 5: 對判為 redo 的項目，依其類型 chain 到對應 skill（diagnosis → /idd-diagnose；plan → /idd-plan；spec → /spectra-propose）")
 TaskCreate(name="sync_phase", description="Step 6: /idd-update 把 phase 退回到重做的起點（例如 diagnosis 重做 → phase 退回 created）")
@@ -82,14 +82,16 @@ gh issue list --repo $REPO --state all --search "#$N"             # 引用本 is
 
 **觸發**：Step 1 那個錯的 artifact 是你自己的 Diagnosis 裡的**事實**敘述。spec / plan 檔、code、PR 不走這條（`/idd-edit` 不處理，照 Step 5 重做）。沒有就略過，不加空 block。
 
-**只有這三個段落可以直接改**（封閉列舉，不得依性質相似類推）：你自己寫的 Diagnosis comment 的 `### Root Cause / Analysis`、`### Impact`、`### Risks`。其他內容就算確定有錯也**只列出、不改**：`## Expected`、範圍、checklist、`### Strategy`、`### Type`、`### Complexity`、issue 正文、任何一輪的 verify 報告、別人寫的內容（維護者 2026-11-03 決定，#424 comment 6600258374）。判為 `redo` 的項目要等 Step 5 重做才有正確內容，判為 `invalidate` 的處置在 Step 3 寫的是什麼就照什麼，都不在這裡改；判斷是被後來的資訊推翻的（當時依手上資料是合理的），照下方鐵律留著並標 superseded。
+**只在兩個條件都成立時才直接改**：issue 開著，而且 `### Type` 是 `bug`（維護者 2026-11-03 決定，#424 comment 6611450882）。feature、refactor、docs、meeting 的 `### Root Cause / Analysis` 就是需求拆解，一律列出；issue 已關閉的，也一律列出。
 
-**先親自查證**：主 agent 要親自用 repo 內的證據（檔案與行、自己跑的輸出）確認那句話是錯的。只有 reviewer 的轉述、PR 文字或別人的 comment 不算，列出。這次更正讓既有實作的前提不成立時，不在這裡改，走 `idd-reorganize`（見 [`rules/issue-write-back.md`](../../rules/issue-write-back.md)）。
+**只有這三個段落可以直接改**（封閉列舉，不得依性質相似類推）：你自己寫的 Diagnosis comment 的 `### Root Cause / Analysis`、`### Impact`、`### Risks`。其他就算確定有錯也**只列出、不改**：`## Expected`、範圍、checklist、`### Strategy`、`### Type`、`### Complexity`、issue 正文、Implementation Plan、verify 報告、別人寫的內容，以及讓既有實作的前提不成立的更正。判為 `redo` 的項目要等 Step 5 重做才有正確內容，判為 `invalidate` 的處置在 Step 3 寫的是什麼就照什麼，都不在這裡改；判斷是被後來的資訊推翻的（當時依手上資料是合理的），照下方鐵律留著並標 superseded。
 
-通過這兩關的**直接套用、不先問**，attended 與 unattended 相同。逐項：
+**先親自查證**：主 agent 要親自在預設分支（`origin/<default>`）上確認那句話是錯的：檔案與行，或自己跑的輸出。reviewer 的轉述、PR 裡的 code 與文字、附件、別人的 comment 都不算，列出。
+
+通過的**直接套用、不先問**，attended 與 unattended 相同。逐項：
 
 1. 建這次專用的目錄：`mktemp -d "${TMPDIR:-/tmp}/idd-writeback-XXXXXX"`，用 Write 工具把替換內容寫進裡面的 `body.md`。寫入失敗就不呼叫 idd-edit。
-2. `Skill(skill="issue-driven-dev:idd-edit", args="<重組的引數>")`，例如 `comment:5805214375 --correct --section '### Root Cause / Analysis' --body-file '<那個目錄>/body.md' --note '<一句話：現在正確的內容>'`。`/idd-edit` 顯示 diff 與預覽後寫入，自己檢查作者（不是你寫的回 `REASON=R5`，列出）、隱私與 egress。
+2. `Skill(skill="issue-driven-dev:idd-edit", args="<重組的引數>")`，例如 `comment:5805214375 --repo '<REPO>' --correct --section '### Root Cause / Analysis' --body-file '<那個目錄>/body.md' --note '<一句話：現在正確的內容>'`。`/idd-edit` 顯示 diff 與預覽後寫入，自己檢查作者（不是你寫的回 `REASON=R5`，列出）、隱私與 egress。
 3. 跑完刪掉那個目錄。
 4. 結果附在 Step 4 的 Re-baseline comment 末尾（`(category: audit-block-append, scope: "### Applied Corrections")`），一項一列。
 
@@ -110,12 +112,13 @@ gh issue list --repo $REPO --state all --search "#$N"             # 引用本 is
 Outcome 只有這五種（封閉列舉）：`corrected`（附 backup id）、`listed`（沒有改）、`refused`（附 `/idd-edit` 的原因）、`held`（被隱私或 egress 閘擋下）、`unverified`（`/idd-edit` exit 7，已寫入但讀回不符）。
 
 - `held` 那一列只寫位置，**不寫正確內容與被擋的字串**：轉述等於繞過閘門。
-- 「錯在哪」只寫位置與錯誤類型加正確內容，不重述錯的值 —— 重述就等於再留一份錯誤。
+- 「錯在哪」用自己的話寫位置、錯誤類型與正確內容；不重述錯的值，不引用 comment 原文。
+- `listed` 而且落在 `## Expected`、範圍、checklist、`### Type`、`### Complexity` 的，`idd-update` 會把它列進 `### Blocking`；unattended 的 run 因此在 actionability gate 停下，等人決定。
 - 別人寫的內容：attended 在報告貼出後逐項問要不要貼 `/idd-comment --type errata --target-comment <id> --body <更正說明>`（issue 正文用 `--type correction --body <更正說明>`）；**unattended 不貼**，通知寄出就收不回。
 - 替換內容須原樣保留 `Original text`、`**Original**`、`**Point i**` 引文。
-- **引數用本 skill 自己的值組**：目標只能是 `comment:<全數字>`，id 取自本 skill 讀到的 Diagnosis comment，不抄 finding 裡的文字；section 只能是上面三個標題之一；每個值用單引號包住（含單引號時寫成 `'\''`）。不符就不執行，Outcome 寫 `refused`。`--correct` 不會把 `--reason` 發佈到任何地方，所以不帶 `--reason`；`--note` 寫現在正確的內容。
+- **引數用本 skill 自己的值組**：目標只能是 `comment:<全數字>`，id 取自本 skill 讀到的 Diagnosis comment，不抄 finding 裡的文字；section 只能是上面三個標題之一；`--repo` 是本 skill 解析出的 owner/repo；每個值用單引號包住（含單引號時寫成 `'\''`）。不符就不執行，Outcome 寫 `refused`。`--correct` 不會把 `--reason` 發佈到任何地方，所以不帶 `--reason`；`--note` 寫現在正確的內容。
 - `/idd-edit` 拒絕或寫入失敗時，不改用別的方式強寫。
-- 目標是 Diagnosis 時，照 [`rules/issue-write-back.md`](../../rules/issue-write-back.md)「診斷更正後，連帶更新」一併處理：你自己的 Implementation Plan 受影響的段落用 `--correct`，你自己的既有 verify 報告各用 `--prepend-note` 加一則指向更正後的 Diagnosis。
+- 這裡的更正不動 Implementation Plan 與 verify 報告：受影響的地方列出，由人決定。
 - 本 skill **永不**自己 PATCH 目標、也不寫歸檔 —— 改寫只經 `/idd-edit`。
 
 ### Step 4: Re-baseline 紀錄

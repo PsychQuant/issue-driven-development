@@ -13,6 +13,8 @@
 - 不問的路徑收窄：隱私自審在任何等級命中都停（attended 問、unattended 捨棄），沒有寫入權的 repo 照舊確認；`/idd-edit` 在 unattended 不再提問，捨棄時記下原因。
 - 新增 `scripts/writeback-candidates.py`，`idd-diagnose`、`idd-plan`、`idd-update` 用它找出別人的新 comment。
 - 診斷更正讓既有實作的前提不成立，或問題改變時，改走 `idd-reorganize`。
+- **verify 第 2 輪後的兩項決定（2026-11-03，comment 6611450882）：** 別人的 comment 只在 `idd-diagnose`、`idd-plan`、`idd-implement` 開始時看，`idd-update` 與 `idd-verify` 不看；`idd-verify` 不自動改任何東西，已發表內容的錯誤一律列成 finding；`idd-diagnose`、`idd-reorganize` 的自動更正只限 `### Type` 是 bug、只改 Diagnosis，Implementation Plan 列出不改。
+- 交給人的更正（`listed` 且落在 Expected、範圍、checklist、Type、Complexity）經 `idd-update` 進 `### Blocking`，unattended 的 actionability gate 會停；`idd-update` 只採受信任作者的 comment。
 - plugin 版本 3.7.0，CHANGELOG 與 README 同步。
 
 ## Capabilities
@@ -25,10 +27,11 @@
 
 - `in-place-correction`: `/idd-edit --correct` 改為回報後直接套用、不再確認；偵測到錯誤的 skill 由「只提議」改為「在封閉範圍內直接套用並回報」。
 - `append-vs-modify-discipline`: `in-place-correction` 分類不再要求確認，改寫處留可見文字。
+- `user-rule-injection`: SessionStart 多一行寫回提醒，印出規則檔的安裝路徑。
 
 ## Impact
 
-- Affected specs: `issue-write-back`（新增）、`in-place-correction`（修改）、`append-vs-modify-discipline`（修改）
+- Affected specs: `issue-write-back`（新增）、`in-place-correction`（修改）、`append-vs-modify-discipline`（修改）、`user-rule-injection`（修改）
 - Affected code:
   - New: plugins/issue-driven-dev/scripts/writeback-candidates.py, plugins/issue-driven-dev/scripts/tests/writeback-candidates/test.sh, plugins/issue-driven-dev/rules/issue-write-back.md, plugins/issue-driven-dev/scripts/tests/issue-write-back/test.sh
-  - Modified: plugins/issue-driven-dev/scripts/idd-edit-helper.py, plugins/issue-driven-dev/hooks/archive-read-guard.py, plugins/issue-driven-dev/skills/idd-plan/SKILL.md, plugins/issue-driven-dev/skills/idd-update/SKILL.md, plugins/issue-driven-dev/skills/idd-close/SKILL.md, plugins/issue-driven-dev/hooks/session-start-commit-rule.sh, plugins/issue-driven-dev/scripts/tests/session-start-commit-rule/test.sh, plugins/issue-driven-dev/skills/idd-edit/SKILL.md, plugins/issue-driven-dev/skills/idd-diagnose/SKILL.md, plugins/issue-driven-dev/skills/idd-verify/SKILL.md, plugins/issue-driven-dev/skills/idd-reorganize/SKILL.md, plugins/issue-driven-dev/skills/idd-comment/SKILL.md, plugins/issue-driven-dev/scripts/tests/in-place-correction/test.sh, plugins/issue-driven-dev/rules/append-vs-modify.md, plugins/issue-driven-dev/README.md, plugins/issue-driven-dev/CHANGELOG.md, plugins/issue-driven-dev/.claude-plugin/plugin.json, .claude-plugin/marketplace.json, README.md
+  - Modified: plugins/issue-driven-dev/scripts/idd-edit-helper.py, plugins/issue-driven-dev/hooks/archive-read-guard.py, plugins/issue-driven-dev/skills/idd-plan/SKILL.md, plugins/issue-driven-dev/skills/idd-implement/SKILL.md, plugins/issue-driven-dev/skills/idd-update/SKILL.md, plugins/issue-driven-dev/skills/idd-close/SKILL.md, plugins/issue-driven-dev/hooks/session-start-commit-rule.sh, plugins/issue-driven-dev/scripts/tests/session-start-commit-rule/test.sh, plugins/issue-driven-dev/skills/idd-edit/SKILL.md, plugins/issue-driven-dev/skills/idd-diagnose/SKILL.md, plugins/issue-driven-dev/skills/idd-verify/SKILL.md, plugins/issue-driven-dev/skills/idd-reorganize/SKILL.md, plugins/issue-driven-dev/skills/idd-comment/SKILL.md, plugins/issue-driven-dev/scripts/tests/in-place-correction/test.sh, plugins/issue-driven-dev/rules/append-vs-modify.md, plugins/issue-driven-dev/README.md, plugins/issue-driven-dev/CHANGELOG.md, plugins/issue-driven-dev/.claude-plugin/plugin.json, .claude-plugin/marketplace.json, README.md

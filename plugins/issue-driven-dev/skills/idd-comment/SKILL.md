@@ -352,7 +352,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" validate-target '<TAR
 ```
 IDD_CALLER=idd-comment-errata \
   /idd-edit comment:{target-comment} --repo {GITHUB_REPO} --correct (--scope whole-comment | --section '{heading}') \
-    --body-file '{correction-file}'
+    --body-file '{correction-file}' --note '{一句話：現在正確的內容}'
 ```
 
 指令不帶 `--reason`：`--correct` 不會把理由發佈到任何地方（它的標記只帶 backup id 與日期）。`{heading}` 是 comment 裡的標題文字（別人改得到），必須是一行 ATX 標題；含單引號時寫成 `'\''`。idd-edit Step 1 先照 shell 規則切開、再重新包，不會疊成兩層。
