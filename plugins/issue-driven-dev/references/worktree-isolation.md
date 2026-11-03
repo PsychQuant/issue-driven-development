@@ -24,7 +24,7 @@ IDD skills 假設只有一個 serial executor 在動 git/filesystem state。同�
 
 - **Worktree path**：`.claude/worktrees/idd-<N>/`，落在 repo root 底下（與 harness `EnterWorktree` 的位置一致）。
 - **Branch**：helper 在建 worktree 時就把 feature branch `idd/<N>-<slug>` 一起建出來（`git worktree add -b idd/<N>-<slug> <path> <default-base>`）。
-- **Gitignore**：`.claude/worktrees/` 會被冪等地（marker 註解守衛）加進 target repo 的 `.gitignore`，這樣 worktree 目錄不會在主 working tree 裡顯示成 untracked。
+- **Gitignore**：`.claude/worktrees/` 會被冪等地（marker 註解守衛）透過既有 `git-ignore-block.sh` 加進 common Git directory 的 `info/exclude`（linked worktree 共用）；不改 tracked `.gitignore`，這樣 worktree 目錄不會在主 working tree 裡顯示成 untracked。
 
 ## Helper Workflow
 
@@ -156,13 +156,13 @@ Case A 落地時會用的 harness primitive：**`Agent(isolation:"worktree")`** 
 
 **Lock 契約**（`scripts/idd-tree-lock.sh`）：
 
-- Lock = 目錄 `.claude/.idd/tree-lock`（`mkdir` atomic，兩個同時 acquire 不會都贏），內含 `info`：holder / pid / heartbeat / epoch。
+- Lock = 檔案 `.claude/.idd/tree-lock`（`set -C` atomic），記錄 holder / pid / heartbeat / epoch；透過 common Git directory 的 `info/exclude` 排除，不改 tracked `.gitignore`。
 - **Scope = cross-terminal；anchor = `$PPID`**：lock 記錄的是 **`$PPID`（harness shell，持久跨 instance 的 Bash calls、instance 結束才死）**，不是 helper 自己的 `$$`（subprocess，一返回就死 → 會讓 lock 變 no-op，#183 verify B1）。所以 isolation 對「**分開 terminal / 分開 `claude` instance**」的並行（就是 ai_martech ~3 個並行 session 的真實情境）生效。`$PPID` 唯一分不出的——**同一 instance 內** sub-agent 共用 `$PPID`——正是 already-deferred 的 Case A（見上節），刻意 out of scope。
 - **Liveness, never doneness**：acquire 撞到既有 lock 時，用 **PID liveness**（`kill -0` recorded `$PPID`）判定 holder 是否還活著——dead → 自動 reclaim、alive → exit 3。**永不**問「holder 做完沒」。PID 不可驗時（含 atomic-create 的短暫窗）用 heartbeat / mtime-TTL（`IDD_TREE_LOCK_TTL`，預設 1800s）作 backup：fresh lock 視為 held、stale 才 reclaim。
-- **Atomicity**：lock 是用 `set -C`（noclobber）原子建立的**檔案**（create + 寫 content 一步到位，無 mkdir-then-write 窗），stale reclaim 用 `mv` 移開（一個 racer 贏）再重建，避免晚到的 reclaimer 抹掉別人剛拿到的新鎖。
+- **Atomicity**：lock 是用 `set -C`（noclobber）原子建立的**檔案**（create + 寫 content 一步到位，無 mkdir-then-write 窗），stale reclaim 先取得 `mkdir` mutex，再檢查 liveness 並重建，避免晚到的 reclaimer 抹掉別人剛拿到的新鎖。
 - **Asymmetric**：first-comer 免費持 tree（不預測未來）；later-comer 偵測 lock 自己隔離。沒有 session 會 retroactively 搬 tree。
 - **idle ≠ done 被繞過**：later session **不等** holder 結束——它立刻隔離。Lock 只回答「此 tree 還有別的 live session 嗎」，由 liveness 回收，從不由「做完了嗎」回收（這次 ai_martech incident 的 watcher 證明 process-quiet ≠ session-done）。
-- **Release**：`idd-close` Step 6.8 釋放（holder-scoped + idempotent）；session 異常結束留下的 stale lock 由下一個 `acquire` 自動 reclaim。
+- **Release**：`idd-close` Step 6.8 釋放（holder-scoped + idempotent）；必須沿用 acquire 的 `--id`，`--pid` 不會選擇 holder。stderr 回報已釋放、原本就空或不同 holder 而保留；刪除失敗回 exit 4。session 異常結束留下的 stale lock 由下一個 `acquire` 自動 reclaim。
 
 **與 #184 的關係**：escalated session 會 branch+merge，放大了 orphan-commit 風險（branch 沒完整 merge 回 main）。所以 tree-lock 與 **#184 merge-completeness gate** 是配套——lock 防 FM-1（並行碰撞），#184 gate 防 FM-2（orphan）。fail-open 之所以安全，正因 #184 是正確性兜底。
 

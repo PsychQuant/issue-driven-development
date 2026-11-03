@@ -8,7 +8,7 @@ Defines the **managed git-worktree lifecycle** (`scripts/idd-worktree.sh`) that 
 
 ### Requirement: Worktree creation
 
-The `idd-worktree.sh create <N>` helper SHALL create a git worktree at `.claude/worktrees/idd-<N>/` under the target repo root, checked out on a feature branch named `idd/<N>-<slug>`. The `slug` SHALL be taken from a `--slug` flag when given, otherwise derived from the issue title (lowercased, non-alphanumeric runs collapsed to `-`, trimmed, capped at 40 characters), otherwise the bare form `idd/<N>` when no title source is available. The helper SHALL print the absolute worktree path as the sole content of stdout so callers and the `--cwd` flag can consume it. The helper SHALL add `.claude/worktrees/` to the target repo's `.gitignore` idempotently (the `.claude/worktrees/` line is appended only when absent; an explanatory marker comment accompanies it) so the worktree directory is never reported as untracked in the main working tree. The helper SHALL NOT append through a symlinked `.gitignore` (it warns and continues instead).
+The `idd-worktree.sh create <N>` helper SHALL create a git worktree at `.claude/worktrees/idd-<N>/` under the target repo root, checked out on a feature branch named `idd/<N>-<slug>`. The `slug` SHALL be taken from a `--slug` flag when given, otherwise derived from the issue title (lowercased, non-alphanumeric runs collapsed to `-`, trimmed, capped at 40 characters), otherwise the bare form `idd/<N>` when no title source is available. The helper SHALL print the absolute worktree path as the sole content of stdout so callers and the `--cwd` flag can consume it. The helper SHALL add `.claude/worktrees/` to the common Git directory's `info/exclude` using the canonical marker-delimited ignore writer, so linked worktrees share the local rule. It SHALL NOT modify the target repo's tracked `.gitignore`. A symlinked exclude file or info directory SHALL be refused with a warning; ignore-write failure SHALL warn and continue.
 
 Re-invoking `create <N>` for a worktree that already exists SHALL print the existing path and exit 0 without creating a second worktree (idempotent).
 
@@ -16,7 +16,7 @@ Re-invoking `create <N>` for a worktree that already exists SHALL print the exis
 
 - **WHEN** `idd-worktree.sh create 167` runs in a clean repo with no `.claude/worktrees/idd-167/`
 - **THEN** a git worktree exists at `.claude/worktrees/idd-167/` on branch `idd/167-<slug>`
-- **AND** `.claude/worktrees/` appears in the repo's `.gitignore`
+- **AND** `.claude/worktrees/` is ignored through the common Git directory's `info/exclude`, and tracked files remain unchanged
 - **AND** stdout is exactly the absolute path of the new worktree
 
 #### Scenario: Idempotent re-create

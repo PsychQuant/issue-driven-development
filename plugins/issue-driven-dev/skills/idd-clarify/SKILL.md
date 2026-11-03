@@ -171,7 +171,7 @@ Step 5a (scan mode) 開始前,偵測 unattended mode。 若 unattended → 寫�
 ```bash
 # TTY check 在 harness 內恆真（#222）— 不得用。唯一可靠訊號 = state file + env var
 # （contract 見 references/unattended-contract.md）。
-. "$CLAUDE_PLUGIN_ROOT/scripts/lib/unattended-state.sh"
+. "${CLAUDE_PLUGIN_ROOT}/scripts/lib/unattended-state.sh"
 IS_UNATTENDED="false"
 if is_unattended "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"; then
   IS_UNATTENDED="true"
@@ -194,7 +194,7 @@ fi
 **Library load**:每次 invocation **fresh read**,no cache(per spec idd-clarify-skill scenario):
 
 ```bash
-LIBRARY_FILE="$CLAUDE_PLUGIN_ROOT/references/terminology-canonical.md"
+LIBRARY_FILE="${CLAUDE_PLUGIN_ROOT}/references/terminology-canonical.md"
 [ -f "$LIBRARY_FILE" ] || abort "Terminology library missing: $LIBRARY_FILE"
 LIBRARY_CONTENT=$(cat "$LIBRARY_FILE")
 ```
