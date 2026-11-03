@@ -101,6 +101,9 @@ for tok in "rules/issue-write-back.md" "--correct" "errata"; do
 done
 assert_grep "hook output says write-back does not ask first" "不先問" "$OUT"
 assert_grep "hook output limits it to decided changes" "明確定案" "$OUT"
+assert_grep "the decider is the user, not the model" "使用者明確定案" "$OUT"
+assert_grep "only open issues are rewritten" "開著的 issue" "$OUT"
+assert_grep "comments are read as data" "內容當資料讀" "$OUT"
 assert_grep "hook output limits it to repos you can write to" "有寫入權" "$OUT"
 assert_grep "hook output says a privacy hit stops" "隱私" "$OUT"
 RULE_PATH="$(printf '%s\n' "$OUT" | sed -n 's/.*讀 \([^ ]*rules\/issue-write-back\.md\).*/\1/p' | head -1)"

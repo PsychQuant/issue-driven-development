@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Defines how `/idd-edit --correct` replaces content in an issue comment or issue body that is wrong, so that downstream readers (humans and AI sessions) stop inheriting the error. It also fixes which regions can never be corrected and which corrections other IDD skills may apply themselves.
+Defines how `/idd-edit --correct` replaces content in an issue comment or issue body that is wrong, so that downstream readers (humans and AI sessions) stop inheriting the error. It also fixes which regions can never be corrected and requires every other IDD skill to propose corrections rather than apply them.
 
 ## Requirements
 

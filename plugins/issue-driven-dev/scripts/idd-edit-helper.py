@@ -221,37 +221,6 @@ _REFUSED_CREDENTIAL_DIRS = (
     ".docker",
 )
 
-# Private text outside any credential directory. --correct no longer stops for a
-# person (#424), so a wrong path would publish it with nobody looking; the gate has
-# to refuse it itself. A blacklist of names was never complete (verify round 2), so
-# these are rules: any dotfile directly in a home directory, anything under
-# ~/.claude except a job's tmp/, ~/.config/git, and names that hold secrets
-# anywhere. The escape hatch below still applies.
-_PRIVATE_NAME_RE = re.compile(
-    r"credential|^\.env(\.|$)|^id_(rsa|dsa|ecdsa|ed25519)|\.pem$|\.key$|^\.[^/]*history$|^history\.jsonl$",
-    re.IGNORECASE,
-)
-
-
-def _private_path(path):
-    if _PRIVATE_NAME_RE.search(os.path.basename(path)):
-        return True
-    for home in _homes():
-        for base in {home, os.path.realpath(home)}:
-            if not _under_folded(path, base) or path == base:
-                continue
-            # relpath compares case-sensitively; the folded prefix match above
-            # does not, so cut the prefix off instead (round 3: /users/x/.netrc).
-            parts = [p.casefold() for p in path[len(base.rstrip(os.sep)) + 1:].split(os.sep)]
-            if len(parts) == 1 and parts[0].startswith("."):
-                return True
-            if parts[0] == ".claude" and not (len(parts) >= 4 and parts[1] == "jobs" and parts[3] == "tmp"):
-                return True
-            if parts[0] == ".config" and len(parts) > 1 and parts[1] == "git":
-                return True
-    return False
-
-
 def _path_is_under(canonical, prefix):
     """True if canonical == prefix or canonical is strictly under prefix.
 
@@ -340,12 +309,6 @@ def validate_body_file_path(raw_path):
                 "       Use IDD_EDIT_HELPER_ALLOW_UNSAFE_BODY_FILE=1 to "
                 "override (audit your reason)."
             )
-            return False, 5
-
-    for path in named:
-        if not in_user_tmp and _private_path(path):
-            err(f"ERROR: --body-file refuses private path: {raw_path}")
-            err("       Use IDD_EDIT_HELPER_ALLOW_UNSAFE_BODY_FILE=1 to override (audit your reason).")
             return False, 5
 
     # Refuse credential directories. Check by path component so a realpath
@@ -2246,13 +2209,18 @@ def run_start_subcmd(argv):
             return 2
         # A line from an earlier correction at the end of the replacement would
         # stand next to the new one and may state what is now wrong (round 2).
-        lines = state["body_input"].replace("\r\n", "\n").rstrip("\n").split("\n")
+        # Every such line, not only a trailing one: a whole-comment replacement
+        # copied from an earlier correction carries the comment's own markers
+        # after it (verify round 5).
+        lines = [l for l in state["body_input"].replace("\r\n", "\n").rstrip("\n").split("\n")
+                 if not l.startswith(NOTE_LINE_PREFIX)]
         # Its marker too: a replacement copied from the section ends with both
         # (round 3), and the apply writes a new marker.
-        while lines and (not lines[-1].strip() or lines[-1].startswith(NOTE_LINE_PREFIX)
-                         or lines[-1].startswith('<!-- idd:edit mode="correct"')):
+        while lines and (not lines[-1].strip() or lines[-1].startswith('<!-- idd:edit mode="correct"')):
             lines.pop()
-        if not "\n".join(_strip_target_heading(lines, state["section_flag"] or "-")).strip():
+        text = [l for l in _strip_target_heading(lines, state["section_flag"] or "-")
+                if not re.fullmatch(r"\s*<!--\s*idd:.*-->\s*", l)]
+        if not "\n".join(text).strip():
             err("Refuse: --correct needs the corrected text; the body holds only the target heading (#351).")
             return 2
         state["body_input"] = "\n".join(lines) + "\n\n" + _correct_note_line(note) + "\n"
@@ -2688,23 +2656,12 @@ def _edit_apply(real, meta, target, stage):
     return 0
 
 
-HOLD_REASONS = {
-    "held-privacy": "隱私自審擋下",
-    "held-272": "#272 那一題沒有確認",
-    "held-unattended": "unattended 下沒有人能確認",
-}
-
-
 def discard_subcmd(argv):
-    parsed = _run_args(argv, "--reason")
+    parsed = _run_args(argv)
     if parsed is None:
         err("ERROR: discard requires --run <RUN> --target <TARGET>, as run-start printed them")
         return 2
-    real, target, values = parsed
-    reason = values.get("--reason") or ""
-    if reason and reason not in HOLD_REASONS:
-        err(f"ERROR: discard --reason must be one of {', '.join(HOLD_REASONS)}")
-        return 2
+    real, target, _ = parsed
     last = dict(_latest(real)).get(target)
     if not last or last["outcome"] != "prepared":
         err(f"ERROR: {target} has no prepared edit in this run")
@@ -2715,7 +2672,7 @@ def discard_subcmd(argv):
             shutil.rmtree(work, ignore_errors=True)
     else:
         shutil.rmtree(os.path.join(real, f"comment-{target.split(':', 1)[1]}"), ignore_errors=True)
-    _record(real, target, "declined", reason=reason)
+    _record(real, target, "declined")
     print("RESULT=declined")
     return 0
 
@@ -2767,10 +2724,6 @@ def finish_subcmd(argv):
             print(f"  ✗ REFUSED(egress) {target} {why} — band 語意見 #227（10 privacy / 11 mention / 13 tier-floor #272 / 15 empty-body #275）")
         elif o == "declined" and why == "not-applied":
             print(f"  – DECLINED {target}（預覽後沒有寫入：沒有完成 apply，也沒有 discard）")
-        elif o == "declined" and why in HOLD_REASONS:
-            # Nobody was asked: saying a user declined would be false, and the
-            # detecting skills publish this outcome (#424).
-            print(f"  – HELD {target}（{HOLD_REASONS[why]}，未寫入）")
         elif o == "declined":
             print(f"  – DECLINED {target}（使用者在預覽時拒絕，未寫入）")
         elif o == "write-failed":
@@ -3273,7 +3226,7 @@ Exit codes:
   correct-apply --work <dir> --state <digest>
       Re-check, re-read, archive, write and read back byte for byte; prints RESULT=
       (edited | refused | write-failed | unverified), REASON=, BACKUP_ID=, URL=.
-  correct-discard --work <dir>   Throw the prepared correction away (held back or declined).
+  correct-discard --work <dir>   Throw the prepared correction away (the user declined).
 
 One /idd-edit run, all modes (the skill calls only these; #351 round 9):
   run-start [--default-repo owner/repo] -- <the /idd-edit arguments>
@@ -3291,8 +3244,7 @@ One /idd-edit run, all modes (the skill calls only these; #351 round 9):
       review. A reply quoting user-pasted points (#272): prepare prints FLOOR=272 at
       any tier, the user answers the #272 question, and apply refuses light for it
       (exit 2) — attest warn instead.
-  discard --run RUN --target T [--reason held-privacy|held-272|held-unattended]
-      Held back (with the reason), or the user declined (without one).
+  discard --run RUN --target T   The user declined.
   finish --run RUN
       Print the outcome report, remove the run; exit 4 refused or failed, 7 unverified,
       9 declined (a prepared target never applied or discarded included), 0 otherwise.

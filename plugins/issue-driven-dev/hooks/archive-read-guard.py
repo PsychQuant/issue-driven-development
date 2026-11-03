@@ -3,11 +3,9 @@ r"""archive-read-guard.py — PreToolUse hook: keep Claude's tools out of the
 correction archive (#351).
 
 `/idd-edit --correct` archives the prior version of a corrected comment or
-issue body under `.claude/.idd/archive/edits/`. Those files hold text a correction
-replaced: usually wrong, and since #424 a correction may be the AI's own judgment,
-so the archive is kept for a person to compare, not for a session to read as fact.
-A session that read it would inherit the replaced text again, the failure #351
-exists to stop; the GitHub edit history is the reader's way back.
+issue body under `.claude/.idd/archive/edits/`. Those files hold content the
+user confirmed to be wrong; an AI session that reads them inherits the error
+again, which is the failure #351 exists to stop.
 
 This hook is the first of two layers. It denies any Read / Grep / Glob / Edit /
 Write / NotebookEdit call whose path argument points into the archive, and any

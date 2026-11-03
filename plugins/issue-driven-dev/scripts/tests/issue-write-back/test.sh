@@ -5,7 +5,7 @@
 # Change: openspec/changes/issue-write-back
 #   specs/issue-write-back/spec.md, specs/in-place-correction/spec.md
 # The SessionStart line is asserted in scripts/tests/session-start-commit-rule;
-# the Applied Corrections blocks in scripts/tests/in-place-correction.
+# the detecting skills' Proposed Corrections blocks in scripts/tests/in-place-correction.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/../../lib/assert-helpers.sh"
@@ -80,12 +80,12 @@ refute_grep "not sure no longer defaults to rewriting" "不要因此把它降級
 
 # dependent records
 assert_grep "Implementation Plan is corrected" "Implementation Plan" "$R"
-assert_grep "verify reports get one prepended line" '--prepend-note' "$R"
-assert_grep "verify findings are not rewritten" "findings 不改" "$R"
-assert_grep "only your own reports get the note" "別人的報告" "$R"
-assert_grep "the PR master is in scope" "PR 上的 master" "$R"
-assert_grep "a second note is not added" "已經有這行" "$R"
-assert_grep "an overturned premise goes to idd-reorganize" "idd-reorganize" "$R"
+refute_grep "verify reports get no note (D12)" '--prepend-note' "$R"
+assert_grep "verify reports are left as they are (D12)" "不改，也不加註記" "$R"
+assert_grep "a change the same PR carries is written back in place (D12)" "同一個 PR 裡跟著改" "$R"
+assert_grep "the Diagnosis target is your newest one" "最新一則以 \`## Diagnosis\` 開頭、作者是你自己的 comment" "$R"
+assert_grep "a Spectra change gets the change by spectra-ingest" "/spectra-ingest" "$R"
+assert_grep "only discarded work goes to idd-reorganize" "這次的 PR 不跟著改時，才呼叫 \`idd-reorganize\`" "$R"
 
 # ── A2. append-vs-modify maps each write-back to its category ─────────────
 echo "A2. append-vs-modify"
@@ -93,28 +93,25 @@ AVM="$PLUGIN/rules/append-vs-modify.md"
 INPLACE="$(awk '/^### 8\. `in-place-correction`/{f=1;next} f&&/^##/{exit} f' "$AVM")"
 assert_output_grep "append-vs-modify links the write-back rule" "issue-write-back.md" "$AVM"
 refute_grep "in-place-correction no longer requires explicit confirmation" "get explicit confirmation" "$INPLACE"
-refute_grep "other skills no longer only propose the command" "reach it by proposing the command" "$INPLACE"
-assert_grep "the write-back mapping names audit-block-append for the verify note" "audit-block-append" "$(awk '/^### Discussion write-back/{f=1;next} f&&/^##/{exit} f' "$AVM")"
+assert_grep "other skills propose the command (D11)" "reach it by proposing the command" "$INPLACE"
+refute_grep "no automatic correction is left in the category" "Applied Corrections" "$INPLACE"
+refute_grep "the AI alone does not find content wrong" "by the AI in a discussion" "$INPLACE"
+refute_grep "the write-back mapping has no verify-note row (D12)" "verify report after" "$(awk '/^### Discussion write-back/{f=1;next} f&&/^##/{exit} f' "$AVM")"
 
 # ── B. /idd-edit confirmation policy ───────────────────────────────────────
 echo "B. idd-edit Step 3"
 EDIT="$SKILLS/idd-edit/SKILL.md"
 S3="$(section "$EDIT" "### Step 3:")"
 assert_grep "Step 3 found" "### Step 3:" "$S3"
-assert_grep "--correct applies without asking (#424 D1)" '`--correct`：不問' "$S3"
-assert_grep "--prepend-note runs the strict author check (#424 D1b)" "validate-target" "$S3"
+assert_grep "--correct applies without asking (#424 D1)" '`--correct` 不問' "$S3"
 assert_grep "SCRUB=enforce leaves the no-ask path" 'SCRUB=enforce' "$S3"
-assert_grep "a privacy hit stops at any level" "任何等級" "$S3"
-assert_grep "unattended never asks" "is_unattended" "$S3"
-assert_grep "unattended discards with the reason" "--reason held-" "$S3"
+assert_grep "a privacy hit at enforce or warn stops --correct" '`enforce`、`warn` 命中就停' "$S3"
 assert_grep "the privacy review looks at the added text" "加入的" "$S3"
-assert_grep "unattended detection follows --cwd" "<CWD>" "$S3"
-assert_eq "the strict check runs before the privacy step that depends on it" "True" "$(python3 -c '
-import sys
-t = sys.argv[1]
-print(t.find("validate-target") >= 0 and t.find("validate-target") < t.find("隱私自審（`privacy_scrub_gate`）"))' "$S3")"
-assert_grep "--prepend-note check is the --correct one" "false --correct" "$S3"
-assert_grep "--append / --replace still ask, default NO" "預設 NO" "$S3"
+assert_grep "--prepend-note, --append and --replace still ask (D12)" '`--prepend-note`、`--append`、`--replace` 照舊要問' "$S3"
+assert_grep "a question defaults to NO" "預設 NO" "$S3"
+refute_grep "--prepend-note no longer skips the question (D12)" "validate-target" "$S3"
+refute_grep "no unattended branch in idd-edit (D12)" "is_unattended" "$S3"
+refute_output_grep "no hold reasons in idd-edit (D12)" "held-" "$EDIT"
 refute_grep "the blanket confirmation line is gone" "5. AskUserQuestion 確認，預設 NO（破壞性動作）。" "$S3"
 assert_output_grep "the confirm task no longer covers every mode" 'TaskCreate(name="preview_and_report"' "$EDIT"
 refute_output_grep "description no longer promises a confirm for every mode" "必 show 原 body + preview 新 body 讓 user confirm" "$EDIT"
@@ -124,16 +121,27 @@ echo "C. idd-diagnose Stage 1"
 DIAG="$SKILLS/idd-diagnose/SKILL.md"
 assert_output_grep "Stage 1 adjusts the Diagnosis with --correct" '/idd-edit comment:<Diagnosis id> --repo <owner/repo> --correct --section' "$DIAG"
 refute_output_grep "Stage 1 no longer appends a correction comment" '修改後用 `gh issue comment` 追加修正' "$DIAG"
+assert_output_grep "Stage 1 leaves the superseded Plan and verify reports alone" "依據的是被取代的診斷，都不動" "$DIAG"
+assert_output_grep "idd-diagnose may invoke idd-edit" "  - Skill" "$DIAG"
+refute_output_grep "Stage 1 adds no note to verify reports (D12)" "每份 verify 報告用" "$DIAG"
 assert_output_grep "Stage 1 points to the write-back rule" "rules/issue-write-back.md" "$DIAG"
 
 # ── D. other people's comments do not trigger on their own (D11) ─────────
 echo "D. no comment trigger"
 assert_grep "someone else's comment does not trigger by itself" "別人的 comment 不會自動觸發寫回" "$R"
 assert_grep "it counts when the user raises and adopts it" "使用者在 session 裡提到它" "$R"
+assert_grep "only the items the user names are adopted" "只寫使用者點名採納的項目" "$R"
+assert_grep "credentials are a hit at every level" "credential 在任何等級都算命中" "$R"
+assert_output_grep "idd-edit counts credentials at every level" "credential 在任何等級都算命中" "$SKILLS/idd-edit/SKILL.md"
+refute_output_grep "the canonical spec Purpose no longer lets skills apply corrections" "may apply themselves" "$PLUGIN/../../openspec/specs/in-place-correction/spec.md"
 for sk in idd-diagnose idd-plan idd-implement idd-update idd-verify; do
   refute_output_grep "$sk runs no candidates script" "writeback-candidates" "$SKILLS/$sk/SKILL.md"
 done
 assert_true "the candidates script is gone" "[ ! -e '$PLUGIN/scripts/writeback-candidates.py' ]"
+HELPER="$PLUGIN/scripts/idd-edit-helper.py"
+refute_output_grep "the helper has no private-path gate (D12)" "_private_path" "$HELPER"
+refute_output_grep "the helper has no hold reasons (D12)" "HOLD_REASONS" "$HELPER"
+refute_output_grep "the errata pointer asks as on main (D12)" "D1b" "$SKILLS/idd-comment/SKILL.md"
 
 # ── E. idd-close reads a corrected empty residue ───────────────────────────
 echo "E. idd-close Step 3.6"

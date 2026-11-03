@@ -46,5 +46,13 @@
 
 ## 8. verify 第 4 輪之後（D11 只留核心）
 
+8.2 撤回了前幾組裡的兩塊，下列項目的內容已不成立，只留作紀錄：1.1 的 comment 觸發、1.2、2.1 的兩種觸發、2.3 的「其他 skill 改為呼叫」、3.3、3.4、5.1 的 `writeback-candidates`、5.3、5.5、5.6 的候選清單接線，以及 6.1 到 7.2 裡關於信任、候選清單、`listed` 與自動更正的部分。
+
 - [x] 8.1 先改測試，鎖住 Decided discussion changes SHALL be written back by kind（別人的 comment 不自動觸發）與 in-place-correction 的 Skills that detect errors SHALL propose corrections, not apply them（選執行後不再問第二次）：刪掉 `scripts/tests/writeback-candidates`；`issue-write-back` 拿掉候選清單、信任表、Comments Not Taken、idd-update 的斷言；`in-place-correction` 的偵測 skill 斷言回到 3.6.0（`### Proposed Corrections`、只列不做），加上「不再寫仍走自己的 preview + confirm」。驗證：改完程式前，`in-place-correction` 對「仍走自己的 preview + confirm」的斷言 FAIL。
 - [x] 8.2 照 D11 只留核心（verify 第 4 輪，2026-11-04 維護者決定，comment 6616229678），撤回兩塊：刪掉 `scripts/writeback-candidates.py`；`idd-verify`、`idd-diagnose`、`idd-reorganize`、`idd-plan`、`idd-implement`、`idd-update` 的 SKILL.md 回到 main，只重新套用 `idd-diagnose` Stage 1 的就地改寫與三個偵測 skill 選執行後的那一句；規則、spec、design、proposal、CHANGELOG、README、plugin.json 與 marketplace 同步。驗證：`run-all-tests.sh` 全部通過、`spectra validate issue-write-back` 通過。
+
+## 9. verify 第 5 輪之後（D12 再拿掉三樣、實作後同 PR 就地寫回）
+
+- [x] 9.1 先改測試，鎖住 A corrected diagnosis SHALL update the records that depend on it（verify 報告不動、同 PR 跟著改就就地寫回）與 in-place-correction 的 Skills that detect errors SHALL propose corrections, not apply them（run-now 問句附替換全文、引數帶 `--repo`）：`issue-write-back` 拿掉 verify 註記、`--prepend-note` 不問、unattended 的斷言，改成反向斷言；`edit-run` 拿掉私人路徑與 `discard --reason` 的區塊；`append-vs-modify` §8 的斷言改回 main 的提議寫法。驗證：把新測試放到 353f686 上跑，這些斷言 FAIL；改完後通過。
+- [x] 9.2 照 D12（verify 第 5 輪，2026-11-04 維護者決定，comment 6617788666）撤回 D1b、D2（第 5 輪撤回，見 D12）：helper 拿掉私人路徑閘與 `discard --reason`、`finish` 的 HELD；`idd-edit` Step 3 拿掉 unattended 偵測與 `--prepend-note` 的不問分支；`idd-comment` 的 errata 指標回到 main；規則、spec、design、proposal、`append-vs-modify`、CHANGELOG、README、plugin.json 與 marketplace 同步。驗證：`run-all-tests.sh` 全部通過、`spectra validate issue-write-back` 通過。
+- [x] 9.3 第 5 輪的 LOW：先在 `edit-run` 加測試（替換文字中間的舊可見文字、只有別的 mode 標記的替換內容），再改 helper（每一行舊可見文字都移除，只有 IDD 標記的替換內容算空）；規則指明 Diagnosis 是最新一則你自己寫的、Spectra tier 用 `/spectra-ingest`；`idd-diagnose` Stage 1 只改剛貼出的那一則、allowed-tools 補上 Skill、Write、mktemp；CHANGELOG 補上 `idd-issue` 的 edit body。驗證：`edit-run`、`issue-write-back` 通過。

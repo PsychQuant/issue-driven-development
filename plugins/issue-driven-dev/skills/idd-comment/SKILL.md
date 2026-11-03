@@ -79,7 +79,7 @@ TaskCreate(name="parse_args", description="Parse #NNN + --type + --body / --quot
 TaskCreate(name="detect_spectra_context", description="Step 0.7: 偵測是否從 spectra-discuss 中斷進來（--resume-spectra flag / --source 含 spectra / spectra list 有 in-flight / .claude/.idd/state/bridge.json（legacy fallback: .claude/state/idd-bridge.json）— 詳見 rules/spectra-bridge.md")
 TaskCreate(name="validate_type_requirements", description="依 type 檢查必填欄位（decision 要 quote、note 要 source、link 要 target、errata 要 target-comment）")
 TaskCreate(name="route_errata", description="（errata 專屬）validate-target --correct 解析 target comment 作者：你自己 → 委派 /idd-edit --correct（更正內容取自 --correction-file）、不 post；其他作者（含 OWNER 與 bot）→ 只 post errata comment（Template: errata）")
-TaskCreate(name="errata_pointer", description="（errata 專屬）就地更正被拒或寫入失敗（idd-edit exit 4）、改貼 errata 之後：原 comment 的第一個非空行不是 ATX 標題或 IDD 標記時，用 /idd-edit --prepend-note 指向 errata（走 idd-edit 的預覽，你自己的 comment 不問）；其他作者的 comment 不加")
+TaskCreate(name="errata_pointer", description="（errata 專屬）就地更正被拒或寫入失敗（idd-edit exit 4）、改貼 errata 之後：原 comment 的第一個非空行不是 ATX 標題或 IDD 標記時，提議 /idd-edit --prepend-note 指向 errata（走 idd-edit 的預覽與確認）；其他作者的 comment 不加")
 TaskCreate(name="resolve_mentions", description="Step 1.5: 若有 --mention 或 body 含 @xxx，強制走 rules/tagging-collaborators.md 協定（gh api 取 collaborators → fuzzy match → AskUserQuestion fallback → 用 @login 不用 display name）")
 TaskCreate(name="resolve_points_source", description="（reply 專屬，排在 build_comment_body 之前 — 順序是契約）--points-from 三層鏈解析：comment URL / `issue-body` → issue body Original text blockquote → fallback 要求使用者貼原文；verbatim，禁止 paraphrase（Reply drafting pipeline R1）")
 TaskCreate(name="verify_before_claim", description="（reply 專屬，排在 build_comment_body 之前）每點宣稱已解決前 per-point 驗證證據：git log --grep 只是入口，找到的 commit / PR 須實際含處理『該點』的改動；無對應改動寫 open / pending（R2）")
@@ -362,7 +362,7 @@ IDD_CALLER=idd-comment-errata \
 | idd-edit 結束碼 | 意思 | 本 skill 接著做 |
 |---|---|---|
 | 0 | 已就地更正 | 回報「已更正」與 backup id，不貼任何 comment |
-| 9 | 使用者在預覽時拒絕、預覽後被捨棄（隱私自審或 #272 那一題擋下），或預覽後沒有寫入（沒有完成 apply，也沒有 discard） | 照 idd-edit 的 report 回報（擋下或沒有寫入），不貼、不改 |
+| 9 | 使用者在預覽時拒絕，或預覽後沒有寫入（沒有完成 apply，也沒有 discard） | 照 idd-edit 的 report 回報（拒絕或沒有寫入），不貼、不改 |
 | 7 | 已寫入，但讀回失敗或內容不符 | 回報「已寫入但無法確認，請手動檢查該 comment」，**不貼 errata**（更正其實已經寫進去，貼「未成功」會留下一句錯的話） |
 | 4 | 更正被拒絕，或寫入失敗 | **改貼 errata**：照下方「其他作者」的路徑，以 `--correction-file` 的內容摘要寫成 errata 說明貼出，並在說明中註明「就地更正未成功：<idd-edit 的拒絕原因>」——錯的原文至少有一則指向正確內容的更正。**例外**：idd-edit 的 report 寫 `REFUSED(egress)` 時不摘要更正內容（那是 egress 擋下的文字，轉述等於繞過它），只說明「更正被 egress 擋下」並請使用者處理（#351 verify 第 7 輪） |
 | 2、3、5（或其他非 0） | 參數有誤，或 `--correction-file` 讀不到、被路徑閘門擋下 | **不貼、也不讀那個檔案**：回報參數錯誤，請使用者修正後重跑。被 #155 路徑閘門擋下的檔案，不能改由 Read 讀出、摘要後公開（#351 verify 第 6 輪） |
@@ -387,7 +387,7 @@ IDD_CALLER=idd-comment-errata \
   /idd-edit comment:{target-comment} --repo {GITHUB_REPO} --prepend-note --reason "此 comment 有誤，更正見 {errata comment URL}"
 ```
 
-這一步走 idd-edit 自己的預覽；目標是你自己的 comment，通過嚴格作者檢查就不問（#424 D1b），被擋下時只回報，不影響已貼出的 errata。其他作者（含 OWNER 與 bot）的 comment 不加：那是第三方原話（2026-10-17 使用者決定），也不提示 `--override-user-content`。
+這一步走 idd-edit 自己的預覽與確認；使用者拒絕或被擋下時只回報，不影響已貼出的 errata。其他作者（含 OWNER 與 bot）的 comment 不加：那是第三方原話（2026-10-17 使用者決定），也不提示 `--override-user-content`。
 
 #### Template: `reply`（v2.100.0+，#269 — human-facing 逐點回覆）
 
@@ -548,7 +548,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-egress.sh" comment $NUMBER --repo $GITHUB
   URL: {comment URL}
 ```
 
-errata 的就地更正路徑沒有新 comment → 改報 idd-edit 的結果（已更正 / 擋下或拒絕 / refuse）。
+errata 的就地更正路徑沒有新 comment → 改報 idd-edit 的結果（已更正 / 使用者拒絕 / refuse）。
 
 ### Step 6: Auto-Update Issue Body（強制，不可省略）
 

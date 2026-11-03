@@ -2,7 +2,7 @@
 name: idd-edit
 description: |
   編輯既有 GitHub issue comment。支援 append/replace/prepend-note/correct 四種 mode；`--correct` 也能更正 issue 正文（`issue:<N>`，#351）。
-  必 show 原 body + preview 新 body；`--correct` 與改自己內容的 `--prepend-note` 顯示後直接寫入並回報（#424），`--append`／`--replace` 讓 user confirm。用 `gh api -F body=@file` 避免 backtick escape bug。
+  必 show 原 body + preview 新 body；`--correct` 顯示後直接寫入並回報（#424），其他 mode 讓 user confirm。用 `gh api -F body=@file` 避免 backtick escape bug。
   支援 batch mode（v2.34.0+）：多個 comment 套同一段 edit（如 `comment:NNN comment:MMM --replace --body '...'`），每個 comment 仍逐一預覽。
   Use when: 補既有 comment 說明（如圖片下方解釋）；你自己寫的內容有錯（打錯字、事實錯誤、被推翻的結論都算）→ `--correct` 就地取代（舊版歸檔、AI 讀不到；別人寫的不改：comment 走 `/idd-comment --type errata`，issue 正文走 `--type correction`）。
   防止的失敗：手動 `gh api PATCH` 字串 escape 錯誤、誤覆蓋未 backup 的原內容。
@@ -23,12 +23,12 @@ allowed-tools:
 
 ## Batch mode（v2.34.0+）
 
-`idd-edit comment:NNN comment:MMM --replace --scope whole-comment --body '...'` 把同一段內容套到多個 comment。Edit 是破壞性動作，batch 把破壞範圍放大 N 倍 — 每個 comment 仍逐一預覽：`--append`／`--replace` 逐一確認（不允許 `--yes-to-all`），`--correct` 與改自己內容的 `--prepend-note` 逐一回報後直接寫入（#424）；每個 target 處理完就推進，不需要 N 次重打命令。
+`idd-edit comment:NNN comment:MMM --replace --scope whole-comment --body '...'` 把同一段內容套到多個 comment。Edit 是破壞性動作，batch 把破壞範圍放大 N 倍 — 每個 comment 仍逐一預覽：`--append`／`--replace`／`--prepend-note` 逐一確認（不允許 `--yes-to-all`），`--correct` 逐一回報後直接寫入（#424）；每個 target 處理完就推進，不需要 N 次重打命令。
 
 **v2.81.0+ R4/R5 在 batch mode 下 per-target 評估**:
 - R4 (`--replace` 必要 scope) 一次套用全 batch
 - R5 (author check) **per-target**:mixed OWNER + non-OWNER 批次採**語意 (i) per-comment refuse + 繼續**（#158 拍板 2026-07-11）— OWNER 的照做、non-OWNER 的 prepare 記為 refused 後換下一個 target,絕不因單一 refuse 殺整批（不中斷 batch（#158 語意 (i)））;`--override-user-content` 語意為 **all-targets + reason 共用**（全 batch 啟用 override,一個 reason 進所有 audit markers）
-- 批次結束由 Step 5 `finish` 輸出 outcome report（`edited / refused` + 顯著標記）;exit contract 依序比對、先中者為準:任一 refused 或寫入失敗 → exit 4（M>0 → exit 4,單 target 退化等價 — 契約鎖於 tests/edit-run）;已寫入但讀回失敗或不符 → 7;任一 target 在預覽後被捨棄（使用者拒絕，或隱私自審、#272 那一題擋下）→ 9;其餘 → 0
+- 批次結束由 Step 5 `finish` 輸出 outcome report（`edited / refused` + 顯著標記）;exit contract 依序比對、先中者為準:任一 refused 或寫入失敗 → exit 4（M>0 → exit 4,單 target 退化等價 — 契約鎖於 tests/edit-run）;已寫入但讀回失敗或不符 → 7;使用者拒絕任一預覽 → 9;其餘 → 0
 
 完整契約見 [batch-and-cluster.md](../../references/batch-and-cluster.md)。罕見場景：跨 issue 的 typo 統一修、補同一段 errata note、把多個 stale comment 統一標 deprecated。
 
@@ -59,7 +59,7 @@ idd-issue source.docx       # auto-trigger when source contains ≥2 findings
 | `--append` | 在末尾加 `---\n**Edit YYYY-MM-DD**: {reason}\n\n{body}` | 保留 | 補充說明、不改原意（內容有錯改用 `--correct`，#351） | `--reason` |
 | `--replace` | 完全替換 body 或指定 section | 寫入 backup 檔 | 大幅改寫（如補圖說明） | `--reason` + **`--scope whole-comment` OR `--section <heading>`**（R4 enforced）|
 | `--prepend-note` | 在最上方加 `> ⚠️ {reason}\n\n---\n\n` | 保留 | 標示「此 comment 已過時」 | `--reason` |
-| `--correct` | 就地取代確定錯誤的整則 comment 或指定 section，區段末尾加一行可見文字（`--note`）與帶 `backup-id` 的標記 | 歸檔到 correction archive（不進 git、權限 0000、hook 擋 AI 讀取） | 內容確定是錯的：使用者指出，或討論與偵測 skill 發現的（#351、#424） | `--scope whole-comment` OR `--section <heading>`；選用 `--note`（一行、200 字內）；`issue:<N>` 只接受 `--section`；不接受 `--override-user-content` |
+| `--correct` | 就地取代確定錯誤的整則 comment 或指定 section，區段末尾加一行可見文字（`--note`）與帶 `backup-id` 的標記 | 歸檔到 correction archive（不進 git、權限 0000、hook 擋 AI 讀取） | 內容確定是錯的：使用者指出或在討論中定案，或在偵測 skill 提議時選了執行（#351、#424） | `--scope whole-comment` OR `--section <heading>`；選用 `--note`（一行、200 字內）；`issue:<N>` 只接受 `--section`；不接受 `--override-user-content` |
 
 ## 動作分類 (per [`#150` action-scoped modify discipline](../../rules/append-vs-modify.md))
 
@@ -128,10 +128,10 @@ Override pathway:`--override-user-content --reason="<rationale>"` 顯式同意�
 ```
 TaskCreate(name="start_run", description="Step 1：依 config-protocol 解析 repo（<REPO>），run-start 解析引數（R4 等閘門）、解析 target 與隱私等級；記下 RUN= / SCRUB= / 每個 TARGET=；PICK=#N 時列出 comments 讓使用者選")
 TaskCreate(name="prepare_targets", description="Step 2：每個 target 一次 prepare —— 作者閘門、讀原文、備份、組新內文、egress 預檢；RESULT=refused 就換下一個 target")
-TaskCreate(name="privacy_scrub_gate", description="Step 3：對 PREVIEW 做 rules/privacy-scrubbing.md 的語意自審；不問的路徑上任何等級命中都不 apply（attended 問，unattended discard --reason held-privacy）；要問的路徑 enforce 命中等使用者確認")
+TaskCreate(name="privacy_scrub_gate", description="Step 3：對 PREVIEW 加入的文字做 rules/privacy-scrubbing.md 的語意自審；不問的 --correct 上 enforce、warn 命中就問，light 只看新加入的第三方逐字內容與 credential；要問的 target enforce 命中等使用者確認")
 TaskCreate(name="reply_272_gate", description="Step 3：prepare 印了 FLOOR=272（reply 引用了使用者貼來的第三方原話）→ 不論等級，另用 AskUserQuestion 問 #272 那一題；沒確認就 discard")
-TaskCreate(name="preview_and_report", description="Step 3：顯示 DIFF 與 PREVIEW（--correct 顯示完整全文）；跑 unattended 偵測；--correct 不問（SCRUB=enforce 除外）；--prepend-note 先跑 validate-target <ID> <REPO> false --correct，exit 0 不問、其他照問；--append／--replace AskUserQuestion 確認，預設 NO；unattended 下任何問題都改成 discard --reason held-*（#424）")
-TaskCreate(name="apply_or_discard", description="Step 4：可寫入（不問的 mode，或使用者確認）→ apply（照抄 RUN / TARGET / Step 1 的 SCRUB，--correct 另帶 STATE；FLOOR=272 而 SCRUB 是 light 時，答完 #272 那一題才填 warn）；擋下或拒絕 → discard")
+TaskCreate(name="preview_and_report", description="Step 3：顯示 DIFF 與 PREVIEW（--correct 顯示完整全文）；--correct 不問（SCRUB=enforce 除外），--prepend-note／--append／--replace AskUserQuestion 確認，預設 NO（#424）")
+TaskCreate(name="apply_or_discard", description="Step 4：可寫入（不問的 --correct，或使用者確認）→ apply（照抄 RUN / TARGET / Step 1 的 SCRUB，--correct 另帶 STATE；FLOOR=272 而 SCRUB 是 light 時，答完 #272 那一題才填 warn）；拒絕 → discard")
 TaskCreate(name="finish_run", description="Step 5：finish —— 印 outcome report，其結束碼就是這次 /idd-edit 的結束碼（0／4／7／9）")
 ```
 
@@ -179,31 +179,17 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" prepare --run '<RUN>'
 
 1. 用 Read 工具讀 `DIFF=` 那一行的路徑並完整顯示：使用者要看得出哪些內容被刪掉或改寫（#351 verify 第 7 輪：只給新全文時看不出來）。
 2. 用 Read 工具讀 `PREVIEW=` 那一行的路徑：`--correct` **完整**顯示（`(assigned after confirmation)` 在 apply 時換成實際的 backup id；helper 的字樣沿用舊名）；其他 mode 至少顯示前 40 行。
-3. **先決定這個 target 問不問**（#424，見 [`rules/issue-write-back.md`](../../rules/issue-write-back.md)）。下面第一個區塊印出 `UNATTENDED=`（`<CWD>` 是 `--cwd` 的值，沒給就填 `.`：idd-all 把旗標寫在它所在的 repo）；是 1 時，下面每一處「問」都改成 discard 這個 target（`--reason` 見各點），**不用 AskUserQuestion**（`references/unattended-contract.md`）。
-   - `--correct`：不問，除非 `SCRUB=enforce`（沒有寫入權或查不到權限，由 `run-start` 判定）。作者閘門在 prepare 已確定這是你自己寫的內容。
-   - `--prepend-note`：跑下面第二個區塊的嚴格作者檢查 `validate-target`（`<ID>` 是 TARGET 去掉 `comment:` 的那串數字，`<REPO>` 照 Step 1 印出的值）。exit 0（你自己寫的）而且不是 `SCRUB=enforce` → 不問；其他（別人寫的、bot、查不到）→ 問。一般的 R5 閘門會放行 OWNER 與 bot，所以不能拿 prepare 的結果代替這一步。
-   - `--append`、`--replace`：問。
-   - 要問而 unattended 時（包括 `SCRUB=enforce` 的 target）：discard，`--reason held-unattended`。discard 之後，這個 target 跳過第 4–6 點與 Step 4。
-4. 隱私自審（`privacy_scrub_gate`）：依 `SCRUB` 等級（prepare 印了 `FLOOR=272` 而 SCRUB 是 `light` 時用 `warn`），對這次**加入的**文字（DIFF 的加入行）做 [`rules/privacy-scrubbing.md`](../../rules/privacy-scrubbing.md) 的語意檢查（本機路徑、未公開的協作者真名、未發表的內容、新加入的第三方逐字內容）。目標裡原本就有的內容命中只回報，不擋：那些已經在 GitHub 上。
-   - **不問的路徑**：**任何等級**都會停：`enforce`、`warn` 命中就停，`light` 只有新加入的第三方逐字內容算命中。沒有人確認，`warn` 的「提醒後照做」不成立（#424 verify 第 1 輪）。attended：顯示 redaction diff，AskUserQuestion（送出／遮蔽後再送／不寫）。unattended：discard，`--reason held-privacy`，回報時不重述被擋的文字。discard 之後跳過第 5、6 點與 Step 4。
-   - **要問的路徑**：`enforce` 命中 → 顯示 redaction diff，使用者確認前不 apply；`warn` 命中 → 印一行提醒，第 6 點一起問。
+3. **問不問**（#424，見 [`rules/issue-write-back.md`](../../rules/issue-write-back.md)）：`--correct` 不問，除非 `SCRUB=enforce`（沒有寫入權或查不到權限，由 `run-start` 判定）；作者閘門在 prepare 已確定這是你自己寫的內容。`--prepend-note`、`--append`、`--replace` 照舊要問。
+4. 隱私自審（`privacy_scrub_gate`）：依 `SCRUB` 等級（prepare 印了 `FLOOR=272` 而 SCRUB 是 `light` 時用 `warn`），對這次**加入的**文字（DIFF 的加入行）做 [`rules/privacy-scrubbing.md`](../../rules/privacy-scrubbing.md) 的語意檢查（本機路徑、未公開的協作者真名、未發表的內容、新加入的第三方逐字內容；密鑰、token、密碼這類 credential 在任何等級都算命中）。目標裡原本就有的內容命中只回報，不擋：那些已經在 GitHub 上。
+   - **不問的 `--correct`**：`enforce`、`warn` 命中就停，`light` 只有新加入的第三方逐字內容與 credential 算命中。沒有人確認，`warn` 的「提醒後照做」不成立（#424 verify 第 1 輪）。命中時顯示 redaction diff，AskUserQuestion（送出／遮蔽後再送／不寫）。
+   - **要問的 target**：`enforce` 命中 → 顯示 redaction diff，使用者確認前不 apply；`warn` 命中 → 印一行提醒，第 6 點一起問。
    - 要送出遮蔽後的版本，就 discard 這個 target、改好 body file 後從 Step 1 重跑（apply 只寫 prepare 組好的內文）。
-5. prepare 印了 `FLOOR=272`（`reply_272_gate`，不論等級）：先另用 AskUserQuestion 問「這次加入或改寫的文字裡，若有第三方逐字內容，確認可以放上 remote？」。說清楚原文已有的引文本來就在 GitHub 上、不受這一題影響，回答「否」只會取消這次編輯，不會把已公開的文字拿掉。選項含「遮蔽後再送」（四種 mode 都適用，遮蔽的是這次 body file 裡的文字；`--correct` 的 `**Point i**` 引文仍須原樣保留）：discard 這個 target、跑 Step 5 的 finish 結束這個 run、改好 body file 後從 Step 1 開新的 run，呼叫端看新 run 的結束碼。使用者沒有確認，就 discard（`--reason held-272`）；unattended 直接 discard（`--reason held-272`）。內文只是提到這兩個標記字串（例如 verify 報告）也會觸發這一題，照實問即可。這是 #272 要求的確認，不能由下一題代替（[`rules/privacy-scrubbing.md`](../../rules/privacy-scrubbing.md) § Reply layer-3 payload tier floor）。
-6. 問或回報：不問的 target，在對話裡回報要寫入的目標與段落，直接進 Step 4 apply。要問的 target，AskUserQuestion 確認，預設 NO（破壞性動作）。
-
-```bash
-# unattended check — prints UNATTENDED=1 or UNATTENDED=0
-. "${CLAUDE_PLUGIN_ROOT}/scripts/lib/unattended-state.sh" && if is_unattended "$(git -C '<CWD>' rev-parse --show-toplevel 2>/dev/null || echo '<CWD>')"; then echo UNATTENDED=1; else echo UNATTENDED=0; fi
-```
-
-```bash
-# strict author check for --prepend-note — exit 0 only for your own comment
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" validate-target '<ID>' '<REPO>' false --correct
-```
+5. prepare 印了 `FLOOR=272`（`reply_272_gate`，不論等級）：先另用 AskUserQuestion 問「這次加入或改寫的文字裡，若有第三方逐字內容，確認可以放上 remote？」。說清楚原文已有的引文本來就在 GitHub 上、不受這一題影響，回答「否」只會取消這次編輯，不會把已公開的文字拿掉。選項含「遮蔽後再送」（四種 mode 都適用，遮蔽的是這次 body file 裡的文字；`--correct` 的 `**Point i**` 引文仍須原樣保留）：discard 這個 target、跑 Step 5 的 finish 結束這個 run、改好 body file 後從 Step 1 開新的 run，呼叫端看新 run 的結束碼。使用者沒有確認，就 discard。內文只是提到這兩個標記字串（例如 verify 報告）也會觸發這一題，照實問即可。這是 #272 要求的確認，不能由下一題代替（[`rules/privacy-scrubbing.md`](../../rules/privacy-scrubbing.md) § Reply layer-3 payload tier floor）。
+6. 問或回報：不問的 `--correct`，在對話裡回報要寫入的目標與段落，直接進 Step 4 apply。要問的 target，AskUserQuestion 確認，預設 NO（破壞性動作）。
 
 ### Step 4: Apply or discard
 
-可以寫入時（`--correct`、通過嚴格作者檢查的 `--prepend-note`，或使用者確認了）：
+可以寫入時（不問的 `--correct`，或使用者確認了）：
 
 ```bash
 # step: apply — after the preview was reported (and confirmed where Step 3 asks); <STATE> is the STATE= value for --correct, empty ('') otherwise
@@ -212,11 +198,11 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" apply --run '<RUN>' -
 
 `--scrub-attested` 填 Step 1 印出的 `SCRUB`（那個值是 `light` 而 prepare 印了 `FLOOR=272`：使用者答了 #272 那一題之後改填 `warn`；自審後認為要更嚴，可填更嚴的 `enforce`），表示 Step 3 的隱私自審做過了；比這個 run 的等級寬 → exit 2；這則 reply 帶 #272 標記而填 `light` → exit 2、不記錄，問過 #272 那一題後改填 `warn` 再跑。`<STATE>` 抄錯 → exit 2，重新抄一次即可（預覽還在，沒有記錄任何結果）；重抄後仍不符，表示預覽之後狀態被動過：discard 這個 target、跑 Step 5 的 finish 結束這個 run（它會列為 DECLINED），再從 Step 1 開一個新的 run，只放還沒處理完的 target（同一個 run 不能再 prepare 同一個 target；第一個 run 的 finish 會把還沒 prepare 的 target 記為 `not-prepared`、exit 4）。把兩個 run 的 outcome report 都告訴使用者；呼叫端看的是新 run 的結束碼。印出 `RESULT=`：`edited`（另有 `URL=`）、`refused`（`REASON=`）、`write-failed`（gh 自身錯誤，重讀確認未寫入）、`unverified`（已寫入但讀回不符，請手動檢查）；`--correct` 有歸檔時另印 `BACKUP_ID=`。不要重跑 prepare、也不要自己算 STATE —— 那會讓 apply 比對的不再是使用者看過的預覽。
 
-擋下或拒絕時（隱私自審、#272 那一題、使用者拒絕）；擋下時帶 `--reason held-privacy`、`held-272` 或 `held-unattended`，使用者拒絕時不帶，`finish` 才不會把沒人問過的說成使用者拒絕：
+使用者拒絕（包括隱私自審與 #272 那一題選了不寫）：
 
 ```bash
-# step: discard — held back or declined
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" discard --run '<RUN>' --target '<TARGET>' <--reason held-... when held back>
+# step: discard — the user declined
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" discard --run '<RUN>' --target '<TARGET>'
 ```
 
 ### Step 5: Finish（outcome report 與結束碼，#158）
@@ -234,7 +220,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" finish --run '<RUN>'
 |---|---|
 | 4 | 有 target 被拒（含 egress 拒絕；Step 1 列出卻沒有 prepare 的 `not-prepared`；沒有選的 PICK `not-picked`；選到別的 issue 的 comment `not-in-pick`），或寫入失敗 —— 它沒有被改 |
 | 7 | 已寫入，但讀回失敗或不符 —— 請手動檢查 |
-| 9 | 沒有拒絕或失敗，但至少一個 target 在預覽後被捨棄（使用者拒絕，或隱私自審、#272 那一題擋下；prepare 後既沒有 apply 也沒有 discard 的 `not-applied` 也算） |
+| 9 | 沒有拒絕或失敗，但使用者拒絕了至少一個預覽（prepare 後既沒有 apply 也沒有 discard 的 `not-applied` 也算） |
 | 0 | 全部完成 |
 
 2、3、5 只來自 Step 1（引數錯誤），不會與上表重疊。這張表就是 batch 的 exit contract（單 target 退化等價），由 `scripts/tests/edit-run/` 的行為測試鎖定。
@@ -303,13 +289,13 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" finish --run '<RUN>'
 ## 鐵律
 
 - **原 body 必 backup**：`--append`/`--replace`/`--prepend-note` 由 prepare 存到使用者暫存目錄下的 `idd-edit-backup/comment-<id>-<unix time>.md`（Step 2 印出 `BACKUP=`，run 結束後仍保留）；`--correct` 在 apply 時歸檔到 correction archive（永久、不進 git、AI 讀不到）；它的工作副本在使用者暫存目錄的 `idd-correct-*`，由 apply／discard／finish 刪除，未完成的一天後由下一次 prepare 清掉
-- **Preview 必 show**：即使是 `--append` 也要 show 最終 body；`--correct` 與改自己內容的 `--prepend-note` show 完直接寫入並回報（#424），其他 mode 讓使用者確認
+- **Preview 必 show**：即使是 `--append` 也要 show 最終 body；`--correct` show 完直接寫入並回報（#424），其他 mode 讓使用者確認
 - **`-F body=@file` 不是 `-f body=""`**：避免 backtick escape（`gh api` 會把 heredoc 裡的 backtick escape 成 `\`）
 - **Metadata marker 不覆蓋**：每次 edit 加新 marker，保留 history
 - **`--replace` 預設 confirm = NO**：破壞性動作不自動 yes
 - **Log 每次 edit**：顯示 URL 讓使用者能立即 verify
 - **提到歸檔路徑的文字**：archive-read-guard hook 會擋下指令文字裡寫出 `.claude/.idd/archive` 的任何呼叫，`--body`、`--reason` 也一樣（fail-closed，#351）。使用者給的 `--reason` 若寫出這個路徑，Step 1 照原樣貼上會被擋：先告訴使用者，請使用者改寫，或同意你改寫成不含路徑的說法，不要自行改寫後照跑。更正或附加的內文若必須提到它，用 Write 工具寫進檔案、以 `--body-file` 傳入（helper 讀檔內容，hook 不看檔案內容）。在含歸檔的 repo 裡，指令文字同時含權限指令（`chmod`、`chown`…）與遞迴標記（`-R`、`find`、`xargs`）也會被擋，`--body`／`--reason` 一樣；內文改用 `--body-file`，`--reason` 照上面的方式請使用者改寫。`cd .claude/.idd` 之後用相對路徑碰 `archive/…` 一樣會被擋，在含歸檔的 repo 裡同一個指令又 `cd` 又 `chmod` 也會被擋；要看舊版請走 `restore`，不要自己讀。
-- **不問的路徑不設 `IDD_EDIT_HELPER_ALLOW_UNSAFE_BODY_FILE`**（#424）：那是給人親手處理特殊路徑的逃生口，AI 寫回的替換文字一律放在 `mktemp -d` 建的目錄。
+- **`--correct` 不設 `IDD_EDIT_HELPER_ALLOW_UNSAFE_BODY_FILE`**（#424，它不問）：那是給人親手處理特殊路徑的逃生口，AI 寫回的替換文字一律放在 `mktemp -d` 建的目錄。
 - **`--body-file` path safety（#155）**：helper **canonicalize（`os.path.realpath`）後拒絕** sensitive system paths（`/etc` `/var` `/sys` `/proc` `/private/etc|var`）+ credential dirs（`.ssh` `.aws` `.gnupg` `.kube` `.docker`，不分大小寫：macOS 的 APFS 把 `~/.SSH` 當成 `~/.ssh`）與 gh 的 token 目錄（`GH_CONFIG_DIR`、`$XDG_CONFIG_HOME/gh`、`~/.config/gh`，escape hatch 也不放行），含 `//etc` / `/tmp/../etc` / symlink / relative-traversal bypass vectors → exit 5 refuse。Escape hatch：`IDD_EDIT_HELPER_ALLOW_UNSAFE_BODY_FILE=1`（須自審 reason）。合法 repo / `/tmp` / `$HOME/Developer` 路徑照常讀；使用者自己的暫存目錄底下（macOS 在 `/var/folders/…`）也放行（#351）。Preview gate 仍是最後一道防線。
 
 ## 與 idd-comment 的配合
@@ -355,7 +341,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" restore '<BACKUP_ID>'
 
 ## Next Step
 
-改的是 Diagnosis 時，照 [`rules/issue-write-back.md`](../../rules/issue-write-back.md)「診斷更正後，連帶更新」處理 Implementation Plan 與 verify 報告；實作之後前提不成立就走 `idd-reorganize`。其他情況通常不需要後續 skill。
+改的是 Diagnosis 時，照 [`rules/issue-write-back.md`](../../rules/issue-write-back.md)「診斷更正後，連帶更新」處理 Implementation Plan；已建好的東西要作廢、這次不跟著改時才走 `idd-reorganize`。其他情況通常不需要後續 skill。
 如果是 errata flow，由 `/idd-comment` 統一 orchestrate。
 
 ## SKILL↔helper Contract（#163）

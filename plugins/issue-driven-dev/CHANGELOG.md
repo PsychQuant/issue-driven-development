@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Living-issue write-back (#424)** — `rules/issue-write-back.md`. While an open issue is discussed in a session,
   a change the user decides is written back to the place that owns it, so the issue body and the Diagnosis stay
   current instead of stopping at their first version. A hypothesis or a question is not a change; a closed issue
-  is not rewritten; someone else's comment counts only when the user raises it and decides to adopt it. Three
+  is not rewritten; someone else's comment counts only when the user raises it and names what to adopt. Three
   kinds, a closed list: the problem (question, scope, `## Expected`) goes to the issue body section with
   `/idd-edit issue:<N> --correct --section`; the diagnosis (root cause, strategy, routing) goes to the Diagnosis
   comment section with `/idd-edit comment:<id> --correct --section`; new information, a decision, or the course of
@@ -20,9 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the AI decides the kind, writes without asking, and reports each write-back with the user's words it rests on;
   elsewhere it asks. Only your own content is rewritten; someone else's comment gets `/idd-comment --type errata`,
   someone else's issue body `--type correction`. The privacy review covers the text being added; a hit at
-  `enforce` or `warn`, or new third-party verbatim text at `light`, stops the write-back. A corrected diagnosis
-  also corrects your Implementation Plan sections and adds one note to your verify reports (findings unchanged);
-  when it overturns what was built, or the problem changed, `idd-reorganize` takes over.
+  `enforce` or `warn`, new third-party verbatim text at `light`, or a credential at any level stops the
+  write-back. A corrected diagnosis also corrects your Implementation Plan sections; verify reports are left as
+  they are. A change decided after implementation is written back in place when the same pull request carries it
+  (for example a design settled during verify-fix); `idd-reorganize` takes over only when what was built is to be
+  thrown away.
 - **`--note` on `/idd-edit --correct`.** The replaced text ends with a visible line,
   `_更正於 YYYY-MM-DD（AI 判斷）：<note>_`, before the marker. A reader could not otherwise tell the text changed:
   the marker is an HTML comment and an edit sends no notification. An earlier line and marker at the end of the
@@ -33,21 +35,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **BREAKING: `/idd-edit --correct` no longer asks for confirmation** in a repository you can write to. It shows
   the diff and the preview, then applies; the privacy review, the #272 question, the re-read before writing and
-  the archive stay. `--prepend-note` skips the question only on your own comment. `--append` and `--replace` still
-  ask. In `idd-verify`, `idd-diagnose` and `idd-reorganize`, the user's "run now" on a proposed correction is the
-  confirmation; they still propose corrections and do not apply them on their own.
-- **`/idd-edit` no longer asks questions in unattended mode.** A question becomes a discard with its reason
-  (`discard --reason held-privacy|held-272|held-unattended`), and `finish` reports HELD instead of saying a user
-  declined; it still exits 9.
+  the archive stay. `--prepend-note`, `--append` and `--replace` still ask. In `idd-verify`, `idd-diagnose` and
+  `idd-reorganize`, the user's "run now" on a proposed correction is the confirmation: the question shows the full
+  replacement text and the command carries `--repo` and `--note`. They still propose corrections and do not apply
+  them on their own. `idd-issue`'s multi-finding "edit body" rows that go to `--correct` also write after the
+  preview without a second question; the batch confirmation in Stage 3 is the one question.
 - `idd-diagnose` Stage 1 rewrites its own Diagnosis instead of appending a correction comment.
-- `--body-file` also refuses dotfiles directly in your home directory, `~/.claude` except a job's `tmp/`,
-  `~/.config/git`, and names that hold secrets (`*credential*`, `.env*`, `id_rsa*` and other keys, `*.pem`,
-  `*.key`, histories). The list is still not complete; the escape hatch is unchanged.
 - `idd-close` Step 3.6 ignores the visible line and the marker when it reads `### Residue`.
 
 The first version also let other people's comments trigger write-back and let the detecting skills correct
 published text on their own. Four verify rounds failed without converging on those two parts, so they were removed
-before release (#424 comment 6616229678).
+before release (#424 comment 6616229678). After the fifth round, three more parts went: a note on each verify
+report, a private-path check on `--body-file`, and an unattended branch in `/idd-edit` (comment 6617788666).
 
 ## [3.6.0] - 2026-11-03
 

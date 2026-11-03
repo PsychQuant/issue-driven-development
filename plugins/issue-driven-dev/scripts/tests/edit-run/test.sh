@@ -150,7 +150,7 @@ assert_output_grep "an override writes its own marker" "override-user-content" <
 h a4of finish --run "$RUN"
 assert_exit "the overridden run exits 0" 0 "$RC"
 
-echo "A5n. the visible line and the reasons for holding back (#424)"
+echo "A5n. the visible line (#424)"
 TODAY="$(date +%Y-%m-%d)"
 mkrec comment-290.json kiki830621 MEMBER "$SECTION_BODY"
 printf 'right text\n' >"$WORK/fix-n.md"
@@ -181,44 +181,12 @@ h a5n5 run-start --default-repo o/r -- comment:292 --correct --scope whole-comme
 assert_exit "a --note over 200 characters exits 2" 2 "$RC"
 h a5n6 run-start --default-repo o/r -- comment:292 --correct --scope whole-comment --body-file "$WORK/fix-n.md" --note 'x --> <!-- y'
 assert_exit "a --note holding an HTML comment token exits 2" 2 "$RC"
-for why in held-privacy:隱私自審 held-272:#272 held-unattended:unattended; do
-  r="${why%%:*}"; word="${why#*:}"
-  mkrec comment-293.json kiki830621 MEMBER "$SECTION_BODY"
-  start a5h comment:293 --correct --section "## Notes" --body-file "$WORK/fix-n.md"
-  h a5hp prepare --run "$RUN" --target comment:293
-  h a5hd discard --run "$RUN" --target comment:293 --reason "$r"
-  assert_exit "discard accepts --reason $r" 0 "$RC"
-  h a5hf finish --run "$RUN"
-  assert_exit "$r exits 9" 9 "$RC"
-  assert_output_grep "$r is reported as held back" "HELD comment:293" "$WORK/a5hf.out"
-  assert_output_grep "$r names the reason" "$word" "$WORK/a5hf.out"
-  refute_output_grep "$r does not say a user declined" "使用者在預覽時拒絕" "$WORK/a5hf.out"
-  assert_eq "$r leaves the comment unchanged" "$SECTION_BODY" "$(body_of comment-293.json)"
-done
-start a5h2 comment:293 --correct --section "## Notes" --body-file "$WORK/fix-n.md"
-h a5h2p prepare --run "$RUN" --target comment:293
-h a5h2d discard --run "$RUN" --target comment:293 --reason nonsense
-assert_exit "an unknown discard reason exits 2" 2 "$RC"
-h a5h2e discard --run "$RUN" --target comment:293
-h a5h2f finish --run "$RUN"
-assert_output_grep "a plain discard is still a decline" "DECLINED comment:293" "$WORK/a5h2f.out"
-for p in .netrc .zsh_history .bash_history .claude.json; do
-  HFILE="$WORK/home/$p"; mkdir -p "$WORK/home"; printf 'secret\n' >"$HFILE"
-  HOME="$WORK/home" h a5g run-start --default-repo o/r -- comment:292 --correct --scope whole-comment --body-file "$HFILE"
-  assert_exit "--body-file refuses $p" 5 "$RC"
-done
-mkdir -p "$WORK/home/.claude/projects/x"; printf 'secret\n' >"$WORK/home/.claude/projects/x/s.jsonl"
-HOME="$WORK/home" h a5g2 run-start --default-repo o/r -- comment:292 --correct --scope whole-comment --body-file "$WORK/home/.claude/projects/x/s.jsonl"
-assert_exit "--body-file refuses a session transcript" 5 "$RC"
-
-echo "A5r3. round 3: markers only, an earlier line, --note characters, private paths"
+echo "A5r3. round 3: markers only, an earlier line, --note characters"
 printf '<!-- idd:dashboard v=1 -->\nreal text\n' >"$WORK/dash-body.md"
 mkrec comment-294.json kiki830621 MEMBER "$(cat "$WORK/dash-body.md")"
 printf '<!-- idd:dashboard v=1 -->\n' >"$WORK/marker-only.md"
-start a5m comment:294 --correct --scope whole-comment --body-file "$WORK/marker-only.md"
-h a5mp prepare --run "$RUN" --target comment:294
-assert_output_grep "a replacement of markers only is still refused" "REASON=empty" "$WORK/a5mp.out"
-h a5mf finish --run "$RUN"
+h a5m run-start --default-repo o/r -- comment:294 --correct --scope whole-comment --body-file "$WORK/marker-only.md"
+assert_exit "a replacement of markers only is refused before prepare" 2 "$RC"
 assert_eq "and the comment is unchanged" "$(cat "$WORK/dash-body.md")" "$(body_of comment-294.json)"
 mkrec comment-295.json kiki830621 MEMBER "$SECTION_BODY"
 printf 'right text\n\n_更正於 2026-01-01（AI 判斷）：old claim_\n' >"$WORK/fix-old.md"
@@ -233,11 +201,6 @@ for bad in 'a <b>' 'a > b' "$(printf 'a\033b')" "$(printf 'a\342\200\250b')" "$(
   h a5c run-start --default-repo o/r -- comment:292 --correct --scope whole-comment --body-file "$WORK/fix-n.md" --note "$bad"
   assert_exit "--note refuses a character it should not carry" 2 "$RC"
 done
-for p in .git-credentials .pgpass .npmrc .env .config/git/credentials .claude/.credentials.json .claude/history.jsonl .claude/CLAUDE.md id_rsa notes/id_ed25519 notes/server.pem; do
-  HFILE="$WORK/home/$p"; mkdir -p "$(dirname "$HFILE")"; printf 'secret\n' >"$HFILE"
-  HOME="$WORK/home" h a5p run-start --default-repo o/r -- comment:292 --correct --scope whole-comment --body-file "$HFILE"
-  assert_exit "--body-file refuses ~/$p" 5 "$RC"
-done
 mkdir -p "$WORK/home/.cache/idd/corrections" "$WORK/home/.claude/jobs/x/tmp" "$WORK/home/notes"
 for p in .cache/idd/corrections/fix.md .claude/jobs/x/tmp/fix.md notes/fix.md; do
   cp "$WORK/fix-n.md" "$WORK/home/$p"
@@ -246,7 +209,21 @@ for p in .cache/idd/corrections/fix.md .claude/jobs/x/tmp/fix.md notes/fix.md; d
   h a5qf finish --run "$(val RUN "$WORK/a5q.out")"
 done
 
-echo "A5r4. an earlier line and marker copied from the section; home case"
+echo "A5r5. round 5: an earlier line anywhere in the replacement, markers only"
+mkrec comment-297.json kiki830621 MEMBER "$SECTION_BODY"
+printf 'right text\n\n_更正於 2026-01-01（AI 判斷）：old claim_\n<!-- idd:comment type=decision date=2026-01-01 -->\n' >"$WORK/fix-mid.md"
+start a5v comment:297 --correct --section "## Notes" --body-file "$WORK/fix-mid.md" --note "new claim"
+h a5vp prepare --run "$RUN" --target comment:297
+h a5va apply --run "$RUN" --target comment:297 --scrub-attested warn --state "$(val STATE "$WORK/a5vp.out")"
+h a5vf finish --run "$RUN"
+N297="$(body_of comment-297.json)"
+refute_grep "an earlier line before a marker is dropped" "old claim" "$N297"
+assert_eq "one visible line remains" "1" "$(printf '%s\n' "$N297" | grep -c '^_更正於 ')"
+printf '<!-- idd:edit mode="append" date="2026-01-01" -->\n' >"$WORK/append-marker.md"
+h a5w run-start --default-repo o/r -- comment:297 --correct --section "## Notes" --body-file "$WORK/append-marker.md"
+assert_exit "a replacement of another mode's marker only is refused" 2 "$RC"
+
+echo "A5r4. an earlier line and marker copied from the section"
 mkrec comment-296.json kiki830621 MEMBER "$SECTION_BODY"
 printf 'right text\n\n_更正於 2026-01-01（AI 判斷）：old claim_\n<!-- idd:edit mode="correct" backup-id="comment-296-20260101T000000Z" date="2026-01-01" -->\n' >"$WORK/fix-copy.md"
 start a5k comment:296 --correct --section "## Notes" --body-file "$WORK/fix-copy.md" --note "new claim"
@@ -259,11 +236,6 @@ refute_grep "a copied earlier marker is dropped" "20260101T000000Z" "$N296"
 printf '_更正於 2026-01-01（AI 判斷）：old_\n<!-- idd:edit mode="correct" backup-id="comment-296-20260101T000000Z" date="2026-01-01" -->\n' >"$WORK/only-old.md"
 h a5k2 run-start --default-repo o/r -- comment:296 --correct --section "## Notes" --body-file "$WORK/only-old.md"
 assert_exit "a replacement of an old line and marker only is refused" 2 "$RC"
-mkdir -p "$WORK/home"; printf 'secret\n' >"$WORK/home/.pgpass"
-if [ -e "$WORK/HOME/.pgpass" ]; then
-  HOME="$WORK/home" h a5k3 run-start --default-repo o/r -- comment:292 --correct --scope whole-comment --body-file "$WORK/HOME/.pgpass"
-  assert_exit "a home path in other case is still refused" 5 "$RC"
-fi
 
 echo "A5. declined, mixed batch, never applied"
 mkrec comment-205.json kiki830621 MEMBER "a"
