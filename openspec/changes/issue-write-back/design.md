@@ -23,14 +23,14 @@ IDD 已有就地更正的工具：`/idd-edit --correct`（#351）可以改自己
 - 改寫別人的內容：別人的 comment 與 issue 正文永遠只用 errata 或 correction comment 回應。
 - `--append`、`--replace` 的確認：維持現狀。
 - 改 `Original text`：受保護區塊規則不動。
-- 修改 helper（`idd-edit-helper.py`）：作者判斷沿用既有的 `validate-target ... --correct`。
+- 修改 helper 的作者判斷：沿用既有的 `validate-target ... --correct`。（第 1 輪後 helper 只加 `--note`、`discard --reason` 與路徑閘清單。）
 - 機械化「這次改變屬於哪一類」：由 AI 判斷，不另設 gate。
 
 ## Decisions
 
 ### D1 `--correct` 不再確認，其餘安全步驟保留
 
-`/idd-edit --correct` 只放行自己的內容（helper 的作者閘），舊版一律歸檔、可還原，所以拿掉確認不會讓錯誤變成不可逆。保留的步驟：diff 與預覽仍完整顯示（改為回報）、privacy 自審（`enforce` 命中就 discard）、#272 閘（reply 帶使用者貼來的第三方原話時仍要問）、apply 時重讀目標與比對預覽、歸檔。替代方案「使用者直接下指令時才確認」被否決：同一個指令兩種行為，讀 skill 的人分不清。
+`/idd-edit --correct` 只放行自己的內容（helper 的作者閘），舊版歸檔在執行它的那份 clone，GitHub 的編輯歷史也保留每個舊版，所以拿掉確認不會讓錯誤變成不可逆。保留的步驟：diff 與預覽仍完整顯示（改為回報）、privacy 自審（任何等級命中都停，見 D6）、#272 閘（reply template 帶使用者貼來的第三方原話時仍要問）、apply 時重讀目標與比對預覽、歸檔。替代方案「使用者直接下指令時才確認」被否決：同一個指令兩種行為，讀 skill 的人分不清。
 
 ### D1b `--prepend-note` 只在自己的內容上不確認
 
@@ -46,45 +46,61 @@ D2 的 verify 報告註記要用 `--prepend-note`，但這個 mode 的作者閘�
 
 ### D4 偵測到錯誤的 skill 直接套用
 
-`in-place-correction` 的「propose, not apply」改為「apply and report」。自己的內容走 `/idd-edit --correct`；別人的內容自動貼 errata 或 correction comment（屬全域規則「GitHub 紀錄不用問」的第 1 類）。報告段落由 `### Proposed Corrections` 改名 `### Applied Corrections`，每項寫目標、段落、錯在哪、結果（backup id、comment 連結，或拒絕原因）。替代方案「只有討論觸發的寫回不確認、偵測到的仍只列不做」被否決：兩套行為並存，#399 那種累積會繼續發生。
+`in-place-correction` 的「propose, not apply」改為「apply and report」，範圍收窄到 D7 列的段落。自己的內容走 `/idd-edit --correct`；別人的內容只列出，attended 報告貼出後才問要不要貼 errata（使用者 2026-10-25 同意的是「自己的內容直接套用」，通知寄出就收不回）。報告段落由 `### Proposed Corrections` 改名 `### Applied Corrections`，每項寫目標、段落、錯在哪、結果（backup id、comment 連結，或拒絕原因）。替代方案「只有討論觸發的寫回不確認、偵測到的仍只列不做」被否決：兩套行為並存，#399 那種累積會繼續發生。
 
 ### D5 別人的 comment 在下一次讀取時觸發
 
-沒有任何事件機制會在別人留言時叫醒 AI；IDD skill 本來就會在 diagnose、plan、verify、update 時讀 comments，使用者也可能在 session 裡談到這張 issue。這兩個時點就是觸發點。
+沒有任何事件機制會在別人留言時叫醒 AI。`idd-diagnose`、`idd-plan`、`idd-update` 執行時用 `scripts/writeback-candidates.py` 列出別人的新 comment，使用者也可能在 session 裡談到這張 issue；這兩個時點就是觸發點。`idd-update` 在每個階段結束都會跑，所以幾乎每次都讀得到。`idd-verify` 不跑這一步：驗收中不該改驗收依據。
+
+### D6 不問的路徑上，隱私命中一律停；只限有寫入權的 repo（verify 第 1 輪）
+
+`privacy-scrubbing` 的 `warn`「default proceed」成立的前提是後面還有人工確認，D1 拿掉確認後就沒有人攔了。所以不問的路徑上，語意自審在任何等級命中都停：attended 問，unattended 捨棄。自己的 public repo 是 `warn`，而外流代價不對稱（通知已寄出、編輯歷史公開）。沒有寫入權的 repo 與查不到權限時（helper 判為 `enforce`）回到確認流程。
+
+### D7 信任邊界、驗收條件、定案門檻、可見文字（2026-11-03 維護者決定，comment 6600258374）
+
+- **來源**：只有 OWNER、MEMBER、COLLABORATOR 的 comment 能導致寫回，事實主張 AI 要自己查證；其他人的只告訴使用者。否則外人的話會以維護者署名進入 Diagnosis，繞過 #383 的作者過濾。`### Type`、`### Complexity` 不由 comment 改。
+- **偵測 skill**：只改 Diagnosis 的 `### Root Cause / Analysis`、`### Impact`、`### Risks`，主 agent 親自用 repo 證據查證。`## Expected`、`### Strategy`、checklist 是驗收依據，verify 不能動自己的判準。
+- **定案**：只有明確定案才算改變，假設與提問不算。已關閉的 issue 不改，避免和 Closing Summary 對不起來。
+- **可見文字**：`--correct` 由 helper 固定加一行 `_更正於 YYYY-MM-DD（AI 判斷）：原因_`。放在 helper 而非規則，才不會忘；原因寫正確內容，不重述錯的值。GitHub 編輯不寄通知，標記又看不見，沒有這行，讀者無從知道。
+
+### D8 實作後的更正走 idd-reorganize
+
+更正讓既有實作的前提不成立，或問題改變時，只改文字會留下 PASS 與舊的 phase。`idd-reorganize` 本來就處理下游枚舉與退 phase，不另造機制。Spectra tier 的 artifact 也由它處理。
 
 ## Implementation Contract
 
 **行為（使用者看得到的）**
 
 - session 裡討論一張 issue 時，AI 判斷改變屬於三類之一並寫回，不問；每次寫回在對話裡回報一行：類別、目標（`issue:N` 的段落或 `comment:<id>`）、連結，`--correct` 另附 backup id。
-- `/idd-edit ... --correct`：顯示 diff 與預覽後直接 apply；privacy 自審命中 `enforce` 或使用者在 #272 題答否時 discard，finish 以 9 結束。
-- `/idd-edit ... --prepend-note`：目標通過嚴格作者檢查時不確認；否則照舊確認。`--append`、`--replace` 照舊確認。
-- `idd-verify`、`idd-diagnose`、`idd-reorganize` 的報告：`### Applied Corrections` 取代 `### Proposed Corrections`，unattended 也直接套用。
+- `/idd-edit ... --correct`：顯示 diff 與預覽後直接 apply，改寫段落尾留一行可見文字；privacy 自審任何等級命中、或 #272 題沒確認時不寫（attended 問，unattended 捨棄），finish 以 9 結束並寫出原因。沒有寫入權的 repo 照舊確認。
+- `/idd-edit ... --prepend-note`：目標通過嚴格作者檢查時不確認；否則照舊確認。`--append`、`--replace` 照舊確認。unattended 下任何問題都改成捨棄。
+- `idd-verify`、`idd-diagnose`、`idd-reorganize` 的報告：`### Applied Corrections` 取代 `### Proposed Corrections`，範圍只有 D7 列的段落，其餘列出不改；unattended 相同。
 - `idd-diagnose` Step 4 Stage 1：使用者要調整診斷時，用 `/idd-edit comment:<Diagnosis id> --correct --section ...` 改寫，不追加 comment。
 - SessionStart 輸出第 5 行提醒寫回規則。
 
 **介面**
 
 - 新檔 `plugins/issue-driven-dev/rules/issue-write-back.md`：三類分流表（封閉列舉）、觸發來源兩種（封閉列舉）、作者邊界、回報格式、privacy 自審、相依紀錄更新（Implementation Plan、verify 報告）。
-- helper 介面不變；skill 用既有的 `validate-target <id> <repo> false --correct` 判斷自己的內容。
+- helper：`run-start` 接受 `--note`（只限 `--correct`）；`discard` 接受 `--reason held-privacy|held-272|held-unattended`；`--body-file` 路徑閘多擋 `.netrc`、shell 歷史、`.claude.json`、`.claude/projects`。新 script `scripts/writeback-candidates.py --repo <r> --issue <n>`：每列 `TRUSTED|UNTRUSTED <comment id> <login> <association>`，抓不到回 1。
 
 **驗收**
 
-- `scripts/tests/issue-write-back/test.sh`：規則檔存在且含三類分流、兩種觸發、作者邊界、回報、privacy；SessionStart 輸出含寫回提醒且 ≤5 行；`idd-edit` Step 3 對 `--correct` 不再要求確認、`--prepend-note` 引用嚴格作者檢查；`idd-diagnose` Stage 1 用 `--correct`、不再寫「追加修正」。
+- `scripts/tests/writeback-candidates/test.sh`（fake gh）：信任分類、自己的不列、日期截止、關閉的 issue、抓取失敗。`scripts/tests/edit-run/test.sh`：`--note` 與可見文字、`discard --reason` 的 finish 報告。
+- `scripts/tests/issue-write-back/test.sh`：規則檔存在且含三類分流、兩種觸發、信任邊界、定案門檻、作者邊界、回報、privacy；SessionStart 輸出含寫回提醒且 ≤5 行；`idd-edit` Step 3 對 `--correct` 不再要求確認、`--prepend-note` 引用嚴格作者檢查；`idd-diagnose` Stage 1 用 `--correct`、不再寫「追加修正」。
 - `scripts/tests/in-place-correction/test.sh`：三個偵測 skill 斷言 `### Applied Corrections`、`--correct`，並反向斷言不再含「只列不做」。
 - `run-all-tests.sh` 全部通過。
 
 **範圍**
 
 - 範圍內：上列規則、hook、四個 SKILL.md、兩份測試、`append-vs-modify` 規則的對應說明、版本與文件。
-- 範圍外：helper 程式、即時觸發、改寫別人的內容、`--append`／`--replace`。
+- 範圍外：作者判斷、即時觸發、改寫別人的內容、`--append`／`--replace`、機械化判斷類別。
 
 ## Risks / Trade-offs
 
-- [AI 判斷錯類別，把新決定寫進正文] → 每次寫回都回報類別與目標；舊版歸檔，可用 `/idd-edit --restore` 還原。
-- [不確認後，privacy 自審變成唯一的人工把關點之外的防線] → 自審仍在 apply 前執行，`enforce` 命中就 discard；gh-egress 的機械閘照常。
+- [AI 判斷錯類別，把新決定寫進正文] → 每次寫回都回報類別與目標；段落尾的可見文字讓讀者看得到；舊版用 GitHub 編輯歷史取回，或在同一份 clone 用 `/idd-edit` 的 `restore`（會蓋掉之後的更正）。
+- [不確認後，privacy 自審是語意上唯一的防線] → 任何等級命中都停（D6）；gh-egress 的機械閘照常。自審本身可能漏判，沒有機械防線，這一點接受。
 - [ADMIN 帳號可改別人的 comment] → 不確認的路徑一律先過 `--correct` 的嚴格作者檢查（D1b）。
-- [verify 在飛時被改到 Diagnosis] → 寫回的是 issue 上的文字，不是 PR 的程式；verify 讀的 context 以啟動時為準，報告結束後才可能被加註記。
+- [verify 期間 Diagnosis 或正文被改] → verify 自己不改驗收依據（D7）；另一個 session 可能改，所以 Step 2.9 比對 issue 與 Diagnosis 的 `updated_at`，不同就在報告註明。
 - [SessionStart 第 5 行是每個 session 的 context 成本] → 一行、指向規則檔，drift guard 鎖住上限。
 
 ## Migration Plan

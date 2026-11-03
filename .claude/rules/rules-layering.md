@@ -15,6 +15,7 @@
 | deep-integration-over-hardcode | dev | #209 Clarity row 3 使用者裁決（「是我開發要用的」）|
 | rules-layering（本檔）| dev | 判準受眾是維護者 |
 | commit-issue-reference | **plugin**（#214 升格）| auto-close trap 咬所有 IDD 使用者；dev 層留蒸餾指回 |
+| issue-write-back | **plugin**（#424）| 約束所有 IDD 使用者討論 issue 的行為，主戰場在 skill 外，SessionStart 一行 |
 | tagging-collaborators / privacy-scrubbing / append-vs-modify / sdd-integration / process-attachments / spectra-bridge / github-math-format | plugin | 約束 skill 執行時的使用者行為 |
 
 ## 歸位程序（#215 全面盤點用）

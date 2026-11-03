@@ -212,10 +212,19 @@ for s in idd-verify idd-diagnose idd-reorganize; do
   F="$SKILLS/$s/SKILL.md"
   assert_output_grep "$s has an Applied Corrections block" "### Applied Corrections" "$F"
   assert_output_grep "$s applies /idd-edit --correct" "--correct" "$F"
-  assert_output_grep "$s decides own content with the strict author check" "false --correct" "$F"
+  assert_output_grep "$s leaves the author check to /idd-edit" "REASON=R5" "$F"
   assert_output_grep "$s tracks the apply step" 'TaskCreate(name="apply_corrections"' "$F"
   refute_output_grep "$s no longer has a Proposed Corrections block" "### Proposed Corrections" "$F"
-  refute_output_grep "$s no longer lists only under unattended" "只列不做" "$F"
+  SEC="$(awk '/^### Step [0-9.]+: Applied Corrections/{f=1;print;next} f&&/^### Step /{exit} f' "$F")"
+  assert_grep "$s limits the targets to diagnosis facts" '`### Root Cause / Analysis`、`### Impact`、`### Risks`' "$SEC"
+  assert_grep "$s never moves the acceptance criteria" '`## Expected`' "$SEC"
+  assert_grep "$s requires its own evidence" "親自" "$SEC"
+  assert_grep "$s lists other people's content" "listed" "$SEC"
+  assert_grep "$s holds the text of a blocked correction back" "held" "$SEC"
+  assert_grep "$s reports unverified" "unverified" "$SEC"
+  assert_grep "$s uses a private file for each correction" 'mktemp -d' "$SEC"
+  assert_grep "$s passes --note" "--note" "$SEC"
+  refute_grep "$s no longer reuses a shared correction path" '.cache/idd/corrections' "$SEC"
   refute_output_grep "$s never calls the archive subcommand" "idd-edit-helper.py\" archive" "$F"
 done
 
@@ -307,7 +316,7 @@ UPD="$SKILLS/idd-update/SKILL.md"
 refute_output_grep "idd-update no longer says Key Decisions are append-only" "Key Decisions 只加不刪" "$UPD"
 assert_output_grep "idd-update rebuilds Key Decisions from current comments" "每次重建" "$UPD"
 for s in idd-verify idd-diagnose idd-reorganize; do
-  assert_output_grep "$s stores replacement files under ~/.cache/idd/corrections" ".cache/idd/corrections" "$SKILLS/$s/SKILL.md"
+  refute_output_grep "$s no longer keeps replacement files in a shared directory" ".cache/idd/corrections" "$SKILLS/$s/SKILL.md"
 done
 # Round 6: the --correct flow moved into the helper; its behavior is exercised
 # end to end in scripts/tests/correct-flow (re-read E3, fetch failure E7, …).
@@ -707,5 +716,15 @@ open(sys.argv[1] + "/r-cr-quote.md", "wb").write(b"> **Original text**: keep me\
 PYX
 run_helper r111 compose-correction "$WORK/cr-quote.md" "## Notes" "$WORK/r-cr-quote.md" "$MARK"
 assert_eq "the blank line after a CR-only quotation survives" "True" "$(bytes_in "$WORK/r111.out" 'b"keep me\n\nright\n"')"
+
+EW_LINE="$(grep -n "^EW_SECTIONS=" "$SKILLS/idd-verify/SKILL.md")"
+assert_grep "EW_SECTIONS lists Applied Corrections" "Applied Corrections" "$EW_LINE"
+assert_output_grep "idd-verify records the issue version it verified" "updated_at" "$SKILLS/idd-verify/SKILL.md"
+assert_output_grep "idd-diagnose applies after Stage 1 when attended" "Stage 1 確認之後" "$SKILLS/idd-diagnose/SKILL.md"
+
+refute_output_grep "idd-comment no longer promises a confirmation for --correct" "預覽與確認後就地取代" "$SKILLS/idd-comment/SKILL.md"
+refute_output_grep "idd-edit archives at apply, not after a confirmation" "--correct\` 確認後歸檔" "$SKILLS/idd-edit/SKILL.md"
+refute_output_grep "the catalog no longer promises a confirmation" "\`--correct\` 確認後就地取代" "$SKILLS/../CLAUDE.md"
+refute_output_grep "append-vs-modify no longer says IDD only proposes" "IDD proposes corrections" "$SKILLS/../rules/append-vs-modify.md"
 
 print_summary "in-place-correction"

@@ -87,7 +87,7 @@ The `scope` qualifier names the targeted section / field / artifact when relevan
 
 **Scope boundary**: Exactly two kinds of content (closed list, #351 — do not extend by analogy):
 1. **Original-source quotations** — a maximal run of consecutive lines starting with `>` in which some line contains one of exactly three labels: `Original text`, the decision-template label `**Original**`, or the reply-template label `**Point ` (`> **Point i**`, a reviewer's words quoted verbatim — verify #351 round 7). The quotation records what was actually said; it stays true as a record even when the judgment it led to turns out wrong.
-2. **Third-party content** — comments, and issue bodies, whose author is neither the OWNER, a bot, nor the invoking user (the authenticated `gh` user). They are someone else's words; IDD proposes corrections to them but does not correct them in place. A bot's comment is outside this list (`--append` / `--replace` / `--prepend-note` may touch it), and so is the OWNER's content when someone else runs the edit, but both are still someone else's words to the person running it, so `--correct` refuses them (bot: verify #351 round 2; OWNER: user decision 2026-10-17). For an issue body the author is the person who opened the issue — an approximation: text an IDD skill or a maintainer later wrote into someone else's issue body counts as that person's, and text a collaborator wrote into yours counts as yours (user decision 2026-10-17).
+2. **Third-party content** — comments, and issue bodies, whose author is neither the OWNER, a bot, nor the invoking user (the authenticated `gh` user). They are someone else's words; IDD lists corrections to them but does not correct them in place. A bot's comment is outside this list (`--append` / `--replace` / `--prepend-note` may touch it), and so is the OWNER's content when someone else runs the edit, but both are still someone else's words to the person running it, so `--correct` refuses them (bot: verify #351 round 2; OWNER: user decision 2026-10-17). For an issue body the author is the person who opened the issue — an approximation: text an IDD skill or a maintainer later wrote into someone else's issue body counts as that person's, and text a collaborator wrote into yours counts as yours (user decision 2026-10-17).
 
 `--override-user-content --reason="..."` still exists for `--append` / `--replace` / `--prepend-note` as an explicit, audited exception for third-party comments; it is never accepted with `--correct`.
 
@@ -135,7 +135,7 @@ Issue-body prose in an issue opened by the invoking user — interpretation para
 
 ### Discussion write-back (#424)
 
-[`issue-write-back.md`](issue-write-back.md) routes each change raised while an issue is discussed to one place; each place maps to one category of this rule:
+[`issue-write-back.md`](issue-write-back.md) routes each decided change raised while an issue is discussed to one place; each place maps to one category of this rule:
 
 | Change | Written with | Category |
 |---|---|---|
@@ -144,7 +144,7 @@ Issue-body prose in an issue opened by the invoking user — interpretation para
 | One line on each existing verify report after the diagnosis is corrected | `/idd-edit comment:<id> --prepend-note` | `audit-block-append` |
 | New information, a decision, the course of the discussion | `/idd-comment #N --type <decision\|note\|question\|link>` | `append-only` (a new comment) |
 
-Someone else's content is never rewritten: their comment gets `/idd-comment --type errata`, their issue body `/idd-comment --type correction`, both new comments.
+Someone else's content is never rewritten: their comment gets `/idd-comment --type errata`, their issue body `/idd-comment --type correction`, both new comments. A skill that detects an error corrects only the invoking user's Diagnosis facts (`### Root Cause / Analysis`, `### Impact`, `### Risks`); the rest is listed. `--correct` ends the replaced text with a visible line (`--note`) before its marker.
 
 ## Decision tree for classifying new modify-actions
 

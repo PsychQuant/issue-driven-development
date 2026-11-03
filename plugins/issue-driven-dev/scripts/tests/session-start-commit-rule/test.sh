@@ -100,6 +100,10 @@ for tok in "rules/issue-write-back.md" "--correct" "errata"; do
   assert_grep "hook output contains write-back token: $tok" "$tok" "$OUT"
 done
 assert_grep "hook output says write-back does not ask first" "不先問" "$OUT"
+assert_grep "hook output limits it to decided changes" "明確定案" "$OUT"
+assert_grep "hook output limits it to repos you can write to" "有寫入權" "$OUT"
+RULE_PATH="$(printf '%s\n' "$OUT" | sed -n 's/.*讀 \([^ ]*rules\/issue-write-back\.md\).*/\1/p' | head -1)"
+assert_true "hook output names a rule file that exists ($RULE_PATH)" "[ -f '$RULE_PATH' ]"
 assert_file_exists "write-back rules file exists" "$WB_RULES"
 assert_grep "write-back rules file says it does not ask first" "不先問" "$(cat "$WB_RULES" 2>/dev/null || echo "")"
 

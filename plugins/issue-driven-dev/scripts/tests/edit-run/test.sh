@@ -150,6 +150,67 @@ assert_output_grep "an override writes its own marker" "override-user-content" <
 h a4of finish --run "$RUN"
 assert_exit "the overridden run exits 0" 0 "$RC"
 
+echo "A5n. the visible line and the reasons for holding back (#424)"
+TODAY="$(date +%Y-%m-%d)"
+mkrec comment-290.json kiki830621 MEMBER "$SECTION_BODY"
+printf 'right text\n' >"$WORK/fix-n.md"
+start a5n comment:290 --correct --section "## Notes" --body-file "$WORK/fix-n.md" --note "改用方案 B"
+h a5np prepare --run "$RUN" --target comment:290
+assert_output_grep "the preview carries the visible line" "_更正於 ${TODAY}（AI 判斷）：改用方案 B_" "$(val PREVIEW "$WORK/a5np.out")"
+h a5na apply --run "$RUN" --target comment:290 --scrub-attested warn --state "$(val STATE "$WORK/a5np.out")"
+h a5nf finish --run "$RUN"
+assert_exit "a noted correction exits 0" 0 "$RC"
+N290="$(body_of comment-290.json)"
+assert_grep "the written section has the visible line" "_更正於 ${TODAY}（AI 判斷）：改用方案 B_" "$N290"
+assert_eq "the line comes after the text and before the marker" "True" "$(python3 -c '
+import sys
+b = sys.argv[1]
+print(b.index("right text") < b.index("_更正於") < b.index("<!-- idd:edit") < b.index("## Next"))' "$N290")"
+mkrec comment-291.json kiki830621 MEMBER "$SECTION_BODY"
+start a5n2 comment:291 --correct --section "## Notes" --body-file "$WORK/fix-n.md"
+h a5n2p prepare --run "$RUN" --target comment:291
+h a5n2a apply --run "$RUN" --target comment:291 --scrub-attested warn --state "$(val STATE "$WORK/a5n2p.out")"
+h a5n2f finish --run "$RUN"
+assert_grep "without --note the line still marks the date and that an AI decided" "_更正於 ${TODAY}（AI 判斷）_" "$(body_of comment-291.json)"
+mkrec comment-292.json kiki830621 MEMBER "a"
+h a5n3 run-start --default-repo o/r -- comment:292 --append --body-file "$WORK/fix-n.md" --reason r --note x
+assert_exit "--note on another mode exits 2" 2 "$RC"
+h a5n4 run-start --default-repo o/r -- comment:292 --correct --scope whole-comment --body-file "$WORK/fix-n.md" --note "$(printf 'two\nlines')"
+assert_exit "a two-line --note exits 2" 2 "$RC"
+h a5n5 run-start --default-repo o/r -- comment:292 --correct --scope whole-comment --body-file "$WORK/fix-n.md" --note "$(python3 -c 'print("x"*201)')"
+assert_exit "a --note over 200 characters exits 2" 2 "$RC"
+h a5n6 run-start --default-repo o/r -- comment:292 --correct --scope whole-comment --body-file "$WORK/fix-n.md" --note 'x --> <!-- y'
+assert_exit "a --note holding an HTML comment token exits 2" 2 "$RC"
+for why in held-privacy:隱私自審 held-272:#272 held-unattended:unattended; do
+  r="${why%%:*}"; word="${why#*:}"
+  mkrec comment-293.json kiki830621 MEMBER "$SECTION_BODY"
+  start a5h comment:293 --correct --section "## Notes" --body-file "$WORK/fix-n.md"
+  h a5hp prepare --run "$RUN" --target comment:293
+  h a5hd discard --run "$RUN" --target comment:293 --reason "$r"
+  assert_exit "discard accepts --reason $r" 0 "$RC"
+  h a5hf finish --run "$RUN"
+  assert_exit "$r exits 9" 9 "$RC"
+  assert_output_grep "$r is reported as held back" "HELD comment:293" "$WORK/a5hf.out"
+  assert_output_grep "$r names the reason" "$word" "$WORK/a5hf.out"
+  refute_output_grep "$r does not say a user declined" "使用者在預覽時拒絕" "$WORK/a5hf.out"
+  assert_eq "$r leaves the comment unchanged" "$SECTION_BODY" "$(body_of comment-293.json)"
+done
+start a5h2 comment:293 --correct --section "## Notes" --body-file "$WORK/fix-n.md"
+h a5h2p prepare --run "$RUN" --target comment:293
+h a5h2d discard --run "$RUN" --target comment:293 --reason nonsense
+assert_exit "an unknown discard reason exits 2" 2 "$RC"
+h a5h2e discard --run "$RUN" --target comment:293
+h a5h2f finish --run "$RUN"
+assert_output_grep "a plain discard is still a decline" "DECLINED comment:293" "$WORK/a5h2f.out"
+for p in .netrc .zsh_history .bash_history .claude.json; do
+  HFILE="$WORK/home/$p"; mkdir -p "$WORK/home"; printf 'secret\n' >"$HFILE"
+  HOME="$WORK/home" h a5g run-start --default-repo o/r -- comment:292 --correct --scope whole-comment --body-file "$HFILE"
+  assert_exit "--body-file refuses $p" 5 "$RC"
+done
+mkdir -p "$WORK/home/.claude/projects/x"; printf 'secret\n' >"$WORK/home/.claude/projects/x/s.jsonl"
+HOME="$WORK/home" h a5g2 run-start --default-repo o/r -- comment:292 --correct --scope whole-comment --body-file "$WORK/home/.claude/projects/x/s.jsonl"
+assert_exit "--body-file refuses a session transcript" 5 "$RC"
+
 echo "A5. declined, mixed batch, never applied"
 mkrec comment-205.json kiki830621 MEMBER "a"
 mkrec comment-206.json collaborator MEMBER "b"

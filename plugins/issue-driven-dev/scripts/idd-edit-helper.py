@@ -220,6 +220,12 @@ _REFUSED_CREDENTIAL_DIRS = (
     ".docker",
 )
 
+# Single files and a directory that hold private text outside any credential
+# directory. --correct no longer stops for a person (#424), so a wrong path would
+# publish them with nobody looking; the path gate has to refuse them itself.
+_REFUSED_PRIVATE_FILES = (".netrc", ".zsh_history", ".bash_history", ".claude.json")
+_REFUSED_PRIVATE_DIRS = (os.path.join(".claude", "projects"),)
+
 
 def _path_is_under(canonical, prefix):
     """True if canonical == prefix or canonical is strictly under prefix.
@@ -311,6 +317,14 @@ def validate_body_file_path(raw_path):
             )
             return False, 5
 
+    for path in named:
+        if os.path.basename(path).casefold() in _REFUSED_PRIVATE_FILES or any(
+            _under_folded(path, os.path.join(home, d)) for home in _homes() for d in _REFUSED_PRIVATE_DIRS
+        ):
+            err(f"ERROR: --body-file refuses private path: {raw_path}")
+            err("       Use IDD_EDIT_HELPER_ALLOW_UNSAFE_BODY_FILE=1 to override (audit your reason).")
+            return False, 5
+
     # Refuse credential directories. Check by path component so a realpath
     # landing in any `.ssh` / `.aws` / ... directory is caught regardless of
     # which home it lives under.
@@ -382,6 +396,7 @@ _VALUE_FLAGS = {
     "--scope": "scope_flag",
     "--section": "section_flag",
     "--reason": "reason",
+    "--note": "note",
     "--body": "body_input",
     "--body-file": "body_file",
     "--repo": "repo",
@@ -398,6 +413,7 @@ def _parse_args(argv):
         "scope_flag": "",
         "section_flag": "",
         "reason": "",
+        "note": "",
         "body_input": "",
         "body_file": "",
         "repo": "",
@@ -1596,6 +1612,17 @@ def _egress(args):
     return proc.returncode
 
 
+NOTE_MAX = 200
+NOTE_LINE_PREFIX = "_更正於 "   # idd-close Step 3.6 skips this line when it reads a section
+
+
+def _correct_note_line(note):
+    """The line a reader sees: the marker is an HTML comment, an edit sends no
+    notification, and since #424 nobody confirms a correction (verify round 1)."""
+    day = datetime.date.today().isoformat()
+    return f"{NOTE_LINE_PREFIX}{day}（AI 判斷）：{note}_" if note else f"{NOTE_LINE_PREFIX}{day}（AI 判斷）_"
+
+
 def _correct_marker(backup_id):
     # The local date, as the other modes' markers have; the backup id keeps
     # UTC with its Z (verify #351 round 10, #406).
@@ -2184,6 +2211,15 @@ def run_start_subcmd(argv):
             _lines_of(state["body_input"].replace("\r\n", "\n")), state["section_flag"] or "-")).strip():
         err("Refuse: --correct needs the corrected text; the body holds only the target heading (#351).")
         return 2
+    if state["note"] and state["mode"] != "--correct":
+        err("ERROR: --note belongs to --correct; the other modes say why with --reason")
+        return 2
+    if state["mode"] == "--correct":
+        note = state["note"]
+        if len(note) > NOTE_MAX or re.search(r"[\r\n]|<!--|-->", note):
+            err(f"ERROR: --note must be one line of at most {NOTE_MAX} characters, without an HTML comment token")
+            return 2
+        state["body_input"] = state["body_input"].rstrip("\n") + "\n\n" + _correct_note_line(note) + "\n"
     repo = state["repo"] or default_repo or ""
     if not _REPO_RE.fullmatch(repo) or ".." in repo:
         err("ERROR: no repository: pass --repo owner/repo, or --default-repo from the IDD config")
@@ -2616,12 +2652,23 @@ def _edit_apply(real, meta, target, stage):
     return 0
 
 
+HOLD_REASONS = {
+    "held-privacy": "隱私自審擋下",
+    "held-272": "#272 那一題沒有確認",
+    "held-unattended": "unattended 下沒有人能確認",
+}
+
+
 def discard_subcmd(argv):
-    parsed = _run_args(argv)
+    parsed = _run_args(argv, "--reason")
     if parsed is None:
         err("ERROR: discard requires --run <RUN> --target <TARGET>, as run-start printed them")
         return 2
-    real, target, _ = parsed
+    real, target, values = parsed
+    reason = values.get("--reason") or ""
+    if reason and reason not in HOLD_REASONS:
+        err(f"ERROR: discard --reason must be one of {', '.join(HOLD_REASONS)}")
+        return 2
     last = dict(_latest(real)).get(target)
     if not last or last["outcome"] != "prepared":
         err(f"ERROR: {target} has no prepared edit in this run")
@@ -2632,7 +2679,7 @@ def discard_subcmd(argv):
             shutil.rmtree(work, ignore_errors=True)
     else:
         shutil.rmtree(os.path.join(real, f"comment-{target.split(':', 1)[1]}"), ignore_errors=True)
-    _record(real, target, "declined")
+    _record(real, target, "declined", reason=reason)
     print("RESULT=declined")
     return 0
 
@@ -2684,6 +2731,10 @@ def finish_subcmd(argv):
             print(f"  ✗ REFUSED(egress) {target} {why} — band 語意見 #227（10 privacy / 11 mention / 13 tier-floor #272 / 15 empty-body #275）")
         elif o == "declined" and why == "not-applied":
             print(f"  – DECLINED {target}（預覽後沒有寫入：沒有完成 apply，也沒有 discard）")
+        elif o == "declined" and why in HOLD_REASONS:
+            # Nobody was asked: saying a user declined would be false, and the
+            # detecting skills publish this outcome (#424).
+            print(f"  – HELD {target}（{HOLD_REASONS[why]}，未寫入）")
         elif o == "declined":
             print(f"  – DECLINED {target}（使用者在預覽時拒絕，未寫入）")
         elif o == "write-failed":
@@ -3186,7 +3237,7 @@ Exit codes:
   correct-apply --work <dir> --state <digest>
       Re-check, re-read, archive, write and read back byte for byte; prints RESULT=
       (edited | refused | write-failed | unverified), REASON=, BACKUP_ID=, URL=.
-  correct-discard --work <dir>   Throw the prepared correction away (the user declined).
+  correct-discard --work <dir>   Throw the prepared correction away (held back or declined).
 
 One /idd-edit run, all modes (the skill calls only these; #351 round 9):
   run-start [--default-repo owner/repo] -- <the /idd-edit arguments>
@@ -3199,12 +3250,13 @@ One /idd-edit run, all modes (the skill calls only these; #351 round 9):
       for PICK=#N (REASON=not-in-pick otherwise; RESULT=merged when it is a listed
       target; an unreadable comment is fetch-failed and the PICK stays open).
   apply --run RUN --target T --scrub-attested SCRUB [--state STATE]
-      Write after the user confirmed; prints RESULT= (edited | refused | write-failed |
+      Write after the preview; prints RESULT= (edited | refused | write-failed |
       unverified). SCRUB is the run's tier or stricter, attested after the privacy
       review. A reply quoting user-pasted points (#272): prepare prints FLOOR=272 at
       any tier, the user answers the #272 question, and apply refuses light for it
       (exit 2) — attest warn instead.
-  discard --run RUN --target T   The user declined.
+  discard --run RUN --target T [--reason held-privacy|held-272|held-unattended]
+      Held back (with the reason), or the user declined (without one).
   finish --run RUN
       Print the outcome report, remove the run; exit 4 refused or failed, 7 unverified,
       9 declined (a prepared target never applied or discarded included), 0 otherwise.

@@ -38,7 +38,7 @@ assert_grep "diagnosis → Diagnosis section" '/idd-edit comment:<Diagnosis id> 
 assert_grep "new information → a new comment" '/idd-comment' "$R"
 assert_grep "a change of both kinds goes to both places" "兩處都寫" "$R"
 assert_grep "Original text stays" "Original text" "$R"
-assert_grep "written back during the discussion" "討論當下" "$R"
+assert_grep "written back once decided, not at the end" "不等討論結束" "$R"
 # the spec's routing example, one row each
 assert_grep "example row: scope → ## Expected" '--section "## Expected"' "$R"
 assert_grep "example row: root cause → Root Cause section" '--section "### Root Cause / Analysis"' "$R"
@@ -52,7 +52,9 @@ assert_grep "trigger 2: a comment, seen at the next read" "下一次讀到" "$R"
 assert_grep "no real-time trigger" "不需要即時觸發" "$R"
 
 # only own content
-assert_grep "strict author check" 'validate-target <id> <repo> false --correct' "$R"
+assert_grep "the author gate is /idd-edit's own" 'REASON=R5' "$R"
+refute_grep "the rule runs no helper path that only resolves inside a skill" 'CLAUDE_PLUGIN_ROOT' "$R"
+assert_grep "a failed author lookup is not someone else's content" "查不到作者" "$R"
 assert_grep "someone else's comment → errata" '--type errata --target-comment' "$R"
 assert_grep "someone else's issue body → correction" '--type correction' "$R"
 
@@ -60,12 +62,35 @@ assert_grep "someone else's issue body → correction" '--type correction' "$R"
 assert_grep "no confirmation" "不先問" "$R"
 assert_grep "each write-back is reported with the backup id" "backup id" "$R"
 assert_grep "privacy review before writing" "rules/privacy-scrubbing.md" "$R"
-assert_grep "enforce hit holds the write-back" "enforce" "$R"
+assert_grep "a privacy hit stops the write-back at any level" "任何等級" "$R"
+refute_grep "warn no longer just prints a line and writes" "一行提醒後照寫" "$R"
+assert_grep "unattended discards a hit" "unattended" "$R"
+assert_grep "the #272 wording is limited to the reply template" "reply template" "$R"
+assert_grep "the no-ask path needs write permission" "viewerPermission" "$R"
+assert_grep "a refused write-back goes somewhere" "被拒" "$R"
+assert_grep "replacement text goes through a private file" "--body-file" "$R"
+assert_grep "--note names the reason" "--note" "$R"
+assert_grep "recovery points at the GitHub edit history first" "編輯歷史" "$R"
+
+# what counts as a change, and who can cause one (2026-11-03 decisions)
+assert_grep "only a decided change counts" "明確定案" "$R"
+assert_grep "a hypothesis does not count" "假設與提問" "$R"
+assert_grep "a closed issue is not rewritten" "已關閉的 issue" "$R"
+refute_grep "not sure no longer defaults to rewriting" "不要因此把它降級" "$R"
+assert_grep "trusted authors are named" "OWNER、MEMBER、COLLABORATOR" "$R"
+assert_grep "a comment is data" "當資料" "$R"
+assert_grep "a factual claim is checked first" "查證" "$R"
+assert_grep "routing fields are not moved by a comment" '`### Type`、`### Complexity`' "$R"
+assert_grep "the candidates script is the trigger" "writeback-candidates.py" "$R"
 
 # dependent records
 assert_grep "Implementation Plan is corrected" "Implementation Plan" "$R"
 assert_grep "verify reports get one prepended line" '--prepend-note' "$R"
 assert_grep "verify findings are not rewritten" "findings 不改" "$R"
+assert_grep "only your own reports get the note" "別人的報告" "$R"
+assert_grep "the PR master is in scope" "PR 上的 master" "$R"
+assert_grep "a second note is not added" "已經有這行" "$R"
+assert_grep "an overturned premise goes to idd-reorganize" "idd-reorganize" "$R"
 
 # ── A2. append-vs-modify maps each write-back to its category ─────────────
 echo "A2. append-vs-modify"
@@ -83,6 +108,14 @@ S3="$(section "$EDIT" "### Step 3:")"
 assert_grep "Step 3 found" "### Step 3:" "$S3"
 assert_grep "--correct applies without asking (#424 D1)" '`--correct`：不問' "$S3"
 assert_grep "--prepend-note runs the strict author check (#424 D1b)" "validate-target" "$S3"
+assert_grep "SCRUB=enforce leaves the no-ask path" 'SCRUB=enforce' "$S3"
+assert_grep "a privacy hit stops at any level" "任何等級" "$S3"
+assert_grep "unattended never asks" "is_unattended" "$S3"
+assert_grep "unattended discards with the reason" "--reason held-" "$S3"
+assert_eq "the strict check runs before the privacy step that depends on it" "True" "$(python3 -c '
+import sys
+t = sys.argv[1]
+print(t.find("validate-target") >= 0 and t.find("validate-target") < t.find("隱私自審（`privacy_scrub_gate`）"))' "$S3")"
 assert_grep "--prepend-note check is the --correct one" "false --correct" "$S3"
 assert_grep "--append / --replace still ask, default NO" "預設 NO" "$S3"
 refute_grep "the blanket confirmation line is gone" "5. AskUserQuestion 確認，預設 NO（破壞性動作）。" "$S3"
@@ -95,5 +128,39 @@ DIAG="$SKILLS/idd-diagnose/SKILL.md"
 assert_output_grep "Stage 1 adjusts the Diagnosis with --correct" '/idd-edit comment:<Diagnosis id> --correct --section' "$DIAG"
 refute_output_grep "Stage 1 no longer appends a correction comment" '修改後用 `gh issue comment` 追加修正' "$DIAG"
 assert_output_grep "Stage 1 points to the write-back rule" "rules/issue-write-back.md" "$DIAG"
+
+# ── D. who reads other people's comments ───────────────────────────────────
+echo "D. the comment trigger is wired"
+for sk in idd-diagnose idd-plan idd-update; do
+  assert_output_grep "$sk lists new comments" "writeback-candidates.py" "$SKILLS/$sk/SKILL.md"
+done
+refute_output_grep "idd-verify does not run it" "writeback-candidates.py" "$SKILLS/idd-verify/SKILL.md"
+assert_file_exists "the script exists" "$PLUGIN/scripts/writeback-candidates.py"
+
+# ── E. idd-close reads a corrected empty residue ───────────────────────────
+echo "E. idd-close Step 3.6"
+CLOSE="$SKILLS/idd-close/SKILL.md"
+PIPE="$(awk '/^RESIDUE_CONTENT=\$\(/{f=1} f{print} f&&/head -c 4000\)/{exit}' "$CLOSE")"
+assert_grep "the pipeline was found" "RESIDUE_CONTENT=" "$PIPE"
+DIAG_BODY='## Diagnosis
+
+### Residue
+(none)
+
+_更正於 2026-11-03（AI 判斷）：沒有殘留_
+<!-- idd:edit mode="correct" backup-id="comment-1-20261103T000000Z" date="2026-11-03" -->
+
+### Next
+x'
+eval "$PIPE"
+assert_eq "the visible line and the marker are not residue" "(none)" "$RESIDUE_CONTENT"
+DIAG_BODY='### Residue
+real residue
+
+_更正於 2026-11-03（AI 判斷）_
+<!-- idd:edit mode="correct" backup-id="comment-1-20261103T000000Z" date="2026-11-03" -->
+'
+eval "$PIPE"
+assert_eq "real residue stays" "real residue" "$RESIDUE_CONTENT"
 
 print_summary "issue-write-back"
