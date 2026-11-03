@@ -111,6 +111,11 @@
 #   - at the tip, an added line already elsewhere in the files the same commit
 #     touched, or a deleted line the branch head still has there (a moved or
 #     duplicated line);
+#   - after a merge of main into the branch: a commit that sets a line back to its
+#     merge-base value and never landed (the maintainer accepted this on 2026-11-03); a
+#     commit in place in a commit of another branch that main merged too; a skipped rename
+#     detection where the merge carried the edit to a new name and the shortcut holds;
+#   - a main move before the fork of a commit reached only through a merge's second parent;
 #   - a move or copy git's rename detection does not record inside one commit (a copy; a
 #     file moved with another put at its old name, or onto a name that exists; a directory
 #     main renamed under a file the branch added; a file moved and rewritten by more than
@@ -310,15 +315,6 @@ skip() { printf 'check-merge-completeness: %s\n' "$*" >&2; exit 4; }
 B="\"$(printf '%s' "$BRANCH" | clean)\""; S="\"$(printf '%s' "$BASELINE" | clean)\""
 RP="\"$(printf '%s' "$REPO" | clean)\""
 
-# Resolve both inputs to commit SHAs up front. `--end-of-options` prevents an
-# option-shaped ref (attacker-controllable PR branch name like `--upload-pack=x`)
-# from being parsed as a git option (#184 S1). A SHA can never be option-shaped,
-# so every downstream git call is injection-safe. Unresolvable → skip (exit 4).
-BRANCH_SHA="$(GIT rev-parse --verify --quiet --end-of-options "${BRANCH}^{commit}" 2>/dev/null)" \
-  || skip "cannot resolve branch $B in $RP"
-BASELINE_SHA="$(GIT rev-parse --verify --quiet --end-of-options "${BASELINE}^{commit}" 2>/dev/null)" \
-  || skip "cannot resolve baseline $S in $RP"
-
 # In a partial clone, git before 2.45 has no way to refuse fetching a blob it never
 # fetched (GIT_NO_LAZY_FETCH above is 2.45's): the check would run the user's
 # transport and write into the repository (#399 verify round 16). A partial clone is
@@ -339,6 +335,15 @@ if [ -n "$PARTIAL" ]; then
     skip "this is a partial clone, and git older than 2.45 would fetch the blobs it never fetched (use git 2.45 or newer, or check by hand)"
   fi
 fi
+
+# Resolve both inputs to commit SHAs up front. `--end-of-options` prevents an
+# option-shaped ref (attacker-controllable PR branch name like `--upload-pack=x`)
+# from being parsed as a git option (#184 S1). A SHA can never be option-shaped,
+# so every downstream git call is injection-safe. Unresolvable → skip (exit 4).
+BRANCH_SHA="$(GIT rev-parse --verify --quiet --end-of-options "${BRANCH}^{commit}" 2>/dev/null)" \
+  || skip "cannot resolve branch $B in $RP"
+BASELINE_SHA="$(GIT rev-parse --verify --quiet --end-of-options "${BASELINE}^{commit}" 2>/dev/null)" \
+  || skip "cannot resolve baseline $S in $RP"
 
 # Candidate orphans = '+'-marked commits (patch-id absent from baseline).
 CHERRY="$(GIT cherry "$BASELINE_SHA" "$BRANCH_SHA" 2>/dev/null)" || {

@@ -71,7 +71,7 @@ copy is an effect too. A file is its path: "a path" is whatever file is at that 
   3. otherwise the helper does not judge: exit 4, "a file the branch touched was moved or renamed",
      naming the commit.
 
-  **Known limits, read by path** (only these; decided 2026-11-02; the answer can be a false clean or
+  **Known limits, read by path** (only these; decided 2026-11-02, except the main move before a second-parent commit's fork, added in round 26, which gives round 20's answer; the answer can be a false clean or
   a false listing): a copy; a file moved with another put at its old name; a file moved onto a name
   that exists; a directory main renamed under a file the branch added; a file moved and rewritten
   by more than half in one commit; a move over two commits that never landed or landed separately
@@ -425,7 +425,7 @@ nothing unexplained.
   branch whose earlier commits reached main in a form no earlier state of it matches (a
   squash of them edited by hand). Its verdict is wrong (exit 0). 3.5.0, which compared the
   tip, listed some of these.
-- **S1, the Update-branch check.** A commit that landed in two pieces, part in a first PR (a squash edited by hand) and the rest in the PR that completes it, is listed although it landed. A merge of another branch that main merged too passes for a merge of main, so a commit in place in that branch's commit is not listed. A commit that sets lines back to their merge-base values and never landed is not listed after a merge of main: that state is already in place at the merged main commit (a false clean).
+- **S1, the Update-branch check.** A commit that landed in two pieces, part in a first PR (a squash edited by hand) and the rest in the PR that completes it, is listed although it landed. A merge of another branch that main merged too passes for a merge of main, so a commit in place in that branch's commit is not listed. A commit that sets lines back to their merge-base values and never landed is not listed after a merge of main: that state is already in place at the merged main commit (a false clean; accepted by the maintainer on 2026-11-03).
 - **B2, main's own commit holds the net change.** When main made a commit of its own —
   before it received S, or after — that holds the branch's net change (it made the same
   edit, or replaced a line the branch deleted), and no earlier commit holds it, that commit
@@ -897,6 +897,7 @@ How the numbers got here:
 - **Round 22 verify.** Four HIGH, the devil's advocate unfinished (quota): P0 turned off where head and tip were identical; a directory emptied over two commits; a merge off the first-parent line; template copies read as moves. Again answers changed for histories without moves.
 - **Round 23 (the maintainer's decision of 2026-11-02).** Copy detection, blob pairing, the directory rule and their counts are gone; those shapes are known limits (Definition, "Moves"). Renames inside the branch's merges and both Update-branch checks stay. On the 337 merged PRs of this repository and Akashic-Library every answer equals round 20's (all 0 at close time, 4 exit 4 against today's main), at the same CPU. bounded.py and bounded_sync.py give round 22's numbers.
 - **Rounds 23 to 25 verify.** The second check cleared a commit that sets a line back to its merge-base value and never landed. Guards at the commit and hunk level each left false cleans or brought #399's false listing back, and no criterion separates a set-back from a branch rewriting its own line, so the guard is gone and the shape is in S1.
+- **Rounds 26 and 27.** The guard is gone (S1). Diff indicators are pinned (fixture 253); a merge spanning main's separate delete and add exits 4 (fixture 254); the partial-clone refusal comes before the inputs are resolved. On that helper: suite 439, run-all-tests, bounded_sync.py 6,264 with 0 unexplained, the 337 merged PRs identical to round 20. `--pre-edit`, bounded.py and the fuzzers were last run on round 23's helper; the second check differs from it only by comments and the set-back guard that came and went.
 - `--after` needs length 2: a single-commit squash is matched by `git cherry`, so no length-1
   case reaches the landing step. Rounds 13 and 14 ran no `--old-git` mode: the helper has not
   called merge-tree since round 12.
