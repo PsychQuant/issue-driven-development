@@ -568,7 +568,7 @@ TaskCreate(name="recovery_protocol", description="Step 2.5 (NEW per #52): 缺 fi
 TaskCreate(name="wait_for_codex", description="等 Codex 背景任務完成,讀 $VERIFY_DIR/codex.md")
 TaskCreate(name="freshness_gate", description="Step 2.9 (#228): merge/aggregate 前比對 FROZEN_SHA vs 當前 HEAD（PR mode: PR head oid）— 不一致 → 拒絕 aggregate,要求 re-freeze + 補審 delta round;一致才放行 merge")
 TaskCreate(name="merge_findings", description="合併 6 個來源 findings 去重,severity 取最高")
-TaskCreate(name="list_published_errors", description="Step 3.5 (#351、#424): findings 證明 issue 正文或既有 comment 已發表的敘述有錯 → 寫成 finding（位置、錯誤類型、正確內容，不重述錯的值）；Expected、範圍、checklist、Type、Complexity 的錯是 Blocking；不呼叫 /idd-edit、不貼 comment")
+TaskCreate(name="list_published_errors", description="Step 3.5 (#351、#424): findings 證明 issue 正文或既有 comment 已發表的敘述有錯 → 寫成 Action 為 listed 的 finding（位置、錯誤類型、正確內容，不重述錯的值），不進修正迴圈；不呼叫 /idd-edit、不貼 comment")
 TaskCreate(name="post_master_and_pointers", description="PR mode: master 貼到 PR + capture URL → 為每個 ref'd issue 貼 pointer comment；本地 mode: 貼到 issue（單 issue 直接貼／多 issue 用 SOP master+pointer）")
 TaskCreate(name="tag_verified", description="Step 4.5 (#85): if config auto_tag.enabled (default on) AND Aggregate PASS, tag idd-{N}-verified at the PR head (PR mode) / current HEAD (local mode) + git push. Idempotent + graceful-skip. Cluster: tag each ref'd #N. Skip on FAIL or auto_tag.enabled=false.")
 TaskCreate(name="restore_working_tree", description="PR mode 結束後 git checkout 回原 branch（Step 0.5 記住的）")
@@ -814,15 +814,6 @@ git diff --stat origin/$DEFAULT_BRANCH...$BRANCH
 for I in $REFD_ISSUES; do
   gh issue view $I --repo $GITHUB_REPO --json title,body > "$VERIFY_DIR/issue_$I.json"
 done
-
-# 需求端的基準（#424）：issue 正文的雜湊與最新 Diagnosis 的 updated_at。Step 2.9 用同一段
-# 指令再算一次，判斷驗證期間 Diagnosis 或正文有沒有被另一個 session 改過。
-req_state() {   # $1 = issue number
-  gh api "repos/$GITHUB_REPO/issues/$1" --jq '.body' | shasum -a 256 | cut -c1-16
-  gh api "repos/$GITHUB_REPO/issues/$1/comments" --paginate \
-    --jq '.[] | select((.body // "") | test("^\\s*## Diagnosis")) | .updated_at' | tail -1
-}
-for I in $REFD_ISSUES; do req_state "$I" > "$VERIFY_DIR/req-before-$I.txt"; done
 ```
 
 ### Step 1.5: 檢查 Attachment(下游,給 reviewer agents 用)
@@ -1211,8 +1202,6 @@ if [ "$CURRENT_SHA" != "$FROZEN_SHA" ]; then
 fi
 ```
 
-**需求端也會動（#424）**：寫回可能由另一個 session 發生。Step 1 存了 `$VERIFY_DIR/req-before-<N>.txt`（issue 正文的雜湊與最新 Diagnosis 的 `updated_at`），這裡用 Step 1 的 `req_state` 再算一次（`req_state "$I" | cmp -s - "$VERIFY_DIR/req-before-$I.txt"`）；不同就在報告的 Engine 下註明「驗證期間 Diagnosis 或正文被改過」，不擋 aggregate（finding 仍對應凍結的 head），讀者要自己判斷。
-
 **紀律句（normative，與 gate 互補）**：verify in-flight 期間不得 commit — orchestrator 收到 findings 的修復**累積到 round 結束**再一次 commit + 觸發下一 round（DA-CRIT-1 當次的處置，自此為正式紀律）。gate 是兜底，紀律是根治：兩者缺一，另一仍能守住。
 
 ### Step 3: 合併 Findings
@@ -1232,8 +1221,8 @@ fi
 **verify 不改任何已發表的內容，也不貼 comment**（維護者 2026-11-03 決定，#424 comment 6611450882）。feature 的 `### Root Cause / Analysis` 就是需求拆解，而 verify 查證用的證據正是受驗的 code；自己改，就會把依據改得符合 code。每一項寫成一則 finding：
 
 - 位置（`issue:<N>` 的段落，或 `comment:<id>` 的段落）、錯誤類型、正確內容；不重述錯的值，不引用 comment 原文。
-- 落在 `## Expected`、範圍、checklist、`### Type`、`### Complexity` 的，Action 是 **Blocking**：要人決定，這一輪因此不會是乾淨的 PASS。其他照 Step 5a 分類。
-- 要改的話，由人在 session 裡定案後依 [`rules/issue-write-back.md`](../../rules/issue-write-back.md) 寫回；bug 的 Diagnosis 事實，下一次 `/idd-diagnose` 會自己查證後更正。
+- Action 寫 `listed`：要人決定，不算 Blocking 也不算 In-scope fix，不進修正迴圈（修 code 去符合一個有爭議的 Expected 正是要避免的事）。報告貼出後由人看；#392 讓 idd-all 自己合併之後，它的 close gate 遇到 `listed` 就停。
+- 要改的話，由人在 session 裡定案後依 [`rules/issue-write-back.md`](../../rules/issue-write-back.md) 寫回，或重跑 `/idd-diagnose`（bug 的 Diagnosis 事實它會查證後自己更正）。
 
 ### Step 4: Comment（master + pointer 規則）
 

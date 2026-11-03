@@ -246,6 +246,25 @@ for p in .cache/idd/corrections/fix.md .claude/jobs/x/tmp/fix.md notes/fix.md; d
   h a5qf finish --run "$(val RUN "$WORK/a5q.out")"
 done
 
+echo "A5r4. an earlier line and marker copied from the section; home case"
+mkrec comment-296.json kiki830621 MEMBER "$SECTION_BODY"
+printf 'right text\n\n_更正於 2026-01-01（AI 判斷）：old claim_\n<!-- idd:edit mode="correct" backup-id="comment-296-20260101T000000Z" date="2026-01-01" -->\n' >"$WORK/fix-copy.md"
+start a5k comment:296 --correct --section "## Notes" --body-file "$WORK/fix-copy.md" --note "new claim"
+h a5kp prepare --run "$RUN" --target comment:296
+h a5ka apply --run "$RUN" --target comment:296 --scrub-attested warn --state "$(val STATE "$WORK/a5kp.out")"
+h a5kf finish --run "$RUN"
+N296="$(body_of comment-296.json)"
+refute_grep "a copied earlier line is dropped" "old claim" "$N296"
+refute_grep "a copied earlier marker is dropped" "20260101T000000Z" "$N296"
+printf '_更正於 2026-01-01（AI 判斷）：old_\n<!-- idd:edit mode="correct" backup-id="comment-296-20260101T000000Z" date="2026-01-01" -->\n' >"$WORK/only-old.md"
+h a5k2 run-start --default-repo o/r -- comment:296 --correct --section "## Notes" --body-file "$WORK/only-old.md"
+assert_exit "a replacement of an old line and marker only is refused" 2 "$RC"
+mkdir -p "$WORK/home"; printf 'secret\n' >"$WORK/home/.pgpass"
+if [ -e "$WORK/HOME/.pgpass" ]; then
+  HOME="$WORK/home" h a5k3 run-start --default-repo o/r -- comment:292 --correct --scope whole-comment --body-file "$WORK/HOME/.pgpass"
+  assert_exit "a home path in other case is still refused" 5 "$RC"
+fi
+
 echo "A5. declined, mixed batch, never applied"
 mkrec comment-205.json kiki830621 MEMBER "a"
 mkrec comment-206.json collaborator MEMBER "b"

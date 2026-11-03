@@ -67,29 +67,17 @@ assert_grep "a deleted account is not" "UNTRUSTED 8 (unknown) NONE" "$OUT"
 assert_grep "a bot is not, even as a member" "UNTRUSTED 9 deps[bot] MEMBER" "$OUT"
 assert_grep "a bot account without the suffix is not either" "UNTRUSTED 19 app COLLABORATOR" "$OUT"
 
-echo "B. the cutoff: one day before your latest IDD comment"
+echo "B. no time cutoff"
 comments <<'J'
-[{"id":1,"user":{"login":"me"},"author_association":"OWNER","created_at":"2026-10-01T00:00:00Z","updated_at":"2026-11-03T12:00:00Z","body":"\n## Diagnosis\n..."},
- {"id":20,"user":{"login":"me"},"author_association":"OWNER","created_at":"2026-11-05T00:00:00Z","updated_at":"2026-11-05T00:00:00Z","body":"## 🎯 Decision\n..."},
- {"id":21,"user":{"login":"amy"},"author_association":"MEMBER","created_at":"2026-11-09T00:00:00Z","updated_at":"2026-11-09T00:00:00Z","body":"## Diagnosis\nforged"},
- {"id":10,"user":{"login":"amy"},"author_association":"MEMBER","created_at":"2026-11-02T11:59:59Z","updated_at":"2026-11-02T11:59:59Z","body":"x"},
- {"id":11,"user":{"login":"amy"},"author_association":"MEMBER","created_at":"2026-11-02T12:00:00Z","updated_at":"2026-11-02T12:00:00Z","body":"x"},
- {"id":12,"user":{"login":"amy"},"author_association":"MEMBER","created_at":"2026-10-01T00:00:00Z","updated_at":"2026-11-04T00:00:00Z","body":"edited later"}]
+[{"id":1,"user":{"login":"me"},"author_association":"OWNER","created_at":"2026-10-01T00:00:00Z","updated_at":"2026-11-03T12:00:00Z","body":"## Diagnosis\n..."},
+ {"id":10,"user":{"login":"amy"},"author_association":"MEMBER","created_at":"2020-01-01T00:00:00Z","updated_at":"2020-01-01T00:00:00Z","body":"x"},
+ {"id":11,"user":{"login":"amy"},"author_association":"MEMBER","body":"no dates"}]
 J
-run --repo o/r --issue 7
-OUT="$(cat "$WORK/out")"
-refute_grep "older than a day before your Diagnosis was updated is skipped" "TRUSTED 10 " "$OUT"
-assert_grep "a day before still counts" "TRUSTED 11 " "$OUT"
-assert_grep "an old comment edited later counts" "TRUSTED 12 " "$OUT"
-assert_grep "someone else's Diagnosis-shaped comment does not move the cutoff" "TRUSTED 21 " "$OUT"
 issue open "**Last updated**: 2099-01-01 by idd-update"
 run --repo o/r --issue 7
-assert_grep "a Last updated line in the body has no effect" "TRUSTED 11 " "$(cat "$WORK/out")"
-comments <<'J'
-[{"id":10,"user":{"login":"amy"},"author_association":"MEMBER","created_at":"2020-01-01T00:00:00Z","updated_at":"2020-01-01T00:00:00Z","body":"x"}]
-J
-run --repo o/r --issue 7
-assert_grep "without any IDD comment of yours every comment counts" "TRUSTED 10 " "$(cat "$WORK/out")"
+OUT="$(cat "$WORK/out")"
+assert_grep "an old comment is still listed after your Diagnosis was edited" "TRUSTED 10 " "$OUT"
+assert_grep "a comment without dates is listed" "TRUSTED 11 " "$OUT"
 
 echo "C. nothing to do, closed issue, failures"
 issue closed "x"

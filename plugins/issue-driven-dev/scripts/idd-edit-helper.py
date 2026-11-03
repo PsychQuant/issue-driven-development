@@ -240,7 +240,9 @@ def _private_path(path):
         for base in {home, os.path.realpath(home)}:
             if not _under_folded(path, base) or path == base:
                 continue
-            parts = [p.casefold() for p in os.path.relpath(path, base).split(os.sep)]
+            # relpath compares case-sensitively; the folded prefix match above
+            # does not, so cut the prefix off instead (round 3: /users/x/.netrc).
+            parts = [p.casefold() for p in path[len(base.rstrip(os.sep)) + 1:].split(os.sep)]
             if len(parts) == 1 and parts[0].startswith("."):
                 return True
             if parts[0] == ".claude" and not (len(parts) >= 4 and parts[1] == "jobs" and parts[3] == "tmp"):
@@ -2245,7 +2247,10 @@ def run_start_subcmd(argv):
         # A line from an earlier correction at the end of the replacement would
         # stand next to the new one and may state what is now wrong (round 2).
         lines = state["body_input"].replace("\r\n", "\n").rstrip("\n").split("\n")
-        while lines and (not lines[-1].strip() or lines[-1].startswith(NOTE_LINE_PREFIX)):
+        # Its marker too: a replacement copied from the section ends with both
+        # (round 3), and the apply writes a new marker.
+        while lines and (not lines[-1].strip() or lines[-1].startswith(NOTE_LINE_PREFIX)
+                         or lines[-1].startswith('<!-- idd:edit mode="correct"')):
             lines.pop()
         if not "\n".join(_strip_target_heading(lines, state["section_flag"] or "-")).strip():
             err("Refuse: --correct needs the corrected text; the body holds only the target heading (#351).")

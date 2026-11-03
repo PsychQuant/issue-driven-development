@@ -10,7 +10,7 @@
 # NO matcher on the SessionStart entry — DELIBERATE (#214 R1 finding 8):
 # firing on startup/resume/clear/compact means the rule survives context
 # compaction; the tax is ≤5 lines per SessionStart EVENT, not per session.
-ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+ROOT="${CLAUDE_PLUGIN_ROOT:-$(CDPATH= cd -- "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cat <<RULES
 ── IDD 紀律（完整版在 issue-driven-dev plugin 的 rules/commit-issue-reference.md 與 rules/issue-write-back.md）──
 1. Issue ref 放 subject 尾端 (#N) 或 body 用 Refs #N

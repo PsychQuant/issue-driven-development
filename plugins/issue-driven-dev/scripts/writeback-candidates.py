@@ -3,25 +3,21 @@
 
 usage: writeback-candidates.py --repo <owner/repo> --issue <N>
 
-Prints one line per comment by someone other than the invoking user, updated no
-earlier than one day before your own latest `## Diagnosis`, `## Implementation
-Plan` or `## Implementation Complete` comment was updated:
+Prints one line per comment by someone other than the invoking user:
 
     TRUSTED <comment id> <login> <author_association>
     UNTRUSTED <comment id> <login> <author_association>
 
-Those three comments are posted by the skills that run this script, so a comment
-older than the latest of them was listed then; the day of margin covers the time
-between the listing and the post. Only your own comments set the cutoff: a line in
-the issue body, or someone else's comment, cannot hide comments. A comment edited
-later is compared by `updated_at`, so it comes back. A bot is UNTRUSTED whatever
-its association. Bodies are not printed: the reader fetches one by id and reads it
-as data.
+Every such comment, whatever its date. Rounds 2 and 3 of #424's verify took a
+cutoff from the issue body and then from your own stage comments; both hid
+comments nobody had read, because a write-back moves the very timestamp the
+cutoff trusts. The reader skips what is already reflected or already listed under
+`### Comments Not Taken`. A bot is UNTRUSTED whatever its association. Bodies are
+not printed: the reader fetches one by id and reads it as data.
 
 Exit: 0 (nothing printed = nothing to look at; a closed issue is not rewritten),
 1 could not read, 2 bad arguments.
 """
-import datetime
 import json
 import re
 import subprocess
@@ -31,7 +27,6 @@ TRUSTED = {"OWNER", "MEMBER", "COLLABORATOR"}
 REPO_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+")
 ISSUE_RE = re.compile(r"[0-9]{1,18}")
 LOGIN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]*(\[bot\])?")
-STAGE_RE = re.compile(r"^## (Diagnosis|Implementation Plan|Implementation Complete)\b")
 
 
 def gh_json(*args):
@@ -54,22 +49,6 @@ def gh_json(*args):
             values.append(value)
     except ValueError:
         return None
-
-
-def stamp(comment):
-    """When the comment last changed, as an aware datetime, or None."""
-    raw = str(comment.get("updated_at") or comment.get("created_at") or "")
-    try:
-        return datetime.datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-
-
-def first_line(body):
-    for line in (body or "").splitlines():
-        if line.strip():
-            return line.strip()
-    return ""
 
 
 def main(argv):
@@ -99,21 +78,10 @@ def main(argv):
         return 1
     comments = [c for page in pages for c in page if isinstance(c, dict) and isinstance(c.get("id"), int)]
 
-    latest = None
-    for comment in comments:
-        if (comment.get("user") or {}).get("login") == me and STAGE_RE.match(first_line(comment.get("body"))):
-            when = stamp(comment)
-            if when and (latest is None or when > latest):
-                latest = when
-    cutoff = latest - datetime.timedelta(days=1) if latest else None
-
     for comment in comments:
         user = comment.get("user") or {}
         login = user.get("login") or ""
         if login == me:
-            continue
-        when = stamp(comment)
-        if cutoff and when and when < cutoff:
             continue
         assoc = str(comment.get("author_association", "NONE"))
         assoc = assoc if assoc.isalpha() else "NONE"

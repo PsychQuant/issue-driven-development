@@ -22,7 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   review covers the text being added; a hit at `enforce` or `warn`, or new third-party verbatim text at `light`,
   stops the write-back (attended asks, unattended discards). Triggers, a closed list: a session discussion, and a
   comment by someone else, seen when `idd-diagnose`, `idd-plan` or `idd-implement` starts, through
-  `scripts/writeback-candidates.py`; `idd-verify` and `idd-update` do not look. Comments are read as data; only
+  `scripts/writeback-candidates.py` (every such comment, no time cutoff); `idd-verify` and `idd-update` do not look.
+  A comment not written back is listed under `### Comments Not Taken` by link and login only. Comments are read as data; only
   OWNER, MEMBER and COLLABORATOR comments that are not bots can lead to a write-back, a factual claim must be
   decided and checked on the default branch, and `### Type` and `### Complexity` never move because of a comment. A corrected diagnosis also corrects your Implementation Plan sections and adds
   one note to your verify reports (findings unchanged); when it overturns what was built, or the problem changed,
@@ -41,28 +42,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`/idd-edit` no longer asks questions in unattended mode.** A question becomes a discard with its reason
   (`discard --reason held-privacy|held-272|held-unattended`), and `finish` reports HELD instead of saying a user
   declined; it still exits 9.
-- **BREAKING: `idd-verify` lists published errors as findings and changes nothing**; an error in `## Expected`,
-  scope, a checklist, `### Type` or `### Complexity` is a Blocking finding. Its `### Proposed Corrections` block
-  is gone.
+- **BREAKING: `idd-verify` lists published errors as findings and changes nothing.** Their Action is `listed`:
+  they are not Blocking and do not enter the fix loop. Its `### Proposed Corrections` block is gone.
 - **BREAKING: `idd-diagnose` and `idd-reorganize` correct a narrow set themselves.** On an open issue whose
   `### Type` is `bug`, after the main agent confirms the error on the default branch, they correct your own
   Diagnosis's `### Root Cause / Analysis`, `### Impact` and `### Risks`, attended and unattended alike. Everything
   else, the Implementation Plan included, is listed and not changed. `### Proposed Corrections` becomes
-  `### Applied Corrections`, with five outcomes (`corrected`, `listed`, `refused`, `held`, `unverified`). A listed
-  correction to `## Expected`, scope, a checklist, Type or Complexity goes to `### Blocking`, so an unattended run
-  stops at the actionability gate.
-- `idd-update` takes Key Decisions, Scope Changes, Blocking and errata markers only from OWNER, MEMBER and
-  COLLABORATOR comments and your own.
+  `### Applied Corrections`, with five outcomes (`corrected`, `listed`, `refused`, `held`, `unverified`). Listed
+  entries stay in the report; idd-all stops at verified for a person to read it.
+- `idd-update` takes phases, Key Decisions, Scope Changes, Blocking and errata markers only from OWNER, MEMBER and
+  COLLABORATOR comments that are not bots, and your own, skipping `### Comments Not Taken`, quotes and HTML
+  comments.
 - `idd-diagnose` Stage 1 rewrites its own Diagnosis instead of appending a correction comment; in attended mode
   Step 3.8 applies after Stage 1 confirms.
 - `--body-file` also refuses dotfiles directly in your home directory, `~/.claude` except a job's `tmp/`,
   `~/.config/git`, and names that hold secrets (`*credential*`, `.env*`, `id_rsa*` and other keys, `*.pem`,
   `*.key`, histories). The list is still not complete; the escape hatch is unchanged.
 - `--note` refuses `<`, `>`, control and bidirectional characters. A replacement that holds nothing but markers is
-  refused as empty again; an earlier visible line at the end of the replacement is replaced.
+  refused as empty again; an earlier visible line and marker at the end of the replacement are replaced.
 - `idd-close` Step 3.6 ignores the visible line and the marker when it reads `### Residue`.
-- `idd-verify` scans `### Applied Corrections` as an external write, and notes when the Diagnosis or issue body
-  changed during the run (Step 1 records a baseline, Step 2.9 compares it).
+- `idd-verify` scans `### Applied Corrections` as an external write.
 
 ## [3.6.0] - 2026-11-03
 

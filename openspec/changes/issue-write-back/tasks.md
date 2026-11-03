@@ -38,3 +38,8 @@
 - [x] 6.3 落實 SessionStart rule injection is minimal and canonical-aligned 與 idd-update SHALL rebuild Key Decisions from current comments，並照 D6（不問的路徑上，隱私命中一律停；只限有寫入權的 repo）、D7（信任邊界、驗收條件、定案門檻、可見文字）、D8（實作後的更正走 idd-reorganize）、D10 改規則。規則、SessionStart 那一行、`idd-update`（移除 Step 1.1、Step 3 只採受信任作者、`listed` 進 Blocking）、`idd-implement`、`idd-plan`、`idd-diagnose` 的 Step 1.1。驗證：`issue-write-back`、`session-start-commit-rule` suite 通過。
 - [x] 6.4 `idd-verify`（Step 3.5 只列、Step 1 記錄需求端基準）、`idd-diagnose` 與 `idd-reorganize`（限 bug、Plan 列出、`--repo`、Stage 1 流程）、`idd-edit`（隱私只看加入的文字、unattended 偵測帶 `--cwd`）、`idd-comment`（errata 帶 `--note`）。驗證：`in-place-correction`、`verify-external-writes`、`edit-run` suite 通過。
 - [x] 6.5 CHANGELOG、README、plugin.json 與 marketplace、`append-vs-modify`，`run-all-tests.sh` 全部通過、`spectra validate issue-write-back` 通過。
+
+## 7. verify 第 3 輪之後（拿掉截止點、listed 不擋）
+
+- [x] 7.1 先寫失敗的測試，鎖住 idd-update SHALL read only trusted comments 與更新後的 Write-back SHALL be triggered by session discussion and by trusted comments、Skills that detect errors SHALL report them and apply only bounded diagnosis corrections：`writeback-candidates`（不論日期全部列出）；`edit-run`（替換內容尾端的舊可見行與舊標記都換掉、home 前綴大小寫不同仍拒絕）；`issue-write-back`（`idd-update` 不再把 listed 放進 Blocking、跳過 Comments Not Taken、Comments Not Taken 只寫連結與帳號）；`in-place-correction`（verify 的 Action 是 listed、diagnose 也看 issue 正文、`req_state` 移除）。驗證：實作前這四個 suite 都有 FAIL。
+- [x] 7.2 helper、腳本、規則、skill 與文件依 D5、D9 更新。驗證：`run-all-tests.sh` 全部通過、`spectra validate issue-write-back` 通過。

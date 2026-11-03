@@ -86,6 +86,8 @@ assert_grep "the refusals that become a comment are listed" "section-ambiguous" 
 assert_grep "every write-back names its basis" "依據" "$R"
 assert_grep "--repo is always passed" "--repo" "$R"
 assert_grep "your own GitHub comments are not candidates" "自己在 GitHub 上留的" "$R"
+assert_grep "no time cutoff" "沒有時間截止點" "$R"
+refute_grep "listed corrections are not sent to Blocking" "放進 \`### Blocking\`" "$R"
 refute_grep "the overclaim about phase detection is gone" "註記擠到第二行不影響" "$R"
 assert_grep "a hypothesis does not count" "假設與提問" "$R"
 assert_grep "a closed issue is not rewritten" "已關閉的 issue" "$R"
@@ -149,6 +151,7 @@ echo "D. the comment trigger is wired"
 for sk in idd-diagnose idd-plan idd-implement; do
   assert_output_grep "$sk lists new comments" "writeback-candidates.py" "$SKILLS/$sk/SKILL.md"
   refute_output_grep "$sk does not say decided OR checked" "或事實主張" "$SKILLS/$sk/SKILL.md"
+  assert_output_grep "$sk lists untaken comments by link and login only" "只寫連結與帳號" "$SKILLS/$sk/SKILL.md"
 done
 for sk in idd-verify idd-update; do
   refute_output_grep "$sk does not run it" "writeback-candidates.py" "$SKILLS/$sk/SKILL.md"
@@ -157,7 +160,9 @@ UPD="$SKILLS/idd-update/SKILL.md"
 S3U="$(section "$UPD" "### Step 3:")"
 assert_grep "idd-update reads trusted comments only" "OWNER、MEMBER、COLLABORATOR" "$S3U"
 assert_grep "idd-update honours an errata marker from a trusted author only" "errata" "$S3U"
-assert_grep "a correction left for a person blocks" "listed" "$S3U"
+refute_grep "a listed correction is not turned into Blocking" "listed" "$S3U"
+assert_grep "idd-update skips Comments Not Taken" "Comments Not Taken" "$S3U"
+assert_grep "idd-update excludes bots" "bot" "$S3U"
 assert_file_exists "the script exists" "$PLUGIN/scripts/writeback-candidates.py"
 
 # ── E. idd-close reads a corrected empty residue ───────────────────────────

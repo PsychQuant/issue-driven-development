@@ -50,7 +50,7 @@ D2 的 verify 報告註記要用 `--prepend-note`，但這個 mode 的作者閘�
 
 ### D5 別人的 comment 在下一次讀取時觸發
 
-沒有任何事件機制會在別人留言時叫醒 AI。`idd-diagnose`、`idd-plan`、`idd-update` 執行時用 `scripts/writeback-candidates.py` 列出別人的新 comment，使用者也可能在 session 裡談到這張 issue；這兩個時點就是觸發點。`idd-update` 在每個階段結束都會跑，所以幾乎每次都讀得到。`idd-verify` 不跑這一步：驗收中不該改驗收依據。
+沒有任何事件機制會在別人留言時叫醒 AI。`idd-diagnose`、`idd-plan`、`idd-implement` 開始時用 `scripts/writeback-candidates.py` 列出別人的 comment，使用者也可能在 session 裡談到這張 issue；這兩個時點就是觸發點。第 1 版放在 `idd-update`，第 2 輪 verify 發現它在每個階段結尾都跑，verify 也會經由它寫回、在輪次之間改驗收依據，還會遞迴（維護者 2026-11-03 決定移出，comment 6611450882）。代價：實作之後才留的 comment，要等下一次提起才處理；Spectra tier 的實作走 `spectra-apply`，不經這三個 skill，實作期間的 comment 也要等提起。第 2、3 版的時間截止點會永久漏掉沒看過的 comment，第 3 輪後拿掉（comment 6615341615）：每次列出全部，已反映的由 AI 跳過。
 
 ### D6 不問的路徑上，隱私命中一律停；只限有寫入權的 repo（verify 第 1 輪）
 
@@ -65,7 +65,7 @@ D2 的 verify 報告註記要用 `--prepend-note`，但這個 mode 的作者閘�
 
 ### D9 verify 只列；自動更正限 bug、只改 Diagnosis（verify 第 2 輪，2026-11-03 維護者決定）
 
-feature issue 的 `### Root Cause / Analysis` 就是需求拆解，而 verify 查證用的「repo 內的證據」正是受驗的 code，自動更正會變成「把 Diagnosis 改得符合 code」。所以 `idd-verify` 不改任何東西，已發表內容的錯誤一律是 finding；`## Expected`、範圍、checklist、Type、Complexity 的錯誤是 Blocking。`idd-diagnose`、`idd-reorganize` 只在 `### Type` 是 bug、issue 開著時改自己 Diagnosis 的三段，證據取自預設分支；Implementation Plan、前提被推翻的情況都列出。交給人的 `listed` 經 `idd-update` 進 `### Blocking`，既有的 actionability gate 就會停下 unattended 的 run，不另造機制。
+feature issue 的 `### Root Cause / Analysis` 就是需求拆解，而 verify 查證用的「repo 內的證據」正是受驗的 code，自動更正會變成「把 Diagnosis 改得符合 code」。所以 `idd-verify` 不改任何東西，已發表內容的錯誤一律是 finding；`## Expected`、範圍、checklist、Type、Complexity 的錯誤是 Blocking。`idd-diagnose`、`idd-reorganize` 只在 `### Type` 是 bug、issue 開著時改自己 Diagnosis 的三段，證據取自預設分支；Implementation Plan、前提被推翻的情況都列出。交給人的 `listed` 只寫在報告裡（第 3 輪後決定，comment 6615341615）：idd-all 目前一律停在 verified，由人看報告；#392 讓 idd-all 自己合併之後，由它的 close gate 擋下帶 `listed` 的 run（#392 comment 6615342214）。第 3 版經 `idd-update` 進 Blocking，重新診斷改了 Type 就誤擋，解除條件也靠模型判斷。
 
 ### D10 「定案」寫成封閉列舉
 
@@ -89,7 +89,7 @@ feature issue 的 `### Root Cause / Analysis` 就是需求拆解，而 verify �
 **介面**
 
 - 新檔 `plugins/issue-driven-dev/rules/issue-write-back.md`：三類分流表（封閉列舉）、觸發來源兩種（封閉列舉）、作者邊界、回報格式、privacy 自審、相依紀錄更新（Implementation Plan、verify 報告）。
-- helper：`run-start` 接受 `--note`（只限 `--correct`）；`discard` 接受 `--reason held-privacy|held-272|held-unattended`；`--body-file` 路徑閘多擋 `.netrc`、shell 歷史、`.claude.json`、`.claude/projects`。新 script `scripts/writeback-candidates.py --repo <r> --issue <n>`：每列 `TRUSTED|UNTRUSTED <comment id> <login> <association>`，截止點是你自己最新的 Diagnosis、Implementation Plan、Implementation Complete 的 `updated_at` 往前一天，比 comment 的 `updated_at`；bot 一律 UNTRUSTED；抓不到回 1。
+- helper：`run-start` 接受 `--note`（只限 `--correct`）；`discard` 接受 `--reason held-privacy|held-272|held-unattended`；`--body-file` 路徑閘多擋 `.netrc`、shell 歷史、`.claude.json`、`.claude/projects`。新 script `scripts/writeback-candidates.py --repo <r> --issue <n>`：每列 `TRUSTED|UNTRUSTED <comment id> <login> <association>`，沒有時間截止點，列出全部別人的 comment；bot 一律 UNTRUSTED；抓不到回 1。
 
 **驗收**
 
@@ -108,7 +108,7 @@ feature issue 的 `### Root Cause / Analysis` 就是需求拆解，而 verify �
 - [AI 判斷錯類別，把新決定寫進正文] → 每次寫回都回報類別與目標；段落尾的可見文字讓讀者看得到；舊版用 GitHub 編輯歷史取回，或在同一份 clone 用 `/idd-edit` 的 `restore`（會蓋掉之後的更正）。
 - [不確認後，privacy 自審是語意上唯一的防線] → 任何等級命中都停（D6）；gh-egress 的機械閘照常。自審本身可能漏判，沒有機械防線，這一點接受。
 - [ADMIN 帳號可改別人的 comment] → 不確認的路徑一律先過 `--correct` 的嚴格作者檢查（D1b）。
-- [verify 期間 Diagnosis 或正文被改] → verify 自己不改任何東西（D9）；另一個 session 可能改，所以 Step 1 記下 issue 正文雜湊與 Diagnosis 的 `updated_at`，Step 2.9 再比，不同就在報告註明。
+- [verify 期間 Diagnosis 或正文被改] → verify 自己不改任何東西（D9）；另一個 session 的寫回可能改到，這一點接受，不另做比對（第 3 版的比對在新的 shell 裡跑不起來，又不擋 aggregate）。
 - [SessionStart 第 5 行是每個 session 的 context 成本] → 一行、指向規則檔，drift guard 鎖住上限。
 
 ## Migration Plan

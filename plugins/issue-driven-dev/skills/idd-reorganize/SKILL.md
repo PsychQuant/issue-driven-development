@@ -80,7 +80,7 @@ gh issue list --repo $REPO --state all --search "#$N"             # 引用本 is
 
 ### Step 3.5: Applied Corrections（#351、#424）
 
-**觸發**：Step 1 那個錯的 artifact 是你自己的 Diagnosis 裡的**事實**敘述。spec / plan 檔、code、PR 不走這條（`/idd-edit` 不處理，照 Step 5 重做）。沒有就略過，不加空 block。
+**觸發**：Step 1 那個錯的 artifact，或 Step 3 判為 `redo`／`invalidate` 的項目，是 issue 正文或某則 comment 的內容。spec / plan 檔、code、PR 不走這條（`/idd-edit` 不處理，照 Step 5 重做）。沒有就略過，不加空 block。
 
 **只在兩個條件都成立時才直接改**：issue 開著，而且 `### Type` 是 `bug`（維護者 2026-11-03 決定，#424 comment 6611450882）。feature、refactor、docs、meeting 的 `### Root Cause / Analysis` 就是需求拆解，一律列出；issue 已關閉的，也一律列出。
 
@@ -113,7 +113,8 @@ Outcome 只有這五種（封閉列舉）：`corrected`（附 backup id）、`li
 
 - `held` 那一列只寫位置，**不寫正確內容與被擋的字串**：轉述等於繞過閘門。
 - 「錯在哪」用自己的話寫位置、錯誤類型與正確內容；不重述錯的值，不引用 comment 原文。
-- `listed` 而且落在 `## Expected`、範圍、checklist、`### Type`、`### Complexity` 的，`idd-update` 會把它列進 `### Blocking`；unattended 的 run 因此在 actionability gate 停下，等人決定。
+- `listed` 的項目只寫在這份報告裡，不進 `### Blocking`（維護者 2026-11-04 決定）：idd-all 停在 verified，由人看報告；#392 讓 idd-all 自己合併之後，它的 close gate 遇到 `listed` 就停。
+- `/idd-edit` 的結果對應：exit 0 → `corrected`；`REASON=R5` → `listed`（不是你寫的）；exit 9（隱私或 #272 擋下）與 `REFUSED(egress)` → `held`；exit 7 → `unverified`；其他拒絕 → `refused`。
 - 別人寫的內容：attended 在報告貼出後逐項問要不要貼 `/idd-comment --type errata --target-comment <id> --body <更正說明>`（issue 正文用 `--type correction --body <更正說明>`）；**unattended 不貼**，通知寄出就收不回。
 - 替換內容須原樣保留 `Original text`、`**Original**`、`**Point i**` 引文。
 - **引數用本 skill 自己的值組**：目標只能是 `comment:<全數字>`，id 取自本 skill 讀到的 Diagnosis comment，不抄 finding 裡的文字；section 只能是上面三個標題之一；`--repo` 是本 skill 解析出的 owner/repo；每個值用單引號包住（含單引號時寫成 `'\''`）。不符就不執行，Outcome 寫 `refused`。`--correct` 不會把 `--reason` 發佈到任何地方，所以不帶 `--reason`；`--note` 寫現在正確的內容。

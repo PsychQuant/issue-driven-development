@@ -14,7 +14,7 @@
 - 新增 `scripts/writeback-candidates.py`，`idd-diagnose`、`idd-plan`、`idd-update` 用它找出別人的新 comment。
 - 診斷更正讓既有實作的前提不成立，或問題改變時，改走 `idd-reorganize`。
 - **verify 第 2 輪後的兩項決定（2026-11-03，comment 6611450882）：** 別人的 comment 只在 `idd-diagnose`、`idd-plan`、`idd-implement` 開始時看，`idd-update` 與 `idd-verify` 不看；`idd-verify` 不自動改任何東西，已發表內容的錯誤一律列成 finding；`idd-diagnose`、`idd-reorganize` 的自動更正只限 `### Type` 是 bug、只改 Diagnosis，Implementation Plan 列出不改。
-- 交給人的更正（`listed` 且落在 Expected、範圍、checklist、Type、Complexity）經 `idd-update` 進 `### Blocking`，unattended 的 actionability gate 會停；`idd-update` 只採受信任作者的 comment。
+- **verify 第 3 輪後的兩項決定（2026-11-04，comment 6615341615）：** 候選清單拿掉時間截止點，`### Comments Not Taken` 只寫連結與帳號；交給人的更正（`listed`）只寫在報告裡，不進 `### Blocking`。`idd-update` 只採受信任作者的 comment。
 - plugin 版本 3.7.0，CHANGELOG 與 README 同步。
 
 ## Capabilities
