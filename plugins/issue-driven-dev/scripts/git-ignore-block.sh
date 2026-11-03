@@ -51,15 +51,37 @@ case "$DIRECTION" in
   *) echo "✗ git-ignore-block: --direction must be exclude|re-include (got '${DIRECTION}')" >&2; exit 2 ;;
 esac
 
+# A control character in --target is refused before anything else: `$(dirname …)`
+# strips trailing newlines, so the allowlist below could check one path while the
+# write lands on another (#431 verify).
+case "$TARGET" in
+  *[[:cntrl:]]*) echo "✗ git-ignore-block: --target contains a control character (refusing to write)." >&2; exit 2 ;;
+esac
+
 # Target allowlist (#194) — the helper only ever writes git ignore files. Reject
 # any other --target so a future caller passing untrusted input can't write to an
 # executable path like .git/hooks/pre-commit (which git RUNS). The legitimate
-# targets are `.gitignore` (any dir) and `.git/info/exclude` (basename `exclude`).
+# targets are `.gitignore` (any dir) and `<git-dir>/info/exclude`.
 TARGET_BASE="$(basename "$TARGET")"
 case "$TARGET_BASE" in
   .gitignore|exclude) ;;
   *) echo "✗ git-ignore-block: --target basename '$TARGET_BASE' not allowed — only '.gitignore' or 'exclude' (refusing to write outside git ignore files)." >&2; exit 2 ;;
 esac
+# An `exclude` target must sit in info/ under a real git dir (#431). The basename
+# alone let any <dir>/exclude through — including /info/exclude, which callers
+# produce when `git rev-parse --git-dir` prints nothing outside any repository —
+# and the mkdir -p below then created its parent directories. The git dir must be
+# a directory: `git --git-dir` also accepts a .git FILE (linked worktree,
+# submodule) by following its gitdir: line, and nothing can be written under it.
+if [ "$TARGET_BASE" = exclude ]; then
+  TARGET_INFO="$(dirname "$TARGET")"
+  TARGET_GIT_DIR="$(dirname "$TARGET_INFO")"
+  if [ "$(basename "$TARGET_INFO")" != info ] || [ ! -d "$TARGET_GIT_DIR" ] \
+     || ! git --git-dir="$TARGET_GIT_DIR" rev-parse --git-dir >/dev/null 2>&1; then
+    echo "✗ git-ignore-block: --target '$TARGET' is not <git-dir>/info/exclude of a git repository (refusing to write)." >&2
+    exit 2
+  fi
+fi
 
 # --- Build block body ---------------------------------------------------------
 BODY=()
