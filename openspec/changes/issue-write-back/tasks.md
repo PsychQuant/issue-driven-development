@@ -43,3 +43,8 @@
 
 - [x] 7.1 先寫失敗的測試，鎖住 idd-update SHALL read only trusted comments 與更新後的 Write-back SHALL be triggered by session discussion and by trusted comments、Skills that detect errors SHALL report them and apply only bounded diagnosis corrections：`writeback-candidates`（不論日期全部列出）；`edit-run`（替換內容尾端的舊可見行與舊標記都換掉、home 前綴大小寫不同仍拒絕）；`issue-write-back`（`idd-update` 不再把 listed 放進 Blocking、跳過 Comments Not Taken、Comments Not Taken 只寫連結與帳號）；`in-place-correction`（verify 的 Action 是 listed、diagnose 也看 issue 正文、`req_state` 移除）。驗證：實作前這四個 suite 都有 FAIL。
 - [x] 7.2 helper、腳本、規則、skill 與文件依 D5、D9 更新。驗證：`run-all-tests.sh` 全部通過、`spectra validate issue-write-back` 通過。
+
+## 8. verify 第 4 輪之後（D11 只留核心）
+
+- [x] 8.1 先改測試，鎖住 Decided discussion changes SHALL be written back by kind（別人的 comment 不自動觸發）與 in-place-correction 的 Skills that detect errors SHALL propose corrections, not apply them（選執行後不再問第二次）：刪掉 `scripts/tests/writeback-candidates`；`issue-write-back` 拿掉候選清單、信任表、Comments Not Taken、idd-update 的斷言；`in-place-correction` 的偵測 skill 斷言回到 3.6.0（`### Proposed Corrections`、只列不做），加上「不再寫仍走自己的 preview + confirm」。驗證：改完程式前，`in-place-correction` 對「仍走自己的 preview + confirm」的斷言 FAIL。
+- [x] 8.2 照 D11 只留核心（verify 第 4 輪，2026-11-04 維護者決定，comment 6616229678），撤回兩塊：刪掉 `scripts/writeback-candidates.py`；`idd-verify`、`idd-diagnose`、`idd-reorganize`、`idd-plan`、`idd-implement`、`idd-update` 的 SKILL.md 回到 main，只重新套用 `idd-diagnose` Stage 1 的就地改寫與三個偵測 skill 選執行後的那一句；規則、spec、design、proposal、CHANGELOG、README、plugin.json 與 marketplace 同步。驗證：`run-all-tests.sh` 全部通過、`spectra validate issue-write-back` 通過。

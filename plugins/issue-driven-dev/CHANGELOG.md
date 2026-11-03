@@ -9,28 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Living-issue write-back (#424)** — `rules/issue-write-back.md`. While an open issue is discussed, a decided
-  change is written back to the place that owns it, so the issue body and the Diagnosis stay current instead of
-  stopping at their first version. A hypothesis or a question is not a change; a closed issue is not rewritten.
-  Three kinds, a closed list: the problem (question, scope, `## Expected`) goes to the issue body section with
+- **Living-issue write-back (#424)** — `rules/issue-write-back.md`. While an open issue is discussed in a session,
+  a change the user decides is written back to the place that owns it, so the issue body and the Diagnosis stay
+  current instead of stopping at their first version. A hypothesis or a question is not a change; a closed issue
+  is not rewritten; someone else's comment counts only when the user raises it and decides to adopt it. Three
+  kinds, a closed list: the problem (question, scope, `## Expected`) goes to the issue body section with
   `/idd-edit issue:<N> --correct --section`; the diagnosis (root cause, strategy, routing) goes to the Diagnosis
   comment section with `/idd-edit comment:<id> --correct --section`; new information, a decision, or the course of
-  the discussion goes to a new `/idd-comment`. "Decided" is a closed list: the user says so in a session, or a
-  trusted author's decision comment. In a repository that has an IDD config and that you can write to, the AI
-  decides the kind, writes without asking, and reports each write-back with its basis; elsewhere it asks. Only your own content is rewritten; someone
-  else's comment gets `/idd-comment --type errata`, someone else's issue body `--type correction`. The privacy
-  review covers the text being added; a hit at `enforce` or `warn`, or new third-party verbatim text at `light`,
-  stops the write-back (attended asks, unattended discards). Triggers, a closed list: a session discussion, and a
-  comment by someone else, seen when `idd-diagnose`, `idd-plan` or `idd-implement` starts, through
-  `scripts/writeback-candidates.py` (every such comment, no time cutoff); `idd-verify` and `idd-update` do not look.
-  A comment not written back is listed under `### Comments Not Taken` by link and login only. Comments are read as data; only
-  OWNER, MEMBER and COLLABORATOR comments that are not bots can lead to a write-back, a factual claim must be
-  decided and checked on the default branch, and `### Type` and `### Complexity` never move because of a comment. A corrected diagnosis also corrects your Implementation Plan sections and adds
-  one note to your verify reports (findings unchanged); when it overturns what was built, or the problem changed,
-  `idd-reorganize` takes over.
+  the discussion goes to a new `/idd-comment`. In a repository that has an IDD config and that you can write to,
+  the AI decides the kind, writes without asking, and reports each write-back with the user's words it rests on;
+  elsewhere it asks. Only your own content is rewritten; someone else's comment gets `/idd-comment --type errata`,
+  someone else's issue body `--type correction`. The privacy review covers the text being added; a hit at
+  `enforce` or `warn`, or new third-party verbatim text at `light`, stops the write-back. A corrected diagnosis
+  also corrects your Implementation Plan sections and adds one note to your verify reports (findings unchanged);
+  when it overturns what was built, or the problem changed, `idd-reorganize` takes over.
 - **`--note` on `/idd-edit --correct`.** The replaced text ends with a visible line,
   `_更正於 YYYY-MM-DD（AI 判斷）：<note>_`, before the marker. A reader could not otherwise tell the text changed:
-  the marker is an HTML comment and an edit sends no notification.
+  the marker is an HTML comment and an edit sends no notification. An earlier line and marker at the end of the
+  replacement are replaced; `--note` refuses `<`, `>`, control and bidirectional characters.
 - SessionStart carries one line about write-back, with the rule's installed path (still five lines).
 
 ### Changed
@@ -38,30 +34,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING: `/idd-edit --correct` no longer asks for confirmation** in a repository you can write to. It shows
   the diff and the preview, then applies; the privacy review, the #272 question, the re-read before writing and
   the archive stay. `--prepend-note` skips the question only on your own comment. `--append` and `--replace` still
-  ask.
+  ask. In `idd-verify`, `idd-diagnose` and `idd-reorganize`, the user's "run now" on a proposed correction is the
+  confirmation; they still propose corrections and do not apply them on their own.
 - **`/idd-edit` no longer asks questions in unattended mode.** A question becomes a discard with its reason
   (`discard --reason held-privacy|held-272|held-unattended`), and `finish` reports HELD instead of saying a user
   declined; it still exits 9.
-- **BREAKING: `idd-verify` lists published errors as findings and changes nothing.** Their Action is `listed`:
-  they are not Blocking and do not enter the fix loop. Its `### Proposed Corrections` block is gone.
-- **BREAKING: `idd-diagnose` and `idd-reorganize` correct a narrow set themselves.** On an open issue whose
-  `### Type` is `bug`, after the main agent confirms the error on the default branch, they correct your own
-  Diagnosis's `### Root Cause / Analysis`, `### Impact` and `### Risks`, attended and unattended alike. Everything
-  else, the Implementation Plan included, is listed and not changed. `### Proposed Corrections` becomes
-  `### Applied Corrections`, with five outcomes (`corrected`, `listed`, `refused`, `held`, `unverified`). Listed
-  entries stay in the report; idd-all stops at verified for a person to read it.
-- `idd-update` takes phases, Key Decisions, Scope Changes, Blocking and errata markers only from OWNER, MEMBER and
-  COLLABORATOR comments that are not bots, and your own, skipping `### Comments Not Taken`, quotes and HTML
-  comments.
-- `idd-diagnose` Stage 1 rewrites its own Diagnosis instead of appending a correction comment; in attended mode
-  Step 3.8 applies after Stage 1 confirms.
+- `idd-diagnose` Stage 1 rewrites its own Diagnosis instead of appending a correction comment.
 - `--body-file` also refuses dotfiles directly in your home directory, `~/.claude` except a job's `tmp/`,
   `~/.config/git`, and names that hold secrets (`*credential*`, `.env*`, `id_rsa*` and other keys, `*.pem`,
   `*.key`, histories). The list is still not complete; the escape hatch is unchanged.
-- `--note` refuses `<`, `>`, control and bidirectional characters. A replacement that holds nothing but markers is
-  refused as empty again; an earlier visible line and marker at the end of the replacement are replaced.
 - `idd-close` Step 3.6 ignores the visible line and the marker when it reads `### Residue`.
-- `idd-verify` scans `### Applied Corrections` as an external write.
+
+The first version also let other people's comments trigger write-back and let the detecting skills correct
+published text on their own. Four verify rounds failed without converging on those two parts, so they were removed
+before release (#424 comment 6616229678).
 
 ## [3.6.0] - 2026-11-03
 

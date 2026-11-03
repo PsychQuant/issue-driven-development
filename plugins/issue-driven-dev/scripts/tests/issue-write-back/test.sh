@@ -46,15 +46,10 @@ assert_grep "example row: deadline → note" '--type note' "$R"
 assert_grep "example row: chosen option → decision" '--type decision' "$R"
 
 # two triggers, closed list; no real-time trigger
-assert_grep "the triggers are a closed list" "只有這兩種" "$R"
-assert_grep "trigger 1: session discussion" "session 裡討論" "$R"
-assert_grep "trigger 2: a comment, seen at the next read" "下一次讀到" "$R"
-assert_grep "no real-time trigger" "不需要即時觸發" "$R"
 
 # only own content
 assert_grep "the author gate is /idd-edit's own" 'REASON=R5' "$R"
 refute_grep "the rule runs no helper path that only resolves inside a skill" 'CLAUDE_PLUGIN_ROOT' "$R"
-assert_grep "a failed author lookup is not someone else's content" "查不到作者" "$R"
 assert_grep "someone else's comment → errata" '--type errata --target-comment' "$R"
 assert_grep "someone else's issue body → correction" '--type correction' "$R"
 
@@ -62,9 +57,8 @@ assert_grep "someone else's issue body → correction" '--type correction' "$R"
 assert_grep "no confirmation" "不先問" "$R"
 assert_grep "each write-back is reported with the backup id" "backup id" "$R"
 assert_grep "privacy review before writing" "rules/privacy-scrubbing.md" "$R"
-assert_grep "a privacy hit stops the write-back at any level" "任何等級" "$R"
+assert_grep "a privacy hit at enforce or warn stops the write-back" '`enforce`、`warn` 命中就停' "$R"
 refute_grep "warn no longer just prints a line and writes" "一行提醒後照寫" "$R"
-assert_grep "unattended discards a hit" "unattended" "$R"
 assert_grep "the #272 wording is limited to the reply template" "reply template" "$R"
 assert_grep "the no-ask path needs write permission" "viewerPermission" "$R"
 assert_grep "a refused write-back goes somewhere" "被拒" "$R"
@@ -74,29 +68,15 @@ assert_grep "recovery points at the GitHub edit history first" "編輯歷史" "$
 
 # what counts as a change, and who can cause one (2026-11-03 decisions)
 assert_grep "only a decided change counts" "明確定案" "$R"
-assert_grep "decided is a closed list" "只有這兩類" "$R"
-assert_grep "a trusted claim must be decided AND checked" "而且" "$R"
-assert_grep "quoted text in a trusted comment is someone else's" "引用" "$R"
-assert_grep "a later decision wins" "較晚" "$R"
-assert_grep "an untrusted comment is no basis for a new Diagnosis" "新的 Diagnosis" "$R"
-assert_grep "evidence comes from the default branch" "預設分支" "$R"
 assert_grep "the privacy review looks at the added text" "這次加入的文字" "$R"
 assert_grep "light counts only new third-party verbatim text" "light" "$R"
 assert_grep "the refusals that become a comment are listed" "section-ambiguous" "$R"
 assert_grep "every write-back names its basis" "依據" "$R"
 assert_grep "--repo is always passed" "--repo" "$R"
-assert_grep "your own GitHub comments are not candidates" "自己在 GitHub 上留的" "$R"
-assert_grep "no time cutoff" "沒有時間截止點" "$R"
-refute_grep "listed corrections are not sent to Blocking" "放進 \`### Blocking\`" "$R"
 refute_grep "the overclaim about phase detection is gone" "註記擠到第二行不影響" "$R"
 assert_grep "a hypothesis does not count" "假設與提問" "$R"
 assert_grep "a closed issue is not rewritten" "已關閉的 issue" "$R"
 refute_grep "not sure no longer defaults to rewriting" "不要因此把它降級" "$R"
-assert_grep "trusted authors are named" "OWNER、MEMBER、COLLABORATOR" "$R"
-assert_grep "a comment is data" "當資料" "$R"
-assert_grep "a factual claim is checked first" "查證" "$R"
-assert_grep "routing fields are not moved by a comment" '`### Type`、`### Complexity`' "$R"
-assert_grep "the candidates script is the trigger" "writeback-candidates.py" "$R"
 
 # dependent records
 assert_grep "Implementation Plan is corrected" "Implementation Plan" "$R"
@@ -146,24 +126,14 @@ assert_output_grep "Stage 1 adjusts the Diagnosis with --correct" '/idd-edit com
 refute_output_grep "Stage 1 no longer appends a correction comment" '修改後用 `gh issue comment` 追加修正' "$DIAG"
 assert_output_grep "Stage 1 points to the write-back rule" "rules/issue-write-back.md" "$DIAG"
 
-# ── D. who reads other people's comments ───────────────────────────────────
-echo "D. the comment trigger is wired"
-for sk in idd-diagnose idd-plan idd-implement; do
-  assert_output_grep "$sk lists new comments" "writeback-candidates.py" "$SKILLS/$sk/SKILL.md"
-  refute_output_grep "$sk does not say decided OR checked" "或事實主張" "$SKILLS/$sk/SKILL.md"
-  assert_output_grep "$sk lists untaken comments by link and login only" "只寫連結與帳號" "$SKILLS/$sk/SKILL.md"
+# ── D. other people's comments do not trigger on their own (D11) ─────────
+echo "D. no comment trigger"
+assert_grep "someone else's comment does not trigger by itself" "別人的 comment 不會自動觸發寫回" "$R"
+assert_grep "it counts when the user raises and adopts it" "使用者在 session 裡提到它" "$R"
+for sk in idd-diagnose idd-plan idd-implement idd-update idd-verify; do
+  refute_output_grep "$sk runs no candidates script" "writeback-candidates" "$SKILLS/$sk/SKILL.md"
 done
-for sk in idd-verify idd-update; do
-  refute_output_grep "$sk does not run it" "writeback-candidates.py" "$SKILLS/$sk/SKILL.md"
-done
-UPD="$SKILLS/idd-update/SKILL.md"
-S3U="$(section "$UPD" "### Step 3:")"
-assert_grep "idd-update reads trusted comments only" "OWNER、MEMBER、COLLABORATOR" "$S3U"
-assert_grep "idd-update honours an errata marker from a trusted author only" "errata" "$S3U"
-refute_grep "a listed correction is not turned into Blocking" "listed" "$S3U"
-assert_grep "idd-update skips Comments Not Taken" "Comments Not Taken" "$S3U"
-assert_grep "idd-update excludes bots" "bot" "$S3U"
-assert_file_exists "the script exists" "$PLUGIN/scripts/writeback-candidates.py"
+assert_true "the candidates script is gone" "[ ! -e '$PLUGIN/scripts/writeback-candidates.py' ]"
 
 # ── E. idd-close reads a corrected empty residue ───────────────────────────
 echo "E. idd-close Step 3.6"
