@@ -40,8 +40,8 @@ assert_grep "a change of both kinds goes to both places" "兩處都寫" "$R"
 assert_grep "Original text stays" "Original text" "$R"
 assert_grep "written back once decided, not at the end" "不等討論結束" "$R"
 # the spec's routing example, one row each
-assert_grep "example row: scope → ## Expected" '--section "## Expected"' "$R"
-assert_grep "example row: root cause → Root Cause section" '--section "### Root Cause / Analysis"' "$R"
+assert_grep "example row: scope → ## Expected" "--section '## Expected'" "$R"
+assert_grep "example row: root cause → Root Cause section" "--section '### Root Cause / Analysis'" "$R"
 assert_grep "example row: deadline → note" '--type note' "$R"
 assert_grep "example row: chosen option → decision" '--type decision' "$R"
 
@@ -82,11 +82,20 @@ refute_grep "not sure no longer defaults to rewriting" "不要因此把它降級
 assert_grep "Implementation Plan is corrected" "Implementation Plan" "$R"
 refute_grep "verify reports get no note (D12)" '--prepend-note' "$R"
 assert_grep "verify reports are left as they are (D12)" "不改，也不加註記" "$R"
-assert_grep "a change the same PR carries is written back in place (D12)" "同一個 PR 裡跟著改" "$R"
-assert_grep "the Diagnosis target is the newest one" "目標是**最新一則 Diagnosis**" "$R"
+assert_grep "a change the same PR carries is written back in place (D12)" "同一個 PR 跟著改" "$R"
+assert_grep "the Diagnosis target is the newest one" "目標是**最新一則以 \`## Diagnosis\` 開頭的 comment**" "$R"
 assert_grep "a newest Diagnosis by someone else gets errata" "最新那則是別人寫的" "$R"
 assert_grep "a Spectra change gets the change by spectra-ingest" "/spectra-ingest" "$R"
-assert_grep "a change no PR carries goes to idd-reorganize after the write-back" "沒有 PR 會帶這個改變" "$R"
+assert_grep "a scope widened after merge goes to a new issue (D14)" "用 \`/idd-issue\` 開一張新 issue 承接" "$R"
+assert_grep "direct-commit counts the same branch as the same PR (D14)" "結案前在同一條 branch 跟著改也算" "$R"
+refute_grep "no undecided write-back-then-reorganize route (D14)" "照上面寫回之後，呼叫" "$R"
+refute_output_grep "idd-reorganize does not take changes no PR carries (D14)" "或沒有 PR 會帶這個改變" "$SKILLS/idd-reorganize/SKILL.md"
+assert_output_grep "idd-diagnose Stage 1 also posts a decision comment (D13)" "記下這個決定（兩處都寫）" "$SKILLS/idd-diagnose/SKILL.md"
+assert_grep "a new mention in a kind-3 comment is asked first" "提及會寄通知給對方" "$R"
+refute_output_grep "the helper keeps no （AI 判斷） format" "（AI 判斷）" "$PLUGIN/scripts/idd-edit-helper.py"
+refute_output_grep "the append-vs-modify delta no longer says an AI decided" "that an AI decided it" "$PLUGIN/../../openspec/changes/issue-write-back/specs/append-vs-modify-discipline/spec.md"
+assert_output_grep "--last always asks" "或 target 來自 \`#N --last\`（" "$SKILLS/idd-edit/SKILL.md"
+assert_output_grep "the hook keeps lines 1-4 literal" "cat <<'RULES'" "$PLUGIN/hooks/session-start-commit-rule.sh"
 assert_grep "a decision that changes the diagnosis is written to both places (D13)" "改了診斷的決定，兩處都寫" "$R"
 assert_grep "write-back files live under the cache, not TMPDIR (D13)" ".cache/idd/writeback" "$R"
 refute_grep "the visible line no longer says AI 判斷 (D13)" "YYYY-MM-DD（AI 判斷）" "$R"
@@ -163,7 +172,7 @@ DIAG_BODY='## Diagnosis
 ### Residue
 (none)
 
-_更正於 2026-11-03（AI 判斷）：沒有殘留_
+_更正於 2026-11-03：沒有殘留_
 <!-- idd:edit mode="correct" backup-id="comment-1-20261103T000000Z" date="2026-11-03" -->
 
 ### Next
@@ -173,10 +182,16 @@ assert_eq "the visible line and the marker are not residue" "(none)" "$RESIDUE_C
 DIAG_BODY='### Residue
 real residue
 
-_更正於 2026-11-03（AI 判斷）_
+_更正於 2026-11-03_
 <!-- idd:edit mode="correct" backup-id="comment-1-20261103T000000Z" date="2026-11-03" -->
 '
 eval "$PIPE"
 assert_eq "real residue stays" "real residue" "$RESIDUE_CONTENT"
+DIAG_BODY='### Residue
+(none)
+_更正於 後來的討論：仍需補上 migration 測試_
+'
+eval "$PIPE"
+assert_grep "a residue line that only starts like the visible line stays" "仍需補上 migration 測試" "$RESIDUE_CONTENT"
 
 print_summary "issue-write-back"

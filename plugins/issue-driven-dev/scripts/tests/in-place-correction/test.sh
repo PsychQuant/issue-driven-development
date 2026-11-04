@@ -215,7 +215,7 @@ for s in idd-verify idd-diagnose idd-reorganize; do
 done
 for s in idd-verify idd-diagnose idd-reorganize; do
   refute_output_grep "$s no longer says idd-edit asks a second time (#424)" "仍走自己的 preview + confirm" "$SKILLS/$s/SKILL.md"
-  assert_output_grep "$s shows the replacement text in the run-now question" "問句裡附上該項替換內容的全文" "$SKILLS/$s/SKILL.md"
+  assert_output_grep "$s shows the replacement text and the note in the run-now question" "問句裡附上該項替換內容的全文與 \`--note\` 那一句" "$SKILLS/$s/SKILL.md"
   assert_output_grep "$s rebuilds the command with --repo" "重組的引數另帶 \`--repo" "$SKILLS/$s/SKILL.md"
   assert_output_grep "$s writes the replacement to a fresh directory" ".cache/idd/writeback/XXXXXX" "$SKILLS/$s/SKILL.md"
 done
@@ -308,7 +308,7 @@ UPD="$SKILLS/idd-update/SKILL.md"
 refute_output_grep "idd-update no longer says Key Decisions are append-only" "Key Decisions 只加不刪" "$UPD"
 assert_output_grep "idd-update rebuilds Key Decisions from current comments" "每次重建" "$UPD"
 for s in idd-verify idd-diagnose idd-reorganize; do
-  assert_output_grep "$s stores replacement files under ~/.cache/idd/corrections" ".cache/idd/corrections" "$SKILLS/$s/SKILL.md"
+  refute_output_grep "$s no longer uses the fixed corrections path" ".cache/idd/corrections" "$SKILLS/$s/SKILL.md"
 done
 # Round 6: the --correct flow moved into the helper; its behavior is exercised
 # end to end in scripts/tests/correct-flow (re-read E3, fetch failure E7, …).

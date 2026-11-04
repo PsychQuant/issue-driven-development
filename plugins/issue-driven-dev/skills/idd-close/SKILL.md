@@ -688,7 +688,7 @@ DIAG_BODY=$(gh issue view "$NUMBER" --repo "$GITHUB_REPO" --json comments \
 RESIDUE_CONTENT=$(printf '%s\n' "$DIAG_BODY" \
   | awk '/^### Residue/{flag=1; next} flag && /^###? /{flag=0} flag' \
   | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' \
-  | grep -vE '^(<!-- idd:edit |_更正於 )' \
+  | grep -vE '^(<!-- idd:edit .*-->|_更正於 [0-9]{4}-[0-9]{2}-[0-9]{2}(：.*)?_)$' \
   | awk 'NF' \
   | head -c 4000)
 

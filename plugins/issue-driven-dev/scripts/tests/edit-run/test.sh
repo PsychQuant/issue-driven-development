@@ -189,7 +189,7 @@ h a5m run-start --default-repo o/r -- comment:294 --correct --scope whole-commen
 assert_exit "a replacement of markers only is refused before prepare" 2 "$RC"
 assert_eq "and the comment is unchanged" "$(cat "$WORK/dash-body.md")" "$(body_of comment-294.json)"
 mkrec comment-295.json kiki830621 MEMBER "$SECTION_BODY"
-printf 'right text\n\n_更正於 2026-01-01（AI 判斷）：old claim_\n' >"$WORK/fix-old.md"
+printf 'right text\n\n_更正於 2026-01-01：old claim_\n' >"$WORK/fix-old.md"
 start a5o comment:295 --correct --section "## Notes" --body-file "$WORK/fix-old.md" --note "new claim"
 h a5op prepare --run "$RUN" --target comment:295
 h a5oa apply --run "$RUN" --target comment:295 --scrub-attested warn --state "$(val STATE "$WORK/a5op.out")"
@@ -211,7 +211,7 @@ done
 
 echo "A5r5. round 5: an earlier line anywhere in the replacement, markers only"
 mkrec comment-297.json kiki830621 MEMBER "$SECTION_BODY"
-printf 'right text\n\n_更正於 2026-01-01（AI 判斷）：old claim_\n<!-- idd:comment type=decision date=2026-01-01 -->\n' >"$WORK/fix-mid.md"
+printf 'right text\n\n_更正於 2026-01-01：old claim_\n<!-- idd:comment type=decision date=2026-01-01 -->\n' >"$WORK/fix-mid.md"
 start a5v comment:297 --correct --section "## Notes" --body-file "$WORK/fix-mid.md" --note "new claim"
 h a5vp prepare --run "$RUN" --target comment:297
 h a5va apply --run "$RUN" --target comment:297 --scrub-attested warn --state "$(val STATE "$WORK/a5vp.out")"
@@ -223,10 +223,11 @@ printf '<!-- idd:edit mode="append" date="2026-01-01" -->\n' >"$WORK/append-mark
 h a5w run-start --default-repo o/r -- comment:297 --correct --section "## Notes" --body-file "$WORK/append-marker.md"
 assert_exit "a replacement of another mode's marker only is refused" 2 "$RC"
 
-echo "A5r7. round 7: an earlier line before the end is refused; look-alike text is kept"
+echo "A5r8. round 8: text before the trailing group is kept as it is; look-alike text is kept"
 printf 'right text\n\n_更正於 2026-01-01：old claim_\n\nmore text\n' >"$WORK/fix-middle.md"
 h a5x run-start --default-repo o/r -- comment:297 --correct --section "## Notes" --body-file "$WORK/fix-middle.md" --note "new"
-assert_exit "an earlier visible line before the end is refused" 2 "$RC"
+assert_exit "an earlier visible line before the end is accepted" 0 "$RC"
+h a5xf finish --run "$(val RUN "$WORK/a5x.out")"
 mkrec comment-298.json kiki830621 MEMBER "$SECTION_BODY"
 printf 'the format:\n\n```text\n_更正於 2026-01-01：說明_\n```\n\n_更正於 後來又改了一次，這是正文_\n' >"$WORK/fix-fence.md"
 start a5y comment:298 --correct --section "## Notes" --body-file "$WORK/fix-fence.md" --note "new"
@@ -237,10 +238,18 @@ N298="$(body_of comment-298.json)"
 assert_grep "a look-alike line inside a code fence is kept" "_更正於 2026-01-01：說明_" "$N298"
 assert_grep "prose that only starts like the line is kept" "_更正於 後來又改了一次，這是正文_" "$N298"
 assert_grep "the new line is written" "_更正於 ${TODAY}：new_" "$N298"
+mkrec comment-289.json kiki830621 MEMBER "## Notes
+old
+<!-- idd:comment type=note date=2026-01-01 -->"
+printf '_更正於 後來又改了一次，這是正文_\n' >"$WORK/fix-prose.md"
+start a5z comment:289 --correct --scope whole-comment --body-file "$WORK/fix-prose.md" --note "new"
+h a5zp prepare --run "$RUN" --target comment:289
+refute_output_grep "a whole-comment replacement of look-alike prose is not empty" "REASON=empty" "$WORK/a5zp.out"
+h a5zf finish --run "$RUN"
 
 echo "A5r4. an earlier line and marker copied from the section"
 mkrec comment-296.json kiki830621 MEMBER "$SECTION_BODY"
-printf 'right text\n\n_更正於 2026-01-01（AI 判斷）：old claim_\n<!-- idd:edit mode="correct" backup-id="comment-296-20260101T000000Z" date="2026-01-01" -->\n' >"$WORK/fix-copy.md"
+printf 'right text\n\n_更正於 2026-01-01：old claim_\n<!-- idd:edit mode="correct" backup-id="comment-296-20260101T000000Z" date="2026-01-01" -->\n' >"$WORK/fix-copy.md"
 start a5k comment:296 --correct --section "## Notes" --body-file "$WORK/fix-copy.md" --note "new claim"
 h a5kp prepare --run "$RUN" --target comment:296
 h a5ka apply --run "$RUN" --target comment:296 --scrub-attested warn --state "$(val STATE "$WORK/a5kp.out")"
@@ -248,7 +257,7 @@ h a5kf finish --run "$RUN"
 N296="$(body_of comment-296.json)"
 refute_grep "a copied earlier line is dropped" "old claim" "$N296"
 refute_grep "a copied earlier marker is dropped" "20260101T000000Z" "$N296"
-printf '_更正於 2026-01-01（AI 判斷）：old_\n<!-- idd:edit mode="correct" backup-id="comment-296-20260101T000000Z" date="2026-01-01" -->\n' >"$WORK/only-old.md"
+printf '_更正於 2026-01-01：old_\n<!-- idd:edit mode="correct" backup-id="comment-296-20260101T000000Z" date="2026-01-01" -->\n' >"$WORK/only-old.md"
 h a5k2 run-start --default-repo o/r -- comment:296 --correct --section "## Notes" --body-file "$WORK/only-old.md"
 assert_exit "a replacement of an old line and marker only is refused" 2 "$RC"
 

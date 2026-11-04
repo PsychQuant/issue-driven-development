@@ -12,7 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Living-issue write-back (#424)** — `rules/issue-write-back.md`. While an open issue is discussed in a session,
   a change the user decides is written back to the place that owns it, so the issue body and the Diagnosis stay
   current instead of stopping at their first version. A hypothesis or a question is not a change; a closed issue
-  is not rewritten; someone else's comment counts only when the user raises it and names what to adopt. Three
+  is not rewritten; someone else's comment counts only when the user raises it and decides to adopt it, and text taken from it is shown
+  and asked about before it is written. Three
   kinds, a closed list: the problem (question, scope, `## Expected`) goes to the issue body section with
   `/idd-edit issue:<N> --correct --section`; the diagnosis (root cause, strategy, routing) goes to the Diagnosis
   comment section with `/idd-edit comment:<id> --correct --section`; new information, a decision, or the course of
@@ -24,14 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `enforce` or `warn`, new third-party verbatim text at `light`, or a credential at any level stops the
   write-back. A corrected diagnosis also corrects your Implementation Plan sections; verify reports are left as
   they are. A change decided after implementation is written back in place when the same pull request carries it
-  (for example a design settled during verify-fix); when no pull request carries it, or what was built is thrown
-  away, it is written back and `idd-reorganize` rolls the phase back.
+  (for example a design settled during verify-fix; in a direct-commit repository, the same branch before close). A
+  scope that widens after the pull request merged is new work: a new issue, with a link comment on the original.
+  `idd-reorganize` takes over only when what was built is thrown away.
 - **`--note` on `/idd-edit --correct`.** The replaced text ends with a visible line,
   `_更正於 YYYY-MM-DD：<note>_`, before the marker. A reader could not otherwise tell the text changed: the marker is
   an HTML comment and an edit sends no notification. The earlier line and correct marker at the end of the
-  replacement are replaced (other IDD markers there are kept); an earlier line or correct marker anywhere else
-  outside a code fence is refused (exit 2), and so is a replacement of nothing but IDD markers, now at `run-start`
-  rather than as `REASON=empty` at `prepare`. `--note` refuses `<`, `>`, control and bidirectional characters.
+  replacement are replaced (other IDD markers there are kept); everything before that group is kept as it is. A
+  replacement of nothing but IDD markers is refused at `run-start` (exit 2) rather than as `REASON=empty` at
+  `prepare`. `--note` refuses `<`, `>`, control and bidirectional characters.
 - SessionStart carries one line about write-back, with the rule's installed path (still five lines).
 
 ### Changed
@@ -51,7 +53,8 @@ published text on their own. Four verify rounds failed without converging on tho
 before release (#424 comment 6616229678). After the fifth round, three more parts went: a note on each verify
 report, a private-path check on `--body-file`, and an unattended branch in `/idd-edit` (comment 6617788666). After
 the sixth, a decision that changes the diagnosis is written to both places, and the visible line no longer says
-（AI 判斷） (comment 6619279709).
+（AI 判斷） (comment 6619279709). After the seventh, a scope widened after merge goes to a new issue (comment
+6620544269).
 
 ## [3.6.0] - 2026-11-03
 

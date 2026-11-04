@@ -1602,10 +1602,9 @@ NOTE_MAX = 200
 NOTE_LINE_PREFIX = "_更正於 "   # idd-close Step 3.6 skips this line when it reads a section
 
 
-# The line this helper writes, and the one rounds before #424 round 7 wrote (with
-# （AI 判斷）). Only a line of exactly this shape counts as an earlier visible
-# line; prose that merely starts with the prefix is the user's text.
-NOTE_LINE_RE = re.compile(r"_更正於 \d{4}-\d{2}-\d{2}(?:（AI 判斷）)?(?:：.*)?_")
+# The line this helper writes. Only a line of exactly this shape counts as an
+# earlier visible line; prose that merely starts with the prefix is the user's text.
+NOTE_LINE_RE = re.compile(r"_更正於 \d{4}-\d{2}-\d{2}(?:：.*)?_")
 CORRECT_MARKER_PREFIX = '<!-- idd:edit mode="correct"'
 IDD_MARKER_RE = re.compile(r"\s*<!--\s*idd:.*-->\s*")
 
@@ -1615,22 +1614,6 @@ def _correct_note_line(note):
     no notification (#424 verify round 1)."""
     day = datetime.date.today().isoformat()
     return f"{NOTE_LINE_PREFIX}{day}：{note}_" if note else f"{NOTE_LINE_PREFIX}{day}_"
-
-
-def _outside_fences(lines):
-    """(index, line) for every line outside a fenced code block."""
-    fence = None
-    for i, line in enumerate(lines):
-        m = re.match(r"\s*(`{3,}|~{3,})", line)
-        if m:
-            if fence is None:
-                fence = m.group(1)[0] * len(m.group(1))
-                continue
-            if line.strip().startswith(fence):
-                fence = None
-                continue
-        if fence is None:
-            yield i, line
 
 
 def _correct_marker(backup_id):
@@ -1754,7 +1737,7 @@ def _correct_prepare(work, target, kind, num, repo, section, scrub, content):
     if heading == "-":
         with open(backup, encoding="utf-8", errors="replace") as fh:
             old_lines = _lines_of(fh.read().replace("\r\n", "\n").replace("\r", "\n"))
-        kept = [l for l in _lines_of(content.replace("\r\n", "\n")) if not l.startswith(NOTE_LINE_PREFIX)]
+        kept = [l for l in _lines_of(content.replace("\r\n", "\n")) if not NOTE_LINE_RE.fullmatch(l.strip())]
         if not "\n".join(_drop_top_markers(old_lines, kept)).strip():
             # Only a copy of the top marker is no text either (round 7).
             err("Refuse: --correct needs the corrected text; the replacement holds only the comment's marker (#351).")
@@ -2233,22 +2216,18 @@ def run_start_subcmd(argv):
             return 2
         # A line from an earlier correction at the end of the replacement would
         # stand next to the new one and may state what is now wrong (round 2).
-        # The trailing group a copied section or comment ends with: the earlier
-        # visible line, its correct marker (round 3), and other IDD markers the
-        # comment carries between them (round 5). The visible line and the
-        # correct marker are dropped, other markers kept. An earlier line or
-        # correct marker anywhere else is refused, not stripped: stripping
-        # rewrote text nobody reviews on this path (round 6).
+        # Only the trailing group a copied section or comment ends with is
+        # touched: the earlier visible line, its correct marker (round 3), and
+        # other IDD markers the comment carries between them (round 5). The
+        # visible line and the correct marker are dropped, other markers kept.
+        # Anything before that group is the user's text and stays as it is:
+        # stripping it rewrote text nobody reviews (round 6), refusing it blocked
+        # corrections main accepts (round 7).
         lines = state["body_input"].replace("\r\n", "\n").rstrip("\n").split("\n")
         tail = []
         while lines and (not lines[-1].strip() or NOTE_LINE_RE.fullmatch(lines[-1].strip())
                          or IDD_MARKER_RE.fullmatch(lines[-1])):
             tail.insert(0, lines.pop())
-        for _, line in _outside_fences(lines):
-            if NOTE_LINE_RE.fullmatch(line.strip()) or line.strip().startswith(CORRECT_MARKER_PREFIX):
-                err("ERROR: the replacement carries an earlier correction's visible line or marker before its end; "
-                    "remove it (#424)")
-                return 2
         lines += [l for l in tail if IDD_MARKER_RE.fullmatch(l) and not l.strip().startswith(CORRECT_MARKER_PREFIX)]
         text = [l for l in _strip_target_heading(lines, state["section_flag"] or "-")
                 if l.strip() and not IDD_MARKER_RE.fullmatch(l)]

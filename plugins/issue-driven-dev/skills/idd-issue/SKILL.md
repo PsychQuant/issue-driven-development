@@ -1583,6 +1583,7 @@ Stage 2 完成所有 findings 後 print 完整 dispatch table + single AskUserQu
 [Execute all] [Edit row N] [Cancel]
 ```
 
+- `[EDIT]` 列若送去 `/idd-edit --correct`（Step 2d 的 edit body），預覽在該列下附上替換內容全文與 `--note`：`--correct` 預覽後直接寫入，這一題是唯一的確認（#424）
 - `[Execute all]` → 進 Stage 4 dispatch
 - `[Edit row N]` → re-invoke Stage 2 picker for row N only,其他 rows 保留;re-pick 完成後回 Stage 3 preview
 - `[Cancel]` → 退出 skill,**no GitHub side effect**,**no jsonl written**

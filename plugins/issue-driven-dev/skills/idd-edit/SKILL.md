@@ -179,7 +179,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" prepare --run '<RUN>'
 
 1. 用 Read 工具讀 `DIFF=` 那一行的路徑並完整顯示：使用者要看得出哪些內容被刪掉或改寫（#351 verify 第 7 輪：只給新全文時看不出來）。
 2. 用 Read 工具讀 `PREVIEW=` 那一行的路徑：`--correct` **完整**顯示（`(assigned after confirmation)` 在 apply 時換成實際的 backup id；helper 的字樣沿用舊名）；其他 mode 至少顯示前 40 行。
-3. **問不問**（#424，見 [`rules/issue-write-back.md`](../../rules/issue-write-back.md)）：`--correct` 不問，除非 `SCRUB=enforce`（沒有寫入權或查不到權限，由 `run-start` 判定），或 target 來自 `#N --last` 而範圍是 `--scope whole-comment`（`--last` 選的是最新一則，未必是你要改的那則）；作者閘門在 prepare 已確定這是你自己寫的內容。`--prepend-note`、`--append`、`--replace` 照舊要問。
+3. **問不問**（#424，見 [`rules/issue-write-back.md`](../../rules/issue-write-back.md)）：`--correct` 不問，除非 `SCRUB=enforce`（沒有寫入權或查不到權限，由 `run-start` 判定），或 target 來自 `#N --last`（`--last` 選的是最新一則，未必是你要改的那則）；作者閘門在 prepare 已確定這是你自己寫的內容。`--prepend-note`、`--append`、`--replace` 照舊要問。
 4. 隱私自審（`privacy_scrub_gate`）：依 `SCRUB` 等級（prepare 印了 `FLOOR=272` 而 SCRUB 是 `light` 時用 `warn`），對這次**加入的**文字（DIFF 的加入行）做 [`rules/privacy-scrubbing.md`](../../rules/privacy-scrubbing.md) 的語意檢查（本機路徑、未公開的協作者真名、未發表的內容、新加入的第三方逐字內容；密鑰、token、密碼這類 credential 在任何等級都算命中）。目標裡原本就有的內容命中只回報，不擋：那些已經在 GitHub 上。
    - **不問的 `--correct`**：`enforce`、`warn` 命中就停，`light` 只有新加入的第三方逐字內容與 credential 算命中。沒有人確認，`warn` 的「提醒後照做」不成立（#424 verify 第 1 輪）。命中時顯示 redaction diff，AskUserQuestion（送出／遮蔽後再送／不寫）。
    - **要問的 target**：`enforce` 命中，或任何等級的 credential → 顯示 redaction diff，使用者確認前不 apply；`warn` 命中 → 印一行提醒，第 6 點一起問。
@@ -341,7 +341,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" restore '<BACKUP_ID>'
 
 ## Next Step
 
-討論寫回改的是 Diagnosis 時，照 [`rules/issue-write-back.md`](../../rules/issue-write-back.md)「診斷更正後，連帶更新」處理 Implementation Plan 與實作之後的去處。由 `idd-diagnose` Stage 1、偵測 skill 或 `idd-comment` errata 呼叫時，照呼叫端的說明，不另外連帶更新。其他情況通常不需要後續 skill。
+討論寫回改的是 Diagnosis 時，照 [`rules/issue-write-back.md`](../../rules/issue-write-back.md)「診斷更正後，連帶更新」處理 Implementation Plan 與實作之後的三種去處。由 `idd-diagnose` Stage 1、偵測 skill 或 `idd-comment` errata 呼叫時，照呼叫端的說明，不另外連帶更新。其他情況通常不需要後續 skill。
 如果是 errata flow，由 `/idd-comment` 統一 orchestrate。
 
 ## SKILL↔helper Contract（#163）

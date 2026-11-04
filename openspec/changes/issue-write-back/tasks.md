@@ -62,3 +62,10 @@
 - [x] 10.1 先改測試，鎖住 Decided discussion changes SHALL be written back by kind（改了診斷的決定兩處都寫）與 A corrected section SHALL carry a visible line（新格式、結尾以外的舊行拒絕、code fence 裡的同形文字保留）：`edit-run` 改可見文字的斷言並加 fail-closed 與 code fence 的案例；`issue-write-back` 加兩處都寫、Diagnosis 目標、實作之後沒有 PR 承載、依編號採納、寫回目錄的斷言。驗證：把新測試放到 f9a7322 上跑，這些斷言 FAIL；改完後通過。
 - [x] 10.2 照 D13（verify 第 6 輪，2026-11-04 維護者決定，comment 6619279709）改 helper、規則、spec、`append-vs-modify`、`idd-edit`、三個偵測 skill、`idd-reorganize`、`idd-issue`、hook、CHANGELOG 與文件。驗證：`run-all-tests.sh` 全部通過、`spectra validate issue-write-back` 通過。
 
+## 11. verify 第 7 輪之後（D14 合併後擴大的範圍開新 issue）
+
+10.2 的兩處改動在這一組被改回：「沒有 PR 承載就寫回後走 `idd-reorganize`」（沒有經過決定）改成 D14 的三種去處；替換文字結尾以外的舊可見文字從拒絕改回照樣保留。
+
+- [x] 11.1 先改測試，鎖住 A corrected diagnosis SHALL update the records that depend on it（實作之後三種去處、合併後擴大的範圍開新 issue）、idd-diagnose SHALL correct its own Diagnosis instead of appending a correction（Stage 1 改策略也貼 decision comment）與 A corrected section SHALL carry a visible line（結尾以外的文字照樣保留、只認新格式）：`edit-run`、`issue-write-back`、`in-place-correction`、`session-start-commit-rule`。驗證：把新測試放到 3c630c4 上跑，這些斷言 FAIL；改完後通過。
+- [x] 11.2 照 D14（verify 第 7 輪，2026-11-04 維護者決定，comment 6620544269）改規則、spec、`idd-reorganize`；並修第 7 輪其餘發現：helper 與 `idd-close` 只認完整格式的可見文字、偵測 skill 的替換檔一律放 `~/.cache/idd/writeback`、`idd-diagnose` Stage 1 兩處都寫、`--last` 一律先問、第 3 類新加入提及先問、append-vs-modify 的 spec delta。驗證：`run-all-tests.sh` 全部通過、`spectra validate issue-write-back` 通過。
+
