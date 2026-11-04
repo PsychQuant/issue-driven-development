@@ -179,11 +179,11 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" prepare --run '<RUN>'
 
 1. 用 Read 工具讀 `DIFF=` 那一行的路徑並完整顯示：使用者要看得出哪些內容被刪掉或改寫（#351 verify 第 7 輪：只給新全文時看不出來）。
 2. 用 Read 工具讀 `PREVIEW=` 那一行的路徑：`--correct` **完整**顯示（`(assigned after confirmation)` 在 apply 時換成實際的 backup id；helper 的字樣沿用舊名）；其他 mode 至少顯示前 40 行。
-3. **問不問**（#424，見 [`rules/issue-write-back.md`](../../rules/issue-write-back.md)）：`--correct` 不問，除非 `SCRUB=enforce`（沒有寫入權或查不到權限，由 `run-start` 判定）；作者閘門在 prepare 已確定這是你自己寫的內容。`--prepend-note`、`--append`、`--replace` 照舊要問。
+3. **問不問**（#424，見 [`rules/issue-write-back.md`](../../rules/issue-write-back.md)）：`--correct` 不問，除非 `SCRUB=enforce`（沒有寫入權或查不到權限，由 `run-start` 判定），或 target 來自 `#N --last` 而範圍是 `--scope whole-comment`（`--last` 選的是最新一則，未必是你要改的那則）；作者閘門在 prepare 已確定這是你自己寫的內容。`--prepend-note`、`--append`、`--replace` 照舊要問。
 4. 隱私自審（`privacy_scrub_gate`）：依 `SCRUB` 等級（prepare 印了 `FLOOR=272` 而 SCRUB 是 `light` 時用 `warn`），對這次**加入的**文字（DIFF 的加入行）做 [`rules/privacy-scrubbing.md`](../../rules/privacy-scrubbing.md) 的語意檢查（本機路徑、未公開的協作者真名、未發表的內容、新加入的第三方逐字內容；密鑰、token、密碼這類 credential 在任何等級都算命中）。目標裡原本就有的內容命中只回報，不擋：那些已經在 GitHub 上。
    - **不問的 `--correct`**：`enforce`、`warn` 命中就停，`light` 只有新加入的第三方逐字內容與 credential 算命中。沒有人確認，`warn` 的「提醒後照做」不成立（#424 verify 第 1 輪）。命中時顯示 redaction diff，AskUserQuestion（送出／遮蔽後再送／不寫）。
-   - **要問的 target**：`enforce` 命中 → 顯示 redaction diff，使用者確認前不 apply；`warn` 命中 → 印一行提醒，第 6 點一起問。
-   - 要送出遮蔽後的版本，就 discard 這個 target、改好 body file 後從 Step 1 重跑（apply 只寫 prepare 組好的內文）。
+   - **要問的 target**：`enforce` 命中，或任何等級的 credential → 顯示 redaction diff，使用者確認前不 apply；`warn` 命中 → 印一行提醒，第 6 點一起問。
+   - 要送出遮蔽後的版本，就 discard 這個 target、改好 body file（命中在 `--note` 那一句時連 `--note` 一起改）後從 Step 1 重跑（apply 只寫 prepare 組好的內文）。
 5. prepare 印了 `FLOOR=272`（`reply_272_gate`，不論等級）：先另用 AskUserQuestion 問「這次加入或改寫的文字裡，若有第三方逐字內容，確認可以放上 remote？」。說清楚原文已有的引文本來就在 GitHub 上、不受這一題影響，回答「否」只會取消這次編輯，不會把已公開的文字拿掉。選項含「遮蔽後再送」（四種 mode 都適用，遮蔽的是這次 body file 裡的文字；`--correct` 的 `**Point i**` 引文仍須原樣保留）：discard 這個 target、跑 Step 5 的 finish 結束這個 run、改好 body file 後從 Step 1 開新的 run，呼叫端看新 run 的結束碼。使用者沒有確認，就 discard。內文只是提到這兩個標記字串（例如 verify 報告）也會觸發這一題，照實問即可。這是 #272 要求的確認，不能由下一題代替（[`rules/privacy-scrubbing.md`](../../rules/privacy-scrubbing.md) § Reply layer-3 payload tier floor）。
 6. 問或回報：不問的 `--correct`，在對話裡回報要寫入的目標與段落，直接進 Step 4 apply。要問的 target，AskUserQuestion 確認，預設 NO（破壞性動作）。
 
@@ -280,7 +280,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" finish --run '<RUN>'
   --body-file=~/notes/fixed-expected.md
 ```
 
-`--correct` 不發布 `--reason`：標記只帶 backup id 與日期（理由可能重述錯的內容）。段落尾的可見文字 `_更正於 YYYY-MM-DD（AI 判斷）：<note>_` 由 helper 加上；用 `--note` 帶一句話，寫現在正確的內容，不重述錯的值（#424）。
+`--correct` 不發布 `--reason`：標記只帶 backup id 與日期（理由可能重述錯的內容）。段落尾的可見文字 `_更正於 YYYY-MM-DD：<note>_` 由 helper 加上；用 `--note` 帶一句話，寫現在正確的內容，不重述錯的值（#424）。
 
 別人發的 comment（含 OWNER 由你以外的人執行時、bot）不用 `--correct`：改用 `/idd-comment --type errata` 另貼更正（`--correct` 沒有 override）；是你用另一個 GitHub 帳號寫的，就 `gh auth switch` 切過去再跑。issue 正文以開 issue 的人為作者，別人開的 issue 正文裡的錯誤改用 `/idd-comment --type correction`。
 
@@ -295,7 +295,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" finish --run '<RUN>'
 - **`--replace` 預設 confirm = NO**：破壞性動作不自動 yes
 - **Log 每次 edit**：顯示 URL 讓使用者能立即 verify
 - **提到歸檔路徑的文字**：archive-read-guard hook 會擋下指令文字裡寫出 `.claude/.idd/archive` 的任何呼叫，`--body`、`--reason` 也一樣（fail-closed，#351）。使用者給的 `--reason` 若寫出這個路徑，Step 1 照原樣貼上會被擋：先告訴使用者，請使用者改寫，或同意你改寫成不含路徑的說法，不要自行改寫後照跑。更正或附加的內文若必須提到它，用 Write 工具寫進檔案、以 `--body-file` 傳入（helper 讀檔內容，hook 不看檔案內容）。在含歸檔的 repo 裡，指令文字同時含權限指令（`chmod`、`chown`…）與遞迴標記（`-R`、`find`、`xargs`）也會被擋，`--body`／`--reason` 一樣；內文改用 `--body-file`，`--reason` 照上面的方式請使用者改寫。`cd .claude/.idd` 之後用相對路徑碰 `archive/…` 一樣會被擋，在含歸檔的 repo 裡同一個指令又 `cd` 又 `chmod` 也會被擋；要看舊版請走 `restore`，不要自己讀。
-- **`--correct` 不設 `IDD_EDIT_HELPER_ALLOW_UNSAFE_BODY_FILE`**（#424，它不問）：那是給人親手處理特殊路徑的逃生口，AI 寫回的替換文字一律放在 `mktemp -d` 建的目錄。
+- **`--correct` 不設 `IDD_EDIT_HELPER_ALLOW_UNSAFE_BODY_FILE`**（#424，它不問）：那是給人親手處理特殊路徑的逃生口，寫回與偵測 skill「現在執行」的替換文字一律放在 `mktemp -d "$HOME/.cache/idd/writeback/XXXXXX"` 建的新目錄（先 `mkdir -p "$HOME/.cache/idd/writeback"`）。
 - **`--body-file` path safety（#155）**：helper **canonicalize（`os.path.realpath`）後拒絕** sensitive system paths（`/etc` `/var` `/sys` `/proc` `/private/etc|var`）+ credential dirs（`.ssh` `.aws` `.gnupg` `.kube` `.docker`，不分大小寫：macOS 的 APFS 把 `~/.SSH` 當成 `~/.ssh`）與 gh 的 token 目錄（`GH_CONFIG_DIR`、`$XDG_CONFIG_HOME/gh`、`~/.config/gh`，escape hatch 也不放行），含 `//etc` / `/tmp/../etc` / symlink / relative-traversal bypass vectors → exit 5 refuse。Escape hatch：`IDD_EDIT_HELPER_ALLOW_UNSAFE_BODY_FILE=1`（須自審 reason）。合法 repo / `/tmp` / `$HOME/Developer` 路徑照常讀；使用者自己的暫存目錄底下（macOS 在 `/var/folders/…`）也放行（#351）。Preview gate 仍是最後一道防線。
 
 ## 與 idd-comment 的配合
@@ -341,7 +341,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" restore '<BACKUP_ID>'
 
 ## Next Step
 
-改的是 Diagnosis 時，照 [`rules/issue-write-back.md`](../../rules/issue-write-back.md)「診斷更正後，連帶更新」處理 Implementation Plan；已建好的東西要作廢、這次不跟著改時才走 `idd-reorganize`。其他情況通常不需要後續 skill。
+討論寫回改的是 Diagnosis 時，照 [`rules/issue-write-back.md`](../../rules/issue-write-back.md)「診斷更正後，連帶更新」處理 Implementation Plan 與實作之後的去處。由 `idd-diagnose` Stage 1、偵測 skill 或 `idd-comment` errata 呼叫時，照呼叫端的說明，不另外連帶更新。其他情況通常不需要後續 skill。
 如果是 errata flow，由 `/idd-comment` 統一 orchestrate。
 
 ## SKILL↔helper Contract（#163）

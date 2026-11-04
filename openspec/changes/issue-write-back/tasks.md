@@ -56,3 +56,9 @@
 - [x] 9.1 先改測試，鎖住 A corrected diagnosis SHALL update the records that depend on it（verify 報告不動、同 PR 跟著改就就地寫回）與 in-place-correction 的 Skills that detect errors SHALL propose corrections, not apply them（run-now 問句附替換全文、引數帶 `--repo`）：`issue-write-back` 拿掉 verify 註記、`--prepend-note` 不問、unattended 的斷言，改成反向斷言；`edit-run` 拿掉私人路徑與 `discard --reason` 的區塊；`append-vs-modify` §8 的斷言改回 main 的提議寫法。驗證：把新測試放到 353f686 上跑，這些斷言 FAIL；改完後通過。
 - [x] 9.2 照 D12（verify 第 5 輪，2026-11-04 維護者決定，comment 6617788666）撤回 D1b、D2（第 5 輪撤回，見 D12）：helper 拿掉私人路徑閘與 `discard --reason`、`finish` 的 HELD；`idd-edit` Step 3 拿掉 unattended 偵測與 `--prepend-note` 的不問分支；`idd-comment` 的 errata 指標回到 main；規則、spec、design、proposal、`append-vs-modify`、CHANGELOG、README、plugin.json 與 marketplace 同步。驗證：`run-all-tests.sh` 全部通過、`spectra validate issue-write-back` 通過。
 - [x] 9.3 第 5 輪的 LOW：先在 `edit-run` 加測試（替換文字中間的舊可見文字、只有別的 mode 標記的替換內容），再改 helper（每一行舊可見文字都移除，只有 IDD 標記的替換內容算空）；規則指明 Diagnosis 是最新一則你自己寫的、Spectra tier 用 `/spectra-ingest`；`idd-diagnose` Stage 1 只改剛貼出的那一則、allowed-tools 補上 Skill、Write、mktemp；CHANGELOG 補上 `idd-issue` 的 edit body。驗證：`edit-run`、`issue-write-back` 通過。
+
+## 10. verify 第 6 輪之後（D13 兩處都寫、可見文字拿掉「AI 判斷」）
+
+- [x] 10.1 先改測試，鎖住 Decided discussion changes SHALL be written back by kind（改了診斷的決定兩處都寫）與 A corrected section SHALL carry a visible line（新格式、結尾以外的舊行拒絕、code fence 裡的同形文字保留）：`edit-run` 改可見文字的斷言並加 fail-closed 與 code fence 的案例；`issue-write-back` 加兩處都寫、Diagnosis 目標、實作之後沒有 PR 承載、依編號採納、寫回目錄的斷言。驗證：把新測試放到 f9a7322 上跑，這些斷言 FAIL；改完後通過。
+- [x] 10.2 照 D13（verify 第 6 輪，2026-11-04 維護者決定，comment 6619279709）改 helper、規則、spec、`append-vs-modify`、`idd-edit`、三個偵測 skill、`idd-reorganize`、`idd-issue`、hook、CHANGELOG 與文件。驗證：`run-all-tests.sh` 全部通過、`spectra validate issue-write-back` 通過。
+

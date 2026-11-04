@@ -48,7 +48,7 @@ IDD 已有就地更正的工具：`/idd-edit --correct`（#351）可以改自己
 ### D7 定案門檻與可見文字（verify 第 1 輪，2026-11-03 維護者決定，comment 6600258374）
 
 - **定案**：只有使用者在 session 裡明確定案才算改變，假設與提問不算。已關閉的 issue 不改，避免和 Closing Summary 對不起來。
-- **可見文字**：`--correct` 由 helper 固定加一行 `_更正於 YYYY-MM-DD（AI 判斷）：原因_`。放在 helper 而非規則，才不會忘；原因寫正確內容，不重述錯的值。GitHub 編輯不寄通知，標記又看不見，沒有這行，讀者無從知道。
+- **可見文字**：`--correct` 由 helper 固定加一行 `_更正於 YYYY-MM-DD：原因_`（第 6 輪後拿掉「AI 判斷」，見 D13）。放在 helper 而非規則，才不會忘；原因寫正確內容，不重述錯的值。GitHub 編輯不寄通知，標記又看不見，沒有這行，讀者無從知道。
 
 ### D8 實作之後：同一個 PR 跟著改就就地寫回（第 5 輪改，見 D12）
 
@@ -61,6 +61,10 @@ IDD 已有就地更正的工具：`/idd-edit --correct`（#351）可以改自己
 ### D12 再拿掉三樣、實作後同 PR 就地寫回（verify 第 5 輪，2026-11-04 維護者決定，comment 6617788666）
 
 第 5 輪的 HIGH 只剩一處殘留，其餘發現多半落在為已砍部分留下的機件上。維護者決定：verify 報告不加註記（註記會擠掉報告首行的標題，讓認首行的 skill 認不出報告；#424 每改一次 Diagnosis 就要加 8 則），`--prepend-note` 回到 main 一律先問；`--body-file` 的私人路徑閘拿掉（規則自己的寫回檔在暫存目錄，本來就不受它檢查，卻在四種 mode 誤擋一般檔案），回到 main 的系統與 credential 目錄檢查；`/idd-edit` 的 unattended 分支拿掉（砍掉自動更正後已沒有 unattended 流程呼叫它，只會被殘留的旗標觸發）；實作之後同一個 PR 跟著改的設計改變就地寫回（D8）。
+
+### D13 改了診斷的決定兩處都寫，可見文字拿掉「AI 判斷」（verify 第 6 輪，2026-11-04 維護者決定，comment 6619279709）
+
+Devil's Advocate 指出 #424 自己跑了六輪，每次定案的都是改策略的決定，實作者每次都只貼 decision comment，Diagnosis 與 Current Status 停在第 1 輪：三類擇一讓這類決定只能選一邊，歸第 2 類使用者的原話沒有位置，歸第 3 類 Diagnosis 不更新。所以改了診斷的決定兩處都寫。「AI 判斷」出自 D7，當時偵測 skill 還會自動更正；D11 之後每條 `--correct` 路徑都是使用者定案或選了執行，這幾個字的前提不在。同一輪的發現也讓替換文字的處理改成 fail-closed：只換掉結尾那一組舊可見文字與更正標記，結尾以外的舊行拒絕，不再逐行剝除（剝除會誤刪 code fence 範例與其他段落的更正紀錄）；寫回檔改放 `$HOME/.cache/idd/writeback/` 下的新目錄（`$TMPDIR` 在 sandbox 內外不同，路徑閘會拒絕另一邊的暫存目錄）。
 
 ## Implementation Contract
 
@@ -80,7 +84,7 @@ IDD 已有就地更正的工具：`/idd-edit --correct`（#351）可以改自己
 
 **驗收**
 
-- `scripts/tests/edit-run/test.sh`：`--note` 與可見文字、舊行與舊標記被換掉、只有標記的替換內容仍回 empty、`--note` 拒絕的字元。
+- `scripts/tests/edit-run/test.sh`：`--note` 與可見文字、結尾的舊行與舊標記被換掉、結尾以外的舊行被拒、code fence 裡的同形文字保留、只有標記的替換內容被拒、`--note` 拒絕的字元。
 - `scripts/tests/issue-write-back/test.sh`：規則檔含定案門檻、三類分流、作者邊界、回報、privacy、被拒時的去處；`idd-edit` Step 3 對 `--correct` 不再要求確認、其他 mode 照舊確認、沒有 unattended 分支；`idd-diagnose` Stage 1 用 `--correct`、不再寫「追加修正」；`idd-close` 讀 Residue 時略過可見文字與標記。
 - `scripts/tests/in-place-correction/test.sh`：三個偵測 skill 保留 `### Proposed Corrections` 與「只列不做」，選執行後不再寫「仍走自己的 preview + confirm」，問句附替換內容全文、引數帶 `--repo`。
 - `run-all-tests.sh` 全部通過。

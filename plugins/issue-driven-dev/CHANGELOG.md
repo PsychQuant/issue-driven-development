@@ -16,19 +16,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   kinds, a closed list: the problem (question, scope, `## Expected`) goes to the issue body section with
   `/idd-edit issue:<N> --correct --section`; the diagnosis (root cause, strategy, routing) goes to the Diagnosis
   comment section with `/idd-edit comment:<id> --correct --section`; new information, a decision, or the course of
-  the discussion goes to a new `/idd-comment`. In a repository that has an IDD config and that you can write to,
+  the discussion goes to a new `/idd-comment`. A decision that changes the diagnosis goes to both: a decision comment
+  with the user's words, and the Diagnosis section. In a repository that has an IDD config and that you can write to,
   the AI decides the kind, writes without asking, and reports each write-back with the user's words it rests on;
   elsewhere it asks. Only your own content is rewritten; someone else's comment gets `/idd-comment --type errata`,
   someone else's issue body `--type correction`. The privacy review covers the text being added; a hit at
   `enforce` or `warn`, new third-party verbatim text at `light`, or a credential at any level stops the
   write-back. A corrected diagnosis also corrects your Implementation Plan sections; verify reports are left as
   they are. A change decided after implementation is written back in place when the same pull request carries it
-  (for example a design settled during verify-fix); `idd-reorganize` takes over only when what was built is to be
-  thrown away.
+  (for example a design settled during verify-fix); when no pull request carries it, or what was built is thrown
+  away, it is written back and `idd-reorganize` rolls the phase back.
 - **`--note` on `/idd-edit --correct`.** The replaced text ends with a visible line,
-  `_更正於 YYYY-MM-DD（AI 判斷）：<note>_`, before the marker. A reader could not otherwise tell the text changed:
-  the marker is an HTML comment and an edit sends no notification. An earlier line and marker at the end of the
-  replacement are replaced; `--note` refuses `<`, `>`, control and bidirectional characters.
+  `_更正於 YYYY-MM-DD：<note>_`, before the marker. A reader could not otherwise tell the text changed: the marker is
+  an HTML comment and an edit sends no notification. The earlier line and correct marker at the end of the
+  replacement are replaced (other IDD markers there are kept); an earlier line or correct marker anywhere else
+  outside a code fence is refused (exit 2), and so is a replacement of nothing but IDD markers, now at `run-start`
+  rather than as `REASON=empty` at `prepare`. `--note` refuses `<`, `>`, control and bidirectional characters.
 - SessionStart carries one line about write-back, with the rule's installed path (still five lines).
 
 ### Changed
@@ -46,7 +49,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The first version also let other people's comments trigger write-back and let the detecting skills correct
 published text on their own. Four verify rounds failed without converging on those two parts, so they were removed
 before release (#424 comment 6616229678). After the fifth round, three more parts went: a note on each verify
-report, a private-path check on `--body-file`, and an unattended branch in `/idd-edit` (comment 6617788666).
+report, a private-path check on `--body-file`, and an unattended branch in `/idd-edit` (comment 6617788666). After
+the sixth, a decision that changes the diagnosis is written to both places, and the visible line no longer says
+（AI 判斷） (comment 6619279709).
 
 ## [3.6.0] - 2026-11-03
 

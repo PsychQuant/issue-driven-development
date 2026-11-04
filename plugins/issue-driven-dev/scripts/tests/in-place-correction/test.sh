@@ -217,6 +217,7 @@ for s in idd-verify idd-diagnose idd-reorganize; do
   refute_output_grep "$s no longer says idd-edit asks a second time (#424)" "仍走自己的 preview + confirm" "$SKILLS/$s/SKILL.md"
   assert_output_grep "$s shows the replacement text in the run-now question" "問句裡附上該項替換內容的全文" "$SKILLS/$s/SKILL.md"
   assert_output_grep "$s rebuilds the command with --repo" "重組的引數另帶 \`--repo" "$SKILLS/$s/SKILL.md"
+  assert_output_grep "$s writes the replacement to a fresh directory" ".cache/idd/writeback/XXXXXX" "$SKILLS/$s/SKILL.md"
 done
 
 # ── E. round 2 (verify #351 round 1) ──────────────────────────────────────

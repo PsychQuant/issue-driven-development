@@ -1602,11 +1602,35 @@ NOTE_MAX = 200
 NOTE_LINE_PREFIX = "_更正於 "   # idd-close Step 3.6 skips this line when it reads a section
 
 
+# The line this helper writes, and the one rounds before #424 round 7 wrote (with
+# （AI 判斷）). Only a line of exactly this shape counts as an earlier visible
+# line; prose that merely starts with the prefix is the user's text.
+NOTE_LINE_RE = re.compile(r"_更正於 \d{4}-\d{2}-\d{2}(?:（AI 判斷）)?(?:：.*)?_")
+CORRECT_MARKER_PREFIX = '<!-- idd:edit mode="correct"'
+IDD_MARKER_RE = re.compile(r"\s*<!--\s*idd:.*-->\s*")
+
+
 def _correct_note_line(note):
-    """The line a reader sees: the marker is an HTML comment, an edit sends no
-    notification, and since #424 nobody confirms a correction (verify round 1)."""
+    """The line a reader sees: the marker is an HTML comment and an edit sends
+    no notification (#424 verify round 1)."""
     day = datetime.date.today().isoformat()
-    return f"{NOTE_LINE_PREFIX}{day}（AI 判斷）：{note}_" if note else f"{NOTE_LINE_PREFIX}{day}（AI 判斷）_"
+    return f"{NOTE_LINE_PREFIX}{day}：{note}_" if note else f"{NOTE_LINE_PREFIX}{day}_"
+
+
+def _outside_fences(lines):
+    """(index, line) for every line outside a fenced code block."""
+    fence = None
+    for i, line in enumerate(lines):
+        m = re.match(r"\s*(`{3,}|~{3,})", line)
+        if m:
+            if fence is None:
+                fence = m.group(1)[0] * len(m.group(1))
+                continue
+            if line.strip().startswith(fence):
+                fence = None
+                continue
+        if fence is None:
+            yield i, line
 
 
 def _correct_marker(backup_id):
@@ -2209,19 +2233,28 @@ def run_start_subcmd(argv):
             return 2
         # A line from an earlier correction at the end of the replacement would
         # stand next to the new one and may state what is now wrong (round 2).
-        # Every such line, not only a trailing one: a whole-comment replacement
-        # copied from an earlier correction carries the comment's own markers
-        # after it (verify round 5).
-        lines = [l for l in state["body_input"].replace("\r\n", "\n").rstrip("\n").split("\n")
-                 if not l.startswith(NOTE_LINE_PREFIX)]
-        # Its marker too: a replacement copied from the section ends with both
-        # (round 3), and the apply writes a new marker.
-        while lines and (not lines[-1].strip() or lines[-1].startswith('<!-- idd:edit mode="correct"')):
-            lines.pop()
+        # The trailing group a copied section or comment ends with: the earlier
+        # visible line, its correct marker (round 3), and other IDD markers the
+        # comment carries between them (round 5). The visible line and the
+        # correct marker are dropped, other markers kept. An earlier line or
+        # correct marker anywhere else is refused, not stripped: stripping
+        # rewrote text nobody reviews on this path (round 6).
+        lines = state["body_input"].replace("\r\n", "\n").rstrip("\n").split("\n")
+        tail = []
+        while lines and (not lines[-1].strip() or NOTE_LINE_RE.fullmatch(lines[-1].strip())
+                         or IDD_MARKER_RE.fullmatch(lines[-1])):
+            tail.insert(0, lines.pop())
+        for _, line in _outside_fences(lines):
+            if NOTE_LINE_RE.fullmatch(line.strip()) or line.strip().startswith(CORRECT_MARKER_PREFIX):
+                err("ERROR: the replacement carries an earlier correction's visible line or marker before its end; "
+                    "remove it (#424)")
+                return 2
+        lines += [l for l in tail if IDD_MARKER_RE.fullmatch(l) and not l.strip().startswith(CORRECT_MARKER_PREFIX)]
         text = [l for l in _strip_target_heading(lines, state["section_flag"] or "-")
-                if not re.fullmatch(r"\s*<!--\s*idd:.*-->\s*", l)]
-        if not "\n".join(text).strip():
-            err("Refuse: --correct needs the corrected text; the body holds only the target heading (#351).")
+                if l.strip() and not IDD_MARKER_RE.fullmatch(l)]
+        if not text:
+            err("Refuse: --correct needs the corrected text; the body holds only the target heading, IDD markers "
+                "or earlier visible lines (#351, #424).")
             return 2
         state["body_input"] = "\n".join(lines) + "\n\n" + _correct_note_line(note) + "\n"
     repo = state["repo"] or default_repo or ""

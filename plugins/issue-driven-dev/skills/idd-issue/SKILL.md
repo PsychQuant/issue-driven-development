@@ -1556,7 +1556,7 @@ options:
 question: "Finding goes to #{picked}. What action?"
 options:
   - "comment"           ← append new comment to #picked
-  - "edit body"         ← modify #picked body (when the finding shows the body is WRONG and the invoking user opened #picked, route to `/idd-edit issue:<N> --correct --section ...` instead — it archives the old text and checks the Original text quotation, #351; anyone else's issue body, or text under no heading, gets `/idd-comment --type correction` instead)
+  - "edit body"         ← modify #picked body (when the finding shows the body is WRONG and the invoking user opened #picked, route to `/idd-edit issue:<N> --correct --section ...` instead — it archives the old text and checks the Original text quotation, #351; anyone else's issue body, or text under no heading, gets `/idd-comment --type correction` instead). Since #424 `--correct` writes after its preview without asking, so the Stage 3 preview shows the full replacement text for these rows, and the command carries `--repo <the target repo>` and `--note <what is now correct>`
   - "update status"     ← call idd-update on #picked Current Status block
   - "skip — change my mind" ← back to picker
 ```

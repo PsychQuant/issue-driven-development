@@ -156,12 +156,12 @@ mkrec comment-290.json kiki830621 MEMBER "$SECTION_BODY"
 printf 'right text\n' >"$WORK/fix-n.md"
 start a5n comment:290 --correct --section "## Notes" --body-file "$WORK/fix-n.md" --note "改用方案 B"
 h a5np prepare --run "$RUN" --target comment:290
-assert_output_grep "the preview carries the visible line" "_更正於 ${TODAY}（AI 判斷）：改用方案 B_" "$(val PREVIEW "$WORK/a5np.out")"
+assert_output_grep "the preview carries the visible line" "_更正於 ${TODAY}：改用方案 B_" "$(val PREVIEW "$WORK/a5np.out")"
 h a5na apply --run "$RUN" --target comment:290 --scrub-attested warn --state "$(val STATE "$WORK/a5np.out")"
 h a5nf finish --run "$RUN"
 assert_exit "a noted correction exits 0" 0 "$RC"
 N290="$(body_of comment-290.json)"
-assert_grep "the written section has the visible line" "_更正於 ${TODAY}（AI 判斷）：改用方案 B_" "$N290"
+assert_grep "the written section has the visible line" "_更正於 ${TODAY}：改用方案 B_" "$N290"
 assert_eq "the line comes after the text and before the marker" "True" "$(python3 -c '
 import sys
 b = sys.argv[1]
@@ -171,7 +171,7 @@ start a5n2 comment:291 --correct --section "## Notes" --body-file "$WORK/fix-n.m
 h a5n2p prepare --run "$RUN" --target comment:291
 h a5n2a apply --run "$RUN" --target comment:291 --scrub-attested warn --state "$(val STATE "$WORK/a5n2p.out")"
 h a5n2f finish --run "$RUN"
-assert_grep "without --note the line still marks the date and that an AI decided" "_更正於 ${TODAY}（AI 判斷）_" "$(body_of comment-291.json)"
+assert_grep "without --note the line still marks the date" "_更正於 ${TODAY}_" "$(body_of comment-291.json)"
 mkrec comment-292.json kiki830621 MEMBER "a"
 h a5n3 run-start --default-repo o/r -- comment:292 --append --body-file "$WORK/fix-n.md" --reason r --note x
 assert_exit "--note on another mode exits 2" 2 "$RC"
@@ -222,6 +222,21 @@ assert_eq "one visible line remains" "1" "$(printf '%s\n' "$N297" | grep -c '^_�
 printf '<!-- idd:edit mode="append" date="2026-01-01" -->\n' >"$WORK/append-marker.md"
 h a5w run-start --default-repo o/r -- comment:297 --correct --section "## Notes" --body-file "$WORK/append-marker.md"
 assert_exit "a replacement of another mode's marker only is refused" 2 "$RC"
+
+echo "A5r7. round 7: an earlier line before the end is refused; look-alike text is kept"
+printf 'right text\n\n_更正於 2026-01-01：old claim_\n\nmore text\n' >"$WORK/fix-middle.md"
+h a5x run-start --default-repo o/r -- comment:297 --correct --section "## Notes" --body-file "$WORK/fix-middle.md" --note "new"
+assert_exit "an earlier visible line before the end is refused" 2 "$RC"
+mkrec comment-298.json kiki830621 MEMBER "$SECTION_BODY"
+printf 'the format:\n\n```text\n_更正於 2026-01-01：說明_\n```\n\n_更正於 後來又改了一次，這是正文_\n' >"$WORK/fix-fence.md"
+start a5y comment:298 --correct --section "## Notes" --body-file "$WORK/fix-fence.md" --note "new"
+h a5yp prepare --run "$RUN" --target comment:298
+h a5ya apply --run "$RUN" --target comment:298 --scrub-attested warn --state "$(val STATE "$WORK/a5yp.out")"
+h a5yf finish --run "$RUN"
+N298="$(body_of comment-298.json)"
+assert_grep "a look-alike line inside a code fence is kept" "_更正於 2026-01-01：說明_" "$N298"
+assert_grep "prose that only starts like the line is kept" "_更正於 後來又改了一次，這是正文_" "$N298"
+assert_grep "the new line is written" "_更正於 ${TODAY}：new_" "$N298"
 
 echo "A5r4. an earlier line and marker copied from the section"
 mkrec comment-296.json kiki830621 MEMBER "$SECTION_BODY"
