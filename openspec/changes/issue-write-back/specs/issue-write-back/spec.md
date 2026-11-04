@@ -82,8 +82,8 @@ In a repository that has an IDD config and where the invoking user's `viewerPerm
 
 #### Scenario: A second correction
 
-- **WHEN** the replacement text ends with the visible line and marker of an earlier correction
-- **THEN** the written section SHALL carry only the new line and one marker
+- **WHEN** a section corrected once is corrected again, and the replacement text ends with that correction's visible line and marker
+- **THEN** the written section SHALL carry one visible line (the new one), the earlier correction's marker once (carried so its backup stays reachable, #351), and the new marker
 
 #### Scenario: Text before the trailing group
 

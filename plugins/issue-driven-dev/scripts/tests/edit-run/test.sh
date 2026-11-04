@@ -247,6 +247,27 @@ h a5zp prepare --run "$RUN" --target comment:289
 refute_output_grep "a whole-comment replacement of look-alike prose is not empty" "REASON=empty" "$WORK/a5zp.out"
 h a5zf finish --run "$RUN"
 
+echo "A5r8b. the same section corrected twice"
+mkrec comment-288.json kiki830621 MEMBER "$SECTION_BODY"
+printf 'first fix\n' >"$WORK/fix-first.md"
+start a5t comment:288 --correct --section "## Notes" --body-file "$WORK/fix-first.md" --note "one"
+h a5tp prepare --run "$RUN" --target comment:288
+h a5ta apply --run "$RUN" --target comment:288 --scrub-attested warn --state "$(val STATE "$WORK/a5tp.out")"
+h a5tf finish --run "$RUN"
+FIRST="$(body_of comment-288.json)"
+FIRST_ID="$(printf '%s\n' "$FIRST" | sed -n 's/.*backup-id="\([^"]*\)".*/\1/p' | head -1)"
+SEC="$(printf '%s\n' "$FIRST" | awk '/^## Notes/{f=1;next} f&&/^## /{exit} f')"
+printf 'second fix\n\n%s\n' "$SEC" | grep -v '^first fix$' >"$WORK/fix-second.md"
+start a5u comment:288 --correct --section "## Notes" --body-file "$WORK/fix-second.md" --note "two"
+h a5up prepare --run "$RUN" --target comment:288
+h a5ua apply --run "$RUN" --target comment:288 --scrub-attested warn --state "$(val STATE "$WORK/a5up.out")"
+h a5uf finish --run "$RUN"
+N288="$(body_of comment-288.json)"
+assert_eq "one visible line after two corrections" "1" "$(printf '%s\n' "$N288" | grep -c '^_更正於 ')"
+assert_grep "the new visible line is the one kept" "_更正於 ${TODAY}：two_" "$N288"
+assert_eq "the first backup id stays once" "1" "$(printf '%s\n' "$N288" | grep -c "$FIRST_ID")"
+assert_eq "two correct markers: the carried one and the new one" "2" "$(printf '%s\n' "$N288" | grep -c 'idd:edit mode="correct"')"
+
 echo "A5r4. an earlier line and marker copied from the section"
 mkrec comment-296.json kiki830621 MEMBER "$SECTION_BODY"
 printf 'right text\n\n_更正於 2026-01-01：old claim_\n<!-- idd:edit mode="correct" backup-id="comment-296-20260101T000000Z" date="2026-01-01" -->\n' >"$WORK/fix-copy.md"
