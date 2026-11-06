@@ -8,7 +8,7 @@ TBD - created by archiving change 'rules-layering-user-injection'. Update Purpos
 
 ### Requirement: SessionStart rule injection is minimal and canonical-aligned
 
-The plugin SHALL ship a SessionStart hook (`hooks/hooks.json` + `hooks/session-start-commit-rule.sh`) whose output is at most 5 lines, containing the commit issue-reference iron rules and a pointer to the canonical rule file. The hook content SHALL be statically defined and token-aligned with the canonical rule file.
+The plugin SHALL ship a SessionStart hook (`hooks/hooks.json` + `hooks/session-start-commit-rule.sh`) whose output is at most 5 lines, containing the commit issue-reference iron rules, a pointer to the canonical rule file, and one line on issue write-back with the installed path of `rules/issue-write-back.md`. The hook content SHALL be statically defined except that installed path, and token-aligned with the canonical rule files.
 
 #### Scenario: Hook artifact is wired for SessionStart
 

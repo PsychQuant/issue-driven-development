@@ -2,7 +2,7 @@
 # test.sh — living-issue write-back (#424): the plugin rule, the confirmation
 # policy of /idd-edit, and idd-diagnose correcting its own Diagnosis.
 #
-# Change: openspec/changes/issue-write-back
+# Change: openspec/changes/archive/2026-11-06-issue-write-back
 #   specs/issue-write-back/spec.md, specs/in-place-correction/spec.md
 # The SessionStart line is asserted in scripts/tests/session-start-commit-rule;
 # the detecting skills' Proposed Corrections blocks in scripts/tests/in-place-correction.
@@ -96,7 +96,7 @@ refute_output_grep "idd-reorganize does not take changes no PR carries (D14)" "�
 assert_output_grep "idd-diagnose Stage 1 also posts a decision comment (D13)" "記下這個決定（兩處都寫" "$SKILLS/idd-diagnose/SKILL.md"
 assert_grep "a new mention in a kind-3 comment is asked first" "提及會寄通知給對方" "$R"
 refute_output_grep "the helper keeps no （AI 判斷） format" "（AI 判斷）" "$PLUGIN/scripts/idd-edit-helper.py"
-refute_output_grep "the append-vs-modify delta no longer says an AI decided" "that an AI decided it" "$PLUGIN/../../openspec/changes/issue-write-back/specs/append-vs-modify-discipline/spec.md"
+refute_output_grep "the append-vs-modify delta no longer says an AI decided" "that an AI decided it" "$PLUGIN/../../openspec/specs/append-vs-modify-discipline/spec.md"
 refute_output_grep "--correct has no --last exception (D15)" "target 來自" "$SKILLS/idd-edit/SKILL.md"
 assert_grep "unattended verify and implementer changes are out of scope (D15)" "都不會觸發寫回" "$R"
 assert_grep "every command carries --repo" "這份規則裡的每一個指令都帶" "$R"
