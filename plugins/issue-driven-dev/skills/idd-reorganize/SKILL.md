@@ -2,7 +2,7 @@
 name: idd-reorganize
 description: |
   當上游 artifact（issue framing / diagnosis / spec）被判定錯誤時，有意識地讓修正**向下傳播**：列出所有建立在它之上的下游產物，逐一裁定「仍然有效 / 需重做 / 作廢」，並留下 re-baseline 紀錄。
-  Use when: 走到一半發現「前面就錯了」—— root cause 選錯、scope 切錯、spec 凍進錯誤假設、或多個 issue 糾纏需要重切，而且已建好的東西要作廢或重做。同一個 PR 跟著改的設計改變不用本 skill：就地寫回 Diagnosis；PR 合併後才擴大的範圍開新 issue（rules/issue-write-back.md，#424）。
+  Use when: 走到一半發現「前面就錯了」—— root cause 選錯、scope 切錯、spec 凍進錯誤假設、或多個 issue 糾纏需要重切，而且已建好的東西要作廢或重做、這次不跟著改。同一個 PR（direct-commit 時同一條 branch）跟著改的設計改變不用本 skill：就地寫回 Diagnosis；PR 合併後才擴大的範圍開新 issue（rules/issue-write-back.md，#424）。
   防止的失敗：只改上游那一處文字，而下游已經建在舊版本上的 diagnosis / plan / spec / PR 悄悄留著錯誤前提繼續走。
 argument-hint: "#issue [--artifact issue|diagnosis|plan|spec] [--reason '<一句話>']"
 allowed-tools:
@@ -25,9 +25,9 @@ allowed-tools:
 |---|---|
 | 一處措辭、typo、補一句說明 | `/idd-edit` |
 | 進度 / phase / checklist 同步 | `/idd-update` |
-| 實作之後定案的設計改變，同一個 PR 跟著改（例如 verify-fix 期間） | 就地寫回 Diagnosis 與 Plan（[`rules/issue-write-back.md`](../../rules/issue-write-back.md)，#424） |
+| 實作之後定案的設計改變，同一個 PR（direct-commit 時同一條 branch）跟著改，例如 verify-fix 期間 | 就地寫回 Diagnosis 與 Plan（[`rules/issue-write-back.md`](../../rules/issue-write-back.md)，#424） |
 | PR 合併後才擴大範圍，已建好的東西照樣有效 | 開新 issue 承接（[`rules/issue-write-back.md`](../../rules/issue-write-back.md)，#424） |
-| **上游 artifact 的前提錯了，下游已經建在它上面，而且要作廢或重做** | **本 skill** |
+| **上游 artifact 的前提錯了，下游已經建在它上面，要作廢或重做，而且這次不跟著改** | **本 skill** |
 | 只是實作沒寫好，前提沒問題 | 照常 `/idd-implement` 修 |
 
 判準一句話：**問題出在「我們當初理解錯了什麼」，而不是「我們寫壞了什麼」時，用這個。**

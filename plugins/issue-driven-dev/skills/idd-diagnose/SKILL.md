@@ -12,11 +12,9 @@ allowed-tools:
   - Bash(git:*)
   - Bash(grep:*)
   - Bash(find:*)
-  - Bash(mktemp:*)
   - Read
   - Glob
   - Grep
-  - Skill
   - AskUserQuestion
 ---
 
@@ -793,7 +791,7 @@ Diagnosis comment 到 #NNN 後，進行兩階段確認:
 
 詢問使用者：「Diagnosis 已 comment 到 #NNN。正確嗎？要調整策略嗎？」
 
-- 如果要調整 → 用 `/idd-edit comment:<Diagnosis id> --repo <owner/repo> --correct --section <heading> --body-file <檔> --note <一句話>` 就地改寫 Diagnosis 受影響的段落（例如 `### Strategy`），**不追加修正 comment**（#424，見 [`rules/issue-write-back.md`](../../rules/issue-write-back.md)）；調整改了策略或 root cause 時，另用 `/idd-comment #N --type decision --quote '<使用者的原話>'` 記下這個決定（兩處都寫）；只改剛貼出的這一則：之前的 Implementation Plan 與 verify 報告依據的是被取代的診斷，都不動（Stage 2 會照新的診斷重新分流）；`/idd-edit` 拒絕時照該規則處理。然後回到這個 Stage 1 重新確認
+- 如果要調整 → 用 `/idd-edit comment:<Diagnosis id> --repo <owner/repo> --correct --section <heading> --body-file <檔> --note <一句話>` 就地改寫 Diagnosis 受影響的段落（例如 `### Strategy`），**不追加修正 comment**（#424，見 [`rules/issue-write-back.md`](../../rules/issue-write-back.md)）；另用 `/idd-comment #N --repo <owner/repo> --type decision --quote '<使用者的原話>' --body <決定與理由>` 記下這個決定（兩處都寫，`--correct` 先做）；只改剛貼出的這一則：之前的 Implementation Plan 與 verify 報告依據的是被取代的診斷，都不動（Stage 2 會照新的診斷重新分流）；`/idd-edit` 拒絕時照該規則處理。然後回到這個 Stage 1 重新確認
 
 > **Choice-first decision surfacing**（套用 `MANIFESTO.md`「Choice-first decision rendering」doctrine / spec `choice-first-decision-rendering`）：當 diagnosis 的 Strategy / Conflict / Risks 浮出**需 stakeholder 拍板且可列舉**的決策（多個 valid approach、方向衝突、命名 / 範圍取捨等），Stage 1 **SHALL** 用 `AskUserQuestion` render 成候選選項（含推薦項）讓 user 挑,而非只用散文列出請 user 自行 articulate。選項空間真的開放（AI 舉不出候選）時才 fallback free-text,且須具名說明為何無法列舉。batch / aggregate diagnose 收尾列多個待拍板決策時同理。Unattended 下不 block,套用既有 unattended 慣例（取安全 non-blocking 預設、寫 audit trail；如 Layer V 的 `proceed anyway`,未必是推薦項）。
 

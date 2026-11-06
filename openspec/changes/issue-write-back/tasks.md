@@ -69,3 +69,11 @@
 - [x] 11.1 先改測試，鎖住 A corrected diagnosis SHALL update the records that depend on it（實作之後三種去處、合併後擴大的範圍開新 issue）、idd-diagnose SHALL correct its own Diagnosis instead of appending a correction（Stage 1 改策略也貼 decision comment）與 A corrected section SHALL carry a visible line（結尾以外的文字照樣保留、只認新格式）：`edit-run`、`issue-write-back`、`in-place-correction`、`session-start-commit-rule`。驗證：把新測試放到 3c630c4 上跑，這些斷言 FAIL；改完後通過。
 - [x] 11.2 照 D14（verify 第 7 輪，2026-11-04 維護者決定，comment 6620544269）改規則、spec、`idd-reorganize`；並修第 7 輪其餘發現：helper 與 `idd-close` 只認完整格式的可見文字、偵測 skill 的替換檔一律放 `~/.cache/idd/writeback`、`idd-diagnose` Stage 1 兩處都寫、`--last` 一律先問、第 3 類新加入提及先問、append-vs-modify 的 spec delta。驗證：`run-all-tests.sh` 全部通過、`spectra validate issue-write-back` 通過。
 - [x] 11.3 Codex（第 8 輪）：規則第 43 行還要 AI 自己刪掉結尾以外的舊行，與 helper 的行為相反，改掉並加反向斷言；design D13 標明第 8 輪的改動。驗證：`issue-write-back` 通過。
+
+## 12. verify 第 8 輪之後（D15 寫明範圍、停止加機件）
+
+- [x] 12.1 先改測試，鎖住 Decided discussion changes SHALL be written back by kind（點名的項目算定案、改了診斷的決定先 `--correct`）與 A corrected diagnosis SHALL update the records that depend on it（不用動實作的照一般寫回、要動的三種依序取第一個符合的）；`edit-run` 加尾端群組的邊界（單獨 CR、同一行兩個 comment、縮排的範例）。驗證：把新測試放到 05f077c 上跑，這些斷言 FAIL；改完後通過。
+- [x] 12.2 照 D15（verify 第 8 輪，2026-11-06 維護者決定，comment 6680124222）改規則、spec、design、proposal、CHANGELOG：寫明 #399 的範圍並開 #474 追蹤；拿掉採納別人 comment 先列出、`--last` 先問、`/idd-clarify --status` 分支；每個指令都帶 `--repo`；`idd-issue`、`idd-diagnose` 的 allowed-tools 回到 main。驗證：`run-all-tests.sh` 全部通過、`spectra validate issue-write-back` 通過。
+
+第 8 輪刻意留著、不在這個 change 處理的 LOW：`--note ''` 給其他 mode 不報錯（#31）、HTML comment 內的 login 算已提及（#32）、Diagnosis 目標沒有作者篩選（#34）、`idd-update` 讀全部作者的 comment（#35，第 1 輪前就存在）、作者閘門看建立者不看最後編輯者與 R5 訊息（#37）、第 3 類 comment 的本文走 shell 變數（#39）、`idd-diagnose` 不在 git 工作樹時寫不了歸檔（#43）、`actionability-gate.md` 的 append-only 敘述（#52）、測試的反向斷言與 SessionStart 行長（#54）。
+

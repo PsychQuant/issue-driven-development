@@ -5,7 +5,7 @@ IDD 已有就地更正的工具：`/idd-edit --correct`（#351）可以改自己
 1. `in-place-correction` 規定 `--correct` 要使用者確認（預設 NO），`idd-edit` Step 3 第 5 點照做。
 2. `idd-diagnose` Step 4 Stage 1 要調整診斷時用 `gh issue comment` 追加修正，而不是改 Diagnosis 本身。
 
-#424 的決策紀錄：Diagnosis 的「決策」段（D1–D3）、decision comment（2026-10-25），以及五輪 verify 之後的維護者決定（comment 6600258374、6611450882、6615341615、6616229678、6617788666）。
+#424 的決策紀錄：Diagnosis 的「決策」段（D1–D3）、decision comment（2026-10-25），以及八輪 verify 之後的維護者決定（comment 6600258374、6611450882、6615341615、6616229678、6617788666、6619279709、6620544269、6680124222）。
 
 ## Goals / Non-Goals
 
@@ -50,7 +50,7 @@ IDD 已有就地更正的工具：`/idd-edit --correct`（#351）可以改自己
 - **定案**：只有使用者在 session 裡明確定案才算改變，假設與提問不算。已關閉的 issue 不改，避免和 Closing Summary 對不起來。
 - **可見文字**：`--correct` 由 helper 固定加一行 `_更正於 YYYY-MM-DD：原因_`（第 6 輪後拿掉「AI 判斷」，見 D13）。放在 helper 而非規則，才不會忘；原因寫正確內容，不重述錯的值。GitHub 編輯不寄通知，標記又看不見，沒有這行，讀者無從知道。
 
-### D8 實作之後的三種去處（第 5 輪改，見 D12；第 7 輪改，見 D14）
+### D8 實作之後的去處（第 5 輪改，見 D12；第 7、8 輪改，見 D14、D15）
 
 實作之後定案的改變，實作在同一個 PR 裡跟著改（例如 verify-fix 期間改了設計；direct-commit 時是結案前的同一條 branch），照一般的寫回改 Diagnosis 與 Implementation Plan。PR 合併後才擴大範圍、已建好的東西照樣有效：開新 issue 承接，原 issue 貼 link comment（D14）。已建好的東西要作廢或重做，才走 `idd-reorganize`：只改文字會留下 PASS 與舊的 phase，而 `idd-reorganize` 本來就處理下游枚舉與退 phase，Spectra tier 的 artifact 也由它處理。第一版把所有實作後的更正都送去 `idd-reorganize`，它會再貼一則新的 Diagnosis，正是 #399 的情況。
 
@@ -70,14 +70,18 @@ Devil's Advocate 指出 #424 自己跑了六輪，每次定案的都是改策略
 
 第 7 輪為了補「實作之後、沒有 PR 承載」的缺口，實作端自己加了「寫回後走 `idd-reorganize`」，沒有經過決定；它在 direct-commit 的 repo 會把一般的 verify-fix 改變也送去 `idd-reorganize`，而 `idd-reorganize` 會再貼一則新的 Diagnosis。維護者決定：這種改變是新的工作，開新 issue 承接，不改原 issue 的 Expected。同一輪也把替換文字的處理改成只動結尾那一組：第 6 輪的逐行剝除會改到沒人看過的文字，第 7 輪的拒絕又擋住 main 接受的整則更正，所以結尾之前的文字一律照樣保留。
 
+### D15 只涵蓋使用者定案的改變，並停止加機件（verify 第 8 輪，2026-11-06 維護者決定，comment 6680124222）
+
+Devil's Advocate 回頭查 #399：五份更正稿是 unattended verify 只列不做的 Proposed Corrections，最後上線的設計是實作者自己換的，兩者都不會觸發本規則。維護者決定寫明不在範圍內，另開 issue 追蹤（#474）。實作時自己加、沒有經過決定的兩條問句（採納別人 comment 先列出、`--last` 先問）拿掉：使用者點名的項目算定案，對方事後改 comment 的風險接受。實作之後的列舉改成先看要不要再動到實作，不用動的照一般寫回，要動的三種依序取第一個符合的。八輪之後不再跑完整 verify，修完跑全套測試就推上 PR 看 CI。
+
 ## Implementation Contract
 
 **行為（使用者看得到的）**
 
-- session 裡討論一張開著的 issue，使用者定案時，AI 判斷改變屬於三類之一並寫回，有寫入權的 repo 不問；每次寫回在對話裡回報一行：類別、目標、連結、依據（使用者的原話），`--correct` 另附 backup id。
+- session 裡討論一張開著的 issue，使用者定案時，AI 判斷改變屬於哪一類（改了診斷的決定兩處都寫）並寫回，有寫入權的 repo 不問；每次寫回在對話裡回報一行：類別、目標、連結、依據（使用者的原話），`--correct` 另附 backup id。
 - `/idd-edit ... --correct`：顯示 diff 與預覽後直接 apply，改寫段落尾留一行可見文字；隱私自審只看這次加入的文字，`enforce`、`warn` 命中、`light` 下新加入的第三方逐字內容、任何等級的 credential，或 #272 題沒確認時先問，使用者不寫就以 9 結束。沒有寫入權的 repo 照舊確認。
 - `/idd-edit ... --prepend-note`、`--append`、`--replace`：照舊確認。
-- `idd-diagnose` Step 4 Stage 1：使用者要調整診斷時，用 `/idd-edit comment:<Diagnosis id> --correct --section ...` 改寫，不追加 comment。
+- `idd-diagnose` Step 4 Stage 1：使用者要調整診斷時，用 `/idd-edit comment:<Diagnosis id> --correct --section ...` 改寫，不追加修正 comment，另貼 decision comment 記使用者的原話。
 - 偵測 skill 照 3.6.0 的提議流程；選「現在執行」後 `/idd-edit --correct` 不再問第二次。
 - SessionStart 輸出第 5 行提醒寫回規則。
 
@@ -102,7 +106,7 @@ Devil's Advocate 指出 #424 自己跑了六輪，每次定案的都是改策略
 
 - [AI 判斷錯類別，把新決定寫進正文] → 每次寫回都回報類別、目標與依據；段落尾的可見文字讓讀者看得到；舊版用 GitHub 編輯歷史取回，或在同一份 clone 用 `/idd-edit` 的 `restore`（會蓋掉之後的更正）。
 - [不確認後，privacy 自審是語意上唯一的防線] → 命中就停，credential 在任何等級都算（D6）；gh-egress 的機械閘與 main 的 `--body-file` 路徑閘照常。自審本身可能漏判，沒有機械防線，這一點接受。
-- [ADMIN 帳號可改別人的 comment] → 不確認的路徑一律先過 `--correct` 的嚴格作者檢查（D1b）。
+- [ADMIN 帳號可改別人的 comment] → 不確認的只有 `--correct`，它的作者閘門只放行呼叫者自己寫的內容。
 - [「定案」只靠 AI 判斷] → 回報帶依據（使用者原話），可見文字與編輯歷史讓錯誤可以被發現與還原。
 - [SessionStart 第 5 行是每個 session 的 context 成本] → 一行、指向規則檔，drift guard 鎖住上限。
 

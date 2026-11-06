@@ -380,7 +380,7 @@ This notice concerns [comment {target-comment}](https://github.com/{repo}/issues
 <!-- idd:comment type=errata date=YYYY-MM-DD target-comment={target-comment} -->
 ```
 
-**就地更正沒成功、改貼 errata 之後，在原 comment 頂端留指標**（#351 verify 第 5、6 輪）：errata 是另一則 comment，直接讀原 comment 的人或 AI session 看不到它。只有上表 exit 4 那一列（你自己的 comment）才做；原 comment 的第一個非空行是 ATX 標題（`## Diagnosis` 等）或 IDD 標記時不做——提示會把它擠到下面，以首行判斷的 skill 就認不出這則 comment——只回報「已貼 errata，原 comment 未加提示」。其餘情況接著跑：
+**就地更正沒成功、改貼 errata 之後，在原 comment 頂端留指標**（#351 verify 第 5、6 輪）：errata 是另一則 comment，直接讀原 comment 的人或 AI session 看不到它。只有上表 exit 4 那一列（你自己的 comment）才做；原 comment 的第一個非空行是 ATX 標題（`## Diagnosis` 等）或 IDD 標記時不做——提示會把它擠到下面，其他 skill 就認不出這則 comment——只回報「已貼 errata，原 comment 未加提示」。其餘情況接著跑：
 
 ```
 IDD_CALLER=idd-comment-errata \

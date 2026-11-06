@@ -1556,7 +1556,7 @@ options:
 question: "Finding goes to #{picked}. What action?"
 options:
   - "comment"           ← append new comment to #picked
-  - "edit body"         ← modify #picked body (when the finding shows the body is WRONG and the invoking user opened #picked, route to `/idd-edit issue:<N> --correct --section ...` instead — it archives the old text and checks the Original text quotation, #351; anyone else's issue body, or text under no heading, gets `/idd-comment --type correction` instead). Since #424 `--correct` writes after its preview without asking, so the Stage 3 preview shows the full replacement text for these rows, and the command carries `--repo <the target repo>` and `--note <what is now correct>`
+  - "edit body"         ← modify #picked body (when the finding shows the body is WRONG and the invoking user opened #picked, route to `/idd-edit issue:<N> --correct --section ...` instead — it archives the old text and checks the Original text quotation, #351; anyone else's issue body, or text under no heading, gets `/idd-comment --type correction` instead)
   - "update status"     ← call idd-update on #picked Current Status block
   - "skip — change my mind" ← back to picker
 ```
@@ -1583,7 +1583,6 @@ Stage 2 完成所有 findings 後 print 完整 dispatch table + single AskUserQu
 [Execute all] [Edit row N] [Cancel]
 ```
 
-- `[EDIT]` 列若送去 `/idd-edit --correct`（Step 2d 的 edit body），預覽在該列下附上替換內容全文與 `--note`：`--correct` 預覽後直接寫入，這一題是唯一的確認（#424）
 - `[Execute all]` → 進 Stage 4 dispatch
 - `[Edit row N]` → re-invoke Stage 2 picker for row N only,其他 rows 保留;re-pick 完成後回 Stage 3 preview
 - `[Cancel]` → 退出 skill,**no GitHub side effect**,**no jsonl written**

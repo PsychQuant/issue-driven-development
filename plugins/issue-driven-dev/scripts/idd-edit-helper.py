@@ -221,6 +221,7 @@ _REFUSED_CREDENTIAL_DIRS = (
     ".docker",
 )
 
+
 def _path_is_under(canonical, prefix):
     """True if canonical == prefix or canonical is strictly under prefix.
 
@@ -1606,7 +1607,7 @@ NOTE_LINE_PREFIX = "_更正於 "   # idd-close Step 3.6 skips this line when it 
 # earlier visible line; prose that merely starts with the prefix is the user's text.
 NOTE_LINE_RE = re.compile(r"_更正於 \d{4}-\d{2}-\d{2}(?:：.*)?_")
 CORRECT_MARKER_PREFIX = '<!-- idd:edit mode="correct"'
-IDD_MARKER_RE = re.compile(r"\s*<!--\s*idd:.*-->\s*")
+IDD_MARKER_RE = re.compile(r"<!--\s*idd:(?:(?!-->).)*-->")
 
 
 def _correct_note_line(note):
@@ -1737,8 +1738,7 @@ def _correct_prepare(work, target, kind, num, repo, section, scrub, content):
     if heading == "-":
         with open(backup, encoding="utf-8", errors="replace") as fh:
             old_lines = _lines_of(fh.read().replace("\r\n", "\n").replace("\r", "\n"))
-        kept = [l for l in _lines_of(content.replace("\r\n", "\n")) if not NOTE_LINE_RE.fullmatch(l.strip())]
-        if not "\n".join(_drop_top_markers(old_lines, kept)).strip():
+        if not "\n".join(_drop_top_markers(old_lines, _lines_of(content.replace("\r\n", "\n")))).strip():
             # Only a copy of the top marker is no text either (round 7).
             err("Refuse: --correct needs the corrected text; the replacement holds only the comment's marker (#351).")
             return _refused("empty", work)
@@ -2223,14 +2223,14 @@ def run_start_subcmd(argv):
         # Anything before that group is the user's text and stays as it is:
         # stripping it rewrote text nobody reviews (round 6), refusing it blocked
         # corrections main accepts (round 7).
-        lines = state["body_input"].replace("\r\n", "\n").rstrip("\n").split("\n")
+        lines = state["body_input"].replace("\r\n", "\n").replace("\r", "\n").rstrip("\n").split("\n")
         tail = []
-        while lines and (not lines[-1].strip() or NOTE_LINE_RE.fullmatch(lines[-1].strip())
-                         or IDD_MARKER_RE.fullmatch(lines[-1])):
-            tail.insert(0, lines.pop())
-        lines += [l for l in tail if IDD_MARKER_RE.fullmatch(l) and not l.strip().startswith(CORRECT_MARKER_PREFIX)]
+        while lines and (not lines[-1].strip() or NOTE_LINE_RE.fullmatch(lines[-1].rstrip())
+                         or IDD_MARKER_RE.fullmatch(lines[-1].rstrip())):
+            tail.insert(0, lines.pop().rstrip())
+        lines += [l for l in tail if IDD_MARKER_RE.fullmatch(l) and not l.startswith(CORRECT_MARKER_PREFIX)]
         text = [l for l in _strip_target_heading(lines, state["section_flag"] or "-")
-                if l.strip() and not IDD_MARKER_RE.fullmatch(l)]
+                if l.strip() and not IDD_MARKER_RE.fullmatch(l.strip())]
         if not text:
             err("Refuse: --correct needs the corrected text; the body holds only the target heading, IDD markers "
                 "or earlier visible lines (#351, #424).")
