@@ -68,4 +68,4 @@
 
 - [x] 11.1 先改測試，鎖住 A corrected diagnosis SHALL update the records that depend on it（實作之後三種去處、合併後擴大的範圍開新 issue）、idd-diagnose SHALL correct its own Diagnosis instead of appending a correction（Stage 1 改策略也貼 decision comment）與 A corrected section SHALL carry a visible line（結尾以外的文字照樣保留、只認新格式）：`edit-run`、`issue-write-back`、`in-place-correction`、`session-start-commit-rule`。驗證：把新測試放到 3c630c4 上跑，這些斷言 FAIL；改完後通過。
 - [x] 11.2 照 D14（verify 第 7 輪，2026-11-04 維護者決定，comment 6620544269）改規則、spec、`idd-reorganize`；並修第 7 輪其餘發現：helper 與 `idd-close` 只認完整格式的可見文字、偵測 skill 的替換檔一律放 `~/.cache/idd/writeback`、`idd-diagnose` Stage 1 兩處都寫、`--last` 一律先問、第 3 類新加入提及先問、append-vs-modify 的 spec delta。驗證：`run-all-tests.sh` 全部通過、`spectra validate issue-write-back` 通過。
-
+- [x] 11.3 Codex（第 8 輪）：規則第 43 行還要 AI 自己刪掉結尾以外的舊行，與 helper 的行為相反，改掉並加反向斷言；design D13 標明第 8 輪的改動。驗證：`issue-write-back` 通過。

@@ -40,7 +40,7 @@ Issue 正文說「現在的問題是什麼」，Diagnosis comment 說「現在�
 - 替換文字用 Write 工具寫進這次專用的新目錄（`mkdir -p "$HOME/.cache/idd/writeback" && mktemp -d "$HOME/.cache/idd/writeback/XXXXXX"`），以 `--body-file` 傳入，**不把文字貼進指令**；`finish` 後刪掉。不用 `$TMPDIR`：sandbox 內外的呼叫看到的暫存目錄不同，`--body-file` 的路徑閘會把另一邊的暫存目錄當成系統路徑拒絕。
 - 一律帶 `--repo <owner/repo>`，值是這張 issue 所在的 repo（IDD config 解析出的那一個）。討論的是別的 repo 的 issue 時，那個 repo 也要有 IDD 設定與寫入權，否則先問：拿掉確認之後，指錯 repo 就沒有最後一道檢查。
 - 目標只能是 `comment:<全數字>` 或 `issue:<全數字>`，`--section` 是一行 ATX 標題，每個值用單引號包住（含單引號時寫成 `'\''`）。
-- 一律帶 `--note`，一句話寫**現在正確的內容**，不重述錯的值。helper 會在段落尾留一行 `_更正於 YYYY-MM-DD：<note>_`，讀者才知道這裡被改過；替換文字結尾那一組舊的可見文字與更正標記會被換掉，結尾以外的地方還有舊的那一行或標記，helper 拒絕（exit 2），先自己拿掉。
+- 一律帶 `--note`，一句話寫**現在正確的內容**，不重述錯的值。helper 會在段落尾留一行 `_更正於 YYYY-MM-DD：<note>_`，讀者才知道這裡被改過；替換文字結尾那一組舊的可見文字與更正標記會被換掉；那一組之前的文字 helper 不動，也不要為此自己刪掉（整則更正時，其他段落的更正紀錄要留著）。
 - 不設 `IDD_EDIT_HELPER_ALLOW_UNSAFE_BODY_FILE`：那是給人親手處理特殊路徑的逃生口。
 
 例子（spec `issue-write-back` 的 Example）：

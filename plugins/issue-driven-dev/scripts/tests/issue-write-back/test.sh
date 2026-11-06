@@ -86,6 +86,8 @@ assert_grep "a change the same PR carries is written back in place (D12)" "同�
 assert_grep "the Diagnosis target is the newest one" "目標是**最新一則以 \`## Diagnosis\` 開頭的 comment**" "$R"
 assert_grep "a newest Diagnosis by someone else gets errata" "最新那則是別人寫的" "$R"
 assert_grep "a Spectra change gets the change by spectra-ingest" "/spectra-ingest" "$R"
+refute_grep "the rule no longer tells the AI to delete earlier lines itself" "先自己拿掉" "$R"
+assert_grep "text before the trailing group is left alone" "那一組之前的文字 helper 不動" "$R"
 assert_grep "a scope widened after merge goes to a new issue (D14)" "用 \`/idd-issue\` 開一張新 issue 承接" "$R"
 assert_grep "direct-commit counts the same branch as the same PR (D14)" "結案前在同一條 branch 跟著改也算" "$R"
 refute_grep "no undecided write-back-then-reorganize route (D14)" "照上面寫回之後，呼叫" "$R"

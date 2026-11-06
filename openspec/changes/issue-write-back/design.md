@@ -64,7 +64,7 @@ IDD 已有就地更正的工具：`/idd-edit --correct`（#351）可以改自己
 
 ### D13 改了診斷的決定兩處都寫，可見文字拿掉「AI 判斷」（verify 第 6 輪，2026-11-04 維護者決定，comment 6619279709）
 
-Devil's Advocate 指出 #424 自己跑了六輪，每次定案的都是改策略的決定，實作者每次都只貼 decision comment，Diagnosis 與 Current Status 停在第 1 輪：三類擇一讓這類決定只能選一邊，歸第 2 類使用者的原話沒有位置，歸第 3 類 Diagnosis 不更新。所以改了診斷的決定兩處都寫。「AI 判斷」出自 D7，當時偵測 skill 還會自動更正；D11 之後每條 `--correct` 路徑都是使用者定案或選了執行，這幾個字的前提不在。同一輪的發現也讓替換文字的處理改成 fail-closed：只換掉結尾那一組舊可見文字與更正標記，結尾以外的舊行拒絕，不再逐行剝除（剝除會誤刪 code fence 範例與其他段落的更正紀錄）；寫回檔改放 `$HOME/.cache/idd/writeback/` 下的新目錄（`$TMPDIR` 在 sandbox 內外不同，路徑閘會拒絕另一邊的暫存目錄）。
+Devil's Advocate 指出 #424 自己跑了六輪，每次定案的都是改策略的決定，實作者每次都只貼 decision comment，Diagnosis 與 Current Status 停在第 1 輪：三類擇一讓這類決定只能選一邊，歸第 2 類使用者的原話沒有位置，歸第 3 類 Diagnosis 不更新。所以改了診斷的決定兩處都寫。「AI 判斷」出自 D7，當時偵測 skill 還會自動更正；D11 之後每條 `--correct` 路徑都是使用者定案或選了執行，這幾個字的前提不在。同一輪的發現也讓替換文字不再逐行剝除（剝除會誤刪 code fence 範例與其他段落的更正紀錄），第 7 輪改成拒絕結尾以外的舊行，第 8 輪再改成照樣保留（見 D14）；寫回檔改放 `$HOME/.cache/idd/writeback/` 下的新目錄（`$TMPDIR` 在 sandbox 內外不同，路徑閘會拒絕另一邊的暫存目錄）。
 
 ### D14 合併後擴大的範圍開新 issue（verify 第 7 輪，2026-11-04 維護者決定，comment 6620544269）
 
