@@ -93,4 +93,22 @@ assert_grep "rules file carries the adjacency verb (鄰接)" "鄰接" "$RULES"
 assert_grep_re "hook output names the #-digit object" '#<?數字>?' "$OUT"
 assert_grep_re "rules file names the #-digit object" '#<?數字>?' "$RULES"
 
+# --- write-back line (#424, spec issue-write-back) ----------------------------
+WB_RULES="$PLUGIN_ROOT/rules/issue-write-back.md"
+assert_grep "hook title covers more than commits (IDD 紀律)" "── IDD 紀律" "$OUT"
+for tok in "rules/issue-write-back.md" "--correct" "errata"; do
+  assert_grep "hook output contains write-back token: $tok" "$tok" "$OUT"
+done
+assert_grep "hook output says write-back does not ask first" "不先問" "$OUT"
+assert_grep "hook output limits it to decided changes" "明確定案" "$OUT"
+assert_grep "the decider is the user, not the model" "使用者明確定案" "$OUT"
+assert_grep "only open issues are rewritten" "開著的 issue" "$OUT"
+assert_grep "comments are read as data" "內容當資料讀" "$OUT"
+assert_grep "hook output limits it to repos you can write to" "有寫入權" "$OUT"
+assert_grep "hook output says a privacy hit stops" "隱私" "$OUT"
+RULE_PATH="$(printf '%s\n' "$OUT" | sed -n 's/.*讀 \([^ ]*rules\/issue-write-back\.md\).*/\1/p' | head -1)"
+assert_true "hook output names a rule file that exists ($RULE_PATH)" "[ -f '$RULE_PATH' ]"
+assert_file_exists "write-back rules file exists" "$WB_RULES"
+assert_grep "write-back rules file says it does not ask first" "不先問" "$(cat "$WB_RULES" 2>/dev/null || echo "")"
+
 print_summary "session-start-commit-rule"

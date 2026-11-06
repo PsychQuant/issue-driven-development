@@ -213,6 +213,12 @@ for s in idd-verify idd-diagnose idd-reorganize; do
   assert_output_grep "$s lists only, under unattended (只列不做)" "只列不做" "$F"
   refute_output_grep "$s never calls the archive subcommand" "idd-edit-helper.py\" archive" "$F"
 done
+for s in idd-verify idd-diagnose idd-reorganize; do
+  refute_output_grep "$s no longer says idd-edit asks a second time (#424)" "仍走自己的 preview + confirm" "$SKILLS/$s/SKILL.md"
+  assert_output_grep "$s shows the replacement text and the note in the run-now question" "問句裡附上該項替換內容的全文與 \`--note\` 那一句" "$SKILLS/$s/SKILL.md"
+  assert_output_grep "$s rebuilds the command with --repo" "重組的引數另帶 \`--repo" "$SKILLS/$s/SKILL.md"
+  assert_output_grep "$s writes the replacement to a fresh directory" ".cache/idd/writeback/XXXXXX" "$SKILLS/$s/SKILL.md"
+done
 
 # ── E. round 2 (verify #351 round 1) ──────────────────────────────────────
 echo "E. round 2"
@@ -302,7 +308,7 @@ UPD="$SKILLS/idd-update/SKILL.md"
 refute_output_grep "idd-update no longer says Key Decisions are append-only" "Key Decisions 只加不刪" "$UPD"
 assert_output_grep "idd-update rebuilds Key Decisions from current comments" "每次重建" "$UPD"
 for s in idd-verify idd-diagnose idd-reorganize; do
-  assert_output_grep "$s stores replacement files under ~/.cache/idd/corrections" ".cache/idd/corrections" "$SKILLS/$s/SKILL.md"
+  refute_output_grep "$s no longer uses the fixed corrections path" ".cache/idd/corrections" "$SKILLS/$s/SKILL.md"
 done
 # Round 6: the --correct flow moved into the helper; its behavior is exercised
 # end to end in scripts/tests/correct-flow (re-read E3, fetch failure E7, …).
@@ -702,5 +708,11 @@ open(sys.argv[1] + "/r-cr-quote.md", "wb").write(b"> **Original text**: keep me\
 PYX
 run_helper r111 compose-correction "$WORK/cr-quote.md" "## Notes" "$WORK/r-cr-quote.md" "$MARK"
 assert_eq "the blank line after a CR-only quotation survives" "True" "$(bytes_in "$WORK/r111.out" 'b"keep me\n\nright\n"')"
+
+assert_output_grep "idd-comment errata passes --note" "--note" "$(awk '/^#### Template: `errata`/{f=1} f&&/^#### Template: /&&!/errata/{exit} f' "$SKILLS/idd-comment/SKILL.md" > "$WORK/errata-tpl.md"; echo "$WORK/errata-tpl.md")"
+
+refute_output_grep "idd-comment no longer promises a confirmation for --correct" "預覽與確認後就地取代" "$SKILLS/idd-comment/SKILL.md"
+refute_output_grep "idd-edit archives at apply, not after a confirmation" "--correct\` 確認後歸檔" "$SKILLS/idd-edit/SKILL.md"
+refute_output_grep "the catalog no longer promises a confirmation" "\`--correct\` 確認後就地取代" "$SKILLS/../CLAUDE.md"
 
 print_summary "in-place-correction"

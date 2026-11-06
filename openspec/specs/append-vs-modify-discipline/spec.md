@@ -263,30 +263,6 @@ code:
 -->
 
 ---
-### Requirement: in-place-correction SHALL replace confirmed errors only after archiving the prior version
-
-The `in-place-correction` category SHALL cover replacing content that the user has confirmed to be wrong, in an issue body or a comment whose author is the authenticated `gh` user (never a bot's comment, and not the OWNER's unless the OWNER runs it), including content that would otherwise fall under `append-only` (published comments) or the issue body above the `---` separator. An action in this category SHALL (a) archive the prior full text of the target before writing, (b) obtain explicit user confirmation, (c) leave a marker that identifies the archive entry without a filesystem path, and (d) refuse the regions that remain `verbatim-preserve`. `/idd-edit --correct` SHALL be the only action declared in this category; other skills SHALL reach it by invoking `/idd-edit`.
-
-#### Scenario: Correction declared in idd-edit
-
-- **WHEN** a plugin contributor reads `plugins/issue-driven-dev/skills/idd-edit/SKILL.md`
-- **THEN** the `--correct` mode description SHALL contain the inline note `(category: in-place-correction)`
-
-#### Scenario: Another skill attempts a direct correction
-
-- **WHEN** a skill other than `idd-edit` replaces published comment text to fix an error without invoking `/idd-edit --correct`
-- **THEN** the action SHALL be refused at skill review time as an undeclared or misdeclared modify-action
-
-
-<!-- @trace
-source: idd-edit-in-place-correction
-updated: 2026-10-20
-code:
-  - plugins/issue-driven-dev/CHANGELOG.md
-  - plugins/issue-driven-dev/README.md
--->
-
----
 ### Requirement: verbatim-preserve SHALL cover only original-source quotations and third-party content
 
 The `verbatim-preserve` category SHALL cover exactly two kinds of content: (1) blockquote runs that quote original source text, identified by a line within the run containing one of exactly three labels — `Original text`, `**Original**` (the decision template) or `**Point ` (the reply template's quotation of a reviewer), and (2) comments and issue bodies authored by anyone other than `OWNER`, a bot, or the authenticated `gh` user. A bot's comment is outside `verbatim-preserve`, but it is still a third party's words, so `in-place-correction` SHALL NOT rewrite it. Issue-body prose in an issue opened by the authenticated `gh` user — interpretation paragraphs, Expected, Actual, Impact, including text an IDD skill wrote there — SHALL NOT be `verbatim-preserve`; it SHALL be correctable through `in-place-correction`. For `in-place-correction` a narrower rule applies on top of (2): only content by the authenticated `gh` user is correctable, so an issue body opened by anyone else — the OWNER's included when someone else runs it — is not. Attributing a whole issue body to the person who opened it is an approximation, accepted by the user on 2026-10-17: text a maintainer or an IDD skill later wrote into someone else's issue body is not correctable in place (it is answered with `/idd-comment --type correction`), and text a collaborator wrote into the user's own issue body is.
@@ -308,3 +284,18 @@ code:
   - plugins/issue-driven-dev/CHANGELOG.md
   - plugins/issue-driven-dev/README.md
 -->
+
+---
+### Requirement: in-place-correction SHALL replace errors only after archiving the prior version
+
+The `in-place-correction` category SHALL cover replacing content that is wrong, as the user states in a discussion or agrees to when an IDD skill proposes it, in an issue body or a comment whose author is the authenticated `gh` user (never a bot's comment, and not the OWNER's unless the OWNER runs it), including content that would otherwise fall under `append-only` (published comments) or the issue body above the `---` separator. An action in this category SHALL (a) archive the prior full text of the target before writing, (b) report its diff and preview, (c) leave a marker that identifies the archive entry without a filesystem path and a visible line stating the date and what is now correct, and (d) refuse the regions that remain `verbatim-preserve`. `/idd-edit --correct` SHALL be the only action declared in this category; other skills SHALL reach it by invoking `/idd-edit`.
+
+#### Scenario: Correction declared in idd-edit
+
+- **WHEN** a plugin contributor reads `plugins/issue-driven-dev/skills/idd-edit/SKILL.md`
+- **THEN** the `--correct` mode description SHALL contain the inline note `(category: in-place-correction)`
+
+#### Scenario: Another skill attempts a direct correction
+
+- **WHEN** a skill other than `idd-edit` replaces published comment text to fix an error without invoking `/idd-edit --correct`
+- **THEN** the action SHALL be refused at skill review time as an undeclared or misdeclared modify-action

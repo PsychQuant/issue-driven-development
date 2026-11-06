@@ -5,6 +5,58 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.7.0] - 2026-11-03
+
+### Added
+
+- **Living-issue write-back (#424)** — `rules/issue-write-back.md`. While an open issue is discussed in a session,
+  a change the user decides is written back to the place that owns it, so the issue body and the Diagnosis stay
+  current instead of stopping at their first version. A hypothesis or a question is not a change; a closed issue
+  is not rewritten; someone else's comment counts only when the user raises it and names what to adopt. Three
+  kinds, a closed list: the problem (question, scope, `## Expected`) goes to the issue body section with
+  `/idd-edit issue:<N> --correct --section`; the diagnosis (root cause, strategy, routing) goes to the Diagnosis
+  comment section with `/idd-edit comment:<id> --correct --section`; new information, a decision, or the course of
+  the discussion goes to a new `/idd-comment`. A decision that changes the diagnosis goes to both: a decision comment
+  with the user's words, and the Diagnosis section. In a repository that has an IDD config and that you can write to,
+  the AI decides the kind, writes without asking, and reports each write-back with the user's words it rests on;
+  elsewhere it asks. Only your own content is rewritten; someone else's comment gets `/idd-comment --type errata`,
+  someone else's issue body `--type correction`. The privacy review covers the text being added; a hit at
+  `enforce` or `warn`, new third-party verbatim text at `light`, or a credential at any level stops the
+  write-back. A corrected diagnosis also corrects your Implementation Plan sections; verify reports are left as
+  they are. A change decided after implementation is written back in place when the same pull request carries it
+  (for example a design settled during verify-fix; in a direct-commit repository, the same branch before close). A
+  scope that widens after the pull request merged is new work: a new issue, with a link comment on the original.
+  `idd-reorganize` takes over only when what was built is thrown away and this pull request does not carry the
+  change. Only changes the user decides are written back: corrections listed by an unattended verify and an
+  approach the implementer changed on their own are out of scope (tracked in #474).
+- **`--note` on `/idd-edit --correct`.** The replaced text ends with a visible line,
+  `_更正於 YYYY-MM-DD：<note>_`, before the marker. A reader could not otherwise tell the text changed: the marker is
+  an HTML comment and an edit sends no notification. The earlier line and correct marker at the end of the
+  replacement is replaced (other IDD markers there are kept, and the earlier correct marker stays in the section so
+  the first backup remains reachable); everything before that group is kept as it is. A
+  replacement of nothing but IDD markers is refused at `run-start` (exit 2) rather than as `REASON=empty` at
+  `prepare`. `--note` refuses `<`, `>`, control and bidirectional characters.
+- SessionStart carries one line about write-back, with the rule's installed path (still five lines).
+
+### Changed
+
+- **BREAKING: `/idd-edit --correct` no longer asks for confirmation** in a repository you can write to. It shows
+  the diff and the preview, then applies; the privacy review, the #272 question, the re-read before writing and
+  the archive stay. `--prepend-note`, `--append` and `--replace` still ask. In `idd-verify`, `idd-diagnose` and
+  `idd-reorganize`, the user's "run now" on a proposed correction is the confirmation: the question shows the full
+  replacement text and the command carries `--repo` and `--note`. They still propose corrections and do not apply
+  them on their own.
+- `idd-diagnose` Stage 1 rewrites its own Diagnosis instead of appending a correction comment.
+- `idd-close` Step 3.6 ignores the visible line and the marker when it reads `### Residue`.
+
+The first version also let other people's comments trigger write-back and let the detecting skills correct
+published text on their own. Four verify rounds failed without converging on those two parts, so they were removed
+before release (#424 comment 6616229678). After the fifth round, three more parts went: a note on each verify
+report, a private-path check on `--body-file`, and an unattended branch in `/idd-edit` (comment 6617788666). After
+the sixth, a decision that changes the diagnosis is written to both places, and the visible line no longer says
+（AI 判斷） (comment 6619279709). After the seventh, a scope widened after merge goes to a new issue (comment
+6620544269).
+
 ## [3.6.0] - 2026-11-03
 
 ### Fixed
