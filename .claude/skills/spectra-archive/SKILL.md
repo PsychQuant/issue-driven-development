@@ -179,9 +179,11 @@ Complete each step → `TaskUpdate → completed` immediately.
 
    The agent (LLM-driven) handles the AskUserQuestion step — bash cannot prompt. The script validates `$CHOSEN_ISSUE` against the original candidate set on re-invoke.
 
+   **What reaches GitHub (#405)**: the script works out the path inside the repository itself, so `--archive-dir` may be absolute or relative and the comment never carries a local path. It posts through `plugins/issue-driven-dev/scripts/gh-egress.sh`, with the attestation level resolved from the repository. If the gate refuses, the wrapper is missing, or write access cannot be confirmed, nothing is posted and the outcome line starts with `(failed — ...)` and says why. Fix the reason (for example a literal `@login` in `tasks.md`) and re-run this step.
+
    **Failure semantics**: any failure in Step 7 (gh auth lost, network, body too large, etc.) is recorded in the outcome file but does NOT abort the overall archive operation — the archive itself (Step 6) has already succeeded, and the archived change directory + main spec deltas are the canonical record. The GitHub comment is the convenience anchor for `/idd-close` supersession.
 
-   **Testing**: run `.claude/scripts/tests/spectra-archive-post-ic/test.sh` to validate the script against fixture archive directories (covers explicit-marker / Refs-fallback / no-marker / multi-candidate / malicious-tasks.md / missing-tasks.md / unsafe-change-name / linked-issue-resolved / linked-issue-invalid / outcome-path-derivation / unsafe-outcome-file / prose-issue-detect / linked-issue-empty-candidates / word-boundary). All 14 fixtures pass.
+   **Testing**: run `.claude/scripts/tests/spectra-archive-post-ic/test.sh` to validate the script against fixture archive directories (covers explicit-marker / Refs-fallback / no-marker / multi-candidate / malicious-tasks.md / missing-tasks.md / unsafe-change-name / linked-issue-resolved / linked-issue-invalid / outcome-path-derivation / unsafe-outcome-file / prose-issue-detect / linked-issue-empty-candidates / word-boundary / cross-repo references / same-repo full references), plus scenario checks that need a real repository or a stubbed `gh` (paths, the egress gate, commit evidence). All fixtures and scenario checks pass.
 
 8. **Display summary**
 

@@ -53,14 +53,27 @@ calls real `gh issue comment` / `gh issue view`. Dry-run mode emits a synthetic
 | 10 | deterministic-outcome-path | No `--outcome-file` passed → script derives `/tmp/spectra-archive-ic-outcome-<change-name>.txt` from `--change-name` (post_assert: derived path `must_exist`). Tests the actual derivation formula, not a hand-copied literal. |
 | 11 | unsafe-outcome-file | `--outcome-file` containing `..` → exit 2 + `(failed — unsafe --outcome-file path)`, rejected before any archive read (post_assert: `/tmp/pwn-fixture-11.txt` must not exist). No `archive/` subdir — the script exits before reaching it. |
 
+| 17 | cross-repo-refs | `other/sandbox#3`, `other/sandbox issue #4` and `-R` forms are not candidates; `Refs #400` is |
+| 18 | same-repo-full-ref | `Test/Repo#400` counts as this repository, in any case; `other/sandbox#9` does not |
+
+Fixtures 12 to 16 are not listed above; their directory names say what they cover.
+
+## Scenario tests
+
+`test.sh` ends with checks a fixture cannot express, because they need a real git
+repository or a post that runs. They build temporary repositories and put a stub
+`gh` first on `PATH`, so nothing reaches GitHub (#405):
+
+- the path in the comment: absolute argument, subdirectory, no git repository
+- the egress gate: a post through the wrapper, a refusal, a missing wrapper, no write access
+- candidate detection: prose and commits disagreeing, a squash subject, a cluster
+  commit, a cross-repo number in a subject, and the case that opened #405
+
 ## CI integration
 
-This test suite is intended to be runnable as a pre-merge gate. Add to CI:
+`.github/workflows/tests.yml` runs this suite as its own step, because
+`run-all-tests.sh` only covers `plugins/issue-driven-dev/scripts/tests/`.
 
-```yaml
-- name: spectra-archive-post-ic unit tests
-  run: .claude/scripts/tests/spectra-archive-post-ic/test.sh
-```
-
-Requires bash, `gh` CLI installed (only for `gh repo view` in non-dry-run paths
-which tests don't exercise), and python3.
+Requires bash, git, python3, and the parser versions in
+`plugins/issue-driven-dev/scripts/requirements-egress.txt` (the post path runs the
+real wrapper). The `gh` CLI is not needed.

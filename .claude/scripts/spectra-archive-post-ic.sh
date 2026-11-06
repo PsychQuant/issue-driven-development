@@ -54,6 +54,9 @@ OUTCOME_FILE_EXPLICIT=0
 GH_REPO_ARG=""
 DRY_RUN=0
 FORCE_LINKED_ISSUE=""
+# The egress gate lives in the plugin tree of this repository. Resolved from this
+# script, not from the caller's cwd: the audited repo must not supply its own gate.
+EGRESS="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd)/plugins/issue-driven-dev/scripts/gh-egress.sh"
 
 # ── Parse args ──
 while [ $# -gt 0 ]; do
@@ -142,41 +145,77 @@ fi
 # ── Archive basename (no date recomputation; derived from passed archive-dir) ──
 ARCHIVE_BASENAME=$(basename "$ARCHIVE_DIR")
 
-# ── Step A: Detect linked issue (3-fallback) with multi-candidate awareness ──
+# ── Path for the comment (#405) ──
+# --archive-dir is how this machine reaches the directory. The comment goes to
+# GitHub, so it only ever gets the path inside the repository. --show-prefix
+# answers that whatever form the argument took (absolute, relative to a
+# subdirectory, through a symlink). Outside a git repository there is no such
+# path: use the conventional location, never the argument as given.
+ARCHIVE_DISPLAY=$(git -C "$ARCHIVE_DIR" rev-parse --show-prefix 2>/dev/null) || ARCHIVE_DISPLAY=""
+ARCHIVE_DISPLAY="${ARCHIVE_DISPLAY%/}"
+[ -n "$ARCHIVE_DISPLAY" ] || ARCHIVE_DISPLAY="openspec/changes/archive/$ARCHIVE_BASENAME"
+
+# ── Step A: Detect linked issue with multi-candidate awareness ──
+
+# Reads text, writes it back without references to other repositories (#405), so a
+# number from a sandbox or an upstream never becomes a candidate here. The same
+# repository's full form is kept, rewritten to the short one.
+strip_cross_repo_refs() {
+  GH_REPO_ENV="$GH_REPO" python3 -c '
+import os, re, sys
+repo = os.environ["GH_REPO_ENV"].lower()
+ref = re.compile(r"(?:(?:-R|--repo)\s+)?`?([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)`?(?:\s+[Ii]ssue)?\s*#(\d+)")
+sys.stdout.write(ref.sub(lambda m: f"issue #{m.group(2)}" if m.group(1).lower() == repo else " ",
+                         sys.stdin.read()))
+'
+}
+
+# Issue numbers in the subjects of the commits that touched a path.
+commit_refs() {
+  git log --format=%s -50 -- "$1" 2>/dev/null \
+    | strip_cross_repo_refs | grep -oE '#[0-9]+' | tr -d '#' | LC_ALL=C sort -u
+}
+
 detect_candidates() {
   local archive_dir="$1"
-  local candidates=""
+  local candidates="" prose="" at_archive="" before_move=""
+  [ -d "$archive_dir" ] || return 0
 
-  # Fallback 1: explicit **GitHub-side tracker** marker
-  if [ -d "$archive_dir" ]; then
-    candidates=$(grep -hoE '\*\*GitHub-side tracker\*\*[^#]*#[0-9]+' \
-      "$archive_dir/proposal.md" "$archive_dir/design.md" 2>/dev/null \
-      | grep -oE '#[0-9]+' | tr -d '#' | sort -u)
+  # An explicit **GitHub-side tracker** marker settles it.
+  candidates=$(cat "$archive_dir/proposal.md" "$archive_dir/design.md" 2>/dev/null \
+    | strip_cross_repo_refs \
+    | grep -oE '\*\*GitHub-side tracker\*\*[^#]*#[0-9]+' \
+    | grep -oE '#[0-9]+' | tr -d '#' | LC_ALL=C sort -u)
+  if [ -n "$candidates" ]; then
+    echo "$candidates"
+    return 0
   fi
 
-  # Fallback 2: Refs / Closes / Fixes / Issue pattern (only if F1 yielded nothing).
-  # `[Ii]ssue` added per #170 — /spectra-propose writes the link in IDD-prose form
-  # ("referencing issue #N"), not as a Refs/Closes/Fixes trailer, so the narrower
-  # regex missed it and detection fell through to "(none)".
-  # The `(^|[^[:alnum:]_])` prefix is a word boundary (#170 verify): without it
-  # `[Ii]ssue` substring-matches `reissue #5` / `tissue #9`. The downstream
-  # `grep -oE '#[0-9]+'` strips the captured prefix char, so only the number
-  # survives. NOTE (known limitation, tracked separately): this is still
-  # context-blind to legitimate cross-references in prose ("see issue #164"),
-  # which can surface a spurious candidate — handled fail-safe by the
-  # multi-candidate exit-75 prompt, but see the membership-semantics follow-up.
-  if [ -z "$candidates" ] && [ -d "$archive_dir" ]; then
-    candidates=$(grep -rhoE '(^|[^[:alnum:]_])(Refs|Closes|Fixes|[Ii]ssue) #[0-9]+' \
-      "$archive_dir"/*.md 2>/dev/null \
-      | grep -oE '#[0-9]+' | tr -d '#' | sort -u)
-  fi
+  # Without a marker there are two weak sources, wrong in different ways (#405):
+  #   prose    names whatever the change talks about. `[Ii]ssue` was added per #170
+  #            because /spectra-propose writes "referencing issue #N", but the same
+  #            words describe a sandbox's "seed issue #1", and nothing marks the
+  #            difference. The `(^|[^[:alnum:]_])` prefix keeps `reissue #5` out.
+  #   commits  carry the issue by rule, but a squash subject adds the PR number and
+  #            a cluster commit adds other issues.
+  # So a number in both is the answer, and commits win when they do not meet: a
+  # lone prose number with commits saying otherwise would otherwise be posted to
+  # silently. Commits are read from the archive path and from the path before the
+  # move, because Step 7 runs before the archive is committed: at that moment the
+  # archive path has no history at all. `:/` makes the second path repo-relative
+  # from any cwd. No `--follow`: it tracks single files only (#56 R2 N5).
+  prose=$(for f in "$archive_dir"/*.md; do
+      [ -f "$f" ] && { cat "$f"; echo; }
+    done \
+    | strip_cross_repo_refs \
+    | grep -oE '(^|[^[:alnum:]_])(Refs|Closes|Fixes|[Ii]ssue) #[0-9]+' \
+    | grep -oE '#[0-9]+' | tr -d '#' | LC_ALL=C sort -u)
+  at_archive=$(commit_refs "$archive_dir")
+  before_move=$(commit_refs ":/openspec/changes/$CHANGE_NAME")
 
-  # Fallback 3: recent commits referencing the archived path
-  # (no --follow; --follow only tracks single files, not directories — per #56 R2 N5 finding)
-  if [ -z "$candidates" ] && [ -d "$archive_dir" ]; then
-    candidates=$(git log --oneline -50 -- "$archive_dir" 2>/dev/null \
-      | grep -oE '#[0-9]+' | tr -d '#' | sort -u)
-  fi
+  candidates=$(LC_ALL=C comm -12 <(printf '%s\n' "$prose") \
+    <(printf '%s\n%s\n' "$at_archive" "$before_move" | sed '/^$/d' | LC_ALL=C sort -u))
+  [ -n "$candidates" ] || candidates="${at_archive:-${before_move:-$prose}}"
 
   echo "$candidates"
 }
@@ -306,7 +345,7 @@ export CHECKLIST_BODY_ENV="$CHECKLIST_BODY"
 export ARCHIVE_BASENAME_ENV="$ARCHIVE_BASENAME"
 export FORCE_NOTE_ENV="${FORCE_NOTE:-}"
 export CHANGE_NAME_ENV="$CHANGE_NAME"
-export ARCHIVE_DIR_ENV="$ARCHIVE_DIR"
+export ARCHIVE_DIR_ENV="$ARCHIVE_DISPLAY"
 export SPEC_DELTAS_ENV="$SPEC_DELTAS"
 export ARCHIVE_DATE_ENV="$ARCHIVE_DATE"
 export BODY_FILE_ENV="$BODY_FILE"
@@ -371,10 +410,43 @@ if [ "$DRY_RUN" = "1" ]; then
   emit_outcome "https://github.com/${GH_REPO}/issues/${LINKED_ISSUE}#issuecomment-DRY-RUN" 0
 fi
 
-COMMENT_URL=$(gh issue comment "$LINKED_ISSUE" --repo "$GH_REPO" --body-file "$BODY_FILE" 2>/dev/null)
-rm -f "$BODY_FILE"
+# Every GitHub write goes through the egress gate (#202, #405). Each refusal below
+# posts nothing and says why. The archive has already succeeded, so all of them
+# still exit 0; the outcome line is how the caller finds out.
+if [ ! -f "$EGRESS" ]; then
+  rm -f "$BODY_FILE"
+  emit_outcome "(failed — gh-egress.sh not found at $EGRESS; nothing posted, archive itself succeeded)" 0
+fi
 
-if [ -z "$COMMENT_URL" ]; then
+# The attestation level comes from the repository, as rules/privacy-scrubbing.md
+# resolves it. `enforce` means a person must look at the text first, and nobody is
+# here to do that, so this script does not post at that level.
+case "$(gh repo view "$GH_REPO" --json viewerPermission,isPrivate \
+        --jq '"\(.viewerPermission)/\(.isPrivate)"' 2>/dev/null)" in
+  ADMIN/true|MAINTAIN/true|WRITE/true)    SCRUB_LEVEL=light ;;
+  ADMIN/false|MAINTAIN/false|WRITE/false) SCRUB_LEVEL=warn ;;
+  *)                                      SCRUB_LEVEL=enforce ;;
+esac
+if [ "$SCRUB_LEVEL" = "enforce" ]; then
+  rm -f "$BODY_FILE"
+  emit_outcome "(failed — could not confirm write access to $GH_REPO, so the comment needs a person to post it; archive itself succeeded)" 0
+fi
+
+EGRESS_ERR=$(mktemp /tmp/spectra-archive-ic-err.XXXXXX) || {
+  rm -f "$BODY_FILE"
+  emit_outcome "(failed — mktemp errored)" 0
+}
+COMMENT_URL=$(bash "$EGRESS" comment "$LINKED_ISSUE" --repo "$GH_REPO" --body-file "$BODY_FILE" \
+  --scrub-attested "$SCRUB_LEVEL" 2>"$EGRESS_ERR")
+EGRESS_RC=$?
+EGRESS_REASON=$(grep -m1 . "$EGRESS_ERR" | LC_ALL=C tr -d '\000-\037' | cut -c1-200)
+rm -f "$BODY_FILE" "$EGRESS_ERR"
+
+# The wrapper keeps its own exit codes at 10 and above; below that is gh's.
+if [ "$EGRESS_RC" -ge 10 ]; then
+  emit_outcome "(failed — gh-egress refused the comment (exit $EGRESS_RC): $EGRESS_REASON; archive itself succeeded)" 0
+fi
+if [ "$EGRESS_RC" -ne 0 ] || [ -z "$COMMENT_URL" ]; then
   emit_outcome "(failed — gh issue comment errored; archive itself succeeded, check gh auth + network)" 0
 fi
 
