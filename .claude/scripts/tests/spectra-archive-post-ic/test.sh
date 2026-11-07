@@ -287,7 +287,7 @@ S2=openspec/changes/archive/2026-01-04-spike
 new_repo "$R2"
 mkdir -p "$R2/openspec/changes/spike"
 printf '# Spike\n\nprivate repo sandbox, with seed issue #1.\n' > "$R2/openspec/changes/spike/proposal.md"
-printf 'opened issue #3, then issue #6 in the sandbox.\nThe sandbox opened issue #4 and merged it.\n' > "$R2/openspec/changes/spike/findings.md"
+printf 'opened issue #3, then issue #6 in the sandbox.\nThe sandbox opened issue #4 and merged it.\nIts PR #2 said `Refs #1`, and PR #4 said `Refs #3`.\n' > "$R2/openspec/changes/spike/findings.md"
 printf -- '- [x] 1.1 done\n' > "$R2/openspec/changes/spike/tasks.md"
 commit_all "$R2" 'docs: propose spike (#400)'
 printf 'run log\n' > "$R2/openspec/changes/spike/run.md"
@@ -402,6 +402,19 @@ printf 'Codified as issue #150.\n' > "$R13/openspec/changes/archive/2026-01-15-c
 commit_all "$R13" 'feat: #137 one thing + #150 another (cluster)' 'Refs #137 Refs #150 Refs #154'
 run_post "$R13" --change-name cluster-body --archive-dir openspec/changes/archive/2026-01-15-cluster-body --gh-repo test/repo --dry-run
 scenario body-refs-several-on-a-line "$(outcome_is 150; echo $?)"
+
+# 21c. A Refs written outside code still disagrees with the commits and is asked;
+#      the same Refs quoted in code does not.
+R14="$SCN/r14"
+new_repo "$R14"
+mkdir -p "$R14/openspec/changes/archive/2026-01-16-quoted"
+printf 'The upstream PR body said `Refs #12`.\n' > "$R14/openspec/changes/archive/2026-01-16-quoted/proposal.md"
+commit_all "$R14" 'docs: quoted refs (#800)'
+run_post "$R14" --change-name quoted --archive-dir openspec/changes/archive/2026-01-16-quoted --gh-repo test/repo --dry-run
+scenario quoted-refs-is-weak "$(outcome_is 800; echo $?)"
+printf 'Refs #12\n' > "$R14/openspec/changes/archive/2026-01-16-quoted/design.md"
+run_post "$R14" --change-name quoted --archive-dir openspec/changes/archive/2026-01-16-quoted --gh-repo test/repo --dry-run
+scenario unquoted-refs-still-asks "$([ "$RC" = 75 ] && grep -qx 12 /tmp/spectra-archive-candidates.txt && grep -qx 800 /tmp/spectra-archive-candidates.txt; echo $?)"
 
 # 22. Bytes that are not UTF-8 do not cost the marker in the same file.
 R12="$SCN/r12"

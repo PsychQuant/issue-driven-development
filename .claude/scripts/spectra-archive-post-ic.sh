@@ -218,8 +218,9 @@ fi
 #            and one that cannot be checked forces the question. History is read for
 #            the archive path and for the path before the move: Step 7 runs before
 #            the archive is committed, when the archive path has no history at all.
-#   prose    `Refs|Closes|Fixes #N` (explicit) and `issue #N` (anything the change
-#            talks about, a sandbox's "seed issue #1" included). `[Ii]ssue` was added
+#   prose    `Refs|Closes|Fixes #N` outside code (explicit) and `issue #N` (anything the
+#            change talks about, a sandbox's "seed issue #1" included). A Refs inside
+#            code is a quotation and counts as `issue #N` does. `[Ii]ssue` was added
 #            per #170; the ASCII lookbehind keeps `reissue #5` out.
 # References to other repositories are removed from all three first.
 # Commits and prose together: a number in both wins. With no overlap, commits win
@@ -276,7 +277,13 @@ if markers:
 
 prose_text = strip("\n".join(read(os.path.join(arch, f)) for f in sorted(os.listdir(arch))
                              if f.endswith(".md") and os.path.isfile(os.path.join(arch, f))))
-strong, weak = nums(STRONG, prose_text), nums(WEAK, prose_text)
+# A Refs/Closes/Fixes inside code (a fence or `inline`) quotes something, often another
+# repository's PR body; it counts only as weak prose. The spike quoted the sandbox's
+# `Refs #1` and `Refs #3` this way.
+CODE = re.compile(r"(?ms)^[ \t]*```.*?^[ \t]*```|`[^`\n]*`")
+outside_code = CODE.sub(lambda m: " " * len(m.group(0)), prose_text)
+strong = nums(STRONG, outside_code)
+weak = nums(WEAK, prose_text) | nums(STRONG, prose_text)
 
 commits = set()
 if root and paths:
