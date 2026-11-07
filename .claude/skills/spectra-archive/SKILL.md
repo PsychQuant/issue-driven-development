@@ -142,25 +142,43 @@ Complete each step → `TaskUpdate → completed` immediately.
    # in a second shell, which breaks the Step 7 → Step 8 handoff (R4 verify
    # R4-S1 finding). The change name is the skill's primary input — always known
    # to Step 8 — so the derived path IS recoverable.
+   # 7a. Dry run (#405): resolves the issue exactly as the real run will and writes
+   # the comment body to /tmp/spectra-archive-ic-dryrun-body.md. Nothing is posted.
    bash "${REPO_ROOT}/.claude/scripts/spectra-archive-post-ic.sh" \
        --change-name "$CHANGE_NAME" \
        --archive-dir "$ARCHIVE_DIR" \
-       --spec-deltas "$SPEC_DELTAS"
+       --spec-deltas "$SPEC_DELTAS" \
+       --dry-run
    POST_IC_EXIT=$?
    ```
+
+   **7b. Review the body before it is posted (#405)**: read
+   `/tmp/spectra-archive-ic-dryrun-body.md` and run the privacy self-review of
+   [`plugins/issue-driven-dev/rules/privacy-scrubbing.md`](../../../plugins/issue-driven-dev/rules/privacy-scrubbing.md)
+   on it, then resolve the level the rule defines for the target repository (third-party
+   `enforce`, your own public repository `warn`, private `light`). The `tasks.md` lines are
+   copied into the comment as they are, so this is where third-party names or
+   unpublished details would be caught. If the review finds something, do not post: tell
+   the user what and where.
+
+   **7c. Post**: run the same command without `--dry-run`, adding
+   `--scrub-attested <level>` (and `--linked-issue <N>` when 7a needed a choice, see below).
+   The script refuses to post without that flag, because it cannot review text itself;
+   the repository's own level is a floor, so a stricter one wins, and at `enforce` it does
+   not post at all.
 
    **Exit codes**:
 
    | Exit | Meaning | Agent action |
    |------|---------|--------------|
    | `0` | Success or normal skip (posted / none / idempotent / unsafe-name / generic failure) | Read outcome from the derived outcome file (see Step 8), proceed to Step 8 |
-   | `2` | Usage error (missing args, or unsafe `--outcome-file` path) | Skill bug — fix invocation |
+   | `2` | Usage error (missing args, unsafe `--outcome-file` path, or a `--scrub-attested` value other than light / warn / enforce) | Skill bug — fix invocation |
    | `64` | Dependency missing (python3) | Surface to user; archive itself succeeded; manual retry after install |
-   | `75` | Multi-candidate detected | **AskUserQuestion required** — read `/tmp/spectra-archive-candidates.txt` for the candidate list, prompt user to pick canonical issue (show `#N + gh issue title` for each), then re-invoke script with `--linked-issue <chosen>` |
+   | `75` | Several candidates, a commit number that disagrees with an explicit `Refs`/`Closes`/`Fixes`, or one candidate whose issue/PR check could not run | **AskUserQuestion required** — read `/tmp/spectra-archive-candidates.txt` for the candidate list, prompt user to pick canonical issue (show `#N + gh issue title` for each), then re-invoke script with `--linked-issue <chosen>` |
 
    **Stdout**: a single line that is either the IC comment URL, or one of the documented status messages (`(none — ...)`, `(skipped — ...)`, `(pending — ...)`, `(failed — ...)`). The same line is also written to the derived outcome file `/tmp/spectra-archive-ic-outcome-${CHANGE_NAME}.txt` for cross-Bash-call persistence (Step 8 reads from there).
 
-   **Multi-candidate flow (agent responsibility)**:
+   **Multi-candidate flow (agent responsibility)**: in 7a, before the review. Re-run the dry run with `--linked-issue <chosen>`, review, then post with the same `--linked-issue`.
 
    ```bash
    if [ "$POST_IC_EXIT" = "75" ]; then
@@ -173,17 +191,18 @@ Complete each step → `TaskUpdate → completed` immediately.
          --change-name "$CHANGE_NAME" \
          --archive-dir "$ARCHIVE_DIR" \
          --spec-deltas "$SPEC_DELTAS" \
-         --linked-issue "$CHOSEN_ISSUE"
+         --linked-issue "$CHOSEN_ISSUE" \
+         --dry-run
    fi
    ```
 
    The agent (LLM-driven) handles the AskUserQuestion step — bash cannot prompt. The script validates `$CHOSEN_ISSUE` against the original candidate set on re-invoke.
 
-   **What reaches GitHub (#405)**: the script works out the path inside the repository itself, so `--archive-dir` may be absolute or relative and the comment never carries a local path. It posts through `plugins/issue-driven-dev/scripts/gh-egress.sh`, with the attestation level resolved from the repository. If the gate refuses, the wrapper is missing, or write access cannot be confirmed, nothing is posted and the outcome line starts with `(failed — ...)` and says why. Fix the reason (for example a literal `@login` in `tasks.md`) and re-run this step.
+   **What reaches GitHub (#405)**: the path to the archive in the comment is the path inside the repository, whatever form `--archive-dir` took; when the repository's origin is not the target repository, the conventional `openspec/changes/archive/<dir>` is used instead. The rest of the body (`--spec-deltas`, the `tasks.md` lines) is what 7b reviews. The comment is posted through `plugins/issue-driven-dev/scripts/gh-egress.sh`. If the gate refuses, the wrapper is missing, permissions cannot be read, or the level is `enforce`, nothing is posted and the outcome line starts with `(failed — ...)` and says why. Do not edit the archived files to get past a refusal (they are the audit record, and archive protection blocks the edit): post a corrected copy of the dry-run body by hand through `gh-egress.sh`.
 
    **Failure semantics**: any failure in Step 7 (gh auth lost, network, body too large, etc.) is recorded in the outcome file but does NOT abort the overall archive operation — the archive itself (Step 6) has already succeeded, and the archived change directory + main spec deltas are the canonical record. The GitHub comment is the convenience anchor for `/idd-close` supersession.
 
-   **Testing**: run `.claude/scripts/tests/spectra-archive-post-ic/test.sh` to validate the script against fixture archive directories (covers explicit-marker / Refs-fallback / no-marker / multi-candidate / malicious-tasks.md / missing-tasks.md / unsafe-change-name / linked-issue-resolved / linked-issue-invalid / outcome-path-derivation / unsafe-outcome-file / prose-issue-detect / linked-issue-empty-candidates / word-boundary / cross-repo references / same-repo full references), plus scenario checks that need a real repository or a stubbed `gh` (paths, the egress gate, commit evidence). All fixtures and scenario checks pass.
+   **Testing**: run `.claude/scripts/tests/spectra-archive-post-ic/test.sh` to validate the script against fixture archive directories (covers explicit-marker / Refs-fallback / no-marker / multi-candidate / malicious-tasks.md / missing-tasks.md / unsafe-change-name / linked-issue-resolved / linked-issue-invalid / outcome-path-derivation / unsafe-outcome-file / prose-issue-detect / linked-issue-empty-candidates / word-boundary / cross-repo references / same-repo full references), plus scenario checks that need a real repository or a stubbed `gh` (paths, the review level, the egress gate, commit evidence, pull-request numbers). All fixtures and scenario checks pass.
 
 8. **Display summary**
 

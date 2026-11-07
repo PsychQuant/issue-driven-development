@@ -14,6 +14,7 @@
 #     [--linked-issue <N>] \
 #     [--outcome-file <path>] \
 #     [--gh-repo <owner/repo>] \
+#     [--scrub-attested <light|warn|enforce>] \
 #     [--dry-run]
 #
 # Exit codes:
@@ -36,8 +37,16 @@
 #   tool calls. --outcome-file may override the path but is rejected if it
 #   contains '..' (path traversal) — see #56 R5-S1 / L1 verify findings.
 #
-# DRY RUN: when --dry-run is passed, skip all `gh` calls; print "[DRY-RUN] $cmd"
-# instead. Used by unit tests in .claude/scripts/tests/spectra-archive-post-ic/.
+# DRY RUN: when --dry-run is passed, nothing is written to GitHub; the composed
+# body goes to /tmp/spectra-archive-ic-dryrun-body.md. Read-only lookups still run:
+# checking whether a number taken from commit subjects is a pull request, so a
+# dry run picks the same issue the real run will (#405). Used by Step 7's review
+# pass and by the tests in .claude/scripts/tests/spectra-archive-post-ic/.
+#
+# --scrub-attested: the privacy level the CALLER resolved after reviewing the
+# dry-run body (plugins/issue-driven-dev/rules/privacy-scrubbing.md). Required to
+# post; the script cannot review text, so it never supplies this itself. The
+# repository's own level is a floor: a stricter one wins, `enforce` is not posted.
 
 set -uo pipefail
 
@@ -54,6 +63,7 @@ OUTCOME_FILE_EXPLICIT=0
 GH_REPO_ARG=""
 DRY_RUN=0
 FORCE_LINKED_ISSUE=""
+SCRUB_ATTESTED=""
 # The egress gate lives in the plugin tree of this repository. Resolved from this
 # script, not from the caller's cwd: the audited repo must not supply its own gate.
 EGRESS="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd)/plugins/issue-driven-dev/scripts/gh-egress.sh"
@@ -68,6 +78,7 @@ while [ $# -gt 0 ]; do
     --force-linked-issue) FORCE_LINKED_ISSUE="$2"; shift 2;;
     --outcome-file)    OUTCOME_FILE="$2"; OUTCOME_FILE_EXPLICIT=1; shift 2;;
     --gh-repo)         GH_REPO_ARG="$2"; shift 2;;
+    --scrub-attested)  SCRUB_ATTESTED="$2"; shift 2;;
     --dry-run)         DRY_RUN=1; shift;;
     -h|--help)
       sed -n '/^#/,/^$/p' "$0" | head -40
@@ -83,9 +94,17 @@ done
 # ── Validate required args ──
 if [ -z "$CHANGE_NAME" ] || [ -z "$ARCHIVE_DIR" ]; then
   echo "ERROR: --change-name and --archive-dir are required" >&2
-  echo "Usage: $0 --change-name <name> --archive-dir <path> [--spec-deltas <text>] [--linked-issue <N> | --force-linked-issue <N>] [--dry-run]" >&2
+  echo "Usage: $0 --change-name <name> --archive-dir <path> [--spec-deltas <text>] [--linked-issue <N> | --force-linked-issue <N>] [--scrub-attested <light|warn|enforce>] [--dry-run]" >&2
   exit 2
 fi
+
+case "$SCRUB_ATTESTED" in
+  ""|light|warn|enforce) ;;
+  *)
+    echo "ERROR: --scrub-attested must be light, warn or enforce: $SCRUB_ATTESTED" >&2
+    exit 2
+    ;;
+esac
 
 # ── Reject path traversal in an explicit --outcome-file (closes #56 R5-S1 / L1) ──
 # Must run BEFORE emit_outcome() is ever called, since emit_outcome writes to
@@ -131,6 +150,13 @@ if [ "$OUTCOME_FILE_EXPLICIT" = "0" ]; then
   OUTCOME_FILE="/tmp/spectra-archive-ic-outcome-${CHANGE_NAME}.txt"
 fi
 
+# ── A real post needs the caller's privacy review (#405) ──
+# Checked before any lookup: without it nothing will be posted, so there is no
+# reason to resolve candidates first.
+if [ "$DRY_RUN" = "0" ] && [ -z "$SCRUB_ATTESTED" ]; then
+  emit_outcome "(failed — not posted: run this step with --dry-run, review /tmp/spectra-archive-ic-dryrun-body.md per plugins/issue-driven-dev/rules/privacy-scrubbing.md, then re-run with --scrub-attested <level>; archive itself succeeded)" 0
+fi
+
 # ── Resolve GH_REPO ──
 if [ -n "$GH_REPO_ARG" ]; then
   GH_REPO="$GH_REPO_ARG"
@@ -145,79 +171,160 @@ fi
 # ── Archive basename (no date recomputation; derived from passed archive-dir) ──
 ARCHIVE_BASENAME=$(basename "$ARCHIVE_DIR")
 
-# ── Path for the comment (#405) ──
+# ── The archive's own repository (#405) ──
+# Everything below that reads git history or names a path works in the repository
+# the archive lives in, never the caller's cwd: a caller in /tmp, or in another
+# repository, must not change which issue gets the comment. That repository is used
+# only when its origin is $GH_REPO; anything else (a fixture tree, a home-directory
+# repo, a fork checked out elsewhere) gives no commit evidence and no path prefix.
+REPO_ROOT=""
+ARCHIVE_REL=""
+if TOP=$(git -C "$ARCHIVE_DIR" rev-parse --show-toplevel 2>/dev/null) \
+   && REL=$(git -C "$ARCHIVE_DIR" rev-parse --show-prefix 2>/dev/null); then
+  ORIGIN_REPO=$(git -C "$TOP" remote get-url origin 2>/dev/null \
+    | sed -E 's#/*$##; s#\.git$##; s#.*[:/]([^/]+/[^/]+)$#\1#')
+  if [ -n "${REL%/}" ] && [ -n "$ORIGIN_REPO" ] \
+     && [ "$(printf '%s' "$ORIGIN_REPO" | tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "$GH_REPO" | tr '[:upper:]' '[:lower:]')" ]; then
+    REPO_ROOT="$TOP"
+    ARCHIVE_REL="${REL%/}"
+  fi
+fi
+
+# ── Path for the comment ──
 # --archive-dir is how this machine reaches the directory. The comment goes to
-# GitHub, so it only ever gets the path inside the repository. --show-prefix
-# answers that whatever form the argument took (absolute, relative to a
-# subdirectory, through a symlink). Outside a git repository there is no such
-# path: use the conventional location, never the argument as given.
-ARCHIVE_DISPLAY=$(git -C "$ARCHIVE_DIR" rev-parse --show-prefix 2>/dev/null) || ARCHIVE_DISPLAY=""
-ARCHIVE_DISPLAY="${ARCHIVE_DISPLAY%/}"
-[ -n "$ARCHIVE_DISPLAY" ] || ARCHIVE_DISPLAY="openspec/changes/archive/$ARCHIVE_BASENAME"
+# GitHub, so it only gets the path inside the repository, whatever form the
+# argument took (absolute, relative to a subdirectory, through a symlink). Without
+# a matching repository, use the conventional location, never the argument.
+if [ -n "$ARCHIVE_REL" ]; then
+  ARCHIVE_DISPLAY="$ARCHIVE_REL"
+  PRE_MOVE_REL="$(dirname "$(dirname "$ARCHIVE_REL")")/$CHANGE_NAME"
+else
+  ARCHIVE_DISPLAY="openspec/changes/archive/$ARCHIVE_BASENAME"
+  PRE_MOVE_REL=""
+fi
 
 # ── Step A: Detect linked issue with multi-candidate awareness ──
-
-# Reads text, writes it back without references to other repositories (#405), so a
-# number from a sandbox or an upstream never becomes a candidate here. The same
-# repository's full form is kept, rewritten to the short one.
-strip_cross_repo_refs() {
-  GH_REPO_ENV="$GH_REPO" python3 -c '
-import os, re, sys
-repo = os.environ["GH_REPO_ENV"].lower()
-ref = re.compile(r"(?:(?:-R|--repo)\s+)?`?([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)`?(?:\s+[Ii]ssue)?\s*#(\d+)")
-sys.stdout.write(ref.sub(lambda m: f"issue #{m.group(2)}" if m.group(1).lower() == repo else " ",
-                         sys.stdin.read()))
-'
-}
-
-# Issue numbers in the subjects of the commits that touched a path.
-commit_refs() {
-  git log --format=%s -50 -- "$1" 2>/dev/null \
-    | strip_cross_repo_refs | grep -oE '#[0-9]+' | tr -d '#' | LC_ALL=C sort -u
-}
-
+# One Python program, run isolated (-I: nothing is imported from the cwd). It prints
+# one candidate per line, then `?ask` when a person must choose even with a single
+# candidate. Sources, strongest first:
+#   marker   `**GitHub-side tracker**: #N` in proposal.md or design.md settles it.
+#   commits  the repo's commit rule (rules/commit-issue-reference.md) writes the issue
+#            as a parenthesised group in the subject, `(#N)` or `(#N #M)`, or as a
+#            body line `Refs #N`. Only those count; a bare `#N` in a subject is prose
+#            (in the spike it was the sandbox's `PR #4`). When no commit has such a
+#            group, any `#N` in the subjects is used instead. A squash adds the PR
+#            number as a group too, so every commit number is checked against the
+#            issues API: pull requests and numbers that do not exist are dropped,
+#            and one that cannot be checked forces the question. History is read for
+#            the archive path and for the path before the move: Step 7 runs before
+#            the archive is committed, when the archive path has no history at all.
+#   prose    `Refs|Closes|Fixes #N` (explicit) and `issue #N` (anything the change
+#            talks about, a sandbox's "seed issue #1" included). `[Ii]ssue` was added
+#            per #170; the ASCII lookbehind keeps `reissue #5` out.
+# References to other repositories are removed from all three first.
+# Commits and prose together: a number in both wins. With no overlap, commits win
+# over `issue #N`, but disagreeing with an explicit Refs/Closes/Fixes they are both
+# offered and a person chooses: neither alone is reliable enough to post silently.
 detect_candidates() {
-  local archive_dir="$1"
-  local candidates="" prose="" at_archive="" before_move=""
-  [ -d "$archive_dir" ] || return 0
+  [ -d "$ARCHIVE_DIR" ] || return 0
+  PIC_ARCHIVE_DIR="$ARCHIVE_DIR" PIC_REPO_ROOT="$REPO_ROOT" PIC_ARCHIVE_REL="$ARCHIVE_REL" \
+  PIC_PRE_MOVE_REL="$PRE_MOVE_REL" PIC_GH_REPO="$GH_REPO" python3 -I - <<'PYEOF'
+import os, re, subprocess, sys
 
-  # An explicit **GitHub-side tracker** marker settles it.
-  candidates=$(cat "$archive_dir/proposal.md" "$archive_dir/design.md" 2>/dev/null \
-    | strip_cross_repo_refs \
-    | grep -oE '\*\*GitHub-side tracker\*\*[^#]*#[0-9]+' \
-    | grep -oE '#[0-9]+' | tr -d '#' | LC_ALL=C sort -u)
-  if [ -n "$candidates" ]; then
-    echo "$candidates"
-    return 0
+arch = os.environ["PIC_ARCHIVE_DIR"]
+root = os.environ["PIC_REPO_ROOT"]
+paths = [p for p in (os.environ["PIC_ARCHIVE_REL"], os.environ["PIC_PRE_MOVE_REL"]) if p]
+gh_repo = os.environ["PIC_GH_REPO"]
+
+def read(path):
+    try:
+        with open(path, "rb") as fh:
+            return fh.read().decode("utf-8", "surrogateescape")
+    except OSError:
+        return ""
+
+# owner/repo, bounded so a long token cannot make the match expensive, and never
+# across a line break. Preceded by nothing that would make it part of a path.
+XREF = re.compile(r"(?<![A-Za-z0-9_./-])(?:(?:-R|--repo)[ \t]+)?`?"
+                  r"([A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100})`?"
+                  r"(?:[ \t]+[Ii]ssue)?[ \t]*#(\d+)")
+def strip(text):
+    return XREF.sub(lambda m: f"issue #{m.group(2)}" if m.group(1).lower() == gh_repo.lower() else " ",
+                    text)
+
+def nums(pattern, text):
+    return {int(n) for m in pattern.finditer(text) for n in re.findall(r"#(\d+)", m.group(0))}
+
+MARKER = re.compile(r"\*\*GitHub-side tracker\*\*[^#\n]*#\d+")
+STRONG = re.compile(r"(?<![A-Za-z0-9_])(?:Refs|Closes|Fixes) #\d+")
+WEAK = re.compile(r"(?<![A-Za-z0-9_])[Ii]ssue #\d+")
+GROUP = re.compile(r"\((?:[Rr]efs[ \t]+)?#\d+(?:[ \t,]+#\d+)*\)")
+# A body line that starts with Refs: every #N on it, so "Refs #137 Refs #150" keeps both.
+BODY_REFS = re.compile(r"(?im)^[ \t]*refs\b[^\n]*")
+ANY = re.compile(r"#\d+")
+
+def emit(cands, ask=False):
+    for n in sorted(cands):
+        print(n)
+    if ask and cands:
+        print("?ask")
+    sys.exit(0)
+
+markers = nums(MARKER, strip(read(os.path.join(arch, "proposal.md")) + "\n" + read(os.path.join(arch, "design.md"))))
+if markers:
+    emit(markers)
+
+prose_text = strip("\n".join(read(os.path.join(arch, f)) for f in sorted(os.listdir(arch))
+                             if f.endswith(".md") and os.path.isfile(os.path.join(arch, f))))
+strong, weak = nums(STRONG, prose_text), nums(WEAK, prose_text)
+
+commits = set()
+if root and paths:
+    out = subprocess.run(["git", "-C", root, "--literal-pathspecs", "log", "--format=%x1e%s%x1f%b",
+                          "-50", "--", *paths], capture_output=True)
+    records = []
+    for rec in out.stdout.decode("utf-8", "surrogateescape").split("\x1e")[1:]:
+        subject, _, body = rec.partition("\x1f")
+        records.append((strip(subject), strip(body)))
+    commits = {n for s, b in records for n in nums(GROUP, s) | nums(BODY_REFS, b)}
+    if not commits:
+        commits = {n for s, _ in records for n in nums(ANY, s)}
+
+unverified = set()
+for n in sorted(commits):
+    r = subprocess.run(["gh", "api", f"repos/{gh_repo}/issues/{n}", "--jq",
+                        'if .pull_request then "pr" else "issue" end'], capture_output=True, text=True)
+    kind = r.stdout.strip() if r.returncode == 0 else ("missing" if "404" in r.stderr else "unknown")
+    if kind in ("pr", "missing"):
+        commits.discard(n)
+    elif kind != "issue":
+        unverified.add(n)
+
+prose = strong | weak
+if commits and prose:
+    both = commits & prose
+    if both:
+        emit(both, ask=bool(both & unverified))
+    if strong:
+        emit(strong | commits, ask=True)
+    emit(commits, ask=bool(unverified))
+if commits:
+    emit(commits, ask=bool(unverified))
+emit(prose)
+PYEOF
+}
+
+# Runs detection and splits its answer: CANDIDATES (one per line) and ASK (1 when a
+# person must choose). A detection that fails is reported, never read as "none".
+run_detection() {
+  local out
+  if ! out=$(detect_candidates); then
+    emit_outcome "(failed — candidate detection errored; nothing posted, archive itself succeeded; pass --force-linked-issue <N> if you know the issue)" 0
   fi
-
-  # Without a marker there are two weak sources, wrong in different ways (#405):
-  #   prose    names whatever the change talks about. `[Ii]ssue` was added per #170
-  #            because /spectra-propose writes "referencing issue #N", but the same
-  #            words describe a sandbox's "seed issue #1", and nothing marks the
-  #            difference. The `(^|[^[:alnum:]_])` prefix keeps `reissue #5` out.
-  #   commits  carry the issue by rule, but a squash subject adds the PR number and
-  #            a cluster commit adds other issues.
-  # So a number in both is the answer, and commits win when they do not meet: a
-  # lone prose number with commits saying otherwise would otherwise be posted to
-  # silently. Commits are read from the archive path and from the path before the
-  # move, because Step 7 runs before the archive is committed: at that moment the
-  # archive path has no history at all. `:/` makes the second path repo-relative
-  # from any cwd. No `--follow`: it tracks single files only (#56 R2 N5).
-  prose=$(for f in "$archive_dir"/*.md; do
-      [ -f "$f" ] && { cat "$f"; echo; }
-    done \
-    | strip_cross_repo_refs \
-    | grep -oE '(^|[^[:alnum:]_])(Refs|Closes|Fixes|[Ii]ssue) #[0-9]+' \
-    | grep -oE '#[0-9]+' | tr -d '#' | LC_ALL=C sort -u)
-  at_archive=$(commit_refs "$archive_dir")
-  before_move=$(commit_refs ":/openspec/changes/$CHANGE_NAME")
-
-  candidates=$(LC_ALL=C comm -12 <(printf '%s\n' "$prose") \
-    <(printf '%s\n%s\n' "$at_archive" "$before_move" | sed '/^$/d' | LC_ALL=C sort -u))
-  [ -n "$candidates" ] || candidates="${at_archive:-${before_move:-$prose}}"
-
-  echo "$candidates"
+  CANDIDATES=$(printf '%s\n' "$out" | grep -E '^[0-9]+$' || true)
+  ASK=0
+  printf '%s\n' "$out" | grep -qx '?ask' && ASK=1
+  return 0
 }
 
 # ── Resolve LINKED_ISSUE ──
@@ -260,7 +367,7 @@ elif [ -n "$LINKED_ISSUE_RESOLVED" ]; then
   # against the candidate set. Empty set = nothing to disambiguate = this is
   # the wrong flag; the authoritative path is --force-linked-issue (which
   # existence-checks instead of membership-checks).
-  CANDIDATES=$(detect_candidates "$ARCHIVE_DIR")
+  run_detection
   if [ -z "$CANDIDATES" ]; then
     emit_outcome "(failed — --linked-issue $LINKED_ISSUE_RESOLVED given but detection found no candidates; if you know the issue number authoritatively, re-invoke with --force-linked-issue $LINKED_ISSUE_RESOLVED)" 0
   fi
@@ -269,7 +376,7 @@ elif [ -n "$LINKED_ISSUE_RESOLVED" ]; then
   fi
   LINKED_ISSUE="$LINKED_ISSUE_RESOLVED"
 else
-  CANDIDATES=$(detect_candidates "$ARCHIVE_DIR")
+  run_detection
   CANDIDATE_COUNT=$(echo "$CANDIDATES" | grep -c . || true)
   # Normalize empty/blank cases
   if [ -z "$CANDIDATES" ]; then CANDIDATE_COUNT=0; fi
@@ -279,11 +386,13 @@ else
       emit_outcome "(none — no linked issue detected)" 0
       ;;
     1)
+      # One candidate is used without asking, unless detection flagged it: its
+      # issue/PR check could not run, so it might be a pull request (#405).
+      if [ "$ASK" = 1 ]; then
+        echo "$CANDIDATES" > /tmp/spectra-archive-candidates.txt
+        emit_outcome "(pending — 1 candidate needs confirmation (could not check whether #$CANDIDATES is an issue or a pull request): $CANDIDATES; see /tmp/spectra-archive-candidates.txt; re-invoke with --linked-issue <N>)" 75
+      fi
       LINKED_ISSUE="$CANDIDATES"
-      # Single-candidate AskUserQuestion confirmation (per R2 N6 fix — even single is attacker-controllable):
-      # signal to caller via a dedicated outcome to optionally prompt. Default: trust the
-      # single candidate (it's the most common path); if `--strict-single-candidate` becomes
-      # needed, add as future flag. For now, single candidate auto-uses.
       ;;
     *)
       # Multi-candidate: write to file + exit 75 → agent prompts + re-invokes
@@ -350,7 +459,7 @@ export SPEC_DELTAS_ENV="$SPEC_DELTAS"
 export ARCHIVE_DATE_ENV="$ARCHIVE_DATE"
 export BODY_FILE_ENV="$BODY_FILE"
 
-python3 <<'PYEOF'
+python3 -I - <<'PYEOF'
 import os, sys
 
 template = """## Implementation Complete (auto-posted by spectra-archive for {basename}{force_note})
@@ -418,18 +527,25 @@ if [ ! -f "$EGRESS" ]; then
   emit_outcome "(failed — gh-egress.sh not found at $EGRESS; nothing posted, archive itself succeeded)" 0
 fi
 
-# The attestation level comes from the repository, as rules/privacy-scrubbing.md
-# resolves it. `enforce` means a person must look at the text first, and nobody is
-# here to do that, so this script does not post at that level.
-case "$(gh repo view "$GH_REPO" --json viewerPermission,isPrivate \
-        --jq '"\(.viewerPermission)/\(.isPrivate)"' 2>/dev/null)" in
-  ADMIN/true|MAINTAIN/true|WRITE/true)    SCRUB_LEVEL=light ;;
-  ADMIN/false|MAINTAIN/false|WRITE/false) SCRUB_LEVEL=warn ;;
-  *)                                      SCRUB_LEVEL=enforce ;;
+# The level is the caller's (it reviewed the dry-run body); the repository's level,
+# as rules/privacy-scrubbing.md resolves it, is a floor that can only make it
+# stricter. `enforce` means a person must post it, so this script does not.
+if ! PERM=$(gh repo view "$GH_REPO" --json viewerPermission,isPrivate \
+        --jq '"\(.viewerPermission)/\(.isPrivate)"' 2>/dev/null) || [ -z "$PERM" ]; then
+  rm -f "$BODY_FILE"
+  emit_outcome "(failed — could not read your permissions on $GH_REPO (gh auth or network?); nothing posted, archive itself succeeded)" 0
+fi
+case "$PERM" in
+  ADMIN/true|MAINTAIN/true|WRITE/true)    REPO_LEVEL=light ;;
+  ADMIN/false|MAINTAIN/false|WRITE/false) REPO_LEVEL=warn ;;
+  *)                                      REPO_LEVEL=enforce ;;
 esac
+rank() { case "$1" in light) echo 0 ;; warn) echo 1 ;; *) echo 2 ;; esac; }
+SCRUB_LEVEL="$SCRUB_ATTESTED"
+[ "$(rank "$REPO_LEVEL")" -gt "$(rank "$SCRUB_LEVEL")" ] && SCRUB_LEVEL="$REPO_LEVEL"
 if [ "$SCRUB_LEVEL" = "enforce" ]; then
   rm -f "$BODY_FILE"
-  emit_outcome "(failed — could not confirm write access to $GH_REPO, so the comment needs a person to post it; archive itself succeeded)" 0
+  emit_outcome "(failed — not posted at level enforce (your permission on $GH_REPO: ${PERM%%/*}); post the dry-run body by hand after review; archive itself succeeded)" 0
 fi
 
 EGRESS_ERR=$(mktemp /tmp/spectra-archive-ic-err.XXXXXX) || {
@@ -444,10 +560,10 @@ rm -f "$BODY_FILE" "$EGRESS_ERR"
 
 # The wrapper keeps its own exit codes at 10 and above; below that is gh's.
 if [ "$EGRESS_RC" -ge 10 ]; then
-  emit_outcome "(failed — gh-egress refused the comment (exit $EGRESS_RC): $EGRESS_REASON; archive itself succeeded)" 0
+  emit_outcome "(failed — gh-egress refused the comment (exit $EGRESS_RC): $EGRESS_REASON; nothing posted, archive itself succeeded; do not edit the archived files: post a corrected copy of the dry-run body by hand through gh-egress.sh)" 0
 fi
 if [ "$EGRESS_RC" -ne 0 ] || [ -z "$COMMENT_URL" ]; then
-  emit_outcome "(failed — gh issue comment errored; archive itself succeeded, check gh auth + network)" 0
+  emit_outcome "(failed — gh issue comment errored (exit $EGRESS_RC): ${EGRESS_REASON:-no message}; archive itself succeeded)" 0
 fi
 
 emit_outcome "$COMMENT_URL" 0

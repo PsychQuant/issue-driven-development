@@ -41,8 +41,8 @@ calls real `gh issue comment` / `gh issue view`. Dry-run mode emits a synthetic
 
 | # | Name | Tests |
 |---|------|-------|
-| 01 | explicit-marker-single | Fallback 1 with single `**GitHub-side tracker**: #N` |
-| 02 | refs-fallback | Fallback 2 matches `Refs #N` pattern |
+| 01 | explicit-marker-single | Single `**GitHub-side tracker**: #N` marker |
+| 02 | refs-fallback | Without a marker, prose `Refs #N` is used |
 | 03 | no-marker | No candidates → exit 0 + "(none — no linked issue detected)" |
 | 04 | multi-candidate | 2 explicit markers → exit 75 + candidates file |
 | 05 | malicious-tasks-triple-quote | tasks.md with Python RCE payload — verifies env-var passing prevents exploit (post_assert: `/tmp/pwn-fixture-05` must not exist) |
@@ -52,11 +52,14 @@ calls real `gh issue comment` / `gh issue view`. Dry-run mode emits a synthetic
 | 09 | linked-issue-invalid | Re-invoke with `--linked-issue 99` not in `[44]` → failed message |
 | 10 | deterministic-outcome-path | No `--outcome-file` passed → script derives `/tmp/spectra-archive-ic-outcome-<change-name>.txt` from `--change-name` (post_assert: derived path `must_exist`). Tests the actual derivation formula, not a hand-copied literal. |
 | 11 | unsafe-outcome-file | `--outcome-file` containing `..` → exit 2 + `(failed — unsafe --outcome-file path)`, rejected before any archive read (post_assert: `/tmp/pwn-fixture-11.txt` must not exist). No `archive/` subdir — the script exits before reaching it. |
-
+| 12 | prose-issue-detect | Prose `issue #N` is a candidate |
+| 13 | linked-issue-empty-candidates | `--linked-issue` with no candidates points to `--force-linked-issue` |
+| 14 | word-boundary-no-substring | `reissue #5` / `tissue #9` are not candidates |
+| 15 | force-linked-issue | `--force-linked-issue` bypasses detection |
+| 16 | force-and-linked-mutex | Both flags → failed message |
 | 17 | cross-repo-refs | `other/sandbox#3`, `other/sandbox issue #4` and `-R` forms are not candidates; `Refs #400` is |
 | 18 | same-repo-full-ref | `Test/Repo#400` counts as this repository, in any case; `other/sandbox#9` does not |
 
-Fixtures 12 to 16 are not listed above; their directory names say what they cover.
 
 ## Scenario tests
 
@@ -64,15 +67,25 @@ Fixtures 12 to 16 are not listed above; their directory names say what they cove
 repository or a post that runs. They build temporary repositories and put a stub
 `gh` first on `PATH`, so nothing reaches GitHub (#405):
 
-- the path in the comment: absolute argument, subdirectory, no git repository
-- the egress gate: a post through the wrapper, a refusal, a missing wrapper, no write access
-- candidate detection: prose and commits disagreeing, a squash subject, a cluster
-  commit, a cross-repo number in a subject, and the case that opened #405
+- the path in the comment: absolute argument, subdirectory, no git repository, a
+  repository whose origin is not `--gh-repo`
+- the review level: missing or invalid `--scrub-attested`, the repository level as a
+  floor, `enforce`, unreadable permissions
+- the egress gate: a post through the wrapper, a refusal, a missing wrapper, a failed
+  post that keeps gh's message
+- candidate detection: the case that opened #405 (before and after the archive commit,
+  from `/tmp` and from another repository), squash subjects, pull-request and missing
+  numbers, an unverifiable number, an explicit `Closes` that disagrees with the commits,
+  a cluster commit, body `Refs` lines, cross-repo numbers in subjects, non-UTF-8 bytes,
+  and Python modules planted in the cwd
 
 ## CI integration
 
 `.github/workflows/tests.yml` runs this suite as its own step, because
 `run-all-tests.sh` only covers `plugins/issue-driven-dev/scripts/tests/`.
+
+The fixtures sit inside this repository, whose origin is not `test/repo`, so they get
+no commit evidence and stay independent of this repository's history.
 
 Requires bash, git, python3, and the parser versions in
 `plugins/issue-driven-dev/scripts/requirements-egress.txt` (the post path runs the
