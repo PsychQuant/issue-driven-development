@@ -72,10 +72,11 @@ repository or a post that runs. They build temporary repositories and put a stub
 
 - the path in the comment: absolute argument, subdirectory, no git repository, a
   repository whose origin is not `--gh-repo`
-- the review level: missing or invalid `--scrub-attested`, the repository level as a
-  floor, `enforce`, unreadable permissions
-- the review copy: no dry run, a body or an issue that changed after the review, a
-  planted symlink, its permissions, its removal after a post
+- the review level: missing or invalid `--scrub-attested`, a level below the
+  repository's (refused), `enforce`, unreadable permissions, a wrapper that cannot run
+- the review copy: no dry run, a body, a repository or an issue that changed after the
+  review, a planted symlink (to a file or a directory), its permissions, its removal
+  after a post, the archive's own date in the body
 - the egress gate: a post through the wrapper, a refusal, a missing wrapper, a failed
   post that keeps gh's message
 - candidate detection: the case that opened #405 (before and after the archive commit,
@@ -84,8 +85,9 @@ repository or a post that runs. They build temporary repositories and put a stub
   a cluster commit, body `Refs` lines, cross-repo numbers in subjects, this repository's
   full form (explicit, as a group, as a mention), `referencing issue #N`, explicit
   references only partly covered by commits, a prose-only pull request, a transport
-  error whose URL contains 404, no `--gh-repo`, non-UTF-8 bytes, and Python modules
-  planted in the cwd (dry run and real post)
+  error whose URL contains 404, a repository that cannot be read, a tracker marker that
+  is a pull request or names another repository, no `--gh-repo`, non-UTF-8 bytes, and
+  Python modules planted in the cwd (dry run and real post)
 
 ## CI integration
 

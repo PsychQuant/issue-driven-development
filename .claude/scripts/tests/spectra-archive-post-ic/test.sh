@@ -38,14 +38,15 @@ FAILED_TESTS=()
 # The review copy that a dry run keeps goes to a temporary state directory, not $HOME.
 SCN=$(mktemp -d "${TMPDIR:-/tmp}/post-ic-405-XXXXXX") || exit 1
 export SPECTRA_POST_IC_STATE_DIR="$SCN/state"
-trap 'rm -rf "$SCN"' EXIT
+trap 'rm -rf "$SCN"; rm -f /tmp/spectra-archive-candidates.txt /tmp/spectra-archive-ic-outcome*.txt' EXIT
 
 # Stub gh. GH_STUB_REPO: "PERM/PRIVATE" for the permission query, or "fail".
 # `repo view --json nameWithOwner` answers with the owner/repo of the cwd's origin.
 # GH_STUB_PRS and GH_STUB_MISSING: space-separated numbers the issues API reports as a
 # pull request or as not found. GH_STUB_API_FAIL=1 makes every issues API call fail
 # the way a transport error does, with the request URL in the message.
-# GH_STUB_POST_FAIL=1 makes the comment fail with a message.
+# GH_STUB_POST_FAIL=1 makes the comment fail with a message. GH_STUB_REPO_HIDDEN=1
+# answers 404 for the repository itself, as GitHub does for one the token cannot see.
 mkdir -p "$SCN/bin"
 cat > "$SCN/bin/gh" <<'STUB'
 #!/usr/bin/env bash
@@ -64,6 +65,9 @@ case "$1 $2" in
     [ "${GH_STUB_API_FAIL:-0}" = 1 ] && { echo "Get \"https://api.github.com/$2\": dial tcp: connection refused" >&2; exit 1; }
     case " ${GH_STUB_MISSING:-} " in *" $n "*) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;; esac
     case " ${GH_STUB_PRS:-} " in *" $n "*) echo pr ;; *) echo issue ;; esac ;;
+  "api "repos/*)
+    [ "${GH_STUB_REPO_HIDDEN:-0}" = 1 ] && { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
+    printf '%s\n' "${2#repos/}" ;;
   "issue comment")
     [ "${GH_STUB_POST_FAIL:-0}" = 1 ] && { echo "GraphQL: Could not resolve to an issue" >&2; exit 1; }
     n=$3
@@ -274,7 +278,7 @@ run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo
 scenario no-attestation-not-posted "$(! posted && outcome_starts '(failed — not posted: run this step with --dry-run'; echo $?)"
 run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --scrub-attested loud
 scenario bad-attestation-usage-error "$([ "$RC" = 2 ] && ! posted; echo $?)"
-review_then_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --scrub-attested light
+review_then_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --scrub-attested warn
 scenario egress-posts-url "$([ "$OUT" = 'https://github.com/test/repo/issues/7#issuecomment-1' ] && [ "$RC" = 0 ]; echo $?)"
 scenario egress-sends-relative-body "$(grep -qF "$A1/" "$SCN/body.md" && ! grep -qF "$SCN" "$SCN/body.md"; echo $?)"
 scenario egress-drops-attestation "$(grep -q '^issue comment 7 --repo test/repo' "$SCN/gh.log" && ! grep -q 'scrub-attested' "$SCN/gh.log"; echo $?)"
@@ -469,20 +473,20 @@ scenario cwd-modules-not-imported "$([ ! -e "$SCN/planted/ran" ] && outcome_is 7
 # 24. Without a dry run there is nothing reviewed, so nothing is posted.
 rm -f "$(dry_body demo)"
 run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --scrub-attested warn
-scenario no-dry-run-not-posted "$(! posted && outcome_starts '(failed — not posted: the body or the issue'; echo $?)"
+scenario no-dry-run-not-posted "$(! posted && outcome_starts '(failed — not posted: the body, the repository or the issue'; echo $?)"
 
 # 25. A body that changed after the review is not posted.
 run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --dry-run
 printf -- '- [x] 1.2 added after the review\n' >> "$R1/$A1/tasks.md"
 run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --scrub-attested warn
-scenario changed-body-not-posted "$(! posted && outcome_starts '(failed — not posted: the body or the issue'; echo $?)"
+scenario changed-body-not-posted "$(! posted && outcome_starts '(failed — not posted: the body, the repository or the issue'; echo $?)"
 git -C "$R1" checkout -q -- "$A1/tasks.md"
 
 # 26. An issue that detection resolves differently after the review is not posted.
 run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --dry-run
 printf '**GitHub-side tracker**: #8\n' > "$R1/$A1/proposal.md"
 run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --scrub-attested warn
-scenario changed-target-not-posted "$(! posted && outcome_starts '(failed — not posted: the body or the issue (#8)'; echo $?)"
+scenario changed-target-not-posted "$(! posted && outcome_starts '(failed — not posted: the body, the repository or the issue (test/repo#8)'; echo $?)"
 git -C "$R1" checkout -q -- "$A1/proposal.md"
 
 # 27. The review copy is private, and a symlink planted at its name is not followed.
@@ -577,6 +581,55 @@ scenario prose-pr-not-posted "$(outcome_starts '(none'; echo $?)"
 
 # 36. --help prints the whole header, through the review options.
 scenario help-shows-review-options "$(bash "$TARGET_SCRIPT" --help | grep -q 'scrub-attested' && bash "$TARGET_SCRIPT" --help | grep -q 'what was reviewed is what'; echo $?)"
+
+# 37. The review is bound to the repository too: the same body for the same number in
+#     another repository was not reviewed for that repository.
+run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --dry-run
+run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/other --scrub-attested warn
+scenario other-repo-not-posted "$(! posted && outcome_starts '(failed — not posted: the body, the repository or the issue (test/other#'; echo $?)"
+
+# 38. A review below the repository's own level is refused, not raised.
+review_then_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --scrub-attested light
+scenario lower-attestation-refused "$(! posted && outcome_starts '(failed — not posted: --scrub-attested light is below test/repo'"'"'s own level warn'; echo $?)"
+
+# 39. A tracker marker that is a pull request is not posted to; what else is found is
+#     offered to a person.
+A23="$SCN/a23/2026-01-24-tracker-pr"
+mkdir -p "$A23"
+printf '**GitHub-side tracker**: #12\n\nRefs #400\n' > "$A23/proposal.md"
+GH_STUB_PRS=12 run_post "$SCN" --change-name tracker-pr --archive-dir "$A23" --gh-repo test/repo --dry-run
+scenario tracker-pr-asks "$([ "$RC" = 75 ] && grep -qx 400 /tmp/spectra-archive-candidates.txt && case "$OUT" in *tracker*) true ;; *) false ;; esac; echo $?)"
+
+# 40. A tracker in another repository does not lend a later number on its line to this one.
+A24="$SCN/a24/2026-01-25-tracker-elsewhere"
+mkdir -p "$A24"
+printf '**GitHub-side tracker**: kiki830621/sandbox#5 (sandbox PR #12 holds the trial)\n\nRefs #400\n' > "$A24/proposal.md"
+run_post "$SCN" --change-name tracker-elsewhere --archive-dir "$A24" --gh-repo test/repo --dry-run
+scenario cross-repo-tracker-not-used "$([ "$RC" = 75 ] && [ "$(cat /tmp/spectra-archive-candidates.txt)" = 400 ]; echo $?)"
+
+# 41. When the repository itself cannot be read, every 404 is meaningless: detection fails.
+A25="$SCN/a25/2026-01-26-hidden"
+mkdir -p "$A25"
+printf 'Closes #400\n' > "$A25/proposal.md"
+GH_STUB_MISSING=400 GH_STUB_REPO_HIDDEN=1 run_post "$SCN" --change-name hidden --archive-dir "$A25" --gh-repo test/typo --dry-run
+scenario hidden-repo-fails "$(outcome_starts '(failed — candidate detection errored'; echo $?)"
+
+# 42. A symlink to a directory at the review copy's name is replaced, not entered.
+mkdir -p "$SCN/victimdir"
+rm -f "$(dry_body demo)"
+ln -s "$SCN/victimdir" "$(dry_body demo)"
+run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --dry-run
+scenario review-copy-dir-symlink "$(outcome_is 7 && [ -f "$(dry_body demo)" ] && [ ! -L "$(dry_body demo)" ] && [ -z "$(ls -A "$SCN/victimdir")" ]; echo $?)"
+
+# 43. The body's date is the archive's own, so a review across midnight UTC still matches.
+scenario body-date-from-archive "$(grep -qF '2026-01-02' "$(dry_body demo)"; echo $?)"
+
+# 44. A wrapper that could not run (exit 127) is an error, not a gate refusal.
+mkdir -p "$SCN/broken/.claude/scripts" "$SCN/broken/plugins/issue-driven-dev/scripts"
+cp "$TARGET_SCRIPT" "$SCN/broken/.claude/scripts/post-ic.sh"
+printf 'exit 127\n' > "$SCN/broken/plugins/issue-driven-dev/scripts/gh-egress.sh"
+POST_SCRIPT="$SCN/broken/.claude/scripts/post-ic.sh" review_then_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --scrub-attested warn
+scenario wrapper-127-is-error "$(outcome_starts '(failed — gh-egress or gh issue comment errored (exit 127)'; echo $?)"
 
 echo ""
 echo "─── Summary ───"

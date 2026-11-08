@@ -287,7 +287,9 @@ def strip(text):
 def nums(pattern, text):
     return {int(n) for m in pattern.finditer(text) for n in re.findall(r"#(\d+)", m.group(0))}
 
-MARKER = re.compile(r"\*\*GitHub-side tracker\*\*[^#\n]*#\d+")
+# One marker runs to the next marker or the end of its line.
+MARKER = re.compile(r"\*\*GitHub-side tracker\*\*(?:(?!\*\*GitHub-side tracker\*\*)[^\n])*")
+FIRST_REF = re.compile(r"(?:([A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}))?#(\d+)")
 STRONG = re.compile(r"(?<![A-Za-z0-9_])(?:(?:Refs|Closes|Fixes) #\d+|[Rr]eferenc(?:e|es|ed|ing)[ \t]+issue #\d+)")
 WEAK = re.compile(r"(?<![A-Za-z0-9_])[Ii]ssue #\d+")
 GROUP = re.compile(r"\((?:[Rr]efs[ \t]+)?#\d+(?:[ \t,]+#\d+)*\)")
@@ -305,28 +307,64 @@ def kind(n):
         if r.returncode == 0:
             v = r.stdout.strip()
             kinds[n] = v if v in ("issue", "pr") else "unknown"
+        elif "(HTTP 404)" in r.stderr:
+            repo_readable()
+            kinds[n] = "missing"
         else:
-            kinds[n] = "missing" if "(HTTP 404)" in r.stderr else "unknown"
+            kinds[n] = "unknown"
     return kinds[n]
+
+readable = []
+def repo_readable():
+    """GitHub answers 404 for every issue of a repository you cannot see, so a 404 is
+    only "missing" once the repository itself answers. Otherwise detection fails."""
+    if not readable:
+        r = subprocess.run(["gh", "api", f"repos/{gh_repo}", "--jq", ".full_name"],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"cannot read repos/{gh_repo}: every issue would look missing", file=sys.stderr)
+            sys.exit(3)
+        readable.append(True)
 
 def postable(numbers):
     """The numbers that are issues or could not be checked, and whether any could not."""
     keep = {n for n in numbers if kind(n) in ("issue", "unknown")}
     return keep, any(kinds[n] == "unknown" for n in keep)
 
-def emit(cands, ask=False, check=True):
+# Why a person must choose, when one is needed; the first reason wins.
+reasons = []
+def emit(cands, ask=None, check=True):
+    if ask:
+        reasons.append(ask)
     if check:
         cands, unsure = postable(cands)
-        ask = ask or unsure
+        if unsure:
+            reasons.append("could not check whether every number is an issue or a pull request")
     for n in sorted(cands):
         print(n)
-    if ask and cands:
-        print("?ask")
+    if reasons and cands:
+        print("?ask " + reasons[0])
     sys.exit(0)
 
-markers = nums(MARKER, strip(read(os.path.join(arch, "proposal.md")) + "\n" + read(os.path.join(arch, "design.md"))))
+# The tracker marker is the author's own declaration, so it goes first, but it is checked
+# like any other number. One that names another repository, a pull request or nothing is
+# not posted to, and whatever else is found is then offered to a person, not posted.
+markers, marker_problem = set(), None
+for m in MARKER.finditer(read(os.path.join(arch, "proposal.md")) + "\n" + read(os.path.join(arch, "design.md"))):
+    ref = FIRST_REF.search(m.group(0))
+    if ref and (not ref.group(1) or ref.group(1).lower() == gh_repo.lower()):
+        markers.add(int(ref.group(2)))
+    else:
+        marker_problem = "the GitHub-side tracker does not name an issue in this repository"
 if markers:
-    emit(markers, check=False)
+    good, unsure = postable(markers)
+    if good:
+        emit(good, ask="could not check whether the tracker is an issue or a pull request" if unsure else None,
+             check=False)
+    marker_problem = "the GitHub-side tracker is a pull request or does not exist"
+# Only when no tracker could be used: then the other sources are asked about.
+if marker_problem:
+    reasons.append(marker_problem)
 
 prose_text = strip("\n".join(read(os.path.join(arch, f)) for f in sorted(os.listdir(arch))
                              if f.endswith(".md") and os.path.isfile(os.path.join(arch, f))))
@@ -359,7 +397,7 @@ if commits and prose:
     # overlap: neither a weak mention nor another explicit reference that does match a
     # commit may hide it.
     if strong - commits:
-        emit(strong | commits, ask=True)
+        emit(strong | commits, ask="an explicit reference names an issue that no commit names")
     both = commits & prose
     if both:
         emit(both)
@@ -379,7 +417,8 @@ run_detection() {
   fi
   CANDIDATES=$(printf '%s\n' "$out" | grep -E '^[0-9]+$' || true)
   ASK=0
-  printf '%s\n' "$out" | grep -qx '?ask' && ASK=1
+  ASK_REASON=$(printf '%s\n' "$out" | sed -n 's/^?ask //p' | head -1)
+  [ -n "$ASK_REASON" ] && ASK=1
   return 0
 }
 
@@ -442,11 +481,11 @@ else
       emit_outcome "(none — no linked issue detected)" 0
       ;;
     1)
-      # One candidate is used without asking, unless detection flagged it: its
-      # issue/PR check could not run, so it might be a pull request (#405).
+      # One candidate is used without asking, unless detection flagged it (#405): its
+      # issue/PR check could not run, or the tracker marker could not be used.
       if [ "$ASK" = 1 ]; then
         echo "$CANDIDATES" > /tmp/spectra-archive-candidates.txt
-        emit_outcome "(pending — 1 candidate needs confirmation (could not check whether #$CANDIDATES is an issue or a pull request): $CANDIDATES; see /tmp/spectra-archive-candidates.txt; re-invoke with --linked-issue <N>)" 75
+        emit_outcome "(pending — 1 candidate needs confirmation ($ASK_REASON): $CANDIDATES; see /tmp/spectra-archive-candidates.txt; re-invoke with --linked-issue <N>)" 75
       fi
       LINKED_ISSUE="$CANDIDATES"
       ;;
@@ -499,7 +538,12 @@ TMP_BODY=$(mktemp /tmp/spectra-archive-ic.XXXXXX) || {
 BODY_FILE="${TMP_BODY}.md"
 mv "$TMP_BODY" "$BODY_FILE" 2>/dev/null || BODY_FILE="$TMP_BODY"
 
-ARCHIVE_DATE=$(date -u +%Y-%m-%d)
+# The archive's own date (its directory name), so the body a dry run kept still matches
+# when the post comes after midnight UTC; the current UTC date only without one.
+case "$ARCHIVE_BASENAME" in
+  [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*) ARCHIVE_DATE="${ARCHIVE_BASENAME%"${ARCHIVE_BASENAME#??????????}"}" ;;
+  *) ARCHIVE_DATE=$(date -u +%Y-%m-%d) ;;
+esac
 
 # Build body via Python (env-var input, not shell-interpolated into -c source).
 # This closes the R2 N1 critical Python3 RCE finding: $CHECKLIST_BODY is read from
@@ -568,6 +612,7 @@ if [ "$BODY_SIZE" -gt 60000 ]; then
 fi
 
 # ── Step D: Post comment ──
+REVIEW_KEY="$(printf '%s' "$GH_REPO" | tr '[:upper:]' '[:lower:]')#$LINKED_ISSUE"
 if [ "$DRY_RUN" = "1" ]; then
   # Keep the body and the issue for review (#405). A new file in a 700 directory is
   # renamed over the old name, so a symlink planted at that name is replaced, never
@@ -576,14 +621,17 @@ if [ "$DRY_RUN" = "1" ]; then
     rm -f "$BODY_FILE"
     emit_outcome "(failed — cannot use $STATE_DIR for the review copy; nothing kept)" 0
   fi
+  # rm first: mv onto a symlink to a directory would move the file into that directory.
+  rm -f "$REVIEW_BODY" "$REVIEW_TARGET" 2>/dev/null
   KEEP_BODY=$(mktemp "$STATE_DIR/.body.XXXXXX") && KEEP_TARGET=$(mktemp "$STATE_DIR/.target.XXXXXX") \
-    && cat "$BODY_FILE" > "$KEEP_BODY" && printf '%s\n' "$LINKED_ISSUE" > "$KEEP_TARGET" \
-    && mv -f "$KEEP_BODY" "$REVIEW_BODY" && mv -f "$KEEP_TARGET" "$REVIEW_TARGET" || {
+    && cat "$BODY_FILE" > "$KEEP_BODY" && printf '%s\n' "$REVIEW_KEY" > "$KEEP_TARGET" \
+    && mv -f "$KEEP_BODY" "$REVIEW_BODY" && mv -f "$KEEP_TARGET" "$REVIEW_TARGET" \
+    && [ -f "$REVIEW_BODY" ] && [ ! -L "$REVIEW_BODY" ] && [ -f "$REVIEW_TARGET" ] && [ ! -L "$REVIEW_TARGET" ] || {
       rm -f "$BODY_FILE" "${KEEP_BODY:-}" "${KEEP_TARGET:-}"
       emit_outcome "(failed — could not write the review copy in $STATE_DIR; nothing kept)" 0
     }
   rm -f "$BODY_FILE"
-  echo "body for review: $REVIEW_BODY (issue #$LINKED_ISSUE)" >&2
+  echo "body for review: $REVIEW_BODY ($REVIEW_KEY)" >&2
   emit_outcome "https://github.com/${GH_REPO}/issues/${LINKED_ISSUE}#issuecomment-DRY-RUN" 0
 fi
 
@@ -591,9 +639,9 @@ fi
 # A body that changed (tasks.md edited, other --spec-deltas, a date after midnight UTC)
 # or an issue that detection now resolves differently means a new dry run and review.
 if [ ! -f "$REVIEW_BODY" ] || [ -L "$REVIEW_BODY" ] || ! cmp -s "$BODY_FILE" "$REVIEW_BODY" \
-   || [ "$(cat "$REVIEW_TARGET" 2>/dev/null)" != "$LINKED_ISSUE" ]; then
+   || [ -L "$REVIEW_TARGET" ] || [ "$(cat "$REVIEW_TARGET" 2>/dev/null)" != "$REVIEW_KEY" ]; then
   rm -f "$BODY_FILE"
-  emit_outcome "(failed — not posted: the body or the issue (#$LINKED_ISSUE) is not the one the dry run kept in $STATE_DIR; run the dry run again with the same arguments, review, then post; archive itself succeeded)" 0
+  emit_outcome "(failed — not posted: the body, the repository or the issue ($REVIEW_KEY) is not the one the dry run kept in $STATE_DIR; run the dry run again with the same arguments, review, then post; archive itself succeeded)" 0
 fi
 
 # Every GitHub write goes through the egress gate (#202, #405). Each refusal below
@@ -619,11 +667,11 @@ case "$PERM" in
 esac
 rank() { case "$1" in light) echo 0 ;; warn) echo 1 ;; *) echo 2 ;; esac; }
 SCRUB_LEVEL="$SCRUB_ATTESTED"
-if [ "$(rank "$REPO_LEVEL")" -gt "$(rank "$SCRUB_LEVEL")" ]; then
-  echo "note: --scrub-attested $SCRUB_ATTESTED is below $GH_REPO's own level; posting at $REPO_LEVEL" >&2
-  SCRUB_LEVEL="$REPO_LEVEL"
+if [ "$REPO_LEVEL" != enforce ] && [ "$(rank "$REPO_LEVEL")" -gt "$(rank "$SCRUB_LEVEL")" ]; then
+  rm -f "$BODY_FILE"
+  emit_outcome "(failed — not posted: --scrub-attested $SCRUB_ATTESTED is below $GH_REPO's own level $REPO_LEVEL; review $REVIEW_BODY at $REPO_LEVEL per rules/privacy-scrubbing.md, then re-run with --scrub-attested $REPO_LEVEL; archive itself succeeded)" 0
 fi
-if [ "$SCRUB_LEVEL" = "enforce" ]; then
+if [ "$SCRUB_LEVEL" = "enforce" ] || [ "$REPO_LEVEL" = "enforce" ]; then
   rm -f "$BODY_FILE"
   emit_outcome "(failed — not posted at level enforce (your permission on $GH_REPO: ${PERM%%/*}); post $REVIEW_BODY by hand after review; archive itself succeeded)" 0
 fi
@@ -640,12 +688,13 @@ EGRESS_RC=$?
 EGRESS_REASON=$(grep -v '^[[:space:]]*$' "$EGRESS_ERR" | head -3 | tr '\n' ' ' | LC_ALL=C tr -d '\000-\037' | cut -c1-300)
 rm -f "$BODY_FILE" "$EGRESS_ERR"
 
-# The wrapper keeps its own exit codes at 10 and above; below that is gh's.
-if [ "$EGRESS_RC" -ge 10 ]; then
+# The wrapper's own refusals are 10 to 15; below that is gh's, and 126, 127 or 128+n
+# mean the wrapper did not run to the end.
+if [ "$EGRESS_RC" -ge 10 ] && [ "$EGRESS_RC" -le 15 ]; then
   emit_outcome "(failed — gh-egress refused the comment (exit $EGRESS_RC): $EGRESS_REASON; nothing posted, archive itself succeeded; do not edit the archived files: post a corrected copy of $REVIEW_BODY by hand through gh-egress.sh)" 0
 fi
 if [ "$EGRESS_RC" -ne 0 ] || [ -z "$COMMENT_URL" ]; then
-  emit_outcome "(failed — gh issue comment errored (exit $EGRESS_RC): ${EGRESS_REASON:-no message}; archive itself succeeded)" 0
+  emit_outcome "(failed — gh-egress or gh issue comment errored (exit $EGRESS_RC): ${EGRESS_REASON:-no message}; archive itself succeeded)" 0
 fi
 
 rm -f "$REVIEW_BODY" "$REVIEW_TARGET"
