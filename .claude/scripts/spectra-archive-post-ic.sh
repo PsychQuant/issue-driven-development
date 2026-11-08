@@ -37,11 +37,15 @@
 #   tool calls. --outcome-file may override the path but is rejected if it
 #   contains '..' (path traversal) — see #56 R5-S1 / L1 verify findings.
 #
-# DRY RUN: when --dry-run is passed, nothing is written to GitHub; the composed
-# body goes to /tmp/spectra-archive-ic-dryrun-body.md. Read-only lookups still run:
-# checking whether a number taken from commit subjects is a pull request, so a
-# dry run picks the same issue the real run will (#405). Used by Step 7's review
-# pass and by the tests in .claude/scripts/tests/spectra-archive-post-ic/.
+# DRY RUN: when --dry-run is passed, nothing is written to GitHub. The composed body
+# and the resolved issue are kept for review in a private directory,
+# ${SPECTRA_POST_IC_STATE_DIR:-~/.cache/idd/spectra-archive} (mode 700), as
+# body-<change>.md and target-<change>.txt. Read-only lookups still run: whether a
+# candidate number is an issue or a pull request, so a dry run picks the same issue
+# the real run will (#405). The real run composes the body again and posts only if
+# both the body and the issue match what the dry run kept: what was reviewed is what
+# is posted. Used by Step 7's review pass and by the tests in
+# .claude/scripts/tests/spectra-archive-post-ic/.
 #
 # --scrub-attested: the privacy level the CALLER resolved after reviewing the
 # dry-run body (plugins/issue-driven-dev/rules/privacy-scrubbing.md). Required to
@@ -81,7 +85,7 @@ while [ $# -gt 0 ]; do
     --scrub-attested)  SCRUB_ATTESTED="$2"; shift 2;;
     --dry-run)         DRY_RUN=1; shift;;
     -h|--help)
-      sed -n '/^#/,/^$/p' "$0" | head -40
+      awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
       exit 0
       ;;
     *)
@@ -150,22 +154,32 @@ if [ "$OUTCOME_FILE_EXPLICIT" = "0" ]; then
   OUTCOME_FILE="/tmp/spectra-archive-ic-outcome-${CHANGE_NAME}.txt"
 fi
 
+# ── Where a dry run keeps what a person reviews (#405) ──
+# Private to the user: not the shared /tmp, where another session, a test run or
+# another account could replace the file between the review and the post.
+STATE_DIR="${SPECTRA_POST_IC_STATE_DIR:-$HOME/.cache/idd/spectra-archive}"
+REVIEW_BODY="$STATE_DIR/body-$CHANGE_NAME.md"
+REVIEW_TARGET="$STATE_DIR/target-$CHANGE_NAME.txt"
+
 # ── A real post needs the caller's privacy review (#405) ──
 # Checked before any lookup: without it nothing will be posted, so there is no
 # reason to resolve candidates first.
 if [ "$DRY_RUN" = "0" ] && [ -z "$SCRUB_ATTESTED" ]; then
-  emit_outcome "(failed — not posted: run this step with --dry-run, review /tmp/spectra-archive-ic-dryrun-body.md per plugins/issue-driven-dev/rules/privacy-scrubbing.md, then re-run with --scrub-attested <level>; archive itself succeeded)" 0
+  emit_outcome "(failed — not posted: run this step with --dry-run, review $REVIEW_BODY per plugins/issue-driven-dev/rules/privacy-scrubbing.md, then re-run with --scrub-attested <level>; archive itself succeeded)" 0
 fi
 
 # ── Resolve GH_REPO ──
 if [ -n "$GH_REPO_ARG" ]; then
   GH_REPO="$GH_REPO_ARG"
 else
-  GH_REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)
+  # Resolved where the archive lives, not in the caller's cwd: running from another
+  # repository must not move the comment there (#405). gh's own default (including
+  # `gh repo set-default` for a fork) applies.
+  GH_REPO=$( (cd "$ARCHIVE_DIR" 2>/dev/null && gh repo view --json nameWithOwner -q .nameWithOwner) 2>/dev/null || true)
 fi
 
 if [ -z "$GH_REPO" ]; then
-  emit_outcome "(failed — cannot resolve GitHub repo: pass --gh-repo or run from a git repo with remote)" 0
+  emit_outcome "(failed — cannot resolve GitHub repo from the archive's repository: pass --gh-repo)" 0
 fi
 
 # ── Archive basename (no date recomputation; derived from passed archive-dir) ──
@@ -175,19 +189,23 @@ ARCHIVE_BASENAME=$(basename "$ARCHIVE_DIR")
 # Everything below that reads git history or names a path works in the repository
 # the archive lives in, never the caller's cwd: a caller in /tmp, or in another
 # repository, must not change which issue gets the comment. That repository is used
-# only when its origin is $GH_REPO; anything else (a fixture tree, a home-directory
-# repo, a fork checked out elsewhere) gives no commit evidence and no path prefix.
+# only when one of its remotes (origin, or upstream for a fork) is $GH_REPO; anything
+# else (a fixture tree, a home-directory repo) gives no commit evidence and no path
+# prefix. Only owner/repo is compared, not the host.
 REPO_ROOT=""
 ARCHIVE_REL=""
+lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 if TOP=$(git -C "$ARCHIVE_DIR" rev-parse --show-toplevel 2>/dev/null) \
-   && REL=$(git -C "$ARCHIVE_DIR" rev-parse --show-prefix 2>/dev/null); then
-  ORIGIN_REPO=$(git -C "$TOP" remote get-url origin 2>/dev/null \
-    | sed -E 's#/*$##; s#\.git$##; s#.*[:/]([^/]+/[^/]+)$#\1#')
-  if [ -n "${REL%/}" ] && [ -n "$ORIGIN_REPO" ] \
-     && [ "$(printf '%s' "$ORIGIN_REPO" | tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "$GH_REPO" | tr '[:upper:]' '[:lower:]')" ]; then
-    REPO_ROOT="$TOP"
-    ARCHIVE_REL="${REL%/}"
-  fi
+   && REL=$(git -C "$ARCHIVE_DIR" rev-parse --show-prefix 2>/dev/null) && [ -n "${REL%/}" ]; then
+  for REMOTE in $(git -C "$TOP" remote 2>/dev/null); do
+    REMOTE_REPO=$(git -C "$TOP" remote get-url "$REMOTE" 2>/dev/null \
+      | sed -E 's#/*$##; s#\.git$##; s#.*[:/]([^/]+/[^/]+)$#\1#')
+    if [ -n "$REMOTE_REPO" ] && [ "$(lower "$REMOTE_REPO")" = "$(lower "$GH_REPO")" ]; then
+      REPO_ROOT="$TOP"
+      ARCHIVE_REL="${REL%/}"
+      break
+    fi
+  done
 fi
 
 # ── Path for the comment ──
@@ -212,21 +230,24 @@ fi
 #            as a parenthesised group in the subject, `(#N)` or `(#N #M)`, or as a
 #            body line `Refs #N`. Only those count; a bare `#N` in a subject is prose
 #            (in the spike it was the sandbox's `PR #4`). When no commit has such a
-#            group, any `#N` in the subjects is used instead. A squash adds the PR
-#            number as a group too, so every commit number is checked against the
-#            issues API: pull requests and numbers that do not exist are dropped,
-#            and one that cannot be checked forces the question. History is read for
+#            group, any `#N` in the subjects is used instead. History is read for
 #            the archive path and for the path before the move: Step 7 runs before
 #            the archive is committed, when the archive path has no history at all.
-#   prose    `Refs|Closes|Fixes #N` outside code (explicit) and `issue #N` (anything the
-#            change talks about, a sandbox's "seed issue #1" included). A Refs inside
-#            code is a quotation and counts as `issue #N` does. `[Ii]ssue` was added
-#            per #170; the ASCII lookbehind keeps `reissue #5` out.
-# References to other repositories are removed from all three first.
-# Commits and prose together: an explicit Refs/Closes/Fixes that no commit names is a
+#   prose    explicit: `Refs|Closes|Fixes #N` and `referencing issue #N` (the form
+#            /spectra-propose writes, #170) outside code. Weak: `issue #N` (anything
+#            the change talks about, a sandbox's "seed issue #1" included) and any
+#            explicit form inside code, which is a quotation. The ASCII lookbehind keeps
+#            `reissue #5` out.
+# References to other repositories are removed from all three first; this repository's
+# full form `owner/repo#N` keeps its role (an explicit reference, a group, a mention).
+# Every number that could be posted to is checked against the issues API: pull
+# requests (a squash adds the PR number as a group) and numbers that do not exist are
+# dropped, and one that cannot be checked forces the question.
+# Commits and prose together: an explicit reference that no commit names is a
 # conflict, and both sides are offered for a person to choose: neither alone is reliable
 # enough to post silently. Otherwise a number in both wins, and with no overlap commits
-# win over `issue #N`.
+# win over weak prose. The cost of that last rule: a change linked only by `issue #N`
+# whose commits name another issue goes to the commits' issue without asking.
 detect_candidates() {
   [ -d "$ARCHIVE_DIR" ] || return 0
   PIC_ARCHIVE_DIR="$ARCHIVE_DIR" PIC_REPO_ROOT="$REPO_ROOT" PIC_ARCHIVE_REL="$ARCHIVE_REL" \
@@ -249,23 +270,54 @@ def read(path):
 # across a line break. Preceded by nothing that would make it part of a path.
 XREF = re.compile(r"(?<![A-Za-z0-9_./-])(?:(?:-R|--repo)[ \t]+)?`?"
                   r"([A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100})`?"
-                  r"(?:[ \t]+[Ii]ssue)?[ \t]*#(\d+)")
+                  r"(?:[ \t]+([Ii]ssue))?[ \t]*#(\d+)")
+# This repository's full form keeps its role: after `(`, a Refs/Closes/Fixes keyword or
+# another number of the same group it becomes `#N`, so `Closes owner/repo#10` stays
+# explicit and `(owner/repo#52)` stays a group; anywhere else it is a mention, `issue #N`.
+KEEP_SHAPE = re.compile(r"(?:\(|(?:Refs|Closes|Fixes|refs)[ \t:]+|#\d+[ \t,]+)$")
 def strip(text):
-    return XREF.sub(lambda m: f"issue #{m.group(2)}" if m.group(1).lower() == gh_repo.lower() else " ",
-                    text)
+    def repl(m):
+        if m.group(1).lower() != gh_repo.lower():
+            return " "
+        if m.group(2) or not KEEP_SHAPE.search(text[max(0, m.start() - 16):m.start()]):
+            return f"issue #{m.group(3)}"
+        return f"#{m.group(3)}"
+    return XREF.sub(repl, text)
 
 def nums(pattern, text):
     return {int(n) for m in pattern.finditer(text) for n in re.findall(r"#(\d+)", m.group(0))}
 
 MARKER = re.compile(r"\*\*GitHub-side tracker\*\*[^#\n]*#\d+")
-STRONG = re.compile(r"(?<![A-Za-z0-9_])(?:Refs|Closes|Fixes) #\d+")
+STRONG = re.compile(r"(?<![A-Za-z0-9_])(?:(?:Refs|Closes|Fixes) #\d+|[Rr]eferenc(?:e|es|ed|ing)[ \t]+issue #\d+)")
 WEAK = re.compile(r"(?<![A-Za-z0-9_])[Ii]ssue #\d+")
 GROUP = re.compile(r"\((?:[Rr]efs[ \t]+)?#\d+(?:[ \t,]+#\d+)*\)")
 # A body line that starts with Refs: every #N on it, so "Refs #137 Refs #150" keeps both.
 BODY_REFS = re.compile(r"(?im)^[ \t]*refs\b[^\n]*")
 ANY = re.compile(r"#\d+")
 
-def emit(cands, ask=False):
+kinds = {}
+def kind(n):
+    """issue, pr, missing or unknown. Only gh's own (HTTP 404) means missing: a transport
+    error prints the request URL, and that may contain 404 anywhere."""
+    if n not in kinds:
+        r = subprocess.run(["gh", "api", f"repos/{gh_repo}/issues/{n}", "--jq",
+                            'if .pull_request then "pr" else "issue" end'], capture_output=True, text=True)
+        if r.returncode == 0:
+            v = r.stdout.strip()
+            kinds[n] = v if v in ("issue", "pr") else "unknown"
+        else:
+            kinds[n] = "missing" if "(HTTP 404)" in r.stderr else "unknown"
+    return kinds[n]
+
+def postable(numbers):
+    """The numbers that are issues or could not be checked, and whether any could not."""
+    keep = {n for n in numbers if kind(n) in ("issue", "unknown")}
+    return keep, any(kinds[n] == "unknown" for n in keep)
+
+def emit(cands, ask=False, check=True):
+    if check:
+        cands, unsure = postable(cands)
+        ask = ask or unsure
     for n in sorted(cands):
         print(n)
     if ask and cands:
@@ -274,7 +326,7 @@ def emit(cands, ask=False):
 
 markers = nums(MARKER, strip(read(os.path.join(arch, "proposal.md")) + "\n" + read(os.path.join(arch, "design.md"))))
 if markers:
-    emit(markers)
+    emit(markers, check=False)
 
 prose_text = strip("\n".join(read(os.path.join(arch, f)) for f in sorted(os.listdir(arch))
                              if f.endswith(".md") and os.path.isfile(os.path.join(arch, f))))
@@ -298,28 +350,22 @@ if root and paths:
     if not commits:
         commits = {n for s, _ in records for n in nums(ANY, s)}
 
-unverified = set()
-for n in sorted(commits):
-    r = subprocess.run(["gh", "api", f"repos/{gh_repo}/issues/{n}", "--jq",
-                        'if .pull_request then "pr" else "issue" end'], capture_output=True, text=True)
-    kind = r.stdout.strip() if r.returncode == 0 else ("missing" if "404" in r.stderr else "unknown")
-    if kind in ("pr", "missing"):
-        commits.discard(n)
-    elif kind != "issue":
-        unverified.add(n)
+commits, _ = postable(commits)
+strong, _ = postable(strong)
 
 prose = strong | weak
 if commits and prose:
-    # An explicit reference the commits never name is a conflict, and is checked before
-    # any overlap: an `issue #N` mention that happens to match a commit must not hide it.
-    if strong and not (strong & commits):
+    # An explicit reference that no commit names is a conflict, checked before any
+    # overlap: neither a weak mention nor another explicit reference that does match a
+    # commit may hide it.
+    if strong - commits:
         emit(strong | commits, ask=True)
     both = commits & prose
     if both:
-        emit(both, ask=bool(both & unverified))
-    emit(commits, ask=bool(unverified))
+        emit(both)
+    emit(commits)
 if commits:
-    emit(commits, ask=bool(unverified))
+    emit(commits)
 emit(prose)
 PYEOF
 }
@@ -523,10 +569,31 @@ fi
 
 # ── Step D: Post comment ──
 if [ "$DRY_RUN" = "1" ]; then
-  # In dry-run mode, write body to a known path for test inspection + return synthetic URL
-  cp "$BODY_FILE" "/tmp/spectra-archive-ic-dryrun-body.md"
+  # Keep the body and the issue for review (#405). A new file in a 700 directory is
+  # renamed over the old name, so a symlink planted at that name is replaced, never
+  # followed, and nobody else can read a body the review may reject.
+  if [ -L "$STATE_DIR" ] || ! mkdir -p "$STATE_DIR" || ! chmod 700 "$STATE_DIR"; then
+    rm -f "$BODY_FILE"
+    emit_outcome "(failed — cannot use $STATE_DIR for the review copy; nothing kept)" 0
+  fi
+  KEEP_BODY=$(mktemp "$STATE_DIR/.body.XXXXXX") && KEEP_TARGET=$(mktemp "$STATE_DIR/.target.XXXXXX") \
+    && cat "$BODY_FILE" > "$KEEP_BODY" && printf '%s\n' "$LINKED_ISSUE" > "$KEEP_TARGET" \
+    && mv -f "$KEEP_BODY" "$REVIEW_BODY" && mv -f "$KEEP_TARGET" "$REVIEW_TARGET" || {
+      rm -f "$BODY_FILE" "${KEEP_BODY:-}" "${KEEP_TARGET:-}"
+      emit_outcome "(failed — could not write the review copy in $STATE_DIR; nothing kept)" 0
+    }
   rm -f "$BODY_FILE"
+  echo "body for review: $REVIEW_BODY (issue #$LINKED_ISSUE)" >&2
   emit_outcome "https://github.com/${GH_REPO}/issues/${LINKED_ISSUE}#issuecomment-DRY-RUN" 0
+fi
+
+# What is posted is what was reviewed: the same body bytes, to the same issue (#405).
+# A body that changed (tasks.md edited, other --spec-deltas, a date after midnight UTC)
+# or an issue that detection now resolves differently means a new dry run and review.
+if [ ! -f "$REVIEW_BODY" ] || [ -L "$REVIEW_BODY" ] || ! cmp -s "$BODY_FILE" "$REVIEW_BODY" \
+   || [ "$(cat "$REVIEW_TARGET" 2>/dev/null)" != "$LINKED_ISSUE" ]; then
+  rm -f "$BODY_FILE"
+  emit_outcome "(failed — not posted: the body or the issue (#$LINKED_ISSUE) is not the one the dry run kept in $STATE_DIR; run the dry run again with the same arguments, review, then post; archive itself succeeded)" 0
 fi
 
 # Every GitHub write goes through the egress gate (#202, #405). Each refusal below
@@ -552,28 +619,34 @@ case "$PERM" in
 esac
 rank() { case "$1" in light) echo 0 ;; warn) echo 1 ;; *) echo 2 ;; esac; }
 SCRUB_LEVEL="$SCRUB_ATTESTED"
-[ "$(rank "$REPO_LEVEL")" -gt "$(rank "$SCRUB_LEVEL")" ] && SCRUB_LEVEL="$REPO_LEVEL"
+if [ "$(rank "$REPO_LEVEL")" -gt "$(rank "$SCRUB_LEVEL")" ]; then
+  echo "note: --scrub-attested $SCRUB_ATTESTED is below $GH_REPO's own level; posting at $REPO_LEVEL" >&2
+  SCRUB_LEVEL="$REPO_LEVEL"
+fi
 if [ "$SCRUB_LEVEL" = "enforce" ]; then
   rm -f "$BODY_FILE"
-  emit_outcome "(failed — not posted at level enforce (your permission on $GH_REPO: ${PERM%%/*}); post the dry-run body by hand after review; archive itself succeeded)" 0
+  emit_outcome "(failed — not posted at level enforce (your permission on $GH_REPO: ${PERM%%/*}); post $REVIEW_BODY by hand after review; archive itself succeeded)" 0
 fi
 
 EGRESS_ERR=$(mktemp /tmp/spectra-archive-ic-err.XXXXXX) || {
   rm -f "$BODY_FILE"
   emit_outcome "(failed — mktemp errored)" 0
 }
-COMMENT_URL=$(bash "$EGRESS" comment "$LINKED_ISSUE" --repo "$GH_REPO" --body-file "$BODY_FILE" \
+# Run from /: the wrapper's own Python reads its program from stdin, so the caller's
+# cwd would come first on its import path. Every path it gets is absolute.
+COMMENT_URL=$(cd / && bash "$EGRESS" comment "$LINKED_ISSUE" --repo "$GH_REPO" --body-file "$BODY_FILE" \
   --scrub-attested "$SCRUB_LEVEL" 2>"$EGRESS_ERR")
 EGRESS_RC=$?
-EGRESS_REASON=$(grep -m1 . "$EGRESS_ERR" | LC_ALL=C tr -d '\000-\037' | cut -c1-200)
+EGRESS_REASON=$(grep -v '^[[:space:]]*$' "$EGRESS_ERR" | head -3 | tr '\n' ' ' | LC_ALL=C tr -d '\000-\037' | cut -c1-300)
 rm -f "$BODY_FILE" "$EGRESS_ERR"
 
 # The wrapper keeps its own exit codes at 10 and above; below that is gh's.
 if [ "$EGRESS_RC" -ge 10 ]; then
-  emit_outcome "(failed — gh-egress refused the comment (exit $EGRESS_RC): $EGRESS_REASON; nothing posted, archive itself succeeded; do not edit the archived files: post a corrected copy of the dry-run body by hand through gh-egress.sh)" 0
+  emit_outcome "(failed — gh-egress refused the comment (exit $EGRESS_RC): $EGRESS_REASON; nothing posted, archive itself succeeded; do not edit the archived files: post a corrected copy of $REVIEW_BODY by hand through gh-egress.sh)" 0
 fi
 if [ "$EGRESS_RC" -ne 0 ] || [ -z "$COMMENT_URL" ]; then
   emit_outcome "(failed — gh issue comment errored (exit $EGRESS_RC): ${EGRESS_REASON:-no message}; archive itself succeeded)" 0
 fi
 
+rm -f "$REVIEW_BODY" "$REVIEW_TARGET"
 emit_outcome "$COMMENT_URL" 0

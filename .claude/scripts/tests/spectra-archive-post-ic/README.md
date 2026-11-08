@@ -29,9 +29,12 @@ fixtures/NN-name/
 `args.txt` MAY contain `__FIXTURE_PATH__` which the runner substitutes with the
 absolute path to the fixture directory.
 
-Always include `--dry-run` and `--gh-repo test/repo` in args so the test never
-calls real `gh issue comment` / `gh issue view`. Dry-run mode emits a synthetic
-`#issuecomment-DRY-RUN` URL so expected_stdout can be deterministic.
+Always include `--dry-run` and `--gh-repo test/repo` in args. Dry-run mode emits a
+synthetic `#issuecomment-DRY-RUN` URL so expected_stdout can be deterministic. The
+runner puts a stub `gh` first on `PATH` for every run, fixtures included, because the
+script asks the issues API whether a candidate is an issue or a pull request; it also
+points `SPECTRA_POST_IC_STATE_DIR` at a temporary directory, so the review copies a dry
+run keeps never land in `$HOME`.
 
 `post_assert.txt` supports:
 - `must_not_exist <path>` — assert that path does NOT exist after run
@@ -71,13 +74,18 @@ repository or a post that runs. They build temporary repositories and put a stub
   repository whose origin is not `--gh-repo`
 - the review level: missing or invalid `--scrub-attested`, the repository level as a
   floor, `enforce`, unreadable permissions
+- the review copy: no dry run, a body or an issue that changed after the review, a
+  planted symlink, its permissions, its removal after a post
 - the egress gate: a post through the wrapper, a refusal, a missing wrapper, a failed
   post that keeps gh's message
 - candidate detection: the case that opened #405 (before and after the archive commit,
   from `/tmp` and from another repository), squash subjects, pull-request and missing
   numbers, an unverifiable number, an explicit `Closes` that disagrees with the commits,
-  a cluster commit, body `Refs` lines, cross-repo numbers in subjects, non-UTF-8 bytes,
-  and Python modules planted in the cwd
+  a cluster commit, body `Refs` lines, cross-repo numbers in subjects, this repository's
+  full form (explicit, as a group, as a mention), `referencing issue #N`, explicit
+  references only partly covered by commits, a prose-only pull request, a transport
+  error whose URL contains 404, no `--gh-repo`, non-UTF-8 bytes, and Python modules
+  planted in the cwd (dry run and real post)
 
 ## CI integration
 

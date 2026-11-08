@@ -142,8 +142,9 @@ Complete each step → `TaskUpdate → completed` immediately.
    # in a second shell, which breaks the Step 7 → Step 8 handoff (R4 verify
    # R4-S1 finding). The change name is the skill's primary input — always known
    # to Step 8 — so the derived path IS recoverable.
-   # 7a. Dry run (#405): resolves the issue exactly as the real run will and writes
-   # the comment body to /tmp/spectra-archive-ic-dryrun-body.md. Nothing is posted.
+   # 7a. Dry run (#405): resolves the issue exactly as the real run will, and keeps the
+   # comment body and that issue for review in a private directory (stderr names the
+   # file): ~/.cache/idd/spectra-archive/body-$CHANGE_NAME.md. Nothing is posted.
    bash "${REPO_ROOT}/.claude/scripts/spectra-archive-post-ic.sh" \
        --change-name "$CHANGE_NAME" \
        --archive-dir "$ARCHIVE_DIR" \
@@ -153,7 +154,7 @@ Complete each step → `TaskUpdate → completed` immediately.
    ```
 
    **7b. Review the body before it is posted (#405)**: read
-   `/tmp/spectra-archive-ic-dryrun-body.md` and run the privacy self-review of
+   `~/.cache/idd/spectra-archive/body-$CHANGE_NAME.md` and run the privacy self-review of
    [`plugins/issue-driven-dev/rules/privacy-scrubbing.md`](../../../plugins/issue-driven-dev/rules/privacy-scrubbing.md)
    on it, then resolve the level the rule defines for the target repository (third-party
    `enforce`, your own public repository `warn`, private `light`). The `tasks.md` lines are
@@ -165,7 +166,9 @@ Complete each step → `TaskUpdate → completed` immediately.
    `--scrub-attested <level>` (and `--linked-issue <N>` when 7a needed a choice, see below).
    The script refuses to post without that flag, because it cannot review text itself;
    the repository's own level is a floor, so a stricter one wins, and at `enforce` it does
-   not post at all.
+   not post at all. It also composes the body again and posts only if the body and the
+   issue are the ones 7a kept: if `tasks.md` changed, the arguments differ, or detection
+   now resolves another issue, it posts nothing and asks for 7a and 7b again.
 
    **Exit codes**:
 
@@ -198,7 +201,7 @@ Complete each step → `TaskUpdate → completed` immediately.
 
    The agent (LLM-driven) handles the AskUserQuestion step — bash cannot prompt. The script validates `$CHOSEN_ISSUE` against the original candidate set on re-invoke.
 
-   **What reaches GitHub (#405)**: the path to the archive in the comment is the path inside the repository, whatever form `--archive-dir` took; when the repository's origin is not the target repository, the conventional `openspec/changes/archive/<dir>` is used instead. The rest of the body (`--spec-deltas`, the `tasks.md` lines) is what 7b reviews. The comment is posted through `plugins/issue-driven-dev/scripts/gh-egress.sh`. If the gate refuses, the wrapper is missing, permissions cannot be read, or the level is `enforce`, nothing is posted and the outcome line starts with `(failed — ...)` and says why. Do not edit the archived files to get past a refusal (they are the audit record, and archive protection blocks the edit): post a corrected copy of the dry-run body by hand through `gh-egress.sh`.
+   **What reaches GitHub (#405)**: the path to the archive in the comment is the path inside the repository, whatever form `--archive-dir` took; when no remote of that repository is the target repository, the conventional `openspec/changes/archive/<dir>` is used instead. Without `--gh-repo`, the target is resolved in the archive's repository, not in the cwd. The rest of the body (`--spec-deltas`, the `tasks.md` lines) is what 7b reviews. The comment is posted through `plugins/issue-driven-dev/scripts/gh-egress.sh`. If the gate refuses, the wrapper is missing, permissions cannot be read, or the level is `enforce`, nothing is posted and the outcome line starts with `(failed — ...)` and says why. Do not edit the archived files to get past a refusal (they are the audit record, and archive protection blocks the edit): post a corrected copy of the kept body by hand through `gh-egress.sh`.
 
    **Failure semantics**: any failure in Step 7 (gh auth lost, network, body too large, etc.) is recorded in the outcome file but does NOT abort the overall archive operation — the archive itself (Step 6) has already succeeded, and the archived change directory + main spec deltas are the canonical record. The GitHub comment is the convenience anchor for `/idd-close` supersession.
 
@@ -235,7 +238,9 @@ Complete each step → `TaskUpdate → completed` immediately.
    - Schema that was used
    - Archive location
    - Spec sync status (synced / sync skipped / no delta specs)
-   - **Implementation Complete posted to:** `$IMPLEMENTATION_COMPLETE_POSTED`
+   - **Implementation Complete posted to:** `$IMPLEMENTATION_COMPLETE_POSTED` — if it ends in
+     `#issuecomment-DRY-RUN`, only 7a ran: write **not posted (dry run only)** and say why 7c
+     did not run (#405)
    - Note about any warnings (incomplete artifacts/tasks)
 
 **Output On Success**
