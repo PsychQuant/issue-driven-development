@@ -223,9 +223,10 @@ fi
 #            code is a quotation and counts as `issue #N` does. `[Ii]ssue` was added
 #            per #170; the ASCII lookbehind keeps `reissue #5` out.
 # References to other repositories are removed from all three first.
-# Commits and prose together: a number in both wins. With no overlap, commits win
-# over `issue #N`, but disagreeing with an explicit Refs/Closes/Fixes they are both
-# offered and a person chooses: neither alone is reliable enough to post silently.
+# Commits and prose together: an explicit Refs/Closes/Fixes that no commit names is a
+# conflict, and both sides are offered for a person to choose: neither alone is reliable
+# enough to post silently. Otherwise a number in both wins, and with no overlap commits
+# win over `issue #N`.
 detect_candidates() {
   [ -d "$ARCHIVE_DIR" ] || return 0
   PIC_ARCHIVE_DIR="$ARCHIVE_DIR" PIC_REPO_ROOT="$REPO_ROOT" PIC_ARCHIVE_REL="$ARCHIVE_REL" \
@@ -309,11 +310,13 @@ for n in sorted(commits):
 
 prose = strong | weak
 if commits and prose:
+    # An explicit reference the commits never name is a conflict, and is checked before
+    # any overlap: an `issue #N` mention that happens to match a commit must not hide it.
+    if strong and not (strong & commits):
+        emit(strong | commits, ask=True)
     both = commits & prose
     if both:
         emit(both, ask=bool(both & unverified))
-    if strong:
-        emit(strong | commits, ask=True)
     emit(commits, ask=bool(unverified))
 if commits:
     emit(commits, ask=bool(unverified))

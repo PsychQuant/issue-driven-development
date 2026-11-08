@@ -340,6 +340,16 @@ commit_all "$R9" 'docs: tidy spectra tasks (#20)'
 run_post "$R9" --change-name disagree --archive-dir openspec/changes/archive/2026-01-11-disagree --gh-repo test/repo --dry-run
 scenario explicit-refs-disagreement-asks "$([ "$RC" = 75 ] && grep -qx 10 /tmp/spectra-archive-candidates.txt && grep -qx 20 /tmp/spectra-archive-candidates.txt; echo $?)"
 
+# 15b. The same conflict is still asked when a weak `issue #N` mention matches the commit
+#      (verify round 2, Codex).
+R15="$SCN/r15"
+new_repo "$R15"
+mkdir -p "$R15/openspec/changes/archive/2026-01-17-masked"
+printf 'Closes #10\nSee also issue #20.\n' > "$R15/openspec/changes/archive/2026-01-17-masked/proposal.md"
+commit_all "$R15" 'docs: update change (#20)'
+run_post "$R15" --change-name masked --archive-dir openspec/changes/archive/2026-01-17-masked --gh-repo test/repo --dry-run
+scenario weak-overlap-does-not-hide-conflict "$([ "$RC" = 75 ] && grep -qx 10 /tmp/spectra-archive-candidates.txt && grep -qx 20 /tmp/spectra-archive-candidates.txt; echo $?)"
+
 # 16. A change whose only commit number is a pull request has no candidate at all.
 R10="$SCN/r10"
 new_repo "$R10"
