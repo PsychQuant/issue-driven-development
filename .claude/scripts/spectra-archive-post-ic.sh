@@ -22,7 +22,8 @@
 #   1  — generic error
 #   2  — usage error (bad/missing args, or unsafe --outcome-file path)
 #  64  — dependency missing (python3 not found)
-#  75  — multi-candidate detected; candidates written to /tmp/spectra-archive-candidates.txt
+#  75  — a person must choose: several candidates, or one that no explicit source
+#         confirms; candidates written to /tmp/spectra-archive-candidates.txt
 #         agent MUST prompt user via AskUserQuestion and re-invoke with --linked-issue <N>
 #
 # Stdout: outcome message OR IC comment URL (single line)
@@ -223,31 +224,30 @@ fi
 
 # ── Step A: Detect linked issue with multi-candidate awareness ──
 # One Python program, run isolated (-I: nothing is imported from the cwd). It prints
-# one candidate per line, then `?ask` when a person must choose even with a single
-# candidate. Sources, strongest first:
-#   marker   `**GitHub-side tracker**: #N` in proposal.md or design.md settles it.
-#   commits  the repo's commit rule (rules/commit-issue-reference.md) writes the issue
-#            as a parenthesised group in the subject, `(#N)` or `(#N #M)`, or as a
-#            body line `Refs #N`. Only those count; a bare `#N` in a subject is prose
-#            (in the spike it was the sandbox's `PR #4`). When no commit has such a
-#            group, any `#N` in the subjects is used instead. History is read for
-#            the archive path and for the path before the move: Step 7 runs before
-#            the archive is committed, when the archive path has no history at all.
-#   prose    explicit: `Refs|Closes|Fixes #N` and `referencing issue #N` (the form
-#            /spectra-propose writes, #170) outside code. Weak: `issue #N` (anything
-#            the change talks about, a sandbox's "seed issue #1" included) and any
-#            explicit form inside code, which is a quotation. The ASCII lookbehind keeps
-#            `reissue #5` out.
-# References to other repositories are removed from all three first; this repository's
-# full form `owner/repo#N` keeps its role (an explicit reference, a group, a mention).
-# Every number that could be posted to is checked against the issues API: pull
+# one candidate per line, then `?ask <reason>` when a person must choose even with a
+# single candidate.
+#
+# It posts without asking in exactly two cases, and offers candidates in every other:
+#   1. marker   `**GitHub-side tracker**: #N` in proposal.md or design.md names one issue
+#               of this repository.
+#   2. commits  the commits that touched the change (the archive path and the path
+#               before the move: Step 7 runs before the archive is committed) name one
+#               issue, as the commit rule (rules/commit-issue-reference.md) writes it: a
+#               parenthesised group in the subject, `(#N)`, or a body line `Refs #N`;
+#               and no explicit reference in the change's text names another issue.
+# Three rounds of verify (#405) showed that ranking weaker evidence keeps posting to a
+# wrong issue for some new way of writing. So weaker evidence only becomes a candidate
+# a person picks from: explicit prose (`Refs|Closes|Fixes|Resolves #N`, with or without a
+# colon, lists included, and `referencing issue #N`, the form /spectra-propose writes)
+# outside code; weak prose (`issue #N`, `(#N)`, `（#N）`, and explicit forms inside code,
+# which quote something); and a bare `#N` in a subject when no commit has a group (the
+# spike's subject named the sandbox's `PR #4`). When none of these finds anything, any
+# `#N` outside code is offered. The cost: a change linked only by its text is asked
+# about, every time.
+# References to other repositories are removed first; this repository's full form
+# `owner/repo#N` keeps its role. Every number is checked against the issues API: pull
 # requests (a squash adds the PR number as a group) and numbers that do not exist are
 # dropped, and one that cannot be checked forces the question.
-# Commits and prose together: an explicit reference that no commit names is a
-# conflict, and both sides are offered for a person to choose: neither alone is reliable
-# enough to post silently. Otherwise a number in both wins, and with no overlap commits
-# win over weak prose. The cost of that last rule: a change linked only by `issue #N`
-# whose commits name another issue goes to the commits' issue without asking.
 detect_candidates() {
   [ -d "$ARCHIVE_DIR" ] || return 0
   PIC_ARCHIVE_DIR="$ARCHIVE_DIR" PIC_REPO_ROOT="$REPO_ROOT" PIC_ARCHIVE_REL="$ARCHIVE_REL" \
@@ -270,16 +270,20 @@ def read(path):
 # across a line break. Preceded by nothing that would make it part of a path.
 XREF = re.compile(r"(?<![A-Za-z0-9_./-])(?:(?:-R|--repo)[ \t]+)?`?"
                   r"([A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100})`?"
-                  r"(?:[ \t]+([Ii]ssue))?[ \t]*#(\d+)")
-# This repository's full form keeps its role: after `(`, a Refs/Closes/Fixes keyword or
-# another number of the same group it becomes `#N`, so `Closes owner/repo#10` stays
-# explicit and `(owner/repo#52)` stays a group; anywhere else it is a mention, `issue #N`.
-KEEP_SHAPE = re.compile(r"(?:\(|(?:Refs|Closes|Fixes|refs)[ \t:]+|#\d+[ \t,]+)$")
-def strip(text):
+                  r"(?:[ \t]+([Ii]ssue)[ \t]+)?#(\d+)")
+# This repository's full form keeps its role. In a commit, after `(`, a keyword or another
+# number of the same group it becomes `#N`, so `(owner/repo#52)` stays a group. In prose,
+# only after a keyword or `issue `, so `Closes owner/repo#10` stays explicit; anywhere else
+# it is a mention, `issue #N`, so it is never lost.
+KW = r"(?:[Rr]efs|[Cc]loses|[Ff]ixes|[Rr]esolves)[ \t]*:?[ \t]+"
+SHAPE_COMMIT = re.compile(r"(?:\(|" + KW + r"|#\d+[ \t,]+)$")
+SHAPE_PROSE = re.compile(r"(?:" + KW + r"|[Ii]ssue[ \t]+)$")
+def strip(text, prose=True):
+    shape = SHAPE_PROSE if prose else SHAPE_COMMIT
     def repl(m):
         if m.group(1).lower() != gh_repo.lower():
             return " "
-        if m.group(2) or not KEEP_SHAPE.search(text[max(0, m.start() - 16):m.start()]):
+        if m.group(2) or not shape.search(text[max(0, m.start() - 16):m.start()]):
             return f"issue #{m.group(3)}"
         return f"#{m.group(3)}"
     return XREF.sub(repl, text)
@@ -290,8 +294,9 @@ def nums(pattern, text):
 # One marker runs to the next marker or the end of its line.
 MARKER = re.compile(r"\*\*GitHub-side tracker\*\*(?:(?!\*\*GitHub-side tracker\*\*)[^\n])*")
 FIRST_REF = re.compile(r"(?:([A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}))?#(\d+)")
-STRONG = re.compile(r"(?<![A-Za-z0-9_])(?:(?:Refs|Closes|Fixes) #\d+|[Rr]eferenc(?:e|es|ed|ing)[ \t]+issue #\d+)")
-WEAK = re.compile(r"(?<![A-Za-z0-9_])[Ii]ssue #\d+")
+STRONG = re.compile(r"(?<![A-Za-z0-9_])(?:" + KW + r"#\d+(?:(?:[ \t]*,[ \t]*|[ \t]+and[ \t]+)(?:issue[ \t]+)?#\d+)*"
+                    r"|[Rr]eferenc(?:e|es|ed|ing)[ \t]+issue[ \t]+#\d+)")
+WEAK = re.compile(r"(?<![A-Za-z0-9_])[Ii]ssue[ \t]+#\d+|[（(]#\d+[）)]")
 GROUP = re.compile(r"\((?:[Rr]efs[ \t]+)?#\d+(?:[ \t,]+#\d+)*\)")
 # A body line that starts with Refs: every #N on it, so "Refs #137 Refs #150" keeps both.
 BODY_REFS = re.compile(r"(?im)^[ \t]*refs\b[^\n]*")
@@ -376,35 +381,37 @@ outside_code = CODE.sub(lambda m: " " * len(m.group(0)), prose_text)
 strong = nums(STRONG, outside_code)
 weak = nums(WEAK, prose_text) | nums(STRONG, prose_text)
 
-commits = set()
+commits, fallback = set(), set()
 if root and paths:
     out = subprocess.run(["git", "-C", root, "--literal-pathspecs", "log", "--format=%x1e%s%x1f%b",
                           "-50", "--", *paths], capture_output=True)
     records = []
     for rec in out.stdout.decode("utf-8", "surrogateescape").split("\x1e")[1:]:
         subject, _, body = rec.partition("\x1f")
-        records.append((strip(subject), strip(body)))
+        records.append((strip(subject, prose=False), strip(body, prose=False)))
     commits = {n for s, b in records for n in nums(GROUP, s) | nums(BODY_REFS, b)}
     if not commits:
-        commits = {n for s, _ in records for n in nums(ANY, s)}
+        fallback = {n for s, _ in records for n in nums(ANY, s)}
 
 commits, _ = postable(commits)
 strong, _ = postable(strong)
 
-prose = strong | weak
-if commits and prose:
-    # An explicit reference that no commit names is a conflict, checked before any
-    # overlap: neither a weak mention nor another explicit reference that does match a
-    # commit may hide it.
-    if strong - commits:
-        emit(strong | commits, ask="an explicit reference names an issue that no commit names")
-    both = commits & prose
-    if both:
-        emit(both)
+# Case 2: the commits name one issue and nothing explicit names another.
+if len(commits) == 1 and not (strong - commits):
     emit(commits)
 if commits:
-    emit(commits)
-emit(prose)
+    reason = ("an explicit reference names an issue that no commit names" if strong - commits
+              else "the commits name more than one issue")
+    emit(commits | strong, ask=reason)
+reason = ("only a bare number in a commit subject names it" if fallback
+          else "no tracker and no commit names it, only the text of the change")
+offer = strong | weak | fallback
+# Nothing recognised at all: any `#N` in the text is offered rather than reporting no
+# linked issue, because a missed issue loses its Implementation Complete without a word.
+if not offer:
+    offer = nums(ANY, outside_code)
+    reason = "only a bare number in the text of the change names it"
+emit(offer, ask=reason)
 PYEOF
 }
 
@@ -492,7 +499,7 @@ else
     *)
       # Multi-candidate: write to file + exit 75 → agent prompts + re-invokes
       echo "$CANDIDATES" > /tmp/spectra-archive-candidates.txt
-      emit_outcome "(pending — $CANDIDATE_COUNT candidates detected: $(echo "$CANDIDATES" | tr '\n' ' '); see /tmp/spectra-archive-candidates.txt; re-invoke with --linked-issue <N>)" 75
+      emit_outcome "(pending — $CANDIDATE_COUNT candidates detected${ASK_REASON:+ ($ASK_REASON)}: $(echo "$CANDIDATES" | tr '\n' ' '); see /tmp/spectra-archive-candidates.txt; re-invoke with --linked-issue <N>)" 75
       ;;
   esac
 fi

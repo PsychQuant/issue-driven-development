@@ -181,9 +181,18 @@ Complete each step → `TaskUpdate → completed` immediately.
    | `0` | Success or normal skip (posted / none / idempotent / unsafe-name / generic failure) | Read outcome from the derived outcome file (see Step 8), proceed to Step 8 |
    | `2` | Usage error (missing args, unsafe `--outcome-file` path, or a `--scrub-attested` value other than light / warn / enforce) | Skill bug — fix invocation |
    | `64` | Dependency missing (python3) | Surface to user; archive itself succeeded; manual retry after install |
-   | `75` | Several candidates, a commit number that disagrees with an explicit `Refs`/`Closes`/`Fixes`, one candidate whose issue/PR check could not run, or a `GitHub-side tracker` that is a pull request, does not exist or names another repository (the outcome says which) | **AskUserQuestion required** — read `/tmp/spectra-archive-candidates.txt` for the candidate list, prompt user to pick canonical issue (show `#N + gh issue title` for each), then re-invoke script with `--linked-issue <chosen>` |
+   | `75` | A person must choose: several candidates, or one that neither a `GitHub-side tracker` nor the commits confirm (see below); the outcome says why | **AskUserQuestion required** — read `/tmp/spectra-archive-candidates.txt` for the candidate list, prompt user to pick canonical issue (show `#N + gh issue title` for each), then re-invoke script with `--linked-issue <chosen>` |
 
    **Stdout**: a single line that is either the IC comment URL, or one of the documented status messages (`(none — ...)`, `(skipped — ...)`, `(pending — ...)`, `(failed — ...)`). The same line is also written to the derived outcome file `/tmp/spectra-archive-ic-outcome-${CHANGE_NAME}.txt` for cross-Bash-call persistence (Step 8 reads from there).
+
+   **When it posts without asking (#405)**: in exactly two cases. (1) A `**GitHub-side tracker**: #N` in
+   `proposal.md` or `design.md` names one issue of this repository. (2) The commits that touched the
+   change name one issue as the commit rule writes it, a subject group `(#N)` or a body line `Refs #N`,
+   and no explicit `Refs`/`Closes`/`Fixes`/`Resolves #N` in the change's text names another. Everything
+   else is offered with exit 75: a change linked only by its text, commits that name several issues
+   (a cluster), a bare `#N` in a subject, a tracker that is a pull request or names another repository,
+   and a number whose issue/PR check could not run. Three verify rounds showed that ranking weaker
+   evidence keeps posting to a wrong issue for some new way of writing; a question costs less.
 
    **Multi-candidate flow (agent responsibility)**: in 7a, before the review. Re-run the dry run with `--linked-issue <chosen>`, review, then post with the same `--linked-issue`.
 

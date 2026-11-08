@@ -45,7 +45,7 @@ run keeps never land in `$HOME`.
 | # | Name | Tests |
 |---|------|-------|
 | 01 | explicit-marker-single | Single `**GitHub-side tracker**: #N` marker |
-| 02 | refs-fallback | Without a marker, prose `Refs #N` is used |
+| 02 | refs-fallback | Without a marker or commits, prose `Refs #N` is offered (exit 75), not posted |
 | 03 | no-marker | No candidates → exit 0 + "(none — no linked issue detected)" |
 | 04 | multi-candidate | 2 explicit markers → exit 75 + candidates file |
 | 05 | malicious-tasks-triple-quote | tasks.md with Python RCE payload — verifies env-var passing prevents exploit (post_assert: `/tmp/pwn-fixture-05` must not exist) |
@@ -55,16 +55,20 @@ run keeps never land in `$HOME`.
 | 09 | linked-issue-invalid | Re-invoke with `--linked-issue 99` not in `[44]` → failed message |
 | 10 | deterministic-outcome-path | No `--outcome-file` passed → script derives `/tmp/spectra-archive-ic-outcome-<change-name>.txt` from `--change-name` (post_assert: derived path `must_exist`). Tests the actual derivation formula, not a hand-copied literal. |
 | 11 | unsafe-outcome-file | `--outcome-file` containing `..` → exit 2 + `(failed — unsafe --outcome-file path)`, rejected before any archive read (post_assert: `/tmp/pwn-fixture-11.txt` must not exist). No `archive/` subdir — the script exits before reaching it. |
-| 12 | prose-issue-detect | Prose `issue #N` is a candidate |
+| 12 | prose-issue-detect | Prose `referencing issue #N` is a candidate, offered (exit 75) |
 | 13 | linked-issue-empty-candidates | `--linked-issue` with no candidates points to `--force-linked-issue` |
-| 14 | word-boundary-no-substring | `reissue #5` / `tissue #9` are not candidates |
+| 14 | word-boundary-no-substring | `reissue #5` / `tissue #9` are not `issue #N` mentions; with nothing else found they are offered as bare numbers, and the outcome says so |
 | 15 | force-linked-issue | `--force-linked-issue` bypasses detection |
 | 16 | force-and-linked-mutex | Both flags → failed message |
-| 17 | cross-repo-refs | `other/sandbox#3`, `other/sandbox issue #4` and `-R` forms are not candidates; `Refs #400` is |
+| 17 | cross-repo-refs | `other/sandbox#3`, `other/sandbox issue #4` and `-R` forms are not candidates; `Refs #400` is the only one offered |
 | 18 | same-repo-full-ref | `Test/Repo#400` counts as this repository, in any case; `other/sandbox#9` does not |
 
 
 ## Scenario tests
+
+The script posts without asking only for a tracker marker of this repository, or for
+commits that name one issue with no explicit reference naming another (#405); every
+other case is offered with exit 75. The fixtures and scenarios below check both sides.
 
 `test.sh` ends with checks a fixture cannot express, because they need a real git
 repository or a post that runs. They build temporary repositories and put a stub

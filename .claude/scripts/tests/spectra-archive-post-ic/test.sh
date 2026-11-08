@@ -350,14 +350,15 @@ commit_all "$R3" 'feat: squashed work (#331) (#334)'
 GH_STUB_PRS=334 run_post "$R3" --change-name squashed --archive-dir openspec/changes/archive/2026-01-05-squashed --gh-repo test/repo --dry-run
 scenario squash-intersection "$(outcome_is 331; echo $?)"
 
-# 14. A squash subject with only the PR number: the PR is dropped, the Refs remains.
+# 14. A squash subject with only the PR number: the PR is dropped, the Refs remains, and
+#     prose alone is asked about.
 R8="$SCN/r8"
 new_repo "$R8"
 mkdir -p "$R8/openspec/changes/archive/2026-01-10-only-pr"
 printf 'Refs #465\n' > "$R8/openspec/changes/archive/2026-01-10-only-pr/proposal.md"
 commit_all "$R8" 'feat: add thing (#468)'
 GH_STUB_PRS=468 run_post "$R8" --change-name only-pr --archive-dir openspec/changes/archive/2026-01-10-only-pr --gh-repo test/repo --dry-run
-scenario pr-only-subject-keeps-refs "$(outcome_is 465; echo $?)"
+scenario pr-only-subject-keeps-refs "$([ "$RC" = 75 ] && [ "$(cat /tmp/spectra-archive-candidates.txt)" = 465 ]; echo $?)"
 
 # 15. An explicit Closes that disagrees with an issue number from the commits is asked.
 R9="$SCN/r9"
@@ -403,7 +404,8 @@ mkdir -p "$R4/openspec/changes/archive"
 git -C "$R4" mv openspec/changes/cluster openspec/changes/archive/2026-01-06-cluster
 commit_all "$R4" 'feat: cluster work (#137 #150)'
 run_post "$R4" --change-name cluster --archive-dir openspec/changes/archive/2026-01-06-cluster --gh-repo test/repo --dry-run
-scenario cluster-uses-pre-move-commits "$(outcome_is 148; echo $?)"
+# Several issues in the commits are asked about; the pre-move commit's #148 is among them.
+scenario cluster-uses-pre-move-commits "$([ "$RC" = 75 ] && grep -qx 148 /tmp/spectra-archive-candidates.txt; echo $?)"
 
 # 19. Commits whose groups name no prose number still win over `issue #N` prose.
 R5="$SCN/r5"
@@ -432,14 +434,14 @@ commit_all "$R11" 'docs: body reference only' 'Refs #700'
 run_post "$R11" --change-name body --archive-dir openspec/changes/archive/2026-01-13-body --gh-repo test/repo --dry-run
 scenario body-refs-line "$(outcome_is 700; echo $?)"
 
-# 21b. Several Refs on one body line all count; the prose picks the archive's own.
+# 21b. Several Refs on one body line all count, so the commits name three issues: asked.
 R13="$SCN/r13"
 new_repo "$R13"
 mkdir -p "$R13/openspec/changes/archive/2026-01-15-cluster-body"
 printf 'Codified as issue #150.\n' > "$R13/openspec/changes/archive/2026-01-15-cluster-body/design.md"
 commit_all "$R13" 'feat: #137 one thing + #150 another (cluster)' 'Refs #137 Refs #150 Refs #154'
 run_post "$R13" --change-name cluster-body --archive-dir openspec/changes/archive/2026-01-15-cluster-body --gh-repo test/repo --dry-run
-scenario body-refs-several-on-a-line "$(outcome_is 150; echo $?)"
+scenario body-refs-several-on-a-line "$([ "$RC" = 75 ] && [ "$(tr '\n' ' ' < /tmp/spectra-archive-candidates.txt)" = '137 150 154 ' ]; echo $?)"
 
 # 21c. A Refs written outside code still disagrees with the commits and is asked;
 #      the same Refs quoted in code does not.
@@ -551,15 +553,15 @@ commit_all "$R20" 'chore: archive (#103)'
 run_post "$R20" --change-name fullgroup --archive-dir openspec/changes/archive/2026-01-21-fullgroup --gh-repo test/repo --dry-run
 scenario full-form-group-is-a-group "$([ "$RC" = 75 ] && grep -qx 102 /tmp/spectra-archive-candidates.txt && grep -qx 103 /tmp/spectra-archive-candidates.txt; echo $?)"
 
-# 33b. A bare full-form mention of this repository is still a mention.
+# 33b. A bare full-form mention of this repository is still a mention: it does not
+#      conflict with the commit's own issue the way an explicit reference would.
 R23="$SCN/r23"
 new_repo "$R23"
 mkdir -p "$R23/openspec/changes/archive/2026-01-24-bare"
 printf 'Designed for test/repo#135 and its sisters.\n' > "$R23/openspec/changes/archive/2026-01-24-bare/design.md"
-commit_all "$R23" 'feat: skill (#135)' 'Refs #135
-Refs #136 #137 (sister concerns)'
+commit_all "$R23" 'feat: skill (#136)'
 run_post "$R23" --change-name bare --archive-dir openspec/changes/archive/2026-01-24-bare --gh-repo test/repo --dry-run
-scenario bare-full-form-is-a-mention "$(outcome_is 135; echo $?)"
+scenario bare-full-form-is-a-mention "$(outcome_is 136; echo $?)"
 
 # 34. The link /spectra-propose writes counts as explicit.
 R21="$SCN/r21"
@@ -630,6 +632,58 @@ cp "$TARGET_SCRIPT" "$SCN/broken/.claude/scripts/post-ic.sh"
 printf 'exit 127\n' > "$SCN/broken/plugins/issue-driven-dev/scripts/gh-egress.sh"
 POST_SCRIPT="$SCN/broken/.claude/scripts/post-ic.sh" review_then_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --scrub-attested warn
 scenario wrapper-127-is-error "$(outcome_starts '(failed — gh-egress or gh issue comment errored (exit 127)'; echo $?)"
+
+# 45. Round 3 shapes (#405). An explicit reference with a colon, in a list, or this
+#     repository's full form after `referencing issue`, conflicts with the commit's issue.
+for t in 'Fixes: #400' 'Refs #12, test/repo#400' 'referencing issue test/repo#400' 'resolves #400'; do
+  R30="$SCN/r30"; rm -rf "$R30"; new_repo "$R30"
+  mkdir -p "$R30/openspec/changes/archive/2026-01-30-shape"
+  printf '%s\n' "$t" > "$R30/openspec/changes/archive/2026-01-30-shape/proposal.md"
+  commit_all "$R30" 'docs: tidy (#20)'
+  run_post "$R30" --change-name shape --archive-dir openspec/changes/archive/2026-01-30-shape --gh-repo test/repo --dry-run
+  scenario "explicit-shape-conflicts:$t" "$([ "$RC" = 75 ] && grep -qx 400 /tmp/spectra-archive-candidates.txt && grep -qx 20 /tmp/spectra-archive-candidates.txt; echo $?)"
+done
+
+# 46. A bare `#N` in a subject without any group is a candidate, never posted silently,
+#     even next to weak prose.
+R31="$SCN/r31"
+new_repo "$R31"
+mkdir -p "$R31/openspec/changes/archive/2026-01-31-bare-subject"
+printf 'This spike is for issue #400.\n' > "$R31/openspec/changes/archive/2026-01-31-bare-subject/proposal.md"
+commit_all "$R31" 'docs: record sandbox PR #4 run'
+run_post "$R31" --change-name bare-subject --archive-dir openspec/changes/archive/2026-01-31-bare-subject --gh-repo test/repo --dry-run
+scenario bare-subject-asks "$([ "$RC" = 75 ] && grep -qx 400 /tmp/spectra-archive-candidates.txt; echo $?)"
+
+# 47. A remote that does not match --gh-repo gives no commit evidence: asked, not posted.
+R32="$SCN/r32"
+new_repo "$R32" https://github.com/oldowner/oldname.git
+mkdir -p "$R32/openspec/changes/archive/2026-02-01-renamed"
+printf 'seed issue #1 in the sandbox\n' > "$R32/openspec/changes/archive/2026-02-01-renamed/proposal.md"
+commit_all "$R32" 'feat: spike (#400)'
+run_post "$R32" --change-name renamed --archive-dir openspec/changes/archive/2026-02-01-renamed --gh-repo test/repo --dry-run
+scenario renamed-remote-asks "$([ "$RC" = 75 ]; echo $?)"
+
+# 48. `word/word #N` with a space is not another repository's reference; the number stays.
+A33="$SCN/a33/2026-02-02-slash-word"
+mkdir -p "$A33"
+printf 'Tracked as issue/PR #400.\n' > "$A33/proposal.md"
+run_post "$SCN" --change-name slash-word --archive-dir "$A33" --gh-repo test/repo --dry-run
+scenario slash-word-keeps-number "$([ "$RC" = 75 ] && [ "$(cat /tmp/spectra-archive-candidates.txt)" = 400 ]; echo $?)"
+
+# 49. This repository's full form after `(` or after another repository's number is
+#     still a candidate in prose.
+A34="$SCN/a34/2026-02-03-shapes"
+mkdir -p "$A34"
+printf 'This fixes the gate (test/repo#405) reported last week; see other/x#5, test/repo#7.\n' > "$A34/proposal.md"
+run_post "$SCN" --change-name shapes --archive-dir "$A34" --gh-repo test/repo --dry-run
+scenario full-form-shapes-kept "$([ "$RC" = 75 ] && [ "$(tr '\n' ' ' < /tmp/spectra-archive-candidates.txt)" = '7 405 ' ]; echo $?)"
+
+# 50. The spike's own anchor, written in full-width parentheses, is offered too.
+A35="$SCN/a35/2026-02-04-spike-text"
+mkdir -p "$A35"
+printf '在 sandbox 開 seed issue #1。本張的錨點（#400）。\n' > "$A35/proposal.md"
+run_post "$SCN" --change-name spike-text --archive-dir "$A35" --gh-repo test/repo --dry-run
+scenario full-width-anchor-offered "$([ "$RC" = 75 ] && grep -qx 400 /tmp/spectra-archive-candidates.txt; echo $?)"
 
 echo ""
 echo "─── Summary ───"
