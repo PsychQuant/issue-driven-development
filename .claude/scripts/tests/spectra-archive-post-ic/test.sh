@@ -251,7 +251,7 @@ review_then_post() {   # review_then_post <cwd> <args...> --scrub-attested L: th
   esac
   run_post "$dir" "$@" "${named[@]}"
 }
-outcome_starts() { case "$OUT" in "$1"*) true ;; *) false ;; esac; }
+outcome_starts() { [[ "$OUT" == "$1"* ]]; }
 posted() { grep -q '^issue comment' "$SCN/gh.log"; }
 
 # A change that was archived and committed: tracker #7, tasks in place.
@@ -319,13 +319,13 @@ scenario caller-enforce-not-posted "$(! posted && outcome_starts '(failed — no
 
 # 8. A failed post keeps gh's reason.
 GH_STUB_POST_FAIL=1 review_then_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --scrub-attested warn
-scenario post-failure-keeps-reason "$(case "$OUT" in *'Could not resolve to an issue'*) true ;; *) false ;; esac; echo $?)"
+scenario post-failure-keeps-reason "$([[ "$OUT" == *'Could not resolve to an issue'* ]]; echo $?)"
 
 # 9. A missing wrapper is a refusal, not a fallback to raw gh.
 mkdir -p "$SCN/elsewhere/.claude/scripts"
 cp "$TARGET_SCRIPT" "$SCN/elsewhere/.claude/scripts/post-ic.sh"
 POST_SCRIPT="$SCN/elsewhere/.claude/scripts/post-ic.sh" review_then_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --scrub-attested warn
-scenario missing-wrapper-not-posted "$(! posted && case "$OUT" in *gh-egress*) true ;; *) false ;; esac; echo $?)"
+scenario missing-wrapper-not-posted "$(! posted && [[ "$OUT" == *gh-egress* ]]; echo $?)"
 
 # 10. The case that opened #405, as round 1 of its verify replayed it: prose about
 #     the sandbox (seed issue #1, issue #3, issue #6, and one line about its #4), and
@@ -620,7 +620,7 @@ A23="$SCN/a23/2026-01-24-tracker-pr"
 mkdir -p "$A23"
 printf '**GitHub-side tracker**: #12\n\nRefs #400\n' > "$A23/proposal.md"
 GH_STUB_PRS=12 run_post "$SCN" --change-name tracker-pr --archive-dir "$A23" --gh-repo test/repo --dry-run
-scenario tracker-pr-asks "$([ "$RC" = 75 ] && grep -qx 400 "$(cand_file)" && case "$OUT" in *tracker*) true ;; *) false ;; esac; echo $?)"
+scenario tracker-pr-asks "$([ "$RC" = 75 ] && grep -qx 400 "$(cand_file)" && [[ "$OUT" == *tracker* ]]; echo $?)"
 
 # 40. A tracker in another repository does not lend a later number on its line to this one.
 A24="$SCN/a24/2026-01-25-tracker-elsewhere"
@@ -722,7 +722,7 @@ scenario real-post-needs-linked-issue "$(! posted && outcome_starts '(failed —
 
 # 52. The dry run shows the proposed issue and its title for the review.
 ERR=$(cd "$R1" && PATH="$SCN/bin:$PATH" GH_STUB_TITLE='Demo title' bash "$TARGET_SCRIPT" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --dry-run 2>&1 >/dev/null)
-scenario dry-run-shows-title "$(case "$ERR" in *'issue for review: https://github.com/test/repo#7 (OPEN) — Demo title'*'proposed from: the GitHub-side tracker'*) true ;; *) false ;; esac; echo $?)"
+scenario dry-run-shows-title "$([[ "$ERR" == *'issue for review: https://github.com/test/repo#7 (OPEN) — Demo title'*'proposed from: the GitHub-side tracker'* ]]; echo $?)"
 
 # 53. An archive already posted is reported by the dry run too.
 GH_STUB_COMMENTS='auto-posted by spectra-archive for 2026-01-02-demo' run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --dry-run
@@ -814,7 +814,7 @@ scenario tracker-pr-only-fails "$(outcome_starts '(failed — candidate detectio
 # 72. --linked-issue must be a checked issue, and every reason is shown, unchecked first.
 probe unchecked 'Refs #7'
 GH_STUB_API_FAIL=1 run_post "$SCN/p-unchecked" --change-name probe --archive-dir openspec/changes/archive/2026-03-01-probe --gh-repo test/repo --dry-run
-scenario unchecked-reason-first "$([ "$RC" = 75 ] && case "$OUT" in *'(could not check whether every number is an issue or a pull request; only the text of the change names it)'*) true ;; *) false ;; esac; echo $?)"
+scenario unchecked-reason-first "$([ "$RC" = 75 ] && [[ "$OUT" == *'(could not check whether every number is an issue or a pull request; only the text of the change names it)'* ]]; echo $?)"
 GH_STUB_API_FAIL=1 run_post "$SCN/p-unchecked" --change-name probe --archive-dir openspec/changes/archive/2026-03-01-probe --gh-repo test/repo --linked-issue 7 --dry-run
 scenario linked-issue-unchecked-refused "$(outcome_starts '(failed — --linked-issue 7: could not check that it is an issue'; echo $?)"
 
@@ -839,8 +839,31 @@ scenario tilde-fence-is-code "$(outcome_is 400; echo $?)"
 
 # 77. The review line says where the number came from, and hands out no command.
 ERR=$(cd "$SCN/p-tilde" && PATH="$SCN/bin:$PATH" bash "$TARGET_SCRIPT" --change-name probe --archive-dir openspec/changes/archive/2026-03-01-probe --gh-repo test/repo --dry-run 2>&1 >/dev/null)
-scenario review-line-shows-commit "$(case "$ERR" in *'proposed from: '*'commit '*' feat: thing (#400)'*) true ;; *) false ;; esac; echo $?)"
-scenario review-line-no-command "$(case "$ERR" in *'post with --linked-issue'*) false ;; *) true ;; esac; echo $?)"
+scenario review-line-shows-commit "$([[ "$ERR" == *'proposed from: '*'commit '*' feat: thing (#400)'* ]]; echo $?)"
+scenario review-line-no-command "$([[ "$ERR" != *'post with --linked-issue'* ]]; echo $?)"
+
+# ── Round 6 (#405) ──
+# 78. A commit message cannot forge a record of the history: fields are NUL-separated.
+probe forge 'Refs #400' 'docs: thing' "$(printf 'details\036deadbee\037(#7)\n999\037x')"
+scenario commit-body-cannot-forge-records "$([ "$RC" = 75 ] && [ "$(cands)" = '400 ' ]; echo $?)"
+
+# 79. What the reviewer reads has no control characters: commit subjects and titles.
+probe esc 'Refs #400' "$(printf 'feat: x \033[31mRED\033[0m (#400)')"
+ERR=$(cd "$SCN/p-esc" && PATH="$SCN/bin:$PATH" GH_STUB_TITLE="$(printf 'T\033[2K\342\200\256itle')" bash "$TARGET_SCRIPT" --change-name probe --archive-dir openspec/changes/archive/2026-03-01-probe --gh-repo test/repo --dry-run 2>&1 >/dev/null)
+scenario review-lines-have-no-controls "$(printf '%s' "$ERR" | LC_ALL=C grep -q "$(printf '\033')" && echo 1 || { printf '%s' "$ERR" | LC_ALL=C grep -q "$(printf '\342\200\256')" && echo 1 || echo 0; })"
+
+# 80. A word/word on the tracker line keeps its number on offer.
+probe wordslash "$(printf '**GitHub-side tracker**: #405 (post-ic and/or egress)\n\nSee issue #170 for history.')"
+scenario tracker-word-slash-offered "$([ "$RC" = 75 ] && [ "$(cands)" = '170 405 ' ]; echo $?)"
+
+# 81. A tracker line about another repository lends none of its numbers, `issue #N` included.
+probe elsewhere-issue "$(printf '**GitHub-side tracker**: kiki830621/sandbox#5 (sandbox issue #12 holds the trial)\n\nRefs #400')"
+scenario elsewhere-tracker-line-blanked "$([ "$RC" = 75 ] && [ "$(cands)" = '400 ' ]; echo $?)"
+
+# 82. A candidate list from an earlier run is not left for this one.
+probe stale 'Refs #12, and see #13' 'docs: tidy (#12)'
+probe stale 'Nothing here' 'docs: tidy (#12)'
+scenario stale-candidates-removed "$([ ! -e "$(cand_file)" ]; echo $?)"
 
 echo ""
 echo "─── Summary ───"

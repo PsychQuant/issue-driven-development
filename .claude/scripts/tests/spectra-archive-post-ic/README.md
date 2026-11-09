@@ -96,6 +96,12 @@ repository or a post that runs. They build temporary repositories and put a stub
   is a pull request with nothing else, an unchecked `--linked-issue`, every reason shown,
   the outcome kept in the state directory, the sentinel's trusted authors, emphasis and
   markdown links around a reference, `~~~` fences, and where the proposed number came from
+- the shapes verify round 6 found: a commit message that tries to forge a history record,
+  control characters in commit subjects and titles, a word/word on the tracker line, an
+  `issue #N` on a tracker line about another repository, and a stale candidate list
+
+The suite runs under macOS's bash 3.2 too: no `case` inside `$(...)`, which 3.2 cannot
+parse; use `[[ ]]`.
 - the egress gate: a post through the wrapper, a refusal, a missing wrapper, a failed
   post that keeps gh's message
 - candidate detection: the case that opened #405 (before and after the archive commit,

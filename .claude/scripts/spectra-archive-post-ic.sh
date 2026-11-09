@@ -155,6 +155,7 @@ fi
 REVIEW_BODY="$STATE_DIR/body-$CHANGE_NAME.md"
 REVIEW_TARGET="$STATE_DIR/target-$CHANGE_NAME.txt"
 CANDIDATES_FILE="$STATE_DIR/candidates-$CHANGE_NAME.txt"
+rm -f "$CANDIDATES_FILE" 2>/dev/null
 
 # ── Derive the change-name-scoped outcome path (single source of truth) ──
 # $CHANGE_NAME has just passed the allowlist (^[A-Za-z0-9_-]+$), so it cannot
@@ -391,7 +392,14 @@ reasons = []
 # Where each number came from, printed for the review: a title alone cannot tell an old
 # issue with the same subject from this change's own.
 sources = {}
+import unicodedata
+def plain(text):
+    """Text safe to print on one protocol line and in a terminal: control and format
+    characters (line breaks, ESC, bidi overrides, tag characters) removed."""
+    return " ".join("".join(c if unicodedata.category(c) not in ("Cc", "Cf", "Co", "Cs") else " "
+                            for c in text).split())
 def note(numbers, how):
+    how = plain(how)
     for n in numbers:
         sources.setdefault(n, [])
         if how not in sources[n] and len(sources[n]) < 3:
@@ -419,22 +427,32 @@ def emit(cands, ask=None, check=True):
 # ── Evidence ──
 raw_md = read(os.path.join(arch, "proposal.md")) + "\n" + read(os.path.join(arch, "design.md"))
 markers, marker_offer, marker_problem = set(), set(), None
-def other_repo_on(seg):
-    """Whether a tracker line names another repository anywhere: a reference, a URL, or a
-    bare owner/repo word."""
+def other_repo_ref(seg):
+    """Whether a tracker line refers to another repository's issue: a reference or a URL."""
     return (any((x.group("r1") or x.group("r2") or x.group("r3")).lower() != gh_repo.lower()
                 for x in XREF.finditer(seg))
-            or any(x.group("r").lower() != gh_repo.lower() for x in URL.finditer(seg))
-            or any(t.lower() != gh_repo.lower() for t in REPO_WORD.findall(URL.sub(" ", seg))))
+            or any(x.group("r").lower() != gh_repo.lower() for x in URL.finditer(seg)))
+def other_repo_word(seg):
+    """A bare word/word on the line (`in other/sandbox`, but also `and/or` or a branch
+    name): not a reference, so it only makes the tracker a question."""
+    return next((t for t in REPO_WORD.findall(URL.sub(" ", seg)) if t.lower() != gh_repo.lower()), None)
+elsewhere_spans = []
 # Code is filled with a letter, not blanks, so `**GitHub-side tracker**: `other/x`#9` cannot
 # turn into an anchored `#9`; the raw span is what is checked for other repositories.
 for m in MARKER.finditer(blank_code(raw_md, "x")):
     a = ANCHORED.match(m.group(0))
     seg = raw_md[m.start():m.end()]
-    elsewhere = other_repo_on(seg)
-    if a and not elsewhere and (not a.group("r") or a.group("r").lower() == gh_repo.lower()):
+    elsewhere = other_repo_ref(seg)
+    word = None if elsewhere else other_repo_word(seg)
+    if elsewhere:
+        elsewhere_spans.append(seg)
+    if a and not elsewhere and not word and (not a.group("r") or a.group("r").lower() == gh_repo.lower()):
         markers.add(int(a.group("n")))
         note([int(a.group("n"))], "the GitHub-side tracker")
+    elif a and word and (not a.group("r") or a.group("r").lower() == gh_repo.lower()):
+        marker_problem = f"the GitHub-side tracker line also says `{plain(word)}`, which may be another repository"
+        marker_offer.add(int(a.group("n")))
+        note([int(a.group("n"))], "the GitHub-side tracker (its line also names a word/word)")
     else:
         marker_problem = ("the GitHub-side tracker is not `**GitHub-side tracker**: #N` "
                           "for an issue of this repository")
@@ -454,6 +472,9 @@ if markers:
 
 raw_text = "\n".join(read(os.path.join(arch, f)) for f in sorted(os.listdir(arch))
                      if f.endswith(".md") and os.path.isfile(os.path.join(arch, f)))
+# A tracker line about another repository lends none of its numbers, in any scan.
+for seg in elsewhere_spans:
+    raw_text = raw_text.replace(seg, " " * len(seg))
 # Emphasis is dropped for reading references, so `**Closes**: #400` is a Closes.
 prose_text = strip(raw_text).replace("**", "")
 outside_code = blank_code(prose_text)
@@ -464,13 +485,11 @@ note(weak - strong, "a mention in the change's text")
 
 commits, fallback = set(), set()
 if root and paths:
-    out = subprocess.run(["git", "-C", root, "--literal-pathspecs", "log", "--format=%x1e%h%x1f%s%x1f%b",
+    out = subprocess.run(["git", "-C", root, "--literal-pathspecs", "log", "--format=%x00%h%x00%s%x00%b",
                           "-50", "--", *paths], capture_output=True)
-    records = []
-    for rec in out.stdout.decode("utf-8", "surrogateescape").split("\x1e")[1:]:
-        sha, _, rest = rec.partition("\x1f")
-        subject, _, body = rest.partition("\x1f")
-        records.append((sha, strip(subject, prose=False), strip(body, prose=False)))
+    fields = out.stdout.decode("utf-8", "surrogateescape").split("\0")[1:]
+    records = [(fields[i], strip(fields[i + 1], prose=False), strip(fields[i + 2], prose=False))
+               for i in range(0, len(fields) - 2, 3)]
     for sha, s, b in records:
         named = nums(GROUP, s) | nums(BODY_REFS, b) | {k for line in SQUASH_LINE.findall(b) for k in nums(GROUP, line)}
         commits |= named
@@ -493,8 +512,7 @@ if markers and not marker_problem:
     others = (strong | commits) - markers
     if not others:
         emit(markers, check=False)
-    emit(markers | others, ask="the tracker and the commits or an explicit reference name different issues",
-         check=False)
+    emit(markers | others, ask="the tracker and the commits or an explicit reference name different issues")
 if marker_problem:
     reasons.append(marker_problem)
 extra = markers | marker_offer
@@ -542,8 +560,10 @@ write_candidates() {
 # A title is text whoever opened the issue wrote: control characters and bidi overrides are
 # removed and it is cut short, so it reads as data in the line the reviewer acts on.
 clean_title() {
-  printf '%s' "$1" | LC_ALL=C tr -d '\000-\037\177' \
-    | LC_ALL=C sed $'s/\xe2\x80[\xaa-\xae]//g; s/\xe2\x81[\xa6-\xa9]//g' | cut -c1-200
+  printf '%s' "$1" | python3 -I -c 'import sys, unicodedata
+s = sys.stdin.buffer.read().decode("utf-8", "replace")
+s = "".join(c for c in s if unicodedata.category(c) not in ("Cc", "Cf", "Co", "Cs"))
+sys.stdout.write(s[:200])'
 }
 
 # Runs detection and splits its answer: CANDIDATES (one per line) and ASK (1 when a
@@ -616,7 +636,7 @@ elif [ -n "$LINKED_ISSUE_RESOLVED" ]; then
     emit_outcome "(failed — --linked-issue $LINKED_ISSUE_RESOLVED given but detection found no candidates; if you know the issue number authoritatively, re-invoke with --force-linked-issue $LINKED_ISSUE_RESOLVED)" 0
   fi
   if ! echo "$CANDIDATES" | grep -qx -- "$LINKED_ISSUE_RESOLVED"; then
-    emit_outcome "(failed — --linked-issue $LINKED_ISSUE_RESOLVED not in candidate set: $(echo "$CANDIDATES" | tr '\n' ' '))" 0
+    emit_outcome "(failed — --linked-issue $LINKED_ISSUE_RESOLVED not in candidate set: $(echo "$CANDIDATES" | tr '\n' ' '); if the review confirmed it as this change's issue, re-run the dry run with --force-linked-issue $LINKED_ISSUE_RESOLVED)" 0
   fi
   # A candidate whose issue/PR check could not run is offered, not trusted: the number the
   # reviewer names must be an issue (#405).
@@ -661,7 +681,8 @@ ANCHOR_SUFFIX="${FORCE_NOTE:-}"
 
 # Read-only, so the dry run runs it too: an archive already posted is not reviewed again.
 # Only comments by the repository's owner, members or collaborators count, so nobody else
-# can block the post by writing the sentinel (#405).
+# can block the post by writing the sentinel (#405). An automation that posts the comment
+# must therefore be a collaborator; a bot that is not would be posted after again.
 ALREADY_POSTED=$(gh issue view "$LINKED_ISSUE" --repo "$GH_REPO" --json comments \
   --jq '.comments[] | select(.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR") | .body' 2>/dev/null \
   | grep -Fc -- "$SENTINEL" \
