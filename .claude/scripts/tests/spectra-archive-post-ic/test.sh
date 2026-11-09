@@ -38,7 +38,7 @@ FAILED_TESTS=()
 # The review copy that a dry run keeps goes to a temporary state directory, not $HOME.
 SCN=$(mktemp -d "${TMPDIR:-/tmp}/post-ic-405-XXXXXX") || exit 1
 export SPECTRA_POST_IC_STATE_DIR="$SCN/state"
-trap 'rm -rf "$SCN"; rm -f /tmp/spectra-archive-candidates.txt /tmp/spectra-archive-ic-outcome*.txt' EXIT
+trap 'rm -rf "$SCN"' EXIT
 
 # Stub gh. GH_STUB_REPO: "PERM/PRIVATE" for the permission query, or "fail".
 # `repo view --json nameWithOwner` answers with the owner/repo of the cwd's origin.
@@ -74,6 +74,7 @@ case "$1 $2" in
     printf '%s\n' "${2#repos/}" ;;
   "issue view")
     case " $* " in
+      *" state,title "*) printf '%s\t%s\n' "${GH_STUB_STATE:-OPEN}" "${GH_STUB_TITLE:-stub title}" ;;
       *" title "*) printf '%s\n' "${GH_STUB_TITLE:-stub title}" ;;
       *" comments "*) printf '%s\n' "${GH_STUB_COMMENTS:-}" ;;
     esac ;;
@@ -104,11 +105,11 @@ for fixture in "$FIXTURES_DIR"/*/; do
   args="${raw_args//__FIXTURE_PATH__/$fixture_abs}"
 
   # Clean any leftover artifacts from prior runs.
-  # The /tmp/spectra-archive-ic-outcome*.txt glob clears the change-name-derived
+  # The state directory's outcome-*.txt glob clears the change-name-derived
   # outcome files (the script derives the path from --change-name since #56 R6),
   # so fixture 10's must_exist post_assert cannot false-pass on a stale file.
-  rm -f /tmp/spectra-archive-candidates.txt /tmp/spectra-archive-ic-dryrun-body.md \
-        /tmp/pwn-fixture-05 /tmp/pwn-fixture-11.txt /tmp/spectra-archive-ic-outcome*.txt
+  rm -f /tmp/pwn-fixture-05 /tmp/pwn-fixture-11.txt "$SPECTRA_POST_IC_STATE_DIR"/outcome-*.txt \
+        "$SPECTRA_POST_IC_STATE_DIR"/candidates-*.txt
 
   # The fixtures sit inside this repository, whose origin is not the test/repo the
   # args name, so the script reads no commit history for them wherever it runs. The
@@ -146,6 +147,7 @@ for fixture in "$FIXTURES_DIR"/*/; do
       [ -z "$line" ] && continue
       cmd=$(echo "$line" | awk '{print $1}')
       target=$(echo "$line" | awk '{print $2}')
+      target="${target//__STATE_DIR__/$SPECTRA_POST_IC_STATE_DIR}"
       case "$cmd" in
         must_not_exist)
           if [ -e "$target" ]; then
@@ -221,6 +223,8 @@ commit_all() {   # commit_all <dir> <subject> [body]
 
 run_post() {   # run_post <cwd> <args...>; sets OUT and RC, stub gh on PATH
   local dir=$1; shift
+  local a prev=""
+  for a in "$@"; do [ "$prev" = --change-name ] && LAST_CHANGE=$a; prev=$a; done
   : > "$SCN/gh.log"; rm -f "$SCN/body.md"
   OUT=$(cd "$dir" && PATH="$SCN/bin:$PATH" GH_STUB_LOG="$SCN/gh.log" GH_STUB_BODY="$SCN/body.md" \
     bash "${POST_SCRIPT:-$TARGET_SCRIPT}" "$@" 2>/dev/null)
@@ -229,6 +233,7 @@ run_post() {   # run_post <cwd> <args...>; sets OUT and RC, stub gh on PATH
 
 outcome_is() { [ "$OUT" = "https://github.com/test/repo/issues/$1#issuecomment-DRY-RUN" ]; }
 dry_body() { printf '%s/body-%s.md' "$SPECTRA_POST_IC_STATE_DIR" "$1"; }
+cand_file() { printf '%s/candidates-%s.txt' "$SPECTRA_POST_IC_STATE_DIR" "$LAST_CHANGE"; }
 review_then_post() {   # review_then_post <cwd> <args...> --scrub-attested L: the dry run first, as Step 7 does
   local dir=$1; shift
   local dry=() a skip=0
@@ -373,7 +378,7 @@ mkdir -p "$R8/openspec/changes/archive/2026-01-10-only-pr"
 printf 'Refs #465\n' > "$R8/openspec/changes/archive/2026-01-10-only-pr/proposal.md"
 commit_all "$R8" 'feat: add thing (#468)'
 GH_STUB_PRS=468 run_post "$R8" --change-name only-pr --archive-dir openspec/changes/archive/2026-01-10-only-pr --gh-repo test/repo --dry-run
-scenario pr-only-subject-keeps-refs "$([ "$RC" = 75 ] && [ "$(cat /tmp/spectra-archive-candidates.txt)" = 465 ]; echo $?)"
+scenario pr-only-subject-keeps-refs "$([ "$RC" = 75 ] && [ "$(cat "$(cand_file)")" = 465 ]; echo $?)"
 
 # 15. An explicit Closes that disagrees with an issue number from the commits is asked.
 R9="$SCN/r9"
@@ -382,7 +387,7 @@ mkdir -p "$R9/openspec/changes/archive/2026-01-11-disagree"
 printf 'Closes #10\n' > "$R9/openspec/changes/archive/2026-01-11-disagree/proposal.md"
 commit_all "$R9" 'docs: tidy spectra tasks (#20)'
 run_post "$R9" --change-name disagree --archive-dir openspec/changes/archive/2026-01-11-disagree --gh-repo test/repo --dry-run
-scenario explicit-refs-disagreement-asks "$([ "$RC" = 75 ] && grep -qx 10 /tmp/spectra-archive-candidates.txt && grep -qx 20 /tmp/spectra-archive-candidates.txt; echo $?)"
+scenario explicit-refs-disagreement-asks "$([ "$RC" = 75 ] && grep -qx 10 "$(cand_file)" && grep -qx 20 "$(cand_file)"; echo $?)"
 
 # 15b. The same conflict is still asked when a weak `issue #N` mention matches the commit
 #      (verify round 2, Codex).
@@ -392,7 +397,7 @@ mkdir -p "$R15/openspec/changes/archive/2026-01-17-masked"
 printf 'Closes #10\nSee also issue #20.\n' > "$R15/openspec/changes/archive/2026-01-17-masked/proposal.md"
 commit_all "$R15" 'docs: update change (#20)'
 run_post "$R15" --change-name masked --archive-dir openspec/changes/archive/2026-01-17-masked --gh-repo test/repo --dry-run
-scenario weak-overlap-does-not-hide-conflict "$([ "$RC" = 75 ] && grep -qx 10 /tmp/spectra-archive-candidates.txt && grep -qx 20 /tmp/spectra-archive-candidates.txt; echo $?)"
+scenario weak-overlap-does-not-hide-conflict "$([ "$RC" = 75 ] && grep -qx 10 "$(cand_file)" && grep -qx 20 "$(cand_file)"; echo $?)"
 
 # 16. A change whose only commit number is a pull request has no candidate at all.
 R10="$SCN/r10"
@@ -407,7 +412,7 @@ scenario missing-number-not-posted "$(outcome_starts '(none'; echo $?)"
 
 # 17. When the issue/PR check cannot run, a lone commit number is asked, not posted.
 GH_STUB_API_FAIL=1 run_post "$R10" --change-name pr-only --archive-dir openspec/changes/archive/2026-01-12-pr-only --gh-repo test/repo --dry-run
-scenario unverified-number-asks "$([ "$RC" = 75 ] && grep -qx 201 /tmp/spectra-archive-candidates.txt; echo $?)"
+scenario unverified-number-asks "$([ "$RC" = 75 ] && grep -qx 201 "$(cand_file)"; echo $?)"
 
 # 18. A cluster commit touched the archive; the prose number lives on the pre-move path.
 R4="$SCN/r4"
@@ -420,7 +425,7 @@ git -C "$R4" mv openspec/changes/cluster openspec/changes/archive/2026-01-06-clu
 commit_all "$R4" 'feat: cluster work (#137 #150)'
 run_post "$R4" --change-name cluster --archive-dir openspec/changes/archive/2026-01-06-cluster --gh-repo test/repo --dry-run
 # Several issues in the commits are asked about; the pre-move commit's #148 is among them.
-scenario cluster-uses-pre-move-commits "$([ "$RC" = 75 ] && grep -qx 148 /tmp/spectra-archive-candidates.txt; echo $?)"
+scenario cluster-uses-pre-move-commits "$([ "$RC" = 75 ] && grep -qx 148 "$(cand_file)"; echo $?)"
 
 # 19. Commits whose groups name no prose number still win over `issue #N` prose.
 R5="$SCN/r5"
@@ -456,7 +461,7 @@ mkdir -p "$R13/openspec/changes/archive/2026-01-15-cluster-body"
 printf 'Codified as issue #150.\n' > "$R13/openspec/changes/archive/2026-01-15-cluster-body/design.md"
 commit_all "$R13" 'feat: #137 one thing + #150 another (cluster)' 'Refs #137 Refs #150 Refs #154'
 run_post "$R13" --change-name cluster-body --archive-dir openspec/changes/archive/2026-01-15-cluster-body --gh-repo test/repo --dry-run
-scenario body-refs-several-on-a-line "$([ "$RC" = 75 ] && [ "$(tr '\n' ' ' < /tmp/spectra-archive-candidates.txt)" = '137 150 154 ' ]; echo $?)"
+scenario body-refs-several-on-a-line "$([ "$RC" = 75 ] && [ "$(tr '\n' ' ' < "$(cand_file)")" = '137 150 154 ' ]; echo $?)"
 
 # 21c. A Refs written outside code still disagrees with the commits and is asked;
 #      the same Refs quoted in code does not.
@@ -469,7 +474,7 @@ run_post "$R14" --change-name quoted --archive-dir openspec/changes/archive/2026
 scenario quoted-refs-is-weak "$(outcome_is 800; echo $?)"
 printf 'Refs #12\n' > "$R14/openspec/changes/archive/2026-01-16-quoted/design.md"
 run_post "$R14" --change-name quoted --archive-dir openspec/changes/archive/2026-01-16-quoted --gh-repo test/repo --dry-run
-scenario unquoted-refs-still-asks "$([ "$RC" = 75 ] && grep -qx 12 /tmp/spectra-archive-candidates.txt && grep -qx 800 /tmp/spectra-archive-candidates.txt; echo $?)"
+scenario unquoted-refs-still-asks "$([ "$RC" = 75 ] && grep -qx 12 "$(cand_file)" && grep -qx 800 "$(cand_file)"; echo $?)"
 
 # 22. Bytes that are not UTF-8 do not cost the marker in the same file.
 R12="$SCN/r12"
@@ -539,7 +544,7 @@ mkdir -p "$R17/openspec/changes/archive/2026-01-18-url404"
 printf 'Sandbox notes: seed issue #1.\n' > "$R17/openspec/changes/archive/2026-01-18-url404/proposal.md"
 commit_all "$R17" 'feat: thing (#404)'
 GH_STUB_API_FAIL=1 run_post "$R17" --change-name url404 --archive-dir openspec/changes/archive/2026-01-18-url404 --gh-repo test/repo --dry-run
-scenario transport-error-is-not-404 "$([ "$RC" = 75 ] && grep -qx 404 /tmp/spectra-archive-candidates.txt; echo $?)"
+scenario transport-error-is-not-404 "$([ "$RC" = 75 ] && grep -qx 404 "$(cand_file)"; echo $?)"
 
 # 32. Explicit references that commits only partly cover are asked.
 R18="$SCN/r18"
@@ -548,7 +553,7 @@ mkdir -p "$R18/openspec/changes/archive/2026-01-19-partial"
 printf 'Closes #10\nRefs #20\n' > "$R18/openspec/changes/archive/2026-01-19-partial/proposal.md"
 commit_all "$R18" 'docs: update change (#20)'
 run_post "$R18" --change-name partial --archive-dir openspec/changes/archive/2026-01-19-partial --gh-repo test/repo --dry-run
-scenario partial-explicit-overlap-asks "$([ "$RC" = 75 ] && grep -qx 10 /tmp/spectra-archive-candidates.txt && grep -qx 20 /tmp/spectra-archive-candidates.txt; echo $?)"
+scenario partial-explicit-overlap-asks "$([ "$RC" = 75 ] && grep -qx 10 "$(cand_file)" && grep -qx 20 "$(cand_file)"; echo $?)"
 
 # 33. This repository's full form stays explicit in prose and stays a group in subjects.
 R19="$SCN/r19"
@@ -557,7 +562,7 @@ mkdir -p "$R19/openspec/changes/archive/2026-01-20-fullform"
 printf 'Closes test/repo#10\n' > "$R19/openspec/changes/archive/2026-01-20-fullform/proposal.md"
 commit_all "$R19" 'docs: update change (#20)'
 run_post "$R19" --change-name fullform --archive-dir openspec/changes/archive/2026-01-20-fullform --gh-repo test/repo --dry-run
-scenario full-form-closes-stays-explicit "$([ "$RC" = 75 ] && grep -qx 10 /tmp/spectra-archive-candidates.txt; echo $?)"
+scenario full-form-closes-stays-explicit "$([ "$RC" = 75 ] && grep -qx 10 "$(cand_file)"; echo $?)"
 R20="$SCN/r20"
 new_repo "$R20"
 mkdir -p "$R20/openspec/changes/archive/2026-01-21-fullgroup"
@@ -566,7 +571,7 @@ commit_all "$R20" 'feat: playbook (Refs test/repo#102)'
 printf 'more\n' >> "$R20/openspec/changes/archive/2026-01-21-fullgroup/proposal.md"
 commit_all "$R20" 'chore: archive (#103)'
 run_post "$R20" --change-name fullgroup --archive-dir openspec/changes/archive/2026-01-21-fullgroup --gh-repo test/repo --dry-run
-scenario full-form-group-is-a-group "$([ "$RC" = 75 ] && grep -qx 102 /tmp/spectra-archive-candidates.txt && grep -qx 103 /tmp/spectra-archive-candidates.txt; echo $?)"
+scenario full-form-group-is-a-group "$([ "$RC" = 75 ] && grep -qx 102 "$(cand_file)" && grep -qx 103 "$(cand_file)"; echo $?)"
 
 # 33b. A bare full-form mention of this repository is still a mention: it does not
 #      conflict with the commit's own issue the way an explicit reference would.
@@ -585,7 +590,7 @@ mkdir -p "$R21/openspec/changes/archive/2026-01-22-proposed"
 printf 'This change was proposed referencing issue #400.\n' > "$R21/openspec/changes/archive/2026-01-22-proposed/proposal.md"
 commit_all "$R21" 'docs: propose follow-up change (#398)'
 run_post "$R21" --change-name proposed --archive-dir openspec/changes/archive/2026-01-22-proposed --gh-repo test/repo --dry-run
-scenario referencing-issue-is-explicit "$([ "$RC" = 75 ] && grep -qx 400 /tmp/spectra-archive-candidates.txt && grep -qx 398 /tmp/spectra-archive-candidates.txt; echo $?)"
+scenario referencing-issue-is-explicit "$([ "$RC" = 75 ] && grep -qx 400 "$(cand_file)" && grep -qx 398 "$(cand_file)"; echo $?)"
 
 # 35. A prose-only candidate that is a pull request is not posted to.
 R22="$SCN/r22"
@@ -615,21 +620,21 @@ A23="$SCN/a23/2026-01-24-tracker-pr"
 mkdir -p "$A23"
 printf '**GitHub-side tracker**: #12\n\nRefs #400\n' > "$A23/proposal.md"
 GH_STUB_PRS=12 run_post "$SCN" --change-name tracker-pr --archive-dir "$A23" --gh-repo test/repo --dry-run
-scenario tracker-pr-asks "$([ "$RC" = 75 ] && grep -qx 400 /tmp/spectra-archive-candidates.txt && case "$OUT" in *tracker*) true ;; *) false ;; esac; echo $?)"
+scenario tracker-pr-asks "$([ "$RC" = 75 ] && grep -qx 400 "$(cand_file)" && case "$OUT" in *tracker*) true ;; *) false ;; esac; echo $?)"
 
 # 40. A tracker in another repository does not lend a later number on its line to this one.
 A24="$SCN/a24/2026-01-25-tracker-elsewhere"
 mkdir -p "$A24"
 printf '**GitHub-side tracker**: kiki830621/sandbox#5 (sandbox PR #12 holds the trial)\n\nRefs #400\n' > "$A24/proposal.md"
 run_post "$SCN" --change-name tracker-elsewhere --archive-dir "$A24" --gh-repo test/repo --dry-run
-scenario cross-repo-tracker-not-used "$([ "$RC" = 75 ] && [ "$(cat /tmp/spectra-archive-candidates.txt)" = 400 ]; echo $?)"
+scenario cross-repo-tracker-not-used "$([ "$RC" = 75 ] && [ "$(cat "$(cand_file)")" = 400 ]; echo $?)"
 
 # 41. When the repository itself cannot be read, every 404 is meaningless: detection fails.
 A25="$SCN/a25/2026-01-26-hidden"
 mkdir -p "$A25"
 printf 'Closes #400\n' > "$A25/proposal.md"
 GH_STUB_MISSING=400 GH_STUB_REPO_HIDDEN=1 run_post "$SCN" --change-name hidden --archive-dir "$A25" --gh-repo test/typo --dry-run
-scenario hidden-repo-fails "$(outcome_starts '(failed — candidate detection errored'; echo $?)"
+scenario hidden-repo-fails "$(outcome_starts '(failed — candidate detection'; echo $?)"
 
 # 42. A symlink to a directory at the review copy's name is replaced, not entered.
 mkdir -p "$SCN/victimdir"
@@ -656,7 +661,7 @@ for t in 'Fixes: #400' 'Refs #12, test/repo#400' 'referencing issue test/repo#40
   printf '%s\n' "$t" > "$R30/openspec/changes/archive/2026-01-30-shape/proposal.md"
   commit_all "$R30" 'docs: tidy (#20)'
   run_post "$R30" --change-name shape --archive-dir openspec/changes/archive/2026-01-30-shape --gh-repo test/repo --dry-run
-  scenario "explicit-shape-conflicts:$t" "$([ "$RC" = 75 ] && grep -qx 400 /tmp/spectra-archive-candidates.txt && grep -qx 20 /tmp/spectra-archive-candidates.txt; echo $?)"
+  scenario "explicit-shape-conflicts:$t" "$([ "$RC" = 75 ] && grep -qx 400 "$(cand_file)" && grep -qx 20 "$(cand_file)"; echo $?)"
 done
 
 # 46. A bare `#N` in a subject without any group is a candidate, never posted silently,
@@ -667,7 +672,7 @@ mkdir -p "$R31/openspec/changes/archive/2026-01-31-bare-subject"
 printf 'This spike is for issue #400.\n' > "$R31/openspec/changes/archive/2026-01-31-bare-subject/proposal.md"
 commit_all "$R31" 'docs: record sandbox PR #4 run'
 run_post "$R31" --change-name bare-subject --archive-dir openspec/changes/archive/2026-01-31-bare-subject --gh-repo test/repo --dry-run
-scenario bare-subject-asks "$([ "$RC" = 75 ] && grep -qx 400 /tmp/spectra-archive-candidates.txt; echo $?)"
+scenario bare-subject-asks "$([ "$RC" = 75 ] && grep -qx 400 "$(cand_file)"; echo $?)"
 
 # 47. A remote that does not match --gh-repo gives no commit evidence: asked, not posted.
 R32="$SCN/r32"
@@ -683,7 +688,7 @@ A33="$SCN/a33/2026-02-02-slash-word"
 mkdir -p "$A33"
 printf 'Tracked as issue/PR #400.\n' > "$A33/proposal.md"
 run_post "$SCN" --change-name slash-word --archive-dir "$A33" --gh-repo test/repo --dry-run
-scenario slash-word-keeps-number "$([ "$RC" = 75 ] && [ "$(cat /tmp/spectra-archive-candidates.txt)" = 400 ]; echo $?)"
+scenario slash-word-keeps-number "$([ "$RC" = 75 ] && [ "$(cat "$(cand_file)")" = 400 ]; echo $?)"
 
 # 49. This repository's full form after `(` or after another repository's number is
 #     still a candidate in prose.
@@ -691,14 +696,14 @@ A34="$SCN/a34/2026-02-03-shapes"
 mkdir -p "$A34"
 printf 'This fixes the gate (test/repo#405) reported last week; see other/x#5, test/repo#7.\n' > "$A34/proposal.md"
 run_post "$SCN" --change-name shapes --archive-dir "$A34" --gh-repo test/repo --dry-run
-scenario full-form-shapes-kept "$([ "$RC" = 75 ] && [ "$(tr '\n' ' ' < /tmp/spectra-archive-candidates.txt)" = '7 405 ' ]; echo $?)"
+scenario full-form-shapes-kept "$([ "$RC" = 75 ] && [ "$(tr '\n' ' ' < "$(cand_file)")" = '7 405 ' ]; echo $?)"
 
 # 50. The spike's own anchor, written in full-width parentheses, is offered too.
 A35="$SCN/a35/2026-02-04-spike-text"
 mkdir -p "$A35"
 printf '在 sandbox 開 seed issue #1。本張的錨點（#400）。\n' > "$A35/proposal.md"
 run_post "$SCN" --change-name spike-text --archive-dir "$A35" --gh-repo test/repo --dry-run
-scenario full-width-anchor-offered "$([ "$RC" = 75 ] && grep -qx 400 /tmp/spectra-archive-candidates.txt; echo $?)"
+scenario full-width-anchor-offered "$([ "$RC" = 75 ] && grep -qx 400 "$(cand_file)"; echo $?)"
 
 # ── Round 4 (#405): the reader approves, and the shapes round 4 found ──
 probe() {   # probe <name> <proposal text> [commit subject] [commit body]: dry run, sets OUT/RC
@@ -708,7 +713,7 @@ probe() {   # probe <name> <proposal text> [commit subject] [commit body]: dry r
   if [ -n "${3:-}" ]; then commit_all "$r" "$3" "${4:-}"; fi
   run_post "$r" --change-name probe --archive-dir "$a" --gh-repo test/repo --dry-run
 }
-cands() { tr '\n' ' ' < /tmp/spectra-archive-candidates.txt; }
+cands() { tr '\n' ' ' < "$(cand_file)"; }
 
 # 51. A real post names the issue the review confirmed.
 run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --dry-run --gh-repo test/repo
@@ -717,7 +722,7 @@ scenario real-post-needs-linked-issue "$(! posted && outcome_starts '(failed —
 
 # 52. The dry run shows the proposed issue and its title for the review.
 ERR=$(cd "$R1" && PATH="$SCN/bin:$PATH" GH_STUB_TITLE='Demo title' bash "$TARGET_SCRIPT" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --dry-run 2>&1 >/dev/null)
-scenario dry-run-shows-title "$(case "$ERR" in *'issue for review: https://github.com/test/repo#7 — Demo title'*) true ;; *) false ;; esac; echo $?)"
+scenario dry-run-shows-title "$(case "$ERR" in *'issue for review: https://github.com/test/repo#7 (OPEN) — Demo title'*'proposed from: the GitHub-side tracker'*) true ;; *) false ;; esac; echo $?)"
 
 # 53. An archive already posted is reported by the dry run too.
 GH_STUB_COMMENTS='auto-posted by spectra-archive for 2026-01-02-demo' run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --dry-run
@@ -739,7 +744,9 @@ scenario gh-repo-shape "$([ "$RC" = 2 ]; echo $?)"
 # 57. Another repository's tracker in any shape is not posted to (round 4 HIGH).
 for t in '**GitHub-side tracker**: other/sandbox issue #9' '**GitHub-side tracker**: `other/sandbox`#9' '**GitHub-side tracker**: --repo other/sandbox #9'; do
   probe xtracker "$t"
-  scenario "cross-repo-tracker-shape:$t" "$([ "$RC" = 75 ]; echo $?)"
+  # Not posted, not offered as this repository's number: the tracker cannot be used and
+  # nothing else names an issue, which is reported as such (round 5).
+  scenario "cross-repo-tracker-shape:$t" "$(outcome_starts '(failed — candidate detection: the GitHub-side tracker'; echo $?)"
 done
 
 # 58. A tracker example in code is not a tracker.
@@ -788,7 +795,52 @@ scenario only-pr-falls-back "$([ "$RC" = 75 ] && [ "$(cands)" = '300 ' ]; echo $
 
 # 68. Too many numbers to check fails instead of making dozens of API calls.
 probe many "$(for i in $(seq 1 45); do printf 'issue #%s ' "$i"; done)"
-scenario too-many-numbers-fails "$(outcome_starts '(failed — candidate detection errored'; echo $?)"
+scenario too-many-numbers-fails "$(outcome_starts '(failed — candidate detection'; echo $?)"
+
+# ── Round 5 (#405) ──
+# 69. An anchored tracker whose line names another repository is not proposed silently.
+probe anchored-elsewhere '**GitHub-side tracker**: #9 (in other/sandbox)'
+scenario anchored-tracker-other-repo-asks "$([ "$RC" = 75 ]; echo $?)"
+
+# 70. The bare-number last resort does not bring back other repositories' numbers.
+probe bare-xref 'opened `kiki/sandbox` issue #3 and -R kiki/sandbox #6, then other/x issue #4'
+scenario bare-fallback-skips-xref "$(outcome_starts '(none'; echo $?)"
+
+# 71. A tracker that is a pull request, with nothing else, is a failure with its reason.
+probe tracker-pr-only '**GitHub-side tracker**: #470'
+GH_STUB_PRS=470 run_post "$SCN/p-tracker-pr-only" --change-name probe --archive-dir openspec/changes/archive/2026-03-01-probe --gh-repo test/repo --dry-run
+scenario tracker-pr-only-fails "$(outcome_starts '(failed — candidate detection: the GitHub-side tracker is a pull request'; echo $?)"
+
+# 72. --linked-issue must be a checked issue, and every reason is shown, unchecked first.
+probe unchecked 'Refs #7'
+GH_STUB_API_FAIL=1 run_post "$SCN/p-unchecked" --change-name probe --archive-dir openspec/changes/archive/2026-03-01-probe --gh-repo test/repo --dry-run
+scenario unchecked-reason-first "$([ "$RC" = 75 ] && case "$OUT" in *'(could not check whether every number is an issue or a pull request; only the text of the change names it)'*) true ;; *) false ;; esac; echo $?)"
+GH_STUB_API_FAIL=1 run_post "$SCN/p-unchecked" --change-name probe --archive-dir openspec/changes/archive/2026-03-01-probe --gh-repo test/repo --linked-issue 7 --dry-run
+scenario linked-issue-unchecked-refused "$(outcome_starts '(failed — --linked-issue 7: could not check that it is an issue'; echo $?)"
+
+# 73. The outcome is kept in the state directory, not in /tmp.
+rm -f /tmp/spectra-archive-ic-outcome-demo.txt
+run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --dry-run
+scenario outcome-in-state-dir "$([ -f "$SPECTRA_POST_IC_STATE_DIR/outcome-demo.txt" ] && [ ! -e /tmp/spectra-archive-ic-outcome-demo.txt ]; echo $?)"
+
+# 74. Only comments by the owner, members or collaborators count as already posted.
+run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --dry-run
+scenario sentinel-trusted-authors "$(grep -q 'authorAssociation == "OWNER"' "$SCN/gh.log"; echo $?)"
+
+# 75. Emphasis and a markdown link around an explicit reference still conflict.
+for t in '**Closes**: #400' 'Closes [#400](https://github.com/test/repo/issues/400)'; do
+  probe emph "$t" 'docs: tidy (#20)'
+  scenario "emphasis-or-link-conflicts:$t" "$([ "$RC" = 75 ] && [ "$(cands)" = '20 400 ' ]; echo $?)"
+done
+
+# 76. A `~~~` fence quotes too: its Refs is not an explicit reference.
+probe tilde "$(printf '~~~\nRefs #1\n~~~\n\nRefs #400')" 'feat: thing (#400)'
+scenario tilde-fence-is-code "$(outcome_is 400; echo $?)"
+
+# 77. The review line says where the number came from, and hands out no command.
+ERR=$(cd "$SCN/p-tilde" && PATH="$SCN/bin:$PATH" bash "$TARGET_SCRIPT" --change-name probe --archive-dir openspec/changes/archive/2026-03-01-probe --gh-repo test/repo --dry-run 2>&1 >/dev/null)
+scenario review-line-shows-commit "$(case "$ERR" in *'proposed from: '*'commit '*' feat: thing (#400)'*) true ;; *) false ;; esac; echo $?)"
+scenario review-line-no-command "$(case "$ERR" in *'post with --linked-issue'*) false ;; *) true ;; esac; echo $?)"
 
 echo ""
 echo "─── Summary ───"

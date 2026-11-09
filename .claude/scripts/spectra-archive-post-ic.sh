@@ -23,14 +23,14 @@
 #   2  — usage error (bad/missing args, or unsafe --outcome-file path)
 #  64  — dependency missing (python3 not found)
 #  75  — a person must choose: several candidates, or one that no explicit source
-#         confirms; candidates written to /tmp/spectra-archive-candidates.txt
+#         confirms; candidates written to candidates-<change-name>.txt in the state directory
 #         agent MUST prompt user via AskUserQuestion and re-invoke with --linked-issue <N>
 #
 # Stdout: outcome message OR IC comment URL (single line)
 # Stderr: diagnostic info
 # Outcome file: same content as stdout, persistent across Bash tool calls.
 #   The path is DERIVED INTERNALLY from --change-name:
-#     /tmp/spectra-archive-ic-outcome-<change-name>.txt
+#     ${SPECTRA_POST_IC_STATE_DIR:-~/.cache/idd/spectra-archive}/outcome-<change-name>.txt
 #   --change-name is allowlist-validated (^[A-Za-z0-9_-]+$) before being used in
 #   the path, so the derived path is always traversal-safe and the formula has a
 #   single source of truth (this script). A caller (SKILL.md Step 8) recomputes
@@ -60,10 +60,10 @@ CHANGE_NAME=""
 ARCHIVE_DIR=""
 SPEC_DELTAS="(see archived change directory)"
 LINKED_ISSUE_RESOLVED=""
-# Pre-allowlist fallback path: used only for the python3-missing / unsafe-change-name
-# emit_outcome calls that fire BEFORE $CHANGE_NAME is validated. Once the allowlist
-# guard passes, OUTCOME_FILE is reassigned to the change-name-derived path below.
-OUTCOME_FILE="/tmp/spectra-archive-ic-outcome.txt"
+# No outcome file until the change name has passed the allowlist and the private state
+# directory exists (#405): the early refusals go to stdout only, not to a fixed name in
+# the shared /tmp that another account could plant or read.
+OUTCOME_FILE=""
 OUTCOME_FILE_EXPLICIT=0
 GH_REPO_ARG=""
 DRY_RUN=0
@@ -130,7 +130,7 @@ emit_outcome() {
   local msg="$1"
   local code="${2:-0}"
   echo "$msg"
-  printf '%s\n' "$msg" > "$OUTCOME_FILE" 2>/dev/null || true
+  [ -n "$OUTCOME_FILE" ] && { printf '%s\n' "$msg" > "$OUTCOME_FILE"; } 2>/dev/null
   exit "$code"
 }
 
@@ -144,6 +144,18 @@ if ! [[ "$CHANGE_NAME" =~ ^[A-Za-z0-9_-]+$ ]]; then
   emit_outcome "(skipped — change name contains unsafe characters: $CHANGE_NAME)" 0
 fi
 
+# ── The private state directory (#405) ──
+# Everything this step keeps lives here, mode 700: the outcome, the candidate list, and
+# the body and issue a dry run keeps for review. Not the shared /tmp, where another
+# session, a test run or another account could plant, read or replace a fixed name.
+STATE_DIR="${SPECTRA_POST_IC_STATE_DIR:-$HOME/.cache/idd/spectra-archive}"
+if [ -L "$STATE_DIR" ] || ! mkdir -p "$STATE_DIR" 2>/dev/null || ! chmod 700 "$STATE_DIR" 2>/dev/null; then
+  emit_outcome "(failed — cannot use $STATE_DIR for this step's files; nothing kept or posted, archive itself succeeded)" 0
+fi
+REVIEW_BODY="$STATE_DIR/body-$CHANGE_NAME.md"
+REVIEW_TARGET="$STATE_DIR/target-$CHANGE_NAME.txt"
+CANDIDATES_FILE="$STATE_DIR/candidates-$CHANGE_NAME.txt"
+
 # ── Derive the change-name-scoped outcome path (single source of truth) ──
 # $CHANGE_NAME has just passed the allowlist (^[A-Za-z0-9_-]+$), so it cannot
 # contain '/', '.', or shell metacharacters — the derived path is traversal-safe.
@@ -152,15 +164,8 @@ fi
 # Skip the reassignment when --outcome-file was explicitly given (already
 # traversal-checked above) so callers retain an escape hatch / tests can override.
 if [ "$OUTCOME_FILE_EXPLICIT" = "0" ]; then
-  OUTCOME_FILE="/tmp/spectra-archive-ic-outcome-${CHANGE_NAME}.txt"
+  OUTCOME_FILE="$STATE_DIR/outcome-${CHANGE_NAME}.txt"
 fi
-
-# ── Where a dry run keeps what a person reviews (#405) ──
-# Private to the user: not the shared /tmp, where another session, a test run or
-# another account could replace the file between the review and the post.
-STATE_DIR="${SPECTRA_POST_IC_STATE_DIR:-$HOME/.cache/idd/spectra-archive}"
-REVIEW_BODY="$STATE_DIR/body-$CHANGE_NAME.md"
-REVIEW_TARGET="$STATE_DIR/target-$CHANGE_NAME.txt"
 
 # ── A real post needs the caller's privacy review (#405) ──
 # Checked before any lookup: without it nothing will be posted, so there is no
@@ -325,7 +330,7 @@ def nums(pattern, text):
 MARKER = re.compile(r"\*\*GitHub-side tracker\*\*(?:(?!\*\*GitHub-side tracker\*\*)[^\n])*")
 ANCHORED = re.compile(r"\*\*GitHub-side tracker\*\*[ \t]*:?[ \t]*(?:\*\*)?(?:(?P<r>" + REPO + r"))?#(?P<n>\d+)"
                       r"(?=[\s.,;:)）。，、*]|$)")
-STRONG = re.compile(r"(?<![A-Za-z0-9_])(?:" + KW + r"#\d+(?:(?:(?:[ \t]*,)+[ \t]*|[ \t]+and[ \t]+)(?:issue[ \t]+)?#\d+)*"
+STRONG = re.compile(r"(?<![A-Za-z0-9_])(?:" + KW + r"\[?#\d+(?:(?:(?:[ \t]*,)+[ \t]*|[ \t]+and[ \t]+)(?:issue[ \t]+)?\[?#\d+)*"
                     r"|[Rr]eferenc(?:e|es|ed|ing)[ \t]+issue[ \t]+#\d+)")
 WEAK = re.compile(r"(?<![A-Za-z0-9_])[Ii]ssue[ \t]+#\d+|[（(]#\d+[）)]")
 GROUP = re.compile(r"\((?:[Rr]efs[ \t]+)?#\d+(?:[ \t,]+#\d+)*\)")
@@ -334,11 +339,11 @@ BODY_REFS = re.compile(r"(?im)^[ \t]*refs\b[^\n]*")
 # A squash commit lists the PR's commits as `* subject (#N)` lines in its body.
 SQUASH_LINE = re.compile(r"(?m)^[ \t]*[*-][ \t]+[^\n]*")
 ANY = re.compile(r"#\d+")
-DIRECT = re.compile(r"(?<![A-Za-z0-9_./-])(" + REPO + r")#\d+")
+REPO_WORD = re.compile(r"(?<![A-Za-z0-9_./:-])(" + REPO + r")")
 # A Refs/Closes/Fixes inside code (a fence or `inline`) quotes something, often another
 # repository's PR body; it counts only as weak prose. The spike quoted the sandbox's
 # `Refs #1` and `Refs #3` this way. Examples of the tracker marker in code are not markers.
-CODE = re.compile(r"(?ms)^[ \t]*```.*?^[ \t]*```|`[^`\n]*`")
+CODE = re.compile(r"(?ms)^[ \t]*(```|~~~).*?^[ \t]*\1|`[^`\n]*`")
 def blank_code(text, fill=" "):
     """Code replaced by `fill`, keeping every offset, so a span found here is the same span
     in the raw text."""
@@ -351,8 +356,7 @@ def kind(n):
     error prints the request URL, and that may contain 404 anywhere."""
     if n not in kinds:
         if len(kinds) >= LIMIT:
-            print(f"more than {LIMIT} numbers to check; name the issue with --force-linked-issue", file=sys.stderr)
-            sys.exit(4)
+            fail(f"more than {LIMIT} numbers to check; name the issue with --force-linked-issue")
         r = subprocess.run(["gh", "api", f"repos/{gh_repo}/issues/{n}", "--jq",
                             'if .pull_request then "pr" else "issue" end'], capture_output=True, text=True)
         if r.returncode == 0:
@@ -373,8 +377,7 @@ def repo_readable():
         r = subprocess.run(["gh", "api", f"repos/{gh_repo}", "--jq", ".full_name"],
                            capture_output=True, text=True)
         if r.returncode != 0:
-            print(f"cannot read repos/{gh_repo}: every issue would look missing", file=sys.stderr)
-            sys.exit(3)
+            fail(f"cannot read repos/{gh_repo}, so every issue would look missing")
         readable.append(True)
 
 def postable(numbers):
@@ -382,40 +385,65 @@ def postable(numbers):
     keep = {n for n in numbers if kind(n) in ("issue", "unknown")}
     return keep, any(kinds[n] == "unknown" for n in keep)
 
-# Why a person must choose, when one is needed; the first reason wins.
+# Why a person must choose, when one is needed. Every reason is shown, the unchecked
+# issue/PR first, because it is the one a title cannot settle.
 reasons = []
+# Where each number came from, printed for the review: a title alone cannot tell an old
+# issue with the same subject from this change's own.
+sources = {}
+def note(numbers, how):
+    for n in numbers:
+        sources.setdefault(n, [])
+        if how not in sources[n] and len(sources[n]) < 3:
+            sources[n].append(how)
+
+def fail(reason):
+    print("?fail " + reason)
+    sys.exit(0)
+
 def emit(cands, ask=None, check=True):
     if ask:
         reasons.append(ask)
+    unsure = False
     if check:
         cands, unsure = postable(cands)
-        if unsure:
-            reasons.append("could not check whether every number is an issue or a pull request")
+    shown = (["could not check whether every number is an issue or a pull request"] if unsure else []) \
+        + [r for i, r in enumerate(reasons) if r not in reasons[:i]]
     for n in sorted(cands):
         print(n)
-    if reasons and cands:
-        print("?ask " + reasons[0])
+        print(f"?src {n} " + "; ".join(sources.get(n, ["the text of the change"])))
+    if shown and cands:
+        print("?ask " + "; ".join(shown))
     sys.exit(0)
 
 # ── Evidence ──
 raw_md = read(os.path.join(arch, "proposal.md")) + "\n" + read(os.path.join(arch, "design.md"))
 markers, marker_offer, marker_problem = set(), set(), None
+def other_repo_on(seg):
+    """Whether a tracker line names another repository anywhere: a reference, a URL, or a
+    bare owner/repo word."""
+    return (any((x.group("r1") or x.group("r2") or x.group("r3")).lower() != gh_repo.lower()
+                for x in XREF.finditer(seg))
+            or any(x.group("r").lower() != gh_repo.lower() for x in URL.finditer(seg))
+            or any(t.lower() != gh_repo.lower() for t in REPO_WORD.findall(URL.sub(" ", seg))))
 # Code is filled with a letter, not blanks, so `**GitHub-side tracker**: `other/x`#9` cannot
 # turn into an anchored `#9`; the raw span is what is checked for other repositories.
 for m in MARKER.finditer(blank_code(raw_md, "x")):
     a = ANCHORED.match(m.group(0))
-    if a and (not a.group("r") or a.group("r").lower() == gh_repo.lower()):
+    seg = raw_md[m.start():m.end()]
+    elsewhere = other_repo_on(seg)
+    if a and not elsewhere and (not a.group("r") or a.group("r").lower() == gh_repo.lower()):
         markers.add(int(a.group("n")))
+        note([int(a.group("n"))], "the GitHub-side tracker")
     else:
         marker_problem = ("the GitHub-side tracker is not `**GitHub-side tracker**: #N` "
                           "for an issue of this repository")
         # Its numbers are offered, unless the line is about another repository: then they
         # are that repository's (a sandbox's PR, say).
-        seg = raw_md[m.start():m.end()]
-        if not any((x.group("r1") or x.group("r2") or x.group("r3")).lower() != gh_repo.lower()
-                   for x in XREF.finditer(seg)) and not any(
-                   x.group("r").lower() != gh_repo.lower() for x in URL.finditer(seg)):
-            marker_offer |= nums(ANY, strip(seg))
+        if not elsewhere:
+            found = nums(ANY, strip(seg))
+            marker_offer |= found
+            note(found, "a GitHub-side tracker line not in the anchored form")
 if markers:
     good, unsure = postable(markers)
     if markers - good:
@@ -426,27 +454,35 @@ if markers:
 
 raw_text = "\n".join(read(os.path.join(arch, f)) for f in sorted(os.listdir(arch))
                      if f.endswith(".md") and os.path.isfile(os.path.join(arch, f)))
-prose_text = strip(raw_text)
+# Emphasis is dropped for reading references, so `**Closes**: #400` is a Closes.
+prose_text = strip(raw_text).replace("**", "")
 outside_code = blank_code(prose_text)
 strong = nums(STRONG, outside_code)
 weak = nums(WEAK, prose_text) | nums(STRONG, prose_text)
+note(strong, "an explicit reference in the change's text")
+note(weak - strong, "a mention in the change's text")
 
 commits, fallback = set(), set()
 if root and paths:
-    out = subprocess.run(["git", "-C", root, "--literal-pathspecs", "log", "--format=%x1e%s%x1f%b",
+    out = subprocess.run(["git", "-C", root, "--literal-pathspecs", "log", "--format=%x1e%h%x1f%s%x1f%b",
                           "-50", "--", *paths], capture_output=True)
     records = []
     for rec in out.stdout.decode("utf-8", "surrogateescape").split("\x1e")[1:]:
-        subject, _, body = rec.partition("\x1f")
-        records.append((strip(subject, prose=False), strip(body, prose=False)))
-    commits = {n for s, b in records
-               for n in nums(GROUP, s) | nums(BODY_REFS, b)
-               | {k for line in SQUASH_LINE.findall(b) for k in nums(GROUP, line)}}
-    # An explicit keyword in a commit message is an anchor too: `Closes #400` in the body of
-    # a commit whose group is (#20) names a second issue.
-    strong |= {n for s, b in records for n in nums(STRONG, s) | nums(STRONG, b)}
+        sha, _, rest = rec.partition("\x1f")
+        subject, _, body = rest.partition("\x1f")
+        records.append((sha, strip(subject, prose=False), strip(body, prose=False)))
+    for sha, s, b in records:
+        named = nums(GROUP, s) | nums(BODY_REFS, b) | {k for line in SQUASH_LINE.findall(b) for k in nums(GROUP, line)}
+        commits |= named
+        note(named, f"commit {sha} {s[:60].strip()}")
+        # An explicit keyword in a commit message is an anchor too: `Closes #400` in the body
+        # of a commit whose group is (#20) names a second issue.
+        kw = nums(STRONG, s) | nums(STRONG, b)
+        strong |= kw
+        note(kw - named, f"an explicit reference in commit {sha}")
     if not commits:
-        fallback = {n for s, _ in records for n in nums(ANY, s)}
+        fallback = {n for _, s, _ in records for n in nums(ANY, s)}
+        note(fallback, "a bare number in a commit subject")
 
 commits, _ = postable(commits)
 strong, _ = postable(strong)
@@ -472,39 +508,57 @@ if commits:
               else "the commits name more than one issue")
     emit(commits | strong | extra, ask=reason)
 reason = ("only a bare number in a commit subject names it" if fallback
-          else "no tracker and no commit names it, only the text of the change")
+          else "only the text of the change names it")
 offer, _ = postable(strong | weak | fallback | extra)
-# Nothing recognised at all: any `#N` outside code that is not another repository's
-# direct reference is offered rather than reporting no linked issue, because a missed
-# issue loses its Implementation Complete without a word.
+# Nothing recognised at all: any `#N` outside code is offered rather than reporting no
+# linked issue, because a missed issue loses its Implementation Complete without a word.
+# Other repositories' references are removed first, in every shape strip() knows.
 if not offer:
-    bare = DIRECT.sub(lambda m: m.group(0) if m.group(1).lower() == gh_repo.lower() else " ",
-                      URL.sub(" ", blank_code(raw_text)))
-    offer = nums(ANY, bare)
+    found = nums(ANY, blank_code(strip(raw_text)))
+    note(found, "a bare number in the change's text")
+    offer, _ = postable(found)
     reason = "only a bare number in the text of the change names it"
+if not offer and marker_problem:
+    # A tracker was declared and cannot be used, and nothing else names an issue: that is a
+    # failure to report, not "no linked issue".
+    fail(marker_problem + ", and nothing else names an issue")
 emit(offer, ask=reason)
 PYEOF
 }
 
-# Writes the candidate list without following a name another account planted in /tmp:
-# a new file is renamed over it, and anything but a regular file there is a failure.
+# Writes the candidate list in the state directory, by rename, and checks it landed as a
+# regular file. Where each one came from goes to stderr for the person choosing.
 write_candidates() {
-  local tmp f=/tmp/spectra-archive-candidates.txt
-  tmp=$(mktemp /tmp/spectra-archive-candidates.XXXXXX) && printf '%s\n' "$CANDIDATES" > "$tmp" \
+  local tmp f="$CANDIDATES_FILE"
+  rm -f "$f" 2>/dev/null
+  tmp=$(mktemp "$STATE_DIR/.candidates.XXXXXX") && printf '%s\n' "$CANDIDATES" > "$tmp" \
     && mv -f "$tmp" "$f" && [ -f "$f" ] && [ ! -L "$f" ] || {
       rm -f "${tmp:-}"
-      emit_outcome "(failed — could not write $f; candidates: $(printf '%s ' $CANDIDATES); re-invoke with --linked-issue <N>)" 0
+      emit_outcome "(failed — could not write the candidate list in $STATE_DIR; candidates: $(printf '%s ' $CANDIDATES); re-run the dry run with --linked-issue <N>)" 0
     }
+  [ -n "$SOURCES" ] && printf '%s\n' "$SOURCES" | sed 's/^\([0-9]*\) /candidate #\1 from: /' >&2
+}
+
+# A title is text whoever opened the issue wrote: control characters and bidi overrides are
+# removed and it is cut short, so it reads as data in the line the reviewer acts on.
+clean_title() {
+  printf '%s' "$1" | LC_ALL=C tr -d '\000-\037\177' \
+    | LC_ALL=C sed $'s/\xe2\x80[\xaa-\xae]//g; s/\xe2\x81[\xa6-\xa9]//g' | cut -c1-200
 }
 
 # Runs detection and splits its answer: CANDIDATES (one per line) and ASK (1 when a
 # person must choose). A detection that fails is reported, never read as "none".
 run_detection() {
-  local out
+  local out fail
   if ! out=$(detect_candidates); then
     emit_outcome "(failed — candidate detection errored; nothing posted, archive itself succeeded; pass --force-linked-issue <N> if you know the issue)" 0
   fi
+  fail=$(printf '%s\n' "$out" | sed -n 's/^?fail //p' | head -1)
+  if [ -n "$fail" ]; then
+    emit_outcome "(failed — candidate detection: $fail; nothing posted, archive itself succeeded; pass --force-linked-issue <N> if you know the issue)" 0
+  fi
   CANDIDATES=$(printf '%s\n' "$out" | grep -E '^[0-9]+$' || true)
+  SOURCES=$(printf '%s\n' "$out" | sed -n 's/^?src //p')
   ASK=0
   ASK_REASON=$(printf '%s\n' "$out" | sed -n 's/^?ask //p' | head -1)
   [ -n "$ASK_REASON" ] && ASK=1
@@ -539,7 +593,8 @@ if [ -n "$FORCE_LINKED_ISSUE" ]; then
     pr) emit_outcome "(failed — --force-linked-issue $FORCE_LINKED_ISSUE is a pull request in $GH_REPO, not an issue)" 0 ;;
     *)  emit_outcome "(failed — --force-linked-issue $FORCE_LINKED_ISSUE: issue not found in $GH_REPO, or it could not be read)" 0 ;;
   esac
-  FORCED_TITLE=$(gh issue view "$FORCE_LINKED_ISSUE" --repo "$GH_REPO" --json title -q .title 2>/dev/null || true)
+  FORCED_TITLE=$(clean_title "$(gh issue view "$FORCE_LINKED_ISSUE" --repo "$GH_REPO" --json title -q .title 2>/dev/null || true)")
+  SOURCES="$FORCE_LINKED_ISSUE --force-linked-issue"
   echo "→ FORCE-LINKED to #${FORCE_LINKED_ISSUE}: ${FORCED_TITLE} (authoritative override — detection & membership bypassed)" >&2
   LINKED_ISSUE="$FORCE_LINKED_ISSUE"
   FORCE_NOTE=" via --force-linked-issue"
@@ -563,6 +618,15 @@ elif [ -n "$LINKED_ISSUE_RESOLVED" ]; then
   if ! echo "$CANDIDATES" | grep -qx -- "$LINKED_ISSUE_RESOLVED"; then
     emit_outcome "(failed — --linked-issue $LINKED_ISSUE_RESOLVED not in candidate set: $(echo "$CANDIDATES" | tr '\n' ' '))" 0
   fi
+  # A candidate whose issue/PR check could not run is offered, not trusted: the number the
+  # reviewer names must be an issue (#405).
+  LINKED_KIND=$(gh api "repos/$GH_REPO/issues/$LINKED_ISSUE_RESOLVED" \
+    --jq 'if .pull_request then "pr" else "issue" end' 2>/dev/null) || LINKED_KIND=""
+  case "$LINKED_KIND" in
+    issue) ;;
+    pr) emit_outcome "(failed — --linked-issue $LINKED_ISSUE_RESOLVED is a pull request in $GH_REPO, not an issue)" 0 ;;
+    *)  emit_outcome "(failed — --linked-issue $LINKED_ISSUE_RESOLVED: could not check that it is an issue in $GH_REPO; nothing posted)" 0 ;;
+  esac
   LINKED_ISSUE="$LINKED_ISSUE_RESOLVED"
 else
   run_detection
@@ -579,14 +643,14 @@ else
       # issue/PR check could not run, or the tracker marker could not be used.
       if [ "$ASK" = 1 ]; then
         write_candidates
-        emit_outcome "(pending — 1 candidate needs confirmation ($ASK_REASON): $CANDIDATES; see /tmp/spectra-archive-candidates.txt; re-invoke with --linked-issue <N>)" 75
+        emit_outcome "(pending — 1 candidate needs confirmation ($ASK_REASON): $CANDIDATES; see candidates-$CHANGE_NAME.txt in the state directory; re-run the dry run with --linked-issue <N>)" 75
       fi
       LINKED_ISSUE="$CANDIDATES"
       ;;
     *)
       # Multi-candidate: write to file + exit 75 → agent prompts + re-invokes
       write_candidates
-      emit_outcome "(pending — $CANDIDATE_COUNT candidates detected${ASK_REASON:+ ($ASK_REASON)}: $(echo "$CANDIDATES" | tr '\n' ' '); see /tmp/spectra-archive-candidates.txt; re-invoke with --linked-issue <N>)" 75
+      emit_outcome "(pending — $CANDIDATE_COUNT candidates detected${ASK_REASON:+ ($ASK_REASON)}: $(echo "$CANDIDATES" | tr '\n' ' '); see candidates-$CHANGE_NAME.txt in the state directory; re-run the dry run with --linked-issue <N>)" 75
       ;;
   esac
 fi
@@ -596,8 +660,10 @@ SENTINEL="auto-posted by spectra-archive for ${ARCHIVE_BASENAME}"
 ANCHOR_SUFFIX="${FORCE_NOTE:-}"
 
 # Read-only, so the dry run runs it too: an archive already posted is not reviewed again.
+# Only comments by the repository's owner, members or collaborators count, so nobody else
+# can block the post by writing the sentinel (#405).
 ALREADY_POSTED=$(gh issue view "$LINKED_ISSUE" --repo "$GH_REPO" --json comments \
-  --jq '.comments[].body' 2>/dev/null \
+  --jq '.comments[] | select(.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR") | .body' 2>/dev/null \
   | grep -Fc -- "$SENTINEL" \
   | tr -d ' ')
 # grep -Fc returns "0" with exit 1 when no match; pipeline status doesn't propagate
@@ -729,9 +795,14 @@ if [ "$DRY_RUN" = "1" ]; then
       emit_outcome "(failed — could not write the review copy in $STATE_DIR; nothing kept)" 0
     }
   rm -f "$BODY_FILE"
-  PROPOSED_TITLE=$(gh issue view "$LINKED_ISSUE" --repo "$GH_REPO" --json title -q .title 2>/dev/null || true)
+  PROPOSED=$(gh issue view "$LINKED_ISSUE" --repo "$GH_REPO" --json state,title -q '"\(.state)\t\(.title)"' 2>/dev/null || true)
+  PROPOSED_STATE=$(clean_title "${PROPOSED%%$'\t'*}")
+  PROPOSED_TITLE=$(clean_title "${PROPOSED#*$'\t'}")
+  FROM=$(printf '%s\n' "${SOURCES:-}" | sed -n "s/^$LINKED_ISSUE //p" | head -1)
   echo "body for review: $REVIEW_BODY" >&2
-  echo "issue for review: $REVIEW_KEY — ${PROPOSED_TITLE:-(title could not be read)}; if it is this change's issue, post with --linked-issue $LINKED_ISSUE" >&2
+  echo "issue for review: $REVIEW_KEY (${PROPOSED_STATE:-state unknown}) — ${PROPOSED_TITLE:-(title could not be read)}" >&2
+  echo "  proposed from: ${FROM:-the text of the change}" >&2
+  echo "  check it against this change's proposal (Step 7b) before naming it in the post" >&2
   emit_outcome "https://github.com/${GH_REPO}/issues/${LINKED_ISSUE}#issuecomment-DRY-RUN" 0
 fi
 

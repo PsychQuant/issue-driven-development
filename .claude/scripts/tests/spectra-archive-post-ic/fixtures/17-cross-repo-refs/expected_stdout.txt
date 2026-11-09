@@ -1,1 +1,1 @@
-(pending — 1 candidate needs confirmation (no tracker and no commit names it, only the text of the change): 400; see /tmp/spectra-archive-candidates.txt; re-invoke with --linked-issue <N>)
+(pending — 1 candidate needs confirmation (only the text of the change names it): 400; see candidates-test-cross-repo.txt in the state directory; re-run the dry run with --linked-issue <N>)

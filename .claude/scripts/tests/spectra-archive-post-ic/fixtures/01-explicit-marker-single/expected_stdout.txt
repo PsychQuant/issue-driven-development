@@ -1,1 +1,1 @@
-(pending — 1 candidate needs confirmation (the GitHub-side tracker is not `**GitHub-side tracker**: #N` for an issue of this repository): 999; see /tmp/spectra-archive-candidates.txt; re-invoke with --linked-issue <N>)
+(pending — 1 candidate needs confirmation (the GitHub-side tracker is not `**GitHub-side tracker**: #N` for an issue of this repository; only the text of the change names it): 999; see candidates-test-explicit.txt in the state directory; re-run the dry run with --linked-issue <N>)

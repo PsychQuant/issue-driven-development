@@ -53,7 +53,7 @@ run keeps never land in `$HOME`.
 | 07 | unsafe-change-name | `--change-name 'evil$(echo)'` → allowlist guard blocks |
 | 08 | linked-issue-resolved | Re-invoke with `--linked-issue 46` validates against candidate set |
 | 09 | linked-issue-invalid | Re-invoke with `--linked-issue 99` not in `[44]` → failed message |
-| 10 | deterministic-outcome-path | No `--outcome-file` passed → script derives `/tmp/spectra-archive-ic-outcome-<change-name>.txt` from `--change-name` (post_assert: derived path `must_exist`). Tests the actual derivation formula, not a hand-copied literal. |
+| 10 | deterministic-outcome-path | No `--outcome-file` passed → script derives `$SPECTRA_POST_IC_STATE_DIR/outcome-<change-name>.txt` (`__STATE_DIR__` in post_assert.txt) from `--change-name` (post_assert: derived path `must_exist`). Tests the actual derivation formula, not a hand-copied literal. |
 | 11 | unsafe-outcome-file | `--outcome-file` containing `..` → exit 2 + `(failed — unsafe --outcome-file path)`, rejected before any archive read (post_assert: `/tmp/pwn-fixture-11.txt` must not exist). No `archive/` subdir — the script exits before reaching it. |
 | 12 | prose-issue-detect | Prose `referencing issue #N` is a candidate, offered (exit 75) |
 | 13 | linked-issue-empty-candidates | `--linked-issue` with no candidates points to `--force-linked-issue` |
@@ -91,6 +91,11 @@ repository or a post that runs. They build temporary repositories and put a stub
   keyword in a commit message, a squash body's groups, inline code before a `Closes`,
   every GitHub closing keyword, a list with another repository's item, issue URLs,
   numbers that are all pull requests, and too many numbers to check
+- the shapes verify round 5 found: an anchored tracker whose line names another
+  repository, other repositories' numbers in the bare-number last resort, a tracker that
+  is a pull request with nothing else, an unchecked `--linked-issue`, every reason shown,
+  the outcome kept in the state directory, the sentinel's trusted authors, emphasis and
+  markdown links around a reference, `~~~` fences, and where the proposed number came from
 - the egress gate: a post through the wrapper, a refusal, a missing wrapper, a failed
   post that keeps gh's message
 - candidate detection: the case that opened #405 (before and after the archive commit,
