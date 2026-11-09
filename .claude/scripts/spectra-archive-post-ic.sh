@@ -168,6 +168,12 @@ REVIEW_TARGET="$STATE_DIR/target-$CHANGE_NAME.txt"
 if [ "$DRY_RUN" = "0" ] && [ -z "$SCRUB_ATTESTED" ]; then
   emit_outcome "(failed — not posted: run this step with --dry-run, review $REVIEW_BODY per plugins/issue-driven-dev/rules/privacy-scrubbing.md, then re-run with --scrub-attested <level>; archive itself succeeded)" 0
 fi
+# Detection only proposes (#405): four verify rounds showed that no rule can tell, from
+# text and history, that a number is this change's issue. The dry run prints the issue it
+# chose and its title; whoever reviews the body checks that too, and names it here.
+if [ "$DRY_RUN" = "0" ] && [ -z "$LINKED_ISSUE_RESOLVED" ] && [ -z "$FORCE_LINKED_ISSUE" ]; then
+  emit_outcome "(failed — not posted: name the issue you confirmed in the review with --linked-issue <N> (or --force-linked-issue <N>); the dry run printed the one it chose and its title; archive itself succeeded)" 0
+fi
 
 # ── Resolve GH_REPO ──
 if [ -n "$GH_REPO_ARG" ]; then
@@ -181,6 +187,9 @@ fi
 
 if [ -z "$GH_REPO" ]; then
   emit_outcome "(failed — cannot resolve GitHub repo from the archive's repository: pass --gh-repo)" 0
+fi
+if ! [[ "$GH_REPO" =~ ^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+$ ]]; then
+  emit_outcome "(failed — GitHub repo '$GH_REPO' is not owner/repo)" 2
 fi
 
 # ── Archive basename (no date recomputation; derived from passed archive-dir) ──
@@ -227,23 +236,29 @@ fi
 # one candidate per line, then `?ask <reason>` when a person must choose even with a
 # single candidate.
 #
-# It posts without asking in exactly two cases, and offers candidates in every other:
-#   1. marker   `**GitHub-side tracker**: #N` in proposal.md or design.md names one issue
-#               of this repository.
+# Detection proposes; it never approves. A real post needs --linked-issue (or
+# --force-linked-issue) from whoever reviewed the dry run, which prints the issue it chose
+# and its title. Four verify rounds (#405) found, every round, some way of writing or some
+# history (a squash, a sweeping commit, a reused change name) that made a rule pick the
+# wrong issue; a reader checking the title catches what no rule here can.
+#
+# It proposes one issue without listing alternatives in exactly two cases:
+#   1. marker   `**GitHub-side tracker**: #N` (that form, the number right after the label)
+#               in proposal.md or design.md, outside code, names one issue of this
+#               repository, and neither the commits nor an explicit reference name another.
 #   2. commits  the commits that touched the change (the archive path and the path
 #               before the move: Step 7 runs before the archive is committed) name one
 #               issue, as the commit rule (rules/commit-issue-reference.md) writes it: a
-#               parenthesised group in the subject, `(#N)`, or a body line `Refs #N`;
-#               and no explicit reference in the change's text names another issue.
-# Three rounds of verify (#405) showed that ranking weaker evidence keeps posting to a
-# wrong issue for some new way of writing. So weaker evidence only becomes a candidate
-# a person picks from: explicit prose (`Refs|Closes|Fixes|Resolves #N`, with or without a
-# colon, lists included, and `referencing issue #N`, the form /spectra-propose writes)
-# outside code; weak prose (`issue #N`, `(#N)`, `（#N）`, and explicit forms inside code,
-# which quote something); and a bare `#N` in a subject when no commit has a group (the
-# spike's subject named the sandbox's `PR #4`). When none of these finds anything, any
-# `#N` outside code is offered. The cost: a change linked only by its text is asked
-# about, every time.
+#               parenthesised group in the subject, `(#N)`, a body line `Refs #N`, or a
+#               squash body's `* subject (#N)` line; and no explicit reference, in the
+#               change's text or in those commit messages, names another issue.
+# Everything else is offered (exit 75, with the reason): explicit prose (GitHub's closing
+# keywords and ref/refs, any case, with or without a colon, lists included, and
+# `referencing issue #N`, the form /spectra-propose writes) outside code; weak prose
+# (`issue #N`, `(#N)`, `（#N）`, this repository's issue URLs, and explicit forms inside
+# code, which quote something); a tracker line in any other form; and a bare `#N` in a
+# subject when no commit has a group (the spike's subject named the sandbox's `PR #4`).
+# When none of these finds anything, any `#N` outside code is offered.
 # References to other repositories are removed first; this repository's full form
 # `owner/repo#N` keeps its role. Every number is checked against the issues API: pull
 # requests (a squash adds the PR number as a group) and numbers that do not exist are
@@ -266,47 +281,78 @@ def read(path):
     except OSError:
         return ""
 
-# owner/repo, bounded so a long token cannot make the match expensive, and never
-# across a line break. Preceded by nothing that would make it part of a path.
-XREF = re.compile(r"(?<![A-Za-z0-9_./-])(?:(?:-R|--repo)[ \t]+)?`?"
-                  r"([A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100})`?"
-                  r"(?:[ \t]+([Ii]ssue)[ \t]+)?#(\d+)")
+REPO = r"[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}"
+# Another repository's reference, in every shape the change's text uses: `owner/repo#N`,
+# `owner/repo issue #N`, a backticked `owner/repo` before either, and `-R`/`--repo owner/repo
+# [issue] #N`. `owner/repo #N` with only a space is not one (`issue/PR #400` is prose). Bounded
+# so a long token cannot make the match expensive, never across a line break, and preceded by
+# nothing that would make it part of a path.
+XREF = re.compile(r"(?<![A-Za-z0-9_./-])(?:"
+                  r"(?:-R|--repo)[ \t]+`?(?P<r1>" + REPO + r")`?[ \t]+(?:(?P<i1>[Ii]ssue)[ \t]+)?"
+                  r"|`(?P<r2>" + REPO + r")`(?:[ \t]+(?P<i2>[Ii]ssue))?[ \t]*"
+                  r"|(?P<r3>" + REPO + r")(?:[ \t]+(?P<i3>[Ii]ssue)[ \t]+)?"
+                  r")#(?P<n>\d+)")
+URL = re.compile(r"https?://github\.com/(?P<r>" + REPO + r")/(?:issues|pull)/(?P<n>\d+)[^\s)\]>]*")
+# GitHub's closing keywords (close, closes, closed, fix, fixes, fixed, resolve, resolves,
+# resolved, in any case) and ref/refs, with or without a colon. The two branches keep the
+# match linear on a keyword followed by a long run of blanks.
+KW = r"(?i:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs?)(?:[ \t]*:[ \t]*|[ \t]*)"
 # This repository's full form keeps its role. In a commit, after `(`, a keyword or another
 # number of the same group it becomes `#N`, so `(owner/repo#52)` stays a group. In prose,
 # only after a keyword or `issue `, so `Closes owner/repo#10` stays explicit; anywhere else
 # it is a mention, `issue #N`, so it is never lost.
-KW = r"(?:[Rr]efs|[Cc]loses|[Ff]ixes|[Rr]esolves)[ \t]*:?[ \t]+"
 SHAPE_COMMIT = re.compile(r"(?:\(|" + KW + r"|#\d+[ \t,]+)$")
 SHAPE_PROSE = re.compile(r"(?:" + KW + r"|[Ii]ssue[ \t]+)$")
 def strip(text, prose=True):
     shape = SHAPE_PROSE if prose else SHAPE_COMMIT
-    def repl(m):
-        if m.group(1).lower() != gh_repo.lower():
+    def keep(repo, mention, n, start):
+        if repo.lower() != gh_repo.lower():
             return " "
-        if m.group(2) or not shape.search(text[max(0, m.start() - 16):m.start()]):
-            return f"issue #{m.group(3)}"
-        return f"#{m.group(3)}"
-    return XREF.sub(repl, text)
+        if mention or not shape.search(text[max(0, start - 16):start]):
+            return f"issue #{n}"
+        return f"#{n}"
+    text = URL.sub(lambda m: keep(m.group("r"), False, m.group("n"), m.start()), text)
+    return XREF.sub(lambda m: keep(m.group("r1") or m.group("r2") or m.group("r3"),
+                                   m.group("i1") or m.group("i2") or m.group("i3"),
+                                   m.group("n"), m.start()), text)
 
 def nums(pattern, text):
     return {int(n) for m in pattern.finditer(text) for n in re.findall(r"#(\d+)", m.group(0))}
 
-# One marker runs to the next marker or the end of its line.
+# One marker runs to the next marker or the end of its line. Only the anchored form is a
+# declaration: the label, then this repository's `#N` right away (`owner/repo#N` allowed for
+# this repository), then the end of the number. A sentence in that place is offered.
 MARKER = re.compile(r"\*\*GitHub-side tracker\*\*(?:(?!\*\*GitHub-side tracker\*\*)[^\n])*")
-FIRST_REF = re.compile(r"(?:([A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}))?#(\d+)")
-STRONG = re.compile(r"(?<![A-Za-z0-9_])(?:" + KW + r"#\d+(?:(?:[ \t]*,[ \t]*|[ \t]+and[ \t]+)(?:issue[ \t]+)?#\d+)*"
+ANCHORED = re.compile(r"\*\*GitHub-side tracker\*\*[ \t]*:?[ \t]*(?:\*\*)?(?:(?P<r>" + REPO + r"))?#(?P<n>\d+)"
+                      r"(?=[\s.,;:)）。，、*]|$)")
+STRONG = re.compile(r"(?<![A-Za-z0-9_])(?:" + KW + r"#\d+(?:(?:(?:[ \t]*,)+[ \t]*|[ \t]+and[ \t]+)(?:issue[ \t]+)?#\d+)*"
                     r"|[Rr]eferenc(?:e|es|ed|ing)[ \t]+issue[ \t]+#\d+)")
 WEAK = re.compile(r"(?<![A-Za-z0-9_])[Ii]ssue[ \t]+#\d+|[（(]#\d+[）)]")
 GROUP = re.compile(r"\((?:[Rr]efs[ \t]+)?#\d+(?:[ \t,]+#\d+)*\)")
 # A body line that starts with Refs: every #N on it, so "Refs #137 Refs #150" keeps both.
 BODY_REFS = re.compile(r"(?im)^[ \t]*refs\b[^\n]*")
+# A squash commit lists the PR's commits as `* subject (#N)` lines in its body.
+SQUASH_LINE = re.compile(r"(?m)^[ \t]*[*-][ \t]+[^\n]*")
 ANY = re.compile(r"#\d+")
+DIRECT = re.compile(r"(?<![A-Za-z0-9_./-])(" + REPO + r")#\d+")
+# A Refs/Closes/Fixes inside code (a fence or `inline`) quotes something, often another
+# repository's PR body; it counts only as weak prose. The spike quoted the sandbox's
+# `Refs #1` and `Refs #3` this way. Examples of the tracker marker in code are not markers.
+CODE = re.compile(r"(?ms)^[ \t]*```.*?^[ \t]*```|`[^`\n]*`")
+def blank_code(text, fill=" "):
+    """Code replaced by `fill`, keeping every offset, so a span found here is the same span
+    in the raw text."""
+    return CODE.sub(lambda m: fill * len(m.group(0)), text)
 
+LIMIT = 40
 kinds = {}
 def kind(n):
     """issue, pr, missing or unknown. Only gh's own (HTTP 404) means missing: a transport
     error prints the request URL, and that may contain 404 anywhere."""
     if n not in kinds:
+        if len(kinds) >= LIMIT:
+            print(f"more than {LIMIT} numbers to check; name the issue with --force-linked-issue", file=sys.stderr)
+            sys.exit(4)
         r = subprocess.run(["gh", "api", f"repos/{gh_repo}/issues/{n}", "--jq",
                             'if .pull_request then "pr" else "issue" end'], capture_output=True, text=True)
         if r.returncode == 0:
@@ -351,33 +397,37 @@ def emit(cands, ask=None, check=True):
         print("?ask " + reasons[0])
     sys.exit(0)
 
-# The tracker marker is the author's own declaration, so it goes first, but it is checked
-# like any other number. One that names another repository, a pull request or nothing is
-# not posted to, and whatever else is found is then offered to a person, not posted.
-markers, marker_problem = set(), None
-for m in MARKER.finditer(read(os.path.join(arch, "proposal.md")) + "\n" + read(os.path.join(arch, "design.md"))):
-    ref = FIRST_REF.search(m.group(0))
-    if ref and (not ref.group(1) or ref.group(1).lower() == gh_repo.lower()):
-        markers.add(int(ref.group(2)))
+# ── Evidence ──
+raw_md = read(os.path.join(arch, "proposal.md")) + "\n" + read(os.path.join(arch, "design.md"))
+markers, marker_offer, marker_problem = set(), set(), None
+# Code is filled with a letter, not blanks, so `**GitHub-side tracker**: `other/x`#9` cannot
+# turn into an anchored `#9`; the raw span is what is checked for other repositories.
+for m in MARKER.finditer(blank_code(raw_md, "x")):
+    a = ANCHORED.match(m.group(0))
+    if a and (not a.group("r") or a.group("r").lower() == gh_repo.lower()):
+        markers.add(int(a.group("n")))
     else:
-        marker_problem = "the GitHub-side tracker does not name an issue in this repository"
+        marker_problem = ("the GitHub-side tracker is not `**GitHub-side tracker**: #N` "
+                          "for an issue of this repository")
+        # Its numbers are offered, unless the line is about another repository: then they
+        # are that repository's (a sandbox's PR, say).
+        seg = raw_md[m.start():m.end()]
+        if not any((x.group("r1") or x.group("r2") or x.group("r3")).lower() != gh_repo.lower()
+                   for x in XREF.finditer(seg)) and not any(
+                   x.group("r").lower() != gh_repo.lower() for x in URL.finditer(seg)):
+            marker_offer |= nums(ANY, strip(seg))
 if markers:
     good, unsure = postable(markers)
-    if good:
-        emit(good, ask="could not check whether the tracker is an issue or a pull request" if unsure else None,
-             check=False)
-    marker_problem = "the GitHub-side tracker is a pull request or does not exist"
-# Only when no tracker could be used: then the other sources are asked about.
-if marker_problem:
-    reasons.append(marker_problem)
+    if markers - good:
+        marker_problem = "the GitHub-side tracker is a pull request or does not exist"
+    if unsure and not marker_problem:
+        marker_problem = "could not check whether the tracker is an issue or a pull request"
+    markers = good
 
-prose_text = strip("\n".join(read(os.path.join(arch, f)) for f in sorted(os.listdir(arch))
-                             if f.endswith(".md") and os.path.isfile(os.path.join(arch, f))))
-# A Refs/Closes/Fixes inside code (a fence or `inline`) quotes something, often another
-# repository's PR body; it counts only as weak prose. The spike quoted the sandbox's
-# `Refs #1` and `Refs #3` this way.
-CODE = re.compile(r"(?ms)^[ \t]*```.*?^[ \t]*```|`[^`\n]*`")
-outside_code = CODE.sub(lambda m: " " * len(m.group(0)), prose_text)
+raw_text = "\n".join(read(os.path.join(arch, f)) for f in sorted(os.listdir(arch))
+                     if f.endswith(".md") and os.path.isfile(os.path.join(arch, f)))
+prose_text = strip(raw_text)
+outside_code = blank_code(prose_text)
 strong = nums(STRONG, outside_code)
 weak = nums(WEAK, prose_text) | nums(STRONG, prose_text)
 
@@ -389,30 +439,62 @@ if root and paths:
     for rec in out.stdout.decode("utf-8", "surrogateescape").split("\x1e")[1:]:
         subject, _, body = rec.partition("\x1f")
         records.append((strip(subject, prose=False), strip(body, prose=False)))
-    commits = {n for s, b in records for n in nums(GROUP, s) | nums(BODY_REFS, b)}
+    commits = {n for s, b in records
+               for n in nums(GROUP, s) | nums(BODY_REFS, b)
+               | {k for line in SQUASH_LINE.findall(b) for k in nums(GROUP, line)}}
+    # An explicit keyword in a commit message is an anchor too: `Closes #400` in the body of
+    # a commit whose group is (#20) names a second issue.
+    strong |= {n for s, b in records for n in nums(STRONG, s) | nums(STRONG, b)}
     if not commits:
         fallback = {n for s, _ in records for n in nums(ANY, s)}
 
 commits, _ = postable(commits)
 strong, _ = postable(strong)
 
-# Case 2: the commits name one issue and nothing explicit names another.
+# ── Decision: two proposals without a question, everything else offered ──
+# Case 1: the tracker, when nothing explicit and no commit names another issue.
+if markers and not marker_problem:
+    others = (strong | commits) - markers
+    if not others:
+        emit(markers, check=False)
+    emit(markers | others, ask="the tracker and the commits or an explicit reference name different issues",
+         check=False)
+if marker_problem:
+    reasons.append(marker_problem)
+extra = markers | marker_offer
+
+# Case 2: the commits name one issue, nothing explicit names another, and no tracker
+# disagrees (a tracker problem is already a reason to ask).
 if len(commits) == 1 and not (strong - commits):
-    emit(commits)
+    emit(commits | extra)
 if commits:
     reason = ("an explicit reference names an issue that no commit names" if strong - commits
               else "the commits name more than one issue")
-    emit(commits | strong, ask=reason)
+    emit(commits | strong | extra, ask=reason)
 reason = ("only a bare number in a commit subject names it" if fallback
           else "no tracker and no commit names it, only the text of the change")
-offer = strong | weak | fallback
-# Nothing recognised at all: any `#N` in the text is offered rather than reporting no
-# linked issue, because a missed issue loses its Implementation Complete without a word.
+offer, _ = postable(strong | weak | fallback | extra)
+# Nothing recognised at all: any `#N` outside code that is not another repository's
+# direct reference is offered rather than reporting no linked issue, because a missed
+# issue loses its Implementation Complete without a word.
 if not offer:
-    offer = nums(ANY, outside_code)
+    bare = DIRECT.sub(lambda m: m.group(0) if m.group(1).lower() == gh_repo.lower() else " ",
+                      URL.sub(" ", blank_code(raw_text)))
+    offer = nums(ANY, bare)
     reason = "only a bare number in the text of the change names it"
 emit(offer, ask=reason)
 PYEOF
+}
+
+# Writes the candidate list without following a name another account planted in /tmp:
+# a new file is renamed over it, and anything but a regular file there is a failure.
+write_candidates() {
+  local tmp f=/tmp/spectra-archive-candidates.txt
+  tmp=$(mktemp /tmp/spectra-archive-candidates.XXXXXX) && printf '%s\n' "$CANDIDATES" > "$tmp" \
+    && mv -f "$tmp" "$f" && [ -f "$f" ] && [ ! -L "$f" ] || {
+      rm -f "${tmp:-}"
+      emit_outcome "(failed — could not write $f; candidates: $(printf '%s ' $CANDIDATES); re-invoke with --linked-issue <N>)" 0
+    }
 }
 
 # Runs detection and splits its answer: CANDIDATES (one per line) and ASK (1 when a
@@ -448,12 +530,17 @@ if [ -n "$FORCE_LINKED_ISSUE" ]; then
   # Existence checkpoint (#172 direction 2): catches nonexistent numbers; a
   # wrong-but-existing number is inherent to an explicit override — mitigated
   # by the loud confirmation + the annotated anchor below.
-  if [ "$DRY_RUN" = "0" ]; then
-    FORCED_TITLE=$(gh issue view "$FORCE_LINKED_ISSUE" --repo "$GH_REPO" --json title -q .title 2>/dev/null) ||       emit_outcome "(failed — --force-linked-issue $FORCE_LINKED_ISSUE: issue not found in $GH_REPO)" 0
-    echo "→ FORCE-LINKED to #${FORCE_LINKED_ISSUE}: ${FORCED_TITLE} (authoritative override — detection & membership bypassed)" >&2
-  else
-    echo "[DRY-RUN] existence check skipped for --force-linked-issue $FORCE_LINKED_ISSUE" >&2
-  fi
+  # Read-only, so the dry run checks it too: `gh issue view` also succeeds for a pull
+  # request, so the issues API says which it is (#405).
+  FORCED_KIND=$(gh api "repos/$GH_REPO/issues/$FORCE_LINKED_ISSUE" \
+    --jq 'if .pull_request then "pr" else "issue" end' 2>/dev/null) || FORCED_KIND=""
+  case "$FORCED_KIND" in
+    issue) ;;
+    pr) emit_outcome "(failed — --force-linked-issue $FORCE_LINKED_ISSUE is a pull request in $GH_REPO, not an issue)" 0 ;;
+    *)  emit_outcome "(failed — --force-linked-issue $FORCE_LINKED_ISSUE: issue not found in $GH_REPO, or it could not be read)" 0 ;;
+  esac
+  FORCED_TITLE=$(gh issue view "$FORCE_LINKED_ISSUE" --repo "$GH_REPO" --json title -q .title 2>/dev/null || true)
+  echo "→ FORCE-LINKED to #${FORCE_LINKED_ISSUE}: ${FORCED_TITLE} (authoritative override — detection & membership bypassed)" >&2
   LINKED_ISSUE="$FORCE_LINKED_ISSUE"
   FORCE_NOTE=" via --force-linked-issue"
 elif [ -n "$LINKED_ISSUE_RESOLVED" ]; then
@@ -491,14 +578,14 @@ else
       # One candidate is used without asking, unless detection flagged it (#405): its
       # issue/PR check could not run, or the tracker marker could not be used.
       if [ "$ASK" = 1 ]; then
-        echo "$CANDIDATES" > /tmp/spectra-archive-candidates.txt
+        write_candidates
         emit_outcome "(pending — 1 candidate needs confirmation ($ASK_REASON): $CANDIDATES; see /tmp/spectra-archive-candidates.txt; re-invoke with --linked-issue <N>)" 75
       fi
       LINKED_ISSUE="$CANDIDATES"
       ;;
     *)
       # Multi-candidate: write to file + exit 75 → agent prompts + re-invokes
-      echo "$CANDIDATES" > /tmp/spectra-archive-candidates.txt
+      write_candidates
       emit_outcome "(pending — $CANDIDATE_COUNT candidates detected${ASK_REASON:+ ($ASK_REASON)}: $(echo "$CANDIDATES" | tr '\n' ' '); see /tmp/spectra-archive-candidates.txt; re-invoke with --linked-issue <N>)" 75
       ;;
   esac
@@ -508,17 +595,14 @@ fi
 SENTINEL="auto-posted by spectra-archive for ${ARCHIVE_BASENAME}"
 ANCHOR_SUFFIX="${FORCE_NOTE:-}"
 
-if [ "$DRY_RUN" = "0" ]; then
-  ALREADY_POSTED=$(gh issue view "$LINKED_ISSUE" --repo "$GH_REPO" --json comments \
-    --jq '.comments[].body' 2>/dev/null \
-    | grep -Fc -- "$SENTINEL" \
-    | tr -d ' ')
-  # grep -Fc returns "0" with exit 1 when no match; pipeline status doesn't propagate
-  # so the value is clean. wc -l is more portable but grep -Fc handles fine here.
-  ALREADY_POSTED="${ALREADY_POSTED:-0}"
-else
-  ALREADY_POSTED=0
-fi
+# Read-only, so the dry run runs it too: an archive already posted is not reviewed again.
+ALREADY_POSTED=$(gh issue view "$LINKED_ISSUE" --repo "$GH_REPO" --json comments \
+  --jq '.comments[].body' 2>/dev/null \
+  | grep -Fc -- "$SENTINEL" \
+  | tr -d ' ')
+# grep -Fc returns "0" with exit 1 when no match; pipeline status doesn't propagate
+# so the value is clean. wc -l is more portable but grep -Fc handles fine here.
+ALREADY_POSTED="${ALREADY_POSTED:-0}"
 
 if [ "$ALREADY_POSTED" -gt 0 ] 2>/dev/null; then
   emit_outcome "(skipped — already auto-posted for $ARCHIVE_BASENAME to #${LINKED_ISSUE})" 0
@@ -538,12 +622,13 @@ if [ -z "${CHECKLIST_BODY:-}" ]; then
   CHECKLIST_BODY="- [x] (no completed tasks found in archived tasks.md)"
 fi
 
-# Portable mktemp (macOS BSD doesn't accept extension after XXXXXX template)
-TMP_BODY=$(mktemp /tmp/spectra-archive-ic.XXXXXX) || {
+# A private directory (mktemp -d is 700) for the body that is compared and posted, so no
+# other account can plant or swap a name between the comparison and the post (#405).
+WORK_DIR=$(mktemp -d /tmp/spectra-archive-ic.XXXXXX) || {
   emit_outcome "(failed — mktemp errored)" 0
 }
-BODY_FILE="${TMP_BODY}.md"
-mv "$TMP_BODY" "$BODY_FILE" 2>/dev/null || BODY_FILE="$TMP_BODY"
+trap 'rm -rf "$WORK_DIR"' EXIT
+BODY_FILE="$WORK_DIR/body.md"
 
 # The archive's own date (its directory name), so the body a dry run kept still matches
 # when the post comes after midnight UTC; the current UTC date only without one.
@@ -575,7 +660,7 @@ template = """## Implementation Complete (auto-posted by spectra-archive for {ba
 
 **Spectra change**: `{archive_dir}/`
 **Spec deltas applied**: {spec_deltas}
-**Auto-posted**: {archive_date}
+**Archived**: {archive_date}
 
 ### Checklist
 
@@ -619,7 +704,13 @@ if [ "$BODY_SIZE" -gt 60000 ]; then
 fi
 
 # ── Step D: Post comment ──
-REVIEW_KEY="$(printf '%s' "$GH_REPO" | tr '[:upper:]' '[:lower:]')#$LINKED_ISSUE"
+# The repository as GitHub names it, host included: a dry run for one host or one name
+# does not authorise a post to another (#405).
+REPO_URL=$(gh repo view "$GH_REPO" --json url -q .url 2>/dev/null) || REPO_URL=""
+if [ -z "$REPO_URL" ]; then
+  emit_outcome "(failed — could not read $GH_REPO's URL (gh auth or network?); nothing kept or posted, archive itself succeeded)" 0
+fi
+REVIEW_KEY="$(printf '%s' "$REPO_URL" | tr '[:upper:]' '[:lower:]')#$LINKED_ISSUE"
 if [ "$DRY_RUN" = "1" ]; then
   # Keep the body and the issue for review (#405). A new file in a 700 directory is
   # renamed over the old name, so a symlink planted at that name is replaced, never
@@ -638,7 +729,9 @@ if [ "$DRY_RUN" = "1" ]; then
       emit_outcome "(failed — could not write the review copy in $STATE_DIR; nothing kept)" 0
     }
   rm -f "$BODY_FILE"
-  echo "body for review: $REVIEW_BODY ($REVIEW_KEY)" >&2
+  PROPOSED_TITLE=$(gh issue view "$LINKED_ISSUE" --repo "$GH_REPO" --json title -q .title 2>/dev/null || true)
+  echo "body for review: $REVIEW_BODY" >&2
+  echo "issue for review: $REVIEW_KEY — ${PROPOSED_TITLE:-(title could not be read)}; if it is this change's issue, post with --linked-issue $LINKED_ISSUE" >&2
   emit_outcome "https://github.com/${GH_REPO}/issues/${LINKED_ISSUE}#issuecomment-DRY-RUN" 0
 fi
 
@@ -683,7 +776,7 @@ if [ "$SCRUB_LEVEL" = "enforce" ] || [ "$REPO_LEVEL" = "enforce" ]; then
   emit_outcome "(failed — not posted at level enforce (your permission on $GH_REPO: ${PERM%%/*}); post $REVIEW_BODY by hand after review; archive itself succeeded)" 0
 fi
 
-EGRESS_ERR=$(mktemp /tmp/spectra-archive-ic-err.XXXXXX) || {
+EGRESS_ERR=$(mktemp "$WORK_DIR/err.XXXXXX") || {
   rm -f "$BODY_FILE"
   emit_outcome "(failed — mktemp errored)" 0
 }

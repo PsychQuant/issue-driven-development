@@ -45,6 +45,8 @@ trap 'rm -rf "$SCN"; rm -f /tmp/spectra-archive-candidates.txt /tmp/spectra-arch
 # GH_STUB_PRS and GH_STUB_MISSING: space-separated numbers the issues API reports as a
 # pull request or as not found. GH_STUB_API_FAIL=1 makes every issues API call fail
 # the way a transport error does, with the request URL in the message.
+# GH_STUB_HOST sets the host in the repository URL; GH_STUB_TITLE and GH_STUB_COMMENTS
+# answer `issue view` for the title and for existing comments.
 # GH_STUB_POST_FAIL=1 makes the comment fail with a message. GH_STUB_REPO_HIDDEN=1
 # answers 404 for the repository itself, as GitHub does for one the token cannot see.
 mkdir -p "$SCN/bin"
@@ -56,6 +58,8 @@ case "$1 $2" in
     case " $* " in
       *" nameWithOwner "*)
         git remote get-url origin 2>/dev/null | sed -E 's#\.git$##; s#.*[:/]([^/]+/[^/]+)$#\1#' ;;
+      *" url "*)
+        printf 'https://%s/%s\n' "${GH_STUB_HOST:-github.com}" "$3" ;;
       *)
         [ "${GH_STUB_REPO:-ADMIN/false}" = fail ] && exit 1
         printf '%s\n' "${GH_STUB_REPO:-ADMIN/false}" ;;
@@ -68,6 +72,11 @@ case "$1 $2" in
   "api "repos/*)
     [ "${GH_STUB_REPO_HIDDEN:-0}" = 1 ] && { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
     printf '%s\n' "${2#repos/}" ;;
+  "issue view")
+    case " $* " in
+      *" title "*) printf '%s\n' "${GH_STUB_TITLE:-stub title}" ;;
+      *" comments "*) printf '%s\n' "${GH_STUB_COMMENTS:-}" ;;
+    esac ;;
   "issue comment")
     [ "${GH_STUB_POST_FAIL:-0}" = 1 ] && { echo "GraphQL: Could not resolve to an issue" >&2; exit 1; }
     n=$3
@@ -229,7 +238,13 @@ review_then_post() {   # review_then_post <cwd> <args...> --scrub-attested L: th
     dry+=("$a")
   done
   run_post "$dir" "${dry[@]}" --dry-run
-  run_post "$dir" "$@"
+  local named=()
+  case " $* " in
+    *" --linked-issue "*|*" --force-linked-issue "*) ;;
+    *) case "$OUT" in */issues/*'#issuecomment-DRY-RUN')
+         named=(--linked-issue "$(printf '%s' "$OUT" | sed -E 's#.*/issues/([0-9]+)\#.*#\1#')") ;; esac ;;
+  esac
+  run_post "$dir" "$@" "${named[@]}"
 }
 outcome_starts() { case "$OUT" in "$1"*) true ;; *) false ;; esac; }
 posted() { grep -q '^issue comment' "$SCN/gh.log"; }
@@ -461,7 +476,7 @@ R12="$SCN/r12"
 new_repo "$R12"
 mkdir -p "$R12/openspec/changes/archive/2026-01-14-bytes"
 printf '**GitHub-side tracker**: #400\ncaf\351 notes\n' > "$R12/openspec/changes/archive/2026-01-14-bytes/proposal.md"
-commit_all "$R12" 'chore: wip (#7)'
+commit_all "$R12" 'chore: wip'
 LC_ALL=en_US.UTF-8 run_post "$R12" --change-name bytes --archive-dir openspec/changes/archive/2026-01-14-bytes --gh-repo test/repo --dry-run
 scenario non-utf8-keeps-marker "$(outcome_is 400; echo $?)"
 
@@ -474,21 +489,21 @@ scenario cwd-modules-not-imported "$([ ! -e "$SCN/planted/ran" ] && outcome_is 7
 
 # 24. Without a dry run there is nothing reviewed, so nothing is posted.
 rm -f "$(dry_body demo)"
-run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --scrub-attested warn
+run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --scrub-attested warn --linked-issue 7
 scenario no-dry-run-not-posted "$(! posted && outcome_starts '(failed — not posted: the body, the repository or the issue'; echo $?)"
 
 # 25. A body that changed after the review is not posted.
 run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --dry-run
 printf -- '- [x] 1.2 added after the review\n' >> "$R1/$A1/tasks.md"
-run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --scrub-attested warn
+run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --scrub-attested warn --linked-issue 7
 scenario changed-body-not-posted "$(! posted && outcome_starts '(failed — not posted: the body, the repository or the issue'; echo $?)"
 git -C "$R1" checkout -q -- "$A1/tasks.md"
 
 # 26. An issue that detection resolves differently after the review is not posted.
 run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --dry-run
 printf '**GitHub-side tracker**: #8\n' > "$R1/$A1/proposal.md"
-run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --scrub-attested warn
-scenario changed-target-not-posted "$(! posted && outcome_starts '(failed — not posted: the body, the repository or the issue (test/repo#8)'; echo $?)"
+run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --scrub-attested warn --linked-issue 8
+scenario changed-target-not-posted "$(! posted && outcome_starts '(failed — not posted: the body, the repository or the issue (https://github.com/test/repo#8)'; echo $?)"
 git -C "$R1" checkout -q -- "$A1/proposal.md"
 
 # 27. The review copy is private, and a symlink planted at its name is not followed.
@@ -587,8 +602,8 @@ scenario help-shows-review-options "$(bash "$TARGET_SCRIPT" --help | grep -q 'sc
 # 37. The review is bound to the repository too: the same body for the same number in
 #     another repository was not reviewed for that repository.
 run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --dry-run
-run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/other --scrub-attested warn
-scenario other-repo-not-posted "$(! posted && outcome_starts '(failed — not posted: the body, the repository or the issue (test/other#'; echo $?)"
+run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/other --scrub-attested warn --linked-issue 7
+scenario other-repo-not-posted "$(! posted && outcome_starts '(failed — not posted: the body, the repository or the issue (https://github.com/test/other#'; echo $?)"
 
 # 38. A review below the repository's own level is refused, not raised.
 review_then_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --scrub-attested light
@@ -684,6 +699,96 @@ mkdir -p "$A35"
 printf '在 sandbox 開 seed issue #1。本張的錨點（#400）。\n' > "$A35/proposal.md"
 run_post "$SCN" --change-name spike-text --archive-dir "$A35" --gh-repo test/repo --dry-run
 scenario full-width-anchor-offered "$([ "$RC" = 75 ] && grep -qx 400 /tmp/spectra-archive-candidates.txt; echo $?)"
+
+# ── Round 4 (#405): the reader approves, and the shapes round 4 found ──
+probe() {   # probe <name> <proposal text> [commit subject] [commit body]: dry run, sets OUT/RC
+  local r="$SCN/p-$1" a=openspec/changes/archive/2026-03-01-probe
+  rm -rf "$r"; new_repo "$r"; mkdir -p "$r/$a"
+  printf '%s\n' "$2" > "$r/$a/proposal.md"
+  if [ -n "${3:-}" ]; then commit_all "$r" "$3" "${4:-}"; fi
+  run_post "$r" --change-name probe --archive-dir "$a" --gh-repo test/repo --dry-run
+}
+cands() { tr '\n' ' ' < /tmp/spectra-archive-candidates.txt; }
+
+# 51. A real post names the issue the review confirmed.
+run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --dry-run --gh-repo test/repo
+run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --scrub-attested warn
+scenario real-post-needs-linked-issue "$(! posted && outcome_starts '(failed — not posted: name the issue you confirmed'; echo $?)"
+
+# 52. The dry run shows the proposed issue and its title for the review.
+ERR=$(cd "$R1" && PATH="$SCN/bin:$PATH" GH_STUB_TITLE='Demo title' bash "$TARGET_SCRIPT" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --dry-run 2>&1 >/dev/null)
+scenario dry-run-shows-title "$(case "$ERR" in *'issue for review: https://github.com/test/repo#7 — Demo title'*) true ;; *) false ;; esac; echo $?)"
+
+# 53. An archive already posted is reported by the dry run too.
+GH_STUB_COMMENTS='auto-posted by spectra-archive for 2026-01-02-demo' run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --dry-run
+scenario dry-run-sees-already-posted "$(outcome_starts '(skipped — already auto-posted'; echo $?)"
+
+# 54. --force-linked-issue refuses a pull request, in the dry run too.
+GH_STUB_PRS=12 run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --force-linked-issue 12 --dry-run
+scenario force-refuses-pr "$(outcome_starts '(failed — --force-linked-issue 12 is a pull request'; echo $?)"
+
+# 55. The review is bound to the host as well.
+GH_STUB_HOST=ghe.example.com run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --dry-run
+run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --scrub-attested warn --linked-issue 7
+scenario other-host-not-posted "$(! posted && outcome_starts '(failed — not posted: the body, the repository or the issue'; echo $?)"
+
+# 56. --gh-repo must be owner/repo.
+run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo 'not a repo' --dry-run
+scenario gh-repo-shape "$([ "$RC" = 2 ]; echo $?)"
+
+# 57. Another repository's tracker in any shape is not posted to (round 4 HIGH).
+for t in '**GitHub-side tracker**: other/sandbox issue #9' '**GitHub-side tracker**: `other/sandbox`#9' '**GitHub-side tracker**: --repo other/sandbox #9'; do
+  probe xtracker "$t"
+  scenario "cross-repo-tracker-shape:$t" "$([ "$RC" = 75 ]; echo $?)"
+done
+
+# 58. A tracker example in code is not a tracker.
+probe codemarker "$(printf '```markdown\n**GitHub-side tracker**: #12\n```\n\nRefs #400')"
+scenario tracker-in-code-ignored "$([ "$RC" = 75 ] && [ "$(cands)" = '400 ' ]; echo $?)"
+
+# 59. A tracker that the commits or an explicit reference contradict is asked about.
+probe markerconflict '**GitHub-side tracker**: #44' 'feat: thing (#46)'
+scenario tracker-vs-commits-asks "$([ "$RC" = 75 ] && [ "$(cands)" = '44 46 ' ]; echo $?)"
+
+# 60. A free-text tracker line is offered, not posted.
+probe freemarker '**GitHub-side tracker**: not filed yet; split out of #12'
+scenario free-text-tracker-asks "$([ "$RC" = 75 ] && [ "$(cands)" = '12 ' ]; echo $?)"
+
+# 61. An explicit keyword in a commit message conflicts with the commit's own group.
+probe commitkw 'Some prose.' 'docs: tidy (#20)' 'Closes #400'
+scenario commit-message-keyword-asks "$([ "$RC" = 75 ] && [ "$(cands)" = '20 400 ' ]; echo $?)"
+
+# 62. A squash body lists the PR's commits; their groups count too.
+probe squash 'tracked as issue #46' 'feat: chain root (#44) (#470)' '* feat: spawned sister fix (#46)'
+GH_STUB_PRS=470 run_post "$SCN/p-squash" --change-name probe --archive-dir openspec/changes/archive/2026-03-01-probe --gh-repo test/repo --dry-run
+scenario squash-body-groups-ask "$([ "$RC" = 75 ] && [ "$(cands)" = '44 46 ' ]; echo $?)"
+
+# 63. Inline code around another repository's reference does not hide a later Closes.
+probe backtick 'Note `other/x#5` was the sandbox. Closes #10. See `foo`.' 'docs: tidy (#20)'
+scenario backticked-xref-keeps-closes "$([ "$RC" = 75 ] && [ "$(cands)" = '10 20 ' ]; echo $?)"
+
+# 64. Every GitHub closing keyword, in any case and with a colon, conflicts.
+for t in 'Fixed #400' 'Close #400' 'Closed #400' 'Resolved #400' 'Resolve #400' 'Fix #400' 'Ref #400' 'REFS #400' 'CLOSES #400' 'Fixes:#400'; do
+  probe kw "$t" 'docs: tidy (#20)'
+  scenario "keyword-conflicts:$t" "$([ "$RC" = 75 ] && [ "$(cands)" = '20 400 ' ]; echo $?)"
+done
+
+# 65. A list broken by another repository's item still counts this repository's items.
+probe list 'Refs #12, other/x#5, #13' 'docs: tidy (#12)'
+scenario list-with-xref-item "$([ "$RC" = 75 ] && [ "$(cands)" = '12 13 ' ]; echo $?)"
+
+# 66. This repository's issue URL is a reference.
+probe url 'Implements https://github.com/test/repo/issues/400 and https://github.com/other/x/issues/5'
+scenario issue-url-offered "$([ "$RC" = 75 ] && [ "$(cands)" = '400 ' ]; echo $?)"
+
+# 67. When the recognised numbers are all pull requests, bare numbers are still offered.
+probe onlypr 'Refs #208, then see #300 later'
+GH_STUB_PRS=208 run_post "$SCN/p-onlypr" --change-name probe --archive-dir openspec/changes/archive/2026-03-01-probe --gh-repo test/repo --dry-run
+scenario only-pr-falls-back "$([ "$RC" = 75 ] && [ "$(cands)" = '300 ' ]; echo $?)"
+
+# 68. Too many numbers to check fails instead of making dozens of API calls.
+probe many "$(for i in $(seq 1 45); do printf 'issue #%s ' "$i"; done)"
+scenario too-many-numbers-fails "$(outcome_starts '(failed — candidate detection errored'; echo $?)"
 
 echo ""
 echo "─── Summary ───"

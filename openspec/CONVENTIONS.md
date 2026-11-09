@@ -19,11 +19,13 @@ Place the marker near the top of `proposal.md`, after the title / summary block.
 
 ### Why
 
-Tooling that maps a Spectra change ↔ its GitHub issue — e.g. `idd-close`'s
-auto-post-Implementation-Complete detection (#56) — otherwise has to walk a
-3-fallback chain: explicit marker → `Refs`/`Closes`/`Fixes` scan → commit grep.
-A single canonical marker collapses the mapping to a one-line lookup and removes
-the ambiguity of the fallback chain.
+Tooling that maps a Spectra change ↔ its GitHub issue — e.g. `/spectra-archive`
+Step 7, which posts Implementation Complete (#56) — proposes the issue from this marker
+first. Write it exactly as above, the number right after the label: a sentence in that
+place, or a tracker in another repository, is offered for a person to choose instead
+(#405). Without the marker, the commits' `(#N)` groups and the change's text are read,
+and anything they do not settle is offered too. The person reviewing Step 7 confirms the
+issue either way.
 
 As of this convention's adoption, only 1 of 6 archived proposals carried the
 marker — the other 5 forced the fallback chain on every tooling run.
@@ -32,9 +34,9 @@ marker — the other 5 forced the fallback chain on every tooling run.
 
 - **Going-forward**: the marker is mandatory for every new proposal.
 - **Retroactive backfill** of the unmarked archived proposals
-  (`openspec/changes/archive/*/proposal.md`) is **optional** — `idd-close`'s
-  fallback chain already handles their absence. Backfill is a separate
-  mechanical pass if a maintainer wants archive consistency.
+  (`openspec/changes/archive/*/proposal.md`) is **optional** — Step 7 offers
+  candidates when the marker is absent. Backfill is a separate mechanical pass if a
+  maintainer wants archive consistency.
 
 ---
 

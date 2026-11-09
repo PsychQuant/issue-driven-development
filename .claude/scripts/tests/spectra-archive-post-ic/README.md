@@ -44,7 +44,7 @@ run keeps never land in `$HOME`.
 
 | # | Name | Tests |
 |---|------|-------|
-| 01 | explicit-marker-single | Single `**GitHub-side tracker**: #N` marker |
+| 01 | explicit-marker-single | A tracker line written as a sentence is offered (exit 75), not proposed |
 | 02 | refs-fallback | Without a marker or commits, prose `Refs #N` is offered (exit 75), not posted |
 | 03 | no-marker | No candidates → exit 0 + "(none — no linked issue detected)" |
 | 04 | multi-candidate | 2 explicit markers → exit 75 + candidates file |
@@ -61,14 +61,16 @@ run keeps never land in `$HOME`.
 | 15 | force-linked-issue | `--force-linked-issue` bypasses detection |
 | 16 | force-and-linked-mutex | Both flags → failed message |
 | 17 | cross-repo-refs | `other/sandbox#3`, `other/sandbox issue #4` and `-R` forms are not candidates; `Refs #400` is the only one offered |
-| 18 | same-repo-full-ref | `Test/Repo#400` counts as this repository, in any case; `other/sandbox#9` does not |
+| 18 | same-repo-full-ref | `Test/Repo#400` counts as this repository, in any case; the `other/sandbox#9` tracker makes it a question |
 
 
 ## Scenario tests
 
-The script posts without asking only for a tracker marker of this repository, or for
-commits that name one issue with no explicit reference naming another (#405); every
-other case is offered with exit 75. The fixtures and scenarios below check both sides.
+Detection proposes one issue only for a tracker marker of this repository (in the
+anchored form, uncontradicted), or for commits that name one issue with no explicit
+reference naming another (#405); every other case is offered with exit 75. A real post
+also needs `--linked-issue`, the issue the review confirmed: the scenario helper passes
+the one the dry run proposed. The fixtures and scenarios below check both sides.
 
 `test.sh` ends with checks a fixture cannot express, because they need a real git
 repository or a post that runs. They build temporary repositories and put a stub
@@ -81,6 +83,14 @@ repository or a post that runs. They build temporary repositories and put a stub
 - the review copy: no dry run, a body, a repository or an issue that changed after the
   review, a planted symlink (to a file or a directory), its permissions, its removal
   after a post, the archive's own date in the body
+- the reader's approval: a real post without `--linked-issue`, the proposed issue and
+  its title in the dry run, an archive already posted, `--force-linked-issue` on a pull
+  request, a dry run for another host, a `--gh-repo` that is not owner/repo
+- the shapes verify round 4 found: another repository's tracker in every shape, a
+  tracker in code, a tracker the commits contradict, a tracker sentence, an explicit
+  keyword in a commit message, a squash body's groups, inline code before a `Closes`,
+  every GitHub closing keyword, a list with another repository's item, issue URLs,
+  numbers that are all pull requests, and too many numbers to check
 - the egress gate: a post through the wrapper, a refusal, a missing wrapper, a failed
   post that keeps gh's message
 - candidate detection: the case that opened #405 (before and after the archive commit,

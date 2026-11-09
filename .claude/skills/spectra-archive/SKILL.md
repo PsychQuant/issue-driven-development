@@ -27,8 +27,8 @@ TaskCreate(name="assess_delta_sync", description="Step 4: compare delta specs vs
 TaskCreate(name="cleanup_tracking", description="Step 5: rm -f .spectra/touched/<name>.json")
 TaskCreate(name="run_archive_cli", description="Step 6: spectra archive <name>")
 TaskCreate(name="dry_run_implementation_complete", description="Step 7a: spectra-archive-post-ic.sh --dry-run — resolve the issue and keep the body for review (#405)")
-TaskCreate(name="privacy_scrub_gate", description="Step 7b: privacy self-review of the kept body per rules/privacy-scrubbing.md; record the level resolved and what the review found (#405)")
-TaskCreate(name="post_implementation_complete", description="Step 7c: post ## Implementation Complete with --scrub-attested <level> (#56, #405)")
+TaskCreate(name="privacy_scrub_gate", description="Step 7b: privacy self-review of the kept body per rules/privacy-scrubbing.md, and check that the proposed issue is this change's; record the level, the issue confirmed and what the review found (#405)")
+TaskCreate(name="post_implementation_complete", description="Step 7c: post ## Implementation Complete with --scrub-attested <level> --linked-issue <N> (#56, #405)")
 TaskCreate(name="display_summary", description="Step 8: read Step 7 outcome + show archive completion summary")
 ```
 
@@ -130,7 +130,9 @@ Complete each step → `TaskUpdate → completed` immediately.
    # path .claude/scripts/... breaks; absolute path via git-root prefix doesn't.
    REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 
-   ARCHIVE_DIR="${REPO_ROOT}/openspec/changes/archive/$(date +%Y-%m-%d)-${CHANGE_NAME}"
+   # The directory `spectra archive` just created, found once: recomputing it from today's
+   # date in 7c would miss it after midnight (#405).
+   ARCHIVE_DIR=$(ls -d "${REPO_ROOT}"/openspec/changes/archive/*-"${CHANGE_NAME}" 2>/dev/null | sort | tail -1)
    SPEC_DELTAS="${SPEC_DELTAS:-(see archived change directory)}"
 
    # The helper script DERIVES the outcome file path internally from
@@ -145,8 +147,9 @@ Complete each step → `TaskUpdate → completed` immediately.
    # R4-S1 finding). The change name is the skill's primary input — always known
    # to Step 8 — so the derived path IS recoverable.
    # 7a. Dry run (#405): resolves the issue exactly as the real run will, and keeps the
-   # comment body and that issue for review in a private directory (stderr names the
-   # file): ~/.cache/idd/spectra-archive/body-$CHANGE_NAME.md. Nothing is posted.
+   # comment body and that issue for review in a private directory. Stderr names the file
+   # (~/.cache/idd/spectra-archive/body-$CHANGE_NAME.md) and the issue it chose with its
+   # title ("issue for review: ..."). Nothing is posted.
    bash "${REPO_ROOT}/.claude/scripts/spectra-archive-post-ic.sh" \
        --change-name "$CHANGE_NAME" \
        --archive-dir "$ARCHIVE_DIR" \
@@ -164,9 +167,17 @@ Complete each step → `TaskUpdate → completed` immediately.
    unpublished details would be caught. If the review finds something, do not post: tell
    the user what and where.
 
+   Check the issue too: read the title 7a printed against this change's `proposal.md`. The
+   script cannot tell that a number is this change's issue (a squash, a commit that swept
+   several changes, a reused change name all mislead it), so this check is what approves
+   it. If it is another issue, re-run 7a with `--linked-issue <N>` (one of the candidates)
+   or `--force-linked-issue <N>`, and review again. If the change has no issue, skip 7c and
+   report **not posted (no linked issue)** in Step 8.
+
    **7c. Post**: run the same command without `--dry-run`, adding
-   `--scrub-attested <level>` (and `--linked-issue <N>` when 7a needed a choice, see below).
-   The script refuses to post without that flag, because it cannot review text itself;
+   `--scrub-attested <level>` and `--linked-issue <N>` for the issue 7b confirmed (or the
+   `--force-linked-issue <N>` 7a used). The script refuses to post without either: it cannot
+   review text or tell which issue is right itself;
    a level below the repository's own is refused (review again at that level), and at
    `enforce` it does not post at all. It also composes the body again and posts only if
    the body, the repository and the issue are the ones 7a kept: if `tasks.md` changed,
@@ -181,18 +192,18 @@ Complete each step → `TaskUpdate → completed` immediately.
    | `0` | Success or normal skip (posted / none / idempotent / unsafe-name / generic failure) | Read outcome from the derived outcome file (see Step 8), proceed to Step 8 |
    | `2` | Usage error (missing args, unsafe `--outcome-file` path, or a `--scrub-attested` value other than light / warn / enforce) | Skill bug — fix invocation |
    | `64` | Dependency missing (python3) | Surface to user; archive itself succeeded; manual retry after install |
-   | `75` | A person must choose: several candidates, or one that neither a `GitHub-side tracker` nor the commits confirm (see below); the outcome says why | **AskUserQuestion required** — read `/tmp/spectra-archive-candidates.txt` for the candidate list, prompt user to pick canonical issue (show `#N + gh issue title` for each), then re-invoke script with `--linked-issue <chosen>` |
+   | `75` | A person must choose: several candidates, or one that neither a `GitHub-side tracker` nor the commits confirm (see below); the outcome says why. If none of them is this change's issue and it has none, skip 7c (**not posted (no linked issue)**) | **AskUserQuestion required** — read `/tmp/spectra-archive-candidates.txt` for the candidate list, prompt user to pick canonical issue (show `#N + gh issue title` for each), then re-invoke script with `--linked-issue <chosen>` |
 
    **Stdout**: a single line that is either the IC comment URL, or one of the documented status messages (`(none — ...)`, `(skipped — ...)`, `(pending — ...)`, `(failed — ...)`). The same line is also written to the derived outcome file `/tmp/spectra-archive-ic-outcome-${CHANGE_NAME}.txt` for cross-Bash-call persistence (Step 8 reads from there).
 
-   **When it posts without asking (#405)**: in exactly two cases. (1) A `**GitHub-side tracker**: #N` in
-   `proposal.md` or `design.md` names one issue of this repository. (2) The commits that touched the
-   change name one issue as the commit rule writes it, a subject group `(#N)` or a body line `Refs #N`,
-   and no explicit `Refs`/`Closes`/`Fixes`/`Resolves #N` in the change's text names another. Everything
-   else is offered with exit 75: a change linked only by its text, commits that name several issues
-   (a cluster), a bare `#N` in a subject, a tracker that is a pull request or names another repository,
-   and a number whose issue/PR check could not run. Three verify rounds showed that ranking weaker
-   evidence keeps posting to a wrong issue for some new way of writing; a question costs less.
+   **What 7a proposes without listing alternatives (#405)**: exactly two cases. (1) A
+   `**GitHub-side tracker**: #N` in `proposal.md` or `design.md`, in that form and outside code,
+   names one issue of this repository, and neither the commits nor an explicit reference name
+   another. (2) The commits that touched the change name one issue as the commit rule writes it (a
+   subject group `(#N)`, a body line `Refs #N`, or a squash body's `* subject (#N)` line), and no
+   explicit reference (GitHub's closing keywords or ref/refs) in the change's text or in those
+   commits names another. Everything else is offered with exit 75 and the reason. Either way 7b
+   confirms the issue: four verify rounds showed that no rule here can approve it.
 
    **Multi-candidate flow (agent responsibility)**: in 7a, before the review. Re-run the dry run with `--linked-issue <chosen>`, review, then post with the same `--linked-issue`.
 
