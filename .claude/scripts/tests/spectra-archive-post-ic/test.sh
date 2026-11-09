@@ -725,7 +725,7 @@ ERR=$(cd "$R1" && PATH="$SCN/bin:$PATH" GH_STUB_TITLE='Demo title' bash "$TARGET
 scenario dry-run-shows-title "$([[ "$ERR" == *'issue for review: https://github.com/test/repo#7 (OPEN) — Demo title'*'proposed from: the GitHub-side tracker'* ]]; echo $?)"
 
 # 53. An archive already posted is reported by the dry run too.
-GH_STUB_COMMENTS='auto-posted by spectra-archive for 2026-01-02-demo' run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --dry-run
+GH_STUB_COMMENTS='## Implementation Complete (auto-posted by spectra-archive for 2026-01-02-demo)' run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --dry-run
 scenario dry-run-sees-already-posted "$(outcome_starts '(skipped — already auto-posted'; echo $?)"
 
 # 54. --force-linked-issue refuses a pull request, in the dry run too.
@@ -839,7 +839,7 @@ scenario tilde-fence-is-code "$(outcome_is 400; echo $?)"
 
 # 77. The review line says where the number came from, and hands out no command.
 ERR=$(cd "$SCN/p-tilde" && PATH="$SCN/bin:$PATH" bash "$TARGET_SCRIPT" --change-name probe --archive-dir openspec/changes/archive/2026-03-01-probe --gh-repo test/repo --dry-run 2>&1 >/dev/null)
-scenario review-line-shows-commit "$([[ "$ERR" == *'proposed from: '*'commit '*' feat: thing (#400)'* ]]; echo $?)"
+scenario review-line-shows-commit "$([[ "$ERR" == *'proposed from: '*'commit '*'"feat: thing (#400)"'* ]]; echo $?)"
 scenario review-line-no-command "$([[ "$ERR" != *'post with --linked-issue'* ]]; echo $?)"
 
 # ── Round 6 (#405) ──
@@ -861,9 +861,33 @@ probe elsewhere-issue "$(printf '**GitHub-side tracker**: kiki830621/sandbox#5 (
 scenario elsewhere-tracker-line-blanked "$([ "$RC" = 75 ] && [ "$(cands)" = '400 ' ]; echo $?)"
 
 # 82. A candidate list from an earlier run is not left for this one.
-probe stale 'Refs #12, and see #13' 'docs: tidy (#12)'
+probe stale "$(printf 'Refs #12\nRefs #13')" 'docs: tidy (#12)'
+STALE_FIRST=$([ "$RC" = 75 ] && [ -f "$(cand_file)" ]; echo $?)
 probe stale 'Nothing here' 'docs: tidy (#12)'
-scenario stale-candidates-removed "$([ ! -e "$(cand_file)" ]; echo $?)"
+scenario stale-candidates-removed "$([ "$STALE_FIRST" = 0 ] && [ ! -e "$(cand_file)" ]; echo $?)"
+
+# ── Round 7 (#405) ──
+# 83. This repository's anchored tracker on a line that also refers to another repository
+#     stays on offer, and a Closes on the same line is still read.
+probe anchored-xref "$(printf '**GitHub-side tracker**: #405 (spike: https://github.com/kiki830621/sandbox/pull/4). Closes #405.\n\nA follow-up of issue #170, which is closed.')"
+scenario anchored-tracker-with-xref-offered "$([ "$RC" = 75 ] && [ "$(cands)" = '170 405 ' ]; echo $?)"
+probe anchored-xref2 '**GitHub-side tracker**: #405 (trial ran in kiki830621/sandbox#5)'
+scenario anchored-tracker-with-xref-only "$([ "$RC" = 75 ] && [ "$(cands)" = '405 ' ]; echo $?)"
+
+# 84. The sentinel is the whole heading: another archive whose name extends this one does not
+#     count as already posted.
+GH_STUB_COMMENTS='## Implementation Complete (auto-posted by spectra-archive for 2026-01-02-demo-2)' run_post "$R1" --change-name demo --archive-dir "$R1/$A1" --gh-repo test/repo --dry-run
+scenario sentinel-whole-heading "$(outcome_is 7; echo $?)"
+
+# 85. A commit subject cannot pass for another source: it is quoted in the provenance.
+probe forge-src 'Refs #400' 'feat: x; the GitHub-side tracker (#400)'
+ERR=$(cd "$SCN/p-forge-src" && PATH="$SCN/bin:$PATH" bash "$TARGET_SCRIPT" --change-name probe --archive-dir openspec/changes/archive/2026-03-01-probe --gh-repo test/repo --dry-run 2>&1 >/dev/null)
+scenario provenance-subject-quoted "$([[ "$ERR" == *'commit '*'"feat: x; the GitHub-side tracker (#400)"'* ]]; echo $?)"
+
+# 86. The bare-subject fallback runs when the only group was a pull request.
+probe squash-pr 'Some prose.' 'feat: thing #300 (#470)'
+GH_STUB_PRS=470 run_post "$SCN/p-squash-pr" --change-name probe --archive-dir openspec/changes/archive/2026-03-01-probe --gh-repo test/repo --dry-run
+scenario fallback-after-pr-dropped "$([ "$RC" = 75 ] && [ "$(cands)" = '300 ' ]; echo $?)"
 
 echo ""
 echo "─── Summary ───"

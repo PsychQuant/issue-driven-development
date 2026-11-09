@@ -329,7 +329,7 @@ def nums(pattern, text):
 # declaration: the label, then this repository's `#N` right away (`owner/repo#N` allowed for
 # this repository), then the end of the number. A sentence in that place is offered.
 MARKER = re.compile(r"\*\*GitHub-side tracker\*\*(?:(?!\*\*GitHub-side tracker\*\*)[^\n])*")
-ANCHORED = re.compile(r"\*\*GitHub-side tracker\*\*[ \t]*:?[ \t]*(?:\*\*)?(?:(?P<r>" + REPO + r"))?#(?P<n>\d+)"
+ANCHORED = re.compile(r"\*\*GitHub-side tracker\*\*[ \t]*(?::[ \t]*)?(?:\*\*)?(?:(?P<r>" + REPO + r"))?#(?P<n>\d+)"
                       r"(?=[\s.,;:)）。，、*]|$)")
 STRONG = re.compile(r"(?<![A-Za-z0-9_])(?:" + KW + r"\[?#\d+(?:(?:(?:[ \t]*,)+[ \t]*|[ \t]+and[ \t]+)(?:issue[ \t]+)?\[?#\d+)*"
                     r"|[Rr]eferenc(?:e|es|ed|ing)[ \t]+issue[ \t]+#\d+)")
@@ -396,7 +396,7 @@ import unicodedata
 def plain(text):
     """Text safe to print on one protocol line and in a terminal: control and format
     characters (line breaks, ESC, bidi overrides, tag characters) removed."""
-    return " ".join("".join(c if unicodedata.category(c) not in ("Cc", "Cf", "Co", "Cs") else " "
+    return " ".join("".join(c if unicodedata.category(c) not in ("Cc", "Cf", "Co", "Cs", "Zl", "Zp") else " "
                             for c in text).split())
 def note(numbers, how):
     how = plain(how)
@@ -444,15 +444,21 @@ for m in MARKER.finditer(blank_code(raw_md, "x")):
     seg = raw_md[m.start():m.end()]
     elsewhere = other_repo_ref(seg)
     word = None if elsewhere else other_repo_word(seg)
-    if elsewhere:
+    ours = bool(a) and (not a.group("r") or a.group("r").lower() == gh_repo.lower())
+    if elsewhere and not ours:
+        # The tracker itself is another repository's: the line lends no number to any scan.
         elsewhere_spans.append(seg)
-    if a and not elsewhere and not word and (not a.group("r") or a.group("r").lower() == gh_repo.lower()):
+    if ours and not elsewhere and not word:
         markers.add(int(a.group("n")))
         note([int(a.group("n"))], "the GitHub-side tracker")
-    elif a and word and (not a.group("r") or a.group("r").lower() == gh_repo.lower()):
-        marker_problem = f"the GitHub-side tracker line also says `{plain(word)}`, which may be another repository"
+    elif ours:
+        # This repository's number, on a line that also names something else: offered, and
+        # the rest of the line is read as usual (another repository's references in it are
+        # removed by strip()).
+        marker_problem = ("the GitHub-side tracker line also refers to another repository" if elsewhere
+                          else f"the GitHub-side tracker line also says `{plain(word)}`, which may be another repository")
         marker_offer.add(int(a.group("n")))
-        note([int(a.group("n"))], "the GitHub-side tracker (its line also names a word/word)")
+        note([int(a.group("n"))], "the GitHub-side tracker (its line also names another repository)")
     else:
         marker_problem = ("the GitHub-side tracker is not `**GitHub-side tracker**: #N` "
                           "for an issue of this repository")
@@ -472,7 +478,7 @@ if markers:
 
 raw_text = "\n".join(read(os.path.join(arch, f)) for f in sorted(os.listdir(arch))
                      if f.endswith(".md") and os.path.isfile(os.path.join(arch, f)))
-# A tracker line about another repository lends none of its numbers, in any scan.
+# A tracker line whose tracker is another repository's lends none of its numbers, in any scan.
 for seg in elsewhere_spans:
     raw_text = raw_text.replace(seg, " " * len(seg))
 # Emphasis is dropped for reading references, so `**Closes**: #400` is a Closes.
@@ -493,12 +499,14 @@ if root and paths:
     for sha, s, b in records:
         named = nums(GROUP, s) | nums(BODY_REFS, b) | {k for line in SQUASH_LINE.findall(b) for k in nums(GROUP, line)}
         commits |= named
-        note(named, f"commit {sha} {s[:60].strip()}")
+        subj = plain(s)
+        note(named, f'commit {sha} "{subj[:100]}{"…" if len(subj) > 100 else ""}"')
         # An explicit keyword in a commit message is an anchor too: `Closes #400` in the body
         # of a commit whose group is (#20) names a second issue.
         kw = nums(STRONG, s) | nums(STRONG, b)
         strong |= kw
         note(kw - named, f"an explicit reference in commit {sha}")
+    commits, _ = postable(commits)
     if not commits:
         fallback = {n for _, s, _ in records for n in nums(ANY, s)}
         note(fallback, "a bare number in a commit subject")
@@ -562,7 +570,7 @@ write_candidates() {
 clean_title() {
   printf '%s' "$1" | python3 -I -c 'import sys, unicodedata
 s = sys.stdin.buffer.read().decode("utf-8", "replace")
-s = "".join(c for c in s if unicodedata.category(c) not in ("Cc", "Cf", "Co", "Cs"))
+s = "".join(c for c in s if unicodedata.category(c) not in ("Cc", "Cf", "Co", "Cs", "Zl", "Zp"))
 sys.stdout.write(s[:200])'
 }
 
@@ -685,7 +693,7 @@ ANCHOR_SUFFIX="${FORCE_NOTE:-}"
 # must therefore be a collaborator; a bot that is not would be posted after again.
 ALREADY_POSTED=$(gh issue view "$LINKED_ISSUE" --repo "$GH_REPO" --json comments \
   --jq '.comments[] | select(.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR") | .body' 2>/dev/null \
-  | grep -Fc -- "$SENTINEL" \
+  | grep -Fc -e "$SENTINEL)" -e "$SENTINEL via " \
   | tr -d ' ')
 # grep -Fc returns "0" with exit 1 when no match; pipeline status doesn't propagate
 # so the value is clean. wc -l is more portable but grep -Fc handles fine here.
@@ -877,7 +885,7 @@ EGRESS_ERR=$(mktemp "$WORK_DIR/err.XXXXXX") || {
 COMMENT_URL=$(cd / && bash "$EGRESS" comment "$LINKED_ISSUE" --repo "$GH_REPO" --body-file "$BODY_FILE" \
   --scrub-attested "$SCRUB_LEVEL" 2>"$EGRESS_ERR")
 EGRESS_RC=$?
-EGRESS_REASON=$(grep -v '^[[:space:]]*$' "$EGRESS_ERR" | head -3 | tr '\n' ' ' | LC_ALL=C tr -d '\000-\037' | cut -c1-300)
+EGRESS_REASON=$(clean_title "$(grep -v '^[[:space:]]*$' "$EGRESS_ERR" | head -3 | tr '\n' ' ')")
 rm -f "$BODY_FILE" "$EGRESS_ERR"
 
 # The wrapper's own refusals are 10 to 15; below that is gh's, and 126, 127 or 128+n

@@ -124,9 +124,15 @@ Complete each step → `TaskUpdate → completed` immediately.
 
    **Invocation**: 7a, 7b's cleanup, 7c, the exit-75 re-run and Step 8 are separate Bash calls,
    with a review between them, and shell variables do not survive from one call to the next.
-   Each block below therefore recomputes what it uses from `$CHANGE_NAME` (#405).
+   Each block below therefore starts by setting `CHANGE_NAME`, and `SPEC_DELTAS` where it is
+   used, to the same literal values, and recomputes its paths from them (#405). `SPEC_DELTAS`
+   is part of the body: a 7c with a different value than 7a's is refused. When Step 6 gave no
+   capability list, use `(see archived change directory)` in every block.
 
    ```bash
+   CHANGE_NAME='<the change name>'                 # the same literal in every Step 7 and 8 block
+   : "${CHANGE_NAME:?set CHANGE_NAME to the change name}"
+   SPEC_DELTAS='<the Step 6 capability list>'      # the same literal in 7a, the exit-75 re-run and 7c
    # Resolve repo root to make the script path cwd-independent — the skill may be
    # invoked from a subdirectory (cd openspec && /spectra-archive ...). Relative
    # path .claude/scripts/... breaks; absolute path via git-root prefix doesn't.
@@ -139,7 +145,8 @@ Complete each step → `TaskUpdate → completed` immediately.
    ARCHIVE_DIR=$(ls -d "${REPO_ROOT}"/openspec/changes/archive/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-"${CHANGE_NAME}" 2>/dev/null | sort | tail -1)
    # Where the script keeps the outcome, candidates and review copy.
    STATE_DIR="${SPECTRA_POST_IC_STATE_DIR:-$HOME/.cache/idd/spectra-archive}"
-   SPEC_DELTAS="${SPEC_DELTAS:-(see archived change directory)}"
+   # An outcome left by an earlier run must not be read as this one's in Step 8.
+   rm -f "$STATE_DIR/outcome-$CHANGE_NAME.txt"
 
    # The helper script DERIVES the outcome file path internally from
    # --change-name: $STATE_DIR/outcome-<change-name>.txt
@@ -190,6 +197,8 @@ Complete each step → `TaskUpdate → completed` immediately.
    the kept copy a 7c is refused; running 7a again starts a new review.
 
    ```bash
+   CHANGE_NAME='<the change name>'                 # the same literal in every Step 7 and 8 block
+   : "${CHANGE_NAME:?set CHANGE_NAME to the change name}"
    STATE_DIR="${SPECTRA_POST_IC_STATE_DIR:-$HOME/.cache/idd/spectra-archive}"
    rm -f "$STATE_DIR/body-$CHANGE_NAME.md" "$STATE_DIR/target-$CHANGE_NAME.txt"
    ```
@@ -206,10 +215,12 @@ Complete each step → `TaskUpdate → completed` immediately.
    directory name), so a review that crosses midnight UTC still matches.
 
    ```bash
+   CHANGE_NAME='<the change name>'                 # the same literal in every Step 7 and 8 block
+   : "${CHANGE_NAME:?set CHANGE_NAME to the change name}"
+   SPEC_DELTAS='<the Step 6 capability list>'      # the same literal in 7a, the exit-75 re-run and 7c
    REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
    ARCHIVE_DIR=$(ls -d "${REPO_ROOT}"/openspec/changes/archive/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-"${CHANGE_NAME}" 2>/dev/null | sort | tail -1)
    STATE_DIR="${SPECTRA_POST_IC_STATE_DIR:-$HOME/.cache/idd/spectra-archive}"
-   SPEC_DELTAS="${SPEC_DELTAS:-(see archived change directory)}"
    bash "${REPO_ROOT}/.claude/scripts/spectra-archive-post-ic.sh" \
        --change-name "$CHANGE_NAME" \
        --archive-dir "$ARCHIVE_DIR" \
@@ -240,25 +251,35 @@ Complete each step → `TaskUpdate → completed` immediately.
 
    **Multi-candidate flow (agent responsibility)**: in 7a, before the review. Re-run the dry run with `--linked-issue <chosen>`, review, then post with the same `--linked-issue`.
 
+   When 7a printed `7a exit: 75`, read the candidates (a new Bash call):
+
    ```bash
-   # When 7a printed "7a exit: 75". A new Bash call: recompute first.
+   CHANGE_NAME='<the change name>'                 # the same literal in every Step 7 and 8 block
+   : "${CHANGE_NAME:?set CHANGE_NAME to the change name}"
+   STATE_DIR="${SPECTRA_POST_IC_STATE_DIR:-$HOME/.cache/idd/spectra-archive}"
+   cat "$STATE_DIR/candidates-$CHANGE_NAME.txt"
+   ```
+
+   For each candidate, fetch its title (`gh issue view <N> --json title -q .title`) and ask with
+   AskUserQuestion which is this change's issue; bash cannot prompt. Then re-run the dry run
+   with the chosen number, in another Bash call:
+
+   ```bash
+   CHANGE_NAME='<the change name>'                 # the same literal in every Step 7 and 8 block
+   : "${CHANGE_NAME:?set CHANGE_NAME to the change name}"
+   SPEC_DELTAS='<the Step 6 capability list>'      # the same literal in 7a, the exit-75 re-run and 7c
    REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
    ARCHIVE_DIR=$(ls -d "${REPO_ROOT}"/openspec/changes/archive/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-"${CHANGE_NAME}" 2>/dev/null | sort | tail -1)
    STATE_DIR="${SPECTRA_POST_IC_STATE_DIR:-$HOME/.cache/idd/spectra-archive}"
-   SPEC_DELTAS="${SPEC_DELTAS:-(see archived change directory)}"
-   CANDIDATES=$(cat "$STATE_DIR/candidates-$CHANGE_NAME.txt")
-   # For each candidate, fetch title via `gh issue view <N> --json title -q .title`
-   # Then AskUserQuestion: "Multi-candidate detected: which is canonical?"
-   # User picks → CHOSEN_ISSUE=<N>
    bash "${REPO_ROOT}/.claude/scripts/spectra-archive-post-ic.sh" \
        --change-name "$CHANGE_NAME" \
        --archive-dir "$ARCHIVE_DIR" \
        --spec-deltas "$SPEC_DELTAS" \
-       --linked-issue "$CHOSEN_ISSUE" \
+       --linked-issue '<the chosen number>' \
        --dry-run
    ```
 
-   The agent (LLM-driven) handles the AskUserQuestion step — bash cannot prompt. The script validates `$CHOSEN_ISSUE` against the original candidate set on re-invoke.
+   The script validates the chosen number against the candidate set on re-invoke.
 
    **What reaches GitHub (#405)**: the path to the archive in the comment is the path inside the repository, whatever form `--archive-dir` took; when no remote of that repository is the target repository, the conventional `openspec/changes/archive/<dir>` is used instead. Without `--gh-repo`, the target is resolved in the archive's repository, not in the cwd. The rest of the body (`--spec-deltas`, the `tasks.md` lines) is what 7b reviews. The comment is posted through `plugins/issue-driven-dev/scripts/gh-egress.sh`. If the gate refuses, the wrapper is missing or fails to run, permissions cannot be read, the level is below the repository's or is `enforce`, or the repository itself cannot be read during detection, nothing is posted and the outcome line starts with `(failed — ...)` and says why. Do not edit the archived files to get past a refusal (they are the audit record, and archive protection blocks the edit): post a corrected copy of the kept body by hand through `gh-egress.sh`.
 
@@ -279,6 +300,8 @@ Complete each step → `TaskUpdate → completed` immediately.
    ```bash
    # Recompute the same path the script derived in Step 7.
    # MUST use the identical $CHANGE_NAME slug — see contract note in Step 7.
+   CHANGE_NAME='<the change name>'                 # the same literal in every Step 7 and 8 block
+   : "${CHANGE_NAME:?set CHANGE_NAME to the change name}"
    OUTCOME_FILE="${SPECTRA_POST_IC_STATE_DIR:-$HOME/.cache/idd/spectra-archive}/outcome-${CHANGE_NAME}.txt"
 
    if [ -f "$OUTCOME_FILE" ]; then
@@ -291,6 +314,7 @@ Complete each step → `TaskUpdate → completed` immediately.
        IMPLEMENTATION_COMPLETE_POSTED="⚠️  ERROR — outcome file not found: $OUTCOME_FILE (Step 7 did not run, \$CHANGE_NAME drifted between Step 7 and Step 8, or the state directory could not be used: see Step 7's stdout)"
        echo "WARNING: spectra-archive Step 8 — outcome file missing: $OUTCOME_FILE" >&2
    fi
+   echo "Implementation Complete: $IMPLEMENTATION_COMPLETE_POSTED"
    ```
 
    Show archive completion summary including:
@@ -373,5 +397,5 @@ Target archive directory already exists.
 - If sync is requested, use the Skill tool to invoke `spectra-sync-specs` (agent-driven)
 - If delta specs exist, always run the sync assessment and show the combined summary before prompting
 - If **AskUserQuestion tool** is not available, ask the same questions as plain text and wait for the user's response
-- **Step 8 multi-candidate disambiguation**: if linked-issue detection (Fallback 1 explicit marker) returns multiple distinct `#N` values, MUST prompt user via AskUserQuestion to pick the canonical one — never auto-pick to avoid posting to the wrong issue
-- **Step 8 silent skip on no linked issue**: do not warn or prompt; not all archives have GitHub trackers (legacy archives, design-only changes). Reflect skip reason in Step 7 summary line
+- **Step 7 candidate choice**: when 7a exits 75 (several candidates, or one that no tracker or commit confirms), MUST prompt the user via AskUserQuestion to pick the canonical one — never auto-pick to avoid posting to the wrong issue. Even a single proposal is approved only by 7b's check (#405)
+- **Step 7 no linked issue**: an outcome of `(none — ...)` is a normal skip, not a warning; not all archives have GitHub trackers (legacy archives, design-only changes). Reflect the skip reason in Step 8's summary line

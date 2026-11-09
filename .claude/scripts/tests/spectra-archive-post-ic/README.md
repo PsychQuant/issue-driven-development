@@ -99,6 +99,9 @@ repository or a post that runs. They build temporary repositories and put a stub
 - the shapes verify round 6 found: a commit message that tries to forge a history record,
   control characters in commit subjects and titles, a word/word on the tracker line, an
   `issue #N` on a tracker line about another repository, and a stale candidate list
+- the shapes verify round 7 found: this repository's anchored tracker on a line that also
+  refers to another repository, a sentinel whose archive name extends another, a commit
+  subject posing as another source, and the bare-subject fallback after a squash's PR
 
 The suite runs under macOS's bash 3.2 too: no `case` inside `$(...)`, which 3.2 cannot
 parse; use `[[ ]]`.
