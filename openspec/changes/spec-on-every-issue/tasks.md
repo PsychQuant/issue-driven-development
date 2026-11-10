@@ -24,7 +24,7 @@
 
 - [ ] [P] 4.1 `idd-verify` 拿規格對照行為（requirement「Reviewers check behaviour against the specs」）：把 `**Spec**:` 行與範圍內改到的規格檔交給每個 reviewer，跑 `links` 與 `archived`，把缺漏列為 Blocking；Regression lens 的提示加上兩條 HIGH 的規則。驗證：在 3.2 的暫存 repo 上拿掉一個 Example 的測試標記後跑 verify，報告有一項 Blocking 指名那個 Example；把留言的宣告換成 `no behaviour change` 後再跑，報告有一項 HIGH。
 - [ ] [P] 4.2 verify 之後的修正留下規格（requirement「A fix after a verify round goes through the same wrapper」；design「verify 之後的修正走同一個 wrapper」）：`idd-all` 的修正迴圈與 `idd-implement` 在修正新增或修改 requirement 時建立 `idd-<N>-fix<k>`，並在新的留言列出這張 issue 的所有 change。驗證：在暫存 repo 讓一輪 verify 回報一項 Blocking，修正後 branch 多一個已封存的 `idd-<N>-fix<k>`，新留言的 `**Spec**:` 行有兩個名稱，`archived --ref HEAD` 印 `pass`。
-- [ ] [P] 4.3 `idd-close` 在關閉前檢查封存（requirement「Close requires the issue's change to be archived」）：依 Example「the close gate reads the default branch」先寫測試（帶對應標記），再把檢查接進 `idd-close` 的 gate。驗證：5 列各有一個檢查並通過；在暫存 repo 上，合併前跑 close 會停下並指名 change，合併後通過。
+- [x] [P] 4.3 `idd-close` 在關閉前檢查封存（requirement「Close requires the issue's change to be archived」）：依 Example「the close gate reads the default branch」先寫測試（帶對應標記），再把檢查接進 `idd-close` 的 gate。驗證：5 列各有一個檢查並通過；在暫存 repo 上，合併前跑 close 會停下並指名 change，合併後通過。
 
 ## 5. 文件與收尾
 

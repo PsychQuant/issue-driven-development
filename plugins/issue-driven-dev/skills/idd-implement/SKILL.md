@@ -357,6 +357,8 @@ No branch operations. Whatever branch the user is on, commits land there.
 
 `idd-plan` 已經建好 change 時（`spectra list` 有 `idd-<N>-` 開頭的 change），這一步只做 preflight，不再 propose。
 
+verify 之後回來做修正時（這張 issue 已經有封存了的 change），修正若新增或修改 requirement，照契約第 7 步另建 `idd-<N>-fix<k>`；只是補測試時不建 change。
+
 ### Step 1: 讀取 Issue + Diagnosis
 
 ```bash

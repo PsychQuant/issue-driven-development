@@ -1137,6 +1137,8 @@ for ROUND in 1..MAX_ROUND:
 
 每個 auto-fix commit:`fix: address verify finding — {finding summary} (#$N)`
 
+**修正也留下規格（#480）**：這張 issue 宣告了 change 時，兩輪 verify 之間的修正（auto-fix，或 attended 時在 session 裡做的修正）若新增或修改了 requirement，照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 7 步：建 `idd-<N>-fix<k>`（k 是剛跑完的 verify 輪數），用輕量形式 propose 與 apply，照第 5 步封存並跑連結檢查，在下一輪 verify 之前完成，再貼一則新的 Implementation Complete，`**Spec**:` 行列出這張 issue 的所有 change（依時間順序）。requirement 與 Example 已經有、只是測試沒寫對時，只補帶標記的測試。Blocking 的修正要留下寫出該性質的 requirement、Example，以及一個在修正前會失敗的測試。
+
 **乾淨的定義（#392，2026-11-10 的決定）**：gate 判 `clean` ＝ 報告判定 PASS、Blocking 為 0、In-scope fix 只剩 LOW／INFO／P3。這些沒擋住 merge 的列數在 gate JSON 的 `low_in_scope`。大於 0 時：
 
 - **不為它們改 branch**。合併的 commit 必須是這一輪審過的 commit；在乾淨的一輪之後再加修正，那些修正就沒有人審過。

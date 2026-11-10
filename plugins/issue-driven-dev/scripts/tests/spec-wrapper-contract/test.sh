@@ -82,4 +82,32 @@ assert_grep "Phase 3b runs the close-out after apply" "Spec close-out" "$B3"
 assert_grep "Phase 3b posts the Implementation Complete with the marker" "$MARK" "$B3"
 assert_grep "Phase 3b's comment has no Checklist section" "沒有 \`### Checklist\`" "$B3"
 
+echo "spec-wrapper-contract: idd-verify checks behaviour against the specs (task 4.1)"
+VERIFY="$PLUGIN/skills/idd-verify/SKILL.md"; PROFILES="$PLUGIN/references/verify-profiles.md"
+V_TXT="$(read_file "$VERIFY")"
+assert_grep "verify runs the link check on the reviewed range" 'links --base "$BASE_SHA" --head "$FROZEN_SHA"' "$V_TXT"
+assert_grep "verify runs the archive check at the reviewed head" '--ref "$FROZEN_SHA"' "$V_TXT"
+assert_grep "verify reads the declaration line" 'spec-change.py" declared' "$V_TXT"
+assert_grep "verify stages the spec context to a file" '"$VERIFY_DIR/spec-block.md"' "$V_TXT"
+assert_grep "the spec context joins the shared context block" '${SPEC_BLOCK}' "$V_TXT"
+assert_true "the spec context is built after the external-writes block is staged" \
+  "[ $(line_of "$VERIFY" '> "$VERIFY_DIR/ew-block.md"') -lt $(line_of "$VERIFY" '> "$VERIFY_DIR/spec-block.md"') ]"
+assert_eq "every manual reviewer prompt is told to read the spec context" \
+  "$(grep -cF 'External-writes context: $VERIFY_DIR/ew-block.md' "$VERIFY")" "$(grep -cF 'Spec context: $VERIFY_DIR/spec-block.md' "$VERIFY")"
+assert_grep "the regression rule: behaviour no requirement states is HIGH" "no requirement" "$V_TXT"
+assert_grep "the regression rule: a false no-behaviour-change declaration is HIGH" "no-behaviour-change" "$V_TXT"
+assert_grep "the test rule: a marked test that does not check its Example is MEDIUM or above" "MEDIUM or above" "$V_TXT"
+assert_grep "Step 3 turns the two checks into Blocking rows" "spec-block.md" "$(sed -n '/^### Step 3: /,/^### Step 3.5: /p' "$VERIFY")"
+assert_grep "the spec context is the code profile's only" "code profile" "$(sed -n '/SPEC CONTEXT/,/spec-block.md/p' "$VERIFY")"
+assert_grep "verify-profiles says the code profile carries the spec context" "spec-block" "$(read_file "$PROFILES")"
+
+echo "spec-wrapper-contract: fixes after a verify round (task 4.2)"
+FIX="$(sed -n '/^\*\*Auto-fix 策略\*\*/,/^### Phase 4.5/p' "$ALL")"
+assert_grep "idd-all's auto-fix creates idd-<N>-fix<k> when a fix adds or changes a requirement" 'idd-<N>-fix<k>' "$FIX"
+assert_grep "… through contract step 7" "第 7 步" "$FIX"
+assert_grep "… archived before the next verify round" "下一輪 verify 之前" "$FIX"
+assert_grep "… and a new Implementation Complete lists every change" "所有 change" "$FIX"
+assert_grep "a Blocking fix leaves a test that fails before the fix" "修正前會失敗" "$FIX"
+assert_grep "idd-implement routes a post-verify fix to step 7" 'idd-<N>-fix<k>' "$(sed -n '/^### Step 0.6: /,/^### Step 1: /p' "$IMPL")"
+
 print_summary spec-wrapper-contract
