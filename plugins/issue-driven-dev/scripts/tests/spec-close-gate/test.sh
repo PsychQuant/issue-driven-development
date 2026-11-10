@@ -62,7 +62,7 @@ mkdir -p "$WORK/bin"
 cat > "$WORK/bin/gh" <<'GH'
 #!/bin/sh
 case "$1 $2" in
-  "repo view") echo main ;;
+  "repo view") [ "${FAKE_VIEW_FAIL:-0}" = 1 ] && exit 1; echo main ;;
   "api repos/"*) [ "${FAKE_FAIL:-0}" = 1 ] && exit 1; cat "$FAKE_COMMENTS" ;;
   *) exit 1 ;;
 esac
@@ -73,9 +73,9 @@ awk '/^### Step 1.57: /{f=1} f && /^```bash$/{b=1; next} b && /^```$/{exit} b' "
 step157() { # comments-json fail(0|1) → STATUS, GRC
   printf '%s' "$1" > "$WORK/comments.json"
   local out
-  out=$(cd "$C" && env PATH="$WORK/bin:$PATH" FAKE_COMMENTS="$WORK/comments.json" FAKE_FAIL="$2" \
+  out=$(cd "$C" && env PATH="$WORK/bin:$PATH" FAKE_COMMENTS="$WORK/comments.json" FAKE_FAIL="$2" FAKE_VIEW_FAIL="${FAKE_VIEW_FAIL:-0}" \
         GITHUB_REPO=o/r NUMBER=42 CWD="$C" CLAUDE_PLUGIN_ROOT="$PLUGIN" \
-        bash -c '. "$1"; printf "\nSTATUS=%s\nGRC=%s\n" "$(printf "%s" "$GATE" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get(\"status\"))")" "$GATE_RC"' _ "$BLOCK" 2>/dev/null)
+        bash --norc --noprofile -c '. "$1"; printf "\nSTATUS=%s\nGRC=%s\n" "$(printf "%s" "$GATE" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get(\"status\"))")" "$GATE_RC"' _ "$BLOCK" 2>/dev/null </dev/null)
   STATUS=$(printf '%s\n' "$out" | sed -n 's/^STATUS=//p'); GRC=$(printf '%s\n' "$out" | sed -n 's/^GRC=//p')
 }
 assert_true "Step 1.57 has a bash block" "[ -s '$BLOCK' ]"
@@ -89,6 +89,13 @@ step157 "[{\"author_association\":\"OWNER\",\"body\":\"$MARK\\n**Spec**: change 
 assert_eq "the newest trusted declaration names a change not archived on the default branch → stops" refuse "$STATUS"
 step157 "[{\"author_association\":\"OWNER\",\"body\":\"$MARK\\n**Spec**: change idd-42-fix-timeout\"},{\"author_association\":\"CONTRIBUTOR\",\"body\":\"$MARK\\n**Spec**: change idd-42-other\"}]" 0
 assert_eq "a newer declaration by a contributor is not the one read" pass "$STATUS"
+IC_OK="[{\"author_association\":\"OWNER\",\"body\":\"$MARK\\n**Spec**: change idd-42-fix-timeout\"}]"
+FAKE_VIEW_FAIL=1 step157 "$IC_OK" 0
+assert_eq "gh repo view fails → stops with error (idd-480-fix2)" error "$STATUS"
+git -C "$C" remote set-url origin "$WORK/no-such-remote.git"
+step157 "$IC_OK" 0
+assert_eq "git fetch of the default branch fails → stops with error, not a stale pass" error "$STATUS"
+git -C "$C" remote set-url origin "$WORK/o.git"
 
 echo "spec-close-gate: the skill text"
 G="$(sed -n '/^### Step 1.57: /,/^### Step 1.6: /p' "$CLOSE")"

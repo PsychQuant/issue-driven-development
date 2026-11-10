@@ -27,7 +27,7 @@ printf '%s\n' "$PF" | jq -r '"→ spec preflight: \(.status) \(.message)"'
 | `linked-worktree` | 停下，不建立任何 artifact、不 commit。Spectra 在 linked worktree 裡會寫進主工作樹。改在主工作樹或獨立 clone 裡跑 |
 | `install-spectra` | 停下，把 `message` 原樣轉給使用者 |
 | `init-openspec` | 停下，把 `message` 原樣轉給使用者 |
-| `error`、或 exit 64 | 停下，回報 |
+| `error`、exit 64、沒有輸出、不是一行 JSON、或上面沒列的 status | 停下，回報 |
 
 讀不到權限（`gh` 失敗、回空值或其他值）時停下，不猜：猜 `no` 會讓自己 repo 的 issue 不寫規格，猜 `yes` 會在別人的 repo 建 `openspec/`。
 

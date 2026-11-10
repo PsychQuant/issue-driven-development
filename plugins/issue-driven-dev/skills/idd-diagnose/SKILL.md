@@ -665,6 +665,7 @@ Diagnosis 完成 + Step 3.4 Vagueness Pre-check 結束後（`type=meeting` 已�
 > **Spectra tier 的追蹤 hand-off（#300，綁定）**：verdict 為 `Spectra` 時，diagnose **必須**在 report 的下一步區塊印出以下三行，否則該 issue 會在 diagnose 之後失去追蹤：
 >
 > ```
+> → 先照 references/spec-wrapper.md 第 1 步跑 spec preflight（ready 才往下；third-party 改走 /idd-implement；其餘停下）
 > → /spectra-discuss   （或依 opt-out 條件走 /spectra-propose）
 > ⚠ Spectra 路徑不產生任何 phase-bearing comment，所以 apply 之後：
 >    照 references/spec-wrapper.md 第 5、6 步收尾（spectra-verify → 封存 → commit → links／archived），

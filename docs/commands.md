@@ -473,7 +473,7 @@
 | Step 1.6 — auto-close was honoured by GitHub on merge | "Should I still post the closing summary?" (default yes) |
 | Unchecked `- [ ]` items remain | (no question — refuses with the list of unchecked items) |
 
-**Workflow position**: last step in the standard IDD pipeline. Spectra changes additionally chain through `/spectra-archive`.
+**Workflow position**: last step in the standard IDD pipeline. A declared Spectra change is archived on the branch before verify (#480); `idd-close` Step 1.57 checks that the archive is on the default branch.
 
 **Spec**: [`skills/idd-close/SKILL.md`](../plugins/issue-driven-dev/skills/idd-close/SKILL.md)
 

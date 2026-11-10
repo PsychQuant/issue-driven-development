@@ -132,7 +132,7 @@ S5A="$(sed -n '/^\*\*Step 5a: Checklist Sync\*\*/,/^\*\*Step 5b/p' "$IMPL")"
 assert_grep "idd-implement Step 5a fills the checklist from tasks.md when the issue has a change" "tasks.md" "$S5A"
 refute_grep "the Implementation Complete template no longer names TaskList as the only source" '### Checklist (synced from TaskList)' "$IMPL_TXT"
 SB="$(sed -n '/規格對照（#480）/,/^DA_FOCUS_SUFFIX=/p' "$VERIFY")"
-assert_grep "verify builds the spec context only under the code profile" 'if [ "${VERIFY_PROFILE:-code}" = code ]; then' "$SB"
+assert_grep "verify builds the spec context only under the code profile, with a git range" 'if [ "${VERIFY_PROFILE:-code}" = code ] && [ -n "${BASE_SHA:-}" ] && [ -n "${FROZEN_SHA:-}" ]; then' "$SB"
 assert_grep "a failed comment fetch is detected on the fetch itself" 'SPEC_FETCH_OK=no' "$SB"
 assert_grep "… and reported as unreadable, not read as legacy" '"form":"unreadable"' "$SB"
 assert_grep "the DA focus carries the spec check results" '${SPEC_DA' "$(grep -F 'DA_FOCUS_SUFFIX=' "$VERIFY")"
@@ -172,5 +172,63 @@ assert_grep "… (idd-all Phase 3b)" 'PF=' "$(grep -F 'cannot read this account'
 refute_grep "idd-all no longer says Phase 3b aborts without Spectra" "Phase 3b will abort" "$ALL_TXT"
 refute_grep "the verify comment no longer describes the jq selection" "jq 照樣對空輸入" "$V_TXT"
 assert_grep "a third-party Spectra-tier issue rerouted to idd-implement keeps a TaskList" "third-party" "$(grep -F '`Spectra`' "$IMPL" | grep -F '跳過本 step')"
+
+echo "spec-wrapper-contract: the preflight call, run (idd-480-fix2)"
+# spec-example: spec-on-every-issue / the preflight call routes by permission and Spectra
+# The bash of contract step 1 and of idd-all Step 3b.0 is run as written, with a stand-in gh that reports
+# $FAKE_PERM and a PATH that has or lacks a stand-in spectra. Both copies must give the same status.
+W2=$(mktemp -d "${TMPDIR:-/tmp}/idd-swc.XXXXXX"); trap 'rm -rf "$W2"' EXIT
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+mkdir -p "$W2/base" "$W2/withspectra"
+for tool in python3 git jq; do ln -s "$(command -v "$tool")" "$W2/base/$tool"; done
+printf '#!/bin/sh\ncase "$1 $2" in "repo view") [ -n "$FAKE_PERM" ] || exit 1; echo "$FAKE_PERM" ;; *) exit 1 ;; esac\n' > "$W2/base/gh"
+printf '#!/bin/sh\nexit 0\n' > "$W2/withspectra/spectra"
+chmod +x "$W2/base/gh" "$W2/withspectra/spectra"
+git init -q "$W2/present"; mkdir -p "$W2/present/openspec/specs"
+git init -q "$W2/absent"
+awk '/^## 1\. /{f=1} f && /^```bash$/{b=1; next} b && /^```$/{exit} b' "$REF" > "$W2/contract.sh"
+awk '/^#### Step 3b.0: Spec preflight/{f=1} f && /^```bash$/{b=1; next} b && /^```$/{exit} b' "$ALL" > "$W2/all.sh"
+pf_status() { # block perm spectra(yes|no) specdir(present|absent) → printed status
+  local p="$W2/base:/usr/bin:/bin"; [ "$3" = yes ] && p="$W2/withspectra:$p"
+  env -i HOME="$HOME" PATH="$p" FAKE_PERM="$2" GITHUB_REPO=o/r CWD="$W2/$4" CLAUDE_PLUGIN_ROOT="$PLUGIN" \
+    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 bash --norc --noprofile -c '. "$1" >/dev/null 2>&1; printf "%s" "$PF" | python3 -c "import json,sys; print(json.loads(sys.stdin.read() or \"{}\").get(\"status\", \"none\"))"' _ "$W2/$1" </dev/null
+}
+for row in "WRITE yes present ready" "ADMIN no present install-spectra" "READ no absent third-party" \
+           "TRIAGE yes present third-party" "- yes present error" "SOMETHING_ELSE yes present error"; do
+  set -- $row; perm=$1; [ "$perm" = - ] && perm=""
+  if [ "$2" = no ]; then
+    # /bin/bash 3.2 reads ~/.bashrc in -c mode when it thinks a remote shell started it (stdin a socket), and
+    # a ~/.bashrc that adds ~/.local/bin put a real spectra on the "clean" PATH: one run in ten failed on
+    # 2026-11-11. Every nested bash here runs with --norc --noprofile and stdin from /dev/null.
+    seen=$(env -i HOME="$HOME" PATH="$W2/base:/usr/bin:/bin" bash --norc --noprofile -c 'command -v spectra || true' </dev/null)
+    assert_eq "… the restricted PATH really has no spectra (row ${perm:-none})" "" "$seen"
+  fi
+  a=$(pf_status contract.sh "$perm" "$2" "$3"); b=$(pf_status all.sh "$perm" "$2" "$3")
+  assert_eq "preflight call: permission '${perm:-none}', spectra $2, spec dir $3 → $4 (contract)" "$4" "$a"
+  assert_eq "… the same in idd-all Step 3b.0" "$a" "$b"
+done
+assert_grep "the contract stops when preflight prints nothing or not JSON" "沒有輸出" "$REF_TXT"
+assert_grep "idd-all Step 3b.0 stops when preflight prints nothing or not JSON" "沒有輸出" "$(sed -n '/^#### Step 3b.0: Spec preflight/,/^#### Step 3b.0.5: /p' "$ALL")"
+
+echo "spec-wrapper-contract: verify round 2 fixes in the text (idd-480-fix2)"
+CL="$PLUGIN/skills/idd-close/SKILL.md"
+assert_grep "a retroactive close skips Step 1.57" "1.57" "$(grep -F '| Step 0 / 1.5' "$CL")"
+assert_grep "the verify spec context runs only with a git range" '[ -n "${BASE_SHA:-}" ]' "$SB"
+assert_grep "the verify spec data sits in a per-run fence" 'SPEC_FENCE' "$SB"
+assert_grep "the DA suffix gains the spec checks only when a spec context was built" '[ -n "$SPEC_BLOCK" ]' "$(grep -F 'DA_FOCUS_SUFFIX=' "$VERIFY" | tail -1; grep -F 'DA_FOCUS_SUFFIX="$DA_FOCUS_SUFFIX' "$VERIFY")"
+assert_grep "verify-profiles says what of the default profile is unchanged" "lens 組合與輸入偵測" "$(read_file "$PROFILES")"
+assert_grep "the diagnose hand-off runs the preflight before /spectra-discuss" "preflight" "$(sed -n '/Spectra tier 的追蹤 hand-off/,/為什麼需要這一行/p' "$PLUGIN/skills/idd-diagnose/SKILL.md")"
+assert_grep "the routing rule's Spectra flow starts with the preflight" "preflight" "$(grep -F 'Spectra:   diagnose' "$PLUGIN/rules/sdd-integration.md")"
+refute_grep "docs/commands.md no longer chains close through /spectra-archive" "chain through \`/spectra-archive\`" "$(read_file "$PLUGIN/../../docs/commands.md")"
+
+echo "spec-wrapper-contract: the verify spec context without a git range, run (idd-480-fix2)"
+S0=$(grep -n '^# ── 規格對照（#480）' "$VERIFY" | cut -d: -f1)
+S1=$(grep -n '^DA_FOCUS_SUFFIX=' "$VERIFY" | tail -1 | cut -d: -f1)
+sed -n "${S0},$((S1 + 1))p" "$VERIFY" | grep -v '^DA_FOCUS_SUFFIX=' > "$W2/specctx.sh"
+mkdir -p "$W2/vdir"
+out=$(env -i HOME="$HOME" PATH="$W2/base:/usr/bin:/bin" VERIFY_DIR="$W2/vdir" CLAUDE_PLUGIN_ROOT="$PLUGIN" \
+      bash --norc --noprofile -c 'BASE_SHA=""; FROZEN_SHA=""; CONTEXT_BLOCK="ctx"; DA_FOCUS_SUFFIX="base"; . "$1" 2>/dev/null; printf "%s|%s|%s" "${SPEC_BLOCK:-EMPTY}" "$CONTEXT_BLOCK" "$DA_FOCUS_SUFFIX"' _ "$W2/specctx.sh" </dev/null)
+assert_eq "no git range (prose / academic): no spec block, context and DA focus unchanged" "EMPTY|ctx|base" "$out"
+assert_grep "… and spec-block.md says it is not used" "not used" "$(cat "$W2/vdir/spec-block.md" 2>/dev/null)"
 
 print_summary spec-wrapper-contract

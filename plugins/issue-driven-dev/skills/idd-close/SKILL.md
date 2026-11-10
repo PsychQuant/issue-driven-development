@@ -57,7 +57,7 @@ allowed-tools:
 
 | 正常 `/idd-close` step | `--retroactive` 行為 |
 |------------------------|----------------------|
-| Step 0 / 1.5 / 1.6 gates | **跳過**（issue 已關，gate moot；非 force bypass）|
+| Step 0 / 1.5 / 1.57 / 1.6 gates | **跳過**（issue 已關，gate moot；非 force bypass。Step 1.57 的封存檢查也一樣：issue 已關，沒有結案可擋）|
 | **Precondition**（retroactive 專屬）| **兩段，缺一不可**。(a) **執行** `check-closed-without-summary.sh --issue N`：`rc != 10` 一律 abort。(b) `rc == 10` **不是許可** —— 你必須自己讀完該 issue 的全部 comment 才能決定，並把依據寫進 draft（見下方「許可由讀者供給」）。draft 前一次、post 前再一次（防 stale list / race / double-post）。|
 | Step 2 draft | **reuse，但 `### Verification` section 特別處理** —— 從 `git log --grep "#N"`（Changes）+ 該 issue 既有的 `## Diagnosis` / `## Implementation Complete` / `## Verify` comments + body reconstruct 五段式。**標題改成** `## Closing Summary (retroactive — auto-closed via <channel>)`。reconstruct 不足 → 標 **「best-effort reconstruction」**，不假裝完整。**`### Verification` 的捏造風險最高 —— 見下方「Verification honesty 鐵律」。** |
 | Step 3 confirm | **強制，無無人值守路徑**（round 12）—— 把 draft 給 user 確認再 post。以前這是「預設」，也就是可以被關掉的；而在 helper 交出許可權之後，人是唯一還能回答「這張 issue 到底有沒有摘要」的環節，關掉它等於沒有任何一層在判斷。confirm 仍**不是** verification —— cold-read + batch 容易 rubber-stamp，所以下方鐵律把誠實寫死進 draft，不靠 confirm 兜底。|
@@ -536,10 +536,12 @@ fi
 2. 對遠端的預設 branch 跑封存檢查。留言抓不到、或 `ic` 讀不了，一律當成 `error`，**不**當成「沒有 Implementation Complete」（verify 第 1 輪的 HIGH：舊寫法用了一個沒有任何步驟設定的變數，抓不到時讀到空檔就放行）：
 
 ```bash
-DEFAULT_BRANCH=$(gh repo view "$GITHUB_REPO" --json defaultBranchRef -q .defaultBranchRef.name)
-git -C "${CWD:-$PWD}" fetch -q origin -- "$DEFAULT_BRANCH"
+DEFAULT_BRANCH=$(gh repo view "$GITHUB_REPO" --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null) || DEFAULT_BRANCH=""
 SPEC_JSON=$(mktemp); SPEC_IC=$(mktemp)
-if gh api "repos/$GITHUB_REPO/issues/$NUMBER/comments" --paginate > "$SPEC_JSON" 2>/dev/null \
+# A stale local ref must not stand in for the default branch: no name, or a failed fetch, is an error (verify round 2).
+if [ -z "$DEFAULT_BRANCH" ] || ! git -C "${CWD:-$PWD}" fetch -q origin -- "$DEFAULT_BRANCH" 2>/dev/null; then
+  GATE='{"status": "error", "not_archived": [], "reason": "the default branch could not be read (gh repo view or git fetch failed)"}'; GATE_RC=2
+elif gh api "repos/$GITHUB_REPO/issues/$NUMBER/comments" --paginate > "$SPEC_JSON" 2>/dev/null \
    && python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" ic --comments "$SPEC_JSON" > "$SPEC_IC"; then
   GATE=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" archived --file "$SPEC_IC" --cwd "${CWD:-$PWD}" --ref "origin/$DEFAULT_BRANCH"); GATE_RC=$?
 else

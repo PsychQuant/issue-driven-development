@@ -825,7 +825,7 @@ printf '%s\n' "$PF" | jq -r '"→ spec preflight: \(.status) \(.message)"'
 |---|---|
 | `ready` | 往下走 Step 3b.0.5 |
 | `third-party` | 不走 Phase 3b，不建立規格目錄；改走 Phase 3 的 Simple 路徑（`idd-implement`），它會自己跑 preflight 並宣告 `**Spec**: third-party clone` |
-| `linked-worktree`、`install-spectra`、`init-openspec`、`error` 或 exit 64 | 停下，`Stopped:` 寫 preflight 的 `message` |
+| `linked-worktree`、`install-spectra`、`init-openspec`、`error`、exit 64、沒有輸出、不是一行 JSON、或上面沒列的 status | 停下，`Stopped:` 寫 preflight 的 `message`（沒有就寫印出的內容） |
 
 #### Step 3b.0.5: Spectra presence hard gate（#211/#210）
 

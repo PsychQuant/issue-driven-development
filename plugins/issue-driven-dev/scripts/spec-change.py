@@ -52,7 +52,8 @@ EXAMPLE_RE = re.compile(r"^##### Example:(.*)$")
 NO_CHECK_RE = re.compile(r"^\s*No executable check:(.*)$")
 REQ_LIKE_RE = re.compile(r"^###\s*Requirement\b")   # a heading meant as a requirement
 MARKER_REST_RE = re.compile(r"\s*(?:-->|\*/)?\s*")          # what may follow an Example title on its line
-IC_RE = re.compile(r"(?:<!-- idd:comment type=implementation-complete -->|\s*## Implementation Complete)")
+IC_RE = re.compile(r"\s*(?:<!-- idd:comment type=implementation-complete -->|## Implementation Complete)")
+FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 TRUSTED = ("OWNER", "MEMBER", "COLLABORATOR")
 INSTALL_HINT = ("install the Spectra CLI (see https://github.com/spectra-app/spectra) and run the wrapper again; "
                 "the spec change is not optional in a repository you can write to")
@@ -120,9 +121,12 @@ def spec_dir_of(text):
         return "openspec"
     value = values[-1].split(" #", 1)[0].strip().strip('"').strip("'").strip()
     parts = value.replace("\\", "/").split("/")
-    if not value or value.startswith("/") or ".." in parts or re.match(r"^[A-Za-z]:", value):
+    if not value or value.startswith(("/", "-")) or ".." in parts or re.match(r"^[A-Za-z]:", value):
         raise Fail(f".spectra.yaml spec_dir {value!r} must be a relative path inside the repository")
-    return "/".join(p for p in parts if p not in ("", "."))
+    sd = "/".join(p for p in parts if p not in ("", "."))
+    if not sd:
+        raise Fail(f".spectra.yaml spec_dir {value!r} names the repository root, not a directory inside it")
+    return sd
 
 
 def spec_dir_at(top, rev):
@@ -136,8 +140,12 @@ def spec_dir_worktree(top):
     path = os.path.join(top, ".spectra.yaml")
     if not os.path.isfile(path):
         return spec_dir_of(None)
-    with open(path, encoding="utf-8", errors="replace") as fh:
-        return spec_dir_of(fh.read())
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+    except OSError as exc:
+        raise Fail(f"cannot read .spectra.yaml: {exc.strerror or exc}")
+    return spec_dir_of(text)
 
 
 def resolve(cwd, rev):
@@ -224,7 +232,7 @@ def cmd_archived(argv):
         top = repo_top(a["--cwd"])
         rev = resolve(top, a["--ref"])
         sd = spec_dir_at(top, rev)
-        listing = git_text(top, "ls-tree", "-d", "--name-only", rev, f"{sd}/changes/", f"{sd}/changes/archive/")
+        listing = git_text(top, "ls-tree", "-d", "--name-only", rev, "--", f"{sd}/changes/", f"{sd}/changes/archive/")
         dirs = set(listing.splitlines())
         archived = [d.rsplit("/", 1)[1] for d in dirs if d.startswith(f"{sd}/changes/archive/")]
         not_archived, why = [], []
@@ -274,38 +282,64 @@ def block_text(lines):
     return "\n".join(lines).strip()
 
 
+def fence_step(line, fence):
+    """CommonMark fences: (fence after this line, whether this line is a fence delimiter).
+
+    A fence opens on three or more backticks (whose info string has no backtick) or tildes, and closes
+    only on a line of the same character, at least as long, with nothing but whitespace after it.
+    """
+    m = FENCE_OPEN_RE.match(line)
+    if fence is None:
+        if m and not (m.group(1)[0] == "`" and "`" in m.group(2)):
+            return (m.group(1)[0], len(m.group(1))), True
+        return None, False
+    if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= fence[1] and not m.group(2).strip():
+        return None, True
+    return fence, False
+
+
 def requirements(text, strict=False):
-    """{name: block text} for the `### Requirement:` blocks of a spec (outside code fences).
+    """{name: (block text, lines of the block outside code fences)} for the `### Requirement:` blocks.
 
     strict (the head revision): a heading meant as a requirement that does not parse as
-    `### Requirement: <name>` is an error, not an absent requirement (verify round 1 of #480:
-    `### Requirement Missing colon` went unchecked and links printed ok).
+    `### Requirement: <name>` is an error, not an absent requirement (verify round 1 of #480), and so is
+    a name used twice in the capability (round 2: the second block silently replaced the first).
     """
-    reqs, name, buf, fence = {}, None, [], None
+    reqs, name, buf, plain, fence = {}, None, [], [], None
+
+    def close():
+        if name is None:
+            return
+        if name in reqs:
+            if strict:
+                raise Fail(f"the requirement {name!r} appears twice in one capability")
+            return
+        reqs[name] = (block_text(buf), list(plain))
+
     for line in text.splitlines():
-        m = FENCE_RE.match(line)
-        if m:
-            tick = m.group(1)[0]
-            fence = tick if fence is None else (None if fence == tick else fence)
-        if fence is None and not m:
+        inside_before = fence is not None
+        fence, delimiter = fence_step(line, fence)
+        fenced = inside_before or delimiter
+        if not fenced:
             r = REQ_RE.match(line)
             if strict and REQ_LIKE_RE.match(line) and not (r and r.group(1)):
                 raise Fail(f"cannot parse the requirement heading {line.strip()!r}; "
                            "write it as `### Requirement: <name>`")
             if r or re.match(r"^#{1,3} ", line):
-                if name is not None:
-                    reqs[name] = block_text(buf)
-                name, buf = (r.group(1), [line]) if r else (None, [])
+                close()
+                name, buf, plain = (r.group(1), [line], []) if r else (None, [], [])
                 continue
         if name is not None:
             buf.append(line)
-    if name is not None:
-        reqs[name] = block_text(buf)
+            if not fenced:
+                plain.append(line)
+    close()
     return reqs
 
 
-def examples(block):
-    return [m.group(1).strip() for m in (EXAMPLE_RE.match(l) for l in block.splitlines()) if m]
+def examples(lines):
+    """Example titles among lines outside code fences."""
+    return [m.group(1).strip() for m in (EXAMPLE_RE.match(l) for l in lines) if m]
 
 
 def marker_files(top, head, needle, sd):
@@ -343,13 +377,13 @@ def cmd_links(argv):
             new = requirements(read_at(top, head, path), strict=True)
             rel = path[len(sd):]
             old = requirements(read_at(top, base, base_files[rel])) if rel in base_files else {}
-            titles = [t for block in new.values() for t in examples(block)]
-            for name, block in new.items():
-                if old.get(name) == block:
+            titles = [t for _, plain in new.values() for t in examples(plain)]
+            for name, (block, plain) in new.items():
+                if old.get(name, (None,))[0] == block:
                     continue
-                exs = examples(block)
+                exs = examples(plain)
                 if not exs:
-                    reasons = [m.group(1).strip() for m in (NO_CHECK_RE.match(l) for l in block.splitlines()) if m]
+                    reasons = [m.group(1).strip() for m in (NO_CHECK_RE.match(l) for l in plain) if m]
                     if not any(reasons):
                         missing.append({"capability": cap, "requirement": name, "example": "",
                                         "why": "no Example and no `No executable check:` line with a reason"})
@@ -382,8 +416,9 @@ def cmd_preflight(argv):
         if a["--can-write"] == "no":
             return emit({"status": "third-party", "message": "the account cannot write to this repository: "
                          "implement without a spec change and declare `**Spec**: third-party clone`"}, 0)
-        gd = git_text(top, "rev-parse", "--path-format=absolute", "--git-dir").strip()
-        cd = git_text(top, "rev-parse", "--path-format=absolute", "--git-common-dir").strip()
+        # Plain --git-dir / --git-common-dir (relative to top when not absolute): --path-format needs git 2.31.
+        gd = os.path.join(top, git_text(top, "rev-parse", "--git-dir").strip())
+        cd = os.path.join(top, git_text(top, "rev-parse", "--git-common-dir").strip())
         if os.path.realpath(gd) != os.path.realpath(cd):
             return emit({"status": "linked-worktree", "message": "this is a git linked worktree; spectra writes into "
                          "the main working tree from here. Run in the main tree or a standalone clone"}, 1)

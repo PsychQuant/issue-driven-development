@@ -251,6 +251,15 @@ linked_repo l-notes; put openspec/specs/cap/spec.md "$(spec "$(req Base)")
 
 Background only."; commit >/dev/null
 links_case "a level-2 heading that mentions Requirement is not a requirement heading" ok 0 0
+# Rows added by idd-480-fix2 (verify round 2 of #480).
+linked_repo l-fenced-ex; put openspec/specs/cap/spec.md "$(spec "$(req Base)" "$(req Alpha "$FENCE" '##### Example: alpha table' "$FENCE")")"; put scripts/tests/x/test.sh '# spec-example: cap / alpha table'; commit >/dev/null
+links_case "added, its only Example line inside a code fence" missing 1 1
+linked_repo l-fenced-nc; put openspec/specs/cap/spec.md "$(spec "$(req Base)" "$(req Alpha "$FENCE" 'No executable check: a model carries this out.' "$FENCE")")"; commit >/dev/null
+links_case "added, its only No executable check line inside a code fence" missing 1 1
+linked_repo l-longfence; put openspec/specs/cap/spec.md "$(spec "$(req Base)" "$(req Alpha '````' "$FENCE" '##### Example: alpha table')")"; put scripts/tests/x/test.sh '# spec-example: cap / alpha table'; commit >/dev/null
+links_case "added, after a four-backtick fence that three backticks do not close" missing 1 1
+linked_repo l-dupname; put openspec/specs/cap/spec.md "$(spec "$(req Base)" "$(req Alpha 'No executable check: a.')" "$(req Alpha 'No executable check: b.')")"; commit >/dev/null
+links_case "added twice with the same name in one capability" error "" 2
 linked_repo l-nospecs; git -C "$REPO" rm -q -r openspec/specs; commit >/dev/null
 links_case "openspec/specs/ holds no tracked file at the head revision" error "" 2
 newrepo l-gitkeep; put openspec/specs/.gitkeep ''; BASE=$(commit base); put README.txt x; commit >/dev/null
@@ -374,11 +383,28 @@ ic_case "two pages, the newest on the second" "[$IC_O]
 ic_case "the file does not exist" "$WORK/no-such-comments.json" EMPTY 2
 ic_case "the file is not JSON" "$(icj ic-notjson 'not json')" EMPTY 2
 ic_case "an empty file (gh exited 0 and printed nothing)" "$(icj ic-empty '')" EMPTY 2
+ic_case "a body that starts with a blank line and then the marker" '[{"author_association":"OWNER","body":"\n<!-- idd:comment type=implementation-complete -->\n**Spec**: change idd-1-w"}]' "idd-1-w" 0
 ic_case "a comment whose body is not a string is not chosen" '[{"author_association":"OWNER","body":7},{"author_association":"OWNER","body":"## Implementation Complete\n\n**Spec**: change idd-1-z"}]' "idd-1-z" 0
 run ic --comments "$(icj ic-one "[$IC_O,$IC_M]")"
 assert_eq "ic: the printed body reads as the declaration it holds" "idd-1-b" "$(printf '%s\n' "$OUT" > "$WORK/ic-out.md"; "$PY" "$SC" declared --file "$WORK/ic-out.md" | field changes | tr -d '[]" ')"
 run ic
 assert_exit "ic: no --comments is a usage error" 64 "$RC"
+
+echo "spec-change: preflight and spec_dir failures (idd-480-fix2)"
+pf_repo pf-unreadable no yes; printf 'spec_dir: openspec\n' > "$TREE/.spectra.yaml"; chmod 000 "$TREE/.spectra.yaml"
+if [ -r "$TREE/.spectra.yaml" ]; then echo "  (skipped: running as a user who can read mode-000 files)"
+else
+  OUT=$(PATH="$BIN_WITH" "$PY" "$SC" preflight --cwd "$TREE" --can-write yes 2>"$WORK/err"); RC=$?
+  LINES=$(printf '%s' "$OUT" | grep -c . || true)
+  assert_eq "preflight: .spectra.yaml cannot be read → error" error "$(printf '%s' "$OUT" | field status)"
+  assert_exit "preflight: .spectra.yaml cannot be read → exit 2" 2 "$RC"
+  assert_eq "preflight: … one JSON line" 1 "$LINES"
+fi
+chmod 644 "$TREE/.spectra.yaml"
+linked_repo dash-sd; printf 'spec_dir: -x\n' > "$REPO/.spectra.yaml"; commit >/dev/null
+run links --cwd "$REPO" --base "$BASE"
+assert_eq "links: a spec_dir that starts with a dash → error" error "$(printf '%s' "$OUT" | field status)"
+assert_exit "links: … exit 2" 2 "$RC"
 
 echo "spec-change: common behaviour"
 mkdir -p "$WORK/not-git"

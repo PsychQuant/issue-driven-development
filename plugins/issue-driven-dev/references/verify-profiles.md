@@ -18,7 +18,7 @@ DA（devil's advocate）在所有 profile 都存在 — 變的是 focus 文本�
 
 ## Profile: code
 
-**今日行為，逐 byte 不變**（backward-compat 鎖，spec scenario「default invocation is unchanged」）。lens 文本維持 idd-verify SKILL.md Step 2 / pai customLenses 既有四則（requirements / logic / security / regression），DA focus 維持既有 adversarial-refute 文本，輸入源走既有 Step 0.5 auto-detect 鏈，freshness 走 #228 git gate。本檔對 `code` **不**另立文本 — 避免雙 source。
+**今日行為，逐 byte 不變**（不變的是 lens 組合與輸入偵測；#480 起另外附一段規格對照，見本節最後）（backward-compat 鎖，spec scenario「default invocation is unchanged」）。lens 文本維持 idd-verify SKILL.md Step 2 / pai customLenses 既有四則（requirements / logic / security / regression），DA focus 維持既有 adversarial-refute 文本，輸入源走既有 Step 0.5 auto-detect 鏈，freshness 走 #228 git gate。本檔對 `code` **不**另立文本 — 避免雙 source。
 
 **#480 起**：`code` profile 的 reviewer 另外讀一段規格對照（`$VERIFY_DIR/spec-block.md`，pai 路徑併入 contextBlock）：這張 issue 的 `**Spec**:` 宣告、審查範圍改到的規格檔、`spec-change.py links` 與 `archived` 的結果，以及據此審查的規則。lens 的 focus 字串不變。`prose`、`academic` 不組這一段。
 

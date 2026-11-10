@@ -199,10 +199,10 @@ Route to `Simple` when none of the above apply:
 ```
 Simple:    diagnose → idd-implement (light propose → apply → archive) → verify → close
 Plan:      diagnose → idd-plan (propose → EnterPlanMode → user approves proposal + tasks → ExitPlanMode) → idd-implement (apply → archive) → verify → close
-Spectra:   diagnose → spectra-discuss → spectra-propose(#NNN) → spectra-apply → archive → verify → close
+Spectra:   diagnose → spec preflight → spectra-discuss → spectra-propose(#NNN) → spectra-apply → archive → verify → close
 ```
 
-`Spectra (opt-out)`: `diagnose → spectra-propose(#NNN) → spectra-apply → archive → verify → close` (skip discuss only when ALL Step 4 opt-out conditions hold; see idd-diagnose).
+`Spectra (opt-out)`: `diagnose → spec preflight → spectra-propose(#NNN) → spectra-apply → archive → verify → close` (skip discuss only when ALL Step 4 opt-out conditions hold; see idd-diagnose).
 
 Every tier leaves a spec change, or declares `no behaviour change` (four closed cases) or `third-party clone`, on the `**Spec**:` line of the Implementation Complete comment (#480, contract: [`references/spec-wrapper.md`](../references/spec-wrapper.md)). The tier decides only what comes before the implementation: discuss, design, and approval.
 
