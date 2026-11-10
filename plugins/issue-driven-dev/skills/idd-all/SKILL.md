@@ -989,6 +989,24 @@ fi
 
 > **Why idd-all overrides spectra defaults via args, not by modifying spectra**: spectra is a separate plugin with its own attended-by-default contract that's correct for solo use. idd-all is the one promising "unattended", so it's idd-all's responsibility to configure each sub-skill invocation to honor that promise. Args-based override keeps the boundary clean.
 
+
+#### Step 3b.6: Spec close-out 與 Implementation Complete（#480）
+
+`spectra-apply` 做完之後、Phase 4 之前，照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 5 步做 Spec close-out，順序固定：`spectra-verify` → `spectra archive <change> -y` → 確認封存落在 `$CWD` → commit `chore: archive <change> (#N)` → `spec-change.py" links --base $(git merge-base HEAD origin/<default>)` → `spec-change.py" archived --ref HEAD`。任何一步沒過：unattended 停下回報（`Stopped:`），attended 告訴使用者哪一步、等他決定。
+
+通過之後貼 Implementation Complete（經 `gh-egress.sh`），讓 `idd-verify` 與 `idd-close` 讀得到這張 issue 的宣告：
+
+```markdown
+<!-- idd:comment type=implementation-complete -->
+## Implementation Complete
+
+**Spec**: change <change 名稱>
+
+Spectra change `<change 名稱>` 已封存在 `<archive commit>`；進度見 `openspec/changes/archive/<日期>-<change 名稱>/tasks.md`。
+```
+
+這則留言沒有 `### Checklist` 小節：Spectra tier 的 checklist 仍由 Step 3b.5 寫進 `## Current Status > ### Tasks`，`idd-close` 的 authoritative source 照舊落在那裡。
+
 ---
 
 ### Phase 4: Verify Loop

@@ -10,9 +10,11 @@
 - [x] 2.4 `preflight` 子指令決定能不能開始寫規格：依 requirement「A repository without Spectra stops and a third-party clone proceeds」的 Example「preflight by write access and Spectra state」先寫測試（帶對應標記）；linked worktree 用真的 `git worktree add` 建出來測（design「linked worktree 先停下」），`spectra` 是否在 PATH 用測試專用的 PATH 控制。驗證：8 列各有一個檢查並通過。
 - [x] 2.5 四個子指令的共同行為（design「機械判定集中在 scripts/spec-change.py」）：非 git 目錄、解析不了的規格檔都回 `error`，不回 `ok` 或 `pass`；每個子指令只印一行 JSON。驗證：測試各一例；`python3 -m py_compile` 通過。
 
+- [x] 2.6 規格目錄照 Spectra 的規則解析（requirement「The spec directory is resolved the way Spectra resolves it」；design「規格目錄照 Spectra 的規則解析」）：依 Example「spec directory by .spectra.yaml」先寫測試（帶對應標記），`archived`、`links`、`preflight` 都改用解析出的目錄。驗證：`scripts/tests/spec-change/test.sh` 的 7 列各有一個檢查並通過，原有的檢查不變；用真的 `spectra` 在暫存 repo 建立、封存一個 change，`links` 與 `archived` 讀得到 `docs/spectra/`。
+
 ## 3. wrapper
 
-- [ ] 3.1 `references/spec-wrapper.md` 寫出共用的契約：preflight、建立 change（design「每張 issue 一個 change，名稱是 idd-N-slug」）、輕量形式不做 discuss 與 design（design「Simple 用 spec-driven 的輕量形式，不 fork workflow」）、apply 時 Example 的測試先寫、收尾的順序（design「封存在 branch 上、verify 之前」）。驗證：內容審閱，契約的每一步都對得到一個 `spec-change.py` 子指令或一個 Spectra 指令，沒有留給執行者自行判斷的總括判準。
+- [x] 3.1 `references/spec-wrapper.md` 寫出共用的契約：preflight、建立 change（design「每張 issue 一個 change，名稱是 idd-N-slug」）、輕量形式不做 discuss 與 design（design「Simple 用 spec-driven 的輕量形式，不 fork workflow」）、apply 時 Example 的測試先寫、收尾的順序（design「封存在 branch 上、verify 之前」）。驗證：內容審閱，契約的每一步都對得到一個 `spec-change.py` 子指令或一個 Spectra 指令，沒有留給執行者自行判斷的總括判準。
 - [ ] 3.2 `idd-implement` 成為 Simple 的 wrapper（requirement「Spec changes go through Spectra behind IDD wrappers」；design「wrapper 是 idd-implement 與 idd-plan，契約放在 references/spec-wrapper.md」）：先跑 preflight，照契約 propose、apply、收尾；Implementation Complete 的模板加上標記與 `**Spec**:` 行（design「宣告寫在 Implementation Complete 留言的 Spec 行」）；tree-lock 那一步寫明 linked worktree 會被 preflight 擋下。驗證：在暫存 repo 跑一張 Simple issue，branch 上有封存目錄與 `openspec/specs/` 的改動，`spec-change.py declared` 讀留言得到 `change`，`spec-change.py archived --ref HEAD` 印 `pass`。
 - [ ] 3.3 `idd-plan` 成為 Plan 的 wrapper：attended 時 propose 之後在 plan mode 請人核准 proposal 與 tasks，核准後把 change 交給 `idd-implement` 做 apply 與收尾，`idd-implement` 不再 propose 一次。驗證：在暫存 repo 跑一張 attended 的 Plan issue，核准之前沒有任何程式檔被改，核准之後的結果與 3.2 相同。
 - [ ] 3.4 `idd-all` 替 Spectra tier 做收尾：apply 之後跑 Spectra 的 verify、封存、commit、`links`，並貼出帶標記與 `**Spec**:` 行、沒有 `### Checklist` 小節的 Implementation Complete。驗證：`authoritative-source-producer` 的測試加一例，確認有這種留言時 checklist 的來源仍是 `Current Status > Tasks`；在暫存 repo 跑一張 Spectra issue，`archived --ref HEAD` 印 `pass`。

@@ -4,6 +4,28 @@ Defines how every issue that IDD implements leaves a change in the repository's 
 
 ## ADDED Requirements
 
+### Requirement: The spec directory is resolved the way Spectra resolves it
+
+Every path this capability names under `openspec/` is relative to the spec directory Spectra uses for the repository, and `scripts/spec-change.py` SHALL resolve it the same way: the value of an uncommented `spec_dir:` line in `.spectra.yaml` at the top of the repository, or `openspec` when the file has no such line or does not exist. `archived` and `links` SHALL read `.spectra.yaml` at the revision they check; `preflight` SHALL read it in the working tree. A value that is absolute, empty, or leaves the repository (a `..` component) SHALL be an `error`, not a fallback to `openspec`.
+
+#### Scenario: A repository initialised by Spectra 3
+
+- **GIVEN** `.spectra.yaml` has `spec_dir: docs/spectra` and the change was archived under `docs/spectra/changes/archive/`
+- **WHEN** `spec-change.py archived` runs on that revision
+- **THEN** it looks under `docs/spectra/` and prints `pass`
+
+##### Example: spec directory by .spectra.yaml
+
+| `.spectra.yaml` at the revision | Spec directory | Result |
+| --- | --- | --- |
+| `spec_dir: docs/spectra` | `docs/spectra` | read there |
+| `spec_dir: "docs/specs"` | `docs/specs` | read there |
+| a file whose only `spec_dir` line is commented out | `openspec` | read there |
+| no `.spectra.yaml` | `openspec` | read there |
+| `spec_dir: /srv/specs` | not applicable | `error` |
+| `spec_dir: ../specs` | not applicable | `error` |
+| `spec_dir:` with no value | not applicable | `error` |
+
 ### Requirement: Every implemented issue leaves a spec change or a declared exemption
 
 When an issue is implemented, the step that finishes the implementation SHALL post a `## Implementation Complete` comment that carries the marker `<!-- idd:comment type=implementation-complete -->` and exactly one line that starts with `**Spec**:`. The line SHALL take one of three forms: `**Spec**: change <name>` followed by further names separated by commas when the issue has more than one change (each name is a Spectra change the branch archives); `**Spec**: no behaviour change`; or `**Spec**: third-party clone`. The tier of the Diagnosis (Simple, Plan, Spectra or SDD-warranted) SHALL NOT decide which form is used; it decides only which steps come before the implementation. An issue whose trusted Diagnosis records the type meeting is not implemented and has no such comment.

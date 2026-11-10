@@ -80,6 +80,10 @@ Spectra tier 之後也貼這則留言（由 `idd-all` 的收尾貼），內容�
 - 測試的標記是 `spec-example: <capability> / <Example title>`，所以 Example 的標題在一個 capability 內要唯一。標記只證明有一個測試指名這個 Example；測試是否真的檢查了 Example 寫的事，由 verify 的 reviewer 判斷。
 - 搜尋字串的測試不能當成 requirement 的檢查（#480 的決定）。由模型照 SKILL 執行、寫不出檢查的 requirement，寫一行 `No executable check:` 與理由，由 verify 審。
 
+### 規格目錄照 Spectra 的規則解析
+
+Spectra 3 的 `spectra init` 預設把規格放在 `docs/spectra/`，`.spectra.yaml` 寫 `spec_dir: docs/spectra`；設定檔沒有這一欄時是 `openspec`（設定檔裡的說明原文：New projects initialize at docs/spectra; configurations without this field resolve to openspec）。本 repo 屬於後者。所以 `spec-change.py` 不寫死 `openspec/`，照同一條規則解析；`archived` 與 `links` 讀被檢查的那個 revision 的設定檔，`preflight` 讀工作樹的。解析出的路徑是絕對路徑、空的、或跑出 repo 時回 `error`，不退回 `openspec`。實作 task 2.1 時在暫存 repo 跑 `spectra init` 才發現這件事。
+
 ### verify 之後的修正走同一個 wrapper
 
 修正若新增或修改 requirement，就是這張 issue 的另一個 change（`idd-<N>-fix<k>`），同樣在下一輪 verify 之前封存，新的 Implementation Complete 留言列出這張 issue 的所有 change。requirement 與 Example 已經存在、只是測試沒寫對的，補測試即可。

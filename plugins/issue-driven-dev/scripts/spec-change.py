@@ -24,6 +24,9 @@ file) and exits with a fixed code. A usage error prints to stderr and exits 64.
       {"status": ready|third-party|linked-worktree|install-spectra|init-openspec|error,
        "message": "..."}   exit 0 (ready, third-party), 1 (the three stops), 2 (error)
 
+Paths named openspec/ above are relative to the spec directory Spectra uses: the `spec_dir:` line of
+.spectra.yaml, or `openspec` when there is none (read at the revision checked; preflight reads the working tree).
+
 Anything that cannot be read or decided is `error` (exit 2), never `ok` or `pass`.
 """
 import json
@@ -93,6 +96,38 @@ def repo_top(cwd):
     if p.returncode != 0:
         raise Fail(f"{cwd} is not inside a git repository")
     return p.stdout.decode("utf-8").strip()
+
+
+SPEC_DIR_RE = re.compile(r"^spec_dir:(.*)$")
+
+
+def spec_dir_of(text):
+    """The spec directory named by .spectra.yaml text (None = no file): Spectra's own rule."""
+    if text is None:
+        return "openspec"
+    values = [m.group(1) for m in (SPEC_DIR_RE.match(l) for l in text.splitlines()) if m]
+    if not values:
+        return "openspec"
+    value = values[-1].split(" #", 1)[0].strip().strip('"').strip("'").strip()
+    parts = value.replace("\\", "/").split("/")
+    if not value or value.startswith("/") or ".." in parts or re.match(r"^[A-Za-z]:", value):
+        raise Fail(f".spectra.yaml spec_dir {value!r} must be a relative path inside the repository")
+    return "/".join(p for p in parts if p not in ("", "."))
+
+
+def spec_dir_at(top, rev):
+    p = git(top, "show", f"{rev}:.spectra.yaml", check=False)
+    if p.returncode != 0:
+        return spec_dir_of(None)
+    return spec_dir_of(p.stdout.decode("utf-8", "replace"))
+
+
+def spec_dir_worktree(top):
+    path = os.path.join(top, ".spectra.yaml")
+    if not os.path.isfile(path):
+        return spec_dir_of(None)
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        return spec_dir_of(fh.read())
 
 
 def resolve(cwd, rev):
@@ -178,16 +213,17 @@ def cmd_archived(argv):
             return emit({"status": "pass", "not_archived": [], "reason": f"form {form}: nothing to archive"}, 0)
         top = repo_top(a["--cwd"])
         rev = resolve(top, a["--ref"])
-        listing = git_text(top, "ls-tree", "-d", "--name-only", rev, "openspec/changes/", "openspec/changes/archive/")
+        sd = spec_dir_at(top, rev)
+        listing = git_text(top, "ls-tree", "-d", "--name-only", rev, f"{sd}/changes/", f"{sd}/changes/archive/")
         dirs = set(listing.splitlines())
-        archived = [d.rsplit("/", 1)[1] for d in dirs if d.startswith("openspec/changes/archive/")]
+        archived = [d.rsplit("/", 1)[1] for d in dirs if d.startswith(f"{sd}/changes/archive/")]
         not_archived, why = [], []
         for name in changes:
-            open_dir = f"openspec/changes/{name}" in dirs
+            open_dir = f"{sd}/changes/{name}" in dirs
             hits = [d for d in archived if re.match(ARCHIVE_DIR_RE % re.escape(name), d)]
             if open_dir or len(hits) != 1:
                 not_archived.append(name)
-                why.append(f"{name}: " + ("still under openspec/changes/" if open_dir else
+                why.append(f"{name}: " + (f"still under {sd}/changes/" if open_dir else
                                           "no archive directory" if not hits else f"{len(hits)} archive directories"))
         if not_archived:
             return emit({"status": "refuse", "not_archived": not_archived,
@@ -199,9 +235,9 @@ def cmd_archived(argv):
 
 # ── links ───────────────────────────────────────────────────────────────────
 
-def spec_files(top, rev):
-    out = git_text(top, "ls-tree", "-r", "--name-only", rev, "--", "openspec/specs/")
-    return [p for p in out.splitlines() if re.match(r"^openspec/specs/[^/]+/spec\.md$", p)]
+def spec_files(top, rev, sd):
+    out = git_text(top, "ls-tree", "-r", "--name-only", rev, "--", f"{sd}/specs/")
+    return [p for p in out.splitlines() if re.match(r"^%s/specs/[^/]+/spec\.md$" % re.escape(sd), p)]
 
 
 def read_at(top, rev, path):
@@ -238,15 +274,15 @@ def examples(block):
     return [m.group(1).strip() for m in (EXAMPLE_RE.match(l) for l in block.splitlines()) if m]
 
 
-def marker_files(top, head, needle):
-    """Tracked files at head, outside openspec/ and not .md, whose text contains needle."""
+def marker_files(top, head, needle, sd):
+    """Tracked files at head, outside the spec directory and not .md, whose text contains needle."""
     p = git(top, "grep", "-l", "-F", "-e", needle, head, "--", ".", check=False)
     if p.returncode not in (0, 1):
         raise Fail("git grep failed: " + p.stderr.decode("utf-8", "replace").strip()[:200])
     files = []
     for line in p.stdout.decode("utf-8", "replace").splitlines():
         path = line.split(":", 1)[1] if line.startswith(head + ":") else line
-        if path.startswith("openspec/") or path.lower().endswith(".md"):
+        if path.startswith(sd + "/") or path.lower().endswith(".md"):
             continue
         files.append(path)
     return files
@@ -258,12 +294,15 @@ def cmd_links(argv):
         top = repo_top(a.get("--cwd", "."))
         base = resolve(top, a["--base"])
         head = resolve(top, a.get("--head", "HEAD"))
-        base_files, head_files = set(spec_files(top, base)), spec_files(top, head)
+        sd, sd_base = spec_dir_at(top, head), spec_dir_at(top, base)
+        base_files = {p[len(sd_base):]: p for p in spec_files(top, base, sd_base)}
+        head_files = spec_files(top, head, sd)
         missing = []
         for path in head_files:
-            cap = path.split("/")[2]
+            cap = path[len(sd) + len("/specs/"):].split("/")[0]
             new = requirements(read_at(top, head, path))
-            old = requirements(read_at(top, base, path)) if path in base_files else {}
+            rel = path[len(sd):]
+            old = requirements(read_at(top, base, base_files[rel])) if rel in base_files else {}
             titles = [t for block in new.values() for t in examples(block)]
             for name, block in new.items():
                 if old.get(name) == block:
@@ -282,9 +321,9 @@ def cmd_links(argv):
                     elif titles.count(title) > 1:
                         missing.append({"capability": cap, "requirement": name, "example": title,
                                         "why": "the Example title is used more than once in this capability"})
-                    elif not marker_files(top, head, f"spec-example: {cap} / {title}"):
+                    elif not marker_files(top, head, f"spec-example: {cap} / {title}", sd):
                         missing.append({"capability": cap, "requirement": name, "example": title,
-                                        "why": "no tracked file outside openspec/ (and not .md) carries its marker"})
+                                        "why": f"no tracked file outside {sd}/ (and not .md) carries its marker"})
         if missing:
             return emit({"status": "missing", "missing": missing, "reason": f"{len(missing)} item(s) without a check"}, 1)
         return emit({"status": "ok", "missing": [], "reason": ""}, 0)
@@ -310,8 +349,9 @@ def cmd_preflight(argv):
                          "the main working tree from here. Run in the main tree or a standalone clone"}, 1)
         if shutil.which("spectra") is None:
             return emit({"status": "install-spectra", "message": INSTALL_HINT}, 1)
-        if not os.path.isdir(os.path.join(top, "openspec")):
-            return emit({"status": "init-openspec", "message": "this repository has no openspec/ directory: "
+        sd = spec_dir_worktree(top)
+        if not os.path.isdir(os.path.join(top, sd)):
+            return emit({"status": "init-openspec", "message": f"this repository has no {sd}/ directory: "
                          "run `spectra init` at its top level, commit it, and run the wrapper again"}, 1)
         return emit({"status": "ready", "message": ""}, 0)
     except Fail as exc:

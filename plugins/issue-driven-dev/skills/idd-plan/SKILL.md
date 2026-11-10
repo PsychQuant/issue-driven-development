@@ -136,6 +136,8 @@ printf 'raw<<<\n'; printf '%s\n%s\n' "${COMPLEXITY_ERR:-}" "${BLOCK_LINE:-}" | s
 
 依 Strategy 起草詳細的 Implementation Plan。**比 idd-implement Step 2 的 plan 更詳盡**，因為這份 plan 是要過 user 在 plan mode UI 審查的，是 deliberation tier 的核心 artifact。
 
+> **code issue 先寫規格（#480，非 meeting）**：照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 1 到 3 步。先跑 preflight（停下的情況照契約），再決定這張 issue 留下什麼；要寫規格時呼叫 `Skill(skill="spectra-propose", args="idd-<N>-<slug>：<需求>。不做 discuss；design 視需要寫。…")`，args 的其餘寫法照契約第 3 步。下面的 Implementation Plan 加一行 `**Spec plan**: change <名稱>`，`### Files & Changes` 對照這個 change 的 tasks。核准的對象是這個 change 的 proposal 與 tasks；之後由 `idd-implement` 做 apply 與收尾。宣告 `no behaviour change` 或 `third-party clone` 時，照下面原本的寫法。
+
 格式：
 
 ```markdown
@@ -217,6 +219,8 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$IMPLEMENTATION_PLAN"
 
 呼叫 `EnterPlanMode` 工具進入 plan mode（read-only tool set 鎖定）。然後在 plan-mode 的視窗呈現完整 Implementation Plan markdown，並透過 `ExitPlanMode` 提交給 user approve。
 
+有 change 時（#480），呈現的內容是 Implementation Plan 加上這個 change 的 proposal 與 tasks（讀 `openspec/changes/<名稱>/` 底下的檔案，原文附上），user 核准的是這一份。
+
 > **重要**: 在 plan mode 期間 **不能呼叫任何 stateful tool**（Edit / Write / Bash with mutations / gh commenting / etc.）— runtime 會 reject。所以 Implementation Plan comment 必須在 Step 2 就 post 完，Step 4 只用 `EnterPlanMode` / `ExitPlanMode` 這兩個 mode-control tool。
 
 `ExitPlanMode` 的 plan 內容：
@@ -255,6 +259,8 @@ Skill(skill="issue-driven-dev:idd-implement", args="#NNN")
 ```
 
 idd-implement 會偵測到 issue 已有 `## Implementation Plan` comment（Step 2 post 的），跳過自己 Step 2 的 plan drafting，直接進 Step 2.5 bootstrap TaskList + Step 3 TDD loop。
+
+有 change 時（#480），args 帶上 change 名稱（`#NNN --spec-change <名稱>` 寫在 args 的文字裡即可），idd-implement 用這個 change 做 apply 與 Step 4.5 收尾，不再 propose。
 
 > **為什麼 chain 而不是把 idd-implement 的內容 inline？** 保持 single source of truth — idd-implement 的 TDD discipline / scope guard / commit conventions / PR flow 全部由 idd-implement 定義，idd-plan 只在前面加 approval gate。Inline 會 drift。
 

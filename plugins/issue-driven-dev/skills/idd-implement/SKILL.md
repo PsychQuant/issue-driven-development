@@ -74,12 +74,14 @@ allowed-tools:
 
 ```
 TaskCreate(name="resolve_pr_path", description="Phase 0.5: --pr/--no-pr flag → fork detection → pr_policy config → ask. 若 PR path: 建 feature branch")
+TaskCreate(name="spec_preflight", description="Step 0.6 (#480): scripts/spec-change.py preflight，決定這張 issue 寫規格、宣告 no behaviour change、或是 third-party clone；linked worktree / 沒有 Spectra 時停下（references/spec-wrapper.md 第 1、2 步）")
 TaskCreate(name="read_issue_and_diagnosis", description="gh issue view + 確認最新 diagnosis comment 的 Strategy")
 TaskCreate(name="check_attachments", description="確認 .claude/.idd/attachments/issue-NNN/ 存在且 _manifest.json 涵蓋當下 issue attachment list;偵測新增 attachment 補 fetch。manifest 缺漏 → 警告並引導使用者重跑 idd-diagnose,不 auto-repair。依 rules/process-attachments.md。")
 TaskCreate(name="draft_implementation_plan", description="依 Strategy 起草 Implementation Plan 並 comment 到 issue")
 TaskCreate(name="bootstrap_strategy_tasklist", description="Step 2.5: Simple complexity → 為每個 - [ ] bullet 建 TaskCreate; SDD → 跳過(spectra-apply 管)")
 TaskCreate(name="execute_tdd_loop", description="Step 3: pre-flight superpowers（check-plugin-presence.sh 三參數，缺席 fail-fast）→ 對每個 strategy item invoke superpowers:test-driven-development 完成 TDD 執行 → commit (#NNN) → TaskUpdate completed（#209 delegation）")
 TaskCreate(name="scope_guard", description="實作中發現不相關問題 → 開新 issue,不混入本 #NNN")
+TaskCreate(name="spec_closeout", description="Step 4.5 (#480): 有 change 時照 references/spec-wrapper.md 第 5 步收尾：spectra-verify → spectra archive → 確認落在工作樹 → commit → spec-change.py links / archived")
 TaskCreate(name="sync_checklist_and_summary", description="Step 5: 把最終 checklist 狀態寫回 Implementation Complete comment")
 TaskCreate(name="open_pr_if_pr_path", description="Phase 5.5: PR path 才執行 — git push + gh pr create with Refs #NNN body")
 TaskCreate(name="sister_bug_sweep", description="Step 5.7: review session log + reproduction trace, identify sister bugs / refactor opportunities / TODOs encountered; AskUserQuestion 3-option per canonical references/ic-r011-checkpoint.md; PATCH Implementation Complete comment with `### Sister Bugs Filed` audit trail (per IC_R011 #526)")
@@ -212,6 +214,8 @@ esac
 
 完整契約見 [`references/worktree-isolation.md`](../../references/worktree-isolation.md) § Tree-lock。
 
+> **要寫規格的 issue 不能在 linked worktree 裡做（#480）**：Spectra 在 linked worktree 裡會把檔案寫進主工作樹。上面 exit 3 改用 worktree 之後，Step 0.6 的 preflight 會回 `linked-worktree` 並停下；這時等主工作樹空出來，或改在獨立 clone 裡跑。宣告 `no behaviour change` 的 issue 不受影響。
+
 ### Step 0.5: Resolve PR vs Direct-commit Path
 
 完整 resolution algorithm 見 [references/pr-flow.md](../../references/pr-flow.md)。簡述:
@@ -343,6 +347,16 @@ No branch operations. Whatever branch the user is on, commits land there.
 
 ---
 
+### Step 0.6: Spec preflight（#480）
+
+每一張實作的 issue 都要留下規格改動，或一個宣告過的豁免。照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 1、2 步做，**在建立任何 artifact 或 commit 之前**：
+
+1. 跑 `spec-change.py" preflight`（指令在契約第 1 步）。`linked-worktree`、`install-spectra`、`init-openspec`、`error` → 停下，把 `message` 轉給使用者，不往下走。`third-party` → 照本 skill 原本的流程做，Implementation Complete 寫 `**Spec**: third-party clone`。
+2. `ready` → 決定這張 issue 留下什麼（契約第 2 步）：會改變行為就寫規格（change 名稱 `idd-<N>-<slug>`）；不會，而且屬於契約列的四種之一，就宣告 `**Spec**: no behaviour change`。
+3. 把決定寫進 Step 2 的 Implementation Plan 留言（一行 `**Spec plan**: change <名稱>` 或 `**Spec plan**: no behaviour change (<a|b|c|d>)`），之後的步驟從那一行讀，不靠 shell 變數。
+
+`idd-plan` 已經建好 change 時（`spectra list` 有 `idd-<N>-` 開頭的 change），這一步只做 preflight，不再 propose。
+
 ### Step 1: 讀取 Issue + Diagnosis
 
 ```bash
@@ -407,6 +421,13 @@ idd-implement 是 **orchestration**（issue tracking、plan、checklist、body s
 
 ### Step 2: 列出變更清單並 comment 到 issue
 
+> **要寫規格時（Step 0.6 決定 `change`，#480）**：先 propose，再寫下面的 Implementation Plan。
+>
+> - change 不存在 → `Skill(skill="spectra-propose", args="<change 名稱>：<需求>。輕量形式：不做 discuss、不寫 design。…")`，args 的寫法照契約第 3 步（每條 requirement 有 Example、測試帶標記）。
+> - change 已存在（`idd-plan` 核准過的）→ 不再 propose，直接用它。
+>
+> Implementation Plan 的清單改成這個 change 的 tasks（照 `tasks.md` 的順序），並加一行 `**Spec plan**: change <名稱>`。宣告 `no behaviour change` 時照下面原本的寫法，加一行 `**Spec plan**: no behaviour change (<a|b|c|d>)`。
+
 根據 diagnosis 的 strategy 與 Step 1.5 的 `EXTRA_REQUIREMENTS`，列出具體要改的檔案：
 
 ```markdown
@@ -439,6 +460,8 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-egress.sh" comment $NUMBER --repo $GITHUB
 ```
 
 ### Step 2.5: Bootstrap TodoList（non-Spectra case）
+
+> **有 change 時跳過這一步（#480）**：進度記在 change 的 `tasks.md`，由 `spectra-apply` 勾選，不另外建 TaskList。
 
 **判斷 Complexity routing**：讀最新 `## Diagnosis` comment 的 `### Complexity` 欄位（v2.36.0+ 三路；v2.50+ 加 Layer V variant）。**tier 抽取與 actionability 判定都不在此處自行寫 parser**，改呼叫 [`references/actionability-gate.md`](../../references/actionability-gate.md) 契約下的共用實作：
 
@@ -535,6 +558,8 @@ Routing **先看 `$VEXIT`**（gate 判定），`0` 才依 `$TIER` 決定行為�
 
 **適用範圍（#209 R1 verify F8）**：pre-flight 針對會走 TDD delegation 的 code 變更項；若本次變更清單**全部**屬下方「IDD 專屬路由例外」（純 prose / `with_skill`），此 pre-flight 可跳過 — 該路由本來就不 invoke superpowers。**注意（F10 → #212 已解）**：pre-flight 現亦查 enabled 狀態 — disabled 會在 pre-flight 即 exit 3 並印 enable 指令；CLI 缺席時 graceful degrade 回磁碟檢查。
 
+> **有 change 時（#480）**：pre-flight 照常跑（superpowers 的 TDD 紀律不變），然後 `Skill(skill="spectra-apply", args="<change 名稱>")` 逐項做 `tasks.md`：每個 Example 的測試先寫、先看到它失敗，測試檔帶 `spec-example: <capability> / <Example title>` 標記。下面的逐項流程用在沒有 change 的 issue（宣告 `no behaviour change`、`third-party clone`）。
+
 每個變更項依序執行：
 
 0. **TaskUpdate → `in_progress`**（開始做這一項之前）
@@ -583,6 +608,12 @@ Routing **先看 `$VEXIT`**（gate 判定），`0` 才依 `$TIER` 決定行為�
 | 比預期更大的改動 | 停下來，回到 diagnosis 重新評估 |
 
 **鐵律**：不在 #NNN 的 branch 上修不相關的東西。
+
+### Step 4.5: Spec close-out（#480）
+
+有 change 時，在貼 Implementation Complete 之前照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 5 步收尾，順序固定：`spectra-verify` → `spectra archive <名稱> -y` → 確認封存落在這個工作樹 → commit `chore: archive <名稱> (#N)` → `spec-change.py" links` → `spec-change.py" archived --ref HEAD`。任何一步沒過就停下修，不貼 Implementation Complete，不開 PR。
+
+沒有 change（`no behaviour change`、`third-party clone`）→ 跳過這一步。
 
 ### Step 5: Checklist Sync + 完成確認
 
@@ -641,7 +672,10 @@ gh release upload $ATTACHMENTS_RELEASE {figure_files}.png \
 
 ```bash
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-egress.sh" comment $NUMBER --repo $GITHUB_REPO --scrub-attested "$SCRUB_LEVEL" --body "$(cat <<'EOF'
+<!-- idd:comment type=implementation-complete -->
 ## Implementation Complete
+
+**Spec**: {change <名稱>[, <名稱>…] | no behaviour change | third-party clone}
 
 ### Checklist (synced from TaskList)
 - [x] {plan item 1} → commit {hash}

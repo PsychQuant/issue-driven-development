@@ -14,6 +14,7 @@
 # spec-example: spec-on-every-issue / whether the declared changes are archived at a commit
 # spec-example: spec-on-every-issue / what the link check reports
 # spec-example: spec-on-every-issue / preflight by write access and Spectra state
+# spec-example: spec-on-every-issue / spec directory by .spectra.yaml
 #
 # Fixture specs below use the made-up capability `cap`, so the markers inside
 # them never name a real Example.
@@ -256,6 +257,58 @@ pf_repo pf-msg2 no no; OUT=$(PATH="$BIN_WITH" "$PY" "$SC" preflight --cwd "$TREE
 assert_grep "preflight: init-openspec names the command" "spectra init" "$(printf '%s' "$OUT" | field message)"
 pf_repo pf-sub no yes; mkdir -p "$TREE/deep/er"; OUT=$(PATH="$BIN_WITH" "$PY" "$SC" preflight --cwd "$TREE/deep/er" --can-write yes 2>/dev/null)
 assert_eq "preflight: run from a subdirectory, openspec/ is looked for at the top of the repository" ready "$(printf '%s' "$OUT" | field status)"
+
+# ── spec directory (task 2.6) ───────────────────────────────────────────────
+echo "spec-change: spec directory (Example: spec directory by .spectra.yaml)"
+SPEC_DS="$MARK
+**Spec**: change idd-42-x"
+specdir_case() { # label spectra-yaml-content(or NONE) dir status exit
+  newrepo "sd-$RANDOM$RANDOM"
+  [ "$2" != NONE ] && put .spectra.yaml "$2"
+  put "$3/changes/archive/2026-11-10-idd-42-x/proposal.md"; R=$(commit)
+  archived_case "spec dir: $1" "$SPEC_DS" "$R" "$4" "" "$5"
+}
+specdir_case "spec_dir: docs/spectra" "spec_dir: docs/spectra" docs/spectra pass 0
+specdir_case 'spec_dir: "docs/specs" (quoted)' 'spec_dir: "docs/specs"' docs/specs pass 0
+specdir_case "only a commented spec_dir line → openspec" "# spec_dir: docs/specs
+locale: tw" openspec pass 0
+specdir_case "no .spectra.yaml → openspec" NONE openspec pass 0
+specdir_case "an absolute spec_dir" "spec_dir: /srv/specs" openspec error 2
+specdir_case "a spec_dir that leaves the repository" "spec_dir: ../specs" openspec error 2
+specdir_case "spec_dir with no value" "spec_dir:" openspec error 2
+specdir_case "the default does not apply when spec_dir names another directory" "spec_dir: docs/spectra" openspec refuse 1
+# links reads the same directory, and markers under it do not count
+newrepo sd-links; put .spectra.yaml "spec_dir: docs/spectra"; put docs/spectra/specs/cap/spec.md "$(spec "$(req Base)")"; BASE=$(commit base)
+put docs/spectra/specs/cap/spec.md "$(spec "$(req Base)" "$(req Alpha "$EX")")"; put docs/spectra/notes.txt 'spec-example: cap / alpha table'; commit >/dev/null
+links_case "spec dir docs/spectra: a new requirement there is checked; a marker under it does not count" missing 1 1
+put scripts/tests/x/test.sh '# spec-example: cap / alpha table'; commit >/dev/null
+links_case "spec dir docs/spectra: with a marker in a test" ok 0 0
+# preflight looks for the resolved directory
+pf_repo sd-pf no no; put .spectra.yaml "spec_dir: docs/spectra"; mkdir -p "$REPO/docs/spectra"; commit >/dev/null
+OUT=$(PATH="$BIN_WITH" "$PY" "$SC" preflight --cwd "$TREE" --can-write yes 2>/dev/null)
+assert_eq "preflight: spec_dir docs/spectra exists → ready" ready "$(printf '%s' "$OUT" | field status)"
+pf_repo sd-pf2 no yes; put .spectra.yaml "spec_dir: docs/spectra"; commit >/dev/null
+OUT=$(PATH="$BIN_WITH" "$PY" "$SC" preflight --cwd "$TREE" --can-write yes 2>/dev/null)
+assert_eq "preflight: openspec/ exists but spec_dir names docs/spectra → init-openspec" init-openspec "$(printf '%s' "$OUT" | field status)"
+
+# the chain with the real spectra CLI (skipped, visibly, when spectra is not installed)
+if command -v spectra >/dev/null 2>&1; then
+  newrepo sd-real; ( cd "$REPO" && spectra init --tools claude </dev/null >/dev/null 2>&1 ); commit init >/dev/null; BASE=$(git -C "$REPO" rev-parse HEAD)
+  DIR=$(sed -nE 's/^spec_dir:[[:space:]]*//p' "$REPO/.spectra.yaml" | head -1); DIR=${DIR:-openspec}
+  ( cd "$REPO" && spectra new change idd-7-demo --agent claude >/dev/null 2>&1 \
+    && printf '## Why\n\nDemo.\n\n## What Changes\n\n- The demo prints hello.\n\n## Capabilities\n\n### New Capabilities\n\n- `demo`: prints hello.\n\n### Modified Capabilities\n\n(none)\n\n## Impact\n\n- Affected specs: demo\n- Affected code:\n  - New: src/demo.sh\n' | spectra new artifact proposal --change idd-7-demo --stdin >/dev/null 2>&1 \
+    && printf '## Purpose\n\nThe demo capability prints a greeting.\n\n## ADDED Requirements\n\n### Requirement: Demo prints hello\n\nThe demo command SHALL print hello.\n\n#### Scenario: run it\n\n- **WHEN** the command runs\n- **THEN** it prints hello\n\n##### Example: greeting\n\n| Input | Output |\n| --- | --- |\n| none | hello |\n' | spectra new artifact spec demo --change idd-7-demo --stdin >/dev/null 2>&1 \
+    && printf '## 1. Demo\n\n- [ ] 1.1 Demo prints hello (Demo prints hello). Verify: test.\n' | spectra new artifact tasks --change idd-7-demo --stdin >/dev/null 2>&1 \
+    && spectra archive idd-7-demo --mark-tasks-complete -y >/dev/null 2>&1 )
+  put tests/demo.sh '# spec-example: demo / greeting'; commit chain >/dev/null
+  run archived --file "$(comment sd-real "$MARK
+**Spec**: change idd-7-demo")" --cwd "$REPO" --ref HEAD
+  assert_eq "real spectra ($DIR): the archived change passes" pass "$(printf '%s' "$OUT" | field status)"
+  run links --cwd "$REPO" --base "$BASE"
+  assert_eq "real spectra ($DIR): the new requirement with a marked test is ok" ok "$(printf '%s' "$OUT" | field status)"
+else
+  echo "  ~ skipped: spectra is not installed, the real-CLI chain was not run"
+fi
 
 # ── common behaviour (task 2.5) ─────────────────────────────────────────────
 echo "spec-change: common behaviour"
