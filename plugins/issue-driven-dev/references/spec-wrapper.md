@@ -15,7 +15,7 @@ case "$PERM" in
   READ|TRIAGE|NONE) CAN_WRITE=no ;;
   *) CAN_WRITE="" ;;   # could not read it: stop, do not guess (see below)
 esac
-[ -n "$CAN_WRITE" ] || { echo "✗ spec preflight: cannot read this account's permission on $GITHUB_REPO ('$PERM'); stopping" >&2; }
+[ -n "$CAN_WRITE" ] || { echo "✗ spec preflight: cannot read this account's permission on $GITHUB_REPO ('$PERM'); stopping" >&2; PF='{"status": "error", "message": "the account permission on the repository could not be read"}'; PF_RC=2; }
 [ -n "$CAN_WRITE" ] && { PF=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" preflight --cwd "$CWD" --can-write "$CAN_WRITE"); PF_RC=$?; }
 printf '%s\n' "$PF" | jq -r '"→ spec preflight: \(.status) \(.message)"'
 ```

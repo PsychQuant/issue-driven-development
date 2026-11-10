@@ -2,7 +2,7 @@
 
 ### Requirement: One way to choose the Implementation Complete comment
 
-`scripts/spec-change.py ic --comments <file>` SHALL read the comments of an issue as GitHub's REST API returns them (one JSON array, or several arrays one after another as `gh api --paginate` prints them) and SHALL print the body of the newest comment whose `author_association` is `OWNER`, `MEMBER` or `COLLABORATOR` and whose body starts with the marker `<!-- idd:comment type=implementation-complete -->` or, after leading whitespace, with `## Implementation Complete`. It SHALL print nothing when no comment qualifies. The author association stands in for write access: the comments API does not report a commenter's permission, and a member or collaborator can lack write access to the repository. The command SHALL exit 0 in both cases and 2, printing nothing, when the file cannot be read or is not such JSON. `idd-verify` and `idd-close` SHALL choose the comment with this command and with no other selection.
+`scripts/spec-change.py ic --comments <file>` SHALL read the comments of an issue as GitHub's REST API returns them (one JSON array, or several arrays one after another as `gh api --paginate` prints them) and SHALL print the body of the newest comment whose `author_association` is `OWNER`, `MEMBER` or `COLLABORATOR` and whose body starts with the marker `<!-- idd:comment type=implementation-complete -->` or, after leading whitespace, with `## Implementation Complete`. It SHALL print nothing when no comment qualifies. The author association stands in for write access: the comments API does not report a commenter's permission, and a member or collaborator can lack write access to the repository. A comment whose body is not a string is not chosen. The command SHALL exit 0 in both cases and 2, printing nothing, when the file cannot be read, is empty, or is not such JSON. `idd-verify` and `idd-close` SHALL choose the comment with this command and with no other selection.
 
 #### Scenario: The newest trusted comment wins
 
@@ -22,6 +22,7 @@
 | two pages printed one after the other, the newest Implementation Complete on the second | the comment on the second page | 0 |
 | the file does not exist | nothing | 2 |
 | the file is not JSON | nothing | 2 |
+| the file is empty | nothing | 2 |
 
 ## MODIFIED Requirements
 

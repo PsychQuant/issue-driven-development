@@ -246,6 +246,11 @@ linked_repo l-emptyname; put openspec/specs/cap/spec.md "$(spec "$(req Base)")
 
 The system SHALL do nothing."; commit >/dev/null
 links_case "a requirement heading with no name" error "" 2
+linked_repo l-notes; put openspec/specs/cap/spec.md "$(spec "$(req Base)")
+## Requirement notes
+
+Background only."; commit >/dev/null
+links_case "a level-2 heading that mentions Requirement is not a requirement heading" ok 0 0
 linked_repo l-nospecs; git -C "$REPO" rm -q -r openspec/specs; commit >/dev/null
 links_case "openspec/specs/ holds no tracked file at the head revision" error "" 2
 newrepo l-gitkeep; put openspec/specs/.gitkeep ''; BASE=$(commit base); put README.txt x; commit >/dev/null
@@ -368,6 +373,8 @@ ic_case "two pages, the newest on the second" "[$IC_O]
 [$DG,$IC_M]" "idd-1-b" 0
 ic_case "the file does not exist" "$WORK/no-such-comments.json" EMPTY 2
 ic_case "the file is not JSON" "$(icj ic-notjson 'not json')" EMPTY 2
+ic_case "an empty file (gh exited 0 and printed nothing)" "$(icj ic-empty '')" EMPTY 2
+ic_case "a comment whose body is not a string is not chosen" '[{"author_association":"OWNER","body":7},{"author_association":"OWNER","body":"## Implementation Complete\n\n**Spec**: change idd-1-z"}]' "idd-1-z" 0
 run ic --comments "$(icj ic-one "[$IC_O,$IC_M]")"
 assert_eq "ic: the printed body reads as the declaration it holds" "idd-1-b" "$(printf '%s\n' "$OUT" > "$WORK/ic-out.md"; "$PY" "$SC" declared --file "$WORK/ic-out.md" | field changes | tr -d '[]" ')"
 run ic

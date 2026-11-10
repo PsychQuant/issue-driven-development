@@ -28,7 +28,7 @@ file) and exits with a fixed code. A usage error prints to stderr and exits 64.
       Which comment is the issue's Implementation Complete? <file> holds the comments as the REST
       API returns them (`gh api --paginate` may print several arrays one after another). Prints the
       body of the newest one by an OWNER, MEMBER or COLLABORATOR, or nothing; not JSON.
-      exit 0 (printed or nothing), 2 (unreadable or not such JSON; prints nothing)
+      exit 0 (printed or nothing), 2 (unreadable, empty, or not such JSON; prints nothing)
 
 Paths named openspec/ above are relative to the spec directory Spectra uses: the `spec_dir:` line of
 .spectra.yaml, or `openspec` when there is none (read at the revision checked; preflight reads the working tree).
@@ -50,7 +50,7 @@ ARCHIVE_DIR_RE = r"^\d{4}-\d{2}-\d{2}-%s$"
 REQ_RE = re.compile(r"^### Requirement:\s*(.*?)\s*$")
 EXAMPLE_RE = re.compile(r"^##### Example:(.*)$")
 NO_CHECK_RE = re.compile(r"^\s*No executable check:(.*)$")
-REQ_LIKE_RE = re.compile(r"^#{1,6}\s*Requirement\b", re.I)   # a heading meant as a requirement
+REQ_LIKE_RE = re.compile(r"^###\s*Requirement\b")   # a heading meant as a requirement
 MARKER_REST_RE = re.compile(r"\s*(?:-->|\*/)?\s*")          # what may follow an Example title on its line
 IC_RE = re.compile(r"(?:<!-- idd:comment type=implementation-complete -->|\s*## Implementation Complete)")
 TRUSTED = ("OWNER", "MEMBER", "COLLABORATOR")
@@ -402,16 +402,19 @@ def cmd_preflight(argv):
 
 def comments_of(text):
     """The comment objects in text: one JSON array, or several printed one after another."""
-    dec, i, out = json.JSONDecoder(), 0, []
+    dec, i, out, arrays = json.JSONDecoder(), 0, [], 0
     while True:
         while i < len(text) and text[i].isspace():
             i += 1
         if i >= len(text):
+            if not arrays:
+                raise ValueError("empty: no JSON array")   # gh exited 0 and printed nothing is not "no comments"
             return out
         value, i = dec.raw_decode(text, i)
         if not isinstance(value, list) or not all(isinstance(c, dict) for c in value):
             raise ValueError("not an array of comment objects")
         out.extend(value)
+        arrays += 1
 
 
 def cmd_ic(argv):
@@ -424,7 +427,8 @@ def cmd_ic(argv):
         return 2
     chosen = None
     for c in comments:
-        body = c.get("body") or ""
+        body = c.get("body")
+        body = body if isinstance(body, str) else ""
         if c.get("author_association") in TRUSTED and IC_RE.match(body):
             chosen = body
     if chosen is not None:

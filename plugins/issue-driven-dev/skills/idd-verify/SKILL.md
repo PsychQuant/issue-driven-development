@@ -461,8 +461,8 @@ printf '%s' "$EW_BLOCK" > "$VERIFY_DIR/ew-block.md"
 # 有寫入權的帳號貼的 Implementation Complete 的 **Spec**: 行）、審查範圍改了哪些規格檔、
 # 兩個機械檢查（spec-change.py links / archived）的結果。檢查失敗或讀不到一律照實寫進來，
 # 由 Step 3 寫成 Blocking 列，不當成「沒有問題」。
-# 留言抓取失敗要在抓取那一步就認出來：失敗時 jq 照樣對空輸入印出空字串，declared 讀到空檔
-# 會回 legacy，所有規格檢查就被跳過（spectra-verify 2026-11-11 的 warning 4）。
+# 留言抓取失敗要在抓取那一步就認出來：讀到空檔時 declared 會回 legacy，所有規格檢查就被跳過
+# （spectra-verify 2026-11-11 的 warning 4）。選留言只用 spec-change.py ic，與 idd-close 共用。
 VERIFY_PROFILE="code"   # 執行時換成這次的 --profile 值；沒帶 --profile 就是 code
 SPEC_DA="not used"
 if [ "${VERIFY_PROFILE:-code}" = code ]; then

@@ -166,4 +166,11 @@ SBQ="$(sed -n '/^  SPEC_BLOCK="SPEC CONTEXT/,/^else$/p' "$VERIFY")"
 assert_true "the SPEC_BLOCK string exists" "[ -n \"\$SBQ\" ]"
 refute_grep "SPEC_BLOCK is a double-quoted string: a backtick in it runs a command (a fix-round slip)" '`' "$SBQ"
 
+echo "spec-wrapper-contract: spectra-verify findings on idd-480-fix1"
+assert_grep "an unreadable permission sets PF to an error the status table catches (contract)" 'PF=' "$(grep -F 'cannot read this account' "$REF")"
+assert_grep "… (idd-all Phase 3b)" 'PF=' "$(grep -F 'cannot read this account' "$ALL")"
+refute_grep "idd-all no longer says Phase 3b aborts without Spectra" "Phase 3b will abort" "$ALL_TXT"
+refute_grep "the verify comment no longer describes the jq selection" "jq 照樣對空輸入" "$V_TXT"
+assert_grep "a third-party Spectra-tier issue rerouted to idd-implement keeps a TaskList" "third-party" "$(grep -F '`Spectra`' "$IMPL" | grep -F '跳過本 step')"
+
 print_summary spec-wrapper-contract

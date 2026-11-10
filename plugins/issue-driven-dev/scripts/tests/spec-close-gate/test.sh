@@ -6,8 +6,9 @@
 # spec-example: spec-on-every-issue / the close gate reads the default branch
 #
 # Rows 1–4 run scripts/spec-change.py archived against the default branch of a
-# real repository, the call Step 1.57 makes; row 5 (no Implementation Complete
-# comment) is a rule of the skill text and is checked there.
+# real repository, the call Step 1.57 makes; the Step 1.57 block itself is then run
+# as written with a stand-in gh, which covers row 5 (no Implementation Complete
+# comment) and a failed comment fetch (idd-480-fix1).
 
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -251,9 +251,9 @@ Phase 1 之前先驗 delegation 依賴，避免 unattended chain 中途 abort �
   claude-plugins-official superpowers || abort "superpowers missing — install first (see hint above), then re-run /idd-all"
 
 # spectra — Phase 0 只 warn（complexity 尚未判定，SDD path 不一定觸發）；
-# Phase 3b 入口另有 hard gate（見該段）— fail 發生在任何 spectra artifact 產生之前
+# 真正的判定在 spec preflight（Step 3b.0 與 wrapper 的 Step 0.6）：沒有寫入權的 clone 不需要 Spectra，照常往下
 if ! command -v spectra >/dev/null 2>&1; then
-  echo "⚠ spectra CLI not on PATH — if diagnosis routes to Spectra tier, Phase 3b will abort."
+  echo "⚠ spectra CLI not on PATH — in a repository you can write to, any issue that writes a spec stops at the spec preflight (#480)."
   echo "  Pre-empt: install the Spectra plugin/CLI before long unattended runs."
 fi
 ```
@@ -816,7 +816,7 @@ case "$PERM" in
   READ|TRIAGE|NONE) CAN_WRITE=no ;;
   *) CAN_WRITE="" ;;   # could not read it: stop, do not guess (see below)
 esac
-[ -n "$CAN_WRITE" ] || { echo "✗ spec preflight: cannot read this account's permission on $GITHUB_REPO ('$PERM'); stopping" >&2; }
+[ -n "$CAN_WRITE" ] || { echo "✗ spec preflight: cannot read this account's permission on $GITHUB_REPO ('$PERM'); stopping" >&2; PF='{"status": "error", "message": "the account permission on the repository could not be read"}'; PF_RC=2; }
 [ -n "$CAN_WRITE" ] && { PF=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" preflight --cwd "$CWD" --can-write "$CAN_WRITE"); PF_RC=$?; }
 printf '%s\n' "$PF" | jq -r '"→ spec preflight: \(.status) \(.message)"'
 ```
