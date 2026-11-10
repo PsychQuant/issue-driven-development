@@ -219,6 +219,16 @@ run links --cwd "$REPO" --base "$BASE" --head "$H"
 assert_eq "links: --head names the revision whose markers are read" missing "$(printf '%s' "$OUT" | field status)"
 OUT_MISSING=$(printf '%s' "$OUT" | "$PY" -c 'import json,sys; m=json.loads(sys.stdin.read())["missing"][0]; print(m["capability"], "|", m["requirement"], "|", m["example"])')
 assert_eq "links: a missing item names capability, requirement and Example" "cap | Alpha | alpha table" "$OUT_MISSING"
+# Spectra's archive appends a requirement to an existing spec as "\n\n---\n### Requirement: …", and the
+# file may end without a newline (found on this repo's own idd-verify spec). The separator and the
+# trailing blank lines are not part of the block before it.
+newrepo l-append; mkdir -p "$REPO/openspec/specs/cap"; printf '%s\n\n<!--\nnote\n-->' "$(spec "$(req Base)")" > "$REPO/openspec/specs/cap/spec.md"
+BASE=$(commit base)
+printf '%s\n\n<!--\nnote\n-->\n\n---\n%s\n' "$(spec "$(req Base)")" "$(req Alpha "$EX")" > "$REPO/openspec/specs/cap/spec.md"; put scripts/tests/x/test.sh '# spec-example: cap / alpha table'; commit >/dev/null
+links_case "a requirement appended after a separator leaves the block before it unchanged" ok 0 0
+newrepo l-append-changed; mkdir -p "$REPO/openspec/specs/cap"; printf '%s' "$(spec "$(req Base)")" > "$REPO/openspec/specs/cap/spec.md"; BASE=$(commit base)
+printf '%s\n\n---\n%s\n' "$(spec "$(req Base 'Changed text.')")" "$(req Alpha "$EX")" > "$REPO/openspec/specs/cap/spec.md"; put scripts/tests/x/test.sh '# spec-example: cap / alpha table'; commit >/dev/null
+links_case "the block before the separator really changed → still reported" missing 1 1
 
 # ── preflight ───────────────────────────────────────────────────────────────
 echo "spec-change: preflight (Example: preflight by write access and Spectra state)"

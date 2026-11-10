@@ -248,6 +248,22 @@ def read_at(top, rev, path):
         raise Fail(f"{path} at {rev[:12]} is not UTF-8 text")
 
 
+THEMATIC_RE = re.compile(r"^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$")
+
+
+def block_text(lines):
+    """A requirement block without the blank lines and separators (---, ***, ___) at its end.
+
+    Spectra's archive appends a requirement to an existing spec as "\\n\\n---\\n### Requirement: …".
+    Those lines belong between blocks, not to the block before them; counting them made an untouched
+    requirement read as changed (found on this repository's own idd-verify spec, #480).
+    """
+    lines = list(lines)
+    while lines and (not lines[-1].strip() or THEMATIC_RE.match(lines[-1])):
+        lines.pop()
+    return "\n".join(lines).strip()
+
+
 def requirements(text):
     """{name: block text} for the `### Requirement:` blocks of a spec (outside code fences)."""
     reqs, name, buf, fence = {}, None, [], None
@@ -260,13 +276,13 @@ def requirements(text):
             r = REQ_RE.match(line)
             if r or re.match(r"^#{1,3} ", line):
                 if name is not None:
-                    reqs[name] = "\n".join(buf).strip()
+                    reqs[name] = block_text(buf)
                 name, buf = (r.group(1), [line]) if r else (None, [])
                 continue
         if name is not None:
             buf.append(line)
     if name is not None:
-        reqs[name] = "\n".join(buf).strip()
+        reqs[name] = block_text(buf)
     return reqs
 
 
