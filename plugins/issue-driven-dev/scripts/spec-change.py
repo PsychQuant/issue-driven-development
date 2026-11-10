@@ -24,6 +24,12 @@ file) and exits with a fixed code. A usage error prints to stderr and exits 64.
       {"status": ready|third-party|linked-worktree|install-spectra|init-openspec|error,
        "message": "..."}   exit 0 (ready, third-party), 1 (the three stops), 2 (error)
 
+  ic        --comments <file>
+      Which comment is the issue's Implementation Complete? <file> holds the comments as the REST
+      API returns them (`gh api --paginate` may print several arrays one after another). Prints the
+      body of the newest one by an OWNER, MEMBER or COLLABORATOR, or nothing; not JSON.
+      exit 0 (printed or nothing), 2 (unreadable or not such JSON; prints nothing)
+
 Paths named openspec/ above are relative to the spec directory Spectra uses: the `spec_dir:` line of
 .spectra.yaml, or `openspec` when there is none (read at the revision checked; preflight reads the working tree).
 
@@ -44,6 +50,10 @@ ARCHIVE_DIR_RE = r"^\d{4}-\d{2}-\d{2}-%s$"
 REQ_RE = re.compile(r"^### Requirement:\s*(.*?)\s*$")
 EXAMPLE_RE = re.compile(r"^##### Example:(.*)$")
 NO_CHECK_RE = re.compile(r"^\s*No executable check:(.*)$")
+REQ_LIKE_RE = re.compile(r"^#{1,6}\s*Requirement\b", re.I)   # a heading meant as a requirement
+MARKER_REST_RE = re.compile(r"\s*(?:-->|\*/)?\s*")          # what may follow an Example title on its line
+IC_RE = re.compile(r"(?:<!-- idd:comment type=implementation-complete -->|\s*## Implementation Complete)")
+TRUSTED = ("OWNER", "MEMBER", "COLLABORATOR")
 INSTALL_HINT = ("install the Spectra CLI (see https://github.com/spectra-app/spectra) and run the wrapper again; "
                 "the spec change is not optional in a repository you can write to")
 
@@ -264,8 +274,13 @@ def block_text(lines):
     return "\n".join(lines).strip()
 
 
-def requirements(text):
-    """{name: block text} for the `### Requirement:` blocks of a spec (outside code fences)."""
+def requirements(text, strict=False):
+    """{name: block text} for the `### Requirement:` blocks of a spec (outside code fences).
+
+    strict (the head revision): a heading meant as a requirement that does not parse as
+    `### Requirement: <name>` is an error, not an absent requirement (verify round 1 of #480:
+    `### Requirement Missing colon` went unchecked and links printed ok).
+    """
     reqs, name, buf, fence = {}, None, [], None
     for line in text.splitlines():
         m = FENCE_RE.match(line)
@@ -274,6 +289,9 @@ def requirements(text):
             fence = tick if fence is None else (None if fence == tick else fence)
         if fence is None and not m:
             r = REQ_RE.match(line)
+            if strict and REQ_LIKE_RE.match(line) and not (r and r.group(1)):
+                raise Fail(f"cannot parse the requirement heading {line.strip()!r}; "
+                           "write it as `### Requirement: <name>`")
             if r or re.match(r"^#{1,3} ", line):
                 if name is not None:
                     reqs[name] = block_text(buf)
@@ -291,16 +309,20 @@ def examples(block):
 
 
 def marker_files(top, head, needle, sd):
-    """Tracked files at head, outside the spec directory and not .md, whose text contains needle."""
-    p = git(top, "grep", "-l", "-F", "-e", needle, head, "--", ".", check=False)
+    """Tracked files at head, outside the spec directory and not .md, with a line on which needle is followed
+    only by whitespace or a comment closer (a marker for `alpha table` does not count for the Example `alpha`)."""
+    p = git(top, "grep", "-z", "-F", "-e", needle, head, "--", ".", check=False)
     if p.returncode not in (0, 1):
         raise Fail("git grep failed: " + p.stderr.decode("utf-8", "replace").strip()[:200])
     files = []
     for line in p.stdout.decode("utf-8", "replace").splitlines():
-        path = line.split(":", 1)[1] if line.startswith(head + ":") else line
-        if path.startswith(sd + "/") or path.lower().endswith(".md"):
+        where, _, content = line.partition("\0")
+        path = where[len(head) + 1:] if where.startswith(head + ":") else where
+        if path.startswith(sd + "/") or path.lower().endswith(".md") or path in files:
             continue
-        files.append(path)
+        rests = content.split(needle)[1:]
+        if any(MARKER_REST_RE.fullmatch(rest) for rest in rests):
+            files.append(path)
     return files
 
 
@@ -312,11 +334,13 @@ def cmd_links(argv):
         head = resolve(top, a.get("--head", "HEAD"))
         sd, sd_base = spec_dir_at(top, head), spec_dir_at(top, base)
         base_files = {p[len(sd_base):]: p for p in spec_files(top, base, sd_base)}
+        if not git_text(top, "ls-tree", "-r", "--name-only", head, "--", f"{sd}/specs/").strip():
+            raise Fail(f"{sd}/specs/ holds no tracked file at {head[:12]}: check `spec_dir` in .spectra.yaml")
         head_files = spec_files(top, head, sd)
         missing = []
         for path in head_files:
             cap = path[len(sd) + len("/specs/"):].split("/")[0]
-            new = requirements(read_at(top, head, path))
+            new = requirements(read_at(top, head, path), strict=True)
             rel = path[len(sd):]
             old = requirements(read_at(top, base, base_files[rel])) if rel in base_files else {}
             titles = [t for block in new.values() for t in examples(block)]
@@ -374,10 +398,45 @@ def cmd_preflight(argv):
         return emit({"status": "error", "message": str(exc)}, 2)
 
 
+# ── ic ──────────────────────────────────────────────────────────────────────
+
+def comments_of(text):
+    """The comment objects in text: one JSON array, or several printed one after another."""
+    dec, i, out = json.JSONDecoder(), 0, []
+    while True:
+        while i < len(text) and text[i].isspace():
+            i += 1
+        if i >= len(text):
+            return out
+        value, i = dec.raw_decode(text, i)
+        if not isinstance(value, list) or not all(isinstance(c, dict) for c in value):
+            raise ValueError("not an array of comment objects")
+        out.extend(value)
+
+
+def cmd_ic(argv):
+    a = parse(argv, {"--comments"}, ["--comments"])
+    try:
+        with open(a["--comments"], encoding="utf-8") as fh:
+            comments = comments_of(fh.read())
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        print(f"spec-change ic: cannot read the comments: {exc}", file=sys.stderr)
+        return 2
+    chosen = None
+    for c in comments:
+        body = c.get("body") or ""
+        if c.get("author_association") in TRUSTED and IC_RE.match(body):
+            chosen = body
+    if chosen is not None:
+        print(chosen)
+    return 0
+
+
 def main(argv):
-    handlers = {"declared": cmd_declared, "archived": cmd_archived, "links": cmd_links, "preflight": cmd_preflight}
+    handlers = {"declared": cmd_declared, "archived": cmd_archived, "links": cmd_links, "preflight": cmd_preflight,
+                "ic": cmd_ic}
     if not argv or argv[0] not in handlers:
-        print("spec-change: subcommand required: declared | archived | links | preflight", file=sys.stderr)
+        print("spec-change: subcommand required: declared | archived | links | preflight | ic", file=sys.stderr)
         return 64
     try:
         return handlers[argv[0]](argv[1:])

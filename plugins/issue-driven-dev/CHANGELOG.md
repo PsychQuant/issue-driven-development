@@ -31,7 +31,8 @@ Version number left to the release.
 
 ### Added
 
-- **`scripts/spec-change.py` (#480)** — `declared`, `archived`, `links` and `preflight`, each printing one JSON line.
+- **`scripts/spec-change.py` (#480)** — `declared`, `archived`, `links` and `preflight`, each printing one JSON line, and
+  `ic`, which chooses the issue's Implementation Complete comment for `idd-verify` and `idd-close` alike.
   `links` requires every requirement added or changed in a range to have Examples whose tests carry the marker
   `spec-example: <capability> / <Example title>` (outside the spec directory, not `.md`), or a
   `No executable check:` line with a reason. The spec directory is read from `.spectra.yaml` `spec_dir`
@@ -41,7 +42,7 @@ Version number left to the release.
 
 - A spec change cannot be written from a git linked worktree: Spectra writes into the main working tree from there, so
   `preflight` stops. `idd-implement` falls back to a linked worktree when the main tree is locked by another session;
-  for issues that change behaviour, wait for the main tree or use a standalone clone.
+  for any issue (the preflight runs before the exemption is decided), wait for the main tree or use a standalone clone.
 - A repository you can write to without Spectra (no CLI, or no spec directory) stops with the install or init command.
 - The marker ties an Example to a test by name only; whether the test checks what the Example states is judged by the
   verify reviewers.

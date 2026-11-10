@@ -84,7 +84,7 @@ idd-all 不取代 atomic skills,而是包它們。每個 phase 仍透過 `Skill(
 
 1. 對每個 `#N` 讀最新 Diagnosis 的 `### Conflict Class`（emit 契約見 `idd-diagnose`）。缺 / 無法 parse → 預設 `D_diagnose_first` 並 **surface**（印出來），不靜默、不預設成 parallel class。
 2. 按 conflict-class discipline 排序處理順序：`E_verified_close`（cheap verify+close）與 `D_diagnose_first`（先 read-only diagnose、再 re-bucket）優先；`B_resource_serialize` / `C_shared_module_coord` 觸碰**同一具名資源**者相鄰序列化、不交錯；`A_parallel_safe` 之間順序不拘。同檔的 issue 視為一組（不拆開）。
-3. 逐一（sequential）跑 `/idd-all #N`。`A_parallel_safe` issue **可選**用 `scripts/idd-worktree.sh create <N>` 隔離工作樹，讓你**事後**能把這些 branch 手動並行推進；serialize-class 不隔離也安全（反正 sequential）。
+3. 逐一（sequential）跑 `/idd-all #N`。`A_parallel_safe` issue **可選**用 `scripts/idd-worktree.sh create <N>` 隔離工作樹，讓你**事後**能把這些 branch 手動並行推進；serialize-class 不隔離也安全（反正 sequential）。#480 起，spec preflight 在 linked worktree 裡對每一張 issue 都停下（Spectra 在那裡會寫進主工作樹），所以在 #488（改用獨立 clone 隔離）之前不要用這個選項。
 4. 每張的終點與單張相同（#392）：verify 乾淨就 merge 並 close；停在 guardrail 的留在 verified；meeting 停在 diagnosed 或 planning。**PR mode** 的每一張結束後（不論有沒有 merge），先 `git -C "$CWD" checkout -q <default> && git -C "$CWD" pull --ff-only -q` 回到並更新預設 branch，再開始下一張，任一步失敗就停止整批並回報是哪一張、哪一步。**direct-commit** 的 batch 不切換 branch：每一張都留在使用者開始時的 branch（Phase 0.5 的契約）。
 
 > **為什麼仍值得排序（即使 sequential）**：sequential 本身永遠安全，所以排序不是為了正確性，而是為了 (a) 把 cheap/E 與 read-first/D 先清掉、(b) 把同資源的 B/C 相鄰處理便於 review、(c) 替「日後手動並行」預先把 class-A 隔離好。真正的價值在 taxonomy 作為**並行安全契約**，而非這個 sequential 外圈本身。
@@ -805,32 +805,37 @@ idd-all 走 SDD path 時,**必須**串完三步:`spectra-discuss` → `spectra-p
 >
 > idd-all 不修改 spectra 任何檔案 — 全程用 args 傳指示(或不傳)override sub-skill 的 attended 預設。
 
-#### Step 3b.0: Spectra presence hard gate（#211/#210）
+#### Step 3b.0: Spec preflight（#480）
+
+照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 1 步跑 preflight，在建立任何 Spectra artifact 之前，也在檢查 Spectra 有沒有安裝之前：沒有寫入權的 clone 不需要 Spectra，要先轉走（verify 第 1 輪的 HIGH）。讀不到權限時停下，`Stopped:` 寫那一行訊息。
+
+```bash
+PERM=$(gh repo view "$GITHUB_REPO" --json viewerPermission -q .viewerPermission 2>/dev/null)
+case "$PERM" in
+  WRITE|MAINTAIN|ADMIN) CAN_WRITE=yes ;;
+  READ|TRIAGE|NONE) CAN_WRITE=no ;;
+  *) CAN_WRITE="" ;;   # could not read it: stop, do not guess (see below)
+esac
+[ -n "$CAN_WRITE" ] || { echo "✗ spec preflight: cannot read this account's permission on $GITHUB_REPO ('$PERM'); stopping" >&2; }
+[ -n "$CAN_WRITE" ] && { PF=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" preflight --cwd "$CWD" --can-write "$CAN_WRITE"); PF_RC=$?; }
+printf '%s\n' "$PF" | jq -r '"→ spec preflight: \(.status) \(.message)"'
+```
+
+| `status` | 做什麼 |
+|---|---|
+| `ready` | 往下走 Step 3b.0.5 |
+| `third-party` | 不走 Phase 3b，不建立規格目錄；改走 Phase 3 的 Simple 路徑（`idd-implement`），它會自己跑 preflight 並宣告 `**Spec**: third-party clone` |
+| `linked-worktree`、`install-spectra`、`init-openspec`、`error` 或 exit 64 | 停下，`Stopped:` 寫 preflight 的 `message` |
+
+#### Step 3b.0.5: Spectra presence hard gate（#211/#210）
+
+preflight 回 `ready` 才會走到這裡；沒有 `spectra` 時 preflight 已經回 `install-spectra`，這一道留作第二層。
 
 ```bash
 command -v spectra >/dev/null 2>&1 || abort "Spectra tier routed but spectra CLI is missing.
    Install the Spectra plugin, then re-run /idd-all #$N — aborting BEFORE any
    spectra artifact is created (no half-baked openspec/changes/ residue)."
 ```
-
-#### Step 3b.0.5: Spec preflight（#480）
-
-照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 1 步跑 preflight，在建立任何 Spectra artifact 之前：
-
-```bash
-CAN_WRITE=no
-case "$(gh repo view "$GITHUB_REPO" --json viewerPermission -q .viewerPermission 2>/dev/null)" in
-  WRITE|MAINTAIN|ADMIN) CAN_WRITE=yes ;;
-esac
-PF=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" preflight --cwd "$CWD" --can-write "$CAN_WRITE"); PF_RC=$?
-printf '%s\n' "$PF" | jq -r '"→ spec preflight: \(.status) \(.message)"'
-```
-
-| `status` | 做什麼 |
-|---|---|
-| `ready` | 往下走 Step 3b.1 |
-| `third-party` | 不走 Phase 3b，不建立規格目錄；改走 Phase 3 的 Simple 路徑（`idd-implement`），它會自己跑 preflight 並宣告 `**Spec**: third-party clone` |
-| `linked-worktree`、`install-spectra`、`init-openspec`、`error` 或 exit 64 | 停下，`Stopped:` 寫 preflight 的 `message` |
 
 #### Step 3b.1: Capture issue context for prompt
 
@@ -908,6 +913,13 @@ else:  # INTERACTION == "attended"
 PROPOSE_ARGS="<conclusion line from Step 3b.2>
 
 Original issue: #${N} ${ISSUE_TITLE}"
+
+# Every tier (#480): the same Example and marker rules as references/spec-wrapper.md step 3.
+PROPOSE_ARGS="$PROPOSE_ARGS
+
+Spec rules (#480): every added or modified requirement has at least one '##### Example:' whose title is unique
+within its capability, or a line 'No executable check: <reason>'. tasks.md has one test task per Example, and the
+test file carries the marker 'spec-example: <capability> / <Example title>'."
 
 # Conditional: unattended only — see spec idd-pr-hitl-modes,
 # requirement "Attended interaction permits sub-skill questions".
@@ -1156,7 +1168,7 @@ for ROUND in 1..MAX_ROUND:
 
 每個 auto-fix commit:`fix: address verify finding — {finding summary} (#$N)`
 
-**修正也留下規格（#480）**：這張 issue 宣告了 change 時，兩輪 verify 之間的修正（auto-fix，或 attended 時在 session 裡做的修正）若新增或修改了 requirement，照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 7 步：建 `idd-<N>-fix<k>`（k 是剛跑完的 verify 輪數），用輕量形式 propose 與 apply，照第 5 步封存並跑連結檢查，在下一輪 verify 之前完成，再貼一則新的 Implementation Complete，`**Spec**:` 行列出這張 issue 的所有 change（依時間順序）。requirement 與 Example 已經有、只是測試沒寫對時，只補帶標記的測試。Blocking 的修正要留下寫出該性質的 requirement、Example，以及一個在修正前會失敗的測試。
+**修正也留下規格（#480）**：宣告 `no behaviour change` 被 verify 否決（豁免不成立的 HIGH）時，修正就是補上規格：照契約第 7 步建這張 issue 的第一個 change `idd-<N>-<slug>`，封存後新的 Implementation Complete 改宣告 `change <名稱>`。其餘情況：這張 issue 宣告了 change 時，兩輪 verify 之間的修正（auto-fix，或 attended 時在 session 裡做的修正）若新增或修改了 requirement，照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 7 步：建 `idd-<N>-fix<k>`（k 是剛跑完的 verify 輪數），用輕量形式 propose 與 apply，照第 5 步封存並跑連結檢查，在下一輪 verify 之前完成，再貼一則新的 Implementation Complete，`**Spec**:` 行列出這張 issue 的所有 change（依時間順序）。requirement 與 Example 已經有、只是測試沒寫對時，只補帶標記的測試。Blocking 的修正要留下寫出該性質的 requirement、Example，以及一個在修正前會失敗的測試。
 
 **乾淨的定義（#392，2026-11-10 的決定）**：gate 判 `clean` ＝ 報告判定 PASS、Blocking 為 0、In-scope fix 只剩 LOW／INFO／P3。這些沒擋住 merge 的列數在 gate JSON 的 `low_in_scope`。大於 0 時：
 

@@ -9,11 +9,14 @@
 ## 1. Preflight（建立任何東西之前）
 
 ```bash
-CAN_WRITE=no
-case "$(gh repo view "$GITHUB_REPO" --json viewerPermission -q .viewerPermission 2>/dev/null)" in
+PERM=$(gh repo view "$GITHUB_REPO" --json viewerPermission -q .viewerPermission 2>/dev/null)
+case "$PERM" in
   WRITE|MAINTAIN|ADMIN) CAN_WRITE=yes ;;
+  READ|TRIAGE|NONE) CAN_WRITE=no ;;
+  *) CAN_WRITE="" ;;   # could not read it: stop, do not guess (see below)
 esac
-PF=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" preflight --cwd "$CWD" --can-write "$CAN_WRITE"); PF_RC=$?
+[ -n "$CAN_WRITE" ] || { echo "✗ spec preflight: cannot read this account's permission on $GITHUB_REPO ('$PERM'); stopping" >&2; }
+[ -n "$CAN_WRITE" ] && { PF=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" preflight --cwd "$CWD" --can-write "$CAN_WRITE"); PF_RC=$?; }
 printf '%s\n' "$PF" | jq -r '"→ spec preflight: \(.status) \(.message)"'
 ```
 
@@ -26,7 +29,7 @@ printf '%s\n' "$PF" | jq -r '"→ spec preflight: \(.status) \(.message)"'
 | `init-openspec` | 停下，把 `message` 原樣轉給使用者 |
 | `error`、或 exit 64 | 停下，回報 |
 
-`--can-write` 讀不到權限時是 `no`：寧可少寫一次規格，不在別人的 repo 建 `openspec/`。
+讀不到權限（`gh` 失敗、回空值或其他值）時停下，不猜：猜 `no` 會讓自己 repo 的 issue 不寫規格，猜 `yes` 會在別人的 repo 建 `openspec/`。
 
 ## 2. 決定這張 issue 留下什麼
 
@@ -117,5 +120,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" links --base "$SPEC_BASE"
 三種寫法：`**Spec**: change <名稱>[, <名稱>…]`（這張 issue 所有封存了的 change，依時間順序）、`**Spec**: no behaviour change`、`**Spec**: third-party clone`。這一行只寫宣告本身：屬於第 2 步 (a)–(d) 的哪一種、為什麼，寫在別行。這一行不放在 code block 裡。
 
 ## 7. verify 之後的修正
+
+宣告 `no behaviour change` 被 verify 否決（豁免不成立的 HIGH）→ 修正就是補上規格：照第 3 到 5 步建這張 issue 的第一個 change `idd-<N>-<slug>`，封存後新的 Implementation Complete 改宣告 `change <名稱>`。
 
 修正新增或修改了 requirement → 再建一個 change，名稱就是 `idd-<N>-fix<k>`（k 是 verify 的輪數，不加 slug），走第 3 步的輕量形式，在下一輪 verify 之前照第 5 步封存，新的 Implementation Complete 列出這張 issue 的所有 change。requirement 與 Example 已經有、只是測試沒寫對 → 只補測試。Blocking 的修正要留下一條寫出該性質的 requirement、Example，以及一個在修正前的 commit 上會失敗的測試。

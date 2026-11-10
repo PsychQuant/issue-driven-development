@@ -145,4 +145,25 @@ assert_grep "the contract: after the archive, a requirement fix goes through ste
 assert_grep "the contract: the Spec line holds the declaration only" "只寫宣告" "$REF_TXT"
 assert_grep "the README states the linked-worktree limit" "linked worktree" "$(read_file "$PLUGIN/README.md")"
 
+echo "spec-wrapper-contract: verify round 1 fixes (idd-480-fix1)"
+SB="$(sed -n '/規格對照（#480）/,/^DA_FOCUS_SUFFIX=/p' "$VERIFY")"
+assert_grep "verify chooses the comment with spec-change.py ic" 'spec-change.py" ic --comments' "$SB"
+refute_grep "… and has no selection of its own" 'author_association ==' "$SB"
+assert_grep "reviewers judge No executable check reasons" 'No executable check:' "$(printf '%s' "$SB" | grep -F 'Every reviewer')"
+B3P="$(sed -n '/^### Phase 3b: /,/^#### Step 3b.1: /p' "$ALL")"
+assert_true "Phase 3b runs the preflight before it checks for Spectra" \
+  "[ $(printf '%s\n' "$B3P" | grep -nF 'spec-change.py" preflight' | head -1 | cut -d: -f1) -lt $(printf '%s\n' "$B3P" | grep -nF 'command -v spectra' | head -1 | cut -d: -f1) ]"
+assert_grep "Phase 3b reads the permission strictly" 'READ|TRIAGE|NONE) CAN_WRITE=no' "$B3P"
+assert_grep "the Spectra tier's propose args ask for Examples and markers" 'spec-example:' "$(sed -n '/^#### Step 3b.3: /,/^#### Step 3b.4: /p' "$ALL")"
+assert_grep "idd-all's fix rule covers a rejected exemption" "verify 否決" "$(sed -n '/^\*\*修正也留下規格（#480）\*\*/,/^\*\*乾淨的定義/p' "$ALL")"
+assert_grep "the contract reads the permission strictly" 'READ|TRIAGE|NONE) CAN_WRITE=no' "$REF_TXT"
+refute_grep "… and no longer defaults an unreadable permission to no" "讀不到權限時是 \`no\`" "$REF_TXT"
+assert_grep "the contract's step 7 covers a rejected exemption" "verify 否決" "$(sed -n '/^## 7\. /,$p' "$REF")"
+refute_grep "idd-implement no longer says exempt issues are unaffected by the worktree stop" "不受影響" "$(sed -n '/^### Step 0.4: /,/^### Step 0.5: /p' "$IMPL")"
+assert_grep "idd-all's batch mode warns that worktrees stop issues that write a spec" "#488" "$(sed -n '/idd-worktree.sh create <N>/p' "$ALL")"
+
+SBQ="$(sed -n '/^  SPEC_BLOCK="SPEC CONTEXT/,/^else$/p' "$VERIFY")"
+assert_true "the SPEC_BLOCK string exists" "[ -n \"\$SBQ\" ]"
+refute_grep "SPEC_BLOCK is a double-quoted string: a backtick in it runs a command (a fix-round slip)" '`' "$SBQ"
+
 print_summary spec-wrapper-contract

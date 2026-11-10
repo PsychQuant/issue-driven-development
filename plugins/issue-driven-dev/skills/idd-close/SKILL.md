@@ -532,15 +532,20 @@ fi
 
 這張 issue 宣告的 Spectra change，要在預設 branch 上已經封存，才能結案（capability `spec-on-every-issue`；判定在 `scripts/spec-change.py`，契約見 [`references/spec-wrapper.md`](../../references/spec-wrapper.md)）。
 
-1. 取最新一則以 `## Implementation Complete` 開頭（或第一行是 `<!-- idd:comment type=implementation-complete -->`）、而且作者對這個 repo 有寫入權的 comment（`author_association` 是 `OWNER`／`MEMBER`／`COLLABORATOR`）。沒有 Implementation Complete 的 issue 不受這一道檢查，直接往下。
-2. 把那則 comment 的內文寫進暫存檔，對遠端的預設 branch 跑：
+1. 留言用 `gh api --paginate` 抓，用 `spec-change.py ic` 選出這張 issue 的 Implementation Complete：最新一則以 `## Implementation Complete` 開頭（或第一行是 `<!-- idd:comment type=implementation-complete -->`）、作者的 `author_association` 是 `OWNER`／`MEMBER`／`COLLABORATOR` 的留言（`author_association` 是寫入權的近似：API 不給留言者的權限）。`idd-verify` 用同一個指令，兩邊選到的一定是同一則。沒有 Implementation Complete 的 issue 不受這一道限制（`ic` 印出空的內容，讀成舊制留言）。
+2. 對遠端的預設 branch 跑封存檢查。留言抓不到、或 `ic` 讀不了，一律當成 `error`，**不**當成「沒有 Implementation Complete」（verify 第 1 輪的 HIGH：舊寫法用了一個沒有任何步驟設定的變數，抓不到時讀到空檔就放行）：
 
 ```bash
 DEFAULT_BRANCH=$(gh repo view "$GITHUB_REPO" --json defaultBranchRef -q .defaultBranchRef.name)
 git -C "${CWD:-$PWD}" fetch -q origin -- "$DEFAULT_BRANCH"
-IC_FILE=$(mktemp); printf '%s\n' "$IC_BODY" > "$IC_FILE"
-GATE=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" archived --file "$IC_FILE" --cwd "${CWD:-$PWD}" --ref "origin/$DEFAULT_BRANCH"); GATE_RC=$?
-rm -f "$IC_FILE"
+SPEC_JSON=$(mktemp); SPEC_IC=$(mktemp)
+if gh api "repos/$GITHUB_REPO/issues/$NUMBER/comments" --paginate > "$SPEC_JSON" 2>/dev/null \
+   && python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" ic --comments "$SPEC_JSON" > "$SPEC_IC"; then
+  GATE=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" archived --file "$SPEC_IC" --cwd "${CWD:-$PWD}" --ref "origin/$DEFAULT_BRANCH"); GATE_RC=$?
+else
+  GATE='{"status": "error", "not_archived": [], "reason": "the issue comments could not be read"}'; GATE_RC=2
+fi
+rm -f "$SPEC_JSON" "$SPEC_IC"
 printf '%s\n' "$GATE" | jq -r '"→ spec archive gate: \(.status) \(.reason)"'
 ```
 
@@ -548,7 +553,7 @@ printf '%s\n' "$GATE" | jq -r '"→ spec archive gate: \(.status) \(.reason)"'
 |---|---|
 | `pass`（含 `no behaviour change`、`third-party clone`、舊制留言） | 往下 |
 | `refuse` | 停下、不 close：列出還沒封存的 change，或 `**Spec**:` 行的問題。常見原因是 PR 還沒合併，或封存 commit 不在合併的範圍裡 |
-| `error` | 停下、不 close：預設 branch 或設定讀不到，照原因處理後重跑 |
+| `error` | 停下、不 close：留言、預設 branch 或設定讀不到，照原因處理後重跑 |
 
 這一道和 Step 1.5 一樣是硬性的：不問人、沒有略過的選項。有人在場時要結案，先把 change 封存進預設 branch，或修正 Implementation Complete 的宣告。
 

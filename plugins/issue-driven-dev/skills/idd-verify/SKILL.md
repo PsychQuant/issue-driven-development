@@ -468,13 +468,13 @@ SPEC_DA="not used"
 if [ "${VERIFY_PROFILE:-code}" = code ]; then
   SPEC_IC=$(mktemp "${TMPDIR:-/tmp}/idd-verify-ic.XXXXXX")
   SPEC_FETCH_OK=yes
-  SPEC_RAW=$(gh api "repos/$GITHUB_REPO/issues/$NUMBER/comments" --paginate 2>/dev/null) || SPEC_FETCH_OK=no
+  # One selection, shared with idd-close Step 1.57: spec-change.py ic (verify round 1 of #480).
+  SPEC_JSON=$(mktemp "${TMPDIR:-/tmp}/idd-verify-comments.XXXXXX")
+  gh api "repos/$GITHUB_REPO/issues/$NUMBER/comments" --paginate > "$SPEC_JSON" 2>/dev/null || SPEC_FETCH_OK=no
   if [ "$SPEC_FETCH_OK" = yes ]; then
-    printf '%s' "$SPEC_RAW" \
-      | jq -s -r 'add // [] | [.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")
-                   | select((.body // "") | test("^(<!-- idd:comment type=implementation-complete -->|\\s*## Implementation Complete)"))]
-                  | last | .body // ""' > "$SPEC_IC" || SPEC_FETCH_OK=no
+    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" ic --comments "$SPEC_JSON" > "$SPEC_IC" || SPEC_FETCH_OK=no
   fi
+  rm -f "$SPEC_JSON"
   if [ "$SPEC_FETCH_OK" = no ]; then
     SPEC_DECL='{"form":"unreadable","reason":"the issue comments could not be fetched"}'
     SPEC_ARCH="not run: the declaration could not be read"
@@ -501,6 +501,7 @@ Archive check at the reviewed head (spec-change.py archived): ${SPEC_ARCH}
 Review rules (skip them when the form is legacy or third-party-clone):
 - Regression reviewer: a behaviour change in the diff that no requirement in the specs at the reviewed head states is a HIGH finding (no requirement states it). When the form is no-behaviour-change, any behaviour change in the diff is a HIGH finding (the declared exemption does not hold).
 - Every reviewer: a test that carries a spec-example marker but does not exercise what its Example states is a finding of MEDIUM or above.
+- Every reviewer: a \"No executable check:\" line under a requirement in the range whose reason does not hold, because a check could be written, is a finding of MEDIUM or above.
 - The coordinator writes a Blocking row (Step 3) for a link check other than ok, an archive check other than pass, and a declaration that is unreadable or invalid."
 else
   SPEC_BLOCK=""

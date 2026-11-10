@@ -54,6 +54,41 @@ gate "## Implementation Complete
 - [x] done"
 assert_eq "no marker, no Spec line (legacy) → passes" pass "$(printf '%s' "$OUT" | field status)"
 
+echo "spec-close-gate: Step 1.57 as written, with a stand-in gh (idd-480-fix1)"
+# The bash block of Step 1.57 is run as the skill writes it. gh is replaced by a script that answers the two
+# calls the block makes; the comments come from $FAKE_COMMENTS, or the fetch fails when FAKE_FAIL=1.
+mkdir -p "$WORK/bin"
+cat > "$WORK/bin/gh" <<'GH'
+#!/bin/sh
+case "$1 $2" in
+  "repo view") echo main ;;
+  "api repos/"*) [ "${FAKE_FAIL:-0}" = 1 ] && exit 1; cat "$FAKE_COMMENTS" ;;
+  *) exit 1 ;;
+esac
+GH
+chmod +x "$WORK/bin/gh"
+BLOCK="$WORK/step157.sh"
+awk '/^### Step 1.57: /{f=1} f && /^```bash$/{b=1; next} b && /^```$/{exit} b' "$CLOSE" > "$BLOCK"
+step157() { # comments-json fail(0|1) → STATUS, GRC
+  printf '%s' "$1" > "$WORK/comments.json"
+  local out
+  out=$(cd "$C" && env PATH="$WORK/bin:$PATH" FAKE_COMMENTS="$WORK/comments.json" FAKE_FAIL="$2" \
+        GITHUB_REPO=o/r NUMBER=42 CWD="$C" CLAUDE_PLUGIN_ROOT="$PLUGIN" \
+        bash -c '. "$1"; printf "\nSTATUS=%s\nGRC=%s\n" "$(printf "%s" "$GATE" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get(\"status\"))")" "$GATE_RC"' _ "$BLOCK" 2>/dev/null)
+  STATUS=$(printf '%s\n' "$out" | sed -n 's/^STATUS=//p'); GRC=$(printf '%s\n' "$out" | sed -n 's/^GRC=//p')
+}
+assert_true "Step 1.57 has a bash block" "[ -s '$BLOCK' ]"
+step157 '[{"author_association":"OWNER","body":"## Diagnosis\n\nx"}]' 0
+assert_eq "no Implementation Complete comment → passes (row 5, run)" pass "$STATUS"
+assert_eq "… exit 0" 0 "$GRC"
+step157 '[]' 1
+assert_eq "the comments could not be fetched → stops with error" error "$STATUS"
+assert_eq "… exit 2" 2 "$GRC"
+step157 "[{\"author_association\":\"OWNER\",\"body\":\"$MARK\\n**Spec**: change idd-42-other\"}]" 0
+assert_eq "the newest trusted declaration names a change not archived on the default branch → stops" refuse "$STATUS"
+step157 "[{\"author_association\":\"OWNER\",\"body\":\"$MARK\\n**Spec**: change idd-42-fix-timeout\"},{\"author_association\":\"CONTRIBUTOR\",\"body\":\"$MARK\\n**Spec**: change idd-42-other\"}]" 0
+assert_eq "a newer declaration by a contributor is not the one read" pass "$STATUS"
+
 echo "spec-close-gate: the skill text"
 G="$(sed -n '/^### Step 1.57: /,/^### Step 1.6: /p' "$CLOSE")"
 line_of() { local n; n=$(grep -nF -- "$1" "$CLOSE" | head -1 | cut -d: -f1); printf '%s' "${n:-999999}"; }
@@ -61,7 +96,7 @@ assert_true "Step 1.57 sits between Step 1.55 and Step 1.6" \
   "[ $(line_of '### Step 1.55: ') -lt $(line_of '### Step 1.57: ') ] && [ $(line_of '### Step 1.57: ') -lt $(line_of '### Step 1.6: ') ]"
 assert_grep "the gate calls spec-change.py archived" 'spec-change.py" archived' "$G"
 assert_grep "the gate reads the default branch as the remote has it" '--ref "origin/$DEFAULT_BRANCH"' "$G"
-assert_grep "the gate takes the newest Implementation Complete by a writer" "有寫入權" "$G"
+assert_grep "the gate chooses the comment with spec-change.py ic (one selection, shared with verify)" 'spec-change.py" ic --comments' "$G"
 assert_grep "no Implementation Complete comment → not held to the gate (row 5)" "沒有 Implementation Complete" "$G"
 assert_grep "refuse or error stops the close" "停下、不 close" "$G"
 assert_grep "the stage task list has the gate" 'name="spec_archive_gate"' "$(cat "$CLOSE")"

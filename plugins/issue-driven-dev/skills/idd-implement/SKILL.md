@@ -214,7 +214,7 @@ esac
 
 完整契約見 [`references/worktree-isolation.md`](../../references/worktree-isolation.md) § Tree-lock。
 
-> **要寫規格的 issue 不能在 linked worktree 裡做（#480）**：Spectra 在 linked worktree 裡會把檔案寫進主工作樹。上面 exit 3 改用 worktree 之後，Step 0.6 的 preflight 會回 `linked-worktree` 並停下；這時等主工作樹空出來，或改在獨立 clone 裡跑。宣告 `no behaviour change` 的 issue 不受影響。
+> **要寫規格的 issue 不能在 linked worktree 裡做（#480）**：Spectra 在 linked worktree 裡會把檔案寫進主工作樹。上面 exit 3 改用 worktree 之後，Step 0.6 的 preflight 會回 `linked-worktree` 並停下；這時等主工作樹空出來，或改在獨立 clone 裡跑。preflight 在決定要不要寫規格之前就跑，所以之後會宣告 `no behaviour change` 的 issue 在 linked worktree 裡一樣停下（#488 會改用獨立 clone）。
 
 ### Step 0.5: Resolve PR vs Direct-commit Path
 
@@ -357,7 +357,7 @@ No branch operations. Whatever branch the user is on, commits land there.
 
 `idd-plan` 已經建好 change 時（`spectra list` 有 `idd-<N>-` 開頭的 change），這一步只做 preflight，不再 propose。
 
-verify 之後回來做修正時（這張 issue 已經有封存了的 change），修正若新增或修改 requirement，照契約第 7 步另建 `idd-<N>-fix<k>`；只是補測試時不建 change。
+verify 之後回來做修正時（這張 issue 已經有封存了的 change），修正若新增或修改 requirement，照契約第 7 步另建 `idd-<N>-fix<k>`；只是補測試時不建 change。宣告 `no behaviour change` 被 verify 否決時，照契約第 7 步建這張 issue 的第一個 change。
 
 ### Step 1: 讀取 Issue + Diagnosis
 

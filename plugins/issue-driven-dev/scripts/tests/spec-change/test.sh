@@ -5,6 +5,7 @@
 #   archived   are the declared changes archived at a revision
 #   links      does every added or changed requirement carry an executable check
 #   preflight  may the wrapper start writing a spec change here
+#   ic         which comment is the issue's Implementation Complete
 #
 # Each block below maps one `##### Example:` table of the capability
 # spec-on-every-issue, one check per row, with the table's values. The markers
@@ -15,6 +16,7 @@
 # spec-example: spec-on-every-issue / what the link check reports
 # spec-example: spec-on-every-issue / preflight by write access and Spectra state
 # spec-example: spec-on-every-issue / spec directory by .spectra.yaml
+# spec-example: spec-on-every-issue / choosing the Implementation Complete comment
 #
 # Fixture specs below use the made-up capability `cap`, so the markers inside
 # them never name a real Example.
@@ -229,6 +231,25 @@ links_case "a requirement appended after a separator leaves the block before it 
 newrepo l-append-changed; mkdir -p "$REPO/openspec/specs/cap"; printf '%s' "$(spec "$(req Base)")" > "$REPO/openspec/specs/cap/spec.md"; BASE=$(commit base)
 printf '%s\n\n---\n%s\n' "$(spec "$(req Base 'Changed text.')")" "$(req Alpha "$EX")" > "$REPO/openspec/specs/cap/spec.md"; put scripts/tests/x/test.sh '# spec-example: cap / alpha table'; commit >/dev/null
 links_case "the block before the separator really changed → still reported" missing 1 1
+# Rows added by idd-480-fix1 (verify round 1 of #480).
+linked_repo l-prefix; put openspec/specs/cap/spec.md "$(spec "$(req Base)" "$(req Alpha '##### Example: alpha')")"; put scripts/tests/x/test.sh '# spec-example: cap / alpha table'; commit >/dev/null
+links_case "added, one Example, only a marker naming a longer title that starts with it" missing 1 1
+linked_repo l-prefix-closer; put openspec/specs/cap/spec.md "$(spec "$(req Base)" "$(req Alpha '##### Example: alpha')")"; put scripts/tests/x/page.html '<!-- spec-example: cap / alpha -->'; commit >/dev/null
+links_case "a marker followed only by a comment closer counts" ok 0 0
+linked_repo l-badhead; put openspec/specs/cap/spec.md "$(spec "$(req Base)")
+### Requirement Missing colon
+
+The system SHALL reject invalid input."; commit >/dev/null
+links_case "added, under the heading '### Requirement Missing colon'" error "" 2
+linked_repo l-emptyname; put openspec/specs/cap/spec.md "$(spec "$(req Base)")
+### Requirement:
+
+The system SHALL do nothing."; commit >/dev/null
+links_case "a requirement heading with no name" error "" 2
+linked_repo l-nospecs; git -C "$REPO" rm -q -r openspec/specs; commit >/dev/null
+links_case "openspec/specs/ holds no tracked file at the head revision" error "" 2
+newrepo l-gitkeep; put openspec/specs/.gitkeep ''; BASE=$(commit base); put README.txt x; commit >/dev/null
+links_case "openspec/specs/ holds only .gitkeep (a newly initialised repository)" ok 0 0
 
 # ── preflight ───────────────────────────────────────────────────────────────
 echo "spec-change: preflight (Example: preflight by write access and Spectra state)"
@@ -321,6 +342,37 @@ else
 fi
 
 # ── common behaviour (task 2.5) ─────────────────────────────────────────────
+echo "spec-change: ic (Example: choosing the Implementation Complete comment)"
+icj() { # name json — write a comments file, print its path
+  printf '%s' "$2" > "$WORK/$1.json"; printf '%s' "$WORK/$1.json"
+}
+IC_O='{"author_association":"OWNER","body":"## Implementation Complete\n\n**Spec**: change idd-1-a"}'
+IC_M='{"author_association":"MEMBER","body":"## Implementation Complete\n\n**Spec**: change idd-1-b"}'
+IC_C='{"author_association":"COLLABORATOR","body":"## Implementation Complete\n\n**Spec**: change idd-1-c"}'
+IC_X='{"author_association":"CONTRIBUTOR","body":"## Implementation Complete\n\n**Spec**: no behaviour change"}'
+IC_K='{"author_association":"OWNER","body":"<!-- idd:comment type=implementation-complete -->\n## Implementation Complete\n\n**Spec**: change idd-1-k"}'
+DG='{"author_association":"OWNER","body":"## Diagnosis\n\nroot cause"}'
+ic_case() { # label json-or-path expected-substring(or EMPTY) exit
+  local f="$2"; case "$f" in /*) ;; *) f=$(icj "ic-$RANDOM" "$2") ;; esac
+  run ic --comments "$f"
+  if [ "$3" = EMPTY ]; then assert_eq "ic: $1 — prints nothing" "" "$OUT"
+  else assert_grep "ic: $1 — prints that body" "$3" "$OUT"; fi
+  assert_exit "ic: $1 — exit" "$4" "$RC"
+}
+ic_case "OWNER then MEMBER → the MEMBER's body" "[$IC_O,$IC_M]" "idd-1-b" 0
+ic_case "COLLABORATOR then CONTRIBUTOR → the COLLABORATOR's body" "[$IC_C,$IC_X]" "idd-1-c" 0
+ic_case "a body that starts with the marker" "[$IC_K]" "idd-1-k" 0
+ic_case "a Diagnosis only" "[$DG]" EMPTY 0
+ic_case "no comments" "[]" EMPTY 0
+ic_case "two pages, the newest on the second" "[$IC_O]
+[$DG,$IC_M]" "idd-1-b" 0
+ic_case "the file does not exist" "$WORK/no-such-comments.json" EMPTY 2
+ic_case "the file is not JSON" "$(icj ic-notjson 'not json')" EMPTY 2
+run ic --comments "$(icj ic-one "[$IC_O,$IC_M]")"
+assert_eq "ic: the printed body reads as the declaration it holds" "idd-1-b" "$(printf '%s\n' "$OUT" > "$WORK/ic-out.md"; "$PY" "$SC" declared --file "$WORK/ic-out.md" | field changes | tr -d '[]" ')"
+run ic
+assert_exit "ic: no --comments is a usage error" 64 "$RC"
+
 echo "spec-change: common behaviour"
 mkdir -p "$WORK/not-git"
 run archived --file "$(comment c-arch "$SPEC1")" --cwd "$WORK/not-git" --ref HEAD
