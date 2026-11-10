@@ -124,14 +124,27 @@ Issue-body prose in an issue opened by the invoking user — interpretation para
 
 ### 8. `in-place-correction`
 
-**Definition**: Replace content that the user has confirmed to be wrong, in place, so that later readers — humans and AI sessions that re-read the issue as memory — stop inheriting the error (#351). Applies only to the invoking user's own content — issue bodies and comments whose author is the invoking user's own `gh` login (org maintainers show as `MEMBER`; the repository OWNER's content counts only when the OWNER runs it — user decision 2026-10-17) — including published comments that are otherwise `append-only`. A bot's comment is not included: it is a third party's words, answered with an errata comment (verify #351 round 2).
+**Definition**: Replace content that is wrong — as the user states in a discussion of the issue, or agrees to when a skill proposes the correction (#424) — in place, so that later readers — humans and AI sessions that re-read the issue as memory — stop inheriting the error (#351). Applies only to the invoking user's own content — issue bodies and comments whose author is the invoking user's own `gh` login (org maintainers show as `MEMBER`; the repository OWNER's content counts only when the OWNER runs it — user decision 2026-10-17) — including published comments that are otherwise `append-only`. A bot's comment is not included: it is a third party's words, answered with an errata comment (verify #351 round 2).
 
-**Scope boundary**: One bounded region — a whole comment (`--scope whole-comment`) or one named section (`--section <heading>`; the only form allowed for an issue body). Known limitation (user decision 2026-10-17): text that belongs to no heading — below an issue body's last `---`, such as the IC_R011 `**Source**` footnote, or before its first heading — cannot be reached; an error there is answered with `/idd-comment --type correction`. The action SHALL (a) show the original and the replacement and get explicit confirmation, (b) archive the prior full text under `.claude/.idd/archive/edits/` of the main worktree (not a linked worktree, so the archive outlives worktree cleanup) before writing — the archive is never tracked by git and Claude's tools are denied access to it — (c) end the replaced region with a marker that carries the backup id and no path, and (d) refuse `verbatim-preserve` content and the regions owned by other skills (`## Current Status` → `idd-update`, `### Clarity Surface` → `idd-clarify`). `/idd-edit --correct` is the only action declared in this category; other skills reach it by proposing the command.
+**Scope boundary**: One bounded region — a whole comment (`--scope whole-comment`) or one named section (`--section <heading>`; the only form allowed for an issue body). Known limitation (user decision 2026-10-17): text that belongs to no heading — below an issue body's last `---`, such as the IC_R011 `**Source**` footnote, or before its first heading — cannot be reached; an error there is answered with `/idd-comment --type correction`. The action SHALL (a) show the diff and the full replacement in the conversation and then apply without asking for confirmation in a repository the user can write to (#424 D1; it asks when the privacy level is `enforce`; the privacy review covers the added text, and a hit at `enforce` or `warn`, newly added third-party verbatim text at `light`, a credential at any level, or an unconfirmed #272 question holds it back instead), (b) archive the prior full text under `.claude/.idd/archive/edits/` of the main worktree (not a linked worktree, so the archive outlives worktree cleanup) before writing — the archive is never tracked by git and Claude's tools are denied access to it — (c) end the replaced region with a marker that carries the backup id and no path, and (d) refuse `verbatim-preserve` content and the regions owned by other skills (`## Current Status` → `idd-update`, `### Clarity Surface` → `idd-clarify`). `/idd-edit --correct` is the only action declared in this category; other skills reach it by proposing the command, and the user's "run now" is the confirmation (#424).
 
 **Examples**:
 - `/idd-edit comment:<id> --correct --section "### Strategy"` replaces a Diagnosis strategy that named the wrong backup location
 - `/idd-edit issue:<N> --correct --section "## Expected"` replaces an Expected paragraph that misread the request, keeping the `Original text` quotation above it untouched
 - `/idd-comment --type errata --target-comment <id>` on the invoking user's own comment delegates to `/idd-edit --correct` instead of appending an errata comment
+
+### Discussion write-back (#424)
+
+[`issue-write-back.md`](issue-write-back.md) routes each change the user decides while an issue is discussed in a session to one place; each place maps to one category of this rule:
+
+| Change | Written with | Category |
+|---|---|---|
+| The problem (question, scope, `## Expected`) | `/idd-edit issue:<N> --correct --section <heading>` | `in-place-correction` |
+| The diagnosis (root cause, strategy, routing), and the affected Implementation Plan sections (verify reports are not edited) | `/idd-edit comment:<id> --correct --section <heading>` | `in-place-correction` |
+| A decision that changes the diagnosis | both: `/idd-comment #N --type decision` and `/idd-edit comment:<id> --correct --section <heading>` | `append-only` and `in-place-correction` |
+| New information, a decision, the course of the discussion | `/idd-comment #N --type <decision\|note\|question\|link>` | `append-only` (a new comment) |
+
+Someone else's content is never rewritten: their comment gets `/idd-comment --type errata`, their issue body `/idd-comment --type correction`, both new comments. Skills that detect an error keep proposing corrections (`### Proposed Corrections`); a user's "run now" is the confirmation. `--correct` ends the replaced text with a visible line (`--note`) before its marker.
 
 ## Decision tree for classifying new modify-actions
 
@@ -147,7 +160,7 @@ Is the target verbatim-preserve content (an Original-text / **Original** / **Poi
 or a comment or issue body authored by someone other than the OWNER, a bot, or the invoking user)?
 ├─ Yes → REFUSE the action entirely (this zone is verbatim-preserve)
 │
-Is the action replacing content the user has confirmed to be wrong?
+Is the action replacing content that is wrong (a problem or diagnosis change the user decides in a discussion counts)?
 ├─ Yes → category: in-place-correction (only via /idd-edit --correct; your own content only —
 │          anyone else's, the OWNER's and a bot's included, gets an errata comment instead)
 │

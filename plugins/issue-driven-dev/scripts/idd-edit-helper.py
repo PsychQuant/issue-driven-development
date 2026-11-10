@@ -64,6 +64,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import unicodedata
 
 # ── R4/R5 helpful messages (constants, must match bash reference substrings) ──
 R4_MSG = (
@@ -382,6 +383,7 @@ _VALUE_FLAGS = {
     "--scope": "scope_flag",
     "--section": "section_flag",
     "--reason": "reason",
+    "--note": "note",
     "--body": "body_input",
     "--body-file": "body_file",
     "--repo": "repo",
@@ -398,6 +400,7 @@ def _parse_args(argv):
         "scope_flag": "",
         "section_flag": "",
         "reason": "",
+        "note": "",
         "body_input": "",
         "body_file": "",
         "repo": "",
@@ -1596,6 +1599,24 @@ def _egress(args):
     return proc.returncode
 
 
+NOTE_MAX = 200
+NOTE_LINE_PREFIX = "_更正於 "   # idd-close Step 3.6 skips this line when it reads a section
+
+
+# The line this helper writes. Only a line of exactly this shape counts as an
+# earlier visible line; prose that merely starts with the prefix is the user's text.
+NOTE_LINE_RE = re.compile(r"_更正於 \d{4}-\d{2}-\d{2}(?:：.*)?_")
+CORRECT_MARKER_PREFIX = '<!-- idd:edit mode="correct"'
+IDD_MARKER_RE = re.compile(r"<!--\s*idd:(?:(?!-->).)*-->")
+
+
+def _correct_note_line(note):
+    """The line a reader sees: the marker is an HTML comment and an edit sends
+    no notification (#424 verify round 1)."""
+    day = datetime.date.today().isoformat()
+    return f"{NOTE_LINE_PREFIX}{day}：{note}_" if note else f"{NOTE_LINE_PREFIX}{day}_"
+
+
 def _correct_marker(backup_id):
     # The local date, as the other modes' markers have; the backup id keeps
     # UTC with its Z (verify #351 round 10, #406).
@@ -2184,6 +2205,37 @@ def run_start_subcmd(argv):
             _lines_of(state["body_input"].replace("\r\n", "\n")), state["section_flag"] or "-")).strip():
         err("Refuse: --correct needs the corrected text; the body holds only the target heading (#351).")
         return 2
+    if state["note"] and state["mode"] != "--correct":
+        err("ERROR: --note belongs to --correct; the other modes say why with --reason")
+        return 2
+    if state["mode"] == "--correct":
+        note = state["note"]
+        if len(note) > NOTE_MAX or any(ch in "<>" or unicodedata.category(ch) in ("Cc", "Cf", "Zl", "Zp") for ch in note):
+            err(f"ERROR: --note must be one line of at most {NOTE_MAX} characters, without <, >, control or "
+                "bidirectional characters")
+            return 2
+        # A line from an earlier correction at the end of the replacement would
+        # stand next to the new one and may state what is now wrong (round 2).
+        # Only the trailing group a copied section or comment ends with is
+        # touched: the earlier visible line, its correct marker (round 3), and
+        # other IDD markers the comment carries between them (round 5). The
+        # visible line and the correct marker are dropped, other markers kept.
+        # Anything before that group is the user's text and stays as it is:
+        # stripping it rewrote text nobody reviews (round 6), refusing it blocked
+        # corrections main accepts (round 7).
+        lines = state["body_input"].replace("\r\n", "\n").replace("\r", "\n").rstrip("\n").split("\n")
+        tail = []
+        while lines and (not lines[-1].strip() or NOTE_LINE_RE.fullmatch(lines[-1].rstrip())
+                         or IDD_MARKER_RE.fullmatch(lines[-1].rstrip())):
+            tail.insert(0, lines.pop().rstrip())
+        lines += [l for l in tail if IDD_MARKER_RE.fullmatch(l) and not l.startswith(CORRECT_MARKER_PREFIX)]
+        text = [l for l in _strip_target_heading(lines, state["section_flag"] or "-")
+                if l.strip() and not IDD_MARKER_RE.fullmatch(l.strip())]
+        if not text:
+            err("Refuse: --correct needs the corrected text; the body holds only the target heading, IDD markers "
+                "or earlier visible lines (#351, #424).")
+            return 2
+        state["body_input"] = "\n".join(lines) + "\n\n" + _correct_note_line(note) + "\n"
     repo = state["repo"] or default_repo or ""
     if not _REPO_RE.fullmatch(repo) or ".." in repo:
         err("ERROR: no repository: pass --repo owner/repo, or --default-repo from the IDD config")
@@ -3199,7 +3251,7 @@ One /idd-edit run, all modes (the skill calls only these; #351 round 9):
       for PICK=#N (REASON=not-in-pick otherwise; RESULT=merged when it is a listed
       target; an unreadable comment is fetch-failed and the PICK stays open).
   apply --run RUN --target T --scrub-attested SCRUB [--state STATE]
-      Write after the user confirmed; prints RESULT= (edited | refused | write-failed |
+      Write after the preview; prints RESULT= (edited | refused | write-failed |
       unverified). SCRUB is the run's tier or stricter, attested after the privacy
       review. A reply quoting user-pasted points (#272): prepare prints FLOOR=272 at
       any tier, the user answers the #272 question, and apply refuses light for it
