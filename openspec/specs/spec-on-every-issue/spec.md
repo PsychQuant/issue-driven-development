@@ -8,7 +8,7 @@ Defines how every issue that IDD implements leaves a change in the repository's 
 
 ### Requirement: The spec directory is resolved the way Spectra resolves it
 
-Every path this capability names under `openspec/` is relative to the spec directory Spectra uses for the repository, and `scripts/spec-change.py` SHALL resolve it the same way: the value of an uncommented `spec_dir:` line in `.spectra.yaml` at the top of the repository, or `openspec` when the file has no such line or does not exist. `archived` and `links` SHALL read `.spectra.yaml` at the revision they check; `preflight` SHALL read it in the working tree. A value that is absolute, empty, starts with `-`, names the repository root (`.`), or leaves the repository (a `..` component) SHALL be an `error`, not a fallback to `openspec`, and so SHALL a `.spectra.yaml` that exists but cannot be read as a file.
+Every path this capability names under `openspec/` is relative to the spec directory Spectra uses for the repository, and `scripts/spec-change.py` SHALL resolve it the same way: the value of an uncommented `spec_dir:` line in `.spectra.yaml` at the top of the repository, or `openspec` when the file has no such line or does not exist. `archived` and `links` SHALL read `.spectra.yaml` at the revision they check; `preflight` SHALL read it in the working tree. A value that is absolute, empty, starts with `-` or `:`, names the repository root (`.`), or leaves the repository (a `..` component) SHALL be an `error`, not a fallback to `openspec`, and so SHALL a `.spectra.yaml` that exists but is not a regular file (a directory or a symbolic link), in the working tree or at the revision. Paths are given to git literally, never as pathspec magic.
 
 #### Scenario: A repository initialised by Spectra 3
 
@@ -29,6 +29,9 @@ Every path this capability names under `openspec/` is relative to the spec direc
 | `spec_dir:` with no value | not applicable | `error` |
 | `spec_dir: -x` | not applicable | `error` |
 | `spec_dir: .` | not applicable | `error` |
+| `spec_dir: ":(top)openspec"` | not applicable | `error` |
+| a directory named `.spectra.yaml` at the revision | not applicable | `error` |
+| a symbolic link named `.spectra.yaml` at the revision | not applicable | `error` |
 
 ---
 ### Requirement: Every implemented issue leaves a spec change or a declared exemption
@@ -51,7 +54,7 @@ Which form applies to a deliverable:
 | Plan | a function is split in two and every output stays the same | `no behaviour change` (d) |
 | any tier, in a clone the account cannot write to | any | `third-party clone` |
 
-`scripts/spec-change.py declared --file <comment>` SHALL read the comment and print one JSON line with `form` (`change`, `no-behaviour-change`, `third-party-clone`, `legacy` or `invalid`) and `changes` (the names, in order). A comment without the marker and without a `**Spec**:` line is `legacy`: it was posted before this capability and is not held to it. A line inside a code fence is not read. The command SHALL exit 0 for the first four forms, 1 for `invalid` and 2 when the file cannot be read.
+`scripts/spec-change.py declared --file <comment>` SHALL read the comment and print one JSON line with `form` (`change`, `no-behaviour-change`, `third-party-clone`, `legacy` or `invalid`) and `changes` (the names, in order). A comment without the marker and without a `**Spec**:` line is `legacy`: it was posted before this capability and is not held to it. A line inside a code fence is not read; fences are judged as for the link check (three or more backticks or tildes at any indentation, closed only by a line of the same character at least as long with nothing after it), and lines end only at `\n`, `\r\n` or `\r`. The command SHALL exit 0 for the first four forms, 1 for `invalid` and 2 when the file cannot be read.
 
 #### Scenario: A Simple-tier fix leaves a spec change
 
@@ -81,6 +84,8 @@ Which form applies to a deliverable:
 | marker, `**Spec**: change ../x` | `invalid` | empty | 1 |
 | marker, `**Spec**: nothing to see` | `invalid` | empty | 1 |
 | marker, the only `**Spec**:` line is inside a code fence | `invalid` | empty | 1 |
+| marker, the only `**Spec**:` line is inside a four-backtick fence that also holds a three-backtick line | `invalid` | empty | 1 |
+| marker, `**Spec**: no behaviour change` follows other text on the same line after U+2028 | `invalid` | empty | 1 |
 | the file does not exist | no JSON line | not applicable | 2 |
 
 ---
@@ -163,7 +168,7 @@ After apply and before `idd-verify`, the wrapper (for the Spectra tier, `idd-all
 ---
 ### Requirement: Added and modified requirements carry an executable check
 
-`scripts/spec-change.py links --base <rev>` SHALL compare the files under `openspec/specs/` at `<rev>` and at `--head` (default `HEAD`). For every requirement that is new or whose text differs between the two, it SHALL require one of two things: at least one `##### Example:` under the requirement, where each such Example has a title that is unique within its capability and a tracked file at the head revision, outside `openspec/` and not ending in `.md`, that contains the marker `spec-example: <capability> / <Example title>`; or a line under the requirement that starts with `No executable check:` followed by a reason. A requirement that does not differ SHALL NOT be checked. A marker counts only when nothing but whitespace, or the comment closer `-->` or `*/`, follows the Example title on its line. Lines inside a code fence are not read as `##### Example:` or `No executable check:` lines; a fence opened by three or more backticks or tildes closes only on a line of the same character, at least as long, with nothing but whitespace after it. Two requirements with the same name in one capability SHALL make the command print `error`. So SHALL a code fence at the head revision that never closes, since the requirements after it would go unchecked. Outside code fences, a heading that starts with `### Requirement` but does not have the form `### Requirement: <name>` with a non-empty name SHALL make the command print `error`, and so SHALL a head revision at which the spec directory's `specs/` holds no tracked file. The command SHALL print one JSON line with `status` (`ok`, `missing` or `error`) and a list naming each requirement or Example that lacks its check, and SHALL exit 0, 1 or 2 in that order. `--base` is required: the caller names the range, so that a run on the default branch is checked against the commit it started from. The marker ties an Example to a test by name only; whether the test exercises what the Example states is judged by the reviewers of `idd-verify`.
+`scripts/spec-change.py links --base <rev>` SHALL compare the files under `openspec/specs/` at `<rev>` and at `--head` (default `HEAD`). For every requirement that is new or whose text differs between the two, it SHALL require one of two things: at least one `##### Example:` under the requirement, where each such Example has a title that is unique within its capability and a tracked file at the head revision, outside `openspec/` and not ending in `.md`, that contains the marker `spec-example: <capability> / <Example title>`; or a line under the requirement that starts with `No executable check:` followed by a reason. A requirement that does not differ SHALL NOT be checked. A marker counts only when nothing but whitespace, or the comment closer `-->` or `*/`, follows the Example title on its line. Lines inside a code fence are not read as `##### Example:` or `No executable check:` lines; a fence opened by three or more backticks or tildes, at any indentation (as inside a list item), closes only on a line of the same character, at least as long, with nothing but whitespace after it; lines end only at `\n`, `\r\n` or `\r`. A requirement heading indented by up to three spaces SHALL be read as a requirement, as Spectra reads it. Two requirements with the same name in one capability SHALL make the command print `error`. So SHALL a code fence at the head revision that never closes, since the requirements after it would go unchecked. Outside code fences, a heading that starts with `### Requirement` but does not have the form `### Requirement: <name>` with a non-empty name SHALL make the command print `error`, and so SHALL a head revision at which the spec directory's `specs/` holds no tracked file. The command SHALL print one JSON line with `status` (`ok`, `missing` or `error`) and a list naming each requirement or Example that lacks its check, and SHALL exit 0, 1 or 2 in that order. `--base` is required: the caller names the range, so that a run on the default branch is checked against the commit it started from. The marker ties an Example to a test by name only; whether the test exercises what the Example states is judged by the reviewers of `idd-verify`.
 
 #### Scenario: An Example without a test is reported
 
@@ -195,6 +200,8 @@ After apply and before `idd-verify`, the wrapper (for the Spectra tier, `idd-all
 | added, its only `##### Example:` line inside a code fence | none outside fences | not applicable | absent | `missing` |
 | added, its only `No executable check:` line inside a code fence | none | not applicable | only inside a fence | `missing` |
 | added, after a fence of four backticks that a line of three backticks does not close | its Example inside that fence | not applicable | absent | `missing` |
+| added, under the heading `  ### Requirement: Alpha` (two leading spaces) | none | not applicable | absent | `missing` |
+| added, its only `No executable check:` line inside a fence indented four spaces in a list item | none | not applicable | only inside that fence | `missing` |
 | added twice with the same name in one capability | not applicable | not applicable | not applicable | `error` |
 | any, after a code fence that never closes | not applicable | not applicable | not applicable | `error` |
 | `--base` names a revision that does not exist | not applicable | not applicable | not applicable | `error` |
@@ -253,7 +260,7 @@ Before a wrapper creates any artifact or commit for an implementation, it SHALL 
 ---
 ### Requirement: Close requires the issue's change to be archived
 
-`idd-close` SHALL fetch the issue's comments with `gh api --paginate`, SHALL choose the Implementation Complete comment with `spec-change.py ic` (requirement "One way to choose the Implementation Complete comment"), and SHALL run `spec-change.py archived` on it with `--ref` set to the default branch as the remote has it. It SHALL close the issue only when the command prints `pass`. On `refuse` it SHALL stop and name the changes that are not archived or the fault in the `**Spec**:` line; on `error` it SHALL stop and say the default branch could not be read, and so SHALL it when `gh repo view` cannot name the default branch or `git fetch` of it fails. When the comments cannot be fetched or `ic` exits 2, it SHALL stop and say the comments could not be read; it SHALL NOT treat that as an issue with no Implementation Complete comment. An issue with no Implementation Complete comment is not held to this rule. A retroactive close (`idd-close --retroactive`, for an issue that is already closed) skips this gate, as it skips the gates before it.
+`idd-close` SHALL fetch the issue's comments with `gh api --paginate`, SHALL choose the Implementation Complete comment with `spec-change.py ic` (requirement "One way to choose the Implementation Complete comment"), and SHALL run `spec-change.py archived` on it with `--ref` set to the default branch as the remote has it. It SHALL close the issue only when the command prints `pass`. On `refuse` it SHALL stop and name the changes that are not archived or the fault in the `**Spec**:` line; on `error` it SHALL stop and say the default branch could not be read. For a comment that declares a change, it SHALL read the default branch by fetching it from the remote and checking the commit that fetch returned, and SHALL stop when `gh repo view` cannot name the default branch or the fetch fails; for any other comment the default branch is not read, since `archived` answers from the comment alone. When the comments cannot be fetched or `ic` exits 2, it SHALL stop and say the comments could not be read; it SHALL NOT treat that as an issue with no Implementation Complete comment. An issue with no Implementation Complete comment is not held to this rule. A retroactive close (`idd-close --retroactive`, for an issue that is already closed) skips this gate, as it skips the gates before it.
 
 #### Scenario: An unarchived change holds the close
 
@@ -273,6 +280,8 @@ Before a wrapper creates any artifact or commit for an implementation, it SHALL 
 | the issue has no Implementation Complete comment | not read | passes |
 | the comments could not be fetched | not read | stops, saying the comments could not be read |
 | marker, `**Spec**: change idd-42-fix-timeout` | the default branch cannot be fetched | stops, saying the default branch could not be read |
+| marker, `**Spec**: no behaviour change` | the default branch cannot be fetched | passes; the branch is not read |
+| marker, `**Spec**: change idd-42-fix-timeout` | the remote's default branch dropped the archive, the local tracking ref did not move | stops, naming the change |
 
 ---
 ### Requirement: One way to choose the Implementation Complete comment
