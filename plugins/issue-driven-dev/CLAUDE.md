@@ -55,13 +55,13 @@ skill source tree；既有 `SKILL.md` 可以繼續使用 Claude-native tool cont
 | `idd-ask` | 不知道當初為何決定、誤把提案當事實 | Issues＋Discussions有界全文問答，精確引用comment/reply；`--corpus issues`保留原語料範圍，partial明示 |
 | `idd-report` | 進度不透明，stakeholder 看不到現況 | 產出進度報告到 GitHub Discussions |
 | `idd-comment` | 非流程性決定 / 外部 context 散落在 chat | Template-guided comment（decision/note/question/correction/link/errata）|
-| `idd-edit` | 手動 `gh api PATCH` 容易字串 escape 誤覆蓋；錯誤留在原處被後續 session 繼承 | 編輯既有 comment（append/replace/prepend-note）；`--correct` 確認後就地取代錯誤內容（含 issue 正文 section），只限你自己（目前登入的 gh 使用者）寫的內容，別人寫的改用 `/idd-comment --type errata`（comment）或 `--type correction`（issue 正文）；舊版歸檔、AI 讀不到（#351）|
+| `idd-edit` | 手動 `gh api PATCH` 容易字串 escape 誤覆蓋；錯誤留在原處被後續 session 繼承 | 編輯既有 comment（append/replace/prepend-note）；`--correct` 顯示預覽後就地取代錯誤內容（含 issue 正文 section，段落尾留可見文字），只限你自己（目前登入的 gh 使用者）寫的內容，別人寫的改用 `/idd-comment --type errata`（comment）或 `--type correction`（issue 正文）；舊版歸檔、AI 讀不到（#351）|
 | `idd-config` | 跑 `idd-issue` 才發現 config 缺、predicate 寫錯只在實際 issue 創建時才報、不知 cwd 落在哪個 candidate / group | 管理 `.claude/issue-driven-dev.local.json` 生命週期：`show` / `init` / `validate` / `which`（v2.31.0）|
 
 **Orchestrator skill**：
 | Skill | 防止的失敗 | 用途 |
 |-------|-----------|------|
-| `idd-all` | 手動跑 5 個 idd-* 太繁瑣、容易漏步驟、orchestration 一致性 | 一鍵跑完 issue→diagnose→implement→verify。v2.46.0+ **從 `pr_policy` + `--pr/--no-pr` 解析 `(path, interaction)` tuple**：`(PR, unattended)` = feature branch + push + PR + sub-skill UNATTENDED MODE（v2.40.0 default + `/loop` friendly）；`(direct-commit, attended)` = 留當前 branch + 不開 PR + sub-skill native attended（HITL）。停在 verified 等人 close — 兩 mode 都不 auto-close。Spectra path 走 discuss→propose→apply chain — v2.46.0。v2.83.0+ **multi-issue batch mode**（`idd-all #a #b #c`）= conflict-class-**ordered sequential** backlog drain（#182；真並發 stateful lane 為 **deferred**——within-window agent teams 是 worktree-isolation 的 Case A、TeamCreate 已廢棄；conflict-class taxonomy 是「手動/未來並行」的安全契約，見 [`references/parallel-orchestration.md`](references/parallel-orchestration.md)） |
+| `idd-all` | 手動跑 5 個 idd-* 太繁瑣、容易漏步驟、orchestration 一致性 | 一鍵跑完 issue→diagnose→implement→verify。v2.46.0+ **從 `pr_policy` + `--pr/--no-pr` 解析 `(path, interaction)` tuple**：`(PR, unattended)` = feature branch + push + PR + sub-skill UNATTENDED MODE（v2.40.0 default + `/loop` friendly）；`(direct-commit, attended)` = 留當前 branch + 不開 PR + sub-skill native attended（HITL）。verify gate 判定乾淨、guardrail 全過就 merge（PR）或在預設 branch 上 push（direct-commit），再以 `ORCHESTRATED BY /idd-all` 跑 `/idd-close`，回報 `Done:`／`Undo:`（#392）；沒過就停在 verified 回報 `Stopped:`；`--review` 停在 verified、不 merge 不 close。Spectra path 走 discuss→propose→apply chain — v2.46.0。v2.83.0+ **multi-issue batch mode**（`idd-all #a #b #c`）= conflict-class-**ordered sequential** backlog drain（#182；真並發 stateful lane 為 **deferred**——within-window agent teams 是 worktree-isolation 的 Case A、TeamCreate 已廢棄；conflict-class taxonomy 是「手動/未來並行」的安全契約，見 [`references/parallel-orchestration.md`](references/parallel-orchestration.md)） |
 | `idd-all-chain` | Root issue 衍生鏈被切成 N 個獨立 PR,reviewer 失去 holistic view;手動逐一跑 `/idd-all #M` 太繁瑣 | **chain-solve mode**(v2.55.0+ single-root,v2.60.0+ multi-root):驅動 root issue + auto-emergent spawn(sub-skill sister sweep / verify follow-up / mid-plan tangential / sister concern)through ONE cluster branch + ONE review PR。Thin shell over `/idd-all`,內部 recursive 用 `--in-chain` flag 推導 4th mode tuple `(direct-commit, unattended)`。v2.60.0+ 支援 multi-root invocation(`#A #B #C`)+ DFS/BFS traversal mode(`--bfs` opt-in,default DFS)。Hard caps:per-root depth=3、global max-issues=10(v2.60.0+, was 2/5)。Eligibility = same-file OR same-skill OR sister-bug。Verify FAIL = per-root halt(continue 其他 root subtree)+ preserve commits。停在 verified、永不 auto-close。Spawn manifest v2 at `.claude/.idd/state/chain-spawned-issues.json`(含 root_issues/traversal/per-spawn root_id),4 sub-skill 共同 conformant write |
 
 ## Use-Case Routing（v2.37.0+）
@@ -143,7 +143,7 @@ skill 不會自動 invoke `/spectra-discuss`。目前覆蓋：`idd-comment`（�
 | Path | 行為 | 適用 |
 |------|------|------|
 | **PR path** | 開 feature branch `idd/<N>-<slug>` + push + `gh pr create` | 多人協作、fork、需 CI / review |
-| **Direct-commit path** | 在當前 branch commit,不 push、不開 PR | Solo project、個人 marketplace、quick fix |
+| **Direct-commit path** | 在當前 branch commit、不開 PR;`idd-all` 在 verify 乾淨、且在預設 branch 上時 push 並 close(#392) | Solo project、個人 marketplace、quick fix |
 
 決策順序(高到低):
 
@@ -152,7 +152,7 @@ skill 不會自動 invoke `/spectra-discuss`。目前覆蓋：`idd-comment`（�
 3. `pr_policy` config 欄位(`always` / `never` / `ask`)
 4. Config 缺省(沒 file 或沒 field)→ 默認 `(PR, unattended)`(v2.40.0 backward compat,保護 `/loop` 等舊 caller)
 
-`idd-all` v2.46.0+ 兩 mode:`(PR, unattended)` 與 `(direct-commit, attended)` 從 `pr_policy` + flag 解析。`idd-close` 偵測 open PR 引用本 issue 時 refuse close。完整 contract:[references/pr-flow.md](references/pr-flow.md)。
+`idd-all` v2.46.0+ 兩 mode:`(PR, unattended)` 與 `(direct-commit, attended)` 從 `pr_policy` + flag 解析。`idd-close` 偵測 open PR 引用本 issue 時 refuse close。兩 mode 在 verify 乾淨後都由 idd-all 自己 merge（或 push）並 close（#392；`--review` 除外）。完整 contract:[references/pr-flow.md](references/pr-flow.md)。
 
 ## Workflow
 

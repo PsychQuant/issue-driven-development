@@ -459,7 +459,7 @@ Controls whether `idd-implement` opens a PR or commits directly.
 | Value | Behavior |
 |-------|----------|
 | `always` | Feature branch + push + `gh pr create`. Same as passing `--pr` every time. |
-| `never` | Stay on current branch, no push, no PR. Same as `--no-pr`. Suits solo repos. |
+| `never` | Stay on current branch, no PR. Same as `--no-pr`. Suits solo repos. `idd-implement` never pushes; `idd-all` pushes the default branch after a clean verify, then closes (#392). |
 | `ask` (default) | Prompt via AskUserQuestion on first invocation; cache within conversation. |
 
 **Override priority** (highest first): `--pr` / `--no-pr` flag > fork detection > `pr_policy` config > `ask` default.

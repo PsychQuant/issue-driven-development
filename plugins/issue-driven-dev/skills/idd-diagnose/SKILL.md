@@ -773,14 +773,14 @@ Full integration contract: [`references/agent-routing.md`](../../references/agen
 ### Proposed Corrections
 | # | Target | Section | 錯在哪 | Command |
 |---|--------|---------|--------|---------|
-| 1 | issue:42 | ## Problem | bug 位置寫錯，root cause 在 `b.py` | `/idd-edit issue:42 --correct --section '## Problem' --body-file '$HOME/.cache/idd/corrections/correction-42-1.md'` |
+| 1 | issue:42 | ## Problem | bug 位置寫錯，root cause 在 `b.py` | `/idd-edit issue:42 --correct --section '## Problem' --body-file '<執行時建的檔>'` |
 ```
 
-- comment 目標寫 `comment:<id>`（數字 REST id，即 URL 的 `#issuecomment-` 後綴），配 `--scope whole-comment` 或 `--section`；issue body 只能 `--section`。替換內容附在表下 `<details>`，執行時寫進 `$HOME/.cache/idd/corrections/correction-<N>-<k>.md`（先 `mkdir -p "$HOME/.cache/idd/corrections"`），`--body-file` 指向它；不放 `$VERIFY_DIR` 或 `$TMPDIR`（那是這一輪的暫存，使用者決定執行時可能已被清掉）。
+- comment 目標寫 `comment:<id>`（數字 REST id，即 URL 的 `#issuecomment-` 後綴），配 `--scope whole-comment` 或 `--section`；issue body 只能 `--section`。替換內容附在表下 `<details>`，使用者選了執行才寫進用 `mktemp -d "$HOME/.cache/idd/writeback/XXXXXX"` 建的新目錄（見下方 attended 那一點），`--body-file` 指向它；不放 `$VERIFY_DIR` 或 `$TMPDIR`（那是這一輪的暫存，使用者決定執行時可能已被清掉；sandbox 內外看到的 `$TMPDIR` 也不同）。
 - 「錯在哪」只寫位置與錯誤類型加正確內容，不重述錯的值 —— 重述就等於再留一份錯誤。
 - 替換內容須原樣保留 `Original text`、`**Original**`、`**Point i**` 引文；`## Current Status`、`### Clarity Surface` 不提議（`/idd-edit` 會拒絕）。錯誤落在 issue 正文裡不屬於任何標題的文字（最後一條 `---` 之下，例如 IC_R011 的 `**Source**` 註腳；或第一個標題之前）時，`--correct` 搆不到（comment 裡的這類文字用 `--scope whole-comment`），改提 `/idd-comment #N --type correction`（issue 正文沒有 comment id，`--type errata` 用不了）；issue 正文不是你開的也一樣。目標 comment 作者不是你自己（目前登入的 gh 使用者；repo OWNER 不是你時，OWNER 寫的也算其他人，bot 寫的也算）→ 改提 `/idd-comment #N --type errata --target-comment <id> --body "..."`。
 - **Command 欄是提議，不是照貼的指令**：這張表貼在 GitHub 上，協作者改得到。attended 執行時，用本 skill 自己的值重組引數 —— 目標只能是 `comment:<全數字>` 或 `issue:<全數字>`，section 必須是一行 ATX 標題（一到六個 `#`、一個空格、標題文字） —— 交給 idd-edit 的引數照 shell 的寫法：每個值用單引號包住（值本身含單引號時寫成 `'\''`，GitHub 上的標題可能含單引號）；idd-edit Step 1 先照 shell 規則切開、再重新包，所以不會疊成兩層。不符就不執行。**絕不**把 GitHub 上那一格原樣貼進指令。`--correct` 不會把 `--reason` 發佈到任何地方（標記只帶 backup id 與日期），所以指令不帶 `--reason`。
-- **attended**：逐項 `AskUserQuestion`（現在執行 / 先不要）；選執行 → `Skill(skill="issue-driven-dev:idd-edit", args="<上一點重組的該項參數>")`，`/idd-edit` 仍走自己的 preview + confirm。**unattended 只列不做**（`idd-all` UNATTENDED MODE，同 Step 3.4 F）：不呼叫 `/idd-edit`。
+- **attended**：逐項 `AskUserQuestion`（現在執行 / 先不要）；選執行 → `Skill(skill="issue-driven-dev:idd-edit", args="<上一點重組的該項參數>")`，這一題就是確認（#424），所以問句裡附上該項替換內容的全文與 `--note` 那一句；選了執行才把替換內容寫進 `mktemp -d "$HOME/.cache/idd/writeback/XXXXXX"` 建的新目錄（先 `mkdir -p "$HOME/.cache/idd/writeback"`，`finish` 後刪掉），`--body-file` 指向它，重組的引數另帶 `--repo <本 skill 解析出的 owner/repo>` 與 `--note '<一句話：現在正確的內容>'`；`/idd-edit --correct` 顯示預覽後直接寫入，不再問第二次（隱私命中、#272 那一題、沒有寫入權的 repo，它照舊會問）。**unattended 只列不做**（`idd-all` UNATTENDED MODE，同 Step 3.4 F）：不呼叫 `/idd-edit`。
 - 本 skill **永不**自己 PATCH 目標、也不寫歸檔 —— 改寫只經 `/idd-edit`。
 
 ### Step 4: 確認 + Routing
@@ -791,9 +791,22 @@ Diagnosis comment 到 #NNN 後，進行兩階段確認:
 
 詢問使用者：「Diagnosis 已 comment 到 #NNN。正確嗎？要調整策略嗎？」
 
-- 如果要調整 → 修改後用 `gh issue comment` 追加修正,然後回到這個 Stage 1 重新確認
+- 如果要調整 → 用 `/idd-edit comment:<Diagnosis id> --repo <owner/repo> --correct --section <heading> --body-file <檔> --note <一句話>` 就地改寫 Diagnosis 受影響的段落（例如 `### Strategy`），**不追加修正 comment**（#424，見 [`rules/issue-write-back.md`](../../rules/issue-write-back.md)）；另用 `/idd-comment #N --repo <owner/repo> --type decision --quote '<使用者的原話>' --body <決定與理由>` 記下這個決定（兩處都寫，`--correct` 先做）；只改剛貼出的這一則：之前的 Implementation Plan 與 verify 報告依據的是被取代的診斷，都不動（Stage 2 會照新的診斷重新分流）；`/idd-edit` 拒絕時照該規則處理。然後回到這個 Stage 1 重新確認
 
 > **Choice-first decision surfacing**（套用 `MANIFESTO.md`「Choice-first decision rendering」doctrine / spec `choice-first-decision-rendering`）：當 diagnosis 的 Strategy / Conflict / Risks 浮出**需 stakeholder 拍板且可列舉**的決策（多個 valid approach、方向衝突、命名 / 範圍取捨等），Stage 1 **SHALL** 用 `AskUserQuestion` render 成候選選項（含推薦項）讓 user 挑,而非只用散文列出請 user 自行 articulate。選項空間真的開放（AI 舉不出候選）時才 fallback free-text,且須具名說明為何無法列舉。batch / aggregate diagnose 收尾列多個待拍板決策時同理。Unattended 下不 block,套用既有 unattended 慣例（取安全 non-blocking 預設、寫 audit trail；如 Layer V 的 `proceed anyway`,未必是推薦項）。
+
+  **結構化 choice default record（#392）**：unattended 下取了預設時，**必須**留一段結構化記錄（每個取了預設的決策一段）：Diagnosis comment 還沒貼出就寫在裡面，已經貼出就另貼一則 comment（close stage 讀所有 comment，r5 #7）。reason literal 引自 [Reason pattern registry](../../rules/append-vs-modify.md#reason-pattern-registry)（strict literal `unattended-auto-Step-4-choice-default`）：
+
+  ```markdown
+  #### Choice Default Record
+
+  - **Reason**: unattended-auto-Step-4-choice-default
+  - **Decision**: <要拍板的是什麼>
+  - **Options**: <列出的候選>
+  - **Default taken**: <取了哪一個、為什麼安全>
+  ```
+
+  `/idd-all` 的 close stage 讀所有 comment 的這一行：之後沒有 Decision comment 回應它，就停在 verified、不自動 merge（這個決定本該由人拍板）；Phase 6 把它列進 Action items。人拍板後，Claude 以 `idd-comment --type decision` 記下，記錄就不再擋。
 
 #### Stage 2: Routing（根據 Complexity 選下一步）
 

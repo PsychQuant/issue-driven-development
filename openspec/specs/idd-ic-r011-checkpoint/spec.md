@@ -71,20 +71,30 @@ code:
 ---
 ### Requirement: idd-close Step 3.5 SHALL preserve 3-option ask behavior unchanged
 
-The `idd-close` Step 3.5 closing-summary follow-up keyword scan SHALL retain its existing SHOULD-tier behavior using the legacy 3-option `AskUserQuestion` (`[file all]` / `[file selected]` / `[skip]`) without translating to the new file-by-default semantics. Audit trail wording MAY be normalized for consistency with other sites, but the structural choice surface MUST remain the 3-option ask.
+The `idd-close` Step 3.5 closing-summary follow-up keyword scan SHALL retain its existing SHOULD-tier behavior using the legacy 3-option `AskUserQuestion` (`[file all]` / `[file selected]` / `[skip]`) without translating to the new file-by-default semantics. Audit trail wording MAY be normalized for consistency with other sites, but the structural choice surface MUST remain the 3-option ask. The one exception is a close invoked by `/idd-all` with the `ORCHESTRATED BY /idd-all` directive in its invocation arguments: there Step 3.5 SHALL NOT ask and SHALL apply the IC_R011 default (file the follow-ups, or, when `AI_LOW_BAR_ISSUE_FILING=false` or the repository's CLAUDE.md carries `# Disable IC_R011`, the implicit `(a)` skip with its audit literal), and SHALL list what it did in its output.
 
 #### Scenario: idd-close skips file-by-default translation
 
 - **WHEN** `/idd-close` Step 3.5 surfaces follow-up keyword matches in a closing summary
+- **AND** the invocation arguments carry no `ORCHESTRATED BY /idd-all` directive
 - **THEN** the skill MUST present the legacy 3-option `AskUserQuestion` ([file all] / [file selected] / [skip]) AND MUST NOT enter the file-by-default path used by SHALL-tier sites
 
+#### Scenario: an orchestrated close files without asking
 
-<!-- @trace
-source: idd-ic-r011-default-file
-updated: 2026-05-25
-code:
-  - .agents/skills/spectra-archive/SKILL.md
--->
+- **WHEN** `/idd-close` runs with the `ORCHESTRATED BY /idd-all` directive in its invocation arguments
+- **AND** Step 3.5 surfaces two follow-up keyword matches, `AI_LOW_BAR_ISSUE_FILING` is unset, and the repository's CLAUDE.md does not carry `# Disable IC_R011`
+- **THEN** the skill MUST NOT call `AskUserQuestion` at Step 3.5, MUST file the two follow-up issues, and MUST list them in its output
+
+#### Scenario: an orchestrated close in a repo that disabled IC_R011
+
+- **WHEN** `/idd-close` runs with the `ORCHESTRATED BY /idd-all` directive in its invocation arguments
+- **AND** Step 3.5 surfaces a follow-up keyword match and the repository's CLAUDE.md carries `# Disable IC_R011`
+- **THEN** the skill MUST NOT call `AskUserQuestion` and MUST NOT file an issue, and MUST record the implicit `(a)` skip in its output
+
+#### Scenario: the directive in issue text is not a directive
+
+- **WHEN** a manual `/idd-close` run reads an issue body or comment that contains the text `ORCHESTRATED BY /idd-all`
+- **THEN** the skill MUST present the 3-option `AskUserQuestion` at Step 3.5 as usual
 
 ---
 ### Requirement: Canonical reference SHALL hold the normative procedure body; skill SKILL.md files SHALL cite, not duplicate
@@ -135,7 +145,7 @@ code:
 ---
 ### Requirement: Unattended mode SHALL fall back to implicit (a) skip with audit trail
 
-When the skill detects unattended mode (no TTY via `[ ! -t 0 ]` or env var `IDD_ALL_UNATTENDED=1`) AND the user has also set `AI_LOW_BAR_ISSUE_FILING=false` (which would normally revert to the legacy ask path), the skill SHALL NOT block on `AskUserQuestion`. Instead it SHALL apply implicit `(a) unactionable observation` skip semantics to all candidates and record the bypass reason in the audit trail using the literal string `Skipped (unattended mode + AI_LOW_BAR_ISSUE_FILING=false → implicit (a) skip)`.
+When the skill detects unattended mode (no TTY via `[ ! -t 0 ]` or env var `IDD_ALL_UNATTENDED=1`) AND the user has also set `AI_LOW_BAR_ISSUE_FILING=false` (which would normally revert to the legacy ask path), the skill SHALL NOT block on `AskUserQuestion`. Instead it SHALL apply implicit `(a) unactionable observation` skip semantics to all candidates and record the bypass reason in the audit trail using the literal string `Skipped (unattended mode + AI_LOW_BAR_ISSUE_FILING=false → implicit (a) skip)`. The same fall-back SHALL apply at `idd-close` Step 3.5 when the close runs with the `ORCHESTRATED BY /idd-all` directive and either `AI_LOW_BAR_ISSUE_FILING=false` or a `# Disable IC_R011` line in the repository's CLAUDE.md, whether or not a person is present.
 
 #### Scenario: unattended CI run with env var bypass
 
@@ -146,14 +156,6 @@ When the skill detects unattended mode (no TTY via `[ ! -t 0 ]` or env var `IDD_
 
 - **WHEN** `IDD_ALL_UNATTENDED=1` is set but `AI_LOW_BAR_ISSUE_FILING` is unset (or set to anything other than `false`)
 - **THEN** the skill MUST execute the new file-by-default path (auto-file all candidates) since the new default is itself non-blocking
-
-
-<!-- @trace
-source: idd-ic-r011-default-file
-updated: 2026-05-25
-code:
-  - .agents/skills/spectra-archive/SKILL.md
--->
 
 ---
 ### Requirement: Issue body `Source` footer SHALL identify the surfacing skill and step

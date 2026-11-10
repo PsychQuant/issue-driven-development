@@ -347,12 +347,12 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/idd-edit-helper.py" validate-target '<TAR
 | 4 | 其他人，OWNER（由別人執行時）與 bot 也是 —— 別人的話是第三方原話（bot：#351 verify 第 2 輪；OWNER：2026-10-17 使用者決定） | 只貼 errata（下方「其他作者」） |
 | 其他（1 = 查不到目前的 gh 使用者、2 = 參數錯） | 無法判定 | 把 stderr 的原因告訴使用者，改貼 errata、不改原文：不猜是不是你的，但錯誤至少有一則指向正確內容的更正（#351 verify 第 4 輪） |
 
-**你自己（目前登入的 gh 使用者） → 就地更正**（OWNER 不是你時，OWNER 寫的 comment 算其他作者；bot 也是；都走另貼 errata）：不 post 任何 comment（跳過 Step 2.5–4），委派 idd-edit；修改本身、預覽、確認（預設 NO）、歸檔舊版都由它執行。更正內容只取自 `--correction-file`；沒給就用 AskUserQuestion 要檔案路徑，**不得**拿 `--body` 當替換內容：
+**你自己（目前登入的 gh 使用者） → 就地更正**（OWNER 不是你時，OWNER 寫的 comment 算其他作者；bot 也是；都走另貼 errata）：不 post 任何 comment（跳過 Step 2.5–4），委派 idd-edit；修改本身、預覽與回報（`--correct` 不問，#424）、歸檔舊版都由它執行。更正內容只取自 `--correction-file`；沒給就用 AskUserQuestion 要檔案路徑，**不得**拿 `--body` 當替換內容：
 
 ```
 IDD_CALLER=idd-comment-errata \
   /idd-edit comment:{target-comment} --repo {GITHUB_REPO} --correct (--scope whole-comment | --section '{heading}') \
-    --body-file '{correction-file}'
+    --body-file '{correction-file}' --note '{一句話：現在正確的內容}'
 ```
 
 指令不帶 `--reason`：`--correct` 不會把理由發佈到任何地方（它的標記只帶 backup id 與日期）。`{heading}` 是 comment 裡的標題文字（別人改得到），必須是一行 ATX 標題；含單引號時寫成 `'\''`。idd-edit Step 1 先照 shell 規則切開、再重新包，不會疊成兩層。
@@ -645,7 +645,7 @@ HTML comment 在 GitHub 不渲染，但可 parse：
   --section="### Strategy" --correction-file=fixed.md
 ```
 
-→ 你自己寫的 comment：不 post，委派 `/idd-edit comment:5805214375 --correct --section "### Strategy" --body-file fixed.md`，經它的預覽與確認後就地取代。
+→ 你自己寫的 comment：不 post，委派 `/idd-edit comment:5805214375 --correct --section "### Strategy" --body-file fixed.md`，經它的預覽後就地取代。
 
 ```
 /idd-comment #17 --type=errata --target-comment=4241327867 \

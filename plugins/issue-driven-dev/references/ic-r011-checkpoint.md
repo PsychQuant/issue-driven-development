@@ -104,7 +104,7 @@ options:
 
 The legacy 3-option `AskUserQuestion` (`file all` / `file selected` / `skip`) is preserved for:
 
-1. **SHOULD-tier sites** (`/idd-close` Step 3.5) — closing is mostly mechanical wrap-up;翻 default 增加 friction without proportional value
+1. **SHOULD-tier sites** (`/idd-close` Step 3.5) — closing is mostly mechanical wrap-up;翻 default 增加 friction without proportional value。例外：`/idd-all` 帶 `ORCHESTRATED BY /idd-all` 指示呼叫時不問（#392），取 IC_R011 預設：file，或兩個 bypass（下一項）任一成立時 implicit (a) skip；見 `skills/idd-close/SKILL.md`〈Orchestrated close〉
 2. **Bypass paths** — `AI_LOW_BAR_ISSUE_FILING=false` env var or `# Disable IC_R011` CLAUDE.md flag reverts SHALL-tier sites to this legacy path
 
 ```
@@ -173,7 +173,7 @@ Each skill PATCHes its own primary comment to add an audit-trail section after t
 | `/idd-close` | `### Closing Follow-ups Filed (v2.45.0+ #527)` | Closing summary comment |
 | `/idd-diagnose` | `### Sister Concerns Filed (mid-diagnose, v2.47.0+ #528)` | Diagnosis comment |
 | `/idd-issue` | `### Linked-Context Siblings Filed (v2.48.0+ #529)` | New issue body |
-| `/idd-verify` | `### Follow-up Findings Filed (v2.72.0+ #148)` | Verify report (master comment) |
+| `/idd-verify` | `### Follow-up Findings Filed (v2.72.0+ #148)` | 獨立 comment（不編輯 verify report，#392） |
 | `/spectra-discuss` | `### Tangential Observations (post-discuss, v1.1.0+ #530)` | Discussion artifact |
 | `/spectra-propose` | `### Tangential Observations (post-propose, v1.1.0+ #530)` | Proposal artifact |
 
@@ -278,14 +278,14 @@ If both env var and CLAUDE.md directive present → both honored (additive opt-o
 |---|---|---|---|
 | **Deliberation moments** (`/idd-plan`, `/idd-diagnose`, `/spectra-discuss`, `/spectra-propose`) | **SHALL** | File by default + 3-category skip | These are the prime moments where tangential discoveries surface. Empty list is legitimate but step is mandatory. |
 | **Manual reproduction / verify** (`/idd-implement`, `/idd-verify`) | **SHALL** | File by default + 3-category skip | Reproduction reveals same-root-cause sister files (proven by #510 → #518 → #520 cluster). |
-| **Closure** (`/idd-close`) | **SHOULD** (advisory) | **Legacy 3-option ask preserved** | Closing summary keyword scan is mostly mechanical wrap-up action;翻 default 增加 friction without proportional value. |
+| **Closure** (`/idd-close`) | **SHOULD** (advisory) | **Legacy 3-option ask preserved**；例外：`/idd-all` 以 `ORCHESTRATED BY /idd-all` 指示呼叫時不問，取 IC_R011 預設（file，或 `AI_LOW_BAR_ISSUE_FILING=false`、repo 的 CLAUDE.md 有 `# Disable IC_R011` 時 implicit (a) skip），#392 | Closing summary keyword scan is mostly mechanical wrap-up action;翻 default 增加 friction without proportional value. |
 | **Issue creation** (`/idd-issue`) | **SHALL** | File by default + 3-category skip | Light-touch grep on linked context;surface only when heuristic clearly hits. Default file applies to the surface-list outcome. |
 | **Mechanical execution** (`/spectra-apply`, `/spectra-archive`, `/spectra-ask`, `/spectra-ingest`, `/spectra-commit`, `/spectra-debug`) | **N/A** (not applicable) | (no checkpoint) | No deliberation phase. These execute pre-decided actions. |
 
 ### Per-site treatment summary
 
 - **5 sites get default-flip**:`/idd-diagnose` Step 3.6, `/idd-plan` Step 2.5, `/idd-implement` Step 5.7, `/idd-issue` Step 4.7, `/idd-verify` Step 5b
-- **1 site preserves legacy**:`/idd-close` Step 3.5 (SHOULD-tier)
+- **1 site preserves legacy**:`/idd-close` Step 3.5 (SHOULD-tier)——除了 `/idd-all` 帶 `ORCHESTRATED BY /idd-all` 指示呼叫時（#392：不問，取 IC_R011 預設並列進輸出）
 - **2 third-party sites get default-flip**:`/spectra-discuss`, `/spectra-propose` (deliberation moments)
 
 ### When in doubt about a new skill

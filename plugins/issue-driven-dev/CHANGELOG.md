@@ -5,6 +5,173 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.7.0] - 2026-11-10
+
+Ships #392 and #424.
+
+### Changed
+
+- **The direct-commit path reads again after the local CI gate (#392).** The gate can run for up to an hour. Before the
+  push, the close stage now reads the verify gate for the commit again and checks whether anyone else became involved
+  after the run started, as the PR path already did after its CI wait.
+- **A failed remote check is named when `gh pr checks` exits 1 (#392).** With a local CI pass the run report lists the
+  failed checks instead of saying they could not be read; in remote mode the stop names the check.
+- **`/idd-all` states its own permissions, and opens its pull request only after `close-stage.py pr-check` says `open` (#392).**
+  `skills/idd-all/SKILL.md` has a new section, 權限, with two closed tables based on Foresay's `reversible` property: the
+  outward actions the skill runs and then reports with an `Undo:` line, and the ones it asks a person about first. An
+  action on neither table is asked about first. Opening the run's pull request is on the first table, behind a new
+  subcommand: `pr-check` answers `ask` when the title or the body mentions an account, has a close keyword next to an
+  issue reference, when the default branch has a `CODEOWNERS` file (opening the pull request would request a review from
+  a person), when the title is empty, or when the default branch cannot be fetched. Refreshing the body of a pull
+  request the same run opened earlier goes through the same check. On `ask` an unattended run neither opens nor changes
+  a pull request: it leaves the branch pushed and reports the reason. The rule lives in the skill, not in a user's own
+  configuration, so every installation behaves the same; a user's stricter rules still win.
+- **BREAKING — `/idd-all` merges (or pushes) and closes after a clean verify, when the intent was confirmed (#392).** The run used to end at
+  verified: PR mode opened the PR, direct-commit mode left local commits, and both asked the user to merge and run
+  `/idd-close`. Now a new close stage (Phase 5c) takes over when the verify gate reports `clean`: PR mode
+  squash-merges after three more guardrails pass (the local CI gate of #465 passes on the verified commit — in
+  `ci.mode: remote` every remote check passes instead, waiting at most 15 minutes for pending ones, while with a
+  local pass a failed remote check is reported and does not stop the merge; no auto-close trap in the PR body or any commit; a squash
+  subject and body that idd-all writes itself and that reference the issue only as `Refs #N`); direct-commit mode
+  pushes only from the default branch, after the same local CI gate and after scanning the outgoing commits for
+  close keywords. It then calls
+  `/idd-close` with the `ORCHESTRATED BY /idd-all` directive. Every check and the merge or push run in one
+  process, `scripts/close-stage.py run` (started in the background): checks split over several skill bash
+  blocks could not stop each other. The run's flags come from a run-state file written when the mode is
+  resolved (Step 0.7, every value explicit, so a lost `--review` is an error rather than a silent "no"); the
+  verify report must be posted by the session's own account and name the range it reviewed
+  (`**Reviewed**: <base>..<head>`), which must be exactly the range being merged (`--match-head-commit`) or
+  pushed (the verified commit itself, not whatever `HEAD` is by then); the close-keyword scan covers
+  `owner/repo#N`, issue URLs and hyphenated `/idd-close #N`; a direct-commit push refuses commits that do not
+  reference the issue. The stage stays at verified unless the intent was confirmed: every comment on the
+  issue comes from someone with write access (bots excepted), the issue shows no clarity question still
+  surfaced or deferred (wherever GitHub shows the row), the Diagnosis has a readable tier, and no comment
+  carries a skipped-confirmation record (a Layer V deferral or a choice-first default) that no later Decision
+  comment answered. The tier itself does not decide: an unattended run that implemented a Plan, Spectra or
+  SDD-warranted issue merges like any other, and Proposed Corrections nobody answered are counted in the
+  result and reported, not a reason to stop (decisions of 2026-11-10). The threat model is an orchestrator that can be wrong, not one that deceives: the
+  checks stop honest mistakes and fail closed on anything they cannot read. It also stays at
+  verified when someone else became involved after the run began: another account (not a bot) commented on
+  the issue or edited a comment or the issue text, labelled, retitled, closed or reopened the issue, a
+  comment was deleted, or the PR (which must be this account's) got a comment, a review, a label, title or
+  description change, is a draft or has changes requested. It also stays at verified
+  when the run was downgraded from PR mode (no
+  ralph-loop), when the issue's author or last editor lacks write access, when a workflow publishes on push
+  to the default branch, and when the default branch has a merge queue; it waits for the `pull_request`
+  check a workflow promises (the check set must stay unchanged for 90 seconds); after the CI wait it fetches
+  the default branch again and repeats the branch, publishing, CI-edit, merge-queue and gate checks; it stops
+  for a branch behind the default branch, for a change that edits CI and for a PR commit that does not
+  reference the issue; only this account's reports posted since the run began count, the newest of its
+  verify comments must be the branch-mode report, unedited and not hidden; a report that marks a finding
+  `Rejected`, files a CRITICAL/HIGH/P0/P1 finding as Follow-up, or has a Process Gaps section stops the run.
+  Publishing detection (`scripts/lib/workflows.py`) treats any trigger it cannot read as a push to the
+  default branch, and a push workflow calling another repository's workflow as publishing. PR mode branches
+  from the freshly fetched remote default branch. The
+  issue counts as closed only when this
+  account posted a `## Closing Summary` after the merge or push (`close-stage.py confirm-close`).
+  Phase 6 reports `Done:` with `Undo:`
+  (`gh issue reopen`, `git revert`), or `Done:` with `Stopped:` naming the check that failed. Callers that need
+  the old end state (`/loop` and other automation that reviews before merging) pass `--review`; `--in-chain`
+  (`/idd-all-chain`, #393) and `type=meeting` runs are unchanged. Unattended runs now fix In-scope fix findings
+  too and run verify again (two verify rounds at most), because automatically fixed code must be verified before
+  it reaches the default branch; manual `/idd-verify` keeps its rule. What counts as clean: a PASS verdict, no
+  Blocking finding, and In-scope fix findings of LOW, INFO or P3 only; those are filed together as one follow-up
+  issue and the branch is not changed for them, so the commit that merges is the commit the round reviewed.
+  Known limits: publishing detection is a list (a release path outside it is not detected; such repositories
+  run with `--review`); the local CI command runs twice per issue (before the PR and again in the close stage);
+  a verify report that does not follow the template is `unparseable` and the run stops at verified (of 80
+  earlier verify reports in this repo, written before the template, 76 read as `unparseable`).
+- **`/idd-close` honours `ORCHESTRATED BY /idd-all` (#392).** With the directive it does not ask at its six stop
+  points: Step 1.55 and Step 1.6 warnings stop without closing, Step 3.5 files the follow-ups (IC_R011 default),
+  Step 3.5 honours `AI_LOW_BAR_ISSUE_FILING=false` and `# Disable IC_R011`; the directive counts only in the invocation arguments, never
+  in issue text. Step 3.6 records the residue without filing (the #392 decision; the manual default since #304 is to file),
+  Step 6.3 does not commit stale docs but lists them in the closing summary, and Step 6.5 asks only when someone
+  is present. Without the directive nothing changes.
+- **`idd-verify` reports state the format the gate reads (#392), next to the Step 4 templates:** a
+  `**Reviewed**: <base>..<head>` line naming the reviewed range, exactly one verdict line opening with
+  `**PASS**` or `**FAIL**` that states its counts, an `Action` cell holding exactly `Blocking`, `In-scope fix`,
+  `Follow-up` or `Rejected` (a finding judged not to stand stays in the table, with the reason), a PASS whose
+  coverage line has every requirement addressed, one `R / T reviewers completed` line, no other line, heading
+  or bold label that starts with a verdict word or a finding class, no table with a `Severity` column and no
+  `Action` column, and the header kept when there are no findings. Five earlier verify comments in
+  this repo all read as `unparseable` without these rules. The local-mode report template now has `### Aggregate`
+  and the `Action` column.
+- **MANIFESTO: auto-merge rests on two reasons side by side (#392)** — verify is the gate, and merge and close
+  are reversible, so they run without a prior confirmation provided the run reports what it did and how to undo
+  it. The section no longer hands auto-merge to #37 (closed as not planned), and lists the guardrails per mode.
+  `docs/workflows.md`, `references/pr-flow.md` and `idd-all-chain` no longer state the old end state; the
+  IC_R011 reference and spec carve out the orchestrated `/idd-close` Step 3.5.
+- **BREAKING: `/idd-edit --correct` no longer asks for confirmation** in a repository you can write to. It shows
+  the diff and the preview, then applies; the privacy review, the #272 question, the re-read before writing and
+  the archive stay. `--prepend-note`, `--append` and `--replace` still ask. In `idd-verify`, `idd-diagnose` and
+  `idd-reorganize`, the user's "run now" on a proposed correction is the confirmation: the question shows the full
+  replacement text and the command carries `--repo` and `--note`. They still propose corrections and do not apply
+  them on their own.
+- `idd-diagnose` Stage 1 rewrites its own Diagnosis instead of appending a correction comment.
+- `idd-close` Step 3.6 ignores the visible line and the marker when it reads `### Residue`.
+
+The first version also let other people's comments trigger write-back and let the detecting skills correct
+published text on their own. Four verify rounds failed without converging on those two parts, so they were removed
+before release (#424 comment 6616229678). After the fifth round, three more parts went: a note on each verify
+report, a private-path check on `--body-file`, and an unattended branch in `/idd-edit` (comment 6617788666). After
+the sixth, a decision that changes the diagnosis is written to both places, and the visible line no longer says
+（AI 判斷） (comment 6619279709). After the seventh, a scope widened after merge goes to a new issue (comment
+6620544269).
+
+### Added
+
+- **Living-issue write-back (#424)** — `rules/issue-write-back.md`. While an open issue is discussed in a session,
+  a change the user decides is written back to the place that owns it, so the issue body and the Diagnosis stay
+  current instead of stopping at their first version. A hypothesis or a question is not a change; a closed issue
+  is not rewritten; someone else's comment counts only when the user raises it and names what to adopt. Three
+  kinds, a closed list: the problem (question, scope, `## Expected`) goes to the issue body section with
+  `/idd-edit issue:<N> --correct --section`; the diagnosis (root cause, strategy, routing) goes to the Diagnosis
+  comment section with `/idd-edit comment:<id> --correct --section`; new information, a decision, or the course of
+  the discussion goes to a new `/idd-comment`. A decision that changes the diagnosis goes to both: a decision comment
+  with the user's words, and the Diagnosis section. In a repository that has an IDD config and that you can write to,
+  the AI decides the kind, writes without asking, and reports each write-back with the user's words it rests on;
+  elsewhere it asks. Only your own content is rewritten; someone else's comment gets `/idd-comment --type errata`,
+  someone else's issue body `--type correction`. The privacy review covers the text being added; a hit at
+  `enforce` or `warn`, new third-party verbatim text at `light`, or a credential at any level stops the
+  write-back. A corrected diagnosis also corrects your Implementation Plan sections; verify reports are left as
+  they are. A change decided after implementation is written back in place when the same pull request carries it
+  (for example a design settled during verify-fix; in a direct-commit repository, the same branch before close). A
+  scope that widens after the pull request merged is new work: a new issue, with a link comment on the original.
+  `idd-reorganize` takes over only when what was built is thrown away and this pull request does not carry the
+  change. Only changes the user decides are written back: corrections listed by an unattended verify and an
+  approach the implementer changed on their own are out of scope (tracked in #474).
+- **`--note` on `/idd-edit --correct`.** The replaced text ends with a visible line,
+  `_更正於 YYYY-MM-DD：<note>_`, before the marker. A reader could not otherwise tell the text changed: the marker is
+  an HTML comment and an edit sends no notification. The earlier line and correct marker at the end of the
+  replacement is replaced (other IDD markers there are kept, and the earlier correct marker stays in the section so
+  the first backup remains reachable); everything before that group is kept as it is. A
+  replacement of nothing but IDD markers is refused at `run-start` (exit 2) rather than as `REASON=empty` at
+  `prepare`. `--note` refuses `<`, `>`, control and bidirectional characters.
+- SessionStart carries one line about write-back, with the rule's installed path (still five lines).
+- `scripts/close-stage.py` (#392): `init` records an `/idd-all` run's flags, `gate` judges the newest verify
+  report by the session's account against a commit range, `run` performs the close stage in one process,
+  `confirm-close` checks the closing summary, `reset` clears an earlier run's state. Helpers in
+  `scripts/lib/`: `rendered.py` (GitHub's rendering, shared with the gate), `ghread.py`, `intent.py`,
+  `workflows.py`. Suite `scripts/tests/close-stage/` (run in parallel; a fake `gh` that, like GitHub, answers
+  only the fields a query asks for; a fake CI gate; fixtures rendered by GitHub, two GraphQL answers recorded
+  from a real PR and issue, and real git repositories).
+- `scripts/verify-gate.py` (#392): reads one verify master comment as GitHub renders it (the comment's
+  `body_html`, so a table is a table exactly when GitHub drew one — markdown parsing kept missing layouts
+  GitHub renders as tables; every line of visible text counts, code blocks excepted), prints one JSON line
+  (`clean` / `not_clean` / `unparseable` with the four counts, the serious Follow-up count, the count of LOW
+  In-scope fix findings that did not hold the merge, whether the verify ran degraded, and a reason) and exits
+  0 / 1 / 2 (64 on a usage error). A clean report needs a complete coverage line and a reviewers line. Fails closed: a missing verdict or findings table, a fifth
+  Action value, an annotated value, two verdict lines or one inside a quote, list or details block, a PASS
+  verdict next to a Blocking row (findings tables inside `<details>` count), a FAIL verdict with no Blocking or
+  In-scope fix row, a findings row outside a findings table, a decorated `Action` header, an `Action` column
+  that is not last, a verdict line whose counts are missing or differ from the tables, a PASS whose coverage line
+  is short, or (with `--expect-sha` / `--expect-base`) a missing or different `**Reviewed**` range are all
+  `unparseable`; so are a second verdict in another form (after an emoji, in bold italics, as plain text, in a
+  heading), a line or heading that starts with a finding class, and a table with a `Severity` column and no
+  `Action` column. Fixtures are GitHub's own rendering of the markdown fixtures (`render-fixtures.sh`). Suites:
+  `scripts/tests/verify-gate/` and `scripts/tests/merge-and-close-contract/`, which
+  pins the idd-all skill, the idd-close skill, the MANIFESTO and the batch reference to the new end state.
+
 ## [3.6.0] - 2026-11-03
 
 ### Fixed

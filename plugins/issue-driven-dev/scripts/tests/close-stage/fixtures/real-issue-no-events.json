@@ -1,0 +1,37 @@
+{
+ "data": {
+  "repository": {
+   "issue": {
+    "state": "OPEN",
+    "author": {
+     "login": "me"
+    },
+    "editor": {
+     "login": "me"
+    },
+    "userContentEdits": {
+     "totalCount": 2,
+     "nodes": [
+      {
+       "editedAt": "2026-11-02T09:48:54Z",
+       "editor": {
+        "login": "me"
+       }
+      },
+      {
+       "editedAt": "2026-11-02T09:46:04Z",
+       "editor": {
+        "login": "me"
+       }
+      }
+     ]
+    },
+    "timelineItems": {
+     "totalCount": 0,
+     "filteredCount": 0,
+     "nodes": []
+    }
+   }
+  }
+ }
+}
