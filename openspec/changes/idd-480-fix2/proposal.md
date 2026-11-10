@@ -50,5 +50,4 @@
   - Modified: plugins/issue-driven-dev/skills/idd-all/SKILL.md
   - Modified: plugins/issue-driven-dev/skills/idd-diagnose/SKILL.md
   - Modified: plugins/issue-driven-dev/rules/sdd-integration.md
-  - Modified: plugins/issue-driven-dev/CHANGELOG.md
   - Modified: docs/commands.md

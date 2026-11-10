@@ -463,10 +463,12 @@ printf '%s' "$EW_BLOCK" > "$VERIFY_DIR/ew-block.md"
 # 由 Step 3 寫成 Blocking 列，不當成「沒有問題」。
 # 留言抓取失敗要在抓取那一步就認出來：讀到空檔時 declared 會回 legacy，所有規格檢查就被跳過
 # （spectra-verify 2026-11-11 的 warning 4）。選留言只用 spec-change.py ic，與 idd-close 共用。
-VERIFY_PROFILE="code"   # 執行時換成這次的 --profile 值；沒帶 --profile 就是 code
+VERIFY_PROFILE="${VERIFY_PROFILE:-code}"   # 在同一個 shell 裡設成這次的 --profile 值；沒帶 --profile 就是 code
 SPEC_DA="not used"
-# Only a review of a git range has specs to compare: prose and academic review files and have no BASE_SHA.
-if [ "${VERIFY_PROFILE:-code}" = code ] && [ -n "${BASE_SHA:-}" ] && [ -n "${FROZEN_SHA:-}" ]; then
+# prose and academic review files and get none of this. Under code, a missing range is not a reason to skip:
+# BASE_SHA and FROZEN_SHA come from Step 1, and an empty one means they did not reach this shell, so the two
+# checks are reported as errors and Step 3 writes them as Blocking (fail closed; spectra-verify on idd-480-fix2).
+if [ "${VERIFY_PROFILE:-code}" = code ]; then
   SPEC_IC=$(mktemp "${TMPDIR:-/tmp}/idd-verify-ic.XXXXXX")
   SPEC_FETCH_OK=yes
   # One selection, shared with idd-close Step 1.57: spec-change.py ic (verify round 1 of #480).
@@ -483,8 +485,14 @@ if [ "${VERIFY_PROFILE:-code}" = code ] && [ -n "${BASE_SHA:-}" ] && [ -n "${FRO
     SPEC_DECL=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" declared --file "$SPEC_IC" 2>&1); [ -n "$SPEC_DECL" ] || SPEC_DECL='{"form":"unreadable","reason":"declared printed nothing"}'
     SPEC_ARCH=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" archived --file "$SPEC_IC" --cwd "${CWD:-$PWD}" --ref "$FROZEN_SHA" 2>&1)
   fi
-  SPEC_LINKS=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" links --base "$BASE_SHA" --head "$FROZEN_SHA" --cwd "${CWD:-$PWD}" 2>&1)
-  SPEC_FILES=$(git -C "${CWD:-$PWD}" diff --name-only "$BASE_SHA" "$FROZEN_SHA" 2>/dev/null | grep -E '/specs/[^/]+/spec\.md$' || echo '(none)')
+  if [ -n "${BASE_SHA:-}" ] && [ -n "${FROZEN_SHA:-}" ]; then
+    SPEC_LINKS=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" links --base "$BASE_SHA" --head "$FROZEN_SHA" --cwd "${CWD:-$PWD}" 2>&1)
+    SPEC_FILES=$(git -C "${CWD:-$PWD}" diff --name-only "$BASE_SHA" "$FROZEN_SHA" 2>/dev/null | grep -E '/specs/[^/]+/spec\.md$' || echo '(none)')
+  else
+    SPEC_LINKS='{"status": "error", "missing": [], "reason": "BASE_SHA or FROZEN_SHA is empty in this shell: set them as Step 1 records them and run this block again"}'
+    SPEC_ARCH='{"status": "error", "not_archived": [], "reason": "no reviewed head in this shell"}'
+    SPEC_FILES='(not read: no reviewed range in this shell)'
+  fi
   rm -f "$SPEC_IC"
   # DA 的 focus 沒有 sentinel（見上），所以只放封閉詞彙：宣告的形式與兩個檢查的狀態。
   SPEC_FORM=$(printf '%s' "$SPEC_DECL" | jq -r '.form // "unreadable"' 2>/dev/null)

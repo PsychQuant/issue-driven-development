@@ -536,16 +536,23 @@ fi
 2. 對遠端的預設 branch 跑封存檢查。留言抓不到、或 `ic` 讀不了，一律當成 `error`，**不**當成「沒有 Implementation Complete」（verify 第 1 輪的 HIGH：舊寫法用了一個沒有任何步驟設定的變數，抓不到時讀到空檔就放行）：
 
 ```bash
-DEFAULT_BRANCH=$(gh repo view "$GITHUB_REPO" --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null) || DEFAULT_BRANCH=""
 SPEC_JSON=$(mktemp); SPEC_IC=$(mktemp)
-# A stale local ref must not stand in for the default branch: no name, or a failed fetch, is an error (verify round 2).
-if [ -z "$DEFAULT_BRANCH" ] || ! git -C "${CWD:-$PWD}" fetch -q origin -- "$DEFAULT_BRANCH" 2>/dev/null; then
-  GATE='{"status": "error", "not_archived": [], "reason": "the default branch could not be read (gh repo view or git fetch failed)"}'; GATE_RC=2
-elif gh api "repos/$GITHUB_REPO/issues/$NUMBER/comments" --paginate > "$SPEC_JSON" 2>/dev/null \
-   && python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" ic --comments "$SPEC_JSON" > "$SPEC_IC"; then
-  GATE=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" archived --file "$SPEC_IC" --cwd "${CWD:-$PWD}" --ref "origin/$DEFAULT_BRANCH"); GATE_RC=$?
-else
+if ! { gh api "repos/$GITHUB_REPO/issues/$NUMBER/comments" --paginate > "$SPEC_JSON" 2>/dev/null \
+       && python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" ic --comments "$SPEC_JSON" > "$SPEC_IC"; }; then
   GATE='{"status": "error", "not_archived": [], "reason": "the issue comments could not be read"}'; GATE_RC=2
+elif [ "$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" declared --file "$SPEC_IC" 2>/dev/null | jq -r '.form // ""')" != change ]; then
+  # No change declared (no comment, legacy, an exemption, an invalid line): the default branch is not read,
+  # so a failed fetch does not hold an issue this gate does not apply to. archived answers these from the comment.
+  GATE=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" archived --file "$SPEC_IC" --cwd "${CWD:-$PWD}" --ref HEAD); GATE_RC=$?
+else
+  # A declared change is checked against the default branch as the remote has it: no name, or a failed fetch,
+  # is an error, never a pass on a stale local ref (verify round 2).
+  DEFAULT_BRANCH=$(gh repo view "$GITHUB_REPO" --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null) || DEFAULT_BRANCH=""
+  if [ -z "$DEFAULT_BRANCH" ] || ! git -C "${CWD:-$PWD}" fetch -q origin -- "$DEFAULT_BRANCH" 2>/dev/null; then
+    GATE='{"status": "error", "not_archived": [], "reason": "the default branch could not be read (gh repo view or git fetch failed)"}'; GATE_RC=2
+  else
+    GATE=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" archived --file "$SPEC_IC" --cwd "${CWD:-$PWD}" --ref "origin/$DEFAULT_BRANCH"); GATE_RC=$?
+  fi
 fi
 rm -f "$SPEC_JSON" "$SPEC_IC"
 printf '%s\n' "$GATE" | jq -r '"→ spec archive gate: \(.status) \(.reason)"'

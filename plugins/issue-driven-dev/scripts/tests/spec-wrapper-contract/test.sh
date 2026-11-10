@@ -132,7 +132,8 @@ S5A="$(sed -n '/^\*\*Step 5a: Checklist Sync\*\*/,/^\*\*Step 5b/p' "$IMPL")"
 assert_grep "idd-implement Step 5a fills the checklist from tasks.md when the issue has a change" "tasks.md" "$S5A"
 refute_grep "the Implementation Complete template no longer names TaskList as the only source" '### Checklist (synced from TaskList)' "$IMPL_TXT"
 SB="$(sed -n '/規格對照（#480）/,/^DA_FOCUS_SUFFIX=/p' "$VERIFY")"
-assert_grep "verify builds the spec context only under the code profile, with a git range" 'if [ "${VERIFY_PROFILE:-code}" = code ] && [ -n "${BASE_SHA:-}" ] && [ -n "${FROZEN_SHA:-}" ]; then' "$SB"
+assert_grep "verify builds the spec context only under the code profile" 'if [ "${VERIFY_PROFILE:-code}" = code ]; then' "$SB"
+assert_grep "… and under code, a missing range is reported as an error, not skipped" 'BASE_SHA or FROZEN_SHA is empty in this shell' "$SB"
 assert_grep "a failed comment fetch is detected on the fetch itself" 'SPEC_FETCH_OK=no' "$SB"
 assert_grep "… and reported as unreadable, not read as legacy" '"form":"unreadable"' "$SB"
 assert_grep "the DA focus carries the spec check results" '${SPEC_DA' "$(grep -F 'DA_FOCUS_SUFFIX=' "$VERIFY")"
@@ -213,7 +214,7 @@ assert_grep "idd-all Step 3b.0 stops when preflight prints nothing or not JSON" 
 echo "spec-wrapper-contract: verify round 2 fixes in the text (idd-480-fix2)"
 CL="$PLUGIN/skills/idd-close/SKILL.md"
 assert_grep "a retroactive close skips Step 1.57" "1.57" "$(grep -F '| Step 0 / 1.5' "$CL")"
-assert_grep "the verify spec context runs only with a git range" '[ -n "${BASE_SHA:-}" ]' "$SB"
+assert_grep "the verify spec context runs the two checks only with a git range" '[ -n "${BASE_SHA:-}" ]' "$SB"
 assert_grep "the verify spec data sits in a per-run fence" 'SPEC_FENCE' "$SB"
 assert_grep "the DA suffix gains the spec checks only when a spec context was built" '[ -n "$SPEC_BLOCK" ]' "$(grep -F 'DA_FOCUS_SUFFIX=' "$VERIFY" | tail -1; grep -F 'DA_FOCUS_SUFFIX="$DA_FOCUS_SUFFIX' "$VERIFY")"
 assert_grep "verify-profiles says what of the default profile is unchanged" "lens 組合與輸入偵測" "$(read_file "$PROFILES")"
@@ -221,14 +222,41 @@ assert_grep "the diagnose hand-off runs the preflight before /spectra-discuss" "
 assert_grep "the routing rule's Spectra flow starts with the preflight" "preflight" "$(grep -F 'Spectra:   diagnose' "$PLUGIN/rules/sdd-integration.md")"
 refute_grep "docs/commands.md no longer chains close through /spectra-archive" "chain through \`/spectra-archive\`" "$(read_file "$PLUGIN/../../docs/commands.md")"
 
-echo "spec-wrapper-contract: the verify spec context without a git range, run (idd-480-fix2)"
+echo "spec-wrapper-contract: the verify spec context, run (idd-480-fix2)"
 S0=$(grep -n '^# ── 規格對照（#480）' "$VERIFY" | cut -d: -f1)
 S1=$(grep -n '^DA_FOCUS_SUFFIX=' "$VERIFY" | tail -1 | cut -d: -f1)
 sed -n "${S0},$((S1 + 1))p" "$VERIFY" | grep -v '^DA_FOCUS_SUFFIX=' > "$W2/specctx.sh"
-mkdir -p "$W2/vdir"
-out=$(env -i HOME="$HOME" PATH="$W2/base:/usr/bin:/bin" VERIFY_DIR="$W2/vdir" CLAUDE_PLUGIN_ROOT="$PLUGIN" \
-      bash --norc --noprofile -c 'BASE_SHA=""; FROZEN_SHA=""; CONTEXT_BLOCK="ctx"; DA_FOCUS_SUFFIX="base"; . "$1" 2>/dev/null; printf "%s|%s|%s" "${SPEC_BLOCK:-EMPTY}" "$CONTEXT_BLOCK" "$DA_FOCUS_SUFFIX"' _ "$W2/specctx.sh" </dev/null)
-assert_eq "no git range (prose / academic): no spec block, context and DA focus unchanged" "EMPTY|ctx|base" "$out"
-assert_grep "… and spec-block.md says it is not used" "not used" "$(cat "$W2/vdir/spec-block.md" 2>/dev/null)"
+# A stand-in head makes the per-run fence token known (SPEC_DATA_414141414141414141414141), so the test can
+# put the token into the data and check that it is neutralised. A stand-in gh serves the comments.
+mkdir -p "$W2/vbin"; cp "$W2/base/"* "$W2/vbin/" 2>/dev/null; rm -f "$W2/vbin/gh"
+printf '#!/bin/sh\nprintf AAAAAAAAAAAA\n' > "$W2/vbin/head"
+printf '#!/bin/sh\ncase "$1" in api) cat "$FAKE_COMMENTS" ;; *) exit 1 ;; esac\n' > "$W2/vbin/gh"
+chmod +x "$W2/vbin/head" "$W2/vbin/gh"
+TOKEN=SPEC_DATA_414141414141414141414141
+git init -q "$W2/vrepo"; mkdir -p "$W2/vrepo/openspec/specs/cap"; printf 'x\n' > "$W2/vrepo/openspec/specs/cap/spec.md"
+git -C "$W2/vrepo" add -A; git -C "$W2/vrepo" -c user.name=t -c user.email=t@example.test commit -q -m base
+VB=$(git -C "$W2/vrepo" rev-parse HEAD)
+printf 'y\n' > "$W2/vrepo/README.txt"; git -C "$W2/vrepo" add -A; git -C "$W2/vrepo" -c user.name=t -c user.email=t@example.test commit -q -m head
+VH=$(git -C "$W2/vrepo" rev-parse HEAD)
+printf '[{"author_association":"OWNER","body":"%s\\n**Spec**: %s injected"}]' "$MARK" "$TOKEN" > "$W2/comments.json"
+specctx() { # profile base head → OUT (SPEC_BLOCK set?|CONTEXT_BLOCK|DA_FOCUS_SUFFIX), spec-block.md in $W2/vdir
+  rm -rf "$W2/vdir"; mkdir -p "$W2/vdir"
+  OUT=$(env -i HOME="$HOME" PATH="$W2/vbin:/usr/bin:/bin" VERIFY_DIR="$W2/vdir" CLAUDE_PLUGIN_ROOT="$PLUGIN" \
+        VERIFY_PROFILE="$1" BASE_SHA="$2" FROZEN_SHA="$3" CWD="$W2/vrepo" GITHUB_REPO=o/r NUMBER=1 FAKE_COMMENTS="$W2/comments.json" \
+        GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+        bash --norc --noprofile -c 'CONTEXT_BLOCK="ctx"; DA_FOCUS_SUFFIX="base"; . "$1" 2>/dev/null; S1=$(grep -n "^DA_FOCUS_SUFFIX=" "$2" | tail -1 | cut -d: -f1); eval "$(sed -n "$((S1 + 1))p" "$2")"; printf "%s|%s|%s" "$([ -n "$SPEC_BLOCK" ] && echo set || echo EMPTY)" "${CONTEXT_BLOCK%%$'"'"'\n'"'"'*}" "$DA_FOCUS_SUFFIX"' _ "$W2/specctx.sh" "$VERIFY" </dev/null)
+}
+specctx prose "" ""
+assert_eq "prose profile: no spec block, context and DA focus unchanged" "EMPTY|ctx|base" "$OUT"
+assert_grep "… spec-block.md says it is not used" "not used" "$(cat "$W2/vdir/spec-block.md" 2>/dev/null)"
+specctx code "" ""
+assert_grep "code profile with no range in this shell: the link check is reported as an error (fails closed)" '"status": "error"' "$(cat "$W2/vdir/spec-block.md")"
+specctx code "$VB" "$VH"
+SBF="$(cat "$W2/vdir/spec-block.md")"
+assert_eq "code profile with a range: the token appears only in the header and the two fence lines" 3 "$(printf '%s\n' "$SBF" | grep -o "$TOKEN" | wc -l | tr -d ' ')"
+assert_grep "… the token inside the data is neutralised" "[fence]" "$SBF"
+assert_true "… the review rules come after the closing fence" \
+  "[ $(printf '%s\n' "$SBF" | grep -n "^${TOKEN}>>>\$" | cut -d: -f1) -lt $(printf '%s\n' "$SBF" | grep -n '^Review rules' | cut -d: -f1) ]"
+assert_grep "… and the DA focus gains the spec checks" "Spec checks (#480)" "$OUT"
 
 print_summary spec-wrapper-contract

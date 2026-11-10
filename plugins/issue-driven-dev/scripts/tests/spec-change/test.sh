@@ -256,10 +256,12 @@ linked_repo l-fenced-ex; put openspec/specs/cap/spec.md "$(spec "$(req Base)" "$
 links_case "added, its only Example line inside a code fence" missing 1 1
 linked_repo l-fenced-nc; put openspec/specs/cap/spec.md "$(spec "$(req Base)" "$(req Alpha "$FENCE" 'No executable check: a model carries this out.' "$FENCE")")"; commit >/dev/null
 links_case "added, its only No executable check line inside a code fence" missing 1 1
-linked_repo l-longfence; put openspec/specs/cap/spec.md "$(spec "$(req Base)" "$(req Alpha '````' "$FENCE" '##### Example: alpha table')")"; put scripts/tests/x/test.sh '# spec-example: cap / alpha table'; commit >/dev/null
+linked_repo l-longfence; put openspec/specs/cap/spec.md "$(spec "$(req Base)" "$(req Alpha '````' "$FENCE" '##### Example: alpha table' '````')")"; put scripts/tests/x/test.sh '# spec-example: cap / alpha table'; commit >/dev/null
 links_case "added, after a four-backtick fence that three backticks do not close" missing 1 1
 linked_repo l-dupname; put openspec/specs/cap/spec.md "$(spec "$(req Base)" "$(req Alpha 'No executable check: a.')" "$(req Alpha 'No executable check: b.')")"; commit >/dev/null
 links_case "added twice with the same name in one capability" error "" 2
+linked_repo l-unclosed; put openspec/specs/cap/spec.md "$(spec "$(req Base)" "$(req Alpha 'No executable check: a.' "$FENCE")" "$(req Gamma "$EX")")"; put scripts/tests/x/test.sh '# spec-example: cap / alpha table'; commit >/dev/null
+links_case "a code fence that never closes at the head revision" error "" 2
 linked_repo l-nospecs; git -C "$REPO" rm -q -r openspec/specs; commit >/dev/null
 links_case "openspec/specs/ holds no tracked file at the head revision" error "" 2
 newrepo l-gitkeep; put openspec/specs/.gitkeep ''; BASE=$(commit base); put README.txt x; commit >/dev/null
@@ -321,6 +323,8 @@ specdir_case "no .spectra.yaml → openspec" NONE openspec pass 0
 specdir_case "an absolute spec_dir" "spec_dir: /srv/specs" openspec error 2
 specdir_case "a spec_dir that leaves the repository" "spec_dir: ../specs" openspec error 2
 specdir_case "spec_dir with no value" "spec_dir:" openspec error 2
+specdir_case "a spec_dir that starts with a dash" "spec_dir: -x" openspec error 2
+specdir_case "a spec_dir that names the repository root" "spec_dir: ." openspec error 2
 specdir_case "the default does not apply when spec_dir names another directory" "spec_dir: docs/spectra" openspec refuse 1
 # links reads the same directory, and markers under it do not count
 newrepo sd-links; put .spectra.yaml "spec_dir: docs/spectra"; put docs/spectra/specs/cap/spec.md "$(spec "$(req Base)")"; BASE=$(commit base)
@@ -401,6 +405,10 @@ else
   assert_eq "preflight: … one JSON line" 1 "$LINES"
 fi
 chmod 644 "$TREE/.spectra.yaml"
+pf_repo pf-dangling no yes; ln -s "$WORK/no-such-target" "$TREE/.spectra.yaml"
+OUT=$(PATH="$BIN_WITH" "$PY" "$SC" preflight --cwd "$TREE" --can-write yes 2>"$WORK/err"); RC=$?
+assert_eq "preflight: .spectra.yaml is a broken symlink → error, not the default directory" error "$(printf '%s' "$OUT" | field status)"
+assert_exit "preflight: … exit 2" 2 "$RC"
 linked_repo dash-sd; printf 'spec_dir: -x\n' > "$REPO/.spectra.yaml"; commit >/dev/null
 run links --cwd "$REPO" --base "$BASE"
 assert_eq "links: a spec_dir that starts with a dash → error" error "$(printf '%s' "$OUT" | field status)"

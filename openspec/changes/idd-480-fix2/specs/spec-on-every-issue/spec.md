@@ -1,5 +1,29 @@
 ## MODIFIED Requirements
 
+### Requirement: The spec directory is resolved the way Spectra resolves it
+
+Every path this capability names under `openspec/` is relative to the spec directory Spectra uses for the repository, and `scripts/spec-change.py` SHALL resolve it the same way: the value of an uncommented `spec_dir:` line in `.spectra.yaml` at the top of the repository, or `openspec` when the file has no such line or does not exist. `archived` and `links` SHALL read `.spectra.yaml` at the revision they check; `preflight` SHALL read it in the working tree. A value that is absolute, empty, starts with `-`, names the repository root (`.`), or leaves the repository (a `..` component) SHALL be an `error`, not a fallback to `openspec`, and so SHALL a `.spectra.yaml` that exists but cannot be read as a file.
+
+#### Scenario: A repository initialised by Spectra 3
+
+- **GIVEN** `.spectra.yaml` has `spec_dir: docs/spectra` and the change was archived under `docs/spectra/changes/archive/`
+- **WHEN** `spec-change.py archived` runs on that revision
+- **THEN** it looks under `docs/spectra/` and prints `pass`
+
+##### Example: spec directory by .spectra.yaml
+
+| `.spectra.yaml` at the revision | Spec directory | Result |
+| --- | --- | --- |
+| `spec_dir: docs/spectra` | `docs/spectra` | read there |
+| `spec_dir: "docs/specs"` | `docs/specs` | read there |
+| a file whose only `spec_dir` line is commented out | `openspec` | read there |
+| no `.spectra.yaml` | `openspec` | read there |
+| `spec_dir: /srv/specs` | not applicable | `error` |
+| `spec_dir: ../specs` | not applicable | `error` |
+| `spec_dir:` with no value | not applicable | `error` |
+| `spec_dir: -x` | not applicable | `error` |
+| `spec_dir: .` | not applicable | `error` |
+
 ### Requirement: One way to choose the Implementation Complete comment
 
 `scripts/spec-change.py ic --comments <file>` SHALL read the comments of an issue as GitHub's REST API returns them (one JSON array, or several arrays one after another as `gh api --paginate` prints them) and SHALL print the body of the newest comment whose `author_association` is `OWNER`, `MEMBER` or `COLLABORATOR` and whose body starts, after leading whitespace, with the marker `<!-- idd:comment type=implementation-complete -->` or with `## Implementation Complete`. It SHALL print nothing when no comment qualifies. The author association stands in for write access: the comments API does not report a commenter's permission, and a member or collaborator can lack write access to the repository. A comment whose body is not a string is not chosen. The command SHALL exit 0 in both cases and 2, printing nothing, when the file cannot be read, is empty, or is not such JSON. `idd-verify` and `idd-close` SHALL choose the comment with this command and with no other selection.
@@ -68,7 +92,7 @@ The preflight call is checked by the Example below. No executable check: the pro
 
 ### Requirement: Added and modified requirements carry an executable check
 
-`scripts/spec-change.py links --base <rev>` SHALL compare the files under `openspec/specs/` at `<rev>` and at `--head` (default `HEAD`). For every requirement that is new or whose text differs between the two, it SHALL require one of two things: at least one `##### Example:` under the requirement, where each such Example has a title that is unique within its capability and a tracked file at the head revision, outside `openspec/` and not ending in `.md`, that contains the marker `spec-example: <capability> / <Example title>`; or a line under the requirement that starts with `No executable check:` followed by a reason. A requirement that does not differ SHALL NOT be checked. A marker counts only when nothing but whitespace, or the comment closer `-->` or `*/`, follows the Example title on its line. Lines inside a code fence are not read as `##### Example:` or `No executable check:` lines; a fence opened by three or more backticks or tildes closes only on a line of the same character, at least as long, with nothing but whitespace after it. Two requirements with the same name in one capability SHALL make the command print `error`. Outside code fences, a heading that starts with `### Requirement` but does not have the form `### Requirement: <name>` with a non-empty name SHALL make the command print `error`, and so SHALL a head revision at which the spec directory's `specs/` holds no tracked file. The command SHALL print one JSON line with `status` (`ok`, `missing` or `error`) and a list naming each requirement or Example that lacks its check, and SHALL exit 0, 1 or 2 in that order. `--base` is required: the caller names the range, so that a run on the default branch is checked against the commit it started from. The marker ties an Example to a test by name only; whether the test exercises what the Example states is judged by the reviewers of `idd-verify`.
+`scripts/spec-change.py links --base <rev>` SHALL compare the files under `openspec/specs/` at `<rev>` and at `--head` (default `HEAD`). For every requirement that is new or whose text differs between the two, it SHALL require one of two things: at least one `##### Example:` under the requirement, where each such Example has a title that is unique within its capability and a tracked file at the head revision, outside `openspec/` and not ending in `.md`, that contains the marker `spec-example: <capability> / <Example title>`; or a line under the requirement that starts with `No executable check:` followed by a reason. A requirement that does not differ SHALL NOT be checked. A marker counts only when nothing but whitespace, or the comment closer `-->` or `*/`, follows the Example title on its line. Lines inside a code fence are not read as `##### Example:` or `No executable check:` lines; a fence opened by three or more backticks or tildes closes only on a line of the same character, at least as long, with nothing but whitespace after it. Two requirements with the same name in one capability SHALL make the command print `error`. So SHALL a code fence at the head revision that never closes, since the requirements after it would go unchecked. Outside code fences, a heading that starts with `### Requirement` but does not have the form `### Requirement: <name>` with a non-empty name SHALL make the command print `error`, and so SHALL a head revision at which the spec directory's `specs/` holds no tracked file. The command SHALL print one JSON line with `status` (`ok`, `missing` or `error`) and a list naming each requirement or Example that lacks its check, and SHALL exit 0, 1 or 2 in that order. `--base` is required: the caller names the range, so that a run on the default branch is checked against the commit it started from. The marker ties an Example to a test by name only; whether the test exercises what the Example states is judged by the reviewers of `idd-verify`.
 
 #### Scenario: An Example without a test is reported
 
@@ -101,6 +125,7 @@ The preflight call is checked by the Example below. No executable check: the pro
 | added, its only `No executable check:` line inside a code fence | none | not applicable | only inside a fence | `missing` |
 | added, after a fence of four backticks that a line of three backticks does not close | its Example inside that fence | not applicable | absent | `missing` |
 | added twice with the same name in one capability | not applicable | not applicable | not applicable | `error` |
+| any, after a code fence that never closes | not applicable | not applicable | not applicable | `error` |
 | `--base` names a revision that does not exist | not applicable | not applicable | not applicable | `error` |
 | `--base` is not given | not applicable | not applicable | not applicable | usage error, exit 64 |
 

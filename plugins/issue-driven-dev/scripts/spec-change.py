@@ -138,8 +138,10 @@ def spec_dir_at(top, rev):
 
 def spec_dir_worktree(top):
     path = os.path.join(top, ".spectra.yaml")
-    if not os.path.isfile(path):
+    if not os.path.lexists(path):
         return spec_dir_of(None)
+    if not os.path.isfile(path):   # a directory or a broken symlink is not "no file"
+        raise Fail("cannot read .spectra.yaml: it is not a regular file")
     try:
         with open(path, encoding="utf-8", errors="replace") as fh:
             text = fh.read()
@@ -333,6 +335,8 @@ def requirements(text, strict=False):
             buf.append(line)
             if not fenced:
                 plain.append(line)
+    if strict and fence is not None:
+        raise Fail("a code fence opened in this spec never closes; the requirements after it would go unchecked")
     close()
     return reqs
 

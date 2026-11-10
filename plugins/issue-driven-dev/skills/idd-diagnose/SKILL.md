@@ -658,11 +658,11 @@ Diagnosis 完成 + Step 3.4 Vagueness Pre-check 結束後（`type=meeting` 已�
 |---------|-----------|------|
 | `Simple` | `/idd-implement #NNN` | diagnose → implement（輕量 propose → apply → 封存，#480）→ verify → close |
 | `Plan` | `/idd-plan #NNN` | diagnose → plan（propose → EnterPlanMode 審查 proposal 與 tasks → 使用者 approve via ExitPlanMode）→ implement（apply → 封存）→ verify → close |
-| `Spectra` (default) | `/spectra-discuss` | diagnose → discuss → propose → apply → 封存 → verify → close |
-| `Spectra` (opt-out) | `/spectra-propose` | diagnose → propose → apply → 封存 → verify → close（僅當 ALL opt-out conditions 成立） |
+| `Spectra` (default) | `/spectra-discuss` | diagnose → spec preflight → discuss → propose → apply → 封存 → verify → close |
+| `Spectra` (opt-out) | `/spectra-propose` | diagnose → spec preflight → propose → apply → 封存 → verify → close（僅當 ALL opt-out conditions 成立） |
 | `meeting`（**type 分流，非 complexity verdict** —— 在 Step 3.5 最優先分支、不經複雜度評分） | `/idd-plan #NNN`（meeting-adapted plan） | diagnose（Phase A/B/C Strategy）→ plan（meeting Plan body：議程 → 決策點 → 行動項；**不** chain to `/idd-implement`）→ close（decision→action mapping + meeting-specific gate，無 `/idd-verify` TDD pass） |
 
-> **Spectra tier 的追蹤 hand-off（#300，綁定）**：verdict 為 `Spectra` 時，diagnose **必須**在 report 的下一步區塊印出以下三行，否則該 issue 會在 diagnose 之後失去追蹤：
+> **Spectra tier 的追蹤 hand-off（#300，綁定）**：verdict 為 `Spectra` 時，diagnose **必須**在 report 的下一步區塊印出以下幾行，否則該 issue 會在 diagnose 之後失去追蹤：
 >
 > ```
 > → 先照 references/spec-wrapper.md 第 1 步跑 spec preflight（ready 才往下；third-party 改走 /idd-implement；其餘停下）

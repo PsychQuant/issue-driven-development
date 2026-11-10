@@ -96,6 +96,13 @@ git -C "$C" remote set-url origin "$WORK/no-such-remote.git"
 step157 "$IC_OK" 0
 assert_eq "git fetch of the default branch fails → stops with error, not a stale pass" error "$STATUS"
 git -C "$C" remote set-url origin "$WORK/o.git"
+# The default branch is read only for a declared change (spectra-verify on idd-480-fix2, warning 2).
+FAKE_VIEW_FAIL=1 step157 '[{"author_association":"OWNER","body":"## Diagnosis\n\nx"}]' 0
+assert_eq "gh repo view fails, no Implementation Complete → still passes (row 5)" pass "$STATUS"
+git -C "$C" remote set-url origin "$WORK/no-such-remote.git"
+step157 "[{\"author_association\":\"OWNER\",\"body\":\"$MARK\\n**Spec**: no behaviour change\"}]" 0
+assert_eq "git fetch fails, an exemption is declared → passes, the branch is not read" pass "$STATUS"
+git -C "$C" remote set-url origin "$WORK/o.git"
 
 echo "spec-close-gate: the skill text"
 G="$(sed -n '/^### Step 1.57: /,/^### Step 1.6: /p' "$CLOSE")"
