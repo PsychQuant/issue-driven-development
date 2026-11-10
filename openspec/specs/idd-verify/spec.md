@@ -179,7 +179,7 @@ code:
 ---
 ### Requirement: Reviewers check behaviour against the specs
 
-When `idd-verify` reviews an implementation of an issue under the `code` profile, it SHALL give every reviewer the `**Spec**:` line of the issue's newest Implementation Complete comment and the list of files under `openspec/specs/` that the reviewed range changes. It SHALL run `scripts/spec-change.py links` with `--base` set to the base of the reviewed range, and `scripts/spec-change.py archived` with `--ref` set to the head of the reviewed range, and SHALL list as a Blocking finding each item `links` reports as missing, each change `archived` refuses, and either command ending in `error`. The regression lens SHALL report as a HIGH finding a behaviour change in the range that no requirement in the specs at the head of the range states, and SHALL report as a HIGH finding any behaviour change in the range when the `**Spec**:` line is `no behaviour change`. A test that carries an Example's marker and does not exercise what the Example states SHALL be reported as a finding of MEDIUM or above. An issue whose comment is legacy, and the `prose` and `academic` profiles, are not changed by this requirement.
+When `idd-verify` reviews an implementation of an issue under the `code` profile, it SHALL give every reviewer the `**Spec**:` line of the issue's newest Implementation Complete comment and the list of files under `openspec/specs/` that the reviewed range changes. It SHALL choose the comment with `spec-change.py ic` and SHALL run `scripts/spec-change.py links` with `--base` set to the base of the reviewed range, and `scripts/spec-change.py archived` with `--ref` set to the head of the reviewed range, and SHALL list as a Blocking finding each item `links` reports as missing, each change `archived` refuses, either command ending in `error` or printing no JSON, and a declaration that cannot be read because the comments could not be fetched, or whose form is `invalid`. The regression lens SHALL report as a HIGH finding a behaviour change in the range that no requirement in the specs at the head of the range states, and SHALL report as a HIGH finding any behaviour change in the range when the `**Spec**:` line is `no behaviour change`. A test that carries an Example's marker and does not exercise what the Example states SHALL be reported as a finding of MEDIUM or above, and so SHALL a `No executable check:` line under a requirement in the range whose reason does not hold because a check could be written. An issue whose comment is legacy or declares `third-party clone`, and the `prose` and `academic` profiles, are not changed by this requirement; for those comments the results of `links` and `archived` are shown but give no finding (a third-party clone usually has no spec directory, where `links` prints `error`).
 
 What the report holds:
 
@@ -192,7 +192,9 @@ What the report holds:
 | `change idd-7-x` | yes | yes | `error` | `pass` | Blocking: the link check did not run |
 | `no behaviour change` | no | not applicable | `ok` | `pass` | none |
 | `no behaviour change` | yes | not applicable | `ok` | `pass` | HIGH: the exemption does not hold |
-| `third-party clone` | yes | not applicable | `ok` | `pass` | none |
+| `third-party clone` | yes | not applicable | `ok`, or `error` with no spec directory | `pass` | none |
+| the comments could not be fetched | yes | not read | `ok` | not run | Blocking: the declaration could not be read |
+| `change idd-7-x` | yes | yes, with `No executable check:` although a test could check it | `ok` | `pass` | MEDIUM: the reason does not hold |
 | a reviewed range of the last three commits on the default branch | yes | yes | run with `--base HEAD~3` | `pass` | none |
 
 No executable check: the reviewers and the report are produced by a model; the two commands the skill runs have their own Examples in the capability `spec-on-every-issue`.
