@@ -30,4 +30,4 @@
 
 - [ ] [P] 5.1 文件與這份 change 一致：`rules/sdd-integration.md` 的流程與「Close triggers archive」改成 branch 上、verify 之前封存；`idd-diagnose` 的下一步說明、`references/verify-profiles.md`、`references/usecase-routing.md`、README、CHANGELOG（標明 BREAKING、linked worktree 的限制、在暫存 repo 量到的一張 Simple 多花的時間）。驗證：內容審閱，這幾份文件沒有任何一處還寫 Simple 不碰規格，或封存在 close 時做。
 - [ ] 5.2 這份 change 自己符合新規則：五個 Example 都有帶標記的測試，其餘 requirement 有 `No executable check:` 行。驗證：`spec-change.py links --base <開始實作的 commit>` 印 `ok`；照新的收尾順序封存後 `spec-change.py archived --ref HEAD` 印 `pass`。
-- [ ] [P] 5.3 開兩張後續的 issue：補齊既有 requirement 的 Example 與檢查；把隔離用的工作樹改成獨立 clone，讓要寫規格的 issue 在主工作樹被鎖住時也能跑。驗證：兩張 issue 的號碼寫進 #480 的 closing summary。
+- [x] [P] 5.3 開兩張後續的 issue（#487 補齊既有 requirement、#488 獨立 clone 隔離）：補齊既有 requirement 的 Example 與檢查；把隔離用的工作樹改成獨立 clone，讓要寫規格的 issue 在主工作樹被鎖住時也能跑。驗證：兩張 issue 的號碼寫進 #480 的 closing summary。

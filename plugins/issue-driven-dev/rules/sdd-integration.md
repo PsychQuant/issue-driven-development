@@ -197,12 +197,14 @@ Route to `Simple` when none of the above apply:
 ## Flow
 
 ```
-Simple:    diagnose → idd-implement → verify → close
-Plan:      diagnose → idd-plan (EnterPlanMode → user approves Implementation Plan → ExitPlanMode) → idd-implement → verify → close
-Spectra:   diagnose → spectra-discuss → spectra-propose(#NNN) → spectra-apply → verify → close + archive
+Simple:    diagnose → idd-implement (light propose → apply → archive) → verify → close
+Plan:      diagnose → idd-plan (propose → EnterPlanMode → user approves proposal + tasks → ExitPlanMode) → idd-implement (apply → archive) → verify → close
+Spectra:   diagnose → spectra-discuss → spectra-propose(#NNN) → spectra-apply → archive → verify → close
 ```
 
-`Spectra (opt-out)`: `diagnose → spectra-propose(#NNN) → spectra-apply → verify → close + archive` (skip discuss only when ALL Step 4 opt-out conditions hold; see idd-diagnose).
+`Spectra (opt-out)`: `diagnose → spectra-propose(#NNN) → spectra-apply → archive → verify → close` (skip discuss only when ALL Step 4 opt-out conditions hold; see idd-diagnose).
+
+Every tier leaves a spec change, or declares `no behaviour change` (four closed cases) or `third-party clone`, on the `**Spec**:` line of the Implementation Complete comment (#480, contract: [`references/spec-wrapper.md`](../references/spec-wrapper.md)). The tier decides only what comes before the implementation: discuss, design, and approval.
 
 ## Why Plan exists (mid-tier between Simple and Spectra)
 
@@ -240,9 +242,9 @@ New diagnosis comments (v2.36.0+) MUST emit `Spectra` — `SDD-warranted` is rea
 ## Rules
 
 1. **Issue is always the entry and exit** — Simple, Plan, and Spectra all start from and close with an issue
-2. **One source of progress** — Simple/Plan use IDD checklist + TaskList; Spectra uses tasks.md, issue gets a link (`→ see spectra change: <name>`)
+2. **One source of progress** — an issue with a Spectra change tracks it in the change's tasks.md (every tier, #480); Simple/Plan issues that declare `no behaviour change` or `third-party clone` use the IDD checklist + TaskList
 3. **Verify through IDD** — `idd-verify #NNN` regardless of which path was taken
-4. **Close triggers archive (Spectra only)** — `idd-close` should also `spectra-archive` for Spectra changes
+4. **Archive on the branch before verify (every tier, #480)** — the wrapper archives the change and commits it before `idd-verify`, so the reviewed commit carries the applied spec; `idd-close` Step 1.57 refuses to close while the declared change is not archived on the default branch
 5. **Discuss-first for Spectra** — `idd-diagnose` must route Spectra issues to `spectra-discuss` by default; only bypass when the user explicitly opts out during the Step 4 routing prompt
 6. **Plan-mode approval gate** — `idd-plan` MUST use `EnterPlanMode` + present full Implementation Plan + `ExitPlanMode` for user approval BEFORE any tool that modifies state. No silent fallthrough to TDD.
 7. **`type=meeting` is evaluated first, then Layer 1 disqualifiers** — the `type=meeting` branch splits before any complexity scoring (deterministic type field). For non-meeting issues, Layer 1 disqualifiers are next: narrative / ad-hoc / no-caller deliverables route to `Simple` even if Plan signals or Spectra signals technically match. The disqualifier protects against pattern-matching scope hints into the heavier tiers.
