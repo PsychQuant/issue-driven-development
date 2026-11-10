@@ -1,1 +1,1 @@
-(none — no linked issue detected)
+(pending — 2 candidates detected (only a bare number in the text of the change names it): 5 9 ; see candidates-test-word-boundary.txt in the state directory; re-run the dry run with --linked-issue <N>)

@@ -1,0 +1,1 @@
+--change-name test-cross-repo --archive-dir __FIXTURE_PATH__/archive --dry-run --gh-repo test/repo
