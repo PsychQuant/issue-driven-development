@@ -1023,7 +1023,7 @@ fi
 
 #### Step 3b.6: Spec close-out 與 Implementation Complete（#480）
 
-`spectra-apply` 做完之後、Phase 4 之前，照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 5 步做 Spec close-out，順序固定：`spectra-verify` → `spectra archive <change> -y` → 確認封存落在 `$CWD` → commit `chore: archive <change> (#N)` → `spec-change.py" links --base $(git merge-base HEAD origin/<default>)` → `spec-change.py" archived --ref HEAD`。任何一步沒過：unattended 停下回報（`Stopped:`），attended 告訴使用者哪一步、等他決定。
+`spectra-apply` 做完之後、Phase 4 之前，照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 5 步做 Spec close-out，順序固定：`spectra-verify` → `spectra archive <change> -y` → 確認封存落在 `$CWD` → commit `chore: archive <change> (#N)` → `spec-change.py" links --base <這條 branch 與剛 fetch 的預設 branch（FETCH_HEAD）的 merge-base>`（契約第 5 步那段） → `spec-change.py" archived --ref HEAD`。任何一步沒過：unattended 停下回報（`Stopped:`），attended 告訴使用者哪一步、等他決定。
 
 通過之後貼 Implementation Complete（經 `gh-egress.sh`），讓 `idd-verify` 與 `idd-close` 讀得到這張 issue 的宣告：
 

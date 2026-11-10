@@ -45,7 +45,6 @@ import sys
 MARKER = "<!-- idd:comment type=implementation-complete -->"
 NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 SPEC_LINE_RE = re.compile(r"^ {0,3}\*\*Spec\*\*:(.*)$")
-FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 ARCHIVE_DIR_RE = r"^\d{4}-\d{2}-\d{2}-%s$"
 REQ_RE = re.compile(r"^ {0,3}### Requirement:\s*(.*?)\s*$")
 EXAMPLE_RE = re.compile(r"^##### Example:(.*)$")
@@ -121,7 +120,7 @@ def spec_dir_of(text):
     """The spec directory named by .spectra.yaml text (None = no file): Spectra's own rule."""
     if text is None:
         return "openspec"
-    values = [m.group(1) for m in (SPEC_DIR_RE.match(l) for l in text.splitlines()) if m]
+    values = [m.group(1) for m in (SPEC_DIR_RE.match(l) for l in lines_of(text)) if m]
     if not values:
         return "openspec"
     value = values[-1].split(" #", 1)[0].strip().strip('"').strip("'").strip()
@@ -151,7 +150,7 @@ def spec_dir_worktree(top):
     path = os.path.join(top, ".spectra.yaml")
     if not os.path.lexists(path):
         return spec_dir_of(None)
-    if not os.path.isfile(path):   # a directory or a broken symlink is not "no file"
+    if os.path.islink(path) or not os.path.isfile(path):   # a directory or a symlink is not "no file", as at a revision
         raise Fail("cannot read .spectra.yaml: it is not a regular file")
     try:
         with open(path, encoding="utf-8", errors="replace") as fh:
@@ -362,8 +361,11 @@ def marker_files(top, head, needle, sd):
     if p.returncode not in (0, 1):
         raise Fail("git grep failed: " + p.stderr.decode("utf-8", "replace").strip()[:200])
     files = []
-    for line in p.stdout.decode("utf-8", "replace").splitlines():
+    for line in p.stdout.decode("utf-8", "replace").split("\n"):
+        if not line:
+            continue
         where, _, content = line.partition("\0")
+        content = lines_of(content)[0]   # CommonMark line endings: text after U+2028 stays on this line
         path = where[len(head) + 1:] if where.startswith(head + ":") else where
         if path.startswith(sd + "/") or path.lower().endswith(".md") or path in files:
             continue

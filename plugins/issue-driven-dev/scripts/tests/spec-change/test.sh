@@ -111,7 +111,6 @@ declared_case "a Spec line inside a tilde fence" "$MARK
 run declared
 assert_exit "declared: no --file is a usage error" 64 "$RC"
 
-# ── archived ────────────────────────────────────────────────────────────────
 # Rows added by idd-480-fix3 (verify round 3 of #480).
 declared_case "marker, the only Spec line inside a four-backtick fence that holds a three-backtick line" "$MARK
 \`\`\`\`
@@ -122,6 +121,7 @@ LS=$(printf '\342\200\250')
 declared_case "marker, Spec line after U+2028 on the same line" "$MARK
 intro${LS}**Spec**: no behaviour change" invalid '[]' 1
 
+# ── archived ────────────────────────────────────────────────────────────────
 echo "spec-change: archived (Example: whether the declared changes are archived at a commit)"
 
 archived_case() { # label comment-body ref status not-archived-json exit
@@ -280,6 +280,8 @@ links_case "added, under a heading indented by two spaces" missing 1 1
 assert_eq "links: … the item names the indented requirement, not the one before it" "Alpha" "$(printf '%s' "$OUT" | "$PY" -c 'import json,sys; m=json.loads(sys.stdin.read())["missing"]; print(m[0]["requirement"] if m else "")')"
 linked_repo l-listfence; put openspec/specs/cap/spec.md "$(spec "$(req Base)" "$(req Alpha '- a list item:' '' "    $FENCE" '    No executable check: hidden in a fenced block of the list item.' "    $FENCE")")"; commit >/dev/null
 links_case "added, its only No executable check line inside a fence indented four spaces in a list item" missing 1 1
+linked_repo l-u2028; put openspec/specs/cap/spec.md "$(spec "$(req Base)" "$(req Alpha '##### Example: alpha')")"; put scripts/tests/x/test.sh "# spec-example: cap / alpha$(printf '\342\200\250') table"; commit >/dev/null
+links_case "a marker followed by U+2028 and more text on the same line does not count" missing 1 1
 linked_repo l-nospecs; git -C "$REPO" rm -q -r openspec/specs; commit >/dev/null
 links_case "openspec/specs/ holds no tracked file at the head revision" error "" 2
 newrepo l-gitkeep; put openspec/specs/.gitkeep ''; BASE=$(commit base); put README.txt x; commit >/dev/null
@@ -346,6 +348,11 @@ specdir_case "a spec_dir that names the repository root" "spec_dir: ." openspec 
 specdir_case "a spec_dir that starts with a colon (git pathspec magic)" 'spec_dir: ":(top)openspec"' openspec error 2
 newrepo sd-yamldir; put .spectra.yaml/x y; put openspec/changes/archive/2026-11-10-idd-42-x/proposal.md; R=$(commit)
 archived_case "spec dir: a directory named .spectra.yaml at the revision" "$SPEC_DS" "$R" error "" 2
+newrepo sd-yamllink; put real.yaml 'spec_dir: openspec'; ln -s real.yaml "$REPO/.spectra.yaml"; put openspec/changes/archive/2026-11-10-idd-42-x/proposal.md; R=$(commit)
+archived_case "spec dir: a symbolic link named .spectra.yaml at the revision" "$SPEC_DS" "$R" error "" 2
+pf_repo pf-yamllink no yes; printf 'spec_dir: openspec\n' > "$TREE/real.yaml"; ln -s real.yaml "$TREE/.spectra.yaml"
+OUT=$(PATH="$BIN_WITH" "$PY" "$SC" preflight --cwd "$TREE" --can-write yes 2>"$WORK/err"); RC=$?
+assert_eq "preflight: .spectra.yaml is a symbolic link in the working tree → error, as at a revision" error "$(printf '%s' "$OUT" | field status)"
 specdir_case "the default does not apply when spec_dir names another directory" "spec_dir: docs/spectra" openspec refuse 1
 # links reads the same directory, and markers under it do not count
 newrepo sd-links; put .spectra.yaml "spec_dir: docs/spectra"; put docs/spectra/specs/cap/spec.md "$(spec "$(req Base)")"; BASE=$(commit base)

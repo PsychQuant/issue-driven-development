@@ -33,7 +33,7 @@ for needle in \
   'spectra archive' \
   'spec-change.py" archived' \
   'spec-change.py" links --base' \
-  'git merge-base HEAD "origin/$DEFAULT_BRANCH"' \
+  'git -C "$CWD" merge-base HEAD FETCH_HEAD' \
   'spec-example: <capability> / <Example title>' \
   "$MARK" \
   '**Spec**: change' \
@@ -251,7 +251,10 @@ specctx prose "" ""
 assert_eq "prose profile: no spec block, context and DA focus unchanged" "EMPTY|ctx|base" "$OUT"
 assert_grep "… spec-block.md says it is not used" "not used" "$(cat "$W2/vdir/spec-block.md" 2>/dev/null)"
 specctx code "" ""
-assert_grep "code profile with no range in this shell: the link check is reported as an error (fails closed)" '"status": "error"' "$(cat "$W2/vdir/spec-block.md")"
+SBN="$(cat "$W2/vdir/spec-block.md")"
+assert_grep "code profile with no range in this shell: the link check reads error (fails closed)" 'Link check (spec-change.py links): {"status": "error"' "$SBN"
+assert_grep "… and so does the archive check" 'Archive check at the reviewed head (spec-change.py archived): {"status": "error"' "$SBN"
+assert_grep "… and the DA focus gains the spec checks" "Spec checks (#480)" "$OUT"
 specctx code "$VB" "$VH"
 SBF="$(cat "$W2/vdir/spec-block.md")"
 assert_eq "code profile with a range: the token appears only in the header and the two fence lines" 3 "$(printf '%s\n' "$SBF" | grep -o "$TOKEN" | wc -l | tr -d ' ')"
@@ -266,6 +269,8 @@ assert_grep "Step 1.57 checks the commit the fetch returned" "FETCH_HEAD" "$S157
 refute_grep "Step 1.57 does not need jq to choose the branch" "jq -r '.form" "$S157"
 assert_grep "Step 1.57's result table stops on no output" "沒有輸出" "$S157"
 assert_grep "the contract's link check stops when SPEC_BASE is empty" '[ -n "$SPEC_BASE" ]' "$REF_TXT"
+refute_grep "the contract no longer explains the merge-base against origin/<default>" 'merge-base HEAD "origin/$DEFAULT_BRANCH"' "$REF_TXT"
+refute_grep "idd-all no longer restates the old merge-base" 'merge-base HEAD origin/<default>' "$ALL_TXT"
 refute_grep "the verify comment no longer claims the spec block holds no third-party prose" "不含別人的散文" "$V_TXT"
 assert_grep "SPEC_FILES lists main specs only, not change deltas" "grep -v '/changes/'" "$SB"
 

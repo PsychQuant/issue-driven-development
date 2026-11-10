@@ -56,7 +56,7 @@ Which form applies to a deliverable:
 
 ### Requirement: The spec directory is resolved the way Spectra resolves it
 
-Every path this capability names under `openspec/` is relative to the spec directory Spectra uses for the repository, and `scripts/spec-change.py` SHALL resolve it the same way: the value of an uncommented `spec_dir:` line in `.spectra.yaml` at the top of the repository, or `openspec` when the file has no such line or does not exist. `archived` and `links` SHALL read `.spectra.yaml` at the revision they check; `preflight` SHALL read it in the working tree. A value that is absolute, empty, starts with `-` or `:`, names the repository root (`.`), or leaves the repository (a `..` component) SHALL be an `error`, not a fallback to `openspec`, and so SHALL a `.spectra.yaml` that exists but is not a regular file: in the working tree, or at the revision (a directory or a symbolic link there). Paths are given to git literally, never as pathspec magic.
+Every path this capability names under `openspec/` is relative to the spec directory Spectra uses for the repository, and `scripts/spec-change.py` SHALL resolve it the same way: the value of an uncommented `spec_dir:` line in `.spectra.yaml` at the top of the repository, or `openspec` when the file has no such line or does not exist. `archived` and `links` SHALL read `.spectra.yaml` at the revision they check; `preflight` SHALL read it in the working tree. A value that is absolute, empty, starts with `-` or `:`, names the repository root (`.`), or leaves the repository (a `..` component) SHALL be an `error`, not a fallback to `openspec`, and so SHALL a `.spectra.yaml` that exists but is not a regular file (a directory or a symbolic link), in the working tree or at the revision. Paths are given to git literally, never as pathspec magic.
 
 #### Scenario: A repository initialised by Spectra 3
 
@@ -79,6 +79,7 @@ Every path this capability names under `openspec/` is relative to the spec direc
 | `spec_dir: .` | not applicable | `error` |
 | `spec_dir: ":(top)openspec"` | not applicable | `error` |
 | a directory named `.spectra.yaml` at the revision | not applicable | `error` |
+| a symbolic link named `.spectra.yaml` at the revision | not applicable | `error` |
 
 ### Requirement: Added and modified requirements carry an executable check
 
