@@ -48,6 +48,15 @@ assert_grep "refactor is the fourth case" "(d)" "$REF_TXT"
 assert_grep "a linked worktree stops" "linked-worktree" "$REF_TXT"
 assert_grep "close-out runs in a fixed order" "順序固定" "$REF_TXT"
 
+echo "spec-wrapper-contract: unattended runs do not stop on Spectra's questions"
+assert_grep "the contract detects unattended runs through the unattended contract" 'is_unattended "$CWD"' "$REF_TXT"
+assert_grep "… and adds the UNATTENDED MODE note to the args" "UNATTENDED MODE" "$REF_TXT"
+assert_grep "the wrapper unparks the change itself before apply" 'spectra unpark "$CHANGE"' "$REF_TXT"
+assert_true "… before it calls spectra-apply" \
+  "[ $(line_of "$REF" 'spectra unpark "$CHANGE"') -lt $(line_of "$REF" 'Skill(skill="spectra-apply"') ]"
+refute_grep "the contract no longer leaves the unpark to spectra-apply" "會自己 unpark" "$REF_TXT"
+assert_grep "the unattended contract lists the spec wrapper as a detector" "spec-wrapper" "$(read_file "$PLUGIN/references/unattended-contract.md")"
+
 echo "spec-wrapper-contract: idd-implement is the Simple wrapper"
 IMPL_TXT="$(read_file "$IMPL")"
 assert_grep "idd-implement cites the contract" "references/spec-wrapper.md" "$IMPL_TXT"

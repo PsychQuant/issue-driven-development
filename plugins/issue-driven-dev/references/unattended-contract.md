@@ -14,7 +14,7 @@
 | 角色 | 責任 | 載體 |
 |------|------|------|
 | **Setter** | `INTERACTION=unattended` 解析成立時 `mark_unattended`；對 subprocess 呼叫在命令列前綴 env var | `idd-all` Phase 0.5（chain 模式由 `idd-all-chain` Phase 0 代行）|
-| **Detector** | 一律經 `scripts/lib/unattended-state.sh` 的 `is_unattended <repo_root>`（env var 先、file 次、TTL 防呆內建）；不得自行 grep 檔案或檢查 TTY | `idd-clarify` Step 4.8.A、`idd-issue` Stage 4.5、IC_R011 checkpoint、（跨 plugin）plugin-tools Phase 0.5 讀 env var 即可 |
+| **Detector** | 一律經 `scripts/lib/unattended-state.sh` 的 `is_unattended <repo_root>`（env var 先、file 次、TTL 防呆內建）；不得自行 grep 檔案或檢查 TTY | `idd-clarify` Step 4.8.A、`idd-issue` Stage 4.5、`references/spec-wrapper.md` 第 3 步（#480）、IC_R011 checkpoint、（跨 plugin）plugin-tools Phase 0.5 讀 env var 即可 |
 | **Cleanup** | Phase 6 terminal report 前 + **每一條 abort path** `clear_unattended` | `idd-all` / `idd-all-chain` |
 
 ## Helper API（`scripts/lib/unattended-state.sh`）

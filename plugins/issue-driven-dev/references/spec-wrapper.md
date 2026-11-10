@@ -57,11 +57,32 @@ spectra list --json | jq -r '.changes[]?.name' ; spectra list --parked --json | 
 - 每一條新增或改到的 requirement 至少一個 `##### Example:`，標題在該 capability 裡唯一；寫不出檢查的，寫一行 `No executable check:` 加理由。
 - tasks 裡每個 Example 對應一個測試 task，測試檔要帶標記 `spec-example: <capability> / <Example title>`。
 
-`spectra-propose` 結束時會 park 這個 change；`spectra-apply` 會自己 unpark。
+無人值守的 run（照 [`unattended-contract.md`](unattended-contract.md) 判定）不能停在 Spectra 的問題上。先判定一次：
+
+```bash
+. "${CLAUDE_PLUGIN_ROOT}/scripts/lib/unattended-state.sh"
+is_unattended "$CWD" && echo "→ spec wrapper: unattended" || echo "→ spec wrapper: attended"
+```
+
+印 `unattended` 時，`spectra-propose` 與第 4 步 `spectra-apply` 的 args 末尾都附上這一段（attended 時不附，Spectra 的問題照常問人）：
+
+> UNATTENDED MODE — called by an IDD spec wrapper (references/spec-wrapper.md).
+> - Skip every AskUserQuestion checkpoint. Where you would ask, make the most conservative choice and write it into the artifact as a line starting with `ASSUMPTION:`.
+> - Do not ask whether to park or apply. Do not ask whether to continue a parked change.
+> - Every commit references the issue as `(#<N>)` at the end of the subject.
+
+`spectra-propose` 結束時可能會 park 這個 change；第 4 步由 wrapper 自己 unpark，不交給 `spectra-apply` 去問。
 
 ## 4. Apply
 
-`Skill(skill="spectra-apply", args="<change 名稱>")`。每個 Example 的測試先寫、先看到它失敗，再寫程式。進度記在 change 的 `tasks.md`，不另外建 TaskList。
+```bash
+CHANGE="<change 名稱>"
+if spectra list --parked --json | jq -e --arg n "$CHANGE" 'any(.parked[]?; .name == $n)' >/dev/null; then
+  spectra unpark "$CHANGE" && echo "→ unparked $CHANGE"
+fi
+```
+
+然後 `Skill(skill="spectra-apply", args="<change 名稱>")`（無人值守時附上第 3 步那一段）。每個 Example 的測試先寫、先看到它失敗，再寫程式。進度記在 change 的 `tasks.md`，不另外建 TaskList。
 
 ## 5. Close-out（verify 之前，順序固定）
 
