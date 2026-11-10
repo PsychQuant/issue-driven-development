@@ -353,9 +353,11 @@ No branch operations. Whatever branch the user is on, commits land there.
 
 1. 跑 `spec-change.py" preflight`（指令在契約第 1 步）。`linked-worktree`、`install-spectra`、`init-openspec`、`error` → 停下，把 `message` 轉給使用者，不往下走。`third-party` → 照本 skill 原本的流程做，Implementation Complete 寫 `**Spec**: third-party clone`。
 2. `ready` → 決定這張 issue 留下什麼（契約第 2 步）：會改變行為就寫規格（change 名稱 `idd-<N>-<slug>`）；不會，而且屬於契約列的四種之一，就宣告 `**Spec**: no behaviour change`。
-3. 把決定寫進 Step 2 的 Implementation Plan 留言（一行 `**Spec plan**: change <名稱>` 或 `**Spec plan**: no behaviour change (<a|b|c|d>)`），之後的步驟從那一行讀，不靠 shell 變數。
+3. 把決定寫進 Step 2 的 Implementation Plan 留言（一行 `**Spec plan**: change <名稱>`、`**Spec plan**: no behaviour change (<a|b|c|d>)` 或 `**Spec plan**: third-party clone`），之後的步驟從那一行讀，不靠 shell 變數。
 
-`idd-plan` 已經建好 change 時（`spectra list` 有 `idd-<N>-` 開頭的 change），這一步只做 preflight，不再 propose。
+**在 Step 2 貼任何留言或 propose 之前**，跑契約第 3 步開頭那段（`spec-change.py" plan`）：這張 issue 有開著的 `idd-<N>-` change 時，只有最新的 Implementation Plan 寫著 `**Spec plan**: change <同名>` 才沿用它（不再 propose）；`rejected` → 停下，告訴人要繼續就重跑 `/idd-plan`；其他情況 → 停下。順序不能反過來：Step 2 自己貼的 plan 會成為「最新的 plan」，蓋掉被拒絕的那一則。
+
+Diagnosis 的 Complexity 是 Plan、這張 issue 沒有開著的 change、而且是有人直接呼叫 `/idd-implement`（不是從 `idd-plan` 或 `idd-all` 來）：attended 先用 AskUserQuestion 問要不要改走 `/idd-plan`，選 abort 就停，不 propose；unattended 照契約的輕量形式往下。這個問題要在 propose 之前問（verify 第 4 輪：放在 Step 2.5 時，propose 已經做完了）。
 
 verify 之後回來做修正時（這張 issue 已經有封存了的 change），修正若新增或修改 requirement，照契約第 7 步另建 `idd-<N>-fix<k>`；只是補測試時不建 change。宣告 `no behaviour change` 被 verify 否決時，照契約第 7 步建這張 issue 的第一個 change。
 
@@ -528,7 +530,7 @@ Routing **先看 `$VEXIT`**（gate 判定），`0` 才依 `$TIER` 決定行為�
 |-----------|------|
 | `TYPE=meeting` · `VEXIT=0` | 🛑 **停止實作（meeting）** — 印出「#N 是 type=meeting：meeting 不走 implement（meeting-issue-type 規格）。下一步：`/idd-plan #N` 寫 Meeting Plan（選填），或 `/idd-close #N`（沒有 plan 時 close gate 退回 Diagnosis 的 Phase C）」。這**不是**資料錯誤，Diagnosis 不必修；不建 branch、不 commit。機器行印 `TYPE=meeting` 但 `VEXIT=1`（被擱置或被擋）時照下面對應的列停止，並加一行「meeting 不走 implement」——那些列本來就不給 lifecycle 命令（#383 verify r1）。沒有受信任 Diagnosis 的 issue 印的是 `TYPE=none`，認不出是不是 meeting，照 `complexity-missing` 那列處理；不要另外從 label 或本文判斷 type（#383 verify r5） |
 | `0` · `0` · `Simple` | ✅ 本 step 啟動 TaskList 追蹤每個 checklist item |
-| `0` · `0` · `Plan`（原值可能是 `Plan via Layer V`）| ✅ 同 Simple — TaskList 啟動。**注意**：使用者通常透過 `/idd-plan #NNN` 呼叫進來，approval gate 已在 idd-plan 處理完，本 skill 直接走 TDD loop。若使用者直接呼叫 `/idd-implement` 而 Complexity=Plan，**先提示**「Complexity 判定為 Plan，建議改走 `/idd-plan #NNN` 進入 approval gate；繼續直接 implement 等於跳過 Plan tier 的 deliberation 價值」並用 AskUserQuestion 確認 continue/abort。`Plan via Layer V` 同樣行為(routing 一致),只是 verdict 標記提示這是 Layer V 觸發 |
+| `0` · `0` · `Plan`（原值可能是 `Plan via Layer V`）| ✅ 同 Simple — TaskList 啟動。**注意**：使用者通常透過 `/idd-plan #NNN` 呼叫進來，approval gate 已在 idd-plan 處理完，本 skill 直接走 TDD loop。若使用者直接呼叫 `/idd-implement` 而 Complexity=Plan，**先提示**「Complexity 判定為 Plan，建議改走 `/idd-plan #NNN` 進入 approval gate；繼續直接 implement 等於跳過 Plan tier 的 deliberation 價值」並用 AskUserQuestion 確認 continue/abort。`Plan via Layer V` 同樣行為(routing 一致),只是 verdict 標記提示這是 Layer V 觸發 （#480 起，有寫規格的 issue 在 Step 0.6、propose 之前就問過，這裡不再問；宣告豁免的 issue 照這一列問）|
 | `0` · `0` · `Spectra` | ⏭ 跳過本 step（由 `spectra-apply` 管 `openspec/changes/<name>/tasks.md`）；`idd-all` Step 3b.0 把 third-party clone 轉來時沒有 apply，照 Simple 建 TaskList |
 | `0` · `0` · `SDD-warranted` (legacy alias) | ⏭ 跳過本 step — 視同 `Spectra` 處理（v2.36.0+ backward compat）|
 | `VEXIT=1` · `$REASONS` 含 `complexity-deferral-marker`（如 `Simple when triggered`）或 `parking-lot-label` | 🛑 **停止實作（parked）** — 印出 `$REASONS` 與原文（`$COMPLEXITY_ERR` 的 `deferral-marker: <原值>`，或 label 名）。這是**合法的延期狀態，不是資料錯誤**；要動它，先由人移除 label 或重新 diagnose。**禁止**截斷成 tier 前綴、**禁止**降級成 `Simple` / `Plan` 或任何其他 tier、**禁止**沿用舊的「不確定就當 Simple」預設 |

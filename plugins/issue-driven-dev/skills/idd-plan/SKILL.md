@@ -136,7 +136,7 @@ printf 'raw<<<\n'; printf '%s\n%s\n' "${COMPLEXITY_ERR:-}" "${BLOCK_LINE:-}" | s
 
 依 Strategy 起草詳細的 Implementation Plan。**比 idd-implement Step 2 的 plan 更詳盡**，因為這份 plan 是要過 user 在 plan mode UI 審查的，是 deliberation tier 的核心 artifact。
 
-> **code issue 先寫規格（#480，非 meeting）**：照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 1 到 3 步。先跑 preflight（停下的情況照契約），再決定這張 issue 留下什麼；要寫規格時呼叫 `Skill(skill="spectra-propose", args="idd-<N>-<slug>：<需求>。不做 discuss；design 視需要寫。…")`，args 的其餘寫法照契約第 3 步。下面的 Implementation Plan 加一行 `**Spec plan**: change <名稱>`，`### Files & Changes` 對照這個 change 的 tasks。核准的對象是這個 change 的 proposal 與 tasks；之後由 `idd-implement` 做 apply 與收尾。宣告 `no behaviour change` 或 `third-party clone` 時，照下面原本的寫法。
+> **code issue 先寫規格（#480，非 meeting）**：照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 1 到 3 步。先跑 preflight（停下的情況照契約），再決定這張 issue 留下什麼；要寫規格時呼叫 `Skill(skill="spectra-propose", args="idd-<N>-<slug>：<需求>。不做 discuss；design 視需要寫。…")`，args 的其餘寫法照契約第 3 步。下面的 Implementation Plan 加一行 `**Spec plan**: change <名稱>`，`### Files & Changes` 對照這個 change 的 tasks。核准的對象是這個 change 的 proposal 與 tasks；之後由 `idd-implement` 做 apply 與收尾。宣告 `no behaviour change` 或 `third-party clone` 時，照下面原本的寫法，並加一行 `**Spec plan**: no behaviour change (<a|b|c|d>)` 或 `**Spec plan**: third-party clone`。這張 issue 已經有一個 park 著、被拒絕過的 change（`spec-change.py plan` 回 `rejected`）時，不再 propose：把那個 change 的 proposal 與 tasks 再呈現一次給人核准；核准後貼新的 Implementation Plan，寫 `**Spec plan**: change <名稱>`。
 
 格式：
 

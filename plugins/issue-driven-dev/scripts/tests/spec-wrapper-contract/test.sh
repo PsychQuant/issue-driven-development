@@ -214,6 +214,7 @@ for row in "WRITE yes present ready" "ADMIN no present install-spectra" "READ no
   assert_eq "… the same in idd-all Step 3b.0" "$a" "$b"
   rc=$(pf_rc contract.sh "$perm" "$2" "$3")
   case "$4" in ready|third-party) want=0 ;; *) want=nonzero ;; esac
+  assert_true "… the block sets PF_RC" "[ '$rc' != unset ]"
   [ "$rc" != 0 ] && [ -n "$rc" ] && rc=nonzero
   assert_eq "… the run $( [ "$want" = 0 ] && echo proceeds || echo stops ) (PF_RC)" "$want" "$rc"
 done
@@ -306,8 +307,10 @@ step34 - '{"name": "idd-7-x"}'
 assert_eq "steps 3-4: attended, idd-7-x parked → prints attended" attended "$S3"
 assert_eq "… unparks idd-7-x" idd-7-x "$S4"
 step34 - '{"name": "idd-8-y"}'
+assert_eq "steps 3-4: only another change parked → prints attended" attended "$S3"
 assert_eq "steps 3-4: only another change parked → unparks nothing" nothing "$S4"
 step34 - ''
+assert_eq "steps 3-4: nothing parked → prints attended" attended "$S3"
 assert_eq "steps 3-4: nothing parked → unparks nothing" nothing "$S4"
 
 echo "spec-wrapper-contract: verify round 4 fixes in the text (idd-480-fix4)"
@@ -318,5 +321,28 @@ assert_grep "the contract states the Spec plan line and its rejected form" '**Sp
 assert_grep "the contract applies an existing change only when the newest plan names it" '`**Spec plan**: change <名稱>`' "$REF_TXT"
 assert_grep "idd-plan marks an aborted plan's change as rejected" '**Spec plan**: rejected' "$(grep -F '| Aborted |' "$PLAN")"
 assert_grep "verify reads changed spec paths unquoted" 'core.quotePath=false' "$SB"
+
+echo "spec-wrapper-contract: an existing change is checked against the Spec plan line, run (idd-480-fix4)"
+awk '/^## 3\. /{f=1} /^## 4\. /{f=0} f && /^```bash$/{b=1; buf=""; next} b && /^```$/{b=0; if (buf ~ /spec-change.py" plan/) {printf "%s", buf; exit} next} b {buf = buf $0 "\n"}' "$REF" > "$W2/exist.sh"
+assert_true "contract step 3 has a bash block that runs spec-change.py plan" "[ -s '$W2/exist.sh' ]"
+mkdir -p "$W2/ebin"
+printf '#!/bin/sh\ncase "$1 $2" in\n  "list --json") printf "{\\"changes\\": [{\\"name\\": \\"idd-7-x\\"}]}" ;;\n  "list --parked") printf "{\\"parked\\": []}" ;;\n  *) exit 1 ;;\nesac\n' > "$W2/ebin/spectra"
+printf '#!/bin/sh\ncase "$1" in api) cat "$FAKE_COMMENTS" ;; *) exit 1 ;; esac\n' > "$W2/ebin/gh"
+chmod +x "$W2/ebin/spectra" "$W2/ebin/gh"
+exist_run() { # comments-json → printed lines
+  printf '%s' "$1" > "$W2/ec.json"
+  env -i HOME="$HOME" PATH="$W2/ebin:$W2/base:/usr/bin:/bin" FAKE_COMMENTS="$W2/ec.json" GITHUB_REPO=o/r NUMBER=7 CLAUDE_PLUGIN_ROOT="$PLUGIN" \
+    bash --norc --noprofile -c '. "$1" 2>/dev/null' _ "$W2/exist.sh" </dev/null
+}
+assert_grep "an open idd-7-x whose newest plan rejects it → reported as rejected" '"form": "rejected"' "$(exist_run '[{"author_association":"OWNER","body":"## Implementation Plan\n\n**Spec plan**: rejected (change idd-7-x left parked)"}]')"
+assert_grep "an open idd-7-x that the newest plan names → reported as change idd-7-x" '"change": "idd-7-x"' "$(exist_run '[{"author_association":"OWNER","body":"## Implementation Plan (Plan tier)\n\n**Spec plan**: change idd-7-x"}]')"
+S06="$(sed -n '/^### Step 0.6: /,/^### Step 1: /p' "$IMPL")"
+assert_grep "idd-implement checks an existing change with spec-change.py plan" 'spec-change.py" plan' "$S06"
+assert_grep "… before Step 2 posts anything" "Step 2 貼" "$S06"
+assert_grep "… and stops on a rejected one" "rejected" "$S06"
+assert_grep "idd-implement offers /idd-plan for a Plan-tier issue before it proposes" "/idd-plan" "$S06"
+assert_grep "idd-plan writes the Spec plan line for an exemption too" '**Spec plan**: no behaviour change' "$(read_file "$PLAN")"
+assert_grep "idd-plan writes the third-party form" '**Spec plan**: third-party clone' "$(read_file "$PLAN")"
+assert_grep "idd-plan re-presents a rejected change for approval" "再呈現" "$(read_file "$PLAN")"
 
 print_summary spec-wrapper-contract

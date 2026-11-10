@@ -30,6 +30,11 @@ file) and exits with a fixed code. A usage error prints to stderr and exits 64.
       body of the newest one by an OWNER, MEMBER or COLLABORATOR, or nothing; not JSON.
       exit 0 (printed or nothing), 2 (unreadable, empty, or not such JSON; prints nothing)
 
+  plan      --comments <file>
+      What does the newest Implementation Plan by a writer say on its **Spec plan**: line?
+      {"form": change|no-behaviour-change|third-party-clone|rejected|none|invalid, "change": "...",
+       "reason": "..."}   exit 0, 1 (invalid), 2 (unreadable; no JSON)
+
 Paths named openspec/ above are relative to the spec directory Spectra uses: the `spec_dir:` line of
 .spectra.yaml, or `openspec` when there is none (read at the revision checked; preflight reads the working tree).
 
@@ -55,6 +60,9 @@ IC_RE = re.compile(r"\s*(?:<!-- idd:comment type=implementation-complete -->|## 
 FENCE_OPEN_RE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")   # any indentation: a fence inside a list item is a fence
 LINE_SPLIT_RE = re.compile(r"\r\n|\r|\n")   # CommonMark line endings only (str.splitlines also breaks at U+2028 and others)
 TRUSTED = ("OWNER", "MEMBER", "COLLABORATOR")
+PLAN_RE = re.compile(r"\s*## Implementation Plan")
+SPEC_PLAN_RE = re.compile(r"^ {0,3}\*\*Spec plan\*\*:(.*)$")
+REJECTED_RE = re.compile(r"^rejected \(change ([a-z0-9]+(?:-[a-z0-9]+)*) left parked\)$")
 INSTALL_HINT = ("install the Spectra CLI (see https://github.com/spectra-app/spectra) and run the wrapper again; "
                 "the spec change is not optional in a repository you can write to")
 
@@ -130,6 +138,8 @@ def spec_dir_of(text):
         if end == -1:
             raise Fail(f".spectra.yaml spec_dir {raw[:60]!r} has an unclosed quote")
         value = raw[1:end].strip()
+    elif raw.startswith("#"):   # "spec_dir: # a comment" names nothing
+        value = ""
     else:
         value = raw.split(" #", 1)[0].strip()
     parts = value.replace("\\", "/").split("/")
@@ -494,11 +504,62 @@ def cmd_ic(argv):
     return 0
 
 
+def plan_of(body):
+    """(form, change, reason) of the **Spec plan**: line of an Implementation Plan comment body."""
+    lines, fence = [], None
+    for line in lines_of(body):
+        inside_before = fence is not None
+        fence, delimiter = fence_step(line, fence)
+        if inside_before or delimiter:
+            continue
+        m = SPEC_PLAN_RE.match(line)
+        if m:
+            lines.append(m.group(1).strip())
+    if not lines:
+        return "none", "", "the plan has no **Spec plan**: line outside a code block"
+    if len(lines) > 1:
+        return "invalid", "", f"{len(lines)} **Spec plan**: lines; there must be exactly one"
+    value = lines[0]
+    if value.startswith("change "):
+        name = value[len("change "):].strip()
+        if NAME_RE.match(name):
+            return "change", name, ""
+        return "invalid", "", f"not a change name: {name[:60]!r}"
+    if re.match(r"^no behaviour change( \([a-d]\))?$", value):
+        return "no-behaviour-change", "", ""
+    if value == "third-party clone":
+        return "third-party-clone", "", ""
+    r = REJECTED_RE.match(value)
+    if r:
+        return "rejected", r.group(1), ""
+    return "invalid", "", f"unknown form {value[:60]!r}"
+
+
+def cmd_plan(argv):
+    a = parse(argv, {"--comments"}, ["--comments"])
+    try:
+        with open(a["--comments"], encoding="utf-8") as fh:
+            comments = comments_of(fh.read())
+    except (OSError, UnicodeDecodeError, ValueError, RecursionError) as exc:
+        print(f"spec-change plan: cannot read the comments: {str(exc)[:200]}", file=sys.stderr)
+        return 2
+    chosen = None
+    for c in comments:
+        body = c.get("body")
+        body = body if isinstance(body, str) else ""
+        if c.get("author_association") in TRUSTED and PLAN_RE.match(body):
+            chosen = body
+    if chosen is None:
+        return emit({"form": "none", "change": "", "reason": "no Implementation Plan comment by a writer"}, 0)
+    form, change, reason = plan_of(chosen)
+    return emit({"form": form, "change": change, "reason": reason}, 1 if form == "invalid" else 0)
+
+
 def main(argv):
     handlers = {"declared": cmd_declared, "archived": cmd_archived, "links": cmd_links, "preflight": cmd_preflight,
-                "ic": cmd_ic}
+                "ic": cmd_ic, "plan": cmd_plan}
     if not argv or argv[0] not in handlers:
-        print("spec-change: subcommand required: declared | archived | links | preflight | ic", file=sys.stderr)
+        print("spec-change: subcommand required: declared | archived | links | preflight | ic | plan", file=sys.stderr)
         return 64
     try:
         return handlers[argv[0]](argv[1:])

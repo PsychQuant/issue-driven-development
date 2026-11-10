@@ -17,6 +17,7 @@
 # spec-example: spec-on-every-issue / preflight by write access and Spectra state
 # spec-example: spec-on-every-issue / spec directory by .spectra.yaml
 # spec-example: spec-on-every-issue / choosing the Implementation Complete comment
+# spec-example: spec-on-every-issue / reading the Spec plan line
 #
 # Fixture specs below use the made-up capability `cap`, so the markers inside
 # them never name a real Example.
@@ -349,6 +350,7 @@ specdir_case "a spec_dir that starts with a dash" "spec_dir: -x" openspec error 
 specdir_case "a spec_dir that names the repository root" "spec_dir: ." openspec error 2
 specdir_case "a spec_dir that starts with a colon (git pathspec magic)" 'spec_dir: ":(top)openspec"' openspec error 2
 specdir_case 'a " #" inside the quotes is part of the value' 'spec_dir: "docs/my # specs"' "docs/my # specs" pass 0
+specdir_case "spec_dir followed only by a comment" "spec_dir: # a comment" openspec error 2
 newrepo sd-yamldir; put .spectra.yaml/x y; put openspec/changes/archive/2026-11-10-idd-42-x/proposal.md; R=$(commit)
 archived_case "spec dir: a directory named .spectra.yaml at the revision" "$SPEC_DS" "$R" error "" 2
 newrepo sd-yamllink; put real.yaml 'spec_dir: openspec'; ln -s real.yaml "$REPO/.spectra.yaml"; put openspec/changes/archive/2026-11-10-idd-42-x/proposal.md; R=$(commit)
@@ -452,6 +454,34 @@ newrepo nogit; put openspec/specs/.keep; R=$(commit)
 OUT=$(PATH="$WORK/empty-path" "$PY" "$SC" archived --file "$(comment c-nogit "$SPEC1")" --cwd "$REPO" --ref "$R" 2>"$WORK/err"); RC=$?
 assert_eq "archived: no git on PATH → error, not a traceback" error "$(printf '%s' "$OUT" | field status)"
 assert_exit "archived: no git on PATH → exit 2" 2 "$RC"
+
+echo "spec-change: plan (Example: reading the Spec plan line)"
+PL_O='{"author_association":"OWNER","body":"## Implementation Plan (Plan tier)\n\n**Spec plan**: change idd-7-x"}'
+PL_R='{"author_association":"OWNER","body":"## Implementation Plan (Plan tier)\n\n**Spec plan**: rejected (change idd-7-x left parked)"}'
+PL_N='{"author_association":"MEMBER","body":"## Implementation Plan\n\n**Spec plan**: no behaviour change (a)"}'
+PL_T='{"author_association":"OWNER","body":"## Implementation Plan\n\n**Spec plan**: third-party clone"}'
+PL_X='{"author_association":"CONTRIBUTOR","body":"## Implementation Plan\n\n**Spec plan**: change idd-7-y"}'
+PL_F='{"author_association":"OWNER","body":"## Implementation Plan\n\n```\n**Spec plan**: change idd-7-x\n```"}'
+PL_2='{"author_association":"OWNER","body":"## Implementation Plan\n\n**Spec plan**: change idd-7-x\n**Spec plan**: change idd-7-z"}'
+plan_case() { # label json-or-path form change exit
+  local f="$2"; case "$f" in /*) ;; *) f=$(icj "pl-$RANDOM" "$2") ;; esac
+  run plan --comments "$f"
+  if [ "$3" = NOJSON ]; then assert_eq "plan: $1 — no JSON line" "" "$OUT"
+  else
+    assert_eq "plan: $1 — form" "$3" "$(printf '%s' "$OUT" | field form)"
+    assert_eq "plan: $1 — change" "$4" "$(printf '%s' "$OUT" | field change)"
+  fi
+  assert_exit "plan: $1 — exit" "$5" "$RC"
+}
+plan_case "the owner's plan naming idd-7-x" "[$PL_O]" change idd-7-x 0
+plan_case "then a newer plan that rejects it" "[$PL_O,$PL_R]" rejected idd-7-x 0
+plan_case "no behaviour change (a)" "[$PL_N]" no-behaviour-change "" 0
+plan_case "third-party clone" "[$PL_T]" third-party-clone "" 0
+plan_case "a newer plan by a contributor is not the one read" "[$PL_O,$PL_X]" change idd-7-x 0
+plan_case "no Implementation Plan comment" "[$DG]" none "" 0
+plan_case "the only Spec plan line inside a code fence" "[$PL_F]" none "" 0
+plan_case "two Spec plan lines" "[$PL_2]" invalid "" 1
+plan_case "the file is not JSON" "$(icj pl-notjson 'not json')" NOJSON "" 2
 
 echo "spec-change: common behaviour"
 mkdir -p "$WORK/not-git"

@@ -46,15 +46,31 @@ printf '%s\n' "$PF" | jq -r '"→ spec preflight: \(.status) \(.message)"'
 
 ## 3. Propose
 
-change 名稱是 `idd-<N>-<slug>`（slug 取 issue 標題，小寫英數與連字號）。先看這個 change 是不是已經存在（`idd-plan` 會先建好）：
+change 名稱是 `idd-<N>-<slug>`（slug 取 issue 標題，小寫英數與連字號）。在 propose 或貼任何留言之前，先看這張 issue 有沒有開著的 change（`idd-plan` 會先建好），有的話讀最新的 Implementation Plan 怎麼說：
 
 ```bash
-spectra list --json | jq -r '.changes[]?.name' ; spectra list --parked --json | jq -r '.parked[]?.name'
+EXISTING=$( { spectra list --json | jq -r '.changes[]?.name'; spectra list --parked --json | jq -r '.parked[]?.name'; } 2>/dev/null | grep -E "^idd-${NUMBER}-" | head -1)
+PLAN='{"form": "none", "change": ""}'
+if [ -n "$EXISTING" ]; then
+  C_JSON=$(mktemp)
+  if gh api "repos/$GITHUB_REPO/issues/$NUMBER/comments" --paginate > "$C_JSON" 2>/dev/null; then
+    PLAN=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" plan --comments "$C_JSON")
+  else
+    PLAN='{"form": "unreadable", "change": ""}'
+  fi
+  rm -f "$C_JSON"
+fi
+printf '→ existing change: %s; plan: %s\n' "${EXISTING:-none}" "$PLAN"
 ```
 
-Implementation Plan 留言（Plan tier 由 `idd-plan` 貼，Simple 由 `idd-implement` Step 2 貼）有剛好一行 `**Spec plan**:`，三種寫法：`**Spec plan**: change <名稱>`、`**Spec plan**: no behaviour change (<a|b|c|d>)`、`**Spec plan**: rejected (change <名稱> left parked)`（維護者在 plan mode 拒絕時，`idd-plan` 改成這一行）。
+Implementation Plan 留言（Plan tier 由 `idd-plan` 貼，Simple 由 `idd-implement` Step 2 貼）有剛好一行 `**Spec plan**:`，四種寫法：`**Spec plan**: change <名稱>`、`**Spec plan**: no behaviour change (<a|b|c|d>)`、`**Spec plan**: third-party clone`、`**Spec plan**: rejected (change <名稱> left parked)`（維護者在 plan mode 拒絕時，`idd-plan` 改成這一行）。`spec-change.py plan` 讀的是最新一則由有寫入權的帳號貼、以 `## Implementation Plan` 開頭的留言。
 
-已經有 `idd-<N>-` 開頭的 change 時：最新的 Implementation Plan 寫著 `**Spec plan**: change <名稱>`、而且名稱相同 → 不再 propose，直接第 4 步。寫著 `rejected`，或沒有任何 Implementation Plan 點名它 → 停下：那是沒有被核准的 proposal，不 apply。
+| 印出的結果 | 做什麼 |
+|---|---|
+| `existing change: none` | 往下 propose（下一段） |
+| plan 的 `form` 是 `change`、`change` 與開著的 change 同名 | 不再 propose，直接第 4 步 |
+| `form` 是 `rejected` | 停下：這個 change 在 plan mode 被拒絕了。要繼續就重跑 `/idd-plan`，它會把這個 change 再呈現一次給人核准 |
+| 其他（`none`、`invalid`、`unreadable`、名稱不同） | 停下：開著的 change 沒有任何核准過的 plan 點名它，不 apply |
 
 沒有 → 呼叫 `Skill(skill="spectra-propose", args="<change 名稱>：<需求，取自 Diagnosis 的 Strategy>。輕量形式：不做 discuss、不寫 design。")`，並在 args 寫明：
 
