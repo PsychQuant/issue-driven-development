@@ -92,7 +92,7 @@ PR mode 下：
 
 `--profile <name>`（`code` 預設 / `prose` / `academic` / config 自訂）同時切換 **lens 組合、DA focus、輸入源預設、freshness 機制** 四元組。canonical 定義（含 prose/academic 的 lens 文本逐字）在 [`references/verify-profiles.md`](../../references/verify-profiles.md) — 本 SKILL 引用、不內嵌複本。要點：
 
-- **`code`（預設）＝今日行為，逐 byte 不變**：lens 文本、輸入源 auto-detect、#228 git diff-freshness gate 全部不動（backward-compat 鎖）。
+- **`code`（預設）＝今日行為，逐 byte 不變**：lens 文本、輸入源 auto-detect、#228 git diff-freshness gate 全部不動（backward-compat 鎖）。#480 起另外附一段規格對照（Step 1 之後的共通前置），它是加上去的，不改上面這三樣。
 - **`prose` / `academic`** 的輸入源預設是 `--file <path>` / `--dir <path>`（必填其一；無 → abort 要求輸入源，**不** fallback git diff）。
 - **未知 profile 名**（內建與 config `verify_profiles` 都查無）→ abort + 印**可用 profile 清單**（fail-loud，同 `IDD_AGENT_MODEL` 判準 — 顯式意圖 typo 不得靜默跑錯 profile）。
 - **自訂 profile** 經 config `verify_profiles` 註冊（schema 見 [`references/config-protocol.md`](../../references/config-protocol.md)）；與內建同名碰撞 → 內建勝 + warning。
@@ -457,7 +457,7 @@ ${EW_BLOCK}"
 printf '%s' "$EW_BLOCK" > "$VERIFY_DIR/ew-block.md"
 
 # ── 規格對照（#480）：只有 code profile 才組；prose / academic 跳過，SPEC_BLOCK 留空 ──
-# 三樣東西都是程式產生的結構化結果，不含別人的散文：這張 issue 宣告了什麼（最新一則由
+# 三樣東西都是程式產生的結果，但會帶著受審規格的標題與留言的片段（所以資料放在下面的 fence 裡）：這張 issue 宣告了什麼（最新一則由
 # 有寫入權的帳號貼的 Implementation Complete 的 **Spec**: 行）、審查範圍改了哪些規格檔、
 # 兩個機械檢查（spec-change.py links / archived）的結果。檢查失敗或讀不到一律照實寫進來，
 # 由 Step 3 寫成 Blocking 列，不當成「沒有問題」。
@@ -487,7 +487,7 @@ if [ "${VERIFY_PROFILE:-code}" = code ]; then
   fi
   if [ -n "${BASE_SHA:-}" ] && [ -n "${FROZEN_SHA:-}" ]; then
     SPEC_LINKS=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" links --base "$BASE_SHA" --head "$FROZEN_SHA" --cwd "${CWD:-$PWD}" 2>&1)
-    SPEC_FILES=$(git -C "${CWD:-$PWD}" diff --name-only "$BASE_SHA" "$FROZEN_SHA" 2>/dev/null | grep -E '/specs/[^/]+/spec\.md$' || echo '(none)')
+    SPEC_FILES=$(git -C "${CWD:-$PWD}" diff --name-only "$BASE_SHA" "$FROZEN_SHA" 2>/dev/null | grep -E '/specs/[^/]+/spec\.md$' | grep -v '/changes/' || echo '(none)')
   else
     SPEC_LINKS='{"status": "error", "missing": [], "reason": "BASE_SHA or FROZEN_SHA is empty in this shell: set them as Step 1 records them and run this block again"}'
     SPEC_ARCH='{"status": "error", "not_archived": [], "reason": "no reviewed head in this shell"}'

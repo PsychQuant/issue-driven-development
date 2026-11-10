@@ -112,6 +112,16 @@ run declared
 assert_exit "declared: no --file is a usage error" 64 "$RC"
 
 # ── archived ────────────────────────────────────────────────────────────────
+# Rows added by idd-480-fix3 (verify round 3 of #480).
+declared_case "marker, the only Spec line inside a four-backtick fence that holds a three-backtick line" "$MARK
+\`\`\`\`
+$FENCE
+**Spec**: no behaviour change
+\`\`\`\`" invalid '[]' 1
+LS=$(printf '\342\200\250')
+declared_case "marker, Spec line after U+2028 on the same line" "$MARK
+intro${LS}**Spec**: no behaviour change" invalid '[]' 1
+
 echo "spec-change: archived (Example: whether the declared changes are archived at a commit)"
 
 archived_case() { # label comment-body ref status not-archived-json exit
@@ -262,6 +272,14 @@ linked_repo l-dupname; put openspec/specs/cap/spec.md "$(spec "$(req Base)" "$(r
 links_case "added twice with the same name in one capability" error "" 2
 linked_repo l-unclosed; put openspec/specs/cap/spec.md "$(spec "$(req Base)" "$(req Alpha 'No executable check: a.' "$FENCE")" "$(req Gamma "$EX")")"; put scripts/tests/x/test.sh '# spec-example: cap / alpha table'; commit >/dev/null
 links_case "a code fence that never closes at the head revision" error "" 2
+linked_repo l-indented-head; put openspec/specs/cap/spec.md "$(spec "$(req Base)")
+  ### Requirement: Alpha
+
+The system SHALL do Alpha."; commit >/dev/null
+links_case "added, under a heading indented by two spaces" missing 1 1
+assert_eq "links: … the item names the indented requirement, not the one before it" "Alpha" "$(printf '%s' "$OUT" | "$PY" -c 'import json,sys; m=json.loads(sys.stdin.read())["missing"]; print(m[0]["requirement"] if m else "")')"
+linked_repo l-listfence; put openspec/specs/cap/spec.md "$(spec "$(req Base)" "$(req Alpha '- a list item:' '' "    $FENCE" '    No executable check: hidden in a fenced block of the list item.' "    $FENCE")")"; commit >/dev/null
+links_case "added, its only No executable check line inside a fence indented four spaces in a list item" missing 1 1
 linked_repo l-nospecs; git -C "$REPO" rm -q -r openspec/specs; commit >/dev/null
 links_case "openspec/specs/ holds no tracked file at the head revision" error "" 2
 newrepo l-gitkeep; put openspec/specs/.gitkeep ''; BASE=$(commit base); put README.txt x; commit >/dev/null
@@ -325,6 +343,9 @@ specdir_case "a spec_dir that leaves the repository" "spec_dir: ../specs" opensp
 specdir_case "spec_dir with no value" "spec_dir:" openspec error 2
 specdir_case "a spec_dir that starts with a dash" "spec_dir: -x" openspec error 2
 specdir_case "a spec_dir that names the repository root" "spec_dir: ." openspec error 2
+specdir_case "a spec_dir that starts with a colon (git pathspec magic)" 'spec_dir: ":(top)openspec"' openspec error 2
+newrepo sd-yamldir; put .spectra.yaml/x y; put openspec/changes/archive/2026-11-10-idd-42-x/proposal.md; R=$(commit)
+archived_case "spec dir: a directory named .spectra.yaml at the revision" "$SPEC_DS" "$R" error "" 2
 specdir_case "the default does not apply when spec_dir names another directory" "spec_dir: docs/spectra" openspec refuse 1
 # links reads the same directory, and markers under it do not count
 newrepo sd-links; put .spectra.yaml "spec_dir: docs/spectra"; put docs/spectra/specs/cap/spec.md "$(spec "$(req Base)")"; BASE=$(commit base)
@@ -413,6 +434,12 @@ linked_repo dash-sd; printf 'spec_dir: -x\n' > "$REPO/.spectra.yaml"; commit >/d
 run links --cwd "$REPO" --base "$BASE"
 assert_eq "links: a spec_dir that starts with a dash → error" error "$(printf '%s' "$OUT" | field status)"
 assert_exit "links: … exit 2" 2 "$RC"
+
+echo "spec-change: no git on PATH (idd-480-fix3)"
+newrepo nogit; put openspec/specs/.keep; R=$(commit)
+OUT=$(PATH="$WORK/empty-path" "$PY" "$SC" archived --file "$(comment c-nogit "$SPEC1")" --cwd "$REPO" --ref "$R" 2>"$WORK/err"); RC=$?
+assert_eq "archived: no git on PATH → error, not a traceback" error "$(printf '%s' "$OUT" | field status)"
+assert_exit "archived: no git on PATH → exit 2" 2 "$RC"
 
 echo "spec-change: common behaviour"
 mkdir -p "$WORK/not-git"

@@ -540,7 +540,7 @@ SPEC_JSON=$(mktemp); SPEC_IC=$(mktemp)
 if ! { gh api "repos/$GITHUB_REPO/issues/$NUMBER/comments" --paginate > "$SPEC_JSON" 2>/dev/null \
        && python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" ic --comments "$SPEC_JSON" > "$SPEC_IC"; }; then
   GATE='{"status": "error", "not_archived": [], "reason": "the issue comments could not be read"}'; GATE_RC=2
-elif [ "$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" declared --file "$SPEC_IC" 2>/dev/null | jq -r '.form // ""')" != change ]; then
+elif [ "$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" declared --file "$SPEC_IC" 2>/dev/null | python3 -c 'import json,sys; print(json.loads(sys.stdin.read() or "{}").get("form", ""))' 2>/dev/null)" != change ]; then
   # No change declared (no comment, legacy, an exemption, an invalid line): the default branch is not read,
   # so a failed fetch does not hold an issue this gate does not apply to. archived answers these from the comment.
   GATE=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" archived --file "$SPEC_IC" --cwd "${CWD:-$PWD}" --ref HEAD); GATE_RC=$?
@@ -548,10 +548,16 @@ else
   # A declared change is checked against the default branch as the remote has it: no name, or a failed fetch,
   # is an error, never a pass on a stale local ref (verify round 2).
   DEFAULT_BRANCH=$(gh repo view "$GITHUB_REPO" --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null) || DEFAULT_BRANCH=""
-  if [ -z "$DEFAULT_BRANCH" ] || ! git -C "${CWD:-$PWD}" fetch -q origin -- "$DEFAULT_BRANCH" 2>/dev/null; then
+  # The commit the fetch returned (FETCH_HEAD), not origin/<default>: a fetch refspec that does not cover the
+  # default branch leaves the tracking ref where it was (verify round 3).
+  SPEC_REF=""
+  if [ -n "$DEFAULT_BRANCH" ] && git -C "${CWD:-$PWD}" fetch -q origin -- "$DEFAULT_BRANCH" 2>/dev/null; then
+    SPEC_REF=$(git -C "${CWD:-$PWD}" rev-parse -q --verify FETCH_HEAD 2>/dev/null)
+  fi
+  if [ -z "$SPEC_REF" ]; then
     GATE='{"status": "error", "not_archived": [], "reason": "the default branch could not be read (gh repo view or git fetch failed)"}'; GATE_RC=2
   else
-    GATE=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" archived --file "$SPEC_IC" --cwd "${CWD:-$PWD}" --ref "origin/$DEFAULT_BRANCH"); GATE_RC=$?
+    GATE=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" archived --file "$SPEC_IC" --cwd "${CWD:-$PWD}" --ref "$SPEC_REF"); GATE_RC=$?
   fi
 fi
 rm -f "$SPEC_JSON" "$SPEC_IC"
@@ -563,6 +569,7 @@ printf '%s\n' "$GATE" | jq -r '"→ spec archive gate: \(.status) \(.reason)"'
 | `pass`（含 `no behaviour change`、`third-party clone`、舊制留言） | 往下 |
 | `refuse` | 停下、不 close：列出還沒封存的 change，或 `**Spec**:` 行的問題。常見原因是 PR 還沒合併，或封存 commit 不在合併的範圍裡 |
 | `error` | 停下、不 close：留言、預設 branch 或設定讀不到，照原因處理後重跑 |
+| 沒有輸出、不是 JSON、或上面沒列的 status | 停下、不 close，回報印出的內容 |
 
 這一道和 Step 1.5 一樣是硬性的：不問人、沒有略過的選項。有人在場時要結案，先把 change 封存進預設 branch，或修正 Implementation Complete 的宣告。
 

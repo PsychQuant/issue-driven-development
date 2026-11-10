@@ -104,13 +104,23 @@ step157 "[{\"author_association\":\"OWNER\",\"body\":\"$MARK\\n**Spec**: no beha
 assert_eq "git fetch fails, an exemption is declared → passes, the branch is not read" pass "$STATUS"
 git -C "$C" remote set-url origin "$WORK/o.git"
 
+# The remote's default branch drops the archive while the local tracking ref stays put (a fetch refspec that
+# does not cover main): Step 1.57 must check the commit the fetch returned (idd-480-fix3).
+C2="$WORK/clone2"; git clone -q "$WORK/o.git" "$C2" 2>/dev/null
+git -C "$C2" rm -q -r openspec/changes/archive/2026-11-10-idd-42-fix-timeout; git -C "$C2" commit -q -m "revert the archive"; git -C "$C2" push -q origin HEAD:main
+git -C "$C" config remote.origin.fetch '+refs/heads/nothing:refs/remotes/origin/nothing'
+step157 "$IC_OK" 0
+assert_eq "the remote dropped the archive, the local tracking ref did not move → stops" refuse "$STATUS"
+git -C "$C" config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+
 echo "spec-close-gate: the skill text"
 G="$(sed -n '/^### Step 1.57: /,/^### Step 1.6: /p' "$CLOSE")"
 line_of() { local n; n=$(grep -nF -- "$1" "$CLOSE" | head -1 | cut -d: -f1); printf '%s' "${n:-999999}"; }
 assert_true "Step 1.57 sits between Step 1.55 and Step 1.6" \
   "[ $(line_of '### Step 1.55: ') -lt $(line_of '### Step 1.57: ') ] && [ $(line_of '### Step 1.57: ') -lt $(line_of '### Step 1.6: ') ]"
 assert_grep "the gate calls spec-change.py archived" 'spec-change.py" archived' "$G"
-assert_grep "the gate reads the default branch as the remote has it" '--ref "origin/$DEFAULT_BRANCH"' "$G"
+assert_grep "the gate fetches the default branch from the remote" 'fetch -q origin -- "$DEFAULT_BRANCH"' "$G"
+assert_grep "… and checks the commit that fetch returned" 'rev-parse -q --verify FETCH_HEAD' "$G"
 assert_grep "the gate chooses the comment with spec-change.py ic (one selection, shared with verify)" 'spec-change.py" ic --comments' "$G"
 assert_grep "no Implementation Complete comment → not held to the gate (row 5)" "沒有 Implementation Complete" "$G"
 assert_grep "refuse or error stops the close" "停下、不 close" "$G"

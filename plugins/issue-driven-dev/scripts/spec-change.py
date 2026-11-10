@@ -47,13 +47,14 @@ NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 SPEC_LINE_RE = re.compile(r"^ {0,3}\*\*Spec\*\*:(.*)$")
 FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 ARCHIVE_DIR_RE = r"^\d{4}-\d{2}-\d{2}-%s$"
-REQ_RE = re.compile(r"^### Requirement:\s*(.*?)\s*$")
+REQ_RE = re.compile(r"^ {0,3}### Requirement:\s*(.*?)\s*$")
 EXAMPLE_RE = re.compile(r"^##### Example:(.*)$")
 NO_CHECK_RE = re.compile(r"^\s*No executable check:(.*)$")
-REQ_LIKE_RE = re.compile(r"^###\s*Requirement\b")   # a heading meant as a requirement
+REQ_LIKE_RE = re.compile(r"^ {0,3}###\s*Requirement\b")   # a heading meant as a requirement
 MARKER_REST_RE = re.compile(r"\s*(?:-->|\*/)?\s*")          # what may follow an Example title on its line
 IC_RE = re.compile(r"\s*(?:<!-- idd:comment type=implementation-complete -->|## Implementation Complete)")
-FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+FENCE_OPEN_RE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")   # any indentation: a fence inside a list item is a fence
+LINE_SPLIT_RE = re.compile(r"\r\n|\r|\n")   # CommonMark line endings only (str.splitlines also breaks at U+2028 and others)
 TRUSTED = ("OWNER", "MEMBER", "COLLABORATOR")
 INSTALL_HINT = ("install the Spectra CLI (see https://github.com/spectra-app/spectra) and run the wrapper again; "
                 "the spec change is not optional in a repository you can write to")
@@ -90,7 +91,11 @@ def parse(argv, allowed, required):
 
 
 def git(cwd, *args, check=True):
-    p = subprocess.run(["git", "-C", cwd, *args], capture_output=True)
+    env = dict(os.environ, GIT_LITERAL_PATHSPECS="1")   # a spec_dir is a path, never pathspec magic
+    try:
+        p = subprocess.run(["git", "-C", cwd, *args], capture_output=True, env=env)
+    except FileNotFoundError:
+        raise Fail("git is not on PATH")
     if check and p.returncode != 0:
         raise Fail(f"git {' '.join(args[:2])} failed: {p.stderr.decode('utf-8', 'replace').strip()[:200]}")
     return p
@@ -121,18 +126,24 @@ def spec_dir_of(text):
         return "openspec"
     value = values[-1].split(" #", 1)[0].strip().strip('"').strip("'").strip()
     parts = value.replace("\\", "/").split("/")
-    if not value or value.startswith(("/", "-")) or ".." in parts or re.match(r"^[A-Za-z]:", value):
-        raise Fail(f".spectra.yaml spec_dir {value!r} must be a relative path inside the repository")
+    if not value or value.startswith(("/", "-", ":")) or ".." in parts or re.match(r"^[A-Za-z]:", value):
+        raise Fail(f".spectra.yaml spec_dir {value[:60]!r} must be a relative path inside the repository")
     sd = "/".join(p for p in parts if p not in ("", "."))
     if not sd:
-        raise Fail(f".spectra.yaml spec_dir {value!r} names the repository root, not a directory inside it")
+        raise Fail(f".spectra.yaml spec_dir {value[:60]!r} names the repository root, not a directory inside it")
     return sd
 
 
 def spec_dir_at(top, rev):
+    entry = git_text(top, "ls-tree", rev, "--", ".spectra.yaml").strip()
+    if not entry:
+        return spec_dir_of(None)
+    mode, kind = entry.split(None, 2)[:2]
+    if kind != "blob" or mode not in ("100644", "100755"):
+        raise Fail(f".spectra.yaml at {rev[:12]} is not a regular file ({kind} {mode})")
     p = git(top, "show", f"{rev}:.spectra.yaml", check=False)
     if p.returncode != 0:
-        return spec_dir_of(None)
+        raise Fail(f"cannot read .spectra.yaml at {rev[:12]}")
     return spec_dir_of(p.stdout.decode("utf-8", "replace"))
 
 
@@ -162,16 +173,10 @@ def resolve(cwd, rev):
 def declared_of(text):
     """(form, changes, reason) for the text of an Implementation Complete comment."""
     has_marker, specs, fence = False, [], None
-    for line in text.splitlines():
-        m = FENCE_RE.match(line)
-        if m:
-            tick = m.group(1)[0]
-            if fence is None:
-                fence = tick
-            elif fence == tick:
-                fence = None
-            continue
-        if fence is not None:
+    for line in lines_of(text):
+        inside_before = fence is not None
+        fence, delimiter = fence_step(line, fence)
+        if inside_before or delimiter:
             continue
         if MARKER in line:
             has_marker = True
@@ -284,6 +289,10 @@ def block_text(lines):
     return "\n".join(lines).strip()
 
 
+def lines_of(text):
+    return LINE_SPLIT_RE.split(text)
+
+
 def fence_step(line, fence):
     """CommonMark fences: (fence after this line, whether this line is a fence delimiter).
 
@@ -318,7 +327,7 @@ def requirements(text, strict=False):
             return
         reqs[name] = (block_text(buf), list(plain))
 
-    for line in text.splitlines():
+    for line in lines_of(text):
         inside_before = fence is not None
         fence, delimiter = fence_step(line, fence)
         fenced = inside_before or delimiter
@@ -327,7 +336,7 @@ def requirements(text, strict=False):
             if strict and REQ_LIKE_RE.match(line) and not (r and r.group(1)):
                 raise Fail(f"cannot parse the requirement heading {line.strip()!r}; "
                            "write it as `### Requirement: <name>`")
-            if r or re.match(r"^#{1,3} ", line):
+            if r or re.match(r"^ {0,3}#{1,3} ", line):
                 close()
                 name, buf, plain = (r.group(1), [line], []) if r else (None, [], [])
                 continue

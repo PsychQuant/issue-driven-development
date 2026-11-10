@@ -223,6 +223,7 @@ assert_grep "the routing rule's Spectra flow starts with the preflight" "preflig
 refute_grep "docs/commands.md no longer chains close through /spectra-archive" "chain through \`/spectra-archive\`" "$(read_file "$PLUGIN/../../docs/commands.md")"
 
 echo "spec-wrapper-contract: the verify spec context, run (idd-480-fix2)"
+# spec-example: idd-verify / the spec context the reviewers get
 S0=$(grep -n '^# ── 規格對照（#480）' "$VERIFY" | cut -d: -f1)
 S1=$(grep -n '^DA_FOCUS_SUFFIX=' "$VERIFY" | tail -1 | cut -d: -f1)
 sed -n "${S0},$((S1 + 1))p" "$VERIFY" | grep -v '^DA_FOCUS_SUFFIX=' > "$W2/specctx.sh"
@@ -258,5 +259,14 @@ assert_grep "… the token inside the data is neutralised" "[fence]" "$SBF"
 assert_true "… the review rules come after the closing fence" \
   "[ $(printf '%s\n' "$SBF" | grep -n "^${TOKEN}>>>\$" | cut -d: -f1) -lt $(printf '%s\n' "$SBF" | grep -n '^Review rules' | cut -d: -f1) ]"
 assert_grep "… and the DA focus gains the spec checks" "Spec checks (#480)" "$OUT"
+
+echo "spec-wrapper-contract: verify round 3 fixes in the text (idd-480-fix3)"
+S157="$(sed -n '/^### Step 1.57: /,/^### Step 1.6: /p' "$PLUGIN/skills/idd-close/SKILL.md")"
+assert_grep "Step 1.57 checks the commit the fetch returned" "FETCH_HEAD" "$S157"
+refute_grep "Step 1.57 does not need jq to choose the branch" "jq -r '.form" "$S157"
+assert_grep "Step 1.57's result table stops on no output" "沒有輸出" "$S157"
+assert_grep "the contract's link check stops when SPEC_BASE is empty" '[ -n "$SPEC_BASE" ]' "$REF_TXT"
+refute_grep "the verify comment no longer claims the spec block holds no third-party prose" "不含別人的散文" "$V_TXT"
+assert_grep "SPEC_FILES lists main specs only, not change deltas" "grep -v '/changes/'" "$SB"
 
 print_summary spec-wrapper-contract

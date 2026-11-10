@@ -96,13 +96,19 @@ fi
 5. 連結檢查：
 
 ```bash
-DEFAULT_BRANCH=$(gh repo view "$GITHUB_REPO" --json defaultBranchRef -q .defaultBranchRef.name)
-git -C "$CWD" fetch -q origin "$DEFAULT_BRANCH"
-SPEC_BASE=$(git -C "$CWD" merge-base HEAD "origin/$DEFAULT_BRANCH")
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" links --base "$SPEC_BASE" --cwd "$CWD"
+DEFAULT_BRANCH=$(gh repo view "$GITHUB_REPO" --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null) || DEFAULT_BRANCH=""
+SPEC_BASE=""
+if [ -n "$DEFAULT_BRANCH" ] && git -C "$CWD" fetch -q origin -- "$DEFAULT_BRANCH" 2>/dev/null; then
+  SPEC_BASE=$(git -C "$CWD" merge-base HEAD FETCH_HEAD 2>/dev/null)
+fi
+if [ -n "$SPEC_BASE" ]; then
+  python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" links --base "$SPEC_BASE" --cwd "$CWD"
+else
+  echo "✗ spec close-out: cannot find where this branch left the default branch (gh repo view, git fetch or git merge-base failed); stopping" >&2
+fi
 ```
 
-`git merge-base HEAD "origin/$DEFAULT_BRANCH"` 在 PR path 是分岔點；在 direct-commit path 是 run 還沒推的 commit 之前那一個。`missing` 就補測試或標記再跑一次。要改的是 requirement 本身（例如寫了一個寫不出檢查的 Example）時，不改 `archive/` 底下的檔案，也不繞過 Spectra 直接改主規格：照第 7 步另建一個 change 修改那條 requirement，封存後再跑。`error` 停下回報。
+`git merge-base HEAD "origin/$DEFAULT_BRANCH"` 在 PR path 是分岔點；在 direct-commit path 是 run 還沒推的 commit 之前那一個。沒有印出 JSON（`SPEC_BASE` 取不到）就停下回報。`missing` 就補測試或標記再跑一次。要改的是 requirement 本身（例如寫了一個寫不出檢查的 Example）時，不改 `archive/` 底下的檔案，也不繞過 Spectra 直接改主規格：照第 7 步另建一個 change 修改那條 requirement，封存後再跑。`error` 停下回報。
 
 6. 確認宣告與 HEAD 一致：把第 6 步要貼的 `**Spec**:` 行寫進一個暫存檔，跑 `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" archived --file <暫存檔> --cwd "$CWD" --ref HEAD`，要 `pass`。
 
