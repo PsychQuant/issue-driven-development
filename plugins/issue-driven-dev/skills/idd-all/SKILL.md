@@ -1266,7 +1266,6 @@ EOF
         --base "$DEFAULT_BRANCH" --head "$BRANCH") || abort "gh pr create failed — branch $BRANCH is pushed; open the PR by hand"
     echo "→ opened $PR_URL"
     echo "Undo: gh pr close ${PR_URL##*/} -R $GITHUB_REPO"
-  fi
   fi   # Phase 5c finds the PR itself (close-stage.py run), it does not take this URL
 fi
 # Every path falls through to Phase 5c below.
