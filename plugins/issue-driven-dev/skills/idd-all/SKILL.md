@@ -79,6 +79,7 @@ TaskCreate(name="ensure_issue", description="Phase 1: 若 from-scratch 則跑 id
 TaskCreate(name="diagnose", description="Phase 2: 跑 idd-diagnose,讀回 complexity 判定")
 TaskCreate(name="implement_or_sdd", description="Phase 3: type=meeting → attended 走 meeting 版 /idd-plan、unattended 跳過(#383,先跑 meeting unwind); Simple/Plan → idd-implement; Spectra → spectra-discuss → spectra-propose → spectra-apply。Args 含 UNATTENDED MODE 與否依 Phase 0.5 解析的 interaction 軸決定。")
 TaskCreate(name="verify_loop", description="Phase 4: type=meeting → 跳過(#383); 每輪 idd-verify 後跑 scripts/verify-gate.py 讀這一輪新貼出的報告(#392); clean → 往下; unparseable → STOP_REASON; not_clean: unattended 修 Blocking 與 In-scope fix 後重跑(最多 2 輪 verify), attended 交回 user; follow-ups → 開新 issue")
+TaskCreate(name="ci_gate", description="Phase 4.5 (#465): type=meeting → 跳過; 對 HEAD 跑 scripts/idd-ci-gate.sh，紀錄貼到 issue；只有 exit 0 繼續、exit 10 改看遠端 CI；exit 3 attended 問指令、unattended 停下回報；exit 1/2/4 停下回報")
 TaskCreate(name="open_pr", description="Phase 5: type=meeting → 跳過、不 push(#383); PR mode → git push + 已有自家 open PR 就沿用並更新 body,否則 gh pr create(body 照 verify gate 結果寫,含 Refs #N, 不含 Closes); direct-commit mode → 不開 PR,進 Phase 5c")
 TaskCreate(name="close_stage", description="Phase 5c (#392): scripts/close-stage.py run（同一個 process，run_in_background）：讀 Step 0.7 的 run-state，擋 --review/--in-chain/meeting/無寫入權限/run 開始後別人插手/意圖沒確認；gate 綁 HEAD SHA、只認本帳號的報告、讀 GitHub 渲染後的 HTML，有 Rejected finding 就停；CI 等完再重查預設 branch 與 PR 上的人；PR → CI（pending 最多 15 分鐘、有 pull_request workflow 就等 check 出現）、auto-close trap、squash message，全過才 gh pr merge --squash --match-head-commit 並確認 MERGED；direct-commit → 在預設 branch、每個要推的 commit 都引用 #N 才 push。merged/pushed 才以 ORCHESTRATED BY /idd-all 呼叫 /idd-close --repo，最後確認 CLOSED 且有 closing summary")
 TaskCreate(name="report_and_stop", description="Phase 6: Done:/Undo: 回報(merge 或 push 的 commit、closed issue 與 closing summary、改動規模、follow-up、residue、distribution sync、verify reviewers); 停下時只列做到的步驟加 Stopped:; --review → awaiting human acceptance 措辭; type=meeting → meeting report(#383)")
@@ -216,7 +217,7 @@ Phase 1 之前先驗 delegation 依賴，避免 unattended chain 中途 abort �
 
 ```bash
 # superpowers — 無條件 hard gate（diagnose/implement 的 delegation 必經）
-"$CLAUDE_PLUGIN_ROOT/scripts/check-plugin-presence.sh" \
+"${CLAUDE_PLUGIN_ROOT}/scripts/check-plugin-presence.sh" \
   claude-plugins-official superpowers || abort "superpowers missing — install first (see hint above), then re-run /idd-all"
 
 # spectra — Phase 0 只 warn（complexity 尚未判定，SDD path 不一定觸發）；
@@ -348,7 +349,7 @@ echo "→ requested path: $REQUESTED_PATH"
 # Unattended signal (#123 — normative contract: references/unattended-contract.md)
 # State file 是 harness 內唯一跨 tool-call 可靠訊號（env var 不跨 fresh shell、
 # TTY 恆非互動 #222）。attended 分支的 clear 是防呆：清掉 crashed prior run 的殘留。
-. "$CLAUDE_PLUGIN_ROOT/scripts/lib/unattended-state.sh"
+. "${CLAUDE_PLUGIN_ROOT}/scripts/lib/unattended-state.sh"
 if [ "$INTERACTION" = "unattended" ]; then
   mark_unattended "$CWD" "idd-all"
 else
@@ -364,7 +365,7 @@ fi
 
 ```bash
 if [ -z "$IN_CHAIN" ] && [ -n "${N:-}" ]; then
-  EW_JSON=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/check-existing-work.sh" --cwd "$CWD" "$GITHUB_REPO" "$N") || EW_JSON='{}'
+  EW_JSON=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/check-existing-work.sh" --cwd "$CWD" "$GITHUB_REPO" "$N") || EW_JSON='{}'
   # 跑不出結果也要講出來 —— 「不知道」不得讀成「沒有」。fallback 必須是 `{}` 不是空字串：jq 收到空輸入什麼都不印，
   # `// "unknown"` 根本不會執行，verdict 會變成空字串，處置表裡沒有這一列
   EW_VERDICT=$(printf '%s' "$EW_JSON" | jq -r --arg n "$N" '.issues[$n].verdict // "unknown"')
@@ -496,7 +497,7 @@ Phase 0.5 解析出 `(PATH_AXIS, INTERACTION)` 後,若 tuple 是 `(PR, unattende
 
 ```bash
 if [ "$PATH_AXIS" = "PR" ] && [ "$INTERACTION" = "unattended" ]; then
-  if ! "$CLAUDE_PLUGIN_ROOT/scripts/check-ralph-loop.sh" 2>/dev/null; then
+  if ! "${CLAUDE_PLUGIN_ROOT}/scripts/check-ralph-loop.sh" 2>/dev/null; then
     echo "⚠ ralph-loop plugin not detected — required to drive (PR, unattended) verify-fix loop."
     echo "  Degrading to (direct-commit, attended) for backward-compat (#28 B4 design)."
     echo "  To restore (PR, unattended): claude plugin install ralph-loop@claude-plugins-official"
@@ -584,8 +585,8 @@ Skill(skill="issue-driven-dev:idd-diagnose", args="#$N --cwd $CWD")
 
 ```bash
 # 缺 helper 一律 fail loud + 指名 path，禁止 fallback 到私有 regex（契約 §Consumer contract）
-. "$CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh" || {
-    echo "FATAL: missing $CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh — 不得改用私有 regex" >&2
+. "${CLAUDE_PLUGIN_ROOT}/scripts/lib/actionability.sh" || {
+    echo "FATAL: missing ${CLAUDE_PLUGIN_ROOT}/scripts/lib/actionability.sh — 不得改用私有 regex" >&2
     exit 1
 }
 
@@ -665,7 +666,7 @@ if [ "${PATH_AXIS:-}" = "direct-commit" ]; then
 fi
 # type 只信最新受信任 Diagnosis 的 ### Type，不看 issue 本文（r4 #19／#35：本文由 issue 作者自由改寫）。
 # 先判 type（只需要 issue 號）：非 meeting 的 run 不因下面任何 shell 狀態遺失而中止（r4 #3／#8、r5 #10）
-. "$CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh" || { echo "FATAL: meeting unwind: actionability helper missing — branch left as is" >&2; exit 1; }
+. "${CLAUDE_PLUGIN_ROOT}/scripts/lib/actionability.sh" || { echo "FATAL: meeting unwind: actionability helper missing — branch left as is" >&2; exit 1; }
 # GITHUB_REPO 是 Phase 0.3 的 shell 狀態，少了它就讀不到 type。讀不到 type 時與 fetch 失敗同樣只警告、不中止：
 # 非 meeting 的 run 不因 shell 狀態遺失而中止（r4 #3／#8）。訊息分開寫，看得出是遺失而不是暫時性失敗（r6 #14、PR #398 review）
 [ -n "${GITHUB_REPO:-}" ] || { echo "⚠ meeting unwind: GITHUB_REPO is empty (shell state lost) — cannot read the Diagnosis type of #$N; branch left as is. If #$N is a meeting issue, re-run the repo resolution and then the unwind, or commit .claude/.idd/attachments/issue-$N on the idd/$N-* branch and return to the default branch by hand"; exit 0; }
@@ -967,7 +968,7 @@ fi
 ```bash
 # issue 號進 REST path 前先驗型（r5 #12）
 case "$N" in ''|*[!0-9]*) echo "FATAL: Phase 4: issue number is not numeric: $N — verify not started" >&2; exit 1 ;; esac
-. "$CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh" || { echo "FATAL: Phase 4: actionability helper missing — verify not started" >&2; exit 1; }
+. "${CLAUDE_PLUGIN_ROOT}/scripts/lib/actionability.sh" || { echo "FATAL: Phase 4: actionability helper missing — verify not started" >&2; exit 1; }
 # 只有「確定讀到 meeting」才中止。讀不到 type（GITHUB_REPO 遺失、fetch 失敗、comment 清單不是 JSON）時，
 # 照 Phase 2 選的 code 路線進 verify——那本來就是這種 run 的安全預設，而 verify 自己也要打同一組 API（r6 #2、#14）。
 # 錯誤處理掛在會失敗的 jq 那一步，不掛在恆 exit 0 的 helper 上（r6 #12）
@@ -1092,6 +1093,33 @@ for ROUND in 1..MAX_ROUND:
 
 ---
 
+### Phase 4.5: CI gate（#465）
+
+`TYPE=meeting` 跳過。其餘在 verify 之後、push 或收尾之前，對目前的 commit 跑閘門。契約見 spec `local-ci-gate` 與 [`references/config-protocol.md`](../../references/config-protocol.md) 的 `ci` 欄位。
+
+```bash
+# 隱私等級照 rules/privacy-scrubbing.md 解析（第三方 enforce、自己的 public warn、private light）；解析不到就用最嚴的
+case "$(gh repo view "$GITHUB_REPO" --json viewerPermission,isPrivate --jq '"\(.viewerPermission)/\(.isPrivate)"' 2>/dev/null)" in
+  ADMIN/true|MAINTAIN/true|WRITE/true) SCRUB_LEVEL=light ;;
+  ADMIN/false|MAINTAIN/false|WRITE/false) SCRUB_LEVEL=warn ;;
+  *) SCRUB_LEVEL=enforce ;;
+esac
+GATE_OUT=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/idd-ci-gate.sh" run --commit "$(git -C "$CWD" rev-parse HEAD)" --cwd "$CWD"); GATE_RC=$?
+printf '%s\n' "$GATE_OUT"
+GATE_RECORD=$(printf '%s\n' "$GATE_OUT" | sed -n 's/^RECORD=//p')
+# 紀錄預設不含指令與輸出；開了 ci.post_output_tail 時輸出末段只換掉路徑與控制字元，不保證其他內容安全，隱私自審照 rules/privacy-scrubbing.md
+[ -n "$GATE_RECORD" ] && bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-egress.sh" comment "$N" --repo "$GITHUB_REPO" --body-file "$GATE_RECORD" --scrub-attested "$SCRUB_LEVEL"
+```
+
+紀錄送不出去不改變閘門結果，但要在 Phase 6 回報。依結束碼（封閉列舉）：
+
+| 結束碼 | 動作 |
+|---|---|
+| 0 pass | 繼續 Phase 5 |
+| 10 remote | 不跑本機指令；繼續 Phase 5，由遠端 CI 決定 |
+| 3 not-configured | attended：用 AskUserQuestion 問指令。可列 repo 裡找到的候選（如 `scripts/ci.sh`），**不執行它們**，並說明這類指令會以使用者的環境執行 repo 每個 commit 裡的內容，只適合信任的 repo；確認後才寫入 `ci.command`，再跑一次。unattended：不寫 config，跳到 Phase 6，列入 Action items，寫明怎麼設定 `ci.command` 或 `ci.mode` |
+| 1 fail、2 timeout、4 error | 不 push、不開 PR，跳到 Phase 6 回報結果與 `LOG=` 路徑 |
+
 ### Phase 5: Push + Open PR (PR mode only)
 
 > **`TYPE=meeting` → 跳過 push 與 PR**(#383):meeting 沒有 code branch 可推,不論 PR 或 direct-commit mode 都不 push、不開 PR。meeting run 在 Phase 2 就跳到 Phase 6,不會進到這裡;進到這裡才讀到 meeting,代表 Phase 2 之後 type 被改了,下方 guard fail-closed:不 push、不開 PR、abort(r5 #11)。
@@ -1111,7 +1139,7 @@ elif [ "$PATH_AXIS" = "PR" ]; then
   # 不 push 的 direct-commit / in-chain 也會多一個網路失敗點(r2 #5)。type 只信最新受信任 Diagnosis 的
   # ### Type —— issue 作者在 implement 之後把本文改成 meeting,不能讓這裡跳過 push(r4 #35)。
   case "$N" in ''|*[!0-9]*) echo "FATAL: Phase 5: issue number is not numeric: $N — not pushing" >&2; exit 1 ;; esac   # r5 #12
-  . "$CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh" || { echo "FATAL: Phase 5: actionability helper missing — not pushing" >&2; exit 1; }
+  . "${CLAUDE_PLUGIN_ROOT}/scripts/lib/actionability.sh" || { echo "FATAL: Phase 5: actionability helper missing — not pushing" >&2; exit 1; }
   # 遺失的 shell 狀態不是暫時性的 fetch 失敗，分開講（r6 #14）；push 之前讀不到 type 一律 fail-closed（r2）
   [ -n "${GITHUB_REPO:-}" ] || { echo "FATAL: Phase 5: GITHUB_REPO is empty (shell state lost) — not pushing" >&2; exit 1; }
   P5_PAGES=$(gh api "repos/$GITHUB_REPO/issues/$N/comments" --paginate --jq '[.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") | .body | select(split("\n") | any(startswith("## Diagnosis")))]') \
@@ -1315,6 +1343,10 @@ Phase 2 走 meeting 列的 run 不印 Run report 樣板——那些樣板宣稱�
 
 報告由模型照實填寫(Plan 填 `/idd-plan` 貼出的 Meeting Plan comment URL,unattended 時用預設文字)。之後照常附上「Phase 6 Action items surface」那一節的 Action items。**順序:先跑 Action items 區塊,再清理**——INTERACTION 遺失時,那個區塊要靠 unattended state file 回推,清掉之後就讀不到(r6 #8、#11)。meeting report 印出後同樣 `clear_unattended "$CWD"`(#123)——跳過 Run report 樣板不代表跳過這個清理(verify r2 #9)。
 
+#### 遠端 CI 紅燈（#465）
+
+本機閘門通過（exit 0）而遠端 check 失敗時，報告列出失敗的 check 名稱與連結，**不算阻擋合併**：本機模式下遠端 CI 只回報。查不到 PR 或還沒有結果時照實寫，不寫成通過。
+
 #### Run report（PR 與 direct-commit 共用，#392）
 
 回報寫實際發生的事，不寫預估；要短——人只需要知道做了什麼、哪裡可能要他處理、怎麼復原。
@@ -1447,7 +1479,7 @@ ACTION_ITEMS+="${EXISTING_WORK_ITEMS:-}"
 RN="${ROOT_N:-$N}"
 case "$RN" in ''|*[!0-9]*) RN="" ;; esac
 MODE="${INTERACTION:-}"
-if [ -z "$MODE" ] && [ -n "${CWD:-}" ] && . "$CLAUDE_PLUGIN_ROOT/scripts/lib/unattended-state.sh" 2>/dev/null && is_unattended "$CWD" 2>/dev/null; then
+if [ -z "$MODE" ] && [ -n "${CWD:-}" ] && . "${CLAUDE_PLUGIN_ROOT}/scripts/lib/unattended-state.sh" 2>/dev/null && is_unattended "$CWD" 2>/dev/null; then
   MODE=unattended
 fi
 if [ "$MODE" = attended ]; then
@@ -1457,7 +1489,7 @@ elif [ -z "$RN" ]; then
   if [ "$MODE" = unattended ]; then
     ACTION_ITEMS+=$'\n'"- the issue number of this run was lost (shell state) — if it was a meeting issue, it stopped at diagnosed; check it by hand"
   fi
-elif [ -n "${GITHUB_REPO:-}" ] && . "$CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh" \
+elif [ -n "${GITHUB_REPO:-}" ] && . "${CLAUDE_PLUGIN_ROOT}/scripts/lib/actionability.sh" \
      && MT_PAGES=$(gh api "repos/$GITHUB_REPO/issues/$RN/comments" --paginate --jq '[.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") | .body | select(split("\n") | any(startswith("## Diagnosis")))]') \
      && MT_LATEST=$(jq -s -r 'add // [] | last // ""' <<<"$MT_PAGES"); then
   if [ "$(idd_diagnosis_type "$MT_LATEST")" = meeting ]; then

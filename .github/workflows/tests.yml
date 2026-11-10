@@ -26,3 +26,7 @@ jobs:
         run: sudo apt-get update -q && sudo apt-get install -y -q zsh
       - name: Run all fixture suites
         run: bash plugins/issue-driven-dev/scripts/run-all-tests.sh
+      # run-all-tests.sh only covers plugins/; this one guards what
+      # /spectra-archive posts to public issues (#405)
+      - name: Run spectra-archive-post-ic tests
+        run: bash .claude/scripts/tests/spectra-archive-post-ic/test.sh

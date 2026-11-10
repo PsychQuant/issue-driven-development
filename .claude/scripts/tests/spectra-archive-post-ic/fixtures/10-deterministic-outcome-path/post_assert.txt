@@ -1,1 +1,1 @@
-must_exist /tmp/spectra-archive-ic-outcome-test-deterministic.txt
+must_exist __STATE_DIR__/outcome-test-deterministic.txt

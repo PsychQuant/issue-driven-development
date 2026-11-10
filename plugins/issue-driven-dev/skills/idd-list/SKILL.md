@@ -281,8 +281,8 @@ def get_leader(refs_list, body, rule):
 
 ```bash
 # 缺 helper 一律 fail loud + 指名 path，禁止 fallback 到私有 regex（契約 §Consumer contract）
-. "$CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh" || {
-    echo "FATAL: missing $CLAUDE_PLUGIN_ROOT/scripts/lib/actionability.sh — 不得改用私有 regex" >&2
+. "${CLAUDE_PLUGIN_ROOT}/scripts/lib/actionability.sh" || {
+    echo "FATAL: missing ${CLAUDE_PLUGIN_ROOT}/scripts/lib/actionability.sh — 不得改用私有 regex" >&2
     exit 1
 }
 
