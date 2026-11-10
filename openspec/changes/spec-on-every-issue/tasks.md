@@ -4,11 +4,11 @@
 
 ## 2. scripts/spec-change.py（測試先寫）
 
-- [ ] 2.1 `declared` 子指令讀出宣告行：依 requirement「Every implemented issue leaves a spec change or a declared exemption」的 Example「reading the Spec line」先寫測試（測試檔帶標記 `spec-example: spec-on-every-issue / reading the Spec line`），確認失敗後再實作。驗證：`bash plugins/issue-driven-dev/scripts/tests/spec-change/test.sh` 裡 13 列各有一個檢查並通過；參數錯誤是 exit 64。
-- [ ] 2.2 `archived` 子指令回答宣告的 change 在某個 commit 上是否已封存：依 requirement「The change is archived on the branch before verify」的 Example「whether the declared changes are archived at a commit」先寫測試（帶對應標記），在暫存 repo 上建立與封存目錄後檢查。驗證：11 列各有一個檢查並通過；名稱只是另一個封存目錄的前綴時回 `refuse`；revision 不存在時回 `error`（exit 2）。
-- [ ] 2.3 `links` 子指令檢查新增與改到的 requirement：依 requirement「Added and modified requirements carry an executable check」的 Example「what the link check reports」先寫測試（帶對應標記）。驗證：15 列各有一個檢查並通過；不給 `--base` 是 exit 64；沒有改到的 requirement 不會被報。
-- [ ] 2.4 `preflight` 子指令決定能不能開始寫規格：依 requirement「A repository without Spectra stops and a third-party clone proceeds」的 Example「preflight by write access and Spectra state」先寫測試（帶對應標記）；linked worktree 用真的 `git worktree add` 建出來測（design「linked worktree 先停下」），`spectra` 是否在 PATH 用測試專用的 PATH 控制。驗證：8 列各有一個檢查並通過。
-- [ ] 2.5 四個子指令的共同行為（design「機械判定集中在 scripts/spec-change.py」）：非 git 目錄、解析不了的規格檔都回 `error`，不回 `ok` 或 `pass`；每個子指令只印一行 JSON。驗證：測試各一例；`python3 -m py_compile` 通過。
+- [x] 2.1 `declared` 子指令讀出宣告行：依 requirement「Every implemented issue leaves a spec change or a declared exemption」的 Example「reading the Spec line」先寫測試（測試檔帶標記 `spec-example: spec-on-every-issue / reading the Spec line`），確認失敗後再實作。驗證：`bash plugins/issue-driven-dev/scripts/tests/spec-change/test.sh` 裡 13 列各有一個檢查並通過；參數錯誤是 exit 64。
+- [x] 2.2 `archived` 子指令回答宣告的 change 在某個 commit 上是否已封存：依 requirement「The change is archived on the branch before verify」的 Example「whether the declared changes are archived at a commit」先寫測試（帶對應標記），在暫存 repo 上建立與封存目錄後檢查。驗證：11 列各有一個檢查並通過；名稱只是另一個封存目錄的前綴時回 `refuse`；revision 不存在時回 `error`（exit 2）。
+- [x] 2.3 `links` 子指令檢查新增與改到的 requirement：依 requirement「Added and modified requirements carry an executable check」的 Example「what the link check reports」先寫測試（帶對應標記）。驗證：15 列各有一個檢查並通過；不給 `--base` 是 exit 64；沒有改到的 requirement 不會被報。
+- [x] 2.4 `preflight` 子指令決定能不能開始寫規格：依 requirement「A repository without Spectra stops and a third-party clone proceeds」的 Example「preflight by write access and Spectra state」先寫測試（帶對應標記）；linked worktree 用真的 `git worktree add` 建出來測（design「linked worktree 先停下」），`spectra` 是否在 PATH 用測試專用的 PATH 控制。驗證：8 列各有一個檢查並通過。
+- [x] 2.5 四個子指令的共同行為（design「機械判定集中在 scripts/spec-change.py」）：非 git 目錄、解析不了的規格檔都回 `error`，不回 `ok` 或 `pass`；每個子指令只印一行 JSON。驗證：測試各一例；`python3 -m py_compile` 通過。
 
 ## 3. wrapper
 
