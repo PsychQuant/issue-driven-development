@@ -72,6 +72,8 @@ assert_true "the spec close-out comes before the Implementation Complete comment
   "[ $(line_of "$IMPL" '### Step 4.5: Spec close-out') -lt $(line_of "$IMPL" '### Step 5: ') ]"
 assert_grep "the Implementation Complete template carries the marker" "$MARK" "$IMPL_TXT"
 assert_grep "the Implementation Complete template carries the Spec line" '**Spec**: {' "$IMPL_TXT"
+assert_grep "idd-implement's apply goes through contract step 4 (unpark first)" "契約第 4 步" "$(grep -F 'Skill(skill="spectra-apply"' "$IMPL")"
+assert_grep "idd-implement's propose carries the unattended note when unattended" "無人值守" "$(grep -F 'Skill(skill="spectra-propose"' "$IMPL")"
 assert_grep "the tree-lock step says a linked worktree cannot write a spec change" "linked worktree" "$(sed -n '/^### Step 0.4: /,/^### Step 0.5: /p' "$IMPL")"
 assert_grep "the stage task list has the spec preflight" 'name="spec_preflight"' "$IMPL_TXT"
 assert_grep "the stage task list has the spec close-out" 'name="spec_closeout"' "$IMPL_TXT"

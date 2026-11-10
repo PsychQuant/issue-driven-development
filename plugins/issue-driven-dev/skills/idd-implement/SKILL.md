@@ -425,7 +425,7 @@ idd-implement 是 **orchestration**（issue tracking、plan、checklist、body s
 
 > **要寫規格時（Step 0.6 決定 `change`，#480）**：先 propose，再寫下面的 Implementation Plan。
 >
-> - change 不存在 → `Skill(skill="spectra-propose", args="<change 名稱>：<需求>。輕量形式：不做 discuss、不寫 design。…")`，args 的寫法照契約第 3 步（每條 requirement 有 Example、測試帶標記）。
+> - change 不存在 → `Skill(skill="spectra-propose", args="<change 名稱>：<需求>。輕量形式：不做 discuss、不寫 design。…")`，args 的寫法照契約第 3 步（每條 requirement 有 Example、測試帶標記；無人值守時附上那一段 UNATTENDED MODE）。
 > - change 已存在（`idd-plan` 核准過的）→ 不再 propose，直接用它。
 >
 > Implementation Plan 的清單改成這個 change 的 tasks（照 `tasks.md` 的順序），並加一行 `**Spec plan**: change <名稱>`。宣告 `no behaviour change` 時照下面原本的寫法，加一行 `**Spec plan**: no behaviour change (<a|b|c|d>)`。
@@ -560,7 +560,7 @@ Routing **先看 `$VEXIT`**（gate 判定），`0` 才依 `$TIER` 決定行為�
 
 **適用範圍（#209 R1 verify F8）**：pre-flight 針對會走 TDD delegation 的 code 變更項；若本次變更清單**全部**屬下方「IDD 專屬路由例外」（純 prose / `with_skill`），此 pre-flight 可跳過 — 該路由本來就不 invoke superpowers。**注意（F10 → #212 已解）**：pre-flight 現亦查 enabled 狀態 — disabled 會在 pre-flight 即 exit 3 並印 enable 指令；CLI 缺席時 graceful degrade 回磁碟檢查。
 
-> **有 change 時（#480）**：pre-flight 照常跑（superpowers 的 TDD 紀律不變），然後 `Skill(skill="spectra-apply", args="<change 名稱>")` 逐項做 `tasks.md`：每個 Example 的測試先寫、先看到它失敗，測試檔帶 `spec-example: <capability> / <Example title>` 標記。下面的逐項流程用在沒有 change 的 issue（宣告 `no behaviour change`、`third-party clone`）。
+> **有 change 時（#480）**：pre-flight 照常跑（superpowers 的 TDD 紀律不變），然後照契約第 4 步：change 被 park 時先 `spectra unpark`，再 `Skill(skill="spectra-apply", args="<change 名稱>")`（無人值守時 args 附上契約第 3 步那一段）逐項做 `tasks.md`：每個 Example 的測試先寫、先看到它失敗，測試檔帶 `spec-example: <capability> / <Example title>` 標記。下面的逐項流程用在沒有 change 的 issue（宣告 `no behaviour change`、`third-party clone`）。
 
 每個變更項依序執行：
 
