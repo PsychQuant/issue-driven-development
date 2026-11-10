@@ -1,1 +1,1 @@
-https://github.com/test/repo/issues/888#issuecomment-DRY-RUN
+(pending — 1 candidate needs confirmation (only the text of the change names it): 888; see candidates-test-refs.txt in the state directory; re-run the dry run with --linked-issue <N>)

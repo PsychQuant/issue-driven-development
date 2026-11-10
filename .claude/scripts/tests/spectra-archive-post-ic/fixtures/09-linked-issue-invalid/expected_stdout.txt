@@ -1,1 +1,1 @@
-(failed — --linked-issue 99 not in candidate set: 44 )
+(failed — --linked-issue 99 not in candidate set: 44 ; if the review confirmed it as this change's issue, re-run the dry run with --force-linked-issue 99)
