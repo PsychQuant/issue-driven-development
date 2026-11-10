@@ -1,0 +1,30 @@
+{
+ "data": {
+  "repository": {
+   "pullRequest": {
+    "isDraft": false,
+    "reviewDecision": null,
+    "author": {
+     "login": "me"
+    },
+    "reviews": {
+     "totalCount": 0,
+     "nodes": []
+    },
+    "comments": {
+     "totalCount": 0,
+     "nodes": []
+    },
+    "userContentEdits": {
+     "totalCount": 0,
+     "nodes": []
+    },
+    "timelineItems": {
+     "totalCount": 1,
+     "filteredCount": 0,
+     "nodes": []
+    }
+   }
+  }
+ }
+}

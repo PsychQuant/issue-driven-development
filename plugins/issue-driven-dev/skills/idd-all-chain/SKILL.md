@@ -67,7 +67,7 @@ Take 1 root issue, recursively solve any chain-eligible spawned issues (from sub
 
 > **`/idd-all-chain` is a thin shell over `/idd-all`.** 90% of pipeline logic stays in `/idd-all` (Phase 0-6 unchanged); chain shell only orchestrates the recursion + cluster branch + cluster PR.
 
-> **Chain stops at verified, never at closed.** Per IDD discipline (already in `/idd-all`), close is a human checkpoint. Chain shell stops at all-verified state — user runs `/idd-close #ROOT #SPAWN_1 #SPAWN_2 ...` to finalize each issue.
+> **Chain stops at verified, never at closed.** The chain keeps close as a human checkpoint: it stops at all-verified state — user runs `/idd-close #ROOT #SPAWN_1 #SPAWN_2 ...` to finalize each issue. (Single-issue `/idd-all` merges and closes after a clean verify since #392; whether the chain follows is #393. Its sub-runs carry `--in-chain`, which keeps them out of `/idd-all`'s close stage.)
 
 > **Chain failure mode = halt + preserve.** If any chained `/idd-all #M --in-chain` ends with verify FAIL, halt the queue, preserve all partial commits on the cluster branch, print abort report. No rebase / revert.
 

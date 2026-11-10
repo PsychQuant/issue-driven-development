@@ -794,7 +794,15 @@ fi
 
 ### Step 1: 取得 diff 和 issue
 
-依 Step 0.5 resolved source：
+依 Step 0.5 resolved source。同時記下這份 diff 的起點 `BASE_SHA`（完整 40 字元），報告的 `**Reviewed**` 那一行要用（#392）：
+
+| source | `BASE_SHA` |
+|---|---|
+| PR mode | `git merge-base origin/$DEFAULT_BRANCH HEAD`（PR head 已 checkout） |
+| `--branch <name>` | `git merge-base origin/$DEFAULT_BRANCH <name>` |
+| `--commits N` | `git rev-parse HEAD~N` |
+| `--since <ref>` | `git rev-parse <ref>` |
+| uncommitted | `git rev-parse HEAD`（範圍是工作樹，`/idd-all` 不會用這種報告 merge） |
 
 ```bash
 # PR mode
@@ -1318,20 +1326,41 @@ git checkout $ORIGINAL_BRANCH   # Step 0.5 記住的
 
 ### Engine
 ${BACKEND_DESC}, model: ${DISPATCH_MODEL}   <!-- 由解析鏈 BACKEND_DESC + 雙路徑抽取的 DISPATCH_MODEL 組成（#207）；canonical 例：pai-ensemble 2.18.0 (canonical #207) — 4 IDD lenses + DA + Codex (gpt-5.x), model: opus；Tier 3 manual 的 DESC 自含 model -->
+R / T reviewers completed   <!-- T＝這一輪派出的 reviewer 數（lens、DA、cross-model 都算），R＝交出結果的數；#392 -->
+
+### Aggregate
+**PASS / FAIL** — N blocking, M in-scope fix, K follow-up
+
+**Reviewed**: `${BASE_SHA}..${FROZEN_SHA}`
 
 ### 要求覆蓋率
 X / Y requirements addressed
 
 ### Findings（合併後）
-| # | Severity | Finding | Source |
-|---|----------|---------|--------|
-| 1 | P1 | ... | agents:logic+codex |
-| 2 | P2 | ... | agents:security |
-| 3 | — | (devil's advocate 未能反駁) | agents:devils-advocate |
+| # | Severity | Finding | Source | Action |
+|---|----------|---------|--------|--------|
+| 1 | P1 | ... | agents:logic+codex | Blocking |
+| 2 | P2 | ... | agents:security | Follow-up |
 
 ### Scope Check
 {有沒有超出 issue 範圍的改動}
 ```
+
+**這兩份樣板是 `/idd-all` 自動 merge 的輸入（#392）**，`scripts/verify-gate.py` 照它讀；Step 4 貼出報告時就要符合，不是 Step 5a 才補：
+
+- gate 讀的是 GitHub 把這則 comment 渲染出來的 HTML，不是 markdown 原文：GitHub 畫成表格的東西 gate 都會讀到（包括收在 `<details>` 裡的表格），GitHub 不顯示的（HTML 註解）gate 也看不到。`<details>` 可以用，例如 Step 3.5 Proposed Corrections 的替換內容。
+- 恰好一行判定，以 `**PASS**` 或 `**FAIL**` 開頭，自成一段（不在引用、清單或 `<details>` 裡），寫出筆數：`N blocking, M in-scope fix, K follow-up`，有 `Rejected` 的列時再加 `, R rejected`，與 Findings 表一致；其他行不要用粗體大寫英文字開頭。
+- `### 要求覆蓋率` 的 `X / Y requirements addressed` 一定要寫；判定 PASS 時 X 必須等於 Y（沒滿足的要求是 Blocking finding，不是 PASS），少了這一行 gate 判讀不出來。
+- Severity 是 CRITICAL、HIGH、P0 或 P1 的意見歸成 `Follow-up` 時，`/idd-all` 不會越過它自動 merge：嚴重的意見歸為範圍外，要由人同意（#392 verify r5 #4）。
+- `### Engine` 下恰好一行 `R / T reviewers completed`：T 是這一輪派出的 reviewer 數（每個 lens、Devil's Advocate、cross-model 各算一個），R 是交出結果的數，數字取自引擎回報的完成數，不是預設值。判定 PASS 的報告少了這一行，gate 讀不出來；R 小於 T 就是 verify 降級跑，`/idd-all` 不自動 merge（#392 verify r7）。
+- reviewer 沒交出結果、由 coordinator 代審時，照 Step 2.5 寫 `### Process Gaps`；報告裡任何地方出現 `Process Gaps` 這兩個字（不分大小寫），`/idd-all` 就不自動 merge（verify 降級跑，r5 #22）。沒有降級就不要寫這一節，也不要寫「Process Gaps：無」。
+- 判定與分類只出現在判定行與 Findings 表。**其他行、標題、粗體標籤都不要以這些字開頭**：`PASS`、`FAIL`、`PASSED`、`FAILED`、`CONDITIONAL`、`Verdict:`（或「判定：」「結論：」）、`Blocking`、`In-scope fix`、`Follow-up`、`Rejected`（複數、前面加 emoji、包在斜體裡都一樣）；報告的標題（`## Verify: #N`）裡也不要寫 PASS 或 FAIL。gate 會把這種行讀成第二個判定或表格外的 finding，整份報告讀不出來（#392 verify r7）。句子中間提到這些字沒有關係，例如「第 1 輪的 2 項 Blocking 都已修」。
+- 有 `Severity` 欄的表一定要有 `Action` 欄（而且是最後一欄）；其他用途的表不要用 `Severity` 當欄名。
+- 判定 PASS 而 In-scope fix 只剩 LOW、INFO 或 P3 時，`/idd-all` 照樣 merge，並把那些列合成一張 follow-up issue（#392，2026-11-10 的決定）；Severity 欄寫了兩個嚴重度時，以較嚴重的那個為準。
+- 報告貼出後不要編輯。結論變了就再跑一輪 verify、貼新的報告：`/idd-all` 不讀貼出後被改過的報告（r5 #14）。
+- 恰好一行 ``**Reviewed**: `<BASE_SHA>..<FROZEN_SHA>` ``，兩個都寫完整的 40 字元 commit：`FROZEN_SHA` 是 `get_diff_and_issue` 凍結的 head，`BASE_SHA` 是這份 diff 的起點（見 Step 1）。`/idd-all` 只在這段範圍正好是要 merge 或 push 的範圍時才放行；只寫一個 commit 會被當成讀不出來。
+- Findings 表的最後一欄是 `Action`，每一列只填 `Blocking`、`In-scope fix`、`Follow-up`、`Rejected` 四者之一（規則見 Step 5a）。
+- 一張表不要被空行切開；引用程式碼用 fence 時要成對關閉。
 
 格式（PR mode，cluster 時 per-issue 分區段）：
 ```markdown
@@ -1339,9 +1368,12 @@ X / Y requirements addressed
 
 ### Engine
 ${BACKEND_DESC}, model: ${DISPATCH_MODEL}   <!-- 同 local/branch mode 的組成規則（#207） -->
+R / T reviewers completed
 
 ### Aggregate
-**PASS / FAIL** — N blocking, M follow-up
+**PASS / FAIL** — N blocking, M in-scope fix, K follow-up
+
+**Reviewed**: `${BASE_SHA}..${FROZEN_SHA}`
 
 ### Scope coverage
 PR refs: #98, #105
@@ -1407,13 +1439,14 @@ done
 
 #### Step 5a: 分類 findings
 
-合併後的每個 finding 歸入三類：
+合併後的每個 finding 歸入四類：
 
 | 類別 | 判斷標準 | 處置 |
 |------|---------|------|
 | **Blocking** | 直接違反 issue 要求、邏輯錯誤、安全漏洞 | 必須修復後重跑 verify |
 | **In-scope fix** | 屬於本 issue 範圍但非阻擋性（如 description 不精確、spec 過時） | 本次修復，不需重跑 verify |
 | **Follow-up** | 不屬於本 issue 範圍的改善建議（如共用函式的行為、缺少上限） | → Step 5b 問使用者 |
+| **Rejected** | 查證後不成立的意見（重現不出來、引用的程式碼不是那樣） | 留在表內、寫出理由；`/idd-all` 不越過它自動 merge（#392） |
 
 在 verification report 的 Findings 表加一欄 `Action`：
 
@@ -1424,6 +1457,13 @@ done
 | 2 | MEDIUM | ... | agents:regression | In-scope fix |
 | 3 | LOW | ... | agents:security | Follow-up |
 ```
+
+**報告格式是 `/idd-all` 自動 merge 的輸入（#392）**：`/idd-all` 用 `scripts/verify-gate.py` 讀這份報告，決定能不能 merge 並 close；讀不出來就停在 verified。所以：
+
+- 報告恰好有一行判定，以 `**PASS**` 或 `**FAIL**` 開頭（放在 `### Aggregate` 下）。其他行不要用粗體大寫英文字開頭，也不要以 `PASS`、`FAIL`、`Verdict:` 或四個分類的名字開頭（完整規則見 Step 4 的樣板說明）。
+- Findings 表的最後一欄是 `Action`，每一列只填 `Blocking`、`In-scope fix`、`Follow-up`、`Rejected` 四者之一，不加括號註解；說明寫在 Finding 欄或表格外。
+- **reviewer 的意見判定為不成立時，照樣留在這張表，Action 填 `Rejected`**，Finding 欄寫出不成立的理由（引用程式碼或行號），判定行寫出 `R rejected`。不要把它移到表外：寫這份報告、判定意見不成立的，就是寫這份程式碼的同一個 orchestrator，gate 只讀這張表（#392 verify r4 #7）。`/idd-all` 不會越過 `Rejected` 的 finding 自動 merge，由人決定它是否成立。
+- 沒有任何 finding 時仍要寫出表頭（只有表頭與分隔列），代表零筆。
 
 #### Step 5b: Follow-up Issue Triage
 
@@ -1438,7 +1478,7 @@ done
 - Pre-filing: similar findings MAY be merged (e.g. same function with multiple problems → one issue)
 - Body references verify report comment URL for source provenance
 
-**Audit trail target**: `### Follow-up Findings Filed (v2.72.0+ #148)` in verify report (master comment)。 **`(category: audit-block-append, scope: "### Follow-up Findings Filed")` per [`rules/append-vs-modify.md`](../../rules/append-vs-modify.md)** — adds new audit block to named section without modifying existing verify report findings table。
+**Audit trail target**: `### Follow-up Findings Filed (v2.72.0+ #148)`，**另貼一則獨立 comment**，第一行就是這個標題，不編輯 verify report：`/idd-all` 不讀貼出後被改過的報告（#392 verify r7）。
 
 **Default behavior (v2.72.0+)**: File by default per canonical Section 1.1. Skip requires 3-category taxonomy per Section 1.4.
 
