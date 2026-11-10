@@ -25,6 +25,9 @@ Version number left to the release.
     a false `no behaviour change` is HIGH, a missing Example test or an unarchived change is Blocking.
   - `idd-close` Step 1.57 refuses to close while the declared change is not archived on the default branch.
   - A fix after a verify round that adds or changes a requirement is a further change `idd-<N>-fix<k>`.
+  - Cost, measured once (2026-11-11, an unattended `/idd-all` on a sandbox Simple issue that added a 20-line
+    script and its test): Diagnosis to Implementation Complete took 5 minutes, of which about 3 went to the
+    propose step and the close-out (spectra-verify, archive), judged from commit times. One run, no control.
 
 ### Added
 
