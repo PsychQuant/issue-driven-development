@@ -498,3 +498,44 @@ When `idd-all` merges, pushes, or closes, its Phase 6 report SHALL start with `D
 
 - **WHEN** a run stops because the verify gate reported `unparseable`
 - **THEN** the report contains no `merged` or `closed` line and contains `Stopped:` with the gate's reason
+
+### Requirement: idd-all states which outward actions it runs without asking
+
+`skills/idd-all/SKILL.md` SHALL carry a section headed `## 權限` that lists, as two closed tables, the outward actions `idd-all` itself starts: the actions it runs and then reports with an `Undo:` line, and the actions it asks a person about first. The basis SHALL be Foresay's `reversible` property: the state can be restored, no cost is unrecoverable, and nothing has been observed by another party. An outward action of `idd-all` that is on neither table SHALL be asked about first; no action SHALL be added to the first table because it resembles one that is there. An action a sub-skill starts follows that sub-skill. Where the rules of the person running `idd-all` are stricter than the section, those rules apply.
+
+`idd-all` SHALL open the pull request of its run without asking only when `close-stage.py pr-check` prints `"status": "open"`. The check reads the title and the body the run is about to send and the default branch as the local clone has it, and SHALL answer `ask` with a reason when any of these holds: the title or the body mentions an account (an `@` followed by a letter or digit, not preceded by a letter, digit, `_`, `.`, `+`, `-` or `/`); the title or the body has a close keyword next to an issue reference; a `CODEOWNERS` file exists on the default branch at `.github/CODEOWNERS`, `CODEOWNERS` or `docs/CODEOWNERS` (opening the pull request would request a review from a person); or the default branch cannot be read. The pull request is opened in the repository the run pushed its branch to, from the run's branch to the default branch, with no reviewer and no assignee. The privacy self-review of the title and the body stays with the model and is not part of this check. When the check answers `ask`, an attended run SHALL ask the person and an unattended run SHALL NOT open the pull request: the branch stays pushed and the run report names the reason.
+
+#### Scenario: A repository with a CODEOWNERS file
+
+- **GIVEN** an unattended PR-mode run whose verify is clean
+- **AND** the default branch has `.github/CODEOWNERS`
+- **WHEN** the run reaches the step that opens the pull request
+- **THEN** `pr-check` prints `"status": "ask"` naming the file, no pull request is opened, the branch stays pushed, and the run report names the reason
+
+##### Example: pr-check by title, body and default branch
+
+| Title and body | Default branch | `status` | Exit |
+| --- | --- | --- | --- |
+| `Refs #7`, no mention | no `CODEOWNERS` at any of the three paths | `open` | 0 |
+| `Refs #7`, no mention | `.github/CODEOWNERS` exists | `ask` | 3 |
+| `Refs #7`, no mention | `docs/CODEOWNERS` exists | `ask` | 3 |
+| body has `thanks @someone` | no `CODEOWNERS` | `ask` | 3 |
+| body has `mail t@example.test` and `` `pkg@1.2` `` | no `CODEOWNERS` | `open` | 0 |
+| title has `fix #7` | no `CODEOWNERS` | `ask` | 3 |
+| `Refs #7`, no mention | the clone has no `origin/<default>` | `ask` | 3 |
+| a title file that does not exist | any | usage error | 64 |
+
+##### Example: which actions idd-all runs and reports, and which it asks about
+
+| Action started by `idd-all` | Table | Undo, or why it cannot be undone |
+| --- | --- | --- |
+| create an issue, comment, edit its own issue body, set a label, push the baseline tag | runs and reports | edit or delete the record |
+| push the run's branch (not the default branch, no `--force`) | runs and reports | delete the remote branch |
+| open the run's pull request, when `pr-check` prints `open` | runs and reports | `gh pr close <N>` |
+| squash-merge, push on the default branch, `/idd-close`, when `close-stage.py run` passes every guardrail | runs and reports | `git revert`, `gh issue reopen` |
+| open a pull request for which `pr-check` prints `ask` | asks first | a notification cannot be recalled |
+| any egress whose text did not pass the privacy self-review | asks first | published text cannot be recalled |
+| delete a branch, or push with `--force` | asks first | the overwritten commits are gone |
+| publish: `gh release`, a marketplace sync, a tag other than the baseline tag | asks first | it has reached users |
+| merge and close in a run that carries `--review` | a person does it | the flag means a person looks first |
+

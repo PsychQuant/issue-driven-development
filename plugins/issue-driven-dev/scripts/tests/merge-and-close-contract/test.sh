@@ -203,4 +203,17 @@ assert_grep "idd-verify: the follow-up record is its own comment" "不編輯 ver
 assert_grep "MANIFESTO: the tier is not on the intent list" "tier 不在此列" "$MANI_TXT"
 assert_grep "MANIFESTO: the CI guardrail is the local CI gate" "idd-ci-gate.sh" "$MANI_TXT"
 
+# 權限 (2026-11-10): the skill itself states which outward actions it runs without asking
+PERM="$(section "$ALL" "## 權限")"
+assert_grep "idd-all has a permissions section based on Foresay's reversible" "Foresay 的 \`reversible\`" "$PERM"
+assert_grep "permissions: an action on neither table is asked about first" "不在表上的對外動作一律先問" "$PERM"
+assert_grep "permissions: opening the PR is on the runs-and-reports table, behind pr-check" "\`close-stage.py pr-check\` 回 \`open\`" "$PERM"
+assert_grep "permissions: opening the PR names its undo" "gh pr close" "$PERM"
+assert_grep "permissions: publishing is asked about first" "gh release" "$PERM"
+assert_grep "permissions: the person's own stricter rules win" "以他的規則為準" "$PERM"
+P5="$(section "$ALL" "### Phase 5: ")"
+assert_grep "Phase 5 asks pr-check before opening the PR" "close-stage.py\" pr-check" "$P5"
+assert_grep "Phase 5 prints the undo of the PR it opened" "Undo: gh pr close" "$P5"
+assert_grep "Phase 5 does not open the PR when pr-check says ask" "PR not opened" "$P5"
+
 print_summary

@@ -296,3 +296,22 @@ MANIFESTO〈auto-merge 的合法性與限制〉改成兩個理由並列：verify
 ## Open Questions
 
 (none) — 使用者的決定已記在 #392（Clarity Surface、Diagnosis Decisions、spectra-discuss 結論）。
+
+## 權限寫進 skill（2026-11-10，#392 comment 6763147692）
+
+sandbox 的端到端測試裡，headless 的 run 推完 branch 後停在開 PR 前，等一個沒有人會回的確認。維護者的決定：開 PR 可逆，算在 `/idd-all` 裡；哪些動作要人決定，照 Foresay 判斷；這條規則要寫在 skill 自己身上，不寫在個人的設定裡，否則別人裝了 plugin 行為會不一樣。
+
+### 權限表是 skill 的一節，不是執行者的設定
+
+**In scope**：`skills/idd-all/SKILL.md` 的〈權限〉一節（兩張封閉的表）、`close-stage.py pr-check`、Phase 5 在開 PR 前呼叫它並在開了之後印 `Undo:`。
+
+**Out of scope**：sub-skill 自己發起的對外動作（例如 `idd-verify` 的 verified tag）照各自的 skill，這一節不改它們；執行者自己更嚴的規則照舊優先。
+
+### 開 PR 算不算可逆，由程式判定
+
+Foresay 的 `reversible` 除了狀態可復原，還要求沒有別人已經看到而收不回的東西。PR 可以關、標題與內文可以改，所以一般情況是可逆的；會讓它不可逆的是通知（`@` 到帳號、`CODEOWNERS` 自動請人 review）與合併時自動關掉 issue（close 關鍵字）。這幾項是字面與檔案存在與否的事，寫成 `pr-check`，不靠模型記得。隱私自審是語意判斷，仍由模型做。
+
+**Alternatives considered**：只寫成 SKILL 裡的條件、由模型逐條核對。沒有採用：unattended 的 run 沒有人看，條件沒有程式擋就等於沒有；這個 change 其餘的閘門也都由 `close-stage.py` 判定。
+
+`CODEOWNERS` 讀的是本機 clone 的 `origin/<default>`，不另外打 API：Phase 0.5 在 PR mode 已經 fetch 過；讀不到就回 `ask`。已知限制：repo 的 watcher 仍會收到「有新 PR」的一般通知，這不算通知到特定的人；提到帳號的判斷比 GitHub 寬（程式碼區塊裡的 `@x` 也算），多出來的是多問一次。
+

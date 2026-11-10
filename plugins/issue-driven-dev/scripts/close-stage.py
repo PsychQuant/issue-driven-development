@@ -760,11 +760,65 @@ def cmd_confirm(argv):
         return 3
 
 
+# ── pr-check: may the run open its pull request without asking? ────────────
+# The SKILL's 權限 section: opening the pull request is reversible (it can be closed and edited)
+# unless it notifies a person or would close the issue on merge. The privacy self-review of the
+# text is the model's; this check covers what a program can decide.
+
+CODEOWNERS_PATHS = (".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS")
+# An @ that starts a token: not part of an e-mail address, a version pin (pkg@1.2) or a path.
+MENTION_RE = re.compile(r"(?<![A-Za-z0-9_.+/-])@[A-Za-z0-9][A-Za-z0-9-]*")
+BRANCH_RE = re.compile(r"^[A-Za-z0-9._/][A-Za-z0-9._/-]*$")
+
+
+def pr_check(cwd, default, title, body):
+    """The reason the run must ask before opening the pull request, or None."""
+    text = title + "\n" + body
+    mention = MENTION_RE.search(text)
+    if mention:
+        return f"the title or the body mentions an account ({mention.group(0)[:40]}): a notification cannot be recalled"
+    hits = trap_hits(text)
+    if hits:
+        return "a close keyword next to an issue reference in the title or the body: " + ", ".join(h[:40] for h in hits[:3])
+    ref = f"refs/remotes/origin/{default}"
+    rc, out, err = run_cmd([GIT, "-C", cwd, "rev-parse", "--verify", "--quiet", ref + "^{commit}"])
+    if rc != 0:
+        return f"could not read origin/{default} in the local clone — cannot tell whether a CODEOWNERS file exists"
+    rc, out, err = run_cmd([GIT, "-C", cwd, "ls-tree", "-z", "--name-only", ref, "--"] + list(CODEOWNERS_PATHS))
+    if rc != 0:
+        return f"could not list origin/{default} — cannot tell whether a CODEOWNERS file exists"
+    found = [path for path in out.split("\0") if path]
+    if found:
+        return f"the default branch has {found[0]}: opening the pull request would request a review from a person"
+    return None
+
+
+def cmd_pr_check(argv):
+    a = parse(argv, {"--cwd": "value", "--default": "value", "--title-file": "value", "--body-file": "value"})
+    if a is None or not (a.get("--cwd") and os.path.isdir(a["--cwd"])) or not BRANCH_RE.match(a.get("--default", "")) \
+            or not all(a.get(k) and os.path.isfile(a[k]) for k in ("--title-file", "--body-file")):
+        return usage("pr-check needs --cwd --default (a branch name) --title-file --body-file (existing files)")
+    try:
+        with open(a["--title-file"], encoding="utf-8") as fh:
+            title = fh.read()
+        with open(a["--body-file"], encoding="utf-8") as fh:
+            body = fh.read()
+        reason = pr_check(a["--cwd"], a["--default"], title, body)
+    except Exception as exc:  # fail closed: a surprise means ask, never open
+        reason = f"internal error: {exc.__class__.__name__}: {exc}"
+    if reason:
+        print(json.dumps({"status": "ask", "reason": reason}, ensure_ascii=False))
+        return 3
+    print(json.dumps({"status": "open"}))
+    return 0
+
+
 def main(argv):
     if not argv:
-        return usage("subcommand required: init | reset | gate | run | confirm-close")
+        return usage("subcommand required: init | reset | gate | pr-check | run | confirm-close")
     sub, rest = argv[0], argv[1:]
-    handlers = {"init": cmd_init, "reset": cmd_reset, "gate": cmd_gate, "run": cmd_run, "confirm-close": cmd_confirm}
+    handlers = {"init": cmd_init, "reset": cmd_reset, "gate": cmd_gate, "pr-check": cmd_pr_check, "run": cmd_run,
+                "confirm-close": cmd_confirm}
     if sub not in handlers:
         return usage(f"unknown subcommand '{sub}'")
     return handlers[sub](rest)

@@ -35,6 +35,33 @@ allowed-tools:
 > - **Clean verify ends in merge and close**（#392）: verify gate（`scripts/verify-gate.py`，報告須寫出它審查的 commit）判定乾淨、而且 merge guardrail 全過時（全部在 `scripts/close-stage.py` 的同一個 process 裡檢查），PR mode squash-merge PR、direct-commit mode 在預設 branch 上 push，接著以 `ORCHESTRATED BY /idd-all` 指示呼叫 `/idd-close`，不先問人。merge 可 revert、close 可 reopen，依 Foresay 屬於 traceable：做完必須回報（`Done:`／`Undo:`）。gate 判定不乾淨或讀不出來、任一 guardrail 不過、意圖沒有確認過、run 開始後有別人插手、帶 `--review`、或在 `--in-chain` 裡時，停在 verified 並回報 `Stopped:`（Phase 5c 的兩張表）。meeting issue 不跑 verify，停在 planning 或 diagnosed（見 Phase 6 meeting report）。
 > - **Fail-safe escalation**: 遇到 ambiguity 寧可 abort,絕不亂猜 — 但 SDD path 預設是「文件化 assumption 後繼續」(見 Phase 3b),不是 abort。Abort 是最後手段。
 
+## 權限：這個 skill 自己做的事，與先問人的事（#392）
+
+依據是 Foresay 的 `reversible`：狀態復原得了、沒有收不回的成本、沒有別人已經看到而收不回的東西。三個都成立的動作，這個 skill 做完就回報並附 `Undo:`，不先問；不成立的先問。下面兩張表是封閉列舉，範圍是這個 skill 自己發起的對外動作（sub-skill 發起的照各自的 skill）。**不在表上的對外動作一律先問，不得因為性質相似就當成第一張表的動作。** 執行者自己的規則比這一節嚴格時，以他的規則為準。
+
+**做完回報**
+
+| 動作 | 條件 | Undo |
+|---|---|---|
+| 建 issue、留言、改自己的 issue 正文、設 label、baseline tag | 內文過隱私自審，經 `gh-egress.sh` 送出 | 編輯或刪除那一筆 |
+| 推這次 run 的 branch（Phase 5） | 不是預設 branch、不帶 `--force` | 刪掉遠端 branch |
+| 開這次 run 的 PR（Phase 5） | `close-stage.py pr-check` 回 `open`，標題與內文過隱私自審 | `gh pr close <N>` |
+| squash-merge、在預設 branch 推送、`/idd-close`（Phase 5c） | `close-stage.py run` 的閘門全過 | `git revert`、`gh issue reopen` |
+
+**先問人**
+
+| 動作 | 為什麼收不回 |
+|---|---|
+| `pr-check` 回 `ask` 的 PR：標題或內文 `@` 到帳號、預設 branch 有 `CODEOWNERS`（開 PR 會自動請人 review）、close 關鍵字緊鄰 issue 號、預設 branch 讀不到 | 通知送出去就收不回；合併時會繞過 `/idd-close` 關掉 issue |
+| 內文沒過隱私自審的任何對外動作 | 公開出去的內容收不回 |
+| 刪除 branch、`--force` | 被覆蓋或刪掉的 commit 找不回來 |
+| 發布：`gh release`、marketplace 同步、baseline 以外的 tag | 已經到使用者手上 |
+| 帶 `--review` 的 run 的合併與結案 | 由人做：這個旗標的意思就是人要先看 |
+
+還沒回答的釐清問題不是操作，是意圖確認：由人回答，run 停在那裡（Phase 5c 的意圖那一列）。
+
+要先問的動作，attended 用 `AskUserQuestion` 問；unattended 不做，把原因寫進 Phase 6 報告的 `Stopped:`。
+
 ## 與其他 idd-* skills 的關係
 
 | Skill | 模式 | 用途 |
@@ -1219,9 +1246,22 @@ EOF
     gh pr edit "$PR_URL" -R "$GITHUB_REPO" --body "$PR_BODY" >/dev/null || echo "⚠ could not refresh the body of $PR_URL"
     echo "→ reusing $PR_URL"
   else
-    PR_URL=$(gh pr create -R "$GITHUB_REPO" --title "$PR_TITLE" --body "$PR_BODY" \
-        --base "$DEFAULT" --head "$BRANCH") || abort "gh pr create failed — branch $BRANCH is pushed; open the PR by hand"
-    echo "→ opened $PR_URL"
+    # 〈權限〉：開 PR 算不算可逆由程式判定（會不會通知到人、會不會在合併時關掉 issue）。隱私自審是模型的事，在這之前做完。
+    PRC_DIR=$(mktemp -d) || abort "mktemp failed — not opening the PR"
+    printf '%s' "$PR_TITLE" > "$PRC_DIR/title"; printf '%s' "$PR_BODY" > "$PRC_DIR/body"
+    PRC=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/close-stage.py" pr-check --cwd "$CWD" --default "$DEFAULT_BRANCH" \
+        --title-file "$PRC_DIR/title" --body-file "$PRC_DIR/body"); PRC_RC=$?
+    rm -f "$PRC_DIR/title" "$PRC_DIR/body"; rmdir "$PRC_DIR"
+    if [ "$PRC_RC" -eq 0 ]; then
+      PR_URL=$(gh pr create -R "$GITHUB_REPO" --title "$PR_TITLE" --body "$PR_BODY" \
+          --base "$DEFAULT" --head "$BRANCH") || abort "gh pr create failed — branch $BRANCH is pushed; open the PR by hand"
+      echo "→ opened $PR_URL"
+      echo "Undo: gh pr close ${PR_URL##*/} -R $GITHUB_REPO"
+    else
+      # exit 3 = ask（原因在 JSON）；其他 = 用法錯誤。兩種都不開 PR。
+      echo "→ PR not opened — pr-check: $(printf '%s' "$PRC" | jq -r '.reason // empty' 2>/dev/null || true)${PRC:+ }(exit $PRC_RC)"
+      echo "   attended: ask the person whether to open it; unattended: leave the branch pushed and put this reason in the Phase 6 report (Stopped:)."
+    fi
   fi   # Phase 5c finds the PR itself (close-stage.py run), it does not take this URL
 fi
 # Every path falls through to Phase 5c below.

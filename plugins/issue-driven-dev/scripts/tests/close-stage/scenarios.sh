@@ -643,4 +643,46 @@ python3 "$CS" reset --cwd "$C" --issue $N; assert_exit "reset: exit" 0 $?
 assert_file_absent "reset: removes the run state" "$C/.claude/.idd/state/idd-all-run-7.json"
 python3 "$CS" bogus >/dev/null 2>&1; assert_exit "an unknown subcommand is a usage error" 64 $?
 
+echo "close-stage: pr-check (may the run open its pull request without asking)"
+# spec-example: idd-pr-hitl-modes / pr-check by title, body and default branch
+prc() { # uses $S $C $TITLE $BODY → PRC (the JSON line), RC
+  printf '%s' "$TITLE" > "$S/title.txt"; printf '%s' "$BODY" > "$S/body.txt"
+  PRC=$(python3 "$CS" pr-check --cwd "$C" --default main --title-file "$S/title.txt" --body-file "$S/body.txt" 2>/dev/null); RC=$?
+}
+codeowners() { # path [push] — commit the file on the current branch; push main unless told not to
+  mkdir -p "$C/$(dirname "$1")"; echo '* @someone' > "$C/$1"; git -C "$C" add "$1"; git -C "$C" commit -q -m "codeowners"
+  [ "${2:-push}" = push ] && git -C "$C" push -q origin main
+}
+# plain_pr stays on one line ending in }: run_parallel.py then puts it in every block's prelude
+plain_pr() { TITLE="docs: say hello (#7)"; BODY=$'Refs #7\n\n## Summary\nhello'; }
+new_scenario prc-plain; plain_pr; prc
+assert_eq "pr-check: no mention, no CODEOWNERS → open" open "$(printf '%s' "$PRC" | field status)"
+assert_exit "pr-check: open exits 0" 0 "$RC"
+for where in .github/CODEOWNERS CODEOWNERS docs/CODEOWNERS; do
+  new_scenario "prc-co-$(printf '%s' "$where" | tr -c 'A-Za-z' '-')"; codeowners "$where"; plain_pr; prc
+  assert_eq "pr-check: $where on the default branch → ask" ask "$(printf '%s' "$PRC" | field status)"
+  assert_exit "pr-check: $where → exit 3" 3 "$RC"
+  assert_grep "pr-check: the reason names $where" "$where" "$(printf '%s' "$PRC" | field reason)"
+done
+new_scenario prc-co-branch-only; git -C "$C" checkout -q -b idd/7-x; codeowners .github/CODEOWNERS nopush; plain_pr; prc
+assert_eq "pr-check: a CODEOWNERS only on the run's branch does not count (the default branch decides)" open "$(printf '%s' "$PRC" | field status)"
+new_scenario prc-mention; plain_pr; BODY=$'Refs #7\n\nthanks @someone'; prc
+assert_eq "pr-check: a mention in the body → ask" ask "$(printf '%s' "$PRC" | field status)"
+assert_grep "pr-check: the reason says it is a mention" "mentions an account" "$(printf '%s' "$PRC" | field reason)"
+new_scenario prc-mention-title; plain_pr; TITLE="docs: for @someone (#7)"; prc
+assert_eq "pr-check: a mention in the title → ask" ask "$(printf '%s' "$PRC" | field status)"
+new_scenario prc-email; plain_pr; BODY=$'Refs #7\n\nmail t@example.test and `pkg@1.2`'; prc
+assert_eq "pr-check: an e-mail address and a version pin are not mentions" open "$(printf '%s' "$PRC" | field status)"
+new_scenario prc-trap; plain_pr; TITLE="fix #7"; prc
+assert_eq "pr-check: a close keyword next to the issue number → ask" ask "$(printf '%s' "$PRC" | field status)"
+assert_grep "pr-check: the reason says it is a close keyword" "close keyword" "$(printf '%s' "$PRC" | field reason)"
+new_scenario prc-noref; git -C "$C" update-ref -d refs/remotes/origin/main; plain_pr; prc
+assert_eq "pr-check: the default branch cannot be read → ask" ask "$(printf '%s' "$PRC" | field status)"
+assert_exit "pr-check: unreadable default branch → exit 3" 3 "$RC"
+new_scenario prc-usage; printf 'b' > "$S/body.txt"
+python3 "$CS" pr-check --cwd "$C" --default main --title-file "$S/absent.txt" --body-file "$S/body.txt" >/dev/null 2>&1
+assert_exit "pr-check: a missing title file is a usage error" 64 $?
+python3 "$CS" pr-check --cwd "$C" --default "-x" --title-file "$S/body.txt" --body-file "$S/body.txt" >/dev/null 2>&1
+assert_exit "pr-check: a default branch that starts with a dash is a usage error" 64 $?
+
 print_summary close-stage
