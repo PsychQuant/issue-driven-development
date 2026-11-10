@@ -92,7 +92,8 @@ def parse(argv, allowed, required):
 def git(cwd, *args, check=True):
     env = dict(os.environ, GIT_LITERAL_PATHSPECS="1")   # a spec_dir is a path, never pathspec magic
     try:
-        p = subprocess.run(["git", "-C", cwd, *args], capture_output=True, env=env)
+        # core.quotePath=false: paths come back as stored, not quoted (a capability named 中文能力 was skipped)
+        p = subprocess.run(["git", "-c", "core.quotePath=false", "-C", cwd, *args], capture_output=True, env=env)
     except FileNotFoundError:
         raise Fail("git is not on PATH")
     if check and p.returncode != 0:
@@ -123,7 +124,14 @@ def spec_dir_of(text):
     values = [m.group(1) for m in (SPEC_DIR_RE.match(l) for l in lines_of(text)) if m]
     if not values:
         return "openspec"
-    value = values[-1].split(" #", 1)[0].strip().strip('"').strip("'").strip()
+    raw = values[-1].strip()
+    if raw[:1] in ('"', "'"):   # a value in quotes is read whole; " #" starts a comment only outside quotes
+        end = raw.find(raw[0], 1)
+        if end == -1:
+            raise Fail(f".spectra.yaml spec_dir {raw[:60]!r} has an unclosed quote")
+        value = raw[1:end].strip()
+    else:
+        value = raw.split(" #", 1)[0].strip()
     parts = value.replace("\\", "/").split("/")
     if not value or value.startswith(("/", "-", ":")) or ".." in parts or re.match(r"^[A-Za-z]:", value):
         raise Fail(f".spectra.yaml spec_dir {value[:60]!r} must be a relative path inside the repository")
@@ -472,8 +480,8 @@ def cmd_ic(argv):
     try:
         with open(a["--comments"], encoding="utf-8") as fh:
             comments = comments_of(fh.read())
-    except (OSError, UnicodeDecodeError, ValueError) as exc:
-        print(f"spec-change ic: cannot read the comments: {exc}", file=sys.stderr)
+    except (OSError, UnicodeDecodeError, ValueError, RecursionError) as exc:
+        print(f"spec-change ic: cannot read the comments: {str(exc)[:200]}", file=sys.stderr)
         return 2
     chosen = None
     for c in comments:

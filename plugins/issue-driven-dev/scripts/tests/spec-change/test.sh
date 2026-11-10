@@ -282,6 +282,8 @@ linked_repo l-listfence; put openspec/specs/cap/spec.md "$(spec "$(req Base)" "$
 links_case "added, its only No executable check line inside a fence indented four spaces in a list item" missing 1 1
 linked_repo l-u2028; put openspec/specs/cap/spec.md "$(spec "$(req Base)" "$(req Alpha '##### Example: alpha')")"; put scripts/tests/x/test.sh "# spec-example: cap / alpha$(printf '\342\200\250') table"; commit >/dev/null
 links_case "a marker followed by U+2028 and more text on the same line does not count" missing 1 1
+linked_repo l-nonascii; put "openspec/specs/中文能力/spec.md" "$(spec "$(req Alpha)")"; commit >/dev/null
+links_case "added, in a capability whose directory name is not ASCII (idd-480-fix4)" missing 1 1
 linked_repo l-nospecs; git -C "$REPO" rm -q -r openspec/specs; commit >/dev/null
 links_case "openspec/specs/ holds no tracked file at the head revision" error "" 2
 newrepo l-gitkeep; put openspec/specs/.gitkeep ''; BASE=$(commit base); put README.txt x; commit >/dev/null
@@ -346,6 +348,7 @@ specdir_case "spec_dir with no value" "spec_dir:" openspec error 2
 specdir_case "a spec_dir that starts with a dash" "spec_dir: -x" openspec error 2
 specdir_case "a spec_dir that names the repository root" "spec_dir: ." openspec error 2
 specdir_case "a spec_dir that starts with a colon (git pathspec magic)" 'spec_dir: ":(top)openspec"' openspec error 2
+specdir_case 'a " #" inside the quotes is part of the value' 'spec_dir: "docs/my # specs"' "docs/my # specs" pass 0
 newrepo sd-yamldir; put .spectra.yaml/x y; put openspec/changes/archive/2026-11-10-idd-42-x/proposal.md; R=$(commit)
 archived_case "spec dir: a directory named .spectra.yaml at the revision" "$SPEC_DS" "$R" error "" 2
 newrepo sd-yamllink; put real.yaml 'spec_dir: openspec'; ln -s real.yaml "$REPO/.spectra.yaml"; put openspec/changes/archive/2026-11-10-idd-42-x/proposal.md; R=$(commit)
@@ -415,6 +418,8 @@ ic_case "two pages, the newest on the second" "[$IC_O]
 ic_case "the file does not exist" "$WORK/no-such-comments.json" EMPTY 2
 ic_case "the file is not JSON" "$(icj ic-notjson 'not json')" EMPTY 2
 ic_case "an empty file (gh exited 0 and printed nothing)" "$(icj ic-empty '')" EMPTY 2
+"$PY" -c 'import sys; sys.stdout.write("[" * 100000 + "]" * 100000)' > "$WORK/ic-deep.json"
+ic_case "JSON nested a hundred thousand arrays deep" "$WORK/ic-deep.json" EMPTY 2
 ic_case "a body that starts with a blank line and then the marker" '[{"author_association":"OWNER","body":"\n<!-- idd:comment type=implementation-complete -->\n**Spec**: change idd-1-w"}]' "idd-1-w" 0
 ic_case "a comment whose body is not a string is not chosen" '[{"author_association":"OWNER","body":7},{"author_association":"OWNER","body":"## Implementation Complete\n\n**Spec**: change idd-1-z"}]' "idd-1-z" 0
 run ic --comments "$(icj ic-one "[$IC_O,$IC_M]")"

@@ -194,6 +194,11 @@ pf_status() { # block perm spectra(yes|no) specdir(present|absent) → printed s
   env -i HOME="$HOME" PATH="$p" FAKE_PERM="$2" GITHUB_REPO=o/r CWD="$W2/$4" CLAUDE_PLUGIN_ROOT="$PLUGIN" \
     GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 bash --norc --noprofile -c '. "$1" >/dev/null 2>&1; printf "%s" "$PF" | python3 -c "import json,sys; print(json.loads(sys.stdin.read() or \"{}\").get(\"status\", \"none\"))"' _ "$W2/$1" </dev/null
 }
+pf_rc() { # block perm spectra specdir → PF_RC the block leaves
+  local p="$W2/base:/usr/bin:/bin"; [ "$3" = yes ] && p="$W2/withspectra:$p"
+  env -i HOME="$HOME" PATH="$p" FAKE_PERM="$2" GITHUB_REPO=o/r CWD="$W2/$4" CLAUDE_PLUGIN_ROOT="$PLUGIN" \
+    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 bash --norc --noprofile -c '. "$1" >/dev/null 2>&1; printf "%s" "${PF_RC:-unset}"' _ "$W2/$1" </dev/null
+}
 for row in "WRITE yes present ready" "ADMIN no present install-spectra" "READ no absent third-party" \
            "TRIAGE yes present third-party" "- yes present error" "SOMETHING_ELSE yes present error"; do
   set -- $row; perm=$1; [ "$perm" = - ] && perm=""
@@ -207,6 +212,10 @@ for row in "WRITE yes present ready" "ADMIN no present install-spectra" "READ no
   a=$(pf_status contract.sh "$perm" "$2" "$3"); b=$(pf_status all.sh "$perm" "$2" "$3")
   assert_eq "preflight call: permission '${perm:-none}', spectra $2, spec dir $3 → $4 (contract)" "$4" "$a"
   assert_eq "… the same in idd-all Step 3b.0" "$a" "$b"
+  rc=$(pf_rc contract.sh "$perm" "$2" "$3")
+  case "$4" in ready|third-party) want=0 ;; *) want=nonzero ;; esac
+  [ "$rc" != 0 ] && [ -n "$rc" ] && rc=nonzero
+  assert_eq "… the run $( [ "$want" = 0 ] && echo proceeds || echo stops ) (PF_RC)" "$want" "$rc"
 done
 assert_grep "the contract stops when preflight prints nothing or not JSON" "沒有輸出" "$REF_TXT"
 assert_grep "idd-all Step 3b.0 stops when preflight prints nothing or not JSON" "沒有輸出" "$(sed -n '/^#### Step 3b.0: Spec preflight/,/^#### Step 3b.0.5: /p' "$ALL")"
@@ -273,5 +282,41 @@ refute_grep "the contract no longer explains the merge-base against origin/<defa
 refute_grep "idd-all no longer restates the old merge-base" 'merge-base HEAD origin/<default>' "$ALL_TXT"
 refute_grep "the verify comment no longer claims the spec block holds no third-party prose" "不含別人的散文" "$V_TXT"
 assert_grep "SPEC_FILES lists main specs only, not change deltas" "grep -v '/changes/'" "$SB"
+
+echo "spec-wrapper-contract: contract steps 3 and 4, run (idd-480-fix4)"
+# spec-example: spec-on-every-issue / contract steps 3 and 4 run as written
+awk '/^## 3\. /{f=1} /^## 4\. /{f=0} f && /^```bash$/{b=1; buf=""; next} b && /^```$/{b=0; if (buf ~ /is_unattended/) {printf "%s", buf; exit} next} b {buf = buf $0 "\n"}' "$REF" > "$W2/step3.sh"
+awk '/^## 4\. /{f=1} f && /^```bash$/{b=1; next} b && /^```$/{exit} b' "$REF" | sed 's/^CHANGE="<change 名稱>"$/CHANGE="idd-7-x"/' > "$W2/step4.sh"
+mkdir -p "$W2/sbin" "$W2/s3cwd"
+printf '#!/bin/sh\ncase "$1 $2" in\n  "list --parked") printf "{\\"parked\\": [%%s]}" "$FAKE_PARKED" ;;\n  "unpark "*) echo "$2" >> "$UNPARK_LOG" ;;\n  *) exit 1 ;;\nesac\n' > "$W2/sbin/spectra"
+chmod +x "$W2/sbin/spectra"
+step34() { # unattended(1|-) parked-json-items → S3 printed word, S4 unparked names
+  rm -f "$W2/unpark.log"; : > "$W2/unpark.log"
+  local ua=(); [ "$1" = 1 ] && ua=(IDD_ALL_UNATTENDED=1)
+  S3=$(env -i HOME="$HOME" PATH="$W2/base:/usr/bin:/bin" "${ua[@]}" CWD="$W2/s3cwd" CLAUDE_PLUGIN_ROOT="$PLUGIN" \
+       bash --norc --noprofile -c '. "$1" 2>/dev/null' _ "$W2/step3.sh" </dev/null | sed -n 's/^→ spec wrapper: //p')
+  env -i HOME="$HOME" PATH="$W2/sbin:$W2/base:/usr/bin:/bin" FAKE_PARKED="$2" UNPARK_LOG="$W2/unpark.log" \
+       bash --norc --noprofile -c '. "$1" >/dev/null 2>&1' _ "$W2/step4.sh" </dev/null
+  S4=$(tr '\n' ' ' < "$W2/unpark.log" | sed 's/ $//'); [ -n "$S4" ] || S4=nothing
+}
+step34 1 '{"name": "idd-7-x"}'
+assert_eq "steps 3-4: unattended, idd-7-x parked → prints unattended" unattended "$S3"
+assert_eq "… unparks idd-7-x" idd-7-x "$S4"
+step34 - '{"name": "idd-7-x"}'
+assert_eq "steps 3-4: attended, idd-7-x parked → prints attended" attended "$S3"
+assert_eq "… unparks idd-7-x" idd-7-x "$S4"
+step34 - '{"name": "idd-8-y"}'
+assert_eq "steps 3-4: only another change parked → unparks nothing" nothing "$S4"
+step34 - ''
+assert_eq "steps 3-4: nothing parked → unparks nothing" nothing "$S4"
+
+echo "spec-wrapper-contract: verify round 4 fixes in the text (idd-480-fix4)"
+S25="$(sed -n '/^### Step 2.5: /,/^### Step 3: /p' "$IMPL")"
+refute_grep "Step 2.5 no longer skips the whole step when there is a change" "有 change 時跳過這一步" "$S25"
+assert_grep "… a change skips only the TaskList; the routing table still applies" "只略過 TaskList" "$S25"
+assert_grep "the contract states the Spec plan line and its rejected form" '**Spec plan**: rejected' "$REF_TXT"
+assert_grep "the contract applies an existing change only when the newest plan names it" '`**Spec plan**: change <名稱>`' "$REF_TXT"
+assert_grep "idd-plan marks an aborted plan's change as rejected" '**Spec plan**: rejected' "$(grep -F '| Aborted |' "$PLAN")"
+assert_grep "verify reads changed spec paths unquoted" 'core.quotePath=false' "$SB"
 
 print_summary spec-wrapper-contract

@@ -487,7 +487,7 @@ if [ "${VERIFY_PROFILE:-code}" = code ]; then
   fi
   if [ -n "${BASE_SHA:-}" ] && [ -n "${FROZEN_SHA:-}" ]; then
     SPEC_LINKS=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" links --base "$BASE_SHA" --head "$FROZEN_SHA" --cwd "${CWD:-$PWD}" 2>&1)
-    SPEC_FILES=$(git -C "${CWD:-$PWD}" diff --name-only "$BASE_SHA" "$FROZEN_SHA" 2>/dev/null | grep -E '/specs/[^/]+/spec\.md$' | grep -v '/changes/' || echo '(none)')
+    SPEC_FILES=$(git -c core.quotePath=false -C "${CWD:-$PWD}" diff --name-only "$BASE_SHA" "$FROZEN_SHA" 2>/dev/null | grep -E '/specs/[^/]+/spec\.md$' | grep -v '/changes/' || echo '(none)')
   else
     SPEC_LINKS='{"status": "error", "missing": [], "reason": "BASE_SHA or FROZEN_SHA is empty in this shell: set them as Step 1 records them and run this block again"}'
     SPEC_ARCH='{"status": "error", "not_archived": [], "reason": "no reviewed head in this shell"}'

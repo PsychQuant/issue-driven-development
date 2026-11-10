@@ -463,7 +463,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-egress.sh" comment $NUMBER --repo $GITHUB
 
 ### Step 2.5: Bootstrap TodoList（non-Spectra case）
 
-> **有 change 時跳過這一步（#480）**：進度記在 change 的 `tasks.md`，由 `spectra-apply` 勾選，不另外建 TaskList。
+> **有 change 時只略過 TaskList 的建立（#480）**：進度記在 change 的 `tasks.md`，由 `spectra-apply` 勾選。下面的分流表照常看：直接呼叫 `/idd-implement` 處理 Plan issue 時，照舊先問要不要改走 `/idd-plan`（verify 第 4 輪：舊寫法連這個問題一起跳過）。
 
 **判斷 Complexity routing**：讀最新 `## Diagnosis` comment 的 `### Complexity` 欄位（v2.36.0+ 三路；v2.50+ 加 Layer V variant）。**tier 抽取與 actionability 判定都不在此處自行寫 parser**，改呼叫 [`references/actionability-gate.md`](../../references/actionability-gate.md) 契約下的共用實作：
 

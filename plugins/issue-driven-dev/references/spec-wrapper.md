@@ -52,7 +52,9 @@ change 名稱是 `idd-<N>-<slug>`（slug 取 issue 標題，小寫英數與連�
 spectra list --json | jq -r '.changes[]?.name' ; spectra list --parked --json | jq -r '.parked[]?.name'
 ```
 
-已經有 `idd-<N>-` 開頭的 change → 不再 propose，直接第 4 步。
+Implementation Plan 留言（Plan tier 由 `idd-plan` 貼，Simple 由 `idd-implement` Step 2 貼）有剛好一行 `**Spec plan**:`，三種寫法：`**Spec plan**: change <名稱>`、`**Spec plan**: no behaviour change (<a|b|c|d>)`、`**Spec plan**: rejected (change <名稱> left parked)`（維護者在 plan mode 拒絕時，`idd-plan` 改成這一行）。
+
+已經有 `idd-<N>-` 開頭的 change 時：最新的 Implementation Plan 寫著 `**Spec plan**: change <名稱>`、而且名稱相同 → 不再 propose，直接第 4 步。寫著 `rejected`，或沒有任何 Implementation Plan 點名它 → 停下：那是沒有被核准的 proposal，不 apply。
 
 沒有 → 呼叫 `Skill(skill="spectra-propose", args="<change 名稱>：<需求，取自 Diagnosis 的 Strategy>。輕量形式：不做 discuss、不寫 design。")`，並在 args 寫明：
 
