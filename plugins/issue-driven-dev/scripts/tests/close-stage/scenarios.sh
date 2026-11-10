@@ -16,6 +16,8 @@ FAKE="$HERE/fake-gh.py"
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/idd-close-stage-test.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 export IDD_CLOSE_STAGE_TEST=1 IDD_SLEEP=0
+# The local CI gate is replaced by fake-ci-gate.py (exit code from <scenario>/gh/ci-gate.rc, default 10 = remote mode).
+export IDD_CI_GATE="$HERE/fake-ci-gate.py"
 # Isolate git from the caller's configuration (#452 lesson).
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.test GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.test
@@ -50,12 +52,12 @@ path, login, head, base, verdict, rows, heading = sys.argv[1:8]
 reviewed = f"{base}..{head}" if base != "-" else head
 pairs = [r.split(":", 1) for r in rows.split(";") if r]
 md_rows = "".join(f"| {i} | LOW | {f} | codex | {c} |\n" for i, (c, f) in enumerate(pairs, 1))
-body = (f"{heading}\n\n### Aggregate\n{verdict}\n\n**Reviewed**: `{reviewed}`\n\n### 要求覆蓋率\n1 / 1 requirements addressed\n\n"
+body = (f"{heading}\n\n6 / 6 reviewers completed\n\n### Aggregate\n{verdict}\n\n**Reviewed**: `{reviewed}`\n\n### 要求覆蓋率\n1 / 1 requirements addressed\n\n"
         "### Findings（合併後）\n| # | Severity | Finding | Source | Action |\n|---|---|---|---|---|\n" + md_rows)
 strong = lambda t: re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", html.escape(t, quote=False))
 html_rows = "".join(f"<tr><td>{i}</td><td>LOW</td><td>{html.escape(f)}</td><td>codex</td><td>{c}</td></tr>\n"
                     for i, (c, f) in enumerate(pairs, 1))
-body_html = (f"<h2>{html.escape(heading.lstrip('# '))}</h2>\n<h3>Aggregate</h3>\n<p>{strong(verdict)}</p>\n"
+body_html = (f"<h2>{html.escape(heading.lstrip('# '))}</h2>\n<p>6 / 6 reviewers completed</p>\n<h3>Aggregate</h3>\n<p>{strong(verdict)}</p>\n"
              f"<p><strong>Reviewed</strong>: <code>{reviewed}</code></p>\n<h3>要求覆蓋率</h3>\n<p>1 / 1 requirements addressed</p>\n"
              "<h3>Findings（合併後）</h3>\n"
              "<markdown-accessiblity-table><table><thead><tr><th>#</th><th>Severity</th><th>Finding</th><th>Source</th>"
@@ -126,6 +128,9 @@ assert_output_grep "squash body references the issue with Refs" 'Refs #7' "$S/gh
 assert_eq "result names the merge commit" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" "$(printf '%s' "$OUT" | field merge_sha)"
 assert_grep "result records when it finished" "T" "$(printf '%s' "$OUT" | field done_at)"
 assert_file_exists "result is written to the state dir" "$C/.claude/.idd/state/idd-all-result-7.json"
+assert_eq "clean run: no Proposed Corrections counted" "0" "$(printf '%s' "$OUT" | field proposed_corrections)"
+assert_eq "clean run: no LOW in-scope finding left" "0" "$(printf '%s' "$OUT" | field low_in_scope)"
+assert_eq "clean run: the CI gate ran on the verified commit, in the clone" "1" "$(calls_with "\"ci-gate\", \"run\", \"--commit\", \"$SHA\", \"--cwd\"")"
 after_checks() { # pattern — calls matching pattern made after the last `gh pr checks` call
   awk -v pat="$1" '/"pr", "checks"/{n=0; seen=1; next} seen && index($0, pat){n++} END{print n+0}' "$S/gh/calls.log"
 }
@@ -191,6 +196,11 @@ pr_scenario release $'on:\n  push:\n    branches: [main]\njobs:\n  r:\n    steps
 stop_case "a workflow on main that publishes on push" "publishes on push"
 pr_scenario tagrelease $'on:\n  push:\n    tags: [\'v*\']\njobs:\n  r:\n    steps:\n      - run: gh release create v1\n'; run_stage
 assert_eq "a release workflow triggered by tags only does not stop the stage" "merged" "$(printf '%s' "$OUT" | field status)"
+# r7 #16: a workflow that publishes when a release is published, or only when another workflow calls it, does not run on a merge.
+pr_scenario on-release $'on:\n  release:\n    types: [published]\njobs:\n  r:\n    steps:\n      - run: npm publish\n'; run_stage
+assert_eq "a publish-on-release workflow does not stop the stage" "merged" "$(printf '%s' "$OUT" | field status)"
+pr_scenario on-workflow-call $'on:\n  workflow_call:\njobs:\n  r:\n    steps:\n      - run: npm publish\n'; run_stage
+assert_eq "a reusable publishing workflow nothing calls on push does not stop the stage" "merged" "$(printf '%s' "$OUT" | field status)"
 pr_scenario editsci; mkdir -p "$C/.github/workflows"; printf 'on: push\n' > "$C/.github/workflows/new.yml"
 git -C "$C" add .github; work_commit "ci (#7)"; pr_fixture "$SHA"; rm "$S/gh/comments.json"; verify_comment me "$SHA" "$(base_of "$SHA")" "$PASS_LINE"; run_stage
 stop_case "a change that edits CI" "edits CI"
@@ -289,30 +299,70 @@ stop_case "an unattended re-diagnosis does not clear an earlier record (r5 #18)"
 pr_scenario choice; diag_fixture diag-choice; run_stage; stop_case "a choice-first default taken unattended (r4 #20)" "unattended-auto-Step-4-choice-default"
 pr_scenario choice-own-comment; add_comment me comment-choice -1800; run_stage
 stop_case "a choice default record posted as its own comment (r5 #7)" "unattended-auto-Step-4-choice-default"
-pr_scenario corrections; diag_fixture diag-corrections; run_stage; stop_case "Proposed Corrections listed by an unattended run (r4 #20)" "Proposed Corrections"
+# Decision of 2026-11-10 (#392 comment 6761657951): Proposed Corrections nobody answered do not stop the merge; the result
+# counts the comments that list them (spec Example "the count in the result").
+corr() { assert_eq "$1: proposed_corrections" "$2" "$(printf '%s' "$OUT" | field proposed_corrections)"; }
+report_corrections() { # the verify report gains a Proposed Corrections section, as idd-verify Step 3.5 writes it
+  python3 - "$S/gh/comments.json" <<'EOF'
+import json, sys
+cs = json.load(open(sys.argv[1]))
+cs[-1]["body"] += "\n### Proposed Corrections\n| # | Target | Section | 錯在哪 | Command |\n|---|---|---|---|---|\n| 1 | issue:7 | ## Expected | 預期行為寫反 | x |\n"
+cs[-1]["body_html"] += ("<h3>Proposed Corrections</h3>\n<markdown-accessiblity-table><table><thead><tr><th>#</th><th>Target</th><th>Section</th>"
+                        "<th>錯在哪</th><th>Command</th></tr></thead><tbody>\n<tr><td>1</td><td>issue:7</td><td>## Expected</td>"
+                        "<td>預期行為寫反</td><td>x</td></tr>\n</tbody></table></markdown-accessiblity-table>\n")
+json.dump(cs, open(sys.argv[1], "w"))
+EOF
+}
+pr_scenario corrections; diag_fixture diag-corrections; run_stage
+merged_case "Proposed Corrections listed by an unattended run do not stop the merge"; corr "in the Diagnosis" 1
 pr_scenario corrections-attended; diag_fixture diag-corrections; init_state PR PR no no attended; run_stage
-merged_case "Proposed Corrections in an attended run (asked one by one)"
-pr_scenario corrections-verify; add_comment me comment-corrections 3; run_stage
-stop_case "Proposed Corrections in a verify report of an unattended run (r5 #5)" "Proposed Corrections"
+merged_case "Proposed Corrections in an attended run"; corr "attended" 1
+pr_scenario corrections-verify; report_corrections; run_stage
+merged_case "Proposed Corrections in the verify report of an unattended run"; corr "in the verify report" 1
+pr_scenario corrections-two; diag_fixture diag-corrections; report_corrections; run_stage
+merged_case "Proposed Corrections in the Diagnosis and in the verify report"; corr "in both" 2
+pr_scenario corrections-decided; diag_fixture diag-corrections; add_comment me decision -3600; python3 - "$S/gh/comments.json" <<'EOF'
+import json, sys
+cs = json.load(open(sys.argv[1])); dec = cs.pop(); cs.insert(1, dec); json.dump(cs, open(sys.argv[1], "w"))
+EOF
+run_stage; merged_case "Proposed Corrections answered by a later Decision comment"; corr "answered by a Decision" 0
+# r7 #15: a subheading inside the section does not end it.
+pr_scenario corrections-sub; diag_fixture diag-corrections-sub; run_stage
+merged_case "Proposed Corrections whose table stands under a subheading"; corr "under a subheading" 1
 set_tier() { python3 - "$S/gh/comments.json" "$1" <<'EOF'
 import json, sys
 cs = json.load(open(sys.argv[1])); cs[0]["body"] = cs[0]["body"].replace("### Complexity\nSimple", "### Complexity\n" + sys.argv[2])
 json.dump(cs, open(sys.argv[1], "w"))
 EOF
 }
-pr_scenario plan-unattended; set_tier Plan; run_stage; stop_case "Plan tier in an unattended run (r4 #2)" "Plan tier implemented in an unattended run"
-pr_scenario spectra-unattended; set_tier "Spectra（decision-heavy）"; run_stage; stop_case "Spectra tier in an unattended run (r4 #13)" "Spectra tier"
+# Decision of 2026-11-10 (#392 comment 6761899504): the tier does not decide the merge (spec Example "result by tier and
+# interaction"). An unreadable tier still stops.
+pr_scenario simple-unattended; run_stage; merged_case "Simple tier in an unattended run"
+pr_scenario plan-unattended; set_tier Plan; run_stage; merged_case "Plan tier in an unattended run"
+pr_scenario spectra-unattended; set_tier "Spectra（decision-heavy）"; run_stage; merged_case "Spectra tier in an unattended run"
+pr_scenario sdd-unattended; set_tier "SDD-warranted"; run_stage; merged_case "SDD-warranted tier in an unattended run"
 pr_scenario plan-attended; set_tier Plan; init_state PR PR no no attended; run_stage; merged_case "Plan tier in an attended run"
 pr_scenario no-tier; set_tier "TBD"; run_stage; stop_case "a Diagnosis without a readable tier" "Complexity tier"
-pr_scenario rerun-heading; add_comment me diag-rerun-plan -1800; run_stage
-stop_case "the newest Diagnosis Phase 2 routes on, with a suffixed heading (r5 #11)" "Plan tier"
+pr_scenario no-tier-attended; set_tier "TBD"; init_state PR PR no no attended; run_stage; stop_case "a Diagnosis without a readable tier, attended" "Complexity tier"
+# The Diagnosis read is the newest one, also under a suffixed heading (r5 #11): the first has no readable tier, the newest has one.
+pr_scenario rerun-heading; set_tier "TBD"; add_comment me diag-rerun-plan -1800; run_stage
+merged_case "the newest Diagnosis Phase 2 routes on is the one read, with a suffixed heading"
 clarity_fixture() { cp "$FX/$1.md" "$S/gh/issue-body"; cp "$FX/$1.html" "$S/gh/issue-body.html"; }
-pr_scenario clarity; clarity_fixture clarity-surfaced; run_stage; stop_case "an open Clarity Surface question" "Clarity Surface"
+pr_scenario clarity; clarity_fixture clarity-surfaced; run_stage; stop_case "an open Clarity Surface question" "open question"
 pr_scenario clarity-resolved; clarity_fixture clarity-resolved; run_stage; merged_case "a resolved Clarity row that keeps its Reason (r4 #18)"
 pr_scenario clarity-deferred-other; clarity_fixture clarity-deferred-other; run_stage
-stop_case "a deferred Clarity row with another reason (r4 #27)" "Clarity Surface"
-pr_scenario clarity-second; clarity_fixture clarity-second; run_stage; stop_case "an open row in the second Clarity block (r4 #30)" "Clarity Surface"
+stop_case "a deferred Clarity row with another reason (r4 #27)" "open question"
+pr_scenario clarity-second; clarity_fixture clarity-second; run_stage; stop_case "an open row in the second Clarity block (r4 #30)" "open question"
 pr_scenario clarity-fenced; clarity_fixture clarity-fenced; run_stage; merged_case "a Clarity example inside a code fence"
+# r7 #2: the row is read wherever GitHub shows it; the heading above it does not matter.
+pr_scenario clarity-details; clarity_fixture clarity-details; run_stage; stop_case "an open row inside a details block" "open question"
+pr_scenario clarity-h4; clarity_fixture clarity-h4; run_stage; stop_case "an open row under a level-4 heading" "open question"
+pr_scenario clarity-raw; clarity_fixture clarity-raw; run_stage; stop_case "an open row GitHub did not draw as a table" "open question"
+pr_scenario clarity-annotated; clarity_fixture clarity-annotated; run_stage; stop_case "a deferred status with a note after it" "open question"
+pr_scenario clarity-quoted; clarity_fixture clarity-quoted; run_stage; stop_case "an open row inside a quote" "open question"
+pr_scenario clarity-other-heading; clarity_fixture clarity-other-heading; run_stage; stop_case "an open row under another heading" "open question"
+pr_scenario clarity-resolved-mentions; clarity_fixture clarity-resolved-mentions; run_stage
+merged_case "resolved rows whose other cells say deferred or surfaced"
 others_comment() { # login type created-offset-seconds
   python3 - "$S/gh/comments.json" "$1" "$2" "$3" <<'EOF'
 import json, sys, time
@@ -326,18 +376,18 @@ EOF
 pr_scenario teammate-after; others_comment teammate User 5; run_stage
 stop_case "a teammate's comment after the run started (r4 #48)" "after the run started"
 pr_scenario bot-after; others_comment ci-bot Bot 5; run_stage; merged_case "a bot's comment after the run started"
-pr_scenario edited-after; echo '{"data":{"repository":{"issue":{"state":"OPEN","author":{"login":"me"},"editor":{"login":"me"},"userContentEdits":{"totalCount":2,"nodes":[{"editedAt":"2099-01-01T00:00:00Z","editor":{"login":"teammate"}},{"editedAt":"2099-01-01T00:00:01Z","editor":{"login":"me"}}]},"timelineItems":{"nodes":[]}}}}}' > "$S/gh/authors.json"
+pr_scenario edited-after; echo '{"data":{"repository":{"issue":{"state":"OPEN","author":{"login":"me"},"editor":{"login":"me"},"userContentEdits":{"totalCount":2,"nodes":[{"editedAt":"2099-01-01T00:00:00Z","editor":{"login":"teammate"}},{"editedAt":"2099-01-01T00:00:01Z","editor":{"login":"me"}}]},"timelineItems":{"totalCount":2,"filteredCount":0,"nodes":[]}}}}}' > "$S/gh/authors.json"
 run_stage; stop_case "the issue text edited by someone else after the run started" "edited the issue text"
-pr_scenario deleted-after; echo '{"data":{"repository":{"issue":{"state":"OPEN","author":{"login":"me"},"editor":null,"userContentEdits":{"nodes":[]},"timelineItems":{"totalCount":1,"nodes":[{"__typename":"CommentDeletedEvent","createdAt":"2099-01-01T00:00:00Z","deletedCommentAuthor":{"login":"stranger"}}]}}}}}' > "$S/gh/authors.json"
+pr_scenario deleted-after; echo '{"data":{"repository":{"issue":{"state":"OPEN","author":{"login":"me"},"editor":null,"userContentEdits":{"nodes":[]},"timelineItems":{"totalCount":5,"filteredCount":1,"nodes":[{"__typename":"CommentDeletedEvent","createdAt":"2099-01-01T00:00:00Z","deletedCommentAuthor":{"login":"stranger"}}]}}}}}' > "$S/gh/authors.json"
 run_stage; stop_case "a comment deleted after the run started (r4 #4)" "was deleted after the run started"
-pr_scenario deleted-before; echo '{"data":{"repository":{"issue":{"state":"OPEN","author":{"login":"me"},"editor":null,"userContentEdits":{"nodes":[]},"timelineItems":{"totalCount":1,"nodes":[{"__typename":"CommentDeletedEvent","createdAt":"2020-01-01T00:00:00Z","deletedCommentAuthor":{"login":"stranger"}}]}}}}}' > "$S/gh/authors.json"
+pr_scenario deleted-before; echo '{"data":{"repository":{"issue":{"state":"OPEN","author":{"login":"me"},"editor":null,"userContentEdits":{"nodes":[]},"timelineItems":{"totalCount":5,"filteredCount":1,"nodes":[{"__typename":"CommentDeletedEvent","createdAt":"2020-01-01T00:00:00Z","deletedCommentAuthor":{"login":"stranger"}}]}}}}}' > "$S/gh/authors.json"
 run_stage; merged_case "a comment deleted before the run started"
 pr_people() { # partial PR JSON, merged over the defaults (author me, nothing else)
   python3 - "$S/gh/pr-people.json" "$1" <<'EOF'
 import json, sys
 base = {"author": {"login": "me"}, "isDraft": False, "reviewDecision": None, "reviews": {"totalCount": 0, "nodes": []},
         "comments": {"totalCount": 0, "nodes": []}, "userContentEdits": {"totalCount": 0, "nodes": []},
-        "timelineItems": {"totalCount": 0, "nodes": []}}
+        "timelineItems": {"totalCount": 1, "filteredCount": 0, "nodes": []}}
 base.update(json.loads(sys.argv[2]))
 json.dump({"data": {"repository": {"pullRequest": base}}}, open(sys.argv[1], "w"))
 EOF
@@ -346,7 +396,7 @@ issue_meta_json() { # partial issue JSON, merged over the defaults (OPEN, author
   python3 - "$S/gh/authors.json" "$1" <<'EOF'
 import json, sys
 base = {"state": "OPEN", "author": {"login": "me"}, "editor": None, "userContentEdits": {"totalCount": 0, "nodes": []},
-        "timelineItems": {"totalCount": 0, "nodes": []}}
+        "timelineItems": {"totalCount": 3, "filteredCount": 0, "nodes": []}}
 base.update(json.loads(sys.argv[2]))
 json.dump({"data": {"repository": {"issue": base}}}, open(sys.argv[1], "w"))
 EOF
@@ -361,9 +411,9 @@ pr_scenario prbot; pr_people '{"isDraft":false,"reviewDecision":null,"reviews":{
 merged_case "a bot comment on the PR"
 pr_scenario prother; pr_people '{"author":{"login":"teammate"}}'; run_stage
 stop_case "a PR opened by another account (r5 #33)" "not by this account"
-pr_scenario prlabel; pr_people '{"timelineItems":{"totalCount":1,"nodes":[{"__typename":"LabeledEvent","createdAt":"2099-01-01T00:00:00Z","actor":{"login":"teammate","__typename":"User"}}]}}'; run_stage
+pr_scenario prlabel; pr_people '{"timelineItems":{"totalCount":5,"filteredCount":1,"nodes":[{"__typename":"LabeledEvent","createdAt":"2099-01-01T00:00:00Z","actor":{"login":"teammate","__typename":"User"}}]}}'; run_stage
 stop_case "a label added to the PR by a teammate (r5 #16)" "labelled PR #9"
-pr_scenario prownlabel; pr_people '{"timelineItems":{"totalCount":1,"nodes":[{"__typename":"LabeledEvent","createdAt":"2099-01-01T00:00:00Z","actor":{"login":"me","__typename":"User"}}]}}'; run_stage
+pr_scenario prownlabel; pr_people '{"timelineItems":{"totalCount":5,"filteredCount":1,"nodes":[{"__typename":"LabeledEvent","createdAt":"2099-01-01T00:00:00Z","actor":{"login":"me","__typename":"User"}}]}}'; run_stage
 merged_case "a label this account added to its own PR"
 pr_scenario predit; pr_people '{"userContentEdits":{"totalCount":1,"nodes":[{"editor":{"login":"teammate"}}]}}'; run_stage
 stop_case "the PR description edited by a teammate (r5 #16)" "edited PR #9"
@@ -373,15 +423,62 @@ nodes = [{"author": {"login": f"bot{i}", "__typename": "Bot"}} for i in range(10
 open(sys.argv[1] + "/pr-people.json", "w").write(json.dumps({"data": {"repository": {"pullRequest": {
     "author": {"login": "me"}, "isDraft": False, "reviewDecision": None, "reviews": {"totalCount": 0, "nodes": []},
     "comments": {"totalCount": 101, "nodes": nodes}, "userContentEdits": {"totalCount": 0, "nodes": []},
-    "timelineItems": {"totalCount": 0, "nodes": []}}}}}))
+    "timelineItems": {"totalCount": 1, "filteredCount": 0, "nodes": []}}}}}))
 EOF
 run_stage; stop_case "a person's comment hidden behind 100 bot comments (r5 #2)" "more comments than one read returns"
 pr_scenario issue-closed; issue_meta_json '{"state":"CLOSED"}'; run_stage
 stop_case "the issue closed during the run (r5 #6)" "someone closed it"
-pr_scenario issue-labelled; issue_meta_json '{"timelineItems":{"totalCount":1,"nodes":[{"__typename":"LabeledEvent","createdAt":"2099-01-01T00:00:00Z","actor":{"login":"teammate","__typename":"User"}}]}}'; run_stage
+pr_scenario issue-labelled; issue_meta_json '{"timelineItems":{"totalCount":5,"filteredCount":1,"nodes":[{"__typename":"LabeledEvent","createdAt":"2099-01-01T00:00:00Z","actor":{"login":"teammate","__typename":"User"}}]}}'; run_stage
 stop_case "a label added to the issue by a teammate (r5 #6)" "labelled the issue"
-pr_scenario issue-many; issue_meta_json '{"timelineItems":{"totalCount":150,"nodes":[{"__typename":"LabeledEvent","createdAt":"2099-01-01T00:00:00Z","actor":{"login":"me","__typename":"User"}}]}}'; run_stage
+pr_scenario issue-many; issue_meta_json '{"timelineItems":{"totalCount":154,"filteredCount":150,"nodes":[{"__typename":"LabeledEvent","createdAt":"2099-01-01T00:00:00Z","actor":{"login":"me","__typename":"User"}}]}}'; run_stage
 stop_case "more issue events than one read returns, all after the run began (r5 #2)" "more entries than one read returns"
+# 2026-11-10: GitHub's totalCount counts every timeline entry (commits, comments); the entries that match the filter are
+# counted by filteredCount. The first two answers were recorded from a sandbox PR and its issue.
+pr_scenario real-pr-timeline; cp "$FX/real-pr-one-commit.json" "$S/gh/pr-people.json"; run_stage
+merged_case "a PR whose only timeline entry is its commit (the answer GitHub gave)"
+pr_scenario real-issue-timeline; cp "$FX/real-issue-no-events.json" "$S/gh/authors.json"; run_stage
+merged_case "an issue with no timeline event and two body edits by this account (the answer GitHub gave)"
+pr_scenario pr-timeline-commits; pr_people '{"timelineItems":{"totalCount":16,"filteredCount":1,"nodes":[{"__typename":"ClosedEvent","createdAt":"2099-01-01T00:00:00Z","actor":{"login":"me","__typename":"User"}}]}}'; run_stage
+merged_case "a PR timeline of 16 entries, one of them matching the filter"
+pr_scenario pr-timeline-many; python3 - "$S/gh" <<'EOF'
+import json, sys
+nodes = [{"__typename": "LabeledEvent", "createdAt": "2099-01-01T00:00:00Z", "actor": {"login": "me", "__typename": "User"}} for _ in range(100)]
+open(sys.argv[1] + "/pr-people.json", "w").write(json.dumps({"data": {"repository": {"pullRequest": {
+    "author": {"login": "me"}, "isDraft": False, "reviewDecision": None, "reviews": {"totalCount": 0, "nodes": []},
+    "comments": {"totalCount": 0, "nodes": []}, "userContentEdits": {"totalCount": 0, "nodes": []},
+    "timelineItems": {"totalCount": 180, "filteredCount": 150, "nodes": nodes}}}}}))
+EOF
+run_stage; stop_case "more matching PR timeline events than one read returns" "more timelineItems than one read returns"
+pr_scenario pr-timeline-nocount; pr_people '{"timelineItems":{"totalCount":1,"nodes":[]}}'; run_stage
+stop_case "a PR timeline answer without filteredCount" "filteredCount"
+pr_scenario issue-timeline-nocount; issue_meta_json '{"timelineItems":{"totalCount":1,"nodes":[]}}'; run_stage
+stop_case "an issue timeline answer without filteredCount" "filteredCount"
+pr_scenario issue-many-old; issue_meta_json '{"timelineItems":{"totalCount":154,"filteredCount":150,"nodes":[{"__typename":"LabeledEvent","createdAt":"2020-01-01T00:00:00Z","actor":{"login":"teammate","__typename":"User"}}]}}'; run_stage
+merged_case "more matching issue events than read, the oldest one read from before the run began"
+# The CI guardrail follows the local CI gate (spec Example "gate exit code, remote checks and the result").
+ci_gate() { echo "$1" > "$S/gh/ci-gate.rc"; }
+pr_scenario ci-local-pass; ci_gate 0; run_stage; merged_case "local CI passes, remote checks passed"
+assert_eq "local CI passes: no failed remote check" "[]" "$(printf '%s' "$OUT" | field remote_ci_failed)"
+pr_scenario ci-local-remote-fail; ci_gate 0; echo '[{"name": "test", "bucket": "fail", "event": "pull_request"}]' > "$S/gh/checks-1.json"; run_stage
+merged_case "local CI passes while a remote check failed"
+assert_eq "local pass, remote fail: the failed check is in the result" "['test']" "$(printf '%s' "$OUT" | field remote_ci_failed)"
+pr_scenario ci-local-remote-pending; ci_gate 0; echo '[{"name": "test", "bucket": "pending", "event": "pull_request"}]' > "$S/gh/checks-1.json"; echo 8 > "$S/gh/checks.rc"; run_stage
+merged_case "local CI passes while a remote check is pending"
+assert_eq "local pass, remote pending: nothing failed" "[]" "$(printf '%s' "$OUT" | field remote_ci_failed)"
+assert_eq "local pass, remote pending: the pending check is in the result" "['test']" "$(printf '%s' "$OUT" | field remote_ci_pending)"
+assert_eq "local pass, remote pending: the checks are read once, without waiting" "1" "$(calls_with '"pr", "checks"')"
+pr_scenario ci-local-remote-unreadable; ci_gate 0; echo 'not json' > "$S/gh/checks-1.json"; run_stage
+merged_case "local CI passes while the remote checks cannot be read"
+assert_eq "local pass, remote unreadable: the result says so" "not readable" "$(printf '%s' "$OUT" | field remote_ci_failed)"
+wf_scenario ci-local-nochecks-wf; ci_gate 0; rm "$S/gh/checks-1.json"; run_stage
+merged_case "local CI passes and no remote check has appeared, although a workflow runs on every pull_request"
+for rc in 1 2 3 4 7; do
+  pr_scenario "ci-gate-$rc"; ci_gate "$rc"; run_stage
+  stop_case "local CI gate exits $rc" "guardrail 2 (CI)"
+  assert_eq "local CI gate exits $rc: the remote checks are not read" "0" "$(calls_with '"pr", "checks"')"
+done
+pr_scenario ci-remote-fail; ci_gate 10; echo '[{"name": "test", "bucket": "fail", "event": "pull_request"}]' > "$S/gh/checks-1.json"; run_stage
+stop_case "remote mode: a failed check" "failed: test"
 pr_scenario edited-report; python3 - "$S/gh/comments.json" <<'EOF'
 import json, sys
 cs = json.load(open(sys.argv[1])); cs[-1]["updated_at"] = "2099-01-01T00:00:00Z"; json.dump(cs, open(sys.argv[1], "w"))
@@ -457,6 +554,15 @@ direct_scenario() { new_scenario "$1"; work_commit "fix: thing (#7)"; verify_com
 direct_scenario dhappy; run_stage
 assert_eq "direct: pushed" "pushed" "$(printf '%s' "$OUT" | field status)"
 assert_eq "direct: the remote has the verified commit" "$SHA" "$(git -C "$S/o/r.git" rev-parse main)"
+assert_eq "direct: the CI gate ran on the verified commit" "1" "$(calls_with "\"ci-gate\", \"run\", \"--commit\", \"$SHA\"")"
+direct_scenario dci-pass; echo 0 > "$S/gh/ci-gate.rc"; run_stage
+assert_eq "direct: local CI passes: pushed" "pushed" "$(printf '%s' "$OUT" | field status)"
+for rc in 1 2 3 4 7; do
+  direct_scenario "dci-$rc"; BASE=$(git -C "$S/o/r.git" rev-parse main); echo "$rc" > "$S/gh/ci-gate.rc"; run_stage
+  assert_eq "direct: local CI gate exits $rc: stopped" "stopped" "$(printf '%s' "$OUT" | field status)"
+  assert_grep "direct: local CI gate exits $rc: reason" "guardrail 2 (CI)" "$(printf '%s' "$OUT" | field reason)"
+  assert_eq "direct: local CI gate exits $rc: nothing was pushed" "$BASE" "$(git -C "$S/o/r.git" rev-parse main)"
+done
 direct_scenario dbranch; git -C "$C" checkout -q -b wip/foo; run_stage
 assert_eq "direct: not on the default branch: stopped" "stopped" "$(printf '%s' "$OUT" | field status)"
 assert_grep "direct: not on the default branch: reason" "wip/foo" "$(printf '%s' "$OUT" | field reason)"

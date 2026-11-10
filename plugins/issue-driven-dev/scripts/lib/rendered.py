@@ -142,6 +142,33 @@ def leading_strong(run):
     return None
 
 
+INLINE_WRAPPERS = {"em", "i", "del", "s", "u", "span", "a", "mark", "sub", "sup", "ins", "g-emoji"}
+
+
+def opening_strong(run):
+    """Like leading_strong, but a person reads the same bold opener through italics or after an emoji:
+    `***FAIL***` (em around strong) and `❌ **FAIL**` both open with the bold word FAIL. Text or elements
+    with no letter or digit before the opener are skipped; anything else before it means no opener."""
+    for c in run:
+        if isinstance(c, str):
+            if re.search(r"\w", c):
+                return None
+            continue
+        if c.tag in ("strong", "b"):
+            return norm(text_of(c))
+        if not re.search(r"\w", text_of(c)):
+            continue
+        if c.tag in INLINE_WRAPPERS:
+            return opening_strong(c.children)
+        return None
+    return None
+
+
+def lead_text(text):
+    """A line's text without what stands before its first letter or digit (emoji, punctuation, spaces)."""
+    return re.sub(r"^[\W_]+", "", text)
+
+
 def heading_level(node):
     """1-6 when the node is a heading (or GitHub's div wrapper around one), else None."""
     if node.tag in HEADINGS:
@@ -153,21 +180,31 @@ def heading_level(node):
     return None
 
 
-def sections(root, prefix, max_level=3, ignore_case=False):
-    """Top-level nodes under every heading (level <= max_level) whose text starts with `prefix`, up to the next such heading."""
-    out, cur = [], None
-    for node in root.children:
-        if not isinstance(node, Node):
-            continue
-        level = heading_level(node)
-        if level is not None and level <= max_level:
-            title = norm(text_of(node))
-            cur = [] if (title.lower() if ignore_case else title).startswith(prefix) else None
+def sections(root, prefix, max_level=3, ignore_case=False, deep=False):
+    """Nodes under every heading (level <= max_level) whose text starts with `prefix`, up to the next heading of the
+    same level or above (deeper headings belong to the section).
+
+    With `deep`, headings inside any container count too (a details block, a quote, a list item): each container's
+    children are read the same way as the root's (r7 #2). Without it, only headings directly under the root.
+    """
+    out = []
+    for container in ([root] + list(walk(root)) if deep else [root]):
+        cur, opened = None, None
+        for node in container.children:
+            if not isinstance(node, Node):
+                continue
+            level = heading_level(node)
+            # A deeper heading inside an open section is part of it; the section ends at the next heading of its
+            # own level or above (r7 #15: a `####` subheading used to end a `###` section).
+            if level is not None and level <= max_level and not (cur is not None and level > opened):
+                title = norm(text_of(node))
+                cur = [] if (title.lower() if ignore_case else title).startswith(prefix) else None
+                opened = level if cur is not None else None
+                if cur is not None:
+                    out.append(cur)
+                continue
             if cur is not None:
-                out.append(cur)
-            continue
-        if cur is not None:
-            cur.append(node)
+                cur.append(node)
     return out
 
 

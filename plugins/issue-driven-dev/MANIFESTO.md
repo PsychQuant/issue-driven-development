@@ -175,12 +175,12 @@ revert 不對稱仍然成立：一個 reviewed change 撤回後，history 留下
 
 Guardrails 是 mandatory，不是 skipped（`idd-all` Phase 5c，全部在 `scripts/close-stage.py` 的同一個 process 裡檢查，merge 或 push 也在那裡做；完整的封閉列舉以 Phase 5c 的兩張表為準，這裡是摘要）：
 
-- **意圖確認過**（Foresay 的 traceable 分支要求意圖清楚**且**可逆）：issue 正文與所有 comment 都出自有寫入權限的人；沒有略過的意圖確認（Clarity Surface 仍是 surfaced／deferred 的列、unattended run 做了 Plan／Spectra tier、有 Layer V 延後或 choice-first 預設的紀錄、unattended run 列了 Proposed Corrections，而之後沒有 Decision comment 回應）。不符合就停在 verified、PR 照開。unattended diagnose 自己做的策略確認算是一次注意：AI 的注意也算注意，只是人的更稀少，留給偵測器觸發的地方
+- **意圖確認過**（Foresay 的 traceable 分支要求意圖清楚**且**可逆）：issue 正文與所有 comment 都出自有寫入權限的人；沒有略過的意圖確認（還沒回答的釐清問題、有 Layer V 延後或 choice-first 預設的紀錄而之後沒有 Decision comment 回應）。不符合就停在 verified、PR 照開。tier 不在此列：unattended run 做了 Plan 或 Spectra 的 issue 照樣收尾；沒有人處理的 Proposed Corrections 也不擋，只在回報裡列出（2026-11-10 的決定，#392）。unattended diagnose 自己做的策略確認算是一次注意：AI 的注意也算注意，只是人的更稀少，留給偵測器觸發的地方
 - **run 開始之後沒有別人插手**：別的帳號（非 bot）沒有在 issue 上留言、改 comment、改正文、改 label 或標題、關閉 issue、刪 comment；PR 是本帳號開的，沒有別人的 comment、review 或修改，不是 draft、沒有 changes requested。run 只照它開始時讀到的意圖做
 - verify gate 判定 `clean`（never CONDITIONAL / FAIL / 讀不出來），gate 讀的是 GitHub 渲染後的報告（人看到的表格就是 gate 讀到的表格）；報告是本帳號貼的、貼出後沒改過、寫明它審查的範圍就是要 merge 或 push 的那一段；沒有被 run 自己判為不成立（`Rejected`）的 finding、沒有被歸為範圍外的嚴重 finding、verify 沒有降級跑
 - 威脅模型：這些檢查防 orchestrator 出錯，不防它刻意欺騙；讀不準的一律停
-- PR mode：CI checks 全部通過（pending 最多等 15 分鐘；有 `pull_request` workflow 就等 check 出現）；auto-close-trap scan 必須 clean（PR body 與每個 commit）；squash commit message 必須 clean（由 idd-all 自己組，只用 `Refs #N`）；merge 綁定 verify 過的 head commit
-- direct-commit mode：沒有 PR 也沒有 merge 前的 CI，所以改成：只在預設 branch 上推、要推出去的每個 commit 都引用這張 issue、沒有 trap 字樣
+- PR mode：本機 CI 閘門通過（`idd-ci-gate.sh`，#465；`ci.mode` 是 `remote` 時才看遠端 checks：全部通過，pending 最多等 15 分鐘，有 `pull_request` workflow 就等 check 出現。本機通過時遠端失敗的 check 只回報、不擋）；auto-close-trap scan 必須 clean（PR body 與每個 commit）；squash commit message 必須 clean（由 idd-all 自己組，只用 `Refs #N`）；merge 綁定 verify 過的 head commit
+- direct-commit mode：沒有 PR，推送前跑同一道本機 CI 閘門（`ci.mode` 是 `remote` 時沒有遠端結果可等）；另外只在預設 branch 上推、要推出去的每個 commit 都引用這張 issue、沒有 trap 字樣
 
 **auto-merge ≠ auto-close** —— merge 之後 `idd-close` 照跑（closing summary 是 audit artifact，不可省）；idd-all 帶 `ORCHESTRATED BY /idd-all` 指示呼叫它，停點取預設。
 

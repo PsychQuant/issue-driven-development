@@ -8,6 +8,9 @@ Files read (all optional unless the call needs them):
   perm-<login>.json     collaborator permission of <login> (default: admin)
   authors.json          GraphQL issue state/author/editor/userContentEdits/timelineItems (default: OPEN, author me, nothing else)
   pr-people.json        GraphQL PR author/isDraft/reviewDecision/reviews/comments/edits/timeline (default: author me, none)
+                        Like GitHub, a GraphQL answer holds only the fields the query asked for: `filteredCount` is
+                        removed from an answer when the query does not name it (the 2026-11 bug compared totalCount,
+                        and every fixture's totalCount had been written to equal its node count)
   minimized.json        GraphQL node isMinimized for the verify report (default: false)
   issue-body.html       body_html of the issue (REST issues/N with the full+json media type; default empty)
   on-checks.sh          run once (bash) on the first `gh pr checks` call — e.g. to move the remote's main
@@ -49,16 +52,30 @@ if argv[:2] == ["api", "graphql"]:
     query = next((x[6:] for x in argv if x.startswith("query=")), "")
     if query.count("{") != query.count("}"):   # a real gh would get a syntax error (#392 verify r7)
         sys.stderr.write("fake gh: unbalanced GraphQL\n"); sys.exit(1)
+    def answer(text):
+        """`text` as GitHub would return it for this query: a field the query did not ask for is not in the answer."""
+        if "filteredCount" in query:
+            return text
+        def strip(o):
+            if isinstance(o, dict):
+                return {k: strip(v) for k, v in o.items() if k != "filteredCount"}
+            return [strip(x) for x in o] if isinstance(o, list) else o
+        try:
+            return json.dumps(strip(json.loads(text)))
+        except ValueError:
+            return text
     if "mergeQueue" in q:
         print(read("mq.json", '{"data":{"repository":{"mergeQueue":null}}}')); sys.exit(0)
     if "pullRequest" in q:
-        print(read("pr-people.json", '{"data":{"repository":{"pullRequest":{"author":{"login":"me"},"isDraft":false,'
+        print(answer(read("pr-people.json", '{"data":{"repository":{"pullRequest":{"author":{"login":"me"},"isDraft":false,'
                    '"reviewDecision":null,"reviews":{"totalCount":0,"nodes":[]},"comments":{"totalCount":0,"nodes":[]},'
-                   '"userContentEdits":{"totalCount":0,"nodes":[]},"timelineItems":{"totalCount":0,"nodes":[]}}}}}')); sys.exit(0)
+                   '"userContentEdits":{"totalCount":0,"nodes":[]},'
+                   '"timelineItems":{"totalCount":1,"filteredCount":0,"nodes":[]}}}}}'))); sys.exit(0)
     if "node(id" in q:
         print(read("minimized.json", '{"data":{"node":{"isMinimized":false}}}')); sys.exit(0)
-    print(read("authors.json", '{"data":{"repository":{"issue":{"state":"OPEN","author":{"login":"me"},"editor":null,'
-               '"userContentEdits":{"totalCount":0,"nodes":[]},"timelineItems":{"totalCount":0,"nodes":[]}}}}}')); sys.exit(0)
+    print(answer(read("authors.json", '{"data":{"repository":{"issue":{"state":"OPEN","author":{"login":"me"},"editor":null,'
+               '"userContentEdits":{"totalCount":0,"nodes":[]},'
+               '"timelineItems":{"totalCount":3,"filteredCount":0,"nodes":[]}}}}}'))); sys.exit(0)
 if argv[0] == "api" and "/collaborators/" in argv[1]:
     login = argv[1].split("/collaborators/")[1].split("/")[0]
     print(read(f"perm-{login}.json", '{"permission":"admin","role_name":"admin"}')); sys.exit(0)

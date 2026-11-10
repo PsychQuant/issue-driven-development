@@ -25,7 +25,9 @@ Subcommands
         any error), 64 usage.
   run   --cwd C --repo O/R --issue N [--ci-timeout S] [--ci-grace S]
         Phase 5c: every guardrail, then the squash merge (PR) or the push
-        (direct-commit). Prints one JSON line and writes it to
+        (direct-commit). The CI guardrail runs the local CI gate
+        (idd-ci-gate.sh) on the verified commit; only in remote mode (exit 10)
+        does it wait for the PR's remote checks. Prints one JSON line and writes it to
         C/.claude/.idd/state/idd-all-result-N.json.
         Exit 0 merged/pushed, 3 stopped (reason in the JSON, including any
         error), 64 usage.
@@ -42,7 +44,14 @@ Fail closed throughout: anything that cannot be read or checked stops the
 stage. Nothing here asks a person; a stop is reported, not negotiated.
 
 Test seams (honoured only when IDD_CLOSE_STAGE_TEST=1): IDD_GH / IDD_GIT name
-the gh and git executables; IDD_SLEEP=0 makes the wait loops not sleep.
+the gh and git executables; IDD_CI_GATE names the local CI gate; IDD_SLEEP=0
+makes the wait loops not sleep.
+
+Result fields a merge or push can carry besides the commit: `low_in_scope` (LOW
+In-scope fix findings the merge did not wait for), `proposed_corrections`
+(comments whose Proposed Corrections nobody answered), `local_ci` (pass or
+remote), and with local CI `remote_ci_failed` / `remote_ci_pending` (remote
+checks read once; they are reported and do not stop the merge).
 
 Modules (scripts/lib/): ghread.py reads GitHub and git and fails closed;
 intent.py decides whether the intent was confirmed and whether anyone else got
@@ -62,8 +71,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.join(HERE, "lib"))
 import workflows  # noqa: E402  scripts/lib/workflows.py — does a push to the default branch publish?
-from ghread import (GH, GIT, SLEEP, TEST, Stop, gh_json, git, issue_comments, issue_view, iso, now,  # noqa: E402
-                    gh_paginated, parse_iso, run_cmd, session_login, ts, first_line)
+from ghread import (CI_GATE_RESULTS, GH, GIT, SLEEP, TEST, Stop, gh_json, git, issue_comments, issue_view, iso,  # noqa: E402
+                    local_ci, now, gh_paginated, parse_iso, run_cmd, session_login, ts, first_line)
 from intent import (check_intent, check_issue_authors, check_meeting, check_others,  # noqa: E402
                     check_pr_people, issue_meta)
 
@@ -428,6 +437,33 @@ def wait_for_checks(repo, pr, expect_pr_event, timeout, grace):
         time.sleep(20 * SLEEP)
 
 
+def remote_checks_once(repo, pr):
+    """The PR's remote checks read once, without waiting: (failed names, pending names), or (None, None) when unreadable."""
+    rc, out, err = run_cmd([GH, "pr", "checks", str(pr), "--repo", repo, "--json", "name,bucket,event"])
+    if rc not in (0, 8):
+        return ([], []) if "no checks reported" in (err + out) else (None, None)
+    try:
+        checks = json.loads(out)
+        assert isinstance(checks, list)
+    except (ValueError, AssertionError):
+        return None, None
+    return ([str(c.get("name")) for c in checks if c.get("bucket") in ("fail", "cancel")],
+            [str(c.get("name")) for c in checks if c.get("bucket") == "pending"])
+
+
+def ci_guardrail(cwd, sha):
+    """Guardrail 2: the local CI gate decides (capability local-ci-gate, #465). Returns "pass" or "remote"; anything
+    else stops. The gate runs here, in the process that merges or pushes: a result handed over from an earlier
+    step could be another commit's."""
+    rc = local_ci(cwd, sha)
+    if rc == 0:
+        return "pass"
+    if rc == 10:
+        return "remote"
+    raise Stop(f"guardrail 2 (CI) — the local CI gate ended with {CI_GATE_RESULTS.get(rc, 'an unknown code')} (exit {rc}) "
+               f"for {sha[:7]}; run scripts/idd-ci-gate.sh run --commit {sha[:7]} to see it")
+
+
 def check_merge_queue(repo, branch):
     owner, name = repo.split("/", 1)
     q = "query($o:String!,$r:String!,$b:String!){repository(owner:$o,name:$r){mergeQueue(branch:$b){id}}}"
@@ -484,7 +520,13 @@ def run_pr(st, cwd, repo, n, timeout, grace, partial):
     rc, gate = judge_report(repo, n, sha, base, since)
     gate_stop(rc, gate)
 
-    ci = wait_for_checks(repo, pr["number"], expects_pr_checks(cwd, sha, default), timeout, grace)
+    # Local CI decides; remote checks are waited for only in remote mode. With a local pass they are read once,
+    # right before the merge, and reported (capability local-ci-gate: they do not block the merge decision).
+    local = ci_guardrail(cwd, sha)
+    if local == "remote":
+        ci = wait_for_checks(repo, pr["number"], expects_pr_checks(cwd, sha, default), timeout, grace)
+    else:
+        ci = "local CI passed"
 
     refs = gh_json(["pr", "view", str(pr["number"]), "--repo", repo, "--json", "closingIssuesReferences"],
                    "the PR's closing references").get("closingIssuesReferences") or []
@@ -513,6 +555,11 @@ def run_pr(st, cwd, repo, n, timeout, grace, partial):
     comments = issue_comments(repo, n)
     check_others(me, since, comments, issue_meta(repo, n))
     check_pr_people(repo, pr["number"], me)
+    remote = {}
+    if local == "pass":
+        failed, pending = remote_checks_once(repo, pr["number"])
+        remote = {"remote_ci_failed": "not readable" if failed is None else failed,
+                  "remote_ci_pending": [] if pending is None else pending}
 
     partial.update({"pr": pr["number"], "pr_url": pr.get("url"), "verified_sha": sha, "merge_attempted": True})
     # Written before the merge call: if this process dies after GitHub merged, the
@@ -555,7 +602,7 @@ def run_pr(st, cwd, repo, n, timeout, grace, partial):
     return {"status": "merged", "pr": pr["number"], "pr_url": pr.get("url"), "merge_sha": merge_sha,
             "merged_at": view.get("mergedAt"),
             "verified_sha": sha, "reviewed_base": base, "verify_url": gate.get("verify_url"), "ci": ci,
-            "default": default}
+            "local_ci": local, "low_in_scope": gate.get("low_in_scope") or 0, "default": default, **remote}
 
 
 # ── run: direct-commit ─────────────────────────────────────────────────────
@@ -578,6 +625,9 @@ def run_direct(st, cwd, repo, n, partial):
         raise Stop(f"the change edits CI ({', '.join(changed_ci[:3])}) — workflow changes are pushed by a person")
     rc, gate = judge_report(repo, n, head, base, parse_iso(st["created_at"]))
     gate_stop(rc, gate)
+    # Local CI before the push. In remote mode there is no remote result for commits that were never pushed,
+    # so the push proceeds and remote CI runs after it (as before #465).
+    local = ci_guardrail(cwd, head)
     # Everything below names `head`, never HEAD: another session can move HEAD
     # or switch the branch while the checks run (#392 verify r2 #1).
     commits, foreign, trapped = scan_commits(cwd, base, head, n)
@@ -603,7 +653,8 @@ def run_direct(st, cwd, repo, n, partial):
     if landed != head:
         raise Stop(f"pushed, but GitHub's {default} is at {str(landed)[:7]}, not {head[:7]} — check the remote before closing")
     return {"status": "pushed", "push_from": base, "push_to": head, "count": len(commits),
-            "verified_sha": head, "reviewed_base": base, "verify_url": gate.get("verify_url"), "default": default}
+            "verified_sha": head, "reviewed_base": base, "verify_url": gate.get("verify_url"), "default": default,
+            "local_ci": local, "low_in_scope": gate.get("low_in_scope") or 0}
 
 
 def cmd_run(argv):
@@ -645,7 +696,7 @@ def cmd_run(argv):
         check_meeting(comments)
         check_issue_authors(repo, meta)
         check_others(me, since, comments, meta)
-        check_intent(repo, n, st, comments, issue)
+        corrections = check_intent(repo, n, st, comments, issue)
         if st.get("path") == "PR":
             result = run_pr(st, cwd, repo, n, timeout, grace, partial)
         elif st.get("path") == "direct-commit":
@@ -653,6 +704,7 @@ def cmd_run(argv):
         else:
             raise Stop("the run state has no path")
         result["done_at"] = iso(now())
+        result["proposed_corrections"] = corrections
         code = 0
     except Stop as exc:
         result, code = dict(partial, status="stopped", reason=str(exc)), 3

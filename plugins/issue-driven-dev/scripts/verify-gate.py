@@ -7,8 +7,8 @@ and prints one JSON line:
     {"status": "clean" | "not_clean" | "unparseable",
      "verdict": "PASS" | "FAIL" | null,
      "blocking": int | null, "in_scope": int | null, "follow_up": int | null,
-     "rejected": int | null, "high_follow_up": int | null,
-     "process_gaps": bool | null, "reason": str}
+     "rejected": int | null, "low_in_scope": int | null,
+     "high_follow_up": int | null, "process_gaps": bool | null, "reason": str}
 
 Exit codes: clean 0 · not_clean 1 · unparseable 2 (also when the file cannot be
 read) · usage error 64.
@@ -31,11 +31,15 @@ What it reads (idd-verify Step 4 / Step 5a):
   newline in a comment into `<br>`) — scripts/lib/rendered.py. Code blocks
   are not read.
 - the verdict line: a line that opens with a bold upper-case word, e.g.
-  `**PASS** — 0 blocking, 0 in-scope fix, 2 follow-up`. Exactly one such line
-  may exist anywhere outside table cells, it must be in a top-level paragraph
-  (not in a quote, list, table or `<details>`), and its word must be PASS or
-  FAIL (CONDITIONAL, or the unfilled template `**PASS / FAIL**`, is
-  unparseable).
+  `**PASS** — 0 blocking, 0 in-scope fix, 2 follow-up`. Exactly one
+  verdict-like line may exist anywhere outside table cells, it must be in a
+  top-level paragraph (not in a quote, list, table or `<details>`), and its
+  word must be PASS or FAIL (CONDITIONAL, or the unfilled template
+  `**PASS / FAIL**`, is unparseable). Verdict-like (r7 #3): a line whose bold
+  upper-case opener stands after an emoji or inside italics, a line that
+  starts with PASS, PASSED, FAIL, FAILED or CONDITIONAL in upper case, a line
+  that starts with `Verdict:` (or 判定、結論), and a heading that holds one of
+  those words. The same words in the middle of a sentence are not read.
 - the Reviewed line: one line opening with bold `Reviewed`, then
   `base..head` (or a single commit), also top level.
 - the findings tables: every table GitHub drew whose header's last cell is
@@ -43,12 +47,24 @@ What it reads (idd-verify Step 4 / Step 5a):
   Every row's Action cell must be exactly `Blocking`, `In-scope fix`,
   `Follow-up` or `Rejected` (a finding the orchestrator judged not to stand;
   /idd-all never merges past one, close-stage.py decides that).
+- what is clean (decision of 2026-11-10 on #392): the verdict is PASS, no
+  Blocking row, and every In-scope fix row is LOW, INFO or P3. A row's
+  severity is the most severe word in its Severity cell. `low_in_scope` counts
+  the In-scope fix rows that did not hold the merge.
+- a finding class outside the tables (r7 #12): a line, heading or bold label
+  that starts with Blocking, In-scope fix, Follow-up or Rejected (plural forms
+  too, any case, after an emoji) is unparseable, and so is a table with a
+  Severity column and no Action column.
 - the coverage line `X / Y requirements addressed`: a clean report must have
   exactly one, with X == Y.
+- the reviewers line `X / Y reviewers completed` (r7 #14): a PASS report must
+  have exactly one, with Y above 0 and X not above Y; X below Y is reported as
+  `process_gaps`.
 - reported, not judged (close-stage.py stops on them): `high_follow_up`, the
   Follow-up rows whose Severity is CRITICAL, HIGH, P0 or P1 (a reviewer's
-  serious finding filed as out of scope), and `process_gaps`, a `Process Gaps`
-  heading (a degraded verify).
+  serious finding filed as out of scope), and `process_gaps`: the words
+  `process gaps` or `cross-model pass incomplete` anywhere in the visible text,
+  in any case, or a reviewers line with X below Y (a degraded verify).
 """
 
 import json
@@ -65,6 +81,15 @@ VERDICT_WORD_RE = re.compile(r"^[A-Z]+(?: / [A-Z]+)*$")
 COUNT_RE = re.compile(r"(\d+)\s+(blocking|in-scope fix|follow-up|rejected)\b", re.IGNORECASE)
 REVIEWED_RE = re.compile(r"^Reviewed\s*[:：]\s*(?:([0-9a-fA-F]+)\.\.)?([0-9a-fA-F]+)(?![0-9a-zA-Z])")
 COVERAGE_RE = re.compile(r"^(\d+)\s*/\s*(\d+)\s+requirements?\s+addressed", re.IGNORECASE)
+REVIEWERS_RE = re.compile(r"^(\d+)\s*/\s*(\d+)\s+reviewers?\s+completed\b", re.IGNORECASE)
+# A second verdict a person reads (r7 #3). Upper case only: "Pass rate" or "fails when" in a sentence is prose.
+VERDICT_START_RE = re.compile(r"^(?:PASS(?:ED)?|FAIL(?:ED)?|CONDITIONAL)\b")
+VERDICT_LABEL_RE = re.compile(r"^(?:verdict|判定|結論)\s*[:：]", re.IGNORECASE)
+VERDICT_ANY_RE = re.compile(r"\b(?:PASS(?:ED)?|FAIL(?:ED)?|CONDITIONAL)\b")
+# A line that starts with a finding class is a finding a person reads (r7 #12).
+CLASS_START_RE = re.compile(r"^(?:blocking|in-scope fix(?:es)?|follow-ups?|rejected)\b", re.IGNORECASE)
+SEVERITY_HEADERS = {"severity", "嚴重度"}
+LOW_SEVERITIES = {"LOW", "INFO", "P3"}
 SHA_ARG_RE = re.compile(r"^[0-9a-f]{40}$")
 # Severities a reviewer uses for a finding that must not be filed away as out of scope (#392 verify r5 #4).
 HIGH_SEVERITIES = {"CRITICAL", "HIGH", "P0", "P1"}
@@ -79,6 +104,7 @@ def emit(status, reason, verdict=None, counts=None, extra=None):
         "in_scope": counts.get("in_scope"),
         "follow_up": counts.get("follow_up"),
         "rejected": counts.get("rejected"),
+        "low_in_scope": (extra or {}).get("low_in_scope"),
         "high_follow_up": (extra or {}).get("high_follow_up"),
         "process_gaps": (extra or {}).get("process_gaps"),
         "reason": reason,
@@ -128,6 +154,33 @@ def labelled(root):
     return out
 
 
+def verdict_like(root):
+    """[(word, text, top_level, canonical)] for every line outside table cells a person reads as a verdict (r7 #3).
+
+    canonical: the line opens directly with bold text that is an upper-case word (the form the report template
+    asks for). The others are a second verdict in another dress: the bold opener after an emoji or inside italics,
+    a line that starts with a verdict word in upper case, a `Verdict:` label, a heading that holds a verdict word.
+    """
+    out = []
+    for el, run, top in rendered.lines(root):
+        if el.tag in ("td", "th"):
+            continue
+        text = rendered.line_text(run)
+        lead = rendered.lead_text(text)
+        direct = rendered.leading_strong(run)
+        if direct is not None and VERDICT_WORD_RE.match(direct):
+            out.append((direct, text, top, True))
+            continue
+        opener = rendered.opening_strong(run)
+        if opener is not None and VERDICT_WORD_RE.match(opener):
+            out.append((opener, text, top, False))
+        elif VERDICT_START_RE.match(lead) or VERDICT_LABEL_RE.match(lead):
+            out.append((lead.split()[0].rstrip(":："), text, top, False))
+        elif el.tag in rendered.HEADINGS and VERDICT_ANY_RE.search(text):
+            out.append((VERDICT_ANY_RE.search(text).group(0), text, top, False))
+    return out
+
+
 def read_tables(root):
     """Return (findings_tables, [(action, severity)]). Fail closed on anything ambiguous."""
     count, values = 0, []
@@ -142,6 +195,8 @@ def read_tables(root):
             raise Unparseable(f"a table header ends in '{last}', which is not exactly Action")
         if "Action" in header[:-1]:
             raise Unparseable("a table has an Action column that is not its last column")
+        if last != "Action" and any(h.strip().lower() in SEVERITY_HEADERS for h in header):
+            raise Unparseable("a table has a Severity column but no Action column: findings a person reads that the gate cannot count")
         if last == "Action":
             count += 1
             sev = header.index("Severity") if "Severity" in header else None
@@ -168,10 +223,12 @@ def read_tables(root):
     for el, run, _ in rendered.lines(root):
         if el.tag in ("td", "th"):
             continue
-        # A heading or a bold label naming a class is a finding a person reads (r6 #17).
-        label = rendered.leading_strong(run) if el.tag not in rendered.HEADINGS else rendered.line_text(run)
-        if label and label.rstrip(":： ").lower() in {c.lower() for c in CLASSES}:
-            raise Unparseable(f"'{label}' names a finding class outside a findings table")
+        # A heading, a bold label or a plain line that starts with a class word is a finding a person reads
+        # (r6 #17; r7 #12: plural forms, a count after it, an emoji before it). The verdict line starts with
+        # PASS or FAIL, so it is not caught here.
+        lead = rendered.lead_text(rendered.line_text(run))
+        if CLASS_START_RE.match(lead):
+            raise Unparseable(f"'{lead[:60]}' names a finding class outside a findings table")
         for text in rendered.raw_line_texts(run):
             if "|" in text and any(cell.strip() in CLASSES for cell in text.split("|")):
                 raise Unparseable(f"a findings row stands outside a findings table: {text[:80]}")
@@ -206,14 +263,15 @@ def judge(html, expect_sha=None, expect_base=None):
 
     found = labelled(root)
     # A verdict-looking line anywhere a person reads text counts, except inside table cells
-    # (a bold severity such as **HIGH** in a findings row is not a verdict) — r5 #10.
-    verdicts = [(label, t, top) for label, t, top, tag in found
-                if VERDICT_WORD_RE.match(label) and tag not in ("td", "th")]
-    if not verdicts:
+    # (a bold severity such as **HIGH** in a findings row is not a verdict) — r5 #10, r7 #3.
+    verdicts = verdict_like(root)
+    if not any(canonical for _, _, _, canonical in verdicts):
+        if verdicts:
+            return emit("unparseable", f"a verdict is stated ({verdicts[0][0]}) but not as a line starting with **PASS** or **FAIL**")
         return emit("unparseable", "no verdict line (a line starting with **PASS** or **FAIL**) was found")
     if len(verdicts) > 1:
         return emit("unparseable", f"{len(verdicts)} verdict lines were found ({', '.join(v[0] for v in verdicts)}); expected exactly one")
-    verdict, verdict_text, top = verdicts[0]
+    verdict, verdict_text, top, _ = verdicts[0]
     if verdict not in ("PASS", "FAIL"):
         return emit("unparseable", f"the verdict is '{verdict}', not PASS or FAIL")
     if not top:
@@ -231,6 +289,7 @@ def judge(html, expect_sha=None, expect_base=None):
     counts = {"blocking": 0, "in_scope": 0, "follow_up": 0, "rejected": 0}
     high_follow_up = 0
     blocking_scope = 0
+    low_in_scope = 0
     for n, (value, severity) in enumerate(values, 1):
         if value not in CLASSES:
             shown = value if value else "(empty)"
@@ -238,16 +297,26 @@ def judge(html, expect_sha=None, expect_base=None):
         counts[CLASSES[value]] += 1
         if value == "Follow-up" and severity in HIGH_SEVERITIES:
             high_follow_up += 1
-        # LOW and INFO In-scope fixes do not hold a merge back: decision after round 7 (#392).
-        if value == "In-scope fix" and severity not in ("LOW", "INFO", "P3"):
-            blocking_scope += 1
+        # LOW, INFO and P3 In-scope fixes do not hold a merge back (decision of 2026-11-10, #392 comment 6761657951).
+        if value == "In-scope fix":
+            if severity in LOW_SEVERITIES:
+                low_in_scope += 1
+            else:
+                blocking_scope += 1
     # A verify that ran degraded (a reviewer failed and the coordinator stood in) says so under
     # `### Process Gaps`; the close stage does not merge on it (r5 #22).
-    gaps = any(rendered.norm(rendered.text_of(node)).startswith("Process Gaps")
-               for node in rendered.walk(root) if rendered.heading_level(node) is not None)
+    # Read in any case, anywhere a person reads text — a heading, a bold label, a list item (r7 #11, #14).
+    # Code blocks are not read: a quoted template does not make a report degraded.
+    all_lines = [rendered.line_text(run) for _, run, _ in rendered.lines(root)]
+    visible = " ".join(all_lines).lower()
+    gaps = "process gaps" in visible
     # The default backend writes a missing cross-model pass as a row, not a section (r6 #8, #21).
-    gaps = gaps or "cross-model pass incomplete" in rendered.norm(rendered.text_of(root)).lower()
-    extra = {"high_follow_up": high_follow_up, "process_gaps": gaps}
+    gaps = gaps or "cross-model pass incomplete" in visible
+    # The report states how many reviewers completed; fewer than all is a degraded verify (r7 #14).
+    reviewers = [m for m in (REVIEWERS_RE.match(t) for t in all_lines) if m]
+    if any(int(m.group(1)) < int(m.group(2)) for m in reviewers):
+        gaps = True
+    extra = {"high_follow_up": high_follow_up, "process_gaps": gaps, "low_in_scope": low_in_scope}
 
     pairs = [(k.lower(), int(v)) for v, k in COUNT_RE.findall(verdict_text)]
     stated = dict(pairs)
@@ -277,7 +346,18 @@ def judge(html, expect_sha=None, expect_base=None):
         if len(cover) > 1 or cover[0].group(1) != cover[0].group(2):
             shown = ", ".join(f"{m.group(1)} / {m.group(2)}" for m in cover)
             return emit("unparseable", f"the verdict PASS contradicts the coverage line ({shown} requirements addressed)", verdict, counts, extra)
-    return emit("clean", "PASS with no Blocking and no In-scope fix finding", verdict, counts, extra)
+        # ... and how many reviewers completed (r7 #14): the gate does not infer a full ensemble from silence.
+        if not reviewers:
+            return emit("unparseable", "a PASS report has no reviewers line ('X / Y reviewers completed')", verdict, counts, extra)
+        if len(reviewers) > 1:
+            return emit("unparseable", f"the report has {len(reviewers)} reviewers lines; expected exactly one", verdict, counts, extra)
+        done, total = int(reviewers[0].group(1)), int(reviewers[0].group(2))
+        if total == 0 or done > total:
+            return emit("unparseable", f"the reviewers line says {done} / {total} reviewers completed, which is not readable as a count", verdict, counts, extra)
+    reason = "PASS with no Blocking finding and no In-scope fix finding above LOW"
+    if low_in_scope:
+        reason += f" ({low_in_scope} LOW In-scope fix finding(s) did not hold the merge)"
+    return emit("clean", reason, verdict, counts, extra)
 
 
 def main(argv):

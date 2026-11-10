@@ -1,5 +1,7 @@
 ## Verify: #42
 
+6 / 6 reviewers completed
+
 ### Aggregate
 **PASS** — 0 blocking, 0 in-scope fix, 1 follow-up, 1 rejected
 

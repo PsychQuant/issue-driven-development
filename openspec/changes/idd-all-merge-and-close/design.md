@@ -30,7 +30,7 @@
 
 ### verify 乾淨的定義與解析失敗即不乾淨
 
-「乾淨」＝最新一輪 verify 的報告判定為 PASS、Blocking 為 0、In-scope fix 為 0。Follow-up 不擋 merge，照既有規則開 follow-up issue。
+「乾淨」＝最新一輪 verify 的報告判定為 PASS、Blocking 為 0、In-scope fix 只剩 LOW／INFO／P3（2026-11-10 的決定，見下方〈verify round 7 之後的修正〉；最初版本要求 In-scope fix 為 0）。Follow-up 不擋 merge，照既有規則開 follow-up issue。
 
 計數由一支新的 helper 從 verify master comment 的分類表解析，輸出 JSON。表格缺失、欄位對不上、判定行讀不到、或計數與判定行矛盾（判定 PASS 但有 Blocking）時，helper 回報 `unparseable`，idd-all 一律當成不乾淨、停在 verified。理由：這是唯一會把程式碼自動送進 main 的判斷，寧可漏 merge，不可誤 merge。
 
@@ -215,16 +215,45 @@ MANIFESTO〈auto-merge 的合法性與限制〉改成兩個理由並列：verify
 - 格式走樣改成停：Severity 欄缺少或 Follow-up 列讀不出嚴重度、略過紀錄的寫法變化、Proposed Corrections 標題層級或非表格、表格外的 Blocking 標題或粗體標籤、留言沒有渲染結果。
 - Decision comment 要以標題開頭並引用 `**Original**`。PR branch 不設 upstream（meeting unwind 讀它）；issue 編輯紀錄的讀取方向；隊友貼的 dashboard 被 run 改寫不算插手。
 
-仍留著的限制（SKILL.md Phase 5c〈已知限制〉）：同一帳號分不出 run 與人、最後檢查到 squash 之間的幾秒、direct-commit 不等 CI、workflow 以外的發佈管道（#460）、idd-all 仍可被模型呼叫（#457）、close 的 Step 0 與 1.5 排在 merge 之後、task 7.2 尚未在真的 GitHub 上跑過。
+仍留著的限制（SKILL.md Phase 5c〈已知限制〉；2026-11-10 之後的現況見下一節）：同一帳號分不出 run 與人、最後檢查到 squash 之間的幾秒、direct-commit 不等 CI、workflow 以外的發佈管道（#460）、idd-all 仍可被模型呼叫（#457）、close 的 Step 0 與 1.5 排在 merge 之後、task 7.2 尚未在真的 GitHub 上跑過。
+
+### verify round 7 之後的修正（2026-11-10，comment 6573633253；決定 comment 6761657951、6761899504）
+
+第 7 輪之後維護者先選了「在真的 GitHub 上跑通端到端，再做下一輪完整 verify」。端到端第二次實跑（sandbox issue #11、PR #12）verify 乾淨、gate `clean`，close stage 卻停下。這一節是那之後的修正與 2026-11-10 的五個決定。
+
+**做法換了。** 前七輪每輪的 HIGH 多半出在上一輪修正新加的程式。這一輪每一項先寫出它違反的性質，在 spec delta 加 requirement 與 Example，寫會失敗的測試，再改程式。只修第 7 輪的 Blocking 與 MEDIUM、端到端找到的 bug、和這五個決定；第 7 輪的 LOW 另開一張 follow-up issue，不在這個 PR 修。
+
+- **時間軸的計數**（端到端找到的 bug）。`check_pr_people` 與 `check_others` 用 `totalCount` 比對讀到的 node 數。帶 `itemTypes` 時 `totalCount` 仍算所有時間軸項目（commit、comment 都算），nodes 才是篩過的。sandbox PR #12 的回應是 `totalCount` 1、`filteredCount` 0、0 個 node，於是任何有 commit 的 PR 都停。改比 `filteredCount`；回應裡沒有這個欄位就停。378 項測試沒抓到，因為假的 `gh` 照 fixture 回答，而 fixture 的 `totalCount` 是照 node 數寫的。假 `gh` 改成：query 沒要 `filteredCount` 就不回這個欄位；另加兩個由真實回應錄下的 fixture。
+- **合併門檻**（決定 2，回答第 7 輪 finding 6 的前提題）：PASS、Blocking 為 0、In-scope fix 只剩 LOW／INFO／P3 就是 `clean`。`83d62f9` 已經這樣做，但沒有規格與測試；這一輪補上，連同 `c853975` 的「Severity 欄取最嚴重的字」。沒擋住 merge 的 LOW 列數在 `low_in_scope`，idd-all 把它們合成一張 follow-up issue，不為它們改 branch：合併的 commit 就是那一輪審過的 commit。
+- **Proposed Corrections 不擋**（決定 3，回答 2026-11-04 note 留下的問題）：unattended run 列出、沒有人處理的更正提議不再讓 close stage 停下，數量放在結果的 `proposed_corrections`，回報裡寫明沒有套用。取代第 4 輪（r4 #20）與第 5 輪（r5 #5）加的那一道。
+- **tier 不擋**（決定 5）：unattended run 做了 Plan、Spectra 或 SDD-warranted 的 issue，其他檢查都過就照樣合併。取代決定 6566557673 的那一項；讀不出 tier 仍然停。代價：unattended 的 Plan tier 是跳過計畫核准直接實作的，只有 verify 把關。
+- **CI 這一道照 `local-ci-gate`**（#465 與 comment 6573622739）：close stage 在同一個 process 裡呼叫 `idd-ci-gate.sh run --commit <verified sha>`。0 就過，遠端 check 讀一次、失敗的放在 `remote_ci_failed`，不擋；10 才照原本的方式等遠端 check；其他結束碼停。direct-commit 推送前也跑，10 時照舊直接推。同一個 commit 會跑兩次本機 CI（Phase 4.5 一次、這裡一次）：Phase 4.5 擋的是 push 與開 PR，這裡擋的是 merge，而 merge 的檢查必須跟 merge 在同一個 process（見〈verify round 1 之後的修正〉）。
+- **發佈偵測是具名限制**：維護者在第 7 輪後接受，原本只記在 `83d62f9` 的 commit message，現在寫進 spec（〈Clean verify leads to merge and close〉）。清單外的發佈方式偵測不到，這類 repo 帶 `--review`。
+
+第 7 輪其餘 MEDIUM 的處置：
+
+| 第 7 輪 # | 處置 |
+|---|---|
+| 1（GraphQL 少一個大括號） | `83d62f9` 已修；假 `gh` 會拒絕大括號不成對的 query |
+| 5（有 Follow-up 就一定停） | `83d62f9` 已修：Follow-up 紀錄另貼一則 comment，不編輯報告 |
+| 6（前提題） | 決定 2 |
+| 9（Severity 取第一個字） | `c853975` 已修；這一輪補測試 |
+| 16（`release`、`workflow_call` 被當成 merge 時會跑） | `83d62f9` 已修 |
+| 4、8、10、18（發佈偵測） | 具名限制 |
+| 13、41（之後的 Decision 清掉先前所有略過紀錄） | 已是規格寫明的行為（「it answers every record posted before it」） |
+| 15（`####` 小標題結束 Proposed Corrections 一節） | 不再影響 merge；只影響 `proposed_corrections` 的計數 |
+| 2、3、11、12、14、17 | 見 tasks.md 第 14 節各項 |
+
+仍留著的限制（現況）：同一帳號分不出 run 與人、最後檢查到 squash 之間的幾秒、發佈偵測是清單（#460）、idd-all 仍可被模型呼叫（#457）、close 的 Step 0 與 1.5 排在 merge 之後、之後的 Decision 回應先前所有略過紀錄、本機 CI 對同一個 commit 跑兩次。
 
 ## Implementation Contract
 
 **verify gate helper（`scripts/verify-gate.py`）：**
 
 - 輸入：`--html-file <path>`（GitHub 渲染 verify master comment 得到的 HTML，即 comment 的 `body_html`），可加 `--expect-sha`、`--expect-base`（各 40 個 hex）。
-- 輸出（stdout，一行 JSON）：`{"status": "clean" | "not_clean" | "unparseable", "verdict": "PASS" | "FAIL" | null, "blocking": <int|null>, "in_scope": <int|null>, "follow_up": <int|null>, "rejected": <int|null>, "reason": <string>}`。
-- `clean`：判定行為 PASS，分類表可解析，Blocking＝0 且 In-scope fix＝0（`Rejected` 不影響 status，由 close stage 停下）。
-- `not_clean`：可解析但有 Blocking 或 In-scope fix，或判定為 FAIL。
+- 輸出（stdout，一行 JSON）：`{"status": "clean" | "not_clean" | "unparseable", "verdict": "PASS" | "FAIL" | null, "blocking": <int|null>, "in_scope": <int|null>, "follow_up": <int|null>, "rejected": <int|null>, "low_in_scope": <int|null>, "high_follow_up": <int|null>, "process_gaps": <bool|null>, "reason": <string>}`。
+- `clean`：判定行為 PASS，分類表可解析，Blocking＝0，In-scope fix 的每一列嚴重度都是 LOW、INFO 或 P3（`Rejected` 不影響 status，由 close stage 停下）。沒擋住 merge 的 In-scope fix 列數在 `low_in_scope`。
+- `not_clean`：可解析，但判定為 FAIL，或有嚴重度高於 LOW 的 In-scope fix。
 - `unparseable`：找不到判定行或分類表、分類欄出現四類以外的值、判定與表格或覆蓋率行矛盾等（完整清單見 spec〈Verify gate parsing fails closed〉）；`reason` 寫明是哪一種。
 - 結束碼：`clean` 為 0，`not_clean` 為 1，`unparseable` 為 2，用法錯誤為 64。檔案讀不到時以 2 結束。
 
@@ -236,12 +265,14 @@ MANIFESTO〈auto-merge 的合法性與限制〉改成兩個理由並列：verify
 | PR mode，任一 guardrail 不過 | 不 merge，停在 verified，回報 Stopped |
 | direct-commit，在預設 branch，gate `clean` | push，呼叫 `/idd-close`，回報 Done |
 | direct-commit，不在預設 branch，或 push 被拒 | 停在 verified，回報 Stopped |
+| gate `clean` 且 `low_in_scope` 大於 0 | 不為這些列改 branch；合成一張 follow-up issue，照常進 close stage |
 | unattended，gate `not_clean` 且未滿 2 輪 | 修 Blocking 與 In-scope fix，重跑 verify |
 | unattended，滿 2 輪仍 `not_clean` | 停在 verified |
 | attended，gate `not_clean` | 交回使用者（既有行為） |
 | gate `unparseable` | 停在 verified，回報解析失敗的原因 |
 | `--review`、`--in-chain`、`type=meeting` | 終點不變 |
-| 意圖沒有確認過，或 run 開始之後有別人插手 | 停在 verified、PR 照開，回報 Stopped（spec 的兩條對應 requirement） |
+| 意圖沒有確認過，或 run 開始之後有別人插手 | 停在 verified、PR 照開，回報 Stopped（spec 的兩條對應 requirement）。tier 與沒人處理的 Proposed Corrections 不在此列（2026-11-10） |
+| 本機 CI 閘門（`idd-ci-gate.sh`）結束碼不是 0 也不是 10 | 停在 verified，回報 Stopped |
 | verify 報告有 `Rejected` 的 finding | 停在 verified，由人決定那則意見是否成立 |
 
 **範圍：**

@@ -10,7 +10,7 @@ import os
 import re
 
 import rendered
-from ghread import (Stop, TRUSTED, can_write, connection, first_line, gh_json, html_root,
+from ghread import (Stop, TRUSTED, can_write, connection, entry_count, first_line, gh_json, html_root,
                     latest_diagnosis, run_cmd, ts)
 
 SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -18,7 +18,7 @@ SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # takes a decision a person would otherwise confirm (rules/append-vs-modify.md
 # § Reason pattern registry). Matched only as a record's `- **Reason**:` line in
 # the latest Diagnosis, outside code fences, so prose that names them does not count.
-APPROVED_TIERS = ("Plan", "Spectra", "SDD-warranted")
+OPEN_STATUSES = ("surfaced", "deferred")
 INTENT_SKIP_REASONS = ("unattended-auto-Step-3.4-layerV-deferred", "unattended-auto-Step-4-choice-default")
 REASON_LINE_RE = re.compile(r"^Reason\s*[:：]")
 DECISION_HEAD_RE = re.compile(r"^#{1,6}[ \t]*(?:\U0001F3AF[ \t]*)?Decision\b")
@@ -32,7 +32,7 @@ def issue_meta(repo, n):
     q = ("query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n)"
          "{state author{login} editor{login} userContentEdits(first:100){totalCount nodes{editedAt editor{login}}}"
          " timelineItems(last:100,itemTypes:[COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT,RENAMED_TITLE_EVENT,"
-         "CLOSED_EVENT,REOPENED_EVENT]){totalCount nodes{__typename"
+         "CLOSED_EVENT,REOPENED_EVENT]){totalCount filteredCount nodes{__typename"
          " ... on CommentDeletedEvent{createdAt deletedCommentAuthor{login}}"
          f" ... on LabeledEvent{{{actor}}} ... on UnlabeledEvent{{{actor}}} ... on RenamedTitleEvent{{{actor}}}"
          f" ... on ClosedEvent{{{actor}}} ... on ReopenedEvent{{{actor}}}}}}}}}}}}}")
@@ -135,8 +135,9 @@ def reason_records(comment):
 
 
 def has_corrections(comment):
+    """The comment shows a Proposed Corrections section with content, at any heading level and inside any container."""
     root = html_root(comment.get("body_html"), comment.get("body"))
-    for section in rendered.sections(root, "proposed corrections", max_level=6, ignore_case=True):
+    for section in rendered.sections(root, "proposed corrections", max_level=6, ignore_case=True, deep=True):
         for table in rendered.tables(section):
             if any(not head and any(cells) for head, cells in rendered.table_rows(table)):
                 return True
@@ -145,8 +146,43 @@ def has_corrections(comment):
     return False
 
 
+def open_clarity_row(issue):
+    """The text of an open clarity question the issue body shows, or None.
+
+    Read wherever GitHub shows it, without looking at the heading above it (r7 #2: a block inside a details
+    element, under a level-4 heading or in a quote was missed while the check went through top-level
+    `Clarity Surface` headings). Open means:
+    - in a table with a `Status` header: a row whose Status cell starts with `surfaced` or `deferred`
+      (a note after the word, as in `deferred (see retry hint)`, does not close it);
+    - in a table without one: a row with a cell that is exactly `surfaced` or `deferred`;
+    - outside any table: a line with pipes GitHub did not draw as a table whose cell starts with one of them.
+    A resolved row keeps its Reason and may quote the words in other cells, so only the status decides.
+    """
+    root = html_root(issue.get("body_html"), issue.get("body"))
+    for table in rendered.tables([root]):
+        rows = rendered.table_rows(table)
+        header = [c.strip().lower() for c in rows[0][1]] if rows and rows[0][0] else []
+        status = header.index("status") if "status" in header else None
+        for head, cells in rows:
+            if head:
+                continue
+            if status is not None:
+                if status < len(cells) and cells[status].strip().lower().startswith(OPEN_STATUSES):
+                    return " | ".join(cells)
+            elif any(cell.strip().lower() in OPEN_STATUSES for cell in cells):
+                return " | ".join(cells)
+    for el, run, _ in rendered.lines(root):
+        if el.tag in ("td", "th"):
+            continue
+        for text in rendered.raw_line_texts(run):
+            if "|" in text and any(cell.strip().lower().startswith(OPEN_STATUSES) for cell in text.split("|")):
+                return text
+    return None
+
+
 def check_intent(repo, n, st, comments, issue):
-    """Merge without a person only when the intent was confirmed (#392 decisions 6566557673, 6567272352, 6568180861).
+    """Merge without a person only when the intent was confirmed (#392 decisions 6566557673, 6567272352, 6568180861,
+    and of 2026-11-10: 6761657951, 6761899504). Returns the number of comments whose Proposed Corrections nobody answered.
 
     Threat model (decision 6568180861): the orchestrator can be wrong, not
     deceptive. An unattended run takes some decisions a person would
@@ -156,17 +192,18 @@ def check_intent(repo, n, st, comments, issue):
     - every comment comes from someone with write access (comments and their
       attachments steer diagnose and implement); bots are exempt, as in
       check_others (r5 #19);
-    - no row of any Clarity Surface table in the issue is still surfaced or
-      deferred (a resolved row keeps its Reason, so the status cell decides);
-    - the Diagnosis Phase 2 routed on has a tier the run could implement
-      without a person: Simple, or any tier when the run was attended;
+    - the issue body shows no open clarity question (open_clarity_row);
+    - the Diagnosis Phase 2 routed on has a readable tier. Which tier does not
+      matter: since the decision of 2026-11-10 an unattended run that
+      implemented a Plan, Spectra or SDD-warranted issue merges like any other;
     - no comment carries a skipped-confirmation record (`- **Reason**:` line
       with a Layer V deferral or choice-first default literal) that no later
       Decision comment answered — any comment, not only the latest Diagnosis,
       so a record posted as its own comment or an unattended re-diagnosis does
       not hide it (r5 #7, #18, #20);
-    - in an unattended run, no Proposed Corrections table — in a Diagnosis or
-      a verify report — that no later Decision answered (r5 #5).
+    Proposed Corrections nobody answered do not stop the stage (decision of
+    2026-11-10); the comments that list them after the latest Decision are
+    counted and returned, and the run report says they were not applied.
     The Stage 1 strategy confirmation an unattended diagnose performs itself
     counts as attention, not as a skipped confirmation (decision 6568180861).
     """
@@ -177,12 +214,10 @@ def check_intent(repo, n, st, comments, issue):
         if not login or not can_write(repo, login):
             raise Stop(f"a comment on the issue is by {login or 'an unknown account'}, who has no write access — "
                        "intent not confirmed; a person reviews and merges this one")
-    for section in rendered.sections(html_root(issue.get("body_html"), issue.get("body")), "Clarity Surface"):
-        for table in rendered.tables(section):
-            for head, cells in rendered.table_rows(table):
-                if not head and any(cell.lower() in ("surfaced", "deferred") for cell in cells):
-                    raise Stop("the issue's Clarity Surface has an open question (surfaced or deferred) — intent not "
-                               "confirmed; a person reviews and merges this one")
+    row = open_clarity_row(issue)
+    if row is not None:
+        raise Stop(f"the issue has an open question (a clarity row still surfaced or deferred: {row[:80]}) — intent not "
+                   "confirmed; a person reviews and merges this one")
     diag = latest_diagnosis(comments)
     if not diag:
         raise Stop("no trusted Diagnosis on the issue — intent not confirmed")
@@ -190,13 +225,10 @@ def check_intent(repo, n, st, comments, issue):
     tier = out.strip() if rc == 0 else ""
     if not tier:
         raise Stop("the latest Diagnosis has no readable Complexity tier — intent not confirmed")
-    unattended = st.get("interaction") != "attended"
-    if unattended and tier in APPROVED_TIERS:
-        raise Stop(f"{tier} tier implemented in an unattended run: the plan or design was not approved by a person — "
-                   "a person reviews and merges this one")
     decided = max([ts(c.get("created_at")) for c in comments
                    if c.get("type") != "Bot" and is_decision(c)]
                   or [0])
+    unanswered = 0
     for c in comments:
         if c.get("type") == "Bot" or ts(c.get("created_at")) <= decided:
             continue
@@ -204,9 +236,9 @@ def check_intent(repo, n, st, comments, issue):
         if found:
             raise Stop(f"a comment records a skipped confirmation ({found[0]}) that no later Decision answered — "
                        "a person reviews and merges this one")
-        if unattended and has_corrections(c):
-            raise Stop("a comment lists Proposed Corrections to the issue that the unattended run did not apply — "
-                       "the spec it was built from may be wrong; a person reviews and merges this one")
+        if has_corrections(c):
+            unanswered += 1
+    return unanswered
 
 
 def check_pr_people(repo, pr, me):
@@ -224,7 +256,7 @@ def check_pr_people(repo, pr, me):
          "comments(last:100){totalCount nodes{author{login __typename}}} "
          "userContentEdits(first:100){totalCount nodes{editor{login}}} "
          "timelineItems(last:100,itemTypes:[LABELED_EVENT,UNLABELED_EVENT,RENAMED_TITLE_EVENT,CONVERT_TO_DRAFT_EVENT,"
-         "CLOSED_EVENT,REOPENED_EVENT]){totalCount nodes{__typename"
+         "CLOSED_EVENT,REOPENED_EVENT]){totalCount filteredCount nodes{__typename"
          f" ... on LabeledEvent{{{actor}}} ... on UnlabeledEvent{{{actor}}} ... on RenamedTitleEvent{{{actor}}}"
          f" ... on ConvertToDraftEvent{{{actor}}} ... on ClosedEvent{{{actor}}} ... on ReopenedEvent{{{actor}}}}}}}}}}}}}")
     data = gh_json(["api", "graphql", "-f", f"query={q}", "-f", f"o={owner}", "-f", f"r={name}", "-F", f"p={pr}"],
@@ -242,7 +274,7 @@ def check_pr_people(repo, pr, me):
     for kind in ("reviews", "comments", "userContentEdits", "timelineItems"):
         conn = view.get(kind) or {}
         nodes = conn.get("nodes") or []
-        if (conn.get("totalCount") or 0) > len(nodes):
+        if entry_count(conn, kind, f"PR #{pr}'s timeline") > len(nodes):
             raise Stop(f"PR #{pr} has more {kind} than one read returns — not merging; a person reviews this one")
         for node in nodes:
             who = node.get("author") or node.get("actor") or node.get("editor") or {}

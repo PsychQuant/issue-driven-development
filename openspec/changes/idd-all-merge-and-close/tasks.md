@@ -82,3 +82,16 @@
 ## 13. verify round 6 修正（#392 comment 6568962908）
 
 - [x] 13.1 close-stage 的 `gate_stop`、`lib/workflows.py` 遞迴與 merge 事件、intent 的格式走樣與 Decision 認定、verify-gate 的 Severity 與表格外標籤、`--no-track`。close-stage suite 改平行（`scenarios.sh`＋`run_parallel.py`）。完成時：`tests/close-stage/` 378、`tests/verify-gate/` 278 全數通過。
+
+## 14. verify round 7 修正與 2026-11-10 的決定（#392 comment 6573633253；決定 6761657951、6761899504）
+
+- [x] 14.1 spec delta 先寫：時間軸計數、合併門檻與 `low_in_scope`、Proposed Corrections、tier、CI 這一道、發佈偵測的具名限制、run report 的三個欄位。完成時：`spectra validate` 通過，每一項有 Example。
+- [x] 14.2 時間軸計數：`lib/ghread.py`、`lib/intent.py` 改比 `filteredCount`，沒有這個欄位就停；假 `gh` 在 query 沒要 `filteredCount` 時不回它；加兩個由 sandbox 真實回應錄下的 fixture。完成時：新情境先在 `c853975` 上失敗、修正後通過；對 sandbox PR #12 與 issue #11 唯讀實測不再停。
+- [x] 14.3 `verify-gate.py`：輸出 `low_in_scope`；`clean` 的 reason 改成符合門檻；補 `83d62f9`、`c853975` 沒有的測試（LOW／INFO／P3 的 In-scope fix 是 clean、MEDIUM 以上是 not_clean、Severity 欄取最嚴重的字）。完成時：`tests/verify-gate/` 全數通過。
+- [x] 14.4 `lib/intent.py`、`close-stage.py`：拿掉 tier 與 Proposed Corrections 的停點；結果帶 `proposed_corrections`、`low_in_scope`。完成時：`corrections`、`corrections-verify`、tier 的情境改成 merged 並斷言計數。
+- [x] 14.5 `close-stage.py` 的 CI 這一道呼叫 `idd-ci-gate.sh`（PR 與 direct-commit），結果帶 `remote_ci_failed`。完成時：spec Example 表的每一列有一個情境。
+- [x] 14.6 第 7 輪 finding 2、3、11、12、14、15、16：finding 2 → 釐清問題不看標題、在任何位置都讀（`open_clarity_row`）；3、12 → 第二個判定與表格外的分類以「行的開頭」判定，有 Severity 欄而沒有 Action 欄的表也拒讀，句子中間的字不讀（具名限制）；11、14 → 降級標記不分大小寫、在可見文字的任何位置都算，PASS 的報告必須有 `R / T reviewers completed`；15 → 較深的小標題不結束一節；16 → 補上 `release`、`workflow_call` 的情境。每一項先有失敗的測試（16 是 `83d62f9` 已修、補測試）。完成時：`tests/verify-gate/` 431、`tests/close-stage/` 481、`tests/merge-and-close-contract/` 全數通過。
+- [x] 14.7 idd-all 的 SKILL.md（Phase 4 的 `low_in_scope`、Phase 4.5 與 close stage 的關係、Phase 5c 兩張表、已知限制、Run report）、idd-verify 的 SKILL.md（樣板的 reviewers 行與格式規則）、MANIFESTO、CHANGELOG（合併 main 時 Unreleased 的條目被併進 3.6.0，已移回）。全域規則不必改：它只指向 skill 的封閉列舉。完成時：合約測試通過。
+- [ ] 14.8 第 7 輪的 LOW 合成一張 follow-up issue；#392 正文的 Blocking 改成現況。
+- [ ] 14.9 重跑 7.2 的端到端（兩張），再跑第 8 輪 verify。
+

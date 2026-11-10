@@ -4,7 +4,8 @@ Split out of close-stage.py (r5: the helper passed 800 lines). Everything here
 raises Stop on anything it cannot read; nothing here decides a merge.
 
 Test seams (honoured only when IDD_CLOSE_STAGE_TEST=1): IDD_GH / IDD_GIT name
-the gh and git executables; IDD_SLEEP=0 makes the wait loops not sleep.
+the gh and git executables; IDD_CI_GATE names the local CI gate; IDD_SLEEP=0
+makes the wait loops not sleep.
 """
 
 import calendar
@@ -20,6 +21,10 @@ TEST = os.environ.get("IDD_CLOSE_STAGE_TEST") == "1"
 GH = os.environ.get("IDD_GH", "gh") if TEST else "gh"
 GIT = os.environ.get("IDD_GIT", "git") if TEST else "git"
 SLEEP = 0 if (TEST and os.environ.get("IDD_SLEEP") == "0") else 1
+SCRIPTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# The local CI gate (#465, capability local-ci-gate): the command, without its arguments.
+CI_GATE = [os.environ["IDD_CI_GATE"]] if (TEST and os.environ.get("IDD_CI_GATE")) else ["bash", os.path.join(SCRIPTS_DIR, "idd-ci-gate.sh")]
+CI_GATE_RESULTS = {0: "pass", 1: "fail", 2: "timeout", 3: "not-configured", 4: "error", 10: "remote"}
 WRITE_ROLES = {"admin", "maintain", "write"}
 TRUSTED = {"OWNER", "MEMBER", "COLLABORATOR"}
 DIAGNOSIS_RE = re.compile(r"(?m)^[ ]{0,3}## Diagnosis")   # the selector idd-all Phase 2 routes on (r5 #11)
@@ -146,11 +151,34 @@ def html_root(html, raw=""):
         raise Stop("could not read GitHub's rendering of the issue or a comment — not merging")
 
 
+def entry_count(conn, name, what):
+    """How many entries the connection holds that the read could have returned.
+
+    A timeline read names the event types it wants (`itemTypes`). GitHub's `totalCount` then still counts every
+    entry of the timeline — commits and comments too — while the nodes are filtered; the entries that match the
+    filter are counted by `filteredCount`. Comparing `totalCount` with the nodes read stopped every PR that had a
+    commit (found by the end-to-end run of 2026-11-02; sandbox PR: totalCount 1, filteredCount 0, no nodes).
+    An answer without the count stops: the read cannot tell whether it saw everything.
+    """
+    key = "filteredCount" if name == "timelineItems" else "totalCount"
+    count = conn.get(key)
+    if name == "timelineItems" and (isinstance(count, bool) or not isinstance(count, int)):
+        raise Stop(f"{what}: GitHub's answer has no filteredCount — cannot tell whether every event was read; not merging")
+    return count or 0
+
+
 def connection(obj, name, since, field, what):
     """Nodes of a GraphQL connection read once (at most 100; order differs per connection, r6 #20). When it holds more and the oldest node read is
     still after `since`, older events in the window were not read: stop rather than guess (r5 #2)."""
     conn = obj.get(name) or {}
     nodes = conn.get("nodes") or []
-    if (conn.get("totalCount") or 0) > len(nodes) and (not nodes or min(ts(x.get(field)) for x in nodes) >= since):
+    if entry_count(conn, name, what) > len(nodes) and (not nodes or min(ts(x.get(field)) for x in nodes) >= since):
         raise Stop(f"{what} has more entries than one read returns — not merging; a person reviews this one")
     return nodes
+
+
+def local_ci(cwd, sha):
+    """Run the local CI gate on `sha` and return its exit code (capability local-ci-gate: 0 pass, 1 fail,
+    2 timeout, 3 not-configured, 4 error, 10 remote). The gate decides; nothing here reads its output as a verdict."""
+    rc, out, err = run_cmd(CI_GATE + ["run", "--commit", sha, "--cwd", cwd])
+    return rc

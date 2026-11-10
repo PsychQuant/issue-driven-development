@@ -5,17 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.6.0] - 2026-11-03
+## [Unreleased]
+
+Version number left to the merge, as in PR #442.
 
 ### Changed
 
 - **BREAKING — `/idd-all` merges (or pushes) and closes after a clean verify, when the intent was confirmed (#392).** The run used to end at
   verified: PR mode opened the PR, direct-commit mode left local commits, and both asked the user to merge and run
   `/idd-close`. Now a new close stage (Phase 5c) takes over when the verify gate reports `clean`: PR mode
-  squash-merges after three more guardrails pass (every CI check passes, waiting at most 15 minutes for pending
-  ones and treating a PR with no checks as passing; no auto-close trap in the PR body or any commit; a squash
+  squash-merges after three more guardrails pass (the local CI gate of #465 passes on the verified commit — in
+  `ci.mode: remote` every remote check passes instead, waiting at most 15 minutes for pending ones, while with a
+  local pass a failed remote check is reported and does not stop the merge; no auto-close trap in the PR body or any commit; a squash
   subject and body that idd-all writes itself and that reference the issue only as `Refs #N`); direct-commit mode
-  pushes only from the default branch, after scanning the outgoing commits for close keywords. It then calls
+  pushes only from the default branch, after the same local CI gate and after scanning the outgoing commits for
+  close keywords. It then calls
   `/idd-close` with the `ORCHESTRATED BY /idd-all` directive. Every check and the merge or push run in one
   process, `scripts/close-stage.py run` (started in the background): checks split over several skill bash
   blocks could not stop each other. The run's flags come from a run-state file written when the mode is
@@ -25,11 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pushed (the verified commit itself, not whatever `HEAD` is by then); the close-keyword scan covers
   `owner/repo#N`, issue URLs and hyphenated `/idd-close #N`; a direct-commit push refuses commits that do not
   reference the issue. The stage stays at verified unless the intent was confirmed: every comment on the
-  issue comes from someone with write access (bots excepted), no Clarity Surface row is still surfaced or
-  deferred, an unattended run implemented a Simple-tier issue (Plan, Spectra and SDD-warranted need the
-  approval only an attended run asks for), and no comment carries a skipped-confirmation record (a Layer V
-  deferral or a choice-first default) or, in an unattended run, Proposed Corrections, unless a later Decision
-  comment answered it. The threat model is an orchestrator that can be wrong, not one that deceives: the
+  issue comes from someone with write access (bots excepted), the issue shows no clarity question still
+  surfaced or deferred (wherever GitHub shows the row), the Diagnosis has a readable tier, and no comment
+  carries a skipped-confirmation record (a Layer V deferral or a choice-first default) that no later Decision
+  comment answered. The tier itself does not decide: an unattended run that implemented a Plan, Spectra or
+  SDD-warranted issue merges like any other, and Proposed Corrections nobody answered are counted in the
+  result and reported, not a reason to stop (decisions of 2026-11-10). The threat model is an orchestrator that can be wrong, not one that deceives: the
   checks stop honest mistakes and fail closed on anything they cannot read. It also stays at
   verified when someone else became involved after the run began: another account (not a bot) commented on
   the issue or edited a comment or the issue text, labelled, retitled, closed or reopened the issue, a
@@ -54,9 +59,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the old end state (`/loop` and other automation that reviews before merging) pass `--review`; `--in-chain`
   (`/idd-all-chain`, #393) and `type=meeting` runs are unchanged. Unattended runs now fix In-scope fix findings
   too and run verify again (two verify rounds at most), because automatically fixed code must be verified before
-  it reaches the default branch; manual `/idd-verify` keeps its rule. Known limit: until #399 (PR #418) lands,
-  `/idd-close` Step 1.55 flags squash-merged branches whose lines a later commit rewrote, and the orchestrated
-  close stops there, so PR-mode runs often end "merged, issue still open".
+  it reaches the default branch; manual `/idd-verify` keeps its rule. What counts as clean: a PASS verdict, no
+  Blocking finding, and In-scope fix findings of LOW, INFO or P3 only; those are filed together as one follow-up
+  issue and the branch is not changed for them, so the commit that merges is the commit the round reviewed.
+  Known limits: publishing detection is a list (a release path outside it is not detected; such repositories
+  run with `--review`); the local CI command runs twice per issue (before the PR and again in the close stage);
+  a verify report that does not follow the template is `unparseable` and the run stops at verified (of 80
+  earlier verify reports in this repo, written before the template, 76 read as `unparseable`).
 - **`/idd-close` honours `ORCHESTRATED BY /idd-all` (#392).** With the directive it does not ask at its six stop
   points: Step 1.55 and Step 1.6 warnings stop without closing, Step 3.5 files the follow-ups (IC_R011 default),
   Step 3.5 honours `AI_LOW_BAR_ISSUE_FILING=false` and `# Disable IC_R011`; the directive counts only in the invocation arguments, never
@@ -67,7 +76,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `**Reviewed**: <base>..<head>` line naming the reviewed range, exactly one verdict line opening with
   `**PASS**` or `**FAIL**` that states its counts, an `Action` cell holding exactly `Blocking`, `In-scope fix`,
   `Follow-up` or `Rejected` (a finding judged not to stand stays in the table, with the reason), a PASS whose
-  coverage line has every requirement addressed, and the header kept when there are no findings. Five earlier verify comments in
+  coverage line has every requirement addressed, one `R / T reviewers completed` line, no other line, heading
+  or bold label that starts with a verdict word or a finding class, no table with a `Severity` column and no
+  `Action` column, and the header kept when there are no findings. Five earlier verify comments in
   this repo all read as `unparseable` without these rules. The local-mode report template now has `### Aggregate`
   and the `Action` column.
 - **MANIFESTO: auto-merge rests on two reasons side by side (#392)** — verify is the gate, and merge and close
@@ -82,22 +93,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   report by the session's account against a commit range, `run` performs the close stage in one process,
   `confirm-close` checks the closing summary, `reset` clears an earlier run's state. Helpers in
   `scripts/lib/`: `rendered.py` (GitHub's rendering, shared with the gate), `ghread.py`, `intent.py`,
-  `workflows.py`. Suite `scripts/tests/close-stage/` (378 assertions, run in parallel, a fake `gh`, fixtures rendered by GitHub
-  and real git repositories).
+  `workflows.py`. Suite `scripts/tests/close-stage/` (run in parallel; a fake `gh` that, like GitHub, answers
+  only the fields a query asks for; a fake CI gate; fixtures rendered by GitHub, two GraphQL answers recorded
+  from a real PR and issue, and real git repositories).
 - `scripts/verify-gate.py` (#392): reads one verify master comment as GitHub renders it (the comment's
   `body_html`, so a table is a table exactly when GitHub drew one — markdown parsing kept missing layouts
   GitHub renders as tables; every line of visible text counts, code blocks excepted), prints one JSON line
-  (`clean` / `not_clean` / `unparseable` with the four counts, the serious Follow-up count, whether there is
-  a Process Gaps section, and a reason) and exits 0 / 1 / 2 (64 on a usage error). A clean report needs a
-  complete coverage line. Fails closed: a missing verdict or findings table, a fifth
+  (`clean` / `not_clean` / `unparseable` with the four counts, the serious Follow-up count, the count of LOW
+  In-scope fix findings that did not hold the merge, whether the verify ran degraded, and a reason) and exits
+  0 / 1 / 2 (64 on a usage error). A clean report needs a complete coverage line and a reviewers line. Fails closed: a missing verdict or findings table, a fifth
   Action value, an annotated value, two verdict lines or one inside a quote, list or details block, a PASS
   verdict next to a Blocking row (findings tables inside `<details>` count), a FAIL verdict with no Blocking or
   In-scope fix row, a findings row outside a findings table, a decorated `Action` header, an `Action` column
   that is not last, a verdict line whose counts are missing or differ from the tables, a PASS whose coverage line
   is short, or (with `--expect-sha` / `--expect-base`) a missing or different `**Reviewed**` range are all
-  `unparseable`. Fixtures are GitHub's own rendering of the markdown fixtures (`render-fixtures.sh`). Suites: `scripts/tests/verify-gate/` (278 assertions) and
-  `scripts/tests/merge-and-close-contract/` (77), which
+  `unparseable`; so are a second verdict in another form (after an emoji, in bold italics, as plain text, in a
+  heading), a line or heading that starts with a finding class, and a table with a `Severity` column and no
+  `Action` column. Fixtures are GitHub's own rendering of the markdown fixtures (`render-fixtures.sh`). Suites:
+  `scripts/tests/verify-gate/` and `scripts/tests/merge-and-close-contract/`, which
   pins the idd-all skill, the idd-close skill, the MANIFESTO and the batch reference to the new end state.
+
+## [3.6.0] - 2026-11-03
 
 ### Fixed
 

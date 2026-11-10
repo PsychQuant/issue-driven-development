@@ -173,6 +173,55 @@ reason_has "missing coverage: reason" "coverage"
 run_gate "a Blocking heading outside a table (r6 #17)" heading-blocking.md unparseable 2
 run_gate "a findings table without Severity (r6 #11)" no-severity.md unparseable 2
 
+# 2026-11-10 (decisions on #392, comment 6761657951): the merge threshold. A PASS report with no Blocking row is clean
+# when every In-scope fix row is LOW, INFO or P3; the rows that did not hold the merge are counted in low_in_scope.
+# Table: spec idd-pr-hitl-modes, Example "status by the In-scope fix rows".
+low() { assert_eq "$1: low_in_scope" "$2" "$(printf '%s' "$LAST_OUT" | json_field low_in_scope)"; }
+run_gate "no In-scope fix row" clean-empty.md clean 0 0 0 0; low "no In-scope fix row" 0
+run_gate "one LOW In-scope fix row" inscope-low.md clean 0 0 1 0; low "one LOW row" 1
+reason_has "LOW In-scope fix: the reason says what did not hold the merge" "above LOW"
+run_gate "INFO, LOW and P3 In-scope fix rows" inscope-low-three.md clean 0 0 3 0; low "INFO, LOW, P3" 3
+run_gate "a MEDIUM In-scope fix row under a PASS verdict" inscope-medium.md not_clean 1 0 1 0; low "MEDIUM" 0
+run_gate "LOW and HIGH In-scope fix rows" inscope-low-high.md not_clean 1 0 2 0; low "LOW and HIGH" 1
+run_gate "a Severity cell naming two severities reads as the most severe" inscope-mixed-cell.md not_clean 1 0 1 0; low "mixed cell" 0
+run_gate "a P2 In-scope fix row" inscope-p2.md not_clean 1 0 1 0
+run_gate "an In-scope fix row whose Severity has no severity word" inscope-unreadable.md unparseable 2
+run_gate "MEDIUM and LOW In-scope fix rows (the earlier fixture)" inscope.md not_clean 1 0 2 0; low "MEDIUM and LOW" 1
+run_gate "Follow-up rows whose Severity cell names HIGH second (r7 #9)" followup-mixed-high.md clean 0 0 0 2
+assert_eq "mixed Follow-up severities: both count as serious" "2" "$(printf '%s' "$LAST_OUT" | json_field high_follow_up)"
+
+# r7 #3, #12: a second verdict, or a finding class, that a person reads outside the verdict line and the findings table.
+# Start-anchored: the words in the middle of a sentence are not read (named limit).
+run_gate "a second verdict after an emoji" second-verdict-emoji.md unparseable 2
+reason_has "emoji verdict: reason" "verdict lines"
+run_gate "a second verdict in bold italics" second-verdict-bolditalic.md unparseable 2
+run_gate "a second verdict as plain text with a label" second-verdict-plain.md unparseable 2
+run_gate "a second verdict as a plain line starting with FAIL" second-verdict-plainword.md unparseable 2
+run_gate "a verdict word in the report's heading" heading-verdict.md unparseable 2
+run_gate "a heading starting with a class word, plural and counted" heading-blocking-findings.md unparseable 2
+reason_has "class heading: reason" "outside a findings table"
+run_gate "a class heading after an emoji" heading-emoji-blocking.md unparseable 2
+run_gate "a list item starting with a class word" list-blocking-label.md unparseable 2
+run_gate "a bold label starting with a class word" bold-blocking-finding.md unparseable 2
+run_gate "a Follow-ups heading" followups-heading.md unparseable 2
+run_gate "a table with a Severity column and no Action column" severity-table-no-action.md unparseable 2
+reason_has "severity table: reason" "Severity column"
+run_gate "the same words in the middle of a sentence" prose-mentions.md clean 0 0 0 0
+
+# r7 #11, #14: a degraded verify. The marker is read in any case anywhere in the visible text, and a PASS report
+# must state how many reviewers completed.
+gaps() { assert_eq "$1: process_gaps" "$2" "$(printf '%s' "$LAST_OUT" | json_field process_gaps)"; }
+run_gate "Process gaps in lower case" process-gaps-lower.md clean 0 0 0 0; gaps "lower case" True
+run_gate "Process Gaps after an emoji" process-gaps-emoji.md clean 0 0 0 0; gaps "emoji" True
+run_gate "Process Gaps as a bold label" process-gaps-bold.md clean 0 0 0 0; gaps "bold label" True
+run_gate "5 / 6 reviewers completed" reviewers-short.md clean 0 0 0 0; gaps "5 / 6" True
+run_gate "6 / 6 reviewers completed" clean-empty.md clean 0 0 0 0; gaps "6 / 6" False
+run_gate "a PASS report without a reviewers line" reviewers-missing.md unparseable 2
+reason_has "missing reviewers line: reason" "reviewers"
+run_gate "0 / 0 reviewers completed" reviewers-zero.md unparseable 2
+run_gate "two reviewers lines" reviewers-twice.md unparseable 2
+run_gate "7 / 6 reviewers completed" reviewers-over.md unparseable 2
+
 # every .md fixture has its rendering committed
 for md in "$FX"/*.md; do
   assert_file_exists "rendered: $(basename "$md")" "${md%.md}.html"

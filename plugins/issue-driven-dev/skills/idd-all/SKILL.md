@@ -78,10 +78,10 @@ TaskCreate(name="record_run", description="Step 0.7 (#392): close-stage.py init 
 TaskCreate(name="ensure_issue", description="Phase 1: 若 from-scratch 則跑 idd-issue; from-issue 則 verify issue 存在")
 TaskCreate(name="diagnose", description="Phase 2: 跑 idd-diagnose,讀回 complexity 判定")
 TaskCreate(name="implement_or_sdd", description="Phase 3: type=meeting → attended 走 meeting 版 /idd-plan、unattended 跳過(#383,先跑 meeting unwind); Simple/Plan → idd-implement; Spectra → spectra-discuss → spectra-propose → spectra-apply。Args 含 UNATTENDED MODE 與否依 Phase 0.5 解析的 interaction 軸決定。")
-TaskCreate(name="verify_loop", description="Phase 4: type=meeting → 跳過(#383); 每輪 idd-verify 後跑 scripts/verify-gate.py 讀這一輪新貼出的報告(#392); clean → 往下; unparseable → STOP_REASON; not_clean: unattended 修 Blocking 與 In-scope fix 後重跑(最多 2 輪 verify), attended 交回 user; follow-ups → 開新 issue")
+TaskCreate(name="verify_loop", description="Phase 4: type=meeting → 跳過(#383); 每輪 idd-verify 後跑 scripts/verify-gate.py 讀這一輪新貼出的報告(#392); clean → 往下(low_in_scope 大於 0 時把那些列合成一張 follow-up issue,不為它們改 branch); unparseable → STOP_REASON; not_clean: unattended 修 Blocking 與 In-scope fix 後重跑(最多 2 輪 verify), attended 交回 user; follow-ups → 開新 issue")
 TaskCreate(name="ci_gate", description="Phase 4.5 (#465): type=meeting → 跳過; 對 HEAD 跑 scripts/idd-ci-gate.sh，紀錄貼到 issue；只有 exit 0 繼續、exit 10 改看遠端 CI；exit 3 attended 問指令、unattended 停下回報；exit 1/2/4 停下回報")
 TaskCreate(name="open_pr", description="Phase 5: type=meeting → 跳過、不 push(#383); PR mode → git push + 已有自家 open PR 就沿用並更新 body,否則 gh pr create(body 照 verify gate 結果寫,含 Refs #N, 不含 Closes); direct-commit mode → 不開 PR,進 Phase 5c")
-TaskCreate(name="close_stage", description="Phase 5c (#392): scripts/close-stage.py run（同一個 process，run_in_background）：讀 Step 0.7 的 run-state，擋 --review/--in-chain/meeting/無寫入權限/run 開始後別人插手/意圖沒確認；gate 綁 HEAD SHA、只認本帳號的報告、讀 GitHub 渲染後的 HTML，有 Rejected finding 就停；CI 等完再重查預設 branch 與 PR 上的人；PR → CI（pending 最多 15 分鐘、有 pull_request workflow 就等 check 出現）、auto-close trap、squash message，全過才 gh pr merge --squash --match-head-commit 並確認 MERGED；direct-commit → 在預設 branch、每個要推的 commit 都引用 #N 才 push。merged/pushed 才以 ORCHESTRATED BY /idd-all 呼叫 /idd-close --repo，最後確認 CLOSED 且有 closing summary")
+TaskCreate(name="close_stage", description="Phase 5c (#392): scripts/close-stage.py run（同一個 process，run_in_background）：讀 Step 0.7 的 run-state，擋 --review/--in-chain/meeting/無寫入權限/run 開始後別人插手/意圖沒確認(tier 與沒人處理的 Proposed Corrections 不擋)；gate 綁 HEAD SHA、只認本帳號的報告、讀 GitHub 渲染後的 HTML，有 Rejected finding 就停；CI 等完再重查預設 branch 與 PR 上的人；PR → 本機 CI 閘門 idd-ci-gate.sh(0 過、10 才等遠端 check:pending 最多 15 分鐘、有 pull_request workflow 就等 check 出現;其他結束碼停)、auto-close trap、squash message，全過才 gh pr merge --squash --match-head-commit 並確認 MERGED；direct-commit → 在預設 branch、每個要推的 commit 都引用 #N 才 push。merged/pushed 才以 ORCHESTRATED BY /idd-all 呼叫 /idd-close --repo，最後確認 CLOSED 且有 closing summary")
 TaskCreate(name="report_and_stop", description="Phase 6: Done:/Undo: 回報(merge 或 push 的 commit、closed issue 與 closing summary、改動規模、follow-up、residue、distribution sync、verify reviewers); 停下時只列做到的步驟加 Stopped:; --review → awaiting human acceptance 措辭; type=meeting → meeting report(#383)")
 ```
 
@@ -1038,6 +1038,10 @@ for ROUND in 1..MAX_ROUND:
     gate = verify_gate()                     # the bash block above → GATE_JSON
 
     if gate.status == "clean" or (gate.status == "not_clean" and gate.blocking == 0 and not FIX_IN_SCOPE):
+        if gate.status == "clean" and gate.low_in_scope > 0:
+            # LOW / INFO / P3 In-scope fix rows do not hold the merge (decision of 2026-11-10). Do NOT change the
+            # branch for them: the commit that merges is the commit this round reviewed. File them together.
+            file_one_follow_up_issue(report_rows(action="In-scope fix", severity=("LOW", "INFO", "P3")))
         break                                # → Phase 5; Phase 5c runs only for a clean gate
 
     if gate.status == "unparseable":
@@ -1085,6 +1089,12 @@ for ROUND in 1..MAX_ROUND:
 
 每個 auto-fix commit:`fix: address verify finding — {finding summary} (#$N)`
 
+**乾淨的定義（#392，2026-11-10 的決定）**：gate 判 `clean` ＝ 報告判定 PASS、Blocking 為 0、In-scope fix 只剩 LOW／INFO／P3。這些沒擋住 merge 的列數在 gate JSON 的 `low_in_scope`。大於 0 時：
+
+- **不為它們改 branch**。合併的 commit 必須是這一輪審過的 commit；在乾淨的一輪之後再加修正，那些修正就沒有人審過。
+- 把它們**合成一張** follow-up issue（`Skill(skill="issue-driven-dev:idd-issue", …)`，標題寫明來自哪張 issue 的 verify，正文逐列引用報告），不是一列一張。issue 號記下來，Phase 6 的回報要列。
+- 接著照常進 Phase 4.5、Phase 5 與 Phase 5c。
+
 > **與 `idd-verify` Step 5a 的差異（#392）**：手動流程裡 In-scope fix 修完**不必**重跑 verify。idd-all 的自動 merge 路徑**要**重跑：自動修的程式碼若沒被 verify 看過就自動進預設 branch，等於沒有人審過。手動流程不變。
 
 **Follow-up findings**(設計決策 #4:auto-create issues):
@@ -1111,7 +1121,7 @@ GATE_RECORD=$(printf '%s\n' "$GATE_OUT" | sed -n 's/^RECORD=//p')
 [ -n "$GATE_RECORD" ] && bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-egress.sh" comment "$N" --repo "$GITHUB_REPO" --body-file "$GATE_RECORD" --scrub-attested "$SCRUB_LEVEL"
 ```
 
-紀錄送不出去不改變閘門結果，但要在 Phase 6 回報。依結束碼（封閉列舉）：
+紀錄送不出去不改變閘門結果，但要在 Phase 6 回報。Phase 5c 的 helper 會對同一個 commit 再跑一次這個閘門（#392）：這裡擋的是 push 與開 PR，那裡擋的是 merge 或 push 到預設 branch，而擋 merge 的檢查必須跟 merge 在同一個 process。依結束碼（封閉列舉）：
 
 | 結束碼 | 動作 |
 |---|---|
@@ -1236,7 +1246,7 @@ verify 乾淨就收尾：PR mode squash-merge PR，direct-commit mode 在預設 
 | Step 0.6 把 PR mode 降成 direct-commit（沒裝 ralph-loop） | helper（run-state 的 requested path 與 path 不同） | 停在 verified：使用者要的是 PR review，不是直接推上預設 branch |
 | `type=meeting` | helper（重讀最新受信任 Diagnosis） | meeting 不 merge、不 push；正常不會到這裡（Phase 2 直接到 Phase 6） |
 | issue 的作者或最後編輯正文的人沒有寫入權限 | helper | 停在 verified：issue 正文是 implement 照著做、verify 照著驗的規格，沒有人 merge 時它必須出自本來就能推這個改動的人 |
-| 意圖沒有確認過：有 comment 出自沒有寫入權限的人（bot 除外）；issue 的 Clarity Surface 有仍是 surfaced 或 deferred 的列；Phase 2 據以分派的那則 Diagnosis（最新一則有 `## Diagnosis` 行的受信任 comment）讀不出 tier，或 tier 是 Plan、Spectra、SDD-warranted 而這次 run 是 unattended（plan 或設計沒有人核准）；任何一則 comment 有 Layer V 延後或 choice-first 預設的紀錄（GitHub 顯示的 `- **Reason**:` 行），而之後沒有 Decision comment 回應它；unattended run 的任何一則 comment（Diagnosis 或 verify 報告）列了 Proposed Corrections，而之後沒有 Decision comment 回應它 | helper | 停在 verified、PR 照開。Foresay 的 traceable 分支要求意圖清楚**且**可逆；unattended run 會自己略過意圖確認，comment 與附件也會帶進實作（#392 決定，comment 6566557673、6567272352）。unattended diagnose 自己做的 Stage 1 策略確認算是一次注意、不算略過（comment 6568180861：「ai的attention也算attention，只是人類的更稀少」） |
+| 意圖沒有確認過，封閉列舉，只有這四種：(1) 有 comment 出自沒有寫入權限的人（bot 除外）；(2) issue 正文有還沒回答的釐清問題：任何一張表的 `Status` 欄以 `surfaced` 或 `deferred` 開頭的列，不論它在哪個標題下、是否收在 `<details>` 或引用裡，GitHub 沒畫成表格的那種列也算；(3) Phase 2 據以分派的那則 Diagnosis（最新一則有 `## Diagnosis` 行的受信任 comment）讀不出 tier；(4) 任何一則 comment 有 Layer V 延後或 choice-first 預設的紀錄（GitHub 顯示的 `- **Reason**:` 行），而之後沒有 Decision comment 回應它。**不在此列**（2026-11-10 的決定，#392 comment 6761657951、6761899504）：tier 是哪一個（unattended run 做了 Plan、Spectra 或 SDD-warranted 的 issue 照樣 merge）；沒有人處理的 Proposed Corrections（不擋，數量在結果的 `proposed_corrections`，回報裡寫明沒有套用） | helper | 停在 verified、PR 照開。Foresay 的 traceable 分支要求意圖清楚**且**可逆；unattended run 會自己略過意圖確認，comment 與附件也會帶進實作（#392 決定，comment 6566557673、6567272352）。unattended diagnose 自己做的 Stage 1 策略確認算是一次注意、不算略過（comment 6568180861：「ai的attention也算attention，只是人類的更稀少」） |
 | 這次 run 開始之後有別人插手：不是這個帳號、也不是 bot 的人在 issue 上留言或改了 comment、改了 issue 正文、加或拿掉 label、改標題、關掉或重開 issue，或刪了任何不是這個帳號的 comment；issue 已經不是 OPEN；PR 不是這個帳號開的、是 draft、changes requested，或有別人的 comment、review、label、標題或描述修改；這些紀錄多到一次讀不完 | helper | 停在 verified。run 開始時讀過的 issue 才是它照著做的意圖，之後進來的話它沒讀過（verify r4 #4、#15、#48；r5 #2、#6、#16、#33）。同事貼的 verify FAIL 也在這一列 |
 | Phase 4 留下 `STOP_REASON` | helper 的 guardrail 1 再判一次 gate | `Stopped: guardrail 1 (verify gate) …` |
 | Phase 4 或 Phase 5 已 abort | — | 照 abort 職責處理（見 Failure Modes） |
@@ -1259,12 +1269,12 @@ helper 依序檢查，第一道不過就停，印一行 JSON（`"status": "stopp
 |---|---|---|
 | 0 | run 本身 | run-state 存在、是這個 repo 與 issue、不超過 24 小時；沒有 `--review`／`--in-chain`；沒有被降級；這個帳號對 repo 有 WRITE 以上的權限；clone 的 `origin` 的每個 fetch 與 push URL 都是 `github.com/<repo>`；最新受信任 Diagnosis 不是 meeting；issue 的作者與最後編輯者都有寫入權限；沒有別人插手、意圖確認過（上表「別人插手」與「意圖」兩列） |
 | 發佈 | 預設 branch 最新的 workflow | 沒有任何 workflow 在 push 到預設 branch（或 `workflow_run`）時發佈或部署（`gh release`、`npm publish`、`docker push`、`deploy-pages`、名稱帶 publish 或 deploy 的 action 之類，含它呼叫的本地 reusable workflow、composite action 與 `run:` 呼叫的本機 script）；呼叫別的 repo 的 reusable workflow 一律當成會發佈；只由 tag 觸發的不算。trigger 讀不懂（加引號的鍵、list 寫法以外的形式、否定或方括號的 branch pattern）就當成會在 push 時跑（`scripts/lib/workflows.py`，r5 #1）。有的話，merge 或 push 本身就是發版，停下要人帶 `--review`。這次改動動到 `.github/workflows` 或 `.github/actions` 也停下：改 CI 的改動由人 merge |
-| 1 | verify gate | 這次 run 開始之後、這個帳號貼的最新 verify comment 是 `## Verify: #N` 報告，貼出後沒有被編輯、沒有被藏起來，它的渲染結果經 `verify-gate.py --expect-sha --expect-base` 判定 `clean`（含完整的覆蓋率行），`**Reviewed**` 的範圍正好是要 merge（`merge-base(origin/<default>, PR head)..PR head`）或要 push（`origin/<default>..HEAD`）的那一段；報告裡沒有 `Rejected` 的 finding（被 run 自己判為不成立的意見，r4 #7）、沒有 Severity 是 CRITICAL／HIGH／P0／P1 的 Follow-up（嚴重的意見被歸為範圍外，r5 #4）、沒有 `Process Gaps` 一節（verify 降級跑，r5 #22） |
-| 2 | CI checks（PR） | `gh pr checks` 的每一項都是 `pass` 或 `skipping`；`pending` 時等待，總共最多 15 分鐘；`fail`、`cancel` 即停。repo 有一個對每個 `pull_request` 都會跑的 workflow（沒有 path 篩選）時，要等到至少一個 `pull_request` 事件的 check 出現；check 的集合連續 90 秒沒有變化才接受，讓 `needs:` 之後才建立的 check 有時間出現 |
+| 1 | verify gate | 這次 run 開始之後、這個帳號貼的最新 verify comment 是 `## Verify: #N` 報告，貼出後沒有被編輯、沒有被藏起來，它的渲染結果經 `verify-gate.py --expect-sha --expect-base` 判定 `clean`（含完整的覆蓋率行），`**Reviewed**` 的範圍正好是要 merge（`merge-base(origin/<default>, PR head)..PR head`）或要 push（`origin/<default>..HEAD`）的那一段；報告裡沒有 `Rejected` 的 finding（被 run 自己判為不成立的意見，r4 #7）、沒有 Severity 是 CRITICAL／HIGH／P0／P1 的 Follow-up（嚴重的意見被歸為範圍外，r5 #4）、verify 沒有降級跑（報告任何地方都沒有 `Process Gaps` 字樣，reviewers 行是 `R / T` 且 R 等於 T；r5 #22、r7 #11、#14）。In-scope fix 只剩 LOW／INFO／P3 仍算 `clean`（`low_in_scope`） |
+| 2 | CI | helper 在同一個 process 裡跑本機 CI 閘門 `idd-ci-gate.sh run --commit <verified sha>`（capability `local-ci-gate`，#465），照結束碼：**0**（pass）就過，PR 的遠端 check 在 merge 前讀一次、不等待，失敗或取消的列在結果的 `remote_ci_failed`、還在跑的列在 `remote_ci_pending`，都不擋 merge；**10**（`ci.mode` 是 `remote`）才照遠端 check 判定：`gh pr checks` 的每一項都是 `pass` 或 `skipping`，`pending` 時等待、總共最多 15 分鐘，`fail`、`cancel` 即停，repo 有一個對每個 `pull_request` 都會跑的 workflow（沒有 path 篩選）時要等到至少一個 `pull_request` 事件的 check 出現，check 的集合連續 90 秒沒有變化才接受；**其他結束碼**（1 fail、2 timeout、3 沒設定指令、4 error，或清單外的值）即停。direct-commit 推送前也跑這一道，10 時沒有遠端結果可看（commit 還沒推），照舊直接推 |
 | 3 | auto-close trap 與 commit 歸屬（PR） | 同 `idd-verify` Step 0.8 的兩個 source（idd-all 以 branch 模式呼叫 verify，Step 0.8 沒有跑）：PR body 沒有 closing reference；每個 commit（從本機 git 讀完整範圍，`gh pr view --json commits` 有筆數上限）的 subject 與 body 沒有 close 類關鍵字接在 `#N`、`owner/repo#N` 或 issue／PR 網址前，而且都引用 `#N`（不是這次 run 的 commit 不 squash 進預設 branch，r5 #23）。連字號不豁免：GitHub 會把 `/idd-close #N` 拆開並關掉 issue（#173） |
 | 4 | squash message（PR） | subject（PR 標題加 `(#PR)`）與 body（`Refs #N` 加 verify 報告連結）同樣掃一次；標題來自 issue，外人寫得到 |
 | merge | PR | CI 等完之後重讀一次會變的東西：重新 fetch 預設 branch，branch 沒有落後它（落後的話 merge 的結果沒被審過，更新 branch 後重新 verify）、它最新的 workflow 不在 push 時發佈、這次改動不動 CI、沒有 merge queue（有的話停下，由人經 queue merge），gate 再判一次，沒有別人插手，PR 不是 draft、沒有 changes requested、沒有別人（非 bot）的 comment 或 review（verify r4 #1、#15）；剛好一個從 run 的 branch 開到預設 branch、不是 fork 的 open PR，它的 head 等於本機 HEAD；`gh pr merge --squash --subject --body --match-head-commit <verified sha>`，不刪 branch；merge 後重讀幾次確認 `MERGED` 且有 merge commit。仍是 OPEN 就關掉 auto-merge 並停下；讀不到確認時回報「可能已 merge」並保留 PR 號 |
-| push | direct-commit | 目前在預設 branch，`origin/<default>` 是 HEAD 的祖先；`origin/<default>..<verified sha>` 的每個 commit 都引用 `#N`（不是這次 run 的 commit 就不推）且沒有 trap 字樣；推送前再確認 HEAD 與 branch 沒變；推的是 verified sha 本身（`git push origin <sha>:refs/heads/<default>`），不是當下的 HEAD；被拒就停，不自動 rebase；推完向 GitHub 確認預設 branch 指向那個 commit |
+| push | direct-commit | 目前在預設 branch，`origin/<default>` 是 HEAD 的祖先；`origin/<default>..<verified sha>` 的每個 commit 都引用 `#N`（不是這次 run 的 commit 就不推）且沒有 trap 字樣；本機 CI 閘門的結束碼是 0 或 10（第 2 道）；推送前再確認 HEAD 與 branch 沒變；推的是 verified sha 本身（`git push origin <sha>:refs/heads/<default>`），不是當下的 HEAD；被拒就停，不自動 rebase；推完向 GitHub 確認預設 branch 指向那個 commit |
 
 #### 5c.2 呼叫 `/idd-close`
 
@@ -1302,18 +1312,20 @@ exit 不是 0 時印 `Stopped: /idd-close did not finish (<reason>); the merge o
 > **威脅模型（#392 決定，comment 6568180861）**：close stage 防的是 orchestrator **出錯**，不是 orchestrator **刻意欺騙**。寫程式碼的 orchestrator 同時寫 verify 報告的分類、略過確認的紀錄與 Decision comment；它若刻意把 Blocking 寫成別的、不寫紀錄，或自己貼 Decision，本機檢查擋不住。上面的檢查讓誠實的錯誤（漏讀、誤判、格式走樣）停下，讀不準的一律停。
 >
 > **已知限制**：
-> - **#399**：idd-close Step 1.55 對「branch 上後面的 commit 改寫了前面 commit 加的行」的 squash merge 會誤報 orphan；orchestrated 模式下 1.55 有警告就停下（#392 Diagnosis Decisions）。unattended 的修正輪正好產生這種 branch，所以在 #399（PR #418）merge 之前，PR mode 的 run 常會停在「已 merge、issue 仍開」，由人跑 `/idd-close #N` 判斷那些 orphan 是不是誤報。
 > - **close 的 Step 0 與 Step 1.5 排在 merge 之後**：issue 上還有未勾的 task（例如一份未完成的 Spectra tasks）時，`/idd-close` 會在 merge 之後拒絕結案，結果同樣是「已 merge、issue 仍開」。
 > - **`gh api user` 被拒的環境**（GitHub App 安裝 token、Actions 的 `GITHUB_TOKEN`）：gate 認不出「本帳號」，一律讀成 `unparseable`，close stage 不會 merge。
 > - **同一個帳號**：run 自己的 comment 與人用同一個帳號打的 comment 分不出來，所以「別人插手」只看別的帳號。要叫一個進行中的 run 停下，用別的帳號留言，或在 PR 上留言（run 從不在自己的 PR 上留言）。
 > - **最後檢查到 merge 之間的幾秒**：`--match-head-commit` 只釘住 PR head。最後一次讀預設 branch 之後、GitHub 實際 squash 之前，若有別的 PR 剛好落地，squash 會落在新的 tip 上；GitHub 沒有釘住 base 的 merge 參數。
-> - **direct-commit 不等 CI**：沒有 PR 就沒有 check 可等；推上去之後由 repo 自己的 CI 跑。
+> - **direct-commit 不等遠端 CI**：推送前跑本機 CI 閘門；`ci.mode` 是 `remote` 時沒有 PR、沒有 check 可等，推上去之後由 repo 自己的 CI 跑。
+> - **本機 CI 對同一個 commit 跑兩次**：Phase 4.5 一次（擋 push 與開 PR）、close stage 一次（擋 merge）。指令跑得久的 repo，一張 issue 會多等一次。
 > - **direct-commit 不讀 branch protection**：admin 權限的 token 推送時，GitHub 會讓它越過要求 PR 或 check 的規則（#464）。
+> - **verify 報告格式走樣就停**：gate 只認 `idd-verify` 樣板的寫法（恰好一行判定、Findings 表、覆蓋率行、reviewers 行）。2026-11-10 拿本 repo 80 份既有的 verify 報告（都早於這份樣板）給 gate 讀，76 份是 `unparseable`。照樣板寫的報告才會自動 merge，其他一律停在 verified 由人處理。
 > - **發佈偵測是清單（維護者接受的限制，#392 第 7 輪後）**：清單外的發佈指令（`make ship`、`rsync`、遠端 action、repo 根目錄的 script）偵測不到，merge 就會發佈。會這樣發佈的 repo 帶 `--review`，repo 層級的設定在 #460。
 > - **workflow 以外的發佈管道不偵測**：預設 branch 由 plugin marketplace 直接服務（例如本 repo 的 `.claude-plugin/marketplace.json`）、GitHub Pages 從 branch 部署、Vercel／Netlify 的 Git 整合，merge 就是把改動交給下一個安裝或部署的人。這類 repo 要帶 `--review`，或等 #460 決定怎麼偵測。push 時跑的 workflow 呼叫的 script（不在 `.github/` 下）被這次改動改到，也不偵測。
 > - **`/idd-all` 仍可被模型自己呼叫**：「`/idd-all #N` 本身就是確認」的前提是人下了這個指令；把 idd-all 限定為只由人呼叫的工作在 #457。
-> - **attended 是依 path 推出來的**：`--no-pr`、`pr_policy: never` 的 run 標為 attended，close stage 因此放行 Plan、Spectra tier。以 `claude -p` 或排程無人值守地跑 attended 模式，就沒有人回答 Plan 核准與 sub-skill 的問題；無人值守時用 PR mode。
-> - **Decision comment 回應紀錄**：任何 Decision comment 都會讓它之前的略過紀錄與 Proposed Corrections 不再擋 merge，不檢查它回應的是哪一則。照威脅模型，Decision comment 只記錄人說的話（`idd-comment --type decision`），不由 run 自己決定貼。
+> - **attended 是依 path 推出來的**：`--no-pr`、`pr_policy: never` 的 run 標為 attended。以 `claude -p` 或排程無人值守地跑 attended 模式，就沒有人回答 Plan 核准與 sub-skill 的問題；無人值守時用 PR mode。
+> - **unattended 的 Plan tier 沒有人核准計畫**（2026-11-10 的決定接受的代價）：unattended run 遇到 Plan tier 是跳過 `/idd-plan` 直接實作的，close stage 不再因此停下，實作出來的東西只有 verify 把關。
+> - **Decision comment 回應紀錄**：任何 Decision comment 都會讓它之前的略過紀錄不再擋 merge（也讓它之前的 Proposed Corrections 不再列入 `proposed_corrections`），不檢查它回應的是哪一則。照威脅模型，Decision comment 只記錄人說的話（`idd-comment --type decision`），不由 run 自己決定貼。
 
 ---
 
@@ -1364,6 +1376,9 @@ Done:
   residue recorded: ${RESIDUE or "none"}
   distribution sync: ${done | asked: <answer> | skipped — run <command> | n/a}
   verify: ${ENGINE line of the verify report}; degraded: ${missing reviewers or "none"}
+  left open: ${LOW} LOW in-scope finding(s) not fixed — listed in #${LOW_FOLLOWUP}        (only when low_in_scope > 0)
+  left open: ${PC} comment(s) list Proposed Corrections that were not applied              (only when proposed_corrections > 0)
+  remote CI: ${failed check names} failed while local CI passed                            (only when remote_ci_failed is not empty; "not readable" → say the remote checks could not be read; list remote_ci_pending as still running)
 Next: run /spectra-archive ${CHANGE} on ${DEFAULT}       (only for a Spectra-tier run: the change is not archived yet)
 Undo:
   gh issue reopen ${N}
@@ -1372,7 +1387,7 @@ Undo:
   then push the revert, or open a PR with it — pushing is your call
 ```
 
-merge 與 push 的欄位取自 `$CWD/.claude/.idd/state/idd-all-result-$N.json`（`pr`、`merge_sha`、`push_from`、`push_to`、`count`、`verify_url`）；closing summary 連結取自 5c.3 `confirm-close` 印出的 `summary_url`；follow-up 取自 Phase 4 開的 issue 加上 `/idd-close` 列出的；residue、distribution sync 取自 `/idd-close` 列出的預設。`changed` 取自 `git diff --shortstat ${MERGE_SHA}^ ${MERGE_SHA}`（direct-commit：`${PUSH_FROM} ${PUSH_TO}`）；`verify` 照抄 verify 報告的 `### Engine` 那一行。`Next:` 那一行只在 Spectra tier 出現：`/idd-close` 不做 archive（`rules/sdd-integration.md`〈Close triggers archive〉），跳過它 change 就一直留在 `openspec/changes/`。
+merge 與 push 的欄位取自 `$CWD/.claude/.idd/state/idd-all-result-$N.json`（`pr`、`merge_sha`、`push_from`、`push_to`、`count`、`verify_url`，以及只在不是 0 或空的時候才列的 `low_in_scope`、`proposed_corrections`、`remote_ci_failed`、`remote_ci_pending`）；closing summary 連結取自 5c.3 `confirm-close` 印出的 `summary_url`；follow-up 取自 Phase 4 開的 issue 加上 `/idd-close` 列出的；residue、distribution sync 取自 `/idd-close` 列出的預設。`changed` 取自 `git diff --shortstat ${MERGE_SHA}^ ${MERGE_SHA}`（direct-commit：`${PUSH_FROM} ${PUSH_TO}`）；`verify` 照抄 verify 報告的 `### Engine` 那一行。`Next:` 那一行只在 Spectra tier 出現：`/idd-close` 不做 archive（`rules/sdd-integration.md`〈Close triggers archive〉），跳過它 change 就一直留在 `openspec/changes/`。
 
 停下時（gate 不乾淨、guardrail 沒過、push 被拒、`/idd-close` 停下、Phase 4 在最後一輪仍有 Blocking 而 abort），`Done:` 只列實際做到的步驟，接著一行 `Stopped:`，原因照抄 Phase 4 或 Phase 5c 印出的那一行：
 
