@@ -134,7 +134,10 @@ Blocking 的修正要留下一條寫出該性質的 requirement、Example 與修
 - **標記可以指向一個不檢查任何事的測試**。→ 規格寫明標記只是名稱上的連結；reviewer 要看測試內容，名不副實是 MEDIUM 以上的 finding。
 - **「不改變行為」的第四種情況（重構）靠 reviewer 判斷**。→ 宣告本身進報告；範圍內有任何行為改動就是 HIGH，方向是寧可多報。
 - **這份 change 自己會經過很多輪 verify**：它改的是分流、驗證與結案。→ 先寫 `spec-change.py` 的 Example 表與測試再實作；verify 找到的 Blocking 先補進規格。
-- **與 #392 的衝突**：兩邊都改 `idd-all`、`idd-verify` 的 SKILL。→ #392 先合併；這份 change 在那之後才 apply，apply 前重新 validate。
+- **與 #392 的衝突**：兩邊都改 `idd-all`、`idd-verify` 的 SKILL。→ #392 先合併；這份 change 在那之後才 apply，apply 前重新 validate。2026-11-11 對 3.7.0（`03f5559`）重新核對（task 1.1）：`spectra validate` 與 `spectra analyze` 都沒有問題；delta 碰到的規格在 main 上沒有被 #392、#424 改過。實作時要接上的三處：
+  - `idd-close` 的封存檢查要比照 Step 1.55、1.6 寫出 `ORCHESTRATED BY /idd-all` 時的行為：不問，`refuse` 或 `error` 就停下、不 close，原因寫進輸出。
+  - `idd-verify` 新增的兩種 Blocking（`links` 缺漏、`archived` 拒絕）要寫成 Findings 表的列、Action 欄是 `Blocking`，否則 #392 的 verify gate 讀不出來。
+  - 封存 commit 是 run 自己的 branch 上的本機 commit，不是新的對外動作，idd-all 的〈權限〉表不用改。現有的留言都沒有用 `type=implementation-complete` 這個標記，新標記不會撞到。
 
 ## Migration Plan
 

@@ -1,6 +1,6 @@
 ## 1. 前置
 
-- [ ] 1.1 確認 #392 已經在 main，對 main 重新檢查這份 change：把 #392 改過的 `idd-pr-hitl-modes` 規格、`idd-all` 與 `idd-verify` 的 SKILL 跟這份 delta 對一次，有衝突先改 delta，並決定封存檢查接在 close stage 的哪一步。驗證：`spectra validate spec-on-every-issue` 通過；design 的 Risks「與 #392 的衝突」補上實際的差異。
+- [x] 1.1 確認 #392 已經在 main，對 main 重新檢查這份 change：把 #392 改過的 `idd-pr-hitl-modes` 規格、`idd-all` 與 `idd-verify` 的 SKILL 跟這份 delta 對一次，有衝突先改 delta，並決定封存檢查接在 close stage 的哪一步。驗證：`spectra validate spec-on-every-issue` 通過；design 的 Risks「與 #392 的衝突」補上實際的差異。
 
 ## 2. scripts/spec-change.py（測試先寫）
 
