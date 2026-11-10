@@ -93,7 +93,7 @@
 - [x] 14.6 第 7 輪 finding 2、3、11、12、14、15、16：finding 2 → 釐清問題不看標題、在任何位置都讀（`open_clarity_row`）；3、12 → 第二個判定與表格外的分類以「行的開頭」判定，有 Severity 欄而沒有 Action 欄的表也拒讀，句子中間的字不讀（具名限制）；11、14 → 降級標記不分大小寫、在可見文字的任何位置都算，PASS 的報告必須有 `R / T reviewers completed`；15 → 較深的小標題不結束一節；16 → 補上 `release`、`workflow_call` 的情境。每一項先有失敗的測試（16 是 `83d62f9` 已修、補測試）。完成時：`tests/verify-gate/` 431、`tests/close-stage/` 481、`tests/merge-and-close-contract/` 全數通過。
 - [x] 14.7 idd-all 的 SKILL.md（Phase 4 的 `low_in_scope`、Phase 4.5 與 close stage 的關係、Phase 5c 兩張表、已知限制、Run report）、idd-verify 的 SKILL.md（樣板的 reviewers 行與格式規則）、MANIFESTO、CHANGELOG（合併 main 時 Unreleased 的條目被併進 3.6.0，已移回）。全域規則不必改：它只指向 skill 的封閉列舉。完成時：合約測試通過。
 - [x] 14.8 第 7 輪的 LOW 合成一張 follow-up issue（#481，20 項未處理、3 項已在 `7a4c3d1` 處理）；#392 正文的 Blocking 改成現況。
-- [ ] 14.9 重跑 7.2 的端到端（兩張），再跑第 8 輪 verify。
+- [x] 14.9 重跑 7.2 的端到端（兩張），再跑第 8 輪 verify。（端到端的紀錄在 #392 的 comment 6763427068、6763687583、6765534212；第 8 輪的報告是 comment 6763800725。）
 
 ## 15. 權限寫進 skill（維護者 2026-11-10 的決定，#392 comment 6763147692）
 
