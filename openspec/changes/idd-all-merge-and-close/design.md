@@ -315,3 +315,20 @@ Foresay 的 `reversible` 除了狀態可復原，還要求沒有別人已經看�
 
 `CODEOWNERS` 讀的是本機 clone 的 `origin/<default>`，不另外打 API：Phase 0.5 在 PR mode 已經 fetch 過；讀不到就回 `ask`。已知限制：repo 的 watcher 仍會收到「有新 PR」的一般通知，這不算通知到特定的人；提到帳號的判斷比 GitHub 寬（程式碼區塊裡的 `@x` 也算），多出來的是多問一次。
 
+## verify round 8 之後的修正（2026-11-10，報告：#392 comment 6763800725）
+
+第 8 輪沒有 HIGH。兩項要先修的 MEDIUM 都出在前兩次修正新加的程式，所以先寫出性質與會失敗的測試，再改程式。
+
+### 等待之後要重讀，兩條路徑一致
+
+`7a4c3d1` 把本機 CI 閘門接進 direct-commit 路徑，卻沒有跟著加「等待之後重讀」。規格本來就寫等待期間會變的東西要在同一個 process 裡重讀，PR 路徑有做。修法是在 `run_direct` 的本機 CI 之後、push 之前，再跑一次 verify gate 與「有沒有別人插手」。測試用假的 CI 閘門在執行期間改掉 issue 的留言。
+
+### 改 PR 正文與開 PR 是同一種動作
+
+`d38d132` 只把 `pr-check` 放在開新 PR 的那一支。續跑時改既有 PR 的正文同樣會通知到正文裡提到的人，所以 `pr-check` 移到分支之前；回 `ask` 時不開也不改。〈權限〉的表補上這個動作。
+
+### 提到帳號的判定寧可多問
+
+原本的 regex 排除了底線、句點、連字號之後的 `@`，GitHub 在其中幾種情況仍會通知。現在只排除前面是字母或數字的情況（e-mail、版本號），用 character reference 寫的 `@` 一律算。這比 GitHub 實際通知的範圍寬，多出來的情況是多問一次。沒有改用 `gh-egress.sh` 的 scanner：它需要兩個固定版本的 Markdown 套件，放進 close stage 會讓沒裝的環境每一張都開不了 PR。
+
+**沒有在這裡修的**：close 關鍵字的 regex 漏掉粗體包住的寫法與 `www.github.com` 的 URL（自動合併另有 GitHub 的 `closingIssuesReferences` 擋住）；`pr-check` 回 `ask` 時 Phase 5c 的停止理由不提 `pr-check`；`filteredCount` 的依據只有 sandbox 錄下的回應。這三項列在 follow-up issue。

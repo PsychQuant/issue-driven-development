@@ -216,4 +216,19 @@ assert_grep "Phase 5 asks pr-check before opening the PR" "close-stage.py\" pr-c
 assert_grep "Phase 5 prints the undo of the PR it opened" "Undo: gh pr close" "$P5"
 assert_grep "Phase 5 does not open the PR when pr-check says ask" "PR not opened" "$P5"
 
+# verify round 8
+FRONT="$(sed -n '1,12p' "$ALL")"
+refute_grep "the description does not say an unattended Plan or Spectra run stops" "unattended 跑了 Plan" "$FRONT"
+refute_grep "the description does not limit closing to the Simple tier" "unattended 的 Simple tier 跑到 closed" "$FRONT"
+assert_grep "the description says the tier does not matter" "tier 是哪一個不影響" "$FRONT"
+assert_true "Phase 5 asks pr-check before it edits an existing PR" '[ "$(printf "%s\n" "$P5" | grep -n "pr-check --cwd" | head -1 | cut -d: -f1)" -lt "$(printf "%s\n" "$P5" | grep -n "gh pr edit" | head -1 | cut -d: -f1)" ]'
+assert_grep "Phase 5 neither opens nor changes a PR when pr-check says ask" "PR not opened or changed" "$P5"
+assert_grep "Phase 5 stops when the push fails" "git push failed — no PR opened" "$P5"
+assert_grep "Phase 5 sets the title in the same block" 'PR_TITLE="' "$P5"
+assert_grep "Phase 5 opens the PR against the branch it checked" '--base "$DEFAULT_BRANCH"' "$P5"
+assert_grep "permissions: refreshing the PR body is on the table" "續跑時更新它的正文" "$PERM"
+assert_grep "permissions: a PR in someone else's repository is asked about first" "開到別人的 repo 的 PR" "$PERM"
+assert_grep "permissions: the PR path is unattended" "PR path 目前一律是 unattended" "$PERM"
+assert_grep "the local CI gate has its own time limit" "ci.timeout_seconds" "$(section "$ALL" "### Phase 5c")"
+
 print_summary

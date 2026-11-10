@@ -55,6 +55,16 @@ When the resolved path is `direct-commit`, `idd-all` SHALL NOT create a feature 
 - **WHEN** the close stage runs
 - **THEN** `idd-all` pushes the verified commit itself (`git push origin <sha>:refs/heads/<default>`), confirms on GitHub that the default branch now points at it, and only then invokes `/idd-close #<N>` with the orchestrated directive
 
+The local CI gate can run for as long as its own time limit (`ci.timeout_seconds`, one hour by default). After it ends and before the push, the close stage SHALL read again, in the same process, the verify gate for the commit it is about to push and whether anyone else became involved after the run started, and SHALL NOT push when either check stops.
+
+##### Example: what the direct path reads again after the local CI gate
+
+| While the local CI gate runs | Local CI gate | Result |
+| --- | --- | --- |
+| nothing changes on the issue | pass | `pushed` |
+| a teammate comments on the issue | pass | `stopped`: the comment came after the run started; nothing is pushed |
+| a new verify report for the same commit says FAIL | pass | `stopped`: the verify gate; nothing is pushed |
+
 #### Scenario: local CI fails before a direct-commit push
 
 - **GIVEN** resolved path is `direct-commit` on the default branch and the verify gate reports `clean`
@@ -503,7 +513,7 @@ When `idd-all` merges, pushes, or closes, its Phase 6 report SHALL start with `D
 
 `skills/idd-all/SKILL.md` SHALL carry a section headed `## 權限` that lists, as two closed tables, the outward actions `idd-all` itself starts: the actions it runs and then reports with an `Undo:` line, and the actions it asks a person about first. The basis SHALL be Foresay's `reversible` property: the state can be restored, no cost is unrecoverable, and nothing has been observed by another party. An outward action of `idd-all` that is on neither table SHALL be asked about first; no action SHALL be added to the first table because it resembles one that is there. An action a sub-skill starts follows that sub-skill. Where the rules of the person running `idd-all` are stricter than the section, those rules apply.
 
-`idd-all` SHALL open the pull request of its run without asking only when `close-stage.py pr-check` prints `"status": "open"`. The check reads the title and the body the run is about to send and the default branch as the local clone has it, and SHALL answer `ask` with a reason when any of these holds: the title or the body mentions an account (an `@` followed by a letter or digit, not preceded by a letter, digit, `_`, `.`, `+`, `-` or `/`); the title or the body has a close keyword next to an issue reference; a `CODEOWNERS` file exists on the default branch at `.github/CODEOWNERS`, `CODEOWNERS` or `docs/CODEOWNERS` (opening the pull request would request a review from a person); or the default branch cannot be read. The pull request is opened in the repository the run pushed its branch to, from the run's branch to the default branch, with no reviewer and no assignee. The privacy self-review of the title and the body stays with the model and is not part of this check. When the check answers `ask`, an attended run SHALL ask the person and an unattended run SHALL NOT open the pull request: the branch stays pushed and the run report names the reason.
+`idd-all` SHALL open the pull request of its run, and SHALL refresh the body of a pull request the same run opened earlier, without asking only when `close-stage.py pr-check` prints `"status": "open"`. The check reads the title and the body the run is about to send and the default branch as the local clone has it, and SHALL answer `ask` with a reason when any of these holds: the title is empty; the title or the body mentions an account (an `@` followed by a letter or digit and not preceded by a letter or digit, or an `@` written as a character reference; this is wider than what GitHub notifies on, and the extra cases only ask); the title or the body has a close keyword next to an issue reference; a `CODEOWNERS` file exists on the default branch at `.github/CODEOWNERS`, `CODEOWNERS` or `docs/CODEOWNERS` (opening the pull request would request a review from a person); or the default branch cannot be fetched or read. The check fetches the default branch before it looks for `CODEOWNERS`, so a file added during the run counts. The pull request is opened in the repository the run pushed its branch to, from the run's branch to the default branch, with no reviewer and no assignee. The privacy self-review of the title and the body stays with the model and is not part of this check. When the check answers `ask`, an attended run SHALL ask the person and an unattended run SHALL NOT open the pull request and SHALL NOT change one that is already open: the branch stays pushed and the run report names the reason. A push of the run's branch that fails SHALL stop the phase before any pull request is opened.
 
 #### Scenario: A repository with a CODEOWNERS file
 
@@ -522,7 +532,11 @@ When `idd-all` merges, pushes, or closes, its Phase 6 report SHALL start with `D
 | body has `thanks @someone` | no `CODEOWNERS` | `ask` | 3 |
 | body has `mail t@example.test` and `` `pkg@1.2` `` | no `CODEOWNERS` | `open` | 0 |
 | title has `fix #7` | no `CODEOWNERS` | `ask` | 3 |
-| `Refs #7`, no mention | the clone has no `origin/<default>` | `ask` | 3 |
+| `Refs #7`, no mention | the default branch cannot be fetched | `ask` | 3 |
+| `Refs #7`, no mention | `.github/CODEOWNERS` was pushed to the remote after the clone last fetched | `ask` | 3 |
+| body has `_@someone_`, `-@someone`, `.@someone` or `(@someone)` | no `CODEOWNERS` | `ask` | 3 |
+| body has `&#64;someone`, `&#x40;someone` or `&commat;someone` | no `CODEOWNERS` | `ask` | 3 |
+| an empty title | no `CODEOWNERS` | `ask` | 3 |
 | a title file that does not exist | any | usage error | 64 |
 
 ##### Example: which actions idd-all runs and reports, and which it asks about
@@ -531,9 +545,10 @@ When `idd-all` merges, pushes, or closes, its Phase 6 report SHALL start with `D
 | --- | --- | --- |
 | create an issue, comment, edit its own issue body, set a label, push the baseline tag | runs and reports | edit or delete the record |
 | push the run's branch (not the default branch, no `--force`) | runs and reports | delete the remote branch |
-| open the run's pull request, when `pr-check` prints `open` | runs and reports | `gh pr close <N>` |
+| open the run's pull request, or refresh the body of the one it opened, when `pr-check` prints `open` | runs and reports | `gh pr close <N>`; GitHub keeps the earlier body in the edit history |
 | squash-merge, push on the default branch, `/idd-close`, when `close-stage.py run` passes every guardrail | runs and reports | `git revert`, `gh issue reopen` |
-| open a pull request for which `pr-check` prints `ask` | asks first | a notification cannot be recalled |
+| open or change a pull request for which `pr-check` prints `ask` | asks first | a notification cannot be recalled |
+| open a pull request in a repository other than the one `origin` names | asks first; `idd-all` has no step that does it | the other party has already seen it |
 | any egress whose text did not pass the privacy self-review | asks first | published text cannot be recalled |
 | delete a branch, or push with `--force` | asks first | the overwritten commits are gone |
 | publish: `gh release`, a marketplace sync, a tag other than the baseline tag | asks first | it has reached users |

@@ -404,17 +404,20 @@ def wait_for_checks(repo, pr, expect_pr_event, timeout, grace):
     last_set, stable_since = None, start
     while True:
         rc, out, err = run_cmd([GH, "pr", "checks", str(pr), "--repo", repo, "--json", "name,bucket,event"])
-        if rc not in (0, 8):
-            if "no checks reported" in (err + out):
-                checks = []
-            else:
-                raise Stop(f"guardrail 2 (CI checks) — gh pr checks exited {rc}: {err.strip()[:200]}")
-        else:
+        checks = None
+        if rc in (0, 1, 8):   # 1: a check failed, 8: one is pending — gh still prints the list (verify r8 #12)
             try:
                 checks = json.loads(out)
                 assert isinstance(checks, list)
             except (ValueError, AssertionError):
+                checks = None
+        if checks is None:
+            if "no checks reported" in (err + out):
+                checks = []
+            elif rc in (0, 8):
                 raise Stop("guardrail 2 (CI checks) — unreadable gh output")
+            else:
+                raise Stop(f"guardrail 2 (CI checks) — gh pr checks exited {rc}: {err.strip()[:200]}")
         bad = [str(c.get("name")) for c in checks if c.get("bucket") in ("fail", "cancel")]
         if bad:
             raise Stop(f"guardrail 2 (CI checks) — failed: {', '.join(bad)}")
@@ -440,13 +443,13 @@ def wait_for_checks(repo, pr, expect_pr_event, timeout, grace):
 def remote_checks_once(repo, pr):
     """The PR's remote checks read once, without waiting: (failed names, pending names), or (None, None) when unreadable."""
     rc, out, err = run_cmd([GH, "pr", "checks", str(pr), "--repo", repo, "--json", "name,bucket,event"])
-    if rc not in (0, 8):
-        return ([], []) if "no checks reported" in (err + out) else (None, None)
+    if rc not in (0, 1, 8):   # 1: a check failed, 8: one is pending — gh still prints the list
+        return None, None
     try:
         checks = json.loads(out)
         assert isinstance(checks, list)
     except (ValueError, AssertionError):
-        return None, None
+        return ([], []) if "no checks reported" in (err + out) else (None, None)
     return ([str(c.get("name")) for c in checks if c.get("bucket") in ("fail", "cancel")],
             [str(c.get("name")) for c in checks if c.get("bucket") == "pending"])
 
@@ -628,6 +631,12 @@ def run_direct(st, cwd, repo, n, partial):
     # Local CI before the push. In remote mode there is no remote result for commits that were never pushed,
     # so the push proceeds and remote CI runs after it (as before #465).
     local = ci_guardrail(cwd, head)
+    # The local CI gate can run for up to an hour: what can change meanwhile is read again before the push,
+    # as the PR path does after its CI wait (verify r8 #1).
+    since = parse_iso(st["created_at"])
+    rc, gate = judge_report(repo, n, head, base, since)
+    gate_stop(rc, gate)
+    check_others(session_login(), since, issue_comments(repo, n), issue_meta(repo, n))
     # Everything below names `head`, never HEAD: another session can move HEAD
     # or switch the branch while the checks run (#392 verify r2 #1).
     commits, foreign, trapped = scan_commits(cwd, base, head, n)
@@ -766,13 +775,17 @@ def cmd_confirm(argv):
 # text is the model's; this check covers what a program can decide.
 
 CODEOWNERS_PATHS = (".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS")
-# An @ that starts a token: not part of an e-mail address, a version pin (pkg@1.2) or a path.
-MENTION_RE = re.compile(r"(?<![A-Za-z0-9_.+/-])@[A-Za-z0-9][A-Za-z0-9-]*")
+# An @ before a letter or digit, unless a letter or digit comes right before it (an e-mail address, a version
+# pin such as pkg@1.2). Wider than what GitHub notifies on (code spans count too): the extra cases only ask.
+# An @ written as a character reference is counted whatever follows it.
+MENTION_RE = re.compile(r"(?<![A-Za-z0-9])@[A-Za-z0-9][A-Za-z0-9-]*|&#0*64;|&#[xX]0*40;|&commat;")
 BRANCH_RE = re.compile(r"^[A-Za-z0-9._/][A-Za-z0-9._/-]*$")
 
 
 def pr_check(cwd, default, title, body):
     """The reason the run must ask before opening the pull request, or None."""
+    if not title.strip():
+        return "the title is empty — the run did not set the pull request's title"
     text = title + "\n" + body
     mention = MENTION_RE.search(text)
     if mention:
@@ -781,6 +794,10 @@ def pr_check(cwd, default, title, body):
     if hits:
         return "a close keyword next to an issue reference in the title or the body: " + ", ".join(h[:40] for h in hits[:3])
     ref = f"refs/remotes/origin/{default}"
+    # Read the default branch as the remote has it now: a CODEOWNERS file added during the run counts (verify r8 #7).
+    rc, out, err = run_cmd([GIT, "-C", cwd, "fetch", "-q", "origin", f"+refs/heads/{default}:{ref}"])
+    if rc != 0:
+        return f"could not fetch origin/{default} — cannot tell whether a CODEOWNERS file exists"
     rc, out, err = run_cmd([GIT, "-C", cwd, "rev-parse", "--verify", "--quiet", ref + "^{commit}"])
     if rc != 0:
         return f"could not read origin/{default} in the local clone — cannot tell whether a CODEOWNERS file exists"

@@ -11,14 +11,20 @@ Version number left to the merge, as in PR #442.
 
 ### Changed
 
+- **The direct-commit path reads again after the local CI gate (#392).** The gate can run for up to an hour. Before the
+  push, the close stage now reads the verify gate for the commit again and checks whether anyone else became involved
+  after the run started, as the PR path already did after its CI wait.
+- **A failed remote check is named when `gh pr checks` exits 1 (#392).** With a local CI pass the run report lists the
+  failed checks instead of saying they could not be read; in remote mode the stop names the check.
 - **`/idd-all` states its own permissions, and opens its pull request only after `close-stage.py pr-check` says `open` (#392).**
   `skills/idd-all/SKILL.md` has a new section, 權限, with two closed tables based on Foresay's `reversible` property: the
   outward actions the skill runs and then reports with an `Undo:` line, and the ones it asks a person about first. An
   action on neither table is asked about first. Opening the run's pull request is on the first table, behind a new
   subcommand: `pr-check` answers `ask` when the title or the body mentions an account, has a close keyword next to an
   issue reference, when the default branch has a `CODEOWNERS` file (opening the pull request would request a review from
-  a person), or when the default branch cannot be read. On `ask` an attended run asks and an unattended run leaves the
-  branch pushed without a pull request and reports the reason. The rule lives in the skill, not in a user's own
+  a person), when the title is empty, or when the default branch cannot be fetched. Refreshing the body of a pull
+  request the same run opened earlier goes through the same check. On `ask` an unattended run neither opens nor changes
+  a pull request: it leaves the branch pushed and reports the reason. The rule lives in the skill, not in a user's own
   configuration, so every installation behaves the same; a user's stricter rules still win.
 - **BREAKING — `/idd-all` merges (or pushes) and closes after a clean verify, when the intent was confirmed (#392).** The run used to end at
   verified: PR mode opened the PR, direct-commit mode left local commits, and both asked the user to merge and run

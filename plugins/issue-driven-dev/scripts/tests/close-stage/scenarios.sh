@@ -676,7 +676,7 @@ assert_eq "pr-check: an e-mail address and a version pin are not mentions" open 
 new_scenario prc-trap; plain_pr; TITLE="fix #7"; prc
 assert_eq "pr-check: a close keyword next to the issue number → ask" ask "$(printf '%s' "$PRC" | field status)"
 assert_grep "pr-check: the reason says it is a close keyword" "close keyword" "$(printf '%s' "$PRC" | field reason)"
-new_scenario prc-noref; git -C "$C" update-ref -d refs/remotes/origin/main; plain_pr; prc
+new_scenario prc-noref; git -C "$C" update-ref -d refs/remotes/origin/main; git -C "$C" remote set-url origin "$S/gone.git"; plain_pr; prc
 assert_eq "pr-check: the default branch cannot be read → ask" ask "$(printf '%s' "$PRC" | field status)"
 assert_exit "pr-check: unreadable default branch → exit 3" 3 "$RC"
 new_scenario prc-usage; printf 'b' > "$S/body.txt"
@@ -684,5 +684,46 @@ python3 "$CS" pr-check --cwd "$C" --default main --title-file "$S/absent.txt" --
 assert_exit "pr-check: a missing title file is a usage error" 64 $?
 python3 "$CS" pr-check --cwd "$C" --default "-x" --title-file "$S/body.txt" --body-file "$S/body.txt" >/dev/null 2>&1
 assert_exit "pr-check: a default branch that starts with a dash is a usage error" 64 $?
+
+echo "close-stage: round 8 — the direct path reads again after the local CI gate"
+# spec-example: idd-pr-hitl-modes / what the direct path reads again after the local CI gate
+direct_scenario dci-teammate; ci_gate 0; cp "$S/gh/comments.json" "$S/gh/before.json"; others_comment teammate User 5
+mv "$S/gh/comments.json" "$S/gh/after.json"; mv "$S/gh/before.json" "$S/gh/comments.json"
+printf '%s\n' "cp '$S/gh/after.json' '$S/gh/comments.json'" > "$S/gh/on-ci-gate.sh"; run_stage
+assert_eq "direct: a teammate's comment during the local CI gate stops the push" "stopped" "$(printf '%s' "$OUT" | field status)"
+assert_grep "direct: the stop names the comment" "after the run started" "$(printf '%s' "$OUT" | field reason)"
+assert_true "direct: nothing was pushed" '[ "$(git -C "$S/o/r.git" rev-parse main)" != "$SHA" ]'
+direct_scenario dci-fail-report; ci_gate 0; cp "$S/gh/comments.json" "$S/gh/before.json"
+verify_comment me "$SHA" "$(base_of "$SHA")" "**FAIL** — 1 blocking" "" "## Verify: #7 — round 2"
+mv "$S/gh/comments.json" "$S/gh/after.json"; mv "$S/gh/before.json" "$S/gh/comments.json"
+printf '%s\n' "cp '$S/gh/after.json' '$S/gh/comments.json'" > "$S/gh/on-ci-gate.sh"; run_stage
+assert_eq "direct: a FAIL report posted during the local CI gate stops the push" "stopped" "$(printf '%s' "$OUT" | field status)"
+assert_grep "direct: the stop is the verify gate" "verify gate" "$(printf '%s' "$OUT" | field reason)"
+assert_true "direct: nothing was pushed after the FAIL report" '[ "$(git -C "$S/o/r.git" rev-parse main)" != "$SHA" ]'
+direct_scenario dci-quiet; ci_gate 0; run_stage
+assert_eq "direct: a quiet local CI gate still ends in a push" "pushed" "$(printf '%s' "$OUT" | field status)"
+
+echo "close-stage: round 8 — gh pr checks exits 1 when a check failed"
+pr_scenario rc1; ci_gate 0; echo '[{"name": "lint", "bucket": "fail", "event": "pull_request"}]' > "$S/gh/checks-1.json"; echo 1 > "$S/gh/checks.rc"; run_stage
+assert_eq "local pass, gh exits 1 for a failed remote check: merged" "merged" "$(printf '%s' "$OUT" | field status)"
+assert_eq "local pass, gh exits 1: the failed check is named" "['lint']" "$(printf '%s' "$OUT" | field remote_ci_failed)"
+
+pr_scenario rc1-remote; echo '[{"name": "lint", "bucket": "fail", "event": "pull_request"}]' > "$S/gh/checks-1.json"; echo 1 > "$S/gh/checks.rc"; run_stage
+stop_case "remote mode, gh exits 1 for a failed check: the stop names the check" "failed: lint"
+
+echo "close-stage: round 8 — pr-check"
+for m in '_@someone_' 'see -@someone' 'x.@someone' '&#64;someone' '&#x40;someone' '&commat;someone' '(@someone)'; do
+  new_scenario "prc-m-$(printf '%s' "$m" | cksum | cut -d' ' -f1)"; plain_pr; BODY="Refs #7 $m"; prc
+  assert_eq "pr-check: '$m' counts as a mention → ask" ask "$(printf '%s' "$PRC" | field status)"
+done
+new_scenario prc-empty-title; plain_pr; TITLE=""; prc
+assert_eq "pr-check: an empty title → ask" ask "$(printf '%s' "$PRC" | field status)"
+assert_grep "pr-check: the reason says the title is empty" "title is empty" "$(printf '%s' "$PRC" | field reason)"
+new_scenario prc-stale; git clone -q "$S/o/r.git" "$S/other"; mkdir -p "$S/other/.github"; echo '* @someone' > "$S/other/.github/CODEOWNERS"
+git -C "$S/other" add .github; git -C "$S/other" commit -q -m codeowners; git -C "$S/other" push -q origin main; plain_pr; prc
+assert_eq "pr-check: a CODEOWNERS pushed after the clone was made is seen (the check fetches) → ask" ask "$(printf '%s' "$PRC" | field status)"
+new_scenario prc-nofetch; git -C "$C" remote set-url origin "$S/gone.git"; plain_pr; prc
+assert_eq "pr-check: the default branch cannot be fetched → ask" ask "$(printf '%s' "$PRC" | field status)"
+assert_grep "pr-check: the reason says the fetch failed" "could not fetch" "$(printf '%s' "$PRC" | field reason)"
 
 print_summary close-stage

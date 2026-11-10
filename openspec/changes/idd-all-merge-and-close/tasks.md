@@ -33,14 +33,14 @@
 - [x] 6.1 [P] 依「文件三層一起改」改寫 `plugins/issue-driven-dev/MANIFESTO.md`：〈auto-merge 的合法性與限制〉改成兩個理由並列（verify 保證改得對；可逆讓它免事前確認但必須事後回報），revert 不對稱段改用來說明 distribution sync 為何仍要確認，指向 #37 的句子改指 #392；〈verify-gated 是 terminal 預設 disposition〉改寫成 verify 乾淨即 merge 並 close；自動化 caller 那段改寫。完成時：MANIFESTO 與 close stage 不矛盾。驗證：3.1 測試的 MANIFESTO 斷言通過。
 - [x] 6.2 [P] 同步其餘文件的 idd-all 終點敘述：`plugins/issue-driven-dev/CLAUDE.md` 的 idd-all 列與 PR vs Direct-commit 段、`plugins/issue-driven-dev/README.md`、`plugins/issue-driven-dev/references/usecase-routing.md`、`plugins/issue-driven-dev/references/pr-flow.md`、`docs/commands.md`。完成時：這些檔案不再寫 idd-all 停在 verified（`--review`、chain、meeting 的例外除外）。驗證：`grep -rn "停在 verified" plugins/issue-driven-dev docs` 的剩餘結果都屬於上述例外，逐筆人工確認。
 
-- [x] 6.3 依 2026-11-02 的決定（#392 comment 6562727408）同步本 repo 以外的兩份規則，避免規則與實作互相矛盾：使用者的全域 `CLAUDE.md`加一節「`/idd-all #N` 本身就是確認」（在 verify 乾淨時的 merge／push 與 close），〈GitHub 紀錄不用問〉裡「關閉 issue（照 IDD，close 由鄭澈決定）」改為除外 `/idd-all`；dev 層 `.claude/rules/human-vs-claude-skills.md` 把「結案只有人能決定」改成「人可以手動結案；`/idd-all` verify 乾淨時自己結案」。完成時：兩份規則不再說 close 一律由人決定。驗證：`grep -n "close 由鄭澈決定\|只有人能決定" ~/.claude/CLAUDE.md .claude/rules/human-vs-claude-skills.md` 沒有與 close stage 矛盾的結果；全域規則所在的設定 repo 有本機 commit。
+- [x] 6.3 依 2026-11-02 的決定（#392 comment 6562727408）同步本 repo 以外的兩份規則，避免規則與實作互相矛盾：使用者的全域 `CLAUDE.md`加一節「`/idd-all #N` 本身就是確認」（在 verify 乾淨時的 merge／push 與 close），〈GitHub 紀錄不用問〉裡「關閉 issue（照 IDD，close 由維護者決定）」改為除外 `/idd-all`；dev 層 `.claude/rules/human-vs-claude-skills.md` 把「結案只有人能決定」改成「人可以手動結案；`/idd-all` verify 乾淨時自己結案」。完成時：兩份規則不再說 close 一律由人決定。驗證：`grep -n "close 由.*決定\|只有人能決定" ~/.claude/CLAUDE.md .claude/rules/human-vs-claude-skills.md` 沒有與 close stage 矛盾的結果；全域規則所在的設定 repo 有本機 commit。
 
 ## 7. 收尾
 
 - [x] 7.1 CHANGELOG 以 BREAKING 記錄 idd-all 終點改變並寫明 `--review` 可取回舊行為；以 minor 版號同步 `plugins/issue-driven-dev/.claude-plugin/plugin.json` 與 `.claude-plugin/marketplace.json`；在 #387 留言標明已併入本 change。完成時：版本號一致、全部測試通過。驗證：`bash plugins/issue-driven-dev/scripts/run-all-tests.sh` 除既知與本 change 無關的失敗外全數通過；`jq` 讀出兩個檔案的版本號相同；#387 有留言。
   - ASSUMPTION（apply 時加，2026-11-02）：main 的 CHANGELOG 已改成「Version number left to the merge, as in PR #442」——同時有 #418（3.5.1）、#426（3.6.0）在飛，先寫死版本號只會撞號。所以本 change 把條目寫在 `[Unreleased]`（BREAKING 標在 Changed 第一條），`plugin.json`／`marketplace.json` 的版本號留給 merge 時決定；文件裡也不寫版本號，只寫 #392。7.1 的「版本號一致」在 merge 時驗。
 
-- [x] 7.2 手動驗收：在一個拋棄式 repo（可沿用 #400 的 scratch repo）以 `claude -p --plugin-dir plugins/issue-driven-dev` 跑兩張 trivial issue：一張 unattended PR mode，確認 PR 被 squash merge、issue 被 close、回報有 `Done:` 與 `Undo:`；一張帶 `--review`，確認停在 verified、沒有 merge。完成時：兩張的結果與 spec scenario 一致。驗證：把兩次的 PR URL、issue 狀態與回報原文貼在 #392 的驗收留言。（2026-11-10 在 sandbox 跑兩張，head `3fc3d41`：PR mode 那張 `close-stage.py run` 回 `merged` 並結案；`--review` 那張回 `stopped`、PR 留著。紀錄在 #392 的 Acceptance comment。）
+- [x] 7.2 手動驗收：在一個拋棄式 repo（可沿用 #400 的 scratch repo）以 `claude -p --plugin-dir plugins/issue-driven-dev` 跑兩張 trivial issue：一張 unattended PR mode，確認 PR 被 squash merge、issue 被 close、回報有 `Done:` 與 `Undo:`；一張帶 `--review`，確認停在 verified、沒有 merge。完成時：兩張的結果與 spec scenario 一致。驗證：把兩次的 PR URL、issue 狀態與回報原文貼在 #392 的驗收留言。（2026-11-10 在 sandbox 跑兩張，head `3fc3d41`：PR mode 那張 `close-stage.py run` 回 `merged` 並結案；`--review` 那張回 `stopped`、PR 留著。紀錄在 #392 的 Acceptance comment。第三張在 `d38d132` 上跑（sandbox #18）：Phase 5 的 `pr-check` 回 `open`，run 沒有停下來問就開了 PR，紀錄在 comment 6763687583。）
   - 進度（2026-11-02）：做了 scripted 驗收，沒做 `claude -p` 的完整端到端。把 SKILL.md 裡 Phase 5c.1–5c.3 的 bash 原文抽出來，在 `PsychQuant/idd-cloud-sandbox` 對真的 PR 跑：trap commit 停在 guardrail 3（PR #9）、乾淨 PR 被 squash merge 且 issue 沒被 GitHub 自動關（PR #10）、direct-commit 的 trap 不推、乾淨的推上 main、不在預設 branch 時停下。第一次跑抓到一個 bug：verify 報告的選擇式用 `([ \t]|$)`，jq 的 `$` 只比對字串結尾，標題後接換行就選不到，close stage 讀到空報告（已修，合約測試改成直接執行 SKILL.md 裡的 jq 程式）。還沒驗的：模型照著 SKILL 走完整條 pipeline、`/idd-close` 收到 ORCHESTRATED 指示時的行為、`--review`。`claude -p` 需要另外設定權限（不用 `--dangerously-skip-permissions`），留到 verify 之後由維護者決定要不要跑。**更正（verify round 2，#25）**：這次 sandbox 跑的是 round 1 之前、寫在 SKILL.md 裡的 bash，那段已在 round 1 整段換成 `scripts/close-stage.py`；現行 helper 的 merge 與 push 只在假的 gh 下測過（`tests/close-stage/`），還沒碰過真的 GitHub。
 
 ## 8. verify round 1 修正（#392 comment 6563410294）
@@ -100,5 +100,15 @@
 - [x] 15.1 spec delta 新增 requirement「idd-all states which outward actions it runs without asking」，含兩張 Example 表；`spectra validate` 通過。
 - [x] 15.2 `close-stage.py pr-check`：標題或內文提到帳號、close 關鍵字緊鄰 issue 號、預設 branch 有 `CODEOWNERS`、預設 branch 讀不到，四種都回 `ask`（exit 3）；其餘回 `open`。驗證：`tests/close-stage` 的 pr-check 情境先在沒有這個子指令時失敗，實作後通過。
 - [x] 15.3 `skills/idd-all/SKILL.md` 新增〈權限〉一節（兩張封閉的表），Phase 5 開 PR 前呼叫 `pr-check`，開了就印 `Undo:`。驗證：`tests/merge-and-close-contract` 的權限檢查。
-- [ ] 15.4 第 8 輪 verify 在含這一節的 head 上跑。
+- [x] 15.4 第 8 輪 verify 在含這一節的 head 上跑（`d38d132`，報告是 #392 comment 6763800725：沒有 HIGH，2 項 MEDIUM 要先修）。
+
+## 16. 第 8 輪 verify 之後的修正（報告：#392 comment 6763800725）
+
+- [x] 16.1 direct-commit 路徑在本機 CI 閘門之後、push 之前，重讀 verify gate 與 run 開始後有沒有別人插手（finding 1）。驗證：`tests/close-stage` 的三個情境（CI 期間沒事、teammate 留言、新的 FAIL 報告），後兩個在修正前會 push。
+- [x] 16.2 續跑時更新既有 PR 的正文也先過 `pr-check`；回 `ask` 就不開也不改（finding 2）。〈權限〉兩張表補上「更新 PR 正文」與「開到別人的 repo」。驗證：`tests/merge-and-close-contract` 檢查 Phase 5 的 `pr-check` 在 `gh pr edit` 之前。
+- [x] 16.3 idd-all 的 description 與 proposal 不再寫 unattended 的 Plan／Spectra 要停（finding 3）。驗證：contract 測試檢查 frontmatter。
+- [x] 16.4 `pr-check`：`@` 前面只要不是字母或數字就算提到帳號，用 character reference 寫的 `@` 也算；空標題回 `ask`；找 `CODEOWNERS` 之前先 fetch 預設 branch（finding 5、7、8）。Phase 5 在同一個 block 設定標題、`git push` 失敗就停（finding 4、8）。驗證：`tests/close-stage` 的 pr-check 情境。
+- [x] 16.5 `gh pr checks` 以 1 結束（有失敗的 check）時照樣讀出清單：本機 CI 通過時回報寫出失敗的 check 名稱，remote mode 的停止理由寫出是哪個 check（finding 12）。驗證：`tests/close-stage` 的兩個情境。
+- [x] 16.6 文件：`--ci-timeout` 只管等遠端 check 的時間，本機 CI 閘門有自己的時限（finding 11）；〈權限〉寫明 follow-up issue 的建立還沒走 `gh-egress.sh`（finding 13）、PR path 一律 unattended（finding 14）、watcher 與 workflow 的通知是已知限制（finding 17）；task 7.2 補上第三張 sandbox 的結果（finding 10）。
+- [x] 16.7 沒有在這個 PR 處理的 finding（6、9、16）開成 follow-up issue #484。finding 15（第 7 輪的發佈偵測改列為已知限制，issue 上沒有 Decision comment）留給維護者確認。
 

@@ -1,8 +1,8 @@
 ---
 name: idd-all
 description: |
-  自動串連 IDD 完整 workflow（issue → diagnose → implement → verify），按 pr_policy 解析 path 與 interaction 兩軸：PR + unattended（自動化、/loop friendly）或 direct-commit + attended（HITL、user 在 keyboard，sub-skill AskUserQuestion 自然 fire）。verify 乾淨通過、意圖確認過、而且沒有別人插手時就 merge（PR mode）或 push（direct-commit mode，限預設 branch）並跑 /idd-close，最後回報做了什麼與怎麼復原；guardrail 沒過、unattended 跑了 Plan／Spectra tier、有未回應的略過紀錄、帶 --review 或 --in-chain 時停在 verified；type=meeting 停在 diagnosed 或 planning，不 verify、不開 PR。
-  Use when: 想一次跑完整條 IDD pipeline、信任 6-AI verify 會抓錯、希望交出去就不用管（unattended 的 Simple tier 跑到 closed，其他停在 verified 回報原因）；HITL 模式則用於 solo repo 想被 sub-skill 諮詢的情境。
+  自動串連 IDD 完整 workflow（issue → diagnose → implement → verify），按 pr_policy 解析 path 與 interaction 兩軸：PR + unattended（自動化、/loop friendly）或 direct-commit + attended（HITL、user 在 keyboard，sub-skill AskUserQuestion 自然 fire）。verify 乾淨通過、意圖確認過、而且沒有別人插手時就 merge（PR mode）或 push（direct-commit mode，限預設 branch）並跑 /idd-close，最後回報做了什麼與怎麼復原；guardrail 沒過、有還沒回答的釐清問題或未回應的略過紀錄、帶 --review 或 --in-chain 時停在 verified（tier 是哪一個不影響）；type=meeting 停在 diagnosed 或 planning，不 verify、不開 PR。
+  Use when: 想一次跑完整條 IDD pipeline、信任 6-AI verify 會抓錯、希望交出去就不用管（verify 乾淨就跑到 closed，沒過就停在 verified 回報原因）；HITL 模式則用於 solo repo 想被 sub-skill 諮詢的情境。
   防止的失敗：手動跑 5 個 idd-* skill 太繁瑣、忘記中間某一步、orchestration 一致性。
 argument-hint: "[#NNN | 'issue description'] [--pr | --no-pr] [--review] [--cwd /path/to/clone] (empty = interactive; --no-pr 觸發 HITL direct-commit + attended; --review 停在 verified、不 merge 也不 close)"
 allowed-tools:
@@ -43,16 +43,17 @@ allowed-tools:
 
 | 動作 | 條件 | Undo |
 |---|---|---|
-| 建 issue、留言、改自己的 issue 正文、設 label、baseline tag | 內文過隱私自審，經 `gh-egress.sh` 送出 | 編輯或刪除那一筆 |
+| 建 issue、留言、改自己的 issue 正文、設 label、baseline tag | 內文過隱私自審；留言與正文經 `gh-egress.sh` 送出（follow-up issue 的建立程序還沒有走它，#483） | 編輯或刪除那一筆 |
 | 推這次 run 的 branch（Phase 5） | 不是預設 branch、不帶 `--force` | 刪掉遠端 branch |
-| 開這次 run 的 PR（Phase 5） | `close-stage.py pr-check` 回 `open`，標題與內文過隱私自審 | `gh pr close <N>` |
+| 開這次 run 的 PR，或續跑時更新它的正文（Phase 5） | `close-stage.py pr-check` 回 `open`，標題與內文過隱私自審 | `gh pr close <N>`；正文的舊版在 GitHub 的編輯紀錄裡 |
 | squash-merge、在預設 branch 推送、`/idd-close`（Phase 5c） | `close-stage.py run` 的閘門全過 | `git revert`、`gh issue reopen` |
 
 **先問人**
 
 | 動作 | 為什麼收不回 |
 |---|---|
-| `pr-check` 回 `ask` 的 PR：標題或內文 `@` 到帳號、預設 branch 有 `CODEOWNERS`（開 PR 會自動請人 review）、close 關鍵字緊鄰 issue 號、預設 branch 讀不到 | 通知送出去就收不回；合併時會繞過 `/idd-close` 關掉 issue |
+| `pr-check` 回 `ask` 的 PR（開新的或改正文都算）：標題是空的、標題或內文 `@` 到帳號、預設 branch 有 `CODEOWNERS`（開 PR 會自動請人 review）、close 關鍵字緊鄰 issue 號、預設 branch 抓不到 | 通知送出去就收不回；合併時會繞過 `/idd-close` 關掉 issue |
+| 開到別人的 repo 的 PR | 對方已經看到。這個 skill 不會做這件事：PR 一律開在 `origin` 指向的 repo，推不上去就不會有 PR |
 | 內文沒過隱私自審的任何對外動作 | 公開出去的內容收不回 |
 | 刪除 branch、`--force` | 被覆蓋或刪掉的 commit 找不回來 |
 | 發布：`gh release`、marketplace 同步、baseline 以外的 tag | 已經到使用者手上 |
@@ -60,7 +61,9 @@ allowed-tools:
 
 還沒回答的釐清問題不是操作，是意圖確認：由人回答，run 停在那裡（Phase 5c 的意圖那一列）。
 
-要先問的動作，attended 用 `AskUserQuestion` 問；unattended 不做，把原因寫進 Phase 6 報告的 `Stopped:`。
+要先問的動作，attended 用 `AskUserQuestion` 問；unattended 不做，把原因寫進 Phase 6 報告的 `Stopped:`。PR path 目前一律是 unattended，所以 `pr-check` 回 `ask` 時就是不開、不改，並回報。
+
+已知限制：repo 的 watcher 會收到「有新 PR」的一般通知，`pull_request` 觸發的 workflow 也可能自己指派或提到人，這兩種 `pr-check` 看不到。
 
 ## 與其他 idd-* skills 的關係
 
@@ -1191,7 +1194,7 @@ elif [ "$PATH_AXIS" = "PR" ]; then
   # Do NOT insert untrusted strings (e.g. issue titles) into the body without
   # sanitization. Current placeholders {...} are markdown-style note text, not
   # ${...} shell expansions, so safe today; future maintainers must keep it that way.
-  git -C "$CWD" push -u origin "$BRANCH"
+  git -C "$CWD" push -u origin "$BRANCH" || abort "Phase 5: git push failed — no PR opened; the commits stay on the local branch $BRANCH"
 
   # The PR body states what the verify gate actually says (#392 verify r1 #20, #29): a run that
   # stops at verified must not open a PR that claims PASS and promises a merge.
@@ -1237,31 +1240,33 @@ ${VERIFY_LINE}
 EOF
 )
 
+  # 標題在這個 block 裡設定（shell 狀態不跨 tool call）：issue 的標題，結尾加 (#N)；不放 close 關鍵字、不 @ 人。
+  PR_TITLE="{issue 的標題} (#${N})"
+  # 〈權限〉：開 PR、或更新這次 run 已經開的 PR 之前，都先由程式判定它算不算可逆
+  # （會不會通知到人、會不會在合併時關掉 issue）。隱私自審是模型的事，在這之前做完。
+  PRC_DIR=$(mktemp -d) || abort "mktemp failed — not opening the PR"
+  printf '%s' "$PR_TITLE" > "$PRC_DIR/title"; printf '%s' "$PR_BODY" > "$PRC_DIR/body"
+  PRC=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/close-stage.py" pr-check --cwd "$CWD" --default "$DEFAULT_BRANCH" \
+      --title-file "$PRC_DIR/title" --body-file "$PRC_DIR/body"); PRC_RC=$?
+  rm -f "$PRC_DIR/title" "$PRC_DIR/body"; rmdir "$PRC_DIR"
   # A resumed run (Step 0.5.1 → resume) already has this branch's PR open: reuse it and refresh
   # its body instead of failing on "a pull request already exists" (#392 verify r2 #23).
   ME=$(gh api user --jq .login)
   PR_URL=$(gh pr list -R "$GITHUB_REPO" --head "$BRANCH" --state open --json url,isCrossRepository,author \
       -q "[.[] | select(.isCrossRepository == false and .author.login == \"$ME\")] | .[0].url // empty")
-  if [ -n "$PR_URL" ]; then
+  if [ "$PRC_RC" -ne 0 ]; then
+    # exit 3 = ask（原因在 JSON）；其他 = 用法錯誤。兩種都不開 PR，也不改已經開著的 PR（verify r8 #2）。
+    echo "→ PR not opened or changed — pr-check: $(printf '%s' "$PRC" | jq -r '.reason // empty' 2>/dev/null || true) (exit $PRC_RC)${PR_URL:+; the open PR $PR_URL keeps its current text}"
+    echo "   Put this reason in the Phase 6 report (Stopped:). Phase 5c will stop too: without a PR it finds none; with the old PR its text was not refreshed."
+  elif [ -n "$PR_URL" ]; then
     gh pr edit "$PR_URL" -R "$GITHUB_REPO" --body "$PR_BODY" >/dev/null || echo "⚠ could not refresh the body of $PR_URL"
-    echo "→ reusing $PR_URL"
+    echo "→ reusing $PR_URL (body refreshed)"
   else
-    # 〈權限〉：開 PR 算不算可逆由程式判定（會不會通知到人、會不會在合併時關掉 issue）。隱私自審是模型的事，在這之前做完。
-    PRC_DIR=$(mktemp -d) || abort "mktemp failed — not opening the PR"
-    printf '%s' "$PR_TITLE" > "$PRC_DIR/title"; printf '%s' "$PR_BODY" > "$PRC_DIR/body"
-    PRC=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/close-stage.py" pr-check --cwd "$CWD" --default "$DEFAULT_BRANCH" \
-        --title-file "$PRC_DIR/title" --body-file "$PRC_DIR/body"); PRC_RC=$?
-    rm -f "$PRC_DIR/title" "$PRC_DIR/body"; rmdir "$PRC_DIR"
-    if [ "$PRC_RC" -eq 0 ]; then
-      PR_URL=$(gh pr create -R "$GITHUB_REPO" --title "$PR_TITLE" --body "$PR_BODY" \
-          --base "$DEFAULT" --head "$BRANCH") || abort "gh pr create failed — branch $BRANCH is pushed; open the PR by hand"
-      echo "→ opened $PR_URL"
-      echo "Undo: gh pr close ${PR_URL##*/} -R $GITHUB_REPO"
-    else
-      # exit 3 = ask（原因在 JSON）；其他 = 用法錯誤。兩種都不開 PR。
-      echo "→ PR not opened — pr-check: $(printf '%s' "$PRC" | jq -r '.reason // empty' 2>/dev/null || true)${PRC:+ }(exit $PRC_RC)"
-      echo "   attended: ask the person whether to open it; unattended: leave the branch pushed and put this reason in the Phase 6 report (Stopped:)."
-    fi
+    PR_URL=$(gh pr create -R "$GITHUB_REPO" --title "$PR_TITLE" --body "$PR_BODY" \
+        --base "$DEFAULT_BRANCH" --head "$BRANCH") || abort "gh pr create failed — branch $BRANCH is pushed; open the PR by hand"
+    echo "→ opened $PR_URL"
+    echo "Undo: gh pr close ${PR_URL##*/} -R $GITHUB_REPO"
+  fi
   fi   # Phase 5c finds the PR itself (close-stage.py run), it does not take this URL
 fi
 # Every path falls through to Phase 5c below.
@@ -1301,7 +1306,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/close-stage.py" run --cwd "$CWD" --repo "
 echo "close-stage exit: $?"
 ```
 
-CI 等待最多 15 分鐘，超過 Bash 工具單次的時間上限：**用 `run_in_background` 執行這個區塊，等它完成的通知**，不要拆成好幾次呼叫（拆開就回到上面說的 fence 問題）。環境不允許背景執行時（例如背景工作被停用），改帶 `--ci-timeout 420` 在前景跑，並把 Bash 工具的 timeout 設成 600000 ms（helper 還要加上寬限期與 merge 的時間）；CI 在 7 分鐘內沒跑完就停在 verified。結果也寫在 `$CWD/.claude/.idd/state/idd-all-result-$N.json`（每次 run 開始時先刪掉舊的；helper 出錯也一律寫 `"status": "stopped"`，不會留下上一次的結果）。呼叫 `gh pr merge` 或 `git push` 之前，helper 先寫一份「可能已 merge／已 push」的結果，做完再改寫：process 在兩者之間被中斷時，結果檔仍說得出可能已經發生了什麼（verify r4 #34）。
+CI 等待最多 15 分鐘，超過 Bash 工具單次的時間上限：**用 `run_in_background` 執行這個區塊，等它完成的通知**，不要拆成好幾次呼叫（拆開就回到上面說的 fence 問題）。環境不允許背景執行時（例如背景工作被停用），改帶 `--ci-timeout 420` 在前景跑，並把 Bash 工具的 timeout 設成 600000 ms（helper 還要加上寬限期與 merge 的時間）；遠端的 check 在 7 分鐘內沒跑完就停在 verified。`--ci-timeout` 只管等遠端 check 的時間：本機 CI 閘門有自己的時限（`ci.timeout_seconds`，預設一小時），本機 CI 會跑超過 Bash 工具上限的 repo 只能用背景執行。結果也寫在 `$CWD/.claude/.idd/state/idd-all-result-$N.json`（每次 run 開始時先刪掉舊的；helper 出錯也一律寫 `"status": "stopped"`，不會留下上一次的結果）。呼叫 `gh pr merge` 或 `git push` 之前，helper 先寫一份「可能已 merge／已 push」的結果，做完再改寫：process 在兩者之間被中斷時，結果檔仍說得出可能已經發生了什麼（verify r4 #34）。
 
 helper 依序檢查，第一道不過就停，印一行 JSON（`"status": "stopped"`、`"reason"` 寫出是哪一道與原因），exit 3：
 
