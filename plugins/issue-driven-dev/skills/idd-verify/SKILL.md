@@ -461,17 +461,39 @@ printf '%s' "$EW_BLOCK" > "$VERIFY_DIR/ew-block.md"
 # 有寫入權的帳號貼的 Implementation Complete 的 **Spec**: 行）、審查範圍改了哪些規格檔、
 # 兩個機械檢查（spec-change.py links / archived）的結果。檢查失敗或讀不到一律照實寫進來，
 # 由 Step 3 寫成 Blocking 列，不當成「沒有問題」。
-SPEC_IC=$(mktemp "${TMPDIR:-/tmp}/idd-verify-ic.XXXXXX")
-gh api "repos/$GITHUB_REPO/issues/$NUMBER/comments" --paginate 2>/dev/null \
-  | jq -s -r 'add // [] | [.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")
-               | select((.body // "") | test("^(<!-- idd:comment type=implementation-complete -->|\\s*## Implementation Complete)"))]
-              | last | .body // ""' > "$SPEC_IC" 2>/dev/null
-SPEC_DECL=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" declared --file "$SPEC_IC" 2>/dev/null) || SPEC_DECL=${SPEC_DECL:-'{"form":"unreadable"}'}
-SPEC_LINKS=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" links --base "$BASE_SHA" --head "$FROZEN_SHA" --cwd "${CWD:-$PWD}" 2>&1)
-SPEC_ARCH=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" archived --file "$SPEC_IC" --cwd "${CWD:-$PWD}" --ref "$FROZEN_SHA" 2>&1)
-SPEC_FILES=$(git -C "${CWD:-$PWD}" diff --name-only "$BASE_SHA" "$FROZEN_SHA" 2>/dev/null | grep -E '/specs/[^/]+/spec\.md$' || echo '(none)')
-rm -f "$SPEC_IC"
-SPEC_BLOCK="SPEC CONTEXT (#480, code profile only). Declaration on the issue's newest Implementation Complete: ${SPEC_DECL}
+# 留言抓取失敗要在抓取那一步就認出來：失敗時 jq 照樣對空輸入印出空字串，declared 讀到空檔
+# 會回 legacy，所有規格檢查就被跳過（spectra-verify 2026-11-11 的 warning 4）。
+VERIFY_PROFILE="code"   # 執行時換成這次的 --profile 值；沒帶 --profile 就是 code
+SPEC_DA="not used"
+if [ "${VERIFY_PROFILE:-code}" = code ]; then
+  SPEC_IC=$(mktemp "${TMPDIR:-/tmp}/idd-verify-ic.XXXXXX")
+  SPEC_FETCH_OK=yes
+  SPEC_RAW=$(gh api "repos/$GITHUB_REPO/issues/$NUMBER/comments" --paginate 2>/dev/null) || SPEC_FETCH_OK=no
+  if [ "$SPEC_FETCH_OK" = yes ]; then
+    printf '%s' "$SPEC_RAW" \
+      | jq -s -r 'add // [] | [.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")
+                   | select((.body // "") | test("^(<!-- idd:comment type=implementation-complete -->|\\s*## Implementation Complete)"))]
+                  | last | .body // ""' > "$SPEC_IC" || SPEC_FETCH_OK=no
+  fi
+  if [ "$SPEC_FETCH_OK" = no ]; then
+    SPEC_DECL='{"form":"unreadable","reason":"the issue comments could not be fetched"}'
+    SPEC_ARCH="not run: the declaration could not be read"
+  else
+    SPEC_DECL=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" declared --file "$SPEC_IC" 2>&1); [ -n "$SPEC_DECL" ] || SPEC_DECL='{"form":"unreadable","reason":"declared printed nothing"}'
+    SPEC_ARCH=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" archived --file "$SPEC_IC" --cwd "${CWD:-$PWD}" --ref "$FROZEN_SHA" 2>&1)
+  fi
+  SPEC_LINKS=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" links --base "$BASE_SHA" --head "$FROZEN_SHA" --cwd "${CWD:-$PWD}" 2>&1)
+  SPEC_FILES=$(git -C "${CWD:-$PWD}" diff --name-only "$BASE_SHA" "$FROZEN_SHA" 2>/dev/null | grep -E '/specs/[^/]+/spec\.md$' || echo '(none)')
+  rm -f "$SPEC_IC"
+  # DA 的 focus 沒有 sentinel（見上），所以只放封閉詞彙：宣告的形式與兩個檢查的狀態。
+  SPEC_FORM=$(printf '%s' "$SPEC_DECL" | jq -r '.form // "unreadable"' 2>/dev/null)
+  SPEC_L=$(printf '%s' "$SPEC_LINKS" | jq -r '.status // "error"' 2>/dev/null)
+  SPEC_A=$(printf '%s' "$SPEC_ARCH" | jq -r '.status // "error"' 2>/dev/null)
+  case "$SPEC_FORM" in change|no-behaviour-change|third-party-clone|legacy|invalid|unreadable) ;; *) SPEC_FORM=unreadable ;; esac
+  case "$SPEC_L" in ok|missing|error) ;; *) SPEC_L=error ;; esac
+  case "$SPEC_A" in pass|refuse|error) ;; *) SPEC_A=error ;; esac
+  SPEC_DA="declaration ${SPEC_FORM}, links ${SPEC_L}, archived ${SPEC_A}"
+  SPEC_BLOCK="SPEC CONTEXT (#480, code profile only). Declaration on the issue's newest Implementation Complete: ${SPEC_DECL}
 Spec files changed in ${BASE_SHA:0:12}..${FROZEN_SHA:0:12}:
 ${SPEC_FILES}
 Link check (spec-change.py links): ${SPEC_LINKS}
@@ -479,9 +501,12 @@ Archive check at the reviewed head (spec-change.py archived): ${SPEC_ARCH}
 Review rules (skip them when the form is legacy or third-party-clone):
 - Regression reviewer: a behaviour change in the diff that no requirement in the specs at the reviewed head states is a HIGH finding (no requirement states it). When the form is no-behaviour-change, any behaviour change in the diff is a HIGH finding (the declared exemption does not hold).
 - Every reviewer: a test that carries a spec-example marker but does not exercise what its Example states is a finding of MEDIUM or above.
-- The coordinator turns each missing link item, an archive refuse, and either check ending in error into a Blocking row (Step 3)."
-printf '%s' "$SPEC_BLOCK" > "$VERIFY_DIR/spec-block.md"
-CONTEXT_BLOCK="${CONTEXT_BLOCK}
+- The coordinator writes a Blocking row (Step 3) for a link check other than ok, an archive check other than pass, and a declaration that is unreadable or invalid."
+else
+  SPEC_BLOCK=""
+fi
+printf '%s\n' "${SPEC_BLOCK:-SPEC CONTEXT: not used under the ${VERIFY_PROFILE} profile.}" > "$VERIFY_DIR/spec-block.md"
+[ -n "$SPEC_BLOCK" ] && CONTEXT_BLOCK="${CONTEXT_BLOCK}
 
 ${SPEC_BLOCK}"
 
@@ -520,7 +545,7 @@ EW_DIGEST=$(printf '%s' "${EXTERNAL_WRITES:-}" \
       }
       END { for (s in seen) printf "%s; ", s }' \
   | cut -c1-600)
-DA_FOCUS_SUFFIX=" Also: the implementation wrote OUTSIDE this diff, at these surfaces — ${EW_DIGEST:-(none recorded; treat the blast radius as UNKNOWN, not empty)}. The full text is in the reviewers context; check whether what was written there matches what the diff does."
+DA_FOCUS_SUFFIX=" Also: the implementation wrote OUTSIDE this diff, at these surfaces — ${EW_DIGEST:-(none recorded; treat the blast radius as UNKNOWN, not empty)}. The full text is in the reviewers context; check whether what was written there matches what the diff does. Spec checks (#480): ${SPEC_DA}; a test that carries a spec-example marker but does not exercise its Example is a finding of MEDIUM or above."
 
 # Tier 1 — canonical：已安裝的 parallel-ai-agents 引擎（#207 使用者依賴裁決；契約 = pai#20 官方化的 EXTERNAL-CONSUMER CONTRACT）
 MIN_PAI="2.19.0"   # codexModel/codexEffort 契約起點（pai#22）——閘門理由：2.18.0 引擎會「靜默忽略」這兩個 args → canonical tier 的 codex 治理斷鏈（#264；同 #205 的 agentModel 教訓：靜默忽略比失敗糟）
@@ -1255,7 +1280,7 @@ fi
 3. **去重**：相同檔案 + 相似描述 → 合併，標註來源 `[agents:logic+codex]`
 4. **severity 以最高為準**：如果 logic 說 P2 但 codex 說 P1 → P1
 5. Devil's Advocate 的反駁如果成立 → 升級 severity
-6. **規格對照（#480，code profile）**：讀 `$VERIFY_DIR/spec-block.md`。links 回報的每一項缺漏、archived 的 `refuse`、任一檢查以 `error` 結束，各寫成 Findings 表的一列：Severity `HIGH`、Source `spec-change.py`、Action `Blocking`。宣告是 legacy 或 third-party-clone 時不加這些列。
+6. **規格對照（#480，code profile）**：讀 `$VERIFY_DIR/spec-block.md`。下列每一種各寫成 Findings 表的一列，Severity `HIGH`、Source `spec-change.py`、Action `Blocking`：links 不是 `ok`（每一項缺漏一列；`error` 或沒有印出 JSON 也算）、archived 不是 `pass`（`refuse`、`error`、沒有執行或沒有印出 JSON 都算）、宣告的形式是 `unreadable` 或 `invalid`。宣告是 `legacy` 或 `third-party-clone` 時不加這些列。
 
 ### Step 3.5: Proposed Corrections（#351）
 

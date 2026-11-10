@@ -623,6 +623,8 @@ Routing **先看 `$VEXIT`**（gate 判定），`0` 才依 `$TIER` 決定行為�
 
 **Step 5a: Checklist Sync**
 
+> **有 change 時（#480）**：Step 2.5 沒有建 TaskList，沒有東西可同步。checklist 改從封存後的 `openspec/changes/archive/<日期>-<change 名稱>/tasks.md` 逐項抄寫（勾選狀態照原樣），標題寫 `### Checklist (synced from tasks.md)`；有幾個 change 就依時間順序各抄一份。下面的表格與鐵律用在沒有 change 的 issue。
+
 `## Implementation Complete > ### Checklist` 在 v2.73.0+ 是 **authoritative_source winner**(priority 1 in [`rules/append-vs-modify.md`](../../rules/append-vs-modify.md))— 一旦本 Step 寫回此 section,所有 downstream gate(`idd-close` Step 0 / `idd-verify` checklist scan / `idd-update` body sync gate)都以該 section 為 implementation truth source,Strategy / Implementation Plan 的 `- [ ]` 視為 superseded snapshot 不再 gate-block。 若本 Step 跳過(無 Implementation Complete > Checklist),downstream gate fall back legacy scan all sources(保留 backward compat,但 Strategy/Plan checkbox 會被視為「未完成」可能 refuse close)。
 
 呼叫 `TaskList` 取當前所有 task 狀態，對照 Implementation Plan 的 bullet，把最終狀態寫回 `## Implementation Complete` comment 的 checkbox：
@@ -679,7 +681,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-egress.sh" comment $NUMBER --repo $GITHUB
 
 **Spec**: {change <名稱>[, <名稱>…] | no behaviour change | third-party clone}
 
-### Checklist (synced from TaskList)
+### Checklist (synced from {TaskList | tasks.md})
 - [x] {plan item 1} → commit {hash}
 - [x] {plan item 2} → commit {hash}
 - [~] {plan item 3} — skipped: {reason why we chose not to do this now}

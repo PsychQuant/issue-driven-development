@@ -121,8 +121,8 @@ Blocking 的修正要留下一條寫出該性質的 requirement、Example 與修
 
 **驗收**
 
-- 規格裡五個 Example 表（讀宣告行、是否已封存、連結檢查、preflight、結案檢查）在 `scripts/tests/spec-change/test.sh` 各有測試，測試帶著對應的 `spec-example:` 標記；這份 change 自己要通過 `links`。
-- 在一個暫存 repo 上各跑一張 Simple 與一張 attended Plan：branch 上出現封存目錄與主規格的改動，留言有 Spec 行，`idd-verify` 的報告列出連結檢查與封存檢查的結果。
+- 規格裡六個 Example 表（讀宣告行、是否已封存、連結檢查、preflight、規格目錄、結案檢查）在 `scripts/tests/spec-change/test.sh` 與 `scripts/tests/spec-close-gate/test.sh` 各有測試，測試帶著對應的 `spec-example:` 標記；這份 change 自己要通過 `links`。
+- 在一個暫存 repo 上各跑一張 Simple 與一張 Spectra tier（attended Plan 依 2026-11-11 維護者的決定只用契約測試驗收）：branch 上出現封存目錄與主規格的改動，留言有 Spec 行，`idd-verify` 的報告列出連結檢查與封存檢查的結果。
 - 一張只改 README 錯字的 issue：沒有 change，留言宣告 `no behaviour change`，verify 沒有相關 finding。
 
 **範圍**

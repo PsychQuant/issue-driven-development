@@ -99,7 +99,7 @@ SPEC_BASE=$(git -C "$CWD" merge-base HEAD "origin/$DEFAULT_BRANCH")
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" links --base "$SPEC_BASE" --cwd "$CWD"
 ```
 
-`git merge-base HEAD "origin/$DEFAULT_BRANCH"` 在 PR path 是分岔點；在 direct-commit path 是 run 還沒推的 commit 之前那一個。`missing` 就補測試或標記再跑一次；`error` 停下回報。
+`git merge-base HEAD "origin/$DEFAULT_BRANCH"` 在 PR path 是分岔點；在 direct-commit path 是 run 還沒推的 commit 之前那一個。`missing` 就補測試或標記再跑一次。要改的是 requirement 本身（例如寫了一個寫不出檢查的 Example）時，不改 `archive/` 底下的檔案，也不繞過 Spectra 直接改主規格：照第 7 步另建一個 change 修改那條 requirement，封存後再跑。`error` 停下回報。
 
 6. 確認宣告與 HEAD 一致：把第 6 步要貼的 `**Spec**:` 行寫進一個暫存檔，跑 `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" archived --file <暫存檔> --cwd "$CWD" --ref HEAD`，要 `pass`。
 
@@ -114,8 +114,8 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" links --base "$SPEC_BASE"
 **Spec**: change idd-42-fix-timeout
 ```
 
-三種寫法：`**Spec**: change <名稱>[, <名稱>…]`（這張 issue 所有封存了的 change，依時間順序）、`**Spec**: no behaviour change`、`**Spec**: third-party clone`。這一行不放在 code block 裡。
+三種寫法：`**Spec**: change <名稱>[, <名稱>…]`（這張 issue 所有封存了的 change，依時間順序）、`**Spec**: no behaviour change`、`**Spec**: third-party clone`。這一行只寫宣告本身：屬於第 2 步 (a)–(d) 的哪一種、為什麼，寫在別行。這一行不放在 code block 裡。
 
 ## 7. verify 之後的修正
 
-修正新增或修改了 requirement → 再建一個 change `idd-<N>-fix<k>`（k 是 verify 的輪數），走第 3 步的輕量形式，在下一輪 verify 之前照第 5 步封存，新的 Implementation Complete 列出這張 issue 的所有 change。requirement 與 Example 已經有、只是測試沒寫對 → 只補測試。Blocking 的修正要留下一條寫出該性質的 requirement、Example，以及一個在修正前的 commit 上會失敗的測試。
+修正新增或修改了 requirement → 再建一個 change，名稱就是 `idd-<N>-fix<k>`（k 是 verify 的輪數，不加 slug），走第 3 步的輕量形式，在下一輪 verify 之前照第 5 步封存，新的 Implementation Complete 列出這張 issue 的所有 change。requirement 與 Example 已經有、只是測試沒寫對 → 只補測試。Blocking 的修正要留下一條寫出該性質的 requirement、Example，以及一個在修正前的 commit 上會失敗的測試。

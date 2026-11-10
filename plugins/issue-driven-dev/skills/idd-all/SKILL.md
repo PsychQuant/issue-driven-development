@@ -813,6 +813,25 @@ command -v spectra >/dev/null 2>&1 || abort "Spectra tier routed but spectra CLI
    spectra artifact is created (no half-baked openspec/changes/ residue)."
 ```
 
+#### Step 3b.0.5: Spec preflight（#480）
+
+照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 1 步跑 preflight，在建立任何 Spectra artifact 之前：
+
+```bash
+CAN_WRITE=no
+case "$(gh repo view "$GITHUB_REPO" --json viewerPermission -q .viewerPermission 2>/dev/null)" in
+  WRITE|MAINTAIN|ADMIN) CAN_WRITE=yes ;;
+esac
+PF=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" preflight --cwd "$CWD" --can-write "$CAN_WRITE"); PF_RC=$?
+printf '%s\n' "$PF" | jq -r '"→ spec preflight: \(.status) \(.message)"'
+```
+
+| `status` | 做什麼 |
+|---|---|
+| `ready` | 往下走 Step 3b.1 |
+| `third-party` | 不走 Phase 3b，不建立規格目錄；改走 Phase 3 的 Simple 路徑（`idd-implement`），它會自己跑 preflight 並宣告 `**Spec**: third-party clone` |
+| `linked-worktree`、`install-spectra`、`init-openspec`、`error` 或 exit 64 | 停下，`Stopped:` 寫 preflight 的 `message` |
+
 #### Step 3b.1: Capture issue context for prompt
 
 ```bash
@@ -1443,7 +1462,6 @@ Done:
   left open: ${LOW} LOW in-scope finding(s) not fixed — listed in #${LOW_FOLLOWUP}        (only when low_in_scope > 0)
   left open: ${PC} comment(s) list Proposed Corrections that were not applied              (only when proposed_corrections > 0)
   remote CI: ${failed check names} failed while local CI passed                            (only when remote_ci_failed is not empty; "not readable" → say the remote checks could not be read; list remote_ci_pending as still running)
-Next: run /spectra-archive ${CHANGE} on ${DEFAULT}       (only for a Spectra-tier run: the change is not archived yet)
 Undo:
   gh issue reopen ${N}
   git -C ${CWD} checkout ${DEFAULT} && git -C ${CWD} pull --ff-only
@@ -1451,7 +1469,7 @@ Undo:
   then push the revert, or open a PR with it — pushing is your call
 ```
 
-merge 與 push 的欄位取自 `$CWD/.claude/.idd/state/idd-all-result-$N.json`（`pr`、`merge_sha`、`push_from`、`push_to`、`count`、`verify_url`，以及只在不是 0 或空的時候才列的 `low_in_scope`、`proposed_corrections`、`remote_ci_failed`、`remote_ci_pending`）；closing summary 連結取自 5c.3 `confirm-close` 印出的 `summary_url`；follow-up 取自 Phase 4 開的 issue 加上 `/idd-close` 列出的；residue、distribution sync 取自 `/idd-close` 列出的預設。`changed` 取自 `git diff --shortstat ${MERGE_SHA}^ ${MERGE_SHA}`（direct-commit：`${PUSH_FROM} ${PUSH_TO}`）；`verify` 照抄 verify 報告的 `### Engine` 那一行。`Next:` 那一行只在 Spectra tier 出現：`/idd-close` 不做 archive（`rules/sdd-integration.md`〈Close triggers archive〉），跳過它 change 就一直留在 `openspec/changes/`。
+merge 與 push 的欄位取自 `$CWD/.claude/.idd/state/idd-all-result-$N.json`（`pr`、`merge_sha`、`push_from`、`push_to`、`count`、`verify_url`，以及只在不是 0 或空的時候才列的 `low_in_scope`、`proposed_corrections`、`remote_ci_failed`、`remote_ci_pending`）；closing summary 連結取自 5c.3 `confirm-close` 印出的 `summary_url`；follow-up 取自 Phase 4 開的 issue 加上 `/idd-close` 列出的；residue、distribution sync 取自 `/idd-close` 列出的預設。`changed` 取自 `git diff --shortstat ${MERGE_SHA}^ ${MERGE_SHA}`（direct-commit：`${PUSH_FROM} ${PUSH_TO}`）；`verify` 照抄 verify 報告的 `### Engine` 那一行。Spectra tier 的 change 在 Step 3b.6 已經封存在 branch 上，merge 之後不需要再封存（#480）。
 
 停下時（gate 不乾淨、guardrail 沒過、push 被拒、`/idd-close` 停下、Phase 4 在最後一輪仍有 Blocking 而 abort），`Done:` 只列實際做到的步驟，接著一行 `Stopped:`，原因照抄 Phase 4 或 Phase 5c 印出的那一行：
 
