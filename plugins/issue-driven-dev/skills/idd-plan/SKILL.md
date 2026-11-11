@@ -7,6 +7,7 @@ description: |
   防止的失敗：跳過 diagnose 直接 plan —— 還沒查出 root cause 就開始寫實作計畫，等於為錯的問題做規劃。
 allowed-tools:
   - Bash(gh:*)
+  - Bash(spectra:*)
   - Bash(git:*)
   - Bash(jq:*)
   - Bash(python3:*)
@@ -136,7 +137,7 @@ printf 'raw<<<\n'; printf '%s\n%s\n' "${COMPLEXITY_ERR:-}" "${BLOCK_LINE:-}" | s
 
 依 Strategy 起草詳細的 Implementation Plan。**比 idd-implement Step 2 的 plan 更詳盡**，因為這份 plan 是要過 user 在 plan mode UI 審查的，是 deliberation tier 的核心 artifact。
 
-> **code issue 先寫規格（#480，非 meeting）**：照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 1、2 步：先跑 preflight（停下的情況照契約），再決定這張 issue 留下什麼。本 skill 不 propose，plan mode 核准的是這份 Implementation Plan；核准後由 `idd-implement` 照契約第 3 到 6 步用輕量形式 propose、apply、收尾，與 Simple tier 相同（2026-11-11 決定；在 plan mode 核准 Spectra 的 proposal 本身另案處理，#497）。要寫規格時，下面的 Implementation Plan 加一行 `**Spec plan**: proposed (change idd-<N>-<slug>)`（進 plan mode 之前貼；核准後改成 `change <名稱>`，見 Step 5），`### Files & Changes` 照常列要改的檔案；這張 issue 已經有開著的 `idd-<N>-` change（上次核准後 propose 到一半中斷）時，寫那個 change 的名稱，不另取名。宣告 `no behaviour change` 或 `third-party clone` 時，照下面原本的寫法，並加一行 `**Spec plan**: no behaviour change (<a|b|c|d>)` 或 `**Spec plan**: third-party clone`。
+> **code issue 先寫規格（#480，非 meeting）**：照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 1、2 步：先跑 preflight（停下的情況照契約），再決定這張 issue 留下什麼。本 skill 不 propose，plan mode 核准的是這份 Implementation Plan；核准後由 `idd-implement` 照契約第 3 到 6 步用輕量形式 propose、apply、收尾，與 Simple tier 相同（2026-11-11 決定；在 plan mode 核准 Spectra 的 proposal 本身另案處理，#497）。要寫規格時，下面的 Implementation Plan 加一行 `**Spec plan**: proposed (change idd-<N>-<slug>)`（進 plan mode 之前貼；核准後改成 `change <名稱>`，見 Step 5），`### Files & Changes` 照常列要改的檔案；先跑 `spectra list --json` 與 `spectra list --parked --json`，找名稱以 `idd-<N>-` 開頭的 change：有開著的（上次核准後 propose 到一半中斷）時，寫那個 change 的名稱，不另取名；兩個指令任一失敗或印出的不是 JSON 就停下，把錯誤轉給人。宣告 `no behaviour change` 或 `third-party clone` 時，照下面原本的寫法，並加一行 `**Spec plan**: no behaviour change (<a|b|c|d>)` 或 `**Spec plan**: third-party clone`。
 
 格式：
 
@@ -245,7 +246,7 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$IMPLEMENTATION_PLAN"
 |---------------|------|
 | Approved | code issue 要寫規格時，先把這則 Implementation Plan 留言的 `**Spec plan**: proposed (change <名稱>)` 改成 `**Spec plan**: change <名稱>`（改自己的留言；這一行才是核准的紀錄），再進 Step 6 — chain to `/idd-implement` |
 | Revised (with feedback) | 修改 Implementation Plan comment（用 `gh api PATCH` 更新原 comment 而非新 comment 避免散亂），再次 `EnterPlanMode` 呈現新版 |
-| Aborted | 跑 `/idd-update #NNN` 改 phase 為 `needs-fix`，並 post 一個 comment 說明「Plan tier deliberation 中止：{reason}；建議重新 `/idd-diagnose #NNN` 或調整 Complexity」。要寫規格的 code issue 這時還沒有 change，plan 行留在 `proposed`（#480），之後的 run 會照契約重新決定。**type=meeting 改說**「Meeting Plan 中止：{reason}；調整議程後重跑 `/idd-plan #NNN`，或直接 `/idd-close #NNN`（close gate 退回 Diagnosis 的 Phase C）」——meeting 沒有 Complexity 可調（#383 verify r2） |
+| Aborted | 跑 `/idd-update #NNN` 改 phase 為 `needs-fix`，並 post 一個 comment 說明「Plan tier deliberation 中止：{reason}；建議重新 `/idd-diagnose #NNN` 或調整 Complexity」。要寫規格的 code issue，plan 行留在 `proposed`（#480）：`idd-implement` 看到 `proposed` 不會 propose 也不會 apply，之後的 run 會照契約重新決定。**type=meeting 改說**「Meeting Plan 中止：{reason}；調整議程後重跑 `/idd-plan #NNN`，或直接 `/idd-close #NNN`（close gate 退回 Diagnosis 的 Phase C）」——meeting 沒有 Complexity 可調（#383 verify r2） |
 
 ### Step 6: Chain to /idd-implement
 
@@ -254,10 +255,11 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$IMPLEMENTATION_PLAN"
 User approved → invoke idd-implement skill 繼續 TDD loop：
 
 ```
-Skill(skill="issue-driven-dev:idd-implement", args="#NNN")
+Skill(skill="issue-driven-dev:idd-implement", args="#NNN")                          # 不寫規格時
+Skill(skill="issue-driven-dev:idd-implement", args="#NNN --spec-change <名稱>")     # 要寫規格時（#480）
 ```
 
-idd-implement 會偵測到 issue 已有 `## Implementation Plan` comment（Step 2 post 的），跳過自己 Step 2 的 plan drafting，直接進 Step 2.5 bootstrap TaskList + Step 3 TDD loop。
+idd-implement 會偵測到 issue 已有 `## Implementation Plan` comment（Step 2 post 的），不另貼 plan：要寫規格時在它的 Step 2 用核准的名稱以輕量形式 propose，有 change 時 Step 2.5 只略過 TaskList（進度記在 `tasks.md`）；不寫規格時照舊在 Step 2.5 bootstrap TaskList。之後進 Step 3 TDD loop。
 
 要寫規格時（#480），args 帶上核准的 plan 行的 change 名稱（`#NNN --spec-change <名稱>` 寫在 args 的文字裡即可），idd-implement 用這個名稱以輕量形式 propose，再 apply 與 Step 4.5 收尾，與 Simple tier 相同；change 已經開著（上次中斷）就直接用它。
 
@@ -310,8 +312,8 @@ idd-plan #NNN
   ├─ Step 4: EnterPlanMode → user reviews → ExitPlanMode (approve / revise / abort)
   └─ Step 6: → idd-implement #NNN
               ├─ Step 0-1: bootstrap + read (re-read same issue, plan already posted)
-              ├─ Step 2: SKIP (existing plan detected)
-              ├─ Step 2.5: bootstrap TaskList
+              ├─ Step 2: no new plan (existing plan detected); with --spec-change, propose the light change (#480)
+              ├─ Step 2.5: bootstrap TaskList (skipped when there is a change; progress lives in tasks.md)
               ├─ Step 3: TDD loop
               ├─ Step 4: scope guard
               ├─ Step 5: checklist sync + Implementation Complete comment
