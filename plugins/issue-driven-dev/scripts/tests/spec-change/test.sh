@@ -476,13 +476,13 @@ plan_case() { # label json-or-path form change exit
   assert_exit "plan: $1 — exit" "$5" "$RC"
 }
 plan_case "the owner's plan naming idd-7-x" "[$PL_O]" change idd-7-x 0
-plan_case "then a newer plan that rejects it" "[$PL_O,$PL_R]" rejected idd-7-x 0
 plan_case "no behaviour change (a)" "[$PL_N]" no-behaviour-change "" 0
 plan_case "third-party clone" "[$PL_T]" third-party-clone "" 0
 PL_P='{"author_association":"OWNER","body":"## Implementation Plan (Plan tier)\n\n**Spec plan**: proposed (change idd-7-x)"}'
 PL_NOTES='{"author_association":"OWNER","body":"## Implementation Planning notes\n\n**Spec plan**: change idd-7-x"}'
 plan_case "proposed, before plan mode (idd-480-fix5)" "[$PL_P]" proposed idd-7-x 0
-plan_case "a newer Implementation Planning notes comment is not a plan" "[$PL_R,$PL_NOTES]" rejected idd-7-x 0
+plan_case "a newer Implementation Planning notes comment is not a plan" "[$PL_O,$PL_NOTES]" change idd-7-x 0
+plan_case "the rejected form is not a Spec plan form (idd-480-fix7)" "[$PL_R]" invalid "" 1
 plan_case "a newer plan by a contributor is not the one read" "[$PL_O,$PL_X]" change idd-7-x 0
 plan_case "no Implementation Plan comment" "[$DG]" none "" 0
 plan_case "the only Spec plan line inside a code fence" "[$PL_F]" none "" 0

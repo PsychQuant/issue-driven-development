@@ -46,7 +46,7 @@ printf '%s\n' "$PF" | jq -r '"→ spec preflight: \(.status) \(.message)"'
 
 ## 3. Propose
 
-change 名稱是 `idd-<N>-<slug>`（slug 取 issue 標題，小寫英數與連字號）。在 propose 或貼任何留言之前，先看這張 issue 有沒有開著的 change（`idd-plan` 會先建好），有的話讀最新的 Implementation Plan 怎麼說：
+change 名稱是 `idd-<N>-<slug>`（slug 取 issue 標題，小寫英數與連字號）。在 propose 或貼任何留言之前，先看這張 issue 有沒有開著的 change（上一次 propose 之後中斷時會有），有的話讀最新的 Implementation Plan 怎麼說：
 
 ```bash
 SPEC_STEP3=""; EXISTING=""
@@ -69,25 +69,25 @@ elif [ -z "$SPEC_STEP3" ]; then
   FORM=$(printf '%s' "$PLAN" | jq -r '.form // "unreadable"' 2>/dev/null); NAMED=$(printf '%s' "$PLAN" | jq -r '.change // ""' 2>/dev/null)
   case "$FORM" in
     change) [ "$NAMED" = "$EXISTING" ] && SPEC_STEP3="go on with $EXISTING" \
-              || SPEC_STEP3="stop: the newest plan names $NAMED, not the open change $EXISTING; run /idd-plan to present $EXISTING for approval" ;;
-    proposed|rejected) SPEC_STEP3="stop: the newest plan is $FORM (change ${NAMED:-unnamed}) and the open change $EXISTING is not approved; run /idd-plan, which presents $EXISTING for approval" ;;
-    *) SPEC_STEP3="stop: no approved plan names the open change $EXISTING (plan: ${FORM:-unreadable}); run /idd-plan to present it for approval" ;;
+              || SPEC_STEP3="stop: the newest plan names $NAMED, not the open change $EXISTING; run /idd-plan to present the Implementation Plan for approval" ;;
+    proposed) SPEC_STEP3="stop: the newest plan is proposed (change ${NAMED:-unnamed}) and not approved for the open change $EXISTING; run /idd-plan, which presents the Implementation Plan for approval" ;;
+    *) SPEC_STEP3="stop: no approved plan names the open change $EXISTING (plan: ${FORM:-unreadable}); run /idd-plan to present the Implementation Plan for approval" ;;
   esac
 fi
 printf '→ spec step 3: %s\n' "$SPEC_STEP3"
 ```
 
-Implementation Plan 留言（Plan tier 由 `idd-plan` 貼，Simple 由 `idd-implement` Step 2 貼）有剛好一行 `**Spec plan**:`，五種寫法：`**Spec plan**: proposed (change <名稱>)`（`idd-plan` 進 plan mode 前寫，核准後改成 `change <名稱>`）、`**Spec plan**: change <名稱>`、`**Spec plan**: no behaviour change (<a|b|c|d>)`、`**Spec plan**: third-party clone`、`**Spec plan**: rejected (change <名稱> left parked)`（維護者在 plan mode 拒絕時，`idd-plan` 改成這一行）。`idd-implement` 與修正輪在 propose 之前貼 plan 行，中途斷掉的 run 重跑時找得到點名它那個 change 的 plan；`idd-plan` 在 propose 之後才貼（它的 plan 要對照 change 的 tasks），斷在兩者之間時留下一個沒有 plan 點名的 change，由下表的 `stop:` 交回 `idd-plan` 重新呈現。`spec-change.py plan` 讀的是最新一則由有寫入權的帳號貼、以 `## Implementation Plan` 開頭的留言。
+Implementation Plan 留言（Plan tier 由 `idd-plan` 貼，Simple 由 `idd-implement` Step 2 貼）有剛好一行 `**Spec plan**:`，四種寫法：`**Spec plan**: proposed (change <名稱>)`（`idd-plan` 進 plan mode 前寫，核准後改成 `change <名稱>`）、`**Spec plan**: change <名稱>`、`**Spec plan**: no behaviour change (<a|b|c|d>)`、`**Spec plan**: third-party clone`。`idd-implement` 與修正輪在 propose 之前貼 plan 行；Plan tier 的 plan 行由 `idd-plan` 在核准時寫成 `change <名稱>`，核准之後才由 `idd-implement` propose。所以中途斷掉的 run 重跑時，找得到點名它那個 change 的 plan。`spec-change.py plan` 讀的是最新一則由有寫入權的帳號貼、以 `## Implementation Plan` 開頭的留言。
 
 | `→ spec step 3:` 印出的 | 做什麼 |
 |---|---|
 | `propose` | 往下 propose（下一段） |
 | `go on with <名稱>` | 不再 propose，直接第 4 步 |
-| `stop: …` | 停下，把那一行轉給人，不 apply。清單讀不到時先修好再跑；其餘的 `stop:` 都是開著的 change 還沒被核准（`proposed`、`rejected`、沒有 plan 點名它、最新的 plan 點名別的 change），要重跑 `/idd-plan`：它是開著的 change 唯一的核准路徑，執行到這一步時不停下，改為把那個 change 呈現給人核准 |
+| `stop: …` | 停下，把那一行轉給人，不 apply。清單讀不到時先修好再跑；其餘的 `stop:` 都是開著的 change 沒有核准過的 plan 點名它（`proposed`、沒有 plan 點名它、最新的 plan 點名別的 change），要重跑 `/idd-plan`：它把 Implementation Plan 再呈現給人核准，核准後 plan 行寫上這個 change |
 
 沒有 → 呼叫 `Skill(skill="spectra-propose", args="<change 名稱>：<需求，取自 Diagnosis 的 Strategy>。輕量形式：不做 discuss、不寫 design。")`，並在 args 寫明：
 
-- 輕量形式（Simple tier 與 unattended 的 Plan tier）：不做 discuss、不寫 design，只寫短的 proposal、spec delta 與 tasks。
+- 輕量形式（Simple 與 Plan tier；Plan tier 由 `idd-implement` 在核准之後 propose）：不做 discuss、不寫 design，只寫短的 proposal、spec delta 與 tasks。
 - 每一條新增或改到的 requirement 至少一個 `##### Example:`，標題在該 capability 裡唯一；寫不出檢查的，寫一行 `No executable check:` 加理由。
 - tasks 裡每個 Example 對應一個測試 task，測試檔要帶標記 `spec-example: <capability> / <Example title>`。
 

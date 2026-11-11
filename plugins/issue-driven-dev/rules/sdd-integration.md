@@ -198,7 +198,7 @@ Route to `Simple` when none of the above apply:
 
 ```
 Simple:    diagnose → idd-implement (light propose → apply → archive) → verify → close
-Plan:      diagnose → idd-plan (propose → EnterPlanMode → user approves proposal + tasks → ExitPlanMode) → idd-implement (apply → archive) → verify → close
+Plan:      diagnose → idd-plan (EnterPlanMode → user approves the Implementation Plan → ExitPlanMode) → idd-implement (propose, light form → apply → archive) → verify → close
 Spectra:   diagnose → spec preflight → spectra-discuss → spectra-propose(#NNN) → spectra-apply → archive → verify → close
 ```
 

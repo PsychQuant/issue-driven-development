@@ -355,7 +355,7 @@ No branch operations. Whatever branch the user is on, commits land there.
 2. `ready` → 決定這張 issue 留下什麼（契約第 2 步）：會改變行為就寫規格（change 名稱 `idd-<N>-<slug>`）；不會，而且屬於契約列的四種之一，就宣告 `**Spec**: no behaviour change`。
 3. 把決定寫進 Step 2 的 Implementation Plan 留言（一行 `**Spec plan**: change <名稱>`、`**Spec plan**: no behaviour change (<a|b|c|d>)` 或 `**Spec plan**: third-party clone`），之後的步驟從那一行讀，不靠 shell 變數。
 
-**在 Step 2 貼任何留言或 propose 之前**，跑契約第 3 步開頭那段（`spec-change.py" plan`）：這張 issue 有開著的 `idd-<N>-` change 時，只有最新的 Implementation Plan 寫著 `**Spec plan**: change <同名>` 才沿用它（不再 propose）；`proposed`、`rejected`、沒有 plan 點名它、或最新的 plan 點名別的 change → 停下，告訴人要繼續就重跑 `/idd-plan`（它把那個 change 呈現給人核准）；清單讀不到 → 停下，先修好再跑。順序不能反過來：Step 2 自己貼的 plan 會成為「最新的 plan」，蓋掉被拒絕的那一則。
+**在 Step 2 貼任何留言或 propose 之前**，跑契約第 3 步開頭那段（`spec-change.py" plan`）：這張 issue 有開著的 `idd-<N>-` change 時，只有最新的 Implementation Plan 寫著 `**Spec plan**: change <同名>` 才沿用它（不再 propose）；`proposed`、沒有 plan 點名它、或最新的 plan 點名別的 change → 停下，告訴人要繼續就重跑 `/idd-plan`（它把 Implementation Plan 再呈現給人核准，核准後 plan 行寫上這個 change）；清單讀不到 → 停下，先修好再跑。順序不能反過來：Step 2 自己貼的 plan 會成為「最新的 plan」，蓋掉還沒核准的那一則。
 
 Diagnosis 的 Complexity 是 Plan、這張 issue 沒有開著的 change、而且是有人直接呼叫 `/idd-implement`（不是從 `idd-plan` 或 `idd-all` 來）：attended 先用 AskUserQuestion 問要不要改走 `/idd-plan`，選 abort 就停，不 propose；unattended 照契約的輕量形式往下。這個問題要在 propose 之前問（verify 第 4 輪：放在 Step 2.5 時，propose 已經做完了）。
 
@@ -428,7 +428,8 @@ idd-implement 是 **orchestration**（issue tracking、plan、checklist、body s
 > **要寫規格時（Step 0.6 決定 `change`，#480）**：先貼下面的 Implementation Plan（含 `**Spec plan**: change <名稱>`），再 propose，propose 完把清單改成這個 change 的 tasks（改自己的留言）。plan 行在 propose 之前貼，中途斷掉的 run 重跑時，契約第 3 步才找得到點名這個 change 的 plan。
 >
 > - change 不存在 → `Skill(skill="spectra-propose", args="<change 名稱>：<需求>。輕量形式：不做 discuss、不寫 design。…")`，args 的寫法照契約第 3 步（每條 requirement 有 Example、測試帶標記；無人值守時附上那一段 UNATTENDED MODE）。
-> - change 已存在（`idd-plan` 核准過的）→ 不再 propose，直接用它。
+> - 從 `idd-plan` 來（args 帶 `--spec-change <名稱>`，核准過的 plan 已寫著 `**Spec plan**: change <名稱>`）→ 不另貼 plan，用這個名稱以輕量形式 propose（同上一項），與 Simple tier 相同。
+> - change 已經開著（上次 propose 之後中斷，且最新的 plan 寫著同名的 `change`）→ 不再 propose，直接用它。
 >
 > Implementation Plan 的清單改成這個 change 的 tasks（照 `tasks.md` 的順序），並加一行 `**Spec plan**: change <名稱>`。宣告 `no behaviour change` 時照下面原本的寫法，加一行 `**Spec plan**: no behaviour change (<a|b|c|d>)`。
 

@@ -32,7 +32,7 @@ file) and exits with a fixed code. A usage error prints to stderr and exits 64.
 
   plan      --comments <file>
       What does the newest Implementation Plan by a writer say on its **Spec plan**: line?
-      {"form": proposed|change|no-behaviour-change|third-party-clone|rejected|none|invalid, "change": "...",
+      {"form": proposed|change|no-behaviour-change|third-party-clone|none|invalid, "change": "...",
        "reason": "..."}   exit 0, 1 (invalid), 2 (unreadable; no JSON)
 
 Paths named openspec/ above are relative to the spec directory Spectra uses: the `spec_dir:` line of
@@ -62,7 +62,6 @@ LINE_SPLIT_RE = re.compile(r"\r\n|\r|\n")   # CommonMark line endings only (str.
 TRUSTED = ("OWNER", "MEMBER", "COLLABORATOR")
 PLAN_RE = re.compile(r"\s*## Implementation Plan(?=[ \t(\r\n]|$)")   # not "## Implementation Planning notes"
 SPEC_PLAN_RE = re.compile(r"^ {0,3}\*\*Spec plan\*\*:(.*)$")
-REJECTED_RE = re.compile(r"^rejected \(change ([a-z0-9]+(?:-[a-z0-9]+)*) left parked\)$")
 PROPOSED_RE = re.compile(r"^proposed \(change ([a-z0-9]+(?:-[a-z0-9]+)*)\)$")
 INSTALL_HINT = ("install Spectra with `brew install --cask spectra-app` (https://github.com/kaochenlong/spectra-app; "
                 "the npm package installs its command as `spxa`, which this wrapper does not call) and run the wrapper again; "
@@ -531,9 +530,6 @@ def plan_of(body):
         return "no-behaviour-change", "", ""
     if value == "third-party clone":
         return "third-party-clone", "", ""
-    r = REJECTED_RE.match(value)
-    if r:
-        return "rejected", r.group(1), ""
     p = PROPOSED_RE.match(value)
     if p:
         return "proposed", p.group(1), ""
