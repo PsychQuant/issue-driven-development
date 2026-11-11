@@ -13,4 +13,4 @@
 ## 3. 收尾
 
 - [x] 3.1 CHANGELOG 記下這四項：plugins/issue-driven-dev/CHANGELOG.md 加 Unreleased 的 Fixed 條目，註明 #499。驗證：條目在 4.0.0 之前，已發布版本的條目沒有改動（git diff 只有新增行）。
-- [ ] 3.2 讀到這些檔案的 suite 全部通過：spec-wrapper-contract、spec-change、plan-routing-consistency、actionability-gate、meeting-issue-type、complexity-hard-gate、superpowers-staging、issue-write-back、skill-plugin-root、verify-scratch-paths、check-existing-work、gh-egress-rollout、pr-body-autoclose-guard、dashboard-comment、closing-summary-prose-drift、blocked-by-mutation，最後跑 run-all-tests.sh。驗證：每個 suite 的結束碼是 0，結果記在 Implementation Complete。
+- [x] 3.2 讀到這些檔案的 suite 全部通過：spec-wrapper-contract、spec-change、plan-routing-consistency、actionability-gate、meeting-issue-type、complexity-hard-gate、superpowers-staging、issue-write-back、skill-plugin-root、verify-scratch-paths、check-existing-work、gh-egress-rollout、pr-body-autoclose-guard、dashboard-comment、closing-summary-prose-drift、blocked-by-mutation，最後跑 run-all-tests.sh。驗證：每個 suite 的結束碼是 0，結果記在 Implementation Complete。
