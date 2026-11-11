@@ -482,6 +482,11 @@ PL_P='{"author_association":"OWNER","body":"## Implementation Plan (Plan tier)\n
 PL_NOTES='{"author_association":"OWNER","body":"## Implementation Planning notes\n\n**Spec plan**: change idd-7-x"}'
 plan_case "proposed, before plan mode (idd-480-fix5)" "[$PL_P]" proposed idd-7-x 0
 plan_case "a newer Implementation Planning notes comment is not a plan" "[$PL_O,$PL_NOTES]" change idd-7-x 0
+# #499: after a plan approved in plan mode, idd-implement posts the tasks of the change in a separate comment and
+# leaves the approved plan alone. The reader has to keep reading that plan: a comment headed "## Spec tasks" is not
+# a plan, even when it is the newer one and one of its lines looks like a Spec plan line.
+PL_TASKS='{"author_association":"OWNER","body":"## Spec tasks (change idd-7-x)\n\n1.1 the first task\n1.2 the second task\n\n**Spec plan**: change idd-7-z"}'
+plan_case "a newer Spec tasks comment is not a plan (#499)" "[$PL_O,$PL_TASKS]" change idd-7-x 0
 plan_case "the rejected form is not a Spec plan form (idd-480-fix7)" "[$PL_R]" invalid "" 1
 plan_case "a newer plan by a contributor is not the one read" "[$PL_O,$PL_X]" change idd-7-x 0
 plan_case "no Implementation Plan comment" "[$DG]" none "" 0
