@@ -425,13 +425,18 @@ idd-implement 是 **orchestration**（issue tracking、plan、checklist、body s
 
 ### Step 2: 列出變更清單並 comment 到 issue
 
-> **要寫規格時（Step 0.6 決定 `change`，#480）**：先貼下面的 Implementation Plan（含 `**Spec plan**: change <名稱>`），再 propose，propose 完把清單改成這個 change 的 tasks（改自己的留言）。plan 行在 propose 之前貼，中途斷掉的 run 重跑時，契約第 3 步才找得到點名這個 change 的 plan。
+> **要寫規格時（Step 0.6 決定 `change`，#480）**：plan 行要在 propose 之前就在 issue 上，中途斷掉的 run 重跑時，契約第 3 步才找得到點名這個 change 的 plan。誰貼 plan、要不要 propose，只有下面三種：
 >
-> - change 不存在 → `Skill(skill="spectra-propose", args="<change 名稱>：<需求>。輕量形式：不做 discuss、不寫 design。…")`，args 的寫法照契約第 3 步（每條 requirement 有 Example、測試帶標記；無人值守時附上那一段 UNATTENDED MODE）。
-> - 從 `idd-plan` 來（args 帶 `--spec-change <名稱>`，核准過的 plan 已寫著 `**Spec plan**: change <名稱>`）→ 不另貼 plan，用這個名稱以輕量形式 propose（同上一項），與 Simple tier 相同。
+> - 本 skill 自己貼 plan、change 不存在 → 先貼下面的 Implementation Plan（含剛好一行 `**Spec plan**: change <名稱>`），再 `Skill(skill="spectra-propose", args="<change 名稱>：<需求>。輕量形式：不做 discuss、不寫 design。…")`，args 的寫法照契約第 3 步（每條 requirement 有 Example、測試帶標記；無人值守時附上那一段 UNATTENDED MODE）。
+> - 從 `idd-plan` 來（args 帶 `--spec-change <名稱>`，核准過的 plan 已寫著 `**Spec plan**: change <名稱>`）→ 不另貼 plan，用這個名稱以輕量形式 propose（args 同上一項）。
 > - change 已經開著（上次 propose 之後中斷，且最新的 plan 寫著同名的 `change`）→ 不再 propose，直接用它。
 >
-> Implementation Plan 的清單改成這個 change 的 tasks（照 `tasks.md` 的順序），並加一行 `**Spec plan**: change <名稱>`。宣告 `no behaviour change` 時照下面原本的寫法，加一行 `**Spec plan**: no behaviour change (<a|b|c|d>)`。
+> propose 之後（或沿用開著的 change 時），change 的 tasks 寫到哪裡，看最新那則 plan 的標題，只有下面兩種。`idd-plan` 與本 skill 用同一個帳號貼留言，所以不看留言是誰貼的（#499）：
+>
+> - 標題是 `## Implementation Plan (Plan tier)`（`idd-plan` 貼、人核准過的那一則）→ 本 skill 不改這則留言。另貼一則留言，第一行 `## Spec tasks (change <名稱>)`，之後照 `tasks.md` 的順序每個 task 一行，不帶 checkbox（進度記在 `tasks.md`）；issue 上已經有這個標題的留言就不再貼。貼法同下面的 Implementation Plan（經 `gh-egress.sh`）。
+> - 其他標題（本 skill 自己貼的 `## Implementation Plan`）→ 把那則留言的清單改成這個 change 的 tasks（照 `tasks.md` 的順序），`**Spec plan**:` 那一行原樣保留，不加第二行。
+>
+> 宣告 `no behaviour change` 時照下面原本的寫法，加一行 `**Spec plan**: no behaviour change (<a|b|c|d>)`。
 
 根據 diagnosis 的 strategy 與 Step 1.5 的 `EXTRA_REQUIREMENTS`，列出具體要改的檔案：
 

@@ -404,12 +404,115 @@ echo "spec-wrapper-contract: spectra-verify warnings on idd-480-fix7"
 assert_eq "the contract test is one file, not two pasted together" 1 "$(grep -c '^#!' "$HERE/test.sh")"
 refute_grep "the README no longer says idd-plan presents the proposal" "the Spectra proposal and tasks" "$(read_file "$PLUGIN/README.md")"
 P139="$(grep -F '先寫規格（#480' "$PLAN")"
-assert_grep "idd-plan looks up the issue's open change in the change list" "spectra list --parked --json" "$P139"
+# Since #499 the lookup is a bash block of Step 2; the note above it only names the line the block prints.
+awk '/^### Step 2: /{f=1} /^### Step 2\.5: /{f=0} f && /^```bash$/{b=1; buf=""; next} b && /^```$/{b=0; if (buf ~ /idd-plan change lookup/) {printf "%s", buf; exit} next} b {buf = buf $0 "\n"}' "$PLAN" > "$W2/plookup.sh"
+assert_grep "idd-plan looks up the issue's open change in the change list" "spectra list --parked --json" "$(cat "$W2/plookup.sh")"
+assert_grep "… and its Step 2 note names the line the block prints" "→ idd-plan change lookup:" "$P139"
 assert_grep "… and may run spectra" "Bash(spectra:*)" "$(sed -n '1,20p' "$PLAN")"
 refute_grep "the Aborted row no longer claims there is no change yet" "這時還沒有 change" "$(grep -F '| Aborted |' "$PLAN")"
 S6P="$(sed -n '/^### Step 6: /,/^### Step 7: /p' "$PLAN")"
 assert_grep "the chain example passes the change name" '--spec-change' "$(grep -F 'Skill(skill="issue-driven-dev:idd-implement"' "$PLAN")"
-refute_grep "idd-plan no longer says idd-implement skips its Step 2" "Step 2: SKIP" "$(read_file "$PLAN")"
+# Until #499 this refuted the literal "Step 2: SKIP", which the file no longer held, so it could not fail while two
+# other lines said the same thing in other words. The property: no line of idd-plan says that a Step 2 is skipped
+# (Step 2.5 skipping its TaskList, and a meeting issue skipping Step 6, are other statements).
+SKIP2='(跳過|略過|不跑|[Ss]kips?|skipped|SKIP)[^|]{0,15}Step 2([^.0-9]|$)|Step 2[^|.0-9]{0,6}(SKIP|[Ss]kip)'
+NOT_SKIPPED='(不|沒有|未|not |never |n.t )(會|被)*(跳過|略過|skip)'   # "Step 2 is not skipped" states the opposite
+assert_eq "no line of idd-plan says a Step 2 is skipped" "" "$(grep -nE "$SKIP2" "$PLAN" | grep -vE "$NOT_SKIPPED")"
 assert_grep "… it says idd-implement proposes in its Step 2" "在它的 Step 2" "$S6P"
+
+echo "spec-wrapper-contract: idd-plan's lookup of an open change, run (#499)"
+# spec-example: spec-on-every-issue / idd-plan looks up the open change of the issue
+# The block extracted above ($W2/plookup.sh) is run as written. A stand-in spectra serves $FAKE_ACTIVE and
+# $FAKE_PARKED (JSON items), fails the call named by $FAKE_FAIL, prints $FAKE_RAW or $FAKE_RAW_PARKED in place of
+# the active or the parked list, and logs every call; a stand-in gh only logs.
+assert_true "idd-plan Step 2 has a bash block that prints the lookup line" "[ -s '$W2/plookup.sh' ]"
+mkdir -p "$W2/lbin"
+printf '#!/bin/sh\necho "spectra $*" >> "$CALL_LOG"\ncase "$1 $2" in\n  "list --json") [ "${FAKE_FAIL:-}" = list ] && { echo "Not initialized" >&2; exit 1; }\n    if [ "${FAKE_RAW+set}" = set ]; then printf "%%s" "$FAKE_RAW"; else printf "{\\"changes\\": [%%s]}" "${FAKE_ACTIVE:-}"; fi ;;\n  "list --parked") [ "${FAKE_FAIL:-}" = parked ] && { echo "boom" >&2; exit 1; }\n    if [ "${FAKE_RAW_PARKED+set}" = set ]; then printf "%%s" "$FAKE_RAW_PARKED"; else printf "{\\"parked\\": [%%s]}" "${FAKE_PARKED:-}"; fi ;;\n  *) exit 1 ;;\nesac\n' > "$W2/lbin/spectra"
+printf '#!/bin/sh\necho "gh $*" >> "$CALL_LOG"\nexit 1\n' > "$W2/lbin/gh"
+chmod +x "$W2/lbin/spectra" "$W2/lbin/gh"
+plook() { # issue-number [VAR=value …] → what the block prints after the prefix; its output is left in plook.out, its calls in plook.log
+  local n="$1"; shift; : > "$W2/plook.log"
+  env -i HOME="$HOME" PATH="$W2/lbin:$W2/base:/usr/bin:/bin" CALL_LOG="$W2/plook.log" NUMBER="$n" "$@" \
+    bash --norc --noprofile -c '. "$1" 2>/dev/null' _ "$W2/plookup.sh" </dev/null > "$W2/plook.out"
+  sed -n 's/^→ idd-plan change lookup: //p' "$W2/plook.out"
+}
+assert_eq "lookup: issue 7, idd-7-x active → its name" "idd-7-x" "$(plook 7 FAKE_ACTIVE='{"name": "idd-7-x"}')"
+assert_eq "lookup: issue 7, idd-7-x parked → its name" "idd-7-x" "$(plook 7 FAKE_PARKED='{"name": "idd-7-x"}')"
+assert_eq "lookup: issue 7, nothing open → new" "new" "$(plook 7)"
+assert_eq "lookup: issue 7, idd-7-a active and idd-7-b parked → the active one" "idd-7-a" "$(plook 7 FAKE_ACTIVE='{"name": "idd-7-a"}' FAKE_PARKED='{"name": "idd-7-b"}')"
+assert_eq "… on one line: the parked one is not printed after it" 1 "$(wc -l < "$W2/plook.out" | tr -d ' ')"
+assert_eq "lookup: issue 7, only idd-70-x open → new" "new" "$(plook 7 FAKE_ACTIVE='{"name": "idd-70-x"}')"
+assert_eq "lookup: issue 70, only idd-7-x open → new" "new" "$(plook 70 FAKE_ACTIVE='{"name": "idd-7-x"}')"
+v=$(plook 7 FAKE_FAIL=list); assert_eq "lookup: the list command fails → a stop" "stop:" "${v%% *}"
+v=$(plook 7 FAKE_FAIL=parked); assert_eq "lookup: the parked list command fails → a stop" "stop:" "${v%% *}"
+v=$(plook 7 FAKE_RAW='not json'); assert_eq "lookup: the list is text that is not JSON → a stop" "stop:" "${v%% *}"
+v=$(plook 7 FAKE_RAW_PARKED='not json'); assert_eq "lookup: the parked list is text that is not JSON → a stop" "stop:" "${v%% *}"
+# a boundary the table does not list: an open change must not be named when the other list cannot be read
+v=$(plook 7 FAKE_FAIL=parked FAKE_ACTIVE='{"name": "idd-7-x"}'); assert_eq "lookup: idd-7-x active but the parked list fails → a stop, not the name" "stop:" "${v%% *}"
+plook 7 FAKE_ACTIVE='{"name": "idd-7-x"}' >/dev/null
+assert_eq "lookup: the block prints exactly one line" 1 "$(wc -l < "$W2/plook.out" | tr -d ' ')"
+assert_eq "lookup: it runs the two list commands and nothing else (no gh, no plan check)" "spectra list --json|spectra list --parked --json" "$(paste -s -d '|' "$W2/plook.log")"
+refute_grep "idd-plan's block does not run the plan check" 'spec-change.py" plan' "$(cat "$W2/plookup.sh")"
+# The same lookup lives in the contract's step 3 (run by idd-implement). The two copies are compared line for line,
+# so a change to one that is not made to the other fails here (one implementation for both is a follow-up of #499).
+lookup_lines() { # file → from the line that lists the changes to the line that sets EXISTING
+  awk '/^if A=\$\(spectra list --json/{f=1} f {print} f && /^  EXISTING=\$\(/{exit}' "$1"
+}
+awk '/^## 3\. /{f=1} /^## 4\. /{f=0} f' "$REF" > "$W2/step3.md"
+assert_eq "the contract's step 3 lookup is three lines" 3 "$(lookup_lines "$W2/step3.md" | wc -l | tr -d ' ')"
+assert_eq "idd-plan's lookup lines are those of the contract's step 3" "$(lookup_lines "$W2/step3.md")" "$(lookup_lines "$W2/plookup.sh")"
+STOP_REF="$(grep -o 'stop: the change list could not be read[^"]*' "$W2/step3.md" | sed -n '1p')"
+assert_true "the contract's step 3 has the stop reason" "[ -n '$STOP_REF' ]"
+assert_eq "… and idd-plan's block gives the same reason" "$STOP_REF" "$(grep -o 'stop: the change list could not be read[^"]*' "$W2/plookup.sh" | sed -n '1p')"
+
+echo "spec-wrapper-contract: round-8 wording (#499)"
+# (a) A `proposed` plan line stops idd-implement only when the issue has an open change. No sentence may say that
+#     idd-implement will not propose or apply on seeing `proposed` without that condition in the same sentence.
+unconditional_proposed() { # files → file:line: sentence, for each sentence that makes the unconditional claim
+  python3 - "$@" <<'PY'
+import re, sys
+neg = re.compile(r"(不會|不再|不)\s*(propose|apply)|(will not|does not|never|neither)[^.]{0,40}(propose|apply)", re.I)
+cond = re.compile(r"(?<!沒)有開著的|\bopen change\b")
+for path in sys.argv[1:]:
+    with open(path, encoding="utf-8") as fh:
+        for n, line in enumerate(fh, 1):
+            for s in re.split(r"[。；;|]|(?<=[.!?])\s+", line):
+                if re.search(r"\bproposed\b", s) and "idd-implement" in s and neg.search(s) and not cond.search(s):
+                    print(f"{path}:{n}: {s.strip()[:100]}")
+PY
+}
+assert_eq "no sentence says idd-implement will not propose on seeing proposed, whatever the open changes" "" "$(unconditional_proposed "$PLAN" "$IMPL" "$REF" "$PLUGIN/README.md")"
+ABR="$(grep -F '| Aborted |' "$PLAN")"
+assert_grep "the Aborted row says what an open change does" "開著的" "$ABR"
+assert_grep "… points at the contract's step 3" "契約第 3 步" "$ABR"
+assert_grep "… and says where the missing guard is tracked" "#496" "$ABR"
+# (b) "the Plan tier proposes only after approval" holds for the run that goes through idd-plan; a sentence that
+#     says it has to carry that limit. The spec's own sentence is changed by the change's delta, not checked here.
+unlimited_only_after() { # files → file:line: sentence
+  python3 - "$@" <<'PY'
+import re, sys
+only_after = re.compile(r"only after|核准之後才|核准後才|核准之後\s*propose", re.I)
+limit = re.compile(r"through `idd-plan`|經 `idd-plan`|有核准")
+for path in sys.argv[1:]:
+    with open(path, encoding="utf-8") as fh:
+        for n, line in enumerate(fh, 1):
+            for s in re.split(r"[。；;|]|(?<=[.!?])\s+", line):
+                if re.search(r"Plan[- ]tier", s) and re.search(r"propos", s, re.I) and only_after.search(s) and not limit.search(s):
+                    print(f"{path}:{n}: {s.strip()[:100]}")
+PY
+}
+assert_eq "every 'the Plan tier proposes only after approval' sentence names the run it holds for" "" "$(unlimited_only_after "$REF" "$PLAN" "$IMPL")"
+assert_grep "the contract says the approved plan is not edited and the tasks go to a separate comment" '## Spec tasks (change <名稱>)' "$REF_TXT"
+# (c) idd-implement Step 2: where the tasks go is decided by the heading of the newest plan, not by "its own comment"
+#     (idd-plan and idd-implement post from one account).
+S2I="$(sed -n '/^### Step 2: /,/^### Step 3/p' "$IMPL")"
+assert_grep "Step 2 decides by the Plan-tier heading" '## Implementation Plan (Plan tier)' "$S2I"
+assert_grep "… names the heading of the separate comment" '## Spec tasks (change <名稱>)' "$S2I"
+assert_grep "… whose task lines carry no checkbox" "不帶 checkbox" "$S2I"
+assert_grep "… and which is posted once" "就不再貼" "$S2I"
+assert_eq "the list is replaced only in the plan this skill posted itself" "" "$(printf '%s\n' "$S2I" | grep -F '清單改成' | grep -vF '自己貼的')"
+refute_grep "Step 2 does not add a second Spec plan line to a plan that has one" '並加一行 `**Spec plan**: change' "$S2I"
+# (e) idd-plan's hand-over says the same
+assert_grep "idd-plan Step 6 says the tasks go to a separate Spec tasks comment" '## Spec tasks (change <名稱>)' "$S6P"
 
 print_summary spec-wrapper-contract

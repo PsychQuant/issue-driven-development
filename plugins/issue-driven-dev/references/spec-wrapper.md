@@ -77,7 +77,7 @@ fi
 printf '→ spec step 3: %s\n' "$SPEC_STEP3"
 ```
 
-Implementation Plan 留言（Plan tier 由 `idd-plan` 貼，Simple 由 `idd-implement` Step 2 貼）有剛好一行 `**Spec plan**:`，四種寫法：`**Spec plan**: proposed (change <名稱>)`（`idd-plan` 進 plan mode 前寫，核准後改成 `change <名稱>`）、`**Spec plan**: change <名稱>`、`**Spec plan**: no behaviour change (<a|b|c|d>)`、`**Spec plan**: third-party clone`。`idd-implement` 與修正輪在 propose 之前貼 plan 行；Plan tier 的 plan 行由 `idd-plan` 在核准時寫成 `change <名稱>`，核准之後才由 `idd-implement` propose。所以中途斷掉的 run 重跑時，找得到點名它那個 change 的 plan。`spec-change.py plan` 讀的是最新一則由有寫入權的帳號貼、以 `## Implementation Plan` 開頭的留言。
+Implementation Plan 留言（Plan tier 由 `idd-plan` 貼，Simple 由 `idd-implement` Step 2 貼）有剛好一行 `**Spec plan**:`，四種寫法：`**Spec plan**: proposed (change <名稱>)`（`idd-plan` 進 plan mode 前寫，核准後改成 `change <名稱>`）、`**Spec plan**: change <名稱>`、`**Spec plan**: no behaviour change (<a|b|c|d>)`、`**Spec plan**: third-party clone`。`idd-implement` 與修正輪在 propose 之前貼 plan 行；經 `idd-plan` 的 run，plan 行由 `idd-plan` 在核准時寫成 `change <名稱>`，核准之後才由 `idd-implement` propose。所以中途斷掉的 run 重跑時，找得到點名它那個 change 的 plan。核准過的那一則（標題是 `## Implementation Plan (Plan tier)`）`idd-implement` 不改：propose 之後，change 的 tasks 另貼成一則 `## Spec tasks (change <名稱>)` 留言，不帶 checkbox，已經有就不再貼；`idd-implement` 自己貼的 plan 才把清單改成 tasks（#499）。`spec-change.py plan` 讀的是最新一則由有寫入權的帳號貼、以 `## Implementation Plan` 開頭的留言。
 
 | `→ spec step 3:` 印出的 | 做什麼 |
 |---|---|
@@ -87,7 +87,7 @@ Implementation Plan 留言（Plan tier 由 `idd-plan` 貼，Simple 由 `idd-impl
 
 沒有 → 呼叫 `Skill(skill="spectra-propose", args="<change 名稱>：<需求，取自 Diagnosis 的 Strategy>。輕量形式：不做 discuss、不寫 design。")`，並在 args 寫明：
 
-- 輕量形式（Simple 與 Plan tier；Plan tier 由 `idd-implement` 在核准之後 propose）：不做 discuss、不寫 design，只寫短的 proposal、spec delta 與 tasks。
+- 輕量形式（Simple 與 Plan tier 都用；有核准這一步的 run 在核准之後才 propose）：不做 discuss、不寫 design，只寫短的 proposal、spec delta 與 tasks。
 - 每一條新增或改到的 requirement 至少一個 `##### Example:`，標題在該 capability 裡唯一；寫不出檢查的，寫一行 `No executable check:` 加理由。
 - tasks 裡每個 Example 對應一個測試 task，測試檔要帶標記 `spec-example: <capability> / <Example title>`。
 
