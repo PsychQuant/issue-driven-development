@@ -77,7 +77,7 @@ fi
 printf '→ spec step 3: %s\n' "$SPEC_STEP3"
 ```
 
-Implementation Plan 留言（Plan tier 由 `idd-plan` 貼，Simple 由 `idd-implement` Step 2 貼）有剛好一行 `**Spec plan**:`，四種寫法：`**Spec plan**: proposed (change <名稱>)`（`idd-plan` 進 plan mode 前寫，核准後改成 `change <名稱>`）、`**Spec plan**: change <名稱>`、`**Spec plan**: no behaviour change (<a|b|c|d>)`、`**Spec plan**: third-party clone`。`idd-implement` 與修正輪在 propose 之前貼 plan 行；經 `idd-plan` 的 run，plan 行由 `idd-plan` 在核准時寫成 `change <名稱>`，核准之後才由 `idd-implement` propose。所以中途斷掉的 run 重跑時，找得到點名它那個 change 的 plan。核准過的那一則（標題是 `## Implementation Plan (Plan tier)`）`idd-implement` 不改：propose 之後，change 的 tasks 另貼成一則 `## Spec tasks (change <名稱>)` 留言，不帶 checkbox，已經有就不再貼；`idd-implement` 自己貼的 plan 才把清單改成 tasks（#499）。`spec-change.py plan` 讀的是最新一則由有寫入權的帳號貼、以 `## Implementation Plan` 開頭的留言。
+Implementation Plan 留言（Plan tier 由 `idd-plan` 貼，Simple 由 `idd-implement` Step 2 貼）有剛好一行 `**Spec plan**:`，四種寫法：`**Spec plan**: proposed (change <名稱>)`（`idd-plan` 進 plan mode 前寫，核准後改成 `change <名稱>`）、`**Spec plan**: change <名稱>`、`**Spec plan**: no behaviour change (<a|b|c|d>)`、`**Spec plan**: third-party clone`。`idd-implement` 與修正輪在 propose 之前貼 plan 行；經 `idd-plan` 的 run，plan 行由 `idd-plan` 在核准時寫成 `change <名稱>`，核准之後才由 `idd-implement` propose。所以中途斷掉的 run 重跑時，找得到點名它那個 change 的 plan。核准過的那一則（標題是 `## Implementation Plan (Plan tier)`）`idd-implement` 不改：propose 之後，change 的 tasks 另貼成一則 `## Spec tasks (change <名稱>)` 留言，不帶 checkbox，有寫入權的帳號已經貼過就不再貼；`idd-implement` 自己貼的 plan 才把清單改成 tasks（#499）。`spec-change.py plan` 讀的是最新一則由有寫入權的帳號貼、以 `## Implementation Plan` 開頭的留言；`idd-implement` 看標題時看的也是這一則，沒有寫入權的帳號貼的 plan 與 Spec tasks 留言都不算。
 
 | `→ spec step 3:` 印出的 | 做什麼 |
 |---|---|

@@ -139,10 +139,12 @@ printf 'raw<<<\n'; printf '%s\n%s\n' "${COMPLEXITY_ERR:-}" "${BLOCK_LINE:-}" | s
 
 > **code issue 先寫規格（#480，非 meeting）**：照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 1、2 步：先跑 preflight（停下的情況照契約），再決定這張 issue 留下什麼。本 skill 不 propose，plan mode 核准的是這份 Implementation Plan；核准後由 `idd-implement` 照契約第 3 到 6 步用輕量形式 propose、apply、收尾，與 Simple tier 相同（2026-11-11 決定；在 plan mode 核准 Spectra 的 proposal 本身另案處理，#497）。要寫規格時，下面的 Implementation Plan 加一行 `**Spec plan**: proposed (change idd-<N>-<slug>)`（進 plan mode 之前貼；核准後改成 `change <名稱>`，見 Step 5），`### Files & Changes` 照常列要改的檔案；plan 行的 change 名稱由這段說明下面的 bash 區塊決定，它印一行 `→ idd-plan change lookup: …`：印出名稱（這張 issue 有開著的 change，上次核准後 propose 到一半中斷）就寫那個名稱，不另取名；印 `new` 就取新名 `idd-<N>-<slug>`；印 `stop: …` 就停下，把那一行轉給人，不貼 plan。宣告 `no behaviour change` 或 `third-party clone` 時，照下面原本的寫法，並加一行 `**Spec plan**: no behaviour change (<a|b|c|d>)` 或 `**Spec plan**: third-party clone`。
 
-要寫規格時先跑這一段（宣告豁免時不跑）：
+要寫規格時先跑這一段（宣告豁免時不跑）。`NUMBER` 要在同一次 Bash 呼叫裡設成這張 issue 的號碼，每次呼叫都是新的 shell：
 
 ```bash
 PLAN_LOOKUP=""; EXISTING=""
+case "${NUMBER:-}" in ''|0*|*[!0-9]*) PLAN_LOOKUP="stop: NUMBER is not this issue's number in this shell (it is empty, starts with 0, or is not a decimal number); set it in the same Bash call and run this block again" ;; esac
+[ -n "$PLAN_LOOKUP" ] ||
 if A=$(spectra list --json 2>/dev/null) && B=$(spectra list --parked --json 2>/dev/null) \
    && printf '%s' "$A" | jq -e . >/dev/null 2>&1 && printf '%s' "$B" | jq -e . >/dev/null 2>&1; then
   EXISTING=$( { printf '%s' "$A" | jq -r '.changes[]?.name'; printf '%s' "$B" | jq -r '.parked[]?.name'; } | grep -E "^idd-${NUMBER}-" | head -1)
@@ -153,7 +155,7 @@ fi
 printf '→ idd-plan change lookup: %s\n' "$PLAN_LOOKUP"
 ```
 
-查詢的三行與契約第 3 步的相同（`spec-wrapper-contract` 逐行比對兩處），本 skill 不跑契約在那之後的 plan 檢查。三個限制也與契約相同（#496）：同時有兩個以上 `idd-<N>-` change 時取第一個（active 先於 parked）；清單是 JSON 但形狀不對時讀成沒有 change；`NUMBER` 不經檢查就放進 regex，這一次 Bash 呼叫裡沒設、或帶了 `#` 這類字元時讀成沒有 change（印 `new`），是 `.*` 這類字串時會比對到別張 issue 的 change。
+查詢的三行與契約第 3 步的相同（`spec-wrapper-contract` 逐行比對兩處），本 skill 不跑契約在那之後的 plan 檢查。`NUMBER` 沒設、是空字串、以 0 開頭或不是十進位數字時，區塊不查清單，直接印 `stop:`：少了這個檢查，名稱過濾比對不到任何東西，開著的 change 會被讀成沒有（#499）。契約第 3 步的查詢還沒有這個檢查（#496）。兩個限制與契約相同（#496）：同時有兩個以上 `idd-<N>-` change 時取第一個（active 先於 parked）；清單是 JSON 但形狀不對時讀成沒有 change。
 
 格式：
 

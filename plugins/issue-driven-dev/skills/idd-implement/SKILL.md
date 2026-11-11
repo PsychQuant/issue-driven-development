@@ -431,9 +431,9 @@ idd-implement 是 **orchestration**（issue tracking、plan、checklist、body s
 > - 從 `idd-plan` 來（args 帶 `--spec-change <名稱>`，核准過的 plan 已寫著 `**Spec plan**: change <名稱>`）→ 不另貼 plan，用這個名稱以輕量形式 propose（args 同上一項）。
 > - change 已經開著（上次 propose 之後中斷，且最新的 plan 寫著同名的 `change`）→ 不再 propose，直接用它。
 >
-> propose 之後（或沿用開著的 change 時），change 的 tasks 寫到哪裡，看最新那則 plan 的標題，只有下面兩種。`idd-plan` 與本 skill 用同一個帳號貼留言，所以不看留言是誰貼的（#499）：
+> propose 之後（或沿用開著的 change 時），change 的 tasks 寫到哪裡，看最新那則 plan 的標題，只有下面兩種；最新那則 plan 就是 `spec-change.py plan` 讀的那一則，也就是有寫入權的帳號（`OWNER`、`MEMBER`、`COLLABORATOR`）貼的、以 `## Implementation Plan` 開頭的留言裡最新的一則，其他帳號貼的不算。`idd-plan` 與本 skill 用同一個帳號貼留言，分不出哪一則是本 skill 自己貼的，所以看標題（#499）：
 >
-> - 標題是 `## Implementation Plan (Plan tier)`（`idd-plan` 貼、人核准過的那一則）→ 本 skill 不改這則留言。另貼一則留言，第一行 `## Spec tasks (change <名稱>)`，之後照 `tasks.md` 的順序每個 task 一行，不帶 checkbox（進度記在 `tasks.md`）；issue 上已經有這個標題的留言就不再貼。貼法同下面的 Implementation Plan（經 `gh-egress.sh`）。
+> - 標題是 `## Implementation Plan (Plan tier)`（`idd-plan` 貼、人核准過的那一則）→ 本 skill 不改這則留言。另貼一則留言，第一行 `## Spec tasks (change <名稱>)`，之後照 `tasks.md` 的順序每個 task 一行，不帶 checkbox（進度記在 `tasks.md`）；有寫入權的帳號已經貼過這個標題的留言就不再貼，其他帳號貼的不算。貼法同下面的 Implementation Plan（經 `gh-egress.sh`）。
 > - 其他標題（本 skill 自己貼的 `## Implementation Plan`）→ 把那則留言的清單改成這個 change 的 tasks（照 `tasks.md` 的順序），`**Spec plan**:` 那一行原樣保留，不加第二行。
 >
 > 宣告 `no behaviour change` 時照下面原本的寫法，加一行 `**Spec plan**: no behaviour change (<a|b|c|d>)`。

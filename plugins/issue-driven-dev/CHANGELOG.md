@@ -29,6 +29,15 @@ Version number left to the release.
   - `idd-plan` said in two places that `idd-implement` skips its Step 2; both now agree with Step 6. The check meant
     to catch this compared a string the file no longer held, so it could not fail; it now fails on any line that
     says a Step 2 is skipped.
+  - Round 1 of this issue's own verify found five more gaps, fixed here. The new lookup block printed `new`
+    when `NUMBER` was unset or not a number, so an open change read as none; it now prints a `stop:` line
+    and looks nothing up (the lookup of the contract's step 3 still has no such check, #496).
+    `idd-implement` Step 2 and the contract now say that the plan whose heading decides where the tasks go,
+    and a `## Spec tasks` comment that is already there, count only when an account with write access
+    posted them: the selection `spec-change.py plan` makes. Three checks of the `spec-wrapper-contract`
+    suite were too loose (an exemption that also matched its own negation, a negation filter applied to
+    whole lines, a check that no longer applied to the sentence it was written for); each is now run
+    against a sentence it has to catch.
 
 ## [4.0.0] - 2026-11-11
 
