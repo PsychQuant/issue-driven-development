@@ -215,11 +215,38 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$IMPLEMENTATION_PLAN"
 
 確認 comment URL 已拿到（capture-then-write SOP）。Plan 必須 post 到 issue 後才進 Step 4，否則 plan-mode UI 呈現的內容沒留 audit trail。
 
+### Step 3.5: 取出 change 的檔案（有 change 時，#480）
+
+只在 code issue 有 change 時做；沒有 change（宣告豁免、third-party clone、meeting）跳過。plan mode 裡不能跑會改狀態的指令，所以在進 plan mode 之前跑這一段：`spectra-propose` 會把 change park 起來，park 之後它的檔案不在 changes 目錄裡（spectra 3.0.0 實測；`spectra show` 只印 proposal 與 tasks，spec delta 只印路徑），必須先 unpark 才讀得到原文。
+
+```bash
+CHANGE="<change 名稱>"
+STEP35=""; CDIR=""
+if spectra list --parked --json 2>/dev/null | jq -e --arg n "$CHANGE" 'any(.parked[]?; .name == $n)' >/dev/null 2>&1; then
+  spectra unpark "$CHANGE" >/dev/null 2>&1 || STEP35="could not take $CHANGE out of the parked state"
+fi
+if [ -z "$STEP35" ]; then
+  CDIR=$(spectra instructions apply --change "$CHANGE" --json 2>/dev/null | jq -er '.changeDir // empty' 2>/dev/null) \
+    || STEP35="spectra instructions apply did not name the directory of $CHANGE"
+fi
+if [ -z "$STEP35" ] && ! { [ -f "$CDIR/proposal.md" ] && [ -f "$CDIR/tasks.md" ] && ls "$CDIR"/specs/*/spec.md >/dev/null 2>&1; }; then
+  STEP35="$CDIR lacks the proposal, the tasks or a spec delta"
+fi
+if [ -n "$STEP35" ]; then
+  echo "✗ step 3.5: $STEP35" >&2
+else
+  printf '→ change files: %s\n' "$CDIR"
+  find "$CDIR" -type f -name '*.md' | LC_ALL=C sort
+fi
+```
+
+印出 `✗ step 3.5:` 就停下，把那一行轉給人，不進 plan mode。印出 `→ change files:` 時，用 Read 讀它下面列的每一個檔案，Step 4 原文附上。
+
 ### Step 4: EnterPlanMode → present plan → ExitPlanMode for approval
 
 呼叫 `EnterPlanMode` 工具進入 plan mode（read-only tool set 鎖定）。然後在 plan-mode 的視窗呈現完整 Implementation Plan markdown，並透過 `ExitPlanMode` 提交給 user approve。
 
-有 change 時（#480），呈現的內容是 Implementation Plan 加上這個 change 的 proposal 與 tasks（讀 `openspec/changes/<名稱>/` 底下的檔案，原文附上），user 核准的是這一份。
+有 change 時（#480），呈現的內容是 Implementation Plan 加上 Step 3.5 列出的每一個檔案（proposal、spec delta、tasks，原文附上，不摘要），user 核准的是這一份，也就是 `idd-implement` 之後 apply 的那一份。
 
 > **重要**: 在 plan mode 期間 **不能呼叫任何 stateful tool**（Edit / Write / Bash with mutations / gh commenting / etc.）— runtime 會 reject。所以 Implementation Plan comment 必須在 Step 2 就 post 完，Step 4 只用 `EnterPlanMode` / `ExitPlanMode` 這兩個 mode-control tool。
 
@@ -234,7 +261,7 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$IMPLEMENTATION_PLAN"
 
 **Approval semantics**:
 - ✅ Approve → 解除 plan mode，chain to /idd-implement，TDD loop 開始執行
-- 📝 Revise → 我會根據你的 feedback 修改 Plan comment，再次進入 plan mode 等 approve
+- 📝 Revise → 我會根據你的 feedback 修改 change 的檔案與 Plan comment，再次進入 plan mode 等 approve
 - ❌ Reject / abort → idd-update phase 改為 needs-fix，結束本次 idd-plan 執行；user 後續可手動修 diagnosis 或重新評估 Complexity
 ```
 
@@ -245,8 +272,8 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$IMPLEMENTATION_PLAN"
 | User response | 行為 |
 |---------------|------|
 | Approved | code issue 有 change 時，先把這則 Implementation Plan 留言的 `**Spec plan**: proposed (change <名稱>)` 改成 `**Spec plan**: change <名稱>`（改自己的留言；這一行才是核准的紀錄），再進 Step 6 — chain to `/idd-implement` |
-| Revised (with feedback) | 修改 Implementation Plan comment（用 `gh api PATCH` 更新原 comment 而非新 comment 避免散亂），再次 `EnterPlanMode` 呈現新版 |
-| Aborted | code issue 已 propose 了 change 時，先把這則 Implementation Plan 留言的 `**Spec plan**:` 行改成 `**Spec plan**: rejected (change <名稱> left parked)`（改自己的留言；change 留在 parked，不 apply，見 `references/spec-wrapper.md` 第 3 步）。接著跑 `/idd-update #NNN` 改 phase 為 `needs-fix`，並 post 一個 comment 說明「Plan tier deliberation 中止：{reason}；要繼續就重跑 `/idd-plan #NNN`（parked 的 change 會再呈現一次給人核准）；要換做法就先討論，再重跑 `/idd-diagnose #NNN`」。**type=meeting 改說**「Meeting Plan 中止：{reason}；調整議程後重跑 `/idd-plan #NNN`，或直接 `/idd-close #NNN`（close gate 退回 Diagnosis 的 Phase C）」——meeting 沒有 Complexity 可調（#383 verify r2） |
+| Revised (with feedback) | 有 change 時（#480），先改 change 的檔案（Step 3.5 列出的 proposal、spec delta、tasks），跑 `spectra validate <名稱>` 並修到通過，重跑 Step 3.5，再依新的 tasks 更新 Implementation Plan comment 的 `### Files & Changes`；只改留言、沒改檔案不算修訂。沒有 change 時只修改 Implementation Plan comment。兩種都用 `gh api PATCH` 更新原 comment 而非新 comment 避免散亂，再次 `EnterPlanMode` 呈現新版 |
+| Aborted | code issue 已 propose 了 change 時，先跑 `spectra park <名稱>` 把 change park 回去（Step 3.5 把它 unpark 了），再把這則 Implementation Plan 留言的 `**Spec plan**:` 行改成 `**Spec plan**: rejected (change <名稱> left parked)`（改自己的留言；change 留在 parked，不 apply，見 `references/spec-wrapper.md` 第 3 步）。接著跑 `/idd-update #NNN` 改 phase 為 `needs-fix`，並 post 一個 comment 說明「Plan tier deliberation 中止：{reason}；要繼續就重跑 `/idd-plan #NNN`（parked 的 change 會再呈現一次給人核准）；要換做法就先討論，再重跑 `/idd-diagnose #NNN`」。**type=meeting 改說**「Meeting Plan 中止：{reason}；調整議程後重跑 `/idd-plan #NNN`，或直接 `/idd-close #NNN`（close gate 退回 Diagnosis 的 Phase C）」——meeting 沒有 Complexity 可調（#383 verify r2） |
 
 ### Step 6: Chain to /idd-implement
 

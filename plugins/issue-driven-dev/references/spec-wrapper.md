@@ -70,7 +70,7 @@ elif [ -z "$SPEC_STEP3" ]; then
   case "$FORM" in
     change) [ "$NAMED" = "$EXISTING" ] && SPEC_STEP3="go on with $EXISTING" \
               || SPEC_STEP3="stop: the newest plan names $NAMED, not the open change $EXISTING; run /idd-plan to present $EXISTING for approval" ;;
-    proposed|rejected) SPEC_STEP3="stop: $EXISTING is $FORM in plan mode; run /idd-plan, which presents it for approval" ;;
+    proposed|rejected) SPEC_STEP3="stop: the newest plan is $FORM (change ${NAMED:-unnamed}) and the open change $EXISTING is not approved; run /idd-plan, which presents $EXISTING for approval" ;;
     *) SPEC_STEP3="stop: no approved plan names the open change $EXISTING (plan: ${FORM:-unreadable}); run /idd-plan to present it for approval" ;;
   esac
 fi

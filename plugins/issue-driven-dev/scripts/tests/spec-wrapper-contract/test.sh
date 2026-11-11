@@ -82,7 +82,7 @@ echo "spec-wrapper-contract: idd-plan is the Plan wrapper"
 PLAN_TXT="$(read_file "$PLAN")"
 assert_grep "idd-plan cites the contract" "references/spec-wrapper.md" "$PLAN_TXT"
 assert_grep "idd-plan proposes through spectra-propose" 'Skill(skill="spectra-propose"' "$PLAN_TXT"
-assert_grep "idd-plan presents the proposal and the tasks for approval" "proposal 與 tasks" "$(sed -n '/^### Step 4: /,/^### Step 5: /p' "$PLAN")"
+assert_grep "idd-plan presents the proposal, the spec delta and the tasks for approval" "proposal、spec delta、tasks" "$(sed -n '/^### Step 4: /,/^### Step 5: /p' "$PLAN")"
 assert_grep "idd-plan hands the approved change to idd-implement" "change 名稱" "$(sed -n '/^### Step 6: /,/^### Step 7: /p' "$PLAN")"
 
 echo "spec-wrapper-contract: idd-all closes out the Spectra tier"
@@ -376,5 +376,51 @@ refute_grep "the contract no longer claims every plan line comes before the prop
 assert_grep "… and says idd-plan posts its plan after the propose" '`idd-plan` 在 propose 之後才貼' "$(read_file "$REF")"
 assert_grep "idd-implement sends a proposed change to /idd-plan too" '`proposed`' "$(sed -n '/^### Step 0.6: /,/^### Step 1: /p' "$IMPL")"
 assert_grep "idd-all's fix-round note posts the plan line first" '**Spec plan**: change idd-<N>-fix<k>' "$(grep -F '**修正也留下規格（#480）**' "$ALL")"
+
+echo "spec-wrapper-contract: Plan-tier approval covers the change as it will be applied, run (idd-480-fix6)"
+awk '/^### Step 3\.5: /{f=1} /^### Step 4: /{f=0} f && /^```bash$/{b=1; buf=""; next} b && /^```$/{b=0; if (buf ~ /spectra instructions apply/) {printf "%s", buf; exit} next} b {buf = buf $0 "\n"}' "$PLAN" > "$W2/s35.sh"
+assert_true "idd-plan Step 3.5 has a bash block that reads spectra instructions apply" "[ -s '$W2/s35.sh' ]"
+sed -i.bak 's/^CHANGE="<change 名稱>"$/CHANGE=idd-7-x/' "$W2/s35.sh"
+assert_grep "… whose CHANGE placeholder the test can fill" "CHANGE=idd-7-x" "$(cat "$W2/s35.sh")"
+# spec-example: spec-on-every-issue / the step-3.5 block
+mkdir -p "$W2/s35bin"
+printf '#!/bin/sh\ncase "$1 $2" in\n  "list --parked") if [ "$FAKE_STATE" = parked ]; then printf "{\\"parked\\": [{\\"name\\": \\"idd-7-x\\"}]}"; else printf "{\\"parked\\": []}"; fi ;;\n  "unpark idd-7-x") [ "$FAKE_UNPARK" = fail ] && exit 1; : > "$FAKE_MARK"; echo "Unparked change: idd-7-x" ;;\n  "instructions apply") [ "$FAKE_INSTR" = fail ] && exit 1; printf "{\\"changeDir\\": \\"%%s\\"}" "$FAKE_DIR" ;;\n  *) exit 1 ;;\nesac\n' > "$W2/s35bin/spectra"
+chmod +x "$W2/s35bin/spectra"
+s35() { # state(parked|active) unpark(ok|fail) instr(ok|fail) delta(yes|no) → stdout, then a line "ERR:<stderr>", then "UNPARKED" when unpark ran
+  rm -rf "$W2/s35dir" "$W2/s35mark"; mkdir -p "$W2/s35dir"
+  printf '## Why\n' > "$W2/s35dir/proposal.md"; printf '## 1. A\n\n- [ ] 1.1 a\n' > "$W2/s35dir/tasks.md"
+  [ "$4" = yes ] && { mkdir -p "$W2/s35dir/specs/demo"; printf '## ADDED Requirements\n' > "$W2/s35dir/specs/demo/spec.md"; }
+  env -i HOME="$HOME" PATH="$W2/s35bin:/usr/bin:/bin" FAKE_STATE="$1" FAKE_UNPARK="$2" FAKE_INSTR="$3" FAKE_DIR="$W2/s35dir" FAKE_MARK="$W2/s35mark" \
+    bash --norc --noprofile -c '. "$1"' _ "$W2/s35.sh" 2>"$W2/s35err" </dev/null
+  printf 'ERR:%s\n' "$(cat "$W2/s35err")"
+  [ -e "$W2/s35mark" ] && echo UNPARKED
+  return 0
+}
+v=$(s35 parked ok ok yes)
+assert_grep "step 3.5: parked → prints the change directory" "→ change files: $W2/s35dir" "$v"
+assert_eq "… and its three files" 3 "$(printf '%s\n' "$v" | grep -c "^$W2/s35dir/.*\.md$")"
+assert_grep "… after taking it out of the parked state" "UNPARKED" "$v"
+v=$(s35 active ok ok yes)
+assert_grep "step 3.5: active → prints the change directory" "→ change files: $W2/s35dir" "$v"
+assert_eq "… and its three files" 3 "$(printf '%s\n' "$v" | grep -c "^$W2/s35dir/.*\.md$")"
+refute_grep "… without an unpark" "UNPARKED" "$v"
+v=$(s35 parked fail ok yes)
+refute_grep "step 3.5: the unpark fails → no file list" "→ change files:" "$v"; assert_grep "… and a stop line" "ERR:✗ step 3.5" "$v"
+v=$(s35 active ok fail yes)
+refute_grep "step 3.5: spectra instructions fails → no file list" "→ change files:" "$v"; assert_grep "… and a stop line" "ERR:✗ step 3.5" "$v"
+v=$(s35 active ok ok no)
+refute_grep "step 3.5: no spec delta → no file list" "→ change files:" "$v"; assert_grep "… and a stop line" "ERR:✗ step 3.5" "$v"
+
+echo "spec-wrapper-contract: idd-plan revisions and aborts act on the change's files (idd-480-fix6)"
+S4="$(sed -n '/^### Step 4: /,/^### Step 5: /p' "$PLAN")"
+assert_grep "Step 4 shows the files Step 3.5 listed" "Step 3.5 列出的" "$S4"
+refute_grep "… and no longer reads the parked change's directory in place" '讀 `openspec/changes/<名稱>/` 底下的檔案' "$S4"
+REV="$(grep -F '| Revised (with feedback) |' "$PLAN")"
+assert_grep "Revised edits the change's files" "change 的檔案" "$REV"
+assert_grep "… runs spectra validate" "spectra validate" "$REV"
+assert_grep "… and runs Step 3.5 again before showing the plan" "重跑 Step 3.5" "$REV"
+assert_grep "Aborted parks the change again" "spectra park" "$(grep -F '| Aborted |' "$PLAN")"
+refute_grep "idd-implement's note no longer asks the Plan question as before" "照舊先問要不要改走" "$(read_file "$IMPL")"
+v=$(exist_run x "$(pl 'proposed (change idd-7-y)')"); assert_grep "step 3: a proposed plan naming another change → the stop names it" "idd-7-y" "$v"; assert_grep "… and the open change" "idd-7-x" "$v"
 
 print_summary spec-wrapper-contract
