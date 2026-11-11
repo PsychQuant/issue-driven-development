@@ -153,7 +153,7 @@ fi
 printf '→ idd-plan change lookup: %s\n' "$PLAN_LOOKUP"
 ```
 
-查詢的三行與契約第 3 步的相同（`spec-wrapper-contract` 逐行比對兩處），本 skill 不跑契約在那之後的 plan 檢查。兩個限制也與契約相同（#496）：同時有兩個以上 `idd-<N>-` change 時取第一個（active 先於 parked）；清單是 JSON 但形狀不對時讀成沒有 change。
+查詢的三行與契約第 3 步的相同（`spec-wrapper-contract` 逐行比對兩處），本 skill 不跑契約在那之後的 plan 檢查。三個限制也與契約相同（#496）：同時有兩個以上 `idd-<N>-` change 時取第一個（active 先於 parked）；清單是 JSON 但形狀不對時讀成沒有 change；`NUMBER` 不經檢查就放進 regex，這一次 Bash 呼叫裡沒設、或帶了 `#` 這類字元時讀成沒有 change（印 `new`），是 `.*` 這類字串時會比對到別張 issue 的 change。
 
 格式：
 
