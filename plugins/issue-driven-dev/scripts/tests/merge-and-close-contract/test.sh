@@ -118,7 +118,10 @@ assert_grep "5c.3 confirms the close positively" "close-stage.py\" confirm-close
 assert_grep "5c.2 calls /idd-close only after a merge or push" "merged|pushed" "$STAGE"
 refute_grep "the ask prompt no longer promises no push" "stay on current branch + no push + no PR" "$ALL_TXT"
 assert_grep "batch: direct-commit does not switch branches" "direct-commit** 的 batch 不切換 branch" "$ALL_TXT"
-assert_grep "Spectra-tier runs are reminded to archive" "/spectra-archive" "$(section "$ALL" "### Phase 6")"
+# #480: the change is archived on the branch in Step 3b.6, before verify, so the report no longer asks for an
+# archive on the default branch after the merge (that reminder came in with #392).
+refute_grep "Spectra-tier runs are not asked to archive after the merge (#480)" "/spectra-archive" "$(section "$ALL" "### Phase 6")"
+assert_grep "… because Step 3b.6 already archived the change on the branch" "Step 3b.6 已經封存" "$(section "$ALL" "### Phase 6")"
 
 echo "idd-all: round-3 fixes stay in the text"
 assert_grep "Step 0.4 resets the previous run's state" 'close-stage.py" reset --cwd' "$ALL_TXT"

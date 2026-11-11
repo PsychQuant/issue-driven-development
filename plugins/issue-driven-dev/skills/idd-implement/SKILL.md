@@ -74,12 +74,14 @@ allowed-tools:
 
 ```
 TaskCreate(name="resolve_pr_path", description="Phase 0.5: --pr/--no-pr flag → fork detection → pr_policy config → ask. 若 PR path: 建 feature branch")
+TaskCreate(name="spec_preflight", description="Step 0.6 (#480): scripts/spec-change.py preflight，決定這張 issue 寫規格、宣告 no behaviour change、或是 third-party clone；linked worktree / 沒有 Spectra 時停下（references/spec-wrapper.md 第 1、2 步）")
 TaskCreate(name="read_issue_and_diagnosis", description="gh issue view + 確認最新 diagnosis comment 的 Strategy")
 TaskCreate(name="check_attachments", description="確認 .claude/.idd/attachments/issue-NNN/ 存在且 _manifest.json 涵蓋當下 issue attachment list;偵測新增 attachment 補 fetch。manifest 缺漏 → 警告並引導使用者重跑 idd-diagnose,不 auto-repair。依 rules/process-attachments.md。")
 TaskCreate(name="draft_implementation_plan", description="依 Strategy 起草 Implementation Plan 並 comment 到 issue")
 TaskCreate(name="bootstrap_strategy_tasklist", description="Step 2.5: Simple complexity → 為每個 - [ ] bullet 建 TaskCreate; SDD → 跳過(spectra-apply 管)")
 TaskCreate(name="execute_tdd_loop", description="Step 3: pre-flight superpowers（check-plugin-presence.sh 三參數，缺席 fail-fast）→ 對每個 strategy item invoke superpowers:test-driven-development 完成 TDD 執行 → commit (#NNN) → TaskUpdate completed（#209 delegation）")
 TaskCreate(name="scope_guard", description="實作中發現不相關問題 → 開新 issue,不混入本 #NNN")
+TaskCreate(name="spec_closeout", description="Step 4.5 (#480): 有 change 時照 references/spec-wrapper.md 第 5 步收尾：spectra-verify → spectra archive → 確認落在工作樹 → commit → spec-change.py links / archived")
 TaskCreate(name="sync_checklist_and_summary", description="Step 5: 把最終 checklist 狀態寫回 Implementation Complete comment")
 TaskCreate(name="open_pr_if_pr_path", description="Phase 5.5: PR path 才執行 — git push + gh pr create with Refs #NNN body")
 TaskCreate(name="sister_bug_sweep", description="Step 5.7: review session log + reproduction trace, identify sister bugs / refactor opportunities / TODOs encountered; AskUserQuestion 3-option per canonical references/ic-r011-checkpoint.md; PATCH Implementation Complete comment with `### Sister Bugs Filed` audit trail (per IC_R011 #526)")
@@ -212,6 +214,8 @@ esac
 
 完整契約見 [`references/worktree-isolation.md`](../../references/worktree-isolation.md) § Tree-lock。
 
+> **要寫規格的 issue 不能在 linked worktree 裡做（#480）**：Spectra 在 linked worktree 裡會把檔案寫進主工作樹。上面 exit 3 改用 worktree 之後，Step 0.6 的 preflight 會回 `linked-worktree` 並停下；這時等主工作樹空出來，或改在獨立 clone 裡跑。preflight 在決定要不要寫規格之前就跑，所以之後會宣告 `no behaviour change` 的 issue 在 linked worktree 裡一樣停下（#488 會改用獨立 clone）。
+
 ### Step 0.5: Resolve PR vs Direct-commit Path
 
 完整 resolution algorithm 見 [references/pr-flow.md](../../references/pr-flow.md)。簡述:
@@ -343,6 +347,20 @@ No branch operations. Whatever branch the user is on, commits land there.
 
 ---
 
+### Step 0.6: Spec preflight（#480）
+
+每一張實作的 issue 都要留下規格改動，或一個宣告過的豁免。照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 1、2 步做，**在建立任何 artifact 或 commit 之前**：
+
+1. 跑 `spec-change.py" preflight`（指令在契約第 1 步）。`linked-worktree`、`install-spectra`、`init-openspec`、`error` → 停下，把 `message` 轉給使用者，不往下走。`third-party` → 照本 skill 原本的流程做，Implementation Complete 寫 `**Spec**: third-party clone`。
+2. `ready` → 決定這張 issue 留下什麼（契約第 2 步）：會改變行為就寫規格（change 名稱 `idd-<N>-<slug>`）；不會，而且屬於契約列的四種之一，就宣告 `**Spec**: no behaviour change`。
+3. 把決定寫進 Step 2 的 Implementation Plan 留言（一行 `**Spec plan**: change <名稱>`、`**Spec plan**: no behaviour change (<a|b|c|d>)` 或 `**Spec plan**: third-party clone`），之後的步驟從那一行讀，不靠 shell 變數。
+
+**在 Step 2 貼任何留言或 propose 之前**，跑契約第 3 步開頭那段（`spec-change.py" plan`）：這張 issue 有開著的 `idd-<N>-` change 時，只有最新的 Implementation Plan 寫著 `**Spec plan**: change <同名>` 才沿用它（不再 propose）；`proposed`、沒有 plan 點名它、或最新的 plan 點名別的 change → 停下，告訴人要繼續就重跑 `/idd-plan`（它把 Implementation Plan 再呈現給人核准，核准後 plan 行寫上這個 change）；清單讀不到 → 停下，先修好再跑。順序不能反過來：Step 2 自己貼的 plan 會成為「最新的 plan」，蓋掉還沒核准的那一則。
+
+Diagnosis 的 Complexity 是 Plan、這張 issue 沒有開著的 change、而且是有人直接呼叫 `/idd-implement`（不是從 `idd-plan` 或 `idd-all` 來）：attended 先用 AskUserQuestion 問要不要改走 `/idd-plan`，選 abort 就停，不 propose；unattended 照契約的輕量形式往下。這個問題要在 propose 之前問（verify 第 4 輪：放在 Step 2.5 時，propose 已經做完了）。
+
+verify 之後回來做修正時（這張 issue 已經有封存了的 change），修正若新增或修改 requirement，照契約第 7 步另建 `idd-<N>-fix<k>`；只是補測試時不建 change。宣告 `no behaviour change` 被 verify 否決時，照契約第 7 步建這張 issue 的第一個 change。
+
 ### Step 1: 讀取 Issue + Diagnosis
 
 ```bash
@@ -407,6 +425,14 @@ idd-implement 是 **orchestration**（issue tracking、plan、checklist、body s
 
 ### Step 2: 列出變更清單並 comment 到 issue
 
+> **要寫規格時（Step 0.6 決定 `change`，#480）**：先貼下面的 Implementation Plan（含 `**Spec plan**: change <名稱>`），再 propose，propose 完把清單改成這個 change 的 tasks（改自己的留言）。plan 行在 propose 之前貼，中途斷掉的 run 重跑時，契約第 3 步才找得到點名這個 change 的 plan。
+>
+> - change 不存在 → `Skill(skill="spectra-propose", args="<change 名稱>：<需求>。輕量形式：不做 discuss、不寫 design。…")`，args 的寫法照契約第 3 步（每條 requirement 有 Example、測試帶標記；無人值守時附上那一段 UNATTENDED MODE）。
+> - 從 `idd-plan` 來（args 帶 `--spec-change <名稱>`，核准過的 plan 已寫著 `**Spec plan**: change <名稱>`）→ 不另貼 plan，用這個名稱以輕量形式 propose（同上一項），與 Simple tier 相同。
+> - change 已經開著（上次 propose 之後中斷，且最新的 plan 寫著同名的 `change`）→ 不再 propose，直接用它。
+>
+> Implementation Plan 的清單改成這個 change 的 tasks（照 `tasks.md` 的順序），並加一行 `**Spec plan**: change <名稱>`。宣告 `no behaviour change` 時照下面原本的寫法，加一行 `**Spec plan**: no behaviour change (<a|b|c|d>)`。
+
 根據 diagnosis 的 strategy 與 Step 1.5 的 `EXTRA_REQUIREMENTS`，列出具體要改的檔案：
 
 ```markdown
@@ -439,6 +465,8 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-egress.sh" comment $NUMBER --repo $GITHUB
 ```
 
 ### Step 2.5: Bootstrap TodoList（non-Spectra case）
+
+> **有 change 時只略過 TaskList 的建立（#480）**：進度記在 change 的 `tasks.md`，由 `spectra-apply` 勾選。下面的分流表照常看（verify 第 4 輪：舊寫法連分流一起跳過）；直接呼叫 `/idd-implement` 處理 Plan issue 時，要不要改走 `/idd-plan` 已在 Step 0.6 問過。
 
 **判斷 Complexity routing**：讀最新 `## Diagnosis` comment 的 `### Complexity` 欄位（v2.36.0+ 三路；v2.50+ 加 Layer V variant）。**tier 抽取與 actionability 判定都不在此處自行寫 parser**，改呼叫 [`references/actionability-gate.md`](../../references/actionability-gate.md) 契約下的共用實作：
 
@@ -503,8 +531,8 @@ Routing **先看 `$VEXIT`**（gate 判定），`0` 才依 `$TIER` 決定行為�
 |-----------|------|
 | `TYPE=meeting` · `VEXIT=0` | 🛑 **停止實作（meeting）** — 印出「#N 是 type=meeting：meeting 不走 implement（meeting-issue-type 規格）。下一步：`/idd-plan #N` 寫 Meeting Plan（選填），或 `/idd-close #N`（沒有 plan 時 close gate 退回 Diagnosis 的 Phase C）」。這**不是**資料錯誤，Diagnosis 不必修；不建 branch、不 commit。機器行印 `TYPE=meeting` 但 `VEXIT=1`（被擱置或被擋）時照下面對應的列停止，並加一行「meeting 不走 implement」——那些列本來就不給 lifecycle 命令（#383 verify r1）。沒有受信任 Diagnosis 的 issue 印的是 `TYPE=none`，認不出是不是 meeting，照 `complexity-missing` 那列處理；不要另外從 label 或本文判斷 type（#383 verify r5） |
 | `0` · `0` · `Simple` | ✅ 本 step 啟動 TaskList 追蹤每個 checklist item |
-| `0` · `0` · `Plan`（原值可能是 `Plan via Layer V`）| ✅ 同 Simple — TaskList 啟動。**注意**：使用者通常透過 `/idd-plan #NNN` 呼叫進來，approval gate 已在 idd-plan 處理完，本 skill 直接走 TDD loop。若使用者直接呼叫 `/idd-implement` 而 Complexity=Plan，**先提示**「Complexity 判定為 Plan，建議改走 `/idd-plan #NNN` 進入 approval gate；繼續直接 implement 等於跳過 Plan tier 的 deliberation 價值」並用 AskUserQuestion 確認 continue/abort。`Plan via Layer V` 同樣行為(routing 一致),只是 verdict 標記提示這是 Layer V 觸發 |
-| `0` · `0` · `Spectra` | ⏭ 跳過本 step（由 `spectra-apply` 管 `openspec/changes/<name>/tasks.md`）|
+| `0` · `0` · `Plan`（原值可能是 `Plan via Layer V`）| ✅ 同 Simple — TaskList 啟動。**注意**：使用者通常透過 `/idd-plan #NNN` 呼叫進來，approval gate 已在 idd-plan 處理完，本 skill 直接走 TDD loop。若使用者直接呼叫 `/idd-implement` 而 Complexity=Plan，「要不要改走 `/idd-plan #NNN`」已在 Step 0.6、propose 之前問過（#480；選 continue 才會走到這裡），這裡不再問。`Plan via Layer V` 同樣行為(routing 一致),只是 verdict 標記提示這是 Layer V 觸發 |
+| `0` · `0` · `Spectra` | ⏭ 跳過本 step（由 `spectra-apply` 管 `openspec/changes/<name>/tasks.md`）；`idd-all` Step 3b.0 把 third-party clone 轉來時沒有 apply，照 Simple 建 TaskList |
 | `0` · `0` · `SDD-warranted` (legacy alias) | ⏭ 跳過本 step — 視同 `Spectra` 處理（v2.36.0+ backward compat）|
 | `VEXIT=1` · `$REASONS` 含 `complexity-deferral-marker`（如 `Simple when triggered`）或 `parking-lot-label` | 🛑 **停止實作（parked）** — 印出 `$REASONS` 與原文（`$COMPLEXITY_ERR` 的 `deferral-marker: <原值>`，或 label 名）。這是**合法的延期狀態，不是資料錯誤**；要動它，先由人移除 label 或重新 diagnose。**禁止**截斷成 tier 前綴、**禁止**降級成 `Simple` / `Plan` 或任何其他 tier、**禁止**沿用舊的「不確定就當 Simple」預設 |
 | `VEXIT=1` · `$REASONS` 含 `blocking-nonempty` | 🛑 **停止實作（blocked）** — 印出 `$BLOCK_LINE`；等 blocker 解除（`idd-update` 清 `### Blocking`）|
@@ -534,6 +562,8 @@ Routing **先看 `$VEXIT`**（gate 判定），`0` 才依 `$TIER` 決定行為�
 缺 plugin 或缺目標 skill → helper 印出含一步安裝指令（`claude plugin install superpowers@claude-plugins-official`）的錯誤，**立即 abort**。不做 vendored fallback、不 silent degrade（#209 D2）— superpowers 是 install-time hard dependency（plugin.json `dependencies` 已宣告，正常安裝下必在；缺席代表安裝壞了，該修安裝而不是繞過紀律）。
 
 **適用範圍（#209 R1 verify F8）**：pre-flight 針對會走 TDD delegation 的 code 變更項；若本次變更清單**全部**屬下方「IDD 專屬路由例外」（純 prose / `with_skill`），此 pre-flight 可跳過 — 該路由本來就不 invoke superpowers。**注意（F10 → #212 已解）**：pre-flight 現亦查 enabled 狀態 — disabled 會在 pre-flight 即 exit 3 並印 enable 指令；CLI 缺席時 graceful degrade 回磁碟檢查。
+
+> **有 change 時（#480）**：pre-flight 照常跑（superpowers 的 TDD 紀律不變），然後照契約第 4 步：change 被 park 時先 `spectra unpark`，再 `Skill(skill="spectra-apply", args="<change 名稱>")`（無人值守時 args 附上契約第 3 步那一段）逐項做 `tasks.md`：每個 Example 的測試先寫、先看到它失敗，測試檔帶 `spec-example: <capability> / <Example title>` 標記。下面的逐項流程用在沒有 change 的 issue（宣告 `no behaviour change`、`third-party clone`）。
 
 每個變更項依序執行：
 
@@ -584,11 +614,19 @@ Routing **先看 `$VEXIT`**（gate 判定），`0` 才依 `$TIER` 決定行為�
 
 **鐵律**：不在 #NNN 的 branch 上修不相關的東西。
 
+### Step 4.5: Spec close-out（#480）
+
+有 change 時，在貼 Implementation Complete 之前照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 5 步收尾，順序固定：`spectra-verify` → `spectra archive <名稱> -y` → 確認封存落在這個工作樹 → commit `chore: archive <名稱> (#N)` → `spec-change.py" links` → `spec-change.py" archived --ref HEAD`。任何一步沒過就停下修，不貼 Implementation Complete，不開 PR。
+
+沒有 change（`no behaviour change`、`third-party clone`）→ 跳過這一步。
+
 ### Step 5: Checklist Sync + 完成確認
 
 所有變更清單項目完成後：
 
 **Step 5a: Checklist Sync**
+
+> **有 change 時（#480）**：Step 2.5 沒有建 TaskList，沒有東西可同步。checklist 改從封存後的 `openspec/changes/archive/<日期>-<change 名稱>/tasks.md` 逐項抄寫（勾選狀態照原樣），標題寫 `### Checklist (synced from tasks.md)`；有幾個 change 就依時間順序各抄一份。下面的表格與鐵律用在沒有 change 的 issue。
 
 `## Implementation Complete > ### Checklist` 在 v2.73.0+ 是 **authoritative_source winner**(priority 1 in [`rules/append-vs-modify.md`](../../rules/append-vs-modify.md))— 一旦本 Step 寫回此 section,所有 downstream gate(`idd-close` Step 0 / `idd-verify` checklist scan / `idd-update` body sync gate)都以該 section 為 implementation truth source,Strategy / Implementation Plan 的 `- [ ]` 視為 superseded snapshot 不再 gate-block。 若本 Step 跳過(無 Implementation Complete > Checklist),downstream gate fall back legacy scan all sources(保留 backward compat,但 Strategy/Plan checkbox 會被視為「未完成」可能 refuse close)。
 
@@ -641,9 +679,12 @@ gh release upload $ATTACHMENTS_RELEASE {figure_files}.png \
 
 ```bash
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-egress.sh" comment $NUMBER --repo $GITHUB_REPO --scrub-attested "$SCRUB_LEVEL" --body "$(cat <<'EOF'
+<!-- idd:comment type=implementation-complete -->
 ## Implementation Complete
 
-### Checklist (synced from TaskList)
+**Spec**: {change <名稱>[, <名稱>…] | no behaviour change | third-party clone}
+
+### Checklist (synced from {TaskList | tasks.md})
 - [x] {plan item 1} → commit {hash}
 - [x] {plan item 2} → commit {hash}
 - [~] {plan item 3} — skipped: {reason why we chose not to do this now}

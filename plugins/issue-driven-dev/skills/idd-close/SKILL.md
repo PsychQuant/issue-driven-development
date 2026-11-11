@@ -57,7 +57,7 @@ allowed-tools:
 
 | 正常 `/idd-close` step | `--retroactive` 行為 |
 |------------------------|----------------------|
-| Step 0 / 1.5 / 1.6 gates | **跳過**（issue 已關，gate moot；非 force bypass）|
+| Step 0 / 1.5 / 1.57 / 1.6 gates | **跳過**（issue 已關，gate moot；非 force bypass。Step 1.57 的封存檢查也一樣：issue 已關，沒有結案可擋）|
 | **Precondition**（retroactive 專屬）| **兩段，缺一不可**。(a) **執行** `check-closed-without-summary.sh --issue N`：`rc != 10` 一律 abort。(b) `rc == 10` **不是許可** —— 你必須自己讀完該 issue 的全部 comment 才能決定，並把依據寫進 draft（見下方「許可由讀者供給」）。draft 前一次、post 前再一次（防 stale list / race / double-post）。|
 | Step 2 draft | **reuse，但 `### Verification` section 特別處理** —— 從 `git log --grep "#N"`（Changes）+ 該 issue 既有的 `## Diagnosis` / `## Implementation Complete` / `## Verify` comments + body reconstruct 五段式。**標題改成** `## Closing Summary (retroactive — auto-closed via <channel>)`。reconstruct 不足 → 標 **「best-effort reconstruction」**，不假裝完整。**`### Verification` 的捏造風險最高 —— 見下方「Verification honesty 鐵律」。** |
 | Step 3 confirm | **強制，無無人值守路徑**（round 12）—— 把 draft 給 user 確認再 post。以前這是「預設」，也就是可以被關掉的；而在 helper 交出許可權之後，人是唯一還能回答「這張 issue 到底有沒有摘要」的環節，關掉它等於沒有任何一層在判斷。confirm 仍**不是** verification —— cold-read + batch 容易 rubber-stamp，所以下方鐵律把誠實寫死進 draft，不靠 confirm 兜底。|
@@ -205,7 +205,7 @@ helper 的 `--issue N` 模式另外做了一件審計模式沒做的事：它用
 - **Residue 記為殘留**：這是 #392 Clarity Surface 第 4 列的決定（2026-10-14），與手動流程的預設（#304：開 follow-up issue）不同。residue 原文會出現在 idd-all 的回報裡，人看得到；要開 issue 就照回報手動開。
 - **6.3 不 commit**：merge 之後才加的 commit 沒有經過 verify，自動 merge 路徑不讓未經 verify 的改動進預設 branch。
 
-其餘步驟照常執行：Step 0 checklist gate 與 Step 1.5 PR gate 擋下時就是停下、不 close；Step 3 的確認照「明確呼叫時可省略」處理（idd-all 不會帶 `--retroactive`）。
+其餘步驟照常執行：Step 0 checklist gate、Step 1.5 PR gate 與 Step 1.57 spec archive gate 擋下時就是停下、不 close；Step 3 的確認照「明確呼叫時可省略」處理（idd-all 不會帶 `--retroactive`）。
 
 停下而沒有 close 時，輸出的最後一行是 `Close stopped: <step> — <reason>`，idd-all 照抄進它的 `Stopped:`。
 
@@ -352,6 +352,7 @@ TaskCreate(name="check_prerequisites", description="gh issue view 確認 OPEN + 
 TaskCreate(name="check_attachments", description="確認 closing comment 即將引用的 attachment 在 .claude/.idd/attachments/issue-NNN/ 仍存在(防止使用者搬檔造成失效引用);manifest 對照 issue 當下 attachment list,新增的不重新 fetch(那是 idd-diagnose 工作)。依 rules/process-attachments.md。")
 TaskCreate(name="check_open_prs", description="Step 1.5: gh pr list 找引用 #NNN 的 open PR；若有 unmerged PR → refuse close")
 TaskCreate(name="merge_completeness_gate", description="Step 1.55 (v2.84.0+, #184): resolve issue branch via merged-PR headRefOid (SHA — survives GitHub branch-delete-on-merge) → local idd/<N>-* → VISIBLE skip note; bash ${CLAUDE_PLUGIN_ROOT}/scripts/check-merge-completeness.sh --branch <sha> --baseline origin/<default> (clean at once when the tip has the head's content; else finds the commit where the branch landed, then checks each commit's effects there in place by two-way diffs; the commits it cannot place at a landing commit are checked at the tip by line presence, #399); rc=3 orphans → AskUserQuestion 3-option (close anyway / abort+land / mis-detection), warn-only; rc=4 (could not verify — reason from the helper's stderr) / no-branch print a note (never silent). Never hard-blocks.")
+TaskCreate(name="spec_archive_gate", description="Step 1.57 (#480): 最新一則由有寫入權的帳號貼的 Implementation Complete → spec-change.py archived --ref origin/<default>；pass 才往下，refuse / error 停下、不 close；沒有 Implementation Complete 的 issue 不受這一道檢查")
 TaskCreate(name="semantic_gate_check", description="Step 1.6: 對每個 - [x] bullet 做 keyword extraction → 驗證對應 artifact 真存在/有 commit。Warn-only。")
 TaskCreate(name="draft_closing_comment", description="起草 closing summary：code issue（bug/feature/refactor/docs）用 Problem / Root Cause / Solution / Verification / Changes 五段式；`type=meeting` 用 decision→action mapping（每個決策 → follow-up action + owner），不用五段式、不跑 ### Verification、不要求 /idd-verify TDD pass（見上方「Meeting close」段 + Step 2 meeting 變體）")
 TaskCreate(name="review_with_user", description="顯示 closing comment 給使用者確認。一般 close 在使用者已明確下 /idd-close 時可省略；**--retroactive 不得省略**——那條路徑上 helper 已經交出許可權，人是唯一還在判斷的一層")
@@ -526,6 +527,51 @@ fi
 > **Branch resolution 用 headRefOid 不用 branch name（#184 DA-1）**：`idd-close` 在 merge **之後**跑，此時 GitHub 預設已 auto-delete head branch、local branch 也常被 `git branch -d`、cross-clone closer 根本沒有它。所以 gate 必須用 merged PR 的 **headRefOid（commit SHA，object 持久）** 解析，而非易逝的 branch name —— 否則正是「partial-merge orphan」這個它要抓的場景會 silent skip。
 >
 > **Skip 一律 VISIBLE**：無 merged PR + 無 feature branch（direct-commit path，不可能 orphan）→ 印一行 note，**不留零 output**（DA-1：silent skip 與 "ran clean" 無法區分是原本的缺陷）。
+
+### Step 1.57: Spec archive gate（#480）
+
+這張 issue 宣告的 Spectra change，要在預設 branch 上已經封存，才能結案（capability `spec-on-every-issue`；判定在 `scripts/spec-change.py`，契約見 [`references/spec-wrapper.md`](../../references/spec-wrapper.md)）。
+
+1. 留言用 `gh api --paginate` 抓，用 `spec-change.py ic` 選出這張 issue 的 Implementation Complete：最新一則以 `## Implementation Complete` 開頭（或第一行是 `<!-- idd:comment type=implementation-complete -->`）、作者的 `author_association` 是 `OWNER`／`MEMBER`／`COLLABORATOR` 的留言（`author_association` 是寫入權的近似：API 不給留言者的權限）。`idd-verify` 用同一個指令，兩邊選到的一定是同一則。沒有 Implementation Complete 的 issue 不受這一道限制（`ic` 印出空的內容，讀成舊制留言）。
+2. 對遠端的預設 branch 跑封存檢查。留言抓不到、或 `ic` 讀不了，一律當成 `error`，**不**當成「沒有 Implementation Complete」（verify 第 1 輪的 HIGH：舊寫法用了一個沒有任何步驟設定的變數，抓不到時讀到空檔就放行）：
+
+```bash
+SPEC_JSON=$(mktemp); SPEC_IC=$(mktemp)
+if ! { gh api "repos/$GITHUB_REPO/issues/$NUMBER/comments" --paginate > "$SPEC_JSON" 2>/dev/null \
+       && python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" ic --comments "$SPEC_JSON" > "$SPEC_IC"; }; then
+  GATE='{"status": "error", "not_archived": [], "reason": "the issue comments could not be read"}'; GATE_RC=2
+elif [ "$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" declared --file "$SPEC_IC" 2>/dev/null | python3 -c 'import json,sys; print(json.loads(sys.stdin.read() or "{}").get("form", ""))' 2>/dev/null)" != change ]; then
+  # No change declared (no comment, legacy, an exemption, an invalid line): the default branch is not read,
+  # so a failed fetch does not hold an issue this gate does not apply to. archived answers these from the comment.
+  GATE=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" archived --file "$SPEC_IC" --cwd "${CWD:-$PWD}" --ref HEAD); GATE_RC=$?
+else
+  # A declared change is checked against the default branch as the remote has it: no name, or a failed fetch,
+  # is an error, never a pass on a stale local ref (verify round 2).
+  DEFAULT_BRANCH=$(gh repo view "$GITHUB_REPO" --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null) || DEFAULT_BRANCH=""
+  # The commit the fetch returned (FETCH_HEAD), not origin/<default>: a fetch refspec that does not cover the
+  # default branch leaves the tracking ref where it was (verify round 3).
+  SPEC_REF=""
+  if [ -n "$DEFAULT_BRANCH" ] && git -C "${CWD:-$PWD}" fetch -q origin -- "$DEFAULT_BRANCH" 2>/dev/null; then
+    SPEC_REF=$(git -C "${CWD:-$PWD}" rev-parse -q --verify FETCH_HEAD 2>/dev/null)
+  fi
+  if [ -z "$SPEC_REF" ]; then
+    GATE='{"status": "error", "not_archived": [], "reason": "the default branch could not be read (gh repo view or git fetch failed)"}'; GATE_RC=2
+  else
+    GATE=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" archived --file "$SPEC_IC" --cwd "${CWD:-$PWD}" --ref "$SPEC_REF"); GATE_RC=$?
+  fi
+fi
+rm -f "$SPEC_JSON" "$SPEC_IC"
+printf '%s\n' "$GATE" | jq -r '"→ spec archive gate: \(.status) \(.reason)"'
+```
+
+| 結果 | 行為 |
+|---|---|
+| `pass`（含 `no behaviour change`、`third-party clone`、舊制留言） | 往下 |
+| `refuse` | 停下、不 close：列出還沒封存的 change，或 `**Spec**:` 行的問題。常見原因是 PR 還沒合併，或封存 commit 不在合併的範圍裡 |
+| `error` | 停下、不 close：留言、預設 branch 或設定讀不到，照原因處理後重跑 |
+| 沒有輸出、不是 JSON、或上面沒列的 status | 停下、不 close，回報印出的內容 |
+
+這一道和 Step 1.5 一樣是硬性的：不問人、沒有略過的選項。有人在場時要結案，先把 change 封存進預設 branch，或修正 Implementation Complete 的宣告。
 
 ### Step 1.6: Semantic Checklist Gate (v2.29.0+)
 

@@ -656,19 +656,21 @@ Diagnosis 完成 + Step 3.4 Vagueness Pre-check 結束後（`type=meeting` 已�
 
 | Verdict | Next Step | Flow |
 |---------|-----------|------|
-| `Simple` | `/idd-implement #NNN` | diagnose → implement → verify → close |
-| `Plan` | `/idd-plan #NNN` | diagnose → plan (EnterPlanMode 審查 Implementation Plan → 使用者 approve via ExitPlanMode) → implement → verify → close |
-| `Spectra` (default) | `/spectra-discuss` | diagnose → discuss → propose → apply → verify → close + archive |
-| `Spectra` (opt-out) | `/spectra-propose` | diagnose → propose → apply → verify → close + archive（僅當 ALL opt-out conditions 成立） |
+| `Simple` | `/idd-implement #NNN` | diagnose → implement（輕量 propose → apply → 封存，#480）→ verify → close |
+| `Plan` | `/idd-plan #NNN` | diagnose → plan（EnterPlanMode 審查 Implementation Plan → 使用者 approve via ExitPlanMode）→ implement（propose → apply → 封存）→ verify → close |
+| `Spectra` (default) | `/spectra-discuss` | diagnose → spec preflight → discuss → propose → apply → 封存 → verify → close |
+| `Spectra` (opt-out) | `/spectra-propose` | diagnose → spec preflight → propose → apply → 封存 → verify → close（僅當 ALL opt-out conditions 成立） |
 | `meeting`（**type 分流，非 complexity verdict** —— 在 Step 3.5 最優先分支、不經複雜度評分） | `/idd-plan #NNN`（meeting-adapted plan） | diagnose（Phase A/B/C Strategy）→ plan（meeting Plan body：議程 → 決策點 → 行動項；**不** chain to `/idd-implement`）→ close（decision→action mapping + meeting-specific gate，無 `/idd-verify` TDD pass） |
 
-> **Spectra tier 的追蹤 hand-off（#300，綁定）**：verdict 為 `Spectra` 時，diagnose **必須**在 report 的下一步區塊印出以下三行，否則該 issue 會在 diagnose 之後失去追蹤：
+> **Spectra tier 的追蹤 hand-off（#300，綁定）**：verdict 為 `Spectra` 時，diagnose **必須**在 report 的下一步區塊印出以下幾行，否則該 issue 會在 diagnose 之後失去追蹤：
 >
 > ```
+> → 先照 references/spec-wrapper.md 第 1 步跑 spec preflight（ready 才往下；third-party 改走 /idd-implement；其餘停下）
 > → /spectra-discuss   （或依 opt-out 條件走 /spectra-propose）
-> ⚠ Spectra 路徑不產生任何 phase-bearing comment，所以：
->    artifacts 完成後請貼一則 `## Implementation Complete`，並跑
->    /idd-update #N --tasks-file openspec/changes/<change-name>/tasks.md
+> ⚠ Spectra 路徑不產生任何 phase-bearing comment，所以 apply 之後：
+>    照 references/spec-wrapper.md 第 5、6 步收尾（spectra-verify → 封存 → commit → links／archived），
+>    貼一則帶標記與 **Spec**: 行的 Implementation Complete，並跑
+>    /idd-update #N --tasks-file openspec/changes/archive/<日期>-<change-name>/tasks.md
 > ```
 >
 > **為什麼需要這一行**：`idd-update` 的 phase 推斷靠掃 comment 標題（`## Diagnosis` / `## Implementation Plan` / `## Implementation Complete` / `## Verify` / `## Closing Summary`），而 `/spectra-discuss`、`/spectra-propose`、`/spectra-apply` **一則都不產生** —— 進度記在 `openspec/changes/<name>/tasks.md`，那個檔案 IDD 看不到。於是 phase 凍在 `diagnosed`，而 `idd-close` 的 authoritative-source 解析會一路 fallback 到第 3 層，掃到 **Diagnosis 的 Strategy checklist** —— 一份 pre-implementation 清單，實作做完了它也還是全未打勾。

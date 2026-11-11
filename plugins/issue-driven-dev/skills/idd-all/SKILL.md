@@ -84,7 +84,7 @@ idd-all 不取代 atomic skills,而是包它們。每個 phase 仍透過 `Skill(
 
 1. 對每個 `#N` 讀最新 Diagnosis 的 `### Conflict Class`（emit 契約見 `idd-diagnose`）。缺 / 無法 parse → 預設 `D_diagnose_first` 並 **surface**（印出來），不靜默、不預設成 parallel class。
 2. 按 conflict-class discipline 排序處理順序：`E_verified_close`（cheap verify+close）與 `D_diagnose_first`（先 read-only diagnose、再 re-bucket）優先；`B_resource_serialize` / `C_shared_module_coord` 觸碰**同一具名資源**者相鄰序列化、不交錯；`A_parallel_safe` 之間順序不拘。同檔的 issue 視為一組（不拆開）。
-3. 逐一（sequential）跑 `/idd-all #N`。`A_parallel_safe` issue **可選**用 `scripts/idd-worktree.sh create <N>` 隔離工作樹，讓你**事後**能把這些 branch 手動並行推進；serialize-class 不隔離也安全（反正 sequential）。
+3. 逐一（sequential）跑 `/idd-all #N`。`A_parallel_safe` issue **可選**用 `scripts/idd-worktree.sh create <N>` 隔離工作樹，讓你**事後**能把這些 branch 手動並行推進；serialize-class 不隔離也安全（反正 sequential）。#480 起，spec preflight 在 linked worktree 裡對每一張 issue 都停下（Spectra 在那裡會寫進主工作樹），所以在 #488（改用獨立 clone 隔離）之前不要用這個選項。
 4. 每張的終點與單張相同（#392）：verify 乾淨就 merge 並 close；停在 guardrail 的留在 verified；meeting 停在 diagnosed 或 planning。**PR mode** 的每一張結束後（不論有沒有 merge），先 `git -C "$CWD" checkout -q <default> && git -C "$CWD" pull --ff-only -q` 回到並更新預設 branch，再開始下一張，任一步失敗就停止整批並回報是哪一張、哪一步。**direct-commit** 的 batch 不切換 branch：每一張都留在使用者開始時的 branch（Phase 0.5 的契約）。
 
 > **為什麼仍值得排序（即使 sequential）**：sequential 本身永遠安全，所以排序不是為了正確性，而是為了 (a) 把 cheap/E 與 read-first/D 先清掉、(b) 把同資源的 B/C 相鄰處理便於 review、(c) 替「日後手動並行」預先把 class-A 隔離好。真正的價值在 taxonomy 作為**並行安全契約**，而非這個 sequential 外圈本身。
@@ -251,9 +251,9 @@ Phase 1 之前先驗 delegation 依賴，避免 unattended chain 中途 abort �
   claude-plugins-official superpowers || abort "superpowers missing — install first (see hint above), then re-run /idd-all"
 
 # spectra — Phase 0 只 warn（complexity 尚未判定，SDD path 不一定觸發）；
-# Phase 3b 入口另有 hard gate（見該段）— fail 發生在任何 spectra artifact 產生之前
+# 真正的判定在 spec preflight（Step 3b.0 與 wrapper 的 Step 0.6）：沒有寫入權的 clone 不需要 Spectra，照常往下
 if ! command -v spectra >/dev/null 2>&1; then
-  echo "⚠ spectra CLI not on PATH — if diagnosis routes to Spectra tier, Phase 3b will abort."
+  echo "⚠ spectra CLI not on PATH — in a repository you can write to, any issue that writes a spec stops at the spec preflight (#480)."
   echo "  Pre-empt: install the Spectra plugin/CLI before long unattended runs."
 fi
 ```
@@ -805,7 +805,31 @@ idd-all 走 SDD path 時,**必須**串完三步:`spectra-discuss` → `spectra-p
 >
 > idd-all 不修改 spectra 任何檔案 — 全程用 args 傳指示(或不傳)override sub-skill 的 attended 預設。
 
-#### Step 3b.0: Spectra presence hard gate（#211/#210）
+#### Step 3b.0: Spec preflight（#480）
+
+照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 1 步跑 preflight，在建立任何 Spectra artifact 之前，也在檢查 Spectra 有沒有安裝之前：沒有寫入權的 clone 不需要 Spectra，要先轉走（verify 第 1 輪的 HIGH）。讀不到權限時停下，`Stopped:` 寫那一行訊息。
+
+```bash
+PERM=$(gh repo view "$GITHUB_REPO" --json viewerPermission -q .viewerPermission 2>/dev/null)
+case "$PERM" in
+  WRITE|MAINTAIN|ADMIN) CAN_WRITE=yes ;;
+  READ|TRIAGE|NONE) CAN_WRITE=no ;;
+  *) CAN_WRITE="" ;;   # could not read it: stop, do not guess (see below)
+esac
+[ -n "$CAN_WRITE" ] || { echo "✗ spec preflight: cannot read this account's permission on $GITHUB_REPO ('$PERM'); stopping" >&2; PF='{"status": "error", "message": "the account permission on the repository could not be read"}'; PF_RC=2; }
+[ -n "$CAN_WRITE" ] && { PF=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" preflight --cwd "$CWD" --can-write "$CAN_WRITE"); PF_RC=$?; }
+printf '%s\n' "$PF" | jq -r '"→ spec preflight: \(.status) \(.message)"'
+```
+
+| `status` | 做什麼 |
+|---|---|
+| `ready` | 往下走 Step 3b.0.5 |
+| `third-party` | 不走 Phase 3b，不建立規格目錄；改走 Phase 3 的 Simple 路徑（`idd-implement`），它會自己跑 preflight 並宣告 `**Spec**: third-party clone` |
+| `linked-worktree`、`install-spectra`、`init-openspec`、`error`、exit 64、沒有輸出、不是一行 JSON、或上面沒列的 status | 停下，`Stopped:` 寫 preflight 的 `message`（沒有就寫印出的內容） |
+
+#### Step 3b.0.5: Spectra presence hard gate（#211/#210）
+
+preflight 回 `ready` 才會走到這裡；沒有 `spectra` 時 preflight 已經回 `install-spectra`，這一道留作第二層。
 
 ```bash
 command -v spectra >/dev/null 2>&1 || abort "Spectra tier routed but spectra CLI is missing.
@@ -889,6 +913,13 @@ else:  # INTERACTION == "attended"
 PROPOSE_ARGS="<conclusion line from Step 3b.2>
 
 Original issue: #${N} ${ISSUE_TITLE}"
+
+# Every tier (#480): the same Example and marker rules as references/spec-wrapper.md step 3.
+PROPOSE_ARGS="$PROPOSE_ARGS
+
+Spec rules (#480): every added or modified requirement has at least one '##### Example:' whose title is unique
+within its capability, or a line 'No executable check: <reason>'. tasks.md has one test task per Example, and the
+test file carries the marker 'spec-example: <capability> / <Example title>'."
 
 # Conditional: unattended only — see spec idd-pr-hitl-modes,
 # requirement "Attended interaction permits sub-skill questions".
@@ -988,6 +1019,24 @@ fi
 | `spectra-apply` reports tasks remaining unfinished | Continue to Phase 4 (verify) — verify will surface incompleteness |
 
 > **Why idd-all overrides spectra defaults via args, not by modifying spectra**: spectra is a separate plugin with its own attended-by-default contract that's correct for solo use. idd-all is the one promising "unattended", so it's idd-all's responsibility to configure each sub-skill invocation to honor that promise. Args-based override keeps the boundary clean.
+
+
+#### Step 3b.6: Spec close-out 與 Implementation Complete（#480）
+
+`spectra-apply` 做完之後、Phase 4 之前，照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 5 步做 Spec close-out，順序固定：`spectra-verify` → `spectra archive <change> -y` → 確認封存落在 `$CWD` → commit `chore: archive <change> (#N)` → `spec-change.py" links --base <這條 branch 與剛 fetch 的預設 branch（FETCH_HEAD）的 merge-base>`（契約第 5 步那段） → `spec-change.py" archived --ref HEAD`。任何一步沒過：unattended 停下回報（`Stopped:`），attended 告訴使用者哪一步、等他決定。
+
+通過之後貼 Implementation Complete（經 `gh-egress.sh`），讓 `idd-verify` 與 `idd-close` 讀得到這張 issue 的宣告：
+
+```markdown
+<!-- idd:comment type=implementation-complete -->
+## Implementation Complete
+
+**Spec**: change <change 名稱>
+
+Spectra change `<change 名稱>` 已封存在 `<archive commit>`；進度見 `openspec/changes/archive/<日期>-<change 名稱>/tasks.md`。
+```
+
+這則留言沒有 `### Checklist` 小節：Spectra tier 的 checklist 仍由 Step 3b.5 寫進 `## Current Status > ### Tasks`，`idd-close` 的 authoritative source 照舊落在那裡。
 
 ---
 
@@ -1118,6 +1167,8 @@ for ROUND in 1..MAX_ROUND:
 - 安全漏洞 → **不 auto-fix**,直接 abort 讓 user 處理
 
 每個 auto-fix commit:`fix: address verify finding — {finding summary} (#$N)`
+
+**修正也留下規格（#480）**：宣告 `no behaviour change` 被 verify 否決（豁免不成立的 HIGH）時，修正就是補上規格：照契約第 7 步建這張 issue 的第一個 change `idd-<N>-<slug>`，封存後新的 Implementation Complete 改宣告 `change <名稱>`。其餘情況：這張 issue 宣告了 change 時，兩輪 verify 之間的修正（auto-fix，或 attended 時在 session 裡做的修正）若新增或修改了 requirement，照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 7 步：建 `idd-<N>-fix<k>`（k 是剛跑完的 verify 輪數）：propose 之前先貼一則 `## Implementation Plan (fix round <k>)`，寫 `**Spec plan**: change idd-<N>-fix<k>`，再用輕量形式 propose 與 apply，照第 5 步封存並跑連結檢查，在下一輪 verify 之前完成，再貼一則新的 Implementation Complete，`**Spec**:` 行列出這張 issue 的所有 change（依時間順序）。requirement 與 Example 已經有、只是測試沒寫對時，只補帶標記的測試。Blocking 的修正要留下寫出該性質的 requirement、Example，以及一個在修正前會失敗的測試。
 
 **乾淨的定義（#392，2026-11-10 的決定）**：gate 判 `clean` ＝ 報告判定 PASS、Blocking 為 0、In-scope fix 只剩 LOW／INFO／P3。這些沒擋住 merge 的列數在 gate JSON 的 `low_in_scope`。大於 0 時：
 
@@ -1423,7 +1474,6 @@ Done:
   left open: ${LOW} LOW in-scope finding(s) not fixed — listed in #${LOW_FOLLOWUP}        (only when low_in_scope > 0)
   left open: ${PC} comment(s) list Proposed Corrections that were not applied              (only when proposed_corrections > 0)
   remote CI: ${failed check names} failed while local CI passed                            (only when remote_ci_failed is not empty; "not readable" → say the remote checks could not be read; list remote_ci_pending as still running)
-Next: run /spectra-archive ${CHANGE} on ${DEFAULT}       (only for a Spectra-tier run: the change is not archived yet)
 Undo:
   gh issue reopen ${N}
   git -C ${CWD} checkout ${DEFAULT} && git -C ${CWD} pull --ff-only
@@ -1431,7 +1481,7 @@ Undo:
   then push the revert, or open a PR with it — pushing is your call
 ```
 
-merge 與 push 的欄位取自 `$CWD/.claude/.idd/state/idd-all-result-$N.json`（`pr`、`merge_sha`、`push_from`、`push_to`、`count`、`verify_url`，以及只在不是 0 或空的時候才列的 `low_in_scope`、`proposed_corrections`、`remote_ci_failed`、`remote_ci_pending`）；closing summary 連結取自 5c.3 `confirm-close` 印出的 `summary_url`；follow-up 取自 Phase 4 開的 issue 加上 `/idd-close` 列出的；residue、distribution sync 取自 `/idd-close` 列出的預設。`changed` 取自 `git diff --shortstat ${MERGE_SHA}^ ${MERGE_SHA}`（direct-commit：`${PUSH_FROM} ${PUSH_TO}`）；`verify` 照抄 verify 報告的 `### Engine` 那一行。`Next:` 那一行只在 Spectra tier 出現：`/idd-close` 不做 archive（`rules/sdd-integration.md`〈Close triggers archive〉），跳過它 change 就一直留在 `openspec/changes/`。
+merge 與 push 的欄位取自 `$CWD/.claude/.idd/state/idd-all-result-$N.json`（`pr`、`merge_sha`、`push_from`、`push_to`、`count`、`verify_url`，以及只在不是 0 或空的時候才列的 `low_in_scope`、`proposed_corrections`、`remote_ci_failed`、`remote_ci_pending`）；closing summary 連結取自 5c.3 `confirm-close` 印出的 `summary_url`；follow-up 取自 Phase 4 開的 issue 加上 `/idd-close` 列出的；residue、distribution sync 取自 `/idd-close` 列出的預設。`changed` 取自 `git diff --shortstat ${MERGE_SHA}^ ${MERGE_SHA}`（direct-commit：`${PUSH_FROM} ${PUSH_TO}`）；`verify` 照抄 verify 報告的 `### Engine` 那一行。Spectra tier 的 change 在 Step 3b.6 已經封存在 branch 上，merge 之後不需要再封存（#480）。
 
 停下時（gate 不乾淨、guardrail 沒過、push 被拒、`/idd-close` 停下、Phase 4 在最後一輪仍有 Blocking 而 abort），`Done:` 只列實際做到的步驟，接著一行 `Stopped:`，原因照抄 Phase 4 或 Phase 5c 印出的那一行：
 

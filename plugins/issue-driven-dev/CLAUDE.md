@@ -157,10 +157,10 @@ skill 不會自動 invoke `/spectra-discuss`。目前覆蓋：`idd-comment`（�
 ## Workflow
 
 ```
-issue → diagnose ─┬→ implement → verify → close                          (Simple)
-  ①        ②      │      ③         ④       ⑤
+issue → diagnose ─┬→ implement（light propose → apply → archive）→ verify → close   (Simple)
+  ①        ②      │      ③                                           ④       ⑤
                    │
-                   └→ spectra-discuss → spectra-propose → spectra-apply → verify → close + archive  (SDD)
+                   └→ spectra-discuss → spectra-propose → spectra-apply → archive → verify → close  (SDD)
                             ②b               ②c              ③b           ④       ⑤
                             ↑
                             default; opt-out to direct propose only when direction is crystal clear
@@ -236,9 +236,10 @@ IDD (Issue-Driven Development)
 - **Simple**（bug fix、單檔改動、follow existing pattern）→ `/idd-implement #N` 直接 TDD loop
 - **Plan**（2+ 互依檔案、5+ ordered steps、decision-heavy、risk-sensitive boundary，**但無 published API contract**）→ `/idd-plan #N` 先 EnterPlanMode 給 user approve Implementation Plan，再 chain to idd-implement
 - **Spectra**（對外 API/protocol/skill/tool 給 future callers + spec contract 需要 frozen，含 backward-compat alias `SDD-warranted`）→ `/spectra-discuss → spectra-propose → spectra-apply`
-- **進度追蹤**：Simple/Plan 用 IDD checklist + TaskList；Spectra 用 `tasks.md`，issue 只掛一句 `→ see spectra change: <name>`
+- **規格**：每個 tier 都留下規格改動（Spectra change，在 branch 上、verify 之前封存），或在 Implementation Complete 宣告 `no behaviour change`／`third-party clone`（#480，[`references/spec-wrapper.md`](references/spec-wrapper.md)）
+- **進度追蹤**：有 change 的 issue 用 change 的 `tasks.md`；宣告豁免的 Simple/Plan 用 IDD checklist + TaskList
 - **驗證**：統一用 `idd-verify #NNN`（6-AI 交叉驗證）
-- **結案**：`idd-close #NNN`（Spectra 同時觸發 `spectra-archive`）
+- **結案**：`idd-close #NNN`（Step 1.57：宣告的 change 要已封存在預設 branch 上）
 
 完整 routing 邏輯見 [`rules/sdd-integration.md`](rules/sdd-integration.md)。
 

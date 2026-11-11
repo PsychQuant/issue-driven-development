@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Version number left to the release.
+
+### Changed
+
+- **BREAKING — every implemented issue leaves a spec change or a declared exemption (#480).** Until now only Spectra-tier
+  issues produced a spec delta; Simple and Plan issues left their decisions in comments, code and tests. Now:
+  - `idd-implement` (Simple) wraps a light Spectra change named `idd-<N>-<slug>`: propose without discuss or design,
+    apply with each Example's test written first, then archive on the branch before verify. `idd-plan` (Plan) has
+    the maintainer approve the Implementation Plan in plan mode and hands the issue to `idd-implement`, which proposes in the
+    light form (approving the proposal itself in plan mode is #497).
+    `idd-all` closes out the Spectra tier the same way (Step 3b.6). The shared contract is
+    `references/spec-wrapper.md`.
+  - The Implementation Complete comment carries a marker and exactly one `**Spec**:` line: `change <names>`,
+    `no behaviour change` (four closed cases: documentation nothing executes, a one-off analysis, tests or CI only, a
+    refactor that changes no behaviour) or `third-party clone`.
+  - `idd-verify` (code profile) checks behaviour against the specs: a behaviour change no requirement states is HIGH,
+    a false `no behaviour change` is HIGH, a missing Example test or an unarchived change is Blocking.
+  - `idd-close` Step 1.57 refuses to close while the declared change is not archived on the default branch.
+  - A fix after a verify round that adds or changes a requirement is a further change `idd-<N>-fix<k>`.
+  - Cost, measured once (2026-11-11, an unattended `/idd-all` on a sandbox Simple issue that added a 20-line
+    script and its test): Diagnosis to Implementation Complete took 5 minutes, of which about 3 went to the
+    propose step and the close-out (spectra-verify, archive), judged from commit times. One run, no control.
+
+### Added
+
+- **`scripts/spec-change.py` (#480)** — `declared`, `archived`, `links` and `preflight`, each printing one JSON line, and
+  `ic`, which chooses the issue's Implementation Complete comment for `idd-verify` and `idd-close` alike.
+  `links` requires every requirement added or changed in a range to have Examples whose tests carry the marker
+  `spec-example: <capability> / <Example title>` (outside the spec directory, not `.md`), or a
+  `No executable check:` line with a reason. The spec directory is read from `.spectra.yaml` `spec_dir`
+  (`openspec` when absent; Spectra 3 initialises new repositories at `docs/spectra`).
+
+### Known limitations
+
+- A spec change cannot be written from a git linked worktree: Spectra writes into the main working tree from there, so
+  `preflight` stops. `idd-implement` falls back to a linked worktree when the main tree is locked by another session;
+  for any issue (the preflight runs before the exemption is decided), wait for the main tree or use a standalone clone.
+- A repository you can write to without Spectra (no CLI, or no spec directory) stops with the install or init command.
+- The marker ties an Example to a test by name only; whether the test checks what the Example states is judged by the
+  verify reviewers.
+
 ## [3.7.0] - 2026-11-10
 
 Ships #392 and #424.

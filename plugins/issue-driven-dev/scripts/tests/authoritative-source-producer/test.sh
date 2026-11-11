@@ -57,6 +57,29 @@ refute  "sibling worktree 的路徑被拒（實測遇到的形狀）" \
         within_toplevel "$R" "$W/repo-other/changes/a/tasks.md"
 refute  "repo 之外的路徑被拒"          within_toplevel "$R" "$W/zero.md"
 
+# ── 機制 3（#480）：Spectra tier 的 Implementation Complete 沒有 ### Checklist ──
+# idd-all Step 3b.6 為 Spectra tier 貼的 Implementation Complete 只有 **Spec**: 行，
+# 沒有 ### Checklist。priority 1 因此不成立，來源仍落在 priority 2。
+ic_items() {  # <file> — ## Implementation Complete 底下 ### Checklist 的 checkbox 行數
+  awk '/^## Implementation Complete/{ic=1;next} ic && /^### Checklist/{f=1;next} f && /^###? /{f=0} f' "$1" \
+    | grep -cE '^[[:space:]]*-[[:space:]]*\[.\][[:space:]]*.+$'
+}
+source_of() {  # <ic-file> <body-file> — 第一個 exists（≥1 項）的來源
+  if [ "$(ic_items "$1")" -gt 0 ]; then echo ic-checklist
+  elif [ "$(count_items "$2")" -gt 0 ]; then echo current-status-tasks
+  else echo legacy; fi
+}
+printf '<!-- idd:comment type=implementation-complete -->\n## Implementation Complete\n\n**Spec**: change idd-7-x\n\nSpectra change archived.\n' > "$W/ic-spectra.md"
+printf '<!-- idd:comment type=implementation-complete -->\n## Implementation Complete\n\n**Spec**: change idd-7-x\n\n### Checklist (synced from TaskList)\n- [x] a\n' > "$W/ic-simple.md"
+assert_eq "Spectra tier 的 Implementation Complete（無 Checklist）→ 來源是 Current Status > Tasks" \
+  current-status-tasks "$(source_of "$W/ic-spectra.md" "$W/three-done.md")"
+assert_eq "Simple tier 的 Implementation Complete（有 Checklist）→ 來源仍是它" \
+  ic-checklist "$(source_of "$W/ic-simple.md" "$W/three-done.md")"
+ALL_SKILL="$HERE/../../../skills/idd-all/SKILL.md"
+S3B6="$(sed -n '/^#### Step 3b.6: /,/^### Phase 4: /p' "$ALL_SKILL")"
+assert_grep "idd-all Step 3b.6 存在" "Implementation Complete" "$S3B6"
+refute_grep "idd-all Step 3b.6 的模板沒有 ### Checklist 標題" "### Checklist" "$(printf '%s' "$S3B6" | sed -n '/^```markdown/,/^```$/p')"
+
 # ── drift-lock：規範文字在位 ───────────────────────────────────────────────
 RULE="$HERE/../../../rules/append-vs-modify.md"
 UPD="$HERE/../../../skills/idd-update/SKILL.md"
