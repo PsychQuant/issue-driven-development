@@ -50,10 +50,11 @@ change 名稱是 `idd-<N>-<slug>`（slug 取 issue 標題，小寫英數與連�
 
 ```bash
 SPEC_STEP3=""; EXISTING=""
-if A=$(spectra list --json 2>/dev/null) && B=$(spectra list --parked --json 2>/dev/null); then
+if A=$(spectra list --json 2>/dev/null) && B=$(spectra list --parked --json 2>/dev/null) \
+   && printf '%s' "$A" | jq -e . >/dev/null 2>&1 && printf '%s' "$B" | jq -e . >/dev/null 2>&1; then
   EXISTING=$( { printf '%s' "$A" | jq -r '.changes[]?.name'; printf '%s' "$B" | jq -r '.parked[]?.name'; } | grep -E "^idd-${NUMBER}-" | head -1)
 else
-  SPEC_STEP3="stop: the change list could not be read (spectra list failed); fix that and run again"
+  SPEC_STEP3="stop: the change list could not be read (spectra list failed or did not print JSON); fix that and run again"
 fi
 if [ -z "$SPEC_STEP3" ] && [ -z "$EXISTING" ]; then
   SPEC_STEP3="propose"
@@ -68,7 +69,7 @@ elif [ -z "$SPEC_STEP3" ]; then
   FORM=$(printf '%s' "$PLAN" | jq -r '.form // "unreadable"' 2>/dev/null); NAMED=$(printf '%s' "$PLAN" | jq -r '.change // ""' 2>/dev/null)
   case "$FORM" in
     change) [ "$NAMED" = "$EXISTING" ] && SPEC_STEP3="go on with $EXISTING" \
-              || SPEC_STEP3="stop: the newest plan names $NAMED, not the open change $EXISTING" ;;
+              || SPEC_STEP3="stop: the newest plan names $NAMED, not the open change $EXISTING; run /idd-plan to present $EXISTING for approval" ;;
     proposed|rejected) SPEC_STEP3="stop: $EXISTING is $FORM in plan mode; run /idd-plan, which presents it for approval" ;;
     *) SPEC_STEP3="stop: no approved plan names the open change $EXISTING (plan: ${FORM:-unreadable}); run /idd-plan to present it for approval" ;;
   esac
@@ -76,13 +77,13 @@ fi
 printf '→ spec step 3: %s\n' "$SPEC_STEP3"
 ```
 
-Implementation Plan 留言（Plan tier 由 `idd-plan` 貼，Simple 由 `idd-implement` Step 2 貼）有剛好一行 `**Spec plan**:`，五種寫法：`**Spec plan**: proposed (change <名稱>)`（`idd-plan` 進 plan mode 前寫，核准後改成 `change <名稱>`）、`**Spec plan**: change <名稱>`、`**Spec plan**: no behaviour change (<a|b|c|d>)`、`**Spec plan**: third-party clone`、`**Spec plan**: rejected (change <名稱> left parked)`（維護者在 plan mode 拒絕時，`idd-plan` 改成這一行）。plan 行一律在 propose 之前貼出，所以中途斷掉的 run 重跑時，找得到點名它那個 change 的 plan。`spec-change.py plan` 讀的是最新一則由有寫入權的帳號貼、以 `## Implementation Plan` 開頭的留言。
+Implementation Plan 留言（Plan tier 由 `idd-plan` 貼，Simple 由 `idd-implement` Step 2 貼）有剛好一行 `**Spec plan**:`，五種寫法：`**Spec plan**: proposed (change <名稱>)`（`idd-plan` 進 plan mode 前寫，核准後改成 `change <名稱>`）、`**Spec plan**: change <名稱>`、`**Spec plan**: no behaviour change (<a|b|c|d>)`、`**Spec plan**: third-party clone`、`**Spec plan**: rejected (change <名稱> left parked)`（維護者在 plan mode 拒絕時，`idd-plan` 改成這一行）。`idd-implement` 與修正輪在 propose 之前貼 plan 行，中途斷掉的 run 重跑時找得到點名它那個 change 的 plan；`idd-plan` 在 propose 之後才貼（它的 plan 要對照 change 的 tasks），斷在兩者之間時留下一個沒有 plan 點名的 change，由下表的 `stop:` 交回 `idd-plan` 重新呈現。`spec-change.py plan` 讀的是最新一則由有寫入權的帳號貼、以 `## Implementation Plan` 開頭的留言。
 
 | `→ spec step 3:` 印出的 | 做什麼 |
 |---|---|
 | `propose` | 往下 propose（下一段） |
 | `go on with <名稱>` | 不再 propose，直接第 4 步 |
-| `stop: …` | 停下，把那一行轉給人：`proposed` 或 `rejected` 的 change 要重跑 `/idd-plan` 核准；清單讀不到時先修好再跑。不 apply |
+| `stop: …` | 停下，把那一行轉給人，不 apply。清單讀不到時先修好再跑；其餘的 `stop:` 都是開著的 change 還沒被核准（`proposed`、`rejected`、沒有 plan 點名它、最新的 plan 點名別的 change），要重跑 `/idd-plan`：它是開著的 change 唯一的核准路徑，執行到這一步時不停下，改為把那個 change 呈現給人核准 |
 
 沒有 → 呼叫 `Skill(skill="spectra-propose", args="<change 名稱>：<需求，取自 Diagnosis 的 Strategy>。輕量形式：不做 discuss、不寫 design。")`，並在 args 寫明：
 
