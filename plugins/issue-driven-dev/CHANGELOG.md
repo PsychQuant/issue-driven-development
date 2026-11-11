@@ -15,7 +15,7 @@ Version number left to the release.
   issues produced a spec delta; Simple and Plan issues left their decisions in comments, code and tests. Now:
   - `idd-implement` (Simple) wraps a light Spectra change named `idd-<N>-<slug>`: propose without discuss or design,
     apply with each Example's test written first, then archive on the branch before verify. `idd-plan` (Plan) proposes
-    and presents the proposal and the tasks for approval in plan mode, then hands the change to `idd-implement`.
+    and presents the proposal, the spec delta and the tasks, read from the change's files, for approval in plan mode, then hands the change to `idd-implement`.
     `idd-all` closes out the Spectra tier the same way (Step 3b.6). The shared contract is
     `references/spec-wrapper.md`.
   - The Implementation Complete comment carries a marker and exactly one `**Spec**:` line: `change <names>`,

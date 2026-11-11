@@ -48,8 +48,9 @@ TaskCreate(name="resolve_pr_path", description="Phase 0.5: --pr/--no-pr flag →
 TaskCreate(name="read_issue_and_diagnosis", description="gh issue view + 讀最新 diagnosis comment 的 Strategy;Complexity 值域判定一律走 scripts/lib/actionability.sh 的 idd_parse_complexity,不自行比對字串")
 TaskCreate(name="draft_implementation_plan", description="依 Strategy 起草 Implementation Plan（5 段：files + reasoning + tests + risks + sequence）並 comment 到 issue")
 TaskCreate(name="tangential_sweep", description="Step 2.5: review session log from Step 1 to here, identify mid-plan tangential discoveries (sister bugs / unrelated quality issues / user-mentioned sub-concerns); AskUserQuestion to file as follow-up issues; append filed list to plan body before ExitPlanMode (per IC_R011 #524)")
+TaskCreate(name="read_change_files", description="Step 3.5（有 change 時，#480）：跑那段 bash —— parked 就 unpark，讀 spectra instructions apply 的 changeDir，缺 proposal、tasks 或 spec delta 就停下；印出 ✗ 不進 plan mode，印出 → change files: 就 Read 每個檔案")
 TaskCreate(name="enter_plan_mode_for_approval", description="Step 4: EnterPlanMode → 呈現 full Implementation Plan → ExitPlanMode 等 user approve / revise / abort")
-TaskCreate(name="handle_plan_response", description="Step 5: Approved → 進 Step 6 chain to idd-implement / Revised → 修改 Implementation Plan comment + 重新 EnterPlanMode / Aborted → idd-update phase=needs-fix 並結束")
+TaskCreate(name="handle_plan_response", description="Step 5: Approved → 有 change 時把 proposed 改成 change，進 Step 6 chain to idd-implement / Revised → 有 change 時先改 change 的檔案、spectra validate、重跑 Step 3.5，再修改 Implementation Plan comment + 重新 EnterPlanMode / Aborted → 有 change 時 spectra park 並寫 rejected，idd-update phase=needs-fix 並結束")
 TaskCreate(name="chain_to_idd_implement", description="Step 6: 呼叫 /idd-implement #NNN，pass 已 approved 的 Implementation Plan via context（idd-implement 跳過 Step 2 自動偵測現有 plan）")
 TaskCreate(name="auto_update_body", description="Step 7: idd-update phase → planning（v2.36+ 新 phase 介於 diagnosed 和 implemented 之間）")
 ```
@@ -136,7 +137,7 @@ printf 'raw<<<\n'; printf '%s\n%s\n' "${COMPLEXITY_ERR:-}" "${BLOCK_LINE:-}" | s
 
 依 Strategy 起草詳細的 Implementation Plan。**比 idd-implement Step 2 的 plan 更詳盡**，因為這份 plan 是要過 user 在 plan mode UI 審查的，是 deliberation tier 的核心 artifact。
 
-> **code issue 先寫規格（#480，非 meeting）**：照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 1 到 3 步。先跑 preflight（停下的情況照契約），再決定這張 issue 留下什麼；要寫規格時呼叫 `Skill(skill="spectra-propose", args="idd-<N>-<slug>：<需求>。不做 discuss；design 視需要寫。…")`，args 的其餘寫法照契約第 3 步。下面的 Implementation Plan 加一行 `**Spec plan**: proposed (change <名稱>)`（進 plan mode 之前貼；核准後改成 `change <名稱>`，見 Step 5），`### Files & Changes` 對照這個 change 的 tasks。核准的對象是這個 change 的 proposal 與 tasks；之後由 `idd-implement` 做 apply 與收尾。宣告 `no behaviour change` 或 `third-party clone` 時，照下面原本的寫法，並加一行 `**Spec plan**: no behaviour change (<a|b|c|d>)` 或 `**Spec plan**: third-party clone`。契約第 3 步因為開著的 change 還沒被核准而印出 `stop:`（plan 是 `proposed` 或 `rejected`、沒有 plan 點名它、或最新的 plan 點名別的 change）時，本 skill 不停下、也不再 propose：把那個開著的 change 的 proposal 與 tasks 再呈現一次給人核准，照常先貼 `**Spec plan**: proposed (change <名稱>)` 的 Implementation Plan 再進 plan mode，核准後改成 `change <名稱>`。這是開著的 change 唯一的核准路徑，第 3 步的停下訊息都指向這裡；只有「清單讀不到」那一種照常停下。
+> **code issue 先寫規格（#480，非 meeting）**：照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 1 到 3 步。先跑 preflight（停下的情況照契約），再決定這張 issue 留下什麼；要寫規格時呼叫 `Skill(skill="spectra-propose", args="idd-<N>-<slug>：<需求>。不做 discuss；design 視需要寫。…")`，args 的其餘寫法照契約第 3 步。下面的 Implementation Plan 加一行 `**Spec plan**: proposed (change <名稱>)`（進 plan mode 之前貼；核准後改成 `change <名稱>`，見 Step 5），`### Files & Changes` 對照這個 change 的 tasks。核准的對象是這個 change 的 proposal、spec delta 與 tasks（Step 3.5 讀出的檔案）；之後由 `idd-implement` 做 apply 與收尾。宣告 `no behaviour change` 或 `third-party clone` 時，照下面原本的寫法，並加一行 `**Spec plan**: no behaviour change (<a|b|c|d>)` 或 `**Spec plan**: third-party clone`。契約第 3 步因為開著的 change 還沒被核准而印出 `stop:`（plan 是 `proposed` 或 `rejected`、沒有 plan 點名它、或最新的 plan 點名別的 change）時，本 skill 不停下、也不再 propose：把那個開著的 change 的 proposal、spec delta 與 tasks 再呈現一次給人核准，照常先貼 `**Spec plan**: proposed (change <名稱>)` 的 Implementation Plan 再進 plan mode，核准後改成 `change <名稱>`。這是開著的 change 唯一的核准路徑，第 3 步的停下訊息都指向這裡；只有「清單讀不到」那一種照常停下。
 
 格式：
 
@@ -217,7 +218,7 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$IMPLEMENTATION_PLAN"
 
 ### Step 3.5: 取出 change 的檔案（有 change 時，#480）
 
-只在 code issue 有 change 時做；沒有 change（宣告豁免、third-party clone、meeting）跳過。plan mode 裡不能跑會改狀態的指令，所以在進 plan mode 之前跑這一段：`spectra-propose` 會把 change park 起來，park 之後它的檔案不在 changes 目錄裡（spectra 3.0.0 實測；`spectra show` 只印 proposal 與 tasks，spec delta 只印路徑），必須先 unpark 才讀得到原文。
+只在 code issue 有 change 時做；沒有 change（宣告豁免、third-party clone、meeting）跳過。plan mode 裡不能跑會改狀態的指令，所以在進 plan mode 之前跑這一段：`spectra-propose` 會把 change park 起來，park 之後它的檔案不在 changes 目錄裡（spectra 3.0.0 實測；`spectra show` 只印 proposal 和 tasks 的內容，spec delta 只印路徑），必須先 unpark 才讀得到原文。
 
 ```bash
 CHANGE="<change 名稱>"
@@ -256,6 +257,8 @@ fi
 # Implementation Plan: Issue #NNN
 
 (貼上 Step 2 起草的完整 Implementation Plan markdown)
+
+(有 change 時：Step 3.5 列出的每個檔案，各以路徑為小標題、原文附上，不摘要)
 
 ---
 

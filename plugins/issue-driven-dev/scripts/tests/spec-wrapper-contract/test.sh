@@ -423,4 +423,14 @@ assert_grep "Aborted parks the change again" "spectra park" "$(grep -F '| Aborte
 refute_grep "idd-implement's note no longer asks the Plan question as before" "照舊先問要不要改走" "$(read_file "$IMPL")"
 v=$(exist_run x "$(pl 'proposed (change idd-7-y)')"); assert_grep "step 3: a proposed plan naming another change → the stop names it" "idd-7-y" "$v"; assert_grep "… and the open change" "idd-7-x" "$v"
 
+echo "spec-wrapper-contract: spectra-verify warnings on idd-480-fix6"
+TPL="$(sed -n '/^`ExitPlanMode` 的 plan 內容：/,/^### Step 5: /p' "$PLAN")"
+assert_grep "the ExitPlanMode template has a place for the change files" "Step 3.5 列出的每個檔案" "$TPL"
+assert_grep "Step 0 lists a task for Step 3.5" 'TaskCreate(name="read_change_files"' "$(read_file "$PLAN")"
+HPR="$(grep -F 'TaskCreate(name="handle_plan_response"' "$PLAN")"
+assert_grep "… and handle_plan_response says a revision edits the change files" "spectra validate" "$HPR"
+assert_grep "… and an abort parks the change" "spectra park" "$HPR"
+refute_grep "idd-plan no longer says it presents only the proposal and the tasks" "proposal 與 tasks" "$(read_file "$PLAN")"
+refute_grep "nor does idd-diagnose's route table" "審查 proposal 與 tasks" "$(read_file "$PLUGIN/skills/idd-diagnose/SKILL.md")"
+
 print_summary spec-wrapper-contract
