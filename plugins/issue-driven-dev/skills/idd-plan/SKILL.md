@@ -136,7 +136,7 @@ printf 'raw<<<\n'; printf '%s\n%s\n' "${COMPLEXITY_ERR:-}" "${BLOCK_LINE:-}" | s
 
 依 Strategy 起草詳細的 Implementation Plan。**比 idd-implement Step 2 的 plan 更詳盡**，因為這份 plan 是要過 user 在 plan mode UI 審查的，是 deliberation tier 的核心 artifact。
 
-> **code issue 先寫規格（#480，非 meeting）**：照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 1 到 3 步。先跑 preflight（停下的情況照契約），再決定這張 issue 留下什麼；要寫規格時呼叫 `Skill(skill="spectra-propose", args="idd-<N>-<slug>：<需求>。不做 discuss；design 視需要寫。…")`，args 的其餘寫法照契約第 3 步。下面的 Implementation Plan 加一行 `**Spec plan**: change <名稱>`，`### Files & Changes` 對照這個 change 的 tasks。核准的對象是這個 change 的 proposal 與 tasks；之後由 `idd-implement` 做 apply 與收尾。宣告 `no behaviour change` 或 `third-party clone` 時，照下面原本的寫法，並加一行 `**Spec plan**: no behaviour change (<a|b|c|d>)` 或 `**Spec plan**: third-party clone`。這張 issue 已經有一個 park 著、被拒絕過的 change（`spec-change.py plan` 回 `rejected`）時，不再 propose：把那個 change 的 proposal 與 tasks 再呈現一次給人核准；核准後貼新的 Implementation Plan，寫 `**Spec plan**: change <名稱>`。
+> **code issue 先寫規格（#480，非 meeting）**：照 [`references/spec-wrapper.md`](../../references/spec-wrapper.md) 第 1 到 3 步。先跑 preflight（停下的情況照契約），再決定這張 issue 留下什麼；要寫規格時呼叫 `Skill(skill="spectra-propose", args="idd-<N>-<slug>：<需求>。不做 discuss；design 視需要寫。…")`，args 的其餘寫法照契約第 3 步。下面的 Implementation Plan 加一行 `**Spec plan**: proposed (change <名稱>)`（進 plan mode 之前貼；核准後改成 `change <名稱>`，見 Step 5），`### Files & Changes` 對照這個 change 的 tasks。核准的對象是這個 change 的 proposal 與 tasks；之後由 `idd-implement` 做 apply 與收尾。宣告 `no behaviour change` 或 `third-party clone` 時，照下面原本的寫法，並加一行 `**Spec plan**: no behaviour change (<a|b|c|d>)` 或 `**Spec plan**: third-party clone`。這張 issue 已經有一個 park 著、被拒絕過的 change（`spec-change.py plan` 回 `rejected`）時，不再 propose：把那個 change 的 proposal 與 tasks 再呈現一次給人核准；照常先貼 `**Spec plan**: proposed (change <名稱>)` 的 Implementation Plan 再進 plan mode，核准後改成 `change <名稱>`。
 
 格式：
 
@@ -244,9 +244,9 @@ gh issue comment $NUMBER --repo $GITHUB_REPO --body "$IMPLEMENTATION_PLAN"
 
 | User response | 行為 |
 |---------------|------|
-| Approved | 進 Step 6 — chain to `/idd-implement` |
+| Approved | code issue 有 change 時，先把這則 Implementation Plan 留言的 `**Spec plan**: proposed (change <名稱>)` 改成 `**Spec plan**: change <名稱>`（改自己的留言；這一行才是核准的紀錄），再進 Step 6 — chain to `/idd-implement` |
 | Revised (with feedback) | 修改 Implementation Plan comment（用 `gh api PATCH` 更新原 comment 而非新 comment 避免散亂），再次 `EnterPlanMode` 呈現新版 |
-| Aborted | code issue 已 propose 了 change 時，先把這則 Implementation Plan 留言的 `**Spec plan**:` 行改成 `**Spec plan**: rejected (change <名稱> left parked)`（改自己的留言；change 留在 parked，不 apply，見 `references/spec-wrapper.md` 第 3 步）。接著跑 `/idd-update #NNN` 改 phase 為 `needs-fix`，並 post 一個 comment 說明「Plan tier deliberation 中止：{reason}；建議重新 `/idd-diagnose #NNN` 或調整 Complexity」。**type=meeting 改說**「Meeting Plan 中止：{reason}；調整議程後重跑 `/idd-plan #NNN`，或直接 `/idd-close #NNN`（close gate 退回 Diagnosis 的 Phase C）」——meeting 沒有 Complexity 可調（#383 verify r2） |
+| Aborted | code issue 已 propose 了 change 時，先把這則 Implementation Plan 留言的 `**Spec plan**:` 行改成 `**Spec plan**: rejected (change <名稱> left parked)`（改自己的留言；change 留在 parked，不 apply，見 `references/spec-wrapper.md` 第 3 步）。接著跑 `/idd-update #NNN` 改 phase 為 `needs-fix`，並 post 一個 comment 說明「Plan tier deliberation 中止：{reason}；要繼續就重跑 `/idd-plan #NNN`（parked 的 change 會再呈現一次給人核准）；要換做法就先討論，再重跑 `/idd-diagnose #NNN`」。**type=meeting 改說**「Meeting Plan 中止：{reason}；調整議程後重跑 `/idd-plan #NNN`，或直接 `/idd-close #NNN`（close gate 退回 Diagnosis 的 Phase C）」——meeting 沒有 Complexity 可調（#383 verify r2） |
 
 ### Step 6: Chain to /idd-implement
 

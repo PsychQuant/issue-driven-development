@@ -49,9 +49,15 @@ printf '%s\n' "$PF" | jq -r '"→ spec preflight: \(.status) \(.message)"'
 change 名稱是 `idd-<N>-<slug>`（slug 取 issue 標題，小寫英數與連字號）。在 propose 或貼任何留言之前，先看這張 issue 有沒有開著的 change（`idd-plan` 會先建好），有的話讀最新的 Implementation Plan 怎麼說：
 
 ```bash
-EXISTING=$( { spectra list --json | jq -r '.changes[]?.name'; spectra list --parked --json | jq -r '.parked[]?.name'; } 2>/dev/null | grep -E "^idd-${NUMBER}-" | head -1)
-PLAN='{"form": "none", "change": ""}'
-if [ -n "$EXISTING" ]; then
+SPEC_STEP3=""; EXISTING=""
+if A=$(spectra list --json 2>/dev/null) && B=$(spectra list --parked --json 2>/dev/null); then
+  EXISTING=$( { printf '%s' "$A" | jq -r '.changes[]?.name'; printf '%s' "$B" | jq -r '.parked[]?.name'; } | grep -E "^idd-${NUMBER}-" | head -1)
+else
+  SPEC_STEP3="stop: the change list could not be read (spectra list failed); fix that and run again"
+fi
+if [ -z "$SPEC_STEP3" ] && [ -z "$EXISTING" ]; then
+  SPEC_STEP3="propose"
+elif [ -z "$SPEC_STEP3" ]; then
   C_JSON=$(mktemp)
   if gh api "repos/$GITHUB_REPO/issues/$NUMBER/comments" --paginate > "$C_JSON" 2>/dev/null; then
     PLAN=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" plan --comments "$C_JSON")
@@ -59,18 +65,24 @@ if [ -n "$EXISTING" ]; then
     PLAN='{"form": "unreadable", "change": ""}'
   fi
   rm -f "$C_JSON"
+  FORM=$(printf '%s' "$PLAN" | jq -r '.form // "unreadable"' 2>/dev/null); NAMED=$(printf '%s' "$PLAN" | jq -r '.change // ""' 2>/dev/null)
+  case "$FORM" in
+    change) [ "$NAMED" = "$EXISTING" ] && SPEC_STEP3="go on with $EXISTING" \
+              || SPEC_STEP3="stop: the newest plan names $NAMED, not the open change $EXISTING" ;;
+    proposed|rejected) SPEC_STEP3="stop: $EXISTING is $FORM in plan mode; run /idd-plan, which presents it for approval" ;;
+    *) SPEC_STEP3="stop: no approved plan names the open change $EXISTING (plan: ${FORM:-unreadable}); run /idd-plan to present it for approval" ;;
+  esac
 fi
-printf '→ existing change: %s; plan: %s\n' "${EXISTING:-none}" "$PLAN"
+printf '→ spec step 3: %s\n' "$SPEC_STEP3"
 ```
 
-Implementation Plan 留言（Plan tier 由 `idd-plan` 貼，Simple 由 `idd-implement` Step 2 貼）有剛好一行 `**Spec plan**:`，四種寫法：`**Spec plan**: change <名稱>`、`**Spec plan**: no behaviour change (<a|b|c|d>)`、`**Spec plan**: third-party clone`、`**Spec plan**: rejected (change <名稱> left parked)`（維護者在 plan mode 拒絕時，`idd-plan` 改成這一行）。`spec-change.py plan` 讀的是最新一則由有寫入權的帳號貼、以 `## Implementation Plan` 開頭的留言。
+Implementation Plan 留言（Plan tier 由 `idd-plan` 貼，Simple 由 `idd-implement` Step 2 貼）有剛好一行 `**Spec plan**:`，五種寫法：`**Spec plan**: proposed (change <名稱>)`（`idd-plan` 進 plan mode 前寫，核准後改成 `change <名稱>`）、`**Spec plan**: change <名稱>`、`**Spec plan**: no behaviour change (<a|b|c|d>)`、`**Spec plan**: third-party clone`、`**Spec plan**: rejected (change <名稱> left parked)`（維護者在 plan mode 拒絕時，`idd-plan` 改成這一行）。plan 行一律在 propose 之前貼出，所以中途斷掉的 run 重跑時，找得到點名它那個 change 的 plan。`spec-change.py plan` 讀的是最新一則由有寫入權的帳號貼、以 `## Implementation Plan` 開頭的留言。
 
-| 印出的結果 | 做什麼 |
+| `→ spec step 3:` 印出的 | 做什麼 |
 |---|---|
-| `existing change: none` | 往下 propose（下一段） |
-| plan 的 `form` 是 `change`、`change` 與開著的 change 同名 | 不再 propose，直接第 4 步 |
-| `form` 是 `rejected` | 停下：這個 change 在 plan mode 被拒絕了。要繼續就重跑 `/idd-plan`，它會把這個 change 再呈現一次給人核准 |
-| 其他（`none`、`invalid`、`unreadable`、名稱不同） | 停下：開著的 change 沒有任何核准過的 plan 點名它，不 apply |
+| `propose` | 往下 propose（下一段） |
+| `go on with <名稱>` | 不再 propose，直接第 4 步 |
+| `stop: …` | 停下，把那一行轉給人：`proposed` 或 `rejected` 的 change 要重跑 `/idd-plan` 核准；清單讀不到時先修好再跑。不 apply |
 
 沒有 → 呼叫 `Skill(skill="spectra-propose", args="<change 名稱>：<需求，取自 Diagnosis 的 Strategy>。輕量形式：不做 discuss、不寫 design。")`，並在 args 寫明：
 
@@ -147,4 +159,4 @@ fi
 
 宣告 `no behaviour change` 被 verify 否決（豁免不成立的 HIGH）→ 修正就是補上規格：照第 3 到 5 步建這張 issue 的第一個 change `idd-<N>-<slug>`，封存後新的 Implementation Complete 改宣告 `change <名稱>`。
 
-修正新增或修改了 requirement → 再建一個 change，名稱就是 `idd-<N>-fix<k>`（k 是 verify 的輪數，不加 slug），走第 3 步的輕量形式，在下一輪 verify 之前照第 5 步封存，新的 Implementation Complete 列出這張 issue 的所有 change。requirement 與 Example 已經有、只是測試沒寫對 → 只補測試。Blocking 的修正要留下一條寫出該性質的 requirement、Example，以及一個在修正前的 commit 上會失敗的測試。
+修正新增或修改了 requirement → 再建一個 change，名稱就是 `idd-<N>-fix<k>`（k 是 verify 的輪數，不加 slug）。propose 之前先貼一則 `## Implementation Plan (fix round <k>)`，寫 `**Spec plan**: change idd-<N>-fix<k>`，讓中途斷掉的修正輪重跑時接得上；走第 3 步的輕量形式，在下一輪 verify 之前照第 5 步封存，新的 Implementation Complete 列出這張 issue 的所有 change。requirement 與 Example 已經有、只是測試沒寫對 → 只補測試。Blocking 的修正要留下一條寫出該性質的 requirement、Example，以及一個在修正前的 commit 上會失敗的測試。

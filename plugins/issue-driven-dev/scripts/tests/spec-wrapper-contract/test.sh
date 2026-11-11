@@ -217,6 +217,8 @@ for row in "WRITE yes present ready" "ADMIN no present install-spectra" "READ no
   assert_true "… the block sets PF_RC" "[ '$rc' != unset ]"
   [ "$rc" != 0 ] && [ -n "$rc" ] && rc=nonzero
   assert_eq "… the run $( [ "$want" = 0 ] && echo proceeds || echo stops ) (PF_RC)" "$want" "$rc"
+  rc2=$(pf_rc all.sh "$perm" "$2" "$3"); [ "$rc2" != 0 ] && [ -n "$rc2" ] && [ "$rc2" != unset ] && rc2=nonzero
+  assert_eq "… and the same in idd-all Step 3b.0 (PF_RC)" "$want" "$rc2"
 done
 assert_grep "the contract stops when preflight prints nothing or not JSON" "沒有輸出" "$REF_TXT"
 assert_grep "idd-all Step 3b.0 stops when preflight prints nothing or not JSON" "沒有輸出" "$(sed -n '/^#### Step 3b.0: Spec preflight/,/^#### Step 3b.0.5: /p' "$ALL")"
@@ -325,17 +327,24 @@ assert_grep "verify reads changed spec paths unquoted" 'core.quotePath=false' "$
 echo "spec-wrapper-contract: an existing change is checked against the Spec plan line, run (idd-480-fix4)"
 awk '/^## 3\. /{f=1} /^## 4\. /{f=0} f && /^```bash$/{b=1; buf=""; next} b && /^```$/{b=0; if (buf ~ /spec-change.py" plan/) {printf "%s", buf; exit} next} b {buf = buf $0 "\n"}' "$REF" > "$W2/exist.sh"
 assert_true "contract step 3 has a bash block that runs spec-change.py plan" "[ -s '$W2/exist.sh' ]"
+# spec-example: spec-on-every-issue / an open change is checked against the newest plan
 mkdir -p "$W2/ebin"
-printf '#!/bin/sh\ncase "$1 $2" in\n  "list --json") printf "{\\"changes\\": [{\\"name\\": \\"idd-7-x\\"}]}" ;;\n  "list --parked") printf "{\\"parked\\": []}" ;;\n  *) exit 1 ;;\nesac\n' > "$W2/ebin/spectra"
+printf '#!/bin/sh\n[ "${FAKE_LIST:-x}" = fail ] && { echo "Not initialized" >&2; exit 1; }\ncase "$1 $2" in\n  "list --json") if [ "${FAKE_LIST:-x}" = none ]; then printf "{\\"changes\\": []}"; else printf "{\\"changes\\": [{\\"name\\": \\"idd-7-x\\"}]}"; fi ;;\n  "list --parked") printf "{\\"parked\\": []}" ;;\n  *) exit 1 ;;\nesac\n' > "$W2/ebin/spectra"
 printf '#!/bin/sh\ncase "$1" in api) cat "$FAKE_COMMENTS" ;; *) exit 1 ;; esac\n' > "$W2/ebin/gh"
 chmod +x "$W2/ebin/spectra" "$W2/ebin/gh"
-exist_run() { # comments-json → printed lines
-  printf '%s' "$1" > "$W2/ec.json"
-  env -i HOME="$HOME" PATH="$W2/ebin:$W2/base:/usr/bin:/bin" FAKE_COMMENTS="$W2/ec.json" GITHUB_REPO=o/r NUMBER=7 CLAUDE_PLUGIN_ROOT="$PLUGIN" \
-    bash --norc --noprofile -c '. "$1" 2>/dev/null' _ "$W2/exist.sh" </dev/null
+exist_run() { # list-mode(x|none|fail) comments-json → the "→ spec step 3:" verdict
+  printf '%s' "$2" > "$W2/ec.json"
+  env -i HOME="$HOME" PATH="$W2/ebin:$W2/base:/usr/bin:/bin" FAKE_LIST="$1" FAKE_COMMENTS="$W2/ec.json" GITHUB_REPO=o/r NUMBER=7 CLAUDE_PLUGIN_ROOT="$PLUGIN" \
+    bash --norc --noprofile -c '. "$1" 2>/dev/null' _ "$W2/exist.sh" </dev/null | sed -n 's/^→ spec step 3: //p'
 }
-assert_grep "an open idd-7-x whose newest plan rejects it → reported as rejected" '"form": "rejected"' "$(exist_run '[{"author_association":"OWNER","body":"## Implementation Plan\n\n**Spec plan**: rejected (change idd-7-x left parked)"}]')"
-assert_grep "an open idd-7-x that the newest plan names → reported as change idd-7-x" '"change": "idd-7-x"' "$(exist_run '[{"author_association":"OWNER","body":"## Implementation Plan (Plan tier)\n\n**Spec plan**: change idd-7-x"}]')"
+pl() { printf '[{"author_association":"OWNER","body":"## Implementation Plan (Plan tier)\\n\\n**Spec plan**: %s"}]' "$1"; }
+assert_eq "step 3: no open change → propose" propose "$(exist_run none "$(pl 'change idd-7-x')")"
+assert_eq "step 3: idd-7-x and a plan naming it → go on" "go on with idd-7-x" "$(exist_run x "$(pl 'change idd-7-x')")"
+v=$(exist_run x "$(pl 'proposed (change idd-7-x)')"); assert_grep "step 3: proposed → a stop" "stop:" "$v"; assert_grep "… that names /idd-plan" "/idd-plan" "$v"
+v=$(exist_run x "$(pl 'rejected (change idd-7-x left parked)')"); assert_grep "step 3: rejected → a stop" "stop:" "$v"; assert_grep "… that names /idd-plan" "/idd-plan" "$v"
+assert_grep "step 3: a plan naming another change → a stop" "stop:" "$(exist_run x "$(pl 'change idd-7-y')")"
+assert_grep "step 3: no plan comment → a stop" "stop:" "$(exist_run x '[]')"
+assert_grep "step 3: the change list cannot be read → a stop, not propose" "stop:" "$(exist_run fail "$(pl 'change idd-7-x')")"
 S06="$(sed -n '/^### Step 0.6: /,/^### Step 1: /p' "$IMPL")"
 assert_grep "idd-implement checks an existing change with spec-change.py plan" 'spec-change.py" plan' "$S06"
 assert_grep "… before Step 2 posts anything" "Step 2 貼" "$S06"
@@ -344,5 +353,14 @@ assert_grep "idd-implement offers /idd-plan for a Plan-tier issue before it prop
 assert_grep "idd-plan writes the Spec plan line for an exemption too" '**Spec plan**: no behaviour change' "$(read_file "$PLAN")"
 assert_grep "idd-plan writes the third-party form" '**Spec plan**: third-party clone' "$(read_file "$PLAN")"
 assert_grep "idd-plan re-presents a rejected change for approval" "再呈現" "$(read_file "$PLAN")"
+
+echo "spec-wrapper-contract: verify round 5 fixes in the text (idd-480-fix5)"
+assert_grep "idd-plan writes proposed before plan mode" '**Spec plan**: proposed (change' "$(read_file "$PLAN")"
+assert_grep "… and changes it to change once approved" "核准後" "$(grep -F '**Spec plan**: proposed' "$PLAN" | head -1)"
+assert_grep "idd-implement posts its plan line before it proposes" "propose 之前" "$(sed -n '/^### Step 0.6: /,/^### Step 1: /p' "$IMPL")"
+assert_grep "a fix round posts its plan line before it proposes the fix change" '**Spec plan**: change idd-<N>-fix<k>' "$(sed -n '/^## 7\. /,$p' "$REF")"
+assert_grep "Step 2.5 no longer asks the Plan question a second time" "Step 0.6" "$(grep -F '若使用者直接呼叫 `/idd-implement` 而 Complexi' "$IMPL")"
+refute_grep "the Abort comment no longer suggests re-diagnosing" "建議重新 \`/idd-diagnose" "$(grep -F '| Aborted |' "$PLAN")"
+assert_grep "verify lists changed spec paths NUL-separated" 'diff -z' "$SB"
 
 print_summary spec-wrapper-contract

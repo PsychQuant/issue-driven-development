@@ -32,7 +32,7 @@ file) and exits with a fixed code. A usage error prints to stderr and exits 64.
 
   plan      --comments <file>
       What does the newest Implementation Plan by a writer say on its **Spec plan**: line?
-      {"form": change|no-behaviour-change|third-party-clone|rejected|none|invalid, "change": "...",
+      {"form": proposed|change|no-behaviour-change|third-party-clone|rejected|none|invalid, "change": "...",
        "reason": "..."}   exit 0, 1 (invalid), 2 (unreadable; no JSON)
 
 Paths named openspec/ above are relative to the spec directory Spectra uses: the `spec_dir:` line of
@@ -60,10 +60,12 @@ IC_RE = re.compile(r"\s*(?:<!-- idd:comment type=implementation-complete -->|## 
 FENCE_OPEN_RE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")   # any indentation: a fence inside a list item is a fence
 LINE_SPLIT_RE = re.compile(r"\r\n|\r|\n")   # CommonMark line endings only (str.splitlines also breaks at U+2028 and others)
 TRUSTED = ("OWNER", "MEMBER", "COLLABORATOR")
-PLAN_RE = re.compile(r"\s*## Implementation Plan")
+PLAN_RE = re.compile(r"\s*## Implementation Plan(?=[ \t(\r\n]|$)")   # not "## Implementation Planning notes"
 SPEC_PLAN_RE = re.compile(r"^ {0,3}\*\*Spec plan\*\*:(.*)$")
 REJECTED_RE = re.compile(r"^rejected \(change ([a-z0-9]+(?:-[a-z0-9]+)*) left parked\)$")
-INSTALL_HINT = ("install the Spectra CLI (see https://github.com/spectra-app/spectra) and run the wrapper again; "
+PROPOSED_RE = re.compile(r"^proposed \(change ([a-z0-9]+(?:-[a-z0-9]+)*)\)$")
+INSTALL_HINT = ("install Spectra with `brew install --cask spectra-app` (https://github.com/kaochenlong/spectra-app; "
+                "the npm package installs its command as `spxa`, which this wrapper does not call) and run the wrapper again; "
                 "the spec change is not optional in a repository you can write to")
 
 
@@ -256,8 +258,8 @@ def cmd_archived(argv):
         top = repo_top(a["--cwd"])
         rev = resolve(top, a["--ref"])
         sd = spec_dir_at(top, rev)
-        listing = git_text(top, "ls-tree", "-d", "--name-only", rev, "--", f"{sd}/changes/", f"{sd}/changes/archive/")
-        dirs = set(listing.splitlines())
+        listing = git_text(top, "ls-tree", "-d", "-z", "--name-only", rev, "--", f"{sd}/changes/", f"{sd}/changes/archive/")
+        dirs = set(p for p in listing.split("\0") if p)
         archived = [d.rsplit("/", 1)[1] for d in dirs if d.startswith(f"{sd}/changes/archive/")]
         not_archived, why = [], []
         for name in changes:
@@ -278,8 +280,8 @@ def cmd_archived(argv):
 # ── links ───────────────────────────────────────────────────────────────────
 
 def spec_files(top, rev, sd):
-    out = git_text(top, "ls-tree", "-r", "--name-only", rev, "--", f"{sd}/specs/")
-    return [p for p in out.splitlines() if re.match(r"^%s/specs/[^/]+/spec\.md$" % re.escape(sd), p)]
+    out = git_text(top, "ls-tree", "-r", "-z", "--name-only", rev, "--", f"{sd}/specs/")
+    return [p for p in out.split("\0") if re.match(r"^%s/specs/[^/]+/spec\.md$" % re.escape(sd), p)]
 
 
 def read_at(top, rev, path):
@@ -401,7 +403,7 @@ def cmd_links(argv):
         head = resolve(top, a.get("--head", "HEAD"))
         sd, sd_base = spec_dir_at(top, head), spec_dir_at(top, base)
         base_files = {p[len(sd_base):]: p for p in spec_files(top, base, sd_base)}
-        if not git_text(top, "ls-tree", "-r", "--name-only", head, "--", f"{sd}/specs/").strip():
+        if not git_text(top, "ls-tree", "-r", "-z", "--name-only", head, "--", f"{sd}/specs/").strip("\0"):
             raise Fail(f"{sd}/specs/ holds no tracked file at {head[:12]}: check `spec_dir` in .spectra.yaml")
         head_files = spec_files(top, head, sd)
         missing = []
@@ -532,6 +534,9 @@ def plan_of(body):
     r = REJECTED_RE.match(value)
     if r:
         return "rejected", r.group(1), ""
+    p = PROPOSED_RE.match(value)
+    if p:
+        return "proposed", p.group(1), ""
     return "invalid", "", f"unknown form {value[:60]!r}"
 
 

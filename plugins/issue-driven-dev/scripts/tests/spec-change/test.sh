@@ -285,6 +285,8 @@ linked_repo l-u2028; put openspec/specs/cap/spec.md "$(spec "$(req Base)" "$(req
 links_case "a marker followed by U+2028 and more text on the same line does not count" missing 1 1
 linked_repo l-nonascii; put "openspec/specs/中文能力/spec.md" "$(spec "$(req Alpha)")"; commit >/dev/null
 links_case "added, in a capability whose directory name is not ASCII (idd-480-fix4)" missing 1 1
+linked_repo l-quote; put 'openspec/specs/quo"te/spec.md' "$(spec "$(req Alpha)")"; commit >/dev/null
+links_case "added, in a capability whose directory name holds a double quote (idd-480-fix5)" missing 1 1
 linked_repo l-nospecs; git -C "$REPO" rm -q -r openspec/specs; commit >/dev/null
 links_case "openspec/specs/ holds no tracked file at the head revision" error "" 2
 newrepo l-gitkeep; put openspec/specs/.gitkeep ''; BASE=$(commit base); put README.txt x; commit >/dev/null
@@ -477,11 +479,20 @@ plan_case "the owner's plan naming idd-7-x" "[$PL_O]" change idd-7-x 0
 plan_case "then a newer plan that rejects it" "[$PL_O,$PL_R]" rejected idd-7-x 0
 plan_case "no behaviour change (a)" "[$PL_N]" no-behaviour-change "" 0
 plan_case "third-party clone" "[$PL_T]" third-party-clone "" 0
+PL_P='{"author_association":"OWNER","body":"## Implementation Plan (Plan tier)\n\n**Spec plan**: proposed (change idd-7-x)"}'
+PL_NOTES='{"author_association":"OWNER","body":"## Implementation Planning notes\n\n**Spec plan**: change idd-7-x"}'
+plan_case "proposed, before plan mode (idd-480-fix5)" "[$PL_P]" proposed idd-7-x 0
+plan_case "a newer Implementation Planning notes comment is not a plan" "[$PL_R,$PL_NOTES]" rejected idd-7-x 0
 plan_case "a newer plan by a contributor is not the one read" "[$PL_O,$PL_X]" change idd-7-x 0
 plan_case "no Implementation Plan comment" "[$DG]" none "" 0
 plan_case "the only Spec plan line inside a code fence" "[$PL_F]" none "" 0
 plan_case "two Spec plan lines" "[$PL_2]" invalid "" 1
 plan_case "the file is not JSON" "$(icj pl-notjson 'not json')" NOJSON "" 2
+
+pf_repo pf-hint no yes
+OUT=$(PATH="$BIN_WITHOUT" "$PY" "$SC" preflight --cwd "$TREE" --can-write yes 2>"$WORK/err")
+assert_grep "preflight: install-spectra names the command that installs Spectra (idd-480-fix5)" "brew install --cask spectra-app" "$(printf '%s' "$OUT" | field message)"
+assert_grep "… and the project's address" "github.com/kaochenlong/spectra-app" "$(printf '%s' "$OUT" | field message)"
 
 echo "spec-change: common behaviour"
 mkdir -p "$WORK/not-git"
