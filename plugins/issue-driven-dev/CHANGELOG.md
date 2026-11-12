@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Version number left to the release.
+
+### Fixed
+
+- **The edit-run suite has a time limit of its own (#508).** Its run time is almost all CPU time (about 65 s on
+  an 18-core Mac), so its wall time grows with the load of the machine. At a load of 50 it reached the 180 s
+  default of `scripts/run-all-tests.sh`, and the full run reported one failed suite although no check had failed.
+  The suite now has a `timeout` file of 1800 s, which the runner already reads. `run-all-tests-self` checks that
+  the file is there, holds one number of at least 900, and is applied by the runner. No other suite got one:
+  apart from merge-completeness, none took more than 60 s in three full runs.
+
 ## [4.0.1] - 2026-11-11
 
 Ships #499.
