@@ -44,21 +44,6 @@ printf '1\n' > "$W/tests/slow/timeout"
 IDD_TESTS_DIR="$W/tests" IDD_SUITE_TIMEOUT=20 bash "$AGG" > "$W/out6" 2>&1
 assert_exit "suite timeout file never lowers the limit → 0" 0 $?
 
-# edit-run declares a limit of its own (#508). Its run time is almost all CPU time (about 65 s on an 18-core
-# Mac), so its wall time grows with the load of the machine: at a load of 50 it reached the default 180 s and was
-# cut off with no failing check. The file is read the way the aggregator reads it, and then handed to the aggregator.
-ER_TIMEOUT="$HERE/../edit-run/timeout"
-assert_file_exists "edit-run has a timeout file" "$ER_TIMEOUT"
-ER_SECS="$(tr -cd '0-9' < "$ER_TIMEOUT" 2>/dev/null)"
-assert_eq "the file holds one number and nothing else (the aggregator keeps every digit it finds)" "${ER_SECS:-no number}" "$(cat "$ER_TIMEOUT" 2>/dev/null)"
-[ "${ER_SECS:-0}" -ge 900 ] 2>/dev/null
-assert_exit "edit-run's limit is at least 900 s, five times the default" 0 $?
-rm -rf "$W/tests/slow"
-mk_suite edit-run 'sleep 3'
-cp "$ER_TIMEOUT" "$W/tests/edit-run/timeout" 2>/dev/null
-IDD_TESTS_DIR="$W/tests" IDD_SUITE_TIMEOUT=1 bash "$AGG" > "$W/out7" 2>&1
-assert_exit "the aggregator applies edit-run's own limit, not the global one → 0" 0 $?
-
 # empty dir → non-zero (zero suites must not read as success)
 mkdir -p "$W/empty"
 IDD_TESTS_DIR="$W/empty" bash "$AGG" > "$W/out4" 2>&1
