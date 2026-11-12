@@ -130,7 +130,7 @@ flag 支援：`idd-issue`、`idd-comment`（其他 skill 走 prose detection）�
 
 當 IDD skill 在 `spectra-discuss` session 中被叫起來（例如討論到一半要把結論 comment 到 issue），依 [`rules/spectra-bridge.md`](rules/spectra-bridge.md) 提供 round-trip context：
 
-1. **Step 0.7 Detect** — `--resume-spectra="<topic>"` flag、`--source` 含 `spectra-discuss`、`spectra list` 有 in-flight、`.claude/.idd/state/bridge.json` 存在 — 任一觸發 `SPECTRA_BRIDGE_ACTIVE=1`
+1. **Step 0.7 Detect** — `--resume-spectra="<topic>"` flag、`--source` 含 `spectra-discuss`、`.claude/.idd/state/bridge.json` 存在且 `active_spectra_session` 為 true — 任一觸發 `SPECTRA_BRIDGE_ACTIVE=1`（repo 裡有開著的 Spectra change 不算，#502）
 2. **Step N-1 寫 bookmark** — `.claude/.idd/state/bridge.json` 含 topic / issue / open_questions / next_step_hint
 3. **Step N 印 Resume Prompt** — 可貼回 spectra-discuss 的 prompt block，使用者控 pacing
 

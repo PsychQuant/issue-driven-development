@@ -76,7 +76,7 @@ idd-issue source.docx       # auto-trigger when source contains ≥2 findings
 
 ```
 TaskCreate(name="parse_args", description="Parse #NNN + --type + --body / --quote / --source / --target / --target-comment / --correction-file / --deadline / --mention / --resume-spectra 等 options")
-TaskCreate(name="detect_spectra_context", description="Step 0.7: 偵測是否從 spectra-discuss 中斷進來（--resume-spectra flag / --source 含 spectra / spectra list 有 in-flight / .claude/.idd/state/bridge.json（legacy fallback: .claude/state/idd-bridge.json）— 詳見 rules/spectra-bridge.md")
+TaskCreate(name="detect_spectra_context", description="Step 0.7: 偵測是否從 spectra-discuss 中斷進來（--resume-spectra flag / --source 含 spectra / .claude/.idd/state/bridge.json 的 active_spectra_session（legacy fallback: .claude/state/idd-bridge.json）；repo 裡有開著的 change 不算 — 詳見 rules/spectra-bridge.md")
 TaskCreate(name="validate_type_requirements", description="依 type 檢查必填欄位（decision 要 quote、note 要 source、link 要 target、errata 要 target-comment）")
 TaskCreate(name="route_errata", description="（errata 專屬）validate-target --correct 解析 target comment 作者：你自己 → 委派 /idd-edit --correct（更正內容取自 --correction-file）、不 post；其他作者（含 OWNER 與 bot）→ 只 post errata comment（Template: errata）")
 TaskCreate(name="errata_pointer", description="（errata 專屬）就地更正被拒或寫入失敗（idd-edit exit 4）、改貼 errata 之後：原 comment 的第一個非空行不是 ATX 標題或 IDD 標記時，提議 /idd-edit --prepend-note 指向 errata（走 idd-edit 的預覽與確認）；其他作者的 comment 不加")
@@ -119,15 +119,7 @@ if echo "$SOURCE" | grep -qi "spectra-discuss"; then
   SPECTRA_BRIDGE_ACTIVE=1
 fi
 
-# Signal 3: spectra list 有 in-flight
-if command -v spectra >/dev/null 2>&1; then
-  IN_FLIGHT=$(spectra list --json 2>/dev/null | jq '.changes | length')
-  if [ "${IN_FLIGHT:-0}" -gt 0 ]; then
-    SPECTRA_BRIDGE_ACTIVE=1
-  fi
-fi
-
-# Signal 4: bookmark 已存在 — new path first, legacy fallback（#199; rule L116 契約）
+# Signal 3: bookmark 已存在 — new path first, legacy fallback（#199; rule L116 契約）
 BRIDGE_FILE=""
 if [ -f ".claude/.idd/state/bridge.json" ]; then
   BRIDGE_FILE=".claude/.idd/state/bridge.json"
@@ -142,6 +134,8 @@ fi
 ```
 
 若 `SPECTRA_BRIDGE_ACTIVE=1`，告訴使用者：「Detected spectra context. Will emit resume prompt at the end.」這樣使用者知道末尾要找 resume block。
+
+repo 裡有開著的 Spectra change **不是**訊號（#502）：它說的是 repo 的狀態，不是這次呼叫從哪裡來。這一步不執行 `spectra`。
 
 ### Step 1: Parse arguments
 
