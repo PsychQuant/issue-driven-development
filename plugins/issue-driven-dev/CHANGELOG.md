@@ -20,6 +20,13 @@ Version number left to the release.
   the job is cancelled. A longer limit buys little: at a load near 150 on the same machine, actionability-gate
   alone took 193 s, so at that load the full run already fails on another suite. No other suite got a file:
   apart from merge-completeness, none took more than 60 s in three full runs at ordinary load.
+- **`idd-close` says in one way where its doc-sync sweep sits (#512).** The 「位置」 sentence of Step 6.3 said the
+  sweep runs before `gh issue close`, while the step order, the Step 0.5 task list and Step 4 (which posts the
+  summary and closes the issue in one block) all run it after the close. The sentence now says what the rest of
+  the skill does: the issue is closed and the closing summary is posted, then the body sync, then the sweep, then
+  the distribution sync. The order of the steps is unchanged. A new capability, `idd-close-doc-sync`, states the
+  position, and the doc-sync-sweep suite reads SKILL.md and compares the three places; it also runs the comparison
+  on copies broken on purpose, one for each thing it compares, so each part of the check is seen to fail.
 
 ## [4.0.1] - 2026-11-11
 

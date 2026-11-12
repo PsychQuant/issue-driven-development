@@ -952,7 +952,7 @@ Skill(skill="issue-driven-dev:idd-update", args="#NNN")
 
 > 使用者原話（#220）：「idd-close 的時候更新所有 README 跟 CLAUDE.md 這可能是最後一步吧」— close 是「改動最終狀態確定」的唯一時點，本步把文件 drift 的攔截制度化（motivating incident：che-ical v1.14.0 三處 stale docs 全靠人工 review 才抓到，其中 `README_zh-TW.md` 整份被字面 glob 漏掉）。
 
-**位置**：closing summary 已 publish、`gh issue close` 之前（與 Step 6 body sync 同區、序在 6.5 distribution sync 前）。
+**位置**：issue 已關閉、closing summary 已貼出之後（Step 4 與 Step 6 body sync 之後），Step 6.5 distribution sync 之前。到這一步時 issue 已經關了，所以它不擋結案；發現過時的文件照 6.3.3 處置。
 
 #### 6.3.1 機械枚舉（防 glob 漏 — incident 教訓）
 
