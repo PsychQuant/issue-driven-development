@@ -27,6 +27,15 @@ Version number left to the release.
   the distribution sync. The order of the steps is unchanged. A new capability, `idd-close-doc-sync`, states the
   position, and the doc-sync-sweep suite reads SKILL.md and compares the three places; it also runs the comparison
   on copies broken on purpose, one for each thing it compares, so each part of the check is seen to fail.
+- **An open Spectra change no longer makes `/idd-comment` think it was called from spectra-discuss (#502).** Step 0.7
+  turned the spectra bridge on whenever `spectra list` showed any open change, whatever the comment was about; Step 7
+  then had to write a bookmark with an empty topic and print a resume prompt for a discussion that did not exist
+  (reported before as #126). Since 4.0.0 every issue being implemented has an open change until it is archived, so in
+  this repository the signal held on almost every call. It is removed. The bridge turns on for `--resume-spectra`,
+  for a `--source` that contains `spectra-discuss`, or for a bridge file whose `active_spectra_session` is true, and
+  detection no longer runs `spectra`. `rules/spectra-bridge.md` and the summaries in the plugin's CLAUDE.md and README
+  list the same three signals; the two summaries used to say the bridge file only had to exist. A new capability,
+  `spectra-bridge-detection`, states this, and a new suite, spectra-bridge-detect, runs the block one signal at a time.
 
 ## [4.0.1] - 2026-11-11
 

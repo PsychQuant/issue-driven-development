@@ -114,7 +114,7 @@ GitHub mentions are an irreversible side effect; the rule is mandatory not advis
 
 When `spectra-discuss` is interrupted mid-flow to invoke an IDD skill (e.g. "let me capture this finding to the issue"), the bridge protocol preserves and resumes context:
 
-- **Step 0.7 Detect** — `--resume-spectra="<topic>"` flag, `--source` contains `spectra-discuss`, `spectra list --json` shows in-flight changes, or `.claude/.idd/state/bridge.json` exists (legacy fallback: `.claude/state/idd-bridge.json`) → `SPECTRA_BRIDGE_ACTIVE=1`
+- **Step 0.7 Detect** — `--resume-spectra="<topic>"` flag, `--source` contains `spectra-discuss`, or `.claude/.idd/state/bridge.json` exists with `active_spectra_session: true` (legacy fallback: `.claude/state/idd-bridge.json`) → `SPECTRA_BRIDGE_ACTIVE=1`. Open Spectra changes in the repository are not a signal (#502)
 - **Step N-1 Bookmark** — `.claude/.idd/state/bridge.json` written with verbatim `spectra_topic` + `issue_url` + `open_questions[]` + `idd_action_url` + `next_step_hint`
 - **Step N Resume Prompt** — final output prints a clearly-delimited `↩ Resume spectra-discuss` block with a copy-pasteable `/spectra-discuss <topic>...` prompt
 

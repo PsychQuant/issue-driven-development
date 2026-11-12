@@ -34,11 +34,11 @@ An IDD skill is "in a spectra context" if **any** of these signals are true:
 |--------|--------|------------|
 | `--resume-spectra="<topic>"` flag | explicit | 100% |
 | `--source` argument contains `spectra-discuss` | explicit-ish | 95% |
-| `spectra list --json` returns in-flight changes | environmental | 60% (could be unrelated) |
 | `.claude/.idd/state/bridge.json` exists with `active_spectra_session: true` | written by spectra (future contract) | 100% |
 | Conversation context (skill caller knows it was launched from spectra) | implicit | varies |
 
 If at least one signal fires → set `SPECTRA_BRIDGE_ACTIVE=1`. Otherwise, no bridge action.
+Open Spectra changes in the repository are **not** a signal (#502): they describe the repository, not where this call came from, so detection never runs `spectra`.
 
 ## Bookmark file (Step N before exit)
 
