@@ -28,14 +28,16 @@ assert_grep "SKILL.md 含 task list 項 doc_sync_sweep" 'name="doc_sync_sweep"' 
 # SKILL.md says where Step 6.3 sits in three places: the order of the step sections, the order of the
 # Step 0.5 task list, and the 「位置」 sentence of Step 6.3. pos.py reads a SKILL.md and prints one line
 # per disagreement, `<kind>: <what>` with kind = sentence | order | tasks, or `ok`. The step order and
-# the task order were already right when the sentence was wrong, so each kind is also run against a
-# copy broken on purpose: a check that cannot fail shows nothing.
+# the task order were already right when the sentence was wrong, so each kind is also run against
+# copies broken on purpose: a check that cannot fail shows nothing. The first eight checks are the
+# rows of the Example; the four after them break one thing each that no row covers on its own.
 cat > "$W/pos.py" <<'PY'
 import re
 import sys
 
 OLD_SENTENCE = "**位置**：closing summary 已 publish、`gh issue close` 之前（與 Step 6 body sync 同區、序在 6.5 distribution sync 前）。"
 SILENT_SENTENCE = "**位置**：closing summary 已貼出之後、Step 6.5 distribution sync 之前。"
+BOTH_SENTENCE = "**位置**：issue 已關閉之後才回報結果，檢查本身在 `gh issue close` 之前做。"
 TASKS = ["publish_and_close", "auto_update_body", "doc_sync_sweep", "distribution_sync_chain_detection"]
 # "before the close": a word for closing, then at most ten characters of the same clause, then 前.
 BEFORE_CLOSE = re.compile(
@@ -85,8 +87,6 @@ def check(lines):
         closes = [i for i in range(a, b) if kind[i] == "code" and lines[i].startswith("gh issue close ")]
         if not closes:
             why.append(("order", "Step 4 has no `gh issue close` command line"))
-        elif not closes[-1] < at["6.3"]:
-            why.append(("order", "Step 6.3 comes before the command that closes the issue"))
         if not at["4"] < at["6"] < at["6.3"] < at["6.5"]:
             why.append(("order", "the sections are not in the order Step 4, Step 6, Step 6.3, Step 6.5"))
     if "0.5" in at:
@@ -124,7 +124,7 @@ def mutate(what, lines):
     kind = kinds(lines)
     one = lambda step: headings(lines, kind, step)[0]
     a, b = section(lines, kind, one("6.3"))
-    put = {"says-before": [OLD_SENTENCE], "silent-on-close": [SILENT_SENTENCE], "no-sentence": []}
+    put = {"says-before": [OLD_SENTENCE], "silent-on-close": [SILENT_SENTENCE], "closed-but-before": [BOTH_SENTENCE], "no-sentence": []}
     if what in put:
         hits = [i for i in range(a, b) if kind[i] == "text" and lines[i].startswith("**位置**")]
         i = hits[0]
@@ -133,12 +133,20 @@ def mutate(what, lines):
         return move(lines, a, b, one("4"))
     if what == "after-step-6.5":
         return move(lines, a, b, section(lines, kind, one("6.5"))[1])
+    if what == "close-moved-after-sweep":
+        s4, e4 = section(lines, kind, one("4"))
+        c = [i for i in range(s4, e4) if kind[i] == "code" and lines[i].startswith("gh issue close ")][0]
+        return move(lines, c, c + 1, b)
+    if what == "heading-missing":
+        return lines[:a] + ["### Doc-sync sweep"] + lines[a + 1:]
     task = lambda name: [i for i, l in enumerate(lines) if l.startswith('TaskCreate(name="%s"' % name)][0]
     d = task("doc_sync_sweep")
     if what == "task-before-publish":
         return move(lines, d, d + 1, task("publish_and_close"))
     if what == "task-after-distribution":
         return move(lines, d, d + 1, task("distribution_sync_chain_detection") + 1)
+    if what == "task-missing":
+        return lines[:d] + lines[d + 1:]
     raise SystemExit("unknown mutation: " + what)
 
 
@@ -188,5 +196,10 @@ assert_eq "Step 6.3 移到 Step 4 之前 → 抓到的是步驟順序" "order" "
 assert_eq "Step 6.3 移到 Step 6.5 之後 → 抓到的是步驟順序" "order" "$(broken_verdict after-step-6.5)"
 assert_eq "清單裡 doc_sync_sweep 排在 publish_and_close 之前 → 抓到的是清單" "tasks" "$(broken_verdict task-before-publish)"
 assert_eq "清單裡 doc_sync_sweep 排在 distribution_sync_chain_detection 之後 → 抓到的是清單" "tasks" "$(broken_verdict task-after-distribution)"
+# One thing broken that no row above covers on its own.
+assert_eq "同一句又說 issue 已關閉、又說在 gh issue close 之前 → 抓到的是那一句" "sentence" "$(broken_verdict closed-but-before)"
+assert_eq "gh issue close 那一行搬到 Step 6.3 之後 → 抓到的是步驟順序" "order" "$(broken_verdict close-moved-after-sweep)"
+assert_eq "Step 6.3 的標題不見了 → 抓到的是步驟順序" "order" "$(broken_verdict heading-missing)"
+assert_eq "清單裡沒有 doc_sync_sweep → 抓到的是清單" "tasks" "$(broken_verdict task-missing)"
 
 print_summary "doc-sync-sweep"

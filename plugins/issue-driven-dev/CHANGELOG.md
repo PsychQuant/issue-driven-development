@@ -26,7 +26,7 @@ Version number left to the release.
   the skill does: the issue is closed and the closing summary is posted, then the body sync, then the sweep, then
   the distribution sync. The order of the steps is unchanged. A new capability, `idd-close-doc-sync`, states the
   position, and the doc-sync-sweep suite reads SKILL.md and compares the three places; it also runs the comparison
-  on seven copies broken on purpose, so each part of the check is seen to fail.
+  on copies broken on purpose, one for each thing it compares, so each part of the check is seen to fail.
 
 ## [4.0.1] - 2026-11-11
 
