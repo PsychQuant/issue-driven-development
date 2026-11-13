@@ -28,13 +28,15 @@ trap cleanup EXIT
 
 # ── This suite's own time limit (#508, #519) ──
 # Most of this suite's run time is CPU time (about 65 s on an 18-core Mac), so it takes longer on a busy machine:
-# run alone it took 84 s at a load near 20 and 123 s at a load of 60 to 100, and inside full runs up to 168 s.
+# run alone it took 84 s at a load near 20 and 123 s at a load of 60 to 100 (#508), and inside full runs up to
+# 168 s (the run recorded on #512).
 # Once, at a load near 50 and with another full run using the same working tree, the aggregator cut it off at its
 # 180 s default with no failing check; that has not been reproduced. The `timeout` file next to this script raises
 # the limit for this suite only. The limit has two bounds. It has to be well above the default. And it has to
 # leave the aggregator time to report a hung run, with its summary, before the CI job's own limit (1200 s) cancels
-# the job: the slowest of the 24 CI jobs of 2026-11-10 to 11-12 took 654 s, so a run that hangs here ends at about
-# 654 + 480 = 1134 s. A limit above 480 s does not leave that minute; measure the CI jobs again before raising it.
+# the job: of the 28 runs of the tests workflow on 2026-11-10 to 11-12 (UTC), the slowest job took 654 s from its
+# start to its end, so a run that hangs here ends at about 654 + 480 = 1134 s. A limit above 480 s does not leave
+# that minute; measure the jobs again before raising it (`gh run list --workflow tests.yml`, then each run's job).
 LIMIT_MIN=360; LIMIT_MAX=480
 limit_in_bounds() { [ "${1:-0}" -ge "$LIMIT_MIN" ] 2>/dev/null && [ "$1" -le "$LIMIT_MAX" ] 2>/dev/null; }
 refute  "359 s is below the lower bound" limit_in_bounds 359
@@ -52,13 +54,11 @@ require "this suite's limit is within the bounds" limit_in_bounds "${LIMIT_SECS:
 STANDIN="er-limit"
 [ ! -e "$HERE/../$STANDIN" ]
 assert_exit "the stand-in suite's name is not the name of a real suite" 0 $?
-# The nested runs work inside $WORK, and only after the EXIT trap is set: bash runs that trap on TERM, INT and HUP
-# too, so a run that is interrupted here leaves nothing behind (#519).
-trap -p EXIT | grep -q cleanup
-assert_exit "the EXIT trap that removes this suite's work directory is set before the nested runs" 0 $?
+# The nested runs work inside $WORK, below the EXIT trap set above. bash runs that trap on TERM, INT and HUP too,
+# so a run that is interrupted here removes its sandbox with the rest of $WORK (#519). Nothing else is cleaned up:
+# the log the aggregator writes under /tmp for the stand-in suite stays (#518), and when the signal reaches this
+# shell alone the nested aggregator is not stopped; it runs on until its stand-in suite ends, 3 s after it started.
 LIMIT_SB="$WORK/limit"; mkdir -p "$LIMIT_SB"
-case "$LIMIT_SB/" in "${WORK:-/nonexistent}"/*) pass "the sandbox of the nested runs is inside that work directory" ;;
-  *) fail "the sandbox of the nested runs is inside that work directory" "$LIMIT_SB is not under ${WORK:-(no work directory yet)}" ;; esac
 # limit_run <sandbox name> <timeout file to copy in, or ''> → the aggregator's exit code; its output is in <sandbox>/out.
 # The sandbox holds one stand-in suite that sleeps 3 s, and the global limit is 1 s.
 limit_run() {
