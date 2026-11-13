@@ -137,6 +137,8 @@ fi
 
 repo 裡有開著的 Spectra change **不是**訊號（#502）：它說的是 repo 的狀態，不是這次呼叫從哪裡來。這一步不執行 `spectra`。
 
+對話脈絡也不是訊號（#525）：這一步只看上面三個訊號。從 spectra-discuss 的討論中途呼叫時，要帶 `--resume-spectra="<主題>"`。
+
 ### Step 1: Parse arguments
 
 ```
@@ -693,7 +695,7 @@ HTML comment 在 GitHub 不渲染，但可 parse：
 - **任何 @xxx 必走 collaborator API**（v2.32.0+）：禁止從訓練記憶 / 聊天歷史 / git log 推測 handle。違反 = 通知錯人，不可逆。詳見 [`rules/tagging-collaborators.md`](../../rules/tagging-collaborators.md)。
 - **reply 是 closing summary 的加項**（v2.100.0+）：不取代 closing summary / verify report / 任何 audit-facing 產出；close gate 不接受 reply 作為 closing summary 替代。
 - **reply 的錨定先於 calibration**（v2.100.0+）：R1–R3 錨定完成後才進 R4 calibration；calibration 不得改動錨定事實（見 Reply drafting pipeline R5）。
-- **Spectra context 不可靜默忽略**（v2.32.0+）：偵測到從 spectra-discuss 進來必須印 resume prompt。使用者要不要回去 spectra 是他的事，但 skill 不能讓 context 默默掉地。
+- **Spectra context 不可靜默忽略**（v2.32.0+）：Step 0.7 判定 `SPECTRA_BRIDGE_ACTIVE=1` 時必須印 resume prompt。使用者要不要回去 spectra 是他的事，但 skill 不能讓 context 默默掉地。這個判定只看 Step 0.7 的三個訊號，不從對話推斷（#525）。
 
 ## 與其他 idd-* skill 的關係
 
