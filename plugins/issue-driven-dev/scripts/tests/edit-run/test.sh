@@ -21,38 +21,68 @@ HELPER="$PLUGIN/scripts/idd-edit-helper.py"
 SKILL="$PLUGIN/skills/idd-edit/SKILL.md"
 FAKE="$HERE/../correct-flow/fake-gh.py"
 
-# ── This suite's own time limit (#508) ──
-# Almost all of this suite's run time is CPU time (about 65 s on an 18-core Mac), so its wall time grows with the
-# load of the machine: at a load of 50 it reached the aggregator's 180 s default and was cut off with no failing
-# check. The `timeout` file next to this script raises the limit for this suite only. The limit has two bounds.
-# It has to be well above the default. And it has to leave the aggregator time to report a hung run, with its
-# summary, before the CI job's own 20-minute limit cancels the job (the other suites take up to nine minutes there).
+WORK="$(mktemp -d /tmp/idd-er-XXXXXX)"
+export TMPDIR="$(mktemp -d /var/tmp/idd-er-tmp-XXXXXX)"
+cleanup() { chmod -R u+rwx "$WORK" "$TMPDIR" 2>/dev/null; rm -rf "$WORK" "$TMPDIR"; }
+trap cleanup EXIT
+
+# ── This suite's own time limit (#508, #519) ──
+# Most of this suite's run time is CPU time (about 65 s on an 18-core Mac), so it takes longer on a busy machine:
+# run alone it took 84 s at a load near 20 and 123 s at a load of 60 to 100 (#508), and inside full runs up to
+# 168 s (the run recorded on #512).
+# Once, at a load near 50 and with another full run using the same working tree, the aggregator cut it off at its
+# 180 s default with no failing check; that has not been reproduced. The `timeout` file next to this script raises
+# the limit for this suite only. The limit has two bounds. It has to be well above the default. And it has to
+# leave the aggregator time to report a hung run, with its summary, before the CI job's own limit (1200 s) cancels
+# the job: of the 28 runs of the tests workflow on 2026-11-10 to 11-12 (UTC), the slowest job took 654 s from its
+# start to its end, so a run that hangs here ends at about 654 + 480 = 1134 s. A limit above 480 s does not leave
+# that minute; measure the jobs again before raising it (`gh run list --workflow tests.yml`, then each run's job).
+LIMIT_MIN=360; LIMIT_MAX=480
+limit_in_bounds() { [ "${1:-0}" -ge "$LIMIT_MIN" ] 2>/dev/null && [ "$1" -le "$LIMIT_MAX" ] 2>/dev/null; }
+refute  "359 s is below the lower bound" limit_in_bounds 359
+require "360 s, twice the default, is the lower bound" limit_in_bounds 360
+require "480 s is the upper bound" limit_in_bounds 480
+refute  "481 s is above the upper bound" limit_in_bounds 481
+refute  "600 s, half the CI job's limit, is above the upper bound" limit_in_bounds 600
 LIMIT_FILE="$HERE/timeout"
 assert_file_exists "this suite has a timeout file" "$LIMIT_FILE"
 LIMIT_SECS="$(tr -cd '0-9' < "$LIMIT_FILE" 2>/dev/null)"
 assert_eq "the file holds one number and nothing else (the aggregator keeps every digit it finds)" "${LIMIT_SECS:-no number}" "$(cat "$LIMIT_FILE" 2>/dev/null)"
-[ "${LIMIT_SECS:-0}" -ge 360 ] 2>/dev/null
-assert_exit "the limit is at least 360 s, twice the default" 0 $?
-[ "${LIMIT_SECS:-99999}" -le 600 ] 2>/dev/null
-assert_exit "the limit is at most 600 s, half the CI job's limit" 0 $?
+require "this suite's limit is within the bounds" limit_in_bounds "${LIMIT_SECS:-0}"
 # The aggregator applies the file. The stand-in suite must not carry the name of a real suite: the aggregator
 # names each suite's log after the suite alone, so a stand-in called edit-run empties the log of this very run (#518).
 STANDIN="er-limit"
 [ ! -e "$HERE/../$STANDIN" ]
 assert_exit "the stand-in suite's name is not the name of a real suite" 0 $?
-LIMIT_SB="$(mktemp -d /tmp/idd-er-limit-XXXXXX)"
-mkdir -p "$LIMIT_SB/tests/$STANDIN"
-printf '#!/usr/bin/env bash\nsleep 3\n' > "$LIMIT_SB/tests/$STANDIN/test.sh"
-cp "$LIMIT_FILE" "$LIMIT_SB/tests/$STANDIN/timeout" 2>/dev/null
-IDD_TESTS_DIR="$LIMIT_SB/tests" IDD_SUITE_TIMEOUT=1 bash "$PLUGIN/scripts/run-all-tests.sh" > "$LIMIT_SB/out" 2>&1
-assert_exit "the aggregator applies this suite's limit, not the global one → 0" 0 $?
+# The nested runs work inside $WORK, below the EXIT trap set above. bash runs that trap on TERM, INT and HUP too,
+# so a run that is interrupted here removes its sandbox with the rest of $WORK (#519). Nothing else is cleaned up:
+# the log the aggregator writes under /tmp for the stand-in suite stays (#518), and when the signal reaches this
+# shell alone the nested aggregator is not stopped; it runs on until its stand-in suite ends, 3 s after it started.
+LIMIT_SB="$WORK/limit"; mkdir -p "$LIMIT_SB"
+# limit_run <sandbox name> <timeout file to copy in, or ''> → the aggregator's exit code; its output is in <sandbox>/out.
+# The sandbox holds one stand-in suite that sleeps 3 s, and the global limit is 1 s.
+limit_run() {
+  local sb="$LIMIT_SB/$1"
+  mkdir -p "$sb/tests/$STANDIN"
+  printf '#!/usr/bin/env bash\nsleep 3\n' > "$sb/tests/$STANDIN/test.sh"
+  [ -n "$2" ] && cp "$2" "$sb/tests/$STANDIN/timeout"
+  IDD_TESTS_DIR="$sb/tests" IDD_SUITE_TIMEOUT=1 bash "$PLUGIN/scripts/run-all-tests.sh" > "$sb/out" 2>&1
+}
+# limit_applied <check name> <sandbox name> <timeout file or ''> → passes when the aggregator exits 0. When it does
+# not, the failure line carries its exit code and the end of its output, so the reason can be read off the log (#519).
+limit_applied() {
+  local rc; limit_run "$2" "$3"; rc=$?
+  if [ "$rc" -eq 0 ]; then pass "$1"
+  else fail "$1" "the aggregator exited $rc; its output ends: $(tail -n 6 "$LIMIT_SB/$2/out" 2>/dev/null | tr '\n' '|')"; fi
+}
+limit_applied "the aggregator applies this suite's limit, not the global one → 0" with-file "$LIMIT_FILE"
+# The same run without the file has to time out, or the check above would pass whatever the file holds. It runs in
+# a subshell: what is checked is the failure line it prints, and that line must not count against this suite.
+CONTROL="$(limit_applied "control" without-file "")"
+assert_grep "without the file the stand-in times out at the global limit" 'TIMEOUT(1s)' "$CONTROL"
+assert_grep "a failing limit check shows the aggregator's exit code" 'the aggregator exited 1' "$CONTROL"
 rm -rf "$LIMIT_SB"
 # ── end of the time limit checks ──
-
-WORK="$(mktemp -d /tmp/idd-er-XXXXXX)"
-export TMPDIR="$(mktemp -d /var/tmp/idd-er-tmp-XXXXXX)"
-cleanup() { chmod -R u+rwx "$WORK" "$TMPDIR" 2>/dev/null; rm -rf "$WORK" "$TMPDIR"; }
-trap cleanup EXIT
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export FAKE_GH_STORE="$WORK/store"; mkdir -p "$FAKE_GH_STORE"
 mkdir -p "$WORK/bin"

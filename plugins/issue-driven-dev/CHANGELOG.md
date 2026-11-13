@@ -11,15 +11,20 @@ Version number left to the release.
 
 ### Fixed
 
-- **The edit-run suite has a time limit of its own (#508).** Its run time is almost all CPU time (about 65 s on
-  an 18-core Mac), so its wall time grows with the load of the machine. At a load of 50 it reached the 180 s
-  default of `scripts/run-all-tests.sh`, and the full run reported one failed suite although no check had failed.
-  The suite now has a `timeout` file of 480 s, which the runner already reads. The suite checks its own file: it
-  is there, it holds one number between 360 and 600, and the runner applies it. The upper bound keeps the limit
-  under half of the CI job's 20 minutes, so a hung run is still reported by the runner, with its summary, before
-  the job is cancelled. A longer limit buys little: at a load near 150 on the same machine, actionability-gate
-  alone took 193 s, so at that load the full run already fails on another suite. No other suite got a file:
-  apart from merge-completeness, none took more than 60 s in three full runs at ordinary load.
+- **The edit-run suite has a time limit of its own (#508, #519).** Most of its run time is CPU time (about 65 s
+  on an 18-core Mac), so it takes longer on a busy machine: run alone it took 84 s at a load near 20 and 123 s at
+  a load of 60 to 100, and inside full runs up to 168 s (#512). Once, at a load near 50 and with another full run using
+  the same working tree, `scripts/run-all-tests.sh` cut it off at its 180 s default, and the full run reported
+  one failed suite although no check had failed; that has not been reproduced. The suite now has a `timeout`
+  file of 480 s, which the runner already reads. The suite checks its own file: it is there, it holds one number
+  between 360 and 480, and the runner applies it. The same run without the file has to time out, and a failing
+  check shows the end of the runner's output. The upper bound comes from the CI job's limit of 20 minutes: of
+  the 28 runs of the tests workflow on 2026-11-10 to 11-12 (UTC), the slowest job took 654 s, so a hung run is
+  cut off and reported by the runner, with its summary, at about 1134 s, a minute before the job is cancelled.
+  That margin holds for those runs; it has to be measured again when CI gets slower. A longer limit buys little:
+  at a load near 150 on the same machine, actionability-gate alone took 193 s, so at that load the full run
+  already fails on another suite. No other suite got a file: apart from merge-completeness, none took more than
+  60 s in three full runs at ordinary load.
 - **`idd-close` says in one way where its doc-sync sweep sits (#512).** The 「位置」 sentence of Step 6.3 said the
   sweep runs before `gh issue close`, while the step order, the Step 0.5 task list and Step 4 (which posts the
   summary and closes the issue in one block) all run it after the close. The sentence now says what the rest of
