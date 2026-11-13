@@ -41,6 +41,18 @@ Version number left to the release.
   detection no longer runs `spectra`. `rules/spectra-bridge.md` and the summaries in the plugin's CLAUDE.md and README
   list the same three signals; the two summaries used to say the bridge file only had to exist. A new capability,
   `spectra-bridge-detection`, states this, and a new suite, spectra-bridge-detect, runs the block one signal at a time.
+- **Conversation context is not a spectra bridge signal (#525).** The detection table of `rules/spectra-bridge.md`
+  had a fourth row, "Conversation context", although nothing in `/idd-comment` reads the conversation: Step 0.7
+  checks three signals, and the skill does not ask the model to judge. The row is removed, and the rule now says
+  that a call made in the middle of a spectra-discuss session passes `--resume-spectra="<topic>"`; the maintainer
+  chose not to add an automatic path. `idd-comment` says the same below the Step 0.7 block, and its rule that a
+  spectra context must not be ignored silently now refers to the result of Step 0.7 and says that it is not
+  inferred from the conversation. The `spectra-bridge-detection` capability states all of this and no longer has
+  a line without an executable check. The spectra-bridge-detect suite gains three kinds of check: when both
+  bridge files exist only the one at the new path counts; the sentences that list the signals are read clause by
+  clause, by a wording rule written out in the spec whose Example table the suite reads, so open changes listed
+  again in Chinese are caught while a remark that they do not count is not; and Step 7 is headed as applying only
+  when the bridge is on. The detection block itself is unchanged.
 
 ## [4.0.1] - 2026-11-11
 
