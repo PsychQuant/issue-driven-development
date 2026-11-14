@@ -487,6 +487,32 @@ Exit codes of `idd-ci-gate.sh run --commit <sha> [--cwd <clone>]`: `0` pass, `1`
 
 In `local` mode a red remote check is reported and does not block merging. A release still requires green remote checks whatever the mode (`idd-close` Step 6.5), because only remote CI sees the older environments that users run.
 
+### `spec_archive` field (#547)
+
+Which branch the spec checks read for a code repository that **deliberately has no remote** — typically a local-only sub-project inside the issue repository's working directory, holding data that must not go to GitHub. Without an entry, `idd-close` Step 1.57 fetches the default branch from the remote, and a repository without a remote can never pass it.
+
+```json
+{ "spec_archive": { "projects/sub-repo": { "ref": "local", "branch": "master" } } }
+```
+
+| Part | Meaning |
+|------|---------|
+| key | The code repository's main working tree (for a linked worktree, the first entry `git worktree list` prints. When the main repository is bare, each linked worktree is keyed by its own path, so each needs its own entry. When git does not record the main working tree — a git directory made apart with `--separate-git-dir` under a name other than `.git`, or a submodule — a linked worktree gets no entry: run from the main working tree. A git directory made apart under the name `.git` is reported by git as the directory that holds it, and that directory is the key), relative to the directory that holds this `.claude/` (both resolved through symbolic links). `./sub/`, `sub/` and `sub` name the same path; `.` names the directory of this configuration itself; a key that is empty or has leading or trailing whitespace names nothing. Two keys that name the same path are an error |
+| `ref` | Must be `local`. Any other value is an error |
+| `branch` | The local branch that plays the default branch: a branch name that `git check-ref-format --branch` accepts unchanged (not `master~1` or `master@{0}`). Required: without a remote there is no `origin/HEAD` to read, and `HEAD` is only the branch checked out now. The check reads this branch whatever `HEAD` is |
+
+Read by `scripts/spec-change.py archive-ref` (and `link-base`), which walks up from the **code repository's** main working tree to the first IDD configuration — the same walk as the other fields, new file before legacy file at each level, stopping after `$HOME` (`/` itself is not read). A file that cannot be read as a JSON object (empty, `null`, not JSON, not UTF-8), and `"spec_archive": null`, are treated as having no entry, so a repository that never set the field is not blocked by it. Every `remote` answer carries `has_remote`: when it is false the repository has no remote at all, and Step 1.57 and the link check stop without fetching, with that reason (git would otherwise read a local path named `origin` as the remote). Write the entry in the issue repository's configuration; do not add a configuration to the code repository just for this, because a file without `github_repo` there would be the first one the other skills find.
+
+**Accepted only while the repository has no remote at all** — no name that `git remote` lists with a `url`, a `pushurl` or a `vcs` (a remote helper) set, whatever the value (an empty or blank `url` counts), and no legacy `remotes/<name>` or `branches/<name>` file in its git directory; a `remote` section with none of them (a global `remote.origin.prune`, say) does not count. An entry for a repository that has any remote is an error, not a silent fallback to the remote: an entry written because there was no remote must not outlive that reason. Other errors: `spec_archive` is not an object, two entries name the repository's path, a key is written twice (`spec_archive` itself, a key of it that names this path, or a key of the matching entry — found while the file is parsed, so no key the file holds can imitate a duplicate), the entry is not `{"ref": "local", "branch": "<name>"}`, or the branch does not exist. A repository whose own path cannot be written as a key (it ends in a space, say) gets no entry: it never borrows the `.` entry of the configuration's own directory. Reasons name the configuration file relative to the code repository, never by an absolute path.
+
+What it changes, and nothing else:
+
+- `idd-close` Step 1.57 checks the archive on `refs/heads/<branch>` instead of fetching, and prints `local ref <branch>@<commit>`.
+- `idd-close` Step 1.5 calls `check-existing-work.sh --skip-branches`: no fetch in the code repository, open PRs still checked on the issue repository.
+- `references/spec-wrapper.md` step 5 starts the link check at the issue's baseline tag (`auto_tag.baseline_format`, default `idd-<N>-baseline`) when it is an ancestor of `HEAD` other than `HEAD` itself, or else at the parent of the oldest commit naming the issue: `#<N>` with the left and right guards of `pr-issue-matching.md`, or the issue repository's own `<github_repo>#<N>` — the form a commit in a separate code repository uses (`other/repo#N` does not count); neither → stop.
+
+A code repository that is not under the issue repository's directory finds no entry and keeps the remote behaviour (and its error).
+
 ### `collaborators[]` field
 
 An OPTIONAL identity registry so IDD can resolve a person's alias / email / display-name → their GitHub `@login` **without guessing** — the hard rule set by [tagging-collaborators.md](../rules/tagging-collaborators.md). It is a *resolution accelerator*, **not** an authority: a table hit is still existence-verified via `gh api users/<login>` before any mention is posted, because the table can go stale.
