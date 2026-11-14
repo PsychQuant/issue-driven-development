@@ -15,6 +15,7 @@
 # spec-example: spec-on-every-issue / whether the declared changes are archived at a commit
 # spec-example: spec-on-every-issue / what the link check reports
 # spec-example: spec-on-every-issue / markers in submodules
+# spec-example: spec-on-every-issue / top directory names
 # spec-example: spec-on-every-issue / preflight by write access and Spectra state
 # spec-example: spec-on-every-issue / spec directory by .spectra.yaml
 # spec-example: spec-on-every-issue / choosing the Implementation Complete comment
@@ -50,15 +51,24 @@ run() { # subcommand args... → OUT, RC, LINES (stdout lines)
 comment() { # name body — write a comment file, print its path
   printf '%s\n' "$2" > "$WORK/$1.md"; printf '%s' "$WORK/$1.md"
 }
+setup_failed() { # what — a fixture step failed: say so before the suite ends without its summary
+  echo "FATAL: spec-change suite: fixture setup failed: $1" >&2; exit 1
+}
 newrepo() { # name → REPO (an empty git repo with one empty commit)
-  REPO="$WORK/$1"; mkdir -p "$REPO"
-  git -C "$REPO" init -q -b main
-  git -C "$REPO" commit -q --allow-empty -m init
+  REPO="$WORK/$1"
+  mkdir -p "$REPO" || setup_failed "create repository directory"
+  git -C "$REPO" init -q -b main || setup_failed "initialize repository"
+  git -C "$REPO" commit -q --allow-empty -m init || setup_failed "commit empty repository"
 }
 put() { # path [content] — write a file into $REPO
-  mkdir -p "$(dirname "$REPO/$1")"; printf '%s\n' "${2:-x}" > "$REPO/$1"
+  mkdir -p "$(dirname "$REPO/$1")" || setup_failed "create fixture file parent"
+  printf '%s\n' "${2:-x}" > "$REPO/$1" || setup_failed "write fixture file"
 }
-commit() { git -C "$REPO" add -A && git -C "$REPO" commit -q -m "${1:-c}"; git -C "$REPO" rev-parse HEAD; }
+commit() {
+  git -C "$REPO" add -A || setup_failed "stage fixture"
+  git -C "$REPO" commit -q -m "${1:-c}" || setup_failed "commit fixture"
+  git -C "$REPO" rev-parse HEAD || setup_failed "read fixture commit"
+}
 
 # ── declared ────────────────────────────────────────────────────────────────
 echo "spec-change: declared (Example: reading the Spec line)"
@@ -187,7 +197,9 @@ links_case() { # label status missing-count exit
   assert_eq "links: $1 — one JSON line" 1 "$LINES"
 }
 linked_repo() { # name — a repo whose base has spec `cap` with requirement Base (no Example); sets BASE
-  newrepo "$1"; put openspec/specs/cap/spec.md "$(spec "$(req Base)")"; BASE=$(commit base)
+  newrepo "$1" || setup_failed "create linked repository"
+  put openspec/specs/cap/spec.md "$(spec "$(req Base)")" || setup_failed "write base spec"
+  BASE=$(commit base) || setup_failed "commit base spec"
 }
 EX='##### Example: alpha table'
 linked_repo l-ok; put openspec/specs/cap/spec.md "$(spec "$(req Base)" "$(req Alpha "$EX")")"; put scripts/tests/x/test.sh '# spec-example: cap / alpha table'; commit >/dev/null
@@ -293,12 +305,37 @@ links_case "openspec/specs/ holds no tracked file at the head revision" error ""
 newrepo l-gitkeep; put openspec/specs/.gitkeep ''; BASE=$(commit base); put README.txt x; commit >/dev/null
 links_case "openspec/specs/ holds only .gitkeep (a newly initialised repository)" ok 0 0
 
+linked_repo l-spec-invalid-utf8 || setup_failed "create invalid-UTF-8 spec fixture"
+spec "$(req Alpha)" > "$WORK/invalid-utf8-spec.md" || setup_failed "write new capability spec"
+SPEC_BLOB=$(git -C "$REPO" hash-object -w "$WORK/invalid-utf8-spec.md") || setup_failed "store spec blob"
+SPEC_PATH=$(printf 'openspec/specs/cap\377/spec.md') || setup_failed "build invalid-UTF-8 spec path"
+git -C "$REPO" update-index --add --cacheinfo "100644,$SPEC_BLOB,$SPEC_PATH" || setup_failed "record invalid-UTF-8 spec path"
+git -C "$REPO" commit -q -m invalid-utf8-spec || setup_failed "commit invalid-UTF-8 spec"
+links_case "a path under the spec directory is not valid UTF-8" error 0 2
+assert_eq "links: invalid-UTF-8 spec path — fixed reason" 'a path under the spec directory is not valid UTF-8' "$(printf '%s' "$OUT" | field reason)"
+refute_output_grep "links: invalid-UTF-8 spec path — no traceback" Traceback "$WORK/err"
+
+# Added before archiving (tasks 4.1): the main repository's failed search keeps git's message, as before:
+# `git grep failed: ` and the first 200 characters of what git wrote to its error stream.
+linked_repo l-main-tree-unreadable || setup_failed "create unreadable-tree fixture"
+put openspec/specs/cap/spec.md "$(spec "$(req Base)" "$(req Alpha "$EX")")" || setup_failed "write Example"
+put src/x.txt 'content' || setup_failed "write a file outside the spec directory"
+commit >/dev/null || setup_failed "commit unreadable-tree fixture"
+SRC_TREE=$(git -C "$REPO" rev-parse 'HEAD:src') || setup_failed "read the tree to remove"
+[ -f "$REPO/.git/objects/${SRC_TREE:0:2}/${SRC_TREE:2}" ] || setup_failed "the tree to remove is not a loose object"
+rm "$REPO/.git/objects/${SRC_TREE:0:2}/${SRC_TREE:2}" || setup_failed "remove the tree"
+links_case "the main repository: a tree outside the spec directory cannot be read" error 0 2
+GIT_SAID=$(git -C "$REPO" grep --no-recurse-submodules -z -F -e 'spec-example: cap / alpha table' "$(git -C "$REPO" rev-parse HEAD)" -- . 2>&1 >/dev/null)
+[ -n "$GIT_SAID" ] || setup_failed "git wrote nothing about the tree it cannot read"
+[ "${#GIT_SAID}" -le 200 ] || setup_failed "git's message about the tree is longer than 200 characters"
+assert_eq "links: unreadable main tree — the reason is what git wrote" "git grep failed: $GIT_SAID" "$(printf '%s' "$OUT" | field reason)"
+GIT_TRACE=1 run links --cwd "$REPO" --base "$BASE"
+assert_eq "links: unreadable main tree — a longer message is cut to 200 characters" 217 \
+  "$(printf '%s' "$OUT" | "$PY" -c 'import json,sys; print(len(json.loads(sys.stdin.read() or "{}").get("reason", "")))')"
+
 # ── links: markers in submodules ────────────────────────────────────────────
 echo "spec-change: links (Example: markers in submodules)"
 
-setup_failed() { # what — a fixture step failed: say so before the suite ends without its summary
-  echo "FATAL: spec-change suite: fixture setup failed: $1" >&2; exit 1
-}
 submodule_repo() { # name source path — add one Example and a local submodule; sets REPO and BASE
   linked_repo "$1" || setup_failed "create submodule repository"
   put openspec/specs/cap/spec.md "$(spec "$(req Base)" "$(req Alpha "$EX")")" || setup_failed "write submodule Example"
@@ -372,12 +409,18 @@ missing_commit_repo() { # name — a checked-out submodule whose recorded commit
   git -C "$REPO" commit -q -m missing-submodule-commit || setup_failed "commit of the missing pointer"
 }
 missing_commit_repo l-sub-recurse-main
-put scripts/test.sh '# spec-example: cap / alpha table'; git -C "$REPO" add scripts/test.sh; git -C "$REPO" commit -q -m main-marker || setup_failed "commit of the main marker"
-git -C "$REPO" config submodule.recurse true
+put scripts/test.sh '# spec-example: cap / alpha table' || setup_failed "write main marker"
+git -C "$REPO" add scripts/test.sh || setup_failed "stage main marker"
+git -C "$REPO" commit -q -m main-marker || setup_failed "commit of the main marker"
+git -C "$REPO" config submodule.recurse true || setup_failed "enable submodule recursion"
+RECURSE=$(git -C "$REPO" config --get submodule.recurse) || setup_failed "read submodule recursion"
+assert_eq "links: submodule row 11 — recursion is enabled" true "$RECURSE"
 links_case "submodule row 11: main marker, recorded commit absent, submodule.recurse on" ok 0 0
 
 missing_commit_repo l-sub-recurse-missing
-git -C "$REPO" config submodule.recurse true
+git -C "$REPO" config submodule.recurse true || setup_failed "enable submodule recursion"
+RECURSE=$(git -C "$REPO" config --get submodule.recurse) || setup_failed "read submodule recursion"
+assert_eq "links: submodule row 12 — recursion is enabled" true "$RECURSE"
 links_case "submodule row 12: recorded commit absent, submodule.recurse on" error 0 2
 assert_eq "links: submodule row 12 — reason names Example and path" "cannot decide whether the Example 'cap / alpha table' has a marker: submodule tests/sub: recorded commit 111111111111 is not in its object store" "$(printf '%s' "$OUT" | field reason)"
 
@@ -510,6 +553,11 @@ chmod u+x "$WORK/gitlog-bin/git" || setup_failed "make logging git executable"
 GIT_CALL_LOG="$WORK/git-calls.log" REAL_GIT="$GIT" PATH="$WORK/gitlog-bin:$PATH" links_case "submodule row 22: main marker, git calls logged" ok 0 0
 assert_grep "links: submodule row 22 — the logging git saw the main repository" "-C $REPO rev-parse" "$(cat "$WORK/git-calls.log")"
 refute_grep "links: submodule row 22 — no git command ran in a submodule" "$(basename "$REPO")/tests/sub" "$(cat "$WORK/git-calls.log")"
+refute_grep_re "links: submodule row 22 — no gitlinks were listed" 'ls-tree -r -z [0-9a-f]{40}$' "$(cat "$WORK/git-calls.log")"
+submodule_repo l-sub-log-control "$SUB" tests/sub || setup_failed "create logging control"
+: > "$WORK/git-calls.log" || setup_failed "clear git call log for control"
+GIT_CALL_LOG="$WORK/git-calls.log" REAL_GIT="$GIT" PATH="$WORK/gitlog-bin:$PATH" links_case "submodule row 22: submodule marker, logging control" ok 0 0
+assert_grep_re "links: submodule row 22 — control lists gitlinks" 'ls-tree -r -z [0-9a-f]{40}$' "$(cat "$WORK/git-calls.log")"
 
 example_repo l-sub-dotdot
 git clone -q "$SUB" "$WORK/outside" || setup_failed "clone outside repository"
@@ -666,6 +714,100 @@ GIT_ALTERNATE_OBJECT_DIRECTORIES="$SUB/.git/objects" git -C "$REPO/tests/sub" ca
 GIT_ALTERNATE_OBJECT_DIRECTORIES="$SUB/.git/objects" links_case "submodule row 41: an inherited object store holds the recorded commit" error 0 2
 submodule_reason 41 tests/sub "recorded commit ${SUB_COMMIT:0:12} is not in its object store"
 
+# Rows 42 and 43: an unreadable outer blob does not hide a complete inner checkout.
+nested_missing_blob_repo() { # name inner-source
+  newrepo "$1-source" || setup_failed "create outer source"
+  put README 'unrelated outer content' || setup_failed "write unrelated outer file"
+  git -C "$REPO" -c protocol.file.allow=always submodule add -q "$2" inner || setup_failed "add inner source"
+  commit >/dev/null || setup_failed "commit outer source"
+  local source="$REPO"
+  submodule_repo "$1" "$source" tests/sub || setup_failed "create nested fixture"
+  git -C "$REPO" -c protocol.file.allow=always submodule update -q --init --recursive || setup_failed "check out inner submodule"
+  remove_submodule_object HEAD:README || setup_failed "remove unrelated outer blob"
+  git -C "$REPO/tests/sub" ls-tree -r HEAD >/dev/null || setup_failed "outer tree must remain readable"
+  [ -e "$REPO/tests/sub/inner/.git" ] || setup_failed "inner submodule must be checked out"
+  local inner_top inner_directory inner_missing
+  inner_top=$(git -C "$REPO/tests/sub/inner" rev-parse --show-toplevel) || setup_failed "read inner checkout top"
+  inner_top=$(cd "$inner_top" && pwd -P) || setup_failed "resolve inner checkout top"
+  inner_directory=$(cd "$REPO/tests/sub/inner" && pwd -P) || setup_failed "resolve inner directory"
+  [ "$inner_top" = "$inner_directory" ] || setup_failed "inner must be its own checkout"
+  inner_missing=$(git -C "$REPO/tests/sub/inner" rev-list --objects --no-walk --missing=print HEAD) || setup_failed "read inner objects"
+  if printf '%s\n' "$inner_missing" | grep -q '^?'; then setup_failed "inner checkout lacks an object"; fi
+}
+nested_missing_blob_repo l-sub-inner-marker-outer-missing "$SUB" || setup_failed "create row 42"
+links_case "submodule row 42: inner marker, unrelated outer blob absent" ok 0 0
+
+nested_missing_blob_repo l-sub-inner-empty-outer-missing "$EMPTY_SUB" || setup_failed "create row 43"
+links_case "submodule row 43: no marker, unrelated outer blob absent" error 0 2
+submodule_reason 43 tests/sub 'its recorded commit could not be read'
+
+submodule_repo l-sub-unchecked-before-marker "$SUB" tests/b || setup_failed "create row 44"
+record_gitlink tests/a "$MISSING_COMMIT" || setup_failed "record unchecked earlier sibling"
+links_case "submodule row 44: unchecked sibling precedes the marker" ok 0 0
+
+newrepo l-sub-marker-missing-source || setup_failed "create row 45 source"
+put scripts/test.sh '# spec-example: cap / alpha table' || setup_failed "write submodule marker"
+put README 'unrelated content' || setup_failed "write unrelated file"
+commit >/dev/null || setup_failed "commit row 45 source"
+MARKER_MISSING_SUB="$REPO"
+submodule_repo l-sub-marker-blob-missing "$MARKER_MISSING_SUB" tests/sub || setup_failed "create row 45"
+remove_submodule_object HEAD:README || setup_failed "remove unrelated blob"
+git -C "$REPO/tests/sub" cat-file -e HEAD:scripts/test.sh || setup_failed "marker blob must remain readable"
+links_case "submodule row 45: marker counts despite another missing blob" ok 0 0
+
+submodule_repo l-sub-trace "$EMPTY_SUB" tests/sub || setup_failed "create row 46"
+links_case "submodule row 46: no marker, trace-free control" missing 1 1
+TRACE_CONTROL_OUT="$OUT"; TRACE_CONTROL_RC="$RC"
+GIT_TRACE=1 links_case "submodule row 46: no marker, GIT_TRACE=1" missing 1 1
+assert_eq "links: submodule row 46 — trace does not change JSON" "$TRACE_CONTROL_OUT" "$OUT"
+assert_exit "links: submodule row 46 — trace does not change exit" "$TRACE_CONTROL_RC" "$RC"
+
+mkdir -p "$WORK/gitversion-bin" || setup_failed "create version git directory"
+cat > "$WORK/gitversion-bin/git" <<'EOF' || setup_failed "write version git"
+#!/bin/sh
+printf '%s\n' "$*" >> "$GIT_CALL_LOG" || exit 1
+case "$1" in
+  version|--version) printf 'git version %s\n' "$TEST_GIT_VERSION"; exit 0 ;;
+esac
+exec "$REAL_GIT" "$@"
+EOF
+chmod u+x "$WORK/gitversion-bin/git" || setup_failed "make version git executable"
+submodule_repo l-sub-old-git "$SUB" tests/sub || setup_failed "create row 47"
+: > "$WORK/git-version.log" || setup_failed "clear version git log"
+GIT_CALL_LOG="$WORK/git-version.log" REAL_GIT="$GIT" TEST_GIT_VERSION=2.44.0 PATH="$WORK/gitversion-bin:$PATH" \
+  links_case "submodule row 47: git 2.44, marker only in submodule" error 0 2
+submodule_reason 47 tests/sub 'git is older than 2.45'
+refute_grep "links: submodule row 47 — no git call in the submodule" "$(basename "$REPO")/tests/sub " "$(cat "$WORK/git-version.log")"
+: > "$WORK/git-version.log" || setup_failed "clear version git log for control"
+GIT_CALL_LOG="$WORK/git-version.log" REAL_GIT="$GIT" TEST_GIT_VERSION=2.45.0 PATH="$WORK/gitversion-bin:$PATH" \
+  links_case "submodule row 47: git 2.45 control" ok 0 0
+# Added before archiving (tasks 4.1): a version that cannot be read counts as older.
+: > "$WORK/git-version.log" || setup_failed "clear version git log for unreadable version"
+GIT_CALL_LOG="$WORK/git-version.log" REAL_GIT="$GIT" TEST_GIT_VERSION=unreadable PATH="$WORK/gitversion-bin:$PATH" \
+  links_case "submodule row 47: a git version that cannot be read" error 0 2
+submodule_reason 47 tests/sub 'git is older than 2.45'
+refute_grep "links: submodule row 47 — no git call in the submodule (unreadable version)" "$(basename "$REPO")/tests/sub " "$(cat "$WORK/git-version.log")"
+
+main_marker || setup_failed "add row 48 main marker"
+: > "$WORK/git-version.log" || setup_failed "clear version git log for main marker"
+GIT_CALL_LOG="$WORK/git-version.log" REAL_GIT="$GIT" TEST_GIT_VERSION=2.44.0 PATH="$WORK/gitversion-bin:$PATH" \
+  links_case "submodule row 48: git 2.44, main marker" ok 0 0
+refute_grep "links: submodule row 48 — no git call in the submodule" "$(basename "$REPO")/tests/sub " "$(cat "$WORK/git-version.log")"
+refute_grep_re "links: submodule row 48 — no version check" '^(version|--version)$' "$(cat "$WORK/git-version.log")"
+
+# Row 49 (added before archiving, tasks 4.1): the object store holds the content of a file, but damaged. Nothing is
+# lacking, so only the exit code of the search shows that the recorded commit could not be read.
+submodule_repo l-sub-damaged-blob "$EMPTY_SUB" tests/sub || setup_failed "create row 49"
+remove_submodule_object HEAD:scripts/test.sh || setup_failed "remove the blob before replacing it"
+DAMAGED=$(git -C "$REPO/tests/sub" rev-parse HEAD:scripts/test.sh) || setup_failed "read the damaged blob id"
+DAMAGED_DIR="$(git -C "$REPO/tests/sub" rev-parse --absolute-git-dir)/objects/${DAMAGED:0:2}" || setup_failed "locate the damaged blob"
+mkdir -p "$DAMAGED_DIR" || setup_failed "create the object directory"
+printf 'this is not a compressed object' > "$DAMAGED_DIR/${DAMAGED:2}" || setup_failed "write the damaged blob"
+LACKING=$(git -C "$REPO/tests/sub" rev-list --objects --no-walk --missing=print HEAD) || setup_failed "ask which objects are lacking"
+if printf '%s\n' "$LACKING" | grep -q '^?'; then setup_failed "the damaged blob must count as present"; fi
+links_case "submodule row 49: no marker, a damaged blob" error 0 2
+submodule_reason 49 tests/sub 'its recorded commit could not be read'
+
 # ── preflight ───────────────────────────────────────────────────────────────
 echo "spec-change: preflight (Example: preflight by write access and Spectra state)"
 
@@ -703,6 +845,53 @@ pf_repo pf-msg2 no no; OUT=$(PATH="$BIN_WITH" "$PY" "$SC" preflight --cwd "$TREE
 assert_grep "preflight: init-openspec names the command" "spectra init" "$(printf '%s' "$OUT" | field message)"
 pf_repo pf-sub no yes; mkdir -p "$TREE/deep/er"; OUT=$(PATH="$BIN_WITH" "$PY" "$SC" preflight --cwd "$TREE/deep/er" --can-write yes 2>/dev/null)
 assert_eq "preflight: run from a subdirectory, openspec/ is looked for at the top of the repository" ready "$(printf '%s' "$OUT" | field status)"
+
+# ── top directory names ─────────────────────────────────────────────────────
+echo "spec-change: top directory names (Example: top directory names)"
+example_repo 'l-top-space ' || setup_failed "create trailing-space repository"
+main_marker || setup_failed "write top-directory marker"
+put openspec/changes/archive/2026-11-10-idd-42-example/proposal.md 'Archived change.' || setup_failed "write archived change"
+commit >/dev/null || setup_failed "commit archived change"
+SPACE_REPO="$REPO"; COPY_REPO="$WORK/l-top-copy"
+cp -R "$SPACE_REPO" "$COPY_REPO" || setup_failed "copy repository without trailing space"
+SPACE_HEAD=$(git -C "$SPACE_REPO" rev-parse HEAD) || setup_failed "read trailing-space head"
+COPY_HEAD=$(git -C "$COPY_REPO" rev-parse HEAD) || setup_failed "read copied head"
+[ "$SPACE_HEAD" = "$COPY_HEAD" ] || setup_failed "copied repository must have the same commits"
+cat > "$WORK/top-directory-comment.md" <<EOF || setup_failed "write archived declaration"
+$MARK
+## Implementation Complete
+
+**Spec**: change idd-42-example
+EOF
+
+REPO="$COPY_REPO"
+links_case "top directory names: links control" ok 0 0
+COPY_OUT="$OUT"; COPY_RC="$RC"
+REPO="$SPACE_REPO"
+links_case "top directory names: links trailing space" ok 0 0
+assert_eq "top directory names: links — identical JSON" "$COPY_OUT" "$OUT"
+assert_exit "top directory names: links — identical exit" "$COPY_RC" "$RC"
+
+run archived --file "$WORK/top-directory-comment.md" --cwd "$COPY_REPO" --ref HEAD
+COPY_OUT="$OUT"; COPY_RC="$RC"
+assert_eq "top directory names: archived control — status" pass "$(printf '%s' "$OUT" | field status)"
+assert_exit "top directory names: archived control — exit" 0 "$RC"
+assert_eq "top directory names: archived control — one JSON line" 1 "$LINES"
+run archived --file "$WORK/top-directory-comment.md" --cwd "$SPACE_REPO" --ref HEAD
+assert_eq "top directory names: archived trailing space — status" pass "$(printf '%s' "$OUT" | field status)"
+assert_eq "top directory names: archived — identical JSON" "$COPY_OUT" "$OUT"
+assert_exit "top directory names: archived — identical exit" "$COPY_RC" "$RC"
+assert_eq "top directory names: archived trailing space — one JSON line" 1 "$LINES"
+
+PATH="$BIN_WITH:$PATH" run preflight --cwd "$COPY_REPO" --can-write yes
+COPY_STATUS=$(printf '%s' "$OUT" | field status); COPY_RC="$RC"
+assert_eq "top directory names: preflight control — status" ready "$COPY_STATUS"
+assert_exit "top directory names: preflight control — exit" 0 "$RC"
+assert_eq "top directory names: preflight control — one JSON line" 1 "$LINES"
+PATH="$BIN_WITH:$PATH" run preflight --cwd "$SPACE_REPO" --can-write yes
+assert_eq "top directory names: preflight — identical status" "$COPY_STATUS" "$(printf '%s' "$OUT" | field status)"
+assert_exit "top directory names: preflight — identical exit" "$COPY_RC" "$RC"
+assert_eq "top directory names: preflight trailing space — one JSON line" 1 "$LINES"
 
 # ── spec directory (task 2.6) ───────────────────────────────────────────────
 echo "spec-change: spec directory (Example: spec directory by .spectra.yaml)"
