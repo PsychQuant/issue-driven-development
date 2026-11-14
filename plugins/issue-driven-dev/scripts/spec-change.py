@@ -35,6 +35,27 @@ file) and exits with a fixed code. A usage error prints to stderr and exits 64.
       {"form": proposed|change|no-behaviour-change|third-party-clone|none|invalid, "change": "...",
        "reason": "..."}   exit 0, 1 (invalid), 2 (unreadable; no JSON)
 
+  archive-ref --cwd <dir>                                                       (#547)
+      Which branch do the spec checks read for this repository? The first IDD configuration walking up
+      from the repository's main working tree may map its path (relative to the directory holding .claude/)
+      in `spec_archive` to {"ref": "local", "branch": "<name>"}; accepted only without any remote (a url, pushurl
+      or vcs, or a legacy remotes/branches file). A configuration that cannot be read as a JSON object, and
+      `"spec_archive": null`, count as having no entry (remote, with a reason). A key written twice (spec_archive
+      itself, a key of it, a key of the matching entry) is an error. Every remote answer carries has_remote;
+      false means the repository has no remote at all, and callers stop instead of fetching.
+      {"status": remote|local|error, "branch": "...", "ref": "<commit>", "config": "...", "key": "...",
+       "has_remote": true|false, "reason": "..."}   exit 0 (remote, local), 2 (error)
+
+  link-base --cwd <dir> --issue <N>                                             (#547)
+      Where does the link check start in local mode? The baseline tag (auto_tag.baseline_format, default
+      idd-<N>-baseline) when it is an ancestor of HEAD other than HEAD itself, else the parent of the oldest
+      commit of HEAD's history naming the issue: #<N> (pr-issue-matching.md guards) or the configuration's
+      github_repo as <owner>/<repo>#<N> (letter case ignored); neither, or a root commit → error. git log is read
+      in UTF-8 with signatures off, and every id must be hexadecimal. The configuration is resolved as archive-ref
+      does first: remote (with has_remote) and error never read --issue.
+      {"status": remote|ok|error, "base": "<commit>", "from": baseline-tag|first-commit, "reason": "..."}
+      exit 0 (remote, ok), 2 (error)
+
 Paths named openspec/ above are relative to the spec directory Spectra uses: the `spec_dir:` line of
 .spectra.yaml, or `openspec` when there is none (read at the revision checked; preflight reads the working tree).
 
@@ -114,13 +135,18 @@ def git_text(cwd, *args):
     return git(cwd, *args).stdout.decode("utf-8")
 
 
+def one_line(text):
+    """A path git printed on one line: only the line ending git appends goes (a name may end in a space or a newline)."""
+    return text[:-1] if text.endswith("\n") else text
+
+
 def repo_top(cwd):
     if not os.path.isdir(cwd):
         raise Fail(f"{cwd} is not a directory")
     p = git(cwd, "rev-parse", "--show-toplevel", check=False)
     if p.returncode != 0:
         raise Fail(f"{cwd} is not inside a git repository")
-    return p.stdout.decode("utf-8").strip()
+    return one_line(p.stdout.decode("utf-8"))   # a path may end in whitespace: only git's line ending goes
 
 
 SPEC_DIR_RE = re.compile(r"^spec_dir:(.*)$")
@@ -451,8 +477,8 @@ def cmd_preflight(argv):
             return emit({"status": "third-party", "message": "the account cannot write to this repository: "
                          "implement without a spec change and declare `**Spec**: third-party clone`"}, 0)
         # Plain --git-dir / --git-common-dir (relative to top when not absolute): --path-format needs git 2.31.
-        gd = os.path.join(top, git_text(top, "rev-parse", "--git-dir").strip())
-        cd = os.path.join(top, git_text(top, "rev-parse", "--git-common-dir").strip())
+        gd = os.path.join(top, one_line(git_text(top, "rev-parse", "--git-dir")))
+        cd = os.path.join(top, one_line(git_text(top, "rev-parse", "--git-common-dir")))
         if os.path.realpath(gd) != os.path.realpath(cd):
             return emit({"status": "linked-worktree", "message": "this is a git linked worktree; spectra writes into "
                          "the main working tree from here. Run in the main tree or a standalone clone"}, 1)
@@ -556,11 +582,281 @@ def cmd_plan(argv):
     return emit({"form": form, "change": change, "reason": reason}, 1 if form == "invalid" else 0)
 
 
+# ── archive-ref / link-base (#547) ──────────────────────────────────────────
+
+CONFIG_NAMES = (os.path.join(".claude", ".idd", "local.json"), os.path.join(".claude", "issue-driven-dev.local.json"))
+ISSUE_REF_RE = r"(?<![A-Za-z0-9_/-])#%s(?![0-9])"   # references/pr-issue-matching.md: same guards on both sides
+HEX_ID_RE = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?$")
+
+
+def find_config(start):
+    """(path, directory that holds its .claude/) of the first IDD configuration walking up from start, or (None, None).
+    The skills' walk-up: below / only, the new file before the legacy one at each level, stop after HOME."""
+    home = os.path.realpath(os.path.expanduser("~"))
+    d = os.path.realpath(start)
+    while d != os.path.dirname(d):          # "/" itself is not read
+        for name in CONFIG_NAMES:
+            p = os.path.join(d, name)
+            if os.path.isfile(p):
+                return p, d
+        if d == home:
+            break
+        d = os.path.dirname(d)
+    return None, None
+
+
+def norm_key(k):
+    """The path a spec_archive key names, or None when the key cannot name one."""
+    if not isinstance(k, str) or not k or k != k.strip():
+        return None
+    k = k.rstrip("/")
+    if not k:
+        return None
+    return os.path.normpath(k).replace(os.sep, "/")
+
+
+def first_worktree(top):
+    """(path, bare) of the first entry `git worktree list --porcelain` prints: the main working tree."""
+    p = git(top, "worktree", "list", "--porcelain", "-z", check=False)
+    if p.returncode == 0:
+        fields = p.stdout.decode("utf-8", "replace").split("\x00")
+    else:                                   # git older than 2.36 has no -z
+        fields = git_text(top, "worktree", "list", "--porcelain").split("\n")
+    path, bare = None, False
+    for f in fields:
+        if not f:
+            if path is not None:
+                break                       # the first entry ends at its empty field
+            continue
+        if path is None:
+            if not f.startswith("worktree "):
+                raise Fail(f"git worktree list printed an entry that does not start with its path: {f[:60]!r}")
+            path = f[len("worktree "):]
+        elif f == "bare":
+            bare = True
+    if path is None:
+        raise Fail("git worktree list printed no working tree")
+    return path, bare
+
+
+def main_tree(top):
+    """The repository's main working tree, or None when git does not record it. For a linked worktree (its git dir
+    is not the common one): the first entry of `git worktree list --porcelain`; a bare entry means there is none,
+    and the top level is used; an entry that is the common git directory itself means git does not know where the
+    main working tree is (a git directory made apart with --separate-git-dir under a name other than .git, or a
+    submodule), and no key is guessed; for one named .git, git reports the directory holding it, which is then used.
+    Otherwise the top level (a --separate-git-dir repository asked from its main working tree included)."""
+    gd = os.path.realpath(os.path.join(top, one_line(git_text(top, "rev-parse", "--git-dir"))))
+    common = os.path.realpath(os.path.join(top, one_line(git_text(top, "rev-parse", "--git-common-dir"))))
+    if gd == common:
+        return os.path.realpath(top)
+    path, bare = first_worktree(top)
+    if bare:
+        return os.path.realpath(top)
+    path = os.path.realpath(path)
+    if path == common:
+        return None
+    return path
+
+
+def rel_to(path, base):
+    """path as seen from base, for messages: never an absolute path from this machine."""
+    try:
+        return os.path.relpath(path, base)
+    except ValueError:
+        return os.path.basename(path)
+
+
+class JsonObject(dict):
+    """A JSON object as parsed; `dups` holds the keys written more than once in it. The record lives on the
+    parsed object, not in its data, so no key the file holds can imitate one."""
+    dups = ()
+
+
+def _pairs(pairs):
+    """object_pairs_hook: keep the pairs as a dict, and remember each key written twice in one object."""
+    d, dup = JsonObject(), []
+    for k, v in pairs:
+        if k in d and k not in dup:
+            dup.append(k)
+        d[k] = v
+    d.dups = tuple(dup)
+    return d
+
+
+def read_config(path, shown):
+    """The configuration as a dict, or (None, reason) when it cannot be read as a JSON object."""
+    try:
+        with open(path, "rb") as fh:
+            data = json.loads(fh.read().decode("utf-8-sig"), object_pairs_hook=_pairs)
+    except (OSError, UnicodeDecodeError, ValueError, RecursionError) as exc:
+        return None, f"{shown} is not readable as JSON ({type(exc).__name__}); spec_archive was not read"
+    if not isinstance(data, dict):
+        return None, f"{shown} is not readable as a JSON object; spec_archive was not read"
+    return data, ""
+
+
+def remotes_of(top):
+    """Names of the remotes git can use here: listed by `git remote` and given a url, a pushurl or a vcs (a remote
+    helper), or a legacy remotes/<name> or branches/<name> file in the git directory. A section with none of them
+    (remote.origin.prune) is no remote."""
+    gd = os.path.join(top, one_line(git_text(top, "rev-parse", "--git-common-dir")))
+    names = set(n for n in git_text(top, "remote").splitlines() if n)
+    for d in ("remotes", "branches"):          # legacy files: newer git no longer lists them, fetch may still read them
+        try:
+            names.update(f for f in os.listdir(os.path.join(gd, d)) if os.path.isfile(os.path.join(gd, d, f)))
+        except OSError:
+            pass
+    out = []
+    for name in names:
+        # the key being set is what counts, whatever its value: a url of " " names a directory git can fetch from
+        has = any(git(top, "config", "--get-all", f"remote.{name}.{k}", check=False).returncode == 0
+                  for k in ("url", "pushurl", "vcs"))
+        has = has or any(os.path.isfile(os.path.join(gd, d, name)) for d in ("remotes", "branches"))
+        if has:
+            out.append(name)
+    return sorted(out)
+
+
+def archive_ref(cwd):
+    """{"status": "remote", reason, has_remote} | {"status": "local", branch, ref, config, key}; raises Fail for an error.
+    has_remote is false when the repository has no remote at all: callers then stop instead of fetching (git would
+    read a local path named like the remote)."""
+    top = repo_top(cwd)
+    tree = main_tree(top)
+
+    def remote(reason):
+        return {"status": "remote", "reason": reason, "has_remote": bool(remotes_of(top))}
+
+    if tree is None:
+        return remote("this is a linked worktree whose main working tree git does not record (a repository whose "
+                      "git directory was made apart with --separate-git-dir, or a submodule); no spec_archive key is "
+                      "guessed: run from the main working tree")
+    path, root = find_config(tree)
+    if path is None:
+        return remote("no IDD configuration found above the repository")
+    shown = rel_to(path, tree)        # messages name the file as seen from the repository
+    data, why = read_config(path, shown)
+    if data is None:
+        return remote(why)
+    if "spec_archive" in data.dups:
+        raise Fail(f"{shown} has more than one entry for spec_archive (the field is written twice)")
+    if data.get("spec_archive") is None:
+        return remote(f"{shown} has no spec_archive field")
+    table = data["spec_archive"]
+    if not isinstance(table, dict):
+        raise Fail(f"spec_archive in {shown} must be an object keyed by repository path")
+    rel = os.path.relpath(tree, root)
+    key = norm_key(rel)
+    if key is None:                   # never fall back to "." (that is another directory's entry)
+        return remote(f"this repository's path {rel!r} cannot be written as a spec_archive key")
+    dup = [k for k in table.dups if norm_key(k) == key]
+    entries = [v for k, v in table.items() if norm_key(k) == key]
+    if not entries:
+        return remote(f"spec_archive in {shown} has no entry for {key}")
+    if len(entries) > 1 or dup:
+        raise Fail(f"spec_archive in {shown} has more than one entry for {key}")
+    entry = entries[0]
+    if isinstance(entry, JsonObject) and entry.dups:
+        raise Fail(f"spec_archive[{key!r}] in {shown} has more than one entry for {', '.join(map(repr, entry.dups))}")
+    if not isinstance(entry, dict) or entry.get("ref") != "local":
+        raise Fail(f"spec_archive[{key!r}] in {shown}: only {{\"ref\": \"local\", \"branch\": \"<name>\"}} is supported")
+    branch = entry.get("branch")
+    if (not isinstance(branch, str) or not branch or branch.startswith("-")
+            or any(ord(c) < 32 or ord(c) == 127 for c in branch)):
+        raise Fail(f"spec_archive[{key!r}] in {shown} needs a branch name")
+    fmt = git(top, "check-ref-format", "--branch", branch, check=False)
+    if fmt.returncode != 0 or fmt.stdout.decode("utf-8", "replace").strip() != branch:
+        raise Fail(f"spec_archive[{key!r}] in {shown}: {branch!r} is not a branch name")
+    remotes = remotes_of(top)
+    if remotes:
+        raise Fail(f"spec_archive[{key!r}] in {shown} asks for the local branch, but this repository has a remote "
+                   f"({', '.join(remotes)}); the local branch is accepted only for a repository without any remote")
+    p = git(top, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}^{{commit}}", check=False)
+    if p.returncode != 0:
+        raise Fail(f"spec_archive[{key!r}] in {shown} names the branch {branch!r}, which does not exist here")
+    return {"status": "local", "branch": branch, "ref": p.stdout.decode("utf-8").strip(), "config": path, "config_shown": shown, "key": key}
+
+
+def cmd_archive_ref(argv):
+    a = parse(argv, {"--cwd"}, ["--cwd"])
+    try:
+        out = archive_ref(a["--cwd"])
+    except Fail as exc:
+        return emit({"status": "error", "reason": str(exc)}, 2)
+    return emit(out, 0)
+
+
+def config_of(config_path):
+    data, _ = read_config(config_path, "")
+    return data or {}
+
+
+def baseline_tag(top, data, n):
+    at = data.get("auto_tag")
+    fmt = at.get("baseline_format") if isinstance(at, dict) else None
+    if isinstance(fmt, str) and "{N}" in fmt:
+        name = fmt.replace("{N}", n)
+        if git(top, "check-ref-format", f"refs/tags/{name}", check=False).returncode == 0:
+            return name
+    return f"idd-{n}-baseline"
+
+
+def names_issue(data, n):
+    """A regex for a commit message that names issue n: #n with the pr-issue-matching guards, or the issue
+    repository's own owner/repo#n (the form a separate code repository uses)."""
+    parts = [ISSUE_REF_RE % n]
+    gh = data.get("github_repo")
+    if isinstance(gh, str) and re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", gh):
+        parts.append(r"(?<![A-Za-z0-9_./-])%s#%s(?![0-9])" % (re.escape(gh), n))
+    return re.compile("|".join("(?:%s)" % x for x in parts), re.IGNORECASE)
+
+
+def cmd_link_base(argv):
+    a = parse(argv, {"--cwd", "--issue"}, ["--cwd", "--issue"])
+    try:
+        out = archive_ref(a["--cwd"])          # the configuration first: remote never reads --issue
+        if out["status"] == "remote":
+            return emit(out, 0)
+        if not re.fullmatch(r"[1-9][0-9]*", a["--issue"]):
+            raise Fail(f"the issue number must be a positive integer written in digits: {a['--issue'][:20]!r}")
+        n = a["--issue"]
+        top = repo_top(a["--cwd"])
+        data = config_of(out["config"])
+        tag = baseline_tag(top, data, n)
+        head_sha = git_text(top, "rev-parse", "--verify", "HEAD^{commit}").strip()
+        t = git(top, "rev-parse", "--verify", "--quiet", f"refs/tags/{tag}^{{commit}}", check=False)
+        if t.returncode == 0:
+            sha = t.stdout.decode("utf-8").strip()
+            if sha != head_sha and git(top, "merge-base", "--is-ancestor", sha, "HEAD", check=False).returncode == 0:
+                return emit({"status": "ok", "base": sha, "from": "baseline-tag", "tag": tag}, 0)
+        names = names_issue(data, n)
+        # -z: one NUL between commits (a commit message cannot hold NUL); no signature text; UTF-8 whatever
+        # i18n.logOutputEncoding says (UTF-16 would put NULs inside every record); HEAD is a revision.
+        log = git(top, "log", "--no-show-signature", "--encoding=UTF-8", "--reverse", "-z", "--format=%H %P%n%B", "HEAD", "--")
+        for rec in log.stdout.decode("utf-8", "replace").split("\x00"):
+            head, _, body = rec.partition("\n")
+            ids = head.split()
+            if not ids:
+                continue
+            if not all(HEX_ID_RE.match(i) for i in ids):
+                raise Fail(f"git log printed a line that is not commit ids: {head[:60]!r}")
+            if not names.search(body):
+                continue
+            if len(ids) < 2:
+                raise Fail(f"the oldest commit naming #{n} ({ids[0][:12]}) is the root commit; pass the base by hand")
+            return emit({"status": "ok", "base": ids[1], "from": "first-commit"}, 0)
+        raise Fail(f"no tag {tag} on the history of HEAD and no commit there names #{n}; pass the base by hand")
+    except Fail as exc:
+        return emit({"status": "error", "reason": str(exc)}, 2)
+
+
 def main(argv):
     handlers = {"declared": cmd_declared, "archived": cmd_archived, "links": cmd_links, "preflight": cmd_preflight,
-                "ic": cmd_ic, "plan": cmd_plan}
+                "ic": cmd_ic, "plan": cmd_plan, "archive-ref": cmd_archive_ref, "link-base": cmd_link_base}
     if not argv or argv[0] not in handlers:
-        print("spec-change: subcommand required: declared | archived | links | preflight | ic | plan", file=sys.stderr)
+        print("spec-change: subcommand required: declared | archived | links | preflight | ic | plan | archive-ref | "
+              "link-base", file=sys.stderr)
         return 64
     try:
         return handlers[argv[0]](argv[1:])
