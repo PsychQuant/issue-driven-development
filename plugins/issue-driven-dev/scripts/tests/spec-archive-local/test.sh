@@ -351,6 +351,15 @@ mkdir -p "$WORK/sp/odd /openspec/specs/cap"; printf '## Purpose\n\nx\n\n## Requi
 git -C "$WORK/sp/odd " add -A; git -C "$WORK/sp/odd " commit -q -m "add a spec"
 OUT=$(python3 "$SC" links --base "$SPB" --cwd "$WORK/sp/odd " 2>/dev/null)
 assert_eq "links on 'odd ' with a sibling 'odd' → missing (reads 'odd ')" missing "$(printf '%s' "$OUT" | field status)"
+# preflight, too (round 4 pre-check): 'pf ' has openspec/, its sibling 'pf' does not; a stub spectra on PATH
+mkdir -p "$WORK/stubsp"; printf '#!/bin/sh\nexit 0\n' > "$WORK/stubsp/spectra"; python3 -c 'import os,sys; os.chmod(sys.argv[1], 0o755)' "$WORK/stubsp/spectra"
+git init -q -b main "$WORK/sp/pf "; git -C "$WORK/sp/pf " commit -q --allow-empty -m base; mkdir -p "$WORK/sp/pf /openspec/specs"
+git init -q -b main "$WORK/sp/pf"; git -C "$WORK/sp/pf" commit -q --allow-empty -m base
+OUT=$(PATH="$WORK/stubsp:$PATH" python3 "$SC" preflight --cwd "$WORK/sp/pf " --can-write yes 2>/dev/null)
+assert_eq "preflight on 'pf ' with a sibling 'pf' → reads 'pf ' (ready)" ready "$(printf '%s' "$OUT" | field status)"
+mv "$WORK/sp/pf" "$WORK/sp/pf-away"
+OUT=$(PATH="$WORK/stubsp:$PATH" python3 "$SC" preflight --cwd "$WORK/sp/pf " --can-write yes 2>/dev/null)
+assert_eq "preflight on 'pf ' alone → ready" ready "$(printf '%s' "$OUT" | field status)"
 
 echo "spec-archive-local: the wrapper and idd-all text"
 WRAP="$PLUGIN/references/spec-wrapper.md"
