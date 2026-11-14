@@ -48,8 +48,11 @@ file) and exits with a fixed code. A usage error prints to stderr and exits 64.
 
   link-base --cwd <dir> --issue <N>                                             (#547)
       Where does the link check start in local mode? The baseline tag (auto_tag.baseline_format, default
-      idd-<N>-baseline) when it is an ancestor of HEAD, else the parent of the oldest commit of HEAD's
-      history naming #<N> (pr-issue-matching.md guards). Remote never reads --issue.
+      idd-<N>-baseline) when it is an ancestor of HEAD other than HEAD itself, else the parent of the oldest
+      commit of HEAD's history naming the issue: #<N> (pr-issue-matching.md guards) or the configuration's
+      github_repo as <owner>/<repo>#<N> (letter case ignored); neither, or a root commit → error. git log is read
+      in UTF-8 with signatures off, and every id must be hexadecimal. The configuration is resolved as archive-ref
+      does first: remote (with has_remote) and error never read --issue.
       {"status": remote|ok|error, "base": "<commit>", "from": baseline-tag|first-commit, "reason": "..."}
       exit 0 (remote, ok), 2 (error)
 
@@ -132,13 +135,18 @@ def git_text(cwd, *args):
     return git(cwd, *args).stdout.decode("utf-8")
 
 
+def one_line(text):
+    """A path git printed on one line: only the line ending git appends goes (a name may end in a space or a newline)."""
+    return text[:-1] if text.endswith("\n") else text
+
+
 def repo_top(cwd):
     if not os.path.isdir(cwd):
         raise Fail(f"{cwd} is not a directory")
     p = git(cwd, "rev-parse", "--show-toplevel", check=False)
     if p.returncode != 0:
         raise Fail(f"{cwd} is not inside a git repository")
-    return p.stdout.decode("utf-8").rstrip("\n")   # a path may end in a space: only the newline goes
+    return one_line(p.stdout.decode("utf-8"))   # a path may end in whitespace: only git's line ending goes
 
 
 SPEC_DIR_RE = re.compile(r"^spec_dir:(.*)$")
@@ -469,8 +477,8 @@ def cmd_preflight(argv):
             return emit({"status": "third-party", "message": "the account cannot write to this repository: "
                          "implement without a spec change and declare `**Spec**: third-party clone`"}, 0)
         # Plain --git-dir / --git-common-dir (relative to top when not absolute): --path-format needs git 2.31.
-        gd = os.path.join(top, git_text(top, "rev-parse", "--git-dir").rstrip("\n"))
-        cd = os.path.join(top, git_text(top, "rev-parse", "--git-common-dir").rstrip("\n"))
+        gd = os.path.join(top, one_line(git_text(top, "rev-parse", "--git-dir")))
+        cd = os.path.join(top, one_line(git_text(top, "rev-parse", "--git-common-dir")))
         if os.path.realpath(gd) != os.path.realpath(cd):
             return emit({"status": "linked-worktree", "message": "this is a git linked worktree; spectra writes into "
                          "the main working tree from here. Run in the main tree or a standalone clone"}, 1)
@@ -637,8 +645,8 @@ def main_tree(top):
     and the top level is used; an entry that is the common git directory itself means git does not know where the
     main working tree is (a repository made with --separate-git-dir keeps no path back to it), and no key is guessed.
     Otherwise the top level (a --separate-git-dir repository asked from its main working tree included)."""
-    gd = os.path.realpath(os.path.join(top, git_text(top, "rev-parse", "--git-dir").rstrip("\n")))
-    common = os.path.realpath(os.path.join(top, git_text(top, "rev-parse", "--git-common-dir").rstrip("\n")))
+    gd = os.path.realpath(os.path.join(top, one_line(git_text(top, "rev-parse", "--git-dir"))))
+    common = os.path.realpath(os.path.join(top, one_line(git_text(top, "rev-parse", "--git-common-dir"))))
     if gd == common:
         return os.path.realpath(top)
     path, bare = first_worktree(top)
@@ -691,7 +699,7 @@ def remotes_of(top):
     """Names of the remotes git can use here: listed by `git remote` and given a url, a pushurl or a vcs (a remote
     helper), or a legacy remotes/<name> or branches/<name> file in the git directory. A section with none of them
     (remote.origin.prune) is no remote."""
-    gd = os.path.join(top, git_text(top, "rev-parse", "--git-common-dir").rstrip("\n"))
+    gd = os.path.join(top, one_line(git_text(top, "rev-parse", "--git-common-dir")))
     names = set(n for n in git_text(top, "remote").splitlines() if n)
     for d in ("remotes", "branches"):          # legacy files: newer git no longer lists them, fetch may still read them
         try:
@@ -700,7 +708,8 @@ def remotes_of(top):
             pass
     out = []
     for name in names:
-        has = any(git(top, "config", "--get-all", f"remote.{name}.{k}", check=False).stdout.strip()
+        # the key being set is what counts, whatever its value: a url of " " names a directory git can fetch from
+        has = any(git(top, "config", "--get-all", f"remote.{name}.{k}", check=False).returncode == 0
                   for k in ("url", "pushurl", "vcs"))
         has = has or any(os.path.isfile(os.path.join(gd, d, name)) for d in ("remotes", "branches"))
         if has:
@@ -719,8 +728,9 @@ def archive_ref(cwd):
         return {"status": "remote", "reason": reason, "has_remote": bool(remotes_of(top))}
 
     if tree is None:
-        return remote("this is a linked worktree whose main working tree git does not record (its git directory "
-                      "was made apart with --separate-git-dir); spec_archive is read only from the main working tree")
+        return remote("this is a linked worktree whose main working tree git does not record (a repository whose "
+                      "git directory was made apart with --separate-git-dir, or a submodule); no spec_archive key is "
+                      "guessed: run from the main working tree")
     path, root = find_config(tree)
     if path is None:
         return remote("no IDD configuration found above the repository")

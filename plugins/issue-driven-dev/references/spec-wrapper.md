@@ -158,7 +158,10 @@ fi
 if [ -n "$SPEC_BASE" ]; then
   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" links --base "$SPEC_BASE" --cwd "$CWD"
 elif [ "$LB_STATUS" = remote ] && [ "${LB_HAS_REMOTE:-}" = True ]; then
-  echo "✗ spec close-out: cannot find where this branch left the default branch (gh repo view, git fetch or git merge-base failed); stopping" >&2
+  echo "✗ spec close-out: cannot find where this branch left the default branch (gh repo view, git fetch or git merge-base failed)$(printf '%s' "$LB" | python3 -I -c 'import json,sys
+try: r = json.loads(sys.stdin.read()).get("reason", "")
+except Exception: r = ""
+print("; link-base: " + r if r else "")' 2>/dev/null); stopping" >&2
 fi
 ```
 

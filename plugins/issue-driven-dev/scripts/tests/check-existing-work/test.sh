@@ -306,6 +306,9 @@ OUT=$(PATH="$W/gitlog:$W/bin:$PATH" bash "$SCRIPT" --cwd "$TR" --skip-branches t
 refute_grep "--skip-branches with gh repo view failing reads no origin/HEAD" "refs/remotes/origin/HEAD" "$(cat "$W/gitlog/calls")"
 refute_grep "… and adds no default-branch error (the default branch is not needed)" "default branch" "$(field "$OUT" "d['errors']")"
 refute_grep "… nor asks GitHub for it" "repo view" "$(field "$OUT" "d['errors']")"
+refute_grep "… runs no git fetch (idd-547-fix4)" "fetch" "$(cat "$W/gitlog/calls")"
+assert_grep "… notes say the branch lookup was skipped (idd-547-fix4)" "branch lookup skipped" "$(field "$OUT" "d.get('notes')")"
+assert_eq "… none open (idd-547-fix4)" "[]" "$(kinds "$OUT" 61)"
 rm -f "$FX/fail_repo_view"
 assert_eq "idd-close: archive-ref answers error → Step 1.5 does not pass --skip-branches" "[]" \
   "$(printf '%s\n' "$ERR_OUT" | sed -n 's/^EWNOTES=//p')"

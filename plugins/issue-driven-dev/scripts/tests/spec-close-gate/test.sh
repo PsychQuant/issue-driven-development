@@ -75,8 +75,8 @@ step157() { # comments-json fail(0|1) → STATUS, GRC
   local out
   out=$(cd "$C" && env PATH="$WORK/bin:$PATH" HOME="$WORK" FAKE_COMMENTS="$WORK/comments.json" FAKE_FAIL="$2" FAKE_VIEW_FAIL="${FAKE_VIEW_FAIL:-0}" \
         GITHUB_REPO=o/r NUMBER=42 CWD="$C" CLAUDE_PLUGIN_ROOT="$PLUGIN" \
-        bash --norc --noprofile -c '. "$1"; printf "\nSTATUS=%s\nGRC=%s\n" "$(printf "%s" "$GATE" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get(\"status\"))")" "$GATE_RC"' _ "$BLOCK" 2>/dev/null </dev/null)
-  STATUS=$(printf '%s\n' "$out" | sed -n 's/^STATUS=//p'); GRC=$(printf '%s\n' "$out" | sed -n 's/^GRC=//p')
+        bash --norc --noprofile -c '. "$1"; printf "\nSTATUS=%s\nGRC=%s\nNA=%s\n" "$(printf "%s" "$GATE" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get(\"status\"))")" "$GATE_RC" "$(printf "%s" "$GATE" | python3 -c "import json,sys; print(\" \".join(json.loads(sys.stdin.read()).get(\"not_archived\") or []))")"' _ "$BLOCK" 2>/dev/null </dev/null)
+  STATUS=$(printf '%s\n' "$out" | sed -n 's/^STATUS=//p'); GRC=$(printf '%s\n' "$out" | sed -n 's/^GRC=//p'); NA=$(printf '%s\n' "$out" | sed -n 's/^NA=//p')
 }
 assert_true "Step 1.57 has a bash block" "[ -s '$BLOCK' ]"
 step157 '[{"author_association":"OWNER","body":"## Diagnosis\n\nx"}]' 0
@@ -87,6 +87,7 @@ assert_eq "the comments could not be fetched → stops with error" error "$STATU
 assert_eq "… exit 2" 2 "$GRC"
 step157 "[{\"author_association\":\"OWNER\",\"body\":\"$MARK\\n**Spec**: change idd-42-other\"}]" 0
 assert_eq "the newest trusted declaration names a change not archived on the default branch → stops" refuse "$STATUS"
+assert_eq "… naming the change (idd-547-fix4)" idd-42-other "$NA"
 step157 "[{\"author_association\":\"OWNER\",\"body\":\"$MARK\\n**Spec**: change idd-42-fix-timeout\"},{\"author_association\":\"CONTRIBUTOR\",\"body\":\"$MARK\\n**Spec**: change idd-42-other\"}]" 0
 assert_eq "a newer declaration by a contributor is not the one read" pass "$STATUS"
 IC_OK="[{\"author_association\":\"OWNER\",\"body\":\"$MARK\\n**Spec**: change idd-42-fix-timeout\"}]"
@@ -111,6 +112,7 @@ git -C "$C2" rm -q -r openspec/changes/archive/2026-11-10-idd-42-fix-timeout; gi
 git -C "$C" config remote.origin.fetch '+refs/heads/nothing:refs/remotes/origin/nothing'
 step157 "$IC_OK" 0
 assert_eq "the remote dropped the archive, the local tracking ref did not move → stops" refuse "$STATUS"
+assert_eq "… naming the change (idd-547-fix4)" idd-42-fix-timeout "$NA"
 git -C "$C" config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
 
 echo "spec-close-gate: a repository without a remote, opted into its local branch (#547)"
@@ -124,11 +126,12 @@ step157_in() { # dir comments-json → STATUS, GRC, OUTALL
   printf '%s' "$2" > "$WORK/comments.json"
   OUTALL=$(cd "$1" && env PATH="$WORK/bin:$PATH" HOME="$WORK" FAKE_COMMENTS="$WORK/comments.json" FAKE_FAIL=0 FAKE_VIEW_FAIL="${VIEW_FAIL_IN:-1}" \
         GITHUB_REPO=o/r NUMBER=42 CWD="$1" CLAUDE_PLUGIN_ROOT="$PLUGIN" \
-        bash --norc --noprofile -c '. "$1"; printf "\nSTATUS=%s\nGRC=%s\n" "$(printf "%s" "$GATE" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get(\"status\"))")" "$GATE_RC"' _ "$BLOCK" 2>/dev/null </dev/null)
-  STATUS=$(printf '%s\n' "$OUTALL" | sed -n 's/^STATUS=//p'); GRC=$(printf '%s\n' "$OUTALL" | sed -n 's/^GRC=//p')
+        bash --norc --noprofile -c '. "$1"; printf "\nSTATUS=%s\nGRC=%s\nNA=%s\n" "$(printf "%s" "$GATE" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get(\"status\"))")" "$GATE_RC" "$(printf "%s" "$GATE" | python3 -c "import json,sys; print(\" \".join(json.loads(sys.stdin.read()).get(\"not_archived\") or []))")"' _ "$BLOCK" 2>/dev/null </dev/null)
+  STATUS=$(printf '%s\n' "$OUTALL" | sed -n 's/^STATUS=//p'); GRC=$(printf '%s\n' "$OUTALL" | sed -n 's/^GRC=//p'); NA=$(printf '%s\n' "$OUTALL" | sed -n 's/^NA=//p')
 }
 step157_in "$LR" "$IC_OK"
 assert_eq "no remote, opted in, the change is not archived on master → stops" refuse "$STATUS"
+assert_eq "… naming the change (idd-547-fix4)" idd-42-fix-timeout "$NA"
 mkdir -p "$LR/openspec/changes/archive/2026-11-14-idd-42-fix-timeout"; echo p > "$LR/openspec/changes/archive/2026-11-14-idd-42-fix-timeout/proposal.md"
 git -C "$LR" add -A; git -C "$LR" commit -q -m "chore: archive idd-42-fix-timeout (#42)"
 step157_in "$LR" "$IC_OK"
@@ -151,6 +154,7 @@ mkdir -p "$LHR/openspec/changes/archive/2026-11-14-idd-42-fix-timeout"; echo p >
 git -C "$LHR" add -A; git -C "$LHR" commit -q -m "chore: archive idd-42-fix-timeout (#42)"
 step157_in "$LHR" "$IC_OK"
 assert_eq "no remote, opted into master, HEAD on the issue's branch with the archive, master without → stops" refuse "$STATUS"
+assert_eq "… naming the change (idd-547-fix4)" idd-42-fix-timeout "$NA"
 # idd-547-fix1: no remote and no spec_archive entry → stops, and the reason says why archive-ref answered remote
 LN="$WORK/noentry"; mkdir -p "$LN/.claude/.idd"; git init -q -b master "$LN/code"
 printf '%s\n' '{"github_repo": "o/r"}' > "$LN/.claude/.idd/local.json"

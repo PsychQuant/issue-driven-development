@@ -5,7 +5,7 @@
 #
 # spec-example: spec-on-every-issue / how a spec_archive entry resolves
 # spec-example: spec-on-every-issue / where the local link check starts
-# spec-example: spec-on-every-issue / a top level whose name ends in a space
+# spec-example: spec-on-every-issue / a top level whose name ends in whitespace
 #
 # Real git repositories under a temporary HOME, so the walk up for the IDD configuration
 # stops inside the fixture and never reads the developer's own files.
@@ -116,6 +116,7 @@ mkrepo "$WORK/b7/sub"; conf "$WORK/b7" '{"spec_archive": {"sub": {"ref": "local"
 git -C "$WORK/b7/sub" commit -q --allow-empty -m second
 ar "$WORK/b7/sub"
 assert_eq "branch master~1 (revision syntax) → error" error "$ST"
+assert_grep "… not a branch name (idd-547-fix4)" "is not a branch name" "$(printf '%s' "$OUT" | field reason)"
 mkrepo "$WORK/b8/sub"; conf "$WORK/b8" '{"spec_archive": {"sub": {"ref": "local", "branch": "master@{0}"}}}'
 ar "$WORK/b8/sub"
 assert_eq "branch master@{0} → error" error "$ST"
@@ -301,6 +302,8 @@ assert_grep "… saying the main working tree is not recorded" "main working tre
 conf "$WORK/d1" "{\"spec_archive\": {\"wt\": $OPT}}"
 ar "$WORK/d1/wt"
 assert_eq "… even when an entry names the linked worktree's own path → remote" remote "$ST"
+assert_eq "… has_remote false (idd-547-fix4)" False "$(printf '%s' "$OUT" | field has_remote)"
+assert_grep "… saying the main working tree is not recorded (idd-547-fix4)" "main working tree" "$(printf '%s' "$OUT" | field reason)"
 ar "$WORK/d1/sub"
 assert_eq "the --separate-git-dir main working tree itself, no entry for sub → remote" remote "$ST"
 mkrepo "$WORK/d2/sub"; mkdir -p "$WORK/d2/.claude/.idd"
@@ -312,6 +315,7 @@ mkrepo "$WORK/d3/sub"; mkdir -p "$WORK/d3/.claude/.idd"
 printf '{"spec_archive": {"sub": {"ref": "local", "branch": "master", "branch": "master"}}}\n' > "$WORK/d3/.claude/.idd/local.json"
 ar "$WORK/d3/sub"
 assert_eq "a key written twice inside the entry → error" error "$ST"
+assert_grep "… more than one entry (idd-547-fix4)" "more than one entry" "$(printf '%s' "$OUT" | field reason)"
 mkrepo "$WORK/d4/sub"; mkdir -p "$WORK/d4/.claude/.idd"
 printf '{"spec_archive": {"sub": %s, "\\u0000duplicate-keys": ["sub"]}, "\\u0000duplicate-keys": ["spec_archive"]}\n' "$OPT" > "$WORK/d4/.claude/.idd/local.json"
 ar "$WORK/d4/sub"
@@ -351,6 +355,15 @@ mkdir -p "$WORK/sp/odd /openspec/specs/cap"; printf '## Purpose\n\nx\n\n## Requi
 git -C "$WORK/sp/odd " add -A; git -C "$WORK/sp/odd " commit -q -m "add a spec"
 OUT=$(python3 "$SC" links --base "$SPB" --cwd "$WORK/sp/odd " 2>/dev/null)
 assert_eq "links on 'odd ' with a sibling 'odd' → missing (reads 'odd ')" missing "$(printf '%s' "$OUT" | field status)"
+# idd-547-fix4: a top level whose name ends in a newline, with a sibling without it
+NL="$WORK/sp/nl"$'\n'
+git init -q -b main "$NL"; mkdir -p "$NL/openspec/specs"; echo x > "$NL/openspec/specs/.keep"; git -C "$NL" add -A; git -C "$NL" commit -q -m base
+mkdir -p "$NL/openspec/changes/archive/2026-11-14-idd-9-c1"; echo p > "$NL/openspec/changes/archive/2026-11-14-idd-9-c1/proposal.md"
+git -C "$NL" add -A; git -C "$NL" commit -q -m "archive c1"
+git init -q -b main "$WORK/sp/nl"; mkdir -p "$WORK/sp/nl/openspec/changes/idd-9-c1"; echo p > "$WORK/sp/nl/openspec/changes/idd-9-c1/proposal.md"
+git -C "$WORK/sp/nl" add -A; git -C "$WORK/sp/nl" commit -q -m "open c1"
+OUT=$(python3 "$SC" archived --file "$WORK/sp/ic.md" --cwd "$NL" --ref HEAD 2>/dev/null)
+assert_eq "archived on a top level ending in a newline, with a sibling without it → reads itself (pass)" pass "$(printf '%s' "$OUT" | field status)"
 # preflight, too (round 4 pre-check): 'pf ' has openspec/, its sibling 'pf' does not; a stub spectra on PATH
 mkdir -p "$WORK/stubsp"; printf '#!/bin/sh\nexit 0\n' > "$WORK/stubsp/spectra"; python3 -c 'import os,sys; os.chmod(sys.argv[1], 0o755)' "$WORK/stubsp/spectra"
 git init -q -b main "$WORK/sp/pf "; git -C "$WORK/sp/pf " commit -q --allow-empty -m base; mkdir -p "$WORK/sp/pf /openspec/specs"
@@ -360,6 +373,31 @@ assert_eq "preflight on 'pf ' with a sibling 'pf' → reads 'pf ' (ready)" ready
 mv "$WORK/sp/pf" "$WORK/sp/pf-away"
 OUT=$(PATH="$WORK/stubsp:$PATH" python3 "$SC" preflight --cwd "$WORK/sp/pf " --can-write yes 2>/dev/null)
 assert_eq "preflight on 'pf ' alone → ready" ready "$(printf '%s' "$OUT" | field status)"
+
+# idd-547-fix4 rows — how a spec_archive entry resolves
+for U in " " ""; do
+  R="$WORK/u$([ -z "$U" ] && echo e || echo s)"; mkrepo "$R/sub"; conf "$R" "{\"spec_archive\": {\"sub\": $OPT}}"
+  git -C "$R/sub" config remote.origin.url "$U"
+  ar "$R/sub"
+  assert_eq "a remote whose url is '$U' counts → error" error "$ST"
+  assert_grep "… naming it" "origin" "$(printf '%s' "$OUT" | field reason)"
+done
+# a bare main repository: its linked worktree is keyed by its own path
+mkdir -p "$WORK/bare"; git init -q --bare -b master "$WORK/bare/main.git"
+git clone -q "$WORK/bare/main.git" "$WORK/bare/seed" 2>/dev/null; git -C "$WORK/bare/seed" commit -q --allow-empty -m base
+git -C "$WORK/bare/seed" push -q origin HEAD:master 2>/dev/null
+git -C "$WORK/bare/main.git" worktree add -q "$WORK/bare/wt" master 2>/dev/null
+conf "$WORK/bare" "{\"spec_archive\": {\"wt\": $OPT}}"
+ar "$WORK/bare/wt"
+assert_eq "a linked worktree of a bare repository → local" local "$ST"
+assert_eq "… keyed by its own path" wt "$(printf '%s' "$OUT" | field key)"
+# --separate-git-dir <dir>/.git: git reports <dir> as the main working tree, and that path is the key
+mkdir -p "$WORK/sg/store" "$WORK/sg/iss"; conf "$WORK/sg" "{\"spec_archive\": {\"store\": $OPT}}"
+git init -q -b master --separate-git-dir "$WORK/sg/store/.git" "$WORK/sg/iss/sub"; git -C "$WORK/sg/iss/sub" commit -q --allow-empty -m base
+git -C "$WORK/sg/iss/sub" worktree add -q "$WORK/sg/wt" -b wt 2>/dev/null
+ar "$WORK/sg/wt"
+assert_eq "a linked worktree of a --separate-git-dir <dir>/.git repository → keyed by <dir>" store "$(printf '%s' "$OUT" | field key)"
+assert_eq "… local, the same repository's master" "$(git -C "$WORK/sg/iss/sub" rev-parse master)" "$(printf '%s' "$OUT" | field ref)"
 
 echo "spec-archive-local: the wrapper and idd-all text"
 WRAP="$PLUGIN/references/spec-wrapper.md"
@@ -379,6 +417,21 @@ refute_grep "… without the failed-fetch message" "cannot find where this branc
 S5OK=$(cd "$WORK/lb2/repo" && env HOME="$WORK" CWD="$WORK/lb2/repo" NUMBER=14 GITHUB_REPO=o/r CLAUDE_PLUGIN_ROOT="$PLUGIN" \
   bash --norc --noprofile "$WORK/step5.sh" 2>&1 </dev/null)
 assert_grep "step 5, local mode with a base → runs the link check from it" "link check from" "$S5OK"
+# idd-547-fix4: step 5 on a repository with a fetchable origin and no entry → the fetch, merge-base and links path
+RM="$WORK/rm"; git init -q --bare -b main "$RM/o.git"; git clone -q "$RM/o.git" "$RM/c" 2>/dev/null
+git -C "$RM/c" checkout -q -B main; mkdir -p "$RM/c/openspec/specs"; echo x > "$RM/c/openspec/specs/.keep"
+git -C "$RM/c" add -A; git -C "$RM/c" commit -q -m base; git -C "$RM/c" push -q origin main 2>/dev/null
+git -C "$RM/c" checkout -q -b feat; git -C "$RM/c" commit -q --allow-empty -m "work (#14)"
+S5RM=$(cd "$RM/c" && env HOME="$WORK" CWD="$RM/c" NUMBER=14 GITHUB_REPO=o/r CLAUDE_PLUGIN_ROOT="$PLUGIN" \
+  PATH="$WORK/ghok:$PATH" bash --norc --noprofile "$WORK/step5.sh" 2>&1 </dev/null)
+assert_grep "step 5, a remote and no entry → runs links from the merge-base with the fetched default branch" '"status": "ok"' "$S5RM"
+refute_grep "… without saying the repository has no remote" "has no remote" "$S5RM"
+assert_eq "… the default branch was fetched" "$(git -C "$RM/o.git" rev-parse main)" "$(git -C "$RM/c" rev-parse -q --verify FETCH_HEAD 2>/dev/null)"
+git -C "$RM/c" remote set-url origin "$RM/nowhere.git"
+S5RF=$(cd "$RM/c" && env HOME="$WORK" CWD="$RM/c" NUMBER=14 GITHUB_REPO=o/r CLAUDE_PLUGIN_ROOT="$PLUGIN" \
+  PATH="$WORK/ghok:$PATH" bash --norc --noprofile "$WORK/step5.sh" 2>&1 </dev/null)
+assert_grep "step 5, the fetch fails → stops with the failed-fetch message" "cannot find where this branch left" "$S5RF"
+assert_grep "… and link-base's reason" "link-base:" "$S5RF"
 # idd-547-fix3: no entry and no remote, a repository named origin inside it → no fetch, stops saying why
 git clone -q --bare "$WORK/none/sub" "$WORK/none/sub/origin" 2>/dev/null
 git -C "$WORK/none/sub/origin" branch -q main master   # fetchable: only has_remote keeps the fetch from running
