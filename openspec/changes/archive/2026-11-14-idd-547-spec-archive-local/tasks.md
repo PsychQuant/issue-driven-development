@@ -20,4 +20,4 @@
 ## 4. 收尾
 
 - [x] 4.1 CHANGELOG 的 Unreleased 加 Added 條目（#547）。驗證：已發布版本的條目沒有改動。
-- [ ] 4.2 跑 run-all-tests.sh 與連結檢查。驗證：結束碼都是 0，links 回 ok。
+- [x] 4.2 跑 run-all-tests.sh 與連結檢查。驗證：結束碼都是 0，links 回 ok。
