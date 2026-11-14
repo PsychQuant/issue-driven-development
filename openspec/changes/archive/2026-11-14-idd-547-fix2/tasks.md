@@ -12,4 +12,4 @@
 
 ## 3. 收尾
 
-- [ ] 3.1 run-all-tests.sh 與連結檢查。驗證：結束碼 0，links 回 ok。
+- [x] 3.1 run-all-tests.sh 與連結檢查。驗證：結束碼 0，links 回 ok。
