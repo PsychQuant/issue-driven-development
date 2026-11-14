@@ -386,7 +386,9 @@ def marker_files(top, head, needle, sd, cache):
         if key in visited:
             continue
         visited.add(key)
-        p = git(directory, "grep", "-z", "-F", "-e", needle, rev, "--", ".", check=False)
+        # --no-recurse-submodules: with submodule.recurse set, git grep would walk the submodules itself, skip one
+        # that is not checked out without saying so, and die on a recorded commit it cannot read.
+        p = git(directory, "grep", "--no-recurse-submodules", "-z", "-F", "-e", needle, rev, "--", ".", check=False)
         if p.returncode not in (0, 1):
             raise Fail("git grep failed: " + p.stderr.decode("utf-8", "replace").strip()[:200])
         for line in p.stdout.decode("utf-8", "replace").split("\n"):
