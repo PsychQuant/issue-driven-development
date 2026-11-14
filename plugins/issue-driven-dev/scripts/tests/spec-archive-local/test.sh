@@ -231,11 +231,76 @@ ar "$WORK/a4/sub"
 assert_eq "HEAD on another branch → ref is still master's commit" "$(git -C "$WORK/a4/sub" rev-parse master)" "$(printf '%s' "$OUT" | field ref)"
 git -C "$WORK/a4/sub" checkout -q master
 
+# idd-547-fix2 rows — how a spec_archive entry resolves
+mkdir -p "$WORK/c1"; conf "$WORK/c1" "{\"spec_archive\": {\".\": $OPT}}"; git init -q -b master "$WORK/c1"; git -C "$WORK/c1" commit -q --allow-empty -m base
+mkrepo "$WORK/c1/odd "
+ar "$WORK/c1/odd "
+assert_eq "a repository whose path cannot be a key does not fall back to . → remote" remote "$ST"
+mkrepo "$WORK/c2/sub"; mkdir -p "$WORK/c2/.claude/.idd"
+printf '{"spec_archive": {"sub": %s, "sub": %s}}\n' "$OPT" "$OPT" > "$WORK/c2/.claude/.idd/local.json"
+ar "$WORK/c2/sub"
+assert_eq "the same key written twice in the file → error" error "$ST"
+mkrepo "$WORK/c3/sub"; conf "$WORK/c3" "{\"spec_archive\": {\"sub\": $OPT}}"; git -C "$WORK/c3/sub" config remote.origin.pushurl "$WORK/nowhere.git"
+ar "$WORK/c3/sub"
+assert_eq "a remote with only a pushurl counts → error" error "$ST"
+assert_grep "… naming it" "origin" "$(printf '%s' "$OUT" | field reason)"
+mkrepo "$WORK/c4/sub"; conf "$WORK/c4" "{\"spec_archive\": {\"sub\": $OPT}}"; mkdir -p "$WORK/c4/sub/.git/remotes"
+printf 'URL: %s\n' "$WORK/nowhere.git" > "$WORK/c4/sub/.git/remotes/origin"
+ar "$WORK/c4/sub"
+assert_eq "a legacy remotes/origin file counts → error" error "$ST"
+mkdir -p "$WORK/c5" "$WORK/c5gd"; conf "$WORK/c5" "{\"spec_archive\": {\"sub\": $OPT}}"
+git init -q -b master --separate-git-dir "$WORK/c5gd/.git" "$WORK/c5/sub"; git -C "$WORK/c5/sub" commit -q --allow-empty -m base
+ar "$WORK/c5/sub"
+assert_eq "a repository made with --separate-git-dir is keyed by its top level → local" local "$ST"
+OUT=$(python3 "$SC" archive-ref --cwd "$WORK/a3/sub" 2>/dev/null)
+refute_grep "reasons do not carry the configuration's absolute path" "$WORK/a3/.claude" "$(printf '%s' "$OUT" | field reason)"
+
+# idd-547-fix2 rows — where the local link check starts
+B="$WORK/ld1/repo"; mkrepo "$B"; conf "$WORK/ld1" "{\"github_repo\": \"o/issues\", \"spec_archive\": {\"repo\": $OPT}}"
+git -C "$B" commit -q --allow-empty -m "see other/r#14"; BEFORE=$(git -C "$B" rev-parse HEAD)
+git -C "$B" commit -q --allow-empty -m "fix (O/ISSUES#14)"
+lb "$B" 14
+assert_eq "github_repo o/issues: O/ISSUES#14 counts, other/r#14 does not" "$BEFORE" "$(printf '%s' "$OUT" | field base)"
+B="$WORK/ld2/repo"; mkrepo "$B"; conf "$WORK/ld2" "{\"spec_archive\": {\"repo\": $OPT}}"; BASE=$(git -C "$B" rev-parse HEAD)
+git -C "$B" commit -q --allow-empty -m "a (#14)"; git -C "$B" tag idd-14-baseline
+lb "$B" 14
+assert_eq "a baseline tag on HEAD itself → falls back to the first commit" "$BASE" "$(printf '%s' "$OUT" | field base)"
+assert_eq "… from first-commit" first-commit "$(printf '%s' "$OUT" | field from)"
+B="$WORK/ld3/repo"; mkrepo "$B"; conf "$WORK/ld3" "{\"spec_archive\": {\"repo\": $OPT}}"
+# A commit carrying a (fake) signature, and log.showSignature pointing at a program that leaves a sentinel
+# (the pattern of merge-completeness fixture 40b). Without --no-show-signature git log runs it and prints its text.
+mkdir -p "$WORK/fakegpg"; printf '#!/bin/sh\ntouch "%s/ran"\necho "gpg: Signature made by fake"\nexit 1\n' "$WORK/fakegpg" > "$WORK/fakegpg/gpg"
+python3 -c 'import os,sys; os.chmod(sys.argv[1], 0o755)' "$WORK/fakegpg/gpg"
+git -C "$B" commit -q --allow-empty -m signed
+SIGNED=$(git -C "$B" cat-file commit HEAD | awk 'NR == 1 { print; next } !done && /^committer / { print; print "gpgsig -----BEGIN PGP SIGNATURE-----"; print " Zm9v"; print " -----END PGP SIGNATURE-----"; done = 1; next } { print }' \
+  | git -C "$B" hash-object -t commit -w --stdin)
+git -C "$B" update-ref refs/heads/master "$SIGNED"
+git -C "$B" config log.showSignature true; git -C "$B" config gpg.program "$WORK/fakegpg/gpg"
+BEFORE=$(git -C "$B" rev-parse HEAD); git -C "$B" commit -q --allow-empty -m "a (#14)"
+lb "$B" 14
+assert_eq "log.showSignature on, a signed commit before → still the parent of a (#14)" "$BEFORE" "$(printf '%s' "$OUT" | field base)"
+assert_exit "… and gpg.program is not run" 1 "$([ -e "$WORK/fakegpg/ran" ]; echo $?)"
+B="$WORK/ld4/repo"; mkrepo "$B"; conf "$WORK/ld4" "{\"spec_archive\": {\"repo\": $OPT}}"; BASE=$(git -C "$B" rev-parse HEAD)
+echo x > "$B/HEAD"; git -C "$B" add HEAD; git -C "$B" commit -q -m "a (#14)"
+lb "$B" 14
+assert_eq "a file named HEAD at the top level → still ok" "$BASE" "$(printf '%s' "$OUT" | field base)"
+
 echo "spec-archive-local: the wrapper and idd-all text"
 WRAP="$PLUGIN/references/spec-wrapper.md"
 STEP5=$(sed -n '/^## 5\. Close-out/,/^## 6\./p' "$WRAP")
 assert_grep "spec-wrapper step 5 asks link-base" 'spec-change.py" link-base' "$STEP5"
 assert_grep "… with the issue number from NUMBER or N" '${NUMBER:-${N:-}}' "$STEP5"
+refute_grep "step 5's JSON readers run isolated: no python3 -c without -I (idd-547-fix2)" "python3 -c 'import json" "$STEP5"
+# idd-547-fix2: run the step-5 block as written. In local mode a link-base error stops with its reason and
+# does not go on to print the failed-fetch message.
+printf '%s\n' "$STEP5" | awk '/^```bash$/{b=1; next} b && /^```$/{exit} b' > "$WORK/step5.sh"
+S5OUT=$(cd "$WORK/lb3/repo" && env HOME="$WORK" CWD="$WORK/lb3/repo" NUMBER=14 GITHUB_REPO=o/r CLAUDE_PLUGIN_ROOT="$PLUGIN" \
+  bash --norc --noprofile "$WORK/step5.sh" 2>&1 </dev/null)
+assert_grep "step 5, local mode, no base found → stops with the archive-ref reason" "archive-ref:" "$S5OUT"
+refute_grep "… without the failed-fetch message" "cannot find where this branch left" "$S5OUT"
+S5OK=$(cd "$WORK/lb2/repo" && env HOME="$WORK" CWD="$WORK/lb2/repo" NUMBER=14 GITHUB_REPO=o/r CLAUDE_PLUGIN_ROOT="$PLUGIN" \
+  bash --norc --noprofile "$WORK/step5.sh" 2>&1 </dev/null)
+assert_grep "step 5, local mode with a base → runs the link check from it" "link check from" "$S5OK"
 assert_grep "idd-all Step 3b.6 names link-base for the local mode" "link-base" "$(sed -n '/^#### Step 3b.6/,/^---/p' "$PLUGIN/skills/idd-all/SKILL.md")"
 
 print_summary spec-archive-local

@@ -135,7 +135,7 @@ def repo_top(cwd):
     p = git(cwd, "rev-parse", "--show-toplevel", check=False)
     if p.returncode != 0:
         raise Fail(f"{cwd} is not inside a git repository")
-    return p.stdout.decode("utf-8").strip()
+    return p.stdout.decode("utf-8").rstrip("\n")   # a path may end in a space: only the newline goes
 
 
 SPEC_DIR_RE = re.compile(r"^spec_dir:(.*)$")
@@ -575,6 +575,7 @@ def cmd_plan(argv):
 
 CONFIG_NAMES = (os.path.join(".claude", ".idd", "local.json"), os.path.join(".claude", "issue-driven-dev.local.json"))
 ISSUE_REF_RE = r"(?<![A-Za-z0-9_/-])#%s(?![0-9])"   # references/pr-issue-matching.md: same guards on both sides
+HEX_ID_RE = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?$")
 
 
 def find_config(start):
@@ -604,35 +605,69 @@ def norm_key(k):
 
 
 def main_tree(top):
-    """The repository's main working tree: for a linked worktree, the directory holding the common .git directory."""
-    common = git_text(top, "rev-parse", "--git-common-dir").strip()
-    common = os.path.realpath(os.path.join(top, common))
-    if os.path.basename(common) == ".git":
+    """The repository's main working tree: for a linked worktree (its git dir is not the common one), the directory
+    holding the common .git directory; otherwise the top level (a --separate-git-dir repository included)."""
+    gd = os.path.realpath(os.path.join(top, git_text(top, "rev-parse", "--git-dir").rstrip("\n")))
+    common = os.path.realpath(os.path.join(top, git_text(top, "rev-parse", "--git-common-dir").rstrip("\n")))
+    if gd != common and os.path.basename(common) == ".git":
         return os.path.dirname(common)
     return os.path.realpath(top)
 
 
-def read_config(path):
+def rel_to(path, base):
+    """path as seen from base, for messages: never an absolute path from this machine."""
+    try:
+        return os.path.relpath(path, base)
+    except ValueError:
+        return os.path.basename(path)
+
+
+class DuplicateKey(ValueError):
+    pass
+
+
+def _pairs(pairs):
+    """object_pairs_hook: keep the pairs as a dict, but remember a key written twice in one object."""
+    d, dup = {}, []
+    for k, v in pairs:
+        if k in d:
+            dup.append(k)
+        d[k] = v
+    if dup:
+        d["\x00duplicate-keys"] = dup
+    return d
+
+
+def read_config(path, shown):
     """The configuration as a dict, or (None, reason) when it cannot be read as a JSON object."""
     try:
         with open(path, "rb") as fh:
-            data = json.loads(fh.read().decode("utf-8-sig"))
+            data = json.loads(fh.read().decode("utf-8-sig"), object_pairs_hook=_pairs)
     except (OSError, UnicodeDecodeError, ValueError, RecursionError) as exc:
-        return None, f"{path} is not readable as JSON ({type(exc).__name__}); spec_archive was not read"
+        return None, f"{shown} is not readable as JSON ({type(exc).__name__}); spec_archive was not read"
     if not isinstance(data, dict):
-        return None, f"{path} is not readable as a JSON object; spec_archive was not read"
+        return None, f"{shown} is not readable as a JSON object; spec_archive was not read"
     return data, ""
 
 
 def remotes_of(top):
-    """Names of the remotes that have a URL in the configuration git reads for this repository."""
-    p = git(top, "config", "--get-regexp", r"^remote\..*\.url$", check=False)
-    names = set()
-    for line in p.stdout.decode("utf-8", "replace").splitlines():
-        key = line.split(" ", 1)[0]
-        if key.startswith("remote.") and key.endswith(".url"):
-            names.add(key[len("remote."):-len(".url")])
-    return sorted(names)
+    """Names of the remotes git can use here: listed by `git remote` and given a url or a pushurl, or a legacy
+    remotes/<name> or branches/<name> file in the git directory. A section with neither (remote.origin.prune) is no remote."""
+    gd = os.path.join(top, git_text(top, "rev-parse", "--git-common-dir").rstrip("\n"))
+    names = set(n for n in git_text(top, "remote").splitlines() if n)
+    for d in ("remotes", "branches"):          # legacy files: newer git no longer lists them, fetch may still read them
+        try:
+            names.update(f for f in os.listdir(os.path.join(gd, d)) if os.path.isfile(os.path.join(gd, d, f)))
+        except OSError:
+            pass
+    out = []
+    for name in names:
+        has = any(git(top, "config", "--get-all", f"remote.{name}.{k}", check=False).stdout.strip()
+                  for k in ("url", "pushurl"))
+        has = has or any(os.path.isfile(os.path.join(gd, d, name)) for d in ("remotes", "branches"))
+        if has:
+            out.append(name)
+    return sorted(out)
 
 
 def archive_ref(cwd):
@@ -642,38 +677,43 @@ def archive_ref(cwd):
     path, root = find_config(tree)
     if path is None:
         return {"status": "remote", "reason": "no IDD configuration found above the repository"}
-    data, why = read_config(path)
+    shown = rel_to(path, tree)        # messages name the file as seen from the repository
+    data, why = read_config(path, shown)
     if data is None:
         return {"status": "remote", "reason": why}
     if "spec_archive" not in data:
-        return {"status": "remote", "reason": f"{path} has no spec_archive field"}
+        return {"status": "remote", "reason": f"{shown} has no spec_archive field"}
     table = data["spec_archive"]
     if not isinstance(table, dict):
-        raise Fail(f"spec_archive in {path} must be an object keyed by repository path")
-    key = norm_key(os.path.relpath(tree, root)) or "."
-    entries = [v for k, v in table.items() if norm_key(k) == key]
+        raise Fail(f"spec_archive in {shown} must be an object keyed by repository path")
+    rel = os.path.relpath(tree, root)
+    key = norm_key(rel)
+    if key is None:                   # never fall back to "." (that is another directory's entry)
+        return {"status": "remote", "reason": f"this repository's path {rel!r} cannot be written as a spec_archive key"}
+    dup = [k for k in table.get("\x00duplicate-keys", []) if norm_key(k) == key]
+    entries = [v for k, v in table.items() if not k.startswith("\x00") and norm_key(k) == key]
     if not entries:
-        return {"status": "remote", "reason": f"spec_archive in {path} has no entry for {key}"}
-    if len(entries) > 1:
-        raise Fail(f"spec_archive in {path} has more than one entry for {key}")
+        return {"status": "remote", "reason": f"spec_archive in {shown} has no entry for {key}"}
+    if len(entries) > 1 or dup:
+        raise Fail(f"spec_archive in {shown} has more than one entry for {key}")
     entry = entries[0]
     if not isinstance(entry, dict) or entry.get("ref") != "local":
-        raise Fail(f"spec_archive[{key!r}] in {path}: only {{\"ref\": \"local\", \"branch\": \"<name>\"}} is supported")
+        raise Fail(f"spec_archive[{key!r}] in {shown}: only {{\"ref\": \"local\", \"branch\": \"<name>\"}} is supported")
     branch = entry.get("branch")
     if (not isinstance(branch, str) or not branch or branch.startswith("-")
             or any(ord(c) < 32 or ord(c) == 127 for c in branch)):
-        raise Fail(f"spec_archive[{key!r}] in {path} needs a branch name")
+        raise Fail(f"spec_archive[{key!r}] in {shown} needs a branch name")
     fmt = git(top, "check-ref-format", "--branch", branch, check=False)
     if fmt.returncode != 0 or fmt.stdout.decode("utf-8", "replace").strip() != branch:
-        raise Fail(f"spec_archive[{key!r}] in {path}: {branch!r} is not a branch name")
+        raise Fail(f"spec_archive[{key!r}] in {shown}: {branch!r} is not a branch name")
     remotes = remotes_of(top)
     if remotes:
-        raise Fail(f"spec_archive[{key!r}] in {path} asks for the local branch, but this repository has a remote "
+        raise Fail(f"spec_archive[{key!r}] in {shown} asks for the local branch, but this repository has a remote "
                    f"({', '.join(remotes)}); the local branch is accepted only for a repository without any remote")
     p = git(top, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}^{{commit}}", check=False)
     if p.returncode != 0:
-        raise Fail(f"spec_archive[{key!r}] in {path} names the branch {branch!r}, which does not exist here")
-    return {"status": "local", "branch": branch, "ref": p.stdout.decode("utf-8").strip(), "config": path, "key": key}
+        raise Fail(f"spec_archive[{key!r}] in {shown} names the branch {branch!r}, which does not exist here")
+    return {"status": "local", "branch": branch, "ref": p.stdout.decode("utf-8").strip(), "config": path, "config_shown": shown, "key": key}
 
 
 def cmd_archive_ref(argv):
@@ -685,12 +725,29 @@ def cmd_archive_ref(argv):
     return emit(out, 0)
 
 
-def baseline_tag(config_path, n):
-    data, _ = read_config(config_path)
-    fmt = ((data or {}).get("auto_tag") or {}).get("baseline_format") if isinstance((data or {}).get("auto_tag"), dict) else None
-    if not isinstance(fmt, str) or "{N}" not in fmt:
-        fmt = "idd-{N}-baseline"
-    return fmt.replace("{N}", n)
+def config_of(config_path):
+    data, _ = read_config(config_path, "")
+    return data or {}
+
+
+def baseline_tag(top, data, n):
+    at = data.get("auto_tag")
+    fmt = at.get("baseline_format") if isinstance(at, dict) else None
+    if isinstance(fmt, str) and "{N}" in fmt:
+        name = fmt.replace("{N}", n)
+        if git(top, "check-ref-format", f"refs/tags/{name}", check=False).returncode == 0:
+            return name
+    return f"idd-{n}-baseline"
+
+
+def names_issue(data, n):
+    """A regex for a commit message that names issue n: #n with the pr-issue-matching guards, or the issue
+    repository's own owner/repo#n (the form a separate code repository uses)."""
+    parts = [ISSUE_REF_RE % n]
+    gh = data.get("github_repo")
+    if isinstance(gh, str) and re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", gh):
+        parts.append(r"(?<![A-Za-z0-9_./-])%s#%s(?![0-9])" % (re.escape(gh), n))
+    return re.compile("|".join("(?:%s)" % x for x in parts), re.IGNORECASE)
 
 
 def cmd_link_base(argv):
@@ -703,19 +760,25 @@ def cmd_link_base(argv):
             raise Fail(f"the issue number must be a positive integer written in digits: {a['--issue'][:20]!r}")
         n = a["--issue"]
         top = repo_top(a["--cwd"])
-        tag = baseline_tag(out["config"], n)
+        data = config_of(out["config"])
+        tag = baseline_tag(top, data, n)
+        head_sha = git_text(top, "rev-parse", "--verify", "HEAD^{commit}").strip()
         t = git(top, "rev-parse", "--verify", "--quiet", f"refs/tags/{tag}^{{commit}}", check=False)
         if t.returncode == 0:
             sha = t.stdout.decode("utf-8").strip()
-            if git(top, "merge-base", "--is-ancestor", sha, "HEAD", check=False).returncode == 0:
+            if sha != head_sha and git(top, "merge-base", "--is-ancestor", sha, "HEAD", check=False).returncode == 0:
                 return emit({"status": "ok", "base": sha, "from": "baseline-tag", "tag": tag}, 0)
-        names = re.compile(ISSUE_REF_RE % n)
-        # -z: one NUL between commits; a commit message cannot hold NUL, so no message hides a commit.
-        log = git(top, "log", "--reverse", "-z", "--format=%H %P%n%B", "HEAD").stdout.decode("utf-8", "replace")
-        for rec in log.split("\x00"):
+        names = names_issue(data, n)
+        # -z: one NUL between commits (a commit message cannot hold NUL); no signature text; HEAD is a revision.
+        log = git(top, "log", "--no-show-signature", "--reverse", "-z", "--format=%H %P%n%B", "HEAD", "--")
+        for rec in log.stdout.decode("utf-8", "replace").split("\x00"):
             head, _, body = rec.partition("\n")
             ids = head.split()
-            if not ids or not names.search(body):
+            if not ids:
+                continue
+            if not all(HEX_ID_RE.match(i) for i in ids):
+                raise Fail(f"git log printed a line that is not commit ids: {head[:60]!r}")
+            if not names.search(body):
                 continue
             if len(ids) < 2:
                 raise Fail(f"the oldest commit naming #{n} ({ids[0][:12]}) is the root commit; pass the base by hand")

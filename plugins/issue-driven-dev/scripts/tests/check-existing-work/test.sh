@@ -224,7 +224,7 @@ assert_grep "idd-diagnose: a crashed lookup prints verdict=unknown" "verdict=unk
 
 reset_fx                                    # no issue_5.json → `gh issue view 5` fails
 pr open 20 "codex/z" ccc $NEWER "" $'Refs #5\n\nbody'
-CLOSE_OUT=$(CLAUDE_PLUGIN_ROOT="$HERE/../../.." WORKDIR="$W/work" GITHUB_REPO=test/repo NUMBER=5 PATH="$W/bin:$PATH" \
+CLOSE_OUT=$(HOME="$W" CLAUDE_PLUGIN_ROOT="$HERE/../../.." WORKDIR="$W/work" GITHUB_REPO=test/repo NUMBER=5 PATH="$W/bin:$PATH" \
   bash -c "$(snippet "$CSEC")" 2>&1); CLOSE_RC=$?
 assert_eq "idd-close: an issue the lookup could not read does not pass the PR gate" 1 "$CLOSE_RC"
 assert_grep "idd-close: and says why" "refusing to close" "$CLOSE_OUT"
@@ -264,7 +264,6 @@ printf 'EWNOTES=%s\\n' \"\$(printf '%s' \"\$EW_JSON\" | jq -c '.notes // []')\"
 printf 'OPENPRS=%s\\n' \"\$(printf '%s' \"\$OPEN_PRS\" | jq -c '[.[].number]')\"" 2>&1)
 assert_grep "idd-close: in a repository opted into its local branch, Step 1.5 says the branch lookup was skipped" \
   "branch lookup skipped" "$OPT_OUT"
-refute_grep "idd-close: … and the helper did not report a failed fetch" "git fetch failed" "$OPT_OUT"
 NOPT_OUT=$(HOME="$W" CLAUDE_PLUGIN_ROOT="$HERE/../../.." WORKDIR="$BR" GITHUB_REPO=test/repo NUMBER=61 PATH="$W/bin:$PATH" \
   bash -c "$(snippet "$CSEC")
 printf 'EWNOTES=%s\\n' \"\$(printf '%s' \"\$EW_JSON\" | jq -c '.notes // []')\"" 2>&1)
@@ -278,6 +277,31 @@ assert_eq "idd-close: … and the open PR declaring the issue still reaches the 
 assert_eq "idd-close: not opted in → the helper ran without the flag (no notes)" "[]" \
   "$(printf '%s\n' "$NOPT_OUT" | sed -n 's/^EWNOTES=//p')"
 runin --cwd "$NR" --cwd "$BR" test/repo 61 >/dev/null; RC_DUP=$?
+# idd-547-fix2: a logging git in front of the real one shows what the helper ran.
+REALGIT=$(command -v git); mkdir -p "$W/gitlog"
+printf '#!/bin/sh\necho "$*" >> "%s/gitlog/calls"\nexec "%s" "$@"\n' "$W" "$REALGIT" > "$W/gitlog/git"
+python3 -c 'import os,sys; os.chmod(sys.argv[1], 0o755)' "$W/gitlog/git"
+TR="$W/tracked"; git "${GIT_ENV[@]}" clone -q "$W/origin.git" "$TR" 2>/dev/null
+mkbr "idd/61-x" "work for 61" >/dev/null; git -C "$TR" fetch -q origin
+reset_fx; issue 61 OPEN $ISSUE_T
+: > "$W/gitlog/calls"
+OUT=$(PATH="$W/gitlog:$W/bin:$PATH" bash "$SCRIPT" --cwd "$TR" --skip-branches test/repo 61 2>"$W/stderr")
+refute_grep "--skip-branches runs no git fetch" "fetch" "$(cat "$W/gitlog/calls")"
+refute_grep "--skip-branches lists no remote-tracking branches" "refs/remotes/origin" "$(cat "$W/gitlog/calls")"
+assert_eq "--skip-branches: a tracking ref idd/61-x is not read as E4" "[]" "$(kinds "$OUT" 61)"
+: > "$W/gitlog/calls"
+OUT=$(PATH="$W/gitlog:$W/bin:$PATH" bash "$SCRIPT" --cwd "$TR" test/repo 61 2>"$W/stderr")
+assert_grep "without the flag the helper fetches" "fetch" "$(cat "$W/gitlog/calls")"
+assert_eq "… and reads idd/61-x as E4" "['E4']" "$(kinds "$OUT" 61)"
+# archive-ref answers error (spec_archive is a list): Step 1.5 does not pass the flag
+ERRP="$W/errconf"; mkdir -p "$ERRP/.claude/.idd"; git "${GIT_ENV[@]}" init -q "$ERRP/code"
+( cd "$ERRP/code" && git "${GIT_ENV[@]}" commit -q --allow-empty -m init )
+printf '%s\n' '{"spec_archive": ["code"]}' > "$ERRP/.claude/.idd/local.json"
+ERR_OUT=$(HOME="$W" CLAUDE_PLUGIN_ROOT="$HERE/../../.." WORKDIR="$ERRP/code" GITHUB_REPO=test/repo NUMBER=61 PATH="$W/bin:$PATH" \
+  bash -c "$(snippet "$CSEC")
+printf 'EWNOTES=%s\\n' \"\$(printf '%s' \"\$EW_JSON\" | jq -c '.notes // []')\"" 2>&1)
+assert_eq "idd-close: archive-ref answers error → Step 1.5 does not pass --skip-branches" "[]" \
+  "$(printf '%s\n' "$ERR_OUT" | sed -n 's/^EWNOTES=//p')"
 assert_eq "a repeated --cwd is a usage error (exit 2)" 2 "$RC_DUP"
 
 print_summary "check-existing-work"

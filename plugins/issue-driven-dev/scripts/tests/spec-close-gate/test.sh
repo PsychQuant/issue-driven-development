@@ -162,6 +162,15 @@ GATE_REASON=$(cd "$LN/code" && env PATH="$WORK/bin:$PATH" HOME="$WORK" FAKE_COMM
   GITHUB_REPO=o/r NUMBER=42 CWD="$LN/code" CLAUDE_PLUGIN_ROOT="$PLUGIN" \
   bash --norc --noprofile -c '. "$1"; printf "%s" "$GATE"' _ "$BLOCK" 2>/dev/null </dev/null)
 assert_grep "… and the reason includes why archive-ref answered remote" "spec_archive" "$GATE_REASON"
+assert_grep "… and still says the default branch could not be read (idd-547-fix2)" "default branch could not be read" "$GATE_REASON"
+refute_grep_re "… without the configuration's absolute path (idd-547-fix2)" '/[^ ]*/\.claude/\.idd/local\.json' "$GATE_REASON"
+# idd-547-fix2: an error unrelated to spec_archive (the directory is not a git repository) is labelled archive-ref:
+mkdir -p "$WORK/notgit"
+NG_REASON=$(cd "$WORK/notgit" && env PATH="$WORK/bin:$PATH" HOME="$WORK" FAKE_COMMENTS="$WORK/comments.json" FAKE_FAIL=0 FAKE_VIEW_FAIL=0 \
+  GITHUB_REPO=o/r NUMBER=42 CWD="$WORK/notgit" CLAUDE_PLUGIN_ROOT="$PLUGIN" \
+  bash --norc --noprofile -c '. "$1"; printf "%s" "$GATE"' _ "$BLOCK" 2>/dev/null </dev/null)
+assert_grep "a directory that is not a git repository → the reason is labelled archive-ref:" "archive-ref:" "$NG_REASON"
+refute_grep "… not spec_archive:" "spec_archive:" "$NG_REASON"
 
 echo "spec-close-gate: the skill text"
 G="$(sed -n '/^### Step 1.57: /,/^### Step 1.6: /p' "$CLOSE")"
@@ -172,6 +181,7 @@ assert_grep "the gate calls spec-change.py archived" 'spec-change.py" archived' 
 assert_grep "the gate fetches the default branch from the remote" 'fetch -q origin -- "$DEFAULT_BRANCH"' "$G"
 assert_grep "… and checks the commit that fetch returned" 'rev-parse -q --verify FETCH_HEAD' "$G"
 assert_grep "the gate first asks archive-ref which branch to read (#547)" 'spec-change.py" archive-ref' "$G"
+refute_grep "the new inline JSON readers run isolated: no python3 -c without -I in Step 1.57 (idd-547-fix2)" "python3 -c 'import json" "$G"
 assert_grep "the gate chooses the comment with spec-change.py ic (one selection, shared with verify)" 'spec-change.py" ic --comments' "$G"
 assert_grep "no Implementation Complete comment → not held to the gate (row 5)" "沒有 Implementation Complete" "$G"
 assert_grep "refuse or error stops the close" "停下、不 close" "$G"

@@ -21,7 +21,8 @@ Version number left to the release.
   repository has no remote at all (a remote with a URL); with a remote it is an error, never a silent fallback.
   Without an entry nothing changes, and a configuration file that cannot be read as a JSON object counts as having
   no entry, so it does not block a repository that never set the field. The branch must be a branch name, and the
-  check reads it whatever `HEAD` is; a linked worktree uses its main working tree's key. New `spec-change.py`
+  check reads it whatever `HEAD` is; a linked worktree uses its main working tree's key. The link check finds the
+  issue in a separate code repository's commits written as `owner/repo#N` for the configured `github_repo`. New `spec-change.py`
   subcommands `archive-ref` and `link-base`; documented in `config-protocol.md`.
 
 ### Fixed

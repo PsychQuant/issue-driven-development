@@ -132,18 +132,18 @@ fi
 # The issue number: NUMBER in the skills that call this contract, N in idd-all. A remote repository never reads it.
 ISSUE_N="${NUMBER:-${N:-}}"
 LB=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" link-base --cwd "$CWD" --issue "${ISSUE_N:-none}" 2>/dev/null)
-LB_STATUS=$(printf '%s' "$LB" | python3 -c 'import json,sys; print(json.loads(sys.stdin.read() or "{}").get("status", ""))' 2>/dev/null)
+LB_STATUS=$(printf '%s' "$LB" | python3 -I -c 'import json,sys; print(json.loads(sys.stdin.read() or "{}").get("status", ""))' 2>/dev/null)
 SPEC_BASE=""
 if [ "$LB_STATUS" = ok ]; then
-  SPEC_BASE=$(printf '%s' "$LB" | python3 -c 'import json,sys; print(json.loads(sys.stdin.read()).get("base", ""))')
-  printf '%s' "$LB" | python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); print("→ link check from %s (%s; spec_archive local mode)" % (d["base"][:7], d["from"]))'
+  SPEC_BASE=$(printf '%s' "$LB" | python3 -I -c 'import json,sys; print(json.loads(sys.stdin.read()).get("base", ""))')
+  printf '%s' "$LB" | python3 -I -c 'import json,sys; d=json.loads(sys.stdin.read()); print("→ link check from %s (%s; spec_archive local mode)" % (d["base"][:7], d["from"]))'
 elif [ "$LB_STATUS" = remote ]; then
   DEFAULT_BRANCH=$(gh repo view "$GITHUB_REPO" --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null) || DEFAULT_BRANCH=""
   if [ -n "$DEFAULT_BRANCH" ] && git -C "$CWD" fetch -q origin -- "$DEFAULT_BRANCH" 2>/dev/null; then
     SPEC_BASE=$(git -C "$CWD" merge-base HEAD FETCH_HEAD 2>/dev/null)
   fi
 else
-  echo "✗ spec close-out: spec_archive: $(printf '%s' "$LB" | python3 -c 'import json,sys
+  echo "✗ spec close-out: archive-ref: $(printf '%s' "$LB" | python3 -I -c 'import json,sys
 try: print(json.loads(sys.stdin.read()).get("reason", "") or "link-base printed nothing readable")
 except Exception: print("link-base printed nothing readable")' 2>/dev/null); stopping" >&2
 fi
@@ -154,7 +154,7 @@ elif [ "$LB_STATUS" = remote ]; then
 fi
 ```
 
-`git merge-base HEAD FETCH_HEAD`（剛從遠端 fetch 的預設 branch）在 PR path 是分岔點；在 direct-commit path 是 run 還沒推的 commit 之前那一個。程式 repo 沒有 remote、用 `spec_archive` 指到本機 branch 時（#547，見 `config-protocol.md`），沒有「還沒推的 commit」這條界線，起點改由 `link-base` 給：這張 issue 的 `idd-<N>-baseline` tag（是 HEAD 的祖先時），否則 HEAD 歷史裡第一個訊息含 `#<N>`（後面不接數字）的 commit 的父 commit；兩者都沒有就停下，不退回 `merge-base`（direct-commit 時那是 HEAD，範圍是空的）。沒有印出 JSON（`SPEC_BASE` 取不到）就停下回報。`missing` 就補測試或標記再跑一次。要改的是 requirement 本身（例如寫了一個寫不出檢查的 Example）時，不改 `archive/` 底下的檔案，也不繞過 Spectra 直接改主規格：照第 7 步另建一個 change 修改那條 requirement，封存後再跑。`error` 停下回報。
+`git merge-base HEAD FETCH_HEAD`（剛從遠端 fetch 的預設 branch）在 PR path 是分岔點；在 direct-commit path 是 run 還沒推的 commit 之前那一個。程式 repo 沒有 remote、用 `spec_archive` 指到本機 branch 時（#547，見 `config-protocol.md`），沒有「還沒推的 commit」這條界線，起點改由 `link-base` 給：這張 issue 的 baseline tag（`auto_tag.baseline_format`，預設 `idd-<N>-baseline`；是 HEAD 的祖先、而且不是 HEAD 本身時），否則 HEAD 歷史裡第一個引用這張 issue 的 commit 的父 commit——引用指 `#<N>`（左右邊界同 `pr-issue-matching.md`），或設定檔 `github_repo` 那個 repo 的 `<owner>/<repo>#<N>`（程式 repo 與 issue repo 分開時 commit 就是這樣寫的）；兩者都沒有就停下，不退回 `merge-base`（direct-commit 時那是 HEAD，範圍是空的）。沒有設定的 repo，`link-base` 回 `remote`、不讀 issue 號，照舊 fetch。沒有印出 JSON（`SPEC_BASE` 取不到）就停下回報。`missing` 就補測試或標記再跑一次。要改的是 requirement 本身（例如寫了一個寫不出檢查的 Example）時，不改 `archive/` 底下的檔案，也不繞過 Spectra 直接改主規格：照第 7 步另建一個 change 修改那條 requirement，封存後再跑。`error` 停下回報。
 
 6. 確認宣告與 HEAD 一致：把第 6 步要貼的 `**Spec**:` 行寫進一個暫存檔，跑 `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" archived --file <暫存檔> --cwd "$CWD" --ref HEAD`，要 `pass`。
 

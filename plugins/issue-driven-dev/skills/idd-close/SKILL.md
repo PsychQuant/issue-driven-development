@@ -416,7 +416,7 @@ Exit code:
 # 不 fetch 它、不讀它的 branch；open PR 照樣在 issue 所在的 repo 查。其他回覆（remote、error）照舊。
 EW_SKIP=""
 if [ "$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" archive-ref --cwd "${WORKDIR:-$PWD}" 2>/dev/null \
-      | python3 -c 'import json,sys; print(json.loads(sys.stdin.read() or "{}").get("status", ""))' 2>/dev/null)" = local ]; then
+      | python3 -I -c 'import json,sys; print(json.loads(sys.stdin.read() or "{}").get("status", ""))' 2>/dev/null)" = local ]; then
   EW_SKIP="--skip-branches"
   echo "→ Step 1.5: spec_archive.ref=local — this repository has no remote; branch lookup skipped, open PRs checked on $GITHUB_REPO"
 fi
@@ -548,7 +548,7 @@ SPEC_JSON=$(mktemp); SPEC_IC=$(mktemp)
 if ! { gh api "repos/$GITHUB_REPO/issues/$NUMBER/comments" --paginate > "$SPEC_JSON" 2>/dev/null \
        && python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" ic --comments "$SPEC_JSON" > "$SPEC_IC"; }; then
   GATE='{"status": "error", "not_archived": [], "reason": "the issue comments could not be read"}'; GATE_RC=2
-elif [ "$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" declared --file "$SPEC_IC" 2>/dev/null | python3 -c 'import json,sys; print(json.loads(sys.stdin.read() or "{}").get("form", ""))' 2>/dev/null)" != change ]; then
+elif [ "$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" declared --file "$SPEC_IC" 2>/dev/null | python3 -I -c 'import json,sys; print(json.loads(sys.stdin.read() or "{}").get("form", ""))' 2>/dev/null)" != change ]; then
   # No change declared (no comment, legacy, an exemption, an invalid line): the default branch is not read,
   # so a failed fetch does not hold an issue this gate does not apply to. archived answers these from the comment.
   GATE=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" archived --file "$SPEC_IC" --cwd "${CWD:-$PWD}" --ref HEAD); GATE_RC=$?
@@ -558,11 +558,11 @@ else
   # entry it prints remote and the default branch is read as the remote has it, as before; an entry that cannot
   # be honoured (the repository has a remote, the branch does not exist, ...) is an error, never a fallback.
   ARCH=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" archive-ref --cwd "${CWD:-$PWD}" 2>/dev/null)
-  ARCH_STATUS=$(printf '%s' "$ARCH" | python3 -c 'import json,sys; print(json.loads(sys.stdin.read() or "{}").get("status", ""))' 2>/dev/null)
+  ARCH_STATUS=$(printf '%s' "$ARCH" | python3 -I -c 'import json,sys; print(json.loads(sys.stdin.read() or "{}").get("status", ""))' 2>/dev/null)
   SPEC_REF=""
   if [ "$ARCH_STATUS" = local ]; then
-    SPEC_REF=$(printf '%s' "$ARCH" | python3 -c 'import json,sys; print(json.loads(sys.stdin.read()).get("ref", ""))' 2>/dev/null)
-    printf '%s' "$ARCH" | python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); print("→ spec archive gate: checking local ref %s@%s (this repository has no remote; spec_archive[%r])" % (d["branch"], d["ref"][:7], d["key"]))' 2>/dev/null
+    SPEC_REF=$(printf '%s' "$ARCH" | python3 -I -c 'import json,sys; print(json.loads(sys.stdin.read()).get("ref", ""))' 2>/dev/null)
+    printf '%s' "$ARCH" | python3 -I -c 'import json,sys; d=json.loads(sys.stdin.read()); print("→ spec archive gate: checking local ref %s@%s (this repository has no remote; spec_archive[%r])" % (d["branch"], d["ref"][:7], d["key"]))' 2>/dev/null
   elif [ "$ARCH_STATUS" = remote ]; then
     # A declared change is checked against the default branch as the remote has it: no name, or a failed fetch,
     # is an error, never a pass on a stale local ref (verify round 2).
@@ -574,17 +574,17 @@ else
     fi
   fi
   if [ "$ARCH_STATUS" != local ] && [ "$ARCH_STATUS" != remote ]; then
-    GATE=$(printf '%s' "$ARCH" | python3 -c 'import json,sys
+    GATE=$(printf '%s' "$ARCH" | python3 -I -c 'import json,sys
 try: r = json.loads(sys.stdin.read()).get("reason", "")
 except Exception: r = ""
-print(json.dumps({"status": "error", "not_archived": [], "reason": "spec_archive: " + (r or "archive-ref printed nothing readable")}))'); GATE_RC=2
+print(json.dumps({"status": "error", "not_archived": [], "reason": "archive-ref: " + (r or "printed nothing readable")}))'); GATE_RC=2
   elif [ -z "$SPEC_REF" ]; then
     # #547: say why archive-ref answered remote, so a repository meant for its local branch whose entry was not
     # found (or whose configuration could not be read) shows the reason next to the failed fetch.
-    GATE=$(printf '%s' "$ARCH" | python3 -c 'import json,sys
+    GATE=$(printf '%s' "$ARCH" | python3 -I -c 'import json,sys
 try: r = json.loads(sys.stdin.read()).get("reason", "")
 except Exception: r = ""
-print(json.dumps({"status": "error", "not_archived": [], "reason": "the default branch could not be read (gh repo view or git fetch failed)" + ("; spec_archive: " + r if r else "")}))'); GATE_RC=2
+print(json.dumps({"status": "error", "not_archived": [], "reason": "the default branch could not be read (gh repo view or git fetch failed)" + ("; archive-ref: " + r if r else "")}))'); GATE_RC=2
   else
     GATE=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" archived --file "$SPEC_IC" --cwd "${CWD:-$PWD}" --ref "$SPEC_REF"); GATE_RC=$?
   fi
@@ -597,7 +597,7 @@ printf '%s\n' "$GATE" | jq -r '"→ spec archive gate: \(.status) \(.reason)"'
 |---|---|
 | `pass`（含 `no behaviour change`、`third-party clone`、舊制留言） | 往下 |
 | `refuse` | 停下、不 close：列出還沒封存的 change，或 `**Spec**:` 行的問題。常見原因是 PR 還沒合併，或封存 commit 不在合併的範圍裡 |
-| `error` | 停下、不 close：留言、預設 branch 或設定讀不到，照原因處理後重跑。`spec_archive:` 開頭的原因是設定的問題（例如設了本機模式的 repo 有 remote、branch 不存在），改設定或移除那一條 |
+| `error` | 停下、不 close：留言、預設 branch 或設定讀不到，照原因處理後重跑。`archive-ref:` 開頭的原因說的是 `spec-change.py archive-ref` 為什麼這樣回答：設定的問題（例如設了本機模式的 repo 有 remote、branch 不存在、同一個路徑有兩個條目）就改設定或移除那一條；程式 repo 讀不到（不是 git repo）就在正確的目錄重跑 |
 | 沒有輸出、不是 JSON、或上面沒列的 status | 停下、不 close，回報印出的內容 |
 
 這一道和 Step 1.5 一樣是硬性的：不問人、沒有略過的選項。有人在場時要結案，先把 change 封存進預設 branch，或修正 Implementation Complete 的宣告。
