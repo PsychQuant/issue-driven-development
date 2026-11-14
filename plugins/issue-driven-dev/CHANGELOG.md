@@ -18,14 +18,24 @@ Version number left to the release.
   (`local ref <branch>@<commit>`); Step 1.5 skips the branch lookup (`check-existing-work.sh --skip-branches`) and
   still checks open PRs on the issue repository; the link check of `references/spec-wrapper.md` step 5 starts at
   the issue's baseline tag, or at the parent of the oldest commit naming `#N`. An entry is accepted only while the
-  repository has no remote at all (a remote with a URL); with a remote it is an error, never a silent fallback.
-  Without an entry nothing changes, and a configuration file that cannot be read as a JSON object counts as having
-  no entry, so it does not block a repository that never set the field. The branch must be a branch name, and the
-  check reads it whatever `HEAD` is; a linked worktree uses its main working tree's key. The link check finds the
-  issue in a separate code repository's commits written as `owner/repo#N` for the configured `github_repo`. New `spec-change.py`
-  subcommands `archive-ref` and `link-base`; documented in `config-protocol.md`.
+  repository has no remote at all (a remote with a url, a pushurl or a vcs); with a remote it is an error, never a
+  silent fallback. Without an entry nothing changes, and a configuration file that cannot be read as a JSON object,
+  or `"spec_archive": null`, counts as having no entry, so it does not block a repository that never set the field.
+  A key written twice is an error, found while the file is parsed. The branch must be a branch name, and the check
+  reads it whatever `HEAD` is; a linked worktree uses its main working tree's key, and a linked worktree of a
+  repository made with `--separate-git-dir` (whose main working tree git does not record) gets no entry. A
+  repository with no remote and no entry now stops without fetching, in Step 1.57 and in the link check: git would
+  read a local path named `origin` as the remote. The link check finds the issue in a separate code repository's
+  commits written as `owner/repo#N` for the configured `github_repo`, reading `git log` in UTF-8 whatever
+  `i18n.logOutputEncoding` says. With `--skip-branches` the helper does not look up the default branch either.
+  New `spec-change.py` subcommands `archive-ref` and `link-base`; documented in `config-protocol.md`.
 
 ### Fixed
+
+- **`spec-change.py` reads the repository whose top level ends in whitespace (#547).** `archived`, `links` and
+  `preflight` stripped the top level `git rev-parse --show-toplevel` printed, so a repository named `odd ` (with a
+  trailing space) was read as a sibling directory `odd`, or failed when there was none. They now take the path as
+  git prints it, removing only the line ending.
 
 - **The edit-run suite has a time limit of its own (#508, #519).** Most of its run time is CPU time (about 65 s
   on an 18-core Mac), so it takes longer on a busy machine: run alone it took 84 s at a load near 20 and 123 s at

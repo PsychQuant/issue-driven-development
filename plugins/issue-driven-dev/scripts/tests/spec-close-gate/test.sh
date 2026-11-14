@@ -122,7 +122,7 @@ git init -q -b master "$LR"; mkdir -p "$LR/openspec/specs"; echo x > "$LR/opensp
 git -C "$LR" add -A; git -C "$LR" commit -q -m base
 step157_in() { # dir comments-json → STATUS, GRC, OUTALL
   printf '%s' "$2" > "$WORK/comments.json"
-  OUTALL=$(cd "$1" && env PATH="$WORK/bin:$PATH" HOME="$WORK" FAKE_COMMENTS="$WORK/comments.json" FAKE_FAIL=0 FAKE_VIEW_FAIL=1 \
+  OUTALL=$(cd "$1" && env PATH="$WORK/bin:$PATH" HOME="$WORK" FAKE_COMMENTS="$WORK/comments.json" FAKE_FAIL=0 FAKE_VIEW_FAIL="${VIEW_FAIL_IN:-1}" \
         GITHUB_REPO=o/r NUMBER=42 CWD="$1" CLAUDE_PLUGIN_ROOT="$PLUGIN" \
         bash --norc --noprofile -c '. "$1"; printf "\nSTATUS=%s\nGRC=%s\n" "$(printf "%s" "$GATE" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get(\"status\"))")" "$GATE_RC"' _ "$BLOCK" 2>/dev/null </dev/null)
   STATUS=$(printf '%s\n' "$OUTALL" | sed -n 's/^STATUS=//p'); GRC=$(printf '%s\n' "$OUTALL" | sed -n 's/^GRC=//p')
@@ -171,6 +171,18 @@ NG_REASON=$(cd "$WORK/notgit" && env PATH="$WORK/bin:$PATH" HOME="$WORK" FAKE_CO
   bash --norc --noprofile -c '. "$1"; printf "%s" "$GATE"' _ "$BLOCK" 2>/dev/null </dev/null)
 assert_grep "a directory that is not a git repository → the reason is labelled archive-ref:" "archive-ref:" "$NG_REASON"
 refute_grep "… not spec_archive:" "spec_archive:" "$NG_REASON"
+# idd-547-fix3: no remote and no entry, with a local repository named origin beside it whose main has the archive.
+# git fetch origin would read that path; the gate must stop without fetching.
+LO="$WORK/originbeside"; mkdir -p "$LO"; git init -q -b master "$LO/code"
+mkdir -p "$LO/code/openspec/specs"; echo x > "$LO/code/openspec/specs/.keep"; git -C "$LO/code" add -A; git -C "$LO/code" commit -q -m base
+git clone -q --bare "$LO/code" "$LO/code/origin" 2>/dev/null
+OC="$WORK/originsrc"; git clone -q "$LO/code/origin" "$OC" 2>/dev/null; git -C "$OC" checkout -q -B main
+mkdir -p "$OC/openspec/changes/archive/2026-11-14-idd-42-fix-timeout"; echo p > "$OC/openspec/changes/archive/2026-11-14-idd-42-fix-timeout/proposal.md"
+git -C "$OC" add -A; git -C "$OC" commit -q -m archive; git -C "$OC" push -q origin main 2>/dev/null
+VIEW_FAIL_IN=0 step157_in "$LO/code" "$IC_OK"
+assert_eq "no remote, no entry, a local repository named origin beside it → stops (idd-547-fix3)" error "$STATUS"
+assert_eq "… and nothing was fetched" "" "$(git -C "$LO/code" rev-parse -q --verify FETCH_HEAD 2>/dev/null)"
+assert_grep "… saying the repository has no remote" "this repository has no remote" "$OUTALL"
 
 echo "spec-close-gate: the skill text"
 G="$(sed -n '/^### Step 1.57: /,/^### Step 1.6: /p' "$CLOSE")"

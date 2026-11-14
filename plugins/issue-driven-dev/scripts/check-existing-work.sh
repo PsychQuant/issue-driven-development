@@ -135,17 +135,19 @@ else:
         errors.append("git for-each-ref failed")
 # The default branch comes from GitHub. The clone's refs/remotes/origin/HEAD is a snapshot from clone time and can
 # point at an old feature branch (seen on a real clone), which makes every commit on the real default branch look
-# unmerged. It is only the fallback when GitHub cannot be asked.
-rv = gh_json(["gh", "repo", "view", repo, "--json", "defaultBranchRef"], "gh repo view")
-default = ((rv or {}).get("defaultBranchRef") or {}).get("name")
-if default is None:
-    h = run(["git", "-C", cwd, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"])
-    if h.returncode == 0 and h.stdout.strip().startswith("origin/"):
-        default = h.stdout.strip()[len("origin/"):]
-    else:
-        default = next((d for d in ("main", "master") if d in branches), None)
-if default is None:
-    errors.append("could not determine the default branch")
+# unmerged. It is only the fallback when GitHub cannot be asked. With --skip-branches there are no branches to
+# compare, so the default branch is not looked up at all (and origin/HEAD, a remote-tracking ref, is not read; #547).
+if not skip_branches:
+    rv = gh_json(["gh", "repo", "view", repo, "--json", "defaultBranchRef"], "gh repo view")
+    default = ((rv or {}).get("defaultBranchRef") or {}).get("name")
+    if default is None:
+        h = run(["git", "-C", cwd, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"])
+        if h.returncode == 0 and h.stdout.strip().startswith("origin/"):
+            default = h.stdout.strip()[len("origin/"):]
+        else:
+            default = next((d for d in ("main", "master") if d in branches), None)
+    if default is None:
+        errors.append("could not determine the default branch")
 
 merged_heads = {p["headRefOid"] for p in merged_prs}
 stale = {b for b, oid in branches.items() if oid in merged_heads}

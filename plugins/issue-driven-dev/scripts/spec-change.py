@@ -38,10 +38,13 @@ file) and exits with a fixed code. A usage error prints to stderr and exits 64.
   archive-ref --cwd <dir>                                                       (#547)
       Which branch do the spec checks read for this repository? The first IDD configuration walking up
       from the repository's main working tree may map its path (relative to the directory holding .claude/)
-      in `spec_archive` to {"ref": "local", "branch": "<name>"}; accepted only without any remote URL.
-      A configuration that cannot be read as a JSON object counts as having no entry (remote, with a reason).
+      in `spec_archive` to {"ref": "local", "branch": "<name>"}; accepted only without any remote (a url, pushurl
+      or vcs, or a legacy remotes/branches file). A configuration that cannot be read as a JSON object, and
+      `"spec_archive": null`, count as having no entry (remote, with a reason). A key written twice (spec_archive
+      itself, a key of it, a key of the matching entry) is an error. Every remote answer carries has_remote;
+      false means the repository has no remote at all, and callers stop instead of fetching.
       {"status": remote|local|error, "branch": "...", "ref": "<commit>", "config": "...", "key": "...",
-       "reason": "..."}   exit 0 (remote, local), 2 (error)
+       "has_remote": true|false, "reason": "..."}   exit 0 (remote, local), 2 (error)
 
   link-base --cwd <dir> --issue <N>                                             (#547)
       Where does the link check start in local mode? The baseline tag (auto_tag.baseline_format, default
@@ -466,8 +469,8 @@ def cmd_preflight(argv):
             return emit({"status": "third-party", "message": "the account cannot write to this repository: "
                          "implement without a spec change and declare `**Spec**: third-party clone`"}, 0)
         # Plain --git-dir / --git-common-dir (relative to top when not absolute): --path-format needs git 2.31.
-        gd = os.path.join(top, git_text(top, "rev-parse", "--git-dir").strip())
-        cd = os.path.join(top, git_text(top, "rev-parse", "--git-common-dir").strip())
+        gd = os.path.join(top, git_text(top, "rev-parse", "--git-dir").rstrip("\n"))
+        cd = os.path.join(top, git_text(top, "rev-parse", "--git-common-dir").rstrip("\n"))
         if os.path.realpath(gd) != os.path.realpath(cd):
             return emit({"status": "linked-worktree", "message": "this is a git linked worktree; spectra writes into "
                          "the main working tree from here. Run in the main tree or a standalone clone"}, 1)
@@ -604,14 +607,47 @@ def norm_key(k):
     return os.path.normpath(k).replace(os.sep, "/")
 
 
+def first_worktree(top):
+    """(path, bare) of the first entry `git worktree list --porcelain` prints: the main working tree."""
+    p = git(top, "worktree", "list", "--porcelain", "-z", check=False)
+    if p.returncode == 0:
+        fields = p.stdout.decode("utf-8", "replace").split("\x00")
+    else:                                   # git older than 2.36 has no -z
+        fields = git_text(top, "worktree", "list", "--porcelain").split("\n")
+    path, bare = None, False
+    for f in fields:
+        if not f:
+            if path is not None:
+                break                       # the first entry ends at its empty field
+            continue
+        if path is None:
+            if not f.startswith("worktree "):
+                raise Fail(f"git worktree list printed an entry that does not start with its path: {f[:60]!r}")
+            path = f[len("worktree "):]
+        elif f == "bare":
+            bare = True
+    if path is None:
+        raise Fail("git worktree list printed no working tree")
+    return path, bare
+
+
 def main_tree(top):
-    """The repository's main working tree: for a linked worktree (its git dir is not the common one), the directory
-    holding the common .git directory; otherwise the top level (a --separate-git-dir repository included)."""
+    """The repository's main working tree, or None when git does not record it. For a linked worktree (its git dir
+    is not the common one): the first entry of `git worktree list --porcelain`; a bare entry means there is none,
+    and the top level is used; an entry that is the common git directory itself means git does not know where the
+    main working tree is (a repository made with --separate-git-dir keeps no path back to it), and no key is guessed.
+    Otherwise the top level (a --separate-git-dir repository asked from its main working tree included)."""
     gd = os.path.realpath(os.path.join(top, git_text(top, "rev-parse", "--git-dir").rstrip("\n")))
     common = os.path.realpath(os.path.join(top, git_text(top, "rev-parse", "--git-common-dir").rstrip("\n")))
-    if gd != common and os.path.basename(common) == ".git":
-        return os.path.dirname(common)
-    return os.path.realpath(top)
+    if gd == common:
+        return os.path.realpath(top)
+    path, bare = first_worktree(top)
+    if bare:
+        return os.path.realpath(top)
+    path = os.path.realpath(path)
+    if path == common:
+        return None
+    return path
 
 
 def rel_to(path, base):
@@ -622,19 +658,20 @@ def rel_to(path, base):
         return os.path.basename(path)
 
 
-class DuplicateKey(ValueError):
-    pass
+class JsonObject(dict):
+    """A JSON object as parsed; `dups` holds the keys written more than once in it. The record lives on the
+    parsed object, not in its data, so no key the file holds can imitate one."""
+    dups = ()
 
 
 def _pairs(pairs):
-    """object_pairs_hook: keep the pairs as a dict, but remember a key written twice in one object."""
-    d, dup = {}, []
+    """object_pairs_hook: keep the pairs as a dict, and remember each key written twice in one object."""
+    d, dup = JsonObject(), []
     for k, v in pairs:
-        if k in d:
+        if k in d and k not in dup:
             dup.append(k)
         d[k] = v
-    if dup:
-        d["\x00duplicate-keys"] = dup
+    d.dups = tuple(dup)
     return d
 
 
@@ -651,8 +688,9 @@ def read_config(path, shown):
 
 
 def remotes_of(top):
-    """Names of the remotes git can use here: listed by `git remote` and given a url or a pushurl, or a legacy
-    remotes/<name> or branches/<name> file in the git directory. A section with neither (remote.origin.prune) is no remote."""
+    """Names of the remotes git can use here: listed by `git remote` and given a url, a pushurl or a vcs (a remote
+    helper), or a legacy remotes/<name> or branches/<name> file in the git directory. A section with none of them
+    (remote.origin.prune) is no remote."""
     gd = os.path.join(top, git_text(top, "rev-parse", "--git-common-dir").rstrip("\n"))
     names = set(n for n in git_text(top, "remote").splitlines() if n)
     for d in ("remotes", "branches"):          # legacy files: newer git no longer lists them, fetch may still read them
@@ -663,7 +701,7 @@ def remotes_of(top):
     out = []
     for name in names:
         has = any(git(top, "config", "--get-all", f"remote.{name}.{k}", check=False).stdout.strip()
-                  for k in ("url", "pushurl"))
+                  for k in ("url", "pushurl", "vcs"))
         has = has or any(os.path.isfile(os.path.join(gd, d, name)) for d in ("remotes", "branches"))
         if has:
             out.append(name)
@@ -671,32 +709,45 @@ def remotes_of(top):
 
 
 def archive_ref(cwd):
-    """{"status": "remote", reason} | {"status": "local", branch, ref, config, key}; raises Fail for an error."""
+    """{"status": "remote", reason, has_remote} | {"status": "local", branch, ref, config, key}; raises Fail for an error.
+    has_remote is false when the repository has no remote at all: callers then stop instead of fetching (git would
+    read a local path named like the remote)."""
     top = repo_top(cwd)
     tree = main_tree(top)
+
+    def remote(reason):
+        return {"status": "remote", "reason": reason, "has_remote": bool(remotes_of(top))}
+
+    if tree is None:
+        return remote("this is a linked worktree whose main working tree git does not record (its git directory "
+                      "was made apart with --separate-git-dir); spec_archive is read only from the main working tree")
     path, root = find_config(tree)
     if path is None:
-        return {"status": "remote", "reason": "no IDD configuration found above the repository"}
+        return remote("no IDD configuration found above the repository")
     shown = rel_to(path, tree)        # messages name the file as seen from the repository
     data, why = read_config(path, shown)
     if data is None:
-        return {"status": "remote", "reason": why}
-    if "spec_archive" not in data:
-        return {"status": "remote", "reason": f"{shown} has no spec_archive field"}
+        return remote(why)
+    if "spec_archive" in data.dups:
+        raise Fail(f"{shown} has more than one entry for spec_archive (the field is written twice)")
+    if data.get("spec_archive") is None:
+        return remote(f"{shown} has no spec_archive field")
     table = data["spec_archive"]
     if not isinstance(table, dict):
         raise Fail(f"spec_archive in {shown} must be an object keyed by repository path")
     rel = os.path.relpath(tree, root)
     key = norm_key(rel)
     if key is None:                   # never fall back to "." (that is another directory's entry)
-        return {"status": "remote", "reason": f"this repository's path {rel!r} cannot be written as a spec_archive key"}
-    dup = [k for k in table.get("\x00duplicate-keys", []) if norm_key(k) == key]
-    entries = [v for k, v in table.items() if not k.startswith("\x00") and norm_key(k) == key]
+        return remote(f"this repository's path {rel!r} cannot be written as a spec_archive key")
+    dup = [k for k in table.dups if norm_key(k) == key]
+    entries = [v for k, v in table.items() if norm_key(k) == key]
     if not entries:
-        return {"status": "remote", "reason": f"spec_archive in {shown} has no entry for {key}"}
+        return remote(f"spec_archive in {shown} has no entry for {key}")
     if len(entries) > 1 or dup:
         raise Fail(f"spec_archive in {shown} has more than one entry for {key}")
     entry = entries[0]
+    if isinstance(entry, JsonObject) and entry.dups:
+        raise Fail(f"spec_archive[{key!r}] in {shown} has more than one entry for {', '.join(map(repr, entry.dups))}")
     if not isinstance(entry, dict) or entry.get("ref") != "local":
         raise Fail(f"spec_archive[{key!r}] in {shown}: only {{\"ref\": \"local\", \"branch\": \"<name>\"}} is supported")
     branch = entry.get("branch")
@@ -769,8 +820,9 @@ def cmd_link_base(argv):
             if sha != head_sha and git(top, "merge-base", "--is-ancestor", sha, "HEAD", check=False).returncode == 0:
                 return emit({"status": "ok", "base": sha, "from": "baseline-tag", "tag": tag}, 0)
         names = names_issue(data, n)
-        # -z: one NUL between commits (a commit message cannot hold NUL); no signature text; HEAD is a revision.
-        log = git(top, "log", "--no-show-signature", "--reverse", "-z", "--format=%H %P%n%B", "HEAD", "--")
+        # -z: one NUL between commits (a commit message cannot hold NUL); no signature text; UTF-8 whatever
+        # i18n.logOutputEncoding says (UTF-16 would put NULs inside every record); HEAD is a revision.
+        log = git(top, "log", "--no-show-signature", "--encoding=UTF-8", "--reverse", "-z", "--format=%H %P%n%B", "HEAD", "--")
         for rec in log.stdout.decode("utf-8", "replace").split("\x00"):
             head, _, body = rec.partition("\n")
             ids = head.split()

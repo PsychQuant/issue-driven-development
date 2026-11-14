@@ -300,6 +300,13 @@ printf '%s\n' '{"spec_archive": ["code"]}' > "$ERRP/.claude/.idd/local.json"
 ERR_OUT=$(HOME="$W" CLAUDE_PLUGIN_ROOT="$HERE/../../.." WORKDIR="$ERRP/code" GITHUB_REPO=test/repo NUMBER=61 PATH="$W/bin:$PATH" \
   bash -c "$(snippet "$CSEC")
 printf 'EWNOTES=%s\\n' \"\$(printf '%s' \"\$EW_JSON\" | jq -c '.notes // []')\"" 2>&1)
+# idd-547-fix3: --skip-branches with gh repo view failing does not read origin/HEAD in --cwd
+touch "$FX/fail_repo_view"; : > "$W/gitlog/calls"
+OUT=$(PATH="$W/gitlog:$W/bin:$PATH" bash "$SCRIPT" --cwd "$TR" --skip-branches test/repo 61 2>"$W/stderr")
+refute_grep "--skip-branches with gh repo view failing reads no origin/HEAD" "refs/remotes/origin/HEAD" "$(cat "$W/gitlog/calls")"
+refute_grep "… and adds no default-branch error (the default branch is not needed)" "default branch" "$(field "$OUT" "d['errors']")"
+refute_grep "… nor asks GitHub for it" "repo view" "$(field "$OUT" "d['errors']")"
+rm -f "$FX/fail_repo_view"
 assert_eq "idd-close: archive-ref answers error → Step 1.5 does not pass --skip-branches" "[]" \
   "$(printf '%s\n' "$ERR_OUT" | sed -n 's/^EWNOTES=//p')"
 assert_eq "a repeated --cwd is a usage error (exit 2)" 2 "$RC_DUP"

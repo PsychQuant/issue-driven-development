@@ -565,12 +565,16 @@ else
     printf '%s' "$ARCH" | python3 -I -c 'import json,sys; d=json.loads(sys.stdin.read()); print("→ spec archive gate: checking local ref %s@%s (this repository has no remote; spec_archive[%r])" % (d["branch"], d["ref"][:7], d["key"]))' 2>/dev/null
   elif [ "$ARCH_STATUS" = remote ]; then
     # A declared change is checked against the default branch as the remote has it: no name, or a failed fetch,
-    # is an error, never a pass on a stale local ref (verify round 2).
-    DEFAULT_BRANCH=$(gh repo view "$GITHUB_REPO" --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null) || DEFAULT_BRANCH=""
-    # The commit the fetch returned (FETCH_HEAD), not origin/<default>: a fetch refspec that does not cover the
-    # default branch leaves the tracking ref where it was (verify round 3).
-    if [ -n "$DEFAULT_BRANCH" ] && git -C "${CWD:-$PWD}" fetch -q origin -- "$DEFAULT_BRANCH" 2>/dev/null; then
-      SPEC_REF=$(git -C "${CWD:-$PWD}" rev-parse -q --verify FETCH_HEAD 2>/dev/null)
+    # is an error, never a pass on a stale local ref (verify round 2). Only when archive-ref says the repository
+    # has a remote: without one, git would fetch a local path named origin (#547 round 3), so it stops below.
+    ARCH_HAS_REMOTE=$(printf '%s' "$ARCH" | python3 -I -c 'import json,sys; print(json.loads(sys.stdin.read() or "{}").get("has_remote") is True)' 2>/dev/null)
+    if [ "$ARCH_HAS_REMOTE" = True ]; then
+      DEFAULT_BRANCH=$(gh repo view "$GITHUB_REPO" --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null) || DEFAULT_BRANCH=""
+      # The commit the fetch returned (FETCH_HEAD), not origin/<default>: a fetch refspec that does not cover the
+      # default branch leaves the tracking ref where it was (verify round 3).
+      if [ -n "$DEFAULT_BRANCH" ] && git -C "${CWD:-$PWD}" fetch -q origin -- "$DEFAULT_BRANCH" 2>/dev/null; then
+        SPEC_REF=$(git -C "${CWD:-$PWD}" rev-parse -q --verify FETCH_HEAD 2>/dev/null)
+      fi
     fi
   fi
   if [ "$ARCH_STATUS" != local ] && [ "$ARCH_STATUS" != remote ]; then
@@ -582,9 +586,11 @@ print(json.dumps({"status": "error", "not_archived": [], "reason": "archive-ref:
     # #547: say why archive-ref answered remote, so a repository meant for its local branch whose entry was not
     # found (or whose configuration could not be read) shows the reason next to the failed fetch.
     GATE=$(printf '%s' "$ARCH" | python3 -I -c 'import json,sys
-try: r = json.loads(sys.stdin.read()).get("reason", "")
-except Exception: r = ""
-print(json.dumps({"status": "error", "not_archived": [], "reason": "the default branch could not be read (gh repo view or git fetch failed)" + ("; archive-ref: " + r if r else "")}))'); GATE_RC=2
+try: d = json.loads(sys.stdin.read())
+except Exception: d = {}
+r = d.get("reason", "") if isinstance(d, dict) else ""
+why = " (gh repo view or git fetch failed)" if isinstance(d, dict) and d.get("has_remote") is True else ": this repository has no remote, so it was not fetched"
+print(json.dumps({"status": "error", "not_archived": [], "reason": "the default branch could not be read" + why + ("; archive-ref: " + r if r else "")}))'); GATE_RC=2
   else
     GATE=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" archived --file "$SPEC_IC" --cwd "${CWD:-$PWD}" --ref "$SPEC_REF"); GATE_RC=$?
   fi
@@ -597,7 +603,7 @@ printf '%s\n' "$GATE" | jq -r '"→ spec archive gate: \(.status) \(.reason)"'
 |---|---|
 | `pass`（含 `no behaviour change`、`third-party clone`、舊制留言） | 往下 |
 | `refuse` | 停下、不 close：列出還沒封存的 change，或 `**Spec**:` 行的問題。常見原因是 PR 還沒合併，或封存 commit 不在合併的範圍裡 |
-| `error` | 停下、不 close：留言、預設 branch 或設定讀不到，照原因處理後重跑。`archive-ref:` 開頭的原因說的是 `spec-change.py archive-ref` 為什麼這樣回答：設定的問題（例如設了本機模式的 repo 有 remote、branch 不存在、同一個路徑有兩個條目）就改設定或移除那一條；程式 repo 讀不到（不是 git repo）就在正確的目錄重跑 |
+| `error` | 停下、不 close：留言、預設 branch 或設定讀不到，照原因處理後重跑。程式 repo 沒有任何 remote 而 `archive-ref` 回 `remote`（`has_remote` 為 false）時不 fetch，原因寫「this repository has no remote」：要嘛在 `spec_archive` 加這個 repo 的條目，要嘛加 remote。`archive-ref:` 開頭的原因說的是 `spec-change.py archive-ref` 為什麼這樣回答：設定的問題（例如設了本機模式的 repo 有 remote、branch 不存在、同一個路徑有兩個條目）就改設定或移除那一條；程式 repo 讀不到（不是 git repo）就在正確的目錄重跑 |
 | 沒有輸出、不是 JSON、或上面沒列的 status | 停下、不 close，回報印出的內容 |
 
 這一道和 Step 1.5 一樣是硬性的：不問人、沒有略過的選項。有人在場時要結案，先把 change 封存進預設 branch，或修正 Implementation Complete 的宣告。
