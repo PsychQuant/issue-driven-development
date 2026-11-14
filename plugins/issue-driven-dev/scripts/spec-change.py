@@ -20,6 +20,9 @@ file) and exits with a fixed code. A usage error prints to stderr and exits 64.
       Searching submodules requires git 2.45 or later.
       A submodule can be searched only when checked out (its directory holds its own .git
       entry and is the top of its own working tree) and its object store holds that commit.
+      A file that counts settles the Example only when the search of its submodule ran to its end;
+      an object of the recorded commit that is absent or cannot be opened makes the submodule one
+      that could not be searched unless such a file was found.
       If an Example's marker is not found and a submodule could not be searched, answer error.
       A marker found in the main repository settles the Example without running git in any submodule.
       {"status": ok|missing|error, "missing": [{capability, requirement, example, why}],
@@ -379,7 +382,7 @@ def examples(lines):
     return [m.group(1).strip() for m in (EXAMPLE_RE.match(l) for l in lines) if m]
 
 
-def submodule_git(cwd, *args):
+def submodule_git(cwd, *args, stdin=None):
     """Read a checkout without inheriting another repository or fetching missing objects."""
     env = dict(os.environ, GIT_LITERAL_PATHSPECS="1", GIT_NO_LAZY_FETCH="1")
     for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
@@ -387,10 +390,33 @@ def submodule_git(cwd, *args):
         env.pop(name, None)
     command = ["git", "-c", "core.quotePath=false", "-c", "safe.bareRepository=explicit", "-C", cwd, *args]
     try:
-        return subprocess.run(command, capture_output=True, env=env)
+        return subprocess.run(command, capture_output=True, env=env, input=stdin)
     except OSError:
         # A checkout that disappears or becomes unreadable is also unavailable.
         return subprocess.CompletedProcess(command, 128, b"", b"")
+
+
+def submodule_lacks_objects(directory, rev):
+    """Does the object store of a submodule lack, or fail to open, an object of the recorded commit?"""
+    p = submodule_git(directory, "rev-list", "--objects", "--no-walk", "--missing=print", rev)
+    if p.returncode != 0:
+        return True
+    ids = []
+    # git ends every record with a line feed and prints a file name as it is, so split at line feeds only:
+    # a name can hold a carriage return, and "?" starts a record only when an object id follows it.
+    for record in p.stdout.split(b"\n"):
+        if not record:
+            continue
+        if re.fullmatch(rb"\?[0-9a-f]+", record):
+            return True
+        ids.append(record.split(b" ", 1)[0])
+    # rev-list asks only whether each object exists. An object file that is present but empty or unreadable is
+    # listed as present, and the search skips the file without failing: --batch-check opens every object.
+    # It gets the ids alone (with the names, every named object would be answered as missing), and it runs
+    # with lazy fetching off like every other command here.
+    p = submodule_git(directory, "cat-file", "--batch-check", stdin=b"".join(i + b"\n" for i in ids))
+    answers = [line for line in p.stdout.split(b"\n") if line]
+    return p.returncode != 0 or len(answers) != len(ids) or any(a.endswith(b" missing") for a in answers)
 
 
 def marker_files(top, head, needle, sd, cache):
@@ -442,15 +468,17 @@ def marker_files(top, head, needle, sd, cache):
         visited.add(key)
         cached = cache.setdefault(key, {})
         if link is not None and "lacks_objects" not in cached:
-            p = submodule_git(directory, "rev-list", "--objects", "--no-walk", "--missing=print", rev)
-            cached["lacks_objects"] = p.returncode != 0 or any(line.startswith(b"?") for line in p.stdout.splitlines())
+            cached["lacks_objects"] = submodule_lacks_objects(directory, rev)
         # --no-recurse-submodules: with submodule.recurse set, git grep would walk the submodules itself, skip one
         # that is not checked out without saying so, and die on a recorded commit it cannot read.
         args = ("grep", "--no-recurse-submodules", "-z", "-F", "-e", needle, rev, "--", ".")
         p = submodule_git(directory, *args) if link is not None else git(directory, *args, check=False)
         if link is None and p.returncode not in (0, 1):   # the main repository: as before this branch
             raise Fail("git grep failed: " + p.stderr.decode("utf-8", "replace").strip()[:200])
-        for line in p.stdout.decode("utf-8", "replace").split("\n"):
+        # A search of a submodule that ended with another code printed as much as its worker threads got to:
+        # that output is not used, or the same repository would answer ok on one run and error on the next.
+        search_died = link is not None and p.returncode not in (0, 1)
+        for line in ([] if search_died else p.stdout.decode("utf-8", "replace").split("\n")):
             if not line:
                 continue
             where, _, content = line.partition("\0")
@@ -461,7 +489,7 @@ def marker_files(top, head, needle, sd, cache):
             rests = content.split(needle)[1:]
             if any(MARKER_REST_RE.fullmatch(rest) for rest in rests):
                 return [path], unavailable
-        unreadable = link is not None and (cached["lacks_objects"] or p.returncode not in (0, 1))
+        unreadable = link is not None and (cached["lacks_objects"] or search_died)
         if unreadable:
             unavailable.append((prefix[:-1], "its recorded commit could not be read"))
         # An unreadable file does not hide the gitlinks of a tree that can still be listed.

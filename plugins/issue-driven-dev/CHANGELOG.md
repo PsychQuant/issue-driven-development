@@ -20,16 +20,19 @@ Version number left to the release.
   if its recorded path is relative with no empty, `.` or `..` component, its resolved directory lies inside
   the main working tree, that directory is not a symbolic link, it holds its own `.git` entry, git reports
   it as the top of its own working tree, and its object store holds the recorded commit. Its object store
-  is asked which objects of that commit it lacks; a marker found in a file that counts still settles the
-  Example even if other objects are missing. What git writes to its error stream does not change whether a
-  submodule counts as searched, nor the reason reported for it.
-  A submodule whose search failed still has its own submodules searched when its tree can be listed.
+  is asked which objects of that commit it lacks or cannot open (an object file that is present but empty
+  or unreadable counts as lacking); a marker found in a file that counts, by a search that ran to its end,
+  still settles the Example even if other objects are missing. What a search printed before it ended early
+  is not used, so the answer is the same on every run. What git writes to its error stream does not change
+  whether a submodule counts as searched, nor the reason reported for it.
+  A submodule whose search failed still has its own submodules searched when all its trees can be listed.
   If the marker is not found and a submodule could not be searched,
   `links` answers `error` and names the Example and up to five submodule paths with fixed reasons. Paths
   under the spec directory are skipped, and nothing is fetched into submodules during the check.
-  A path under the spec directory that is not valid UTF-8 gives a fixed error reason without exception text.
+  A path under the spec directory's `specs/` that is not valid UTF-8 gives a fixed error reason without
+  exception text; such a path elsewhere under the spec directory does not change the answer.
   `links`, `archived` and `preflight` read the top directory as git prints it, removing only its trailing
-  newline, so directory names ending in a space work consistently.
+  newline, so directory names ending in a space or in a line feed work consistently.
 
 ### Fixed
 
