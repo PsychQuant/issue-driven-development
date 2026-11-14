@@ -91,8 +91,8 @@ Implementation Plan 留言（Plan tier 由 `idd-plan` 貼，Simple 由 `idd-impl
 - 每一條新增或改到的 requirement 至少一個 `##### Example:`，標題在該 capability 裡唯一；寫不出檢查的，寫一行 `No executable check:` 加理由。
 - tasks 裡每個 Example 對應一個測試 task，測試檔要帶標記 `spec-example: <capability> / <Example title>`。
 
-標記也可以在 submodule 的已追蹤檔案裡，讀的是主 repo 記錄的 commit；檢查時 submodule 要已經取出，否則找不到標記的 Example 會讓檢查回 `error`。
-標記在 submodule 時，檢查前先跑 `git submodule update --init --recursive`。部分 clone 的 submodule 必須先備齊記錄的 commit 所需的物件，因為檢查不會抓取物件。樹裡記成 submodule、`.gitmodules` 卻沒有對應項目的路徑無法取出，必須補上對應項目，或從樹裡移除該路徑。
+標記也可以在 submodule 的已追蹤檔案裡，讀的是主 repo 記錄的 commit；搜尋 submodule 需要 git 2.45 或更新版本。檢查時 submodule 要已經取出，否則找不到標記的 Example 會讓檢查回 `error`。
+標記在 submodule 時，檢查前先跑 `git submodule update --init --recursive`；這會連到該分支的 `.gitmodules` 指定的位址，只在信任它時執行。部分 clone 的 submodule 必須先備齊記錄的 commit 所需的物件，因為檢查不會抓取物件。樹裡記成 submodule、`.gitmodules` 卻沒有對應項目的路徑無法取出，必須補上對應項目，或從樹裡移除該路徑。
 
 無人值守的 run（照 [`unattended-contract.md`](unattended-contract.md) 判定）不能停在 Spectra 的問題上。先判定一次：
 

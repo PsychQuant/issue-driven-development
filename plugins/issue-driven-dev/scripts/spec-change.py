@@ -17,6 +17,7 @@ file) and exits with a fixed code. A usage error prints to stderr and exits 64.
   links     --base <rev> [--head <rev>] [--cwd <dir>]
       Does every requirement added or changed in base..head carry an executable check?
       Tracked files of submodules count, read at the commit the head revision records.
+      Searching submodules requires git 2.45 or later.
       A submodule can be searched only when checked out (its directory holds its own .git
       entry and is the top of its own working tree) and its object store holds that commit.
       If an Example's marker is not found and a submodule could not be searched, answer error.
@@ -125,7 +126,7 @@ def repo_top(cwd):
     p = git(cwd, "rev-parse", "--show-toplevel", check=False)
     if p.returncode != 0:
         raise Fail(f"{cwd} is not inside a git repository")
-    return p.stdout.decode("utf-8").strip()
+    return os.fsdecode(p.stdout[:-1] if p.stdout.endswith(b"\n") else p.stdout)
 
 
 SPEC_DIR_RE = re.compile(r"^spec_dir:(.*)$")
@@ -411,14 +412,26 @@ def marker_files(top, head, needle, sd, cache):
                 elif not os.path.isdir(directory) or os.path.islink(directory) or not os.path.lexists(os.path.join(directory, ".git")):
                     reason = "not checked out"
                 else:
-                    p = submodule_git(directory, "rev-parse", "--show-toplevel")
-                    reported_top = os.fsdecode(p.stdout[:-1] if p.stdout.endswith(b"\n") else p.stdout)
-                    if p.returncode != 0:
-                        reason = "git refused to open it"
-                    elif os.path.realpath(reported_top) != os.path.realpath(directory):
-                        reason = "not checked out"
-                    elif submodule_git(directory, "cat-file", "-e", rev + "^{commit}").returncode != 0:
-                        reason = f"recorded commit {rev[:12]} is not in its object store"
+                    if "git_supported" not in cache:
+                        # Older git ignores GIT_NO_LAZY_FETCH, so do not open a submodule with it.
+                        try:
+                            p = subprocess.run(["git", "version"], capture_output=True)
+                            version = re.match(rb"git version (\d+)\.(\d+)", p.stdout)
+                            cache["git_supported"] = (p.returncode == 0 and version is not None
+                                                      and tuple(map(int, version.groups())) >= (2, 45))
+                        except (OSError, ValueError):
+                            cache["git_supported"] = False
+                    if not cache["git_supported"]:
+                        reason = "git is older than 2.45"
+                    else:
+                        p = submodule_git(directory, "rev-parse", "--show-toplevel")
+                        reported_top = os.fsdecode(p.stdout[:-1] if p.stdout.endswith(b"\n") else p.stdout)
+                        if p.returncode != 0:
+                            reason = "git refused to open it"
+                        elif os.path.realpath(reported_top) != os.path.realpath(directory):
+                            reason = "not checked out"
+                        elif submodule_git(directory, "cat-file", "-e", rev + "^{commit}").returncode != 0:
+                            reason = f"recorded commit {rev[:12]} is not in its object store"
                 link["reason"] = reason
             if link["reason"]:
                 unavailable.append((prefix[:-1], link["reason"]))
@@ -427,14 +440,15 @@ def marker_files(top, head, needle, sd, cache):
         if key in visited:
             continue
         visited.add(key)
+        cached = cache.setdefault(key, {})
+        if link is not None and "lacks_objects" not in cached:
+            p = submodule_git(directory, "rev-list", "--objects", "--no-walk", "--missing=print", rev)
+            cached["lacks_objects"] = p.returncode != 0 or any(line.startswith(b"?") for line in p.stdout.splitlines())
         # --no-recurse-submodules: with submodule.recurse set, git grep would walk the submodules itself, skip one
         # that is not checked out without saying so, and die on a recorded commit it cannot read.
         args = ("grep", "--no-recurse-submodules", "-z", "-F", "-e", needle, rev, "--", ".")
         p = submodule_git(directory, *args) if link is not None else git(directory, *args, check=False)
-        if link is not None and p.returncode not in (0, 1):
-            unavailable.append((prefix[:-1], "its recorded commit could not be read"))
-            continue
-        if p.returncode not in (0, 1):
+        if link is None and p.returncode not in (0, 1):   # the main repository: as before this branch
             raise Fail("git grep failed: " + p.stderr.decode("utf-8", "replace").strip()[:200])
         for line in p.stdout.decode("utf-8", "replace").split("\n"):
             if not line:
@@ -447,29 +461,31 @@ def marker_files(top, head, needle, sd, cache):
             rests = content.split(needle)[1:]
             if any(MARKER_REST_RE.fullmatch(rest) for rest in rests):
                 return [path], unavailable
-        if link is not None and p.stderr:
-            # No file that counts was found, and git could not read something: not "searched, no marker".
-            # This also covers a search that matched only files that do not count (exit 0).
+        unreadable = link is not None and (cached["lacks_objects"] or p.returncode not in (0, 1))
+        if unreadable:
             unavailable.append((prefix[:-1], "its recorded commit could not be read"))
-            continue
-        if key not in cache:   # Availability depends on the recorded tree, not on the Example.
+        # An unreadable file does not hide the gitlinks of a tree that can still be listed.
+        if "links" not in cached:
             args = ("ls-tree", "-r", "-z", rev)
             p = submodule_git(directory, *args) if link is not None else git(directory, *args)
-            if p.returncode != 0:
+            cached["links"] = None
+            if p.returncode == 0:
+                links = []
+                for entry in p.stdout.split(b"\0"):
+                    if not entry:
+                        continue
+                    info, _, raw_path = entry.partition(b"\t")
+                    mode, _, commit = info.decode("ascii").split()
+                    if mode != "160000":
+                        continue
+                    links.append({"path": os.fsdecode(raw_path), "commit": commit, "reason": None})
+                cached["links"] = links
+        if cached["links"] is None:
+            if not unreadable:
                 unavailable.append((prefix[:-1], "its recorded commit could not be read"))
-                continue
-            links = []
-            for entry in p.stdout.split(b"\0"):
-                if not entry:
-                    continue
-                info, _, raw_path = entry.partition(b"\t")
-                mode, _, commit = info.decode("ascii").split()
-                if mode != "160000":
-                    continue
-                links.append({"path": os.fsdecode(raw_path), "commit": commit, "reason": None})
-            cache[key] = links
+            continue
         children = []
-        for child in cache[key]:
+        for child in cached["links"]:
             path = child["path"]
             if (prefix + path).startswith(sd + "/"):
                 continue
@@ -481,20 +497,17 @@ def marker_files(top, head, needle, sd, cache):
 def cmd_links(argv):
     a = parse(argv, {"--base", "--head", "--cwd"}, ["--base"])
     try:
-        cwd = a.get("--cwd", ".")
-        if not os.path.isdir(cwd):
-            raise Fail(f"{cwd} is not a directory")
-        p = git(cwd, "rev-parse", "--show-toplevel", check=False)
-        if p.returncode != 0:
-            raise Fail(f"{cwd} is not inside a git repository")
-        top = os.fsdecode(p.stdout[:-1] if p.stdout.endswith(b"\n") else p.stdout)
+        top = repo_top(a.get("--cwd", "."))
         base = resolve(top, a["--base"])
         head = resolve(top, a.get("--head", "HEAD"))
         sd, sd_base = spec_dir_at(top, head), spec_dir_at(top, base)
-        base_files = {p[len(sd_base):]: p for p in spec_files(top, base, sd_base)}
-        if not git_text(top, "ls-tree", "-r", "-z", "--name-only", head, "--", f"{sd}/specs/").strip("\0"):
-            raise Fail(f"{sd}/specs/ holds no tracked file at {head[:12]}: check `spec_dir` in .spectra.yaml")
-        head_files = spec_files(top, head, sd)
+        try:
+            base_files = {p[len(sd_base):]: p for p in spec_files(top, base, sd_base)}
+            if not git_text(top, "ls-tree", "-r", "-z", "--name-only", head, "--", f"{sd}/specs/").strip("\0"):
+                raise Fail(f"{sd}/specs/ holds no tracked file at {head[:12]}: check `spec_dir` in .spectra.yaml")
+            head_files = spec_files(top, head, sd)
+        except UnicodeDecodeError:
+            raise Fail("a path under the spec directory is not valid UTF-8")
         missing, cache = [], {}
         for path in head_files:
             cap = path[len(sd) + len("/specs/"):].split("/")[0]

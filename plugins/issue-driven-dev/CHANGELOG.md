@@ -13,14 +13,23 @@ Version number left to the release.
 
 - **`spec-change.py links` reads markers in submodules (#548).** Tracked files of checked-out submodules,
   including nested ones, count at the commit the head revision records, even when their working trees are on
-  another commit. A marker found in the main repository settles the Example without running git in any
-  submodule; otherwise the search stops at the first submodule with a marker. A submodule is searched only
+  another commit. A marker found in the main repository settles the Example without listing gitlinks or
+  running git in any submodule; otherwise the search stops at the first submodule with a marker, even if
+  another could not be searched. Searching submodules requires git 2.45 or later; older git, or git whose
+  version cannot be read, does not run in their directories. A submodule is searched only
   if its recorded path is relative with no empty, `.` or `..` component, its resolved directory lies inside
   the main working tree, that directory is not a symbolic link, it holds its own `.git` entry, git reports
-  it as the top of its own working tree, and its object store holds the recorded commit. A failure inside
-  a submodule counts as not searched; if the marker is not found and a submodule could not be searched,
+  it as the top of its own working tree, and its object store holds the recorded commit. Its object store
+  is asked which objects of that commit it lacks; a marker found in a file that counts still settles the
+  Example even if other objects are missing. What git writes to its error stream does not change whether a
+  submodule counts as searched, nor the reason reported for it.
+  A submodule whose search failed still has its own submodules searched when its tree can be listed.
+  If the marker is not found and a submodule could not be searched,
   `links` answers `error` and names the Example and up to five submodule paths with fixed reasons. Paths
   under the spec directory are skipped, and nothing is fetched into submodules during the check.
+  A path under the spec directory that is not valid UTF-8 gives a fixed error reason without exception text.
+  `links`, `archived` and `preflight` read the top directory as git prints it, removing only its trailing
+  newline, so directory names ending in a space work consistently.
 
 ### Fixed
 
