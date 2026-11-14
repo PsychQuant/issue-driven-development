@@ -20,8 +20,8 @@ Version number left to the release.
   if its recorded path is relative with no empty, `.` or `..` component, its resolved directory lies inside
   the main working tree, that directory is not a symbolic link, it holds its own `.git` entry, git reports
   it as the top of its own working tree, and its object store holds the recorded commit. Its object store
-  is asked which objects of that commit it lacks or cannot open (an object file that is present but empty
-  or unreadable counts as lacking); a marker found in a file that counts, by a search that ran to its end,
+  is asked which objects of that commit it lacks or cannot open (an object file that is present but cannot
+  be opened, for example an empty one, counts as lacking); a marker found in a file that counts, by a search that ran to its end,
   still settles the Example even if other objects are missing. What a search printed before it ended early
   is not used, so the answer is the same on every run. What git writes to its error stream does not change
   whether a submodule counts as searched, nor the reason reported for it.

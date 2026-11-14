@@ -410,8 +410,9 @@ def submodule_lacks_objects(directory, rev):
         if re.fullmatch(rb"\?[0-9a-f]+", record):
             return True
         ids.append(record.split(b" ", 1)[0])
-    # rev-list asks only whether each object exists. An object file that is present but empty or unreadable is
-    # listed as present, and the search skips the file without failing: --batch-check opens every object.
+    # rev-list asks only whether each object exists. An object file that is present but cannot be opened (an
+    # empty file, for one) is listed as present, and the search skips the file without failing: --batch-check
+    # opens every object. One that opens and cannot be read to its end is caught by the exit code of the search.
     # It gets the ids alone (with the names, every named object would be answered as missing), and it runs
     # with lazy fetching off like every other command here.
     p = submodule_git(directory, "cat-file", "--batch-check", stdin=b"".join(i + b"\n" for i in ids))
