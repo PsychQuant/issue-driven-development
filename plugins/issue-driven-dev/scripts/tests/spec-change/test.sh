@@ -296,10 +296,13 @@ links_case "openspec/specs/ holds only .gitkeep (a newly initialised repository)
 # ── links: markers in submodules ────────────────────────────────────────────
 echo "spec-change: links (Example: markers in submodules)"
 
+setup_failed() { # what — a fixture step failed: say so before the suite ends without its summary
+  echo "FATAL: spec-change suite: fixture setup failed: $1" >&2; exit 1
+}
 submodule_repo() { # name source path — add one Example and a local submodule; sets REPO and BASE
   linked_repo "$1"
   put openspec/specs/cap/spec.md "$(spec "$(req Base)" "$(req Alpha "$EX")")"
-  git -C "$REPO" -c protocol.file.allow=always submodule add -q "$2" "$3" || exit 1
+  git -C "$REPO" -c protocol.file.allow=always submodule add -q "$2" "$3" || setup_failed "submodule add $3"
   commit >/dev/null
 }
 newrepo l-sub-source; put scripts/test.sh '# spec-example: cap / alpha table'; commit >/dev/null; SUB="$REPO"
@@ -310,10 +313,10 @@ submodule_repo l-sub-tracked "$SUB" tests/sub
 links_case "submodule row 1: tracked marker at the recorded commit" ok 0 0
 
 newrepo l-sub-nested-source
-git -C "$REPO" -c protocol.file.allow=always submodule add -q "$SUB" inner || exit 1
+git -C "$REPO" -c protocol.file.allow=always submodule add -q "$SUB" inner || setup_failed "submodule add inner"
 commit >/dev/null; NESTED_SUB="$REPO"
 submodule_repo l-sub-nested "$NESTED_SUB" tests/sub
-git -C "$REPO" -c protocol.file.allow=always submodule update -q --init --recursive || exit 1
+git -C "$REPO" -c protocol.file.allow=always submodule update -q --init --recursive || setup_failed "submodule update --recursive"
 links_case "submodule row 2: marker in a nested submodule" ok 0 0
 
 submodule_repo l-sub-space "$SUB" 'tests/sub module'
@@ -337,21 +340,51 @@ submodule_repo l-sub-nowhere "$EMPTY_SUB" tests/sub
 links_case "submodule row 7: no marker, submodule checked out" missing 1 1
 
 submodule_repo l-sub-deinit "$SUB" tests/sub
-git -C "$REPO" submodule deinit -q -f -- tests/sub || exit 1
+git -C "$REPO" submodule deinit -q -f -- tests/sub || setup_failed "submodule deinit"
 links_case "submodule row 8: marker in a submodule not checked out" error 0 2
 assert_eq "links: submodule row 8 — reason names Example and path" "cannot decide whether the Example 'cap / alpha table' has a marker: submodule tests/sub: not checked out" "$(printf '%s' "$OUT" | field reason)"
 
 submodule_repo l-sub-main "$SUB" tests/sub
 put scripts/test.sh '# spec-example: cap / alpha table'; commit >/dev/null
-git -C "$REPO" submodule deinit -q -f -- tests/sub || exit 1
+git -C "$REPO" submodule deinit -q -f -- tests/sub || setup_failed "submodule deinit"
 links_case "submodule row 9: main marker, submodule not checked out" ok 0 0
 
 submodule_repo l-sub-missing-commit "$EMPTY_SUB" tests/sub
-git -C "$REPO" update-index --cacheinfo 160000,1111111111111111111111111111111111111111,tests/sub || exit 1
+git -C "$REPO" update-index --cacheinfo 160000,1111111111111111111111111111111111111111,tests/sub || setup_failed "update-index of a commit that does not exist"
 # Do not add the working tree: keep the missing commit recorded in the index.
-git -C "$REPO" commit -q -m missing-submodule-commit || exit 1
+git -C "$REPO" commit -q -m missing-submodule-commit || setup_failed "commit of the missing pointer"
 links_case "submodule row 10: recorded commit absent from the object store" error 0 2
 assert_eq "links: submodule row 10 — reason names Example and path" "cannot decide whether the Example 'cap / alpha table' has a marker: submodule tests/sub: recorded commit 111111111111 is not in its object store" "$(printf '%s' "$OUT" | field reason)"
+
+# Rows 11 and 12: the user's git configuration turns git's own recursion on. links must answer as in rows 9 and 10.
+missing_commit_repo() { # name — a checked-out submodule whose recorded commit its object store lacks
+  submodule_repo "$1" "$EMPTY_SUB" tests/sub
+  git -C "$REPO" update-index --cacheinfo 160000,1111111111111111111111111111111111111111,tests/sub || setup_failed "update-index of a commit that does not exist"
+  git -C "$REPO" commit -q -m missing-submodule-commit || setup_failed "commit of the missing pointer"
+}
+missing_commit_repo l-sub-recurse-main
+put scripts/test.sh '# spec-example: cap / alpha table'; git -C "$REPO" add scripts/test.sh; git -C "$REPO" commit -q -m main-marker || setup_failed "commit of the main marker"
+git -C "$REPO" config submodule.recurse true
+links_case "submodule row 11: main marker, recorded commit absent, submodule.recurse on" ok 0 0
+
+missing_commit_repo l-sub-recurse-missing
+git -C "$REPO" config submodule.recurse true
+links_case "submodule row 12: recorded commit absent, submodule.recurse on" error 0 2
+assert_eq "links: submodule row 12 — reason names Example and path" "cannot decide whether the Example 'cap / alpha table' has a marker: submodule tests/sub: recorded commit 111111111111 is not in its object store" "$(printf '%s' "$OUT" | field reason)"
+
+submodule_repo l-sub-two "$SUB" tests/a
+git -C "$REPO" -c protocol.file.allow=always submodule add -q "$SUB" tests/b || setup_failed "submodule add tests/b"
+commit >/dev/null
+git -C "$REPO" submodule deinit -q -f -- tests/a tests/b || setup_failed "submodule deinit of two"
+links_case "submodule row 13: two submodules, neither checked out" error 0 2
+assert_eq "links: submodule row 13 — both paths, joined" "cannot decide whether the Example 'cap / alpha table' has a marker: submodule tests/a: not checked out; submodule tests/b: not checked out" "$(printf '%s' "$OUT" | field reason)"
+
+submodule_repo l-sub-inner-out "$NESTED_SUB" tests/sub   # the outer one is checked out, its own submodule is not
+links_case "submodule row 14: marker only in a nested submodule that is not checked out" error 0 2
+assert_eq "links: submodule row 14 — reason names the inner path under the outer one" "cannot decide whether the Example 'cap / alpha table' has a marker: submodule tests/sub/inner: not checked out" "$(printf '%s' "$OUT" | field reason)"
+
+submodule_repo l-sub-under-spec "$SUB" openspec/vendor/sub
+links_case "submodule row 15: marker only in a submodule mounted under the spec directory" missing 1 1
 
 # ── preflight ───────────────────────────────────────────────────────────────
 echo "spec-change: preflight (Example: preflight by write access and Spectra state)"
