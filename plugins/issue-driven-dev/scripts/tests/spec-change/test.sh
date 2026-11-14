@@ -30,10 +30,24 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SC="$HERE/../../spec-change.py"
 PY=$(command -v python3)
 GIT=$(command -v git)
+# The rows about submodules need git 2.45 or later: spec-change.py does not open a submodule with an older git.
+GIT_VERSION_TEXT=$("$GIT" version 2>/dev/null)
+if ! printf '%s\n' "$GIT_VERSION_TEXT" | "$PY" -c 'import re, sys
+m = re.match(r"git version (\d+)\.(\d+)", sys.stdin.read())
+sys.exit(0 if m and (int(m.group(1)), int(m.group(2))) >= (2, 45) else 1)'; then
+  echo "FATAL: spec-change suite: this suite needs git 2.45 or later; found: ${GIT_VERSION_TEXT:-no git version}" >&2
+  exit 1
+fi
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/idd-spec-change.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 # Isolate git from the caller's configuration (#452 lesson).
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+# Nothing of the caller's git environment may reach the fixtures. Inside a git hook GIT_DIR would send every
+# fixture commit to the caller's own repository; GIT_TRACE lengthens every message git writes. The rows that
+# need one of these variables set it for the one call under test.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR \
+  GIT_NAMESPACE GIT_TRACE GIT_TRACE2 GIT_TRACE2_EVENT GIT_TRACE2_PERF GIT_TRACE_SETUP GIT_TRACE_PACKET \
+  GIT_TRACE_PERFORMANCE
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.test GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.test
 
 MARK='<!-- idd:comment type=implementation-complete -->'
@@ -51,8 +65,13 @@ run() { # subcommand args... → OUT, RC, LINES (stdout lines)
 comment() { # name body — write a comment file, print its path
   printf '%s\n' "$2" > "$WORK/$1.md"; printf '%s' "$WORK/$1.md"
 }
+MAIN_PID=$$
+trap 'exit 1' TERM
 setup_failed() { # what — a fixture step failed: say so before the suite ends without its summary
-  echo "FATAL: spec-change suite: fixture setup failed: $1" >&2; exit 1
+  echo "FATAL: spec-change suite: fixture setup failed: $1" >&2
+  # Inside $(...) an exit ends only the subshell (X=$(commit) would go on with an empty X): stop the suite too.
+  [ "${BASH_SUBSHELL:-0}" -eq 0 ] || kill -TERM "$MAIN_PID" 2>/dev/null
+  exit 1
 }
 newrepo() { # name → REPO (an empty git repo with one empty commit)
   REPO="$WORK/$1"
@@ -305,6 +324,18 @@ links_case "openspec/specs/ holds no tracked file at the head revision" error ""
 newrepo l-gitkeep; put openspec/specs/.gitkeep ''; BASE=$(commit base); put README.txt x; commit >/dev/null
 links_case "openspec/specs/ holds only .gitkeep (a newly initialised repository)" ok 0 0
 
+# A path that is not valid UTF-8 under the spec directory but outside specs/ does not change the answer.
+linked_repo l-changes-invalid-utf8 || setup_failed "create invalid-UTF-8 changes fixture"
+put openspec/specs/cap/spec.md "$(spec "$(req Base)" "$(req Alpha "$EX")")" || setup_failed "write Example for the changes fixture"
+put scripts/tests/x/test.sh '# spec-example: cap / alpha table' || setup_failed "write marker for the changes fixture"
+git -C "$REPO" add -A || setup_failed "stage the changes fixture"
+OTHER_BLOB=$(git -C "$REPO" hash-object -w "$REPO/scripts/tests/x/test.sh") || setup_failed "store a blob for the changes fixture"
+OTHER_PATH=$(printf 'openspec/changes/x\377/notes.txt') || setup_failed "build invalid-UTF-8 changes path"
+git -C "$REPO" update-index --add --cacheinfo "100644,$OTHER_BLOB,$OTHER_PATH" || setup_failed "record invalid-UTF-8 changes path"
+git -C "$REPO" commit -q -m example || setup_failed "commit the changes fixture"
+git -C "$REPO" ls-tree -r --name-only HEAD | LC_ALL=C grep -q "$(printf 'changes/x\\\\377')" || setup_failed "the invalid-UTF-8 changes path is not in the head revision"
+links_case "added, a path under openspec/changes/ is not valid UTF-8" ok 0 0
+
 linked_repo l-spec-invalid-utf8 || setup_failed "create invalid-UTF-8 spec fixture"
 spec "$(req Alpha)" > "$WORK/invalid-utf8-spec.md" || setup_failed "write new capability spec"
 SPEC_BLOB=$(git -C "$REPO" hash-object -w "$WORK/invalid-utf8-spec.md") || setup_failed "store spec blob"
@@ -329,9 +360,23 @@ GIT_SAID=$(git -C "$REPO" grep --no-recurse-submodules -z -F -e 'spec-example: c
 [ -n "$GIT_SAID" ] || setup_failed "git wrote nothing about the tree it cannot read"
 [ "${#GIT_SAID}" -le 200 ] || setup_failed "git's message about the tree is longer than 200 characters"
 assert_eq "links: unreadable main tree — the reason is what git wrote" "git grep failed: $GIT_SAID" "$(printf '%s' "$OUT" | field reason)"
-GIT_TRACE=1 run links --cwd "$REPO" --base "$BASE"
-assert_eq "links: unreadable main tree — a longer message is cut to 200 characters" 217 \
-  "$(printf '%s' "$OUT" | "$PY" -c 'import json,sys; print(len(json.loads(sys.stdin.read() or "{}").get("reason", "")))')"
+# A message longer than 200 characters, with a known text: a git whose search fails with 300 characters in
+# which every group of four is distinct, so the first 200 cannot be mistaken for the last 200.
+mkdir -p "$WORK/gitlong-bin" || setup_failed "create long-message git directory"
+cat > "$WORK/gitlong-bin/git" <<'EOF' || setup_failed "write long-message git"
+#!/bin/sh
+for a in "$@"; do
+  if [ "$a" = grep ]; then printf '%s' "$TEST_GIT_GREP_MESSAGE" >&2; exit 128; fi
+done
+exec "$REAL_GIT" "$@"
+EOF
+chmod u+x "$WORK/gitlong-bin/git" || setup_failed "make long-message git executable"
+LONG_MESSAGE=$("$PY" -c 'print("".join("%03d|" % i for i in range(75)), end="")') || setup_failed "build the long message"
+[ "${#LONG_MESSAGE}" -eq 300 ] || setup_failed "the long message must have 300 characters"
+REAL_GIT="$GIT" TEST_GIT_GREP_MESSAGE="$LONG_MESSAGE" PATH="$WORK/gitlong-bin:$PATH" run links --cwd "$REPO" --base "$BASE"
+assert_eq "links: unreadable main tree — a longer message is cut to its first 200 characters" \
+  "git grep failed: ${LONG_MESSAGE:0:200}" "$(printf '%s' "$OUT" | field reason)"
+assert_exit "links: unreadable main tree — exit with the longer message" 2 "$RC"
 
 # ── links: markers in submodules ────────────────────────────────────────────
 echo "spec-change: links (Example: markers in submodules)"
@@ -795,8 +840,9 @@ GIT_CALL_LOG="$WORK/git-version.log" REAL_GIT="$GIT" TEST_GIT_VERSION=2.44.0 PAT
 refute_grep "links: submodule row 48 — no git call in the submodule" "$(basename "$REPO")/tests/sub " "$(cat "$WORK/git-version.log")"
 refute_grep_re "links: submodule row 48 — no version check" '^(version|--version)$' "$(cat "$WORK/git-version.log")"
 
-# Row 49 (added before archiving, tasks 4.1): the object store holds the content of a file, but damaged. Nothing is
-# lacking, so only the exit code of the search shows that the recorded commit could not be read.
+# Row 49: the object store holds the content of a file, but damaged: bytes that are not a compressed object.
+# rev-list lists the object as present, opening it fails, and the search ends with exit code 128. (Row 54 is the
+# case that only the exit code shows.)
 submodule_repo l-sub-damaged-blob "$EMPTY_SUB" tests/sub || setup_failed "create row 49"
 remove_submodule_object HEAD:scripts/test.sh || setup_failed "remove the blob before replacing it"
 DAMAGED=$(git -C "$REPO/tests/sub" rev-parse HEAD:scripts/test.sh) || setup_failed "read the damaged blob id"
@@ -807,6 +853,96 @@ LACKING=$(git -C "$REPO/tests/sub" rev-list --objects --no-walk --missing=print 
 if printf '%s\n' "$LACKING" | grep -q '^?'; then setup_failed "the damaged blob must count as present"; fi
 links_case "submodule row 49: no marker, a damaged blob" error 0 2
 submodule_reason 49 tests/sub 'its recorded commit could not be read'
+
+# Row 50: the object that holds the marker's file is present but empty. git lists it as present, and the search
+# skips the file and still ends with 0 or 1: only opening the object shows that the file was not read.
+submodule_repo l-sub-empty-object "$SUB" tests/sub || setup_failed "create row 50"
+remove_submodule_object HEAD:scripts/test.sh || setup_failed "remove the marker blob before emptying it"
+EMPTY_OID=$(git -C "$REPO/tests/sub" rev-parse HEAD:scripts/test.sh) || setup_failed "read the emptied blob id"
+EMPTY_DIR="$(git -C "$REPO/tests/sub" rev-parse --absolute-git-dir)/objects/${EMPTY_OID:0:2}" || setup_failed "locate the emptied blob"
+mkdir -p "$EMPTY_DIR" || setup_failed "create the object directory of row 50"
+: > "$EMPTY_DIR/${EMPTY_OID:2}" || setup_failed "write the empty object file"
+LACKING=$(git -C "$REPO/tests/sub" rev-list --objects --no-walk --missing=print HEAD) || setup_failed "ask which objects row 50 lacks"
+if printf '%s\n' "$LACKING" | grep -q '^?'; then setup_failed "the empty object must be listed as present"; fi
+git -C "$REPO/tests/sub" grep --no-recurse-submodules -q -F -e 'spec-example: cap / alpha table' HEAD -- . >/dev/null 2>&1
+[ "$?" -le 1 ] || setup_failed "the search of a submodule with an empty object must end with 0 or 1"
+links_case "submodule row 50: the marker's object is present but empty" error 0 2
+submodule_reason 50 tests/sub 'its recorded commit could not be read'
+
+# Row 51: a complete submodule with a file whose name holds a carriage return followed by a question mark.
+newrepo l-sub-cr-source || setup_failed "create row 51 source"
+put scripts/test.sh '# no marker' || setup_failed "write row 51 file"
+put "$(printf 'a\r?b')" 'content' || setup_failed "write the file with a carriage return in its name"
+commit >/dev/null || setup_failed "commit row 51 source"
+CR_SOURCE="$REPO"
+submodule_repo l-sub-cr-name "$CR_SOURCE" tests/sub || setup_failed "create row 51"
+git -C "$REPO/tests/sub" rev-list --objects --no-walk HEAD | LC_ALL=C grep -q "$(printf 'a\r')?b" \
+  || setup_failed "the name with a carriage return is not in the recorded commit"
+links_case "submodule row 51: a file name with a carriage return and a question mark" missing 1 1
+
+# Row 52: the search of the submodule ends early (a damaged object) although the marker is in that submodule.
+# What the search printed before it ended depends on its worker threads, so that output is not used.
+newrepo l-sub-dies-source || setup_failed "create row 52 source"
+put a/test.sh '# spec-example: cap / alpha table' || setup_failed "write row 52 marker"
+put z/data.txt 'to be damaged' || setup_failed "write row 52 data file"
+commit >/dev/null || setup_failed "commit row 52 source"
+DIES_SOURCE="$REPO"
+submodule_repo l-sub-search-dies "$DIES_SOURCE" tests/sub || setup_failed "create row 52"
+remove_submodule_object HEAD:z/data.txt || setup_failed "remove the data blob before replacing it"
+DIES_OID=$(git -C "$REPO/tests/sub" rev-parse HEAD:z/data.txt) || setup_failed "read the damaged blob id of row 52"
+DIES_DIR="$(git -C "$REPO/tests/sub" rev-parse --absolute-git-dir)/objects/${DIES_OID:0:2}" || setup_failed "locate the damaged blob of row 52"
+mkdir -p "$DIES_DIR" || setup_failed "create the object directory of row 52"
+printf 'this is not a compressed object' > "$DIES_DIR/${DIES_OID:2}" || setup_failed "write the damaged blob of row 52"
+git -C "$REPO/tests/sub" grep --no-recurse-submodules -q -F -e 'spec-example: cap / alpha table' HEAD -- . >/dev/null 2>&1
+[ "$?" -gt 1 ] || setup_failed "the search of row 52 must end with a code other than 0 or 1"
+for run_number in 1 2 3; do
+  links_case "submodule row 52: the search ends early, marker in the same submodule (run $run_number)" error 0 2
+  submodule_reason 52 tests/sub 'its recorded commit could not be read'
+done
+
+# Row 53: the outer submodule lacks a tree below the top of its recorded commit. Its trees cannot all be listed,
+# so the submodules inside it are unknown, although the top tree shows the inner one.
+newrepo l-sub-outer-subtree-source || setup_failed "create row 53 outer source"
+put zdir/file 'unrelated outer content' || setup_failed "write row 53 outer file"
+git -C "$REPO" -c protocol.file.allow=always submodule add -q "$SUB" inner || setup_failed "add row 53 inner source"
+commit >/dev/null || setup_failed "commit row 53 outer source"
+SUBTREE_SOURCE="$REPO"
+submodule_repo l-sub-outer-subtree-missing "$SUBTREE_SOURCE" tests/sub || setup_failed "create row 53"
+git -C "$REPO" -c protocol.file.allow=always submodule update -q --init --recursive || setup_failed "check out row 53 inner submodule"
+remove_submodule_object HEAD:zdir || setup_failed "remove the outer subtree"
+git -C "$REPO/tests/sub" ls-tree HEAD | grep -q "$(printf '\t')inner\$" || setup_failed "the top tree must still show the inner submodule"
+if git -C "$REPO/tests/sub" ls-tree -r HEAD >/dev/null 2>&1; then setup_failed "the full listing of row 53 must fail"; fi
+[ -e "$REPO/tests/sub/inner/.git" ] || setup_failed "row 53 inner submodule must be checked out"
+links_case "submodule row 53: the outer one lacks a subtree, marker in the inner one" error 0 2
+submodule_reason 53 tests/sub 'its recorded commit could not be read'
+
+# Row 54: the content of one file is damaged in its body. git lists the object and can open it, so nothing is
+# lacking; only the exit code of the search shows that the recorded commit could not be read.
+# The file is large enough that git reads its header without reaching the end of the compressed stream.
+newrepo l-sub-body-source || setup_failed "create row 54 source"
+put scripts/test.sh '# no marker' || setup_failed "write row 54 file"
+"$PY" -c 'import sys
+open(sys.argv[1], "w").write("".join("line %06d of an unrelated file\n" % i for i in range(4000)))' "$REPO/data.txt" || setup_failed "write the large file of row 54"
+commit >/dev/null || setup_failed "commit row 54 source"
+BODY_SOURCE="$REPO"
+submodule_repo l-sub-body-damaged "$BODY_SOURCE" tests/sub || setup_failed "create row 54"
+remove_submodule_object HEAD:data.txt || setup_failed "remove the blob of row 54 before rewriting it"
+BODY_OID=$(git -C "$REPO/tests/sub" rev-parse HEAD:data.txt) || setup_failed "read the blob id of row 54"
+[ "$(git -C "$REPO/tests/sub" hash-object -w "$BODY_SOURCE/data.txt")" = "$BODY_OID" ] || setup_failed "rewrite the blob of row 54 as a loose object"
+BODY_FILE="$(git -C "$REPO/tests/sub" rev-parse --absolute-git-dir)/objects/${BODY_OID:0:2}/${BODY_OID:2}" || setup_failed "locate the blob of row 54"
+"$PY" -c 'import os, sys
+path = sys.argv[1]
+data = bytearray(open(path, "rb").read())
+data[-1] ^= 0xFF          # the last byte belongs to the checksum of the compressed stream
+os.chmod(path, 0o644)
+open(path, "wb").write(bytes(data))' "$BODY_FILE" || setup_failed "damage the body of the blob of row 54"
+LACKING=$(git -C "$REPO/tests/sub" rev-list --objects --no-walk --missing=print HEAD) || setup_failed "ask which objects row 54 lacks"
+if printf '%s\n' "$LACKING" | grep -q '^?'; then setup_failed "the damaged blob of row 54 must be listed as present"; fi
+printf '%s\n' "$BODY_OID" | git -C "$REPO/tests/sub" cat-file --batch-check | grep -q " blob " || setup_failed "the damaged blob of row 54 must still be opened"
+git -C "$REPO/tests/sub" grep --no-recurse-submodules -q -F -e 'spec-example: cap / alpha table' HEAD -- . >/dev/null 2>&1
+[ "$?" -gt 1 ] || setup_failed "the search of row 54 must end with a code other than 0 or 1"
+links_case "submodule row 54: no marker, an object that opens but cannot be read to its end" error 0 2
+submodule_reason 54 tests/sub 'its recorded commit could not be read'
 
 # ── preflight ───────────────────────────────────────────────────────────────
 echo "spec-change: preflight (Example: preflight by write access and Spectra state)"
@@ -892,6 +1028,30 @@ PATH="$BIN_WITH:$PATH" run preflight --cwd "$SPACE_REPO" --can-write yes
 assert_eq "top directory names: preflight — identical status" "$COPY_STATUS" "$(printf '%s' "$OUT" | field status)"
 assert_exit "top directory names: preflight — identical exit" "$COPY_RC" "$RC"
 assert_eq "top directory names: preflight trailing space — one JSON line" 1 "$LINES"
+
+# A name that ends in a line feed: the only input that tells "remove the one line end git adds" from "remove
+# every trailing line feed". The copy at a plain name is the control of the block above.
+NEWLINE_REPO="$WORK/l-top-newline"$'\n'
+cp -R "$COPY_REPO" "$NEWLINE_REPO" || setup_failed "copy repository to a name that ends in a line feed"
+[ "$(git -C "$NEWLINE_REPO" rev-parse HEAD)" = "$COPY_HEAD" ] || setup_failed "the line-feed copy must have the same commits"
+REPO="$COPY_REPO"
+links_case "top directory names: links control (line feed)" ok 0 0
+COPY_OUT="$OUT"; COPY_RC="$RC"
+REPO="$NEWLINE_REPO"
+links_case "top directory names: links trailing line feed" ok 0 0
+assert_eq "top directory names: links, line feed — identical JSON" "$COPY_OUT" "$OUT"
+assert_exit "top directory names: links, line feed — identical exit" "$COPY_RC" "$RC"
+run archived --file "$WORK/top-directory-comment.md" --cwd "$COPY_REPO" --ref HEAD
+COPY_OUT="$OUT"; COPY_RC="$RC"
+run archived --file "$WORK/top-directory-comment.md" --cwd "$NEWLINE_REPO" --ref HEAD
+assert_eq "top directory names: archived trailing line feed — status" pass "$(printf '%s' "$OUT" | field status)"
+assert_eq "top directory names: archived, line feed — identical JSON" "$COPY_OUT" "$OUT"
+assert_exit "top directory names: archived, line feed — identical exit" "$COPY_RC" "$RC"
+PATH="$BIN_WITH:$PATH" run preflight --cwd "$COPY_REPO" --can-write yes
+COPY_STATUS=$(printf '%s' "$OUT" | field status); COPY_RC="$RC"
+PATH="$BIN_WITH:$PATH" run preflight --cwd "$NEWLINE_REPO" --can-write yes
+assert_eq "top directory names: preflight, line feed — identical status" "$COPY_STATUS" "$(printf '%s' "$OUT" | field status)"
+assert_exit "top directory names: preflight, line feed — identical exit" "$COPY_RC" "$RC"
 
 # ── spec directory (task 2.6) ───────────────────────────────────────────────
 echo "spec-change: spec directory (Example: spec directory by .spectra.yaml)"
