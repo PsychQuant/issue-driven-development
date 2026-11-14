@@ -14,6 +14,7 @@
 # spec-example: spec-on-every-issue / reading the Spec line
 # spec-example: spec-on-every-issue / whether the declared changes are archived at a commit
 # spec-example: spec-on-every-issue / what the link check reports
+# spec-example: spec-on-every-issue / markers in submodules
 # spec-example: spec-on-every-issue / preflight by write access and Spectra state
 # spec-example: spec-on-every-issue / spec directory by .spectra.yaml
 # spec-example: spec-on-every-issue / choosing the Implementation Complete comment
@@ -291,6 +292,66 @@ linked_repo l-nospecs; git -C "$REPO" rm -q -r openspec/specs; commit >/dev/null
 links_case "openspec/specs/ holds no tracked file at the head revision" error "" 2
 newrepo l-gitkeep; put openspec/specs/.gitkeep ''; BASE=$(commit base); put README.txt x; commit >/dev/null
 links_case "openspec/specs/ holds only .gitkeep (a newly initialised repository)" ok 0 0
+
+# ── links: markers in submodules ────────────────────────────────────────────
+echo "spec-change: links (Example: markers in submodules)"
+
+submodule_repo() { # name source path — add one Example and a local submodule; sets REPO and BASE
+  linked_repo "$1"
+  put openspec/specs/cap/spec.md "$(spec "$(req Base)" "$(req Alpha "$EX")")"
+  git -C "$REPO" -c protocol.file.allow=always submodule add -q "$2" "$3" || exit 1
+  commit >/dev/null
+}
+newrepo l-sub-source; put scripts/test.sh '# spec-example: cap / alpha table'; commit >/dev/null; SUB="$REPO"
+newrepo l-sub-empty-source; put scripts/test.sh '# no marker'; commit >/dev/null; EMPTY_SUB="$REPO"
+newrepo l-sub-md-source; put notes.md '# spec-example: cap / alpha table'; commit >/dev/null; MD_SUB="$REPO"
+
+submodule_repo l-sub-tracked "$SUB" tests/sub
+links_case "submodule row 1: tracked marker at the recorded commit" ok 0 0
+
+newrepo l-sub-nested-source
+git -C "$REPO" -c protocol.file.allow=always submodule add -q "$SUB" inner || exit 1
+commit >/dev/null; NESTED_SUB="$REPO"
+submodule_repo l-sub-nested "$NESTED_SUB" tests/sub
+git -C "$REPO" -c protocol.file.allow=always submodule update -q --init --recursive || exit 1
+links_case "submodule row 2: marker in a nested submodule" ok 0 0
+
+submodule_repo l-sub-space "$SUB" 'tests/sub module'
+links_case "submodule row 3: path with a space" ok 0 0
+
+submodule_repo l-sub-earlier "$SUB" tests/sub
+printf '# no marker\n' > "$REPO/tests/sub/scripts/test.sh"
+git -C "$REPO/tests/sub" add -A; git -C "$REPO/tests/sub" commit -q -m remove-marker
+links_case "submodule row 4: marker only at the recorded commit" ok 0 0
+
+submodule_repo l-sub-later "$EMPTY_SUB" tests/sub
+printf '# spec-example: cap / alpha table\n' > "$REPO/tests/sub/scripts/test.sh"
+git -C "$REPO/tests/sub" add -A; git -C "$REPO/tests/sub" commit -q -m add-marker
+links_case "submodule row 5: marker only at the later working-tree commit" missing 1 1
+assert_eq "links: submodule row 5 — why unchanged" 'no tracked file outside openspec/ (and not .md) carries its marker' "$(printf '%s' "$OUT" | "$PY" -c 'import json,sys; m=json.load(sys.stdin)["missing"]; print(m[0]["why"] if m else "")')"
+
+submodule_repo l-sub-md "$MD_SUB" tests/sub
+links_case "submodule row 6: marker only in a .md file" missing 1 1
+
+submodule_repo l-sub-nowhere "$EMPTY_SUB" tests/sub
+links_case "submodule row 7: no marker, submodule checked out" missing 1 1
+
+submodule_repo l-sub-deinit "$SUB" tests/sub
+git -C "$REPO" submodule deinit -q -f -- tests/sub || exit 1
+links_case "submodule row 8: marker in a submodule not checked out" error 0 2
+assert_eq "links: submodule row 8 — reason names Example and path" "cannot decide whether the Example 'cap / alpha table' has a marker: submodule tests/sub: not checked out" "$(printf '%s' "$OUT" | field reason)"
+
+submodule_repo l-sub-main "$SUB" tests/sub
+put scripts/test.sh '# spec-example: cap / alpha table'; commit >/dev/null
+git -C "$REPO" submodule deinit -q -f -- tests/sub || exit 1
+links_case "submodule row 9: main marker, submodule not checked out" ok 0 0
+
+submodule_repo l-sub-missing-commit "$EMPTY_SUB" tests/sub
+git -C "$REPO" update-index --cacheinfo 160000,1111111111111111111111111111111111111111,tests/sub || exit 1
+# Do not add the working tree: keep the missing commit recorded in the index.
+git -C "$REPO" commit -q -m missing-submodule-commit || exit 1
+links_case "submodule row 10: recorded commit absent from the object store" error 0 2
+assert_eq "links: submodule row 10 — reason names Example and path" "cannot decide whether the Example 'cap / alpha table' has a marker: submodule tests/sub: recorded commit 111111111111 is not in its object store" "$(printf '%s' "$OUT" | field reason)"
 
 # ── preflight ───────────────────────────────────────────────────────────────
 echo "spec-change: preflight (Example: preflight by write access and Spectra state)"
