@@ -13,8 +13,14 @@ Version number left to the release.
 
 - **`spec-change.py links` reads markers in submodules (#548).** Tracked files of checked-out submodules,
   including nested ones, count at the commit the head revision records, even when their working trees are on
-  another commit. If an Example's marker is not found and a submodule could not be searched, `links` answers
-  `error` and names the Example, the submodule's path and the reason; a marker already found still counts.
+  another commit. A marker found in the main repository settles the Example without running git in any
+  submodule; otherwise the search stops at the first submodule with a marker. A submodule is searched only
+  if its recorded path is relative with no empty, `.` or `..` component, its resolved directory lies inside
+  the main working tree, that directory is not a symbolic link, it holds its own `.git` entry, git reports
+  it as the top of its own working tree, and its object store holds the recorded commit. A failure inside
+  a submodule counts as not searched; if the marker is not found and a submodule could not be searched,
+  `links` answers `error` and names the Example and up to five submodule paths with fixed reasons. Paths
+  under the spec directory are skipped, and nothing is fetched into submodules during the check.
 
 ### Fixed
 

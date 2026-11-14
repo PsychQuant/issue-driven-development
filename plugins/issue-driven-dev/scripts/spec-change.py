@@ -17,7 +17,10 @@ file) and exits with a fixed code. A usage error prints to stderr and exits 64.
   links     --base <rev> [--head <rev>] [--cwd <dir>]
       Does every requirement added or changed in base..head carry an executable check?
       Tracked files of submodules count, read at the commit the head revision records.
+      A submodule can be searched only when checked out (its directory holds its own .git
+      entry and is the top of its own working tree) and its object store holds that commit.
       If an Example's marker is not found and a submodule could not be searched, answer error.
+      A marker found in the main repository settles the Example without running git in any submodule.
       {"status": ok|missing|error, "missing": [{capability, requirement, example, why}],
        "reason": "..."}   exit 0, 1, 2
 
@@ -375,20 +378,62 @@ def examples(lines):
     return [m.group(1).strip() for m in (EXAMPLE_RE.match(l) for l in lines) if m]
 
 
+def submodule_git(cwd, *args):
+    """Read a checkout without inheriting another repository or fetching missing objects."""
+    env = dict(os.environ, GIT_LITERAL_PATHSPECS="1", GIT_NO_LAZY_FETCH="1")
+    for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
+                 "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR"):
+        env.pop(name, None)
+    command = ["git", "-c", "core.quotePath=false", "-c", "safe.bareRepository=explicit", "-C", cwd, *args]
+    try:
+        return subprocess.run(command, capture_output=True, env=env)
+    except OSError:
+        # A checkout that disappears or becomes unreadable is also unavailable.
+        return subprocess.CompletedProcess(command, 128, b"", b"")
+
+
 def marker_files(top, head, needle, sd, cache):
     """Tracked files at head, outside the spec directory and not .md, with a line on which needle is followed
     only by whitespace or a comment closer; also return submodules that could not be searched."""
-    files, unavailable, visited = [], [], set()
-    pending = [(top, head, "")]
+    unavailable, visited = [], set()
+    real_top = os.path.realpath(top)
+    pending = [(top, head, "", None)]
     while pending:
-        directory, rev, prefix = pending.pop()
+        directory, rev, prefix, link = pending.pop()
+        if link is not None:
+            path = link["path"]
+            if link["reason"] is None:   # Check a child only when the search reaches it.
+                reason = ""
+                if os.path.isabs(path) or any(p in ("", ".", "..") for p in path.split("/")):
+                    reason = "path leaves the repository"
+                elif os.path.commonpath((real_top, os.path.realpath(directory))) != real_top:
+                    reason = "path leaves the repository"
+                elif not os.path.isdir(directory) or os.path.islink(directory) or not os.path.lexists(os.path.join(directory, ".git")):
+                    reason = "not checked out"
+                else:
+                    p = submodule_git(directory, "rev-parse", "--show-toplevel")
+                    reported_top = os.fsdecode(p.stdout[:-1] if p.stdout.endswith(b"\n") else p.stdout)
+                    if p.returncode != 0:
+                        reason = "git refused to open it"
+                    elif os.path.realpath(reported_top) != os.path.realpath(directory):
+                        reason = "not checked out"
+                    elif submodule_git(directory, "cat-file", "-e", rev + "^{commit}").returncode != 0:
+                        reason = f"recorded commit {rev[:12]} is not in its object store"
+                link["reason"] = reason
+            if link["reason"]:
+                unavailable.append((prefix[:-1], link["reason"]))
+                continue
         key = (os.path.realpath(directory), rev)
         if key in visited:
             continue
         visited.add(key)
         # --no-recurse-submodules: with submodule.recurse set, git grep would walk the submodules itself, skip one
         # that is not checked out without saying so, and die on a recorded commit it cannot read.
-        p = git(directory, "grep", "--no-recurse-submodules", "-z", "-F", "-e", needle, rev, "--", ".", check=False)
+        args = ("grep", "--no-recurse-submodules", "-z", "-F", "-e", needle, rev, "--", ".")
+        p = submodule_git(directory, *args) if link is not None else git(directory, *args, check=False)
+        if link is not None and p.returncode not in (0, 1):
+            unavailable.append((prefix[:-1], "its recorded commit could not be read"))
+            continue
         if p.returncode not in (0, 1):
             raise Fail("git grep failed: " + p.stderr.decode("utf-8", "replace").strip()[:200])
         for line in p.stdout.decode("utf-8", "replace").split("\n"):
@@ -397,47 +442,52 @@ def marker_files(top, head, needle, sd, cache):
             where, _, content = line.partition("\0")
             content = lines_of(content)[0]   # CommonMark line endings: text after U+2028 stays on this line
             path = prefix + (where[len(rev) + 1:] if where.startswith(rev + ":") else where)
-            if path.startswith(sd + "/") or path.lower().endswith(".md") or path in files:
+            if path.startswith(sd + "/") or path.lower().endswith(".md"):
                 continue
             rests = content.split(needle)[1:]
             if any(MARKER_REST_RE.fullmatch(rest) for rest in rests):
-                files.append(path)
+                return [path], unavailable
+        if link is not None and p.stderr:
+            # No file that counts was found, and git could not read something: not "searched, no marker".
+            # This also covers a search that matched only files that do not count (exit 0).
+            unavailable.append((prefix[:-1], "its recorded commit could not be read"))
+            continue
         if key not in cache:   # Availability depends on the recorded tree, not on the Example.
+            args = ("ls-tree", "-r", "-z", rev)
+            p = submodule_git(directory, *args) if link is not None else git(directory, *args)
+            if p.returncode != 0:
+                unavailable.append((prefix[:-1], "its recorded commit could not be read"))
+                continue
             links = []
-            for entry in git(directory, "ls-tree", "-r", "-z", rev).stdout.split(b"\0"):
+            for entry in p.stdout.split(b"\0"):
                 if not entry:
                     continue
                 info, _, raw_path = entry.partition(b"\t")
                 mode, _, commit = info.decode("ascii").split()
                 if mode != "160000":
                     continue
-                path = raw_path.decode("utf-8")
-                subdir = os.path.join(directory, path)
-                reason = ""
-                if not os.path.isdir(subdir) or os.path.islink(subdir):
-                    reason = "not checked out"
-                else:
-                    p = git(subdir, "rev-parse", "--show-toplevel", check=False)
-                    if p.returncode != 0 or os.path.realpath(p.stdout.decode("utf-8").strip()) != os.path.realpath(subdir):
-                        reason = "not checked out"
-                    elif git(subdir, "cat-file", "-e", commit + "^{commit}", check=False).returncode != 0:
-                        reason = f"recorded commit {commit[:12]} is not in its object store"
-                links.append((path, subdir, commit, reason))
+                links.append({"path": os.fsdecode(raw_path), "commit": commit, "reason": None})
             cache[key] = links
         children = []
-        for path, subdir, commit, reason in cache[key]:
-            if reason:
-                unavailable.append((prefix + path, reason))
-            else:
-                children.append((subdir, commit, prefix + path + "/"))
+        for child in cache[key]:
+            path = child["path"]
+            if (prefix + path).startswith(sd + "/"):
+                continue
+            children.append((os.path.join(directory, path), child["commit"], prefix + path + "/", child))
         pending.extend(reversed(children))
-    return files, unavailable
+    return [], unavailable
 
 
 def cmd_links(argv):
     a = parse(argv, {"--base", "--head", "--cwd"}, ["--base"])
     try:
-        top = repo_top(a.get("--cwd", "."))
+        cwd = a.get("--cwd", ".")
+        if not os.path.isdir(cwd):
+            raise Fail(f"{cwd} is not a directory")
+        p = git(cwd, "rev-parse", "--show-toplevel", check=False)
+        if p.returncode != 0:
+            raise Fail(f"{cwd} is not inside a git repository")
+        top = os.fsdecode(p.stdout[:-1] if p.stdout.endswith(b"\n") else p.stdout)
         base = resolve(top, a["--base"])
         head = resolve(top, a.get("--head", "HEAD"))
         sd, sd_base = spec_dir_at(top, head), spec_dir_at(top, base)
@@ -474,15 +524,23 @@ def cmd_links(argv):
                         if files:
                             continue
                         if unavailable:
-                            reasons = "; ".join(f"submodule {path}: {reason}" for path, reason in unavailable)
-                            raise Fail(f"cannot decide whether the Example '{cap} / {title}' has a marker: {reasons}")
+                            reasons = []
+                            for path, reason in sorted(unavailable)[:5]:
+                                path = path.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
+                                if len(path) > 200:
+                                    path = path[:200] + "..."
+                                reasons.append(f"submodule {path}: {reason}")
+                            if len(unavailable) > 5:
+                                reasons.append(f"and {len(unavailable) - 5} more")
+                            raise Fail(f"cannot decide whether the Example '{cap} / {title}' has a marker: " + "; ".join(reasons))
                         missing.append({"capability": cap, "requirement": name, "example": title,
                                         "why": f"no tracked file outside {sd}/ (and not .md) carries its marker"})
         if missing:
             return emit({"status": "missing", "missing": missing, "reason": f"{len(missing)} item(s) without a check"}, 1)
         return emit({"status": "ok", "missing": [], "reason": ""}, 0)
-    except Fail as exc:
-        return emit({"status": "error", "missing": [], "reason": str(exc)}, 2)
+    except (Fail, OSError, ValueError, RecursionError) as exc:
+        reason = str(exc).encode("utf-8", "surrogateescape").decode("utf-8", "replace")
+        return emit({"status": "error", "missing": [], "reason": reason}, 2)
 
 
 # ── preflight ───────────────────────────────────────────────────────────────
