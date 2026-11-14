@@ -16,6 +16,8 @@ file) and exits with a fixed code. A usage error prints to stderr and exits 64.
 
   links     --base <rev> [--head <rev>] [--cwd <dir>]
       Does every requirement added or changed in base..head carry an executable check?
+      Tracked files of submodules count, read at the commit the head revision records.
+      If an Example's marker is not found and a submodule could not be searched, answer error.
       {"status": ok|missing|error, "missing": [{capability, requirement, example, why}],
        "reason": "..."}   exit 0, 1, 2
 
@@ -373,25 +375,61 @@ def examples(lines):
     return [m.group(1).strip() for m in (EXAMPLE_RE.match(l) for l in lines) if m]
 
 
-def marker_files(top, head, needle, sd):
+def marker_files(top, head, needle, sd, cache):
     """Tracked files at head, outside the spec directory and not .md, with a line on which needle is followed
-    only by whitespace or a comment closer (a marker for `alpha table` does not count for the Example `alpha`)."""
-    p = git(top, "grep", "-z", "-F", "-e", needle, head, "--", ".", check=False)
-    if p.returncode not in (0, 1):
-        raise Fail("git grep failed: " + p.stderr.decode("utf-8", "replace").strip()[:200])
-    files = []
-    for line in p.stdout.decode("utf-8", "replace").split("\n"):
-        if not line:
+    only by whitespace or a comment closer; also return submodules that could not be searched."""
+    files, unavailable, visited = [], [], set()
+    pending = [(top, head, "")]
+    while pending:
+        directory, rev, prefix = pending.pop()
+        key = (os.path.realpath(directory), rev)
+        if key in visited:
             continue
-        where, _, content = line.partition("\0")
-        content = lines_of(content)[0]   # CommonMark line endings: text after U+2028 stays on this line
-        path = where[len(head) + 1:] if where.startswith(head + ":") else where
-        if path.startswith(sd + "/") or path.lower().endswith(".md") or path in files:
-            continue
-        rests = content.split(needle)[1:]
-        if any(MARKER_REST_RE.fullmatch(rest) for rest in rests):
-            files.append(path)
-    return files
+        visited.add(key)
+        p = git(directory, "grep", "-z", "-F", "-e", needle, rev, "--", ".", check=False)
+        if p.returncode not in (0, 1):
+            raise Fail("git grep failed: " + p.stderr.decode("utf-8", "replace").strip()[:200])
+        for line in p.stdout.decode("utf-8", "replace").split("\n"):
+            if not line:
+                continue
+            where, _, content = line.partition("\0")
+            content = lines_of(content)[0]   # CommonMark line endings: text after U+2028 stays on this line
+            path = prefix + (where[len(rev) + 1:] if where.startswith(rev + ":") else where)
+            if path.startswith(sd + "/") or path.lower().endswith(".md") or path in files:
+                continue
+            rests = content.split(needle)[1:]
+            if any(MARKER_REST_RE.fullmatch(rest) for rest in rests):
+                files.append(path)
+        if key not in cache:   # Availability depends on the recorded tree, not on the Example.
+            links = []
+            for entry in git(directory, "ls-tree", "-r", "-z", rev).stdout.split(b"\0"):
+                if not entry:
+                    continue
+                info, _, raw_path = entry.partition(b"\t")
+                mode, _, commit = info.decode("ascii").split()
+                if mode != "160000":
+                    continue
+                path = raw_path.decode("utf-8")
+                subdir = os.path.join(directory, path)
+                reason = ""
+                if not os.path.isdir(subdir) or os.path.islink(subdir):
+                    reason = "not checked out"
+                else:
+                    p = git(subdir, "rev-parse", "--show-toplevel", check=False)
+                    if p.returncode != 0 or os.path.realpath(p.stdout.decode("utf-8").strip()) != os.path.realpath(subdir):
+                        reason = "not checked out"
+                    elif git(subdir, "cat-file", "-e", commit + "^{commit}", check=False).returncode != 0:
+                        reason = f"recorded commit {commit[:12]} is not in its object store"
+                links.append((path, subdir, commit, reason))
+            cache[key] = links
+        children = []
+        for path, subdir, commit, reason in cache[key]:
+            if reason:
+                unavailable.append((prefix + path, reason))
+            else:
+                children.append((subdir, commit, prefix + path + "/"))
+        pending.extend(reversed(children))
+    return files, unavailable
 
 
 def cmd_links(argv):
@@ -405,7 +443,7 @@ def cmd_links(argv):
         if not git_text(top, "ls-tree", "-r", "-z", "--name-only", head, "--", f"{sd}/specs/").strip("\0"):
             raise Fail(f"{sd}/specs/ holds no tracked file at {head[:12]}: check `spec_dir` in .spectra.yaml")
         head_files = spec_files(top, head, sd)
-        missing = []
+        missing, cache = [], {}
         for path in head_files:
             cap = path[len(sd) + len("/specs/"):].split("/")[0]
             new = requirements(read_at(top, head, path), strict=True)
@@ -429,7 +467,13 @@ def cmd_links(argv):
                     elif titles.count(title) > 1:
                         missing.append({"capability": cap, "requirement": name, "example": title,
                                         "why": "the Example title is used more than once in this capability"})
-                    elif not marker_files(top, head, f"spec-example: {cap} / {title}", sd):
+                    else:
+                        files, unavailable = marker_files(top, head, f"spec-example: {cap} / {title}", sd, cache)
+                        if files:
+                            continue
+                        if unavailable:
+                            reasons = "; ".join(f"submodule {path}: {reason}" for path, reason in unavailable)
+                            raise Fail(f"cannot decide whether the Example '{cap} / {title}' has a marker: {reasons}")
                         missing.append({"capability": cap, "requirement": name, "example": title,
                                         "why": f"no tracked file outside {sd}/ (and not .md) carries its marker"})
         if missing:

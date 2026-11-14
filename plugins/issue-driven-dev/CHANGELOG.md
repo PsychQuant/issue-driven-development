@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Version number left to the release.
 
+### Changed
+
+- **`spec-change.py links` reads markers in submodules (#548).** Tracked files of checked-out submodules,
+  including nested ones, count at the commit the head revision records, even when their working trees are on
+  another commit. If an Example's marker is not found and a submodule could not be searched, `links` answers
+  `error` and names the Example, the submodule's path and the reason; a marker already found still counts.
+
 ### Fixed
 
 - **The edit-run suite has a time limit of its own (#508, #519).** Most of its run time is CPU time (about 65 s

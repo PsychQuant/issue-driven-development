@@ -91,6 +91,8 @@ Implementation Plan 留言（Plan tier 由 `idd-plan` 貼，Simple 由 `idd-impl
 - 每一條新增或改到的 requirement 至少一個 `##### Example:`，標題在該 capability 裡唯一；寫不出檢查的，寫一行 `No executable check:` 加理由。
 - tasks 裡每個 Example 對應一個測試 task，測試檔要帶標記 `spec-example: <capability> / <Example title>`。
 
+標記也可以在 submodule 的已追蹤檔案裡，讀的是主 repo 記錄的 commit；檢查時 submodule 要已經取出，否則找不到標記的 Example 會讓檢查回 `error`。
+
 無人值守的 run（照 [`unattended-contract.md`](unattended-contract.md) 判定）不能停在 Spectra 的問題上。先判定一次：
 
 ```bash
