@@ -300,10 +300,11 @@ setup_failed() { # what — a fixture step failed: say so before the suite ends 
   echo "FATAL: spec-change suite: fixture setup failed: $1" >&2; exit 1
 }
 submodule_repo() { # name source path — add one Example and a local submodule; sets REPO and BASE
-  linked_repo "$1"
-  put openspec/specs/cap/spec.md "$(spec "$(req Base)" "$(req Alpha "$EX")")"
+  linked_repo "$1" || setup_failed "create submodule repository"
+  put openspec/specs/cap/spec.md "$(spec "$(req Base)" "$(req Alpha "$EX")")" || setup_failed "write submodule Example"
   git -C "$REPO" -c protocol.file.allow=always submodule add -q "$2" "$3" || setup_failed "submodule add $3"
-  commit >/dev/null
+  git -C "$REPO" add -A || setup_failed "stage submodule Example"
+  git -C "$REPO" commit -q -m example || setup_failed "commit submodule Example"
 }
 newrepo l-sub-source; put scripts/test.sh '# spec-example: cap / alpha table'; commit >/dev/null; SUB="$REPO"
 newrepo l-sub-empty-source; put scripts/test.sh '# no marker'; commit >/dev/null; EMPTY_SUB="$REPO"
@@ -324,12 +325,20 @@ links_case "submodule row 3: path with a space" ok 0 0
 
 submodule_repo l-sub-earlier "$SUB" tests/sub
 printf '# no marker\n' > "$REPO/tests/sub/scripts/test.sh"
-git -C "$REPO/tests/sub" add -A; git -C "$REPO/tests/sub" commit -q -m remove-marker
+git -C "$REPO/tests/sub" add -A || setup_failed "stage removed marker"
+git -C "$REPO/tests/sub" commit -q -m remove-marker || setup_failed "commit removed marker"
+RECORDED=$(git -C "$REPO" rev-parse HEAD:tests/sub) || setup_failed "read recorded commit"
+CHECKED_OUT=$(git -C "$REPO/tests/sub" rev-parse HEAD) || setup_failed "read working-tree commit"
+refute "links: submodule row 4 — working tree is on another commit" test "$RECORDED" = "$CHECKED_OUT"
 links_case "submodule row 4: marker only at the recorded commit" ok 0 0
 
 submodule_repo l-sub-later "$EMPTY_SUB" tests/sub
 printf '# spec-example: cap / alpha table\n' > "$REPO/tests/sub/scripts/test.sh"
-git -C "$REPO/tests/sub" add -A; git -C "$REPO/tests/sub" commit -q -m add-marker
+git -C "$REPO/tests/sub" add -A || setup_failed "stage added marker"
+git -C "$REPO/tests/sub" commit -q -m add-marker || setup_failed "commit added marker"
+RECORDED=$(git -C "$REPO" rev-parse HEAD:tests/sub) || setup_failed "read recorded commit"
+CHECKED_OUT=$(git -C "$REPO/tests/sub" rev-parse HEAD) || setup_failed "read working-tree commit"
+refute "links: submodule row 5 — working tree is on another commit" test "$RECORDED" = "$CHECKED_OUT"
 links_case "submodule row 5: marker only at the later working-tree commit" missing 1 1
 assert_eq "links: submodule row 5 — why unchanged" 'no tracked file outside openspec/ (and not .md) carries its marker' "$(printf '%s' "$OUT" | "$PY" -c 'import json,sys; m=json.load(sys.stdin)["missing"]; print(m[0]["why"] if m else "")')"
 
@@ -385,6 +394,277 @@ assert_eq "links: submodule row 14 — reason names the inner path under the out
 
 submodule_repo l-sub-under-spec "$SUB" openspec/vendor/sub
 links_case "submodule row 15: marker only in a submodule mounted under the spec directory" missing 1 1
+
+# Keep the head tree separate from the checkout: some rows deliberately make them disagree.
+example_repo() { # name — the Example, without a marker or submodule
+  linked_repo "$1" || setup_failed "create Example repository"
+  put openspec/specs/cap/spec.md "$(spec "$(req Base)" "$(req Alpha "$EX")")" || setup_failed "write Example"
+  git -C "$REPO" add -A || setup_failed "stage Example"
+  git -C "$REPO" commit -q -m example || setup_failed "commit Example"
+}
+record_gitlink() { # path commit — do not stage the working tree
+  git -C "$REPO" update-index --add --cacheinfo "160000,$2,$1" || setup_failed "record gitlink"
+  git -C "$REPO" commit -q -m gitlink || setup_failed "commit gitlink"
+}
+main_marker() {
+  put scripts/test.sh '# spec-example: cap / alpha table' || setup_failed "write main marker"
+  git -C "$REPO" add scripts/test.sh || setup_failed "stage main marker"
+  git -C "$REPO" commit -q -m main-marker || setup_failed "commit main marker"
+}
+submodule_reason() { # row path reason
+  assert_eq "links: submodule row $1 — reason names Example and path" \
+    "cannot decide whether the Example 'cap / alpha table' has a marker: submodule $2: $3" \
+    "$(printf '%s' "$OUT" | field reason)"
+}
+remove_submodule_object() { # revision expression — unpack first if the clone has packs
+  local oid objects pack saved
+  oid=$(git -C "$REPO/tests/sub" rev-parse "$1") || setup_failed "resolve object to remove"
+  objects=$(git -C "$REPO/tests/sub" rev-parse --absolute-git-dir) || setup_failed "locate submodule object store"
+  objects="$objects/objects"
+  for pack in "$objects"/pack/*.pack; do
+    [ -f "$pack" ] || continue
+    saved="$WORK/$(basename "$REPO")-$(basename "$pack")"
+    mv "$pack" "$saved" || setup_failed "move pack before unpacking"
+    git -C "$REPO/tests/sub" unpack-objects < "$saved" || setup_failed "unpack submodule objects"
+    rm "${pack%.pack}.idx" || setup_failed "remove pack index"
+  done
+  [ -f "$objects/${oid:0:2}/${oid:2}" ] || setup_failed "object to remove is not loose"
+  rm "$objects/${oid:0:2}/${oid:2}" || setup_failed "remove submodule object"
+  git -C "$REPO/tests/sub" cat-file -e 'HEAD^{commit}' || setup_failed "recorded commit must remain"
+}
+planted_directory() { # directory canary — ordinary files that look like a git directory
+  mkdir -p "$1/objects" "$1/refs/heads" || setup_failed "create planted directories"
+  printf 'ref: refs/heads/main\n' > "$1/HEAD" || setup_failed "write planted HEAD"
+  touch "$1/objects/.keep" "$1/refs/heads/.keep" || setup_failed "write planted placeholders"
+  cat > "$1/config" <<EOF || setup_failed "write planted config"
+[core]
+    repositoryformatversion = 1
+    bare = false
+    worktree = .
+    sshCommand = touch '$2'; false
+[extensions]
+    partialClone = origin
+[remote "origin"]
+    url = ssh://example.invalid/repository
+    promisor = true
+EOF
+}
+MISSING_COMMIT=1111111111111111111111111111111111111111
+
+example_repo l-sub-bytes-main
+main_marker
+record_gitlink "$(printf 'vendor/lib\377')" "$MISSING_COMMIT"
+links_case "submodule row 16: main marker, non-UTF-8 gitlink" ok 0 0
+refute_output_grep "links: submodule row 16 — no traceback" Traceback "$WORK/err"
+
+example_repo l-sub-bytes-missing
+record_gitlink "$(printf 'vendor/lib\377')" "$MISSING_COMMIT"
+links_case "submodule row 17: no marker, non-UTF-8 gitlink" error 0 2
+submodule_reason 17 'vendor/lib�' 'not checked out'
+refute_output_grep "links: submodule row 17 — no traceback" Traceback "$WORK/err"
+
+submodule_repo l-sub-tree-main "$EMPTY_SUB" tests/sub || setup_failed "create missing-tree fixture"
+main_marker
+remove_submodule_object 'HEAD^{tree}'
+links_case "submodule row 18: main marker, submodule tree absent" ok 0 0
+
+submodule_repo l-sub-tree-missing "$EMPTY_SUB" tests/sub || setup_failed "create missing-tree fixture"
+remove_submodule_object 'HEAD^{tree}'
+links_case "submodule row 19: no marker, submodule tree absent" error 0 2
+submodule_reason 19 tests/sub 'its recorded commit could not be read'
+refute_grep "links: submodule row 19 — no temporary directory in reason" "$WORK" "$(printf '%s' "$OUT" | field reason)"
+refute_grep "links: submodule row 19 — no git error in reason" fatal "$(printf '%s' "$OUT" | field reason)"
+
+submodule_repo l-sub-blob-missing "$EMPTY_SUB" tests/sub || setup_failed "create missing-blob fixture"
+remove_submodule_object HEAD:scripts/test.sh
+git -C "$REPO/tests/sub" cat-file -e 'HEAD^{tree}' || setup_failed "recorded tree must remain"
+links_case "submodule row 20: no marker, submodule blob absent" error 0 2
+submodule_reason 20 tests/sub 'its recorded commit could not be read'
+refute_grep "links: submodule row 20 — no temporary directory in reason" "$WORK" "$(printf '%s' "$OUT" | field reason)"
+refute_grep "links: submodule row 20 — no git error in reason" fatal "$(printf '%s' "$OUT" | field reason)"
+
+submodule_repo l-sub-planted "$EMPTY_SUB" tests/sub || setup_failed "create planted fixture"
+git -C "$REPO/tests/sub" update-index --add --cacheinfo "160000,$MISSING_COMMIT,emb" || setup_failed "record nested gitlink"
+git -C "$REPO/tests/sub" commit -q -m nested-gitlink || setup_failed "commit nested gitlink"
+RECORDED=$(git -C "$REPO/tests/sub" rev-parse HEAD) || setup_failed "read nested-gitlink commit"
+record_gitlink tests/sub "$RECORDED"
+git -C "$REPO/tests/sub" update-index --force-remove emb || setup_failed "remove nested gitlink from later index"
+CANARY="$WORK/nested-canary"
+planted_directory "$REPO/tests/sub/emb" "$CANARY"
+git -C "$REPO/tests/sub" add emb/HEAD emb/config emb/objects/.keep emb/refs/heads/.keep || setup_failed "stage planted files"
+git -C "$REPO/tests/sub" commit -q -m ordinary-files || setup_failed "commit planted files"
+links_case "submodule row 21: nested planted directory" error 0 2
+submodule_reason 21 tests/sub/emb 'not checked out'
+assert_file_absent "links: submodule row 21 — planted command did not run" "$CANARY"
+
+rm -f "$CANARY" || setup_failed "clear canary before main-marker check"
+main_marker
+links_case "submodule row 22: main marker, nested planted directory" ok 0 0
+assert_file_absent "links: submodule row 22 — planted command did not run" "$CANARY"
+# Row 22 once more with every git call logged. The marker is in the main repository, so no git command may run
+# in a submodule's directory; the planted command staying silent would not show that on its own.
+mkdir -p "$WORK/gitlog-bin" || setup_failed "create logging git directory"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$GIT_CALL_LOG"\nexec "$REAL_GIT" "$@"\n' > "$WORK/gitlog-bin/git" || setup_failed "write logging git"
+chmod u+x "$WORK/gitlog-bin/git" || setup_failed "make logging git executable"
+: > "$WORK/git-calls.log" || setup_failed "clear git call log"
+GIT_CALL_LOG="$WORK/git-calls.log" REAL_GIT="$GIT" PATH="$WORK/gitlog-bin:$PATH" links_case "submodule row 22: main marker, git calls logged" ok 0 0
+assert_grep "links: submodule row 22 — the logging git saw the main repository" "-C $REPO rev-parse" "$(cat "$WORK/git-calls.log")"
+refute_grep "links: submodule row 22 — no git command ran in a submodule" "$(basename "$REPO")/tests/sub" "$(cat "$WORK/git-calls.log")"
+
+example_repo l-sub-dotdot
+git clone -q "$SUB" "$WORK/outside" || setup_failed "clone outside repository"
+RECORDED=$(git -C "$WORK/outside" rev-parse HEAD) || setup_failed "read outside commit"
+OUTSIDE_TREE=$(printf '160000 commit %s\toutside\n' "$RECORDED" | git -C "$REPO" mktree) || setup_failed "build outside tree"
+git -C "$REPO" ls-tree HEAD > "$WORK/root-tree" || setup_failed "read root tree"
+printf '040000 tree %s\t..\n' "$OUTSIDE_TREE" >> "$WORK/root-tree" || setup_failed "append parent component"
+ROOT_TREE=$(git -C "$REPO" mktree < "$WORK/root-tree") || setup_failed "build parent-component tree"
+ROOT_COMMIT=$(git -C "$REPO" commit-tree "$ROOT_TREE" -p HEAD -m parent-component) || setup_failed "commit parent-component tree"
+git -C "$REPO" update-ref HEAD "$ROOT_COMMIT" || setup_failed "select parent-component tree"
+links_case "submodule row 23: parent component, outside repository present" error 0 2
+submodule_reason 23 ../outside 'path leaves the repository'
+FIRST_OUT="$OUT"; FIRST_RC="$RC"
+rm -rf "$WORK/outside" || setup_failed "remove outside repository"
+links_case "submodule row 23: parent component, outside repository absent" error 0 2
+submodule_reason 23 ../outside 'path leaves the repository'
+assert_eq "links: submodule row 23 — identical JSON whether outside exists" "$FIRST_OUT" "$OUT"
+assert_exit "links: submodule row 23 — identical exit whether outside exists" "$FIRST_RC" "$RC"
+
+example_repo l-sub-outside-symlink
+mkdir -p "$WORK/outside-area" || setup_failed "create outside area"
+git clone -q "$SUB" "$WORK/outside-area/outside" || setup_failed "clone outside repository"
+RECORDED=$(git -C "$WORK/outside-area/outside" rev-parse HEAD) || setup_failed "read outside commit"
+# Record the path before placing the symlink: update-index rejects a path through one.
+record_gitlink lnk/outside "$RECORDED"
+ln -s "$WORK/outside-area" "$REPO/lnk" || setup_failed "link outside area"
+links_case "submodule row 24: parent symlink leaves working tree" error 0 2
+submodule_reason 24 lnk/outside 'path leaves the repository'
+
+submodule_repo l-sub-trailing-space "$SUB" 'tests/sub ' || setup_failed "create trailing-space fixture"
+links_case "submodule row 25: path ends in a space" ok 0 0
+
+submodule_repo l-sub-spec-unchecked "$EMPTY_SUB" openspec/vendor/sub || setup_failed "create excluded fixture"
+git -C "$REPO" submodule deinit -q -f -- openspec/vendor/sub || setup_failed "deinit excluded submodule"
+links_case "submodule row 26: unchecked submodule under spec directory" missing 1 1
+
+submodule_repo l-sub-inner-symlink "$SUB" tests/sub || setup_failed "create inner-symlink fixture"
+mkdir -p "$REPO/elsewhere" || setup_failed "create alternate checkout parent"
+git clone -q "$SUB" "$REPO/elsewhere/sub" || setup_failed "clone alternate checkout"
+rm -rf "$REPO/tests/sub" || setup_failed "remove original checkout"
+ln -s ../elsewhere/sub "$REPO/tests/sub" || setup_failed "link alternate checkout"
+links_case "submodule row 27: submodule directory is a symlink inside working tree" error 0 2
+submodule_reason 27 tests/sub 'not checked out'
+
+submodule_repo l-sub-git-dir "$SUB" tests/sub || setup_failed "create inherited-GIT_DIR fixture"
+GIT_DIR="$REPO/.git" links_case "submodule row 28: inherited GIT_DIR names main repository" ok 0 0
+
+example_repo l-sub-seven
+for n in 1 2 3 4 5 6 7; do
+  git -C "$REPO" update-index --add --cacheinfo "160000,$MISSING_COMMIT,m$n" || setup_failed "record gitlink m$n"
+done
+git -C "$REPO" commit -q -m seven-gitlinks || setup_failed "commit seven gitlinks"
+links_case "submodule row 29: seven unchecked submodules" error 0 2
+assert_eq "links: submodule row 29 — sorted first five and remainder" \
+  "cannot decide whether the Example 'cap / alpha table' has a marker: submodule m1: not checked out; submodule m2: not checked out; submodule m3: not checked out; submodule m4: not checked out; submodule m5: not checked out; and 2 more" \
+  "$(printf '%s' "$OUT" | field reason)"
+refute_grep "links: submodule row 29 — no sixth path" m6 "$(printf '%s' "$OUT" | field reason)"
+refute_grep "links: submodule row 29 — no seventh path" m7 "$(printf '%s' "$OUT" | field reason)"
+
+submodule_repo l-sub-bad-gitfile "$EMPTY_SUB" tests/sub || setup_failed "create bad-gitfile fixture"
+printf 'gitdir: %s\n' "$WORK/absent-git-dir" > "$REPO/tests/sub/.git" || setup_failed "write bad gitfile"
+links_case "submodule row 30: gitfile names an absent directory" error 0 2
+submodule_reason 30 tests/sub 'git refused to open it'
+
+example_repo l-sub-empty-gitdir
+record_gitlink tests/sub "$MISSING_COMMIT"
+CANARY="$WORK/empty-gitdir-canary"
+planted_directory "$REPO/tests/sub" "$CANARY"
+mkdir "$REPO/tests/sub/.git" || setup_failed "create empty git directory"
+links_case "submodule row 31: planted directory beside an empty .git" error 0 2
+submodule_reason 31 tests/sub 'git refused to open it'
+assert_file_absent "links: submodule row 31 — planted command did not run" "$CANARY"
+
+blob_present() { # repository blob — is the object in the local object store? Lists what is there; never fetches.
+  git -C "$1" cat-file --batch-all-objects --batch-check 2>/dev/null | grep -q "^$2 "
+}
+partial_submodule_repo() { # name — no checkout, with commits and trees but no blob
+  example_repo "$1"
+  git -C "$EMPTY_SUB" config uploadpack.allowFilter true || setup_failed "allow clone filter"
+  mkdir -p "$REPO/tests" || setup_failed "create partial clone parent"
+  git -c protocol.file.allow=always clone -q --no-checkout --filter=blob:none "file://$EMPTY_SUB" "$REPO/tests/sub" || setup_failed "make partial clone"
+  RECORDED=$(git -C "$EMPTY_SUB" rev-parse HEAD) || setup_failed "read source commit"
+  BLOB=$(git -C "$EMPTY_SUB" rev-parse HEAD:scripts/test.sh) || setup_failed "read source blob"
+  record_gitlink tests/sub "$RECORDED"
+  git -C "$REPO/tests/sub" cat-file -e "$RECORDED^{tree}" || setup_failed "partial clone must hold tree"
+  if blob_present "$REPO/tests/sub" "$BLOB"; then
+    setup_failed "partial clone unexpectedly holds blob"
+  fi
+}
+partial_submodule_repo l-sub-partial-main
+main_marker
+links_case "submodule row 32: main marker, partial submodule" ok 0 0
+refute "links: submodule row 32 — blob was not fetched" blob_present "$REPO/tests/sub" "$BLOB"
+
+partial_submodule_repo l-sub-partial-missing
+links_case "submodule row 33: no marker, partial submodule" error 0 2
+submodule_reason 33 tests/sub 'its recorded commit could not be read'
+refute "links: submodule row 33 — blob was not fetched" blob_present "$REPO/tests/sub" "$BLOB"
+
+example_repo l-sub-long-path
+LONG_PATH=$("$PY" -c 'print("a" * 100 + "/" + "b" * 100 + "/c")') || setup_failed "build long path"
+record_gitlink "$LONG_PATH" "$MISSING_COMMIT"
+links_case "submodule row 34: unchecked submodule with a long path" error 0 2
+submodule_reason 34 "${LONG_PATH:0:200}..." 'not checked out'
+refute_grep "links: submodule row 34 — no full path" "$LONG_PATH" "$(printf '%s' "$OUT" | field reason)"
+
+submodule_repo l-sub-found-and-unchecked "$SUB" tests/a || setup_failed "create two-submodule fixture"
+record_gitlink tests/b "$MISSING_COMMIT"
+links_case "submodule row 35: found marker settles Example despite unchecked sibling" ok 0 0
+
+# Rows 36 to 41 were added after the change was checked before archiving (tasks 4.1).
+newrepo l-sub-md-and-code-source; put notes.md '# spec-example: cap / alpha table'; put scripts/test.sh '# no marker here'; commit >/dev/null; MD_CODE_SUB="$REPO"
+submodule_repo l-sub-md-match-blob-missing "$MD_CODE_SUB" tests/sub || setup_failed "create md-match fixture"
+remove_submodule_object HEAD:scripts/test.sh
+git -C "$REPO/tests/sub" cat-file -e HEAD:notes.md || setup_failed "the .md file with the marker must remain readable"
+links_case "submodule row 36: marker only in a .md file, another blob absent" error 0 2
+submodule_reason 36 tests/sub 'its recorded commit could not be read'
+
+submodule_repo l-sub-top-elsewhere "$SUB" tests/sub || setup_failed "create other-top fixture"
+git -C "$REPO/tests/sub" config core.worktree "$REPO/tests" || setup_failed "point the submodule's working tree at its parent directory"
+REPORTED_TOP=$(git -C "$REPO/tests/sub" rev-parse --show-toplevel) || setup_failed "git must still open the submodule"
+refute "links: submodule row 37 — git names another directory as the top" test "$(cd "$REPORTED_TOP" && pwd -P)" = "$(cd "$REPO/tests/sub" && pwd -P)"
+links_case "submodule row 37: git names another directory as the top" error 0 2
+submodule_reason 37 tests/sub 'not checked out'
+
+submodule_repo l-sub-path-order "$NESTED_SUB" a || setup_failed "create path-order fixture"   # a is checked out, a/inner is not
+record_gitlink a-b "$MISSING_COMMIT"
+# The walk meets a/inner (inside a) before a-b; the reason names them in the order of their paths, a-b first.
+links_case "submodule row 38: two unsearchable submodules, path order" error 0 2
+assert_eq "links: submodule row 38 — named in the order of their paths" \
+  "cannot decide whether the Example 'cap / alpha table' has a marker: submodule a-b: not checked out; submodule a/inner: not checked out" \
+  "$(printf '%s' "$OUT" | field reason)"
+
+example_repo l-sub-dot
+INSIDE_TREE=$(printf '160000 commit %s\tinside\n' "$MISSING_COMMIT" | git -C "$REPO" mktree) || setup_failed "build tree under the dot component"
+git -C "$REPO" ls-tree HEAD > "$WORK/dot-root-tree" || setup_failed "read root tree"
+printf '040000 tree %s\t.\n' "$INSIDE_TREE" >> "$WORK/dot-root-tree" || setup_failed "append dot component"
+DOT_TREE=$(git -C "$REPO" mktree < "$WORK/dot-root-tree") || setup_failed "build dot-component tree"
+DOT_COMMIT=$(git -C "$REPO" commit-tree "$DOT_TREE" -p HEAD -m dot-component) || setup_failed "commit dot-component tree"
+git -C "$REPO" update-ref HEAD "$DOT_COMMIT" || setup_failed "select dot-component tree"
+links_case "submodule row 39: a '.' component in a recorded path" error 0 2
+submodule_reason 39 ./inside 'path leaves the repository'
+
+submodule_repo l-sub-git-env "$SUB" tests/sub || setup_failed "create inherited-environment fixture"
+GIT_DIR="$REPO/.git" GIT_WORK_TREE="$REPO" GIT_INDEX_FILE="$REPO/.git/index" GIT_OBJECT_DIRECTORY="$REPO/.git/objects" \
+  GIT_ALTERNATE_OBJECT_DIRECTORIES="$REPO/.git/objects" GIT_COMMON_DIR="$REPO/.git" \
+  links_case "submodule row 40: six inherited git variables name the main repository" ok 0 0
+
+submodule_repo l-sub-alternates "$EMPTY_SUB" tests/sub || setup_failed "create inherited-alternates fixture"
+SUB_COMMIT=$(git -C "$SUB" rev-parse HEAD) || setup_failed "read the commit that holds the marker"
+record_gitlink tests/sub "$SUB_COMMIT"   # a commit that this checkout's object store does not hold
+if git -C "$REPO/tests/sub" cat-file -e "$SUB_COMMIT^{commit}" 2>/dev/null; then setup_failed "the checkout unexpectedly holds the recorded commit"; fi
+GIT_ALTERNATE_OBJECT_DIRECTORIES="$SUB/.git/objects" git -C "$REPO/tests/sub" cat-file -e "$SUB_COMMIT^{commit}" || setup_failed "the inherited object store must hold the recorded commit"
+GIT_ALTERNATE_OBJECT_DIRECTORIES="$SUB/.git/objects" links_case "submodule row 41: an inherited object store holds the recorded commit" error 0 2
+submodule_reason 41 tests/sub "recorded commit ${SUB_COMMIT:0:12} is not in its object store"
 
 # ── preflight ───────────────────────────────────────────────────────────────
 echo "spec-change: preflight (Example: preflight by write access and Spectra state)"
