@@ -35,6 +35,19 @@ file) and exits with a fixed code. A usage error prints to stderr and exits 64.
       {"form": proposed|change|no-behaviour-change|third-party-clone|none|invalid, "change": "...",
        "reason": "..."}   exit 0, 1 (invalid), 2 (unreadable; no JSON)
 
+  archive-ref --cwd <dir>                                                       (#547)
+      Which branch do the spec checks read for this repository? The first IDD configuration walking up
+      from the repository's top level may map its path (relative to the directory holding .claude/) in
+      `spec_archive` to {"ref": "local", "branch": "<name>"}; that is accepted only without any remote.
+      {"status": remote|local|error, "branch": "...", "ref": "<commit>", "config": "...", "key": "...",
+       "reason": "..."}   exit 0 (remote, local), 2 (error)
+
+  link-base --cwd <dir> --issue <N>                                             (#547)
+      Where does the link check start in local mode? The tag idd-<N>-baseline when it is an ancestor of
+      HEAD, else the parent of the oldest commit of HEAD's history naming #<N> (no digit after it).
+      {"status": remote|ok|error, "base": "<commit>", "from": baseline-tag|first-commit, "reason": "..."}
+      exit 0 (remote, ok), 2 (error)
+
 Paths named openspec/ above are relative to the spec directory Spectra uses: the `spec_dir:` line of
 .spectra.yaml, or `openspec` when there is none (read at the revision checked; preflight reads the working tree).
 
@@ -556,11 +569,117 @@ def cmd_plan(argv):
     return emit({"form": form, "change": change, "reason": reason}, 1 if form == "invalid" else 0)
 
 
+# ── archive-ref / link-base (#547) ──────────────────────────────────────────
+
+CONFIG_NAMES = (os.path.join(".claude", ".idd", "local.json"), os.path.join(".claude", "issue-driven-dev.local.json"))
+
+
+def find_config(top):
+    """(path, directory that holds its .claude/) of the first IDD configuration walking up from top, or (None, None).
+    Same order as the skills' walk-up: the new file before the legacy one at each level, stop after HOME or at /."""
+    home = os.path.realpath(os.path.expanduser("~"))
+    d = os.path.realpath(top)
+    while True:
+        for name in CONFIG_NAMES:
+            p = os.path.join(d, name)
+            if os.path.isfile(p):
+                return p, d
+        parent = os.path.dirname(d)
+        if d == home or parent == d:
+            return None, None
+        d = parent
+
+
+def norm_key(k):
+    k = os.path.normpath(k.strip().rstrip("/") or ".")
+    return k.replace(os.sep, "/")
+
+
+def archive_ref(cwd):
+    """{"status": "remote"} | {"status": "local", branch, ref, config, key}; raises Fail for an error."""
+    top = repo_top(cwd)
+    path, root = find_config(top)
+    if path is None:
+        return {"status": "remote", "reason": "no IDD configuration found above the repository"}
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        raise Fail(f"cannot read the IDD configuration {path}: {str(exc)[:160]}")
+    if not isinstance(data, dict):
+        raise Fail(f"the IDD configuration {path} is not a JSON object")
+    if "spec_archive" not in data:
+        return {"status": "remote", "reason": f"{path} has no spec_archive field"}
+    table = data["spec_archive"]
+    if not isinstance(table, dict):
+        raise Fail(f"spec_archive in {path} must be an object keyed by repository path")
+    key = norm_key(os.path.relpath(os.path.realpath(top), root))
+    entries = [v for k, v in table.items() if isinstance(k, str) and norm_key(k) == key]
+    if not entries:
+        return {"status": "remote", "reason": f"spec_archive in {path} has no entry for {key}"}
+    if len(entries) > 1:
+        raise Fail(f"spec_archive in {path} has more than one entry for {key}")
+    entry = entries[0]
+    if not isinstance(entry, dict) or entry.get("ref") != "local":
+        raise Fail(f"spec_archive[{key!r}] in {path}: only {{\"ref\": \"local\", \"branch\": \"<name>\"}} is supported")
+    branch = entry.get("branch")
+    if not isinstance(branch, str) or not branch.strip() or branch.startswith("-"):
+        raise Fail(f"spec_archive[{key!r}] in {path} needs a branch name")
+    remotes = git_text(top, "remote").split()
+    if remotes:
+        raise Fail(f"spec_archive[{key!r}] in {path} asks for the local branch, but this repository has a remote "
+                   f"({', '.join(remotes)}); the local branch is accepted only for a repository without any remote")
+    p = git(top, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}^{{commit}}", check=False)
+    if p.returncode != 0:
+        raise Fail(f"spec_archive[{key!r}] in {path} names the branch {branch!r}, which does not exist here")
+    return {"status": "local", "branch": branch, "ref": p.stdout.decode("utf-8").strip(), "config": path, "key": key}
+
+
+def cmd_archive_ref(argv):
+    a = parse(argv, {"--cwd"}, ["--cwd"])
+    try:
+        out = archive_ref(a["--cwd"])
+    except Fail as exc:
+        return emit({"status": "error", "reason": str(exc)}, 2)
+    return emit(out, 0)
+
+
+def cmd_link_base(argv):
+    a = parse(argv, {"--cwd", "--issue"}, ["--cwd", "--issue"])
+    try:
+        if not re.fullmatch(r"[1-9][0-9]*", a["--issue"]):
+            raise Fail(f"the issue number must be a positive integer written in digits: {a['--issue'][:20]!r}")
+        n = a["--issue"]
+        out = archive_ref(a["--cwd"])
+        if out["status"] == "remote":
+            return emit(out, 0)
+        top = repo_top(a["--cwd"])
+        tag = git(top, "rev-parse", "--verify", "--quiet", f"refs/tags/idd-{n}-baseline^{{commit}}", check=False)
+        if tag.returncode == 0:
+            sha = tag.stdout.decode("utf-8").strip()
+            if git(top, "merge-base", "--is-ancestor", sha, "HEAD", check=False).returncode == 0:
+                return emit({"status": "ok", "base": sha, "from": "baseline-tag"}, 0)
+        names = re.compile(r"#%s(?![0-9])" % n)
+        log = git_text(top, "log", "--reverse", "--format=%H%x00%P%x00%B%x1e", "HEAD")
+        for rec in log.split("\x1e"):
+            parts = rec.strip("\n").split("\x00")
+            if len(parts) < 3 or not names.search(parts[2]):
+                continue
+            parents = parts[1].split()
+            if not parents:
+                raise Fail(f"the oldest commit naming #{n} ({parts[0][:12]}) is the root commit; pass the base by hand")
+            return emit({"status": "ok", "base": parents[0], "from": "first-commit"}, 0)
+        raise Fail(f"no tag idd-{n}-baseline on the history of HEAD and no commit there names #{n}; pass the base by hand")
+    except Fail as exc:
+        return emit({"status": "error", "reason": str(exc)}, 2)
+
+
 def main(argv):
     handlers = {"declared": cmd_declared, "archived": cmd_archived, "links": cmd_links, "preflight": cmd_preflight,
-                "ic": cmd_ic, "plan": cmd_plan}
+                "ic": cmd_ic, "plan": cmd_plan, "archive-ref": cmd_archive_ref, "link-base": cmd_link_base}
     if not argv or argv[0] not in handlers:
-        print("spec-change: subcommand required: declared | archived | links | preflight | ic | plan", file=sys.stderr)
+        print("spec-change: subcommand required: declared | archived | links | preflight | ic | plan | archive-ref | "
+              "link-base", file=sys.stderr)
         return 64
     try:
         return handlers[argv[0]](argv[1:])

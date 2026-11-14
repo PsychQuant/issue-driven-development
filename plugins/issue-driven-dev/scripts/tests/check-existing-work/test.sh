@@ -229,4 +229,43 @@ CLOSE_OUT=$(CLAUDE_PLUGIN_ROOT="$HERE/../../.." WORKDIR="$W/work" GITHUB_REPO=te
 assert_eq "idd-close: an issue the lookup could not read does not pass the PR gate" 1 "$CLOSE_RC"
 assert_grep "idd-close: and says why" "refusing to close" "$CLOSE_OUT"
 
+# ── the branch lookup can be skipped (#547) ─────────────────────────────────
+# spec-example: idd-existing-work-lookup / the branch lookup can be skipped
+NR="$W/noremote"; git "${GIT_ENV[@]}" init -q "$NR"; ( cd "$NR" && git "${GIT_ENV[@]}" commit -q --allow-empty -m init )
+BR="$W/badremote"; git "${GIT_ENV[@]}" init -q "$BR"; ( cd "$BR" && git "${GIT_ENV[@]}" commit -q --allow-empty -m init )
+git -C "$BR" remote add origin "$W/no-such-origin.git"
+runin() { PATH="$W/bin:$PATH" bash "$SCRIPT" "$@" 2>"$W/stderr"; }
+reset_fx; issue 61 OPEN $ISSUE_T
+pr open 30 "codex/a" fff $NEWER "" $'Refs #61\n\nbody'
+OUT=$(runin --cwd "$BR" test/repo 61)
+assert_grep "an origin that cannot be fetched, no flag → git fetch failed" "git fetch failed" "$(field "$OUT" "d['errors']")"
+assert_eq "… no notes field" "False" "$(field "$OUT" "'notes' in d")"
+assert_eq "… the open PR is E1" "['E1']" "$(kinds "$OUT" 61)"
+OUT=$(runin --cwd "$NR" --skip-branches test/repo 61)
+refute_grep "no remote, --skip-branches → no git fetch failed" "git fetch failed" "$(field "$OUT" "d['errors']")"
+assert_grep "… notes say the branch lookup was skipped" "branch lookup skipped" "$(field "$OUT" "d.get('notes')")"
+assert_eq "… the open PR is still E1" "['E1']" "$(kinds "$OUT" 61)"
+OUT=$(runin --skip-branches --cwd "$NR" test/repo 61)
+assert_eq "… the flag before --cwd works too" "['E1']" "$(kinds "$OUT" 61)"
+touch "$FX/fail_pr_open"
+OUT=$(runin --cwd "$NR" --skip-branches test/repo 61)
+assert_grep "no remote, --skip-branches, the open PR list fails → reported" "--state open" "$(field "$OUT" "d['errors']")"
+assert_grep "… notes still say the branch lookup was skipped" "branch lookup skipped" "$(field "$OUT" "d.get('notes')")"
+assert_eq "… verdict unknown" "unknown" "$(verdict "$OUT" 61)"
+rm -f "$FX/fail_pr_open"
+
+# idd-close Step 1.5 passes --skip-branches only when archive-ref says local
+OPTP="$W/opted"; mkdir -p "$OPTP/.claude/.idd"; git "${GIT_ENV[@]}" init -q "$OPTP/code"
+( cd "$OPTP/code" && git "${GIT_ENV[@]}" checkout -q -b master && git "${GIT_ENV[@]}" commit -q --allow-empty -m init )
+printf '%s\n' '{"spec_archive": {"code": {"ref": "local", "branch": "master"}}}' > "$OPTP/.claude/.idd/local.json"
+OPT_OUT=$(HOME="$W" CLAUDE_PLUGIN_ROOT="$HERE/../../.." WORKDIR="$OPTP/code" GITHUB_REPO=test/repo NUMBER=61 PATH="$W/bin:$PATH" \
+  bash -c "$(snippet "$CSEC")" 2>&1)
+assert_grep "idd-close: in a repository opted into its local branch, Step 1.5 says the branch lookup was skipped" \
+  "branch lookup skipped" "$OPT_OUT"
+refute_grep "idd-close: … and the helper did not report a failed fetch" "git fetch failed" "$OPT_OUT"
+NOPT_OUT=$(HOME="$W" CLAUDE_PLUGIN_ROOT="$HERE/../../.." WORKDIR="$BR" GITHUB_REPO=test/repo NUMBER=61 PATH="$W/bin:$PATH" \
+  bash -c "$(snippet "$CSEC")" 2>&1)
+refute_grep "idd-close: in a repository not opted in, Step 1.5 does not skip the branch lookup" "branch lookup skipped" "$NOPT_OUT"
+assert_grep "idd-close: Step 1.5 asks archive-ref" 'spec-change.py" archive-ref' "$CSEC"
+
 print_summary "check-existing-work"

@@ -127,10 +127,21 @@ fi
 5. 連結檢查：
 
 ```bash
-DEFAULT_BRANCH=$(gh repo view "$GITHUB_REPO" --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null) || DEFAULT_BRANCH=""
+# #547: a repository without a remote, opted into its local branch by spec_archive, starts at the issue's
+# baseline (link-base prints ok); with no entry link-base prints remote and the default branch is fetched as before.
+LB=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" link-base --cwd "$CWD" --issue "$NUMBER" 2>/dev/null)
+LB_STATUS=$(printf '%s' "$LB" | python3 -c 'import json,sys; print(json.loads(sys.stdin.read() or "{}").get("status", ""))' 2>/dev/null)
 SPEC_BASE=""
-if [ -n "$DEFAULT_BRANCH" ] && git -C "$CWD" fetch -q origin -- "$DEFAULT_BRANCH" 2>/dev/null; then
-  SPEC_BASE=$(git -C "$CWD" merge-base HEAD FETCH_HEAD 2>/dev/null)
+if [ "$LB_STATUS" = ok ]; then
+  SPEC_BASE=$(printf '%s' "$LB" | python3 -c 'import json,sys; print(json.loads(sys.stdin.read()).get("base", ""))')
+  printf '%s' "$LB" | python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); print("→ link check from %s (%s; spec_archive local mode)" % (d["base"][:7], d["from"]))'
+elif [ "$LB_STATUS" = remote ]; then
+  DEFAULT_BRANCH=$(gh repo view "$GITHUB_REPO" --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null) || DEFAULT_BRANCH=""
+  if [ -n "$DEFAULT_BRANCH" ] && git -C "$CWD" fetch -q origin -- "$DEFAULT_BRANCH" 2>/dev/null; then
+    SPEC_BASE=$(git -C "$CWD" merge-base HEAD FETCH_HEAD 2>/dev/null)
+  fi
+else
+  echo "✗ spec close-out: spec_archive: $(printf '%s' "$LB" | python3 -c 'import json,sys; print(json.loads(sys.stdin.read() or "{}").get("reason", "link-base printed nothing readable"))' 2>/dev/null)" >&2
 fi
 if [ -n "$SPEC_BASE" ]; then
   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" links --base "$SPEC_BASE" --cwd "$CWD"
@@ -139,7 +150,7 @@ else
 fi
 ```
 
-`git merge-base HEAD FETCH_HEAD`（剛從遠端 fetch 的預設 branch）在 PR path 是分岔點；在 direct-commit path 是 run 還沒推的 commit 之前那一個。沒有印出 JSON（`SPEC_BASE` 取不到）就停下回報。`missing` 就補測試或標記再跑一次。要改的是 requirement 本身（例如寫了一個寫不出檢查的 Example）時，不改 `archive/` 底下的檔案，也不繞過 Spectra 直接改主規格：照第 7 步另建一個 change 修改那條 requirement，封存後再跑。`error` 停下回報。
+`git merge-base HEAD FETCH_HEAD`（剛從遠端 fetch 的預設 branch）在 PR path 是分岔點；在 direct-commit path 是 run 還沒推的 commit 之前那一個。程式 repo 沒有 remote、用 `spec_archive` 指到本機 branch 時（#547，見 `config-protocol.md`），沒有「還沒推的 commit」這條界線，起點改由 `link-base` 給：這張 issue 的 `idd-<N>-baseline` tag（是 HEAD 的祖先時），否則 HEAD 歷史裡第一個訊息含 `#<N>`（後面不接數字）的 commit 的父 commit；兩者都沒有就停下，不退回 `merge-base`（direct-commit 時那是 HEAD，範圍是空的）。沒有印出 JSON（`SPEC_BASE` 取不到）就停下回報。`missing` 就補測試或標記再跑一次。要改的是 requirement 本身（例如寫了一個寫不出檢查的 Example）時，不改 `archive/` 底下的檔案，也不繞過 Spectra 直接改主規格：照第 7 步另建一個 change 修改那條 requirement，封存後再跑。`error` 停下回報。
 
 6. 確認宣告與 HEAD 一致：把第 6 步要貼的 `**Spec**:` 行寫進一個暫存檔，跑 `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" archived --file <暫存檔> --cwd "$CWD" --ref HEAD`，要 `pass`。
 

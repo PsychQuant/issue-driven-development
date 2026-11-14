@@ -113,6 +113,35 @@ step157 "$IC_OK" 0
 assert_eq "the remote dropped the archive, the local tracking ref did not move → stops" refuse "$STATUS"
 git -C "$C" config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
 
+echo "spec-close-gate: a repository without a remote, opted into its local branch (#547)"
+# The configuration sits above the repository, keyed by its path; the repository has no remote. gh repo view
+# fails in these rows, so a pass shows the gate did not go to the remote at all.
+L="$WORK/issue-repo"; LR="$L/code"; mkdir -p "$L/.claude/.idd" "$LR"
+printf '%s\n' '{"spec_archive": {"code": {"ref": "local", "branch": "master"}}}' > "$L/.claude/.idd/local.json"
+git init -q -b master "$LR"; mkdir -p "$LR/openspec/specs"; echo x > "$LR/openspec/specs/.keep"
+git -C "$LR" add -A; git -C "$LR" commit -q -m base
+step157_in() { # dir comments-json → STATUS, GRC, OUTALL
+  printf '%s' "$2" > "$WORK/comments.json"
+  OUTALL=$(cd "$1" && env PATH="$WORK/bin:$PATH" HOME="$WORK" FAKE_COMMENTS="$WORK/comments.json" FAKE_FAIL=0 FAKE_VIEW_FAIL=1 \
+        GITHUB_REPO=o/r NUMBER=42 CWD="$1" CLAUDE_PLUGIN_ROOT="$PLUGIN" \
+        bash --norc --noprofile -c '. "$1"; printf "\nSTATUS=%s\nGRC=%s\n" "$(printf "%s" "$GATE" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get(\"status\"))")" "$GATE_RC"' _ "$BLOCK" 2>/dev/null </dev/null)
+  STATUS=$(printf '%s\n' "$OUTALL" | sed -n 's/^STATUS=//p'); GRC=$(printf '%s\n' "$OUTALL" | sed -n 's/^GRC=//p')
+}
+step157_in "$LR" "$IC_OK"
+assert_eq "no remote, opted in, the change is not archived on master → stops" refuse "$STATUS"
+mkdir -p "$LR/openspec/changes/archive/2026-11-14-idd-42-fix-timeout"; echo p > "$LR/openspec/changes/archive/2026-11-14-idd-42-fix-timeout/proposal.md"
+git -C "$LR" add -A; git -C "$LR" commit -q -m "chore: archive idd-42-fix-timeout (#42)"
+step157_in "$LR" "$IC_OK"
+assert_eq "no remote, opted in, the change is archived on master → passes without the remote" pass "$STATUS"
+assert_eq "… exit 0" 0 "$GRC"
+assert_grep "… and prints the local branch and commit" "local ref master@$(git -C "$LR" rev-parse --short master)" "$OUTALL"
+git -C "$LR" remote add origin "$WORK/o.git"
+step157_in "$LR" "$IC_OK"
+assert_eq "the repository has a remote and is opted into local → stops" error "$STATUS"
+assert_eq "… exit 2" 2 "$GRC"
+assert_grep "… and prints the reason" "remote" "$OUTALL"
+git -C "$LR" remote remove origin
+
 echo "spec-close-gate: the skill text"
 G="$(sed -n '/^### Step 1.57: /,/^### Step 1.6: /p' "$CLOSE")"
 line_of() { local n; n=$(grep -nF -- "$1" "$CLOSE" | head -1 | cut -d: -f1); printf '%s' "${n:-999999}"; }
@@ -121,6 +150,7 @@ assert_true "Step 1.57 sits between Step 1.55 and Step 1.6" \
 assert_grep "the gate calls spec-change.py archived" 'spec-change.py" archived' "$G"
 assert_grep "the gate fetches the default branch from the remote" 'fetch -q origin -- "$DEFAULT_BRANCH"' "$G"
 assert_grep "… and checks the commit that fetch returned" 'rev-parse -q --verify FETCH_HEAD' "$G"
+assert_grep "the gate first asks archive-ref which branch to read (#547)" 'spec-change.py" archive-ref' "$G"
 assert_grep "the gate chooses the comment with spec-change.py ic (one selection, shared with verify)" 'spec-change.py" ic --comments' "$G"
 assert_grep "no Implementation Complete comment → not held to the gate (row 5)" "沒有 Implementation Complete" "$G"
 assert_grep "refuse or error stops the close" "停下、不 close" "$G"

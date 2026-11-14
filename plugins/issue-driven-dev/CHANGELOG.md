@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Version number left to the release.
 
+### Added
+
+- **A code repository without a remote can be closed against its local branch (#547, #546).** The IDD
+  configuration takes a `spec_archive` field that maps a code repository's path (relative to the configuration's
+  directory) to `{"ref": "local", "branch": "<name>"}`. For that repository `idd-close` Step 1.57 checks the archive
+  on the local branch instead of fetching the default branch from a remote that does not exist, and says so
+  (`local ref <branch>@<commit>`); Step 1.5 skips the branch lookup (`check-existing-work.sh --skip-branches`) and
+  still checks open PRs on the issue repository; the link check of `references/spec-wrapper.md` step 5 starts at
+  the issue's baseline tag, or at the parent of the oldest commit naming `#N`. An entry is accepted only while the
+  repository has no remote at all; with a remote it is an error, never a silent fallback. Without an entry nothing
+  changes. New `spec-change.py` subcommands `archive-ref` and `link-base`; documented in `config-protocol.md`.
+
 ### Fixed
 
 - **The edit-run suite has a time limit of its own (#508, #519).** Most of its run time is CPU time (about 65 s

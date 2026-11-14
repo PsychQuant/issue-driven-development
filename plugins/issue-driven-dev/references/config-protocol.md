@@ -487,6 +487,32 @@ Exit codes of `idd-ci-gate.sh run --commit <sha> [--cwd <clone>]`: `0` pass, `1`
 
 In `local` mode a red remote check is reported and does not block merging. A release still requires green remote checks whatever the mode (`idd-close` Step 6.5), because only remote CI sees the older environments that users run.
 
+### `spec_archive` field (#547)
+
+Which branch the spec checks read for a code repository that **deliberately has no remote** — typically a local-only sub-project inside the issue repository's working directory, holding data that must not go to GitHub. Without an entry, `idd-close` Step 1.57 fetches the default branch from the remote, and a repository without a remote can never pass it.
+
+```json
+{ "spec_archive": { "projects/sub-repo": { "ref": "local", "branch": "master" } } }
+```
+
+| Part | Meaning |
+|------|---------|
+| key | The code repository's top level, relative to the directory that holds this `.claude/` (both resolved through symbolic links). `./sub/`, `sub/` and `sub` name the same path; `.` names the directory of this configuration itself |
+| `ref` | Must be `local`. Any other value is an error |
+| `branch` | The local branch that plays the default branch. Required: without a remote there is no `origin/HEAD` to read, and `HEAD` is only the branch checked out now |
+
+Read by `scripts/spec-change.py archive-ref` (and `link-base`), which walks up from the **code repository's** top level to the first IDD configuration — the same walk as the other fields, new file before legacy file at each level, stopping after `$HOME`. Write the entry in the issue repository's configuration; do not add a configuration to the code repository just for this, because a file without `github_repo` there would be the first one the other skills find.
+
+**Accepted only while the repository has no remote at all.** An entry for a repository that has any remote is an error, not a silent fallback to the remote: an entry written because there was no remote must not outlive that reason. Other errors: the file is not a JSON object, `spec_archive` is not an object, the entry is not `{"ref": "local", "branch": "<name>"}`, or the branch does not exist.
+
+What it changes, and nothing else:
+
+- `idd-close` Step 1.57 checks the archive on `refs/heads/<branch>` instead of fetching, and prints `local ref <branch>@<commit>`.
+- `idd-close` Step 1.5 calls `check-existing-work.sh --skip-branches`: no fetch in the code repository, open PRs still checked on the issue repository.
+- `references/spec-wrapper.md` step 5 starts the link check at the issue's `idd-<N>-baseline` tag, or else at the parent of the oldest commit naming `#<N>`; neither → stop.
+
+A code repository that is not under the issue repository's directory finds no entry and keeps the remote behaviour (and its error).
+
 ### `collaborators[]` field
 
 An OPTIONAL identity registry so IDD can resolve a person's alias / email / display-name → their GitHub `@login` **without guessing** — the hard rule set by [tagging-collaborators.md](../rules/tagging-collaborators.md). It is a *resolution accelerator*, **not** an authority: a table hit is still existence-verified via `gh api users/<login>` before any mention is posted, because the table can go stale.
