@@ -643,7 +643,8 @@ def main_tree(top):
     """The repository's main working tree, or None when git does not record it. For a linked worktree (its git dir
     is not the common one): the first entry of `git worktree list --porcelain`; a bare entry means there is none,
     and the top level is used; an entry that is the common git directory itself means git does not know where the
-    main working tree is (a repository made with --separate-git-dir keeps no path back to it), and no key is guessed.
+    main working tree is (a git directory made apart with --separate-git-dir under a name other than .git, or a
+    submodule), and no key is guessed; for one named .git, git reports the directory holding it, which is then used.
     Otherwise the top level (a --separate-git-dir repository asked from its main working tree included)."""
     gd = os.path.realpath(os.path.join(top, one_line(git_text(top, "rev-parse", "--git-dir"))))
     common = os.path.realpath(os.path.join(top, one_line(git_text(top, "rev-parse", "--git-common-dir"))))
