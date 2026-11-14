@@ -45,13 +45,16 @@ def usage(msg):
 args = sys.argv[1:]
 cwd = "."
 skip_branches = False
+seen_cwd = False
 while args[:1] in (["--cwd"], ["--skip-branches"]):
     if args[0] == "--skip-branches":
         skip_branches, args = True, args[1:]
         continue
+    if seen_cwd:
+        usage("--cwd given more than once")
     if len(args) < 2:
         usage("--cwd needs a directory")
-    cwd, args = args[1], args[2:]
+    cwd, args, seen_cwd = args[1], args[2:], True
 if len(args) < 2:
     usage("need <owner/repo> and at least one issue number")
 repo, issues = args[0], args[1:]

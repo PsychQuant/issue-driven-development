@@ -18,8 +18,11 @@ Version number left to the release.
   (`local ref <branch>@<commit>`); Step 1.5 skips the branch lookup (`check-existing-work.sh --skip-branches`) and
   still checks open PRs on the issue repository; the link check of `references/spec-wrapper.md` step 5 starts at
   the issue's baseline tag, or at the parent of the oldest commit naming `#N`. An entry is accepted only while the
-  repository has no remote at all; with a remote it is an error, never a silent fallback. Without an entry nothing
-  changes. New `spec-change.py` subcommands `archive-ref` and `link-base`; documented in `config-protocol.md`.
+  repository has no remote at all (a remote with a URL); with a remote it is an error, never a silent fallback.
+  Without an entry nothing changes, and a configuration file that cannot be read as a JSON object counts as having
+  no entry, so it does not block a repository that never set the field. The branch must be a branch name, and the
+  check reads it whatever `HEAD` is; a linked worktree uses its main working tree's key. New `spec-change.py`
+  subcommands `archive-ref` and `link-base`; documented in `config-protocol.md`.
 
 ### Fixed
 

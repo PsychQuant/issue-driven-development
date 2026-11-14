@@ -73,7 +73,7 @@ awk '/^### Step 1.57: /{f=1} f && /^```bash$/{b=1; next} b && /^```$/{exit} b' "
 step157() { # comments-json fail(0|1) → STATUS, GRC
   printf '%s' "$1" > "$WORK/comments.json"
   local out
-  out=$(cd "$C" && env PATH="$WORK/bin:$PATH" FAKE_COMMENTS="$WORK/comments.json" FAKE_FAIL="$2" FAKE_VIEW_FAIL="${FAKE_VIEW_FAIL:-0}" \
+  out=$(cd "$C" && env PATH="$WORK/bin:$PATH" HOME="$WORK" FAKE_COMMENTS="$WORK/comments.json" FAKE_FAIL="$2" FAKE_VIEW_FAIL="${FAKE_VIEW_FAIL:-0}" \
         GITHUB_REPO=o/r NUMBER=42 CWD="$C" CLAUDE_PLUGIN_ROOT="$PLUGIN" \
         bash --norc --noprofile -c '. "$1"; printf "\nSTATUS=%s\nGRC=%s\n" "$(printf "%s" "$GATE" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get(\"status\"))")" "$GATE_RC"' _ "$BLOCK" 2>/dev/null </dev/null)
   STATUS=$(printf '%s\n' "$out" | sed -n 's/^STATUS=//p'); GRC=$(printf '%s\n' "$out" | sed -n 's/^GRC=//p')
@@ -141,6 +141,27 @@ assert_eq "the repository has a remote and is opted into local → stops" error 
 assert_eq "… exit 2" 2 "$GRC"
 assert_grep "… and prints the reason" "remote" "$OUTALL"
 git -C "$LR" remote remove origin
+refute_grep "the local-mode line does not print the configuration file's path (idd-547-fix1)" ".claude/.idd/local.json" "$(cd "$LR" && git checkout -q master 2>/dev/null; step157_in "$LR" "$IC_OK"; printf '%s' "$OUTALL")"
+# idd-547-fix1: HEAD on the issue's branch, where the change is archived; the configured master does not have it.
+LH="$WORK/issue-repo-h"; LHR="$LH/code"; mkdir -p "$LH/.claude/.idd" "$LHR"
+printf '%s\n' '{"spec_archive": {"code": {"ref": "local", "branch": "master"}}}' > "$LH/.claude/.idd/local.json"
+git init -q -b master "$LHR"; mkdir -p "$LHR/openspec/specs"; echo x > "$LHR/openspec/specs/.keep"
+git -C "$LHR" add -A; git -C "$LHR" commit -q -m base; git -C "$LHR" checkout -q -b idd/42-x
+mkdir -p "$LHR/openspec/changes/archive/2026-11-14-idd-42-fix-timeout"; echo p > "$LHR/openspec/changes/archive/2026-11-14-idd-42-fix-timeout/proposal.md"
+git -C "$LHR" add -A; git -C "$LHR" commit -q -m "chore: archive idd-42-fix-timeout (#42)"
+step157_in "$LHR" "$IC_OK"
+assert_eq "no remote, opted into master, HEAD on the issue's branch with the archive, master without → stops" refuse "$STATUS"
+# idd-547-fix1: no remote and no spec_archive entry → stops, and the reason says why archive-ref answered remote
+LN="$WORK/noentry"; mkdir -p "$LN/.claude/.idd"; git init -q -b master "$LN/code"
+printf '%s\n' '{"github_repo": "o/r"}' > "$LN/.claude/.idd/local.json"
+mkdir -p "$LN/code/openspec/specs"; echo x > "$LN/code/openspec/specs/.keep"; git -C "$LN/code" add -A; git -C "$LN/code" commit -q -m base
+step157_in "$LN/code" "$IC_OK"
+assert_eq "no remote and no spec_archive entry → stops with error" error "$STATUS"
+assert_eq "… exit 2" 2 "$GRC"
+GATE_REASON=$(cd "$LN/code" && env PATH="$WORK/bin:$PATH" HOME="$WORK" FAKE_COMMENTS="$WORK/comments.json" FAKE_FAIL=0 FAKE_VIEW_FAIL=0 \
+  GITHUB_REPO=o/r NUMBER=42 CWD="$LN/code" CLAUDE_PLUGIN_ROOT="$PLUGIN" \
+  bash --norc --noprofile -c '. "$1"; printf "%s" "$GATE"' _ "$BLOCK" 2>/dev/null </dev/null)
+assert_grep "… and the reason includes why archive-ref answered remote" "spec_archive" "$GATE_REASON"
 
 echo "spec-close-gate: the skill text"
 G="$(sed -n '/^### Step 1.57: /,/^### Step 1.6: /p' "$CLOSE")"

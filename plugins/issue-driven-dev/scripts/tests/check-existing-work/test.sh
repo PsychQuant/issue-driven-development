@@ -259,13 +259,25 @@ OPTP="$W/opted"; mkdir -p "$OPTP/.claude/.idd"; git "${GIT_ENV[@]}" init -q "$OP
 ( cd "$OPTP/code" && git "${GIT_ENV[@]}" checkout -q -b master && git "${GIT_ENV[@]}" commit -q --allow-empty -m init )
 printf '%s\n' '{"spec_archive": {"code": {"ref": "local", "branch": "master"}}}' > "$OPTP/.claude/.idd/local.json"
 OPT_OUT=$(HOME="$W" CLAUDE_PLUGIN_ROOT="$HERE/../../.." WORKDIR="$OPTP/code" GITHUB_REPO=test/repo NUMBER=61 PATH="$W/bin:$PATH" \
-  bash -c "$(snippet "$CSEC")" 2>&1)
+  bash -c "$(snippet "$CSEC")
+printf 'EWNOTES=%s\\n' \"\$(printf '%s' \"\$EW_JSON\" | jq -c '.notes // []')\"
+printf 'OPENPRS=%s\\n' \"\$(printf '%s' \"\$OPEN_PRS\" | jq -c '[.[].number]')\"" 2>&1)
 assert_grep "idd-close: in a repository opted into its local branch, Step 1.5 says the branch lookup was skipped" \
   "branch lookup skipped" "$OPT_OUT"
 refute_grep "idd-close: … and the helper did not report a failed fetch" "git fetch failed" "$OPT_OUT"
 NOPT_OUT=$(HOME="$W" CLAUDE_PLUGIN_ROOT="$HERE/../../.." WORKDIR="$BR" GITHUB_REPO=test/repo NUMBER=61 PATH="$W/bin:$PATH" \
-  bash -c "$(snippet "$CSEC")" 2>&1)
+  bash -c "$(snippet "$CSEC")
+printf 'EWNOTES=%s\\n' \"\$(printf '%s' \"\$EW_JSON\" | jq -c '.notes // []')\"" 2>&1)
 refute_grep "idd-close: in a repository not opted in, Step 1.5 does not skip the branch lookup" "branch lookup skipped" "$NOPT_OUT"
 assert_grep "idd-close: Step 1.5 asks archive-ref" 'spec-change.py" archive-ref' "$CSEC"
+# idd-547-fix1: the helper itself received --skip-branches (its notes say so), and the open PR still reaches the gate
+assert_grep "idd-close: in local mode the helper ran with --skip-branches (its notes say so)" "branch lookup skipped" \
+  "$(printf '%s\n' "$OPT_OUT" | sed -n 's/^EWNOTES=//p')"
+assert_eq "idd-close: … and the open PR declaring the issue still reaches the gate" "[30]" \
+  "$(printf '%s\n' "$OPT_OUT" | sed -n 's/^OPENPRS=//p')"
+assert_eq "idd-close: not opted in → the helper ran without the flag (no notes)" "[]" \
+  "$(printf '%s\n' "$NOPT_OUT" | sed -n 's/^EWNOTES=//p')"
+runin --cwd "$NR" --cwd "$BR" test/repo 61 >/dev/null; RC_DUP=$?
+assert_eq "a repeated --cwd is a usage error (exit 2)" 2 "$RC_DUP"
 
 print_summary "check-existing-work"

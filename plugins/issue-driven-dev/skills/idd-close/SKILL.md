@@ -562,7 +562,7 @@ else
   SPEC_REF=""
   if [ "$ARCH_STATUS" = local ]; then
     SPEC_REF=$(printf '%s' "$ARCH" | python3 -c 'import json,sys; print(json.loads(sys.stdin.read()).get("ref", ""))' 2>/dev/null)
-    printf '%s' "$ARCH" | python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); print("→ spec archive gate: checking local ref %s@%s (this repository has no remote; spec_archive[%r] in %s)" % (d["branch"], d["ref"][:7], d["key"], d["config"]))' 2>/dev/null
+    printf '%s' "$ARCH" | python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); print("→ spec archive gate: checking local ref %s@%s (this repository has no remote; spec_archive[%r])" % (d["branch"], d["ref"][:7], d["key"]))' 2>/dev/null
   elif [ "$ARCH_STATUS" = remote ]; then
     # A declared change is checked against the default branch as the remote has it: no name, or a failed fetch,
     # is an error, never a pass on a stale local ref (verify round 2).
@@ -579,7 +579,12 @@ try: r = json.loads(sys.stdin.read()).get("reason", "")
 except Exception: r = ""
 print(json.dumps({"status": "error", "not_archived": [], "reason": "spec_archive: " + (r or "archive-ref printed nothing readable")}))'); GATE_RC=2
   elif [ -z "$SPEC_REF" ]; then
-    GATE='{"status": "error", "not_archived": [], "reason": "the default branch could not be read (gh repo view or git fetch failed)"}'; GATE_RC=2
+    # #547: say why archive-ref answered remote, so a repository meant for its local branch whose entry was not
+    # found (or whose configuration could not be read) shows the reason next to the failed fetch.
+    GATE=$(printf '%s' "$ARCH" | python3 -c 'import json,sys
+try: r = json.loads(sys.stdin.read()).get("reason", "")
+except Exception: r = ""
+print(json.dumps({"status": "error", "not_archived": [], "reason": "the default branch could not be read (gh repo view or git fetch failed)" + ("; spec_archive: " + r if r else "")}))'); GATE_RC=2
   else
     GATE=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" archived --file "$SPEC_IC" --cwd "${CWD:-$PWD}" --ref "$SPEC_REF"); GATE_RC=$?
   fi

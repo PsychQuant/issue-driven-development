@@ -129,7 +129,9 @@ fi
 ```bash
 # #547: a repository without a remote, opted into its local branch by spec_archive, starts at the issue's
 # baseline (link-base prints ok); with no entry link-base prints remote and the default branch is fetched as before.
-LB=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" link-base --cwd "$CWD" --issue "$NUMBER" 2>/dev/null)
+# The issue number: NUMBER in the skills that call this contract, N in idd-all. A remote repository never reads it.
+ISSUE_N="${NUMBER:-${N:-}}"
+LB=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" link-base --cwd "$CWD" --issue "${ISSUE_N:-none}" 2>/dev/null)
 LB_STATUS=$(printf '%s' "$LB" | python3 -c 'import json,sys; print(json.loads(sys.stdin.read() or "{}").get("status", ""))' 2>/dev/null)
 SPEC_BASE=""
 if [ "$LB_STATUS" = ok ]; then
@@ -141,11 +143,13 @@ elif [ "$LB_STATUS" = remote ]; then
     SPEC_BASE=$(git -C "$CWD" merge-base HEAD FETCH_HEAD 2>/dev/null)
   fi
 else
-  echo "✗ spec close-out: spec_archive: $(printf '%s' "$LB" | python3 -c 'import json,sys; print(json.loads(sys.stdin.read() or "{}").get("reason", "link-base printed nothing readable"))' 2>/dev/null)" >&2
+  echo "✗ spec close-out: spec_archive: $(printf '%s' "$LB" | python3 -c 'import json,sys
+try: print(json.loads(sys.stdin.read()).get("reason", "") or "link-base printed nothing readable")
+except Exception: print("link-base printed nothing readable")' 2>/dev/null); stopping" >&2
 fi
 if [ -n "$SPEC_BASE" ]; then
   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/spec-change.py" links --base "$SPEC_BASE" --cwd "$CWD"
-else
+elif [ "$LB_STATUS" = remote ]; then
   echo "✗ spec close-out: cannot find where this branch left the default branch (gh repo view, git fetch or git merge-base failed); stopping" >&2
 fi
 ```
