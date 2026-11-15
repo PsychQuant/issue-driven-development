@@ -20,10 +20,12 @@ file) and exits with a fixed code. A usage error prints to stderr and exits 64.
       Searching submodules requires git 2.45 or later.
       A submodule can be searched only when checked out (its directory holds its own .git
       entry and is the top of its own working tree) and its object store holds that commit.
-      Its directory must be the top directory or lie under it, and neither it nor a directory
-      between it and the top may be one of the two directories git names at the top
-      (rev-parse --absolute-git-dir and --git-common-dir): git is not run in such a directory.
-      No other directory is excluded.
+      Its directory must be the top directory or lie under it (the top is met on the way up from
+      it), and neither it, unless it is the top, nor a directory between it and the top may be one
+      of the two directories git names at the top (rev-parse --absolute-git-dir and
+      --git-common-dir): git is not run in such a directory. No other directory is excluded.
+      Directories are compared by device and inode, not by name: a path that spells one of them
+      in another way (another letter case on a volume that folds case) names the same directory.
       A file that counts settles the Example only when the search of its submodule ran to its end;
       an object of the recorded commit that is absent or cannot be opened makes the submodule one
       that could not be searched unless such a file was found.
@@ -468,33 +470,76 @@ def main_git_directories(top, cache):
     return cache["main_git_dirs"]
 
 
-def under_git_directory(directory, real_top, git_dirs):
-    """Is the directory, or a directory between it and the top directory, one of git_dirs?
+def directories_below_top(directory, top):
+    """The directories passed on the way from directory, with symbolic links resolved, up to the top directory:
+    the resolved directory itself, unless it is the top directory, and each directory between the two. None when
+    the top directory is not met on the way up to the root.
 
-    directory is resolved and is real_top or lies under it. The top directory itself is not compared. Directories
-    are compared, not names: a git directory made apart can have any name, and on a volume that folds case a link
-    can spell `.git` in another case."""
+    Directories are compared, not names: two paths name one directory when the operating system reports the same
+    device and inode for both. A resolved path can spell the top directory otherwise than git does (another letter
+    case on a volume that folds case; on macOS, with /System/Volumes/Data in front). A directory that cannot be
+    examined (one that is not there, for one) is not the top directory."""
+    try:
+        top_stat = os.stat(top)
+    except OSError:
+        raise Fail("the top directory of the repository cannot be read")
+    passed = []
+    current = os.path.realpath(directory)
+    while True:
+        try:
+            if os.path.samestat(os.stat(current), top_stat):
+                return passed
+        except OSError:
+            pass
+        parent = os.path.dirname(current)
+        if parent == current:   # the root, and the top directory was not met
+            return None
+        passed.append(current)
+        current = parent
+
+
+def under_git_directory(passed, git_dirs):
+    """Is one of the directories in passed (see directories_below_top) one of git_dirs?
+
+    The top directory is not in passed, so it is never compared. Directories are compared, not names: a git
+    directory made apart can have any name, and on a volume that folds case a path can spell `.git` in another
+    case. A directory that cannot be examined is not one of them."""
     try:
         wanted = [os.stat(git_dir) for git_dir in git_dirs]
     except OSError:
         raise Fail("the git directory of the repository cannot be read")
-    current = directory
-    while len(current) > len(real_top):
+    for current in passed:
         try:
             here = os.stat(current)
-            if any(os.path.samestat(here, one) for one in wanted):
-                return True
         except OSError:
-            pass   # a component that is not there cannot be one of them
-        current = os.path.dirname(current)
+            continue
+        if any(os.path.samestat(here, one) for one in wanted):
+            return True
     return False
+
+
+def leaves_repository(directory, top, cache):
+    """Condition 2 fails: the top directory is not met on the way up from the directory, or a directory passed
+    on that way is one of the two that git names at the top directory. Git is asked for the two only when the
+    top directory was met."""
+    passed = directories_below_top(directory, top)
+    if passed is None:
+        return True
+    return under_git_directory(passed, main_git_directories(top, cache))
+
+
+def same_directory(one, other):
+    """Do the two paths name one directory? Compared by device and inode, not by name."""
+    try:
+        return os.path.samefile(one, other)
+    except OSError:
+        return False
 
 
 def marker_files(top, head, needle, sd, cache):
     """Tracked files at head, outside the spec directory and not .md, with a line on which needle is followed
     only by whitespace or a comment closer; also return submodules that could not be searched."""
     unavailable, visited = [], set()
-    real_top = os.path.realpath(top)
     pending = [(top, head, "", None)]
     while pending:
         directory, rev, prefix, link = pending.pop()
@@ -504,10 +549,8 @@ def marker_files(top, head, needle, sd, cache):
                 reason = ""
                 if os.path.isabs(path) or any(p in ("", ".", "..") for p in path.split("/")):
                     reason = "path leaves the repository"
-                elif os.path.commonpath((real_top, os.path.realpath(directory))) != real_top:
-                    reason = "path leaves the repository"
-                elif under_git_directory(os.path.realpath(directory), real_top, main_git_directories(top, cache)):
-                    # One of the two directories of condition 2, or under one of them.
+                elif leaves_repository(directory, top, cache):
+                    # Condition 2: not under the top directory, or one of the two directories, or under one.
                     reason = "path leaves the repository"
                 elif not os.path.isdir(directory) or os.path.islink(directory) or not os.path.lexists(os.path.join(directory, ".git")):
                     reason = "not checked out"
@@ -528,7 +571,8 @@ def marker_files(top, head, needle, sd, cache):
                         reported_top = one_line(os.fsdecode(p.stdout))
                         if p.returncode != 0:
                             reason = "git refused to open it"
-                        elif os.path.realpath(reported_top) != os.path.realpath(directory):
+                        elif not same_directory(reported_top, directory):
+                            # Condition 5: git names another directory as the top (compared as directories).
                             reason = "not checked out"
                         elif submodule_git(directory, "cat-file", "-e", rev + "^{commit}").returncode != 0:
                             reason = f"recorded commit {rev[:12]} is not in its object store"
