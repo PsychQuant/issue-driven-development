@@ -31,8 +31,9 @@ Version number left to the release.
   under the spec directory are skipped, and nothing is fetched into submodules during the check.
   A path under the spec directory's `specs/` that is not valid UTF-8 gives a fixed error reason without
   exception text; such a path elsewhere under the spec directory does not change the answer.
-  `links`, `archived` and `preflight` read the top directory as git prints it, removing only its trailing
-  newline, so directory names ending in a space or in a line feed work consistently.
+  The Example of the 4.1.0 requirement on the top directory gains six rows: `links`, `archived` and
+  `preflight` answer for a repository whose name ends in a space, or in a line feed, as they do for a copy
+  under a plain name.
 
 ## [4.1.0] - 2026-11-15
 
