@@ -562,25 +562,9 @@ Every subcommand of `scripts/spec-change.py` that takes `--cwd` (`archived`, `li
 | `pf ` has an `openspec/` directory, the sibling `pf` does not | `preflight --cwd 'pf ' --can-write yes` | `ready` |
 | `pf ` alone, with an `openspec/` directory | `preflight --cwd 'pf ' --can-write yes` | `ready` |
 | `nl` followed by a newline has the change archived, the sibling `nl` does not | `archived` with `--cwd` that directory, `--ref HEAD` | `pass` |
-
----
-### Requirement: The repository's top directory is read as git prints it
-
-The subcommands of `scripts/spec-change.py` that take `--cwd` (`links`, `archived` and `preflight`) SHALL take the repository's top directory from `git rev-parse --show-toplevel` as git prints it, removing only the line end that git adds: a directory name that ends in a space, or in a line feed of its own, is kept. The three SHALL read it in the same way, so that they agree about the same `--cwd`.
-
-#### Scenario: A repository whose directory name ends in a space
-
-- **GIVEN** a repository whose top directory name ends in a space, with a requirement added in a range and its marker in a tracked test file
-- **WHEN** `spec-change.py links` runs with `--cwd` at that directory
-- **THEN** it prints `status` `ok` and exits 0, as it does for a copy of the repository at a path that does not end in a space
-
-##### Example: top directory names
-
-| Subcommand | Top directory of the repository | Answer |
-| --- | --- | --- |
-| `links` | the name ends in a space | the same JSON line and exit code as for a copy whose name does not end in a space (`ok`) |
-| `archived` | the name ends in a space | the same JSON line and exit code as for that copy (`pass`) |
-| `preflight` | the name ends in a space | the same `status` and exit code as for that copy |
-| `links` | the name ends in a line feed | the same JSON line and exit code as for a copy whose name does not end in one (`ok`) |
-| `archived` | the name ends in a line feed | the same JSON line and exit code as for that copy (`pass`) |
-| `preflight` | the name ends in a line feed | the same `status` and exit code as for that copy |
+| `sp ` (its name ends in a space) holds an added requirement with its marker in a tracked test file, and has the declared change archived; `copy` is the same repository under a name that does not end in a space | `links` with `--cwd` at each | `ok` for both, with the same JSON line and exit code |
+| the same two repositories | `archived` with `--cwd` at each, `--ref HEAD` | `pass` for both, with the same JSON line and exit code |
+| the same two repositories | `preflight` with `--cwd` at each, `--can-write yes` | `ready` for both, with the same exit code |
+| the same repository under a name that ends in a line feed, and `copy` | `links` with `--cwd` at each | `ok` for both, with the same JSON line and exit code |
+| the same two repositories | `archived` with `--cwd` at each, `--ref HEAD` | `pass` for both, with the same JSON line and exit code |
+| the same two repositories | `preflight` with `--cwd` at each, `--can-write yes` | the same `status` and exit code for both |
