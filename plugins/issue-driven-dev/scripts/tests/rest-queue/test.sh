@@ -53,7 +53,7 @@ echo "── the two tables ──"
 # spec-example: idd-all-rest / argument forms
 # spec-example: idd-all-rest / class precedence
 python3 "$HERE/tables_check.py" > "$WORK/tables.out" 2>&1; rc=$?
-assert_exit "tables_check.py passes (argument forms, class precedence, 256 combinations)" 0 "$rc"
+assert_exit "tables_check.py passes (argument forms, class precedence, 512 combinations)" 0 "$rc"
 [ "$rc" = 0 ] || tail -20 "$WORK/tables.out"
 
 OUT=$(rq args --); rc=$?
@@ -106,22 +106,24 @@ refute_output_grep "list: comments of #8 were not read again" "repos/o/r/issues/
 # every class from real inputs (the judgements come from actionability.sh, intent.py and ghread.py)
 new classes 1:author=outsider 2:author=botty 3:author=none 4:editor=outsider 5:labels=epic \
   6:html=body-two-rows 7:labels=parking-lot 8:diag=parked 9:blocking=waiting-for-upstream 10:diag=meeting \
-  11:html=body-verified 12:html=body-fenced-phase,diag=Plan 13 14:diag=Simple 15:labels=north-star
+  11:html=body-verified 12:html=body-fenced-phase,diag=Plan 13 14:diag=Simple 15:labels=north-star \
+  16:commenter=outsider 17:bot=helper-bot 18:commenter=outsider,comments=130
+: > "$G/perm-helper-bot.500"     # a bot's permission is never read: it would end the command here
 echo '{"permission": "read", "role_name": "read"}' > "$G/perm-outsider.json"
 : > "$G/perm-botty.404"
 OUT=$(rq list --repo "$REPO" --json); rc=$?
 assert_exit "classes: exits 0" 0 "$rc"
-assert_eq "classes: author (no write access, bot account, gone account, outsider edit)" "[1,2,3,4]" "$(printf '%s' "$OUT" | jget classes.author)"
+assert_eq "classes: outsider (author without write access, app account, gone account, outside edit, outside comment, an old outside comment)" "[1,2,3,4,16,18]" "$(printf '%s' "$OUT" | jget classes.outsider)"
 assert_eq "classes: tracker" "[5,15]" "$(printf '%s' "$OUT" | jget classes.tracker)"
 assert_eq "classes: needs-person" "[6]" "$(printf '%s' "$OUT" | jget classes.needs-person)"
 assert_eq "classes: parked (label, and a deferral in Complexity)" "[7,8]" "$(printf '%s' "$OUT" | jget classes.parked)"
 assert_eq "classes: blocked" "[9]" "$(printf '%s' "$OUT" | jget classes.blocked)"
 assert_eq "classes: meeting" "[10]" "$(printf '%s' "$OUT" | jget classes.meeting)"
 assert_eq "classes: verified" "[11]" "$(printf '%s' "$OUT" | jget classes.verified)"
-assert_eq "classes: candidate (a Phase line inside a code block does not count)" "[12,13,14]" "$(printf '%s' "$OUT" | jget classes.candidate)"
-assert_eq "classes: run order" "[12,14,13]" "$(printf '%s' "$OUT" | jget order)"
+assert_eq "classes: candidate (a Phase line inside a code block does not count; a bot comment does not hold an issue back)" "[12,13,14,17]" "$(printf '%s' "$OUT" | jget classes.candidate)"
+assert_eq "classes: run order" "[12,14,13,17]" "$(printf '%s' "$OUT" | jget order)"
 assert_eq "classes: both questions of #6 are listed" "2" "$(printf '%s' "$OUT" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["questions"]["6"]))')"
-assert_eq "classes: every issue is in exactly one class" "15" "$(printf '%s' "$OUT" | python3 -c 'import json,sys; c=json.load(sys.stdin)["classes"]; a=[n for v in c.values() for n in v]; print(len(a) if len(a)==len(set(a)) else "duplicates")')"
+assert_eq "classes: every issue is in exactly one class" "18" "$(printf '%s' "$OUT" | python3 -c 'import json,sys; c=json.load(sys.stdin)["classes"]; a=[n for v in c.values() for n in v]; print(len(a) if len(a)==len(set(a)) else "duplicates")')"
 
 new perm500 1:author=flaky
 : > "$G/perm-flaky.500"
@@ -292,6 +294,12 @@ assert_grep_re "skill: Step 0.1 has a row for no positional argument" '^\| `/idd
 assert_grep_re "skill: Step 0.1 has a row for the word rest" '^\| `/idd-all rest`[^|]*\| rest ' "$STEP01"
 refute_grep "skill: the two-way question is gone" "建新 issue 還是用既有 issue" "$(cat "$SKILL")"
 assert_grep "skill: Step 0.1 says an unquoted description is one argument" "整段算一個引數" "$STEP01"
+assert_grep "skill: the rest section does not take over existing work" 'existing work: ' "$REST"
+assert_grep_re "skill: and names both verdicts" 'verdict=resume.*verdict=blocked' "$REST"
+STEP051=$(awk '/^#### Step 0\.5\.1/{f=1} f&&/^#### Step 0\.6/{exit} f' "$SKILL")
+assert_grep "skill: Step 0.5.1 points at the rest rule" '## Rest mode' "$STEP051"
+PHASE6=$(awk '/^### Phase 6/{f=1} f&&/^#### /{exit} f' "$SKILL")
+assert_grep "skill: Phase 6 sends a rest run back to the rest section" '## Rest mode' "$PHASE6"
 line_of() { printf '%s\n' "$REST" | grep -n -F -- "$1" | head -1 | cut -d: -f1; }
 for sub in start next record stop report; do
   assert_true "skill: the rest section calls $sub" "[ -n \"\$(line_of 'rest-queue.py\" $sub')\" ]"

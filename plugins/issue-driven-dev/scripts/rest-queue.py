@@ -58,7 +58,7 @@ GROUPS = ("actionable", "parked", "blocked", "undiagnosed")
 
 # The decision table: ordered, the first rule whose test holds decides the class.
 TABLE = (
-    ("author", lambda f: not (f["author_writes"] and f["editor_writes"])),
+    ("outsider", lambda f: not (f["author_writes"] and f["editor_writes"] and f["commenters_write"])),
     ("tracker", lambda f: f["tracker"]),
     ("needs-person", lambda f: f["open_clarity"]),
     ("parked", lambda f: f["group"] == "parked"),
@@ -76,14 +76,15 @@ LABELS = {
     "parked": "parked",
     "meeting": "meeting",
     "tracker": "tracker",
-    "author": "opened or edited by an account without write access",
+    "outsider": "holds text from an account without write access (author, last editor or a commenter)",
 }
 
 
 # ── the two tables ─────────────────────────────────────────────────────────
 
 def classify(facts):
-    """The class of an issue, from: author_writes, editor_writes, tracker, open_clarity, group, meeting, verified."""
+    """The class of an issue, from: author_writes, editor_writes, commenters_write, tracker, open_clarity, group,
+    meeting, verified."""
     for name, test in TABLE:
         if test(facts):
             return name
@@ -126,7 +127,7 @@ QUERY = ("query($o:String!,$r:String!,$c:String){repository(owner:$o,name:$r){"
          "issues(states:OPEN,first:%d,after:$c,orderBy:{field:CREATED_AT,direction:ASC}){"
          "pageInfo{hasNextPage endCursor} nodes{number author{login} editor{login} "
          "labels(first:100){totalCount nodes{name}} body bodyHTML "
-         "comments(last:100){totalCount nodes{authorAssociation body}}}}}}" % PAGE)
+         "comments(last:100){totalCount nodes{authorAssociation body author{login __typename}}}}}}}" % PAGE)
 
 
 def lacks(what):
@@ -143,6 +144,8 @@ def checked(node):
               and all(isinstance(l["name"], str) for l in node["labels"]["nodes"])
               and isinstance(node["comments"]["totalCount"], int)
               and all(isinstance(c["authorAssociation"], str) and isinstance(c["body"], str)
+                      and (c["author"] is None or (isinstance(c["author"]["login"], str)
+                                                   and isinstance(c["author"]["__typename"], str)))
                       for c in node["comments"]["nodes"]))
     except (KeyError, TypeError):
         ok = False
@@ -212,21 +215,28 @@ def put(path, text):
         fh.write(text)
 
 
-def gate_groups(repo, nodes):
+def comments_of(repo, node):
+    """Every comment of the issue as {assoc, body, login, type}: the ones the query returned, or all of them
+    (one more read) when it returned only the newest — the Diagnosis the run routes on may be older, and so
+    may a comment by an account without write access."""
+    got = node["comments"]["nodes"]
+    if node["comments"]["totalCount"] > len(got):
+        return issue_comments(repo, node["number"])
+    return [{"assoc": c["authorAssociation"], "body": c["body"],
+             "login": (c["author"] or {}).get("login"), "type": (c["author"] or {}).get("__typename")} for c in got]
+
+
+def gate_groups(nodes, comments):
     """{issue number: (gate group, Diagnosis type)}, from lib/actionability.sh."""
     if not nodes:
         return {}
     work = tempfile.mkdtemp(prefix="idd-rest-queue-")
     try:
         for node in nodes:
-            comments = [{"assoc": c["authorAssociation"], "body": c["body"]} for c in node["comments"]["nodes"]]
-            if node["comments"]["totalCount"] > len(comments):
-                # the query returned only the newest ones; the Diagnosis the run routes on may be older
-                comments = issue_comments(repo, node["number"])
             d = os.path.join(work, str(node["number"]))
             os.mkdir(d)
             put(os.path.join(d, "body"), node["body"])
-            put(os.path.join(d, "diag"), latest_diagnosis(comments))
+            put(os.path.join(d, "diag"), latest_diagnosis(comments[node["number"]]))
             put(os.path.join(d, "park"), "yes" if any(l["name"] == PARKING_LABEL for l in node["labels"]["nodes"]) else "no")
         rc, out, err = run_cmd(["bash", "-c", GATE_SH, "_", HERE, work])
     finally:
@@ -277,7 +287,8 @@ def phase_of(root):
 def read_classes(repo):
     """[{number, class, group, questions}] for every open issue."""
     nodes = read_issues(repo)
-    groups = gate_groups(repo, nodes)
+    comments = {node["number"]: comments_of(repo, node) for node in nodes}
+    groups = gate_groups(nodes, comments)
     out = []
     for node in nodes:
         number = node["number"]
@@ -291,6 +302,8 @@ def read_classes(repo):
         facts = {
             "author_writes": writes(repo, author),
             "editor_writes": node["editor"] is None or writes(repo, node["editor"]["login"]),
+            # bots are exempt, as in the close stage: a repository admin installed them
+            "commenters_write": all(c.get("type") == "Bot" or writes(repo, c.get("login")) for c in comments[number]),
             "tracker": any(l["name"].lower() in TRACKER_LABELS for l in node["labels"]["nodes"]),
             "open_clarity": bool(rows),
             "group": group,
@@ -405,7 +418,7 @@ def list_lines(lst, attempted=()):
              f"  diagnosed {diagnosed}, not diagnosed {len(todo) - diagnosed}"]
     if attempted:
         lines.append(f"already attempted in this run ({len(attempted)}): {nums(sorted(attempted))}")
-    for name in ("needs-person", "blocked", "verified", "parked", "meeting", "tracker", "author"):
+    for name in ("needs-person", "blocked", "verified", "parked", "meeting", "tracker", "outsider"):
         lines.append(f"{LABELS[name]} ({len(lst['classes'][name])}): {nums(lst['classes'][name])}")
     return lines
 
@@ -570,7 +583,7 @@ def cmd_report(argv):
         for n in waiting:
             out.append(f"  #{n}")
             out += [f"    - {q}" for q in lst["questions"].get(str(n), [])]
-        for name in ("blocked", "verified", "parked", "meeting", "tracker", "author"):
+        for name in ("blocked", "verified", "parked", "meeting", "tracker", "outsider"):
             out.append(f"not run — {LABELS[name]} ({len(lst['classes'][name])}): {nums(lst['classes'][name])}")
         attempted = {x["issue"] for x in st["attempts"]}
         left = [n for n in lst["order"] if n not in attempted]

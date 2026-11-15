@@ -40,3 +40,10 @@
 
 - [x] 6.1 對真實的 repo 唯讀跑一次 `rest-queue.py list --repo PsychQuant/issue-driven-development --json`，確認每一張 open issue 都被分類、各類張數與 Diagnosis 記的同一個量級（候選約 166、等人約 18、blocked 4、verified 4）。驗證：把實際數字寫進 Implementation Complete。
 - [x] 6.2 跑 run-all-tests.sh 與連結檢查。驗證：結束碼都是 0，links 回 ok。
+
+## 7. verify 之前的補強
+
+- [x] 7.1 判定表第 1 類加上留言者：任何一則 comment 的作者沒有寫入權（bot 不算）就歸 outsider，類別由 author 改名；comment 超過查詢回傳的數量時讀完整再判。驗證：tables_check.py 的 512 種組合與 rest-queue suite 的 classes 情境（#16、#17、#18）通過。
+- [x] 7.2 已經有 PR 或 branch 的 issue 不接手：rest 流程第 3 步寫明 Step 0.5.1 回 resume 或 blocked 時記為 stopped、原因寫 `existing work: `，Step 0.5.1 有一句指回這一步。驗證：rest-queue suite 的 skill 文字檢查。
+- [x] 7.3 Phase 6 開頭加一句：rest mode 下印完這一張的報告後回 Rest mode 流程第 4 步。驗證：rest-queue suite 的 skill 文字檢查。
+

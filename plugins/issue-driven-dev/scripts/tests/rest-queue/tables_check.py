@@ -86,27 +86,28 @@ for k in range(3):
 # spec-example: idd-all-rest / class precedence
 YES, NO = True, False
 CLASS_ROWS = [
-    # author writes, editor writes, tracker, open clarity, gate group, meeting, verified → class
-    (NO, YES, NO, NO, "actionable", NO, NO, "author"),
-    (YES, NO, NO, NO, "actionable", NO, NO, "author"),
-    (NO, YES, YES, YES, "parked", NO, YES, "author"),
-    (YES, YES, YES, YES, "blocked", NO, NO, "tracker"),
-    (YES, YES, NO, YES, "blocked", NO, YES, "needs-person"),
-    (YES, YES, NO, NO, "parked", YES, YES, "parked"),
-    (YES, YES, NO, NO, "blocked", NO, YES, "blocked"),
-    (YES, YES, NO, NO, "actionable", YES, YES, "meeting"),
-    (YES, YES, NO, NO, "actionable", NO, YES, "verified"),
-    (YES, YES, NO, NO, "actionable", NO, NO, "candidate"),
-    (YES, YES, NO, NO, "undiagnosed", NO, NO, "candidate"),
+    # author writes, editor writes, commenters write, tracker, open clarity, gate group, meeting, verified → class
+    (NO, YES, YES, NO, NO, "actionable", NO, NO, "outsider"),
+    (YES, NO, YES, NO, NO, "actionable", NO, NO, "outsider"),
+    (YES, YES, NO, NO, NO, "actionable", NO, NO, "outsider"),
+    (NO, YES, YES, YES, YES, "parked", NO, YES, "outsider"),
+    (YES, YES, YES, YES, YES, "blocked", NO, NO, "tracker"),
+    (YES, YES, YES, NO, YES, "blocked", NO, YES, "needs-person"),
+    (YES, YES, YES, NO, NO, "parked", YES, YES, "parked"),
+    (YES, YES, YES, NO, NO, "blocked", NO, YES, "blocked"),
+    (YES, YES, YES, NO, NO, "actionable", YES, YES, "meeting"),
+    (YES, YES, YES, NO, NO, "actionable", NO, YES, "verified"),
+    (YES, YES, YES, NO, NO, "actionable", NO, NO, "candidate"),
+    (YES, YES, YES, NO, NO, "undiagnosed", NO, NO, "candidate"),
 ]
-KEYS = ("author_writes", "editor_writes", "tracker", "open_clarity", "group", "meeting", "verified")
+KEYS = ("author_writes", "editor_writes", "commenters_write", "tracker", "open_clarity", "group", "meeting", "verified")
 for row in CLASS_ROWS:
     check(f"class {row[:-1]}", row[-1], rq.classify(dict(zip(KEYS, row[:-1]))))
 
 
 def class_oracle(f):
-    if not f["author_writes"] or not f["editor_writes"]:
-        return "author"
+    if not f["author_writes"] or not f["editor_writes"] or not f["commenters_write"]:
+        return "outsider"
     if f["tracker"]:
         return "tracker"
     if f["open_clarity"]:
@@ -122,11 +123,11 @@ def class_oracle(f):
     return "candidate"
 
 
-EXPECTED_CLASSES = ("author", "tracker", "needs-person", "parked", "blocked", "meeting", "verified", "candidate")
+EXPECTED_CLASSES = ("outsider", "tracker", "needs-person", "parked", "blocked", "meeting", "verified", "candidate")
 check("the table lists the eight classes in order", EXPECTED_CLASSES, tuple(name for name, _ in rq.TABLE))
 check("CLASSES matches the table", EXPECTED_CLASSES, tuple(rq.CLASSES))
 combos = 0
-for values in itertools.product((YES, NO), (YES, NO), (YES, NO), (YES, NO),
+for values in itertools.product((YES, NO), (YES, NO), (YES, NO), (YES, NO), (YES, NO),
                                 ("actionable", "parked", "blocked", "undiagnosed"), (YES, NO), (YES, NO)):
     facts = dict(zip(KEYS, values))
     combos += 1
@@ -136,9 +137,10 @@ for values in itertools.product((YES, NO), (YES, NO), (YES, NO), (YES, NO),
     # only a candidate is run, and a candidate has none of the reasons to hold it back
     if got == "candidate":
         check(f"candidate has no hold-back {values}", True,
-              facts["author_writes"] and facts["editor_writes"] and not facts["tracker"] and not facts["open_clarity"]
+              facts["author_writes"] and facts["editor_writes"] and facts["commenters_write"]
+              and not facts["tracker"] and not facts["open_clarity"]
               and facts["group"] in ("actionable", "undiagnosed") and not facts["meeting"] and not facts["verified"])
-check("256 combinations were checked", 256, combos)
+check("512 combinations were checked", 512, combos)
 
 for line in failures:
     print("FAIL " + line)

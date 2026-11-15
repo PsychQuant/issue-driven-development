@@ -52,7 +52,7 @@ Flags are `--pr`, `--no-pr`, `--review`, `--in-chain`, `--cwd <path>` and `--cwd
 
 `rest-queue.py` SHALL put every open issue of the repository into exactly one of eight classes by this ordered table, first match wins:
 
-1. `author` — the account that opened the issue, or the last editor of its body, has no write access to the repository, or the opening account cannot be read.
+1. `outsider` — the account that opened the issue, the last editor of its body, or the author of any of its comments has no write access to the repository, or one of these accounts cannot be read. A comment by a bot account does not count, as in the close stage.
 2. `tracker` — the issue carries the label `north-star` or `epic`.
 3. `needs-person` — the issue body shows at least one open clarity row.
 4. `parked` — the actionability gate puts the issue in its `parked` group.
@@ -61,14 +61,19 @@ Flags are `--pr`, `--no-pr`, `--review`, `--in-chain`, `--cwd <path>` and `--cwd
 7. `verified` — the first `Phase` line that GitHub's rendering of the body shows outside code blocks has the value `verified`.
 8. `candidate` — every other issue.
 
-Only `candidate` issues are run. The table SHALL be held as ordered data, and the classification SHALL be a pure function of these inputs: author has write access, last editor has write access, tracker label present, open clarity row present, gate group (`actionable`, `parked`, `blocked`, `undiagnosed`), Diagnosis type is `meeting`, phase is `verified`.
+Only `candidate` issues are run. The table SHALL be held as ordered data, and the classification SHALL be a pure function of these inputs: author has write access, last editor has write access, every commenter has write access, tracker label present, open clarity row present, gate group (`actionable`, `parked`, `blocked`, `undiagnosed`), Diagnosis type is `meeting`, phase is `verified`.
 
 The judgements SHALL come from the existing implementations: open clarity rows from `scripts/lib/intent.py`, the gate group and the Diagnosis type from `scripts/lib/actionability.sh`, write access from `scripts/lib/ghread.py`, and the latest trusted Diagnosis from `scripts/lib/ghread.py`. `rest-queue.py` SHALL NOT contain a second implementation of any of them.
 
 #### Scenario: an issue opened by an account without write access is never run
 
 - **WHEN** an open issue was opened by an account without write access and would otherwise be a candidate
-- **THEN** its class is `author` and it is not in the run order
+- **THEN** its class is `outsider` and it is not in the run order
+
+#### Scenario: a comment by an account without write access keeps an issue out of the run
+
+- **WHEN** an open issue by a maintainer carries a comment by an account without write access, and would otherwise be a candidate
+- **THEN** its class is `outsider`, also when that comment is older than the comments the first read returned
 
 #### Scenario: an issue with an unanswered clarity question waits for a person
 
@@ -77,19 +82,20 @@ The judgements SHALL come from the existing implementations: open clarity rows f
 
 ##### Example: class precedence
 
-| author writes | editor writes | tracker | open clarity row | gate group | meeting | verified | class |
-| ------------- | ------------- | ------- | ---------------- | ---------- | ------- | -------- | ----- |
-| no | yes | no | no | actionable | no | no | author |
-| yes | no | no | no | actionable | no | no | author |
-| no | yes | yes | yes | parked | no | yes | author |
-| yes | yes | yes | yes | blocked | no | no | tracker |
-| yes | yes | no | yes | blocked | no | yes | needs-person |
-| yes | yes | no | no | parked | yes | yes | parked |
-| yes | yes | no | no | blocked | no | yes | blocked |
-| yes | yes | no | no | actionable | yes | yes | meeting |
-| yes | yes | no | no | actionable | no | yes | verified |
-| yes | yes | no | no | actionable | no | no | candidate |
-| yes | yes | no | no | undiagnosed | no | no | candidate |
+| author writes | editor writes | commenters write | tracker | open clarity row | gate group | meeting | verified | class |
+| ------------- | ------------- | ---------------- | ------- | ---------------- | ---------- | ------- | -------- | ----- |
+| no | yes | yes | no | no | actionable | no | no | outsider |
+| yes | no | yes | no | no | actionable | no | no | outsider |
+| yes | yes | no | no | no | actionable | no | no | outsider |
+| no | yes | yes | yes | yes | parked | no | yes | outsider |
+| yes | yes | yes | yes | yes | blocked | no | no | tracker |
+| yes | yes | yes | no | yes | blocked | no | yes | needs-person |
+| yes | yes | yes | no | no | parked | yes | yes | parked |
+| yes | yes | yes | no | no | blocked | no | yes | blocked |
+| yes | yes | yes | no | no | actionable | yes | yes | meeting |
+| yes | yes | yes | no | no | actionable | no | yes | verified |
+| yes | yes | yes | no | no | actionable | no | no | candidate |
+| yes | yes | yes | no | no | undiagnosed | no | no | candidate |
 
 ### Requirement: Candidates run diagnosed first and then by issue number
 
@@ -241,13 +247,20 @@ When the working tree holds the state of a run of the same repository whose last
 
 In rest mode `idd-all` SHALL call `rest-queue.py start`, then repeat: `next`; run the single-issue pipeline for the issue handed out, with the flags of this invocation; `record` with the stop reason the single-issue report printed, if any; in PR mode check out the default branch and fast-forward it as the batch mode of capability `parallel-orchestration` requires. It SHALL leave the loop when `next` prints `done` or a stop reason, and SHALL then call `rest-queue.py report` and relay its output.
 
+In rest mode `idd-all` SHALL NOT take over work that already exists: when the existing-work check of the single-issue pipeline returns `resume` or `blocked` for the issue handed out, it SHALL create no branch, leave the pull request untouched, and record the issue with a reason that names the pull request or branch.
+
 #### Scenario: the loop ends with the report
 
 - **WHEN** `next` prints `done`
 - **THEN** `idd-all` calls `report` and starts no further issue
 
+#### Scenario: an issue that already has a pull request is listed, not resumed
+
+- **WHEN** the issue handed out has an open pull request on its own `idd/<N>-…` branch
+- **THEN** `idd-all` records it as stopped with the reason `existing work: PR #<P>` and asks `next` for the following issue
+
 ##### Example: the skill names the loop commands in order
 
 - **GIVEN** the text of `skills/idd-all/SKILL.md`
 - **WHEN** the rest section is read
-- **THEN** it contains the invocations `rest-queue.py" start`, `rest-queue.py" next`, `rest-queue.py" record`, `rest-queue.py" stop` and `rest-queue.py" report`, with `start` before `next`, `next` before `record`, and `report` last, and Step 0.1 contains the invocation `rest-queue.py" args`
+- **THEN** it contains the invocations `rest-queue.py" start`, `rest-queue.py" next`, `rest-queue.py" record`, `rest-queue.py" stop` and `rest-queue.py" report`, with `start` before `next`, `next` before `record`, and `report` last; Step 0.1 contains the invocation `rest-queue.py" args`; the rest section states that `resume` and `blocked` are recorded with the reason `existing work: `; and Phase 6 sends a rest run back to the rest section

@@ -104,7 +104,7 @@ idd-all 不取代 atomic skills,而是包它們。每個 phase 仍透過 `Skill(
 
 | 類別 | 條件 |
 |---|---|
-| author | 開 issue 的帳號或正文最後編輯者沒有寫入權 |
+| outsider | 開 issue 的帳號、正文最後編輯者，或任何一則 comment 的作者沒有寫入權（留言的 bot 不算） |
 | tracker | 有 `north-star` 或 `epic` label |
 | needs-person | 正文有還沒回答的釐清問題 |
 | parked | actionability gate 判為 parked |
@@ -113,7 +113,7 @@ idd-all 不取代 atomic skills,而是包它們。每個 phase 仍透過 `Skill(
 | verified | Current Status 的 Phase 是 verified：它已經停在那裡等人，要處理就指名 `/idd-all #N` |
 | candidate | 其餘。已經診斷過的先跑，再來是沒診斷的，各自依 issue 號由小到大 |
 
-第一類排在最前面，是因為指名 `#N` 時是人選了那一張，rest 沒有人選；close stage 的作者檢查只擋 merge，擋不到 implement、push 與開 PR。
+第一類排在最前面，是因為指名 `#N` 時是人選了那一張，rest 沒有人選；close stage 對作者與留言者的檢查只擋 merge，擋不到 implement、push 與開 PR。
 
 ### 流程
 
@@ -140,7 +140,9 @@ Step 0.2、0.3、0.35 只做一次，`$CWD`、`$GITHUB_REPO` 與旗標每一張�
    | `{"next": null, "done": true}` | 做「結束」一節 |
    | `{"next": null, "stopped": "…"}` | 做「結束」一節 |
 
-3. 對 #N 跑單張流程：從 Step 0.4 到 Phase 6，行為與 `/idd-all #N` 加上這次呼叫的旗標完全相同，包含它自己的 Phase 6 報告與清理。這一張停下、abort、或被 gate 判為不可動，都只影響這一張。
+3. 對 #N 跑單張流程：從 Step 0.4 到 Phase 6，行為與 `/idd-all #N` 加上這次呼叫的旗標相同，包含它自己的 Phase 6 報告與清理，只有下面一處不同。這一張停下、abort、或被 gate 判為不可動，都只影響這一張。
+
+   **已經有 PR 或 branch 的 issue，rest 不接手**：Step 0.5.1 印出 `verdict=resume` 或 `verdict=blocked` 時，不建 branch、不碰那個 PR，直接做第 4 步，`--reason` 寫 `existing work: ` 加上 Step 0.5.1 印出的那個 PR 或 branch。那是先前的 run 或別人已經開始、停在某處的工作，要接著做就指名 `/idd-all #N`。`verdict=unknown` 與 `clear` 照單張流程往下。
 
 4. 記下這一張的結果。這一張的 Phase 6 報告有 `Stopped:` 時，把那一行填進 `--reason`（abort 時填 abort 的原因）；已經結案就不帶 `--reason`。結果是 closed 還是 stopped 由 helper 自己向 GitHub 讀，不在這裡判斷：
 
@@ -184,7 +186,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" report --cwd "$CWD" --repo
 - 不平行。與批次模式相同，依序跑。
 - 途中新開的 issue 不併進同一個 PR：重讀清單時接住，各自跑單張流程、各自一個 PR。chain 成為預設是 #457。
 - 不改單張流程的 verify 輪數上限（#423）。
-- 不重跑已經 verified 的 issue。
+- 不重跑已經 verified 的 issue，也不接手已經有 PR 或 branch 的 issue。
 - 不判斷一張舊 issue 的前提還成不成立。
 
 ## Configuration
@@ -506,7 +508,7 @@ fi
 
 #### Step 0.5.1: Existing-work check（#366）
 
-在**建任何 branch 之前**，問「這張 issue 是否已有 PR 或 branch 在處理」。查詢只有一個實作：`scripts/check-existing-work.sh`（契約見 [`references/pr-issue-matching.md`](../../references/pr-issue-matching.md)，行為見 spec `idd-existing-work-lookup`）；本 skill **不得**自帶 PR 比對。from-scratch mode（還沒有 issue）與 `--in-chain`（`/idd-all-chain` 的 Phase 0.4 已對每個 root 做過）跳過。批次（`/idd-all #a #b #c`）逐張各跑一次，一張被停下不影響其他張。
+在**建任何 branch 之前**，問「這張 issue 是否已有 PR 或 branch 在處理」。rest mode 下 `resume` 也不接手，見 `## Rest mode` 流程第 3 步。查詢只有一個實作：`scripts/check-existing-work.sh`（契約見 [`references/pr-issue-matching.md`](../../references/pr-issue-matching.md)，行為見 spec `idd-existing-work-lookup`）；本 skill **不得**自帶 PR 比對。from-scratch mode（還沒有 issue）與 `--in-chain`（`/idd-all-chain` 的 Phase 0.4 已對每個 root 做過）跳過。批次（`/idd-all #a #b #c`）逐張各跑一次，一張被停下不影響其他張。
 
 ```bash
 if [ -z "$IN_CHAIN" ] && [ -n "${N:-}" ]; then
@@ -1540,6 +1542,8 @@ exit 不是 0 時印 `Stopped: /idd-close did not finish (<reason>); the merge o
 ---
 
 ### Phase 6: Report and Stop (mode-aware)
+
+rest mode（`## Rest mode`）下這裡的「Stop」只是這一張結束：印完這一張的報告並清理之後，回到該節流程第 4 步記下結果，再取下一張。
 
 Phase 6 回報這次 run 實際做到哪裡（#392）：merge（或 push）並 close 都完成時是 `Done:`／`Undo:`；在 gate、guardrail 或 `/idd-close` 停下時是 `Done:` 加上 `Stopped:`；帶 `--review` 時沿用「awaiting human acceptance」措辭；meeting issue 印 meeting report。
 

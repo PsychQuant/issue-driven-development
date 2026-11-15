@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   positional argument no longer asks whether to create an issue or pick one. It starts a run over the open
   issues of the repository, one at a time, each through the unchanged single-issue pipeline; the single word
   `rest` does the same. `scripts/rest-queue.py` reads every open issue in one paginated query and puts each in
-  exactly one class by an ordered table: opened or last edited by an account without write access, tracker
+  exactly one class by an ordered table: opened, last edited or commented on by an account without write access, tracker
   label, an unanswered clarity question, parked, blocked, a meeting Diagnosis, already verified, or candidate.
   Only candidates run, those with a Diagnosis first and then the others, each by ascending issue number. The
   judgements are the existing ones (`lib/actionability.sh`, `lib/intent.py`, `lib/ghread.py`); a read that
@@ -21,7 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `.claude/.idd/state/idd-all-rest.json`: an issue is recorded when it is handed out and is attempted once per
   run, the open issues are re-read after every issue (so an issue opened during the run is picked up), the
   outcome of an issue is read from GitHub, and a run whose last activity is less than 24 hours old is resumed
-  instead of restarted. An issue that stops does not stop the run. The run stops as a whole only when the
+  instead of restarted. An issue that already has a pull request or a branch is not taken over: it is recorded
+  with that pull request or branch as the reason. An issue that stops does not stop the run. The run stops as a whole only when the
   default branch cannot be restored between two issues, the helper cannot read GitHub, `gh` authentication is
   lost, or the user interrupts. `start` prints the list (issue numbers only) before anything runs and `report`
   prints one report at the end: closed, stopped with the reason, waiting for a person with every open question,

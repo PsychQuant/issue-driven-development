@@ -45,7 +45,7 @@ Diagnosis 在無人值守下取了六個預設（不等 #457 與 #423、衍生 i
 
 分類規則寫成一張有順序的表（資料，不是散在程式裡的 if），先中者為準：
 
-1. author：開 issue 的帳號或正文最後編輯者沒有寫入權（帳號讀不到也算）
+1. outsider：開 issue 的帳號、正文最後編輯者，或任何一則 comment 的作者沒有寫入權（帳號讀不到也算；留言的 bot 不算，與 close stage 相同）
 2. tracker：有 north-star 或 epic label
 3. needs-person：正文有還沒回答的釐清問題
 4. parked：actionability gate 的 parked 一組
@@ -54,11 +54,13 @@ Diagnosis 在無人值守下取了六個預設（不等 #457 與 #423、衍生 i
 7. verified：正文 Current Status 的 Phase 是 verified
 8. candidate：其餘
 
-測試對七個輸入的所有組合（六個布林與四值的 gate 分組，共 256 種）檢查：每一種都落在恰好一類，而且符合表的先後順序。表先寫、檢查先寫，再寫讀 GitHub 的部分。
+測試對八個輸入的所有組合（七個布林與四值的 gate 分組，共 512 種）檢查：每一種都落在恰好一類，而且符合表的先後順序。表先寫、檢查先寫，再寫讀 GitHub 的部分。
 
-第 1 類放在最前面的理由：指名一張 issue 時是人選了它；rest 沒有人選。close stage 的同一道作者檢查只擋 merge，擋不到 implement、push 與開 PR。
+第 1 類放在最前面的理由：指名一張 issue 時是人選了它；rest 沒有人選。close stage 對作者與留言者的同一道檢查只擋 merge，擋不到 implement、push 與開 PR；留言與附件會影響診斷與實作，所以留言者也在這一類裡。
 
 第 7 類是 Diagnosis 的第六個預設：已經停在 verified 的 issue 不重跑。維護者若改成重跑，拿掉這一列即可，它們會落到 candidate。
+
+同一個預設還有另一半：已經有 PR 或 branch、但正文沒有 Phase 那一行的 issue（2026-11-15 有 #446 與 #452）。這不放進判定表：PR 與 issue 的對應只有一份實作（check-existing-work.sh），它對每張 issue 要一次 API 呼叫，清單階段對近兩百張都查太慢。改在交出之後處理：單張流程的 Step 0.5.1 本來就會查這一張，rest 對 resume 與 blocked 都不接手，記為 stopped 並寫出那個 PR 或 branch。
 
 ### Judgement is reused, not copied
 
@@ -92,7 +94,7 @@ args 把參數分成旗標與位置參數。認得的旗標是 --pr、--no-pr、
 
 ### Listings print issue numbers, not titles
 
-start 與 report 的清單只印 issue 號。標題是 issue 作者寫的文字，印 192 個標題既佔篇幅，也把別人寫的文字送到模型面前。report 會印等人回答的問題原文，但 author 那一類排在最前面，所以被印出的問題都來自有寫入權的帳號開的 issue。已經 verified 的 issue 也只列號碼，不另外查它的 PR：PR 與 issue 的對應只有一份實作（check-existing-work.sh），在這個 repo 它對每張都回 unknown（#471）；issue 自己的 dashboard 留言已經有 PR 連結。這一點比 Diagnosis 寫的「附它的 PR」少。
+start 與 report 的清單只印 issue 號。標題是 issue 作者寫的文字，印 192 個標題既佔篇幅，也把別人寫的文字送到模型面前。report 會印等人回答的問題原文，但 author 那一類排在最前面，所以被印出的問題都來自有寫入權的帳號開的 issue。已經 verified 的 issue 在清單裡只列號碼，不在清單階段查它的 PR（理由見判定表一節）；被交出後因為已有 PR 或 branch 而沒有接手的 issue，總報告會在它的原因裡寫出那個 PR 或 branch。Diagnosis 寫 check-existing-work.sh 在這個 repo 對每張都回 unknown，那是錯的：找不到任何證據時才回 unknown（#471），有開著的 PR 或自己的 branch 時照常回 resume 或 blocked。
 
 ## Implementation Contract
 
@@ -101,12 +103,13 @@ start 與 report 的清單只印 issue 號。標題是 issue 作者寫的文字�
 - `/idd-all` 開始時先跑 args。結果是 rest 時不提問，進入 rest 流程；refuse 時印出原因與用法後結束，不做任何事；other 時照現有流程。
 - rest 流程：start（印出清單）→ 反覆 next、跑那一張的單張流程（Phase 0.4 起，旗標沿用這次呼叫的）、record、PR mode 下回到預設 branch 並 pull → next 回 done 或 stopped 後 report。
 - 單張停下、abort 或被 gate 判為不可動，都只記在那一張，下一張照跑。
+- 交出的 issue 已經有 PR 或 branch（Step 0.5.1 回 resume 或 blocked）時，rest 不接手：不建 branch、不碰那個 PR，記為 stopped，原因寫 `existing work: ` 加上那個 PR 或 branch。
 - 整個 run 停下只有四種：回不到預設 branch、rest-queue.py 以結束碼 3 結束（GitHub 或判定程式讀不到）、gh 認證失效、使用者中斷。結束碼 1 與 2 是呼叫寫錯，改正後重跑，不算停下。前三種由 skill 呼叫 stop 記下原因後 report；使用者中斷時狀態檔留著，24 小時內再跑會接續。
 
 **介面**
 
 - `rest-queue.py args -- <argv…>`：stdout 一行 JSON，`{"mode": "rest"}`、`{"mode": "other"}` 或 `{"mode": "refuse", "reason": "…"}`；rest 與 other 結束碼 0，refuse 結束碼 1。
-- `rest-queue.py list --repo O/R [--json]`：只讀，不建立 run。JSON 形狀：`{"repo", "open", "classes": {"candidate": [n…], "needs-person": […], "author": […], "tracker": […], "parked": […], "blocked": […], "meeting": […], "verified": […]}, "order": [n…], "diagnosed": [n…], "questions": {"<n>": ["…"]}}`（diagnosed 是候選裡已經有可動 Diagnosis 的那些）。
+- `rest-queue.py list --repo O/R [--json]`：只讀，不建立 run。JSON 形狀：`{"repo", "open", "classes": {"candidate": [n…], "needs-person": […], "outsider": […], "tracker": […], "parked": […], "blocked": […], "meeting": […], "verified": […]}, "order": [n…], "diagnosed": [n…], "questions": {"<n>": ["…"]}}`（diagnosed 是候選裡已經有可動 Diagnosis 的那些）。
 - `rest-queue.py start --cwd C --repo O/R`：建立或接續 run，印清單（文字），結束碼 0。
 - `rest-queue.py next --cwd C --repo O/R`：stdout 一行 JSON，`{"next": n, "in_flight": false}`、`{"next": n, "in_flight": true}`、`{"next": null, "done": true}` 或 `{"next": null, "stopped": "…"}`。
 - `rest-queue.py record --cwd C --repo O/R --issue N [--reason TEXT]`：stdout 一行 JSON `{"issue": n, "outcome": "closed"|"stopped", "reason": "…"}`。N 不是 in flight 的那一張時結束碼 1、狀態不變。
