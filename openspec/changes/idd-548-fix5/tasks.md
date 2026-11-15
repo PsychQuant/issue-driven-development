@@ -9,8 +9,8 @@
 
 ## 3. 第五輪第 2 到 5 列
 
-- [ ] 3.1 [after: 2.1] 依 design「第 29 列：改 fixture，不改列」「建不出暫存目錄就停」「第 7 到 12 列的標籤改名」：`plugins/issue-driven-dev/scripts/tests/spec-change/test.sh` 的第 29 列 fixture 改成七個來源有標記、停在記錄的 commit、再 deinit 的 submodule，斷言不變；`mktemp` 失敗或結果不是目錄時印出原因並以 1 結束；第 7 到 12 列的 26 個標籤與這一段的註解、標題改用現在的 Example 標題的用詞。驗證：測試全部通過；`TMPDIR` 指向不存在的目錄時測試以 1 結束，而且沒有任何一行訊息提到根目錄下的路徑。
-- [ ] 3.2 [after: 3.1] 依 design「照條文改程式，不改條文去配合程式」與 Implementation Contract：`plugins/issue-driven-dev/CHANGELOG.md` 的 #548 條目兩處：條件的敘述寫明主 repo 自己的 git 目錄不算在工作目錄內；補一句 `submodule.recurse` 打開時答案會變的情況。驗證：`git diff` 對 CHANGELOG 只動 `[Unreleased]` 裡 #548 那一條；文字不含任何特定專案的名稱或本機路徑。
+- [x] 3.1 [after: 2.1] 依 design「第 29 列：改 fixture，不改列」「建不出暫存目錄就停」「第 7 到 12 列的標籤改名」：`plugins/issue-driven-dev/scripts/tests/spec-change/test.sh` 的第 29 列 fixture 改成七個來源有標記、停在記錄的 commit、再 deinit 的 submodule，斷言不變；`mktemp` 失敗或結果不是目錄時印出原因並以 1 結束；第 7 到 12 列的 26 個標籤與這一段的註解、標題改用現在的 Example 標題的用詞。驗證：測試全部通過；`TMPDIR` 指向不存在的目錄時測試以 1 結束，而且沒有任何一行訊息提到根目錄下的路徑。
+- [x] 3.2 [after: 3.1] 依 design「照條文改程式，不改條文去配合程式」與 Implementation Contract：`plugins/issue-driven-dev/CHANGELOG.md` 的 #548 條目兩處：條件的敘述寫明主 repo 自己的 git 目錄不算在工作目錄內；補一句 `submodule.recurse` 打開時答案會變的情況。驗證：`git diff` 對 CHANGELOG 只動 `[Unreleased]` 裡 #548 那一條；文字不含任何特定專案的名稱或本機路徑。
 
 ## 4. 收尾
 

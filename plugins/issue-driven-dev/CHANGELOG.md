@@ -18,7 +18,9 @@ Version number left to the release.
   another could not be searched. Searching submodules requires git 2.45 or later; older git, or git whose
   version cannot be read, does not run in their directories. A submodule is searched only
   if its recorded path is relative with no empty, `.` or `..` component, its resolved directory lies inside
-  the main working tree, that directory is not a symbolic link, it holds its own `.git` entry, git reports
+  the main working tree (the main repository's own git directory, wherever git keeps it, is no part of the
+  working tree, and git is not run in a directory there), that directory is not a symbolic link, it holds
+  its own `.git` entry, git reports
   it as the top of its own working tree, and its object store holds the recorded commit. Its object store
   is asked which objects of that commit it lacks or cannot open (an object file that is present but cannot
   be opened, for example an empty one, counts as lacking); a marker found in a file that counts, by a search that ran to its end,
@@ -29,6 +31,11 @@ Version number left to the release.
   If the marker is not found and a submodule could not be searched,
   `links` answers `error` and names the Example and up to five submodule paths with fixed reasons. Paths
   under the spec directory are skipped, and nothing is fetched into submodules during the check.
+  The search of the main repository no longer uses git's own recursion into submodules, so
+  `submodule.recurse` does not change an answer. With that setting on, 4.1.0 already found a marker in a
+  submodule, also in one that is initialised and has no working tree; when the marker is only there,
+  `links` now answers `error` (not checked out) until the submodule is checked out again
+  (`git submodule update --init`).
   A path under the spec directory's `specs/` that is not valid UTF-8 gives a fixed error reason without
   exception text; such a path elsewhere under the spec directory does not change the answer.
   The Example of the 4.1.0 requirement on the top directory gains six rows: `links`, `archived` and
