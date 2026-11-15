@@ -111,7 +111,8 @@ def classify_args(argv):
             positionals.append(arg)
         i += 1
     if len(positionals) >= 2 and "rest" in positionals:
-        return "refuse", "`rest` runs every remaining issue and cannot be combined with an issue, a description or a file"
+        return "refuse", ("`rest` runs every remaining issue and cannot be combined with an issue, a description or a file "
+                          "(a description that contains the word rest is one argument: put it in quotes)")
     if not positionals or positionals == ["rest"]:
         if in_chain:
             return "refuse", "--in-chain is for a call that names an issue"
@@ -466,7 +467,7 @@ def cmd_start(argv):
     lst = listing(repo)   # before anything is written: a failed read leaves no run behind
     if not resumed:
         st = {"version": 1, "repo": repo, "started_at": iso(now()), "updated_at": "", "attempts": [], "stop": None}
-        save_state(cwd, st)
+    save_state(cwd, st)   # a resumed run too: starting is activity, and the 24 hours count from the last one
     attempted = [x["issue"] for x in st["attempts"]]
     head = f"rest run for {repo} — "
     head += (f"resumed (started {st['started_at']}, {len(attempted)} attempt(s) so far)" if resumed

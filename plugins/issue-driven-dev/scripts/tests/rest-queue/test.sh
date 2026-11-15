@@ -225,6 +225,7 @@ assert_output_grep "resume: start says the run is resumed" "resumed" "$S/start.o
 assert_output_grep "resume: with one attempt" "1 attempt" "$S/start.out"
 assert_output_grep "resume: the list names issue numbers" "#9" "$S/start.out"
 refute_output_grep "resume: the list prints no issue text" "SECRET-TITLE-TEXT" "$S/start.out"
+assert_eq "resume: starting counts as activity (updated_at is now, not 2 hours ago)" "fresh" "$(python3 -c 'import calendar,json,sys,time; s=json.load(open(sys.argv[1])); t=calendar.timegm(time.strptime(s["updated_at"], "%Y-%m-%dT%H:%M:%SZ")); print("fresh" if time.time()-t < 300 else "stale")' "$(state_file)")"
 assert_eq "resume: next is #9, not #5" "9" "$(run next | jget next)"
 run start > /dev/null 2>&1    # a second start during the run
 assert_eq "resume: a second start keeps the attempts" "2" "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["attempts"]))' "$(state_file)")"
@@ -290,6 +291,7 @@ assert_grep "skill: Step 0.1 runs the argument classification" 'rest-queue.py" a
 assert_grep_re "skill: Step 0.1 has a row for no positional argument" '^\| `/idd-all`[^|]*\| rest ' "$STEP01"
 assert_grep_re "skill: Step 0.1 has a row for the word rest" '^\| `/idd-all rest`[^|]*\| rest ' "$STEP01"
 refute_grep "skill: the two-way question is gone" "建新 issue 還是用既有 issue" "$(cat "$SKILL")"
+assert_grep "skill: Step 0.1 says an unquoted description is one argument" "整段算一個引數" "$STEP01"
 line_of() { printf '%s\n' "$REST" | grep -n -F -- "$1" | head -1 | cut -d: -f1; }
 for sub in start next record stop report; do
   assert_true "skill: the rest section calls $sub" "[ -n \"\$(line_of 'rest-queue.py\" $sub')\" ]"

@@ -38,5 +38,5 @@
 
 ## 6. 收尾
 
-- [ ] 6.1 對真實的 repo 唯讀跑一次 `rest-queue.py list --repo PsychQuant/issue-driven-development --json`，確認每一張 open issue 都被分類、各類張數與 Diagnosis 記的同一個量級（候選約 166、等人約 18、blocked 4、verified 4）。驗證：把實際數字寫進 Implementation Complete。
-- [ ] 6.2 跑 run-all-tests.sh 與連結檢查。驗證：結束碼都是 0，links 回 ok。
+- [x] 6.1 對真實的 repo 唯讀跑一次 `rest-queue.py list --repo PsychQuant/issue-driven-development --json`，確認每一張 open issue 都被分類、各類張數與 Diagnosis 記的同一個量級（候選約 166、等人約 18、blocked 4、verified 4）。驗證：把實際數字寫進 Implementation Complete。
+- [x] 6.2 跑 run-all-tests.sh 與連結檢查。驗證：結束碼都是 0，links 回 ok。

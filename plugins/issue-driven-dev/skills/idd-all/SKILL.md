@@ -226,7 +226,7 @@ rest mode 先建 `preflight` 與 `rest_run` 兩項；每交出一張 issue，再
 
 #### Step 0.1: Argument Parsing
 
-先判定這次呼叫的形式（#478）。把收到的引數原樣放在 `--` 後面，每個引數用單引號包住；沒有引數就只寫 `--`：
+先判定這次呼叫的形式（#478）。把收到的引數放在 `--` 後面，每個引數用單引號包住；沒有引數就只寫 `--`。切法：`#N`、旗標（`--cwd` 與它的路徑是兩個）、單獨的 `rest`、檔案路徑各是一個引數；使用者用引號包住的一段，或一段沒有引號的描述文字，整段算一個引數：
 
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" args -- <ARGS>
