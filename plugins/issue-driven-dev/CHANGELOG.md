@@ -34,7 +34,10 @@ Version number left to the release.
   A submodule whose search failed still has its own submodules searched when all its trees can be listed.
   If the marker is not found and a submodule could not be searched,
   `links` answers `error` and names the Example and up to five submodule paths with fixed reasons. Paths
-  under the spec directory are skipped, and nothing is fetched into submodules during the check.
+  under the spec directory are skipped, and so is a submodule whose directory lies in the spec directory
+  under another name (reached through a symbolic link that leads there, or through a path that spells the
+  spec directory in another letter case): it is not searched and is not one that could not be searched.
+  Nothing is fetched into submodules during the check.
   The search of the main repository no longer uses git's own recursion into submodules, so
   `submodule.recurse` does not change an answer. With that setting on, 4.1.0 already found a marker in a
   submodule, also in one that is initialised and has no working tree; when the marker is only there,

@@ -9,7 +9,8 @@
 
 - [x] 2.1 [after: 1.1] 依 design「『在頂層目錄底下』的意思是往上走會遇到頂層目錄」「往上走經過的目錄，就是與那兩個 git 目錄比對的清單」「第 5 個條件用同一種比對」「檢查不到的目錄略過」與 Implementation Contract：`plugins/issue-driven-dev/scripts/spec-change.py` 新增 `directories_below_top()`、`leaves_repository()`、`same_directory()`，`under_git_directory()` 改成比對一份清單，`marker_files()` 的第 2、5 個條件改用它們；檔頭與函式的說明改成同樣的說法。驗證：`bash plugins/issue-driven-dev/scripts/tests/spec-change/test.sh` 全部通過；第七輪協調者的兩個重現（上游只改大小寫後 pull；link 的目標寫成 `/System/Volumes/Data` 的拼法）都回 `ok`。
   - 紀錄（`54d1775`，同一環境）：868 項通過、0 項失敗。兩個重現用這份 script 重跑：上游把 `Tests/sub` 改成 `tests/sub` 之後 pull，`links` 回 `ok`；link 的目標寫成 `/System/Volumes/Data` 的拼法回 `ok`，對照（一般的拼法）也回 `ok`。
-- [ ] 2.2 [after: 1.2] 依 design「落在規格目錄裡的 submodule 不搜尋，不論路徑叫什麼」與 Implementation Contract：`plugins/issue-driven-dev/scripts/spec-change.py` 新增 `in_spec_directory()`，`marker_files()` 在第 2 個條件之後多一個分支：往上走經過的目錄裡有規格目錄時，這個 submodule 不搜尋，也不列為搜尋不到；檔頭的說明加上這一點。驗證：`bash plugins/issue-driven-dev/scripts/tests/spec-change/test.sh` 全部通過。
+- [x] 2.2 [after: 1.2] 依 design「落在規格目錄裡的 submodule 不搜尋，不論路徑叫什麼」與 Implementation Contract：`plugins/issue-driven-dev/scripts/spec-change.py` 新增 `in_spec_directory()`，`marker_files()` 在第 2 個條件之後多一個分支：往上走經過的目錄裡有規格目錄時，這個 submodule 不搜尋，也不列為搜尋不到；檔頭的說明加上這一點。驗證：`bash plugins/issue-driven-dev/scripts/tests/spec-change/test.sh` 全部通過。
+  - 紀錄（`9fb5cc1`，同一環境）：878 項通過、0 項失敗。
 
 ## 3. 文字
 
