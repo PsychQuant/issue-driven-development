@@ -15,3 +15,11 @@
 ## 4. 收尾
 
 - [ ] 4.1 [after: 3.2] 依 Implementation Contract 驗收：`bash plugins/issue-driven-dev/scripts/run-all-tests.sh` 與 `bash .claude/scripts/tests/spectra-archive-post-ic/test.sh` 結束碼都是 0；把 2.1 的判斷拿掉時只有第 55 列的檢查失敗；link 指向工作目錄內另一個 clone 時仍回 `ok`、指到頂層目錄之外時仍回 `error`；`python3 plugins/issue-driven-dev/scripts/spec-change.py links --base origin/main --cwd .` 的結果。驗證：驗收紀錄寫在這一項底下；封存之後的結果寫在 issue 的 Implementation Complete 留言。
+  - 驗收紀錄。這個 change 的文件、規格差異、測試與程式都由同一個協調者撰寫，沒有實作者模型，也沒有獨立讀者；第六輪 verify 是第一次獨立審查。環境：macOS、git 2.55.0、Python 3.13.5。
+  - 整套測試（`dd8d2b9`，封存之前）：`bash plugins/issue-driven-dev/scripts/run-all-tests.sh` 75 個 suite、0 個失敗、沒有逾時；`bash .claude/scripts/tests/spectra-archive-post-ic/test.sh` 141 項通過、0 項失敗。`bash plugins/issue-driven-dev/scripts/tests/spec-change/test.sh` 806 項通過、0 項失敗（第 55 列加了 7 項）。
+  - 變異：在一份副本裡把 2.1 加的那個判斷拿掉，測試檔 802 項通過、4 項失敗，失敗的就是 1.1 記錄的那四項（第 55 列的 `status`、結束碼、原因、沒有在那個目錄執行 git）。
+  - 三個 fixture，各用 4.1.0、修改前（`8003a7b`）、修改後的 script 跑一次，並記錄 git 呼叫。link 指進主 repo 的 `.git`：`missing`、`ok`（在那個目錄 5 次呼叫）、`error`（path leaves the repository，0 次）。link 指向工作目錄內的另一個 clone：`missing`、`ok`、`ok`（修改前後都是 5 次）。link 指到頂層目錄之外：`missing`、`error`、`error`（都是 0 次）。
+  - 另外三種情況，修改前與修改後各跑一次。link 的目標寫成 `.GIT`（這個 volume 會折疊大小寫）：修改前 `error`（not checked out，在那個目錄執行了 1 次 git），修改後 `error`（path leaves the repository，0 次）。git 目錄用 `--separate-git-dir` 放在頂層目錄內、取名 `gd`，link 指進它：修改前 `ok`（5 次），修改後 `error`（0 次）。主 repo 是 linked worktree、submodule 照一般方式取出：修改前後都 `ok`，在 submodule 裡都是 5 次呼叫，整次執行的呼叫從 18 次變成 19 次（多的那一次是問 git 目錄在哪裡）；它的主 worktree 也一樣。
+  - 暫存目錄：`TMPDIR` 指向不存在的目錄時，測試印出 mktemp 的錯誤與一行 FATAL，以 1 結束，共兩行，沒有任何一行提到根目錄下的路徑。
+  - 連結檢查，封存之前（`python3 plugins/issue-driven-dev/scripts/spec-change.py links --base origin/main --cwd .`）：`{"status": "ok", "missing": [], "reason": ""}`。封存之後的結果寫在 issue 的 Implementation Complete 留言。
+  - 沒有做的：測試只在 macOS 上跑過；記錄的路徑離開頂層目錄再回到頂層目錄本身的那一種情況沒有處理（design 的 Risks，#559）；外層 submodule 自己的 `.git` 真目錄那一種沒有實測。
