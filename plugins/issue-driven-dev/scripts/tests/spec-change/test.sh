@@ -974,6 +974,88 @@ submodule_reason 55 lnk/planted 'path leaves the repository'
 assert_grep "links: submodule row 55 — the logging git saw the main repository" "-C $REPO rev-parse" "$(cat "$WORK/git-calls.log")"
 refute_grep "links: submodule row 55 — no git command ran in the planted directory" "lnk/planted" "$(cat "$WORK/git-calls.log")"
 
+# Row 56: the command runs in a linked worktree whose top directory holds the main repository. The directory git
+# names for this worktree is a private one; the clone was placed in the repository's own git directory, which git
+# names as the common directory. Both are on the list of condition 2, so git must not run there.
+example_repo l-sub-worktree-source
+WT_MAIN="$REPO"; WT_TOP="$WORK/l-sub-worktree-top"
+git -C "$WT_MAIN" worktree add -q -b side "$WT_TOP" HEAD || setup_failed "row 56: add the linked worktree"
+mv "$WT_MAIN" "$WT_TOP/main" || setup_failed "row 56: move the main repository into the worktree"
+git -C "$WT_TOP/main" worktree repair "$WT_TOP" >/dev/null 2>&1 || setup_failed "row 56: repair the worktree"
+REPO="$WT_TOP"
+RECORDED=$(git -C "$SUB" rev-parse HEAD) || setup_failed "read the commit of row 56"
+# Record the path before placing the symlink: update-index rejects a path through one.
+record_gitlink lnk/planted "$RECORDED"
+git clone -q "$SUB" "$REPO/main/.git/planted-area/planted" || setup_failed "row 56: clone into the repository's git directory"
+ln -s main/.git/planted-area "$REPO/lnk" || setup_failed "row 56: link into the repository's git directory"
+WT_PRIVATE=$(cd "$(git -C "$REPO" rev-parse --absolute-git-dir)" && pwd -P) || setup_failed "row 56: read the git directory of the worktree"
+WT_COMMON=$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd -P) || setup_failed "row 56: read the common git directory"
+[ "$WT_COMMON" = "$(cd "$REPO/main/.git" && pwd -P)" ] || setup_failed "row 56: the common git directory must be the main repository's"
+[ "$WT_PRIVATE" != "$WT_COMMON" ] || setup_failed "row 56: the two directories git names must differ"
+git -C "$REPO/lnk/planted" cat-file -e "$RECORDED^{commit}" || setup_failed "row 56: the planted clone must hold the recorded commit"
+git -C "$REPO/lnk/planted" grep -q -F -e 'spec-example: cap / alpha table' "$RECORDED" -- . || setup_failed "row 56: the recorded commit must hold the marker"
+[ "$(git -C "$REPO/main/.git/planted-area" rev-parse --is-inside-git-dir)" = true ] || setup_failed "row 56: the planted area must be inside a git directory"
+[ "$(git -C "$REPO/main/.git/planted-area" rev-parse --is-inside-work-tree)" = false ] || setup_failed "row 56: the planted area must not be inside a working tree"
+: > "$WORK/git-calls.log" || setup_failed "clear git call log for row 56"
+GIT_CALL_LOG="$WORK/git-calls.log" REAL_GIT="$GIT" PATH="$WORK/gitlog-bin:$PATH" links_case "submodule row 56: linked worktree that holds the main repository" error 0 2
+submodule_reason 56 lnk/planted 'path leaves the repository'
+assert_grep "links: submodule row 56 — the logging git saw the worktree" "-C $REPO rev-parse" "$(cat "$WORK/git-calls.log")"
+refute_grep "links: submodule row 56 — no git command ran in the planted directory" "lnk/planted" "$(cat "$WORK/git-calls.log")"
+
+# Row 57: the list of condition 2 is closed, and the git directory of a submodule is not on it. The outer submodule
+# is a plain clone, so its `.git` is a directory; a link inside it leads into that directory, where a clone that
+# holds the marker was placed by hand. The inner path is searched.
+newrepo l-sub-own-gitdir-outer-source
+git -C "$REPO" update-index --add --cacheinfo "160000,$RECORDED,l/inner" || setup_failed "row 57: record the inner gitlink"
+git -C "$REPO" commit -q -m inner-gitlink || setup_failed "row 57: commit the inner gitlink"
+OUTER_SOURCE="$REPO"
+OUTER_RECORDED=$(git -C "$OUTER_SOURCE" rev-parse HEAD) || setup_failed "row 57: read the commit of the outer submodule"
+example_repo l-sub-own-gitdir
+git clone -q "$OUTER_SOURCE" "$REPO/outer" || setup_failed "row 57: clone the outer submodule"
+record_gitlink outer "$OUTER_RECORDED"
+{ [ -d "$REPO/outer/.git" ] && [ ! -L "$REPO/outer/.git" ]; } || setup_failed "row 57: the .git entry of the outer submodule must be a directory"
+rm -rf "$REPO/outer/l" || setup_failed "row 57: remove the checked-out inner path"
+git clone -q "$SUB" "$REPO/outer/.git/planted-area/inner" || setup_failed "row 57: clone into the git directory of the outer submodule"
+ln -s .git/planted-area "$REPO/outer/l" || setup_failed "row 57: link into the git directory of the outer submodule"
+git -C "$REPO/outer/l/inner" cat-file -e "$RECORDED^{commit}" || setup_failed "row 57: the planted clone must hold the recorded commit"
+git -C "$REPO/outer/l/inner" grep -q -F -e 'spec-example: cap / alpha table' "$RECORDED" -- . || setup_failed "row 57: the recorded commit must hold the marker"
+[ "$(git -C "$REPO/outer/.git/planted-area" rev-parse --is-inside-git-dir)" = true ] || setup_failed "row 57: the planted area must be inside the git directory of the outer submodule"
+links_case "submodule row 57: link into the git directory of a submodule" ok 0 0
+
+# Row 58: the top directory is not compared with the two directories of condition 2. Here the git directory of the
+# main repository was made apart and the top directory lies inside it; the submodule under the top directory is
+# searched as usual.
+INSIDE="$WORK/l-sub-top-inside-gitdir"
+mkdir -p "$INSIDE" || setup_failed "row 58: create the parent directory"
+git init -q -b main --separate-git-dir "$INSIDE/gd" "$INSIDE/gd/top" || setup_failed "row 58: initialize a repository whose top directory lies inside its git directory"
+REPO="$INSIDE/gd/top"
+git -C "$REPO" commit -q --allow-empty -m init || setup_failed "row 58: commit the empty repository"
+put openspec/specs/cap/spec.md "$(spec "$(req Base)")" || setup_failed "row 58: write the base spec"
+BASE=$(commit base) || setup_failed "row 58: commit the base spec"
+put openspec/specs/cap/spec.md "$(spec "$(req Base)" "$(req Alpha "$EX")")" || setup_failed "row 58: write the Example"
+git -C "$REPO" -c protocol.file.allow=always submodule add -q "$SUB" tests/sub || setup_failed "row 58: add the submodule"
+commit example >/dev/null || setup_failed "row 58: commit the Example"
+[ "$(git -C "$REPO" rev-parse --is-inside-work-tree)" = true ] || setup_failed "row 58: git must report the top directory as inside the working tree"
+[ "$(git -C "$REPO" rev-parse --is-inside-git-dir)" = true ] || setup_failed "row 58: git must report the top directory as inside the git directory"
+links_case "submodule row 58: top directory inside the main git directory" ok 0 0
+
+# Row 59: a directory that resolves to the top directory itself meets condition 2. The head records, at a path
+# that a link leads back to the top directory, an earlier commit of the main repository that holds the marker; the
+# files of the head do not hold it.
+linked_repo l-sub-back-to-top
+put scripts/test.sh '# spec-example: cap / alpha table' || setup_failed "row 59: write the marker"
+EARLIER=$(commit marker) || setup_failed "row 59: commit the marker"
+git -C "$REPO" rm -q scripts/test.sh || setup_failed "row 59: remove the marker"
+put openspec/specs/cap/spec.md "$(spec "$(req Base)" "$(req Alpha "$EX")")" || setup_failed "row 59: write the Example"
+commit example >/dev/null || setup_failed "row 59: commit the Example"
+BACK="out/$(basename "$REPO")"
+record_gitlink "$BACK" "$EARLIER"
+ln -s .. "$REPO/out" || setup_failed "row 59: link back to the parent directory"
+[ "$(cd "$REPO/$BACK" && pwd -P)" = "$(cd "$REPO" && pwd -P)" ] || setup_failed "row 59: the recorded path must resolve to the top directory"
+if git -C "$REPO" grep -q -F -e 'spec-example: cap / alpha table' HEAD -- scripts; then setup_failed "row 59: the files of the head must not hold the marker"; fi
+git -C "$REPO" grep -q -F -e 'spec-example: cap / alpha table' "$EARLIER" -- scripts || setup_failed "row 59: the earlier commit must hold the marker"
+links_case "submodule row 59: recorded path that resolves to the top directory" ok 0 0
+
 # ── preflight ───────────────────────────────────────────────────────────────
 echo "spec-change: preflight (Example: preflight by write access and Spectra state)"
 
