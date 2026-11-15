@@ -1087,6 +1087,97 @@ GIT_CALL_LOG="$WORK/git-calls.log" REAL_GIT="$GIT" PATH="$WORK/gitlog-bin:$PATH"
 assert_grep "links: submodule row 59 — git searched at the recorded path" "$(basename "$REPO")/$BACK grep " "$(cat "$WORK/git-calls.log")"
 assert_grep "links: submodule row 59 — the commit searched there is the recorded one" "$EARLIER -- ." "$(cat "$WORK/git-calls.log")"
 
+# Rows 60 to 63 need two spellings of one directory: a path written in another letter case, on a volume that does
+# not distinguish letter case. A volume that does has no second spelling that an ordinary user can make, and the
+# four rows are not run there.
+mkdir "$WORK/CaseProbe" || setup_failed "create the directory that probes letter case"
+if [ -d "$WORK/caseprobe" ]; then
+  other_case() { # path — the same path with its last component in the other letter case
+    printf '%s/%s' "$(dirname "$1")" "$(basename "$1" | tr 'a-z' 'A-Z')"
+  }
+
+  # Row 60: the submodule is checked out inside the working tree and its recorded path runs through a symbolic
+  # link whose target names the top directory in another letter case. The resolved path keeps that spelling; the
+  # directory it names lies under the top directory, and git names it by its name on disk (conditions 2 and 5).
+  example_repo l-sub-case-link
+  RECORDED=$(git -C "$SUB" rev-parse HEAD) || setup_failed "read the commit of row 60"
+  # Record the path before placing the symlink: update-index rejects a path through one.
+  record_gitlink alias/sub "$RECORDED"
+  mkdir "$REPO/actual" || setup_failed "row 60: create the directory that holds the submodule"
+  git clone -q "$SUB" "$REPO/actual/sub" || setup_failed "row 60: clone the submodule into the working tree"
+  SPELLED=$(other_case "$REPO")
+  [ "$SPELLED" != "$REPO" ] || setup_failed "row 60: the second spelling must differ from the first"
+  [ "$SPELLED" -ef "$REPO" ] || setup_failed "row 60: the second spelling must name the top directory"
+  ln -s "$SPELLED/actual" "$REPO/alias" || setup_failed "row 60: link through the second spelling"
+  git -C "$REPO/alias/sub" grep -q -F -e 'spec-example: cap / alpha table' "$RECORDED" -- . || setup_failed "row 60: the recorded commit must hold the marker"
+  : > "$WORK/git-calls.log" || setup_failed "clear git call log for row 60"
+  GIT_CALL_LOG="$WORK/git-calls.log" REAL_GIT="$GIT" PATH="$WORK/gitlog-bin:$PATH" links_case "submodule row 60: link whose target names the top directory in another letter case" ok 0 0
+  assert_grep "links: submodule row 60 — git searched at the recorded path" "$(basename "$REPO")/alias/sub grep " "$(cat "$WORK/git-calls.log")"
+  # The same input with the target written through the data volume of macOS, where that path names the fixture.
+  DATA_SPELLED="/System/Volumes/Data$(cd "$REPO" && pwd -P)"
+  if [ "$DATA_SPELLED" -ef "$REPO" ]; then
+    rm "$REPO/alias" || setup_failed "row 60: remove the link"
+    ln -s "$DATA_SPELLED/actual" "$REPO/alias" || setup_failed "row 60: link through the data volume"
+    links_case "submodule row 60: the same link written through the data volume" ok 0 0
+  else
+    echo "  ~ skipped: /System/Volumes/Data does not name the fixtures here, the second form of row 60 was not run"
+  fi
+
+  # Row 61: the tree records the path tests/sub and the directory on disk is named Tests/sub (as after a rename by
+  # letter case upstream and a pull). Git, run there, names the directory as it is named on disk: the same
+  # directory as the one the recorded path names, under another name (condition 5).
+  example_repo l-sub-case-recorded
+  RECORDED=$(git -C "$SUB" rev-parse HEAD) || setup_failed "read the commit of row 61"
+  record_gitlink tests/sub "$RECORDED"
+  mkdir "$REPO/Tests" || setup_failed "row 61: create the directory named Tests"
+  git clone -q "$SUB" "$REPO/Tests/sub" || setup_failed "row 61: clone the submodule"
+  case "$(git -C "$REPO/tests/sub" rev-parse --show-toplevel)" in
+    */Tests/sub) ;;
+    *) setup_failed "row 61: git must name the directory as it is named on disk" ;;
+  esac
+  : > "$WORK/git-calls.log" || setup_failed "clear git call log for row 61"
+  GIT_CALL_LOG="$WORK/git-calls.log" REAL_GIT="$GIT" PATH="$WORK/gitlog-bin:$PATH" links_case "submodule row 61: recorded path and directory on disk differ in letter case only" ok 0 0
+  assert_grep "links: submodule row 61 — git searched at the recorded path" "$(basename "$REPO")/tests/sub grep " "$(cat "$WORK/git-calls.log")"
+
+  # Row 62: the link leads to a directory outside the top directory, and its target names that directory in
+  # another letter case. Going up from it the top directory is not met, so git is asked nothing about it.
+  example_repo l-sub-case-outside
+  RECORDED=$(git -C "$SUB" rev-parse HEAD) || setup_failed "read the commit of row 62"
+  record_gitlink alias/sub "$RECORDED"
+  OUTSIDE="$WORK/l-sub-case-outside-target"
+  mkdir "$OUTSIDE" || setup_failed "row 62: create the outside directory"
+  git clone -q "$SUB" "$OUTSIDE/sub" || setup_failed "row 62: clone outside the top directory"
+  SPELLED=$(other_case "$OUTSIDE")
+  [ "$SPELLED" -ef "$OUTSIDE" ] || setup_failed "row 62: the second spelling must name the outside directory"
+  ln -s "$SPELLED" "$REPO/alias" || setup_failed "row 62: link to the outside directory"
+  git -C "$REPO/alias/sub" grep -q -F -e 'spec-example: cap / alpha table' "$RECORDED" -- . || setup_failed "row 62: the outside clone must hold the marker"
+  : > "$WORK/git-calls.log" || setup_failed "clear git call log for row 62"
+  GIT_CALL_LOG="$WORK/git-calls.log" REAL_GIT="$GIT" PATH="$WORK/gitlog-bin:$PATH" links_case "submodule row 62: link to a directory outside the top directory, named in another letter case" error 0 2
+  submodule_reason 62 alias/sub 'path leaves the repository'
+  refute_grep "links: submodule row 62 — no git command ran in the outside directory" "alias/sub" "$(cat "$WORK/git-calls.log")"
+  refute_grep "links: submodule row 62 — git was not asked for the two directories" "rev-parse --absolute-git-dir" "$(cat "$WORK/git-calls.log")"
+
+  # Row 63: the input of row 55, with the link's target naming the top directory in another letter case. The
+  # top directory is met on the way up, and the main git directory is passed before it: the refusal comes from
+  # the comparison with the two directories, for which git is asked, not from the spelling of the path.
+  example_repo l-sub-case-gitdir
+  RECORDED=$(git -C "$SUB" rev-parse HEAD) || setup_failed "read the commit of row 63"
+  record_gitlink lnk/planted "$RECORDED"
+  git clone -q "$SUB" "$REPO/.git/planted-area/planted" || setup_failed "row 63: clone into the git directory"
+  SPELLED=$(other_case "$REPO")
+  [ "$SPELLED" -ef "$REPO" ] || setup_failed "row 63: the second spelling must name the top directory"
+  ln -s "$SPELLED/.git/planted-area" "$REPO/lnk" || setup_failed "row 63: link into the git directory"
+  git -C "$REPO/lnk/planted" cat-file -e "$RECORDED^{commit}" || setup_failed "row 63: the planted clone must hold the recorded commit"
+  git -C "$REPO/lnk/planted" grep -q -F -e 'spec-example: cap / alpha table' "$RECORDED" -- . || setup_failed "row 63: the recorded commit must hold the marker"
+  : > "$WORK/git-calls.log" || setup_failed "clear git call log for row 63"
+  GIT_CALL_LOG="$WORK/git-calls.log" REAL_GIT="$GIT" PATH="$WORK/gitlog-bin:$PATH" links_case "submodule row 63: link into the main git directory through another letter case of the top directory" error 0 2
+  submodule_reason 63 lnk/planted 'path leaves the repository'
+  refute_grep "links: submodule row 63 — no git command ran in the planted directory" "lnk/planted" "$(cat "$WORK/git-calls.log")"
+  assert_grep "links: submodule row 63 — git was asked for the two directories" "rev-parse --absolute-git-dir" "$(cat "$WORK/git-calls.log")"
+else
+  echo "  ~ skipped: this volume distinguishes letter case, submodule rows 60 to 63 were not run"
+fi
+
 # ── preflight ───────────────────────────────────────────────────────────────
 echo "spec-change: preflight (Example: preflight by write access and Spectra state)"
 
