@@ -108,7 +108,7 @@ The run order SHALL contain exactly the `candidate` issues. Candidates whose gat
 
 ### Requirement: The open issues are read completely or not at all
 
-`rest-queue.py` SHALL read all open issues with one paginated GraphQL query. For an issue that has more comments than the query returned, it SHALL read all comments of that issue before choosing its latest trusted Diagnosis. When any page fails, a response lacks an expected field, or an `actionability.sh` function reports misuse, the command SHALL exit non-zero, print one reason line on stderr, and SHALL NOT print a list on stdout.
+`rest-queue.py` SHALL read all open issues with one paginated GraphQL query. For an issue that has more comments than the query returned, it SHALL read all comments of that issue before choosing its latest trusted Diagnosis. When any page fails, a response lacks an expected field, a permission read fails for a reason other than the account not being found, or an `actionability.sh` function reports misuse, the command SHALL exit non-zero, print one reason line on stderr, and SHALL NOT print a list on stdout.
 
 #### Scenario: a failed page fails the whole command
 
@@ -188,7 +188,7 @@ An issue recorded as `stopped` SHALL NOT end the run: the following `next` hands
 
 `rest-queue.py start` SHALL print the number of open issues, the issue numbers of every class, and the run order, before any issue is handed out. It SHALL print issue numbers only, no issue titles.
 
-When the working tree holds the state of a run of the same repository that started less than 24 hours ago and was not ended by `report`, `start` SHALL resume it: the recorded attempts are kept and are not handed out again. Otherwise `start` SHALL begin a new run with no attempts.
+When the working tree holds the state of a run of the same repository whose last recorded activity (start, hand-out, record or stop) is less than 24 hours old and that was not ended by `report`, `start` SHALL resume it: the recorded attempts and a recorded stop are kept, and the attempts are not handed out again. Otherwise `start` SHALL begin a new run with no attempts.
 
 #### Scenario: calling start twice does not reset the run
 
@@ -197,13 +197,13 @@ When the working tree holds the state of a run of the same repository that start
 
 ##### Example: resume within 24 hours
 
-- **GIVEN** a run state started 2 hours ago in which #5 is recorded as stopped, and candidates #5 and #9
+- **GIVEN** a run state whose last activity was 2 hours ago, in which #5 is recorded as stopped, and candidates #5 and #9
 - **WHEN** `start` and then `next` are called
 - **THEN** `start` says the run is resumed with 1 attempt, and `next` hands out #9
 
 ##### Example: a state older than 24 hours starts a new run
 
-- **GIVEN** a run state started 25 hours ago in which #5 is recorded as stopped, and candidates #5 and #9
+- **GIVEN** a run state whose last activity was 25 hours ago, in which #5 is recorded as stopped, and candidates #5 and #9
 - **WHEN** `start` and then `next` are called
 - **THEN** `next` hands out #5
 
@@ -224,7 +224,7 @@ When the working tree holds the state of a run of the same repository that start
 
 ### Requirement: All open clarity rows are available from one implementation
 
-`scripts/lib/intent.py` SHALL provide `open_clarity_rows(issue)`, which returns the text of every open clarity row the issue body shows, in document order. `open_clarity_row(issue)` SHALL return the first element of that list, or `None` when the list is empty, so that the close stage keeps its behaviour.
+`scripts/lib/intent.py` SHALL provide `open_clarity_rows(issue)`, which returns the text of every open clarity row the issue body shows: the rows of rendered tables in document order, followed by the rows GitHub did not render as a table. `open_clarity_row(issue)` SHALL return the first element of that list, or `None` when the list is empty, so that the close stage keeps its behaviour.
 
 #### Scenario: the close stage sees the same first row as before
 

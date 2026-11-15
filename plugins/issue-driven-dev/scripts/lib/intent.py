@@ -146,8 +146,9 @@ def has_corrections(comment):
     return False
 
 
-def open_clarity_row(issue):
-    """The text of an open clarity question the issue body shows, or None.
+def open_clarity_rows(issue):
+    """The text of every open clarity question the issue body shows: table rows in document order, then the
+    rows GitHub did not draw as a table.
 
     Read wherever GitHub shows it, without looking at the heading above it (r7 #2: a block inside a details
     element, under a level-4 heading or in a quote was missed while the check went through top-level
@@ -159,6 +160,7 @@ def open_clarity_row(issue):
     A resolved row keeps its Reason and may quote the words in other cells, so only the status decides.
     """
     root = html_root(issue.get("body_html"), issue.get("body"))
+    found = []
     for table in rendered.tables([root]):
         rows = rendered.table_rows(table)
         header = [c.strip().lower() for c in rows[0][1]] if rows and rows[0][0] else []
@@ -168,16 +170,23 @@ def open_clarity_row(issue):
                 continue
             if status is not None:
                 if status < len(cells) and cells[status].strip().lower().startswith(OPEN_STATUSES):
-                    return " | ".join(cells)
+                    found.append(" | ".join(cells))
             elif any(cell.strip().lower() in OPEN_STATUSES for cell in cells):
-                return " | ".join(cells)
+                found.append(" | ".join(cells))
     for el, run, _ in rendered.lines(root):
         if el.tag in ("td", "th"):
             continue
         for text in rendered.raw_line_texts(run):
             if "|" in text and any(cell.strip().lower().startswith(OPEN_STATUSES) for cell in text.split("|")):
-                return text
-    return None
+                found.append(text)
+    return found
+
+
+def open_clarity_row(issue):
+    """The first of open_clarity_rows, or None: what the close stage stops on (#478 added the list for
+    /idd-all's rest mode, which reports every open question; the two read the body the same way)."""
+    rows = open_clarity_rows(issue)
+    return rows[0] if rows else None
 
 
 def check_intent(repo, n, st, comments, issue):

@@ -64,7 +64,7 @@ Diagnosis 在無人值守下取了六個預設（不等 #457 與 #423、衍生 i
 
 - 釐清問題：intent.py 新增 open_clarity_rows(issue)，回傳所有未回答的列；原本的 open_clarity_row 改成回傳其中第一筆。close stage 的行為不變。不另外移植 idd-diagnose Step 0.5 的 bash。
 - 可動性：呼叫 actionability.sh 的 idd_blocking_section、idd_diagnosis_type、idd_parse_complexity、idd_actionability_verdict、idd_actionability_group。issue 正文與 Diagnosis 經暫存檔交給 bash，不走命令列參數（Linux 單一參數上限 128 KB，中文正文會超過）。
-- 寫入權：ghread.can_write，每個帳號查一次。
+- 寫入權：ghread.can_write，每個帳號查一次。GitHub 回 404（不是 collaborator，或是 app 的 bot 帳號）算沒有寫入權；其他失敗讓整個命令失敗。
 - 受信任的 Diagnosis：ghread.latest_diagnosis。
 - Phase：從 GitHub 渲染後的正文讀第一行以 Phase 開頭的文字，code block 裡的不算。這是新的讀法，因為 repo 裡沒有現成的 phase 解析程式；只認 verified 這一個值。
 
@@ -80,7 +80,7 @@ Diagnosis 在無人值守下取了六個預設（不等 #457 與 #423、衍生 i
 
 next 把一張 issue 交出去的當下就寫進狀態檔（in flight）；record 再補上結果。有一張還在 in flight 時，next 不會交出第二張，而是重複同一張並標明它還沒有結果。這樣模型在一張跑到一半時遇到 context 壓縮、又呼叫 next，不會靜悄悄跳到下一張，也不會把同一張重新跑一遍而不自知。
 
-start 遇到 24 小時內沒結束的 run 就接續，不重置；超過 24 小時或已經 report 過的才重新開始。理由相同：模型壓縮後從頭讀 skill 再呼叫一次 start，不能把試過的清單清掉。24 小時與 close stage 的 run-state、unattended 狀態的效期一致。
+start 遇到最後一次活動（start、交出、record、stop）在 24 小時內、還沒 report 的 run 就接續，不重置，記下的 stop 也保留；超過 24 小時或已經 report 過的才重新開始。效期從最後一次活動算起，不從開始算起：跑完整個 backlog 會超過一天。理由相同：模型壓縮後從頭讀 skill 再呼叫一次 start，不能把試過的清單清掉。24 小時與 close stage 的 run-state、unattended 狀態的效期一致。
 
 ### record reads the outcome from GitHub
 
@@ -106,13 +106,13 @@ start 與 report 的清單只印 issue 號。標題是 issue 作者寫的文字�
 **介面**
 
 - `rest-queue.py args -- <argv…>`：stdout 一行 JSON，`{"mode": "rest"}`、`{"mode": "other"}` 或 `{"mode": "refuse", "reason": "…"}`；rest 與 other 結束碼 0，refuse 結束碼 1。
-- `rest-queue.py list --repo O/R [--json]`：只讀，不建立 run。JSON 形狀：`{"repo", "open", "classes": {"candidate": [n…], "needs-person": […], "author": […], "tracker": […], "parked": […], "blocked": […], "meeting": […], "verified": […]}, "order": [n…], "questions": {"<n>": ["…"]}}`。
+- `rest-queue.py list --repo O/R [--json]`：只讀，不建立 run。JSON 形狀：`{"repo", "open", "classes": {"candidate": [n…], "needs-person": […], "author": […], "tracker": […], "parked": […], "blocked": […], "meeting": […], "verified": […]}, "order": [n…], "diagnosed": [n…], "questions": {"<n>": ["…"]}}`（diagnosed 是候選裡已經有可動 Diagnosis 的那些）。
 - `rest-queue.py start --cwd C --repo O/R`：建立或接續 run，印清單（文字），結束碼 0。
 - `rest-queue.py next --cwd C --repo O/R`：stdout 一行 JSON，`{"next": n, "in_flight": false}`、`{"next": n, "in_flight": true}`、`{"next": null, "done": true}` 或 `{"next": null, "stopped": "…"}`。
 - `rest-queue.py record --cwd C --repo O/R --issue N [--reason TEXT]`：stdout 一行 JSON `{"issue": n, "outcome": "closed"|"stopped", "reason": "…"}`。N 不是 in flight 的那一張時結束碼 1、狀態不變。
-- `rest-queue.py stop --cwd C --reason TEXT`：記下整個 run 停止的原因；之後 next 回 stopped。
+- `rest-queue.py stop --cwd C [--repo O/R] --reason TEXT`：記下整個 run 停止的原因；之後 next 回 stopped。第一個原因保留，再呼叫一次不會覆蓋。
 - `rest-queue.py report --cwd C --repo O/R`：印總報告（結案的、停下的與原因、等人回答的問題、沒跑的與類別、整個 run 停下的原因），然後刪除狀態檔。清單重讀失敗時仍印出狀態檔裡有的部分，並說明清單讀不到。
-- 狀態檔：`{"version": 1, "repo", "started_at", "attempts": [{"issue", "handed_at", "outcome", "reason", "recorded_at"}], "stop": null | {"reason", "at"}}`。
+- 狀態檔：`{"version": 1, "repo", "started_at", "updated_at", "attempts": [{"issue", "handed_at", "outcome", "reason", "recorded_at"}], "stop": null | {"reason", "at"}}`。
 - intent.open_clarity_rows(issue) 回傳字串 list；open_clarity_row(issue) 回傳第一筆或 None。
 
 **失敗時**
