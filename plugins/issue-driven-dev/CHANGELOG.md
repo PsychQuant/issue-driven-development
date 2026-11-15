@@ -13,26 +13,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   positional argument no longer asks whether to create an issue or pick one. It starts a run over the open
   issues of the repository, one at a time, each through the unchanged single-issue pipeline; the single word
   `rest` does the same. `scripts/rest-queue.py` reads every open issue in one paginated query and puts each in
-  exactly one of nine classes by an ordered table: opened, last edited or commented on by an account without
+  exactly one of eight classes by an ordered table: opened, last edited or commented on by an account without
   write access (a body that was edited by an account GitHub does not return counts as that), tracker label,
-  a body GitHub does not render (`unreadable`), an unanswered clarity question, parked, blocked, a meeting
-  Diagnosis, already verified, or candidate. Only candidates run, those with a Diagnosis first and then the
-  others, each by ascending issue number. The judgements are the existing ones (`lib/actionability.sh`,
+  a body GitHub does not render (`unreadable`), waiting for a person (an unanswered clarity question, or a
+  skipped confirmation of an unattended run that no Decision comment answered), parked, blocked, a meeting
+  Diagnosis, or candidate. Only candidates run, those with a Diagnosis first and then the others, each by
+  ascending issue number. An issue an earlier run left at verified, or that already has its own branch or
+  pull request, is a candidate like any other: the run continues it to its close, also when the earlier run
+  carried `--review` (add `--review` to keep such issues waiting). A pull request that is not on the issue's
+  own branch is left alone, as when the issue is named. The judgements are the existing ones (`lib/actionability.sh`,
   `lib/intent.py`, `lib/ghread.py`); a read that fails or is incomplete ends the command without a list, while
   one issue whose body has text and no rendering (one HTML comment is enough) is listed as `unreadable` and
   does not hold back the others. The helper keeps the state of the run in
   `.claude/.idd/state/idd-all-rest.json`: an issue is recorded when it is handed out and is attempted once per
   run, the open issues are re-read after every issue (so an issue opened during the run is picked up), the
   outcome of an issue is read from GitHub, and a run whose last activity is less than 24 hours old is resumed
-  instead of restarted. An issue that already has a pull request or a branch is not taken over: it is recorded
-  with that pull request or branch as the reason. An issue that stops does not stop the run. The run stops as a whole only when the
+  instead of restarted. An issue that stops does not stop the run. The run stops as a whole only when the
   default branch cannot be restored between two issues, the helper cannot read GitHub, `gh` authentication is
   lost, or the user interrupts; a `start` that cannot read the open issues begins no run and is reported
   as it is. `start` prints the list (issue numbers only) before anything runs and `report` prints one report
   at the end: closed, stopped with the reason, waiting for a person with every open question in full, and not
   run by class; an issue the run attempted is named once, with what happened to it and the questions it now
-  waits on, and the report says that
-  a verified issue or one stopped with existing work continues when it is named. `rest` with another
+  waits on. `rest` with another
   positional argument, `--in-chain` without an issue, an unknown `--` flag (also in a call that names an
   issue: it used to be ignored) and `--cwd` without a path are refused. **If you scheduled or looped a bare
   `/idd-all`** (`/schedule … /idd-all`, `/loop /idd-all`): that call used to stop at a question and now runs
@@ -40,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `idd-all-rest`.
 - `lib/intent.py` has `open_clarity_rows`, which returns every open clarity row of an issue body;
   `open_clarity_row` returns the first of them, so the close stage reads a body as before (#478).
+- `lib/intent.py` has `unanswered_confirmations`, which returns the skipped confirmations no Decision comment
+  answered; the close stage's intent check and rest mode read an issue through it (#478).
 
 ## [4.1.0] - 2026-11-15
 

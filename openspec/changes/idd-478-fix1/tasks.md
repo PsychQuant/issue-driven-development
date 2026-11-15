@@ -20,6 +20,12 @@
 - [x] 3.1 `docs/commands.md`（Syntax、不帶參數那一列、拒絕的形式）與 `docs/workflows.md` 的 P-cron-autopilot（改成指名 issue，另寫明不帶參數是 rest mode 與它的風險），再跑 `scripts/generate-path-map.py` 重新產生 `docs/wiki/Path-Map.md`。完成時：`scripts/tests/path-map-sync/test.sh` 通過。
 - [x] 3.2 `CHANGELOG.md` 的 `[Unreleased]`：寫入九類、`unreadable`、報告的改動，BREAKING 補一句提醒既有的排程與 `/loop /idd-all`；`README.md`、`MANIFESTO.md`、`references/` 裡提到八類或類別清單的地方跟著改。完成時：`grep` 找不到還寫八類的地方。
 
-## 4. 驗證
+## 4. 接手既有的工作（維護者 2026-11-15 的決定）
 
-- [ ] 4.1 跑 `scripts/tests/rest-queue/test.sh`、`scripts/tests/close-stage/test.sh` 與每一個讀到這次改動檔案的 suite，全部通過。完成時：`scripts/run-all-tests.sh` 沒有失敗的 suite。
+- [x] 4.1 測試先寫：`class precedence` 改成八類（拿掉 verified 那一欄），窮舉 512 種組合；Example `an unanswered default keeps an issue waiting`、`a record before and after a Decision`、`a verified issue is taken up again` 的測試各帶標記；`an attempted issue is not listed as not run` 改用 blocked 這一類；skill 文字的檢查改成八類與「照單張流程的處置表」。完成時：這些檢查在修正前的程式上失敗。
+- [x] 4.2 Requirement「Unanswered skipped confirmations are available from one implementation」：`lib/intent.py` 新增 `unanswered_confirmations` 與 `decided_at`，`check_intent` 改用它。完成時：`scripts/tests/close-stage/test.sh` 與 4.1 的測試通過。
+- [x] 4.3 Requirement「Start prints the list and resumes an unfinished run」與「idd-all runs rest mode as a loop over the single-issue pipeline」：`rest-queue.py` 拿掉 `verified` 這一類，`needs-person` 涵蓋沒回應的略過確認（只對 comment 原文含該字樣的 issue 多讀一次渲染），清單與 `start` 標出從 verified 接著做的 issue；`skills/idd-all/SKILL.md` 的判定表、第 3 步、「這一節不做的事」與 Step 0.5.1 改成接手；`CHANGELOG.md` 跟著改。完成時：`scripts/tests/rest-queue/test.sh` 全部通過。
+
+## 5. 驗證
+
+- [ ] 5.1 跑 `scripts/tests/rest-queue/test.sh`、`scripts/tests/close-stage/test.sh` 與每一個讀到這次改動檔案的 suite，全部通過。完成時：`scripts/run-all-tests.sh` 沒有失敗的 suite。

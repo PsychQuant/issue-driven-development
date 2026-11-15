@@ -7,6 +7,7 @@
 3. 總報告把這次 run 已經試過的 issue 再列進 `not run` 各類。
 4. 等人回答的問題整列被截成 300 字，Source 夠長時問題本身會被截掉。
 5. 第一次 `start` 失敗時還沒有狀態檔，skill 要求的 `stop` 與 `report` 都只會回結束碼 1，沒有走得完的失敗處理。
+6. rest 不重跑已經 verified 的 issue，也不接手已經有 PR 或 branch 的 issue，所以一張 issue 只被 rest 試一次，之後每次都跳過。這與 issue 寫的「每一張走到結案」「verify 沒過不算必須要人」不一致。維護者在 2026-11-15 決定在這張 issue 裡改成接手。
 
 ## Root Cause
 
@@ -21,12 +22,14 @@
 - 判定表多一類 `unreadable`，排在 `tracker` 之後：正文有字而讀不到渲染的 issue 不跑、列在清單與報告裡，命令不失敗。帳號的判定不讀渲染，所以沒有寫入權的帳號開的這種 issue 仍是 `outsider`。
 - 報告的 `not run` 各類扣掉這次 run 的 attempts；等人回答的問題整列印出；`verified` 與 `existing work:` 的 issue 寫明要指名 `/idd-all #N` 才會繼續。
 - skill：`start` 自己以 3 結束時，直接把原因告訴使用者就結束，不呼叫 `stop` 與 `report`。
+- 接手既有的工作：判定表拿掉 `verified` 這一類（剩八類），已經 verified 的 issue 是一般的 candidate，`start` 的清單標出它們；已經有 PR 或 branch 的 issue 照單張流程的處置表（自己的 `idd/N-*` branch 就接著做，別人的 PR 或已合併的 PR 不開始）。為了不重做一輪又停在同一個地方，還有沒回應的略過確認（無人值守時取的預設）的 issue 歸 `needs-person`：`lib/intent.py` 新增 `unanswered_confirmations`，close stage 與 rest 共用。
 
 同一輪一併修的小項不改 requirement：狀態寫不進去或沒預期的錯誤一律是一行原因與結束碼 3、`--reason ""` 視同沒有原因、狀態檔不能用時 `start` 明說、`--repo` 不接受 `.` 與 `..`、skill 文字（單引號與跳脫、不接手時的清理、`other` 的說明、`--target` 提示）、測試 fixture 加上標題、`docs/commands.md` 與 `docs/workflows.md`。
 
 ## Non-Goals
 
-- rest 接手已 verified 或已有 PR、branch 的 issue：等維護者決定，這一輪只在報告裡寫明要指名才會繼續。
+- 分辨一張 verified 的 issue 上次為什麼停下（CI、close stage 的其他閘門、`--review`）：除了略過確認之外都會再跑一輪 verify。
+- 替「別的 session 同時在跑同一張 issue」上鎖：push 不強推，後到的那一個會停下。
 - `.claude/.idd/state/` 沒有被 ignore 的目標 repo：單張流程的 unattended 標記有同一個前提，另開 issue 一起處理。
 - close stage 的 `check_issue_authors` 對讀不到的編輯者也是略過：另開 issue。
 - verify 的停止規則與輪數上限（#423）。
@@ -36,15 +39,18 @@
 - 正文編輯過、GitHub 沒有回編輯者的 issue 歸 `outsider`；從未編輯過的 issue 照舊。
 - 一張正文只有 HTML 註解的 issue 存在時，`list` 的結束碼是 0，那一張歸 `unreadable`（作者沒有寫入權時歸 `outsider`），其他 issue 照常排序。
 - 這次 run 試過的 issue 不出現在報告的 `not run` 各類。
+- 正文的 Phase 是 verified 的 issue 在 run order 裡，`start` 的清單標出它；有沒回應的略過確認的 issue 歸 `needs-person`，有 Decision comment 回應之後才是 candidate。
 - 超過 300 字的釐清列在報告裡完整出現。
 - skill 的 rest 一節寫明 `start` 失敗時不呼叫 `stop` 與 `report`。
 - `scripts/tests/rest-queue/test.sh` 全部通過，每個新的 Example 都有帶標記的測試，而且在修正前的程式上會失敗。
 
 ## Impact
 
-- Affected specs: `idd-all-rest`（修改四條 requirement）
+- Affected specs: `idd-all-rest`（修改六條 requirement，新增一條）
 - Affected code:
   - Modified: plugins/issue-driven-dev/scripts/rest-queue.py
+  - Modified: plugins/issue-driven-dev/scripts/lib/intent.py
+  - New: plugins/issue-driven-dev/scripts/tests/rest-queue/confirmations_check.py
   - Modified: plugins/issue-driven-dev/scripts/tests/rest-queue/test.sh
   - Modified: plugins/issue-driven-dev/scripts/tests/rest-queue/tables_check.py
   - Modified: plugins/issue-driven-dev/scripts/tests/rest-queue/scenario.py
