@@ -15,7 +15,7 @@
 # spec-example: spec-on-every-issue / whether the declared changes are archived at a commit
 # spec-example: spec-on-every-issue / what the link check reports
 # spec-example: spec-on-every-issue / markers in submodules
-# spec-example: spec-on-every-issue / top directory names
+# spec-example: spec-on-every-issue / a top level whose name ends in whitespace
 # spec-example: spec-on-every-issue / preflight by write access and Spectra state
 # spec-example: spec-on-every-issue / spec directory by .spectra.yaml
 # spec-example: spec-on-every-issue / choosing the Implementation Complete comment
@@ -983,7 +983,7 @@ pf_repo pf-sub no yes; mkdir -p "$TREE/deep/er"; OUT=$(PATH="$BIN_WITH" "$PY" "$
 assert_eq "preflight: run from a subdirectory, openspec/ is looked for at the top of the repository" ready "$(printf '%s' "$OUT" | field status)"
 
 # ── top directory names ─────────────────────────────────────────────────────
-echo "spec-change: top directory names (Example: top directory names)"
+echo "spec-change: top directory names (Example: a top level whose name ends in whitespace)"
 example_repo 'l-top-space ' || setup_failed "create trailing-space repository"
 main_marker || setup_failed "write top-directory marker"
 put openspec/changes/archive/2026-11-10-idd-42-example/proposal.md 'Archived change.' || setup_failed "write archived change"
