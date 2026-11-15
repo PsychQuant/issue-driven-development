@@ -14,7 +14,7 @@
 
 ## 4. 收尾
 
-- [ ] 4.1 [after: 3.2] 依 Implementation Contract 驗收：`bash plugins/issue-driven-dev/scripts/run-all-tests.sh` 與 `bash .claude/scripts/tests/spectra-archive-post-ic/test.sh` 結束碼都是 0；把 2.1 的判斷拿掉時只有第 55 列的檢查失敗；link 指向工作目錄內另一個 clone 時仍回 `ok`、指到頂層目錄之外時仍回 `error`；`python3 plugins/issue-driven-dev/scripts/spec-change.py links --base origin/main --cwd .` 的結果。驗證：驗收紀錄寫在這一項底下；封存之後的結果寫在 issue 的 Implementation Complete 留言。
+- [x] 4.1 [after: 3.2] 依 Implementation Contract 驗收：`bash plugins/issue-driven-dev/scripts/run-all-tests.sh` 與 `bash .claude/scripts/tests/spectra-archive-post-ic/test.sh` 結束碼都是 0；把 2.1 的判斷拿掉時只有第 55 列的檢查失敗；link 指向工作目錄內另一個 clone 時仍回 `ok`、指到頂層目錄之外時仍回 `error`；`python3 plugins/issue-driven-dev/scripts/spec-change.py links --base origin/main --cwd .` 的結果。驗證：驗收紀錄寫在這一項底下；封存之後的結果寫在 issue 的 Implementation Complete 留言。
   - 驗收紀錄。這個 change 的文件、規格差異、測試與程式都由同一個協調者撰寫，沒有實作者模型，也沒有獨立讀者；第六輪 verify 是第一次獨立審查。環境：macOS、git 2.55.0、Python 3.13.5。
   - 整套測試（`dd8d2b9`，封存之前）：`bash plugins/issue-driven-dev/scripts/run-all-tests.sh` 75 個 suite、0 個失敗、沒有逾時；`bash .claude/scripts/tests/spectra-archive-post-ic/test.sh` 141 項通過、0 項失敗。`bash plugins/issue-driven-dev/scripts/tests/spec-change/test.sh` 806 項通過、0 項失敗（第 55 列加了 7 項）。
   - 變異：在一份副本裡把 2.1 加的那個判斷拿掉，測試檔 802 項通過、4 項失敗，失敗的就是 1.1 記錄的那四項（第 55 列的 `status`、結束碼、原因、沒有在那個目錄執行 git）。
