@@ -1088,9 +1088,9 @@ GIT_CALL_LOG="$WORK/git-calls.log" REAL_GIT="$GIT" PATH="$WORK/gitlog-bin:$PATH"
 assert_grep "links: submodule row 59 — git searched at the recorded path" "$(basename "$REPO")/$BACK grep " "$(cat "$WORK/git-calls.log")"
 assert_grep "links: submodule row 59 — the commit searched there is the recorded one" "$EARLIER -- ." "$(cat "$WORK/git-calls.log")"
 
-# Rows 60 to 63 need two spellings of one directory: a path written in another letter case, on a volume that does
+# Rows 60 to 64 need two spellings of one directory: a path written in another letter case, on a volume that does
 # not distinguish letter case. A volume that does has no second spelling that an ordinary user can make, and the
-# four rows are not run there.
+# five rows are not run there.
 mkdir "$WORK/CaseProbe" || setup_failed "create the directory that probes letter case"
 if [ -d "$WORK/caseprobe" ]; then
   other_case() { # path — the same path with its last component in the other letter case
@@ -1175,9 +1175,39 @@ if [ -d "$WORK/caseprobe" ]; then
   submodule_reason 63 lnk/planted 'path leaves the repository'
   refute_grep "links: submodule row 63 — no git command ran in the planted directory" "lnk/planted" "$(cat "$WORK/git-calls.log")"
   assert_grep "links: submodule row 63 — git was asked for the two directories" "rev-parse --absolute-git-dir" "$(cat "$WORK/git-calls.log")"
+
+  # Row 64: the recorded path names the spec directory in another letter case, so the submodule's directory lies
+  # in the spec directory although its name is not under `openspec/`. It is not searched, and it is not one that
+  # could not be searched: the answer is the one of row 15.
+  example_repo l-sub-case-spec
+  RECORDED=$(git -C "$SUB" rev-parse HEAD) || setup_failed "read the commit of row 64"
+  record_gitlink OPENSPEC/vendor/sub "$RECORDED"
+  mkdir -p "$REPO/openspec/vendor" || setup_failed "row 64: create the directory under the spec directory"
+  git clone -q "$SUB" "$REPO/openspec/vendor/sub" || setup_failed "row 64: clone into the spec directory"
+  [ "$REPO/OPENSPEC/vendor/sub" -ef "$REPO/openspec/vendor/sub" ] || setup_failed "row 64: the recorded path must name the clone"
+  git -C "$REPO" ls-tree -r --name-only HEAD | grep -q '^OPENSPEC/vendor/sub$' || setup_failed "row 64: the tree must record the path in the other letter case"
+  git -C "$REPO/OPENSPEC/vendor/sub" grep -q -F -e 'spec-example: cap / alpha table' "$RECORDED" -- . || setup_failed "row 64: the recorded commit must hold the marker"
+  : > "$WORK/git-calls.log" || setup_failed "clear git call log for row 64"
+  GIT_CALL_LOG="$WORK/git-calls.log" REAL_GIT="$GIT" PATH="$WORK/gitlog-bin:$PATH" links_case "submodule row 64: recorded path names the spec directory in another letter case" missing 1 1
+  refute_grep "links: submodule row 64 — no git command ran in that directory" "vendor/sub" "$(cat "$WORK/git-calls.log")"
 else
-  echo "  ~ skipped: this volume distinguishes letter case, submodule rows 60 to 63 were not run"
+  echo "  ~ skipped: this volume distinguishes letter case, submodule rows 60 to 64 were not run"
 fi
+
+# Row 65: the submodule is checked out under the spec directory and its recorded path reaches it through a
+# symbolic link in the working tree, so its name is not under `openspec/`. Its directory lies in the spec
+# directory: it is not searched, and it is not one that could not be searched.
+example_repo l-sub-link-into-spec
+RECORDED=$(git -C "$SUB" rev-parse HEAD) || setup_failed "read the commit of row 65"
+# Record the path before placing the symlink: update-index rejects a path through one.
+record_gitlink lnk/sub "$RECORDED"
+mkdir -p "$REPO/openspec/vendor" || setup_failed "row 65: create the directory under the spec directory"
+git clone -q "$SUB" "$REPO/openspec/vendor/sub" || setup_failed "row 65: clone into the spec directory"
+ln -s openspec/vendor "$REPO/lnk" || setup_failed "row 65: link into the spec directory"
+git -C "$REPO/lnk/sub" grep -q -F -e 'spec-example: cap / alpha table' "$RECORDED" -- . || setup_failed "row 65: the recorded commit must hold the marker"
+: > "$WORK/git-calls.log" || setup_failed "clear git call log for row 65"
+GIT_CALL_LOG="$WORK/git-calls.log" REAL_GIT="$GIT" PATH="$WORK/gitlog-bin:$PATH" links_case "submodule row 65: link that leads into the spec directory" missing 1 1
+refute_grep "links: submodule row 65 — no git command ran in that directory" "lnk/sub" "$(cat "$WORK/git-calls.log")"
 
 # ── preflight ───────────────────────────────────────────────────────────────
 echo "spec-change: preflight (Example: preflight by write access and Spectra state)"

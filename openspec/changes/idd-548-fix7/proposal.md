@@ -11,6 +11,8 @@
 
 兩項 HIGH 的方向都是保守的：答案是 `error`，不會把沒有檢查的 Example 說成 `ok`。
 
+修這兩行會連帶改變另一種輸入的答案，所以一起處理：submodule 的目錄實際落在規格目錄裡、但樹裡記的路徑名稱不在 `openspec/` 底下。這種輸入有兩個形狀。一個是路徑經過一個指進規格目錄的 symbolic link，它從這條分支第一個 change 起就回 `ok`（4.1.0 回 `missing`）。另一個是路徑把規格目錄寫成另一種大小寫，它原本回 `error`，原因正是第 5 個條件比對名稱；第 5 個條件改對之後會變成 `ok`。Example 第 15 列說的是「mounted under `openspec/`」的 submodule 回 `missing`；這兩個形狀都是放在規格目錄裡的 submodule。
+
 維護者的決定（留言 6894347661）：改程式，再審一輪。
 
 ## Root Cause
@@ -31,14 +33,15 @@
   - 第 2 個條件寫明整個條件都比對目錄，並說「在頂層目錄底下」是什麼意思（往上走會遇到頂層目錄）；子句加上「除非它就是頂層目錄」。
   - 第 5 個條件寫明 git 回報的是同一個目錄，不論路徑怎麼拼。
   - 「submodule 的 git 目錄不在清單上」改成「不另外加進清單」，並說它正好是那兩個目錄之一或在其中之一底下時，第 2 個條件照寫的適用。
-- Example「markers in submodules」加四列（第 60 到 63 列）。這四列需要同一個目錄的兩種拼法，測試只在不分大小寫的磁碟上建得出來；在區分大小寫的磁碟上，測試印出一行說明並略過這四列。
+- 落在規格目錄裡的 submodule：程式在第 1、2 個條件通過之後，檢查往上走經過的目錄裡有沒有規格目錄（比對目錄）；有的話不搜尋，也不算搜尋不到，與路徑名稱在規格目錄底下時相同。條文在「Submodules」一段加三句。
+- Example「markers in submodules」加六列（第 60 到 65 列）。第 60 到 64 列需要同一個目錄的兩種拼法，測試只在不分大小寫的磁碟上建得出來；在區分大小寫的磁碟上，測試印出一行說明並略過這五列。第 65 列（link 指進規格目錄）在任何磁碟上都執行。
 - `spec-change.py` 檔頭的說明、函式的說明與 CHANGELOG 的 #548 條目，改成同樣的說法。
 
 ## Non-Goals
 
 - 不改主 repo 自己的搜尋，也不改 `archived`、`preflight`、`declared`、`ic`。
 - 不改「同一個目錄、同一個 commit 只搜尋一次」所用的鍵（仍是解析後的路徑字串）：同一個目錄經由兩種拼法被搜尋兩次時答案相同。記在 #559。
-- 不改規格目錄與 `.md` 的排除：條文寫明它們看的是樹裡記的名稱。量測結果與一個因此改變答案的輸入寫在 design「照名稱比對而這次不動的地方」。
+- 不改主 repo 自己的檔案的排除，也不改 `.md` 的排除：條文寫明它們看的是樹裡記的名稱。主 repo 的檔案記在把規格目錄寫成另一種大小寫的路徑時，從 4.1.0 起就回 `ok`；這牽涉沒有 submodule 的 repository 的答案，記在 #559。
 - 不處理 #556、#559 裡的其他項目，包括繼承的 `GIT_DIR`、`GIT_COMMON_DIR`，以及 git 答不出目錄時的原因文字。
 - 不排除 submodule 自己的 git 目錄，也不改「解析後等於頂層目錄的路徑照樣接受」。
 
@@ -46,6 +49,7 @@
 
 - 在不分大小寫的磁碟上，第 60、61 列的檢查在改程式之前的 commit 上失敗（`status` 是 `error`），之後通過。第 62 列改之前與之後都通過。第 63 列的答案改之前與之後相同，但改之前是字串比對拒絕的、沒有問 git 那兩個目錄，所以它「問過那兩個目錄」的檢查在改之前失敗、之後通過。
 - 逐一把程式的每一處修改改回去或改壞時，每一種都讓至少一列的檢查失敗。哪一種讓哪些列失敗以量到的為準，記在 tasks.md 的驗收紀錄；動手之前已知的一點是，第 60 列的輸入要第 2 個條件與第 5 個條件兩處都改了才回 `ok`，所以把其中任何一處改回去，第 60 列都會失敗。
+- 第 64、65 列的檢查在加上規格目錄的檢查之前的 commit 上失敗（`status` 是 `ok`），之後通過；第 65 列不需要不分大小寫的磁碟。
 - 第 1 到 59 列的答案不變。
 - `bash plugins/issue-driven-dev/scripts/tests/spec-change/test.sh` 全部通過；`bash plugins/issue-driven-dev/scripts/run-all-tests.sh` 結束碼 0。
 - `spec-change.py links` 從預設分支到這條分支的 HEAD 回 `ok`；`archived` 回 pass。
@@ -58,7 +62,7 @@
 
 ### Modified Capabilities
 
-- `spec-on-every-issue`: requirement「Added and modified requirements carry an executable check」的第 2、5 個條件與條件之後的一段改寫；Example「markers in submodules」加第 60 到 63 列。
+- `spec-on-every-issue`: requirement「Added and modified requirements carry an executable check」的第 2、5 個條件與條件之後的一段改寫，「Submodules」一段加三句；Example「markers in submodules」加第 60 到 65 列。
 
 ## Impact
 
