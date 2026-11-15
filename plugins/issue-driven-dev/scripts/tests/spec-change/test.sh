@@ -1022,9 +1022,10 @@ GIT_CALL_LOG="$WORK/git-calls.log" REAL_GIT="$GIT" PATH="$WORK/gitsilent-bin:$PA
 assert_grep "links: git names no common directory — the silent git was asked for it" "rev-parse --git-common-dir" "$(cat "$WORK/git-calls.log")"
 refute_grep "links: git names no common directory — no git command ran in the planted directory" "lnk/planted" "$(cat "$WORK/git-calls.log")"
 
-# Row 57: the list of condition 2 is closed, and the git directory of a submodule is not on it. The outer submodule
-# is a plain clone, so its `.git` is a directory; a link inside it leads into that directory, where a clone that
-# holds the marker was placed by hand. The inner path is searched.
+# Row 57: the list of condition 2 is closed, and no git directory of a submodule is added to it. The outer
+# submodule is a plain clone, so its `.git` is a directory, which is neither of the two nor under one of them; a
+# link inside the submodule leads into that directory, where a clone that holds the marker was placed by hand.
+# The inner path is searched.
 newrepo l-sub-own-gitdir-outer-source
 git -C "$REPO" update-index --add --cacheinfo "160000,$RECORDED,l/inner" || setup_failed "row 57: record the inner gitlink"
 git -C "$REPO" commit -q -m inner-gitlink || setup_failed "row 57: commit the inner gitlink"

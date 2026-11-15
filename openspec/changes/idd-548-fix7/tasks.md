@@ -9,7 +9,7 @@
 
 ## 3. 文字
 
-- [ ] 3.1 [after: 2.1] 依 design「條文的三句（第七輪第 3、4 列）」與 Implementation Contract：`plugins/issue-driven-dev/CHANGELOG.md` 的 #548 條目講第 2、5 個條件的那一句，改成新的說法。驗證：`git diff` 對 CHANGELOG 只動 `[Unreleased]` 裡 #548 那一條；文字不含任何特定專案的名稱或本機路徑；測試仍然全部通過。
+- [ ] 3.1 [after: 2.1] 依 design「條文的三句（第七輪第 3、4 列）」與 Implementation Contract：`plugins/issue-driven-dev/CHANGELOG.md` 的 #548 條目講第 2、5 個條件的那一句，與 `plugins/issue-driven-dev/scripts/tests/spec-change/test.sh` 第 57 列的註解，改成新的說法。驗證：`git diff` 對 CHANGELOG 只動 `[Unreleased]` 裡 #548 那一條；文字不含任何特定專案的名稱或本機路徑；測試仍然全部通過。
 
 ## 4. 收尾
 

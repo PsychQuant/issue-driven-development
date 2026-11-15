@@ -78,7 +78,7 @@ git 在 submodule 的目錄回報的頂層，與那個目錄，用 `os.path.same
 
 - `openspec/specs/spec-on-every-issue/spec.md`（由封存套用）：requirement「Added and modified requirements carry an executable check」的第 2、5 個條件換掉；「(6) its object store holds the recorded commit.」之後加兩句（比對的是目錄；檢查不到的目錄略過）；其後「The git directory of a submodule …」與「The top directory is not compared …」兩句換掉；Example「markers in submodules」在第 59 列之後多第 60 到 63 列。其他句子與列逐字不變。
 - `plugins/issue-driven-dev/scripts/spec-change.py`：新增 `directories_below_top()`、`leaves_repository()`、`same_directory()`；`under_git_directory()` 改成比對一份清單；`marker_files()` 裡第 2 個條件的兩個分支合成一個、第 5 個條件改用 `same_directory()`，不再計算 `real_top`；檔頭 `links` 的說明改寫。除此之外不改。
-- `plugins/issue-driven-dev/scripts/tests/spec-change/test.sh`：第 59 列之後新增第 60 到 63 列的 fixture 與檢查，以及偵測磁碟是否區分大小寫的一段。其他不動。
+- `plugins/issue-driven-dev/scripts/tests/spec-change/test.sh`：第 59 列之後新增第 60 到 63 列的 fixture 與檢查，以及偵測磁碟是否區分大小寫的一段；第 57 列的註解改成新的說法（不另外把 submodule 的 git 目錄加進清單）。其他不動。
 - `plugins/issue-driven-dev/CHANGELOG.md`：只動 `[Unreleased]` 裡 #548 那一條講這兩個條件的那一句。
 - 驗證：在不分大小寫的磁碟上，第 60、61 列的檢查與第 63 列「問過那兩個目錄」的檢查在改程式之前的 commit 上失敗、之後通過；第 62 列與第 63 列的其他檢查前後都通過；`tests/spec-change/test.sh` 全部通過；`run-all-tests.sh` 結束碼 0；`links --base origin/main` 回 `ok`；`archived` 回 pass。
 
