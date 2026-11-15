@@ -20,6 +20,8 @@ file) and exits with a fixed code. A usage error prints to stderr and exits 64.
       Searching submodules requires git 2.45 or later.
       A submodule can be searched only when checked out (its directory holds its own .git
       entry and is the top of its own working tree) and its object store holds that commit.
+      Its directory must lie in the main working tree: the main repository's own git directory
+      is no part of it, so git is not run in a directory there.
       A file that counts settles the Example only when the search of its submodule ran to its end;
       an object of the recorded commit that is absent or cannot be opened makes the submodule one
       that could not be searched unless such a file was found.
@@ -447,6 +449,33 @@ def submodule_lacks_objects(directory, rev):
     return p.returncode != 0 or len(answers) != len(ids) or any(a.endswith(b" missing") for a in answers)
 
 
+def main_git_directory(top, cache):
+    """Where git keeps the main repository. Asked once in a run, and only when a submodule's directory is examined."""
+    if "main_git_dir" not in cache:
+        cache["main_git_dir"] = one_line(os.fsdecode(git(top, "rev-parse", "--absolute-git-dir").stdout))
+    return cache["main_git_dir"]
+
+
+def under_git_directory(directory, real_top, git_dir):
+    """Is the directory the main repository's git directory, or under it?
+
+    directory is resolved and lies under real_top. Directories are compared, not names: a git directory made
+    apart can have any name, and on a volume that folds case a link can spell `.git` in another case."""
+    try:
+        wanted = os.stat(git_dir)
+    except OSError:
+        raise Fail("the git directory of the repository cannot be read")
+    current = directory
+    while len(current) > len(real_top):
+        try:
+            if os.path.samestat(os.stat(current), wanted):
+                return True
+        except OSError:
+            pass   # a component that is not there cannot be the git directory
+        current = os.path.dirname(current)
+    return False
+
+
 def marker_files(top, head, needle, sd, cache):
     """Tracked files at head, outside the spec directory and not .md, with a line on which needle is followed
     only by whitespace or a comment closer; also return submodules that could not be searched."""
@@ -462,6 +491,9 @@ def marker_files(top, head, needle, sd, cache):
                 if os.path.isabs(path) or any(p in ("", ".", "..") for p in path.split("/")):
                     reason = "path leaves the repository"
                 elif os.path.commonpath((real_top, os.path.realpath(directory))) != real_top:
+                    reason = "path leaves the repository"
+                elif under_git_directory(os.path.realpath(directory), real_top, main_git_directory(top, cache)):
+                    # Under the top directory and no part of the working tree: condition 2 does not hold.
                     reason = "path leaves the repository"
                 elif not os.path.isdir(directory) or os.path.islink(directory) or not os.path.lexists(os.path.join(directory, ".git")):
                     reason = "not checked out"

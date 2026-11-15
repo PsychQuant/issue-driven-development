@@ -5,7 +5,7 @@
 
 ## 2. 程式
 
-- [ ] 2.1 [after: 1.1] 依 design「git 目錄的位置問 git，用目錄的身分比，不比名稱」「只排除主 repo 自己的 git 目錄」「只在第一次要檢查 submodule 的目錄時問一次」與 Implementation Contract：`plugins/issue-driven-dev/scripts/spec-change.py` 的 `marker_files()` 在「解析後的目錄在頂層目錄內」之後多一個判斷，解析後的目錄是主 repo 的 git 目錄或在它底下時，原因是 path leaves the repository，不呼叫 `submodule_git()`。驗證：`bash plugins/issue-driven-dev/scripts/tests/spec-change/test.sh` 全部通過、0 項失敗；標記在主 repo 的 repo，git 呼叫的次數與修改前相同（第 22 列既有的檢查）。
+- [x] 2.1 [after: 1.1] 依 design「git 目錄的位置問 git，用目錄的身分比，不比名稱」「只排除主 repo 自己的 git 目錄」「只在第一次要檢查 submodule 的目錄時問一次」與 Implementation Contract：`plugins/issue-driven-dev/scripts/spec-change.py` 的 `marker_files()` 在「解析後的目錄在頂層目錄內」之後多一個判斷，解析後的目錄是主 repo 的 git 目錄或在它底下時，原因是 path leaves the repository，不呼叫 `submodule_git()`。驗證：`bash plugins/issue-driven-dev/scripts/tests/spec-change/test.sh` 全部通過、0 項失敗；標記在主 repo 的 repo，git 呼叫的次數與修改前相同（第 22 列既有的檢查）。
 
 ## 3. 第五輪第 2 到 5 列
 
