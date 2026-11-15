@@ -12,11 +12,6 @@ ISSUE is `number[:key=value[,key=value…]]`. Keys:
   comments=N                                                (total comment count the query reports)
   commenter=LOGIN                                           (one more comment, by that account)
   bot=NAME                                                  (one more comment, by a bot account)
-  default=open|answered|code                                (a trusted Diagnosis that records a skipped choice; with
-                                                             `answered` a Decision comment follows it; with `code` the
-                                                             literal stands only inside a code block). The comments are
-                                                             also written to comments-<n>.json as REST returns them,
-                                                             with created_at and GitHub's rendering.
 A diagnosis is the newest comment unless comments=N is given: then the query returns only the last 100
 comments, none of them a Diagnosis, and comments-<n>.json holds all N with the Diagnosis as the 5th.
 """
@@ -54,16 +49,6 @@ def node(spec, out_dir):
     if "diag" in opts:
         comments = [{"authorAssociation": "MEMBER", "body": DIAG[opts["diag"]], "author": user("me")}]
         total = 1
-    if "default" in opts:
-        names = {"open": ["comment-default-record"], "answered": ["comment-default-record", "comment-decision"],
-                 "code": ["comment-default-in-code"]}[opts["default"]]
-        full = [{"assoc": "MEMBER", "login": "me", "type": "User", "created_at": f"2026-11-0{i + 1}T00:00:00Z",
-                 "updated_at": f"2026-11-0{i + 1}T00:00:00Z", "body": fixture(name, "md"), "body_html": fixture(name, "html")}
-                for i, name in enumerate(names)]
-        with open(os.path.join(out_dir, f"comments-{n}.json"), "w", encoding="utf-8") as fh:
-            json.dump(full, fh)
-        comments = [{"authorAssociation": c["assoc"], "body": c["body"], "author": user(c["login"])} for c in full]
-        total = len(comments)
     if "commenter" in opts:
         comments.append({"authorAssociation": "NONE", "body": "an outside remark", "author": user(opts["commenter"])})
         total += 1

@@ -86,24 +86,26 @@ for k in range(3):
 # spec-example: idd-all-rest / class precedence
 YES, NO = True, False
 CLASS_ROWS = [
-    # author writes, editor writes, commenters write, tracker, readable, open question, gate group, meeting → class
-    (NO, YES, YES, NO, YES, NO, "actionable", NO, "outsider"),
-    (YES, NO, YES, NO, YES, NO, "actionable", NO, "outsider"),
-    (YES, YES, NO, NO, YES, NO, "actionable", NO, "outsider"),
-    (NO, YES, YES, YES, YES, YES, "parked", NO, "outsider"),
-    (NO, YES, YES, NO, NO, NO, "actionable", NO, "outsider"),
-    (YES, YES, YES, YES, YES, YES, "blocked", NO, "tracker"),
-    (YES, YES, YES, YES, NO, NO, "actionable", NO, "tracker"),
-    (YES, YES, YES, NO, NO, NO, "actionable", NO, "unreadable"),
-    (YES, YES, YES, NO, NO, NO, "blocked", YES, "unreadable"),
-    (YES, YES, YES, NO, YES, YES, "blocked", NO, "needs-person"),
-    (YES, YES, YES, NO, YES, NO, "parked", YES, "parked"),
-    (YES, YES, YES, NO, YES, NO, "blocked", YES, "blocked"),
-    (YES, YES, YES, NO, YES, NO, "actionable", YES, "meeting"),
-    (YES, YES, YES, NO, YES, NO, "actionable", NO, "candidate"),
-    (YES, YES, YES, NO, YES, NO, "undiagnosed", NO, "candidate"),
+    # author writes, editor writes, commenters write, tracker, readable, open clarity, gate group, meeting, verified → class
+    (NO, YES, YES, NO, YES, NO, "actionable", NO, NO, "outsider"),
+    (YES, NO, YES, NO, YES, NO, "actionable", NO, NO, "outsider"),
+    (YES, YES, NO, NO, YES, NO, "actionable", NO, NO, "outsider"),
+    (NO, YES, YES, YES, YES, YES, "parked", NO, YES, "outsider"),
+    (NO, YES, YES, NO, NO, NO, "actionable", NO, NO, "outsider"),
+    (YES, YES, YES, YES, YES, YES, "blocked", NO, NO, "tracker"),
+    (YES, YES, YES, YES, NO, NO, "actionable", NO, NO, "tracker"),
+    (YES, YES, YES, NO, NO, NO, "actionable", NO, NO, "unreadable"),
+    (YES, YES, YES, NO, NO, NO, "blocked", YES, NO, "unreadable"),
+    (YES, YES, YES, NO, YES, YES, "blocked", NO, YES, "needs-person"),
+    (YES, YES, YES, NO, YES, NO, "parked", YES, YES, "parked"),
+    (YES, YES, YES, NO, YES, NO, "blocked", NO, YES, "blocked"),
+    (YES, YES, YES, NO, YES, NO, "actionable", YES, YES, "meeting"),
+    (YES, YES, YES, NO, YES, NO, "actionable", NO, YES, "verified"),
+    (YES, YES, YES, NO, YES, NO, "actionable", NO, NO, "candidate"),
+    (YES, YES, YES, NO, YES, NO, "undiagnosed", NO, NO, "candidate"),
 ]
-KEYS = ("author_writes", "editor_writes", "commenters_write", "tracker", "readable", "open_question", "group", "meeting")
+KEYS = ("author_writes", "editor_writes", "commenters_write", "tracker", "readable", "open_clarity", "group", "meeting",
+        "verified")
 
 
 def classify(facts):
@@ -125,7 +127,7 @@ def class_oracle(f):
         return "tracker"
     if not f["readable"]:
         return "unreadable"
-    if f["open_question"]:
+    if f["open_clarity"]:
         return "needs-person"
     if f["group"] == "parked":
         return "parked"
@@ -133,16 +135,19 @@ def class_oracle(f):
         return "blocked"
     if f["meeting"]:
         return "meeting"
+    if f["verified"]:
+        return "verified"
     return "candidate"
 
 
-EXPECTED_CLASSES = ("outsider", "tracker", "unreadable", "needs-person", "parked", "blocked", "meeting", "candidate")
-check("the table lists the eight classes in order", EXPECTED_CLASSES, tuple(name for name, _ in rq.TABLE))
+EXPECTED_CLASSES = ("outsider", "tracker", "unreadable", "needs-person", "parked", "blocked", "meeting", "verified",
+                    "candidate")
+check("the table lists the nine classes in order", EXPECTED_CLASSES, tuple(name for name, _ in rq.TABLE))
 check("CLASSES matches the table", EXPECTED_CLASSES, tuple(rq.CLASSES))
 check("every class has a label", set(EXPECTED_CLASSES), set(rq.LABELS))
 combos = 0
 for values in itertools.product((YES, NO), (YES, NO), (YES, NO), (YES, NO), (YES, NO), (YES, NO),
-                                ("actionable", "parked", "blocked", "undiagnosed"), (YES, NO)):
+                                ("actionable", "parked", "blocked", "undiagnosed"), (YES, NO), (YES, NO)):
     facts = dict(zip(KEYS, values))
     combos += 1
     got = classify(facts)
@@ -152,9 +157,9 @@ for values in itertools.product((YES, NO), (YES, NO), (YES, NO), (YES, NO), (YES
     if got == "candidate":
         check(f"candidate has no hold-back {values}", True,
               facts["author_writes"] and facts["editor_writes"] and facts["commenters_write"]
-              and not facts["tracker"] and facts["readable"] and not facts["open_question"]
-              and facts["group"] in ("actionable", "undiagnosed") and not facts["meeting"])
-check("512 combinations were checked", 512, combos)
+              and not facts["tracker"] and facts["readable"] and not facts["open_clarity"]
+              and facts["group"] in ("actionable", "undiagnosed") and not facts["meeting"] and not facts["verified"])
+check("1024 combinations were checked", 1024, combos)
 
 for line in failures:
     print("FAIL " + line)

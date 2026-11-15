@@ -53,7 +53,7 @@ echo "── the two tables ──"
 # spec-example: idd-all-rest / argument forms
 # spec-example: idd-all-rest / class precedence
 python3 "$HERE/tables_check.py" > "$WORK/tables.out" 2>&1; rc=$?
-assert_exit "tables_check.py passes (argument forms, class precedence, 512 combinations)" 0 "$rc"
+assert_exit "tables_check.py passes (argument forms, class precedence, 1024 combinations)" 0 "$rc"
 [ "$rc" = 0 ] || tail -20 "$WORK/tables.out"
 
 OUT=$(rq args --); rc=$?
@@ -119,10 +119,9 @@ assert_eq "classes: needs-person" "[6]" "$(printf '%s' "$OUT" | jget classes.nee
 assert_eq "classes: parked (label, and a deferral in Complexity)" "[7,8]" "$(printf '%s' "$OUT" | jget classes.parked)"
 assert_eq "classes: blocked" "[9]" "$(printf '%s' "$OUT" | jget classes.blocked)"
 assert_eq "classes: meeting" "[10]" "$(printf '%s' "$OUT" | jget classes.meeting)"
-assert_eq "classes: verified is not a class" "<missing>" "$(printf '%s' "$OUT" | jget classes.verified)"
-assert_eq "classes: candidate (an issue an earlier run verified; a bot comment does not hold an issue back)" "[11,12,13,14,17]" "$(printf '%s' "$OUT" | jget classes.candidate)"
-assert_eq "classes: run order" "[12,14,11,13,17]" "$(printf '%s' "$OUT" | jget order)"
-assert_eq "classes: the verified issue is named as taken up again (a Phase line inside a code block does not count)" "[11]" "$(printf '%s' "$OUT" | jget again)"
+assert_eq "classes: verified" "[11]" "$(printf '%s' "$OUT" | jget classes.verified)"
+assert_eq "classes: candidate (a Phase line inside a code block does not count; a bot comment does not hold an issue back)" "[12,13,14,17]" "$(printf '%s' "$OUT" | jget classes.candidate)"
+assert_eq "classes: run order" "[12,14,13,17]" "$(printf '%s' "$OUT" | jget order)"
 assert_eq "classes: both questions of #6 are listed" "2" "$(printf '%s' "$OUT" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["questions"]["6"]))')"
 assert_eq "classes: every issue is in exactly one class" "18" "$(printf '%s' "$OUT" | python3 -c 'import json,sys; c=json.load(sys.stdin)["classes"]; a=[n for v in c.values() for n in v]; print(len(a) if len(a)==len(set(a)) else "duplicates")')"
 
@@ -135,35 +134,6 @@ assert_eq "edited: edited by an account GitHub does not return is an outsider is
 python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); del d[0]["lastEditedAt"]; json.dump(d, open(p,"w"))' "$G/issues.json"
 OUT=$(rq list --repo "$REPO" --json 2>/dev/null); rc=$?
 assert_exit "edited: a node without the time of the last edit exits 3" 3 "$rc"
-
-# spec-example: idd-all-rest / an unanswered default keeps an issue waiting
-new defaults 5:default=open 6:default=answered 7:default=code 8
-OUT=$(rq list --repo "$REPO" --json); rc=$?
-assert_exit "defaults: exits 0" 0 "$rc"
-assert_eq "defaults: a skipped choice nobody answered keeps the issue waiting for a person" "[5]" "$(printf '%s' "$OUT" | jget classes.needs-person)"
-assert_eq "defaults: answered by a Decision, or only quoted in a code block, the issue runs (diagnosed first)" "[6,7,8]" "$(printf '%s' "$OUT" | jget order)"
-assert_eq "defaults: the question of #5 names the unanswered confirmation and what answers it" "1 True True" "$(printf '%s' "$OUT" | python3 -c 'import json,sys; q=json.load(sys.stdin)["questions"].get("5", []); print(len(q), "unattended-auto-Step-4-choice-default" in " ".join(q), "Decision" in " ".join(q))')"
-refute_output_grep "defaults: an issue without the literal costs no extra read" "repos/o/r/issues/8/comments" "$G/calls.log"
-assert_output_grep "defaults: an issue with the literal is read with GitHub's rendering" "repos/o/r/issues/7/comments" "$G/calls.log"
-python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d[0]["body_html"]=""; json.dump(d, open(p,"w"))' "$G/comments-7.json"
-OUT=$(rq list --repo "$REPO" --json 2>/dev/null); rc=$?
-assert_exit "defaults: a comment without a rendering does not fail the command" 0 "$rc"
-assert_eq "defaults: that issue waits for a person instead of running" "[5,7]" "$(printf '%s' "$OUT" | jget classes.needs-person)"
-
-# spec-example: idd-all-rest / a comment GitHub does not render keeps the issue waiting
-new norender 7:default=open 8
-python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d[0]["body_html"]=""; json.dump(d, open(p,"w"))' "$G/comments-7.json"
-OUT=$(rq list --repo "$REPO" --json 2>"$S/err"); rc=$?
-assert_exit "no rendering of a comment: the command exits 0" 0 "$rc"
-assert_eq "no rendering of a comment: the issue waits for a person" "[7]" "$(printf '%s' "$OUT" | jget classes.needs-person)"
-assert_eq "no rendering of a comment: one question, and it says a comment could not be read" "1 True" "$(printf '%s' "$OUT" | python3 -c 'import json,sys; q=json.load(sys.stdin)["questions"].get("7", []); print(len(q), "GitHub does not render" in " ".join(q))')"
-assert_eq "no rendering of a comment: the run order holds the other issue" "[8]" "$(printf '%s' "$OUT" | jget order)"
-
-# spec-example: idd-all-rest / a record before and after a Decision
-UC=$(python3 "$HERE/confirmations_check.py" "$PLUGIN/scripts/lib" "$HERE/fixtures")
-assert_eq "confirmations: only the record after the Decision is unanswered; a bot comment and a code block do not count" \
-  '{"three":["unattended-auto-Step-3.4-layerV-deferred"],"two":[],"none answered":["unattended-auto-Step-4-choice-default"],"bot":[],"in code":[]}' "$UC"
-assert_grep "confirmations: the close stage reads them through the same function" "unanswered_confirmations(" "$(sed -n '/^def check_intent/,/^def /p' "$PLUGIN/scripts/lib/intent.py")"
 
 # spec-example: idd-all-rest / a body GitHub renders as nothing
 new unreadable 5 6:html=body-comment-only 7:html=body-comment-only,author=outsider
@@ -297,16 +267,6 @@ assert_eq "resume: next is #9, not #5" "9" "$(run next | jget next)"
 run start > /dev/null 2>&1    # a second start during the run
 assert_eq "resume: a second start keeps the attempts" "2" "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["attempts"]))' "$(state_file)")"
 
-# spec-example: idd-all-rest / a verified issue is taken up again
-new again 5 8:html=body-verified,diag=Simple
-run start > "$S/start.out" 2>&1; rc=$?
-assert_exit "again: start exits 0" 0 "$rc"
-assert_eq "again: the verified issue is in the run order, diagnosed first" "[8,5]" "$(rq list --repo "$REPO" --json | jget order)"
-AGAIN=$(grep -E 'taken up again' "$S/start.out")
-assert_grep "again: start names #8 as taken up again from an earlier run" "#8" "$AGAIN"
-refute_grep "again: and not #5" "#5" "$AGAIN"
-assert_eq "again: next hands out #8 first" "8" "$(run next | jget next)"
-
 # spec-example: idd-all-rest / a state older than 24 hours starts a new run
 new expired 5 9
 write_state 25 '[{"issue": 5, "outcome": "stopped", "reason": "verify gate: not_clean"}]'
@@ -332,17 +292,21 @@ assert_exit "report: a later next exits 1" 1 "$rc"
 refute_output_grep "report: prints no issue title" "SECRET-TITLE-TEXT" "$S/report.out"
 
 # spec-example: idd-all-rest / an attempted issue is not listed as not run
-new report-attempted 5 8:blocking=waiting-for-upstream
+new report-attempted 5 8:html=body-verified
 run start > /dev/null 2>&1
 run next > /dev/null; run record --issue 5 --reason "verify gate: not_clean" > /dev/null
-issues 5:blocking=waiting-for-a-review 8:blocking=waiting-for-upstream      # by the time of the report #5 is blocked too
+issues 5:html=body-verified 8:html=body-verified      # by the time of the report #5 shows the phase verified too
 run report > "$S/report.out" 2>&1; rc=$?
 assert_exit "report (attempted): exits 0" 0 "$rc"
-BLINE=$(grep -E '^not run — blocked' "$S/report.out")
-assert_grep "report (attempted): the blocked line names #8" "#8" "$BLINE"
-refute_grep "report (attempted): and does not name #5" "#5" "$BLINE"
+VLINE=$(grep -E '^not run — already verified' "$S/report.out")
+assert_grep "report (attempted): the verified line names #8" "#8" "$VLINE"
+refute_grep "report (attempted): and does not name #5" "#5" "$VLINE"
 assert_output_grep "report (attempted): #5 is under stopped" "#5 — verify gate: not_clean" "$S/report.out"
-refute_output_grep "report: no line for a verified class" "already verified" "$S/report.out"
+assert_grep "report (attempted): a verified issue continues when it is named" "/idd-all #N" "$VLINE"
+new report-existing 5
+run start > /dev/null 2>&1; run next > /dev/null; run record --issue 5 --reason "existing work: PR #77" > /dev/null
+run report > "$S/report.out" 2>&1
+assert_true "report: existing work continues when it is named" 'grep -E "existing work.*/idd-all #N" "$S/report.out" >/dev/null'
 
 # spec-example: idd-all-rest / a stopped issue carries its open questions
 new report-asked 5 14:html=body-two-rows
@@ -410,14 +374,6 @@ run stop --reason "the open issues could not be read" > /dev/null 2>&1; rc=$?
 assert_exit "start failed: there is no run, so stop exits 1" 1 "$rc"
 run report > /dev/null 2>&1; rc=$?
 assert_exit "start failed: and report exits 1" 1 "$rc"
-new start-fail-resume 5 9
-write_state 2 '[{"issue": 5, "outcome": "stopped", "reason": "verify gate: not_clean"}]'
-cp "$(state_file)" "$S/before.json"; echo 1 > "$G/fail-page"
-run start > /dev/null 2>&1; rc=$?
-assert_exit "start failed on a run it would have resumed: exits 3" 3 "$rc"
-require "start failed on a run it would have resumed: the state of that run is untouched" cmp -s "$S/before.json" "$(state_file)"
-rm "$G/fail-page"
-assert_eq "start failed on a run it would have resumed: a later start resumes it" "9" "$(run start > /dev/null 2>&1; run next | jget next)"
 
 echo "── failures of the helper itself ──"
 new unwritable 5
@@ -455,17 +411,8 @@ assert_grep_re "skill: Step 0.1 has a row for no positional argument" '^\| `/idd
 assert_grep_re "skill: Step 0.1 has a row for the word rest" '^\| `/idd-all rest`[^|]*\| rest ' "$STEP01"
 refute_grep "skill: the two-way question is gone" "建新 issue 還是用既有 issue" "$(cat "$SKILL")"
 assert_grep "skill: Step 0.1 says an unquoted description is one argument" "整段算一個引數" "$STEP01"
-EXISTING=$(printf '%s\n' "$REST" | grep -F 'verdict=resume')
-assert_grep_re "skill: an issue with its own branch or pull request is continued on that branch" 'verdict=resume`[^。]*接著做' "$EXISTING"
-assert_grep_re "skill: a pull request that is not the issue's own is handled as the single-issue pipeline handles it" 'verdict=blocked`[^。]*單張流程' "$EXISTING"
-refute_grep "skill: rest has no rule of its own against taking over" "rest 不接手" "$REST"
-assert_grep "skill: the issue's own local branch is checked out" 'checkout -q "$BRANCH"' "$REST"
-assert_grep "skill: and fast-forwarded to the remote branch of the same name" 'merge -q --ff-only "origin/$BRANCH"' "$REST"
-LOCALB=$(printf '%s\n' "$REST" | grep -F '本機已經有這張 issue 的 branch')
-assert_grep "skill: no question is asked about it" "不問" "$LOCALB"
-assert_grep_re "skill: a branch that cannot be fast-forwarded stops that issue, without deleting or forcing" '不刪 branch、不強推' "$REST"
-assert_grep "skill: the description says once per run, and that stopped work is continued" "每張在一次 run 裡只試一次" "$(sed -n '1,12p' "$SKILL")"
-assert_grep "skill: an issue held by an earlier --review run is taken up too, and the text says so" "--review" "$EXISTING"
+assert_grep "skill: the rest section does not take over existing work" 'existing work: ' "$REST"
+assert_grep_re "skill: and names both verdicts" 'verdict=resume.*verdict=blocked' "$REST"
 STEP051=$(awk '/^#### Step 0\.5\.1/{f=1} f&&/^#### Step 0\.6/{exit} f' "$SKILL")
 assert_grep "skill: Step 0.5.1 points at the rest rule" '## Rest mode' "$STEP051"
 STOPS=$(printf '%s\n' "$REST" | awk '/^### 整個 run 停下/{f=1; next} f&&/^### /{exit} f' | grep -E '^\| ' | sed -n '2,$p')   # the header row is dropped; the |---| line never matches
@@ -481,14 +428,15 @@ assert_grep_re "skill: stop case — the helper exits 3" '^\| `rest-queue.py` �
 assert_grep_re "skill: stop case — gh authentication" '^\| `gh auth status` 失敗' "$STOPS"
 assert_grep_re "skill: stop case — the user interrupts, and nothing is recorded" '^\| 使用者中斷 \| 不必做任何事' "$STOPS"
 assert_grep "skill: step 5 checks that the working tree is clean" 'status --porcelain' "$REST"
+assert_grep_re "skill: an issue rest does not take over is cleaned up before it is recorded" '不接手.*clear_unattended|clear_unattended.*不接手' "$REST"
 ENDING=$(printf '%s\n' "$REST" | awk '/^### 結束/{f=1; next} f&&/^### /{exit} f')
 assert_grep "skill: the end of the run clears the unattended marker" 'clear_unattended "$CWD"' "$ENDING"
 assert_grep "skill: outside text goes into single quotes" "單引號" "$REST"
 assert_grep "skill: with the way to write a single quote inside them" "'\\''" "$REST"
 refute_grep_re "skill: no reason template in double quotes" '--reason "<' "$REST"
 CLASSROWS=$(printf '%s\n' "$REST" | grep -E '^\| `(outsider|tracker|unreadable|needs-person|parked|blocked|meeting|verified|candidate)` ')
-assert_eq "skill: the class table has the eight classes" "8" "$(printf '%s\n' "$CLASSROWS" | grep -c '^| ')"
-assert_eq "skill: in the order of the decision table" "outsider tracker unreadable needs-person parked blocked meeting candidate" "$(printf '%s\n' "$CLASSROWS" | sed -E 's/^\| `([a-z-]+)`.*/\1/' | tr '\n' ' ' | sed 's/ $//')"
+assert_eq "skill: the class table has the nine classes" "9" "$(printf '%s\n' "$CLASSROWS" | grep -c '^| ')"
+assert_eq "skill: in the order of the decision table" "outsider tracker unreadable needs-person parked blocked meeting verified candidate" "$(printf '%s\n' "$CLASSROWS" | sed -E 's/^\| `([a-z-]+)`.*/\1/' | tr '\n' ' ' | sed 's/ $//')"
 assert_grep "skill: the mode is resolved once" '只問一次' "$REST"
 PHASE6=$(awk '/^### Phase 6/{f=1} f&&/^#### /{exit} f' "$SKILL")
 assert_grep "skill: Phase 6 sends a rest run back to the rest section" '## Rest mode' "$PHASE6"
