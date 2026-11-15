@@ -2,9 +2,10 @@
 name: idd-all
 description: |
   自動串連 IDD 完整 workflow（issue → diagnose → implement → verify），按 pr_policy 解析 path 與 interaction 兩軸：PR + unattended（自動化、/loop friendly）或 direct-commit + attended（HITL、user 在 keyboard，sub-skill AskUserQuestion 自然 fire）。verify 乾淨通過、意圖確認過、而且沒有別人插手時就 merge（PR mode）或 push（direct-commit mode，限預設 branch）並跑 /idd-close，最後回報做了什麼與怎麼復原；guardrail 沒過、有還沒回答的釐清問題或未回應的略過紀錄、帶 --review 或 --in-chain 時停在 verified（tier 是哪一個不影響）；type=meeting 停在 diagnosed 或 planning，不 verify、不開 PR。
+  不帶 issue（或只寫 rest）時跑 repo 裡剩下的全部 open issue：需要人的先跳過、每張只試一次、結束時一份總報告（#478）。
   Use when: 想一次跑完整條 IDD pipeline、信任 6-AI verify 會抓錯、希望交出去就不用管（verify 乾淨就跑到 closed，沒過就停在 verified 回報原因）；HITL 模式則用於 solo repo 想被 sub-skill 諮詢的情境。
   防止的失敗：手動跑 5 個 idd-* skill 太繁瑣、忘記中間某一步、orchestration 一致性。
-argument-hint: "[#NNN | 'issue description'] [--pr | --no-pr] [--review] [--cwd /path/to/clone] (empty = interactive; --no-pr 觸發 HITL direct-commit + attended; --review 停在 verified、不 merge 也不 close)"
+argument-hint: "[#NNN | 'issue description' | rest] [--pr | --no-pr] [--review] [--cwd /path/to/clone] (empty 或 rest = 跑剩下的全部 open issue; --no-pr 觸發 HITL direct-commit + attended; --review 停在 verified、不 merge 也不 close)"
 allowed-tools:
   - Bash(gh:*)
   - Bash(git:*)
@@ -65,6 +66,8 @@ allowed-tools:
 
 已知限制：repo 的 watcher 會收到「有新 PR」的一般通知，`pull_request` 觸發的 workflow 也可能自己指派或提到人，這兩種 `pr-check` 看不到。
 
+rest mode（`## Rest mode`，#478）沒有新的對外動作：每一張 issue 的動作各自照上面兩張表，各自過 `pr-check` 與 `close-stage.py run` 的閘門；前一張過了不代表下一張也過。
+
 ## 與其他 idd-* skills 的關係
 
 | Skill | 模式 | 用途 |
@@ -87,7 +90,102 @@ idd-all 不取代 atomic skills,而是包它們。每個 phase 仍透過 `Skill(
 3. 逐一（sequential）跑 `/idd-all #N`。`A_parallel_safe` issue **可選**用 `scripts/idd-worktree.sh create <N>` 隔離工作樹，讓你**事後**能把這些 branch 手動並行推進；serialize-class 不隔離也安全（反正 sequential）。#480 起，spec preflight 在 linked worktree 裡對每一張 issue 都停下（Spectra 在那裡會寫進主工作樹），所以在 #488（改用獨立 clone 隔離）之前不要用這個選項。
 4. 每張的終點與單張相同（#392）：verify 乾淨就 merge 並 close；停在 guardrail 的留在 verified；meeting 停在 diagnosed 或 planning。**PR mode** 的每一張結束後（不論有沒有 merge），先 `git -C "$CWD" checkout -q <default> && git -C "$CWD" pull --ff-only -q` 回到並更新預設 branch，再開始下一張，任一步失敗就停止整批並回報是哪一張、哪一步。**direct-commit** 的 batch 不切換 branch：每一張都留在使用者開始時的 branch（Phase 0.5 的契約）。
 
+不想自己列號碼時用下一節的 rest mode：它同樣依序跑，由程式挑選與排序。
+
 > **為什麼仍值得排序（即使 sequential）**：sequential 本身永遠安全，所以排序不是為了正確性，而是為了 (a) 把 cheap/E 與 read-first/D 先清掉、(b) 把同資源的 B/C 相鄰處理便於 review、(c) 替「日後手動並行」預先把 class-A 隔離好。真正的價值在 taxonomy 作為**並行安全契約**，而非這個 sequential 外圈本身。
+
+## Rest mode：不帶 issue 就跑剩下的全部（#478）
+
+`/idd-all` 沒有位置引數，或唯一的位置引數是 `rest`，就是把 repo 裡剩下的 open issue 逐張跑完。不提問。規格是 capability `idd-all-rest`。
+
+挑哪一張、照什麼順序、哪些試過了，都由 `scripts/rest-queue.py` 決定並記在 `$CWD/.claude/.idd/state/idd-all-rest.json`，不靠記憶：一次 run 會跨很多張 issue 與多次 context 壓縮。
+
+**哪些會跑**。每張 open issue 恰好屬於一類，由上往下先中者為準，只有最後一類會跑：
+
+| 類別 | 條件 |
+|---|---|
+| author | 開 issue 的帳號或正文最後編輯者沒有寫入權 |
+| tracker | 有 `north-star` 或 `epic` label |
+| needs-person | 正文有還沒回答的釐清問題 |
+| parked | actionability gate 判為 parked |
+| blocked | `### Blocking` 有內容 |
+| meeting | 最新受信任 Diagnosis 的 type 是 meeting |
+| verified | Current Status 的 Phase 是 verified：它已經停在那裡等人，要處理就指名 `/idd-all #N` |
+| candidate | 其餘。已經診斷過的先跑，再來是沒診斷的，各自依 issue 號由小到大 |
+
+第一類排在最前面，是因為指名 `#N` 時是人選了那一張，rest 沒有人選；close stage 的作者檢查只擋 merge，擋不到 implement、push 與開 PR。
+
+### 流程
+
+Step 0.2、0.3、0.35 只做一次，`$CWD`、`$GITHUB_REPO` 與旗標每一張沿用。
+
+1. 開始。把它印出的清單原樣給使用者看：
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" start --cwd "$CWD" --repo "$GITHUB_REPO"
+   ```
+
+   24 小時內有還沒結束的 run 時它會接續，試過的 issue 不會再跑。
+
+2. 取下一張：
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" next --cwd "$CWD" --repo "$GITHUB_REPO"
+   ```
+
+   | 印出的 JSON | 做什麼 |
+   |---|---|
+   | `{"next": N, "in_flight": false, …}` | 對 #N 做第 3 步 |
+   | `{"next": N, "in_flight": true}` | #N 交出之後還沒有記錄結果，通常是跑到一半遇到 context 壓縮。先看它做到哪裡（它的 run-state 檔、issue 的 phase、目前所在的 branch）：已經有 Phase 6 的結果就直接做第 4 步；否則從中斷的那個 phase 接著做完。不重頭跑，也不跳到別張 |
+   | `{"next": null, "done": true}` | 做「結束」一節 |
+   | `{"next": null, "stopped": "…"}` | 做「結束」一節 |
+
+3. 對 #N 跑單張流程：從 Step 0.4 到 Phase 6，行為與 `/idd-all #N` 加上這次呼叫的旗標完全相同，包含它自己的 Phase 6 報告與清理。這一張停下、abort、或被 gate 判為不可動，都只影響這一張。
+
+4. 記下這一張的結果。這一張的 Phase 6 報告有 `Stopped:` 時，把那一行填進 `--reason`（abort 時填 abort 的原因）；已經結案就不帶 `--reason`。結果是 closed 還是 stopped 由 helper 自己向 GitHub 讀，不在這裡判斷：
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" record --cwd "$CWD" --repo "$GITHUB_REPO" --issue "$N" --reason "<Stopped: 那一行>"
+   ```
+
+5. PR mode：照批次模式第 4 點回到並更新預設 branch（`git -C "$CWD" checkout -q <default> && git -C "$CWD" pull --ff-only -q`）。direct-commit 不切換 branch。然後回第 2 步。
+
+### 整個 run 停下
+
+封閉列舉，只有這四種，不得依性質相似類推第五種。前三種先記下原因，再做「結束」一節：
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" stop --cwd "$CWD" --repo "$GITHUB_REPO" --reason "<原因>"
+```
+
+| 情況 | 處理 |
+|---|---|
+| 第 5 步回不到預設 branch，或 `pull --ff-only` 失敗 | `stop`，原因寫在哪一張之後、哪一個指令失敗 |
+| `rest-queue.py` 的子命令以 3 結束（GitHub 或判定程式讀不到） | `stop`，原因照抄它印在 stderr 的那一行。`stop` 自己也失敗時直接做「結束」一節 |
+| `gh auth status` 失敗 | `stop` |
+| 使用者中斷 | 不必做任何事。狀態留著，24 小時內再下一次 `/idd-all` 會接續 |
+
+結束碼 1 與 2 不在表上：那是這裡呼叫錯了（沒有先 `start`、`record` 的 issue 號不是交出的那一張、引數寫錯），改正後重跑同一個子命令。
+
+單張的 verify 沒過、close stage 的閘門沒過、Phase 0.5 abort、existing-work 判為 blocked，也都不在表上：記在那一張，下一張照跑。
+
+### 結束
+
+印總報告，原樣轉給使用者，不改寫、不補推測：
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" report --cwd "$CWD" --repo "$GITHUB_REPO"
+```
+
+報告列出結案的、停下的與原因、等人回答的問題、沒跑的與類別；印完就刪掉 run 的狀態。等人回答的問題由人回答；回答後那一張下次 rest 就會被跑到。
+
+### 這一節不做的事
+
+- 不平行。與批次模式相同，依序跑。
+- 途中新開的 issue 不併進同一個 PR：重讀清單時接住，各自跑單張流程、各自一個 PR。chain 成為預設是 #457。
+- 不改單張流程的 verify 輪數上限（#423）。
+- 不重跑已經 verified 的 issue。
+- 不判斷一張舊 issue 的前提還成不成立。
 
 ## Configuration
 
@@ -113,9 +211,12 @@ TaskCreate(name="ci_gate", description="Phase 4.5 (#465): type=meeting → 跳�
 TaskCreate(name="open_pr", description="Phase 5: type=meeting → 跳過、不 push(#383); PR mode → git push + 已有自家 open PR 就沿用並更新 body,否則 gh pr create(body 照 verify gate 結果寫,含 Refs #N, 不含 Closes); direct-commit mode → 不開 PR,進 Phase 5c")
 TaskCreate(name="close_stage", description="Phase 5c (#392): scripts/close-stage.py run（同一個 process，run_in_background）：讀 Step 0.7 的 run-state，擋 --review/--in-chain/meeting/無寫入權限/run 開始後別人插手/意圖沒確認(tier 與沒人處理的 Proposed Corrections 不擋)；gate 綁 HEAD SHA、只認本帳號的報告、讀 GitHub 渲染後的 HTML，有 Rejected finding 就停；CI 等完再重查預設 branch 與 PR 上的人；PR → 本機 CI 閘門 idd-ci-gate.sh(0 過、10 才等遠端 check:pending 最多 15 分鐘、有 pull_request workflow 就等 check 出現;其他結束碼停)、auto-close trap、squash message，全過才 gh pr merge --squash --match-head-commit 並確認 MERGED；direct-commit → 在預設 branch、每個要推的 commit 都引用 #N 才 push。merged/pushed 才以 ORCHESTRATED BY /idd-all 呼叫 /idd-close --repo，最後確認 CLOSED 且有 closing summary")
 TaskCreate(name="report_and_stop", description="Phase 6: Done:/Undo: 回報(merge 或 push 的 commit、closed issue 與 closing summary、改動規模、follow-up、residue、distribution sync、verify reviewers); 停下時只列做到的步驟加 Stopped:; --review → awaiting human acceptance 措辭; type=meeting → meeting report(#383)")
+TaskCreate(name="rest_run", description="僅 rest mode（#478：沒有位置引數，或只有 rest）: rest-queue.py start 印清單 → 反覆 next、單張流程、record、回到預設 branch → 整個 run 停下時 stop → report 印總報告")
 ```
 
 完成每一步立即 `TaskUpdate → completed`。**靜默完成 = 違規**。
+
+rest mode 先建 `preflight` 與 `rest_run` 兩項；每交出一張 issue，再為那一張建 `resolve_mode` 到 `report_and_stop` 各項。
 
 `idd-all` 內部呼叫的 atomic skill 會各自建自己的 stage TaskList(那是它們的責任),idd-all 的 task list 只追 phase-level 進度。
 
@@ -125,9 +226,23 @@ TaskCreate(name="report_and_stop", description="Phase 6: Done:/Undo: 回報(merg
 
 #### Step 0.1: Argument Parsing
 
+先判定這次呼叫的形式（#478）。把收到的引數原樣放在 `--` 後面，每個引數用單引號包住；沒有引數就只寫 `--`：
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" args -- <ARGS>
+```
+
+| 印出的 `mode` | 做什麼 |
+|---|---|
+| `rest` | 不提問，照 `## Rest mode` 跑剩下的全部 open issue |
+| `refuse`（結束碼 1） | 把 `reason` 與下表告訴使用者，然後結束，不做其他事 |
+| `other` | 照下表，行為與以前相同 |
+
 | 輸入 | Mode | 行為 |
 |------|------|------|
-| `/idd-all` | interactive | AskUserQuestion: 建新 issue 還是用既有 issue? |
+| `/idd-all`（可以只帶旗標，例如 `/idd-all --review`） | rest | 跑剩下的全部 open issue，見 `## Rest mode` |
+| `/idd-all rest` | rest | 同上。`rest` 是保留字，只在它是唯一的位置引數時成立；標題就叫 rest 的新 issue 用 `/idd-issue` 開 |
+| `/idd-all rest #19`、`/idd-all --in-chain`（沒有 issue 號）、不認得的 `--` 旗標、`--cwd` 沒有給路徑 | refuse | 拒絕並說明原因。不帶 issue 會開始一個無人值守的 run，所以打錯的旗標不會被當成沒看到 |
 | `/idd-all #19` | from-issue | 直接從 #19 進 diagnose,mode 由 Phase 0.5 解析 |
 | `/idd-all #19 --pr` | from-issue, force PR | 強制 (PR, unattended) — v2.40.0 既有行為,/loop friendly |
 | `/idd-all #19 --no-pr` | from-issue, force HITL | 強制 (direct-commit, attended) — user 在 keyboard,sub-skill 自然問問題 |
@@ -262,7 +377,7 @@ fi
 
 - **from-issue mode**(`/idd-all #19`): 確認 issue #19 存在且 OPEN(`gh issue view 19 -R "$GITHUB_REPO" --json state -q .state`); 若 state=CLOSED → abort
 - **from-scratch mode**: skip 到 Phase 1 跑 idd-issue
-- **interactive mode**: AskUserQuestion 兩選一
+- **rest mode**: 不在這裡決定 issue 號；每一張由 `rest-queue.py next` 交出（`## Rest mode`），交出後照 from-issue mode 確認它存在且 OPEN
 - **開工前檢查（已有 PR／branch 在處理這張 issue？）**: 見 Step 0.5.1。它需要先知道 interaction 軸，所以排在 mode 解析之後、建 branch 之前
 
 #### Step 0.5: Resolve Mode + Conditional Branch Setup
@@ -1807,6 +1922,15 @@ Phase 0.5 印 `→ Path: PR (unattended) — pr_policy absent (v2.40.0 default)`
 後續 sub-skill 全部進 attended 模式(像 Trace 2),user 在 keyboard 自然推進。final report 標明 degrade 原因。
 
 無 abort、無 silent break — backward-compat 對 v2.40.0 既有 caller 維持。
+
+### 不帶 issue：跑剩下的全部（#478）
+
+```
+/idd-all
+/idd-all rest --review
+```
+
+`rest-queue.py start` 先印出清單（要跑的 issue 號與順序、等人回答的、blocked、已經 verified 的），接著每一張各自跑完整的單張流程；`--review` 讓每一張都停在 verified。結束時 `rest-queue.py report` 印一份總報告。中斷後 24 小時內再下一次會接續。
 
 ### 從零開始 — 文字描述
 

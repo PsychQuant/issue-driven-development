@@ -31,10 +31,10 @@
 ## 5. skill 與文件
 
 - [x] 5.1 skill 的文字檢查：依 requirement「idd-all runs rest mode as a loop over the single-issue pipeline」的 Example「the skill names the loop commands in order」，rest-queue suite 檢查 `skills/idd-all/SKILL.md` 的 Step 0.1 有 args 的呼叫與參數表的 rest 兩列，rest 一節依序有 start、next、record、stop、report 的呼叫，整個 run 的停止條件列的是三種加使用者中斷，帶標記 spec-example: idd-all-rest / the skill names the loop commands in order。驗證：改 SKILL.md 之前失敗。
-- [ ] 5.2 `skills/idd-all/SKILL.md`：Step 0.1 先跑 args 並依 mode 分流、參數表拿掉提問那一列並加上 rest 的列、Step 0.4 拿掉 interactive、新增 rest 一節（流程、整個 run 的停止條件、總報告由 report 印出）、範例加一段 rest、frontmatter 的 description 提到不帶參數的行為、權限一節說明 rest 的每一張各自過 close stage 的閘門。驗證：5.1 通過；skill-description-contract、merge-and-close-contract、spec-wrapper-contract、actionability-gate 這四個讀 SKILL.md 的 suite 照舊通過。
-- [ ] 5.3 [P] `references/parallel-orchestration.md` 與 `references/batch-and-cluster.md`：寫明 rest 是批次模式之外的另一種選法、同樣依序；後者把 idd-all 從沒有批次的那一欄移到有批次的一欄，selector 那一句改成「明列的 #N，或 idd-all 的 rest」。驗證：兩個檔不再有「idd-all 沒有批次」與「selector 只能是明列的 #N」這兩句；docs-catalog-sync 與 doc-sync-sweep suite 照舊通過。
-- [ ] 5.4 [P] plugin 的 README 與 MANIFESTO：README 的 idd-all 用法加上不帶參數與 rest；MANIFESTO 提到 #37 的那一段補上 #478 把不帶參數的入口做成 rest。驗證：兩個檔都提到 rest 與 #478；讀這兩個檔的既有 suite 照舊通過。
-- [ ] 5.5 CHANGELOG 的 Unreleased 加一條 Added 與一條 BREAKING 說明（#478）。驗證：已發布版本的條目沒有改動；版本號沒有改動。
+- [x] 5.2 `skills/idd-all/SKILL.md`：Step 0.1 先跑 args 並依 mode 分流、參數表拿掉提問那一列並加上 rest 的列、Step 0.4 拿掉 interactive、新增 rest 一節（流程、整個 run 的停止條件、總報告由 report 印出）、範例加一段 rest、frontmatter 的 description 提到不帶參數的行為、權限一節說明 rest 的每一張各自過 close stage 的閘門。驗證：5.1 通過；skill-description-contract、merge-and-close-contract、spec-wrapper-contract、actionability-gate 這四個讀 SKILL.md 的 suite 照舊通過。
+- [x] 5.3 [P] `references/parallel-orchestration.md` 與 `references/batch-and-cluster.md`：寫明 rest 是批次模式之外的另一種選法、同樣依序；後者把 idd-all 從沒有批次的那一欄移到有批次的一欄，selector 那一句改成「明列的 #N，或 idd-all 的 rest」。驗證：兩個檔不再有「idd-all 沒有批次」與「selector 只能是明列的 #N」這兩句；docs-catalog-sync 與 doc-sync-sweep suite 照舊通過。
+- [x] 5.4 [P] plugin 的 README 與 MANIFESTO：README 的 idd-all 用法加上不帶參數與 rest；MANIFESTO 提到 #37 的那一段補上 #478 把不帶參數的入口做成 rest。驗證：兩個檔都提到 rest 與 #478；讀這兩個檔的既有 suite 照舊通過。
+- [x] 5.5 CHANGELOG 的 Unreleased 加一條 Added 與一條 BREAKING 說明（#478）。驗證：已發布版本的條目沒有改動；版本號沒有改動。
 
 ## 6. 收尾
 

@@ -90,7 +90,7 @@ assert_eq "list: the query ran once per page" "2" "$(grep -c '"graphql"' "$G/cal
 new page-fail 1 2 3
 echo 2 > "$G/page-size"; echo 2 > "$G/fail-page"
 OUT=$(rq list --repo "$REPO" --json 2>"$S/err"); rc=$?
-assert_true "list: a failed page exits non-zero" "[ $rc -ne 0 ]"
+assert_exit "list: a failed page exits 3" 3 "$rc"
 assert_eq "list: a failed page prints no list" "" "$OUT"
 assert_true "list: a failed page says why on stderr" '[ -s "$S/err" ]'
 
@@ -126,13 +126,13 @@ assert_eq "classes: every issue is in exactly one class" "15" "$(printf '%s' "$O
 new perm500 1:author=flaky
 : > "$G/perm-flaky.500"
 OUT=$(rq list --repo "$REPO" --json 2>/dev/null); rc=$?
-assert_true "list: a permission read that fails (not 404) exits non-zero" "[ $rc -ne 0 ]"
+assert_exit "list: a permission read that fails (not 404) exits 3" 3 "$rc"
 assert_eq "list: and prints no list" "" "$OUT"
 
 new missing-field 1
 python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); del d[0]["bodyHTML"]; json.dump(d, open(p,"w"))' "$G/issues.json"
 OUT=$(rq list --repo "$REPO" --json 2>/dev/null); rc=$?
-assert_true "list: a node without an expected field exits non-zero" "[ $rc -ne 0 ]"
+assert_exit "list: a node without an expected field exits 3" 3 "$rc"
 assert_eq "list: and prints no list" "" "$OUT"
 
 echo "── open clarity rows ──"
@@ -274,12 +274,12 @@ rq next --cwd "$T" --repo "not a repo" > /dev/null 2>&1; assert_exit "usage: a m
 new symlink 5
 mkdir -p "$S/elsewhere"; ln -s "$S/elsewhere" "$T/.claude"
 run start > /dev/null 2>&1; rc=$?
-assert_true "start: refuses a state directory behind a symlink" "[ $rc -ne 0 ]"
+assert_exit "start: refuses a state directory behind a symlink (exit 3)" 3 "$rc"
 assert_true "start: and writes nothing through it" '[ -z "$(ls -A "$S/elsewhere")" ]'
 new start-fail 5
 echo 1 > "$G/fail-page"
 run start > /dev/null 2>&1; rc=$?
-assert_true "start: fails when the issues cannot be read" "[ $rc -ne 0 ]"
+assert_exit "start: exits 3 when the issues cannot be read" 3 "$rc"
 assert_file_absent "start: and leaves no run state" "$(state_file)"
 
 echo "── the skill ──"

@@ -101,7 +101,7 @@ start 與 report 的清單只印 issue 號。標題是 issue 作者寫的文字�
 - `/idd-all` 開始時先跑 args。結果是 rest 時不提問，進入 rest 流程；refuse 時印出原因與用法後結束，不做任何事；other 時照現有流程。
 - rest 流程：start（印出清單）→ 反覆 next、跑那一張的單張流程（Phase 0.4 起，旗標沿用這次呼叫的）、record、PR mode 下回到預設 branch 並 pull → next 回 done 或 stopped 後 report。
 - 單張停下、abort 或被 gate 判為不可動，都只記在那一張，下一張照跑。
-- 整個 run 停下只有四種：回不到預設 branch、rest-queue.py 以非 0 結束、gh 認證失效、使用者中斷。前三種由 skill 呼叫 stop 記下原因後 report；使用者中斷時狀態檔留著，24 小時內再跑會接續。
+- 整個 run 停下只有四種：回不到預設 branch、rest-queue.py 以結束碼 3 結束（GitHub 或判定程式讀不到）、gh 認證失效、使用者中斷。結束碼 1 與 2 是呼叫寫錯，改正後重跑，不算停下。前三種由 skill 呼叫 stop 記下原因後 report；使用者中斷時狀態檔留著，24 小時內再跑會接續。
 
 **介面**
 
@@ -117,7 +117,7 @@ start 與 report 的清單只印 issue 號。標題是 issue 作者寫的文字�
 
 **失敗時**
 
-- 讀取失敗、清單不完整、helper 誤用：結束碼非 0，stderr 一行原因，stdout 不印清單。
+- 讀取失敗、清單不完整、helper 誤用：結束碼 3，stderr 一行原因，stdout 不印清單。
 - 沒有 run 時呼叫 next、record、stop：結束碼 1。
 - 用法錯誤：結束碼 2。
 
