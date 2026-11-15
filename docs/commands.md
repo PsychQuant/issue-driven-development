@@ -22,7 +22,7 @@
 | [`/idd-close`](#idd-close) | Closing summary + close (refuses on unchecked items) | `#N [#N ...]` |
 | [`/idd-update`](#idd-update) | Sync issue body Current Status block | `#N [#N ...]` |
 | [`/idd-report`](#idd-report) | Aggregate progress report to GitHub Discussions | `#N ... \| source:file \| milestone:name [@tag ...]` |
-| [`/idd-all`](#idd-all) | Run the whole pipeline (issue → closed after a clean verify) | `[#N \| 'desc'] [--pr \| --no-pr] [--review] [--cwd ...]` |
+| [`/idd-all`](#idd-all) | Run the whole pipeline (issue → closed after a clean verify); with no issue, every remaining open issue | `[#N \| 'desc' \| rest] [--pr \| --no-pr] [--review] [--cwd ...]` |
 | [`/idd-all-chain`](#idd-all-chain) | `/idd-all` over root + auto-emergent spawned issues, 1 cluster PR | `[#N] [--cwd ...]` |
 | [`/idd-route-recommend`](#idd-route-recommend) | Recommend an agent for an issue (data-driven) | `<repo-path> <complexity> <scope-loc> --signals s1,...` |
 | [`/idd-route-stats`](#idd-route-stats) | Human-readable summary of `routing-stats.jsonl` | `<repo-path> [--decay-half-life-days N]` |
@@ -524,7 +524,7 @@
 
 **Goal**: Run the entire pipeline (issue → diagnose → plan-or-direct → implement → verify) in one call. Resolves a `(path, interaction)` tuple from `pr_policy` so the same `pr_policy:never` user gets `(direct-commit, attended)` (HITL — sub-skills are free to AskUserQuestion) and `pr_policy:always` user gets `(PR, unattended)` (automation-friendly; sub-skills suppress AskUserQuestion). When the verify gate reports clean and the merge guardrails pass, it merges the PR (PR mode) or pushes to the default branch (direct-commit mode) and runs `/idd-close` itself, then reports `Done:` and `Undo:` (#392). Otherwise it stops at `verified` and reports `Stopped:`.
 
-**Syntax**: `/idd-all [#N | 'issue description'] [--pr | --no-pr] [--review] [--cwd ...]`
+**Syntax**: `/idd-all [#N | 'issue description' | rest] [--pr | --no-pr] [--review] [--cwd ...]`
 
 **Options**:
 
@@ -532,7 +532,8 @@
 |---|---|
 | `#N` | Skip Phase 1 (issue already exists) and resume from diagnose |
 | `'description'` | Phase 1 creates the issue from this description first |
-| _(empty)_ | Interactive — prompt for what to work on |
+| _(empty)_, or the single word `rest` | **Rest mode (#478)**: no question is asked. Every remaining open issue is run, one at a time, each through the same pipeline; issues that wait for a person are skipped and listed in one report at the end. In PR mode this is unattended: every issue whose verify is clean is merged and closed, and there is no cap on the number of issues. Name an issue to run only that one |
+| `rest` with an issue or a description, `--in-chain` without an issue, an unknown `--` flag, `--cwd` without a path | Refused with the reason; nothing runs |
 | `--pr` | `(PR, unattended)` |
 | `--no-pr` | `(direct-commit, attended)` |
 | `--review` | Stop at `verified`: no merge, no close ("awaiting human acceptance" wording) |

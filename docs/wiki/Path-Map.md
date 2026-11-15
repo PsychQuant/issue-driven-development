@@ -141,7 +141,7 @@ flowchart TD
 | Path | 說明 |
 |------|------|
 | `P-loop-autopilot` | - **Use case**:autonomous 持續執行;適合 well-bounded simple issues |
-| `P-cron-autopilot` | - **Use case**:cron-scheduled ETL / housekeeping |
+| `P-cron-autopilot` | - **Use case**:cron-scheduled ETL / housekeeping — 排程跑**指名的** issue |
 | `P-cron-list-triage` | - **Use case**:每週一 9am 印出 open issue triage report |
 
 ---
