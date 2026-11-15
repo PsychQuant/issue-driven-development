@@ -104,20 +104,21 @@ idd-all 不取代 atomic skills,而是包它們。每個 phase 仍透過 `Skill(
 
 | 類別 | 條件 |
 |---|---|
-| outsider | 開 issue 的帳號、正文最後編輯者，或任何一則 comment 的作者沒有寫入權（留言的 bot 不算） |
-| tracker | 有 `north-star` 或 `epic` label |
-| needs-person | 正文有還沒回答的釐清問題 |
-| parked | actionability gate 判為 parked |
-| blocked | `### Blocking` 有內容 |
-| meeting | 最新受信任 Diagnosis 的 type 是 meeting |
-| verified | Current Status 的 Phase 是 verified：它已經停在那裡等人，要處理就指名 `/idd-all #N` |
-| candidate | 其餘。已經診斷過的先跑，再來是沒診斷的，各自依 issue 號由小到大 |
+| `outsider` | 開 issue 的帳號、正文最後編輯者，或任何一則 comment 的作者沒有寫入權，或這些帳號有一個讀不到（正文被編輯過而 GitHub 沒有回編輯者也算；留言的 bot 不算） |
+| `tracker` | 有 `north-star` 或 `epic` label |
+| `unreadable` | 正文有字，但 GitHub 沒有給出讀得到的渲染結果（例如正文只有一段 HTML 註解）。這一張不跑，其他張照常 |
+| `needs-person` | 正文有還沒回答的釐清問題 |
+| `parked` | actionability gate 判為 parked |
+| `blocked` | `### Blocking` 有內容 |
+| `meeting` | 最新受信任 Diagnosis 的 type 是 meeting |
+| `verified` | Current Status 的 Phase 是 verified：它已經停在那裡等人，要處理就指名 `/idd-all #N` |
+| `candidate` | 其餘。已經診斷過的先跑，再來是沒診斷的，各自依 issue 號由小到大 |
 
 第一類排在最前面，是因為指名 `#N` 時是人選了那一張，rest 沒有人選；close stage 對作者與留言者的檢查只擋 merge，擋不到 implement、push 與開 PR。
 
 ### 流程
 
-Step 0.2、0.3、0.35 只做一次，`$CWD`、`$GITHUB_REPO` 與旗標每一張沿用。Step 0.5 的 path 與 interaction 在第一張解析一次，之後每一張沿用同一個結果（`pr_policy: ask` 只問一次）；每一張仍各自做 Step 0.5 的工作樹檢查與建 branch。
+Step 0.2、0.3、0.35 只做一次，`$CWD`、`$GITHUB_REPO` 與旗標每一張沿用。Step 0.5 的 path 與 interaction 在第一張解析一次，之後每一張沿用同一個結果（`pr_policy: ask` 只問一次）；每一張仍各自做 Step 0.5 的 unattended 標記、工作樹檢查與建 branch。
 
 1. 開始。把它印出的清單原樣給使用者看：
 
@@ -142,28 +143,31 @@ Step 0.2、0.3、0.35 只做一次，`$CWD`、`$GITHUB_REPO` 與旗標每一張�
 
 3. 對 #N 跑單張流程：從 Step 0.4 到 Phase 6，行為與 `/idd-all #N` 加上這次呼叫的旗標相同，包含它自己的 Phase 6 報告與清理，只有下面一處不同。這一張停下、abort、或被 gate 判為不可動，都只影響這一張。
 
-   **已經有 PR 或 branch 的 issue，rest 不接手**：Step 0.5.1 印出 `verdict=resume` 或 `verdict=blocked` 時，不建 branch、不碰那個 PR，直接做第 4 步，`--reason` 寫 `existing work: ` 加上 Step 0.5.1 印出的那個 PR 或 branch。那是先前的 run 或別人已經開始、停在某處的工作，要接著做就指名 `/idd-all #N`。`verdict=unknown` 與 `clear` 照單張流程往下。
+   **已經有 PR 或 branch 的 issue，rest 不接手**：Step 0.5.1 印出 `verdict=resume` 或 `verdict=blocked` 時，不建 branch、不碰那個 PR：rest 不接手這一張，但這一張的 Step 0.5 已經寫了 unattended 標記，所以先 `clear_unattended "$CWD"`（這一張不會走到 Phase 6 的清理），再做第 4 步，`--reason` 寫 `existing work: ` 加上 Step 0.5.1 印出的那個 PR 或 branch。那是先前的 run 或別人已經開始、停在某處的工作，要接著做就指名 `/idd-all #N`。`verdict=unknown` 與 `clear` 照單張流程往下。
 
-4. 記下這一張的結果。這一張的 Phase 6 報告有 `Stopped:` 時，把那一行填進 `--reason`（abort 時填 abort 的原因）；已經結案就不帶 `--reason`。結果是 closed 還是 stopped 由 helper 自己向 GitHub 讀，不在這裡判斷：
+4. 記下這一張的結果。這一張的 Phase 6 報告有 `Stopped:` 時，把那一行填進 `--reason`（abort 時填 abort 的原因）；已經結案或沒有原因可填，就整個不帶 `--reason`。結果是 closed 還是 stopped 由 helper 自己向 GitHub 讀，不在這裡判斷：
 
    ```bash
-   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" record --cwd "$CWD" --repo "$GITHUB_REPO" --issue "$N" --reason "<Stopped: 那一行>"
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" record --cwd "$CWD" --repo "$GITHUB_REPO" --issue "$N" --reason '<Stopped: 那一行>'
    ```
+
+   `--reason` 的值是外來文字（branch 名稱、gh 的錯誤訊息都可能含 `$` 或反引號），本節每一處都用單引號包住，值本身含單引號時把那個單引號寫成 `'\''`。不要放進雙引號：shell 會先展開裡面的內容。
 
 5. PR mode：照批次模式第 4 點回到並更新預設 branch，並確認工作樹是乾淨的（`git -C "$CWD" checkout -q <default> && git -C "$CWD" pull --ff-only -q && [ -z "$(git -C "$CWD" status --porcelain)" ]`）。三步有任何一步不成立，就照下面「整個 run 停下」處理：上一張留下沒 commit 的改動時，後面每一張都會在 Phase 0.5 因為工作樹不乾淨而 abort。direct-commit 不切換 branch。然後回第 2 步。
 
 ### 整個 run 停下
 
-封閉列舉，只有這四種，不得依性質相似類推第五種。前三種先記下原因，再做「結束」一節：
+封閉列舉，只有這五種，不得依性質相似類推第六種。第二到第四種先記下原因，再做「結束」一節：
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" stop --cwd "$CWD" --repo "$GITHUB_REPO" --reason "<原因>"
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" stop --cwd "$CWD" --repo "$GITHUB_REPO" --reason '<原因>'
 ```
 
 | 情況 | 處理 |
 |---|---|
+| 第 1 步的 `start` 以 3 結束（清單讀不到，這次還沒有 run 開始） | 把它印在 stderr 的那一行告訴使用者就結束，不呼叫 `stop` 與 `report`：沒有 run 可以停，也沒有結果可以報。先前還沒結束的 run 的狀態留著，24 小時內再下一次 `/idd-all` 會接續 |
 | 第 5 步回不到預設 branch、`pull --ff-only` 失敗，或回去之後工作樹不乾淨 | `stop`，原因寫在哪一張之後、哪一步不成立 |
-| `rest-queue.py` 的子命令以 3 結束（GitHub 或判定程式讀不到） | `stop`，原因照抄它印在 stderr 的那一行。`stop` 自己也失敗時直接做「結束」一節 |
+| `rest-queue.py` 的子命令以 3 結束（run 已經開始；GitHub、判定程式讀不到，或狀態寫不進去） | `stop`，原因照抄它印在 stderr 的那一行。`stop` 自己也失敗時直接做「結束」一節 |
 | `gh auth status` 失敗 | `stop` |
 | 使用者中斷 | 不必做任何事。狀態留著，24 小時內再下一次 `/idd-all` 會接續 |
 
@@ -179,7 +183,13 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" stop --cwd "$CWD" --repo "
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" report --cwd "$CWD" --repo "$GITHUB_REPO"
 ```
 
-報告列出結案的、停下的與原因、等人回答的問題、沒跑的與類別；印完就刪掉 run 的狀態。等人回答的問題由人回答；回答後那一張下次 rest 就會被跑到。
+報告列出結案的、停下的與原因、等人回答的問題（整列，不截斷）、沒跑的與類別；這次 run 試過的 issue 只出現在結案或停下那兩段。已經 verified 的與停在 `existing work` 的會註明要指名 `/idd-all #N` 才會繼續。印完就刪掉 run 的狀態。等人回答的問題由人回答；回答後那一張下次 rest 就會被跑到。
+
+報告印完之後清掉 unattended 標記。單張流程的 Phase 6 本來會清，但 run 在兩張之間停下、或最後一張是 rest 不接手的 issue 時可能還留著，留著會讓這個工作樹之後的 attended session 被當成 unattended：
+
+```bash
+. "${CLAUDE_PLUGIN_ROOT}/scripts/lib/unattended-state.sh" && clear_unattended "$CWD"
+```
 
 ### 這一節不做的事
 
@@ -228,7 +238,7 @@ rest mode 先建 `preflight` 與 `rest_run` 兩項；每交出一張 issue，再
 
 #### Step 0.1: Argument Parsing
 
-先判定這次呼叫的形式（#478）。把收到的引數放在 `--` 後面，每個引數用單引號包住；沒有引數就只寫 `--`。切法：`#N`、旗標（`--cwd` 與它的路徑是兩個）、單獨的 `rest`、檔案路徑各是一個引數；使用者用引號包住的一段，或一段沒有引號的描述文字，整段算一個引數：
+先判定這次呼叫的形式（#478）。把收到的引數放在 `--` 後面，每個引數用單引號包住（引數本身含單引號時把它寫成 `'\''`，例如描述文字裡的 `don't`）；沒有引數就只寫 `--`。切法：`#N`、旗標（`--cwd` 與它的路徑是兩個）、單獨的 `rest`、檔案路徑各是一個引數；使用者用引號包住的一段，或一段沒有引號的描述文字，整段算一個引數：
 
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" args -- <ARGS>
@@ -238,7 +248,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" args -- <ARGS>
 |---|---|
 | `rest` | 不提問，照 `## Rest mode` 跑剩下的全部 open issue |
 | `refuse`（結束碼 1） | 把 `reason` 與下表告訴使用者，然後結束，不做其他事 |
-| `other` | 照下表，行為與以前相同 |
+| `other` | 照下表。指名 issue 的呼叫照舊；唯一的差別是不認得的 `--` 旗標現在會被拒絕（上一列），以前是被忽略 |
 
 | 輸入 | Mode | 行為 |
 |------|------|------|
@@ -312,7 +322,7 @@ GITHUB_REPO=$(git -C "$CWD" remote get-url origin 2>/dev/null \
 if [[ ! "$GITHUB_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
   abort "Could not derive owner/repo shape from origin URL of $CWD.
    Got: '$GITHUB_REPO'
-   Pass --target owner/repo or check 'git -C $CWD remote get-url origin'."
+   Check 'git -C $CWD remote get-url origin', or pass --cwd <path to a clone whose origin is the GitHub repository>."
 fi
 
 # 4. Walked-up CONFIG_PATH discovery(從 $CWD 往上找 IDD config;新路徑優先,#195)

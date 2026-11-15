@@ -24,11 +24,13 @@ The judgements are not made here: open clarity rows come from lib/intent.py, the
 Diagnosis type from lib/actionability.sh, write access and the trusted Diagnosis from lib/ghread.py.
 
 The open issues are read completely or not at all: one failed page, one missing field or one helper
-that reports misuse ends the command without a list.
+that reports misuse ends the command without a list. One issue whose body GitHub does not render is not
+such a failure: it gets the class unreadable and the others are classified as usual.
 
 Run state: <cwd>/.claude/.idd/state/idd-all-rest.json.
 
-Exit: 0 done · 1 refused (args says refuse; no run; not the issue in flight) · 2 usage · 3 GitHub or a helper could not be read
+Exit: 0 done · 1 refused (args says refuse; no run; not the issue in flight) · 2 usage · 3 GitHub or a helper could not be
+read, the run state could not be written, or a failure nobody planned for
 """
 
 import json
@@ -60,6 +62,7 @@ GROUPS = ("actionable", "parked", "blocked", "undiagnosed")
 TABLE = (
     ("outsider", lambda f: not (f["author_writes"] and f["editor_writes"] and f["commenters_write"])),
     ("tracker", lambda f: f["tracker"]),
+    ("unreadable", lambda f: not f["readable"]),
     ("needs-person", lambda f: f["open_clarity"]),
     ("parked", lambda f: f["group"] == "parked"),
     ("blocked", lambda f: f["group"] == "blocked"),
@@ -73,18 +76,23 @@ LABELS = {
     "needs-person": "waiting for a person",
     "blocked": "blocked",
     "verified": "already verified",
+    "unreadable": "the body has text but GitHub returned no rendering of it",
     "parked": "parked",
     "meeting": "meeting",
     "tracker": "tracker",
     "outsider": "holds text from an account without write access (author, last editor or a commenter)",
 }
+NOT_RUN = ("blocked", "verified", "unreadable", "parked", "meeting", "tracker", "outsider")   # the order they are listed in
+# What the report adds to a class whose issues go on only when a person names them.
+REPORT_NOTES = {"verified": ", continues when it is named (/idd-all #N)"}
+EXISTING_WORK = "existing work:"   # how idd-all starts the reason of an issue it did not take over
 
 
 # ── the two tables ─────────────────────────────────────────────────────────
 
 def classify(facts):
-    """The class of an issue, from: author_writes, editor_writes, commenters_write, tracker, open_clarity, group,
-    meeting, verified."""
+    """The class of an issue, from: author_writes, editor_writes, commenters_write, tracker, readable, open_clarity,
+    group, meeting, verified."""
     for name, test in TABLE:
         if test(facts):
             return name
@@ -125,7 +133,7 @@ def classify_args(argv):
 
 QUERY = ("query($o:String!,$r:String!,$c:String){repository(owner:$o,name:$r){"
          "issues(states:OPEN,first:%d,after:$c,orderBy:{field:CREATED_AT,direction:ASC}){"
-         "pageInfo{hasNextPage endCursor} nodes{number author{login} editor{login} "
+         "pageInfo{hasNextPage endCursor} nodes{number author{login} editor{login} lastEditedAt "
          "labels(first:100){totalCount nodes{name}} body bodyHTML "
          "comments(last:100){totalCount nodes{authorAssociation body author{login __typename}}}}}}}" % PAGE)
 
@@ -139,6 +147,7 @@ def checked(node):
     try:
         ok = (isinstance(node["number"], int) and not isinstance(node["number"], bool)
               and all(node[k] is None or isinstance(node[k]["login"], str) for k in ("author", "editor"))
+              and (node["lastEditedAt"] is None or isinstance(node["lastEditedAt"], str))
               and isinstance(node["body"], str) and isinstance(node["bodyHTML"], str)
               and isinstance(node["labels"]["totalCount"], int)
               and all(isinstance(l["name"], str) for l in node["labels"]["nodes"])
@@ -292,24 +301,30 @@ def read_classes(repo):
     out = []
     for node in nodes:
         number = node["number"]
-        try:
-            root = html_root(node["bodyHTML"], node["body"])
-            rows = intent.open_clarity_rows({"body_html": node["bodyHTML"], "body": node["body"]})
-        except Stop:
-            raise Stop(f"could not read GitHub's rendering of issue #{number}")
         group, dtype = groups[number]
         author = (node["author"] or {}).get("login")
+        # GitHub returns no editor both for a body nobody edited and for one edited by an account it cannot
+        # return; only the time of the last edit tells them apart. Edited by an unknown account = not trusted.
+        edited = node["lastEditedAt"] is not None or node["editor"] is not None
         facts = {
             "author_writes": writes(repo, author),
-            "editor_writes": node["editor"] is None or writes(repo, node["editor"]["login"]),
+            "editor_writes": not edited or writes(repo, (node["editor"] or {}).get("login")),
             # bots are exempt, as in the close stage: a repository admin installed them
             "commenters_write": all(c.get("type") == "Bot" or writes(repo, c.get("login")) for c in comments[number]),
             "tracker": any(l["name"].lower() in TRACKER_LABELS for l in node["labels"]["nodes"]),
-            "open_clarity": bool(rows),
             "group": group,
             "meeting": dtype == "meeting",
-            "verified": phase_of(root) == "verified",
         }
+        # The accounts are judged above without the rendering. A body GitHub does not render (text, but an
+        # empty rendering: one HTML comment is enough) is one issue this run cannot read, not a failed read
+        # of the repository: anyone who can open an issue could otherwise stop every run.
+        try:
+            root = html_root(node["bodyHTML"], node["body"])
+            rows = intent.open_clarity_rows({"body_html": node["bodyHTML"], "body": node["body"]})
+            phase, readable = phase_of(root), True
+        except Stop:
+            rows, phase, readable = [], "", False
+        facts.update(readable=readable, open_clarity=bool(rows), verified=phase == "verified")
         out.append({"number": number, "class": classify(facts), "group": group, "questions": rows})
     return out
 
@@ -321,7 +336,7 @@ def listing(repo):
     diagnosed = sorted(i["number"] for i in candidates if i["group"] == "actionable")
     others = sorted(i["number"] for i in candidates if i["group"] != "actionable")
     return {"repo": repo, "open": len(issues), "classes": classes, "order": diagnosed + others, "diagnosed": diagnosed,
-            "questions": {str(i["number"]): [one_line(q, REASON_MAX) for q in i["questions"]]
+            "questions": {str(i["number"]): [one_line(q) for q in i["questions"]]   # the whole row: the question is its last part
                           for i in issues if i["class"] == "needs-person"}}
 
 
@@ -346,36 +361,50 @@ def state_path(cwd):
     return path
 
 
-def load_state(cwd, repo=None):
-    """The run state of this working tree, or None when there is none this helper can use."""
+def read_state(cwd, repo=None):
+    """(state, problem). The run state of this working tree; or None, with the reason when a state file is
+    there and this helper cannot use it ('' when there is no file)."""
     path = state_path(cwd)
     try:
         with open(path, encoding="utf-8") as fh:
-            st = json.load(fh)
-    except (OSError, ValueError):
-        return None
+            raw = fh.read()
+    except (FileNotFoundError, NotADirectoryError):
+        return None, ""
+    except (OSError, ValueError) as exc:
+        return None, f"it cannot be read ({type(exc).__name__})"
     try:
-        ok = (st["version"] == 1 and isinstance(st["repo"], str) and (repo is None or st["repo"] == repo)
+        st = json.loads(raw)
+        ok = (st["version"] == 1 and isinstance(st["repo"], str)
               and isinstance(st["started_at"], str) and isinstance(st["updated_at"], str)
               and isinstance(st["attempts"], list)
               and all(isinstance(a["issue"], int) and a["outcome"] in (None, "closed", "stopped") for a in st["attempts"])
               and (st["stop"] is None or isinstance(st["stop"]["reason"], str)))
-    except (KeyError, TypeError):
+    except (ValueError, KeyError, TypeError):
         ok = False
-    return st if ok else None
+    if not ok:
+        return None, "it is not a run state this helper can read"
+    if repo is not None and st["repo"] != repo:
+        return None, f"it belongs to a run for {one_line(st['repo'], 80)}"
+    return st, ""
+
+
+def load_state(cwd, repo=None):
+    """The run state of this working tree, or None when there is none this helper can use."""
+    return read_state(cwd, repo)[0]
 
 
 def save_state(cwd, st):
     path = state_path(cwd)
-    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
     st["updated_at"] = iso(now())
-    fd, tmp = tempfile.mkstemp(prefix=STATE_NAME + ".", dir=os.path.dirname(path))
+    tmp = None
     try:
+        os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=STATE_NAME + ".", dir=os.path.dirname(path))
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(st, fh)
         os.replace(tmp, path)
     except OSError as exc:
-        if os.path.exists(tmp):
+        if tmp and os.path.exists(tmp):
             os.unlink(tmp)
         raise Stop(f"could not write the run state: {exc.strerror or exc}")
 
@@ -386,9 +415,10 @@ def in_flight(st):
 
 # ── output ─────────────────────────────────────────────────────────────────
 
-def one_line(text, limit):
+def one_line(text, limit=None):
+    """The text on one line, without control characters; cut to `limit` characters when one is given."""
     text = " ".join("".join(ch if ch.isprintable() else " " for ch in str(text)).split())
-    return text if len(text) <= limit else text[:limit - 1] + "…"
+    return text if limit is None or len(text) <= limit else text[:limit - 1] + "…"
 
 
 def nums(numbers):
@@ -418,12 +448,20 @@ def list_lines(lst, attempted=()):
              f"  diagnosed {diagnosed}, not diagnosed {len(todo) - diagnosed}"]
     if attempted:
         lines.append(f"already attempted in this run ({len(attempted)}): {nums(sorted(attempted))}")
-    for name in ("needs-person", "blocked", "verified", "parked", "meeting", "tracker", "outsider"):
+    for name in ("needs-person",) + NOT_RUN:
         lines.append(f"{LABELS[name]} ({len(lst['classes'][name])}): {nums(lst['classes'][name])}")
     return lines
 
 
 # ── commands ───────────────────────────────────────────────────────────────
+
+EMPTY_OK = {"--reason"}   # an empty reason reads as none given; every other value must be there
+
+
+def repo_ok(repo):
+    """owner/name, each part of the characters GitHub allows and neither `.` nor `..` (the value goes into API paths)."""
+    return bool(REPO_RE.match(repo)) and all(part not in (".", "..") for part in repo.split("/"))
+
 
 def parse(argv, valued, switches=()):
     """{flag: value} for the flags in `valued`, True for those in `switches`; None on a malformed command line."""
@@ -433,7 +471,7 @@ def parse(argv, valued, switches=()):
         if flag in switches and flag not in out:
             out[flag] = True
             i += 1
-        elif flag in valued and flag not in out and i + 1 < len(argv) and argv[i + 1] != "":
+        elif flag in valued and flag not in out and i + 1 < len(argv) and (argv[i + 1] != "" or flag in EMPTY_OK):
             out[flag] = argv[i + 1]
             i += 2
         else:
@@ -447,7 +485,7 @@ def common(argv, valued, need, switches=()):
         return None
     if "--cwd" in a and not os.path.isdir(a["--cwd"]):
         return None
-    if "--repo" in a and not REPO_RE.match(a["--repo"]):
+    if "--repo" in a and not repo_ok(a["--repo"]):
         return None
     if "--issue" in a and not re.match(r"^[0-9]{1,9}$", a["--issue"]):
         return None
@@ -475,7 +513,7 @@ def cmd_start(argv):
     if a is None:
         return usage("start --cwd C --repo O/R")
     cwd, repo = a["--cwd"], a["--repo"]
-    st = load_state(cwd, repo)
+    st, problem = read_state(cwd, repo)
     resumed = st is not None and now() - ts(st["updated_at"]) < STATE_TTL
     lst = listing(repo)   # before anything is written: a failed read leaves no run behind
     if not resumed:
@@ -486,6 +524,8 @@ def cmd_start(argv):
     head += (f"resumed (started {st['started_at']}, {len(attempted)} attempt(s) so far)" if resumed
              else f"new (started {st['started_at']})")
     print(head)
+    if problem:   # said, not silent: the attempts of that state are not carried over
+        print(f"a run state was found in this working tree but cannot be used ({problem}) — this is a new run, and it replaces that file")
     if st["stop"]:
         print(f"this run stopped earlier: {st['stop']['reason']} — next hands out nothing; call report to end it")
     flight = in_flight(st)
@@ -573,6 +613,8 @@ def cmd_report(argv):
            f"closed ({len(closed)}): {nums(x['issue'] for x in closed)}",
            f"stopped ({len(stopped)}):" + ("" if stopped else " -")]
     out += [f"  #{x['issue']} — {x['reason']}" for x in stopped]
+    if any(x["reason"].startswith(EXISTING_WORK) for x in stopped):
+        out.append("  an issue stopped with existing work continues when it is named (/idd-all #N)")
     if flight:
         out.append(f"handed out, no result recorded ({len(flight)}): {nums(x['issue'] for x in flight)}")
     if lst is None:
@@ -583,9 +625,10 @@ def cmd_report(argv):
         for n in waiting:
             out.append(f"  #{n}")
             out += [f"    - {q}" for q in lst["questions"].get(str(n), [])]
-        for name in ("blocked", "verified", "parked", "meeting", "tracker", "outsider"):
-            out.append(f"not run — {LABELS[name]} ({len(lst['classes'][name])}): {nums(lst['classes'][name])}")
-        attempted = {x["issue"] for x in st["attempts"]}
+        attempted = {x["issue"] for x in st["attempts"]}   # these are listed above, with what happened to them
+        for name in NOT_RUN:
+            rest = [n for n in lst["classes"][name] if n not in attempted]
+            out.append(f"not run — {LABELS[name]}{REPORT_NOTES.get(name, '')} ({len(rest)}): {nums(rest)}")
         left = [n for n in lst["order"] if n not in attempted]
         if left:
             out.append(f"still to run ({len(left)}): {nums(left)}")
@@ -610,6 +653,9 @@ def main(argv):
         return COMMANDS[argv[0]](argv[1:])
     except Stop as exc:
         print("rest-queue: " + one_line(exc, 400), file=sys.stderr)   # one reason line, whatever gh printed
+        return 3
+    except Exception as exc:   # not a wrong call (1, 2): one reason line and 3, never a traceback
+        print("rest-queue: unexpected failure — " + one_line(f"{type(exc).__name__}: {exc}", 400), file=sys.stderr)
         return 3
 
 
