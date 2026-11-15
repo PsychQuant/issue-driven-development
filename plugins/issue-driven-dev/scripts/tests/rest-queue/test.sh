@@ -308,6 +308,29 @@ run start > /dev/null 2>&1; run next > /dev/null; run record --issue 5 --reason 
 run report > "$S/report.out" 2>&1
 assert_true "report: existing work continues when it is named" 'grep -E "existing work.*/idd-all #N" "$S/report.out" >/dev/null'
 
+# spec-example: idd-all-rest / a stopped issue carries its open questions
+new report-asked 5 14:html=body-two-rows
+run start > /dev/null 2>&1
+run next > /dev/null; run record --issue 5 --reason "verify gate: not_clean" > /dev/null
+issues 5:html=body-three-rows 14:html=body-two-rows      # by the time of the report #5 shows two open rows
+run report > "$S/report.out" 2>&1; rc=$?
+assert_exit "report (asked): exits 0" 0 "$rc"
+assert_eq "report (asked): #5 is named once" "1" "$(grep -c '#5\b' "$S/report.out")"
+STOPPED_BLOCK=$(awk '/^stopped \(/{f=1; next} f&&/^[^ ]/{exit} f' "$S/report.out")
+assert_grep "report (asked): under stopped, with its reason" "#5 — verify gate: not_clean" "$STOPPED_BLOCK"
+assert_eq "report (asked): followed by its two open rows" "2" "$(printf '%s\n' "$STOPPED_BLOCK" | grep -c '^    - ')"
+assert_grep "report (asked): the first row of #5" "first thing" "$STOPPED_BLOCK"
+WAITING_BLOCK=$(awk '/^waiting for a person \(/{f=1; print; next} f&&/^[^ ]/{exit} f' "$S/report.out")
+assert_grep_re "report (asked): one issue waits for a person" '^waiting for a person \(1\):' "$WAITING_BLOCK"
+assert_grep "report (asked): it is #14" "#14" "$WAITING_BLOCK"
+refute_grep "report (asked): and not #5" "#5" "$WAITING_BLOCK"
+new report-flight 5
+run start > /dev/null 2>&1; run next > /dev/null
+issues 5:html=body-two-rows
+run report > "$S/report.out" 2>&1
+assert_output_grep "report: an issue in flight keeps its open questions too" "Does alpha include beta?" "$S/report.out"
+assert_true "report: and it is not listed as waiting" 'grep -E "^waiting for a person \(0\)" "$S/report.out" >/dev/null'
+
 # spec-example: idd-all-rest / a long clarity row is printed in full
 new report-long 5 14:html=body-long-row
 assert_true "long row: the open row of the fixture is longer than 300 characters" '[ "$(grep -c "END-OF-QUESTION" "$HERE/fixtures/body-long-row.md")" = 1 ] && [ "$(grep "END-OF-QUESTION" "$HERE/fixtures/body-long-row.md" | wc -m)" -gt 300 ]'

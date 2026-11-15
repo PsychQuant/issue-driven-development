@@ -111,7 +111,7 @@ An issue recorded as `stopped` SHALL NOT end the run: the following `next` hands
 
 `idd-all` SHALL call `stop` only in these three cases: between two issues in PR mode the default branch cannot be checked out or fast-forwarded, or the working tree is not clean afterwards; a `rest-queue.py` command of a run that exists exits with code 3 (GitHub or a helper could not be read); `gh` authentication is lost. Exit codes 1 and 2 of `rest-queue.py` mean the call itself was wrong and are corrected, not treated as a stop. An interruption by the user leaves the run state in place without a stop record.
 
-When the `start` that would begin a run exits with code 3, no run exists and there is nothing to stop or to report. `idd-all` SHALL relay the reason line that `start` printed and end, and SHALL NOT call `stop` or `report`.
+When the `start` that would begin a run exits with code 3, no run exists and there is nothing to stop or to report. `idd-all` SHALL relay the reason line that `start` printed and end, and SHALL NOT call `stop` or `report`. The same holds when that `start` would have resumed an earlier run: the state of the earlier run is left as it is, so that a later `start` resumes it.
 
 #### Scenario: one failing issue does not end the run
 
@@ -140,7 +140,7 @@ When the `start` that would begin a run exits with code 3, no run exists and the
 
 `rest-queue.py report` SHALL print one report with: the issues recorded as closed; the issues recorded as stopped, each with its reason; the `needs-person` issues, each with the complete text of every open clarity row, one line per row and not shortened; the issues of every other class that was not run; and the stop reason of the run when there is one. It SHALL then delete the run state. When the open issues cannot be re-read, it SHALL still print the recorded attempts, say that the list could not be read, and delete the run state.
 
-An issue that this run handed out SHALL appear under closed, under stopped or as handed out without a result, and SHALL NOT appear in the line of a class that was not run. For the class `verified`, and when at least one issue was recorded with a reason that begins with `existing work:`, the report SHALL say that such an issue continues when it is named (`/idd-all #N`).
+An issue that this run handed out SHALL appear once: under closed, under stopped or as handed out without a result. It SHALL NOT appear in the list of issues waiting for a person or in the line of a class that was not run. When such an issue shows open clarity rows at the time of the report, the report SHALL print those rows under the entry of that issue. For the class `verified`, and when at least one issue was recorded with a reason that begins with `existing work:`, the report SHALL say that such an issue continues when it is named (`/idd-all #N`).
 
 #### Scenario: the report ends the run
 
@@ -163,6 +163,12 @@ An issue that this run handed out SHALL appear under closed, under stopped or as
 - **GIVEN** a run in which #5 was recorded as stopped with the reason `verify gate: not_clean`, and by the time of the report the body of #5 shows the phase `verified`; the open issue #8 also shows the phase `verified` and was never handed out
 - **WHEN** `report` runs
 - **THEN** the line of the `verified` class names #8 and does not name #5, #5 is listed under stopped, and the report says that a verified issue continues when it is named
+
+##### Example: a stopped issue carries its open questions
+
+- **GIVEN** a run in which #5 was recorded as stopped with the reason `verify gate: not_clean`, and by the time of the report the body of #5 shows two open clarity rows; the open issue #14 also shows two open clarity rows and was never handed out
+- **WHEN** `report` runs
+- **THEN** #5 is named once, under stopped, followed by its two row texts; the list of issues waiting for a person names #14 and does not name #5
 
 ##### Example: a long clarity row is printed in full
 
