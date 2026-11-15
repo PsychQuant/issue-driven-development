@@ -1063,7 +1063,13 @@ put openspec/specs/cap/spec.md "$(spec "$(req Base)" "$(req Alpha "$EX")")" || s
 git -C "$REPO" -c protocol.file.allow=always submodule add -q "$SUB" tests/sub || setup_failed "row 58: add the submodule"
 commit example >/dev/null || setup_failed "row 58: commit the Example"
 [ "$(git -C "$REPO" rev-parse --is-inside-work-tree)" = true ] || setup_failed "row 58: git must report the top directory as inside the working tree"
-[ "$(git -C "$REPO" rev-parse --is-inside-git-dir)" = true ] || setup_failed "row 58: git must report the top directory as inside the git directory"
+# Asked of the file system, not of `git rev-parse --is-inside-git-dir`: for this layout git 2.55 answers true and
+# git 2.54 answers false, and the row states where the top directory lies, not what that option prints.
+ROW58_GD=$(cd "$(git -C "$REPO" rev-parse --absolute-git-dir)" && pwd -P) || setup_failed "row 58: read the git directory"
+case "$(cd "$REPO" && pwd -P)/" in
+  "$ROW58_GD"/*) ;;
+  *) setup_failed "row 58: the top directory must lie inside the git directory" ;;
+esac
 : > "$WORK/git-calls.log" || setup_failed "clear git call log for row 58"
 GIT_CALL_LOG="$WORK/git-calls.log" REAL_GIT="$GIT" PATH="$WORK/gitlog-bin:$PATH" links_case "submodule row 58: top directory inside the main git directory" ok 0 0
 assert_grep "links: submodule row 58 — git searched the submodule under the top directory" "$(basename "$REPO")/tests/sub grep " "$(cat "$WORK/git-calls.log")"
