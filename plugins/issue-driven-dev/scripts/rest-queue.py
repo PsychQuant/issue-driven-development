@@ -18,10 +18,7 @@ stop    marks the whole run as stopped; next hands out nothing afterwards.
 report  prints what the run did and deletes its state.
 
 Every open issue falls into exactly one class, by TABLE (first match wins). Only candidates are run:
-those with a Diagnosis first, then the others, each by ascending issue number. An issue an earlier run
-left at verified, or that already has a pull request or a branch, is a candidate like any other: the run
-takes it up again. An issue that waits for an answer (an open clarity row, or a skipped confirmation no
-Decision comment answered) is not run again until the answer is there.
+those with a Diagnosis first, then the others, each by ascending issue number.
 
 The judgements are not made here: open clarity rows come from lib/intent.py, the gate group and the
 Diagnosis type from lib/actionability.sh, write access and the trusted Diagnosis from lib/ghread.py.
@@ -66,10 +63,11 @@ TABLE = (
     ("outsider", lambda f: not (f["author_writes"] and f["editor_writes"] and f["commenters_write"])),
     ("tracker", lambda f: f["tracker"]),
     ("unreadable", lambda f: not f["readable"]),
-    ("needs-person", lambda f: f["open_question"]),
+    ("needs-person", lambda f: f["open_clarity"]),
     ("parked", lambda f: f["group"] == "parked"),
     ("blocked", lambda f: f["group"] == "blocked"),
     ("meeting", lambda f: f["meeting"]),
+    ("verified", lambda f: f["verified"]),
     ("candidate", lambda f: True),
 )
 CLASSES = tuple(name for name, _ in TABLE)
@@ -77,20 +75,24 @@ LABELS = {
     "candidate": "to run",
     "needs-person": "waiting for a person",
     "blocked": "blocked",
+    "verified": "already verified",
     "unreadable": "the body has text but GitHub returned no rendering of it",
     "parked": "parked",
     "meeting": "meeting",
     "tracker": "tracker",
     "outsider": "holds text from an account without write access (author, last editor or a commenter)",
 }
-NOT_RUN = ("blocked", "unreadable", "parked", "meeting", "tracker", "outsider")   # the order they are listed in
+NOT_RUN = ("blocked", "verified", "unreadable", "parked", "meeting", "tracker", "outsider")   # the order they are listed in
+# What the report adds to a class whose issues go on only when a person names them.
+REPORT_NOTES = {"verified": ", continues when it is named (/idd-all #N)"}
+EXISTING_WORK = "existing work:"   # how idd-all starts the reason of an issue it did not take over
 
 
 # ── the two tables ─────────────────────────────────────────────────────────
 
 def classify(facts):
-    """The class of an issue, from: author_writes, editor_writes, commenters_write, tracker, readable, open_question,
-    group, meeting."""
+    """The class of an issue, from: author_writes, editor_writes, commenters_write, tracker, readable, open_clarity,
+    group, meeting, verified."""
     for name, test in TABLE:
         if test(facts):
             return name
@@ -291,26 +293,8 @@ def phase_of(root):
     return ""
 
 
-def pending_question(repo, number, comments):
-    """'' or the line that says which skipped confirmations of the issue no Decision comment answered
-    (lib/intent.py decides). The judgement reads GitHub's rendering, so an issue whose comments hold one of the
-    literals as text is read once more with it; every other issue costs nothing."""
-    if not any(lit in (c.get("body") or "") for c in comments for lit in intent.INTENT_SKIP_REASONS):
-        return ""
-    full = comments if all("body_html" in c for c in comments) else issue_comments(repo, number)
-    try:
-        pending = intent.unanswered_confirmations(full)
-    except Stop:   # one comment without a rendering: this issue waits for a person, the others are read as usual
-        return ("a comment of this issue has text GitHub does not render, so its skipped confirmations cannot be "
-                "read — a person looks at it")
-    if not pending:
-        return ""
-    return (f"{len(pending)} skipped confirmation(s) of an unattended run wait for a Decision comment: "
-            + ", ".join(sorted(set(pending))))
-
-
 def read_classes(repo):
-    """[{number, class, group, questions, phase}] for every open issue."""
+    """[{number, class, group, questions}] for every open issue."""
     nodes = read_issues(repo)
     comments = {node["number"]: comments_of(repo, node) for node in nodes}
     groups = gate_groups(nodes, comments)
@@ -340,11 +324,8 @@ def read_classes(repo):
             phase, readable = phase_of(root), True
         except Stop:
             rows, phase, readable = [], "", False
-        if readable:   # what the issue waits on: its open clarity rows, then the confirmations nobody answered
-            pending = pending_question(repo, number, comments[number])
-            rows = rows + ([pending] if pending else [])
-        facts.update(readable=readable, open_question=bool(rows))
-        out.append({"number": number, "class": classify(facts), "group": group, "questions": rows, "phase": phase})
+        facts.update(readable=readable, open_clarity=bool(rows), verified=phase == "verified")
+        out.append({"number": number, "class": classify(facts), "group": group, "questions": rows})
     return out
 
 
@@ -355,8 +336,6 @@ def listing(repo):
     diagnosed = sorted(i["number"] for i in candidates if i["group"] == "actionable")
     others = sorted(i["number"] for i in candidates if i["group"] != "actionable")
     return {"repo": repo, "open": len(issues), "classes": classes, "order": diagnosed + others, "diagnosed": diagnosed,
-            # an earlier run stopped at verified; this run takes these up again (the phase is not a class)
-            "again": sorted(i["number"] for i in candidates if i["phase"] == "verified"),
             "questions": {str(i["number"]): [one_line(q) for q in i["questions"]]   # the whole row, so a long Source does not cut off the question
                           for i in issues if i["class"] == "needs-person"}}
 
@@ -467,9 +446,6 @@ def list_lines(lst, attempted=()):
     lines = [f"open issues: {lst['open']}",
              f"to run ({len(todo)}): {nums(todo)}",
              f"  diagnosed {diagnosed}, not diagnosed {len(todo) - diagnosed}"]
-    again = [n for n in lst["again"] if n not in attempted]
-    if again:
-        lines.append(f"  taken up again from an earlier run that stopped at verified ({len(again)}): {nums(again)}")
     if attempted:
         lines.append(f"already attempted in this run ({len(attempted)}): {nums(sorted(attempted))}")
     for name in ("needs-person",) + NOT_RUN:
@@ -642,6 +618,8 @@ def cmd_report(argv):
     for x in stopped:
         out.append(f"  #{x['issue']} — {x['reason']}")
         out += rows_of(x["issue"])
+    if any(x["reason"].startswith(EXISTING_WORK) for x in stopped):
+        out.append("  an issue stopped with existing work continues when it is named (/idd-all #N)")
     if flight:
         out.append(f"handed out, no result recorded ({len(flight)}): {nums(x['issue'] for x in flight)}")
         for x in flight:
@@ -657,7 +635,7 @@ def cmd_report(argv):
             out += rows_of(n)
         for name in NOT_RUN:
             rest = [n for n in lst["classes"][name] if n not in attempted]
-            out.append(f"not run — {LABELS[name]} ({len(rest)}): {nums(rest)}")
+            out.append(f"not run — {LABELS[name]}{REPORT_NOTES.get(name, '')} ({len(rest)}): {nums(rest)}")
         left = [n for n in lst["order"] if n not in attempted]
         if left:
             out.append(f"still to run ({len(left)}): {nums(left)}")

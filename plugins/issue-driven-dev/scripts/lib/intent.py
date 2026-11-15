@@ -134,27 +134,6 @@ def reason_records(comment):
     return out
 
 
-def decided_at(comments):
-    """When the latest Decision comment was posted (0 when there is none); bot comments aside."""
-    return max([ts(c.get("created_at")) for c in comments if c.get("type") != "Bot" and is_decision(c)] or [0])
-
-
-def unanswered_confirmations(comments):
-    """The skipped-confirmation literals the comments posted after the latest Decision comment show, in the
-    order of those comments; bot comments aside.
-
-    One reading for two callers (#478): the close stage stops on the first of them, and /idd-all's rest mode
-    keeps such an issue waiting for a person instead of running it again only to stop at the same place.
-    """
-    decided = decided_at(comments)
-    found = []
-    for c in comments:
-        if c.get("type") == "Bot" or ts(c.get("created_at")) <= decided:
-            continue
-        found.extend(reason_records(c))
-    return found
-
-
 def has_corrections(comment):
     """The comment shows a Proposed Corrections section with content, at any heading level and inside any container."""
     root = html_root(comment.get("body_html"), comment.get("body"))
@@ -255,13 +234,20 @@ def check_intent(repo, n, st, comments, issue):
     tier = out.strip() if rc == 0 else ""
     if not tier:
         raise Stop("the latest Diagnosis has no readable Complexity tier — intent not confirmed")
-    found = unanswered_confirmations(comments)
-    if found:
-        raise Stop(f"a comment records a skipped confirmation ({found[0]}) that no later Decision answered — "
-                   "a person reviews and merges this one")
-    decided = decided_at(comments)
-    return sum(1 for c in comments
-               if c.get("type") != "Bot" and ts(c.get("created_at")) > decided and has_corrections(c))
+    decided = max([ts(c.get("created_at")) for c in comments
+                   if c.get("type") != "Bot" and is_decision(c)]
+                  or [0])
+    unanswered = 0
+    for c in comments:
+        if c.get("type") == "Bot" or ts(c.get("created_at")) <= decided:
+            continue
+        found = reason_records(c)
+        if found:
+            raise Stop(f"a comment records a skipped confirmation ({found[0]}) that no later Decision answered — "
+                       "a person reviews and merges this one")
+        if has_corrections(c):
+            unanswered += 1
+    return unanswered
 
 
 def check_pr_people(repo, pr, me):

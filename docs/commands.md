@@ -532,7 +532,7 @@
 |---|---|
 | `#N` | Skip Phase 1 (issue already exists) and resume from diagnose |
 | `'description'` | Phase 1 creates the issue from this description first |
-| _(empty)_, or the single word `rest` | **Rest mode (#478)**: no question is asked. Every remaining open issue is run, one at a time, each through the same pipeline; issues that wait for a person are skipped and listed in one report at the end. An issue an earlier run left at verified, or with its own branch or pull request, is continued — also when that run carried `--review`; pass `--review` to keep such issues waiting. In PR mode this is unattended: every issue whose verify is clean is merged and closed, and there is no cap on the number of issues. Name an issue to run only that one |
+| _(empty)_, or the single word `rest` | **Rest mode (#478)**: no question is asked. Every remaining open issue is run, one at a time, each through the same pipeline; issues that wait for a person are skipped and listed in one report at the end. In PR mode this is unattended: every issue whose verify is clean is merged and closed, and there is no cap on the number of issues. Name an issue to run only that one |
 | `rest` with an issue or a description, `--in-chain` without an issue, an unknown `--` flag, `--cwd` without a path | Refused with the reason; nothing runs |
 | `--pr` | `(PR, unattended)` |
 | `--no-pr` | `(direct-commit, attended)` |

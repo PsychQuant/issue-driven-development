@@ -2,7 +2,7 @@
 name: idd-all
 description: |
   自動串連 IDD 完整 workflow（issue → diagnose → implement → verify），按 pr_policy 解析 path 與 interaction 兩軸：PR + unattended（自動化、/loop friendly）或 direct-commit + attended（HITL、user 在 keyboard，sub-skill AskUserQuestion 自然 fire）。verify 乾淨通過、意圖確認過、而且沒有別人插手時就 merge（PR mode）或 push（direct-commit mode，限預設 branch）並跑 /idd-close，最後回報做了什麼與怎麼復原；guardrail 沒過、有還沒回答的釐清問題或未回應的略過紀錄、帶 --review 或 --in-chain 時停在 verified（tier 是哪一個不影響）；type=meeting 停在 diagnosed 或 planning，不 verify、不開 PR。
-  不帶 issue（或只寫 rest）時跑 repo 裡剩下的全部 open issue：需要人的先跳過、每張在一次 run 裡只試一次、先前停下的（verified、已有自己的 PR 或 branch）接著做、結束時一份總報告（#478）。
+  不帶 issue（或只寫 rest）時跑 repo 裡剩下的全部 open issue：需要人的先跳過、每張只試一次、結束時一份總報告（#478）。
   Use when: 想一次跑完整條 IDD pipeline、信任 6-AI verify 會抓錯、希望交出去就不用管（verify 乾淨就跑到 closed，沒過就停在 verified 回報原因）；HITL 模式則用於 solo repo 想被 sub-skill 諮詢的情境。
   防止的失敗：手動跑 5 個 idd-* skill 太繁瑣、忘記中間某一步、orchestration 一致性。
 argument-hint: "[#NNN | 'issue description' | rest] [--pr | --no-pr] [--review] [--cwd /path/to/clone] (empty 或 rest = 跑剩下的全部 open issue; --no-pr 觸發 HITL direct-commit + attended; --review 停在 verified、不 merge 也不 close)"
@@ -58,7 +58,7 @@ allowed-tools:
 | 內文沒過隱私自審的任何對外動作 | 公開出去的內容收不回 |
 | 刪除 branch、`--force` | 被覆蓋或刪掉的 commit 找不回來 |
 | 發布：`gh release`、marketplace 同步、baseline 以外的 tag | 已經到使用者手上 |
-| 帶 `--review` 的 run 的合併與結案 | 由人做：這個旗標的意思就是人要先看。之後不帶 `--review` 再跑同一張（指名，或 rest mode 接著做），那一次 run 就會做到合併，見 `## Rest mode` 流程第 3 步 |
+| 帶 `--review` 的 run 的合併與結案 | 由人做：這個旗標的意思就是人要先看 |
 
 還沒回答的釐清問題不是操作，是意圖確認：由人回答，run 停在那裡（Phase 5c 的意圖那一列）。
 
@@ -107,13 +107,12 @@ idd-all 不取代 atomic skills,而是包它們。每個 phase 仍透過 `Skill(
 | `outsider` | 開 issue 的帳號、正文最後編輯者，或任何一則 comment 的作者沒有寫入權，或這些帳號有一個讀不到（正文被編輯過而 GitHub 沒有回編輯者也算；留言的 bot 不算） |
 | `tracker` | 有 `north-star` 或 `epic` label |
 | `unreadable` | 正文有字，但 GitHub 沒有給出讀得到的渲染結果（例如正文只有一段 HTML 註解）。這一張不跑，其他張照常 |
-| `needs-person` | 正文有還沒回答的釐清問題；或有一則 comment 記了略過的確認（無人值守時取的預設，`Reason` 那一行），而之後沒有 Decision comment 回應 |
+| `needs-person` | 正文有還沒回答的釐清問題 |
 | `parked` | actionability gate 判為 parked |
 | `blocked` | `### Blocking` 有內容 |
 | `meeting` | 最新受信任 Diagnosis 的 type 是 meeting |
+| `verified` | Current Status 的 Phase 是 verified：它已經停在那裡等人，要處理就指名 `/idd-all #N` |
 | `candidate` | 其餘。已經診斷過的先跑，再來是沒診斷的，各自依 issue 號由小到大 |
-
-已經 verified 的 issue、已經有 PR 或 branch 的 issue 不是另一類：上面各列都不成立時它就是 `candidate`，這次 run 接著把它帶到結案（維護者 2026-11-15 的決定）。`start` 印的清單會標出其中從 verified 接著做的。上一次是因為略過確認而停下的 issue 留在 `needs-person`，等 Decision comment 回應之後才再跑，不重做一輪又停在同一個地方。
 
 第一類排在最前面，是因為指名 `#N` 時是人選了那一張，rest 沒有人選；close stage 對作者與留言者的檢查只擋 merge，擋不到 implement、push 與開 PR。
 
@@ -142,20 +141,9 @@ Step 0.2、0.3、0.35 只做一次，`$CWD`、`$GITHUB_REPO` 與旗標每一張�
    | `{"next": null, "done": true}` | 做「結束」一節 |
    | `{"next": null, "stopped": "…"}` | 做「結束」一節 |
 
-3. 對 #N 跑單張流程：從 Step 0.4 到 Phase 6，行為與 `/idd-all #N` 加上這次呼叫的旗標相同，包含它自己的 Phase 6 報告與清理，只有下面標明的一處不同。這一張停下、abort、或被 gate 判為不可動，都只影響這一張。
+3. 對 #N 跑單張流程：從 Step 0.4 到 Phase 6，行為與 `/idd-all #N` 加上這次呼叫的旗標相同，包含它自己的 Phase 6 報告與清理，只有下面一處不同。這一張停下、abort、或被 gate 判為不可動，都只影響這一張。
 
-   **已經有 PR 或 branch 的 issue 照單張流程的處置表**：Step 0.5.1 印出 `verdict=resume` 時，在那張 issue 自己的 `idd/N-*` branch 上接著做、沿用它的 PR，先前帶 `--review` 停下等人看的 issue 也一樣；印出 `verdict=blocked` 時（宣告這張 issue 的 PR 不在它自己的 branch 上，或那個 PR 已經合併），照單張流程：unattended 不開始這一張，把 Step 0.5.1 印的 outcome 填進第 4 步的 `--reason`。`verdict=unknown` 與 `clear` 照單張流程往下。
-
-   接著做的那一張沒有帶 `--review` 時，verify 乾淨就會 merge 並結案。要讓先前等人看的 issue 繼續等人，這次 rest 也帶 `--review`。
-
-   **唯一的不同：本機已經有這張 issue 的 branch 時不問**。同一個 clone 裡上一次 run 留下的 branch 還在時（第 5 步只切回預設 branch，不刪它），Phase 0.5 的 branch setup 原本用三選一問人；rest 直接在那個 branch 上接著做，遠端有同名的 branch 就先快轉到它：
-
-   ```bash
-   git -C "$CWD" checkout -q "$BRANCH" \
-     && { ! git -C "$CWD" show-ref --verify --quiet "refs/remotes/origin/$BRANCH" || git -C "$CWD" merge -q --ff-only "origin/$BRANCH"; }
-   ```
-
-   不成立（切不過去，或本機與遠端的 branch 分岔、快轉不了）就停這一張，第 4 步的 `--reason` 寫 `local branch <名稱> cannot be continued`；不刪 branch、不強推，由人看過再處理。
+   **已經有 PR 或 branch 的 issue，rest 不接手**：Step 0.5.1 印出 `verdict=resume` 或 `verdict=blocked` 時，不建 branch、不碰那個 PR：rest 不接手這一張，但這一張的 Step 0.5 已經寫了 unattended 標記，所以先 `clear_unattended "$CWD"`（這一張不會走到 Phase 6 的清理），再做第 4 步，`--reason` 寫 `existing work: ` 加上 Step 0.5.1 印出的那個 PR 或 branch。那是先前的 run 或別人已經開始、停在某處的工作，要接著做就指名 `/idd-all #N`。`verdict=unknown` 與 `clear` 照單張流程往下。
 
 4. 記下這一張的結果。這一張的 Phase 6 報告有 `Stopped:` 時，把那一行填進 `--reason`（abort 時填 abort 的原因）；已經結案或沒有原因可填，就整個不帶 `--reason`。結果是 closed 還是 stopped 由 helper 自己向 GitHub 讀，不在這裡判斷：
 
@@ -195,9 +183,9 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" stop --cwd "$CWD" --repo "
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" report --cwd "$CWD" --repo "$GITHUB_REPO"
 ```
 
-報告列出結案的、停下的與原因、等人回答的問題（整列，不截斷）、沒跑的與類別；這次 run 試過的 issue 只出現一次，在結案、停下、或「交出後還沒有結果」那三段之一，它現在有還沒回答的問題時，問題列在它那一筆底下。印完就刪掉 run 的狀態。等人回答的問題由人回答；回答後那一張下次 rest 就會被跑到。
+報告列出結案的、停下的與原因、等人回答的問題（整列，不截斷）、沒跑的與類別；這次 run 試過的 issue 只出現一次，在結案、停下、或「交出後還沒有結果」那三段之一，它現在有還沒回答的釐清問題時，問題列在它那一筆底下。已經 verified 的與停在 `existing work` 的會註明要指名 `/idd-all #N` 才會繼續。印完就刪掉 run 的狀態。等人回答的問題由人回答；回答後那一張下次 rest 就會被跑到。
 
-報告印完之後清掉 unattended 標記。單張流程的 Phase 6 本來會清，但 run 在兩張之間停下時可能還留著，留著會讓這個工作樹之後的 attended session 被當成 unattended：
+報告印完之後清掉 unattended 標記。單張流程的 Phase 6 本來會清，但 run 在兩張之間停下、或最後一張是 rest 不接手的 issue 時可能還留著，留著會讓這個工作樹之後的 attended session 被當成 unattended：
 
 ```bash
 . "${CLAUDE_PLUGIN_ROOT}/scripts/lib/unattended-state.sh" && clear_unattended "$CWD"
@@ -208,9 +196,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" report --cwd "$CWD" --repo
 - 不平行。與批次模式相同，依序跑。
 - 途中新開的 issue 不併進同一個 PR：重讀清單時接住，各自跑單張流程、各自一個 PR。chain 成為預設是 #457。
 - 不改單張流程的 verify 輪數上限（#423）。
-- 不替「別的 session 同時在跑同一張 issue」上鎖。push 不強推，後到的那一個會在 push 停下，記為這一張停下。
-- 不記住一張 issue 上次在 Step 0.5.1 停過：PR 已經合併而 issue 還開著、或 PR 不在它自己 branch 上的 issue，每次 rest 都會交出它、再停一次（不跑 verify，成本很小）。
-- 不分辨一張 verified 的 issue 上次是為什麼停下：還有沒回應的略過確認時它是 `needs-person`；其餘（CI 沒過、close stage 的其他閘門、帶 `--review`）都會再跑一輪 verify。
+- 不重跑已經 verified 的 issue，也不接手已經有 PR 或 branch 的 issue。
 - 不判斷一張舊 issue 的前提還成不成立。
 
 ## Configuration
@@ -532,7 +518,7 @@ fi
 
 #### Step 0.5.1: Existing-work check（#366）
 
-在**建任何 branch 之前**，問「這張 issue 是否已有 PR 或 branch 在處理」。rest mode 照同一張處置表，見 `## Rest mode` 流程第 3 步。查詢只有一個實作：`scripts/check-existing-work.sh`（契約見 [`references/pr-issue-matching.md`](../../references/pr-issue-matching.md)，行為見 spec `idd-existing-work-lookup`）；本 skill **不得**自帶 PR 比對。from-scratch mode（還沒有 issue）與 `--in-chain`（`/idd-all-chain` 的 Phase 0.4 已對每個 root 做過）跳過。批次（`/idd-all #a #b #c`）逐張各跑一次，一張被停下不影響其他張。
+在**建任何 branch 之前**，問「這張 issue 是否已有 PR 或 branch 在處理」。rest mode 下 `resume` 也不接手，見 `## Rest mode` 流程第 3 步。查詢只有一個實作：`scripts/check-existing-work.sh`（契約見 [`references/pr-issue-matching.md`](../../references/pr-issue-matching.md)，行為見 spec `idd-existing-work-lookup`）；本 skill **不得**自帶 PR 比對。from-scratch mode（還沒有 issue）與 `--in-chain`（`/idd-all-chain` 的 Phase 0.4 已對每個 root 做過）跳過。批次（`/idd-all #a #b #c`）逐張各跑一次，一張被停下不影響其他張。
 
 ```bash
 if [ -z "$IN_CHAIN" ] && [ -n "${N:-}" ]; then
@@ -599,7 +585,6 @@ if [ "$PATH_AXIS" = "PR" ]; then
     # Per (a): git checkout "$BRANCH"
     # Per (b): NEXT=$(suffix_for "$BRANCH"); BRANCH="$NEXT"; git checkout -b "$BRANCH"
     # Per (c): abort "Branch $BRANCH already exists. Run: git -C $CWD branch -D $BRANCH or pick a different issue."
-    # rest mode (#478) asks nothing here: it checks the branch out and fast-forwards it — `## Rest mode` 流程第 3 步
     :  # bash flow exits the if; agent assigns BRANCH per user's choice and falls through
   elif [ -n "${RESUME_BRANCH:-}" ]; then
     git -C "$CWD" checkout -b "$BRANCH" "origin/$BRANCH"   # #366: resume 該 remote branch
@@ -1959,7 +1944,7 @@ Phase 0.5 印 `→ Path: PR (unattended) — pr_policy absent (v2.40.0 default)`
 /idd-all rest --review
 ```
 
-`rest-queue.py start` 先印出清單（要跑的 issue 號與順序、其中從 verified 接著做的、等人回答的、blocked 的），接著每一張各自跑完整的單張流程；`--review` 讓每一張都停在 verified。結束時 `rest-queue.py report` 印一份總報告。中斷後 24 小時內再下一次會接續。
+`rest-queue.py start` 先印出清單（要跑的 issue 號與順序、等人回答的、blocked、已經 verified 的），接著每一張各自跑完整的單張流程；`--review` 讓每一張都停在 verified。結束時 `rest-queue.py report` 印一份總報告。中斷後 24 小時內再下一次會接續。
 
 ### 從零開始 — 文字描述
 
