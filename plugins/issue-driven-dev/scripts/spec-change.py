@@ -26,6 +26,9 @@ file) and exits with a fixed code. A usage error prints to stderr and exits 64.
       --git-common-dir): git is not run in such a directory. No other directory is excluded.
       Directories are compared by device and inode, not by name: a path that spells one of them
       in another way (another letter case on a volume that folds case) names the same directory.
+      A submodule whose directory is the spec directory or lies under it is not searched and is
+      not one that could not be searched, whatever its path is named (a link, or another
+      spelling of the name, that leads there): none of its files could count.
       A file that counts settles the Example only when the search of its submodule ran to its end;
       an object of the recorded commit that is absent or cannot be opened makes the submodule one
       that could not be searched unless such a file was found.
@@ -528,6 +531,28 @@ def leaves_repository(directory, top, cache):
     return under_git_directory(passed, main_git_directories(top, cache))
 
 
+def in_spec_directory(directory, top, sd):
+    """Is the directory, with symbolic links resolved, the spec directory of the main repository or under it?
+    Asked after condition 2 holds, so the top directory is met on the way up. Directories are compared, not
+    names: a link, or another spelling of the name, can lead into the spec directory from a path that is not
+    under it by name. A spec directory that cannot be examined (one that is not there) has nothing under it."""
+    passed = directories_below_top(directory, top)
+    if not passed:
+        return False
+    try:
+        spec = os.stat(os.path.join(top, sd))
+    except OSError:
+        return False
+    for current in passed:
+        try:
+            here = os.stat(current)
+        except OSError:
+            continue
+        if os.path.samestat(here, spec):
+            return True
+    return False
+
+
 def same_directory(one, other):
     """Do the two paths name one directory? Compared by device and inode, not by name."""
     try:
@@ -552,6 +577,9 @@ def marker_files(top, head, needle, sd, cache):
                 elif leaves_repository(directory, top, cache):
                     # Condition 2: not under the top directory, or one of the two directories, or under one.
                     reason = "path leaves the repository"
+                elif in_spec_directory(directory, top, sd):
+                    # In the spec directory under another name: not searched, and not one that could not be.
+                    link["in_spec"] = True
                 elif not os.path.isdir(directory) or os.path.islink(directory) or not os.path.lexists(os.path.join(directory, ".git")):
                     reason = "not checked out"
                 else:
@@ -577,6 +605,8 @@ def marker_files(top, head, needle, sd, cache):
                         elif submodule_git(directory, "cat-file", "-e", rev + "^{commit}").returncode != 0:
                             reason = f"recorded commit {rev[:12]} is not in its object store"
                 link["reason"] = reason
+            if link.get("in_spec"):
+                continue
             if link["reason"]:
                 unavailable.append((prefix[:-1], link["reason"]))
                 continue
