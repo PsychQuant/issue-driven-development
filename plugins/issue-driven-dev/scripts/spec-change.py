@@ -454,11 +454,15 @@ def submodule_lacks_objects(directory, rev):
 def main_git_directories(top, cache):
     """The two directories git names at the top directory: the git directory of this working tree and the common
     git directory of the repository (in a linked worktree they differ). Asked once in a run, and only when a
-    submodule's directory is examined. A relative answer is relative to the top directory, where git ran."""
+    submodule's directory is examined. A relative answer is relative to the top directory, where git ran; an
+    answer that names no directory ends the run (joined to the top directory it would be the top directory,
+    which is never compared)."""
     if "main_git_dirs" not in cache:
         found = []
         for option in ("--absolute-git-dir", "--git-common-dir"):
             printed = one_line(os.fsdecode(git(top, "rev-parse", option).stdout))
+            if not printed:
+                raise Fail("the git directory of the repository cannot be read")
             found.append(printed if os.path.isabs(printed) else os.path.join(top, printed))
         cache["main_git_dirs"] = tuple(found)
     return cache["main_git_dirs"]
