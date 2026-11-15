@@ -1001,6 +1001,26 @@ GIT_CALL_LOG="$WORK/git-calls.log" REAL_GIT="$GIT" PATH="$WORK/gitlog-bin:$PATH"
 submodule_reason 56 lnk/planted 'path leaves the repository'
 assert_grep "links: submodule row 56 — the logging git saw the worktree" "-C $REPO rev-parse" "$(cat "$WORK/git-calls.log")"
 refute_grep "links: submodule row 56 — no git command ran in the planted directory" "lnk/planted" "$(cat "$WORK/git-calls.log")"
+# Added before archiving (tasks 4.1), on the input of row 56; no row states it. An answer of git that names no
+# directory is not taken for one: joined to the top directory, an empty answer would be the top directory, which
+# is never compared, and the planted directory would be searched. With a git that prints nothing when asked for
+# the common directory, the run ends in error and git is not run in the planted directory. (The same line of the
+# script reads both answers. An empty answer to the other question changes no result on the inputs here: the
+# directory it would have named is the common directory or lies under it, and the common directory still matches.)
+mkdir -p "$WORK/gitsilent-bin" || setup_failed "create the directory of the silent git"
+cat > "$WORK/gitsilent-bin/git" <<'EOF' || setup_failed "write the silent git"
+#!/bin/sh
+printf '%s\n' "$*" >> "$GIT_CALL_LOG" || exit 1
+case " $* " in
+  *" rev-parse --git-common-dir "*) exit 0 ;;
+esac
+exec "$REAL_GIT" "$@"
+EOF
+chmod u+x "$WORK/gitsilent-bin/git" || setup_failed "make the silent git executable"
+: > "$WORK/git-calls.log" || setup_failed "clear git call log for the silent git"
+GIT_CALL_LOG="$WORK/git-calls.log" REAL_GIT="$GIT" PATH="$WORK/gitsilent-bin:$PATH" links_case "git names no common directory (input of row 56)" error 0 2
+assert_grep "links: git names no common directory — the silent git was asked for it" "rev-parse --git-common-dir" "$(cat "$WORK/git-calls.log")"
+refute_grep "links: git names no common directory — no git command ran in the planted directory" "lnk/planted" "$(cat "$WORK/git-calls.log")"
 
 # Row 57: the list of condition 2 is closed, and the git directory of a submodule is not on it. The outer submodule
 # is a plain clone, so its `.git` is a directory; a link inside it leads into that directory, where a clone that
@@ -1020,7 +1040,13 @@ ln -s .git/planted-area "$REPO/outer/l" || setup_failed "row 57: link into the g
 git -C "$REPO/outer/l/inner" cat-file -e "$RECORDED^{commit}" || setup_failed "row 57: the planted clone must hold the recorded commit"
 git -C "$REPO/outer/l/inner" grep -q -F -e 'spec-example: cap / alpha table' "$RECORDED" -- . || setup_failed "row 57: the recorded commit must hold the marker"
 [ "$(git -C "$REPO/outer/.git/planted-area" rev-parse --is-inside-git-dir)" = true ] || setup_failed "row 57: the planted area must be inside the git directory of the outer submodule"
-links_case "submodule row 57: link into the git directory of a submodule" ok 0 0
+: > "$WORK/git-calls.log" || setup_failed "clear git call log for row 57"
+GIT_CALL_LOG="$WORK/git-calls.log" REAL_GIT="$GIT" PATH="$WORK/gitlog-bin:$PATH" links_case "submodule row 57: link into the git directory of a submodule" ok 0 0
+assert_grep "links: submodule row 57 — git searched the directory inside the git directory of the submodule" "$(basename "$REPO")/outer/l/inner grep " "$(cat "$WORK/git-calls.log")"
+# Control: the answer comes from that directory alone. Without the planted clone the inner path cannot be searched.
+rm -rf "$REPO/outer/.git/planted-area/inner" || setup_failed "row 57: remove the planted clone"
+links_case "submodule row 57: control without the planted clone" error 0 2
+submodule_reason 57 outer/l/inner 'not checked out'
 
 # Row 58: the top directory is not compared with the two directories of condition 2. Here the git directory of the
 # main repository was made apart and the top directory lies inside it; the submodule under the top directory is
@@ -1037,7 +1063,9 @@ git -C "$REPO" -c protocol.file.allow=always submodule add -q "$SUB" tests/sub |
 commit example >/dev/null || setup_failed "row 58: commit the Example"
 [ "$(git -C "$REPO" rev-parse --is-inside-work-tree)" = true ] || setup_failed "row 58: git must report the top directory as inside the working tree"
 [ "$(git -C "$REPO" rev-parse --is-inside-git-dir)" = true ] || setup_failed "row 58: git must report the top directory as inside the git directory"
-links_case "submodule row 58: top directory inside the main git directory" ok 0 0
+: > "$WORK/git-calls.log" || setup_failed "clear git call log for row 58"
+GIT_CALL_LOG="$WORK/git-calls.log" REAL_GIT="$GIT" PATH="$WORK/gitlog-bin:$PATH" links_case "submodule row 58: top directory inside the main git directory" ok 0 0
+assert_grep "links: submodule row 58 — git searched the submodule under the top directory" "$(basename "$REPO")/tests/sub grep " "$(cat "$WORK/git-calls.log")"
 
 # Row 59: a directory that resolves to the top directory itself meets condition 2. The head records, at a path
 # that a link leads back to the top directory, an earlier commit of the main repository that holds the marker; the
@@ -1054,7 +1082,10 @@ ln -s .. "$REPO/out" || setup_failed "row 59: link back to the parent directory"
 [ "$(cd "$REPO/$BACK" && pwd -P)" = "$(cd "$REPO" && pwd -P)" ] || setup_failed "row 59: the recorded path must resolve to the top directory"
 if git -C "$REPO" grep -q -F -e 'spec-example: cap / alpha table' HEAD -- scripts; then setup_failed "row 59: the files of the head must not hold the marker"; fi
 git -C "$REPO" grep -q -F -e 'spec-example: cap / alpha table' "$EARLIER" -- scripts || setup_failed "row 59: the earlier commit must hold the marker"
-links_case "submodule row 59: recorded path that resolves to the top directory" ok 0 0
+: > "$WORK/git-calls.log" || setup_failed "clear git call log for row 59"
+GIT_CALL_LOG="$WORK/git-calls.log" REAL_GIT="$GIT" PATH="$WORK/gitlog-bin:$PATH" links_case "submodule row 59: recorded path that resolves to the top directory" ok 0 0
+assert_grep "links: submodule row 59 — git searched at the recorded path" "$(basename "$REPO")/$BACK grep " "$(cat "$WORK/git-calls.log")"
+assert_grep "links: submodule row 59 — the commit searched there is the recorded one" "$EARLIER -- ." "$(cat "$WORK/git-calls.log")"
 
 # ── preflight ───────────────────────────────────────────────────────────────
 echo "spec-change: preflight (Example: preflight by write access and Spectra state)"
