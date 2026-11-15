@@ -956,8 +956,8 @@ links_case "submodule row 54: no marker, an object that opens but cannot be read
 submodule_reason 54 tests/sub 'its recorded commit could not be read'
 
 # Row 55: the recorded path runs through a symbolic link into the main repository's own git directory, where a
-# clone that holds the recorded commit and the marker was placed by hand. The git directory is no part of the
-# working tree, so the path leaves the repository and git must not run there.
+# clone that holds the recorded commit and the marker was placed by hand. That directory is one of the two that
+# git names at the top directory (condition 2), so the path leaves the repository and git must not run there.
 example_repo l-sub-gitdir-symlink
 RECORDED=$(git -C "$SUB" rev-parse HEAD) || setup_failed "read the commit of row 55"
 # Record the path before placing the symlink: update-index rejects a path through one.

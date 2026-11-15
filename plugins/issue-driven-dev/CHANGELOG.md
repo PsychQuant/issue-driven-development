@@ -17,9 +17,11 @@ Version number left to the release.
   running git in any submodule; otherwise the search stops at the first submodule with a marker, even if
   another could not be searched. Searching submodules requires git 2.45 or later; older git, or git whose
   version cannot be read, does not run in their directories. A submodule is searched only
-  if its recorded path is relative with no empty, `.` or `..` component, its resolved directory lies inside
-  the main working tree (the main repository's own git directory, wherever git keeps it, is no part of the
-  working tree, and git is not run in a directory there), that directory is not a symbolic link, it holds
+  if its recorded path is relative with no empty, `.` or `..` component, its resolved directory is the
+  top directory or lies under it and neither it nor a directory between it and the top directory is one of the
+  two directories git names at the top directory (`git rev-parse --absolute-git-dir` and `--git-common-dir`;
+  git is not run in such a directory, and no other directory is excluded, so the git directory of a submodule
+  is not), that directory is not a symbolic link, it holds
   its own `.git` entry, git reports
   it as the top of its own working tree, and its object store holds the recorded commit. Its object store
   is asked which objects of that commit it lacks or cannot open (an object file that is present but cannot
