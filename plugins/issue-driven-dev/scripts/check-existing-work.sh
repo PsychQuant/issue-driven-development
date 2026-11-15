@@ -2,7 +2,9 @@
 # check-existing-work.sh — does a PR or a branch already address issue N? (#366)
 #
 # Usage:
-#   check-existing-work.sh [--cwd DIR] <owner/repo> <issue-number> [<issue-number>...]
+#   check-existing-work.sh [--cwd DIR] [--skip-branches] <owner/repo> <issue-number> [<issue-number>...]
+#   --skip-branches (#547): no git fetch and no remote-tracking branches in DIR (a clone without a remote, opted
+#   into its local branch); the PR lookups run as usual and a top-level "notes" list says the lookup was skipped.
 #
 # Stdout: JSON
 #   {"repo":..., "truncated":bool, "errors":[...],
@@ -36,16 +38,23 @@ COMMIT_REFS = re.compile(r'^\s*refs\b', re.I)
 
 def usage(msg):
     print(f"check-existing-work.sh: {msg}", file=sys.stderr)
-    print("usage: check-existing-work.sh [--cwd DIR] <owner/repo> <issue-number>...", file=sys.stderr)
+    print("usage: check-existing-work.sh [--cwd DIR] [--skip-branches] <owner/repo> <issue-number>...", file=sys.stderr)
     sys.exit(2)
 
 
 args = sys.argv[1:]
 cwd = "."
-if args[:1] == ["--cwd"]:
+skip_branches = False
+seen_cwd = False
+while args[:1] in (["--cwd"], ["--skip-branches"]):
+    if args[0] == "--skip-branches":
+        skip_branches, args = True, args[1:]
+        continue
+    if seen_cwd:
+        usage("--cwd given more than once")
     if len(args) < 2:
         usage("--cwd needs a directory")
-    cwd, args = args[1], args[2:]
+    cwd, args, seen_cwd = args[1], args[2:], True
 if len(args) < 2:
     usage("need <owner/repo> and at least one issue number")
 repo, issues = args[0], args[1:]
@@ -108,30 +117,37 @@ if len(merged_prs) >= LIMIT:
     errors.append(f"merged PR list reached its limit ({LIMIT}); older merged PRs were not checked")
 
 branches, default = {}, None
-f = run(["git", "-C", cwd, "fetch", "--quiet", "--prune", "origin"])
-if f.returncode != 0:
-    errors.append(f"git fetch failed: {(f.stderr or '').strip()[:160]}")
-r = run(["git", "-C", cwd, "for-each-ref", "--format=%(refname:short)\t%(objectname)", "refs/remotes/origin"])
-if r.returncode == 0:
-    for line in r.stdout.splitlines():
-        name, _, oid = line.partition("\t")
-        if name.startswith("origin/") and name != "origin/HEAD":
-            branches[name[len("origin/"):]] = oid
+notes = []
+if skip_branches:
+    # #547: a clone without a remote (spec_archive.ref=local) has no remote-tracking branches to read
+    notes.append("branch lookup skipped (--skip-branches): no git fetch, no remote-tracking branches read in --cwd")
 else:
-    errors.append("git for-each-ref failed")
+    f = run(["git", "-C", cwd, "fetch", "--quiet", "--prune", "origin"])
+    if f.returncode != 0:
+        errors.append(f"git fetch failed: {(f.stderr or '').strip()[:160]}")
+    r = run(["git", "-C", cwd, "for-each-ref", "--format=%(refname:short)\t%(objectname)", "refs/remotes/origin"])
+    if r.returncode == 0:
+        for line in r.stdout.splitlines():
+            name, _, oid = line.partition("\t")
+            if name.startswith("origin/") and name != "origin/HEAD":
+                branches[name[len("origin/"):]] = oid
+    else:
+        errors.append("git for-each-ref failed")
 # The default branch comes from GitHub. The clone's refs/remotes/origin/HEAD is a snapshot from clone time and can
 # point at an old feature branch (seen on a real clone), which makes every commit on the real default branch look
-# unmerged. It is only the fallback when GitHub cannot be asked.
-rv = gh_json(["gh", "repo", "view", repo, "--json", "defaultBranchRef"], "gh repo view")
-default = ((rv or {}).get("defaultBranchRef") or {}).get("name")
-if default is None:
-    h = run(["git", "-C", cwd, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"])
-    if h.returncode == 0 and h.stdout.strip().startswith("origin/"):
-        default = h.stdout.strip()[len("origin/"):]
-    else:
-        default = next((d for d in ("main", "master") if d in branches), None)
-if default is None:
-    errors.append("could not determine the default branch")
+# unmerged. It is only the fallback when GitHub cannot be asked. With --skip-branches there are no branches to
+# compare, so the default branch is not looked up at all (and origin/HEAD, a remote-tracking ref, is not read; #547).
+if not skip_branches:
+    rv = gh_json(["gh", "repo", "view", repo, "--json", "defaultBranchRef"], "gh repo view")
+    default = ((rv or {}).get("defaultBranchRef") or {}).get("name")
+    if default is None:
+        h = run(["git", "-C", cwd, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"])
+        if h.returncode == 0 and h.stdout.strip().startswith("origin/"):
+            default = h.stdout.strip()[len("origin/"):]
+        else:
+            default = next((d for d in ("main", "master") if d in branches), None)
+    if default is None:
+        errors.append("could not determine the default branch")
 
 merged_heads = {p["headRefOid"] for p in merged_prs}
 stale = {b for b, oid in branches.items() if oid in merged_heads}
@@ -207,5 +223,8 @@ for n in issues:
         verdict, reason = "clear", ""
     out[str(n)] = {"verdict": verdict, "reason": reason, "evidence": ev}
 
-print(json.dumps({"repo": repo, "truncated": truncated, "errors": errors, "issues": out}, ensure_ascii=False))
+result = {"repo": repo, "truncated": truncated, "errors": errors, "issues": out}
+if notes:
+    result["notes"] = notes
+print(json.dumps(result, ensure_ascii=False))
 PY
