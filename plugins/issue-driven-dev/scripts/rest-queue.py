@@ -336,7 +336,7 @@ def listing(repo):
     diagnosed = sorted(i["number"] for i in candidates if i["group"] == "actionable")
     others = sorted(i["number"] for i in candidates if i["group"] != "actionable")
     return {"repo": repo, "open": len(issues), "classes": classes, "order": diagnosed + others, "diagnosed": diagnosed,
-            "questions": {str(i["number"]): [one_line(q) for q in i["questions"]]   # the whole row: the question is its last part
+            "questions": {str(i["number"]): [one_line(q) for q in i["questions"]]   # the whole row, so a long Source does not cut off the question
                           for i in issues if i["class"] == "needs-person"}}
 
 
@@ -612,20 +612,27 @@ def cmd_report(argv):
            f"started {st['started_at']}, {len(st['attempts'])} issue(s) attempted",
            f"closed ({len(closed)}): {nums(x['issue'] for x in closed)}",
            f"stopped ({len(stopped)}):" + ("" if stopped else " -")]
-    out += [f"  #{x['issue']} — {x['reason']}" for x in stopped]
+    # An issue this run handed out is named once, here, with the questions it now waits on.
+    asked = lst["questions"] if lst else {}
+    rows_of = lambda n: [f"    - {q}" for q in asked.get(str(n), [])]
+    for x in stopped:
+        out.append(f"  #{x['issue']} — {x['reason']}")
+        out += rows_of(x["issue"])
     if any(x["reason"].startswith(EXISTING_WORK) for x in stopped):
         out.append("  an issue stopped with existing work continues when it is named (/idd-all #N)")
     if flight:
         out.append(f"handed out, no result recorded ({len(flight)}): {nums(x['issue'] for x in flight)}")
+        for x in flight:
+            out += rows_of(x["issue"])
     if lst is None:
         out.append(f"the open issues could not be read, so the issues that were not run are not listed: {one_line(unread, REASON_MAX)}")
     else:
-        waiting = lst["classes"]["needs-person"]
+        attempted = {x["issue"] for x in st["attempts"]}   # these are listed above, with what happened to them
+        waiting = [n for n in lst["classes"]["needs-person"] if n not in attempted]
         out.append(f"{LABELS['needs-person']} ({len(waiting)}):" + ("" if waiting else " -"))
         for n in waiting:
             out.append(f"  #{n}")
-            out += [f"    - {q}" for q in lst["questions"].get(str(n), [])]
-        attempted = {x["issue"] for x in st["attempts"]}   # these are listed above, with what happened to them
+            out += rows_of(n)
         for name in NOT_RUN:
             rest = [n for n in lst["classes"][name] if n not in attempted]
             out.append(f"not run — {LABELS[name]}{REPORT_NOTES.get(name, '')} ({len(rest)}): {nums(rest)}")

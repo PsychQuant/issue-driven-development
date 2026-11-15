@@ -30,7 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lost, or the user interrupts; a `start` that cannot read the open issues begins no run and is reported
   as it is. `start` prints the list (issue numbers only) before anything runs and `report` prints one report
   at the end: closed, stopped with the reason, waiting for a person with every open question in full, and not
-  run by class; an issue the run attempted is listed only with what happened to it, and the report says that
+  run by class; an issue the run attempted is named once, with what happened to it and the questions it now
+  waits on, and the report says that
   a verified issue or one stopped with existing work continues when it is named. `rest` with another
   positional argument, `--in-chain` without an issue, an unknown `--` flag (also in a call that names an
   issue: it used to be ignored) and `--cwd` without a path are refused. **If you scheduled or looped a bare

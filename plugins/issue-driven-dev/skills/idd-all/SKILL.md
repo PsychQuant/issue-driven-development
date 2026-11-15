@@ -183,7 +183,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" stop --cwd "$CWD" --repo "
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" report --cwd "$CWD" --repo "$GITHUB_REPO"
 ```
 
-報告列出結案的、停下的與原因、等人回答的問題（整列，不截斷）、沒跑的與類別；這次 run 試過的 issue 只出現在結案或停下那兩段。已經 verified 的與停在 `existing work` 的會註明要指名 `/idd-all #N` 才會繼續。印完就刪掉 run 的狀態。等人回答的問題由人回答；回答後那一張下次 rest 就會被跑到。
+報告列出結案的、停下的與原因、等人回答的問題（整列，不截斷）、沒跑的與類別；這次 run 試過的 issue 只出現一次，在結案、停下、或「交出後還沒有結果」那三段之一，它現在有還沒回答的釐清問題時，問題列在它那一筆底下。已經 verified 的與停在 `existing work` 的會註明要指名 `/idd-all #N` 才會繼續。印完就刪掉 run 的狀態。等人回答的問題由人回答；回答後那一張下次 rest 就會被跑到。
 
 報告印完之後清掉 unattended 標記。單張流程的 Phase 6 本來會清，但 run 在兩張之間停下、或最後一張是 rest 不接手的 issue 時可能還留著，留著會讓這個工作樹之後的 attended session 被當成 unattended：
 
