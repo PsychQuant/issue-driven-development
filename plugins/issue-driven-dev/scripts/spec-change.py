@@ -20,8 +20,10 @@ file) and exits with a fixed code. A usage error prints to stderr and exits 64.
       Searching submodules requires git 2.45 or later.
       A submodule can be searched only when checked out (its directory holds its own .git
       entry and is the top of its own working tree) and its object store holds that commit.
-      Its directory must lie in the main working tree: the main repository's own git directory
-      is no part of it, so git is not run in a directory there.
+      Its directory must be the top directory or lie under it, and neither it nor a directory
+      between it and the top may be one of the two directories git names at the top
+      (rev-parse --absolute-git-dir and --git-common-dir): git is not run in such a directory.
+      No other directory is excluded.
       A file that counts settles the Example only when the search of its submodule ran to its end;
       an object of the recorded commit that is absent or cannot be opened makes the submodule one
       that could not be searched unless such a file was found.
@@ -449,29 +451,37 @@ def submodule_lacks_objects(directory, rev):
     return p.returncode != 0 or len(answers) != len(ids) or any(a.endswith(b" missing") for a in answers)
 
 
-def main_git_directory(top, cache):
-    """Where git keeps the main repository. Asked once in a run, and only when a submodule's directory is examined."""
-    if "main_git_dir" not in cache:
-        cache["main_git_dir"] = one_line(os.fsdecode(git(top, "rev-parse", "--absolute-git-dir").stdout))
-    return cache["main_git_dir"]
+def main_git_directories(top, cache):
+    """The two directories git names at the top directory: the git directory of this working tree and the common
+    git directory of the repository (in a linked worktree they differ). Asked once in a run, and only when a
+    submodule's directory is examined. A relative answer is relative to the top directory, where git ran."""
+    if "main_git_dirs" not in cache:
+        found = []
+        for option in ("--absolute-git-dir", "--git-common-dir"):
+            printed = one_line(os.fsdecode(git(top, "rev-parse", option).stdout))
+            found.append(printed if os.path.isabs(printed) else os.path.join(top, printed))
+        cache["main_git_dirs"] = tuple(found)
+    return cache["main_git_dirs"]
 
 
-def under_git_directory(directory, real_top, git_dir):
-    """Is the directory the main repository's git directory, or under it?
+def under_git_directory(directory, real_top, git_dirs):
+    """Is the directory, or a directory between it and the top directory, one of git_dirs?
 
-    directory is resolved and lies under real_top. Directories are compared, not names: a git directory made
-    apart can have any name, and on a volume that folds case a link can spell `.git` in another case."""
+    directory is resolved and is real_top or lies under it. The top directory itself is not compared. Directories
+    are compared, not names: a git directory made apart can have any name, and on a volume that folds case a link
+    can spell `.git` in another case."""
     try:
-        wanted = os.stat(git_dir)
+        wanted = [os.stat(git_dir) for git_dir in git_dirs]
     except OSError:
         raise Fail("the git directory of the repository cannot be read")
     current = directory
     while len(current) > len(real_top):
         try:
-            if os.path.samestat(os.stat(current), wanted):
+            here = os.stat(current)
+            if any(os.path.samestat(here, one) for one in wanted):
                 return True
         except OSError:
-            pass   # a component that is not there cannot be the git directory
+            pass   # a component that is not there cannot be one of them
         current = os.path.dirname(current)
     return False
 
@@ -492,8 +502,8 @@ def marker_files(top, head, needle, sd, cache):
                     reason = "path leaves the repository"
                 elif os.path.commonpath((real_top, os.path.realpath(directory))) != real_top:
                     reason = "path leaves the repository"
-                elif under_git_directory(os.path.realpath(directory), real_top, main_git_directory(top, cache)):
-                    # Under the top directory and no part of the working tree: condition 2 does not hold.
+                elif under_git_directory(os.path.realpath(directory), real_top, main_git_directories(top, cache)):
+                    # One of the two directories of condition 2, or under one of them.
                     reason = "path leaves the repository"
                 elif not os.path.isdir(directory) or os.path.islink(directory) or not os.path.lexists(os.path.join(directory, ".git")):
                     reason = "not checked out"

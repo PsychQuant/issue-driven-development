@@ -5,7 +5,7 @@
 
 ## 2. 程式
 
-- [ ] 2.1 [after: 1.1] 依 design「兩個目錄分兩次問，相對路徑接在頂層目錄後面」「往上比對只到頂層目錄為止」與 Implementation Contract：`plugins/issue-driven-dev/scripts/spec-change.py` 在主 repo 的頂層問 `--absolute-git-dir` 與 `--git-common-dir`，解析後的目錄或它到頂層目錄之間的任何一層是兩者之一時，原因是 path leaves the repository，不呼叫 `submodule_git()`；檔頭與函式的說明改成同樣的說法。驗證：`bash plugins/issue-driven-dev/scripts/tests/spec-change/test.sh` 全部通過、0 項失敗；標記在主 repo 的 repo，git 呼叫的次數與修改前相同（第 22 列既有的檢查）。
+- [x] 2.1 [after: 1.1] 依 design「兩個目錄分兩次問，相對路徑接在頂層目錄後面」「往上比對只到頂層目錄為止」與 Implementation Contract：`plugins/issue-driven-dev/scripts/spec-change.py` 在主 repo 的頂層問 `--absolute-git-dir` 與 `--git-common-dir`，解析後的目錄或它到頂層目錄之間的任何一層是兩者之一時，原因是 path leaves the repository，不呼叫 `submodule_git()`；檔頭與函式的說明改成同樣的說法。驗證：`bash plugins/issue-driven-dev/scripts/tests/spec-change/test.sh` 全部通過、0 項失敗；標記在主 repo 的 repo，git 呼叫的次數與修改前相同（第 22 列既有的檢查）。
 
 ## 3. 文字
 
