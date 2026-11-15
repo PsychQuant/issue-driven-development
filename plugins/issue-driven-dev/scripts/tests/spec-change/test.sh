@@ -38,7 +38,12 @@ sys.exit(0 if m and (int(m.group(1)), int(m.group(2))) >= (2, 45) else 1)'; then
   echo "FATAL: spec-change suite: this suite needs git 2.45 or later; found: ${GIT_VERSION_TEXT:-no git version}" >&2
   exit 1
 fi
-WORK=$(mktemp -d "${TMPDIR:-/tmp}/idd-spec-change.XXXXXX")
+# Every fixture lives under $WORK and the suite removes paths below it: without it the suite must not start.
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/idd-spec-change.XXXXXX") || WORK=""
+if [ -z "$WORK" ] || [ ! -d "$WORK" ]; then
+  echo "FATAL: spec-change suite: could not create a temporary directory under ${TMPDIR:-/tmp}" >&2
+  exit 1
+fi
 trap 'rm -rf "$WORK"' EXIT
 # Isolate git from the caller's configuration (#452 lesson).
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
@@ -650,11 +655,17 @@ submodule_reason 27 tests/sub 'not checked out'
 submodule_repo l-sub-git-dir "$SUB" tests/sub || setup_failed "create inherited-GIT_DIR fixture"
 GIT_DIR="$REPO/.git" links_case "submodule row 28: inherited GIT_DIR names main repository" ok 0 0
 
-example_repo l-sub-seven
-for n in 1 2 3 4 5 6 7; do
-  git -C "$REPO" update-index --add --cacheinfo "160000,$MISSING_COMMIT,m$n" || setup_failed "record gitlink m$n"
+# Row 29: the marker is in the recorded commit of each of seven submodules, and none of them is checked out.
+submodule_repo l-sub-seven "$SUB" m1 || setup_failed "create row 29"
+for n in 2 3 4 5 6 7; do
+  git -C "$REPO" -c protocol.file.allow=always submodule add -q "$SUB" "m$n" || setup_failed "submodule add m$n"
 done
-git -C "$REPO" commit -q -m seven-gitlinks || setup_failed "commit seven gitlinks"
+commit >/dev/null || setup_failed "commit seven submodules"
+for n in 1 2 3 4 5 6 7; do
+  [ "$(git -C "$REPO" rev-parse "HEAD:m$n")" = "$(git -C "$REPO/m$n" rev-parse HEAD)" ] || setup_failed "row 29: m$n must be at its recorded commit"
+  git -C "$REPO/m$n" grep -q -F -e 'spec-example: cap / alpha table' HEAD -- . || setup_failed "row 29: the recorded commit of m$n must hold the marker"
+done
+git -C "$REPO" submodule deinit -q -f -- m1 m2 m3 m4 m5 m6 m7 || setup_failed "submodule deinit of seven"
 links_case "submodule row 29: seven unchecked submodules" error 0 2
 assert_eq "links: submodule row 29 — sorted first five and remainder" \
   "cannot decide whether the Example 'cap / alpha table' has a marker: submodule m1: not checked out; submodule m2: not checked out; submodule m3: not checked out; submodule m4: not checked out; submodule m5: not checked out; and 2 more" \
@@ -1001,8 +1012,8 @@ assert_grep "preflight: init-openspec names the command" "spectra init" "$(print
 pf_repo pf-sub no yes; mkdir -p "$TREE/deep/er"; OUT=$(PATH="$BIN_WITH" "$PY" "$SC" preflight --cwd "$TREE/deep/er" --can-write yes 2>/dev/null)
 assert_eq "preflight: run from a subdirectory, openspec/ is looked for at the top of the repository" ready "$(printf '%s' "$OUT" | field status)"
 
-# ── top directory names ─────────────────────────────────────────────────────
-echo "spec-change: top directory names (Example: a top level whose name ends in whitespace)"
+# ── a top level whose name ends in whitespace ───────────────────────────────
+echo "spec-change: a top level whose name ends in whitespace (rows 7 to 12 of the Example)"
 example_repo 'l-top-space ' || setup_failed "create trailing-space repository"
 main_marker || setup_failed "write top-directory marker"
 put openspec/changes/archive/2026-11-10-idd-42-example/proposal.md 'Archived change.' || setup_failed "write archived change"
@@ -1020,33 +1031,33 @@ $MARK
 EOF
 
 REPO="$COPY_REPO"
-links_case "top directory names: links control" ok 0 0
+links_case "top level ending in whitespace: links control" ok 0 0
 COPY_OUT="$OUT"; COPY_RC="$RC"
 REPO="$SPACE_REPO"
-links_case "top directory names: links trailing space" ok 0 0
-assert_eq "top directory names: links — identical JSON" "$COPY_OUT" "$OUT"
-assert_exit "top directory names: links — identical exit" "$COPY_RC" "$RC"
+links_case "top level ending in whitespace: links trailing space" ok 0 0
+assert_eq "top level ending in whitespace: links — identical JSON" "$COPY_OUT" "$OUT"
+assert_exit "top level ending in whitespace: links — identical exit" "$COPY_RC" "$RC"
 
 run archived --file "$WORK/top-directory-comment.md" --cwd "$COPY_REPO" --ref HEAD
 COPY_OUT="$OUT"; COPY_RC="$RC"
-assert_eq "top directory names: archived control — status" pass "$(printf '%s' "$OUT" | field status)"
-assert_exit "top directory names: archived control — exit" 0 "$RC"
-assert_eq "top directory names: archived control — one JSON line" 1 "$LINES"
+assert_eq "top level ending in whitespace: archived control — status" pass "$(printf '%s' "$OUT" | field status)"
+assert_exit "top level ending in whitespace: archived control — exit" 0 "$RC"
+assert_eq "top level ending in whitespace: archived control — one JSON line" 1 "$LINES"
 run archived --file "$WORK/top-directory-comment.md" --cwd "$SPACE_REPO" --ref HEAD
-assert_eq "top directory names: archived trailing space — status" pass "$(printf '%s' "$OUT" | field status)"
-assert_eq "top directory names: archived — identical JSON" "$COPY_OUT" "$OUT"
-assert_exit "top directory names: archived — identical exit" "$COPY_RC" "$RC"
-assert_eq "top directory names: archived trailing space — one JSON line" 1 "$LINES"
+assert_eq "top level ending in whitespace: archived trailing space — status" pass "$(printf '%s' "$OUT" | field status)"
+assert_eq "top level ending in whitespace: archived — identical JSON" "$COPY_OUT" "$OUT"
+assert_exit "top level ending in whitespace: archived — identical exit" "$COPY_RC" "$RC"
+assert_eq "top level ending in whitespace: archived trailing space — one JSON line" 1 "$LINES"
 
 PATH="$BIN_WITH:$PATH" run preflight --cwd "$COPY_REPO" --can-write yes
 COPY_STATUS=$(printf '%s' "$OUT" | field status); COPY_RC="$RC"
-assert_eq "top directory names: preflight control — status" ready "$COPY_STATUS"
-assert_exit "top directory names: preflight control — exit" 0 "$RC"
-assert_eq "top directory names: preflight control — one JSON line" 1 "$LINES"
+assert_eq "top level ending in whitespace: preflight control — status" ready "$COPY_STATUS"
+assert_exit "top level ending in whitespace: preflight control — exit" 0 "$RC"
+assert_eq "top level ending in whitespace: preflight control — one JSON line" 1 "$LINES"
 PATH="$BIN_WITH:$PATH" run preflight --cwd "$SPACE_REPO" --can-write yes
-assert_eq "top directory names: preflight — identical status" "$COPY_STATUS" "$(printf '%s' "$OUT" | field status)"
-assert_exit "top directory names: preflight — identical exit" "$COPY_RC" "$RC"
-assert_eq "top directory names: preflight trailing space — one JSON line" 1 "$LINES"
+assert_eq "top level ending in whitespace: preflight — identical status" "$COPY_STATUS" "$(printf '%s' "$OUT" | field status)"
+assert_exit "top level ending in whitespace: preflight — identical exit" "$COPY_RC" "$RC"
+assert_eq "top level ending in whitespace: preflight trailing space — one JSON line" 1 "$LINES"
 
 # A name that ends in a line feed: the only input that tells "remove the one line end git adds" from "remove
 # every trailing line feed". The copy at a plain name is the control of the block above.
@@ -1054,23 +1065,23 @@ NEWLINE_REPO="$WORK/l-top-newline"$'\n'
 cp -R "$COPY_REPO" "$NEWLINE_REPO" || setup_failed "copy repository to a name that ends in a line feed"
 [ "$(git -C "$NEWLINE_REPO" rev-parse HEAD)" = "$COPY_HEAD" ] || setup_failed "the line-feed copy must have the same commits"
 REPO="$COPY_REPO"
-links_case "top directory names: links control (line feed)" ok 0 0
+links_case "top level ending in whitespace: links control (line feed)" ok 0 0
 COPY_OUT="$OUT"; COPY_RC="$RC"
 REPO="$NEWLINE_REPO"
-links_case "top directory names: links trailing line feed" ok 0 0
-assert_eq "top directory names: links, line feed — identical JSON" "$COPY_OUT" "$OUT"
-assert_exit "top directory names: links, line feed — identical exit" "$COPY_RC" "$RC"
+links_case "top level ending in whitespace: links trailing line feed" ok 0 0
+assert_eq "top level ending in whitespace: links, line feed — identical JSON" "$COPY_OUT" "$OUT"
+assert_exit "top level ending in whitespace: links, line feed — identical exit" "$COPY_RC" "$RC"
 run archived --file "$WORK/top-directory-comment.md" --cwd "$COPY_REPO" --ref HEAD
 COPY_OUT="$OUT"; COPY_RC="$RC"
 run archived --file "$WORK/top-directory-comment.md" --cwd "$NEWLINE_REPO" --ref HEAD
-assert_eq "top directory names: archived trailing line feed — status" pass "$(printf '%s' "$OUT" | field status)"
-assert_eq "top directory names: archived, line feed — identical JSON" "$COPY_OUT" "$OUT"
-assert_exit "top directory names: archived, line feed — identical exit" "$COPY_RC" "$RC"
+assert_eq "top level ending in whitespace: archived trailing line feed — status" pass "$(printf '%s' "$OUT" | field status)"
+assert_eq "top level ending in whitespace: archived, line feed — identical JSON" "$COPY_OUT" "$OUT"
+assert_exit "top level ending in whitespace: archived, line feed — identical exit" "$COPY_RC" "$RC"
 PATH="$BIN_WITH:$PATH" run preflight --cwd "$COPY_REPO" --can-write yes
 COPY_STATUS=$(printf '%s' "$OUT" | field status); COPY_RC="$RC"
 PATH="$BIN_WITH:$PATH" run preflight --cwd "$NEWLINE_REPO" --can-write yes
-assert_eq "top directory names: preflight, line feed — identical status" "$COPY_STATUS" "$(printf '%s' "$OUT" | field status)"
-assert_exit "top directory names: preflight, line feed — identical exit" "$COPY_RC" "$RC"
+assert_eq "top level ending in whitespace: preflight, line feed — identical status" "$COPY_STATUS" "$(printf '%s' "$OUT" | field status)"
+assert_exit "top level ending in whitespace: preflight, line feed — identical exit" "$COPY_RC" "$RC"
 
 # ── spec directory (task 2.6) ───────────────────────────────────────────────
 echo "spec-change: spec directory (Example: spec directory by .spectra.yaml)"
