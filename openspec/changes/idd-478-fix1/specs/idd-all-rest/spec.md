@@ -2,23 +2,24 @@
 
 ### Requirement: Every open issue falls into exactly one class
 
-`rest-queue.py` SHALL put every open issue of the repository into exactly one of nine classes by this ordered table, first match wins:
+`rest-queue.py` SHALL put every open issue of the repository into exactly one of eight classes by this ordered table, first match wins:
 
 1. `outsider` — the account that opened the issue, the last editor of its body, or the author of any of its comments has no write access to the repository, or one of these accounts cannot be read. A comment by a bot account does not count, as in the close stage.
 2. `tracker` — the issue carries the label `north-star` or `epic`.
 3. `unreadable` — the body of the issue has text and GitHub returns no rendering of it that this helper can read.
-4. `needs-person` — the issue body shows at least one open clarity row.
+4. `needs-person` — the issue body shows at least one open clarity row, or a comment of the issue records a skipped confirmation that no later Decision comment answered.
 5. `parked` — the actionability gate puts the issue in its `parked` group.
 6. `blocked` — the actionability gate puts the issue in its `blocked` group.
 7. `meeting` — the latest trusted Diagnosis records the type `meeting`.
-8. `verified` — the first `Phase` line that GitHub's rendering of the body shows outside code blocks has the value `verified`.
-9. `candidate` — every other issue.
+8. `candidate` — every other issue.
 
-Only `candidate` issues are run. The table SHALL be held as ordered data, and the classification SHALL be a pure function of these inputs: author has write access, last editor has write access, every commenter has write access, tracker label present, body rendering readable, open clarity row present, gate group (`actionable`, `parked`, `blocked`, `undiagnosed`), Diagnosis type is `meeting`, phase is `verified`.
+Only `candidate` issues are run. The table SHALL be held as ordered data, and the classification SHALL be a pure function of these inputs: author has write access, last editor has write access, every commenter has write access, tracker label present, body rendering readable, open question present (an open clarity row or an unanswered skipped confirmation), gate group (`actionable`, `parked`, `blocked`, `undiagnosed`), Diagnosis type is `meeting`.
 
 The input "last editor has write access" SHALL be true when the body was never edited (GitHub reports no time of a last edit), true when GitHub names the last editor and that account has write access, and false in every other case: a body that was edited by an account GitHub does not return is treated as edited by an account without write access.
 
-The three inputs about accounts SHALL be decided without reading the rendering of the body, so that an issue that holds text from an account without write access is `outsider` whatever its body renders to. For an issue whose body rendering is not readable, the inputs "open clarity row present" and "phase is `verified`" SHALL be false.
+The three inputs about accounts SHALL be decided without reading the rendering of the body, so that an issue that holds text from an account without write access is `outsider` whatever its body renders to. For an issue whose body rendering is not readable, the input "open question present" SHALL be false.
+
+An issue that an earlier run left at the phase `verified`, or that already has a pull request or a branch, is not a class of its own: it is a `candidate` unless one of the rules above holds, so that a run takes it up again. An issue whose earlier run stopped because a confirmation was skipped stays `needs-person` until a Decision comment answers it, so that the run does not repeat the work only to stop at the same place.
 
 The judgements SHALL come from the existing implementations: open clarity rows from `scripts/lib/intent.py`, the gate group and the Diagnosis type from `scripts/lib/actionability.sh`, write access from `scripts/lib/ghread.py`, and the latest trusted Diagnosis from `scripts/lib/ghread.py`. `rest-queue.py` SHALL NOT contain a second implementation of any of them.
 
@@ -37,6 +38,11 @@ The judgements SHALL come from the existing implementations: open clarity rows f
 - **WHEN** an open issue by a maintainer shows a clarity row whose status is `surfaced`
 - **THEN** its class is `needs-person` and it is not in the run order
 
+#### Scenario: an issue an earlier run verified is taken up again
+
+- **WHEN** the body of an open issue by a maintainer shows the phase `verified`, and none of the rules above holds
+- **THEN** its class is `candidate` and it is in the run order
+
 #### Scenario: an issue edited by an account that cannot be read is never run
 
 - **WHEN** the body of an open issue by a maintainer was edited and GitHub does not return the account that edited it
@@ -44,30 +50,35 @@ The judgements SHALL come from the existing implementations: open clarity rows f
 
 ##### Example: class precedence
 
-| author writes | editor writes | commenters write | tracker | readable | open clarity row | gate group | meeting | verified | class |
-| ------------- | ------------- | ---------------- | ------- | -------- | ---------------- | ---------- | ------- | -------- | ----- |
-| no | yes | yes | no | yes | no | actionable | no | no | outsider |
-| yes | no | yes | no | yes | no | actionable | no | no | outsider |
-| yes | yes | no | no | yes | no | actionable | no | no | outsider |
-| no | yes | yes | yes | yes | yes | parked | no | yes | outsider |
-| no | yes | yes | no | no | no | actionable | no | no | outsider |
-| yes | yes | yes | yes | yes | yes | blocked | no | no | tracker |
-| yes | yes | yes | yes | no | no | actionable | no | no | tracker |
-| yes | yes | yes | no | no | no | actionable | no | no | unreadable |
-| yes | yes | yes | no | no | no | blocked | yes | no | unreadable |
-| yes | yes | yes | no | yes | yes | blocked | no | yes | needs-person |
-| yes | yes | yes | no | yes | no | parked | yes | yes | parked |
-| yes | yes | yes | no | yes | no | blocked | no | yes | blocked |
-| yes | yes | yes | no | yes | no | actionable | yes | yes | meeting |
-| yes | yes | yes | no | yes | no | actionable | no | yes | verified |
-| yes | yes | yes | no | yes | no | actionable | no | no | candidate |
-| yes | yes | yes | no | yes | no | undiagnosed | no | no | candidate |
+| author writes | editor writes | commenters write | tracker | readable | open question | gate group | meeting | class |
+| ------------- | ------------- | ---------------- | ------- | -------- | ------------- | ---------- | ------- | ----- |
+| no | yes | yes | no | yes | no | actionable | no | outsider |
+| yes | no | yes | no | yes | no | actionable | no | outsider |
+| yes | yes | no | no | yes | no | actionable | no | outsider |
+| no | yes | yes | yes | yes | yes | parked | no | outsider |
+| no | yes | yes | no | no | no | actionable | no | outsider |
+| yes | yes | yes | yes | yes | yes | blocked | no | tracker |
+| yes | yes | yes | yes | no | no | actionable | no | tracker |
+| yes | yes | yes | no | no | no | actionable | no | unreadable |
+| yes | yes | yes | no | no | no | blocked | yes | unreadable |
+| yes | yes | yes | no | yes | yes | blocked | no | needs-person |
+| yes | yes | yes | no | yes | no | parked | yes | parked |
+| yes | yes | yes | no | yes | no | blocked | yes | blocked |
+| yes | yes | yes | no | yes | no | actionable | yes | meeting |
+| yes | yes | yes | no | yes | no | actionable | no | candidate |
+| yes | yes | yes | no | yes | no | undiagnosed | no | candidate |
 
 ##### Example: edited by an account that cannot be read
 
 - **GIVEN** three open issues opened by an account with write access: #5 was never edited, #6 was edited by an account with write access, and #7 was edited and GitHub returns no account for the editor
 - **WHEN** the list is produced
 - **THEN** #5 and #6 are candidates and #7 has the class `outsider`
+
+##### Example: an unanswered default keeps an issue waiting
+
+- **GIVEN** three open issues by an account with write access, each with a trusted Diagnosis comment: on #5 that comment shows a `Reason` line with the literal `unattended-auto-Step-4-choice-default` and no Decision comment follows; on #6 the same comment is followed by a Decision comment; on #7 the literal stands only inside a code block of the comment
+- **WHEN** the list is produced
+- **THEN** #5 has the class `needs-person` and its questions name the unanswered confirmation, and #6 and #7 are candidates
 
 ---
 ### Requirement: The open issues are read completely or not at all
@@ -140,7 +151,7 @@ When the `start` that would begin a run exits with code 3, no run exists and the
 
 `rest-queue.py report` SHALL print one report with: the issues recorded as closed; the issues recorded as stopped, each with its reason; the `needs-person` issues, each with the complete text of every open clarity row, one line per row and not shortened; the issues of every other class that was not run; and the stop reason of the run when there is one. It SHALL then delete the run state. When the open issues cannot be re-read, it SHALL still print the recorded attempts, say that the list could not be read, and delete the run state.
 
-An issue that this run handed out SHALL appear once: under closed, under stopped or as handed out without a result. It SHALL NOT appear in the list of issues waiting for a person or in the line of a class that was not run. When such an issue shows open clarity rows at the time of the report, the report SHALL print those rows under the entry of that issue. For the class `verified`, and when at least one issue was recorded with a reason that begins with `existing work:`, the report SHALL say that such an issue continues when it is named (`/idd-all #N`).
+An issue that this run handed out SHALL appear once: under closed, under stopped or as handed out without a result. It SHALL NOT appear in the list of issues waiting for a person or in the line of a class that was not run. When such an issue shows open clarity rows at the time of the report, the report SHALL print those rows under the entry of that issue.
 
 #### Scenario: the report ends the run
 
@@ -149,8 +160,8 @@ An issue that this run handed out SHALL appear once: under closed, under stopped
 
 #### Scenario: an issue the run stopped on is not reported as not run
 
-- **WHEN** an issue was handed out, stopped at the close stage, and its body now shows the phase `verified`
-- **THEN** the report lists it under stopped and not in the line of the `verified` class
+- **WHEN** an issue was handed out and stopped, and by the time of the report it falls into a class that is not run
+- **THEN** the report lists it under stopped and not in the line of that class
 
 ##### Example: report with one closed, one stopped and one waiting issue
 
@@ -160,9 +171,9 @@ An issue that this run handed out SHALL appear once: under closed, under stopped
 
 ##### Example: an attempted issue is not listed as not run
 
-- **GIVEN** a run in which #5 was recorded as stopped with the reason `verify gate: not_clean`, and by the time of the report the body of #5 shows the phase `verified`; the open issue #8 also shows the phase `verified` and was never handed out
+- **GIVEN** a run in which #5 was recorded as stopped with the reason `verify gate: not_clean`, and by the time of the report the body of #5 has a non-empty `### Blocking` section; the open issue #8 also has one and was never handed out
 - **WHEN** `report` runs
-- **THEN** the line of the `verified` class names #8 and does not name #5, #5 is listed under stopped, and the report says that a verified issue continues when it is named
+- **THEN** the line of the `blocked` class names #8 and does not name #5, and #5 is listed under stopped
 
 ##### Example: a stopped issue carries its open questions
 
@@ -175,3 +186,78 @@ An issue that this run handed out SHALL appear once: under closed, under stopped
 - **GIVEN** an open issue #14 whose body shows one open clarity row that is longer than 300 characters and whose question ends with the words `END-OF-QUESTION`
 - **WHEN** `report` runs
 - **THEN** the line of that row in the output contains `END-OF-QUESTION`
+
+---
+### Requirement: Start prints the list and resumes an unfinished run
+
+`rest-queue.py start` SHALL print the number of open issues, the issue numbers of every class, and the run order, before any issue is handed out. It SHALL print issue numbers only, no issue titles. Among the issues of the run order it SHALL name those whose body shows the phase `verified`: an earlier run stopped there and this run takes them up again.
+
+When the working tree holds the state of a run of the same repository whose last recorded activity (start, hand-out, record or stop) is less than 24 hours old and that was not ended by `report`, `start` SHALL resume it: the recorded attempts and a recorded stop are kept, and the attempts are not handed out again. Otherwise `start` SHALL begin a new run with no attempts.
+
+#### Scenario: calling start twice does not reset the run
+
+- **WHEN** `start` is called a second time during a run, after one issue was recorded
+- **THEN** the recorded attempt is still present and `next` does not hand that issue out
+
+##### Example: resume within 24 hours
+
+- **GIVEN** a run state whose last activity was 2 hours ago, in which #5 is recorded as stopped, and candidates #5 and #9
+- **WHEN** `start` and then `next` are called
+- **THEN** `start` says the run is resumed with 1 attempt, and `next` hands out #9
+
+##### Example: a state older than 24 hours starts a new run
+
+- **GIVEN** a run state whose last activity was 25 hours ago, in which #5 is recorded as stopped, and candidates #5 and #9
+- **WHEN** `start` and then `next` are called
+- **THEN** `next` hands out #5
+
+##### Example: a verified issue is taken up again
+
+- **GIVEN** the open issues #5 (a plain candidate without a Diagnosis) and #8, whose body shows the phase `verified` and which has a trusted Diagnosis with the Complexity `Simple`
+- **WHEN** `start` runs
+- **THEN** the run order is 8, 5, and the output names #8 as taken up again from an earlier run and does not name #5 there
+
+---
+### Requirement: idd-all runs rest mode as a loop over the single-issue pipeline
+
+In rest mode `idd-all` SHALL call `rest-queue.py start`, then repeat: `next`; run the single-issue pipeline for the issue handed out, with the flags of this invocation; `record` with the stop reason the single-issue report printed, if any; in PR mode check out the default branch and fast-forward it as the batch mode of capability `parallel-orchestration` requires, and confirm that the working tree is clean. It SHALL resolve the path and the interaction mode once, for the first issue, and reuse them for every later issue. It SHALL leave the loop when `next` prints `done` or a stop reason, and SHALL then call `rest-queue.py report` and relay its output.
+
+In rest mode `idd-all` SHALL treat an issue that already has a pull request or a branch exactly as the single-issue pipeline treats it when that issue is named. When the existing-work check returns `resume`, it SHALL continue on the issue's own branch and reuse its pull request. When the check returns `blocked` and the interaction is unattended, it SHALL NOT start the issue, as the single-issue pipeline requires for a pull request that is not on the issue's own branch or that is already merged, and SHALL record the issue with the outcome the check printed.
+
+#### Scenario: the loop ends with the report
+
+- **WHEN** `next` prints `done`
+- **THEN** `idd-all` calls `report` and starts no further issue
+
+#### Scenario: an issue that already has its own pull request is continued
+
+- **WHEN** the issue handed out has an open pull request on its own `idd/<N>-…` branch
+- **THEN** `idd-all` checks out that branch, continues the pipeline on it and reuses the pull request
+
+#### Scenario: a pull request that is not the issue's own is left alone
+
+- **WHEN** the issue handed out is declared by an open pull request on another branch and the run is unattended
+- **THEN** `idd-all` starts nothing for that issue, records it as stopped with the outcome of the existing-work check, and asks `next` for the following issue
+
+##### Example: the skill names the loop commands in order
+
+- **GIVEN** the text of `skills/idd-all/SKILL.md`
+- **WHEN** the rest section is read
+- **THEN** it contains the invocations `rest-queue.py" start`, `rest-queue.py" next`, `rest-queue.py" record`, `rest-queue.py" stop` and `rest-queue.py" report`, with `start` before `next`, `next` before `record`, and `report` last; Step 0.1 contains the invocation `rest-queue.py" args`; the rest section states that `verdict=resume` is continued on the issue's own branch and that `verdict=blocked` is handled as the single-issue pipeline handles it; and Phase 6 sends a rest run back to the rest section
+
+## ADDED Requirements
+
+### Requirement: Unanswered skipped confirmations are available from one implementation
+
+`scripts/lib/intent.py` SHALL provide `unanswered_confirmations(comments)`, which returns the skipped-confirmation literals that the comments posted after the latest Decision comment show, in the order of those comments. A literal counts where GitHub's rendering of the comment shows it on a line labelled `Reason`; a comment by a bot account does not count. The close stage SHALL use this function for its own check, so that the close stage and rest mode read an issue the same way.
+
+#### Scenario: the close stage stops on the same record
+
+- **WHEN** `unanswered_confirmations` returns at least one literal for the comments of an issue
+- **THEN** the intent check of the close stage stops for that issue and names the first of them
+
+##### Example: a record before and after a Decision
+
+- **GIVEN** three comments in this order: a Diagnosis whose `Reason` line shows `unattended-auto-Step-4-choice-default`, a Decision comment, and a second Diagnosis whose `Reason` line shows `unattended-auto-Step-3.4-layerV-deferred`
+- **WHEN** `unanswered_confirmations` is called with the three comments, and again with only the first two
+- **THEN** the first call returns the one literal `unattended-auto-Step-3.4-layerV-deferred`, and the second call returns an empty list
