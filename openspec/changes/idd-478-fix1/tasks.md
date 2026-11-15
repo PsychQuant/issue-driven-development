@@ -28,8 +28,8 @@
 - [x] 4.2 Requirement「Unanswered skipped confirmations are available from one implementation」：`lib/intent.py` 新增 `unanswered_confirmations` 與 `decided_at`，`check_intent` 改用它。完成時：`scripts/tests/close-stage/test.sh` 與 4.1 的測試通過。
 - [x] 4.3 Requirement「Start prints the list and resumes an unfinished run」與「idd-all runs rest mode as a loop over the single-issue pipeline」：`rest-queue.py` 拿掉 `verified` 這一類，`needs-person` 涵蓋沒回應的略過確認（只對 comment 原文含該字樣的 issue 多讀一次渲染），清單與 `start` 標出從 verified 接著做的 issue；`skills/idd-all/SKILL.md` 的判定表、第 3 步、「這一節不做的事」與 Step 0.5.1 改成接手；`CHANGELOG.md` 跟著改。完成時：`scripts/tests/rest-queue/test.sh` 全部通過。
 
-- [ ] 4.4 第二次規格對照檢查的項目：本機已經有這張 issue 的 branch 時 rest 不問、checkout 並快轉（Requirement「idd-all runs rest mode as a loop over the single-issue pipeline」，skill 文字與檢查）；comment 沒有渲染時歸 `needs-person`（Example `a comment GitHub does not render keeps the issue waiting`，帶標記的測試）；`start` 失敗時不動先前那次 run 的狀態（測試）；報告只印 `needs-person` 的問題；skill 的 description、`--review` 那一列、`docs/commands.md` 補上接手。完成時：`scripts/tests/rest-queue/test.sh` 全部通過。
+- [x] 4.4 第二次規格對照檢查的項目：本機已經有這張 issue 的 branch 時 rest 不問、checkout 並快轉（Requirement「idd-all runs rest mode as a loop over the single-issue pipeline」，skill 文字與檢查）；comment 沒有渲染時歸 `needs-person`（Example `a comment GitHub does not render keeps the issue waiting`，帶標記的測試）；`start` 失敗時不動先前那次 run 的狀態（測試）；報告只印 `needs-person` 的問題；skill 的 description、`--review` 那一列、`docs/commands.md` 補上接手。完成時：`scripts/tests/rest-queue/test.sh` 全部通過。
 
 ## 5. 驗證
 
-- [ ] 5.1 跑 `scripts/tests/rest-queue/test.sh`、`scripts/tests/close-stage/test.sh` 與每一個讀到這次改動檔案的 suite，全部通過。完成時：`scripts/run-all-tests.sh` 沒有失敗的 suite。
+- [x] 5.1 跑 `scripts/tests/rest-queue/test.sh`、`scripts/tests/close-stage/test.sh` 與每一個讀到這次改動檔案的 suite，全部通過。完成時：`scripts/run-all-tests.sh` 沒有失敗的 suite。
