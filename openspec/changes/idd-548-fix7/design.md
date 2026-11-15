@@ -85,6 +85,10 @@ git 在 submodule 的目錄回報的頂層，與那個目錄，用 `os.path.same
 
 第 60 到 64 列需要同一個目錄的兩種拼法。在區分大小寫的磁碟上沒有不需要管理者權限的做法，測試偵測到之後印出一行說明並略過這五列；所以它們的「測試先寫、在修改之前失敗」只在不分大小寫的磁碟上看得到。第 65 列在任何磁碟上都執行。macOS 上另外用 `/System/Volumes/Data` 的拼法重跑第 60 列的輸入（那個路徑指得到 fixture 時）。
 
+### 第 58 列的 fixture 直接看檔案系統
+
+量各環境下的檢查項數時發現：第 58 列（上一個 change 的列）的 fixture 用 `git rev-parse --is-inside-git-dir` 確認頂層目錄在 git 目錄裡。這個配置下 git 2.55.0 回 true、git 2.54.0（macOS 內附的）回 false，舊的 git 在 PATH 前面時整個測試檔停在這個 fixture。列的文字說的是頂層目錄在哪裡，不是那個選項印什麼；fixture 改成比對 `git rev-parse --absolute-git-dir` 印的目錄與頂層目錄的實際路徑。對 script 行為的檢查沒有改。
+
 ### 仍然照名稱比對的地方
 
 這次改成比對目錄的有：第 2 個條件的前半、往上比對的停止條件、第 5 個條件，以及新加的規格目錄檢查。下面三處仍然比對名稱，各自在修改前後用兩種拼法量測過（不分大小寫的磁碟，git 2.55.0）：
@@ -95,16 +99,16 @@ git 在 submodule 的目錄回報的頂層，與那個目錄，用 `os.path.same
 
 ## Implementation Contract
 
-- `openspec/specs/spec-on-every-issue/spec.md`（由封存套用）：requirement「Added and modified requirements carry an executable check」的第 2、5 個條件換掉；「(6) its object store holds the recorded commit.」之後加兩句（比對的是目錄；檢查不到的目錄略過）；其後「The git directory of a submodule …」與「The top directory is not compared …」兩句換掉；Example「markers in submodules」在第 59 列之後多第 60 到 63 列。其他句子與列逐字不變。
+- `openspec/specs/spec-on-every-issue/spec.md`（由封存套用）：requirement「Added and modified requirements carry an executable check」的第 2、5 個條件換掉；「(6) its object store holds the recorded commit.」之後加兩句（比對的是目錄；檢查不到的目錄略過）；其後「The git directory of a submodule …」與「The top directory is not compared …」兩句換掉；「Submodules」一段在「none of its files could count.」之後加三句（落在規格目錄裡的 submodule）；Example「markers in submodules」在第 59 列之後多第 60 到 65 列。其他句子與列逐字不變。
 - `plugins/issue-driven-dev/scripts/spec-change.py`：新增 `directories_below_top()`、`leaves_repository()`、`same_directory()`、`in_spec_directory()`；`under_git_directory()` 改成比對一份清單；`marker_files()` 裡第 2 個條件的兩個分支合成一個、第 5 個條件改用 `same_directory()`，不再計算 `real_top`，第 2 個條件之後多一個分支（落在規格目錄裡的不搜尋、不列為搜尋不到）；檔頭 `links` 的說明改寫。除此之外不改。
-- `plugins/issue-driven-dev/scripts/tests/spec-change/test.sh`：第 59 列之後新增第 60 到 65 列的 fixture 與檢查，以及偵測磁碟是否區分大小寫的一段；第 57 列的註解改成新的說法（不另外把 submodule 的 git 目錄加進清單）。其他不動。
-- `plugins/issue-driven-dev/CHANGELOG.md`：只動 `[Unreleased]` 裡 #548 那一條講這兩個條件的那一句。
+- `plugins/issue-driven-dev/scripts/tests/spec-change/test.sh`：第 59 列之後新增第 60 到 65 列的 fixture 與檢查，以及偵測磁碟是否區分大小寫的一段；第 57 列的註解改成新的說法（不另外把 submodule 的 git 目錄加進清單）；第 58 列的 fixture 確認配置的那一行改成直接看檔案系統。其他不動。
+- `plugins/issue-driven-dev/CHANGELOG.md`：只動 `[Unreleased]` 裡 #548 那一條講這兩個條件的那一句，與講規格目錄底下的路徑被略過的那一句。
 - 驗證：在不分大小寫的磁碟上，第 60、61 列的檢查與第 63 列「問過那兩個目錄」的檢查在改程式之前的 commit 上失敗、之後通過；第 62 列與第 63 列的其他檢查前後都通過；第 64、65 列的檢查在加上規格目錄檢查之前的 commit 上失敗、之後通過；`tests/spec-change/test.sh` 全部通過；`run-all-tests.sh` 結束碼 0；`links --base origin/main` 回 `ok`；`archived` 回 pass。
 
 ## Risks / Trade-offs
 
 - 比對裝置與 inode 是作業系統對「同一個目錄」的說法。同一個目錄經由兩個掛載點出現時（例如 Linux 的 bind mount），兩邊會被當成同一個目錄；這與條文一致。反過來，子目錄另外掛載到別處、而上層沒有一起掛載時，往上走遇不到頂層目錄，答案是 path leaves the repository（保守的方向）。
-- 第 60 到 63 列在區分大小寫的磁碟上不執行，所以 Linux 上的 CI 看不到它們。這個缺陷在那種磁碟上不靠管理者權限也造不出來。
+- 第 60 到 64 列在區分大小寫的磁碟上不執行，所以 Linux 上的 CI 看不到它們。這個缺陷在那種磁碟上不靠管理者權限也造不出來。
 - 落在規格目錄裡、經由 link 走到的 submodule，答案從 `ok` 變成 `missing`（第 65 列）。有人把檢查用的 submodule 放在規格目錄裡、再用 link 引出來的話，要把它移到規格目錄之外。
 - 主 repo 自己的檔案仍然照名稱排除（上面第 3 點），與 submodule 的處理不一致，留給 #559。
 
