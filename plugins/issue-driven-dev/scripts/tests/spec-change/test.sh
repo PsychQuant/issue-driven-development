@@ -944,6 +944,25 @@ git -C "$REPO/tests/sub" grep --no-recurse-submodules -q -F -e 'spec-example: ca
 links_case "submodule row 54: no marker, an object that opens but cannot be read to its end" error 0 2
 submodule_reason 54 tests/sub 'its recorded commit could not be read'
 
+# Row 55: the recorded path runs through a symbolic link into the main repository's own git directory, where a
+# clone that holds the recorded commit and the marker was placed by hand. The git directory is no part of the
+# working tree, so the path leaves the repository and git must not run there.
+example_repo l-sub-gitdir-symlink
+RECORDED=$(git -C "$SUB" rev-parse HEAD) || setup_failed "read the commit of row 55"
+# Record the path before placing the symlink: update-index rejects a path through one.
+record_gitlink lnk/planted "$RECORDED"
+git clone -q "$SUB" "$REPO/.git/planted-area/planted" || setup_failed "clone into the git directory"
+ln -s .git/planted-area "$REPO/lnk" || setup_failed "link into the git directory"
+git -C "$REPO/lnk/planted" cat-file -e "$RECORDED^{commit}" || setup_failed "row 55: the planted clone must hold the recorded commit"
+git -C "$REPO/lnk/planted" grep -q -F -e 'spec-example: cap / alpha table' "$RECORDED" -- . || setup_failed "row 55: the recorded commit must hold the marker"
+[ "$(git -C "$REPO/.git/planted-area" rev-parse --is-inside-git-dir)" = true ] || setup_failed "row 55: the planted area must be inside the git directory"
+[ "$(git -C "$REPO/.git/planted-area" rev-parse --is-inside-work-tree)" = false ] || setup_failed "row 55: the planted area must not be inside the working tree"
+: > "$WORK/git-calls.log" || setup_failed "clear git call log for row 55"
+GIT_CALL_LOG="$WORK/git-calls.log" REAL_GIT="$GIT" PATH="$WORK/gitlog-bin:$PATH" links_case "submodule row 55: parent symlink into the main git directory" error 0 2
+submodule_reason 55 lnk/planted 'path leaves the repository'
+assert_grep "links: submodule row 55 — the logging git saw the main repository" "-C $REPO rev-parse" "$(cat "$WORK/git-calls.log")"
+refute_grep "links: submodule row 55 — no git command ran in the planted directory" "lnk/planted" "$(cat "$WORK/git-calls.log")"
+
 # ── preflight ───────────────────────────────────────────────────────────────
 echo "spec-change: preflight (Example: preflight by write access and Spectra state)"
 
