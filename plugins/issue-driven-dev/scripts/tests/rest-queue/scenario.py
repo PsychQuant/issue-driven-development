@@ -4,7 +4,8 @@
   scenario.py DIR ISSUE [ISSUE…]
 
 ISSUE is `number[:key=value[,key=value…]]`. Keys:
-  author=LOGIN (default me; `none` = the account is gone)   editor=LOGIN
+  author=LOGIN (default me; `none` = the account is gone)   editor=LOGIN (the body was edited by LOGIN)
+  edited=yes (the body was edited and GitHub returns no account for the editor)
   labels=a+b                                                html=FIXTURE (fixtures/FIXTURE.html and .md)
   diag=Simple|Plan|Spectra|meeting|parked                    (a trusted Diagnosis comment)
   blocking=TEXT                                             (a non-empty ### Blocking in the body)
@@ -39,7 +40,7 @@ def node(spec, out_dir):
     number, _, rest = spec.partition(":")
     opts = dict(kv.split("=", 1) for kv in rest.split(",") if kv)
     n = int(number)
-    body, html = "A plain issue. SECRET-TITLE-TEXT\n", "<p dir=\"auto\">A plain issue. SECRET-TITLE-TEXT</p>"
+    body, html = "A plain issue. SECRET-BODY-TEXT\n", "<p dir=\"auto\">A plain issue. SECRET-BODY-TEXT</p>"
     if "html" in opts:
         body, html = fixture(opts["html"], "md"), fixture(opts["html"], "html")
     if "blocking" in opts:
@@ -69,8 +70,10 @@ def node(spec, out_dir):
     labels = [l for l in opts.get("labels", "").split("+") if l]
     return {
         "number": n,
+        "title": f"Issue {n} SECRET-TITLE-TEXT",   # never requested by the helper, never printed
         "author": None if author == "none" else {"login": author},
         "editor": {"login": opts["editor"]} if "editor" in opts else None,
+        "lastEditedAt": "2026-11-01T00:00:00Z" if ("editor" in opts or opts.get("edited") == "yes") else None,
         "labels": {"totalCount": len(labels), "nodes": [{"name": l} for l in labels]},
         "body": body, "bodyHTML": html,
         "comments": {"totalCount": total, "nodes": comments},

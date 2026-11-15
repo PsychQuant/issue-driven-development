@@ -53,7 +53,7 @@ echo "── the two tables ──"
 # spec-example: idd-all-rest / argument forms
 # spec-example: idd-all-rest / class precedence
 python3 "$HERE/tables_check.py" > "$WORK/tables.out" 2>&1; rc=$?
-assert_exit "tables_check.py passes (argument forms, class precedence, 512 combinations)" 0 "$rc"
+assert_exit "tables_check.py passes (argument forms, class precedence, 1024 combinations)" 0 "$rc"
 [ "$rc" = 0 ] || tail -20 "$WORK/tables.out"
 
 OUT=$(rq args --); rc=$?
@@ -124,6 +124,29 @@ assert_eq "classes: candidate (a Phase line inside a code block does not count; 
 assert_eq "classes: run order" "[12,14,13,17]" "$(printf '%s' "$OUT" | jget order)"
 assert_eq "classes: both questions of #6 are listed" "2" "$(printf '%s' "$OUT" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["questions"]["6"]))')"
 assert_eq "classes: every issue is in exactly one class" "18" "$(printf '%s' "$OUT" | python3 -c 'import json,sys; c=json.load(sys.stdin)["classes"]; a=[n for v in c.values() for n in v]; print(len(a) if len(a)==len(set(a)) else "duplicates")')"
+
+# spec-example: idd-all-rest / edited by an account that cannot be read
+new edited 5 6:editor=me 7:edited=yes
+OUT=$(rq list --repo "$REPO" --json); rc=$?
+assert_exit "edited: exits 0" 0 "$rc"
+assert_eq "edited: never edited, and edited by an account with write access, are candidates" "[5,6]" "$(printf '%s' "$OUT" | jget order)"
+assert_eq "edited: edited by an account GitHub does not return is an outsider issue" "[7]" "$(printf '%s' "$OUT" | jget classes.outsider)"
+python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); del d[0]["lastEditedAt"]; json.dump(d, open(p,"w"))' "$G/issues.json"
+OUT=$(rq list --repo "$REPO" --json 2>/dev/null); rc=$?
+assert_exit "edited: a node without the time of the last edit exits 3" 3 "$rc"
+
+# spec-example: idd-all-rest / a body GitHub renders as nothing
+new unreadable 5 6:html=body-comment-only 7:html=body-comment-only,author=outsider
+echo '{"permission": "read", "role_name": "read"}' > "$G/perm-outsider.json"
+assert_true "unreadable: the fixture has text and GitHub's rendering of it is empty" '[ -s "$HERE/fixtures/body-comment-only.md" ] && [ ! -s "$HERE/fixtures/body-comment-only.html" ]'
+OUT=$(rq list --repo "$REPO" --json 2>"$S/err"); rc=$?
+assert_exit "unreadable: one issue without a rendering does not fail the command" 0 "$rc"
+assert_eq "unreadable: that issue has its own class" "[6]" "$(printf '%s' "$OUT" | jget classes.unreadable)"
+assert_eq "unreadable: by an account without write access it is an outsider issue" "[7]" "$(printf '%s' "$OUT" | jget classes.outsider)"
+assert_eq "unreadable: the run order holds the other candidate" "[5]" "$(printf '%s' "$OUT" | jget order)"
+rq list --repo "$REPO" > "$S/list.out" 2>&1
+assert_true "unreadable: the plain list names the class and the issue" 'grep -E "no rendering.*\(1\): #6$" "$S/list.out" >/dev/null'
+refute_output_grep "list: prints no issue title" "SECRET-TITLE-TEXT" "$S/list.out"
 
 new perm500 1:author=flaky
 : > "$G/perm-flaky.500"
@@ -236,7 +259,9 @@ assert_exit "resume: start exits 0" 0 "$rc"
 assert_output_grep "resume: start says the run is resumed" "resumed" "$S/start.out"
 assert_output_grep "resume: with one attempt" "1 attempt" "$S/start.out"
 assert_output_grep "resume: the list names issue numbers" "#9" "$S/start.out"
-refute_output_grep "resume: the list prints no issue text" "SECRET-TITLE-TEXT" "$S/start.out"
+refute_output_grep "resume: the list prints no issue title" "SECRET-TITLE-TEXT" "$S/start.out"
+refute_output_grep "resume: the list prints no issue text" "SECRET-BODY-TEXT" "$S/start.out"
+assert_true "resume: the fixture issues do carry that title" 'grep -q "SECRET-TITLE-TEXT" "$G/issues.json"'
 assert_eq "resume: starting counts as activity (updated_at is now, not 2 hours ago)" "fresh" "$(python3 -c 'import calendar,json,sys,time; s=json.load(open(sys.argv[1])); t=calendar.timegm(time.strptime(s["updated_at"], "%Y-%m-%dT%H:%M:%SZ")); print("fresh" if time.time()-t < 300 else "stale")' "$(state_file)")"
 assert_eq "resume: next is #9, not #5" "9" "$(run next | jget next)"
 run start > /dev/null 2>&1    # a second start during the run
@@ -263,6 +288,34 @@ assert_output_grep "report: the second question of #14" "Which file holds gamma?
 assert_file_absent "report: the run state is deleted" "$(state_file)"
 run next > /dev/null 2>&1; rc=$?
 assert_exit "report: a later next exits 1" 1 "$rc"
+
+refute_output_grep "report: prints no issue title" "SECRET-TITLE-TEXT" "$S/report.out"
+
+# spec-example: idd-all-rest / an attempted issue is not listed as not run
+new report-attempted 5 8:html=body-verified
+run start > /dev/null 2>&1
+run next > /dev/null; run record --issue 5 --reason "verify gate: not_clean" > /dev/null
+issues 5:html=body-verified 8:html=body-verified      # by the time of the report #5 shows the phase verified too
+run report > "$S/report.out" 2>&1; rc=$?
+assert_exit "report (attempted): exits 0" 0 "$rc"
+VLINE=$(grep -E '^not run — already verified' "$S/report.out")
+assert_grep "report (attempted): the verified line names #8" "#8" "$VLINE"
+refute_grep "report (attempted): and does not name #5" "#5" "$VLINE"
+assert_output_grep "report (attempted): #5 is under stopped" "#5 — verify gate: not_clean" "$S/report.out"
+assert_grep "report (attempted): a verified issue continues when it is named" "/idd-all #N" "$VLINE"
+new report-existing 5
+run start > /dev/null 2>&1; run next > /dev/null; run record --issue 5 --reason "existing work: PR #77" > /dev/null
+run report > "$S/report.out" 2>&1
+assert_true "report: existing work continues when it is named" 'grep -E "existing work.*/idd-all #N" "$S/report.out" >/dev/null'
+
+# spec-example: idd-all-rest / a long clarity row is printed in full
+new report-long 5 14:html=body-long-row
+assert_true "long row: the open row of the fixture is longer than 300 characters" '[ "$(grep -c "END-OF-QUESTION" "$HERE/fixtures/body-long-row.md")" = 1 ] && [ "$(grep "END-OF-QUESTION" "$HERE/fixtures/body-long-row.md" | wc -m)" -gt 300 ]'
+run start > /dev/null 2>&1; run next > /dev/null; run record --issue 5 --reason x > /dev/null
+run report > "$S/report.out" 2>&1; rc=$?
+assert_exit "report (long row): exits 0" 0 "$rc"
+assert_true "report (long row): the row is printed up to its last words" 'grep -E "^    - .*END-OF-QUESTION" "$S/report.out" >/dev/null'
+assert_eq "report (long row): on one line" "1" "$(grep -c "END-OF-QUESTION" "$S/report.out")"
 
 new report-unreadable 5
 run start > /dev/null 2>&1; run next > /dev/null; run record --issue 5 --reason "stopped at the PR" > /dev/null
@@ -294,6 +347,37 @@ echo 1 > "$G/fail-page"
 run start > /dev/null 2>&1; rc=$?
 assert_exit "start: exits 3 when the issues cannot be read" 3 "$rc"
 assert_file_absent "start: and leaves no run state" "$(state_file)"
+run stop --reason "the open issues could not be read" > /dev/null 2>&1; rc=$?
+assert_exit "start failed: there is no run, so stop exits 1" 1 "$rc"
+run report > /dev/null 2>&1; rc=$?
+assert_exit "start failed: and report exits 1" 1 "$rc"
+
+echo "── failures of the helper itself ──"
+new unwritable 5
+mkdir -p "$T/.claude/.idd"; : > "$T/.claude/.idd/state"      # the state directory cannot be created: a file is in the way
+run start > "$S/out" 2> "$S/err"; rc=$?
+assert_exit "start: a run state that cannot be written exits 3" 3 "$rc"
+assert_eq "start: with one reason line" "1" "$(wc -l < "$S/err" | tr -d ' ')"
+refute_output_grep "start: and no traceback" "Traceback" "$S/err"
+new empty-reason 5
+run start > /dev/null 2>&1; run next > /dev/null
+OUT=$(run record --issue 5 --reason ""); rc=$?
+assert_exit "record: an empty reason is accepted" 0 "$rc"
+assert_eq "record: and reads as no reason" "stopped|no reason given" "$(printf '%s' "$OUT" | jget outcome)|$(printf '%s' "$OUT" | jget reason)"
+new broken-state 5
+mkdir -p "$T/.claude/.idd/state"; printf '{"version": 1, "repo"' > "$(state_file)"
+run start > "$S/start.out" 2>&1; rc=$?
+assert_exit "start: a run state that cannot be used does not stop it" 0 "$rc"
+assert_output_grep "start: but it says so" "cannot be used" "$S/start.out"
+new other-repo-state 5
+write_state 1 '[{"issue": 5, "outcome": "stopped", "reason": "x"}]'
+rq start --cwd "$T" --repo o/other > "$S/start.out" 2>&1; rc=$?
+assert_exit "start: a run state of another repository does not stop it" 0 "$rc"
+assert_output_grep "start: and it says whose it was" "o/r" "$S/start.out"
+for bad in "../x" "o/.." "./r" "o/."; do
+  rq list --repo "$bad" > /dev/null 2>&1; assert_exit "usage: --repo $bad exits 2" 2 "$?"
+done
+rq list --repo "o/.github" > /dev/null 2>&1; assert_exit "usage: a repository name that begins with a dot is fine" 0 "$?"
 
 echo "── the skill ──"
 # spec-example: idd-all-rest / the skill names the loop commands in order
@@ -309,12 +393,27 @@ assert_grep_re "skill: and names both verdicts" 'verdict=resume.*verdict=blocked
 STEP051=$(awk '/^#### Step 0\.5\.1/{f=1} f&&/^#### Step 0\.6/{exit} f' "$SKILL")
 assert_grep "skill: Step 0.5.1 points at the rest rule" '## Rest mode' "$STEP051"
 STOPS=$(printf '%s\n' "$REST" | awk '/^### 整個 run 停下/{f=1; next} f&&/^### /{exit} f' | grep -E '^\| ' | sed -n '2,$p')   # the header row is dropped; the |---| line never matches
-assert_eq "skill: the whole-run stop table has four rows" "4" "$(printf '%s\n' "$STOPS" | grep -c '^| ')"
+assert_eq "skill: the whole-run stop table has five rows" "5" "$(printf '%s\n' "$STOPS" | grep -c '^| ')"
+# spec-example: idd-all-rest / the skill reports a failed start directly
+FAILED_START=$(printf '%s\n' "$STOPS" | grep -E '^\| [^|]*`start`[^|]*以 3 結束')
+assert_eq "skill: one row is about the start that fails before a run exists" "1" "$(printf '%s\n' "$FAILED_START" | grep -c '^| ')"
+assert_grep "skill: that row says no run exists yet" "還沒有 run" "$FAILED_START"
+assert_grep_re "skill: and to call neither stop nor report" '不呼叫 `stop` 與 `report`' "$FAILED_START"
+assert_grep "skill: and to tell the user the reason" "告訴使用者" "$FAILED_START"
 assert_grep_re "skill: stop case — the default branch or a dirty tree" '^\| 第 5 步回不到預設 branch.*工作樹不乾淨' "$STOPS"
 assert_grep_re "skill: stop case — the helper exits 3" '^\| `rest-queue.py` 的子命令以 3 結束' "$STOPS"
 assert_grep_re "skill: stop case — gh authentication" '^\| `gh auth status` 失敗' "$STOPS"
 assert_grep_re "skill: stop case — the user interrupts, and nothing is recorded" '^\| 使用者中斷 \| 不必做任何事' "$STOPS"
 assert_grep "skill: step 5 checks that the working tree is clean" 'status --porcelain' "$REST"
+assert_grep_re "skill: an issue rest does not take over is cleaned up before it is recorded" '不接手.*clear_unattended|clear_unattended.*不接手' "$REST"
+ENDING=$(printf '%s\n' "$REST" | awk '/^### 結束/{f=1; next} f&&/^### /{exit} f')
+assert_grep "skill: the end of the run clears the unattended marker" 'clear_unattended "$CWD"' "$ENDING"
+assert_grep "skill: outside text goes into single quotes" "單引號" "$REST"
+assert_grep "skill: with the way to write a single quote inside them" "'\\''" "$REST"
+refute_grep_re "skill: no reason template in double quotes" '--reason "<' "$REST"
+CLASSROWS=$(printf '%s\n' "$REST" | grep -E '^\| `(outsider|tracker|unreadable|needs-person|parked|blocked|meeting|verified|candidate)` ')
+assert_eq "skill: the class table has the nine classes" "9" "$(printf '%s\n' "$CLASSROWS" | grep -c '^| ')"
+assert_eq "skill: in the order of the decision table" "outsider tracker unreadable needs-person parked blocked meeting verified candidate" "$(printf '%s\n' "$CLASSROWS" | sed -E 's/^\| `([a-z-]+)`.*/\1/' | tr '\n' ' ' | sed 's/ $//')"
 assert_grep "skill: the mode is resolved once" '只問一次' "$REST"
 PHASE6=$(awk '/^### Phase 6/{f=1} f&&/^#### /{exit} f' "$SKILL")
 assert_grep "skill: Phase 6 sends a rest run back to the rest section" '## Rest mode' "$PHASE6"
