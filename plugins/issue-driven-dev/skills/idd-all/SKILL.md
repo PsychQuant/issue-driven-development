@@ -2,7 +2,7 @@
 name: idd-all
 description: |
   自動串連 IDD 完整 workflow（issue → diagnose → implement → verify），按 pr_policy 解析 path 與 interaction 兩軸：PR + unattended（自動化、/loop friendly）或 direct-commit + attended（HITL、user 在 keyboard，sub-skill AskUserQuestion 自然 fire）。verify 乾淨通過、意圖確認過、而且沒有別人插手時就 merge（PR mode）或 push（direct-commit mode，限預設 branch）並跑 /idd-close，最後回報做了什麼與怎麼復原；guardrail 沒過、有還沒回答的釐清問題或未回應的略過紀錄、帶 --review 或 --in-chain 時停在 verified（tier 是哪一個不影響）；type=meeting 停在 diagnosed 或 planning，不 verify、不開 PR。
-  不帶 issue（或只寫 rest）時跑 repo 裡剩下的全部 open issue：需要人的先跳過、每張只試一次、結束時一份總報告（#478）。
+  不帶 issue（或只寫 rest）時跑 repo 裡剩下的全部 open issue：需要人的先跳過、每張在一次 run 裡只試一次、先前停下的（verified、已有自己的 PR 或 branch）接著做、結束時一份總報告（#478）。
   Use when: 想一次跑完整條 IDD pipeline、信任 6-AI verify 會抓錯、希望交出去就不用管（verify 乾淨就跑到 closed，沒過就停在 verified 回報原因）；HITL 模式則用於 solo repo 想被 sub-skill 諮詢的情境。
   防止的失敗：手動跑 5 個 idd-* skill 太繁瑣、忘記中間某一步、orchestration 一致性。
 argument-hint: "[#NNN | 'issue description' | rest] [--pr | --no-pr] [--review] [--cwd /path/to/clone] (empty 或 rest = 跑剩下的全部 open issue; --no-pr 觸發 HITL direct-commit + attended; --review 停在 verified、不 merge 也不 close)"
@@ -58,7 +58,7 @@ allowed-tools:
 | 內文沒過隱私自審的任何對外動作 | 公開出去的內容收不回 |
 | 刪除 branch、`--force` | 被覆蓋或刪掉的 commit 找不回來 |
 | 發布：`gh release`、marketplace 同步、baseline 以外的 tag | 已經到使用者手上 |
-| 帶 `--review` 的 run 的合併與結案 | 由人做：這個旗標的意思就是人要先看 |
+| 帶 `--review` 的 run 的合併與結案 | 由人做：這個旗標的意思就是人要先看。之後不帶 `--review` 再跑同一張（指名，或 rest mode 接著做），那一次 run 就會做到合併，見 `## Rest mode` 流程第 3 步 |
 
 還沒回答的釐清問題不是操作，是意圖確認：由人回答，run 停在那裡（Phase 5c 的意圖那一列）。
 
@@ -142,11 +142,20 @@ Step 0.2、0.3、0.35 只做一次，`$CWD`、`$GITHUB_REPO` 與旗標每一張�
    | `{"next": null, "done": true}` | 做「結束」一節 |
    | `{"next": null, "stopped": "…"}` | 做「結束」一節 |
 
-3. 對 #N 跑單張流程：從 Step 0.4 到 Phase 6，行為與 `/idd-all #N` 加上這次呼叫的旗標相同，包含它自己的 Phase 6 報告與清理，只有下面一處不同。這一張停下、abort、或被 gate 判為不可動，都只影響這一張。
+3. 對 #N 跑單張流程：從 Step 0.4 到 Phase 6，行為與 `/idd-all #N` 加上這次呼叫的旗標相同，包含它自己的 Phase 6 報告與清理，只有下面標明的一處不同。這一張停下、abort、或被 gate 判為不可動，都只影響這一張。
 
-   **已經有 PR 或 branch 的 issue 照單張流程的處置表，rest 沒有自己的規則**：Step 0.5.1 印出 `verdict=resume` 時，在那張 issue 自己的 `idd/N-*` branch 上接著做、沿用它的 PR，先前帶 `--review` 停下等人看的 issue 也一樣；印出 `verdict=blocked` 時（宣告這張 issue 的 PR 不在它自己的 branch 上，或那個 PR 已經合併），照單張流程：unattended 不開始這一張，把 Step 0.5.1 印的 outcome 填進第 4 步的 `--reason`。`verdict=unknown` 與 `clear` 照單張流程往下。
+   **已經有 PR 或 branch 的 issue 照單張流程的處置表**：Step 0.5.1 印出 `verdict=resume` 時，在那張 issue 自己的 `idd/N-*` branch 上接著做、沿用它的 PR，先前帶 `--review` 停下等人看的 issue 也一樣；印出 `verdict=blocked` 時（宣告這張 issue 的 PR 不在它自己的 branch 上，或那個 PR 已經合併），照單張流程：unattended 不開始這一張，把 Step 0.5.1 印的 outcome 填進第 4 步的 `--reason`。`verdict=unknown` 與 `clear` 照單張流程往下。
 
    接著做的那一張沒有帶 `--review` 時，verify 乾淨就會 merge 並結案。要讓先前等人看的 issue 繼續等人，這次 rest 也帶 `--review`。
+
+   **唯一的不同：本機已經有這張 issue 的 branch 時不問**。同一個 clone 裡上一次 run 留下的 branch 還在時（第 5 步只切回預設 branch，不刪它），Phase 0.5 的 branch setup 原本用三選一問人；rest 直接在那個 branch 上接著做，遠端有同名的 branch 就先快轉到它：
+
+   ```bash
+   git -C "$CWD" checkout -q "$BRANCH" \
+     && { ! git -C "$CWD" show-ref --verify --quiet "refs/remotes/origin/$BRANCH" || git -C "$CWD" merge -q --ff-only "origin/$BRANCH"; }
+   ```
+
+   不成立（切不過去，或本機與遠端的 branch 分岔、快轉不了）就停這一張，第 4 步的 `--reason` 寫 `local branch <名稱> cannot be continued`；不刪 branch、不強推，由人看過再處理。
 
 4. 記下這一張的結果。這一張的 Phase 6 報告有 `Stopped:` 時，把那一行填進 `--reason`（abort 時填 abort 的原因）；已經結案或沒有原因可填，就整個不帶 `--reason`。結果是 closed 還是 stopped 由 helper 自己向 GitHub 讀，不在這裡判斷：
 
@@ -200,6 +209,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" report --cwd "$CWD" --repo
 - 途中新開的 issue 不併進同一個 PR：重讀清單時接住，各自跑單張流程、各自一個 PR。chain 成為預設是 #457。
 - 不改單張流程的 verify 輪數上限（#423）。
 - 不替「別的 session 同時在跑同一張 issue」上鎖。push 不強推，後到的那一個會在 push 停下，記為這一張停下。
+- 不記住一張 issue 上次在 Step 0.5.1 停過：PR 已經合併而 issue 還開著、或 PR 不在它自己 branch 上的 issue，每次 rest 都會交出它、再停一次（不跑 verify，成本很小）。
 - 不分辨一張 verified 的 issue 上次是為什麼停下：還有沒回應的略過確認時它是 `needs-person`；其餘（CI 沒過、close stage 的其他閘門、帶 `--review`）都會再跑一輪 verify。
 - 不判斷一張舊 issue 的前提還成不成立。
 
@@ -589,6 +599,7 @@ if [ "$PATH_AXIS" = "PR" ]; then
     # Per (a): git checkout "$BRANCH"
     # Per (b): NEXT=$(suffix_for "$BRANCH"); BRANCH="$NEXT"; git checkout -b "$BRANCH"
     # Per (c): abort "Branch $BRANCH already exists. Run: git -C $CWD branch -D $BRANCH or pick a different issue."
+    # rest mode (#478) asks nothing here: it checks the branch out and fast-forwards it — `## Rest mode` 流程第 3 步
     :  # bash flow exits the if; agent assigns BRANCH per user's choice and falls through
   elif [ -n "${RESUME_BRANCH:-}" ]; then
     git -C "$CWD" checkout -b "$BRANCH" "origin/$BRANCH"   # #366: resume 該 remote branch
