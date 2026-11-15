@@ -1,3 +1,5 @@
+> 註：1.2、1.7、2.1、2.2、2.4、3.2 裡關於九類、`verified` 這一類與「不接手」的敘述，已由第 4 節取代（維護者 2026-11-15 的決定）。
+
 ## 1. 測試先寫（每一項先看到它失敗）
 
 - [x] 1.1 `scenario.py` 與 fixtures：每個 issue node 帶 `lastEditedAt` 與 `title`（標題含一段不該被印出的字）；新增鍵 `edited=yes`（編輯過但沒有回編輯者）；新增 fixture `body-comment-only`（正文只有 HTML 註解、渲染是空字串）與 `body-long-row`（一列超過 300 字、問題以 `END-OF-QUESTION` 結尾的釐清表，用 `../verify-gate/render-fixtures.sh` 取 GitHub 的渲染）。完成時：`scenario.py` 產生的 `issues.json` 每個 node 都有這兩個欄位，兩組 fixture 的 `.md` 與 `.html` 都在。
@@ -25,6 +27,8 @@
 - [x] 4.1 測試先寫：`class precedence` 改成八類（拿掉 verified 那一欄），窮舉 512 種組合；Example `an unanswered default keeps an issue waiting`、`a record before and after a Decision`、`a verified issue is taken up again` 的測試各帶標記；`an attempted issue is not listed as not run` 改用 blocked 這一類；skill 文字的檢查改成八類與「照單張流程的處置表」。完成時：這些檢查在修正前的程式上失敗。
 - [x] 4.2 Requirement「Unanswered skipped confirmations are available from one implementation」：`lib/intent.py` 新增 `unanswered_confirmations` 與 `decided_at`，`check_intent` 改用它。完成時：`scripts/tests/close-stage/test.sh` 與 4.1 的測試通過。
 - [x] 4.3 Requirement「Start prints the list and resumes an unfinished run」與「idd-all runs rest mode as a loop over the single-issue pipeline」：`rest-queue.py` 拿掉 `verified` 這一類，`needs-person` 涵蓋沒回應的略過確認（只對 comment 原文含該字樣的 issue 多讀一次渲染），清單與 `start` 標出從 verified 接著做的 issue；`skills/idd-all/SKILL.md` 的判定表、第 3 步、「這一節不做的事」與 Step 0.5.1 改成接手；`CHANGELOG.md` 跟著改。完成時：`scripts/tests/rest-queue/test.sh` 全部通過。
+
+- [ ] 4.4 第二次規格對照檢查的項目：本機已經有這張 issue 的 branch 時 rest 不問、checkout 並快轉（Requirement「idd-all runs rest mode as a loop over the single-issue pipeline」，skill 文字與檢查）；comment 沒有渲染時歸 `needs-person`（Example `a comment GitHub does not render keeps the issue waiting`，帶標記的測試）；`start` 失敗時不動先前那次 run 的狀態（測試）；報告只印 `needs-person` 的問題；skill 的 description、`--review` 那一列、`docs/commands.md` 補上接手。完成時：`scripts/tests/rest-queue/test.sh` 全部通過。
 
 ## 5. 驗證
 

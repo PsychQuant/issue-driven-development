@@ -7,7 +7,7 @@
 1. `outsider` — the account that opened the issue, the last editor of its body, or the author of any of its comments has no write access to the repository, or one of these accounts cannot be read. A comment by a bot account does not count, as in the close stage.
 2. `tracker` — the issue carries the label `north-star` or `epic`.
 3. `unreadable` — the body of the issue has text and GitHub returns no rendering of it that this helper can read.
-4. `needs-person` — the issue body shows at least one open clarity row, or a comment of the issue records a skipped confirmation that no later Decision comment answered.
+4. `needs-person` — the issue body shows at least one open clarity row; or a comment of the issue records a skipped confirmation that no later Decision comment answered; or a comment that has to be read for such a record has text for which GitHub returns no rendering.
 5. `parked` — the actionability gate puts the issue in its `parked` group.
 6. `blocked` — the actionability gate puts the issue in its `blocked` group.
 7. `meeting` — the latest trusted Diagnosis records the type `meeting`.
@@ -15,7 +15,7 @@
 
 Only `candidate` issues are run. The table SHALL be held as ordered data, and the classification SHALL be a pure function of these inputs: author has write access, last editor has write access, every commenter has write access, tracker label present, body rendering readable, open question present (an open clarity row or an unanswered skipped confirmation), gate group (`actionable`, `parked`, `blocked`, `undiagnosed`), Diagnosis type is `meeting`.
 
-The input "last editor has write access" SHALL be true when the body was never edited (GitHub reports no time of a last edit), true when GitHub names the last editor and that account has write access, and false in every other case: a body that was edited by an account GitHub does not return is treated as edited by an account without write access.
+The input "last editor has write access" SHALL be true when the body was never edited (GitHub reports neither a last editor nor a time of a last edit), true when GitHub names the last editor and that account has write access, and false in every other case: a body that was edited by an account GitHub does not return is treated as edited by an account without write access.
 
 The three inputs about accounts SHALL be decided without reading the rendering of the body, so that an issue that holds text from an account without write access is `outsider` whatever its body renders to. For an issue whose body rendering is not readable, the input "open question present" SHALL be false.
 
@@ -87,6 +87,8 @@ The judgements SHALL come from the existing implementations: open clarity rows f
 
 An issue whose body has text for which GitHub returns no rendering this helper can read is not a failed read. The command SHALL give that issue the class `unreadable`, or `outsider` when the issue holds text from an account without write access, and SHALL classify and order every other issue as usual.
 
+The comments of an issue are read with GitHub's rendering only when one of them holds the text of a skipped-confirmation literal. When such a comment has text and no rendering, that is not a failed read either: the issue is `needs-person`, with a question that says a comment could not be read.
+
 #### Scenario: a failed page fails the whole command
 
 - **WHEN** the second page of the query fails
@@ -108,6 +110,12 @@ An issue whose body has text for which GitHub returns no rendering this helper c
 - **GIVEN** issue #7 with 130 comments, where the only trusted `## Diagnosis` comment is the 5th comment and its Complexity is `Simple`
 - **WHEN** the list is produced
 - **THEN** issue #7 has gate group `actionable`, not `undiagnosed`
+
+##### Example: a comment GitHub does not render keeps the issue waiting
+
+- **GIVEN** the open issue #7 by an account with write access, whose one comment holds the text `unattended-auto-Step-4-choice-default` and for which GitHub returns the empty string as its rendering, and the plain candidate #8
+- **WHEN** `rest-queue.py list --repo o/r --json` runs
+- **THEN** the exit code is 0, #7 has the class `needs-person` with one question that says a comment could not be read, and the run order is 8
 
 ##### Example: a body GitHub renders as nothing
 
@@ -151,7 +159,7 @@ When the `start` that would begin a run exits with code 3, no run exists and the
 
 `rest-queue.py report` SHALL print one report with: the issues recorded as closed; the issues recorded as stopped, each with its reason; the `needs-person` issues, each with the complete text of every open clarity row, one line per row and not shortened; the issues of every other class that was not run; and the stop reason of the run when there is one. It SHALL then delete the run state. When the open issues cannot be re-read, it SHALL still print the recorded attempts, say that the list could not be read, and delete the run state.
 
-An issue that this run handed out SHALL appear once: under closed, under stopped or as handed out without a result. It SHALL NOT appear in the list of issues waiting for a person or in the line of a class that was not run. When such an issue shows open clarity rows at the time of the report, the report SHALL print those rows under the entry of that issue.
+An issue that this run handed out SHALL appear once: under closed, under stopped or as handed out without a result. It SHALL NOT appear in the list of issues waiting for a person or in the line of a class that was not run. When such an issue is `needs-person` at the time of the report, the report SHALL print its open questions under the entry of that issue. The report prints no text of an issue of any other class.
 
 #### Scenario: the report ends the run
 
@@ -222,7 +230,7 @@ When the working tree holds the state of a run of the same repository whose last
 
 In rest mode `idd-all` SHALL call `rest-queue.py start`, then repeat: `next`; run the single-issue pipeline for the issue handed out, with the flags of this invocation; `record` with the stop reason the single-issue report printed, if any; in PR mode check out the default branch and fast-forward it as the batch mode of capability `parallel-orchestration` requires, and confirm that the working tree is clean. It SHALL resolve the path and the interaction mode once, for the first issue, and reuse them for every later issue. It SHALL leave the loop when `next` prints `done` or a stop reason, and SHALL then call `rest-queue.py report` and relay its output.
 
-In rest mode `idd-all` SHALL treat an issue that already has a pull request or a branch exactly as the single-issue pipeline treats it when that issue is named. When the existing-work check returns `resume`, it SHALL continue on the issue's own branch and reuse its pull request. When the check returns `blocked` and the interaction is unattended, it SHALL NOT start the issue, as the single-issue pipeline requires for a pull request that is not on the issue's own branch or that is already merged, and SHALL record the issue with the outcome the check printed.
+In rest mode `idd-all` SHALL treat an issue that already has a pull request or a branch as the single-issue pipeline treats it when that issue is named, with one difference: when the branch of the issue already exists in the working tree, left there by an earlier run, rest mode SHALL NOT ask what to do with it. It SHALL check that branch out, fast-forward it to the remote branch of the same name when there is one, and continue on it; when the fast-forward is not possible it SHALL stop that issue, without deleting the branch and without a forced push. When the existing-work check returns `resume`, it SHALL continue on the issue's own branch and reuse its pull request. When the check returns `blocked` and the interaction is unattended, it SHALL NOT start the issue, as the single-issue pipeline requires for a pull request that is not on the issue's own branch or that is already merged, and SHALL record the issue with the outcome the check printed.
 
 #### Scenario: the loop ends with the report
 
@@ -234,6 +242,11 @@ In rest mode `idd-all` SHALL treat an issue that already has a pull request or a
 - **WHEN** the issue handed out has an open pull request on its own `idd/<N>-…` branch
 - **THEN** `idd-all` checks out that branch, continues the pipeline on it and reuses the pull request
 
+#### Scenario: the branch an earlier run left in the working tree is continued without a question
+
+- **WHEN** the issue handed out has a local branch of its own in the working tree from an earlier run
+- **THEN** `idd-all` checks that branch out, fast-forwards it to the remote branch of the same name when there is one, and asks no question
+
 #### Scenario: a pull request that is not the issue's own is left alone
 
 - **WHEN** the issue handed out is declared by an open pull request on another branch and the run is unattended
@@ -243,7 +256,7 @@ In rest mode `idd-all` SHALL treat an issue that already has a pull request or a
 
 - **GIVEN** the text of `skills/idd-all/SKILL.md`
 - **WHEN** the rest section is read
-- **THEN** it contains the invocations `rest-queue.py" start`, `rest-queue.py" next`, `rest-queue.py" record`, `rest-queue.py" stop` and `rest-queue.py" report`, with `start` before `next`, `next` before `record`, and `report` last; Step 0.1 contains the invocation `rest-queue.py" args`; the rest section states that `verdict=resume` is continued on the issue's own branch and that `verdict=blocked` is handled as the single-issue pipeline handles it; and Phase 6 sends a rest run back to the rest section
+- **THEN** it contains the invocations `rest-queue.py" start`, `rest-queue.py" next`, `rest-queue.py" record`, `rest-queue.py" stop` and `rest-queue.py" report`, with `start` before `next`, `next` before `record`, and `report` last; Step 0.1 contains the invocation `rest-queue.py" args`; the rest section states that `verdict=resume` is continued on the issue's own branch and that `verdict=blocked` is handled as the single-issue pipeline handles it; it holds the commands that check out the issue's own local branch and fast-forward it with `merge -q --ff-only`, and says that no question is asked there; and Phase 6 sends a rest run back to the rest section
 
 ## ADDED Requirements
 

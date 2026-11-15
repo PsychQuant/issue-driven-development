@@ -150,6 +150,15 @@ OUT=$(rq list --repo "$REPO" --json 2>/dev/null); rc=$?
 assert_exit "defaults: a comment without a rendering does not fail the command" 0 "$rc"
 assert_eq "defaults: that issue waits for a person instead of running" "[5,7]" "$(printf '%s' "$OUT" | jget classes.needs-person)"
 
+# spec-example: idd-all-rest / a comment GitHub does not render keeps the issue waiting
+new norender 7:default=open 8
+python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d[0]["body_html"]=""; json.dump(d, open(p,"w"))' "$G/comments-7.json"
+OUT=$(rq list --repo "$REPO" --json 2>"$S/err"); rc=$?
+assert_exit "no rendering of a comment: the command exits 0" 0 "$rc"
+assert_eq "no rendering of a comment: the issue waits for a person" "[7]" "$(printf '%s' "$OUT" | jget classes.needs-person)"
+assert_eq "no rendering of a comment: one question, and it says a comment could not be read" "1 True" "$(printf '%s' "$OUT" | python3 -c 'import json,sys; q=json.load(sys.stdin)["questions"].get("7", []); print(len(q), "GitHub does not render" in " ".join(q))')"
+assert_eq "no rendering of a comment: the run order holds the other issue" "[8]" "$(printf '%s' "$OUT" | jget order)"
+
 # spec-example: idd-all-rest / a record before and after a Decision
 UC=$(python3 "$HERE/confirmations_check.py" "$PLUGIN/scripts/lib" "$HERE/fixtures")
 assert_eq "confirmations: only the record after the Decision is unanswered; a bot comment and a code block do not count" \
@@ -401,6 +410,14 @@ run stop --reason "the open issues could not be read" > /dev/null 2>&1; rc=$?
 assert_exit "start failed: there is no run, so stop exits 1" 1 "$rc"
 run report > /dev/null 2>&1; rc=$?
 assert_exit "start failed: and report exits 1" 1 "$rc"
+new start-fail-resume 5 9
+write_state 2 '[{"issue": 5, "outcome": "stopped", "reason": "verify gate: not_clean"}]'
+cp "$(state_file)" "$S/before.json"; echo 1 > "$G/fail-page"
+run start > /dev/null 2>&1; rc=$?
+assert_exit "start failed on a run it would have resumed: exits 3" 3 "$rc"
+require "start failed on a run it would have resumed: the state of that run is untouched" cmp -s "$S/before.json" "$(state_file)"
+rm "$G/fail-page"
+assert_eq "start failed on a run it would have resumed: a later start resumes it" "9" "$(run start > /dev/null 2>&1; run next | jget next)"
 
 echo "── failures of the helper itself ──"
 new unwritable 5
@@ -442,6 +459,12 @@ EXISTING=$(printf '%s\n' "$REST" | grep -F 'verdict=resume')
 assert_grep_re "skill: an issue with its own branch or pull request is continued on that branch" 'verdict=resume`[^。]*接著做' "$EXISTING"
 assert_grep_re "skill: a pull request that is not the issue's own is handled as the single-issue pipeline handles it" 'verdict=blocked`[^。]*單張流程' "$EXISTING"
 refute_grep "skill: rest has no rule of its own against taking over" "rest 不接手" "$REST"
+assert_grep "skill: the issue's own local branch is checked out" 'checkout -q "$BRANCH"' "$REST"
+assert_grep "skill: and fast-forwarded to the remote branch of the same name" 'merge -q --ff-only "origin/$BRANCH"' "$REST"
+LOCALB=$(printf '%s\n' "$REST" | grep -F '本機已經有這張 issue 的 branch')
+assert_grep "skill: no question is asked about it" "不問" "$LOCALB"
+assert_grep_re "skill: a branch that cannot be fast-forwarded stops that issue, without deleting or forcing" '不刪 branch、不強推' "$REST"
+assert_grep "skill: the description says once per run, and that stopped work is continued" "每張在一次 run 裡只試一次" "$(sed -n '1,12p' "$SKILL")"
 assert_grep "skill: an issue held by an earlier --review run is taken up too, and the text says so" "--review" "$EXISTING"
 STEP051=$(awk '/^#### Step 0\.5\.1/{f=1} f&&/^#### Step 0\.6/{exit} f' "$SKILL")
 assert_grep "skill: Step 0.5.1 points at the rest rule" '## Rest mode' "$STEP051"

@@ -20,8 +20,9 @@
 
 - 查詢加讀 `lastEditedAt`：正文編輯過而沒有回編輯者時，「最後編輯者有寫入權」為否。
 - 判定表多一類 `unreadable`，排在 `tracker` 之後：正文有字而讀不到渲染的 issue 不跑、列在清單與報告裡，命令不失敗。帳號的判定不讀渲染，所以沒有寫入權的帳號開的這種 issue 仍是 `outsider`。
-- 報告的 `not run` 各類扣掉這次 run 的 attempts；等人回答的問題整列印出；`verified` 與 `existing work:` 的 issue 寫明要指名 `/idd-all #N` 才會繼續。
+- 報告的 `not run` 各類扣掉這次 run 的 attempts；這次試過的 issue 只出現一次，它等人回答的問題列在它那一筆底下；等人回答的問題整列印出。
 - skill：`start` 自己以 3 結束時，直接把原因告訴使用者就結束，不呼叫 `stop` 與 `report`。
+- 同一個 clone 裡上一次 run 留下的本機 branch：rest 不問三選一，checkout 它、能快轉就快轉到遠端同名的 branch，接著做；快轉不了就停那一張。
 - 接手既有的工作：判定表拿掉 `verified` 這一類（剩八類），已經 verified 的 issue 是一般的 candidate，`start` 的清單標出它們；已經有 PR 或 branch 的 issue 照單張流程的處置表（自己的 `idd/N-*` branch 就接著做，別人的 PR 或已合併的 PR 不開始）。為了不重做一輪又停在同一個地方，還有沒回應的略過確認（無人值守時取的預設）的 issue 歸 `needs-person`：`lib/intent.py` 新增 `unanswered_confirmations`，close stage 與 rest 共用。
 
 同一輪一併修的小項不改 requirement：狀態寫不進去或沒預期的錯誤一律是一行原因與結束碼 3、`--reason ""` 視同沒有原因、狀態檔不能用時 `start` 明說、`--repo` 不接受 `.` 與 `..`、skill 文字（單引號與跳脫、不接手時的清理、`other` 的說明、`--target` 提示）、測試 fixture 加上標題、`docs/commands.md` 與 `docs/workflows.md`。
@@ -63,3 +64,11 @@
   - New: plugins/issue-driven-dev/scripts/tests/rest-queue/fixtures/body-comment-only.html
   - New: plugins/issue-driven-dev/scripts/tests/rest-queue/fixtures/body-long-row.md
   - New: plugins/issue-driven-dev/scripts/tests/rest-queue/fixtures/body-long-row.html
+  - New: plugins/issue-driven-dev/scripts/tests/rest-queue/fixtures/comment-default-record.md
+  - New: plugins/issue-driven-dev/scripts/tests/rest-queue/fixtures/comment-default-record.html
+  - New: plugins/issue-driven-dev/scripts/tests/rest-queue/fixtures/comment-default-in-code.md
+  - New: plugins/issue-driven-dev/scripts/tests/rest-queue/fixtures/comment-default-in-code.html
+  - New: plugins/issue-driven-dev/scripts/tests/rest-queue/fixtures/comment-layerv-record.md
+  - New: plugins/issue-driven-dev/scripts/tests/rest-queue/fixtures/comment-layerv-record.html
+  - New: plugins/issue-driven-dev/scripts/tests/rest-queue/fixtures/comment-decision.md
+  - New: plugins/issue-driven-dev/scripts/tests/rest-queue/fixtures/comment-decision.html
