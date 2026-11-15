@@ -74,6 +74,7 @@ requirement 把第 1、2 個條件的原因定為同一句。這個情況是第 
 - 有 submodule 要檢查的執行多一次 git 呼叫（在主 repo 的頂層）。
 - 在主 repo 的 git 目錄裡放 clone、再用 link 接出來的人，答案從 `ok` 變成 `error`。這個狀態只能手動造出來；`git submodule update --init` 取出的 submodule 不受影響。
 - 外層 submodule 自己的 `.git` 真目錄不在排除範圍內（見上面的決定）。
+- 協調者在做這個 change 時另外試出一種同類的情況，這個 change 不處理：記錄的路徑經過上層的 symbolic link 離開頂層目錄、再回到頂層目錄本身（例如 `out` 指向 `..`，記錄的路徑是 `out/<頂層目錄的名字>`），而且 head 為它記錄的是主 repo 自己較早的一個 commit。六個條件照字面都成立（git 在頂層目錄回報它在工作目錄內），`links` 會讀那個較早的 commit；那個 commit 有標記時回 `ok`，即使 head 自己的檔案沒有標記。修改前後的 script 答案相同，4.1.0 回 `missing`。這個狀態同樣要手動放 link 才造得出來。記在 #559。
 - 這個 change 的條文、測試與程式都由協調者撰寫，沒有實作者模型，也沒有獨立讀者；第六輪 verify 是第一次獨立審查。
 
 ## Migration Plan
