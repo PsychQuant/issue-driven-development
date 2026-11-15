@@ -1,7 +1,7 @@
 ## 1. 測試先行：參數與判定表
 
 - [x] 1.1 [P] 參數形式：依 requirement「Rest mode is selected by a closed list of argument forms」的 Example「argument forms」，新 suite rest-queue 對 `rest-queue.py args` 跑表上十六列，另對小世界（位置參數取自 rest、#12、一段文字，最多兩個；旗標的所有子集，外加一個不認得的旗標）窮舉檢查 Unknown flags are refused 與「rest 只在沒有其他位置參數時成立」，帶標記 spec-example: idd-all-rest / argument forms。驗證：實作前這組檢查失敗。
-- [x] 1.2 [P] 判定表：依 requirement「Every open issue falls into exactly one class」的 Example「class precedence」，rest-queue suite 對純函式 classify 跑表上十一列，並對 256 種輸入組合窮舉檢查「恰好一類」與表的先後順序（Decision table is data, checked exhaustively），帶標記 spec-example: idd-all-rest / class precedence。驗證：實作前失敗。
+- [x] 1.2 [P] 判定表：依 requirement「Every open issue falls into exactly one class」的 Example「class precedence」，rest-queue suite 對純函式 classify 跑表上各列（7.1 之後是十二列），並對所有輸入組合（7.1 之後是 512 種）窮舉檢查「恰好一類」與表的先後順序（Decision table is data, checked exhaustively），帶標記 spec-example: idd-all-rest / class precedence。驗證：實作前失敗。
 
 ## 2. 測試先行：讀取、排序、釐清問題
 

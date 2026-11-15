@@ -177,7 +177,7 @@ An issue opened after the run started SHALL be handed out by a later `next` when
 
 An issue recorded as `stopped` SHALL NOT end the run: the following `next` hands out the next issue. `rest-queue.py stop --reason TEXT` SHALL mark the whole run as stopped; every later `next` of that run SHALL print the stop reason and hand out nothing.
 
-`idd-all` SHALL call `stop` only in these three cases: the default branch cannot be checked out or fast-forwarded between two issues in PR mode; a `rest-queue.py` command exits with code 3 (GitHub or a helper could not be read); `gh` authentication is lost. Exit codes 1 and 2 of `rest-queue.py` mean the call itself was wrong and are corrected, not treated as a stop. An interruption by the user leaves the run state in place without a stop record.
+`idd-all` SHALL call `stop` only in these three cases: between two issues in PR mode the default branch cannot be checked out or fast-forwarded, or the working tree is not clean afterwards; a `rest-queue.py` command exits with code 3 (GitHub or a helper could not be read); `gh` authentication is lost. Exit codes 1 and 2 of `rest-queue.py` mean the call itself was wrong and are corrected, not treated as a stop. An interruption by the user leaves the run state in place without a stop record.
 
 #### Scenario: one failing issue does not end the run
 
@@ -245,7 +245,7 @@ When the working tree holds the state of a run of the same repository whose last
 
 ### Requirement: idd-all runs rest mode as a loop over the single-issue pipeline
 
-In rest mode `idd-all` SHALL call `rest-queue.py start`, then repeat: `next`; run the single-issue pipeline for the issue handed out, with the flags of this invocation; `record` with the stop reason the single-issue report printed, if any; in PR mode check out the default branch and fast-forward it as the batch mode of capability `parallel-orchestration` requires. It SHALL leave the loop when `next` prints `done` or a stop reason, and SHALL then call `rest-queue.py report` and relay its output.
+In rest mode `idd-all` SHALL call `rest-queue.py start`, then repeat: `next`; run the single-issue pipeline for the issue handed out, with the flags of this invocation; `record` with the stop reason the single-issue report printed, if any; in PR mode check out the default branch and fast-forward it as the batch mode of capability `parallel-orchestration` requires, and confirm that the working tree is clean. It SHALL resolve the path and the interaction mode once, for the first issue, and reuse them for every later issue. It SHALL leave the loop when `next` prints `done` or a stop reason, and SHALL then call `rest-queue.py report` and relay its output.
 
 In rest mode `idd-all` SHALL NOT take over work that already exists: when the existing-work check of the single-issue pipeline returns `resume` or `blocked` for the issue handed out, it SHALL create no branch, leave the pull request untouched, and record the issue with a reason that names the pull request or branch.
 

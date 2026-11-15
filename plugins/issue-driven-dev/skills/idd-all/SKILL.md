@@ -117,7 +117,7 @@ idd-all 不取代 atomic skills,而是包它們。每個 phase 仍透過 `Skill(
 
 ### 流程
 
-Step 0.2、0.3、0.35 只做一次，`$CWD`、`$GITHUB_REPO` 與旗標每一張沿用。
+Step 0.2、0.3、0.35 只做一次，`$CWD`、`$GITHUB_REPO` 與旗標每一張沿用。Step 0.5 的 path 與 interaction 在第一張解析一次，之後每一張沿用同一個結果（`pr_policy: ask` 只問一次）；每一張仍各自做 Step 0.5 的工作樹檢查與建 branch。
 
 1. 開始。把它印出的清單原樣給使用者看：
 
@@ -150,7 +150,7 @@ Step 0.2、0.3、0.35 只做一次，`$CWD`、`$GITHUB_REPO` 與旗標每一張�
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" record --cwd "$CWD" --repo "$GITHUB_REPO" --issue "$N" --reason "<Stopped: 那一行>"
    ```
 
-5. PR mode：照批次模式第 4 點回到並更新預設 branch（`git -C "$CWD" checkout -q <default> && git -C "$CWD" pull --ff-only -q`）。direct-commit 不切換 branch。然後回第 2 步。
+5. PR mode：照批次模式第 4 點回到並更新預設 branch，並確認工作樹是乾淨的（`git -C "$CWD" checkout -q <default> && git -C "$CWD" pull --ff-only -q && [ -z "$(git -C "$CWD" status --porcelain)" ]`）。三步有任何一步不成立，就照下面「整個 run 停下」處理：上一張留下沒 commit 的改動時，後面每一張都會在 Phase 0.5 因為工作樹不乾淨而 abort。direct-commit 不切換 branch。然後回第 2 步。
 
 ### 整個 run 停下
 
@@ -162,7 +162,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" stop --cwd "$CWD" --repo "
 
 | 情況 | 處理 |
 |---|---|
-| 第 5 步回不到預設 branch，或 `pull --ff-only` 失敗 | `stop`，原因寫在哪一張之後、哪一個指令失敗 |
+| 第 5 步回不到預設 branch、`pull --ff-only` 失敗，或回去之後工作樹不乾淨 | `stop`，原因寫在哪一張之後、哪一步不成立 |
 | `rest-queue.py` 的子命令以 3 結束（GitHub 或判定程式讀不到） | `stop`，原因照抄它印在 stderr 的那一行。`stop` 自己也失敗時直接做「結束」一節 |
 | `gh auth status` 失敗 | `stop` |
 | 使用者中斷 | 不必做任何事。狀態留著，24 小時內再下一次 `/idd-all` 會接續 |

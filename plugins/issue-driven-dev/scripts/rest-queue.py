@@ -609,7 +609,7 @@ def main(argv):
     try:
         return COMMANDS[argv[0]](argv[1:])
     except Stop as exc:
-        print(f"rest-queue: {exc}", file=sys.stderr)
+        print("rest-queue: " + one_line(exc, 400), file=sys.stderr)   # one reason line, whatever gh printed
         return 3
 
 

@@ -137,6 +137,16 @@ OUT=$(rq list --repo "$REPO" --json 2>/dev/null); rc=$?
 assert_exit "list: a node without an expected field exits 3" 3 "$rc"
 assert_eq "list: and prints no list" "" "$OUT"
 
+# a gate that cannot be evaluated ends the command: a copy of the helper without lib/actionability.sh
+new gate-missing 1:diag=Simple
+mkdir -p "$S/copy/lib"
+cp "$RQ" "$S/copy/rest-queue.py"
+cp "$PLUGIN/scripts/lib/ghread.py" "$PLUGIN/scripts/lib/intent.py" "$PLUGIN/scripts/lib/rendered.py" "$S/copy/lib/"
+OUT=$(python3 "$S/copy/rest-queue.py" list --repo "$REPO" --json 2>"$S/err"); rc=$?
+assert_exit "list: a gate that cannot be evaluated exits 3" 3 "$rc"
+assert_eq "list: and prints no list" "" "$OUT"
+assert_eq "list: the reason is one line" "1" "$(wc -l < "$S/err" | tr -d ' ')"
+
 echo "── open clarity rows ──"
 # spec-example: idd-all-rest / two open rows and one resolved row
 ROWS=$(python3 - "$PLUGIN/scripts/lib" "$HERE/fixtures" <<'PY'
@@ -298,6 +308,14 @@ assert_grep "skill: the rest section does not take over existing work" 'existing
 assert_grep_re "skill: and names both verdicts" 'verdict=resume.*verdict=blocked' "$REST"
 STEP051=$(awk '/^#### Step 0\.5\.1/{f=1} f&&/^#### Step 0\.6/{exit} f' "$SKILL")
 assert_grep "skill: Step 0.5.1 points at the rest rule" '## Rest mode' "$STEP051"
+STOPS=$(printf '%s\n' "$REST" | awk '/^### 整個 run 停下/{f=1; next} f&&/^### /{exit} f' | grep -E '^\| ' | sed -n '2,$p')   # the header row is dropped; the |---| line never matches
+assert_eq "skill: the whole-run stop table has four rows" "4" "$(printf '%s\n' "$STOPS" | grep -c '^| ')"
+assert_grep_re "skill: stop case — the default branch or a dirty tree" '^\| 第 5 步回不到預設 branch.*工作樹不乾淨' "$STOPS"
+assert_grep_re "skill: stop case — the helper exits 3" '^\| `rest-queue.py` 的子命令以 3 結束' "$STOPS"
+assert_grep_re "skill: stop case — gh authentication" '^\| `gh auth status` 失敗' "$STOPS"
+assert_grep_re "skill: stop case — the user interrupts, and nothing is recorded" '^\| 使用者中斷 \| 不必做任何事' "$STOPS"
+assert_grep "skill: step 5 checks that the working tree is clean" 'status --porcelain' "$REST"
+assert_grep "skill: the mode is resolved once" '只問一次' "$REST"
 PHASE6=$(awk '/^### Phase 6/{f=1} f&&/^#### /{exit} f' "$SKILL")
 assert_grep "skill: Phase 6 sends a rest run back to the rest section" '## Rest mode' "$PHASE6"
 line_of() { printf '%s\n' "$REST" | grep -n -F -- "$1" | head -1 | cut -d: -f1; }

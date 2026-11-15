@@ -94,7 +94,7 @@ args 把參數分成旗標與位置參數。認得的旗標是 --pr、--no-pr、
 
 ### Listings print issue numbers, not titles
 
-start 與 report 的清單只印 issue 號。標題是 issue 作者寫的文字，印 192 個標題既佔篇幅，也把別人寫的文字送到模型面前。report 會印等人回答的問題原文，但 author 那一類排在最前面，所以被印出的問題都來自有寫入權的帳號開的 issue。已經 verified 的 issue 在清單裡只列號碼，不在清單階段查它的 PR（理由見判定表一節）；被交出後因為已有 PR 或 branch 而沒有接手的 issue，總報告會在它的原因裡寫出那個 PR 或 branch。Diagnosis 寫 check-existing-work.sh 在這個 repo 對每張都回 unknown，那是錯的：找不到任何證據時才回 unknown（#471），有開著的 PR 或自己的 branch 時照常回 resume 或 blocked。
+start 與 report 的清單只印 issue 號。標題是 issue 作者寫的文字，印 192 個標題既佔篇幅，也把別人寫的文字送到模型面前。report 會印等人回答的問題原文，但 outsider 那一類排在最前面，所以被印出的問題都來自作者、編輯者與留言者都有寫入權的 issue。已經 verified 的 issue 在清單裡只列號碼，不在清單階段查它的 PR（理由見判定表一節）；被交出後因為已有 PR 或 branch 而沒有接手的 issue，總報告會在它的原因裡寫出那個 PR 或 branch。Diagnosis 寫 check-existing-work.sh 在這個 repo 對每張都回 unknown，那是錯的：找不到任何證據時才回 unknown（#471），有開著的 PR 或自己的 branch 時照常回 resume 或 blocked。
 
 ## Implementation Contract
 
@@ -104,14 +104,14 @@ start 與 report 的清單只印 issue 號。標題是 issue 作者寫的文字�
 - rest 流程：start（印出清單）→ 反覆 next、跑那一張的單張流程（Phase 0.4 起，旗標沿用這次呼叫的）、record、PR mode 下回到預設 branch 並 pull → next 回 done 或 stopped 後 report。
 - 單張停下、abort 或被 gate 判為不可動，都只記在那一張，下一張照跑。
 - 交出的 issue 已經有 PR 或 branch（Step 0.5.1 回 resume 或 blocked）時，rest 不接手：不建 branch、不碰那個 PR，記為 stopped，原因寫 `existing work: ` 加上那個 PR 或 branch。
-- 整個 run 停下只有四種：回不到預設 branch、rest-queue.py 以結束碼 3 結束（GitHub 或判定程式讀不到）、gh 認證失效、使用者中斷。結束碼 1 與 2 是呼叫寫錯，改正後重跑，不算停下。前三種由 skill 呼叫 stop 記下原因後 report；使用者中斷時狀態檔留著，24 小時內再跑會接續。
+- 整個 run 停下只有四種：回不到預設 branch（含回去之後工作樹不乾淨）、rest-queue.py 以結束碼 3 結束（GitHub 或判定程式讀不到）、gh 認證失效、使用者中斷。結束碼 1 與 2 是呼叫寫錯，改正後重跑，不算停下。前三種由 skill 呼叫 stop 記下原因後 report；使用者中斷時狀態檔留著，24 小時內再跑會接續。
 
 **介面**
 
 - `rest-queue.py args -- <argv…>`：stdout 一行 JSON，`{"mode": "rest"}`、`{"mode": "other"}` 或 `{"mode": "refuse", "reason": "…"}`；rest 與 other 結束碼 0，refuse 結束碼 1。
 - `rest-queue.py list --repo O/R [--json]`：只讀，不建立 run。JSON 形狀：`{"repo", "open", "classes": {"candidate": [n…], "needs-person": […], "outsider": […], "tracker": […], "parked": […], "blocked": […], "meeting": […], "verified": […]}, "order": [n…], "diagnosed": [n…], "questions": {"<n>": ["…"]}}`（diagnosed 是候選裡已經有可動 Diagnosis 的那些）。
 - `rest-queue.py start --cwd C --repo O/R`：建立或接續 run，印清單（文字），結束碼 0。
-- `rest-queue.py next --cwd C --repo O/R`：stdout 一行 JSON，`{"next": n, "in_flight": false}`、`{"next": n, "in_flight": true}`、`{"next": null, "done": true}` 或 `{"next": null, "stopped": "…"}`。
+- `rest-queue.py next --cwd C --repo O/R`：stdout 一行 JSON，`{"next": n, "in_flight": false, "remaining": k}`（k 是它之後還沒試過的候選數）、`{"next": n, "in_flight": true}`、`{"next": null, "done": true}` 或 `{"next": null, "stopped": "…"}`。
 - `rest-queue.py record --cwd C --repo O/R --issue N [--reason TEXT]`：stdout 一行 JSON `{"issue": n, "outcome": "closed"|"stopped", "reason": "…"}`。N 不是 in flight 的那一張時結束碼 1、狀態不變。
 - `rest-queue.py stop --cwd C [--repo O/R] --reason TEXT`：記下整個 run 停止的原因；之後 next 回 stopped。第一個原因保留，再呼叫一次不會覆蓋。
 - `rest-queue.py report --cwd C --repo O/R`：印總報告（結案的、停下的與原因、等人回答的問題、沒跑的與類別、整個 run 停下的原因），然後刪除狀態檔。清單重讀失敗時仍印出狀態檔裡有的部分，並說明清單讀不到。
@@ -126,7 +126,7 @@ start 與 report 的清單只印 issue 號。標題是 issue 作者寫的文字�
 
 **驗收**
 
-- scripts/tests/rest-queue/test.sh 全過：參數表每一列、判定表的 256 種組合、排序、讀取失敗、comment 超過 100 則、只試一次與 in flight、record 讀 GitHub、stop、接續、report。
+- scripts/tests/rest-queue/test.sh 全過：參數表每一列、判定表的 512 種組合、排序、讀取失敗、comment 超過 100 則、只試一次與 in flight、record 讀 GitHub、stop、接續、report。
 - close-stage 既有的測試全過（open_clarity_row 的行為不變）。
 - scripts/run-all-tests.sh 全過。
 - skills/idd-all/SKILL.md 的參數表與 rest 一節有文字檢查釘住。
