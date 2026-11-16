@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Version number left to the release.
+
+### Changed
+
+- **`spec-change.py links` reads markers in submodules (#548).** Tracked files of checked-out submodules,
+  including nested ones, count at the commit the head revision records, even when their working trees are on
+  another commit. A marker found in the main repository settles the Example without listing gitlinks or
+  running git in any submodule; otherwise the search stops at the first submodule with a marker, even if
+  another could not be searched. Searching submodules requires git 2.45 or later; older git, or git whose
+  version cannot be read, does not run in their directories. A submodule is searched only
+  if its recorded path is relative with no empty, `.` or `..` component, its resolved directory is the
+  top directory or lies under it (the top directory is met on the way up from it) and neither it, unless it is
+  the top directory, nor a directory between it and the top directory is one of the two directories git names
+  at the top directory (`git rev-parse --absolute-git-dir` and `--git-common-dir`; git is not run in such a
+  directory, no other directory is excluded, and no git directory of a submodule is added to the two), that
+  directory is not a symbolic link, it holds its own `.git` entry, git reports that same directory as the top of
+  its own working tree, and its object store holds the recorded commit. These comparisons are between
+  directories (device and inode), not names: a path that spells a directory in another letter case, on a volume
+  that does not distinguish letter case, names the same directory. Its object store
+  is asked which objects of that commit it lacks or cannot open (an object file that is present but cannot
+  be opened, for example an empty one, counts as lacking); a marker found in a file that counts, by a search that ran to its end,
+  still settles the Example even if other objects are missing. What a search printed before it ended early
+  is not used, so the answer is the same on every run. What git writes to its error stream does not change
+  whether a submodule counts as searched, nor the reason reported for it.
+  A submodule whose search failed still has its own submodules searched when all its trees can be listed.
+  If the marker is not found and a submodule could not be searched,
+  `links` answers `error` and names the Example and up to five submodule paths with fixed reasons. Paths
+  under the spec directory are skipped, and so is a submodule whose directory lies in the spec directory
+  under another name (reached through a symbolic link that leads there, or through a path that spells the
+  spec directory in another letter case): it is not searched and is not one that could not be searched.
+  Nothing is fetched into submodules during the check.
+  The search of the main repository no longer uses git's own recursion into submodules, so
+  `submodule.recurse` does not change an answer. With that setting on, 4.1.0 already found a marker in a
+  submodule, also in one that is initialised and has no working tree; when the marker is only there,
+  `links` now answers `error` (not checked out) until the submodule is checked out again
+  (`git submodule update --init`).
+  A path under the spec directory's `specs/` that is not valid UTF-8 gives a fixed error reason without
+  exception text; such a path elsewhere under the spec directory does not change the answer.
+  The Example of the 4.1.0 requirement on the top directory gains six rows: `links`, `archived` and
+  `preflight` answer for a repository whose name ends in a space, or in a line feed, as they do for a copy
+  under a plain name.
+
 ## [4.1.0] - 2026-11-15
 
 Ships #547, with the fixes for #508, #519, #512 and #502.
