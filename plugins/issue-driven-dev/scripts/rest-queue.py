@@ -6,14 +6,18 @@
   rest-queue.py start  --cwd C --repo O/R
   rest-queue.py next   --cwd C --repo O/R
   rest-queue.py record --cwd C --repo O/R --issue N [--reason TEXT]
+  rest-queue.py settle --cwd C --repo O/R --issue N --default BRANCH --path PR|direct-commit
   rest-queue.py stop   --cwd C [--repo O/R] --reason TEXT
   rest-queue.py report --cwd C --repo O/R
 
 args    classifies the invocation: {"mode": "rest" | "other" | "refuse"[, "reason"]}.
 list    reads every open issue and prints its class and the run order. Read-only, no run.
 start   begins a run, or resumes one whose last activity is less than 24 hours old, and prints the list.
-next    re-reads the open issues and hands out the first one this run has not handed out yet.
+next    re-reads the open issues and hands out the first one this run has not handed out yet. A candidate with a
+        local branch of its own (idd/N, idd/N-…) is recorded as existing work instead and not handed out.
 record  writes the outcome of the issue in flight: closed when GitHub says the issue is closed, stopped otherwise.
+settle  between two issues: keeps what the issue recorded last left on its own branch (PR mode), checks that the
+        default branch is clean and has nothing origin lacks, and fast-forwards it. next waits until it has run.
 stop    marks the whole run as stopped; next hands out nothing afterwards.
 report  prints what the run did and deletes its state.
 
@@ -27,10 +31,11 @@ The open issues are read completely or not at all: one failed page, one missing 
 that reports misuse ends the command without a list. One issue whose body GitHub does not render is not
 such a failure: it gets the class unreadable and the others are classified as usual.
 
-Run state: <cwd>/.claude/.idd/state/idd-all-rest.json.
+Run state: <cwd>/.claude/.idd/state/idd-all-rest.json. start refuses to begin when git would not ignore it.
 
-Exit: 0 done · 1 refused (args says refuse; no run; not the issue in flight) · 2 usage · 3 GitHub or a helper could not be
-read, the run state could not be written, or a failure nobody planned for
+Exit: 0 done · 1 refused (args says refuse; no run; not the issue in flight; not the issue recorded last; next before
+settle) · 2 usage · 3 GitHub, git or a helper could not be read, the run state could not be written, the working tree
+could not be settled, or a failure nobody planned for
 """
 
 import json
@@ -46,11 +51,12 @@ sys.path.insert(0, os.path.join(HERE, "lib"))
 import intent  # noqa: E402  open clarity rows, the close stage's reading
 import rendered  # noqa: E402  GitHub's rendering of a body
 from ghread import (Stop, can_write, gh_json, html_root, iso, issue_comments, latest_diagnosis,  # noqa: E402
-                    now, run_cmd, ts)
+                    now, parse_iso, run_cmd, ts)
 
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 STATE_TTL = 24 * 3600   # the same life as the close stage's run state and the unattended marker
 STATE_NAME = "idd-all-rest.json"
+STATE_REL = ".claude/.idd/state/" + STATE_NAME
 PAGE = 50
 REASON_MAX = 300
 FLAGS = ("--pr", "--no-pr", "--review", "--in-chain")
@@ -326,7 +332,7 @@ def read_classes(repo):
             root = html_root(node["bodyHTML"], node["body"])
             rows = intent.open_clarity_rows({"body_html": node["bodyHTML"], "body": node["body"]})
             phase, readable = phase_of(root), True
-        except Stop:
+        except Exception:   # Stop, or anything else the rendering of this one body set off (a nesting too deep, …)
             rows, phase, readable = [], "", False
         facts.update(readable=readable, open_clarity=bool(rows), verified=phase == "verified")
         out.append({"number": number, "class": classify(facts), "group": group, "questions": rows})
@@ -378,19 +384,41 @@ def read_state(cwd, repo=None):
         return None, f"it cannot be read ({type(exc).__name__})"
     try:
         st = json.loads(raw)
-        ok = (st["version"] == 1 and isinstance(st["repo"], str)
-              and isinstance(st["started_at"], str) and isinstance(st["updated_at"], str)
-              and isinstance(st["attempts"], list)
-              and all(isinstance(a["issue"], int) and a["outcome"] in (None, "closed", "stopped")
-                      and isinstance(a.get("reason", ""), str) for a in st["attempts"])
+        ok = (st["version"] == 1 and isinstance(st["repo"], str) and is_time(st["started_at"])
+              and is_time(st["updated_at"]) and isinstance(st["attempts"], list)
+              and all(attempt_ok(a) for a in st["attempts"])
               and (st["stop"] is None or isinstance(st["stop"]["reason"], str)))
-    except (ValueError, KeyError, TypeError):
+    except (ValueError, KeyError, TypeError, AttributeError):
         ok = False
     if not ok:
         return None, "it is not a run state this helper can read"
     if repo is not None and st["repo"] != repo:
         return None, f"it belongs to a run for {one_line(st['repo'], 80)}"
     return st, ""
+
+
+def is_time(value):
+    try:
+        parse_iso(value)
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+def attempt_ok(a):
+    """An attempt this helper can use: every key it reads is there and of its type."""
+    kept = a.get("kept", [])
+    return (isinstance(a["issue"], int) and not isinstance(a["issue"], bool)
+            and a["outcome"] in (None, "closed", "stopped") and isinstance(a["reason"], str)
+            and isinstance(a.get("settled", True), bool) and isinstance(kept, list)
+            and all(isinstance(k, dict) and isinstance(k.get("branch"), str) and isinstance(k.get("commit"), str)
+                    for k in kept))
+
+
+def owes_settle(st):
+    """The attempt recorded last when settle has not run for it yet, else None."""
+    last = st["attempts"][-1] if st["attempts"] else None
+    return last if last and last["outcome"] is not None and not last.get("settled", True) else None
 
 
 def load_state(cwd, repo=None):
@@ -416,6 +444,95 @@ def save_state(cwd, st):
 
 def in_flight(st):
     return next((a for a in st["attempts"] if a["outcome"] is None), None)
+
+
+# ── the working tree ───────────────────────────────────────────────────────
+
+# Places IDD keeps out of git (closed list, the spec's): run state, edit backups that hold other people's words,
+# locks, worktrees, and the attachment files themselves; only an issue folder's own _manifest.json is tracked.
+KEEP_OUT_DIRS = (".claude/.idd/" + "archive/", ".claude/.idd/state/", ".claude/worktrees/")
+KEEP_OUT_PREFIX = ".claude/.idd/tree-lock"
+ATTACHMENTS = ".claude/.idd/attachments/"
+MANIFEST_RE = re.compile(r"^\.claude/\.idd/attachments/[^/]+/_manifest\.json$")
+UNMERGED = {"DD", "AU", "UD", "UA", "DU", "AA", "UU"}
+
+
+def keep_out(path):
+    if path.startswith(KEEP_OUT_DIRS) or path.startswith(KEEP_OUT_PREFIX):
+        return True
+    return path.startswith(ATTACHMENTS) and not MANIFEST_RE.match(path)
+
+
+def git(cwd, args, what):
+    """git's stdout; Stop naming `what` when git fails."""
+    rc, out, err = run_cmd(["git", "-C", cwd] + args)
+    if rc != 0:
+        raise Stop(f"{what}: {one_line(err, 200) or 'git exited ' + str(rc)}")
+    return out
+
+
+def git_ok(cwd, args):
+    return run_cmd(["git", "-C", cwd] + args)[0] == 0
+
+
+def ensure_ignored(cwd):
+    """Refuse a working tree in which git would not ignore the run state: an untracked state file makes every
+    issue stop at its clean-tree check (#564 makes idd-all add the rule itself)."""
+    rc, _, err = run_cmd(["git", "-C", cwd, "check-ignore", "-q", "--", STATE_REL])
+    if rc == 1:
+        raise Stop("git would not ignore the run state in .claude/.idd/state/ — add the line .claude/.idd/state/ to "
+                   ".git/info/exclude (or .gitignore), then start again")
+    if rc != 0:
+        raise Stop(f"git cannot tell whether .claude/.idd/state/ is ignored here (is this a git working tree?): "
+                   f"{one_line(err, 200) or 'git check-ignore exited ' + str(rc)}")
+
+
+def idd_branches(cwd):
+    """{issue number: [local branch names idd/N or idd/N-…]}."""
+    out = git(cwd, ["for-each-ref", "--format=%(refname)", "refs/heads/idd/"], "could not list the local branches")
+    found = {}
+    for ref in out.splitlines():
+        m = re.match(r"^refs/heads/idd/([0-9]+)(?:-.*)?$", ref)
+        if m:
+            found.setdefault(int(m.group(1)), []).append(ref[len("refs/heads/"):])
+    return {n: sorted(b) for n, b in found.items()}
+
+
+def leftovers(cwd):
+    """(paths, unmerged): every changed or untracked path git does not ignore, relative to the repository root,
+    one entry per file (an untracked folder is not folded into one entry)."""
+    out = git(cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"],
+              "could not read the working tree")
+    fields, paths, unmerged, i = out.split("\0"), [], False, 0
+    while i < len(fields):
+        entry = fields[i]
+        i += 1
+        if len(entry) < 4:
+            continue
+        xy, path = entry[:2], entry[3:]
+        paths.append(path)
+        unmerged = unmerged or xy in UNMERGED
+        if xy[0] in "RC":   # a rename or copy names its source in the next field
+            if i < len(fields) and fields[i]:
+                paths.append(fields[i])
+            i += 1
+    return sorted(set(paths)), unmerged
+
+
+def operation_in_progress(cwd):
+    for ref, name in (("MERGE_HEAD", "merge"), ("CHERRY_PICK_HEAD", "cherry-pick"), ("REVERT_HEAD", "revert")):
+        if git_ok(cwd, ["rev-parse", "-q", "--verify", ref]):
+            return name
+    for d in ("rebase-merge", "rebase-apply"):
+        where = git(cwd, ["rev-parse", "--git-path", d], "could not read the git folder").strip()
+        if os.path.isdir(where if os.path.isabs(where) else os.path.join(cwd, where)):
+            return "rebase"
+    return ""
+
+
+def some(paths):
+    shown = ", ".join(one_line(p, 120) for p in paths[:5])
+    return shown + (f" and {len(paths) - 5} more" if len(paths) > 5 else "")
 
 
 # ── output ─────────────────────────────────────────────────────────────────
@@ -518,6 +635,7 @@ def cmd_start(argv):
     if a is None:
         return usage("start --cwd C --repo O/R")
     cwd, repo = a["--cwd"], a["--repo"]
+    ensure_ignored(cwd)   # before anything is read or written
     st, problem = read_state(cwd, repo)
     resumed = st is not None and now() - ts(st["updated_at"]) < STATE_TTL
     lst = listing(repo)   # before anything is written: a failed read leaves no run behind
@@ -526,8 +644,8 @@ def cmd_start(argv):
     save_state(cwd, st)   # a resumed run too: starting is activity, and the 24 hours count from the last one
     attempted = [x["issue"] for x in st["attempts"]]
     head = f"rest run for {repo} — "
-    head += (f"resumed (started {st['started_at']}, {len(attempted)} attempt(s) so far)" if resumed
-             else f"new (started {st['started_at']})")
+    head += (f"resumed (started {one_line(st['started_at'], 40)}, {len(attempted)} attempt(s) so far)" if resumed
+             else f"new (started {one_line(st['started_at'], 40)})")
     print(head)
     if problem:   # said, not silent: the attempts of that state are not carried over
         print(f"a run state was found in this working tree but cannot be used ({problem}) — this is a new run, and it replaces that file")
@@ -537,6 +655,7 @@ def cmd_start(argv):
     if flight:
         print(f"in flight, no result recorded yet: #{flight['issue']}")
     print("\n".join(list_lines(lst, attempted)))
+    print("a candidate with a pull request or a branch of its own is not run: it is recorded as existing work when its turn comes")
     return 0
 
 
@@ -550,13 +669,25 @@ def cmd_next(argv):
         return refuse("no rest run in this working tree — call start first")
     if st["stop"]:
         return emit({"next": None, "stopped": one_line(st["stop"]["reason"], REASON_MAX)})
+    owed = owes_settle(st)
+    if owed:
+        return refuse(f"#{owed['issue']} is recorded but its working tree is not settled — call settle for #{owed['issue']} first")
     flight = in_flight(st)
     if flight:
         print(f"→ #{flight['issue']} is still in flight: finish it and call record", file=sys.stderr)
         return emit({"next": flight["issue"], "in_flight": True})
     attempted = {x["issue"] for x in st["attempts"]}
     todo = [n for n in listing(repo)["order"] if n not in attempted]
+    branches = idd_branches(cwd)
+    while todo and todo[0] in branches:   # work an earlier run or a person started: a person decides about it
+        stamp = iso(now())
+        st["attempts"].append({"issue": todo[0], "handed_at": stamp, "outcome": "stopped", "recorded_at": stamp,
+                               "reason": one_line(f"{EXISTING_WORK} local branch {branches[todo[0]][0]}", REASON_MAX),
+                               "settled": True})
+        print(f"→ #{todo[0]} has the local branch {branches[todo[0]][0]}: recorded as existing work", file=sys.stderr)
+        todo.pop(0)
     if not todo:
+        save_state(cwd, st)
         return emit({"next": None, "done": True})
     st["attempts"].append({"issue": todo[0], "handed_at": iso(now()), "outcome": None, "reason": "", "recorded_at": None})
     save_state(cwd, st)
@@ -581,8 +712,93 @@ def cmd_record(argv):
     flight["outcome"] = "closed" if state == "CLOSED" else "stopped"
     flight["reason"] = "" if state == "CLOSED" else (one_line(a.get("--reason", ""), REASON_MAX) or "no reason given")
     flight["recorded_at"] = iso(now())
+    flight["settled"] = False   # next waits for settle
     save_state(cwd, st)
     return emit({"issue": n, "outcome": flight["outcome"], "reason": flight["reason"]})
+
+
+SETTLE_PATHS = ("PR", "direct-commit")
+
+
+def cmd_settle(argv):
+    a = common(argv, {"--cwd", "--repo", "--issue", "--default", "--path"},
+               ["--cwd", "--repo", "--issue", "--default", "--path"])
+    use = "settle --cwd C --repo O/R --issue N --default BRANCH --path PR|direct-commit"
+    if a is None or a["--path"] not in SETTLE_PATHS:
+        return usage(use)
+    cwd, repo, n, default, path = a["--cwd"], a["--repo"], int(a["--issue"]), a["--default"], a["--path"]
+    if default.startswith("-") or not git_ok(cwd, ["check-ref-format", "--branch", default]):
+        return usage(use)
+    st = load_state(cwd, repo)
+    if st is None:
+        return refuse("no rest run in this working tree — call start first")
+    last = st["attempts"][-1] if st["attempts"] else None
+    if last is None or last["issue"] != n or last["outcome"] is None:
+        held = "none is" if last is None else (f"#{last['issue']} is in flight" if last["outcome"] is None
+                                               else f"#{last['issue']} was")
+        return refuse(f"#{n} is not the issue recorded last ({held})")
+    kept = settle_tree(cwd, n, default, path, last, st)
+    last["kept"], last["settled"] = kept, True
+    save_state(cwd, st)
+    return emit({"issue": n, "settled": True, "kept": kept})
+
+
+def settle_tree(cwd, n, default, path, last, st):
+    """The closed table of the requirement, then the default branch against origin. Returns the kept branches."""
+    branch = run_cmd(["git", "-C", cwd, "symbolic-ref", "--quiet", "--short", "HEAD"])[1].strip()
+    on = branch or "no branch"
+    busy = operation_in_progress(cwd)
+    paths, unmerged = leftovers(cwd)
+    if busy or unmerged:
+        raise Stop(f"#{n}: git reports an unfinished {busy or 'merge'} on {on} — finish or abort it, then run /idd-all again")
+    commit = ""
+    own = re.match(rf"^idd/{n}(?:-.*)?$", branch or "")
+    if path == "PR" and own:                                   # row 1
+        bad = [x for x in paths if keep_out(x)]
+        if bad:
+            raise Stop(f"#{n}: {on} holds files IDD keeps out of git: {some(bad)} — tell git to ignore them "
+                       f"(.git/info/exclude), deal with what else is left on {on}, then run /idd-all again")
+        if paths:
+            git(cwd, ["add", "-A"], f"#{n}: could not stage what the run left on {on}")
+            git(cwd, ["commit", "-q", "-m", f"chore: keep what the run of #{n} left (#{n})"],
+                f"#{n}: could not commit what the run left on {on} — run /idd-all again after dealing with it")
+            commit = git(cwd, ["rev-parse", "HEAD"], f"#{n}: could not read the new commit").strip()
+            last["kept"] = [{"branch": branch, "commit": commit}]   # saved now: a later step may still fail
+            save_state(cwd, st)
+        git(cwd, ["checkout", "-q", default], f"#{n}: could not check out {default} from {on}")
+    elif path == "PR" and branch == default:                   # row 2
+        if paths:
+            raise Stop(f"#{n}: {default} has changes no issue branch holds: {some(paths)} — commit them elsewhere "
+                       f"or remove them, then run /idd-all again")
+    elif path == "PR":                                         # row 3
+        raise Stop(f"#{n}: the working tree is on {on}, not on {default} or a branch of #{n} — check out "
+                   f"{default}, then run /idd-all again")
+    elif branch != default or paths:                           # row 4
+        raise Stop(f"#{n}: direct-commit needs {default} checked out and clean; it is on {on}"
+                   + (f" with {some(paths)}" if paths else "") + " — commit or remove them, then run /idd-all again")
+    git(cwd, ["fetch", "-q", "origin", default], f"#{n}: could not fetch {default} from origin")
+    ahead = int(git(cwd, ["rev-list", "--count", f"refs/remotes/origin/{default}..refs/heads/{default}"],
+                    f"#{n}: could not compare {default} with origin/{default}").strip() or "0")
+    if ahead:
+        raise Stop(f"#{n}: {default} has {ahead} commit(s) that origin/{default} lacks — push them, or keep them on a "
+                   f"branch of their own and reset {default} to origin/{default}, then run /idd-all again")
+    git(cwd, ["merge", "-q", "--ff-only", f"refs/remotes/origin/{default}"],
+        f"#{n}: {default} could not be fast-forwarded to origin/{default}")
+    after, _ = leftovers(cwd)
+    if after:
+        raise Stop(f"#{n}: the working tree is not clean on {default} after the fast-forward: {some(after)}")
+    if path != "PR":
+        return []
+    kept = []
+    for b in idd_branches(cwd).get(n, []):   # every one of them was created by this run: next skips an issue that had one
+        mine = int(git(cwd, ["rev-list", "--count", f"refs/remotes/origin/{default}..refs/heads/{b}"],
+                       f"#{n}: could not compare {b} with origin/{default}").strip() or "0")
+        upstream = git(cwd, ["for-each-ref", "--format=%(upstream)", f"refs/heads/{b}"],
+                       f"#{n}: could not read the upstream of {b}").strip()
+        if mine == 0 and not upstream and git_ok(cwd, ["branch", "-q", "-d", b]):
+            continue
+        kept.append({"branch": b, "commit": commit if b == branch else ""})
+    return kept
 
 
 def cmd_stop(argv):
@@ -614,7 +830,7 @@ def cmd_report(argv):
     stopped = [x for x in st["attempts"] if x["outcome"] == "stopped"]
     flight = [x for x in st["attempts"] if x["outcome"] is None]
     out = [f"rest run report — {repo}",
-           f"started {st['started_at']}, {len(st['attempts'])} issue(s) attempted",
+           f"started {one_line(st['started_at'], 40)}, {len(st['attempts'])} issue(s) attempted",
            f"closed ({len(closed)}): {nums(x['issue'] for x in closed)}"]
     # An issue this run handed out is named once, here, with the questions it now waits on.
     asked = lst["questions"] if lst else {}
@@ -624,12 +840,19 @@ def cmd_report(argv):
         if x["issue"] in open_now:   # recorded as closed by this run, and someone reopened it since
             out.append(f"  #{x['issue']} — open again")
             out += rows_of(x["issue"])
+        for k in (k for k in x.get("kept", []) if k["commit"]):   # a merged branch is named only when settle added to it
+            out.append(f"  #{x['issue']} — what the run left is kept on {one_line(k['branch'], 120)} (commit {one_line(k['commit'], 40)[:7]})")
     out.append(f"stopped ({len(stopped)}):" + ("" if stopped else " -"))
     for x in stopped:
         out.append(f"  #{x['issue']} — {one_line(x['reason'], REASON_MAX)}")
+        for k in x.get("kept", []):
+            out.append(f"    branch {one_line(k['branch'], 120)} is kept"
+                       + (f", with commit {one_line(k['commit'], 40)[:7]} holding what the run left" if k["commit"] else ""))
         out += rows_of(x["issue"])
+    if any(x.get("kept") for x in stopped):
+        out.append("  a later rest run records an issue with a kept branch as existing work; to go on with it, name it (/idd-all #N)")
     if any(x["reason"].startswith(EXISTING_WORK) for x in stopped):
-        out.append("  an issue stopped with existing work continues when it is named (/idd-all #N)")
+        out.append("  an issue stopped with existing work is left for a person: its reason names the pull request or branch to look at")
     if flight:
         out.append(f"handed out, no result recorded ({len(flight)}): {nums(x['issue'] for x in flight)}")
         for x in flight:
@@ -660,7 +883,7 @@ def cmd_report(argv):
 
 
 COMMANDS = {"args": cmd_args, "list": cmd_list, "start": cmd_start, "next": cmd_next,
-            "record": cmd_record, "stop": cmd_stop, "report": cmd_report}
+            "record": cmd_record, "settle": cmd_settle, "stop": cmd_stop, "report": cmd_report}
 
 
 def main(argv):
