@@ -37,10 +37,15 @@ ARG_ROWS = [
     (["rest", "--in-chain"], "refuse"),
     (["--reveiw"], "refuse"),
     (["--cwd"], "refuse"),
+    ([""], "refuse"),
+    (["  "], "refuse"),
+    (["last"], "refuse"),
+    (["last", "--pr"], "refuse"),
     (["#12"], "other"),
     (["#12", "#13"], "other"),
     (["Rest"], "other"),
     (["rest in peace"], "other"),
+    (["last call for papers"], "other"),
     (["#12", "--in-chain"], "other"),
 ]
 for argv, mode in ARG_ROWS:
@@ -55,16 +60,19 @@ for argv, mode in [(["--cwd", "rest"], "rest"), (["--cwd=rest"], "rest"), (["--c
 
 
 def args_oracle(positionals, flags, unknown):
-    if unknown:
+    if unknown or any(not p.strip() for p in positionals):
         return "refuse"
     if len(positionals) >= 2 and "rest" in positionals:
         return "refuse"
     if not positionals or positionals == ["rest"]:
         return "refuse" if "--in-chain" in flags else "rest"
+    if positionals == ["last"]:
+        return "refuse"
     return "other"
 
 
-WORDS = ["rest", "#12", "some text"]
+check("args: the reason for last names rest", True, "rest" in rq.classify_args(["last"])[1])
+WORDS = ["rest", "#12", "some text", "last", ""]
 FLAGS = ["--pr", "--no-pr", "--review", "--in-chain", "--cwd"]
 for k in range(3):
     for positionals in itertools.product(WORDS, repeat=k):

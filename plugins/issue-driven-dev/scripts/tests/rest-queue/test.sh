@@ -69,6 +69,11 @@ assert_eq "args: one issue is other" "other" "$(printf '%s' "$OUT" | jget mode)"
 OUT=$(rq args -- --reveiw); rc=$?
 assert_exit "args: an unknown flag exits 1" 1 "$rc"
 assert_eq "args: an unknown flag is refused" "refuse" "$(printf '%s' "$OUT" | jget mode)"
+OUT=$(rq args -- last); rc=$?
+assert_exit "args: the word last exits 1" 1 "$rc"
+assert_grep "args: and the reason names rest" "rest" "$(printf '%s' "$OUT" | jget reason)"
+OUT=$(rq args -- ''); rc=$?
+assert_exit "args: an empty argument exits 1" 1 "$rc"
 
 echo "── reading and ordering ──"
 # spec-example: idd-all-rest / four candidates in run order
@@ -331,6 +336,46 @@ run report > "$S/report.out" 2>&1
 assert_output_grep "report: an issue in flight keeps its open questions too" "Does alpha include beta?" "$S/report.out"
 assert_true "report: and it is not listed as waiting" 'grep -E "^waiting for a person \(0\)" "$S/report.out" >/dev/null'
 
+# spec-example: idd-all-rest / a closed issue that was reopened carries its open questions
+new report-reopened 5 9
+run start > /dev/null 2>&1
+run next > /dev/null; echo CLOSED > "$G/state-5"; run record --issue 5 > /dev/null
+issues 5:html=body-two-rows 9      # #5 is open again, with two open clarity rows
+run report > "$S/report.out" 2>&1; rc=$?
+assert_exit "report (reopened): exits 0" 0 "$rc"
+CLOSED_BLOCK=$(awk '/^closed \(/{f=1; print; next} f&&/^[^ ]/{exit} f' "$S/report.out")
+assert_grep_re "report (reopened): #5 is under closed" '^closed \(1\): #5$' "$CLOSED_BLOCK"
+assert_grep "report (reopened): with a note that it is open again" "#5 — open again" "$CLOSED_BLOCK"
+assert_eq "report (reopened): followed by its two open rows" "2" "$(printf '%s\n' "$CLOSED_BLOCK" | grep -c '^    - ')"
+WAITING_BLOCK=$(awk '/^waiting for a person \(/{f=1; print; next} f&&/^[^ ]/{exit} f' "$S/report.out")
+refute_grep "report (reopened): and #5 is not listed as waiting" "#5" "$WAITING_BLOCK"
+assert_eq "report (reopened): #5 is named once" "1" "$(grep -c '#5\b' "$S/report.out")"
+
+# spec-example: idd-all-rest / a reason with a line break is printed on one line
+new one-line 5 9
+mkdir -p "$T/.claude/.idd/state"
+python3 - "$(state_file)" <<'PY'
+import json, sys, time
+stamp = lambda t: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
+now = time.time()
+json.dump({"version": 1, "repo": "o/r", "started_at": stamp(now - 600), "updated_at": stamp(now - 300),
+           "attempts": [{"issue": 5, "handed_at": stamp(now - 500), "outcome": "stopped",
+                         "reason": "verify gate\nSECOND-LINE of the issue reason", "recorded_at": stamp(now - 400)}],
+           "stop": {"reason": "first line\nSECOND-LINE of the stop reason", "at": stamp(now - 300)}}, open(sys.argv[1], "w"))
+PY
+run start > "$S/start.out" 2>&1; rc=$?
+assert_exit "one line: start exits 0" 0 "$rc"
+refute_output_grep "one line: no line of start begins with the second line" "
+SECOND-LINE" "$S/start.out"
+assert_true "one line: start holds both parts of the stop reason on one line" 'grep -E "first line SECOND-LINE of the stop reason" "$S/start.out" >/dev/null'
+OUT=$(run next)
+assert_eq "one line: next gives the stop reason on one line" "first line SECOND-LINE of the stop reason" "$(printf '%s' "$OUT" | jget stopped)"
+run report > "$S/report.out" 2>&1; rc=$?
+assert_exit "one line: report exits 0" 0 "$rc"
+assert_true "one line: no line of report begins with the second line" '! grep -E "^SECOND-LINE" "$S/report.out" >/dev/null'
+assert_true "one line: report holds both parts of the stop reason on one line" 'grep -E "first line SECOND-LINE of the stop reason" "$S/report.out" >/dev/null'
+assert_true "one line: and the issue reason on one line" 'grep -E "#5 — verify gate SECOND-LINE of the issue reason" "$S/report.out" >/dev/null'
+
 # spec-example: idd-all-rest / a long clarity row is printed in full
 new report-long 5 14:html=body-long-row
 assert_true "long row: the open row of the fixture is longer than 300 characters" '[ "$(grep -c "END-OF-QUESTION" "$HERE/fixtures/body-long-row.md")" = 1 ] && [ "$(grep "END-OF-QUESTION" "$HERE/fixtures/body-long-row.md" | wc -m)" -gt 300 ]'
@@ -348,6 +393,16 @@ assert_exit "report: still exits 0 when the list cannot be re-read" 0 "$rc"
 assert_output_grep "report: the recorded result is still printed" "#5 — stopped at the PR" "$S/report.out"
 assert_output_grep "report: and it says the list could not be read" "could not be read" "$S/report.out"
 assert_file_absent "report: the run state is deleted" "$(state_file)"
+
+new report-crash 5
+run start > /dev/null 2>&1; run next > /dev/null; run record --issue 5 --reason "stopped at the PR" > /dev/null
+mkdir -p "$S/copy"; cp "$RQ" "$S/copy/rest-queue.py"; cp -R "$PLUGIN/scripts/lib" "$S/copy/lib"
+printf '\n\ndef open_clarity_rows(issue):\n    raise RuntimeError("a failure nobody planned for")\n' >> "$S/copy/lib/intent.py"
+python3 "$S/copy/rest-queue.py" report --cwd "$T" --repo "$REPO" > "$S/report.out" 2>&1; rc=$?
+assert_exit "report: an unplanned failure while re-reading the list still exits 0" 0 "$rc"
+assert_output_grep "report: the recorded result is still printed after it" "#5 — stopped at the PR" "$S/report.out"
+assert_output_grep "report: and it says the list could not be read" "could not be read" "$S/report.out"
+assert_file_absent "report: and the run state is deleted" "$(state_file)"
 
 echo "── refusals ──"
 new norun 5
@@ -374,6 +429,16 @@ run stop --reason "the open issues could not be read" > /dev/null 2>&1; rc=$?
 assert_exit "start failed: there is no run, so stop exits 1" 1 "$rc"
 run report > /dev/null 2>&1; rc=$?
 assert_exit "start failed: and report exits 1" 1 "$rc"
+new start-fail-resume 5 9
+write_state 2 '[{"issue": 5, "outcome": "stopped", "reason": "verify gate: not_clean"}]'
+cp "$(state_file)" "$S/before.json"; echo 1 > "$G/fail-page"
+run start > /dev/null 2>&1; rc=$?
+assert_exit "start failed on a run it would have resumed: exits 3" 3 "$rc"
+require "start failed on a run it would have resumed: the state of that run is untouched" cmp -s "$S/before.json" "$(state_file)"
+rm "$G/fail-page"
+run start > "$S/start.out" 2>&1
+assert_output_grep "start failed on a run it would have resumed: a later start resumes it" "resumed" "$S/start.out"
+assert_eq "start failed on a run it would have resumed: and #5 is not handed out again" "9" "$(run next | jget next)"
 
 echo "── failures of the helper itself ──"
 new unwritable 5
@@ -416,7 +481,13 @@ assert_grep_re "skill: and names both verdicts" 'verdict=resume.*verdict=blocked
 STEP051=$(awk '/^#### Step 0\.5\.1/{f=1} f&&/^#### Step 0\.6/{exit} f' "$SKILL")
 assert_grep "skill: Step 0.5.1 points at the rest rule" '## Rest mode' "$STEP051"
 STOPS=$(printf '%s\n' "$REST" | awk '/^### 整個 run 停下/{f=1; next} f&&/^### /{exit} f' | grep -E '^\| ' | sed -n '2,$p')   # the header row is dropped; the |---| line never matches
-assert_eq "skill: the whole-run stop table has five rows" "5" "$(printf '%s\n' "$STOPS" | grep -c '^| ')"
+assert_eq "skill: the whole-run stop table has six rows" "6" "$(printf '%s\n' "$STOPS" | grep -c '^| ')"
+# spec-example: idd-all-rest / the skill ends when the report itself fails
+FAILED_REPORT=$(printf '%s\n' "$STOPS" | grep -E '^\| [^|]*`report`[^|]*以 3 結束')
+assert_eq "skill: one row is about the report that fails" "1" "$(printf '%s\n' "$FAILED_REPORT" | grep -c '^| ')"
+assert_grep "skill: that row says to pass on what was printed" "已經印出" "$FAILED_REPORT"
+assert_grep_re "skill: and to call neither stop nor report again" '不再呼叫 `stop` 或 `report`' "$FAILED_REPORT"
+assert_grep "skill: the stop list says six cases" "只有這六種" "$REST"
 # spec-example: idd-all-rest / the skill reports a failed start directly
 FAILED_START=$(printf '%s\n' "$STOPS" | grep -E '^\| [^|]*`start`[^|]*以 3 結束')
 assert_eq "skill: one row is about the start that fails before a run exists" "1" "$(printf '%s\n' "$FAILED_START" | grep -c '^| ')"
@@ -428,9 +499,21 @@ assert_grep_re "skill: stop case — the helper exits 3" '^\| `rest-queue.py` �
 assert_grep_re "skill: stop case — gh authentication" '^\| `gh auth status` 失敗' "$STOPS"
 assert_grep_re "skill: stop case — the user interrupts, and nothing is recorded" '^\| 使用者中斷 \| 不必做任何事' "$STOPS"
 assert_grep "skill: step 5 checks that the working tree is clean" 'status --porcelain' "$REST"
-assert_grep_re "skill: an issue rest does not take over is cleaned up before it is recorded" '不接手.*clear_unattended|clear_unattended.*不接手' "$REST"
+# spec-example: idd-all-rest / the skill clears the unattended marker
+NOTAKE=$(printf '%s\n' "$REST" | grep -F 'verdict=resume')
+assert_grep_re "skill: an issue rest does not take over is cleaned up before it is recorded" 'clear_unattended "\$CWD"`[^。]*再做第 4 步' "$NOTAKE"
 ENDING=$(printf '%s\n' "$REST" | awk '/^### 結束/{f=1; next} f&&/^### /{exit} f')
 assert_grep "skill: the end of the run clears the unattended marker" 'clear_unattended "$CWD"' "$ENDING"
+L_REP=$(printf '%s\n' "$ENDING" | grep -n -F 'rest-queue.py" report' | head -1 | cut -d: -f1)
+L_CLR=$(printf '%s\n' "$ENDING" | grep -n -F 'clear_unattended "$CWD"' | tail -1 | cut -d: -f1)
+assert_true "skill: and it does so after the report" "[ ${L_REP:-0} -gt 0 ] && [ ${L_CLR:-0} -gt ${L_REP:-0} ]"
+assert_grep "skill: the rest section names where the takeover went" "#566" "$REST"
+assert_grep "skill: the description says once per run" "每張在一次 run 裡只試一次" "$(sed -n '1,12p' "$SKILL")"
+assert_grep "skill: a run that names an issue does not create rest_run" "指名 issue 的 run 不建 \`rest_run\`" "$(cat "$SKILL")"
+assert_grep "skill: Step 0.1 names the word last" '`last`' "$STEP01"
+for f in "$PLUGIN/MANIFESTO.md" "$PLUGIN/README.md" "$PLUGIN/skills/idd-issue/SKILL.md"; do
+  refute_grep_re "docs: no bare /idd-all with only a flag as an example of one issue in $(basename "$(dirname "$f")")/$(basename "$f")" 'idd-all --(pr|no-pr)' "$(cat "$f")"
+done
 assert_grep "skill: outside text goes into single quotes" "單引號" "$REST"
 assert_grep "skill: with the way to write a single quote inside them" "'\\''" "$REST"
 refute_grep_re "skill: no reason template in double quotes" '--reason "<' "$REST"
