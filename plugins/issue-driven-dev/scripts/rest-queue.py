@@ -116,6 +116,8 @@ def classify_args(argv):
             in_chain = in_chain or arg == "--in-chain"
         elif arg.startswith("--"):
             return "refuse", "unknown flag " + one_line(arg, 40)
+        elif not arg.strip():
+            return "refuse", "an empty argument: give an issue, a description or a file, or nothing at all"
         else:
             positionals.append(arg)
         i += 1
@@ -126,6 +128,8 @@ def classify_args(argv):
         if in_chain:
             return "refuse", "--in-chain is for a call that names an issue"
         return "rest", ""
+    if positionals == ["last"]:   # the word the request for this mode first used; never the title of a new issue
+        return "refuse", "`last` is not a mode: to run every remaining issue, call /idd-all with no argument or with `rest`"
     return "other", ""
 
 
@@ -527,7 +531,7 @@ def cmd_start(argv):
     if problem:   # said, not silent: the attempts of that state are not carried over
         print(f"a run state was found in this working tree but cannot be used ({problem}) — this is a new run, and it replaces that file")
     if st["stop"]:
-        print(f"this run stopped earlier: {st['stop']['reason']} — next hands out nothing; call report to end it")
+        print(f"this run stopped earlier: {one_line(st['stop']['reason'], REASON_MAX)} — next hands out nothing; call report to end it")
     flight = in_flight(st)
     if flight:
         print(f"in flight, no result recorded yet: #{flight['issue']}")
@@ -544,7 +548,7 @@ def cmd_next(argv):
     if st is None:
         return refuse("no rest run in this working tree — call start first")
     if st["stop"]:
-        return emit({"next": None, "stopped": st["stop"]["reason"]})
+        return emit({"next": None, "stopped": one_line(st["stop"]["reason"], REASON_MAX)})
     flight = in_flight(st)
     if flight:
         print(f"→ #{flight['issue']} is still in flight: finish it and call record", file=sys.stderr)
@@ -590,7 +594,7 @@ def cmd_stop(argv):
     if not st["stop"]:   # the first reason stands
         st["stop"] = {"reason": one_line(a["--reason"], REASON_MAX) or "no reason given", "at": iso(now())}
         save_state(a["--cwd"], st)
-    return emit({"stopped": st["stop"]["reason"]})
+    return emit({"stopped": one_line(st["stop"]["reason"], REASON_MAX)})
 
 
 def cmd_report(argv):
@@ -603,20 +607,25 @@ def cmd_report(argv):
         return refuse("no rest run in this working tree")
     try:
         lst, unread = listing(repo), ""
-    except Stop as exc:
-        lst, unread = None, str(exc)
+    except Exception as exc:   # whatever went wrong, the attempts below are what this run did
+        lst, unread = None, str(exc) if isinstance(exc, Stop) else f"{type(exc).__name__}: {exc}"
     closed = [x for x in st["attempts"] if x["outcome"] == "closed"]
     stopped = [x for x in st["attempts"] if x["outcome"] == "stopped"]
     flight = [x for x in st["attempts"] if x["outcome"] is None]
     out = [f"rest run report — {repo}",
            f"started {st['started_at']}, {len(st['attempts'])} issue(s) attempted",
-           f"closed ({len(closed)}): {nums(x['issue'] for x in closed)}",
-           f"stopped ({len(stopped)}):" + ("" if stopped else " -")]
+           f"closed ({len(closed)}): {nums(x['issue'] for x in closed)}"]
     # An issue this run handed out is named once, here, with the questions it now waits on.
     asked = lst["questions"] if lst else {}
     rows_of = lambda n: [f"    - {q}" for q in asked.get(str(n), [])]
+    open_now = {n for numbers in lst["classes"].values() for n in numbers} if lst else set()
+    for x in closed:
+        if x["issue"] in open_now:   # recorded as closed by this run, and someone reopened it since
+            out.append(f"  #{x['issue']} — open again")
+            out += rows_of(x["issue"])
+    out.append(f"stopped ({len(stopped)}):" + ("" if stopped else " -"))
     for x in stopped:
-        out.append(f"  #{x['issue']} — {x['reason']}")
+        out.append(f"  #{x['issue']} — {one_line(x['reason'], REASON_MAX)}")
         out += rows_of(x["issue"])
     if any(x["reason"].startswith(EXISTING_WORK) for x in stopped):
         out.append("  an issue stopped with existing work continues when it is named (/idd-all #N)")
@@ -640,7 +649,7 @@ def cmd_report(argv):
         if left:
             out.append(f"still to run ({len(left)}): {nums(left)}")
     if st["stop"]:
-        out.append(f"run stopped: {st['stop']['reason']}")
+        out.append(f"run stopped: {one_line(st['stop']['reason'], REASON_MAX)}")
     print("\n".join(out))
     try:
         os.unlink(state_path(cwd))

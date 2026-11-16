@@ -78,7 +78,7 @@ references/shared.md    ←  90% common pipeline, both skills cite
 
 ### Case B. Default 有 dominant 多數
 
-**範例**: `idd-implement --no-pr` / `idd-all --no-pr` 的 `pr_policy` config
+**範例**: `idd-implement --no-pr` / `idd-all #N --no-pr` 的 `pr_policy` config
 
 90% 場景使用者要 PR mode (collaboration / review trail),`pr_policy` default 「PR」是 dominant pick。極少數 solo project 才設 `never` — minority 願意 explicit override。**沒兩難因為一邊壓倒性 dominant**。
 

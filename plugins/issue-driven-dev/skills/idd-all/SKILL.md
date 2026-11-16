@@ -2,7 +2,7 @@
 name: idd-all
 description: |
   自動串連 IDD 完整 workflow（issue → diagnose → implement → verify），按 pr_policy 解析 path 與 interaction 兩軸：PR + unattended（自動化、/loop friendly）或 direct-commit + attended（HITL、user 在 keyboard，sub-skill AskUserQuestion 自然 fire）。verify 乾淨通過、意圖確認過、而且沒有別人插手時就 merge（PR mode）或 push（direct-commit mode，限預設 branch）並跑 /idd-close，最後回報做了什麼與怎麼復原；guardrail 沒過、有還沒回答的釐清問題或未回應的略過紀錄、帶 --review 或 --in-chain 時停在 verified（tier 是哪一個不影響）；type=meeting 停在 diagnosed 或 planning，不 verify、不開 PR。
-  不帶 issue（或只寫 rest）時跑 repo 裡剩下的全部 open issue：需要人的先跳過、每張只試一次、結束時一份總報告（#478）。
+  不帶 issue（或只寫 rest）時跑 repo 裡剩下的全部 open issue：需要人的先跳過、每張在一次 run 裡只試一次、結束時一份總報告（#478）。
   Use when: 想一次跑完整條 IDD pipeline、信任 6-AI verify 會抓錯、希望交出去就不用管（verify 乾淨就跑到 closed，沒過就停在 verified 回報原因）；HITL 模式則用於 solo repo 想被 sub-skill 諮詢的情境。
   防止的失敗：手動跑 5 個 idd-* skill 太繁瑣、忘記中間某一步、orchestration 一致性。
 argument-hint: "[#NNN | 'issue description' | rest] [--pr | --no-pr] [--review] [--cwd /path/to/clone] (empty 或 rest = 跑剩下的全部 open issue; --no-pr 觸發 HITL direct-commit + attended; --review 停在 verified、不 merge 也不 close)"
@@ -157,7 +157,7 @@ Step 0.2、0.3、0.35 只做一次，`$CWD`、`$GITHUB_REPO` 與旗標每一張�
 
 ### 整個 run 停下
 
-封閉列舉，只有這五種，不得依性質相似類推第六種。第二到第四種先記下原因，再做「結束」一節：
+封閉列舉，只有這六種，不得依性質相似類推第七種。第二到第四種先記下原因，再做「結束」一節：
 
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" stop --cwd "$CWD" --repo "$GITHUB_REPO" --reason '<原因>'
@@ -167,9 +167,10 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" stop --cwd "$CWD" --repo "
 |---|---|
 | 第 1 步的 `start` 以 3 結束（清單讀不到，這次還沒有 run 開始） | 把它印在 stderr 的那一行告訴使用者就結束，不呼叫 `stop` 與 `report`：沒有 run 可以停，也沒有結果可以報。先前還沒結束的 run 的狀態留著，24 小時內再下一次 `/idd-all` 會接續 |
 | 第 5 步回不到預設 branch、`pull --ff-only` 失敗，或回去之後工作樹不乾淨 | `stop`，原因寫在哪一張之後、哪一步不成立 |
-| `rest-queue.py` 的子命令以 3 結束（run 已經開始；GitHub、判定程式讀不到，或狀態寫不進去） | `stop`，原因照抄它印在 stderr 的那一行。`stop` 自己也失敗時直接做「結束」一節 |
+| `next` 或 `record` 以 3 結束（run 已經開始；GitHub、判定程式讀不到，或狀態寫不進去） | `stop`，原因照抄它印在 stderr 的那一行。`stop` 自己也失敗時直接做「結束」一節 |
 | `gh auth status` 失敗 | `stop` |
 | 使用者中斷 | 不必做任何事。狀態留著，24 小時內再下一次 `/idd-all` 會接續 |
+| 「結束」一節的 `report` 以 3 結束（報告印了，但狀態刪不掉；或讀不到狀態） | 把它已經印出的內容與 stderr 那一行原樣轉給使用者就結束，不再呼叫 `stop` 或 `report`：再呼叫一次只會停在同一個地方 |
 
 結束碼 1 與 2 不在表上：那是這裡呼叫錯了（沒有先 `start`、`record` 的 issue 號不是交出的那一張、引數寫錯），改正後重跑同一個子命令。
 
@@ -196,7 +197,9 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" report --cwd "$CWD" --repo
 - 不平行。與批次模式相同，依序跑。
 - 途中新開的 issue 不併進同一個 PR：重讀清單時接住，各自跑單張流程、各自一個 PR。chain 成為預設是 #457。
 - 不改單張流程的 verify 輪數上限（#423）。
-- 不重跑已經 verified 的 issue，也不接手已經有 PR 或 branch 的 issue。
+- 不重跑已經 verified 的 issue，也不接手已經有 PR 或 branch 的 issue。rest 只靠 GitHub 上的資料，分不出一張 verified 的 issue 上次是不是已經交給人（例如帶 `--review` 留下等人看）；接手要先讓 close stage 把停止原因留在 GitHub 上，這件事在 #566（維護者 2026-11-15 的決定）。
+- 不在交出之後重新分類：一張 issue 交出之後才出現的外部帳號留言或新的釐清問題，不會讓 rest 停下那一張（中斷後接續 in flight 的 issue 時也一樣）。merge 之前 close stage 的檢查照樣擋。
+- 宣告某張 issue 的 open PR（不論誰開的）會讓 rest 把那一張記為 `existing work`，不跑它。
 - 不判斷一張舊 issue 的前提還成不成立。
 
 ## Configuration
@@ -228,7 +231,7 @@ TaskCreate(name="rest_run", description="僅 rest mode（#478：沒有位置引�
 
 完成每一步立即 `TaskUpdate → completed`。**靜默完成 = 違規**。
 
-rest mode 先建 `preflight` 與 `rest_run` 兩項；每交出一張 issue，再為那一張建 `resolve_mode` 到 `report_and_stop` 各項。
+rest mode 先建 `preflight` 與 `rest_run` 兩項；每交出一張 issue，再為那一張建 `resolve_mode` 到 `report_and_stop` 各項。指名 issue 的 run 不建 `rest_run`。
 
 `idd-all` 內部呼叫的 atomic skill 會各自建自己的 stage TaskList(那是它們的責任),idd-all 的 task list 只追 phase-level 進度。
 
@@ -254,7 +257,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" args -- <ARGS>
 |------|------|------|
 | `/idd-all`（可以只帶旗標，例如 `/idd-all --review`） | rest | 跑剩下的全部 open issue，見 `## Rest mode` |
 | `/idd-all rest` | rest | 同上。`rest` 是保留字，只在它是唯一的位置引數時成立；標題就叫 rest 的新 issue 用 `/idd-issue` 開 |
-| `/idd-all rest #19`、`/idd-all --in-chain`（沒有 issue 號）、不認得的 `--` 旗標、`--cwd` 沒有給路徑 | refuse | 拒絕並說明原因。不帶 issue 會開始一個無人值守的 run，所以打錯的旗標不會被當成沒看到 |
+| `/idd-all rest #19`、`/idd-all --in-chain`（沒有 issue 號）、不認得的 `--` 旗標、`--cwd` 沒有給路徑、空的引數、單獨的 `last` | refuse | 拒絕並說明原因。不帶 issue 會開始一個無人值守的 run，所以打錯的旗標不會被當成沒看到。`last` 是這個模式最早被提出時用的字，現在的寫法是不帶引數或 `rest`；它不會被當成新 issue 的標題 |
 | `/idd-all #19` | from-issue | 直接從 #19 進 diagnose,mode 由 Phase 0.5 解析 |
 | `/idd-all #19 --pr` | from-issue, force PR | 強制 (PR, unattended) — v2.40.0 既有行為,/loop friendly |
 | `/idd-all #19 --no-pr` | from-issue, force HITL | 強制 (direct-commit, attended) — user 在 keyboard,sub-skill 自然問問題 |

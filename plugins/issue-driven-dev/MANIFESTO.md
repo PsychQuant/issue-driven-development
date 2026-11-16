@@ -143,7 +143,7 @@ Foresay 的「Read-Only for Humans」在 IDD 落成一條具體的 cross-skill �
 理由：當 AI 已經能列出選項，請 user 從白紙寫答案是把 enumeration 的認知負擔推回給人。人**挑選**比**articulate**更確定、更快，也更能讓 AI 的「我理解的選項空間」攤開受檢（misframe 一眼可抓）。
 
 - **Scope**：限**決策 / 澄清點**，不含純資訊提示、進度回報、status 輸出（那些不是決策，不 render 選項）。
-- **Unattended**：unattended 模式（無人在場，如 `/idd-all --pr`、`/loop`；經 `UNATTENDED MODE` directive 通知 sub-skill）下不 block —— 套用該 skill 既有的 unattended 慣例：取**安全的 non-blocking 預設**（無人可挑時最保守、能繼續的選項，**未必**等於給人看的推薦項）並寫 audit trail。例：Layer V unattended 取 `proceed anyway`（而非 max_score 5/6 時需要人的推薦項 `clarify` / `escalate`）。
+- **Unattended**：unattended 模式（無人在場，如 `/idd-all #N --pr`、`/loop`；經 `UNATTENDED MODE` directive 通知 sub-skill）下不 block —— 套用該 skill 既有的 unattended 慣例：取**安全的 non-blocking 預設**（無人可挑時最保守、能繼續的選項，**未必**等於給人看的推薦項）並寫 audit trail。例：Layer V unattended 取 `proceed anyway`（而非 max_score 5/6 時需要人的推薦項 `clarify` / `escalate`）。
 - **既有 instance**：`idd-diagnose` Step 3.4 Layer V D.1（vagueness `clarify now` render 候選詮釋）是這條 doctrine 的一個 application；doctrine 是 single source of truth，D.1 引用它而非另立規則。
 
 > **觸發事件（#190）**：一次 `idd-diagnose` batch 收尾時，AI 用**散文**列了 4 個待 stakeholder 拍板的決策、反問「要不要做成選項」。User：「需要 clarify 的部分，與其要我說，不如給我幾個選擇我比較確定。」散文列決策 = choice-first 沒在 Layer V 以外 fire。本 doctrine 把它從「AI 自覺」升為跨 skill 規範。

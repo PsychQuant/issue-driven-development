@@ -308,7 +308,7 @@ IDD 遵循「**深度整合 >> hard-coded**」原則（#209/#214）：生態系�
 | `idd-implement`（TDD / 完成前驗證）+ `idd-diagnose`（bug RCA） | `superpowers` | `claude-plugins-official` | process-discipline delegation（#209 hard dependency；正常情況由 `dependencies` 自動安裝，不會缺席） | **fail-fast abort** + install hint |
 | `idd-verify --loop` | `ralph-loop` | `claude-plugins-official` | outer driver for verify-fix loop | **fail-fast abort** + install hint |
 | `idd-all` (PR, unattended) (default) | `ralph-loop` | 同上 | unattended 在 verify findings 後需 driver 觸發下一輪 | **graceful degrade** to `(direct-commit, attended)` + warning(保護 v2.40.0 caller backward compat) |
-| `idd-all --no-pr` (direct-commit, attended) | (none) | n/a | user 在 keyboard 自然推進 | n/a |
+| `idd-all #N --no-pr` (direct-commit, attended) | (none) | n/a | user 在 keyboard 自然推進 | n/a |
 | Single-skill calls (no `--loop`) | (none) | n/a | atomic skill 自完成 | n/a |
 
 Install:`claude plugin marketplace add anthropics/claude-plugins-official` 然後 `claude plugin install ralph-loop@claude-plugins-official`。

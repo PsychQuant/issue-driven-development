@@ -34,7 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   waits on, and the report says that
   a verified issue or one stopped with existing work continues when it is named. `rest` with another
   positional argument, `--in-chain` without an issue, an unknown `--` flag (also in a call that names an
-  issue: it used to be ignored) and `--cwd` without a path are refused. **If you scheduled or looped a bare
+  issue: it used to be ignored), `--cwd` without a path, an empty argument and the single word `last` (it is not
+  a mode, and is no longer taken as the title of a new issue) are refused. **If you scheduled or looped a bare
   `/idd-all`** (`/schedule … /idd-all`, `/loop /idd-all`): that call used to stop at a question and now runs
   the whole backlog unattended; add the issue number unless that is what you want. Spec: capability
   `idd-all-rest`.

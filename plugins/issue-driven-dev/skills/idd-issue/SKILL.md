@@ -944,7 +944,7 @@ TaskCreate(name="discussion_metadata_helper",
 #### Interaction 模式（surface-only 契約，CRITICAL）
 
 - **attended**：以下每個 sub-step 用 `AskUserQuestion`（Claude runtime tool，非 shell）問使用者，選 Yes 才實際 `gh issue edit`。
-- **unattended**（`/idd-all --pr` 等）：`AskUserQuestion` 被抑制 → **不呼叫任何 `gh issue edit --add-assignee/--add-label/--milestone`**，改成在 Step 5 report 印一段「建議的 metadata（未套用）」讓人事後手動決定。**outward-facing metadata 在 unattended 下絕不 auto-set**（#141 Key Decision）。
+- **unattended**（`/idd-all #N --pr` 等）：`AskUserQuestion` 被抑制 → **不呼叫任何 `gh issue edit --add-assignee/--add-label/--milestone`**，改成在 Step 5 report 印一段「建議的 metadata（未套用）」讓人事後手動決定。**outward-facing metadata 在 unattended 下絕不 auto-set**（#141 Key Decision）。
 
 #### (a) Assignee suggestion
 
