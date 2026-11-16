@@ -1,12 +1,13 @@
 ## 1. 測試先寫（先看到它們失敗）
 
 - [ ] 1.1 `scripts/tests/rest-queue/test.sh` 的情境改成在 git working tree 裡跑（`git init`、`.claude/.idd/state/` 寫進 `info/exclude`、本機的 user 設定），既有檢查照舊通過。完成時：在目前的程式上，既有的檢查沒有新的失敗。
-- [ ] 1.2 Requirement「Between two issues one helper settles the working tree」：四個 Example 的測試（標記各自的 Example 標題），在有 bare origin 的臨時 repo 裡實際執行 `settle`；另有 Scenario 的檢查（乾淨的 issue branch、別的 issue 的 branch、還在 in flight 的 issue 回 1）。
+- [ ] 1.2 Requirement「Between two issues one helper settles the working tree」：六個 Example 的測試（標記各自的 Example 標題），在有 bare origin 的臨時 repo 裡實際執行 `settle`；另有 Scenario 的檢查（有 commit 的 issue branch、別的 issue 的 branch、還在 in flight 的 issue 與別張 issue 回 1、進行中的 merge 回 3）。
+- [ ] 1.2b 同一條 requirement 的窮舉檢查：path（PR、direct-commit）× 所在 branch（自己的、預設、別張的、detached）× 留下物（無、一般檔、manifest、IDD 不收進 git 的檔）× 預設 branch 與遠端（相同、落後、超前），每一格在臨時 repo 裡實際執行 `settle`，與一張獨立寫成的預期表比對結束碼、有沒有 commit、最後所在的 branch。
 - [ ] 1.3 Requirement「Each issue is attempted at most once per run」：Example `an issue with a local branch is recorded, not handed out` 的測試。
 - [ ] 1.4 Requirement「Start prints the list and resumes an unfinished run」：Example `a run state that git would track` 的測試；狀態檔缺 `reason`、`started_at` 讀不出來時視為不能用；`start` 的清單說明已有 PR 或 branch 的 issue 會記為 existing work。
 - [ ] 1.5 Requirement「The open issues are read completely or not at all」：讀渲染時丟出任何例外的 issue 歸 `unreadable`，命令照樣結束碼 0（以複製的 lib 讓 `open_clarity_rows` 丟出 RuntimeError）。
 - [ ] 1.6 Requirement「Report lists what happened and ends the run」：existing work 的說明改成留給人、看 reason 寫的 PR 或 branch；settle 保留的 branch 與 commit 列在那一張底下（併在 1.2 的第一個 Example）。
-- [ ] 1.7 Requirement「A stopped issue does not stop the run and a stopped run hands out nothing」與「idd-all runs rest mode as a loop over the single-issue pipeline」與 `idd-existing-work-lookup` 的「Starting skills SHALL act on a blocked verdict」：skill 文字的檢查（停止表四列、`report` 以 1 或 3 結束那一列、`settle` 在 `record` 之後、in flight 那一列不重跑 Step 0.5.1、rest mode 記錄 existing work 不提問、Step 0.5.1 指回 rest 一節），標記 `the skill names the loop commands in order`、`the skill ends when the report itself fails`、`the skill continues an issue in flight`、`rest mode records existing work instead of acting on it`。
+- [ ] 1.7 Requirement「A stopped issue does not stop the run and a stopped run hands out nothing」與「idd-all runs rest mode as a loop over the single-issue pipeline」與 `idd-existing-work-lookup` 的「Starting skills SHALL act on a blocked verdict」：skill 文字的檢查（停止表四列、`report` 以 1 或 3 結束那一列、`settle` 在 `record` 之後、in flight 那一列不重跑 Step 0.5.1、rest mode 記錄 existing work 不提問、Step 0.5.1 指回 rest 一節、前置步驟只做一次、`stop` 自己失敗時往報告走、direct-commit 在哪裡結束），標記 `the skill names the loop commands in order`、`the skill ends when the report itself fails`、`the skill goes on to the report when stop fails`、`the skill says where a direct-commit run ends`、`the skill runs the preflight steps once`、`the skill continues an issue in flight`、`rest mode records existing work instead of acting on it`。
 
 ## 2. 程式與 skill
 
