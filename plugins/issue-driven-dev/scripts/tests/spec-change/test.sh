@@ -865,8 +865,10 @@ if printf '%s\n' "$LACKING" | grep -q '^?'; then setup_failed "the damaged blob 
 links_case "submodule row 49: no marker, a damaged blob" error 0 2
 submodule_reason 49 tests/sub 'its recorded commit could not be read'
 
-# Row 50: the object that holds the marker's file is present but empty. git lists it as present, and the search
-# skips the file and still ends with 0 or 1: only opening the object shows that the file was not read.
+# Row 50: the object that holds the marker's file is present but empty. git lists it as present. What the search
+# does then depends on the version of git. Measured: git 2.54.0 and 2.55.0 skip the file and still end with 0 or 1,
+# so that only opening the object shows that the file was not read; git 2.56.0 ends the search itself with 128, and
+# the row then takes the path of row 49. The answer is the same in both cases, and it is checked in both.
 submodule_repo l-sub-empty-object "$SUB" tests/sub || setup_failed "create row 50"
 remove_submodule_object HEAD:scripts/test.sh || setup_failed "remove the marker blob before emptying it"
 EMPTY_OID=$(git -C "$REPO/tests/sub" rev-parse HEAD:scripts/test.sh) || setup_failed "read the emptied blob id"
@@ -876,7 +878,10 @@ mkdir -p "$EMPTY_DIR" || setup_failed "create the object directory of row 50"
 LACKING=$(git -C "$REPO/tests/sub" rev-list --objects --no-walk --missing=print HEAD) || setup_failed "ask which objects row 50 lacks"
 if printf '%s\n' "$LACKING" | grep -q '^?'; then setup_failed "the empty object must be listed as present"; fi
 git -C "$REPO/tests/sub" grep --no-recurse-submodules -q -F -e 'spec-example: cap / alpha table' HEAD -- . >/dev/null 2>&1
-[ "$?" -le 1 ] || setup_failed "the search of a submodule with an empty object must end with 0 or 1"
+EMPTY_SEARCH=$?
+if [ "$EMPTY_SEARCH" -gt 1 ]; then
+  echo "  ~ note: this git ends the search of an empty object with exit code $EMPTY_SEARCH, row 50 takes the path of row 49"
+fi
 links_case "submodule row 50: the marker's object is present but empty" error 0 2
 submodule_reason 50 tests/sub 'its recorded commit could not be read'
 
