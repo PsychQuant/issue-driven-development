@@ -39,3 +39,5 @@ verify 第 3 輪（#478）判定 FAIL。4 項 Blocking 都在「一張 issue 結
   - Modified: plugins/issue-driven-dev/CLAUDE.md
   - Modified: plugins/issue-driven-dev/references/usecase-routing.md
   - Modified: docs/commands.md
+  - Modified: plugins/issue-driven-dev/references/cross-repo-cwd.md
+  - New: plugins/issue-driven-dev/scripts/tests/rest-queue/settle_matrix.py

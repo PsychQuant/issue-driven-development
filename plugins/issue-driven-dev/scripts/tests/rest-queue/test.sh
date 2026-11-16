@@ -542,6 +542,9 @@ assert_eq "kept: clean" "" "$(git -C "$T" status --porcelain)"
 assert_eq "kept: at the commit of origin/main" "$(git -C "$S/other" rev-parse HEAD)" "$(git -C "$T" rev-parse HEAD)"
 assert_eq "kept: the commit is not pushed" "" "$(git -C "$T" ls-remote origin refs/heads/idd/5-x)"
 KEPT=$(git -C "$T" rev-parse --short=7 idd/5-x)
+OUT=$(settle 5 2>/dev/null); rc=$?
+assert_exit "kept: a second settle for the same issue exits 0" 0 "$rc"
+assert_eq "kept: and changes nothing" "$KEPT" "$(git -C "$T" rev-parse --short=7 idd/5-x)"
 run report > "$S/report.out" 2>&1
 assert_grep "kept: the report names the branch under #5" "idd/5-x" "$(stopped_block "$S/report.out")"
 assert_grep "kept: and the commit" "$KEPT" "$(stopped_block "$S/report.out")"
@@ -571,7 +574,7 @@ assert_eq "keep out: idd/5-x has no new commit" "$INIT" "$(git -C "$T" rev-parse
 assert_eq "keep out: and the working tree stays on it" "idd/5-x" "$(head_branch)"
 for p in ".claude/.idd/state/x.json" ".claude/.idd/tree-lock.reclaim" ".claude/worktrees/w/a" ".claude/.idd/attachments/issue-5/sub/_manifest.json"; do
   new "keep-out-$(printf '%s' "$p" | tr -c 'a-z0-9' '-')" 5 9
-  printf '.claude/.idd/state/idd-all-rest.json\n' > "$T/.git/info/exclude"   # only the run state itself is ignored
+  printf '.claude/.idd/state/idd-all-rest.json\n.claude/.idd/state/unattended.json\n' > "$T/.git/info/exclude"   # two named files, not the folder
   run start > /dev/null 2>&1; run next > /dev/null; run record --issue 5 --reason x > /dev/null
   git -C "$T" checkout -q -b idd/5-x; mkdir -p "$T/$(dirname "$p")"; printf 'x\n' > "$T/$p"
   settle 5 > /dev/null 2> "$S/err"; rc=$?
@@ -658,10 +661,28 @@ settle 5 > /dev/null 2> "$S/err"; assert_exit "merging: an unfinished merge exit
 assert_true "merging: and is left unfinished" 'git -C "$T" rev-parse -q --verify MERGE_HEAD >/dev/null'
 assert_eq "merging: no commit was made" "$MINE" "$(git -C "$T" rev-parse HEAD)"
 
+new picking 5 9
+run start > /dev/null 2>&1; run next > /dev/null
+git -C "$T" checkout -q -b side; printf 'side\n' > "$T/a.txt"; git -C "$T" commit -q -am side; SIDE=$(git -C "$T" rev-parse HEAD)
+git -C "$T" checkout -q main; git -C "$T" checkout -q -b idd/5-x; printf 'mine\n' > "$T/a.txt"; git -C "$T" commit -q -am mine
+git -C "$T" cherry-pick "$SIDE" > /dev/null 2>&1
+run record --issue 5 --reason x > /dev/null
+settle 5 > /dev/null 2> "$S/err"; assert_exit "picking: an unfinished cherry-pick exits 3" 3 "$?"
+assert_output_grep "picking: and the reason names it" "cherry-pick" "$S/err"
+new closed-kept 5 9
+run start > /dev/null 2>&1; run next > /dev/null; git -C "$T" checkout -q -b idd/5-x
+mkdir -p "$T/.claude/.idd"; printf '{}\n' > "$T/.claude/.idd/routing-stats.jsonl"
+echo CLOSED > "$G/state-5"; run record --issue 5 > /dev/null; settle 5 > /dev/null 2>&1
+KEPT=$(git -C "$T" rev-parse --short=7 idd/5-x)
+run report > "$S/report.out" 2>&1
+assert_output_grep "closed: a branch to which settle added a commit is named" "#5 — what the run left is kept on idd/5-x (commit $KEPT)" "$S/report.out"
+
 # spec-example: idd-all-rest / an issue with a local branch is recorded, not handed out
 new local-branch 5 9
 git -C "$T" branch idd/5-old
 run start > "$S/start.out" 2>&1
+assert_output_grep "start: says a candidate with a pull request or branch is recorded as existing work" "recorded as existing work when its turn comes" "$S/start.out"
+assert_output_grep "start: warns when git would track attachment files" "git would not ignore attachment files" "$S/start.out"
 assert_eq "local branch: next hands out #9" "9" "$(run next | jget next)"
 assert_eq "local branch: #5 is recorded as stopped with the branch" "stopped|existing work: local branch idd/5-old" \
   "$(python3 -c 'import json,sys; a=json.load(open(sys.argv[1]))["attempts"][0]; print(a["outcome"] + "|" + a["reason"]) if a["issue"] == 5 else print("not #5")' "$(state_file)")"
@@ -684,6 +705,18 @@ assert_true "tracked state: nothing was written in the tree" '[ -z "$(git -C "$T
 new nogit 5
 rm -rf "$T/.git"
 run start > /dev/null 2>&1; assert_exit "start: a folder that is not a git working tree exits 3" 3 "$?"
+new one-file 5
+printf '.claude/.idd/state/idd-all-rest.json\n' > "$T/.git/info/exclude"
+run start > /dev/null 2> "$S/err"; assert_exit "start: ignoring only the run state file is not enough (the folder holds other state)" 3 "$?"
+assert_output_grep "start: and the reason names the folder" ".claude/.idd/state/" "$S/err"
+new attachments-ignored 5
+printf '.claude/.idd/attachments/*/*\n!.claude/.idd/attachments/*/_manifest.json\n' >> "$T/.git/info/exclude"
+run start > "$S/start.out" 2>&1
+refute_output_grep "start: no attachment warning when git ignores attachment files" "attachment files" "$S/start.out"
+new branches-unreadable 5 9
+run start > /dev/null 2>&1; rm -rf "$T/.git"
+run next > /dev/null 2> "$S/err"; assert_exit "next: git that cannot list the local branches exits 3" 3 "$?"
+assert_eq "next: with one reason line" "1" "$(wc -l < "$S/err" | tr -d ' ')"
 
 echo "── the run state ──"
 new state-no-reason 5

@@ -129,7 +129,7 @@ When `report` itself exits with a code other than 0, `idd-all` SHALL relay what 
 
 When the working tree holds the state of a run of the same repository whose last recorded activity (start, hand-out, record or stop) is less than 24 hours old and that was not ended by `report`, `start` SHALL resume it: the recorded attempts and a recorded stop are kept, and the attempts are not handed out again. Otherwise `start` SHALL begin a new run with no attempts. A state file whose start time cannot be read as a time, or with an attempt that has no reason, is not a state this helper can use.
 
-Before it reads anything, `start` SHALL ask git whether the run state file would be ignored in this working tree. When git would not ignore it, or the working tree is not a git working tree, `start` SHALL exit with code 3 and a reason line that names the path, and SHALL write nothing: an untracked state file makes every later issue stop at its clean-tree check.
+Before it reads anything, `start` SHALL ask git whether files in `.claude/.idd/state/` would be ignored in this working tree, for the run state file and for the unattended marker in the same folder. When git would not ignore one of them, or the working tree is not a git working tree, `start` SHALL exit with code 3 and a reason line that names the folder and says how to ignore it, and SHALL write nothing: an untracked state file makes every later issue stop at its clean-tree check. When git would not ignore a file inside an issue's attachment folder, `start` SHALL say so in one line and go on: an issue that downloads attachments then stops the run at `settle`.
 
 #### Scenario: calling start twice does not reset the run
 
@@ -159,6 +159,11 @@ Before it reads anything, `start` SHALL ask git whether the run state file would
 - **GIVEN** a git working tree in which no ignore rule covers `.claude/.idd/state/`
 - **WHEN** `start` runs
 - **THEN** it exits 3, its reason line names `.claude/.idd/state/`, and no run state file exists
+
+#### Scenario: attachment files git would track
+
+- **WHEN** git ignores `.claude/.idd/state/` but not the files in `.claude/.idd/attachments/`
+- **THEN** `start` exits 0 and one line of its output says that git would not ignore attachment files
 
 ---
 ### Requirement: Report lists what happened and ends the run
@@ -228,7 +233,7 @@ The unattended marker SHALL NOT outlive the run. Before `idd-all` records an iss
 #### Scenario: an issue that already has a pull request is listed, not resumed
 
 - **WHEN** the issue handed out has an open pull request on its own `idd/<N>-…` branch
-- **THEN** `idd-all` records it as stopped with the reason `existing work: PR #<P>` and asks `next` for the following issue
+- **THEN** `idd-all` records it as stopped with a reason that begins with `existing work: ` and names PR #<P>, and asks `next` for the following issue
 
 ##### Example: the skill names the loop commands in order
 
@@ -258,7 +263,7 @@ The unattended marker SHALL NOT outlive the run. Before `idd-all` records an iss
 
 ### Requirement: Between two issues one helper settles the working tree
 
-After an issue is recorded and before the next one is handed out, `idd-all` SHALL call `rest-queue.py settle --issue N --default D --path P`, where `P` is the path the run resolved after Step 0.6 (`PR` or `direct-commit`). `settle` SHALL accept only the issue this run recorded last, and SHALL exit 1 for any other issue and while an issue is in flight. Until `settle` has succeeded for the issue recorded last, `next` SHALL exit 1 and name that issue. An issue that `next` itself recorded as existing work needs no `settle`: no work was started on it.
+After an issue is recorded and before the next one is handed out, `idd-all` SHALL call `rest-queue.py settle --issue N --default D --path P`, where `P` is the path the run resolved after Step 0.6 (`PR` or `direct-commit`). `settle` SHALL accept only the issue this run recorded last, and SHALL exit 1 for any other issue and while an issue is in flight. A second `settle` for an issue it has already settled SHALL change nothing and print what the first one recorded. Until `settle` has succeeded for the issue recorded last, `next` SHALL exit 1 and name that issue. An issue that `next` itself recorded as existing work needs no `settle`: no work was started on it.
 
 `settle` SHALL exit 3 and change nothing when git reports an unfinished merge, cherry-pick, revert or rebase. Otherwise it SHALL act on what it observes in the working tree, by this closed table, first match wins:
 

@@ -57,6 +57,8 @@ REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 STATE_TTL = 24 * 3600   # the same life as the close stage's run state and the unattended marker
 STATE_NAME = "idd-all-rest.json"
 STATE_REL = ".claude/.idd/state/" + STATE_NAME
+UNATTENDED_REL = ".claude/.idd/state/unattended.json"   # lib/unattended-state.sh
+ATTACHMENT_RULE = "the ignore block in the plugin's rules/process-attachments.md"
 PAGE = 50
 REASON_MAX = 300
 FLAGS = ("--pr", "--no-pr", "--review", "--in-chain")
@@ -463,11 +465,11 @@ def keep_out(path):
     return path.startswith(ATTACHMENTS) and not MANIFEST_RE.match(path)
 
 
-def git(cwd, args, what):
-    """git's stdout; Stop naming `what` when git fails."""
+def git(cwd, args, what, todo=""):
+    """git's stdout; Stop naming `what`, git's reason and `todo` (what a person does next) when git fails."""
     rc, out, err = run_cmd(["git", "-C", cwd] + args)
     if rc != 0:
-        raise Stop(f"{what}: {one_line(err, 200) or 'git exited ' + str(rc)}")
+        raise Stop(f"{what} ({one_line(err, 200) or 'git exited ' + str(rc)})" + (f" — {todo}" if todo else ""))
     return out
 
 
@@ -478,18 +480,25 @@ def git_ok(cwd, args):
 def ensure_ignored(cwd):
     """Refuse a working tree in which git would not ignore the run state: an untracked state file makes every
     issue stop at its clean-tree check (#564 makes idd-all add the rule itself)."""
-    rc, _, err = run_cmd(["git", "-C", cwd, "check-ignore", "-q", "--", STATE_REL])
-    if rc == 1:
-        raise Stop("git would not ignore the run state in .claude/.idd/state/ — add the line .claude/.idd/state/ to "
-                   ".git/info/exclude (or .gitignore), then start again")
-    if rc != 0:
-        raise Stop(f"git cannot tell whether .claude/.idd/state/ is ignored here (is this a git working tree?): "
-                   f"{one_line(err, 200) or 'git check-ignore exited ' + str(rc)}")
+    for probe in (STATE_REL, UNATTENDED_REL):   # the folder, not one file: the unattended marker and the close stage's state live there too
+        rc, _, err = run_cmd(["git", "-C", cwd, "check-ignore", "-q", "--", probe])
+        if rc == 1:
+            raise Stop("git would not ignore the run state in .claude/.idd/state/ — add the line .claude/.idd/state/ to "
+                       ".git/info/exclude (or .gitignore), then start again")
+        if rc != 0:
+            raise Stop(f"git cannot tell whether .claude/.idd/state/ is ignored here (is this a git working tree?): "
+                       f"{one_line(err, 200) or 'git check-ignore exited ' + str(rc)}")
+
+
+def attachments_ignored(cwd):
+    """False when git would track a file an issue's attachments put on disk (settle then stops the run)."""
+    return run_cmd(["git", "-C", cwd, "check-ignore", "-q", "--", ATTACHMENTS + "issue-0/probe.png"])[0] != 1
 
 
 def idd_branches(cwd):
     """{issue number: [local branch names idd/N or idd/N-…]}."""
-    out = git(cwd, ["for-each-ref", "--format=%(refname)", "refs/heads/idd/"], "could not list the local branches")
+    out = git(cwd, ["for-each-ref", "--format=%(refname)", "refs/heads/idd/"], "could not list the local branches",
+              f"check that git can read this working tree, {AGAIN}")
     found = {}
     for ref in out.splitlines():
         m = re.match(r"^refs/heads/idd/([0-9]+)(?:-.*)?$", ref)
@@ -502,7 +511,7 @@ def leftovers(cwd):
     """(paths, unmerged): every changed or untracked path git does not ignore, relative to the repository root,
     one entry per file (an untracked folder is not folded into one entry)."""
     out = git(cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"],
-              "could not read the working tree")
+              "could not read the working tree", f"check that git can read this working tree, {AGAIN}")
     fields, paths, unmerged, i = out.split("\0"), [], False, 0
     while i < len(fields):
         entry = fields[i]
@@ -524,7 +533,8 @@ def operation_in_progress(cwd):
         if git_ok(cwd, ["rev-parse", "-q", "--verify", ref]):
             return name
     for d in ("rebase-merge", "rebase-apply"):
-        where = git(cwd, ["rev-parse", "--git-path", d], "could not read the git folder").strip()
+        where = git(cwd, ["rev-parse", "--git-path", d], "could not read the git folder",
+                    f"check that git can read this working tree, {AGAIN}").strip()
         if os.path.isdir(where if os.path.isabs(where) else os.path.join(cwd, where)):
             return "rebase"
     return ""
@@ -656,6 +666,9 @@ def cmd_start(argv):
         print(f"in flight, no result recorded yet: #{flight['issue']}")
     print("\n".join(list_lines(lst, attempted)))
     print("a candidate with a pull request or a branch of its own is not run: it is recorded as existing work when its turn comes")
+    if not attachments_ignored(cwd):
+        print(f"git would not ignore attachment files (.claude/.idd/attachments/<issue>/…): an issue that downloads "
+              f"attachments will stop the run between two issues — add {ATTACHMENT_RULE}")
     return 0
 
 
@@ -737,64 +750,80 @@ def cmd_settle(argv):
         held = "none is" if last is None else (f"#{last['issue']} is in flight" if last["outcome"] is None
                                                else f"#{last['issue']} was")
         return refuse(f"#{n} is not the issue recorded last ({held})")
+    if last.get("settled", True):   # settled already (or recorded as existing work by next): change nothing
+        return emit({"issue": n, "settled": True, "kept": last.get("kept", []), "again": True})
     kept = settle_tree(cwd, n, default, path, last, st)
     last["kept"], last["settled"] = kept, True
     save_state(cwd, st)
     return emit({"issue": n, "settled": True, "kept": kept})
 
 
+AGAIN = "then run /idd-all again"
+
+
 def settle_tree(cwd, n, default, path, last, st):
-    """The closed table of the requirement, then the default branch against origin. Returns the kept branches."""
+    """The closed table of the requirement, then the default branch against origin. Returns the kept branches.
+    Every reason it stops with names the issue and the branch, and says what a person does next."""
     branch = run_cmd(["git", "-C", cwd, "symbolic-ref", "--quiet", "--short", "HEAD"])[1].strip()
     on = branch or "no branch"
     busy = operation_in_progress(cwd)
     paths, unmerged = leftovers(cwd)
     if busy or unmerged:
-        raise Stop(f"#{n}: git reports an unfinished {busy or 'merge'} on {on} — finish or abort it, then run /idd-all again")
+        raise Stop(f"#{n}: git reports an unfinished {busy or 'merge'} on {on} — finish or abort it, {AGAIN}")
     commit = ""
     own = re.match(rf"^idd/{n}(?:-.*)?$", branch or "")
     if path == "PR" and own:                                   # row 1
         bad = [x for x in paths if keep_out(x)]
         if bad:
-            raise Stop(f"#{n}: {on} holds files IDD keeps out of git: {some(bad)} — tell git to ignore them "
-                       f"(.git/info/exclude), deal with what else is left on {on}, then run /idd-all again")
+            rule = f" ({ATTACHMENT_RULE})" if any(x.startswith(ATTACHMENTS) for x in bad) else ""
+            raise Stop(f"#{n}: {on} holds files IDD keeps out of git: {some(bad)} — tell git to ignore them{rule}, "
+                       f"commit or remove what else is left on {on}, check out {default}, {AGAIN}")
         if paths:
-            git(cwd, ["add", "-A"], f"#{n}: could not stage what the run left on {on}")
+            todo = f"commit or remove what is left on {on}, check out {default}, {AGAIN}"
+            git(cwd, ["add", "-A"], f"#{n}: could not stage what the run left on {on}", todo)
             git(cwd, ["commit", "-q", "-m", f"chore: keep what the run of #{n} left (#{n})"],
-                f"#{n}: could not commit what the run left on {on} — run /idd-all again after dealing with it")
-            commit = git(cwd, ["rev-parse", "HEAD"], f"#{n}: could not read the new commit").strip()
+                f"#{n}: could not commit what the run left on {on}", todo)
+            commit = git(cwd, ["rev-parse", "HEAD"], f"#{n}: could not read the new commit on {on}",
+                         f"check out {default}, {AGAIN}").strip()
             last["kept"] = [{"branch": branch, "commit": commit}]   # saved now: a later step may still fail
             save_state(cwd, st)
-        git(cwd, ["checkout", "-q", default], f"#{n}: could not check out {default} from {on}")
+        git(cwd, ["checkout", "-q", default], f"#{n}: could not check out {default} from {on}",
+            f"check out {default} by hand, {AGAIN}")
     elif path == "PR" and branch == default:                   # row 2
         if paths:
             raise Stop(f"#{n}: {default} has changes no issue branch holds: {some(paths)} — commit them elsewhere "
-                       f"or remove them, then run /idd-all again")
+                       f"or remove them, {AGAIN}")
     elif path == "PR":                                         # row 3
         raise Stop(f"#{n}: the working tree is on {on}, not on {default} or a branch of #{n} — check out "
-                   f"{default}, then run /idd-all again")
+                   f"{default}, {AGAIN}")
     elif branch != default or paths:                           # row 4
         raise Stop(f"#{n}: direct-commit needs {default} checked out and clean; it is on {on}"
-                   + (f" with {some(paths)}" if paths else "") + " — commit or remove them, then run /idd-all again")
-    git(cwd, ["fetch", "-q", "origin", default], f"#{n}: could not fetch {default} from origin")
+                   + (f" with {some(paths)}" if paths else "")
+                   + f" — check out {default}, commit or remove what is left, {AGAIN}")
+    git(cwd, ["fetch", "-q", "origin", default], f"#{n}: could not fetch {default} from origin",
+        f"check that origin can be reached, {AGAIN}")
     ahead = int(git(cwd, ["rev-list", "--count", f"refs/remotes/origin/{default}..refs/heads/{default}"],
-                    f"#{n}: could not compare {default} with origin/{default}").strip() or "0")
+                    f"#{n}: could not compare {default} with origin/{default}",
+                    f"look at {default}, {AGAIN}").strip() or "0")
     if ahead:
         raise Stop(f"#{n}: {default} has {ahead} commit(s) that origin/{default} lacks — push them, or keep them on a "
-                   f"branch of their own and reset {default} to origin/{default}, then run /idd-all again")
+                   f"branch of their own and reset {default} to origin/{default}, {AGAIN}")
     git(cwd, ["merge", "-q", "--ff-only", f"refs/remotes/origin/{default}"],
-        f"#{n}: {default} could not be fast-forwarded to origin/{default}")
+        f"#{n}: {default} could not be fast-forwarded to origin/{default}",
+        f"bring {default} level with origin/{default} by hand, {AGAIN}")
     after, _ = leftovers(cwd)
     if after:
-        raise Stop(f"#{n}: the working tree is not clean on {default} after the fast-forward: {some(after)}")
+        raise Stop(f"#{n}: the working tree is not clean on {default} after the fast-forward: {some(after)} — "
+                   f"commit or remove them, {AGAIN}")
     if path != "PR":
         return []
     kept = []
     for b in idd_branches(cwd).get(n, []):   # every one of them was created by this run: next skips an issue that had one
+        look = f"look at {b}, {AGAIN}"
         mine = int(git(cwd, ["rev-list", "--count", f"refs/remotes/origin/{default}..refs/heads/{b}"],
-                       f"#{n}: could not compare {b} with origin/{default}").strip() or "0")
+                       f"#{n}: could not compare {b} with origin/{default}", look).strip() or "0")
         upstream = git(cwd, ["for-each-ref", "--format=%(upstream)", f"refs/heads/{b}"],
-                       f"#{n}: could not read the upstream of {b}").strip()
+                       f"#{n}: could not read the upstream of {b}", look).strip()
         if mine == 0 and not upstream and git_ok(cwd, ["branch", "-q", "-d", b]):
             continue
         kept.append({"branch": b, "commit": commit if b == branch else ""})

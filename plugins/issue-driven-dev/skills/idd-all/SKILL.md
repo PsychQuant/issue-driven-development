@@ -128,7 +128,7 @@ direct-commit 下，一張停下而在預設 branch 留下 commit 或檔案時�
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" start --cwd "$CWD" --repo "$GITHUB_REPO"
    ```
 
-   24 小時內有還沒結束的 run 時它會接續，試過的 issue 不會再跑。git 不會忽略 `.claude/.idd/state/` 時它以 3 結束，並說明要在哪裡加那一行（由 idd-all 自己加是 #564）。
+   24 小時內有還沒結束的 run 時它會接續，試過的 issue 不會再跑。git 不會忽略 `.claude/.idd/state/` 時它以 3 結束，並說明要在哪裡加那一行（由 idd-all 自己加是 #564）。git 會追蹤附件檔時它印一行提醒：下載了附件的那一張會讓第 5 步停下整個 run，ignore 的寫法在 `rules/process-attachments.md`。
 
 2. 取下一張：
 
@@ -235,7 +235,7 @@ TaskCreate(name="ci_gate", description="Phase 4.5 (#465): type=meeting → 跳�
 TaskCreate(name="open_pr", description="Phase 5: type=meeting → 跳過、不 push(#383); PR mode → git push + 已有自家 open PR 就沿用並更新 body,否則 gh pr create(body 照 verify gate 結果寫,含 Refs #N, 不含 Closes); direct-commit mode → 不開 PR,進 Phase 5c")
 TaskCreate(name="close_stage", description="Phase 5c (#392): scripts/close-stage.py run（同一個 process，run_in_background）：讀 Step 0.7 的 run-state，擋 --review/--in-chain/meeting/無寫入權限/run 開始後別人插手/意圖沒確認(tier 與沒人處理的 Proposed Corrections 不擋)；gate 綁 HEAD SHA、只認本帳號的報告、讀 GitHub 渲染後的 HTML，有 Rejected finding 就停；CI 等完再重查預設 branch 與 PR 上的人；PR → 本機 CI 閘門 idd-ci-gate.sh(0 過、10 才等遠端 check:pending 最多 15 分鐘、有 pull_request workflow 就等 check 出現;其他結束碼停)、auto-close trap、squash message，全過才 gh pr merge --squash --match-head-commit 並確認 MERGED；direct-commit → 在預設 branch、每個要推的 commit 都引用 #N 才 push。merged/pushed 才以 ORCHESTRATED BY /idd-all 呼叫 /idd-close --repo，最後確認 CLOSED 且有 closing summary")
 TaskCreate(name="report_and_stop", description="Phase 6: Done:/Undo: 回報(merge 或 push 的 commit、closed issue 與 closing summary、改動規模、follow-up、residue、distribution sync、verify reviewers); 停下時只列做到的步驟加 Stopped:; --review → awaiting human acceptance 措辭; type=meeting → meeting report(#383)")
-TaskCreate(name="rest_run", description="僅 rest mode（#478：沒有位置引數，或只有 rest；指名 issue 的 run 不建這一項）: rest-queue.py start 印清單 → 反覆 next、單張流程、record、回到預設 branch → 整個 run 停下時 stop → report 印總報告")
+TaskCreate(name="rest_run", description="僅 rest mode（#478：沒有位置引數，或只有 rest；指名 issue 的 run 不建這一項）: rest-queue.py start 印清單 → 反覆 next、單張流程、record、settle → 整個 run 停下時 stop → report 印總報告")
 ```
 
 完成每一步立即 `TaskUpdate → completed`。**靜默完成 = 違規**。
