@@ -349,7 +349,7 @@ assert_grep "report (reopened): with a note that it is open again" "#5 — open 
 assert_eq "report (reopened): followed by its two open rows" "2" "$(printf '%s\n' "$CLOSED_BLOCK" | grep -c '^    - ')"
 WAITING_BLOCK=$(awk '/^waiting for a person \(/{f=1; print; next} f&&/^[^ ]/{exit} f' "$S/report.out")
 refute_grep "report (reopened): and #5 is not listed as waiting" "#5" "$WAITING_BLOCK"
-assert_eq "report (reopened): #5 is named once" "1" "$(grep -c '#5\b' "$S/report.out")"
+assert_eq "report (reopened): #5 is named nowhere outside the closed part" "0" "$(awk '/^closed \(/{f=1; next} f&&/^[^ ]/{f=0} !f' "$S/report.out" | grep -c '#5\b')"
 
 # spec-example: idd-all-rest / a reason with a line break is printed on one line
 new one-line 5 9
@@ -365,8 +365,7 @@ json.dump({"version": 1, "repo": "o/r", "started_at": stamp(now - 600), "updated
 PY
 run start > "$S/start.out" 2>&1; rc=$?
 assert_exit "one line: start exits 0" 0 "$rc"
-refute_output_grep "one line: no line of start begins with the second line" "
-SECOND-LINE" "$S/start.out"
+assert_true "one line: no line of start begins with the second line" '! grep -E "^SECOND-LINE" "$S/start.out" >/dev/null'
 assert_true "one line: start holds both parts of the stop reason on one line" 'grep -E "first line SECOND-LINE of the stop reason" "$S/start.out" >/dev/null'
 OUT=$(run next)
 assert_eq "one line: next gives the stop reason on one line" "first line SECOND-LINE of the stop reason" "$(printf '%s' "$OUT" | jget stopped)"
@@ -495,7 +494,7 @@ assert_grep "skill: that row says no run exists yet" "還沒有 run" "$FAILED_ST
 assert_grep_re "skill: and to call neither stop nor report" '不呼叫 `stop` 與 `report`' "$FAILED_START"
 assert_grep "skill: and to tell the user the reason" "告訴使用者" "$FAILED_START"
 assert_grep_re "skill: stop case — the default branch or a dirty tree" '^\| 第 5 步回不到預設 branch.*工作樹不乾淨' "$STOPS"
-assert_grep_re "skill: stop case — the helper exits 3" '^\| `rest-queue.py` 的子命令以 3 結束' "$STOPS"
+assert_grep_re "skill: stop case — next or record exits 3 in a run that exists" '^\| `next` 或 `record` 以 3 結束（run 已經開始' "$STOPS"
 assert_grep_re "skill: stop case — gh authentication" '^\| `gh auth status` 失敗' "$STOPS"
 assert_grep_re "skill: stop case — the user interrupts, and nothing is recorded" '^\| 使用者中斷 \| 不必做任何事' "$STOPS"
 assert_grep "skill: step 5 checks that the working tree is clean" 'status --porcelain' "$REST"
