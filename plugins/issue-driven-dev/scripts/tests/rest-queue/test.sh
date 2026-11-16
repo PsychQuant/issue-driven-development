@@ -360,7 +360,9 @@ stamp = lambda t: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
 now = time.time()
 json.dump({"version": 1, "repo": "o/r", "started_at": stamp(now - 600), "updated_at": stamp(now - 300),
            "attempts": [{"issue": 5, "handed_at": stamp(now - 500), "outcome": "stopped",
-                         "reason": "verify gate\nSECOND-LINE of the issue reason", "recorded_at": stamp(now - 400)}],
+                         "reason": "verify gate\nSECOND-LINE of the issue reason", "recorded_at": stamp(now - 400)},
+                        {"issue": 6, "handed_at": stamp(now - 450), "outcome": "stopped",
+                         "reason": "a\tTAB-FOLLOWS " + "x" * 400, "recorded_at": stamp(now - 350)}],
            "stop": {"reason": "first line\nSECOND-LINE of the stop reason", "at": stamp(now - 300)}}, open(sys.argv[1], "w"))
 PY
 run start > "$S/start.out" 2>&1; rc=$?
@@ -374,6 +376,9 @@ assert_exit "one line: report exits 0" 0 "$rc"
 assert_true "one line: no line of report begins with the second line" '! grep -E "^SECOND-LINE" "$S/report.out" >/dev/null'
 assert_true "one line: report holds both parts of the stop reason on one line" 'grep -E "first line SECOND-LINE of the stop reason" "$S/report.out" >/dev/null'
 assert_true "one line: and the issue reason on one line" 'grep -E "#5 — verify gate SECOND-LINE of the issue reason" "$S/report.out" >/dev/null'
+L6=$(grep -F '#6 — ' "$S/report.out")
+assert_true "one line: a tab in a reason is not printed" "! printf '%s' \"\$L6\" | grep -q \"\$(printf '\\t')\""
+assert_true "one line: and a long reason is cut to the limit" '[ "$(printf "%s" "$L6" | sed "s/^  #6 — //" | wc -m)" -le 301 ]'
 
 # spec-example: idd-all-rest / a long clarity row is printed in full
 new report-long 5 14:html=body-long-row
@@ -456,6 +461,11 @@ mkdir -p "$T/.claude/.idd/state"; printf '{"version": 1, "repo"' > "$(state_file
 run start > "$S/start.out" 2>&1; rc=$?
 assert_exit "start: a run state that cannot be used does not stop it" 0 "$rc"
 assert_output_grep "start: but it says so" "cannot be used" "$S/start.out"
+new null-reason 5
+write_state 1 '[{"issue": 5, "outcome": "stopped", "reason": null}]'
+run start > "$S/start.out" 2>&1; rc=$?
+assert_exit "start: an attempt without a usable reason makes the state unusable, not the command fail" 0 "$rc"
+assert_output_grep "start: and it says so" "cannot be used" "$S/start.out"
 new other-repo-state 5
 write_state 1 '[{"issue": 5, "outcome": "stopped", "reason": "x"}]'
 rq start --cwd "$T" --repo o/other > "$S/start.out" 2>&1; rc=$?
@@ -486,6 +496,7 @@ FAILED_REPORT=$(printf '%s\n' "$STOPS" | grep -E '^\| [^|]*`report`[^|]*以 3 �
 assert_eq "skill: one row is about the report that fails" "1" "$(printf '%s\n' "$FAILED_REPORT" | grep -c '^| ')"
 assert_grep "skill: that row says to pass on what was printed" "已經印出" "$FAILED_REPORT"
 assert_grep_re "skill: and to call neither stop nor report again" '不再呼叫 `stop` 或 `report`' "$FAILED_REPORT"
+assert_grep "skill: and still to clear the unattended marker" 'clear_unattended "$CWD"' "$FAILED_REPORT"
 assert_grep "skill: the stop list says six cases" "只有這六種" "$REST"
 # spec-example: idd-all-rest / the skill reports a failed start directly
 FAILED_START=$(printf '%s\n' "$STOPS" | grep -E '^\| [^|]*`start`[^|]*以 3 結束')
@@ -509,6 +520,7 @@ assert_true "skill: and it does so after the report" "[ ${L_REP:-0} -gt 0 ] && [
 assert_grep "skill: the rest section names where the takeover went" "#566" "$REST"
 assert_grep "skill: the description says once per run" "每張在一次 run 裡只試一次" "$(sed -n '1,12p' "$SKILL")"
 assert_grep "skill: a run that names an issue does not create rest_run" "指名 issue 的 run 不建 \`rest_run\`" "$(cat "$SKILL")"
+assert_grep "skill: and the task line itself says so" "指名 issue 的 run 不建這一項" "$(grep -F 'TaskCreate(name="rest_run"' "$SKILL")"
 assert_grep "skill: Step 0.1 names the word last" '`last`' "$STEP01"
 for f in "$PLUGIN/MANIFESTO.md" "$PLUGIN/README.md" "$PLUGIN/skills/idd-issue/SKILL.md"; do
   refute_grep_re "docs: no bare /idd-all with only a flag as an example of one issue in $(basename "$(dirname "$f")")/$(basename "$f")" 'idd-all --(pr|no-pr)' "$(cat "$f")"
