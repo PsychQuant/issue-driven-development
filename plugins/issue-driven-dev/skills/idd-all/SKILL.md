@@ -170,7 +170,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" stop --cwd "$CWD" --repo "
 | `next` 或 `record` 以 3 結束（run 已經開始；GitHub、判定程式讀不到，或狀態寫不進去） | `stop`，原因照抄它印在 stderr 的那一行。`stop` 自己也失敗時直接做「結束」一節 |
 | `gh auth status` 失敗 | `stop` |
 | 使用者中斷 | 不必做任何事。狀態留著，24 小時內再下一次 `/idd-all` 會接續 |
-| 「結束」一節的 `report` 以 3 結束（報告印了，但狀態刪不掉；或讀不到狀態） | 把它已經印出的內容與 stderr 那一行原樣轉給使用者就結束，不再呼叫 `stop` 或 `report`：再呼叫一次只會停在同一個地方 |
+| 「結束」一節的 `report` 以 3 結束（報告印了，但狀態刪不掉；或讀不到狀態） | 把它已經印出的內容與 stderr 那一行原樣轉給使用者，清掉 unattended 標記（`. "${CLAUDE_PLUGIN_ROOT}/scripts/lib/unattended-state.sh" && clear_unattended "$CWD"`）就結束，不再呼叫 `stop` 或 `report`：再呼叫一次只會停在同一個地方 |
 
 結束碼 1 與 2 不在表上：那是這裡呼叫錯了（沒有先 `start`、`record` 的 issue 號不是交出的那一張、引數寫錯），改正後重跑同一個子命令。
 
@@ -226,7 +226,7 @@ TaskCreate(name="ci_gate", description="Phase 4.5 (#465): type=meeting → 跳�
 TaskCreate(name="open_pr", description="Phase 5: type=meeting → 跳過、不 push(#383); PR mode → git push + 已有自家 open PR 就沿用並更新 body,否則 gh pr create(body 照 verify gate 結果寫,含 Refs #N, 不含 Closes); direct-commit mode → 不開 PR,進 Phase 5c")
 TaskCreate(name="close_stage", description="Phase 5c (#392): scripts/close-stage.py run（同一個 process，run_in_background）：讀 Step 0.7 的 run-state，擋 --review/--in-chain/meeting/無寫入權限/run 開始後別人插手/意圖沒確認(tier 與沒人處理的 Proposed Corrections 不擋)；gate 綁 HEAD SHA、只認本帳號的報告、讀 GitHub 渲染後的 HTML，有 Rejected finding 就停；CI 等完再重查預設 branch 與 PR 上的人；PR → 本機 CI 閘門 idd-ci-gate.sh(0 過、10 才等遠端 check:pending 最多 15 分鐘、有 pull_request workflow 就等 check 出現;其他結束碼停)、auto-close trap、squash message，全過才 gh pr merge --squash --match-head-commit 並確認 MERGED；direct-commit → 在預設 branch、每個要推的 commit 都引用 #N 才 push。merged/pushed 才以 ORCHESTRATED BY /idd-all 呼叫 /idd-close --repo，最後確認 CLOSED 且有 closing summary")
 TaskCreate(name="report_and_stop", description="Phase 6: Done:/Undo: 回報(merge 或 push 的 commit、closed issue 與 closing summary、改動規模、follow-up、residue、distribution sync、verify reviewers); 停下時只列做到的步驟加 Stopped:; --review → awaiting human acceptance 措辭; type=meeting → meeting report(#383)")
-TaskCreate(name="rest_run", description="僅 rest mode（#478：沒有位置引數，或只有 rest）: rest-queue.py start 印清單 → 反覆 next、單張流程、record、回到預設 branch → 整個 run 停下時 stop → report 印總報告")
+TaskCreate(name="rest_run", description="僅 rest mode（#478：沒有位置引數，或只有 rest；指名 issue 的 run 不建這一項）: rest-queue.py start 印清單 → 反覆 next、單張流程、record、回到預設 branch → 整個 run 停下時 stop → report 印總報告")
 ```
 
 完成每一步立即 `TaskUpdate → completed`。**靜默完成 = 違規**。

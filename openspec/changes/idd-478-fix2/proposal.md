@@ -43,6 +43,7 @@ verify 第 2 輪（#478）判定 FAIL，6 項 Blocking 幾乎都在修正輪 1 �
   - Modified: plugins/issue-driven-dev/MANIFESTO.md
   - Modified: plugins/issue-driven-dev/README.md
   - Modified: docs/commands.md
+  - Modified: docs/design-patterns/default-dilemma.md
   - Removed: plugins/issue-driven-dev/scripts/tests/rest-queue/confirmations_check.py
   - Removed: plugins/issue-driven-dev/scripts/tests/rest-queue/fixtures/comment-default-record.md
   - Removed: plugins/issue-driven-dev/scripts/tests/rest-queue/fixtures/comment-default-record.html

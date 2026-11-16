@@ -381,7 +381,8 @@ def read_state(cwd, repo=None):
         ok = (st["version"] == 1 and isinstance(st["repo"], str)
               and isinstance(st["started_at"], str) and isinstance(st["updated_at"], str)
               and isinstance(st["attempts"], list)
-              and all(isinstance(a["issue"], int) and a["outcome"] in (None, "closed", "stopped") for a in st["attempts"])
+              and all(isinstance(a["issue"], int) and a["outcome"] in (None, "closed", "stopped")
+                      and isinstance(a.get("reason", ""), str) for a in st["attempts"])
               and (st["stop"] is None or isinstance(st["stop"]["reason"], str)))
     except (ValueError, KeyError, TypeError):
         ok = False

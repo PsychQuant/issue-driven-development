@@ -5,7 +5,7 @@
 
 ## 2. 第 2 輪的小項（測試先，再程式）
 
-- [x] 2.1 Requirement「Rest mode is selected by a closed list of argument forms」：Example `argument forms` 的表多六列（空的引數、兩個空白、`last`、`last --pr`、`last call for papers`），`tables_check.py` 的對照與小世界跟著加（標記 `spec-example: idd-all-rest / argument forms` 保留）；`classify_args` 拒絕空的位置引數與單獨的 `last`。完成時：表上每一列通過。
+- [x] 2.1 Requirement「Rest mode is selected by a closed list of argument forms」：Example `argument forms` 的表多五列（空的引數、兩個空白、`last`、`last --pr`、`last call for papers`），`tables_check.py` 的對照與小世界跟著加（標記 `spec-example: idd-all-rest / argument forms` 保留）；`classify_args` 拒絕空的位置引數與單獨的 `last`。完成時：表上每一列通過。
 - [x] 2.2 Requirement「Report lists what happened and ends the run」：Example `a closed issue that was reopened carries its open questions` 的測試（標記 `spec-example: idd-all-rest / a closed issue that was reopened carries its open questions`）；`cmd_report` 在 closed 那一段列出重開而等人回答的 issue 與它的問題；清單讀不到時不論原因都照樣印出已記錄的結果（測試：`listing` 丟出沒預期的例外）。
 - [x] 2.3 Requirement「Start prints the list and resumes an unfinished run」：Example `a reason with a line break is printed on one line` 的測試（標記 `spec-example: idd-all-rest / a reason with a line break is printed on one line`）；`start`、`next` 與 `report` 印狀態檔裡的原因時一律清成一行。
 - [x] 2.4 Requirement「A stopped issue does not stop the run and a stopped run hands out nothing」：Example `the skill ends when the report itself fails` 的測試（標記 `spec-example: idd-all-rest / the skill ends when the report itself fails`）；Scenario「a failed start leaves an earlier run as it was」的 helper 測試；skill 的停止表多一列 `report` 以 3 結束。
