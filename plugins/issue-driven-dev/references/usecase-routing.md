@@ -29,7 +29,8 @@
 ```
 
 > **Note**: the decision tree above only covers atomic skill picking. For backlog
-> bulk-solve scenarios (N unrelated open issues), use `/idd-all #a #b #c` —
+> bulk-solve scenarios: every remaining open issue → `/idd-all` with no issue (**rest mode**, #478:
+> only ready issues run, the others are listed in one report); N chosen unrelated issues → `/idd-all #a #b #c` —
 > **multi-issue batch mode** (v2.83.0+): a conflict-class-**ordered sequential**
 > drain (see row 27 below). True concurrent stateful lanes are deferred; the
 > conflict-class taxonomy is the safety contract for manual/future parallelism.
@@ -70,7 +71,7 @@
 | **24** | 要把 issue tag 給 collaborator | `idd-issue --mention <login>[,<login>...]` | `--mention`（自動 fuzzy match + AskUserQuestion fallback）| `rules/tagging-collaborators.md` |
 | **25** | Emergent multi-issue solve from one root — root issue 解到一半 spawn 出 sister bug / follow-up,想全鏈在 1 個 PR review(v2.55.0+ single-root, v2.60.0+ multi-root + DFS/BFS) | `idd-all-chain #N` 或 `idd-all-chain #A #B #C [--bfs]` | （無 — 內部用 `--in-chain` 自動推導 4th mode tuple `(direct-commit, unattended)`）；hard caps per-root depth=3 / global max-issues=10 (v2.60.0+, was 2/5)；eligibility = same-file OR same-skill OR sister-bug；multi-root 時 verify FAIL = per-root halt（其他 root subtree 繼續）| [chain-flow.md](chain-flow.md), [spawn-manifest.md](spawn-manifest.md) |
 | **26** | Multi-finding source(transcript / docx / 老師回饋)— 一個 source 含 ≥2 findings 要分流到 mixed routing(部分 new issue、部分 amend 既存 #N comment / edit / update),用一次 invocation 取代手敲 N 次 atomic skill(v2.56.0+)| `idd-issue source.docx`(auto-trigger when ≥2 findings)或 `idd-issue --multi-finding "text"`(force in)| `--multi-finding` / `--no-multi-finding`(override auto-detect);**互斥**`--bundle-mode`;Stage 2 picker AI surface top-3 candidates 不 decide;Stage 3 batch preview confirm;Stage 4 warn-continue dispatch + per-action footer + jsonl run log at `.claude/.idd/issue-runs/<run_id>.jsonl`(commit 進 git)| `skills/idd-issue/SKILL.md` `## Multi-finding source mode` 段落 |
-| **27** | N 個 unrelated open issues 想一次解（無 emergent 關係，backlog drain）| **`idd-all #A #B #C`**（v2.83.0+ multi-issue batch mode）— conflict-class-**ordered sequential** drain：依 `### Conflict Class` 排序（`E`/`D` 先、同資源 `B`/`C` 相鄰序列化、同檔成組、`A` 不拘），逐一跑完整 idd-all pipeline | （無 — 每 issue 讀 `### Conflict Class`，缺則預設 `D_diagnose_first` surfaced）；**sequential**（真並發 stateful lane = deferred，見 worktree-isolation Case A）；`A` 可選 worktree 隔離供事後手動並行；每張 verify 乾淨就 merge 並 close，之間 `git pull --ff-only`（#392）| [parallel-orchestration.md](parallel-orchestration.md)（取代先前「無內建 bulk-solve」註記；conflict-class taxonomy = 並行安全契約；#37 已以 not planned 結案；自動 merge 與 close 由 #392 做進 `idd-all`）|
+| **27** | N 個 unrelated open issues 想一次解（無 emergent 關係，backlog drain）；不指名、要剩下的全部 → **`/idd-all`**（不帶 issue，rest mode，#478：只跑 candidate、其餘列在總報告、已有 PR 或 branch 的不接手）| **`idd-all #A #B #C`**（v2.83.0+ multi-issue batch mode）— conflict-class-**ordered sequential** drain：依 `### Conflict Class` 排序（`E`/`D` 先、同資源 `B`/`C` 相鄰序列化、同檔成組、`A` 不拘），逐一跑完整 idd-all pipeline | （無 — 每 issue 讀 `### Conflict Class`，缺則預設 `D_diagnose_first` surfaced）；**sequential**（真並發 stateful lane = deferred，見 worktree-isolation Case A）；`A` 可選 worktree 隔離供事後手動並行；每張 verify 乾淨就 merge 並 close，之間 `git pull --ff-only`（#392）| [parallel-orchestration.md](parallel-orchestration.md)（取代先前「無內建 bulk-solve」註記；conflict-class taxonomy = 並行安全契約；#37 已以 not planned 結案；自動 merge 與 close 由 #392 做進 `idd-all`）|
 | **28** | 使用者回報以 **GitHub Discussion** 形式抵達（Q&A / Ideas），要納入 IDD intake | `idd-list --discussions`（surface actionable）→ 人判斷 → `idd-issue --from-discussion <url>`（seed + provenance + draft-and-confirm 回文）| `--discussions` / `--from-discussion` | [discussions-intake.md](discussions-intake.md) |
 | **29** | 「之前是不是處理過類似的問題？」— 建案前查重、找舊案考古、引用過往結案紀錄（v2.97.0+，#139）| `idd-find "<free-text query>"`（open+closed 全語料，GitHub relevance 排序 + phase / PR overlay；surfacing-only、read-only）| `--repo` / `--limit N`（filter flags 拒收 → 導流 `idd-list`）| [surfacing-primitives.md](surfacing-primitives.md) |
 | **30** | 「當時為什麼這樣決定？」「X 怎麼運作？」— 還原 decision rationale、查歷史脈絡、不想自己翻 issue（v2.99+，#72）| `idd-ask "<自然語言問題>"`（retrieval delegate idd-find backend → top-N 全文 → grounded 合成答案：claim 必附引用 + source priority + `### Referenced Issues`；surfacing-only、read-only、不觸發 diagnose）| `--repo` / `--limit N`（top-N 上限 10）| [surfacing-primitives.md](surfacing-primitives.md) |
@@ -89,8 +90,8 @@
 > **Chain-solve vs bulk-solve semantic 差異**(per #49 cross-link):
 > - **`/idd-all-chain #N`**(v2.55.0+, row 25, single-root):**hot-chain from active work** — 1 root + auto-emergent spawn(sister bug / verify follow-up / mid-plan tangential / sister concern detected via spawn manifest)。Bounded by hard caps per-root depth=3、global max-issues=10 (v2.60.0+, was 2/5)。Reviewer mental model:「this thread is complete」。
 > - **`/idd-all-chain #A #B #C [--bfs]`**(v2.60.0+ multi-root, [#46](https://github.com/PsychQuant/issue-driven-development/issues/46)):**multi-root forest** — N roots + per-root subtrees。DFS default (rich subtree first) / BFS opt-in (fairness across roots)。Verify FAIL = per-root halt(其他 root subtree 繼續)。Cluster branch `idd/chain-multi-<hash8>-<root1-slug>` for N>1。**部分 cover** #37 use case 若 user 願意手動 list roots,但仍非 zero-arg auto-sequence。
-> - **#37 bulk-solve**(parked):**cold-start from backlog** — zero-arg auto-sequence all open issues。Unbounded scope。Reviewer mental model:「all my issues fixed in one go」。
-> - **`/idd-all-chain` 不**滿足 #37 reopen criteria 的「一次解所有 open issue」— chain 不是 bulk,user 仍需手動挑 root(N=1 或 N>1)。#37 reopen 條件繼續成立(尚未 trigger)。
+> - **bulk-solve = `/idd-all` 不帶 issue**(rest mode,#478,取代 #37):**cold-start from backlog** — zero-arg,逐張跑剩下的 open issue 裡的 candidate,每張各自一個 PR;其他類別與已有 PR 或 branch 的 issue 列在總報告。Reviewer mental model:「all my ready issues, one PR each」。
+> - **`/idd-all-chain`** 仍是另一件事:chain 把衍生 issue 併進同一個 PR,user 手動挑 root(N=1 或 N>1);rest mode 不併 PR(chain 成為預設是 #457)。
 
 ---
 

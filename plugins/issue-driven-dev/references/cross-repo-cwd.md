@@ -83,7 +83,7 @@ Some skills also accept `--target owner/repo` (e.g. `idd-issue`, `idd-list`, `id
 - `--cwd` alone → both `git -C` and `gh -R` substitution (repo derived from clone's origin)
 - Both given → must agree (`gh repo view -R $GITHUB_REPO` must point at same repo as `git -C $CWD remote get-url origin`); abort if mismatch
 
-`idd-implement` / `idd-verify` / `idd-all` require `--cwd` (not just `--target`) because they do local git writes that need a real working tree.
+`idd-implement` / `idd-verify` / `idd-all` require `--cwd` because they do local git writes that need a real working tree. `idd-all` does not take `--target` at all: it refuses any `--` flag it does not know (#478).
 
 ## Parallel Worktree Pattern
 

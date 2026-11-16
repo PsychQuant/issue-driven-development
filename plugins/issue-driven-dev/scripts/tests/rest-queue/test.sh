@@ -729,30 +729,46 @@ assert_grep_re "skill: Step 0.1 has a row for no positional argument" '^\| `/idd
 assert_grep_re "skill: Step 0.1 has a row for the word rest" '^\| `/idd-all rest`[^|]*\| rest ' "$STEP01"
 refute_grep "skill: the two-way question is gone" "建新 issue 還是用既有 issue" "$(cat "$SKILL")"
 assert_grep "skill: Step 0.1 says an unquoted description is one argument" "整段算一個引數" "$STEP01"
+# spec-example: idd-existing-work-lookup / rest mode records existing work instead of acting on it
 assert_grep "skill: the rest section does not take over existing work" 'existing work: ' "$REST"
 assert_grep_re "skill: and names both verdicts" 'verdict=resume.*verdict=blocked' "$REST"
+assert_grep "skill: and records them without a question" "不提問" "$(printf '%s\n' "$REST" | grep -F 'verdict=resume')"
 STEP051=$(awk '/^#### Step 0\.5\.1/{f=1} f&&/^#### Step 0\.6/{exit} f' "$SKILL")
 assert_grep "skill: Step 0.5.1 points at the rest rule" '## Rest mode' "$STEP051"
 STOPS=$(printf '%s\n' "$REST" | awk '/^### 整個 run 停下/{f=1; next} f&&/^### /{exit} f' | grep -E '^\| ' | sed -n '2,$p')   # the header row is dropped; the |---| line never matches
-assert_eq "skill: the whole-run stop table has six rows" "6" "$(printf '%s\n' "$STOPS" | grep -c '^| ')"
+assert_eq "skill: the whole-run stop table has four rows" "4" "$(printf '%s\n' "$STOPS" | grep -c '^| ')"
 # spec-example: idd-all-rest / the skill ends when the report itself fails
-FAILED_REPORT=$(printf '%s\n' "$STOPS" | grep -E '^\| [^|]*`report`[^|]*以 3 結束')
+FAILED_REPORT=$(printf '%s\n' "$STOPS" | grep -E '^\| [^|]*`report`[^|]*以 1 或 3 結束')
 assert_eq "skill: one row is about the report that fails" "1" "$(printf '%s\n' "$FAILED_REPORT" | grep -c '^| ')"
 assert_grep "skill: that row says to pass on what was printed" "已經印出" "$FAILED_REPORT"
 assert_grep_re "skill: and to call neither stop nor report again" '不再呼叫 `stop` 或 `report`' "$FAILED_REPORT"
 assert_grep "skill: and still to clear the unattended marker" 'clear_unattended "$CWD"' "$FAILED_REPORT"
-assert_grep "skill: the stop list says six cases" "只有這六種" "$REST"
+assert_grep "skill: the stop list says four cases" "只有這四種" "$REST"
 # spec-example: idd-all-rest / the skill reports a failed start directly
 FAILED_START=$(printf '%s\n' "$STOPS" | grep -E '^\| [^|]*`start`[^|]*以 3 結束')
 assert_eq "skill: one row is about the start that fails before a run exists" "1" "$(printf '%s\n' "$FAILED_START" | grep -c '^| ')"
 assert_grep "skill: that row says no run exists yet" "還沒有 run" "$FAILED_START"
 assert_grep_re "skill: and to call neither stop nor report" '不呼叫 `stop` 與 `report`' "$FAILED_START"
 assert_grep "skill: and to tell the user the reason" "告訴使用者" "$FAILED_START"
-assert_grep_re "skill: stop case — the default branch or a dirty tree" '^\| 第 5 步回不到預設 branch.*工作樹不乾淨' "$STOPS"
-assert_grep_re "skill: stop case — next or record exits 3 in a run that exists" '^\| `next` 或 `record` 以 3 結束（run 已經開始' "$STOPS"
-assert_grep_re "skill: stop case — gh authentication" '^\| `gh auth status` 失敗' "$STOPS"
+# spec-example: idd-all-rest / the skill goes on to the report when stop fails
+STOP3=$(printf '%s\n' "$STOPS" | grep -E '^\| `next`、`record` 或 `settle` 以 3 結束')
+assert_eq "skill: one row is about next, record or settle exiting 3" "1" "$(printf '%s\n' "$STOP3" | grep -c '^| ')"
+assert_grep "skill: that row calls stop with the reason line" "照抄" "$STOP3"
+assert_grep "skill: and goes on to the end when stop itself fails" '`stop` 自己也失敗時直接做「結束」一節' "$STOP3"
+assert_grep "skill: gh authentication is part of that row" "gh" "$STOP3"
 assert_grep_re "skill: stop case — the user interrupts, and nothing is recorded" '^\| 使用者中斷 \| 不必做任何事' "$STOPS"
-assert_grep "skill: step 5 checks that the working tree is clean" 'status --porcelain' "$REST"
+refute_grep "skill: the old step 5 prose is gone" 'pull --ff-only -q' "$REST"
+# spec-example: idd-all-rest / the skill says where a direct-commit run ends
+assert_grep "skill: a direct-commit run ends at an issue that leaves work on the default branch" "direct-commit 下，一張停下而在預設 branch 留下 commit 或檔案時" "$REST"
+assert_grep "skill: and a PR-mode run goes on" "PR mode 會繼續" "$REST"
+# spec-example: idd-all-rest / the skill runs the preflight steps once
+assert_grep "skill: the preflight steps run once" "Step 0.2、0.3、0.35 只做一次" "$REST"
+assert_grep "skill: settle gets the path resolved after Step 0.6" "Step 0.6 之後的 path" "$(printf '%s\n' "$REST" | grep -F -e 'rest-queue.py" settle' -e 'Step 0.6 之後')"
+# spec-example: idd-all-rest / the skill continues an issue in flight
+FLIGHT=$(printf '%s\n' "$REST" | grep -F '"in_flight": true')
+assert_grep "skill: an issue in flight with a Phase 6 result goes to record" "直接做第 4 步" "$FLIGHT"
+assert_grep "skill: otherwise its interrupted phase is continued" "從中斷的那個 phase 接著做完" "$FLIGHT"
+assert_grep "skill: and Step 0.5.1 is not run again" "不重跑 Step 0.5.1" "$FLIGHT"
 # spec-example: idd-all-rest / the skill clears the unattended marker
 NOTAKE=$(printf '%s\n' "$REST" | grep -F 'verdict=resume')
 assert_grep_re "skill: an issue rest does not take over is cleaned up before it is recorded" 'clear_unattended "\$CWD"`[^。]*再做第 4 步' "$NOTAKE"
@@ -779,14 +795,15 @@ assert_grep "skill: the mode is resolved once" '只問一次' "$REST"
 PHASE6=$(awk '/^### Phase 6/{f=1} f&&/^#### /{exit} f' "$SKILL")
 assert_grep "skill: Phase 6 sends a rest run back to the rest section" '## Rest mode' "$PHASE6"
 line_of() { printf '%s\n' "$REST" | grep -n -F -- "$1" | head -1 | cut -d: -f1; }
-for sub in start next record stop report; do
+for sub in start next record settle stop report; do
   assert_true "skill: the rest section calls $sub" "[ -n \"\$(line_of 'rest-queue.py\" $sub')\" ]"
 done
 L_START=$(line_of 'rest-queue.py" start'); L_NEXT=$(line_of 'rest-queue.py" next')
 L_RECORD=$(line_of 'rest-queue.py" record'); L_REPORT=$(line_of 'rest-queue.py" report')
-L_STOP=$(line_of 'rest-queue.py" stop')
+L_STOP=$(line_of 'rest-queue.py" stop'); L_SETTLE=$(line_of 'rest-queue.py" settle')
 assert_true "skill: start comes before next" "[ ${L_START:-0} -gt 0 ] && [ ${L_START:-0} -lt ${L_NEXT:-0} ]"
 assert_true "skill: next comes before record" "[ ${L_NEXT:-0} -gt 0 ] && [ ${L_NEXT:-0} -lt ${L_RECORD:-0} ]"
-assert_true "skill: report comes last" "[ ${L_REPORT:-0} -gt ${L_RECORD:-0} ] && [ ${L_REPORT:-0} -gt ${L_STOP:-0} ]"
+assert_true "skill: settle comes after record" "[ ${L_SETTLE:-0} -gt ${L_RECORD:-0} ]"
+assert_true "skill: report comes last" "[ ${L_REPORT:-0} -gt ${L_SETTLE:-0} ] && [ ${L_REPORT:-0} -gt ${L_STOP:-0} ]"
 
 print_summary "rest-queue"

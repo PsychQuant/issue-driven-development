@@ -24,21 +24,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `.claude/.idd/state/idd-all-rest.json`: an issue is recorded when it is handed out and is attempted once per
   run, the open issues are re-read after every issue (so an issue opened during the run is picked up), the
   outcome of an issue is read from GitHub, and a run whose last activity is less than 24 hours old is resumed
-  instead of restarted. An issue that already has a pull request or a branch is not taken over: it is recorded
-  with that pull request or branch as the reason. An issue that stops does not stop the run. The run stops as a whole only when the
-  default branch cannot be restored between two issues, the helper cannot read GitHub, `gh` authentication is
-  lost, or the user interrupts; a `start` that cannot read the open issues begins no run and is reported
-  as it is. `start` prints the list (issue numbers only) before anything runs and `report` prints one report
+  instead of restarted. An issue that already has a pull request or a branch, on GitHub or as a local
+  `idd/N` branch, is not taken over: it is recorded as existing work, with that pull request or branch as the
+  reason (taking such work over is #566). Between two issues `rest-queue.py settle` handles the working tree by a
+  closed table, tested in temporary repositories: in PR mode what a stopped issue left is committed on its own
+  branch (locally, never pushed) and the default branch is fast-forwarded; files IDD keeps out of git are never
+  committed; an empty issue branch is deleted. An issue that stops does not stop the run, except in
+  direct-commit mode when it leaves commits or files on the default branch. The run stops as a whole only when
+  `next`, `record` or `settle` cannot read GitHub or git, cannot write the state or cannot settle the working
+  tree, or the user interrupts; a `start` that cannot read the open issues, or that finds the run state would
+  not be ignored by git, begins no run and is reported as it is. `start` prints the list (issue numbers only) before anything runs and `report` prints one report
   at the end: closed, stopped with the reason, waiting for a person with every open question in full, and not
   run by class; an issue the run attempted is named once, with what happened to it and the questions it now
   waits on, and the report says that
-  a verified issue or one stopped with existing work continues when it is named. `rest` with another
+  a verified issue continues when it is named, that an issue stopped with existing work is left for a person,
+  and which branch each stopped issue kept. `rest` with another
   positional argument, `--in-chain` without an issue, an unknown `--` flag (also in a call that names an
   issue: it used to be ignored), `--cwd` without a path, an empty argument and the single word `last` (it is not
   a mode, and is no longer taken as the title of a new issue) are refused. **If you scheduled or looped a bare
   `/idd-all`** (`/schedule … /idd-all`, `/loop /idd-all`): that call used to stop at a question and now runs
-  the whole backlog unattended; add the issue number unless that is what you want. Spec: capability
-  `idd-all-rest`.
+  the whole backlog unattended; add the issue number unless that is what you want. The same holds when the model
+  calls `/idd-all` without an issue on its own. Spec: capability `idd-all-rest`.
 - `lib/intent.py` has `open_clarity_rows`, which returns every open clarity row of an issue body;
   `open_clarity_row` returns the first of them, so the close stage reads a body as before (#478).
 
