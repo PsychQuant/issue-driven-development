@@ -118,7 +118,7 @@ idd-all 不取代 atomic skills,而是包它們。每個 phase 仍透過 `Skill(
 
 ### 流程
 
-Step 0.2、0.3、0.35 只做一次，`$CWD`、`$GITHUB_REPO` 與旗標每一張沿用。Step 0.5 的 path 與 interaction 在第一張解析一次（Step 0.6 的降級也是），之後每一張沿用同一個結果（`pr_policy: ask` 只問一次）；每一張仍各自做 Step 0.5 的 unattended 標記、工作樹檢查與建 branch。attended 的 run（`--no-pr`、`pr_policy: never`）每一張都照單張流程問 sub-skill 的問題，人要在場。
+Step 0.2、0.3、0.35 只做一次，`$CWD`、`$GITHUB_REPO` 與旗標每一張沿用。Step 0.5 的 path 與 interaction 在第一張解析一次（Step 0.6 的降級也是），之後每一張沿用同一個結果（`pr_policy: ask` 只問一次）；每一張仍各自做 Step 0.5 的 unattended 標記、工作樹檢查與建 branch。attended 的 run（`--no-pr`、`pr_policy: never`）每一張都照單張流程問 sub-skill 的問題，人要在場；要不看著一次跑完，就用 PR mode。
 
 direct-commit 下，一張停下而在預設 branch 留下 commit 或檔案時，第 5 步的 `settle` 以 3 結束，整個 run 停在那裡：之後任何一張的 close stage 推送時，會把它們一起推上去。PR mode 會繼續跑下一張：留下的東西在那一張自己的 branch 上。
 
