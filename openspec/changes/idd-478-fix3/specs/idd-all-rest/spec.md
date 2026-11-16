@@ -69,9 +69,9 @@ Before it hands out a candidate, `next` SHALL look for a local branch of that is
 ---
 ### Requirement: A stopped issue does not stop the run and a stopped run hands out nothing
 
-An issue recorded as `stopped` SHALL NOT end the run: the following `next` hands out the next issue. `rest-queue.py stop --reason TEXT` SHALL mark the whole run as stopped; every later `next` of that run SHALL print the stop reason and hand out nothing.
+An issue recorded as `stopped` SHALL NOT by itself end the run: once `settle` has succeeded for it, the following `next` hands out the next issue. In direct-commit mode an issue that stopped after leaving commits or files on the default branch ends the run through `settle`, which exits with code 3: the close stage of any later issue would push them with its own. A PR-mode run goes on past such an issue, because the leftovers stay on the issue's own branch. `rest-queue.py stop --reason TEXT` SHALL mark the whole run as stopped; every later `next` of that run SHALL print the stop reason and hand out nothing.
 
-`idd-all` SHALL call `stop` only when a `next`, a `record` or a `settle` of a run that exists exits with code 3: GitHub, `gh` authentication or a helper could not be read, the run state could not be written, or the working tree could not be settled between two issues. Exit codes 1 and 2 of `rest-queue.py` mean the call itself was wrong and are corrected, not treated as a stop. An interruption by the user leaves the run state in place without a stop record.
+`idd-all` SHALL call `stop` only when a `next`, a `record` or a `settle` of a run that exists exits with code 3: GitHub, `gh` authentication or a helper could not be read, the run state could not be written, or the working tree could not be settled between two issues. When `stop` itself exits with a code other than 0, `idd-all` SHALL go on to `report`. Exit codes 1 and 2 of `rest-queue.py` mean the call itself was wrong and are corrected, not treated as a stop. An interruption by the user leaves the run state in place without a stop record.
 
 When the `start` that would begin a run exits with code 3, no run exists and there is nothing to stop or to report. `idd-all` SHALL relay the reason line that `start` printed and end, and SHALL NOT call `stop` or `report`. The same holds when that `start` would have resumed an earlier run: the state of the earlier run is left as it is, so that a later `start` resumes it.
 
@@ -109,6 +109,18 @@ When `report` itself exits with a code other than 0, `idd-all` SHALL relay what 
 - **GIVEN** the text of `skills/idd-all/SKILL.md`
 - **WHEN** the part of the rest section about stopping the whole run is read
 - **THEN** one line of it names the `report` that exits with code 1 or 3, and that line says to pass on what was printed, to clear the unattended marker, and to call neither `stop` nor `report` again
+
+##### Example: the skill goes on to the report when stop fails
+
+- **GIVEN** the text of `skills/idd-all/SKILL.md`
+- **WHEN** the part of the rest section about stopping the whole run is read
+- **THEN** one row names `next`, `record` and `settle` exiting with code 3, and that row says to call `stop` with the reason line and, when `stop` itself fails, to go on to the end of the run
+
+##### Example: the skill says where a direct-commit run ends
+
+- **GIVEN** the text of `skills/idd-all/SKILL.md`
+- **WHEN** the rest section is read
+- **THEN** it says that in direct-commit an issue that stopped after leaving commits or files on the default branch ends the run, and that a PR-mode run goes on
 
 ---
 ### Requirement: Start prints the list and resumes an unfinished run
@@ -155,7 +167,7 @@ Before it reads anything, `start` SHALL ask git whether the run state file would
 
 An issue that this run handed out SHALL appear once: under closed, under stopped or as handed out without a result. It SHALL NOT appear in the list of issues waiting for a person or in the line of a class that was not run. When such an issue is `needs-person` at the time of the report, the report SHALL print its open questions under the entry of that issue, also when the issue was recorded as closed and reopened since. The report prints no text of an issue of any other class.
 
-For the class `verified` the report SHALL say that such an issue continues when it is named (`/idd-all #N`). When at least one issue was recorded with a reason that begins with `existing work:`, the report SHALL say that such an issue is left for a person and that its reason names the pull request or branch to look at. When `settle` kept what a run left on the issue's own branch, the report SHALL name that branch and commit under the entry of the issue.
+For the class `verified` the report SHALL say that such an issue continues when it is named (`/idd-all #N`). When at least one issue was recorded with a reason that begins with `existing work:`, the report SHALL say that such an issue is left for a person and that its reason names the pull request or branch to look at. Under the entry of an issue recorded as stopped, the report SHALL name each branch of that issue that `settle` kept, with the commit `settle` made when it made one, and SHALL say once that a later rest run records an issue with a kept branch as existing work. Under the entry of an issue recorded as closed, it SHALL name the branch and the commit only when `settle` made a commit.
 
 #### Scenario: the report ends the run
 
@@ -230,6 +242,12 @@ The unattended marker SHALL NOT outlive the run. Before `idd-all` records an iss
 - **WHEN** the rest section is read
 - **THEN** the step for an issue that is not taken over holds `clear_unattended "$CWD"` before the issue is recorded, and the part about the end of the run holds `clear_unattended "$CWD"` after the `report` invocation
 
+##### Example: the skill runs the preflight steps once
+
+- **GIVEN** the text of `skills/idd-all/SKILL.md`
+- **WHEN** the rest section is read
+- **THEN** one sentence names Step 0.2, Step 0.3 and Step 0.35 and says they run once, and the path passed to `settle` is the one resolved after Step 0.6
+
 ##### Example: the skill continues an issue in flight
 
 - **GIVEN** the text of `skills/idd-all/SKILL.md`
@@ -240,19 +258,25 @@ The unattended marker SHALL NOT outlive the run. Before `idd-all` records an iss
 
 ### Requirement: Between two issues one helper settles the working tree
 
-After an issue is recorded and before the next one is handed out, `idd-all` SHALL call `rest-queue.py settle --issue N --default D --path P`, where `P` is the path the run resolved (`PR` or `direct-commit`). `settle` SHALL accept only the issue this run recorded last, and SHALL exit 1 for any other issue or for an issue still in flight. It SHALL act on what it observes in the working tree, by this closed table, first match wins:
+After an issue is recorded and before the next one is handed out, `idd-all` SHALL call `rest-queue.py settle --issue N --default D --path P`, where `P` is the path the run resolved after Step 0.6 (`PR` or `direct-commit`). `settle` SHALL accept only the issue this run recorded last, and SHALL exit 1 for any other issue and while an issue is in flight. Until `settle` has succeeded for the issue recorded last, `next` SHALL exit 1 and name that issue. An issue that `next` itself recorded as existing work needs no `settle`: no work was started on it.
 
-1. Path `PR`, the working tree is on the issue's own branch (`idd/<N>` or `idd/<N>-…`): every changed or untracked path that is not ignored is a leftover of that issue. When a leftover lies under `.claude/.idd/` and outside `.claude/.idd/attachments/issue-<N>/`, `settle` SHALL exit 3 and commit nothing: such a path holds run state, edit backups with other people's words, or another issue's files, and git should have been told to ignore it. Otherwise `settle` SHALL commit the leftovers on that branch, without pushing, and SHALL record the branch, the commit and the number of files in the run state. It SHALL then check out the default branch.
-2. Path `PR`, the working tree is on the default branch: any changed or untracked path that is not ignored SHALL make `settle` exit 3 and commit nothing, because it cannot be told which issue left it.
+`settle` SHALL exit 3 and change nothing when git reports an unfinished merge, cherry-pick, revert or rebase. Otherwise it SHALL act on what it observes in the working tree, by this closed table, first match wins:
+
+1. Path `PR`, the working tree is on the issue's own branch (`idd/<N>` or `idd/<N>-…`): every changed or untracked path that git does not ignore is a leftover of that issue. When a leftover lies in a place IDD keeps out of git, `settle` SHALL exit 3 and commit nothing. These places are a closed list: `.claude/.idd/archive/`, `.claude/.idd/state/`, a name that begins with `.claude/.idd/tree-lock`, `.claude/worktrees/`, and every file under `.claude/.idd/attachments/` other than a `_manifest.json` directly inside an issue's folder. Otherwise `settle` SHALL commit the leftovers on that branch, without pushing, record the commit in the run state, and check out the default branch.
+2. Path `PR`, the working tree is on the default branch: any leftover SHALL make `settle` exit 3 and commit nothing, because a later issue would carry it into its own pull request.
 3. Path `PR`, the working tree is on any other branch, or on no branch: `settle` SHALL exit 3.
-4. Path `direct-commit`: the working tree SHALL be on the default branch, clean, and without commits that the remote default branch lacks; otherwise `settle` SHALL exit 3. Unpushed commits on the default branch would make the close stage of every later issue refuse to push.
+4. Path `direct-commit`: the working tree SHALL be on the default branch and clean; otherwise `settle` SHALL exit 3, because a later issue would commit the leftovers with its own.
 
-After the table, `settle` SHALL fetch the default branch from `origin`, fast-forward the local default branch to it, and confirm that the working tree is clean; when any of these fails it SHALL exit 3. Its reason line on exit 3 SHALL name the issue, the branch and up to five of the paths that it could not settle.
+After the table, `settle` SHALL fetch the default branch from `origin`. When the local default branch has commits that `origin/<default>` lacks, it SHALL exit 3: in direct-commit they are the commits of an issue that stopped, and the close stage of a later issue would push them; in PR mode a later pull request would carry them. It SHALL then fast-forward the local default branch to `origin/<default>` and confirm that the working tree is clean, and exit 3 when either fails.
 
-#### Scenario: a clean issue branch is left as it is
+In PR mode, `settle` SHALL then look at every local branch of the issue. A branch with no commits that `origin/<default>` lacks and no upstream holds no work, and `settle` SHALL delete it with a safe delete; it SHALL record every other one as kept. Every local branch of the issue was created by this run, because `next` does not hand out an issue that already has one.
 
-- **WHEN** the run of #5 ended on `idd/5-x` with nothing changed
-- **THEN** `settle` makes no commit, checks out the default branch and fast-forwards it
+On exit 3, the reason line SHALL name the issue, the branch the working tree is on, and up to five of the paths or the number of commits that could not be settled, and SHALL say what a person does next.
+
+#### Scenario: an issue branch with work and nothing left over
+
+- **WHEN** the run of #5 ended on `idd/5-x`, which has one commit and nothing changed
+- **THEN** `settle` makes no commit, checks out the default branch, fast-forwards it, and records `idd/5-x` as kept
 
 #### Scenario: the working tree is on a branch of another issue
 
@@ -261,7 +285,7 @@ After the table, `settle` SHALL fetch the default branch from `origin`, fast-for
 
 ##### Example: leftovers on the issue's own branch are kept there
 
-- **GIVEN** path `PR`, #5 recorded as stopped, the working tree on `idd/5-x` with a changed tracked file `a.txt` and an untracked file `.claude/.idd/attachments/issue-5/_manifest.json`, and the remote default branch `main` one commit ahead of the local one
+- **GIVEN** path `PR`, #5 recorded as stopped, the working tree on `idd/5-x` with a changed tracked file `a.txt` and an untracked file `.claude/.idd/attachments/issue-5/_manifest.json` in an untracked `.claude/` folder, and the remote default branch `main` one commit ahead of the local one
 - **WHEN** `settle --issue 5 --default main --path PR` runs, and then `report`
 - **THEN** `settle` exits 0, `idd/5-x` has one new commit that holds both paths, the working tree is on `main`, clean, at the commit of `origin/main`, and the report names `idd/5-x` and that commit under the entry of #5
 
@@ -271,14 +295,26 @@ After the table, `settle` SHALL fetch the default branch from `origin`, fast-for
 - **WHEN** `settle --issue 5 --default main --path PR` runs
 - **THEN** it exits 3, its reason line names `b.txt`, and no commit was made
 
-##### Example: an IDD file outside the issue's attachments is never committed
+##### Example: a file IDD keeps out of git is never committed
 
-- **GIVEN** path `PR`, #5 recorded as stopped, the working tree on `idd/5-x` with an untracked file `.claude/.idd/issue-runs/run.jsonl` that no ignore rule covers, and a changed tracked file `a.txt`
+- **GIVEN** path `PR`, #5 recorded as stopped, the working tree on `idd/5-x` with an untracked file `.claude/.idd/attachments/issue-5/screenshot.png` that no ignore rule covers, and a changed tracked file `a.txt`
 - **WHEN** `settle --issue 5 --default main --path PR` runs
-- **THEN** it exits 3, its reason line names `.claude/.idd/issue-runs/run.jsonl`, and `idd/5-x` has no new commit
+- **THEN** it exits 3, its reason line names `.claude/.idd/attachments/issue-5/screenshot.png`, and `idd/5-x` has no new commit
 
 ##### Example: unpushed commits on the default branch stop a direct-commit run
 
 - **GIVEN** path `direct-commit`, #5 recorded as stopped, the working tree on `main`, clean, with one commit that `origin/main` lacks
 - **WHEN** `settle --issue 5 --default main --path direct-commit` runs
 - **THEN** it exits 3, and its reason line names #5 and the number of unpushed commits
+
+##### Example: an empty issue branch is deleted
+
+- **GIVEN** path `PR`, #5 recorded as stopped, the working tree on `idd/5-x`, which has no commit of its own, no upstream, and nothing changed
+- **WHEN** `settle --issue 5 --default main --path PR` runs, and then `report`
+- **THEN** `settle` exits 0, the branch `idd/5-x` no longer exists, the working tree is on `main`, and the report names no branch under the entry of #5
+
+##### Example: next waits for settle
+
+- **GIVEN** a run with candidates #5 and #9, in which #5 was handed out and recorded as stopped and `settle` was not called
+- **WHEN** `next` is called, then `settle` for #5, then `next` again
+- **THEN** the first `next` exits 1 and its reason line names #5, and the second `next` hands out #9
