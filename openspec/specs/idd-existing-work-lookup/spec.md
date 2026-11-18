@@ -156,7 +156,7 @@ When `gh` or `git ls-remote` fails, or when a PR list reaches its limit, the hel
 
 `idd-all`, `idd-all-chain` and `idd-implement` SHALL call the helper before they start work on an issue. On `blocked`, an attended run SHALL ask the user to choose between continuing on that PR, verifying that PR with `idd-verify #N --pr P`, and ignoring it, and SHALL record an ignore as one line in the issue body. An unattended run SHALL NOT start work on that issue, SHALL continue with the rest of the batch, and SHALL add one line for the issue to the Phase 6 section `## Action items (require human review)`, with the outcome `existing PR #P` or, for E3, `already merged in PR #P -> /idd-close #N`. On `resume` the run SHALL continue on that PR or branch. `idd-implement` SHALL skip its own call when its caller passes `--existing-work-checked`.
 
-In rest mode (capability `idd-all-rest`, an `/idd-all` without an issue) none of the above applies to `idd-all`: for `resume` and for `blocked`, attended and unattended alike, it starts no work on the issue, asks no question and writes no Action item. It records the issue as existing work, with the outcome and the next step for a person, and the report of the rest run lists it.
+In rest mode (capability `idd-all-rest`, an `/idd-all` without an issue) `idd-all` still calls the helper before it starts work on an issue. What differs is what it does with `resume` and with `blocked`: it starts no work on the issue, asks no question and writes no Action item. It records the issue as existing work, with the outcome and the next step for a person, and the report of the rest run lists it.
 
 #### Scenario: Unattended batch with one blocked issue
 
@@ -180,7 +180,7 @@ In rest mode (capability `idd-all-rest`, an `/idd-all` without an issue) none of
 
 #### Scenario: rest mode meets a blocked verdict
 
-- **WHEN** `/idd-all` without an issue hands out an issue whose verdict is `blocked`, and the run is attended
+- **WHEN** `/idd-all` without an issue hands out an issue whose verdict is `blocked`
 - **THEN** no question is asked, no branch is created, and the issue is recorded as stopped with a reason that begins with `existing work: `
 
 ##### Example: rest mode records existing work instead of acting on it
