@@ -806,6 +806,23 @@ reason_shape "long branch" "$S/err"
 assert_eq "long branch: the branch name appears once" "1" "$(grep -o "$LONG" "$S/err" | wc -l | tr -d ' ')"
 assert_grep_re "long branch: the line ends with the number of the paths it did not name" 'and [0-9]+ more\)$|[0-9]+ path\(s\)\)$' "$(cat "$S/err")"
 # every git step of settle, failed once and run again: the commit recorded first is still the one recorded
+SHAPE=$(python3 - "$RQ" <<'SHAPE_PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("rq", sys.argv[1]); rq = importlib.util.module_from_spec(spec); spec.loader.exec_module(rq)
+todo = "do the one thing that puts it right, " + rq.AGAIN
+line = str(rq.SettleStop(5, "idd/5-" + "a" * 40, "what is wrong, said at great length " * 12, todo, "git's own words " * 30))
+print(len(line) <= rq.REASON_MAX, todo in line, line.count("idd/5-"), "what is wrong" in line, line.endswith(")"))
+SHAPE_PY
+)
+assert_eq "reason: a long problem is cut first, the next step stays whole, the line fits and still carries the detail" "True True 1 True True" "$SHAPE"
+new discard-order 5 9
+run start --path PR --review no > /dev/null 2>&1; run next > /dev/null
+git -C "$T" checkout -q --no-track -b idd/5-x origin/main; download 5 "$T" with_url
+run record --issue 5 --reason x > /dev/null
+OUT=$(settle 5 2>/dev/null)
+assert_eq "discard: the manifest and the file it vouches for are discarded, the manifest last" \
+  '[".claude/.idd/attachments/issue-5/spec.docx",".claude/.idd/attachments/issue-5/_manifest.json"]' "$(printf '%s' "$OUT" | jget discarded)"
+
 for step in checkout merge; do
   new "fail-$step" 5 9
   run start --path PR --review no > /dev/null 2>&1; run next > /dev/null
