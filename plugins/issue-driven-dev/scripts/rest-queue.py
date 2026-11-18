@@ -1087,7 +1087,7 @@ def cmd_settle(argv):
     try:   # every way this stops has the one shape of SettleStop, whichever step it was
         if not branch_name_ok(cwd, default):   # start checked it; the file may have changed since
             raise SettleStop(n, current_branch(cwd) or "no branch", "the run state does not hold a usable default branch",
-                             f"commit or remove what is left, check out the default branch of the repository, {AGAIN}")
+                             f"commit or remove what is left, then {checkout_cmd('')} (the default branch of the repository), {AGAIN}")
         kept, gone = settle_tree(cwd, n, default, current_branch(cwd), last, st)
         last["kept"], last["settled"] = kept, True
         save_state(cwd, st)

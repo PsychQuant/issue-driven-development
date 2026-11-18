@@ -984,7 +984,7 @@ printf "stray\n" > stray.txt' ;;
             git -C "$T" add a.txt; git -C "$T" commit -q -m "resolved"; git -C "$T" stash drop -q; git -C "$T" checkout -q --no-overwrite-ignore main ;;
     unclean) assert_output_grep "follow unclean: the reason names the step" "the working tree is not clean — commit what is there elsewhere or move it away, then" "$S/err"
             mv "$T/stray.txt" "$S/stray.txt.kept" ;;
-    state)  assert_output_grep "follow state: the reason names every step" "commit or remove what is left, check out the default branch of the repository, then" "$S/err"
+    state)  assert_output_grep "follow state: the reason names every step" "commit or remove what is left, then git checkout --no-overwrite-ignore <the default branch> (the default branch of the repository), then" "$S/err"
             git -C "$T" commit -q -am "what was left"; git -C "$T" checkout -q --no-overwrite-ignore main ;;
     default) assert_output_grep "follow default: the reason names every step" "commit them elsewhere or move them away, then" "$S/err"
             assert_eq "follow default: and names the default branch once" "1" "$(before_detail "$S/err" | grep -o 'main' | wc -l | tr -d ' ')"

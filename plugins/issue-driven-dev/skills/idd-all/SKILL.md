@@ -234,7 +234,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" report --cwd "$CWD" --repo
 - 執行的帳號要有這個 repo 的寫入權：沒有的話 GitHub 不回答誰有寫入權，`start` 以 3 結束。
 - `--cwd` 在 repo 頂層以下時不替 tree-lock 補 ignore 規則：它的寫入端把規則加在頂層，蓋不到子目錄裡的 `.claude/.idd/tree-lock`，implement 之後停下的那一張會讓 `settle` 以 3 結束。要在子目錄跑，先把 `<子目錄>/.claude/.idd/tree-lock*` 加進 `.git/info/exclude`。
 - 不改 `idd-diagnose` 下載附件的位置：它以 session 的目前目錄為基準（#586）。`--cwd` 不是 session 的目前目錄時，附件不在 `settle` 認得的位置，會被當成一般的留下物 commit 在那一張的 branch。
-- `close-stage.py` 只看與它同一個 `--cwd` 的 rest run：`rest-queue.py` 與 `close-stage.py` 要拿到同一個 `$CWD`，本節每一個指令都用第 1 步的那一個。
+- `close-stage.py` 只看與它同一個 `--cwd` 的 rest run：`rest-queue.py` 與 `close-stage.py` 要拿到同一個 `$CWD`，本節每一個指令都用第 1 步的那一個。它在 `run` 開始時讀一次 rest 的狀態；之後（例如等 CI 的時候）另一個 session 才替這個 run 加上的 `--review`，這一張看不到。
 - 不管 plugin 以外的程式在 repo 裡寫了什麼：寫入端的盤點（`references/working-tree-writers.md`）只涵蓋 plugin 自己的 skill 與 script。Spectra CLI、`idd-route` 與目標 repo 的 hook 寫的東西，照「其他一切」那一列處理。
 - 不判斷一張舊 issue 的前提還成不成立。
 
