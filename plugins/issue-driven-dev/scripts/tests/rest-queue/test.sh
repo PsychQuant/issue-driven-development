@@ -723,8 +723,8 @@ hook() { printf '%s\n' "$3" > "$1/.git/hooks/$2"; chmod +x "$1/.git/hooks/$2"; }
 # hooks that come from git's configuration (hook.<name>.event): only where this git knows them
 CONFIG_HOOKS=""
 git init -q "$WORK/hookprobe" && git -C "$WORK/hookprobe" config hook.probe.event pre-commit && git -C "$WORK/hookprobe" config hook.probe.command true \
-  && git -C "$WORK/hookprobe" hook list pre-commit 2>/dev/null | grep -qx probe && CONFIG_HOOKS="config-pre-commit config-prepare-commit-msg config-and-file"
-[ -n "$CONFIG_HOOKS" ] || echo "  (this git has no hooks from configuration: three rows of the hook Example are not run)"
+  && git -C "$WORK/hookprobe" hook list pre-commit 2>/dev/null | grep -qx probe && CONFIG_HOOKS="config-pre-commit config-prepare-commit-msg config-and-file config-odd-name"
+[ -n "$CONFIG_HOOKS" ] || echo "  (this git has no hooks from configuration: four rows of the hook Example are not run)"
 for kind in pre-commit prepare-commit-msg formatter $CONFIG_HOOKS; do
   new "hook-$kind" 5 9
   run start --path PR --review no > /dev/null 2>&1; run next > /dev/null
@@ -734,6 +734,7 @@ for kind in pre-commit prepare-commit-msg formatter $CONFIG_HOOKS; do
     formatter) hook "$T" pre-commit '#!/bin/sh
 printf "formatted\n" > a.txt
 exit 1' ;;
+    config-odd-name) git -C "$T" config "hook.my lint.event" pre-commit; git -C "$T" config "hook.my lint.command" "exit 1" ;;   # a name that cannot be switched off by -c
     config-and-file) git -C "$T" config hook.lint.event pre-commit; git -C "$T" config hook.lint.command "exit 1"
                hook "$T" pre-commit '#!/bin/sh
 exit 1' ;;
@@ -824,6 +825,15 @@ line = str(rq.SettleStop(5, "idd/5-" + "a" * 40, "what is wrong, said at great l
 print(len(line) <= rq.REASON_MAX, todo in line, line.count("idd/5-"), "what is wrong" in line, line.endswith(")"))
 SHAPE_PY
 )
+TIGHT=$(python3 - "$RQ" <<'TIGHT_PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("rq", sys.argv[1]); rq = importlib.util.module_from_spec(spec); spec.loader.exec_module(rq)
+todo = "s" * 163 + ", " + rq.AGAIN   # a next step so long that a 60-character branch name does not fit beside it
+line = str(rq.SettleStop(5, "b" * 60, "what is wrong", todo))
+print(len(line) <= rq.REASON_MAX, todo in line, rq.ON_MIN <= line.count("b") < 60)
+TIGHT_PY
+)
+assert_eq "reason: beside a very long next step the branch name is shortened, never below its least, and the step stays whole" "True True True" "$TIGHT"
 assert_eq "reason: a long problem is cut first, the next step stays whole, the line fits and still carries the detail" "True True 1 True True" "$SHAPE"
 # every stop of settle, with names as long as a reason line shows them: the next step is whole and the line fits
 new longest 5 9
@@ -835,6 +845,18 @@ run record --issue 5 --reason x > /dev/null
 settle 5 > /dev/null 2> "$S/err"; assert_exit "longest: settle exits 3" 3 "$?"
 reason_shape "longest" "$S/err"
 assert_output_grep "longest: the checkout command is whole, with the whole name" "then git checkout --no-overwrite-ignore $NAME40, then run the same /idd-all command again (same flags)" "$S/err"
+# a default branch whose name a shell would not read as one word is not put into a command
+for name in 'ma;in' 'a$(touch${IFS}made-by-the-name)' "$(python3 -c 'print("d" * 41)')"; do
+  new "odd-default" 5 9; rm -rf "$S/made"; mkdir -p "$S/made"
+  git -C "$T" branch -q -m main "$name"; git -C "$T" push -q origin "$name" 2>/dev/null; printf '%s\n' "$name" > "$G/default-branch"
+  run start --path PR --review no > /dev/null 2>&1; run next > /dev/null
+  git -C "$T" checkout -q --no-track -b idd/5-x "origin/$name"; mkdir -p "$T/.claude/.idd"; printf 'pid\n' > "$T/.claude/.idd/tree-lock"
+  run record --issue 5 --reason x > /dev/null
+  settle 5 > /dev/null 2> "$S/err"; assert_exit "odd default branch: settle exits 3" 3 "$?"
+  assert_output_grep "odd default branch: the command holds a placeholder" "then git checkout --no-overwrite-ignore <the default branch>, then run the same /idd-all command again (same flags)" "$S/err"
+  refute_grep "odd default branch: and not the name" "$name" "$(cat "$S/err")"
+  rm -rf "$WORK/odd-default"
+done
 new discard-order 5 9
 run start --path PR --review no > /dev/null 2>&1; run next > /dev/null
 git -C "$T" checkout -q --no-track -b idd/5-x origin/main; download 5 "$T" with_url
