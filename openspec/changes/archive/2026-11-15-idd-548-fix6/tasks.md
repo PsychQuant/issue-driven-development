@@ -1,0 +1,26 @@
+## 1. 測試先寫
+
+- [x] 1.1 依 design「清單只有兩個目錄，而且寫明是封閉的」「往上比對只到頂層目錄為止」「解析後就是頂層目錄的路徑符合第 2 個條件」，為 requirement「Added and modified requirements carry an executable check」的 Example「markers in submodules」第 56 到 59 列寫 fixture 與檢查，加在 `plugins/issue-driven-dev/scripts/tests/spec-change/test.sh` 第 55 列的檢查之後。第 56 列：linked worktree 的頂層目錄裡放著主 repo，link 指進主 repo 的 git 目錄裡人工放的 clone；fixture 先確認 git 在頂層印的兩個目錄不同、放 clone 的位置在 git 目錄內；檢查 `status` 是 `error`、結束碼 2、原因點名路徑與 path leaves the repository、記錄 git 呼叫的程式沒有看到任何一次在那個目錄的呼叫。第 57 列：外層 submodule 的 `.git` 是真目錄，link 指進它；檢查回 `ok`。第 58 列：頂層目錄在主 repo 的 git 目錄裡面，submodule 照一般方式取出；fixture 先確認 git 在頂層同時回報在工作目錄內與在 git 目錄內；檢查回 `ok`。第 59 列：記錄的路徑經過 link 回到頂層目錄本身，記錄的是主 repo 較早、有標記的 commit；檢查回 `ok`。驗證：這時 script 還沒改，`bash plugins/issue-driven-dev/scripts/tests/spec-change/test.sh` 只有第 56 列的檢查失敗；失敗的檢查名稱記在這一項底下。
+  - 紀錄（script 未改，git 2.55.0、macOS）：821 項通過、4 項失敗，四項都是第 56 列：`links: submodule row 56: linked worktree that holds the main repository — status`（要 `error`，得到 `ok`）、同名的 `— exit`（要 2，得到 0）、`links: submodule row 56 — reason names Example and path`、`links: submodule row 56 — no git command ran in the planted directory`。第 57、58、59 列與第 56 列的另外三項（回報的項目數、只有一行 JSON、記錄 git 呼叫的程式看到 worktree）通過。
+
+## 2. 程式
+
+- [x] 2.1 [after: 1.1] 依 design「兩個目錄分兩次問，相對路徑接在頂層目錄後面」「往上比對只到頂層目錄為止」與 Implementation Contract：`plugins/issue-driven-dev/scripts/spec-change.py` 在主 repo 的頂層問 `--absolute-git-dir` 與 `--git-common-dir`，解析後的目錄或它到頂層目錄之間的任何一層是兩者之一時，原因是 path leaves the repository，不呼叫 `submodule_git()`；檔頭與函式的說明改成同樣的說法。驗證：`bash plugins/issue-driven-dev/scripts/tests/spec-change/test.sh` 全部通過、0 項失敗；標記在主 repo 的 repo，git 呼叫的次數與修改前相同（第 22 列既有的檢查）。
+
+## 3. 文字
+
+- [x] 3.1 [after: 2.1] 依 design「條文寫比對的內容，不寫『工作目錄』」與 Implementation Contract：`plugins/issue-driven-dev/scripts/tests/spec-change/test.sh` 第 55 列的註解，與 `plugins/issue-driven-dev/CHANGELOG.md` 的 #548 條目講這個條件的那一句，改成新的說法。驗證：`git diff` 對 CHANGELOG 只動 `[Unreleased]` 裡 #548 那一條；文字不含任何特定專案的名稱或本機路徑；測試仍然全部通過。
+
+## 4. 收尾
+
+- [x] 4.1 [after: 3.1] 依 Implementation Contract 驗收：`bash plugins/issue-driven-dev/scripts/run-all-tests.sh` 與 `bash .claude/scripts/tests/spectra-archive-post-ic/test.sh` 結束碼都是 0；把 2.1 新加的比對（common 目錄）拿掉時只有第 56 列的檢查失敗；第 55 列仍回 `error`；一般的 linked worktree（主 repo 在旁邊）裡照一般方式取出的 submodule 仍回 `ok`；`python3 plugins/issue-driven-dev/scripts/spec-change.py links --base origin/main --cwd .` 的結果。驗證：驗收紀錄寫在這一項底下；封存之後的結果寫在 issue 的 Implementation Complete 留言。
+  - 驗收紀錄。這個 change 的文件、規格差異、測試與程式都由同一個協調者撰寫，沒有實作者模型，也沒有獨立讀者；第七輪 verify 是第一次獨立審查。環境：macOS、git 2.55.0、Python 3.13.5。
+  - 整套測試，封存之前跑了兩次。在 `4af6539`（下一點的補充之前）：`bash plugins/issue-driven-dev/scripts/run-all-tests.sh` 75 個 suite、0 個失敗、沒有逾時，結束碼 0；`bash .claude/scripts/tests/spectra-archive-post-ic/test.sh` 141 項通過、0 項失敗；測試檔 825 項通過。在 `6f91370`：75 個 suite、1 個失敗、沒有逾時，結束碼 1；失敗的是 `idd-edit` 這個 suite 的第 21 個 fixture（mock-requires-test-mode），其餘 36 項通過。緊接著單獨跑 `tests/idd-edit/test.sh`，37 項全過。這個 suite 與這次改的兩個檔案無關；那一次整套執行時，同一台機器上另一個工作階段也在跑同一支 runner，而 runner 的每個 suite 輸出都寫到 `/tmp` 下固定的檔名，所以那一項失敗當時的輸出已被蓋掉，原因沒有查出來。`spectra-archive-post-ic` 在 `6f91370` 是 141 項通過、0 項失敗；`tests/spec-change/test.sh` 840 項通過、0 項失敗。結束碼為 0 的整套執行在封存之後的 HEAD 上補跑，結果寫在 issue 的 Implementation Complete 留言。
+  - 封存之前補的兩個 commit（測試在前）。`20048d8`：以第 56 列的輸入加一項檢查，用一個對 `rev-parse --git-common-dir` 什麼都不印的 git 替身，`links` 必須回 `error`、不在放進去的目錄執行 git；另外第 57、58、59 列各加一項，從 git 呼叫紀錄確認搜尋的是該列描述的目錄，第 57 列加一個拿掉 clone 的對照（回 `error`、not checked out）。在這個 commit 上測試檔 837 項通過、3 項失敗，失敗的是新檢查的 `status`、結束碼、「沒有在那個目錄執行 git」：2.1 把 git 的答案接在頂層目錄後面，空白的答案就變成頂層目錄，而頂層目錄不比對。`6f91370`：空白的答案讓整次執行以 `error` 結束（原因與讀不到 git 目錄時相同）。第六輪的 script 遇到空白答案也是回這個 `error`；真的 git 不會在這裡印空白。這一項沒有對應的 Example 列，原因文字是 #559 第 18 點已記錄、requirement 沒有列的那一句。
+  - 變異，各在一份副本裡改 `6f91370` 的 script 一處。(a) 只問 `--absolute-git-dir`：第 56 列的四項與「git 不回答 common 目錄」的四項失敗，其他都過。(b) 把呼叫 `under_git_directory()` 的那個判斷換成 `False`：第 55、56 列各四項與「git 不回答 common 目錄」的四項失敗。(c) 讓往上比對越過頂層目錄：只有第 58 列的三項失敗。(d) 拿掉空白答案的兩行：就是 `20048d8` 的狀態，失敗的是上一點的三項。
+  - linked worktree 的頂層目錄裡放著主 repo 的配置（第六輪第 1 列），各用 4.1.0、第五輪的 script、第六輪的 script、`6f91370` 的 script 跑，並記錄 git 呼叫。link 指進主 repo 的 `.git`：`missing`、`ok`、`ok`、`error`（path leaves the repository）；在放進去的目錄的 git 呼叫是 0、5、5、0 次。記錄的路徑直接寫成 `main/.git/…`：同樣的四個答案與呼叫次數。對照（同一個配置下照一般方式取出的 submodule，以及 worktree 在主 repo 旁邊時）：`missing`、`ok`、`ok`、`ok`，後三者在 submodule 裡都是 5 次呼叫。
+  - git 對 common 目錄的回答是相對路徑的情形（一般的 repository 印 `.git`）：process 的目錄分別是該 repository、不是 repository 的目錄、另一個 repository、根目錄，`--cwd` 指向該 repository。一般取出的 submodule 四次都回 `ok`，第 55 列的輸入四次都回 `error`。
+  - git 呼叫次數（一個 repository、一個取出的 submodule）：第六輪的 script 19 次，`6f91370` 20 次，多的一次是 `rev-parse --git-common-dir`；標記在主 repo 時兩者都是 11 次，兩個問題都沒有問。
+  - 其他地方的同一句話：script 開頭的說明、兩個函式的 docstring（`8e5e0c1`）、測試檔第 55 列的註解與 CHANGELOG 的 #548 條目（`4af6539`）都改成封閉列舉的寫法。封存目錄以外搜尋 `working tree of the main`、`own git directory`、`no part of`、`main working tree`：剩下的都是描述輸入放在哪裡的 Example 列（第 30、33、55 列）、別的 requirement（archive-ref、tree lock）與別的測試檔，沒有一句再把第 2 個條件說成「工作目錄之內」。
+  - 連結檢查，封存之前（`python3 plugins/issue-driven-dev/scripts/spec-change.py links --base origin/main --cwd .`）：`{"status": "ok", "missing": [], "reason": ""}`。封存之後的結果寫在 issue 的 Implementation Complete 留言。
+  - 沒有做的：測試只在 macOS 上跑過；第六輪第 4 到 7 列沒有在這條分支上改（#556、#559）；submodule 自己的 git 目錄不排除、解析後等於頂層目錄的路徑照樣接受，這兩件事是協調者在維護者的指示（留言 6891118023）下選的，寫進 requirement 與第 57、59 列，要不要這樣由第七輪的裁定席與維護者決定。
