@@ -829,9 +829,12 @@ def cmd_settle(argv):
     branch = run_cmd(["git", "-C", cwd, "symbolic-ref", "--quiet", "--short", "HEAD"])[1].strip()
     try:
         kept, gone = settle_tree(cwd, n, st["default"], branch, last, st)
-    except Stop as exc:   # whichever read failed, the reason names the issue and where the working tree is
+    except Stop as exc:   # whichever step failed, the reason names the issue and where the working tree is now
         text = str(exc)
-        raise Stop(text if text.startswith(f"#{n} ") else f"#{n} (working tree on {one_line(branch or 'no branch', 60)}): {text}")
+        if text.startswith(f"#{n} "):
+            raise
+        now_on = run_cmd(["git", "-C", cwd, "symbolic-ref", "--quiet", "--short", "HEAD"])[1].strip()
+        raise Stop(f"#{n} (working tree on {one_line(now_on or 'no branch', 60)}): {text}")
     last["kept"], last["settled"] = kept, True
     save_state(cwd, st)
     return emit({"issue": n, "settled": True, "kept": kept, "discarded": gone})

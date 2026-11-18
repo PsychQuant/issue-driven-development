@@ -66,7 +66,7 @@ allowed-tools:
 
 已知限制：repo 的 watcher 會收到「有新 PR」的一般通知，`pull_request` 觸發的 workflow 也可能自己指派或提到人，這兩種 `pr-check` 看不到。
 
-rest mode（`## Rest mode`，#478）沒有新的對外動作：每一張 issue 的動作各自照上面兩張表，各自過 `pr-check` 與 `close-stage.py run` 的閘門；前一張過了不代表下一張也過。
+rest mode（`## Rest mode`，#478）沒有新的對外動作：每一張 issue 的動作各自照上面兩張表，各自過 `pr-check` 與 `close-stage.py run` 的閘門；前一張過了不代表下一張也過。它在兩張之間另外做三件只在本機的事，都不讓任何 commit 或無法重新產生的內容消失：把一張 issue 留下而沒有 commit 的東西 commit 在那一張自己的 branch（不推）；丟掉那一張的附件紀錄（下一次 diagnose 會重寫；條件見該節第 6 步）；刪掉那一張沒有自己 commit、也沒有 upstream 的 branch（它的每一個 commit 都在 `origin/<default>` 上）。
 
 ## 與其他 idd-* skills 的關係
 
@@ -153,7 +153,7 @@ rest 只走 PR path（PR、unattended）。兩張之間，一張 issue 留下的
 
 4. 對 #N 跑單張流程：從 Step 0.4 到 Phase 6，行為與 `/idd-all #N` 加上這次呼叫的旗標相同（path 與 interaction 用第 1 步的結果），包含它自己的 Phase 6 報告與清理，只有下面一處不同。這一張停下、abort、或被 gate 判為不可動，都只影響這一張。
 
-   **已經有 PR 或 branch 的 issue，rest 不接手**：Step 0.5.1 印出 `verdict=resume` 或 `verdict=blocked` 時，不建 branch、不碰那個 PR、不提問：rest 不接手這一張，但這一張的 Step 0.5 已經寫了 unattended 標記，所以先 `clear_unattended "$CWD"`（這一張不會走到 Phase 6 的清理），再做第 5 步，`--reason` 寫 `existing work: ` 加上 Step 0.5.1 印出的 outcome 與人接下來可以做的事，例如 `existing work: existing PR #77 — review it, or name it (/idd-all #N)`。那是先前的 run 或別人已經開始、停在某處的工作，由人決定怎麼接。`verdict=unknown` 與 `clear` 照單張流程往下。
+   **已經有 PR 或 branch 的 issue，rest 不接手**：Step 0.5.1 印出 `verdict=resume` 或 `verdict=blocked` 時，不建 branch、不碰那個 PR、不提問：rest 不接手這一張，但這一張的 Step 0.5 已經寫了 unattended 標記，所以先 `clear_unattended "$CWD"`（這一張不會走到 Phase 6 的清理），再做第 5 步，`--reason` 寫 `existing work: ` 加上 Step 0.5.1 印出的 outcome 與人接下來可以做的事，例如 `existing work: existing PR #77 — review that pull request`。那是先前的 run 或別人已經開始、停在某處的工作，由人決定怎麼接。`verdict=unknown` 與 `clear` 照單張流程往下。
 
 5. 記下這一張的結果。這一張的 Phase 6 報告有 `Stopped:` 時，把那一行填進 `--reason`（abort 時填 abort 的原因）；已經結案或沒有原因可填，就整個不帶 `--reason`。結果是 closed 還是 stopped 由 helper 自己向 GitHub 讀，不在這裡判斷：
 

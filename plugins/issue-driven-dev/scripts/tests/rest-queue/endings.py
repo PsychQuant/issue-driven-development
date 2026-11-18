@@ -113,7 +113,8 @@ out=""; while [ $# -gt 0 ]; do [ "$1" = "-o" ] && out="$2"; shift; done
 
 def download(tree, stub, mode, caller):
     """The real writer, run the way idd-diagnose runs it: from the working tree, for issue 5."""
-    env = dict(GIT_ENV, PATH=stub + os.pathsep + os.environ["PATH"], GH_STUB_MODE=mode, IDD_CALLER=caller)
+    env = dict(GIT_ENV, PATH=stub + os.pathsep + os.environ["PATH"], GH_STUB_MODE=mode)
+    env["IDD_CALLER"] = caller   # recorded in the manifest as fetched_by
     proc = sh(["bash", PA, "download", "5", "--repo", "o/r"], cwd=tree, env=env, check=False)
     if proc.returncode != 0:
         raise RuntimeError(f"process-attachments.sh download failed: {proc.stderr.strip()[:300]}")
