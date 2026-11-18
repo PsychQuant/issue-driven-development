@@ -143,6 +143,21 @@ def common_ok(a):
 
 # ── init ───────────────────────────────────────────────────────────────────
 
+def rest_run_reviews(cwd, n):
+    """True when a rest run that was started with --review has issue n in flight in this working tree
+    (scripts/rest-queue.py keeps that run's state beside this file's). The close stage merges when the record of
+    an issue says review is off; this keeps a value lost on the way from switching it off (#478). A rest state
+    that cannot be read, is older than its 24 hours or has another issue in flight changes nothing."""
+    try:
+        with open(os.path.join(state_dir(cwd), "idd-all-rest.json"), encoding="utf-8") as fh:
+            rest = json.load(fh)
+        if now() - parse_iso(rest["updated_at"]) >= STATE_TTL:
+            return False
+        return rest["review"] is True and any(a["issue"] == n and a["outcome"] is None for a in rest["attempts"])
+    except Exception:   # not a state of a rest run this can read: init does what it always did
+        return False
+
+
 def cmd_init(argv):
     keys = ["--cwd", "--repo", "--issue", "--path", "--requested-path", "--interaction", "--branch",
             "--default", "--review", "--in-chain"]
@@ -156,6 +171,10 @@ def cmd_init(argv):
     if a["--review"] not in ("yes", "no") or a["--in-chain"] not in ("yes", "no"):
         return usage("--review and --in-chain must be yes or no")
     cwd = os.path.realpath(a["--cwd"])
+    if a["--review"] == "no" and rest_run_reviews(cwd, int(a["--issue"])):
+        # no run state is written: the close stage then finds none and stops at verified (#478)
+        return usage(f"a rest run with review on has #{a['--issue']} in flight in this working tree: record it with "
+                     "--review yes (the value rest-queue.py next printed)")
     try:
         spath, rpath = state_path(cwd, a["--issue"]), result_path(cwd, a["--issue"])
     except Stop as exc:
