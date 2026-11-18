@@ -26,11 +26,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   outcome of an issue is read from GitHub, and a run whose last activity is less than 24 hours old is resumed
   instead of restarted. An issue that already has a pull request or a branch, on GitHub or as a local
   `idd/N` branch, is not taken over: it is recorded as existing work, with that pull request or branch as the
-  reason (taking such work over is #566). Between two issues `rest-queue.py settle` handles the working tree by a
-  closed table, tested in temporary repositories: in PR mode what a stopped issue left is committed on its own
-  branch (locally, never pushed) and the default branch is fast-forwarded; files IDD keeps out of git are never
-  committed; an empty issue branch is deleted. An issue that stops does not stop the run, except in
-  direct-commit mode when it leaves commits or files on the default branch. The run stops as a whole only when
+  reason (taking such work over is #566). Rest mode runs on the PR path only: with `--no-pr`,
+  `pr_policy: never`, or a path downgraded because the ralph-loop plugin is missing, `start` refuses to begin
+  (#583). Between two issues `rest-queue.py settle` handles the working tree by a closed table whose rows come
+  from an inventory of what the single-issue pipeline writes; every way that pipeline ends is run in a
+  temporary repository. The records `idd-diagnose` writes again on every run are discarded (the attachment
+  manifest and, on a branch without a commit of its own, the attachments it lists by SHA-256); a file in a place
+  whose writer keeps it out of git is never committed; everything else an issue left is committed on its own
+  branch (locally, never pushed) and listed in the report, with a note when it is a log shared by all issues
+  (`routing-stats.jsonl`; carrying its lines back is #584); the default branch is fast-forwarded when it is
+  behind; an issue branch without a commit is deleted, so an issue that stopped before its first commit is run
+  again by a later run. An issue that stops does not stop the run. The run stops as a whole only when
   `next`, `record` or `settle` cannot read GitHub or git, cannot write the state or cannot settle the working
   tree, or the user interrupts; a `start` that cannot read the open issues, or that finds the run state would
   not be ignored by git, begins no run and is reported as it is. `start` prints the list (issue numbers only) before anything runs and `report` prints one report
@@ -38,7 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run by class; an issue the run attempted is named once, with what happened to it and the questions it now
   waits on, and the report says that
   a verified issue continues when it is named, that an issue stopped with existing work is left for a person,
-  and which branch each stopped issue kept. `rest` with another
+  which branch each stopped issue kept, and what a person can do with it. `rest` with another
   positional argument, `--in-chain` without an issue, an unknown `--` flag (also in a call that names an
   issue: it used to be ignored), `--cwd` without a path, an empty argument and the single word `last` (it is not
   a mode, and is no longer taken as the title of a new issue) are refused. **If you scheduled or looped a bare

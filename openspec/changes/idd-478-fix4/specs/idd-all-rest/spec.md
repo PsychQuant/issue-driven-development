@@ -206,7 +206,7 @@ For the class `verified` the report SHALL say that such an issue continues when 
 
 - **GIVEN** a run in which #5 was recorded as stopped and `settle` kept the branch `idd/5-x`
 - **WHEN** `report` runs
-- **THEN** one line of it says that deleting the branch lets a later rest run start the issue over, and no line of it holds `/idd-all #`
+- **THEN** one line of it says that deleting the branch lets a later rest run start the issue over, and that line does not hold `/idd-all`
 
 ---
 ### Requirement: idd-all runs rest mode as a loop over the single-issue pipeline
@@ -283,7 +283,7 @@ The paths in this requirement are relative to the directory `idd-all` runs in (`
 
 After the table, `settle` SHALL fetch the default branch from `origin` and exit 3 when it cannot. When the local default branch is behind `origin/<default>` it SHALL fast-forward it. When the local default branch has commits that `origin/<default>` lacks, `settle` SHALL leave it as it is: an issue on the PR path starts its branch from `origin/<default>`, not from the local default branch. It SHALL then confirm that `git status --porcelain` prints nothing in the working tree, which is the check every issue on the PR path starts with, and exit 3 otherwise.
 
-`settle` SHALL then look at every local branch of the issue. A branch with no commits that `origin/<default>` lacks and no upstream holds no work, and `settle` SHALL delete it with a safe delete; it SHALL record every other one as kept. Every local branch of the issue was created by this run, because `next` does not hand out an issue that already has one. A `settle` that runs again after an earlier call stopped part of the way SHALL keep the commit and the paths that the earlier call recorded.
+`settle` SHALL then look at every local branch of the issue. A branch with no commits that `origin/<default>` lacks and no upstream holds no work, and `settle` SHALL delete it, since every commit of such a branch is on `origin/<default>`; it SHALL record every other one as kept. Every local branch of the issue was created by this run, because `next` does not hand out an issue that already has one. A `settle` that runs again after an earlier call stopped part of the way SHALL keep the commit and the paths that the earlier call recorded.
 
 On exit 3, the reason line SHALL name the issue and the branch the working tree is on, SHALL say what a person does next before it names any path, SHALL name at most three paths and the number of the others, and SHALL be no longer than the helper's limit for a reason.
 
@@ -327,6 +327,7 @@ Every way the single-issue pipeline ends on the PR path, what it leaves, and wha
 | `stop-after-diagnose-foreign-file`: as `stop-after-diagnose`, and the folder also holds `notes.txt`, which the manifest does not list | `idd/5-x`, no commit | the untracked manifest and `notes.txt` | 0 | `idd/5-x`, with a commit that holds both paths | existing work |
 | `meeting`: the meeting unwind committed the attachment folder on the branch and checked out the default branch | `main` | nothing; `idd/5-x` has one commit | 0 | `idd/5-x` | existing work |
 | `stop-in-implement`: implement or the spec steps stopped part of the way | `idd/5-x`, one commit | a changed `a.txt`, a new `openspec/changes/idd-5-x/proposal.md`, and the untracked manifest | 0 | `idd/5-x`, with a commit that holds `a.txt` and the proposal and not the manifest | existing work |
+| `stop-in-implement-attachments`: implement stopped part of the way, and the issue has one attachment that git does not ignore | `idd/5-x`, one commit | a changed `a.txt`, the untracked manifest and the downloaded file | 0 | `idd/5-x`, with a commit that holds `a.txt`, the manifest and the file | existing work |
 | `stop-after-verify`: verify, the CI gate, the push or the pull request stopped the issue | `idd/5-x`, one commit | the untracked manifest and one new line in the tracked `.claude/.idd/routing-stats.jsonl` | 0 | `idd/5-x`, with a commit that holds the log and not the manifest | existing work |
 | `stop-at-close-stage`: the issue was pushed and stopped at verified | `idd/5-x`, one commit, with an upstream | the same as `stop-after-verify` | 0 | `idd/5-x`, with a commit that holds the log | existing work |
 | `merged-and-closed`: the pull request was squash-merged and the issue closed | `idd/5-x`, one commit, with an upstream; `origin/main` has the squash commit | a changed tracked manifest and one new line in the tracked `.claude/.idd/routing-stats.jsonl` | 0 | `idd/5-x`, with a commit that holds the log and not the manifest | #5 is closed |

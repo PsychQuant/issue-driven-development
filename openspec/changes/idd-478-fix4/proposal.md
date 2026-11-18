@@ -53,7 +53,6 @@ verify 第 4 輪（#478，range `3b87909..7002ba7`）判 FAIL，6 項 Blocking�
 - Affected specs: `idd-all-rest`、`idd-existing-work-lookup`
 - Affected code:
   - Modified: plugins/issue-driven-dev/scripts/rest-queue.py
-  - Modified: plugins/issue-driven-dev/scripts/lib/ghread.py
   - Modified: plugins/issue-driven-dev/scripts/close-stage.py
   - Modified: plugins/issue-driven-dev/scripts/check-existing-work.sh
   - Modified: plugins/issue-driven-dev/scripts/tests/rest-queue/test.sh
@@ -63,5 +62,5 @@ verify 第 4 輪（#478，range `3b87909..7002ba7`）判 FAIL，6 項 Blocking�
   - Modified: plugins/issue-driven-dev/skills/idd-all/SKILL.md
   - Modified: plugins/issue-driven-dev/references/parallel-orchestration.md
   - Modified: docs/commands.md
-  - Modified: README.md
+  - Modified: plugins/issue-driven-dev/README.md
   - Modified: plugins/issue-driven-dev/CHANGELOG.md
