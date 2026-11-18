@@ -6,7 +6,7 @@ Single source of truth for **multi-issue invocation** in IDD. Two modes, differe
 |------|----------------|----------|
 | **Batch mode** | `idd-diagnose`, `idd-update`, `idd-comment`, `idd-edit` | Independent per-issue ops looped sequentially. No shared state. |
 | **Cluster-PR mode** | `idd-implement`, `idd-verify`, `idd-close` | Multi-issue work sharing one feature branch + one PR. Per-commit `Refs #N` per issue. |
-| **Backlog drain** | `idd-all` | Whole pipelines, one issue at a time: an explicit list (`/idd-all #a #b #c`, conflict-class order) or every remaining open issue (`/idd-all` with no issue, or `rest`; #478). See [parallel-orchestration.md](parallel-orchestration.md) and the skill's `## Rest mode`. |
+| **Backlog drain** | `idd-all` | Whole pipelines, one issue at a time: an explicit list (`/idd-all #a #b #c`, conflict-class order) or every open issue that is ready (`/idd-all` with no issue, or `rest`; #478, PR path only). See [parallel-orchestration.md](parallel-orchestration.md) and the skill's `## Rest mode`. |
 | _(neither)_ | `idd-issue`, `idd-list`, `idd-report`, `idd-config` | Single-issue or already-multi-by-design. Out of scope. |
 
 Why split: batch is safe when each issue's op is order-independent and idempotent. Cluster-PR is needed when ops produce *correlated artifacts* (commits, PR, verify report) that must stay coherent across the issue group.
@@ -45,7 +45,7 @@ at end:
 
 ### Issue selector syntax (v1)
 
-Explicit list only for the batch-mode skills: `#34 #36 #38`. `idd-all` has one form that is not a list, rest mode (no issue, or the word `rest`): `scripts/rest-queue.py` selects every remaining open issue that can run (#478). Selector syntax (`--label needs-update`, `--milestone v2`) deferred to v2 if real workflow demands it. Parsing rule: tokens matching `^#\d+$` before any `--flag` are issue numbers; everything after is flags applied to every issue.
+Explicit list only for the batch-mode skills: `#34 #36 #38`. `idd-all` has one form that is not a list, rest mode (no issue, or the word `rest`): `scripts/rest-queue.py` selects every open issue that can run (#478). Selector syntax (`--label needs-update`, `--milestone v2`) deferred to v2 if real workflow demands it. Parsing rule: tokens matching `^#\d+$` before any `--flag` are issue numbers; everything after is flags applied to every issue.
 
 ### What batch does NOT do
 

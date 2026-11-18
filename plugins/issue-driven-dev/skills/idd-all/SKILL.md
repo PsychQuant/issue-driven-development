@@ -96,7 +96,7 @@ idd-all 不取代 atomic skills,而是包它們。每個 phase 仍透過 `Skill(
 
 ## Rest mode：不帶 issue 就跑剩下的全部（#478）
 
-`/idd-all` 沒有位置引數，或唯一的位置引數是 `rest`，就是把 repo 裡可以跑的 open issue（下表的 `candidate`）逐張跑完，其他的列在報告裡。不提問。規格是 capability `idd-all-rest`。
+`/idd-all` 沒有位置引數，或唯一的位置引數是 `rest`，就是把 repo 裡可以跑的 open issue（下表的 `candidate`）逐張跑完，其他的列在報告裡。不問要跑哪一張；`pr_policy: ask` 時只問一題，要不要以 PR path 開始（流程第 1 步）。規格是 capability `idd-all-rest`。
 
 挑哪一張、照什麼順序、哪些試過了，都由 `scripts/rest-queue.py` 決定並記在 `$CWD/.claude/.idd/state/idd-all-rest.json`，不靠記憶：一次 run 會跨很多張 issue 與多次 context 壓縮。
 
@@ -118,7 +118,7 @@ idd-all 不取代 atomic skills,而是包它們。每個 phase 仍透過 `Skill(
 
 ### 流程
 
-rest 只走 PR path（PR、unattended）。兩張之間，一張 issue 留下的東西放在它自己的 branch，而只有 PR path 的每一張才有自己的 branch。`--no-pr`、`pr_policy: never`，或沒裝 ralph-loop 而被降成 direct-commit 時，第 2 步的 `start` 會拒絕開始並說明怎麼做；direct-commit 與 attended 的 rest 是 #583。
+rest 只走 PR path（PR、unattended）。兩張之間，一張 issue 留下的東西放在它自己的 branch，而只有 PR path 的每一張才有自己的 branch。`--no-pr`、`pr_policy: never`，或沒裝 ralph-loop 而被降成 direct-commit 時，第 2 步的 `start` 會拒絕開始並說明怎麼做（沒裝 ralph-loop 時帶 `--pr` 也一樣會被降級，要先裝它）；direct-commit 與 attended 的 rest 是 #583。
 
 1. 前置檢查與 path 的解析。這一步在 `start` 之前，整個 run 只做一次：
 
@@ -126,7 +126,7 @@ rest 只走 PR path（PR、unattended）。兩張之間，一張 issue 留下的
    - Step 0.5 只做解析 `(path, interaction)` 的那一段，到印出 `→ Path:` 為止。這時還沒有 issue：不寫 unattended 標記，不做 PR mode 的 branch setup。`pr_policy: ask` 在這裡只問一次，問的是要不要以 PR path 開始這次 run，不提供 direct-commit；回答不要就結束，不呼叫 `start`。
    - Step 0.6 的檢查照做。它把 path 降成 direct-commit 時不必 unwind（還沒有 branch）；降級後的 `PATH_AXIS` 照樣交給第 2 步，由 `start` 拒絕。
 
-   之後每一張都用這裡得到的 `PATH_AXIS=PR` 與 `INTERACTION=unattended`：單張流程的 Step 0.5 不再重新解析，Step 0.6 不再檢查、也不降級。每一張仍各自做 Step 0.5 的 unattended 標記、工作樹檢查與建 branch。
+   之後每一張都用這裡得到的 `PATH_AXIS=PR`、`REQUESTED_PATH=PR` 與 `INTERACTION=unattended`（Step 0.7 會用到這三個值；shell 變數遺失時照這裡重設，不重新解析）：單張流程的 Step 0.5 不再重新解析，Step 0.6 不再檢查、也不降級。每一張仍各自做 Step 0.5 的 unattended 標記、工作樹檢查與建 branch。
 
 2. 開始。把它印出的清單原樣給使用者看：
 
@@ -153,7 +153,7 @@ rest 只走 PR path（PR、unattended）。兩張之間，一張 issue 留下的
 
 4. 對 #N 跑單張流程：從 Step 0.4 到 Phase 6，行為與 `/idd-all #N` 加上這次呼叫的旗標相同（path 與 interaction 用第 1 步的結果），包含它自己的 Phase 6 報告與清理，只有下面一處不同。這一張停下、abort、或被 gate 判為不可動，都只影響這一張。
 
-   **已經有 PR 或 branch 的 issue，rest 不接手**：Step 0.5.1 印出 `verdict=resume` 或 `verdict=blocked` 時，不建 branch、不碰那個 PR、不提問：rest 不接手這一張，但這一張的 Step 0.5 已經寫了 unattended 標記，所以先 `clear_unattended "$CWD"`（這一張不會走到 Phase 6 的清理），再做第 5 步，`--reason` 寫 `existing work: ` 加上 Step 0.5.1 印出的 outcome 與人接下來可以做的事，例如 `existing work: existing PR #77 — review that pull request`。那是先前的 run 或別人已經開始、停在某處的工作，由人決定怎麼接。`verdict=unknown` 與 `clear` 照單張流程往下。
+   **已經有 PR 或 branch 的 issue，rest 不接手**：Step 0.5.1 印出 `verdict=resume` 或 `verdict=blocked` 時，不建 branch、不碰那個 PR、不提問：rest 不接手這一張，但這一張的 Step 0.5 已經寫了 unattended 標記，所以先 `. "${CLAUDE_PLUGIN_ROOT}/scripts/lib/unattended-state.sh" && clear_unattended "$CWD"`（這一張不會走到 Phase 6 的清理），再做第 5 步，`--reason` 寫 `existing work: ` 加上 Step 0.5.1 印出的 outcome 與人接下來可以做的事，例如 `existing work: existing PR #77 — review that pull request`。那是先前的 run 或別人已經開始、停在某處的工作，由人決定怎麼接。`verdict=unknown` 與 `clear` 照單張流程往下。
 
 5. 記下這一張的結果。這一張的 Phase 6 報告有 `Stopped:` 時，把那一行填進 `--reason`（abort 時填 abort 的原因）；已經結案或沒有原因可填，就整個不帶 `--reason`。結果是 closed 還是 stopped 由 helper 自己向 GitHub 讀，不在這裡判斷：
 
@@ -177,7 +177,7 @@ rest 只走 PR path（PR、unattended）。兩張之間，一張 issue 留下的
    | 寫入端自己排除在 git 之外的位置：`.claude/.idd/` 裡的 run 狀態、編輯備份與鎖，以及 `.claude/worktrees/` | 不 commit，以 3 結束 |
    | 其他一切（沒 commit 的改動、Spectra 的 artifact、沒被上面丟掉的附件、所有 issue 共用的紀錄檔如 `routing-stats.jsonl`） | commit 在這張的 branch，只在本機、不推；branch、commit 與路徑記進 run 的狀態，列在報告裡 |
 
-   然後切回預設 branch。工作樹停在預設 branch 而有留下的東西，或停在別的 branch，都以 3 結束。之後 fetch，預設 branch 落後 origin 時快轉（本機預設 branch 有自己的 commit 時不動它：PR path 的 branch 從 `origin/<default>` 建），並確認 `git status --porcelain` 沒有輸出。這張沒有自己的 commit、也沒有 upstream 的 branch 會刪掉，所以沒有附件、在 implement 之前停下的那一張之後還會再被交出；其他的 branch 留著，列在報告裡。以 3 結束照下面「整個 run 停下」處理；以 0 結束就回第 3 步。
+   然後切回預設 branch。工作樹停在預設 branch 而有留下的東西，或停在別的 branch，都以 3 結束。之後 fetch，預設 branch 落後 origin 時快轉（本機預設 branch 有自己的 commit 時不動它：PR path 的 branch 從 `origin/<default>` 建），並確認 `git status --porcelain` 沒有輸出。這張沒有自己的 commit、也沒有 upstream 的 branch 會刪掉，所以在第一個 commit 之前停下、只留下上表第一列那些紀錄的那一張，之後還會再被交出；其他的 branch 留著，列在報告裡。以 3 結束照下面「整個 run 停下」處理；以 0 結束就回第 3 步。
 
 ### 整個 run 停下
 
@@ -277,7 +277,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" args -- <ARGS>
 
 | 印出的 `mode` | 做什麼 |
 |---|---|
-| `rest` | 不提問，照 `## Rest mode` 逐張跑每一張可以跑的 open issue（`candidate`） |
+| `rest` | 不問要跑哪一張，照 `## Rest mode` 逐張跑每一張可以跑的 open issue（`candidate`） |
 | `refuse`（結束碼 1） | 把 `reason` 與下表告訴使用者，然後結束，不做其他事 |
 | 沒有印出 JSON（結束碼 2 或 3：helper 本身出錯） | 把它印在 stderr 的那一行告訴使用者，然後結束。不猜這次呼叫是哪一種形式 |
 | `other` | 照下表。指名 issue 的呼叫照舊；與以前不同的只有上一列列出的拒絕：以前不認得的 `--` 旗標被忽略，`rest`、`last` 與空的引數被當成新 issue 的描述 |

@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`/idd-all` with no issue runs every remaining open issue (#478).** **BREAKING**: `/idd-all` without a
+- **`/idd-all` with no issue runs every open issue that is ready (#478).** **BREAKING**: `/idd-all` without a
   positional argument no longer asks whether to create an issue or pick one. It starts a run over the open
   issues of the repository, one at a time, each through the unchanged single-issue pipeline; the single word
   `rest` does the same. `scripts/rest-queue.py` reads every open issue in one paginated query and puts each in
@@ -35,8 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whose writer keeps it out of git is never committed; everything else an issue left is committed on its own
   branch (locally, never pushed) and listed in the report, with a note when it is a log shared by all issues
   (`routing-stats.jsonl`; carrying its lines back is #584); the default branch is fast-forwarded when it is
-  behind; an issue branch without a commit is deleted, so an issue that stopped before its first commit is run
-  again by a later run. An issue that stops does not stop the run. The run stops as a whole only when
+  behind; an issue branch without a commit and without an upstream is deleted, so an issue that stopped before
+  its first commit and left nothing but those records is run again by a later run. An issue that stops does not stop the run. The run stops as a whole only when
   `next`, `record` or `settle` cannot read GitHub or git, cannot write the state or cannot settle the working
   tree, or the user interrupts; a `start` that cannot read the open issues, or that finds the run state would
   not be ignored by git, begins no run and is reported as it is. `start` prints the list (issue numbers only) before anything runs and `report` prints one report

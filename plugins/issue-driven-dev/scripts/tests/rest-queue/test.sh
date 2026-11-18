@@ -59,6 +59,10 @@ download() { # issue [dir] [mode] → process-attachments.sh download, run from 
   (cd "${2:-$T}" && PATH="$STUB:$PATH" GH_STUB_MODE="${3:-empty}" IDD_CALLER=idd-diagnose \
      bash "$PLUGIN/scripts/process-attachments.sh" download "$1" --repo "$REPO" > /dev/null 2>&1)
 }
+reason_shape() { # label file → the reason line fits the limit and says what to do next before any detail
+  assert_true "$1: the reason fits the limit for a reason" "[ \"\$(sed 's/^rest-queue: //' '$2' | wc -m | tr -d ' ')\" -le 301 ]"
+  assert_grep_re "$1: and says what to do next before git's words or any path" 'then run the same /idd-all command again \(same flags\)( \(.*\))?$' "$(cat "$2")"
+}
 kept_of() { # issue → the kept entries of that attempt in the run state, as compact JSON
   python3 -c 'import json,sys; a=[x for x in json.load(open(sys.argv[1]))["attempts"] if x["issue"]==int(sys.argv[2])][0]; print(json.dumps(a.get("kept", []), separators=(",",":")))' "$(state_file)" "$1"
 }
@@ -609,7 +613,17 @@ assert_exit "keep out: settle exits 3" 3 "$rc"
 assert_output_grep "keep out: its reason line names the file" ".claude/.idd/tree-lock" "$S/err"
 assert_output_grep "keep out: and the issue" "#5" "$S/err"
 assert_true "keep out: what to do comes before the path" '[ "$(grep -o "have git ignore.*" "$S/err" | grep -c "tree-lock")" = 1 ]'
-assert_true "keep out: the reason fits the limit for a reason" '[ "$(sed "s/^rest-queue: //" "$S/err" | wc -m | tr -d " ")" -le 301 ]'
+reason_shape "keep out" "$S/err"
+new keep-out-many 5 9
+run start --path PR > /dev/null 2>&1; run next > /dev/null
+git -C "$T" checkout -q -b idd/5-x; mkdir -p "$T/.claude/worktrees"
+for i in 1 2 3 4 5; do printf 'x\n' > "$T/.claude/worktrees/a-very-long-file-name-that-fills-the-line-and-then-some-more-of-it-number-$i.txt"; done
+download 5   # the manifest would be discarded, were the run not stopping
+run record --issue 5 --reason x > /dev/null
+settle 5 > /dev/null 2> "$S/err"; assert_exit "keep out: five long paths exit 3" 3 "$?"
+reason_shape "keep out, many" "$S/err"
+assert_output_grep "keep out: the number of the other paths is not cut off" "and 2 more)" "$S/err"
+assert_true "keep out: nothing was discarded before it stopped" '[ -f "$T/.claude/.idd/attachments/issue-5/_manifest.json" ]'
 assert_eq "keep out: idd/5-x has no new commit" "$INIT" "$(git -C "$T" rev-parse idd/5-x)"
 assert_eq "keep out: and the working tree stays on it" "idd/5-x" "$(head_branch)"
 for p in ".claude/.idd/state/x.json" ".claude/.idd/tree-lock.reclaim" ".claude/worktrees/w/a"; do
@@ -683,6 +697,8 @@ git -C "$T" remote set-url origin "$S/nowhere.git"
 settle 5 > /dev/null 2> "$S/err"; rc=$?
 assert_exit "interrupted: the first settle exits 3 when origin cannot be reached" 3 "$rc"
 assert_output_grep "interrupted: its reason names the issue" "#5" "$S/err"
+assert_output_grep "interrupted: and where the working tree is now" "working tree on main" "$S/err"
+reason_shape "interrupted" "$S/err"
 FIRST=$(git -C "$T" rev-parse idd/5-x)
 assert_eq "interrupted: after it committed a.txt on idd/5-x" "a.txt" "$(git -C "$T" show --name-only --format= idd/5-x)"
 run next > /dev/null 2>&1; assert_exit "interrupted: next still waits for settle" 1 "$?"
@@ -707,6 +723,7 @@ for step in commit checkout merge; do
   assert_exit "fail $step: settle exits 3" 3 "$rc"
   assert_eq "fail $step: with one reason line" "1" "$(wc -l < "$S/err" | tr -d ' ')"
   assert_output_grep "fail $step: that names the issue" "#5" "$S/err"
+  reason_shape "fail $step" "$S/err"
   rm -f "$T/.git/hooks/pre-commit" "$T/.git/hooks/post-commit" "$T/.git/hooks/post-checkout" "$T/.git/index.lock"
   FIRST=$(kept_of 5)
   settle 5 > /dev/null 2>&1; rc=$?
@@ -920,11 +937,18 @@ write_state 1 '[{"issue": 5, "outcome": "stopped", "reason": "x", "settled": tru
 run start --path PR > "$S/start.out" 2>&1
 assert_output_grep "state: a kept branch that is not a name is not used" "cannot be used" "$S/start.out"
 
-new state-v1 5
+for field in path default; do
+  new "state-no-$field" 5
+  write_state 1 '[{"issue": 5, "outcome": "stopped", "reason": "x"}]'
+  python3 -c 'import json,sys; p=sys.argv[1]; s=json.load(open(p)); del s[sys.argv[2]]; json.dump(s, open(p,"w"))' "$(state_file)" "$field"
+  run start --path PR > "$S/start.out" 2>&1
+  assert_output_grep "state: a state without a stored $field is not used" "cannot be used" "$S/start.out"
+done
+new state-other-path 5
 write_state 1 '[{"issue": 5, "outcome": "stopped", "reason": "x"}]'
-python3 -c 'import json,sys; p=sys.argv[1]; s=json.load(open(p)); del s["default"]; json.dump(s, open(p,"w"))' "$(state_file)"
+python3 -c 'import json,sys; p=sys.argv[1]; s=json.load(open(p)); s["path"]="direct-commit"; json.dump(s, open(p,"w"))' "$(state_file)"
 run start --path PR > "$S/start.out" 2>&1
-assert_output_grep "state: a state without a stored default branch is not used" "cannot be used" "$S/start.out"
+assert_output_grep "state: a state of a run on another path is not used" "cannot be used" "$S/start.out"
 new state-kept-paths 5
 write_state 1 '[{"issue": 5, "outcome": "stopped", "reason": "x", "settled": true, "kept": [{"branch": "idd/5-x", "commit": "", "paths": [5]}]}]'
 run start --path PR > "$S/start.out" 2>&1
@@ -940,7 +964,7 @@ assert_eq "rendering: the issues it hit are unreadable" "[5,9]" "$(printf '%s' "
 python3 "$HERE/settle_matrix.py" "$RQ" > "$WORK/matrix.out" 2>&1; rc=$?
 assert_exit "settle matrix: every combination matches the table" 0 "$rc"
 [ "$rc" = 0 ] || sed -n "1,40p" "$WORK/matrix.out"
-assert_output_grep "settle matrix: and it ran all of them" "160 cases, 0 mismatch(es)" "$WORK/matrix.out"
+assert_output_grep "settle matrix: and it ran all of them" "192 cases, 0 mismatch(es)" "$WORK/matrix.out"
 
 echo "── the skill ──"
 # spec-example: idd-all-rest / the skill names the loop commands in order
@@ -986,10 +1010,12 @@ assert_grep "skill: and that row clears the unattended marker" 'clear_unattended
 refute_grep "skill: the rest section no longer describes a direct-commit run" "direct-commit 下，一張停下" "$REST"
 # spec-example: idd-all-rest / the skill runs the preflight steps once
 FLOW=$(printf '%s\n' "$REST" | awk '/^### 流程/{f=1; next} f&&/^### /{exit} f')
-STEP1=$(printf '%s\n' "$FLOW" | awk '/^1\. /{f=1} f&&/^2\. /{exit} f')   # the numbered step before the one that calls start
-assert_true "skill: step 1 comes before the start invocation" '[ -n "$STEP1" ] && ! printf "%s\n" "$STEP1" | grep -qF "rest-queue.py\" start"'
-for step in "Step 0.2" "Step 0.3" "Step 0.35" "Step 0.5" "Step 0.6"; do
-  assert_grep "skill: step 1 names $step" "$step" "$STEP1"
+L_STARTCMD=$(printf '%s\n' "$FLOW" | grep -n -F 'rest-queue.py" start' | head -1 | cut -d: -f1)
+K=$(printf '%s\n' "$FLOW" | sed -n "1,${L_STARTCMD:-1}p" | grep -E '^[0-9]+\. ' | tail -1 | sed -E 's/^([0-9]+)\..*/\1/')   # the numbered step that calls start
+STEP1=$(printf '%s\n' "$FLOW" | awk -v a="$((K - 1))" -v b="$K" '$0 ~ "^" a "\\. " {f=1} f && $0 ~ "^" b "\\. " {exit} f')   # the one before it
+assert_true "skill: there is a numbered step before the one that calls start" '[ "${K:-0}" -ge 2 ] && [ -n "$STEP1" ]'
+for step in '0\.2' '0\.3' '0\.35' '0\.5' '0\.6'; do
+  assert_grep_re "skill: that step names Step $step" "Step $step([^0-9.]|\$)" "$STEP1"
 done
 assert_grep "skill: and says it runs once" "只做一次" "$(printf '%s\n' "$STEP1" | sed -n '1p')"
 assert_grep "skill: the start invocation passes the path it resolved" '--path "$PATH_AXIS"' "$(printf '%s\n' "$REST" | grep -F 'rest-queue.py" start')"

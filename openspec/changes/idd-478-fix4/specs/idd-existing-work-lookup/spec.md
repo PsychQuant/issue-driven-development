@@ -28,7 +28,7 @@ In rest mode (capability `idd-all-rest`, an `/idd-all` without an issue) `idd-al
 
 #### Scenario: rest mode meets a blocked verdict
 
-- **WHEN** `/idd-all` without an issue hands out an issue whose verdict is `blocked`, and the run is attended
+- **WHEN** `/idd-all` without an issue hands out an issue whose verdict is `blocked`
 - **THEN** no question is asked, no branch is created, and the issue is recorded as stopped with a reason that begins with `existing work: `
 
 ##### Example: rest mode records existing work instead of acting on it

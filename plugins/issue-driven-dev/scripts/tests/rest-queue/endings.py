@@ -15,7 +15,11 @@ result, not the steps:
   exit 3  HEAD, the branch, every branch tip and the output of git status are unchanged, and there is one
           reason line that names #5
 
-The row names and exit codes are compared with the table in the spec when the spec is on disk.
+A row whose issue is closed has no later run to look at; there the report is checked instead: it names the kept
+branch with settle's commit and its paths, or no branch at all.
+
+The row names, the exit codes, the branches afterwards and the later run are compared with the table in the spec
+when the spec is on disk.
 """
 import glob
 import hashlib
@@ -290,7 +294,14 @@ def check(base, stub, row):
     if set(left) - discarded - set(committed or []):
         problems.append(f"neither kept nor discarded: {sorted(set(left) - discarded - set(committed or []))}")
     later = row["later"]
-    if later != "closed":
+    if later == "closed":   # no later run hands a closed issue out: what the report says about it is what is left to check
+        text = rq(tree, gh_dir, "report").stdout
+        lines = [ln for ln in text.splitlines() if B in ln]
+        if committed is None and lines:
+            problems.append(f"the report names a branch of the closed issue: {lines[0][:160]}")
+        if committed is not None and not any(tip[:7] in ln and all(p in ln for p in committed) for ln in lines):
+            problems.append(f"the report does not name {B}, the commit and its paths under the closed issue: {lines[:1]}")
+    else:
         rq(tree, gh_dir, "report")
         started = rq(tree, gh_dir, "start", "--path", "PR")
         nxt = rq(tree, gh_dir, "next")
@@ -308,8 +319,13 @@ def check(base, stub, row):
     return problems
 
 
+BRANCH_CELL = {"none": [], "unchanged": None}   # cells that begin with `idd/5-x` keep that branch
+LATER_CELL = {"handed out": "handed", "existing work": "existing", "#5 is closed": "closed", "—": None}
+
+
 def spec_rows():
-    """{row id: exit code} of the table in the spec, or None when no spec with that Example is on disk."""
+    """{row id: (exit code, branches afterwards, later run)} of the table in the spec, or None when no spec
+    with that Example is on disk."""
     for path in [os.path.join(ROOT, "openspec/specs/idd-all-rest/spec.md")] + sorted(glob.glob(os.path.join(ROOT, "openspec/changes/*/specs/idd-all-rest/spec.md"))):
         try:
             with open(path, encoding="utf-8") as fh:
@@ -324,7 +340,8 @@ def spec_rows():
             cells = [c.strip() for c in line.strip().strip("|").split("|")]
             m = re.match(r"^`([a-z-]+)`:", cells[0]) if len(cells) == 6 else None
             if m:
-                rows[m.group(1)] = int(cells[3])
+                kept = [B] if cells[4].startswith(f"`{B}`") else BRANCH_CELL.get(cells[4].split(",")[0].strip(), "?")
+                rows[m.group(1)] = (int(cells[3]), kept, LATER_CELL.get(cells[5], "?"))
         return rows
     return None
 
@@ -346,9 +363,12 @@ def main():
         table = spec_rows()
         if table is None:
             print("endings: no spec with the table on disk; the row names were not compared")
-        elif table != {r["id"]: r["exit"] for r in ROWS}:
-            bad += 1
-            print(f"FAIL the rows here and the table in the spec differ: {sorted(set(table) ^ {r['id'] for r in ROWS})}")
+        else:
+            here = {r["id"]: (r["exit"], r.get("branches"), r.get("later")) for r in ROWS}
+            for name in sorted(set(table) | set(here)):
+                if table.get(name) != here.get(name):
+                    bad += 1
+                    print(f"FAIL {name}: the table in the spec says {table.get(name)}, the row here {here.get(name)}")
         print(f"endings: {len(ROWS)} rows, {bad} failure(s)")
         return 1 if bad else 0
     finally:

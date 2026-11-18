@@ -2,7 +2,7 @@
 """settle_matrix.py <rest-queue.py> — every combination of the settle inputs, run for real (#478).
 
 where the working tree is × what is left over × the local default branch against origin × whether the issue's
-branch has a commit × whether it has an upstream: 4 × 5 × 2 × 2 × 2 = 160 temporary repositories. Each runs
+branch has a commit × whether it has an upstream: 4 × 6 × 2 × 2 × 2 = 192 temporary repositories. Each runs
 `rest-queue.py settle`. What the single-issue pipeline really leaves, ending by ending, is endings.py; this file
 checks that the same invariants hold over the whole input space:
 
@@ -29,7 +29,7 @@ ENV = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1", G
            GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
            GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid")
 WHERE = {"own": "idd/5-x", "default": "main", "other": "idd/7-y", "detached": "<detached>"}
-LEFT = ("none", "plain", "manifest", "attachment", "lock")   # attachment: the manifest and a file it lists
+LEFT = ("none", "plain", "manifest", "attachment", "lock", "manifest+lock")   # attachment: the manifest and a file it lists
 REMOTE = ("behind", "ahead")
 WORK = (0, 1)
 UPSTREAM = (0, 1)
@@ -42,7 +42,7 @@ def expected(where, left, remote, work, up):
         return 3, False, True
     if where == "default":                          # row 2: any leftover stops
         return (3, False, True) if left != "none" else (0, False, bool(work or up))
-    if left == "lock":                              # row 1, step 2: a place that is never committed
+    if left in ("lock", "manifest+lock"):           # row 1, step 2: a place that is never committed; nothing is discarded first
         return 3, False, True
     fresh = not work and not up
     committed = left == "plain" or (left == "attachment" and not fresh)   # step 1 discards the rest
@@ -111,13 +111,13 @@ def one(base, case):
         git(tree, "checkout", "-q", "--detach", "main")
     if left == "plain":
         write(os.path.join(tree, "a.txt"), "changed\n")
-    elif left == "manifest":
+    if left in ("manifest", "manifest+lock"):
         write(os.path.join(tree, FOLDER + "_manifest.json"), json.dumps({"issue": 5, "files": []}))
     elif left == "attachment":
         write(os.path.join(tree, FOLDER + "spec.docx"), "bytes\n")
         write(os.path.join(tree, FOLDER + "_manifest.json"), json.dumps({"issue": 5, "files": [
             {"filename": "spec.docx", "url": "https://example.invalid/spec.docx", "sha256": hashlib.sha256(b"bytes\n").hexdigest()}]}))
-    elif left == "lock":
+    if left in ("lock", "manifest+lock"):
         write(os.path.join(tree, ".claude/.idd/tree-lock"), "pid\n")
     stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     write(os.path.join(tree, ".claude/.idd/state/idd-all-rest.json"), json.dumps({

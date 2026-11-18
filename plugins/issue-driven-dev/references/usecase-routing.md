@@ -29,7 +29,7 @@
 ```
 
 > **Note**: the decision tree above only covers atomic skill picking. For backlog
-> bulk-solve scenarios: every remaining open issue → `/idd-all` with no issue (**rest mode**, #478:
+> bulk-solve scenarios: every open issue that is ready → `/idd-all` with no issue (**rest mode**, #478:
 > only ready issues run, the others are listed in one report); N chosen unrelated issues → `/idd-all #a #b #c` —
 > **multi-issue batch mode** (v2.83.0+): a conflict-class-**ordered sequential**
 > drain (see row 27 below). True concurrent stateful lanes are deferred; the

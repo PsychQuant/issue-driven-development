@@ -293,7 +293,7 @@ def writes(repo, login):
         if "HTTP 404" in str(exc):
             _NO_ACCOUNT.add(login)
             return False
-        if "HTTP 403" in str(exc):   # GitHub answers this question only to an account that can write itself
+        if "HTTP 403" in str(exc) and "rate limit" not in str(exc).lower():   # GitHub answers this question only to an account that can write itself
             raise Stop("rest mode needs an account with write access to this repository: GitHub would not say "
                        "who can write to it (HTTP 403)")
         raise
@@ -479,11 +479,20 @@ def keep_out(path, pre):
     return rel.startswith(KEEP_OUT_DIRS) or rel.startswith(KEEP_OUT_PREFIX)
 
 
+class GitFailed(Stop):
+    """A git step failed: what was being done, git's own words, and what a person does next, kept apart so that
+    settle can put the next step before git's words (which may hold a path) and fit the line to the limit."""
+
+    def __init__(self, what, err, todo=""):
+        super().__init__(f"{what} ({err})" + (f" — {todo}" if todo else ""))
+        self.what, self.err, self.todo = what, err, todo
+
+
 def git(cwd, args, what, todo=""):
-    """git's stdout; Stop naming `what`, git's reason and `todo` (what a person does next) when git fails."""
+    """git's stdout; GitFailed naming `what`, git's reason and `todo` (what a person does next) when git fails."""
     rc, out, err = run_cmd(["git", "-C", cwd] + args)
     if rc != 0:
-        raise Stop(f"{what} ({one_line(err, 200) or 'git exited ' + str(rc)})" + (f" — {todo}" if todo else ""))
+        raise GitFailed(what, one_line(err, 200) or "git exited " + str(rc), todo)
     return out
 
 
@@ -510,7 +519,7 @@ def idd_branches(cwd):
               f"check that git can read this working tree, {AGAIN}")
     found = {}
     for ref in out.splitlines():
-        m = re.match(r"^refs/heads/idd/([0-9]+)(?:-.*)?$", ref)   # BRANCH_OF, for any issue number
+        m = re.match(r"^refs/heads/idd/(0|[1-9][0-9]*)(?:-.*)?$", ref)   # BRANCH_OF, for any issue number as it is written (no leading zero)
         if m:
             found.setdefault(int(m.group(1)), []).append(ref[len("refs/heads/"):])
     return {n: sorted(b) for n, b in found.items()}
@@ -549,9 +558,17 @@ def operation_in_progress(cwd):
     return ""
 
 
-def some(paths):
-    shown = ", ".join(one_line(p, 60) for p in paths[:3])
-    return shown + (f" and {len(paths) - 3} more" if len(paths) > 3 else "")
+def some(paths, room):
+    """Up to three of the paths and the number of the others, in at most `room` characters: the paths are
+    shortened to fit, the number is never cut off."""
+    shown = list(paths[:3])
+    while shown:
+        tail = f" and {len(paths) - len(shown)} more" if len(paths) > len(shown) else ""
+        each = (room - len(tail) - 2 * (len(shown) - 1)) // len(shown)
+        if each >= 12:
+            return ", ".join(one_line(p, each) for p in shown) + tail
+        shown.pop()
+    return f"{len(paths)} path(s)"
 
 
 def vouched(top, folder, manifest, path):
@@ -600,7 +617,7 @@ def discard(cwd, top, path, what, todo):
     except FileNotFoundError:
         pass
     except OSError as exc:
-        raise Stop(f"{what} ({exc.strerror or exc}) — {todo}")
+        raise GitFailed(what, f"{one_line(path, 80)}: {exc.strerror or exc}", todo)
 
 
 def own_commits(cwd, default, branch, what, todo):
@@ -719,7 +736,8 @@ def cmd_start(argv):
     cwd, repo, path = a["--cwd"], a["--repo"], a["--path"]
     if path != "PR":   # between two issues, what an issue left is kept on its own branch: only the PR path has one
         raise Stop(f"rest mode runs on the PR path only, and this run resolved to {one_line(path, 40)} — pass --pr "
-                   "(/idd-all --pr), or name the issues one at a time (/idd-all #N)")
+                   "(/idd-all --pr); when the path was downgraded because the ralph-loop plugin is missing, install "
+                   "it first; or name the issues one at a time (/idd-all #N)")
     ensure_ignored(cwd)   # before anything is read or written
     st, problem = read_state(cwd, repo)
     resumed = st is not None and now() - ts(st["updated_at"]) < STATE_TTL
@@ -826,29 +844,42 @@ def cmd_settle(argv):
         return refuse(f"#{n} is not the issue recorded last ({held})")
     if last.get("settled", True):   # settled already (or recorded as existing work by next): change nothing
         return emit({"issue": n, "settled": True, "kept": last.get("kept", []), "again": True})
+    default = st["default"]
+    if default.startswith("-") or not git_ok(cwd, ["check-ref-format", "--branch", default]):   # start checked it; the file may have changed since
+        raise Stop(f"#{n}: the run state does not hold a usable default branch — end this run with report, then run /idd-all again")
     branch = run_cmd(["git", "-C", cwd, "symbolic-ref", "--quiet", "--short", "HEAD"])[1].strip()
     try:
-        kept, gone = settle_tree(cwd, n, st["default"], branch, last, st)
-    except Stop as exc:   # whichever step failed, the reason names the issue and where the working tree is now
-        text = str(exc)
-        if text.startswith(f"#{n} "):
-            raise
-        now_on = run_cmd(["git", "-C", cwd, "symbolic-ref", "--quiet", "--short", "HEAD"])[1].strip()
-        raise Stop(f"#{n} (working tree on {one_line(now_on or 'no branch', 60)}): {text}")
+        kept, gone = settle_tree(cwd, n, default, branch, last, st)
+    except SettleStop:
+        raise
+    except Stop as exc:   # whichever step failed, the reason has the same shape and names where the working tree is now
+        now_on = run_cmd(["git", "-C", cwd, "symbolic-ref", "--quiet", "--short", "HEAD"])[1].strip() or "no branch"
+        if isinstance(exc, GitFailed):
+            raise SettleStop(n, now_on, exc.what, exc.todo or f"look at that, {AGAIN}", exc.err)
+        raise SettleStop(n, now_on, str(exc), f"look at that, {AGAIN}")
     last["kept"], last["settled"] = kept, True
     save_state(cwd, st)
     return emit({"issue": n, "settled": True, "kept": kept, "discarded": gone})
 
 
-AGAIN = "then run the same /idd-all command again, with the flags you used"
+AGAIN = "then run the same /idd-all command again (same flags)"
+
+
+class SettleStop(Stop):
+    """The one shape of a reason settle stops with: the issue and the branch the working tree is on, what is
+    wrong, what a person does next, and only then the detail (git's words, or up to three paths and the number
+    of the others) — the whole line no longer than the limit for a reason."""
+
+    def __init__(self, n, on, problem, todo, detail=""):
+        head = f"#{n} (working tree on {one_line(on, 40)}): {one_line(problem, 80)} — {one_line(todo, 130)}"
+        room = REASON_MAX - len(head) - 3
+        if detail and room >= 16:
+            head += f" ({detail(room) if callable(detail) else one_line(detail, room)})"
+        super().__init__(one_line(head, REASON_MAX))
 
 
 def trouble(n, on, problem, todo, paths=()):
-    """One reason line for a settle that stops: the issue and the branch, what is wrong, what a person does next,
-    and only then up to three paths — cut so that the whole line fits the limit for a reason."""
-    head = f"#{n} (working tree on {one_line(on, 60)}): {problem} — {todo}, {AGAIN}"
-    room = REASON_MAX - len(head) - 3
-    return Stop(head + (f" ({one_line(some(paths), room)})" if paths and room > 20 else ""))
+    return SettleStop(n, on, problem, f"{todo}, {AGAIN}", (lambda room: some(paths, room)) if paths else "")
 
 
 def settle_tree(cwd, n, default, branch, last, st):
@@ -869,13 +900,14 @@ def settle_tree(cwd, n, default, branch, last, st):
         fresh = (own_commits(cwd, default, branch, f"could not compare {branch} with origin/{default}", look) == 0
                  and not upstream_of(cwd, branch, f"could not read the upstream of {branch}", look))
         gone = regenerated(top, pre, n, paths, fresh)             # step 1: what idd-diagnose writes again
-        for p in gone:
-            discard(cwd, top, p, f"could not discard {one_line(p, 80)}", f"remove it by hand, check out {default}")
         paths = [p for p in paths if p not in gone]
         bad = [p for p in paths if keep_out(p, pre)]              # step 2: places that are never committed
-        if bad:
+        if bad:                                                   # decided before anything is discarded: exit 3 changes nothing
             raise trouble(n, on, "it holds files IDD keeps out of git",
                           f"have git ignore them, commit or remove what else is left, check out {default}", bad)
+        for p in gone:
+            discard(cwd, top, p, "could not discard a record that idd-diagnose writes again",
+                    f"remove it by hand, check out {default}, {AGAIN}")
         if paths:                                                 # step 3: everything else stays with the issue
             todo = f"commit or remove what is left on {on}, check out {default}"
             git(cwd, ["add", "-A", "--", ":(top)"], f"could not stage what the run left on {on}", f"{todo}, {AGAIN}")
