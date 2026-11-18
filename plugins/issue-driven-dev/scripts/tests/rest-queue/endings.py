@@ -4,22 +4,25 @@
 One temporary repository (with a bare origin) per row of that table. What `idd-diagnose` leaves is written by
 the real writer, `process-attachments.sh download`, with gh and curl replaced on PATH; the line in
 routing-stats.jsonl is appended here, because its writer (idd-route) is an external program; the meeting row
-repeats the two git commands of the meeting unwind. Each row then runs `rest-queue.py settle` and checks the
-result, not the steps:
+repeats the two git commands of the meeting unwind; a rejecting commit hook and an ignore rule of the issue's own
+branch are really installed and committed. GitHub's side of each row (the phase, `### Blocking`, the Diagnosis
+type) is what that ending leaves there, so the last column is checked against the class a later run really sees.
+Each row then runs `rest-queue.py settle` and checks the result, not the steps:
 
   exit 0  the working tree is on the default branch and `git status --porcelain` prints nothing (the check
           every issue on the PR path starts with); the branches of #5 are those of the row and the run state
           names exactly them; a path that was left over is either in the commit settle made, byte for byte, or
-          it is the manifest or a file the manifest lists with its SHA-256 (nothing else may be discarded); and
-          a new run hands #5 out, or records it as existing work, as the row says
+          it is the manifest or a file the manifest vouches for (nothing else may be discarded); a stash the row
+          names can be applied again and gives the file back; and a later run does with #5 what the row says
   exit 3  HEAD, the branch, every branch tip and the output of git status are unchanged, and there is one
           reason line that names #5
 
-A row whose issue is closed has no later run to look at; there the report is checked instead: it names the kept
-branch with settle's commit and its paths, or no branch at all.
+A step the report tells a person to take is taken here: a kept branch without an upstream is deleted, and a new
+run then hands the issue out. A row whose issue is closed has no later run to look at; there the report is
+checked instead.
 
 The row names, the exit codes, the branches afterwards and the later run are compared with the table in the spec
-when the spec is on disk.
+when the spec is on disk (a change that is not archived yet wins over the main spec).
 """
 import glob
 import hashlib
@@ -44,9 +47,12 @@ DOC = FOLDER + "spec.docx"
 LOG = ".claude/.idd/routing-stats.jsonl"
 PROPOSAL = "openspec/changes/idd-5-x/proposal.md"
 B = "idd/5-x"
+STATE = ".claude/.idd/state/idd-all-rest.json"
+STASH_MESSAGE = f"idd rest: files of #5 that only {B} ignores"
 
 # on: where the working tree is when settle runs · work: the branch has a commit of its own · leave: what the
-# ending leaves · exit / branches / committed (the paths of settle's commit, None = no commit) / discarded / later
+# ending leaves · gh: the issue on GitHub after the ending (scenario.py) · exit / branches / committed (the paths
+# of settle's commit, None = no commit) / discarded / later (what a later run does with #5)
 ROWS = [
     dict(id="closed-before-start", on="main", outcome="closed", exit=0, branches=[], later="closed"),
     dict(id="existing-work", on="main", exit=0, branches=[], later="handed"),
@@ -58,17 +64,23 @@ ROWS = [
          branches=[], discarded=[M], later="handed"),
     dict(id="stop-after-diagnose-tracked-manifest", on="own", tracked_manifest=True, leave=["manifest"], exit=0,
          branches=[], discarded=[M], later="handed"),
+    dict(id="stop-after-diagnose-failed-download", on="own", leave=["failed-download"], exit=0, branches=[],
+         discarded=[M, DOC], later="handed"),
     dict(id="stop-after-diagnose-foreign-file", on="own", leave=["manifest", "foreign"], exit=0, branches=[B],
          committed=[M, FOLDER + "notes.txt"], later="existing"),
-    dict(id="meeting", on="main", meeting=True, exit=0, branches=[B], later="existing"),
+    dict(id="meeting", on="main", meeting=True, gh="5:diag=meeting", exit=0, branches=[B], later="meeting"),
     dict(id="stop-in-implement", on="own", work=True, leave=["edit", "proposal", "manifest"], exit=0, branches=[B],
          committed=["a.txt", PROPOSAL], discarded=[M], later="existing"),
     dict(id="stop-in-implement-attachments", on="own", work=True, leave=["edit", "attachment"], exit=0, branches=[B],
          committed=["a.txt", M, DOC], later="existing"),
-    dict(id="stop-after-verify", on="own", work=True, leave=["manifest", "log"], exit=0, branches=[B],
-         committed=[LOG], discarded=[M], later="existing"),
-    dict(id="stop-at-close-stage", on="own", work=True, upstream=True, leave=["manifest", "log"], exit=0,
-         branches=[B], committed=[LOG], discarded=[M], later="existing"),
+    dict(id="stop-in-implement-hooks-reject", on="own", work=True, leave=["edit", "rejecting-hook"], exit=0,
+         branches=[B], committed=["a.txt"], no_hooks=True, later="existing"),
+    dict(id="stop-in-implement-ignored-files", on="own", work=True, work_ignore=True, leave=["ignored"], exit=0,
+         branches=[B], stash=["coverage/"], later="existing"),
+    dict(id="stop-after-verify-failed", on="own", work=True, leave=["manifest", "log"], gh="5:blocking=verify findings",
+         exit=0, branches=[B], committed=[LOG], discarded=[M], later="blocked"),
+    dict(id="stop-at-close-stage", on="own", work=True, upstream=True, leave=["manifest", "log"],
+         gh="5:html=body-verified", exit=0, branches=[B], committed=[LOG], discarded=[M], later="verified"),
     dict(id="merged-and-closed", on="own", work=True, work_manifest=True, upstream=True, squash=True,
          outcome="closed", leave=["manifest", "log"], exit=0, branches=[B], committed=[LOG], discarded=[M],
          later="closed"),
@@ -92,11 +104,17 @@ def write(path, text, mode="w"):
         fh.write(text)
 
 
+def executable(path, text):
+    write(path, text)
+    os.chmod(path, 0o755)
+
+
 def stubs(base):
-    """gh and curl as process-attachments.sh calls them: an issue with or without one attachment, and its bytes."""
+    """gh and curl as process-attachments.sh calls them: an issue with or without one attachment, and its bytes;
+    with CURL_STUB_MODE=fail the download breaks off after part of the file arrived."""
     d = os.path.join(base, "stub")
     os.mkdir(d)
-    write(os.path.join(d, "gh"), """#!/usr/bin/env bash
+    executable(os.path.join(d, "gh"), """#!/usr/bin/env bash
 case "${1:-}" in
   issue) case "${GH_STUB_MODE:-empty}" in
            empty)    printf '{"body":"no attachment here","comments":[]}\\n' ;;
@@ -106,21 +124,20 @@ case "${1:-}" in
   *)     echo "gh stub: unhandled: $*" >&2; exit 1 ;;
 esac
 """)
-    write(os.path.join(d, "curl"), """#!/usr/bin/env bash
+    executable(os.path.join(d, "curl"), """#!/usr/bin/env bash
 out=""; while [ $# -gt 0 ]; do [ "$1" = "-o" ] && out="$2"; shift; done
+if [ "${CURL_STUB_MODE:-ok}" = fail ]; then [ -n "$out" ] && printf 'attach' > "$out"; exit 18; fi
 [ -n "$out" ] && printf 'attachment bytes\\n' > "$out"
 """)
-    for name in ("gh", "curl"):
-        os.chmod(os.path.join(d, name), 0o755)
     return d
 
 
-def download(tree, stub, mode, caller):
-    """The real writer, run the way idd-diagnose runs it: from the working tree, for issue 5."""
-    env = dict(GIT_ENV, PATH=stub + os.pathsep + os.environ["PATH"], GH_STUB_MODE=mode)
+def download(tree, stub, mode, caller, curl="ok"):
+    """The real writer, run from the working tree, for issue 5."""
+    env = dict(GIT_ENV, PATH=stub + os.pathsep + os.environ["PATH"], GH_STUB_MODE=mode, CURL_STUB_MODE=curl)
     env["IDD_CALLER"] = caller   # recorded in the manifest as fetched_by
     proc = sh(["bash", PA, "download", "5", "--repo", "o/r"], cwd=tree, env=env, check=False)
-    if proc.returncode != 0:
+    if proc.returncode != 0 and curl == "ok":   # with a broken download the writer itself reports the failure
         raise RuntimeError(f"process-attachments.sh download failed: {proc.stderr.strip()[:300]}")
 
 
@@ -140,7 +157,20 @@ def template(base):
 
 def rq(tree, gh_dir, *args):
     env = dict(GIT_ENV, IDD_GH=os.path.join(HERE, "fake-gh.py"), FAKE_GH_DIR=gh_dir, IDD_CLOSE_STAGE_TEST="1")
-    return sh([sys.executable, RQ, args[0], "--cwd", tree, "--repo", "o/r", *args[1:]], env=env, check=False)
+    scoped = [] if args[0] == "list" else ["--cwd", tree]
+    return sh([sys.executable, RQ, args[0], *scoped, "--repo", "o/r", *args[1:]], env=env, check=False)
+
+
+def state_of(tree):
+    with open(os.path.join(tree, STATE)) as fh:
+        return json.load(fh)
+
+
+def answer(proc):
+    try:
+        return json.loads(proc.stdout)
+    except ValueError:
+        return {}
 
 
 def left_over(tree):
@@ -157,17 +187,19 @@ def branches_of_5(tree):
 
 
 def regenerated(tree, path):
-    """True for the manifest, and for a file the manifest lists with the SHA-256 the file has (the spec's rule)."""
+    """True for the manifest, and for a file the manifest vouches for: it lists the file with the SHA-256 the
+    file has, or as a download that failed (the spec's rule)."""
     if path == M:
         return True
     try:
         with open(os.path.join(tree, M)) as fh:
-            listed = {f.get("filename"): f.get("sha256") for f in json.load(fh)["files"]}
+            listed = {f.get("filename"): f for f in json.load(fh)["files"]}
         with open(os.path.join(tree, path), "rb") as fh:
             digest = hashlib.sha256(fh.read()).hexdigest()
     except (OSError, ValueError, KeyError):
         return False
-    return path.startswith(FOLDER) and listed.get(path[len(FOLDER):]) == digest
+    row = listed.get(path[len(FOLDER):]) if path.startswith(FOLDER) else None
+    return bool(row) and (row.get("sha256") == digest or bool(row.get("error")))
 
 
 def build(base, stub, row):
@@ -176,7 +208,7 @@ def build(base, stub, row):
     origin, tree, gh_dir = os.path.join(root, "origin.git"), os.path.join(root, "tree"), os.path.join(root, "gh")
     git(tree, "remote", "set-url", "origin", origin)
     os.mkdir(gh_dir)
-    sh([sys.executable, os.path.join(HERE, "scenario.py"), gh_dir, "5"])
+    sh([sys.executable, os.path.join(HERE, "scenario.py"), gh_dir, row.get("gh", "5")])
     if row.get("ignore_files"):   # the documented rule: the downloaded files are ignored, the manifest is not
         write(os.path.join(tree, ".gitignore"), ".claude/.idd/attachments/*/*\n!.claude/.idd/attachments/*/_manifest.json\n")
         git(tree, "add", ".gitignore")
@@ -190,16 +222,19 @@ def build(base, stub, row):
     if outcome == "closed":
         write(os.path.join(gh_dir, "state-5"), "CLOSED\n")
     stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    write(os.path.join(tree, ".claude/.idd/state/idd-all-rest.json"), json.dumps({
-        "version": 2, "repo": "o/r", "path": "PR", "default": "main", "started_at": stamp, "updated_at": stamp,
-        "stop": None, "attempts": [{"issue": 5, "outcome": outcome, "reason": "" if outcome == "closed" else "x",
-                                    "handed_at": stamp, "recorded_at": stamp, "settled": False}]}))
+    write(os.path.join(tree, STATE), json.dumps({
+        "version": 3, "repo": "o/r", "path": "PR", "default": "main", "review": False, "started_at": stamp,
+        "updated_at": stamp, "stop": None,
+        "attempts": [{"issue": 5, "outcome": outcome, "reason": "" if outcome == "closed" else "x",
+                      "handed_at": stamp, "recorded_at": stamp, "settled": False}]}))
     if row["on"] == "own" or row.get("meeting"):
         git(tree, "checkout", "-q", "--no-track", "-b", B, "origin/main")   # as Phase 0.5 creates it
     if row.get("work"):
         write(os.path.join(tree, "w.txt"), "w\n")
         if row.get("work_manifest"):   # the run's own commit carried the manifest
             download(tree, stub, "empty", "idd-issue")
+        if row.get("work_ignore"):     # a commit of the issue adds an ignore rule the default branch lacks
+            write(os.path.join(tree, ".gitignore"), "coverage/\n")
         git(tree, "add", "-A")
         git(tree, "commit", "-q", "-m", "work of #5 (#5)")
     if row.get("upstream"):
@@ -212,6 +247,8 @@ def build(base, stub, row):
             download(tree, stub, "empty", "idd-diagnose")
         elif kind == "attachment":
             download(tree, stub, "with_url", "idd-diagnose")
+        elif kind == "failed-download":
+            download(tree, stub, "with_url", "idd-diagnose", curl="fail")
         elif kind == "foreign":
             write(os.path.join(tree, FOLDER, "notes.txt"), "a person's notes\n")
         elif kind == "edit":
@@ -224,6 +261,10 @@ def build(base, stub, row):
             write(os.path.join(tree, "b.txt"), "b\n")
         elif kind == "lock":
             write(os.path.join(tree, ".claude/.idd/tree-lock"), "pid\n")
+        elif kind == "rejecting-hook":   # a lint hook: it rejects what the run left
+            executable(os.path.join(tree, ".git", "hooks", "pre-commit"), "#!/bin/sh\necho 'lint: a.txt fails' >&2\nexit 1\n")
+        elif kind == "ignored":          # written by the run, ignored by the rule the issue's commit added
+            write(os.path.join(tree, "coverage", "report.txt"), "the report\n")
     if row.get("meeting"):   # the meeting unwind: commit the attachment folder on the branch, return to the default branch
         download(tree, stub, "empty", "idd-diagnose")
         git(tree, "add", "--", FOLDER.rstrip("/"))
@@ -232,6 +273,30 @@ def build(base, stub, row):
     if row["on"] == "wip":
         git(tree, "checkout", "-q", "-b", "wip")
     return root, origin, tree, gh_dir
+
+
+def later_run(tree, gh_dir, row, problems):
+    """What a later run does with #5: the last column of the table."""
+    later = row["later"]
+    started = rq(tree, gh_dir, "start", "--path", "PR", "--review", "no")
+    if started.returncode != 0:
+        problems.append(f"a new run does not start after settle: {started.stderr.strip()[:200]}")
+        return
+    nxt = answer(rq(tree, gh_dir, "next"))
+    attempts = state_of(tree)["attempts"]
+    if later == "handed":
+        if nxt.get("next") != 5:
+            problems.append(f"a later run does not hand #5 out: {nxt}")
+    elif later == "existing":
+        if nxt.get("next") is not None or not attempts or not attempts[0]["reason"].startswith("existing work: local branch " + B):
+            problems.append(f"a later run does not record #5 as existing work: {nxt} {attempts[:1]}")
+    else:   # no longer a candidate: listed under its class, not handed out, not recorded
+        classes = answer(rq(tree, gh_dir, "list", "--json")).get("classes", {})
+        if 5 not in classes.get(later, []):
+            problems.append(f"#5 is not in the class {later} for a later run: {classes}")
+        if nxt.get("next") is not None or attempts:
+            problems.append(f"a later run hands out or records #5 although it is {later}: {nxt} {attempts[:1]}")
+    rq(tree, gh_dir, "report")
 
 
 def check(base, stub, row):
@@ -262,11 +327,12 @@ def check(base, stub, row):
         problems.append("git status --porcelain prints something: the next issue would stop")
     if branches_of_5(tree) != row["branches"]:
         problems.append(f"branches of #5: {branches_of_5(tree)}, want {row['branches']}")
-    with open(os.path.join(tree, ".claude/.idd/state/idd-all-rest.json")) as fh:
-        attempt = json.load(fh)["attempts"][0]
+    attempt = state_of(tree)["attempts"][0]
     kept = attempt.get("kept", [])
     if sorted(k["branch"] for k in kept) != row["branches"]:
         problems.append(f"the run state keeps {[k['branch'] for k in kept]}, want {row['branches']}")
+    if kept and kept[0].get("upstream") is not bool(row.get("upstream")):
+        problems.append(f"the run state says upstream {kept[0].get('upstream')!r}, the branch has {'one' if row.get('upstream') else 'none'}")
     discarded = set(row.get("discarded", []))
     if not discarded <= set(left):
         problems.append(f"fixture: {sorted(discarded - set(left))} was not left over")
@@ -285,6 +351,10 @@ def check(base, stub, row):
             problems.append(f"the commit holds {names}, want {sorted(committed)}")
         if not kept or kept[0].get("commit") != tip or sorted(kept[0].get("paths", [])) != sorted(committed):
             problems.append(f"the run state does not record the commit and its paths: {kept}")
+        body = git(tree, "log", "-1", "--format=%b", B) if tip else ""
+        skipped = "hooks" in body and "skipped" in body
+        if bool(row.get("no_hooks")) is not skipped or bool(row.get("no_hooks")) is not (bool(kept) and kept[0].get("hooks") == "skipped"):
+            problems.append(f"hooks skipped: the commit message says {skipped}, the run state {kept[0].get('hooks') if kept else None!r}, the row {bool(row.get('no_hooks'))}")
     for p in left:
         if p in discarded:
             continue
@@ -293,40 +363,54 @@ def check(base, stub, row):
             problems.append(f"{p} was left over and is not on {B} as it was")
     if set(left) - discarded - set(committed or []):
         problems.append(f"neither kept nor discarded: {sorted(set(left) - discarded - set(committed or []))}")
-    later = row["later"]
-    if later == "closed":   # no later run hands a closed issue out: what the report says about it is what is left to check
-        text = rq(tree, gh_dir, "report").stdout
-        lines = [ln for ln in text.splitlines() if B in ln]
+    stash = attempt.get("stash")
+    if row.get("stash"):
+        listed = git(tree, "stash", "list", "--format=%H %gs")
+        if not stash or stash.get("paths") != row["stash"] or stash.get("commit", "?") not in listed or STASH_MESSAGE not in listed:
+            problems.append(f"the stash is not recorded with its commit and paths: state {stash}, stash list {listed.strip()[:160]!r}")
+    elif stash or git(tree, "stash", "list"):
+        problems.append(f"a stash was made and the row has none: {stash}")
+    report = rq(tree, gh_dir, "report").stdout
+    if row["later"] == "closed":   # no later run hands a closed issue out: what the report says about it is what is left to check
+        lines = [ln for ln in report.splitlines() if B in ln]
         if committed is None and lines:
             problems.append(f"the report names a branch of the closed issue: {lines[0][:160]}")
         if committed is not None and not any(tip[:7] in ln and all(p in ln for p in committed) for ln in lines):
             problems.append(f"the report does not name {B}, the commit and its paths under the closed issue: {lines[:1]}")
     else:
-        rq(tree, gh_dir, "report")
-        started = rq(tree, gh_dir, "start", "--path", "PR")
-        nxt = rq(tree, gh_dir, "next")
-        try:
-            answer = json.loads(nxt.stdout)
-        except ValueError:
-            answer = {}
-        if later == "handed" and answer.get("next") != 5:
-            problems.append(f"a new run does not hand #5 out: start {started.returncode}, next {nxt.stdout.strip()[:120]!r} {nxt.stderr.strip()[:120]!r}")
-        if later == "existing":
-            with open(os.path.join(tree, ".claude/.idd/state/idd-all-rest.json")) as fh:
-                again = json.load(fh)["attempts"]
-            if answer.get("next") is not None or not again or not again[0]["reason"].startswith("existing work: local branch " + B):
-                problems.append(f"a new run does not record #5 as existing work: {nxt.stdout.strip()[:120]!r}")
+        if row.get("no_hooks") and "without the repository's commit hooks" not in report:
+            problems.append("the report does not say that the commit was made without the commit hooks")
+        advice = "deleting it lets a later rest run start the issue over" in report
+        want_advice = bool(row["branches"]) and not row.get("upstream")
+        if advice is not want_advice:
+            problems.append(f"the report {'gives' if advice else 'does not give'} the delete-the-branch step; the row {'has a kept branch without an upstream' if want_advice else 'has none'}")
+        later_run(tree, gh_dir, row, problems)
+        if want_advice and row["later"] == "existing":   # the step the report gives, taken: the issue is then handed out
+            git(tree, "branch", "-D", B)
+            again = dict(row, later="handed")
+            later_run(tree, gh_dir, again, problems)
+    if row.get("stash") and stash:   # the other step the report gives: the stash applied on that branch gives the file back
+        if f"git stash apply {stash['commit']}" not in report:
+            problems.append("the report does not say how to get the stashed files back")
+        if not branches_of_5(tree):
+            git(tree, "branch", B, tip)   # deleted above to take the report's first step; the stash is applied where the report says
+        git(tree, "checkout", "-q", B)
+        applied = sh(["git", "-C", tree, "stash", "apply", "-q", stash["commit"]], check=False)
+        path = os.path.join(tree, "coverage", "report.txt")
+        if applied.returncode != 0 or not os.path.isfile(path) or open(path).read() != "the report\n":
+            problems.append(f"the stash does not give coverage/report.txt back: {applied.stderr.strip()[:160]}")
     return problems
 
 
 BRANCH_CELL = {"none": [], "unchanged": None}   # cells that begin with `idd/5-x` keep that branch
-LATER_CELL = {"handed out": "handed", "existing work": "existing", "#5 is closed": "closed", "—": None}
+LATER_CELL = {"handed out": "handed", "existing work": "existing", "#5 is closed": "closed", "—": None,
+              "not run: verified": "verified", "not run: blocked": "blocked", "not run: meeting": "meeting"}
 
 
 def spec_rows():
     """{row id: (exit code, branches afterwards, later run)} of the table in the spec, or None when no spec
     with that Example is on disk."""
-    for path in [os.path.join(ROOT, "openspec/specs/idd-all-rest/spec.md")] + sorted(glob.glob(os.path.join(ROOT, "openspec/changes/*/specs/idd-all-rest/spec.md"))):
+    for path in sorted(glob.glob(os.path.join(ROOT, "openspec/changes/*/specs/idd-all-rest/spec.md"))) + [os.path.join(ROOT, "openspec/specs/idd-all-rest/spec.md")]:
         try:
             with open(path, encoding="utf-8") as fh:
                 text = fh.read()

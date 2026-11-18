@@ -121,7 +121,7 @@ def one(base, case):
         write(os.path.join(tree, ".claude/.idd/tree-lock"), "pid\n")
     stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     write(os.path.join(tree, ".claude/.idd/state/idd-all-rest.json"), json.dumps({
-        "version": 2, "repo": "o/r", "path": "PR", "default": "main", "started_at": stamp, "updated_at": stamp, "stop": None,
+        "version": 3, "repo": "o/r", "path": "PR", "default": "main", "review": False, "started_at": stamp, "updated_at": stamp, "stop": None,
         "attempts": [{"issue": 5, "outcome": "stopped", "reason": "x", "handed_at": stamp, "recorded_at": stamp,
                       "settled": False}]}))
     before, tip = snapshot(tree), git(tree, "rev-parse", "idd/5-x")
