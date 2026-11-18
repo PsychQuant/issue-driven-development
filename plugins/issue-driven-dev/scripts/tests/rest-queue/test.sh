@@ -35,7 +35,33 @@ new() { # name issue-spec… → S (scenario dir), G (gh answers), T (working tr
   export FAKE_GH_DIR="$G"
   python3 "$HERE/scenario.py" "$G" "$@"
 }
-settle() { run settle --issue "$1" --default main --path "${2:-PR}"; }   # the step between two issues
+settle() { run settle --issue "$1"; }   # the step between two issues
+# what idd-diagnose leaves is written by the real writer, with gh and curl replaced on PATH
+STUB="$WORK/stub"; mkdir -p "$STUB"
+cat > "$STUB/gh" <<'GHSTUB'
+#!/usr/bin/env bash
+case "${1:-}" in
+  issue) case "${GH_STUB_MODE:-empty}" in
+           empty)    printf '{"body":"no attachment here","comments":[]}\n' ;;
+           with_url) printf '{"body":"spec: https://github.com/user-attachments/files/123/spec.docx ok","comments":[]}\n' ;;
+         esac ;;
+  auth)  echo stub-token ;;
+  *)     echo "gh stub: unhandled: $*" >&2; exit 1 ;;
+esac
+GHSTUB
+cat > "$STUB/curl" <<'CURLSTUB'
+#!/usr/bin/env bash
+out=""; while [ $# -gt 0 ]; do [ "$1" = "-o" ] && out="$2"; shift; done
+[ -n "$out" ] && printf 'attachment bytes\n' > "$out"
+CURLSTUB
+chmod +x "$STUB/gh" "$STUB/curl"
+download() { # issue [dir] [mode] → process-attachments.sh download, run from dir (default: the working tree)
+  (cd "${2:-$T}" && PATH="$STUB:$PATH" GH_STUB_MODE="${3:-empty}" IDD_CALLER=idd-diagnose \
+     bash "$PLUGIN/scripts/process-attachments.sh" download "$1" --repo "$REPO" > /dev/null 2>&1)
+}
+kept_of() { # issue → the kept entries of that attempt in the run state, as compact JSON
+  python3 -c 'import json,sys; a=[x for x in json.load(open(sys.argv[1]))["attempts"] if x["issue"]==int(sys.argv[2])][0]; print(json.dumps(a.get("kept", []), separators=(",",":")))' "$(state_file)" "$1"
+}
 remote_ahead() { # origin/main gets one commit the working tree does not have
   git clone -q "$T.origin.git" "$S/other" 2>/dev/null && printf 'b\n' > "$S/other/b.txt" \
     && git -C "$S/other" add b.txt && git -C "$S/other" commit -q -m remote && git -C "$S/other" push -q origin main 2>/dev/null
@@ -62,7 +88,7 @@ at = time.time() - hours * 3600
 for a in attempts:
     a.setdefault("handed_at", stamp(at)); a.setdefault("recorded_at", stamp(at)); a.setdefault("reason", "")
     a.setdefault("settled", True)
-json.dump({"version": 1, "repo": "o/r", "started_at": stamp(at - 60), "updated_at": stamp(at),
+json.dump({"version": 2, "repo": "o/r", "path": "PR", "default": "main", "started_at": stamp(at - 60), "updated_at": stamp(at),
            "attempts": attempts, "stop": None}, open(path, "w"))
 PY
 }
@@ -216,7 +242,7 @@ assert_eq "clarity: two open rows, in document order, and the single-row functio
 echo "── the run ──"
 # spec-example: idd-all-rest / a spawned issue is picked up
 new spawn 5 9
-run start > "$S/start.out" 2>&1; rc=$?
+run start --path PR > "$S/start.out" 2>&1; rc=$?
 assert_exit "spawn: start exits 0" 0 "$rc"
 assert_eq "spawn: first next is #5" "5" "$(run next | jget next)"
 assert_eq "spawn: #5 is recorded as stopped" "stopped" "$(run record --issue 5 --reason 'verify gate: not_clean' | jget outcome)"
@@ -233,31 +259,36 @@ assert_eq "spawn: and #5 is not handed out again" "null" "$(printf '%s' "$OUT" |
 
 # spec-example: idd-all-rest / the in-flight issue is repeated
 new inflight 5 9
-run start > /dev/null 2>&1
+run start --path PR > /dev/null 2>&1
 run next > /dev/null
 OUT=$(run next)
-assert_eq "in flight: the same issue is repeated" '{"next":5,"in_flight":true}' "$(printf '%s' "$OUT" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps({"next": d["next"], "in_flight": d["in_flight"]}, separators=(",",":")))')"
+assert_eq "in flight: the same issue is repeated, with no branch" '{"next":5,"in_flight":true,"branch":null}' "$(printf '%s' "$OUT" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin), separators=(",",":")))')"
 assert_eq "in flight: the state holds one attempt" "1" "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["attempts"]))' "$(state_file)")"
+
+# spec-example: idd-all-rest / the in-flight issue names its branch
+new inflight-branch 5 9
+run start --path PR > /dev/null 2>&1; run next > /dev/null; git -C "$T" branch idd/5-x
+assert_eq "in flight: the issue names its local branch" '{"next":5,"in_flight":true,"branch":"idd/5-x"}' "$(run next | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin), separators=(",",":")))')"
 
 # spec-example: idd-all-rest / outcomes by issue state
 new out-closed 5
-run start > /dev/null 2>&1; run next > /dev/null; echo CLOSED > "$G/state-5"
+run start --path PR > /dev/null 2>&1; run next > /dev/null; echo CLOSED > "$G/state-5"
 OUT=$(run record --issue 5)
 assert_eq "outcome: CLOSED without a reason" "closed|" "$(printf '%s' "$OUT" | jget outcome)|$(printf '%s' "$OUT" | jget reason)"
 new out-open-reason 5
-run start > /dev/null 2>&1; run next > /dev/null
+run start --path PR > /dev/null 2>&1; run next > /dev/null
 OUT=$(run record --issue 5 --reason "verify gate: not_clean")
 assert_eq "outcome: OPEN with a reason" "stopped|verify gate: not_clean" "$(printf '%s' "$OUT" | jget outcome)|$(printf '%s' "$OUT" | jget reason)"
 new out-open-none 5
-run start > /dev/null 2>&1; run next > /dev/null
+run start --path PR > /dev/null 2>&1; run next > /dev/null
 OUT=$(run record --issue 5)
 assert_eq "outcome: OPEN without a reason" "stopped|no reason given" "$(printf '%s' "$OUT" | jget outcome)|$(printf '%s' "$OUT" | jget reason)"
 new out-claimed 5
-run start > /dev/null 2>&1; run next > /dev/null
+run start --path PR > /dev/null 2>&1; run next > /dev/null
 OUT=$(run record --issue 5 --reason "merged and closed")
 assert_eq "outcome: an open issue is stopped whatever the caller says" "stopped" "$(printf '%s' "$OUT" | jget outcome)"
 new out-wrong 5 9
-run start > /dev/null 2>&1; run next > /dev/null
+run start --path PR > /dev/null 2>&1; run next > /dev/null
 cp "$(state_file)" "$S/before.json"
 run record --issue 9 > /dev/null 2>&1; rc=$?
 assert_exit "record: an issue that is not in flight exits 1" 1 "$rc"
@@ -265,10 +296,10 @@ require "record: and the state is unchanged" cmp -s "$S/before.json" "$(state_fi
 
 # spec-example: idd-all-rest / stop ends the run
 new cont 5 9
-run start > /dev/null 2>&1; run next > /dev/null; run record --issue 5 --reason x > /dev/null; settle 5 > /dev/null
+run start --path PR > /dev/null 2>&1; run next > /dev/null; run record --issue 5 --reason x > /dev/null; settle 5 > /dev/null
 assert_eq "one stopped issue does not end the run" "9" "$(run next | jget next)"
 new stop 5 9
-run start > /dev/null 2>&1; run next > /dev/null; run record --issue 5 --reason x > /dev/null
+run start --path PR > /dev/null 2>&1; run next > /dev/null; run record --issue 5 --reason x > /dev/null
 run stop --reason "default branch could not be fast-forwarded" > /dev/null 2>&1; rc=$?
 assert_exit "stop: exits 0" 0 "$rc"
 OUT=$(rq next --cwd "$T" --repo "$REPO")
@@ -279,7 +310,7 @@ assert_eq "stop: #9 was not handed out" "1" "$(python3 -c 'import json,sys; prin
 # spec-example: idd-all-rest / resume within 24 hours
 new resume 5 9
 write_state 2 '[{"issue": 5, "outcome": "stopped", "reason": "verify gate: not_clean"}]'
-run start > "$S/start.out" 2>&1; rc=$?
+run start --path PR > "$S/start.out" 2>&1; rc=$?
 assert_exit "resume: start exits 0" 0 "$rc"
 assert_output_grep "resume: start says the run is resumed" "resumed" "$S/start.out"
 assert_output_grep "resume: with one attempt" "1 attempt" "$S/start.out"
@@ -289,19 +320,19 @@ refute_output_grep "resume: the list prints no issue text" "SECRET-BODY-TEXT" "$
 assert_true "resume: the fixture issues do carry that title" 'grep -q "SECRET-TITLE-TEXT" "$G/issues.json"'
 assert_eq "resume: starting counts as activity (updated_at is now, not 2 hours ago)" "fresh" "$(python3 -c 'import calendar,json,sys,time; s=json.load(open(sys.argv[1])); t=calendar.timegm(time.strptime(s["updated_at"], "%Y-%m-%dT%H:%M:%SZ")); print("fresh" if time.time()-t < 300 else "stale")' "$(state_file)")"
 assert_eq "resume: next is #9, not #5" "9" "$(run next | jget next)"
-run start > /dev/null 2>&1    # a second start during the run
+run start --path PR > /dev/null 2>&1    # a second start during the run
 assert_eq "resume: a second start keeps the attempts" "2" "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["attempts"]))' "$(state_file)")"
 
 # spec-example: idd-all-rest / a state older than 24 hours starts a new run
 new expired 5 9
 write_state 25 '[{"issue": 5, "outcome": "stopped", "reason": "verify gate: not_clean"}]'
-run start > "$S/start.out" 2>&1
+run start --path PR > "$S/start.out" 2>&1
 refute_output_grep "expired: start does not resume" "resumed" "$S/start.out"
 assert_eq "expired: next is #5 again" "5" "$(run next | jget next)"
 
 # spec-example: idd-all-rest / report with one closed, one stopped and one waiting issue
 new report 5 9 14:html=body-two-rows
-run start > /dev/null 2>&1
+run start --path PR > /dev/null 2>&1
 run next > /dev/null; issues 9 14:html=body-two-rows; echo CLOSED > "$G/state-5"; run record --issue 5 > /dev/null; settle 5 > /dev/null
 run next > /dev/null; run record --issue 9 --reason "verify gate: not_clean" > /dev/null
 run report > "$S/report.out" 2>&1; rc=$?
@@ -318,7 +349,7 @@ refute_output_grep "report: prints no issue title" "SECRET-TITLE-TEXT" "$S/repor
 
 # spec-example: idd-all-rest / an attempted issue is not listed as not run
 new report-attempted 5 8:html=body-verified
-run start > /dev/null 2>&1
+run start --path PR > /dev/null 2>&1
 run next > /dev/null; run record --issue 5 --reason "verify gate: not_clean" > /dev/null
 issues 5:html=body-verified 8:html=body-verified      # by the time of the report #5 shows the phase verified too
 run report > "$S/report.out" 2>&1; rc=$?
@@ -329,14 +360,14 @@ refute_grep "report (attempted): and does not name #5" "#5" "$VLINE"
 assert_output_grep "report (attempted): #5 is under stopped" "#5 — verify gate: not_clean" "$S/report.out"
 assert_grep "report (attempted): a verified issue continues when it is named" "/idd-all #N" "$VLINE"
 new report-existing 5
-run start > /dev/null 2>&1; run next > /dev/null; run record --issue 5 --reason "existing work: PR #77" > /dev/null
+run start --path PR > /dev/null 2>&1; run next > /dev/null; run record --issue 5 --reason "existing work: PR #77" > /dev/null
 run report > "$S/report.out" 2>&1
 assert_output_grep "report: an issue with existing work is left for a person" "existing work is left for a person" "$S/report.out"
 assert_output_grep "report: whose reason names what to look at" "names the pull request or branch to look at" "$S/report.out"
 
 # spec-example: idd-all-rest / a stopped issue carries its open questions
 new report-asked 5 14:html=body-two-rows
-run start > /dev/null 2>&1
+run start --path PR > /dev/null 2>&1
 run next > /dev/null; run record --issue 5 --reason "verify gate: not_clean" > /dev/null
 issues 5:html=body-three-rows 14:html=body-two-rows      # by the time of the report #5 shows two open rows
 run report > "$S/report.out" 2>&1; rc=$?
@@ -351,7 +382,7 @@ assert_grep_re "report (asked): one issue waits for a person" '^waiting for a pe
 assert_grep "report (asked): it is #14" "#14" "$WAITING_BLOCK"
 refute_grep "report (asked): and not #5" "#5" "$WAITING_BLOCK"
 new report-flight 5
-run start > /dev/null 2>&1; run next > /dev/null
+run start --path PR > /dev/null 2>&1; run next > /dev/null
 issues 5:html=body-two-rows
 run report > "$S/report.out" 2>&1
 assert_output_grep "report: an issue in flight keeps its open questions too" "Does alpha include beta?" "$S/report.out"
@@ -359,7 +390,7 @@ assert_true "report: and it is not listed as waiting" 'grep -E "^waiting for a p
 
 # spec-example: idd-all-rest / a closed issue that was reopened carries its open questions
 new report-reopened 5 9
-run start > /dev/null 2>&1
+run start --path PR > /dev/null 2>&1
 run next > /dev/null; echo CLOSED > "$G/state-5"; run record --issue 5 > /dev/null
 issues 5:html=body-two-rows 9      # #5 is open again, with two open clarity rows
 run report > "$S/report.out" 2>&1; rc=$?
@@ -379,14 +410,14 @@ python3 - "$(state_file)" <<'PY'
 import json, sys, time
 stamp = lambda t: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
 now = time.time()
-json.dump({"version": 1, "repo": "o/r", "started_at": stamp(now - 600), "updated_at": stamp(now - 300),
+json.dump({"version": 2, "repo": "o/r", "path": "PR", "default": "main", "started_at": stamp(now - 600), "updated_at": stamp(now - 300),
            "attempts": [{"issue": 5, "handed_at": stamp(now - 500), "outcome": "stopped",
                          "reason": "verify gate\nSECOND-LINE of the issue reason", "recorded_at": stamp(now - 400)},
                         {"issue": 6, "handed_at": stamp(now - 450), "outcome": "stopped",
                          "reason": "a\tTAB-FOLLOWS " + "x" * 400, "recorded_at": stamp(now - 350)}],
            "stop": {"reason": "first line\nSECOND-LINE of the stop reason", "at": stamp(now - 300)}}, open(sys.argv[1], "w"))
 PY
-run start > "$S/start.out" 2>&1; rc=$?
+run start --path PR > "$S/start.out" 2>&1; rc=$?
 assert_exit "one line: start exits 0" 0 "$rc"
 assert_true "one line: no line of start begins with the second line" '! grep -E "^SECOND-LINE" "$S/start.out" >/dev/null'
 assert_true "one line: start holds both parts of the stop reason on one line" 'grep -E "first line SECOND-LINE of the stop reason" "$S/start.out" >/dev/null'
@@ -404,14 +435,14 @@ assert_true "one line: and a long reason is cut to the limit" '[ "$(printf "%s" 
 # spec-example: idd-all-rest / a long clarity row is printed in full
 new report-long 5 14:html=body-long-row
 assert_true "long row: the open row of the fixture is longer than 300 characters" '[ "$(grep -c "END-OF-QUESTION" "$HERE/fixtures/body-long-row.md")" = 1 ] && [ "$(grep "END-OF-QUESTION" "$HERE/fixtures/body-long-row.md" | wc -m)" -gt 300 ]'
-run start > /dev/null 2>&1; run next > /dev/null; run record --issue 5 --reason x > /dev/null
+run start --path PR > /dev/null 2>&1; run next > /dev/null; run record --issue 5 --reason x > /dev/null
 run report > "$S/report.out" 2>&1; rc=$?
 assert_exit "report (long row): exits 0" 0 "$rc"
 assert_true "report (long row): the row is printed up to its last words" 'grep -E "^    - .*END-OF-QUESTION" "$S/report.out" >/dev/null'
 assert_eq "report (long row): on one line" "1" "$(grep -c "END-OF-QUESTION" "$S/report.out")"
 
 new report-unreadable 5
-run start > /dev/null 2>&1; run next > /dev/null; run record --issue 5 --reason "stopped at the PR" > /dev/null
+run start --path PR > /dev/null 2>&1; run next > /dev/null; run record --issue 5 --reason "stopped at the PR" > /dev/null
 echo 1 > "$G/fail-page"
 run report > "$S/report.out" 2>&1; rc=$?
 assert_exit "report: still exits 0 when the list cannot be re-read" 0 "$rc"
@@ -420,7 +451,7 @@ assert_output_grep "report: and it says the list could not be read" "could not b
 assert_file_absent "report: the run state is deleted" "$(state_file)"
 
 new report-crash 5
-run start > /dev/null 2>&1; run next > /dev/null; run record --issue 5 --reason "stopped at the PR" > /dev/null
+run start --path PR > /dev/null 2>&1; run next > /dev/null; run record --issue 5 --reason "stopped at the PR" > /dev/null
 mkdir -p "$S/copy"; cp "$RQ" "$S/copy/rest-queue.py"; cp -R "$PLUGIN/scripts/lib" "$S/copy/lib"
 printf '\n\ndef latest_diagnosis(comments):\n    raise RuntimeError("a failure nobody planned for")\n' >> "$S/copy/lib/ghread.py"
 python3 "$S/copy/rest-queue.py" report --cwd "$T" --repo "$REPO" > "$S/report.out" 2>&1; rc=$?
@@ -442,12 +473,12 @@ rq bogus > /dev/null 2>&1; assert_exit "usage: an unknown subcommand exits 2" 2 
 rq next --cwd "$T" --repo "not a repo" > /dev/null 2>&1; assert_exit "usage: a malformed repo exits 2" 2 "$?"
 new symlink 5
 mkdir -p "$S/elsewhere"; ln -s "$S/elsewhere" "$T/.claude"
-run start > /dev/null 2>&1; rc=$?
+run start --path PR > /dev/null 2>&1; rc=$?
 assert_exit "start: refuses a state directory behind a symlink (exit 3)" 3 "$rc"
 assert_true "start: and writes nothing through it" '[ -z "$(ls -A "$S/elsewhere")" ]'
 new start-fail 5
 echo 1 > "$G/fail-page"
-run start > /dev/null 2>&1; rc=$?
+run start --path PR > /dev/null 2>&1; rc=$?
 assert_exit "start: exits 3 when the issues cannot be read" 3 "$rc"
 assert_file_absent "start: and leaves no run state" "$(state_file)"
 run stop --reason "the open issues could not be read" > /dev/null 2>&1; rc=$?
@@ -457,39 +488,39 @@ assert_exit "start failed: and report exits 1" 1 "$rc"
 new start-fail-resume 5 9
 write_state 2 '[{"issue": 5, "outcome": "stopped", "reason": "verify gate: not_clean"}]'
 cp "$(state_file)" "$S/before.json"; echo 1 > "$G/fail-page"
-run start > /dev/null 2>&1; rc=$?
+run start --path PR > /dev/null 2>&1; rc=$?
 assert_exit "start failed on a run it would have resumed: exits 3" 3 "$rc"
 require "start failed on a run it would have resumed: the state of that run is untouched" cmp -s "$S/before.json" "$(state_file)"
 rm "$G/fail-page"
-run start > "$S/start.out" 2>&1
+run start --path PR > "$S/start.out" 2>&1
 assert_output_grep "start failed on a run it would have resumed: a later start resumes it" "resumed" "$S/start.out"
 assert_eq "start failed on a run it would have resumed: and #5 is not handed out again" "9" "$(run next | jget next)"
 
 echo "── failures of the helper itself ──"
 new unwritable 5
 mkdir -p "$T/.claude/.idd"; : > "$T/.claude/.idd/state"      # the state directory cannot be created: a file is in the way
-run start > "$S/out" 2> "$S/err"; rc=$?
+run start --path PR > "$S/out" 2> "$S/err"; rc=$?
 assert_exit "start: a run state that cannot be written exits 3" 3 "$rc"
 assert_eq "start: with one reason line" "1" "$(wc -l < "$S/err" | tr -d ' ')"
 refute_output_grep "start: and no traceback" "Traceback" "$S/err"
 new empty-reason 5
-run start > /dev/null 2>&1; run next > /dev/null
+run start --path PR > /dev/null 2>&1; run next > /dev/null
 OUT=$(run record --issue 5 --reason ""); rc=$?
 assert_exit "record: an empty reason is accepted" 0 "$rc"
 assert_eq "record: and reads as no reason" "stopped|no reason given" "$(printf '%s' "$OUT" | jget outcome)|$(printf '%s' "$OUT" | jget reason)"
 new broken-state 5
 mkdir -p "$T/.claude/.idd/state"; printf '{"version": 1, "repo"' > "$(state_file)"
-run start > "$S/start.out" 2>&1; rc=$?
+run start --path PR > "$S/start.out" 2>&1; rc=$?
 assert_exit "start: a run state that cannot be used does not stop it" 0 "$rc"
 assert_output_grep "start: but it says so" "cannot be used" "$S/start.out"
 new null-reason 5
 write_state 1 '[{"issue": 5, "outcome": "stopped", "reason": null}]'
-run start > "$S/start.out" 2>&1; rc=$?
+run start --path PR > "$S/start.out" 2>&1; rc=$?
 assert_exit "start: an attempt without a usable reason makes the state unusable, not the command fail" 0 "$rc"
 assert_output_grep "start: and it says so" "cannot be used" "$S/start.out"
 new other-repo-state 5
 write_state 1 '[{"issue": 5, "outcome": "stopped", "reason": "x"}]'
-rq start --cwd "$T" --repo o/other > "$S/start.out" 2>&1; rc=$?
+rq start --cwd "$T" --repo o/other --path PR > "$S/start.out" 2>&1; rc=$?
 assert_exit "start: a run state of another repository does not stop it" 0 "$rc"
 assert_output_grep "start: and it says whose it was" "o/r" "$S/start.out"
 for bad in "../x" "o/.." "./r" "o/."; do
@@ -503,7 +534,7 @@ stopped_block() { awk '/^stopped \(/{f=1; next} f&&/^[^ ]/{exit} f' "$1"; }
 
 # spec-example: idd-all-rest / next waits for settle
 new waits 5 9
-run start > /dev/null 2>&1; run next > /dev/null; run record --issue 5 --reason x > /dev/null
+run start --path PR > /dev/null 2>&1; run next > /dev/null; run record --issue 5 --reason x > /dev/null
 run next > /dev/null 2> "$S/err"; rc=$?
 assert_exit "settle: next before settle exits 1" 1 "$rc"
 assert_output_grep "settle: and its reason line names the issue to settle" "#5" "$S/err"
@@ -512,31 +543,32 @@ assert_exit "settle: a clean default branch settles" 0 "$rc"
 assert_eq "settle: then next hands out #9" "9" "$(run next | jget next)"
 
 new settle-calls 5 9
-run start > /dev/null 2>&1; run next > /dev/null
+run start --path PR > /dev/null 2>&1; run next > /dev/null
 settle 5 > /dev/null 2>&1; assert_exit "settle: the issue in flight exits 1" 1 "$?"
 run record --issue 5 --reason x > /dev/null
 settle 9 > /dev/null 2>&1; assert_exit "settle: an issue that was not recorded last exits 1" 1 "$?"
-run settle --issue 5 --default main --path pr > /dev/null 2>&1; assert_exit "settle: an unknown path is a usage error" 2 "$?"
-run settle --issue 5 --default 'ma..in' --path PR > /dev/null 2>&1; assert_exit "settle: a default that is not a branch name is a usage error" 2 "$?"
-run settle --issue 5 --default main > /dev/null 2>&1; assert_exit "settle: the path is required" 2 "$?"
-mkdir -p "$WORK/no-run"; rq settle --cwd "$WORK/no-run" --repo "$REPO" --issue 5 --default main --path PR > /dev/null 2>&1
+run settle --issue 5 --default main > /dev/null 2>&1; assert_exit "settle: --default is not an argument any more" 2 "$?"
+run settle --issue 5 --path PR > /dev/null 2>&1; assert_exit "settle: neither is --path" 2 "$?"
+mkdir -p "$WORK/no-run"; rq settle --cwd "$WORK/no-run" --repo "$REPO" --issue 5 > /dev/null 2>&1
 assert_exit "settle: no run in the working tree exits 1" 1 "$?"
 
 # spec-example: idd-all-rest / leftovers on the issue's own branch are kept there
 new kept 5 9
-run start > /dev/null 2>&1; run next > /dev/null
+run start --path PR > /dev/null 2>&1; run next > /dev/null
 INIT=$(git -C "$T" rev-parse HEAD)
 git -C "$T" checkout -q -b idd/5-x
 printf 'changed\n' >> "$T/a.txt"
-mkdir -p "$T/.claude/.idd/attachments/issue-5"; printf '{}\n' > "$T/.claude/.idd/attachments/issue-5/_manifest.json"
-assert_eq "kept: the fixture's .claude folder is wholly untracked" "?? .claude/" "$(git -C "$T" status --porcelain | grep claude)"
+download 5
+assert_eq "kept: the manifest the real writer wrote is untracked" "?? .claude/" "$(git -C "$T" status --porcelain | grep claude)"
 remote_ahead
 run record --issue 5 --reason x > /dev/null
 settle 5 > "$S/out" 2> "$S/err"; rc=$?
 assert_exit "kept: settle exits 0" 0 "$rc"
 assert_eq "kept: idd/5-x has one new commit" "1" "$(git -C "$T" rev-list --count "$INIT..idd/5-x")"
-assert_eq "kept: and it holds both paths" ".claude/.idd/attachments/issue-5/_manifest.json a.txt" \
+assert_eq "kept: and it holds a.txt and not the manifest" "a.txt" \
   "$(git -C "$T" show --name-only --format= idd/5-x | sort | tr '\n' ' ' | sed 's/ $//')"
+assert_file_absent "kept: the manifest no longer exists" "$T/.claude/.idd/attachments/issue-5/_manifest.json"
+assert_eq "kept: settle says what it discarded" '[".claude/.idd/attachments/issue-5/_manifest.json"]' "$(jget discarded < "$S/out")"
 assert_eq "kept: the working tree is on main" "main" "$(head_branch)"
 assert_eq "kept: clean" "" "$(git -C "$T" status --porcelain)"
 assert_eq "kept: at the commit of origin/main" "$(git -C "$S/other" rev-parse HEAD)" "$(git -C "$T" rev-parse HEAD)"
@@ -548,11 +580,16 @@ assert_eq "kept: and changes nothing" "$KEPT" "$(git -C "$T" rev-parse --short=7
 run report > "$S/report.out" 2>&1
 assert_grep "kept: the report names the branch under #5" "idd/5-x" "$(stopped_block "$S/report.out")"
 assert_grep "kept: and the commit" "$KEPT" "$(stopped_block "$S/report.out")"
+assert_grep "kept: and the path the commit holds" "a.txt" "$(stopped_block "$S/report.out" | grep -F "$KEPT")"
 assert_output_grep "kept: and says a later run records it as existing work" "later rest run" "$S/report.out"
+# spec-example: idd-all-rest / the report says what to do with a kept branch
+HINT=$(grep -F "later rest run" "$S/report.out")
+assert_grep "kept branch: deleting it lets a later rest run start the issue over" "delete the branch" "$HINT"
+refute_grep "kept branch: and that line does not say to name the issue" "/idd-all" "$HINT"
 
 # spec-example: idd-all-rest / a leftover on the default branch stops the run
 new dirty-default 5 9
-run start > /dev/null 2>&1; run next > /dev/null; printf 'b\n' > "$T/b.txt"; run record --issue 5 --reason x > /dev/null
+run start --path PR > /dev/null 2>&1; run next > /dev/null; printf 'b\n' > "$T/b.txt"; run record --issue 5 --reason x > /dev/null
 settle 5 > /dev/null 2> "$S/err"; rc=$?
 assert_exit "dirty default: settle exits 3" 3 "$rc"
 assert_output_grep "dirty default: its reason line names b.txt" "b.txt" "$S/err"
@@ -562,59 +599,173 @@ assert_eq "dirty default: b.txt is left as it was" "?? b.txt" "$(git -C "$T" sta
 
 # spec-example: idd-all-rest / a file IDD keeps out of git is never committed
 new keep-out 5 9
-run start > /dev/null 2>&1; run next > /dev/null
+run start --path PR > /dev/null 2>&1; run next > /dev/null
 INIT=$(git -C "$T" rev-parse HEAD)
 git -C "$T" checkout -q -b idd/5-x; printf 'changed\n' >> "$T/a.txt"
-mkdir -p "$T/.claude/.idd/attachments/issue-5"; printf 'png\n' > "$T/.claude/.idd/attachments/issue-5/screenshot.png"
+mkdir -p "$T/.claude/.idd"; printf 'pid\n' > "$T/.claude/.idd/tree-lock"
 run record --issue 5 --reason x > /dev/null
 settle 5 > /dev/null 2> "$S/err"; rc=$?
 assert_exit "keep out: settle exits 3" 3 "$rc"
-assert_output_grep "keep out: its reason line names the file" ".claude/.idd/attachments/issue-5/screenshot.png" "$S/err"
+assert_output_grep "keep out: its reason line names the file" ".claude/.idd/tree-lock" "$S/err"
+assert_output_grep "keep out: and the issue" "#5" "$S/err"
+assert_true "keep out: what to do comes before the path" '[ "$(grep -o "have git ignore.*" "$S/err" | grep -c "tree-lock")" = 1 ]'
+assert_true "keep out: the reason fits the limit for a reason" '[ "$(sed "s/^rest-queue: //" "$S/err" | wc -m | tr -d " ")" -le 301 ]'
 assert_eq "keep out: idd/5-x has no new commit" "$INIT" "$(git -C "$T" rev-parse idd/5-x)"
 assert_eq "keep out: and the working tree stays on it" "idd/5-x" "$(head_branch)"
-for p in ".claude/.idd/state/x.json" ".claude/.idd/tree-lock.reclaim" ".claude/worktrees/w/a" ".claude/.idd/attachments/issue-5/sub/_manifest.json"; do
+for p in ".claude/.idd/state/x.json" ".claude/.idd/tree-lock.reclaim" ".claude/worktrees/w/a"; do
   new "keep-out-$(printf '%s' "$p" | tr -c 'a-z0-9' '-')" 5 9
   printf '.claude/.idd/state/idd-all-rest.json\n.claude/.idd/state/unattended.json\n' > "$T/.git/info/exclude"   # two named files, not the folder
-  run start > /dev/null 2>&1; run next > /dev/null; run record --issue 5 --reason x > /dev/null
+  run start --path PR > /dev/null 2>&1; run next > /dev/null; run record --issue 5 --reason x > /dev/null
   git -C "$T" checkout -q -b idd/5-x; mkdir -p "$T/$(dirname "$p")"; printf 'x\n' > "$T/$p"
   settle 5 > /dev/null 2> "$S/err"; rc=$?
   assert_exit "keep out: $p is never committed (exit 3)" 3 "$rc"
   assert_output_grep "keep out: and is named" "$p" "$S/err"
 done
-for p in ".claude/.idd/issue-runs/run.jsonl" ".claude/.idd/routing-stats.jsonl" ".claude/.idd/attachments/issue-5/_manifest.json"; do
+for p in ".claude/.idd/issue-runs/run.jsonl" ".claude/.idd/routing-stats.jsonl" ".claude/.idd/attachments/issue-5/sub/_manifest.json" \
+         ".claude/.idd/attachments/issue-5/screenshot.png" ".claude/.idd/attachments/issue-6/_manifest.json"; do   # a file no manifest vouches for, and another issue's folder
   new "commit-ok-$(printf '%s' "$p" | tr -c 'a-z0-9' '-')" 5 9
-  run start > /dev/null 2>&1; run next > /dev/null; run record --issue 5 --reason x > /dev/null
+  run start --path PR > /dev/null 2>&1; run next > /dev/null; run record --issue 5 --reason x > /dev/null
   git -C "$T" checkout -q -b idd/5-x; mkdir -p "$T/$(dirname "$p")"; printf 'x\n' > "$T/$p"
   settle 5 > /dev/null 2>&1; assert_exit "commit: $p is committed on the issue's own branch" 0 "$?"
   assert_eq "commit: $p is in that commit" "$p" "$(git -C "$T" show --name-only --format= idd/5-x)"
 done
 
-# spec-example: idd-all-rest / unpushed commits on the default branch stop a direct-commit run
-new dc-ahead 5 9
-run start > /dev/null 2>&1; run next > /dev/null
-printf 'c\n' > "$T/c.txt"; git -C "$T" add c.txt; git -C "$T" commit -q -m "work of #5"
-run record --issue 5 --reason x > /dev/null
-settle 5 direct-commit > /dev/null 2> "$S/err"; rc=$?
-assert_exit "direct-commit ahead: settle exits 3" 3 "$rc"
-assert_output_grep "direct-commit ahead: its reason line names #5" "#5" "$S/err"
-assert_output_grep "direct-commit ahead: and the number of unpushed commits" "1 commit" "$S/err"
-assert_eq "direct-commit ahead: the commit is still on main" "2" "$(git -C "$T" rev-list --count main)"
-new dc-dirty 5 9
-run start > /dev/null 2>&1; run next > /dev/null; printf 'c\n' > "$T/c.txt"; run record --issue 5 --reason x > /dev/null
-settle 5 direct-commit > /dev/null 2>&1; assert_exit "direct-commit: a file left on main exits 3" 3 "$?"
-new dc-clean 5 9
-run start > /dev/null 2>&1; run next > /dev/null; run record --issue 5 --reason x > /dev/null; remote_ahead
-settle 5 direct-commit > /dev/null 2>&1; assert_exit "direct-commit: a clean main settles" 0 "$?"
-assert_eq "direct-commit: and is fast-forwarded" "$(git -C "$S/other" rev-parse HEAD)" "$(git -C "$T" rev-parse HEAD)"
-new pr-ahead 5 9
-run start > /dev/null 2>&1; run next > /dev/null
+# spec-example: idd-all-rest / a local default branch with commits of its own does not stop the run
+new main-ahead 5 9
+run start --path PR > /dev/null 2>&1; run next > /dev/null
 printf 'c\n' > "$T/c.txt"; git -C "$T" add c.txt; git -C "$T" commit -q -m "not of any issue"
+git -C "$T" checkout -q --no-track -b idd/5-x origin/main
+printf 'w\n' > "$T/w.txt"; git -C "$T" add w.txt; git -C "$T" commit -q -m "work of #5"
 run record --issue 5 --reason x > /dev/null
-settle 5 > /dev/null 2>&1; assert_exit "PR: a local default branch with unpushed commits exits 3" 3 "$?"
+settle 5 > /dev/null 2> "$S/err"; rc=$?
+assert_exit "main ahead: settle exits 0" 0 "$rc"
+assert_eq "main ahead: the working tree is on main" "main" "$(head_branch)"
+assert_eq "main ahead: and main still has its own commit" "1" "$(git -C "$T" rev-list --count origin/main..main)"
+new main-diverged 5 9
+run start --path PR > /dev/null 2>&1; run next > /dev/null
+printf 'c\n' > "$T/c.txt"; git -C "$T" add c.txt; git -C "$T" commit -q -m "not of any issue"; remote_ahead
+git -C "$T" fetch -q origin main; git -C "$T" checkout -q --no-track -b idd/5-x origin/main
+run record --issue 5 --reason x > /dev/null
+settle 5 > /dev/null 2>&1; assert_exit "main diverged: settle exits 0 and leaves main as it is" 0 "$?"
+assert_true "main diverged: the empty branch is deleted all the same (its commits are on origin/main)" '! git -C "$T" show-ref --verify --quiet refs/heads/idd/5-x'
+new main-behind 5 9
+run start --path PR > /dev/null 2>&1; run next > /dev/null; run record --issue 5 --reason x > /dev/null; remote_ahead
+settle 5 > /dev/null 2>&1; assert_exit "main behind: settle exits 0" 0 "$?"
+assert_eq "main behind: and main is fast-forwarded" "$(git -C "$S/other" rev-parse HEAD)" "$(git -C "$T" rev-parse HEAD)"
+run settle --issue 5 direct-commit > /dev/null 2>&1; assert_exit "settle: a positional argument is a usage error" 2 "$?"
+
+# spec-example: idd-all-rest / a shared log is committed and named as such
+new shared-log 5 9
+mkdir -p "$T/.claude/.idd"; printf '{"issue":1}\n' > "$T/.claude/.idd/routing-stats.jsonl"
+git -C "$T" add .claude/.idd/routing-stats.jsonl; git -C "$T" commit -q -m "stats"; git -C "$T" push -q origin main
+run start --path PR > /dev/null 2>&1; run next > /dev/null
+git -C "$T" checkout -q --no-track -b idd/5-x origin/main
+printf 'w\n' > "$T/w.txt"; git -C "$T" add w.txt; git -C "$T" commit -q -m "work of #5"; git -C "$T" push -q -u origin idd/5-x
+printf '{"issue":5}\n' >> "$T/.claude/.idd/routing-stats.jsonl"
+echo CLOSED > "$G/state-5"; run record --issue 5 > /dev/null
+settle 5 > /dev/null 2>&1; rc=$?
+assert_exit "shared log: settle exits 0" 0 "$rc"
+assert_eq "shared log: the new commit holds the log" ".claude/.idd/routing-stats.jsonl" "$(git -C "$T" show --name-only --format= idd/5-x)"
+assert_eq "shared log: and is not pushed" "1" "$(git -C "$T" rev-list --count origin/idd/5-x..idd/5-x)"
+KEPT=$(git -C "$T" rev-parse --short=7 idd/5-x)
+run report > "$S/report.out" 2>&1
+LINE=$(grep -F "#5 — what the run left is kept on idd/5-x (commit $KEPT)" "$S/report.out")
+assert_grep "shared log: the report names the branch, the commit and the path under #5" ".claude/.idd/routing-stats.jsonl" "$LINE"
+assert_grep "shared log: and says that it is a log shared by all issues" "log shared by all issues" "$LINE"
+assert_output_grep "shared log: and what to do with a kept branch" "delete the branch" "$S/report.out"
+
+# spec-example: idd-all-rest / an interrupted settle keeps its commit
+new interrupted 5 9
+run start --path PR > /dev/null 2>&1; run next > /dev/null
+git -C "$T" checkout -q --no-track -b idd/5-x origin/main; printf 'changed\n' >> "$T/a.txt"
+run record --issue 5 --reason x > /dev/null
+git -C "$T" remote set-url origin "$S/nowhere.git"
+settle 5 > /dev/null 2> "$S/err"; rc=$?
+assert_exit "interrupted: the first settle exits 3 when origin cannot be reached" 3 "$rc"
+assert_output_grep "interrupted: its reason names the issue" "#5" "$S/err"
+FIRST=$(git -C "$T" rev-parse idd/5-x)
+assert_eq "interrupted: after it committed a.txt on idd/5-x" "a.txt" "$(git -C "$T" show --name-only --format= idd/5-x)"
+run next > /dev/null 2>&1; assert_exit "interrupted: next still waits for settle" 1 "$?"
+git -C "$T" remote set-url origin "$T.origin.git"
+settle 5 > /dev/null 2>&1; rc=$?
+assert_exit "interrupted: the second settle exits 0" 0 "$rc"
+assert_eq "interrupted: the run state keeps the commit of the first call and its path" \
+  "[{\"branch\":\"idd/5-x\",\"commit\":\"$FIRST\",\"paths\":[\"a.txt\"],\"more\":0,\"shared\":[]}]" "$(kept_of 5)"
+# every git step of settle, failed once and run again: the commit recorded first is still the one recorded
+for step in commit checkout merge; do
+  new "fail-$step" 5 9
+  run start --path PR > /dev/null 2>&1; run next > /dev/null
+  [ "$step" = merge ] && remote_ahead   # main is behind origin/main: settle will fast-forward it
+  git -C "$T" checkout -q --no-track -b idd/5-x "$(git -C "$T" rev-parse main)"; printf 'changed\n' >> "$T/a.txt"
+  run record --issue 5 --reason x > /dev/null
+  case "$step" in
+    commit)   printf '#!/bin/sh\nexit 1\n' > "$T/.git/hooks/pre-commit"; chmod +x "$T/.git/hooks/pre-commit" ;;
+    checkout) printf '#!/bin/sh\n: > "$(git rev-parse --git-dir)/index.lock"\n' > "$T/.git/hooks/post-commit"; chmod +x "$T/.git/hooks/post-commit" ;;
+    merge)    printf '#!/bin/sh\n: > "$(git rev-parse --git-dir)/index.lock"\n' > "$T/.git/hooks/post-checkout"; chmod +x "$T/.git/hooks/post-checkout" ;;
+  esac
+  settle 5 > /dev/null 2> "$S/err"; rc=$?
+  assert_exit "fail $step: settle exits 3" 3 "$rc"
+  assert_eq "fail $step: with one reason line" "1" "$(wc -l < "$S/err" | tr -d ' ')"
+  assert_output_grep "fail $step: that names the issue" "#5" "$S/err"
+  rm -f "$T/.git/hooks/pre-commit" "$T/.git/hooks/post-commit" "$T/.git/hooks/post-checkout" "$T/.git/index.lock"
+  FIRST=$(kept_of 5)
+  settle 5 > /dev/null 2>&1; rc=$?
+  assert_exit "fail $step: the second settle exits 0" 0 "$rc"
+  assert_eq "fail $step: the branch holds the leftover" "a.txt" "$(git -C "$T" show --name-only --format= idd/5-x)"
+  [ "$step" = commit ] || assert_eq "fail $step: and the run state still records the first commit" "$FIRST" "$(kept_of 5)"
+  assert_eq "fail $step: the recorded commit is the tip of the branch" "$(git -C "$T" rev-parse idd/5-x)" \
+    "$(kept_of 5 | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["commit"])')"
+  assert_eq "fail $step: the working tree is clean on main" "main|" "$(head_branch)|$(git -C "$T" status --porcelain)"
+done
+
+# spec-example: idd-all-rest / the working tree below the top of the repository
+new below-top 5 9
+mkdir -p "$T/sub"; printf 's\n' > "$T/sub/s.txt"; git -C "$T" add sub/s.txt; git -C "$T" commit -q -m sub; git -C "$T" push -q origin main
+printf 'sub/.claude/.idd/state/\n' >> "$T/.git/info/exclude"
+rq start --cwd "$T/sub" --repo "$REPO" --path PR > /dev/null 2>&1; rq next --cwd "$T/sub" --repo "$REPO" > /dev/null
+git -C "$T" checkout -q --no-track -b idd/5-x origin/main
+download 5 "$T/sub"
+assert_eq "below top: the manifest is the only leftover" "?? sub/.claude/" "$(git -C "$T" status --porcelain)"
+rq record --cwd "$T/sub" --repo "$REPO" --issue 5 --reason x > /dev/null
+rq settle --cwd "$T/sub" --repo "$REPO" --issue 5 > /dev/null 2> "$S/err"; rc=$?
+assert_exit "below top: settle exits 0" 0 "$rc"
+assert_file_absent "below top: the manifest no longer exists" "$T/sub/.claude/.idd/attachments/issue-5/_manifest.json"
+assert_true "below top: and the branch no longer exists" '! git -C "$T" show-ref --verify --quiet refs/heads/idd/5-x'
+new below-top-state 5 9
+mkdir -p "$T/sub"; printf 's\n' > "$T/sub/s.txt"; git -C "$T" add sub/s.txt; git -C "$T" commit -q -m sub; git -C "$T" push -q origin main
+printf 'sub/.claude/.idd/state/idd-all-rest.json\nsub/.claude/.idd/state/unattended.json\n' >> "$T/.git/info/exclude"
+rq start --cwd "$T/sub" --repo "$REPO" --path PR > /dev/null 2>&1; rq next --cwd "$T/sub" --repo "$REPO" > /dev/null
+git -C "$T" checkout -q --no-track -b idd/5-x origin/main
+printf 'x\n' > "$T/sub/.claude/.idd/state/x.json"; rq record --cwd "$T/sub" --repo "$REPO" --issue 5 --reason x > /dev/null
+rq settle --cwd "$T/sub" --repo "$REPO" --issue 5 > /dev/null 2>&1
+assert_exit "below top: a state file below --cwd is never committed (exit 3)" 3 "$?"
+
+# Scenario: a branch with an upstream is kept
+new upstream 5 9
+run start --path PR > /dev/null 2>&1; run next > /dev/null
+git -C "$T" checkout -q --no-track -b idd/5-x origin/main; git -C "$T" push -q -u origin idd/5-x
+run record --issue 5 --reason x > /dev/null
+settle 5 > /dev/null 2>&1; assert_exit "upstream: settle exits 0" 0 "$?"
+assert_eq "upstream: the branch without a commit of its own is kept" '[{"branch":"idd/5-x","commit":""}]' "$(kept_of 5)"
+# Scenario: two branches of one issue
+new two-branches 5 9
+run start --path PR > /dev/null 2>&1; run next > /dev/null
+git -C "$T" branch idd/5-y; git -C "$T" checkout -q --no-track -b idd/5-x origin/main
+printf 'w\n' > "$T/w.txt"; git -C "$T" add w.txt; git -C "$T" commit -q -m "work of #5"
+run record --issue 5 --reason x > /dev/null
+settle 5 > /dev/null 2>&1; assert_exit "two branches: settle exits 0" 0 "$?"
+assert_true "two branches: the empty one is deleted" '! git -C "$T" show-ref --verify --quiet refs/heads/idd/5-y'
+assert_eq "two branches: the one with work is kept" '[{"branch":"idd/5-x","commit":""}]' "$(kept_of 5)"
+
+# spec-example: idd-all-rest / endings of the single-issue pipeline
+python3 "$HERE/endings.py" "$RQ" "$PLUGIN/scripts/process-attachments.sh" > "$WORK/endings.out" 2>&1; rc=$?
+assert_exit "endings: every row of the table holds" 0 "$rc"
+[ "$rc" = 0 ] || sed -n "1,40p" "$WORK/endings.out"
+assert_output_grep "endings: and it ran all of them" "17 rows, 0 failure(s)" "$WORK/endings.out"
 
 # spec-example: idd-all-rest / an empty issue branch is deleted
 new empty-branch 5 9
-run start > /dev/null 2>&1; run next > /dev/null; git -C "$T" checkout -q -b idd/5-x; run record --issue 5 --reason x > /dev/null
+run start --path PR > /dev/null 2>&1; run next > /dev/null; git -C "$T" checkout -q -b idd/5-x; run record --issue 5 --reason x > /dev/null
 settle 5 > /dev/null 2>&1; rc=$?
 assert_exit "empty branch: settle exits 0" 0 "$rc"
 assert_true "empty branch: idd/5-x no longer exists" '! git -C "$T" show-ref --verify --quiet refs/heads/idd/5-x'
@@ -625,7 +776,7 @@ refute_output_grep "empty branch: and says nothing about kept branches" "later r
 
 # Scenario: an issue branch with work and nothing left over
 new work-branch 5 9
-run start > /dev/null 2>&1; run next > /dev/null; git -C "$T" checkout -q -b idd/5-x
+run start --path PR > /dev/null 2>&1; run next > /dev/null; git -C "$T" checkout -q -b idd/5-x
 printf 'w\n' > "$T/w.txt"; git -C "$T" add w.txt; git -C "$T" commit -q -m "work of #5"; WORK5=$(git -C "$T" rev-parse HEAD)
 run record --issue 5 --reason x > /dev/null
 settle 5 > /dev/null 2>&1; assert_exit "work branch: settle exits 0" 0 "$?"
@@ -635,7 +786,7 @@ run report > "$S/report.out" 2>&1
 assert_grep "work branch: the report names the kept branch under #5" "idd/5-x" "$(stopped_block "$S/report.out")"
 refute_grep "work branch: with no settle commit" "commit" "$(stopped_block "$S/report.out" | grep 'idd/5-x')"
 new closed-branch 5 9
-run start > /dev/null 2>&1; run next > /dev/null; git -C "$T" checkout -q -b idd/5-x
+run start --path PR > /dev/null 2>&1; run next > /dev/null; git -C "$T" checkout -q -b idd/5-x
 printf 'w\n' > "$T/w.txt"; git -C "$T" add w.txt; git -C "$T" commit -q -m "work of #5"
 echo CLOSED > "$G/state-5"; run record --issue 5 > /dev/null; settle 5 > /dev/null 2>&1
 run report > "$S/report.out" 2>&1
@@ -643,15 +794,15 @@ refute_output_grep "closed: a merged branch without a settle commit is not named
 
 # Scenario: the working tree is on a branch of another issue
 new other-branch 5 9
-run start > /dev/null 2>&1; run next > /dev/null; git -C "$T" checkout -q -b idd/7-y; run record --issue 5 --reason x > /dev/null
+run start --path PR > /dev/null 2>&1; run next > /dev/null; git -C "$T" checkout -q -b idd/7-y; run record --issue 5 --reason x > /dev/null
 settle 5 > /dev/null 2> "$S/err"; assert_exit "other branch: settle exits 3" 3 "$?"
 assert_eq "other branch: and leaves the working tree there" "idd/7-y" "$(head_branch)"
 assert_output_grep "other branch: its reason line names the branch" "idd/7-y" "$S/err"
 new detached 5 9
-run start > /dev/null 2>&1; run next > /dev/null; git -C "$T" checkout -q --detach; run record --issue 5 --reason x > /dev/null
+run start --path PR > /dev/null 2>&1; run next > /dev/null; git -C "$T" checkout -q --detach; run record --issue 5 --reason x > /dev/null
 settle 5 > /dev/null 2>&1; assert_exit "detached: settle exits 3" 3 "$?"
 new merging 5 9
-run start > /dev/null 2>&1; run next > /dev/null
+run start --path PR > /dev/null 2>&1; run next > /dev/null
 git -C "$T" checkout -q -b side; printf 'side\n' > "$T/a.txt"; git -C "$T" commit -q -am side
 git -C "$T" checkout -q main; git -C "$T" checkout -q -b idd/5-x; printf 'mine\n' > "$T/a.txt"; git -C "$T" commit -q -am mine
 git -C "$T" merge -q side > /dev/null 2>&1
@@ -662,7 +813,7 @@ assert_true "merging: and is left unfinished" 'git -C "$T" rev-parse -q --verify
 assert_eq "merging: no commit was made" "$MINE" "$(git -C "$T" rev-parse HEAD)"
 
 new picking 5 9
-run start > /dev/null 2>&1; run next > /dev/null
+run start --path PR > /dev/null 2>&1; run next > /dev/null
 git -C "$T" checkout -q -b side; printf 'side\n' > "$T/a.txt"; git -C "$T" commit -q -am side; SIDE=$(git -C "$T" rev-parse HEAD)
 git -C "$T" checkout -q main; git -C "$T" checkout -q -b idd/5-x; printf 'mine\n' > "$T/a.txt"; git -C "$T" commit -q -am mine
 git -C "$T" cherry-pick "$SIDE" > /dev/null 2>&1
@@ -670,33 +821,36 @@ run record --issue 5 --reason x > /dev/null
 settle 5 > /dev/null 2> "$S/err"; assert_exit "picking: an unfinished cherry-pick exits 3" 3 "$?"
 assert_output_grep "picking: and the reason names it" "cherry-pick" "$S/err"
 new closed-kept 5 9
-run start > /dev/null 2>&1; run next > /dev/null; git -C "$T" checkout -q -b idd/5-x
+run start --path PR > /dev/null 2>&1; run next > /dev/null; git -C "$T" checkout -q -b idd/5-x
 mkdir -p "$T/.claude/.idd"; printf '{}\n' > "$T/.claude/.idd/routing-stats.jsonl"
 echo CLOSED > "$G/state-5"; run record --issue 5 > /dev/null; settle 5 > /dev/null 2>&1
 KEPT=$(git -C "$T" rev-parse --short=7 idd/5-x)
 run report > "$S/report.out" 2>&1
-assert_output_grep "closed: a branch to which settle added a commit is named" "#5 — what the run left is kept on idd/5-x (commit $KEPT)" "$S/report.out"
+assert_output_grep "closed: a branch to which settle added a commit is named, with the path" "#5 — what the run left is kept on idd/5-x (commit $KEPT): .claude/.idd/routing-stats.jsonl" "$S/report.out"
 
 # spec-example: idd-all-rest / an issue with a local branch is recorded, not handed out
 new local-branch 5 9
 git -C "$T" branch idd/5-old
-run start > "$S/start.out" 2>&1
+run start --path PR > "$S/start.out" 2>&1
 assert_output_grep "start: says a candidate with a pull request or branch is recorded as existing work" "recorded as existing work when its turn comes" "$S/start.out"
-assert_output_grep "start: warns when git would track attachment files" "git would not ignore attachment files" "$S/start.out"
+refute_output_grep "start: says nothing about attachment files" "attachment files" "$S/start.out"
+# spec-example: idd-all-rest / candidates with a local branch are listed apart
+assert_output_grep "start: the run order names #9 and not #5" "to run (1): #9" "$S/start.out"
+assert_output_grep "start: and #5 is on a line of its own, as a candidate with a local branch" "candidates with a local branch, recorded as existing work when their turn comes (1): #5" "$S/start.out"
 assert_eq "local branch: next hands out #9" "9" "$(run next | jget next)"
 assert_eq "local branch: #5 is recorded as stopped with the branch" "stopped|existing work: local branch idd/5-old" \
   "$(python3 -c 'import json,sys; a=json.load(open(sys.argv[1]))["attempts"][0]; print(a["outcome"] + "|" + a["reason"]) if a["issue"] == 5 else print("not #5")' "$(state_file)")"
 new local-branch-other 5 9
 git -C "$T" branch idd/50-x; git -C "$T" branch idd/5x
-assert_eq "local branch: a branch of another issue does not count" "5" "$(run start > /dev/null 2>&1; run next | jget next)"
+assert_eq "local branch: a branch of another issue does not count" "5" "$(run start --path PR > /dev/null 2>&1; run next | jget next)"
 new local-branch-all 5
 git -C "$T" branch idd/5
-assert_eq "local branch: when every candidate has one, the run is done" "true" "$(run start > /dev/null 2>&1; run next | jget done)"
+assert_eq "local branch: when every candidate has one, the run is done" "true" "$(run start --path PR > /dev/null 2>&1; run next | jget done)"
 
 # spec-example: idd-all-rest / a run state that git would track
 new tracked 5
 : > "$T/.git/info/exclude"
-run start > "$S/out" 2> "$S/err"; rc=$?
+run start --path PR > "$S/out" 2> "$S/err"; rc=$?
 assert_exit "tracked state: start exits 3" 3 "$rc"
 assert_output_grep "tracked state: its reason line names the folder" ".claude/.idd/state/" "$S/err"
 assert_output_grep "tracked state: and says how to ignore it" "info/exclude" "$S/err"
@@ -704,17 +858,42 @@ assert_file_absent "tracked state: no run state file exists" "$(state_file)"
 assert_true "tracked state: nothing was written in the tree" '[ -z "$(git -C "$T" status --porcelain)" ]'
 new nogit 5
 rm -rf "$T/.git"
-run start > /dev/null 2>&1; assert_exit "start: a folder that is not a git working tree exits 3" 3 "$?"
+run start --path PR > /dev/null 2>&1; assert_exit "start: a folder that is not a git working tree exits 3" 3 "$?"
 new one-file 5
 printf '.claude/.idd/state/idd-all-rest.json\n' > "$T/.git/info/exclude"
-run start > /dev/null 2> "$S/err"; assert_exit "start: ignoring only the run state file is not enough (the folder holds other state)" 3 "$?"
+run start --path PR > /dev/null 2> "$S/err"; assert_exit "start: ignoring only the run state file is not enough (the folder holds other state)" 3 "$?"
 assert_output_grep "start: and the reason names the folder" ".claude/.idd/state/" "$S/err"
-new attachments-ignored 5
-printf '.claude/.idd/attachments/*/*\n!.claude/.idd/attachments/*/_manifest.json\n' >> "$T/.git/info/exclude"
-run start > "$S/start.out" 2>&1
-refute_output_grep "start: no attachment warning when git ignores attachment files" "attachment files" "$S/start.out"
+# spec-example: idd-all-rest / a run that is not on the PR path is refused
+new not-pr 5
+rq start --cwd "$T" --repo "$REPO" --path direct-commit > "$S/out" 2> "$S/err"; rc=$?
+assert_exit "not PR: start exits 3" 3 "$rc"
+assert_output_grep "not PR: its reason line names --pr" "--pr" "$S/err"
+assert_output_grep "not PR: and the path it was given" "direct-commit" "$S/err"
+assert_file_absent "not PR: no run state file exists" "$(state_file)"
+assert_file_absent "not PR: gh was not called" "$G/calls.log"
+rq start --cwd "$T" --repo "$REPO" > /dev/null 2>&1; assert_exit "start: the path is required (usage)" 2 "$?"
+# spec-example: idd-all-rest / start stores the default branch
+new default-branch 5
+echo trunk > "$G/default-branch"
+run start --path PR > /dev/null 2>&1; rc=$?
+assert_exit "default branch: start exits 0" 0 "$rc"
+assert_eq "default branch: the run state holds the path and the default branch" "PR|trunk" \
+  "$(python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); print(s["path"] + "|" + s["default"])' "$(state_file)")"
+echo other > "$G/default-branch"; run start --path PR > /dev/null 2>&1
+assert_eq "default branch: a resumed run keeps the one it stored" "trunk" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["default"])' "$(state_file)")"
+new default-bad 5
+printf -- '--evil\n' > "$G/default-branch"
+run start --path PR > /dev/null 2> "$S/err"; assert_exit "default branch: a name that is not a branch name exits 3" 3 "$?"
+assert_file_absent "default branch: and no run state file exists" "$(state_file)"
+# spec-example: idd-all-rest / an account without write access cannot start a run
+new no-write 5:author=alice
+: > "$G/perm-alice.403"
+run start --path PR > /dev/null 2> "$S/err"; rc=$?
+assert_exit "no write access: start exits 3" 3 "$rc"
+assert_output_grep "no write access: its reason says rest mode needs an account with write access" "needs an account with write access" "$S/err"
+assert_file_absent "no write access: no run state file exists" "$(state_file)"
 new branches-unreadable 5 9
-run start > /dev/null 2>&1; rm -rf "$T/.git"
+run start --path PR > /dev/null 2>&1; rm -rf "$T/.git"
 run next > /dev/null 2> "$S/err"; assert_exit "next: git that cannot list the local branches exits 3" 3 "$?"
 assert_eq "next: with one reason line" "1" "$(wc -l < "$S/err" | tr -d ' ')"
 
@@ -724,22 +903,32 @@ mkdir -p "$T/.claude/.idd/state"
 python3 - "$(state_file)" <<'PY'
 import json, sys, time
 s = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-json.dump({"version": 1, "repo": "o/r", "started_at": s, "updated_at": s, "stop": None,
+json.dump({"version": 2, "repo": "o/r", "path": "PR", "default": "main", "started_at": s, "updated_at": s, "stop": None,
            "attempts": [{"issue": 5, "outcome": "stopped", "handed_at": s, "recorded_at": s}]}, open(sys.argv[1], "w"))
 PY
-run start > "$S/start.out" 2>&1; rc=$?
+run start --path PR > "$S/start.out" 2>&1; rc=$?
 assert_exit "state: an attempt without a reason is not used, and start still runs" 0 "$rc"
 assert_output_grep "state: and start says so" "cannot be used" "$S/start.out"
 new state-bad-time 5
 write_state 1 '[]'
 python3 -c 'import json,sys; p=sys.argv[1]; s=json.load(open(p)); s["started_at"]="yesterday\nFORGED"; json.dump(s, open(p,"w"))' "$(state_file)"
-run start > "$S/start.out" 2>&1
+run start --path PR > "$S/start.out" 2>&1
 assert_output_grep "state: a start time that is not a time is not used" "cannot be used" "$S/start.out"
 refute_output_grep "state: and is not printed" "FORGED" "$S/start.out"
 new state-bad-kept 5
 write_state 1 '[{"issue": 5, "outcome": "stopped", "reason": "x", "settled": true, "kept": [{"branch": 5}]}]'
-run start > "$S/start.out" 2>&1
+run start --path PR > "$S/start.out" 2>&1
 assert_output_grep "state: a kept branch that is not a name is not used" "cannot be used" "$S/start.out"
+
+new state-v1 5
+write_state 1 '[{"issue": 5, "outcome": "stopped", "reason": "x"}]'
+python3 -c 'import json,sys; p=sys.argv[1]; s=json.load(open(p)); del s["default"]; json.dump(s, open(p,"w"))' "$(state_file)"
+run start --path PR > "$S/start.out" 2>&1
+assert_output_grep "state: a state without a stored default branch is not used" "cannot be used" "$S/start.out"
+new state-kept-paths 5
+write_state 1 '[{"issue": 5, "outcome": "stopped", "reason": "x", "settled": true, "kept": [{"branch": "idd/5-x", "commit": "", "paths": [5]}]}]'
+run start --path PR > "$S/start.out" 2>&1
+assert_output_grep "state: kept paths that are not names are not used" "cannot be used" "$S/start.out"
 
 new render-crash 5 9
 mkdir -p "$S/copy"; cp "$RQ" "$S/copy/rest-queue.py"; cp -R "$PLUGIN/scripts/lib" "$S/copy/lib"
@@ -751,7 +940,7 @@ assert_eq "rendering: the issues it hit are unreadable" "[5,9]" "$(printf '%s' "
 python3 "$HERE/settle_matrix.py" "$RQ" > "$WORK/matrix.out" 2>&1; rc=$?
 assert_exit "settle matrix: every combination matches the table" 0 "$rc"
 [ "$rc" = 0 ] || sed -n "1,40p" "$WORK/matrix.out"
-assert_output_grep "settle matrix: and it ran all of them" "192 cases" "$WORK/matrix.out"
+assert_output_grep "settle matrix: and it ran all of them" "160 cases, 0 mismatch(es)" "$WORK/matrix.out"
 
 echo "── the skill ──"
 # spec-example: idd-all-rest / the skill names the loop commands in order
@@ -791,20 +980,35 @@ assert_grep "skill: and goes on to the end when stop itself fails" '`stop` 自�
 assert_grep "skill: gh authentication is part of that row" "gh" "$STOP3"
 assert_grep_re "skill: stop case — the user interrupts, and nothing is recorded" '^\| 使用者中斷 \| 不必做任何事' "$STOPS"
 refute_grep "skill: the old step 5 prose is gone" 'pull --ff-only -q' "$REST"
-# spec-example: idd-all-rest / the skill says where a direct-commit run ends
-assert_grep "skill: a direct-commit run ends at an issue that leaves work on the default branch" "direct-commit 下，一張停下而在預設 branch 留下 commit 或檔案時" "$REST"
-assert_grep "skill: and a PR-mode run goes on" "PR mode 會繼續" "$REST"
+# spec-example: idd-all-rest / the skill ends a refused run without a marker
+assert_grep "skill: a path that is not PR is one cause of a start that exits 3" 'path 不是 `PR`' "$FAILED_START"
+assert_grep "skill: and that row clears the unattended marker" 'clear_unattended "$CWD"' "$FAILED_START"
+refute_grep "skill: the rest section no longer describes a direct-commit run" "direct-commit 下，一張停下" "$REST"
 # spec-example: idd-all-rest / the skill runs the preflight steps once
-assert_grep "skill: the preflight steps run once" "Step 0.2、0.3、0.35 只做一次" "$REST"
-assert_grep "skill: settle gets the path resolved after Step 0.6" "Step 0.6 之後的 path" "$(printf '%s\n' "$REST" | grep -F -e 'rest-queue.py" settle' -e 'Step 0.6 之後')"
+FLOW=$(printf '%s\n' "$REST" | awk '/^### 流程/{f=1; next} f&&/^### /{exit} f')
+STEP1=$(printf '%s\n' "$FLOW" | awk '/^1\. /{f=1} f&&/^2\. /{exit} f')   # the numbered step before the one that calls start
+assert_true "skill: step 1 comes before the start invocation" '[ -n "$STEP1" ] && ! printf "%s\n" "$STEP1" | grep -qF "rest-queue.py\" start"'
+for step in "Step 0.2" "Step 0.3" "Step 0.35" "Step 0.5" "Step 0.6"; do
+  assert_grep "skill: step 1 names $step" "$step" "$STEP1"
+done
+assert_grep "skill: and says it runs once" "只做一次" "$(printf '%s\n' "$STEP1" | sed -n '1p')"
+assert_grep "skill: the start invocation passes the path it resolved" '--path "$PATH_AXIS"' "$(printf '%s\n' "$REST" | grep -F 'rest-queue.py" start')"
+SETTLE_LINE=$(printf '%s\n' "$REST" | grep -F 'rest-queue.py" settle')
+assert_eq "skill: there is one settle invocation" "1" "$(printf '%s\n' "$SETTLE_LINE" | grep -c .)"
+refute_grep "skill: and it passes no default branch" "--default" "$SETTLE_LINE"
+refute_grep "skill: and no path" "--path" "$SETTLE_LINE"
 # spec-example: idd-all-rest / the skill continues an issue in flight
 FLIGHT=$(printf '%s\n' "$REST" | grep -F '"in_flight": true')
-assert_grep "skill: an issue in flight with a Phase 6 result goes to record" "直接做第 4 步" "$FLIGHT"
+assert_eq "skill: one row is about an issue in flight" "1" "$(printf '%s\n' "$FLIGHT" | grep -c .)"
+assert_grep "skill: an issue in flight with a Phase 6 result goes to record" "直接做第 5 步" "$FLIGHT"
+assert_grep_re "skill: without a branch it starts again from Step 0.4" '`branch` 是 `null` 時[^。]*從 Step 0\.4 重新開始' "$FLIGHT"
 assert_grep "skill: otherwise its interrupted phase is continued" "從中斷的那個 phase 接著做完" "$FLIGHT"
 assert_grep "skill: and Step 0.5.1 is not run again" "不重跑 Step 0.5.1" "$FLIGHT"
+RECORD_STEP=$(printf '%s\n' "$FLOW" | grep -n -F 'rest-queue.py" record' | head -1 | cut -d: -f1)
+assert_grep_re "skill: step 5 is the one that records" '^5\. 記下這一張的結果' "$(printf '%s\n' "$FLOW" | sed -n "1,${RECORD_STEP:-1}p" | grep -E '^[0-9]+\. ' | tail -1)"
 # spec-example: idd-all-rest / the skill clears the unattended marker
 NOTAKE=$(printf '%s\n' "$REST" | grep -F 'verdict=resume')
-assert_grep_re "skill: an issue rest does not take over is cleaned up before it is recorded" 'clear_unattended "\$CWD"`[^。]*再做第 4 步' "$NOTAKE"
+assert_grep_re "skill: an issue rest does not take over is cleaned up before it is recorded" 'clear_unattended "\$CWD"`[^。]*再做第 5 步' "$NOTAKE"
 ENDING=$(printf '%s\n' "$REST" | awk '/^### 結束/{f=1; next} f&&/^### /{exit} f')
 assert_grep "skill: the end of the run clears the unattended marker" 'clear_unattended "$CWD"' "$ENDING"
 L_REP=$(printf '%s\n' "$ENDING" | grep -n -F 'rest-queue.py" report' | head -1 | cut -d: -f1)

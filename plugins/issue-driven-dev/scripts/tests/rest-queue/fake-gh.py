@@ -10,6 +10,8 @@ Files read (all optional unless the call needs them):
   perm-<login>.500     when present, the permission request fails with HTTP 500
   comments-<n>.json    every comment of issue n, as `gh api … --paginate --jq` prints them (one JSON list)
   state-<n>            state of issue n for `gh issue view --json state` (default OPEN)
+  default-branch       the default branch `gh repo view --json defaultBranchRef` answers (default main)
+  perm-<login>.403     when present, the permission request fails with HTTP 403
 Every call is appended to calls.log as one JSON array.
 """
 import json, os, sys
@@ -56,6 +58,8 @@ if argv[:1] == ["api"] and len(argv) > 1 and "/collaborators/" in argv[1] and ar
     login = argv[1].split("/collaborators/")[1].split("/")[0]
     if read(f"perm-{login}.404") is not None:
         sys.stderr.write("gh: Not Found (HTTP 404)\n"); sys.exit(1)
+    if read(f"perm-{login}.403") is not None:
+        sys.stderr.write("gh: Must have push access to view collaborator permission. (HTTP 403)\n"); sys.exit(1)
     if read(f"perm-{login}.500") is not None:
         sys.stderr.write("gh: Server Error (HTTP 500)\n"); sys.exit(1)
     print(read(f"perm-{login}.json", '{"permission": "admin", "role_name": "admin"}')); sys.exit(0)
@@ -63,6 +67,9 @@ if argv[:1] == ["api"] and len(argv) > 1 and "/collaborators/" in argv[1] and ar
 if argv[:1] == ["api"] and len(argv) > 1 and "/issues/" in argv[1] and argv[1].endswith("/comments"):
     n = argv[1].split("/issues/")[1].split("/")[0]
     print(read(f"comments-{n}.json", "[]")); sys.exit(0)
+
+if argv[:2] == ["repo", "view"]:
+    print(json.dumps({"defaultBranchRef": {"name": (read("default-branch", "main") or "main").strip()}})); sys.exit(0)
 
 if argv[:2] == ["issue", "view"]:
     n = argv[2]
