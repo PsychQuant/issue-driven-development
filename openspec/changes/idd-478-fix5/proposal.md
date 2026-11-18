@@ -35,7 +35,7 @@ verify 第 5 輪（#478，range `6c26645..a78b933`）判 FAIL：2 項 Blocking�
 
 同一位 reviewer 用它原先的重現步驟重驗之後，又修了這幾項：
 
-13. **叫人切回預設 branch 的地方都給不會覆寫的指令**：原因行原本寫「把 git 點名的檔移開」，檔名太長被截掉時人看不到要移哪些檔，照做再用一般的 checkout 仍會覆寫。改成給 `git checkout --no-overwrite-ignore <default>`（快轉給對應的 `git merge` 指令），由 git 自己完整列出擋路的檔；`start` 的拒絕原因與報告的那一行同樣處理。
+13. **叫人切回預設 branch 的地方都給不會覆寫的指令**：原因行原本寫「把 git 點名的檔移開」，檔名太長被截掉時人看不到要移哪些檔，照做再用一般的 checkout 仍會覆寫。改成給 `git checkout --no-overwrite-ignore <default>`（快轉給對應的 `git merge` 指令），由 git 自己完整列出擋路的檔；`start` 的拒絕原因與報告的那一行同樣處理。指令裡的預設 branch 名稱只在它不超過 40 字、而且只含英數字與 `.`、`_`、`/`、`-` 時才寫進去，否則以 `<the default branch>` 代替（git 允許 branch 名稱含 `;`、`$` 與反引號，照抄進 shell 會出事；這一點是 commit 之後的安全檢查提出的）。
 14. **git 設定裡的 hook**（`hook.<name>.event`）：用 `git hook list` 找 commit 之前會跑的 hook，不經 hook 重做時把設定裡的 hook 逐一關掉。git 2.55 上量過：`core.hooksPath=/dev/null` 與 `--no-verify` 都關不掉設定裡的 `prepare-commit-msg`。
 15. 第一次 commit 的紀錄遺失時，第二次 commit 仍記下先前那一筆；stash 指的 branch 已刪掉時，報告寫明檔案套回後要再移出工作樹；停下的表加四列（預設 branch 上未完成的操作、沒有進行中操作的 unmerged 路徑、checkout 之後不乾淨、狀態裡沒有可用的預設 branch）。
 
