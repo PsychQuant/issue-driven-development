@@ -316,7 +316,7 @@ def load_state(cwd, repo, n):
     except (KeyError, ValueError, TypeError):
         raise Stop("the run state has no readable creation time — not merging")
     if age > STATE_TTL or age < -300:
-        raise Stop(f"the run state is older than 24 hours (an earlier run's) — not merging; run /idd-all #{n} again")
+        raise Stop(f"the run state is older than 24 hours (an earlier run's) — not merging; run the same /idd-all command for #{n} again, with the flags you used")
     return st
 
 

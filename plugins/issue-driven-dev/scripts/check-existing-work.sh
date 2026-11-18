@@ -99,7 +99,7 @@ def declares(body, n, rx=DECL):
     return False
 
 
-def own(head, n):
+def own(head, n):   # the same naming rule as BRANCH_OF in scripts/rest-queue.py: change both together
     return bool(re.fullmatch(r'idd/%d(-.*)?' % n, head or ""))
 
 
