@@ -59,6 +59,6 @@ Paths are relative to the directory the skill runs in (`--cwd`) unless the row s
 
 ## What this inventory and its check cannot see
 
-- Programs outside the plugin: the Spectra CLI, `idd-route`, and the hooks of the target repository. What they write is handled as `kept with the issue`; a commit hook that rejects the commit, and a hook that fails after a checkout, are handled by the requirement itself.
+- Programs outside the plugin: the Spectra CLI, `idd-route`, and the hooks of the target repository. What they write is handled as `kept with the issue`; a commit hook that rejects the commit (a hook file, or a hook from git's configuration), and a hook that fails after a checkout, are handled by the requirement itself.
 - A writer that builds its path from pieces, so that no skill or script holds the path as text.
 - Locations outside `.claude/`. The table "Other things an issue leaves" is kept by hand.

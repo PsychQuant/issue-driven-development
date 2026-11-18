@@ -827,9 +827,9 @@ SHAPE_PY
 assert_eq "reason: a long problem is cut first, the next step stays whole, the line fits and still carries the detail" "True True 1 True True" "$SHAPE"
 # every stop of settle, with names as long as a reason line shows them: the next step is whole and the line fits
 new longest 5 9
-NAME40=$(python3 -c 'print("d" * 40)'); LONG5="idd/5-$(python3 -c 'print("b" * 34)')"
+NAME40=$(python3 -c 'print("d" * 40)'); LONG5="idd/5-$(python3 -c 'print("b" * 54)')"   # 40 and 60 characters
 git -C "$T" branch -q -m main "$NAME40"; git -C "$T" push -q origin "$NAME40" 2>/dev/null; printf '%s\n' "$NAME40" > "$G/default-branch"
-begin
+run start --path PR --review no > /dev/null 2>&1; run next > /dev/null
 git -C "$T" checkout -q --no-track -b "$LONG5" "origin/$NAME40"; mkdir -p "$T/.claude/.idd"; printf 'pid\n' > "$T/.claude/.idd/tree-lock"
 run record --issue 5 --reason x > /dev/null
 settle 5 > /dev/null 2> "$S/err"; assert_exit "longest: settle exits 3" 3 "$?"

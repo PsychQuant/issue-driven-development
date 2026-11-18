@@ -24,6 +24,21 @@ verify 第 5 輪（#478，range `6c26645..a78b933`）判 FAIL：2 項 Blocking�
 5. **報告給人的步驟都要有測試實際做過**：只有沒有 upstream 的保留 branch 才寫「刪掉就會重跑」，測試刪掉後開新的 run 確認；有 upstream 的只說留給人。
 6. 其餘小項：重跑時由固定的 commit 訊息與 stash 訊息找回漏記的紀錄；停止原因不重複 branch 名稱、下一步不被截掉；`stop` 去掉 `rest-queue: ` 前綴；issue 已結案時保留 `record` 的原因；不收進 git 的位置同時在 `--cwd` 與 repo 頂層比對；新的 run 要求工作樹在乾淨的預設 branch；`record` 與 `stop` 的原因改從 stdin 傳；Step 0.5 與 Step 0.6 指回 rest 的規則；下載失敗的附件算會重新產生的紀錄、manifest 最後才丟；寫入端的盤點寫成 `references/working-tree-writers.md` 並加檢查；文件用字。
 
+封存前請一位沒有參與實作的 reviewer 逐條對照規格與程式，它實際重現了下列問題，同一個變更一併修正：
+
+7. **review 旗標也要擋住正在跑的那一張**：接續 run 時才加上 `--review`，那一張先前記下的紀錄仍是「不 review」。`close-stage.py run` 改成自己讀同一個 `--cwd` 的 rest 狀態：帶 review 而那一張 in flight 就停在 verified；24 小時內的狀態檔讀不出來也停。兩個 helper 的狀態都以 `--cwd` 為準，規格把「同一個工作樹」改寫成「同一個 `--cwd`」。
+8. **不覆寫 git 忽略的檔**：`git checkout` 與快轉預設會悄悄覆寫被忽略的檔。那一張 branch 忽略、預設 branch 有追蹤的檔會因此被蓋掉。兩處都加 `--no-overwrite-ignore`，擋住時以 3 結束、檔案不動。這裡選擇停下而不是另外收進 stash，是實作的預設。
+9. **停下之後的步驟要完整**：`settle` 停下後 run 會以報告結束，再下指令是新的 run，要工作樹在乾淨的預設 branch 上。原本的原因行少了「把剩下的 commit 起來」這類步驟，照做會被 `start` 拒絕。規格加一張封閉的表（七種停下、各自的步驟），報告叫人做的步驟也改成封閉列舉，測試照著做完再開新的 run。
+10. **只有 repo 有 commit 之前會跑的 hook 時才略過 hook**：commit 失敗而沒有這種 hook 時不再試第二次，以 3 結束。
+11. **stash 的順序維持在 fetch 之前**（fetch 失敗時不留下未追蹤的檔），規格改寫成這個順序並寫明後果；stash 指的 branch 被刪掉時報告換一種寫法。
+12. 其餘：第二次 keep commit 合併先前的紀錄；丟掉的紀錄存進狀態；原因行只在開頭寫一次工作樹所在的 branch；`--pr` 的說明改成取代 `--no-pr`；skill 的 `record` 區塊移到行首並由測試實際執行；`REVIEW_FLAG` 也取 `next` 的值；盤點檔四列改正；結束方式表加兩列（共 22 列），兩列 closed 的 GitHub 端改正。
+
+同一位 reviewer 用它原先的重現步驟重驗之後，又修了這幾項：
+
+13. **叫人切回預設 branch 的地方都給不會覆寫的指令**：原因行原本寫「把 git 點名的檔移開」，檔名太長被截掉時人看不到要移哪些檔，照做再用一般的 checkout 仍會覆寫。改成給 `git checkout --no-overwrite-ignore <default>`（快轉給對應的 `git merge` 指令），由 git 自己完整列出擋路的檔；`start` 的拒絕原因與報告的那一行同樣處理。
+14. **git 設定裡的 hook**（`hook.<name>.event`）：用 `git hook list` 找 commit 之前會跑的 hook，不經 hook 重做時把設定裡的 hook 逐一關掉。git 2.55 上量過：`core.hooksPath=/dev/null` 與 `--no-verify` 都關不掉設定裡的 `prepare-commit-msg`。
+15. 第一次 commit 的紀錄遺失時，第二次 commit 仍記下先前那一筆；stash 指的 branch 已刪掉時，報告寫明檔案套回後要再移出工作樹；停下的表加四列（預設 branch 上未完成的操作、沒有進行中操作的 unmerged 路徑、checkout 之後不乾淨、狀態裡沒有可用的預設 branch）。
+
 ## Non-Goals
 
 - direct-commit 與 attended 的 rest（#583）、接手保留的 branch（#566）、把共用紀錄檔帶回預設 branch（#584）、`idd-diagnose` 下載附件時的目前目錄（#586）。

@@ -35,4 +35,4 @@
 - [ ] 6.4 `skills/idd-all/SKILL.md`。Requirement「idd-all runs rest mode as a loop over the single-issue pipeline」：`record` 的程式區塊移到行首（Example `the skill's record command works as written`，實際執行區塊）；`REVIEW_FLAG` 也取 `next` 的值、Step 0.7 重跑時 rest 不回頭看原始引數（Example `the skill takes both review values from next`）；第 6 步與停止表補上不覆寫被忽略的檔、hook 的條件、停下之後的步驟。
 - [ ] 6.5 `references/working-tree-writers.md` 四列改正（附件資料夾有一處以名稱 stage、編輯備份寫在主工作樹、routing-stats 寫在 shell 所在工作樹的頂層、issue-runs 是否 commit 標為未查到），歸類加「stashed」與「stops」；CHANGELOG、`docs/commands.md`、`MANIFESTO.md` 的說法對齊。
 - [ ] 6.6 對 6.1 與 6.2 新增的分支做變異檢查，每一處至少有一個測試失敗；請同一位獨立 reviewer 重跑它原先的重現步驟。
-
+- [ ] 6.7 reviewer 重驗之後。測試先寫：Example `a file the default branch tracks is not overwritten` 加長檔名的四個檔、`the steps a stop names lead to a run that starts` 加四列（共十列）、hook 的 Example 加三列設定型 hook、`a second keep commit keeps the first` 加紀錄遺失的情況、`a stash whose branch was deleted` 做到開新的 run、`a long branch name does not cut off the next step` 加兩個長名稱。`rest-queue.py`：叫人切回預設 branch 的地方都給 `git checkout --no-overwrite-ignore`；`commit_hooks` 用 `git hook list`、重做時關掉設定裡的 hook；keep commit 之前先由訊息找回遺失的那一筆；原因行開頭的 branch 名稱只在放不下時才縮短。完成時：`fix5` 的變異檢查對這幾處各有測試失敗。

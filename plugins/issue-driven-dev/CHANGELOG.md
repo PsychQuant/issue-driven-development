@@ -33,8 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   temporary repository. The records `idd-diagnose` writes again on every run are discarded (the attachment
   manifest and, on a branch without a commit of its own, the attachments it lists by SHA-256); a file in a place
   whose writer keeps it out of git is never committed; everything else an issue left is committed on its own
-  branch (locally, never pushed; when that commit fails and the repository has a hook git runs before a commit, it
-  is made without the hooks, and the commit message and the report say so) and listed in the report, with a note when it is a log shared by all issues
+  branch (locally, never pushed; when that commit fails and the repository has a hook git runs before a commit, as a
+  file or in git's configuration, it is made without the hooks, and the commit message and the report say so) and listed in the report, with a note when it is a log shared by all issues
   (`routing-stats.jsonl`; carrying its lines back is #584); files that only the issue's branch ignores are put into a stash
   entry, none deleted; the checkout and the fast-forward do not overwrite a file git ignores (settle stops
   instead); the default branch is fast-forwarded when it is behind; an issue branch without a commit and without an upstream is deleted, so an issue that stopped before
@@ -47,7 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   waits on, and the report says that
   a verified issue continues when it is named, that an issue stopped with existing work is left for a person,
   which branch each stopped issue kept, and what a person can do with it. The steps the report and a stopped `settle` name are a closed list in the spec, and
-  a test takes each of them and then starts a new run. `--review` is stored in the run state: a resumed run can add it and cannot drop it, `next` prints
+  a test takes each of them and sees the result (after the steps of a stop, a new run starts). Where they tell a
+  person to check out the default branch they give `git checkout --no-overwrite-ignore`, because a plain checkout
+  overwrites a file git ignores without a word. `--review` is stored in the run state: a resumed run can add it and cannot drop it, `next` prints
   it with every issue, `close-stage.py init` refuses to record review as off for an issue such a run has in
   flight, and `close-stage.py run` stops at verified for such an issue whatever its record says. A new run needs the working tree clean on the default branch, and the account that runs it needs write
   access to the repository. What the plugin writes into a repository, and how rest mode treats each location, is
