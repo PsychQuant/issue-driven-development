@@ -614,6 +614,8 @@ assert_output_grep "keep out: its reason line names the file" ".claude/.idd/tree
 assert_output_grep "keep out: and the issue" "#5" "$S/err"
 assert_true "keep out: what to do comes before the path" '[ "$(grep -o "have git ignore.*" "$S/err" | grep -c "tree-lock")" = 1 ]'
 reason_shape "keep out" "$S/err"
+assert_eq "keep out: idd/5-x has no new commit" "$INIT" "$(git -C "$T" rev-parse idd/5-x)"
+assert_eq "keep out: and the working tree stays on it" "idd/5-x" "$(head_branch)"
 new keep-out-many 5 9
 run start --path PR > /dev/null 2>&1; run next > /dev/null
 git -C "$T" checkout -q -b idd/5-x; mkdir -p "$T/.claude/worktrees"
@@ -624,8 +626,6 @@ settle 5 > /dev/null 2> "$S/err"; assert_exit "keep out: five long paths exit 3"
 reason_shape "keep out, many" "$S/err"
 assert_output_grep "keep out: the number of the other paths is not cut off" "and 2 more)" "$S/err"
 assert_true "keep out: nothing was discarded before it stopped" '[ -f "$T/.claude/.idd/attachments/issue-5/_manifest.json" ]'
-assert_eq "keep out: idd/5-x has no new commit" "$INIT" "$(git -C "$T" rev-parse idd/5-x)"
-assert_eq "keep out: and the working tree stays on it" "idd/5-x" "$(head_branch)"
 for p in ".claude/.idd/state/x.json" ".claude/.idd/tree-lock.reclaim" ".claude/worktrees/w/a"; do
   new "keep-out-$(printf '%s' "$p" | tr -c 'a-z0-9' '-')" 5 9
   printf '.claude/.idd/state/idd-all-rest.json\n.claude/.idd/state/unattended.json\n' > "$T/.git/info/exclude"   # two named files, not the folder
