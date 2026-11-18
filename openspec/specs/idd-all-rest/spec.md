@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`/idd-all` invoked without an issue runs every remaining open issue of the repository through the single-issue pipeline. This capability defines which invocations select that mode, how open issues are classified and ordered, how a run records what it tried, when a run stops as a whole, and what it reports.
+`/idd-all` invoked without an issue runs every open issue of the repository that is ready (a candidate) through the single-issue pipeline, one at a time, on the PR path. This capability defines which invocations select that mode, how open issues are classified and ordered, how a run records what it tried, when a run stops as a whole, and what it reports.
 
 ## Requirements
 

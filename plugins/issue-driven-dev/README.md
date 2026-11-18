@@ -260,7 +260,7 @@ IDD 遵循「**深度整合 >> hard-coded**」原則（#209/#214）：生態系�
 | `parallel-ai-agents`（`psychquant-claude-plugins`） | **Hard dependency** — `plugin.json` `dependencies` 安裝時自動安裝（#219；cross-marketplace，root marketplace 需 `allowCrossMarketplaceDependenciesOn` 增列） | `idd-verify` 的 canonical ensemble 引擎（4 lens + DA + Codex；≥2.18.0 STABLE contract） | 缺席/過舊 → 印一步安裝指令 + fall back **manual fan-out**（品質等價、較慢）；vendored fork 已刪（#207 Residue 成熟） |
 | `superpowers`（`claude-plugins-official`） | **Hard dependency** — `plugin.json` `dependencies` 安裝時自動安裝（#209） | TDD 執行（`idd-implement`）、系統性除錯（`idd-diagnose` bug RCA）、完成前驗證的 canonical process 紀律 | Delegation 點 **fail-fast abort** + 一步安裝指令；絕不 silent degrade |
 | `parallel-ai-agents`（pai） | **Canonical engine + 版本閘門 ≥ 2.19.0**（#207/#264，STABLE external-consumer contract 含 codexModel/codexEffort） | `idd-verify` 的 6-AI ensemble 引擎（4 lenses + Devil's Advocate + Codex 編排）+ `bin/codex-call` executable（#264 起 IDD 不再 vendor） | 兩層 degrade：canonical → manual fan-out（每層印 notice；vendored fork 已刪 #219/#264） |
-| `ralph-loop`（`claude-plugins-official`） | Optional mode 依賴（#28） | `idd-verify --loop` / `idd-all (PR, unattended)` 的 verify-fix loop driver | `--loop` fail-fast + 安裝指引；`idd-all` graceful degrade 到 (direct-commit, attended) |
+| `ralph-loop`（`claude-plugins-official`） | Optional mode 依賴（#28） | `idd-verify --loop` / `idd-all (PR, unattended)` 的 verify-fix loop driver | `--loop` fail-fast + 安裝指引；`idd-all` graceful degrade 到 (direct-commit, attended)；rest mode（不帶 issue）改為拒絕開始（#583） |
 | `codex-pro`（codex-pro marketplace） | **Hard dependency**（#264）— codex 治理 single source（`defaults.json` + profile.yaml 契約，MIN 0.7.0） | Verify 跨模型盲驗 lens 的 model/effort/max-time 治理（gpt-5.x，世代 pin 只在 codex-pro 一處） | 缺席 **fail-fast abort** + 一步安裝指令；絕不靜默 fallback 舊 model |
 | `che-word-mcp` / `che-telegram-mcp` / `che-apple-mail-mcp` / `che-apple-notes-mcp` | Optional per source type（#27） | `idd-issue` 來源 adapter（docx / Telegram / Mail / Notes） | 該 source type **fail-fast** + 結構化安裝指引（見下方 Optional 表） |
 
@@ -308,7 +308,7 @@ IDD 遵循「**深度整合 >> hard-coded**」原則（#209/#214）：生態系�
 |------|-----------------|-------------|-----|---------------------|
 | `idd-implement`（TDD / 完成前驗證）+ `idd-diagnose`（bug RCA） | `superpowers` | `claude-plugins-official` | process-discipline delegation（#209 hard dependency；正常情況由 `dependencies` 自動安裝，不會缺席） | **fail-fast abort** + install hint |
 | `idd-verify --loop` | `ralph-loop` | `claude-plugins-official` | outer driver for verify-fix loop | **fail-fast abort** + install hint |
-| `idd-all` (PR, unattended) (default) | `ralph-loop` | 同上 | unattended 在 verify findings 後需 driver 觸發下一輪 | **graceful degrade** to `(direct-commit, attended)` + warning(保護 v2.40.0 caller backward compat) |
+| `idd-all` (PR, unattended) (default) | `ralph-loop` | 同上 | unattended 在 verify findings 後需 driver 觸發下一輪 | **graceful degrade** to `(direct-commit, attended)` + warning(保護 v2.40.0 caller backward compat)；rest mode（不帶 issue）不降級，拒絕開始並說明要先安裝（#583） |
 | `idd-all #N --no-pr` (direct-commit, attended) | (none) | n/a | user 在 keyboard 自然推進 | n/a |
 | Single-skill calls (no `--loop`) | (none) | n/a | atomic skill 自完成 | n/a |
 

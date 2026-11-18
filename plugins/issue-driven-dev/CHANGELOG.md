@@ -33,9 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   temporary repository. The records `idd-diagnose` writes again on every run are discarded (the attachment
   manifest and, on a branch without a commit of its own, the attachments it lists by SHA-256); a file in a place
   whose writer keeps it out of git is never committed; everything else an issue left is committed on its own
-  branch (locally, never pushed) and listed in the report, with a note when it is a log shared by all issues
-  (`routing-stats.jsonl`; carrying its lines back is #584); the default branch is fast-forwarded when it is
-  behind; an issue branch without a commit and without an upstream is deleted, so an issue that stopped before
+  branch (locally, never pushed; when the repository's commit hooks make that commit fail it is made without
+  them, and the commit message and the report say so) and listed in the report, with a note when it is a log shared by all issues
+  (`routing-stats.jsonl`; carrying its lines back is #584); files that only the issue's branch ignores are put into a stash
+  entry, none deleted; the default branch is fast-forwarded when it is behind; an issue branch without a commit and without an upstream is deleted, so an issue that stopped before
   its first commit and left nothing but those records is run again by a later run. An issue that stops does not stop the run. The run stops as a whole only when
   `next`, `record` or `settle` cannot read GitHub or git, cannot write the state or cannot settle the working
   tree, or the user interrupts; a `start` that cannot read the open issues, or that finds the run state would
@@ -44,7 +45,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run by class; an issue the run attempted is named once, with what happened to it and the questions it now
   waits on, and the report says that
   a verified issue continues when it is named, that an issue stopped with existing work is left for a person,
-  which branch each stopped issue kept, and what a person can do with it. `rest` with another
+  which branch each stopped issue kept, and what a person can do with it (every step the report gives is one a
+  test takes). `--review` is stored in the run state: a resumed run can add it and cannot drop it, `next` prints
+  it with every issue, and `close-stage.py init` refuses to record review as off for an issue such a run has in
+  flight. A new run needs the working tree clean on the default branch, and the account that runs it needs write
+  access to the repository. What the plugin writes into a repository, and how rest mode treats each location, is
+  listed in `references/working-tree-writers.md`. `rest` with another
   positional argument, `--in-chain` without an issue, an unknown `--` flag (also in a call that names an
   issue: it used to be ignored), `--cwd` without a path, an empty argument and the single word `last` (it is not
   a mode, and is no longer taken as the title of a new issue) are refused. **If you scheduled or looped a bare

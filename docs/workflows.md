@@ -414,7 +414,7 @@ idd-edit comment:NNN --append --body "..."
 
 - **Use case**:cron-scheduled ETL / housekeeping — 排程跑**指名的** issue
 - **Mode**:Unattended
-- **Risks**:**極高** — 同 P-loop-autopilot。**不要省略 issue 號**:不帶 issue 的 `/idd-all` 是 rest mode(#478),會把 repo 裡剩下的 open issue 逐張跑完,verify 乾淨的每一張都 merge 並 close,不設張數上限;排程下也沒有人看它開始前印出的清單。要排程跑整個 backlog 是可以的,但那是另一個決定:先手動跑一次 `/idd-all` 看清單與結果,再決定要不要排程。
+- **Risks**:**極高** — 同 P-loop-autopilot。**不要省略 issue 號**:不帶 issue 的 `/idd-all` 是 rest mode(#478),會把 repo 裡每一張可以跑的 open issue 逐張跑完(只走 PR path),verify 乾淨的每一張都 merge 並 close,不設張數上限;排程下也沒有人看它開始前印出的清單。要排程跑整個 backlog 是可以的,但那是另一個決定:先手動跑一次 `/idd-all` 看清單與結果,再決定要不要排程。
 
 #### P-cron-list-triage
 
