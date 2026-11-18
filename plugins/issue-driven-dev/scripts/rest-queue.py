@@ -482,14 +482,22 @@ HOOKS_SKIPPED = ("The commit failed with the repository's commit hooks, so the h
                  "Look at it before the branch is pushed.")
 STASH_MESSAGE = "idd rest: files of #{n} that only {branch} ignores"   # and its stash entry by this message
 PATHS_KEPT = 10
-NAME_MAX = 40   # the name of the default branch is shortened to this where a command in a reason line names it
+NAME_MAX = 40   # a default branch name longer than this is not put into a command a reason line gives
+PLAIN_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")   # a branch name that a shell reads as one plain word
 ON_MAX, ON_MIN = 60, 20   # the branch the working tree is on, at the start of a reason line: this long, or as short as that
 HOOK_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")   # a hook of git's configuration that can be named in -c
 
 
+def in_command(default):
+    """The default branch as a command names it. A person may copy that command into a shell, and git allows
+    `;`, `$` and backticks in a branch name: only a plain name of at most NAME_MAX characters is put in, whole;
+    any other name is replaced by a placeholder and never shortened."""
+    return default if len(default) <= NAME_MAX and PLAIN_NAME_RE.match(default) else "<the default branch>"
+
+
 def checkout_cmd(default):
     """The checkout a person is told to run: a plain one overwrites, without a word, a file git ignores."""
-    return f"git checkout --no-overwrite-ignore {one_line(default, NAME_MAX)}"
+    return f"git checkout --no-overwrite-ignore {in_command(default)}"
 COMMIT_HOOKS = ("pre-commit", "prepare-commit-msg", "commit-msg")   # the hooks git runs before it makes a commit
 UNMERGED = {"DD", "AU", "UD", "UA", "DU", "AA", "UU"}
 
@@ -960,7 +968,7 @@ def cmd_start(argv):
                        f"may have left it there — commit or remove what is left there, run {checkout_cmd(default)}, {again}")
         left = git(cwd, ["status", "--porcelain"], "could not read the working tree", "check that git can read this working tree").strip()
         if left:
-            raise Stop(f"the working tree has changes on {one_line(default, NAME_MAX)}; an earlier run may have left them — commit "
+            raise Stop(f"the working tree has changes on {one_line(default, ON_MAX)}; an earlier run may have left them — commit "
                        f"them elsewhere or move them away, {again} ({some(leftovers(cwd)[0], 90)})")
         st = {"version": STATE_VERSION, "repo": repo, "path": path, "default": default, "review": review,
               "started_at": iso(now()), "updated_at": "", "attempts": [], "stop": None}
@@ -1192,7 +1200,7 @@ def settle_tree(cwd, n, default, branch, last, st):
     if behind and not ahead:   # a default branch with commits of its own is left alone: a PR-path issue starts from origin's
         git(cwd, ["merge", "-q", "--ff-only", "--no-overwrite-ignore", f"refs/remotes/origin/{default}"],
             "it could not be fast-forwarded to origin",
-            f"run git merge --ff-only --no-overwrite-ignore origin/{one_line(default, NAME_MAX)} and move away each file it "
+            f"run git merge --ff-only --no-overwrite-ignore origin/{in_command(default)} and move away each file it "
             f"names until it succeeds, {AGAIN}")
     if git(cwd, ["status", "--porcelain"], "could not read the working tree", look).strip():   # the check every PR-path issue starts with
         raise trouble(n, default, "the working tree is not clean", "commit what is there elsewhere or move it away", leftovers(cwd)[0])
