@@ -8,7 +8,11 @@ A rest run started with `--review` stops every issue at verified; a run that los
 
 `next` SHALL print the review flag of the run (`"review": "yes"` or `"no"`) with every issue it hands out, in flight or not. `idd-all` SHALL take the review flag of each issue from there.
 
-`close-stage.py init` records the run of one issue, and the close stage merges when that record says review is off. `init` SHALL refuse to record review as off for an issue that a rest run with review on has in flight in the same working tree: it SHALL exit with a usage error and write no run state, so that the close stage finds none and stops at verified. A rest run state that cannot be read, is older than 24 hours, or has another issue in flight does not change what `init` does.
+`close-stage.py init` records the run of one issue, and `close-stage.py run` merges when that record says review is off. Both SHALL read the state of the rest run at their own `--cwd`. `init` SHALL refuse to record review as off for an issue that such a run with review on has in flight: it SHALL exit with a usage error and write no run state, so that `run` finds none and stops at verified. `run` SHALL stop without merging for an issue that such a run with review on has in flight, whatever the record of that issue says: the flag can be added to the run after `init` recorded the issue.
+
+A rest run state that is older than 24 hours, or that has another issue in flight, changes neither of the two. A rest run state that cannot be read does not change what `init` does; `run` SHALL stop without merging when such a file was changed in the last 24 hours, because the review flag of that run is then unknown, and its reason SHALL say so.
+
+Both helpers keep their state below `--cwd`. A rest run at another `--cwd` of the same repository is not seen by `close-stage.py`; `idd-all` gives both helpers the same `--cwd`.
 
 #### Scenario: the flag is printed for an issue in flight
 
@@ -41,6 +45,22 @@ A rest run started with `--review` stops every issue at verified; a run that los
 - **GIVEN** a working tree with the rest run state of the first column
 - **WHEN** `close-stage.py init` runs for issue 5 with the review value of the second column and otherwise valid arguments
 - **THEN** the exit code and the run state of #5 are those of the row
+
+##### Example: review added while an issue is in flight
+
+| the run is resumed with | `close-stage.py run` for #5 |
+| --- | --- |
+| `--review yes` | exits 3, and its reason says that the rest run at this `--cwd` has `--review` |
+| `--review no` | does not give that reason |
+
+- **GIVEN** a rest run started with `--review no` in which #5 is in flight, and a `close-stage.py init` for #5 with `--review no` that succeeded
+- **WHEN** `start` runs again with the flag of the first column, and then `close-stage.py run` for #5
+- **THEN** the close stage does what the row says
+
+#### Scenario: a rest run state that cannot be read stops the close stage
+
+- **WHEN** #5 is in flight in a rest run, `close-stage.py init` for #5 succeeded, the rest run state is then overwritten with text that is not JSON, and `close-stage.py run` for #5 runs
+- **THEN** it exits 3 and its reason says that the review flag of that run is unknown
 
 ## MODIFIED Requirements
 
@@ -167,11 +187,11 @@ When `report` itself exits with a code other than 0, `idd-all` SHALL relay what 
 
 `rest-queue.py start --path P --review yes|no` SHALL print the number of open issues, the issue numbers of every class, and the run order, before any issue is handed out. It SHALL print issue numbers only, no issue titles. The run order it prints SHALL hold only the candidates that have no local branch in the working tree. The candidates that have one (`idd/<N>` or `idd/<N>-…`) SHALL be printed on a line of their own, which says that they are recorded as existing work when their turn comes. `start` SHALL also say that a candidate with a pull request or a branch on GitHub is recorded as existing work when its turn comes. Every reason and every time it prints from the run state SHALL be on one line, without control characters and no longer than the helper's limit for a reason, whatever the state file holds.
 
-`P` is the path that `idd-all` resolved for this invocation. Rest mode runs on the PR path only: between two issues, what an issue left is kept on that issue's own branch, and only the PR path gives every issue a branch. When `P` is not `PR`, `start` SHALL exit with code 3, write nothing, and print a reason line that says rest mode needs the PR path and names what a person can do: run the same command with `--pr` added and the other flags kept, install the ralph-loop plugin when its absence is what downgraded the path, or name the issues one at a time. The reason line SHALL NOT hold a complete `/idd-all` command line: a command copied from it would lose the flags of the invocation. A new run SHALL read the default branch of the repository from GitHub and store it in the run state together with the path; `settle` takes the default branch from there. A resumed run keeps the default branch it stored.
+`P` is the path that `idd-all` resolved for this invocation. Rest mode runs on the PR path only: between two issues, what an issue left is kept on that issue's own branch, and only the PR path gives every issue a branch. When `P` is not `PR`, `start` SHALL exit with code 3, write nothing, and print a reason line that says rest mode needs the PR path and names what a person can do: run the same command with `--pr`, in place of `--no-pr` when the command has it, and the other flags kept, install the ralph-loop plugin when its absence is what downgraded the path, or name the issues one at a time. The reason line SHALL NOT hold a complete `/idd-all` command line: a command copied from it would lose the flags of the invocation. A new run SHALL read the default branch of the repository from GitHub and store it in the run state together with the path; `settle` takes the default branch from there. A resumed run keeps the default branch it stored.
 
 When the working tree holds the state of a run of the same repository whose last recorded activity (start, hand-out, record or stop) is less than 24 hours old and that was not ended by `report`, `start` SHALL resume it: the recorded attempts and a recorded stop are kept, and the attempts are not handed out again. Otherwise `start` SHALL begin a new run with no attempts. A state file whose start time cannot be read as a time, with an attempt that has no reason, without a stored default branch or a stored review flag, or whose stored path is not `PR`, is not a state this helper can use.
 
-A new run SHALL begin only when the working tree is on the default branch and `git status --porcelain` prints nothing there, which is what every issue on the PR path requires when it starts. Otherwise `start` SHALL exit with code 3, write nothing, and say in its reason line where the working tree is, that an earlier run may have left it so, and what a person does. A resumed run is not checked this way: its issue in flight may be on its own branch.
+A new run SHALL begin only when the working tree is on the default branch and `git status --porcelain` prints nothing there, which is what every issue on the PR path requires when it starts. Otherwise `start` SHALL exit with code 3, write nothing, and say in its reason line where the working tree is, that an earlier run may have left it so, and what a person does: on another branch, commit or remove what is left there and check out the default branch; on the default branch with changes, commit them elsewhere or move them away. Taken as written, those steps leave a working tree in which the run starts. A resumed run is not checked this way: its issue in flight may be on its own branch.
 
 Before it reads anything, `start` SHALL ask git whether files in `.claude/.idd/state/` would be ignored in this working tree, for the run state file and for the unattended marker in the same folder. When git would not ignore one of them, or the working tree is not a git working tree, `start` SHALL exit with code 3 and a reason line that names the folder and says how to ignore it, and SHALL write nothing: an untracked state file makes every later issue stop at its clean-tree check.
 
@@ -210,7 +230,7 @@ To decide the class `outsider`, the helper asks GitHub who has write access to t
 
 - **GIVEN** a working tree without a run state
 - **WHEN** `start --path direct-commit --review no` runs
-- **THEN** it exits 3, its reason line names `--pr` and holds no `/idd-all` followed by a flag, and no run state file exists
+- **THEN** it exits 3, its reason line names `--pr`, says that it takes the place of `--no-pr`, and holds no `/idd-all` followed by a flag, and no run state file exists
 
 ##### Example: start stores the default branch
 
@@ -240,7 +260,7 @@ To decide the class `outsider`, the helper asks GitHub who has write access to t
 
 - **GIVEN** a working tree as in the row, without a run state, and candidate #5
 - **WHEN** `start --path PR --review no` runs
-- **THEN** the exit code is that of the row; on exit 3 the reason line names what the row says and no run state file exists
+- **THEN** the exit code is that of the row; on exit 3 the reason line names what the row says and the steps to take, and no run state file exists; in the second row, after `main` is checked out, the same `start` exits 0
 
 ---
 ### Requirement: Report lists what happened and ends the run
@@ -249,7 +269,9 @@ To decide the class `outsider`, the helper asks GitHub who has write access to t
 
 An issue that this run handed out SHALL appear once: under closed, under stopped or as handed out without a result. It SHALL NOT appear in the list of issues waiting for a person or in the line of a class that was not run. When such an issue is `needs-person` at the time of the report, the report SHALL print its open questions under the entry of that issue, also when the issue was recorded as closed and reopened since. The report prints no text of an issue of any other class.
 
-For the class `verified` the report SHALL say that such an issue continues when it is named (`/idd-all #N`), and that a branch of it kept in this working tree is to be looked at first. When at least one issue was recorded with a reason that begins with `existing work:`, the report SHALL say that such an issue is left for a person and that its reason names the pull request or branch to look at. Under the entry of an issue recorded as stopped, the report SHALL name each branch of that issue that `settle` kept and, when `settle` made a commit on it, that commit and the paths it holds (at most ten, then the number of the others). Under the entry of an issue recorded as closed, it SHALL name the branch, the commit and the paths only when `settle` made a commit, and SHALL print the reason when the issue was recorded with one. When `settle` made a commit without the repository's commit hooks, the report SHALL say so on that entry and that the commit is to be looked at before the branch is pushed. When `settle` stashed files, the report SHALL name the commit of the stash entry and the paths on that entry, and say that `git stash apply <commit>` on that branch brings them back. When one of those paths is a log shared by all issues (`.claude/.idd/routing-stats.jsonl`, or a file under `.claude/.idd/issue-runs/`), the report SHALL say so on that entry: the new lines of that log are on that branch and not on the default branch. When the report names a kept branch of an issue recorded as stopped, it SHALL say once that a later rest run does not take up an issue that has a kept branch, a pull request or the phase `verified`, and that going on with such work is for a person. Under a kept branch that has no upstream it SHALL add that deleting the branch lets a later rest run start the issue over while the issue is a candidate. It SHALL NOT say that under a branch that has an upstream, and SHALL NOT tell the person to name the issue (`/idd-all #N`) as the way to continue a kept branch. Every step the report tells a person to take SHALL be one that a check of this capability takes and sees the result of.
+For the class `verified` the report SHALL say that such an issue continues when it is named (`/idd-all #N`), and that a branch of it kept in this working tree is to be looked at first. When at least one issue was recorded with a reason that begins with `existing work:`, the report SHALL say that such an issue is left for a person and that its reason names the pull request or branch to look at. Under the entry of an issue recorded as stopped, the report SHALL name each branch of that issue that `settle` kept and, when `settle` made a commit on it, that commit and the paths it holds (at most ten, then the number of the others). Under the entry of an issue recorded as closed, it SHALL name the branch, the commit and the paths only when `settle` made a commit, and SHALL print the reason when the issue was recorded with one. When `settle` made a commit without the repository's commit hooks, the report SHALL say so on that entry and that the commit is to be looked at before the branch is pushed. When `settle` stashed files, the report SHALL name the commit of the stash entry and the paths on that entry, and say that `git stash apply <commit>` on that branch brings them back. When one of those paths is a log shared by all issues (`.claude/.idd/routing-stats.jsonl`, or a file under `.claude/.idd/issue-runs/`), the report SHALL say so on that entry: the new lines of that log are on that branch and not on the default branch. When the report names a kept branch of an issue recorded as stopped, it SHALL say once that a later rest run does not take up an issue that has a kept branch, a pull request or the phase `verified`, and that going on with such work is for a person. Under a kept branch that has no upstream it SHALL add that deleting the branch lets a later rest run start the issue over while the issue is a candidate. It SHALL NOT say that under a branch that has an upstream, and no line under an issue recorded as stopped SHALL tell the person to name the issue (`/idd-all #N`). When the branch a stash names was not kept, the report SHALL say that the branch is deleted and that the stash brings the files back as untracked files in the working tree, and SHALL NOT say `on that branch`. When `settle` committed twice on a branch, the report SHALL name both commits.
+
+The report tells a person to take three kinds of steps, and this list is closed: delete a kept branch that has no upstream; apply a stash; and, when the attempt recorded last was not settled or an issue is in flight, commit or remove what is left on the branch of that issue and check out the default branch. A check of this capability SHALL take each of them and see the result: the issue is handed out again, the files are back, a new run starts. Looking at a branch, a commit or a pull request is not such a step.
 
 When the attempt recorded last was not settled, or an issue is in flight, when `report` runs, the report SHALL say that the working tree may still be on a branch of that issue and name the default branch to check out.
 
@@ -297,7 +319,7 @@ When the attempt recorded last was not settled, or an issue is in flight, when `
 
 - **GIVEN** a run in which #5 was recorded as stopped and `settle` kept `idd/5-x`, which has one commit and no upstream, and #9 was recorded as stopped and `settle` kept `idd/9-y`, which has one commit and an upstream
 - **WHEN** `report` runs, then `idd/5-x` is deleted as the report says, and a new run is started
-- **THEN** the line of `idd/5-x` says that deleting the branch lets a later rest run start the issue over, the line of `idd/9-y` does not, one line says that going on with kept work is for a person, no line about a kept branch holds `/idd-all`, and `next` of the new run hands out #5
+- **THEN** the line of `idd/5-x` says that deleting the branch lets a later rest run start the issue over, the line of `idd/9-y` does not, one line says that going on with kept work is for a person, no line under a stopped issue holds `/idd-all`, and `next` of the new run hands out #5
 
 ##### Example: a closed issue whose run reported a stop
 
@@ -311,6 +333,12 @@ When the attempt recorded last was not settled, or an issue is in flight, when `
 - **WHEN** `report` runs
 - **THEN** one line says that the working tree may still be on a branch of #5 and names `main`
 
+##### Example: the step for a working tree that was not settled
+
+- **GIVEN** a run in which #5 was handed out and no outcome was recorded, and the working tree on `idd/5-x` with a changed `a.txt`
+- **WHEN** `report` runs, and a person then commits `a.txt` on `idd/5-x`, checks out `main` and starts a new run
+- **THEN** the report says to commit or remove what is left there and to check out `main`, and the new run starts
+
 ---
 ### Requirement: idd-all runs rest mode as a loop over the single-issue pipeline
 
@@ -318,11 +346,11 @@ In rest mode `idd-all` SHALL first run, once, the steps of the single-issue pipe
 
 It SHALL then call `rest-queue.py start` with the path it resolved and the review flag of the invocation. When `start` exits with code 3, `idd-all` SHALL relay the reason line, clear the unattended marker and end.
 
-It SHALL then repeat: `next`; run the single-issue pipeline for the issue handed out, with the path and the interaction mode resolved before `start`, which are neither resolved nor downgraded again for a later issue, and with the review flag that `next` printed; `record` with the stop reason the single-issue report printed, if any; `rest-queue.py settle` for that issue, with the issue number and no path or branch. It SHALL leave the loop when `next` prints `done` or a stop reason, and SHALL then call `rest-queue.py report` and relay its output.
+It SHALL then repeat: `next`; run the single-issue pipeline for the issue handed out, with the path and the interaction mode resolved before `start`, which are neither resolved nor downgraded again for a later issue, and with the review flag that `next` printed, which decides both what is recorded for the close stage and whether the issue fixes in-scope findings and enters the close stage at all; `record` with the stop reason the single-issue report printed, if any; `rest-queue.py settle` for that issue, with the issue number and no path or branch. It SHALL leave the loop when `next` prints `done` or a stop reason, and SHALL then call `rest-queue.py report` and relay its output.
 
 The two steps of the single-issue pipeline that resolve the path and that can downgrade it SHALL each say, where they stand in the skill, that a rest run does not run them again for an issue and which values it uses instead.
 
-A reason that `idd-all` passes to `record` or to `stop` is text from outside (a line of a report, a line this helper printed, with file names and git's words in it). `idd-all` SHALL pass it on standard input, not as a shell argument.
+A reason that `idd-all` passes to `record` or to `stop` is text from outside (a line of a report, a line this helper printed, with file names and git's words in it). `idd-all` SHALL pass it on standard input, not as a shell argument. The commands in the skill that do so SHALL work when they are run exactly as they are written there, indentation included.
 
 In rest mode `idd-all` SHALL NOT take over work that already exists: when the existing-work check of the single-issue pipeline returns `resume` or `blocked` for the issue handed out, it SHALL create no branch, leave the pull request untouched, ask no question, and record the issue with a reason that begins with `existing work: ` and holds the outcome the check printed and the next step for a person.
 
@@ -378,6 +406,18 @@ The unattended marker SHALL NOT outlive the run. Before `idd-all` records an iss
 - **WHEN** the step of the rest section that runs the single-issue pipeline is read
 - **THEN** it says that `REVIEW_YN` of the issue is the `review` value `next` printed, and not a value remembered from the invocation
 
+##### Example: the skill takes both review values from next
+
+- **GIVEN** the text of `skills/idd-all/SKILL.md`
+- **WHEN** the step of the rest section that runs the single-issue pipeline, and the paragraph of Step 0.7 about running its block again in a new shell, are read
+- **THEN** the step says that `REVIEW_FLAG` follows the value `next` printed, and the paragraph says that a rest run does not go back to the original arguments for `REVIEW_YN`
+
+##### Example: the skill's record command works as written
+
+- **GIVEN** a run in which #5 is in flight, and the two fenced blocks of the rest section of `skills/idd-all/SKILL.md` that hold `--reason-stdin`, copied as they are
+- **WHEN** the first block is run by a shell with ``Stopped: the price is $5 and `date` is not run`` in the place of its placeholder, `settle` runs, and the second block is run with `the helper stopped` in the place of its placeholder
+- **THEN** the recorded reason of #5 is exactly ``Stopped: the price is $5 and `date` is not run``, and the stop reason of the run is exactly `the helper stopped`
+
 ##### Example: the skill passes reasons on standard input
 
 - **GIVEN** the text of `skills/idd-all/SKILL.md`
@@ -399,7 +439,7 @@ The unattended marker SHALL NOT outlive the run. Before `idd-all` records an iss
 ---
 ### Requirement: Between two issues one helper settles the working tree
 
-After an issue is recorded and before the next one is handed out, `idd-all` SHALL call `rest-queue.py settle --issue N`. `settle` takes the default branch from the run state, where `start` stored it. `settle` SHALL accept only the issue this run recorded last, and SHALL exit 1 for any other issue and while an issue is in flight. A second `settle` for an issue it has already settled SHALL change nothing and print what the first one recorded. Until `settle` has succeeded for the issue recorded last, `next` SHALL exit 1 and name that issue. An issue that `next` itself recorded as existing work needs no `settle`: no work was started on it.
+After an issue is recorded and before the next one is handed out, `idd-all` SHALL call `rest-queue.py settle --issue N`. `settle` takes the default branch from the run state, where `start` stored it. `settle` SHALL accept only the issue this run recorded last, and SHALL exit 1 for any other issue and while an issue is in flight. A second `settle` for an issue it has already settled SHALL change nothing and print what the first one recorded: the kept branches, the records it discarded, and the stash when it made one. Until `settle` has succeeded for the issue recorded last, `next` SHALL exit 1 and name that issue. An issue that `next` itself recorded as existing work needs no `settle`: no work was started on it.
 
 The paths in this requirement are relative to the directory `idd-all` runs in (`--cwd`), which need not be the top of the repository. Two of the places that are never committed, the worktree folder and the folder of edit backups, are written at the top of the repository whatever `--cwd` is, so `settle` SHALL match all four places both below `--cwd` and at the top.
 
@@ -410,21 +450,35 @@ What the single-issue pipeline writes into the repository, and which of the clas
 1. The working tree is on the issue's own branch (`idd/<N>` or `idd/<N>-…`). Every changed or untracked path that git does not ignore is a leftover, and `settle` SHALL handle the leftovers in three steps, in this order:
    1. **Regenerated records.** The folder `.claude/.idd/attachments/issue-<N>/` holds what `idd-diagnose` downloads for the issue, and `idd-diagnose` runs again, and writes that folder again, every time the issue is run. A file directly in that folder is vouched for when the manifest lists it with the SHA-256 the file has, or lists it as a download that failed. When `_manifest.json` is the only leftover in that folder, `settle` SHALL discard it. When the branch has no commit that `origin/<default>` lacks and no upstream, and every leftover lies in that folder and is either the manifest or a file the manifest vouches for, `settle` SHALL discard all of them, the manifest last. To discard is to delete an untracked file and to restore a tracked one to its committed content. `settle` SHALL discard nothing else.
    2. **Places that are never committed.** When a leftover that remains lies in a place whose writer keeps it out of git, `settle` SHALL exit 3 without having discarded or committed anything. These places are a closed list: `.claude/.idd/state/`, `.claude/.idd/archive/`, a name that begins with `.claude/.idd/tree-lock`, and `.claude/worktrees/`.
-   3. **Everything else stays with the issue.** `settle` SHALL commit the leftovers that remain on that branch, without pushing, with the subject `chore: keep what the run of #<N> left (#<N>)`, and SHALL record the branch, the commit and the committed paths in the run state before it does anything else. The commit runs the repository's commit hooks. When they reject it, `settle` SHALL stage the leftovers again and make the same commit without running the repository's hooks, SHALL say in the body of that commit message that the hooks rejected the content and were skipped, and SHALL record that in the run state. It SHALL NOT skip the hooks for a commit they did not reject.
+   3. **Everything else stays with the issue.** `settle` SHALL commit the leftovers that remain on that branch, without pushing, with the subject `chore: keep what the run of #<N> left (#<N>)`, and SHALL record the branch, the commit and the committed paths in the run state before it does anything else. The paths it records are the ones git reports for that commit. The commit runs the repository's commit hooks. When the commit fails and the repository has a hook that git runs before a commit (an executable `pre-commit`, `prepare-commit-msg` or `commit-msg` in the hooks folder git names), `settle` SHALL stage the leftovers again and make the same commit without running the repository's hooks, SHALL say in the body of that commit message that the commit failed with the repository's commit hooks and that the hooks were skipped, and SHALL record that in the run state. `settle` cannot tell whether a hook or something else made the commit fail; that such a hook is there is what it goes by. When the commit fails and the repository has no such hook, `settle` SHALL exit 3 and SHALL NOT make the commit a second time.
 
-   It SHALL then check out the default branch. When git reports the checkout as failed and the working tree is on the default branch all the same (a hook that runs after the checkout failed), the checkout counts as done.
+   It SHALL then check out the default branch, in the way that does not overwrite a file git ignores (`git checkout --no-overwrite-ignore`). A file that the issue's branch ignores and the default branch tracks makes that checkout fail; `settle` SHALL then exit 3 with the working tree still on the issue's branch and the file as it was. When git reports the checkout as failed and the working tree is on the default branch all the same (a hook that runs after the checkout failed), the checkout counts as done.
 2. The working tree is on the default branch: any leftover SHALL make `settle` exit 3 and commit nothing, because no branch of the issue holds it and the next issue starts from a clean working tree.
 3. The working tree is on any other branch, or on no branch: `settle` SHALL exit 3.
 
-After the table, `settle` SHALL fetch the default branch from `origin` and exit 3 when it cannot. When the local default branch is behind `origin/<default>` it SHALL fast-forward it. When the local default branch has commits that `origin/<default>` lacks, `settle` SHALL leave it as it is: an issue on the PR path starts its branch from `origin/<default>`, not from the local default branch.
+After the table the working tree is on the default branch. A branch of the issue can carry an ignore rule that the default branch lacks; what that rule covered is then untracked on the default branch. When untracked paths remain at this point and git ignored every one of them while the working tree was on the issue's branch, `settle` SHALL put them into one stash entry with the message `idd rest: files of #<N> that only <branch> ignores`, deleting none of them, and SHALL record the commit of that stash entry and the paths in the run state before it does anything else. It does this before it fetches, so that a fetch that fails leaves no untracked file behind. The stash can therefore hold files that the default branch ignores as well once it is level with `origin`.
 
-A branch of the issue can carry an ignore rule that the default branch lacks; what that rule covered is then untracked on the default branch. When untracked paths remain at this point and git ignored every one of them while the working tree was on the issue's branch, `settle` SHALL put them into one stash entry with the message `idd rest: files of #<N> that only <branch> ignores`, deleting none of them, and SHALL record the commit of that stash entry and the paths in the run state before it does anything else. It SHALL then confirm that `git status --porcelain` prints nothing in the working tree, which is the check every issue on the PR path starts with, and exit 3 otherwise.
+`settle` SHALL then fetch the default branch from `origin` and exit 3 when it cannot. When the local default branch is behind `origin/<default>` it SHALL fast-forward it, again in the way that does not overwrite a file git ignores (`git merge --ff-only --no-overwrite-ignore`): such a file in the way makes `settle` exit 3 with the file as it was. When the local default branch has commits that `origin/<default>` lacks, `settle` SHALL leave it as it is: an issue on the PR path starts its branch from `origin/<default>`, not from the local default branch. It SHALL then confirm that `git status --porcelain` prints nothing in the working tree, which is the check every issue on the PR path starts with, and exit 3 otherwise.
 
-`settle` SHALL then look at every local branch of the issue. A branch with no commits that `origin/<default>` lacks and no upstream holds no work, and `settle` SHALL delete it, since every commit of such a branch is on `origin/<default>`; it SHALL record every other one as kept, with whether it has an upstream. Every local branch of the issue was created by this run, because `next` does not hand out an issue that already has one.
+`settle` SHALL then look at every local branch of the issue. A branch with no commits that `origin/<default>` lacks and no upstream holds no work, and `settle` SHALL delete it, since every commit of such a branch is on `origin/<default>`; it SHALL record every other one as kept, with whether it has an upstream. Every local branch of the issue was created by this run, because `next` does not hand out an issue that already has one. When `settle` made a stash, it SHALL record with it whether the branch the stash names was kept.
 
-A `settle` that runs again after an earlier call stopped part of the way SHALL keep the commit, the paths and the stash that the earlier call recorded. When the earlier call stopped after the commit or the stash and before the run state was written, `settle` SHALL find them again: a kept branch whose newest commit has the subject above and is not on `origin/<default>` is that commit, and a stash entry with the message above is that stash.
+A `settle` that runs again after an earlier call stopped part of the way SHALL keep what the earlier call recorded: the records it discarded, its commit and paths, and its stash. When it makes a second commit on a branch that the earlier call committed on, the record of that branch SHALL name the newest commit, the earlier commit, and the paths of both. When the earlier call stopped after the commit or the stash and before the run state was written, `settle` SHALL find them again: a kept branch whose newest commit has the subject above and is not on `origin/<default>` is that commit, and a stash entry with the message above is that stash.
 
-On exit 3, whichever step stopped, the reason line SHALL have one shape: the issue and the branch the working tree is on at that moment, what is wrong, what a person does next, and only then the detail, which is git's own words or at most three paths and the number of the others. The branch name appears once. When the line would be too long, what is wrong is shortened first and the detail after it; what a person does next and the number of the other paths are never cut off. The whole line SHALL be no longer than the helper's limit for a reason.
+On exit 3, whichever step stopped, the reason line SHALL have one shape: the issue and the branch the working tree is on at that moment, what is wrong, what a person does next, and only then the detail, which is git's own words or at most three paths and the number of the others. The branch the working tree is on is named once, at the start of the line; what is wrong and what a person does next name the default branch only when the working tree is on another branch. A branch name longer than 60 characters is shortened where the line names it. When the line would be too long, what is wrong is shortened first and the detail after it; what a person does next and the number of the other paths are never cut off. The whole line SHALL be no longer than the helper's limit for a reason.
+
+After `settle` stops, `idd-all` ends the run with its report, so the next `/idd-all` begins a new run, and a new run needs the working tree clean on the default branch. For the stops of the table below, what the reason tells a person to do SHALL therefore be complete: taken as written, the steps leave a working tree in which a new run starts. Each ends with running the same `/idd-all` command again with the same flags.
+
+| `settle` stops because | The working tree is on | What the reason tells the person to do |
+| --- | --- | --- |
+| git reports an unfinished merge, cherry-pick, revert or rebase | a branch of the issue | finish or abort it, commit or remove what is left, check out the default branch |
+| a place that is never committed holds a file git does not ignore | a branch of the issue | have git ignore them, commit or remove what else is left, check out the default branch |
+| the checkout would overwrite a file git ignores | a branch of the issue | move away any file that git names, check out the default branch |
+| something is left on the default branch | the default branch | commit them elsewhere or move them away |
+| the working tree is on another branch | that branch | commit or remove what is left there, check out the default branch |
+| `origin` cannot be reached | the default branch | check that origin can be reached |
+| the fast-forward would overwrite a file git ignores | the default branch | move away any file that git names and bring it level with origin |
+
+This table is closed. A stop at which git itself cannot read or write the repository (staging, committing without a hook in play, stashing, reading a branch) carries git's own words; what a person repairs first there is not something this requirement can name.
 
 #### Scenario: an issue branch with work and nothing left over
 
@@ -480,12 +534,14 @@ The endings of the single-issue pipeline on the PR path that the inventory of it
 | `stop-in-implement-attachments`: implement stopped part of the way, and the issue has one attachment that git does not ignore | `idd/5-x`, one commit | a changed `a.txt`, the untracked manifest and the downloaded file | 0 | `idd/5-x`, with a commit that holds `a.txt`, the manifest and the file | existing work |
 | `stop-in-implement-hooks-reject`: implement stopped part of the way, and a pre-commit hook of the repository rejects what it left | `idd/5-x`, one commit | a changed `a.txt` | 0 | `idd/5-x`, with a commit that holds `a.txt` and was made without the hooks | existing work |
 | `stop-in-implement-ignored-files`: a commit of the issue added the ignore rule `coverage/`, and its run wrote `coverage/report.txt` | `idd/5-x`, one commit | nothing git shows on that branch; `coverage/report.txt`, ignored there | 0 | `idd/5-x`; a stash entry holds `coverage/` | existing work |
+| `stop-before-commit-ignored-files`: the issue stopped before its first commit; `origin/main` has the ignore rule `coverage/`, the local `main` lacks it and has a commit of its own, and the run wrote `coverage/report.txt` | `idd/5-x`, no commit | nothing git shows on that branch; `coverage/report.txt`, ignored there | 0 | none; a stash entry holds `coverage/` | handed out |
 | `stop-after-verify-failed`: verify ended with findings that block, and the issue body lists them under `### Blocking` | `idd/5-x`, one commit | the untracked manifest and one new line in the tracked `.claude/.idd/routing-stats.jsonl` | 0 | `idd/5-x`, with a commit that holds the log and not the manifest | not run: blocked |
 | `stop-at-close-stage`: verify was clean, the issue was pushed and stopped before the merge; its phase is `verified` | `idd/5-x`, one commit, with an upstream | the same as `stop-after-verify-failed` | 0 | `idd/5-x`, with a commit that holds the log | not run: verified |
 | `merged-and-closed`: the pull request was squash-merged and the issue closed | `idd/5-x`, one commit, with an upstream; `origin/main` has the squash commit | a changed tracked manifest and one new line in the tracked `.claude/.idd/routing-stats.jsonl` | 0 | `idd/5-x`, with a commit that holds the log and not the manifest | #5 is closed |
 | `on-another-branch`: the pipeline ended on a branch that is neither the default branch nor a branch of #5 | `wip` | nothing | 3 | unchanged | — |
 | `leftover-on-default`: something was left on the default branch | `main` | an untracked `b.txt` | 3 | unchanged | — |
 | `never-committed-place`: a file whose writer keeps it out of git is not ignored | `idd/5-x`, one commit | an untracked `.claude/.idd/tree-lock` and a changed `a.txt` | 3 | unchanged, no new commit | — |
+| `file-the-default-branch-tracks`: a commit of the issue stopped tracking `a.txt` and added an ignore rule for it, and its run wrote `a.txt` | `idd/5-x`, one commit | nothing git shows on that branch; `a.txt`, ignored there and tracked on `main` | 3 | unchanged, no new commit | — |
 
 ##### Example: leftovers on the issue's own branch are kept there
 
@@ -559,6 +615,58 @@ The endings of the single-issue pipeline on the PR path that the inventory of it
 - **GIVEN** #5 recorded as stopped, the working tree on `idd/5-x`, whose one commit adds the ignore rule `coverage/`, and the file `coverage/report.txt`
 - **WHEN** `settle --issue 5` runs, then `report`, and then the stash commit the report names is applied on `idd/5-x`
 - **THEN** `settle` exits 0, the working tree is on `main` and `git status --porcelain` prints nothing, one stash entry has the message `idd rest: files of #5 that only idd/5-x ignores`, the report names that stash commit and `coverage/` under the entry of #5, and after the stash is applied `coverage/report.txt` is there again with its content
+
+##### Example: a file the default branch tracks is not overwritten
+
+- **GIVEN** #5 recorded as stopped, the working tree on `idd/5-x`, whose one commit stops tracking `a.txt` and adds the ignore rule `a.txt`, and the file `a.txt` with the content `the run wrote this`
+- **WHEN** `settle --issue 5` runs, `idd-all` ends the run, and a person then moves `a.txt` away, checks out `main` and starts a new run
+- **THEN** `settle` exits 3 with the working tree on `idd/5-x` and `a.txt` still holding `the run wrote this`, its reason line says to move away any file that git names and to check out `main`, and the new run starts
+
+##### Example: the steps a stop names lead to a run that starts
+
+- **GIVEN** #5 recorded as stopped, and the working tree as the row says
+
+  | the stop | the working tree | the steps the reason names, as a person takes them |
+  | --- | --- | --- |
+  | a place that is never committed | on `idd/5-x`, with an untracked `.claude/.idd/tree-lock` that no ignore rule covers and a changed `a.txt` | add the lock to `.git/info/exclude`, commit `a.txt` on `idd/5-x`, check out `main` |
+  | another branch | on `wip`, with a changed `a.txt` | commit `a.txt` on `wip`, check out `main` |
+  | a leftover on the default branch | on `main`, with an untracked `b.txt` | move `b.txt` away |
+  | an unfinished merge | on `idd/5-x`, in a merge that stopped on a conflict in `a.txt` | abort the merge, check out `main` |
+  | `origin` cannot be reached | on `idd/5-x`, with a changed `a.txt`, and the URL of `origin` points nowhere | set the URL of `origin` back |
+  | the fast-forward | on `idd/5-x`, which has one commit; `origin/main` has a new commit that tracks `build.log`, and the working tree holds a `build.log` with the content `local, ignored` that `.git/info/exclude` ignores | move `build.log` away, fast-forward `main` to `origin/main` |
+
+- **WHEN** `settle --issue 5` runs, `idd-all` ends the run with `stop` and `report`, the person takes the steps of the row, and a new run is started
+- **THEN** in each row `settle` exits 3 with a reason line that names those steps, and the new run starts; in the last row `build.log` still holds `local, ignored` when `settle` has stopped; in the rows where the working tree ends on `main`, the reason line names `main` once
+
+##### Example: a commit that fails without a commit hook is not made again
+
+- **GIVEN** #5 recorded as stopped, the working tree on `idd/5-x` with a changed tracked file `a.txt`, and a git whose first commit fails for a reason that is no hook's
+
+  | the repository has | `settle` |
+  | --- | --- |
+  | no commit hook | exits 3; its reason line says that what the run left could not be committed; `idd/5-x` has no new commit |
+  | a `pre-commit` hook that succeeds | exits 0; the body of the commit message says that the commit hooks were skipped |
+
+- **WHEN** `settle --issue 5` runs
+- **THEN** the outcome is that of the row
+
+##### Example: a second keep commit keeps the first
+
+- **GIVEN** #5 recorded as stopped, the working tree on `idd/5-x` with a changed tracked file `a.txt`, and a first `settle --issue 5` that committed `a.txt` and then stopped before the checkout
+- **WHEN** an untracked file `b.txt` appears, `settle --issue 5` runs again, and then `report`
+- **THEN** the second call exits 0, the run state holds `idd/5-x` as kept with the commit of the second call, the commit of the first call as the earlier one, and the paths `a.txt` and `b.txt`, and the report names both commits on the line of `idd/5-x`
+
+##### Example: a stash whose branch was deleted
+
+- **GIVEN** `origin/main` with the ignore rule `coverage/`, a local `main` that lacks that rule and has one commit of its own, #5 recorded as stopped, the working tree on `idd/5-x`, which was created from `origin/main` and has no commit of its own, and the file `coverage/report.txt`
+- **WHEN** `settle --issue 5` runs, then `report`, and then the stash commit the report names is applied in the working tree
+- **THEN** `settle` exits 0, the branch `idd/5-x` no longer exists, `settle` prints the stash with `kept` false, the report says on the line of that stash that the branch is deleted and does not say `on that branch`, and after the stash is applied `coverage/report.txt` is there again
+
+##### Example: a stash the run state missed is found again
+
+- **GIVEN** the state of the Example "files that only the issue's branch ignores are stashed" after `settle`, from which the record of the stash was then removed and the attempt marked as not settled
+- **WHEN** `settle --issue 5` runs again, and then once more
+- **THEN** the first of the two exits 0 and prints the stash with the commit of the first stash, the path `coverage/` and `kept` true, and the second prints the same stash commit
 
 ##### Example: a long branch name does not cut off the next step
 

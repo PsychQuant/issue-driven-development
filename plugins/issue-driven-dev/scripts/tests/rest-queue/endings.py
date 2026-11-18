@@ -18,11 +18,13 @@ Each row then runs `rest-queue.py settle` and checks the result, not the steps:
           reason line that names #5
 
 A step the report tells a person to take is taken here: a kept branch without an upstream is deleted, and a new
-run then hands the issue out. A row whose issue is closed has no later run to look at; there the report is
-checked instead.
+run then hands the issue out; a stash is applied where the report says (on the kept branch, or in the working tree
+when that branch is gone). For a row whose issue is closed, the report is checked and a later run must not know
+the issue.
 
-The row names, the exit codes, the branches afterwards and the later run are compared with the table in the spec
-when the spec is on disk (a change that is not archived yet wins over the main spec).
+Every cell of the table is compared with the spec when the spec is on disk (a change that is not archived yet
+wins over the main spec): the row names, the exit codes, the branches afterwards and the later run against what the
+rows here expect, and the two cells that describe the fixture against the copy in CELLS.
 """
 import glob
 import hashlib
@@ -51,10 +53,11 @@ STATE = ".claude/.idd/state/idd-all-rest.json"
 STASH_MESSAGE = f"idd rest: files of #5 that only {B} ignores"
 
 # on: where the working tree is when settle runs · work: the branch has a commit of its own · leave: what the
-# ending leaves · gh: the issue on GitHub after the ending (scenario.py) · exit / branches / committed (the paths
-# of settle's commit, None = no commit) / discarded / later (what a later run does with #5)
+# ending leaves · gh: the open issues on GitHub after the ending (scenario.py; a closed #5 is not among them) ·
+# exit / branches / committed (the paths of settle's commit, None = no commit) / discarded / later (what a later
+# run does with #5) · intact: files that must hold this content after an exit 3
 ROWS = [
-    dict(id="closed-before-start", on="main", outcome="closed", exit=0, branches=[], later="closed"),
+    dict(id="closed-before-start", on="main", outcome="closed", gh="9", exit=0, branches=[], later="closed"),
     dict(id="existing-work", on="main", exit=0, branches=[], later="handed"),
     dict(id="stop-before-download", on="own", exit=0, branches=[], later="handed"),
     dict(id="stop-after-diagnose", on="own", leave=["manifest"], exit=0, branches=[], discarded=[M], later="handed"),
@@ -77,17 +80,69 @@ ROWS = [
          branches=[B], committed=["a.txt"], no_hooks=True, later="existing"),
     dict(id="stop-in-implement-ignored-files", on="own", work=True, work_ignore=True, leave=["ignored"], exit=0,
          branches=[B], stash=["coverage/"], later="existing"),
+    dict(id="stop-before-commit-ignored-files", on="own", origin_ignore=True, leave=["ignored"], exit=0, branches=[],
+         stash=["coverage/"], later="handed"),
     dict(id="stop-after-verify-failed", on="own", work=True, leave=["manifest", "log"], gh="5:blocking=verify findings",
          exit=0, branches=[B], committed=[LOG], discarded=[M], later="blocked"),
     dict(id="stop-at-close-stage", on="own", work=True, upstream=True, leave=["manifest", "log"],
          gh="5:html=body-verified", exit=0, branches=[B], committed=[LOG], discarded=[M], later="verified"),
     dict(id="merged-and-closed", on="own", work=True, work_manifest=True, upstream=True, squash=True,
-         outcome="closed", leave=["manifest", "log"], exit=0, branches=[B], committed=[LOG], discarded=[M],
+         outcome="closed", gh="9", leave=["manifest", "log"], exit=0, branches=[B], committed=[LOG], discarded=[M],
          later="closed"),
     dict(id="on-another-branch", on="wip", exit=3),
     dict(id="leftover-on-default", on="main", leave=["b"], exit=3),
     dict(id="never-committed-place", on="own", work=True, leave=["lock", "edit"], exit=3),
+    dict(id="file-the-default-branch-tracks", on="own", work=True, work_untrack=True, leave=["ignored-tracked"], exit=3,
+         intact={"a.txt": "the run wrote this\n"}),
 ]
+
+# the cells `The working tree is on` and `What the ending leaves` of each row, as the spec has them
+CELLS = {
+    'closed-before-start': ('`main`',
+        'nothing'),
+    'existing-work': ('`main`',
+        'nothing'),
+    'stop-before-download': ('`idd/5-x`, no commit',
+        'nothing'),
+    'stop-after-diagnose': ('`idd/5-x`, no commit',
+        'the untracked manifest, written by `process-attachments.sh download`'),
+    'stop-after-diagnose-attachments': ('`idd/5-x`, no commit',
+        'the untracked manifest and the downloaded file, both written by `process-attachments.sh download`'),
+    'stop-after-diagnose-ignored-attachments': ('`idd/5-x`, no commit',
+        'the untracked manifest, which lists one file'),
+    'stop-after-diagnose-tracked-manifest': ('`idd/5-x`, no commit',
+        'the tracked manifest, changed by `process-attachments.sh download`'),
+    'stop-after-diagnose-failed-download': ('`idd/5-x`, no commit',
+        'the untracked manifest, which lists the file as a failed download, and the part of the file that arrived'),
+    'stop-after-diagnose-foreign-file': ('`idd/5-x`, no commit',
+        'the untracked manifest and `notes.txt`'),
+    'meeting': ('`main`',
+        'nothing; `idd/5-x` has one commit'),
+    'stop-in-implement': ('`idd/5-x`, one commit',
+        'a changed `a.txt`, a new `openspec/changes/idd-5-x/proposal.md`, and the untracked manifest'),
+    'stop-in-implement-attachments': ('`idd/5-x`, one commit',
+        'a changed `a.txt`, the untracked manifest and the downloaded file'),
+    'stop-in-implement-hooks-reject': ('`idd/5-x`, one commit',
+        'a changed `a.txt`'),
+    'stop-in-implement-ignored-files': ('`idd/5-x`, one commit',
+        'nothing git shows on that branch; `coverage/report.txt`, ignored there'),
+    'stop-before-commit-ignored-files': ('`idd/5-x`, no commit',
+        'nothing git shows on that branch; `coverage/report.txt`, ignored there'),
+    'stop-after-verify-failed': ('`idd/5-x`, one commit',
+        'the untracked manifest and one new line in the tracked `.claude/.idd/routing-stats.jsonl`'),
+    'stop-at-close-stage': ('`idd/5-x`, one commit, with an upstream',
+        'the same as `stop-after-verify-failed`'),
+    'merged-and-closed': ('`idd/5-x`, one commit, with an upstream; `origin/main` has the squash commit',
+        'a changed tracked manifest and one new line in the tracked `.claude/.idd/routing-stats.jsonl`'),
+    'on-another-branch': ('`wip`',
+        'nothing'),
+    'leftover-on-default': ('`main`',
+        'an untracked `b.txt`'),
+    'never-committed-place': ('`idd/5-x`, one commit',
+        'an untracked `.claude/.idd/tree-lock` and a changed `a.txt`'),
+    'file-the-default-branch-tracks': ('`idd/5-x`, one commit',
+        'nothing git shows on that branch; `a.txt`, ignored there and tracked on `main`'),
+}
 
 
 def sh(args, cwd=None, env=None, check=True):
@@ -218,6 +273,17 @@ def build(base, stub, row):
     if row.get("ignore_files") or row.get("tracked_manifest"):
         git(tree, "commit", "-q", "-m", "earlier")
         git(tree, "push", "-q", "origin", "main")
+    if row.get("origin_ignore"):   # origin/main gets an ignore rule; the local default branch lacks it and has a commit of its own
+        git(tree, "checkout", "-q", "-b", "elsewhere")
+        write(os.path.join(tree, ".gitignore"), "coverage/\n")
+        git(tree, "add", ".gitignore")
+        git(tree, "commit", "-q", "-m", "ignore coverage")
+        git(tree, "push", "-q", "origin", "elsewhere:main")
+        git(tree, "checkout", "-q", "main")
+        git(tree, "branch", "-q", "-D", "elsewhere")
+        write(os.path.join(tree, "local.txt"), "l\n")
+        git(tree, "add", "local.txt")
+        git(tree, "commit", "-q", "-m", "a commit only this clone has")
     outcome = row.get("outcome", "stopped")
     if outcome == "closed":
         write(os.path.join(gh_dir, "state-5"), "CLOSED\n")
@@ -235,6 +301,9 @@ def build(base, stub, row):
             download(tree, stub, "empty", "idd-issue")
         if row.get("work_ignore"):     # a commit of the issue adds an ignore rule the default branch lacks
             write(os.path.join(tree, ".gitignore"), "coverage/\n")
+        if row.get("work_untrack"):    # a commit of the issue stops tracking a file the default branch tracks, and ignores it
+            git(tree, "rm", "-q", "--cached", "a.txt")
+            write(os.path.join(tree, ".gitignore"), "a.txt\n")
         git(tree, "add", "-A")
         git(tree, "commit", "-q", "-m", "work of #5 (#5)")
     if row.get("upstream"):
@@ -263,8 +332,10 @@ def build(base, stub, row):
             write(os.path.join(tree, ".claude/.idd/tree-lock"), "pid\n")
         elif kind == "rejecting-hook":   # a lint hook: it rejects what the run left
             executable(os.path.join(tree, ".git", "hooks", "pre-commit"), "#!/bin/sh\necho 'lint: a.txt fails' >&2\nexit 1\n")
-        elif kind == "ignored":          # written by the run, ignored by the rule the issue's commit added
+        elif kind == "ignored":          # written by the run, ignored by a rule the issue's branch has
             write(os.path.join(tree, "coverage", "report.txt"), "the report\n")
+        elif kind == "ignored-tracked":  # written by the run, ignored on the branch, tracked on the default branch
+            write(os.path.join(tree, "a.txt"), "the run wrote this\n")
     if row.get("meeting"):   # the meeting unwind: commit the attachment folder on the branch, return to the default branch
         download(tree, stub, "empty", "idd-diagnose")
         git(tree, "add", "--", FOLDER.rstrip("/"))
@@ -290,6 +361,10 @@ def later_run(tree, gh_dir, row, problems):
     elif later == "existing":
         if nxt.get("next") is not None or not attempts or not attempts[0]["reason"].startswith("existing work: local branch " + B):
             problems.append(f"a later run does not record #5 as existing work: {nxt} {attempts[:1]}")
+    elif later == "closed":   # not among the open issues: in no class, and not the one handed out
+        classes = answer(rq(tree, gh_dir, "list", "--json")).get("classes", {})
+        if any(5 in numbers for numbers in classes.values()) or nxt.get("next") == 5 or any(a["issue"] == 5 for a in attempts):
+            problems.append(f"a later run still knows the closed #5: {classes} {nxt}")
     else:   # no longer a candidate: listed under its class, not handed out, not recorded
         classes = answer(rq(tree, gh_dir, "list", "--json")).get("classes", {})
         if 5 not in classes.get(later, []):
@@ -320,6 +395,9 @@ def check(base, stub, row):
         lines = proc.stderr.strip().splitlines()
         if len(lines) != 1 or "#5" not in lines[0]:
             problems.append(f"exit 3 without exactly one reason line that names #5: {proc.stderr.strip()[:200]!r}")
+        for path, content in row.get("intact", {}).items():
+            if open(os.path.join(tree, path)).read() != content:
+                problems.append(f"exit 3 and {path} no longer holds what the run wrote")
         return problems
     if git(tree, "symbolic-ref", "--short", "HEAD").strip() != "main":
         problems.append("the working tree is not on the default branch")
@@ -377,6 +455,9 @@ def check(base, stub, row):
             problems.append(f"the report names a branch of the closed issue: {lines[0][:160]}")
         if committed is not None and not any(tip[:7] in ln and all(p in ln for p in committed) for ln in lines):
             problems.append(f"the report does not name {B}, the commit and its paths under the closed issue: {lines[:1]}")
+        if "open again" in report:
+            problems.append("the report says the closed issue is open again")
+        later_run(tree, gh_dir, row, problems)
     else:
         if row.get("no_hooks") and "without the repository's commit hooks" not in report:
             problems.append("the report does not say that the commit was made without the commit hooks")
@@ -389,12 +470,20 @@ def check(base, stub, row):
             git(tree, "branch", "-D", B)
             again = dict(row, later="handed")
             later_run(tree, gh_dir, again, problems)
-    if row.get("stash") and stash:   # the other step the report gives: the stash applied on that branch gives the file back
-        if f"git stash apply {stash['commit']}" not in report:
+    if row.get("stash") and stash:   # the other step the report gives: the stash applied where the report says gives the file back
+        line = next((ln for ln in report.splitlines() if f"git stash apply {stash['commit']}" in ln), "")
+        if not line:
             problems.append("the report does not say how to get the stashed files back")
-        if not branches_of_5(tree):
-            git(tree, "branch", B, tip)   # deleted above to take the report's first step; the stash is applied where the report says
-        git(tree, "checkout", "-q", B)
+        if stash.get("kept") is not bool(row["branches"]):
+            problems.append(f"the run state says the branch of the stash was kept: {stash.get('kept')!r}; the row keeps {row['branches']}")
+        if row["branches"]:
+            if "on that branch" not in line:
+                problems.append("the report does not say to apply the stash on the kept branch")
+            if not branches_of_5(tree):
+                git(tree, "branch", B, tip)   # deleted above to take the report's first step
+            git(tree, "checkout", "-q", B)
+        elif "is deleted" not in line or "on that branch" in line:
+            problems.append(f"the branch of the stash is gone and the report does not say so: {line[:200]}")
         applied = sh(["git", "-C", tree, "stash", "apply", "-q", stash["commit"]], check=False)
         path = os.path.join(tree, "coverage", "report.txt")
         if applied.returncode != 0 or not os.path.isfile(path) or open(path).read() != "the report\n":
@@ -402,14 +491,14 @@ def check(base, stub, row):
     return problems
 
 
-BRANCH_CELL = {"none": [], "unchanged": None}   # cells that begin with `idd/5-x` keep that branch
+BRANCH_CELL = {"none": [], "unchanged": None}   # cells that begin with `idd/5-x` keep that branch; what follows , or ; is prose
 LATER_CELL = {"handed out": "handed", "existing work": "existing", "#5 is closed": "closed", "—": None,
               "not run: verified": "verified", "not run: blocked": "blocked", "not run: meeting": "meeting"}
 
 
 def spec_rows():
-    """{row id: (exit code, branches afterwards, later run)} of the table in the spec, or None when no spec
-    with that Example is on disk."""
+    """{row id: (exit code, branches afterwards, later run, the cell `on`, the cell `leaves`)} of the table in the
+    spec, or None when no spec with that Example is on disk."""
     for path in sorted(glob.glob(os.path.join(ROOT, "openspec/changes/*/specs/idd-all-rest/spec.md"))) + [os.path.join(ROOT, "openspec/specs/idd-all-rest/spec.md")]:
         try:
             with open(path, encoding="utf-8") as fh:
@@ -424,8 +513,8 @@ def spec_rows():
             cells = [c.strip() for c in line.strip().strip("|").split("|")]
             m = re.match(r"^`([a-z-]+)`:", cells[0]) if len(cells) == 6 else None
             if m:
-                kept = [B] if cells[4].startswith(f"`{B}`") else BRANCH_CELL.get(cells[4].split(",")[0].strip(), "?")
-                rows[m.group(1)] = (int(cells[3]), kept, LATER_CELL.get(cells[5], "?"))
+                kept = [B] if cells[4].startswith(f"`{B}`") else BRANCH_CELL.get(re.split(r"[,;]", cells[4])[0].strip(), "?")
+                rows[m.group(1)] = (int(cells[3]), kept, LATER_CELL.get(cells[5], "?"), cells[1], cells[2])
         return rows
     return None
 
@@ -448,7 +537,7 @@ def main():
         if table is None:
             print("endings: no spec with the table on disk; the row names were not compared")
         else:
-            here = {r["id"]: (r["exit"], r.get("branches"), r.get("later")) for r in ROWS}
+            here = {r["id"]: (r["exit"], r.get("branches"), r.get("later"), *CELLS.get(r["id"], ("?", "?"))) for r in ROWS}
             for name in sorted(set(table) | set(here)):
                 if table.get(name) != here.get(name):
                     bad += 1

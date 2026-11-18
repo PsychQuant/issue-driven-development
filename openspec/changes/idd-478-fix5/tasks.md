@@ -26,3 +26,13 @@
 
 - [ ] 5.1 對 helper 新增的分支再做一次變異檢查，每一處至少有一個測試失敗。
 - [ ] 5.2 跑 `scripts/tests/rest-queue/test.sh`、`scripts/tests/close-stage/test.sh` 與 `scripts/run-all-tests.sh`，全部通過。
+
+## 6. 獨立規格對照之後的修正
+
+- [ ] 6.1 測試先寫。Requirement「A rest run keeps its review flag」：Example `review added while an issue is in flight`（兩列，實際呼叫 `close-stage.py run`）與 Scenario `a rest run state that cannot be read stops the close stage`。`close-stage.py run` 自己讀同一個 `--cwd` 的 rest 狀態：帶 review 而那一張 in flight 就停，24 小時內的狀態檔讀不出來也停。完成時：這兩項檢查在改之前失敗、改之後通過。
+- [ ] 6.2 測試先寫。Requirement「Between two issues one helper settles the working tree」：Example `a file the default branch tracks is not overwritten`、`the steps a stop names lead to a run that starts`（六列，照原因行寫的步驟做完再開新的 run）、`a commit that fails without a commit hook is not made again`（兩列）、`a second keep commit keeps the first`、`a stash whose branch was deleted`、`a stash the run state missed is found again`；`endings.py` 加 `stop-before-commit-ignored-files` 與 `file-the-default-branch-tracks` 兩列，兩列 closed 的 GitHub 端不再列出 #5、並檢查之後的 run，表的六欄都與規格比對。`rest-queue.py settle`：checkout 與快轉帶 `--no-overwrite-ignore`；只有 repo 有 commit 之前會跑的 hook 時才不經 hook 重做 commit；第二次 keep commit 合併先前的紀錄；記下 stash 指的 branch 有沒有留下；丟掉的紀錄存進狀態、第二次 `settle` 一併印出；每一種停下的後續步驟寫完整；原因行只在開頭寫一次工作樹所在的 branch。
+- [ ] 6.3 Requirement「Start prints the list and resumes an unfinished run」與「Report lists what happened and ends the run」：`start` 的兩則拒絕原因寫完整的步驟，`--pr` 那一句改成取代 `--no-pr`；報告的 stash 那一行分 branch 還在與已刪掉兩種寫法，兩次 commit 都列出，「工作樹可能還在某張的 branch 上」那一行寫完整的步驟（Example `the step for a working tree that was not settled`）；報告叫人做的步驟改成封閉列舉。
+- [ ] 6.4 `skills/idd-all/SKILL.md`。Requirement「idd-all runs rest mode as a loop over the single-issue pipeline」：`record` 的程式區塊移到行首（Example `the skill's record command works as written`，實際執行區塊）；`REVIEW_FLAG` 也取 `next` 的值、Step 0.7 重跑時 rest 不回頭看原始引數（Example `the skill takes both review values from next`）；第 6 步與停止表補上不覆寫被忽略的檔、hook 的條件、停下之後的步驟。
+- [ ] 6.5 `references/working-tree-writers.md` 四列改正（附件資料夾有一處以名稱 stage、編輯備份寫在主工作樹、routing-stats 寫在 shell 所在工作樹的頂層、issue-runs 是否 commit 標為未查到），歸類加「stashed」與「stops」；CHANGELOG、`docs/commands.md`、`MANIFESTO.md` 的說法對齊。
+- [ ] 6.6 對 6.1 與 6.2 新增的分支做變異檢查，每一處至少有一個測試失敗；請同一位獨立 reviewer 重跑它原先的重現步驟。
+

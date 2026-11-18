@@ -184,7 +184,7 @@ Guardrails 是 mandatory，不是 skipped（`idd-all` Phase 5c，全部在 `scri
 
 **auto-merge ≠ auto-close** —— merge 之後 `idd-close` 照跑（closing summary 是 audit artifact，不可省）；idd-all 帶 `ORCHESTRATED BY /idd-all` 指示呼叫它，停點取預設。
 
-這條路原本交給 #37 的 bulk-solve autopilot；#37 以 not planned 結案，#392 把它做進 `idd-all` 本身。#37 剩下的另一半（不帶 issue 就跑剩下的全部）由 #478 做成 `idd-all` 的 rest mode：哪些 issue 會跑由 `scripts/rest-queue.py` 的判定表決定，每一張仍然各自過上面的 guardrail。
+這條路原本交給 #37 的 bulk-solve autopilot；#37 以 not planned 結案，#392 把它做進 `idd-all` 本身。#37 剩下的另一半（不帶 issue 就逐張跑每一張可以跑的 open issue）由 #478 做成 `idd-all` 的 rest mode：哪些 issue 會跑由 `scripts/rest-queue.py` 的判定表決定，每一張仍然各自過上面的 guardrail。
 
 自動化 caller（`/loop`、`/goal`（native，v2.1.139+）、`ralph-loop`、外部 CI）不需要自己 merge：`/idd-all` 會做，而且只在上面的 guardrail 全過時做。caller 看到 Phase 6 的 `Stopped:`，代表某一道沒過 —— 那不是 merge 的訊號，也不該繞過它自己 `gh pr merge`。
 

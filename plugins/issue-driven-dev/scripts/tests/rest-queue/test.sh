@@ -1058,7 +1058,7 @@ assert_eq "two branches: the one with work is kept" '[{"branch":"idd/5-x","commi
 python3 "$HERE/endings.py" "$RQ" "$PLUGIN/scripts/process-attachments.sh" > "$WORK/endings.out" 2>&1; rc=$?
 assert_exit "endings: every row of the table holds" 0 "$rc"
 [ "$rc" = 0 ] || sed -n "1,40p" "$WORK/endings.out"
-assert_output_grep "endings: and it ran all of them" "20 rows, 0 failure(s)" "$WORK/endings.out"
+assert_output_grep "endings: and it ran all of them" "22 rows, 0 failure(s)" "$WORK/endings.out"
 
 # spec-example: idd-all-rest / an empty issue branch is deleted
 new empty-branch 5 9
@@ -1357,6 +1357,7 @@ git -C "$T" branch -q -D idd/5-x
 run start --path PR --review no > /dev/null 2>&1
 assert_eq "advice: with the branch deleted as the report says, a new run hands out #5" "5" "$(run next | jget next)"
 # spec-example: idd-all-rest / the report says where the working tree may be
+# spec-example: idd-all-rest / the step for a working tree that was not settled
 new loose 5
 run start --path PR --review no > /dev/null 2>&1; run next > /dev/null
 git -C "$T" checkout -q --no-track -b idd/5-x origin/main; printf 'changed\n' >> "$T/a.txt"
