@@ -720,7 +720,12 @@ assert_eq "missed: and finds the commit and its path again" \
 
 # spec-example: idd-all-rest / commit hooks that reject the leftovers are skipped for that commit
 hook() { printf '%s\n' "$3" > "$1/.git/hooks/$2"; chmod +x "$1/.git/hooks/$2"; }
-for kind in pre-commit prepare-commit-msg formatter; do
+# hooks that come from git's configuration (hook.<name>.event): only where this git knows them
+CONFIG_HOOKS=""
+git init -q "$WORK/hookprobe" && git -C "$WORK/hookprobe" config hook.probe.event pre-commit && git -C "$WORK/hookprobe" config hook.probe.command true \
+  && git -C "$WORK/hookprobe" hook list pre-commit 2>/dev/null | grep -qx probe && CONFIG_HOOKS="config-pre-commit config-prepare-commit-msg config-and-file"
+[ -n "$CONFIG_HOOKS" ] || echo "  (this git has no hooks from configuration: three rows of the hook Example are not run)"
+for kind in pre-commit prepare-commit-msg formatter $CONFIG_HOOKS; do
   new "hook-$kind" 5 9
   run start --path PR --review no > /dev/null 2>&1; run next > /dev/null
   git -C "$T" checkout -q --no-track -b idd/5-x origin/main; printf 'changed\n' >> "$T/a.txt"
@@ -729,6 +734,10 @@ for kind in pre-commit prepare-commit-msg formatter; do
     formatter) hook "$T" pre-commit '#!/bin/sh
 printf "formatted\n" > a.txt
 exit 1' ;;
+    config-and-file) git -C "$T" config hook.lint.event pre-commit; git -C "$T" config hook.lint.command "exit 1"
+               hook "$T" pre-commit '#!/bin/sh
+exit 1' ;;
+    config-*)  git -C "$T" config hook.lint.event "${kind#config-}"; git -C "$T" config hook.lint.command "exit 1" ;;
     *)         hook "$T" "$kind" '#!/bin/sh
 exit 1' ;;
   esac
@@ -816,6 +825,16 @@ print(len(line) <= rq.REASON_MAX, todo in line, line.count("idd/5-"), "what is w
 SHAPE_PY
 )
 assert_eq "reason: a long problem is cut first, the next step stays whole, the line fits and still carries the detail" "True True 1 True True" "$SHAPE"
+# every stop of settle, with names as long as a reason line shows them: the next step is whole and the line fits
+new longest 5 9
+NAME40=$(python3 -c 'print("d" * 40)'); LONG5="idd/5-$(python3 -c 'print("b" * 34)')"
+git -C "$T" branch -q -m main "$NAME40"; git -C "$T" push -q origin "$NAME40" 2>/dev/null; printf '%s\n' "$NAME40" > "$G/default-branch"
+begin
+git -C "$T" checkout -q --no-track -b "$LONG5" "origin/$NAME40"; mkdir -p "$T/.claude/.idd"; printf 'pid\n' > "$T/.claude/.idd/tree-lock"
+run record --issue 5 --reason x > /dev/null
+settle 5 > /dev/null 2> "$S/err"; assert_exit "longest: settle exits 3" 3 "$?"
+reason_shape "longest" "$S/err"
+assert_output_grep "longest: the checkout command is whole, with the whole name" "then git checkout --no-overwrite-ignore $NAME40, then run the same /idd-all command again (same flags)" "$S/err"
 new discard-order 5 9
 run start --path PR --review no > /dev/null 2>&1; run next > /dev/null
 git -C "$T" checkout -q --no-track -b idd/5-x origin/main; download 5 "$T" with_url
@@ -872,13 +891,33 @@ assert_exit "overwrite: settle exits 3" 3 "$rc"
 assert_eq "overwrite: the file still holds what the run wrote, and the working tree is on the issue's branch" \
   "idd/5-x|the run wrote this" "$(head_branch)|$(cat "$T/a.txt")"
 reason_shape "overwrite" "$S/err"
-assert_output_grep "overwrite: the reason says to move the file away before the checkout" "move away any file that git names, check out main" "$S/err"
+assert_output_grep "overwrite: the reason gives the checkout that does not overwrite" "run git checkout --no-overwrite-ignore main and move away each file it names until it succeeds, then" "$S/err"
 ended
-mv "$T/a.txt" "$S/a.txt.kept"; git -C "$T" checkout -q main
-accepts "overwrite: with the file moved away and main checked out, a new run starts"
+git -C "$T" checkout -q --no-overwrite-ignore main 2> "$S/git.err"; assert_exit "overwrite: that checkout fails while the file is in the way" 1 "$?"
+assert_output_grep "overwrite: and names the file" "a.txt" "$S/git.err"
+mv "$T/a.txt" "$S/a.txt.kept"; git -C "$T" checkout -q --no-overwrite-ignore main
+accepts "overwrite: with the file moved away and that checkout done, a new run starts"
+# the same with names too long for a reason line: the steps still lose nothing
+new overwrite-long 5 9
+LONGNAME="settings-for-the-local-development-environment-of-this-repository-number"
+mkdir -p "$T/config"; for i in 1 2 3 4; do printf 'main\n' > "$T/config/$LONGNAME-$i.json"; done
+git -C "$T" add config; git -C "$T" commit -q -m "config"; git -C "$T" push -q origin main 2>/dev/null
+begin
+git -C "$T" checkout -q --no-track -b idd/5-x origin/main
+git -C "$T" rm -q -r --cached config; printf 'config/\n' > "$T/.gitignore"; git -C "$T" add .gitignore; git -C "$T" commit -q -m "stop tracking config (#5)"
+for i in 1 2 3 4; do printf 'the run wrote this\n' > "$T/config/$LONGNAME-$i.json"; done
+run record --issue 5 --reason x > /dev/null
+settle 5 > /dev/null 2> "$S/err"; assert_exit "overwrite, long names: settle exits 3" 3 "$?"
+reason_shape "overwrite, long names" "$S/err"
+ended
+git -C "$T" checkout -q --no-overwrite-ignore main 2> "$S/git.err"; assert_exit "overwrite, long names: the checkout the reason gives fails" 1 "$?"
+assert_eq "overwrite, long names: and names all four files in full" "4" "$(grep -c "$LONGNAME" "$S/git.err")"
+mv "$T/config" "$S/config.kept"; git -C "$T" checkout -q --no-overwrite-ignore main
+assert_eq "overwrite, long names: every file still holds what the run wrote" "4" "$(grep -l 'the run wrote this' "$S"/config.kept/*.json | wc -l | tr -d ' ')"
+accepts "overwrite, long names: and a new run starts"
 
 # spec-example: idd-all-rest / the steps a stop names lead to a run that starts
-for stop in lock other-branch default merge fetch fast-forward; do
+for stop in lock other-branch default merge merge-default unmerged unclean state fetch fast-forward; do
   new "follow-$stop" 5 9
   if [ "$stop" = fast-forward ]; then   # origin/main gets a commit that tracks build.log
     git clone -q "$T.origin.git" "$S/other" 2>/dev/null; printf 'from origin\n' > "$S/other/build.log"
@@ -893,31 +932,51 @@ for stop in lock other-branch default merge fetch fast-forward; do
     merge)  git -C "$T" checkout -q --no-track -b idd/5-x origin/main; printf 'one\n' > "$T/a.txt"; git -C "$T" commit -q -am "one (#5)"
             git -C "$T" checkout -q -b side main; printf 'two\n' > "$T/a.txt"; git -C "$T" commit -q -am two
             git -C "$T" checkout -q idd/5-x; git -C "$T" merge -q side > /dev/null 2>&1 ;;
+    merge-default) git -C "$T" checkout -q -b side main; printf 'two\n' > "$T/a.txt"; git -C "$T" commit -q -am two
+            git -C "$T" checkout -q main; printf 'one\n' > "$T/a.txt"; git -C "$T" commit -q -am "a commit only this clone has"
+            git -C "$T" merge -q side > /dev/null 2>&1 ;;
+    unmerged) git -C "$T" checkout -q --no-track -b idd/5-x origin/main; printf 'stashed\n' > "$T/a.txt"; git -C "$T" stash -q
+            printf 'one\n' > "$T/a.txt"; git -C "$T" commit -q -am "one (#5)"; git -C "$T" stash pop -q > /dev/null 2>&1 ;;
+    unclean) git -C "$T" checkout -q --no-track -b idd/5-x origin/main; printf 'w\n' > "$T/w.txt"; git -C "$T" add w.txt
+            git -C "$T" commit -q -m "work (#5)"; hook "$T" post-checkout '#!/bin/sh
+printf "stray\n" > stray.txt' ;;
+    state)  git -C "$T" checkout -q --no-track -b idd/5-x origin/main; printf 'changed\n' >> "$T/a.txt" ;;
     fetch)  git -C "$T" checkout -q --no-track -b idd/5-x origin/main; printf 'changed\n' >> "$T/a.txt"
             git -C "$T" remote set-url origin "$S/nowhere.git" ;;
     fast-forward) git -C "$T" checkout -q --no-track -b idd/5-x origin/main; printf 'w\n' > "$T/w.txt"; git -C "$T" add w.txt
             git -C "$T" commit -q -m "work (#5)"; printf 'build.log\n' >> "$T/.git/info/exclude"; printf 'local, ignored\n' > "$T/build.log" ;;
   esac
   run record --issue 5 --reason x > /dev/null
+  [ "$stop" = state ] && python3 -c 'import json,sys; p=sys.argv[1]; s=json.load(open(p)); s["default"]="not a branch name"; json.dump(s, open(p,"w"))' "$(state_file)"
   settle 5 > /dev/null 2> "$S/err"; assert_exit "follow $stop: settle exits 3" 3 "$?"
   reason_shape "follow $stop" "$S/err"
   ended
   case "$stop" in   # the steps the reason names, taken as they are written
-    lock)   assert_output_grep "follow lock: the reason names every step" "have git ignore them, commit or remove what else is left, check out main, then" "$S/err"
-            printf '.claude/.idd/tree-lock\n' >> "$T/.git/info/exclude"; git -C "$T" add -A; git -C "$T" commit -q -m "what was left"; git -C "$T" checkout -q main ;;
-    other-branch) assert_output_grep "follow other-branch: the reason names every step" "commit or remove what is left there, check out main, then" "$S/err"
-            git -C "$T" add -A; git -C "$T" commit -q -m "what was left"; git -C "$T" checkout -q main ;;
+    lock)   assert_output_grep "follow lock: the reason names every step" "have git ignore them, commit or remove what else is left, then git checkout --no-overwrite-ignore main, then" "$S/err"
+            printf '.claude/.idd/tree-lock\n' >> "$T/.git/info/exclude"; git -C "$T" add -A; git -C "$T" commit -q -m "what was left"; git -C "$T" checkout -q --no-overwrite-ignore main ;;
+    other-branch) assert_output_grep "follow other-branch: the reason names every step" "commit or remove what is left there, then git checkout --no-overwrite-ignore main, then" "$S/err"
+            git -C "$T" add -A; git -C "$T" commit -q -m "what was left"; git -C "$T" checkout -q --no-overwrite-ignore main ;;
+    merge-default) assert_output_grep "follow merge-default: on the default branch nothing is to be committed there" "finish or abort it, commit what is left elsewhere or move it away, then" "$S/err"
+            git -C "$T" merge --abort ;;
+    unmerged) assert_output_grep "follow unmerged: the reason says the paths are unmerged, not that a merge is unfinished" "git reports unmerged paths — resolve them, commit or remove what is left, then git checkout --no-overwrite-ignore main, then" "$S/err"
+            git -C "$T" add a.txt; git -C "$T" commit -q -m "resolved"; git -C "$T" stash drop -q; git -C "$T" checkout -q --no-overwrite-ignore main ;;
+    unclean) assert_output_grep "follow unclean: the reason names the step" "the working tree is not clean — commit what is there elsewhere or move it away, then" "$S/err"
+            mv "$T/stray.txt" "$S/stray.txt.kept" ;;
+    state)  assert_output_grep "follow state: the reason names every step" "commit or remove what is left, check out the default branch of the repository, then" "$S/err"
+            git -C "$T" commit -q -am "what was left"; git -C "$T" checkout -q --no-overwrite-ignore main ;;
     default) assert_output_grep "follow default: the reason names every step" "commit them elsewhere or move them away, then" "$S/err"
             assert_eq "follow default: and names the default branch once" "1" "$(before_detail "$S/err" | grep -o 'main' | wc -l | tr -d ' ')"
             mv "$T/b.txt" "$S/b.txt.kept" ;;
-    merge)  assert_output_grep "follow merge: the reason names every step" "finish or abort it, commit or remove what is left, check out main, then" "$S/err"
-            git -C "$T" merge --abort; git -C "$T" checkout -q main ;;
+    merge)  assert_output_grep "follow merge: the reason names every step" "finish or abort it, commit or remove what is left, then git checkout --no-overwrite-ignore main, then" "$S/err"
+            git -C "$T" merge --abort; git -C "$T" checkout -q --no-overwrite-ignore main ;;
     fetch)  assert_output_grep "follow fetch: the reason names the step" "check that origin can be reached, then" "$S/err"
             assert_eq "follow fetch: and names the default branch once" "1" "$(before_detail "$S/err" | grep -o 'main' | wc -l | tr -d ' ')"
             git -C "$T" remote set-url origin "$T.origin.git" ;;
     fast-forward) assert_eq "follow fast-forward: the ignored file in the way was not overwritten" "local, ignored" "$(cat "$T/build.log")"
-            assert_output_grep "follow fast-forward: the reason names every step" "move away any file that git names and bring it level with origin, then" "$S/err"
-            mv "$T/build.log" "$S/build.log.kept"; git -C "$T" merge -q --ff-only origin/main ;;
+            assert_output_grep "follow fast-forward: the reason gives the fast-forward that does not overwrite" "run git merge --ff-only --no-overwrite-ignore origin/main and move away each file it names until it succeeds, then" "$S/err"
+            git -C "$T" merge -q --ff-only --no-overwrite-ignore origin/main 2> "$S/git.err"; assert_exit "follow fast-forward: that command fails while the file is in the way" 1 "$?"
+            assert_output_grep "follow fast-forward: and names the file" "build.log" "$S/git.err"
+            mv "$T/build.log" "$S/build.log.kept"; git -C "$T" merge -q --ff-only --no-overwrite-ignore origin/main ;;
   esac
   accepts "follow $stop: after those steps a new run starts"
 done
@@ -971,6 +1030,19 @@ LINE=$(grep -F 'branch idd/5-x is kept' "$S/report.out")
 assert_grep "second keep: the report names the newest commit" "$(printf '%s' "$SECOND" | cut -c1-7)" "$LINE"
 assert_grep "second keep: and the earlier one" "$(printf '%s' "$FIRST" | cut -c1-7)" "$LINE"
 
+new second-keep-missed 5 9
+begin
+git -C "$T" checkout -q --no-track -b idd/5-x origin/main; printf 'changed\n' >> "$T/a.txt"
+run record --issue 5 --reason x > /dev/null
+hook "$T" post-commit '#!/bin/sh
+: > "$(git rev-parse --git-dir)/index.lock"'
+settle 5 > /dev/null 2>&1; rm -f "$T/.git/hooks/post-commit" "$T/.git/index.lock"
+FIRST=$(git -C "$T" rev-parse idd/5-x); printf 'b\n' > "$T/b.txt"
+python3 -c 'import json,sys; p=sys.argv[1]; s=json.load(open(p)); s["attempts"][-1].pop("kept"); json.dump(s, open(p,"w"))' "$(state_file)"
+settle 5 > /dev/null 2>&1; assert_exit "second keep, first record lost: settle exits 0" 0 "$?"
+assert_eq "second keep, first record lost: the earlier commit and the paths of both are still named" "[\"a.txt\",\"b.txt\"]|[\"$FIRST\"]" \
+  "$(kept_of 5 | python3 -c 'import json,sys; k=json.load(sys.stdin)[0]; d=lambda v: json.dumps(v, separators=(",",":")); print(d(k["paths"]), d(k.get("earlier")), sep="|")')"
+
 # spec-example: idd-all-rest / a stash whose branch was deleted
 new stash-gone 5 9
 git clone -q "$T.origin.git" "$S/other" 2>/dev/null; printf 'coverage/\n' > "$S/other/.gitignore"
@@ -990,6 +1062,9 @@ assert_grep "stash gone: the report says that branch is deleted" "is deleted" "$
 refute_grep "stash gone: and does not say to apply the stash on that branch" "on that branch" "$LINE"
 git -C "$T" stash apply -q "$STASH" 2>/dev/null
 assert_eq "stash gone: applied in the working tree, the file is there again" "the report" "$(cat "$T/coverage/report.txt" 2>/dev/null)"
+assert_grep "stash gone: the report says to move the files out again before the next run" "move them out of the working tree again before the next run" "$LINE"
+mv "$T/coverage" "$S/coverage.kept"
+accepts "stash gone: with the files moved out, a new run starts"
 
 # spec-example: idd-all-rest / a stash the run state missed is found again
 new stash-missed 5 9
@@ -1242,8 +1317,8 @@ run start --path PR --review no > /dev/null 2> "$S/err"; assert_exit "new run: a
 assert_output_grep "new run: the reason names the branch" "idd/7-y" "$S/err"
 assert_output_grep "new run: and that an earlier run may have left it" "earlier run" "$S/err"
 assert_file_absent "new run: no run state file exists" "$(state_file)"
-assert_output_grep "new run: the reason names every step" "commit or remove what is left there, check out main, then" "$S/err"
-git -C "$T" checkout -q main
+assert_output_grep "new run: the reason names every step" "commit or remove what is left there, run git checkout --no-overwrite-ignore main, then" "$S/err"
+git -C "$T" checkout -q --no-overwrite-ignore main
 run start --path PR --review no > /dev/null 2>&1; assert_exit "new run: after those steps it starts" 0 "$?"
 new fresh-dirty 5
 printf 'b\n' > "$T/b.txt"
@@ -1362,8 +1437,8 @@ new loose 5
 run start --path PR --review no > /dev/null 2>&1; run next > /dev/null
 git -C "$T" checkout -q --no-track -b idd/5-x origin/main; printf 'changed\n' >> "$T/a.txt"
 run report > "$S/report.out" 2>&1
-assert_grep "report: and says to commit or remove what is left there first" "commit or remove what is left there and check out main" "$(grep -F 'may still be on a branch' "$S/report.out")"
-git -C "$T" commit -q -am "what was left"; git -C "$T" checkout -q main
+assert_grep "report: and says to commit or remove what is left there first" "commit or remove what is left there, then run git checkout --no-overwrite-ignore main" "$(grep -F 'may still be on a branch' "$S/report.out")"
+git -C "$T" commit -q -am "what was left"; git -C "$T" checkout -q --no-overwrite-ignore main
 run start --path PR --review no > /dev/null 2>&1; assert_exit "report: after those steps a new run starts" 0 "$?"
 assert_output_grep "report: says the working tree may still be on a branch of the issue in flight" "the working tree may still be on a branch of #5" "$S/report.out"
 assert_grep "report: and names the default branch" "main" "$(grep -F 'may still be on a branch' "$S/report.out")"
