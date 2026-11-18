@@ -143,19 +143,30 @@ def common_ok(a):
 
 # ── init ───────────────────────────────────────────────────────────────────
 
-def rest_run_reviews(cwd, n):
-    """True when a rest run that was started with --review has issue n in flight in this working tree
-    (scripts/rest-queue.py keeps that run's state beside this file's). The close stage merges when the record of
-    an issue says review is off; this keeps a value lost on the way from switching it off (#478). A rest state
-    that cannot be read, is older than its 24 hours or has another issue in flight changes nothing."""
+def rest_review(cwd, n):
+    """What the rest run at this --cwd says about issue n (scripts/rest-queue.py keeps that run's state beside
+    this file's): "on" when a run with --review has n in flight; "unreadable" when a state file that changed in
+    the last 24 hours is there and cannot be read as one; "off" otherwise (no file, a run older than its 24 hours,
+    review off, or another issue in flight). The close stage merges when the record of an issue says review is
+    off; this keeps a value lost on the way, or added to the run later, from switching it off (#478)."""
     try:
-        with open(os.path.join(state_dir(cwd), "idd-all-rest.json"), encoding="utf-8") as fh:
+        path = os.path.join(state_dir(cwd), "idd-all-rest.json")
+        recent = now() - os.stat(path).st_mtime < STATE_TTL
+    except FileNotFoundError:
+        return "off"
+    except (OSError, Stop):
+        return "unreadable"
+    try:
+        with open(path, encoding="utf-8") as fh:
             rest = json.load(fh)
         if now() - parse_iso(rest["updated_at"]) >= STATE_TTL:
-            return False
-        return rest["review"] is True and any(a["issue"] == n and a["outcome"] is None for a in rest["attempts"])
-    except Exception:   # not a state of a rest run this can read: init does what it always did
-        return False
+            return "off"
+        if not isinstance(rest["review"], bool):
+            raise ValueError("review")
+        flight = any(a["issue"] == n and a["outcome"] is None for a in rest["attempts"])
+        return "on" if rest["review"] and flight else "off"
+    except Exception:   # not a state of a rest run this can read
+        return "unreadable" if recent else "off"
 
 
 def cmd_init(argv):
@@ -171,7 +182,7 @@ def cmd_init(argv):
     if a["--review"] not in ("yes", "no") or a["--in-chain"] not in ("yes", "no"):
         return usage("--review and --in-chain must be yes or no")
     cwd = os.path.realpath(a["--cwd"])
-    if a["--review"] == "no" and rest_run_reviews(cwd, int(a["--issue"])):
+    if a["--review"] == "no" and rest_review(cwd, int(a["--issue"])) == "on":
         # no run state is written: the close stage then finds none and stops at verified (#478)
         return usage(f"a rest run with review on has #{a['--issue']} in flight in this working tree: record it with "
                      "--review yes (the value rest-queue.py next printed)")
@@ -705,8 +716,15 @@ def cmd_run(argv):
     st, partial = {}, {}
     try:
         st = load_state(cwd, repo, n)
+        rest = rest_review(cwd, int(n))   # read here too: --review can be added to a rest run after init recorded this issue
         if st.get("review"):
             raise Stop("--review: the run stays at verified (no merge, no close)")
+        if rest == "on":
+            raise Stop("--review: the run stays at verified (no merge, no close) — the rest run at this --cwd has --review "
+                       "and has this issue in flight")
+        if rest == "unreadable":
+            raise Stop("a rest run state at this --cwd cannot be read, so its review flag is unknown: the run stays at "
+                       "verified — when no rest run is going on here, delete .claude/.idd/state/idd-all-rest.json")
         if st.get("in_chain"):
             raise Stop("--in-chain: /idd-all-chain owns the cluster PR (no merge, no close)")
         if st.get("path") != st.get("requested_path"):
