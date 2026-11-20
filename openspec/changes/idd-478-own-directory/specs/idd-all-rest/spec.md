@@ -128,10 +128,10 @@ Every reason SHALL say what was found and name it: the paths (at most ten, then 
 
 ##### Example: a routing log that cannot be carried over keeps the directory
 
-| at `T` | the directory of #5 | the file the link points at |
+| at `T`, `.claude/.idd/routing-stats.jsonl` is | the directory of #5 | what is there afterwards |
 | --- | --- | --- |
-| `.claude/.idd/routing-stats.jsonl` is a symbolic link to a file outside `T` | kept, and a reason names the routing log | unchanged |
-| `.claude/.idd` is a symbolic link to a folder outside `T` | kept, and a reason names the routing log | no file was written into that folder |
+| a symbolic link to a file outside `T` | kept, and a reason names the routing log | the file outside `T` is unchanged |
+| a folder | kept, and a reason names the routing log | the folder, with nothing new in it |
 
 - **GIVEN** a run at `T` in which #5 is in flight, `T` as the row says, and the directory of #5 with a pushed branch and an untracked routing log
 - **WHEN** `record --issue 5` runs
@@ -160,7 +160,7 @@ Every reason SHALL say what was found and name it: the paths (at most ten, then 
 
 From before `start` to after `report`, a rest run SHALL leave the repository at `--cwd` as it was: the commit and the branch that are checked out, the index, the stash, the local branches and tags, and every file in the working tree, whether git tracks it, does not track it or ignores it. A person or another session MAY work there while the run goes. The skill SHALL say so.
 
-Rest mode writes at these places of that repository, and this list is closed: the state folder of the run (`.claude/.idd/state/` below `--cwd`); the folder of the directories (`.claude/worktrees/` at the top); the routing log at the top, to which `record` appends (requirement "The directory of an issue is removed only when nothing exists only there"); and the local exclude file of the git directory, to which `start` adds the rule for `.claude/worktrees/` when git does not ignore that folder yet. The existing-work check that `next` runs fetches from `origin`, which moves remote-tracking branches and nothing else.
+Rest mode writes at these places of that repository, and this list is closed: the state folder of the run (`.claude/.idd/state/` below `--cwd`); the folder of the directories (`.claude/worktrees/` at the top); the routing log at the top, to which `record` appends (requirement "The directory of an issue is removed only when nothing exists only there"); and the local exclude file of the git directory, to which `start` adds the rule for `.claude/worktrees/` when git does not ignore that folder yet. The existing-work check that `next` runs fetches from `origin`: that moves remote-tracking branches and can bring tags that `origin` has, and changes no tag and no local branch that is there.
 
 A helper cannot see an edit that the model makes, with its own tools, to a file of the starting working tree while an issue runs. `next` SHALL therefore record, at the hand-out, the commit and the branch checked out at `--cwd`, what git lists as changed or untracked there, and the stash; `record` SHALL read them again before it writes anything there. When they differ, `record` SHALL store which of the four changed, and the report SHALL say so under the entry of that issue, together with the fact that rest mode does not write there. This does not stop the run: a person may have made the change.
 
@@ -169,13 +169,13 @@ Before it reads anything, `start` SHALL ask git whether `.claude/worktrees/` wou
 #### Scenario: a run changes nothing in the working tree it was started in
 
 - **WHEN** a rest run handed out two issues, one whose directory was removed and one whose directory was kept, and ended with `report`
-- **THEN** the repository at `--cwd` holds the same checked-out commit and branch, index, stash, local branches, tags and files as before `start`, apart from the places of the closed list
+- **THEN** the repository at `--cwd` holds the same checked-out commit and branch, index, stash, local branches and files as before `start`, apart from the places of the closed list, and every tag it held, unchanged
 
 ##### Example: the starting working tree is the same after every ending
 
 - **GIVEN** a repository at `T` on the branch `wip` with a staged change of `a.txt`, a changed `c.txt`, an untracked `b.txt`, an ignored `local/notes.txt`, one stash and the local branch `side`; candidates #5 and #9; and each row of the example "what becomes of a directory" for #5
 - **WHEN** `start`, `next`, the row's state of the directory, `record`, `next`, `record` for #9 and `report` run
-- **THEN** a listing of every file below `T` with its content, of the index, of `HEAD`, of the local branches and tags and of the stash is the same as before `start`, apart from `.claude/.idd/state/`, `.claude/worktrees/`, `.claude/.idd/routing-stats.jsonl` and `.git/info/exclude`
+- **THEN** a listing of every file below `T` with its content, of the index, of `HEAD`, of the local branches and tags and of the stash is the same as before `start`, apart from `.claude/.idd/state/`, `.claude/worktrees/`, `.claude/.idd/routing-stats.jsonl` and `.git/info/exclude`, and apart from tags of `origin` that the fetch brought
 
 ##### Example: a change of the starting working tree is reported
 
@@ -249,7 +249,7 @@ In each of these cases `next` SHALL record the issue as stopped with that reason
 | nothing | hands out #5 | — |
 | an open pull request #12 whose body has the line `Refs #5` | hands out #9 | begins with `existing work: ` and names pull request #12 |
 | a branch `idd/5-x` on `origin` with one commit of its own | hands out #9 | begins with `existing work: ` and names `idd/5-x` |
-| nothing, and the list of open pull requests cannot be read | hands out #9 | begins with `existing work: could not be determined` |
+| nothing, and the list of open pull requests cannot be read | hands out neither #5 nor #9 | begins with `existing work: could not be determined`, for #9 as well |
 
 - **GIVEN** a run whose candidates are #5 and #9, and GitHub and `origin` as the row says
 - **WHEN** `next` is called
@@ -617,7 +617,7 @@ The state of a rest run is below the directory the run was started in; the close
 - `elsewhere`: `C` holds no pointer, and a rest run whose state is below `C` has `N` in flight in a directory of its own. The pipeline of the issue is then running in the wrong place.
 - `unreadable`: the pointer cannot be read or names another issue; or the state file it leads to, or the one below `C`, was changed in the last 24 hours and is not a usable state.
 
-`init` SHALL exit with a usage error and write no run state when the reading is `elsewhere`, whatever the review value, and its message SHALL name the directory the issue runs in. `run` SHALL stop without merging for `elsewhere` and for `unreadable`, and its reason SHALL say which. Phase 5 of `idd-all` SHALL take the review of a rest run from that command and from nowhere else, and SHALL treat every word other than `off` as review: the close stage stops at verified for it, so the body of the pull request does not promise a merge.
+`init` SHALL exit with a usage error and write no run state when the reading is `elsewhere`, whatever the review value, and its message SHALL name the directory the issue runs in. `unreadable` does not change what `init` does. `run` SHALL stop without merging for `elsewhere` and for `unreadable`, and its reason SHALL say which. Phase 5 of `idd-all` SHALL take the review of a rest run from that command and from nowhere else, and SHALL treat every word other than `off` as review: the close stage stops at verified for it, so the body of the pull request does not promise a merge.
 
 The 24 hours count from the last time the rest run wrote its state, which it does at every hand-out and record; a run that has written nothing for that long is over as far as this check goes, as it is for `start`. Whether a file at the place of a state or of a pointer can be read is decided in one place, for `rest-queue.py` and `close-stage.py` alike (`scripts/lib/reststate.py`): neither reads a state file, a pointer file or a state folder that is a symbolic link, and a file that `start` stops on is a file whose review flag the close stage does not take either, however its `review` entry reads.
 

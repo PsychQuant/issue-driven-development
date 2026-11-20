@@ -144,35 +144,77 @@ def common_ok(a):
 
 # ── init ───────────────────────────────────────────────────────────────────
 
-def rest_review(cwd, n):
-    """What the rest run at this --cwd says about issue n (scripts/rest-queue.py keeps that run's state beside
-    this file's): "on" when a run with --review has n in flight; "unreadable" when a file that changed in the last 24 hours is
-    there and is not a state rest-queue.py can use (scripts/lib/reststate.py decides that for both); "off" otherwise (no file, a run older than its 24 hours,
-    review off, or another issue in flight). The close stage merges when the record of an issue says review is
-    off; this keeps a value lost on the way, or added to the run later, from switching it off (#478)."""
+def rest_state(folder):
+    """The rest run whose state file is in the state folder `folder`: ("off", None) when there is no file or the
+    run has written nothing for 24 hours; ("unreadable", None) when a file changed in the last 24 hours is there
+    and is not a state rest-queue.py can use (scripts/lib/reststate.py decides that for both; a symbolic link is
+    never followed); ("ok", the state) otherwise."""
+    path = os.path.join(folder, reststate.STATE_NAME)
+    kind, rest = reststate.read(path)
+    if kind == "none":
+        return "off", None
     try:
-        path = os.path.join(state_dir(cwd), "idd-all-rest.json")
-        recent = now() - os.stat(path).st_mtime < STATE_TTL
-    except FileNotFoundError:
-        return "off"
-    except (OSError, Stop):
-        return "unreadable"
-    try:
-        with open(path, encoding="utf-8") as fh:
-            rest = json.load(fh)
-    except Exception:   # not JSON, or not readable
-        return "unreadable" if recent else "off"
-    if not reststate.usable(rest):   # what rest-queue.py start stops on: the flag in such a file is not taken either
-        return "unreadable" if recent else "off"
+        recent = now() - os.lstat(path).st_mtime < STATE_TTL
+    except OSError:
+        return "unreadable", None
+    if kind != "ok" or not reststate.usable(rest):   # what rest-queue.py start stops on: the flag in such a file is not taken either
+        return ("unreadable" if recent else "off"), None
     if now() - parse_iso(rest["updated_at"]) >= STATE_TTL:
-        return "off"
-    flight = any(a["issue"] == n and a["outcome"] is None for a in rest["attempts"])
-    return "on" if rest["review"] and flight else "off"
+        return "off", None
+    return "ok", rest
+
+
+def rest_reading(cwd, n):
+    """(word, directory) — what a rest run says about issue n when the close stage runs at this --cwd (#478).
+
+    A rest run keeps its state below the directory it was started in; each of its issues runs in a directory of its
+    own, in whose state folder a pointer file names the run. The word is one of four (closed list, the spec's):
+      on          this --cwd holds a pointer for n, and the run it names has review on and n in flight
+      off         no pointer and no run below this --cwd has n in flight; or the pointer names a run that has no
+                  state file, that wrote nothing for 24 hours, that has review off, or that does not have n in flight
+      elsewhere   no pointer, and a run whose state is below this --cwd has n in flight in a directory of its own
+                  (the second value): the pipeline of n is running in the wrong place
+      unreadable  the pointer cannot be read or is for another issue or another directory; or a state file that
+                  was changed in the last 24 hours is not a usable state
+    The close stage merges when the record of an issue says review is off; this keeps a value lost on the way, or
+    added to the run later, from switching it off."""
+    try:
+        here = state_dir(cwd)
+    except Stop:
+        return "unreadable", None
+    kind, ptr = reststate.pointer(here)
+    if kind == "unreadable":
+        return "unreadable", None
+    if kind == "none":
+        word, rest = rest_state(here)
+        if word != "ok":
+            return word, None
+        flight = next((a for a in rest["attempts"] if a["issue"] == n and a["outcome"] is None and a.get("dir")), None)
+        return ("elsewhere", flight["dir"]) if flight else ("off", None)
+    if ptr["issue"] != n:
+        return "unreadable", None
+    try:
+        there = state_dir(ptr["root"])
+    except Stop:
+        return "unreadable", None
+    word, rest = rest_state(there)
+    if word != "ok":
+        return word, None
+    flight = next((a for a in rest["attempts"] if a["issue"] == n and a["outcome"] is None), None)
+    if flight is None:
+        return "off", None
+    if not flight.get("dir") or os.path.realpath(flight["dir"]) != os.path.realpath(cwd):
+        return "unreadable", None
+    return ("on" if rest["review"] else "off"), None
+
+
+def rest_review(cwd, n):
+    return rest_reading(cwd, n)[0]
 
 
 def cmd_rest_review(argv):
-    """Print what the rest run at --cwd says about the issue: on, off or unreadable (rest_review). The skill asks
-    here, so that a PR body and the close stage go by one reading of that state."""
+    """Print what a rest run says about the issue for this --cwd: on, off, elsewhere or unreadable (rest_reading).
+    The skill asks here, so that a PR body and the close stage go by one reading of that state."""
     a = parse(argv, {"--cwd": "value", "--repo": "value", "--issue": "value"})
     if a is None or not common_ok(a):
         return usage("rest-review needs --cwd, --repo and --issue")
@@ -193,7 +235,14 @@ def cmd_init(argv):
     if a["--review"] not in ("yes", "no") or a["--in-chain"] not in ("yes", "no"):
         return usage("--review and --in-chain must be yes or no")
     cwd = os.path.realpath(a["--cwd"])
-    if a["--review"] == "no" and rest_review(cwd, int(a["--issue"])) == "on":
+    word, place = rest_reading(cwd, int(a["--issue"]))
+    if word == "elsewhere":
+        # no run state is written: the pipeline of this issue is running in the wrong place (#478)
+        return usage(f"a rest run at this --cwd has #{a['--issue']} in flight in a directory of its own: {place} — run the "
+                     "pipeline of the issue there (change to that directory and give it as --cwd); or, when you named this "
+                     "issue yourself while that rest run is unfinished, end the rest run first (give /idd-all without an "
+                     "issue to resume it, or call rest-queue.py report)")
+    if a["--review"] == "no" and word == "on":
         # no run state is written: the close stage then finds none and stops at verified (#478)
         return usage(f"a rest run with review on has #{a['--issue']} in flight at this --cwd: record it with --review yes "
                      "(the value rest-queue.py next printed); or, when you named this issue yourself while that rest run "
@@ -733,11 +782,16 @@ def cmd_run(argv):
         if st.get("review"):
             raise Stop("--review: the run stays at verified (no merge, no close)")
         if rest == "on":
-            raise Stop("--review: the run stays at verified (no merge, no close) — the rest run at this --cwd has --review "
+            raise Stop("--review: the run stays at verified (no merge, no close) — the rest run has --review "
                        "and has this issue in flight")
+        if rest == "elsewhere":
+            raise Stop("a rest run at this --cwd has this issue in flight in a directory of its own: the run stays at "
+                       "verified — the pipeline of the issue is to run in that directory, not here")
         if rest == "unreadable":
-            raise Stop("a rest run state at this --cwd cannot be read, so its review flag is unknown: the run stays at "
-                       "verified — when no rest run is going on here, delete .claude/.idd/state/idd-all-rest.json")
+            raise Stop("the state of a rest run, or the file in this directory that names the run, cannot be read, so its "
+                       "review flag is unknown: the run stays at verified — when no rest run is going on, delete "
+                       ".claude/.idd/state/idd-all-rest.json where the run was started, or "
+                       f".claude/.idd/state/{reststate.POINTER_NAME} in this directory")
         if st.get("in_chain"):
             raise Stop("--in-chain: /idd-all-chain owns the cluster PR (no merge, no close)")
         if st.get("path") != st.get("requested_path"):

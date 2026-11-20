@@ -12,6 +12,9 @@ Files read (all optional unless the call needs them):
   state-<n>            state of issue n for `gh issue view --json state` (default OPEN)
   default-branch       the default branch `gh repo view --json defaultBranchRef` answers (default main)
   perm-<login>.403     when present, the permission request fails with HTTP 403
+  prs-open.json        what `gh pr list --state open` answers (default: no pull request); prs-merged.json likewise
+  prs-open.fail        when present, `gh pr list --state open` exits 1
+  created-<n>          when issue n was created, for `gh issue view --json createdAt,state` (default 2020-01-01T00:00:00Z)
 Every call is appended to calls.log as one JSON array.
 """
 import json, os, sys
@@ -73,7 +76,17 @@ if argv[:2] == ["repo", "view"]:
 
 if argv[:2] == ["issue", "view"]:
     n = argv[2]
-    print(json.dumps({"state": (read(f"state-{n}", "OPEN") or "OPEN").strip()})); sys.exit(0)
+    print(json.dumps({"state": (read(f"state-{n}", "OPEN") or "OPEN").strip(),
+                      "createdAt": (read(f"created-{n}", "2020-01-01T00:00:00Z") or "").strip()})); sys.exit(0)
+
+if argv[:2] == ["pr", "list"]:   # scripts/check-existing-work.sh, which rest-queue.py next asks
+    state = argv[argv.index("--state") + 1] if "--state" in argv else "open"
+    if read(f"prs-{state}.fail") is not None:
+        sys.stderr.write("fake gh: HTTP 502\n"); sys.exit(1)
+    print(read(f"prs-{state}.json", "[]")); sys.exit(0)
+
+if argv[:1] == ["api"] and len(argv) > 1 and "/issues/" in argv[1] and argv[1].endswith("/events"):
+    print("[]"); sys.exit(0)
 
 sys.stderr.write("fake gh: unhandled call: " + json.dumps(argv) + "\n")
 sys.exit(1)
