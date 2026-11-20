@@ -163,7 +163,7 @@ To decide the class `outsider`, the helper asks GitHub who has write access to t
 
 An issue that this run handed out SHALL appear once: under closed, under stopped or as handed out without a result. It SHALL NOT appear in the list of issues waiting for a person or in the line of a class that was not run. When such an issue is `needs-person` at the time of the report, the report SHALL print its open questions under the entry of that issue, also when the issue was recorded as closed and reopened since. The report prints no text of an issue of any other class.
 
-For the class `verified` the report SHALL say that such an issue continues when it is named (`/idd-all #N`), and that a branch of it kept in this working tree is to be looked at first. When at least one issue was recorded with a reason that begins with `existing work:`, the report SHALL say that such an issue is left for a person and that its reason names the pull request or branch to look at. Under the entry of an issue recorded as stopped, the report SHALL name each branch of that issue that `settle` kept and, when `settle` made a commit on it, that commit and the paths it holds (at most ten, then the number of the others). Under the entry of an issue recorded as closed, it SHALL name the branch, the commit and the paths only when `settle` made a commit, and SHALL print the reason when the issue was recorded with one. When `settle` made a commit without the repository's commit hooks, the report SHALL say so on that entry, that the commit failed while the repository has a commit hook (which is all `settle` knows about why), and that the commit is to be looked at before the branch is pushed. When `settle` stashed files, the report SHALL name, for each stash, the commit of the stash entry and the paths on that entry, and say that `git stash apply <commit>` on that branch brings them back. When `settle` added paths to the local exclude file, the report SHALL name them on that entry and say that they were in the working tree before the run, that the default branch no longer ignores them, and that their lines in `.git/info/exclude` can be removed once the files are dealt with. When one of those paths is a log shared by all issues (`.claude/.idd/routing-stats.jsonl`, or a file under `.claude/.idd/issue-runs/`), the report SHALL say so on that entry: the new lines of that log are on that branch and not on the default branch. When the report names a kept branch of an issue recorded as stopped, it SHALL say once that a later rest run does not take up an issue that has a kept branch, a pull request or the phase `verified`, and that going on with such work is for a person. Under a kept branch that is recorded as having no upstream it SHALL add that deleting the branch lets a later rest run start the issue over while the issue is a candidate. It SHALL NOT say that under a branch that has an upstream, nor under one whose record does not say (a `settle` that stopped part of the way), and no line under an issue recorded as stopped SHALL tell the person to name the issue (`/idd-all #N`). When the branch a stash names was not kept, the report SHALL say that the branch is deleted that the stash brings the files back as files git does not track there, and that they are to be moved out of the working tree again before the next run; it SHALL NOT say `on that branch`. When `settle` committed twice on a branch, the report SHALL name both commits.
+For the class `verified` the report SHALL say that such an issue continues when it is named (`/idd-all #N`), and that a branch of it kept in this working tree is to be looked at first. When at least one issue was recorded with a reason that begins with `existing work:`, the report SHALL say that such an issue is left for a person and that its reason names the pull request or branch to look at. Under the entry of an issue recorded as stopped, the report SHALL name each branch of that issue that `settle` kept and, when `settle` made a commit on it, that commit and the paths it holds (at most ten, then the number of the others). Under the entry of an issue recorded as closed, it SHALL name the branch, the commit and the paths only when `settle` made a commit, and SHALL print the reason when the issue was recorded with one. When `settle` made a commit without the repository's commit hooks, the report SHALL say so on that entry, that the commit failed while the repository has a commit hook (which is all `settle` knows about why), and that the commit is to be looked at before the branch is pushed. When `settle` stashed files, the report SHALL name, for each stash, the commit of the stash entry and the paths on that entry, and say that `git stash apply <commit>` on that branch brings them back. When `settle` added paths to the local exclude file, the report SHALL name them on that entry and say that they were in the working tree before the run, that the default branch no longer ignores them, and that their lines in `.git/info/exclude` can be removed once the files are dealt with. When `settle` put files back after the checkout, or found paths from before the run missing, the report SHALL name them on that entry and say which of the two happened. When a folder of files set aside is still below the state folder, the report SHALL name it. When one of those paths is a log shared by all issues (`.claude/.idd/routing-stats.jsonl`, or a file under `.claude/.idd/issue-runs/`), the report SHALL say so on that entry: the new lines of that log are on that branch and not on the default branch. When the report names a kept branch of an issue recorded as stopped, it SHALL say once that a later rest run does not take up an issue that has a kept branch, a pull request or the phase `verified`, and that going on with such work is for a person. Under a kept branch that is recorded as having no upstream it SHALL add that deleting the branch lets a later rest run start the issue over while the issue is a candidate. It SHALL NOT say that under a branch that has an upstream, nor under one whose record does not say (a `settle` that stopped part of the way), and no line under an issue recorded as stopped SHALL tell the person to name the issue (`/idd-all #N`). When the branch a stash names was not kept, the report SHALL say that the branch is deleted that the stash brings the files back as files git does not track there, and that they are to be moved out of the working tree again before the next run; it SHALL NOT say `on that branch`. When `settle` committed twice on a branch, the report SHALL name both commits.
 
 The report tells a person to take three kinds of steps, and this list is closed: delete a branch that has no upstream (a kept one, or, after a `settle` that stopped, a branch of that issue without a commit of its own); apply a stash; and, when the attempt recorded last was not settled or an issue is in flight, commit or remove what is left on the branch of that issue and run `git checkout --no-overwrite-ignore <default>`. A check of this capability SHALL take each of them and see the result: the issue is handed out again; the files are back; a new run starts. Looking at a branch, a commit or a pull request is not such a step.
 
@@ -243,6 +243,8 @@ It SHALL then call `rest-queue.py start` with the path it resolved and the revie
 It SHALL then repeat: `next`; run the single-issue pipeline for the issue handed out, with the path and the interaction mode resolved before `start`, which are neither resolved nor downgraded again for a later issue, and with the review flag that `next` printed, which decides both what is recorded for the close stage and whether the issue fixes in-scope findings and enters the close stage at all; `record` with the stop reason the single-issue report printed, if any; `rest-queue.py settle` for that issue, with the issue number and no path or branch. It SHALL leave the loop when `next` prints `done` or a stop reason, and SHALL then call `rest-queue.py report` and relay its output.
 
 The two steps of the single-issue pipeline that resolve the path and that can downgrade it SHALL each say, where they stand in the skill, that a rest run does not run them again for an issue and which values it uses instead. Wherever the skill says that a later `/idd-all` resumes an unfinished run, it SHALL say that the command is to carry the same flags. The text of the pull request an issue of a rest run opens SHALL follow the review flag `next` printed for that issue, not a value recorded earlier.
+
+The step of the single-issue pipeline that creates the issue's branch SHALL check out in the way that does not overwrite a file git ignores (`git checkout --no-overwrite-ignore`), whether it creates the branch from `origin/<default>` or takes up a branch on the remote: `origin` can track a path that git ignores in this working tree, and a plain checkout writes over that file without a word. When a file is in the way, that step stops the issue and says so. This holds for every `/idd-all` run on the PR path, not only for rest mode.
 
 Between two issues `settle` commits, stashes and checks out in the working tree. The skill SHALL say that nothing else, neither a person nor another session, is to work in that working tree while a rest run goes: `settle` cannot tell such changes from what the issue left.
 
@@ -332,6 +334,12 @@ The unattended marker SHALL NOT outlive the run. Before `idd-all` records an iss
 - **WHEN** the two rows of the stop table that say a later command resumes the run are read
 - **THEN** each says that the command is to carry the same flags; and every other line of the skill that says a later `/idd-all` within 24 hours resumes the run says so as well
 
+##### Example: the step that creates the branch does not overwrite a file git ignores
+
+- **GIVEN** a working tree in which `.git/info/exclude` ignores `.vscode/` and `.vscode/settings.json` holds `MINE`, and an `origin/main` whose newest commit tracks `.vscode/settings.json` with the content `TEAM`
+- **WHEN** the line of Step 0.5 in `skills/idd-all/SKILL.md` that creates the branch from `origin/$DEFAULT` is run as it is written
+- **THEN** that line holds `--no-overwrite-ignore`, as does the line that takes up a branch on the remote; the command fails and git names `.vscode/settings.json`; and the file still holds `MINE`
+
 ##### Example: the skill says to leave the working tree alone
 
 - **GIVEN** the text of `skills/idd-all/SKILL.md`
@@ -341,13 +349,21 @@ The unattended marker SHALL NOT outlive the run. Before `idd-all` records an iss
 ---
 ### Requirement: Between two issues one helper settles the working tree
 
-After an issue is recorded and before the next one is handed out, `idd-all` SHALL call `rest-queue.py settle --issue N`. `settle` takes the default branch from the run state, where `start` stored it. `settle` SHALL accept only the issue this run recorded last, and SHALL exit 1 for any other issue and while an issue is in flight. A second `settle` for an issue it has already settled SHALL change nothing and print what the first one recorded: the kept branches, the records it discarded, the stashes it made, and the paths it added to the local exclude file. Until `settle` has succeeded for the issue recorded last, `next` SHALL exit 1 and name that issue. An issue that `next` itself recorded as existing work needs no `settle`: no work was started on it.
+After an issue is recorded and before the next one is handed out, `idd-all` SHALL call `rest-queue.py settle --issue N`. `settle` takes the default branch from the run state, where `start` stored it. `settle` SHALL accept only the issue this run recorded last, and SHALL exit 1 for any other issue and while an issue is in flight. A second `settle` for an issue it has already settled SHALL change nothing and print what the first one recorded: the kept branches, the records it discarded, the stashes it made, and the paths it added to the local exclude file, put back, or found missing. Until `settle` has succeeded for the issue recorded last, `next` SHALL exit 1 and name that issue. An issue that `next` itself recorded as existing work needs no `settle`: no work was started on it.
 
 The paths in this requirement are relative to the directory `idd-all` runs in (`--cwd`), which need not be the top of the repository. Two of the places that are never committed, the worktree folder and the folder of edit backups, are written at the top of the repository whatever `--cwd` is, so `settle` SHALL match all four places both below `--cwd` and at the top.
 
 What the single-issue pipeline writes into the repository, and which of the classes below each location falls into, is listed in `references/working-tree-writers.md`. The lists in this requirement come from that inventory. A check SHALL fail when a skill or a script of the plugin names a location under `.claude/` that the inventory does not name. The inventory covers the plugin's own writers; what other programs write (the Spectra CLI, `idd-route`, the hooks of the target repository) is outside what that check can see.
 
-What was in the working tree before an issue was handed out is not that issue's work. `next` hands out a new issue only when the working tree is clean on the default branch, so at that moment every file git does not track is a file it ignores, and `next` records those paths with the issue. `settle` SHALL account for every file that was in the working tree at that moment. A file git did not track then SHALL be in the same place with the same content when `settle` returns, with exit code 0 or 3: `settle` SHALL NOT commit it, stash it, move it or delete it. A file git tracked then holds, after exit code 0, what the default branch has for it.
+What was in the working tree before an issue was handed out is not that issue's work. `next` hands out a new issue only when the working tree is clean on the default branch, so at that moment every file git does not track is a file it ignores, and `next` records those paths with the issue. `settle` SHALL account for every file that was in the working tree at that moment. A file git did not track then SHALL be, when `settle` returns with exit code 0 or 3, where it was and as it was when `settle` began: `settle` SHALL NOT commit it, stash it or delete it, and SHALL NOT leave it anywhere else. A file git tracked then holds, after exit code 0, what the default branch has for it.
+
+Three cases have a step of their own:
+
+- **The issue's branch tracks a path recorded at hand-out, and the default branch does not** (the issue committed a file git used to ignore). A checkout of the default branch takes such a file out of the working tree. Before the checkout `settle` SHALL move each such file into a folder of its own below the state folder, and after the checkout, whether it succeeded or failed, SHALL move each back to where it was; it records the paths it moved back on the default branch as returned. The list of what is moved SHALL be written before anything is moved, and a later `settle` for the issue SHALL first move back what an earlier one left there. A place that is taken again by something else is left as it is and so is the file set aside: `settle` SHALL exit 3 and name the folder. While that folder exists, `start` SHALL NOT start a new run (exit code 3, naming the folder), and the report SHALL name it.
+- **A commit hook of the repository staged a path recorded at hand-out** into the commit of step 3 (a hook that runs `git add -A`), whether the hook then let the commit through or failed. `settle` SHALL undo that commit, take those paths out of the index, and make the commit without the repository's hooks; the body of the commit message SHALL say that a hook staged files from before the run. When nothing else was staged, `settle` makes no commit.
+- **A path recorded at hand-out is gone when `settle` begins**: the issue's run removed it. `settle` cannot bring it back. It SHALL record the path as missing, and the report names it.
+
+A file that a person or another session adds to the working tree while an issue is in flight is, to `settle`, something that issue left: it is not recorded at hand-out, and `settle` has no way to tell it apart. A change the issue's run itself made to a file from before the run is not `settle`'s to undo either.
 
 A check of this capability SHALL establish that from the file system and not from `git status`, which is the view `settle` itself works from: it records the content of every file outside the git folder before `settle` runs, and afterwards finds each of them unchanged, in a commit `settle` made, in a stash `settle` recorded, among the regenerated records `settle` discarded, or written by the checkout with the content of the default branch. Every fixture of that check holds files that were there before the issue was handed out and that git ignored, and the run state of the fixture is written by `start` and `next` themselves.
 
@@ -461,6 +477,8 @@ The endings of the single-issue pipeline on the PR path that the inventory of it
 | `merged-rule-deleted`: the same commit, squash-merged, and the issue closed | `idd/5-x`, one commit, with an upstream; `origin/main` has the squash commit | nothing of the run; `tools/.env`, which neither branch ignores any more | 0 | `idd/5-x`; `tools/.env` is in the local exclude file | #5 is closed |
 | `stop-rule-rewritten`: a commit of the issue rewrote the top `.gitignore` without the rule `local/`, and the issue stopped | `idd/5-x`, one commit | nothing of the run; `local/settings.json`, which that branch no longer ignores | 0 | `idd/5-x` | existing work |
 | `local-default-rule`: the local `main` has a commit of its own with the ignore rule `settings.local.json`, the file was there before the run, and the issue stopped before its first commit | `idd/5-x`, no commit | nothing of the run; `settings.local.json`, which that branch does not ignore | 0 | none | handed out |
+| `stop-tracks-file-from-before`: a commit of the issue dropped the rule `local/` and added `local/settings.json`, and the issue stopped | `idd/5-x`, one commit | nothing of the run; `local/settings.json`, which that branch tracks | 0 | `idd/5-x` | existing work |
+| `stop-hook-stages-everything`: implement stopped part of the way after a commit that deleted `tools/`, and a pre-commit hook of the repository stages every file | `idd/5-x`, one commit | a changed `a.txt`; `tools/.env`, which that branch no longer ignores | 0 | `idd/5-x`, with a commit that holds `a.txt` and was made without the hooks | existing work |
 | `stop-after-verify-failed`: verify ended with findings that block, and the issue body lists them under `### Blocking` | `idd/5-x`, one commit | the untracked manifest and one new line in the tracked `.claude/.idd/routing-stats.jsonl` | 0 | `idd/5-x`, with a commit that holds the log and not the manifest | not run: blocked |
 | `stop-at-close-stage`: verify was clean, the issue was pushed and stopped before the merge; its phase is `verified` | `idd/5-x`, one commit, with an upstream | the same as `stop-after-verify-failed` | 0 | `idd/5-x`, with a commit that holds the log | not run: verified |
 | `merged-and-closed`: the pull request was squash-merged and the issue closed | `idd/5-x`, one commit, with an upstream; `origin/main` has the squash commit | a changed tracked manifest and one new line in the tracked `.claude/.idd/routing-stats.jsonl` | 0 | `idd/5-x`, with a commit that holds the log and not the manifest | #5 is closed |
@@ -571,6 +589,70 @@ The endings of the single-issue pipeline on the PR path that the inventory of it
 - **GIVEN** a repository whose `tools/.gitignore` has the rule `.env`, with the file `tools/.env` holding `TOKEN=ghp_secret` before the run, and a pre-commit hook that rejects a staged change holding `ghp_`; #5 handed out by `next`; `idd/5-x` with one commit that deletes `tools/`, a changed tracked file `a.txt`, and #5 recorded as stopped
 - **WHEN** `settle --issue 5` runs, and then `report`
 - **THEN** `settle` exits 0, `idd/5-x` has one new commit that holds `a.txt` and does not hold `tools/.env`, the hook has run and accepted that commit, `tools/.env` is in the working tree with `TOKEN=ghp_secret`, the working tree is on `main` and `git status --porcelain` prints nothing, and the report does not name `tools/.env`
+
+##### Example: a file from before that the issue starts to track is put back
+
+- **GIVEN** a repository whose `.gitignore` has the rule `package-lock.json`, with the file `package-lock.json` holding `{"lock": "MINE"}` before the run; #5 handed out by `next`; `idd/5-x` with one commit that empties `.gitignore` and adds `package-lock.json`; and #5 recorded as stopped
+
+  | `package-lock.json` in the working tree when `settle` begins | afterwards |
+  | --- | --- |
+  | as the issue committed it | `{"lock": "MINE"}` |
+  | changed to `{"lock": "MINE, edited"}` and not committed | `{"lock": "MINE, edited"}` |
+
+- **WHEN** `settle --issue 5` runs, then `report`, and then `idd/5-x` is deleted
+- **THEN** in each row `settle` exits 0, makes no commit and prints `package-lock.json` as returned, the working tree is on `main` and `git status --porcelain` prints nothing, no folder is left below the state folder, `package-lock.json` is in the working tree with the content of the row, the report says that `settle` put it back, and it is still there after the branch is deleted
+
+##### Example: a file set aside is put back when the checkout fails
+
+- **GIVEN** a repository whose `.gitignore` has the rule `local/`, with `local/settings.json` holding `mine` and `local/notes.txt` before the run; #5 handed out by `next`; `idd/5-x` with one commit that adds `local/notes.txt`; `local/notes.txt` then changed to `notes, edited` and not committed; a newer commit on `origin/main` that tracks `local/settings.json`; and #5 recorded as stopped
+- **WHEN** `settle --issue 5` runs
+- **THEN** it exits 3 because the checkout would write over `local/settings.json`, the working tree is on `idd/5-x` with `git status --porcelain` printing ` M local/notes.txt` as before, `local/notes.txt` holds `notes, edited`, `local/settings.json` holds `mine`, and no folder is left below the state folder
+
+##### Example: a file put back that the default branch does not ignore goes into the local exclude file
+
+- **GIVEN** the repository of the first Example of this group; #5 handed out by `next`; `idd/5-x` with one commit that adds `package-lock.json` and leaves `.gitignore` alone; a newer commit on `origin/main` that empties `.gitignore`; and #5 recorded as stopped
+- **WHEN** `settle --issue 5` runs
+- **THEN** it exits 0, `package-lock.json` is in the working tree with `{"lock": "MINE"}`, the run state records the path both as returned and as added to the local exclude file, `.git/info/exclude` has the line `/package-lock.json`, and the working tree is on `main` with nothing for `git status --porcelain` to print
+
+##### Example: a changed file from before that the merged issue tracks stays as it is
+
+- **GIVEN** the repository and the branch of the first Example of this group; `idd/5-x` pushed, squash-merged on `origin/main`, and #5 closed and recorded so; and `package-lock.json` then changed in the working tree to `{"lock": "MINE, edited"}`
+- **WHEN** `settle --issue 5` runs
+- **THEN** it exits 3 with the working tree on `main`, where `git status --porcelain` prints ` M package-lock.json`: the default branch tracks the file by now, so it is not set aside; it holds `{"lock": "MINE, edited"}`, and no folder is left below the state folder
+
+##### Example: a settle that was killed with a file set aside
+
+- **GIVEN** the repository and the branch of the first Example of this group, #5 recorded as stopped, and what a `settle` leaves that was killed after it had set the file aside: the folder `rest-held-5` below the state folder with its list and the file, and no `package-lock.json` in the working tree
+
+  | what happens next | outcome |
+  | --- | --- |
+  | `settle --issue 5` runs, with the working tree still on `idd/5-x` | exit 0; the file is back with `{"lock": "MINE"}`, recorded as returned; the folder is gone; the working tree is clean on `main` |
+  | the working tree is switched to `main`, then `settle --issue 5` runs | the same |
+  | `report` ends the run, the working tree is switched to `main`, and `start` runs | the report names the folder; `start` exits 3 and names the folder; the file is still in the folder; with the file moved back and the folder removed, `start` exits 0 |
+  | the working tree is switched to `main`, a `package-lock.json` with the same content is written there, and `settle --issue 5` runs | exit 0; the folder is gone |
+  | the same with a `package-lock.json` that holds `OTHER` | exit 3; the reason names the folder; the file in the working tree holds `OTHER` and the file in the folder holds `{"lock": "MINE"}` |
+  | the list in the folder names `../escaped.txt` as the place of the file, the working tree is switched to `main`, and `settle --issue 5` runs | exit 3; no file is written outside the working tree, and the file is still in the folder |
+
+- **WHEN** the steps of the row happen
+- **THEN** the outcome is that of the row
+
+##### Example: a hook that stages everything does not put a file from before into the commit
+
+- **GIVEN** a repository whose `tools/.gitignore` has the rule `.env`, with the file `tools/.env` holding `TOKEN=ghp_secret` before the run; #5 handed out by `next`; `idd/5-x` with one commit that deletes `tools/`, a changed tracked file `a.txt`, and #5 recorded as stopped
+
+  | the pre-commit hook of the repository |
+  | --- |
+  | runs `git add -A` and succeeds |
+  | runs `git add -A` and fails |
+
+- **WHEN** `settle --issue 5` runs
+- **THEN** in each row it exits 0, `idd/5-x` has one new commit that holds `a.txt` and does not hold `tools/.env`, no commit of `idd/5-x` holds `tools/.env`, the body of the new commit's message says that a hook staged files that were in the working tree before the run, the run state says the hooks were skipped, `tools/.env` is in the working tree with `TOKEN=ghp_secret`, and the working tree is on `main` with nothing for `git status --porcelain` to print
+
+##### Example: a file from before that the run removed is named in the report
+
+- **GIVEN** the repository of the Example above without a hook; #5 handed out by `next`; the working tree on `idd/5-x`, where the run deleted the folder `tools/` from the disk; and #5 recorded as stopped
+- **WHEN** `settle --issue 5` runs, and then `report`
+- **THEN** `settle` prints `tools/.env` as missing, and the report says under the entry of #5 that `tools/.env` was in the working tree when the issue was handed out and was gone when its run ended
 
 ##### Example: a path the default branch no longer ignores goes into the local exclude file
 

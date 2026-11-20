@@ -18,7 +18,7 @@ verify 第 6 輪（#478 的 comment 6991471219）在 `a47bcd6` 判定 FAIL：3 �
 
 先把性質寫進規格並加檢查，再修。
 
-**性質**：一張 issue 被交出時就在工作樹的檔，`settle` 之後都要交代得出去。當時 git 沒有追蹤的檔，`settle` 之後在原處、內容不變（以 0 或 3 結束都一樣），`settle` 不 commit、不 stash、不搬、不刪；當時有追蹤的檔，以 0 結束後是預設 branch 的版本。
+**性質**：一張 issue 被交出時就在工作樹的檔，`settle` 之後都要交代得出去。當時 git 沒有追蹤的檔，`settle` 之後在原處、內容與 `settle` 開始時相同（以 0 或 3 結束都一樣），`settle` 不 commit、不 stash、不刪，也不把它留在別處；當時有追蹤的檔，以 0 結束後是預設 branch 的版本。
 
 **檢查**：測試直接走檔案系統。`settle` 之前把 git 資料夾以外的每個檔算雜湊，之後逐一交代：沒變、在保留的 commit 裡、在記下的 stash 裡、是丟掉的會重新產生的紀錄、或被 checkout 寫成預設 branch 的內容。每個情境都有原本就在、被忽略的檔，run 的狀態由真正的 `start` 與 `next` 寫出。
 
@@ -32,11 +32,19 @@ verify 第 6 輪（#478 的 comment 6991471219）在 `a47bcd6` 判定 FAIL：3 �
 
 **21 項 In-scope fix**：設定型 hook 不論名稱都關掉；找回 stash 時遞迴列路徑；狀態裡的 commit 必須是 40 字元的十六進位；24 小時內讀不出來的狀態檔讓 `start` 以 3 結束；超過 24 小時而沒有報告的 run 先印出它留下的東西；`start` 加上 `--review` 時的說明、PR 內文、`init` 的訊息；「找不到 run」的訊息；skill 的 Examples 與「不做的事」；停下的表列出每一種停下；共用工作樹的說明；`idd-all-chain` 與 `idd-pr-hitl-modes` 兩份規格指向 `idd-all-rest`。
 
+**獨立 reviewer 找到的五種情形（修正輪 6 自己的檢查，verify 之前；tasks 5.2）**：只有一個任務的 reviewer（找出一個交出之前就在、`settle` 之後不見或變了的檔）在臨時 repo 重現了五種。前三種是上面性質的破口，一併修：
+
+1. 那一張把交出時就在的檔 commit 進自己的 branch（預設 branch 沒有追蹤它）：checkout 會把它從工作樹拿掉，報告還建議刪掉那個 branch。`settle` 在 checkout 之前把這種檔搬到狀態資料夾底下的 `rest-held-<N>/`，checkout 之後（成功或失敗）搬回原處；清單先寫、再搬；下一次 `settle` 先把上一次沒搬回的搬回；原處被佔住時不覆寫、以 3 結束；資料夾還在時 `start` 不開新的 run，報告列出它。
+2. repo 的 commit hook 自己 `git add -A`：交出時就在的檔進了保留的 commit。`settle` 在 commit 之後檢查，有這種路徑就撤回、移出 stage、不經 hook 重做，訊息註明。
+3. 單張流程建立 branch 的那一步（Step 0.5）用一般的 checkout：`origin` 的預設 branch 追蹤了一個本機被忽略的檔時，那個檔在 `settle` 之前就被覆寫。那兩行改用 `--no-overwrite-ignore`，擋路時停下這一張。這一項對所有走 PR 的 `/idd-all` 都生效，不只 rest。
+4. 交出時就在的檔被那一張的 run 自己刪掉：`settle` 救不回來，記為 missing，報告列出。
+5. issue 進行中由人加進工作樹的檔：`settle` 分不出來，寫進 skill 的「不做的事」。
+
 ## Non-Goals
 
 - 每張 issue 用獨立的 git worktree。維護者 2026-11-19 選的是在同一個工作樹再修一輪。
-- 那一張 issue 自己把預設 branch 忽略的檔 commit 進去之後的 checkout（單張流程本來的行為）。
-- 單張流程自己的一般 checkout（#587）。
+- 單張流程其餘的一般 checkout（#587）：Phase 0.6 降級時切回預設 branch、meeting 的收尾、batch 一張結束後的切回、`idd-verify` PR mode 結束後切回原 branch。這一輪只改 Step 0.5 建立 branch 的兩行。
+- 交出時就在的檔被那一張的 run 改了內容：交出時只記路徑、不記內容，`settle` 看不出來。
 - 把 `/idd-all` 限定為只由人呼叫（#457）。
 - 同一個工作樹裡別人還沒 commit 的改動：`settle` 分不出來，這一輪只寫進文件。
 
@@ -46,6 +54,7 @@ verify 第 6 輪（#478 的 comment 6991471219）在 `a47bcd6` 判定 FAIL：3 �
 - 第 6 輪第 1 項的重現（那一張刪掉 `tools/` 連同它的 `.gitignore`，repo 有密鑰掃描 hook）：`tools/.env` 不在保留的 commit 裡、仍在工作樹，hook 沒有被略過。
 - 把檔案改成不追蹤的 issue 不論停下或已 merge，`settle` 都以 0 結束，下一張被交出。
 - `settle` 在保留的 commit 之後停下、branch 有 upstream 時，報告不寫刪除的步驟。
+- 獨立 reviewer 找到的前三種情形各有測試：檔案在原處、內容相同；checkout 失敗時搬走的檔已搬回；Step 0.5 那一行照原樣執行時不覆寫被忽略的檔。
 - `scripts/tests/rest-queue/test.sh`、`scripts/tests/close-stage/test.sh` 與 `scripts/run-all-tests.sh` 全部通過；對新程式的變異檢查每一處都有測試失敗。
 
 ## Impact

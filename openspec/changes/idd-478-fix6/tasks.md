@@ -18,8 +18,14 @@
 - [ ] 3.5 `skills/idd-all/SKILL.md`。Requirement「idd-all runs rest mode as a loop over the single-issue pipeline」：Example `the skill says the flags are to be the same`（涵蓋 Examples 一節）與 `the skill says to leave the working tree alone`；in flight 那一張的 PR 內文依 `next` 的 review；第 6 步、停止表、「結束」與「不做的事」對齊新的行為（原本就在的檔、exclude、兩種 stash、附件的說法）；權限一節那一句。
 - [ ] 3.6 文件：`references/working-tree-writers.md`（`.git/info/exclude` 多一個寫入端、歸類的說明、原本就在的檔那一列）；CHANGELOG（性質、exclude、狀態版本 4 與 24 小時內舊狀態的處理、指名 issue 的 run 會讀 rest 的狀態、不經 hook 重做看的是有沒有 hook、rest run 期間不要動工作樹）；`docs/commands.md`。Requirement「idd-all-chain skill SHALL drive root issue plus auto-emergent spawn through one cluster branch and one PR」（capability `idd-all-chain`）與「Mode resolution from pr_policy and flags」（capability `idd-pr-hitl-modes`）各改一句，指向 `idd-all-rest`；這兩處只改規格的說法，沒有程式要改。
 
-## 4. 驗證
+## 4. 獨立 reviewer 找到的情形（5.2 的結果）
 
-- [ ] 4.1 對 `rest-queue.py` 新增的分支做變異檢查，每一處至少有一個測試失敗；其中一個變異是把「交出時就在的路徑」的排除拿掉，1.1 的檢查必須失敗。
-- [ ] 4.2 請同一位沒有參與實作的 reviewer 在臨時 repo 實際執行，任務只有一個：找出一個交出之前就在、`settle` 之後不見或變了的檔。
-- [ ] 4.3 跑 `scripts/tests/rest-queue/test.sh`、`scripts/tests/close-stage/test.sh` 與 `scripts/run-all-tests.sh`，全部通過。
+- [ ] 4.1 測試先寫（`test.sh`，各帶 `spec-example` 標記；requirement「Between two issues one helper settles the working tree」）：Example `a file from before that the issue starts to track is put back`、`a file set aside is put back when the checkout fails`、`a file put back that the default branch does not ignore goes into the local exclude file`、`a changed file from before that the merged issue tracks stays as it is`、`a settle that was killed with a file set aside`（六列）、`a hook that stages everything does not put a file from before into the commit`（兩列）、`a file from before that the run removed is named in the report`；requirement「idd-all runs rest mode as a loop over the single-issue pipeline」：Example `the step that creates the branch does not overwrite a file git ignores`。`endings.py` 加兩列（共 29 列），`settle_matrix.py` 的規則維度加兩種（共 288 種組合），`treecheck.py` 對 run 自己改過的檔以 `settle` 開始時為準。完成時：新的檢查在還沒改的 `rest-queue.py` 上失敗。
+- [ ] 4.2 `rest-queue.py`：`hold_back`／`put_back`（搬走、checkout、搬回，`try`／`finally`）、`settle` 開頭先搬回上一次沒搬回的、`keep_commit` 在 commit 之後檢查交出時就在的路徑、`missing` 與 `returned` 兩個紀錄、`start` 與報告對 `rest-held-<N>/` 的處理。完成時：4.1 通過。
+- [ ] 4.3 `skills/idd-all/SKILL.md` Step 0.5 的兩行改用 `--no-overwrite-ignore`，第 6 步與「不做的事」對齊；`references/working-tree-writers.md`、CHANGELOG。完成時：4.1 的 skill 檢查通過。
+
+## 5. 驗證
+
+- [ ] 5.1 對 `rest-queue.py` 新增的分支做變異檢查，每一處至少有一個測試失敗；其中一個變異是把「交出時就在的路徑」的排除拿掉，1.1 的檢查必須失敗。
+- [ ] 5.2 請同一位沒有參與實作的 reviewer 在臨時 repo 實際執行，任務只有一個：找出一個交出之前就在、`settle` 之後不見或變了的檔。
+- [ ] 5.3 跑 `scripts/tests/rest-queue/test.sh`、`scripts/tests/close-stage/test.sh` 與 `scripts/run-all-tests.sh`，全部通過。
