@@ -16,7 +16,7 @@ The `idd-all-chain` skill SHALL accept one or more root issue arguments (`/idd-a
 4. Opens exactly one pull request after the chain completes, covering all chained issues across all root subtrees.
 5. Stops at verified state and SHALL NOT auto-close any issue (user retains close authority per IDD discipline).
 
-The skill MUST NOT alter the existing `/idd-all` skill's single-issue lifecycle behavior. `/idd-all` invocations without `--in-chain` flag MUST behave identically to v2.46.0+ baseline.
+The skill MUST NOT alter the existing `/idd-all` skill's single-issue lifecycle behavior. `/idd-all` invocations that name an issue and carry no `--in-chain` flag MUST behave identically to v2.46.0+ baseline. An invocation without an issue is rest mode, which capability `idd-all-rest` defines.
 
 The skill SHALL accept an optional `--bfs` flag that selects BFS traversal mode (level-by-level across all root subtrees). When `--bfs` is absent the skill SHALL use DFS traversal mode (process one root subtree fully before advancing to the next root). In DFS mode the chain queue SHALL push newly spawned issues to the **front** of the queue. In BFS mode the chain queue SHALL push newly spawned issues to the **back** of the queue. The default mode is DFS.
 

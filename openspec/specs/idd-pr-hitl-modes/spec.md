@@ -18,7 +18,7 @@ Resolution precedence (first match wins):
 4. Fork detected (`gh repo view --json isFork` returns true) → `(PR, unattended)` regardless of config
 5. `pr_policy: always` → `(PR, unattended)`
 6. `pr_policy: never` → `(direct-commit, attended)`
-7. `pr_policy: ask` (explicitly set) → `AskUserQuestion`; first answer locks the tuple for the invocation
+7. `pr_policy: ask` (explicitly set) → `AskUserQuestion`; first answer locks the tuple for the invocation. In rest mode (capability `idd-all-rest`) the question is asked once, before the run starts, and only offers to start the run on the PR path
 8. `pr_policy` absent (no config file, or field missing) → `(PR, unattended)` — v2.40.0 backward-compat default; protects existing `/loop` automation callers from interactive hang
 
 The resolved tuple MUST be printed as a one-line notice before any state-mutating action, e.g. `→ Path: direct-commit (attended) — pr_policy=never` or `→ Path: direct-commit (unattended) — flag=--in-chain`.
