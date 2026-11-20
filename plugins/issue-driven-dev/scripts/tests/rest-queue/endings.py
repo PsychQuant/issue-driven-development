@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """endings.py <rest-queue.py> <process-attachments.sh> — the Example "endings of the single-issue pipeline" (#478).
 
-One temporary repository (with a bare origin) per row of that table. What `idd-diagnose` leaves is written by
+One temporary repository (with a bare origin) per row of that table. Every one holds files that were there before
+the run and that git ignores; the run state is written by the real `start`, `next` and `record`. After settle,
+with either exit code, treecheck.py accounts for every file from the file system, not from `git status`.
+What `idd-diagnose` leaves is written by
 the real writer, `process-attachments.sh download`, with gh and curl replaced on PATH; the line in
 routing-stats.jsonl is appended here, because its writer (idd-route) is an external program; the meeting row
 repeats the two git commands of the meeting unwind; a rejecting commit hook and an ignore rule of the issue's own
@@ -37,6 +40,9 @@ import sys
 import tempfile
 import time
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import treecheck  # noqa: E402
+
 RQ, PA = os.path.abspath(sys.argv[1]), os.path.abspath(sys.argv[2])
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", "..", "..", ".."))
@@ -51,6 +57,9 @@ PROPOSAL = "openspec/changes/idd-5-x/proposal.md"
 B = "idd/5-x"
 STATE = ".claude/.idd/state/idd-all-rest.json"
 STASH_MESSAGE = f"idd rest: files of #5 that only {B} ignores"
+STASH_TRACKED = f"idd rest: files of #5 that {B} ignores and the default branch tracks"
+# in every row: in the working tree before the run, and ignored there (the top rule `local/`, the rule `.env` of tools/.gitignore)
+HERE_BEFORE = {"tools/.env": "TOKEN=ghp_secret\n", "local/settings.json": '{"mine": true}\n'}
 
 # on: where the working tree is when settle runs · work: the branch has a commit of its own · leave: what the
 # ending leaves · gh: the open issues on GitHub after the ending (scenario.py; a closed #5 is not among them) ·
@@ -82,6 +91,12 @@ ROWS = [
          branches=[B], stash=["coverage/"], later="existing"),
     dict(id="stop-before-commit-ignored-files", on="own", origin_ignore=True, leave=["ignored"], exit=0, branches=[],
          stash=["coverage/"], later="handed"),
+    # what was there before the run, on a branch that no longer ignores it
+    dict(id="stop-rule-deleted", on="own", work=True, work_rm_tools=True, exit=0, branches=[B], later="existing"),
+    dict(id="merged-rule-deleted", on="own", work=True, work_rm_tools=True, upstream=True, squash=True, outcome="closed",
+         gh="9", exit=0, branches=[B], excluded=["tools/.env"], later="closed"),
+    dict(id="stop-rule-rewritten", on="own", work=True, work_rewrite_ignore=True, exit=0, branches=[B], later="existing"),
+    dict(id="local-default-rule", on="own", local_rule=True, exit=0, branches=[], later="handed"),
     dict(id="stop-after-verify-failed", on="own", work=True, leave=["manifest", "log"], gh="5:blocking=verify findings",
          exit=0, branches=[B], committed=[LOG], discarded=[M], later="blocked"),
     dict(id="stop-at-close-stage", on="own", work=True, upstream=True, leave=["manifest", "log"],
@@ -92,8 +107,11 @@ ROWS = [
     dict(id="on-another-branch", on="wip", exit=3),
     dict(id="leftover-on-default", on="main", leave=["b"], exit=3),
     dict(id="never-committed-place", on="own", work=True, leave=["lock", "edit"], exit=3),
-    dict(id="file-the-default-branch-tracks", on="own", work=True, work_untrack=True, leave=["ignored-tracked"], exit=3,
-         intact={"a.txt": "the run wrote this\n"}),
+    # a file the issue stopped tracking: the default branch still tracks it until the issue is merged
+    dict(id="file-the-default-branch-tracks", on="own", work=True, work_untrack=True, leave=["ignored-tracked"], exit=0,
+         branches=[B], stash=["a.txt"], stash_message=STASH_TRACKED, stash_file=("a.txt", "the run wrote this\n"), later="existing"),
+    dict(id="merged-file-untracked", on="own", work=True, work_untrack=True, upstream=True, squash=True, outcome="closed",
+         gh="9", exit=0, branches=[B], later="closed"),
 ]
 
 # the cells `The working tree is on` and `What the ending leaves` of each row, as the spec has them
@@ -128,6 +146,14 @@ CELLS = {
         'nothing git shows on that branch; `coverage/report.txt`, ignored there'),
     'stop-before-commit-ignored-files': ('`idd/5-x`, no commit',
         'nothing git shows on that branch; `coverage/report.txt`, ignored there'),
+    'stop-rule-deleted': ('`idd/5-x`, one commit',
+        'nothing of the run; `tools/.env`, which that branch no longer ignores'),
+    'merged-rule-deleted': ('`idd/5-x`, one commit, with an upstream; `origin/main` has the squash commit',
+        'nothing of the run; `tools/.env`, which neither branch ignores any more'),
+    'stop-rule-rewritten': ('`idd/5-x`, one commit',
+        'nothing of the run; `local/settings.json`, which that branch no longer ignores'),
+    'local-default-rule': ('`idd/5-x`, no commit',
+        'nothing of the run; `settings.local.json`, which that branch does not ignore'),
     'stop-after-verify-failed': ('`idd/5-x`, one commit',
         'the untracked manifest and one new line in the tracked `.claude/.idd/routing-stats.jsonl`'),
     'stop-at-close-stage': ('`idd/5-x`, one commit, with an upstream',
@@ -142,6 +168,8 @@ CELLS = {
         'an untracked `.claude/.idd/tree-lock` and a changed `a.txt`'),
     'file-the-default-branch-tracks': ('`idd/5-x`, one commit',
         'nothing git shows on that branch; `a.txt`, ignored there and tracked on `main`'),
+    'merged-file-untracked': ('`idd/5-x`, one commit, with an upstream; `origin/main` has the squash commit',
+        'nothing git shows on that branch; `a.txt`, ignored there'),
 }
 
 
@@ -204,10 +232,16 @@ def template(base):
     write(os.path.join(tree, ".git", "info", "exclude"), ".claude/.idd/state/\n", "a")
     write(os.path.join(tree, "a.txt"), "a\n")
     write(os.path.join(tree, LOG), '{"issue": 1}\n')
+    write(os.path.join(tree, "tools", "run.sh"), "#!/bin/sh\n")
+    write(os.path.join(tree, "tools", ".gitignore"), ".env\n")
+    write(os.path.join(tree, ".gitignore"), "local/\n")
     git(tree, "add", "-A")
     git(tree, "commit", "-q", "-m", "init")
     git(tree, "remote", "add", "origin", origin)
     git(tree, "push", "-q", "-u", "origin", "main")
+    # there before any run, and ignored: a person's own files, never the work of an issue
+    for path, text in HERE_BEFORE.items():
+        write(os.path.join(tree, path), text)
 
 
 def rq(tree, gh_dir, *args):
@@ -258,14 +292,17 @@ def regenerated(tree, path):
 
 
 def build(base, stub, row):
+    """A repository in which #5 was handed out by the real `next`, ended in the way of the row, and was recorded by
+    the real `record`. Returns (root, origin, tree, gh_dir, what git did not track at hand-out)."""
     root = tempfile.mkdtemp(prefix=row["id"] + ".", dir=base)
     shutil.copytree(os.path.join(base, "tpl"), root, dirs_exist_ok=True, symlinks=True)
     origin, tree, gh_dir = os.path.join(root, "origin.git"), os.path.join(root, "tree"), os.path.join(root, "gh")
     git(tree, "remote", "set-url", "origin", origin)
     os.mkdir(gh_dir)
-    sh([sys.executable, os.path.join(HERE, "scenario.py"), gh_dir, row.get("gh", "5")])
+    sh([sys.executable, os.path.join(HERE, "scenario.py"), gh_dir, "5", "9"])
+    # ── the repository before the run ──
     if row.get("ignore_files"):   # the documented rule: the downloaded files are ignored, the manifest is not
-        write(os.path.join(tree, ".gitignore"), ".claude/.idd/attachments/*/*\n!.claude/.idd/attachments/*/_manifest.json\n")
+        write(os.path.join(tree, ".gitignore"), ".claude/.idd/attachments/*/*\n!.claude/.idd/attachments/*/_manifest.json\n", "a")
         git(tree, "add", ".gitignore")
     if row.get("tracked_manifest"):   # an earlier run committed the manifest on the default branch
         download(tree, stub, "empty", "idd-issue")
@@ -275,7 +312,7 @@ def build(base, stub, row):
         git(tree, "push", "-q", "origin", "main")
     if row.get("origin_ignore"):   # origin/main gets an ignore rule; the local default branch lacks it and has a commit of its own
         git(tree, "checkout", "-q", "-b", "elsewhere")
-        write(os.path.join(tree, ".gitignore"), "coverage/\n")
+        write(os.path.join(tree, ".gitignore"), "coverage/\n", "a")
         git(tree, "add", ".gitignore")
         git(tree, "commit", "-q", "-m", "ignore coverage")
         git(tree, "push", "-q", "origin", "elsewhere:main")
@@ -284,27 +321,41 @@ def build(base, stub, row):
         write(os.path.join(tree, "local.txt"), "l\n")
         git(tree, "add", "local.txt")
         git(tree, "commit", "-q", "-m", "a commit only this clone has")
+    if row.get("local_rule"):   # the local default branch has an ignore rule of its own, and the file it covers is there
+        write(os.path.join(tree, ".gitignore"), "settings.local.json\n", "a")
+        git(tree, "add", ".gitignore")
+        git(tree, "commit", "-q", "-m", "a rule only this clone has")
+        write(os.path.join(tree, "settings.local.json"), '{"token": "local"}\n')
+    # ── the run: start and next, as idd-all calls them ──
+    started = rq(tree, gh_dir, "start", "--path", "PR", "--review", "no")
+    if started.returncode != 0:
+        raise RuntimeError(f"start: {started.stderr.strip()[:200]}")
+    at_handout = treecheck.handout(tree)
+    handed = answer(rq(tree, gh_dir, "next"))
+    if handed.get("next") != 5:
+        raise RuntimeError(f"next did not hand out #5: {handed}")
+    # ── the ending ──
     outcome = row.get("outcome", "stopped")
-    if outcome == "closed":
-        write(os.path.join(gh_dir, "state-5"), "CLOSED\n")
-    stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    write(os.path.join(tree, STATE), json.dumps({
-        "version": 3, "repo": "o/r", "path": "PR", "default": "main", "review": False, "started_at": stamp,
-        "updated_at": stamp, "stop": None,
-        "attempts": [{"issue": 5, "outcome": outcome, "reason": "" if outcome == "closed" else "x",
-                      "handed_at": stamp, "recorded_at": stamp, "settled": False}]}))
     if row["on"] == "own" or row.get("meeting"):
         git(tree, "checkout", "-q", "--no-track", "-b", B, "origin/main")   # as Phase 0.5 creates it
-    if row.get("work"):
+    if row.get("work"):   # the issue's own commit; staged by name, as idd-implement does
         write(os.path.join(tree, "w.txt"), "w\n")
+        git(tree, "add", "--", "w.txt")
         if row.get("work_manifest"):   # the run's own commit carried the manifest
             download(tree, stub, "empty", "idd-issue")
+            git(tree, "add", "--", M)
         if row.get("work_ignore"):     # a commit of the issue adds an ignore rule the default branch lacks
-            write(os.path.join(tree, ".gitignore"), "coverage/\n")
+            write(os.path.join(tree, ".gitignore"), "coverage/\n", "a")
+            git(tree, "add", "--", ".gitignore")
         if row.get("work_untrack"):    # a commit of the issue stops tracking a file the default branch tracks, and ignores it
             git(tree, "rm", "-q", "--cached", "a.txt")
-            write(os.path.join(tree, ".gitignore"), "a.txt\n")
-        git(tree, "add", "-A")
+            write(os.path.join(tree, ".gitignore"), "a.txt\n", "a")
+            git(tree, "add", "--", ".gitignore")
+        if row.get("work_rm_tools"):   # a commit of the issue deletes a folder together with its own ignore rules
+            git(tree, "rm", "-q", "-r", "tools")
+        if row.get("work_rewrite_ignore"):   # a commit of the issue rewrites the top ignore rules and drops `local/`
+            write(os.path.join(tree, ".gitignore"), "coverage/\n")
+            git(tree, "add", "--", ".gitignore")
         git(tree, "commit", "-q", "-m", "work of #5 (#5)")
     if row.get("upstream"):
         git(tree, "push", "-q", "-u", "origin", B)
@@ -343,7 +394,14 @@ def build(base, stub, row):
         git(tree, "checkout", "-q", "main")
     if row["on"] == "wip":
         git(tree, "checkout", "-q", "-b", "wip")
-    return root, origin, tree, gh_dir
+    # ── GitHub after the ending, and the record ──
+    sh([sys.executable, os.path.join(HERE, "scenario.py"), gh_dir, row.get("gh", "5")])
+    if outcome == "closed":
+        write(os.path.join(gh_dir, "state-5"), "CLOSED\n")
+    recorded = rq(tree, gh_dir, "record", "--issue", "5", *([] if outcome == "closed" else ["--reason", "x"]))
+    if recorded.returncode != 0 or answer(recorded).get("outcome") != outcome:
+        raise RuntimeError(f"record: {recorded.stdout.strip()[:120]} {recorded.stderr.strip()[:200]}")
+    return root, origin, tree, gh_dir, at_handout
 
 
 def later_run(tree, gh_dir, row, problems):
@@ -376,14 +434,23 @@ def later_run(tree, gh_dir, row, problems):
 
 def check(base, stub, row):
     problems = []
-    root, origin, tree, gh_dir = build(base, stub, row)
+    root, origin, tree, gh_dir, at_handout = build(base, stub, row)
     before = dict(head=git(tree, "rev-parse", "HEAD"), on=git(tree, "symbolic-ref", "--short", "HEAD"),
                   status=git(tree, "status", "--porcelain", "--untracked-files=all"), tips=tips(tree))
-    left = left_over(tree)
+    files_before = treecheck.snapshot(tree)
+    left = [p for p in left_over(tree) if p not in at_handout]   # what git shows, without what was there before the run
     blobs = {p: git(tree, "hash-object", "--", p).strip() for p in left if os.path.isfile(os.path.join(tree, p))}
     may_go = {p for p in left if regenerated(tree, p)}
     tip_before = git(tree, "rev-parse", "-q", "--verify", "refs/heads/" + B, check=False).strip()
     proc = rq(tree, gh_dir, "settle", "--issue", "5")
+    attempt = state_of(tree)["attempts"][0]
+    kept, stashes = attempt.get("kept", []), attempt.get("stashes", [])
+    tip = git(tree, "rev-parse", "-q", "--verify", "refs/heads/" + B, check=False).strip()
+    # every file, read from the file system: with either exit code
+    refs = [before["head"].strip(), tip_before, tip, "refs/heads/main", *(k.get("commit") for k in kept)]
+    for st in stashes:
+        refs += [st.get("commit", ""), st.get("commit", "") + "^3"]
+    problems += treecheck.account(tree, at_handout, files_before, refs=refs, discarded=attempt.get("discarded", []))
     if proc.returncode != row["exit"]:
         problems.append(f"exit {proc.returncode}, want {row['exit']}: {proc.stderr.strip()[:200]}")
         return problems
@@ -395,9 +462,6 @@ def check(base, stub, row):
         lines = proc.stderr.strip().splitlines()
         if len(lines) != 1 or "#5" not in lines[0]:
             problems.append(f"exit 3 without exactly one reason line that names #5: {proc.stderr.strip()[:200]!r}")
-        for path, content in row.get("intact", {}).items():
-            if open(os.path.join(tree, path)).read() != content:
-                problems.append(f"exit 3 and {path} no longer holds what the run wrote")
         return problems
     if git(tree, "symbolic-ref", "--short", "HEAD").strip() != "main":
         problems.append("the working tree is not on the default branch")
@@ -405,8 +469,6 @@ def check(base, stub, row):
         problems.append("git status --porcelain prints something: the next issue would stop")
     if branches_of_5(tree) != row["branches"]:
         problems.append(f"branches of #5: {branches_of_5(tree)}, want {row['branches']}")
-    attempt = state_of(tree)["attempts"][0]
-    kept = attempt.get("kept", [])
     if sorted(k["branch"] for k in kept) != row["branches"]:
         problems.append(f"the run state keeps {[k['branch'] for k in kept]}, want {row['branches']}")
     if kept and kept[0].get("upstream") is not bool(row.get("upstream")):
@@ -417,10 +479,9 @@ def check(base, stub, row):
     if not discarded <= may_go:
         problems.append(f"the row discards something the manifest does not vouch for: {sorted(discarded - may_go)}")
     committed = row.get("committed")
-    tip = git(tree, "rev-parse", "-q", "--verify", "refs/heads/" + B, check=False).strip()
     if committed is None:
         if tip and tip != tip_before:
-            problems.append("settle made a commit and the row has none")
+            problems.append(f"settle made a commit and the row has none: {git(tree, 'show', '--name-only', '--format=', B).split()}")
         if any(k.get("commit") for k in kept):
             problems.append("the run state names a commit and the row has none")
     else:
@@ -441,18 +502,32 @@ def check(base, stub, row):
             problems.append(f"{p} was left over and is not on {B} as it was")
     if set(left) - discarded - set(committed or []):
         problems.append(f"neither kept nor discarded: {sorted(set(left) - discarded - set(committed or []))}")
-    stash = attempt.get("stash")
+    # what settle put into the local exclude file
+    excluded = attempt.get("excluded", [])
+    if excluded != row.get("excluded", []):
+        problems.append(f"the run state says these paths went into the local exclude file: {excluded}, want {row.get('excluded', [])}")
+    lines = open(os.path.join(tree, ".git", "info", "exclude")).read().splitlines()
+    for path in row.get("excluded", []):
+        if "/" + path not in lines:
+            problems.append(f"/{path} is not a line of .git/info/exclude")
+    stash = stashes[0] if stashes else None
     if row.get("stash"):
         listed = git(tree, "stash", "list", "--format=%H %gs")
-        if not stash or stash.get("paths") != row["stash"] or stash.get("commit", "?") not in listed or STASH_MESSAGE not in listed:
-            problems.append(f"the stash is not recorded with its commit and paths: state {stash}, stash list {listed.strip()[:160]!r}")
-    elif stash or git(tree, "stash", "list"):
-        problems.append(f"a stash was made and the row has none: {stash}")
+        message = row.get("stash_message", STASH_MESSAGE)
+        if len(stashes) != 1 or stash.get("paths") != row["stash"] or stash.get("commit", "?") not in listed or message not in listed:
+            problems.append(f"the stash is not recorded with its commit and paths: state {stashes}, stash list {listed.strip()[:160]!r}")
+    elif stashes or git(tree, "stash", "list"):
+        problems.append(f"a stash was made and the row has none: {stashes}")
     report = rq(tree, gh_dir, "report").stdout
-    if row["later"] == "closed":   # no later run hands a closed issue out: what the report says about it is what is left to check
+    for path in row.get("excluded", []):
+        if not any(path in ln and "exclude" in ln for ln in report.splitlines()):
+            problems.append(f"the report does not say that {path} went into the local exclude file")
+    if any(p in report for p in at_handout if p not in row.get("excluded", [])):
+        problems.append("the report names a file that was there before the run as something the run left")
+    if row["later"] == "closed":   # what the report says about a closed issue, and what a later run knows of it
         lines = [ln for ln in report.splitlines() if B in ln]
-        if committed is None and lines:
-            problems.append(f"the report names a branch of the closed issue: {lines[0][:160]}")
+        if committed is None and any("is kept" in ln or "what the run left" in ln for ln in lines):
+            problems.append(f"the report names a commit of settle for the closed issue: {lines[0][:160]}")
         if committed is not None and not any(tip[:7] in ln and all(p in ln for p in committed) for ln in lines):
             problems.append(f"the report does not name {B}, the commit and its paths under the closed issue: {lines[:1]}")
         if "open again" in report:
@@ -481,13 +556,14 @@ def check(base, stub, row):
                 problems.append("the report does not say to apply the stash on the kept branch")
             if not branches_of_5(tree):
                 git(tree, "branch", B, tip)   # deleted above to take the report's first step
-            git(tree, "checkout", "-q", B)
+            git(tree, "checkout", "-q", "--no-overwrite-ignore", B)
         elif "is deleted" not in line or "on that branch" in line:
             problems.append(f"the branch of the stash is gone and the report does not say so: {line[:200]}")
         applied = sh(["git", "-C", tree, "stash", "apply", "-q", stash["commit"]], check=False)
-        path = os.path.join(tree, "coverage", "report.txt")
-        if applied.returncode != 0 or not os.path.isfile(path) or open(path).read() != "the report\n":
-            problems.append(f"the stash does not give coverage/report.txt back: {applied.stderr.strip()[:160]}")
+        name, content = row.get("stash_file", ("coverage/report.txt", "the report\n"))
+        path = os.path.join(tree, name)
+        if applied.returncode != 0 or not os.path.isfile(path) or open(path).read() != content:
+            problems.append(f"the stash does not give {name} back: {applied.stderr.strip()[:160]}")
     return problems
 
 

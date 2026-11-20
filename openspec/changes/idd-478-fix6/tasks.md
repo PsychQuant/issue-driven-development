@@ -1,7 +1,7 @@
 ## 1. 性質與檢查
 
 - [ ] 1.1 新檔 `scripts/tests/rest-queue/treecheck.py`：`settle` 之前記下 git 資料夾以外每個檔的雜湊，之後逐一交代（沒變、在 `settle` 的 commit 裡、在記下的 stash 裡、是丟掉的紀錄、或是預設 branch 的內容），交出時被忽略的檔必須沒變。對應 requirement「Between two issues one helper settles the working tree」的性質段落。完成時：它對一個手動做出的遺失（把被忽略的檔刪掉）回報失敗。
-- [ ] 1.2 `endings.py`：每一列都由真正的 `start`、`next`、`record` 產生 run 的狀態；範本 repo 加上 `tools/`（含 `.gitignore`）、頂層 `.gitignore` 與兩個原本就在的被忽略檔；每一列跑 1.1 的檢查（以 0 或 3 結束都跑）；結束方式表加六列、改一列（Example「endings of the single-issue pipeline」，共 28 列）。完成時：新的幾列在目前的 `rest-queue.py` 上失敗。
+- [ ] 1.2 `endings.py`：每一列都由真正的 `start`、`next`、`record` 產生 run 的狀態；範本 repo 加上 `tools/`（含 `.gitignore`）、頂層 `.gitignore` 與兩個原本就在的被忽略檔；每一列跑 1.1 的檢查（以 0 或 3 結束都跑）；結束方式表加五列、改一列（Example「endings of the single-issue pipeline」，共 27 列）。完成時：新的幾列在目前的 `rest-queue.py` 上失敗。
 - [ ] 1.3 `settle_matrix.py`：狀態由真正的 `start` 與 `next` 產生，加一個維度「那一張的 commit 對 ignore 規則做了什麼」（沒動、刪掉 `tools/` 連同 `.gitignore`、改寫頂層 `.gitignore`），每一種組合跑 1.1 的檢查。完成時：0 處不符。
 
 ## 2. 三項 Blocking
