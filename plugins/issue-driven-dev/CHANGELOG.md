@@ -39,7 +39,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   put into stash entries, none deleted; the checkout and the fast-forward do not overwrite a file git ignores;
   what was in the working tree before an issue was handed out (the files git ignored then: `.env`,
   `node_modules/`) is left where it is, never committed or stashed, and when a merged issue removed the rule
-  that ignored such a file, its path goes into `.git/info/exclude` and the report names it. Do not work in the
+  that ignored such a file, its path goes into `.git/info/exclude` and the report names it; when the issue
+  itself committed such a file, settle moves it aside for the checkout and puts it back afterwards; a commit hook that
+  stages everything does not get such a file into settle's commit; one that the issue's run deleted is named in the report.
+  Step 0.5 of the single-issue flow now creates the issue's branch with `git checkout --no-overwrite-ignore`, so that
+  a file git ignores locally is not written over when `origin/<default>` tracks it; this one change applies to every
+  `/idd-all` run on the PR path, not only to rest mode (the other plain checkouts of the pipeline are #587). Do not work in the
   same working tree while a rest run goes: settle cannot tell your changes from what an issue left; the default branch is fast-forwarded when it is behind; an issue branch without a commit and without an upstream is deleted, so an issue that stopped before
   its first commit and left nothing but those records is run again by a later run. An issue that stops does not stop the run. The run stops as a whole only when
   `next`, `record` or `settle` cannot read GitHub or git, cannot write the state or cannot settle the working

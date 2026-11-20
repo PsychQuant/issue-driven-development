@@ -179,13 +179,14 @@ IDD_REASON
    |---|---|
    | 這張的附件資料夾（`.claude/.idd/attachments/issue-N/`）裡會重新產生的紀錄。diagnose 每次都重跑、每次都重寫這個資料夾 | manifest 是那個資料夾裡唯一的留下物時丟掉。branch 還沒有自己的 commit、也沒有 upstream，而留下的全是 manifest 與它擔保的附件（列出且雜湊相符，或列為下載失敗）時，全部丟掉。丟掉是刪掉未追蹤的檔、把已追蹤的檔還原；其他東西一律不丟 |
    | 寫入端自己排除在 git 之外的位置：`.claude/.idd/` 裡的 run 狀態、編輯備份與鎖，以及 `.claude/worktrees/` | 不 commit，以 3 結束 |
-   | 其他一切（沒 commit 的改動、Spectra 的 artifact、沒被上面丟掉的附件、所有 issue 共用的紀錄檔如 `routing-stats.jsonl`） | commit 在這張的 branch（只 stage 這些路徑），只在本機、不推；branch、commit 與路徑記進 run 的狀態，列在報告裡。這個 commit 失敗、而 repo 有 commit 之前會跑的 hook（`pre-commit`、`prepare-commit-msg`、`commit-msg`；hook 檔或 git 設定裡的 hook 都算）時，重新 stage、兩種 hook 都不經過再 commit 一次（之前先重新讀一次留下物，因為 hook 可能寫了檔），commit 訊息的正文與報告都會註明（維護者 2026-11-19 的決定）；失敗而沒有這種 hook 時不再試第二次，以 3 結束 |
+   | 其他一切（沒 commit 的改動、Spectra 的 artifact、沒被上面丟掉的附件、所有 issue 共用的紀錄檔如 `routing-stats.jsonl`） | commit 在這張的 branch（只 stage 這些路徑），只在本機、不推；branch、commit 與路徑記進 run 的狀態，列在報告裡。這個 commit 失敗、而 repo 有 commit 之前會跑的 hook（`pre-commit`、`prepare-commit-msg`、`commit-msg`；hook 檔或 git 設定裡的 hook 都算）時，重新 stage、兩種 hook 都不經過再 commit 一次（之前先重新讀一次留下物，因為 hook 可能寫了檔），commit 訊息的正文與報告都會註明（維護者 2026-11-19 的決定）；失敗而沒有這種 hook 時不再試第二次，以 3 結束。hook 若把交出時就在的檔一併 stage 進去（會 `git add -A` 的 hook，不論它最後讓不讓 commit 過），`settle` 撤回那個 commit、把那些檔移出 stage，再不經 hook commit 一次，訊息正文會註明 |
 
    然後依序做這幾件事：
 
    1. fetch 預設 branch。本機的預設 branch 落後 origin 而沒有自己的 commit 時，先把它往前移（這時它還沒被 checkout）；已經 merge 的那一張因此不會擋路。fetch 失敗時先把下面的事做完，最後才以 3 結束，工作樹停在乾淨的預設 branch。
    2. 那一張的 branch 忽略、預設 branch 卻有追蹤的檔（例如那一張把某個檔改成不追蹤），一般的 checkout 會悄悄覆寫。這些檔先收進一個 stash，一個都不刪。
    3. 切回預設 branch，而且不覆寫 git 忽略的檔（`--no-overwrite-ignore`）；還有檔擋路時以 3 結束，檔案不動。checkout 之後才失敗的 hook 不算 checkout 失敗。
+      交出時就在、而這一張的 branch 把它 commit 進去的檔（預設 branch 沒有追蹤它），checkout 會把它從工作樹拿掉。`settle` 在 checkout 之前把這種檔搬到狀態資料夾底下的 `rest-held-<N>/`，checkout 之後（成功或失敗都一樣）搬回原處，內容與搬走時相同。原處被別的東西佔住時不覆寫，以 3 結束並指出那個資料夾。那個資料夾還在的時候，`start` 不開新的 run，報告也會列出它。
    4. 切回之後仍未追蹤的路徑：交出時就在的（那一張刪掉了 ignore 規則而且已經 merge），寫進 `.git/info/exclude`，檔案不動；只被那一張 branch 的 ignore 規則蓋住的，收進另一個 stash；其他的不處理。
    5. 確認 `git status --porcelain` 沒有輸出。
 
@@ -240,8 +241,8 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" report --cwd "$CWD" --repo
 - 不走 direct-commit，也不 attended：`start` 遇到不是 `PR` 的 path 就拒絕（#583）。
 - 不把所有 issue 共用的紀錄檔的新內容帶回預設 branch：它留在那一張的本機 branch，報告會標明（#584）。
 - 不刪附件以外的東西：`settle` 丟掉的只有這張的 manifest 與 manifest 擔保的附件（列出且雜湊相符，或列為下載失敗），下一次 diagnose 會再寫一次。
-- rest run 進行中，不要在同一個工作樹做別的事（人或另一個 session 都一樣）：`settle` 會在兩張之間 commit、stash 與 checkout，它分不出哪些改動是那一張留下的、哪些是別人剛寫的。要邊跑邊做別的事，另外 clone 一份。
-- 那一張 issue 自己把預設 branch 忽略的檔 commit 進去時，切回預設 branch 會把那個檔從工作樹拿掉（它在那一張的 commit 裡）；這是單張流程本來的行為，這裡不另外處理。
+- rest run 進行中，不要在同一個工作樹做別的事（人或另一個 session 都一樣）：`settle` 會在兩張之間 commit、stash 與 checkout，它分不出哪些改動是那一張留下的、哪些是別人剛寫的。一張 issue 正在跑的時候加進工作樹的檔，對 `settle` 來說就是那一張留下的，會被 commit 在那一張的 branch。要邊跑邊做別的事，另外 clone 一份。
+- 交出時就在的檔若被那一張的 run 自己刪掉或改掉（例如 `rm -rf` 一個資料夾），`settle` 救不回來；被刪掉的會列在報告裡，被改掉的不會（交出時只記路徑，不記內容）。
 - bot 的留言不讓一張 issue 變成 `outsider`（與 close stage 相同）。把外部輸入轉貼成留言的 app，它帶進來的文字會被 diagnose 讀到。
 - 執行的帳號要有這個 repo 的寫入權：沒有的話 GitHub 不回答誰有寫入權，`start` 以 3 結束。
 - `--cwd` 在 repo 頂層以下時不替 tree-lock 補 ignore 規則：它的寫入端把規則加在頂層，蓋不到子目錄裡的 `.claude/.idd/tree-lock`，implement 之後停下的那一張會讓 `settle` 以 3 結束。要在子目錄跑，先把 `<子目錄>/.claude/.idd/tree-lock*` 加進 `.git/info/exclude`。
@@ -641,13 +642,16 @@ if [ "$PATH_AXIS" = "PR" ]; then
     # Per (c): abort "Branch $BRANCH already exists. Run: git -C $CWD branch -D $BRANCH or pick a different issue."
     :  # bash flow exits the if; agent assigns BRANCH per user's choice and falls through
   elif [ -n "${RESUME_BRANCH:-}" ]; then
-    git -C "$CWD" checkout -b "$BRANCH" "origin/$BRANCH"   # #366: resume 該 remote branch
+    # --no-overwrite-ignore: a plain checkout writes over a file git ignores here when the branch tracks it (#478)
+    git -C "$CWD" checkout --no-overwrite-ignore -b "$BRANCH" "origin/$BRANCH" || abort "Could not check out $BRANCH from origin (git's reason is above). When git names files that would be overwritten, they are files git ignores in this working tree and that branch tracks: move them away, then run the same /idd-all command again, with the flags you used."   # #366: resume 該 remote branch
   else
     # #392 verify r5 #21, #23: branch from the remote default branch as it is now, not from the local
     # one. A local default that missed a merge makes the close stage stop as "behind" only after
     # implement and verify; one with unpushed commits would put work that is not this issue's in the PR.
     git -C "$CWD" fetch -q origin "$DEFAULT" || abort "Could not fetch origin/$DEFAULT."
-    git -C "$CWD" checkout --no-track -b "$BRANCH" "origin/$DEFAULT"   # no upstream: the meeting unwind reads it (r6 #18)
+    # --no-overwrite-ignore: origin/<default> may track a path that git ignores in this working tree (a personal
+    # .vscode/, a local settings file); a plain checkout would write over that file without a word (#478)
+    git -C "$CWD" checkout --no-overwrite-ignore --no-track -b "$BRANCH" "origin/$DEFAULT" || abort "Could not create $BRANCH from origin/$DEFAULT (git's reason is above). When git names files that would be overwritten, they are files git ignores in this working tree and origin/$DEFAULT tracks: move them away, then run the same /idd-all command again, with the flags you used."   # no upstream: the meeting unwind reads it (r6 #18)
   fi
 fi
 ```
