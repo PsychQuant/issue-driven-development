@@ -134,7 +134,7 @@ rest 只走 PR path（PR、unattended）。兩張之間，一張 issue 留下的
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" start --cwd "$CWD" --repo "$GITHUB_REPO" --path "$PATH_AXIS" --review "$REVIEW_YN"
    ```
 
-   它把 path、`--review` 與它向 GitHub 讀到的預設 branch 存進 run 的狀態。24 小時內有還沒結束的 run 時它會接續，試過的 issue 不會再跑；接續時 `--review` 只能加上、不能拿掉（先前的 run 帶了、這次沒帶，照樣每一張停在 verified；它會印一行說明），要拿掉就讓那個 run 以報告結束。新的 run 要求工作樹在乾淨的預設 branch 上。以 3 結束時照下面「整個 run 停下」的第一列處理：path 不是 `PR`、工作樹不在乾淨的預設 branch 上、git 不會忽略 `.claude/.idd/state/`（它會說明要在哪裡加那一行；由 idd-all 自己加是 #564）、執行的帳號沒有這個 repo 的寫入權，或清單讀不到。清單把本機已經有 `idd/N` branch 的 candidate 另列一行：它們輪到時會被記為 existing work，不跑。
+   它把 path、`--review` 與它向 GitHub 讀到的預設 branch 存進 run 的狀態。24 小時內有還沒結束的 run 時它會接續（再下指令時旗標要相同），試過的 issue 不會再跑；接續時 `--review` 只能加上、不能拿掉（先前的 run 帶了、這次沒帶，照樣每一張停在 verified；它會印一行說明），要拿掉就讓那個 run 以報告結束。新的 run 要求工作樹在乾淨的預設 branch 上。以 3 結束時照下面「整個 run 停下」的第一列處理：path 不是 `PR`、工作樹不在乾淨的預設 branch 上、git 不會忽略 `.claude/.idd/state/`（它會說明要在哪裡加那一行；由 idd-all 自己加是 #564）、執行的帳號沒有這個 repo 的寫入權，或清單讀不到。清單把本機已經有 `idd/N` branch 的 candidate 另列一行：它們輪到時會被記為 existing work，不跑。
 
 3. 取下一張：
 
@@ -173,13 +173,13 @@ IDD_REASON
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" settle --cwd "$CWD" --repo "$GITHUB_REPO" --issue "$N"
    ```
 
-   它看工作樹的實際狀態，照規格 `idd-all-rest` 的封閉表處理。這一張被交出時就在工作樹、當時被 git 忽略的檔不算這一張留下的：即使這一張的 branch 不再忽略它（這一張刪掉或改寫了 ignore 規則），`settle` 也不 commit、不 stash、不搬、不刪。工作樹在這張自己的 branch 上時，其餘留下而沒有 commit 的東西分三類：
+   它看工作樹的實際狀態，照規格 `idd-all-rest` 的封閉表處理。`start`、`next` 與 `settle` 讀工作樹只有一種讀法：列出每一個未追蹤檔，不受 git 的顯示設定影響（例如 `status.showUntrackedFiles no`）。`settle` 在任何一步被中止之後可以重跑，結果與沒被中止相同：之後無從得知的事（要丟的紀錄、要搬開的檔、那一張 branch 忽略了什麼、要寫進 exclude 的路徑），它在動手之前先寫進 run 的狀態。這一張被交出時就在工作樹、當時被 git 忽略的檔不算這一張留下的：即使這一張的 branch 不再忽略它（這一張刪掉或改寫了 ignore 規則），`settle` 也不 commit、不 stash、不搬、不刪。工作樹在這張自己的 branch 上時，其餘留下而沒有 commit 的東西分三類：
 
    | 留下的東西 | 處理 |
    |---|---|
    | 這張的附件資料夾（`.claude/.idd/attachments/issue-N/`）裡會重新產生的紀錄。diagnose 每次都重跑、每次都重寫這個資料夾 | manifest 是那個資料夾裡唯一的留下物時丟掉。branch 還沒有自己的 commit、也沒有 upstream，而留下的全是 manifest 與它擔保的附件（列出且雜湊相符，或列為下載失敗）時，全部丟掉。丟掉是刪掉未追蹤的檔、把已追蹤的檔還原；其他東西一律不丟 |
    | 寫入端自己排除在 git 之外的位置：`.claude/.idd/` 裡的 run 狀態、編輯備份與鎖，以及 `.claude/worktrees/` | 不 commit，以 3 結束 |
-   | 其他一切（沒 commit 的改動、Spectra 的 artifact、沒被上面丟掉的附件、所有 issue 共用的紀錄檔如 `routing-stats.jsonl`） | commit 在這張的 branch（只 stage 這些路徑），只在本機、不推；branch、commit 與路徑記進 run 的狀態，列在報告裡。這個 commit 失敗、而 repo 有 commit 之前會跑的 hook（`pre-commit`、`prepare-commit-msg`、`commit-msg`；hook 檔或 git 設定裡的 hook 都算）時，重新 stage、兩種 hook 都不經過再 commit 一次（之前先重新讀一次留下物，因為 hook 可能寫了檔），commit 訊息的正文與報告都會註明（維護者 2026-11-19 的決定）；失敗而沒有這種 hook 時不再試第二次，以 3 結束。hook 若把交出時就在的檔一併 stage 進去（會 `git add -A` 的 hook，不論它最後讓不讓 commit 過），`settle` 撤回那個 commit、把那些檔移出 stage，再不經 hook commit 一次，訊息正文會註明 |
+   | 其他一切（沒 commit 的改動、Spectra 的 artifact、沒被上面丟掉的附件、所有 issue 共用的紀錄檔如 `routing-stats.jsonl`） | commit 在這張的 branch（只 stage 這些路徑），只在本機、不推；branch、commit 與路徑記進 run 的狀態，列在報告裡。這個 commit 失敗、而 repo 有 commit 之前會跑的 hook（`pre-commit`、`prepare-commit-msg`、`commit-msg`；hook 檔或 git 設定裡的 hook 都算）時，重新 stage、兩種 hook 都不經過再 commit 一次（之前先重新讀一次留下物，因為 hook 可能寫了檔），commit 訊息的正文與報告都會註明（維護者 2026-11-19 的決定）；失敗而沒有這種 hook 時不再試第二次，以 3 結束。hook 若把交出時就在的檔一併 stage 進去（會 `git add -A` 的 hook，不論它最後讓不讓 commit 過），`settle` 撤回那個 commit、把那些檔移出 stage，再不經 hook commit 一次，訊息正文會註明。這個檢查看的是 commit 本身的路徑，新做的、不經 hook 重做的、上一次被中止前做的都一樣；裡面有不收進 git 的位置的檔（hook 自己加的）時，撤回那個 commit、以 3 結束 |
 
    然後依序做這幾件事：
 
@@ -187,8 +187,8 @@ IDD_REASON
    2. 那一張的 branch 忽略、預設 branch 卻有追蹤的檔（例如那一張把某個檔改成不追蹤），一般的 checkout 會悄悄覆寫。這些檔先收進一個 stash，一個都不刪。
    3. 切回預設 branch，而且不覆寫 git 忽略的檔（`--no-overwrite-ignore`）；還有檔擋路時以 3 結束，檔案不動。checkout 之後才失敗的 hook 不算 checkout 失敗。
       交出時就在、而這一張的 branch 把它 commit 進去的檔（預設 branch 沒有追蹤它），checkout 會把它從工作樹拿掉。`settle` 在 checkout 之前把這種檔搬到狀態資料夾底下的 `rest-held-<N>/`，checkout 之後（成功或失敗都一樣）搬回原處，內容與搬走時相同。原處被別的東西佔住、或中途的資料夾是 symlink 時不搬，以 3 結束並指出那個資料夾。這種檔若預設 branch 也追蹤了、而且內容與那一張的 branch 不同，checkout 會不出聲地換掉它：`settle` 在 checkout 之前就以 3 結束，檔案不動，原因行列出路徑。那個資料夾還在的時候，`start` 不開新的 run，報告也會列出它。
-   4. 切回之後仍未追蹤的路徑：交出時就在的（那一張刪掉了 ignore 規則而且已經 merge），寫進 `.git/info/exclude`，檔案不動；只被那一張 branch 的 ignore 規則蓋住的，收進另一個 stash；其他的不處理。
-   5. 確認 `git status --porcelain` 沒有輸出。
+   4. 切回之後仍未追蹤的路徑：交出時就在的（那一張刪掉了 ignore 規則而且已經 merge），寫進 `.git/info/exclude`，檔案不動；寫了之後 git 仍不忽略它時（預設 branch 的 `.gitignore` 有 `!` 開頭的規則，優先於本機的 exclude），把那一行拿掉、以 3 結束，不記成已排除；只被那一張 branch 的 ignore 規則蓋住的，收進另一個 stash；其他的不處理。
+   5. 確認工作樹沒有改動、也沒有未被忽略的未追蹤檔（同一種讀法）。保留的 branch 上 `settle` 記下的 commit 若含不該有的檔，以 3 結束並指出那個 commit。
 
    工作樹停在預設 branch 而有這一張留下的東西，或停在別的 branch，都以 3 結束。本機預設 branch 有自己的 commit 時不動它：PR path 的 branch 從 `origin/<default>` 建。這張沒有自己的 commit、也沒有 upstream 的 branch 會刪掉，所以在第一個 commit 之前停下、只留下上表第一列那些紀錄的那一張，之後還會再被交出；其他的 branch 留著，列在報告裡。以 3 結束照下面「整個 run 停下」處理；以 0 結束就回第 3 步。
 
@@ -242,7 +242,8 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" report --cwd "$CWD" --repo
 - 不把所有 issue 共用的紀錄檔的新內容帶回預設 branch：它留在那一張的本機 branch，報告會標明（#584）。
 - 不刪附件以外的東西：`settle` 丟掉的只有這張的 manifest 與 manifest 擔保的附件（列出且雜湊相符，或列為下載失敗），下一次 diagnose 會再寫一次。
 - rest run 進行中，不要在同一個工作樹做別的事（人或另一個 session 都一樣）：`settle` 會在兩張之間 commit、stash 與 checkout，它分不出哪些改動是那一張留下的、哪些是別人剛寫的。一張 issue 正在跑的時候加進工作樹的檔，對 `settle` 來說就是那一張留下的，會被 commit 在那一張的 branch。要邊跑邊做別的事，另外 clone 一份。
-- 交出時就在的檔若被那一張的 run 自己刪掉或改掉（例如 `rm -rf` 一個資料夾），`settle` 救不回來；被刪掉的會列在報告裡，被改掉的不會（交出時只記路徑，不記內容）。
+- 交出時就在的檔若被那一張的 run 自己刪掉或改掉（例如 `rm -rf` 一個資料夾），`settle` 救不回來；被刪掉的會列在報告裡，被改掉的不會（交出時只記路徑，不記內容）。整個資料夾被 git 忽略時，記下的是那個資料夾：資料夾還在、裡面少了個別的檔，報告看不出來。
+- `settle` 停在那一張的 branch、而那個 branch 把交出時就在的檔 commit 進去了：照原因行自己 checkout 回預設 branch 會把那些檔從工作樹拿掉。報告會列出這些檔，checkout 之前先複製出來，之後放回（`settle` 自己走到 checkout 時會替你做這件事）。
 - bot 的留言不讓一張 issue 變成 `outsider`（與 close stage 相同）。把外部輸入轉貼成留言的 app，它帶進來的文字會被 diagnose 讀到。
 - 執行的帳號要有這個 repo 的寫入權：沒有的話 GitHub 不回答誰有寫入權，`start` 以 3 結束。
 - `--cwd` 在 repo 頂層以下時不替 tree-lock 補 ignore 規則：它的寫入端把規則加在頂層，蓋不到子目錄裡的 `.claude/.idd/tree-lock`，implement 之後停下的那一張會讓 `settle` 以 3 結束。要在子目錄跑，先把 `<子目錄>/.claude/.idd/tree-lock*` 加進 `.git/info/exclude`。
@@ -1443,9 +1444,10 @@ elif [ "$PATH_AXIS" = "PR" ]; then
   BASE_SHA=$(git -C "$CWD" merge-base "origin/$DEFAULT_BRANCH" "$HEAD_SHA")
   RUN_REVIEW=$(jq -r 'if .review then "yes" else "no" end' "$CWD/.claude/.idd/state/idd-all-run-$N.json" 2>/dev/null || echo unknown)
   # a rest run can be given --review after this issue was recorded: the close stage stops for it, so the body must not promise a merge (#478)
-  REST_REVIEW=$(jq -r --argjson n "$N" 'if .review and any(.attempts[]; .issue == $n and .outcome == null) then "yes" else "no" end' \
-    "$CWD/.claude/.idd/state/idd-all-rest.json" 2>/dev/null || echo no)
-  [ "$REST_REVIEW" = yes ] && RUN_REVIEW=yes
+  # asked of the close stage, which reads that state the same way when it runs: on, off, or unreadable (a recent state
+  # file that cannot be used; the close stage stops at verified for it, so the body must not promise a merge either)
+  REST_REVIEW=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/close-stage.py" rest-review --cwd "$CWD" --repo "$GITHUB_REPO" --issue "$N" 2>/dev/null || echo unreadable)
+  [ "$REST_REVIEW" = off ] || RUN_REVIEW=yes
   GATE_BASE=(--base "$BASE_SHA"); [ "$RUN_REVIEW" = no ] || GATE_BASE=()   # --review: verify's range is not pinned (r4 #44)
   GATE_OUT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/close-stage.py" gate --cwd "$CWD" --repo "$GITHUB_REPO" --issue "$N" --sha "$HEAD_SHA" "${GATE_BASE[@]}")
   VERIFY_STATE=$(printf '%s' "$GATE_OUT" | jq -r '.status // "unparseable"')
