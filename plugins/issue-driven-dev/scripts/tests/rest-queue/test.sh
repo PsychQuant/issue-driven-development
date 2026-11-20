@@ -2121,4 +2121,24 @@ assert_true "skill: next comes before record" "[ ${L_NEXT:-0} -gt 0 ] && [ ${L_N
 assert_true "skill: settle comes after record" "[ ${L_SETTLE:-0} -gt ${L_RECORD:-0} ]"
 assert_true "skill: report comes last" "[ ${L_REPORT:-0} -gt ${L_SETTLE:-0} ] && [ ${L_REPORT:-0} -gt ${L_STOP:-0} ]"
 
+# ── two requirements of other capabilities that #478 touched (each to point at idd-all-rest) ──
+# spec-example: idd-all-chain / DFS vs BFS queue order with a single spawn
+CHAIN="$PLUGIN/skills/idd-all-chain/SKILL.md"
+POP=$(grep -F 'QUEUE=("${QUEUE[@]:1}")' "$CHAIN" | sed 's/ *#.*$//')
+PUSH=$(awk '/# Push semantics dispatch/{f=1; next} f{print} f&&/^ *fi$/{exit}' "$CHAIN")
+assert_eq "chain: one line of the skill pops the front of the queue" "1" "$(printf '%s\n' "$POP" | grep -c .)"
+assert_eq "chain: the skill's push block is the five lines after its comment" "5" "$(printf '%s\n' "$PUSH" | grep -c .)"
+queue_after() { # dfs|bfs → "the issue popped|the queue after the spawn X was added|the next one"
+  TRAVERSAL=$1 SPAWN_NUM=X POP="$POP" PUSH="$PUSH" bash -c 'QUEUE=(44 45 50); CURRENT="${QUEUE[0]}"; eval "$POP"; eval "$PUSH"; printf "%s|%s|%s" "$CURRENT" "${QUEUE[*]}" "${QUEUE[0]}"' 2>&1
+}
+assert_eq "chain, DFS: #44 is popped, the spawn goes to the front and is next" "44|X 45 50|X" "$(queue_after dfs)"
+assert_eq "chain, BFS: #44 is popped, the spawn goes to the back and #45 is next" "44|45 50 X|45" "$(queue_after bfs)"
+
+# spec-example: idd-pr-hitl-modes / the skill asks once in rest mode and offers only the PR path
+PRE=$(grep -F 'Step 0.5 只做解析' "$SKILL")
+assert_grep "skill: in rest mode pr_policy: ask is asked once, in the preflight step" '`pr_policy: ask` 在這裡只問一次' "$PRE"
+assert_grep "skill: the question is whether to start the run on the PR path" "要不要以 PR path 開始這次 run" "$PRE"
+assert_grep "skill: and direct-commit is not offered" "不提供 direct-commit" "$PRE"
+assert_grep "skill: Step 0.5 says rest does not resolve the path again for each issue" "不再重新解析 path 與 interaction" "$(grep -F '**rest mode（`## Rest mode`）**' "$SKILL")"
+
 print_summary "rest-queue"
