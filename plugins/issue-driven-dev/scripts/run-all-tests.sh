@@ -13,7 +13,9 @@
 #     minutes of CPU, and took 11 minutes of wall time on a Mac, where process start-up
 #     is slow, hours at a load of 500, and about two minutes on Linux; #508: the edit-run
 #     suite uses about 65 seconds of CPU and took up to 168 s inside full runs on a busy
-#     18-core Mac (#512); once it was cut off at the default with no failing check)
+#     18-core Mac (#512); once it was cut off at the default with no failing check; #478: the
+#     rest-queue suite builds about 1,200 temporary repositories and takes four to six minutes of wall
+#     time alone on that Mac, and was cut off at the default with no failing check)
 #   - exit 0 iff every suite passed; 1 otherwise
 #
 # Env:
