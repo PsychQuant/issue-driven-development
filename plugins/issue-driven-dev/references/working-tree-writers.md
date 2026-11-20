@@ -13,7 +13,7 @@ A check in `scripts/tests/rest-queue/test.sh` fails when a skill or a script of 
 | kept with the issue | Committed on the issue's own branch, locally, and listed in the report |
 | shared log | As `kept with the issue`, and the report says that the path is a log shared by all issues |
 | not in the working tree | Outside the repository, or inside the git directory: `git status` does not show it and `settle` does not see it |
-| stashed | Put into one stash entry after the checkout of the default branch and before the fetch; nothing is deleted |
+| stashed | Put into a stash entry, before the checkout (files the default branch tracks) or after it (files only the issue's branch ignores); nothing is deleted |
 | stops | `settle` exits 3 and leaves the file as it is |
 | read only | The plugin reads this location and does not write it |
 
@@ -50,12 +50,22 @@ Paths are relative to the directory the skill runs in (`--cwd`) unless the row s
 | `openspec/changes/<change>/` (the folder name comes from the repository's Spectra configuration) | The Spectra CLI, driven by `references/spec-wrapper.md` | kept with the issue | No step commits a proposal by name; the archive commit carries what is left |
 | `.spectra/` | The Spectra CLI | kept with the issue | The plugin does not say whether it is ignored. Not determined: which Spectra commands write `touched/` and `archive-recovery/` |
 | `<git dir>/spectra-app/` (parked changes, its database) | The Spectra CLI | not in the working tree | |
-| `<git dir>/info/exclude` | `scripts/lib/runtime-ignore.sh`, `scripts/idd-edit-helper.py`, `scripts/git-ignore-block.sh` | not in the working tree | |
+| `<git dir>/info/exclude` | `scripts/lib/runtime-ignore.sh`, `scripts/idd-edit-helper.py`, `scripts/git-ignore-block.sh`; `scripts/rest-queue.py settle` (a path that was there before the run and that the default branch no longer ignores) | not in the working tree | |
 | `.gitignore` at the top | `idd-issue` (the carve-out for run logs, after the user chose it) | kept with the issue | |
 | Files that an ignore rule of the issue's own branch covers | The issue's own commands (a build, a test run) | stashed | Ignored on the branch, untracked on the default branch. The report says how to bring them back, also when the branch held no commit and was deleted |
-| A file that the issue's branch ignores and the default branch tracks | The issue's own commands, after a commit of the issue stopped tracking the file | stops | A plain checkout would overwrite it without a word; `settle` checks out with `--no-overwrite-ignore` and stops. The fast-forward of the default branch is done the same way |
+| A file that the issue's branch ignores and the default branch tracks | The issue's own commands, after a commit of the issue stopped tracking the file | stashed | A plain checkout would overwrite it without a word. `settle` first moves the local default branch forward when it can (a merged issue is then not in the way), puts what is still in the way into a stash entry before the checkout, and checks out with `--no-overwrite-ignore` |
 | The branch `idd/<N>-<slug>` | `idd-all` Step 0.5, before diagnose, from `origin/<default>` | — | `settle` deletes it when it has no commit that `origin/<default>` lacks and no upstream; otherwise it is kept |
 | The tags `idd-<N>-baseline` and `idd-<N>-verified` | `idd-issue`, `idd-verify` | not in the working tree | |
+
+## What was there before the run
+
+The rows above are about what an issue's run writes. A working tree also holds a person's own files that git ignores: `.env`, `node_modules/`, a virtualenv. They are no writer's output and no issue's work. `rest-queue.py next` records the paths git ignores when it hands an issue out, on a clean default branch, and `settle` leaves those paths where they are whatever the issue's branch does to the ignore rules. The checks of `settle` (`scripts/tests/rest-queue/treecheck.py`) read the file system, not `git status`, and every fixture holds such files.
+
+| What | Class | Notes |
+| --- | --- | --- |
+| A path git ignored at hand-out that the issue's branch no longer ignores | left where it is | Not committed, not stashed |
+| The same path, when the issue is merged and the default branch no longer ignores it either | added to `.git/info/exclude` | The file is untouched; the report names the path |
+| A path git ignored at hand-out that the default branch has come to track | stops | The checkout would overwrite it; `settle` exits 3 |
 
 ## What this inventory and its check cannot see
 

@@ -6,7 +6,7 @@
 
 An issue opened after the run started SHALL be handed out by a later `next` when it is a candidate.
 
-`next` SHALL hand out a new issue only when the working tree is on the default branch and `git status --porcelain` prints nothing there. Otherwise it SHALL exit with code 3 and hand out nothing; its reason line says where the working tree is and what a person does, in the words `start` uses for a new run. With the hand-out, `next` SHALL record in the run state every path git ignores in the working tree at that moment, a folder that is ignored as a whole as one path; `settle` reads that record. An issue in flight is handed out again without this check, and what was recorded for it stays as it is.
+`next` SHALL hand out a new issue only when the working tree is on the default branch and `git status --porcelain` prints nothing there. Otherwise it SHALL exit with code 3 and hand out nothing; its reason line says where the working tree is and what a person does, in the words `start` uses for a new run. With the hand-out, `next` SHALL record in the run state every path in the working tree that matches an ignore rule at that moment; `settle` reads that record. A folder that a rule ignores is one path. A folder that merely holds nothing but ignored files is not recorded as a whole, only its ignored files are: what is written into such a folder later is not ignored. An issue in flight is handed out again without this check, and what was recorded for it stays as it is.
 
 Before it hands out a candidate, `next` SHALL look for a local branch of that issue in the working tree (`idd/<N>` or `idd/<N>-…`). When one exists, `next` SHALL NOT hand the issue out: it SHALL record the issue as stopped with the reason `existing work: local branch <name>` and go on to the following candidate. Such a branch is work that an earlier run or a person started; rest mode does not take it over. When git cannot be asked, `next` SHALL exit with code 3.
 
@@ -43,7 +43,7 @@ Before it hands out a candidate, `next` SHALL look for a local branch of that is
 
 | the working tree | `next` |
 | --- | --- |
-| on `main`, clean, with the ignored folder `local/` | hands out #5; the run state holds `local/` among the paths recorded for #5 |
+| on `main`, clean, with the ignored folder `local/` | hands out #5; the run state holds `local/` among the paths recorded for #5, and does not hold `.claude/`, which holds nothing but the ignored folder of the run state |
 | on `wip` | exits 3; its reason line names `wip`; the run state holds no attempt |
 | on `main`, with an untracked `b.txt` | exits 3; its reason line names `b.txt`; the run state holds no attempt |
 
@@ -65,7 +65,7 @@ Before it hands out a candidate, `next` SHALL look for a local branch of that is
 
 When the working tree holds the state of a run of the same repository whose last recorded activity (start, hand-out, record or stop) is less than 24 hours old and that was not ended by `report`, `start` SHALL resume it: the recorded attempts and a recorded stop are kept, and the attempts are not handed out again. Otherwise `start` SHALL begin a new run with no attempts. A state file whose start time cannot be read as a time, with an attempt that has no reason, without a stored default branch or a stored review flag, with a version this helper does not know, or whose stored path is not `PR`, is not a state this helper can use.
 
-A state file that this helper cannot use and that was written in the last 24 hours SHALL make `start` exit with code 3 and leave the file as it is: the review flag of that run cannot be read, and a new run in its place would drop it. The reason line SHALL name the file and say that it is to be deleted when no rest run is going on in this working tree. A state file of a run that the previous version of this helper wrote is such a file. A state file older than 24 hours is replaced by the new run. When that file can be read and its run was not ended by `report`, `start` SHALL first print what that run kept and nobody was told: each kept branch with its commit and whether a commit was made without the repository's hooks, each stash with its commit, and each path that run added to the local exclude file.
+A state file that this helper cannot use and that was written in the last 24 hours SHALL make `start` exit with code 3 and leave the file as it is: the review flag of that run cannot be read, and a new run in its place would drop it. The reason line SHALL name the file and say that it is to be deleted when no rest run is going on in this working tree. A state file of a run that the previous version of this helper wrote is such a file. A state that can be read and belongs to a run for another repository is not: `start` replaces it and says whose it was. A state file older than 24 hours is replaced by the new run. When that file can be read and its run was not ended by `report`, `start` SHALL first print what that run kept and nobody was told: each kept branch with its commit and whether a commit was made without the repository's hooks, each stash with its commit, and each path that run added to the local exclude file.
 
 A new run SHALL begin only when the working tree is on the default branch and `git status --porcelain` prints nothing there, which is what every issue on the PR path requires when it starts. Otherwise `start` SHALL exit with code 3, write nothing, and say in its reason line where the working tree is, that an earlier run may have left it so, and what a person does: on another branch, commit or remove what is left there and run `git checkout --no-overwrite-ignore <default>` (a plain checkout overwrites, without a word, a file git ignores); on the default branch with changes, commit them elsewhere or move them away. Taken as written, those steps leave a working tree in which the run starts. A resumed run is not checked this way: its issue in flight may be on its own branch.
 
@@ -306,7 +306,7 @@ The unattended marker SHALL NOT outlive the run. Before `idd-all` records an iss
 
 - **GIVEN** the text of `skills/idd-all/SKILL.md`
 - **WHEN** the step of the rest section that runs the single-issue pipeline, and the paragraph of Step 0.7 about running its block again in a new shell, are read
-- **THEN** the step says that `REVIEW_FLAG` follows the value `next` printed, and the paragraph says that a rest run does not go back to the original arguments for `REVIEW_YN`
+- **THEN** the step says that `REVIEW_FLAG` follows the value `next` printed, and the paragraph says that a rest run does not go back to the original arguments for `REVIEW_YN`; and the block that prepares the text of the pull request reads the review flag of the rest run state for the issue in flight
 
 ##### Example: the skill's record command works as written
 
@@ -400,7 +400,7 @@ After `settle` stops, `idd-all` ends the run with its report, so the next `/idd-
 
 This table is closed. `settle` stops in these other ways too, and this list is closed as well: a git command it needs fails (reading the status, what git ignores, a branch, an upstream or a commit; staging; the commit when the repository has no commit hook; the commit made without the hooks; discarding a regenerated record; making or finding a stash; comparing the default branch with `origin`), the local exclude file or the run state cannot be written, a path that would go into the local exclude file holds a line break, or `settle` fails in a way it does not know. For these the reason carries git's own words or the error, and names looking at that and running the same command again as the next step. This requirement does not promise that this step is enough.
 
-When `settle` stops with the working tree on a branch of the issue, the report SHALL name every local branch of that issue that has no commit of its own and no upstream, and say that deleting it lets a later rest run start the issue over: `settle` deletes such a branch only after it has reached the default branch.
+When the attempt recorded last was not settled (a `settle` that stopped), the report SHALL name every local branch of that issue that has no commit of its own and no upstream, and say that deleting it lets a later rest run start the issue over: `settle` deletes such a branch only at its end.
 
 #### Scenario: an issue branch with work and nothing left over
 
@@ -611,7 +611,7 @@ The endings of the single-issue pipeline on the PR path that the inventory of it
   | not clean after the checkout | on `idd/5-x`, which has one commit, in a repository whose post-checkout hook writes `stray.txt` | move `stray.txt` away |
   | no usable default branch in the run state | on `idd/5-x`, with a changed `a.txt`, and the default branch in the run state replaced by text that is no branch name | commit `a.txt`, that checkout |
   | `origin` cannot be reached | on `idd/5-x`, with a changed `a.txt`, and the URL of `origin` points nowhere | set the URL of `origin` back |
-  | the fast-forward | on `idd/5-x`, which has one commit; `origin/main` has a new commit that tracks `build.log`, and the working tree holds a `build.log` with the content `local, ignored` that `.git/info/exclude` ignores | run `git merge --ff-only --no-overwrite-ignore origin/main`, move away the `build.log` it names, run it again |
+  | the fast-forward | on `main`, where the issue ended; `origin/main` has a new commit that tracks `build.log`, and the working tree holds, from before the run, a `build.log` with the content `local, ignored` that `.git/info/exclude` ignores | run `git merge --ff-only --no-overwrite-ignore origin/main`, move away the `build.log` it names, run it again |
 
 - **WHEN** `settle --issue 5` runs, `idd-all` ends the run with `stop` and `report`, the person takes the steps of the row, and a new run is started
 - **THEN** in each row `settle` exits 3 with a reason line that names those steps, and the new run starts; in the last row `build.log` still holds `local, ignored` when `settle` has stopped, and the command the reason gives fails and names `build.log` while the file is in the way; in the rows `a leftover on the default branch` and `origin cannot be reached`, the reason line names `main` once

@@ -874,10 +874,9 @@ assert_eq "discard: the manifest and the file it vouches for are discarded, the 
   '[".claude/.idd/attachments/issue-5/spec.docx",".claude/.idd/attachments/issue-5/_manifest.json"]' "$(printf '%s' "$OUT" | jget discarded)"
 assert_eq "discard: a second settle prints the same records" "$(printf '%s' "$OUT" | jget discarded)" "$(settle 5 2>/dev/null | jget discarded)"
 
-for step in checkout merge; do
+for step in checkout; do   # the fast-forward has a check of its own below: settle now moves the default branch before the checkout
   new "fail-$step" 5 9
   run start --path PR --review no > /dev/null 2>&1; run next > /dev/null
-  [ "$step" = merge ] && remote_ahead   # main is behind origin/main: settle will fast-forward it
   git -C "$T" checkout -q --no-track -b idd/5-x "$(git -C "$T" rev-parse main)"; printf 'changed\n' >> "$T/a.txt"
   run record --issue 5 --reason x > /dev/null
   case "$step" in
@@ -900,6 +899,20 @@ for step in checkout merge; do
     "$(kept_of 5 | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["commit"])')|$FIRST"
   assert_eq "fail $step: the working tree is clean on main" "main|" "$(head_branch)|$(git -C "$T" status --porcelain)"
 done
+
+# the fast-forward fails where the working tree was on the default branch all along; a second settle finishes it
+new fail-merge 5 9
+run start --path PR --review no > /dev/null 2>&1; run next > /dev/null; remote_ahead
+run record --issue 5 --reason x > /dev/null
+: > "$T/.git/index.lock"
+settle 5 > /dev/null 2> "$S/err"; rc=$?
+assert_exit "fail merge: settle exits 3" 3 "$rc"
+assert_eq "fail merge: with one reason line" "1" "$(wc -l < "$S/err" | tr -d ' ')"
+assert_output_grep "fail merge: that names the issue" "#5" "$S/err"
+reason_shape "fail merge" "$S/err"
+rm -f "$T/.git/index.lock"
+settle 5 > /dev/null 2>&1; assert_exit "fail merge: the second settle exits 0" 0 "$?"
+assert_eq "fail merge: main is at origin/main and clean" "$(git -C "$T" rev-parse origin/main)|" "$(git -C "$T" rev-parse HEAD)|$(git -C "$T" status --porcelain)"
 
 echo "── what a stop tells a person to do ──"
 ended() { # what idd-all does after settle stopped the run: stop with that reason, then the report, which ends the run
@@ -1083,6 +1096,7 @@ for stop in lock other-branch default merge merge-default unmerged unclean state
   if [ "$stop" = fast-forward ]; then   # origin/main gets a commit that tracks build.log
     git clone -q "$T.origin.git" "$S/other" 2>/dev/null; printf 'from origin\n' > "$S/other/build.log"
     git -C "$S/other" add build.log; git -C "$S/other" commit -q -m "track build.log"; git -C "$S/other" push -q origin main 2>/dev/null
+    printf 'build.log\n' >> "$T/.git/info/exclude"; printf 'local, ignored\n' > "$T/build.log"   # there before the run, and ignored
   fi
   begin
   case "$stop" in
@@ -1104,8 +1118,7 @@ printf "stray\n" > stray.txt' ;;
     state)  git -C "$T" checkout -q --no-track -b idd/5-x origin/main; printf 'changed\n' >> "$T/a.txt" ;;
     fetch)  git -C "$T" checkout -q --no-track -b idd/5-x origin/main; printf 'changed\n' >> "$T/a.txt"
             git -C "$T" remote set-url origin "$S/nowhere.git" ;;
-    fast-forward) git -C "$T" checkout -q --no-track -b idd/5-x origin/main; printf 'w\n' > "$T/w.txt"; git -C "$T" add w.txt
-            git -C "$T" commit -q -m "work (#5)"; printf 'build.log\n' >> "$T/.git/info/exclude"; printf 'local, ignored\n' > "$T/build.log" ;;
+    fast-forward) : ;;   # the issue ended on main, which is behind origin/main
   esac
   run record --issue 5 --reason x > /dev/null
   [ "$stop" = state ] && python3 -c 'import json,sys; p=sys.argv[1]; s=json.load(open(p)); s["default"]="not a branch name"; json.dump(s, open(p,"w"))' "$(state_file)"
@@ -1530,6 +1543,8 @@ for where in clean wip dirty; do
   case "$where" in
     clean) assert_eq "hand-out, clean main: next hands out #5" "0|5" "$rc|$(printf '%s' "$OUT" | jget next)"
            assert_grep "hand-out, clean main: the run state holds local/ among the paths recorded for #5" '"local/"' \
+             "$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["attempts"][0].get("before")))' "$(state_file)")"
+           refute_grep "hand-out, clean main: and not .claude/, which only holds the ignored state folder" '".claude/"' \
              "$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["attempts"][0].get("before")))' "$(state_file)")" ;;
     wip)   assert_eq "hand-out, on wip: next exits 3 and the run state holds no attempt" "3|0" "$rc|$ATTEMPTS"
            assert_output_grep "hand-out, on wip: the reason names the branch" "wip" "$S/err" ;;
@@ -1803,6 +1818,7 @@ OUT=$(cd "$S" && CLAUDE_PLUGIN_ROOT="$PLUGIN" CWD="$T" GITHUB_REPO="$REPO" bash 
 assert_eq "skill: and so does the stop block" "the helper stopped" "$(printf '%s' "$OUT" | jget stopped)"
 # spec-example: idd-all-rest / the skill takes both review values from next
 assert_grep_re "skill: REVIEW_FLAG of an issue follows the review next printed" '`REVIEW_FLAG`[^。]*`next`' "$RUN_STEP"
+assert_grep "skill: the block that prepares the pull request text reads the review flag of the rest run state" 'idd-all-rest.json' "$(grep -F -A1 'REST_REVIEW=' "$SKILL")"
 assert_grep "skill: Step 0.7 says a rest run does not go back to the original arguments" "rest mode 例外" "$(awk '/^#### Step 0.7:/{f=1} f&&/^#### Step 0.8|^### Phase 1/{exit} f' "$SKILL" | grep -F '原始引數')"
 # spec-example: idd-all-rest / the skill says the flags are to be the same
 RESUME_ROWS=$(printf '%s\n' "$STOPS" | grep -F '會接續')

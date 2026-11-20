@@ -35,9 +35,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whose writer keeps it out of git is never committed; everything else an issue left is committed on its own
   branch (locally, never pushed; when that commit fails and the repository has a hook git runs before a commit, as a
   file or in git's configuration, it is made without the hooks, and the commit message and the report say so) and listed in the report, with a note when it is a log shared by all issues
-  (`routing-stats.jsonl`; carrying its lines back is #584); files that only the issue's branch ignores are put into a stash
-  entry, none deleted; the checkout and the fast-forward do not overwrite a file git ignores (settle stops
-  instead); the default branch is fast-forwarded when it is behind; an issue branch without a commit and without an upstream is deleted, so an issue that stopped before
+  (`routing-stats.jsonl`; carrying its lines back is #584); files that the issue's branch ignores and that would be in the way of the checkout or untracked after it are
+  put into stash entries, none deleted; the checkout and the fast-forward do not overwrite a file git ignores;
+  what was in the working tree before an issue was handed out (the files git ignored then: `.env`,
+  `node_modules/`) is left where it is, never committed or stashed, and when a merged issue removed the rule
+  that ignored such a file, its path goes into `.git/info/exclude` and the report names it. Do not work in the
+  same working tree while a rest run goes: settle cannot tell your changes from what an issue left; the default branch is fast-forwarded when it is behind; an issue branch without a commit and without an upstream is deleted, so an issue that stopped before
   its first commit and left nothing but those records is run again by a later run. An issue that stops does not stop the run. The run stops as a whole only when
   `next`, `record` or `settle` cannot read GitHub or git, cannot write the state or cannot settle the working
   tree, or the user interrupts; a `start` that cannot read the open issues, or that finds the run state would
@@ -51,7 +54,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   person to check out the default branch they give `git checkout --no-overwrite-ignore`, because a plain checkout
   overwrites a file git ignores without a word. `--review` is stored in the run state: a resumed run can add it and cannot drop it, `next` prints
   it with every issue, `close-stage.py init` refuses to record review as off for an issue such a run has in
-  flight, and `close-stage.py run` stops at verified for such an issue whatever its record says. A new run needs the working tree clean on the default branch, and the account that runs it needs write
+  flight, and `close-stage.py run` stops at verified for such an issue whatever its record says. This also
+  holds for a run that names an issue (`/idd-all #N`) while a rest run is unfinished at the same `--cwd`: end
+  the rest run first, or give `--review`; a rest run state that cannot be read stops the close stage as well.
+  The commit made without the hooks goes by a commit hook being there: settle cannot tell why the commit
+  failed. The run state is version 4 (it records what git ignored at each hand-out): a state file of an earlier
+  version, or one that cannot be read, that was written in the last 24 hours makes `start` stop instead of
+  starting a new run in its place; delete it when no rest run is going on. A new run needs the working tree clean on the default branch, and the account that runs it needs write
   access to the repository. What the plugin writes into a repository, and how rest mode treats each location, is
   listed in `references/working-tree-writers.md`. `rest` with another
   positional argument, `--in-chain` without an issue, an unknown `--` flag (also in a call that names an
