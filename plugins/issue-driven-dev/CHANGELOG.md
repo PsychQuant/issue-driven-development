@@ -28,54 +28,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `idd/N` branch, is not taken over: it is recorded as existing work, with that pull request or branch as the
   reason (taking such work over is #566). Rest mode runs on the PR path only: with `--no-pr`,
   `pr_policy: never`, or a path downgraded because the ralph-loop plugin is missing, `start` refuses to begin
-  (#583). Between two issues `rest-queue.py settle` handles the working tree by a closed table whose rows come
-  from an inventory of what the single-issue pipeline writes; every way that pipeline ends is run in a
-  temporary repository. The records `idd-diagnose` writes again on every run are discarded (the attachment
-  manifest and, on a branch without a commit of its own, the attachments it lists by SHA-256); a file in a place
-  whose writer keeps it out of git is never committed; everything else an issue left is committed on its own
-  branch (locally, never pushed; when that commit fails and the repository has a hook git runs before a commit, as a
-  file or in git's configuration, it is made without the hooks, and the commit message and the report say so) and listed in the report, with a note when it is a log shared by all issues
-  (`routing-stats.jsonl`; carrying its lines back is #584); files that the issue's branch ignores and that would be in the way of the checkout or untracked after it are
-  put into stash entries, none deleted; the checkout and the fast-forward do not overwrite a file git ignores;
-  what was in the working tree before an issue was handed out (the files git ignored then: `.env`,
-  `node_modules/`) is left where it is, never committed or stashed, and when a merged issue removed the rule
-  that ignored such a file, its path goes into `.git/info/exclude` and the report names it; when the issue
-  itself committed such a file, settle moves it aside for the checkout and puts it back afterwards; a commit hook that
-  stages everything does not get such a file into settle's commit; one that the issue's run deleted is named in the report.
-  Step 0.5 of the single-issue flow now creates the issue's branch with `git checkout --no-overwrite-ignore`, so that
-  a file git ignores locally is not written over when `origin/<default>` tracks it; this one change applies to every
-  `/idd-all` run on the PR path, not only to rest mode (the other plain checkouts of the pipeline are #587).
-  The helper reads the working tree in one way, with every untracked file listed, so that git's display settings
-  (`status.showUntrackedFiles no`) cannot hide a file from the hand-out that settle would then commit; a settle that is
-  killed at any point and run again ends where an undisturbed one ends; every commit settle keeps is checked after it is
-  made (a hook that lets the commit through cannot add a file from before the run or a file that is never committed);
-  a line in the local exclude file that a `!` rule of the default branch outranks is taken out again and settle stops;
-  the close stage and the helper decide in one place (`scripts/lib/reststate.py`) whether a rest state file can be used,
-  and `close-stage.py rest-review` prints what the rest run says about an issue. Every git call of the helper carries a
-  fixed configuration (`diff.relative`, `log.showSignature`) and its output is read as bytes; when settle stops on
-  an issue's branch, the report names the files from before the run that are in sight there or tracked by that branch,
-  and says what to do with them before the checkout. Do not work in the
-  same working tree while a rest run goes: settle cannot tell your changes from what an issue left; the default branch is fast-forwarded when it is behind; an issue branch without a commit and without an upstream is deleted, so an issue that stopped before
-  its first commit and left nothing but those records is run again by a later run. An issue that stops does not stop the run. The run stops as a whole only when
-  `next`, `record` or `settle` cannot read GitHub or git, cannot write the state or cannot settle the working
-  tree, or the user interrupts; a `start` that cannot read the open issues, or that finds the run state would
+  (#583). Each issue runs in a directory of its own: `next` makes a clone at
+  `<top>/.claude/worktrees/rest-<N>/` from `origin` (a repository of its own, not a git linked worktree, in which
+  the Spectra CLI would write into the main working tree), carries over `user.name` and `user.email` and nothing
+  else, and prints the directory; the skill changes the shell to it and runs the single-issue pipeline there,
+  after `rest-queue.py here` has confirmed it is the directory the run made for that issue. The working tree the
+  run was started in is not used: it can be on any branch, with changes, and a person or another session can go on
+  working in it; rest mode writes there at four places only (the run state, the folder of the directories, the
+  routing log, the local exclude file), and a check lists that repository before `start` and after `report` for
+  every ending. After an issue, `record` removes its directory only when nothing exists only there, by a closed list
+  checked in that directory (no uncommitted change or untracked file git does not ignore, apart from three places
+  the plugin writes again; no stash; every branch and the commit checked out held by a branch on `origin`; every
+  tag on `origin`; no second working tree; no earlier versions of corrected text and no parked Spectra change);
+  an item that cannot be checked keeps the directory, and a directory that is not a repository of its own is never
+  looked into. The routing log of a removed directory is appended to the one of the starting working tree, once
+  (carrying it back is #584). A kept directory is named in the report with its reasons and does not stop the run.
+  `record` and `next` ended at any point and run again come to the same end, checked over every point. `next`
+  asks the existing-work check itself and hands an issue out only when the check says `clear`: a lookup that could
+  not be completed keeps the issue back. Step 0.5 of the single-issue flow now creates the issue's branch with
+  `git checkout --no-overwrite-ignore`, so that a file git ignores locally is not written over when
+  `origin/<default>` tracks it; this one change applies to every `/idd-all` run on the PR path, not only to rest
+  mode (the other plain checkouts of the pipeline are #587). An issue that stops does not stop the run. An issue that stops does not stop the run. The run stops as a whole only when
+  `next` or `record` cannot read GitHub or git, cannot write the state or cannot make the directory of an
+  issue, or the user interrupts; a `start` that cannot read the open issues, or that finds the run state would
   not be ignored by git, begins no run and is reported as it is. `start` prints the list (issue numbers only) before anything runs and `report` prints one report
   at the end: closed, stopped with the reason, waiting for a person with every open question in full, and not
   run by class; an issue the run attempted is named once, with what happened to it and the questions it now
   waits on, and the report says that
   a verified issue continues when it is named, that an issue stopped with existing work is left for a person,
-  which branch each stopped issue kept, and what a person can do with it. The steps the report and a stopped `settle` name are a closed list in the spec, and
-  a test takes each of them and sees the result (after the steps of a stop, a new run starts). Where they tell a
-  person to check out the default branch they give `git checkout --no-overwrite-ignore`, because a plain checkout
-  overwrites a file git ignores without a word. `--review` is stored in the run state: a resumed run can add it and cannot drop it, `next` prints
+  which directory was kept and why, and what a person can do with it (go on in it, or delete it; a test deletes
+  it and sees a later run hand the issue out again). `--review` is stored in the run state: a resumed run can add it and cannot drop it, `next` prints
   it with every issue, `close-stage.py init` refuses to record review as off for an issue such a run has in
   flight, and `close-stage.py run` stops at verified for such an issue whatever its record says. This also
   holds for a run that names an issue (`/idd-all #N`) while a rest run is unfinished at the same `--cwd`: end
-  the rest run first, or give `--review`; a rest run state that cannot be read stops the close stage as well.
-  The commit made without the hooks goes by a commit hook being there: settle cannot tell why the commit
-  failed. The run state is version 4 (it records what git ignored at each hand-out): a state file of an earlier
+  the rest run first, or give `--review`. The close stage of an issue runs in its directory and finds the run
+  through a pointer file there; run where the rest run was started for an issue that runs elsewhere, it refuses,
+  and a state or pointer file that cannot be read (a symbolic link included, decided in one place,
+  `scripts/lib/reststate.py`) stops it at verified; `close-stage.py rest-review` prints what the rest run says
+  about an issue. The run state is version 5: a state file of an earlier
   version, or one that cannot be read, that was written in the last 24 hours makes `start` stop instead of
-  starting a new run in its place; delete it when no rest run is going on. A new run needs the working tree clean on the default branch, and the account that runs it needs write
+  starting a new run in its place; delete it when no rest run is going on. The account that runs a run needs write
   access to the repository. What the plugin writes into a repository, and how rest mode treats each location, is
   listed in `references/working-tree-writers.md`. `rest` with another
   positional argument, `--in-chain` without an issue, an unknown `--` flag (also in a call that names an

@@ -699,6 +699,13 @@ assert_output_grep "record: and says to call record for #5 again" "call record f
 OUT=$(run record --issue 5 2> /dev/null); assert_exit "record: called again, it finishes" 0 "$?"
 assert_eq "record: with the reason of the first call and the directory decided" "x|removed" "$(printf '%s' "$OUT" | jget reason)|$(printf '%s' "$OUT" | jget directory)"
 assert_eq "record: and next goes on" "9" "$(run next 2> /dev/null | jget next)"
+new record-done 5 9
+begin; D=$(dir_of 5); pushed
+FIRST=$(run record --issue 5 --reason x 2> /dev/null)
+OUT=$(run record --issue 5 --reason y 2> /dev/null); assert_exit "record: called again after it finished, it exits 0" 0 "$?"
+assert_eq "record: and prints the decision it stored" "$FIRST" "$OUT"
+run next > /dev/null 2>&1
+run record --issue 5 > /dev/null 2>&1; assert_exit "record: once the next issue is handed out, #5 is refused (exit 1)" 1 "$?"
 
 # spec-example: idd-all-rest / fewer comments than the issue has
 new comments-short 5:diag=Simple,comments=130
@@ -961,6 +968,42 @@ run report > "$S/report.out" 2>&1
 assert_grep_re "stop: and so does the report" '^run stopped: x+and 2 more\)$' "$(cat "$S/report.out")"
 
 echo "── the inventory of writers ──"
+echo "── the inventory of writers ──"
+INVENTORY="$PLUGIN/references/working-tree-writers.md"
+assert_true "inventory: the file is there" '[ -f "$INVENTORY" ]'
+python3 - "$PLUGIN" "$INVENTORY" > "$WORK/inventory.out" 2>&1 <<'PY'
+import os, re, sys
+plugin, inventory = sys.argv[1], sys.argv[2]
+named = open(inventory, encoding="utf-8").read() if os.path.isfile(inventory) else ""
+found = {}
+for sub in ("skills", "scripts"):
+    for base, dirs, files in os.walk(os.path.join(plugin, sub)):
+        dirs[:] = [d for d in dirs if d != "tests"]
+        for name in files:
+            path = os.path.join(base, name)
+            try:
+                text = open(path, encoding="utf-8").read()
+            except (OSError, UnicodeDecodeError):
+                continue
+            for m in re.finditer(r"\.claude/(\.idd/)?([A-Za-z0-9_][A-Za-z0-9_.-]*)", text):
+                if m.group(2) == ".idd":
+                    continue
+                found.setdefault(".claude/" + (m.group(1) or "") + m.group(2).rstrip("."), os.path.relpath(path, plugin))
+missing = sorted(loc for loc in found if loc not in named)
+for loc in missing:
+    print(f"not in the inventory: {loc} (named in {found[loc]})")
+print(f"inventory: {len(found)} locations, {len(missing)} missing")
+PY
+assert_output_grep "inventory: every location the skills and scripts name is in it" " 0 missing" "$WORK/inventory.out"
+grep -q ' 0 missing' "$WORK/inventory.out" || sed -n '1,30p' "$WORK/inventory.out"
+
+new render-crash 5 9
+mkdir -p "$S/copy"; cp "$RQ" "$S/copy/rest-queue.py"; cp -R "$PLUGIN/scripts/lib" "$S/copy/lib"
+printf '\n\ndef open_clarity_rows(issue):\n    raise RuntimeError("a failure nobody planned for")\n' >> "$S/copy/lib/intent.py"
+OUT=$(python3 "$S/copy/rest-queue.py" list --repo "$REPO" --json 2> "$S/err"); rc=$?
+assert_exit "rendering: an unplanned failure reading one rendering does not fail the list" 0 "$rc"
+assert_eq "rendering: the issues it hit are unreadable" "[5,9]" "$(printf '%s' "$OUT" | jget classes.unreadable)"
+
 echo "── the skill ──"
 # spec-example: idd-all-rest / the skill names the loop commands in order
 STEP01=$(awk '/^#### Step 0\.1/{f=1} f&&/^#### Step 0\.2/{exit} f' "$SKILL")
@@ -972,8 +1015,8 @@ refute_grep "skill: the two-way question is gone" "建新 issue 還是用既有 
 assert_grep "skill: Step 0.1 says an unquoted description is one argument" "整段算一個引數" "$STEP01"
 # spec-example: idd-existing-work-lookup / rest mode records existing work instead of acting on it
 assert_grep "skill: the rest section does not take over existing work" 'existing work: ' "$REST"
-assert_grep_re "skill: and names both verdicts" 'verdict=resume.*verdict=blocked' "$REST"
-assert_grep "skill: and records them without a question" "不提問" "$(printf '%s\n' "$REST" | grep -F 'verdict=resume')"
+assert_grep_re "skill: and every verdict other than clear is recorded so" '`verdict=clear` 以外的任何結果' "$REST"
+assert_grep "skill: without a question" "不提問" "$(printf '%s\n' "$REST" | grep -F 'verdict=clear')"
 STEP051=$(awk '/^#### Step 0\.5\.1/{f=1} f&&/^#### Step 0\.6/{exit} f' "$SKILL")
 assert_grep "skill: Step 0.5.1 points at the rest rule" '## Rest mode' "$STEP051"
 STOPS=$(printf '%s\n' "$REST" | awk '/^### 整個 run 停下/{f=1; next} f&&/^### /{exit} f' | grep -E '^\| ' | sed -n '2,$p')   # the header row is dropped; the |---| line never matches
@@ -983,17 +1026,19 @@ FAILED_REPORT=$(printf '%s\n' "$STOPS" | grep -E '^\| [^|]*`report`[^|]*以 1 �
 assert_eq "skill: one row is about the report that fails" "1" "$(printf '%s\n' "$FAILED_REPORT" | grep -c '^| ')"
 assert_grep "skill: that row says to pass on what was printed" "已經印出" "$FAILED_REPORT"
 assert_grep_re "skill: and to call neither stop nor report again" '不再呼叫 `stop` 或 `report`' "$FAILED_REPORT"
-assert_grep "skill: and still to clear the unattended marker" 'clear_unattended "$CWD"' "$FAILED_REPORT"
 assert_grep "skill: the stop list says four cases" "只有這四種" "$REST"
 # spec-example: idd-all-rest / the skill reports a failed start directly
+# spec-example: idd-all-rest / the skill ends a refused run
 FAILED_START=$(printf '%s\n' "$STOPS" | grep -E '^\| [^|]*`start`[^|]*以 3 結束')
 assert_eq "skill: one row is about the start that fails before a run exists" "1" "$(printf '%s\n' "$FAILED_START" | grep -c '^| ')"
 assert_grep "skill: that row says no run exists yet" "還沒有 run" "$FAILED_START"
 assert_grep_re "skill: and to call neither stop nor report" '不呼叫 `stop` 與 `report`' "$FAILED_START"
 assert_grep "skill: and to tell the user the reason" "告訴使用者" "$FAILED_START"
+assert_grep "skill: a path that is not PR is among its causes" "path 不是 \`PR\`" "$FAILED_START"
+refute_grep "skill: and a working tree that is not clean is not" "乾淨" "$FAILED_START"
 # spec-example: idd-all-rest / the skill goes on to the report when stop fails
-STOP3=$(printf '%s\n' "$STOPS" | grep -E '^\| `next`、`record` 或 `settle` 以 3 結束')
-assert_eq "skill: one row is about next, record or settle exiting 3" "1" "$(printf '%s\n' "$STOP3" | grep -c '^| ')"
+STOP3=$(printf '%s\n' "$STOPS" | grep -E '^\| `next` 或 `record` 以 3 結束')
+assert_eq "skill: one row is about next or record exiting 3" "1" "$(printf '%s\n' "$STOP3" | grep -c '^| ')"
 assert_grep "skill: that row calls stop with the reason line" "照抄" "$STOP3"
 assert_grep "skill: and goes on to the end when stop itself fails" '`stop` 自己也失敗時直接做「結束」一節' "$STOP3"
 assert_grep "skill: gh authentication is part of that row" "gh" "$STOP3"
@@ -1039,10 +1084,10 @@ for fence in re.findall(r"^[ \t]*```bash\n(.*?)^[ \t]*```", rest, flags=re.S | r
 BLOCKS_PY
 awk '/^#-- next block --$/{n++; next} n==0' "$S/blocks.txt" | sed 's/<Stopped: 那一行>/Stopped: the price is $5 and `date` is not run/' > "$S/record.sh"
 awk '/^#-- next block --$/{n++; next} n==1' "$S/blocks.txt" | sed 's/<原因>/the helper stopped/' > "$S/stop.sh"
-OUT=$(cd "$S" && CLAUDE_PLUGIN_ROOT="$PLUGIN" CWD="$T" GITHUB_REPO="$REPO" N=5 bash "$S/record.sh" 2>/dev/null)
+OUT=$(cd "$S" && CLAUDE_PLUGIN_ROOT="$PLUGIN" REST_ROOT="$T" CWD="$(dir_of 5)" GITHUB_REPO="$REPO" N=5 bash "$S/record.sh" 2>/dev/null)
 assert_eq "skill: the record block, run as it is written, records exactly that line" 'Stopped: the price is $5 and `date` is not run' "$(printf '%s' "$OUT" | jget reason)"
 
-OUT=$(cd "$S" && CLAUDE_PLUGIN_ROOT="$PLUGIN" CWD="$T" GITHUB_REPO="$REPO" bash "$S/stop.sh" 2>/dev/null)
+OUT=$(cd "$S" && CLAUDE_PLUGIN_ROOT="$PLUGIN" REST_ROOT="$T" CWD="$(dir_of 5)" GITHUB_REPO="$REPO" bash "$S/stop.sh" 2>/dev/null)
 assert_eq "skill: and so does the stop block" "the helper stopped" "$(printf '%s' "$OUT" | jget stopped)"
 # spec-example: idd-all-rest / the skill takes both review values from next
 assert_grep_re "skill: REVIEW_FLAG of an issue follows the review next printed" '`REVIEW_FLAG`[^。]*`next`' "$RUN_STEP"
@@ -1060,19 +1105,20 @@ assert_eq "skill: every line of the rest section about resuming within 24 hours 
 FLIGHT=$(printf '%s\n' "$REST" | grep -F '"in_flight": true')
 assert_eq "skill: one row is about an issue in flight" "1" "$(printf '%s\n' "$FLIGHT" | grep -c .)"
 assert_grep "skill: an issue in flight with a Phase 6 result goes to record" "直接做第 5 步" "$FLIGHT"
+assert_grep "skill: and it is continued in the dir that was printed" "在印出的 \`dir\` 裡接著做" "$FLIGHT"
 assert_grep_re "skill: without a branch it starts again from Step 0.4" '`branch` 是 `null` 時[^。]*從 Step 0\.4 重新開始' "$FLIGHT"
 assert_grep "skill: otherwise its interrupted phase is continued" "從中斷的那個 phase 接著做完" "$FLIGHT"
 assert_grep "skill: and Step 0.5.1 is not run again" "不重跑 Step 0.5.1" "$FLIGHT"
 RECORD_STEP=$(printf '%s\n' "$FLOW" | grep -n -F 'rest-queue.py" record' | head -1 | cut -d: -f1)
 assert_grep_re "skill: step 5 is the one that records" '^5\. 記下這一張的結果' "$(printf '%s\n' "$FLOW" | sed -n "1,${RECORD_STEP:-1}p" | grep -E '^[0-9]+\. ' | tail -1)"
 # spec-example: idd-all-rest / the skill clears the unattended marker
-NOTAKE=$(printf '%s\n' "$REST" | grep -F 'verdict=resume')
-assert_grep_re "skill: an issue rest does not take over is cleaned up before it is recorded" 'clear_unattended "\$CWD"`[^。]*再做第 5 步' "$NOTAKE"
-ENDING=$(printf '%s\n' "$REST" | awk '/^### 結束/{f=1; next} f&&/^### /{exit} f')
-assert_grep "skill: the end of the run clears the unattended marker" 'clear_unattended "$CWD"' "$ENDING"
-L_REP=$(printf '%s\n' "$ENDING" | grep -n -F 'rest-queue.py" report' | head -1 | cut -d: -f1)
-L_CLR=$(printf '%s\n' "$ENDING" | grep -n -F 'clear_unattended "$CWD"' | tail -1 | cut -d: -f1)
-assert_true "skill: and it does so after the report" "[ ${L_REP:-0} -gt 0 ] && [ ${L_CLR:-0} -gt ${L_REP:-0} ]"
+RECORD5=$(printf '%s\n' "$FLOW" | awk '/^5\. /{f=1} f')
+L_CLR=$(printf '%s\n' "$RECORD5" | grep -n -F 'clear_unattended "$CWD"' | head -1 | cut -d: -f1)
+L_BACK=$(printf '%s\n' "$RECORD5" | grep -n -F 'cd "$REST_ROOT"' | head -1 | cut -d: -f1)
+L_REC=$(printf '%s\n' "$RECORD5" | grep -n -F 'rest-queue.py" record' | head -1 | cut -d: -f1)
+assert_true "skill: the step that records clears the marker of the issue's directory, then goes back, then records" \
+  "[ ${L_CLR:-0} -gt 0 ] && [ ${L_CLR:-0} -lt ${L_BACK:-0} ] && [ ${L_BACK:-0} -lt ${L_REC:-0} ]"
+assert_eq "skill: no line of the rest section clears a marker where the run was started" "0" "$(printf '%s\n' "$REST" | grep -c 'clear_unattended "$REST_ROOT"')"
 assert_grep "skill: the rest section names where the takeover went" "#566" "$REST"
 assert_grep "skill: the description says once per run" "每張在一次 run 裡只試一次" "$(sed -n '1,12p' "$SKILL")"
 assert_grep "skill: a run that names an issue does not create rest_run" "指名 issue 的 run 不建 \`rest_run\`" "$(cat "$SKILL")"
@@ -1090,16 +1136,32 @@ assert_grep "skill: the mode is resolved once" '只問一次' "$REST"
 PHASE6=$(awk '/^### Phase 6/{f=1} f&&/^#### /{exit} f' "$SKILL")
 assert_grep "skill: Phase 6 sends a rest run back to the rest section" '## Rest mode' "$PHASE6"
 line_of() { printf '%s\n' "$REST" | grep -n -F -- "$1" | head -1 | cut -d: -f1; }
-for sub in start next record settle stop report; do
+for sub in start next here record stop report; do
   assert_true "skill: the rest section calls $sub" "[ -n \"\$(line_of 'rest-queue.py\" $sub')\" ]"
 done
 L_START=$(line_of 'rest-queue.py" start'); L_NEXT=$(line_of 'rest-queue.py" next')
 L_RECORD=$(line_of 'rest-queue.py" record'); L_REPORT=$(line_of 'rest-queue.py" report')
-L_STOP=$(line_of 'rest-queue.py" stop'); L_SETTLE=$(line_of 'rest-queue.py" settle')
+L_STOP=$(line_of 'rest-queue.py" stop'); L_HERE=$(line_of 'rest-queue.py" here')
 assert_true "skill: start comes before next" "[ ${L_START:-0} -gt 0 ] && [ ${L_START:-0} -lt ${L_NEXT:-0} ]"
-assert_true "skill: next comes before record" "[ ${L_NEXT:-0} -gt 0 ] && [ ${L_NEXT:-0} -lt ${L_RECORD:-0} ]"
-assert_true "skill: settle comes after record" "[ ${L_SETTLE:-0} -gt ${L_RECORD:-0} ]"
-assert_true "skill: report comes last" "[ ${L_REPORT:-0} -gt ${L_SETTLE:-0} ] && [ ${L_REPORT:-0} -gt ${L_STOP:-0} ]"
+assert_true "skill: next comes before here" "[ ${L_NEXT:-0} -gt 0 ] && [ ${L_NEXT:-0} -lt ${L_HERE:-0} ]"
+assert_true "skill: here comes before record" "[ ${L_HERE:-0} -gt 0 ] && [ ${L_HERE:-0} -lt ${L_RECORD:-0} ]"
+assert_true "skill: report comes last" "[ ${L_REPORT:-0} -gt ${L_RECORD:-0} ] && [ ${L_REPORT:-0} -gt ${L_STOP:-0} ]"
+assert_eq "skill: no line of the skill calls settle" "0" "$(grep -c 'rest-queue.py" settle' "$SKILL")"
+# spec-example: idd-all-rest / the skill runs each issue in its directory
+RUN4=$(printf '%s\n' "$FLOW" | awk '/^4\. /{f=1} f&&/^5\. /{exit} f')
+L_CWD=$(printf '%s\n' "$RUN4" | grep -n -F 'CWD="<next 印出的 dir>"' | head -1 | cut -d: -f1)
+L_CD=$(printf '%s\n' "$RUN4" | grep -n -F 'cd "$CWD"' | head -1 | cut -d: -f1)
+L_H=$(printf '%s\n' "$RUN4" | grep -n -F 'rest-queue.py" here' | head -1 | cut -d: -f1)
+assert_true "skill: step 4 sets CWD to the dir next printed and changes to it, before here" \
+  "[ ${L_CWD:-0} -gt 0 ] && [ ${L_CD:-0} -gt 0 ] && [ ${L_CWD:-0} -lt ${L_H:-0} ] && [ ${L_CD:-0} -lt ${L_H:-0} ]"
+assert_grep "skill: the here invocation is given the directory of the issue" '--cwd "$CWD"' "$(printf '%s\n' "$REST" | grep -F 'rest-queue.py" here')"
+for sub in start next record stop report; do
+  assert_grep "skill: the $sub invocation is given the directory the run was started in" '--cwd "$REST_ROOT"' "$(printf '%s\n' "$REST" | grep -F "rest-queue.py\" $sub")"
+done
+assert_grep "skill: step 4 says the sub-skills are still given --cwd" '子 skill 照樣帶 `--cwd "$CWD"`' "$RUN4"
+# spec-example: idd-all-rest / the skill says that the starting working tree is not used
+assert_grep "skill: a rest run does not work in the working tree it was started in" "rest 不在啟動它的那個工作樹裡做事" "$REST"
+assert_grep "skill: and a person may go on working there" "人或別的 session 也可以繼續在那裡工作" "$REST"
 
 # ── one reading of the rest run's state ──
 # spec-example: idd-all-rest / the review flag of a rest run has one reader

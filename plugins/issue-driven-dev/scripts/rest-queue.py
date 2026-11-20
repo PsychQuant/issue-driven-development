@@ -1162,11 +1162,13 @@ def cmd_record(argv):
     if st is None:
         return refuse(NO_RUN)
     x = in_flight(st)
-    if x is None or x["issue"] != n:
-        again = undecided(st)   # a record that was ended after it wrote the outcome: it goes on from there
-        if again is None or again["issue"] != n:
-            return refuse(f"#{n} is not the issue in flight" + (f" (#{x['issue']} is)" if x else " (none is)"))
-        x = again
+    last = st["attempts"][-1] if st["attempts"] else None
+    if x is None and last and last["issue"] == n and last["outcome"] is not None and last.get("dir") is not None:
+        # this issue was recorded last, and nothing was handed out since: a record ended after it wrote the outcome
+        # goes on from there, and one that had finished prints what it decided (the caller cannot tell the two apart)
+        x = last
+    elif x is None or x["issue"] != n:
+        return refuse(f"#{n} is not the issue in flight" + (f" (#{x['issue']} is)" if x else " (none is)"))
     else:
         state = gh_json(["issue", "view", str(n), "--repo", repo, "--json", "state"], f"the state of #{n}").get("state")
         if state not in ("OPEN", "CLOSED"):
@@ -1179,8 +1181,9 @@ def cmd_record(argv):
         x["reason"] = one_line(reason, REASON_MAX) or ("" if state == "CLOSED" else "no reason given")
         x["recorded_at"] = iso(now())
         save_state(cwd, st)
-    leave(cwd, top_of(cwd), st, x)
-    save_state(cwd, st)
+    if x.get("left") is None:
+        leave(cwd, top_of(cwd), st, x)
+        save_state(cwd, st)
     return emit({"issue": n, "outcome": x["outcome"], "reason": x["reason"], "directory": x["left"],
                  **({"dir": x["dir"], "why": x["why"]} if x["left"] == "kept" else {})})
 

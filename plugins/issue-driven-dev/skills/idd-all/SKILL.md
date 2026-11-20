@@ -98,7 +98,7 @@ idd-all 不取代 atomic skills,而是包它們。每個 phase 仍透過 `Skill(
 
 `/idd-all` 沒有位置引數，或唯一的位置引數是 `rest`，就是把 repo 裡可以跑的 open issue（下表的 `candidate`）逐張跑完，其他的列在報告裡。不問要跑哪一張；`pr_policy: ask` 時只問一題，要不要以 PR path 開始（流程第 1 步）。規格是 capability `idd-all-rest`。
 
-挑哪一張、照什麼順序、哪些試過了，都由 `scripts/rest-queue.py` 決定並記在 `$CWD/.claude/.idd/state/idd-all-rest.json`，不靠記憶：一次 run 會跨很多張 issue 與多次 context 壓縮。
+挑哪一張、照什麼順序、哪些試過了、每一張在哪個資料夾跑，都由 `scripts/rest-queue.py` 決定並記在 `$REST_ROOT/.claude/.idd/state/idd-all-rest.json`，不靠記憶：一次 run 會跨很多張 issue 與多次 context 壓縮。
 
 **哪些會跑**。每張 open issue 恰好屬於一類，由上往下先中者為準，只有最後一類會跑：
 
@@ -118,138 +118,149 @@ idd-all 不取代 atomic skills,而是包它們。每個 phase 仍透過 `Skill(
 
 ### 流程
 
-rest 只走 PR path（PR、unattended）。兩張之間，一張 issue 留下的東西放在它自己的 branch，而只有 PR path 的每一張才有自己的 branch。`--no-pr`、`pr_policy: never`，或沒裝 ralph-loop 而被降成 direct-commit 時，第 2 步的 `start` 會拒絕開始並說明怎麼做（沒裝 ralph-loop 時帶 `--pr` 也一樣會被降級，要先裝它）；direct-commit 與 attended 的 rest 是 #583。
+rest 只走 PR path（PR、unattended）：每一張 issue 在自己的資料夾、自己的 branch 上跑，留下的東西以 PR 交出去。`--no-pr`、`pr_policy: never`，或沒裝 ralph-loop 而被降成 direct-commit 時，第 2 步的 `start` 會拒絕開始並說明怎麼做（沒裝 ralph-loop 時帶 `--pr` 也一樣會被降級，要先裝它）；direct-commit 與 attended 的 rest 是 #583。
+
+**rest 不在啟動它的那個工作樹裡做事。** 每一張 issue 跑在 `rest-queue.py next` 替它建的資料夾裡：`<repo 頂層>/.claude/worktrees/rest-<N>/`，一個獨立的 clone（不是 git 的 linked worktree：Spectra 在 linked worktree 裡會寫進主工作樹）。啟動 rest 的那個工作樹可以在任何 branch 上、可以有沒 commit 的改動，rest run 進行中人或別的 session 也可以繼續在那裡工作：rest 不在那裡 commit、stash、checkout，也不搬、不刪那裡的檔。
+
+兩個目錄，兩個變數：
+
+- `$REST_ROOT`：啟動 rest 的目錄，也就是 Step 0.2 解析出來的 `$CWD`。第 1 步做完就存成 `REST_ROOT="$CWD"`。`rest-queue.py` 的 `start`、`next`、`record`、`stop`、`report` 都拿它當 `--cwd`。shell 變數遺失時，`next` 印出的 `root` 就是它。
+- `$CWD`：正在跑的那一張 issue 的資料夾，`next` 印出的 `dir`。單張流程的每一步、每一個子 skill 的 `--cwd`，以及 `rest-queue.py here` 都用它。
 
 1. 前置檢查與 path 的解析。這一步在 `start` 之前，整個 run 只做一次：
 
-   - Step 0.2、Step 0.3、Step 0.35 照單張流程做。`$CWD` 與 `$GITHUB_REPO` 每一張沿用；Step 0.2 得出的 `REVIEW_YN` 只用在第 2 步的 `start`，之後每一張的值由 `next` 給（第 4 步）。
+   - Step 0.2、Step 0.3、Step 0.35 照單張流程做。`$GITHUB_REPO` 每一張沿用；Step 0.2 得出的 `$CWD` 存成 `REST_ROOT`；它得出的 `REVIEW_YN` 只用在第 2 步的 `start`，之後每一張的值由 `next` 給（第 4 步）。
    - Step 0.5 只做解析 `(path, interaction)` 的那一段，到印出 `→ Path:` 為止。這時還沒有 issue：同一個程式區塊後面的 `mark_unattended` 與 PR mode 的 branch setup 這時都不跑。`pr_policy: ask` 在這裡只問一次，問的是要不要以 PR path 開始這次 run，不提供 direct-commit；回答不要就結束，不呼叫 `start`。
    - Step 0.6 的檢查照做。它把 path 降成 direct-commit 時不必 unwind（還沒有 branch）；降級後的 `PATH_AXIS` 照樣交給第 2 步，由 `start` 拒絕。
 
-   之後每一張都用這裡得到的 `PATH_AXIS=PR`、`REQUESTED_PATH=PR` 與 `INTERACTION=unattended`（Step 0.7 會用到這三個值；shell 變數遺失時照這裡重設，不重新解析）：單張流程的 Step 0.5 不再重新解析，Step 0.6 不再檢查、也不降級。每一張仍各自做 Step 0.5 的 unattended 標記、工作樹檢查與建 branch。
+   之後每一張都用這裡得到的 `PATH_AXIS=PR`、`REQUESTED_PATH=PR` 與 `INTERACTION=unattended`（Step 0.7 會用到這三個值；shell 變數遺失時照這裡重設，不重新解析）：單張流程的 Step 0.5 不再重新解析，Step 0.6 不再檢查、也不降級。每一張仍各自做 Step 0.5 的 unattended 標記、工作樹檢查與建 branch，都在它自己的資料夾裡。
 
 2. 開始。把它印出的清單原樣給使用者看：
 
    ```bash
-   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" start --cwd "$CWD" --repo "$GITHUB_REPO" --path "$PATH_AXIS" --review "$REVIEW_YN"
+   REST_ROOT="$CWD"
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" start --cwd "$REST_ROOT" --repo "$GITHUB_REPO" --path "$PATH_AXIS" --review "$REVIEW_YN"
    ```
 
-   它把 path、`--review` 與它向 GitHub 讀到的預設 branch 存進 run 的狀態。24 小時內有還沒結束的 run 時它會接續（再下指令時旗標要相同），試過的 issue 不會再跑；接續時 `--review` 只能加上、不能拿掉（先前的 run 帶了、這次沒帶，照樣每一張停在 verified；它會印一行說明），要拿掉就讓那個 run 以報告結束。新的 run 要求工作樹在乾淨的預設 branch 上。以 3 結束時照下面「整個 run 停下」的第一列處理：path 不是 `PR`、工作樹不在乾淨的預設 branch 上、git 不會忽略 `.claude/.idd/state/`（它會說明要在哪裡加那一行；由 idd-all 自己加是 #564）、執行的帳號沒有這個 repo 的寫入權，或清單讀不到。清單把本機已經有 `idd/N` branch 的 candidate 另列一行：它們輪到時會被記為 existing work，不跑。
+   它把 path、`--review` 與它向 GitHub 讀到的預設 branch 存進 run 的狀態。24 小時內有還沒結束的 run 時它會接續（再下指令時旗標要相同），試過的 issue 不會再跑；接續時 `--review` 只能加上、不能拿掉（先前的 run 帶了、這次沒帶，照樣每一張停在 verified；它會印一行說明），要拿掉就讓那個 run 以報告結束。它不看 `$REST_ROOT` 的工作樹在哪個 branch、有沒有改動。git 還不會忽略 `.claude/worktrees/` 時，它把規則加進本機的 `.git/info/exclude`。以 3 結束時照下面「整個 run 停下」的第一列處理：path 不是 `PR`、git 不會忽略 `.claude/.idd/state/`（它會說明要在哪裡加那一行；由 idd-all 自己加是 #564）、執行的帳號沒有這個 repo 的寫入權，或清單讀不到。清單把本機已經有 `idd/N` branch、或先前的 run 留下資料夾的 candidate 另列一行：它們輪到時會被記為 existing work，不會跑。
 
 3. 取下一張：
 
    ```bash
-   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" next --cwd "$CWD" --repo "$GITHUB_REPO"
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" next --cwd "$REST_ROOT" --repo "$GITHUB_REPO"
    ```
 
    | 印出的 JSON | 做什麼 |
    |---|---|
-   | `{"next": N, "in_flight": false, "review": …, …}` | 對 #N 做第 4 步 |
-   | `{"next": N, "in_flight": true, "branch": …, "review": …}` | #N 交出之後還沒有記錄結果，通常是跑到一半遇到 context 壓縮。已經有 Phase 6 的結果就直接做第 5 步。`branch` 是 `null` 時，這一張還沒有走到建 branch 的那一步：從 Step 0.4 重新開始，包含 Step 0.5.1（這時它找到的 PR 或 branch 不是這次 run 建的）。`branch` 有值時，從中斷的那個 phase 接著做完（看它的 run-state 檔、issue 的 phase），不重跑 Step 0.5.1：它會找到的 branch 與 PR 是這次 run 自己建的。不跳到別張 |
+   | `{"next": N, "in_flight": false, "dir": …, "root": …, "review": …}` | 對 #N 做第 4 步，在 `dir` 那個資料夾裡 |
+   | `{"next": N, "in_flight": true, "dir": …, "root": …, "branch": …, "review": …}` | #N 交出之後還沒有記錄結果，通常是跑到一半遇到 context 壓縮。在印出的 `dir` 裡接著做（先做第 4 步開頭的 `cd` 與 `here`）。已經有 Phase 6 的結果就直接做第 5 步。`branch` 是 `null` 時，這一張還沒有走到建 branch 的那一步：從 Step 0.4 重新開始，包含 Step 0.5.1。`branch` 有值時，從中斷的那個 phase 接著做完（看它的 run-state 檔、issue 的 phase），不重跑 Step 0.5.1：它會找到的 branch 與 PR 是這次 run 自己建的。不跳到別張 |
    | `{"next": null, "done": true}` | 做「結束」一節 |
    | `{"next": null, "stopped": "…"}` | 做「結束」一節 |
 
-   `next` 交出新的一張之前，會確認工作樹在乾淨的預設 branch 上（不是就以 3 結束，照「整個 run 停下」處理），並把當時 git 忽略的路徑記進 run 的狀態：那些是使用者原本就放在那裡的檔，第 6 步不會動它們。
+   `next` 交出一張之前，自己問這一張有沒有既有的工作，有就不交出、記為 existing work，接著看下一張。它問三件事（封閉清單）：`$REST_ROOT` 的 repo 有沒有這一張的本機 branch（`idd/N` 或 `idd/N-…`）；這一張資料夾的位置上是不是已經有東西（先前的 run 留下的）；以及單張流程 Step 0.5.1 用的同一支 `scripts/check-existing-work.sh`。最後一項只有回 `clear` 才交出：`resume`、`blocked` 是有人已經開始的工作；查不出來（`unknown`、查詢失敗）也不交出，因為查不出來不等於沒有。
 
-   `next` 以 1 結束並要求先 `settle` 某一張時，是那一張記下結果之後、第 6 步之前中斷了：對那一張做第 6 步，再回到這一步。本機已經有某張的 `idd/N` 或 `idd/N-…` branch 時，`next` 自己把那張記為 `existing work: local branch …`，不交出來，接著交出下一張。
+   `next` 以 1 結束並要求先對某一張再呼叫一次 `record` 時，是那一張的 `record` 做到一半中斷了：對那一張再做一次第 5 步的 `record`（不必再給原因），再回到這一步。
 
-4. 對 #N 跑單張流程：從 Step 0.4 到 Phase 6，行為與 `/idd-all #N` 相同，包含它自己的 Phase 6 報告與清理，只有下面兩處不同：path 與 interaction 用第 1 步的結果，以及 rest 不接手已經有的工作。這一張的 `REVIEW_YN` 是 `next` 印出的 `review`（`yes` 或 `no`），`REVIEW_FLAG` 也照 `next` 的這個值設（`yes` 是 `--review`，`no` 是空字串；Phase 4 修不修 in-scope finding、進不進 Phase 5c 都看它），兩個都不從記憶或原始引數取；Step 0.7 把 `REVIEW_YN` 交給 `close-stage.py init`。run 的狀態寫著 review、而 `init` 拿到的是 `no` 時，`init` 會拒絕，這一張的 close stage 因此停在 verified。close stage 的 `run` 自己也讀 rest 的 run 狀態：run 帶著 review 而這一張正在跑時，它一律停在 verified，不管這一張自己的紀錄怎麼寫（接續 run 時才加上 `--review` 的也算）；那個狀態檔讀不出來時也停在 verified。這一張停下、abort、或被 gate 判為不可動，都只影響這一張。
+4. 對 #N 跑單張流程。先進到它的資料夾，並確認那是 run 替它建的那一個：
 
-   **已經有 PR 或 branch 的 issue，rest 不接手**：Step 0.5.1 印出 `verdict=resume` 或 `verdict=blocked` 時，不建 branch、不碰那個 PR、不提問：rest 不接手這一張，但這一張的 Step 0.5 已經寫了 unattended 標記，所以先 `. "${CLAUDE_PLUGIN_ROOT}/scripts/lib/unattended-state.sh" && clear_unattended "$CWD"`（這一張不會走到 Phase 6 的清理），再做第 5 步，傳給 `record` 的原因寫 `existing work: ` 加上 Step 0.5.1 印出的 outcome 與人接下來可以做的事，例如 `existing work: existing PR #77 — review that pull request`。那是先前的 run 或別人已經開始、停在某處的工作，由人決定怎麼接。`verdict=unknown` 與 `clear` 照單張流程往下。
+   ```bash
+   CWD="<next 印出的 dir>"
+   cd "$CWD"
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" here --cwd "$CWD" --repo "$GITHUB_REPO" --issue "$N"
+   ```
 
-5. 記下這一張的結果。這一張的 Phase 6 報告有 `Stopped:` 時，把那一行從標準輸入傳給 `record`（abort 時傳 abort 的原因）；issue 已經結案而報告仍有 `Stopped:` 時照樣傳，總報告會把它列在 closed 那一筆底下。沒有原因可傳，就不帶 `--reason-stdin`，也不必有 heredoc。結果是 closed 還是 stopped 由 helper 自己向 GitHub 讀，不在這裡判斷。下面這一段刻意不縮排：heredoc 的結束行要從行首開始，縮排了就不會結束。
+   `here` 以 0 結束才往下。它以 1 結束時，`$CWD` 不是這一張的資料夾（它印出的原因會寫這一張在哪裡跑）：改正 `$CWD` 與 shell 的目錄再試一次；仍然不行就不跑這一張，直接做第 5 步，原因寫它印出的那一行。**不要在 `$REST_ROOT` 跑單張流程。**
+
+   這一張的每一個指令都在這個資料夾裡下：shell 留在那裡，所以依 shell 目錄做事的步驟（diagnose 下載的附件、`routing-stats.jsonl`、Spectra CLI、unattended 的判定）都落在這個資料夾。Claude Code 的 shell 在 `cd` 到專案資料夾裡面時會留在那裡；每個 phase 開始前可以再 `cd "$CWD"` 一次，不花什麼。子 skill 照樣帶 `--cwd "$CWD"`：verify 的 reviewer 不共用這個 shell。
+
+   然後從 Step 0.4 到 Phase 6，行為與在那個資料夾裡下 `/idd-all #N` 相同，包含它自己的 Phase 6 報告與清理，只有下面兩處不同：path 與 interaction 用第 1 步的結果，以及 rest 不接手已經有的工作。這一張的 `REVIEW_YN` 是 `next` 印出的 `review`（`yes` 或 `no`），`REVIEW_FLAG` 也照 `next` 的這個值設（`yes` 是 `--review`，`no` 是空字串；Phase 4 修不修 in-scope finding、進不進 Phase 5c 都看它），兩個都不從記憶或原始引數取；Step 0.7 把 `REVIEW_YN` 交給 `close-stage.py init`。run 的狀態寫著 review、而 `init` 拿到的是 `no` 時，`init` 會拒絕，這一張的 close stage 因為沒有 run-state 而停在 verified。`close-stage.py` 透過資料夾裡的指標檔找到這個 run 的狀態；在 `$REST_ROOT` 對這一張呼叫它會被拒絕。
+
+   **已經有 PR 或 branch 的 issue，rest 不接手**：`next` 已經問過一次；單張流程的 Step 0.5.1 在資料夾裡再問一次（兩次之間可能有人開了 PR）。它印出 `verdict=clear` 以外的任何結果（`resume`、`blocked`、`unknown`）時，不建 branch、不碰那個 PR、不提問：rest 不接手這一張，直接做第 5 步，傳給 `record` 的原因寫 `existing work: ` 加上 Step 0.5.1 印出的 outcome 與人接下來可以做的事，例如 `existing work: existing PR #77 — review that pull request`。那是先前的 run 或別人已經開始、停在某處的工作，由人決定怎麼接。
+
+5. 記下這一張的結果。先清掉這個資料夾裡的 unattended 標記（這一張走到 Phase 6 的清理也好、沒走到也好，都清一次），再回到 `$REST_ROOT`：`record` 可能刪掉這一張的資料夾，shell 不能留在裡面。
+
+   ```bash
+   . "${CLAUDE_PLUGIN_ROOT}/scripts/lib/unattended-state.sh" && clear_unattended "$CWD"
+   cd "$REST_ROOT"
+   ```
+
+   這一張的 Phase 6 報告有 `Stopped:` 時，把那一行從標準輸入傳給 `record`（abort 時傳 abort 的原因）；issue 已經結案而報告仍有 `Stopped:` 時照樣傳，總報告會把它列在 closed 那一筆底下。沒有原因可傳，就不帶 `--reason-stdin`，也不必有 heredoc。結果是 closed 還是 stopped 由 helper 自己向 GitHub 讀，不在這裡判斷。下面這一段刻意不縮排：heredoc 的結束行要從行首開始，縮排了就不會結束。
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" record --cwd "$CWD" --repo "$GITHUB_REPO" --issue "$N" --reason-stdin <<'IDD_REASON'
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" record --cwd "$REST_ROOT" --repo "$GITHUB_REPO" --issue "$N" --reason-stdin <<'IDD_REASON'
 <Stopped: 那一行>
 IDD_REASON
 ```
 
    原因是外來文字（branch 名稱、檔名、git 與 gh 的訊息都可能含引號、`$` 或反引號），不放進 shell 的引數：本節每一處都用上面這種加了引號的 heredoc（`<<'IDD_REASON'`）從標準輸入傳，shell 不會展開裡面的任何東西。
 
-6. 整理兩張之間的工作樹。只給 issue 號；預設 branch 由 helper 從 run 的狀態讀：
+   `record` 記下結果之後，同一個指令決定這一張的資料夾留不留，並印出來（`"directory": "removed"`、`"kept"` 或 `"none"`）。資料夾裡沒有只存在那裡的東西才刪，判定是規格 `idd-all-rest` 的封閉清單，全部成立才刪，查不出來的當作不成立：
 
-   ```bash
-   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" settle --cwd "$CWD" --repo "$GITHUB_REPO" --issue "$N"
-   ```
-
-   它看工作樹的實際狀態，照規格 `idd-all-rest` 的封閉表處理。`start`、`next` 與 `settle` 讀工作樹只有一種讀法：列出每一個未追蹤檔，不受 git 的顯示設定影響（例如 `status.showUntrackedFiles no`）。`settle` 在任何一步被中止之後可以重跑，結果與沒被中止相同：之後無從得知的事（要丟的紀錄、要搬開的檔、那一張 branch 忽略了什麼、要寫進 exclude 的路徑），它在動手之前先寫進 run 的狀態。這一張被交出時就在工作樹、當時被 git 忽略的檔不算這一張留下的：即使這一張的 branch 不再忽略它（這一張刪掉或改寫了 ignore 規則），`settle` 也不 commit、不 stash、不搬、不刪。工作樹在這張自己的 branch 上時，其餘留下而沒有 commit 的東西分三類：
-
-   | 留下的東西 | 處理 |
+   | 查什麼 | 不成立時 |
    |---|---|
-   | 這張的附件資料夾（`.claude/.idd/attachments/issue-N/`）裡會重新產生的紀錄。diagnose 每次都重跑、每次都重寫這個資料夾 | manifest 是那個資料夾裡唯一的留下物時丟掉。branch 還沒有自己的 commit、也沒有 upstream，而留下的全是 manifest 與它擔保的附件（列出且雜湊相符，或列為下載失敗）時，全部丟掉。丟掉是刪掉未追蹤的檔、把已追蹤的檔還原；其他東西一律不丟 |
-   | 寫入端自己排除在 git 之外的位置：`.claude/.idd/` 裡的 run 狀態、編輯備份與鎖，以及 `.claude/worktrees/` | 不 commit，以 3 結束 |
-   | 其他一切（沒 commit 的改動、Spectra 的 artifact、沒被上面丟掉的附件、所有 issue 共用的紀錄檔如 `routing-stats.jsonl`） | commit 在這張的 branch（只 stage 這些路徑），只在本機、不推；branch、commit 與路徑記進 run 的狀態，列在報告裡。這個 commit 失敗、而 repo 有 commit 之前會跑的 hook（`pre-commit`、`prepare-commit-msg`、`commit-msg`；hook 檔或 git 設定裡的 hook 都算）時，重新 stage、兩種 hook 都不經過再 commit 一次（之前先重新讀一次留下物，因為 hook 可能寫了檔），commit 訊息的正文與報告都會註明（維護者 2026-11-19 的決定）；失敗而沒有這種 hook 時不再試第二次，以 3 結束。hook 若把交出時就在的檔一併 stage 進去（會 `git add -A` 的 hook，不論它最後讓不讓 commit 過），`settle` 撤回那個 commit、把那些檔移出 stage，再不經 hook commit 一次，訊息正文會註明。這個檢查看的是 commit 本身的路徑，新做的、不經 hook 重做的、上一次被中止前做的都一樣；裡面有不收進 git 的位置的檔（hook 自己加的）時，撤回那個 commit、以 3 結束 |
+   | 它是 run 為這一張記下的那個資料夾，自己就是一個 git repo 的頂層，路徑上沒有 symlink | 留著，裡面的東西不看也不動 |
+   | `git status` 沒有改動、沒有未追蹤的檔。plugin 自己會再寫一次的三個位置不算：`.claude/.idd/attachments/`、`.claude/.idd/state/`、`.claude/.idd/tree-lock` 開頭的路徑 | 留著，原因列出路徑 |
+   | 沒有 stash | 留著 |
+   | 每個本機 branch 與目前 checkout 的 commit 都在某個 `origin` 的 branch 裡（推過） | 留著，原因列出 branch |
+   | 每個 tag 在 `origin` 上都有而且相同（問不到 `origin` 也算不成立） | 留著，原因列出 tag |
+   | 沒有第二個 worktree | 留著 |
+   | 沒有只存在那裡的紀錄：更正過的 GitHub 文字的舊版、Spectra 暫存的 change | 留著 |
+   | `routing-stats.jsonl` 是未追蹤的檔時，已經接到 `$REST_ROOT` 那一份的檔尾 | 接不上去就留著 |
 
-   然後依序做這幾件事：
-
-   1. fetch 預設 branch。本機的預設 branch 落後 origin 而沒有自己的 commit 時，先把它往前移（這時它還沒被 checkout）；已經 merge 的那一張因此不會擋路。fetch 失敗時先把下面的事做完，最後才以 3 結束，工作樹停在乾淨的預設 branch。
-   2. 那一張的 branch 忽略、預設 branch 卻有追蹤的檔（例如那一張把某個檔改成不追蹤），一般的 checkout 會悄悄覆寫。這些檔先收進一個 stash，一個都不刪。
-   3. 切回預設 branch，而且不覆寫 git 忽略的檔（`--no-overwrite-ignore`）；還有檔擋路時以 3 結束，檔案不動。checkout 之後才失敗的 hook 不算 checkout 失敗。
-      交出時就在、而這一張的 branch 把它 commit 進去的檔（預設 branch 沒有追蹤它），checkout 會把它從工作樹拿掉。`settle` 在 checkout 之前把這種檔搬到狀態資料夾底下的 `rest-held-<N>/`，checkout 之後（成功或失敗都一樣）搬回原處，內容與搬走時相同。原處被別的東西佔住、或中途的資料夾是 symlink 時不搬，以 3 結束並指出那個資料夾。這種檔若預設 branch 也追蹤了、而且內容與那一張的 branch 不同，checkout 會不出聲地換掉它：`settle` 在 checkout 之前就以 3 結束，檔案不動，原因行列出路徑。那個資料夾還在的時候，`start` 不開新的 run，報告也會列出它。
-   4. 切回之後仍未追蹤的路徑：交出時就在的（那一張刪掉了 ignore 規則而且已經 merge），寫進 `.git/info/exclude`，檔案不動；寫了之後 git 仍不忽略它時（預設 branch 的 `.gitignore` 有 `!` 開頭的規則，優先於本機的 exclude），把那一行拿掉、以 3 結束，不記成已排除；只被那一張 branch 的 ignore 規則蓋住的，收進另一個 stash；其他的不處理。
-   5. 確認工作樹沒有改動、也沒有未被忽略的未追蹤檔（同一種讀法）。保留的 branch 上 `settle` 記下的 commit 若含不該有的檔，以 3 結束並指出那個 commit。
-
-   工作樹停在預設 branch 而有這一張留下的東西，或停在別的 branch，都以 3 結束。本機預設 branch 有自己的 commit 時不動它：PR path 的 branch 從 `origin/<default>` 建。這張沒有自己的 commit、也沒有 upstream 的 branch 會刪掉，所以在第一個 commit 之前停下、只留下上表第一列那些紀錄的那一張，之後還會再被交出；其他的 branch 留著，列在報告裡。以 3 結束照下面「整個 run 停下」處理；以 0 結束就回第 3 步。
+   被 git 忽略的其他檔（這一張自己的指令產生的 build 產物）隨資料夾刪掉：資料夾是這次 run 建的，裡面沒有人原本的檔。留下資料夾不會讓 run 停下：`record` 照樣以 0 結束，總報告會列出資料夾與原因。以 3 結束照下面「整個 run 停下」處理；以 0 結束就回第 3 步。
 
 ### 整個 run 停下
 
 封閉列舉，只有這四種，不得依性質相似類推第五種。第二種先用 `stop` 記下原因，再做「結束」一節：
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" stop --cwd "$CWD" --repo "$GITHUB_REPO" --reason-stdin <<'IDD_REASON'
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" stop --cwd "$REST_ROOT" --repo "$GITHUB_REPO" --reason-stdin <<'IDD_REASON'
 <原因>
 IDD_REASON
 ```
 
 | 情況 | 處理 |
 |---|---|
-| 第 2 步的 `start` 以 3 結束（path 不是 `PR`、工作樹不在乾淨的預設 branch 上、有一個 24 小時內寫入而讀不出來的狀態檔、清單讀不到、git 不會忽略狀態檔、執行的帳號沒有寫入權，或這裡不是 git 工作樹；這次還沒有 run 開始） | 把它印在 stderr 的那一行告訴使用者就結束，不呼叫 `stop` 與 `report`：沒有 run 可以停，也沒有結果可以報。結束前清掉 unattended 標記（`. "${CLAUDE_PLUGIN_ROOT}/scripts/lib/unattended-state.sh" && clear_unattended "$CWD"`）：先前的 run 可能留著它。先前還沒結束的 run 的狀態留著，24 小時內再下同一個 `/idd-all` 指令（旗標相同）會接續 |
-| `next`、`record` 或 `settle` 以 3 結束（run 已經開始；GitHub、`gh` 的認證、判定程式或 git 讀不到，狀態寫不進去，或兩張之間的工作樹整理不了） | `stop`，原因照抄它印在 stderr 的那一行（從標準輸入傳，開頭的 `rest-queue: ` 可以留著），再做「結束」一節。`stop` 自己也失敗時直接做「結束」一節。`settle` 的那一行寫著人接下來要做的每一步：run 結束之後再下 `/idd-all` 是新的 run，要工作樹在乾淨的預設 branch 上，那些步驟照做就會到那裡。要切回預設 branch 的地方，它給的是 `git checkout --no-overwrite-ignore <預設 branch>`：一般的 checkout 會悄悄覆寫 git 忽略的檔，轉述時不要改成一般的 checkout |
+| 第 2 步的 `start` 以 3 結束（path 不是 `PR`、有一個 24 小時內寫入而讀不出來的狀態檔、清單讀不到、git 不會忽略狀態檔或放資料夾的位置、執行的帳號沒有寫入權，或這裡不是 git repo；這次還沒有 run 開始） | 把它印在 stderr 的那一行告訴使用者就結束，不呼叫 `stop` 與 `report`：沒有 run 可以停，也沒有結果可以報。先前還沒結束的 run 的狀態留著，24 小時內再下同一個 `/idd-all` 指令（旗標相同）會接續 |
+| `next` 或 `record` 以 3 結束（run 已經開始；GitHub、`gh` 的認證、判定程式或 git 讀不到，狀態寫不進去，或這一張的資料夾建不起來） | `stop`，原因照抄它印在 stderr 的那一行（從標準輸入傳，開頭的 `rest-queue: ` 可以留著），再做「結束」一節。`stop` 自己也失敗時直接做「結束」一節 |
 | 使用者中斷 | 不必做任何事。狀態留著，24 小時內再下同一個 `/idd-all` 指令（旗標相同）會接續。`--review` 存在 run 的狀態裡，再下指令時少帶了也不會被拿掉 |
-| 「結束」一節的 `report` 以 1 或 3 結束（報告印了，但狀態刪不掉；或讀不到狀態） | 把它已經印出的內容與 stderr 那一行原樣轉給使用者，清掉 unattended 標記（`. "${CLAUDE_PLUGIN_ROOT}/scripts/lib/unattended-state.sh" && clear_unattended "$CWD"`）就結束，不再呼叫 `stop` 或 `report`：再呼叫一次只會停在同一個地方 |
+| 「結束」一節的 `report` 以 1 或 3 結束（報告印了，但狀態刪不掉；或讀不到狀態） | 把它已經印出的內容與 stderr 那一行原樣轉給使用者就結束，不再呼叫 `stop` 或 `report`：再呼叫一次只會停在同一個地方 |
 
-其他子命令的結束碼 1 與 2 不在表上：那是這裡呼叫錯了（沒有先 `start`、`start` 沒有帶 `--path` 或 `--review`、`record` 的 issue 號不是交出的那一張、`settle` 的不是剛記下的那一張、`next` 在 `settle` 之前、引數寫錯），改正後重跑同一個子命令。run 開始之後，`next`、`record` 或 `settle` 以 1 結束並說這個工作樹沒有 rest run，是 `--cwd` 給錯了：改正 `--cwd`，不要再呼叫一次 `start`。
+其他子命令的結束碼 1 與 2 不在表上：那是這裡呼叫錯了（沒有先 `start`、`start` 沒有帶 `--path` 或 `--review`、`record` 的 issue 號不是交出的那一張、`here` 的目錄不是那一張的資料夾、`next` 在一張的 `record` 做完之前、引數寫錯），改正後重跑同一個子命令。run 開始之後，`next` 或 `record` 以 1 結束並說這個工作樹沒有 rest run，是 `--cwd` 給錯了：改成 `$REST_ROOT`，不要再呼叫一次 `start`。
 
-單張的 verify 沒過、close stage 的閘門沒過、Phase 0.5 abort、existing-work 判為 blocked，也都不在表上：記在那一張，下一張照跑。
+單張的 verify 沒過、close stage 的閘門沒過、Phase 0.5 abort、既有工作的查詢不是 `clear`，也都不在表上：記在那一張，下一張照跑。資料夾被留下也不在表上。
 
 ### 結束
 
 印總報告，原樣轉給使用者，不改寫、不補推測：
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" report --cwd "$CWD" --repo "$GITHUB_REPO"
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" report --cwd "$REST_ROOT" --repo "$GITHUB_REPO"
 ```
 
-報告列出結案的、停下的與原因、等人回答的問題（整列，不截斷）、沒跑的與類別；這次 run 試過的 issue 只出現一次，在結案、停下、或「交出後還沒有結果」那三段之一，它現在有還沒回答的釐清問題時，問題列在它那一筆底下。停下的那一張的 branch 留著時，報告列出那個 branch；`settle` 替它 commit 了留下的東西時也列出那個 commit 與裡面的路徑，其中是所有 issue 共用的紀錄檔（`routing-stats.jsonl`）的會另外標明：它的新內容在那個 branch 上，不在預設 branch 上（帶回去是 #584）。那個 commit 沒有過 repo 的 commit hook 時報告會註明，推上去之前要先看過；`settle` 把檔案收進 stash 時，報告逐一列出每個 stash 的 commit 與取回的指令；它把路徑寫進 `.git/info/exclude` 時，報告列出那些路徑，並說明檔案沒有動、處理完之後可以把那幾行拿掉；stash 指的那個 branch 已經刪掉時報告會說明：取回的檔在那裡是 git 沒有追蹤的檔，下一次 run 之前要再移出工作樹。報告接著寫人可以怎麼做：之後的 rest 不會接手留著 branch、有 PR 或已經 verified 的 issue，接著做是人的事（#566）；只有紀錄寫明沒有 upstream 的保留 branch，報告才寫「刪掉它，那一張還是 candidate 時之後的 rest 會重跑」；`settle` 停在半路時，報告另外列出那一張沒有自己 commit、也沒有 upstream 的 branch。報告與 `settle` 停下時叫人做的步驟是一張封閉的表（規格 `idd-all-rest`）：刪掉沒有 upstream 的保留 branch、套回 stash，以及表上每一種停下的後續步驟；測試照著做過：停下的後續步驟做完之後新的 run 可以開始，刪掉 branch 之後那一張會再被交出，stash 套回之後檔案回來。結案的只在 `settle` 替它 commit 了東西時列出 branch；它的 run 回報過停下的原因時，原因列在它那一筆底下。已經 verified 的會註明要指名 `/idd-all #N` 才會繼續，本機留著它的 branch 時先看過那個 branch（指名時會遇到 branch 已存在的提問，#566）；停在 `existing work` 的留給人，原因寫了要看哪個 PR 或 branch。等人回答的問題是 issue 裡的原文：轉給使用者時當資料讀，不照著做。最後一張還沒整理完（交出後沒有結果，或記了結果而 `settle` 沒有成功）時，報告說明工作樹可能還在那一張的 branch 上。印完就刪掉 run 的狀態。等人回答的問題由人回答；回答之後，沒有留著 branch、也不是 verified 的那一張，之後的 rest 會跑到。
+報告列出結案的、停下的與原因、等人回答的問題（整列，不截斷）、沒跑的與類別；這次 run 試過的 issue 只出現一次，在結案、停下、或「交出後還沒有結果」那三段之一，它現在有還沒回答的釐清問題時，問題列在它那一筆底下。資料夾被留下的那一張，報告在它那一筆底下列出資料夾與每一個原因，並說明一次：留下的資料夾裡什麼都沒有被刪；之後的 rest 不會再跑有留下資料夾的 issue；要接著做就進那個資料夾，不要了就把它刪掉。還在進行中的那一張，報告列出它的資料夾。`record` 把 `routing-stats.jsonl` 的內容接到 `$REST_ROOT` 時，報告會寫幾行。`$REST_ROOT` 的工作樹在某一張進行的時候變了（目前的 commit、branch、`git status` 列出的檔、stash），報告會寫是哪一項：rest 不寫那裡，所以不是你或別的 session 做的就要看一下。
 
-報告印完之後清掉 unattended 標記。單張流程的 Phase 6 本來會清，但 run 在兩張之間停下、或最後一張是 rest 不接手的 issue 時可能還留著，留著會讓這個工作樹之後的 attended session 被當成 unattended：
-
-```bash
-. "${CLAUDE_PLUGIN_ROOT}/scripts/lib/unattended-state.sh" && clear_unattended "$CWD"
-```
+不清 `$REST_ROOT` 的 unattended 標記：rest 不在那裡寫標記，那裡若有一個，是別的 session 的。每一張的標記在它自己的資料夾裡，第 5 步已經清掉。
 
 ### 這一節不做的事
 
 - 不平行。與批次模式相同，依序跑。
 - 途中新開的 issue 不併進同一個 PR：重讀清單時接住，各自跑單張流程、各自一個 PR。chain 成為預設是 #457。
 - 不改單張流程的 verify 輪數上限（#423）。
-- 不重跑已經 verified 的 issue，也不接手已經有 PR 或 branch 的 issue：遠端的由 Step 0.5.1 判定，本機的由 `next` 判定。停下而留著 branch 的那一張，之後的 rest 也不會再跑它。rest 只靠 GitHub 上的資料，分不出一張 verified 的 issue 上次是不是已經交給人（例如帶 `--review` 留下等人看）；接手要先讓 close stage 把停止原因留在 GitHub 上，這件事在 #566（維護者 2026-11-15 的決定）。
+- 不重跑已經 verified 的 issue，也不接手已經有 PR、branch 或留下資料夾的 issue。rest 只靠 GitHub 上的資料，分不出一張 verified 的 issue 上次是不是已經交給人（例如帶 `--review` 留下等人看）；接手要先讓 close stage 把停止原因留在 GitHub 上，這件事在 #566（維護者 2026-11-15 的決定）。
 - 不在交出之後重新分類：一張 issue 交出之後才出現的外部帳號留言或新的釐清問題，不會讓 rest 停下那一張（中斷後接續 in flight 的 issue 時也一樣）。那一張照樣 implement、push、開 PR；只有 merge 之前，close stage 的檢查照樣擋。
 - 宣告某張 issue 的 open PR（不論誰開的）會讓 rest 把那一張記為 `existing work`，不跑它。
-- 不推 `settle` 的 commit：它只在本機，留給人看。接著做留下的 branch 不在這一版：指名那一張（`/idd-all #N`）會遇到單張流程對已存在 branch 的提問，那是 #566。
 - 不走 direct-commit，也不 attended：`start` 遇到不是 `PR` 的 path 就拒絕（#583）。
-- 不把所有 issue 共用的紀錄檔的新內容帶回預設 branch：它留在那一張的本機 branch，報告會標明（#584）。
-- 不刪附件以外的東西：`settle` 丟掉的只有這張的 manifest 與 manifest 擔保的附件（列出且雜湊相符，或列為下載失敗），下一次 diagnose 會再寫一次。
-- rest run 進行中，不要在同一個工作樹做別的事（人或另一個 session 都一樣）：`settle` 會在兩張之間 commit、stash 與 checkout，它分不出哪些改動是那一張留下的、哪些是別人剛寫的。一張 issue 正在跑的時候加進工作樹的檔，對 `settle` 來說就是那一張留下的，會被 commit 在那一張的 branch。要邊跑邊做別的事，另外 clone 一份。
-- 交出時就在的檔若被那一張的 run 自己刪掉或改掉（例如 `rm -rf` 一個資料夾），`settle` 救不回來；被刪掉的會列在報告裡，被改掉的不會（交出時只記路徑，不記內容）。整個資料夾被 git 忽略時，記下的是那個資料夾：資料夾還在、裡面少了個別的檔，報告看不出來。
-- `settle` 停在那一張的 branch、而那個 branch 把交出時就在的檔 commit 進去了：照原因行自己 checkout 回預設 branch 會把那些檔從工作樹拿掉。報告會列出這些檔，checkout 之前先複製出來，之後放回（`settle` 自己走到 checkout 時會替你做這件事）。那一張的 branch 不再忽略、所以 git 在那個 branch 上顯示出來的原本就在的檔，報告也會列出：它們不是那一張留下的，不要 commit、也不要刪。兩種情形下，原因行都會寫「先看報告」。
+- 資料夾裡沒有 `$REST_ROOT` 被 git 忽略的本機檔（`node_modules`、`.env`、本機的設定檔）：它是從 `origin` clone 的。需要那些檔才能 build 或跑測試的 repo，那一張會停在 implement、verify 或 CI，資料夾照清單決定留不留。
+- `$REST_ROOT` 本機的 git hook 與本機的 git 設定不帶進資料夾，只帶 `user.name` 與 `user.email`（封閉清單）。
+- 資料夾是從 `origin` 的預設 branch 建的：`$REST_ROOT` 本機還沒推的 commit 不在裡面。
+- 不支援 shell 不會留在 `cd` 之後的目錄的環境：依 shell 目錄做事的步驟會落在 `$REST_ROOT`，其中 Spectra 沒有指定專案根目錄的選項，會改到那裡已追蹤的檔。`here` 擋得住 `$CWD` 給錯，擋不住 shell 的目錄與 `$CWD` 不同；報告裡「工作樹變了」那一行是事後才看得到的。
+- 既有工作的查詢會在 `$REST_ROOT` 的 repo 做一次 `git fetch`：它會移動 remote-tracking branch，也可能帶進 `origin` 上的 tag；不動既有的 tag 與本機 branch。
+- 不把留下的資料夾接著做完：之後的 rest 看到某一張有留下的資料夾就跳過它。要接著做，進那個資料夾，在裡面指名那一張（`/idd-all #N`）；單張流程對已存在 branch 的提問是 #566。
 - bot 的留言不讓一張 issue 變成 `outsider`（與 close stage 相同）。把外部輸入轉貼成留言的 app，它帶進來的文字會被 diagnose 讀到。
 - 執行的帳號要有這個 repo 的寫入權：沒有的話 GitHub 不回答誰有寫入權，`start` 以 3 結束。
-- `--cwd` 在 repo 頂層以下時不替 tree-lock 補 ignore 規則：它的寫入端把規則加在頂層，蓋不到子目錄裡的 `.claude/.idd/tree-lock`，implement 之後停下的那一張會讓 `settle` 以 3 結束。要在子目錄跑，先把 `<子目錄>/.claude/.idd/tree-lock*` 加進 `.git/info/exclude`。
-- 不改 `idd-diagnose` 下載附件的位置：它以 session 的目前目錄為基準（#586）。`--cwd` 不是 session 的目前目錄時，附件不在 `settle` 認得的位置，會被當成一般的留下物 commit 在那一張的 branch。
-- `close-stage.py` 只看與它同一個 `--cwd` 的 rest run：`rest-queue.py` 與 `close-stage.py` 要拿到同一個 `$CWD`，本節每一個指令都用第 1 步的那一個。它在 `run` 開始時讀一次 rest 的狀態；之後（例如等 CI 的時候）另一個 session 才替這個 run 加上的 `--review`，這一張看不到。
-- 不管 plugin 以外的程式在 repo 裡寫了什麼：寫入端的盤點（`references/working-tree-writers.md`）只涵蓋 plugin 自己的 skill 與 script。Spectra CLI、`idd-route` 與目標 repo 的 hook 寫的東西，照「其他一切」那一列處理。
+- `close-stage.py` 在 `run` 開始時讀一次 rest 的狀態；之後（例如等 CI 的時候）另一個 session 才替這個 run 加上的 `--review`，這一張看不到。
+- 不管 plugin 以外的程式在資料夾裡寫了什麼：寫入端的盤點（`references/working-tree-writers.md`）只涵蓋 plugin 自己的 skill 與 script。它們留下而 git 沒有忽略的東西，會讓資料夾被留下。
 - 不判斷一張舊 issue 的前提還成不成立。
 
 ## Configuration
@@ -276,7 +287,7 @@ TaskCreate(name="ci_gate", description="Phase 4.5 (#465): type=meeting → 跳�
 TaskCreate(name="open_pr", description="Phase 5: type=meeting → 跳過、不 push(#383); PR mode → git push + 已有自家 open PR 就沿用並更新 body,否則 gh pr create(body 照 verify gate 結果寫,含 Refs #N, 不含 Closes); direct-commit mode → 不開 PR,進 Phase 5c")
 TaskCreate(name="close_stage", description="Phase 5c (#392): scripts/close-stage.py run（同一個 process，run_in_background）：讀 Step 0.7 的 run-state，擋 --review/--in-chain/meeting/無寫入權限/run 開始後別人插手/意圖沒確認(tier 與沒人處理的 Proposed Corrections 不擋)；gate 綁 HEAD SHA、只認本帳號的報告、讀 GitHub 渲染後的 HTML，有 Rejected finding 就停；CI 等完再重查預設 branch 與 PR 上的人；PR → 本機 CI 閘門 idd-ci-gate.sh(0 過、10 才等遠端 check:pending 最多 15 分鐘、有 pull_request workflow 就等 check 出現;其他結束碼停)、auto-close trap、squash message，全過才 gh pr merge --squash --match-head-commit 並確認 MERGED；direct-commit → 在預設 branch、每個要推的 commit 都引用 #N 才 push。merged/pushed 才以 ORCHESTRATED BY /idd-all 呼叫 /idd-close --repo，最後確認 CLOSED 且有 closing summary")
 TaskCreate(name="report_and_stop", description="Phase 6: Done:/Undo: 回報(merge 或 push 的 commit、closed issue 與 closing summary、改動規模、follow-up、residue、distribution sync、verify reviewers); 停下時只列做到的步驟加 Stopped:; --review → awaiting human acceptance 措辭; type=meeting → meeting report(#383)")
-TaskCreate(name="rest_run", description="僅 rest mode（#478：沒有位置引數，或只有 rest；指名 issue 的 run 不建這一項）: 前置檢查與 path 的解析只做一次 → rest-queue.py start --path --review 印清單（path 不是 PR、或工作樹不在乾淨的預設 branch 上就結束）→ 反覆 next（每一張的 REVIEW_YN 取它印出的 review）、單張流程、record、settle → 整個 run 停下時 stop → report 印總報告")
+TaskCreate(name="rest_run", description="僅 rest mode（#478：沒有位置引數，或只有 rest；指名 issue 的 run 不建這一項）: 前置檢查與 path 的解析只做一次 → REST_ROOT=$CWD，rest-queue.py start --path --review 印清單（path 不是 PR 就結束）→ 反覆 next（印出這一張的資料夾 dir；REVIEW_YN 取它印出的 review）、cd 進 dir 並 CWD=dir、here、單張流程、清掉 dir 的 unattended 標記、cd 回 REST_ROOT、record（決定資料夾刪或留）→ 整個 run 停下時 stop → report 印總報告")
 ```
 
 完成每一步立即 `TaskUpdate → completed`。**靜默完成 = 違規**。
@@ -2010,7 +2021,7 @@ Phase 0.5 印 `→ Path: PR (unattended) — pr_policy absent (v2.40.0 default)`
 /idd-all rest --review
 ```
 
-rest 只走 PR path。`rest-queue.py start` 先印出清單（要跑的 issue 號與順序、等人回答的、blocked、已經 verified 的），接著每一張各自跑完整的單張流程，兩張之間由 `rest-queue.py settle` 整理工作樹；`--review` 讓每一張都停在 verified。結束時 `rest-queue.py report` 印一份總報告。中斷後 24 小時內再下同一個指令（旗標相同）會接續。
+rest 只走 PR path。`rest-queue.py start` 先印出清單（要跑的 issue 號與順序、等人回答的、blocked、已經 verified 的），接著每一張在自己的資料夾（`.claude/worktrees/rest-<N>/`，一個獨立的 clone）跑完整的單張流程，跑完之後資料夾裡沒有只存在那裡的東西就刪掉；啟動 rest 的工作樹不動，可以照常在裡面工作。`--review` 讓每一張都停在 verified。結束時 `rest-queue.py report` 印一份總報告。中斷後 24 小時內再下同一個指令（旗標相同）會接續。
 
 ### 從零開始 — 文字描述
 
