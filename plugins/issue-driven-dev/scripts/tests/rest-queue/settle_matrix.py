@@ -4,7 +4,8 @@
 where the working tree is × what is left over × the local default branch against origin × whether the issue's
 branch has a commit × whether it has an upstream: 4 × 6 × 2 × 2 × 2 = 192 temporary repositories, and, where the
 working tree is on the issue's branch and that branch has a commit, what that commit did to the ignore rules
-(deleted a folder with its own rules; rewrote the top rules): 6 × 2 × 2 × 2 = 48 more. Every repository holds
+(deleted a folder with its own rules; rewrote the top rules; started to track a file from before the run, with
+or without a change to that file left in the working tree): 6 × 2 × 2 × 4 = 96 more. Every repository holds
 files that were there before the run and that git ignores, and its run state is written by the real `start`,
 `next` and `record`. Each runs `rest-queue.py settle`. What the single-issue pipeline really leaves, ending by
 ending, is endings.py; this file checks that the same invariants hold over the whole input space:
@@ -43,7 +44,8 @@ LEFT = ("none", "plain", "manifest", "attachment", "lock", "manifest+lock")   # 
 REMOTE = ("behind", "ahead")
 WORK = (0, 1)
 UPSTREAM = (0, 1)
-RULES = ("kept", "folder-deleted", "rewritten")   # what the commit of the issue did to the ignore rules
+# what the commit of the issue did to the ignore rules; the last two also commit local/settings.json, a file from before the run
+RULES = ("kept", "folder-deleted", "rewritten", "tracked", "tracked-edited")
 # in the working tree before the run, and ignored there (the top rule `local/`, the rule `.env` of tools/.gitignore)
 HERE_BEFORE = {"tools/.env": "TOKEN=ghp_secret\n", "local/settings.json": '{"mine": true}\n'}
 FOLDER = ".claude/.idd/attachments/issue-5/"
@@ -128,6 +130,9 @@ def one(base, case):
         elif rules == "rewritten":
             write(os.path.join(tree, ".gitignore"), "coverage/\n")
             git(tree, "add", "--", ".gitignore")
+        elif rules in ("tracked", "tracked-edited"):
+            write(os.path.join(tree, ".gitignore"), "coverage/\n")
+            git(tree, "add", "--", ".gitignore", "local/settings.json")
         git(tree, "commit", "-q", "-m", "work")
         git(tree, "checkout", "-q", "main")
     if up:
@@ -146,6 +151,8 @@ def one(base, case):
         git(tree, "checkout", "-q", "-b", "idd/7-y", "main")
     elif where == "detached":
         git(tree, "checkout", "-q", "--detach", "main")
+    if rules == "tracked-edited":   # the run of the issue changed the file after its commit
+        write(os.path.join(tree, "local/settings.json"), '{"mine": "edited by the run"}\n')
     if left == "plain":
         write(os.path.join(tree, "a.txt"), "changed\n")
     if left in ("manifest", "manifest+lock"):
@@ -170,7 +177,12 @@ def one(base, case):
     refs = [before[0], tip, "refs/heads/main", "refs/heads/idd/5-x" if exists else "", *(k.get("commit") for k in attempt.get("kept", []))]
     for st in attempt.get("stashes", []):
         refs += [st.get("commit", ""), st.get("commit", "") + "^3"]
-    problems = treecheck.account(tree, at_handout, files, refs=refs, discarded=attempt.get("discarded", []))
+    problems = treecheck.account(tree, at_handout, files, refs=refs, discarded=attempt.get("discarded", []),
+                                 run_changed=("local/settings.json",) if rules == "tracked-edited" else ())
+    if os.path.exists(os.path.join(tree, ".claude/.idd/state/rest-held-5")):
+        problems.append("files are still set aside below the state folder")
+    if rules.startswith("tracked") and proc.returncode == 0 and attempt.get("returned") != ["local/settings.json"]:
+        problems.append(f"the run state does not say that local/settings.json was put back: {attempt.get('returned')}")
     if got != want:
         problems.append(f"got {got}, want {want}: {proc.stderr.strip()[:160]}")
     if proc.returncode == 0:

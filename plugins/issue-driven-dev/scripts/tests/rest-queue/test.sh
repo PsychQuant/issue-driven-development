@@ -1090,6 +1090,180 @@ mv "$T/local" "$S/local.kept"; git -C "$T" checkout -q --no-overwrite-ignore mai
 assert_eq "overwrite, long names: every file still holds what it held" "4" "$(grep -l 'mine' "$S"/local.kept/*.json | wc -l | tr -d ' ')"
 accepts "overwrite, long names: and a new run starts"
 
+# ── files from before the run that the issue's branch tracks, or that a hook stages ──
+lockfile() { # the rule `package-lock.json`, and the file, there before the run
+  printf 'package-lock.json\n' > "$T/.gitignore"; git -C "$T" add .gitignore; git -C "$T" commit -q -m "ignore the lockfile"; git -C "$T" push -q origin main 2>/dev/null
+  printf '{"lock": "MINE"}\n' > "$T/package-lock.json"
+}
+tracks_lockfile() { # #5 handed out; its branch drops the rule and commits the file
+  begin
+  git -C "$T" checkout -q --no-track -b idd/5-x origin/main; : > "$T/.gitignore"
+  git -C "$T" add -- .gitignore package-lock.json; git -C "$T" commit -q -m "track the lockfile (#5)"
+}
+set_aside() { # what a settle leaves that was killed after it had set the file aside
+  H="$T/.claude/.idd/state/rest-held-5"; mkdir -p "$H"; printf '[{"path": "%s", "name": "0"}]' "${1:-package-lock.json}" > "$H/held.json"
+  mv "$T/package-lock.json" "$H/0"
+}
+state_list() { # key → that list of the first attempt in the run state, as compact JSON
+  python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["attempts"][0].get(sys.argv[2], "<missing>"), separators=(",",":")))' "$(state_file)" "$1"
+}
+
+# spec-example: idd-all-rest / a file from before that the issue starts to track is put back
+for how in committed changed; do
+  new "tracks-$how" 5 9
+  lockfile; tracks_lockfile
+  WANT='{"lock": "MINE"}'
+  [ "$how" = changed ] && { WANT='{"lock": "MINE, edited"}'; printf '%s\n' "$WANT" > "$T/package-lock.json"; }
+  run record --issue 5 --reason x > /dev/null
+  settle 5 > "$S/out" 2> "$S/err"; assert_exit "tracks ($how): settle exits 0" 0 "$?"
+  assert_eq "tracks ($how): the file is in the working tree as it was" "$WANT" "$(cat "$T/package-lock.json" 2>/dev/null)"
+  assert_eq "tracks ($how): the working tree is on main and git status prints nothing" "main|" "$(head_branch)|$(git -C "$T" status --porcelain)"
+  assert_eq "tracks ($how): settle prints the path as returned" '["package-lock.json"]' "$(jget returned < "$S/out")"
+  assert_true "tracks ($how): nothing is left set aside" '[ ! -e "$T/.claude/.idd/state/rest-held-5" ]'
+  assert_eq "tracks ($how): settle made no commit" "track the lockfile (#5)" "$(git -C "$T" log -1 --format=%s idd/5-x)"
+  run report > "$S/report.out" 2>&1
+  assert_grep "tracks ($how): the report says settle put the file back" "put them back" "$(grep -F 'package-lock.json' "$S/report.out")"
+  git -C "$T" branch -q -D idd/5-x
+  assert_eq "tracks ($how): and it is still there after the kept branch is deleted" "$WANT" "$(cat "$T/package-lock.json" 2>/dev/null)"
+done
+
+# spec-example: idd-all-rest / a file set aside is put back when the checkout fails
+new tracks-refused 5 9
+ignore_local; printf 'mine\n' > "$T/local/settings.json"; printf 'notes\n' > "$T/local/notes.txt"
+begin
+git -C "$T" checkout -q --no-track -b idd/5-x origin/main
+git -C "$T" add -f -- local/notes.txt; git -C "$T" commit -q -m "track the notes (#5)"
+printf 'notes, edited\n' > "$T/local/notes.txt"
+tracked_elsewhere settings.json
+run record --issue 5 --reason x > /dev/null
+settle 5 > /dev/null 2> "$S/err"; assert_exit "tracks, refused: settle exits 3" 3 "$?"
+assert_eq "tracks, refused: both files hold what they held" "notes, edited|mine" "$(cat "$T/local/notes.txt" 2>/dev/null)|$(cat "$T/local/settings.json" 2>/dev/null)"
+assert_eq "tracks, refused: the working tree is on the issue's branch with the change it had" "idd/5-x| M local/notes.txt" "$(head_branch)|$(git -C "$T" status --porcelain)"
+assert_true "tracks, refused: nothing is left set aside" '[ ! -e "$T/.claude/.idd/state/rest-held-5" ]'
+reason_shape "tracks, refused" "$S/err"
+
+# spec-example: idd-all-rest / a file put back that the default branch does not ignore goes into the local exclude file
+new tracks-unignored 5 9
+lockfile
+begin
+git -C "$T" checkout -q --no-track -b idd/5-x origin/main
+git -C "$T" add -f -- package-lock.json; git -C "$T" commit -q -m "track the lockfile (#5)"
+git clone -q "$T.origin.git" "$S/other" 2>/dev/null; : > "$S/other/.gitignore"
+git -C "$S/other" commit -q -a -m "drop the rule"; git -C "$S/other" push -q origin main 2>/dev/null
+run record --issue 5 --reason x > /dev/null
+settle 5 > "$S/out" 2> "$S/err"; assert_exit "tracks, not ignored: settle exits 0" 0 "$?"
+assert_eq "tracks, not ignored: the file is in the working tree as it was" '{"lock": "MINE"}' "$(cat "$T/package-lock.json" 2>/dev/null)"
+assert_eq "tracks, not ignored: the working tree is on main and git status prints nothing" "main|" "$(head_branch)|$(git -C "$T" status --porcelain)"
+assert_eq "tracks, not ignored: the path is recorded as returned and as excluded" '["package-lock.json"]|["package-lock.json"]' "$(state_list returned)|$(state_list excluded)"
+assert_grep "tracks, not ignored: and it is a line of the local exclude file" "/package-lock.json" "$(cat "$T/.git/info/exclude")"
+
+# spec-example: idd-all-rest / a changed file from before that the merged issue tracks stays as it is
+new tracks-merged-edited 5 9
+lockfile; tracks_lockfile
+git -C "$T" push -q -u origin idd/5-x 2>/dev/null; squash5
+printf '{"lock": "MINE, edited"}\n' > "$T/package-lock.json"
+run record --issue 5 > /dev/null
+settle 5 > /dev/null 2> "$S/err"; assert_exit "tracks, merged, changed: settle exits 3" 3 "$?"
+assert_eq "tracks, merged, changed: the file is where it was with the change" '{"lock": "MINE, edited"}' "$(cat "$T/package-lock.json" 2>/dev/null)"
+assert_eq "tracks, merged, changed: the working tree is on main, where git shows the change" "main| M package-lock.json" "$(head_branch)|$(git -C "$T" status --porcelain)"
+assert_true "tracks, merged, changed: nothing is left set aside" '[ ! -e "$T/.claude/.idd/state/rest-held-5" ]'
+reason_shape "tracks, merged, changed" "$S/err"
+
+# spec-example: idd-all-rest / a hook that stages everything does not put a file from before into the commit
+for hook_exit in 0 1; do
+  new "hook-stages-all-$hook_exit" 5 9
+  with_tools
+  begin
+  git -C "$T" checkout -q --no-track -b idd/5-x origin/main; git -C "$T" rm -q -r tools; git -C "$T" commit -q -m "remove tools (#5)"
+  printf 'changed\n' >> "$T/a.txt"
+  hook "$T" pre-commit "#!/bin/sh
+git add -A
+exit $hook_exit"
+  run record --issue 5 --reason x > /dev/null
+  settle 5 > "$S/out" 2> "$S/err"; assert_exit "hook stages all, exits $hook_exit: settle exits 0" 0 "$?"
+  assert_eq "hook stages all, exits $hook_exit: the new commit holds a.txt and not tools/.env" "a.txt" "$(git -C "$T" show --name-only --format= idd/5-x)"
+  assert_grep "hook stages all, exits $hook_exit: its message says a hook staged files from before the run" "staged files that were in the working tree before the run" "$(git -C "$T" log -1 --format=%b idd/5-x)"
+  assert_eq "hook stages all, exits $hook_exit: the run state says the hooks were skipped" "skipped" "$(kept_of 5 | python3 -c 'import json,sys; print(json.load(sys.stdin)[0].get("hooks"))')"
+  assert_eq "hook stages all, exits $hook_exit: tools/.env is in the working tree with its content" "TOKEN=ghp_secret" "$(cat "$T/tools/.env" 2>/dev/null)"
+  assert_eq "hook stages all, exits $hook_exit: no commit of idd/5-x holds tools/.env" "" "$(git -C "$T" log --format=%h origin/main..idd/5-x -- tools/.env)"
+  assert_eq "hook stages all, exits $hook_exit: the working tree is on main and git status prints nothing" "main|" "$(head_branch)|$(git -C "$T" status --porcelain)"
+done
+
+# spec-example: idd-all-rest / a file from before that the run removed is named in the report
+new run-removed 5 9
+with_tools
+begin
+git -C "$T" checkout -q --no-track -b idd/5-x origin/main; rm -rf "$T/tools"
+run record --issue 5 --reason x > /dev/null
+settle 5 > "$S/out" 2> "$S/err"
+assert_eq "run removed: settle prints tools/.env as missing" '["tools/.env"]' "$(jget missing < "$S/out")"
+run report > "$S/report.out" 2>&1
+assert_grep "run removed: the report names the file as gone when the run ended" "tools/.env" "$(grep -F 'gone when its run ended' "$S/report.out")"
+
+# spec-example: idd-all-rest / a settle that was killed with a file set aside
+for at in idd/5-x main; do
+  new "held-killed-${at%%/*}" 5 9
+  lockfile; tracks_lockfile
+  run record --issue 5 --reason x > /dev/null
+  set_aside
+  [ "$at" = main ] && git -C "$T" checkout -q main
+  settle 5 > "$S/out" 2> "$S/err"; assert_exit "set aside, on $at: the next settle exits 0" 0 "$?"
+  assert_eq "set aside, on $at: the file is where it was, as it was" '{"lock": "MINE"}' "$(cat "$T/package-lock.json" 2>/dev/null)"
+  assert_eq "set aside, on $at: it is recorded as returned" '["package-lock.json"]' "$(state_list returned)"
+  assert_true "set aside, on $at: the folder is gone" '[ ! -e "$H" ]'
+  assert_eq "set aside, on $at: the working tree is on main and git status prints nothing" "main|" "$(head_branch)|$(git -C "$T" status --porcelain)"
+done
+new held-orphan 5 9
+lockfile; tracks_lockfile
+run record --issue 5 --reason x > /dev/null
+set_aside
+run report > "$S/report.out" 2>&1
+assert_output_grep "set aside, never settled: the report names the folder" "are still set aside in .claude/.idd/state/rest-held-5" "$S/report.out"
+git -C "$T" checkout -q main
+run start --path PR --review no > /dev/null 2> "$S/start.err"; assert_exit "set aside, never settled: a new run does not start" 3 "$?"
+assert_output_grep "set aside, never settled: and says where the files are" "still set aside in .claude/.idd/state/rest-held-5" "$S/start.err"
+assert_eq "set aside, never settled: the file is still in the folder" '{"lock": "MINE"}' "$(cat "$H/0" 2>/dev/null)"
+mv "$H/0" "$T/package-lock.json"; rm -r "$H"
+accepts "set aside, never settled: with the file moved back and the folder removed, a new run starts"
+for same in yes no; do
+  new "held-taken-$same" 5 9
+  lockfile; tracks_lockfile
+  run record --issue 5 --reason x > /dev/null
+  set_aside; git -C "$T" checkout -q main
+  if [ "$same" = yes ]; then printf '{"lock": "MINE"}\n' > "$T/package-lock.json"; else printf 'OTHER\n' > "$T/package-lock.json"; fi
+  settle 5 > "$S/out" 2> "$S/err"; rc=$?
+  if [ "$same" = yes ]; then
+    assert_exit "place taken by the same content: settle exits 0" 0 "$rc"
+    assert_true "place taken by the same content: the copy and its folder are gone" '[ ! -e "$H" ]'
+  else
+    assert_exit "place taken by other content: settle exits 3" 3 "$rc"
+    assert_eq "place taken by other content: neither file is touched" 'OTHER|{"lock": "MINE"}' "$(cat "$T/package-lock.json")|$(cat "$H/0" 2>/dev/null)"
+    assert_output_grep "place taken by other content: the reason names the folder" ".claude/.idd/state/rest-held-5" "$S/err"
+    reason_shape "place taken by other content" "$S/err"
+  fi
+done
+new held-tampered 5 9
+lockfile; tracks_lockfile
+run record --issue 5 --reason x > /dev/null
+set_aside "../escaped.txt"; git -C "$T" checkout -q main
+settle 5 > "$S/out" 2> "$S/err"; assert_exit "a list that settle did not write: settle exits 3" 3 "$?"
+assert_true "a list that settle did not write: nothing is written outside the working tree" '[ ! -e "$S/escaped.txt" ] && [ -f "$H/0" ]'
+
+# spec-example: idd-all-rest / the step that creates the branch does not overwrite a file git ignores
+new step05 5
+printf '.vscode/\n' >> "$T/.git/info/exclude"; mkdir -p "$T/.vscode"; printf 'MINE\n' > "$T/.vscode/settings.json"
+git clone -q "$T.origin.git" "$S/other" 2>/dev/null; mkdir -p "$S/other/.vscode"; printf 'TEAM\n' > "$S/other/.vscode/settings.json"
+git -C "$S/other" add .vscode; git -C "$S/other" commit -q -m "team settings"; git -C "$S/other" push -q origin main 2>/dev/null
+CREATE=$(grep -F -- '--no-track -b "$BRANCH" "origin/$DEFAULT"' "$SKILL" | grep -F 'git -C')
+assert_eq "skill: one line of Step 0.5 creates the branch from the remote default branch" "1" "$(printf '%s\n' "$CREATE" | grep -c .)"
+assert_grep "skill: it checks out in the way that does not overwrite a file git ignores" "--no-overwrite-ignore" "$CREATE"
+assert_grep "skill: and so does the line that takes up a branch on the remote" "--no-overwrite-ignore" "$(grep -F 'git -C' "$SKILL" | grep -F -- '-b "$BRANCH" "origin/$BRANCH"')"
+git -C "$T" fetch -q origin main
+(CWD="$T"; BRANCH=idd/5-x; DEFAULT=main; eval "$(printf '%s\n' "$CREATE" | sed 's/ *|| abort.*$//; s/ *#.*$//')") > /dev/null 2> "$S/git.err"; rc=$?
+assert_true "step 0.5: that line, run as it is written, fails while the file is in the way" "[ $rc != 0 ]"
+assert_eq "step 0.5: and the file still holds what it held" "MINE" "$(cat "$T/.vscode/settings.json")"
+assert_output_grep "step 0.5: git names the file" ".vscode/settings.json" "$S/git.err"
+
 # spec-example: idd-all-rest / the steps a stop names lead to a run that starts
 for stop in lock other-branch default merge merge-default unmerged unclean state fetch fast-forward; do
   new "follow-$stop" 5 9
@@ -1307,7 +1481,7 @@ assert_eq "two branches: the one with work is kept" '[{"branch":"idd/5-x","commi
 python3 "$HERE/endings.py" "$RQ" "$PLUGIN/scripts/process-attachments.sh" > "$WORK/endings.out" 2>&1; rc=$?
 assert_exit "endings: every row of the table holds" 0 "$rc"
 [ "$rc" = 0 ] || sed -n "1,40p" "$WORK/endings.out"
-assert_output_grep "endings: and it ran all of them" "27 rows, 0 failure(s)" "$WORK/endings.out"
+assert_output_grep "endings: and it ran all of them" "29 rows, 0 failure(s)" "$WORK/endings.out"
 
 # spec-example: idd-all-rest / an empty issue branch is deleted
 new empty-branch 5 9
@@ -1727,7 +1901,7 @@ assert_eq "rendering: the issues it hit are unreadable" "[5,9]" "$(printf '%s' "
 python3 "$HERE/settle_matrix.py" "$RQ" > "$WORK/matrix.out" 2>&1; rc=$?
 assert_exit "settle matrix: every combination matches the table" 0 "$rc"
 [ "$rc" = 0 ] || sed -n "1,40p" "$WORK/matrix.out"
-assert_output_grep "settle matrix: and it ran all of them" "240 cases, 0 mismatch(es)" "$WORK/matrix.out"
+assert_output_grep "settle matrix: and it ran all of them" "288 cases, 0 mismatch(es)" "$WORK/matrix.out"
 
 echo "── the skill ──"
 # spec-example: idd-all-rest / the skill names the loop commands in order

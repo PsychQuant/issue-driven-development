@@ -65,12 +65,17 @@ def held_by(tree, ref, path, digest):
     return proc.returncode == 0 and hashlib.sha256(proc.stdout).hexdigest() == digest
 
 
-def account(tree, at_handout, before, refs=(), discarded=()):
+def account(tree, at_handout, before, refs=(), discarded=(), run_changed=()):
     """The problems after settle. `at_handout` is handout() from before `next`, `before` is snapshot() from before
     settle, `refs` are commits that may hold what settle took out of the working tree, `discarded` are the
-    regenerated records settle reported."""
+    regenerated records settle reported. `run_changed` are files from before the run that the fixture's run of the
+    issue changed or removed itself: each is held to what it was when settle began, not to what it was at hand-out."""
     after, problems = snapshot(tree), []
     for path, digest in sorted(at_handout.items()):
+        if path in run_changed:
+            digest = before.get(path)
+            if digest is None:       # the run removed it: settle has nothing to keep
+                continue
         if path not in after:
             problems.append(f"{path} was in the working tree before the issue was handed out and is gone")
         elif after[path] != digest:

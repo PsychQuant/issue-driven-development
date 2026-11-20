@@ -97,6 +97,10 @@ ROWS = [
          gh="9", exit=0, branches=[B], excluded=["tools/.env"], later="closed"),
     dict(id="stop-rule-rewritten", on="own", work=True, work_rewrite_ignore=True, exit=0, branches=[B], later="existing"),
     dict(id="local-default-rule", on="own", local_rule=True, exit=0, branches=[], later="handed"),
+    dict(id="stop-tracks-file-from-before", on="own", work=True, work_track_before=True, exit=0, branches=[B],
+         returned=["local/settings.json"], later="existing"),
+    dict(id="stop-hook-stages-everything", on="own", work=True, work_rm_tools=True, leave=["edit", "staging-hook"], exit=0,
+         branches=[B], committed=["a.txt"], no_hooks=True, later="existing"),
     dict(id="stop-after-verify-failed", on="own", work=True, leave=["manifest", "log"], gh="5:blocking=verify findings",
          exit=0, branches=[B], committed=[LOG], discarded=[M], later="blocked"),
     dict(id="stop-at-close-stage", on="own", work=True, upstream=True, leave=["manifest", "log"],
@@ -154,6 +158,10 @@ CELLS = {
         'nothing of the run; `local/settings.json`, which that branch no longer ignores'),
     'local-default-rule': ('`idd/5-x`, no commit',
         'nothing of the run; `settings.local.json`, which that branch does not ignore'),
+    'stop-tracks-file-from-before': ('`idd/5-x`, one commit',
+        'nothing of the run; `local/settings.json`, which that branch tracks'),
+    'stop-hook-stages-everything': ('`idd/5-x`, one commit',
+        'a changed `a.txt`; `tools/.env`, which that branch no longer ignores'),
     'stop-after-verify-failed': ('`idd/5-x`, one commit',
         'the untracked manifest and one new line in the tracked `.claude/.idd/routing-stats.jsonl`'),
     'stop-at-close-stage': ('`idd/5-x`, one commit, with an upstream',
@@ -353,6 +361,9 @@ def build(base, stub, row):
             git(tree, "add", "--", ".gitignore")
         if row.get("work_rm_tools"):   # a commit of the issue deletes a folder together with its own ignore rules
             git(tree, "rm", "-q", "-r", "tools")
+        if row.get("work_track_before"):   # a commit of the issue drops the rule `local/` and starts to track the file it covered
+            write(os.path.join(tree, ".gitignore"), "coverage/\n")
+            git(tree, "add", "--", ".gitignore", "local/settings.json")
         if row.get("work_rewrite_ignore"):   # a commit of the issue rewrites the top ignore rules and drops `local/`
             write(os.path.join(tree, ".gitignore"), "coverage/\n")
             git(tree, "add", "--", ".gitignore")
@@ -383,6 +394,8 @@ def build(base, stub, row):
             write(os.path.join(tree, ".claude/.idd/tree-lock"), "pid\n")
         elif kind == "rejecting-hook":   # a lint hook: it rejects what the run left
             executable(os.path.join(tree, ".git", "hooks", "pre-commit"), "#!/bin/sh\necho 'lint: a.txt fails' >&2\nexit 1\n")
+        elif kind == "staging-hook":     # a hook that formats and stages everything again, and lets the commit through
+            executable(os.path.join(tree, ".git", "hooks", "pre-commit"), "#!/bin/sh\ngit add -A\n")
         elif kind == "ignored":          # written by the run, ignored by a rule the issue's branch has
             write(os.path.join(tree, "coverage", "report.txt"), "the report\n")
         elif kind == "ignored-tracked":  # written by the run, ignored on the branch, tracked on the default branch
@@ -522,7 +535,13 @@ def check(base, stub, row):
     for path in row.get("excluded", []):
         if not any(path in ln and "exclude" in ln for ln in report.splitlines()):
             problems.append(f"the report does not say that {path} went into the local exclude file")
-    if any(p in report for p in at_handout if p not in row.get("excluded", [])):
+    returned = attempt.get("returned", [])
+    if returned != row.get("returned", []):
+        problems.append(f"the run state says settle put these back: {returned}, want {row.get('returned', [])}")
+    for path in row.get("returned", []):
+        if not any(path in ln and "put them back" in ln for ln in report.splitlines()):
+            problems.append(f"the report does not say that settle put {path} back")
+    if any(p in report for p in at_handout if p not in row.get("excluded", []) + row.get("returned", [])):
         problems.append("the report names a file that was there before the run as something the run left")
     if row["later"] == "closed":   # what the report says about a closed issue, and what a later run knows of it
         lines = [ln for ln in report.splitlines() if B in ln]
