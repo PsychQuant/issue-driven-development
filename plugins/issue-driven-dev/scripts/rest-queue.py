@@ -82,8 +82,9 @@ def step():
             fh.write(str(_STEPS[0]))
 
 
-# git as this helper calls it: what git prints for the helper does not depend on the person's configuration
-GIT = ["git", "-c", "diff.relative=false", "-c", "log.showSignature=false", "-c", "core.quotePath=false", "-c", "color.ui=false"]
+# git as this helper calls it: no signature lines in a log, no quoted paths, no colours, whatever the person's
+# configuration says. (The one `git diff` that lists paths asks for paths from the top itself: --no-relative.)
+GIT = ["git", "-c", "log.showSignature=false", "-c", "core.quotePath=false", "-c", "color.ui=false"]
 _print = print
 
 

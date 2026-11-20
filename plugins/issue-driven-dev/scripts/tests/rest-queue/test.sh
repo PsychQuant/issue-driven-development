@@ -1216,6 +1216,7 @@ settle 5 > "$S/out" 2> "$S/err"; assert_exit "a rule un-ignores the file: settle
 assert_eq "a rule un-ignores the file: the file is in the working tree as it was" '{"lock": "MINE"}' "$(cat "$T/package-lock.json" 2>/dev/null)"
 assert_eq "a rule un-ignores the file: the run state does not say it was excluded" "[]" "$(state_list excluded | sed 's/"<missing>"/[]/')"
 assert_eq "a rule un-ignores the file: the local exclude file has no line for it" "0" "$(grep -c 'package-lock' "$T/.git/info/exclude")"
+assert_eq "a rule un-ignores the file: and no comment line of settle is left behind" "0" "$(grep -c 'idd rest' "$T/.git/info/exclude")"
 assert_output_grep "a rule un-ignores the file: the reason names it" "package-lock.json" "$S/err"
 assert_output_grep "a rule un-ignores the file: and says the local exclude file cannot hide it" "local exclude file cannot hide" "$S/err"
 reason_shape "a rule un-ignores the file" "$S/err"
