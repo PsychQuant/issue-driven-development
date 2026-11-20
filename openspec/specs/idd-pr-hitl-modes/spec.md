@@ -120,6 +120,12 @@ code:
   - AGENTS.md
 -->
 
+##### Example: the skill asks once in rest mode and offers only the PR path
+
+- **GIVEN** `skills/idd-all/SKILL.md`
+- **WHEN** the preflight step of its rest section and its Step 0.5 are read
+- **THEN** the preflight step says that `pr_policy: ask` is asked once there, that the question is whether to start the run on the PR path, and that direct-commit is not offered; and Step 0.5 says that in rest mode the path is not resolved again for each issue
+
 ---
 ### Requirement: PR path preserves v2.40.0 behavior
 
