@@ -1248,6 +1248,23 @@ run record --issue 5 --reason x > /dev/null
 set_aside "../escaped.txt"; git -C "$T" checkout -q main
 settle 5 > "$S/out" 2> "$S/err"; assert_exit "a list that settle did not write: settle exits 3" 3 "$?"
 assert_true "a list that settle did not write: nothing is written outside the working tree" '[ ! -e "$S/escaped.txt" ] && [ -f "$H/0" ]'
+new held-not-recorded 5 9
+lockfile; tracks_lockfile
+run record --issue 5 --reason x > /dev/null
+set_aside "a-path-nobody-recorded.txt"; git -C "$T" checkout -q main
+settle 5 > "$S/out" 2> "$S/err"; assert_exit "a list with a path that was not recorded at hand-out: settle exits 3" 3 "$?"
+assert_true "a list with a path that was not recorded at hand-out: nothing is written" '[ ! -e "$T/a-path-nobody-recorded.txt" ] && [ -f "$H/0" ]'
+new held-behind-a-link 5 9
+ignore_local; printf 'mine\n' > "$T/local/settings.json"
+begin
+git -C "$T" checkout -q --no-track -b idd/5-x origin/main
+git -C "$T" add -f -- local/settings.json; git -C "$T" commit -q -m "track the settings (#5)"
+run record --issue 5 --reason x > /dev/null
+H="$T/.claude/.idd/state/rest-held-5"; mkdir -p "$H" "$S/outside"; printf '[{"path": "local/settings.json", "name": "0"}]' > "$H/held.json"
+mv "$T/local/settings.json" "$H/0"; git -C "$T" checkout -q main; rm -rf "$T/local"; ln -s "$S/outside" "$T/local"
+settle 5 > "$S/out" 2> "$S/err"; assert_exit "the place is below a folder that is a link: settle exits 3" 3 "$?"
+assert_true "the place is below a folder that is a link: nothing is written where the link points" '[ ! -e "$S/outside/settings.json" ] && [ -f "$H/0" ]'
+assert_output_grep "the place is below a folder that is a link: the reason names the folder" ".claude/.idd/state/rest-held-5" "$S/err"
 
 # spec-example: idd-all-rest / the step that creates the branch does not overwrite a file git ignores
 new step05 5

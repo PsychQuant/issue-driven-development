@@ -833,10 +833,23 @@ def same_file(a, b):
     return os.path.isfile(a) and os.path.isfile(b) and filecmp.cmp(a, b, shallow=False)
 
 
-def put_back(cwd, top, n):
+def no_link_on_the_way(top, path):
+    """True when no folder between the top of the repository and this path is a symbolic link: a file moved to
+    such a path would land wherever the link points."""
+    probe = top
+    for part in path.split("/")[:-1]:
+        probe = os.path.join(probe, part)
+        if os.path.islink(probe):
+            return False
+    return True
+
+
+def put_back(cwd, top, n, before):
     """Move what hold_back() set aside to where it was, and return the paths moved. A place that is taken again
     is left as it is: when it holds the same thing the copy is removed, otherwise the copy stays where it is and
-    settle stops, naming the folder. The folder is removed only when nothing is left in it."""
+    settle stops, naming the folder. A place below a folder that is a symbolic link counts as taken. The list is
+    used only when every path in it is one recorded at hand-out (`before`). The folder is removed only when
+    nothing is left in it."""
     folder = held_dir(cwd, n)
     if not os.path.isdir(folder):
         return []
@@ -849,10 +862,13 @@ def put_back(cwd, top, n):
         for e in entries:
             path, name = e["path"], e["name"]
             if (not isinstance(path, str) or not isinstance(name, str) or not name.isdigit() or not path
-                    or os.path.isabs(path) or ".." in path.split("/")):
+                    or os.path.isabs(path) or ".." in path.split("/") or not covers(before, path)):
                 raise ValueError("an entry of the list is not one settle wrote")
             src, dest = os.path.join(folder, name), os.path.join(top, path)
             if not os.path.lexists(src):       # never moved, or put back by an earlier call
+                continue
+            if not no_link_on_the_way(top, path):
+                taken.append(path)
                 continue
             if os.path.lexists(dest):
                 if same_file(src, dest):
@@ -1412,7 +1428,7 @@ def settle_tree(cwd, n, default, branch, last, st):
     pre = git(cwd, ["rev-parse", "--show-prefix"], "could not read where the working tree lies in the repository", look).strip()
     top = git(cwd, ["rev-parse", "--show-toplevel"], "could not read the top of the repository", look).strip()
     # an earlier call was killed between setting files aside and putting them back: they go back before anything is read
-    returned = put_back(cwd, top, n)
+    returned = put_back(cwd, top, n, before)
     if branch != default:   # back where they were on the issue's branch: the checkout below sets them aside again
         returned = []
     if "missing" not in last:   # read once, before settle does anything: what the issue's run itself took away
@@ -1487,7 +1503,7 @@ def settle_tree(cwd, n, default, branch, last, st):
             hold_back(cwd, top, n, default_files, before, f"look at that{back}, {AGAIN}")
             rc, _, err = run_cmd(["git", "-C", cwd, "checkout", "-q", "--no-overwrite-ignore", default, "--"])
         finally:  # wherever the working tree is now, and however this went
-            returned = put_back(cwd, top, n)
+            returned = put_back(cwd, top, n, before)
         if rc != 0 and current_branch(cwd) != default:            # a hook that fails after the checkout does not undo it
             raise GitFailed("could not check out the default branch", one_line(err, 200) or "git exited " + str(rc),
                             f"run {checkout_cmd(default)} and move away each file it names until it succeeds, then move away "
