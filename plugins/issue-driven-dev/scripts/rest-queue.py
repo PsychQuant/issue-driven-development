@@ -800,16 +800,16 @@ def held_folders(cwd):
     return sorted(int(m.group(1)) for m in map(HELD_RE.match, names) if m)
 
 
-def hold_back(cwd, top, n, default_files, before, todo):
+def hold_back(cwd, top, n, here, default_files, before, todo):
     """A file from before the run that the issue's branch tracks and the default branch does not would leave the
     working tree with the checkout: the issue committed a file git used to ignore. Each such file is moved below
     the state folder (a rename: its bytes, its mode and its times stay as they are), so that the checkout finds
     nothing of it to remove and no change to refuse. put_back() moves it to where it was, whether the checkout
-    succeeded or not. The list of what is moved is written before anything is moved."""
+    succeeded or not. The list of what is moved is written before anything is moved. `here` are the files the
+    issue's branch tracks."""
     what = "could not set aside a file from before the run that the issue's branch tracks"
-    out = git(cwd, ["ls-files", "-z", "--full-name", "--", ":(top)"], "could not read what the issue's branch tracks", todo)
-    held = sorted(f for f in set(out.split("\0"))
-                  if f and covers(before, f) and f not in default_files and os.path.lexists(os.path.join(top, f)))
+    held = sorted(f for f in here
+                  if covers(before, f) and f not in default_files and os.path.lexists(os.path.join(top, f)))
     if not held:
         return
     folder = held_dir(cwd, n)
@@ -1496,11 +1496,21 @@ def settle_tree(cwd, n, default, branch, last, st):
             if behind and not ahead:   # move the default branch while it is not checked out: a merged issue is then not in the way
                 run_cmd(["git", "-C", cwd, "fetch", "-q", ".", f"refs/remotes/origin/{default}:refs/heads/{default}"])   # git allows a fast-forward only; refused: left
         default_files = tracked_by(cwd, default)
+        out = git(cwd, ["ls-files", "-z", "--full-name", "--", ":(top)"], "could not read what the issue's branch tracks", look)
+        here = {f for f in out.split("\0") if f}
+        out = git(cwd, ["diff", "--name-only", "-z", "HEAD", f"refs/heads/{default}", "--"],
+                  "could not compare the issue's branch with the default branch", look)
+        differs = {f for f in out.split("\0") if f}
+        # both branches track it, each with its own content: git takes it for an ordinary tracked file and a checkout replaces it
+        clash = sorted(f for f in here & default_files & differs if covers(before, f) and os.path.lexists(os.path.join(top, f)))
+        if clash:
+            raise trouble(n, on, "a checkout would replace files from before the run: the default branch tracks them with other content",
+                          f"move those files away{back}", clash)
         way = in_the_way(top, default_files, ignored, before)
         if way:   # a plain checkout would overwrite these without a word
             make_stash(cwd, n, branch, "tracked", way, last, st, f"move those files away{back}, {AGAIN}")
         try:      # a file from before the run that the branch tracks would leave the working tree with the checkout
-            hold_back(cwd, top, n, default_files, before, f"look at that{back}, {AGAIN}")
+            hold_back(cwd, top, n, here, default_files, before, f"look at that{back}, {AGAIN}")
             rc, _, err = run_cmd(["git", "-C", cwd, "checkout", "-q", "--no-overwrite-ignore", default, "--"])
         finally:  # wherever the working tree is now, and however this went
             returned = put_back(cwd, top, n, before)

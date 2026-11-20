@@ -67,6 +67,7 @@ The rows above are about what an issue's run writes. A working tree also holds a
 | The same path, when the issue is merged and the default branch no longer ignores it either | added to `.git/info/exclude` | The file is untouched; the report names the path |
 | A path git ignored at hand-out that the default branch has come to track | stops | The checkout would overwrite it; `settle` exits 3 |
 | A path git ignored at hand-out that the issue committed on its branch | put back | A checkout takes it out of the working tree; `settle` moves it to `rest-held-<N>/` below the state folder for the checkout and back afterwards |
+| A path git ignored at hand-out that the issue committed and the default branch has come to track with other content | stops | A checkout would replace it without a word; `settle` exits 3 before the checkout |
 | A path git ignored at hand-out that the issue's run deleted | named in the report | `settle` cannot bring it back |
 
 ## What this inventory and its check cannot see

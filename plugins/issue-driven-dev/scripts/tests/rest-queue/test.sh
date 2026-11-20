@@ -1048,6 +1048,29 @@ assert_grep "stopped, pushed: the report names idd/5-x with what its commit hold
 refute_grep "stopped, pushed: and gives no delete step for it" "deleting it" "$LINE"
 assert_grep "stopped, pushed: the report names idd/5-y as a branch of #5 without a commit of its own" "idd/5-y" "$(grep -F 'no commit of its own' "$S/report.out")"
 
+# spec-example: idd-all-rest / a settle that stopped gives the delete step only where the record says no upstream
+for record in none dropped; do
+  new "stopped-$record" 5 9
+  begin
+  git -C "$T" checkout -q --no-track -b idd/5-x origin/main; printf 'w\n' > "$T/w.txt"; git -C "$T" add w.txt; git -C "$T" commit -q -m "work (#5)"
+  printf 'changed\n' >> "$T/a.txt"
+  hook "$T" post-checkout '#!/bin/sh
+printf "stray\n" > stray.txt'
+  run record --issue 5 --reason x > /dev/null
+  settle 5 > /dev/null 2> "$S/err"; assert_exit "stopped, upstream $record: settle exits 3" 3 "$?"
+  if [ "$record" = dropped ]; then   # a record that does not say whether the branch has an upstream
+    python3 -c 'import json,sys; p=sys.argv[1]; s=json.load(open(p)); [k.pop("upstream", None) for k in s["attempts"][0]["kept"]]; json.dump(s, open(p,"w"))' "$(state_file)"
+  fi
+  ended
+  LINE=$(grep -F 'branch idd/5-x is kept' "$S/report.out")
+  assert_grep "stopped, upstream $record: the report names idd/5-x with what its commit holds" "a.txt" "$LINE"
+  if [ "$record" = none ]; then
+    assert_grep "stopped, upstream none: and gives the delete step for it" "it has no upstream: deleting it" "$LINE"
+  else
+    refute_grep "stopped, upstream dropped from the record: and gives no delete step for it" "deleting it" "$LINE"
+  fi
+done
+
 # spec-example: idd-all-rest / a file the default branch tracks is not overwritten
 ignore_local() { printf 'local/\n' > "$T/.gitignore"; git -C "$T" add .gitignore; git -C "$T" commit -q -m "ignore local"; git -C "$T" push -q origin main 2>/dev/null; mkdir -p "$T/local"; }
 tracked_elsewhere() { # someone else commits the same paths on origin/main
@@ -1107,6 +1130,19 @@ set_aside() { # what a settle leaves that was killed after it had set the file a
 state_list() { # key → that list of the first attempt in the run state, as compact JSON
   python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["attempts"][0].get(sys.argv[2], "<missing>"), separators=(",",":")))' "$(state_file)" "$1"
 }
+
+# spec-example: idd-all-rest / a path whose rule someone else removed goes into the local exclude file and not into a stash
+new exclude-elsewhere 5 9
+lockfile
+begin
+git -C "$T" checkout -q --no-track -b idd/5-x origin/main; printf 'w\n' > "$T/w.txt"; git -C "$T" add w.txt; git -C "$T" commit -q -m "work (#5)"
+git clone -q "$T.origin.git" "$S/other" 2>/dev/null; : > "$S/other/.gitignore"
+git -C "$S/other" commit -q -a -m "drop the rule"; git -C "$S/other" push -q origin main 2>/dev/null
+run record --issue 5 --reason x > /dev/null
+settle 5 > "$S/out" 2> "$S/err"; assert_exit "exclude, rule removed elsewhere: settle exits 0" 0 "$?"
+assert_eq "exclude, rule removed elsewhere: the file is in the working tree as it was" '{"lock": "MINE"}' "$(cat "$T/package-lock.json" 2>/dev/null)"
+assert_eq "exclude, rule removed elsewhere: it is recorded as excluded, and no stash was made" '["package-lock.json"]|[]|' "$(jget excluded < "$S/out")|$(jget stashes < "$S/out")|$(git -C "$T" stash list)"
+assert_eq "exclude, rule removed elsewhere: the working tree is on main and git status prints nothing" "main|" "$(head_branch)|$(git -C "$T" status --porcelain)"
 
 # spec-example: idd-all-rest / a file from before that the issue starts to track is put back
 for how in committed changed; do
@@ -1168,6 +1204,23 @@ assert_eq "tracks, merged, changed: the file is where it was with the change" '{
 assert_eq "tracks, merged, changed: the working tree is on main, where git shows the change" "main| M package-lock.json" "$(head_branch)|$(git -C "$T" status --porcelain)"
 assert_true "tracks, merged, changed: nothing is left set aside" '[ ! -e "$T/.claude/.idd/state/rest-held-5" ]'
 reason_shape "tracks, merged, changed" "$S/err"
+
+# spec-example: idd-all-rest / a file from before that both branches track with different content stops the run
+new tracks-clash 5 9
+lockfile; tracks_lockfile
+git clone -q "$T.origin.git" "$S/other" 2>/dev/null; printf 'THEIRS\n' > "$S/other/package-lock.json"
+git -C "$S/other" add -f package-lock.json; git -C "$S/other" commit -q -m "a lockfile of the team"; git -C "$S/other" push -q origin main 2>/dev/null
+run record --issue 5 --reason x > /dev/null
+settle 5 > /dev/null 2> "$S/err"; assert_exit "tracks, both: settle exits 3" 3 "$?"
+assert_eq "tracks, both: the file holds what it held" '{"lock": "MINE"}' "$(cat "$T/package-lock.json" 2>/dev/null)"
+assert_eq "tracks, both: the working tree is on the issue's branch, unchanged" "idd/5-x|" "$(head_branch)|$(git -C "$T" status --porcelain)"
+assert_output_grep "tracks, both: the reason says to move the file away and gives the checkout" "move those files away, then git checkout --no-overwrite-ignore main, then" "$S/err"
+assert_output_grep "tracks, both: and names the file" "package-lock.json" "$S/err"
+reason_shape "tracks, both" "$S/err"
+ended
+mv "$T/package-lock.json" "$S/lock.kept"; git -C "$T" checkout -q --no-overwrite-ignore main
+assert_eq "tracks, both: with the file moved away, that checkout brings the version of the default branch" "THEIRS" "$(cat "$T/package-lock.json" 2>/dev/null)"
+accepts "tracks, both: and a new run starts"
 
 # spec-example: idd-all-rest / a hook that stages everything does not put a file from before into the commit
 for hook_exit in 0 1; do

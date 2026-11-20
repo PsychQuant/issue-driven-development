@@ -359,7 +359,7 @@ What was in the working tree before an issue was handed out is not that issue's 
 
 Three cases have a step of their own:
 
-- **The issue's branch tracks a path recorded at hand-out, and the default branch does not** (the issue committed a file git used to ignore). A checkout of the default branch takes such a file out of the working tree. Before the checkout `settle` SHALL move each such file into a folder of its own below the state folder, and after the checkout, whether it succeeded or failed, SHALL move each back to where it was; it records the paths it moved back on the default branch as returned. The list of what is moved SHALL be written before anything is moved, and a later `settle` for the issue SHALL first move back what an earlier one left there. A place that is taken again by something else is left as it is and so is the file set aside: `settle` SHALL exit 3 and name the folder. A place below a folder that is a symbolic link counts as taken, and a list that names a path which was not recorded at hand-out is not used at all: in both cases nothing is moved. While that folder exists, `start` SHALL NOT start a new run (exit code 3, naming the folder), and the report SHALL name it.
+- **The issue's branch tracks a path recorded at hand-out, and the default branch does not** (the issue committed a file git used to ignore). A checkout of the default branch takes such a file out of the working tree. Before the checkout `settle` SHALL move each such file into a folder of its own below the state folder, and after the checkout, whether it succeeded or failed, SHALL move each back to where it was; it records the paths it moved back on the default branch as returned. The list of what is moved SHALL be written before anything is moved, and a later `settle` for the issue SHALL first move back what an earlier one left there. A place that is taken again by something else is left as it is and so is the file set aside: `settle` SHALL exit 3 and name the folder. A place below a folder that is a symbolic link counts as taken, and a list that names a path which was not recorded at hand-out is not used at all: in both cases nothing is moved. While that folder exists, `start` SHALL NOT start a new run (exit code 3, naming the folder), and the report SHALL name it. When the default branch tracks such a path too, and with other content than the issue's branch has, git takes it for an ordinary tracked file and a checkout replaces it without a word: `settle` SHALL exit 3 before the checkout, with the file untouched, and name the paths.
 - **A commit hook of the repository staged a path recorded at hand-out** into the commit of step 3 (a hook that runs `git add -A`), whether the hook then let the commit through or failed. `settle` SHALL undo that commit, take those paths out of the index, and make the commit without the repository's hooks; the body of the commit message SHALL say that a hook staged files from before the run. When nothing else was staged, `settle` makes no commit.
 - **A path recorded at hand-out is gone when `settle` begins**: the issue's run removed it. `settle` cannot bring it back. It SHALL record the path as missing, and the report names it.
 
@@ -407,6 +407,8 @@ After `settle` stops, `idd-all` ends the run with its report, so the next `/idd-
 | git reports unmerged paths and no unfinished operation | a branch of the issue | resolve them, commit or remove what is left, then that checkout |
 | a place that is never committed holds a file git does not ignore | a branch of the issue | have git ignore them, commit or remove what else is left, then that checkout |
 | the checkout would overwrite a file git ignores (a path recorded at hand-out that the default branch has come to track) | a branch of the issue | run that checkout and move away each file it names until it succeeds, then move away what `git status` shows as untracked |
+| a checkout would replace a file from before the run (the issue's branch and the default branch both track it, with different content) | a branch of the issue | move those files away, then that checkout |
+| a file that was set aside for the checkout cannot be put back: its place is taken | wherever the checkout left it | compare each with its copy in the folder the reason names, keep the one you want in the working tree, remove the folder |
 | something is left on the default branch | the default branch | commit them elsewhere or move them away |
 | the working tree is on another branch | that branch | commit or remove what is left there, then that checkout |
 | `origin` cannot be reached | the default branch | check that origin can be reached |
@@ -414,7 +416,7 @@ After `settle` stops, `idd-all` ends the run with its report, so the next `/idd-
 | the working tree is not clean after the checkout | the default branch | commit what is there elsewhere or move it away |
 | the run state holds no usable default branch | a branch of the issue | commit or remove what is left, check out the default branch of the repository |
 
-This table is closed. `settle` stops in these other ways too, and this list is closed as well: a git command it needs fails (reading the status, what git ignores, a branch, an upstream or a commit; staging; the commit when the repository has no commit hook; the commit made without the hooks; discarding a regenerated record; making or finding a stash; comparing the default branch with `origin`), the local exclude file or the run state cannot be written, a path that would go into the local exclude file holds a line break, or `settle` fails in a way it does not know. For these the reason carries git's own words or the error, and names looking at that and running the same command again as the next step. This requirement does not promise that this step is enough.
+This table is closed. `settle` stops in these other ways too, and this list is closed as well: a git command it needs fails (reading the status, what git ignores, a branch, an upstream or a commit; staging; the commit when the repository has no commit hook; the commit made without the hooks; discarding a regenerated record; making or finding a stash; comparing the default branch with `origin` or with the issue's branch; setting a file aside, or reading the list of what was set aside), the local exclude file or the run state cannot be written, a path that would go into the local exclude file holds a line break, or `settle` fails in a way it does not know. For these the reason carries git's own words or the error, and names looking at that and running the same command again as the next step. This requirement does not promise that this step is enough.
 
 When the attempt recorded last was not settled (a `settle` that stopped), the report SHALL name every local branch of that issue that has no commit of its own and no upstream, and say that deleting it lets a later rest run start the issue over: `settle` deletes such a branch only at its end.
 
@@ -602,6 +604,12 @@ The endings of the single-issue pipeline on the PR path that the inventory of it
 - **WHEN** `settle --issue 5` runs, then `report`, and then `idd/5-x` is deleted
 - **THEN** in each row `settle` exits 0, makes no commit and prints `package-lock.json` as returned, the working tree is on `main` and `git status --porcelain` prints nothing, no folder is left below the state folder, `package-lock.json` is in the working tree with the content of the row, the report says that `settle` put it back, and it is still there after the branch is deleted
 
+##### Example: a file from before that both branches track with different content stops the run
+
+- **GIVEN** the repository and the branch of the Example above (`idd/5-x` tracks `package-lock.json` with `{"lock": "MINE"}`), a newer commit on `origin/main` that tracks `package-lock.json` with the content `THEIRS`, and #5 recorded as stopped
+- **WHEN** `settle --issue 5` runs, `idd-all` ends the run with `stop` and `report`, the person moves `package-lock.json` away and runs `git checkout --no-overwrite-ignore main`, and a new run is started
+- **THEN** `settle` exits 3 with the working tree on `idd/5-x` and nothing for `git status --porcelain` to print, `package-lock.json` holds `{"lock": "MINE"}`, the reason line names the file and says to move it away and then gives that checkout; after the person's steps `package-lock.json` holds `THEIRS`, and the new run starts
+
 ##### Example: a file set aside is put back when the checkout fails
 
 - **GIVEN** a repository whose `.gitignore` has the rule `local/`, with `local/settings.json` holding `mine` and `local/notes.txt` before the run; #5 handed out by `next`; `idd/5-x` with one commit that adds `local/notes.txt`; `local/notes.txt` then changed to `notes, edited` and not committed; a newer commit on `origin/main` that tracks `local/settings.json`; and #5 recorded as stopped
@@ -662,6 +670,12 @@ The endings of the single-issue pipeline on the PR path that the inventory of it
 - **WHEN** `settle --issue 5` runs, then `next`, and at the end of the run `report`
 - **THEN** `settle` exits 0 and prints `tools/.env` as excluded, `.git/info/exclude` holds the line `/tools/.env` under a comment line that names #5, `tools/.env` still holds `TOKEN=ghp_secret`, `git status --porcelain` prints nothing, `next` hands out #9, and the report says under the entry of #5 that `tools/.env` was there before the run, is no longer ignored by the default branch and was added to `.git/info/exclude`
 
+##### Example: a path whose rule someone else removed goes into the local exclude file and not into a stash
+
+- **GIVEN** a repository whose `.gitignore` has the rule `package-lock.json`, with the file `package-lock.json` holding `{"lock": "MINE"}` before the run; #5 handed out by `next`; `idd/5-x` with one commit that adds `w.txt` and still has the rule; a newer commit on `origin/main`, made by someone else, that empties `.gitignore`; and #5 recorded as stopped
+- **WHEN** `settle --issue 5` runs
+- **THEN** it exits 0, `package-lock.json` is in the working tree with `{"lock": "MINE"}`, `settle` prints the path as excluded and no stash, `git stash list` prints nothing, and the working tree is on `main` with nothing for `git status --porcelain` to print: a path from before the run is not stashed even though the issue's branch ignores it
+
 ##### Example: what a rejecting hook wrote is looked at again
 
 - **GIVEN** #5 recorded as stopped, the working tree on `idd/5-x` with a changed tracked file `a.txt`, and a pre-commit hook that writes the file of the row and exits 1
@@ -679,6 +693,18 @@ The endings of the single-issue pipeline on the PR path that the inventory of it
 - **GIVEN** #5 recorded as stopped, the working tree on `idd/5-x`, which has one commit and an upstream, with a changed tracked file `a.txt`, an untracked `stray.txt` written by a post-checkout hook of the repository, and a second local branch `idd/5-y` with no commit of its own and no upstream
 - **WHEN** `settle --issue 5` runs, and then `stop` and `report`
 - **THEN** `settle` exits 3 after it committed `a.txt` on `idd/5-x`; the line of `idd/5-x` in the report does not say that deleting it lets a later rest run start the issue over; and the report names `idd/5-y` as a branch of #5 without a commit of its own whose deletion lets a later rest run start the issue over
+
+##### Example: a settle that stopped gives the delete step only where the record says no upstream
+
+- **GIVEN** #5 recorded as stopped, the working tree on `idd/5-x`, which has one commit and no upstream, with a changed tracked file `a.txt`, and an untracked `stray.txt` written by a post-checkout hook of the repository
+
+  | the record of the kept branch in the run state, when the report is made | the line of `idd/5-x` in the report |
+  | --- | --- |
+  | as `settle` wrote it: no upstream | says that it has no upstream and that deleting it lets a later rest run start the issue over |
+  | without the entry that says whether it has an upstream | does not say that |
+
+- **WHEN** `settle --issue 5` runs, and then `stop` and `report`
+- **THEN** `settle` exits 3 after it committed `a.txt` on `idd/5-x`, and the report is that of the row
 
 ##### Example: the steps a stop names lead to a run that starts
 

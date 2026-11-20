@@ -186,7 +186,7 @@ IDD_REASON
    1. fetch 預設 branch。本機的預設 branch 落後 origin 而沒有自己的 commit 時，先把它往前移（這時它還沒被 checkout）；已經 merge 的那一張因此不會擋路。fetch 失敗時先把下面的事做完，最後才以 3 結束，工作樹停在乾淨的預設 branch。
    2. 那一張的 branch 忽略、預設 branch 卻有追蹤的檔（例如那一張把某個檔改成不追蹤），一般的 checkout 會悄悄覆寫。這些檔先收進一個 stash，一個都不刪。
    3. 切回預設 branch，而且不覆寫 git 忽略的檔（`--no-overwrite-ignore`）；還有檔擋路時以 3 結束，檔案不動。checkout 之後才失敗的 hook 不算 checkout 失敗。
-      交出時就在、而這一張的 branch 把它 commit 進去的檔（預設 branch 沒有追蹤它），checkout 會把它從工作樹拿掉。`settle` 在 checkout 之前把這種檔搬到狀態資料夾底下的 `rest-held-<N>/`，checkout 之後（成功或失敗都一樣）搬回原處，內容與搬走時相同。原處被別的東西佔住時不覆寫，以 3 結束並指出那個資料夾。那個資料夾還在的時候，`start` 不開新的 run，報告也會列出它。
+      交出時就在、而這一張的 branch 把它 commit 進去的檔（預設 branch 沒有追蹤它），checkout 會把它從工作樹拿掉。`settle` 在 checkout 之前把這種檔搬到狀態資料夾底下的 `rest-held-<N>/`，checkout 之後（成功或失敗都一樣）搬回原處，內容與搬走時相同。原處被別的東西佔住、或中途的資料夾是 symlink 時不搬，以 3 結束並指出那個資料夾。這種檔若預設 branch 也追蹤了、而且內容與那一張的 branch 不同，checkout 會不出聲地換掉它：`settle` 在 checkout 之前就以 3 結束，檔案不動，原因行列出路徑。那個資料夾還在的時候，`start` 不開新的 run，報告也會列出它。
    4. 切回之後仍未追蹤的路徑：交出時就在的（那一張刪掉了 ignore 規則而且已經 merge），寫進 `.git/info/exclude`，檔案不動；只被那一張 branch 的 ignore 規則蓋住的，收進另一個 stash；其他的不處理。
    5. 確認 `git status --porcelain` 沒有輸出。
 
