@@ -64,7 +64,7 @@ STATE_TTL = 24 * 3600   # the same life as the close stage's run state and the u
 STATE_NAME = "idd-all-rest.json"
 STATE_REL = ".claude/.idd/state/" + STATE_NAME
 UNATTENDED_REL = ".claude/.idd/state/unattended.json"   # lib/unattended-state.sh
-STATE_VERSION = 3   # 2: the run stores its path and the default branch · 3: and its review flag
+STATE_VERSION = 4   # 2: the path and the default branch · 3: the review flag · 4: what git ignored at each hand-out
 HELPER_PREFIX = "rest-queue: "   # what main() puts before a reason line
 PAGE = 50
 REASON_MAX = 300
@@ -407,7 +407,7 @@ def read_state(cwd, repo=None):
     if not ok:
         return None, "it is not a run state this helper can read"
     if repo is not None and st["repo"] != repo:
-        return None, f"it belongs to a run for {one_line(st['repo'], 80)}"
+        return None, f"{OTHER_REPO} {one_line(st['repo'], 80)}"   # a state this helper can read: start replaces it and says whose it was
     return st, ""
 
 
@@ -421,19 +421,21 @@ def is_time(value):
 
 def attempt_ok(a):
     """An attempt this helper can use: every key it reads is there and of its type."""
-    kept, stash, gone = a.get("kept", []), a.get("stash"), a.get("discarded", [])
+    kept, stashes, gone = a.get("kept", []), a.get("stashes", []), a.get("discarded", [])
+    strings = lambda v: isinstance(v, list) and all(isinstance(x, str) for x in v)
+    commit = lambda v: isinstance(v, str) and bool(HEX40_RE.match(v))   # these go into git commands a person is shown
     names = lambda d: all(isinstance(x, str) for key in ("paths", "shared") for x in d.get(key, [])) and isinstance(d.get("more", 0), int)
     return (isinstance(a["issue"], int) and not isinstance(a["issue"], bool)
             and a["outcome"] in (None, "closed", "stopped") and isinstance(a["reason"], str)
             and isinstance(a.get("settled", True), bool) and isinstance(kept, list)
-            and all(isinstance(k, dict) and isinstance(k.get("branch"), str) and isinstance(k.get("commit"), str)
+            and all(isinstance(k, dict) and isinstance(k.get("branch"), str) and (k.get("commit") == "" or commit(k.get("commit")))
                     and names(k) and k.get("hooks") in (None, "skipped") and isinstance(k.get("upstream", False), bool)
-                    and isinstance(k.get("earlier", []), list) and all(isinstance(c, str) for c in k.get("earlier", []))
+                    and isinstance(k.get("earlier", []), list) and all(commit(c) for c in k.get("earlier", []))
                     for k in kept)
-            and isinstance(gone, list) and all(isinstance(p, str) for p in gone)
-            and (stash is None or (isinstance(stash, dict) and isinstance(stash.get("commit"), str)
-                                   and isinstance(stash.get("branch"), str) and names(stash)
-                                   and isinstance(stash.get("kept", True), bool))))
+            and strings(gone) and strings(a.get("before", [])) and strings(a.get("excluded", []))
+            and isinstance(stashes, list)
+            and all(isinstance(x, dict) and commit(x.get("commit")) and isinstance(x.get("branch"), str) and names(x)
+                    and x.get("kind") in STASH_KINDS and isinstance(x.get("kept", True), bool) for x in stashes))
 
 
 def owes_settle(st):
@@ -480,12 +482,17 @@ BRANCH_OF = r"idd/{n}(?:-.*)?"   # an issue's own branch; scripts/check-existing
 KEEP_SUBJECT = "chore: keep what the run of #{n} left (#{n})"   # settle finds its own commit again by this subject
 HOOKS_SKIPPED = ("The commit failed with the repository's commit hooks, so the hooks were skipped for this commit.\n"
                  "Look at it before the branch is pushed.")
-STASH_MESSAGE = "idd rest: files of #{n} that only {branch} ignores"   # and its stash entry by this message
+STASH_MESSAGE = "idd rest: files of #{n} that only {branch} ignores"   # and its stash entries by these messages
+STASH_TRACKED = "idd rest: files of #{n} that {branch} ignores and the default branch tracks"
+STASH_KINDS = {"only": STASH_MESSAGE, "tracked": STASH_TRACKED}   # made after the checkout · made before it
+HEX40_RE = re.compile(r"^[0-9a-f]{40}$")
+OTHER_REPO = "it belongs to a run for"
+NO_RUN = ("no rest run at this --cwd — before a run has started, call start; after it has, this --cwd is not the "
+          "one start was given: give that one, and do not call start again")
 PATHS_KEPT = 10
 NAME_MAX = 40   # a default branch name longer than this is not put into a command a reason line gives
 PLAIN_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")   # a branch name that a shell reads as one plain word
 ON_MAX, ON_MIN = 60, 20   # the branch the working tree is on, at the start of a reason line: this long, or as short as that
-HOOK_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")   # a hook of git's configuration that can be named in -c
 
 
 def in_command(default):
@@ -673,11 +680,32 @@ def discard(cwd, top, path, what, todo):
 
 
 def ignored_here(cwd):
-    """What git ignores in the working tree as it is now, relative to the top of the repository; a folder that
-    is ignored as a whole is one entry (`coverage/`), so that this does not walk into it."""
-    out = git(cwd, ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "--full-name", "-z", "--", ":(top)"],
+    """What git ignores in the working tree as it is now, relative to the top of the repository: the paths that
+    match an ignore rule. A folder that a rule ignores is one entry (`coverage/`), so that this does not walk into
+    it; a folder that merely holds nothing but ignored files is not an entry, its files are (`--ignored=matching`).
+    The other reading, in which such a folder counts as ignored, would cover whatever is written into it later."""
+    out = git(cwd, ["status", "--porcelain=v1", "-z", "--ignored=matching", "--untracked-files=all", "--ignore-submodules=none"],
               "could not list what git ignores", f"check that git can read this working tree, {AGAIN}")
-    return [e for e in out.split("\0") if e]
+    return sorted(e[3:] for e in out.split("\0") if e.startswith("!! "))
+
+
+def covers(entries, path):
+    """True when one of the entries (files, or folders with a trailing slash) is this path or a folder above it."""
+    return any(path == e or (e.endswith("/") and path.startswith(e)) for e in entries)
+
+
+def entries_of(entries, paths):
+    """The entries that cover at least one of the paths, sorted."""
+    return sorted(e for e in entries if any(p == e or (e.endswith("/") and p.startswith(e)) for p in paths))
+
+
+def pathspec_file(cwd, paths):
+    """A file that names these paths for git, literally and from the top (there can be many, and a name may hold
+    anything). The caller removes it."""
+    fd, spec = tempfile.mkstemp(prefix="paths.", dir=state_dir(cwd))
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write("\0".join(":(top,literal)" + e for e in paths))
+    return spec
 
 
 def stash_of(cwd, message, since):
@@ -696,48 +724,86 @@ def stash_tip(cwd):
     return run_cmd(["git", "-C", cwd, "rev-parse", "-q", "--verify", "refs/stash"])[1].strip()
 
 
-def stash_branch_only(cwd, n, branch, ignored, last, st):
-    """After the checkout of the default branch: untracked files that git ignored on the issue's branch (the
-    branch has an ignore rule the default branch lacks) go into one stash entry; nothing is deleted. Anything
-    else that is left is not touched here: the clean check that follows stops on it."""
-    entries = status_entries(cwd)
-    files = [path for xy, path in entries if xy == "??"]
-    covers = lambda e, path: path == e or (e.endswith("/") and path.startswith(e))
-    if not files or len(files) != len(entries) or not all(any(covers(e, f) for e in ignored) for f in files):
-        return
-    picked = sorted(e for e in ignored if any(covers(e, f) for f in files))
-    message = STASH_MESSAGE.format(n=n, branch=branch)
-    todo = f"move those files away, or have git ignore them here, {AGAIN}"
-    spec, before = None, stash_tip(cwd)
-    try:   # the pathspecs go through a file: there can be many, and a name may hold anything
-        fd, spec = tempfile.mkstemp(prefix="stash-paths.", dir=state_dir(cwd))
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write("\0".join(":(top,literal)" + e for e in picked))
-        git(cwd, ["stash", "push", "--quiet", "--include-untracked", "-m", message,
-                  "--pathspec-from-file=" + spec, "--pathspec-file-nul"], "could not stash the files that only the issue's branch ignores", todo)
+def make_stash(cwd, n, branch, kind, picked, last, st, todo):
+    """One stash entry for these paths, recorded in the run state at once. Nothing is deleted: what leaves the
+    working tree is in the entry. `tracked` files are ignored where they lie, so that stash takes ignored files
+    (`--all`), and only the ones named."""
+    what = ("could not stash the files that the issue's branch ignores and the default branch tracks" if kind == "tracked"
+            else "could not stash the files that only the issue's branch ignores")
+    spec, tip = None, stash_tip(cwd)
+    try:
+        spec = pathspec_file(cwd, picked)
+        git(cwd, ["stash", "push", "--quiet", "--all" if kind == "tracked" else "--include-untracked",
+                  "-m", STASH_KINDS[kind].format(n=n, branch=branch), "--pathspec-from-file=" + spec, "--pathspec-file-nul"], what, todo)
     except OSError as exc:
-        raise GitFailed("could not stash the files that only the issue's branch ignores", exc.strerror or str(exc), todo)
+        raise GitFailed(what, exc.strerror or str(exc), todo)
     finally:
         if spec and os.path.exists(spec):
             os.unlink(spec)
     commit = stash_tip(cwd)
-    if not commit or commit == before:   # git stash exits 0 when it saved nothing
-        raise GitFailed("git made no stash entry for the files that only the issue's branch ignores", "refs/stash did not change", todo)
-    last["stash"] = {"commit": commit, "branch": branch, "paths": picked[:PATHS_KEPT], "more": max(0, len(picked) - PATHS_KEPT)}
+    if not commit or commit == tip:   # git stash exits 0 when it saved nothing
+        raise GitFailed(what, "git made no stash entry: refs/stash did not change", todo)
+    last.setdefault("stashes", []).append({"commit": commit, "branch": branch, "kind": kind, "paths": picked[:PATHS_KEPT],
+                                           "more": max(0, len(picked) - PATHS_KEPT)})
     save_state(cwd, st)   # saved now: a later step may still fail
 
 
-def found_stash(cwd, n, branches, since):
+def found_stash(cwd, n, branches, kind, since):
     """The stash entry of this attempt that the run state missed (the earlier call stopped before it was
-    written), as a record; or None."""
+    written), as a record; or None. Its paths are the files the entry holds."""
     look = f"check that git can read this working tree, {AGAIN}"
     for b in branches:
-        commit = stash_of(cwd, STASH_MESSAGE.format(n=n, branch=b), since)
+        commit = stash_of(cwd, STASH_KINDS[kind].format(n=n, branch=b), since)
         if commit:
-            rows = git(cwd, ["ls-tree", "-z", commit + "^3"], "could not read the stash entry", look).split("\0")
-            names = sorted(r.split("\t", 1)[1] + ("/" if r.split(" ", 2)[1] == "tree" else "") for r in rows if "\t" in r)
-            return {"commit": commit, "branch": b, "paths": names[:PATHS_KEPT], "more": max(0, len(names) - PATHS_KEPT)}
+            out = git(cwd, ["ls-tree", "-r", "--name-only", "-z", commit + "^3"], "could not read the stash entry", look)
+            names = sorted(x for x in out.split("\0") if x)
+            return {"commit": commit, "branch": b, "kind": kind, "paths": names[:PATHS_KEPT], "more": max(0, len(names) - PATHS_KEPT)}
     return None
+
+
+def in_the_way(cwd, top, default, ignored, before):
+    """Files in the working tree that git ignores here and that the default branch tracks: a checkout of the
+    default branch would write over them. A path recorded at hand-out is left out: it is not put anywhere."""
+    out = git(cwd, ["ls-tree", "-r", "--name-only", "-z", "--full-tree", f"refs/heads/{default}"],
+              "could not read what the default branch tracks", f"check that git can read this working tree, {AGAIN}")
+    return sorted(f for f in out.split("\0")
+                  if f and covers(ignored, f) and not covers(before, f) and os.path.lexists(os.path.join(top, f)))
+
+
+def exclude_pattern(path):
+    """The line of an exclude file that matches this path, from the top of the repository, and no other."""
+    body = re.sub(r"([\\*?\[\]])", r"\\\1", path.rstrip("/"))
+    if body.endswith(" "):
+        body = body[:-1] + "\\ "
+    return "/" + body + ("/" if path.endswith("/") else "")
+
+
+def exclude_locally(cwd, n, picked, todo):
+    """Add these paths to the repository's local exclude file (.git/info/exclude: never committed, never leaves
+    this machine), under a comment line that names the issue. The files themselves are not touched."""
+    what = "could not write the local exclude file"
+    bad = [e for e in picked if "\n" in e or "\r" in e]
+    if bad:   # an exclude file has one pattern on a line
+        raise GitFailed("a path from before the run holds a line break and cannot go into the local exclude file", repr(bad[0])[:120], todo)
+    where = git(cwd, ["rev-parse", "--git-path", "info/exclude"], "could not find the local exclude file", todo).strip()
+    where = where if os.path.isabs(where) else os.path.join(cwd, where)
+    try:
+        os.makedirs(os.path.dirname(where), exist_ok=True)
+        have = set()
+        if os.path.exists(where):
+            with open(where, encoding="utf-8", errors="replace") as fh:
+                text = fh.read()
+            have = set(text.splitlines())
+        else:
+            text = ""
+        new = [exclude_pattern(e) for e in picked if exclude_pattern(e) not in have]
+        if new:
+            with open(where, "a", encoding="utf-8") as fh:
+                fh.write(("" if not text or text.endswith("\n") else "\n")
+                         + f"# idd rest: in the working tree before #{n} was run, and no longer ignored by the default branch\n"
+                         + "".join(line + "\n" for line in new))
+    except OSError as exc:
+        raise GitFailed(what, exc.strerror or str(exc), todo)
 
 
 def kept_entry(branch, commit, paths, hooks):
@@ -752,14 +818,15 @@ def commit_hooks(cwd):
     """(whether this repository has a hook that git runs before it makes a commit, the names of such hooks that
     come from git's configuration). `git hook list` knows hook files and configured hooks alike; a git that
     cannot list hooks has hook files only, and those are looked up in the folder git names, from the top of the
-    repository."""
+    repository. A configured hook can have any name; one that `-c` cannot carry (it holds `=` or a control
+    character) is left out, and the commit then fails with it."""
     found, named, lists = False, [], True
     for event in COMMIT_HOOKS:
         rc, out, err = run_cmd(["git", "-C", cwd, "hook", "list", event])
         if rc == 0:
             lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
             found = found or bool(lines)
-            named += [ln for ln in lines if HOOK_NAME_RE.match(ln) and ln not in named]
+            named += [ln for ln in lines if ln != "hook from hookdir" and "=" not in ln and ln.isprintable() and ln not in named]
         elif "no hooks found" not in err:
             lists = False
     if not lists:
@@ -781,22 +848,36 @@ def paths_of(cwd, commits, look):
     return sorted(names)
 
 
-def keep_commit(cwd, n, back, earlier=None):
-    """Commit what the run left on the branch the working tree is on. The repository's commit hooks run. When the
-    commit fails and the repository has a hook that git runs before a commit, the leftovers are staged again (a
-    hook may have rewritten files) and committed without the hooks, and the commit message says so. A commit that
-    fails without such a hook is not made a second time. `earlier` is what an earlier, interrupted call recorded
-    for this branch: its commits and paths stay in the record."""
+def stage(cwd, paths, todo):
+    """Stage these paths, and nothing else: what was in the working tree before the run is not among them."""
+    what, spec = "could not stage what the run left", None
+    try:
+        spec = pathspec_file(cwd, paths)
+        git(cwd, ["add", "-A", "--pathspec-from-file=" + spec, "--pathspec-file-nul"], what, todo)
+    except OSError as exc:
+        raise GitFailed(what, exc.strerror or str(exc), todo)
+    finally:
+        if spec and os.path.exists(spec):
+            os.unlink(spec)
+
+
+def keep_commit(cwd, n, back, paths, again, earlier=None):
+    """Commit these leftovers on the branch the working tree is on. The repository's commit hooks run. When the
+    commit fails and the repository has a hook that git runs before a commit, the leftovers are read again
+    (`again()`: a hook may have written files; the same rules decide what is a leftover, and can stop), staged,
+    and committed without the hooks, and the commit message says so. A commit that fails without such a hook is
+    not made a second time. `earlier` is what an earlier, interrupted call recorded for this branch: its commits
+    and paths stay in the record."""
     todo = f"commit or remove what is left{back}, {AGAIN}"
     subject = KEEP_SUBJECT.format(n=n)
-    git(cwd, ["add", "-A", "--", ":(top)"], "could not stage what the run left", todo)
+    stage(cwd, paths, todo)
     rc, _, err = run_cmd(["git", "-C", cwd, "commit", "-q", "-m", subject])
     hooks = rc != 0
     if hooks:
         present, configured = commit_hooks(cwd)
         if not present:   # no hook of the repository took part in that failure
             raise GitFailed("could not commit what the run left", one_line(err, 200) or f"git exited {rc}", todo)
-        git(cwd, ["add", "-A", "--", ":(top)"], "could not stage what the run left", todo)
+        stage(cwd, again(), todo)
         # hook files: an empty hooks folder (--no-verify leaves prepare-commit-msg running); hooks of git's
         # configuration: each one switched off by name, since neither of the other two reaches all of them
         off = [x for name in configured for x in ("-c", f"hook.{name}.enabled=false")]
@@ -944,7 +1025,14 @@ def cmd_start(argv):
                    "issues one at a time")
     ensure_ignored(cwd)   # before anything is read or written
     st, problem = read_state(cwd, repo)
+    again = "then give the same command again (same flags)"
+    if st is None and problem and not problem.startswith(OTHER_REPO) and state_written_within(cwd, STATE_TTL):
+        # the review flag of that run cannot be read: a new run in its place would drop it
+        raise Stop(f"a run state file is in this working tree and cannot be used ({problem}): {STATE_REL} — it was written in "
+                   "the last 24 hours, so it is not replaced; delete it when no rest run is going on in this working tree, "
+                   f"{again}")
     resumed = st is not None and now() - ts(st["updated_at"]) < STATE_TTL
+    unreported = [] if resumed or st is None else forgotten(st)   # an earlier run that nobody ended with its report
     lst = listing(repo)   # before anything is written: a failed read leaves no run behind
     branches = idd_branches(cwd)
     differs = ""
@@ -952,7 +1040,10 @@ def cmd_start(argv):
         if st["review"] and not review:
             differs = "the review flag differs: this run was started with --review and keeps it (ending the run with its report is the way to drop it)"
         elif review and not st["review"]:
-            differs = "the review flag differs: --review is added to this run, every issue from here on stops at verified"
+            flight = in_flight(st)
+            differs = ("the review flag differs: --review is added to this run, every issue handed out from here on stops at verified"
+                       + (f"; a close stage that is already running for #{flight['issue']} is not stopped by it (it read the flag "
+                          "when it started)" if flight else ""))
         st["review"] = st["review"] or review
     else:
         default = gh_json(["repo", "view", repo, "--json", "defaultBranchRef"],
@@ -961,15 +1052,7 @@ def cmd_start(argv):
         if not isinstance(default, str) or not branch_name_ok(cwd, default):
             raise Stop(f"could not read the default branch of {repo} from GitHub")
         # what every issue on the PR path requires when it starts; an earlier run may have left the tree otherwise
-        again = "then give the same command again (same flags)"
-        on = current_branch(cwd)
-        if on != default:
-            raise Stop(f"the working tree is on {one_line(on or 'no branch', ON_MAX)}, not on the default branch; an earlier run "
-                       f"may have left it there — commit or remove what is left there, run {checkout_cmd(default)}, {again}")
-        left = git(cwd, ["status", "--porcelain"], "could not read the working tree", "check that git can read this working tree").strip()
-        if left:
-            raise Stop(f"the working tree has changes on {one_line(default, ON_MAX)}; an earlier run may have left them — commit "
-                       f"them elsewhere or move them away, {again} ({some(leftovers(cwd)[0], 90)})")
+        clean_default(cwd, default, "", "; an earlier run may have left it so", again)
         st = {"version": STATE_VERSION, "repo": repo, "path": path, "default": default, "review": review,
               "started_at": iso(now()), "updated_at": "", "attempts": [], "stop": None}
     save_state(cwd, st)   # a resumed run too: starting is activity, and the 24 hours count from the last one
@@ -982,7 +1065,10 @@ def cmd_start(argv):
     if differs:
         print(differs)
     if problem:   # said, not silent: the attempts of that state are not carried over
-        print(f"a run state was found in this working tree but cannot be used ({problem}) — this is a new run, and it replaces that file")
+        print(f"a run state was found in this working tree but cannot be used ({problem}) — it is older than 24 hours; this is a new run, and it replaces that file")
+    if unreported:
+        print("an earlier rest run in this working tree was never ended with its report; what it kept and nobody was told:")
+        print("\n".join(unreported))
     if st["stop"]:
         print(f"this run stopped earlier: {one_line(st['stop']['reason'], REASON_MAX)} — next hands out nothing; call report to end it")
     flight = in_flight(st)
@@ -993,6 +1079,43 @@ def cmd_start(argv):
     return 0
 
 
+def state_written_within(cwd, seconds):
+    """True when the run state file was written less than `seconds` ago (by the file's own time)."""
+    try:
+        return now() - os.stat(state_path(cwd)).st_mtime < seconds
+    except OSError:
+        return False
+
+
+def forgotten(st):
+    """What a run that was never ended with its report kept, as lines: only its report would have said it."""
+    lines = []
+    for x in st["attempts"]:
+        for k in x.get("kept", []):
+            lines.append(f"  #{x['issue']} — branch {one_line(k['branch'], 120)} is kept"
+                         + (f", with commit {k['commit'][:7]} holding what the run left" if k.get("commit") else "")
+                         + (" — a commit of settle was made without the repository's commit hooks: look at it before the branch "
+                            "is pushed" if k.get("hooks") == "skipped" else ""))
+        for sx in x.get("stashes", []):
+            lines.append(f"  #{x['issue']} — a stash holds files of {one_line(sx['branch'], 120)}: git stash apply {sx['commit']}")
+        for path in x.get("excluded", []):
+            lines.append(f"  #{x['issue']} — {one_line(path, 120)} was added to .git/info/exclude")
+    return lines
+
+
+def clean_default(cwd, default, lead, cause, again):
+    """Stop unless the working tree is on the default branch with nothing changed: what every issue on the PR
+    path requires when it starts, and what makes "git does not track it" mean "git ignores it" at a hand-out."""
+    on = current_branch(cwd)
+    if on != default:
+        raise Stop(f"{lead}the working tree is on {one_line(on or 'no branch', ON_MAX)}, not on the default branch{cause} — "
+                   f"commit or remove what is left there, run {checkout_cmd(default)}, {again}")
+    left = git(cwd, ["status", "--porcelain"], "could not read the working tree", "check that git can read this working tree").strip()
+    if left:
+        raise Stop(f"{lead}the working tree has changes on {one_line(default, ON_MAX)}{cause} — commit them elsewhere or move "
+                   f"them away, {again} ({some(leftovers(cwd)[0], 90)})")
+
+
 def cmd_next(argv):
     a = common(argv, {"--cwd", "--repo"}, ["--cwd", "--repo"])
     if a is None:
@@ -1000,7 +1123,7 @@ def cmd_next(argv):
     cwd, repo = a["--cwd"], a["--repo"]
     st = load_state(cwd, repo)
     if st is None:
-        return refuse("no rest run in this working tree — call start first")
+        return refuse(NO_RUN)
     if st["stop"]:
         return emit({"next": None, "stopped": one_line(st["stop"]["reason"], REASON_MAX)})
     owed = owes_settle(st)
@@ -1025,7 +1148,11 @@ def cmd_next(argv):
     if not todo:
         save_state(cwd, st)
         return emit({"next": None, "done": True})
-    st["attempts"].append({"issue": todo[0], "handed_at": iso(now()), "outcome": None, "reason": "", "recorded_at": None})
+    # a new issue starts from a clean default branch; nothing is written when it does not
+    clean_default(cwd, st["default"], f"#{todo[0]} is not handed out: ", "", AGAIN)
+    # on a clean default branch, what git does not track is what it ignores: none of it is the work of this issue
+    st["attempts"].append({"issue": todo[0], "handed_at": iso(now()), "outcome": None, "reason": "", "recorded_at": None,
+                           "before": ignored_here(cwd)})
     save_state(cwd, st)
     print(f"→ next: #{todo[0]} ({len(todo) - 1} more after it)", file=sys.stderr)
     return emit({"next": todo[0], "in_flight": False, "remaining": len(todo) - 1, "review": review})
@@ -1049,7 +1176,7 @@ def cmd_record(argv):
     cwd, repo, n = a["--cwd"], a["--repo"], int(a["--issue"])
     st = load_state(cwd, repo)
     if st is None:
-        return refuse("no rest run in this working tree — call start first")
+        return refuse(NO_RUN)
     flight = in_flight(st)
     if flight is None or flight["issue"] != n:
         return refuse(f"#{n} is not the issue in flight" + (f" (#{flight['issue']} is)" if flight else " (none is)"))
@@ -1072,17 +1199,15 @@ def cmd_settle(argv):
     cwd, repo, n = a["--cwd"], a["--repo"], int(a["--issue"])
     st = load_state(cwd, repo)
     if st is None:
-        return refuse("no rest run in this working tree — call start first")
+        return refuse(NO_RUN)
     last = st["attempts"][-1] if st["attempts"] else None
     if last is None or last["issue"] != n or last["outcome"] is None:
         held_by = "none is" if last is None else (f"#{last['issue']} is in flight" if last["outcome"] is None
                                                   else f"#{last['issue']} was")
         return refuse(f"#{n} is not the issue recorded last ({held_by})")
     if last.get("settled", True):   # settled already (or recorded as existing work by next): change nothing
-        out = {"issue": n, "settled": True, "kept": last.get("kept", []), "discarded": last.get("discarded", []), "again": True}
-        if last.get("stash"):
-            out["stash"] = last["stash"]
-        return emit(out)
+        return emit({"issue": n, "settled": True, "kept": last.get("kept", []), "discarded": last.get("discarded", []),
+                     "stashes": last.get("stashes", []), "excluded": last.get("excluded", []), "again": True})
     default = st["default"]
     try:   # every way this stops has the one shape of SettleStop, whichever step it was
         if not branch_name_ok(cwd, default):   # start checked it; the file may have changed since
@@ -1101,10 +1226,8 @@ def cmd_settle(argv):
     except Exception as exc:   # a failure nobody planned for has the same shape
         raise SettleStop(n, current_branch(cwd) or "no branch", f"settle failed in a way it does not know ({type(exc).__name__})",
                          f"look at the working tree, {AGAIN}", str(exc))
-    out = {"issue": n, "settled": True, "kept": kept, "discarded": gone}
-    if last.get("stash"):
-        out["stash"] = last["stash"]
-    return emit(out)
+    return emit({"issue": n, "settled": True, "kept": kept, "discarded": gone, "stashes": last.get("stashes", []),
+                 "excluded": last.get("excluded", [])})
 
 
 AGAIN = "then run the same /idd-all command again (same flags)"
@@ -1139,13 +1262,15 @@ def trouble(n, on, problem, todo, paths=()):
 def settle_tree(cwd, n, default, branch, last, st):
     """The closed table of the requirement, then the default branch against origin. Returns (the kept branches,
     the regenerated records it discarded). Every reason it stops with names the issue and the branch, and says
-    what a person does next."""
+    what a person does next. What git ignored when the issue was handed out (`before`) is not the issue's work:
+    it is never staged, stashed, moved or deleted."""
     on = branch or "no branch"
     # what a person does to get back: the default branch is named only when the working tree is not on it
     back = "" if branch == default else f", then {checkout_cmd(default)}"
     # on the default branch nothing is to be committed: what is left belongs to no branch of the issue
     rest_of = "commit what is left elsewhere or move it away" if branch == default else f"commit or remove what is left{back}"
     look = f"check that git can read this working tree, {AGAIN}"
+    before = last.get("before", [])
     busy = operation_in_progress(cwd)
     paths, unmerged = leftovers(cwd)
     if busy:
@@ -1156,59 +1281,105 @@ def settle_tree(cwd, n, default, branch, last, st):
     top = git(cwd, ["rev-parse", "--show-toplevel"], "could not read the top of the repository", look).strip()
     prior = {k["branch"]: k for k in last.get("kept", [])}   # what an earlier, interrupted call recorded
     gone, ignored = list(last.get("discarded", [])), None       # what an earlier call discarded stays in the record
+    fetch_failed = None
+
+    def fetch():
+        """Fetch the default branch. A failure is kept for later: settle first finishes what it can do locally,
+        so that it stops with the working tree on the default branch."""
+        rc, _, err = run_cmd(["git", "-C", cwd, "fetch", "-q", "origin", default])
+        return None if rc == 0 else (one_line(err, 200) or f"git exited {rc}")
+
+    def against_origin():
+        compare = "could not compare the default branch with origin"
+        behind = int(git(cwd, ["rev-list", "--count", f"refs/heads/{default}..refs/remotes/origin/{default}"], compare, look).strip() or "0")
+        ahead = int(git(cwd, ["rev-list", "--count", f"refs/remotes/origin/{default}..refs/heads/{default}"], compare, look).strip() or "0")
+        return behind, ahead
+
     if re.fullmatch(BRANCH_OF.format(n=n), branch or ""):         # row 1: the issue's own branch
         fresh = (own_commits(cwd, default, branch, "could not compare the issue's branch with origin", look) == 0
                  and not upstream_of(cwd, branch, "could not read the upstream of the issue's branch", look))
-        again = regenerated(top, pre, n, paths, fresh)            # step 1: what idd-diagnose writes again
-        paths = [p for p in paths if p not in again]
-        bad = [p for p in paths if keep_out(p, pre)]              # step 2: places that are never committed
-        if bad:                                                   # decided before anything is discarded: exit 3 changes nothing
-            raise trouble(n, on, "it holds files that are never committed",
-                          f"have git ignore them, commit or remove what else is left{back}", bad)
-        for p in again:
+
+        def sort_out(found):
+            """(the leftovers to commit, the regenerated records to discard) of these paths; stops on a place
+            that is never committed. A path from before the run is neither."""
+            mine = [p for p in found if not covers(before, p)]
+            records = regenerated(top, pre, n, mine, fresh)       # step 1: what idd-diagnose writes again
+            mine = [p for p in mine if p not in records]
+            bad = [p for p in mine if keep_out(p, pre)]           # step 2: places that are never committed
+            if bad:                                               # decided before anything is discarded: exit 3 changes nothing
+                raise trouble(n, on, "it holds files that are never committed",
+                              f"have git ignore them, commit or remove what else is left{back}", bad)
+            return mine, records
+
+        paths, records = sort_out(paths)
+        for p in records:
             discard(cwd, top, p, "could not discard a record that idd-diagnose writes again",
                     f"remove it by hand, commit or remove what else is left{back}, {AGAIN}")
-        if again:
-            gone += [p for p in again if p not in gone]
+        if records:
+            gone += [p for p in records if p not in gone]
             last["discarded"] = gone                              # saved now: a later step may still fail
             save_state(cwd, st)
         if paths:                                                 # step 3: everything else stays with the issue
             # an earlier call may have committed and stopped before the state was written: that commit is found by its subject
             earlier = prior.get(branch) or found_commit(cwd, n, branch, default)
-            prior[branch] = keep_commit(cwd, n, back, earlier)
+            upstream = bool(upstream_of(cwd, branch, "could not read the upstream of the issue's branch", look))
+            entry = keep_commit(cwd, n, back, paths, lambda: sort_out(leftovers(cwd)[0])[0], earlier)
+            prior[branch] = dict(entry, upstream=upstream)        # the report gives a delete step only where this says False
             last["kept"] = list(prior.values())                   # saved now: a later step may still fail
             save_state(cwd, st)
         ignored = ignored_here(cwd)                               # read before the branch, and its ignore rules, are left
-        # git's default overwrites a file the branch ignores when the default branch tracks it: here it stops instead
+        fetch_failed = fetch()
+        if fetch_failed is None:
+            behind, ahead = against_origin()
+            if behind and not ahead:   # move the default branch while it is not checked out: a merged issue is then not in the way
+                run_cmd(["git", "-C", cwd, "fetch", "-q", ".", f"refs/remotes/origin/{default}:refs/heads/{default}"])   # git allows a fast-forward only; refused: left
+        way = in_the_way(cwd, top, default, ignored, before)
+        if way:   # a plain checkout would overwrite these without a word
+            make_stash(cwd, n, branch, "tracked", way, last, st, f"move those files away{back}, {AGAIN}")
         rc, _, err = run_cmd(["git", "-C", cwd, "checkout", "-q", "--no-overwrite-ignore", default, "--"])
         if rc != 0 and current_branch(cwd) != default:            # a hook that fails after the checkout does not undo it
             raise GitFailed("could not check out the default branch", one_line(err, 200) or "git exited " + str(rc),
-                            f"run {checkout_cmd(default)} and move away each file it names until it succeeds, {AGAIN}")
-    elif branch == default:                                       # row 2: nothing may be left here
-        if paths:
-            raise trouble(n, on, "it has changes that no branch of the issue holds", "commit them elsewhere or move them away", paths)
+                            f"run {checkout_cmd(default)} and move away each file it names until it succeeds, then move away "
+                            f"what git status shows as untracked, {AGAIN}")
+    elif branch == default:                                       # row 2: nothing of the issue may be left here
+        mine = [p for p in paths if not covers(before, p)]
+        if mine:
+            raise trouble(n, on, "it has changes that no branch of the issue holds", "commit them elsewhere or move them away", mine)
+        fetch_failed = fetch()
     else:                                                         # row 3
         raise trouble(n, on, "it is neither the default branch nor a branch of the issue", f"commit or remove what is left there{back}")
     # from here on the working tree is on the default branch, and no line names that branch a second time
-    if ignored:                                                   # what only the issue's branch ignores is untracked here
-        stash_branch_only(cwd, n, branch, ignored, last, st)      # before the fetch: a failure there leaves no stray file
-    git(cwd, ["fetch", "-q", "origin", default], "could not fetch the default branch from origin",
-        f"check that origin can be reached, {AGAIN}")
-    compare = "could not compare the default branch with origin"
-    behind = int(git(cwd, ["rev-list", "--count", f"refs/heads/{default}..refs/remotes/origin/{default}"], compare, look).strip() or "0")
-    ahead = int(git(cwd, ["rev-list", "--count", f"refs/remotes/origin/{default}..refs/heads/{default}"], compare, look).strip() or "0")
-    if behind and not ahead:   # a default branch with commits of its own is left alone: a PR-path issue starts from origin's
-        git(cwd, ["merge", "-q", "--ff-only", "--no-overwrite-ignore", f"refs/remotes/origin/{default}"],
-            "it could not be fast-forwarded to origin",
-            f"run git merge --ff-only --no-overwrite-ignore origin/{in_command(default)} and move away each file it "
-            f"names until it succeeds, {AGAIN}")
+    if fetch_failed is None:
+        behind, ahead = against_origin()
+        if behind and not ahead:   # a default branch with commits of its own is left alone: a PR-path issue starts from origin's
+            git(cwd, ["merge", "-q", "--ff-only", "--no-overwrite-ignore", f"refs/remotes/origin/{default}"],
+                "it could not be fast-forwarded to origin",
+                f"run git merge --ff-only --no-overwrite-ignore origin/{in_command(default)} and move away each file it "
+                f"names until it succeeds, {AGAIN}")
+    entries = status_entries(cwd)
+    untracked = [path for xy, path in entries if xy == "??"]
+    theirs = [p for p in untracked if covers(before, p)]
+    if theirs:   # there before the run, and the default branch no longer ignores them: the rule went with a merged issue
+        picked = entries_of(before, theirs)
+        exclude_locally(cwd, n, picked, f"move those files away or have git ignore them, {AGAIN}")
+        last["excluded"] = sorted(set(last.get("excluded", [])) | set(picked))
+        save_state(cwd, st)
+    rest = [p for p in untracked if not covers(before, p)]
+    if rest and ignored and len(untracked) == len(entries) and all(covers(ignored, p) for p in rest):
+        # what only the issue's branch ignores is untracked here
+        make_stash(cwd, n, branch, "only", entries_of(ignored, rest), last, st, f"move those files away, or have git ignore them here, {AGAIN}")
     if git(cwd, ["status", "--porcelain"], "could not read the working tree", look).strip():   # the check every PR-path issue starts with
-        raise trouble(n, default, "the working tree is not clean", "commit what is there elsewhere or move it away", leftovers(cwd)[0])
+        raise trouble(n, default, "the working tree is not clean", "commit what is there elsewhere or move it away",
+                      [p for p in leftovers(cwd)[0]])
+    if fetch_failed is not None:   # everything local is done: the working tree is clean on the default branch
+        raise GitFailed("could not fetch the default branch from origin", fetch_failed, f"check that origin can be reached, {AGAIN}")
     mine = idd_branches(cwd).get(n, [])   # every one of them was created by this run: next skips an issue that had one
-    if "stash" not in last:               # an earlier call stashed and stopped before the state was written
-        found = found_stash(cwd, n, mine, int(ts(last.get("handed_at") or st["started_at"])))
-        if found:
-            last["stash"] = found
+    have = {sx["kind"] for sx in last.get("stashes", [])}
+    for kind in STASH_KINDS:              # an earlier call stashed and stopped before the state was written
+        if kind not in have:
+            found = found_stash(cwd, n, mine, kind, int(ts(last.get("handed_at") or st["started_at"])))
+            if found:
+                last.setdefault("stashes", []).append(found)
     kept = []
     for b in mine:
         upstream = upstream_of(cwd, b, "could not read the upstream of a branch of the issue", look)
@@ -1219,8 +1390,8 @@ def settle_tree(cwd, n, default, branch, last, st):
         if not entry or not entry.get("commit"):
             entry = found_commit(cwd, n, b, default) or entry or {"branch": b, "commit": ""}
         kept.append(dict(entry, upstream=bool(upstream)))
-    if last.get("stash"):   # the report says "on that branch" only for a branch that is still there
-        last["stash"]["kept"] = any(k["branch"] == last["stash"]["branch"] for k in kept)
+    for sx in last.get("stashes", []):   # the report says "on that branch" only for a branch that is still there
+        sx["kept"] = any(k["branch"] == sx["branch"] for k in kept)
     return kept, gone
 
 
@@ -1256,22 +1427,29 @@ def held(k, default):
                  f"this branch, not on {one_line(default, 60)}")
     if k.get("hooks") == "skipped":
         text += (" — a commit of settle was made without the repository's commit hooks, after the commit had failed "
-                 "with them: look at it before the branch is pushed")
+                 "while the repository has a commit hook (settle goes by the hook being there; it cannot tell why the "
+                 "commit failed): look at it before the branch is pushed")
     return text
 
 
 def stashed(x):
-    """The line about what settle stashed for this attempt, or nothing."""
-    s = x.get("stash")
-    if not s:
-        return []
-    names = ", ".join(one_line(p, 120) for p in s.get("paths", [])) + (f" and {s['more']} more" if s.get("more") else "")
-    if s.get("kept", True):
-        how = f"git stash apply {one_line(s['commit'], 40)} on that branch brings them back"
-    else:
-        how = (f"that branch held no commit of its own and is deleted; git stash apply {one_line(s['commit'], 40)} brings "
-               "them back as files git does not track here: move them out of the working tree again before the next run")
-    return [f"    files that only {one_line(s['branch'], 120)} ignores are in a stash: {names} — {how}"]
+    """The lines about what settle stashed for this attempt and what it added to the local exclude file."""
+    lines = []
+    for sx in x.get("stashes", []):
+        names = ", ".join(one_line(p, 120) for p in sx.get("paths", [])) + (f" and {sx['more']} more" if sx.get("more") else "")
+        which = (f"files that {one_line(sx['branch'], 120)} ignores and the default branch tracks" if sx.get("kind") == "tracked"
+                 else f"files that only {one_line(sx['branch'], 120)} ignores")
+        if sx.get("kept", True):
+            how = f"git stash apply {one_line(sx['commit'], 40)} on that branch brings them back"
+        else:
+            how = (f"that branch held no commit of its own and is deleted; git stash apply {one_line(sx['commit'], 40)} brings "
+                   "them back as files git does not track here: move them out of the working tree again before the next run")
+        lines.append(f"    {which} are in a stash: {names} — {how}")
+    if x.get("excluded"):
+        lines.append("    in the working tree before the run, and no longer ignored by the default branch; added to .git/info/exclude "
+                     "(the files are untouched; remove those lines once the files are dealt with): "
+                     + ", ".join(one_line(p, 120) for p in x["excluded"]))
+    return lines
 
 
 def cmd_report(argv):
@@ -1311,7 +1489,8 @@ def cmd_report(argv):
         for k in x.get("kept", []):
             out.append(f"    branch {one_line(k['branch'], 120)} is kept"
                        + (f", with commit {one_line(k['commit'], 40)[:7]} holding what the run left{held(k, st['default'])}" if k["commit"] else "")
-                       + ("" if k.get("upstream") else "; it has no upstream: deleting it lets a later rest run start the issue over while the issue is a candidate"))
+                       + ("; it has no upstream: deleting it lets a later rest run start the issue over while the issue is a candidate"
+                          if k.get("upstream") is False else ""))   # a record that does not say (settle stopped early) gets no such step
         out += stashed(x)
         out += rows_of(x["issue"])
     if any(x.get("kept") for x in stopped):
@@ -1342,6 +1521,15 @@ def cmd_report(argv):
         out.append(f"run stopped: {one_line(st['stop']['reason'], REASON_MAX)}")
     loose = flight[-1] if flight else owes_settle(st)   # handed out or recorded, and the working tree not settled
     if loose:
+        try:   # a settle that stopped has not deleted the branches of the issue that hold nothing
+            what = "could not read a branch of the issue"
+            empty = [b for b in idd_branches(cwd).get(loose["issue"], [])
+                     if own_commits(cwd, st["default"], b, what, "") == 0 and not upstream_of(cwd, b, what, "")]
+        except Stop:
+            empty = []
+        for b in empty:
+            out.append(f"  branch {one_line(b, 120)} of #{loose['issue']} has no commit of its own and no upstream: deleting it lets "
+                       "a later rest run start the issue over while the issue is a candidate")
         out.append(f"the working tree may still be on a branch of #{loose['issue']}: commit or remove what is left there, "
                    f"then run {checkout_cmd(st['default'])}, before the next run")
     print("\n".join(out))

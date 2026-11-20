@@ -184,8 +184,10 @@ def cmd_init(argv):
     cwd = os.path.realpath(a["--cwd"])
     if a["--review"] == "no" and rest_review(cwd, int(a["--issue"])) == "on":
         # no run state is written: the close stage then finds none and stops at verified (#478)
-        return usage(f"a rest run with review on has #{a['--issue']} in flight in this working tree: record it with "
-                     "--review yes (the value rest-queue.py next printed)")
+        return usage(f"a rest run with review on has #{a['--issue']} in flight at this --cwd: record it with --review yes "
+                     "(the value rest-queue.py next printed); or, when you named this issue yourself while that rest run "
+                     "is unfinished, end the rest run first (give /idd-all without an issue to resume it, or call "
+                     "rest-queue.py report)")
     try:
         spath, rpath = state_path(cwd, a["--issue"]), result_path(cwd, a["--issue"])
     except Stop as exc:
