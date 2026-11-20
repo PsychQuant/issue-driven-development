@@ -51,7 +51,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   made (a hook that lets the commit through cannot add a file from before the run or a file that is never committed);
   a line in the local exclude file that a `!` rule of the default branch outranks is taken out again and settle stops;
   the close stage and the helper decide in one place (`scripts/lib/reststate.py`) whether a rest state file can be used,
-  and `close-stage.py rest-review` prints what the rest run says about an issue. Do not work in the
+  and `close-stage.py rest-review` prints what the rest run says about an issue. Every git call of the helper carries a
+  fixed configuration (`diff.relative`, `log.showSignature`) and its output is read as bytes; when settle stops on
+  an issue's branch, the report names the files from before the run that are in sight there or tracked by that branch,
+  and says what to do with them before the checkout. Do not work in the
   same working tree while a rest run goes: settle cannot tell your changes from what an issue left; the default branch is fast-forwarded when it is behind; an issue branch without a commit and without an upstream is deleted, so an issue that stopped before
   its first commit and left nothing but those records is run again by a later run. An issue that stops does not stop the run. The run stops as a whole only when
   `next`, `record` or `settle` cannot read GitHub or git, cannot write the state or cannot settle the working

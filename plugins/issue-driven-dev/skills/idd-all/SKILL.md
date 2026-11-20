@@ -243,7 +243,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" report --cwd "$CWD" --repo
 - 不刪附件以外的東西：`settle` 丟掉的只有這張的 manifest 與 manifest 擔保的附件（列出且雜湊相符，或列為下載失敗），下一次 diagnose 會再寫一次。
 - rest run 進行中，不要在同一個工作樹做別的事（人或另一個 session 都一樣）：`settle` 會在兩張之間 commit、stash 與 checkout，它分不出哪些改動是那一張留下的、哪些是別人剛寫的。一張 issue 正在跑的時候加進工作樹的檔，對 `settle` 來說就是那一張留下的，會被 commit 在那一張的 branch。要邊跑邊做別的事，另外 clone 一份。
 - 交出時就在的檔若被那一張的 run 自己刪掉或改掉（例如 `rm -rf` 一個資料夾），`settle` 救不回來；被刪掉的會列在報告裡，被改掉的不會（交出時只記路徑，不記內容）。整個資料夾被 git 忽略時，記下的是那個資料夾：資料夾還在、裡面少了個別的檔，報告看不出來。
-- `settle` 停在那一張的 branch、而那個 branch 把交出時就在的檔 commit 進去了：照原因行自己 checkout 回預設 branch 會把那些檔從工作樹拿掉。報告會列出這些檔，checkout 之前先複製出來，之後放回（`settle` 自己走到 checkout 時會替你做這件事）。
+- `settle` 停在那一張的 branch、而那個 branch 把交出時就在的檔 commit 進去了：照原因行自己 checkout 回預設 branch 會把那些檔從工作樹拿掉。報告會列出這些檔，checkout 之前先複製出來，之後放回（`settle` 自己走到 checkout 時會替你做這件事）。那一張的 branch 不再忽略、所以 git 在那個 branch 上顯示出來的原本就在的檔，報告也會列出：它們不是那一張留下的，不要 commit、也不要刪。兩種情形下，原因行都會寫「先看報告」。
 - bot 的留言不讓一張 issue 變成 `outsider`（與 close stage 相同）。把外部輸入轉貼成留言的 app，它帶進來的文字會被 diagnose 讀到。
 - 執行的帳號要有這個 repo 的寫入權：沒有的話 GitHub 不回答誰有寫入權，`start` 以 3 結束。
 - `--cwd` 在 repo 頂層以下時不替 tree-lock 補 ignore 規則：它的寫入端把規則加在頂層，蓋不到子目錄裡的 `.claude/.idd/tree-lock`，implement 之後停下的那一張會讓 `settle` 以 3 結束。要在子目錄跑，先把 `<子目錄>/.claude/.idd/tree-lock*` 加進 `.git/info/exclude`。

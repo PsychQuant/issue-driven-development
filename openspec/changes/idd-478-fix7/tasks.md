@@ -10,6 +10,8 @@
 - [ ] 2.2 新檔 `scripts/lib/reststate.py`；`close-stage.py` 的 `rest_review` 用它，並加子命令 `rest-review`；`skills/idd-all/SKILL.md` Phase 5 改呼叫它，接續說明補上旗標。完成時：1.3 的 review 檢查與 `scripts/tests/close-stage/test.sh` 通過。
 - [ ] 2.3 文件：`skills/idd-all/SKILL.md` 的 rest 一節（一個讀法、中止後重跑、commit 的檢查、exclude 沒生效時停下、missing 的限制、手動 checkout 之前的複製）；`references/working-tree-writers.md`；CHANGELOG。結束方式表的 `existing-work` 列與兩列 stash 的說法。
 
+- [ ] 2.4 3.2 的 reviewer 找到的（requirement「Between two issues…」與「Report lists what happened and ends the run」）：helper 的每個 git 呼叫帶固定的設定、輸出以位元組讀取（Example `what git is configured to print does not change what settle compares`、`a carriage return in a file name`）；資料夾的紀錄涵蓋資料夾本身的路徑（Example `a file that origin puts where an ignored folder stands`）；exclude 只拿掉自己加的行（Example `a line of the local exclude file that settle did not add stays`）；`settle` 停在那一張的 branch 時，報告列出 git 顯示出來的原本就在的檔（Example `the report says which files in sight are not what the run left`）。完成時：這五個 Example 的測試通過。
+
 ## 3. 驗證
 
 - [ ] 3.1 對新程式做變異檢查，變異檢查同時跑 `rest-queue` 與 `rest-queue-sweep` 兩個 suite；每一處至少有一個測試失敗。

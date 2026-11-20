@@ -49,6 +49,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -61,7 +62,6 @@ import reststate  # noqa: E402  what a run state is: read here and by the close 
 from reststate import HEX40_RE, STASH_KINDS, STATE_NAME, STATE_TTL, STATE_VERSION  # noqa: E402
 from ghread import (TEST, Stop, can_write, gh_json, html_root, iso, issue_comments, latest_diagnosis,  # noqa: E402
                     now, parse_iso, ts)
-from ghread import run_cmd as _run_cmd  # noqa: E402
 
 _STEPS = [0]
 
@@ -82,10 +82,26 @@ def step():
             fh.write(str(_STEPS[0]))
 
 
+# git as this helper calls it: what git prints for the helper does not depend on the person's configuration
+GIT = ["git", "-c", "diff.relative=false", "-c", "log.showSignature=false", "-c", "core.quotePath=false", "-c", "color.ui=false"]
+_print = print
+
+
+def print(*args, **kw):
+    """print, with a name that is not UTF-8 shown with its bytes escaped: a reason line is never a failed write."""
+    _print(*[a.encode("utf-8", "backslashreplace").decode("utf-8") if isinstance(a, str) else a for a in args], **kw)
+
+
 def run_cmd(cmd, cwd=None):
-    result = _run_cmd(cmd, cwd)
+    """(exit code, stdout, stderr) of a command. The output is read as bytes: a carriage return in a file name
+    stays one (a pipe read as text turns it into a line feed, and the name then names no file), and bytes that are
+    not UTF-8 survive the way back to a path."""
+    try:
+        proc = subprocess.run(cmd, cwd=cwd, capture_output=True)
+    except OSError as exc:
+        raise Stop(f"could not run {cmd[0]}: {exc.strerror or exc}")
     step()
-    return result
+    return proc.returncode, proc.stdout.decode("utf-8", "surrogateescape"), proc.stderr.decode("utf-8", "surrogateescape")
 
 
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -533,21 +549,21 @@ class GitFailed(Stop):
 
 def git(cwd, args, what, todo=""):
     """git's stdout; GitFailed naming `what`, git's reason and `todo` (what a person does next) when git fails."""
-    rc, out, err = run_cmd(["git", "-C", cwd] + args)
+    rc, out, err = run_cmd([*GIT, "-C", cwd] + args)
     if rc != 0:
         raise GitFailed(what, one_line(err, 200) or "git exited " + str(rc), todo)
     return out
 
 
 def git_ok(cwd, args):
-    return run_cmd(["git", "-C", cwd] + args)[0] == 0
+    return run_cmd([*GIT, "-C", cwd] + args)[0] == 0
 
 
 def ensure_ignored(cwd):
     """Refuse a working tree in which git would not ignore the run state: an untracked state file makes every
     issue stop at its clean-tree check (#564 makes idd-all add the rule itself)."""
     for probe in (STATE_REL, UNATTENDED_REL):   # the folder, not one file: the unattended marker and the close stage's state live there too
-        rc, _, err = run_cmd(["git", "-C", cwd, "check-ignore", "-q", "--", probe])
+        rc, _, err = run_cmd([*GIT, "-C", cwd, "check-ignore", "-q", "--", probe])
         if rc == 1:
             raise Stop("git would not ignore the run state in .claude/.idd/state/ — add the line .claude/.idd/state/ to "
                        ".git/info/exclude (or .gitignore), then start again")
@@ -591,7 +607,7 @@ def leftovers(cwd):
 
 
 def current_branch(cwd):
-    return run_cmd(["git", "-C", cwd, "symbolic-ref", "--quiet", "--short", "HEAD"])[1].strip()
+    return run_cmd([*GIT, "-C", cwd, "symbolic-ref", "--quiet", "--short", "HEAD"])[1].strip()
 
 
 def branch_name_ok(cwd, name):
@@ -686,21 +702,25 @@ def ignored_here(cwd):
 
 
 def covers(entries, path):
-    """True when one of the entries (files, or folders with a trailing slash) is this path or a folder above it."""
-    return any(path == e or (e.endswith("/") and path.startswith(e)) for e in entries)
+    """True when one of the entries (files, or folders with a trailing slash) is this path or a folder above it.
+    The folder `x/build/` covers the path `x/build` too: a file git is to write where that folder stands."""
+    return any(path == e or (e.endswith("/") and (path.startswith(e) or path == e[:-1])) for e in entries)
 
 
 def entries_of(entries, paths):
     """The entries that cover at least one of the paths, sorted."""
-    return sorted(e for e in entries if any(p == e or (e.endswith("/") and p.startswith(e)) for p in paths))
+    return sorted(e for e in entries if any(covers([e], p) for p in paths))
+
+
+PATHS_PREFIX = "paths."   # the files pathspec_file writes below the state folder
 
 
 def pathspec_file(cwd, paths):
     """A file that names these paths for git, literally and from the top (there can be many, and a name may hold
     anything). The caller removes it."""
-    fd, spec = tempfile.mkstemp(prefix="paths.", dir=state_dir(cwd))
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        fh.write("\0".join(":(top,literal)" + e for e in paths))
+    fd, spec = tempfile.mkstemp(prefix=PATHS_PREFIX, dir=state_dir(cwd))
+    with os.fdopen(fd, "wb") as fh:
+        fh.write("\0".join(":(top,literal)" + e for e in paths).encode("utf-8", "surrogateescape"))
     return spec
 
 
@@ -717,7 +737,7 @@ def stash_of(cwd, message, since):
 
 
 def stash_tip(cwd):
-    return run_cmd(["git", "-C", cwd, "rev-parse", "-q", "--verify", "refs/stash"])[1].strip()
+    return run_cmd([*GIT, "-C", cwd, "rev-parse", "-q", "--verify", "refs/stash"])[1].strip()
 
 
 def make_stash(cwd, n, branch, kind, picked, last, st, todo):
@@ -903,6 +923,26 @@ def exclude_pattern(path):
     return "/" + body + ("/" if path.endswith("/") else "")
 
 
+EXCLUDE_NOTE = "# idd rest: in the working tree before #{n} was run, and no longer ignored by the default branch"
+
+
+def exclude_file(cwd, todo):
+    where = git(cwd, ["rev-parse", "--git-path", "info/exclude"], "could not find the local exclude file", todo).strip()
+    return where if os.path.isabs(where) else os.path.join(cwd, where)
+
+
+def lines_to_exclude(cwd, picked, todo):
+    """The lines exclude_locally() would add for these paths: the ones the file does not hold yet."""
+    try:
+        with open(exclude_file(cwd, todo), encoding="utf-8", errors="surrogateescape") as fh:
+            have = set(fh.read().splitlines())
+    except FileNotFoundError:
+        have = set()
+    except OSError as exc:
+        raise GitFailed("could not read the local exclude file", exc.strerror or str(exc), todo)
+    return [exclude_pattern(e) for e in picked if exclude_pattern(e) not in have]
+
+
 def exclude_locally(cwd, n, picked, todo):
     """Add these paths to the repository's local exclude file (.git/info/exclude: never committed, never leaves
     this machine), under a comment line that names the issue. The files themselves are not touched."""
@@ -910,39 +950,41 @@ def exclude_locally(cwd, n, picked, todo):
     bad = [e for e in picked if "\n" in e or "\r" in e]
     if bad:   # an exclude file has one pattern on a line
         raise GitFailed("a path from before the run holds a line break and cannot go into the local exclude file", repr(bad[0])[:120], todo)
-    where = git(cwd, ["rev-parse", "--git-path", "info/exclude"], "could not find the local exclude file", todo).strip()
-    where = where if os.path.isabs(where) else os.path.join(cwd, where)
+    where = exclude_file(cwd, todo)
     try:
         os.makedirs(os.path.dirname(where), exist_ok=True)
         have = set()
         if os.path.exists(where):
-            with open(where, encoding="utf-8", errors="replace") as fh:
+            with open(where, encoding="utf-8", errors="surrogateescape") as fh:
                 text = fh.read()
             have = set(text.splitlines())
         else:
             text = ""
         new = [exclude_pattern(e) for e in picked if exclude_pattern(e) not in have]
         if new:
-            with open(where, "a", encoding="utf-8") as fh:
-                fh.write(("" if not text or text.endswith("\n") else "\n")
-                         + f"# idd rest: in the working tree before #{n} was run, and no longer ignored by the default branch\n"
+            with open(where, "a", encoding="utf-8", errors="surrogateescape") as fh:
+                fh.write(("" if not text or text.endswith("\n") else "\n") + EXCLUDE_NOTE.format(n=n) + "\n"
                          + "".join(line + "\n" for line in new))
             step()
     except OSError as exc:
         raise GitFailed(what, exc.strerror or str(exc), todo)
 
 
-def unexclude_locally(cwd, picked, todo):
-    """Take the lines of these paths out of the local exclude file again."""
+def unexclude_locally(cwd, n, picked, added, todo):
+    """Take the lines of these paths out of the local exclude file again: only lines settle added for this issue
+    (`added`), never one that was there before, and the comment line of this issue when no line of it is left
+    below it."""
     what = "could not write the local exclude file"
-    where = git(cwd, ["rev-parse", "--git-path", "info/exclude"], "could not find the local exclude file", todo).strip()
-    where = where if os.path.isabs(where) else os.path.join(cwd, where)
-    drop = {exclude_pattern(e) for e in picked}
+    where = exclude_file(cwd, todo)
+    drop = {exclude_pattern(e) for e in picked} & set(added)
+    note = EXCLUDE_NOTE.format(n=n)
     try:
-        with open(where, encoding="utf-8", errors="replace") as fh:
-            lines = fh.read().splitlines(keepends=True)
-        with open(where + ".idd-part", "w", encoding="utf-8") as fh:
-            fh.write("".join(line for line in lines if line.rstrip("\r\n") not in drop))
+        with open(where, encoding="utf-8", errors="surrogateescape") as fh:
+            lines = [line for line in fh.read().splitlines(keepends=True) if line.rstrip("\r\n") not in drop]
+        kept = [line for i, line in enumerate(lines)
+                if not (line.rstrip("\r\n") == note and (i + 1 == len(lines) or lines[i + 1].rstrip("\r\n") not in set(added)))]
+        with open(where + ".idd-part", "w", encoding="utf-8", errors="surrogateescape") as fh:
+            fh.write("".join(kept))
         os.replace(where + ".idd-part", where)
         step()
     except OSError as exc:
@@ -965,7 +1007,7 @@ def commit_hooks(cwd):
     character) is left out, and the commit then fails with it."""
     found, named, lists = False, [], True
     for event in COMMIT_HOOKS:
-        rc, out, err = run_cmd(["git", "-C", cwd, "hook", "list", event])
+        rc, out, err = run_cmd([*GIT, "-C", cwd, "hook", "list", event])
         if rc == 0:
             lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
             found = found or bool(lines)
@@ -973,8 +1015,8 @@ def commit_hooks(cwd):
         elif "no hooks found" not in err:
             lists = False
     if not lists:
-        top = run_cmd(["git", "-C", cwd, "rev-parse", "--show-toplevel"])[1].strip()
-        folder = run_cmd(["git", "-C", top, "rev-parse", "--git-path", "hooks"])[1].strip() if top else ""
+        top = run_cmd([*GIT, "-C", cwd, "rev-parse", "--show-toplevel"])[1].strip()
+        folder = run_cmd([*GIT, "-C", top, "rev-parse", "--git-path", "hooks"])[1].strip() if top else ""
         if folder:
             folder = folder if os.path.isabs(folder) else os.path.join(top, folder)
             found = found or any(os.path.isfile(os.path.join(folder, h)) and os.access(os.path.join(folder, h), os.X_OK)
@@ -1053,7 +1095,7 @@ def keep_tip(cwd, n, back, on, pre, before, paths, again, known):
     start, hooks = head(), False
     if paths:
         stage(cwd, paths, todo)
-        rc, _, err = run_cmd(["git", "-C", cwd, "commit", "-q", "-m", subject])
+        rc, _, err = run_cmd([*GIT, "-C", cwd, "commit", "-q", "-m", subject])
         if rc != 0:
             present, _ = commit_hooks(cwd)
             if not present:   # no hook of the repository took part in that failure
@@ -1078,7 +1120,7 @@ def keep_tip(cwd, n, back, on, pre, before, paths, again, known):
             raise trouble(n, on, "it holds files that are never committed",
                           f"have git ignore them, commit or remove what else is left{back}", bad)
         unstage(cwd, theirs, todo)
-        if run_cmd(["git", "-C", cwd, "diff", "--cached", "--quiet"])[0] == 0:
+        if run_cmd([*GIT, "-C", cwd, "diff", "--cached", "--quiet"])[0] == 0:
             if not older:
                 return None   # the hook had left nothing else staged: there is nothing of the issue to keep
             tip, older = older[-1], older[:-1]
@@ -1484,6 +1526,9 @@ def settle_tree(cwd, n, default, branch, last, st):
     before = last.get("before", [])
     pre = git(cwd, ["rev-parse", "--show-prefix"], "could not read where the working tree lies in the repository", look).strip()
     top = git(cwd, ["rev-parse", "--show-toplevel"], "could not read the top of the repository", look).strip()
+    for name in os.listdir(state_dir(cwd)):   # a list of paths that a call left when it was killed
+        if name.startswith(PATHS_PREFIX):
+            os.unlink(os.path.join(state_dir(cwd), name))
     # an earlier call was killed between setting files aside and putting them back: they go back before anything is read
     restored = put_back(cwd, top, n, before)
     own = bool(re.fullmatch(BRANCH_OF.format(n=n), branch or ""))
@@ -1491,18 +1536,21 @@ def settle_tree(cwd, n, default, branch, last, st):
         tracks = to_hold(top, tracked_here(cwd, look), tracked_by(cwd, default), before)
     else:
         tracks = last.get("tracks", [])
-    if "missing" not in last or last.get("tracks", []) != tracks:
+    busy = operation_in_progress(cwd)
+    paths, unmerged = leftovers(cwd)
+    # files from before the run that git shows on this branch (its rules no longer ignore them): not what the run left
+    shown = entries_of(before, [p for p in paths if covers(before, p)]) if own else last.get("shown", [])
+    if "missing" not in last or last.get("tracks", []) != tracks or last.get("shown", []) != shown:
         # missing is read once, before settle does anything: what the issue's run itself took away
         last.setdefault("missing", [e for e in before if not os.path.lexists(os.path.join(top, e.rstrip("/")))])
-        last["tracks"] = tracks
+        last["tracks"], last["shown"] = tracks, shown
         save_state(cwd, st)
-    # what a person does to get back: the default branch is named only when the working tree is not on it
-    copying = " (after the copying the report asks for)" if own and tracks else ""
+    # what a person does to get back: the default branch is named only when the working tree is not on it. When
+    # files from before the run are in sight on this branch, or tracked by it, the report says what to do with them
+    copying = " (see the report first)" if own and (tracks or shown) else ""
     back = "" if branch == default else f", then{copying} {checkout_cmd(default)}"
     # on the default branch nothing is to be committed: what is left belongs to no branch of the issue
     rest_of = "commit what is left elsewhere or move it away" if branch == default else f"commit or remove what is left{back}"
-    busy = operation_in_progress(cwd)
-    paths, unmerged = leftovers(cwd)
     if busy:
         raise trouble(n, on, f"git reports an unfinished {busy}", f"finish or abort it, {rest_of}")
     if unmerged:   # for example a stash that was applied and conflicted: no operation is there to abort
@@ -1516,7 +1564,7 @@ def settle_tree(cwd, n, default, branch, last, st):
     def fetch():
         """Fetch the default branch. A failure is kept for later: settle first finishes what it can do locally,
         so that it stops with the working tree on the default branch."""
-        rc, _, err = run_cmd(["git", "-C", cwd, "fetch", "-q", "origin", default])
+        rc, _, err = run_cmd([*GIT, "-C", cwd, "fetch", "-q", "origin", default])
         return None if rc == 0 else (one_line(err, 200) or f"git exited {rc}")
 
     def against_origin():
@@ -1578,10 +1626,10 @@ def settle_tree(cwd, n, default, branch, last, st):
         if fetch_failed is None:
             behind, ahead = against_origin()
             if behind and not ahead:   # move the default branch while it is not checked out: a merged issue is then not in the way
-                run_cmd(["git", "-C", cwd, "fetch", "-q", ".", f"refs/remotes/origin/{default}:refs/heads/{default}"])   # git allows a fast-forward only; refused: left
+                run_cmd([*GIT, "-C", cwd, "fetch", "-q", ".", f"refs/remotes/origin/{default}:refs/heads/{default}"])   # git allows a fast-forward only; refused: left
         default_files = tracked_by(cwd, default)
         here = tracked_here(cwd, look)
-        out = git(cwd, ["diff", "--name-only", "-z", "HEAD", f"refs/heads/{default}", "--"],
+        out = git(cwd, ["diff", "--no-relative", "--name-only", "-z", "HEAD", f"refs/heads/{default}", "--"],
                   "could not compare the issue's branch with the default branch", look)
         differs = {f for f in out.split("\0") if f}
         # both branches track it, each with its own content: git takes it for an ordinary tracked file and a checkout replaces it
@@ -1599,7 +1647,7 @@ def settle_tree(cwd, n, default, branch, last, st):
         save_state(cwd, st)
         try:      # a file from before the run that the branch tracks would leave the working tree with the checkout
             hold_back(cwd, top, n, held, f"look at that{back}, {AGAIN}")
-            rc, _, err = run_cmd(["git", "-C", cwd, "checkout", "-q", "--no-overwrite-ignore", default, "--"])
+            rc, _, err = run_cmd([*GIT, "-C", cwd, "checkout", "-q", "--no-overwrite-ignore", default, "--"])
         finally:  # wherever the working tree is now, and however this went
             put_back(cwd, top, n, before)
         if rc != 0 and current_branch(cwd) != default:            # a hook that fails after the checkout does not undo it
@@ -1633,13 +1681,15 @@ def settle_tree(cwd, n, default, branch, last, st):
     if theirs:   # there before the run, and the default branch no longer ignores them: the rule went with a merged issue
         picked = entries_of(before, theirs)
         last["excluded"] = sorted(set(last.get("excluded", [])) | set(picked))   # written down first, as above
+        last["excluded_lines"] = sorted(set(last.get("excluded_lines", []))
+                                        | set(lines_to_exclude(cwd, picked, f"look at .git/info/exclude, {AGAIN}")))
         save_state(cwd, st)
         exclude_locally(cwd, n, picked, f"move those files away or have git ignore them, {AGAIN}")
         still = [p for xy, p in status_entries(cwd) if xy == "??" and covers(picked, p)]
         if still:   # a rule of the default branch (a `!` line of a .gitignore) outranks the local exclude file
-            shown = entries_of(picked, still)
-            unexclude_locally(cwd, shown, f"remove their lines from .git/info/exclude by hand, {AGAIN}")
-            last["excluded"] = [e for e in last["excluded"] if e not in shown]
+            not_hidden = entries_of(picked, still)
+            unexclude_locally(cwd, n, not_hidden, last["excluded_lines"], f"remove their lines from .git/info/exclude by hand, {AGAIN}")
+            last["excluded"] = [e for e in last["excluded"] if e not in not_hidden]
             save_state(cwd, st)
             raise trouble(n, default, "the local exclude file cannot hide files from before the run: a rule of the default branch keeps git from ignoring them",
                           "move those files away, or have a commit of the default branch change that rule", still)
@@ -1826,6 +1876,11 @@ def cmd_report(argv):
         for b in empty:
             out.append(f"  branch {one_line(b, 120)} of #{loose['issue']} has no commit of its own and no upstream: deleting it lets "
                        "a later rest run start the issue over while the issue is a candidate")
+        if loose.get("shown"):
+            out.append(f"  these were in the working tree before the run of #{loose['issue']} and are not what the run left; git shows "
+                       "them on that branch because its rules no longer ignore them. Leave them as they are: do not commit "
+                       "them and do not remove them: " + ", ".join(one_line(p, 120) for p in loose["shown"][:PATHS_KEPT])
+                       + (f" and {len(loose['shown']) - PATHS_KEPT} more" if len(loose["shown"]) > PATHS_KEPT else ""))
         if loose.get("tracks"):
             out.append(f"  a branch of #{loose['issue']} tracks files that were in the working tree before the run: a checkout of "
                        f"{one_line(st['default'], 60)} takes them out of the working tree. Copy them elsewhere before that "

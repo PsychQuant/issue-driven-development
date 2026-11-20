@@ -30,6 +30,8 @@ verify 第 7 輪（#478 的 comment 7030373381，只有 Codex 一席）在 `48fe
 
 其餘：寫進 exclude 之後確認真的生效，沒生效（預設 branch 有 `!` 規則）就把那一行拿掉、照實以 3 結束；comment 重讀之後核對數量；整個資料夾被忽略時「missing」只看那個資料夾，規格與文件照實寫；`settle` 在那一張的 branch 上停下、而那個 branch 追蹤了交出時就在的檔時，報告列出這些檔並說明手動 checkout 之前要先複製；結束方式表的 `existing-work` 列改成真的以 `existing work:` 記錄；接續說明的旗標；另一個 repo 的狀態檔的說法。
 
+**凍結前的獨立檢查找到的（tasks 3.2）**：`diff.relative` 加上 `--cwd` 在子目錄時，「兩邊都追蹤、內容不同」的檢查失效，checkout 換掉使用者的檔；`settle` 停在那一張的 branch 時，原因行叫人「commit 或移除剩下的」，而 git 在那個 branch 上顯示的東西裡有使用者原本就在的檔；檔名含 carriage return 時讀到的路徑對不上；`origin` 在被忽略的資料夾的位置放了一個檔時，資料夾裡原本就在的檔被收進 stash；exclude 沒生效時連使用者自己寫的那一行也拿掉。處置寫在 tasks 2.4。
+
 ## Non-Goals
 
 - 每張 issue 用獨立的 worktree（維護者 2026-11-20 沒有選）。

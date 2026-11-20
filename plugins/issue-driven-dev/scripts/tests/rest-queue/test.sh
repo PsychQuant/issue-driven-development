@@ -1172,6 +1172,8 @@ settle 5 > /dev/null 2> "$S/err"; assert_exit "hook adds a file that is never co
 assert_eq "hook adds a file that is never committed: idd/5-x has no new commit" "$TIP" "$(git -C "$T" rev-parse idd/5-x)"
 assert_output_grep "hook adds a file that is never committed: the reason names the file" ".claude/worktrees/from-the-hook.txt" "$S/err"
 assert_eq "hook adds a file that is never committed: the change of a.txt is still in the working tree" "changed" "$(tail -1 "$T/a.txt")"
+assert_eq "hook adds a file that is never committed: the working tree stays on the issue's branch" "idd/5-x" "$(head_branch)"
+assert_output_grep "hook adds a file that is never committed: the reason says so" "it holds files that are never committed" "$S/err"
 reason_shape "hook adds a file that is never committed" "$S/err"
 
 # spec-example: idd-all-rest / a record a rejecting hook wrote is discarded, not committed
@@ -1218,6 +1220,79 @@ assert_output_grep "a rule un-ignores the file: the reason names it" "package-lo
 assert_output_grep "a rule un-ignores the file: and says the local exclude file cannot hide it" "local exclude file cannot hide" "$S/err"
 reason_shape "a rule un-ignores the file" "$S/err"
 
+# spec-example: idd-all-rest / what git is configured to print does not change what settle compares
+new relative-diff 5 9
+mkdir -p "$T/sub"; printf 's\n' > "$T/sub/s.txt"; printf 'local.cfg\n' > "$T/.gitignore"
+git -C "$T" add sub/s.txt .gitignore; git -C "$T" commit -q -m sub; git -C "$T" push -q origin main 2>/dev/null
+printf 'sub/.claude/.idd/state/\n' >> "$T/.git/info/exclude"
+git -C "$T" config diff.relative true; git -C "$T" config log.showSignature true
+printf 'MINE\n' > "$T/local.cfg"
+rq start --cwd "$T/sub" --repo "$REPO" --path PR --review no > /dev/null 2>&1; rq next --cwd "$T/sub" --repo "$REPO" > /dev/null
+git -C "$T" checkout -q --no-track -b idd/5-x origin/main; : > "$T/.gitignore"
+git -C "$T" add -- .gitignore local.cfg; git -C "$T" commit -q -m "track the settings (#5)"
+git clone -q "$T.origin.git" "$S/other" 2>/dev/null; printf 'THEIRS\n' > "$S/other/local.cfg"
+git -C "$S/other" add -f local.cfg; git -C "$S/other" commit -q -m "settings of the team"; git -C "$S/other" push -q origin main 2>/dev/null
+rq record --cwd "$T/sub" --repo "$REPO" --issue 5 --reason x > /dev/null
+rq settle --cwd "$T/sub" --repo "$REPO" --issue 5 > /dev/null 2> "$S/err"; assert_exit "relative diff, below the top: settle exits 3" 3 "$?"
+assert_eq "relative diff, below the top: the file holds what it held" "MINE" "$(cat "$T/local.cfg" 2>/dev/null)"
+assert_output_grep "relative diff, below the top: the reason names the file" "local.cfg" "$S/err"
+
+# spec-example: idd-all-rest / a carriage return in a file name
+new odd-name 5 9
+printf 'odd*\n' > "$T/.gitignore"; git -C "$T" add .gitignore; git -C "$T" commit -q -m "ignore odd"; git -C "$T" push -q origin main 2>/dev/null
+ODD="$T/$(printf 'odd\rname.txt')"
+if printf 'MINE\n' > "$ODD" 2>/dev/null && [ -f "$ODD" ]; then
+  begin
+  git -C "$T" checkout -q --no-track -b idd/5-x origin/main; : > "$T/.gitignore"
+  git -C "$T" add -A; git -C "$T" commit -q -m "track the odd file (#5)"
+  run record --issue 5 --reason x > /dev/null
+  settle 5 > "$S/out" 2> "$S/err"; assert_exit "a carriage return in a name: settle exits 0" 0 "$?"
+  assert_eq "a carriage return in a name: the file is in the working tree as it was" "MINE" "$(cat "$ODD" 2>/dev/null)"
+  assert_eq "a carriage return in a name: nothing is recorded as missing" "[]" "$(jget missing < "$S/out")"
+  assert_eq "a carriage return in a name: the working tree is on main and git status prints nothing" "main|" "$(head_branch)|$(git -C "$T" status --porcelain)"
+else
+  echo "  (skipped: this file system does not take a carriage return in a file name)"
+fi
+
+# spec-example: idd-all-rest / a file that origin puts where an ignored folder stands
+new folder-in-the-way 5 9
+printf 'build/\n' > "$T/.gitignore"; git -C "$T" add .gitignore; git -C "$T" commit -q -m "ignore build"; git -C "$T" push -q origin main 2>/dev/null
+mkdir -p "$T/x/build"; printf 'notes\n' > "$T/x/build/notes.txt"
+begin
+git -C "$T" checkout -q --no-track -b idd/5-x origin/main; printf 'x/\n' >> "$T/.gitignore"
+git -C "$T" add .gitignore; git -C "$T" commit -q -m "ignore x (#5)"
+git clone -q "$T.origin.git" "$S/other" 2>/dev/null; mkdir -p "$S/other/x"; printf 'a file\n' > "$S/other/x/build"
+git -C "$S/other" add -f x/build; git -C "$S/other" commit -q -m "a file named build"; git -C "$S/other" push -q origin main 2>/dev/null
+run record --issue 5 --reason x > /dev/null
+settle 5 > /dev/null 2> "$S/err"; assert_exit "a file where an ignored folder stands: settle exits 3" 3 "$?"
+assert_eq "a file where an ignored folder stands: the file in the folder holds what it held" "notes" "$(cat "$T/x/build/notes.txt" 2>/dev/null)"
+assert_eq "a file where an ignored folder stands: no stash was made" "" "$(git -C "$T" stash list)"
+
+# spec-example: idd-all-rest / a line of the local exclude file that settle did not add stays
+new exclude-own-line 5 9
+printf '/package-lock.json\n' >> "$T/.git/info/exclude"; printf '{"lock": "MINE"}\n' > "$T/package-lock.json"
+begin
+git -C "$T" checkout -q --no-track -b idd/5-x origin/main; printf 'w\n' > "$T/w.txt"; git -C "$T" add w.txt; git -C "$T" commit -q -m "work (#5)"
+git clone -q "$T.origin.git" "$S/other" 2>/dev/null; printf '!package-lock.json\n' > "$S/other/.gitignore"
+git -C "$S/other" add .gitignore; git -C "$S/other" commit -q -m "never ignore the lockfile"; git -C "$S/other" push -q origin main 2>/dev/null
+run record --issue 5 --reason x > /dev/null
+settle 5 > /dev/null 2> "$S/err"; assert_exit "the person's own exclude line: settle exits 3" 3 "$?"
+assert_eq "the person's own exclude line: it is still in the file, once" "1" "$(grep -cx '/package-lock.json' "$T/.git/info/exclude")"
+assert_eq "the person's own exclude line: and settle left no comment line of its own" "0" "$(grep -c 'idd rest' "$T/.git/info/exclude")"
+
+# spec-example: idd-all-rest / the report says which files in sight are not what the run left
+new shown-before 5 9
+with_tools
+begin
+git -C "$T" checkout -q --no-track -b idd/5-x origin/main; git -C "$T" rm -q -r tools; git -C "$T" commit -q -m "remove tools (#5)"
+mkdir -p "$T/.claude/.idd"; printf 'pid\n' > "$T/.claude/.idd/tree-lock"; printf 'changed\n' >> "$T/a.txt"
+run record --issue 5 --reason x > /dev/null
+settle 5 > /dev/null 2> "$S/err"; assert_exit "files from before in sight: settle exits 3" 3 "$?"
+assert_output_grep "files from before in sight: the reason sends the person to the report before the checkout" "then (see the report first) git checkout --no-overwrite-ignore main" "$S/err"
+reason_shape "files from before in sight" "$S/err"
+ended
+assert_grep "files from before in sight: the report names the file and says to leave it" "tools/.env" "$(grep -F 'do not commit them and do not remove them' "$S/report.out")"
+
 # spec-example: idd-all-rest / fewer comments than the issue has
 new comments-short 5:diag=Simple,comments=130
 printf '[{"assoc": "MEMBER", "body": "one", "login": "me", "type": "User"}]' > "$G/comments-5.json"
@@ -1260,7 +1335,7 @@ assert_eq "tracks, refused: the working tree is on the issue's branch with the c
 assert_true "tracks, refused: nothing is left set aside" '[ ! -e "$T/.claude/.idd/state/rest-held-5" ]'
 reason_shape "tracks, refused" "$S/err"
 # spec-example: idd-all-rest / the report says what to copy before a checkout by hand
-assert_output_grep "tracks, refused: the reason puts the checkout after the copying the report asks for" "(after the copying the report asks for) git checkout --no-overwrite-ignore main" "$S/err"
+assert_output_grep "tracks, refused: the reason sends the person to the report before the checkout" "(see the report first) git checkout --no-overwrite-ignore main" "$S/err"
 ended
 assert_grep "tracks, refused: the report names the file the branch tracks and says to copy it before the checkout" "local/notes.txt" "$(grep -F 'Copy them elsewhere before that checkout' "$S/report.out")"
 
