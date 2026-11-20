@@ -70,6 +70,7 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.join(HERE, "lib"))
+import reststate  # noqa: E402  scripts/lib/reststate.py — what the state of a rest run is
 import workflows  # noqa: E402  scripts/lib/workflows.py — does a push to the default branch publish?
 from ghread import (CI_GATE_RESULTS, GH, GIT, SLEEP, TEST, Stop, gh_json, git, issue_comments, issue_view, iso,  # noqa: E402
                     local_ci, now, gh_paginated, parse_iso, run_cmd, session_login, ts, first_line)
@@ -145,8 +146,8 @@ def common_ok(a):
 
 def rest_review(cwd, n):
     """What the rest run at this --cwd says about issue n (scripts/rest-queue.py keeps that run's state beside
-    this file's): "on" when a run with --review has n in flight; "unreadable" when a state file that changed in
-    the last 24 hours is there and cannot be read as one; "off" otherwise (no file, a run older than its 24 hours,
+    this file's): "on" when a run with --review has n in flight; "unreadable" when a file that changed in the last 24 hours is
+    there and is not a state rest-queue.py can use (scripts/lib/reststate.py decides that for both); "off" otherwise (no file, a run older than its 24 hours,
     review off, or another issue in flight). The close stage merges when the record of an issue says review is
     off; this keeps a value lost on the way, or added to the run later, from switching it off (#478)."""
     try:
@@ -159,14 +160,24 @@ def rest_review(cwd, n):
     try:
         with open(path, encoding="utf-8") as fh:
             rest = json.load(fh)
-        if now() - parse_iso(rest["updated_at"]) >= STATE_TTL:
-            return "off"
-        if not isinstance(rest["review"], bool):
-            raise ValueError("review")
-        flight = any(a["issue"] == n and a["outcome"] is None for a in rest["attempts"])
-        return "on" if rest["review"] and flight else "off"
-    except Exception:   # not a state of a rest run this can read
+    except Exception:   # not JSON, or not readable
         return "unreadable" if recent else "off"
+    if not reststate.usable(rest):   # what rest-queue.py start stops on: the flag in such a file is not taken either
+        return "unreadable" if recent else "off"
+    if now() - parse_iso(rest["updated_at"]) >= STATE_TTL:
+        return "off"
+    flight = any(a["issue"] == n and a["outcome"] is None for a in rest["attempts"])
+    return "on" if rest["review"] and flight else "off"
+
+
+def cmd_rest_review(argv):
+    """Print what the rest run at --cwd says about the issue: on, off or unreadable (rest_review). The skill asks
+    here, so that a PR body and the close stage go by one reading of that state."""
+    a = parse(argv, {"--cwd": "value", "--repo": "value", "--issue": "value"})
+    if a is None or not common_ok(a):
+        return usage("rest-review needs --cwd, --repo and --issue")
+    print(rest_review(os.path.realpath(a["--cwd"]), int(a["--issue"])))
+    return 0
 
 
 def cmd_init(argv):
@@ -873,7 +884,7 @@ def main(argv):
     if not argv:
         return usage("subcommand required: init | reset | gate | pr-check | run | confirm-close")
     sub, rest = argv[0], argv[1:]
-    handlers = {"init": cmd_init, "reset": cmd_reset, "gate": cmd_gate, "pr-check": cmd_pr_check, "run": cmd_run,
+    handlers = {"rest-review": cmd_rest_review, "init": cmd_init, "reset": cmd_reset, "gate": cmd_gate, "pr-check": cmd_pr_check, "run": cmd_run,
                 "confirm-close": cmd_confirm}
     if sub not in handlers:
         return usage(f"unknown subcommand '{sub}'")
