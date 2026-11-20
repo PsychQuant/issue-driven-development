@@ -224,7 +224,7 @@ assert_eq "list: and prints no list" "" "$OUT"
 new gate-missing 1:diag=Simple
 mkdir -p "$S/copy/lib"
 cp "$RQ" "$S/copy/rest-queue.py"
-cp "$PLUGIN/scripts/lib/ghread.py" "$PLUGIN/scripts/lib/intent.py" "$PLUGIN/scripts/lib/rendered.py" "$S/copy/lib/"
+cp "$PLUGIN/scripts/lib/ghread.py" "$PLUGIN/scripts/lib/intent.py" "$PLUGIN/scripts/lib/rendered.py" "$PLUGIN/scripts/lib/reststate.py" "$S/copy/lib/"
 OUT=$(python3 "$S/copy/rest-queue.py" list --repo "$REPO" --json 2>"$S/err"); rc=$?
 assert_exit "list: a gate that cannot be evaluated exits 3" 3 "$rc"
 assert_eq "list: and prints no list" "" "$OUT"
@@ -534,6 +534,7 @@ write_state 1 '[{"issue": 5, "outcome": "stopped", "reason": "x"}]'
 rq start --cwd "$T" --repo o/other --path PR --review no > "$S/start.out" 2>&1; rc=$?
 assert_exit "start: a run state of another repository does not stop it" 0 "$rc"
 assert_output_grep "start: and it says whose it was" "o/r" "$S/start.out"
+refute_grep "start: and does not call a state written an hour ago older than 24 hours" "older than 24 hours" "$(cat "$S/start.out")"
 for bad in "../x" "o/.." "./r" "o/."; do
   rq list --repo "$bad" > /dev/null 2>&1; assert_exit "usage: --repo $bad exits 2" 2 "$?"
 done
@@ -1144,6 +1145,87 @@ assert_eq "exclude, rule removed elsewhere: the file is in the working tree as i
 assert_eq "exclude, rule removed elsewhere: it is recorded as excluded, and no stash was made" '["package-lock.json"]|[]|' "$(jget excluded < "$S/out")|$(jget stashes < "$S/out")|$(git -C "$T" stash list)"
 assert_eq "exclude, rule removed elsewhere: the working tree is on main and git status prints nothing" "main|" "$(head_branch)|$(git -C "$T" status --porcelain)"
 
+# ── fix round 7: one reader of the working tree, one check of every kept commit ──
+# spec-example: idd-all-rest / what git shows by default does not change what is handed out
+new hidden-untracked-start 5 9
+git -C "$T" config status.showUntrackedFiles no; printf 'notes\n' > "$T/local-notes.txt"
+run start --path PR --review no > /dev/null 2> "$S/err"; assert_exit "hidden untracked file: start exits 3" 3 "$?"
+assert_output_grep "hidden untracked file: start names the file" "local-notes.txt" "$S/err"
+new hidden-untracked-next 5 9
+run start --path PR --review no > /dev/null 2>&1
+git -C "$T" config status.showUntrackedFiles no; printf 'notes\n' > "$T/local-notes.txt"
+run next > "$S/out" 2> "$S/err"; assert_exit "hidden untracked file: next exits 3" 3 "$?"
+assert_output_grep "hidden untracked file: next names the file" "local-notes.txt" "$S/err"
+assert_eq "hidden untracked file: and the run state holds no attempt" "0" "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["attempts"]))' "$(state_file)")"
+assert_eq "hidden untracked file: the file is untouched" "notes" "$(cat "$T/local-notes.txt")"
+
+# spec-example: idd-all-rest / a hook that lets the commit through cannot add a file that is never committed
+new hook-adds-keep-out 5 9
+begin
+git -C "$T" checkout -q --no-track -b idd/5-x origin/main; printf 'changed\n' >> "$T/a.txt"
+hook "$T" pre-commit '#!/bin/sh
+mkdir -p .claude/worktrees && printf "x\n" > .claude/worktrees/from-the-hook.txt
+git add -A'
+TIP=$(git -C "$T" rev-parse idd/5-x)
+run record --issue 5 --reason x > /dev/null
+settle 5 > /dev/null 2> "$S/err"; assert_exit "hook adds a file that is never committed: settle exits 3" 3 "$?"
+assert_eq "hook adds a file that is never committed: idd/5-x has no new commit" "$TIP" "$(git -C "$T" rev-parse idd/5-x)"
+assert_output_grep "hook adds a file that is never committed: the reason names the file" ".claude/worktrees/from-the-hook.txt" "$S/err"
+assert_eq "hook adds a file that is never committed: the change of a.txt is still in the working tree" "changed" "$(tail -1 "$T/a.txt")"
+reason_shape "hook adds a file that is never committed" "$S/err"
+
+# spec-example: idd-all-rest / a record a rejecting hook wrote is discarded, not committed
+new hook-writes-record 5 9
+begin
+git -C "$T" checkout -q --no-track -b idd/5-x origin/main; printf 'changed\n' >> "$T/a.txt"
+hook "$T" pre-commit '#!/bin/sh
+mkdir -p .claude/.idd/attachments/issue-5 && printf "{\"issue\": 5, \"files\": []}" > .claude/.idd/attachments/issue-5/_manifest.json
+git add -A
+exit 1'
+run record --issue 5 --reason x > /dev/null
+settle 5 > "$S/out" 2> "$S/err"; assert_exit "hook writes a record and rejects: settle exits 0" 0 "$?"
+assert_eq "hook writes a record and rejects: the new commit holds a.txt only" "a.txt" "$(git -C "$T" show --name-only --format= idd/5-x)"
+assert_eq "hook writes a record and rejects: the record is among the discarded" '[".claude/.idd/attachments/issue-5/_manifest.json"]' "$(jget discarded < "$S/out")"
+
+# spec-example: idd-all-rest / a kept commit that holds a file from before the run stops settle on the default branch
+new kept-commit-bad 5 9
+with_tools
+begin
+git -C "$T" checkout -q --no-track -b idd/5-x origin/main; printf 'changed\n' >> "$T/a.txt"
+git -C "$T" add -f -- a.txt tools/.env; git -C "$T" commit -q -m "chore: keep what the run of #5 left (#5)"
+BAD=$(git -C "$T" rev-parse --short=7 idd/5-x)
+cp "$T/tools/.env" "$S/env.kept"; git -C "$T" checkout -q main; cp "$S/env.kept" "$T/tools/.env"   # the checkout takes the file out: it is put back by hand
+run record --issue 5 --reason x > /dev/null
+settle 5 > /dev/null 2> "$S/err"; assert_exit "a kept commit with a file from before: settle exits 3" 3 "$?"
+assert_output_grep "a kept commit with a file from before: the reason names the commit" "$BAD" "$S/err"
+assert_output_grep "a kept commit with a file from before: and the file" "tools/.env" "$S/err"
+assert_eq "a kept commit with a file from before: the file is in the working tree" "TOKEN=ghp_secret" "$(cat "$T/tools/.env" 2>/dev/null)"
+reason_shape "a kept commit with a file from before" "$S/err"
+
+# spec-example: idd-all-rest / a rule of the default branch that un-ignores the file stops settle
+new exclude-negated 5 9
+lockfile
+begin
+git -C "$T" checkout -q --no-track -b idd/5-x origin/main; printf 'w\n' > "$T/w.txt"; git -C "$T" add w.txt; git -C "$T" commit -q -m "work (#5)"
+git clone -q "$T.origin.git" "$S/other" 2>/dev/null; printf '!package-lock.json\n' > "$S/other/.gitignore"
+git -C "$S/other" commit -q -a -m "never ignore the lockfile"; git -C "$S/other" push -q origin main 2>/dev/null
+run record --issue 5 --reason x > /dev/null
+settle 5 > "$S/out" 2> "$S/err"; assert_exit "a rule un-ignores the file: settle exits 3" 3 "$?"
+assert_eq "a rule un-ignores the file: the file is in the working tree as it was" '{"lock": "MINE"}' "$(cat "$T/package-lock.json" 2>/dev/null)"
+assert_eq "a rule un-ignores the file: the run state does not say it was excluded" "[]" "$(state_list excluded | sed 's/"<missing>"/[]/')"
+assert_eq "a rule un-ignores the file: the local exclude file has no line for it" "0" "$(grep -c 'package-lock' "$T/.git/info/exclude")"
+assert_output_grep "a rule un-ignores the file: the reason names it" "package-lock.json" "$S/err"
+assert_output_grep "a rule un-ignores the file: and says the local exclude file cannot hide it" "local exclude file cannot hide" "$S/err"
+reason_shape "a rule un-ignores the file" "$S/err"
+
+# spec-example: idd-all-rest / fewer comments than the issue has
+new comments-short 5:diag=Simple,comments=130
+printf '[{"assoc": "MEMBER", "body": "one", "login": "me", "type": "User"}]' > "$G/comments-5.json"
+rq list --repo "$REPO" --json > "$S/out" 2> "$S/err"; rc=$?
+assert_true "fewer comments than the issue has: list does not exit 0" "[ $rc != 0 ]"
+assert_eq "fewer comments than the issue has: and prints no list" "" "$(cat "$S/out")"
+assert_output_grep "fewer comments than the issue has: the reason says the comments were not read completely" "comments of #5" "$S/err"
+
 # spec-example: idd-all-rest / a file from before that the issue starts to track is put back
 for how in committed changed; do
   new "tracks-$how" 5 9
@@ -1177,6 +1259,10 @@ assert_eq "tracks, refused: both files hold what they held" "notes, edited|mine"
 assert_eq "tracks, refused: the working tree is on the issue's branch with the change it had" "idd/5-x| M local/notes.txt" "$(head_branch)|$(git -C "$T" status --porcelain)"
 assert_true "tracks, refused: nothing is left set aside" '[ ! -e "$T/.claude/.idd/state/rest-held-5" ]'
 reason_shape "tracks, refused" "$S/err"
+# spec-example: idd-all-rest / the report says what to copy before a checkout by hand
+assert_output_grep "tracks, refused: the reason puts the checkout after the copying the report asks for" "(after the copying the report asks for) git checkout --no-overwrite-ignore main" "$S/err"
+ended
+assert_grep "tracks, refused: the report names the file the branch tracks and says to copy it before the checkout" "local/notes.txt" "$(grep -F 'Copy them elsewhere before that checkout' "$S/report.out")"
 
 # spec-example: idd-all-rest / a file put back that the default branch does not ignore goes into the local exclude file
 new tracks-unignored 5 9
@@ -2062,7 +2148,7 @@ OUT=$(cd "$S" && CLAUDE_PLUGIN_ROOT="$PLUGIN" CWD="$T" GITHUB_REPO="$REPO" bash 
 assert_eq "skill: and so does the stop block" "the helper stopped" "$(printf '%s' "$OUT" | jget stopped)"
 # spec-example: idd-all-rest / the skill takes both review values from next
 assert_grep_re "skill: REVIEW_FLAG of an issue follows the review next printed" '`REVIEW_FLAG`[^。]*`next`' "$RUN_STEP"
-assert_grep "skill: the block that prepares the pull request text reads the review flag of the rest run state" 'idd-all-rest.json' "$(grep -F -A1 'REST_REVIEW=' "$SKILL")"
+assert_grep "skill: the block that prepares the pull request text asks the close stage for the review flag of the rest run" 'rest-review' "$(grep -F 'REST_REVIEW=' "$SKILL")"
 assert_grep "skill: Step 0.7 says a rest run does not go back to the original arguments" "rest mode 例外" "$(awk '/^#### Step 0.7:/{f=1} f&&/^#### Step 0.8|^### Phase 1/{exit} f' "$SKILL" | grep -F '原始引數')"
 # spec-example: idd-all-rest / the skill says the flags are to be the same
 RESUME_ROWS=$(printf '%s\n' "$STOPS" | grep -F '會接續')
@@ -2070,6 +2156,8 @@ assert_eq "skill: two rows of the stop table say a later command resumes the run
 assert_eq "skill: and both say the flags are to be the same" "2" "$(printf '%s\n' "$RESUME_ROWS" | grep -c '旗標相同')"
 assert_eq "skill: every line that says a later command within 24 hours resumes the run says the flags are to be the same" "0" \
   "$(grep -F '24 小時內再下' "$SKILL" | grep -vc '旗標相同')"
+assert_eq "skill: every line of the rest section about resuming within 24 hours says the flags are to be the same" "0" \
+  "$(printf '%s\n' "$REST" | grep -F '24 小時內' | grep -F '接續' | grep -vc '旗標')"
 # spec-example: idd-all-rest / the skill says to leave the working tree alone
 assert_grep "skill: the rest section says nothing else is to work in the same working tree while a rest run goes" "不要在同一個工作樹" "$REST"
 SETTLE_LINE=$(printf '%s\n' "$REST" | grep -F 'rest-queue.py" settle')
@@ -2120,6 +2208,54 @@ assert_true "skill: start comes before next" "[ ${L_START:-0} -gt 0 ] && [ ${L_S
 assert_true "skill: next comes before record" "[ ${L_NEXT:-0} -gt 0 ] && [ ${L_NEXT:-0} -lt ${L_RECORD:-0} ]"
 assert_true "skill: settle comes after record" "[ ${L_SETTLE:-0} -gt ${L_RECORD:-0} ]"
 assert_true "skill: report comes last" "[ ${L_REPORT:-0} -gt ${L_SETTLE:-0} ] && [ ${L_REPORT:-0} -gt ${L_STOP:-0} ]"
+
+# ── fix round 7: one reading of the rest run's state ──
+# spec-example: idd-all-rest / the review flag of a rest run has one reader
+rest_review() { python3 "$CS" rest-review --cwd "$T" --repo "$REPO" --issue 5 2> /dev/null; }
+new rr-none 5 9
+assert_eq "rest-review: no rest run: off" "off" "$(rest_review)"
+for flag in yes no; do
+  new "rr-$flag" 5 9
+  run start --path PR --review "$flag" > /dev/null 2>&1; run next > /dev/null
+  [ "$flag" = yes ] && WANT=on || WANT=off
+  assert_eq "rest-review: review $flag, #5 in flight: $WANT" "$WANT" "$(rest_review)"
+done
+new rr-old 5 9
+write_state 25 '[{"issue": 5, "outcome": null}]'
+python3 -c 'import json,sys; p=sys.argv[1]; s=json.load(open(p)); s["review"]=True; json.dump(s, open(p,"w"))' "$(state_file)"
+assert_eq "rest-review: a run older than 24 hours: off" "off" "$(rest_review)"
+for lacks in version path default; do
+  new "rr-lacks-$lacks" 5 9
+  write_state 1 '[{"issue": 5, "outcome": null}]'
+  python3 -c 'import json,sys; p=sys.argv[1]; s=json.load(open(p)); s.pop(sys.argv[2]); json.dump(s, open(p,"w"))' "$(state_file)" "$lacks"
+  assert_eq "rest-review: a recent state without $lacks, review false: unreadable" "unreadable" "$(rest_review)"
+  run start --path PR --review no > /dev/null 2>&1; assert_exit "rest-review: and start stops on the same file" 3 "$?"
+  init no > /dev/null 2>&1
+  python3 "$CS" run --cwd "$T" --repo "$REPO" --issue 5 > "$S/run.out" 2>&1
+  assert_output_grep "rest-review: and the close stage stays at verified for it" "review flag is unknown" "$S/run.out"
+done
+new rr-not-json 5 9
+mkdir -p "$T/.claude/.idd/state"; printf '{"review": fal' > "$(state_file)"
+assert_eq "rest-review: a recent file that is not JSON: unreadable" "unreadable" "$(rest_review)"
+phase5() { # the two lines of Phase 5 that take the review of the rest run, run as they are written → RUN_REVIEW
+  (CLAUDE_PLUGIN_ROOT="$PLUGIN"; CWD="$T"; GITHUB_REPO="$REPO"; N=5; RUN_REVIEW=no
+   eval "$(grep -F -A1 'REST_REVIEW=$(python3' "$SKILL")"; printf '%s' "$RUN_REVIEW")
+}
+assert_eq "skill: the two lines of Phase 5 are the call and the line that uses its answer" "2" "$(grep -F -A1 'REST_REVIEW=$(python3' "$SKILL" | grep -c 'REST_REVIEW')"
+new p5-none 5 9
+assert_eq "phase 5: no rest run leaves the review of the issue as it is" "no" "$(phase5)"
+new p5-on 5 9
+run start --path PR --review yes > /dev/null 2>&1; run next > /dev/null
+assert_eq "phase 5: a rest run with review that has the issue in flight makes it a review" "yes" "$(phase5)"
+new p5-off 5 9
+run start --path PR --review no > /dev/null 2>&1; run next > /dev/null
+assert_eq "phase 5: a rest run without review leaves it as it is" "no" "$(phase5)"
+new p5-unreadable 5 9
+mkdir -p "$T/.claude/.idd/state"; printf '{"review": fal' > "$(state_file)"
+assert_eq "phase 5: a recent state that cannot be used makes it a review" "yes" "$(phase5)"
+PHASE5=$(grep -F 'REST_REVIEW=' "$SKILL")
+assert_grep "skill: Phase 5 asks the close stage what the rest run says" 'close-stage.py" rest-review' "$PHASE5"
+assert_eq "skill: and no line of the skill reads the rest run's state file with jq" "0" "$(grep -F 'idd-all-rest.json' "$SKILL" | grep -c 'jq ')"
 
 # ── two requirements of other capabilities that #478 touched (each to point at idd-all-rest) ──
 # spec-example: idd-all-chain / DFS vs BFS queue order with a single spawn

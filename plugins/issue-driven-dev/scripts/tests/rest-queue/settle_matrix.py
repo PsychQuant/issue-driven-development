@@ -35,7 +35,7 @@ sys.path.insert(0, HERE)
 import treecheck  # noqa: E402
 
 RQ = os.path.abspath(sys.argv[1])
-ENV = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1", GIT_TERMINAL_PROMPT="0",
+ENV = dict(os.environ, GIT_CONFIG_GLOBAL=os.environ.get("IDD_TEST_GIT_CONFIG_GLOBAL", "/dev/null"), GIT_CONFIG_NOSYSTEM="1", GIT_TERMINAL_PROMPT="0",
            IDD_GH=os.path.join(HERE, "fake-gh.py"), IDD_CLOSE_STAGE_TEST="1",
            GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
            GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid")

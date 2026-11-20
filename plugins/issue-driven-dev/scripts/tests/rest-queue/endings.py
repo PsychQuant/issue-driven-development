@@ -46,7 +46,9 @@ import treecheck  # noqa: E402
 RQ, PA = os.path.abspath(sys.argv[1]), os.path.abspath(sys.argv[2])
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", "..", "..", ".."))
-GIT_ENV = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1", GIT_TERMINAL_PROMPT="0",
+# IDD_TEST_GIT_CONFIG_GLOBAL: the sweep suite runs every row once more under a git configuration that changes what
+# git shows by default (../rest-queue-sweep/test.sh)
+GIT_ENV = dict(os.environ, GIT_CONFIG_GLOBAL=os.environ.get("IDD_TEST_GIT_CONFIG_GLOBAL", "/dev/null"), GIT_CONFIG_NOSYSTEM="1", GIT_TERMINAL_PROMPT="0",
                GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
                GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid")
 FOLDER = ".claude/.idd/attachments/issue-5/"
@@ -67,7 +69,7 @@ HERE_BEFORE = {"tools/.env": "TOKEN=ghp_secret\n", "local/settings.json": '{"min
 # run does with #5) · intact: files that must hold this content after an exit 3
 ROWS = [
     dict(id="closed-before-start", on="main", outcome="closed", gh="9", exit=0, branches=[], later="closed"),
-    dict(id="existing-work", on="main", exit=0, branches=[], later="handed"),
+    dict(id="existing-work", on="main", reason="existing work: pull request #12 is open", exit=0, branches=[], later="handed"),
     dict(id="stop-before-download", on="own", exit=0, branches=[], later="handed"),
     dict(id="stop-after-diagnose", on="own", leave=["manifest"], exit=0, branches=[], discarded=[M], later="handed"),
     dict(id="stop-after-diagnose-attachments", on="own", leave=["attachment"], exit=0, branches=[],
@@ -88,9 +90,9 @@ ROWS = [
     dict(id="stop-in-implement-hooks-reject", on="own", work=True, leave=["edit", "rejecting-hook"], exit=0,
          branches=[B], committed=["a.txt"], no_hooks=True, later="existing"),
     dict(id="stop-in-implement-ignored-files", on="own", work=True, work_ignore=True, leave=["ignored"], exit=0,
-         branches=[B], stash=["coverage/"], later="existing"),
+         branches=[B], stash=["coverage/report.txt"], later="existing"),
     dict(id="stop-before-commit-ignored-files", on="own", origin_ignore=True, leave=["ignored"], exit=0, branches=[],
-         stash=["coverage/"], later="handed"),
+         stash=["coverage/report.txt"], later="handed"),
     # what was there before the run, on a branch that no longer ignores it
     dict(id="stop-rule-deleted", on="own", work=True, work_rm_tools=True, exit=0, branches=[B], later="existing"),
     dict(id="merged-rule-deleted", on="own", work=True, work_rm_tools=True, upstream=True, squash=True, outcome="closed",
@@ -411,7 +413,7 @@ def build(base, stub, row):
     sh([sys.executable, os.path.join(HERE, "scenario.py"), gh_dir, row.get("gh", "5")])
     if outcome == "closed":
         write(os.path.join(gh_dir, "state-5"), "CLOSED\n")
-    recorded = rq(tree, gh_dir, "record", "--issue", "5", *([] if outcome == "closed" else ["--reason", "x"]))
+    recorded = rq(tree, gh_dir, "record", "--issue", "5", *([] if outcome == "closed" else ["--reason", row.get("reason", "x")]))
     if recorded.returncode != 0 or answer(recorded).get("outcome") != outcome:
         raise RuntimeError(f"record: {recorded.stdout.strip()[:120]} {recorded.stderr.strip()[:200]}")
     return root, origin, tree, gh_dir, at_handout
@@ -535,6 +537,11 @@ def check(base, stub, row):
     for path in row.get("excluded", []):
         if not any(path in ln and "exclude" in ln for ln in report.splitlines()):
             problems.append(f"the report does not say that {path} went into the local exclude file")
+    if row.get("reason"):   # the ending idd-all records when its own lookup found a pull request or a branch on GitHub
+        if row["reason"] not in report or "an issue stopped with existing work is left for a person" not in report:
+            problems.append("the report does not give the reason of the existing work and say that it is left for a person")
+        if tip or tip_before:
+            problems.append("a branch of #5 exists although the issue was recorded as existing work")
     returned = attempt.get("returned", [])
     if returned != row.get("returned", []):
         problems.append(f"the run state says settle put these back: {returned}, want {row.get('returned', [])}")
@@ -587,7 +594,7 @@ def check(base, stub, row):
 
 
 BRANCH_CELL = {"none": [], "unchanged": None}   # cells that begin with `idd/5-x` keep that branch; what follows , or ; is prose
-LATER_CELL = {"handed out": "handed", "existing work": "existing", "#5 is closed": "closed", "—": None,
+LATER_CELL = {"handed out": "handed", "handed out by the helper; the lookup of `idd-all` records it again": "handed", "existing work": "existing", "#5 is closed": "closed", "—": None,
               "not run: verified": "verified", "not run: blocked": "blocked", "not run: meeting": "meeting"}
 
 
