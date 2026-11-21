@@ -16,4 +16,4 @@
 - [x] 3.1 The report prints paths as they are, names temporary folders, and a run that was never reported lists every path that is still there
 - [x] 3.2 Tests: the check that `record` leaves a directory lists the whole directory; the Phase 5 test of `on` reads `on`; a further change of a file already listed is not reported
 - [x] 3.3 `skills/idd-all/SKILL.md`: the token of the run, `start --take-over`, `where`, `here` before Phase 5, the stale text about deleting a directory; `references/working-tree-writers.md`, `CHANGELOG.md`
-- [ ] 3.4 Run the rest-queue, close-stage and sweep suites, then every suite
+- [x] 3.4 Run the rest-queue, close-stage and sweep suites, then every suite
