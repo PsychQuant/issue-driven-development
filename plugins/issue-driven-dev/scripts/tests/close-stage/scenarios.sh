@@ -956,6 +956,45 @@ json.dump(st, open(p, "w"))
 PY
 NO_PREGATE=1 run_stage
 stop_case "early, HIGH In-scope fix left and not in the round record" "CRITICAL, HIGH, P0 or P1"
+# verify r2 #1: a stop-mode merge checks that the report it re-reads has the counts the round record holds
+SEV=MEDIUM two_rounds stop-run-counts exhaustive-all "**FAIL** — 0 blocking, 2 in-scope fix" "In-scope fix:a;In-scope fix:b" \
+  "**FAIL** — 0 blocking, 2 in-scope fix" "In-scope fix:c;In-scope fix:d"
+python3 - "$C/.claude/.idd/state/idd-all-run-7.json" <<'PY'
+import json, sys
+p = sys.argv[1]; st = json.load(open(p)); st["rounds"][-1]["in_scope"] = 0; json.dump(st, open(p, "w"))
+PY
+NO_PREGATE=1 run_stage
+stop_case "exhaustive-all, a round record whose counts differ from the report" "does not match"
+# verify r2 #2: without a stop mode, a round with no report on the same commit is still a round
+new_scenario stop-nomode-noreport; git -C "$C" checkout -q -b idd/7-x; work_commit "feat: thing (#7)"; pr_fixture "$SHA"
+init_state PR PR no no unattended none
+verify_comment me "$SHA" "$(base_of "$SHA")" "**FAIL** — 1 blocking" "Blocking:x"; gate_run; next_run
+assert_eq "no stop mode, round 1 with a Blocking finding: fix" fix "$(nx decision)"
+# round 2's newest verify comment is a PR-mode pointer: the gate reads no report id (the same as a failed fetch)
+verify_comment me "$SHA" "$(base_of "$SHA")" "$PASS_LINE" "" "## Verify (via PR #9) — round 2"; gate_run
+assert_eq "no stop mode: round 2 without a branch-mode report has no report id" "<missing>" "$(printf '%s' "$G" | field comment_id)"
+assert_eq "no stop mode: a second round with no report on the same commit is a second attempt" 2 "$(attempts_len)"
+next_run
+assert_eq "no stop mode: … and the two-round limit stops the loop" stop "$(nx decision)"
+# verify r2 #3: a result next answered with fix is not merged when it later reads clean
+new_scenario stop-nomode-laterclean; git -C "$C" checkout -q -b idd/7-x; work_commit "feat: thing (#7)"; pr_fixture "$SHA"
+init_state PR PR no no unattended none
+verify_comment me "$SHA" "$(base_of "$SHA")" "$PASS_LINE"
+python3 - "$S/gh/comments.json" "$S/html.stash" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); open(sys.argv[2], "w").write(d[-1].pop("body_html")); json.dump(d, open(sys.argv[1], "w"))
+PY
+gate_run; next_run
+assert_eq "no stop mode, round 1 unreadable (no rendered HTML): fix" fix "$(nx decision)"
+python3 - "$S/gh/comments.json" "$S/html.stash" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); d[-1]["body_html"] = open(sys.argv[2]).read(); json.dump(d, open(sys.argv[1], "w"))
+PY
+gate_run; next_run
+assert_eq "the same report read as clean after a fix answer: stop" stop "$(nx decision)"
+assert_eq "the same report read as clean after a fix answer: no merge" False "$(nx merge)"
+NO_PREGATE=1 run_stage
+stop_case "no stop mode, a clean report next already answered with fix" "fix answer"
 # spec (fix round 1): exhaustive-all with --review counts Blocking only
 new_scenario stop-exall-review; write_rounds exhaustive-all unattended yes "0,2,0"; next_run
 assert_eq "exhaustive-all --review, 0 Blocking: stop" stop "$(nx decision)"

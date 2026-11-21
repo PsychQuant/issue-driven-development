@@ -83,8 +83,9 @@ def fix_key(st):
     return {"sha": last.get("sha"), "report_id": last.get("report_id")}
 
 
-def answered_fix(st):
-    key = fix_key(st)
+def answered_fix(st, key=None):
+    """Whether `next` already answered fix for this gate result (the last one, unless `key` names another)."""
+    key = key or fix_key(st)
     return any(isinstance(f, dict) and f.get("sha") == key["sha"] and f.get("report_id") == key["report_id"]
                for f in st.get("fix_answers") or [])
 
@@ -92,7 +93,9 @@ def answered_fix(st):
 def decide(st):
     """The answer for the newest recorded round, after the two rules that hold in every run (module docstring)."""
     ans = _decide(st)
-    if ans["decision"] == "fix" and answered_fix(st):
+    # Whatever this result reads as now (verify r2 #3: an unreadable report that later reads clean), a result that
+    # was answered fix is not answered again: stop, no merge.
+    if answered_fix(st) and (ans["decision"] == "fix" or ans["merge"]):
         return dict(ans, decision="stop", merge=False,
                     reason=f"no new report or commit followed the fix answer for this result ({ans['reason']})")
     rounds = st.get("rounds") or []

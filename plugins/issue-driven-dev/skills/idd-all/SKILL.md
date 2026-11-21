@@ -150,7 +150,7 @@ REVIEW_FLAG=""    # "" | "--review" — set by --review flag (v2.65+ #102)
 # error there, never a silent "no" that lets the close stage merge (#392 verify r2 #3).
 REVIEW_YN="no"; IN_CHAIN_YN="no"
 STOP_FLAG=""      # "" | early | exhaustive-blocking | exhaustive-all — set by --stop (#595)
-STOP_GIVEN=""     # "1" when --stop appeared at all: an empty value is a mistake, not "no flag"
+STOP_GIVEN=""     # one "1" per --stop: an empty value is a mistake, not "no flag"; two are a mistake too
 ARGS=("$@")
 for ((i=0; i<${#ARGS[@]}; i++)); do
   arg="${ARGS[i]}"
@@ -176,11 +176,14 @@ for ((i=0; i<${#ARGS[@]}; i++)); do
       # change idd-all behavior, does NOT make idd-all wait. Per MANIFESTO
       # "Human-in-the-loop: IDD 即 Foresay Confirmation Protocol" doctrine.
       REVIEW_FLAG="--review"; REVIEW_YN="yes" ;;
-    --stop=*)   STOP_GIVEN=1; STOP_FLAG="${arg#--stop=}" ;;
-    --stop)     STOP_GIVEN=1; i=$((i+1)); STOP_FLAG="${ARGS[i]:-}" ;;
+    --stop=*)   STOP_GIVEN="${STOP_GIVEN}1"; STOP_FLAG="${arg#--stop=}" ;;
+    --stop)     # the value is the next argument, unless that is another flag (verify r2 #4: never swallow --review)
+                STOP_GIVEN="${STOP_GIVEN}1"
+                case "${ARGS[i+1]:-}" in --*|'') STOP_FLAG="" ;; *) i=$((i+1)); STOP_FLAG="${ARGS[i]}" ;; esac ;;
   esac
 done
 # #595: a --stop value outside the three is the user's explicit request mistyped — stop before Phase 1
+[ "${#STOP_GIVEN}" -le 1 ] || abort "--stop was given more than once; give one stop mode"
 case "$STOP_FLAG" in
   early|exhaustive-blocking|exhaustive-all) ;;
   '') [ -z "$STOP_GIVEN" ] || abort "--stop needs a value: early, exhaustive-blocking or exhaustive-all" ;;
@@ -1162,7 +1165,7 @@ echo "→ next (round $(printf '%s' "$NEXT_JSON" | jq -r '.round // "?"')): $NEX
 FIX_IN_SCOPE = not REVIEW_FLAG and not IN_CHAIN      # read the run-state file if the shell lost them
 STOP_MODE = run_state["verify_stop"]                 # None, "early", "exhaustive-blocking" or "exhaustive-all"
 STOP_REASON = None
-ROUND = 0                                            # counted here only when next has no run state (verify r1 #6)
+ROUND = 0                                            # the last round next counted; the fallback goes on from it (verify r2 #5)
 while True:
     Skill(skill="issue-driven-dev:idd-verify", args=VERIFY_ARGS)
     gate = verify_gate()                     # the gate block above → GATE_JSON (it records the round)
@@ -1195,6 +1198,8 @@ while True:
     # or unreadable, or the fix pass made no commit.
     # No run state (next's answer has no round or limit, e.g. Step 0.7's init failed): count the rounds yourself as
     # before #595 (verify r1 #6). The close stage does not merge such a run, but the fix rounds stay the same.
+    if nxt.get("round") is not None:
+        ROUND = nxt.round                    # keep the count, in case the run state is lost in a later round
     if nxt.get("round") is None or nxt.get("limit") is None:
         ROUND += 1
         LIMIT = 2 if INTERACTION == "unattended" else 1
@@ -1362,6 +1367,9 @@ elif [ "$PATH_AXIS" = "PR" ]; then
     VERIFY_BOX="[x]"; VERIFY_LINE="Verify gate: ${VERIFY_STATE}, and stop mode ${STOP_MODE_RUN} stops here with a merge (see the latest verify report on issue #${N}). /idd-all merges this PR next if CI and the close-stage guardrails pass; the findings left are listed in a follow-up issue."
   elif [ "$VERIFY_STATE" != clean ]; then
     VERIFY_BOX="[ ]"; VERIFY_LINE="Verify gate: ${VERIFY_STATE} (see the latest verify report on issue #${N}). /idd-all will not merge this PR; a person decides."
+  elif [ "$STOP_MODE_RUN" != none ] && [ "$STOP_MERGE" = no ]; then   # clean, but the stop mode does not merge (verify r2 #6)
+    STOP_WHY=$(printf '%s' "$NEXT_OUT" | jq -r '.reason // "no reason given"' 2>/dev/null || echo "no reason given")
+    VERIFY_BOX="[ ]"; VERIFY_LINE="Verify gate: clean, but stop mode ${STOP_MODE_RUN} stops without a merge: ${STOP_WHY} (see the latest verify report on issue #${N}). /idd-all will not merge this PR; a person decides."
   elif [ "$RUN_REVIEW" != no ]; then   # --review, or the run state cannot be read: a person merges
     VERIFY_BOX="[x]"; VERIFY_LINE="Verify gate clean — ready to merge → after merge, run /idd-close to finalize this issue (this run carries --review: no automatic merge)."
   else

@@ -84,7 +84,7 @@ from ghread import (CI_GATE_RESULTS, GH, GIT, SLEEP, TEST, Stop, gh_json, git, i
                     local_ci, now, gh_paginated, parse_iso, run_cmd, session_login, ts, first_line)
 from intent import (check_intent, check_issue_authors, check_meeting, check_others,  # noqa: E402
                     check_pr_people, issue_meta)
-from stopmode import MODES, decide, fix_key  # noqa: E402  scripts/lib/stopmode.py — when the fix loop stops (#595)
+from stopmode import MODES, answered_fix, decide, fix_key  # noqa: E402  scripts/lib/stopmode.py — when the fix loop stops (#595)
 
 WRITE_PERMS = {"WRITE", "MAINTAIN", "ADMIN"}
 STATE_TTL = 24 * 3600
@@ -372,9 +372,11 @@ def record_round(cwd, repo, n, result, sha):
     st["last_gate"] = {"status": result.get("status"), "report_id": rid, "sha": sha, "reason": result.get("reason"),
                        "at": at}
     seen = [r.get("report_id") for r in rounds]
-    # An attempt is a verify round: a new commit, or a new report on the same commit (a fix pass that made no
-    # commit still counts, so the limit holds). Reading the same report again on the same commit adds nothing.
-    if not attempts or attempts[-1].get("sha") != sha or (rid is not None and rid not in seen):
+    # An attempt is a verify round: a new commit, or on the same commit a report id (or no report id: the round's
+    # report is missing or could not be fetched, verify r2 #2) not read on it before. A fix pass that made no
+    # commit still counts, so the limit holds; reading the same result again on the same commit adds nothing.
+    on_sha = [a.get("report_id") for a in attempts if a.get("sha") == sha]
+    if not attempts or attempts[-1].get("sha") != sha or rid not in on_sha:
         attempts.append({"sha": sha, "report_id": rid, "at": at})
     if rid is not None and rid not in seen:
         judged = result.get("status") != "unparseable"
@@ -427,6 +429,10 @@ def merge_gate(st, rc, gate, sha):
     answer is stop with a merge."""
     mode = st.get("verify_stop")
     rounds = st.get("rounds") or []
+    # A result `next` answered with fix is never merged as it stands (verify r2 #3), with or without a stop mode.
+    if answered_fix(st, {"sha": sha, "report_id": gate.get("comment_id")}):
+        raise Stop("guardrail 1 (verify rounds) — next gave a fix answer for this report on this commit, and no new "
+                   "commit or report followed it")
     if mode is None:
         gate_stop(rc, gate)
         attempts = st.get("attempts") or []
@@ -442,6 +448,11 @@ def merge_gate(st, rc, gate, sha):
     if not rounds or rounds[-1].get("report_id") != gate.get("comment_id") or rounds[-1].get("sha") != sha:
         raise Stop(f"guardrail 1 (stop mode {mode}) — the newest verify report is not the round the stop mode judged; "
                    "run close-stage.py gate and next again")
+    # The table is applied to the counts the gate just re-read, not only to the record (verify r2 #1).
+    for field in ("blocking", "in_scope", "low_in_scope"):
+        if rounds[-1].get(field) != gate.get(field):
+            raise Stop(f"guardrail 1 (stop mode {mode}) — the round record's {field} ({rounds[-1].get(field)}) does not "
+                       f"match the report the close stage re-read ({gate.get(field)}); run close-stage.py gate and next again")
     answer = decide(st)
     if answer["decision"] != "stop" or not answer["merge"]:
         raise Stop(f"guardrail 1 (stop mode {mode}) — {answer['reason']}; the stop mode does not merge this round "
