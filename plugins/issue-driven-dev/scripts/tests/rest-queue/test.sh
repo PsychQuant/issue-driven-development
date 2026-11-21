@@ -511,6 +511,7 @@ run start --path PR --review no > "$S/start.out" 2>&1
 assert_output_grep "a directory at the place: start lists #5 apart" "candidates with a local branch or a directory an earlier run kept, recorded as existing work when their turn comes (1): #5" "$S/start.out"
 assert_eq "a directory at the place: next hands out #9" "9" "$(run next 2> /dev/null | jget next)"
 assert_grep_re "a directory at the place: #5 is recorded as existing work" '^stopped\|existing work: directory ' "$(attempt 5 outcome)|$(attempt 5 reason)"
+assert_grep "a directory at the place: the reason names it and says rest mode removes no directory" "$T/.claude/worktrees/rest-5 — rest mode removes no directory: look at it and delete it" "$(attempt 5 reason)"
 assert_eq "a directory at the place: the file in it is still there" "mine" "$(cat "$T/.claude/worktrees/rest-5/mine.txt" 2>/dev/null)"
 
 # spec-example: idd-all-rest / here names the directory an issue runs in
@@ -522,7 +523,7 @@ here "$T" 5 > /dev/null; assert_exit "here: the directory the run was started in
 assert_output_grep "here: and the reason says T is not the directory of #5" "is not the directory of #5" "$S/err"
 here "$D" 9 > /dev/null; assert_exit "here: the directory of #5, issue 9: exit 1" 1 "$?"
 assert_output_grep "here: and the reason says it is not the directory of #9" "is not the directory of #9" "$S/err"
-here "$D" 5 "$D" "0000" > /dev/null; assert_exit "here: another token: exit 1" 1 "$?"
+here "$D" 5 "$D" "0000" > /dev/null; assert_exit "here: another token: exit 4" 4 "$?"
 assert_output_grep "here: and the reason says the token is not the one of #5" "the token is not the one of #5" "$S/err"
 mkdir -p "$S/nowhere"; git init -q "$S/nowhere"
 here "$S/nowhere" 5 > /dev/null; assert_exit "here: a directory that is not below a working tree with a run: exit 1" 1 "$?"
@@ -542,11 +543,15 @@ run start --path PR --review no > /dev/null 2>&1; K=$(run next 2> /dev/null | jg
 assert_eq "token: next of an issue in flight prints no token" "<missing>" "$(run next 2> /dev/null | jget token)"
 L=$(run next --take-over 2> /dev/null | jget token)
 assert_true "token: next --take-over prints a new one" '[ -n "$L" ] && [ "$L" != "<missing>" ] && [ "$L" != "$K" ]'
-(cd "$D" && python3 "$RQ" here --cwd "$D" --repo "$REPO" --issue 5 --token "$K") > /dev/null 2> "$S/err"; assert_exit "token: here with the old token exits 1" 1 "$?"
+(cd "$D" && python3 "$RQ" here --cwd "$D" --repo "$REPO" --issue 5 --token "$K") > /dev/null 2> "$S/err"; assert_exit "token: here with the old token exits 4" 4 "$?"
 assert_output_grep "token: and says the token is not the one of #5" "the token is not the one of #5" "$S/err"
-rq record --cwd "$T" --repo "$REPO" --issue 5 --token "$K" --reason x > /dev/null 2> "$S/err"; assert_exit "token: record with the old token exits 1" 1 "$?"
+rq record --cwd "$T" --repo "$REPO" --issue 5 --token "$K" --reason x > /dev/null 2> "$S/err"; assert_exit "token: record with the old token exits 4" 4 "$?"
 assert_output_grep "token: and says the token is not the one of #5" "the token is not the one of #5" "$S/err"
+assert_output_grep "token: and that the invocation is to end" "end this invocation" "$S/err"
 assert_eq "token: the outcome of #5 is not recorded" "null" "$(attempt 5 outcome)"
+OUT=$(run next 2> /dev/null)   # what the session that was displaced would get: the same issue, and nothing to run it with
+assert_eq "token: a next after the refusals prints #5 again" "5|true|<missing>" "$(printf '%s' "$OUT" | jget next)|$(printf '%s' "$OUT" | jget in_flight)|$(printf '%s' "$OUT" | jget token)"
+assert_eq "token: and the token stored for #5 is still the new one" "$L" "$(token_of 5)"
 (cd "$D" && python3 "$RQ" here --cwd "$D" --repo "$REPO" --issue 5 --token "$L") > /dev/null 2>&1; assert_exit "token: here with the new token exits 0" 0 "$?"
 
 # spec-example: idd-all-rest / existing work on GitHub is found by next
@@ -618,6 +623,19 @@ begin; run record --issue 5 --reason x > /dev/null 2>&1
 assert_eq "the index of the starting working tree: its bytes are those before start" "$BEFORE" "$(shasum "$IDX" | cut -d' ' -f1)"
 
 # spec-example: idd-all-rest / a change of the starting working tree is reported
+# a run whose starting directory is given through a symbolic link (a synced folder, /tmp on macOS): every command
+# resolves --cwd, next prints the directory below the real path, and here and init agree with it
+new root-link 5 9
+ln -s "$T" "$S/link"
+rq start --cwd "$S/link" --repo "$REPO" --path PR --review no > /dev/null 2>&1; assert_exit "root through a link: start exits 0" 0 "$?"
+OUT=$(rq next --cwd "$S/link" --repo "$REPO" 2> /dev/null)
+assert_eq "root through a link: next prints the directory below the real path" "$T/.claude/worktrees/rest-5" "$(printf '%s' "$OUT" | jget dir)"
+D=$(printf '%s' "$OUT" | jget dir); K=$(printf '%s' "$OUT" | jget token)
+(cd "$D" && python3 "$RQ" here --cwd "$D" --repo "$REPO" --issue 5 --token "$K") > /dev/null 2>&1; assert_exit "root through a link: here exits 0 at the directory next printed" 0 "$?"
+(cd "$S/link/.claude/worktrees/rest-5" && python3 "$RQ" here --cwd "$S/link/.claude/worktrees/rest-5" --repo "$REPO" --issue 5 --token "$K") > /dev/null 2>&1; assert_exit "root through a link: here exits 1 for the directory named through the link" 1 "$?"
+python3 "$PLUGIN/scripts/close-stage.py" init --cwd "$D" --repo "$REPO" --issue 5 --path PR --requested-path PR --interaction unattended --branch idd/5-x --default main --review no --in-chain no --rest-root "$S/link" > /dev/null 2>&1; assert_exit "root through a link: init takes the rest root through the link" 0 "$?"
+rq record --cwd "$S/link" --repo "$REPO" --issue 5 --token "$K" --reason x > /dev/null 2>&1; assert_exit "root through a link: record exits 0" 0 "$?"
+
 new root-same 5 9
 begin; run record --issue 5 --reason x > /dev/null 2>&1; rc=$?; run report > "$S/report.out" 2>&1
 assert_exit "starting working tree (nothing happens): record exits 0" 0 "$rc"
@@ -800,7 +818,7 @@ begin; D=$(dir_of 5); pushed
 FIRST=$(run record --issue 5 --reason x 2> /dev/null)
 OUT=$(run record --issue 5 --reason y 2> /dev/null); assert_exit "record: called again for the issue recorded last, with its token, it exits 0" 0 "$?"
 assert_eq "record: and prints what it recorded" "$FIRST" "$OUT"
-rq record --cwd "$T" --repo "$REPO" --issue 5 --token wrong > /dev/null 2>&1; assert_exit "record: called again with another token, it exits 1" 1 "$?"
+rq record --cwd "$T" --repo "$REPO" --issue 5 --token wrong > /dev/null 2>&1; assert_exit "record: called again with another token, it exits 4" 4 "$?"
 run next > /dev/null 2>&1
 run record --issue 5 > /dev/null 2>&1; assert_exit "record: once the next issue is handed out, #5 is refused (exit 1)" 1 "$?"
 new record-no-token 5 9
@@ -1063,6 +1081,13 @@ assert_eq "skill: the whole-run stop table has five rows" "5" "$(printf '%s\n' "
 BUSY=$(printf '%s\n' "$STOPS" | grep -E '以 4 結束')
 assert_eq "skill: one row is about a command that exits 4" "1" "$(printf '%s\n' "$BUSY" | grep -c '^| ')"
 assert_grep "skill: that row ends the invocation without stop or report" '不呼叫 `stop` 也不呼叫 `report`' "$BUSY"
+assert_grep "skill: that row names the lock" "鎖" "$(printf '%s\n' "$BUSY" | cut -d'|' -f2)"
+assert_grep "skill: and the token that is not the issue's" "token 不是這一張的" "$(printf '%s\n' "$BUSY" | cut -d'|' -f2)"
+assert_grep "skill: that row says not to call next again" '不再呼叫 `next`' "$BUSY"
+assert_grep "skill: nor to take the issue back" '不用 `next --take-over` 把它搶回來' "$BUSY"
+assert_grep "skill: the here step says exit code 4 ends the invocation" "這一次的呼叫就此結束" "$(printf '%s\n' "$REST" | grep -F '它以 4 結束')"
+assert_eq "skill: no sentence about a refused token sends the session back to step 3" "0" "$(printf '%s\n' "$REST" | tr '。；' '\n\n' | grep -F 'token 不是' | grep -c '回第 3 步')"
+assert_grep "skill: a refused token is not a lost token" '不可以用 `--take-over` 搶回來' "$REST"
 # spec-example: idd-all-rest / the skill ends when the report itself fails
 FAILED_REPORT=$(printf '%s\n' "$STOPS" | grep -E '^\| [^|]*`report`[^|]*以 1 或 3 結束')
 assert_eq "skill: one row is about the report that fails" "1" "$(printf '%s\n' "$FAILED_REPORT" | grep -c '^| ')"
@@ -1221,7 +1246,9 @@ for f in "$SKILL" "$PLUGIN/CLAUDE.md" "$PLUGIN/references/parallel-orchestration
   name=$(basename "$f")
   assert_eq "docs ($name): no rest-queue.py settle and no \`settle\`" "0" "$(grep -c -e 'rest-queue.py" settle' -e 'rest-queue.py settle' -e '`settle`' "$f")"
   assert_eq "docs ($name): no sentence about rest mode speaks of between two issues" "0" "$(grep -i 'rest' "$f" | grep -ci 'between two issues\|兩張之間')"
+  assert_eq "docs ($name): no pointer file" "0" "$(grep -ci 'pointer file\|idd-all-rest-run' "$f")"
 done
+assert_eq "docs (CHANGELOG.md): no pointer file" "0" "$(grep -ci 'pointer file\|idd-all-rest-run' "$PLUGIN/CHANGELOG.md")"
 CMDS="$PLUGIN/../../docs/commands.md"
 refute_grep "docs (commands.md): a rest run does not need a clean working tree" "needs the working tree clean" "$(cat "$CMDS")"
 refute_grep "docs (commands.md): and nothing says not to work in it" "Do not work in the same working tree" "$(cat "$CMDS")"

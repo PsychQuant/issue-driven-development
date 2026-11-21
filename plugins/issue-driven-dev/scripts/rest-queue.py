@@ -46,8 +46,9 @@ Run state: <C>/.claude/.idd/state/idd-all-rest.json. start refuses to begin when
 In the repository at C this helper writes at three places only: that state folder, <top>/.claude/worktrees/, and
 the local exclude file of the git directory (the rule for .claude/worktrees/, when git does not ignore that folder yet).
 
-Exit: 0 done · 1 refused (args says refuse; no run; not the issue in flight; a token that is not the issue's; here: not
-the directory of that issue) · 4 another command of this run holds its lock (end the invocation; no stop, no report) · 2 usage · 3 GitHub, git or a helper could not be read, the run state could not be
+Exit: 0 done · 1 refused (args says refuse; no run; not the issue in flight; here: not the directory of that issue) ·
+4 another session has this run: a command of it holds the lock, or here / record were given a token that is not the
+issue's (end the invocation; no stop, no report, no next) · 2 usage · 3 GitHub, git or a helper could not be read, the run state could not be
 written, the directory of an issue could not be made, or a failure nobody planned for
 """
 
@@ -776,6 +777,14 @@ def refuse(msg):
     return 1
 
 
+def displaced(n, then):
+    """Exit 4: the token is not the one of issue n. Another session took the issue over with next --take-over and now
+    runs this rest run; the session that holds the earlier token ends its invocation, as with a lock it cannot get."""
+    print(f"rest-queue: the token is not the one of #{n}: another session has taken the issue over (next --take-over) and "
+          f"runs this rest run now — {then}; end this invocation: no stop, no report, no next", file=sys.stderr)
+    return 4
+
+
 def usage(msg):
     print(f"rest-queue: {msg}\n{__doc__.split(chr(10) + chr(10))[1]}", file=sys.stderr)
     return 2
@@ -1037,8 +1046,7 @@ def cmd_here(argv):
     if not flight or flight["issue"] != n or not flight.get("made") or flight["dir"] != d:
         return refuse(f"no rest run has #{n} in flight there ({one_line(d, 200)})")
     if a["--token"] != flight.get("token"):
-        return refuse(f"the token is not the one of #{n}: another session has taken the issue over (next --take-over) — stop "
-                      "working on it here")
+        return displaced(n, "stop working on the issue here")
     link = link_on_the_way(root_dir, d)
     if link:
         return refuse(f"a symbolic link is on the way to the directory of #{n}: {one_line(link, 200)}")
@@ -1083,8 +1091,7 @@ def cmd_record(argv):
     elif x is None or x["issue"] != n:
         return refuse(f"#{n} is not the issue in flight" + (f" (#{x['issue']} is)" if x else " (none is)"))
     if a["--token"] != x.get("token"):
-        return refuse(f"the token is not the one of #{n}: another session has taken the issue over (next --take-over) — "
-                      "nothing is recorded")
+        return displaced(n, "nothing is recorded")
     if not again:
         state = gh_json(["issue", "view", str(n), "--repo", repo, "--json", "state"], f"the state of #{n}").get("state")
         if state not in ("OPEN", "CLOSED"):

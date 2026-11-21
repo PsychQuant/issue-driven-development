@@ -56,14 +56,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run by class; an issue the run attempted is named once, with what happened to it and the questions it now
   waits on, and the report says that
   a verified issue continues when it is named, that an issue stopped with existing work is left for a person,
-  which directory was kept and why, and what a person can do with it (go on in it, or delete it; a test deletes
+  which directory holds it, and what a person can do with it (go on in it, or delete it; a test deletes
   it and sees a later run hand the issue out again). `--review` is stored in the run state: a resumed run can add it and cannot drop it, `next` prints
   it with every issue, `close-stage.py init` refuses to record review as off for an issue such a run has in
   flight, and `close-stage.py run` stops at verified for such an issue whatever its record says. This also
   holds for a run that names an issue (`/idd-all #N`) while a rest run is unfinished at the same `--cwd`: end
-  the rest run first, or give `--review`. The close stage of an issue runs in its directory and finds the run
-  through a pointer file there; run where the rest run was started for an issue that runs elsewhere, it refuses,
-  and a state or pointer file that cannot be read (a symbolic link included, decided in one place,
+  the rest run first, or give `--review`. The close stage of an issue runs in its directory and is told the run
+  by `close-stage.py init --rest-root`; run where the rest run was started for an issue that runs elsewhere, it refuses,
+  and a run state that cannot be read (a symbolic link or a FIFO included, decided in one place,
   `scripts/lib/reststate.py`) stops it at verified; `close-stage.py rest-review` prints what the rest run says
   about an issue. The run state is version 5: a state file of an earlier
   version, or one that cannot be read, that was written in the last 24 hours makes `start` stop instead of
