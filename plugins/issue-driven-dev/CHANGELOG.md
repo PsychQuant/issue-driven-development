@@ -23,24 +23,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   does not hold back the others. The helper keeps the state of the run in
   `.claude/.idd/state/idd-all-rest.json`: an issue is recorded when it is handed out and is attempted once per
   run, the open issues are re-read after every issue (so an issue opened during the run is picked up), the
-  outcome of an issue is read from GitHub, and a run whose last activity is less than 24 hours old is resumed
-  instead of restarted. An issue that already has a pull request or a branch, on GitHub or as a local
+  outcome of an issue is read from GitHub, and a run whose last activity is less than 24 hours old is unfinished:
+  `start` refuses it with exit 4 (a session may be running it) unless it is given `--take-over`, which resumes it. An issue that already has a pull request or a branch, on GitHub or as a local
   `idd/N` branch, is not taken over: it is recorded as existing work, with that pull request or branch as the
   reason (taking such work over is #566). Rest mode runs on the PR path only: with `--no-pr`,
   `pr_policy: never`, or a path downgraded because the ralph-loop plugin is missing, `start` refuses to begin
-  (#583). Each issue runs in a directory of its own: `next` makes a clone at
-  `<top>/.claude/worktrees/rest-<N>/` from `origin` (a repository of its own, not a git linked worktree, in which
-  the Spectra CLI would write into the main working tree), carries over `user.name` and `user.email` and nothing
-  else, and prints the directory; the skill changes the shell to it and runs the single-issue pipeline there,
-  after `rest-queue.py here` has confirmed it is the directory the run made for that issue, the token `next` gave
-  the session for it, and that the shell is really there (`here` runs in a command of its own before each phase that
-  writes by the shell's directory; when the shell did not keep its directory, the run stops). The working tree the
+  (#583). A run starts at the top of its repository and nowhere else. Each issue runs in a directory of its own:
+  `next` makes a clone at `<top>/.claude/worktrees/rest-<N>/` from `origin` (a repository of its own, not a git
+  linked worktree, in which the Spectra CLI would write into the main working tree), carries over `user.name` and
+  `user.email` and nothing else, writes a mark into its git directory, and prints the directory. The clone is made
+  in a temporary folder of its own name and moved into the place, which `next` takes with `mkdir`, so that a clone
+  that fails, and git's clean-up of it, touch nothing else; a temporary folder that is left is named in the report.
+  The skill takes the directory from `rest-queue.py where` (it is not pasted into a command), changes the shell to
+  it and runs the single-issue pipeline there, after `rest-queue.py here` has confirmed that it is the directory the
+  run made for that issue and is bound to it (its mark and its `origin` are the ones `next` stored), that the token
+  is the run's, and that the shell is really there (`here` runs in a command of its own before each phase that
+  writes by the shell's directory or pushes; when the shell did not keep its directory, the run stops; a shell
+  that is reset between two tool calls of one phase is a known limitation the maintainer accepted). One session
+  runs a run: `start` prints a token once and keeps only its digest, every other command of the run requires it,
+  and so do `close-stage.py init` and `run` for an issue of the run; a session that was taken over with
+  `start --take-over` gets exit 4 and ends its invocation, and the close stage does not merge for it (it checks the
+  token when it starts and again, holding the lock of the run, right before the merge). The working tree the
   run was started in is not used: it can be on any branch, with changes, and a person or another session can go on
   working in it; rest mode writes there at three places only (the run state, the folder of the directories, the
   local exclude file), every git command runs without optional locks so that reading it does not rewrite its index,
   and a check lists that repository before `start` and after `report` for every ending. Rest mode removes no
   directory: `record` records the outcome and does nothing to the directory, and the report names every directory
-  for a person to delete (it may hold commits that were not pushed). The commands that write the run state hold a
+  for a person to delete (it may hold commits that were not pushed), printing every path as it is. The commands that write the run state hold a
   lock: a second session waits up to 30 seconds, then exits 4, and the skill ends that invocation without stopping
   the run. A directory belongs to the run of the working tree it is below (`R/.claude/worktrees/rest-<N>`); the close
   stage takes `--rest-root` and stays at verified when that run can no longer be found. `next`
@@ -65,7 +74,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by `close-stage.py init --rest-root`; run where the rest run was started for an issue that runs elsewhere, it refuses,
   and a run state that cannot be read (a symbolic link or a FIFO included, decided in one place,
   `scripts/lib/reststate.py`) stops it at verified; `close-stage.py rest-review` prints what the rest run says
-  about an issue. The run state is version 5: a state file of an earlier
+  about an issue. The run state is version 6: a state file of an earlier
   version, or one that cannot be read, that was written in the last 24 hours makes `start` stop instead of
   starting a new run in its place; delete it when no rest run is going on. The account that runs a run needs write
   access to the repository. What the plugin writes into a repository, and how rest mode treats each location, is

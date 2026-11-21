@@ -95,7 +95,7 @@ init_state() { # path [requested-path] [review] [in-chain] [interaction]
   local path="$1" req="${2:-$1}" review="${3:-no}" chain="${4:-no}" inter="${5:-unattended}"
   local branch=main; [ "$path" = PR ] && branch="idd/7-x"
   python3 "$CS" init --cwd "$C" --repo $REPO --issue $N --path "$path" --requested-path "$req" \
-    --interaction "$inter" --branch "$branch" --default main --review "$review" --in-chain "$chain" --rest-root none >/dev/null
+    --interaction "$inter" --branch "$branch" --default main --review "$review" --in-chain "$chain" --rest-root none --rest-token none >/dev/null
 }
 
 run_stage() { # → OUT, RC
@@ -630,11 +630,11 @@ assert_exit "gate: gh missing is unparseable, not 'not clean'" 2 "$RC"
 python3 "$CS" gate --cwd "$C" --repo $REPO --issue $N --sha abc >/dev/null 2>&1; assert_exit "gate: a short sha is a usage error" 64 $?
 python3 "$CS" run --cwd "$C" --repo "not a repo" --issue $N >/dev/null 2>&1; assert_exit "run: a malformed repo is a usage error" 64 $?
 python3 "$CS" run --cwd "$C" --repo $REPO --issue $N --ci-timeout nan >/dev/null 2>&1; assert_exit "run: a non-finite timeout is a usage error" 64 $?
-python3 "$CS" init --cwd "$C" --repo $REPO --issue $N --path PR --requested-path PR --interaction unattended --branch b --default main --in-chain no --rest-root none >/dev/null 2>&1
+python3 "$CS" init --cwd "$C" --repo $REPO --issue $N --path PR --requested-path PR --interaction unattended --branch b --default main --in-chain no --rest-root none --rest-token none >/dev/null 2>&1
 assert_exit "init: a missing --review is a usage error, not 'no'" 64 $?
-python3 "$CS" init --cwd "$C" --repo $REPO --issue $N --path PR --requested-path PR --interaction unattended --branch b --default main --review "" --in-chain no --rest-root none >/dev/null 2>&1
+python3 "$CS" init --cwd "$C" --repo $REPO --issue $N --path PR --requested-path PR --interaction unattended --branch b --default main --review "" --in-chain no --rest-root none --rest-token none >/dev/null 2>&1
 assert_exit "init: an empty --review (a lost variable) is a usage error" 64 $?
-python3 "$CS" init --cwd "$C" --repo $REPO --issue $N --path sideways --requested-path PR --interaction unattended --branch b --default main --review no --in-chain no --rest-root none >/dev/null 2>&1
+python3 "$CS" init --cwd "$C" --repo $REPO --issue $N --path sideways --requested-path PR --interaction unattended --branch b --default main --review no --in-chain no --rest-root none --rest-token none >/dev/null 2>&1
 assert_exit "init: an unknown path is a usage error" 64 $?
 BEFORE=$(wc -l < "$S/gh/calls.log")
 IDD_GH="$FAKE" FAKE_GH_DIR="$S/gh" IDD_CLOSE_STAGE_TEST=0 PATH=/nonexistent python3 "$CS" gate --cwd "$C" --repo $REPO --issue $N --sha "$SHA" >/dev/null 2>&1
@@ -725,5 +725,50 @@ assert_eq "pr-check: a CODEOWNERS pushed after the clone was made is seen (the c
 new_scenario prc-nofetch; git -C "$C" remote set-url origin "$S/gone.git"; plain_pr; prc
 assert_eq "pr-check: the default branch cannot be fetched → ask" ask "$(printf '%s' "$PRC" | field status)"
 assert_grep "pr-check: the reason says the fetch failed" "could not fetch" "$(printf '%s' "$PRC" | field reason)"
+
+echo "close-stage: an issue of a rest run (#478)"
+# spec-example: idd-all-rest / the close stage of a session that was taken over
+RTOKEN=00112233445566778899aabb; OTHER=ffeeddccbbaa998877665544
+rest_scenario() { # name → a PR-mode scenario ready to merge whose clone is the directory of #7 of a rest run at RR (review off)
+  new_scenario "$1"
+  mkdir -p "$S/root/.claude/worktrees"; RR=$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$S/root")
+  mv "$C" "$RR/.claude/worktrees/rest-7"; C="$RR/.claude/worktrees/rest-7"
+  git -C "$C" checkout -q -b idd/7-x; work_commit "feat: thing (#7)"
+  pr_fixture "$SHA"; verify_comment me "$SHA" "$(base_of "$SHA")" "$PASS_LINE"
+  python3 - "$RR" "$C" "$(git -C "$C" config --file "$C/.git/config" --get remote.origin.url)" "$RTOKEN" <<'REST_PY'
+import hashlib, json, os, sys, time
+root, d, origin, token = sys.argv[1:5]
+stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+os.makedirs(f"{root}/.claude/.idd/state", exist_ok=True)
+json.dump({"version": 6, "repo": "o/r", "path": "PR", "default": "main", "review": False, "started_at": stamp, "updated_at": stamp,
+           "token_digest": hashlib.sha256(token.encode()).hexdigest(), "stop": None,
+           "attempts": [{"issue": 7, "handed_at": stamp, "outcome": None, "reason": "", "recorded_at": None, "dir": d, "made": True,
+                         "left": None, "mark": "m" * 32, "origin": origin, "tmps": []}]},
+          open(f"{root}/.claude/.idd/state/idd-all-rest.json", "w"))
+json.dump({"mark": "m" * 32}, open(f"{d}/.git/idd-rest-mark", "w"))
+REST_PY
+  python3 "$CS" init --cwd "$C" --repo $REPO --issue $N --path PR --requested-path PR --interaction unattended --branch idd/7-x \
+    --default main --review no --in-chain no --rest-root "$RR" --rest-token "$RTOKEN" > /dev/null
+}
+rest_stage() { # [token] → OUT, RC of close-stage.py run in the directory of #7 (no --rest-token when the argument is -)
+  local tk=(--rest-token "${1:-$RTOKEN}"); [ "${1:-}" = - ] && tk=()
+  OUT=$(IDD_GH="$FAKE" FAKE_GH_DIR="$S/gh" python3 "$CS" run --cwd "$C" --repo $REPO --issue $N --ci-timeout 0.5 --ci-grace 0 "${tk[@]}" 2>"$S/err"); RC=$?
+}
+retoken() { python3 -c 'import hashlib,json,sys; p=sys.argv[1]; s=json.load(open(p)); s["token_digest"]=hashlib.sha256(sys.argv[2].encode()).hexdigest(); json.dump(s, open(p,"w"))' "$RR/.claude/.idd/state/idd-all-rest.json" "$1"; }
+rest_scenario rest-happy; rest_stage
+assert_eq "rest: with the token of the run, the issue is merged" "merged" "$(printf '%s' "$OUT" | field status)"
+rest_scenario rest-no-token; rest_stage -
+stop_case "rest: without --rest-token" "no token of the rest run was given"
+rest_scenario rest-other-token; retoken "$OTHER"; rest_stage
+stop_case "rest: with the token of a start that was taken over since" "another session has taken the rest run over"
+rest_scenario rest-taken-meanwhile
+( sleep 1.5; retoken "$OTHER" ) & P=$!
+IDD_REST_SLEEP_BEFORE_RECHECK=4 rest_stage; wait "$P"
+stop_case "rest: taken over while the close stage waited" "another session has taken the rest run over"
+assert_grep "rest: taken over while the close stage waited — the reason says it was while it ran" "while the close stage ran" "$(printf '%s' "$OUT" | field reason)"
+rest_scenario rest-lock-held
+python3 -c 'import fcntl,sys,time; f=open(sys.argv[1],"a"); fcntl.flock(f, fcntl.LOCK_EX); time.sleep(6)' "$RR/.claude/.idd/state/idd-all-rest.lock" & HOLD=$!
+sleep 0.5; IDD_REST_LOCK_WAIT=1 rest_stage; wait "$HOLD"
+stop_case "rest: the lock of the rest run held longer than the wait" "the lock of the rest run is held"
 
 print_summary close-stage

@@ -7,6 +7,9 @@ repository before `start` and after `report` and comparing the two listings. The
 
   treecheck.py list <tree>    one line per fact: every file and link with its content, every folder, the commit and
                               the branch checked out, the index, the local branches, the tags and the stash
+  treecheck.py whole <dir>    the same facts, with nothing left out: every file below the folder, its git directory,
+                              the state folder and the routing log included (the directory of an issue, which no
+                              command of a rest run writes once it is made)
   treecheck.py same <before> <after>   exit 0 when the second listing is the first one, with nothing but new tags
                               added: a fetch brings the tags origin has, and changes none that is there
   treecheck.py --self-test    checks that the listing changes when one of those facts changes, and does not change
@@ -41,16 +44,17 @@ def git(tree, *args):
     return subprocess.run(["git", "-C", tree, *args], capture_output=True).stdout.decode("utf-8", "surrogateescape")
 
 
-def listing(tree):
+def listing(tree, whole=False):
+    skip_dirs, skip_files, made = ((), (), ()) if whole else (SKIP_DIRS, SKIP_FILES, (".claude", ".claude/.idd"))
     lines = []
     for base, dirs, files in os.walk(tree):
         rel = os.path.relpath(base, tree).replace(os.sep, "/")
         rel = "" if rel == "." else rel + "/"
         links = [d for d in dirs if os.path.islink(os.path.join(base, d))]
-        dirs[:] = [d for d in dirs if rel + d not in SKIP_DIRS and d not in links]
-        lines += [f"dir {rel}{d}" for d in dirs if rel + d not in (".claude", ".claude/.idd")]   # a run may make the folders its places are in
+        dirs[:] = [d for d in dirs if rel + d not in skip_dirs and d not in links]
+        lines += [f"dir {rel}{d}" for d in dirs if rel + d not in made]   # a run may make the folders its places are in
         for name in files + links:
-            if rel + name not in SKIP_FILES:
+            if rel + name not in skip_files:
                 lines.append(f"file {rel}{name} {digest_of(os.path.join(base, name))}")
     lines.append("head " + git(tree, "rev-parse", "-q", "--verify", "HEAD").strip())
     lines.append("on " + git(tree, "symbolic-ref", "-q", "HEAD").strip())
@@ -133,8 +137,8 @@ if __name__ == "__main__":
         sys.exit(self_test())
     if len(sys.argv) == 4 and sys.argv[1] == "same":
         sys.exit(0 if same(*[open(p, encoding="utf-8", errors="surrogateescape").read().splitlines() for p in sys.argv[2:4]]) else 1)
-    if len(sys.argv) == 3 and sys.argv[1] == "list":
-        print("\n".join(listing(sys.argv[2])))
+    if len(sys.argv) == 3 and sys.argv[1] in ("list", "whole"):
+        print("\n".join(listing(sys.argv[2], whole=sys.argv[1] == "whole")))
         sys.exit(0)
     print(__doc__, file=sys.stderr)
     sys.exit(2)

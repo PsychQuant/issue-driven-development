@@ -2,8 +2,12 @@
 # rest-queue-sweep suite (#478) — the checks of rest-queue.py that run it many hundred times:
 #   - `record`, ended after each of its steps and run again, comes to the end an undisturbed record comes to, for
 #     every state the directory of an issue can be in (../rest-queue/lib.sh), and leaves that directory as it was;
-#   - `next`, ended after each of its steps and run again, hands out the same issue in a directory of its own, and
-#     leaves the working tree it was started in as it was.
+#   - `next`, ended after each of its steps and run again, hands out the same issue in a directory of its own, or
+#     records it as stopped when the end came after it took the place of the directory and before it moved the clone
+#     there; it leaves the working tree it was started in as it was, and every temporary folder it leaves is recorded.
+# The points are between the commands and the writes of the helper (step() in rest-queue.py): a clone is ended after
+# git has returned, not while it runs. What a clone that fails while it runs does is in the rest-queue suite
+# (example "a clone that fails touches only its temporary folder").
 # It is a suite of its own so that the rest-queue suite stays within a few minutes.
 
 set -u
@@ -20,7 +24,7 @@ for k in ("handed_at", "recorded_at", "at"):
     a.pop(k, None)
 print("attempt:", json.dumps(a, sort_keys=True, ensure_ascii=False))' "$(state_file)"
   printf 'routing: %s\n' "$(cat "$T/$ROUTING" 2>/dev/null | paste -sd'|' -)"
-  if [ -d "$D/.git" ]; then echo "the directory:"; python3 "$RQT/treecheck.py" list "$D"; fi   # its files, index, refs and stash
+  if [ -d "$D/.git" ]; then echo "the directory:"; python3 "$RQT/treecheck.py" whole "$D"; fi   # every file, .git included, refs and stash
   python3 "$RQT/treecheck.py" list "$T"
 }
 
@@ -52,7 +56,7 @@ assert_true "record: over more than 60 points in all" "[ $POINTS -gt 60 ]"
 new sw-next 5 9; run start --path PR --review no > /dev/null 2>&1; D=$(dir_of 5)
 python3 "$RQT/treecheck.py" list "$T" > "$WORK/next-before.txt"
 snap sw-next
-IDD_REST_COUNT_STEPS="$S/steps" run next > /dev/null 2>&1; STEPS=$(cat "$S/steps"); bad=0; LEFT_SEEN=0
+IDD_REST_COUNT_STEPS="$S/steps" run next > /dev/null 2>&1; STEPS=$(cat "$S/steps"); bad=0; LEFT_SEEN=0; TMP_SEEN=0
 for k in $(seq 1 "$STEPS"); do
   restore sw-next
   IDD_REST_STOP_AFTER_STEP=$k run next > /dev/null 2>&1
@@ -72,10 +76,21 @@ for k in $(seq 1 "$STEPS"); do
     bad=$((bad + 1)); echo "    next: point $k: $outcome"
   fi
   [ "$outcome" = "$left" ] && LEFT_SEEN=$((LEFT_SEEN + 1))
+  # every temporary folder that is still there is recorded with #5, so that the report names it
+  unrecorded=$(python3 - "$(state_file)" "$T/.claude/worktrees" <<'SWEEP_PY'
+import json, os, sys
+a = [x for x in json.load(open(sys.argv[1]))["attempts"] if x["issue"] == 5][0]
+left = [os.path.join(sys.argv[2], n) for n in os.listdir(sys.argv[2]) if n.startswith(".rest-5-")]
+print(len(left), sum(1 for p in left if p not in a.get("tmps", [])))
+SWEEP_PY
+)
+  [ "${unrecorded#* }" = 0 ] || { bad=$((bad + 1)); echo "    next: point $k: a temporary folder that is not recorded"; }
+  [ "${unrecorded% *}" -gt 0 ] && TMP_SEEN=$((TMP_SEEN + 1))
 done
 # spec-example: idd-all-rest / a directory that was not finished
-assert_eq "next: at each of its $STEPS points, ended there and run again, it makes #5 again or leaves its partial folder and hands out #9, and leaves T as it was" "0" "$bad"
-assert_true "next: some points end inside the clone, and there the folder is left" "[ $LEFT_SEEN -gt 0 ]"
+assert_eq "next: at each of its $STEPS points, ended there and run again, it makes #5 again or leaves the place it took and hands out #9, leaves T as it was, and records every temporary folder it leaves" "0" "$bad"
+assert_true "next: some points end after it took the place and before it moved the clone there, and there the place is left" "[ $LEFT_SEEN -gt 0 ]"
+assert_true "next: some points leave a temporary folder, which is recorded" "[ $TMP_SEEN -gt 0 ]"
 assert_true "next: it has more than five points" "[ $STEPS -gt 5 ]"
 
 print_summary "rest-queue-sweep"

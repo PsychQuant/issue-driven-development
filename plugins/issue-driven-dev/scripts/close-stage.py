@@ -12,7 +12,10 @@ state file and from GitHub here, never from the model's memory.
 Subcommands
   init  --cwd C --repo O/R --issue N --path PR|direct-commit --requested-path PR|direct-commit
         --interaction attended|unattended --branch B --default D --review yes|no --in-chain yes|no
-        Step 0.7: record the run's flags in C/.claude/.idd/state/idd-all-run-N.json.
+        --rest-root R|none --rest-token K|none
+        Step 0.7: record the run's flags in C/.claude/.idd/state/idd-all-run-N.json. For an issue of a rest
+        run, R is the directory the run was started in and K its token: C must be the directory of the issue
+        at R, bound to it, and K the token of that run (exit 4 otherwise: another session has the run).
         Every value is required: a value lost between tool calls is a usage
         error (64), never a silent "no" (#392 verify r2 #3).
   gate  --cwd C --repo O/R --issue N --sha SHA [--base SHA]
@@ -23,9 +26,10 @@ Subcommands
         Prints the gate JSON plus comment_id / verify_url.
         Exit 0 clean, 1 not clean, 2 unparseable (including: no such report,
         any error), 64 usage.
-  run   --cwd C --repo O/R --issue N [--ci-timeout S] [--ci-grace S]
+  run   --cwd C --repo O/R --issue N [--ci-timeout S] [--ci-grace S] [--rest-token K]
         Phase 5c: every guardrail, then the squash merge (PR) or the push
-        (direct-commit). The CI guardrail runs the local CI gate
+        (direct-commit). For an issue of a rest run the token of that run is checked when the stage starts
+        and again, holding the lock of the run, right before the merge. The CI guardrail runs the local CI gate
         (idd-ci-gate.sh) on the verified commit; only in remote mode (exit 10)
         does it wait for the PR's remote checks. Prints one JSON line and writes it to
         C/.claude/.idd/state/idd-all-result-N.json.
@@ -45,7 +49,9 @@ stage. Nothing here asks a person; a stop is reported, not negotiated.
 
 Test seams (honoured only when IDD_CLOSE_STAGE_TEST=1): IDD_GH / IDD_GIT name
 the gh and git executables; IDD_CI_GATE names the local CI gate; IDD_SLEEP=0
-makes the wait loops not sleep.
+makes the wait loops not sleep; IDD_REST_LOCK_WAIT sets the wait for the lock of a
+rest run, and IDD_REST_SLEEP_BEFORE_RECHECK=s pauses before the check of its token
+that comes right before the merge.
 
 Result fields a merge or push can carry besides the commit: `low_in_scope` (LOW
 In-scope fix findings the merge did not wait for), `proposed_corrections`
@@ -169,10 +175,50 @@ def flight_of(rest, n):
 
 
 def at_dir(flight, cwd):
-    """True when the issue in flight is recorded as made in exactly this directory, and the directory, as recorded,
-    is reached through no symbolic link (its real path is the recorded path)."""
+    """True when the issue in flight is recorded as made in exactly this directory, the directory, as recorded, is
+    reached through no symbolic link (its real path is the recorded path), and it is bound to the issue: its mark and
+    its origin are those stored with the issue (scripts/lib/reststate.py bound)."""
     d = flight.get("dir")
-    return bool(flight.get("made")) and d == cwd and os.path.realpath(d) == d
+    return bool(flight.get("made")) and d == cwd and os.path.realpath(d) == d and not reststate.bound(flight, d)
+
+
+def by_record(cwd, n, root):
+    """(word, the rest state) for an issue whose run names the rest root `root`: on or off when the run at `root` has n
+    in flight in exactly this directory, bound to it, and this directory is the place of n below `root`; unreadable
+    otherwise (the run cannot be read, has ended, or does not have n there)."""
+    place = reststate.run_of(cwd)
+    if not place or place != (os.path.realpath(root), n):   # the state is read below the real path of the root in any case
+        return "unreadable", None
+    try:
+        word, rest = rest_state(state_dir(root))
+    except Stop:
+        return "unreadable", None
+    flight = flight_of(rest, n) if word == "ok" else None
+    if not flight or not at_dir(flight, cwd):
+        return "unreadable", None
+    return ("on" if rest["review"] else "off"), rest
+
+
+def by_place(cwd, n):
+    """(word, directory) by the place of this --cwd alone, without the run of the issue recorded here: elsewhere (with
+    the directory) when a rest run has n in flight in a directory of its own and this --cwd is that run's working tree
+    or the place of that directory; unreadable when such a state was changed in the last 24 hours and cannot be used;
+    off otherwise."""
+    places = [cwd]
+    place = reststate.run_of(cwd)
+    if place and place[1] == n:
+        places.append(place[0])
+    for where in places:
+        try:
+            word, rest = rest_state(state_dir(where))
+        except Stop:
+            return "unreadable", None
+        if word == "unreadable":
+            return "unreadable", None
+        flight = flight_of(rest, n) if word == "ok" else None
+        if flight and flight.get("dir"):
+            return "elsewhere", flight["dir"]
+    return "off", None
 
 
 def the_record(cwd, n):
@@ -194,34 +240,14 @@ def rest_reading(cwd, n):
                   record) and no rest run has n in flight here or at this --cwd
       elsewhere   the record names none (or there is none), and a rest run has n in flight in a directory of its own
                   that this --cwd is not, read as given: this --cwd is that run's working tree, or its place shows the run
-      unreadable  the record names R whose run cannot be read, has ended or does not have n in flight here; or a state
-                  file of a rest run that was changed in the last 24 hours is not a usable state"""
+      unreadable  the record names R whose run cannot be read, has ended or does not have n in flight here, bound to it,
+                  or this --cwd is not the place of n below R; or a state file of a rest run that was changed in the
+                  last 24 hours is not a usable state"""
     rec = the_record(cwd, n)
     root = rec.get("rest_root") if rec else None
     if isinstance(root, str) and root != "none":
-        try:
-            word, rest = rest_state(state_dir(root))
-        except Stop:
-            return "unreadable", None
-        flight = flight_of(rest, n) if word == "ok" else None
-        if not flight or not at_dir(flight, cwd):
-            return "unreadable", None
-        return ("on" if rest["review"] else "off"), None
-    places = [cwd]
-    place = reststate.run_of(cwd)
-    if place and place[1] == n:
-        places.append(place[0])
-    for where in places:
-        try:
-            word, rest = rest_state(state_dir(where))
-        except Stop:
-            return "unreadable", None
-        if word == "unreadable":
-            return "unreadable", None
-        flight = flight_of(rest, n) if word == "ok" else None
-        if flight and flight.get("dir"):
-            return "elsewhere", flight["dir"]
-    return "off", None
+        return by_record(cwd, n, root)[0], None
+    return by_place(cwd, n)
 
 
 def rest_review(cwd, n):
@@ -240,10 +266,12 @@ def cmd_rest_review(argv):
 
 def cmd_init(argv):
     keys = ["--cwd", "--repo", "--issue", "--path", "--requested-path", "--interaction", "--branch",
-            "--default", "--review", "--in-chain", "--rest-root"]
+            "--default", "--review", "--in-chain", "--rest-root", "--rest-token"]
     a = parse(argv, {k: "value" for k in keys})
     if a is None or not common_ok(a) or any(k not in a for k in keys):
         return usage("init needs every one of: " + " ".join(keys) + " (each with a value)")
+    if (a["--rest-root"] == "none") != (a["--rest-token"] == "none"):
+        return usage("--rest-root and --rest-token are both given for an issue of a rest run, and are both none otherwise")
     if a["--path"] not in ("PR", "direct-commit") or a["--requested-path"] not in ("PR", "direct-commit"):
         return usage("--path and --requested-path must be PR or direct-commit")
     if a["--interaction"] not in ("attended", "unattended"):
@@ -256,17 +284,22 @@ def cmd_init(argv):
     if root != "none":   # an issue of a rest run: its run is named, not inferred (#478)
         if not os.path.isabs(root):
             return usage("--rest-root is the directory the rest run was started in (an absolute path), or none")
-        try:
-            word, rest = rest_state(state_dir(root))
-        except Stop:
-            word, rest = "unreadable", None
-        flight = flight_of(rest, n) if word == "ok" else None
-        if not flight or not at_dir(flight, cwd):
-            return usage(f"the rest run at {root} does not have #{n} in flight in this directory ({cwd}): run init in the "
-                         "directory that rest-queue.py next printed for the issue, with the directory the run was started in")
-        word, place = ("on" if rest["review"] else "off"), None
-    else:
-        word, place = rest_reading(cwd, n)
+        if os.path.abspath(a["--cwd"]) != cwd:   # as given and as its real path: a directory reached through a link is not the directory
+            return usage(f"--cwd {a['--cwd']} is reached through a symbolic link: give the directory that rest-queue.py "
+                         "next printed for the issue, as it printed it")
+        word, rest = by_record(cwd, n, root)
+        if word == "unreadable":
+            return usage(f"the rest run at {root} does not have #{n} in flight in this directory ({cwd}), bound to it: run "
+                         "init in the directory that rest-queue.py next printed for the issue, with the directory the run "
+                         "was started in")
+        if not reststate.owns(rest, a["--rest-token"]):
+            print("close-stage: the token is not the one of the rest run at this rest root: another session has taken the "
+                  "run over (start --take-over) and runs it now — no run state is written; end this invocation: no "
+                  "record, no stop, no report", file=sys.stderr)
+            return 4
+        place = None
+    else:   # by the place alone: the run of the issue recorded here before is the one this init replaces
+        word, place = by_place(cwd, n)
     if word == "elsewhere":
         # no run state is written: the pipeline of this issue is running in the wrong place (#478)
         return usage(f"a rest run has #{a['--issue']} in flight in a directory of its own: {place} — run the pipeline of the "
@@ -630,7 +663,52 @@ def write_result(cwd, n, result):
         json.dump(result, fh, ensure_ascii=False)
 
 
-def run_pr(st, cwd, repo, n, timeout, grace, partial):
+def rest_token_guard(cwd, n, root, token):
+    """For an issue whose run names a rest root: check now that `token` is the token of that run, and return the check
+    that run_pr makes right before the merge (rest_recheck). None for any other run. Stop when no token was given or
+    it is not the run's: another session has taken the run over, and the issue is that session's."""
+    if root in (None, "none"):
+        return None
+    if not token:
+        raise Stop("no token of the rest run was given (--rest-token): an issue of a rest run is merged only by the session "
+                   "that holds the run — the run stays at verified")
+    word, rest = by_record(cwd, n, root)
+    if word == "unreadable" or not reststate.owns(rest, token):
+        raise Stop("the token is not the one of the rest run of this issue: another session has taken the rest run over "
+                   "(start --take-over) — the run stays at verified")
+    return lambda: rest_recheck(cwd, n, root, token)
+
+
+def rest_recheck(cwd, n, root, token):
+    """Right before the merge: take the lock of the rest run and read it again. The descriptor that holds the lock is
+    returned, to be closed once the merge call has returned; a start --take-over meanwhile waits for it. Stop when the
+    lock is held beyond the wait, the token is no longer the run's, or the run no longer has the issue in flight in this
+    directory, bound to it."""
+    if TEST and os.environ.get("IDD_REST_SLEEP_BEFORE_RECHECK"):
+        time.sleep(float(os.environ["IDD_REST_SLEEP_BEFORE_RECHECK"]))
+    wait = float(os.environ.get("IDD_REST_LOCK_WAIT", "30")) if TEST else reststate.LOCK_WAIT
+    try:
+        fd = reststate.lock(state_dir(root), wait)
+    except reststate.Held:
+        raise Stop("the lock of the rest run is held by another command beyond the wait, so its token cannot be checked "
+                   "again before the merge — not merging; the run stays at verified")
+    except (OSError, Stop) as exc:
+        raise Stop(f"the lock of the rest run cannot be taken ({exc}) — not merging; the run stays at verified")
+    try:
+        word, rest = by_record(cwd, n, root)
+        if word == "unreadable":
+            raise Stop("the rest run of this issue cannot be found any more (it has ended, or no longer has this issue in "
+                       "flight in this directory) — not merging; the run stays at verified")
+        if not reststate.owns(rest, token):
+            raise Stop("the token is not the one of the rest run of this issue: another session has taken the rest run over "
+                       "(start --take-over) while the close stage ran — not merging; the run stays at verified")
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def run_pr(st, cwd, repo, n, timeout, grace, partial, guard=None):
     default = st["default"]
     prs = gh_json(["pr", "list", "--repo", repo, "--head", st["branch"], "--state", "open",
                    "--json", "number,headRefName,baseRefName,headRefOid,title,url,isCrossRepository"], "the open PRs")
@@ -690,14 +768,19 @@ def run_pr(st, cwd, repo, n, timeout, grace, partial):
         remote = {"remote_ci_failed": "not readable" if failed is None else failed,
                   "remote_ci_pending": [] if pending is None else pending}
 
-    partial.update({"pr": pr["number"], "pr_url": pr.get("url"), "verified_sha": sha, "merge_attempted": True})
-    # Written before the merge call: if this process dies after GitHub merged, the
-    # result still says a merge may have happened (r4 #34).
-    write_result(cwd, n, dict(partial, status="stopped",
-                              reason=f"interrupted after the merge call started — PR #{pr['number']} may be merged; check it",
-                              interaction=st.get("interaction", "unknown")))
-    rc, out, err = run_cmd([GH, "pr", "merge", str(pr["number"]), "--repo", repo, "--squash",
-                            "--subject", subject, "--body", body, "--match-head-commit", sha])
+    held = guard() if guard else None   # the token of the rest run, read again under its lock (#478)
+    try:
+        partial.update({"pr": pr["number"], "pr_url": pr.get("url"), "verified_sha": sha, "merge_attempted": True})
+        # Written before the merge call: if this process dies after GitHub merged, the
+        # result still says a merge may have happened (r4 #34).
+        write_result(cwd, n, dict(partial, status="stopped",
+                                  reason=f"interrupted after the merge call started — PR #{pr['number']} may be merged; check it",
+                                  interaction=st.get("interaction", "unknown")))
+        rc, out, err = run_cmd([GH, "pr", "merge", str(pr["number"]), "--repo", repo, "--squash",
+                                "--subject", subject, "--body", body, "--match-head-commit", sha])
+    finally:
+        if held is not None:
+            os.close(held)
     if rc != 0:
         try:
             after = gh_json(["pr", "view", str(pr["number"]), "--repo", repo, "--json", "state"], "the PR").get("state")
@@ -794,7 +877,7 @@ def run_direct(st, cwd, repo, n, partial):
 
 def cmd_run(argv):
     a = parse(argv, {"--cwd": "value", "--repo": "value", "--issue": "value",
-                     "--ci-timeout": "value", "--ci-grace": "value"})
+                     "--ci-timeout": "value", "--ci-grace": "value", "--rest-token": "value"})
     if a is None or not common_ok(a):
         return usage("run needs --cwd <dir> --repo owner/repo --issue <digits>")
     try:
@@ -827,6 +910,7 @@ def cmd_run(argv):
         if rest == "unreadable":
             raise Stop("a rest run state at this --cwd cannot be read, so its review flag is unknown: the run stays at verified "
                        "— when no rest run is going on here, delete .claude/.idd/state/idd-all-rest.json")
+        guard = rest_token_guard(cwd, int(n), st.get("rest_root"), a.get("--rest-token"))
         if st.get("in_chain"):
             raise Stop("--in-chain: /idd-all-chain owns the cluster PR (no merge, no close)")
         if st.get("path") != st.get("requested_path"):
@@ -846,7 +930,7 @@ def cmd_run(argv):
         check_others(me, since, comments, meta)
         corrections = check_intent(repo, n, st, comments, issue)
         if st.get("path") == "PR":
-            result = run_pr(st, cwd, repo, n, timeout, grace, partial)
+            result = run_pr(st, cwd, repo, n, timeout, grace, partial, guard)
         elif st.get("path") == "direct-commit":
             result = run_direct(st, cwd, repo, n, partial)
         else:
@@ -969,15 +1053,20 @@ def cmd_pr_check(argv):
     return 0
 
 
+HANDLERS = {"rest-review": cmd_rest_review, "init": cmd_init, "reset": cmd_reset, "gate": cmd_gate, "pr-check": cmd_pr_check,
+            "run": cmd_run, "confirm-close": cmd_confirm}
+# The commands that take the token of a rest run (closed list): init with a rest root, and run for an issue whose record
+# names one. rest-review reads a rest run's state and takes no token; the others do not read it.
+REST_TOKEN = ("init", "run")
+
+
 def main(argv):
     if not argv:
         return usage("subcommand required: init | reset | gate | pr-check | run | confirm-close")
     sub, rest = argv[0], argv[1:]
-    handlers = {"rest-review": cmd_rest_review, "init": cmd_init, "reset": cmd_reset, "gate": cmd_gate, "pr-check": cmd_pr_check, "run": cmd_run,
-                "confirm-close": cmd_confirm}
-    if sub not in handlers:
+    if sub not in HANDLERS:
         return usage(f"unknown subcommand '{sub}'")
-    return handlers[sub](rest)
+    return HANDLERS[sub](rest)
 
 
 if __name__ == "__main__":

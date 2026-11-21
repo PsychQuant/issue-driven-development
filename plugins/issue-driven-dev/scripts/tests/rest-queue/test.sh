@@ -223,7 +223,7 @@ new stop 5 9
 run start --path PR --review no > /dev/null 2>&1; run next > /dev/null; run record --issue 5 --reason x > /dev/null
 run stop --reason "default branch could not be fast-forwarded" > /dev/null 2>&1; rc=$?
 assert_exit "stop: exits 0" 0 "$rc"
-OUT=$(rq next --cwd "$T" --repo "$REPO")
+OUT=$(run next)
 assert_eq "stop: next names the reason and hands out nothing" '{"next":null,"stopped":"default branch could not be fast-forwarded"}' \
   "$(printf '%s' "$OUT" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps({"next": d["next"], "stopped": d["stopped"]}, separators=(",",":")))')"
 assert_eq "stop: #9 was not handed out" "1" "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["attempts"]))' "$(state_file)")"
@@ -231,8 +231,8 @@ assert_eq "stop: #9 was not handed out" "1" "$(python3 -c 'import json,sys; prin
 # spec-example: idd-all-rest / resume within 24 hours
 new resume 5 9
 write_state 2 '[{"issue": 5, "outcome": "stopped", "reason": "verify gate: not_clean"}]'
-run start --path PR --review no > "$S/start.out" 2>&1; rc=$?
-assert_exit "resume: start exits 0" 0 "$rc"
+run start --path PR --review no --take-over > "$S/start.out" 2>&1; rc=$?
+assert_exit "resume: start --take-over exits 0" 0 "$rc"
 assert_output_grep "resume: start says the run is resumed" "resumed" "$S/start.out"
 assert_output_grep "resume: with one attempt" "1 attempt" "$S/start.out"
 assert_output_grep "resume: the list names issue numbers" "#9" "$S/start.out"
@@ -241,8 +241,8 @@ refute_output_grep "resume: the list prints no issue text" "SECRET-BODY-TEXT" "$
 assert_true "resume: the fixture issues do carry that title" 'grep -q "SECRET-TITLE-TEXT" "$G/issues.json"'
 assert_eq "resume: starting counts as activity (updated_at is now, not 2 hours ago)" "fresh" "$(python3 -c 'import calendar,json,sys,time; s=json.load(open(sys.argv[1])); t=calendar.timegm(time.strptime(s["updated_at"], "%Y-%m-%dT%H:%M:%SZ")); print("fresh" if time.time()-t < 300 else "stale")' "$(state_file)")"
 assert_eq "resume: next is #9, not #5" "9" "$(run next | jget next)"
-run start --path PR --review no > /dev/null 2>&1    # a second start during the run
-assert_eq "resume: a second start keeps the attempts" "2" "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["attempts"]))' "$(state_file)")"
+run start --path PR --review no --take-over > /dev/null 2>&1    # a start that takes the run over
+assert_eq "resume: a start --take-over keeps the attempts" "2" "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["attempts"]))' "$(state_file)")"
 
 # spec-example: idd-all-rest / a state older than 24 hours starts a new run
 new expired 5 9
@@ -331,14 +331,15 @@ python3 - "$(state_file)" <<'PY'
 import json, sys, time
 stamp = lambda t: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
 now = time.time()
-json.dump({"version": 5, "repo": "o/r", "path": "PR", "default": "main", "review": False, "started_at": stamp(now - 600), "updated_at": stamp(now - 300),
+json.dump({"version": 6, "repo": "o/r", "path": "PR", "default": "main", "review": False, "started_at": stamp(now - 600), "updated_at": stamp(now - 300),
+           "token_digest": __import__("hashlib").sha256(b"00112233445566778899aabb").hexdigest(),
            "attempts": [{"issue": 5, "handed_at": stamp(now - 500), "outcome": "stopped",
                          "reason": "verify gate\nSECOND-LINE of the issue reason", "recorded_at": stamp(now - 400)},
                         {"issue": 6, "handed_at": stamp(now - 450), "outcome": "stopped",
                          "reason": "a\tTAB-FOLLOWS " + "x" * 400, "recorded_at": stamp(now - 350)}],
            "stop": {"reason": "first line\nSECOND-LINE of the stop reason", "at": stamp(now - 300)}}, open(sys.argv[1], "w"))
 PY
-run start --path PR --review no > "$S/start.out" 2>&1; rc=$?
+run start --path PR --review no --take-over > "$S/start.out" 2>&1; rc=$?
 assert_exit "one line: start exits 0" 0 "$rc"
 assert_true "one line: no line of start begins with the second line" '! grep -E "^SECOND-LINE" "$S/start.out" >/dev/null'
 assert_true "one line: start holds both parts of the stop reason on one line" 'grep -E "first line SECOND-LINE of the stop reason" "$S/start.out" >/dev/null'
@@ -375,7 +376,7 @@ new report-crash 5
 run start --path PR --review no > /dev/null 2>&1; run next > /dev/null; run record --issue 5 --reason "stopped at the PR" > /dev/null
 mkdir -p "$S/copy"; cp "$RQ" "$S/copy/rest-queue.py"; cp -R "$PLUGIN/scripts/lib" "$S/copy/lib"
 printf '\n\ndef latest_diagnosis(comments):\n    raise RuntimeError("a failure nobody planned for")\n' >> "$S/copy/lib/ghread.py"
-python3 "$S/copy/rest-queue.py" report --cwd "$T" --repo "$REPO" > "$S/report.out" 2>&1; rc=$?
+python3 "$S/copy/rest-queue.py" report --cwd "$T" --repo "$REPO" --token "$(run_token)" > "$S/report.out" 2>&1; rc=$?
 assert_exit "report: an unplanned failure while re-reading the list still exits 0" 0 "$rc"
 assert_output_grep "report: the recorded result is still printed after it" "#5 — stopped at the PR" "$S/report.out"
 assert_output_grep "report: and it says the list could not be read" "could not be read" "$S/report.out"
@@ -383,9 +384,9 @@ assert_file_absent "report: and the run state is deleted" "$(state_file)"
 
 echo "── refusals ──"
 new norun 5
-for sub in next record stop report; do
+for sub in next where record stop report; do
   case "$sub" in record) extra=(--issue 5) ;; stop) extra=(--reason x) ;; *) extra=() ;; esac
-  if [ "$sub" = stop ]; then rq stop --cwd "$T" "${extra[@]}" > /dev/null 2>&1; rc=$?
+  if [ "$sub" = stop ]; then rq stop --cwd "$T" --token "$NO_TOKEN_YET" "${extra[@]}" > /dev/null 2>&1; rc=$?
   else run "$sub" ${extra[@]+"${extra[@]}"} > /dev/null 2>&1; rc=$?; fi
   assert_exit "no run: $sub exits 1" 1 "$rc"
 done
@@ -409,11 +410,11 @@ assert_exit "start failed: and report exits 1" 1 "$rc"
 new start-fail-resume 5 9
 write_state 2 '[{"issue": 5, "outcome": "stopped", "reason": "verify gate: not_clean"}]'
 cp "$(state_file)" "$S/before.json"; echo 1 > "$G/fail-page"
-run start --path PR --review no > /dev/null 2>&1; rc=$?
+run start --path PR --review no --take-over > /dev/null 2>&1; rc=$?
 assert_exit "start failed on a run it would have resumed: exits 3" 3 "$rc"
 require "start failed on a run it would have resumed: the state of that run is untouched" cmp -s "$S/before.json" "$(state_file)"
 rm "$G/fail-page"
-run start --path PR --review no > "$S/start.out" 2>&1
+run start --path PR --review no --take-over > "$S/start.out" 2>&1
 assert_output_grep "start failed on a run it would have resumed: a later start resumes it" "resumed" "$S/start.out"
 assert_eq "start failed on a run it would have resumed: and #5 is not handed out again" "9" "$(run next | jget next)"
 
@@ -462,7 +463,8 @@ git -C "$T" config user.name "Local Name"
 printf '#!/bin/sh\nexit 0\n' > "$T/.git/hooks/pre-commit"; /bin/chmod u+x "$T/.git/hooks/pre-commit"
 run start --path PR --review no > /dev/null 2>&1; OUT=$(run next 2> /dev/null); D=$(dir_of 5)
 assert_eq "directory: next prints it as dir, and the directory the run was started in as root" "$D|$T" "$(printf '%s' "$OUT" | jget dir)|$(printf '%s' "$OUT" | jget root)"
-assert_true "directory: next prints a token with the new hand-out" '[ "$(printf "%s" "$OUT" | jget token | wc -c)" -gt 16 ]'
+assert_eq "directory: next prints no token" "<missing>" "$(printf '%s' "$OUT" | jget token)"
+assert_true "directory: no file below T or its origin holds the token of the run" '! grep -rqF "$(run_token)" "$T" "$T.origin.git"'
 assert_true "directory: it holds a git directory of its own" '[ -d "$D/.git" ] && [ ! -L "$D/.git" ]'
 assert_eq "directory: it is on main, at the commit origin has" "main|$(git -C "$T.origin.git" rev-parse main)" "$(git -C "$D" symbolic-ref --short HEAD)|$(git -C "$D" rev-parse HEAD)"
 assert_true "directory: which the repository the run was started in does not have checked out" '[ "$(git -C "$T" rev-parse HEAD)" != "$(git -C "$D" rev-parse HEAD)" ]'
@@ -473,7 +475,11 @@ assert_true "directory: the hook is not" '[ ! -e "$D/.git/hooks/pre-commit" ]'
 assert_true "directory: it borrows no objects once it is made" '[ ! -e "$D/.git/objects/info/alternates" ]'
 assert_eq "directory: git ignores the plugin's own places in it" "3" "$(cd "$D" && git check-ignore .claude/.idd/state/x .claude/worktrees/x .claude/.idd/tree-lock.reclaim | grep -c .)"
 assert_eq "directory: the helper wrote no file into the clone (git status is empty, and so is its state folder)" "|0" "$(git -C "$D" status --porcelain --untracked-files=all --ignored)|$(ls -A "$D/.claude/.idd/state" 2>/dev/null | grep -c .)"
-(cd "$D" && python3 "$RQ" here --cwd "$D" --repo "$REPO" --issue 5 --token "$(printf '%s' "$OUT" | jget token)") > /dev/null 2>&1; assert_exit "directory: here exits 0 for it, the issue and its token, run there" 0 "$?"
+assert_eq "directory: its git directory holds the mark stored with the issue" "$(attempt 5 mark)" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["mark"])' "$D/.git/idd-rest-mark" 2>/dev/null)"
+assert_true "directory: the mark is a value of its own" '[ "$(attempt 5 mark | wc -c)" -gt 16 ]'
+assert_eq "directory: the URL it was cloned from is stored with the issue" "$(git -C "$T" remote get-url origin)" "$(attempt 5 origin)"
+assert_eq "directory: no temporary folder is left once it is made" "0" "$(ls -A "$T/.claude/worktrees" | grep -c '^\.rest-')"
+here_in "$D" 5 > /dev/null 2>&1; assert_exit "directory: here exits 0 for it, the issue and the token of the run, run there" 0 "$?"
 
 # spec-example: idd-all-rest / the working tree the run was started in is not needed clean
 new not-clean-a 5
@@ -503,6 +509,61 @@ assert_eq "unfinished directory (a folder at its place): it hands out #9" "9" "$
 assert_eq "unfinished directory (a folder at its place): #5 is recorded as stopped" "stopped" "$(attempt 5 outcome)"
 assert_grep "unfinished directory (a folder at its place): and its reason names the place" "$D" "$(attempt 5 reason)"
 assert_eq "unfinished directory (a folder at its place): partial.txt is still there" "half" "$(cat "$D/partial.txt" 2>/dev/null)"
+new dir-unfinished-moved 5 9
+begin; D=$(dir_of 5); unmade; printf 'keep\n' > "$D/keep.txt"   # the clone the earlier next moved there, before it said so
+OUT=$(run next 2> /dev/null); rc=$?
+assert_exit "unfinished directory (the clone the earlier next moved there): next exits 0" 0 "$rc"
+assert_eq "unfinished directory (the clone the earlier next moved there): it prints #5 in flight with the same dir" "5|true|$D" "$(printf '%s' "$OUT" | jget next)|$(printf '%s' "$OUT" | jget in_flight)|$(printf '%s' "$OUT" | jget dir)"
+assert_eq "unfinished directory (the clone the earlier next moved there): and it is the one that was there" "keep" "$(cat "$D/keep.txt" 2>/dev/null)"
+new dir-unfinished-other 5 9
+begin; D=$(dir_of 5); unmade; rm -rf "$D"; git clone -q "$T.origin.git" "$D" 2> /dev/null   # another clone of the same origin, without the mark
+python3 "$HERE/treecheck.py" whole "$D" > "$S/other-before.txt"
+OUT=$(run next 2> /dev/null)
+assert_eq "unfinished directory (another clone without the mark): it hands out #9" "9" "$(printf '%s' "$OUT" | jget next)"
+assert_eq "unfinished directory (another clone without the mark): #5 is recorded as stopped" "stopped" "$(attempt 5 outcome)"
+assert_grep "unfinished directory (another clone without the mark): and its reason names the place" "$D" "$(attempt 5 reason)"
+python3 "$HERE/treecheck.py" whole "$D" > "$S/other-after.txt"
+require "unfinished directory (another clone without the mark): that clone is as it was" cmp -s "$S/other-before.txt" "$S/other-after.txt"
+
+# spec-example: idd-all-rest / a clone that fails touches only its temporary folder
+wait_tmp() { # issue → returns once next has made the temporary folder of its clone (it then waits before the clone)
+  local i; for i in $(seq 1 150); do ls -A "$T/.claude/worktrees" 2> /dev/null | grep -q "^\.rest-$1-" && return 0; sleep 0.1; done; return 1
+}
+new clone-fails 5 9
+run start --path PR --review no > /dev/null 2>&1
+python3 -c 'import json,sys; p=sys.argv[1]; s=json.load(open(p)); s["default"]="nosuch"; json.dump(s, open(p,"w"))' "$(state_file)"   # a branch origin does not have: the clone fails
+D=$(dir_of 5)
+IDD_REST_SLEEP_BEFORE_CLONE=4 run next > "$S/next.out" 2> "$S/next.err" & P=$!
+wait_tmp 5; mkdir -p "$D"; printf 'mine\n' > "$D/mine.txt"
+wait "$P"; rc=$?
+assert_exit "a clone that fails: next exits 3" 3 "$rc"
+assert_eq "a clone that fails: mine.txt at the place is there with its content" "mine" "$(cat "$D/mine.txt" 2>/dev/null)"
+assert_eq "a clone that fails: the place holds nothing else" "mine.txt" "$(ls -A "$D" | tr '\n' ' ' | sed 's/ $//')"
+new clone-place-taken 5 9
+run start --path PR --review no > /dev/null 2>&1
+D=$(dir_of 5)
+IDD_REST_SLEEP_BEFORE_CLONE=4 run next > "$S/next.out" 2> "$S/next.err" & P=$!
+wait_tmp 5; mkdir -p "$D"; printf 'mine\n' > "$D/mine.txt"
+wait "$P"; rc=$?
+assert_exit "a place taken during the clone: next exits 0" 0 "$rc"
+assert_eq "a place taken during the clone: it hands out #9" "9" "$(jget next < "$S/next.out")"
+assert_eq "a place taken during the clone: #5 is recorded as stopped" "stopped" "$(attempt 5 outcome)"
+assert_grep "a place taken during the clone: and its reason names the place" "$D" "$(attempt 5 reason)"
+assert_eq "a place taken during the clone: mine.txt is there with its content" "mine|mine.txt" "$(cat "$D/mine.txt" 2>/dev/null)|$(ls -A "$D" | tr '\n' ' ' | sed 's/ $//')"
+TMP5=$(python3 -c 'import json,sys; a=[x for x in json.load(open(sys.argv[1]))["attempts"] if x["issue"]==5][0]; print((a.get("tmps") or [""])[0])' "$(state_file)")
+assert_true "a place taken during the clone: the temporary folder of #5 is recorded and holds the clone" '[ -n "$TMP5" ] && [ -d "$TMP5/.git" ] && git --git-dir "$TMP5/.git" rev-parse --git-dir > /dev/null 2>&1'
+assert_true "a place taken during the clone: its name is not the name of a directory" 'case "$(basename "$TMP5")" in .rest-5-*) true ;; *) false ;; esac'
+new clone-place-empty 5 9
+run start --path PR --review no > /dev/null 2>&1
+D=$(dir_of 5)
+IDD_REST_SLEEP_BEFORE_CLONE=4 run next > "$S/next.out" 2> "$S/next.err" & P=$!
+wait_tmp 5; mkdir -p "$D"   # an empty folder: a rename onto it would replace it
+wait "$P"; rc=$?
+assert_exit "an empty folder put at the place during the clone: next exits 0" 0 "$rc"
+assert_eq "an empty folder put at the place during the clone: it hands out #9 and records #5 as stopped" "9|stopped" "$(jget next < "$S/next.out")|$(attempt 5 outcome)"
+assert_true "an empty folder put at the place during the clone: the folder is there and empty" '[ -d "$D" ] && [ -z "$(ls -A "$D")" ]'
+TMP5=$(python3 -c 'import json,sys; a=[x for x in json.load(open(sys.argv[1]))["attempts"] if x["issue"]==5][0]; print((a.get("tmps") or [""])[0])' "$(state_file)")
+assert_true "an empty folder put at the place during the clone: the temporary folder of #5 holds the clone" '[ -n "$TMP5" ] && [ -d "$TMP5/.git" ]'
 
 # spec-example: idd-all-rest / a directory is not removed because of its name
 new dir-name 5 9
@@ -516,15 +577,24 @@ assert_eq "a directory at the place: the file in it is still there" "mine" "$(ca
 
 # spec-example: idd-all-rest / here names the directory an issue runs in
 new here 5 9
-begin; D=$(dir_of 5); K=$(token_of 5)
+begin; D=$(dir_of 5); K=$(run_token)
 here() { (cd "${3:-$1}" && python3 "$RQ" here --cwd "$1" --repo "$REPO" --issue "$2" --token "${4:-$K}") 2> "$S/err"; }   # dir issue [the process's directory] [token]
 here "$D" 5 > /dev/null; assert_exit "here: the directory of #5, issue 5, its token: exit 0" 0 "$?"
 here "$T" 5 > /dev/null; assert_exit "here: the directory the run was started in, issue 5: exit 1" 1 "$?"
 assert_output_grep "here: and the reason says T is not the directory of #5" "is not the directory of #5" "$S/err"
 here "$D" 9 > /dev/null; assert_exit "here: the directory of #5, issue 9: exit 1" 1 "$?"
 assert_output_grep "here: and the reason says it is not the directory of #9" "is not the directory of #9" "$S/err"
-here "$D" 5 "$D" "0000" > /dev/null; assert_exit "here: another token: exit 4" 4 "$?"
-assert_output_grep "here: and the reason says the token is not the one of #5" "the token is not the one of #5" "$S/err"
+here "$D" 5 "$D" "$NO_TOKEN_YET" > /dev/null; assert_exit "here: another token: exit 4" 4 "$?"
+assert_output_grep "here: and the reason says the token is not the one of this rest run" "the token is not the one of this rest run" "$S/err"
+mv "$D" "$S/orig"; git clone -q "$T.origin.git" "$D" 2> /dev/null   # another clone of the same origin at the place
+here "$D" 5 > /dev/null; assert_exit "here: another clone of the same origin at its place: exit 1" 1 "$?"
+assert_output_grep "here: and the reason says the directory is not bound to #5" "is not bound to #5" "$S/err"
+rm -rf "$D"; mv "$S/orig" "$D"
+URL=$(git -C "$D" remote get-url origin); git -C "$D" remote set-url origin "$S/elsewhere.git"
+here "$D" 5 > /dev/null; assert_exit "here: its origin set to another URL: exit 1" 1 "$?"
+assert_output_grep "here: and the reason says the directory is not bound to #5" "is not bound to #5" "$S/err"
+git -C "$D" remote set-url origin "$URL"
+here "$D" 5 > /dev/null; assert_exit "here: back as it was: exit 0" 0 "$?"
 mkdir -p "$S/nowhere"; git init -q "$S/nowhere"
 here "$S/nowhere" 5 > /dev/null; assert_exit "here: a directory that is not below a working tree with a run: exit 1" 1 "$?"
 assert_output_grep "here: and the reason says no rest run has #5 in flight there" "no rest run has #5 in flight" "$S/err"
@@ -537,22 +607,59 @@ here "$D" 5 > /dev/null; assert_exit "here: a moved clone, given as the place of
 assert_output_grep "here: and the reason says a symbolic link is on the way" "symbolic link" "$S/err"
 rm "$D"; mv "$S/moved" "$D"
 
-# spec-example: idd-all-rest / a token belongs to one session
+# spec-example: idd-all-rest / the token belongs to the run
 new token 5 9
-run start --path PR --review no > /dev/null 2>&1; K=$(run next 2> /dev/null | jget token); D=$(dir_of 5)
-assert_eq "token: next of an issue in flight prints no token" "<missing>" "$(run next 2> /dev/null | jget token)"
-L=$(run next --take-over 2> /dev/null | jget token)
-assert_true "token: next --take-over prints a new one" '[ -n "$L" ] && [ "$L" != "<missing>" ] && [ "$L" != "$K" ]'
-(cd "$D" && python3 "$RQ" here --cwd "$D" --repo "$REPO" --issue 5 --token "$K") > /dev/null 2> "$S/err"; assert_exit "token: here with the old token exits 4" 4 "$?"
-assert_output_grep "token: and says the token is not the one of #5" "the token is not the one of #5" "$S/err"
-rq record --cwd "$T" --repo "$REPO" --issue 5 --token "$K" --reason x > /dev/null 2> "$S/err"; assert_exit "token: record with the old token exits 4" 4 "$?"
-assert_output_grep "token: and says the token is not the one of #5" "the token is not the one of #5" "$S/err"
-assert_output_grep "token: and that the invocation is to end" "end this invocation" "$S/err"
+begin; K=$(run_token); D=$(dir_of 5)
+run start --path PR --review no --take-over > "$S/start.out" 2>&1; L=$(run_token)
+assert_true "token: start --take-over prints a new token" '[ -n "$L" ] && [ "$L" != "$K" ]'
+assert_output_grep "token: and says the run is taken over" "taken over" "$S/start.out"
+for sub in here where record; do
+  case "$sub" in
+    here) here_in "$D" 5 "$K" > /dev/null 2> "$S/err" ;;
+    where) run where --token "$K" > /dev/null 2> "$S/err" ;;
+    record) run record --issue 5 --reason x --token "$K" > /dev/null 2> "$S/err" ;;
+  esac
+  rc=$?
+  assert_exit "token: $sub with the earlier token exits 4" 4 "$rc"
+  assert_output_grep "token: and says the token is not the one of this rest run" "the token is not the one of this rest run" "$S/err"
+  assert_output_grep "token: and that the invocation is to end" "end this invocation" "$S/err"
+done
 assert_eq "token: the outcome of #5 is not recorded" "null" "$(attempt 5 outcome)"
-OUT=$(run next 2> /dev/null)   # what the session that was displaced would get: the same issue, and nothing to run it with
-assert_eq "token: a next after the refusals prints #5 again" "5|true|<missing>" "$(printf '%s' "$OUT" | jget next)|$(printf '%s' "$OUT" | jget in_flight)|$(printf '%s' "$OUT" | jget token)"
-assert_eq "token: and the token stored for #5 is still the new one" "$L" "$(token_of 5)"
-(cd "$D" && python3 "$RQ" here --cwd "$D" --repo "$REPO" --issue 5 --token "$L") > /dev/null 2>&1; assert_exit "token: here with the new token exits 0" 0 "$?"
+OUT=$(run next 2> /dev/null)
+assert_eq "token: next with the new token prints #5 in flight, and no token" "5|true|<missing>" "$(printf '%s' "$OUT" | jget next)|$(printf '%s' "$OUT" | jget in_flight)|$(printf '%s' "$OUT" | jget token)"
+here_in "$D" 5 "$L" > /dev/null 2>&1; assert_exit "token: here with the new token exits 0" 0 "$?"
+assert_eq "token: where with the new token prints the directory of #5" "$D" "$(run where 2> /dev/null)"
+
+# spec-example: idd-all-rest / an unfinished run is taken over only with --take-over
+new take-over 5 9
+begin; K=$(run_token); cp "$(state_file)" "$S/before.json"
+run start --path PR --review no > "$S/out" 2> "$S/err"; rc=$?
+assert_exit "take over: start without --take-over on an unfinished run exits 4" 4 "$rc"
+assert_output_grep "take over: and says an unfinished rest run is in this working tree" "an unfinished rest run is in this working tree" "$S/err"
+assert_output_grep "take over: and names start --take-over" "start --take-over" "$S/err"
+require "take over: the run state is as it was" cmp -s "$S/before.json" "$(state_file)"
+assert_eq "take over: and the token is still the one it was" "$K" "$(run_token)"
+run start --path PR --review no --take-over > /dev/null 2>&1; rc=$?; L=$(run_token)
+assert_exit "take over: start --take-over exits 0" 0 "$rc"
+assert_true "take over: and prints a token that is not the earlier one" '[ "$L" != "$K" ]'
+run next --token "$K" > /dev/null 2>&1; assert_exit "take over: next with the earlier token exits 4" 4 "$?"
+assert_eq "take over: next with the new token prints #5 in flight" "5|true" "$(run next | jget next)|$(run next | jget in_flight)"
+assert_true "take over: no file below T holds either token" '! grep -rqF -e "$K" -e "$L" "$T"'
+
+# spec-example: idd-all-rest / start runs only at the top of a repository
+new top-only 5
+mkdir -p "$T/sub"
+rq start --cwd "$T/sub" --repo "$REPO" --path PR --review no > /dev/null 2> "$S/err"; rc=$?
+assert_exit "top only (a folder below the top): start exits 3" 3 "$rc"
+assert_output_grep "top only (a folder below the top): its reason line names the top" "$T," "$S/err"
+assert_true "top only (a folder below the top): no .claude folder below it and no run state at the top" '[ ! -e "$T/sub/.claude" ] && [ ! -e "$(state_file)" ]'
+rq next --cwd "$T/sub" --repo "$REPO" --token "$NO_TOKEN_YET" > /dev/null 2>&1; assert_exit "top only (a folder below the top): next exits 3" 3 "$?"
+run start --path PR --review no > /dev/null 2>&1; assert_exit "top only (the top): start exits 0" 0 "$?"
+assert_true "top only (the top): a run state below it" '[ -f "$(state_file)" ]'
+NL="$WORK/line"$'\n'"feed"; mkdir -p "$NL"; git_tree "$NL/tree"
+rq start --cwd "$NL/tree" --repo "$REPO" --path PR --review no > /dev/null 2>&1; assert_exit "top only (a path with a line feed): start exits 3" 3 "$?"
+assert_true "top only (a path with a line feed): no run state below it" '[ ! -e "$NL/tree/.claude/.idd/state/idd-all-rest.json" ]'
+rq next --cwd "$NL/tree" --repo "$REPO" --token "$NO_TOKEN_YET" > /dev/null 2>&1; assert_exit "top only (a path with a line feed): next exits 3" 3 "$?"
 
 # spec-example: idd-all-rest / existing work on GitHub is found by next
 PR12='[{"number": 12, "body": "Refs #5", "headRefName": "feature-x", "headRefOid": "1111111111111111111111111111111111111111", "createdAt": "2021-01-01T00:00:00Z", "url": "https://example.invalid/pull/12"}]'
@@ -584,19 +691,28 @@ new ew-crash 5 9
 mkdir -p "$S/copy/lib"; cp "$RQ" "$S/copy/rest-queue.py"; cp -R "$PLUGIN/scripts/lib/." "$S/copy/lib/"
 printf '#!/bin/sh\necho "check: crashed" >&2\nexit 1\n' > "$S/copy/check-existing-work.sh"
 printf '.claude/worktrees/\n' >> "$T/.git/info/exclude"   # the copy has no writer for that rule beside it
-python3 "$S/copy/rest-queue.py" start --cwd "$T" --repo "$REPO" --path PR --review no > /dev/null 2>&1
-OUT=$(python3 "$S/copy/rest-queue.py" next --cwd "$T" --repo "$REPO" 2> /dev/null)
+TOKC=$(python3 "$S/copy/rest-queue.py" start --cwd "$T" --repo "$REPO" --path PR --review no 2> /dev/null | sed -n 's/^token: //p')
+OUT=$(python3 "$S/copy/rest-queue.py" next --cwd "$T" --repo "$REPO" --token "$TOKC" 2> /dev/null)
 assert_eq "existing work (the check itself fails): nothing is handed out" "null" "$(printf '%s' "$OUT" | jget next)"
 assert_grep_re "existing work (the check itself fails): the reason says it could not be determined" '^existing work: could not be determined' "$(attempt 5 reason)"
 
 # spec-example: idd-all-rest / record leaves every directory as it was
 # Scenario: a merged issue keeps its directory
 leave_rows
+new whole-listing 5 9
+begin; D=$(dir_of 5)
+python3 "$HERE/treecheck.py" whole "$D" > "$S/w1.txt"
+mkdir -p "$D/.claude/.idd"; printf '{"n":1}\n' > "$D/$ROUTING"
+python3 "$HERE/treecheck.py" whole "$D" > "$S/w2.txt"
+assert_true "listing of a directory: a routing log written in it shows" '! cmp -s "$S/w1.txt" "$S/w2.txt"'
+printf 'x\n' >> "$D/.git/description"
+python3 "$HERE/treecheck.py" whole "$D" > "$S/w3.txt"
+assert_true "listing of a directory: a changed file of its git directory shows" '! cmp -s "$S/w2.txt" "$S/w3.txt"'
 new record-leaves-merged 5 9
-begin; D=$(dir_of 5); pushed; python3 "$HERE/treecheck.py" list "$D" > "$S/dir-before.txt"; echo CLOSED > "$G/state-5"
+begin; D=$(dir_of 5); pushed; python3 "$HERE/treecheck.py" whole "$D" > "$S/dir-before.txt"; echo CLOSED > "$G/state-5"
 OUT=$(run record --issue 5 2> /dev/null)
 assert_eq "record (a merged and closed issue): the outcome is closed and the directory is printed" "closed|$D" "$(printf '%s' "$OUT" | jget outcome)|$(printf '%s' "$OUT" | jget dir)"
-python3 "$HERE/treecheck.py" list "$D" > "$S/dir-after.txt"
+python3 "$HERE/treecheck.py" whole "$D" > "$S/dir-after.txt"
 require "record (a merged and closed issue): the directory is there, as it was" cmp -s "$S/dir-before.txt" "$S/dir-after.txt"
 
 # spec-example: idd-all-rest / the starting working tree is the same after every ending
@@ -627,13 +743,13 @@ assert_eq "the index of the starting working tree: its bytes are those before st
 # resolves --cwd, next prints the directory below the real path, and here and init agree with it
 new root-link 5 9
 ln -s "$T" "$S/link"
-rq start --cwd "$S/link" --repo "$REPO" --path PR --review no > /dev/null 2>&1; assert_exit "root through a link: start exits 0" 0 "$?"
-OUT=$(rq next --cwd "$S/link" --repo "$REPO" 2> /dev/null)
+K=$(rq start --cwd "$S/link" --repo "$REPO" --path PR --review no 2> /dev/null | sed -n 's/^token: //p'); assert_true "root through a link: start exits 0 and prints a token" '[ -n "$K" ]'
+OUT=$(rq next --cwd "$S/link" --repo "$REPO" --token "$K" 2> /dev/null)
 assert_eq "root through a link: next prints the directory below the real path" "$T/.claude/worktrees/rest-5" "$(printf '%s' "$OUT" | jget dir)"
-D=$(printf '%s' "$OUT" | jget dir); K=$(printf '%s' "$OUT" | jget token)
+D=$(printf '%s' "$OUT" | jget dir)
 (cd "$D" && python3 "$RQ" here --cwd "$D" --repo "$REPO" --issue 5 --token "$K") > /dev/null 2>&1; assert_exit "root through a link: here exits 0 at the directory next printed" 0 "$?"
 (cd "$S/link/.claude/worktrees/rest-5" && python3 "$RQ" here --cwd "$S/link/.claude/worktrees/rest-5" --repo "$REPO" --issue 5 --token "$K") > /dev/null 2>&1; assert_exit "root through a link: here exits 1 for the directory named through the link" 1 "$?"
-python3 "$PLUGIN/scripts/close-stage.py" init --cwd "$D" --repo "$REPO" --issue 5 --path PR --requested-path PR --interaction unattended --branch idd/5-x --default main --review no --in-chain no --rest-root "$S/link" > /dev/null 2>&1; assert_exit "root through a link: init takes the rest root through the link" 0 "$?"
+python3 "$PLUGIN/scripts/close-stage.py" init --cwd "$D" --repo "$REPO" --issue 5 --path PR --requested-path PR --interaction unattended --branch idd/5-x --default main --review no --in-chain no --rest-root "$S/link" --rest-token "$K" > /dev/null 2>&1; assert_exit "root through a link: init takes the rest root through the link" 0 "$?"
 rq record --cwd "$S/link" --repo "$REPO" --issue 5 --token "$K" --reason x > /dev/null 2>&1; assert_exit "root through a link: record exits 0" 0 "$?"
 
 new root-same 5 9
@@ -648,6 +764,11 @@ assert_output_grep "starting working tree (a file is changed): and that rest mod
 new root-commit 5 9
 begin; printf 'c\n' > "$T/c.txt"; git -C "$T" add c.txt; git -C "$T" commit -q -m "by a person"; run record --issue 5 --reason x > /dev/null 2>&1; run report > "$S/report.out" 2>&1
 assert_output_grep "starting working tree (a commit is made): the report says the checked-out commit changed" "this working tree changed (the checked-out commit)" "$S/report.out"
+new root-again 5 9
+printf 'changed\n' >> "$T/a.txt"   # already listed as changed when #5 is handed out
+begin; printf 'once more\n' >> "$T/a.txt"; run record --issue 5 --reason x > /dev/null 2>&1; rc=$?; run report > "$S/report.out" 2>&1
+assert_exit "starting working tree (a file already changed is changed once more): record exits 0" 0 "$rc"
+refute_output_grep "starting working tree (a file already changed is changed once more): the report says nothing about it, as git lists the same" "this working tree changed" "$S/report.out"
 new root-stash 5 9
 begin; printf 'edited\n' >> "$T/a.txt"; git -C "$T" stash -q; run record --issue 5 --reason x > /dev/null 2>&1; run report > "$S/report.out" 2>&1
 assert_output_grep "starting working tree (a stash is made): the report says the stash changed" "this working tree changed (the stash)" "$S/report.out"
@@ -680,7 +801,27 @@ assert_eq "report (every directory): once it is deleted, a new run hands #5 out 
 new report-flight-dir 5
 begin; run report > "$S/report.out" 2>&1
 assert_output_grep "report (in flight): #5 is named as handed out without a recorded outcome" "handed out, no outcome recorded (1): #5" "$S/report.out"
-assert_output_grep "report (in flight): with its directory" "#5 — its directory: $(dir_of 5)" "$S/report.out"
+assert_true "report (in flight): a line under it names its directory" 'grep -Fx "    its directory: $(dir_of 5)" "$S/report.out" > /dev/null'
+
+# spec-example: idd-all-rest / the report prints a path as it is
+LONG="report  path/$(printf 'y%.0s' $(seq 1 150))/$(printf 'z%.0s' $(seq 1 160))"
+new "$LONG" 5 9
+assert_true "report (a path as it is): the path of T holds two spaces in a row and is longer than 300 characters" 'case "$T" in *"  "*) [ "${#T}" -gt 300 ] ;; *) false ;; esac'
+begin; run record --issue 5 --reason x > /dev/null 2>&1; run report > "$S/report.out" 2>&1
+assert_true "report (a path as it is): a line is four spaces, a label and the path of the directory exactly" 'grep -Fx "    its directory: $(dir_of 5)" "$S/report.out" > /dev/null'
+
+# spec-example: idd-all-rest / the report names a temporary folder that is left
+new report-tmp 5 9
+begin; D=$(dir_of 5); unmade; rm -rf "$D"
+LEFT="$T/.claude/worktrees/.rest-5-left"; mkdir -p "$LEFT"; printf 'half\n' > "$LEFT/partial.txt"   # what a next that was ended during the clone left
+python3 -c 'import json,sys; p=sys.argv[1]; s=json.load(open(p)); s["attempts"][0]["tmps"]=[sys.argv[2]]; json.dump(s, open(p,"w"))' "$(state_file)" "$LEFT"
+OUT=$(run next 2> /dev/null)
+assert_eq "report (a temporary folder): the next after it hands out #5 again, made in a new folder" "5|true" "$(printf '%s' "$OUT" | jget next)|$(printf '%s' "$OUT" | jget in_flight)"
+run record --issue 5 --reason x > /dev/null 2>&1; run report > "$S/report.out" 2>&1
+UNDER5=$(awk '/^  #5 /{f=1; next} f&&/^    /{print; next} f{exit}' "$S/report.out")
+assert_grep "report (a temporary folder): under #5 it names the directory" "its directory: $D" "$UNDER5"
+assert_grep "report (a temporary folder): and the folder that was left" "$LEFT" "$UNDER5"
+assert_eq "report (a temporary folder): which is still there" "half" "$(cat "$LEFT/partial.txt" 2>/dev/null)"
 
 echo "── start, next and the branch step ──"
 # spec-example: idd-all-rest / fewer comments than the issue has
@@ -799,7 +940,7 @@ new lock-record 5 9
 begin
 IDD_REST_SLEEP_AFTER_READ=2 run record --issue 5 --reason x > /dev/null 2>&1 &
 FIRST=$!; sleep 0.5
-IDD_REST_LOCK_WAIT=20 run start --path PR --review yes > /dev/null 2>&1
+IDD_REST_LOCK_WAIT=20 run start --path PR --review yes --take-over > /dev/null 2>&1
 wait "$FIRST"
 assert_eq "lock (record and start --review yes): the run state has review on" "true" "$(python3 -c 'import json,sys; print(str(json.load(open(sys.argv[1]))["review"]).lower())' "$(state_file)")"
 new lock-held 5 9
@@ -818,7 +959,8 @@ begin; D=$(dir_of 5); pushed
 FIRST=$(run record --issue 5 --reason x 2> /dev/null)
 OUT=$(run record --issue 5 --reason y 2> /dev/null); assert_exit "record: called again for the issue recorded last, with its token, it exits 0" 0 "$?"
 assert_eq "record: and prints what it recorded" "$FIRST" "$OUT"
-rq record --cwd "$T" --repo "$REPO" --issue 5 --token wrong > /dev/null 2>&1; assert_exit "record: called again with another token, it exits 4" 4 "$?"
+rq record --cwd "$T" --repo "$REPO" --issue 5 --token "$NO_TOKEN_YET" > /dev/null 2>&1; assert_exit "record: called again with another token, it exits 4" 4 "$?"
+rq record --cwd "$T" --repo "$REPO" --issue 5 --token wrong > /dev/null 2>&1; assert_exit "record: a token that is not of the form start prints is a usage error (exit 2)" 2 "$?"
 run next > /dev/null 2>&1
 run record --issue 5 > /dev/null 2>&1; assert_exit "record: once the next issue is handed out, #5 is refused (exit 1)" 1 "$?"
 new record-no-token 5 9
@@ -831,7 +973,8 @@ mkdir -p "$T/.claude/.idd/state"
 python3 - "$(state_file)" <<'PY'
 import json, sys, time
 s = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-json.dump({"version": 5, "repo": "o/r", "path": "PR", "default": "main", "review": False, "started_at": s, "updated_at": s, "stop": None,
+json.dump({"version": 6, "repo": "o/r", "path": "PR", "default": "main", "review": False, "started_at": s, "updated_at": s, "stop": None,
+           "token_digest": __import__("hashlib").sha256(b"00112233445566778899aabb").hexdigest(),
            "attempts": [{"issue": 5, "outcome": "stopped", "handed_at": s, "recorded_at": s}]}, open(sys.argv[1], "w"))
 PY
 run start --path PR --review no > "$S/start.out" 2>&1; rc=$?
@@ -847,12 +990,16 @@ new state-bad-kept 5
 write_state 1 '[{"issue": 5, "outcome": "stopped", "reason": "x", "left": "kept", "dir": "/x/rest-5", "why": [5]}]'
 run start --path PR --review no > "$S/start.out" 2>&1
 assert_output_grep "state: a reason for keeping a directory that is not text is not used" "cannot be used" "$S/start.out"
+new state-bad-path 5
+write_state 1 '[{"issue": 5, "outcome": "stopped", "reason": "x", "dir": "/x/rest\u0007-5", "made": true}]'
+run start --path PR --review no > "$S/start.out" 2>&1
+assert_output_grep "state: a directory whose path cannot be printed as it is is not used" "cannot be used" "$S/start.out"
 new state-bad-dir 5
 write_state 1 '[{"issue": 5, "outcome": null, "reason": "", "dir": "rest-5"}]'
 run start --path PR --review no > "$S/start.out" 2>&1
 assert_output_grep "state: a directory that is not an absolute path is not used" "cannot be used" "$S/start.out"
 
-for field in path default review; do
+for field in path default review token_digest; do
   new "state-no-$field" 5
   write_state 1 '[{"issue": 5, "outcome": "stopped", "reason": "x"}]'
   python3 -c 'import json,sys; p=sys.argv[1]; s=json.load(open(p)); del s[sys.argv[2]]; json.dump(s, open(p,"w"))' "$(state_file)" "$field"
@@ -871,9 +1018,9 @@ mkdir -p "$T/.claude/.idd/state"; printf '{"review": tr' > "$(state_file)"
 run start --path PR --review no > /dev/null 2> "$S/err"; assert_exit "unusable state: text that is not JSON, written now, stops start (exit 3)" 3 "$?"
 assert_output_grep "unusable state: the reason names the file" "idd-all-rest.json" "$S/err"
 assert_eq "unusable state: and the file is unchanged" '{"review": tr' "$(cat "$(state_file)")"
-new unusable-v3 5
-write_state 1 '[]'
-python3 -c 'import json,sys; p=sys.argv[1]; s=json.load(open(p)); s["version"]=3; s["review"]=True; json.dump(s, open(p,"w"))' "$(state_file)"
+new unusable-v5 5
+write_state 1 '[{"issue": 5, "outcome": null, "reason": "", "token": "t"}]'
+python3 -c 'import json,sys; p=sys.argv[1]; s=json.load(open(p)); s["version"]=5; s["review"]=True; s.pop("token_digest"); json.dump(s, open(p,"w"))' "$(state_file)"
 BEFORE=$(cat "$(state_file)")
 run start --path PR --review no > /dev/null 2> "$S/err"; assert_exit "unusable state: a state of the previous version, an hour old, stops start (exit 3)" 3 "$?"
 assert_eq "unusable state: and the file is unchanged" "$BEFORE" "$(cat "$(state_file)")"
@@ -899,19 +1046,30 @@ for hours in 1 25; do
 done
 
 # spec-example: idd-all-rest / a run that was never reported is not forgotten
-new forgotten 9
-write_state 25 '[{"issue": 5, "outcome": "stopped", "reason": "x", "dir": "/somewhere/.claude/worktrees/rest-5", "made": true, "left": "left", "token": "t"}]'
-run start --path PR --review no > "$S/start.out" 2>&1; assert_exit "forgotten: start exits 0 and begins a new run" 0 "$?"
-OLD=$(awk '/never ended with its report/{f=1; next} /^open issues:/{f=0} f' "$S/start.out")
-assert_grep "forgotten: before the list it names the directory that run kept" "/somewhere/.claude/worktrees/rest-5" "$OLD"
-assert_grep "forgotten: and the outcome of that issue" "stopped" "$OLD"
+forgotten_row() { # name attempt-json → start after a run of 25 hours ago with that attempt; OLD is what it printed of it
+  new "forgotten-$1" 9
+  write_state 25 "$2"
+  run start --path PR --review no > "$S/start.out" 2>&1; assert_exit "forgotten ($1): start exits 0 and begins a new run" 0 "$?"
+  OLD=$(awk '/never ended with its report/{f=1; next} /^open issues:/{f=0} f' "$S/start.out")
+}
+OLDDIR="$WORK/old-run/.claude/worktrees/rest-5"; mkdir -p "$OLDDIR"; printf 'x\n' > "$OLDDIR/a.txt"
+forgotten_row made '[{"issue": 5, "outcome": "stopped", "reason": "x", "dir": "'"$OLDDIR"'", "made": true, "left": "left"}]'
+assert_grep "forgotten (stopped, made): before the list it names the directory, as it is" "    its directory: $OLDDIR" "$OLD"
+assert_grep "forgotten (stopped, made): and the outcome of that issue" "stopped" "$OLD"
+OLDHALF="$WORK/old-half/.claude/worktrees/rest-5"; mkdir -p "$OLDHALF"; printf 'half\n' > "$OLDHALF/partial.txt"
+forgotten_row half '[{"issue": 5, "outcome": null, "reason": "", "dir": "'"$OLDHALF"'", "made": false}]'
+assert_grep "forgotten (in flight, not made): it names the folder at the place" "$OLDHALF" "$OLD"
+OLDTMP="$WORK/old-tmp/.claude/worktrees/.rest-5-abc"; mkdir -p "$OLDTMP"
+forgotten_row tmp '[{"issue": 5, "outcome": null, "reason": "", "dir": "'"$WORK/old-tmp/.claude/worktrees/rest-5"'", "made": false, "tmps": ["'"$OLDTMP"'"]}]'
+assert_grep "forgotten (a temporary folder recorded): it names the temporary folder" "$OLDTMP" "$OLD"
+refute_grep "forgotten (a temporary folder recorded): and not the directory, at whose place nothing is" "rest-5$" "$OLD"
 echo "── the review flag ──"
 # spec-example: idd-all-rest / the review flag across a resumed run
 for row in "yes yes yes no" "yes no yes yes" "no yes yes yes" "no no no no"; do
   set -- $row
   new "review-$1-$2" 5
   run start --path PR --review "$1" > /dev/null 2>&1
-  run start --path PR --review "$2" > "$S/start.out" 2>&1; assert_exit "review $1 then $2: start exits 0" 0 "$?"
+  run start --path PR --review "$2" --take-over > "$S/start.out" 2>&1; assert_exit "review $1 then $2: start --take-over exits 0" 0 "$?"
   assert_eq "review $1 then $2: next prints review $3" "$3" "$(run next | jget review)"
   assert_eq "review $1 then $2: start says the flag differs: $4" "$4" "$(grep -q 'review flag differs' "$S/start.out" && echo yes || echo no)"
 done
@@ -921,8 +1079,11 @@ run start --path PR --review yes > /dev/null 2>&1; run next > /dev/null
 assert_eq "review: an issue in flight carries the flag" "true|yes" "$(run next | jget in_flight)|$(run next | jget review)"
 # spec-example: idd-all-rest / the close stage cannot be told that review is off
 CS="$PLUGIN/scripts/close-stage.py"
-init() { # review [directory] [rest root] → close-stage.py init for #5 there (default: the directory of #5, --rest-root T)
-  python3 "$CS" init --cwd "${2:-$(dir_of 5)}" --repo "$REPO" --issue 5 --path PR --requested-path PR --interaction unattended --branch idd/5-x --default main --review "$1" --in-chain no --rest-root "${3:-$T}"
+init() { # review [directory] [rest root] [token] → close-stage.py init for #5 there (default: the directory of #5,
+        # --rest-root T, and the token of the run when the rest root is not none)
+  local rr="${3:-$T}" tk="${4:-}"
+  [ -n "$tk" ] || { [ "$rr" = none ] && tk=none || tk=$(run_token); }
+  python3 "$CS" init --cwd "${2:-$(dir_of 5)}" --repo "$REPO" --issue 5 --path PR --requested-path PR --interaction unattended --branch idd/5-x --default main --review "$1" --in-chain no --rest-root "$rr" --rest-token "$tk"
 }
 runstate() { [ -f "${1:-$(dir_of 5)}/.claude/.idd/state/idd-all-run-5.json" ] && echo yes || echo no; }
 # the rest run (its review, the issue in flight) | where init runs | --rest-root | --review | exit | a run state for #5 exists there
@@ -955,13 +1116,30 @@ new init-unreadable 5
 mkdir -p "$T/.claude/.idd/state"; printf '{"review": tr' > "$(state_file)"
 init no "$T" none > /dev/null 2>&1; assert_exit "init: a rest state that cannot be read changes nothing" 0 "$?"
 
+# spec-example: idd-all-rest / init binds the issue to its directory
+rec_root() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("rest_root"))' "$(dir_of 5)/.claude/.idd/state/idd-all-run-5.json" 2> /dev/null || echo none; }
+bind_row() { # name what-happened init-args exit the-run-of-#5-afterwards
+  new "bind-$1" 5 9; begin; D=$(dir_of 5)
+  eval "$2"
+  eval "init no $3" > /dev/null 2> "$S/err"; rc=$?
+  assert_exit "init binds ($1): exits $4" "$4" "$rc"
+  local want="$5"; [ "$want" = T ] && want="$T"   # T of this scenario, which new has just made
+  assert_eq "init binds ($1): the run of #5 there afterwards" "$want" "$(rec_root)"
+}
+bind_row token ':' '' 0 T
+bind_row other-token ':' '"" "$T" "$NO_TOKEN_YET"' 4 none
+bind_row swapped 'mv "$D" "$S/orig"; git clone -q "$T.origin.git" "$D" 2> /dev/null' '' 64 none
+bind_row origin 'git -C "$D" remote set-url origin "$S/elsewhere.git"' '' 64 none
+bind_row other-root 'mkdir -p "$S/U"' '"" "$S/U"' 64 none
+bind_row none-after 'init no > /dev/null 2>&1' '"" none' 64 T
+
 # spec-example: idd-all-rest / review added while an issue is in flight
-crun() { python3 "$CS" run --cwd "$(dir_of 5)" --repo "$REPO" --issue 5 2>/dev/null; }
+crun() { python3 "$CS" run --cwd "$(dir_of 5)" --repo "$REPO" --issue 5 --rest-token "${1:-$(run_token)}" 2>/dev/null; }
 for added in yes no; do
   new "review-added-$added" 5 9
   run start --path PR --review no > /dev/null 2>&1; run next > /dev/null 2>&1
   init no > /dev/null 2>&1; assert_exit "review added ($added): init records review off while the run has none" 0 "$?"
-  run start --path PR --review "$added" > "$S/start.out" 2>&1
+  run start --path PR --review "$added" --take-over > "$S/start.out" 2>&1
   [ "$added" = yes ] && assert_output_grep "review added (yes): start says a close stage that is already running is not stopped by it" "already running" "$S/start.out"
   OUT=$(crun); rc=$?
   [ "$added" = yes ] && assert_exit "review added (yes): the close stage stops (exit 3)" 3 "$rc"
@@ -979,7 +1157,7 @@ for gone in no resumed replaced; do
   new "run-gone-$gone" 5 9
   run start --path PR --review no > /dev/null 2>&1; run next > /dev/null 2>&1; init no > /dev/null 2>&1
   case "$gone" in
-    resumed) run start --path PR --review yes > /dev/null 2>&1; run report > /dev/null 2>&1 ;;
+    resumed) run start --path PR --review yes --take-over > /dev/null 2>&1; run report > /dev/null 2>&1 ;;
     replaced) run report > /dev/null 2>&1; issues 9; run start --path PR --review no > /dev/null 2>&1; run next > /dev/null 2>&1 ;;
   esac
   OUT=$(crun); rc=$?
@@ -989,6 +1167,63 @@ for gone in no resumed replaced; do
     assert_exit "run gone ($gone): the close stage stops (exit 3)" 3 "$rc"
     assert_grep "run gone ($gone): and its reason says the rest run of the issue cannot be found" "cannot be found" "$(printf '%s' "$OUT" | jget reason)"
   fi
+done
+# spec-example: idd-all-rest / the close stage of a session that was taken over (the rows that stop before the merge
+# are here; the two that need a pull request ready to merge are in the close-stage suite)
+new taken-over-cs 5 9
+begin; init no > /dev/null 2>&1; K=$(run_token)
+OUT=$(crun); refute_grep "close stage (with the token of the run): gives no reason of the other rows" "token" "$(printf '%s' "$OUT" | jget reason)"
+OUT=$(python3 "$CS" run --cwd "$(dir_of 5)" --repo "$REPO" --issue 5 2> /dev/null); rc=$?
+assert_exit "close stage (without --rest-token): exits 3" 3 "$rc"
+assert_grep "close stage (without --rest-token): its reason says no token of the rest run was given" "no token of the rest run was given" "$(printf '%s' "$OUT" | jget reason)"
+run start --path PR --review no --take-over > /dev/null 2>&1
+OUT=$(crun "$K"); rc=$?
+assert_exit "close stage (with the token of a start that was taken over): exits 3" 3 "$rc"
+assert_grep "close stage (with the token of a start that was taken over): another session has taken the rest run over" "another session has taken the rest run over" "$(printf '%s' "$OUT" | jget reason)"
+# spec-example: idd-all-rest / every command of a run takes its token
+new token-table 5 9
+begin; D=$(dir_of 5); cp "$(state_file)" "$S/before.json"
+CMDS=$(python3 - "$RQ" <<'TABLE_PY'
+import runpy, sys
+g = runpy.run_path(sys.argv[1], run_name="probe")
+print(" ".join(sorted(g["COMMANDS"])) + "|" + " ".join(g["NO_TOKEN"]))
+TABLE_PY
+)
+EXEMPT=${CMDS#*|}
+assert_eq "token table: the commands of rest-queue.py that take no token are args, list and start" "args list start" "$EXEMPT"
+for sub in ${CMDS%%|*}; do
+  case " $EXEMPT " in *" $sub "*) continue ;; esac
+  case "$sub" in
+    next|where|report|here) args=() ;;
+    record) args=(--issue 5 --reason x) ;;
+    stop) args=(--reason x) ;;
+    *) assert_true "token table: the command $sub has a row in this table" false; continue ;;
+  esac
+  if [ "$sub" = here ]; then
+    here_in "$D" 5 "$NO_TOKEN_YET" > /dev/null 2>&1; rc=$?
+    (cd "$D" && python3 "$RQ" here --cwd "$D" --repo "$REPO" --issue 5) > /dev/null 2>&1; rc2=$?
+  else
+    rq "$sub" --cwd "$T" --repo "$REPO" ${args[@]+"${args[@]}"} --token "$NO_TOKEN_YET" > /dev/null 2>&1; rc=$?
+    rq "$sub" --cwd "$T" --repo "$REPO" ${args[@]+"${args[@]}"} > /dev/null 2>&1; rc2=$?
+  fi
+  assert_exit "token table: $sub with a token that is not the run's exits 4" 4 "$rc"
+  assert_exit "token table: $sub without a token is a usage error" 2 "$rc2"
+  require "token table: the run state is as it was after $sub" cmp -s "$S/before.json" "$(state_file)"
+done
+init no "" "$T" "$NO_TOKEN_YET" > /dev/null 2>&1; assert_exit "token table: close-stage.py init with a rest root and a token that is not the run's exits 4" 4 "$?"
+assert_eq "token table: and writes no run state" "no" "$(runstate)"
+python3 "$CS" init --cwd "$D" --repo "$REPO" --issue 5 --path PR --requested-path PR --interaction unattended --branch b --default main --review no --in-chain no --rest-root "$T" > /dev/null 2>&1
+assert_exit "token table: close-stage.py init with a rest root and no --rest-token is a usage error" 64 "$?"
+require "token table: the run state is as it was after close-stage.py init" cmp -s "$S/before.json" "$(state_file)"
+CSCMDS=$(python3 - "$CS" <<'TABLE_PY'
+import runpy, sys
+g = runpy.run_path(sys.argv[1], run_name="probe")
+print(" ".join(sorted(g["HANDLERS"])) + "|" + " ".join(g["REST_TOKEN"]))
+TABLE_PY
+)
+assert_eq "token table: the commands of close-stage.py that take the token of a rest run are init and run" "init run" "${CSCMDS#*|}"
+for sub in ${CSCMDS%%|*}; do   # every other one is known not to read a rest run's state as its own (rest-review reads it and takes no token)
+  case "$sub" in init|run|rest-review|reset|gate|pr-check|confirm-close) ;; *) assert_true "token table: close-stage.py $sub is in neither list" false ;; esac
 done
 new review-elsewhere 5 9
 run start --path PR --review no > /dev/null 2>&1; run next > /dev/null 2>&1; init no > /dev/null 2>&1
@@ -1082,9 +1317,11 @@ BUSY=$(printf '%s\n' "$STOPS" | grep -E '以 4 結束')
 assert_eq "skill: one row is about a command that exits 4" "1" "$(printf '%s\n' "$BUSY" | grep -c '^| ')"
 assert_grep "skill: that row ends the invocation without stop or report" '不呼叫 `stop` 也不呼叫 `report`' "$BUSY"
 assert_grep "skill: that row names the lock" "鎖" "$(printf '%s\n' "$BUSY" | cut -d'|' -f2)"
-assert_grep "skill: and the token that is not the issue's" "token 不是這一張的" "$(printf '%s\n' "$BUSY" | cut -d'|' -f2)"
+assert_grep "skill: and the token that is not the run's" "token 不是這個 run 的" "$(printf '%s\n' "$BUSY" | cut -d'|' -f2)"
+assert_grep "skill: and a start without --take-over that finds an unfinished run" '`start` 沒帶 `--take-over`' "$(printf '%s\n' "$BUSY" | cut -d'|' -f2)"
+assert_grep "skill: and an init of the close stage that exits 4" '`close-stage.py init`' "$(printf '%s\n' "$BUSY" | cut -d'|' -f2)"
 assert_grep "skill: that row says not to call next again" '不再呼叫 `next`' "$BUSY"
-assert_grep "skill: nor to take the issue back" '不用 `next --take-over` 把它搶回來' "$BUSY"
+assert_grep "skill: nor to take the run back" '不用 `start --take-over` 把它搶回來' "$BUSY"
 assert_grep "skill: the here step says exit code 4 ends the invocation" "這一次的呼叫就此結束" "$(printf '%s\n' "$REST" | grep -F '它以 4 結束')"
 assert_eq "skill: no sentence about a refused token sends the session back to step 3" "0" "$(printf '%s\n' "$REST" | tr '。；' '\n\n' | grep -F 'token 不是' | grep -c '回第 3 步')"
 assert_grep "skill: a refused token is not a lost token" '不可以用 `--take-over` 搶回來' "$REST"
@@ -1154,7 +1391,7 @@ awk '/^#-- next block --$/{n++; next} n==1' "$S/blocks.txt" | sed 's/<原因>/th
 OUT=$(cd "$S" && CLAUDE_PLUGIN_ROOT="$PLUGIN" REST_ROOT="$T" CWD="$(dir_of 5)" GITHUB_REPO="$REPO" N=5 TOKEN="$(token_of 5)" bash "$S/record.sh" 2>/dev/null)
 assert_eq "skill: the record block, run as it is written, records exactly that line" 'Stopped: the price is $5 and `date` is not run' "$(printf '%s' "$OUT" | jget reason)"
 
-OUT=$(cd "$S" && CLAUDE_PLUGIN_ROOT="$PLUGIN" REST_ROOT="$T" CWD="$(dir_of 5)" GITHUB_REPO="$REPO" bash "$S/stop.sh" 2>/dev/null)
+OUT=$(cd "$S" && CLAUDE_PLUGIN_ROOT="$PLUGIN" REST_ROOT="$T" CWD="$(dir_of 5)" GITHUB_REPO="$REPO" TOKEN="$(run_token)" bash "$S/stop.sh" 2>/dev/null)
 assert_eq "skill: and so does the stop block" "the helper stopped" "$(printf '%s' "$OUT" | jget stopped)"
 # spec-example: idd-all-rest / the skill takes both review values from next
 assert_grep_re "skill: REVIEW_FLAG of an issue follows the review next printed" '`REVIEW_FLAG`[^。]*`next`' "$RUN_STEP"
@@ -1164,6 +1401,9 @@ assert_grep "skill: Step 0.7 says a rest run does not go back to the original ar
 RESUME_ROWS=$(printf '%s\n' "$STOPS" | grep -F '會接續')
 assert_eq "skill: two rows of the stop table say a later command resumes the run" "2" "$(printf '%s\n' "$RESUME_ROWS" | grep -c '^| ')"
 assert_eq "skill: and both say the flags are to be the same" "2" "$(printf '%s\n' "$RESUME_ROWS" | grep -c '旗標相同')"
+assert_eq "skill: and both name --take-over" "2" "$(printf '%s\n' "$RESUME_ROWS" | grep -c -- '--take-over')"
+assert_eq "skill: every line that says a later command within 24 hours resumes the run names --take-over" "0" \
+  "$(grep -F '24 小時內' "$SKILL" | grep -F '接續' | grep -vc -- '--take-over')"
 assert_eq "skill: every line that says a later command within 24 hours resumes the run says the flags are to be the same" "0" \
   "$(grep -F '24 小時內再下' "$SKILL" | grep -vc '旗標相同')"
 assert_eq "skill: every line of the rest section about resuming within 24 hours says the flags are to be the same" "0" \
@@ -1203,14 +1443,15 @@ assert_grep "skill: the mode is resolved once" '只問一次' "$REST"
 PHASE6=$(awk '/^### Phase 6/{f=1} f&&/^#### /{exit} f' "$SKILL")
 assert_grep "skill: Phase 6 sends a rest run back to the rest section" '## Rest mode' "$PHASE6"
 line_of() { printf '%s\n' "$REST" | grep -n -F -- "$1" | head -1 | cut -d: -f1; }
-for sub in start next here record stop report; do
+for sub in start next where here record stop report; do
   assert_true "skill: the rest section calls $sub" "[ -n \"\$(line_of 'rest-queue.py\" $sub')\" ]"
 done
 L_START=$(line_of 'rest-queue.py" start'); L_NEXT=$(line_of 'rest-queue.py" next')
 L_RECORD=$(line_of 'rest-queue.py" record'); L_REPORT=$(line_of 'rest-queue.py" report')
-L_STOP=$(line_of 'rest-queue.py" stop'); L_HERE=$(line_of 'rest-queue.py" here')
+L_STOP=$(line_of 'rest-queue.py" stop'); L_HERE=$(line_of 'rest-queue.py" here'); L_WHERE=$(line_of 'rest-queue.py" where')
 assert_true "skill: start comes before next" "[ ${L_START:-0} -gt 0 ] && [ ${L_START:-0} -lt ${L_NEXT:-0} ]"
-assert_true "skill: next comes before here" "[ ${L_NEXT:-0} -gt 0 ] && [ ${L_NEXT:-0} -lt ${L_HERE:-0} ]"
+assert_true "skill: next comes before where" "[ ${L_NEXT:-0} -gt 0 ] && [ ${L_NEXT:-0} -lt ${L_WHERE:-0} ]"
+assert_true "skill: where comes before here" "[ ${L_WHERE:-0} -gt 0 ] && [ ${L_WHERE:-0} -lt ${L_HERE:-0} ]"
 assert_true "skill: here comes before record" "[ ${L_HERE:-0} -gt 0 ] && [ ${L_HERE:-0} -lt ${L_RECORD:-0} ]"
 assert_true "skill: report comes last" "[ ${L_REPORT:-0} -gt ${L_RECORD:-0} ] && [ ${L_REPORT:-0} -gt ${L_STOP:-0} ]"
 assert_eq "skill: no line of the skill calls settle" "0" "$(grep -c 'rest-queue.py" settle' "$SKILL")"
@@ -1227,19 +1468,41 @@ FENCES_PY
 )
 CDBLOCK=$(printf '%s\n' "$FENCES4" | awk '/^#-- block 0 --$/{f=1; next} /^#-- block /{f=0} f')
 HEREBLOCK=$(printf '%s\n' "$FENCES4" | awk '/^#-- block 1 --$/{f=1; next} /^#-- block /{f=0} f')
-assert_grep "skill: the first block of step 4 sets CWD to the directory next printed" 'CWD="<next 印出的 dir>"' "$CDBLOCK"
+assert_grep "skill: the first block of step 4 sets CWD from the output of where" 'CWD="$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" where' "$CDBLOCK"
+assert_eq "skill: no line of the rest section sets CWD to a value written between angle brackets" "0" "$(printf '%s\n' "$REST" | grep -cE 'CWD="?<')"
 assert_grep "skill: and changes to it, ending the command when that fails" 'cd "$CWD" ||' "$CDBLOCK"
 refute_grep "skill: and does not run here in the same block" 'rest-queue.py" here' "$CDBLOCK"
 assert_grep "skill: the next block runs here with the token" '--token "$TOKEN"' "$HEREBLOCK"
 assert_grep "skill: and the directory of the issue" '--cwd "$CWD"' "$HEREBLOCK"
 refute_grep "skill: and does not change the directory" 'cd ' "$HEREBLOCK"
-assert_grep_re "skill: step 4 says to run here again before Phase 2, Phase 3 and Phase 4" 'Phase 2[^。]*Phase 3[^。]*Phase 4[^。]*here' "$RUN4"
+assert_grep_re "skill: step 4 says to run here again before Phase 2, Phase 3, Phase 4 and Phase 5" 'Phase 2[^。]*Phase 3[^。]*Phase 4[^。]*Phase 5[^。]*here' "$RUN4"
 assert_grep "skill: and that a here that fails on the current directory stops the whole run" "整個 run 停下" "$(printf '%s\n' "$RUN4" | grep -F '目前的目錄')"
-assert_grep "skill: the token goes into the task description" "task 描述" "$RUN4"
-for sub in start next record stop report; do
+for sub in start next where record stop report; do
   assert_grep "skill: the $sub invocation is given the directory the run was started in" '--cwd "$REST_ROOT"' "$(printf '%s\n' "$REST" | grep -F "rest-queue.py\" $sub")"
 done
-assert_grep "skill: the record invocation carries the token" '--token "$TOKEN"' "$(printf '%s\n' "$REST" | grep -F 'rest-queue.py" record')"
+for sub in next where here record stop report; do
+  assert_grep "skill: the $sub invocation carries the token of the run" '--token "$TOKEN"' "$(printf '%s\n' "$REST" | grep -F "rest-queue.py\" $sub")"
+done
+# spec-example: idd-all-rest / the skill keeps the token of the run
+STEP2=$(printf '%s\n' "$FLOW" | awk '/^2\. /{f=1} f&&/^3\. /{exit} f')
+assert_grep "skill: the step that calls start sets REST_ROOT to the top of the repository" 'REST_ROOT="$(git -C "$CWD" rev-parse --show-toplevel)"' "$STEP2"
+assert_grep "skill: and says to keep the token: line in the task list of the run" '`token: ` 那一行' "$STEP2"
+assert_grep "skill: in the task description" "task 描述" "$STEP2"
+assert_grep "skill: a start that exits 4 ends the invocation" "這一次的呼叫就此結束" "$(printf '%s\n' "$STEP2" | grep -F '以 4 結束')"
+assert_grep "skill: start --take-over is for a user who asks for the run to be taken over" "使用者在這次對話裡說要接手" "$STEP2"
+assert_grep "skill: and for a token this invocation lost" '`--take-over` 再跑一次' "$(printf '%s\n' "$RUN4" | grep -F 'token 弄丟了')"
+assert_eq "skill: no line of the skill holds next --take-over" "0" "$(grep -c 'next --take-over' "$SKILL")"
+assert_grep "skill: Step 0.7 gives init the token of a rest run" '--rest-token "$REST_TOKEN_OR_NONE"' "$(awk '/^#### Step 0.7:/{f=1} f&&/^#### Step 0.8|^### Phase 1/{exit} f' "$SKILL")"
+assert_grep "skill: Phase 5c gives run the token of a rest run" 'REST_TOKEN_ARG=(--rest-token' "$(grep -F 'REST_TOKEN_ARG=' "$SKILL")"
+assert_grep "skill: and passes it to run" '"${REST_TOKEN_ARG[@]}"' "$(grep -F 'close-stage.py" run --cwd' "$SKILL")"
+
+# spec-example: idd-all-rest / the skill takes the directory from where
+new 'where-$(touch made-by-the-path)' 5 9
+begin
+printf '%s\n' "$CDBLOCK" > "$S/cd.sh"; printf 'pwd -P\n' >> "$S/cd.sh"
+OUT=$(cd "$S" && CLAUDE_PLUGIN_ROOT="$PLUGIN" REST_ROOT="$T" GITHUB_REPO="$REPO" N=5 TOKEN="$(run_token)" bash "$S/cd.sh" 2> "$S/cd.err" | tail -1)
+assert_eq "skill: the cd block, run as it is written in a run whose path holds a command, ends in the directory of #5" "$(dir_of 5)" "$OUT"
+assert_true "skill: and nothing in the path was run" '[ -z "$(find "$WORK" -name made-by-the-path 2> /dev/null)" ]'
 assert_grep "skill: step 4 says the sub-skills are still given --cwd" '子 skill 照樣帶 `--cwd "$CWD"`' "$RUN4"
 # spec-example: idd-all-rest / no text describes the removed step between two issues
 for f in "$SKILL" "$PLUGIN/CLAUDE.md" "$PLUGIN/references/parallel-orchestration.md" "$PLUGIN/references/working-tree-writers.md" "$PLUGIN/../../docs/commands.md"; do
@@ -1314,7 +1577,8 @@ phase5() { # [directory] → the two lines of Phase 5 that take the review of th
 assert_eq "skill: the two lines of Phase 5 are the call and the line that uses its answer" "2" "$(grep -F -A1 'REST_REVIEW=$(python3' "$SKILL" | grep -c 'REST_REVIEW')"
 new p5-none 5 9
 assert_eq "phase 5: no rest run leaves the review of the issue as it is" "no" "$(phase5 "$T")"
-flight5 p5-on yes
+flight5 p5-on yes bare; init yes > /dev/null 2>&1
+assert_eq "phase 5 (on): the close stage reads on" "on" "$(rest_review)"
 assert_eq "phase 5: a rest run with review that has the issue in flight makes it a review" "yes" "$(phase5)"
 flight5 p5-off no
 assert_eq "phase 5: a rest run without review leaves it as it is" "no" "$(phase5)"

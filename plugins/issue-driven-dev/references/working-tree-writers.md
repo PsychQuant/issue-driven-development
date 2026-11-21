@@ -46,6 +46,8 @@ Paths are relative to the directory the skill runs in (`--cwd`, which in rest mo
 | `.spectra/` | The Spectra CLI | in the directory | When the repository does not ignore it |
 | `<git dir>/spectra-app/changes/` (parked changes) | The Spectra CLI | in the directory | Not in the working tree, and never pushed |
 | `<git dir>/info/exclude` | `scripts/lib/runtime-ignore.sh`, `scripts/idd-edit-helper.py`, `scripts/git-ignore-block.sh`; `scripts/rest-queue.py` (`next`, in each directory it makes; `start`, the rule for `.claude/worktrees/` at the top of the working tree the run was started in) | not in the working tree | |
+| `<git dir>/idd-rest-mark` | `scripts/rest-queue.py next`, in each directory it makes: the mark that binds the directory to its issue, read by `here` and by the close stage | not in the working tree | With the exclude lines, the only file the helper writes into a clone (a closed list, requirement "Each issue of a rest run runs in a directory of its own") |
+| `.claude/worktrees/.rest-<N>-…` at the top of the working tree the run was started in | `scripts/rest-queue.py next`: the temporary folder the clone is made in before it is moved to its place | not in the working tree | Recorded with the issue before the clone starts; when a `next` is ended before the move, or the place was taken meanwhile, the folder is left and the report names it |
 | `.gitignore` at the top | `idd-issue` (the carve-out for run logs, after the user chose it) | in the directory | |
 | Files that the issue's own commands write and git ignores (a build, a test run) | The issue's own commands | in the directory | |
 | The branch `idd/<N>-<slug>` | `idd-all` Step 0.5, before diagnose, from `origin/<default>` | in the directory | Pushed when the issue reaches its pull request |
@@ -57,4 +59,4 @@ Paths are relative to the directory the skill runs in (`--cwd`, which in rest mo
 - Programs outside the plugin: the Spectra CLI, `idd-route`, and the hooks of the target repository. What they leave stays in the directory.
 - A writer that builds its path from pieces, so that no skill or script holds the path as text.
 - Locations outside `.claude/`. The table "Other things an issue leaves" is kept by hand.
-- A writer that goes by the shell's directory, when the shell is not in the directory of the issue: it writes into the working tree the run was started in. The report says when that working tree changed while an issue ran.
+- A writer that goes by the shell's directory, when the shell is not in the directory of the issue: it writes into the working tree the run was started in (a shell reset between two tool calls of one phase; a known limitation the maintainer accepted). The report says when that working tree changed while an issue ran, as far as what git lists changed.

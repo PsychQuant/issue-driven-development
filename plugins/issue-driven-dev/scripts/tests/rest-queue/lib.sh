@@ -69,22 +69,29 @@ remote_ahead() { # origin/main gets one commit the working tree does not have
 }
 issues() { python3 "$RQT/scenario.py" "$G" "$@"; }   # replace the open issues of the current scenario
 rq() { python3 "$RQ" "$@"; }
-token_of() { # issue → the token stored for it in the run state ("none" when there is none: the value is never empty)
-  python3 -c '
-import json, sys
-try:
-    a = [x for x in json.load(open(sys.argv[1]))["attempts"] if x["issue"] == int(sys.argv[2])]
-except Exception:
-    a = []
-print((a[-1].get("token") if a else "") or "none")' "$(state_file)" "$1"
+NO_TOKEN_YET=000000000000000000000000   # a well-formed token that is no run's: what a command gets before any start
+TEST_TOKEN=00112233445566778899aabb      # the token of a state that write_state writes by hand
+run_token() { # → the token the last start of this scenario printed (or write_state stored)
+  cat "$S/token" 2> /dev/null || printf '%s' "$NO_TOKEN_YET"
 }
-run() { # subcommand args… → rest-queue.py at T; record is given the token of its issue unless the call names one
-  local sub="$1" n="" prev="" arg; shift
-  if [ "$sub" = record ]; then
-    for arg in "$@"; do [ "$prev" = --issue ] && n="$arg"; prev="$arg"; done
-    case " $* " in *" --token "*) ;; *) set -- "$@" --token "$(token_of "$n")" ;; esac
-  fi
+token_of() { run_token; }   # one token per run: every issue of a run has the run's
+run() { # subcommand args… → rest-queue.py at T; start keeps the token it prints, and every command that takes one is
+        # given it unless the call names one
+  local sub="$1" out rc tok; shift
+  case "$sub" in
+    start)
+      out=$(rq start --cwd "$T" --repo "$REPO" "$@"); rc=$?
+      tok=$(printf '%s\n' "$out" | sed -n 's/^token: \([0-9a-f]\{24\}\)$/\1/p' | head -1)
+      [ -n "$tok" ] && printf '%s' "$tok" > "$S/token"
+      [ -n "$out" ] && printf '%s\n' "$out"
+      return "$rc" ;;
+    next|where|record|stop|report)
+      case " $* " in *" --token "*) ;; *) set -- "$@" --token "$(run_token)" ;; esac ;;
+  esac
   rq "$sub" --cwd "$T" --repo "$REPO" "$@"
+}
+here_in() { # directory issue [token] → here, run in that directory
+  (cd "$1" && python3 "$RQ" here --cwd "$1" --repo "$REPO" --issue "$2" --token "${3:-$(run_token)}")
 }
 jget() { # dotted.key → the value as compact JSON (strings unquoted); <missing> when absent
   python3 -c '
@@ -105,16 +112,17 @@ print(v if isinstance(v, str) else json.dumps(v, separators=(",", ":")))' "$1"
 write_state() { # hours-since-last-activity attempts-json
   mkdir -p "$T/.claude/.idd/state"
   python3 - "$(state_file)" "$1" "$2" <<'PY'
-import json, sys, time
+import hashlib, json, sys, time
 path, hours, attempts = sys.argv[1], float(sys.argv[2]), json.loads(sys.argv[3])
 stamp = lambda t: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
 at = time.time() - hours * 3600
 for a in attempts:
     a.setdefault("handed_at", stamp(at)); a.setdefault("recorded_at", stamp(at)); a.setdefault("reason", "")
     a.setdefault("dir", None); a.setdefault("made", False); a.setdefault("left", "none" if a["outcome"] else None)
-json.dump({"version": 5, "repo": "o/r", "path": "PR", "default": "main", "review": False, "started_at": stamp(at - 60), "updated_at": stamp(at),
-           "attempts": attempts, "stop": None}, open(path, "w"))
+json.dump({"version": 6, "repo": "o/r", "path": "PR", "default": "main", "review": False, "started_at": stamp(at - 60), "updated_at": stamp(at),
+           "token_digest": hashlib.sha256(b"00112233445566778899aabb").hexdigest(), "attempts": attempts, "stop": None}, open(path, "w"))
 PY
+  printf '%s' "$TEST_TOKEN" > "$S/token"
 }
 
 # ── the directory of an issue ──
@@ -168,10 +176,10 @@ LEAVE_NAMES="pushed manifest attachment ignored nothing unpushed changed untrack
 leave_row() { # name → record leaves the directory in the state s_<name> as it is, and the run goes on
   local name="$1" OUT rc
   new "leave-$name" 5 9; begin; D=$(dir_of 5); "s_$name"
-  python3 "$RQT/treecheck.py" list "$D" > "$S/dir-before.txt"
+  python3 "$RQT/treecheck.py" whole "$D" > "$S/dir-before.txt"
   OUT=$(run record --issue 5 --reason x 2> "$S/err"); rc=$?
   assert_exit "record leaves the directory ($name): record exits 0" 0 "$rc"
-  python3 "$RQT/treecheck.py" list "$D" > "$S/dir-after.txt"
+  python3 "$RQT/treecheck.py" whole "$D" > "$S/dir-after.txt"
   require "record leaves the directory ($name): its files, index, branches, tags and stash are as they were" cmp -s "$S/dir-before.txt" "$S/dir-after.txt"
   assert_eq "record leaves the directory ($name): record prints it" "$D" "$(printf '%s' "$OUT" | jget dir)"
   assert_true "record leaves the directory ($name): no routing log reached the working tree the run was started in" '[ ! -e "$T/$ROUTING" ]'
