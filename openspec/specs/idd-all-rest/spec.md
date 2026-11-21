@@ -376,6 +376,8 @@ To decide the class `outsider`, the helper asks GitHub who has write access to t
 | text that is not JSON | now | exits 3, names the file, and the file is unchanged |
 | a state of version 4 with review on | 1 hour ago | exits 3, names the file, and the file is unchanged |
 | text that is not JSON | 25 hours ago | exits 0 and begins a new run |
+| a symbolic link to a usable state | 1 hour ago | exits 3, names the file, and the link is unchanged |
+| a symbolic link to a usable state | 25 hours ago | exits 0, begins a new run, and the link is replaced by a file; the file the link pointed at is unchanged |
 
 - **GIVEN** a working tree with the state file of the row, and candidate #5
 - **WHEN** `start --path PR --review no` runs
@@ -432,7 +434,7 @@ An issue that this run handed out SHALL appear once: under closed, under stopped
 
 For the class `verified` the report SHALL say that such an issue continues when it is named (`/idd-all #N`). When at least one issue was recorded with a reason that begins with `existing work:`, the report SHALL say that such an issue is left for a person and that its reason names the pull request, the branch or the directory to look at. Under the entry of an issue recorded as closed, it SHALL print the reason when the issue was recorded with one.
 
-Under the entry of an issue whose directory was kept, whether the issue is recorded as closed or as stopped, the report SHALL name the directory and every reason `record` stored for keeping it. When the report names at least one kept directory, it SHALL say once that nothing in a kept directory was removed, that a later rest run does not take up an issue that has a kept directory, a pull request, a branch or the phase `verified`, and what a person does with such a directory: go on with the work in it, or delete it. Under the entry of an issue that is in flight when `report` runs, the report SHALL name its directory and say that the issue was handed out and has no recorded outcome. When `record` carried lines of the routing log over, the report SHALL say so under that entry and name the file. When `record` found the working tree at `--cwd` changed while the issue ran, the report SHALL say which of the checked-out commit, the branch, the files and the stash changed, and that rest mode does not write there (requirement "A rest run leaves the working tree it was started in as it was").
+Under the entry of an issue whose directory was kept, whether the issue is recorded as closed or as stopped, the report SHALL name the directory and every reason `record` stored for keeping it. When the report names at least one kept directory, it SHALL say once that nothing in a kept directory was removed, except in a directory whose removal failed part of the way, which its reason names, that a later rest run does not take up an issue that has a kept directory, a pull request, a branch or the phase `verified`, and what a person does with such a directory: go on with the work in it, or delete it. Under the entry of an issue that is in flight when `report` runs, the report SHALL name its directory and say that the issue was handed out and has no recorded outcome. When `record` carried lines of the routing log over, the report SHALL say so under that entry and name the file. When `record` found the working tree at `--cwd` changed while the issue ran, the report SHALL say which of the checked-out commit, the branch, the files and the stash changed, and that rest mode does not write there (requirement "A rest run leaves the working tree it was started in as it was").
 
 The report tells a person to take one kind of step, and this list is closed: delete a kept directory. A check of this capability SHALL take that step and see the result: a later run hands the issue out again while it is a candidate without other existing work. Looking at a directory, a branch, a commit or a pull request is not such a step. No line under an issue recorded as stopped SHALL tell the person to name the issue (`/idd-all #N`).
 
@@ -531,7 +533,7 @@ The two steps of the single-issue pipeline that resolve the path and that can do
 
 The step of the single-issue pipeline that creates the issue's branch SHALL check out in the way that does not overwrite a file git ignores (`git checkout --no-overwrite-ignore`), whether it creates the branch from `origin/<default>` or takes up a branch on the remote: `origin` can track a path that git ignores in this working tree, and a plain checkout writes over that file without a word. When a file is in the way, that step stops the issue and says so. This holds for every `/idd-all` run on the PR path, not only for rest mode.
 
-The skill SHALL say that a rest run does not work in the working tree it was started in, and that a person or another session may go on working there while the run goes.
+The skill SHALL say that a rest run does not work in the working tree it was started in, and that a person or another session may go on working there while the run goes. No text of the plugin SHALL describe a step between two issues in the working tree a run was started in: no commit, stash, exclude line, checkout or branch deletion there.
 
 A reason that `idd-all` passes to `record` or to `stop` is text from outside (a line of a report, a line this helper printed, with file names and git's words in it). `idd-all` SHALL pass it on standard input, not as a shell argument. The commands in the skill that do so SHALL work when they are run exactly as they are written there, indentation included.
 
@@ -563,7 +565,7 @@ The unattended marker of an issue is in the directory of that issue. Before `idd
 
 - **GIVEN** the text of `skills/idd-all/SKILL.md`
 - **WHEN** the rest section is read
-- **THEN** the step that runs the single-issue pipeline holds a line that changes the shell's directory to the directory `next` printed and sets `CWD` to it, before the `here` invocation; the line of the `here` invocation holds `--cwd "$CWD"`; the step that records holds a line that changes the shell's directory to `"$REST_ROOT"` before the `record` invocation; the lines of the `start`, `next`, `record`, `stop` and `report` invocations hold `--cwd "$REST_ROOT"`; and the step says that the sub-skills are given `--cwd`
+- **THEN** the step that runs the single-issue pipeline holds a line that changes the shell's directory to the directory `next` printed and sets `CWD` to it, before the `here` invocation, and the line holds `cd "$CWD" ||`; the same step says to run `cd "$CWD" &&` followed by the `here` invocation before Phase 3 and before Phase 4; the line of the `here` invocation holds `--cwd "$CWD"`; the step that records holds a line that changes the shell's directory to `"$REST_ROOT"` before the `record` invocation; the lines of the `start`, `next`, `record`, `stop` and `report` invocations hold `--cwd "$REST_ROOT"`; and the step says that the sub-skills are given `--cwd`
 
 ##### Example: the skill clears the unattended marker
 
@@ -637,6 +639,12 @@ The unattended marker of an issue is in the directory of that issue. Before `idd
 - **WHEN** the rest section is read
 - **THEN** it says that a rest run does not work in the working tree it was started in and that a person may go on working there while the run goes
 
+##### Example: no text describes the removed step between two issues
+
+- **GIVEN** the texts of `skills/idd-all/SKILL.md`, `CLAUDE.md`, `references/parallel-orchestration.md` and `references/working-tree-writers.md` of the plugin, and `docs/commands.md` of the repository
+- **WHEN** they are read
+- **THEN** none holds `rest-queue.py settle` or `` `settle` ``, none holds the words `between two issues` in a sentence about rest mode, and `docs/commands.md` does not say that a rest run needs a clean working tree or that nothing else may work in it
+
 ---
 ### Requirement: A rest run keeps its review flag
 
@@ -646,7 +654,7 @@ A rest run started with `--review` stops every issue at verified; a run that los
 
 `next` SHALL print the review flag of the run (`"review": "yes"` or `"no"`) with every issue it hands out, in flight or not. `idd-all` SHALL take the review flag of each issue from there.
 
-The state of a rest run is below the directory the run was started in; the close stage of an issue runs in the directory of that issue. `next` SHALL write a pointer file into the state folder of that directory, which names the directory the run was started in and the issue (requirement "Each issue of a rest run runs in a directory of its own"). `close-stage.py` SHALL find the state of the rest run through that pointer.
+The state of a rest run is below the directory the run was started in; the close stage of an issue runs in the directory of that issue. `next` SHALL write a pointer file into the state folder of that directory, which names the directory the run was started in and the issue (requirement "Each issue of a rest run runs in a directory of its own"). `close-stage.py` SHALL find the state of the rest run through that pointer. `init` SHALL record in the run of the issue whether it found a pointer there. `run` SHALL stop without merging when that record says it did and the pointer cannot be read now, or is gone: the issue belongs to a rest run whose review flag can no longer be read.
 
 `close-stage.py init` records the run of one issue, and `close-stage.py run` merges when that record says review is off. `init` SHALL refuse to record review as off for an issue that a rest run with review on has in flight: it SHALL exit with a usage error and write no run state, so that `run` finds none and stops at verified. Its message SHALL name both ways out: give `--review yes`, or, when the issue was named by a person while that rest run is unfinished, end the rest run first. `run` SHALL stop without merging for an issue that such a run with review on has in flight, whatever the record of that issue says: the flag can be added to the run after `init` recorded the issue. `run` reads that state once, when it starts.
 
@@ -659,7 +667,7 @@ The state of a rest run is below the directory the run was started in; the close
 
 `init` SHALL exit with a usage error and write no run state when the reading is `elsewhere`, whatever the review value, and its message SHALL name the directory the issue runs in. `unreadable` does not change what `init` does. `run` SHALL stop without merging for `elsewhere` and for `unreadable`, and its reason SHALL say which. Phase 5 of `idd-all` SHALL take the review of a rest run from that command and from nowhere else, and SHALL treat every word other than `off` as review: the close stage stops at verified for it, so the body of the pull request does not promise a merge.
 
-The 24 hours count from the last time the rest run wrote its state, which it does at every hand-out and record; a run that has written nothing for that long is over as far as this check goes, as it is for `start`. Whether a file at the place of a state or of a pointer can be read is decided in one place, for `rest-queue.py` and `close-stage.py` alike (`scripts/lib/reststate.py`): neither reads a state file, a pointer file or a state folder that is a symbolic link, and a file that `start` stops on is a file whose review flag the close stage does not take either, however its `review` entry reads.
+The 24 hours count from the last time the rest run wrote its state, which it does at every hand-out and record; a run that has written nothing for that long is over as far as this check goes, as it is for `start`. Whether a file at the place of a state or of a pointer can be read is decided in one place, for `rest-queue.py` and `close-stage.py` alike (`scripts/lib/reststate.py`): both open a state file or a pointer file through one function that does not follow a symbolic link and takes the age from the file itself; neither reads a state file, a pointer file or a state folder that is a symbolic link; and a file that `start` stops on is a file whose review flag the close stage does not take either, however its `review` entry reads. A state file that is a symbolic link counts as a file that cannot be used: one changed in the last 24 hours makes `start` stop and the close stage stay at verified, and an older one is replaced by a new run.
 
 #### Scenario: the flag is printed for an issue in flight
 
@@ -732,12 +740,23 @@ The 24 hours count from the last time the rest run wrote its state, which it doe
 - **WHEN** `rest-review` runs in the directory of #5; and, for those three rows, `rest-queue.py start` at `T` and `close-stage.py run --issue 5` in the directory
 - **THEN** `rest-review` prints the word of the row; for those three rows `start` exits 3 and `run` stays at verified and says that the review flag is unknown; `rest-review` at `T` prints `elsewhere` in the second and the third row; the line of `skills/idd-all/SKILL.md` that sets `REST_REVIEW` calls `close-stage.py rest-review`, and no line of the skill reads the state file of the rest run with `jq`; and that line together with the one after it, run as they are written with the review of the issue set to no, leave it at no for `off` and for no file, and make it yes for `on`, for `elsewhere` and for `unreadable`
 
+##### Example: a lost pointer stops the close stage of a rest issue
+
+| after `init` for #5 succeeded in its directory | `close-stage.py run` for #5 |
+| --- | --- |
+| nothing happens | does not give the reason of the second row |
+| the pointer file of the directory is deleted, and the run is resumed with `--review yes` | exits 3, and its reason says that the rest run of the issue cannot be found |
+
+- **GIVEN** a rest run started with `--review no` in which #5 is in flight, and a `close-stage.py init` for #5 with `--review no` that succeeded in the directory of #5
+- **WHEN** what the row says happens, and then `close-stage.py run` for #5 runs there
+- **THEN** the close stage does what the row says
+
 ---
 ### Requirement: Each issue of a rest run runs in a directory of its own
 
 Rest mode SHALL NOT run an issue in the working tree it was started in. For every issue it hands out, `rest-queue.py next` SHALL make a clone of the repository in the directory `.claude/worktrees/rest-<N>` below the top of the repository that holds `--cwd`, and SHALL print that directory as `dir` together with the issue, and `--cwd` itself as `root`. The clone is a repository of its own, not a git linked worktree: the Spectra CLI, run in a linked worktree, writes into the main working tree. It SHALL be made from the `origin` of the repository at `--cwd`, may borrow objects from that repository while it is made, and SHALL NOT depend on it afterwards. It SHALL be on the default branch the run stored, at the commit `origin` has for it.
 
-In the clone `next` SHALL set `user.name` and `user.email` to the values git reports for them in the repository at `--cwd`, when it reports one. This list is closed: no other configuration and no hook of that repository is carried over. It SHALL add to the clone's own exclude file the lines `.claude/.idd/state/`, `.claude/worktrees/` and `.claude/.idd/tree-lock*`, and SHALL write, in the clone's state folder, a pointer file that names `--cwd` and the issue (requirement "A rest run keeps its review flag").
+In the clone `next` SHALL set `user.name` and `user.email` to the values git reports for them in the repository at `--cwd`, when it reports one. This list is closed: no other configuration and no hook of that repository is carried over. It SHALL add to the clone's own exclude file the lines `.claude/.idd/state/`, `.claude/worktrees/` and `.claude/.idd/tree-lock*`, and SHALL write, in the clone's state folder, a pointer file that names `--cwd` and the issue (requirement "A rest run keeps its review flag"). It SHALL write the pointer file and the lines of the exclude file only when no symbolic link is on the way to them from the directory, the file itself included: a clone can hold a symbolic link that `origin` tracks, and a write through it lands elsewhere. Otherwise `next` SHALL exit with code 3 and write nothing there.
 
 `next` SHALL record the directory in the run state, marked as not yet made, before it makes it, and SHALL mark it as made and print it only after it has checked that the directory is the top of a repository of its own. A directory below the working tree that holds no usable repository is answered for by the repository around it: git, asked in such a directory, finds the working tree the run was started in. `rest-queue.py` SHALL therefore name the git directory and the working tree in every git command it runs for a clone, so that git never looks further up, and SHALL compare paths without dropping white space from their ends.
 
@@ -745,7 +764,7 @@ When `next` finds the issue in flight with a directory recorded as not yet made 
 
 When the directory cannot be made (the clone fails, or the place is taken by something that is not such a directory), `next` SHALL exit with code 3, and the issue stays in flight with its directory recorded as not yet made.
 
-`rest-queue.py here --cwd D --repo O/R --issue N` SHALL exit with code 0 when `D` is the directory that a rest run, found through the pointer file in `D`, has recorded as made for issue `N`, and `N` is in flight in that run. Otherwise it SHALL exit with code 1 and say in its reason line which directory the issue runs in, when it knows one. `idd-all` SHALL run the single-issue pipeline of an issue only after `here` exited with code 0 for the directory it is about to use.
+`rest-queue.py here --cwd D --repo O/R --issue N` SHALL exit with code 0 only when all of these hold (closed list): `D`, made absolute and not resolved, is the directory that a rest run, found through the pointer file in `D`, has recorded as made for issue `N`; no symbolic link is on the way to `D` from the top of the repository the run was started in, `D` included; `D` is the top of a repository of its own; `N` is in flight in that run; and the current directory of the process, which is the shell's directory when the skill runs it, is `D`. Otherwise it SHALL exit with code 1 and say in its reason line what does not hold, and which directory the issue runs in when it knows one. `idd-all` SHALL run the single-issue pipeline of an issue only after `here` exited with code 0 in the directory it is about to use, and SHALL run `here` again in the same command as a `cd` into that directory before the step that implements the issue and before the step that verifies it: those steps run programs that write by the shell's directory. A `cd` that fails SHALL end that command, so that `here` is not reached.
 
 #### Scenario: an issue is handed out with its directory
 
@@ -789,10 +808,24 @@ When the directory cannot be made (the clone fails, or the place is taken by som
 | `T`, issue 5 | 1 | names the directory of #5 |
 | the directory of #5, issue 9 | 1 | says that the directory is the one of #5 |
 | a directory without a pointer file and without a run, issue 5 | 1 | says that no rest run has #5 in flight there |
+| the directory of #5, issue 5, with the process in `T` | 1 | says that the current directory is not the directory of #5 |
+| the directory of #5 after it was moved to `U` outside `T` and a symbolic link to `U` was put at its place, given as `U`, with the process in `U` | 1 | says that `U` is not the directory of #5 |
+| the same, given as the place of the link, with the process there | 1 | says that a symbolic link is on the way |
 
 - **GIVEN** a run at `T` in which #5 is in flight
-- **WHEN** `here` runs as the row says
+- **WHEN** `here` runs as the row says, with the process in the directory it is asked about unless the row says otherwise
 - **THEN** the exit code and the reason line are those of the row
+
+##### Example: the pointer file is not written through a symbolic link
+
+| what `origin` tracks in the repository | `next` | outside the clone |
+| --- | --- | --- |
+| `.claude/.idd/state` as a symbolic link to `../../outside` | exits 3, its reason line names the link | no file was written into `outside` |
+| `.claude/.idd/state/idd-all-rest-run.json` as a symbolic link to a file outside the clone | exits 3, its reason line names the link | the file the link points at is unchanged |
+
+- **GIVEN** a repository at `T` whose `origin/main` tracks what the row says, and candidate #5
+- **WHEN** `start` and `next` run
+- **THEN** the outcome is that of the row
 
 ---
 ### Requirement: The directory of an issue is removed only when nothing exists only there
@@ -800,19 +833,19 @@ When the directory cannot be made (the clone fails, or the place is taken by som
 After `rest-queue.py record` has recorded the outcome of an issue, the same command SHALL decide what becomes of the directory of that issue, and SHALL print the decision: `removed`, `kept` with the reasons, or `none` when the issue had no directory. It SHALL remove the directory only when every item of the following list holds. The list is closed, and an item that cannot be checked does not hold.
 
 1. The directory is the one the run state names for the issue; neither it nor a directory above it, up to the top of the repository at `--cwd`, is a symbolic link; and it is the top of a repository of its own.
-2. Git lists no changed file and no untracked file there that it does not ignore, read with every untracked file listed, whatever git is configured to show. Entries below `.claude/.idd/attachments/`, entries below `.claude/.idd/state/` and entries whose path begins with `.claude/.idd/tree-lock` do not count, whether they are untracked files or changes of tracked files: the plugin writes them again. This list of three is closed.
+2. Git lists no changed file and no untracked file there that it does not ignore, read with every untracked file listed, whatever git is configured to show. Entries below `.claude/.idd/attachments/`, entries below `.claude/.idd/state/` and entries whose path begins with `.claude/.idd/tree-lock` do not count, whether they are untracked files or changes of tracked files: the plugin writes them again. This list of three is closed. No tracked file is marked `assume-unchanged` or `skip-worktree` (as `git ls-files -v` shows): git does not list a change of such a file, so it cannot be checked.
 3. There is no stash.
-4. The commit of every local branch, and the commit that is checked out, is held by a remote-tracking branch of `origin`. Such a branch exists only through a fetch or a push, so the commit has been on `origin`.
+4. After `record` has fetched from `origin` in the directory with the remote-tracking branches that `origin` no longer has pruned, the commit of every local branch, and the commit that is checked out, is held by a remote-tracking branch of `origin`. A remote-tracking branch shows what `origin` had at the last fetch or push; a branch deleted on `origin` since (after a squash merge, for example) would still show there without the fetch. When the fetch fails, the item does not hold.
 5. Every tag in the directory is on `origin` with the same value, as `origin` answers when it is asked. When `origin` cannot be asked, the item does not hold.
 6. The repository has no second working tree.
-7. No record is there that exists nowhere else. This list is closed: the folder in which `idd-edit-helper.py` keeps earlier versions of corrected GitHub text, when it holds a file; and a change that the Spectra CLI parked in the git directory.
-8. The routing log (`.claude/.idd/routing-stats.jsonl`), when it is an untracked file there, has been carried over as the next paragraph says.
+7. No record is there that exists nowhere else. This list is closed: the folder in which `idd-edit-helper.py` keeps earlier versions of corrected GitHub text, when it holds a file; and a change that the Spectra CLI parked in the git directory. A folder of this list, or a folder below it, that cannot be listed counts as holding such a record.
+8. The routing log (`.claude/.idd/routing-stats.jsonl`), when it is a file there that git does not track, whether or not git ignores it, has been carried over as the next paragraph says. A routing log that is a symbolic link or a folder does not hold.
 
 Files that git ignores in the directory, other than those of item 7, are removed with it. The directory was made by the run, so no file of the person from before the run is in it.
 
-When items 1 to 7 hold and the routing log is an untracked file in the directory, `record` SHALL append its content, in one write, to the file of the same path below the top of the repository at `--cwd`, and SHALL NOT rewrite that file: a line another session appends at the same time is kept. When that file already holds the content as one block, `record` SHALL NOT append it again. When that file or a folder above it, up to the top, is a symbolic link, or the write fails, the log is not carried over and the directory is kept. The log of a directory that is kept for another reason stays in it.
+When items 1 to 7 hold and the routing log is a file in the directory that git does not track, `record` SHALL append its content, in one write, to the file of the same path below the top of the repository at `--cwd`, and SHALL NOT rewrite that file: a line another session appends at the same time is kept. When that file already holds the content as one block, `record` SHALL NOT append it again. When that file or a folder above it, up to the top, is a symbolic link, or the write fails, the log is not carried over and the directory is kept. The log of a directory that is kept for another reason stays in it.
 
-`record` SHALL NOT end the run because a directory is kept: it exits with code 0 and the following `next` hands out the next issue. When a directory is kept, `record` SHALL remove the pointer file from it: from then on it is an ordinary clone, in which a person can go on. `record` SHALL store the decision and the reasons in the run state. A `record` that was ended part of the way can be run again and comes to the same end: the outcome is read again, a directory that is gone counts as removed, and a log that was carried over is not carried over twice. A `record` for the issue recorded last, while no issue has been handed out since, SHALL print the decision it stored and exit with code 0: whoever calls it cannot tell a record that was ended after its last write from one that was not.
+`record` SHALL NOT end the run because a directory is kept: it exits with code 0 and the following `next` hands out the next issue. When a directory is kept, `record` SHALL remove the pointer file from it: from then on it is an ordinary clone, in which a person can go on. `record` SHALL store the decision and the reasons in the run state. Before it removes anything, `record` SHALL store in the run state that it is removing the directory. A `record` that finds that mark SHALL finish the removal, at the place of the directory and through no symbolic link, without checking the list again: the part removed before may have been the git directory. When the removal fails part of the way, the directory is kept, and its reason SHALL say that the removal failed part of the way and that some of its files may be gone. A `record` that was ended part of the way can be run again and comes to the same end: the outcome is read from GitHub again, a directory that is gone counts as removed, and a log that was carried over is not carried over twice. A `record` for the issue recorded last, while no issue has been handed out since, SHALL print the decision it stored and exit with code 0: whoever calls it cannot tell a record that was ended after its last write from one that was not.
 
 Every reason SHALL say what was found and name it: the paths (at most ten, then the number of the others), the branch, the tag, the folder.
 
@@ -840,6 +873,12 @@ Every reason SHALL say what was found and name it: the paths (at most ten, then 
 | a pushed branch, and a file in the folder of earlier versions of corrected text | kept | that folder |
 | a pushed branch, and a change the Spectra CLI parked | kept | the parked change |
 | a commit checked out without a branch that no branch on `origin` holds | kept | the commit that is checked out |
+| a pushed branch, and a tag `idd-5-verified` that `origin` has at another commit | kept | `idd-5-verified` |
+| a branch `idd/5-x` that was pushed and then deleted on `origin` | kept | `idd/5-x` |
+| a pushed branch, and a change of `a.txt` hidden by `assume-unchanged` | kept | `a.txt` |
+| a pushed branch, and a change of `a.txt` hidden by `skip-worktree` | kept | `a.txt` |
+| a pushed branch, and an index git cannot read | kept | git could not be read there |
+| a pushed branch, and a folder below the folder of earlier versions of corrected text that cannot be listed | kept | that folder |
 
 - **GIVEN** a run at `T` in which #5 is in flight, and the directory of #5 brought into the state of the row
 - **WHEN** `record --issue 5` runs
@@ -868,6 +907,9 @@ Every reason SHALL say what was found and name it: the paths (at most ten, then 
 | --- | --- |
 | a folder with the file `x.txt` and no `.git` | keeps it; a reason says that it is not a repository of its own; `x.txt` is still there |
 | a symbolic link to a folder outside `T` that holds `x.txt` | keeps it; `x.txt` is still there |
+| a folder with an empty `.git` folder and `x.txt` | keeps it; a reason says that it is not a repository of its own; `x.txt` is still there |
+| a folder whose `.git` is a file that names the git directory of `T` | keeps it; a reason says that it is not a repository of its own |
+| a clone as `next` made it, with `T/.claude/worktrees` replaced by a symbolic link to a folder outside `T` that holds it | keeps it; a reason says that it is not a repository of its own; the clone is untouched |
 | not there | prints `removed` |
 
 - **GIVEN** a run at `T` in which #5 is in flight with its directory recorded as made, the working tree at `T` holding a stash and an untracked `mine.txt`, and the directory of #5 replaced by what the row says
@@ -877,8 +919,20 @@ Every reason SHALL say what was found and name it: the paths (at most ten, then 
 ##### Example: record ended part of the way comes to the same end
 
 - **GIVEN** each row of the example "what becomes of a directory", and the example "the routing log is carried over once"
-- **WHEN** `record --issue 5` is ended after each of its steps in turn and run again
-- **THEN** the directory, the run state's decision and reasons, the routing log at `T` and the working tree at `T` are those of the same case without the interruption
+- **WHEN** `record --issue 5` is ended after each of its steps in turn, the steps of removing the directory included, and run again
+- **THEN** the directory, and when it is there every file in it with its content, its index, its branches, its tags and its stash; the run state's decision and reasons; the routing log at `T`; and the working tree at `T` are those of the same case without the interruption
+
+##### Example: a routing log that git ignores is carried over
+
+- **GIVEN** a run at `T` in which #5 is in flight; the directory of #5 with a pushed branch, a rule `.claude/.idd/routing-stats.jsonl` in its exclude file, and that file holding the line `{"n":2}`
+- **WHEN** `record --issue 5` runs
+- **THEN** the directory is removed, and `T/.claude/.idd/routing-stats.jsonl` holds `{"n":2}`
+
+##### Example: a record ended before it decided reads the outcome again
+
+- **GIVEN** a run at `T` in which #5 is in flight and open, and a `record --issue 5` that was ended after it stored the outcome `stopped` and before it decided about the directory
+- **WHEN** #5 is closed on GitHub and `record --issue 5` runs again
+- **THEN** the outcome of #5 is `closed`
 
 ---
 ### Requirement: A rest run leaves the working tree it was started in as it was
@@ -886,6 +940,8 @@ Every reason SHALL say what was found and name it: the paths (at most ten, then 
 From before `start` to after `report`, a rest run SHALL leave the repository at `--cwd` as it was: the commit and the branch that are checked out, the index, the stash, the local branches and tags, and every file in the working tree, whether git tracks it, does not track it or ignores it. A person or another session MAY work there while the run goes. The skill SHALL say so.
 
 Rest mode writes at these places of that repository, and this list is closed: the state folder of the run (`.claude/.idd/state/` below `--cwd`); the folder of the directories (`.claude/worktrees/` at the top); the routing log at the top, to which `record` appends (requirement "The directory of an issue is removed only when nothing exists only there"); and the local exclude file of the git directory, to which `start` adds the rule for `.claude/worktrees/` when git does not ignore that folder yet. The existing-work check that `next` runs fetches from `origin`: that moves remote-tracking branches and can bring tags that `origin` has, and changes no tag and no local branch that is there.
+
+Reading a repository can write it: `git status` refreshes the index and writes it back when it can take the lock. Every git command of `rest-queue.py` and of the existing-work check it runs SHALL therefore run without optional locks (`--no-optional-locks`, or `GIT_OPTIONAL_LOCKS=0` for a program it starts), so that no read writes the index.
 
 A helper cannot see an edit that the model makes, with its own tools, to a file of the starting working tree while an issue runs. `next` SHALL therefore record, at the hand-out, the commit and the branch checked out at `--cwd`, what git lists as changed or untracked there, and the stash; `record` SHALL read them again before it writes anything there. When they differ, `record` SHALL store which of the four changed, and the report SHALL say so under the entry of that issue, together with the fact that rest mode does not write there. This does not stop the run: a person may have made the change.
 
@@ -900,7 +956,7 @@ Before it reads anything, `start` SHALL ask git whether `.claude/worktrees/` wou
 
 - **GIVEN** a repository at `T` on the branch `wip` with a staged change of `a.txt`, a changed `c.txt`, an untracked `b.txt`, an ignored `local/notes.txt`, one stash and the local branch `side`; candidates #5 and #9; and each row of the example "what becomes of a directory" for #5
 - **WHEN** `start`, `next`, the row's state of the directory, `record`, `next`, `record` for #9 and `report` run
-- **THEN** a listing of every file below `T` with its content, of the index, of `HEAD`, of the local branches and tags and of the stash is the same as before `start`, apart from `.claude/.idd/state/`, `.claude/worktrees/`, `.claude/.idd/routing-stats.jsonl` and `.git/info/exclude`, and apart from tags of `origin` that the fetch brought
+- **THEN** a listing of every file below `T` with its content, of the bytes of the index file, of `HEAD`, of the local branches and tags and of the stash is the same as before `start`, apart from `.claude/.idd/state/`, `.claude/worktrees/`, `.claude/.idd/routing-stats.jsonl` and `.git/info/exclude`, and apart from tags of `origin` that the fetch brought
 
 ##### Example: a change of the starting working tree is reported
 
@@ -919,3 +975,31 @@ Before it reads anything, `start` SHALL ask git whether `.claude/worktrees/` wou
 - **GIVEN** a repository at `T` in which no ignore rule covers `.claude/worktrees/`, and candidate #5
 - **WHEN** `start` and `next` run
 - **THEN** `start` exits 0, `git status` at `T` lists nothing below `.claude/worktrees/` after `next`, and the rule is in the local exclude file of `T` and in no tracked file
+
+##### Example: reading the starting working tree does not write its index
+
+- **GIVEN** a repository at `T` whose tracked `d.txt` was given an older modification time after the index was written, and candidate #5
+- **WHEN** `start`, `next` and `record --issue 5` run
+- **THEN** the bytes of the index file of `T` are those before `start`
+
+---
+### Requirement: The commands of one rest run do not overlap
+
+`rest-queue.py` `start`, `next`, `record`, `stop` and `report` SHALL each hold an exclusive lock on the file `idd-all-rest.lock` in the state folder of the run, from before they read the run state until after their last write. Without it, two sessions that call the helper for the same run at the same time each act on a state the other is about to replace: a `next` can take the directory of an issue that the other `next` just handed out for one it did not finish and remove it, and a `record` that read the state before a `start --review yes` can write review off again. The lock file SHALL be opened without following a symbolic link. A command that finds the lock held SHALL wait for it, at most 30 seconds, and SHALL then exit with code 3 and a reason line that says another rest command for this run is going on and that two sessions are not to run the same rest run. `here` and `list` read and do not take the lock.
+
+#### Scenario: a second command waits for the first
+
+- **WHEN** a `next` holds the lock and another `next` for the same run starts
+- **THEN** the second waits, and when the first has handed out #5 the second prints #5 with `in_flight` true and removes nothing
+
+##### Example: two sessions at the same run
+
+| while the first command holds the lock | the second command | afterwards |
+| --- | --- | --- |
+| `next`, which hands out #5 and then writes `notes.txt` into its directory | `next` | the second prints #5 with `in_flight` true; `notes.txt` is still there |
+| `record --issue 5`, held for a second after it read the run state | `start --review yes` | the run state has review on |
+| a lock held for longer than the wait | `next` | the second exits 3; its reason line says another rest command for this run is going on; the run state is unchanged |
+
+- **GIVEN** a run at `T` with candidates #5 and #9, run with a wait of a few seconds for the lock (test hook `IDD_REST_LOCK_WAIT`)
+- **WHEN** the two commands of the row run at the same time
+- **THEN** the outcome is that of the row
