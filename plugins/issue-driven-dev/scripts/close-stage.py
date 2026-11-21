@@ -311,8 +311,9 @@ def cmd_gate(argv):
             or ("--base" in a and not SHA_RE.match(a["--base"])) or a.get("--read-only", "yes") != "yes":
         return usage("gate needs --cwd --repo --issue and --sha (40 lowercase hex digits), optionally --base and "
                      "--read-only yes")
+    since = run_since(a["--cwd"], a["--issue"])   # the run this gate reads for; the record is written for it only
     try:
-        rc, result = judge_report(a["--repo"], a["--issue"], a["--sha"], a.get("--base"), run_since(a["--cwd"], a["--issue"]))
+        rc, result = judge_report(a["--repo"], a["--issue"], a["--sha"], a.get("--base"), since)
     except Stop as exc:
         rc, result = 2, {"status": "unparseable", "reason": str(exc)}
     except Exception as exc:  # fail closed: any surprise is unparseable, never "not clean"
@@ -320,7 +321,7 @@ def cmd_gate(argv):
     try:
         # --read-only (Phase 5's PR body, verify r3 #1): judge, but leave the round record as Phase 4 left it
         if "--read-only" not in a:
-            record_round(a["--cwd"], a["--repo"], a["--issue"], result, a["--sha"])
+            record_round(a["--cwd"], a["--repo"], a["--issue"], result, a["--sha"], since)
     except Exception as exc:  # fail closed: a round that was not recorded must not read as a judged round
         rc, result = 2, {"status": "unparseable", "reason": f"the round record could not be written: "
                          f"{exc.__class__.__name__}: {exc}", "comment_id": result.get("comment_id")}
@@ -362,7 +363,7 @@ def read_state(cwd, repo, n):
     return st
 
 
-def record_round(cwd, repo, n, result, sha):
+def record_round(cwd, repo, n, result, sha, since=None):
     """#595/#591: the latest gate result; one attempt per verify round — a new commit, or a new report on the same
     commit (a round whose report is missing or unreadable still counts); and one round per verify report this run
     has not read yet. An unparseable
@@ -370,6 +371,14 @@ def record_round(cwd, repo, n, result, sha):
     if not os.path.exists(state_path(cwd, n)):
         return
     st = read_state(cwd, repo, n)
+    # The report was picked with this run's start time (`since`). If another /idd-all replaced the run state while the
+    # gate was reading (or there was none then), the result belongs to no round of this run (verify r4 #1).
+    try:
+        created = parse_iso(st["created_at"])
+    except (KeyError, ValueError, TypeError):
+        created = None
+    if since is None or created != since:
+        raise Stop("the run state was replaced while the gate was reading; the result is not recorded")
     rid = result.get("comment_id")
     rounds, attempts = list(st.get("rounds") or []), list(st.get("attempts") or [])
     at = iso(now())

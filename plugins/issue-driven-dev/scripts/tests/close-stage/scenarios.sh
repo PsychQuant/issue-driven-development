@@ -1056,10 +1056,29 @@ python3 - "$C/.claude/.idd/state/idd-all-run-7.json" <<'EOF'
 import json, sys
 p = sys.argv[1]; st = json.load(open(p)); last = st["rounds"][-1]
 st["rounds"] = [dict(last, round=1, report_id=-1), dict(last, round=2, report_id=-2), dict(last, round=3)]
-st["attempts"] = [{"sha": "1" * 40, "at": last["at"]}, {"sha": "2" * 40, "at": last["at"]}, {"sha": last["sha"], "at": last["at"]}]
+st["attempts"] = [{"sha": "1" * 40, "report_id": -1, "at": last["at"]}, {"sha": "2" * 40, "report_id": -2, "at": last["at"]},
+                  {"sha": last["sha"], "report_id": last["report_id"], "at": last["at"]}]
 json.dump(st, open(p, "w"))
 EOF
-run_stage
+assert_eq "no stop mode, 3 rounds: the record holds exactly 3 attempts (verify r4 #5)" 3 "$(attempts_len)"
+NO_PREGATE=1 run_stage
+assert_eq "no stop mode, 3 rounds: the close stage added no attempt" 3 "$(attempts_len)"
 stop_case "no stop mode, 3 rounds recorded" "2 verify rounds"
+# verify r4 #1: a gate result read for one run is not written into the run that replaced it
+pr_scenario stop-gate-replaced
+RR=$(python3 - "$CS" "$C" "$REPO" "$N" "$SHA" <<'PY'
+import importlib.util, json, sys
+cs, cwd, repo, n, sha = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("cs", cs); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+since = m.run_since(cwd, n)
+p = m.state_path(cwd, n); st = json.load(open(p)); st["created_at"] = "2099-01-01T00:00:00Z"; json.dump(st, open(p, "w"))
+try:
+    m.record_round(cwd, repo, n, {"status": "clean", "comment_id": 5, "blocking": 0, "in_scope": 0}, sha, since)
+    print("written", len(json.load(open(p)).get("rounds") or []))
+except m.Stop as exc:   # only the close stage's own refusal counts
+    print("refused", len(json.load(open(p)).get("rounds") or []), exc)
+PY
+)
+assert_grep "gate: a result read for a replaced run is refused" "refused 0" "$RR"
 
 print_summary close-stage

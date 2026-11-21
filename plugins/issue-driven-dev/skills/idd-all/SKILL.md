@@ -1163,7 +1163,12 @@ echo "→ next (round $(printf '%s' "$NEXT_JSON" | jq -r '.round // "?"')): $NEX
 # In-scope fix findings are fixed and re-verified only when this run can reach the close stage.
 # --review and --in-chain runs never merge, so they keep the earlier scope: fix Blocking only.
 FIX_IN_SCOPE = not REVIEW_FLAG and not IN_CHAIN      # read the run-state file if the shell lost them
-STOP_MODE = run_state["verify_stop"]                 # None, "early", "exhaustive-blocking" or "exhaustive-all"
+# The mode is the one Step 0.2 resolved for this invocation, not a read of the run state: the run state may be missing
+# (Step 0.7's init failed). STOP_MODE_LINE is the first word after `→ Stop mode:` in Step 0.2's output (`none`, `early`,
+# `exhaustive-blocking` or `exhaustive-all`); copy it from that line when the shell lost the variable. A mode with no
+# run state stops below, a run with no mode counts its rounds as before #595 (verify r4 #3). When the run state is
+# readable, its verify_stop is this same value.
+STOP_MODE = None if STOP_MODE_LINE == "none" else STOP_MODE_LINE   # None, "early", "exhaustive-blocking" or "exhaustive-all"
 STOP_REASON = None
 ROUND = 0                                            # the last round next counted; the fallback goes on from it (verify r2 #5)
 while True:
@@ -1255,7 +1260,7 @@ while True:
 | `exhaustive-blocking` | Blocking 是 0；或最近兩輪 Blocking 都沒有比前一輪少 | Blocking 是 0 才合併 |
 | `exhaustive-all` | Blocking 與 In-scope fix（含 LOW）都是 0；沒有輪數上限 | 合併 |
 
-每種模式在 gate 讀不出報告、或報告有 Rejected finding 時都停、不合併。停下時合併的是最後一輪審過的 commit，剩下的 In-scope fix 合成一張 follow-up issue，不再為它們改 branch；剩下的列裡有安全漏洞就 abort。這種合併跟乾淨的合併過同樣的 guardrail：覆蓋率行完整、reviewers 行完整、沒有降級、沒有嚴重的 Follow-up。`--review`、`--in-chain` 與 meeting 一樣從不合併。`STOP_REASON` 不跨 Bash 呼叫存活：Phase 5 與 Phase 6 需要它時，重跑上面的 gate 區塊得到同一個結果（gate 只讀 GitHub 與 HEAD，結果可重現）。
+每種模式在 gate 讀不出報告、或報告有 Rejected finding 時都停、不合併。停下時合併的是最後一輪審過的 commit，剩下的 In-scope fix 合成一張 follow-up issue，不再為它們改 branch；剩下的列裡有安全漏洞就 abort。這種合併跟乾淨的合併過同樣的 guardrail：覆蓋率行完整、reviewers 行完整、沒有降級、沒有嚴重的 Follow-up。`--review`、`--in-chain` 與 meeting 一樣從不合併。`STOP_REASON` 不跨 Bash 呼叫存活：Phase 5 與 Phase 6 需要它時，用 `close-stage.py gate … --read-only yes` 與 `close-stage.py next … --read-only yes` 讀回 Phase 4 的結果（reason 取自 `next` 的回答），不重跑上面那兩個會寫紀錄的區塊：重跑會把 Phase 4 之後才出現的報告記成最後一輪（verify r4 #2）。
 
 **Auto-fix 策略**(unattended，以及設了停止模式的 attended run — best-effort):
 
@@ -1365,6 +1370,14 @@ elif [ "$PATH_AXIS" = "PR" ]; then
   NEXT_OUT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/close-stage.py" next --cwd "$CWD" --repo "$GITHUB_REPO" --issue "$N" --read-only yes 2>/dev/null)
   STOP_MODE_RUN=$(printf '%s' "$NEXT_OUT" | jq -r '.mode // "none"' 2>/dev/null || echo none)
   STOP_MERGE=$(printf '%s' "$NEXT_OUT" | jq -r 'if .merge == true then "yes" else "no" end' 2>/dev/null || echo no)
+  # The gate's report and next's last round must be the same report on the same commit (verify r4 #4): a report that
+  # appeared after Phase 4 is not what Phase 4 decided on, and the close stage will not merge on it.
+  GATE_KEY=$(printf '%s' "$GATE_OUT" | jq -r '"\(.comment_id // "none")"' 2>/dev/null || echo none)
+  NEXT_KEY=$(printf '%s' "$NEXT_OUT" | jq -r '(.rounds // [])[-1] | "\(.report_id // "none") \(.sha // "none")"' 2>/dev/null || echo "none none")
+  # (no recorded round, e.g. no run state: nothing to compare, and the close stage does not merge such a run anyway)
+  if [ "$NEXT_KEY" != "none none" ] && [ "$NEXT_KEY" != "$GATE_KEY $HEAD_SHA" ]; then
+    VERIFY_STATE="changed after Phase 4 (the newest report is not the round Phase 4 judged)"; STOP_MERGE=no
+  fi
   if [ "$STOP_MODE_RUN" != none ] && [ "$STOP_MERGE" = yes ] && [ "$VERIFY_STATE" != clean ] && [ "$RUN_REVIEW" = no ]; then
     VERIFY_BOX="[x]"; VERIFY_LINE="Verify gate: ${VERIFY_STATE}, and stop mode ${STOP_MODE_RUN} stops here with a merge (see the latest verify report on issue #${N}). /idd-all merges this PR next if CI and the close-stage guardrails pass; the findings left are listed in a follow-up issue."
   elif [ "$VERIFY_STATE" != clean ]; then
