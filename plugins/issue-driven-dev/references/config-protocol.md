@@ -571,6 +571,32 @@ An OPTIONAL string that shifts **where a complexity hard-gate hit escalates to**
 
 **Trade-off note（流程重量）.** `sdd_bias: high` 買到的是「每個 gate-worthy 改動都有 spec 紀錄」，付出的是**流程重量** — 每次硬閘命中都走 proposal / design / spec / tasks 全套 artifacts，而不是單一 plan-mode approval。預設不翻轉：「over-trigger 成本高於 under-plan 殘餘風險」是 #129 的既有使用者裁決，本欄位是 opt-in 的團隊姿態（spec-first posture），不是新 baseline。
 
+### `verify_stop` field
+
+An OPTIONAL object choosing **when `/idd-all`'s verify-and-fix loop stops, and whether that stop merges** (#595; the decision table is `scripts/lib/stopmode.py`, the contract is the requirement "A configured stop mode decides when the fix loop stops and whether the run merges" of `openspec/specs/idd-pr-hitl-modes`):
+
+```json
+{
+  "verify_stop": { "mode": "early" }
+}
+```
+
+| `mode` | Stops when | Merges on that stop |
+|--------|-----------|---------------------|
+| absent | unattended after 2 verify rounds, attended after 1 — the behavior before #595, unchanged | only a clean round |
+| `"early"` | the to-fix count is 0, or, from round 2 on, it is not lower than the previous round's | when Blocking is 0 |
+| `"exhaustive-blocking"` | Blocking is 0, or Blocking was not lower than the round before in each of the last two rounds | when Blocking is 0 |
+| `"exhaustive-all"` | Blocking and In-scope fix (LOW included) are both 0 — **no round limit** | yes |
+| anything else | treated as absent; `/idd-all` prints one line saying the value was ignored | — |
+
+The to-fix count is Blocking plus the In-scope fix findings above LOW/INFO/P3. A run with `--review` or `--in-chain` counts Blocking only and never merges.
+
+**Override.** `/idd-all --stop <mode>` replaces the config value for that run. A `--stop` value outside the three stops `/idd-all` before Phase 1: it is the user's explicit request, mistyped. A bad config value only falls back to the absent behavior, which is the stricter one.
+
+**What a mode changes.** With a mode, attended runs fix and re-verify on their own as unattended runs do (a security vulnerability is still handed back), and the run-state record's 24-hour age counts from the last verify round instead of the run's start.
+
+**Trade-off note（自動合併不乾淨的 commit）.** 有模式時，`early` 與 `exhaustive-blocking` 在 Blocking 為 0 時合併**最後一輪審過的 commit**，即使 verify 還有 In-scope fix 沒修；剩下的列合成一張 follow-up issue。這是把「只有乾淨才合併」（#392）換成「收斂了、沒有 Blocking 就合併」。`exhaustive-all` 沒有輪數上限，成本與時間沒有界線，靠回報裡每一輪的 to-fix count 看出是否在空轉。預設（不設）不變。
+
 ### `verify_profiles` field
 
 An OPTIONAL object registering **repo-local custom verification profiles** for `idd-verify --profile` (#258; profile semantics + built-in profiles in [`verify-profiles.md`](verify-profiles.md)):

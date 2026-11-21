@@ -104,11 +104,11 @@ TaskCreate(name="preflight", description="Phase 0: 解析 args(含 --pr/--no-pr/
 TaskCreate(name="parse_review_flag", description="Phase 0: 解析 --review flag → $REVIEW_FLAG (Phase 6 terminal report 切換 verify-gated default vs awaiting human acceptance; per #102 Foresay doctrine)")
 TaskCreate(name="resolve_mode", description="Phase 0.5: 從 pr_policy + flag + fork detection 解析 (path, interaction) tuple,印 notice line。PR mode 才檢查 git clean + on-default-branch + 建 feature branch;direct-commit mode 留在當前 branch。")
 TaskCreate(name="existing_work_check", description="Phase 0.5.1 (#366): 在建任何 branch 之前呼叫 scripts/check-existing-work.sh;blocked → attended 問三選項、unattended 停該張並記入 Phase 6 Action items;resume → 在該 PR/branch 上繼續;unknown → 印出並繼續")
-TaskCreate(name="record_run", description="Step 0.7 (#392): close-stage.py init 把 path/interaction/branch/default/--review/--in-chain 寫進 run-state（from-scratch 在 Phase 1 之後）")
+TaskCreate(name="record_run", description="Step 0.7 (#392): close-stage.py init 把 path/interaction/branch/default/--review/--in-chain/--stop（#595 停止模式）寫進 run-state（from-scratch 在 Phase 1 之後）")
 TaskCreate(name="ensure_issue", description="Phase 1: 若 from-scratch 則跑 idd-issue; from-issue 則 verify issue 存在")
 TaskCreate(name="diagnose", description="Phase 2: 跑 idd-diagnose,讀回 complexity 判定")
 TaskCreate(name="implement_or_sdd", description="Phase 3: type=meeting → attended 走 meeting 版 /idd-plan、unattended 跳過(#383,先跑 meeting unwind); Simple/Plan → idd-implement; Spectra → spectra-discuss → spectra-propose → spectra-apply。Args 含 UNATTENDED MODE 與否依 Phase 0.5 解析的 interaction 軸決定。")
-TaskCreate(name="verify_loop", description="Phase 4: type=meeting → 跳過(#383); 每輪 idd-verify 後跑 scripts/verify-gate.py 讀這一輪新貼出的報告(#392); clean → 往下(low_in_scope 大於 0 時把那些列合成一張 follow-up issue,不為它們改 branch); unparseable → STOP_REASON; not_clean: unattended 修 Blocking 與 In-scope fix 後重跑(最多 2 輪 verify), attended 交回 user; follow-ups → 開新 issue")
+TaskCreate(name="verify_loop", description="Phase 4: type=meeting → 跳過(#383); 每輪 idd-verify 後跑 close-stage.py gate 與 next(#595：要不要再修一輪、停下時合不合併由 next 依停止模式回答；沒有模式時是下面的規則); 每輪 idd-verify 後跑 scripts/verify-gate.py 讀這一輪新貼出的報告(#392); clean → 往下(low_in_scope 大於 0 時把那些列合成一張 follow-up issue,不為它們改 branch); unparseable → STOP_REASON; not_clean: unattended 修 Blocking 與 In-scope fix 後重跑(最多 2 輪 verify), attended 交回 user; follow-ups → 開新 issue")
 TaskCreate(name="ci_gate", description="Phase 4.5 (#465): type=meeting → 跳過; 對 HEAD 跑 scripts/idd-ci-gate.sh，紀錄貼到 issue；只有 exit 0 繼續、exit 10 改看遠端 CI；exit 3 attended 問指令、unattended 停下回報；exit 1/2/4 停下回報")
 TaskCreate(name="open_pr", description="Phase 5: type=meeting → 跳過、不 push(#383); PR mode → git push + 已有自家 open PR 就沿用並更新 body,否則 gh pr create(body 照 verify gate 結果寫,含 Refs #N, 不含 Closes); direct-commit mode → 不開 PR,進 Phase 5c")
 TaskCreate(name="close_stage", description="Phase 5c (#392): scripts/close-stage.py run（同一個 process，run_in_background）：讀 Step 0.7 的 run-state，擋 --review/--in-chain/meeting/無寫入權限/run 開始後別人插手/意圖沒確認(tier 與沒人處理的 Proposed Corrections 不擋)；gate 綁 HEAD SHA、只認本帳號的報告、讀 GitHub 渲染後的 HTML，有 Rejected finding 就停；CI 等完再重查預設 branch 與 PR 上的人；PR → 本機 CI 閘門 idd-ci-gate.sh(0 過、10 才等遠端 check:pending 最多 15 分鐘、有 pull_request workflow 就等 check 出現;其他結束碼停)、auto-close trap、squash message，全過才 gh pr merge --squash --match-head-commit 並確認 MERGED；direct-commit → 在預設 branch、每個要推的 commit 都引用 #N 才 push。merged/pushed 才以 ORCHESTRATED BY /idd-all 呼叫 /idd-close --repo，最後確認 CLOSED 且有 closing summary")
@@ -149,6 +149,8 @@ REVIEW_FLAG=""    # "" | "--review" — set by --review flag (v2.65+ #102)
 # #392: the same two opt-outs as explicit yes/no for Step 0.7. A lost variable must be an
 # error there, never a silent "no" that lets the close stage merge (#392 verify r2 #3).
 REVIEW_YN="no"; IN_CHAIN_YN="no"
+STOP_FLAG=""      # "" | early | exhaustive-blocking | exhaustive-all — set by --stop (#595)
+STOP_GIVEN=""     # "1" when --stop appeared at all: an empty value is a mistake, not "no flag"
 ARGS=("$@")
 for ((i=0; i<${#ARGS[@]}; i++)); do
   arg="${ARGS[i]}"
@@ -174,8 +176,16 @@ for ((i=0; i<${#ARGS[@]}; i++)); do
       # change idd-all behavior, does NOT make idd-all wait. Per MANIFESTO
       # "Human-in-the-loop: IDD 即 Foresay Confirmation Protocol" doctrine.
       REVIEW_FLAG="--review"; REVIEW_YN="yes" ;;
+    --stop=*)   STOP_GIVEN=1; STOP_FLAG="${arg#--stop=}" ;;
+    --stop)     STOP_GIVEN=1; i=$((i+1)); STOP_FLAG="${ARGS[i]:-}" ;;
   esac
 done
+# #595: a --stop value outside the three is the user's explicit request mistyped — stop before Phase 1
+case "$STOP_FLAG" in
+  early|exhaustive-blocking|exhaustive-all) ;;
+  '') [ -z "$STOP_GIVEN" ] || abort "--stop needs a value: early, exhaustive-blocking or exhaustive-all" ;;
+  *) abort "--stop must be early, exhaustive-blocking or exhaustive-all (got '$STOP_FLAG')" ;;
+esac
 
 # 2. 確定 working tree 路徑
 if [ -n "$CWD_FLAG" ]; then
@@ -217,7 +227,28 @@ find_idd_config() {
   return 1
 }
 CONFIG_PATH=$(find_idd_config "$CWD")  # may be empty if no config found
+
+# 5. Stop mode (#595): --stop wins; else verify_stop.mode of the config. A config value outside the three is
+#    no stop mode — the stricter behaviour (fewer automatic merges), so a typo never loosens anything.
+if [ -n "$STOP_FLAG" ]; then
+  STOP_MODE="$STOP_FLAG"; STOP_SRC="flag=--stop"
+else
+  STOP_MODE=""
+  if [ -n "$CONFIG_PATH" ] && jq -e 'has("verify_stop")' "$CONFIG_PATH" >/dev/null 2>&1; then
+    # present: an object with a string mode, or else a value that is not understood (printed below)
+    STOP_MODE=$(jq -r 'if (.verify_stop | type) == "object" then (.verify_stop.mode // "(no mode)") else "(not an object)" end' "$CONFIG_PATH" 2>/dev/null || echo "(unreadable)")
+  fi
+  case "$STOP_MODE" in
+    early|exhaustive-blocking|exhaustive-all) STOP_SRC="config verify_stop.mode" ;;
+    '') STOP_MODE=none; STOP_SRC="no stop mode" ;;
+    *) echo "⚠ verify_stop.mode '$STOP_MODE' in $CONFIG_PATH is not early, exhaustive-blocking or exhaustive-all — running without a stop mode"
+       STOP_MODE=none; STOP_SRC="no stop mode (the config value was ignored)" ;;
+  esac
+fi
+echo "→ Stop mode: $STOP_MODE — $STOP_SRC"
 ```
+
+> **停止模式（#595）**：`none`（沒有設定）時 verify 迴圈與合併條件與 #595 之前相同。三種模式的判定表在 Phase 4，config 欄位在 [`references/config-protocol.md`](../../references/config-protocol.md) 的 `verify_stop` 一節。
 
 > **Why parse `--pr/--no-pr` here, not in Phase 0.5**: Phase 0.5 references `$PR_FLAG` and `$CONFIG_PATH` in its precedence chain. Both variables must be initialized before that chain runs. Conflict detection between `--pr` and `--no-pr` (Task: P1 finding 4) lands here at parse time so we abort early with a clear message.
 
@@ -576,11 +607,12 @@ DEFAULT_BRANCH=$(gh repo view "$GITHUB_REPO" --json defaultBranchRef -q .default
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/close-stage.py" init --cwd "$CWD" --repo "$GITHUB_REPO" --issue "$N" \
   --path "$PATH_AXIS" --requested-path "$REQUESTED_PATH" --interaction "$INTERACTION" \
   --branch "$BRANCH" --default "$DEFAULT_BRANCH" --review "$REVIEW_YN" --in-chain "$IN_CHAIN_YN" \
+  --stop "$STOP_MODE" \
   || { echo "⚠ Step 0.7: the run state was not recorded — the run continues, and the close stage will stop at verified (it merges only with a run state)"
        python3 "${CLAUDE_PLUGIN_ROOT}/scripts/close-stage.py" reset --cwd "$CWD" --issue "$N"; }   # a failed init leaves no run state
 ```
 
-每個值都必填：shell 變數跨 tool call 遺失時，init 會因為空值而報 usage error（exit 64），不會悄悄記成「沒有 `--review`」。run 照常往下走，close stage 因為沒有 run-state 而停在 verified：上一次 run 的狀態已在 Step 0.5.1 之後清掉，`||` 之後的 reset 再清一次，不沿用上一次 run 的旗標（verify r3 #17、r5 #36）。N 本身遺失時，上面的 FATAL 先中止這一段，同樣沒有舊狀態可讀。在新的 shell 重跑這一段時，`REVIEW_YN`／`IN_CHAIN_YN`／`REQUESTED_PATH` 要從這次 `/idd-all` 的原始參數與 Phase 0.5 印出的那兩行重新得出。
+每個值都必填：shell 變數跨 tool call 遺失時，init 會因為空值而報 usage error（exit 64），不會悄悄記成「沒有 `--review`」。run 照常往下走，close stage 因為沒有 run-state 而停在 verified：上一次 run 的狀態已在 Step 0.5.1 之後清掉，`||` 之後的 reset 再清一次，不沿用上一次 run 的旗標（verify r3 #17、r5 #36）。N 本身遺失時，上面的 FATAL 先中止這一段，同樣沒有舊狀態可讀。在新的 shell 重跑這一段時，`REVIEW_YN`／`IN_CHAIN_YN`／`REQUESTED_PATH` 要從這次 `/idd-all` 的原始參數與 Phase 0.5 印出的那兩行重新得出，`STOP_MODE` 照抄 Step 0.2 印出的 `→ Stop mode:` 那一行。
 
 檔案在 `$CWD/.claude/.idd/state/`，與 unattended flag 同一個目錄；請確認目標 repo 的 ignore 規則涵蓋它（`scripts/git-ignore-block.sh`）。run-state 超過 24 小時就不算數；Phase 6 結束時刪掉。沒有這個檔，Phase 5c 一律不 merge、不 push。
 
@@ -1103,18 +1135,53 @@ BASE_SHA=$(git -C "$CWD" merge-base "origin/$DEFAULT_BRANCH" "$HEAD_SHA")
 GATE_BASE=(--base "$BASE_SHA")
 [ "$(jq -r 'if (.review or .in_chain) then "no" else "yes" end' "$CWD/.claude/.idd/state/idd-all-run-$N.json" 2>/dev/null)" = yes ] || GATE_BASE=()
 GATE_JSON=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/close-stage.py" gate --cwd "$CWD" --repo "$GITHUB_REPO" --issue "$N" --sha "$HEAD_SHA" "${GATE_BASE[@]}")
-echo "→ verify gate (round $ROUND, head $HEAD_SHA${GATE_BASE:+, range from $BASE_SHA}): $GATE_JSON"
+echo "→ verify gate (head $HEAD_SHA${GATE_BASE:+, range from $BASE_SHA}): $GATE_JSON"
+```
+
+gate 讀到這次 run 還沒讀過的報告時，會把這一輪的計數記進 run-state（#595）。接著問 `next` 下一步，**在同一個回合、gate 之後立刻跑**：
+
+```bash
+case "$N" in ''|*[!0-9]*) echo "FATAL: Phase 4: issue number is not numeric: $N" >&2; exit 1 ;; esac
+NEXT_JSON=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/close-stage.py" next --cwd "$CWD" --repo "$GITHUB_REPO" --issue "$N"); NEXT_RC=$?
+echo "→ next (round $(printf '%s' "$NEXT_JSON" | jq -r '.round // "?"')): $NEXT_JSON"
+[ "$NEXT_RC" -eq 0 ] || echo "⚠ next could not decide (exit $NEXT_RC) — the answer is stop without a merge"
 ```
 
 ```python
-MAX_ROUND = 2 if INTERACTION == "unattended" else 1   # verify rounds; at most one fix pass between them
+# The loop's next step comes from close-stage.py next (#595/#591): it reads the run state's stop mode and the
+# round record the gate wrote. The model does not count rounds and does not decide when a stop mode stops.
 # In-scope fix findings are fixed and re-verified only when this run can reach the close stage.
 # --review and --in-chain runs never merge, so they keep the earlier scope: fix Blocking only.
 FIX_IN_SCOPE = not REVIEW_FLAG and not IN_CHAIN      # read the run-state file if the shell lost them
+STOP_MODE = run_state["verify_stop"]                 # None, "early", "exhaustive-blocking" or "exhaustive-all"
 STOP_REASON = None
-for ROUND in 1..MAX_ROUND:
+while True:
     Skill(skill="issue-driven-dev:idd-verify", args=VERIFY_ARGS)
-    gate = verify_gate()                     # the bash block above → GATE_JSON
+    gate = verify_gate()                     # the gate block above → GATE_JSON (it records the round)
+    nxt = next_step()                        # the next block above → NEXT_JSON
+
+    if STOP_MODE is not None:
+        # With a stop mode (#595), attended and unattended alike: next decides, the model only fixes.
+        if nxt.decision == "fix":
+            rows = report_rows(action="Blocking") + (report_rows(action="In-scope fix") if FIX_IN_SCOPE else [])
+            if any(is_security_vulnerability(r) for r in rows):
+                abort_with_message("a finding to fix is a security vulnerability; manual intervention needed")
+            attempt_auto_fix(rows)
+            continue
+        if nxt.merge and any(is_security_vulnerability(r) for r in report_rows(action="In-scope fix")):
+            abort_with_message("a finding left by the stop-mode merge is a security vulnerability; manual intervention needed")
+        if nxt.merge and report_rows(action="In-scope fix"):
+            # Stop with a merge and findings left: do NOT change the branch (the commit that merges is the one this
+            # round reviewed). File them together, like the low_in_scope rows of a clean round.
+            file_one_follow_up_issue(report_rows(action="In-scope fix"))
+        if not nxt.merge:
+            STOP_REASON = f"stop mode {STOP_MODE}: {nxt.reason}"
+        break                                # → Phase 5; Phase 5c merges only when next answered merge
+
+    # No stop mode: the rules of #392. The round limit (2 unattended, 1 attended) is next's, not the model's.
+    # A round is a verify attempt: a new commit or a new report on the same commit, also when its report was missing
+    # or unreadable, or the fix pass made no commit.
+    # When next's answer has no round or no limit (no run state, e.g. Step 0.7's init failed), the limit is reached.
 
     if gate.status == "clean" or (gate.status == "not_clean" and gate.blocking == 0 and not FIX_IN_SCOPE):
         if gate.status == "clean" and gate.low_in_scope > 0:
@@ -1132,7 +1199,7 @@ for ROUND in 1..MAX_ROUND:
             break                            # Phase 5 opens the PR with a "not clean" body; Phase 5c does not run
         if INTERACTION == "attended":
             report_findings_and_exit_to_user(); break
-        if ROUND == MAX_ROUND:
+        if nxt.round >= nxt.limit:
             abort_with_message("verify still has Blocking findings after the last round; manual intervention needed")
         attempt_auto_fix(report_rows(action="Blocking")); continue
 
@@ -1144,11 +1211,11 @@ for ROUND in 1..MAX_ROUND:
         STOP_REASON = "verify gate: not_clean — findings handed back to the user"
         break
 
-    if ROUND == MAX_ROUND:
+    if nxt.decision == "stop":
         if gate.blocking > 0:
-            abort_with_message(f"verify still has Blocking findings after {MAX_ROUND} rounds; manual intervention needed")
+            abort_with_message(f"verify still has Blocking findings after {nxt.limit} rounds; manual intervention needed")
             # the abort report carries one line: Stopped: verify still has Blocking findings after round N (report URL)
-        STOP_REASON = f"verify gate: not_clean after {MAX_ROUND} rounds — {gate.in_scope} In-scope fix finding(s) remain"
+        STOP_REASON = f"verify gate: not_clean after {nxt.limit} rounds — {gate.in_scope} In-scope fix finding(s) remain"
         break                                # 0 Blocking: Phase 5 still opens the PR (its body says so); Phase 5c does not run
 
     # unattended: fix the rows of the verify report whose Action is Blocking
@@ -1156,9 +1223,19 @@ for ROUND in 1..MAX_ROUND:
     attempt_auto_fix(report_rows(action="Blocking") + (report_rows(action="In-scope fix") if FIX_IN_SCOPE else []))
 ```
 
-**`MAX_ROUND`**：unattended 2 輪 verify（中間最多修一次）；attended 1 輪（讀出結果、交回使用者）。attended 的使用者在同一個 session 裡處理完 findings、說要繼續時，再跑一輪 verify（不限輪數，不自動修），乾淨了就照常進 Phase 5 與 Phase 5c；這是 attended 走到「某一輪乾淨才 merge 並 close」的路徑（spectra-discuss 結論 2，verify r3 #8）。`STOP_REASON` 不跨 Bash 呼叫存活：Phase 5 與 Phase 6 需要它時，重跑上面的 gate 區塊得到同一個結果（gate 只讀 GitHub 與 HEAD，結果可重現）。
+**輪數由 `next` 決定（#595、#591）**：沒有停止模式時，unattended 2 輪 verify（中間最多修一次）、attended 1 輪（讀出結果、交回使用者），與 #595 之前相同；輪數從 run-state 的紀錄讀（gate 每判一個新的 commit、或同一個 commit 上的新報告算一輪；報告沒貼出、讀不出，或修正沒有產生 commit，也算），所以 compaction 之後也不會被超過，close stage 也會擋下紀錄超過 2 輪的無人值守 run，以及 Phase 4 從沒判過的報告。`next` 的回答沒有 `round` 或 `limit` 時（沒有 run-state，例如 Step 0.7 的 init 失敗），當成已到上限。attended 的使用者在同一個 session 裡處理完 findings、說要繼續時，再跑一輪 verify（不限輪數，不自動修），乾淨了就照常進 Phase 5 與 Phase 5c；這是 attended 走到「某一輪乾淨才 merge 並 close」的路徑（spectra-discuss 結論 2，verify r3 #8）。
 
-**Auto-fix 策略**(unattended only — best-effort):
+**停止模式（#595）**：設了模式時（Step 0.2 的 `→ Stop mode:` 不是 `none`），attended 與 unattended 都照 `next` 自動修、自動再驗；安全漏洞仍不自動修。to-fix count 是 Blocking 加上 LOW／INFO／P3 以外的 In-scope fix（`--review`、`--in-chain` 只數 Blocking）。判定表（`scripts/lib/stopmode.py`，規格 `idd-pr-hitl-modes` 的「A configured stop mode decides when the fix loop stops and whether the run merges」）：
+
+| 模式 | 什麼時候停 | 停下時合併嗎 |
+|---|---|---|
+| `early` | to-fix count 是 0，或從第 2 輪起沒有比上一輪少 | Blocking 是 0 才合併 |
+| `exhaustive-blocking` | Blocking 是 0；或最近兩輪 Blocking 都沒有比前一輪少 | Blocking 是 0 才合併 |
+| `exhaustive-all` | Blocking 與 In-scope fix（含 LOW）都是 0；沒有輪數上限 | 合併 |
+
+每種模式在 gate 讀不出報告、或報告有 Rejected finding 時都停、不合併。停下時合併的是最後一輪審過的 commit，剩下的 In-scope fix 合成一張 follow-up issue，不再為它們改 branch；剩下的列裡有安全漏洞就 abort。這種合併跟乾淨的合併過同樣的 guardrail：覆蓋率行完整、reviewers 行完整、沒有降級、沒有嚴重的 Follow-up。`--review`、`--in-chain` 與 meeting 一樣從不合併。`STOP_REASON` 不跨 Bash 呼叫存活：Phase 5 與 Phase 6 需要它時，重跑上面的 gate 區塊得到同一個結果（gate 只讀 GitHub 與 HEAD，結果可重現）。
+
+**Auto-fix 策略**(unattended，以及設了停止模式的 attended run — best-effort):
 
 對每個要修的 finding（verify 報告 Findings 表裡 Action 為 Blocking，`FIX_IN_SCOPE` 時加上 In-scope fix 的列），讀其描述 + suggested action，套用 Edit/Write 修正：
 
@@ -1260,7 +1337,13 @@ elif [ "$PATH_AXIS" = "PR" ]; then
   VERIFY_STATE=$(printf '%s' "$GATE_OUT" | jq -r '.status // "unparseable"')
   # A Rejected finding is a disagreement no person has settled: the close stage stops on it, so the body must not promise a merge
   [ "$VERIFY_STATE" = clean ] && [ "$(printf '%s' "$GATE_OUT" | jq -r '.rejected // 0')" != 0 ] && VERIFY_STATE="clean, with Rejected findings"
-  if [ "$VERIFY_STATE" != clean ]; then
+  # #595: with a stop mode, next decides whether this round merges, also when the gate is not clean
+  NEXT_OUT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/close-stage.py" next --cwd "$CWD" --repo "$GITHUB_REPO" --issue "$N" 2>/dev/null)
+  STOP_MODE_RUN=$(printf '%s' "$NEXT_OUT" | jq -r '.mode // "none"' 2>/dev/null || echo none)
+  STOP_MERGE=$(printf '%s' "$NEXT_OUT" | jq -r 'if .merge == true then "yes" else "no" end' 2>/dev/null || echo no)
+  if [ "$STOP_MODE_RUN" != none ] && [ "$STOP_MERGE" = yes ] && [ "$VERIFY_STATE" != clean ] && [ "$RUN_REVIEW" = no ]; then
+    VERIFY_BOX="[x]"; VERIFY_LINE="Verify gate: ${VERIFY_STATE}, and stop mode ${STOP_MODE_RUN} stops here with a merge (see the latest verify report on issue #${N}). /idd-all merges this PR next if CI and the close-stage guardrails pass; the findings left are listed in a follow-up issue."
+  elif [ "$VERIFY_STATE" != clean ]; then
     VERIFY_BOX="[ ]"; VERIFY_LINE="Verify gate: ${VERIFY_STATE} (see the latest verify report on issue #${N}). /idd-all will not merge this PR; a person decides."
   elif [ "$RUN_REVIEW" != no ]; then   # --review, or the run state cannot be read: a person merges
     VERIFY_BOX="[x]"; VERIFY_LINE="Verify gate clean — ready to merge → after merge, run /idd-close to finalize this issue (this run carries --review: no automatic merge)."
@@ -1328,7 +1411,7 @@ fi
 
 ### Phase 5c: Close stage — merge（或 push）並 `/idd-close`（#392）
 
-verify 乾淨就收尾：PR mode squash-merge PR，direct-commit mode 在預設 branch 上 push，然後以 `ORCHESTRATED BY /idd-all` 指示呼叫 `/idd-close`。**不先問人**：merge 可以 revert、close 可以 reopen，依 Foresay 屬於 traceable 分支——做完必須在 Phase 6 回報實際做了什麼、怎麼復原（MANIFESTO〈auto-merge 的合法性與限制〉）。`/idd-all` 這個呼叫本身就是要它做完的請求；想先看過再 merge 的人帶 `--review`。
+verify 乾淨（有停止模式時：`next` 對最後一輪回 stop 並 merge，#595）就收尾：PR mode squash-merge PR，direct-commit mode 在預設 branch 上 push，然後以 `ORCHESTRATED BY /idd-all` 指示呼叫 `/idd-close`。**不先問人**：merge 可以 revert、close 可以 reopen，依 Foresay 屬於 traceable 分支——做完必須在 Phase 6 回報實際做了什麼、怎麼復原（MANIFESTO〈auto-merge 的合法性與限制〉）。`/idd-all` 這個呼叫本身就是要它做完的請求；想先看過再 merge 的人帶 `--review`。
 
 **所有檢查與 merge／push 都在 `scripts/close-stage.py run` 這一個 process 裡**。檢查不能放在 skill 的 bash 區塊：每個區塊是一次獨立的 tool call，一個區塊判了 `Stopped` 再 `exit 0`，擋不住下一個區塊的 `gh pr merge`（#383 r2 #12，#392 verify r1 #9）；shell 變數也不跨呼叫存活。helper 需要的值從 Step 0.7 寫下的 run-state 檔與 GitHub 讀，不從模型的記憶讀。
 
@@ -1343,7 +1426,7 @@ verify 乾淨就收尾：PR mode squash-merge PR，direct-commit mode 在預設 
 | issue 的作者或最後編輯正文的人沒有寫入權限 | helper | 停在 verified：issue 正文是 implement 照著做、verify 照著驗的規格，沒有人 merge 時它必須出自本來就能推這個改動的人 |
 | 意圖沒有確認過，封閉列舉，只有這四種：(1) 有 comment 出自沒有寫入權限的人（bot 除外）；(2) issue 正文有還沒回答的釐清問題：任何一張表的 `Status` 欄以 `surfaced` 或 `deferred` 開頭的列，不論它在哪個標題下、是否收在 `<details>` 或引用裡，GitHub 沒畫成表格的那種列也算；(3) Phase 2 據以分派的那則 Diagnosis（最新一則有 `## Diagnosis` 行的受信任 comment）讀不出 tier；(4) 任何一則 comment 有 Layer V 延後或 choice-first 預設的紀錄（GitHub 顯示的 `- **Reason**:` 行），而之後沒有 Decision comment 回應它。**不在此列**（2026-11-10 的決定，#392 comment 6761657951、6761899504）：tier 是哪一個（unattended run 做了 Plan、Spectra 或 SDD-warranted 的 issue 照樣 merge）；沒有人處理的 Proposed Corrections（不擋，數量在結果的 `proposed_corrections`，回報裡寫明沒有套用） | helper | 停在 verified、PR 照開。Foresay 的 traceable 分支要求意圖清楚**且**可逆；unattended run 會自己略過意圖確認，comment 與附件也會帶進實作（#392 決定，comment 6566557673、6567272352）。unattended diagnose 自己做的 Stage 1 策略確認算是一次注意、不算略過（comment 6568180861：「ai的attention也算attention，只是人類的更稀少」） |
 | 這次 run 開始之後有別人插手：不是這個帳號、也不是 bot 的人在 issue 上留言或改了 comment、改了 issue 正文、加或拿掉 label、改標題、關掉或重開 issue，或刪了任何不是這個帳號的 comment；issue 已經不是 OPEN；PR 不是這個帳號開的、是 draft、changes requested，或有別人的 comment、review、label、標題或描述修改；這些紀錄多到一次讀不完 | helper | 停在 verified。run 開始時讀過的 issue 才是它照著做的意圖，之後進來的話它沒讀過（verify r4 #4、#15、#48；r5 #2、#6、#16、#33）。同事貼的 verify FAIL 也在這一列 |
-| Phase 4 留下 `STOP_REASON` | helper 的 guardrail 1 再判一次 gate | `Stopped: guardrail 1 (verify gate) …` |
+| Phase 4 留下 `STOP_REASON` | helper 的 guardrail 1 再判一次 gate（有停止模式時再問一次判定表） | `Stopped: guardrail 1 (verify gate) …` 或 `Stopped: guardrail 1 (stop mode <mode>) …` |
 | Phase 4 或 Phase 5 已 abort | — | 照 abort 職責處理（見 Failure Modes） |
 
 即使模型漏看上表直接呼叫 helper，前八種也會被 helper 自己擋下。
@@ -1362,9 +1445,9 @@ helper 依序檢查，第一道不過就停，印一行 JSON（`"status": "stopp
 
 | 道 | 檢查 | 過的條件 |
 |---|---|---|
-| 0 | run 本身 | run-state 存在、是這個 repo 與 issue、不超過 24 小時；沒有 `--review`／`--in-chain`；沒有被降級；這個帳號對 repo 有 WRITE 以上的權限；clone 的 `origin` 的每個 fetch 與 push URL 都是 `github.com/<repo>`；最新受信任 Diagnosis 不是 meeting；issue 的作者與最後編輯者都有寫入權限；沒有別人插手、意圖確認過（上表「別人插手」與「意圖」兩列） |
+| 0 | run 本身 | run-state 存在、是這個 repo 與 issue、不超過 24 小時（有停止模式時從最後一輪 verify 算起，#595）；沒有 `--review`／`--in-chain`；沒有被降級；這個帳號對 repo 有 WRITE 以上的權限；clone 的 `origin` 的每個 fetch 與 push URL 都是 `github.com/<repo>`；最新受信任 Diagnosis 不是 meeting；issue 的作者與最後編輯者都有寫入權限；沒有別人插手、意圖確認過（上表「別人插手」與「意圖」兩列） |
 | 發佈 | 預設 branch 最新的 workflow | 沒有任何 workflow 在 push 到預設 branch（或 `workflow_run`）時發佈或部署（`gh release`、`npm publish`、`docker push`、`deploy-pages`、名稱帶 publish 或 deploy 的 action 之類，含它呼叫的本地 reusable workflow、composite action 與 `run:` 呼叫的本機 script）；呼叫別的 repo 的 reusable workflow 一律當成會發佈；只由 tag 觸發的不算。trigger 讀不懂（加引號的鍵、list 寫法以外的形式、否定或方括號的 branch pattern）就當成會在 push 時跑（`scripts/lib/workflows.py`，r5 #1）。有的話，merge 或 push 本身就是發版，停下要人帶 `--review`。這次改動動到 `.github/workflows` 或 `.github/actions` 也停下：改 CI 的改動由人 merge |
-| 1 | verify gate | 這次 run 開始之後、這個帳號貼的最新 verify comment 是 `## Verify: #N` 報告，貼出後沒有被編輯、沒有被藏起來，它的渲染結果經 `verify-gate.py --expect-sha --expect-base` 判定 `clean`（含完整的覆蓋率行），`**Reviewed**` 的範圍正好是要 merge（`merge-base(origin/<default>, PR head)..PR head`）或要 push（`origin/<default>..HEAD`）的那一段；報告裡沒有 `Rejected` 的 finding（被 run 自己判為不成立的意見，r4 #7）、沒有 Severity 是 CRITICAL／HIGH／P0／P1 的 Follow-up（嚴重的意見被歸為範圍外，r5 #4）、verify 沒有降級跑（報告任何地方都沒有 `Process Gaps` 字樣，reviewers 行是 `R / T` 且 R 等於 T；r5 #22、r7 #11、#14）。In-scope fix 只剩 LOW／INFO／P3 仍算 `clean`（`low_in_scope`） |
+| 1 | verify gate | 這次 run 開始之後、這個帳號貼的最新 verify comment 是 `## Verify: #N` 報告，貼出後沒有被編輯、沒有被藏起來，它的渲染結果經 `verify-gate.py --expect-sha --expect-base` 判定 `clean`（含完整的覆蓋率行），`**Reviewed**` 的範圍正好是要 merge（`merge-base(origin/<default>, PR head)..PR head`）或要 push（`origin/<default>..HEAD`）的那一段；報告裡沒有 `Rejected` 的 finding（被 run 自己判為不成立的意見，r4 #7）、沒有 Severity 是 CRITICAL／HIGH／P0／P1 的 Follow-up（嚴重的意見被歸為範圍外，r5 #4）、verify 沒有降級跑（報告任何地方都沒有 `Process Gaps` 字樣，reviewers 行是 `R / T` 且 R 等於 T；r5 #22、r7 #11、#14）。In-scope fix 只剩 LOW／INFO／P3 仍算 `clean`（`low_in_scope`）。沒有停止模式時（#591），無人值守 run 記到的 verify 輪數（`attempts`：每個新的 commit 或同一個 commit 上的新報告算一輪）超過 2 也停，最新的報告不在 round 紀錄裡（Phase 4 沒判過）也停。**有停止模式時（#595）**不要求 `clean`：最新的報告必須就是 round 紀錄最後一筆（同一則 comment、同一個 commit），判定表對它回 stop 並 merge；覆蓋率行與 reviewers 行要完整，Rejected、嚴重的 Follow-up、降級照樣擋 |
 | 2 | CI | helper 在同一個 process 裡跑本機 CI 閘門 `idd-ci-gate.sh run --commit <verified sha>`（capability `local-ci-gate`，#465），照結束碼：**0**（pass）就過，PR 的遠端 check 在 merge 前讀一次、不等待，失敗或取消的列在結果的 `remote_ci_failed`、還在跑的列在 `remote_ci_pending`，都不擋 merge；**10**（`ci.mode` 是 `remote`）才照遠端 check 判定：`gh pr checks` 的每一項都是 `pass` 或 `skipping`，`pending` 時等待、總共最多 15 分鐘，`fail`、`cancel` 即停，repo 有一個對每個 `pull_request` 都會跑的 workflow（沒有 path 篩選）時要等到至少一個 `pull_request` 事件的 check 出現，check 的集合連續 90 秒沒有變化才接受；**其他結束碼**（1 fail、2 timeout、3 沒設定指令、4 error，或清單外的值）即停。direct-commit 推送前也跑這一道，10 時沒有遠端結果可看（commit 還沒推），照舊直接推 |
 | 3 | auto-close trap 與 commit 歸屬（PR） | 同 `idd-verify` Step 0.8 的兩個 source（idd-all 以 branch 模式呼叫 verify，Step 0.8 沒有跑）：PR body 沒有 closing reference；每個 commit（從本機 git 讀完整範圍，`gh pr view --json commits` 有筆數上限）的 subject 與 body 沒有 close 類關鍵字接在 `#N`、`owner/repo#N` 或 issue／PR 網址前，而且都引用 `#N`（不是這次 run 的 commit 不 squash 進預設 branch，r5 #23）。連字號不豁免：GitHub 會把 `/idd-close #N` 拆開並關掉 issue（#173） |
 | 4 | squash message（PR） | subject（PR 標題加 `(#PR)`）與 body（`Refs #N` 加 verify 報告連結）同樣掃一次；標題來自 issue，外人寫得到 |
@@ -1472,6 +1555,8 @@ Done:
   distribution sync: ${done | asked: <answer> | skipped — run <command> | n/a}
   verify: ${ENGINE line of the verify report}; degraded: ${missing reviewers or "none"}
   left open: ${LOW} LOW in-scope finding(s) not fixed — listed in #${LOW_FOLLOWUP}        (only when low_in_scope > 0)
+  stop mode: ${MODE} — ${K} round(s), to-fix ${COUNTS}; stopped because ${NEXT_REASON}   (only with a stop mode; COUNTS like "6 → 4 → 4")
+  left open: ${F} in-scope finding(s) not fixed (stop mode) — listed in #${STOP_FOLLOWUP}    (only when a stop-mode merge left findings)
   left open: ${PC} comment(s) list Proposed Corrections that were not applied              (only when proposed_corrections > 0)
   remote CI: ${failed check names} failed while local CI passed                            (only when remote_ci_failed is not empty; "not readable" → say the remote checks could not be read; list remote_ci_pending as still running)
 Undo:
@@ -1483,7 +1568,7 @@ Undo:
 
 merge 與 push 的欄位取自 `$CWD/.claude/.idd/state/idd-all-result-$N.json`（`pr`、`merge_sha`、`push_from`、`push_to`、`count`、`verify_url`，以及只在不是 0 或空的時候才列的 `low_in_scope`、`proposed_corrections`、`remote_ci_failed`、`remote_ci_pending`）；closing summary 連結取自 5c.3 `confirm-close` 印出的 `summary_url`；follow-up 取自 Phase 4 開的 issue 加上 `/idd-close` 列出的；residue、distribution sync 取自 `/idd-close` 列出的預設。`changed` 取自 `git diff --shortstat ${MERGE_SHA}^ ${MERGE_SHA}`（direct-commit：`${PUSH_FROM} ${PUSH_TO}`）；`verify` 照抄 verify 報告的 `### Engine` 那一行。Spectra tier 的 change 在 Step 3b.6 已經封存在 branch 上，merge 之後不需要再封存（#480）。
 
-停下時（gate 不乾淨、guardrail 沒過、push 被拒、`/idd-close` 停下、Phase 4 在最後一輪仍有 Blocking 而 abort），`Done:` 只列實際做到的步驟，接著一行 `Stopped:`，原因照抄 Phase 4 或 Phase 5c 印出的那一行：
+停下時（gate 不乾淨、guardrail 沒過、push 被拒、`/idd-close` 停下、Phase 4 在最後一輪仍有 Blocking 而 abort、停止模式停下而不合併），`Done:` 只列實際做到的步驟，接著一行 `Stopped:`，原因照抄 Phase 4 或 Phase 5c 印出的那一行；有停止模式時另加上面那行 `stop mode:`：
 
 ```
 ✓ idd-all #${N} — ${TITLE} (stopped)
@@ -1666,7 +1751,8 @@ fi
 | spectra-propose 沒 emit `Change:` line | 同上 |
 | spectra-propose 遇到 unrecoverable validation error | Phase 3b abort,artifacts 保留,提示手動 `/spectra-propose` |
 | spectra-apply 留下 unfinished tasks | 不 abort — Phase 4 verify 會抓出來 |
-| Verify 2 round 後仍 blocking | Phase 4 abort,留 branch 給 user 手動修 |
+| Verify 2 round 後仍 blocking（沒有停止模式） | Phase 4 abort,留 branch 給 user 手動修 |
+| 停止模式停下而不合併（#595） | 開 PR、寫明 `next` 的原因，Phase 5c 不 merge |
 | `gh pr create` fail | Phase 5 abort,branch 已 push,提示手動開 PR |
 | verify gate `unparseable`(報告讀不出來、沒有新報告、判定與表格矛盾) | 不修、不 merge、不 close;停在 verified,Phase 6 `Stopped:` 寫出 gate 的 reason(#392) |
 | Phase 5c 任一道 guardrail 沒過(CI 失敗或 15 分鐘仍 pending、auto-close trap、squash message) | 不 merge;PR 保留,Phase 6 `Stopped:` 寫出是哪一道與原因(#392) |

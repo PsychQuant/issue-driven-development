@@ -107,6 +107,8 @@ def emit(status, reason, verdict=None, counts=None, extra=None):
         "low_in_scope": (extra or {}).get("low_in_scope"),
         "high_follow_up": (extra or {}).get("high_follow_up"),
         "process_gaps": (extra or {}).get("process_gaps"),
+        "coverage_complete": (extra or {}).get("coverage_complete"),
+        "reviewers_complete": (extra or {}).get("reviewers_complete"),
         "reason": reason,
     }
     print(json.dumps(out, ensure_ascii=False))
@@ -316,7 +318,14 @@ def judge(html, expect_sha=None, expect_base=None):
     reviewers = [m for m in (REVIEWERS_RE.match(t) for t in all_lines) if m]
     if any(int(m.group(1)) < int(m.group(2)) for m in reviewers):
         gaps = True
-    extra = {"high_follow_up": high_follow_up, "process_gaps": gaps, "low_in_scope": low_in_scope}
+    # Whether the coverage line and the reviewers line are complete, read for every verdict (#595): a stop mode
+    # can merge a FAIL round, and that merge passes the same coverage and reviewers checks as a clean one.
+    cover = [m for m in (COVERAGE_RE.match(t) for t in all_lines) if m]
+    coverage_complete = len(cover) == 1 and cover[0].group(1) == cover[0].group(2)
+    reviewers_complete = (len(reviewers) == 1 and int(reviewers[0].group(2)) > 0
+                          and int(reviewers[0].group(1)) == int(reviewers[0].group(2)))
+    extra = {"high_follow_up": high_follow_up, "process_gaps": gaps, "low_in_scope": low_in_scope,
+             "coverage_complete": coverage_complete, "reviewers_complete": reviewers_complete}
 
     pairs = [(k.lower(), int(v)) for v, k in COUNT_RE.findall(verdict_text)]
     stated = dict(pairs)
