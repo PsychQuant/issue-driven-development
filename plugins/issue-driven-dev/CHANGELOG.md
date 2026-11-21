@@ -43,7 +43,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an item that cannot be checked keeps the directory, and a directory that is not a repository of its own is never
   looked into. The routing log of a removed directory is appended to the one of the starting working tree, once
   (carrying it back is #584). A kept directory is named in the report with its reasons and does not stop the run.
-  `record` and `next` ended at any point and run again come to the same end, checked over every point. `next`
+  `record` and `next` ended at any point and run again come to the same end, checked over every point, the steps of a
+  removal included (`record` marks a removal before it starts and finishes it after an interruption). Before it judges,
+  `record` fetches with pruning in the directory (a branch deleted on `origin` after a squash merge no longer counts as
+  pushed), keeps a directory with a file flagged `assume-unchanged` or `skip-worktree` or a folder of records it cannot
+  list, and carries the routing log over whether or not git ignores it. The commands that write the run state hold a
+  lock (a second session waits up to 30 seconds, then stops); `here` checks the shell's own directory, compares the
+  path as given and refuses a symbolic link on the way; the pointer and the exclude lines of a directory are never
+  written through a link; every git command runs without optional locks, so that reading the starting working tree
+  does not rewrite its index; and the close stage of a rest issue whose pointer was lost stays at verified. `next`
   asks the existing-work check itself and hands an issue out only when the check says `clear`: a lookup that could
   not be completed keeps the issue back. Step 0.5 of the single-issue flow now creates the issue's branch with
   `git checkout --no-overwrite-ignore`, so that a file git ignores locally is not written over when

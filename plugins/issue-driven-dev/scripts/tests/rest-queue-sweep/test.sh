@@ -21,6 +21,7 @@ for k in ("handed_at", "recorded_at", "at"):
     a.pop(k, None)
 print("attempt:", json.dumps(a, sort_keys=True, ensure_ascii=False))' "$(state_file)"
   printf 'routing: %s\n' "$(cat "$T/$ROUTING" 2>/dev/null | paste -sd'|' -)"
+  if [ -d "$D/.git" ]; then echo "the directory:"; python3 "$RQT/treecheck.py" list "$D"; fi   # its files, index, refs and stash
   python3 "$RQT/treecheck.py" list "$T"
 }
 
@@ -62,7 +63,7 @@ for k in $(seq 1 "$STEPS"); do
   OUT=$(run next 2> /dev/null)
   python3 "$RQT/treecheck.py" list "$T" > "$WORK/next-after.txt"
   got="$(printf '%s' "$OUT" | jget next)|$(printf '%s' "$OUT" | jget dir)|$(attempt 5 made)|$(git -C "$D" symbolic-ref --short HEAD 2>/dev/null)"
-  here=$(python3 "$RQ" here --cwd "$D" --repo "$REPO" --issue 5 > /dev/null 2>&1; echo $?)
+  here=$(cd "$D" 2>/dev/null && python3 "$RQ" here --cwd "$D" --repo "$REPO" --issue 5 > /dev/null 2>&1; echo $?)
   if [ "$got|$here" != "5|$D|true|main|0" ] || ! python3 "$RQT/treecheck.py" same "$WORK/next-before.txt" "$WORK/next-after.txt"; then
     bad=$((bad + 1)); echo "    next: point $k: $got|here $here"
   fi

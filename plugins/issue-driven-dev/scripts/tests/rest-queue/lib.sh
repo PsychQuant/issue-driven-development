@@ -6,7 +6,7 @@ RQ="$RQT/../../rest-queue.py"
 PLUGIN="$(cd "$RQT/../../.." && pwd)"
 SKILL="$PLUGIN/skills/idd-all/SKILL.md"
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/idd-rest-queue-test.XXXXXX")
-trap 'rm -rf "$WORK"' EXIT
+trap '/bin/chmod -R u+rwX "$WORK" 2>/dev/null; rm -rf "$WORK"' EXIT   # a test may leave a folder that cannot be listed
 export IDD_CLOSE_STAGE_TEST=1 IDD_GH="$RQT/fake-gh.py"
 # git in the scenarios reads no configuration of this machine: hooks, signing and templates there cannot change a result
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0 \
@@ -141,6 +141,10 @@ s_tag_moved()  { pushed; git -C "$D" tag idd-5-verified main; git -C "$D" push -
 s_worktree()   { pushed; git -C "$D" worktree add -q "$S/second" -b side 2>/dev/null; }
 s_edits()      { pushed; printf '%s/\n' "$EDITS" >> "$D/.git/info/exclude"; mkdir -p "$D/$EDITS/edits"; printf 'old text\n' > "$D/$EDITS/edits/c1.md"; }
 s_parked()     { pushed; mkdir -p "$D/.git/spectra-app/changes/x"; printf 'p\n' > "$D/.git/spectra-app/changes/x/proposal.md"; }
+s_deleted()    { pushed; git -C "$T.origin.git" branch -q -D idd/5-x; }   # pushed, then deleted on origin (as after a squash merge)
+s_assume()     { pushed; git -C "$D" update-index --assume-unchanged a.txt; printf 'hidden\n' >> "$D/a.txt"; }
+s_skip()       { pushed; git -C "$D" update-index --skip-worktree a.txt; printf 'hidden\n' >> "$D/a.txt"; }
+s_index()      { pushed; printf 'not an index' > "$D/.git/index"; }
 s_detached()   { git -C "$D" checkout -q --detach; printf 'w\n' > "$D/w.txt"; git -C "$D" add w.txt; git -C "$D" commit -q -m "no branch (#5)"; }
 s_routing()    { pushed; mkdir -p "$T/.claude/.idd"; printf '{"n":1}\n' > "$T/$ROUTING"; printf '{"n":2}\n{"n":3}\n' > "$D/$ROUTING"; }   # the example "the routing log is carried over once"
 # name | what becomes of the directory | what a reason names
@@ -159,7 +163,11 @@ tag_moved|kept|idd-5-verified
 worktree|kept|a second working tree
 edits|kept|earlier versions of corrected GitHub text
 parked|kept|parked
-detached|kept|the commit that is checked out'
+detached|kept|the commit that is checked out
+deleted|kept|idd/5-x
+assume|kept|a.txt
+skip|kept|a.txt
+index|kept|git could not be read there'
 
 leave_row() { # label name want needle → the row: record decides what the row says, and the run goes on
   local label="$1" name="$2" want="$3" needle="$4" OUT rc
@@ -186,7 +194,9 @@ person_tree() { # T as a person left it: on wip, with a staged and an unstaged c
   printf 'local/\n' > "$T/.gitignore"; printf 'c\n' > "$T/c.txt"; git -C "$T" add .gitignore c.txt
   git -C "$T" commit -q -m "more"; git -C "$T" push -q origin main 2>/dev/null
   git -C "$T" branch side; git -C "$T" checkout -q -b wip
+  printf 'd\n' > "$T/d.txt"; git -C "$T" add d.txt; git -C "$T" commit -q -m "d"
   printf 'stashed\n' >> "$T/a.txt"; git -C "$T" stash -q
   printf 'staged\n' >> "$T/a.txt"; git -C "$T" add a.txt; printf 'changed\n' >> "$T/c.txt"; printf 'b\n' > "$T/b.txt"
   mkdir -p "$T/local"; printf 'mine\n' > "$T/local/notes.txt"
+  touch -t 202001010000 "$T/d.txt"   # the stat of d.txt no longer matches the index: a git status that may write would refresh it
 }

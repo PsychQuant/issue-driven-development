@@ -54,7 +54,9 @@ def listing(tree):
                 lines.append(f"file {rel}{name} {digest_of(os.path.join(base, name))}")
     lines.append("head " + git(tree, "rev-parse", "-q", "--verify", "HEAD").strip())
     lines.append("on " + git(tree, "symbolic-ref", "-q", "HEAD").strip())
-    lines.append("index " + hashlib.sha256(git(tree, "ls-files", "-s", "-z").encode("utf-8", "surrogateescape")).hexdigest())
+    index = git(tree, "rev-parse", "--git-path", "index").strip()
+    index = index if os.path.isabs(index) else os.path.join(tree, index)
+    lines.append("index " + (digest_of(index) if os.path.exists(index) else "none"))   # the bytes: a refreshed stat cache is a change
     lines += ["ref " + line for line in git(tree, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads").splitlines()]
     lines += ["tag " + line for line in git(tree, "for-each-ref", "--format=%(refname) %(objectname)", "refs/tags").splitlines()]
     lines += ["stash " + line for line in git(tree, "stash", "list", "--format=%H").splitlines()]
@@ -80,14 +82,16 @@ def self_test():
         run("init", "-q", "-b", "main")
         put("a.txt", "a\n"); put(".gitignore", "local/\n"); put("local/notes.txt", "mine\n")
         run("add", "a.txt", ".gitignore"); run("commit", "-q", "-m", "init")
-        base = listing(tree)
+        base = [listing(tree)]
+        no_index = lambda lines: [ln for ln in lines if not ln.startswith("index ")]
 
         def expect(name, changes, act, undo):
+            base[0] = listing(tree)   # the git commands of an earlier undo may have written the index
             act()
-            if (listing(tree) != base) != changes:
+            if (listing(tree) != base[0]) != changes:
                 failed.append(name)
             undo()
-            if listing(tree) != base:
+            if no_index(listing(tree)) != no_index(base[0]):
                 failed.append(name + " (not undone: the self-test is wrong)")
 
         rm = lambda rel: os.unlink(os.path.join(tree, rel))
@@ -110,6 +114,8 @@ def self_test():
         run("reset", "-q", "--hard", "HEAD~1"); run("tag", "-d", "v0"); run("tag", "-d", "v1")
         expect("a checkout of another branch", True, lambda: run("checkout", "-q", "-b", "other"),
                lambda: (run("checkout", "-q", "main"), run("branch", "-D", "other")))
+        expect("a refreshed index", True, lambda: (os.utime(os.path.join(tree, "a.txt"), (0, 0)), subprocess.run(["git", "-C", tree, "status"], capture_output=True)),
+               lambda: None)
         expect("a stash", True, lambda: (put("a.txt", "st\n"), run("stash")), lambda: (run("stash", "drop"), put("a.txt", "a\n")))
         expect("the state folder", False, lambda: put(".claude/.idd/state/x.json", "{}"), lambda: rm(".claude/.idd/state/x.json"))
         expect("the folder of the directories", False, lambda: put(".claude/worktrees/rest-5/a.txt", "x"), lambda: rm(".claude/worktrees/rest-5/a.txt"))
@@ -118,7 +124,7 @@ def self_test():
         expect("another file below .claude/.idd", True, lambda: put(".claude/.idd/local.json", "{}"), lambda: rm(".claude/.idd/local.json"))
     for name in failed:
         print("FAIL: " + name)
-    print(f"treecheck self-test: {16 - len(failed)} of 16 pass")
+    print(f"treecheck self-test: {17 - len(failed)} of 17 pass")
     return 1 if failed else 0
 
 

@@ -59,6 +59,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
+import fcntl
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.dont_write_bytecode = True
@@ -91,7 +93,8 @@ def step():
 
 # git as this helper calls it: no signature lines in a log, no quoted paths, no colours, whatever the person's
 # configuration says. (The one `git diff` that lists paths asks for paths from the top itself: --no-relative.)
-GIT = ["git", "-c", "log.showSignature=false", "-c", "core.quotePath=false", "-c", "color.ui=false"]
+GIT = ["git", "--no-optional-locks", "-c", "log.showSignature=false", "-c", "core.quotePath=false", "-c", "color.ui=false"]
+os.environ["GIT_OPTIONAL_LOCKS"] = "0"   # and every program this helper starts (the existing-work check, a clone): git status writes the index otherwise
 _print = print
 
 
@@ -431,29 +434,59 @@ def state_dir(cwd):
 
 
 def state_path(cwd):
-    path = os.path.join(state_dir(cwd), STATE_NAME)
-    if os.path.islink(path):
-        raise Stop(f"{path} is a symlink — refusing to use it")
-    return path
+    return os.path.join(state_dir(cwd), STATE_NAME)   # a symbolic link there is a file that cannot be used (reststate.read)
+
+
+LOCK_NAME = "idd-all-rest.lock"
+_LOCK = []
+
+
+def lock_run(cwd, create):
+    """Hold the lock of the run at this --cwd until the process ends: the commands that write the run state do not
+    overlap. Without `create`, a working tree that has no state folder has no run, and nothing is locked."""
+    folder = state_dir(cwd)
+    if not os.path.isdir(folder):
+        if not create:
+            return
+        try:
+            os.makedirs(folder, mode=0o700, exist_ok=True)
+        except OSError as exc:
+            raise Stop(f"could not make the state folder: {exc.strerror or exc}")
+    try:
+        fd = os.open(os.path.join(folder, LOCK_NAME), os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    except OSError as exc:
+        raise Stop(f"could not open the lock of the run ({LOCK_NAME}): {exc.strerror or exc}")
+    wait = float(os.environ.get("IDD_REST_LOCK_WAIT", "30")) if TEST else 30.0
+    until = time.monotonic() + wait
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            if time.monotonic() >= until:
+                os.close(fd)
+                raise Stop("another rest command for this run is going on (its lock is held) — two sessions are not to run "
+                           f"the same rest run; when no other session runs it, {AGAIN}")
+            time.sleep(0.1)
+    _LOCK.append(fd)
+
+
+def test_sleep(name):
+    """A pause at a named point, under the test suite only (IDD_REST_SLEEP_<NAME>=seconds): two commands can then be
+    made to overlap there."""
+    if TEST and os.environ.get("IDD_REST_SLEEP_" + name):
+        time.sleep(float(os.environ["IDD_REST_SLEEP_" + name]))
 
 
 def read_state(cwd, repo=None):
     """(state, problem). The run state of this working tree; or None, with the reason when a state file is
     there and this helper cannot use it ('' when there is no file)."""
-    path = state_path(cwd)
-    try:
-        with open(path, encoding="utf-8") as fh:
-            raw = fh.read()
-    except (FileNotFoundError, NotADirectoryError):
+    kind, st = reststate.read(state_path(cwd))
+    if kind == "none":
         return None, ""
-    except (OSError, ValueError) as exc:
-        return None, f"it cannot be read ({type(exc).__name__})"
-    try:
-        st = json.loads(raw)
-        ok = reststate.usable(st)
-    except ValueError:
-        ok = False
-    if not ok:
+    if kind != "ok":
+        return None, "it cannot be read (a symbolic link, or not JSON)"
+    if not reststate.usable(st):
         return None, "it is not a run state this helper can read"
     if repo is not None and st["repo"] != repo:
         return None, f"{OTHER_REPO} {one_line(st['repo'], 80)}"   # a state this helper can read: start replaces it and says whose it was
@@ -646,15 +679,24 @@ def kept_dirs(top):
 
 
 def remove_dir(top, d):
-    """Remove the directory of an issue. Only a folder at the place of such a directory, reached through no
-    symbolic link, is removed; a link inside it is removed as a link."""
+    """Remove the directory of an issue, one entry of it at a time (the git directory first: a removal ended after it
+    leaves no repository, and the mark in the run state is what lets a record finish it). Only a folder at the place
+    of such a directory, reached through no symbolic link, is removed; a link inside it is removed as a link."""
     m = DIR_RE.match(os.path.basename(d))
     if not m or d != dir_of(top, m.group(1)):
         raise Stop(f"{one_line(d, 200)} is not at the place of an issue's directory: it is not removed")
     if link_on_the_way(top, d) or not os.path.isdir(d):
         raise Stop(f"{one_line(d, 200)} is not a folder of its own (a symbolic link is on the way, or it is a file): it is not removed")
     try:
-        shutil.rmtree(d)
+        names = sorted(os.listdir(d), key=lambda name: (name != ".git", name))
+        for name in names:
+            path = os.path.join(d, name)
+            if os.path.isdir(path) and not os.path.islink(path):
+                shutil.rmtree(path)
+            else:
+                os.unlink(path)
+            step()
+        os.rmdir(d)
     except OSError as exc:
         raise Stop(f"{one_line(d, 200)} could not be removed: {exc.strerror or exc}")
     step()
@@ -664,6 +706,7 @@ def make_dir(cwd, top, st, flight):
     """Make the directory of the issue in flight: a clone of its own, on the default branch as origin has it."""
     d, n = flight["dir"], flight["issue"]
     todo = f"look at {one_line(d, 200)} and at what git says, {AGAIN}"
+    test_sleep("BEFORE_MAKE")
     link = link_on_the_way(top, os.path.dirname(d))
     if link:
         raise Stop(f"{one_line(link, 200)} is a symbolic link: the directory of #{n} is not made through it")
@@ -687,14 +730,23 @@ def make_dir(cwd, top, st, flight):
         if rc == 0 and line_of(value):
             if in_dir(d, ["config", key, line_of(value)])[0] != 0:
                 raise Stop(f"could not set {key} in the directory of #{n} — {todo}")
+    exclude = os.path.join(d, ".git", "info", "exclude")
+    folder = os.path.join(d, ".claude", ".idd", "state")
+    pointer_file = os.path.join(folder, reststate.POINTER_NAME)
+    for target in (exclude, pointer_file):   # a clone holds the symbolic links origin tracks: a write through one lands elsewhere
+        link = link_on_the_way(d, target)
+        if link:
+            raise Stop(f"{one_line(link, 200)} in the directory of #{n} is a symbolic link: nothing is written through it — {todo}")
     try:
-        with open(os.path.join(d, ".git", "info", "exclude"), "a", encoding="utf-8") as fh:
+        with open(exclude, "a", encoding="utf-8") as fh:
             fh.write("\n# rest mode (#478): what the plugin keeps out of git in the directory of an issue\n"
                      + "".join(line + "\n" for line in EXCLUDED_IN_DIR))
         step()
-        folder = os.path.join(d, ".claude", ".idd", "state")
         os.makedirs(folder, mode=0o700, exist_ok=True)
-        with open(os.path.join(folder, reststate.POINTER_NAME), "w", encoding="utf-8") as fh:
+        if link_on_the_way(d, pointer_file):
+            raise Stop(f"a symbolic link appeared on the way to the pointer file of #{n} — {todo}")
+        fd = os.open(pointer_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(reststate.pointer_text(os.path.realpath(cwd), n))
         step()
     except OSError as exc:
@@ -735,7 +787,13 @@ def existing_work(cwd, repo, n):
 # ── what becomes of the directory of an issue ──────────────────────────────
 
 def has_file(folder):
-    return any(files for _, _, files in os.walk(folder))
+    """True when the folder, or a folder below it, holds a file; an error that keeps a folder from being listed raises:
+    a folder that cannot be listed is not a folder without such a file."""
+    def fail(exc):
+        raise exc
+    if not os.path.lexists(folder):
+        return False
+    return any(files for _, _, files in os.walk(folder, onerror=fail))
 
 
 def carry_log(top, d):
@@ -776,12 +834,24 @@ def only_there(d):
             return None
         return out
 
+    if ask(["fetch", "--quiet", "--prune", "origin"], "a fetch from origin") is None:   # a remote-tracking branch shows the last fetch, not origin now
+        why.append("origin could not be asked which of these commits it still has")
     out = ask(STATUS, "the working tree")
     entries = [] if out is None else [e for e in entries_of(out) if not e[1].startswith(WRITTEN_AGAIN)]
-    log = any(e == ("??", ROUTING_LOG) for e in entries)
     left = sorted({path for xy, path in entries if (xy, path) != ("??", ROUTING_LOG)})
     if left:
         why.append(f"{len(left)} path(s) that are changed and not committed, or that git does not track: {listed(left)}")
+    out = ask(["ls-files", "-v", "-z"], "the flags of the index")
+    hidden = sorted(e[2:] for e in (out or "").split("\0") if len(e) > 2 and (e[0].islower() or e[0] == "S"))
+    if hidden:   # git status does not list a change of such a file
+        why.append(f"{len(hidden)} tracked path(s) marked assume-unchanged or skip-worktree, whose changes git does not show: {listed(hidden)}")
+    log_path = os.path.join(d, *ROUTING_LOG.split("/"))
+    log = False
+    if os.path.lexists(log_path):   # whether or not git ignores it: the lines are in no other place
+        if os.path.islink(log_path) or not os.path.isfile(log_path):
+            why.append(f"the routing log is not a file there: {ROUTING_LOG}")
+        else:
+            log = in_dir(d, ["ls-files", "--error-unmatch", "--", ROUTING_LOG])[0] != 0
     out = ask(["stash", "list", "--format=%H"], "the stash")
     if out:
         why.append("a stash (git stash list)")
@@ -808,11 +878,17 @@ def only_there(d):
     out = ask(["worktree", "list", "--porcelain"], "the working trees")
     if out is not None and sum(1 for line in out.splitlines() if line.startswith("worktree ")) != 1:
         why.append("a second working tree (git worktree list)")
-    if has_file(os.path.join(d, *EDITS_KEPT.split("/"))):
-        why.append(f"earlier versions of corrected GitHub text, which exist nowhere else ({EDITS_KEPT}/)")
+    try:
+        if has_file(os.path.join(d, *EDITS_KEPT.split("/"))):
+            why.append(f"earlier versions of corrected GitHub text, which exist nowhere else ({EDITS_KEPT}/)")
+    except OSError as exc:
+        why.append(f"earlier versions of corrected GitHub text may be there and a folder of them cannot be listed ({EDITS_KEPT}/: {exc.strerror or exc})")
     parked = os.path.join(d, ".git", *PARKED.split("/"))
-    if os.path.isdir(parked) and os.listdir(parked):
-        why.append(f"a change the Spectra CLI parked (.git/{PARKED}/)")
+    try:
+        if os.path.isdir(parked) and os.listdir(parked):
+            why.append(f"a change the Spectra CLI parked (.git/{PARKED}/)")
+    except OSError as exc:
+        why.append(f"a change the Spectra CLI parked may be there and its folder cannot be listed (.git/{PARKED}/: {exc.strerror or exc})")
     return why, log
 
 
@@ -826,6 +902,15 @@ def leave(cwd, top, st, x):
     if not os.path.lexists(d):
         x["left"], x["why"] = "removed", []
         return
+    if x.get("left") == "removing":   # judged before, and the removal was ended part of the way: it is finished, not judged again
+        try:
+            if d != dir_of(top, x["issue"]) or link_on_the_way(top, d):
+                raise Stop(f"{one_line(d, 200)} is not at the place of the directory, or a symbolic link is on the way")
+            remove_dir(top, d)
+            x["left"], x["why"] = "removed", []
+        except Stop as exc:
+            x["left"], x["why"] = "kept", [one_line("its removal failed part of the way, so some of its files may be gone: " + str(exc), REASON_MAX)]
+        return
     why = []
     if d != dir_of(top, x["issue"]) or link_on_the_way(top, d) or not own_top(d):
         why = ["it is not a repository of its own at the place the run made one: nothing in it was looked at or removed"]
@@ -838,17 +923,21 @@ def leave(cwd, top, st, x):
             except Stop as exc:
                 why = [f"the routing log could not be carried over to this working tree ({one_line(exc, 120)}): {ROUTING_LOG}"]
         if not why:
+            x["left"] = "removing"   # stored before anything is removed: a record ended inside the removal finishes it
+            save_state(cwd, st)
             try:
                 remove_dir(top, d)
                 x["left"], x["why"] = "removed", []
                 return
             except Stop as exc:
-                why = [one_line(exc, 300)]
-        try:   # a kept directory is an ordinary clone from here on: a person can go on in it
-            os.unlink(os.path.join(d, ".claude", ".idd", "state", reststate.POINTER_NAME))
-            step()
-        except OSError:
-            pass
+                why = ["its removal failed part of the way, so some of its files may be gone: " + one_line(exc, 200)]
+        pointer_file = os.path.join(d, ".claude", ".idd", "state", reststate.POINTER_NAME)
+        if os.path.lexists(pointer_file) and not link_on_the_way(d, pointer_file):   # an ordinary clone from here on: a person can go on in it
+            try:
+                os.unlink(pointer_file)
+                step()
+            except OSError:
+                pass
     x["left"], x["why"] = "kept", [one_line(w, REASON_MAX) for w in why]
 
 
@@ -964,6 +1053,7 @@ def cmd_start(argv):
                    "the path was downgraded because the ralph-loop plugin is missing, install it first; or name the "
                    "issues one at a time")
     ensure_ignored(cwd)   # before anything is read or written
+    lock_run(cwd, True)
     st, problem = read_state(cwd, repo)
     again = "then give the same command again (same flags)"
     if st is None and problem and not problem.startswith(OTHER_REPO) and state_written_within(cwd, STATE_TTL):
@@ -1025,10 +1115,8 @@ def cmd_start(argv):
 
 def state_written_within(cwd, seconds):
     """True when the run state file was written less than `seconds` ago (by the file's own time)."""
-    try:
-        return now() - os.lstat(state_path(cwd)).st_mtime < seconds
-    except OSError:
-        return False
+    old = reststate.age(state_path(cwd), now())
+    return old is not None and old < seconds
 
 
 def kept_lines(x, indent):
@@ -1058,7 +1146,7 @@ def stopped_attempt(n, reason):
 
 def undecided(st):
     """The attempt whose outcome is recorded and whose directory is not decided yet (a record ended part of the way)."""
-    return next((x for x in st["attempts"] if x["outcome"] is not None and x.get("left") is None), None)
+    return next((x for x in st["attempts"] if x["outcome"] is not None and x.get("left") in (None, "removing")), None)
 
 
 def cmd_next(argv):
@@ -1066,6 +1154,7 @@ def cmd_next(argv):
     if a is None:
         return usage("next --cwd C --repo O/R")
     cwd, repo = a["--cwd"], a["--repo"]
+    lock_run(cwd, False)
     st = load_state(cwd, repo)
     if st is None:
         return refuse(NO_RUN)
@@ -1123,7 +1212,7 @@ def cmd_here(argv):
     a = common(argv, {"--cwd", "--repo", "--issue"}, ["--cwd", "--repo", "--issue"])
     if a is None:
         return usage("here --cwd D --repo O/R --issue N")
-    d, repo, n = os.path.realpath(a["--cwd"]), a["--repo"], int(a["--issue"])
+    d, repo, n = os.path.abspath(a["--cwd"]), a["--repo"], int(a["--issue"])   # as given: a symbolic link is not resolved away
     kind, ptr = reststate.pointer(state_dir(d))
     if kind == "none":
         st = load_state(d, repo)
@@ -1137,8 +1226,23 @@ def cmd_here(argv):
         return refuse(f"this directory is the one of #{ptr['issue']}, not of #{n}")
     st = load_state(ptr["root"], repo)
     flight = in_flight(st) if st else None
-    if not flight or flight["issue"] != n or not flight.get("made") or os.path.realpath(flight["dir"]) != d or not own_top(d):
-        return refuse(f"the rest run at {one_line(ptr['root'], 200)} does not have #{n} in flight in this directory")
+    if not flight or flight["issue"] != n or not flight.get("made"):
+        return refuse(f"the rest run at {one_line(ptr['root'], 200)} does not have #{n} in flight")
+    if d != flight["dir"]:
+        return refuse(f"{one_line(d, 200)} is not the directory of #{n}, which is {one_line(flight['dir'], 200)}")
+    top = os.path.dirname(os.path.dirname(os.path.dirname(d)))
+    link = link_on_the_way(top, d)
+    if link:
+        return refuse(f"a symbolic link is on the way to the directory of #{n}: {one_line(link, 200)}")
+    if not own_top(d):
+        return refuse(f"the directory of #{n} is not a repository of its own")
+    try:
+        here_now = os.path.realpath(os.getcwd())
+    except OSError:
+        here_now = ""
+    if here_now != d:   # what writes by the shell's directory writes there
+        return refuse(f"the current directory is {one_line(here_now or 'unknown', 200)}, not the directory of #{n}: change to "
+                      f"{one_line(d, 200)} in the same command, and do not run the pipeline of the issue elsewhere")
     return emit({"here": n, "root": ptr["root"]})
 
 
@@ -1158,30 +1262,33 @@ def cmd_record(argv):
     if reason is None:
         return usage("record --cwd C --repo O/R --issue N [--reason TEXT | --reason-stdin]")
     cwd, repo, n = a["--cwd"], a["--repo"], int(a["--issue"])
+    lock_run(cwd, False)
     st = load_state(cwd, repo)
     if st is None:
         return refuse(NO_RUN)
+    test_sleep("AFTER_READ")
     x = in_flight(st)
     last = st["attempts"][-1] if st["attempts"] else None
-    if x is None and last and last["issue"] == n and last["outcome"] is not None and last.get("dir") is not None:
-        # this issue was recorded last, and nothing was handed out since: a record ended after it wrote the outcome
-        # goes on from there, and one that had finished prints what it decided (the caller cannot tell the two apart)
+    again = x is None and last and last["issue"] == n and last["outcome"] is not None and last.get("dir") is not None
+    if again:
+        # this issue was recorded last, and nothing was handed out since: a record ended part of the way goes on from
+        # there, and one that had finished prints what it decided (the caller cannot tell the two apart)
         x = last
     elif x is None or x["issue"] != n:
         return refuse(f"#{n} is not the issue in flight" + (f" (#{x['issue']} is)" if x else " (none is)"))
-    else:
+    if x.get("left") in (None, "removing"):   # not finished: the outcome is read from GitHub again
         state = gh_json(["issue", "view", str(n), "--repo", repo, "--json", "state"], f"the state of #{n}").get("state")
         if state not in ("OPEN", "CLOSED"):
             raise Stop(f"could not read the state of #{n}")
-        # before anything is written here: what a helper can see of this working tree, against the hand-out
-        seen = root_now(cwd) if x.get("at") else None
-        x["changed"] = [CHANGED[k] for k in reststate.AT_KEYS if seen and seen[k] != x["at"][k]]
+        if not again:   # before anything is written here: what a helper can see of this working tree, against the hand-out
+            seen = root_now(cwd) if x.get("at") else None
+            x["changed"] = [CHANGED[k] for k in reststate.AT_KEYS if seen and seen[k] != x["at"][k]]
         x["outcome"] = "closed" if state == "CLOSED" else "stopped"
         # a closed issue keeps the reason too: closed while its run reported a stop is not a finished run
-        x["reason"] = one_line(reason, REASON_MAX) or ("" if state == "CLOSED" else "no reason given")
+        given = one_line(reason, REASON_MAX)
+        x["reason"] = given or (x["reason"] if again and x["reason"] != "no reason given" else "") or ("" if state == "CLOSED" else "no reason given")
         x["recorded_at"] = iso(now())
         save_state(cwd, st)
-    if x.get("left") is None:
         leave(cwd, top_of(cwd), st, x)
         save_state(cwd, st)
     return emit({"issue": n, "outcome": x["outcome"], "reason": x["reason"], "directory": x["left"],
@@ -1193,6 +1300,7 @@ def cmd_stop(argv):
     reason = None if a is None or ("--reason" not in a and not a.get("--reason-stdin")) else reason_given(a)
     if reason is None:
         return usage("stop --cwd C [--repo O/R] --reason TEXT | --reason-stdin")
+    lock_run(a["--cwd"], False)
     st = load_state(a["--cwd"], a.get("--repo"))
     if st is None:
         return refuse("no rest run in this working tree")
@@ -1222,6 +1330,7 @@ def cmd_report(argv):
     if a is None:
         return usage("report --cwd C --repo O/R")
     cwd, repo = a["--cwd"], a["--repo"]
+    lock_run(cwd, False)
     st = load_state(cwd, repo)
     if st is None:
         return refuse("no rest run in this working tree")
@@ -1252,7 +1361,7 @@ def cmd_report(argv):
         out += about(x)
         out += rows_of(x["issue"])
     if any(x.get("left") == "kept" for x in st["attempts"]):
-        out.append("  nothing in a kept directory was removed. A later rest run does not take up an issue that has a kept directory, "
+        out.append("  nothing in a kept directory was removed, except in a directory whose removal failed part of the way, which its reason names. A later rest run does not take up an issue that has a kept directory, "
                    "a pull request, a branch or the phase verified. Going on with the work in a kept directory, or deleting the "
                    "directory, is for a person; once it is deleted, a later rest run starts the issue over while it is a "
                    "candidate without other existing work")

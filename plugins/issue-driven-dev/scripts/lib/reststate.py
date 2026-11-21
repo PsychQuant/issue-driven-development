@@ -18,7 +18,7 @@ POINTER_NAME = "idd-all-rest-run.json"   # in the state folder of an issue's dir
 STATE_VERSION = 5   # 2: the path and the default branch · 3: the review flag · 5: each issue in a directory of its own
 POINTER_VERSION = 1
 STATE_TTL = 24 * 3600   # the same life as the close stage's run state and the unattended marker
-LEFT = (None, "none", "removed", "kept")   # what became of an issue's directory: not decided yet · it had none · …
+LEFT = (None, "none", "removed", "kept", "removing")   # what became of an issue's directory: not decided yet · it had none · … · a removal that started
 AT_KEYS = ("head", "branch", "files", "stash")   # what next reads at the directory the run was started in
 
 
@@ -32,16 +32,29 @@ def is_time(value):
 
 def read(path):
     """("none", None) when nothing is at the path · ("ok", value) when a file there holds JSON · ("unreadable", None)
-    otherwise. A symbolic link at the path is not followed: it is unreadable, whatever it points at."""
-    try:
-        if os.path.islink(path):
-            return "unreadable", None
-        with open(path, encoding="utf-8") as fh:
-            return "ok", json.load(fh)
-    except (FileNotFoundError, NotADirectoryError):
+    otherwise. The file is opened without following a symbolic link (O_NOFOLLOW): a link at the path is unreadable,
+    whatever it points at, and no check before the open can be outrun by a swap."""
+    if not os.path.lexists(path):
         return "none", None
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except FileNotFoundError:
+        return "none", None
+    except OSError:
+        return "unreadable", None
+    try:
+        with os.fdopen(fd, encoding="utf-8") as fh:
+            return "ok", json.load(fh)
     except (OSError, ValueError):
         return "unreadable", None
+
+
+def age(path, now):
+    """Seconds since the file at the path, a symbolic link itself included, was last written; None when nothing is there."""
+    try:
+        return now - os.lstat(path).st_mtime
+    except OSError:
+        return None
 
 
 def pointer(folder):

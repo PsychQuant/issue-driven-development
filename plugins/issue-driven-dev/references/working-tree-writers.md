@@ -10,8 +10,8 @@ A check in `scripts/tests/rest-queue/test.sh` fails when a skill or a script of 
 | --- | --- |
 | written again | Does not keep the directory, whether it is untracked or a change of a tracked file: the plugin writes it again on the next run of the issue. Closed list of three: `.claude/.idd/attachments/`, `.claude/.idd/state/`, paths that begin with `.claude/.idd/tree-lock` |
 | only there | Keeps the directory, whatever git says about it: the record exists nowhere else |
-| carried over | Appended to the file of the same path at the top of the working tree the run was started in, in one write and not twice; then it does not keep the directory. When that cannot be done, the directory is kept |
-| keeps the directory | Any other change git lists, any untracked file git does not ignore, a stash, a commit no branch on `origin` holds, a tag that `origin` does not have with the same value, a second working tree |
+| carried over | When it is a file that git does not track, whether or not git ignores it: appended to the file of the same path at the top of the working tree the run was started in, in one write and not twice; then it does not keep the directory. When that cannot be done, the directory is kept |
+| keeps the directory | Any other change git lists, any untracked file git does not ignore, a tracked file marked `assume-unchanged` or `skip-worktree`, a stash, a commit no branch on `origin` holds after a fetch with pruning, a tag that `origin` does not have with the same value, a second working tree, and anything `record` cannot check |
 | removed with the directory | A file git ignores in the directory that is not `only there`: the directory was made by the run, so it holds no file of a person from before the run |
 | not in the working tree | Outside the repository, or inside the git directory: `git status` does not show it |
 | read only | The plugin reads this location and does not write it |

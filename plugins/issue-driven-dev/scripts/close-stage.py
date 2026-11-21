@@ -153,10 +153,10 @@ def rest_state(folder):
     kind, rest = reststate.read(path)
     if kind == "none":
         return "off", None
-    try:
-        recent = now() - os.lstat(path).st_mtime < STATE_TTL
-    except OSError:
+    old = reststate.age(path, now())
+    if old is None:
         return "unreadable", None
+    recent = old < STATE_TTL
     if kind != "ok" or not reststate.usable(rest):   # what rest-queue.py start stops on: the flag in such a file is not taken either
         return ("unreadable" if recent else "off"), None
     if now() - parse_iso(rest["updated_at"]) >= STATE_TTL:
@@ -258,6 +258,8 @@ def cmd_init(argv):
         "requested_path": a["--requested-path"], "interaction": a["--interaction"],
         "branch": a["--branch"], "default": a["--default"],
         "review": a["--review"] == "yes", "in_chain": a["--in-chain"] == "yes",
+        # whether this issue runs in the directory of a rest run: run stops when the pointer to that run is lost later
+        "rest": reststate.pointer(state_dir(cwd))[0] == "ok",
         "created_at": iso(now()),
     }
     os.makedirs(os.path.dirname(spath), exist_ok=True)
@@ -787,6 +789,10 @@ def cmd_run(argv):
         if rest == "elsewhere":
             raise Stop("a rest run at this --cwd has this issue in flight in a directory of its own: the run stays at "
                        "verified — the pipeline of the issue is to run in that directory, not here")
+        if st.get("rest") and reststate.pointer(state_dir(cwd))[0] != "ok":
+            raise Stop("this issue runs in the directory of a rest run, and the file there that names the run is gone or "
+                       "cannot be read: the rest run of the issue cannot be found, so its review flag is unknown — the run "
+                       "stays at verified")
         if rest == "unreadable":
             raise Stop("the state of a rest run, or the file in this directory that names the run, cannot be read, so its "
                        "review flag is unknown: the run stays at verified — when no rest run is going on, delete "

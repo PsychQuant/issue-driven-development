@@ -66,7 +66,7 @@ allowed-tools:
 
 已知限制：repo 的 watcher 會收到「有新 PR」的一般通知，`pull_request` 觸發的 workflow 也可能自己指派或提到人，這兩種 `pr-check` 看不到。
 
-rest mode（`## Rest mode`，#478）沒有新的對外動作：每一張 issue 的動作各自照上面兩張表，各自過 `pr-check` 與 `close-stage.py run` 的閘門；前一張過了不代表下一張也過。它在兩張之間另外做幾件只在本機的事，都不讓任何 commit 或無法重新產生的內容消失，而且不動那一張被交出之前就在工作樹的檔（當時被 git 忽略的檔：`.env`、`node_modules/` 這一類）：把一張 issue 留下而沒有 commit 的東西 commit 在那一張自己的 branch（不推；repo 的 commit hook 讓這個 commit 失敗時改成不經 hook，commit 訊息與報告都會註明）；把那一張的 branch 忽略、而切回預設 branch 會擋路或變成未追蹤的檔收進 stash（不刪）；那一張已經 merge、預設 branch 因此不再忽略某個原本就在的檔時，把那個路徑寫進 `.git/info/exclude`（只在本機，維護者 2026-11-20 的決定）；丟掉那一張的附件紀錄（下一次 diagnose 會重寫；條件見該節第 6 步）；刪掉那一張沒有自己 commit、也沒有 upstream 的 branch（它的每一個 commit 都在 `origin/<default>` 上）。
+rest mode（`## Rest mode`，#478）沒有新的對外動作：每一張 issue 的動作各自照上面兩張表，各自過 `pr-check` 與 `close-stage.py run` 的閘門；前一張過了不代表下一張也過。每一張跑在 `rest-queue.py next` 替它建的資料夾裡（`.claude/worktrees/rest-<N>/`，從 `origin` clone 的獨立 repo）。rest 在啟動它的工作樹裡不 commit、不 stash、不 checkout、不刪也不搬任何檔，也不刪 branch；它在那裡只寫四個位置：run 的狀態資料夾、放這些資料夾的 `.claude/worktrees/`、`routing-stats.jsonl`（`record` 把刪掉的資料夾裡的那幾行接上去），以及本機的 `.git/info/exclude`（`.claude/worktrees/` 的忽略規則）。一張跑完，`record` 只在資料夾裡沒有只存在那裡的東西時刪掉它（判定是規格的封閉清單，拿不準就留著）；刪資料夾是本機的事，留下的資料夾列在報告裡。
 
 ## 與其他 idd-* skills 的關係
 
@@ -165,13 +165,19 @@ rest 只走 PR path（PR、unattended）：每一張 issue 在自己的資料夾
 
    ```bash
    CWD="<next 印出的 dir>"
-   cd "$CWD"
+   cd "$CWD" || { echo "could not change to $CWD: the pipeline of #$N is not run"; exit 1; }
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" here --cwd "$CWD" --repo "$GITHUB_REPO" --issue "$N"
    ```
 
-   `here` 以 0 結束才往下。它以 1 結束時，`$CWD` 不是這一張的資料夾（它印出的原因會寫這一張在哪裡跑）：改正 `$CWD` 與 shell 的目錄再試一次；仍然不行就不跑這一張，直接做第 5 步，原因寫它印出的那一行。**不要在 `$REST_ROOT` 跑單張流程。**
+   `here` 以 0 結束才往下。它檢查四件事：`$CWD` 原樣（不解析 symlink）就是 run 替這一張記下的資料夾；路徑上沒有 symlink；那是一個獨立的 repo；而且 shell 現在就在那裡。它以 1 結束時，`$CWD` 不是這一張的資料夾（它印出的原因會寫這一張在哪裡跑）：改正 `$CWD` 與 shell 的目錄再試一次；仍然不行就不跑這一張，直接做第 5 步，原因寫它印出的那一行。**不要在 `$REST_ROOT` 跑單張流程。**
 
-   這一張的每一個指令都在這個資料夾裡下：shell 留在那裡，所以依 shell 目錄做事的步驟（diagnose 下載的附件、`routing-stats.jsonl`、Spectra CLI、unattended 的判定）都落在這個資料夾。Claude Code 的 shell 在 `cd` 到專案資料夾裡面時會留在那裡；每個 phase 開始前可以再 `cd "$CWD"` 一次，不花什麼。子 skill 照樣帶 `--cwd "$CWD"`：verify 的 reviewer 不共用這個 shell。
+   這一張的每一個指令都在這個資料夾裡下：shell 留在那裡，所以依 shell 目錄做事的步驟（diagnose 下載的附件、`routing-stats.jsonl`、Spectra CLI、unattended 的判定）都落在這個資料夾。Claude Code 的 shell 在 `cd` 到專案資料夾裡面時會留在那裡。Phase 3（implement 或 Spectra）開始之前、Phase 4（verify）開始之前，各在同一個指令裡再確認一次，`here` 以 1 結束就停下這一張、做第 5 步：
+
+   ```bash
+   cd "$CWD" && python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" here --cwd "$CWD" --repo "$GITHUB_REPO" --issue "$N"
+   ```
+
+   這兩個 phase 會跑依 shell 目錄寫檔的程式，在錯的地方跑，寫進去的就是啟動 rest 的那個工作樹。子 skill 照樣帶 `--cwd "$CWD"`：verify 的 reviewer 不共用這個 shell。
 
    然後從 Step 0.4 到 Phase 6，行為與在那個資料夾裡下 `/idd-all #N` 相同，包含它自己的 Phase 6 報告與清理，只有下面兩處不同：path 與 interaction 用第 1 步的結果，以及 rest 不接手已經有的工作。這一張的 `REVIEW_YN` 是 `next` 印出的 `review`（`yes` 或 `no`），`REVIEW_FLAG` 也照 `next` 的這個值設（`yes` 是 `--review`，`no` 是空字串；Phase 4 修不修 in-scope finding、進不進 Phase 5c 都看它），兩個都不從記憶或原始引數取；Step 0.7 把 `REVIEW_YN` 交給 `close-stage.py init`。run 的狀態寫著 review、而 `init` 拿到的是 `no` 時，`init` 會拒絕，這一張的 close stage 因為沒有 run-state 而停在 verified。`close-stage.py` 透過資料夾裡的指標檔找到這個 run 的狀態；在 `$REST_ROOT` 對這一張呼叫它會被拒絕。
 
@@ -254,7 +260,8 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" report --cwd "$REST_ROOT" 
 - 資料夾裡沒有 `$REST_ROOT` 被 git 忽略的本機檔（`node_modules`、`.env`、本機的設定檔）：它是從 `origin` clone 的。需要那些檔才能 build 或跑測試的 repo，那一張會停在 implement、verify 或 CI，資料夾照清單決定留不留。
 - `$REST_ROOT` 本機的 git hook 與本機的 git 設定不帶進資料夾，只帶 `user.name` 與 `user.email`（封閉清單）。
 - 資料夾是從 `origin` 的預設 branch 建的：`$REST_ROOT` 本機還沒推的 commit 不在裡面。
-- 不支援 shell 不會留在 `cd` 之後的目錄的環境：依 shell 目錄做事的步驟會落在 `$REST_ROOT`，其中 Spectra 沒有指定專案根目錄的選項，會改到那裡已追蹤的檔。`here` 擋得住 `$CWD` 給錯，擋不住 shell 的目錄與 `$CWD` 不同；報告裡「工作樹變了」那一行是事後才看得到的。
+- 不支援 shell 不會留在 `cd` 之後的目錄的環境：依 shell 目錄做事的步驟會落在 `$REST_ROOT`，其中 Spectra 沒有指定專案根目錄的選項，會改到那裡已追蹤的檔。`here` 檢查它被執行時 shell 在哪裡，所以在第 4 步開頭與 Phase 3、Phase 4 之前擋得住；兩次 `here` 之間 shell 若被重設，擋不住，報告裡「工作樹變了」那一行是事後才看得到的。
+- 兩個 session 不要跑同一個 rest run：`start`、`next`、`record`、`stop` 與 `report` 會鎖住 run 的狀態，第二個最多等 30 秒，等不到就以 3 結束。
 - 既有工作的查詢會在 `$REST_ROOT` 的 repo 做一次 `git fetch`：它會移動 remote-tracking branch，也可能帶進 `origin` 上的 tag；不動既有的 tag 與本機 branch。
 - 不把留下的資料夾接著做完：之後的 rest 看到某一張有留下的資料夾就跳過它。要接著做，進那個資料夾，在裡面指名那一張（`/idd-all #N`）；單張流程對已存在 branch 的提問是 #566。
 - bot 的留言不讓一張 issue 變成 `outsider`（與 close stage 相同）。把外部輸入轉貼成留言的 app，它帶進來的文字會被 diagnose 讀到。
