@@ -547,6 +547,15 @@ assert_grep_re "existing work (not determined): the reason says so" '^existing w
 assert_true "existing work (not determined): no directory was made for #5" '[ ! -e "$(dir_of 5)" ]'
 assert_grep_re "existing work (not determined): #9 is recorded for the same reason" '^existing work: could not be determined' "$(attempt 9 reason)"
 
+new ew-crash 5 9
+mkdir -p "$S/copy/lib"; cp "$RQ" "$S/copy/rest-queue.py"; cp -R "$PLUGIN/scripts/lib/." "$S/copy/lib/"
+printf '#!/bin/sh\necho "check: crashed" >&2\nexit 1\n' > "$S/copy/check-existing-work.sh"
+printf '.claude/worktrees/\n' >> "$T/.git/info/exclude"   # the copy has no writer for that rule beside it
+python3 "$S/copy/rest-queue.py" start --cwd "$T" --repo "$REPO" --path PR --review no > /dev/null 2>&1
+OUT=$(python3 "$S/copy/rest-queue.py" next --cwd "$T" --repo "$REPO" 2> /dev/null)
+assert_eq "existing work (the check itself fails): nothing is handed out" "null" "$(printf '%s' "$OUT" | jget next)"
+assert_grep_re "existing work (the check itself fails): the reason says it could not be determined" '^existing work: could not be determined' "$(attempt 5 reason)"
+
 # spec-example: idd-all-rest / what becomes of a directory
 # Scenario: the directory of a merged issue is removed
 leave_rows directory
@@ -617,7 +626,26 @@ not_own nr-gitfile
 rm -rf "$D"; mkdir -p "$D"; printf 'gitdir: %s\n' "$T/.git" > "$D/.git"; printf 'x\n' > "$D/x.txt"   # a .git file that points at the repository around it
 OUT=$(run record --issue 5 --reason x 2> /dev/null)
 assert_eq "not a repository (a .git file that points at the repository around it): it is kept" "kept" "$(printf '%s' "$OUT" | jget directory)"
+assert_grep "not a repository (a .git file): the reason says it is not a repository of its own" "not a repository of its own" "$(printf '%s' "$OUT" | jget why)"
 still_mine "not a repository (a .git file)"
+not_own nr-empty-git
+rm -rf "$D"; mkdir -p "$D/.git"; printf 'x\n' > "$D/x.txt"   # a .git folder git cannot use: git would look further up from here
+OUT=$(run record --issue 5 --reason x 2> /dev/null)
+assert_eq "not a repository (an empty .git folder): it is kept" "kept" "$(printf '%s' "$OUT" | jget directory)"
+assert_grep "not a repository (an empty .git folder): the reason says it is not a repository of its own" "not a repository of its own" "$(printf '%s' "$OUT" | jget why)"
+assert_eq "not a repository (an empty .git folder): the file in it is still there" "x" "$(cat "$D/x.txt" 2>/dev/null)"
+still_mine "not a repository (an empty .git folder)"
+not_own nr-dirs-link
+pushed; mv "$T/.claude/worktrees" "$S/worktrees-outside"; ln -s "$S/worktrees-outside" "$T/.claude/worktrees"
+OUT=$(run record --issue 5 --reason x 2> /dev/null)
+assert_eq "not a repository (the folder of the directories is a link): it is kept" "kept" "$(printf '%s' "$OUT" | jget directory)"
+assert_grep "not a repository (the folder of the directories is a link): the reason says so" "not a repository of its own" "$(printf '%s' "$OUT" | jget why)"
+assert_true "not a repository (the folder of the directories is a link): the clone behind the link is untouched" '[ -f "$S/worktrees-outside/rest-5/w.txt" ]'
+new git-unreadable 5 9
+begin; D=$(dir_of 5); pushed; printf 'not an index' > "$D/.git/index"   # git can find the repository and cannot read its index
+OUT=$(run record --issue 5 --reason x 2> /dev/null); assert_exit "a check that fails: record exits 0" 0 "$?"
+assert_eq "a check that fails: the directory is kept" "kept" "$(printf '%s' "$OUT" | jget directory)"
+assert_grep "a check that fails: the reason says git could not be read there" "git could not be read there" "$(printf '%s' "$OUT" | jget why)"
 
 # spec-example: idd-all-rest / the starting working tree is the same after every ending
 # Scenario: a run changes nothing in the working tree it was started in
@@ -648,6 +676,9 @@ assert_output_grep "starting working tree (a file is changed): and that rest mod
 new root-commit 5 9
 begin; printf 'c\n' > "$T/c.txt"; git -C "$T" add c.txt; git -C "$T" commit -q -m "by a person"; run record --issue 5 --reason x > /dev/null 2>&1; run report > "$S/report.out" 2>&1
 assert_output_grep "starting working tree (a commit is made): the report says the checked-out commit changed" "this working tree changed (the checked-out commit)" "$S/report.out"
+new root-stash 5 9
+begin; printf 'edited\n' >> "$T/a.txt"; git -C "$T" stash -q; run record --issue 5 --reason x > /dev/null 2>&1; run report > "$S/report.out" 2>&1
+assert_output_grep "starting working tree (a stash is made): the report says the stash changed" "this working tree changed (the stash)" "$S/report.out"
 
 # spec-example: idd-all-rest / the folder of the directories is ignored before a run starts
 new ignore-dirs 5
@@ -704,6 +735,13 @@ begin; D=$(dir_of 5); pushed
 FIRST=$(run record --issue 5 --reason x 2> /dev/null)
 OUT=$(run record --issue 5 --reason y 2> /dev/null); assert_exit "record: called again after it finished, it exits 0" 0 "$?"
 assert_eq "record: and prints the decision it stored" "$FIRST" "$OUT"
+new record-done-kept 5 9
+begin; D=$(dir_of 5); pushed; printf 'changed\n' >> "$D/a.txt"
+FIRST=$(run record --issue 5 --reason x 2> /dev/null)
+git -C "$D" checkout -q -- a.txt   # what kept it is gone now
+OUT=$(run record --issue 5 --reason x 2> /dev/null)
+assert_eq "record: called again after it kept a directory, it prints the stored decision" "$FIRST" "$OUT"
+assert_true "record: and does not decide again: the directory is still there" '[ -d "$D" ]'
 run next > /dev/null 2>&1
 run record --issue 5 > /dev/null 2>&1; assert_exit "record: once the next issue is handed out, #5 is refused (exit 1)" 1 "$?"
 

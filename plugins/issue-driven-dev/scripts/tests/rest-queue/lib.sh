@@ -136,6 +136,8 @@ s_untracked()  { pushed; printf 'n\n' > "$D/notes.txt"; }
 s_stash()      { pushed; printf 'changed\n' >> "$D/a.txt"; git -C "$D" stash -q; }
 s_tag_local()  { pushed; git -C "$D" tag idd-5-verified; }
 s_tag_pushed() { pushed; git -C "$D" tag idd-5-verified; git -C "$D" push -q origin idd-5-verified 2>/dev/null; }
+s_tag_moved()  { pushed; git -C "$D" tag idd-5-verified main; git -C "$D" push -q origin idd-5-verified 2>/dev/null
+                 git -C "$D" tag -f idd-5-verified idd/5-x > /dev/null; }   # origin has the tag at another commit
 s_worktree()   { pushed; git -C "$D" worktree add -q "$S/second" -b side 2>/dev/null; }
 s_edits()      { pushed; printf '%s/\n' "$EDITS" >> "$D/.git/info/exclude"; mkdir -p "$D/$EDITS/edits"; printf 'old text\n' > "$D/$EDITS/edits/c1.md"; }
 s_parked()     { pushed; mkdir -p "$D/.git/spectra-app/changes/x"; printf 'p\n' > "$D/.git/spectra-app/changes/x/proposal.md"; }
@@ -153,6 +155,7 @@ untracked|kept|notes.txt
 stash|kept|a stash
 tag_local|kept|idd-5-verified
 tag_pushed|removed|
+tag_moved|kept|idd-5-verified
 worktree|kept|a second working tree
 edits|kept|earlier versions of corrected GitHub text
 parked|kept|parked
