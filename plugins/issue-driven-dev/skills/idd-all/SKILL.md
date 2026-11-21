@@ -235,13 +235,20 @@ if [ -n "$STOP_FLAG" ]; then
 else
   STOP_MODE=""
   if [ -n "$CONFIG_PATH" ] && jq -e 'has("verify_stop")' "$CONFIG_PATH" >/dev/null 2>&1; then
-    # present: an object with a string mode, or else a value that is not understood (printed below)
-    STOP_MODE=$(jq -r 'if (.verify_stop | type) == "object" then (.verify_stop.mode // "(no mode)") else "(not an object)" end' "$CONFIG_PATH" 2>/dev/null || echo "(unreadable)")
+    # Compared inside jq, on the JSON value (verify r1 #5): $(...) strips trailing newlines, so a shell
+    # comparison would read "early\n" as early. jq prints one of the three values exactly, or a description in
+    # parentheses (an empty string included), which the case below warns about.
+    STOP_MODE=$(jq -r '.verify_stop as $v
+      | if ($v | type) != "object" then "(not an object)"
+        elif ($v | has("mode") | not) then "(no mode)"
+        elif ($v.mode | type) != "string" then "(mode is not a string)"
+        elif ($v.mode | IN("early", "exhaustive-blocking", "exhaustive-all")) then $v.mode
+        else "(mode \($v.mode | @json))" end' "$CONFIG_PATH" 2>/dev/null || echo "(unreadable)")
   fi
   case "$STOP_MODE" in
     early|exhaustive-blocking|exhaustive-all) STOP_SRC="config verify_stop.mode" ;;
     '') STOP_MODE=none; STOP_SRC="no stop mode" ;;
-    *) echo "⚠ verify_stop.mode '$STOP_MODE' in $CONFIG_PATH is not early, exhaustive-blocking or exhaustive-all — running without a stop mode"
+    *) echo "⚠ verify_stop in $CONFIG_PATH: $STOP_MODE is not early, exhaustive-blocking or exhaustive-all — running without a stop mode"
        STOP_MODE=none; STOP_SRC="no stop mode (the config value was ignored)" ;;
   esac
 fi
@@ -1155,6 +1162,7 @@ echo "→ next (round $(printf '%s' "$NEXT_JSON" | jq -r '.round // "?"')): $NEX
 FIX_IN_SCOPE = not REVIEW_FLAG and not IN_CHAIN      # read the run-state file if the shell lost them
 STOP_MODE = run_state["verify_stop"]                 # None, "early", "exhaustive-blocking" or "exhaustive-all"
 STOP_REASON = None
+ROUND = 0                                            # counted here only when next has no run state (verify r1 #6)
 while True:
     Skill(skill="issue-driven-dev:idd-verify", args=VERIFY_ARGS)
     gate = verify_gate()                     # the gate block above → GATE_JSON (it records the round)
@@ -1162,6 +1170,10 @@ while True:
 
     if STOP_MODE is not None:
         # With a stop mode (#595), attended and unattended alike: next decides, the model only fixes.
+        # A round that is not recorded never fixes (verify r1 #4): an unparseable gate, or no run state, stops here.
+        if gate.status == "unparseable" or nxt.mode is None:
+            STOP_REASON = f"stop mode {STOP_MODE}: {gate.reason if gate.status == 'unparseable' else nxt.reason}"
+            break
         if nxt.decision == "fix":
             rows = report_rows(action="Blocking") + (report_rows(action="In-scope fix") if FIX_IN_SCOPE else [])
             if any(is_security_vulnerability(r) for r in rows):
@@ -1181,7 +1193,12 @@ while True:
     # No stop mode: the rules of #392. The round limit (2 unattended, 1 attended) is next's, not the model's.
     # A round is a verify attempt: a new commit or a new report on the same commit, also when its report was missing
     # or unreadable, or the fix pass made no commit.
-    # When next's answer has no round or no limit (no run state, e.g. Step 0.7's init failed), the limit is reached.
+    # No run state (next's answer has no round or limit, e.g. Step 0.7's init failed): count the rounds yourself as
+    # before #595 (verify r1 #6). The close stage does not merge such a run, but the fix rounds stay the same.
+    if nxt.get("round") is None or nxt.get("limit") is None:
+        ROUND += 1
+        LIMIT = 2 if INTERACTION == "unattended" else 1
+        nxt = dict(nxt, round=ROUND, limit=LIMIT, decision="stop" if ROUND >= LIMIT else "fix")
 
     if gate.status == "clean" or (gate.status == "not_clean" and gate.blocking == 0 and not FIX_IN_SCOPE):
         if gate.status == "clean" and gate.low_in_scope > 0:
@@ -1199,8 +1216,8 @@ while True:
             break                            # Phase 5 opens the PR with a "not clean" body; Phase 5c does not run
         if INTERACTION == "attended":
             report_findings_and_exit_to_user(); break
-        if nxt.round >= nxt.limit:
-            abort_with_message("verify still has Blocking findings after the last round; manual intervention needed")
+        if nxt.decision == "stop":
+            abort_with_message(f"verify still has Blocking findings ({nxt.reason}); manual intervention needed")
         attempt_auto_fix(report_rows(action="Blocking")); continue
 
     # not_clean
@@ -1213,9 +1230,9 @@ while True:
 
     if nxt.decision == "stop":
         if gate.blocking > 0:
-            abort_with_message(f"verify still has Blocking findings after {nxt.limit} rounds; manual intervention needed")
+            abort_with_message(f"verify still has Blocking findings ({nxt.reason}); manual intervention needed")
             # the abort report carries one line: Stopped: verify still has Blocking findings after round N (report URL)
-        STOP_REASON = f"verify gate: not_clean after {nxt.limit} rounds — {gate.in_scope} In-scope fix finding(s) remain"
+        STOP_REASON = f"verify gate: not_clean ({nxt.reason}) — {gate.in_scope} In-scope fix finding(s) remain"
         break                                # 0 Blocking: Phase 5 still opens the PR (its body says so); Phase 5c does not run
 
     # unattended: fix the rows of the verify report whose Action is Blocking
@@ -1223,7 +1240,7 @@ while True:
     attempt_auto_fix(report_rows(action="Blocking") + (report_rows(action="In-scope fix") if FIX_IN_SCOPE else []))
 ```
 
-**輪數由 `next` 決定（#595、#591）**：沒有停止模式時，unattended 2 輪 verify（中間最多修一次）、attended 1 輪（讀出結果、交回使用者），與 #595 之前相同；輪數從 run-state 的紀錄讀（gate 每判一個新的 commit、或同一個 commit 上的新報告算一輪；報告沒貼出、讀不出，或修正沒有產生 commit，也算），所以 compaction 之後也不會被超過，close stage 也會擋下紀錄超過 2 輪的無人值守 run，以及 Phase 4 從沒判過的報告。`next` 的回答沒有 `round` 或 `limit` 時（沒有 run-state，例如 Step 0.7 的 init 失敗），當成已到上限。attended 的使用者在同一個 session 裡處理完 findings、說要繼續時，再跑一輪 verify（不限輪數，不自動修），乾淨了就照常進 Phase 5 與 Phase 5c；這是 attended 走到「某一輪乾淨才 merge 並 close」的路徑（spectra-discuss 結論 2，verify r3 #8）。
+**輪數由 `next` 決定（#595、#591）**：沒有停止模式時，unattended 2 輪 verify（中間最多修一次）、attended 1 輪（讀出結果、交回使用者），與 #595 之前相同；輪數從 run-state 的紀錄讀（gate 每判一個新的 commit、或同一個 commit 上的新報告算一輪；報告沒貼出、讀不出，或修正沒有產生 commit，也算），所以 compaction 之後也不會被超過，close stage 也會擋下紀錄超過 2 輪的無人值守 run，以及 Phase 4 從沒判過的報告。`next` 的回答沒有 `round` 或 `limit` 時（沒有 run-state，例如 Step 0.7 的 init 失敗），照 #595 之前由 Phase 4 自己數輪數（unattended 2 輪、attended 1 輪）；這種 run 的 close stage 本來就不合併，修正的輪數不變。設了停止模式而沒有 run-state、或這一輪 gate 讀不出報告時，不再修、直接停下。`next` 回答過 fix 的同一個結果（同一個 commit、同一份報告或同樣沒有報告）再問一次，答案是停下、不合併：新的一輪一定要帶來新的 commit 或新的報告，所以 compaction 之後重跑 `next` 也會停在這裡，而不是重複上一輪的修正（verify r1 #2、#4）。attended 的使用者在同一個 session 裡處理完 findings、說要繼續時，再跑一輪 verify（不限輪數，不自動修），乾淨了就照常進 Phase 5 與 Phase 5c；這是 attended 走到「某一輪乾淨才 merge 並 close」的路徑（spectra-discuss 結論 2，verify r3 #8）。
 
 **停止模式（#595）**：設了模式時（Step 0.2 的 `→ Stop mode:` 不是 `none`），attended 與 unattended 都照 `next` 自動修、自動再驗；安全漏洞仍不自動修。to-fix count 是 Blocking 加上 LOW／INFO／P3 以外的 In-scope fix（`--review`、`--in-chain` 只數 Blocking）。判定表（`scripts/lib/stopmode.py`，規格 `idd-pr-hitl-modes` 的「A configured stop mode decides when the fix loop stops and whether the run merges」）：
 

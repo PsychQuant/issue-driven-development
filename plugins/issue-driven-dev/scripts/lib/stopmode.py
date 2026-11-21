@@ -18,7 +18,15 @@ loop stops and whether the run merges"):
 
 The to-fix count is what the loop fixes: Blocking plus the In-scope fix findings above
 LOW. A run with --review or --in-chain fixes Blocking only and never merges, so its
-count is Blocking.
+count is Blocking (also in exhaustive-all).
+
+Two rules hold in every run (verify round 1 of #595):
+- a gate result that `next` already answered with fix (same commit, same report or no
+  report) is answered stop without a merge: a new round brings a new commit or a new
+  report, so the loop always ends, and a round whose result was not recorded never
+  reuses the previous answer;
+- a stop-mode stop does not merge while the round leaves an In-scope fix finding of
+  severity CRITICAL, HIGH, P0 or P1 (`high_in_scope`; the close stage checks it too).
 """
 
 MODES = ("early", "exhaustive-blocking", "exhaustive-all")
@@ -69,8 +77,33 @@ def _no_mode(st):
     return _answer("fix", False, f"no stop mode: round {k} of {limit} is {status or 'not judged'}", None, rounds, **extra)
 
 
+def fix_key(st):
+    """The gate result an answer is about: the commit and the report the gate read last."""
+    last = st.get("last_gate") or {}
+    return {"sha": last.get("sha"), "report_id": last.get("report_id")}
+
+
+def answered_fix(st):
+    key = fix_key(st)
+    return any(isinstance(f, dict) and f.get("sha") == key["sha"] and f.get("report_id") == key["report_id"]
+               for f in st.get("fix_answers") or [])
+
+
 def decide(st):
-    """The answer for the newest recorded round. Anything that cannot be judged is a stop without a merge."""
+    """The answer for the newest recorded round, after the two rules that hold in every run (module docstring)."""
+    ans = _decide(st)
+    if ans["decision"] == "fix" and answered_fix(st):
+        return dict(ans, decision="stop", merge=False,
+                    reason=f"no new report or commit followed the fix answer for this result ({ans['reason']})")
+    rounds = st.get("rounds") or []
+    high = rounds[-1].get("high_in_scope") if rounds else None
+    if ans["merge"] and ans.get("mode") is not None and isinstance(high, int) and high > 0:
+        return dict(ans, merge=False, reason=f"{ans['reason']}; {high} In-scope fix finding(s) of severity CRITICAL, "
+                    "HIGH, P0 or P1 are left, so the stop does not merge")
+    return ans
+
+
+def _decide(st):
     mode = st.get("verify_stop")
     if mode is None:
         return _no_mode(st)
@@ -115,5 +148,6 @@ def decide(st):
     # exhaustive-all: no round limit; LOW In-scope fix findings count too
     left = cur["blocking"] + (0 if never_merges else cur["in_scope"])
     if left == 0:
-        return _answer("stop", may_merge, f"round {k} leaves no finding", mode, rounds, never_merges, round=k, to_fix=0)
+        why = f"round {k} has no Blocking finding" if never_merges else f"round {k} leaves no finding"
+        return _answer("stop", may_merge, why, mode, rounds, never_merges, round=k, to_fix=0)
     return _answer("fix", False, f"round {k} leaves {left} finding(s)", mode, rounds, never_merges, round=k, to_fix=left)

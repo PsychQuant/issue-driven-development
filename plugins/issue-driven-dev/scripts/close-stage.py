@@ -84,7 +84,7 @@ from ghread import (CI_GATE_RESULTS, GH, GIT, SLEEP, TEST, Stop, gh_json, git, i
                     local_ci, now, gh_paginated, parse_iso, run_cmd, session_login, ts, first_line)
 from intent import (check_intent, check_issue_authors, check_meeting, check_others,  # noqa: E402
                     check_pr_people, issue_meta)
-from stopmode import MODES, decide  # noqa: E402  scripts/lib/stopmode.py — when the fix loop stops (#595)
+from stopmode import MODES, decide, fix_key  # noqa: E402  scripts/lib/stopmode.py — when the fix loop stops (#595)
 
 WRITE_PERMS = {"WRITE", "MAINTAIN", "ADMIN"}
 STATE_TTL = 24 * 3600
@@ -352,7 +352,7 @@ def read_state(cwd, repo, n):
         raise Stop("the run state is not a JSON object")
     if st.get("repo") != repo or str(st.get("issue")) != str(n):
         raise Stop("the run state names another repo or issue")
-    for key in ("rounds", "attempts"):
+    for key in ("rounds", "attempts", "fix_answers"):
         if not isinstance(st.get(key) or [], list) or not all(isinstance(r, dict) for r in st.get(key) or []):
             raise Stop(f"the run state's {key} is not a list of records")
     return st
@@ -382,6 +382,7 @@ def record_round(cwd, repo, n, result, sha):
                        "blocking": result.get("blocking") if judged else None,
                        "in_scope": result.get("in_scope") if judged else None,
                        "low_in_scope": result.get("low_in_scope") if judged else None,
+                       "high_in_scope": result.get("high_in_scope") if judged else None,
                        "rejected": result.get("rejected") if judged else None,
                        "report_id": rid, "at": at})
         seen.append(rid)
@@ -400,7 +401,17 @@ def cmd_next(argv):
         return usage("next needs --cwd <dir> --repo owner/repo --issue <digits>")
     unknown = {"decision": "stop", "merge": False, "mode": None, "rounds": [], "decided": False}
     try:
-        answer = decide(read_state(a["--cwd"], a["--repo"], a["--issue"]))
+        st = read_state(a["--cwd"], a["--repo"], a["--issue"])
+        answer = decide(st)
+        if answer["decision"] == "fix":
+            # Remember the result this fix answer is about: asked again with no new report or commit, it is a stop.
+            # Not recorded means no fix: a loop whose stop cannot be guaranteed does not run another round.
+            try:
+                st["fix_answers"] = list(st.get("fix_answers") or []) + [fix_key(st)]
+                write_state(a["--cwd"], a["--issue"], st)
+            except Exception as exc:
+                answer = dict(answer, decision="stop", merge=False, decided=False,
+                              reason=f"the fix answer could not be recorded ({exc.__class__.__name__}: {exc})")
     except Stop as exc:
         answer = dict(unknown, reason=f"no readable run state: {exc}")
     except Exception as exc:  # fail closed: a surprise is a stop without a merge, never "fix"
@@ -422,7 +433,7 @@ def merge_gate(st, rc, gate, sha):
         if st.get("interaction") == "unattended" and len(attempts) > 2:
             raise Stop(f"guardrail 1 (verify rounds) — {len(attempts)} verify rounds are recorded and a run without a stop "
                        "mode allows 2 verify rounds; a person reviews the fixes after the second")
-        if rounds and gate.get("comment_id") not in [r.get("report_id") for r in rounds]:
+        if gate.get("comment_id") not in [r.get("report_id") for r in rounds]:   # an empty record too
             raise Stop("guardrail 1 (verify rounds) — the newest verify report was never judged in Phase 4 "
                        "(it is not in the round record)")
         return
@@ -436,6 +447,13 @@ def merge_gate(st, rc, gate, sha):
         raise Stop(f"guardrail 1 (stop mode {mode}) — {answer['reason']}; the stop mode does not merge this round "
                    f"(answer: {answer['decision']})")
     settled_stop(gate)
+    # A serious In-scope fix finding is not left behind by a merge (verify round 1 #1): the close stage checks it
+    # itself, whatever Phase 4 did about security findings.
+    high = gate.get("high_in_scope")
+    if not isinstance(high, int) or high:
+        left = "an unknown number of" if not isinstance(high, int) else str(high)
+        raise Stop(f"guardrail 1 (stop mode {mode}) — the report leaves {left} In-scope fix finding(s) of severity "
+                   "CRITICAL, HIGH, P0 or P1; a stop mode merges only when none is left")
     # The clean merge requires a complete coverage line and reviewers line; verify-gate reads them for every verdict.
     for field, what in (("coverage_complete", "a complete coverage line (X / X requirements addressed)"),
                         ("reviewers_complete", "a complete reviewers line (X / X reviewers completed)")):

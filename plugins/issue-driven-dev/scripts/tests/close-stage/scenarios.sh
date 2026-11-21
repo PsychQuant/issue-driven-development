@@ -104,7 +104,11 @@ init_state() { # path [requested-path] [review] [in-chain] [interaction] [stop-m
     --interaction "$inter" --branch "$branch" --default main --review "$review" --in-chain "$chain" --stop "$stop" >/dev/null
 }
 
-run_stage() { # → OUT, RC
+run_stage() { # → OUT, RC. Phase 4 always judges the round before the close stage (#595): run the gate first,
+  # unless the test is about a report Phase 4 never judged (NO_PREGATE=1).
+  if [ -z "${NO_PREGATE:-}" ] && [ -n "${SHA:-}" ]; then
+    IDD_GH="$FAKE" FAKE_GH_DIR="$S/gh" python3 "$CS" gate --cwd "$C" --repo $REPO --issue $N --sha "$SHA" --base "$(base_of "$SHA")" >/dev/null 2>&1
+  fi
   OUT=$(IDD_GH="$FAKE" FAKE_GH_DIR="$S/gh" python3 "$CS" run --cwd "$C" --repo $REPO --issue $N --ci-timeout 0.5 --ci-grace 0 2>"$S/err"); RC=$?
 }
 
@@ -549,7 +553,9 @@ pr_scenario moved-during-ci; cat > "$S/gh/on-checks.sh" <<EOF
 cd "$WORK" && rm -rf mdc && git clone -q "$S/o/r.git" mdc && cd mdc && echo y > h.txt && git add h.txt && git -c user.name=t -c user.email=t@e commit -q -m other && git push -q origin main
 EOF
 run_stage; stop_case "the default branch moved during the CI wait (r4 #1)" "behind"
-pr_scenario slash; init_state PR; OUT=$(IDD_GH="$FAKE" FAKE_GH_DIR="$S/gh" python3 "$CS" run --cwd "$C/" --repo $REPO --issue $N --ci-timeout 0.5 --ci-grace 0 2>"$S/err"); RC=$?
+pr_scenario slash; init_state PR
+IDD_GH="$FAKE" FAKE_GH_DIR="$S/gh" python3 "$CS" gate --cwd "$C/" --repo $REPO --issue $N --sha "$SHA" --base "$(base_of "$SHA")" >/dev/null 2>&1   # Phase 4 judged it
+OUT=$(IDD_GH="$FAKE" FAKE_GH_DIR="$S/gh" python3 "$CS" run --cwd "$C/" --repo $REPO --issue $N --ci-timeout 0.5 --ci-grace 0 2>"$S/err"); RC=$?
 merged_case "--cwd with a trailing slash (r4 #43)"
 pr_scenario crash; OUT=$(IDD_GH=/nonexistent/gh FAKE_GH_DIR="$S/gh" python3 "$CS" run --cwd "$C" --repo $REPO --issue $N 2>/dev/null); RC=$?
 assert_eq "gh missing: stopped, not a traceback" "stopped" "$(printf '%s' "$OUT" | field status)"
@@ -890,7 +896,7 @@ stop_case "early, a round with Blocking" "stop mode early"
 new_scenario stop-merge-stale; git -C "$C" checkout -q -b idd/7-x; work_commit "feat: thing (#7)"; pr_fixture "$SHA"
 verify_comment me "$SHA" "$(base_of "$SHA")" "**FAIL** — 0 blocking, 1 in-scope fix" "In-scope fix:a LOW leftover"
 init_state PR PR no no unattended early; gate_run
-verify_comment me "$SHA" "$(base_of "$SHA")" "**FAIL** — 0 blocking, 1 in-scope fix" "In-scope fix:a LOW leftover"; run_stage
+verify_comment me "$SHA" "$(base_of "$SHA")" "**FAIL** — 0 blocking, 1 in-scope fix" "In-scope fix:a LOW leftover"; NO_PREGATE=1 run_stage
 stop_case "early, a report the round record has not seen" "not the round"
 
 # two rounds of one PR: round 1 on the first commit, round 2 on a fix commit
@@ -918,12 +924,46 @@ REVIEWERS="" SEV=MEDIUM two_rounds stop-run-noreviewers early "**FAIL** — 0 bl
   "**FAIL** — 0 blocking, 2 in-scope fix" "In-scope fix:c;In-scope fix:d"; run_stage
 stop_case "early, no reviewers line" "reviewers line"
 # no stop mode: a report the round record never saw does not merge
-pr_scenario stop-nomode-unseen; gate_run; verify_comment me "$SHA" "$(base_of "$SHA")" "$PASS_LINE"; run_stage
+pr_scenario stop-nomode-unseen; gate_run; verify_comment me "$SHA" "$(base_of "$SHA")" "$PASS_LINE"; NO_PREGATE=1 run_stage
 stop_case "no stop mode, a newer report Phase 4 never judged" "never judged"
 # gate: a broken round record fails the gate closed
 pr_scenario stop-gate-broken; echo '{"repo": "o/r", "issue": 7, "rounds": "x"}' > "$C/.claude/.idd/state/idd-all-run-7.json"; gate_run
 assert_exit "gate: a round record that is not a list is unparseable" 2 "$RC"
 assert_eq "gate: … and says so" unparseable "$(printf '%s' "$G" | field status)"
+
+# spec (fix round 1): a result already answered with fix stops the loop
+new_scenario stop-fix-answered; write_rounds early unattended no "0,3,0"; next_run
+assert_eq "early round 1 with 3 to fix: fix" fix "$(nx decision)"
+next_run
+assert_eq "the same result asked again (no new report, no new commit): stop" stop "$(nx decision)"
+assert_eq "the same result asked again: no merge" False "$(nx merge)"
+assert_grep "the same result asked again: the reason says so" "no new report or commit" "$(nx reason)"
+write_rounds none unattended no "0,3,0"; next_run; next_run
+assert_eq "no stop mode: the same result asked again also stops" stop "$(nx decision)"
+# spec (fix round 1): a serious In-scope finding left unfixed is not merged
+SEV=HIGH two_rounds stop-run-high early "**FAIL** — 0 blocking, 2 in-scope fix" "In-scope fix:a;In-scope fix:b" \
+  "**FAIL** — 0 blocking, 2 in-scope fix" "In-scope fix:c;In-scope fix:d"; run_stage
+stop_case "early, two HIGH In-scope fix findings left" "HIGH"
+# … and the close stage checks it itself: a round record without high_in_scope (next cannot see it) still stops
+SEV=HIGH two_rounds stop-run-high-cs early "**FAIL** — 0 blocking, 2 in-scope fix" "In-scope fix:a;In-scope fix:b" \
+  "**FAIL** — 0 blocking, 2 in-scope fix" "In-scope fix:c;In-scope fix:d"
+python3 - "$C/.claude/.idd/state/idd-all-run-7.json" <<'PY'
+import json, sys
+p = sys.argv[1]; st = json.load(open(p))
+for r in st["rounds"]:
+    r.pop("high_in_scope", None)
+json.dump(st, open(p, "w"))
+PY
+NO_PREGATE=1 run_stage
+stop_case "early, HIGH In-scope fix left and not in the round record" "CRITICAL, HIGH, P0 or P1"
+# spec (fix round 1): exhaustive-all with --review counts Blocking only
+new_scenario stop-exall-review; write_rounds exhaustive-all unattended yes "0,2,0"; next_run
+assert_eq "exhaustive-all --review, 0 Blocking: stop" stop "$(nx decision)"
+assert_eq "exhaustive-all --review: no merge" False "$(nx merge)"
+assert_grep "exhaustive-all --review: the reason says no Blocking" "no Blocking" "$(nx reason)"
+# spec (fix round 1): an empty round record does not merge
+pr_scenario stop-nomode-empty; NO_PREGATE=1 run_stage
+stop_case "no stop mode, an empty round record" "never judged"
 
 # spec (Clean verify leads to merge and close): a stop-mode run is not stopped by its own length
 age_state() { # created-hours-ago last-round-hours-ago
