@@ -1155,7 +1155,7 @@ bind_row token ':' '' 0 T
 bind_row other-token ':' '"" "$T" "$NO_TOKEN_YET"' 4 none
 bind_row swapped 'mv "$D" "$S/orig"; git clone -q "$T.origin.git" "$D" 2> /dev/null' '' 64 none
 bind_row origin 'git -C "$D" remote set-url origin "$S/elsewhere.git"' '' 64 none
-bind_row other-root 'mkdir -p "$S/U"' '"" "$S/U"' 64 none
+bind_row other-root 'git_tree "$S/U"; mkdir -p "$S/U/.claude/.idd/state"; cp "$(state_file)" "$S/U/.claude/.idd/state/"' '"" "$S/U"' 64 none   # U holds a copy of the run of T
 bind_row none-after 'init no > /dev/null 2>&1' '"" none' 64 T
 
 # spec-example: idd-all-rest / review added while an issue is in flight

@@ -705,18 +705,10 @@ def write_result(cwd, n, result):
 
 
 def rest_token_guard(cwd, n, root, token):
-    """For an issue whose run names a rest root: check now that `token` is the token of that run, and return the check
-    that run_pr makes right before the merge (rest_recheck). None for any other run. Stop when no token was given or
-    it is not the run's: another session has taken the run over, and the issue is that session's."""
+    """For an issue whose run names a rest root: the check that run_pr makes right before the merge (rest_recheck).
+    None for any other run. The token itself was checked when cmd_run began, before anything was written."""
     if root in (None, "none"):
         return None
-    if not token:
-        raise Stop("no token of the rest run was given (--rest-token): an issue of a rest run is merged only by the session "
-                   "that holds the run — the run stays at verified")
-    word, rest = by_record(cwd, n, root)
-    if word == "unreadable" or not reststate.owns(rest, token):
-        raise Stop("the token is not the one of the rest run of this issue: another session has taken the rest run over "
-                   "(start --take-over) — the run stays at verified")
     return lambda: rest_recheck(cwd, n, root, token)
 
 
