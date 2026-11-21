@@ -7,7 +7,7 @@ and prints one JSON line:
     {"status": "clean" | "not_clean" | "unparseable",
      "verdict": "PASS" | "FAIL" | null,
      "blocking": int | null, "in_scope": int | null, "follow_up": int | null,
-     "rejected": int | null, "low_in_scope": int | null,
+     "rejected": int | null, "low_in_scope": int | null, "high_in_scope": int | null,
      "high_follow_up": int | null, "process_gaps": bool | null, "reason": str}
 
 Exit codes: clean 0 · not_clean 1 · unparseable 2 (also when the file cannot be
@@ -105,8 +105,11 @@ def emit(status, reason, verdict=None, counts=None, extra=None):
         "follow_up": counts.get("follow_up"),
         "rejected": counts.get("rejected"),
         "low_in_scope": (extra or {}).get("low_in_scope"),
+        "high_in_scope": (extra or {}).get("high_in_scope"),
         "high_follow_up": (extra or {}).get("high_follow_up"),
         "process_gaps": (extra or {}).get("process_gaps"),
+        "coverage_complete": (extra or {}).get("coverage_complete"),
+        "reviewers_complete": (extra or {}).get("reviewers_complete"),
         "reason": reason,
     }
     print(json.dumps(out, ensure_ascii=False))
@@ -290,6 +293,7 @@ def judge(html, expect_sha=None, expect_base=None):
     high_follow_up = 0
     blocking_scope = 0
     low_in_scope = 0
+    high_in_scope = 0   # In-scope fix rows of severity CRITICAL, HIGH, P0 or P1: a stop-mode merge leaves none (#595)
     for n, (value, severity) in enumerate(values, 1):
         if value not in CLASSES:
             shown = value if value else "(empty)"
@@ -303,6 +307,8 @@ def judge(html, expect_sha=None, expect_base=None):
                 low_in_scope += 1
             else:
                 blocking_scope += 1
+            if severity in HIGH_SEVERITIES:
+                high_in_scope += 1
     # A verify that ran degraded (a reviewer failed and the coordinator stood in) says so under
     # `### Process Gaps`; the close stage does not merge on it (r5 #22).
     # Read in any case, anywhere a person reads text — a heading, a bold label, a list item (r7 #11, #14).
@@ -316,7 +322,15 @@ def judge(html, expect_sha=None, expect_base=None):
     reviewers = [m for m in (REVIEWERS_RE.match(t) for t in all_lines) if m]
     if any(int(m.group(1)) < int(m.group(2)) for m in reviewers):
         gaps = True
-    extra = {"high_follow_up": high_follow_up, "process_gaps": gaps, "low_in_scope": low_in_scope}
+    # Whether the coverage line and the reviewers line are complete, read for every verdict (#595): a stop mode
+    # can merge a FAIL round, and that merge passes the same coverage and reviewers checks as a clean one.
+    cover = [m for m in (COVERAGE_RE.match(t) for t in all_lines) if m]
+    coverage_complete = len(cover) == 1 and cover[0].group(1) == cover[0].group(2)
+    reviewers_complete = (len(reviewers) == 1 and int(reviewers[0].group(2)) > 0
+                          and int(reviewers[0].group(1)) == int(reviewers[0].group(2)))
+    extra = {"high_follow_up": high_follow_up, "process_gaps": gaps, "low_in_scope": low_in_scope,
+             "high_in_scope": high_in_scope,
+             "coverage_complete": coverage_complete, "reviewers_complete": reviewers_complete}
 
     pairs = [(k.lower(), int(v)) for v, k in COUNT_RE.findall(verdict_text)]
     stated = dict(pairs)
