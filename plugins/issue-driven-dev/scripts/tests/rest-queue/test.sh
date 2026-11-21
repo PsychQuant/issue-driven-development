@@ -1273,7 +1273,12 @@ assert_eq "rest-review: the directory moved to U with a link at its place, asked
 rm "$D"; mv "$S/moved" "$D"
 new rr-fifo 5 9
 mkdir -p "$T/.claude/.idd/state"; mkfifo "$(state_file)"
-OUT=$( (rest_review "$T" & P=$!; ( sleep 5; kill $P 2>/dev/null ) & wait $P) 2>/dev/null)
+# the reader runs as a direct child with its output in a file, so a reader that waits on the FIFO is ended after
+# 5 seconds and the test fails; it does not wait with it (a command substitution would wait for the reader's pipe)
+python3 "$CS" rest-review --cwd "$T" --repo "$REPO" --issue 5 > "$S/fifo.out" 2> /dev/null & P=$!
+( sleep 5; kill "$P" 2> /dev/null ) > /dev/null 2>&1 & W=$!
+wait "$P" 2> /dev/null; kill "$W" 2> /dev/null
+OUT=$(cat "$S/fifo.out")
 assert_eq "rest-review: a FIFO at the place of the state: unreadable, without waiting" "unreadable" "$OUT"
 phase5() { # [directory] → the two lines of Phase 5 that take the review of the rest run, run as they are written → RUN_REVIEW
   (CLAUDE_PLUGIN_ROOT="$PLUGIN"; CWD="${1:-$(dir_of 5)}"; GITHUB_REPO="$REPO"; N=5; RUN_REVIEW=no
