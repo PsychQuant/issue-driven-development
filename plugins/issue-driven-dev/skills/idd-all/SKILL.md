@@ -1355,12 +1355,14 @@ elif [ "$PATH_AXIS" = "PR" ]; then
   BASE_SHA=$(git -C "$CWD" merge-base "origin/$DEFAULT_BRANCH" "$HEAD_SHA")
   RUN_REVIEW=$(jq -r 'if .review then "yes" else "no" end' "$CWD/.claude/.idd/state/idd-all-run-$N.json" 2>/dev/null || echo unknown)
   GATE_BASE=(--base "$BASE_SHA"); [ "$RUN_REVIEW" = no ] || GATE_BASE=()   # --review: verify's range is not pinned (r4 #44)
-  GATE_OUT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/close-stage.py" gate --cwd "$CWD" --repo "$GITHUB_REPO" --issue "$N" --sha "$HEAD_SHA" "${GATE_BASE[@]}")
+  # --read-only (verify r3 #1): the PR body reads what Phase 4 decided; it never records a round or changes an answer.
+  # A report that appeared after Phase 4 stopped is not in the round record, so the close stage does not merge on it.
+  GATE_OUT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/close-stage.py" gate --cwd "$CWD" --repo "$GITHUB_REPO" --issue "$N" --sha "$HEAD_SHA" "${GATE_BASE[@]}" --read-only yes)
   VERIFY_STATE=$(printf '%s' "$GATE_OUT" | jq -r '.status // "unparseable"')
   # A Rejected finding is a disagreement no person has settled: the close stage stops on it, so the body must not promise a merge
   [ "$VERIFY_STATE" = clean ] && [ "$(printf '%s' "$GATE_OUT" | jq -r '.rejected // 0')" != 0 ] && VERIFY_STATE="clean, with Rejected findings"
   # #595: with a stop mode, next decides whether this round merges, also when the gate is not clean
-  NEXT_OUT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/close-stage.py" next --cwd "$CWD" --repo "$GITHUB_REPO" --issue "$N" 2>/dev/null)
+  NEXT_OUT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/close-stage.py" next --cwd "$CWD" --repo "$GITHUB_REPO" --issue "$N" --read-only yes 2>/dev/null)
   STOP_MODE_RUN=$(printf '%s' "$NEXT_OUT" | jq -r '.mode // "none"' 2>/dev/null || echo none)
   STOP_MERGE=$(printf '%s' "$NEXT_OUT" | jq -r 'if .merge == true then "yes" else "no" end' 2>/dev/null || echo no)
   if [ "$STOP_MODE_RUN" != none ] && [ "$STOP_MERGE" = yes ] && [ "$VERIFY_STATE" != clean ] && [ "$RUN_REVIEW" = no ]; then
@@ -1579,9 +1581,9 @@ Done:
   residue recorded: ${RESIDUE or "none"}
   distribution sync: ${done | asked: <answer> | skipped — run <command> | n/a}
   verify: ${ENGINE line of the verify report}; degraded: ${missing reviewers or "none"}
-  left open: ${LOW} LOW in-scope finding(s) not fixed — listed in #${LOW_FOLLOWUP}        (only when low_in_scope > 0)
+  left open: ${LOW} LOW in-scope finding(s) not fixed — listed in #${LOW_FOLLOWUP}        (only when low_in_scope > 0 and the run has no stop mode)
   stop mode: ${MODE} — ${K} round(s), to-fix ${COUNTS}; stopped because ${NEXT_REASON}   (only with a stop mode; COUNTS like "6 → 4 → 4")
-  left open: ${F} in-scope finding(s) not fixed (stop mode) — listed in #${STOP_FOLLOWUP}    (only when a stop-mode merge left findings)
+  left open: ${F} in-scope finding(s) not fixed (stop mode) — listed in #${STOP_FOLLOWUP}    (only when a stop-mode merge left findings; LOW ones included, so the line above is not printed)
   left open: ${PC} comment(s) list Proposed Corrections that were not applied              (only when proposed_corrections > 0)
   remote CI: ${failed check names} failed while local CI passed                            (only when remote_ci_failed is not empty; "not readable" → say the remote checks could not be read; list remote_ci_pending as still running)
 Undo:

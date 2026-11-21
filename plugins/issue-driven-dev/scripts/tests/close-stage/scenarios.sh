@@ -995,6 +995,32 @@ assert_eq "the same report read as clean after a fix answer: stop" stop "$(nx de
 assert_eq "the same report read as clean after a fix answer: no merge" False "$(nx merge)"
 NO_PREGATE=1 run_stage
 stop_case "no stop mode, a clean report next already answered with fix" "fix answer"
+# verify r3 #1: Phase 5 reads the gate without writing the round record; a report Phase 4 never judged does not merge
+SEV=MEDIUM two_rounds stop-run-readonly early "**FAIL** — 1 blocking, 2 in-scope fix" "Blocking:x;In-scope fix:a;In-scope fix:b" \
+  "**FAIL** — 1 blocking, 2 in-scope fix" "Blocking:x;In-scope fix:c;In-scope fix:d"; next_run
+assert_eq "early 3 → 3 with a Blocking finding: stop" stop "$(nx decision)"
+SEV=MEDIUM verify_comment me "$SHA" "$(base_of "$SHA")" "**FAIL** — 0 blocking, 2 in-scope fix" "In-scope fix:e;In-scope fix:f" "## Verify: #7 — round 3"
+G=$(IDD_GH="$FAKE" FAKE_GH_DIR="$S/gh" python3 "$CS" gate --cwd "$C" --repo $REPO --issue $N --sha "$SHA" --base "$(base_of "$SHA")" --read-only yes); RC=$?
+assert_eq "gate --read-only: judges the newest report" not_clean "$(printf '%s' "$G" | field status)"
+assert_eq "gate --read-only: writes no round" 2 "$(rounds_len)"
+NX=$(python3 "$CS" next --cwd "$C" --repo $REPO --issue $N --read-only yes 2>"$S/err"); RC=$?
+assert_eq "next --read-only: Phase 4's answer stands" stop "$(nx decision)"
+NO_PREGATE=1 run_stage
+stop_case "early, a report posted after Phase 4 stopped" "not the round"
+# verify r3 #2: without a stop mode, a record with fewer attempts than rounds does not merge
+pr_scenario stop-nomode-noattempts; gate_run
+python3 - "$C/.claude/.idd/state/idd-all-run-7.json" <<'PY'
+import json, sys
+p = sys.argv[1]; st = json.load(open(p)); last = st["rounds"][-1]
+st["rounds"] = [dict(last, round=1, report_id=-1), dict(last, round=2, report_id=-2), dict(last, round=3)]
+st.pop("attempts"); json.dump(st, open(p, "w"))
+PY
+NO_PREGATE=1 run_stage
+stop_case "no stop mode, three rounds and no attempts recorded" "inconsistent"
+# verify r3 #3: before any gate result is recorded, next cannot decide
+new_scenario stop-nomode-nogate; init_state PR PR no no unattended none; next_run
+assert_eq "no stop mode, nothing recorded yet: stop" stop "$(nx decision)"
+assert_exit "no stop mode, nothing recorded yet: undecided" 3 "$RC"
 # spec (fix round 1): exhaustive-all with --review counts Blocking only
 new_scenario stop-exall-review; write_rounds exhaustive-all unattended yes "0,2,0"; next_run
 assert_eq "exhaustive-all --review, 0 Blocking: stop" stop "$(nx decision)"

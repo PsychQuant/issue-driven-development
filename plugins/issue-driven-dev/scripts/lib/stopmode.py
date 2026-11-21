@@ -66,6 +66,9 @@ def _no_mode(st):
     status = (st.get("last_gate") or {}).get("status")
     never_merges = bool(st.get("review") or st.get("in_chain"))
     extra = {"round": k, "limit": limit}
+    if k == 0:   # no gate result recorded yet (verify r3 #3): nothing to decide on
+        return _answer("stop", False, "no verify round is recorded in the run state yet", None, rounds,
+                       decided=False, **extra)
     if status == "clean":
         if k > limit:
             return _answer("stop", False, f"round {k} is clean, but a run without a stop mode allows {limit} "

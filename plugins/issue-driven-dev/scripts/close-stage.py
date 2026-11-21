@@ -305,10 +305,12 @@ def run_since(cwd, n):
 
 
 def cmd_gate(argv):
-    a = parse(argv, {"--cwd": "value", "--repo": "value", "--issue": "value", "--sha": "value", "--base": "value"})
+    a = parse(argv, {"--cwd": "value", "--repo": "value", "--issue": "value", "--sha": "value", "--base": "value",
+                     "--read-only": "value"})
     if a is None or not common_ok(a) or not SHA_RE.match(a.get("--sha", "")) \
-            or ("--base" in a and not SHA_RE.match(a["--base"])):
-        return usage("gate needs --cwd --repo --issue and --sha (40 lowercase hex digits), optionally --base")
+            or ("--base" in a and not SHA_RE.match(a["--base"])) or a.get("--read-only", "yes") != "yes":
+        return usage("gate needs --cwd --repo --issue and --sha (40 lowercase hex digits), optionally --base and "
+                     "--read-only yes")
     try:
         rc, result = judge_report(a["--repo"], a["--issue"], a["--sha"], a.get("--base"), run_since(a["--cwd"], a["--issue"]))
     except Stop as exc:
@@ -316,7 +318,9 @@ def cmd_gate(argv):
     except Exception as exc:  # fail closed: any surprise is unparseable, never "not clean"
         rc, result = 2, {"status": "unparseable", "reason": f"internal error: {exc.__class__.__name__}: {exc}"}
     try:
-        record_round(a["--cwd"], a["--repo"], a["--issue"], result, a["--sha"])
+        # --read-only (Phase 5's PR body, verify r3 #1): judge, but leave the round record as Phase 4 left it
+        if "--read-only" not in a:
+            record_round(a["--cwd"], a["--repo"], a["--issue"], result, a["--sha"])
     except Exception as exc:  # fail closed: a round that was not recorded must not read as a judged round
         rc, result = 2, {"status": "unparseable", "reason": f"the round record could not be written: "
                          f"{exc.__class__.__name__}: {exc}", "comment_id": result.get("comment_id")}
@@ -398,14 +402,14 @@ def record_round(cwd, repo, n, result, sha):
 # ── next ───────────────────────────────────────────────────────────────────
 
 def cmd_next(argv):
-    a = parse(argv, {"--cwd": "value", "--repo": "value", "--issue": "value"})
-    if a is None or not common_ok(a):
-        return usage("next needs --cwd <dir> --repo owner/repo --issue <digits>")
+    a = parse(argv, {"--cwd": "value", "--repo": "value", "--issue": "value", "--read-only": "value"})
+    if a is None or not common_ok(a) or a.get("--read-only", "yes") != "yes":
+        return usage("next needs --cwd <dir> --repo owner/repo --issue <digits>, optionally --read-only yes")
     unknown = {"decision": "stop", "merge": False, "mode": None, "rounds": [], "decided": False}
     try:
         st = read_state(a["--cwd"], a["--repo"], a["--issue"])
         answer = decide(st)
-        if answer["decision"] == "fix":
+        if answer["decision"] == "fix" and "--read-only" not in a:
             # Remember the result this fix answer is about: asked again with no new report or commit, it is a stop.
             # Not recorded means no fix: a loop whose stop cannot be guaranteed does not run another round.
             try:
@@ -435,13 +439,18 @@ def merge_gate(st, rc, gate, sha):
                    "commit or report followed it")
     if mode is None:
         gate_stop(rc, gate)
-        attempts = st.get("attempts") or []
-        if st.get("interaction") == "unattended" and len(attempts) > 2:
-            raise Stop(f"guardrail 1 (verify rounds) — {len(attempts)} verify rounds are recorded and a run without a stop "
-                       "mode allows 2 verify rounds; a person reviews the fixes after the second")
         if gate.get("comment_id") not in [r.get("report_id") for r in rounds]:   # an empty record too
             raise Stop("guardrail 1 (verify rounds) — the newest verify report was never judged in Phase 4 "
                        "(it is not in the round record)")
+        attempts = st.get("attempts") or []
+        # every round the gate recorded is also an attempt: fewer attempts than rounds is a record that cannot be
+        # counted (verify r3 #2), never "no rounds yet"
+        if not attempts or len(attempts) < len(rounds):
+            raise Stop(f"guardrail 1 (verify rounds) — the round record is inconsistent ({len(rounds)} round(s), "
+                       f"{len(attempts)} attempt(s)); the verify rounds cannot be counted")
+        if st.get("interaction") == "unattended" and len(attempts) > 2:
+            raise Stop(f"guardrail 1 (verify rounds) — {len(attempts)} verify rounds are recorded and a run without a stop "
+                       "mode allows 2 verify rounds; a person reviews the fixes after the second")
         return
     if rc == 2:
         raise Stop(f"guardrail 1 (verify gate) — unparseable: {gate.get('reason')}")
