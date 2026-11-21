@@ -93,8 +93,10 @@ def step():
 
 # git as this helper calls it: no signature lines in a log, no quoted paths, no colours, whatever the person's
 # configuration says. (The one `git diff` that lists paths asks for paths from the top itself: --no-relative.)
-GIT = ["git", "--no-optional-locks", "-c", "log.showSignature=false", "-c", "core.quotePath=false", "-c", "color.ui=false"]
-os.environ["GIT_OPTIONAL_LOCKS"] = "0"   # and every program this helper starts (the existing-work check, a clone): git status writes the index otherwise
+GIT = ["git", "-c", "log.showSignature=false", "-c", "core.quotePath=false", "-c", "color.ui=false"]
+# No optional locks, for every git this helper runs and every program it starts (the existing-work check, a clone):
+# git status writes the refreshed index back otherwise. One guard, in the environment, so that its test has teeth.
+os.environ["GIT_OPTIONAL_LOCKS"] = "0"
 _print = print
 
 
@@ -679,8 +681,9 @@ def kept_dirs(top):
 
 
 def remove_dir(top, d):
-    """Remove the directory of an issue, one entry of it at a time (the git directory first: a removal ended after it
-    leaves no repository, and the mark in the run state is what lets a record finish it). Only a folder at the place
+    """Remove the directory of an issue, one entry of it at a time. The order does not matter: the mark in the run state
+    lets a record ended part of the way finish the removal, whatever is left (the git directory goes first, so that
+    the sweep reaches the case in which no repository is left). Only a folder at the place
     of such a directory, reached through no symbolic link, is removed; a link inside it is removed as a link."""
     m = DIR_RE.match(os.path.basename(d))
     if not m or d != dir_of(top, m.group(1)):
@@ -743,8 +746,6 @@ def make_dir(cwd, top, st, flight):
                      + "".join(line + "\n" for line in EXCLUDED_IN_DIR))
         step()
         os.makedirs(folder, mode=0o700, exist_ok=True)
-        if link_on_the_way(d, pointer_file):
-            raise Stop(f"a symbolic link appeared on the way to the pointer file of #{n} — {todo}")
         fd = os.open(pointer_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(reststate.pointer_text(os.path.realpath(cwd), n))
