@@ -12,7 +12,8 @@ on:
 jobs:
   suites:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 30, not 20: the rest-queue and rest-queue-sweep suites (#478) add several minutes on a runner
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

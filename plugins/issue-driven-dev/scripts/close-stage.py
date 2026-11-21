@@ -35,9 +35,11 @@ Subcommands
         C/.claude/.idd/state/idd-all-result-N.json.
         Exit 0 merged/pushed, 3 stopped (reason in the JSON, including any
         error), 64 usage.
-  reset --cwd C --issue N
+  reset --cwd C --issue N [--rest-token K]
         Abort duty: remove this issue's run-state and result files. (init does the
-        same for the run it records.)
+        same for the run it records.) In the directory of an issue that a rest run has
+        in flight there, K must be the token of that run (exit 4 otherwise: nothing is
+        removed). run likewise writes nothing for such an issue without that token.
   confirm-close --cwd C --repo O/R --issue N
         After /idd-close: the issue is CLOSED and a comment by this account
         that opens with the canonical '## Closing Summary' heading was posted
@@ -199,16 +201,31 @@ def by_record(cwd, n, root):
     return ("on" if rest["review"] else "off"), rest
 
 
+def places_of(cwd):
+    """The folders whose rest run this --cwd may belong to: the --cwd itself; the top of the repository that holds it,
+    as git names it (on a file system that ignores letter case git gives the case on disk); and, for each of these that
+    is the place of a directory of an issue (R/.claude/worktrees/rest-<N>, whatever N is), the working tree R of that
+    run. A folder below the top of a working tree, or below the directory of an issue, is in that run's working tree."""
+    out = [cwd]
+    try:
+        top = git(cwd, "rev-parse", "--show-toplevel")
+        if top:
+            out.append(os.path.realpath(top))
+    except Stop:
+        pass
+    for p in list(out):
+        place = reststate.run_of(p)
+        if place:
+            out.append(place[0])
+    return list(dict.fromkeys(out))
+
+
 def by_place(cwd, n):
     """(word, directory) by the place of this --cwd alone, without the run of the issue recorded here: elsewhere (with
-    the directory) when a rest run has n in flight in a directory of its own and this --cwd is that run's working tree
-    or the place of that directory; unreadable when such a state was changed in the last 24 hours and cannot be used;
-    off otherwise."""
-    places = [cwd]
-    place = reststate.run_of(cwd)
-    if place and place[1] == n:
-        places.append(place[0])
-    for where in places:
+    the directory) when a rest run has n in flight in a directory of its own and this --cwd is in that run's working
+    tree or in the directory of one of its issues (places_of); unreadable when such a state was changed in the last 24
+    hours and cannot be used; off otherwise."""
+    for where in places_of(cwd):
         try:
             word, rest = rest_state(state_dir(where))
         except Stop:
@@ -297,6 +314,8 @@ def cmd_init(argv):
                   "run over (start --take-over) and runs it now — no run state is written; end this invocation: no "
                   "record, no stop, no report", file=sys.stderr)
             return 4
+        if a["--path"] != "PR" or a["--requested-path"] != "PR":
+            return usage("an issue of a rest run runs on the PR path only")
         place = None
     else:   # by the place alone: the run of the issue recorded here before is the one this init replaces
         word, place = by_place(cwd, n)
@@ -336,10 +355,32 @@ def cmd_init(argv):
     return 0
 
 
+def displaced_in(cwd, n, token):
+    """'' unless this --cwd is the directory of issue n of a rest run that has n in flight there; then '' when `token`
+    is the token of that run, and otherwise why it is not: a session that was taken over writes nothing for the issue."""
+    place = reststate.run_of(cwd)
+    if not place or place[1] != n:
+        return ""
+    try:
+        word, rest = rest_state(state_dir(place[0]))
+    except Stop:
+        return ""
+    flight = flight_of(rest, n) if word == "ok" else None
+    if not flight or flight.get("dir") != cwd or reststate.owns(rest, token):
+        return ""
+    if not token:
+        return "no token of the rest run was given (--rest-token)"
+    return "the token is not the one of the rest run of this directory: another session has taken the rest run over (start --take-over)"
+
+
 def cmd_reset(argv):
-    a = parse(argv, {"--cwd": "value", "--issue": "value"})
+    a = parse(argv, {"--cwd": "value", "--issue": "value", "--rest-token": "value"})
     if a is None or not a.get("--cwd") or not os.path.isdir(a["--cwd"]) or not re.match(r"^[0-9]+$", a.get("--issue", "")):
-        return usage("reset needs --cwd <dir> --issue <digits>")
+        return usage("reset needs --cwd <dir> --issue <digits> [--rest-token K]")
+    why = displaced_in(os.path.realpath(a["--cwd"]), int(a["--issue"]), a.get("--rest-token"))
+    if why:   # the run of the issue belongs to the session that holds the rest run: nothing is removed
+        print(f"close-stage: {why} — nothing is removed; end this invocation: no record, no stop, no report", file=sys.stderr)
+        return 4
     try:
         for path in (state_path(a["--cwd"], a["--issue"]), result_path(a["--cwd"], a["--issue"])):
             if os.path.exists(path):
@@ -887,6 +928,18 @@ def cmd_run(argv):
     except (ValueError, AssertionError):
         return usage("--ci-timeout and --ci-grace are non-negative seconds")
     cwd, repo, n = os.path.realpath(a["--cwd"]), a["--repo"], a["--issue"]
+    rec = the_record(cwd, int(n))
+    root = rec.get("rest_root") if rec else None
+    why = displaced_in(cwd, int(n), a.get("--rest-token"))
+    if not why and root not in (None, "none"):
+        word, rest = by_record(cwd, int(n), root)
+        if word != "unreadable" and not reststate.owns(rest, a.get("--rest-token")):
+            why = ("no token of the rest run was given (--rest-token)" if not a.get("--rest-token") else
+                   "the token is not the one of the rest run of this issue: another session has taken the rest run over (start --take-over)")
+    if why:   # the issue belongs to the session that holds the rest run: nothing is written or removed here
+        print(json.dumps({"status": "stopped", "reason": f"{why} — the run stays at verified, and nothing is written here; "
+                          "end this invocation: no record, no stop, no report", "interaction": "unattended"}, ensure_ascii=False))
+        return 3
     try:
         if os.path.exists(result_path(cwd, n)):
             os.unlink(result_path(cwd, n))   # never let an earlier run's result stand for this one
@@ -911,6 +964,8 @@ def cmd_run(argv):
             raise Stop("a rest run state at this --cwd cannot be read, so its review flag is unknown: the run stays at verified "
                        "— when no rest run is going on here, delete .claude/.idd/state/idd-all-rest.json")
         guard = rest_token_guard(cwd, int(n), st.get("rest_root"), a.get("--rest-token"))
+        if guard and st.get("path") != "PR":
+            raise Stop("an issue of a rest run runs on the PR path only — not pushing; the run stays at verified")
         if st.get("in_chain"):
             raise Stop("--in-chain: /idd-all-chain owns the cluster PR (no merge, no close)")
         if st.get("path") != st.get("requested_path"):
@@ -1055,9 +1110,11 @@ def cmd_pr_check(argv):
 
 HANDLERS = {"rest-review": cmd_rest_review, "init": cmd_init, "reset": cmd_reset, "gate": cmd_gate, "pr-check": cmd_pr_check,
             "run": cmd_run, "confirm-close": cmd_confirm}
-# The commands that take the token of a rest run (closed list): init with a rest root, and run for an issue whose record
-# names one. rest-review reads a rest run's state and takes no token; the others do not read it.
-REST_TOKEN = ("init", "run")
+# The commands that take the token of a rest run (closed list): init with a rest root; run for an issue whose record
+# names one or whose directory is that of an issue a rest run has in flight; reset in such a directory. They change
+# what the close stage does or holds for an issue of the run. rest-review only reads a rest run's state and prints a
+# word, and init and run read it to refuse; gate, pr-check and confirm-close do not read it.
+REST_TOKEN = ("init", "run", "reset")
 
 
 def main(argv):

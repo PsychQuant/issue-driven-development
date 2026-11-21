@@ -145,7 +145,7 @@ rest 只走 PR path（PR、unattended）：每一張 issue 在自己的資料夾
 
    它印出這個 run 的 token（`token: ` 那一行），只印這一次：把值寫進 `rest_run` 的 task 描述（例如 `token=<值>`），之後每個指令前設 `TOKEN=<值>`。context 壓縮之後要靠 task 描述，shell 變數留不住。它把 path、`--review`、它向 GitHub 讀到的預設 branch 與 token 的 digest 存進 run 的狀態（token 本身不存）。
 
-   24 小時內有還沒結束的 run 時，`start` 以 4 結束、什麼都不改：那個 run 可能還有另一個 session 在跑。把它印的那一行告訴使用者，這一次的呼叫就此結束。只有使用者在這次對話裡說要接手那個 run，或這一次的呼叫自己開始了這個 run、後來把 token 弄丟了（見第 4 步），才用同樣的旗標加 `--take-over` 再跑一次 `start`：它接續那個 run（旗標相同），試過的 issue 不會再跑，並印出新的 token，舊的作廢，原本拿著舊 token 的 session 下一個指令就以 4 結束。接續時 `--review` 只能加上、不能拿掉（先前的 run 帶了、這次沒帶，照樣每一張停在 verified；它會印一行說明），要拿掉就讓那個 run 以報告結束。它不看 `$REST_ROOT` 的工作樹在哪個 branch、有沒有改動。git 還不會忽略 `.claude/worktrees/` 時，它把規則加進本機的 `.git/info/exclude`。以 3 結束時照下面「整個 run 停下」的第一列處理：path 不是 `PR`、`--cwd` 不是 repo 的頂層、頂層的路徑有印不出原樣的字元、git 不會忽略 `.claude/.idd/state/`（它會說明要在哪裡加那一行；由 idd-all 自己加是 #564）、執行的帳號沒有這個 repo 的寫入權，或清單讀不到。清單把本機已經有 `idd/N` branch、或先前的 run 留下資料夾的 candidate 另列一行：它們輪到時會被記為 existing work，不會跑。
+   24 小時內有還沒結束的 run 時，`start` 以 4 結束、什麼都不改：那個 run 可能還有另一個 session 在跑。把它印的那一行告訴使用者，這一次的呼叫就此結束。只有使用者在這次對話裡說要接手那個 run，才用同樣的旗標加 `--take-over` 再跑一次 `start`（程式分不出另一個 session 還在不在跑，所以這不由模型自己判斷）：它接續那個 run（旗標相同），試過的 issue 不會再跑，並印出新的 token，舊的作廢，原本拿著舊 token 的 session 下一個指令就以 4 結束。接續時 `--review` 只能加上、不能拿掉（先前的 run 帶了、這次沒帶，照樣每一張停在 verified；它會印一行說明），要拿掉就讓那個 run 以報告結束。它不看 `$REST_ROOT` 的工作樹在哪個 branch、有沒有改動。git 還不會忽略 `.claude/worktrees/` 時，它把規則加進本機的 `.git/info/exclude`。以 3 結束時照下面「整個 run 停下」的第一列處理：path 不是 `PR`、`--cwd` 不是 repo 的頂層、頂層的路徑有印不出原樣的字元、git 不會忽略 `.claude/.idd/state/`（它會說明要在哪裡加那一行；由 idd-all 自己加是 #564）、執行的帳號沒有這個 repo 的寫入權，或清單讀不到。清單把本機已經有 `idd/N` branch、或先前的 run 留下資料夾的 candidate 另列一行：它們輪到時會被記為 existing work，不會跑。
 
 3. 取下一張：
 
@@ -189,15 +189,15 @@ rest 只走 PR path（PR、unattended）：每一張 issue 在自己的資料夾
    - 原因是目前的目錄：shell 沒有把上一個指令的 `cd` 留到這一個指令，這個環境不支援 rest。整個 run 停下（照下面「整個 run 停下」的第二列，原因照抄）。
    - 其他原因：`$CWD` 不是這一張的資料夾（原因會寫它在哪裡），或那個資料夾沒有綁定這一張。從 `cd` 那一步再試一次；仍然不行就不跑這一張，直接做第 5 步，原因寫它印出的那一行。**不要在 `$REST_ROOT` 跑單張流程。**
 
-   這一張的每一個指令都在這個資料夾裡下：依 shell 目錄做事的步驟（diagnose 下載的附件、`routing-stats.jsonl`、Spectra CLI、unattended 的判定）都落在這個資料夾。Phase 2（diagnose）、Phase 3（implement 或 Spectra）、Phase 4（verify）、Phase 5（push 與開 PR）開始之前，各用一個單獨的指令、不 `cd`，再跑一次上面的 `here`；不是 0 就照上面處理（4 是結束這一次的呼叫，1 看原因）。前三個 phase 會跑依 shell 目錄寫檔的程式，在錯的地方跑，寫進去的就是啟動 rest 的那個工作樹；Phase 5 把 branch 推出去、開 PR，被接手的 session 不該再做。子 skill 照樣帶 `--cwd "$CWD"`：verify 的 reviewer 不共用這個 shell。
+   這一張的每一個指令都在這個資料夾裡下：依 shell 目錄做事的步驟（diagnose 下載的附件、`routing-stats.jsonl`、Spectra CLI、unattended 的判定）都落在這個資料夾。Phase 2（diagnose）、Phase 3（implement 或 Spectra）、Phase 4（verify）、Phase 5（push 與開 PR）、Phase 6（報告與清理）開始之前，各用一個單獨的指令、不 `cd`，再跑一次上面的 `here`；不是 0 就照上面處理（4 是結束這一次的呼叫，1 看原因）。前三個 phase 會跑依 shell 目錄寫檔的程式，在錯的地方跑，寫進去的就是啟動 rest 的那個工作樹；Phase 5 把 branch 推出去、開 PR，Phase 6 刪這一張的 run-state 與標記，被接手的 session 都不該再做。子 skill 照樣帶 `--cwd "$CWD"`：verify 的 reviewer 不共用這個 shell。
 
-   token 弄丟了（task 描述裡沒有、也記不起來）：用第 2 步的 `start`、同樣的旗標加 `--take-over` 再跑一次，它印出新的 token，舊的作廢。只在確定沒有別的 session 在跑這個 run 時這樣做：它會讓原本持有的那一方在下一個指令以 4 結束。不確定就不換發：結束這一次的呼叫，把情況告訴使用者。某個指令以 4 結束之後不是「弄丟了」：token 還在、只是作廢了，**不可以用 `--take-over` 搶回來**。
+   token 弄丟了（task 描述裡沒有、也記不起來）：結束這一次的呼叫，把情況告訴使用者，不自己換發。程式分不出另一個 session 還在不在跑這個 run。使用者說要接手時，才用第 2 步的 `start`、同樣的旗標加 `--take-over` 再跑一次：它印出新的 token，舊的作廢，原本持有的那一方在下一個指令以 4 結束。某個指令以 4 結束之後不是「弄丟了」：token 還在、只是作廢了，**不可以用 `--take-over` 搶回來**。
 
-   然後從 Step 0.4 到 Phase 6，行為與在那個資料夾裡下 `/idd-all #N` 相同，包含它自己的 Phase 6 報告與清理，只有下面兩處不同：path 與 interaction 用第 1 步的結果，以及 rest 不接手已經有的工作。這一張的 `REVIEW_YN` 是 `next` 印出的 `review`（`yes` 或 `no`），`REVIEW_FLAG` 也照 `next` 的這個值設（`yes` 是 `--review`，`no` 是空字串；Phase 4 修不修 in-scope finding、進不進 Phase 5c 都看它），兩個都不從記憶或原始引數取；Step 0.7 把 `REVIEW_YN` 交給 `close-stage.py init`，`--rest-root` 給 `$REST_ROOT`、`--rest-token` 給 `$TOKEN`；Phase 5c 的 `close-stage.py run` 也帶 `--rest-token`。run 的狀態寫著 review、而 `init` 拿到的是 `no` 時，`init` 會拒絕，這一張的 close stage 因為沒有 run-state 而停在 verified。`init` 以 4 結束（token 不是這個 run 的）時照下面「整個 run 停下」的最後一列。`close-stage.py` 照 `--rest-root` 讀這個 run 的狀態，而且只認 run 替這一張記下的那個資料夾、綁定這一張；在 `$REST_ROOT` 對這一張呼叫它會被拒絕。close stage 在開始時、以及 merge 之前拿著這個 run 的鎖各查一次 token：被接手的 session 不會 merge。
+   然後從 Step 0.4 到 Phase 6，行為與在那個資料夾裡下 `/idd-all #N` 相同，包含它自己的 Phase 6 報告與清理，只有下面兩處不同：path 與 interaction 用第 1 步的結果，以及 rest 不接手已經有的工作。這一張的 `REVIEW_YN` 是 `next` 印出的 `review`（`yes` 或 `no`），`REVIEW_FLAG` 也照 `next` 的這個值設（`yes` 是 `--review`，`no` 是空字串；Phase 4 修不修 in-scope finding、進不進 Phase 5c 都看它），兩個都不從記憶或原始引數取；Step 0.7 把 `REVIEW_YN` 交給 `close-stage.py init`，`--rest-root` 給 `$REST_ROOT`、`--rest-token` 給 `$TOKEN`；Phase 5c 的 `close-stage.py run` 也帶 `--rest-token`。run 的狀態寫著 review、而 `init` 拿到的是 `no` 時，`init` 會拒絕，這一張的 close stage 因為沒有 run-state 而停在 verified。`init` 以 4 結束（token 不是這個 run 的）時照下面「整個 run 停下」的最後一列，不 reset。`close-stage.py` 照 `--rest-root` 讀這個 run 的狀態，而且只認 run 替這一張記下的那個資料夾、綁定這一張；在 `$REST_ROOT` 或它底下任何資料夾、或別張 issue 的資料夾裡對這一張呼叫它會被拒絕。close stage 在開始時查一次 token，merge 之前拿著這個 run 的鎖再查一次：被接手的 session 不會 merge。token 不是這個 run 的（或沒給）時，`close-stage.py run` 什麼都不寫、以 3 結束，原因寫「another session has taken the rest run over」或「no token of the rest run was given」；這時照下面「整個 run 停下」的最後一列結束這一次的呼叫，不做 Phase 6 的清理、不 `record`。這一張的 `close-stage.py reset`（Step 0.4、Step 0.7、abort 職責、Phase 6 的清理）在 rest mode 都帶 `--rest-token "$TOKEN"`：在這個資料夾裡沒有這個 run 的 token，`reset` 以 4 結束、什麼都不刪。
 
    **已經有 PR 或 branch 的 issue，rest 不接手**：`next` 已經問過一次；單張流程的 Step 0.5.1 在資料夾裡再問一次（兩次之間可能有人開了 PR）。它印出 `verdict=clear` 以外的任何結果（`resume`、`blocked`、`unknown`）時，不建 branch、不碰那個 PR、不提問：rest 不接手這一張，直接做第 5 步，傳給 `record` 的原因寫 `existing work: ` 加上 Step 0.5.1 印出的 outcome 與人接下來可以做的事，例如 `existing work: existing PR #77 — review that pull request`。那是先前的 run 或別人已經開始、停在某處的工作，由人決定怎麼接。
 
-5. 記下這一張的結果。先清掉這個資料夾裡的 unattended 標記（這一張走到 Phase 6 的清理也好、沒走到也好，都清一次），再回到 `$REST_ROOT`：
+5. 記下這一張的結果。先用一個單獨的指令、不 `cd`，在這個資料夾裡再跑一次第 4 步的 `here`：以 4 結束就照下面「整個 run 停下」的最後一列結束這一次的呼叫，不清標記、不 `record`（這一張已經是另一個 session 的）；其他結束碼照樣往下。再清掉這個資料夾裡的 unattended 標記（這一張走到 Phase 6 的清理也好、沒走到也好，都清一次），再回到 `$REST_ROOT`：
 
    ```bash
    . "${CLAUDE_PLUGIN_ROOT}/scripts/lib/unattended-state.sh" && clear_unattended "$CWD"
@@ -231,7 +231,7 @@ IDD_REASON
 | 第 2 步的 `start` 以 3 結束（path 不是 `PR`、`--cwd` 不是 repo 的頂層或頂層的路徑有印不出原樣的字元、有一個 24 小時內寫入而讀不出來的狀態檔、清單讀不到、git 不會忽略狀態檔或放資料夾的位置、執行的帳號沒有寫入權，或這裡不是 git repo；這次還沒有 run 開始） | 把它印在 stderr 的那一行告訴使用者就結束，不呼叫 `stop` 與 `report`：沒有 run 可以停，也沒有結果可以報。先前還沒結束的 run 的狀態留著，24 小時內以 `start --take-over`（旗標相同）會接續 |
 | `next` 或 `record` 以 3 結束（run 已經開始；GitHub、`gh` 的認證、判定程式或 git 讀不到，狀態寫不進去，或這一張的資料夾建不起來） | `stop`，原因照抄它印在 stderr 的那一行（從標準輸入傳，開頭的 `rest-queue: ` 可以留著），再做「結束」一節。`stop` 自己也失敗時直接做「結束」一節 |
 | 使用者中斷 | 不必做任何事。狀態留著：24 小時內再下同一個 `/idd-all` 指令時 `start` 會說這裡有還沒結束的 run，使用者說要接手，就以 `start --take-over`（旗標相同）會接續。`--review` 存在 run 的狀態裡，再下指令時少帶了也不會被拿掉 |
-| `rest-queue.py` 的任何一個指令或 `close-stage.py init` 以 4 結束（另一個指令正拿著這個 run 的鎖，等了 30 秒沒拿到；拿到的 token 不是這個 run 的：另一個 session 用 `start --take-over` 接手了；或 `start` 沒帶 `--take-over`，而這裡有還沒結束的 run） | 這一次的呼叫就此結束，**不呼叫 `stop` 也不呼叫 `report`**：那會把另一個 session 正在跑的 run 結束掉。也不再呼叫 `next`，不用 `start --take-over` 把它搶回來（只有使用者說要接手時才用，見第 2 步）。把它印的那一行告訴使用者：兩個 session 不要跑同一個 rest run |
+| `rest-queue.py` 的任何一個指令、`close-stage.py init` 或 `reset` 以 4 結束，或 `close-stage.py run` 說另一個 session 接手了、沒有給 token（另一個指令正拿著這個 run 的鎖，等了 30 秒沒拿到；拿到的 token 不是這個 run 的：另一個 session 用 `start --take-over` 接手了；或 `start` 沒帶 `--take-over`，而這裡有還沒結束的 run，或有另一個 repo 還沒結束的 run） | 這一次的呼叫就此結束，**不呼叫 `stop` 也不呼叫 `report`**：那會把另一個 session 正在跑的 run 結束掉。也不再呼叫 `next`，不用 `start --take-over` 把它搶回來（只有使用者說要接手時才用，見第 2 步）。把它印的那一行告訴使用者：兩個 session 不要跑同一個 rest run |
 | 「結束」一節的 `report` 以 1 或 3 結束（報告印了，但狀態刪不掉；或讀不到狀態） | 把它已經印出的內容與 stderr 那一行原樣轉給使用者就結束，不再呼叫 `stop` 或 `report`：再呼叫一次只會停在同一個地方 |
 
 其他子命令的結束碼 1 與 2 不在表上：那是這裡呼叫錯了（沒有先 `start`、`start` 沒有帶 `--path` 或 `--review`、沒有帶 `--token` 或它不是 `start` 印的形式、`record` 的 issue 號不是交出的那一張、`here` 的目錄不是那一張的資料夾、`next` 在一張的 `record` 做完之前、引數寫錯），改正後重跑同一個子命令。run 開始之後，`next` 或 `record` 以 1 結束並說這個工作樹沒有 rest run，是 `--cwd` 給錯了：改成 `$REST_ROOT`，不要再呼叫一次 `start`。
@@ -265,7 +265,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rest-queue.py" report --cwd "$REST_ROOT" 
 - 不支援 shell 不會留在 `cd` 之後的目錄的環境（已知限制，維護者 2026-11-22 接受，#478 comment 7069013462）：依 shell 目錄做事的步驟會落在 `$REST_ROOT`，其中 Spectra 沒有指定專案根目錄的選項，會改到那裡已追蹤的檔。`here` 檢查它被執行時 shell 在哪裡，所以在第 4 步開頭與 Phase 2 到 Phase 5 之前擋得住；同一個 phase 裡、兩次工具呼叫之間 shell 若被重設，擋不住，報告裡「工作樹變了」那一行是事後才看得到的，而且只看得到 git 列出來的變化。
 - 兩個 session 不要跑同一個 rest run：`start`、`next`、`record`、`stop` 與 `report` 會鎖住 run 的狀態，第二個最多等 30 秒，等不到就以 4 結束。一個 run 由拿到它的 token 的那個 session 跑；`start --take-over` 換發 token 時，原本的 session 下一個指令以 4 結束，close stage 也不會替它 merge（開始時與 merge 之前各查一次），那個 session 的這一次呼叫就此結束。兩次檢查之間（例如一個 phase 裡），被接手的 session 還可能在資料夾裡多做幾步。程式分不出「同一個 session 壓縮後忘了 token」與「另一個 session」，所以 token 要寫進 task 描述。
 - 連同 `.git` 一起複製出來的資料夾（例如 `cp -R`）有同樣的記號，被當成同一個資料夾。
-- 既有工作的查詢會在 `$REST_ROOT` 的 repo 做一次 `git fetch`：它會移動 remote-tracking branch，也可能帶進 `origin` 上的 tag；不動既有的 tag 與本機 branch。
+- 既有工作的查詢會在 `$REST_ROOT` 的 repo 做一次 `git fetch --prune`：它會移動 remote-tracking branch、移除 `origin` 已經沒有的 remote-tracking branch，也可能帶進 `origin` 上的 tag；不動既有的 tag 與本機 branch（設定開了 `fetch.pruneTags` 或 `remote.origin.pruneTags` 也一樣，這次 fetch 不修剪 tag）。
 - 不刪資料夾，也不把留下的資料夾接著做完：之後的 rest 看到某一張的資料夾還在就跳過它。清掉已經 merge 的資料夾的指令是另一件事（follow-up）。要接著做，進那個資料夾，在裡面指名那一張（`/idd-all #N`）；單張流程對已存在 branch 的提問是 #566。
 - bot 的留言不讓一張 issue 變成 `outsider`（與 close stage 相同）。把外部輸入轉貼成留言的 app，它帶進來的文字會被 diagnose 讀到。
 - 執行的帳號要有這個 repo 的寫入權：沒有的話 GitHub 不回答誰有寫入權，`start` 以 3 結束。
@@ -618,7 +618,7 @@ fi
 
 blocked 的 outcome 文字：E1 → `existing PR #P`；E3 → `already merged in PR #P -> /idd-close #N`。Action items 的一行：`- #N: existing PR #P declares it — not started; review it (/idd-verify #N --pr P) or run /idd-all #N interactively`（E3：`- #N: already merged in PR #P — run /idd-close #N`）。
 
-**清掉上一次 run 的狀態（#392）**：existing-work check 放行之後（`clear`、`unknown`、`resume`，或 attended 選了 (c)），先跑 `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/close-stage.py" reset --cwd "$CWD" --issue "$N"`，刪掉這張 issue 上一次 run 留下的 run-state 與結果檔。排在這裡有兩個理由：之後 Step 0.7 若因 N 遺失而中止，close stage 讀不到上一次 run 的旗標（verify r3 #17、r5 #36）；同一個 clone 裡另一個還在等 CI 的 run 已經被上面的檢查擋下，不會被這裡清掉狀態（r4 #47）。from-scratch 在 Phase 1 建出 issue 之後跑。
+**清掉上一次 run 的狀態（#392）**：existing-work check 放行之後（`clear`、`unknown`、`resume`，或 attended 選了 (c)），先跑 `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/close-stage.py" reset --cwd "$CWD" --issue "$N"`（rest mode 另帶 `--rest-token "$TOKEN"`，以 4 結束時照 `## Rest mode` 的「整個 run 停下」最後一列結束這一次的呼叫），刪掉這張 issue 上一次 run 留下的 run-state 與結果檔。排在這裡有兩個理由：之後 Step 0.7 若因 N 遺失而中止，close stage 讀不到上一次 run 的旗標（verify r3 #17、r5 #36）；同一個 clone 裡另一個還在等 CI 的 run 已經被上面的檢查擋下，不會被這裡清掉狀態（r4 #47）。from-scratch 在 Phase 1 建出 issue 之後跑。
 
 > **為什麼 unknown 不擋**：這個檢查防的是重複實作，最壞只是多做一次；`idd-close` 擋的是把還沒做完的 issue 結掉——close 能 reopen，但結案摘要一貼出就通知了關注這張的人——所以它對失敗維持 fail-closed。兩者的差別是刻意的。
 
@@ -787,9 +787,11 @@ REST_TOKEN_OR_NONE=none; [ "$REST_ROOT_OR_NONE" = none ] || REST_TOKEN_OR_NONE="
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/close-stage.py" init --cwd "$CWD" --repo "$GITHUB_REPO" --issue "$N" \
   --path "$PATH_AXIS" --requested-path "$REQUESTED_PATH" --interaction "$INTERACTION" \
   --branch "$BRANCH" --default "$DEFAULT_BRANCH" --review "$REVIEW_YN" --in-chain "$IN_CHAIN_YN" \
-  --rest-root "$REST_ROOT_OR_NONE" --rest-token "$REST_TOKEN_OR_NONE" \
-  || { echo "⚠ Step 0.7: the run state was not recorded — the run continues, and the close stage will stop at verified (it merges only with a run state)"
-       python3 "${CLAUDE_PLUGIN_ROOT}/scripts/close-stage.py" reset --cwd "$CWD" --issue "$N"; }   # a failed init leaves no run state
+  --rest-root "$REST_ROOT_OR_NONE" --rest-token "$REST_TOKEN_OR_NONE"; rc=$?
+[ "$rc" != 4 ] || { echo "Step 0.7: another session has this rest run (exit 4) — end this invocation: no reset, no record, no stop, no report"; exit 4; }
+[ "$rc" = 0 ] || { echo "⚠ Step 0.7: the run state was not recorded — the run continues, and the close stage will stop at verified (it merges only with a run state)"
+       REST_TOKEN_ARG=(); [ "$REST_ROOT_OR_NONE" = none ] || REST_TOKEN_ARG=(--rest-token "$REST_TOKEN_OR_NONE")
+       python3 "${CLAUDE_PLUGIN_ROOT}/scripts/close-stage.py" reset --cwd "$CWD" --issue "$N" "${REST_TOKEN_ARG[@]}"; }   # a failed init leaves no run state
 ```
 
 `REST_ROOT_OR_NONE` 是 rest mode 的 `$REST_ROOT`（啟動 rest 的目錄），指名 issue 的 run 是 `none`；`REST_TOKEN_OR_NONE` 是 rest mode 的 `$TOKEN`，指名 issue 的 run 是 `none`。shell 變數遺失時照這兩句重設，不要猜：rest mode 的 token 遺失時 init 拒絕，這一張的 close stage 停在 verified。rest mode 下 init 以 4 結束（token 不是這個 run 的）時，這一次的呼叫就此結束（`## Rest mode` 的「整個 run 停下」最後一列）。每個值都必填：shell 變數跨 tool call 遺失時，init 會因為空值而報 usage error（exit 64），不會悄悄記成「沒有 `--review`」。run 照常往下走，close stage 因為沒有 run-state 而停在 verified：上一次 run 的狀態已在 Step 0.5.1 之後清掉，`||` 之後的 reset 再清一次，不沿用上一次 run 的旗標（verify r3 #17、r5 #36）。N 本身遺失時，上面的 FATAL 先中止這一段，同樣沒有舊狀態可讀。在新的 shell 重跑這一段時，`REVIEW_YN`／`IN_CHAIN_YN`／`REQUESTED_PATH` 要從這次 `/idd-all` 的原始參數與 Phase 0.5 印出的那兩行重新得出。rest mode 例外：`REVIEW_YN` 重新取 `rest-queue.py next` 印出的 `review`（這一張還在跑時，再呼叫一次 `next` 會印出同一張與同一個值），不回頭看原始引數；`IN_CHAIN_YN` 是 `no`，`REQUESTED_PATH` 是 `PR`。
@@ -1719,7 +1721,7 @@ Undo:                                                   (only when something was
 
 這行 `Next:` 是 Phase 6 要人接手的地方；merge 與 close 都完成、又不是 Spectra tier 時沒有 `Next:`。
 
-**清理**：回報印出後刪掉 `$CWD/.claude/.idd/state/idd-all-run-$N.json` 與 `idd-all-result-$N.json`，下一次 run 不會讀到這次的值。
+**清理**：回報印出後用 `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/close-stage.py" reset --cwd "$CWD" --issue "$N"`（rest mode 另帶 `--rest-token "$TOKEN"`）刪掉 `$CWD/.claude/.idd/state/idd-all-run-$N.json` 與 `idd-all-result-$N.json`，下一次 run 不會讀到這次的值。rest mode 下它以 4 結束時，這一張已經是另一個 session 的：什麼都不刪，這一次的呼叫就此結束。
 
 #### `--review` report
 
@@ -1895,7 +1897,7 @@ fi
 
 abort 時:
 - `clear_unattended "$CWD"`（#123 — 絕不留 stale unattended flag 誤導下一個 attended session）
-- `close-stage.py reset --cwd "$CWD" --issue "$N"`（#392 — 不留這次 run 的 run-state 給下一次 run 讀）
+- `close-stage.py reset --cwd "$CWD" --issue "$N"`（#392 — 不留這次 run 的 run-state 給下一次 run 讀；rest mode 另帶 `--rest-token "$TOKEN"`，以 4 結束時什麼都不刪，這一次的呼叫就此結束）
 - TaskList 標記當前 phase 為 in_progress(不要 mark completed)
 - 顯示「自己手動接手」的具體命令(例:`/idd-verify #19` 或 `gh pr create ...`)
 - branch 不刪除(保留進度,user 可繼續)

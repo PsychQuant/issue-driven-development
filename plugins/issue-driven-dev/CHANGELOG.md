@@ -43,7 +43,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runs a run: `start` prints a token once and keeps only its digest, every other command of the run requires it,
   and so do `close-stage.py init` and `run` for an issue of the run; a session that was taken over with
   `start --take-over` gets exit 4 and ends its invocation, and the close stage does not merge for it (it checks the
-  token when it starts and again, holding the lock of the run, right before the merge). The working tree the
+  token when it starts and again, holding the lock of the run, right before the merge). `close-stage.py reset` and `run` write
+  and remove nothing for an issue of a rest run without the run's token, and an issue of a rest run runs on the PR
+  path only. The close stage finds the rest run of an issue from anywhere in that run's working tree or in the
+  directory of any of its issues. An unfinished run of another repository is replaced only with `--take-over`
+  (repository names are compared without letter case). The existing-work check never prunes a tag in the
+  repository the run was started in, whatever `fetch.pruneTags` says. The working tree the
   run was started in is not used: it can be on any branch, with changes, and a person or another session can go on
   working in it; rest mode writes there at three places only (the run state, the folder of the directories, the
   local exclude file), every git command runs without optional locks so that reading it does not rewrite its index,

@@ -112,12 +112,12 @@ def print(*args, **kw):
     _print(*[a.encode("utf-8", "backslashreplace").decode("utf-8") if isinstance(a, str) else a for a in args], **kw)
 
 
-def run_cmd(cmd, cwd=None):
+def run_cmd(cmd, cwd=None, env=None):
     """(exit code, stdout, stderr) of a command. The output is read as bytes: a carriage return in a file name
     stays one (a pipe read as text turns it into a line feed, and the name then names no file), and bytes that are
     not UTF-8 survive the way back to a path."""
     try:
-        proc = subprocess.run(cmd, cwd=cwd, capture_output=True)
+        proc = subprocess.run(cmd, cwd=cwd, capture_output=True, env=env)
     except OSError as exc:
         raise Stop(f"could not run {cmd[0]}: {exc.strerror or exc}")
     step()
@@ -484,7 +484,10 @@ def displaced(then):
 def owned_state(cwd, repo, token, then):
     """The run state at this --cwd (None when there is none), for a command that is given the token of the run; Busy
     (exit 4) when the token is not the run's. The token is compared in reststate.owns, the one comparison of both helpers."""
-    st = load_state(cwd, repo)
+    st, problem = read_state(cwd, repo)
+    if st is None and problem.startswith(OTHER_REPO):   # replaced by a run for another repository, which only start --take-over does
+        raise Busy(f"the rest run in this working tree is now one for another repository ({problem}): another session replaced "
+                   f"this run with start --take-over — {then}; end this invocation: no stop, no report, no next")
     if st is not None and not reststate.owns(st, token):
         raise displaced(then)
     return st
@@ -507,9 +510,17 @@ def read_state(cwd, repo=None):
         return None, "it cannot be read (a symbolic link, or not JSON)"
     if not reststate.usable(st):
         return None, "it is not a run state this helper can read"
-    if repo is not None and st["repo"] != repo:
-        return None, f"{OTHER_REPO} {one_line(st['repo'], 80)}"   # a state this helper can read: start replaces it and says whose it was
+    if repo is not None and st["repo"].lower() != repo.lower():   # GitHub does not tell owner/name apart by letter case
+        return None, f"{OTHER_REPO} {one_line(st['repo'], 80)}"   # a state this helper can read: start replaces it (--take-over) and says whose it was
     return st, ""
+
+
+def other_run(cwd, repo):
+    """The usable state of a run for another repository in this working tree, or None."""
+    kind, st = reststate.read(state_path(cwd))
+    if kind == "ok" and reststate.usable(st) and st["repo"].lower() != repo.lower():
+        return st
+    return None
 
 
 def load_state(cwd, repo=None):
@@ -783,6 +794,9 @@ def make_dir(cwd, top, st, flight, save):
     if flight["origin"] != url:
         raise Stop(f"the clone of #{n} does not name the origin it was cloned from — {todo}")
     save()
+    link = link_on_the_way(top, base)   # again: the folder may have been swapped for a link while the clone was made
+    if link:
+        raise Stop(f"{one_line(link, 200)} is a symbolic link: the directory of #{n} is not made through it — {todo}")
     try:
         os.mkdir(d)   # the place, taken: mkdir fails when anything is there
     except OSError:
@@ -812,9 +826,21 @@ def root_now(cwd):
 CHANGED = {"head": "the checked-out commit", "branch": "the branch", "files": "the files", "stash": "the stash"}
 
 
+def no_tag_pruning():
+    """The environment of the existing-work check: its fetch in the working tree the run was started in may remove
+    remote-tracking branches that origin no longer has, and never a local tag, whatever fetch.pruneTags or
+    remote.origin.pruneTags say (configuration given in the environment comes after every configuration file)."""
+    env = dict(os.environ)
+    count = int(env.get("GIT_CONFIG_COUNT", "0") or 0) if (env.get("GIT_CONFIG_COUNT", "0") or "0").isdigit() else 0
+    for i, key in enumerate(("fetch.pruneTags", "remote.origin.pruneTags")):
+        env[f"GIT_CONFIG_KEY_{count + i}"], env[f"GIT_CONFIG_VALUE_{count + i}"] = key, "false"
+    env["GIT_CONFIG_COUNT"] = str(count + 2)
+    return env
+
+
 def existing_work(cwd, repo, n):
     """'' when the existing-work check says clear for the issue; otherwise the reason it is not handed out."""
-    rc, out, err = run_cmd(["bash", CHECK_SCRIPT, "--cwd", cwd, repo, str(n)])
+    rc, out, err = run_cmd(["bash", CHECK_SCRIPT, "--cwd", cwd, repo, str(n)], env=no_tag_pruning())
     try:
         found = json.loads(out)["issues"][str(n)]
         verdict, reason = found["verdict"], one_line(found.get("reason") or "", 200)
@@ -953,7 +979,12 @@ def cmd_start(argv):
         raise Busy(f"an unfinished rest run is in this working tree (started {one_line(st['started_at'], 40)}, last active "
                    f"{one_line(st['updated_at'], 40)}) and a session may be running it — when no other session runs it, take it "
                    "over with start --take-over and the same flags; the session that ran it then ends at its next command")
-    unreported = [] if resumed or st is None else forgotten(st)   # an earlier run that nobody ended with its report
+    other = other_run(cwd, repo) if st is None else None
+    if other and now() - ts(other["updated_at"]) < STATE_TTL and not a.get("--take-over"):
+        raise Busy(f"an unfinished rest run for {one_line(other['repo'], 80)} is in this working tree (last active "
+                   f"{one_line(other['updated_at'], 40)}) and a session may be running it — when no other session runs it, "
+                   "start --take-over replaces it with a run for this repository; the session that ran it then ends at its next command")
+    unreported = [] if resumed else forgotten(st if st is not None else other) if (st or other) else []   # a run nobody ended with its report
     lst = listing(repo)   # before anything is written: a failed read leaves no run behind
     branches = idd_branches(cwd)
     differs = ""
@@ -1155,10 +1186,10 @@ def cmd_here(argv):
         return refuse(f"{one_line(d, 200)} is not the directory of #{n}")
     st = load_state(root_dir, repo) if os.path.isdir(root_dir) else None
     flight = in_flight(st) if st else None
+    if st is not None and not reststate.owns(st, a["--token"]):   # before anything else of the run is looked at
+        raise displaced("stop working on the issue here")
     if not flight or flight["issue"] != n or not flight.get("made") or flight["dir"] != d:
         return refuse(f"no rest run has #{n} in flight there ({one_line(d, 200)})")
-    if not reststate.owns(st, a["--token"]):
-        raise displaced("stop working on the issue here")
     link = link_on_the_way(root_dir, d)
     if link:
         return refuse(f"a symbolic link is on the way to the directory of #{n}: {one_line(link, 200)}")
