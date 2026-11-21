@@ -69,7 +69,23 @@ remote_ahead() { # origin/main gets one commit the working tree does not have
 }
 issues() { python3 "$RQT/scenario.py" "$G" "$@"; }   # replace the open issues of the current scenario
 rq() { python3 "$RQ" "$@"; }
-run() { rq "$1" --cwd "$T" --repo "$REPO" "${@:2}"; }
+token_of() { # issue → the token stored for it in the run state ("none" when there is none: the value is never empty)
+  python3 -c '
+import json, sys
+try:
+    a = [x for x in json.load(open(sys.argv[1]))["attempts"] if x["issue"] == int(sys.argv[2])]
+except Exception:
+    a = []
+print((a[-1].get("token") if a else "") or "none")' "$(state_file)" "$1"
+}
+run() { # subcommand args… → rest-queue.py at T; record is given the token of its issue unless the call names one
+  local sub="$1" n="" prev="" arg; shift
+  if [ "$sub" = record ]; then
+    for arg in "$@"; do [ "$prev" = --issue ] && n="$arg"; prev="$arg"; done
+    case " $* " in *" --token "*) ;; *) set -- "$@" --token "$(token_of "$n")" ;; esac
+  fi
+  rq "$sub" --cwd "$T" --repo "$REPO" "$@"
+}
 jget() { # dotted.key → the value as compact JSON (strings unquoted); <missing> when absent
   python3 -c '
 import json, sys
@@ -103,7 +119,6 @@ PY
 
 # ── the directory of an issue ──
 dir_of() { printf '%s' "$T/.claude/worktrees/rest-$1"; }
-POINTER=".claude/.idd/state/idd-all-rest-run.json"
 EDITS=".claude/.idd/$(printf 'arch%s' ive)"   # where idd-edit-helper.py keeps earlier versions of corrected GitHub text
 ROUTING=".claude/.idd/routing-stats.jsonl"
 begin() { run start --path PR --review no > /dev/null 2>&1; run next > /dev/null 2>&1; }   # a new run, the first candidate handed out
@@ -146,50 +161,23 @@ s_assume()     { pushed; git -C "$D" update-index --assume-unchanged a.txt; prin
 s_skip()       { pushed; git -C "$D" update-index --skip-worktree a.txt; printf 'hidden\n' >> "$D/a.txt"; }
 s_index()      { pushed; printf 'not an index' > "$D/.git/index"; }
 s_detached()   { git -C "$D" checkout -q --detach; printf 'w\n' > "$D/w.txt"; git -C "$D" add w.txt; git -C "$D" commit -q -m "no branch (#5)"; }
-s_routing()    { pushed; mkdir -p "$T/.claude/.idd"; printf '{"n":1}\n' > "$T/$ROUTING"; printf '{"n":2}\n{"n":3}\n' > "$D/$ROUTING"; }   # the example "the routing log is carried over once"
-# name | what becomes of the directory | what a reason names
-LEAVE_ROWS='pushed|removed|
-manifest|removed|
-attachment|removed|
-ignored|removed|
-nothing|removed|
-unpushed|kept|idd/5-x
-changed|kept|a.txt
-untracked|kept|notes.txt
-stash|kept|a stash
-tag_local|kept|idd-5-verified
-tag_pushed|removed|
-tag_moved|kept|idd-5-verified
-worktree|kept|a second working tree
-edits|kept|earlier versions of corrected GitHub text
-parked|kept|parked
-detached|kept|the commit that is checked out
-deleted|kept|idd/5-x
-assume|kept|a.txt
-skip|kept|a.txt
-index|kept|git could not be read there'
+s_routing()    { pushed; mkdir -p "$D/.claude/.idd"; printf '{"n":2}\n{"n":3}\n' > "$D/$ROUTING"; }   # a routing log stays in the directory
+# the states of the directory of #5 that the tests make (record leaves each of them as it is)
+LEAVE_NAMES="pushed manifest attachment ignored nothing unpushed changed untracked stash tag_local tag_pushed tag_moved worktree edits parked detached deleted assume skip index routing"
 
-leave_row() { # label name want needle → the row: record decides what the row says, and the run goes on
-  local label="$1" name="$2" want="$3" needle="$4" OUT rc
-  new "$label-$name" 5 9; begin; D=$(dir_of 5); "s_$name"
+leave_row() { # name → record leaves the directory in the state s_<name> as it is, and the run goes on
+  local name="$1" OUT rc
+  new "leave-$name" 5 9; begin; D=$(dir_of 5); "s_$name"
+  python3 "$RQT/treecheck.py" list "$D" > "$S/dir-before.txt"
   OUT=$(run record --issue 5 --reason x 2> "$S/err"); rc=$?
-  assert_exit "$label ($name): record exits 0" 0 "$rc"
-  assert_eq "$label ($name): the directory is $want" "$want" "$(printf '%s' "$OUT" | jget directory)"
-  assert_eq "$label ($name): the run state says so" "$want" "$(attempt 5 left)"
-  if [ "$want" = removed ]; then
-    assert_true "$label ($name): it is gone" '[ ! -e "$D" ]'
-  else
-    assert_true "$label ($name): it is still there" '[ -d "$D" ]'
-    assert_grep "$label ($name): a reason names: $needle" "$needle" "$(printf '%s' "$OUT" | jget why)"
-    assert_grep "$label ($name): the run state holds that reason" "$needle" "$(attempt 5 why)"
-    assert_true "$label ($name): it holds no pointer file" '[ ! -e "$D/$POINTER" ]'
-  fi
-  assert_eq "$label ($name): the following next hands out the next candidate" "9" "$(run next 2> /dev/null | jget next)"
+  assert_exit "record leaves the directory ($name): record exits 0" 0 "$rc"
+  python3 "$RQT/treecheck.py" list "$D" > "$S/dir-after.txt"
+  require "record leaves the directory ($name): its files, index, branches, tags and stash are as they were" cmp -s "$S/dir-before.txt" "$S/dir-after.txt"
+  assert_eq "record leaves the directory ($name): record prints it" "$D" "$(printf '%s' "$OUT" | jget dir)"
+  assert_true "record leaves the directory ($name): no routing log reached the working tree the run was started in" '[ ! -e "$T/$ROUTING" ]'
+  assert_eq "record leaves the directory ($name): the following next hands out the next candidate" "9" "$(run next 2> /dev/null | jget next)"
 }
-leave_rows() { # label → every row of LEAVE_ROWS
-  local name want needle
-  while IFS='|' read -r name want needle; do leave_row "$1" "$name" "$want" "$needle"; done <<< "$LEAVE_ROWS"
-}
+leave_rows() { local name; for name in $LEAVE_NAMES; do leave_row "$name"; done; }
 person_tree() { # T as a person left it: on wip, with a staged and an unstaged change, an untracked and an ignored file, a stash and a branch
   printf 'local/\n' > "$T/.gitignore"; printf 'c\n' > "$T/c.txt"; git -C "$T" add .gitignore c.txt
   git -C "$T" commit -q -m "more"; git -C "$T" push -q origin main 2>/dev/null

@@ -4,21 +4,19 @@ scripts/rest-queue.py writes the state and reads it; scripts/close-stage.py read
 decide here whether a file found at the state's place is a state: a file that one of them takes for a state and the
 other does not would let the close stage merge an issue of a run whose review flag nobody can read.
 
-The state is below the directory the run was started in. Each issue runs in a directory of its own, and a pointer
-file in the state folder of that directory names the directory the run was started in: that is how the close stage,
-which runs in the directory of the issue, finds the run.
+The state is below the directory the run was started in. Each issue runs in a directory of its own at
+R/.claude/worktrees/rest-<N>, and the helpers find the run of a directory by that place (run_of), not by a file in it.
 """
 import json
 import os
+import stat
 
 from ghread import parse_iso
 
 STATE_NAME = "idd-all-rest.json"
-POINTER_NAME = "idd-all-rest-run.json"   # in the state folder of an issue's directory: where the run is, and which issue
 STATE_VERSION = 5   # 2: the path and the default branch · 3: the review flag · 5: each issue in a directory of its own
-POINTER_VERSION = 1
 STATE_TTL = 24 * 3600   # the same life as the close stage's run state and the unattended marker
-LEFT = (None, "none", "removed", "kept", "removing")   # what became of an issue's directory: not decided yet · it had none · … · a removal that started
+LEFT = (None, "none", "left")   # an issue's directory: not recorded yet · it had none · it is left for a person
 AT_KEYS = ("head", "branch", "files", "stash")   # what next reads at the directory the run was started in
 
 
@@ -36,13 +34,16 @@ def read(path):
     whatever it points at, and no check before the open can be outrun by a swap."""
     if not os.path.lexists(path):
         return "none", None
-    try:
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:   # O_NONBLOCK: a FIFO at the path does not make the open wait for a writer
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
     except FileNotFoundError:
         return "none", None
     except OSError:
         return "unreadable", None
     try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):   # only a regular file is a state
+            os.close(fd)
+            return "unreadable", None
         with os.fdopen(fd, encoding="utf-8") as fh:
             return "ok", json.load(fh)
     except (OSError, ValueError):
@@ -57,20 +58,16 @@ def age(path, now):
         return None
 
 
-def pointer(folder):
-    """The pointer file of the state folder `folder`: ("none", None), ("unreadable", None), or
-    ("ok", {"root": the directory the run was started in, "issue": the issue this directory was made for})."""
-    kind, value = read(os.path.join(folder, POINTER_NAME))
-    if kind != "ok":
-        return kind, None
-    ok = (isinstance(value, dict) and value.get("version") == POINTER_VERSION
-          and isinstance(value.get("root"), str) and os.path.isabs(value["root"])
-          and isinstance(value.get("issue"), int) and not isinstance(value["issue"], bool))
-    return ("ok", {"root": value["root"], "issue": value["issue"]}) if ok else ("unreadable", None)
-
-
-def pointer_text(root, issue):
-    return json.dumps({"version": POINTER_VERSION, "root": root, "issue": issue})
+def run_of(d):
+    """(R, N) when the path `d`, as given, is R/.claude/worktrees/rest-<N> — the place of the directory of issue N of the
+    run whose working tree is R; None otherwise."""
+    d = os.path.abspath(d)
+    name, worktrees = os.path.basename(d), os.path.dirname(d)
+    if os.path.basename(worktrees) != "worktrees" or os.path.basename(os.path.dirname(worktrees)) != ".claude":
+        return None
+    if not name.startswith("rest-") or not name[5:].isdigit() or (len(name) > 6 and name[5] == "0"):
+        return None
+    return os.path.dirname(os.path.dirname(worktrees)), int(name[5:])
 
 
 def attempt_ok(a):
@@ -81,7 +78,7 @@ def attempt_ok(a):
     return (number(a["issue"]) and a["outcome"] in (None, "closed", "stopped") and isinstance(a["reason"], str)
             and (a.get("dir") is None or (isinstance(a["dir"], str) and os.path.isabs(a["dir"])))
             and isinstance(a.get("made", False), bool) and a.get("left") in LEFT
-            and strings(a.get("why", [])) and strings(a.get("changed", [])) and number(a.get("routing", 0))
+            and isinstance(a.get("token", ""), str) and strings(a.get("changed", []))
             and (at is None or (isinstance(at, dict) and all(isinstance(at.get(k), str) for k in AT_KEYS))))
 
 

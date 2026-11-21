@@ -164,48 +164,64 @@ def rest_state(folder):
     return "ok", rest
 
 
+def flight_of(rest, n):
+    return next((a for a in rest["attempts"] if a["issue"] == n and a["outcome"] is None), None)
+
+
+def at_dir(flight, cwd):
+    """True when the issue in flight is recorded as made in exactly this directory, and the directory, as recorded,
+    is reached through no symbolic link (its real path is the recorded path)."""
+    d = flight.get("dir")
+    return bool(flight.get("made")) and d == cwd and os.path.realpath(d) == d
+
+
+def the_record(cwd, n):
+    """The run of issue n that init wrote at this --cwd, or None (no file, or one that cannot be read)."""
+    try:
+        kind, rec = reststate.read(state_path(cwd, n))
+    except Stop:
+        return None
+    return rec if kind == "ok" and isinstance(rec, dict) else None
+
+
 def rest_reading(cwd, n):
     """(word, directory) — what a rest run says about issue n when the close stage runs at this --cwd (#478).
 
-    A rest run keeps its state below the directory it was started in; each of its issues runs in a directory of its
-    own, in whose state folder a pointer file names the run. The word is one of four (closed list, the spec's):
-      on          this --cwd holds a pointer for n, and the run it names has review on and n in flight
-      off         no pointer and no run below this --cwd has n in flight; or the pointer names a run that has no
-                  state file, that wrote nothing for 24 hours, that has review off, or that does not have n in flight
-      elsewhere   no pointer, and a run whose state is below this --cwd has n in flight in a directory of its own
-                  (the second value): the pipeline of n is running in the wrong place
-      unreadable  the pointer cannot be read or is for another issue or another directory; or a state file that
-                  was changed in the last 24 hours is not a usable state
-    The close stage merges when the record of an issue says review is off; this keeps a value lost on the way, or
-    added to the run later, from switching it off."""
-    try:
-        here = state_dir(cwd)
-    except Stop:
-        return "unreadable", None
-    kind, ptr = reststate.pointer(here)
-    if kind == "unreadable":
-        return "unreadable", None
-    if kind == "none":
-        word, rest = rest_state(here)
-        if word != "ok":
-            return word, None
-        flight = next((a for a in rest["attempts"] if a["issue"] == n and a["outcome"] is None and a.get("dir")), None)
-        return ("elsewhere", flight["dir"]) if flight else ("off", None)
-    if ptr["issue"] != n:
-        return "unreadable", None
-    try:
-        there = state_dir(ptr["root"])
-    except Stop:
-        return "unreadable", None
-    word, rest = rest_state(there)
-    if word != "ok":
-        return word, None
-    flight = next((a for a in rest["attempts"] if a["issue"] == n and a["outcome"] is None), None)
-    if flight is None:
-        return "off", None
-    if not flight.get("dir") or os.path.realpath(flight["dir"]) != os.path.realpath(cwd):
-        return "unreadable", None
-    return ("on" if rest["review"] else "off"), None
+    A rest run keeps its state below the directory it was started in, R; issue N runs in R/.claude/worktrees/rest-N.
+    The run of the issue that init wrote names R (--rest-root) or none. The word is one of four (closed list, the spec's):
+      on          the record names R, and the run at R has review on and n in flight in exactly this directory
+      off         the record names R whose run has review off and n in flight here; or it names none (or there is no
+                  record) and no rest run has n in flight here or at this --cwd
+      elsewhere   the record names none (or there is none), and a rest run has n in flight in a directory of its own
+                  that this --cwd is not, read as given: this --cwd is that run's working tree, or its place shows the run
+      unreadable  the record names R whose run cannot be read, has ended or does not have n in flight here; or a state
+                  file of a rest run that was changed in the last 24 hours is not a usable state"""
+    rec = the_record(cwd, n)
+    root = rec.get("rest_root") if rec else None
+    if isinstance(root, str) and root != "none":
+        try:
+            word, rest = rest_state(state_dir(root))
+        except Stop:
+            return "unreadable", None
+        flight = flight_of(rest, n) if word == "ok" else None
+        if not flight or not at_dir(flight, cwd):
+            return "unreadable", None
+        return ("on" if rest["review"] else "off"), None
+    places = [cwd]
+    place = reststate.run_of(cwd)
+    if place and place[1] == n:
+        places.append(place[0])
+    for where in places:
+        try:
+            word, rest = rest_state(state_dir(where))
+        except Stop:
+            return "unreadable", None
+        if word == "unreadable":
+            return "unreadable", None
+        flight = flight_of(rest, n) if word == "ok" else None
+        if flight and flight.get("dir"):
+            return "elsewhere", flight["dir"]
+    return "off", None
 
 
 def rest_review(cwd, n):
@@ -224,7 +240,7 @@ def cmd_rest_review(argv):
 
 def cmd_init(argv):
     keys = ["--cwd", "--repo", "--issue", "--path", "--requested-path", "--interaction", "--branch",
-            "--default", "--review", "--in-chain"]
+            "--default", "--review", "--in-chain", "--rest-root"]
     a = parse(argv, {k: "value" for k in keys})
     if a is None or not common_ok(a) or any(k not in a for k in keys):
         return usage("init needs every one of: " + " ".join(keys) + " (each with a value)")
@@ -235,11 +251,27 @@ def cmd_init(argv):
     if a["--review"] not in ("yes", "no") or a["--in-chain"] not in ("yes", "no"):
         return usage("--review and --in-chain must be yes or no")
     cwd = os.path.realpath(a["--cwd"])
-    word, place = rest_reading(cwd, int(a["--issue"]))
+    n = int(a["--issue"])
+    root = a["--rest-root"]
+    if root != "none":   # an issue of a rest run: its run is named, not inferred (#478)
+        if not os.path.isabs(root):
+            return usage("--rest-root is the directory the rest run was started in (an absolute path), or none")
+        try:
+            word, rest = rest_state(state_dir(root))
+        except Stop:
+            word, rest = "unreadable", None
+        flight = flight_of(rest, n) if word == "ok" else None
+        if not flight or not at_dir(flight, cwd):
+            return usage(f"the rest run at {root} does not have #{n} in flight in this directory ({cwd}): run init in the "
+                         "directory that rest-queue.py next printed for the issue, with the directory the run was started in")
+        word, place = ("on" if rest["review"] else "off"), None
+    else:
+        word, place = rest_reading(cwd, n)
     if word == "elsewhere":
         # no run state is written: the pipeline of this issue is running in the wrong place (#478)
-        return usage(f"a rest run at this --cwd has #{a['--issue']} in flight in a directory of its own: {place} — run the "
-                     "pipeline of the issue there (change to that directory and give it as --cwd); or, when you named this "
+        return usage(f"a rest run has #{a['--issue']} in flight in a directory of its own: {place} — run the pipeline of the "
+                     "issue there (change to that directory and give it as --cwd) and give --rest-root the directory the run "
+                     "was started in; or, when you named this "
                      "issue yourself while that rest run is unfinished, end the rest run first (give /idd-all without an "
                      "issue to resume it, or call rest-queue.py report)")
     if a["--review"] == "no" and word == "on":
@@ -258,8 +290,8 @@ def cmd_init(argv):
         "requested_path": a["--requested-path"], "interaction": a["--interaction"],
         "branch": a["--branch"], "default": a["--default"],
         "review": a["--review"] == "yes", "in_chain": a["--in-chain"] == "yes",
-        # whether this issue runs in the directory of a rest run: run stops when the pointer to that run is lost later
-        "rest": reststate.pointer(state_dir(cwd))[0] == "ok",
+        # the rest run of this issue, or none: run stops when that run can no longer be found
+        "rest_root": root,
         "created_at": iso(now()),
     }
     os.makedirs(os.path.dirname(spath), exist_ok=True)
@@ -789,15 +821,12 @@ def cmd_run(argv):
         if rest == "elsewhere":
             raise Stop("a rest run at this --cwd has this issue in flight in a directory of its own: the run stays at "
                        "verified — the pipeline of the issue is to run in that directory, not here")
-        if st.get("rest") and reststate.pointer(state_dir(cwd))[0] != "ok":
-            raise Stop("this issue runs in the directory of a rest run, and the file there that names the run is gone or "
-                       "cannot be read: the rest run of the issue cannot be found, so its review flag is unknown — the run "
-                       "stays at verified")
+        if rest == "unreadable" and st.get("rest_root") not in (None, "none"):
+            raise Stop("the rest run of this issue cannot be found (its state cannot be read, the run has ended, or it does not "
+                       "have this issue in flight in this directory), so its review flag is unknown: the run stays at verified")
         if rest == "unreadable":
-            raise Stop("the state of a rest run, or the file in this directory that names the run, cannot be read, so its "
-                       "review flag is unknown: the run stays at verified — when no rest run is going on, delete "
-                       ".claude/.idd/state/idd-all-rest.json where the run was started, or "
-                       f".claude/.idd/state/{reststate.POINTER_NAME} in this directory")
+            raise Stop("a rest run state at this --cwd cannot be read, so its review flag is unknown: the run stays at verified "
+                       "— when no rest run is going on here, delete .claude/.idd/state/idd-all-rest.json")
         if st.get("in_chain"):
             raise Stop("--in-chain: /idd-all-chain owns the cluster PR (no merge, no close)")
         if st.get("path") != st.get("requested_path"):

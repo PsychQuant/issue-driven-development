@@ -32,31 +32,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `<top>/.claude/worktrees/rest-<N>/` from `origin` (a repository of its own, not a git linked worktree, in which
   the Spectra CLI would write into the main working tree), carries over `user.name` and `user.email` and nothing
   else, and prints the directory; the skill changes the shell to it and runs the single-issue pipeline there,
-  after `rest-queue.py here` has confirmed it is the directory the run made for that issue. The working tree the
+  after `rest-queue.py here` has confirmed it is the directory the run made for that issue, the token `next` gave
+  the session for it, and that the shell is really there (`here` runs in a command of its own before each phase that
+  writes by the shell's directory; when the shell did not keep its directory, the run stops). The working tree the
   run was started in is not used: it can be on any branch, with changes, and a person or another session can go on
-  working in it; rest mode writes there at four places only (the run state, the folder of the directories, the
-  routing log, the local exclude file), and a check lists that repository before `start` and after `report` for
-  every ending. After an issue, `record` removes its directory only when nothing exists only there, by a closed list
-  checked in that directory (no uncommitted change or untracked file git does not ignore, apart from three places
-  the plugin writes again; no stash; every branch and the commit checked out held by a branch on `origin`; every
-  tag on `origin`; no second working tree; no earlier versions of corrected text and no parked Spectra change);
-  an item that cannot be checked keeps the directory, and a directory that is not a repository of its own is never
-  looked into. The routing log of a removed directory is appended to the one of the starting working tree, once
-  (carrying it back is #584). A kept directory is named in the report with its reasons and does not stop the run.
-  `record` and `next` ended at any point and run again come to the same end, checked over every point, the steps of a
-  removal included (`record` marks a removal before it starts and finishes it after an interruption). Before it judges,
-  `record` fetches with pruning in the directory (a branch deleted on `origin` after a squash merge no longer counts as
-  pushed), keeps a directory with a file flagged `assume-unchanged` or `skip-worktree` or a folder of records it cannot
-  list, and carries the routing log over whether or not git ignores it. The commands that write the run state hold a
-  lock (a second session waits up to 30 seconds, then stops); `here` checks the shell's own directory, compares the
-  path as given and refuses a symbolic link on the way; the pointer and the exclude lines of a directory are never
-  written through a link; every git command runs without optional locks, so that reading the starting working tree
-  does not rewrite its index; and the close stage of a rest issue whose pointer was lost stays at verified. `next`
+  working in it; rest mode writes there at three places only (the run state, the folder of the directories, the
+  local exclude file), every git command runs without optional locks so that reading it does not rewrite its index,
+  and a check lists that repository before `start` and after `report` for every ending. Rest mode removes no
+  directory: `record` records the outcome and does nothing to the directory, and the report names every directory
+  for a person to delete (it may hold commits that were not pushed). The commands that write the run state hold a
+  lock: a second session waits up to 30 seconds, then exits 4, and the skill ends that invocation without stopping
+  the run. A directory belongs to the run of the working tree it is below (`R/.claude/worktrees/rest-<N>`); the close
+  stage takes `--rest-root` and stays at verified when that run can no longer be found. `next`
   asks the existing-work check itself and hands an issue out only when the check says `clear`: a lookup that could
   not be completed keeps the issue back. Step 0.5 of the single-issue flow now creates the issue's branch with
   `git checkout --no-overwrite-ignore`, so that a file git ignores locally is not written over when
   `origin/<default>` tracks it; this one change applies to every `/idd-all` run on the PR path, not only to rest
-  mode (the other plain checkouts of the pipeline are #587). An issue that stops does not stop the run. An issue that stops does not stop the run. The run stops as a whole only when
+  mode (the other plain checkouts of the pipeline are #587). An issue that stops does not stop the run. The run stops as a whole only when
   `next` or `record` cannot read GitHub or git, cannot write the state or cannot make the directory of an
   issue, or the user interrupts; a `start` that cannot read the open issues, or that finds the run state would
   not be ignored by git, begins no run and is reported as it is. `start` prints the list (issue numbers only) before anything runs and `report` prints one report

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # rest-queue-sweep suite (#478) — the checks of rest-queue.py that run it many hundred times:
 #   - `record`, ended after each of its steps and run again, comes to the end an undisturbed record comes to, for
-#     every state the directory of an issue can be in (the rows of ../rest-queue/lib.sh) and for the routing log;
+#     every state the directory of an issue can be in (../rest-queue/lib.sh), and leaves that directory as it was;
 #   - `next`, ended after each of its steps and run again, hands out the same issue in a directory of its own, and
 #     leaves the working tree it was started in as it was.
 # It is a suite of its own so that the rest-queue suite stays within a few minutes.
@@ -13,7 +13,6 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
 outcome() { # → what a record comes to: the directory, the attempt (without its times), the routing log and the listing of T
   printf 'directory: %s\n' "$([ -e "$D" ] && echo there || echo gone)"
-  printf 'pointer: %s\n' "$([ -e "$D/$POINTER" ] && echo there || echo gone)"
   python3 -c '
 import json, sys
 a = [x for x in json.load(open(sys.argv[1]))["attempts"] if x["issue"] == 5][0]
@@ -25,7 +24,6 @@ print("attempt:", json.dumps(a, sort_keys=True, ensure_ascii=False))' "$(state_f
   python3 "$RQT/treecheck.py" list "$T"
 }
 
-# spec-example: idd-all-rest / record ended part of the way comes to the same end
 sweep_record() { # name → every point of record, for the state of the directory that s_<name> makes
   local name="$1" steps k bad=0
   new "sw-$name" 5 9; begin; D=$(dir_of 5); "s_$name"
@@ -43,32 +41,41 @@ sweep_record() { # name → every point of record, for the state of the director
     fi
   done
   assert_eq "record ($name): at each of its $steps points, ended there and run again, it comes to the same end" "0" "$bad"
-  assert_true "record ($name): it has more than five points" "[ $steps -gt 5 ]"
+  assert_true "record ($name): it has at least three points" "[ $steps -ge 3 ]"
   POINTS=$((POINTS + steps))
 }
 POINTS=0
-while IFS='|' read -r name want needle; do sweep_record "$name"; done <<< "$LEAVE_ROWS"
-sweep_record routing
-assert_true "record: over more than 150 points in all" "[ $POINTS -gt 150 ]"
+for name in $LEAVE_NAMES; do sweep_record "$name"; done
+assert_true "record: over more than 60 points in all" "[ $POINTS -gt 60 ]"
 
 # next, ended after each of its steps and run again
 new sw-next 5 9; run start --path PR --review no > /dev/null 2>&1; D=$(dir_of 5)
 python3 "$RQT/treecheck.py" list "$T" > "$WORK/next-before.txt"
 snap sw-next
-IDD_REST_COUNT_STEPS="$S/steps" run next > /dev/null 2>&1; STEPS=$(cat "$S/steps"); bad=0
+IDD_REST_COUNT_STEPS="$S/steps" run next > /dev/null 2>&1; STEPS=$(cat "$S/steps"); bad=0; LEFT_SEEN=0
 for k in $(seq 1 "$STEPS"); do
   restore sw-next
   IDD_REST_STOP_AFTER_STEP=$k run next > /dev/null 2>&1
   [ "$?" = 99 ] || { bad=$((bad + 1)); echo "    next: point $k: the first next was not ended there"; continue; }
   OUT=$(run next 2> /dev/null)
   python3 "$RQT/treecheck.py" list "$T" > "$WORK/next-after.txt"
+  # the two outcomes of the example "a directory that was not finished": nothing was at the place, so #5 is made
+  # again; or the clone was ended part of the way, so #5 is recorded as stopped, its folder is left, and #9 is handed out
   got="$(printf '%s' "$OUT" | jget next)|$(printf '%s' "$OUT" | jget dir)|$(attempt 5 made)|$(git -C "$D" symbolic-ref --short HEAD 2>/dev/null)"
-  here=$(cd "$D" 2>/dev/null && python3 "$RQ" here --cwd "$D" --repo "$REPO" --issue 5 > /dev/null 2>&1; echo $?)
-  if [ "$got|$here" != "5|$D|true|main|0" ] || ! python3 "$RQT/treecheck.py" same "$WORK/next-before.txt" "$WORK/next-after.txt"; then
-    bad=$((bad + 1)); echo "    next: point $k: $got|here $here"
+  here=$(cd "$D" 2>/dev/null && python3 "$RQ" here --cwd "$D" --repo "$REPO" --issue 5 --token "$(token_of 5)" > /dev/null 2>&1; echo $?)
+  D9=$(dir_of 9)
+  here9=$(cd "$D9" 2>/dev/null && python3 "$RQ" here --cwd "$D9" --repo "$REPO" --issue 9 --token "$(token_of 9)" > /dev/null 2>&1; echo $?)
+  made="5|$D|true|main|0"
+  left="9|$D9|stopped|$D|0"
+  [ "$got|$here" = "$made" ] && outcome="$made" || outcome="$(printf '%s' "$OUT" | jget next)|$(printf '%s' "$OUT" | jget dir)|$(attempt 5 outcome)|$([ -e "$D" ] && printf '%s' "$D")|$here9"
+  if { [ "$outcome" != "$made" ] && [ "$outcome" != "$left" ]; } || ! python3 "$RQT/treecheck.py" same "$WORK/next-before.txt" "$WORK/next-after.txt"; then
+    bad=$((bad + 1)); echo "    next: point $k: $outcome"
   fi
+  [ "$outcome" = "$left" ] && LEFT_SEEN=$((LEFT_SEEN + 1))
 done
-assert_eq "next: at each of its $STEPS points, ended there and run again, it hands out #5 in a directory of its own and leaves T as it was" "0" "$bad"
+# spec-example: idd-all-rest / a directory that was not finished
+assert_eq "next: at each of its $STEPS points, ended there and run again, it makes #5 again or leaves its partial folder and hands out #9, and leaves T as it was" "0" "$bad"
+assert_true "next: some points end inside the clone, and there the folder is left" "[ $LEFT_SEEN -gt 0 ]"
 assert_true "next: it has more than five points" "[ $STEPS -gt 5 ]"
 
 print_summary "rest-queue-sweep"

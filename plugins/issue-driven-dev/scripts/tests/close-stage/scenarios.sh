@@ -95,7 +95,7 @@ init_state() { # path [requested-path] [review] [in-chain] [interaction]
   local path="$1" req="${2:-$1}" review="${3:-no}" chain="${4:-no}" inter="${5:-unattended}"
   local branch=main; [ "$path" = PR ] && branch="idd/7-x"
   python3 "$CS" init --cwd "$C" --repo $REPO --issue $N --path "$path" --requested-path "$req" \
-    --interaction "$inter" --branch "$branch" --default main --review "$review" --in-chain "$chain" >/dev/null
+    --interaction "$inter" --branch "$branch" --default main --review "$review" --in-chain "$chain" --rest-root none >/dev/null
 }
 
 run_stage() { # → OUT, RC
@@ -630,11 +630,11 @@ assert_exit "gate: gh missing is unparseable, not 'not clean'" 2 "$RC"
 python3 "$CS" gate --cwd "$C" --repo $REPO --issue $N --sha abc >/dev/null 2>&1; assert_exit "gate: a short sha is a usage error" 64 $?
 python3 "$CS" run --cwd "$C" --repo "not a repo" --issue $N >/dev/null 2>&1; assert_exit "run: a malformed repo is a usage error" 64 $?
 python3 "$CS" run --cwd "$C" --repo $REPO --issue $N --ci-timeout nan >/dev/null 2>&1; assert_exit "run: a non-finite timeout is a usage error" 64 $?
-python3 "$CS" init --cwd "$C" --repo $REPO --issue $N --path PR --requested-path PR --interaction unattended --branch b --default main --in-chain no >/dev/null 2>&1
+python3 "$CS" init --cwd "$C" --repo $REPO --issue $N --path PR --requested-path PR --interaction unattended --branch b --default main --in-chain no --rest-root none >/dev/null 2>&1
 assert_exit "init: a missing --review is a usage error, not 'no'" 64 $?
-python3 "$CS" init --cwd "$C" --repo $REPO --issue $N --path PR --requested-path PR --interaction unattended --branch b --default main --review "" --in-chain no >/dev/null 2>&1
+python3 "$CS" init --cwd "$C" --repo $REPO --issue $N --path PR --requested-path PR --interaction unattended --branch b --default main --review "" --in-chain no --rest-root none >/dev/null 2>&1
 assert_exit "init: an empty --review (a lost variable) is a usage error" 64 $?
-python3 "$CS" init --cwd "$C" --repo $REPO --issue $N --path sideways --requested-path PR --interaction unattended --branch b --default main --review no --in-chain no >/dev/null 2>&1
+python3 "$CS" init --cwd "$C" --repo $REPO --issue $N --path sideways --requested-path PR --interaction unattended --branch b --default main --review no --in-chain no --rest-root none >/dev/null 2>&1
 assert_exit "init: an unknown path is a usage error" 64 $?
 BEFORE=$(wc -l < "$S/gh/calls.log")
 IDD_GH="$FAKE" FAKE_GH_DIR="$S/gh" IDD_CLOSE_STAGE_TEST=0 PATH=/nonexistent python3 "$CS" gate --cwd "$C" --repo $REPO --issue $N --sha "$SHA" >/dev/null 2>&1
