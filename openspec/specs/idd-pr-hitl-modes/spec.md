@@ -1004,7 +1004,7 @@ tests:
 ---
 ### Requirement: A run with a stop mode leaves a record of how its verify loop ended
 
-When `/idd-all` runs with a stop mode and `close-stage.py next` answers anything other than `fix`, the Phase 4 block that runs `next` SHALL append one JSON line to the stop-mode record through `scripts/stop-mode-log.py append`. The line SHALL carry the repository, the issue, the run's `created_at`, the mode, the decision, whether it merges, `decided`, the reason, and every recorded round with its status, Blocking count, In-scope count and report id. The record file SHALL be `~/.claude/.idd/stop-mode-runs.jsonl` unless `IDD_STOP_LOG` names another path, outside every repository. A run without a stop mode, a `fix` answer, or a run with no readable run state SHALL write nothing. A failed append SHALL print a warning and SHALL NOT change the run. `stop-mode-log.py summary` SHALL group the records by mode, taking the last line written for each (repository, issue, `created_at`).
+When `/idd-all` runs with a stop mode and `close-stage.py next` answers anything other than `fix`, the Phase 4 block that runs `next` SHALL append one JSON line to the stop-mode record through `scripts/stop-mode-log.py append`. The line SHALL carry the repository, the issue, the run's `created_at`, the mode, the decision, whether `next` answered merge (`next_merge`; not whether the run merged, because the close stage can still stop it), `decided`, the reason, and every recorded round with its status, Blocking count, In-scope count and report id. The record file SHALL be `~/.claude/.idd/stop-mode-runs.jsonl` unless `IDD_STOP_LOG` names another path, outside every repository. A run without a stop mode, a `fix` answer, or a run with no readable run state SHALL write nothing. A failed append SHALL print a warning and SHALL NOT change the run. `stop-mode-log.py summary` SHALL group the records by mode, taking the last line written for each (repository, issue, `created_at`), and SHALL count merge answers as such, not as merged runs.
 
 #### Scenario: A stop answer of a run with a stop mode is recorded once per run
 
@@ -1027,3 +1027,9 @@ When `/idd-all` runs with a stop mode and `close-stage.py next` answers anything
 - **GIVEN** a record path that cannot be written
 - **WHEN** the Phase 4 `next` block runs
 - **THEN** it prints a warning, `NEXT_JSON` and `NEXT_RC` are the answer of `next`, and the block's own result is unchanged
+
+#### Scenario: The summary does not claim a merge
+
+- **GIVEN** a record whose `next` answered stop with merge true
+- **WHEN** `summary` is run
+- **THEN** it counts one merge answer for the mode, says `next answered merge`, and has no `merged` count
