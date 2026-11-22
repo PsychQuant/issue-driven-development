@@ -126,12 +126,15 @@ Same as `/idd-all`,plus:
 - Optional: `--cwd /path/to/clone` for cross-repo invocation
 
 ```bash
+# >>> arg-parse
 declare -a ROOT_ISSUES=()
 TRAVERSAL="dfs"   # default
 CWD_FLAG=""
 REVIEW_FLAG=""    # "" | "--review" — set by --review flag (v2.65+ #102)
-for ((i=0; i<${#ARGS[@]}; i++)); do
-  arg="${ARGS[i]}"
+# #598: a shift loop, not `for ((i=0; i<${#ARGS[@]}; i++))` — zsh arrays start at 1, so an index loop from 0
+# never reads the last argument under zsh (the shell of Claude Code's Bash tool).
+while [ $# -gt 0 ]; do
+  arg=$1; shift
   case "$arg" in
     \#[0-9]*)
       ROOT_ISSUES+=("${arg#\#}") ;;
@@ -145,7 +148,7 @@ for ((i=0; i<${#ARGS[@]}; i++)); do
       # "Human-in-the-loop: IDD 即 Foresay Confirmation Protocol" doctrine.
       REVIEW_FLAG="--review" ;;
     --cwd=*) CWD_FLAG="${arg#--cwd=}" ;;
-    --cwd)   i=$((i+1)); CWD_FLAG="${ARGS[i]}" ;;
+    --cwd)   CWD_FLAG="${1:-}"; [ $# -gt 0 ] && shift ;;
   esac
 done
 [ ${#ROOT_ISSUES[@]} -eq 0 ] && abort "Usage: /idd-all-chain #NNN [#MMM ...] [--bfs] [--review] [--cwd /path]"
@@ -155,8 +158,9 @@ IFS=$'\n' ROOT_ISSUES_SORTED=($(sort -n <<<"${ROOT_ISSUES[*]}"))
 unset IFS
 
 N_ROOTS=${#ROOT_ISSUES_SORTED[@]}
-LOWEST_ROOT="${ROOT_ISSUES_SORTED[0]}"
+LOWEST_ROOT=$(printf '%s\n' "${ROOT_ISSUES_SORTED[@]}" | head -1)   # no 0-based index: zsh arrays start at 1 (#598)
 ROOT_ISSUE="$LOWEST_ROOT"   # legacy alias: many downstream blocks refer to the "primary" root
+# <<< arg-parse
 ```
 
 #### Step 0.2: Working tree resolution

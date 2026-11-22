@@ -79,6 +79,7 @@ TaskCreate(name="report_and_stop", description="Step 7: echo summary(N rows surf
 ### Step 1: Parse args
 
 ```bash
+# >>> arg-parse
 NUMBER=""           # 必要,gh issue number
 STATUS_ACTION=""    # "" | "resolved" | "dismissed"
 STATUS_ROW_IDX=""
@@ -86,14 +87,14 @@ STATUS_REASON=""
 CWD_FLAG=""
 
 # Parse positional + flags
-ARGS=("$@")
-for ((i=0; i<${#ARGS[@]}; i++)); do
-  arg="${ARGS[i]}"
+# #598: a shift loop, not `for ((i=0; i<${#ARGS[@]}; i++))` — zsh arrays start at 1, so an index loop from 0
+# never reads the last argument under zsh (the shell of Claude Code's Bash tool).
+while [ $# -gt 0 ]; do
+  arg=$1; shift
   case "$arg" in
     "#"*) NUMBER="${arg#\#}" ;;
     --status)
-      i=$((i+1))
-      STATUS_RAW="${ARGS[i]}"
+      STATUS_RAW="${1:-}"; [ $# -gt 0 ] && shift
       # Parse "resolved=2,reason text" or "dismissed=3"
       STATUS_ACTION="${STATUS_RAW%%=*}"
       STATUS_TAIL="${STATUS_RAW#*=}"
@@ -101,7 +102,7 @@ for ((i=0; i<${#ARGS[@]}; i++)); do
       STATUS_REASON="${STATUS_TAIL#*,}"
       [ "$STATUS_REASON" = "$STATUS_TAIL" ] && STATUS_REASON=""  # no comma → no reason
       ;;
-    --cwd) i=$((i+1)); CWD_FLAG="${ARGS[i]}" ;;
+    --cwd) CWD_FLAG="${1:-}"; [ $# -gt 0 ] && shift ;;
     --cwd=*) CWD_FLAG="${arg#--cwd=}" ;;
   esac
 done
@@ -109,6 +110,7 @@ done
 # Validate
 [ -z "$NUMBER" ] && abort "Missing issue number. Usage: /idd-clarify #N [--status action=row[,reason]]"
 [[ ! "$NUMBER" =~ ^[0-9]+$ ]] && abort "Invalid issue number: $NUMBER"
+# <<< arg-parse
 ```
 
 ### Step 2: Resolve target
