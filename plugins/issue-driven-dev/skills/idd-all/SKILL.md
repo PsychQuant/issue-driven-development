@@ -1155,6 +1155,10 @@ case "$N" in ''|*[!0-9]*) echo "FATAL: Phase 4: issue number is not numeric: $N"
 NEXT_JSON=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/close-stage.py" next --cwd "$CWD" --repo "$GITHUB_REPO" --issue "$N"); NEXT_RC=$?
 echo "→ next (round $(printf '%s' "$NEXT_JSON" | jq -r '.round // "?"')): $NEXT_JSON"
 [ "$NEXT_RC" -eq 0 ] || echo "⚠ next could not decide (exit $NEXT_RC) — the answer is stop without a merge"
+# #603: a run with a stop mode records how its loop ended (writes only for an answer other than fix). The record is
+# outside the repository; a failed write only warns and changes nothing about the run.
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/stop-mode-log.py" append --cwd "$CWD" --repo "$GITHUB_REPO" --issue "$N" --answer "$NEXT_JSON" \
+  || echo "⚠ the stop-mode record was not written (the run goes on as next answered)"
 ```
 
 ```python
