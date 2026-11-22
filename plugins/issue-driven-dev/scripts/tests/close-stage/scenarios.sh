@@ -1080,5 +1080,12 @@ except m.Stop as exc:   # only the close stage's own refusal counts
 PY
 )
 assert_grep "gate: a result read for a replaced run is refused" "refused 0" "$RR"
+# verify r5 #4: a run-state path the close stage refuses (a symlink) is an unparseable gate result, not a traceback
+pr_scenario stop-gate-symlink
+mv "$C/.claude/.idd/state/idd-all-run-7.json" "$S/real-state.json"
+ln -s "$S/real-state.json" "$C/.claude/.idd/state/idd-all-run-7.json"
+gate_run
+assert_exit "gate: a symlinked run state is unparseable (exit 2)" 2 "$RC"
+assert_eq "gate: … with a JSON answer" unparseable "$(printf '%s' "$G" | field status)"
 
 print_summary close-stage

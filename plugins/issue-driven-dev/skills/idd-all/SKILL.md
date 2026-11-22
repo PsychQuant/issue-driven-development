@@ -183,7 +183,7 @@ for ((i=0; i<${#ARGS[@]}; i++)); do
   esac
 done
 # #595: a --stop value outside the three is the user's explicit request mistyped — stop before Phase 1
-[ "${#STOP_GIVEN}" -le 1 ] || abort "--stop was given more than once; give one stop mode"
+[ "${#STOP_GIVEN}" -le 1 ] || abort "--stop was given more than once; give one of early, exhaustive-blocking or exhaustive-all"
 case "$STOP_FLAG" in
   early|exhaustive-blocking|exhaustive-all) ;;
   '') [ -z "$STOP_GIVEN" ] || abort "--stop needs a value: early, exhaustive-blocking or exhaustive-all" ;;
@@ -1378,6 +1378,8 @@ elif [ "$PATH_AXIS" = "PR" ]; then
   if [ "$NEXT_KEY" != "none none" ] && [ "$NEXT_KEY" != "$GATE_KEY $HEAD_SHA" ]; then
     VERIFY_STATE="changed after Phase 4 (the newest report is not the round Phase 4 judged)"; STOP_MERGE=no
   fi
+  # A report that no longer reads (edited or hidden after Phase 4) is not merged, stop mode or not (verify r5 #5)
+  case "$VERIFY_STATE" in unparseable*) STOP_MERGE=no ;; esac
   if [ "$STOP_MODE_RUN" != none ] && [ "$STOP_MERGE" = yes ] && [ "$VERIFY_STATE" != clean ] && [ "$RUN_REVIEW" = no ]; then
     VERIFY_BOX="[x]"; VERIFY_LINE="Verify gate: ${VERIFY_STATE}, and stop mode ${STOP_MODE_RUN} stops here with a merge (see the latest verify report on issue #${N}). /idd-all merges this PR next if CI and the close-stage guardrails pass; the findings left are listed in a follow-up issue."
   elif [ "$VERIFY_STATE" != clean ]; then

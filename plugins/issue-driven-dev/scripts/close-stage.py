@@ -311,8 +311,9 @@ def cmd_gate(argv):
             or ("--base" in a and not SHA_RE.match(a["--base"])) or a.get("--read-only", "yes") != "yes":
         return usage("gate needs --cwd --repo --issue and --sha (40 lowercase hex digits), optionally --base and "
                      "--read-only yes")
-    since = run_since(a["--cwd"], a["--issue"])   # the run this gate reads for; the record is written for it only
+    since = None
     try:
+        since = run_since(a["--cwd"], a["--issue"])   # the run this gate reads for; the record is written for it only
         rc, result = judge_report(a["--repo"], a["--issue"], a["--sha"], a.get("--base"), since)
     except Stop as exc:
         rc, result = 2, {"status": "unparseable", "reason": str(exc)}
