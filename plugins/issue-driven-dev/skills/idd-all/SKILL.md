@@ -142,6 +142,7 @@ idd-all 的所有 git/gh 操作都針對單一 target repo,且 Phase 0.5 mode re
 
 ```bash
 # 1. 解析 flags(per-invocation override) — 順序逐一掃描 argv
+# >>> arg-parse
 CWD_FLAG=""
 PR_FLAG=""        # "" | "--pr" | "--no-pr"
 IN_CHAIN=""       # "" | "1" — set by --in-chain flag (v2.55+ #44)
@@ -151,12 +152,13 @@ REVIEW_FLAG=""    # "" | "--review" — set by --review flag (v2.65+ #102)
 REVIEW_YN="no"; IN_CHAIN_YN="no"
 STOP_FLAG=""      # "" | early | exhaustive-blocking | exhaustive-all — set by --stop (#595)
 STOP_GIVEN=""     # one "1" per --stop: an empty value is a mistake, not "no flag"; two are a mistake too
-ARGS=("$@")
-for ((i=0; i<${#ARGS[@]}; i++)); do
-  arg="${ARGS[i]}"
+# #598: a shift loop, not `for ((i=0; i<${#ARGS[@]}; i++))` — zsh arrays start at 1, so an index loop from 0
+# never reads the last argument under zsh (the shell of Claude Code's Bash tool).
+while [ $# -gt 0 ]; do
+  arg=$1; shift
   case "$arg" in
     --cwd=*)    CWD_FLAG="${arg#--cwd=}" ;;
-    --cwd)      i=$((i+1)); CWD_FLAG="${ARGS[i]}" ;;
+    --cwd)      CWD_FLAG="${1:-}"; [ $# -gt 0 ] && shift ;;
     --pr)
       [ -n "$PR_FLAG" ] && abort "Conflicting flags: '$PR_FLAG' and '--pr' both passed. Pick one."
       [ -n "$IN_CHAIN" ] && abort "Conflicting flags: '--in-chain' and '--pr' cannot be combined. --in-chain implies (direct-commit, unattended); pick one."
@@ -179,7 +181,7 @@ for ((i=0; i<${#ARGS[@]}; i++)); do
     --stop=*)   STOP_GIVEN="${STOP_GIVEN}1"; STOP_FLAG="${arg#--stop=}" ;;
     --stop)     # the value is the next argument, unless that is another flag (verify r2 #4: never swallow --review)
                 STOP_GIVEN="${STOP_GIVEN}1"
-                case "${ARGS[i+1]:-}" in --*|'') STOP_FLAG="" ;; *) i=$((i+1)); STOP_FLAG="${ARGS[i]}" ;; esac ;;
+                case "${1:-}" in --*|'') STOP_FLAG="" ;; *) STOP_FLAG=$1; shift ;; esac ;;
   esac
 done
 # #595: a --stop value outside the three is the user's explicit request mistyped — stop before Phase 1
@@ -189,6 +191,7 @@ case "$STOP_FLAG" in
   '') [ -z "$STOP_GIVEN" ] || abort "--stop needs a value: early, exhaustive-blocking or exhaustive-all" ;;
   *) abort "--stop must be early, exhaustive-blocking or exhaustive-all (got '$STOP_FLAG')" ;;
 esac
+# <<< arg-parse
 
 # 2. 確定 working tree 路徑
 if [ -n "$CWD_FLAG" ]; then
