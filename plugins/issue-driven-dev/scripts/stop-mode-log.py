@@ -11,8 +11,9 @@ mode leaves a record of how its verify loop ended".
           A run without a stop mode, a fix answer, or no readable run state writes nothing (exit 0).
           Exit 1 when the line could not be written; idd-all Phase 4 only warns then.
   summary [--json]
-          Group the records by mode, the last line per (repo, issue, created_at): runs, merged, rounds per
-          run, the to-fix sequences and the stop reasons.
+          Group the records by mode, the last line per (repo, issue, created_at): runs, how many `next`
+          answered merge, rounds per run, the to-fix sequences and the stop reasons. A merge answer is not a
+          merged PR: the close stage can still stop the run (#607), so the record says what `next` answered.
 
 The record file is ~/.claude/.idd/stop-mode-runs.jsonl, or IDD_STOP_LOG. It is outside every repository, so
 it never dirties a working tree; it holds repository names and issue numbers of this machine's runs and is
@@ -84,7 +85,7 @@ def cmd_append(argv):
         "repo": a["--repo"], "issue": int(a["--issue"]), "created_at": st.get("created_at"),
         "mode": mode, "interaction": st.get("interaction"), "review": bool(st.get("review")),
         "in_chain": bool(st.get("in_chain")),
-        "decision": answer.get("decision"), "merge": bool(answer.get("merge")),
+        "decision": answer.get("decision"), "next_merge": bool(answer.get("merge")),     # next's answer, not the outcome
         "decided": answer.get("decided", True) is not False, "reason": answer.get("reason"),
         "rounds": rounds,
         "written_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -130,9 +131,9 @@ def cmd_summary(argv):
     records, bad = read_records(path)
     modes = {}
     for rec in records:
-        m = modes.setdefault(rec.get("mode"), {"runs": 0, "merged": 0, "rounds": [], "to_fix": [], "reasons": {}})
+        m = modes.setdefault(rec.get("mode"), {"runs": 0, "next_merge": 0, "rounds": [], "to_fix": [], "reasons": {}})
         m["runs"] += 1
-        m["merged"] += 1 if rec.get("merge") else 0
+        m["next_merge"] += 1 if rec.get("next_merge") else 0
         m["rounds"].append(len(rec.get("rounds") or []))
         m["to_fix"].append(sequence(rec))
         reason = rec.get("reason") or "(none)"
@@ -143,7 +144,7 @@ def cmd_summary(argv):
     print(f"stop-mode record: {path} ({len(records)} run(s){f', {bad} unreadable line(s)' if bad else ''})")
     for mode in sorted(modes):
         m = modes[mode]
-        print(f"{mode}: {m['runs']} run(s), {m['merged']} merged; rounds {m['rounds']}")
+        print(f"{mode}: {m['runs']} run(s), next answered merge in {m['next_merge']}; rounds {m['rounds']}")
         for seq in m["to_fix"]:
             print(f"  to-fix {seq}")
         for reason, k in sorted(m["reasons"].items(), key=lambda kv: -kv[1]):
